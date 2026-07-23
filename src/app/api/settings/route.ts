@@ -20,8 +20,14 @@ export async function GET() {
     telegramEnabled: s.telegramEnabled,
     heartbeatEnabled: s.heartbeatEnabled,
     heartbeatHour: s.heartbeatHour,
+    lastHeartbeatAt: s.lastHeartbeatAt,
     minOpportunityScore: s.minOpportunityScore,
     maxRiskScore: s.maxRiskScore,
+    // v1.1
+    imageAnalysisEnabled: s.imageAnalysisEnabled,
+    playwrightEnabled: s.playwrightEnabled,
+    telegramInlineButtons: s.telegramInlineButtons,
+    telegramWebhookSecretSet: !!s.telegramWebhookSecret,
     updatedAt: s.updatedAt,
   });
 }
@@ -66,11 +72,18 @@ export async function POST(req: NextRequest) {
   if (typeof body.heartbeatHour === 'number') data.heartbeatHour = body.heartbeatHour;
   if (typeof body.minOpportunityScore === 'number') data.minOpportunityScore = body.minOpportunityScore;
   if (typeof body.maxRiskScore === 'number') data.maxRiskScore = body.maxRiskScore;
+  // v1.1
+  if (typeof body.imageAnalysisEnabled === 'boolean') data.imageAnalysisEnabled = body.imageAnalysisEnabled;
+  if (typeof body.playwrightEnabled === 'boolean') data.playwrightEnabled = body.playwrightEnabled;
+  if (typeof body.telegramInlineButtons === 'boolean') data.telegramInlineButtons = body.telegramInlineButtons;
   if (typeof body.aiApiKey === 'string' && body.aiApiKey.trim() !== '') {
     data.aiApiKey = body.aiApiKey.trim();
   }
   if (typeof body.telegramBotToken === 'string' && body.telegramBotToken.trim() !== '') {
     data.telegramBotToken = body.telegramBotToken.trim();
+  }
+  if (typeof body.telegramWebhookSecret === 'string' && body.telegramWebhookSecret.trim() !== '') {
+    data.telegramWebhookSecret = body.telegramWebhookSecret.trim();
   }
 
   const updated = await db.settings.upsert({

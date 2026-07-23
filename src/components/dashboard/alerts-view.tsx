@@ -225,7 +225,7 @@ function AlertCard({
               )}
             </div>
             <h3 className="font-bold text-sm mb-1 truncate">{alert.title}</h3>
-            <pre className="text-xs text-muted-foreground whitespace-pre-wrap font-mono leading-relaxed line-clamp-4">
+            <pre className="text-xs text-muted-foreground whitespace-pre-wrap font-mono leading-relaxed line-clamp-6">
               {alert.body}
             </pre>
             <div className="flex items-center gap-3 mt-2 text-[11px] text-muted-foreground">
