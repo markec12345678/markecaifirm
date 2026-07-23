@@ -40,6 +40,8 @@ export async function POST(req: NextRequest) {
       runEndHour: typeof body.runEndHour === 'number' ? body.runEndHour : null,
       // v1.3: auto-pause threshold
       autoPauseThreshold: typeof body.autoPauseThreshold === 'number' ? body.autoPauseThreshold : 5,
+      // v2.5: notification channels
+      notificationChannels: typeof body.notificationChannels === 'string' ? body.notificationChannels : '{}',
     },
   });
   return NextResponse.json(monitor, { status: 201 });
