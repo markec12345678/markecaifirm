@@ -1,0 +1,92 @@
+[
+  {
+    "url": "https://github.com/BoPeng/ai-marketplace-monitor",
+    "name": "BoPeng/ai-marketplace-monitor",
+    "snippet": "An intelligent tool that monitors Facebook Marketplace listings using AI to help you find the best deals. Get instant notifications when items matching your ... Read more",
+    "host_name": "github.com",
+    "rank": 0,
+    "date": "",
+    "favicon": ""
+  },
+  {
+    "url": "https://apify.com/webdatalabs/facebook-marketplace-deal-finder",
+    "name": "Facebook Marketplace Scraper – AI Deal Finder",
+    "snippet": "Scrape Facebook Marketplace listings worldwide, get AI-powered market price comparison , and discover underpriced items for reselling. Works in any language — ... Read more",
+    "host_name": "apify.com",
+    "rank": 1,
+    "date": "",
+    "favicon": ""
+  },
+  {
+    "url": "https://pypi.org/project/ai-marketplace-monitor/0.7.0",
+    "name": "ai-marketplace-monitor",
+    "snippet": "An AI-based tool for monitoring facebook marketplace . this tool automates the process of searching for specific products, filtering out irrelevant listings,",
+    "host_name": "pypi.org",
+    "rank": 2,
+    "date": "",
+    "favicon": ""
+  },
+  {
+    "url": "https://www.linkedin.com/posts/bo-peng-53668026_github-bopengai-marketplace-monitor-monitor-activity-7288407431150288896-qXkl",
+    "name": "Monitor facebook marketplace with AI | Bo Peng",
+    "snippet": "A tool that periodically searches Facebook Marketplace , filters out repeated, uninteresting, and spam-like listings, and sends phone notifications. Read more",
+    "host_name": "www.linkedin.com",
+    "rank": 3,
+    "date": "",
+    "favicon": ""
+  },
+  {
+    "url": "https://ai-marketplace-monitor.readthedocs.io/en/latest",
+    "name": "ai-marketplace-monitor 0.10.2 documentation",
+    "snippet": "An intelligent tool that monitors Facebook Marketplace listings using AI to help you find the best deals. Get instant notifications when items matching your ... Read more",
+    "host_name": "ai-marketplace-monitor.readthedocs.io",
+    "rank": 4,
+    "date": "",
+    "favicon": ""
+  },
+  {
+    "url": "https://www.pricetrakker.com/solutions/marketplace-monitoring",
+    "name": "Marketplace Price Monitoring — Amazon, eBay & More",
+    "snippet": "Monitor competitor pricing and unauthorised sellers across Amazon, eBay, and other marketplaces. Track price activity, spot violations, and protect your ...",
+    "host_name": "www.pricetrakker.com",
+    "rank": 5,
+    "date": "",
+    "favicon": ""
+  },
+  {
+    "url": "https://www.botscraper.com/price-intelligence",
+    "name": "AI-Powered Online Price Intelligence Tool for Business",
+    "snippet": "Analyze competitors with the help of our AI -backed price intelligence tool . Get important details like the list price , discounted pricing, shipping cost,",
+    "host_name": "www.botscraper.com",
+    "rank": 6,
+    "date": "",
+    "favicon": ""
+  },
+  {
+    "url": "https://www.import.io/post/best-price-intelligence-tools-in-2026",
+    "name": "Best Price Intelligence Tools in 2026",
+    "snippet": "Apr 29, 2026 — Price intelligence tools help teams track competitor prices , promotions, availability, and market changes across retailers and marketplaces. The ... Read more",
+    "host_name": "www.import.io",
+    "rank": 7,
+    "date": "",
+    "favicon": ""
+  },
+  {
+    "url": "https://aipricemonitor.com",
+    "name": "AI Price Monitor — Automated Competitor Price Tracking",
+    "snippet": "Track what competitors charge for the same products you sell. AI Price Monitor automatically matches products by brand, model number, or barcode, scrapes competitor prices daily, and shows you where your pricing sits against the market. Works across any industry and any country.",
+    "host_name": "aipricemonitor.com",
+    "rank": 8,
+    "date": "",
+    "favicon": ""
+  },
+  {
+    "url": "https://www.smartscrape.app",
+    "name": "SmartScrape - Read the Internet. Faster.",
+    "snippet": "Turn any website into clear, actionable summaries using AI. Extract data from websites, analyze content, and get insights faster. Perfect for business intelligence, market research, and content analysis.",
+    "host_name": "www.smartscrape.app",
+    "rank": 9,
+    "date": "",
+    "favicon": ""
+  }
+]

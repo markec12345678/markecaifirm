@@ -1,0 +1,47 @@
+[
+  {
+    "url": "https://github.com/BoPeng/ai-marketplace-monitor",
+    "name": "BoPeng/ai-marketplace-monitor - GitHub",
+    "snippet": "An intelligent tool that monitors Facebook Marketplace listings using AI to help you find the best deals. Get instant notifications when items matching your ... Missing: digest algorithm",
+    "host_name": "github.com",
+    "rank": 0,
+    "date": "",
+    "favicon": ""
+  },
+  {
+    "url": "https://ai-marketplace-monitor.readthedocs.io/en/latest",
+    "name": "ai-marketplace-monitor 0.10.2 documentation - Read the Docs",
+    "snippet": "An intelligent tool that monitors Facebook Marketplace listings using AI to help you find the best deals. Get instant notifications when items matching your ... Missing: digest algorithm",
+    "host_name": "ai-marketplace-monitor.readthedocs.io",
+    "rank": 1,
+    "date": "",
+    "favicon": ""
+  },
+  {
+    "url": "https://pypi.org/project/ai-marketplace-monitor/0.7.0",
+    "name": "ai-marketplace-monitor - PyPI",
+    "snippet": "An AI-based tool for monitoring Facebook Marketplace. With the aids from AI, this tool automates the process of searching for specific products. Missing: newsletter | Show results with: newsletter",
+    "host_name": "pypi.org",
+    "rank": 2,
+    "date": "",
+    "favicon": ""
+  },
+  {
+    "url": "https://github.com/BoPeng/ai-marketplace-monitor/issues/242",
+    "name": "[Feature Request] Daily digest · Issue #242 · BoPeng/ai-marketplace",
+    "snippet": "It can be useful to send a daily digest listing items that have been evaluated, rejected, still in market etc. I suppose this is only useful ... Missing: algorithm scoring",
+    "host_name": "github.com",
+    "rank": 3,
+    "date": "",
+    "favicon": ""
+  },
+  {
+    "url": "https://www.linkedin.com/posts/bo-peng-53668026_github-bopengai-marketplace-monitor-monitor-activity-7288407431150288896-qXkl",
+    "name": "Monitor facebook marketplace with AI | Bo Peng - LinkedIn",
+    "snippet": "A tool that periodically searches Facebook Marketplace, filters out repeated, uninteresting, and spam-like listings, and sends phone notifications. Missing: newsletter digest",
+    "host_name": "www.linkedin.com",
+    "rank": 4,
+    "date": "",
+    "favicon": ""
+  }
+]
