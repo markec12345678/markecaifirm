@@ -1,0 +1,92 @@
+[
+  {
+    "url": "https://github.com/Defend-AI-Tech-Inc/agent-discover-scanner",
+    "name": "Defend-AI-Tech-Inc/agent-discover-scanner",
+    "snippet": "Automatically inventory autonomous agents. AgentDiscover Scanner finds it in under 60 seconds by watching the runtime and cross-referencing it against your ...\nalerts on it. The scanner detects autonomous agent platforms that carry systemic security risk by design — not misconfigurations, but architecture.",
+    "host_name": "github.com",
+    "rank": 0,
+    "date": "",
+    "favicon": ""
+  },
+  {
+    "url": "https://github.com/e2b-dev/awesome-ai-agents",
+    "name": "e2b-dev/awesome-ai-agents: A list of AI autonomous agents",
+    "snippet": "SuperAGI is an open-source autonomous AI framework to enable development and deployment autonomous agents ... Meet autonomous AI sales agents that close deals. Read more\nThese agents can collaborate to solve tasks and can interact seamlessly with humans. It simplifies complex LLM workflows, enhancing automation and optimization. Missing: scanner | Show results with: scanner",
+    "host_name": "github.com",
+    "rank": 1,
+    "date": "",
+    "favicon": ""
+  },
+  {
+    "url": "https://www.youtube.com/watch?v=rhM5kbM8bGo",
+    "name": "From Alert to Fix: AI Agents and the Future of Vulnerability",
+    "snippet": "Dependabot alerts accumulate faster than developers can triage them. Dependabot's AI agent assignment works end-to-end — from alert triage to ...",
+    "host_name": "www.youtube.com",
+    "rank": 2,
+    "date": "",
+    "favicon": ""
+  },
+  {
+    "url": "https://github.com/ProjectRecon/awesome-ai-agents-security",
+    "name": "ProjectRecon/awesome-ai-agents-security",
+    "snippet": "A curated list of open - source tools, frameworks, and resources for securing autonomous AI agents . This list is organized by the security lifecycle of an ... Read more",
+    "host_name": "github.com",
+    "rank": 3,
+    "date": "",
+    "favicon": ""
+  },
+  {
+    "url": "https://www.reddit.com/r/SideProject/comments/1s8hv24/i_built_autonomous_ai_agents_that_scan_every",
+    "name": "I built autonomous AI agents that scan every platform 24/7",
+    "snippet": "I built autonomous AI agents that scan every platform 24/7 to find developer tools you'd miss. I got tired of missing useful tools ... Read more",
+    "host_name": "www.reddit.com",
+    "rank": 4,
+    "date": "",
+    "favicon": ""
+  },
+  {
+    "url": "https://github.com/jim-schwoebel/awesome_ai_agents",
+    "name": "Awesome AI Agents: Tools, Resources, and Projects",
+    "snippet": "Agents is an open-source framework for building autonomous language agents with features including long-short term memory, tool usage, web navigation, multi- ...",
+    "host_name": "github.com",
+    "rank": 5,
+    "date": "",
+    "favicon": ""
+  },
+  {
+    "url": "https://andrewford.co.nz/articles/automate-github-security-updates-comet-browser-copilot-agent-in-action",
+    "name": "Automate GitHub Security Updates with AI Agents - Andrew Ford",
+    "snippet": "Jul 28, 2025 — Learn how to automate GitHub security notifications using Comet and GitHub Copilot. Transform hours of manual work into 15 minutes of ...",
+    "host_name": "andrewford.co.nz",
+    "rank": 6,
+    "date": "",
+    "favicon": ""
+  },
+  {
+    "url": "https://www.youtube.com/watch?v=S1ch_6fjp5M&vl=en",
+    "name": "Run code generation in the background with GitHub Copilot",
+    "snippet": "The GitHub Copilot Coding Agent now runs in the cloud, allowing you to offload complex tasks like \"add comprehensive tests\" to the background ...",
+    "host_name": "www.youtube.com",
+    "rank": 7,
+    "date": "",
+    "favicon": ""
+  },
+  {
+    "url": "https://github.com/gmh5225/awesome-ai-security",
+    "name": "gmh5225/awesome-ai-security",
+    "snippet": "2 days ago — This repository provides skills that can be used with AI agents and coding assistants such as Cursor, OpenClaw, Claude Code, Codex CLI, and ... Read more",
+    "host_name": "github.com",
+    "rank": 8,
+    "date": "",
+    "favicon": ""
+  },
+  {
+    "url": "https://github.com/ColeMurray/background-agents",
+    "name": "An open-source background agents coding system - GitHub",
+    "snippet": "Open-Inspect provides a hosted background coding agent that can: Work on tasks in the background while you focus on other things; Access full development ... Missing: autonomous continuous scanner",
+    "host_name": "github.com",
+    "rank": 9,
+    "date": "",
+    "favicon": ""
+  }
+]
