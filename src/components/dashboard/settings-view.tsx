@@ -52,6 +52,14 @@ interface Settings {
   digestMode: string;
   digestHour: number;
   quickResponseTemplatesSet: boolean;
+  // v2.2: Quiet hours
+  quietHoursEnabled: boolean;
+  quietStartHour: number;
+  quietEndHour: number;
+  // v2.2: Auto-cleanup
+  autoCleanupEnabled: boolean;
+  autoCleanupAlertsDays: number;
+  autoCleanupListingsDays: number;
   updatedAt: string;
 }
 
@@ -122,6 +130,14 @@ export function SettingsView() {
   const [digestMode, setDigestMode] = useState('instant');
   const [digestHour, setDigestHour] = useState(20);
   const [digestSending, setDigestSending] = useState(false);
+  // v2.2: Quiet hours
+  const [quietHoursEnabled, setQuietHoursEnabled] = useState(false);
+  const [quietStartHour, setQuietStartHour] = useState(22);
+  const [quietEndHour, setQuietEndHour] = useState(7);
+  // v2.2: Auto-cleanup
+  const [autoCleanupEnabled, setAutoCleanupEnabled] = useState(false);
+  const [autoCleanupAlertsDays, setAutoCleanupAlertsDays] = useState(30);
+  const [autoCleanupListingsDays, setAutoCleanupListingsDays] = useState(90);
   const [heartbeatSending, setHeartbeatSending] = useState(false);
 
   // Test states
@@ -154,6 +170,12 @@ export function SettingsView() {
         setPushEnabled(data.pushEnabled ?? false);
         setDigestMode(data.digestMode ?? 'instant');
         setDigestHour(data.digestHour ?? 20);
+        setQuietHoursEnabled(data.quietHoursEnabled ?? false);
+        setQuietStartHour(data.quietStartHour ?? 22);
+        setQuietEndHour(data.quietEndHour ?? 7);
+        setAutoCleanupEnabled(data.autoCleanupEnabled ?? false);
+        setAutoCleanupAlertsDays(data.autoCleanupAlertsDays ?? 30);
+        setAutoCleanupListingsDays(data.autoCleanupListingsDays ?? 90);
       } catch {
         toast.error('Ne morem naložiti nastavitev');
       } finally {
@@ -215,6 +237,13 @@ export function SettingsView() {
         // v1.6
         digestMode,
         digestHour,
+        // v2.2
+        quietHoursEnabled,
+        quietStartHour,
+        quietEndHour,
+        autoCleanupEnabled,
+        autoCleanupAlertsDays,
+        autoCleanupListingsDays,
       };
       if (apiKey) body.aiApiKey = apiKey;
       if (telegramBotToken) body.telegramBotToken = telegramBotToken;
@@ -944,6 +973,82 @@ curl "https://api.telegram.org/bot<TOKEN>/setWebhook\\
               ⚠ Push na iOS zahteva iOS 16.4+ in instalirano PWA (ne deluje v Safari browserju).
             </p>
           </div>
+        </CardContent>
+      </Card>
+
+      {/* v2.2: Quiet hours */}
+      <Card className="bg-card/50">
+        <CardHeader>
+          <CardTitle className="text-sm font-bold uppercase tracking-wider flex items-center gap-2">
+            <Bell className="w-4 h-4 text-primary" />
+            Tihe ure <Badge variant="outline" className="text-[10px] text-primary border-primary/40">v2.2</Badge>
+          </CardTitle>
+          <CardDescription>
+            Ne pošiljaj alertov (Telegram/Discord/Slack/Push) v določenih urah. Alerti se še vedno shranijo v bazo.
+          </CardDescription>
+        </CardHeader>
+        <CardContent>
+          <div className="flex items-center gap-3 mb-3">
+            <Switch checked={quietHoursEnabled} onCheckedChange={setQuietHoursEnabled} />
+            <div className="flex-1">
+              <p className="text-sm font-medium">Omogoči tihe ure</p>
+              <p className="text-[11px] text-muted-foreground mt-0.5">
+                {quietHoursEnabled
+                  ? `Tihe ure: ${String(quietStartHour).padStart(2, '0')}:00 – ${String(quietEndHour).padStart(2, '0')}:00`
+                  : 'Izklopljeno — alerti prihajajo 24/7'}
+              </p>
+            </div>
+          </div>
+          {quietHoursEnabled && (
+            <div className="grid grid-cols-2 gap-3">
+              <div>
+                <Label className="text-xs uppercase">Od ure</Label>
+                <Input type="number" min={0} max={23} value={quietStartHour} onChange={(e) => setQuietStartHour(parseInt(e.target.value, 10) || 0)} className="mt-1 font-mono text-center w-24" />
+              </div>
+              <div>
+                <Label className="text-xs uppercase">Do ure</Label>
+                <Input type="number" min={0} max={23} value={quietEndHour} onChange={(e) => setQuietEndHour(parseInt(e.target.value, 10) || 0)} className="mt-1 font-mono text-center w-24" />
+              </div>
+            </div>
+          )}
+        </CardContent>
+      </Card>
+
+      {/* v2.2: Auto-cleanup */}
+      <Card className="bg-card/50">
+        <CardHeader>
+          <CardTitle className="text-sm font-bold uppercase tracking-wider flex items-center gap-2">
+            <Trash2 className="w-4 h-4 text-primary" />
+            Samodejni cleanup <Badge variant="outline" className="text-[10px] text-primary border-primary/40">v2.2</Badge>
+          </CardTitle>
+          <CardDescription>
+            Samodejno arhiviraj stare alerte in briši stare oglase. Bookmarked in v Skladišču ne bodo izbrisani.
+          </CardDescription>
+        </CardHeader>
+        <CardContent>
+          <div className="flex items-center gap-3 mb-3">
+            <Switch checked={autoCleanupEnabled} onCheckedChange={setAutoCleanupEnabled} />
+            <div className="flex-1">
+              <p className="text-sm font-medium">Omogoči samodejni cleanup</p>
+              <p className="text-[11px] text-muted-foreground mt-0.5">
+                {autoCleanupEnabled
+                  ? `Arhivira alerte >${autoCleanupAlertsDays} dni, briše oglase >${autoCleanupListingsDays} dni`
+                  : 'Izklopljeno — ročno upravljanje'}
+              </p>
+            </div>
+          </div>
+          {autoCleanupEnabled && (
+            <div className="grid grid-cols-2 gap-3">
+              <div>
+                <Label className="text-xs uppercase">Arhiviraj alerte po (dneh)</Label>
+                <Input type="number" min={1} max={365} value={autoCleanupAlertsDays} onChange={(e) => setAutoCleanupAlertsDays(parseInt(e.target.value, 10) || 30)} className="mt-1 font-mono text-center w-24" />
+              </div>
+              <div>
+                <Label className="text-xs uppercase">Briši oglase po (dneh)</Label>
+                <Input type="number" min={1} max={365} value={autoCleanupListingsDays} onChange={(e) => setAutoCleanupListingsDays(parseInt(e.target.value, 10) || 90)} className="mt-1 font-mono text-center w-24" />
+              </div>
+            </div>
+          )}
         </CardContent>
       </Card>
 

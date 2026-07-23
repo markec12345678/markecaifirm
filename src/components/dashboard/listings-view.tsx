@@ -20,7 +20,7 @@ import {
   DialogTitle,
   DialogDescription,
 } from '@/components/ui/dialog';
-import { RefreshCw, Download, ExternalLink, ChevronLeft, ChevronRight, Filter, ImageIcon, AlertTriangle, Target, MapPin, Clock, Bookmark, Sparkles, ShoppingCart, MessageSquare, BarChart3, TrendingDown, TrendingUp, Copy, Check } from 'lucide-react';
+import { RefreshCw, Download, ExternalLink, ChevronLeft, ChevronRight, Filter, ImageIcon, AlertTriangle, Target, MapPin, Clock, Bookmark, Sparkles, ShoppingCart, MessageSquare, BarChart3, TrendingDown, TrendingUp, Copy, Check, GitCompare } from 'lucide-react';
 import { toast } from 'sonner';
 import { cn } from '@/lib/utils';
 
@@ -73,6 +73,9 @@ export function ListingsView() {
   const [bookmarkedOnly, setBookmarkedOnly] = useState(false);
   const [sort, setSort] = useState<string>('firstSeen');
   const [offset, setOffset] = useState(0);
+  const [compareIds, setCompareIds] = useState<Set<string>>(new Set());
+  const [compareData, setCompareData] = useState<any>(null);
+  const [compareLoading, setCompareLoading] = useState(false);
   const limit = 50;
 
   const load = useCallback(async () => {
@@ -127,6 +130,38 @@ export function ListingsView() {
     params.set('limit', '500');
     params.set('format', 'csv');
     window.open(`/api/listings?${params}`, '_blank');
+  };
+
+  // v2.3: Compare functions
+  const toggleCompare = (id: string) => {
+    setCompareIds(prev => {
+      const next = new Set(prev);
+      if (next.has(id)) next.delete(id);
+      else if (next.size < 4) next.add(id);
+      else toast.info('Maksimalno 4 oglase za primerjavo');
+      return next;
+    });
+  };
+
+  const runCompare = async () => {
+    if (compareIds.size < 2) {
+      toast.error('Izberi vsaj 2 oglasa za primerjavo');
+      return;
+    }
+    setCompareLoading(true);
+    try {
+      const res = await fetch('/api/listings/compare', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ ids: Array.from(compareIds) }),
+      });
+      const data = await res.json();
+      setCompareData(data);
+    } catch {
+      toast.error('Napaka pri primerjavi');
+    } finally {
+      setCompareLoading(false);
+    }
   };
 
   // v1.4: Toggle bookmark
@@ -285,6 +320,8 @@ export function ListingsView() {
                 listing={l}
                 onOpenDetail={() => setDetailListingId(l.id)}
                 onToggleBookmark={() => toggleBookmark(l.id, l.isBookmarked)}
+                onToggleCompare={() => toggleCompare(l.id)}
+                isCompareSelected={compareIds.has(l.id)}
               />
             ))}
           </div>
@@ -317,6 +354,27 @@ export function ListingsView() {
         </>
       )}
 
+      {/* v2.3: Compare toolbar */}
+      {compareIds.size > 0 && (
+        <Card className="bg-primary/5 border-primary/30">
+          <CardContent className="p-3">
+            <div className="flex items-center gap-2 flex-wrap">
+              <span className="text-sm font-medium text-primary">{compareIds.size} izbranih za primerjavo</span>
+              <Button size="sm" onClick={runCompare} disabled={compareLoading || compareIds.size < 2} className="gap-2 bg-primary text-primary-foreground hover:bg-primary/90 h-7">
+                {compareLoading ? <RefreshCw className="w-3.5 h-3.5 animate-spin" /> : <GitCompare className="w-3.5 h-3.5" />}
+                Primerjaj ({compareIds.size})
+              </Button>
+              <Button size="sm" variant="ghost" onClick={() => setCompareIds(new Set())} className="h-7 text-xs">
+                Počisti
+              </Button>
+            </div>
+          </CardContent>
+        </Card>
+      )}
+
+      {/* v2.3: Compare modal */}
+      <CompareModal data={compareData} onClose={() => { setCompareData(null); setCompareIds(new Set()); }} />
+
       {/* v1.3: Listing detail modal */}
       <ListingDetailModal
         listingId={detailListingId}
@@ -326,7 +384,7 @@ export function ListingsView() {
   );
 }
 
-function ListingRow({ listing, onOpenDetail, onToggleBookmark }: { listing: Listing; onOpenDetail: () => void; onToggleBookmark: () => void }) {
+function ListingRow({ listing, onOpenDetail, onToggleBookmark, onToggleCompare, isCompareSelected }: { listing: Listing; onOpenDetail: () => void; onToggleBookmark: () => void; onToggleCompare: () => void; isCompareSelected: boolean }) {
   const verdictColor =
     listing.aiVerdict === 'PRILIKA' ? 'border-primary/40 text-primary' :
     listing.aiVerdict === 'SUMNJIVO' ? 'border-amber-400/40 text-amber-400' :
@@ -396,16 +454,28 @@ function ListingRow({ listing, onOpenDetail, onToggleBookmark }: { listing: List
               })()}
             </div>
           </div>
-          <button
-            onClick={(e) => { e.stopPropagation(); onToggleBookmark(); }}
-            className={cn(
-              'shrink-0 p-1.5 rounded hover:bg-primary/10 transition-colors',
-              listing.isBookmarked ? 'text-primary' : 'text-muted-foreground hover:text-primary'
-            )}
-            title={listing.isBookmarked ? 'Odstrani iz shranjenih' : 'Shrani'}
-          >
-            <Bookmark className={cn('w-4 h-4', listing.isBookmarked && 'fill-current')} />
-          </button>
+          <div className="flex items-center gap-1 shrink-0">
+            <button
+              onClick={(e) => { e.stopPropagation(); onToggleCompare(); }}
+              className={cn(
+                'shrink-0 p-1.5 rounded hover:bg-primary/10 transition-colors',
+                isCompareSelected ? 'text-primary bg-primary/10' : 'text-muted-foreground hover:text-primary'
+              )}
+              title={isCompareSelected ? 'Odstrani iz primerjave' : 'Dodaj v primerjavo'}
+            >
+              <GitCompare className={cn('w-4 h-4', isCompareSelected && 'text-primary')} />
+            </button>
+            <button
+              onClick={(e) => { e.stopPropagation(); onToggleBookmark(); }}
+              className={cn(
+                'shrink-0 p-1.5 rounded hover:bg-primary/10 transition-colors',
+                listing.isBookmarked ? 'text-primary' : 'text-muted-foreground hover:text-primary'
+              )}
+              title={listing.isBookmarked ? 'Odstrani iz shranjenih' : 'Shrani'}
+            >
+              <Bookmark className={cn('w-4 h-4', listing.isBookmarked && 'fill-current')} />
+            </button>
+          </div>
         </div>
       </CardContent>
     </Card>
@@ -955,4 +1025,76 @@ function formatTimeAgo(iso: string): string {
   const days = Math.floor(h / 24);
   if (days < 30) return `pred ${days}d`;
   return d.toLocaleDateString('sl-SI');
+}
+
+// v2.3: Side-by-side compare modal
+function CompareModal({ data, onClose }: { data: any; onClose: () => void }) {
+  if (!data || !data.listings || data.listings.length === 0) return null;
+  const listings = data.listings;
+
+  // Find best price (lowest)
+  const prices = listings.map((l: any) => l.price).filter((p: any) => p != null);
+  const bestPrice = prices.length > 0 ? Math.min(...prices) : null;
+  // Find best AI score (highest)
+  const scores = listings.map((l: any) => l.aiScore).filter((s: any) => s != null);
+  const bestScore = scores.length > 0 ? Math.max(...scores) : null;
+
+  return (
+    <Dialog open={!!data} onOpenChange={(open) => !open && onClose()}>
+      <DialogContent className="max-w-5xl max-h-[90vh] overflow-y-auto">
+        <DialogHeader>
+          <DialogTitle className="text-base flex items-center gap-2">
+            <GitCompare className="w-4 h-4 text-primary" />
+            Primerjava {listings.length} oglasov
+          </DialogTitle>
+          <DialogDescription>Side-by-side primerjava — izberi najboljšo ponzudbo.</DialogDescription>
+        </DialogHeader>
+        <div className="overflow-x-auto">
+          <table className="w-full text-xs border-collapse">
+            <thead>
+              <tr className="border-b border-border">
+                <th className="text-left p-2 text-muted-foreground uppercase tracking-wider w-32">Lastnost</th>
+                {listings.map((l: any, i: number) => (
+                  <th key={i} className="text-left p-2 align-top min-w-[180px]">
+                    {l.imageUrl && (
+                      <img src={l.imageUrl} alt="" className="w-full h-24 object-cover rounded mb-2" loading="lazy" />
+                    )}
+                    <a href={l.url} target="_blank" rel="noopener noreferrer" className="font-bold text-primary hover:underline line-clamp-2">
+                      {l.title}
+                    </a>
+                  </th>
+                ))}
+              </tr>
+            </thead>
+            <tbody>
+              <CompareRow label="Cena" values={listings.map((l: any) => l.priceText ?? '—')} best={listings.map((l: any) => l.price === bestPrice && l.price != null)} />
+              <CompareRow label="AI verdikt" values={listings.map((l: any) => l.aiVerdict ?? '—')} />
+              <CompareRow label="AI prilika" values={listings.map((l: any) => l.aiScore != null ? `${l.aiScore}/10` : '—')} best={listings.map((l: any) => l.aiScore === bestScore && l.aiScore != null)} />
+              <CompareRow label="AI tveganje" values={listings.map((l: any) => l.aiRisk != null ? `${l.aiRisk}/10` : '—')} />
+              <CompareRow label="AI tržna vrednost" values={listings.map((l: any) => l.aiEstimatedValue ? `${l.aiEstimatedValue} €` : '—')} />
+              <CompareRow label="Lokacija" values={listings.map((l: any) => l.location || '—')} />
+              <CompareRow label="Monitor" values={listings.map((l: any) => l.monitor?.name ?? '—')} />
+              <CompareRow label="Prvič videno" values={listings.map((l: any) => new Date(l.firstSeenAt).toLocaleDateString('sl-SI'))} />
+              <CompareRow label="Starost (dni)" values={listings.map((l: any) => String(Math.floor((Date.now() - new Date(l.firstSeenAt).getTime()) / 86400000)))} />
+              <CompareRow label="Padec cene" values={listings.map((l: any) => l.priceDroppedAt ? `📉 ${new Date(l.priceDroppedAt).toLocaleDateString('sl-SI')}` : '—')} />
+              <CompareRow label="AI razlog" values={listings.map((l: any) => (l.aiReason || '—').slice(0, 100))} />
+            </tbody>
+          </table>
+        </div>
+      </DialogContent>
+    </Dialog>
+  );
+}
+
+function CompareRow({ label, values, best }: { label: string; values: string[]; best?: boolean[] }) {
+  return (
+    <tr className="border-b border-border/50">
+      <td className="p-2 text-muted-foreground font-medium uppercase tracking-wider text-[10px]">{label}</td>
+      {values.map((v, i) => (
+        <td key={i} className={cn('p-2 font-mono', best?.[i] && 'text-primary font-bold')}>
+          {v}
+        </td>
+      ))}
+    </tr>
+  );
 }
