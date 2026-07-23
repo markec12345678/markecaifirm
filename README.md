@@ -3,6 +3,8 @@
 Lokalni AI lovec priložnosti za slovenske spletne portale (Bolha, Nepremičnine, Avtonet, ...).
 V lastnem API ključu in lastnem AI modelu (Ollama / OpenAI / Anthropic / OpenAI-kompatibilni).
 
+**v1.3** — dodani: listing detail modal z podobnimi oglasi, bulk akcije na alertih (multi-select), globalno iskanje (Ctrl+K), auto-pause monitorja po N zaporednih napakah, dry-run test URL-ja, backup/restore baze podatkov.
+
 **v1.2** — dodani: urnik delovanja (schedule windows) za stroškovni nadzor, pregled vseh oglasov (Listings browser) za validacijo AI, analitika z grafy (alerts/day, verdikt distribucija, performansa monitorjev, natančnost AI), CSV export za vse poglede, feedback loop za AI natančnost (👍 Zanima me / 🚫 Prevara).
 
 **v1.1** — dodani: heartbeat (dnevni povzetek na Telegram), AI analiza slik oglasov (multimodalni modeli), Bolha Playwright fallback za Cloudflare bypass, Telegram inline tipke z webhook callback podporo.
@@ -272,6 +274,76 @@ Po nekaj tednih boš imel dovolj povratnih informacij za tuning thresholdov v Na
 - Če precision < 50%: dvigaj `minOpportunityScore` iz 7 na 8
 - Če precision > 90% in malo alertov: spusti `minOpportunityScore` na 6
 - Če veliko SCAM označb: dvigaj `maxRiskScore` ni pravilno — raje dodaj excludeKeywords v monitor
+
+## v1.3 funkcije
+
+### 1. Listing detail modal
+
+Klik na kateri koli listing v zavihku "Oglasi" odpre modal z bogatim pregledom:
+- Velika slika oglasa (če obstaja)
+- AI evalvacija v mreži: verdikt, ocena prilike, ocena tveganja
+- AI razlog (italic, citat)
+- AI analiza slike (če je bila narejena)
+- Originalni opis oglasa
+- **Podobni oglasi** iz istega monitorja v cena ±30% razponu — ključno za primerjavo tržne vrednosti
+- Direktni gumb "Odpri oglas"
+
+### 2. Bulk akcije na alertih
+
+Multi-select s checkboxi omogoča hkratno delovanje na več alertih:
+- Checkbox ob vsakem alertu
+- "Izberi vse" / "Odznači vse" v glavi seznama
+- Bulk toolbar (se pojavi ko je vsaj 1 izbran) z akcijami:
+  - ✓ Prebrano
+  - 👍 Zanima me
+  - ✅ Arhiviraj
+  - 🚫 Prevara
+  - 🗑 Izbriši
+- Maksimalno 500 alertov naenkrat
+
+### 3. Globalno iskanje (Ctrl+K)
+
+Pritisni **Ctrl+K** (ali Cmd+K na Macu) kjer koli v aplikaciji za odprtje iskanja:
+- Išče po naslovih, opisih, URL-jih in lokacijah listings + alerts hkrati
+- Rezultati razdeljeni v dve sekciji (Oglasi / Alerti)
+- Debounce 300ms (čaka da končaš tipkanje)
+- Klik na listing odpre originalni oglas v novem zavihku
+- Klik na alert zapre modal in te pelje v zavihek Alerti
+- Mobile: iskalni gumb v glavi (brez shortcut)
+
+### 4. Auto-pause po zaporednih napakah
+
+Vsak monitor ima nastavljiv `autoPauseThreshold` (privzeto 5):
+- Po N zaporednih napakah se monitor samodejno deaktivira
+- `consecutiveErrors` se resetira ob prvi uspešni izvedbi
+- Status prikazan v MonitorCard:
+  - `⚠ 3/5 zaporednih napak` — opozorilo pred pavzo
+  - `Auto-paused pred 5min po 5 zaporednih napakah. [Reaktiviraj]` — po pavzi
+- Reaktivacija preko Switch ali "Reaktiviraj" linka avtomatsko resetira counter
+- Threshold 0 = onemogočeno (monitor se nikoli ne auto-pavza)
+- Cron endpoint vrača `autoPaused` count v JSON odgovoru
+
+**Zakaj je to ključno**: če Bolha spremeni HTML strukturo ali če Ollama crkne, bi drugače monitor vsakih 30 min porabil AI klice za nič. Auto-pause prepreči zapravljanje in log spam.
+
+### 5. Dry-run test URL-ja
+
+V monitor formi je nov gumb **"Test URL"** poleg URL polja:
+- Pošlje request na `/api/monitors/dry-run` z vnosi iz forme
+- Izvede scraping brez shranjevanja in brez AI klicev
+- Vrne prve 3 rezultate z naslovi in cenami za validacijo
+- Prikaže trajanje v ms (pomaga diagnosticirati počasne vire)
+- Ne shrani monitorja — varno za eksperimentiranje z URL-ji
+
+**Uporaba**: preden shraniš monitor, klikni "Test URL" da preveriš, ali bodo rezultati smiselni. Prihrani čas pri debugginganju struktur Boltonih/Nepremičnin.
+
+### 6. Backup / Restore baze
+
+Nov "Baza podatkov" card v Nastavitvah z 3 akcijami:
+- **Prenesi .db**: prenese celotno SQLite bazo (vključno z API ključi in Telegram tokenom — hranite varno!)
+- **Obnovi iz .db**: naloži prejšnjo varnostno kopijo. Pred obnovitvijo se samodejno naredi backup trenutne baze v `backups/` mapo. Po obnovitvi priporočamo ponovni zagon aplikacije (Prisma client cache).
+- **Počisti podatke**: izbriše vse oglase, alerte, run loge in heartbeate. Monitorji in nastavitve (vključno z API ključi) ostanejo. Uporabno za "fresh start" pri testiranju.
+
+Validacija na restore: preverja SQLite magic header ("SQLite format 3\0"). Če naložiš ne-SQLite datoteko, restore ne uspe in trenutna baza ostane nedotaknjena.
 
 ## Testirano z
 
