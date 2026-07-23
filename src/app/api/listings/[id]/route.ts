@@ -34,6 +34,9 @@ export async function GET(_req: NextRequest, { params }: { params: Promise<{ id:
   });
   if (!listing) return NextResponse.json({ error: 'Ne najdem' }, { status: 404 });
 
+  // v2.4: Ensure notes fields are included (they're on the model, just explicitly noted)
+  // No additional query needed — fields come back automatically
+
   // Parse detailImages JSON if present
   let detailImages: string[] = [];
   try {

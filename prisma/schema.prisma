@@ -195,6 +195,13 @@ model Listing {
   // v2.0: price drop tracking
   previousPrice    Int?    // last known price before current (for drop detection)
   priceDroppedAt   DateTime? // when the price last dropped
+  // v2.4: Personal notes (user's own notes about this listing)
+  userNotes        String?
+  userNotesUpdatedAt DateTime?
+  // v2.4: Contact tracking
+  contactStatus    String   @default("none") // none | contacted | responded | closed
+  contactedAt      DateTime?
+  sellerResponse   String?
   // Alerts generated for this listing
   alerts      Alert[]
   priceHistory PriceHistory[]
