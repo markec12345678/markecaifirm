@@ -66,4 +66,8 @@ download/
 .claude/
 CLAUDE.md
 *.png
+# Exception: PWA icons in public/
+!public/icon-*.png
+!public/favicon-*.png
+!public/favicon.ico
 package-lock.json
