@@ -175,10 +175,15 @@ export async function GET() {
 
   // 7. Cron / monitors status
   try {
-    const [activeMonitors, totalMonitors, autoPausedCount, recentRuns] = await Promise.all([
+    const [activeMonitors, totalMonitors, autoPausedCount, autoPausedMonitors, recentRuns] = await Promise.all([
       db.monitor.count({ where: { isActive: true } }),
       db.monitor.count(),
       db.monitor.count({ where: { autoPausedAt: { not: null } } }),
+      // v1.9: Get details of auto-paused monitors
+      db.monitor.findMany({
+        where: { autoPausedAt: { not: null } },
+        select: { id: true, name: true, consecutiveErrors: true, autoPauseThreshold: true, autoPausedAt: true, lastError: true },
+      }),
       db.runLog.findMany({
         take: 5,
         orderBy: { startedAt: 'desc' },
@@ -212,6 +217,14 @@ export async function GET() {
         activeMonitors, totalMonitors, autoPausedCount,
         lastRunStatus: lastRun?.status,
         lastRunAgoMin,
+        // v1.9: Auto-paused monitor details
+        autoPausedMonitors: autoPausedMonitors.map(m => ({
+          name: m.name,
+          errors: m.consecutiveErrors,
+          threshold: m.autoPauseThreshold,
+          pausedAt: m.autoPausedAt,
+          error: m.lastError?.slice(0, 100),
+        })),
       },
     });
   } catch (e: any) {
