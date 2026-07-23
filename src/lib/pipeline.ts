@@ -311,20 +311,40 @@ export async function runMonitor(monitorId: string): Promise<RunResult> {
 }
 
 /** Run all active monitors whose interval has elapsed. Used by the cron endpoint. */
-export async function runDueMonitors(): Promise<{ ran: number; results: RunResult[] }> {
+export async function runDueMonitors(): Promise<{ ran: number; results: RunResult[]; skipped: number }> {
   const now = new Date();
   const monitors = await db.monitor.findMany({ where: { isActive: true } });
-  const due = monitors.filter(m => {
-    if (!m.lastRunAt) return true;
-    const elapsed = now.getTime() - m.lastRunAt.getTime();
-    return elapsed >= m.intervalMinutes * 60 * 1000;
-  });
+  const currentHour = now.getHours();
+
+  const due: typeof monitors = [];
+  let skipped = 0;
+  for (const m of monitors) {
+    // Interval check
+    if (m.lastRunAt) {
+      const elapsed = now.getTime() - m.lastRunAt.getTime();
+      if (elapsed < m.intervalMinutes * 60 * 1000) continue;
+    }
+    // v1.2: schedule window check
+    if (m.runStartHour != null && m.runEndHour != null) {
+      const start = m.runStartHour;
+      const end = m.runEndHour;
+      // Handle wrap-around (e.g. 22-6 = night)
+      const inWindow = start <= end
+        ? (currentHour >= start && currentHour < end)
+        : (currentHour >= start || currentHour < end);
+      if (!inWindow) {
+        skipped++;
+        continue;
+      }
+    }
+    due.push(m);
+  }
   const results: RunResult[] = [];
   for (const m of due) {
     const r = await runMonitor(m.id);
     results.push(r);
   }
-  return { ran: due.length, results };
+  return { ran: due.length, results, skipped };
 }
 
 /**

@@ -1,7 +1,7 @@
 'use client';
 
 import { useEffect, useState, useCallback } from 'react';
-import { Activity, Bell, Settings, ListPlus, Zap, RefreshCw, AlertCircle } from 'lucide-react';
+import { Activity, Bell, Settings, ListPlus, Zap, RefreshCw, AlertCircle, LayoutGrid, BarChart3 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
 import { toast } from 'sonner';
@@ -10,13 +10,17 @@ import { DashboardView } from '@/components/dashboard/dashboard-view';
 import { MonitorsView } from '@/components/dashboard/monitors-view';
 import { AlertsView } from '@/components/dashboard/alerts-view';
 import { SettingsView } from '@/components/dashboard/settings-view';
+import { ListingsView } from '@/components/dashboard/listings-view';
+import { AnalyticsView } from '@/components/dashboard/analytics-view';
 
-type View = 'dashboard' | 'monitors' | 'alerts' | 'settings';
+type View = 'dashboard' | 'monitors' | 'alerts' | 'listings' | 'analytics' | 'settings';
 
 const NAV: { id: View; label: string; icon: typeof Activity }[] = [
   { id: 'dashboard', label: 'Dashboard', icon: Activity },
   { id: 'monitors', label: 'Monitorji', icon: ListPlus },
   { id: 'alerts', label: 'Alerti', icon: Bell },
+  { id: 'listings', label: 'Oglasi', icon: LayoutGrid },
+  { id: 'analytics', label: 'Analitika', icon: BarChart3 },
   { id: 'settings', label: 'Nastavitve', icon: Settings },
 ];
 
@@ -131,6 +135,8 @@ export default function Home() {
         {view === 'dashboard' && <DashboardView onNavigate={setView} />}
         {view === 'monitors' && <MonitorsView />}
         {view === 'alerts' && <AlertsView />}
+        {view === 'listings' && <ListingsView />}
+        {view === 'analytics' && <AnalyticsView />}
         {view === 'settings' && <SettingsView />}
       </main>
 

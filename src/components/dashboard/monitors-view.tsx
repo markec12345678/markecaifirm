@@ -44,6 +44,8 @@ interface Monitor {
   lastStatus: string | null;
   lastError: string | null;
   customPrompt: string;
+  runStartHour: number | null;
+  runEndHour: number | null;
   createdAt: string;
   _count?: { listings: number; alerts: number };
 }
@@ -214,6 +216,11 @@ export function MonitorsView() {
                   <span className="flex items-center gap-1">
                     <Clock className="w-3 h-3" /> vsakih {m.intervalMinutes}min
                   </span>
+                  {m.runStartHour != null && m.runEndHour != null && (
+                    <span className="text-primary">
+                      • {String(m.runStartHour).padStart(2, '0')}:00–{String(m.runEndHour).padStart(2, '0')}:00
+                    </span>
+                  )}
                   {m.minPrice != null && <span>min {m.minPrice}€</span>}
                   {m.maxPrice != null && <span>max {m.maxPrice}€</span>}
                   {m.keywords && <span className="text-amber-400">+{m.keywords.split(',').length} kw</span>}
@@ -309,6 +316,10 @@ function MonitorFormDialog({
   const [maxPrice, setMaxPrice] = useState('');
   const [intervalMinutes, setIntervalMinutes] = useState(30);
   const [customPrompt, setCustomPrompt] = useState('');
+  // v1.2: schedule window
+  const [useSchedule, setUseSchedule] = useState(false);
+  const [runStartHour, setRunStartHour] = useState(7);
+  const [runEndHour, setRunEndHour] = useState(23);
   const [saving, setSaving] = useState(false);
 
   useEffect(() => {
@@ -322,6 +333,9 @@ function MonitorFormDialog({
       setMaxPrice(editing.maxPrice?.toString() ?? '');
       setIntervalMinutes(editing.intervalMinutes);
       setCustomPrompt(editing.customPrompt);
+      setUseSchedule(editing.runStartHour != null && editing.runEndHour != null);
+      setRunStartHour(editing.runStartHour ?? 7);
+      setRunEndHour(editing.runEndHour ?? 23);
     } else {
       setName('');
       setSource('bolha');
@@ -332,6 +346,9 @@ function MonitorFormDialog({
       setMaxPrice('');
       setIntervalMinutes(30);
       setCustomPrompt('');
+      setUseSchedule(false);
+      setRunStartHour(7);
+      setRunEndHour(23);
     }
   }, [editing, open]);
 
@@ -358,6 +375,9 @@ function MonitorFormDialog({
         maxPrice: maxPrice ? parseInt(maxPrice, 10) : null,
         intervalMinutes,
         customPrompt: customPrompt.trim(),
+        // v1.2: schedule window
+        runStartHour: useSchedule ? runStartHour : null,
+        runEndHour: useSchedule ? runEndHour : null,
       };
       const res = await fetch(
         editing ? `/api/monitors/${editing.id}` : '/api/monitors',
@@ -525,6 +545,56 @@ function MonitorFormDialog({
             <p className="text-[11px] text-muted-foreground mt-1">
               Ta navodila se dodajo AI promptu samo za ta monitor.
             </p>
+          </div>
+
+          {/* v1.2: Schedule window */}
+          <div className="border-t border-border pt-4">
+            <div className="flex items-center justify-between mb-2">
+              <div>
+                <Label className="text-xs uppercase tracking-wider flex items-center gap-2">
+                  <Clock className="w-3 h-3" />
+                  Urnik delovanja <Badge variant="outline" className="text-[10px] text-primary border-primary/40">v1.2</Badge>
+                </Label>
+                <p className="text-[11px] text-muted-foreground mt-1">
+                  Omeji delovanje monitorja na določene ure — prihrani AI klice v nočnem času.
+                </p>
+              </div>
+              <Switch checked={useSchedule} onCheckedChange={setUseSchedule} />
+            </div>
+            {useSchedule && (
+              <div className="grid grid-cols-2 gap-3 mt-2">
+                <div>
+                  <Label htmlFor="m-start" className="text-xs uppercase">Od ure</Label>
+                  <Input
+                    id="m-start"
+                    type="number"
+                    min={0}
+                    max={23}
+                    value={runStartHour}
+                    onChange={(e) => setRunStartHour(parseInt(e.target.value, 10) || 0)}
+                    className="mt-1 font-mono text-center"
+                  />
+                </div>
+                <div>
+                  <Label htmlFor="m-end" className="text-xs uppercase">Do ure</Label>
+                  <Input
+                    id="m-end"
+                    type="number"
+                    min={0}
+                    max={23}
+                    value={runEndHour}
+                    onChange={(e) => setRunEndHour(parseInt(e.target.value, 10) || 0)}
+                    className="mt-1 font-mono text-center"
+                  />
+                </div>
+                <p className="text-[11px] text-muted-foreground col-span-2">
+                  {runStartHour <= runEndHour
+                    ? `Deluje ${String(runStartHour).padStart(2, '0')}:00–${String(runEndHour).padStart(2, '0')}:00.`
+                    : `Deluje ${String(runStartHour).padStart(2, '0')}:00–${String(runEndHour).padStart(2, '0')}:00 (čez polnoč).`}
+                  {' '}Preostali čas se preskoči brez napake.
+                </p>
+              </div>
+            )}
           </div>
         </div>
 

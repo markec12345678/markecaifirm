@@ -55,6 +55,9 @@ model Monitor {
   // Schedule
   intervalMinutes Int @default(30)
   isActive   Boolean  @default(true)
+  // v1.2: schedule window — only run during these hours (e.g. "6-23"). Empty = always.
+  runStartHour Int?
+  runEndHour   Int?
   lastRunAt  DateTime?
   lastStatus String?  // ok | error | empty
   lastError  String?
@@ -120,10 +123,14 @@ model Alert {
   // UI state
   isRead      Boolean  @default(false)
   isArchived  Boolean  @default(false)
+  // v1.2: user feedback for AI accuracy tracking
+  userAction  String?  // interested | archived | scam | ignored (auto-set after 7 days)
+  userActionedAt DateTime?
   createdAt   DateTime @default(now())
 
   @@index([monitorId, createdAt])
   @@index([isArchived, createdAt])
+  @@index([userAction])
 }
 
 // Run log — every monitor execution record

@@ -4,7 +4,7 @@ import { useEffect, useState, useCallback } from 'react';
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
-import { Activity, Bell, AlertTriangle, Target, TrendingUp, Play, RefreshCw, Clock, Zap } from 'lucide-react';
+import { Activity, Bell, AlertTriangle, Target, TrendingUp, Play, RefreshCw, Clock, Zap, LayoutGrid, BarChart3 } from 'lucide-react';
 import { toast } from 'sonner';
 import { cn } from '@/lib/utils';
 
@@ -32,7 +32,7 @@ interface Stats {
 }
 
 interface ViewProps {
-  onNavigate: (v: 'dashboard' | 'monitors' | 'alerts' | 'settings') => void;
+  onNavigate: (v: 'dashboard' | 'monitors' | 'alerts' | 'listings' | 'analytics' | 'settings') => void;
 }
 
 export function DashboardView({ onNavigate }: ViewProps) {
@@ -146,6 +146,34 @@ export function DashboardView({ onNavigate }: ViewProps) {
           color="primary"
           onClick={() => onNavigate('alerts')}
         />
+      </div>
+
+      {/* Quick links row */}
+      <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+        <Card
+          className="bg-card/50 hover:bg-card hover:border-primary/30 cursor-pointer transition-colors"
+          onClick={() => onNavigate('listings')}
+        >
+          <CardContent className="p-4 flex items-center gap-3">
+            <LayoutGrid className="w-5 h-5 text-primary" />
+            <div>
+              <p className="text-sm font-bold">Pregled vseh oglasov</p>
+              <p className="text-[11px] text-muted-foreground">Validiraj AI — vidi tudi NEZANIMIVO</p>
+            </div>
+          </CardContent>
+        </Card>
+        <Card
+          className="bg-card/50 hover:bg-card hover:border-primary/30 cursor-pointer transition-colors"
+          onClick={() => onNavigate('analytics')}
+        >
+          <CardContent className="p-4 flex items-center gap-3">
+            <BarChart3 className="w-5 h-5 text-primary" />
+            <div>
+              <p className="text-sm font-bold">Analitika sistema</p>
+              <p className="text-[11px] text-muted-foreground">Trendi, performansa monitorjev, natančnost AI</p>
+            </div>
+          </CardContent>
+        </Card>
       </div>
 
       {/* Recent runs */}

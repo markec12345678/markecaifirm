@@ -63,7 +63,13 @@ export async function POST(req: NextRequest) {
       } else {
         await db.alert.update({
           where: { id: alertId },
-          data: { isArchived: true, isRead: true },
+          data: {
+            isArchived: true,
+            isRead: true,
+            // v1.2: track user feedback
+            userAction: 'archived',
+            userActionedAt: new Date(),
+          },
         });
         ackText = '✅ Arhivirano';
         actionSuccess = true;
@@ -90,6 +96,9 @@ export async function POST(req: NextRequest) {
             isArchived: true,
             isRead: true,
             aiVerdict: 'SUMNJIVO',
+            // v1.2: track user feedback
+            userAction: 'scam',
+            userActionedAt: new Date(),
           },
         });
         ackText = '🚫 Označeno kot prevara';
@@ -102,6 +111,24 @@ export async function POST(req: NextRequest) {
             [[{ text: '🔗 Odpri oglas', url: alert.url }]]
           );
         }
+      }
+    } else if (data.startsWith('interested:')) {
+      // v1.2: explicit "interested" callback
+      const alertId = data.slice('interested:'.length);
+      const alert = await db.alert.findUnique({ where: { id: alertId } });
+      if (!alert) {
+        ackText = 'Alert ne obstaja več';
+      } else {
+        await db.alert.update({
+          where: { id: alertId },
+          data: {
+            isRead: true,
+            userAction: 'interested',
+            userActionedAt: new Date(),
+          },
+        });
+        ackText = '👍 Zabeleženo kot zanimiv';
+        actionSuccess = true;
       }
     } else {
       ackText = `Neznana akcija: ${data}`;
