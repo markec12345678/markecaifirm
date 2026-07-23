@@ -16,6 +16,32 @@ import { sendDiscordMessage, buildAlertEmbed } from './discord';
 import { sendSlackMessage, buildAlertSlackBlocks } from './slack';
 import { sendPushNotification } from './push';
 
+/** v2.2: Check if current time is within quiet hours. */
+function isInQuietHours(quietStart: number, quietEnd: number): boolean {
+  const hour = new Date().getHours();
+  // Handle wrap-around (e.g., 22-7)
+  if (quietStart <= quietEnd) {
+    return hour >= quietStart && hour < quietEnd;
+  }
+  return hour >= quietStart || hour < quietEnd;
+}
+
+/** v2.2: Parse monitor-specific notification channels. */
+function getMonitorChannels(channelsJson: string): { telegram: boolean; discord: boolean; slack: boolean; push: boolean } | null {
+  try {
+    const parsed = JSON.parse(channelsJson || '{}');
+    if (Object.keys(parsed).length === 0) return null; // empty = use global
+    return {
+      telegram: parsed.telegram ?? true,
+      discord: parsed.discord ?? true,
+      slack: parsed.slack ?? true,
+      push: parsed.push ?? true,
+    };
+  } catch {
+    return null;
+  }
+}
+
 export interface RunResult {
   status: 'ok' | 'error' | 'empty';
   listingsFound: number;
@@ -342,87 +368,100 @@ export async function runMonitor(monitorId: string): Promise<RunResult> {
             },
           });
 
-          // Send Telegram if enabled
-          if (settings.telegramEnabled && settings.telegramBotToken && settings.telegramChatId) {
-            const inlineButtons = settings.telegramInlineButtons
-              ? buildAlertInlineButtons({
-                  alertId: alert.id,
-                  listingUrl: listing.url,
-                  dashboardUrl: 'http://localhost:3000/alerts',
-                })
-              : undefined;
-            const tg = await sendTelegramMessage(
-              { botToken: settings.telegramBotToken, chatId: settings.telegramChatId },
-              alertBody,
-              { inlineButtons }
-            );
-            await db.alert.update({
-              where: { id: alert.id },
-              data: {
-                sentTelegram: tg.ok,
-                telegramSentAt: tg.ok ? new Date() : null,
-                telegramError: tg.ok ? null : tg.error,
-              },
-            });
-            if (tg.ok) alertsSent++;
+          // v2.2: Check quiet hours and monitor-specific channels
+          const inQuietHours = settings.quietHoursEnabled &&
+            isInQuietHours(settings.quietStartHour, settings.quietEndHour);
+          const monitorChannels = getMonitorChannels(monitor.notificationChannels);
+          // Use monitor-specific channels if set, otherwise fall back to global
+          const useTelegram = monitorChannels ? monitorChannels.telegram : settings.telegramEnabled;
+          const useDiscord = monitorChannels ? monitorChannels.discord : settings.discordEnabled;
+          const useSlack = monitorChannels ? monitorChannels.slack : settings.slackEnabled;
+          const usePush = monitorChannels ? monitorChannels.push : settings.pushEnabled;
+
+          // Skip notifications during quiet hours (but still create alert in DB)
+          if (!inQuietHours) {
+            // Send Telegram if enabled
+            if (useTelegram && settings.telegramBotToken && settings.telegramChatId) {
+              const inlineButtons = settings.telegramInlineButtons
+                ? buildAlertInlineButtons({
+                    alertId: alert.id,
+                    listingUrl: listing.url,
+                    dashboardUrl: 'http://localhost:3000/alerts',
+                  })
+                : undefined;
+              const tg = await sendTelegramMessage(
+                { botToken: settings.telegramBotToken, chatId: settings.telegramChatId },
+                alertBody,
+                { inlineButtons }
+              );
+              await db.alert.update({
+                where: { id: alert.id },
+                data: {
+                  sentTelegram: tg.ok,
+                  telegramSentAt: tg.ok ? new Date() : null,
+                  telegramError: tg.ok ? null : tg.error,
+                },
+              });
+              if (tg.ok) alertsSent++;
+            }
+
+            // v1.4: Send Discord if enabled
+            if (useDiscord && settings.discordWebhookUrl) {
+              const embed = buildAlertEmbed({
+                monitorName: monitor.name,
+                title: listing.title,
+                priceText: listing.priceText,
+                url: listing.url,
+                location: listing.location || undefined,
+                aiScore: evaluation.ocena_prilike,
+                aiRisk: evaluation.ocena_tveganja,
+                aiVerdict: evaluation.verdict,
+                aiReason: evaluation.razlog,
+                estimatedValue: evaluation.predvidena_trzna_vrednost ?? null,
+                imageAnalysis: evaluation.image_analysis ?? null,
+                imageUrl: listing.imageUrl ?? null,
+              });
+              const dc = await sendDiscordMessage(
+                { webhookUrl: settings.discordWebhookUrl },
+                embed
+              );
+              if (dc.ok && alertsSent === 0) alertsSent++;
+            }
+
+            // v2.1: Send Slack if enabled
+            if (useSlack && settings.slackWebhookUrl) {
+              const blocks = buildAlertSlackBlocks({
+                title: listing.title,
+                priceText: listing.priceText,
+                url: listing.url,
+                monitorName: monitor.name,
+                aiScore: evaluation.ocena_prilike,
+                aiRisk: evaluation.ocena_tveganja,
+                aiVerdict: evaluation.verdict,
+                aiReason: evaluation.razlog,
+                estimatedValue: evaluation.predvidena_trzna_vrednost ?? null,
+              });
+              const sl = await sendSlackMessage(
+                { webhookUrl: settings.slackWebhookUrl },
+                `🎯 ${listing.title}`,
+                blocks
+              );
+              if (sl.ok && alertsSent === 0) alertsSent++;
+            }
+
+            // v1.5: Send browser push notification if enabled
+            if (usePush) {
+              await sendPushNotification({
+                title: `${evaluation.verdict === 'PRILIKA' ? '🎯' : evaluation.verdict === 'SUMNJIVO' ? '⚠️' : '•'} ${listing.title.slice(0, 60)}`,
+                body: `${listing.priceText} • ${monitor.name} (prilika ${evaluation.ocena_prilike}/10, tveganje ${evaluation.ocena_tveganja}/10)`,
+                url: '/alerts',
+              });
+            }
           }
 
-          // v1.4: Send Discord if enabled
-          if (settings.discordEnabled && settings.discordWebhookUrl) {
-            const embed = buildAlertEmbed({
-              monitorName: monitor.name,
-              title: listing.title,
-              priceText: listing.priceText,
-              url: listing.url,
-              location: listing.location || undefined,
-              aiScore: evaluation.ocena_prilike,
-              aiRisk: evaluation.ocena_tveganja,
-              aiVerdict: evaluation.verdict,
-              aiReason: evaluation.razlog,
-              estimatedValue: evaluation.predvidena_trzna_vrednost ?? null,
-              imageAnalysis: evaluation.image_analysis ?? null,
-              imageUrl: listing.imageUrl ?? null,
-            });
-            const dc = await sendDiscordMessage(
-              { webhookUrl: settings.discordWebhookUrl },
-              embed
-            );
-            if (dc.ok && alertsSent === 0) alertsSent++;
-          }
-
-          // v1.5: Send browser push notification if enabled
-          if (settings.pushEnabled) {
-            await sendPushNotification({
-              title: `${evaluation.verdict === 'PRILIKA' ? '🎯' : evaluation.verdict === 'SUMNJIVO' ? '⚠️' : '•'} ${listing.title.slice(0, 60)}`,
-              body: `${listing.priceText} • ${monitor.name} (prilika ${evaluation.ocena_prilike}/10, tveganje ${evaluation.ocena_tveganja}/10)`,
-              url: '/alerts',
-            });
-          }
-
-          // If neither enabled, still count as alert for stats
-          if (!settings.telegramEnabled && !settings.discordEnabled && !settings.pushEnabled && !settings.slackEnabled) {
+          // If neither enabled or in quiet hours, still count as alert for stats
+          if (!useTelegram && !useDiscord && !useSlack && !usePush) {
             alertsSent++;
-          }
-
-          // v2.1: Send Slack if enabled
-          if (settings.slackEnabled && settings.slackWebhookUrl) {
-            const blocks = buildAlertSlackBlocks({
-              title: listing.title,
-              priceText: listing.priceText,
-              url: listing.url,
-              monitorName: monitor.name,
-              aiScore: evaluation.ocena_prilike,
-              aiRisk: evaluation.ocena_tveganja,
-              aiVerdict: evaluation.verdict,
-              aiReason: evaluation.razlog,
-              estimatedValue: evaluation.predvidena_trzna_vrednost ?? null,
-            });
-            const sl = await sendSlackMessage(
-              { webhookUrl: settings.slackWebhookUrl },
-              `🎯 ${listing.title}`,
-              blocks
-            );
-            if (sl.ok && alertsSent === 0) alertsSent++;
           }
         }
       } else if (evalError) {

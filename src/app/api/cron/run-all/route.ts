@@ -35,6 +35,17 @@ export async function GET(req: NextRequest) {
     }
   } catch { /* ignore digest errors */ }
 
+  // v2.2: Auto-cleanup old data
+  let cleanupResult = { skipped: true, reason: 'not checked' };
+  try {
+    const cleanupRes = await fetch(`${req.nextUrl.origin}/api/cleanup`, {
+      method: 'POST',
+    });
+    if (cleanupRes.ok) {
+      cleanupResult = await cleanupRes.json();
+    }
+  } catch { /* ignore cleanup errors */ }
+
   return NextResponse.json({
     ran: monitorsResult.ran,
     skipped: monitorsResult.skipped,
@@ -42,6 +53,7 @@ export async function GET(req: NextRequest) {
     results: monitorsResult.results,
     heartbeat: heartbeatResult,
     digest: digestResult,
+    cleanup: cleanupResult,
     timestamp: new Date().toISOString(),
   });
 }

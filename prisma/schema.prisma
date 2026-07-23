@@ -51,6 +51,14 @@ model Settings {
   digestHour           Int     @default(20) // 20:00 local
   // v1.6: Quick response templates (JSON array of {name, text} objects)
   quickResponseTemplates String @default("[]")
+  // v2.2: Notification quiet hours — don't send alerts during these hours
+  quietHoursEnabled    Boolean @default(false)
+  quietStartHour       Int     @default(22) // 22:00
+  quietEndHour         Int     @default(7)  // 07:00
+  // v2.2: Auto-cleanup — automatically archive/delete old data
+  autoCleanupEnabled   Boolean @default(false)
+  autoCleanupAlertsDays Int    @default(30) // archive alerts older than N days
+  autoCleanupListingsDays Int  @default(90) // delete listings older than N days
   // Metadata
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
@@ -137,6 +145,8 @@ model Monitor {
   consecutiveErrors Int @default(0)
   autoPauseThreshold Int @default(5)  // 0 = disabled, otherwise pause after N consecutive errors
   autoPausedAt DateTime?
+  // v2.2: Monitor-specific notification channels (JSON: {telegram, discord, slack, push})
+  notificationChannels String @default("{}") // empty = use global settings
   // AI prompt customization (optional)
   customPrompt String @default("")
   createdAt  DateTime @default(now())
