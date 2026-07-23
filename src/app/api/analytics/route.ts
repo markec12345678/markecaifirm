@@ -121,6 +121,66 @@ export async function GET() {
     const cost = t.buyPrice + (t.buyFees ?? 0);
     return sum + (revenue - cost);
   }, 0);
+
+  // v2.0: Price drop stats
+  const priceDrops = await db.listing.count({
+    where: { priceDroppedAt: { not: null } },
+  });
+  const recentPriceDrops = await db.listing.findMany({
+    where: { priceDroppedAt: { not: null } },
+    orderBy: { priceDroppedAt: 'desc' },
+    take: 5,
+    select: {
+      id: true, title: true, price: true, previousPrice: true, priceText: true,
+      url: true, priceDroppedAt: true, monitor: { select: { name: true } },
+    },
+  });
+
+  // v2.0: Auto-threshold tuning suggestions
+  const thresholdAlerts = await db.alert.findMany({
+    where: { userAction: { not: null } },
+    select: { userAction: true, aiScore: true, aiRisk: true },
+  });
+  const thresholdInterested = thresholdAlerts.filter(a => a.userAction === 'interested').length;
+  const thresholdScam = thresholdAlerts.filter(a => a.userAction === 'scam').length;
+  const thresholdTotal = thresholdAlerts.length;
+  const thresholdPrecision = (thresholdInterested + thresholdScam) > 0
+    ? thresholdInterested / (thresholdInterested + thresholdScam)
+    : null;
+
+  let thresholdSuggestion: any = null;
+  if (thresholdTotal >= 10 && thresholdPrecision != null) {
+    const settings = await db.settings.findUnique({ where: { id: 'singleton' }, select: { minOpportunityScore: true, maxRiskScore: true } });
+    const currentMinScore = settings?.minOpportunityScore ?? 7;
+    const currentMaxRisk = settings?.maxRiskScore ?? 3;
+
+    if (thresholdPrecision < 0.4) {
+      thresholdSuggestion = {
+        action: 'increase_min_score',
+        current: currentMinScore,
+        suggested: Math.min(currentMinScore + 1, 10),
+        reason: `Precision je ${Math.round(thresholdPrecision * 100)}% (pod 40%). Dviganje minOpportunityScore na ${Math.min(currentMinScore + 1, 10)} bo zmanjšalo false positive.`,
+        impact: 'Manj alertov, ampak bolj točnih',
+      };
+    } else if (thresholdPrecision > 0.85 && thresholdInterested > 5) {
+      thresholdSuggestion = {
+        action: 'decrease_min_score',
+        current: currentMinScore,
+        suggested: Math.max(currentMinScore - 1, 1),
+        reason: `Precision je ${Math.round(thresholdPrecision * 100)}% (nad 85%). Spustite minOpportunityScore na ${Math.max(currentMinScore - 1, 1)} za več alertov — AI je zelo natančen.`,
+        impact: 'Več alertov, še vedno visoka natančnost',
+      };
+    }
+  }
+
+  // v2.0: Top sellers (seller tracking)
+  const topSellers = await db.listing.groupBy({
+    by: ['sellerName'],
+    where: { sellerName: { not: null } },
+    _count: { sellerName: true },
+    orderBy: { _count: { sellerName: 'desc' } },
+    take: 5,
+  });
   // Profit by month (last 12)
   const tradeByMonth: Array<{ month: string; profit: number; count: number }> = [];
   const tradeNow = new Date();
@@ -170,6 +230,29 @@ export async function GET() {
       byMonth: tradeByMonth,
       byCategory: tradeByCategory,
     },
+    // v2.0: Price drop alerts
+    priceDrops: {
+      total: priceDrops,
+      recent: recentPriceDrops.map(l => ({
+        id: l.id,
+        title: l.title,
+        currentPrice: l.price,
+        previousPrice: l.previousPrice,
+        priceText: l.priceText,
+        url: l.url,
+        monitorName: l.monitor.name,
+        droppedAt: l.priceDroppedAt,
+      })),
+    },
+    // v2.0: Auto-threshold suggestion
+    thresholdSuggestion,
+    // v2.0: Top sellers
+    topSellers: topSellers
+      .filter(s => s.sellerName)
+      .map(s => ({
+        name: s.sellerName,
+        listingCount: s._count.sellerName,
+      })),
     generatedAt: tradeNow.toISOString(),
   });
 }
