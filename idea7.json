@@ -1,0 +1,74 @@
+[
+  {
+    "url": "https://parse.bot/marketplace/fd6f757f-4243-4268-bfa9-9a82cefafacb/avto-net-api",
+    "name": "avto API – Slovenian Car Listings - Parse.bot",
+    "snippet": "The avto.net API provides access to Slovenia's largest car marketplace through 2 endpoints. The search endpoint returns paginated listings ... Missing: Bolha 2024 2025\nSearch and retrieve car listings from avto.net, Slovenia's leading auto marketplace. Filter by brand, model, year, and price. a raw scraper you ...",
+    "host_name": "parse.bot",
+    "rank": 0,
+    "date": "",
+    "favicon": ""
+  },
+  {
+    "url": "https://github.com/nootey/avto-net-scrapper",
+    "name": "GitHub - nootey/avtonet-finder: A simple web scraper for watching car",
+    "snippet": "A simple web scraper for watching car listings from Avto.net. You can also enable notifications about errors, that may happen on scrapes, A simple web scraper ... Missing: Slovenian Bolha auto bot 2024 2025\nA simple web scraper for watching car listings from Avto.net. You can also enable notifications about errors, that may happen on scrapes, via the notify_on_ ...",
+    "host_name": "github.com",
+    "rank": 1,
+    "date": "",
+    "favicon": ""
+  },
+  {
+    "url": "https://www.reddit.com/r/Slovenia/comments/1l0mlzp/rabljen_avto_uvoz_ali_avtonet/?tl=en",
+    "name": "Used car - import or auto.net? : r/Slovenia - Reddit",
+    "snippet": "If you're thinking of buying a Slovenian car, buy it on Avtonet. The kilometers will be verifiable because of the car's history and official ... Pri 17 letih sem si naredil AI bot za Avto.net, ker so mi dilerji ... Naredil sem telegram bota ki javlja nove avto.net oglase More results from www.reddit.com",
+    "host_name": "www.reddit.com",
+    "rank": 2,
+    "date": "",
+    "favicon": ""
+  },
+  {
+    "url": "https://www.avto.net",
+    "name": "www.Avto.net - AVTONET",
+    "snippet": "Največja ponudba osebnih, dostavnih , tovornih, počitniških vozil in prikolic ter avtomobilske ter motoristične opreme v Sloveniji.",
+    "host_name": "www.avto.net",
+    "rank": 3,
+    "date": "",
+    "favicon": ""
+  },
+  {
+    "url": "https://gaga.ba/en/blog/uvoz-polovnog-auta-iz-slovenije-u-bih-2026",
+    "name": "Importing a Used Car from Slovenia to BiH 2026: Buyer's Guide",
+    "snippet": "Practical guide to importing a used car from Slovenia to BiH 2026: avto.net, export plates, EUR.1, homologation and final cost to registration.",
+    "host_name": "gaga.ba",
+    "rank": 4,
+    "date": "",
+    "favicon": ""
+  },
+  {
+    "url": "https://www.bolha.com/avto-oglasi",
+    "name": "Avto oglasi - Bolha.com",
+    "snippet": "Iščete najboljšo ponudbo za nov avto ga želite prodati? Prebrskajte med številnimi oglasi novih in rabljenih vozil in izberite ugodno pot do novega avta.",
+    "host_name": "www.bolha.com",
+    "rank": 5,
+    "date": "",
+    "favicon": ""
+  },
+  {
+    "url": "https://www.avto.net/ROBOCARS",
+    "name": "RoBoCars, Robert Bokani s.p. | www.Avto.net - Avtonet",
+    "snippet": "Največja ponudba osebnih in dostavnih vozil, gospodarskih vozil, gradbene in kmetijske mehanizacije, počitniških vozil in prikolic v Sloveniji.",
+    "host_name": "www.avto.net",
+    "rank": 6,
+    "date": "",
+    "favicon": ""
+  },
+  {
+    "url": "https://github.com/mulaz/avto-net-notifications",
+    "name": "GitHub - mulaz/avto-net-notifications: Sends emails when chosen",
+    "snippet": "Sends emails when chosen car appears on avto.net . Contribute to mulaz/avto-net-notifications development by creating an account on GitHub.",
+    "host_name": "github.com",
+    "rank": 7,
+    "date": "",
+    "favicon": ""
+  }
+]

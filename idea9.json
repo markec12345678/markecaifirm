@@ -1,0 +1,74 @@
+[
+  {
+    "url": "https://www.reddit.com/r/coolgithubprojects/comments/1rv2gb9/i_built_a_tool_that_compares_car_listings_with",
+    "name": "I built a tool that compares car listings with market value, here's what it",
+    "snippet": "I built a small tool that scans car listings and compares them with similar vehicles to detect potentially underpriced cars. Missing: prediction | Show results with: prediction",
+    "host_name": "www.reddit.com",
+    "rank": 0,
+    "date": "",
+    "favicon": ""
+  },
+  {
+    "url": "https://medium.com/@declang2003/predicting-used-car-prices-with-supervised-learning-4e040d34e273",
+    "name": "Predicting Used Car Prices with Supervised Learning - Medium",
+    "snippet": "The Random Forest model accurately predicted car prices for a large portion of the dataset and highlighted the main factors that affect value. Missing: valuation detect underpriced",
+    "host_name": "medium.com",
+    "rank": 1,
+    "date": "",
+    "favicon": ""
+  },
+  {
+    "url": "https://www.datategy.net/2024/07/18/how-do-ai-predictive-models-estimate-car-prices",
+    "name": "How Do AI Predictive Models Estimate Car Prices? - - Datategy",
+    "snippet": "Discover how AI predictive models use data and algorithms to estimate car prices with high accuracy and reliability. Missing: underpriced | Show results with: underpriced\nDiscover how AI predictive models use data and algorithms to estimate car prices with high accuracy and reliability. Missing: listing | Show results with: listing",
+    "host_name": "www.datategy.net",
+    "rank": 2,
+    "date": "",
+    "favicon": ""
+  },
+  {
+    "url": "https://www.youtube.com/watch?v=WsKBKP3FPhE",
+    "name": "AI - Lets use it predict Car Values and see how it can help with Car Buying!",
+    "snippet": "... cars with the insurance costs and value. Although things are improving, insurance pricing is high and it seems we need other insurance items ... Missing: listing underpriced",
+    "host_name": "www.youtube.com",
+    "rank": 3,
+    "date": "",
+    "favicon": ""
+  },
+  {
+    "url": "https://www.sciencedirect.com/science/article/pii/S0957417424025077",
+    "name": "Machine learning for predicting used car resale prices using granular",
+    "snippet": "Our work presents a machine learning prediction model for the resale price of used vehicles including equipment information as predictors. our machine learning ... Missing: underpriced | Show results with: underpriced\nDuring machine learning, we make predictions of our target variable y given by the relative resale value. Specifically, we use the ratio of the actual resale ...",
+    "host_name": "www.sciencedirect.com",
+    "rank": 4,
+    "date": "",
+    "favicon": ""
+  },
+  {
+    "url": "https://trembit.com/blog/machine-learning-prediction-of-vehicle-prices-a-case-study-in-advanced-regression-modeling",
+    "name": "Vehicle Price Prediction with Machine Learning: A Case Study - Trembit",
+    "snippet": "A cutting-edge predictive analytics solution that could deliver highly accurate used car prices and forecast vehicle depreciation over seven years. Missing: detect underpriced\nA machine learning vehicle price prediction case study: cleaning 1.7M listings, stacking 10 models, and forecasting car depreciation over ...\nA cutting-edge predictive analytics solution that could deliver highly accurate used car prices and forecast vehicle depreciation over seven years. Missing: detect | Show results with: detect",
+    "host_name": "trembit.com",
+    "rank": 5,
+    "date": "",
+    "favicon": ""
+  },
+  {
+    "url": "https://towardsdatascience.com/figuring-out-a-fair-price-of-a-used-car-in-a-data-science-way-11450b3b252b",
+    "name": "Figuring out a Fair Price of a Used Car in a Data Science Way",
+    "snippet": "You may even investigate for how long cars are listed in the catalog and detect overpriced samples to make more informed decision. Missing: valuation underpriced",
+    "host_name": "towardsdatascience.com",
+    "rank": 6,
+    "date": "",
+    "favicon": ""
+  },
+  {
+    "url": "https://www.omnetic.com/en/products/pricing",
+    "name": "Price Report - Omnetic",
+    "snippet": "An AI-powered platform that learns from millions of listings daily, providing unmatched, real-time valuation intelligence. Evaluate vehicle price. Missing: prediction | Show results with: prediction",
+    "host_name": "www.omnetic.com",
+    "rank": 7,
+    "date": "",
+    "favicon": ""
+  }
+]
