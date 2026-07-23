@@ -4,7 +4,7 @@ import { useEffect, useState, useCallback } from 'react';
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
-import { RefreshCw, BarChart3, TrendingUp, Target, AlertTriangle, Activity, ThumbsUp, ThumbsDown, Archive, Bell, Wallet } from 'lucide-react';
+import { RefreshCw, BarChart3, TrendingUp, TrendingDown, Target, AlertTriangle, AlertCircle, Activity, ThumbsUp, ThumbsDown, Archive, Bell, Wallet } from 'lucide-react';
 import { toast } from 'sonner';
 import {
   ResponsiveContainer, LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, Legend,
@@ -50,6 +50,30 @@ interface AnalyticsData {
     byMonth: Array<{ month: string; profit: number; count: number }>;
     byCategory: Array<{ category: string; count: number; profit: number }>;
   };
+  // v2.0: Price drops
+  priceDrops: {
+    total: number;
+    recent: Array<{
+      id: string;
+      title: string;
+      currentPrice: number | null;
+      previousPrice: number | null;
+      priceText: string;
+      url: string;
+      monitorName: string;
+      droppedAt: string | null;
+    }>;
+  };
+  // v2.0: Threshold suggestion
+  thresholdSuggestion: {
+    action: string;
+    current: number;
+    suggested: number;
+    reason: string;
+    impact: string;
+  } | null;
+  // v2.0: Top sellers
+  topSellers: Array<{ name: string; listingCount: number }>;
   generatedAt: string;
 }
 
@@ -340,6 +364,101 @@ export function AnalyticsView() {
               </>
             )}
           </div>
+
+          {/* v2.1: Threshold suggestion banner */}
+          {data.thresholdSuggestion && (
+            <Card className="border-amber-400/40 bg-amber-400/5">
+              <CardContent className="p-4">
+                <div className="flex items-start gap-3">
+                  <AlertCircle className="w-5 h-5 text-amber-400 shrink-0 mt-0.5" />
+                  <div>
+                    <h3 className="text-sm font-bold text-amber-400 uppercase tracking-wider mb-1">
+                      Predlog za threshold tuning
+                    </h3>
+                    <p className="text-xs text-muted-foreground mb-2">{data.thresholdSuggestion.reason}</p>
+                    <div className="flex items-center gap-3 text-xs">
+                      <span className="text-muted-foreground">Trenutno: <b className="text-foreground">{data.thresholdSuggestion.current}</b></span>
+                      <span className="text-amber-400">→</span>
+                      <span className="text-primary">Predlagano: <b>{data.thresholdSuggestion.suggested}</b></span>
+                      <span className="text-muted-foreground ml-2">({data.thresholdSuggestion.impact})</span>
+                    </div>
+                  </div>
+                </div>
+              </CardContent>
+            </Card>
+          )}
+
+          {/* v2.1: Recent price drops */}
+          {data.priceDrops && data.priceDrops.recent.length > 0 && (
+            <Card className="bg-card/50">
+              <CardHeader>
+                <CardTitle className="text-sm font-bold uppercase tracking-wider flex items-center gap-2">
+                  <TrendingDown className="w-4 h-4 text-primary" />
+                  Zadnji padci cen ({data.priceDrops.total} skupno)
+                </CardTitle>
+                <CardDescription>Oglasi kjer je prodajalec znižal ceno — boljša pogajalska pozicija.</CardDescription>
+              </CardHeader>
+              <CardContent>
+                <div className="space-y-1.5">
+                  {data.priceDrops.recent.map((drop, i) => {
+                    const diff = drop.previousPrice != null && drop.currentPrice != null
+                      ? drop.previousPrice - drop.currentPrice
+                      : null;
+                    const pct = diff != null && drop.previousPrice != null && drop.previousPrice > 0
+                      ? Math.round((diff / drop.previousPrice) * 100)
+                      : null;
+                    return (
+                      <a
+                        key={drop.id || i}
+                        href={drop.url}
+                        target="_blank"
+                        rel="noopener noreferrer"
+                        className="flex items-center justify-between gap-2 p-2 bg-background/30 border border-border rounded hover:border-primary/30 transition-colors text-xs"
+                      >
+                        <div className="min-w-0 flex-1">
+                          <div className="font-medium truncate">{drop.title}</div>
+                          <div className="text-[10px] text-muted-foreground">
+                            {drop.priceText} • {drop.monitorName}
+                            {drop.droppedAt && ` • ${new Date(drop.droppedAt).toLocaleDateString('sl-SI')}`}
+                          </div>
+                        </div>
+                        {diff != null && pct != null && (
+                          <Badge variant="outline" className="text-[10px] border-primary/40 text-primary shrink-0">
+                            📉 -{diff}€ ({pct}%)
+                          </Badge>
+                        )}
+                      </a>
+                    );
+                  })}
+                </div>
+              </CardContent>
+            </Card>
+          )}
+
+          {/* v2.1: Top sellers */}
+          {data.topSellers && data.topSellers.length > 0 && (
+            <Card className="bg-card/50">
+              <CardHeader>
+                <CardTitle className="text-sm font-bold uppercase tracking-wider flex items-center gap-2">
+                  <Activity className="w-4 h-4 text-primary" />
+                  Top prodajalci (seller tracking)
+                </CardTitle>
+                <CardDescription>Prodajalci z največ aktivnimi oglasi — aktivni prodajalci so bolj verodostojni.</CardDescription>
+              </CardHeader>
+              <CardContent>
+                <div className="space-y-1.5">
+                  {data.topSellers.map((seller, i) => (
+                    <div key={i} className="flex items-center justify-between gap-2 p-2 bg-background/30 rounded text-xs">
+                      <span className="font-medium">{seller.name}</span>
+                      <Badge variant="outline" className="text-[10px]">
+                        {seller.listingCount} oglasov
+                      </Badge>
+                    </div>
+                  ))}
+                </div>
+              </CardContent>
+            </Card>
+          )}
 
           {/* Monitor performance table */}
           <Card className="bg-card/50">

@@ -13,6 +13,7 @@ import { scrape, type SourceType, type ScraperFilters } from './scraper';
 import { evaluateListing, downloadImageAsBase64, type AiSettings, type ListingEvaluation } from './ai';
 import { sendTelegramMessage, formatAlertMessage, buildAlertInlineButtons } from './telegram';
 import { sendDiscordMessage, buildAlertEmbed } from './discord';
+import { sendSlackMessage, buildAlertSlackBlocks } from './slack';
 import { sendPushNotification } from './push';
 
 export interface RunResult {
@@ -399,8 +400,29 @@ export async function runMonitor(monitorId: string): Promise<RunResult> {
           }
 
           // If neither enabled, still count as alert for stats
-          if (!settings.telegramEnabled && !settings.discordEnabled && !settings.pushEnabled) {
+          if (!settings.telegramEnabled && !settings.discordEnabled && !settings.pushEnabled && !settings.slackEnabled) {
             alertsSent++;
+          }
+
+          // v2.1: Send Slack if enabled
+          if (settings.slackEnabled && settings.slackWebhookUrl) {
+            const blocks = buildAlertSlackBlocks({
+              title: listing.title,
+              priceText: listing.priceText,
+              url: listing.url,
+              monitorName: monitor.name,
+              aiScore: evaluation.ocena_prilike,
+              aiRisk: evaluation.ocena_tveganja,
+              aiVerdict: evaluation.verdict,
+              aiReason: evaluation.razlog,
+              estimatedValue: evaluation.predvidena_trzna_vrednost ?? null,
+            });
+            const sl = await sendSlackMessage(
+              { webhookUrl: settings.slackWebhookUrl },
+              `🎯 ${listing.title}`,
+              blocks
+            );
+            if (sl.ok && alertsSent === 0) alertsSent++;
           }
         }
       } else if (evalError) {

@@ -24,6 +24,9 @@ model Settings {
   // v1.4: Discord webhook
   discordWebhookUrl String @default("")
   discordEnabled   Boolean @default(false)
+  // v2.1: Slack webhook
+  slackWebhookUrl  String  @default("")
+  slackEnabled     Boolean  @default(false)
   // Heartbeat
   heartbeatEnabled Boolean @default(true)
   heartbeatHour    Int     @default(22) // 22:00 local

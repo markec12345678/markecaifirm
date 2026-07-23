@@ -22,6 +22,10 @@ export async function GET() {
     discordWebhookUrlSet: !!s.discordWebhookUrl,
     discordWebhookUrlMasked: s.discordWebhookUrl ? maskWebhook(s.discordWebhookUrl) : '',
     discordEnabled: s.discordEnabled,
+    // v2.1
+    slackWebhookUrlSet: !!s.slackWebhookUrl,
+    slackWebhookUrlMasked: s.slackWebhookUrl ? maskWebhook(s.slackWebhookUrl) : '',
+    slackEnabled: s.slackEnabled,
     heartbeatEnabled: s.heartbeatEnabled,
     heartbeatHour: s.heartbeatHour,
     lastHeartbeatAt: s.lastHeartbeatAt,
@@ -111,6 +115,11 @@ export async function POST(req: NextRequest) {
   if (typeof body.telegramInlineButtons === 'boolean') data.telegramInlineButtons = body.telegramInlineButtons;
   // v1.4: Discord
   if (typeof body.discordEnabled === 'boolean') data.discordEnabled = body.discordEnabled;
+  // v2.1: Slack
+  if (typeof body.slackEnabled === 'boolean') data.slackEnabled = body.slackEnabled;
+  if (typeof body.slackWebhookUrl === 'string' && body.slackWebhookUrl.trim() !== '') {
+    data.slackWebhookUrl = body.slackWebhookUrl.trim();
+  }
   // v1.5: Push
   if (typeof body.pushEnabled === 'boolean') data.pushEnabled = body.pushEnabled;
   // v1.6: Digest
