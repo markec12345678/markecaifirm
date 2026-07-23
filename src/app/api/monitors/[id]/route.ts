@@ -33,11 +33,20 @@ export async function PUT(req: NextRequest, { params }: { params: Promise<{ id: 
   if (typeof body.minPrice === 'number' || body.minPrice === null) data.minPrice = body.minPrice;
   if (typeof body.maxPrice === 'number' || body.maxPrice === null) data.maxPrice = body.maxPrice;
   if (typeof body.intervalMinutes === 'number') data.intervalMinutes = body.intervalMinutes;
-  if (typeof body.isActive === 'boolean') data.isActive = body.isActive;
   if (typeof body.customPrompt === 'string') data.customPrompt = body.customPrompt;
   // v1.2: schedule window
   if (typeof body.runStartHour === 'number' || body.runStartHour === null) data.runStartHour = body.runStartHour;
   if (typeof body.runEndHour === 'number' || body.runEndHour === null) data.runEndHour = body.runEndHour;
+  // v1.3: auto-pause threshold
+  if (typeof body.autoPauseThreshold === 'number') data.autoPauseThreshold = body.autoPauseThreshold;
+  // Handle isActive: when manually reactivating, reset auto-pause state
+  if (body.isActive === true) {
+    data.isActive = true;
+    data.consecutiveErrors = 0;
+    data.autoPausedAt = null;
+  } else if (body.isActive === false) {
+    data.isActive = false;
+  }
 
   const updated = await db.monitor.update({ where: { id }, data });
   return NextResponse.json(updated);

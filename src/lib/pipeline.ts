@@ -279,7 +279,13 @@ export async function runMonitor(monitorId: string): Promise<RunResult> {
     });
     await db.monitor.update({
       where: { id: monitor.id },
-      data: { lastRunAt: new Date(), lastStatus: 'ok', lastError: null },
+      data: {
+        lastRunAt: new Date(),
+        lastStatus: 'ok',
+        lastError: null,
+        // v1.3: reset consecutive error counter on success
+        consecutiveErrors: 0,
+      },
     });
 
     return {
@@ -302,22 +308,47 @@ export async function runMonitor(monitorId: string): Promise<RunResult> {
         },
       });
     }
+    // v1.3: increment consecutive errors and auto-pause if threshold reached
+    const newErrorCount = monitor.consecutiveErrors + 1;
+    const shouldAutoPause =
+      monitor.autoPauseThreshold > 0 &&
+      newErrorCount >= monitor.autoPauseThreshold;
+
     await db.monitor.update({
       where: { id: monitor.id },
-      data: { lastRunAt: new Date(), lastStatus: 'error', lastError: error },
+      data: {
+        lastRunAt: new Date(),
+        lastStatus: 'error',
+        lastError: error,
+        consecutiveErrors: newErrorCount,
+        ...(shouldAutoPause
+          ? { isActive: false, autoPausedAt: new Date() }
+          : {}),
+      },
     });
-    return { status: 'error', listingsFound: 0, newListings: 0, alertsSent: 0, error, durationMs: Date.now() - startedAt };
+
+    return {
+      status: 'error',
+      listingsFound: 0,
+      newListings: 0,
+      alertsSent: 0,
+      error: shouldAutoPause
+        ? `${error} (AUTO-PAUSED po ${newErrorCount} zaporednih napakah)`
+        : error,
+      durationMs: Date.now() - startedAt,
+    };
   }
 }
 
 /** Run all active monitors whose interval has elapsed. Used by the cron endpoint. */
-export async function runDueMonitors(): Promise<{ ran: number; results: RunResult[]; skipped: number }> {
+export async function runDueMonitors(): Promise<{ ran: number; results: RunResult[]; skipped: number; autoPaused: number }> {
   const now = new Date();
   const monitors = await db.monitor.findMany({ where: { isActive: true } });
   const currentHour = now.getHours();
 
   const due: typeof monitors = [];
   let skipped = 0;
+  let autoPaused = 0;
   for (const m of monitors) {
     // Interval check
     if (m.lastRunAt) {
@@ -342,9 +373,19 @@ export async function runDueMonitors(): Promise<{ ran: number; results: RunResul
   const results: RunResult[] = [];
   for (const m of due) {
     const r = await runMonitor(m.id);
+    // v1.3: check if monitor was auto-paused by this run
+    if (r.status === 'error') {
+      const updated = await db.monitor.findUnique({
+        where: { id: m.id },
+        select: { isActive: true, autoPausedAt: true },
+      });
+      if (updated && !updated.isActive && updated.autoPausedAt) {
+        autoPaused++;
+      }
+    }
     results.push(r);
   }
-  return { ran: due.length, results, skipped };
+  return { ran: due.length, results, skipped, autoPaused };
 }
 
 /**

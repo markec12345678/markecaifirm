@@ -5,7 +5,8 @@ import { Card, CardContent } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
 import { Switch } from '@/components/ui/switch';
-import { Bell, Check, Archive, Trash2, ExternalLink, RefreshCw, Filter, Target, AlertTriangle, Download, ThumbsUp, ThumbsDown } from 'lucide-react';
+import { Checkbox } from '@/components/ui/checkbox';
+import { Bell, Check, Archive, Trash2, ExternalLink, RefreshCw, Filter, Target, AlertTriangle, Download, ThumbsUp, ThumbsDown, Square } from 'lucide-react';
 import { toast } from 'sonner';
 import { cn } from '@/lib/utils';
 
@@ -31,6 +32,8 @@ export function AlertsView() {
   const [loading, setLoading] = useState(true);
   const [showArchived, setShowArchived] = useState(false);
   const [filter, setFilter] = useState<'all' | 'PRILIKA' | 'SUMNJIVO' | 'NEZANIMIVO'>('all');
+  // v1.3: multi-select for bulk actions
+  const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
 
   const load = useCallback(async () => {
     try {
@@ -81,6 +84,50 @@ export function AlertsView() {
 
   const exportCsv = () => {
     window.open(`/api/alerts?archived=${showArchived ? '1' : '0'}&limit=1000&format=csv`, '_blank');
+  };
+
+  // v1.3: Bulk actions
+  const toggleSelect = (id: string) => {
+    setSelectedIds((prev) => {
+      const next = new Set(prev);
+      if (next.has(id)) next.delete(id);
+      else next.add(id);
+      return next;
+    });
+  };
+
+  const selectAll = () => {
+    setSelectedIds(new Set(filtered.map(a => a.id)));
+  };
+
+  const clearSelection = () => setSelectedIds(new Set());
+
+  const bulkAction = async (action: 'archive' | 'read' | 'scam' | 'interested' | 'delete') => {
+    if (selectedIds.size === 0) return;
+    const actionLabels: Record<string, string> = {
+      archive: 'arhivirano',
+      read: 'označeno prebrano',
+      scam: 'označeno kot prevara',
+      interested: 'označeno kot zanimivo',
+      delete: 'izbrisano',
+    };
+    try {
+      const res = await fetch('/api/alerts/bulk', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ ids: Array.from(selectedIds), action }),
+      });
+      const data = await res.json();
+      if (data.ok) {
+        toast.success(`${data.affected} alertov ${actionLabels[action]}`);
+        setSelectedIds(new Set());
+        await load();
+      } else {
+        toast.error(data.error ?? 'Napaka');
+      }
+    } catch {
+      toast.error('Napaka pri bulk operaciji');
+    }
   };
 
   const remove = async (a: Alert) => {
@@ -153,6 +200,37 @@ export function AlertsView() {
         ))}
       </div>
 
+      {/* v1.3: Bulk action toolbar */}
+      {selectedIds.size > 0 && (
+        <Card className="bg-primary/5 border-primary/30">
+          <CardContent className="p-3">
+            <div className="flex flex-wrap items-center gap-2">
+              <span className="text-sm font-medium text-primary mr-2">
+                {selectedIds.size} izbranih
+              </span>
+              <Button size="sm" variant="outline" onClick={() => bulkAction('read')} className="h-7 gap-1.5 text-xs">
+                <Check className="w-3 h-3" /> Prebrano
+              </Button>
+              <Button size="sm" variant="outline" onClick={() => bulkAction('interested')} className="h-7 gap-1.5 text-xs text-primary">
+                <ThumbsUp className="w-3 h-3" /> Zanima me
+              </Button>
+              <Button size="sm" variant="outline" onClick={() => bulkAction('archive')} className="h-7 gap-1.5 text-xs">
+                <Archive className="w-3 h-3" /> Arhiviraj
+              </Button>
+              <Button size="sm" variant="outline" onClick={() => bulkAction('scam')} className="h-7 gap-1.5 text-xs text-amber-400">
+                <ThumbsDown className="w-3 h-3" /> Prevara
+              </Button>
+              <Button size="sm" variant="outline" onClick={() => bulkAction('delete')} className="h-7 gap-1.5 text-xs text-destructive">
+                <Trash2 className="w-3 h-3" /> Izbriši
+              </Button>
+              <Button size="sm" variant="ghost" onClick={clearSelection} className="h-7 text-xs ml-auto">
+                Prekliči izbiro
+              </Button>
+            </div>
+          </CardContent>
+        </Card>
+      )}
+
       {loading ? (
         <div className="space-y-2">
           {[...Array(5)].map((_, i) => (
@@ -168,18 +246,33 @@ export function AlertsView() {
           </CardContent>
         </Card>
       ) : (
-        <div className="space-y-2">
-          {filtered.map((a) => (
-            <AlertCard
-              key={a.id}
-              alert={a}
-              onMarkRead={() => markRead(a)}
-              onArchive={() => archive(a)}
-              onDelete={() => remove(a)}
-              onUserAction={(action) => markUserAction(a, action)}
-            />
-          ))}
-        </div>
+        <>
+          {/* v1.3: Select all row */}
+          <div className="flex items-center justify-between gap-2 text-xs">
+            <button
+              onClick={selectedIds.size === filtered.length && filtered.length > 0 ? clearSelection : selectAll}
+              className="flex items-center gap-2 text-muted-foreground hover:text-primary"
+            >
+              <Square className="w-3.5 h-3.5" />
+              {selectedIds.size === filtered.length && filtered.length > 0 ? 'Odznači vse' : 'Izberi vse'}
+            </button>
+            <span className="text-muted-foreground">{filtered.length} alertov</span>
+          </div>
+          <div className="space-y-2">
+            {filtered.map((a) => (
+              <AlertCard
+                key={a.id}
+                alert={a}
+                selected={selectedIds.has(a.id)}
+                onToggleSelect={() => toggleSelect(a.id)}
+                onMarkRead={() => markRead(a)}
+                onArchive={() => archive(a)}
+                onDelete={() => remove(a)}
+                onUserAction={(action) => markUserAction(a, action)}
+              />
+            ))}
+          </div>
+        </>
       )}
     </div>
   );
@@ -187,12 +280,16 @@ export function AlertsView() {
 
 function AlertCard({
   alert,
+  selected,
+  onToggleSelect,
   onMarkRead,
   onArchive,
   onDelete,
   onUserAction,
 }: {
   alert: Alert;
+  selected: boolean;
+  onToggleSelect: () => void;
   onMarkRead: () => void;
   onArchive: () => void;
   onDelete: () => void;
@@ -215,14 +312,22 @@ function AlertCard({
   return (
     <Card
       className={cn(
-        'bg-card/50 hover:bg-card transition-colors',
-        !alert.isRead && 'border-primary/40 bg-primary/5'
+        'bg-card/50 hover:bg-card transition-colors flex-row items-start gap-2',
+        !alert.isRead && 'border-primary/40 bg-primary/5',
+        selected && 'border-primary ring-1 ring-primary/30'
       )}
       onClick={onMarkRead}
     >
-      <CardContent className="p-4">
-        <div className="flex items-start justify-between gap-3">
-          <div className="min-w-0 flex-1">
+      <CardContent className="p-4 flex items-start gap-3 w-full">
+        {/* v1.3: selection checkbox */}
+        <div onClick={(e) => e.stopPropagation()} className="pt-0.5">
+          <Checkbox
+            checked={selected}
+            onCheckedChange={onToggleSelect}
+            className="border-muted-foreground/50"
+          />
+        </div>
+        <div className="min-w-0 flex-1">
             <div className="flex items-center gap-2 mb-1.5 flex-wrap">
               {verdictIcon && <span className={verdictColor}>{verdictIcon}</span>}
               {alert.aiVerdict && (
@@ -303,7 +408,6 @@ function AlertCard({
               <Trash2 className="w-3.5 h-3.5" />
             </Button>
           </div>
-        </div>
       </CardContent>
     </Card>
   );

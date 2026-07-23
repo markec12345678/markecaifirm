@@ -1,9 +1,10 @@
 'use client';
 
 import { useEffect, useState, useCallback } from 'react';
-import { Activity, Bell, Settings, ListPlus, Zap, RefreshCw, AlertCircle, LayoutGrid, BarChart3 } from 'lucide-react';
+import { Activity, Bell, Settings, ListPlus, Zap, RefreshCw, AlertCircle, LayoutGrid, BarChart3, Search } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
+import { Input } from '@/components/ui/input';
 import { toast } from 'sonner';
 import { cn } from '@/lib/utils';
 import { DashboardView } from '@/components/dashboard/dashboard-view';
@@ -12,6 +13,7 @@ import { AlertsView } from '@/components/dashboard/alerts-view';
 import { SettingsView } from '@/components/dashboard/settings-view';
 import { ListingsView } from '@/components/dashboard/listings-view';
 import { AnalyticsView } from '@/components/dashboard/analytics-view';
+import { SearchModal } from '@/components/dashboard/search-modal';
 
 type View = 'dashboard' | 'monitors' | 'alerts' | 'listings' | 'analytics' | 'settings';
 
@@ -28,6 +30,7 @@ export default function Home() {
   const [view, setView] = useState<View>('dashboard');
   const [unreadAlerts, setUnreadAlerts] = useState(0);
   const [now, setNow] = useState<Date | null>(null);
+  const [searchOpen, setSearchOpen] = useState(false);
 
   // Clock effect — only subscribe to setInterval, initial value set lazily to avoid setState in effect
   useEffect(() => {
@@ -66,6 +69,18 @@ export default function Home() {
     };
   }, [refreshUnread]);
 
+  // Ctrl+K shortcut for global search
+  useEffect(() => {
+    const handler = (e: KeyboardEvent) => {
+      if ((e.ctrlKey || e.metaKey) && e.key === 'k') {
+        e.preventDefault();
+        setSearchOpen(true);
+      }
+    };
+    window.addEventListener('keydown', handler);
+    return () => window.removeEventListener('keydown', handler);
+  }, []);
+
   return (
     <div className="min-h-screen flex flex-col bg-background text-foreground">
       {/* Header — terminal style */}
@@ -84,6 +99,15 @@ export default function Home() {
               </div>
             </div>
             <div className="hidden md:flex items-center gap-4 text-xs text-muted-foreground">
+              <button
+                onClick={() => setSearchOpen(true)}
+                className="flex items-center gap-2 px-3 py-1.5 rounded border border-border bg-card/50 hover:border-primary/30 hover:text-primary transition-colors"
+                title="Iskanje (Ctrl+K)"
+              >
+                <Search className="w-3.5 h-3.5" />
+                <span>Iskanje</span>
+                <kbd className="text-[10px] bg-background/60 px-1.5 py-0.5 rounded border border-border">Ctrl+K</kbd>
+              </button>
               {now && (
                 <span className="font-mono">
                   {now.toLocaleDateString('sl-SI')} {now.toLocaleTimeString('sl-SI')}
@@ -94,6 +118,13 @@ export default function Home() {
                 ONLINE
               </span>
             </div>
+            <button
+              onClick={() => setSearchOpen(true)}
+              className="md:hidden p-2 rounded border border-border bg-card/50 hover:border-primary/30"
+              aria-label="Iskanje"
+            >
+              <Search className="w-4 h-4" />
+            </button>
           </div>
         </div>
       </header>
@@ -146,7 +177,7 @@ export default function Home() {
           <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-2 text-xs text-muted-foreground">
             <div className="flex items-center gap-3">
               <span className="text-primary">markec-ai-firm</span>
-              <span>v1.0.0</span>
+              <span>v1.3.0</span>
               <span>•</span>
               <span>local-first</span>
               <span>•</span>
@@ -158,6 +189,9 @@ export default function Home() {
           </div>
         </div>
       </footer>
+
+      {/* v1.3: Global search modal */}
+      <SearchModal open={searchOpen} onOpenChange={setSearchOpen} onNavigate={setView} />
     </div>
   );
 }

@@ -61,6 +61,10 @@ model Monitor {
   lastRunAt  DateTime?
   lastStatus String?  // ok | error | empty
   lastError  String?
+  // v1.3: auto-pause after N consecutive errors
+  consecutiveErrors Int @default(0)
+  autoPauseThreshold Int @default(5)  // 0 = disabled, otherwise pause after N consecutive errors
+  autoPausedAt DateTime?
   // AI prompt customization (optional)
   customPrompt String @default("")
   createdAt  DateTime @default(now())
