@@ -114,8 +114,24 @@ async function fetchRss(url: string): Promise<string> {
  * Bolha.com scraper — uses the listings page HTML.
  * Bolha uses Cloudflare; if the simple fetch returns 0 results (likely blocked),
  * the pipeline will optionally retry with Playwright (v1.1) if enabled.
+ *
+ * v1.5: First tries Bolha RSS feed (?output=rss) before falling back to HTML.
+ * Bolha RSS structure: https://www.bolha.com/iskanje?q=...&output=rss
+ * or per-category: https://www.bolha.com/<category>?output=rss
  */
 async function scrapeBolha(url: string, filters: ScraperFilters): Promise<ScrapedListing[]> {
+  // v1.5: Try RSS first if URL supports ?output=rss
+  const rssUrl = appendRssParam(url);
+  if (rssUrl !== url) {
+    try {
+      const rssListings = await scrapeBolhaRss(rssUrl, filters);
+      if (rssListings.length > 0) return rssListings;
+      // If RSS returns 0, fall through to HTML scraping
+    } catch {
+      // RSS not available for this URL, fall through to HTML
+    }
+  }
+
   const html = await fetchHtml(url);
   // Detect Cloudflare challenge page
   if (isCloudflareChallenge(html)) {
@@ -125,6 +141,84 @@ async function scrapeBolha(url: string, filters: ScraperFilters): Promise<Scrape
   // If we got 0 listings with cheerio, the page may have changed structure or be blocked.
   // The pipeline decides whether to retry with Playwright.
   return applyFilters(listings, filters);
+}
+
+/** Append ?output=rss to Bolha URL if not already present. */
+function appendRssParam(url: string): string {
+  try {
+    const u = new URL(url);
+    if (u.hostname.includes('bolha.com') && !u.searchParams.has('output')) {
+      u.searchParams.set('output', 'rss');
+      return u.toString();
+    }
+    return url;
+  } catch {
+    return url;
+  }
+}
+
+/** Parse Bolha RSS feed (similar to generic RSS but with Bolha-specific price extraction). */
+async function scrapeBolhaRss(url: string, filters: ScraperFilters): Promise<ScrapedListing[]> {
+  const xml = await fetchRss(url);
+  const out: ScrapedListing[] = [];
+  const itemRegex = /<item>([\s\S]*?)<\/item>/gi;
+  const fieldRegex = (tag: string) => new RegExp(`<${tag}[^>]*>([\\s\\S]*?)<\\/${tag}>`, 'i');
+
+  let m: RegExpExecArray | null;
+  while ((m = itemRegex.exec(xml)) !== null) {
+    const itemXml = m[1];
+    const title = (itemXml.match(fieldRegex('title'))?.[1] ?? '').replace(/<!\[CDATA\[([\s\S]*?)\]\]>/g, '$1').trim();
+    const link = (itemXml.match(fieldRegex('link'))?.[1] ?? '').trim();
+    const description = (itemXml.match(fieldRegex('description'))?.[1] ?? '')
+      .replace(/<!\[CDATA\[([\s\S]*?)\]\]>/g, '$1')
+      .replace(/<[^>]+>/g, ' ')
+      .replace(/\s+/g, ' ')
+      .trim();
+    const pubDate = (itemXml.match(fieldRegex('pubDate'))?.[1] ?? '').trim();
+
+    if (!title || !link) continue;
+
+    // Bolha RSS often embeds price in title or description like "350 € · iPhone 13 Pro"
+    const priceMatch = title.match(/([\d.]+)\s*€/) || description.match(/([\d.]+)\s*€/);
+    let price: number | null = null;
+    let priceText = '';
+    if (priceMatch) {
+      price = parseInt(priceMatch[1].replace(/\./g, ''), 10);
+      priceText = `${priceMatch[1]} €`;
+    } else {
+      priceText = 'po dogovoru';
+    }
+
+    // Try to extract image from enclosure tag or description
+    let imageUrl: string | null = null;
+    const enclosureMatch = itemXml.match(/<enclosure[^>]+url="([^"]+)"/i);
+    if (enclosureMatch) {
+      imageUrl = enclosureMatch[1];
+    } else {
+      const imgMatch = description.match(/<img[^>]+src="([^"]+)"/i);
+      if (imgMatch) imageUrl = imgMatch[1];
+    }
+
+    let postedAt: Date | null = null;
+    if (pubDate) {
+      const d = new Date(pubDate);
+      if (!isNaN(d.getTime())) postedAt = d;
+    }
+
+    out.push({
+      externalId: hashExternalId(link),
+      title,
+      priceText,
+      price,
+      url: link,
+      location: '',
+      description,
+      imageUrl: imageUrl ?? undefined,
+      postedAt,
+    });
+  }
+
+  return applyFilters(out, filters);
 }
 
 /** Detect Cloudflare "Just a moment" or similar challenge page. */

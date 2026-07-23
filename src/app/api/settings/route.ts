@@ -32,6 +32,9 @@ export async function GET() {
     playwrightEnabled: s.playwrightEnabled,
     telegramInlineButtons: s.telegramInlineButtons,
     telegramWebhookSecretSet: !!s.telegramWebhookSecret,
+    // v1.5
+    pushEnabled: s.pushEnabled,
+    vapidPublicKeySet: !!s.vapidPublicKey,
     updatedAt: s.updatedAt,
   });
 }
@@ -104,6 +107,8 @@ export async function POST(req: NextRequest) {
   if (typeof body.telegramInlineButtons === 'boolean') data.telegramInlineButtons = body.telegramInlineButtons;
   // v1.4: Discord
   if (typeof body.discordEnabled === 'boolean') data.discordEnabled = body.discordEnabled;
+  // v1.5: Push
+  if (typeof body.pushEnabled === 'boolean') data.pushEnabled = body.pushEnabled;
   if (typeof body.aiApiKey === 'string' && body.aiApiKey.trim() !== '') {
     data.aiApiKey = body.aiApiKey.trim();
   }

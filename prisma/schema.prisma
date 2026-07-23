@@ -39,9 +39,23 @@ model Settings {
   telegramInlineButtons Boolean @default(true)
   // Webhook secret for Telegram callback queries (v1.1)
   telegramWebhookSecret String @default("")
+  // v1.5: Web Push notifications (VAPID)
+  pushEnabled          Boolean @default(false)
+  vapidPublicKey       String  @default("")
+  vapidPrivateKey      String  @default("")
   // Metadata
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
+}
+
+// v1.5: Push subscription — stores browser push endpoints
+model PushSubscription {
+  id          String   @id @default(cuid())
+  endpoint    String   @unique // browser push endpoint URL
+  p256dh      String   // user agent public key
+  auth        String   // auth secret
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
 }
 
 // A configured search monitor (e.g. "iPhone 13 Pro on Bolha", "2-sobno LJ na Nepremicnine")
@@ -116,6 +130,9 @@ model Listing {
 
   @@unique([monitorId, externalId])
   @@index([monitorId, firstSeenAt])
+  @@index([aiVerdict, aiScore])
+  @@index([isBookmarked, firstSeenAt])
+  @@index([price])
 }
 
 // An alert that was sent (Telegram/email/dashboard)

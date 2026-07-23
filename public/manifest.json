@@ -1,0 +1,45 @@
+{
+  "name": "Markec AI Firm — Opportunity Monitor",
+  "short_name": "Markec AI",
+  "description": "Lokalni AI lovec priložnosti za slovenske spletne portale (Bolha, Nepremičnine, Avtonet).",
+  "start_url": "/",
+  "display": "standalone",
+  "background_color": "#0a0e0a",
+  "theme_color": "#0a0e0a",
+  "orientation": "portrait-primary",
+  "icons": [
+    {
+      "src": "/icon-192.png",
+      "sizes": "192x192",
+      "type": "image/png",
+      "purpose": "any maskable"
+    },
+    {
+      "src": "/icon-512.png",
+      "sizes": "512x512",
+      "type": "image/png",
+      "purpose": "any maskable"
+    }
+  ],
+  "shortcuts": [
+    {
+      "name": "Dashboard",
+      "short_name": "Dashboard",
+      "url": "/?view=dashboard",
+      "description": "Pregled sistema"
+    },
+    {
+      "name": "Alerti",
+      "short_name": "Alerti",
+      "url": "/?view=alerts",
+      "description": "Aktivni alerti"
+    },
+    {
+      "name": "Oglasi",
+      "short_name": "Oglasi",
+      "url": "/?view=listings",
+      "description": "Vsi scraped oglasi"
+    }
+  ],
+  "categories": ["productivity", "business", "utilities"]
+}

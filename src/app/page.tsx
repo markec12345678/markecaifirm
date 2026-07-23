@@ -1,7 +1,7 @@
 'use client';
 
 import { useEffect, useState, useCallback } from 'react';
-import { Activity, Bell, Settings, ListPlus, Zap, RefreshCw, AlertCircle, LayoutGrid, BarChart3, Search } from 'lucide-react';
+import { Activity, Bell, Settings, ListPlus, Zap, RefreshCw, AlertCircle, LayoutGrid, BarChart3, Search, Heart } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
 import { Input } from '@/components/ui/input';
@@ -13,9 +13,10 @@ import { AlertsView } from '@/components/dashboard/alerts-view';
 import { SettingsView } from '@/components/dashboard/settings-view';
 import { ListingsView } from '@/components/dashboard/listings-view';
 import { AnalyticsView } from '@/components/dashboard/analytics-view';
+import { HealthView } from '@/components/dashboard/health-view';
 import { SearchModal } from '@/components/dashboard/search-modal';
 
-type View = 'dashboard' | 'monitors' | 'alerts' | 'listings' | 'analytics' | 'settings';
+type View = 'dashboard' | 'monitors' | 'alerts' | 'listings' | 'analytics' | 'health' | 'settings';
 
 const NAV: { id: View; label: string; icon: typeof Activity }[] = [
   { id: 'dashboard', label: 'Dashboard', icon: Activity },
@@ -23,6 +24,7 @@ const NAV: { id: View; label: string; icon: typeof Activity }[] = [
   { id: 'alerts', label: 'Alerti', icon: Bell },
   { id: 'listings', label: 'Oglasi', icon: LayoutGrid },
   { id: 'analytics', label: 'Analitika', icon: BarChart3 },
+  { id: 'health', label: 'Zdravje', icon: Heart },
   { id: 'settings', label: 'Nastavitve', icon: Settings },
 ];
 
@@ -168,6 +170,7 @@ export default function Home() {
         {view === 'alerts' && <AlertsView />}
         {view === 'listings' && <ListingsView />}
         {view === 'analytics' && <AnalyticsView />}
+        {view === 'health' && <HealthView />}
         {view === 'settings' && <SettingsView />}
       </main>
 

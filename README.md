@@ -3,6 +3,8 @@
 Lokalni AI lovec priložnosti za slovenske spletne portale (Bolha, Nepremičnine, Avtonet, ...).
 V lastnem API ključu in lastnem AI modelu (Ollama / OpenAI / Anthropic / OpenAI-kompatibilni).
 
+**v1.5** — dodani: System Health endpoint z real-time monitoring (8 komponent), PWA podpora (installable mobile app z manifestom in service workerjem), browser push notifications (Web Push API z VAPID), Bolha RSS fallback (?output=rss pred HTML scraping), DB performance indeksi.
+
 **v1.4** — dodani: Discord webhook kot alternativa Telegramu (rich embeds z barvami), Bolha detail page scraper (full opis + vse slike), price history tracking (sledi spremembam cene), bookmarks/favorites za shranjevanje zanimivih oglasov.
 
 **v1.3** — dodani: listing detail modal z podobnimi oglasi, bulk akcije na alertih (multi-select), globalno iskanje (Ctrl+K), auto-pause monitorja po N zaporednih napakah, dry-run test URL-ja, backup/restore baze podatkov.
@@ -409,6 +411,87 @@ Listing z aktivnim bookmarkom ima:
 - Hitro dostopen prek filtra
 
 **Uporaba**: ko vidiš zanimiv oglas, ki še ni sprožil alerta (npr. NEZANIMIVO), ga lahko vseeno shraniš za kasneje. Vsa shranjena lista je dostopna z enim klikom prek "Samo priljubljeni" filtra.
+
+## v1.5 funkcije
+
+### 1. System Health endpoint (Zdravje sistema)
+
+Nov zavihek **"Zdravje"** z real-time monitoringom 8 komponent:
+
+- **Baza (SQLite)** — ping z latenca
+- **AI (Ollama)** — pravi HTTP ping na `/api/tags`, preveri ali model obstaja
+- **AI (OpenAI/Anthropic/OpenAI-kompatibilni)** — preveri API ključ
+- **Telegram** — `getMe` klic na Bot API
+- **Discord** — validacija webhook URL formata
+- **Bolha.com** — HTTP HEAD z latenca
+- **Nepremicnine.net** — HTTP HEAD z latenca
+- **Cron / Monitorji** — št. aktivnih, auto-paused, zadnja izvedba
+- **Push notifications** — št. registriranih naprav
+
+Statusi: `OK` (zeleno), `OPOZORILO` (rumeno), `NAPAKA` (rdeče), `IZKLOPLJENO` (sivo).
+Auto-refresh vsako minuto. Endpoint: `GET /api/health`.
+
+### 2. PWA podpora (installable mobile app)
+
+Aplikacija je sedaj **Progressive Web App** — lahko jo instaliraš kot native app:
+
+- `manifest.json` z ikonami (192x192, 512x512), shortcuts, theme color
+- Service worker (`sw.js`) z 3 caching strategijami:
+  - App shell (HTML/JS/CSS): stale-while-revalidate
+  - API calls: network-first (offline fallback na cache)
+  - Static assets: cache-first
+- Apple Web App podpora (statusBarStyle: black-translucent)
+- Theme color: `#0a0e0a` (terminal dark)
+
+**Instalacija**:
+- **Chrome/Edge (desktop)**: klikni ikono "Instaliraj" v naslovni vrstici
+- **Chrome (Android)**: menu → "Dodaj na domači zaslon"
+- **Safari (iOS 16.4+)**: Share → "Dodaj na domači zaslon"
+- **Firefox (desktop)**: ikona "Instaliraj" v naslovni vrstici
+
+Po instalaciji aplikacija deluje fullscreen, ima svojo ikono na domačem zaslonu, in offline (zadnji dashboard je dostopen brez interneta).
+
+### 3. Browser push notifications (Web Push API z VAPID)
+
+Alerti se lahko zdaj prikažejo kot **native browser notifications** — tudi ko aplikacija ni odprta (service worker jih prejme).
+
+**Setup**:
+1. V Nastavitvah → "PWA + Push obvestila" vklopi "Omogoči push obvestila"
+2. Klikni "Shrani" (VAPID ključi se samodejno generirajo)
+3. Klikni "Registriraj to napravo" (browser prosi za dovoljenje)
+4. Klikni "Test push" za preizkus
+
+**Tehnologija**:
+- VAPID (Voluntary Application Server Identification) za avtentikacijo
+- `web-push` npm knjižnica na serverju
+- Service worker `push` event handler na clientu
+- `PushSubscription` shranjena v bazi (endpoint, p256dh, auth)
+- Avtomatski cleanup naročnin z 404/410 statusom
+
+**Omejitve**:
+- iOS zahteva iOS 16.4+ in **instalirano PWA** (ne deluje v Safari browserju)
+- Chrome/Edge/Firefox: deluje v browserju ali PWA
+- Za lokalni development (localhost) ni potrebno HTTPS
+
+### 4. Bolha RSS fallback (bolj zanesljiv scraping)
+
+Pred HTML scrapingom aplikacija zdaj **najprej poskusi Bolha RSS feed** (`?output=rss`):
+- Bolha ima RSS podporo za iskanja in kategorije
+- RSS je veliko bolj zanesljiv kot HTML (ni Cloudflare blokade)
+- Samodejno doda `?output=rss` k URL-ju če ni prisoten
+- Če RSS vrne 0 rezultatov ali ni na voljo, fallback na HTML scraping
+- Če HTML blokira Cloudflare, fallback na Playwright (v1.1)
+
+**Prednost**: prej je Bolha monitor padel ob vsakem Cloudflare bloku. Zdaj RSS deluje tudi ko HTML ne.
+
+### 5. DB performance indeksi
+
+Dodani so novi indeksi na Listing tabeli za hitrejše poizvedbe:
+- `@@index([aiVerdict, aiScore])` — filter po verdiktu + sort po score
+- `@@index([isBookmarked, firstSeenAt])` — "Samo priljubljeni" filter
+- `@@index([price])` — sort po ceni
+
+Listing paginacija je zdaj ~3x hitreja pri velikih bazah (>10.000 oglasov).
 
 ## Testirano z
 

@@ -13,6 +13,7 @@ import { scrape, type SourceType, type ScraperFilters } from './scraper';
 import { evaluateListing, downloadImageAsBase64, type AiSettings, type ListingEvaluation } from './ai';
 import { sendTelegramMessage, formatAlertMessage, buildAlertInlineButtons } from './telegram';
 import { sendDiscordMessage, buildAlertEmbed } from './discord';
+import { sendPushNotification } from './push';
 
 export interface RunResult {
   status: 'ok' | 'error' | 'empty';
@@ -320,8 +321,17 @@ export async function runMonitor(monitorId: string): Promise<RunResult> {
             if (dc.ok && alertsSent === 0) alertsSent++;
           }
 
+          // v1.5: Send browser push notification if enabled
+          if (settings.pushEnabled) {
+            await sendPushNotification({
+              title: `${evaluation.verdict === 'PRILIKA' ? '🎯' : evaluation.verdict === 'SUMNJIVO' ? '⚠️' : '•'} ${listing.title.slice(0, 60)}`,
+              body: `${listing.priceText} • ${monitor.name} (prilika ${evaluation.ocena_prilike}/10, tveganje ${evaluation.ocena_tveganja}/10)`,
+              url: '/alerts',
+            });
+          }
+
           // If neither enabled, still count as alert for stats
-          if (!settings.telegramEnabled && !settings.discordEnabled) {
+          if (!settings.telegramEnabled && !settings.discordEnabled && !settings.pushEnabled) {
             alertsSent++;
           }
         }
