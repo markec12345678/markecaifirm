@@ -72,6 +72,7 @@ export function ListingsView() {
   const [maxRisk, setMaxRisk] = useState<string>('');
   const [hasImage, setHasImage] = useState(false);
   const [bookmarkedOnly, setBookmarkedOnly] = useState(false);
+  const [contactFilter, setContactFilter] = useState<string>('all');
   const [sort, setSort] = useState<string>('firstSeen');
   const [offset, setOffset] = useState(0);
   const [compareIds, setCompareIds] = useState<Set<string>>(new Set());
@@ -89,6 +90,7 @@ export function ListingsView() {
       if (maxRisk) params.set('maxRisk', maxRisk);
       if (hasImage) params.set('hasImage', '1');
       if (bookmarkedOnly) params.set('bookmarked', '1');
+      if (contactFilter !== 'all') params.set('contactStatus', contactFilter);
       params.set('sort', sort);
       params.set('limit', String(limit));
       params.set('offset', String(offset));
@@ -101,7 +103,7 @@ export function ListingsView() {
     } finally {
       setLoading(false);
     }
-  }, [monitorId, verdict, minScore, maxRisk, hasImage, bookmarkedOnly, sort, offset]);
+  }, [monitorId, verdict, minScore, maxRisk, hasImage, bookmarkedOnly, contactFilter, sort, offset]);
 
   useEffect(() => {
     (async () => {
@@ -117,7 +119,7 @@ export function ListingsView() {
   }, [load]);
 
   // Reset offset when filters change
-  useEffect(() => { setOffset(0); }, [monitorId, verdict, minScore, maxRisk, hasImage, bookmarkedOnly, sort]);
+  useEffect(() => { setOffset(0); }, [monitorId, verdict, minScore, maxRisk, hasImage, bookmarkedOnly, contactFilter, sort]);
 
   const exportCsv = () => {
     const params = new URLSearchParams();
@@ -127,6 +129,7 @@ export function ListingsView() {
     if (maxRisk) params.set('maxRisk', maxRisk);
     if (hasImage) params.set('hasImage', '1');
     if (bookmarkedOnly) params.set('bookmarked', '1');
+    if (contactFilter !== 'all') params.set('contactStatus', contactFilter);
     params.set('sort', sort);
     params.set('limit', '500');
     params.set('format', 'csv');
@@ -287,11 +290,26 @@ export function ListingsView() {
               <Bookmark className="w-3.5 h-3.5" />
               Samo priljubljeni
             </Button>
-            {(monitorId !== 'all' || verdict !== 'all' || minScore || maxRisk || hasImage || bookmarkedOnly) && (
-              <Button size="sm" variant="ghost" onClick={() => { setMonitorId('all'); setVerdict('all'); setMinScore(''); setMaxRisk(''); setHasImage(false); setBookmarkedOnly(false); }} className="h-7 text-xs">
+            {(monitorId !== 'all' || verdict !== 'all' || minScore || maxRisk || hasImage || bookmarkedOnly || contactFilter !== 'all') && (
+              <Button size="sm" variant="ghost" onClick={() => { setMonitorId('all'); setVerdict('all'); setMinScore(''); setMaxRisk(''); setHasImage(false); setBookmarkedOnly(false); setContactFilter('all'); }} className="h-7 text-xs">
                 Počisti filtre
               </Button>
             )}
+          </div>
+          {/* v2.5: Contact status filter */}
+          <div className="flex items-center gap-2 pt-1">
+            <span className="text-[10px] text-muted-foreground uppercase tracking-wider">Kontakt:</span>
+            {['all', 'none', 'contacted', 'responded', 'closed'].map(f => (
+              <Button
+                key={f}
+                size="sm"
+                variant={contactFilter === f ? 'default' : 'outline'}
+                onClick={() => setContactFilter(f)}
+                className={cn('h-6 px-2 text-[10px] uppercase', contactFilter === f && 'bg-primary text-primary-foreground')}
+              >
+                {f === 'all' ? 'Vsi' : f === 'none' ? 'Ni kontakt' : f === 'contacted' ? '📞 Kontaktiran' : f === 'responded' ? '✉️ Odgovoril' : '✅ Zaključeno'}
+              </Button>
+            ))}
           </div>
         </CardContent>
       </Card>

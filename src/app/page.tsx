@@ -76,14 +76,46 @@ export default function Home() {
   // Ctrl+K shortcut for global search
   useEffect(() => {
     const handler = (e: KeyboardEvent) => {
+      // Ctrl+K or Cmd+K → search
       if ((e.ctrlKey || e.metaKey) && e.key === 'k') {
         e.preventDefault();
         setSearchOpen(true);
+        return;
+      }
+      // Don't trigger shortcuts when typing in inputs
+      const target = e.target as HTMLElement;
+      if (target.tagName === 'INPUT' || target.tagName === 'TEXTAREA' || target.isContentEditable) return;
+      // Don't trigger when dialog is open
+      if (searchOpen) return;
+
+      // v2.5: Tab navigation shortcuts
+      const navMap: Record<string, View> = {
+        '1': 'dashboard',
+        '2': 'monitors',
+        '3': 'alerts',
+        '4': 'listings',
+        '5': 'trades',
+        '6': 'analytics',
+        '7': 'health',
+        '8': 'settings',
+      };
+      if (navMap[e.key] && !e.ctrlKey && !e.metaKey && !e.altKey) {
+        e.preventDefault();
+        setView(navMap[e.key]);
+        return;
+      }
+      // ? → help toast
+      if (e.key === '?') {
+        e.preventDefault();
+        toast.info(
+          'Tipkovne bližnjice:\n1-8: navigacija med zavihki\nCtrl+K: iskanje\n?: ta pomoč',
+          { duration: 5000 }
+        );
       }
     };
     window.addEventListener('keydown', handler);
     return () => window.removeEventListener('keydown', handler);
-  }, []);
+  }, [searchOpen]);
 
   return (
     <div className="min-h-screen flex flex-col bg-background text-foreground">

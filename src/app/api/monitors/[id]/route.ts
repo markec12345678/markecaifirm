@@ -39,6 +39,8 @@ export async function PUT(req: NextRequest, { params }: { params: Promise<{ id: 
   if (typeof body.runEndHour === 'number' || body.runEndHour === null) data.runEndHour = body.runEndHour;
   // v1.3: auto-pause threshold
   if (typeof body.autoPauseThreshold === 'number') data.autoPauseThreshold = body.autoPauseThreshold;
+  // v2.5: notification channels
+  if (typeof body.notificationChannels === 'string') data.notificationChannels = body.notificationChannels;
   // Handle isActive: when manually reactivating, reset auto-pause state
   if (body.isActive === true) {
     data.isActive = true;

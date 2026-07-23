@@ -23,7 +23,7 @@ import {
   DialogDescription,
   DialogFooter,
 } from '@/components/ui/dialog';
-import { Plus, Play, Pencil, Trash2, RefreshCw, ExternalLink, CheckCircle2, XCircle, Clock, Zap, AlertCircle, PauseCircle } from 'lucide-react';
+import { Plus, Play, Pencil, Trash2, RefreshCw, ExternalLink, CheckCircle2, XCircle, Clock, Zap, AlertCircle, PauseCircle, Bell } from 'lucide-react';
 import { toast } from 'sonner';
 import { cn } from '@/lib/utils';
 
@@ -46,10 +46,12 @@ interface Monitor {
   customPrompt: string;
   runStartHour: number | null;
   runEndHour: number | null;
-  // v1.3
+  // v1.3: auto-pause
   consecutiveErrors: number;
   autoPauseThreshold: number;
   autoPausedAt: string | null;
+  // v2.2: notification channels
+  notificationChannels: string;
   createdAt: string;
   _count?: { listings: number; alerts: number };
 }
@@ -357,6 +359,12 @@ function MonitorFormDialog({
   const [autoPauseThreshold, setAutoPauseThreshold] = useState(5);
   const [dryRunLoading, setDryRunLoading] = useState(false);
   const [dryRunResult, setDryRunResult] = useState<any>(null);
+  // v2.5: notification channels
+  const [useCustomChannels, setUseCustomChannels] = useState(false);
+  const [chanTelegram, setChanTelegram] = useState(true);
+  const [chanDiscord, setChanDiscord] = useState(true);
+  const [chanSlack, setChanSlack] = useState(true);
+  const [chanPush, setChanPush] = useState(true);
   const [saving, setSaving] = useState(false);
 
   useEffect(() => {
@@ -374,6 +382,18 @@ function MonitorFormDialog({
       setRunStartHour(editing.runStartHour ?? 7);
       setRunEndHour(editing.runEndHour ?? 23);
       setAutoPauseThreshold(editing.autoPauseThreshold ?? 5);
+      // v2.5: Load notification channels
+      try {
+        const ch = JSON.parse(editing.notificationChannels || '{}');
+        const hasCustom = Object.keys(ch).length > 0;
+        setUseCustomChannels(hasCustom);
+        setChanTelegram(ch.telegram ?? true);
+        setChanDiscord(ch.discord ?? true);
+        setChanSlack(ch.slack ?? true);
+        setChanPush(ch.push ?? true);
+      } catch {
+        setUseCustomChannels(false);
+      }
     } else {
       setName('');
       setSource('bolha');
@@ -388,6 +408,11 @@ function MonitorFormDialog({
       setRunStartHour(7);
       setRunEndHour(23);
       setAutoPauseThreshold(5);
+      setUseCustomChannels(false);
+      setChanTelegram(true);
+      setChanDiscord(true);
+      setChanSlack(true);
+      setChanPush(true);
     }
     setDryRunResult(null);
   }, [editing, open]);
@@ -456,6 +481,10 @@ function MonitorFormDialog({
         runEndHour: useSchedule ? runEndHour : null,
         // v1.3: auto-pause threshold
         autoPauseThreshold,
+        // v2.5: notification channels
+        notificationChannels: useCustomChannels
+          ? JSON.stringify({ telegram: chanTelegram, discord: chanDiscord, slack: chanSlack, push: chanPush })
+          : '{}',
       };
       const res = await fetch(
         editing ? `/api/monitors/${editing.id}` : '/api/monitors',
@@ -732,6 +761,41 @@ function MonitorFormDialog({
                 zaporednih napakah → auto-pause
               </span>
             </div>
+          </div>
+          {/* v2.5: Notification channels */}
+          <div className="border-t border-border pt-4">
+            <div className="flex items-center justify-between mb-2">
+              <div>
+                <Label className="text-xs uppercase tracking-wider flex items-center gap-2">
+                  <Bell className="w-3 h-3" />
+                  Notifikacijski kanali <Badge variant="outline" className="text-[10px] text-primary border-primary/40">v2.5</Badge>
+                </Label>
+                <p className="text-[11px] text-muted-foreground mt-1">
+                  Pošiljaj alerte tega monitorja na specifične kanale. Pusti izklopljeno za globalne nastavitve.
+                </p>
+              </div>
+              <Switch checked={useCustomChannels} onCheckedChange={setUseCustomChannels} />
+            </div>
+            {useCustomChannels && (
+              <div className="grid grid-cols-2 gap-2 mt-2">
+                <label className="flex items-center gap-2 p-2 bg-background/30 rounded border border-border cursor-pointer hover:border-primary/30">
+                  <Switch checked={chanTelegram} onCheckedChange={setChanTelegram} />
+                  <span className="text-xs">Telegram</span>
+                </label>
+                <label className="flex items-center gap-2 p-2 bg-background/30 rounded border border-border cursor-pointer hover:border-primary/30">
+                  <Switch checked={chanDiscord} onCheckedChange={setChanDiscord} />
+                  <span className="text-xs">Discord</span>
+                </label>
+                <label className="flex items-center gap-2 p-2 bg-background/30 rounded border border-border cursor-pointer hover:border-primary/30">
+                  <Switch checked={chanSlack} onCheckedChange={setChanSlack} />
+                  <span className="text-xs">Slack</span>
+                </label>
+                <label className="flex items-center gap-2 p-2 bg-background/30 rounded border border-border cursor-pointer hover:border-primary/30">
+                  <Switch checked={chanPush} onCheckedChange={setChanPush} />
+                  <span className="text-xs">Push</span>
+                </label>
+              </div>
+            )}
           </div>
         </div>
 
