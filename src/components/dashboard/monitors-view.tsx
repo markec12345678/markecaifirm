@@ -27,7 +27,7 @@ import { Plus, Play, Pencil, Trash2, RefreshCw, ExternalLink, CheckCircle2, XCir
 import { toast } from 'sonner';
 import { cn } from '@/lib/utils';
 
-type Source = 'bolha' | 'nepremicnine' | 'avtonet' | 'salomon' | 'custom-rss';
+type Source = 'bolha' | 'nepremicnine' | 'avtonet' | 'salomon' | 'custom-rss' | 'vinted';
 
 interface Monitor {
   id: string;
@@ -60,6 +60,7 @@ const SOURCE_LABELS: Record<Source, string> = {
   avtonet: 'Avtonet.si',
   salomon: 'Salomon.si',
   'custom-rss': 'Custom RSS',
+  vinted: 'Vinted.si (API)',
 };
 
 const SOURCE_PRESETS: Array<{ source: Source; label: string; url: string; hint: string }> = [
@@ -80,6 +81,12 @@ const SOURCE_PRESETS: Array<{ source: Source; label: string; url: string; hint: 
     label: 'Bolha — orodje Bosch',
     url: 'https://www.bolha.com/orodja?query=bosch',
     hint: 'Kategorija + iskalni niz',
+  },
+  {
+    source: 'vinted',
+    label: 'Vinted — Nike Air Max',
+    url: 'https://www.vinted.si/api/v2/catalog/items?search_text=nike%20air%20max&order_by=newest_first',
+    hint: 'Vinted API — zamenjaj search_text param',
   },
 ];
 

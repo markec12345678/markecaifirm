@@ -20,7 +20,7 @@ import {
   DialogTitle,
   DialogDescription,
 } from '@/components/ui/dialog';
-import { RefreshCw, Download, ExternalLink, ChevronLeft, ChevronRight, Filter, ImageIcon, AlertTriangle, Target, MapPin, Clock, Bookmark, Sparkles, ShoppingCart } from 'lucide-react';
+import { RefreshCw, Download, ExternalLink, ChevronLeft, ChevronRight, Filter, ImageIcon, AlertTriangle, Target, MapPin, Clock, Bookmark, Sparkles, ShoppingCart, MessageSquare, BarChart3, TrendingDown, TrendingUp, Copy, Check } from 'lucide-react';
 import { toast } from 'sonner';
 import { cn } from '@/lib/utils';
 
@@ -413,6 +413,11 @@ function ListingDetailModal({ listingId, onClose }: { listingId: string | null; 
   const [fetchingDetail, setFetchingDetail] = useState(false);
   const [togglingBookmark, setTogglingBookmark] = useState(false);
   const [addingToTrade, setAddingToTrade] = useState(false);
+  // v1.8: AI Negotiator
+  const [negotiating, setNegotiating] = useState(false);
+  const [negotiateMessage, setNegotiateMessage] = useState<string | null>(null);
+  const [negotiateType, setNegotiateType] = useState<string>('initial');
+  const [copied, setCopied] = useState(false);
 
   const loadDetail = useCallback(async () => {
     if (!listingId) {
@@ -489,13 +494,12 @@ function ListingDetailModal({ listingId, onClose }: { listingId: string | null; 
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           fromListingId: listing.id,
-          // buyPrice comes from listing.price automatically
-          category: '', // user can edit later
+          category: '',
         }),
       });
       if (res.ok) {
         toast.success('✓ Dodano v Skladišče — uredi podrobnosti v zavihku Skladišče');
-        await loadDetail(); // reload to show "V skladišču" badge
+        await loadDetail();
       } else {
         toast.error('Napaka pri dodajanju');
       }
@@ -504,6 +508,40 @@ function ListingDetailModal({ listingId, onClose }: { listingId: string | null; 
     } finally {
       setAddingToTrade(false);
     }
+  };
+
+  // v1.8: AI Negotiator — generate message to seller
+  const generateMessage = async (type: string) => {
+    if (!listing) return;
+    setNegotiating(true);
+    setNegotiateType(type);
+    setNegotiateMessage(null);
+    try {
+      const res = await fetch(`/api/listings/${listing.id}/negotiate`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ type }),
+      });
+      const data = await res.json();
+      if (data.ok) {
+        setNegotiateMessage(data.message);
+        toast.success('Sporočilo generirano');
+      } else {
+        toast.error(data.error ?? 'Napaka pri generiranju');
+      }
+    } catch {
+      toast.error('Napaka');
+    } finally {
+      setNegotiating(false);
+    }
+  };
+
+  const copyMessage = () => {
+    if (!negotiateMessage) return;
+    navigator.clipboard.writeText(negotiateMessage);
+    setCopied(true);
+    toast.success('Sporočilo kopirano');
+    setTimeout(() => setCopied(false), 2000);
   };
 
   return (
@@ -612,6 +650,56 @@ function ListingDetailModal({ listingId, onClose }: { listingId: string | null; 
                     <div className="text-lg font-bold text-amber-400">{listing.aiRisk}/10</div>
                   </div>
                 )}
+              </div>
+            )}
+
+            {/* v1.8: Market comparison — real data vs AI estimate */}
+            {data?.marketComparison && (
+              <div>
+                <h4 className="text-xs uppercase tracking-wider text-muted-foreground mb-2 flex items-center gap-1.5">
+                  <BarChart3 className="w-3.5 h-3.5" />
+                  Tržna primerjava (realni podatki)
+                  <Badge variant="outline" className="text-[10px] ml-1">
+                    {data.marketComparison.count} podobnih
+                  </Badge>
+                </h4>
+                <div className="grid grid-cols-2 sm:grid-cols-4 gap-2 text-xs">
+                  <div className="bg-background/30 rounded p-2 text-center">
+                    <div className="text-[10px] text-muted-foreground uppercase">Povprečje</div>
+                    <div className="font-mono font-bold text-primary">{data.marketComparison.average} €</div>
+                  </div>
+                  <div className="bg-background/30 rounded p-2 text-center">
+                    <div className="text-[10px] text-muted-foreground uppercase">Mediana</div>
+                    <div className="font-mono font-bold">{data.marketComparison.median} €</div>
+                  </div>
+                  <div className="bg-background/30 rounded p-2 text-center">
+                    <div className="text-[10px] text-muted-foreground uppercase">Min – Max</div>
+                    <div className="font-mono text-[11px]">{data.marketComparison.min} – {data.marketComparison.max} €</div>
+                  </div>
+                  <div className="bg-background/30 rounded p-2 text-center">
+                    <div className="text-[10px] text-muted-foreground uppercase">Std. dev.</div>
+                    <div className="font-mono">±{data.marketComparison.stdDev} €</div>
+                  </div>
+                </div>
+                <div className={cn(
+                  'mt-2 p-2 rounded text-xs flex items-center gap-2',
+                  data.marketComparison.belowMarket
+                    ? 'bg-primary/5 border border-primary/20 text-primary'
+                    : 'bg-amber-400/5 border border-amber-400/20 text-amber-400'
+                )}>
+                  {data.marketComparison.belowMarket
+                    ? <TrendingDown className="w-4 h-4 shrink-0" />
+                    : <TrendingUp className="w-4 h-4 shrink-0" />}
+                  <span>
+                    Ta oglas je <b>{data.marketComparison.belowMarket ? 'pod' : 'nad'}</b> tržnim povprečjem
+                    za <b>{Math.abs(data.marketComparison.diffPct)}%</b> ({Math.abs(data.marketComparison.diffFromAvg)} €).
+                    {data.marketComparison.aiVsMarketDiff != null && (
+                      <span className="ml-1">
+                        AI ocena {listing.aiEstimatedValue}€ {data.marketComparison.aiVsMarketDiff > 0 ? 'višja' : 'nižja'} od tržne za {Math.abs(data.marketComparison.aiVsMarketDiff)}€.
+                      </span>
+                    )}
+                  </span>
+                </div>
               </div>
             )}
 
@@ -748,7 +836,6 @@ function ListingDetailModal({ listingId, onClose }: { listingId: string | null; 
                 {fetchingDetail ? <RefreshCw className="w-3.5 h-3.5 animate-spin" /> : <Sparkles className="w-3.5 h-3.5" />}
                 Pridobi detail page
               </Button>
-              {/* v1.7: Add to Skladišče (Trade) */}
               {listing.trades && listing.trades.length > 0 ? (
                 <Badge variant="outline" className="border-primary/40 text-primary text-xs gap-1">
                   <ShoppingCart className="w-3 h-3" />
@@ -765,6 +852,43 @@ function ListingDetailModal({ listingId, onClose }: { listingId: string | null; 
                   {addingToTrade ? <RefreshCw className="w-3.5 h-3.5 animate-spin" /> : <ShoppingCart className="w-3.5 h-3.5" />}
                   Dodaj v Skladišče
                 </Button>
+              )}
+            </div>
+
+            {/* v1.8: AI Negotiator */}
+            <div className="border-t border-border pt-3">
+              <h4 className="text-xs uppercase tracking-wider text-muted-foreground mb-2 flex items-center gap-1.5">
+                <MessageSquare className="w-3.5 h-3.5" />
+                AI pogajalec
+              </h4>
+              <div className="flex flex-wrap gap-2 mb-2">
+                <Button size="sm" variant="outline" onClick={() => generateMessage('initial')} disabled={negotiating} className="gap-1.5 text-xs h-7">
+                  {negotiating && negotiateType === 'initial' ? <RefreshCw className="w-3 h-3 animate-spin" /> : <MessageSquare className="w-3 h-3" />}
+                  Začetno sporočilo
+                </Button>
+                <Button size="sm" variant="outline" onClick={() => generateMessage('low_offer')} disabled={negotiating} className="gap-1.5 text-xs h-7">
+                  {negotiating && negotiateType === 'low_offer' ? <RefreshCw className="w-3 h-3 animate-spin" /> : <TrendingDown className="w-3 h-3" />}
+                  Nizka ponudba
+                </Button>
+                <Button size="sm" variant="outline" onClick={() => generateMessage('polite_decline')} disabled={negotiating} className="gap-1.5 text-xs h-7">
+                  {negotiating && negotiateType === 'polite_decline' ? <RefreshCw className="w-3 h-3 animate-spin" /> : null}
+                  Vljudna zavrnitev
+                </Button>
+              </div>
+              {negotiateMessage && (
+                <div className="bg-background/50 border border-border rounded p-3">
+                  <div className="flex items-start justify-between gap-2 mb-2">
+                    <span className="text-[10px] text-muted-foreground uppercase tracking-wider">Generirano sporočilo:</span>
+                    <Button size="sm" variant="ghost" onClick={copyMessage} className="h-6 px-2 text-xs gap-1">
+                      {copied ? <Check className="w-3 h-3 text-primary" /> : <Copy className="w-3 h-3" />}
+                      {copied ? 'Kopirano' : 'Kopiraj'}
+                    </Button>
+                  </div>
+                  <p className="text-sm whitespace-pre-wrap">{negotiateMessage}</p>
+                  <p className="text-[10px] text-muted-foreground mt-2">
+                    ⚠️ Preglej in prilagodi pred pošiljanjem. AI ne pozna specifičnih detailov ki jih vidiš ti.
+                  </p>
+                </div>
               )}
             </div>
           </div>

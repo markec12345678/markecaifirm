@@ -25,7 +25,7 @@ export interface ScraperFilters {
   maxPrice?: number | null;
 }
 
-export type SourceType = 'bolha' | 'nepremicnine' | 'avtonet' | 'salomon' | 'custom-rss';
+export type SourceType = 'bolha' | 'nepremicnine' | 'avtonet' | 'salomon' | 'custom-rss' | 'vinted';
 
 const USER_AGENTS = [
   'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36',
@@ -461,6 +461,85 @@ async function scrapeAvtonet(url: string, filters: ScraperFilters): Promise<Scra
   return applyFilters(out, filters);
 }
 
+/** v1.8: Vinted scraper — uses public catalog API.
+ * URL format: https://www.vinted.si/api/v2/catalog/items?search_text=...&price_to=...
+ * or just a search text which we convert to API call.
+ */
+async function scrapeVinted(url: string, filters: ScraperFilters): Promise<ScrapedListing[]> {
+  // Parse the URL to extract search parameters
+  let apiUrl: string;
+  try {
+    const u = new URL(url);
+    if (u.hostname.includes('vinted') && u.pathname.includes('/api/')) {
+      // Already an API URL, use as-is
+      apiUrl = url;
+    } else {
+      // Convert search URL to API call
+      // Extract search text from URL or query params
+      const searchText = u.searchParams.get('search_text') ||
+                        u.searchParams.get('q') ||
+                        u.pathname.split('/').pop() ||
+                        '';
+      apiUrl = `https://www.vinted.si/api/v2/catalog/items?search_text=${encodeURIComponent(searchText)}&per_page=50&order_by=newest_first`;
+      // Copy price filters from URL
+      if (u.searchParams.get('price_from')) apiUrl += `&price_from=${u.searchParams.get('price_from')}`;
+      if (u.searchParams.get('price_to')) apiUrl += `&price_to=${u.searchParams.get('price_to')}`;
+    }
+  } catch {
+    // If URL parsing fails, treat as search text
+    apiUrl = `https://www.vinted.si/api/v2/catalog/items?search_text=${encodeURIComponent(url)}&per_page=50&order_by=newest_first`;
+  }
+
+  // Apply filters from monitor config
+  if (filters.minPrice != null) apiUrl += `&price_from=${filters.minPrice}`;
+  if (filters.maxPrice != null) apiUrl += `&price_to=${filters.maxPrice}`;
+
+  const res = await fetch(apiUrl, {
+    headers: {
+      'User-Agent': randomUA(),
+      'Accept': 'application/json, text/plain, */*',
+      'Accept-Language': 'sl-SI,sl;q=0.9,en;q=0.8',
+    },
+  });
+  if (!res.ok) {
+    throw new Error(`Vinted API HTTP ${res.status}`);
+  }
+  const data = await res.json();
+  const items: any[] = data?.items ?? [];
+
+  const out: ScrapedListing[] = items.map((item: any) => {
+    const price = parseFloat(item.price || '0') || null;
+    const title = item.title || '';
+    const itemUrl = item.url || `https://www.vinted.si/items/${item.id}`;
+    const imageUrl = item.photo?.thumbnails?.[0]?.url ||
+                     item.photo?.full_size_url ||
+                     null;
+    const brand = item.brand_title ? ` (${item.brand_title})` : '';
+    const size = item.size_title ? `, velikost: ${item.size_title}` : '';
+    const description = `Brend: ${item.brand_title || 'n/a'}${size}${item.status ? `, stanje: ${item.status}` : ''}`;
+    let postedAt: Date | null = null;
+    if (item.created_at_ts) {
+      const d = new Date(item.created_at_ts);
+      if (!isNaN(d.getTime())) postedAt = d;
+    }
+
+    return {
+      externalId: hashExternalId(itemUrl),
+      title: title + brand,
+      priceText: price != null ? `${price.toFixed(2)} €` : 'po dogovoru',
+      price,
+      url: itemUrl,
+      location: '',
+      description,
+      imageUrl: imageUrl ?? undefined,
+      postedAt,
+    };
+  });
+
+  // Apply keyword filters (Vinted API doesn't support keyword exclusion)
+  return applyFilters(out, filters);
+}
+
 export async function scrape(
   source: SourceType,
   url: string,
@@ -482,6 +561,7 @@ export async function scrape(
     case 'nepremicnine': return scrapeNepremicnine(url, filters);
     case 'avtonet': return scrapeAvtonet(url, filters);
     case 'custom-rss': return scrapeCustomRss(url, filters);
+    case 'vinted': return scrapeVinted(url, filters);
     default: throw new Error(`Unknown source: ${source}`);
   }
 }
