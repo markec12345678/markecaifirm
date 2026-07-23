@@ -18,6 +18,10 @@ export async function GET() {
     telegramBotTokenSet: !!s.telegramBotToken,
     telegramChatId: s.telegramChatId,
     telegramEnabled: s.telegramEnabled,
+    // v1.4
+    discordWebhookUrlSet: !!s.discordWebhookUrl,
+    discordWebhookUrlMasked: s.discordWebhookUrl ? maskWebhook(s.discordWebhookUrl) : '',
+    discordEnabled: s.discordEnabled,
     heartbeatEnabled: s.heartbeatEnabled,
     heartbeatHour: s.heartbeatHour,
     lastHeartbeatAt: s.lastHeartbeatAt,
@@ -35,6 +39,18 @@ export async function GET() {
 function maskKey(k: string): string {
   if (k.length <= 8) return '••••';
   return k.slice(0, 4) + '••••' + k.slice(-4);
+}
+
+function maskWebhook(u: string): string {
+  // Discord webhook URLs contain a token at the end
+  // https://discord.com/api/webhooks/<id>/<token>
+  try {
+    const parts = u.split('/');
+    if (parts.length >= 2) {
+      return parts.slice(0, -1).join('/') + '/' + '••••' + (parts[parts.length - 1]?.slice(-4) ?? '');
+    }
+  } catch { /* ignore */ }
+  return '••••';
 }
 
 export async function POST(req: NextRequest) {
@@ -62,6 +78,16 @@ export async function POST(req: NextRequest) {
     return NextResponse.json(result);
   }
 
+  // v1.4: Test Discord webhook
+  if (action === 'test-discord') {
+    const s = await getSettingsRow();
+    const { testDiscord } = await import('@/lib/discord');
+    const result = await testDiscord({
+      webhookUrl: body.discordWebhookUrl ?? s.discordWebhookUrl,
+    });
+    return NextResponse.json(result);
+  }
+
   const data: any = {};
   if (typeof body.aiProvider === 'string') data.aiProvider = body.aiProvider;
   if (typeof body.aiBaseUrl === 'string') data.aiBaseUrl = body.aiBaseUrl;
@@ -76,6 +102,8 @@ export async function POST(req: NextRequest) {
   if (typeof body.imageAnalysisEnabled === 'boolean') data.imageAnalysisEnabled = body.imageAnalysisEnabled;
   if (typeof body.playwrightEnabled === 'boolean') data.playwrightEnabled = body.playwrightEnabled;
   if (typeof body.telegramInlineButtons === 'boolean') data.telegramInlineButtons = body.telegramInlineButtons;
+  // v1.4: Discord
+  if (typeof body.discordEnabled === 'boolean') data.discordEnabled = body.discordEnabled;
   if (typeof body.aiApiKey === 'string' && body.aiApiKey.trim() !== '') {
     data.aiApiKey = body.aiApiKey.trim();
   }
@@ -84,6 +112,10 @@ export async function POST(req: NextRequest) {
   }
   if (typeof body.telegramWebhookSecret === 'string' && body.telegramWebhookSecret.trim() !== '') {
     data.telegramWebhookSecret = body.telegramWebhookSecret.trim();
+  }
+  // v1.4: Discord webhook URL (only overwrite if non-empty)
+  if (typeof body.discordWebhookUrl === 'string' && body.discordWebhookUrl.trim() !== '') {
+    data.discordWebhookUrl = body.discordWebhookUrl.trim();
   }
 
   const updated = await db.settings.upsert({

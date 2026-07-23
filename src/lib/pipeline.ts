@@ -12,6 +12,7 @@ import { db } from './db';
 import { scrape, type SourceType, type ScraperFilters } from './scraper';
 import { evaluateListing, downloadImageAsBase64, type AiSettings, type ListingEvaluation } from './ai';
 import { sendTelegramMessage, formatAlertMessage, buildAlertInlineButtons } from './telegram';
+import { sendDiscordMessage, buildAlertEmbed } from './discord';
 
 export interface RunResult {
   status: 'ok' | 'error' | 'empty';
@@ -152,6 +153,47 @@ export async function runMonitor(monitorId: string): Promise<RunResult> {
       }))
     );
 
+    // v1.4: Record initial price history for each new listing
+    await Promise.all(
+      createdListings.map(l => db.priceHistory.create({
+        data: {
+          listingId: l.id,
+          price: l.price,
+          priceText: l.priceText,
+        },
+      }))
+    );
+
+    // v1.4: For existing listings, check if price changed and record history
+    // (we already filtered to fresh only, so this is for the next run)
+    // This logic is in runMonitor - check existing listings seen again with new price
+    const existingListingsWithSameExternalId = await db.listing.findMany({
+      where: {
+        monitorId: monitor.id,
+        externalId: { in: listings.filter(l => existingIds.has(l.externalId)).map(l => l.externalId) },
+      },
+      select: { id: true, externalId: true, price: true, priceText: true },
+    });
+    for (const existing of existingListingsWithSameExternalId) {
+      const newListings = listings.find(l => l.externalId === existing.externalId);
+      if (!newListings) continue;
+      // If price changed, record new entry
+      if (newListings.price !== existing.price || newListings.priceText !== existing.priceText) {
+        await db.priceHistory.create({
+          data: {
+            listingId: existing.id,
+            price: newListings.price ?? null,
+            priceText: newListings.priceText,
+          },
+        });
+        // Also update the listing's current price
+        await db.listing.update({
+          where: { id: existing.id },
+          data: { price: newListings.price ?? null, priceText: newListings.priceText },
+        });
+      }
+    }
+
     // Evaluate each fresh listing with AI
     for (let i = 0; i < createdListings.length; i++) {
       const listing = createdListings[i];
@@ -253,7 +295,33 @@ export async function runMonitor(monitorId: string): Promise<RunResult> {
               },
             });
             if (tg.ok) alertsSent++;
-          } else {
+          }
+
+          // v1.4: Send Discord if enabled
+          if (settings.discordEnabled && settings.discordWebhookUrl) {
+            const embed = buildAlertEmbed({
+              monitorName: monitor.name,
+              title: listing.title,
+              priceText: listing.priceText,
+              url: listing.url,
+              location: listing.location || undefined,
+              aiScore: evaluation.ocena_prilike,
+              aiRisk: evaluation.ocena_tveganja,
+              aiVerdict: evaluation.verdict,
+              aiReason: evaluation.razlog,
+              estimatedValue: evaluation.predvidena_trzna_vrednost ?? null,
+              imageAnalysis: evaluation.image_analysis ?? null,
+              imageUrl: listing.imageUrl ?? null,
+            });
+            const dc = await sendDiscordMessage(
+              { webhookUrl: settings.discordWebhookUrl },
+              embed
+            );
+            if (dc.ok && alertsSent === 0) alertsSent++;
+          }
+
+          // If neither enabled, still count as alert for stats
+          if (!settings.telegramEnabled && !settings.discordEnabled) {
             alertsSent++;
           }
         }
@@ -443,6 +511,7 @@ export async function maybeSendHeartbeat(): Promise<{ sent: boolean; reason: str
 
   // Build and send message
   const { formatHeartbeatMessage, buildHeartbeatInlineButtons } = await import('./telegram');
+  const { buildHeartbeatEmbed } = await import('./discord');
   const message = formatHeartbeatMessage({
     periodStart,
     periodEnd,
@@ -456,12 +525,38 @@ export async function maybeSendHeartbeat(): Promise<{ sent: boolean; reason: str
     activeMonitors,
   });
 
-  const inlineButtons = buildHeartbeatInlineButtons('http://localhost:3000');
-  const tg = await sendTelegramMessage(
-    { botToken: settings.telegramBotToken, chatId: settings.telegramChatId },
-    message,
-    { inlineButtons }
-  );
+  let telegramOk = false;
+  let telegramError: string | null = null;
+  let discordOk = false;
+  let discordError: string | null = null;
+
+  // Send to Telegram
+  if (settings.telegramEnabled && settings.telegramBotToken && settings.telegramChatId) {
+    const inlineButtons = buildHeartbeatInlineButtons('http://localhost:3000');
+    const tg = await sendTelegramMessage(
+      { botToken: settings.telegramBotToken, chatId: settings.telegramChatId },
+      message,
+      { inlineButtons }
+    );
+    telegramOk = tg.ok;
+    telegramError = tg.ok ? null : tg.error ?? null;
+  }
+
+  // v1.4: Send to Discord
+  if (settings.discordEnabled && settings.discordWebhookUrl) {
+    const embed = buildHeartbeatEmbed({
+      periodStart, periodEnd,
+      totalRuns, successfulRuns, failedRuns,
+      newListings, totalAlerts, prilikaAlerts, sumnjivoAlerts,
+      activeMonitors,
+    });
+    const dc = await sendDiscordMessage({ webhookUrl: settings.discordWebhookUrl }, embed);
+    discordOk = dc.ok;
+    discordError = dc.ok ? null : dc.error ?? null;
+  }
+
+  const sentOk = telegramOk || discordOk;
+  const combinedError = [telegramError, discordError].filter(Boolean).join('; ') || null;
 
   // Log to DB
   const log = await db.heartbeatLog.create({
@@ -478,8 +573,8 @@ export async function maybeSendHeartbeat(): Promise<{ sent: boolean; reason: str
       prilikaAlerts,
       sumnjivoAlerts,
       activeMonitors,
-      sentTelegram: tg.ok,
-      telegramError: tg.ok ? null : tg.error ?? null,
+      sentTelegram: telegramOk || discordOk,
+      telegramError: combinedError,
       message,
     },
   });
@@ -491,8 +586,8 @@ export async function maybeSendHeartbeat(): Promise<{ sent: boolean; reason: str
   });
 
   return {
-    sent: tg.ok,
-    reason: tg.ok ? 'poslano' : `napaka: ${tg.error}`,
+    sent: sentOk,
+    reason: sentOk ? 'poslano' : `napaka: ${combinedError}`,
     logId: log.id,
   };
 }

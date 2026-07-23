@@ -3,6 +3,8 @@
 Lokalni AI lovec priložnosti za slovenske spletne portale (Bolha, Nepremičnine, Avtonet, ...).
 V lastnem API ključu in lastnem AI modelu (Ollama / OpenAI / Anthropic / OpenAI-kompatibilni).
 
+**v1.4** — dodani: Discord webhook kot alternativa Telegramu (rich embeds z barvami), Bolha detail page scraper (full opis + vse slike), price history tracking (sledi spremembam cene), bookmarks/favorites za shranjevanje zanimivih oglasov.
+
 **v1.3** — dodani: listing detail modal z podobnimi oglasi, bulk akcije na alertih (multi-select), globalno iskanje (Ctrl+K), auto-pause monitorja po N zaporednih napakah, dry-run test URL-ja, backup/restore baze podatkov.
 
 **v1.2** — dodani: urnik delovanja (schedule windows) za stroškovni nadzor, pregled vseh oglasov (Listings browser) za validacijo AI, analitika z grafy (alerts/day, verdikt distribucija, performansa monitorjev, natančnost AI), CSV export za vse poglede, feedback loop za AI natančnost (👍 Zanima me / 🚫 Prevara).
@@ -344,6 +346,69 @@ Nov "Baza podatkov" card v Nastavitvah z 3 akcijami:
 - **Počisti podatke**: izbriše vse oglase, alerte, run loge in heartbeate. Monitorji in nastavitve (vključno z API ključi) ostanejo. Uporabno za "fresh start" pri testiranju.
 
 Validacija na restore: preverja SQLite magic header ("SQLite format 3\0"). Če naložiš ne-SQLite datoteko, restore ne uspe in trenutna baza ostane nedotaknjena.
+
+## v1.4 funkcije
+
+### 1. Discord webhook (alternativa Telegramu)
+
+Nov "Discord webhook" card v Nastavitvah:
+- Vnosi: Webhook URL + toggle enable
+- Test gumb pošlje testni embed
+- Alerti pridejo kot rich embed z barvo glede na verdikt:
+  - 🎯 PRILIKA → zelena (#4ade80)
+  - ⚠️ SUMNJIVO → rumena (#fbbf24)
+  - ⚪ NEZANIMIVO → siva (#6b7280)
+- Vključuje thumbnail (prva slika), fields (prilika, tveganje, tržna vrednost, lokacija, monitor)
+- Heartbeat prav tako gre na Discord (vlastita embed oblika)
+
+**Prednost pred Telegramom**: Discord webhook je **pull** (aplikacija pošlje HTTP POST), ne **push** (Telegram zahteva webhook + ngrok za callback gumbe). Tako:
+- Ni expose-anja localhosta
+- Ni webhook setupa
+- Samo prilepi URL in deluje
+
+**Setup**: Discord → Server Settings → Integrations → Webhooks → New Webhook → Copy Webhook URL → prilepi v Nastavitve.
+
+Telegram in Discord lahko delujeta hkrati — alert gre na oba kanala.
+
+### 2. Bolha detail page scraper
+
+V listing detail modalu nov gumb **"Pridobi detail page"**:
+- Naredi HTTP GET na URL oglasa (Bolha detail stran)
+- Izlušči celoten opis (daljši od tistega na seznamu)
+- Zbere vse slike iz oglasa (do 20, filtrira logotipe/ikone po dimenzijah)
+- Shrani v `detailDescription` in `detailImages` (JSON array) na Listing modelu
+- V modalu prikaže vse slike v grid 2-3 stolpce, click za prikaz
+
+**Uporaba**: ko te zanima določen oglas, klikni "Pridobi detail page" za boljši pregled pred odpiranjem izvorne strani. Prihrani čas in prepoznavanje stock fotografij.
+
+### 3. Price history tracking
+
+Vsak listing ima sedaj zgodovino cene. Pipeline samodejno:
+- Pri prvem videzu oglasa zabeleži začetno ceno v `PriceHistory` tabelo
+- Pri vsakem naslednjem pregledu preveri, ali se je cena spremenila
+- Če se je, zabeleži nov vnos v PriceHistory in posodobi trenutno ceno na Listing
+
+V listing detail modalu se prikaže "📈 Zgodovina cene" sekcija z:
+- Vsemi cenovnimi vnosi kronološko
+- Razliko in procentom spremembe (zeleno za padec, rumeno za dvig)
+- Časom opažanja
+
+**Uporaba**: ni potrebna nobena konfiguracija — deluje samodejno. Po nekaj tednih boš videl, ali prodajalci znižujejo cene (kar je znak, da je oglas težko prodati in je morda prostor za pogajanje).
+
+### 4. Bookmarks / Favorites
+
+Vsak listing ima bookmark gumb (★ ikona):
+- V ListingRow: gumb na desni strani
+- V ListingDetailModal: "Shrani"/"Shranjeno" gumb v action vrstici
+- Nov filter "Samo priljubljeni" v Listings zavihku
+- Nov StatCard na dashboardu "Priljubljeni" s številom shranjenih
+
+Listing z aktivnim bookmarkom ima:
+- Modro obrobo + ring v seznamu
+- Filled bookmark ikono
+- Hitro dostopen prek filtra
+
+**Uporaba**: ko vidiš zanimiv oglas, ki še ni sprožil alerta (npr. NEZANIMIVO), ga lahko vseeno shraniš za kasneje. Vsa shranjena lista je dostopna z enim klikom prek "Samo priljubljeni" filtra.
 
 ## Testirano z
 

@@ -20,7 +20,7 @@ import {
   DialogTitle,
   DialogDescription,
 } from '@/components/ui/dialog';
-import { RefreshCw, Download, ExternalLink, ChevronLeft, ChevronRight, Filter, ImageIcon, AlertTriangle, Target, MapPin, Clock } from 'lucide-react';
+import { RefreshCw, Download, ExternalLink, ChevronLeft, ChevronRight, Filter, ImageIcon, AlertTriangle, Target, MapPin, Clock, Bookmark, Sparkles } from 'lucide-react';
 import { toast } from 'sonner';
 import { cn } from '@/lib/utils';
 
@@ -41,6 +41,7 @@ interface Listing {
   aiEstimatedValue: number | null;
   aiImageVerdict: string | null;
   aiImageAnalysis: string | null;
+  isBookmarked: boolean;
   monitor: { name: string; source: string };
 }
 
@@ -69,6 +70,7 @@ export function ListingsView() {
   const [minScore, setMinScore] = useState<string>('');
   const [maxRisk, setMaxRisk] = useState<string>('');
   const [hasImage, setHasImage] = useState(false);
+  const [bookmarkedOnly, setBookmarkedOnly] = useState(false);
   const [sort, setSort] = useState<string>('firstSeen');
   const [offset, setOffset] = useState(0);
   const limit = 50;
@@ -82,6 +84,7 @@ export function ListingsView() {
       if (minScore) params.set('minScore', minScore);
       if (maxRisk) params.set('maxRisk', maxRisk);
       if (hasImage) params.set('hasImage', '1');
+      if (bookmarkedOnly) params.set('bookmarked', '1');
       params.set('sort', sort);
       params.set('limit', String(limit));
       params.set('offset', String(offset));
@@ -94,7 +97,7 @@ export function ListingsView() {
     } finally {
       setLoading(false);
     }
-  }, [monitorId, verdict, minScore, maxRisk, hasImage, sort, offset]);
+  }, [monitorId, verdict, minScore, maxRisk, hasImage, bookmarkedOnly, sort, offset]);
 
   useEffect(() => {
     (async () => {
@@ -110,7 +113,7 @@ export function ListingsView() {
   }, [load]);
 
   // Reset offset when filters change
-  useEffect(() => { setOffset(0); }, [monitorId, verdict, minScore, maxRisk, hasImage, sort]);
+  useEffect(() => { setOffset(0); }, [monitorId, verdict, minScore, maxRisk, hasImage, bookmarkedOnly, sort]);
 
   const exportCsv = () => {
     const params = new URLSearchParams();
@@ -119,10 +122,39 @@ export function ListingsView() {
     if (minScore) params.set('minScore', minScore);
     if (maxRisk) params.set('maxRisk', maxRisk);
     if (hasImage) params.set('hasImage', '1');
+    if (bookmarkedOnly) params.set('bookmarked', '1');
     params.set('sort', sort);
     params.set('limit', '500');
     params.set('format', 'csv');
     window.open(`/api/listings?${params}`, '_blank');
+  };
+
+  // v1.4: Toggle bookmark
+  const toggleBookmark = async (id: string, current: boolean) => {
+    // Optimistic update
+    setData(prev => prev ? {
+      ...prev,
+      listings: prev.listings.map(l =>
+        l.id === id ? { ...l, isBookmarked: !current } : l
+      ),
+    } : prev);
+    try {
+      await fetch('/api/listings/bookmark', {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ id, isBookmarked: !current }),
+      });
+      toast.success(!current ? '⭐ Shranjeno' : 'Odstranjeno iz shranjenih');
+    } catch {
+      toast.error('Napaka pri shranjevanju');
+      // Revert on error
+      setData(prev => prev ? {
+        ...prev,
+        listings: prev.listings.map(l =>
+          l.id === id ? { ...l, isBookmarked: current } : l
+        ),
+      } : prev);
+    }
   };
 
   return (
@@ -210,8 +242,17 @@ export function ListingsView() {
               <ImageIcon className="w-3.5 h-3.5" />
               Samo z sliko
             </Button>
-            {(monitorId !== 'all' || verdict !== 'all' || minScore || maxRisk || hasImage) && (
-              <Button size="sm" variant="ghost" onClick={() => { setMonitorId('all'); setVerdict('all'); setMinScore(''); setMaxRisk(''); setHasImage(false); }} className="h-7 text-xs">
+            <Button
+              size="sm"
+              variant={bookmarkedOnly ? 'default' : 'outline'}
+              onClick={() => setBookmarkedOnly(!bookmarkedOnly)}
+              className="h-7 text-xs gap-2"
+            >
+              <Bookmark className="w-3.5 h-3.5" />
+              Samo priljubljeni
+            </Button>
+            {(monitorId !== 'all' || verdict !== 'all' || minScore || maxRisk || hasImage || bookmarkedOnly) && (
+              <Button size="sm" variant="ghost" onClick={() => { setMonitorId('all'); setVerdict('all'); setMinScore(''); setMaxRisk(''); setHasImage(false); setBookmarkedOnly(false); }} className="h-7 text-xs">
                 Počisti filtre
               </Button>
             )}
@@ -239,7 +280,12 @@ export function ListingsView() {
           </div>
           <div className="space-y-2">
             {data.listings.map(l => (
-              <ListingRow key={l.id} listing={l} onOpenDetail={() => setDetailListingId(l.id)} />
+              <ListingRow
+                key={l.id}
+                listing={l}
+                onOpenDetail={() => setDetailListingId(l.id)}
+                onToggleBookmark={() => toggleBookmark(l.id, l.isBookmarked)}
+              />
             ))}
           </div>
           {/* Pagination */}
@@ -280,7 +326,7 @@ export function ListingsView() {
   );
 }
 
-function ListingRow({ listing, onOpenDetail }: { listing: Listing; onOpenDetail: () => void }) {
+function ListingRow({ listing, onOpenDetail, onToggleBookmark }: { listing: Listing; onOpenDetail: () => void; onToggleBookmark: () => void }) {
   const verdictColor =
     listing.aiVerdict === 'PRILIKA' ? 'border-primary/40 text-primary' :
     listing.aiVerdict === 'SUMNJIVO' ? 'border-amber-400/40 text-amber-400' :
@@ -291,7 +337,10 @@ function ListingRow({ listing, onOpenDetail }: { listing: Listing; onOpenDetail:
     null;
 
   return (
-    <Card className="bg-card/50 hover:bg-card hover:border-primary/30 transition-colors cursor-pointer" onClick={onOpenDetail}>
+    <Card className={cn(
+      'bg-card/50 hover:bg-card hover:border-primary/30 transition-colors cursor-pointer',
+      listing.isBookmarked && 'border-primary/50 ring-1 ring-primary/20'
+    )} onClick={onOpenDetail}>
       <CardContent className="p-3">
         <div className="flex items-start gap-3">
           {listing.imageUrl ? (
@@ -341,41 +390,93 @@ function ListingRow({ listing, onOpenDetail }: { listing: Listing; onOpenDetail:
               <span>• {formatTimeAgo(listing.firstSeenAt)}</span>
             </div>
           </div>
+          <button
+            onClick={(e) => { e.stopPropagation(); onToggleBookmark(); }}
+            className={cn(
+              'shrink-0 p-1.5 rounded hover:bg-primary/10 transition-colors',
+              listing.isBookmarked ? 'text-primary' : 'text-muted-foreground hover:text-primary'
+            )}
+            title={listing.isBookmarked ? 'Odstrani iz shranjenih' : 'Shrani'}
+          >
+            <Bookmark className={cn('w-4 h-4', listing.isBookmarked && 'fill-current')} />
+          </button>
         </div>
       </CardContent>
     </Card>
   );
 }
 
-// v1.3: Listing detail modal
+// v1.3+v1.4: Listing detail modal
 function ListingDetailModal({ listingId, onClose }: { listingId: string | null; onClose: () => void }) {
   const [data, setData] = useState<any>(null);
   const [loading, setLoading] = useState(false);
+  const [fetchingDetail, setFetchingDetail] = useState(false);
+  const [togglingBookmark, setTogglingBookmark] = useState(false);
 
-  useEffect(() => {
+  const loadDetail = useCallback(async () => {
     if (!listingId) {
       setData(null);
       return;
     }
     setLoading(true);
-    (async () => {
-      try {
-        const res = await fetch(`/api/listings/${listingId}`);
-        if (!res.ok) throw new Error();
-        const d = await res.json();
-        setData(d);
-      } catch {
-        toast.error('Ne morem naložiti podrobnosti');
-      } finally {
-        setLoading(false);
-      }
-    })();
+    try {
+      const res = await fetch(`/api/listings/${listingId}`);
+      if (!res.ok) throw new Error();
+      const d = await res.json();
+      setData(d);
+    } catch {
+      toast.error('Ne morem naložiti podrobnosti');
+    } finally {
+      setLoading(false);
+    }
   }, [listingId]);
+
+  useEffect(() => { loadDetail(); }, [loadDetail]);
 
   if (!listingId) return null;
 
   const listing = data?.listing;
   const similar = data?.similar ?? [];
+  const priceHistory = data?.priceHistory ?? [];
+
+  const fetchDetailPage = async () => {
+    if (!listing) return;
+    setFetchingDetail(true);
+    try {
+      const res = await fetch(`/api/listings/${listing.id}/fetch-detail`, { method: 'POST' });
+      const d = await res.json();
+      if (d.ok) {
+        toast.success(`✓ Pridobljenih ${d.images?.length ?? 0} slik in ${(d.fullDescription?.length ?? 0)} znakov opisa`);
+        await loadDetail();
+      } else {
+        toast.error(`Napaka: ${d.error?.slice(0, 80)}`);
+      }
+    } catch {
+      toast.error('Napaka pri pridobivanju detail page');
+    } finally {
+      setFetchingDetail(false);
+    }
+  };
+
+  const toggleBookmark = async () => {
+    if (!listing) return;
+    setTogglingBookmark(true);
+    try {
+      const res = await fetch('/api/listings/bookmark', {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ id: listing.id, isBookmarked: !listing.isBookmarked }),
+      });
+      if (res.ok) {
+        toast.success(!listing.isBookmarked ? '⭐ Shranjeno' : 'Odstranjeno iz shranjenih');
+        await loadDetail();
+      }
+    } catch {
+      toast.error('Napaka');
+    } finally {
+      setTogglingBookmark(false);
+    }
+  };
 
   return (
     <Dialog open={!!listingId} onOpenChange={(open) => !open && onClose()}>
@@ -398,22 +499,37 @@ function ListingDetailModal({ listingId, onClose }: { listingId: string | null; 
           </div>
         ) : (
           <div className="space-y-4">
-            {/* Image */}
-            {listing.imageUrl && (
+            {/* Image gallery - primary image + detail images if fetched */}
+            {(listing.imageUrl || (listing.detailImages?.length ?? 0) > 0) && (
               <div className="rounded overflow-hidden border border-border bg-muted/30">
-                <img
-                  src={listing.imageUrl}
-                  alt={listing.title}
-                  className="w-full max-h-80 object-contain bg-background"
-                  onError={(e) => { (e.target as HTMLImageElement).style.display = 'none'; }}
-                />
+                {listing.detailImages && listing.detailImages.length > 0 ? (
+                  <div className="grid grid-cols-2 sm:grid-cols-3 gap-1 p-1 max-h-96 overflow-y-auto">
+                    {listing.detailImages.map((img: string, i: number) => (
+                      <img
+                        key={i}
+                        src={img}
+                        alt={`Slika ${i + 1}`}
+                        className="w-full h-24 object-cover rounded bg-background cursor-pointer hover:opacity-80"
+                        loading="lazy"
+                        onError={(e) => { (e.target as HTMLImageElement).style.display = 'none'; }}
+                      />
+                    ))}
+                  </div>
+                ) : listing.imageUrl ? (
+                  <img
+                    src={listing.imageUrl}
+                    alt={listing.title}
+                    className="w-full max-h-80 object-contain bg-background"
+                    onError={(e) => { (e.target as HTMLImageElement).style.display = 'none'; }}
+                  />
+                ) : null}
               </div>
             )}
 
             {/* Title + price */}
             <div>
               <h2 className="font-bold text-base mb-1">{listing.title}</h2>
-              <div className="flex items-center gap-3 text-sm">
+              <div className="flex items-center gap-3 text-sm flex-wrap">
                 <span className="text-amber-400 font-mono text-lg">{listing.priceText}</span>
                 {listing.aiEstimatedValue && (
                   <span className="text-xs text-primary">
@@ -429,7 +545,7 @@ function ListingDetailModal({ listingId, onClose }: { listingId: string | null; 
                 )}
               </div>
               {(listing.location || listing.firstSeenAt) && (
-                <div className="flex items-center gap-3 text-[11px] text-muted-foreground mt-1.5">
+                <div className="flex items-center gap-3 text-[11px] text-muted-foreground mt-1.5 flex-wrap">
                   {listing.location && (
                     <span className="flex items-center gap-1">
                       <MapPin className="w-3 h-3" /> {listing.location}
@@ -471,6 +587,36 @@ function ListingDetailModal({ listingId, onClose }: { listingId: string | null; 
               </div>
             )}
 
+            {/* v1.4: Price history */}
+            {priceHistory.length > 1 && (
+              <div>
+                <h4 className="text-xs uppercase tracking-wider text-muted-foreground mb-2 flex items-center gap-1.5">
+                  📈 Zgodovina cene ({priceHistory.length} {priceHistory.length === 1 ? 'zapisek' : 'zapiskov'})
+                </h4>
+                <div className="space-y-1">
+                  {priceHistory.map((ph: any, i: number) => {
+                    const prev = i > 0 ? priceHistory[i - 1] : null;
+                    const changed = prev && (prev.price !== ph.price);
+                    const diff = changed && prev.price != null && ph.price != null ? ph.price - prev.price : null;
+                    return (
+                      <div key={ph.id} className="flex items-center gap-2 text-xs p-1.5 bg-background/30 rounded">
+                        <span className="font-mono text-amber-400">{ph.priceText}</span>
+                        <span className="text-muted-foreground text-[10px]">• {new Date(ph.seenAt).toLocaleString('sl-SI')}</span>
+                        {diff != null && (
+                          <Badge variant="outline" className={cn(
+                            'text-[10px] ml-auto',
+                            diff < 0 ? 'border-primary/40 text-primary' : 'border-amber-400/40 text-amber-400',
+                          )}>
+                            {diff < 0 ? '↓' : '↑'} {Math.abs(diff)}€ ({diff < 0 ? 'padec' : 'dvig'})
+                          </Badge>
+                        )}
+                      </div>
+                    );
+                  })}
+                </div>
+              </div>
+            )}
+
             {/* AI reason */}
             {listing.aiReason && (
               <div>
@@ -492,6 +638,21 @@ function ListingDetailModal({ listingId, onClose }: { listingId: string | null; 
                     listing.aiImageVerdict === 'STOCK_PHOTO' && 'border-amber-400/40 text-amber-400',
                   )}>{listing.aiImageVerdict}</Badge>
                 )}
+              </div>
+            )}
+
+            {/* v1.4: Full detail description (from detail page fetch) */}
+            {listing.detailDescription && (
+              <div>
+                <h4 className="text-xs uppercase tracking-wider text-muted-foreground mb-1 flex items-center gap-1.5">
+                  📄 Celoten opis (z detail strani)
+                  {listing.detailFetchedAt && (
+                    <span className="text-[10px] font-normal">
+                      • pridobljeno {new Date(listing.detailFetchedAt).toLocaleString('sl-SI')}
+                    </span>
+                  )}
+                </h4>
+                <p className="text-sm bg-background/50 border border-border rounded p-3 max-h-48 overflow-y-auto whitespace-pre-wrap">{listing.detailDescription}</p>
               </div>
             )}
 
@@ -533,11 +694,31 @@ function ListingDetailModal({ listingId, onClose }: { listingId: string | null; 
             )}
 
             {/* Action buttons */}
-            <div className="flex gap-2 pt-2 border-t border-border">
+            <div className="flex flex-wrap gap-2 pt-2 border-t border-border">
               <Button asChild size="sm" className="gap-2 bg-primary text-primary-foreground hover:bg-primary/90">
                 <a href={listing.url} target="_blank" rel="noopener noreferrer">
                   <ExternalLink className="w-3.5 h-3.5" /> Odpri oglas
                 </a>
+              </Button>
+              <Button
+                size="sm"
+                variant="outline"
+                onClick={toggleBookmark}
+                disabled={togglingBookmark}
+                className={cn('gap-2', listing.isBookmarked && 'border-primary/40 text-primary')}
+              >
+                <Bookmark className={cn('w-3.5 h-3.5', listing.isBookmarked && 'fill-current')} />
+                {listing.isBookmarked ? 'Shranjeno' : 'Shrani'}
+              </Button>
+              <Button
+                size="sm"
+                variant="outline"
+                onClick={fetchDetailPage}
+                disabled={fetchingDetail}
+                className="gap-2"
+              >
+                {fetchingDetail ? <RefreshCw className="w-3.5 h-3.5 animate-spin" /> : <Sparkles className="w-3.5 h-3.5" />}
+                Pridobi detail page
               </Button>
             </div>
           </div>

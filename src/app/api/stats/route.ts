@@ -13,6 +13,7 @@ export async function GET() {
     unreadAlerts,
     prilikaAlerts,
     sumnjivoAlerts,
+    bookmarkedListings,
     recentRuns,
   ] = await Promise.all([
     db.monitor.count(),
@@ -22,6 +23,7 @@ export async function GET() {
     db.alert.count({ where: { isRead: false, isArchived: false } }),
     db.alert.count({ where: { aiVerdict: 'PRILIKA' } }),
     db.alert.count({ where: { aiVerdict: 'SUMNJIVO' } }),
+    db.listing.count({ where: { isBookmarked: true } }),
     db.runLog.findMany({
       take: 10,
       orderBy: { startedAt: 'desc' },
@@ -41,6 +43,7 @@ export async function GET() {
     unreadAlerts,
     prilikaAlerts,
     sumnjivoAlerts,
+    bookmarkedListings,
     newListings24h,
     newAlerts24h,
     recentRuns,

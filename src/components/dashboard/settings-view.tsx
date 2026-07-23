@@ -15,7 +15,7 @@ import {
   SelectValue,
 } from '@/components/ui/select';
 import { Badge } from '@/components/ui/badge';
-import { RefreshCw, Save, Zap, Send, Cpu, Key, Bot, MessageSquare, AlertCircle, CheckCircle2, Download, Upload, Database, Trash2 } from 'lucide-react';
+import { RefreshCw, Save, Zap, Send, Cpu, Key, Bot, MessageSquare, AlertCircle, CheckCircle2, Download, Upload, Database, Trash2, Bell } from 'lucide-react';
 import { toast } from 'sonner';
 import { cn } from '@/lib/utils';
 
@@ -30,6 +30,10 @@ interface Settings {
   telegramBotTokenSet: boolean;
   telegramChatId: string;
   telegramEnabled: boolean;
+  // v1.4
+  discordWebhookUrlSet: boolean;
+  discordWebhookUrlMasked: string;
+  discordEnabled: boolean;
   heartbeatEnabled: boolean;
   heartbeatHour: number;
   lastHeartbeatAt: string | null;
@@ -87,6 +91,11 @@ export function SettingsView() {
   const [telegramBotToken, setTelegramBotToken] = useState('');
   const [telegramChatId, setTelegramChatId] = useState('');
   const [telegramEnabled, setTelegramEnabled] = useState(false);
+  // v1.4: Discord
+  const [discordWebhookUrl, setDiscordWebhookUrl] = useState('');
+  const [discordEnabled, setDiscordEnabled] = useState(false);
+  const [testingDc, setTestingDc] = useState(false);
+  const [dcTestResult, setDcTestResult] = useState<{ ok: boolean; message: string } | null>(null);
   const [heartbeatEnabled, setHeartbeatEnabled] = useState(true);
   const [heartbeatHour, setHeartbeatHour] = useState(22);
   const [minOpportunityScore, setMinOpportunityScore] = useState(7);
@@ -116,6 +125,7 @@ export function SettingsView() {
         setModel(data.aiModel);
         setTelegramChatId(data.telegramChatId);
         setTelegramEnabled(data.telegramEnabled);
+        setDiscordEnabled(data.discordEnabled);
         setHeartbeatEnabled(data.heartbeatEnabled);
         setHeartbeatHour(data.heartbeatHour);
         setMinOpportunityScore(data.minOpportunityScore);
@@ -152,6 +162,8 @@ export function SettingsView() {
         aiModel: model,
         telegramChatId,
         telegramEnabled,
+        // v1.4
+        discordEnabled,
         heartbeatEnabled,
         heartbeatHour,
         minOpportunityScore,
@@ -164,6 +176,8 @@ export function SettingsView() {
       if (apiKey) body.aiApiKey = apiKey;
       if (telegramBotToken) body.telegramBotToken = telegramBotToken;
       if (telegramWebhookSecret) body.telegramWebhookSecret = telegramWebhookSecret;
+      // v1.4
+      if (discordWebhookUrl) body.discordWebhookUrl = discordWebhookUrl;
 
       const res = await fetch('/api/settings', {
         method: 'POST',
@@ -232,6 +246,29 @@ export function SettingsView() {
       setTgTestResult({ ok: false, message: e?.message ?? 'napaka' });
     } finally {
       setTestingTg(false);
+    }
+  };
+
+  // v1.4: Test Discord webhook
+  const testDiscord = async () => {
+    setTestingDc(true);
+    setDcTestResult(null);
+    try {
+      const body: any = { action: 'test-discord' };
+      if (discordWebhookUrl) body.discordWebhookUrl = discordWebhookUrl;
+      const res = await fetch('/api/settings', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(body),
+      });
+      const data = await res.json();
+      setDcTestResult(data);
+      if (data.ok) toast.success('Discord test poslan');
+      else toast.error(`Discord: ${data.message?.slice(0, 80)}`);
+    } catch (e: any) {
+      setDcTestResult({ ok: false, message: e?.message ?? 'napaka' });
+    } finally {
+      setTestingDc(false);
     }
   };
 
@@ -414,6 +451,55 @@ export function SettingsView() {
             <p className={cn('text-xs flex items-center gap-1.5', tgTestResult.ok ? 'text-primary' : 'text-destructive')}>
               {tgTestResult.ok ? <CheckCircle2 className="w-3.5 h-3.5" /> : <AlertCircle className="w-3.5 h-3.5" />}
               {tgTestResult.message}
+            </p>
+          )}
+        </CardContent>
+      </Card>
+
+      {/* v1.4: Discord card */}
+      <Card className="bg-card/50">
+        <CardHeader>
+          <CardTitle className="text-sm font-bold uppercase tracking-wider flex items-center gap-2">
+            <Bell className="w-4 h-4 text-primary" />
+            Discord webhook <Badge variant="outline" className="text-[10px] text-primary border-primary/40">v1.4</Badge>
+          </CardTitle>
+          <CardDescription>
+            Alternativa Telegramu — alerti kot rich embed sporočila z barvami glede na verdikt.
+          </CardDescription>
+        </CardHeader>
+        <CardContent className="space-y-4">
+          <div>
+            <Label htmlFor="s-dc-url" className="text-xs uppercase tracking-wider">Webhook URL</Label>
+            <Input
+              id="s-dc-url"
+              type="password"
+              value={discordWebhookUrl}
+              onChange={(e) => setDiscordWebhookUrl(e.target.value)}
+              placeholder={settings.discordWebhookUrlSet ? `shranjen (${settings.discordWebhookUrlMasked}) — pusti prazno za ohranitev` : 'https://discord.com/api/webhooks/...'}
+              className="mt-1 font-mono text-xs"
+            />
+            <p className="text-[11px] text-muted-foreground mt-1">
+              Discord → Server Settings → Integrations → Webhooks → New Webhook → Copy Webhook URL.
+              Za razliko od Telegrama, Discord ne zahteva expose-anja localhosta (webhook je pull, ne push).
+            </p>
+          </div>
+          <div className="flex items-center justify-between pt-2 border-t border-border">
+            <div className="flex items-center gap-3">
+              <Switch checked={discordEnabled} onCheckedChange={setDiscordEnabled} />
+              <div>
+                <p className="text-sm font-medium">Omogoči Discord</p>
+                <p className="text-[11px] text-muted-foreground">Alerti in heartbeat bodo šli tudi na Discord (poleg Telegrama, če je vklopljen).</p>
+              </div>
+            </div>
+            <Button size="sm" variant="outline" onClick={testDiscord} disabled={testingDc} className="gap-2">
+              {testingDc ? <RefreshCw className="w-3.5 h-3.5 animate-spin" /> : <Send className="w-3.5 h-3.5" />}
+              Test
+            </Button>
+          </div>
+          {dcTestResult && (
+            <p className={cn('text-xs flex items-center gap-1.5', dcTestResult.ok ? 'text-primary' : 'text-destructive')}>
+              {dcTestResult.ok ? <CheckCircle2 className="w-3.5 h-3.5" /> : <AlertCircle className="w-3.5 h-3.5" />}
+              {dcTestResult.message}
             </p>
           )}
         </CardContent>
