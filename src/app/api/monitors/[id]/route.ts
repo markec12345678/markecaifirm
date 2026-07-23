@@ -35,6 +35,9 @@ export async function PUT(req: NextRequest, { params }: { params: Promise<{ id: 
   if (typeof body.intervalMinutes === 'number') data.intervalMinutes = body.intervalMinutes;
   if (typeof body.isActive === 'boolean') data.isActive = body.isActive;
   if (typeof body.customPrompt === 'string') data.customPrompt = body.customPrompt;
+  // v1.2: schedule window
+  if (typeof body.runStartHour === 'number' || body.runStartHour === null) data.runStartHour = body.runStartHour;
+  if (typeof body.runEndHour === 'number' || body.runEndHour === null) data.runEndHour = body.runEndHour;
 
   const updated = await db.monitor.update({ where: { id }, data });
   return NextResponse.json(updated);

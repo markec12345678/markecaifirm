@@ -205,8 +205,9 @@ export function buildAlertInlineButtons(opts: {
   // Row 2: action callbacks (require webhook)
   if (opts.alertId) {
     rows.push([
+      { text: '👍 Zanima me', callbackData: `interested:${opts.alertId}` },
       { text: '✅ Arhiviraj', callbackData: `archive:${opts.alertId}` },
-      { text: '🚫 Označi prevaro', callbackData: `scam:${opts.alertId}` },
+      { text: '🚫 Prevara', callbackData: `scam:${opts.alertId}` },
     ]);
   }
   return rows;

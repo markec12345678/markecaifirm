@@ -3,6 +3,8 @@
 Lokalni AI lovec priložnosti za slovenske spletne portale (Bolha, Nepremičnine, Avtonet, ...).
 V lastnem API ključu in lastnem AI modelu (Ollama / OpenAI / Anthropic / OpenAI-kompatibilni).
 
+**v1.2** — dodani: urnik delovanja (schedule windows) za stroškovni nadzor, pregled vseh oglasov (Listings browser) za validacijo AI, analitika z grafy (alerts/day, verdikt distribucija, performansa monitorjev, natančnost AI), CSV export za vse poglede, feedback loop za AI natančnost (👍 Zanima me / 🚫 Prevara).
+
 **v1.1** — dodani: heartbeat (dnevni povzetek na Telegram), AI analiza slik oglasov (multimodalni modeli), Bolha Playwright fallback za Cloudflare bypass, Telegram inline tipke z webhook callback podporo.
 
 ## Kar aplikacija počne
@@ -206,6 +208,70 @@ curl "https://api.telegram.org/bot<TOKEN>/setWebhook?url=https://<tvoj-tunnel>/a
 ```
 
 Za odstranitev webhooka: `curl "https://api.telegram.org/bot<TOKEN>/deleteWebhook"`
+
+## v1.2 funkcije
+
+### 1. Urnik delovanja (schedule windows)
+
+Vsak monitor lahko omejiš na delovanje le v določenih urah. Tipičen primer: nepremičninski monitor ne potrebuje delati ob 3:00 zjutraj, ker novi oglasi takrat ne nastajajo.
+
+- **Konfiguracija**: v monitor formi vklopi "Urnik delovanja" in nastavi "Od ure" / "Do ure"
+- **Wrap-around**: ura 22-6 pomeni delovanje 22:00–06:00 (čez polnoč)
+- **Obnašanje**: cron endpoint samodejno preskoči monitorje izven okna (ne vrača napake, samo `skipped` v odgovoru)
+- **Statistika**: na dashboardu vidiš "skipped: N" v cron odgovoru
+
+### 2. Pregled vseh oglasov (Listings browser)
+
+Nov zavihek "Oglasi" prikazuje vse scraped oglase z AI oceno — vključno z NEZANIMIVO (tistimi, ki niso sprožili alerta). To je ključno za validacijo AI:
+
+- **Filtri**: monitor, verdikt (PRILIKA/SUMNJIVO/NEZANIMIVO), min AI score, max AI risk, samo z sliko, sortiranje
+- **Podrobnosti**: klik na oglas razkrije AI razlog, analizo slike, originalni opis in povezavo
+- **Indikator cene**: pri vsakem oglasu vidiš tudi razliko med navedeno ceno in AI-jevo oceno tržne vrednosti
+- **Paginacija**: 50 na stran
+
+**Zakaj je to ključno**: če AI označuje preveč oglasov kot NEZANIMIVO, morda zamudiš dobre priložnosti. Če preveč kot PRILIKA, dobiš preveč lažnih alarmov. Listings browser omogoča, da preverjaš obe stranici.
+
+### 3. Analitika (Analytics)
+
+Nov zavihek "Analitika" s tremi ključnimi pogledi:
+
+**AI natančnost** (precision):
+- Število alertov z vsako oznako (👍 Zanima me / ✅ Arhivirano / 🚫 Prevara / brez akcije)
+- Precision = interested / (interested + scam) — visok pomeni, da AI dobro ločuje prave priložnosti
+- Barvni indikator: zeleno (≥70%), rumeno (40-70%), rdeče (<40%)
+- Povezava na actionable nasvete (dvigaj threshold, dodaj excludeKeywords)
+
+**Grafy** (recharts):
+- Alerti na dan (zadnjih 14 dni) — line chart z razčlenitvijo po verdiktu
+- Distribucija verdiktov (skupno) — pie chart
+- Novi oglasi na dan — bar chart
+
+**Performansa monitorjev** (tabela):
+- Za vsak monitor: št. oglasov, št. alertov, št. prilik, success rate, povprečen čas izvedbe
+- Precision per monitor — identificiraj slabo nastavljene monitorje
+- Actionable: če je precision < 40%, premakni threshold ali dodaj excludeKeywords
+
+### 4. CSV export
+
+Vsi pogledi (Oglasi, Alerti) imajo gumb "CSV", ki izvozi trenutno filtrirane podatke:
+- **Listings**: firstSeenAt, monitor, source, title, price, location, url, aiScore, aiRisk, aiVerdict, aiReason, aiEstimatedValue, aiImageVerdict, aiImageAnalysis
+- **Alerts**: createdAt, monitor, title, url, aiScore, aiRisk, aiVerdict, sentTelegram, isRead, isArchived, userAction, userActionedAt
+
+CSV je v UTF-8, primeren za Excel/Google Sheets/LibreOffice.
+
+### 5. AI feedback loop
+
+V Alerti zavihku ima vsak alert tri gumbe:
+- **👍 Zanima me** — označi kot dobro priložnost (poveča precision)
+- **🚫 Prevara** — označi kot slabo (zniža precision, vpliva na threshold tuning)
+- **✅ Arhiviraj** — neutralna akcija
+
+Telegram inline tipke so enake (👍 Zanima me / ✅ Arhiviraj / 🚫 Prevara) — zahtevajo webhook (glej v1.1 navodila).
+
+Po nekaj tednih boš imel dovolj povratnih informacij za tuning thresholdov v Nastavitvah. Priporočam:
+- Če precision < 50%: dvigaj `minOpportunityScore` iz 7 na 8
+- Če precision > 90% in malo alertov: spusti `minOpportunityScore` na 6
+- Če veliko SCAM označb: dvigaj `maxRiskScore` ni pravilno — raje dodaj excludeKeywords v monitor
 
 ## Testirano z
 

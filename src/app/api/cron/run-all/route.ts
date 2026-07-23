@@ -26,6 +26,7 @@ export async function GET(req: NextRequest) {
   ]);
   return NextResponse.json({
     ran: monitorsResult.ran,
+    skipped: monitorsResult.skipped,
     results: monitorsResult.results,
     heartbeat: heartbeatResult,
     timestamp: new Date().toISOString(),
