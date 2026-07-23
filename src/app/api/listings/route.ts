@@ -26,6 +26,7 @@ export async function GET(req: NextRequest) {
   const maxRisk = url.searchParams.get('maxRisk') ? parseInt(url.searchParams.get('maxRisk')!, 10) : undefined;
   const hasImage = url.searchParams.get('hasImage') === '1' ? true : undefined;
   const bookmarked = url.searchParams.get('bookmarked') === '1' ? true : undefined;
+  const contactStatus = url.searchParams.get('contactStatus') ?? undefined;
   const limit = Math.min(parseInt(url.searchParams.get('limit') ?? '100', 10), 500);
   const offset = parseInt(url.searchParams.get('offset') ?? '0', 10);
   const sortField = url.searchParams.get('sort') ?? 'firstSeen';
@@ -39,6 +40,7 @@ export async function GET(req: NextRequest) {
   if (maxRisk != null) where.aiRisk = { lte: maxRisk };
   if (hasImage) where.NOT = { imageUrl: null };
   if (bookmarked) where.isBookmarked = true;
+  if (contactStatus) where.contactStatus = contactStatus;
 
   const orderBy: any = {
     firstSeen: 'firstSeenAt',
