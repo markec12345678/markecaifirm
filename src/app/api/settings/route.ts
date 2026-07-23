@@ -43,6 +43,14 @@ export async function GET() {
     digestMode: s.digestMode,
     digestHour: s.digestHour,
     quickResponseTemplatesSet: !!s.quickResponseTemplates && s.quickResponseTemplates !== '[]',
+    // v2.2: Quiet hours
+    quietHoursEnabled: s.quietHoursEnabled,
+    quietStartHour: s.quietStartHour,
+    quietEndHour: s.quietEndHour,
+    // v2.2: Auto-cleanup
+    autoCleanupEnabled: s.autoCleanupEnabled,
+    autoCleanupAlertsDays: s.autoCleanupAlertsDays,
+    autoCleanupListingsDays: s.autoCleanupListingsDays,
     updatedAt: s.updatedAt,
   });
 }
@@ -127,6 +135,14 @@ export async function POST(req: NextRequest) {
     data.digestMode = body.digestMode;
   }
   if (typeof body.digestHour === 'number') data.digestHour = body.digestHour;
+  // v2.2: Quiet hours
+  if (typeof body.quietHoursEnabled === 'boolean') data.quietHoursEnabled = body.quietHoursEnabled;
+  if (typeof body.quietStartHour === 'number') data.quietStartHour = body.quietStartHour;
+  if (typeof body.quietEndHour === 'number') data.quietEndHour = body.quietEndHour;
+  // v2.2: Auto-cleanup
+  if (typeof body.autoCleanupEnabled === 'boolean') data.autoCleanupEnabled = body.autoCleanupEnabled;
+  if (typeof body.autoCleanupAlertsDays === 'number') data.autoCleanupAlertsDays = body.autoCleanupAlertsDays;
+  if (typeof body.autoCleanupListingsDays === 'number') data.autoCleanupListingsDays = body.autoCleanupListingsDays;
   if (typeof body.aiApiKey === 'string' && body.aiApiKey.trim() !== '') {
     data.aiApiKey = body.aiApiKey.trim();
   }
