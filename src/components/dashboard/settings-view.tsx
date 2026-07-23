@@ -15,7 +15,7 @@ import {
   SelectValue,
 } from '@/components/ui/select';
 import { Badge } from '@/components/ui/badge';
-import { RefreshCw, Save, Zap, Send, Cpu, Key, Bot, MessageSquare, AlertCircle, CheckCircle2, Download, Upload, Database, Trash2, Bell, Smartphone, SmartphoneCharging } from 'lucide-react';
+import { RefreshCw, Save, Zap, Send, Cpu, Key, Bot, MessageSquare, AlertCircle, CheckCircle2, Download, Upload, Database, Trash2, Bell, Smartphone, SmartphoneCharging, Mail } from 'lucide-react';
 import { toast } from 'sonner';
 import { cn } from '@/lib/utils';
 
@@ -47,6 +47,10 @@ interface Settings {
   // v1.5
   pushEnabled: boolean;
   vapidPublicKeySet: boolean;
+  // v1.6: Digest
+  digestMode: string;
+  digestHour: number;
+  quickResponseTemplatesSet: boolean;
   updatedAt: string;
 }
 
@@ -113,6 +117,10 @@ export function SettingsView() {
   const [pushSupported, setPushSupported] = useState(false);
   const [pushSubscribed, setPushSubscribed] = useState(false);
   const [pushLoading, setPushLoading] = useState(false);
+  // v1.6: Digest
+  const [digestMode, setDigestMode] = useState('instant');
+  const [digestHour, setDigestHour] = useState(20);
+  const [digestSending, setDigestSending] = useState(false);
   const [heartbeatSending, setHeartbeatSending] = useState(false);
 
   // Test states
@@ -143,6 +151,8 @@ export function SettingsView() {
         setPlaywrightEnabled(data.playwrightEnabled ?? false);
         setTelegramInlineButtons(data.telegramInlineButtons ?? true);
         setPushEnabled(data.pushEnabled ?? false);
+        setDigestMode(data.digestMode ?? 'instant');
+        setDigestHour(data.digestHour ?? 20);
       } catch {
         toast.error('Ne morem naložiti nastavitev');
       } finally {
@@ -201,6 +211,9 @@ export function SettingsView() {
         telegramInlineButtons,
         // v1.5
         pushEnabled,
+        // v1.6
+        digestMode,
+        digestHour,
       };
       if (apiKey) body.aiApiKey = apiKey;
       if (telegramBotToken) body.telegramBotToken = telegramBotToken;
@@ -929,6 +942,73 @@ curl "https://api.telegram.org/bot<TOKEN>/setWebhook\\
             <p className="text-[11px] text-amber-400 mt-2">
               ⚠ Push na iOS zahteva iOS 16.4+ in instalirano PWA (ne deluje v Safari browserju).
             </p>
+          </div>
+        </CardContent>
+      </Card>
+
+      {/* v1.6: Digest mode */}
+      <Card className="bg-card/50">
+        <CardHeader>
+          <CardTitle className="text-sm font-bold uppercase tracking-wider flex items-center gap-2">
+            <Mail className="w-4 h-4 text-primary" />
+            Digest mode <Badge variant="outline" className="text-[10px] text-primary border-primary/40">v1.6</Badge>
+          </CardTitle>
+          <CardDescription>
+            Namesto instant alertov (vsak posebej) prejmi dnevni ali tedenski povzetek z top priložnostmi.
+          </CardDescription>
+        </CardHeader>
+        <CardContent className="space-y-4">
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+            <div>
+              <Label className="text-xs uppercase tracking-wider">Način</Label>
+              <Select value={digestMode} onValueChange={setDigestMode}>
+                <SelectTrigger className="mt-1"><SelectValue /></SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="instant">⚡ Instant (vsak alert posebej)</SelectItem>
+                  <SelectItem value="daily">📊 Dnevni povzetek</SelectItem>
+                  <SelectItem value="weekly">📅 Tedenski povzetek</SelectItem>
+                </SelectContent>
+              </Select>
+            </div>
+            {digestMode !== 'instant' && (
+              <div>
+                <Label className="text-xs uppercase tracking-wider">Ura pošiljanja</Label>
+                <Input
+                  type="number"
+                  min={0}
+                  max={23}
+                  value={digestHour}
+                  onChange={(e) => setDigestHour(parseInt(e.target.value, 10) || 20)}
+                  className="mt-1 font-mono text-center w-24"
+                />
+              </div>
+            )}
+          </div>
+          {digestMode !== 'instant' && (
+            <p className="text-[11px] text-muted-foreground">
+              Povzetek se pošlje ob {digestHour}:00 ali ob naslednjem cron klicu po uri. Vsebuje: št. novih oglasov, št. alertov, top 5 priložnosti z AI razlogi.
+            </p>
+          )}
+          <div className="flex items-center gap-2">
+            <Button
+              size="sm"
+              variant="outline"
+              disabled={digestSending || digestMode === 'instant'}
+              onClick={async () => {
+                setDigestSending(true);
+                try {
+                  const res = await fetch('/api/digest?force=1', { method: 'POST' });
+                  const data = await res.json();
+                  if (data.ok && data.sent) toast.success('Digest poslan');
+                  else toast.info('Digest ni poslan: ' + (data.reason ?? 'napaka'));
+                } catch { toast.error('Napaka'); }
+                finally { setDigestSending(false); }
+              }}
+              className="gap-2"
+            >
+              {digestSending && <RefreshCw className="w-3.5 h-3.5 animate-spin" />}
+              Pošlji testni digest
+            </Button>
           </div>
         </CardContent>
       </Card>
