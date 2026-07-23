@@ -1,0 +1,92 @@
+[
+  {
+    "url": "https://github.com/BoPeng/ai-marketplace-monitor",
+    "name": "BoPeng/ai-marketplace-monitor",
+    "snippet": "An intelligent tool that monitors Facebook Marketplace listings using AI to help you find the best deals. Get instant notifications when items matching your ... Read more",
+    "host_name": "github.com",
+    "rank": 0,
+    "date": "",
+    "favicon": ""
+  },
+  {
+    "url": "https://play.google.com/store/apps/details?id=com.marketplace.monitormobile&hl=en_US",
+    "name": "Marketplace Monitor - Apps on Google Play",
+    "snippet": "Marketplace Monitor is the ultimate app for flippers looking to find the best deals instantly. Our advanced AI technology scans multiple online marketplaces. Read more",
+    "host_name": "play.google.com",
+    "rank": 1,
+    "date": "",
+    "favicon": ""
+  },
+  {
+    "url": "https://apps.apple.com/us/app/marketplace-monitor/id6491068401",
+    "name": "Marketplace Monitor - App Store - Apple",
+    "snippet": "Stop missing out on Deals on Marketplaces! Marketplace Monitor is the ultimate solution for any flipper with its cross platform instant alerts. Read more",
+    "host_name": "apps.apple.com",
+    "rank": 2,
+    "date": "",
+    "favicon": ""
+  },
+  {
+    "url": "https://ai-marketplace-monitor.readthedocs.io/en/latest",
+    "name": "ai-marketplace-monitor 0.10.2 documentation",
+    "snippet": "An intelligent tool that monitors Facebook Marketplace listings using AI to help you find the best deals. Get instant notifications when items matching your ...",
+    "host_name": "ai-marketplace-monitor.readthedocs.io",
+    "rank": 3,
+    "date": "",
+    "favicon": ""
+  },
+  {
+    "url": "https://pypi.org/project/ai-marketplace-monitor/0.7.0",
+    "name": "ai-marketplace-monitor",
+    "snippet": "An AI -based tool for monitoring facebook marketplace . this tool automates the process of searching for specific products, filtering out irrelevant listings,",
+    "host_name": "pypi.org",
+    "rank": 4,
+    "date": "",
+    "favicon": ""
+  },
+  {
+    "url": "https://apify.com/webdatalabs/facebook-marketplace-deal-finder",
+    "name": "Facebook Marketplace Scraper – AI Deal Finder",
+    "snippet": "Facebook Marketplace listings and surface underpriced deals with AI scoring. Perfect for market research, price monitoring , competitor analysis,\nScrape Facebook Marketplace listings and surface underpriced deals with AI scoring. Pricing from $16.00 / 1,000 listing analyzeds",
+    "host_name": "apify.com",
+    "rank": 5,
+    "date": "",
+    "favicon": ""
+  },
+  {
+    "url": "https://www.youtube.com/watch?v=CVlZdvDthOM",
+    "name": "How AI Makes Facebook Marketplace a Gold Mine",
+    "snippet": "We put together a step-by-step business plan for FB Marketplace Scraping! 6,000+ words & 22 pages - with charts and graphs and It also covers ...",
+    "host_name": "www.youtube.com",
+    "rank": 6,
+    "date": "",
+    "favicon": ""
+  },
+  {
+    "url": "https://www.linkedin.com/posts/bo-peng-53668026_github-bopengai-marketplace-monitor-monitor-activity-7288407431150288896-qXkl",
+    "name": "Monitor facebook marketplace with AI | Bo Peng",
+    "snippet": "A tool that periodically searches Facebook Marketplace , filters out repeated, uninteresting, and spam-like listings, and sends phone notifications. Read more",
+    "host_name": "www.linkedin.com",
+    "rank": 7,
+    "date": "",
+    "favicon": ""
+  },
+  {
+    "url": "https://chromewebstore.google.com/detail/spottable-facebook-market/dbgjphnanjmmfjacahfhliahblokmpgh",
+    "name": "Spottable - Facebook Marketplace AI - Chrome Web Store",
+    "snippet": "Spottable is the AI -powered deal analyzer for Facebook Marketplace that tells you instantly whether a listing is a great deal , fairly priced, or overpriced — ... Read more\nSpottable is the AI-powered deal analyzer for Facebook Marketplace that tells you instantly whether a listing is a great deal, fairly priced, or overpriced — ...",
+    "host_name": "chromewebstore.google.com",
+    "rank": 8,
+    "date": "",
+    "favicon": ""
+  },
+  {
+    "url": "https://www.reddit.com/r/FacebookMarketplace/comments/1kza54z/i_built_an_facebook_marketplace_ai_assistant_to",
+    "name": "I built an Facebook Marketplace AI assistant to negotiate",
+    "snippet": "I created this AI assistant. You add all your criteria, the AI finds the listing, analyzes the description & seller profile & pictures of the car.",
+    "host_name": "www.reddit.com",
+    "rank": 9,
+    "date": "",
+    "favicon": ""
+  }
+]
