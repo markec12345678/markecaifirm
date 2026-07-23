@@ -1,0 +1,92 @@
+[
+  {
+    "url": "https://github.com/fendouai/ArbitrageBot",
+    "name": "ArbitrageBot, Detect Arbitrage Opportunities, Trading Clients, etc.",
+    "snippet": "Detects arbitrage opportunities across 131 cryptocurrency exchanges in 50 countries bitcoin-arbitrage opportunity detector and automated trading",
+    "host_name": "github.com",
+    "rank": 0,
+    "date": "",
+    "favicon": ""
+  },
+  {
+    "url": "https://github.com/ericjang/cryptocurrency_arbitrage",
+    "name": "ericjang/cryptocurrency_arbitrage: Automated Trading  - GitHub",
+    "snippet": "This is an automated trading program that detects pairwise and triangular arbitrage opportunities on altcoin/bitcoin exchanges. Missing: scanner | Show results with: scanner",
+    "host_name": "github.com",
+    "rank": 1,
+    "date": "",
+    "favicon": ""
+  },
+  {
+    "url": "https://github.com/BhaveshG-22/ai-trade-agent",
+    "name": "BhaveshG-22/ai-trade-agent: AI crypto arbitrage bot using GPT  - GitHub",
+    "snippet": "This project implements an AI-powered crypto trading agent that automates the discovery and execution of arbitrage opportunities across multiple cryptocurrency ... Missing: scanner | Show results with: scanner",
+    "host_name": "github.com",
+    "rank": 2,
+    "date": "",
+    "favicon": ""
+  },
+  {
+    "url": "https://medium.com/@gwrx2005/top-10-ai-powered-crypto-trading-repositories-on-github-0041862546b6",
+    "name": "Top 10 AI-Powered Crypto Trading Repositories on GitHub - Medium",
+    "snippet": "Below is a ranked list of the top 10 GitHub repositories focused on cryptocurrency trading strategies that incorporate AI techniques (e.g. ... Missing: scanner | Show results with: scanner",
+    "host_name": "medium.com",
+    "rank": 3,
+    "date": "",
+    "favicon": ""
+  },
+  {
+    "url": "https://github.com/jeremylongshore/claude-code-plugins-plus-skills/blob/main/plugins/crypto/arbitrage-opportunity-finder/skills/finding-arbitrage-opportunities/SKILL.md",
+    "name": "claude-code-plugins-plus-skills",
+    "snippet": "Detect profitable arbitrage opportunities across CEX, DEX, and cross-chain markets in real-time. Use when scanning for price spreads, finding arbitrage paths, ...",
+    "host_name": "github.com",
+    "rank": 4,
+    "date": "",
+    "favicon": ""
+  },
+  {
+    "url": "https://github.com/StepanTita/crypto-trading",
+    "name": "StepanTita/crypto-trading: Crypto Arbitrage Explorer: A Dash  - GitHub",
+    "snippet": "Crypto Arbitrage Explorer: A Dash-powered Python tool for real-time visualization of cryptocurrency arbitrage opportunities across exchanges ... Missing: scanner | Show results with: scanner",
+    "host_name": "github.com",
+    "rank": 5,
+    "date": "",
+    "favicon": ""
+  },
+  {
+    "url": "https://github.com/topics/trading-bot-bsc-solana",
+    "name": "trading-bot-bsc-solana · GitHub Topics",
+    "snippet": "AI is an advanced, open-source quantitative trading platform #1 AI Trading Bot for Crypto, Forex & Stocks. Automated Arbitrage Engine v3.4. Works on Solana, ... Missing: opportunity | Show results with: opportunity",
+    "host_name": "github.com",
+    "rank": 6,
+    "date": "",
+    "favicon": ""
+  },
+  {
+    "url": "https://www.reddit.com/r/algotrading/comments/8578th/i_created_an_opensource_cryptocurrency_arbitrage",
+    "name": "I created an open-source cryptocurrency arbitrage detection",
+    "snippet": "An open-source cryptocurrency arbitrage detection library in Python which offers several customizable algorithms to survey over 90 cryptocurrency exchanges in ...",
+    "host_name": "www.reddit.com",
+    "rank": 7,
+    "date": "",
+    "favicon": ""
+  },
+  {
+    "url": "https://github.com/almienava/crypto-arbitrage-scanner",
+    "name": "Crypto Arbitrage Scanner (Arbitradar.io) - GitHub",
+    "snippet": "Arbitradar.io is a real-time crypto arbitrage scanner and dashboard that helps you find, evaluate, and act on price spreads across multiple exchanges—fast.",
+    "host_name": "github.com",
+    "rank": 8,
+    "date": "",
+    "favicon": ""
+  },
+  {
+    "url": "https://github.com/Polymarket/agents",
+    "name": "Trade autonomously on Polymarket using AI Agents - GitHub",
+    "snippet": "Polymarket Agents is a developer framework and set of utilities for building AI agents for Polymarket. This code is free and publicly available ...",
+    "host_name": "github.com",
+    "rank": 9,
+    "date": "",
+    "favicon": ""
+  }
+]

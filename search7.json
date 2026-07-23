@@ -1,0 +1,92 @@
+[
+  {
+    "url": "https://github.com/alyrazik/Baby-AGI",
+    "name": "alyrazik/Baby-AGI - Auto-GPT - GitHub",
+    "snippet": "Run the AI without user authorization, 100% automated. Continuous mode is NOT recommended. It is potentially dangerous and may cause your AI to run forever or ... Missing: scraper | Show results with: scraper",
+    "host_name": "github.com",
+    "rank": 0,
+    "date": "",
+    "favicon": ""
+  },
+  {
+    "url": "https://github.com/yoheinakajima/babyagi",
+    "name": "yoheinakajima/babyagi - GitHub",
+    "snippet": "This newest BabyAGI is an experimental framework for a self-building autonomous agent. for managing functions, running updates, and viewing logs. Missing: gpt continuously computer scraper",
+    "host_name": "github.com",
+    "rank": 1,
+    "date": "",
+    "favicon": ""
+  },
+  {
+    "url": "https://github.com/wangrendong-yition/awesome-ai-agents-20231013",
+    "name": "GitHub - wangrendong-yition/awesome-ai",
+    "snippet": "An agent that can answer HR related queries autonomously using the tools it has on hand. A project inspired by Auto-GPT and BabyAGI, GitHub on its own.",
+    "host_name": "github.com",
+    "rank": 2,
+    "date": "",
+    "favicon": ""
+  },
+  {
+    "url": "https://github.com/topics/autogpt",
+    "name": "autogpt · GitHub Topics",
+    "snippet": "Free Auto GPT with NO paids API is a repository that offers a simple version of Auto GPT, an autonomous AI agent capable of performing tasks independently. Missing: continuously scraper",
+    "host_name": "github.com",
+    "rank": 3,
+    "date": "",
+    "favicon": ""
+  },
+  {
+    "url": "https://github.com/significant-gravitas/autogpt",
+    "name": "AutoGPT — AI agents that finish the work - GitHub",
+    "snippet": "AutoGPT lets you build, deploy, and run AI agents that carry out complete workflows. Describe an outcome in plain English or shape every step in the visual ... Missing: continuously scraper",
+    "host_name": "github.com",
+    "rank": 4,
+    "date": "",
+    "favicon": ""
+  },
+  {
+    "url": "https://www.youtube.com/watch?v=jvpCvRSxXQI&vl=en",
+    "name": "Auto-GPT, BabyAGI, and 4 autonomous agents you must try",
+    "snippet": "We talk about Auto-GPT, BabyAGI, Camel, and the LangChain framework. Repos: - Auto-GPT: https://github.com/Significant-Gravitas/Auto-GPT - ... Missing: continuously running 24/7 scraper",
+    "host_name": "www.youtube.com",
+    "rank": 5,
+    "date": "",
+    "favicon": ""
+  },
+  {
+    "url": "https://mashable.com/article/autogpt-ai-agents-how-to-get-access",
+    "name": "Auto-GPT, BabyAGI, and AgentGPT: How to use AI agents | Mashable",
+    "snippet": "AI agents like Auto-GPT, AgentGPT, and BabyAGI build off of OpenAI's API to automate tasks. Here's how to use them. Missing: continuously 24/7 scraper",
+    "host_name": "mashable.com",
+    "rank": 6,
+    "date": "",
+    "favicon": ""
+  },
+  {
+    "url": "https://github.com/seattled23/Free-AUTO-GPT-with-NO-API",
+    "name": "USE AI AGENTs, like AUTO-GPT or BABYAGI, without paids API",
+    "snippet": "Free AUTOGPT with NO API is a repository that offers a simple version of Autogpt, an autonomous AI agent capable of performing tasks independently.",
+    "host_name": "github.com",
+    "rank": 7,
+    "date": "",
+    "favicon": ""
+  },
+  {
+    "url": "https://generativeai.pub/an-overview-of-autonomous-agents-babyagi-auto-gpt-camel-and-beyond-956efe7fb55d",
+    "name": "An Overview Of Autonomous Agents: BabyAGI, Auto-GPT, CAMEL, and",
+    "snippet": "It's time for us to catch up with the latest releases and look at how these agents work, what types we have so far, and how you can try them yourself. Missing: continuously computer",
+    "host_name": "generativeai.pub",
+    "rank": 8,
+    "date": "",
+    "favicon": ""
+  },
+  {
+    "url": "https://github.com/topics/autonomous-agents",
+    "name": "autonomous-agents · GitHub Topics",
+    "snippet": "A dev-first open source autonomous AI agent framework. Enabling developers to build, manage & run useful autonomous agents quickly and reliably. Missing: continuously scraper",
+    "host_name": "github.com",
+    "rank": 9,
+    "date": "",
+    "favicon": ""
+  }
+]
