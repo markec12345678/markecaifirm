@@ -1,0 +1,132 @@
+// Prisma schema for Markec AI Firm — Opportunity Monitor
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "sqlite"
+  url      = env("DATABASE_URL")
+}
+
+// Single-row table storing app configuration (AI provider, Telegram, etc.)
+model Settings {
+  id              String   @id @default("singleton")
+  // AI provider config
+  aiProvider      String   @default("ollama") // ollama | openai | anthropic | openai-compatible
+  aiBaseUrl       String   @default("http://localhost:11434")
+  aiApiKey        String   @default("")
+  aiModel         String   @default("qwen2.5:7b")
+  // Telegram config
+  telegramBotToken String  @default("")
+  telegramChatId   String  @default("")
+  telegramEnabled  Boolean @default(false)
+  // Heartbeat
+  heartbeatEnabled Boolean @default(true)
+  heartbeatHour    Int     @default(22) // 22:00 local
+  // Thresholds
+  minOpportunityScore Int  @default(7)   // 1-10 — alert only when AI score >= this
+  maxRiskScore        Int  @default(3)   // 1-10 — alert only when AI risk <= this
+  // Metadata
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+}
+
+// A configured search monitor (e.g. "iPhone 13 Pro on Bolha", "2-sobno LJ na Nepremicnine")
+model Monitor {
+  id          String   @id @default(cuid())
+  name        String
+  source      String   // bolha | nepremicnine | avtonet | salomon | custom-rss
+  sourceUrl   String   // the search URL or RSS URL
+  // Optional filters
+  keywords    String   @default("") // comma-separated, must appear in title/description
+  excludeKeywords String @default("")
+  minPrice    Int?
+  maxPrice    Int?
+  // Schedule
+  intervalMinutes Int @default(30)
+  isActive   Boolean  @default(true)
+  lastRunAt  DateTime?
+  lastStatus String?  // ok | error | empty
+  lastError  String?
+  // AI prompt customization (optional)
+  customPrompt String @default("")
+  createdAt  DateTime @default(now())
+  updatedAt  DateTime @updatedAt
+
+  listings   Listing[]
+  alerts     Alert[]
+  runLogs    RunLog[]
+}
+
+// A scraped listing — kept for deduplication & history
+model Listing {
+  id          String   @id @default(cuid())
+  monitorId   String
+  monitor     Monitor  @relation(fields: [monitorId], references: [id], onDelete: Cascade)
+  externalId  String   // unique listing id from source (URL hash)
+  title       String
+  price       Int?     // EUR
+  priceText   String   // raw price text (e.g. "Po dogovoru")
+  url         String
+  location    String   @default("")
+  description String   @default("")
+  imageUrl    String?
+  postedAt    DateTime?
+  firstSeenAt DateTime @default(now())
+  // AI evaluation (cached)
+  aiScore        Int?      // 1-10 opportunity score
+  aiRisk         Int?      // 1-10 risk score
+  aiVerdict      String?   // PRILIKA | SUMNJIVO | NEZANIMIVO
+  aiReason       String?
+  aiEstimatedValue Int?    // EUR — what AI thinks fair market value is
+  aiEvaluatedAt  DateTime?
+  // Alerts generated for this listing
+  alerts      Alert[]
+
+  @@unique([monitorId, externalId])
+  @@index([monitorId, firstSeenAt])
+}
+
+// An alert that was sent (Telegram/email/dashboard)
+model Alert {
+  id          String   @id @default(cuid())
+  monitorId   String
+  monitor     Monitor  @relation(fields: [monitorId], references: [id], onDelete: Cascade)
+  listingId   String?
+  listing     Listing? @relation(fields: [listingId], references: [id], onDelete: SetNull)
+  title       String
+  body        String
+  url         String
+  aiScore     Int?
+  aiRisk      Int?
+  aiVerdict   String?
+  // Delivery
+  sentTelegram Boolean @default(false)
+  telegramSentAt DateTime?
+  telegramError String?
+  // UI state
+  isRead      Boolean  @default(false)
+  isArchived  Boolean  @default(false)
+  createdAt   DateTime @default(now())
+
+  @@index([monitorId, createdAt])
+  @@index([isArchived, createdAt])
+}
+
+// Run log — every monitor execution record
+model RunLog {
+  id          String   @id @default(cuid())
+  monitorId   String
+  monitor     Monitor  @relation(fields: [monitorId], references: [id], onDelete: Cascade)
+  startedAt   DateTime @default(now())
+  finishedAt  DateTime?
+  status      String   // ok | error | empty
+  listingsFound Int    @default(0)
+  newListings  Int     @default(0)
+  alertsSent   Int     @default(0)
+  error       String?
+  durationMs  Int?
+
+  @@index([monitorId, startedAt])
+}
