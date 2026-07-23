@@ -35,6 +35,10 @@ export async function GET() {
     // v1.5
     pushEnabled: s.pushEnabled,
     vapidPublicKeySet: !!s.vapidPublicKey,
+    // v1.6
+    digestMode: s.digestMode,
+    digestHour: s.digestHour,
+    quickResponseTemplatesSet: !!s.quickResponseTemplates && s.quickResponseTemplates !== '[]',
     updatedAt: s.updatedAt,
   });
 }
@@ -109,6 +113,11 @@ export async function POST(req: NextRequest) {
   if (typeof body.discordEnabled === 'boolean') data.discordEnabled = body.discordEnabled;
   // v1.5: Push
   if (typeof body.pushEnabled === 'boolean') data.pushEnabled = body.pushEnabled;
+  // v1.6: Digest
+  if (typeof body.digestMode === 'string' && ['instant', 'daily', 'weekly'].includes(body.digestMode)) {
+    data.digestMode = body.digestMode;
+  }
+  if (typeof body.digestHour === 'number') data.digestHour = body.digestHour;
   if (typeof body.aiApiKey === 'string' && body.aiApiKey.trim() !== '') {
     data.aiApiKey = body.aiApiKey.trim();
   }

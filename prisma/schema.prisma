@@ -43,6 +43,11 @@ model Settings {
   pushEnabled          Boolean @default(false)
   vapidPublicKey       String  @default("")
   vapidPrivateKey      String  @default("")
+  // v1.6: Digest mode (namesto instant alerts)
+  digestMode           String  @default("instant") // instant | daily | weekly
+  digestHour           Int     @default(20) // 20:00 local
+  // v1.6: Quick response templates (JSON array of {name, text} objects)
+  quickResponseTemplates String @default("[]")
   // Metadata
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
@@ -56,6 +61,53 @@ model PushSubscription {
   auth        String   // auth secret
   createdAt   DateTime @default(now())
   updatedAt   DateTime @updatedAt
+}
+
+// v1.6: Trade — tracks bought + sold listings for profit calculation
+model Trade {
+  id          String   @id @default(cuid())
+  // Link to original listing (nullable if user manually adds)
+  listingId   String?
+  listing     Listing? @relation(fields: [listingId], references: [id], onDelete: SetNull)
+  // Item details (denormalized so manual trades work without listing)
+  title       String
+  category    String   @default("") // npr. "elektronika", "avto", "nepremičnina"
+  imageUrl    String?
+  url         String?
+  // Buy side
+  buyPrice    Float    // EUR
+  buyDate     DateTime @default(now())
+  buyLocation String   @default("") // kje kupljeno (Bolha, FB, trgovina)
+  buyFees     Float    @default(0) // pristojbine, šhiping pri nakupu
+  // Sell side (null if not yet sold)
+  sellPrice   Float?
+  sellDate    DateTime?
+  sellLocation String  @default("") // kje prodano
+  sellFees    Float    @default(0) // pristojbine pri prodaji
+  // Status
+  status      String   @default("held") // held | sold | cancelled
+  // Notes
+  notes       String   @default("")
+  // Metadata
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  @@index([status, buyDate])
+  @@index([category])
+}
+
+// v1.6: Digest log — when digests were sent (for scheduling)
+model DigestLog {
+  id          String   @id @default(cuid())
+  sentAt      DateTime @default(now())
+  type        String   // daily | weekly
+  listingsCount Int    @default(0)
+  alertsCount Int      @default(0)
+  topOpportunities Int @default(0)
+  sentTelegram Boolean @default(false)
+  sentDiscord  Boolean @default(false)
+  sentPush     Boolean @default(false)
+  message     String
 }
 
 // A configured search monitor (e.g. "iPhone 13 Pro on Bolha", "2-sobno LJ na Nepremicnine")
@@ -127,6 +179,8 @@ model Listing {
   // Alerts generated for this listing
   alerts      Alert[]
   priceHistory PriceHistory[]
+  // v1.6: Trade (if this listing was bought)
+  trades      Trade[]
 
   @@unique([monitorId, externalId])
   @@index([monitorId, firstSeenAt])
