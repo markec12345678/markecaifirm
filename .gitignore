@@ -65,3 +65,4 @@ download/
 # Claude / AI
 .claude/
 CLAUDE.md
+*.png

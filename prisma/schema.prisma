@@ -24,9 +24,18 @@ model Settings {
   // Heartbeat
   heartbeatEnabled Boolean @default(true)
   heartbeatHour    Int     @default(22) // 22:00 local
+  lastHeartbeatAt  DateTime?
   // Thresholds
   minOpportunityScore Int  @default(7)   // 1-10 — alert only when AI score >= this
   maxRiskScore        Int  @default(3)   // 1-10 — alert only when AI risk <= this
+  // Image analysis (v1.1)
+  imageAnalysisEnabled Boolean @default(false)
+  // Bolha Playwright fallback (v1.1)
+  playwrightEnabled    Boolean @default(false)
+  // Telegram inline buttons (v1.1)
+  telegramInlineButtons Boolean @default(true)
+  // Webhook secret for Telegram callback queries (v1.1)
+  telegramWebhookSecret String @default("")
   // Metadata
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
@@ -81,6 +90,9 @@ model Listing {
   aiReason       String?
   aiEstimatedValue Int?    // EUR — what AI thinks fair market value is
   aiEvaluatedAt  DateTime?
+  // Image analysis (v1.1)
+  aiImageAnalysis String?  // AI description of the listing image
+  aiImageVerdict  String?  // AUTHENTIC | SUSPICIOUS | STOCK_PHOTO | NO_IMAGE
   // Alerts generated for this listing
   alerts      Alert[]
 
@@ -129,4 +141,24 @@ model RunLog {
   durationMs  Int?
 
   @@index([monitorId, startedAt])
+}
+
+// Heartbeat log — daily system health report (v1.1)
+model HeartbeatLog {
+  id            String   @id @default(cuid())
+  sentAt        DateTime @default(now())
+  periodStart   DateTime
+  periodEnd     DateTime
+  totalRuns     Int      @default(0)
+  successfulRuns Int     @default(0)
+  failedRuns    Int      @default(0)
+  totalListings Int      @default(0)
+  newListings   Int      @default(0)
+  totalAlerts   Int      @default(0)
+  prilikaAlerts Int      @default(0)
+  sumnjivoAlerts Int     @default(0)
+  activeMonitors Int     @default(0)
+  sentTelegram  Boolean  @default(false)
+  telegramError String?
+  message       String
 }

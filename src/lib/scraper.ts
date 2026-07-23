@@ -112,17 +112,40 @@ async function fetchRss(url: string): Promise<string> {
 
 /**
  * Bolha.com scraper — uses the listings page HTML.
- * Bolha uses Cloudflare; if the simple fetch is blocked, user should switch to Playwright.
+ * Bolha uses Cloudflare; if the simple fetch returns 0 results (likely blocked),
+ * the pipeline will optionally retry with Playwright (v1.1) if enabled.
  */
 async function scrapeBolha(url: string, filters: ScraperFilters): Promise<ScrapedListing[]> {
   const html = await fetchHtml(url);
-  // Dynamic import to keep startup light
+  // Detect Cloudflare challenge page
+  if (isCloudflareChallenge(html)) {
+    throw new Error('Cloudflare blokada — omogoči Playwright v nastavitvah za fallback');
+  }
+  const listings = await parseBolhaHtml(html);
+  // If we got 0 listings with cheerio, the page may have changed structure or be blocked.
+  // The pipeline decides whether to retry with Playwright.
+  return applyFilters(listings, filters);
+}
+
+/** Detect Cloudflare "Just a moment" or similar challenge page. */
+function isCloudflareChallenge(html: string): boolean {
+  const lower = html.toLowerCase();
+  return (
+    lower.includes('just a moment') ||
+    lower.includes('cf-browser-verification') ||
+    lower.includes('cf-challenge-running') ||
+    lower.includes('_cf_chl_opt') ||
+    lower.includes('attention required! | cloudflare') ||
+    (lower.includes('cloudflare') && lower.includes('ray id') && html.length < 5000)
+  );
+}
+
+/** Parse Bolha HTML using cheerio — extracted so Playwright fallback can reuse it. */
+async function parseBolhaHtml(html: string): Promise<ScrapedListing[]> {
   const cheerio = await import('cheerio');
   const $ = cheerio.load(html);
   const out: ScrapedListing[] = [];
 
-  // Bolha listing selectors (may change over time — keep flexible)
-  // Try multiple known selectors
   const cards = $([
     'article[data-id]',
     '.entity-body',
@@ -162,13 +185,56 @@ async function scrapeBolha(url: string, filters: ScraperFilters): Promise<Scrape
 
   // Deduplicate by URL
   const seen = new Set<string>();
-  const dedup = out.filter(l => {
+  return out.filter(l => {
     if (seen.has(l.url)) return false;
     seen.add(l.url);
     return true;
   });
+}
 
-  return applyFilters(dedup, filters);
+/**
+ * v1.1: Bolha scraper with Playwright fallback for Cloudflare bypass.
+ * Falls back gracefully if Playwright is not installed.
+ *
+ * To enable: bun add playwright && bunx playwright install chromium
+ * Then toggle "Playwright fallback" in Settings.
+ */
+export async function scrapeBolhaWithPlaywright(url: string, filters: ScraperFilters): Promise<ScrapedListing[]> {
+  let chromium: any = null;
+  try {
+    // Dynamic import — if playwright isn't installed, this throws
+    const pw = await import('playwright');
+    chromium = pw.chromium;
+  } catch {
+    throw new Error('Playwright ni nameščen. Poženi: bun add playwright && bunx playwright install chromium');
+  }
+
+  const browser = await chromium.launch({ headless: true });
+  const context = await browser.newContext({
+    userAgent: randomUA(),
+    locale: 'sl-SI',
+    viewport: { width: 1366, height: 768 },
+  });
+  try {
+    const page = await context.newPage();
+    // Bolha uses Cloudflare — wait for it to clear
+    await page.goto(url, { waitUntil: 'domcontentloaded', timeout: 30_000 });
+    // Wait for either listings or Cloudflare challenge to clear
+    try {
+      await page.waitForSelector('article, .entity-body, .search-item, a[href*="/bolha/"]', { timeout: 15_000 });
+    } catch {
+      // Maybe still on challenge page — wait more
+      await page.waitForTimeout(5000);
+    }
+    const html = await page.content();
+    if (isCloudflareChallenge(html)) {
+      throw new Error('Cloudflare blokada tudi po Playwright poizkusu');
+    }
+    const listings = await parseBolhaHtml(html);
+    return applyFilters(listings, filters);
+  } finally {
+    await browser.close();
+  }
 }
 
 /**
@@ -304,13 +370,23 @@ async function scrapeAvtonet(url: string, filters: ScraperFilters): Promise<Scra
 export async function scrape(
   source: SourceType,
   url: string,
-  filters: ScraperFilters
+  filters: ScraperFilters,
+  opts: { playwrightEnabled?: boolean } = {}
 ): Promise<ScrapedListing[]> {
+  if (source === 'bolha' || source === 'salomon') {
+    try {
+      return await scrapeBolha(url, filters);
+    } catch (e: any) {
+      // If Cloudflare detected AND Playwright enabled, retry with browser
+      if (opts.playwrightEnabled && e?.message?.toLowerCase().includes('cloudflare')) {
+        return await scrapeBolhaWithPlaywright(url, filters);
+      }
+      throw e;
+    }
+  }
   switch (source) {
-    case 'bolha': return scrapeBolha(url, filters);
     case 'nepremicnine': return scrapeNepremicnine(url, filters);
     case 'avtonet': return scrapeAvtonet(url, filters);
-    case 'salomon': return scrapeBolha(url, filters); // similar structure
     case 'custom-rss': return scrapeCustomRss(url, filters);
     default: throw new Error(`Unknown source: ${source}`);
   }

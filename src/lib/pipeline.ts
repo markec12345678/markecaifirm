@@ -10,8 +10,8 @@
 
 import { db } from './db';
 import { scrape, type SourceType, type ScraperFilters } from './scraper';
-import { evaluateListing, type AiSettings, type ListingEvaluation } from './ai';
-import { sendTelegramMessage, formatAlertMessage } from './telegram';
+import { evaluateListing, downloadImageAsBase64, type AiSettings, type ListingEvaluation } from './ai';
+import { sendTelegramMessage, formatAlertMessage, buildAlertInlineButtons } from './telegram';
 
 export interface RunResult {
   status: 'ok' | 'error' | 'empty';
@@ -75,7 +75,12 @@ export async function runMonitor(monitorId: string): Promise<RunResult> {
     runLogId = runLog.id;
 
     // 1. Scrape
-    const listings = await scrape(monitor.source as SourceType, monitor.sourceUrl, filters);
+    const listings = await scrape(
+      monitor.source as SourceType,
+      monitor.sourceUrl,
+      filters,
+      { playwrightEnabled: settings.playwrightEnabled }
+    );
 
     if (listings.length === 0) {
       await db.runLog.update({
@@ -155,6 +160,12 @@ export async function runMonitor(monitorId: string): Promise<RunResult> {
       let evalError: string | null = null;
 
       try {
+        // v1.1: download image if enabled and listing has imageUrl
+        let imageBase64: string | null = null;
+        if (settings.imageAnalysisEnabled && listing.imageUrl) {
+          imageBase64 = await downloadImageAsBase64(listing.imageUrl, { timeoutMs: 8000 });
+        }
+
         evaluation = await evaluateListing(aiSettings, {
           title: listing.title,
           priceText: listing.priceText,
@@ -164,6 +175,8 @@ export async function runMonitor(monitorId: string): Promise<RunResult> {
           source: monitor.source,
           monitorName: monitor.name,
           customPrompt: monitor.customPrompt,
+          imageBase64,
+          imageUrl: listing.imageUrl ?? null,
         });
       } catch (e: any) {
         evalError = e?.message ?? 'AI eval error';
@@ -179,6 +192,8 @@ export async function runMonitor(monitorId: string): Promise<RunResult> {
             aiReason: evaluation.razlog,
             aiEstimatedValue: evaluation.predvidena_trzna_vrednost ?? null,
             aiEvaluatedAt: new Date(),
+            aiImageAnalysis: evaluation.image_analysis ?? null,
+            aiImageVerdict: evaluation.image_verdict ?? null,
           },
         });
 
@@ -199,6 +214,7 @@ export async function runMonitor(monitorId: string): Promise<RunResult> {
             aiVerdict: evaluation.verdict,
             aiReason: evaluation.razlog,
             estimatedValue: evaluation.predvidena_trzna_vrednost ?? null,
+            imageAnalysis: evaluation.image_analysis ?? null,
           });
 
           const alert = await db.alert.create({
@@ -216,9 +232,17 @@ export async function runMonitor(monitorId: string): Promise<RunResult> {
 
           // Send Telegram if enabled
           if (settings.telegramEnabled && settings.telegramBotToken && settings.telegramChatId) {
+            const inlineButtons = settings.telegramInlineButtons
+              ? buildAlertInlineButtons({
+                  alertId: alert.id,
+                  listingUrl: listing.url,
+                  dashboardUrl: 'http://localhost:3000/alerts',
+                })
+              : undefined;
             const tg = await sendTelegramMessage(
               { botToken: settings.telegramBotToken, chatId: settings.telegramChatId },
-              alertBody
+              alertBody,
+              { inlineButtons }
             );
             await db.alert.update({
               where: { id: alert.id },
@@ -301,4 +325,113 @@ export async function runDueMonitors(): Promise<{ ran: number; results: RunResul
     results.push(r);
   }
   return { ran: due.length, results };
+}
+
+/**
+ * v1.1: Heartbeat — sends daily summary to Telegram if it's the right hour
+ * and we haven't sent one in the last 23 hours.
+ *
+ * Designed to be called by the same cron as runDueMonitors (every 5-10 min).
+ * It will only actually send a message at the configured hour.
+ */
+export async function maybeSendHeartbeat(): Promise<{ sent: boolean; reason: string; logId?: string }> {
+  const settings = await getSettingsRow();
+  if (!settings.heartbeatEnabled) {
+    return { sent: false, reason: 'heartbeat onemogočen' };
+  }
+  if (!settings.telegramEnabled || !settings.telegramBotToken || !settings.telegramChatId) {
+    return { sent: false, reason: 'telegram ni konfiguriran' };
+  }
+
+  const now = new Date();
+  // Check if we're in the right hour
+  if (now.getHours() !== settings.heartbeatHour) {
+    return { sent: false, reason: `ni ura (${now.getHours()} != ${settings.heartbeatHour})` };
+  }
+  // Check if we already sent in the last 23 hours
+  if (settings.lastHeartbeatAt) {
+    const elapsedH = (now.getTime() - settings.lastHeartbeatAt.getTime()) / (60 * 60 * 1000);
+    if (elapsedH < 23) {
+      return { sent: false, reason: `že poslano pred ${elapsedH.toFixed(1)}h` };
+    }
+  }
+
+  // Compute stats for last 24h
+  const periodStart = new Date(now.getTime() - 24 * 60 * 60 * 1000);
+  const periodEnd = now;
+
+  const [runs, activeMonitors, newListings, alerts] = await Promise.all([
+    db.runLog.findMany({
+      where: { startedAt: { gte: periodStart, lte: periodEnd } },
+      select: { status: true, listingsFound: true, newListings: true, alertsSent: true },
+    }),
+    db.monitor.count({ where: { isActive: true } }),
+    db.listing.count({ where: { firstSeenAt: { gte: periodStart, lte: periodEnd } } }),
+    db.alert.findMany({
+      where: { createdAt: { gte: periodStart, lte: periodEnd } },
+      select: { aiVerdict: true },
+    }),
+  ]);
+
+  const totalRuns = runs.length;
+  const successfulRuns = runs.filter(r => r.status === 'ok').length;
+  const failedRuns = runs.filter(r => r.status === 'error').length;
+  const totalAlerts = alerts.length;
+  const prilikaAlerts = alerts.filter(a => a.aiVerdict === 'PRILIKA').length;
+  const sumnjivoAlerts = alerts.filter(a => a.aiVerdict === 'SUMNJIVO').length;
+
+  // Build and send message
+  const { formatHeartbeatMessage, buildHeartbeatInlineButtons } = await import('./telegram');
+  const message = formatHeartbeatMessage({
+    periodStart,
+    periodEnd,
+    totalRuns,
+    successfulRuns,
+    failedRuns,
+    newListings,
+    totalAlerts,
+    prilikaAlerts,
+    sumnjivoAlerts,
+    activeMonitors,
+  });
+
+  const inlineButtons = buildHeartbeatInlineButtons('http://localhost:3000');
+  const tg = await sendTelegramMessage(
+    { botToken: settings.telegramBotToken, chatId: settings.telegramChatId },
+    message,
+    { inlineButtons }
+  );
+
+  // Log to DB
+  const log = await db.heartbeatLog.create({
+    data: {
+      sentAt: now,
+      periodStart,
+      periodEnd,
+      totalRuns,
+      successfulRuns,
+      failedRuns,
+      totalListings: runs.reduce((s, r) => s + r.listingsFound, 0),
+      newListings,
+      totalAlerts,
+      prilikaAlerts,
+      sumnjivoAlerts,
+      activeMonitors,
+      sentTelegram: tg.ok,
+      telegramError: tg.ok ? null : tg.error ?? null,
+      message,
+    },
+  });
+
+  // Update last heartbeat time
+  await db.settings.update({
+    where: { id: 'singleton' },
+    data: { lastHeartbeatAt: now },
+  });
+
+  return {
+    sent: tg.ok,
+    reason: tg.ok ? 'poslano' : `napaka: ${tg.error}`,
+    logId: log.id,
+  };
 }
