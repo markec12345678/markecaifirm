@@ -21,6 +21,9 @@ model Settings {
   telegramBotToken String  @default("")
   telegramChatId   String  @default("")
   telegramEnabled  Boolean @default(false)
+  // v1.4: Discord webhook
+  discordWebhookUrl String @default("")
+  discordEnabled   Boolean @default(false)
   // Heartbeat
   heartbeatEnabled Boolean @default(true)
   heartbeatHour    Int     @default(22) // 22:00 local
@@ -100,8 +103,16 @@ model Listing {
   // Image analysis (v1.1)
   aiImageAnalysis String?  // AI description of the listing image
   aiImageVerdict  String?  // AUTHENTIC | SUSPICIOUS | STOCK_PHOTO | NO_IMAGE
+  // v1.4: bookmark/favorite
+  isBookmarked    Boolean  @default(false)
+  bookmarkedAt    DateTime?
+  // v1.4: full detail page data (Bolha detail page scraper)
+  detailDescription String? // full description from detail page (longer than listing description)
+  detailImages      String? // JSON array of all image URLs
+  detailFetchedAt   DateTime?
   // Alerts generated for this listing
   alerts      Alert[]
+  priceHistory PriceHistory[]
 
   @@unique([monitorId, externalId])
   @@index([monitorId, firstSeenAt])
@@ -172,4 +183,16 @@ model HeartbeatLog {
   sentTelegram  Boolean  @default(false)
   telegramError String?
   message       String
+}
+
+// v1.4: Price history — tracks price changes of a listing over time
+model PriceHistory {
+  id          String   @id @default(cuid())
+  listingId   String
+  listing     Listing  @relation(fields: [listingId], references: [id], onDelete: Cascade)
+  price       Int?     // EUR — null if "po dogovoru"
+  priceText   String   // raw text
+  seenAt      DateTime @default(now())
+
+  @@index([listingId, seenAt])
 }

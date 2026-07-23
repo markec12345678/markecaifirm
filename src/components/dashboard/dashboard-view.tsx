@@ -4,7 +4,7 @@ import { useEffect, useState, useCallback } from 'react';
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
-import { Activity, Bell, AlertTriangle, Target, TrendingUp, Play, RefreshCw, Clock, Zap, LayoutGrid, BarChart3 } from 'lucide-react';
+import { Activity, Bell, AlertTriangle, Target, TrendingUp, Play, RefreshCw, Clock, Zap, LayoutGrid, BarChart3, Bookmark } from 'lucide-react';
 import { toast } from 'sonner';
 import { cn } from '@/lib/utils';
 
@@ -16,6 +16,7 @@ interface Stats {
   unreadAlerts: number;
   prilikaAlerts: number;
   sumnjivoAlerts: number;
+  bookmarkedListings: number;
   newListings24h: number;
   newAlerts24h: number;
   recentRuns: Array<{
@@ -113,7 +114,7 @@ export function DashboardView({ onNavigate }: ViewProps) {
       </div>
 
       {/* Stat grid */}
-      <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
+      <div className="grid grid-cols-2 md:grid-cols-5 gap-4">
         <StatCard
           icon={<Activity className="w-4 h-4" />}
           label="Aktivni monitorji"
@@ -145,6 +146,14 @@ export function DashboardView({ onNavigate }: ViewProps) {
           subtext={`${stats.sumnjivoAlerts} sumljivih`}
           color="primary"
           onClick={() => onNavigate('alerts')}
+        />
+        <StatCard
+          icon={<Bookmark className="w-4 h-4" />}
+          label="Priljubljeni"
+          value={stats.bookmarkedListings}
+          subtext="shranjeni oglasi"
+          color="amber"
+          onClick={() => onNavigate('listings')}
         />
       </div>
 

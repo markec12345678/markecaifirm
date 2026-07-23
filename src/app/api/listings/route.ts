@@ -25,6 +25,7 @@ export async function GET(req: NextRequest) {
   const minScore = url.searchParams.get('minScore') ? parseInt(url.searchParams.get('minScore')!, 10) : undefined;
   const maxRisk = url.searchParams.get('maxRisk') ? parseInt(url.searchParams.get('maxRisk')!, 10) : undefined;
   const hasImage = url.searchParams.get('hasImage') === '1' ? true : undefined;
+  const bookmarked = url.searchParams.get('bookmarked') === '1' ? true : undefined;
   const limit = Math.min(parseInt(url.searchParams.get('limit') ?? '100', 10), 500);
   const offset = parseInt(url.searchParams.get('offset') ?? '0', 10);
   const sortField = url.searchParams.get('sort') ?? 'firstSeen';
@@ -37,6 +38,7 @@ export async function GET(req: NextRequest) {
   if (minScore != null) where.aiScore = { gte: minScore };
   if (maxRisk != null) where.aiRisk = { lte: maxRisk };
   if (hasImage) where.NOT = { imageUrl: null };
+  if (bookmarked) where.isBookmarked = true;
 
   const orderBy: any = {
     firstSeen: 'firstSeenAt',

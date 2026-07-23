@@ -391,3 +391,46 @@ export async function scrape(
     default: throw new Error(`Unknown source: ${source}`);
   }
 }
+
+// v1.4: Listing detail page scraper — fetch full description and all images from a single listing URL
+export interface ListingDetail {
+  fullDescription: string;
+  images: string[];
+  fetchedAt: Date;
+}
+
+export async function fetchListingDetail(url: string): Promise<ListingDetail> {
+  const html = await fetchHtml(url);
+  if (isCloudflareChallenge(html)) {
+    throw new Error('Cloudflare blokada — uporabi Playwright za detail page');
+  }
+  const cheerio = await import('cheerio');
+  const $ = cheerio.load(html);
+
+  // Bolha detail page selectors (flexible — try multiple)
+  const fullDescription =
+    $('.ad-description, .description, .entity-description, [data-cy="ad-description"]').text().trim() ||
+    $('.ad-body, .body').text().trim() ||
+    $('meta[name="description"]').attr('content')?.trim() ||
+    '';
+
+  // Images — collect all unique image URLs from gallery and listing
+  const imageSet = new Set<string>();
+  $('img').each((_, el) => {
+    const src = $(el).attr('src') || $(el).attr('data-src') || $(el).attr('data-large');
+    if (src && src.startsWith('http') && !src.includes('logo') && !src.includes('avatar')) {
+      // Filter out small icons and logos
+      const width = parseInt($(el).attr('width') ?? '0', 10);
+      const height = parseInt($(el).attr('height') ?? '0', 10);
+      if ((width === 0 || width > 100) && (height === 0 || height > 100)) {
+        imageSet.add(src);
+      }
+    }
+  });
+
+  return {
+    fullDescription,
+    images: Array.from(imageSet).slice(0, 20), // limit to 20
+    fetchedAt: new Date(),
+  };
+}

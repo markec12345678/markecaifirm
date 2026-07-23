@@ -6,7 +6,7 @@ export const dynamic = 'force-dynamic';
 
 /**
  * GET /api/listings/:id
- * Returns full listing detail + similar listings from same monitor.
+ * Returns full listing detail + similar listings + price history.
  */
 export async function GET(_req: NextRequest, { params }: { params: Promise<{ id: string }> }) {
   const { id } = await params;
@@ -21,9 +21,21 @@ export async function GET(_req: NextRequest, { params }: { params: Promise<{ id:
         },
         orderBy: { createdAt: 'desc' },
       },
+      priceHistory: {
+        orderBy: { seenAt: 'asc' },
+        select: { id: true, price: true, priceText: true, seenAt: true },
+      },
     },
   });
   if (!listing) return NextResponse.json({ error: 'Ne najdem' }, { status: 404 });
+
+  // Parse detailImages JSON if present
+  let detailImages: string[] = [];
+  try {
+    if (listing.detailImages) {
+      detailImages = JSON.parse(listing.detailImages);
+    }
+  } catch { /* ignore */ }
 
   // Find similar listings: same monitor, similar price range (±30%), different id
   const price = listing.price;
@@ -47,5 +59,12 @@ export async function GET(_req: NextRequest, { params }: { params: Promise<{ id:
     });
   }
 
-  return NextResponse.json({ listing, similar });
+  return NextResponse.json({
+    listing: {
+      ...listing,
+      detailImages,
+    },
+    similar,
+    priceHistory: listing.priceHistory,
+  });
 }
