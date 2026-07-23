@@ -176,6 +176,12 @@ model Listing {
   detailDescription String? // full description from detail page (longer than listing description)
   detailImages      String? // JSON array of all image URLs
   detailFetchedAt   DateTime?
+  // v2.0: seller tracking (extracted from listing URL or description)
+  sellerName       String?
+  sellerListingCount Int   @default(0) // how many listings this seller has
+  // v2.0: price drop tracking
+  previousPrice    Int?    // last known price before current (for drop detection)
+  priceDroppedAt   DateTime? // when the price last dropped
   // Alerts generated for this listing
   alerts      Alert[]
   priceHistory PriceHistory[]
@@ -187,6 +193,7 @@ model Listing {
   @@index([aiVerdict, aiScore])
   @@index([isBookmarked, firstSeenAt])
   @@index([price])
+  @@index([sellerName])
 }
 
 // An alert that was sent (Telegram/email/dashboard)

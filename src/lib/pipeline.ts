@@ -173,8 +173,9 @@ export async function runMonitor(monitorId: string): Promise<RunResult> {
         monitorId: monitor.id,
         externalId: { in: listings.filter(l => existingIds.has(l.externalId)).map(l => l.externalId) },
       },
-      select: { id: true, externalId: true, price: true, priceText: true },
+      select: { id: true, externalId: true, price: true, priceText: true, title: true, url: true, aiVerdict: true },
     });
+    let priceDropAlerts = 0;
     for (const existing of existingListingsWithSameExternalId) {
       const newListings = listings.find(l => l.externalId === existing.externalId);
       if (!newListings) continue;
@@ -187,10 +188,77 @@ export async function runMonitor(monitorId: string): Promise<RunResult> {
             priceText: newListings.priceText,
           },
         });
-        // Also update the listing's current price
+        // v2.0: Price drop alert — if price DECREASED, send alert
+        if (newListings.price != null && existing.price != null && newListings.price < existing.price) {
+          const dropAmount = existing.price - newListings.price;
+          const dropPct = Math.round((dropAmount / existing.price) * 100);
+
+          const alertBody = formatAlertMessage({
+            monitorName: monitor.name,
+            title: `📉 CENA PADLA: ${existing.title}`,
+            priceText: `${newListings.priceText} (prej ${existing.priceText})`,
+            url: existing.url,
+            aiScore: null,
+            aiRisk: null,
+            aiVerdict: existing.aiVerdict,
+            aiReason: `Cena padla za ${dropAmount}€ (${dropPct}%). Morda je zdaj pravi čas za nakup.`,
+            estimatedValue: null,
+          });
+
+          const alert = await db.alert.create({
+            data: {
+              monitorId: monitor.id,
+              listingId: existing.id,
+              title: `📉 ${existing.title}`,
+              body: alertBody,
+              url: existing.url,
+              aiVerdict: 'PRILIKA',
+            },
+          });
+
+          // Send notifications
+          if (settings.telegramEnabled && settings.telegramBotToken && settings.telegramChatId) {
+            const inlineButtons = settings.telegramInlineButtons
+              ? buildAlertInlineButtons({ alertId: alert.id, listingUrl: existing.url, dashboardUrl: 'http://localhost:3000/alerts' })
+              : undefined;
+            await sendTelegramMessage(
+              { botToken: settings.telegramBotToken, chatId: settings.telegramChatId },
+              alertBody,
+              { inlineButtons }
+            );
+          }
+          if (settings.discordEnabled && settings.discordWebhookUrl) {
+            const embed = buildAlertEmbed({
+              monitorName: monitor.name,
+              title: `📉 CENA PADLA: ${existing.title}`,
+              priceText: `${newListings.priceText} (prej ${existing.priceText})`,
+              url: existing.url,
+              aiVerdict: 'PRILIKA',
+              aiReason: `Cena padla za ${dropAmount}€ (${dropPct}%).`,
+              aiScore: null,
+              aiRisk: null,
+            });
+            await sendDiscordMessage({ webhookUrl: settings.discordWebhookUrl }, embed);
+          }
+          if (settings.pushEnabled) {
+            await sendPushNotification({
+              title: `📉 Cena padla: ${existing.title.slice(0, 50)}`,
+              body: `${newListings.priceText} (prej ${existing.priceText}) — ${dropPct}% nižje!`,
+              url: '/alerts',
+            });
+          }
+          priceDropAlerts++;
+        }
+
+        // v2.0: Update listing with previous price for tracking
         await db.listing.update({
           where: { id: existing.id },
-          data: { price: newListings.price ?? null, priceText: newListings.priceText },
+          data: {
+            price: newListings.price ?? null,
+            priceText: newListings.priceText,
+            previousPrice: existing.price,
+            priceDroppedAt: newListings.price != null && existing.price != null && newListings.price < existing.price ? new Date() : null,
+          },
         });
       }
     }
@@ -343,6 +411,9 @@ export async function runMonitor(monitorId: string): Promise<RunResult> {
         });
       }
     }
+
+    // v2.0: Add price drop alerts to total
+    alertsSent += priceDropAlerts;
 
     await db.runLog.update({
       where: { id: runLog.id },
