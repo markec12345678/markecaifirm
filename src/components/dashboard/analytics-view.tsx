@@ -4,7 +4,7 @@ import { useEffect, useState, useCallback } from 'react';
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
-import { RefreshCw, BarChart3, TrendingUp, Target, AlertTriangle, Activity, ThumbsUp, ThumbsDown, Archive, Bell } from 'lucide-react';
+import { RefreshCw, BarChart3, TrendingUp, Target, AlertTriangle, Activity, ThumbsUp, ThumbsDown, Archive, Bell, Wallet } from 'lucide-react';
 import { toast } from 'sonner';
 import {
   ResponsiveContainer, LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, Legend,
@@ -40,6 +40,15 @@ interface AnalyticsData {
     ignored: number;
     total: number;
     precision: number | null;
+  };
+  // v1.7: Trade stats
+  trades: {
+    totalTrades: number;
+    heldCount: number;
+    soldCount: number;
+    realizedProfit: number;
+    byMonth: Array<{ month: string; profit: number; count: number }>;
+    byCategory: Array<{ category: string; count: number; profit: number }>;
   };
   generatedAt: string;
 }
@@ -261,6 +270,75 @@ export function AnalyticsView() {
                 </ResponsiveContainer>
               </CardContent>
             </Card>
+
+            {/* v1.7: Profit chart from trades */}
+            {data.trades && data.trades.totalTrades > 0 && (
+              <>
+                <Card className="bg-card/50 lg:col-span-2">
+                  <CardHeader>
+                    <CardTitle className="text-sm font-bold uppercase tracking-wider flex items-center gap-2">
+                      <Wallet className="w-4 h-4 text-primary" />
+                      Profit po mesecih (Skladišče)
+                      <Badge variant="outline" className="text-[10px] text-primary border-primary/40 ml-2">
+                        Skupno: {data.trades.realizedProfit >= 0 ? '+' : ''}{data.trades.realizedProfit.toFixed(2)} €
+                      </Badge>
+                    </CardTitle>
+                    <CardDescription>
+                      Realiziran profit iz prodanih tradev. {data.trades.soldCount} prodanih, {data.trades.heldCount} v skladišču.
+                    </CardDescription>
+                  </CardHeader>
+                  <CardContent>
+                    <ResponsiveContainer width="100%" height={200}>
+                      <BarChart data={data.trades.byMonth}>
+                        <CartesianGrid strokeDasharray="3 3" stroke="#1f2a1f" />
+                        <XAxis dataKey="month" tick={{ fill: '#6b7280', fontSize: 10 }} stroke="#1f2a1f" />
+                        <YAxis tick={{ fill: '#6b7280', fontSize: 10 }} stroke="#1f2a1f" />
+                        <Tooltip
+                          contentStyle={{ backgroundColor: '#11140f', border: '1px solid #1f2a1f', borderRadius: '4px', fontSize: '12px' }}
+                          labelStyle={{ color: '#d4d4d4' }}
+                          formatter={(value: any) => [`${Number(value).toFixed(2)} €`, 'Profit']}
+                        />
+                        <Bar dataKey="profit" fill="#4ade80" radius={[3, 3, 0, 0]}>
+                          {data.trades.byMonth.map((entry, i) => (
+                            <Cell key={i} fill={entry.profit >= 0 ? '#4ade80' : '#ef4444'} />
+                          ))}
+                        </Bar>
+                      </BarChart>
+                    </ResponsiveContainer>
+                  </CardContent>
+                </Card>
+
+                {/* Profit by category */}
+                {data.trades.byCategory.length > 0 && (
+                  <Card className="bg-card/50">
+                    <CardHeader>
+                      <CardTitle className="text-sm font-bold uppercase tracking-wider flex items-center gap-2">
+                        <Target className="w-4 h-4 text-primary" />
+                        Profit po kategorijah
+                      </CardTitle>
+                      <CardDescription>Kje dejansko zaslužiš?</CardDescription>
+                    </CardHeader>
+                    <CardContent>
+                      <div className="space-y-2">
+                        {data.trades.byCategory
+                          .sort((a, b) => b.profit - a.profit)
+                          .map(cat => (
+                            <div key={cat.category} className="flex items-center justify-between p-2 bg-background/30 rounded text-xs">
+                              <div>
+                                <div className="font-medium">{cat.category}</div>
+                                <div className="text-[10px] text-muted-foreground">{cat.count} tradev</div>
+                              </div>
+                              <div className={cn('font-bold font-mono', cat.profit >= 0 ? 'text-primary' : 'text-destructive')}>
+                                {cat.profit >= 0 ? '+' : ''}{cat.profit.toFixed(2)} €
+                              </div>
+                            </div>
+                          ))}
+                      </div>
+                    </CardContent>
+                  </Card>
+                )}
+              </>
+            )}
           </div>
 
           {/* Monitor performance table */}
