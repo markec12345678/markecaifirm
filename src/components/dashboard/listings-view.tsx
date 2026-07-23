@@ -388,6 +388,12 @@ function ListingRow({ listing, onOpenDetail, onToggleBookmark }: { listing: List
               {listing.location && <span>• {listing.location}</span>}
               <span>• {listing.monitor.name}</span>
               <span>• {formatTimeAgo(listing.firstSeenAt)}</span>
+              {(() => {
+                const days = Math.floor((Date.now() - new Date(listing.firstSeenAt).getTime()) / 86400000);
+                if (days >= 7) return <span className="text-amber-400">• {days}d aktiven ⏳</span>;
+                if (days >= 30) return <span className="text-primary">• {days}d aktiven 🟢</span>;
+                return null;
+              })()}
             </div>
           </div>
           <button
@@ -779,6 +785,45 @@ function ListingDetailModal({ listingId, onClose }: { listingId: string | null; 
                 <p className="text-sm bg-background/50 border border-border rounded p-3 max-h-48 overflow-y-auto whitespace-pre-wrap">{listing.description}</p>
               </div>
             )}
+
+            {/* v1.9: VIN extraction (for car listings) */}
+            {(() => {
+              const fullText = `${listing.title} ${listing.description || ''} ${listing.detailDescription || ''}`;
+              // VIN pattern: 17 chars, alphanumeric, no I/O/Q, typically preceded by "VIN" or "št. podvozja"
+              const vinMatch = fullText.match(/\b([A-HJ-NPR-Z0-9]{17})\b/i);
+              if (!vinMatch) return null;
+              const vin = vinMatch[1].toUpperCase();
+              const days = Math.floor((Date.now() - new Date(listing.firstSeenAt).getTime()) / 86400000);
+              return (
+                <div>
+                  <h4 className="text-xs uppercase tracking-wider text-muted-foreground mb-2 flex items-center gap-1.5">
+                    🚗 VIN / Zgodovina vozila <Badge variant="outline" className="text-[10px] text-primary border-primary/40">v1.9</Badge>
+                  </h4>
+                  <div className="bg-background/50 border border-border rounded p-3 space-y-2">
+                    <div className="flex items-center gap-2">
+                      <span className="text-[10px] text-muted-foreground uppercase">VIN:</span>
+                      <code className="text-sm font-mono text-primary">{vin}</code>
+                    </div>
+                    <div className="flex flex-wrap gap-2">
+                      <a href={`https://www.carfax.eu/vin/${vin}`} target="_blank" rel="noopener noreferrer" className="text-xs text-primary/70 hover:text-primary flex items-center gap-1">
+                        <ExternalLink className="w-3 h-3" /> CARFAX EU
+                      </a>
+                      <a href={`https://www.vindecoderz.com/VIN/${vin}`} target="_blank" rel="noopener noreferrer" className="text-xs text-primary/70 hover:text-primary flex items-center gap-1">
+                        <ExternalLink className="w-3 h-3" /> VIN Decoder
+                      </a>
+                      <a href={`https://en.wikipedia.org/wiki/Vehicle_identification_number`} target="_blank" rel="noopener noreferrer" className="text-xs text-muted-foreground hover:text-primary flex items-center gap-1">
+                        <ExternalLink className="w-3 h-3" /> Kaj je VIN?
+                      </a>
+                    </div>
+                    {days >= 14 && (
+                      <p className="text-[11px] text-amber-400 mt-1">
+                        ⏳ Oglas aktiven {days} dni — prodajalec je verjetno bolj motiviran za pogajanje.
+                      </p>
+                    )}
+                  </div>
+                </div>
+              );
+            })()}
 
             {/* Similar listings */}
             {similar.length > 0 && (
