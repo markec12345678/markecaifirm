@@ -13,7 +13,7 @@ import {
 import {
   Select, SelectContent, SelectItem, SelectTrigger, SelectValue,
 } from '@/components/ui/select';
-import { RefreshCw, Plus, Pencil, Trash2, TrendingUp, TrendingDown, Wallet, Target, ExternalLink, ShoppingCart, Tag } from 'lucide-react';
+import { RefreshCw, Plus, Pencil, Trash2, TrendingUp, TrendingDown, Wallet, Target, ExternalLink, ShoppingCart, Tag, Download } from 'lucide-react';
 import { toast } from 'sonner';
 import { cn } from '@/lib/utils';
 
@@ -103,9 +103,20 @@ export function TradesView() {
             Sledi kupljene in prodane oglase — izračunaj profit in ROI.
           </p>
         </div>
-        <Button size="sm" onClick={() => { setEditing(null); setShowForm(true); }} className="gap-2 bg-primary text-primary-foreground hover:bg-primary/90">
-          <Plus className="w-3.5 h-3.5" /> Nov trade
-        </Button>
+        <div className="flex items-center gap-2">
+          <Button
+            size="sm"
+            variant="outline"
+            onClick={() => window.open(`/api/trades?format=csv`, '_blank')}
+            className="gap-2"
+            title="Izvozi v CSV za Excel/računovodstvo"
+          >
+            <Download className="w-3.5 h-3.5" /> CSV
+          </Button>
+          <Button size="sm" onClick={() => { setEditing(null); setShowForm(true); }} className="gap-2 bg-primary text-primary-foreground hover:bg-primary/90">
+            <Plus className="w-3.5 h-3.5" /> Nov trade
+          </Button>
+        </div>
       </div>
 
       {/* Stats overview */}

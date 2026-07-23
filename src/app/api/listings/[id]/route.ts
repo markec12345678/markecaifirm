@@ -25,6 +25,11 @@ export async function GET(_req: NextRequest, { params }: { params: Promise<{ id:
         orderBy: { seenAt: 'asc' },
         select: { id: true, price: true, priceText: true, seenAt: true },
       },
+      // v1.7: include related trades
+      trades: {
+        orderBy: { buyDate: 'desc' },
+        select: { id: true, status: true, buyPrice: true, sellPrice: true, buyDate: true, sellDate: true },
+      },
     },
   });
   if (!listing) return NextResponse.json({ error: 'Ne najdem' }, { status: 404 });

@@ -20,7 +20,7 @@ import {
   DialogTitle,
   DialogDescription,
 } from '@/components/ui/dialog';
-import { RefreshCw, Download, ExternalLink, ChevronLeft, ChevronRight, Filter, ImageIcon, AlertTriangle, Target, MapPin, Clock, Bookmark, Sparkles } from 'lucide-react';
+import { RefreshCw, Download, ExternalLink, ChevronLeft, ChevronRight, Filter, ImageIcon, AlertTriangle, Target, MapPin, Clock, Bookmark, Sparkles, ShoppingCart } from 'lucide-react';
 import { toast } from 'sonner';
 import { cn } from '@/lib/utils';
 
@@ -412,6 +412,7 @@ function ListingDetailModal({ listingId, onClose }: { listingId: string | null; 
   const [loading, setLoading] = useState(false);
   const [fetchingDetail, setFetchingDetail] = useState(false);
   const [togglingBookmark, setTogglingBookmark] = useState(false);
+  const [addingToTrade, setAddingToTrade] = useState(false);
 
   const loadDetail = useCallback(async () => {
     if (!listingId) {
@@ -475,6 +476,33 @@ function ListingDetailModal({ listingId, onClose }: { listingId: string | null; 
       toast.error('Napaka');
     } finally {
       setTogglingBookmark(false);
+    }
+  };
+
+  // v1.7: Add to Skladišče (Trade) — 1-click from listing detail
+  const addToSkladisce = async () => {
+    if (!listing) return;
+    setAddingToTrade(true);
+    try {
+      const res = await fetch('/api/trades', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          fromListingId: listing.id,
+          // buyPrice comes from listing.price automatically
+          category: '', // user can edit later
+        }),
+      });
+      if (res.ok) {
+        toast.success('✓ Dodano v Skladišče — uredi podrobnosti v zavihku Skladišče');
+        await loadDetail(); // reload to show "V skladišču" badge
+      } else {
+        toast.error('Napaka pri dodajanju');
+      }
+    } catch {
+      toast.error('Napaka');
+    } finally {
+      setAddingToTrade(false);
     }
   };
 
@@ -720,6 +748,24 @@ function ListingDetailModal({ listingId, onClose }: { listingId: string | null; 
                 {fetchingDetail ? <RefreshCw className="w-3.5 h-3.5 animate-spin" /> : <Sparkles className="w-3.5 h-3.5" />}
                 Pridobi detail page
               </Button>
+              {/* v1.7: Add to Skladišče (Trade) */}
+              {listing.trades && listing.trades.length > 0 ? (
+                <Badge variant="outline" className="border-primary/40 text-primary text-xs gap-1">
+                  <ShoppingCart className="w-3 h-3" />
+                  V skladišču ({listing.trades.length})
+                </Badge>
+              ) : (
+                <Button
+                  size="sm"
+                  variant="outline"
+                  onClick={addToSkladisce}
+                  disabled={addingToTrade}
+                  className="gap-2 border-primary/40 text-primary hover:bg-primary/10"
+                >
+                  {addingToTrade ? <RefreshCw className="w-3.5 h-3.5 animate-spin" /> : <ShoppingCart className="w-3.5 h-3.5" />}
+                  Dodaj v Skladišče
+                </Button>
+              )}
             </div>
           </div>
         )}

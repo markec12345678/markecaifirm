@@ -107,6 +107,50 @@ export async function GET() {
     ? accuracy.interested / (accuracy.interested + accuracy.scam)
     : null;
 
+  // v1.7: Trade stats (profit tracker integration)
+  const trades = await db.trade.findMany({
+    where: { status: { in: ['held', 'sold'] } },
+    select: {
+      buyPrice: true, buyFees: true, sellPrice: true, sellFees: true,
+      status: true, category: true, sellDate: true,
+    },
+  });
+  const soldTrades = trades.filter(t => t.status === 'sold' && t.sellPrice != null);
+  const realizedProfit = soldTrades.reduce((sum, t) => {
+    const revenue = (t.sellPrice ?? 0) - (t.sellFees ?? 0);
+    const cost = t.buyPrice + (t.buyFees ?? 0);
+    return sum + (revenue - cost);
+  }, 0);
+  // Profit by month (last 12)
+  const tradeByMonth: Array<{ month: string; profit: number; count: number }> = [];
+  const tradeNow = new Date();
+  for (let i = 11; i >= 0; i--) {
+    const d = new Date(tradeNow.getFullYear(), tradeNow.getMonth() - i, 1);
+    const monthKey = d.toISOString().slice(0, 7);
+    const monthTrades = soldTrades.filter(t => {
+      if (!t.sellDate) return false;
+      return t.sellDate.toISOString().slice(0, 7) === monthKey;
+    });
+    const profit = monthTrades.reduce((sum, t) => {
+      return sum + ((t.sellPrice ?? 0) - (t.sellFees ?? 0) - t.buyPrice - (t.buyFees ?? 0));
+    }, 0);
+    tradeByMonth.push({ month: monthKey, profit: Math.round(profit * 100) / 100, count: monthTrades.length });
+  }
+  // By category
+  const tradeByCategory: Array<{ category: string; count: number; profit: number }> = [];
+  const categoryMap: Record<string, { count: number; profit: number }> = {};
+  for (const t of trades) {
+    const cat = t.category || 'brez kategorije';
+    if (!categoryMap[cat]) categoryMap[cat] = { count: 0, profit: 0 };
+    categoryMap[cat].count++;
+    if (t.status === 'sold' && t.sellPrice != null) {
+      categoryMap[cat].profit += (t.sellPrice - (t.sellFees ?? 0)) - t.buyPrice - (t.buyFees ?? 0);
+    }
+  }
+  for (const [cat, v] of Object.entries(categoryMap)) {
+    tradeByCategory.push({ category: cat, count: v.count, profit: Math.round(v.profit * 100) / 100 });
+  }
+
   return NextResponse.json({
     alertsPerDay,
     listingsPerDay,
@@ -117,7 +161,16 @@ export async function GET() {
       total: totalFeedback,
       precision,
     },
-    generatedAt: now.toISOString(),
+    // v1.7: Trade stats
+    trades: {
+      totalTrades: trades.length,
+      heldCount: trades.filter(t => t.status === 'held').length,
+      soldCount: soldTrades.length,
+      realizedProfit: Math.round(realizedProfit * 100) / 100,
+      byMonth: tradeByMonth,
+      byCategory: tradeByCategory,
+    },
+    generatedAt: tradeNow.toISOString(),
   });
 }
 
