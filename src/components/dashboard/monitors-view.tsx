@@ -23,7 +23,7 @@ import {
   DialogDescription,
   DialogFooter,
 } from '@/components/ui/dialog';
-import { Plus, Play, Pencil, Trash2, RefreshCw, ExternalLink, CheckCircle2, XCircle, Clock } from 'lucide-react';
+import { Plus, Play, Pencil, Trash2, RefreshCw, ExternalLink, CheckCircle2, XCircle, Clock, Zap, AlertCircle, PauseCircle } from 'lucide-react';
 import { toast } from 'sonner';
 import { cn } from '@/lib/utils';
 
@@ -46,6 +46,10 @@ interface Monitor {
   customPrompt: string;
   runStartHour: number | null;
   runEndHour: number | null;
+  // v1.3
+  consecutiveErrors: number;
+  autoPauseThreshold: number;
+  autoPausedAt: string | null;
   createdAt: string;
   _count?: { listings: number; alerts: number };
 }
@@ -130,6 +134,7 @@ export function MonitorsView() {
 
   const toggleActive = async (m: Monitor) => {
     try {
+      // When reactivating, isActive: true triggers reset of consecutiveErrors and autoPausedAt in API
       await fetch(`/api/monitors/${m.id}`, {
         method: 'PUT',
         headers: { 'Content-Type': 'application/json' },
@@ -233,6 +238,27 @@ export function MonitorsView() {
                   )}
                 </div>
 
+                {/* v1.3: auto-paused warning */}
+                {m.autoPausedAt && (
+                  <div className="flex items-center gap-2 text-[11px] text-amber-400 mb-2 p-2 bg-amber-400/5 border border-amber-400/20 rounded">
+                    <PauseCircle className="w-3.5 h-3.5 shrink-0" />
+                    <span>
+                      Auto-paused {formatTimeAgo(m.autoPausedAt)} po {m.consecutiveErrors} zaporednih napakah.
+                      <button
+                        onClick={(e) => { e.stopPropagation(); toggleActive(m); }}
+                        className="ml-1 underline hover:text-amber-300"
+                      >
+                        Reaktiviraj
+                      </button>
+                    </span>
+                  </div>
+                )}
+                {!m.autoPausedAt && m.consecutiveErrors > 0 && m.autoPauseThreshold > 0 && (
+                  <div className="text-[10px] text-amber-400/70 mb-2">
+                    ⚠ {m.consecutiveErrors}/{m.autoPauseThreshold} zaporednih napak
+                  </div>
+                )}
+
                 <div className="flex items-center justify-between gap-2">
                   <div className="flex items-center gap-2 text-xs">
                     {m.lastStatus === 'ok' && <CheckCircle2 className="w-3.5 h-3.5 text-primary" />}
@@ -320,6 +346,10 @@ function MonitorFormDialog({
   const [useSchedule, setUseSchedule] = useState(false);
   const [runStartHour, setRunStartHour] = useState(7);
   const [runEndHour, setRunEndHour] = useState(23);
+  // v1.3: auto-pause
+  const [autoPauseThreshold, setAutoPauseThreshold] = useState(5);
+  const [dryRunLoading, setDryRunLoading] = useState(false);
+  const [dryRunResult, setDryRunResult] = useState<any>(null);
   const [saving, setSaving] = useState(false);
 
   useEffect(() => {
@@ -336,6 +366,7 @@ function MonitorFormDialog({
       setUseSchedule(editing.runStartHour != null && editing.runEndHour != null);
       setRunStartHour(editing.runStartHour ?? 7);
       setRunEndHour(editing.runEndHour ?? 23);
+      setAutoPauseThreshold(editing.autoPauseThreshold ?? 5);
     } else {
       setName('');
       setSource('bolha');
@@ -349,13 +380,51 @@ function MonitorFormDialog({
       setUseSchedule(false);
       setRunStartHour(7);
       setRunEndHour(23);
+      setAutoPauseThreshold(5);
     }
+    setDryRunResult(null);
   }, [editing, open]);
 
   const applyPreset = (preset: typeof SOURCE_PRESETS[number]) => {
     setSource(preset.source);
     setSourceUrl(preset.url);
     if (!name) setName(preset.label);
+  };
+
+  // v1.3: dry-run — test scraping without saving or AI
+  const dryRun = async () => {
+    if (!sourceUrl.trim()) {
+      toast.error('Vnesi URL za test');
+      return;
+    }
+    setDryRunLoading(true);
+    setDryRunResult(null);
+    try {
+      const res = await fetch('/api/monitors/dry-run', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          source,
+          sourceUrl: sourceUrl.trim(),
+          keywords,
+          excludeKeywords,
+          minPrice: minPrice ? parseInt(minPrice, 10) : undefined,
+          maxPrice: maxPrice ? parseInt(maxPrice, 10) : undefined,
+        }),
+      });
+      const data = await res.json();
+      setDryRunResult(data);
+      if (data.ok) {
+        toast.success(`OK: ${data.count} oglasov najdenih v ${data.durationMs}ms`);
+      } else {
+        toast.error(`Napaka: ${data.error?.slice(0, 80)}`);
+      }
+    } catch (e: any) {
+      setDryRunResult({ ok: false, error: e?.message ?? 'Napaka' });
+      toast.error('Dry-run ni uspel');
+    } finally {
+      setDryRunLoading(false);
+    }
   };
 
   const save = async () => {
@@ -378,6 +447,8 @@ function MonitorFormDialog({
         // v1.2: schedule window
         runStartHour: useSchedule ? runStartHour : null,
         runEndHour: useSchedule ? runEndHour : null,
+        // v1.3: auto-pause threshold
+        autoPauseThreshold,
       };
       const res = await fetch(
         editing ? `/api/monitors/${editing.id}` : '/api/monitors',
@@ -470,7 +541,19 @@ function MonitorFormDialog({
           </div>
 
           <div>
-            <Label htmlFor="m-url" className="text-xs uppercase tracking-wider">URL iskanja / RSS *</Label>
+            <Label htmlFor="m-url" className="text-xs uppercase tracking-wider flex items-center justify-between">
+              <span>URL iskanja / RSS *</span>
+              <Button
+                size="sm"
+                variant="outline"
+                onClick={dryRun}
+                disabled={dryRunLoading}
+                className="h-6 px-2 text-[10px] gap-1"
+              >
+                {dryRunLoading ? <RefreshCw className="w-3 h-3 animate-spin" /> : <Zap className="w-3 h-3" />}
+                Test URL
+              </Button>
+            </Label>
             <Input
               id="m-url"
               value={sourceUrl}
@@ -481,6 +564,29 @@ function MonitorFormDialog({
             <p className="text-[11px] text-muted-foreground mt-1">
               Za Nepremičnine: obišči stran z rezultati iskanja, nastavi filtre, kopiraj URL in dodaj <code>?output=rss</code> na konec.
             </p>
+            {dryRunResult && (
+              <div className={cn(
+                'mt-2 p-2 rounded border text-xs',
+                dryRunResult.ok
+                  ? 'border-primary/30 bg-primary/5 text-primary'
+                  : 'border-amber-400/30 bg-amber-400/5 text-amber-400'
+              )}>
+                {dryRunResult.ok ? (
+                  <>
+                    ✓ Najdenih <b>{dryRunResult.count}</b> oglasov v {dryRunResult.durationMs}ms.
+                    {dryRunResult.sample?.length > 0 && (
+                      <ul className="mt-1 ml-3 list-disc text-[10px] text-muted-foreground">
+                        {dryRunResult.sample.slice(0, 3).map((s: any, i: number) => (
+                          <li key={i} className="truncate">{s.title} — {s.priceText}</li>
+                        ))}
+                      </ul>
+                    )}
+                  </>
+                ) : (
+                  <>⚠ {dryRunResult.error}</>
+                )}
+              </div>
+            )}
           </div>
 
           <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
@@ -595,6 +701,30 @@ function MonitorFormDialog({
                 </p>
               </div>
             )}
+          </div>
+          {/* v1.3: Auto-pause threshold */}
+          <div className="border-t border-border pt-4">
+            <Label className="text-xs uppercase tracking-wider flex items-center gap-2">
+              <AlertCircle className="w-3 h-3" />
+              Auto-pause po napakah <Badge variant="outline" className="text-[10px] text-primary border-primary/40">v1.3</Badge>
+            </Label>
+            <p className="text-[11px] text-muted-foreground mt-1 mb-2">
+              Samodejno onemogoči monitor po N zaporednih napakah (prepreči log spam in zapravljanje AI tokenov).
+              0 = onemogočeno.
+            </p>
+            <div className="flex items-center gap-2">
+              <Input
+                type="number"
+                min={0}
+                max={100}
+                value={autoPauseThreshold}
+                onChange={(e) => setAutoPauseThreshold(parseInt(e.target.value, 10) || 0)}
+                className="w-20 font-mono text-center"
+              />
+              <span className="text-xs text-muted-foreground">
+                zaporednih napakah → auto-pause
+              </span>
+            </div>
           </div>
         </div>
 

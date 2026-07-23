@@ -38,6 +38,8 @@ export async function POST(req: NextRequest) {
       // v1.2: schedule window
       runStartHour: typeof body.runStartHour === 'number' ? body.runStartHour : null,
       runEndHour: typeof body.runEndHour === 'number' ? body.runEndHour : null,
+      // v1.3: auto-pause threshold
+      autoPauseThreshold: typeof body.autoPauseThreshold === 'number' ? body.autoPauseThreshold : 5,
     },
   });
   return NextResponse.json(monitor, { status: 201 });

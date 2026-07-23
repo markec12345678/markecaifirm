@@ -1,6 +1,6 @@
 'use client';
 
-import { useEffect, useState } from 'react';
+import { useEffect, useState, useRef } from 'react';
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
@@ -15,7 +15,7 @@ import {
   SelectValue,
 } from '@/components/ui/select';
 import { Badge } from '@/components/ui/badge';
-import { RefreshCw, Save, Zap, Send, Cpu, Key, Bot, MessageSquare, AlertCircle, CheckCircle2 } from 'lucide-react';
+import { RefreshCw, Save, Zap, Send, Cpu, Key, Bot, MessageSquare, AlertCircle, CheckCircle2, Download, Upload, Database, Trash2 } from 'lucide-react';
 import { toast } from 'sonner';
 import { cn } from '@/lib/utils';
 
@@ -639,6 +639,22 @@ curl "https://api.telegram.org/bot<TOKEN>/setWebhook\\
         </CardContent>
       </Card>
 
+      {/* v1.3: Database backup / restore */}
+      <Card className="bg-card/50">
+        <CardHeader>
+          <CardTitle className="text-sm font-bold uppercase tracking-wider flex items-center gap-2">
+            <Database className="w-4 h-4 text-primary" />
+            Baza podatkov <Badge variant="outline" className="text-[10px] text-primary border-primary/40">v1.3</Badge>
+          </CardTitle>
+          <CardDescription>
+            Varnostno kopiraj ali obnovi SQLite bazo. Vključuje vse monitorje, oglase, alerte, zgodovino in nastavitve (vključno z API ključi).
+          </CardDescription>
+        </CardHeader>
+        <CardContent className="space-y-4">
+          <BackupSection />
+        </CardContent>
+      </Card>
+
       {/* Cron info */}
       <Card className="border-primary/30 bg-primary/5">
         <CardContent className="p-4">
@@ -661,6 +677,128 @@ curl -s "http://localhost:3000/api/cron/run-all?key=secret"`}
 
       <div className="text-[11px] text-muted-foreground text-center pb-4">
         Zadnja posodobitev nastavitev: {settings.updatedAt ? new Date(settings.updatedAt).toLocaleString('sl-SI') : '—'}
+      </div>
+    </div>
+  );
+}
+
+// v1.3: Backup section component
+function BackupSection() {
+  const [info, setInfo] = useState<{ sizeMb: string; lastModified: string } | null>(null);
+  const [restoring, setRestoring] = useState(false);
+  const fileInputRef = useRef<HTMLInputElement>(null);
+
+  const loadInfo = async () => {
+    try {
+      const res = await fetch('/api/backup');
+      if (res.ok) {
+        const data = await res.json();
+        setInfo({ sizeMb: data.sizeMb, lastModified: data.lastModified });
+      }
+    } catch { /* ignore */ }
+  };
+
+  useEffect(() => { loadInfo(); }, []);
+
+  const download = () => {
+    window.open('/api/backup?download=1', '_blank');
+    toast.success('Prenos baze se začne');
+  };
+
+  const restore = async (file: File) => {
+    if (!confirm(`Obnovim bazo iz "${file.name}"? TRENUTNI PODATKI BODO ZAMENJANI. Pred obnovitvijo se bo naredila varnostna kopija.`)) return;
+    setRestoring(true);
+    try {
+      const formData = new FormData();
+      formData.append('db', file);
+      const res = await fetch('/api/backup', {
+        method: 'POST',
+        body: formData,
+      });
+      const data = await res.json();
+      if (data.ok) {
+        toast.success(data.message);
+        await loadInfo();
+      } else {
+        toast.error(data.error ?? 'Napaka pri obnovi');
+      }
+    } catch (e: any) {
+      toast.error(e?.message ?? 'Napaka pri obnovi');
+    } finally {
+      setRestoring(false);
+      if (fileInputRef.current) fileInputRef.current.value = '';
+    }
+  };
+
+  const clearAll = async () => {
+    if (!confirm('Izbrišem VSE oglase, alerte, run loge in heartbeate? MONITORJI in NASTAVITVE bodo ohranjene. Tega ni mogoče razveljaviti.')) return;
+    if (!confirm('ZADNJI POTRDITEV: resnično izbrišem vse podatke?')) return;
+    try {
+      const res = await fetch('/api/backup', { method: 'DELETE' });
+      const data = await res.json();
+      if (data.ok) toast.success(data.message);
+      else toast.error(data.error ?? 'Napaka');
+      await loadInfo();
+    } catch (e: any) {
+      toast.error(e?.message ?? 'Napaka');
+    }
+  };
+
+  return (
+    <div className="space-y-3">
+      {info && (
+        <div className="grid grid-cols-2 gap-2 text-xs">
+          <div className="bg-background/50 border border-border rounded p-2">
+            <div className="text-[10px] text-muted-foreground uppercase tracking-wider mb-1">Velikost</div>
+            <div className="font-mono text-primary">{info.sizeMb} MB</div>
+          </div>
+          <div className="bg-background/50 border border-border rounded p-2">
+            <div className="text-[10px] text-muted-foreground uppercase tracking-wider mb-1">Zadnja sprememba</div>
+            <div className="font-mono text-primary text-[11px]">{new Date(info.lastModified).toLocaleString('sl-SI')}</div>
+          </div>
+        </div>
+      )}
+
+      <div className="grid grid-cols-1 sm:grid-cols-3 gap-2">
+        <Button size="sm" variant="outline" onClick={download} className="gap-2 h-8">
+          <Download className="w-3.5 h-3.5" /> Prenesi .db
+        </Button>
+        <Button
+          size="sm"
+          variant="outline"
+          disabled={restoring}
+          onClick={() => fileInputRef.current?.click()}
+          className="gap-2 h-8"
+        >
+          {restoring ? <RefreshCw className="w-3.5 h-3.5 animate-spin" /> : <Upload className="w-3.5 h-3.5" />}
+          Obnovi iz .db
+        </Button>
+        <Button size="sm" variant="outline" onClick={clearAll} className="gap-2 h-8 text-destructive hover:text-destructive">
+          <Trash2 className="w-3.5 h-3.5" /> Počisti podatke
+        </Button>
+      </div>
+
+      <input
+        ref={fileInputRef}
+        type="file"
+        accept=".db,.sqlite,.sqlite3,application/octet-stream"
+        className="hidden"
+        onChange={(e) => {
+          const file = e.target.files?.[0];
+          if (file) restore(file);
+        }}
+      />
+
+      <div className="text-[11px] text-muted-foreground space-y-1">
+        <p>
+          <b>Prenesi .db</b>: varnostna kopija celotne baze (vključno z API ključi in Telegram tokenom — hranite varno!).
+        </p>
+        <p>
+          <b>Obnovi iz .db</b>: naloži prejšnjo varnostno kopijo. Pred obnovitvijo se samodejno naredi backup trenutne baze. Po obnovitvi <b>priporočamo ponovni zagon aplikacije</b> (Prisma client cache).
+        </p>
+        <p>
+          <b>Počisti podatke</b>: izbriše vse oglase, alerte, run loge in heartbeate. Monitorji in nastavitve (vključno z API ključi) ostanejo. Uporabno za "fresh start" pri testiranju.
+        </p>
       </div>
     </div>
   );
