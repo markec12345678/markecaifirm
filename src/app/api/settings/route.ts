@@ -31,6 +31,14 @@ export async function GET() {
     slackWebhookUrlSet: !!s.slackWebhookUrl,
     slackWebhookUrlMasked: s.slackWebhookUrl ? maskWebhook(s.slackWebhookUrl) : '',
     slackEnabled: s.slackEnabled,
+    // v2.7: Email
+    emailEnabled: s.emailEnabled,
+    emailSmtpHost: s.emailSmtpHost,
+    emailSmtpPort: s.emailSmtpPort,
+    emailSmtpUser: s.emailSmtpUser,
+    emailSmtpPasswordSet: !!s.emailSmtpPassword,
+    emailFrom: s.emailFrom,
+    emailTo: s.emailTo,
     heartbeatEnabled: s.heartbeatEnabled,
     heartbeatHour: s.heartbeatHour,
     lastHeartbeatAt: s.lastHeartbeatAt,
@@ -112,6 +120,21 @@ export async function POST(req: NextRequest) {
     return NextResponse.json(result);
   }
 
+  // v2.7: Test Email
+  if (action === 'test-email') {
+    const s = await getSettingsRow();
+    const { testEmail } = await import('@/lib/email');
+    const result = await testEmail({
+      smtpHost: body.emailSmtpHost ?? s.emailSmtpHost,
+      smtpPort: body.emailSmtpPort ?? s.emailSmtpPort,
+      smtpUser: body.emailSmtpUser ?? s.emailSmtpUser,
+      smtpPassword: body.emailSmtpPassword ?? s.emailSmtpPassword,
+      from: body.emailFrom ?? s.emailFrom,
+      to: body.emailTo ?? s.emailTo,
+    });
+    return NextResponse.json(result);
+  }
+
   const data: any = {};
   if (typeof body.aiProvider === 'string') data.aiProvider = body.aiProvider;
   if (typeof body.aiBaseUrl === 'string') data.aiBaseUrl = body.aiBaseUrl;
@@ -140,6 +163,16 @@ export async function POST(req: NextRequest) {
   if (typeof body.slackWebhookUrl === 'string' && body.slackWebhookUrl.trim() !== '') {
     data.slackWebhookUrl = body.slackWebhookUrl.trim();
   }
+  // v2.7: Email
+  if (typeof body.emailEnabled === 'boolean') data.emailEnabled = body.emailEnabled;
+  if (typeof body.emailSmtpHost === 'string') data.emailSmtpHost = body.emailSmtpHost;
+  if (typeof body.emailSmtpPort === 'number') data.emailSmtpPort = body.emailSmtpPort;
+  if (typeof body.emailSmtpUser === 'string') data.emailSmtpUser = body.emailSmtpUser;
+  if (typeof body.emailSmtpPassword === 'string' && body.emailSmtpPassword.trim() !== '') {
+    data.emailSmtpPassword = body.emailSmtpPassword.trim();
+  }
+  if (typeof body.emailFrom === 'string') data.emailFrom = body.emailFrom;
+  if (typeof body.emailTo === 'string') data.emailTo = body.emailTo;
   // v1.5: Push
   if (typeof body.pushEnabled === 'boolean') data.pushEnabled = body.pushEnabled;
   // v1.6: Digest

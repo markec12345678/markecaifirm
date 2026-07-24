@@ -15,6 +15,7 @@ import { sendTelegramMessage, formatAlertMessage, buildAlertInlineButtons } from
 import { sendDiscordMessage, buildAlertEmbed } from './discord';
 import { sendSlackMessage, buildAlertSlackBlocks } from './slack';
 import { sendPushNotification } from './push';
+import { sendEmail, formatAlertEmail } from './email';
 
 /** v2.2: Check if current time is within quiet hours. */
 function isInQuietHours(quietStart: number, quietEnd: number): boolean {
@@ -386,6 +387,8 @@ export async function runMonitor(monitorId: string): Promise<RunResult> {
           const useDiscord = monitorChannels ? monitorChannels.discord : settings.discordEnabled;
           const useSlack = monitorChannels ? monitorChannels.slack : settings.slackEnabled;
           const usePush = monitorChannels ? monitorChannels.push : settings.pushEnabled;
+          // v2.7: Email always uses global settings (no per-monitor override yet)
+          const useEmail = settings.emailEnabled;
 
           // Skip notifications during quiet hours (but still create alert in DB)
           if (!inQuietHours) {
@@ -466,10 +469,37 @@ export async function runMonitor(monitorId: string): Promise<RunResult> {
                 url: '/alerts',
               });
             }
+
+            // v2.7: Send Email if enabled
+            if (useEmail && settings.emailSmtpHost && settings.emailTo) {
+              const html = formatAlertEmail({
+                title: listing.title,
+                priceText: listing.priceText,
+                url: listing.url,
+                monitorName: monitor.name,
+                aiScore: evaluation.ocena_prilike,
+                aiRisk: evaluation.ocena_tveganja,
+                aiVerdict: evaluation.verdict,
+                aiReason: evaluation.razlog,
+                estimatedValue: evaluation.predvidena_trzna_vrednost ?? null,
+              });
+              await sendEmail(
+                {
+                  smtpHost: settings.emailSmtpHost,
+                  smtpPort: settings.emailSmtpPort,
+                  smtpUser: settings.emailSmtpUser,
+                  smtpPassword: settings.emailSmtpPassword,
+                  from: settings.emailFrom,
+                  to: settings.emailTo,
+                },
+                `🎯 ${listing.title.slice(0, 60)}`,
+                html
+              );
+            }
           }
 
           // If neither enabled or in quiet hours, still count as alert for stats
-          if (!useTelegram && !useDiscord && !useSlack && !usePush) {
+          if (!useTelegram && !useDiscord && !useSlack && !usePush && !useEmail) {
             alertsSent++;
           }
         }
