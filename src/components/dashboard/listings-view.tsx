@@ -21,7 +21,7 @@ import {
   DialogDescription,
 } from '@/components/ui/dialog';
 import { Textarea } from '@/components/ui/textarea';
-import { RefreshCw, Download, ExternalLink, ChevronLeft, ChevronRight, Filter, ImageIcon, AlertTriangle, Target, MapPin, Clock, Bookmark, Sparkles, ShoppingCart, MessageSquare, BarChart3, TrendingDown, TrendingUp, Copy, Check, GitCompare, StickyNote, Phone } from 'lucide-react';
+import { RefreshCw, Download, ExternalLink, ChevronLeft, ChevronRight, Filter, ImageIcon, AlertTriangle, Target, MapPin, Clock, Bookmark, Sparkles, ShoppingCart, MessageSquare, BarChart3, TrendingDown, TrendingUp, Copy, Check, GitCompare, StickyNote, Phone, Trash2 } from 'lucide-react';
 import { toast } from 'sonner';
 import { cn } from '@/lib/utils';
 
@@ -78,6 +78,9 @@ export function ListingsView() {
   const [compareIds, setCompareIds] = useState<Set<string>>(new Set());
   const [compareData, setCompareData] = useState<any>(null);
   const [compareLoading, setCompareLoading] = useState(false);
+  // v3.6: Bulk select for listings
+  const [bulkIds, setBulkIds] = useState<Set<string>>(new Set());
+  const [bulkLoading, setBulkLoading] = useState(false);
   const limit = 50;
 
   const load = useCallback(async () => {
@@ -134,6 +137,48 @@ export function ListingsView() {
     params.set('limit', '500');
     params.set('format', 'csv');
     window.open(`/api/listings?${params}`, '_blank');
+  };
+
+  // v3.6: Bulk actions
+  const toggleBulk = (id: string) => {
+    setBulkIds(prev => {
+      const next = new Set(prev);
+      if (next.has(id)) next.delete(id);
+      else next.add(id);
+      return next;
+    });
+  };
+
+  const bulkAction = async (action: 'bookmark' | 'unbookmark' | 'delete' | 'contact' | 'clear_contact') => {
+    if (bulkIds.size === 0) return;
+    if (action === 'delete' && !confirm(`Izbrišem ${bulkIds.size} oglasov?`)) return;
+    setBulkLoading(true);
+    try {
+      const res = await fetch('/api/listings/bulk', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ ids: Array.from(bulkIds), action }),
+      });
+      const data = await res.json();
+      if (data.ok) {
+        const labels: Record<string, string> = {
+          bookmark: 'označeni kot priljubljeni',
+          unbookmark: 'odstranjeno iz priljubljenih',
+          delete: 'izbrisani',
+          contact: 'označeni kot kontaktirani',
+          clear_contact: 'počiščen kontakt status',
+        };
+        toast.success(`${data.affected} oglasov ${labels[action] || action}`);
+        setBulkIds(new Set());
+        await load();
+      } else {
+        toast.error(data.error ?? 'Napaka');
+      }
+    } catch {
+      toast.error('Napaka pri bulk operaciji');
+    } finally {
+      setBulkLoading(false);
+    }
   };
 
   // v2.3: Compare functions
@@ -345,6 +390,8 @@ export function ListingsView() {
                 onToggleBookmark={() => toggleBookmark(l.id, l.isBookmarked)}
                 onToggleCompare={() => toggleCompare(l.id)}
                 isCompareSelected={compareIds.has(l.id)}
+                onToggleBulk={() => toggleBulk(l.id)}
+                isBulkSelected={bulkIds.has(l.id)}
               />
             ))}
           </div>
@@ -377,6 +424,29 @@ export function ListingsView() {
         </>
       )}
 
+      {/* v3.6: Bulk actions toolbar */}
+      {bulkIds.size > 0 && (
+        <Card className="bg-primary/5 border-primary/30">
+          <CardContent className="p-3">
+            <div className="flex flex-wrap items-center gap-2">
+              <span className="text-sm font-medium text-primary">{bulkIds.size} izbranih</span>
+              <Button size="sm" variant="outline" onClick={() => bulkAction('bookmark')} disabled={bulkLoading} className="gap-1.5 text-xs h-7">
+                <Bookmark className="w-3 h-3" /> Priljubljeni
+              </Button>
+              <Button size="sm" variant="outline" onClick={() => bulkAction('contact')} disabled={bulkLoading} className="gap-1.5 text-xs h-7">
+                📞 Kontaktiran
+              </Button>
+              <Button size="sm" variant="outline" onClick={() => bulkAction('delete')} disabled={bulkLoading} className="gap-1.5 text-xs h-7 text-destructive">
+                <Trash2 className="w-3 h-3" /> Izbriši
+              </Button>
+              <Button size="sm" variant="ghost" onClick={() => setBulkIds(new Set())} className="h-7 text-xs">
+                Počisti
+              </Button>
+            </div>
+          </CardContent>
+        </Card>
+      )}
+
       {/* v2.3: Compare toolbar */}
       {compareIds.size > 0 && (
         <Card className="bg-primary/5 border-primary/30">
@@ -407,7 +477,7 @@ export function ListingsView() {
   );
 }
 
-function ListingRow({ listing, onOpenDetail, onToggleBookmark, onToggleCompare, isCompareSelected }: { listing: Listing; onOpenDetail: () => void; onToggleBookmark: () => void; onToggleCompare: () => void; isCompareSelected: boolean }) {
+function ListingRow({ listing, onOpenDetail, onToggleBookmark, onToggleCompare, isCompareSelected, onToggleBulk, isBulkSelected }: { listing: Listing; onOpenDetail: () => void; onToggleBookmark: () => void; onToggleCompare: () => void; isCompareSelected: boolean; onToggleBulk: () => void; isBulkSelected: boolean }) {
   const verdictColor =
     listing.aiVerdict === 'PRILIKA' ? 'border-primary/40 text-primary' :
     listing.aiVerdict === 'SUMNJIVO' ? 'border-amber-400/40 text-amber-400' :
@@ -481,6 +551,17 @@ function ListingRow({ listing, onOpenDetail, onToggleBookmark, onToggleCompare, 
             )}
           </div>
           <div className="flex items-center gap-1 shrink-0">
+            {/* v3.6: Bulk select checkbox */}
+            <button
+              onClick={(e) => { e.stopPropagation(); onToggleBulk(); }}
+              className={cn(
+                'w-4 h-4 rounded border shrink-0 transition-colors',
+                isBulkSelected ? 'bg-primary border-primary' : 'border-border hover:border-primary'
+              )}
+              title="Izberi za bulk akcijo"
+            >
+              {isBulkSelected && <Check className="w-3 h-3 text-primary-foreground mx-auto" />}
+            </button>
             <button
               onClick={(e) => { e.stopPropagation(); onToggleCompare(); }}
               className={cn(
