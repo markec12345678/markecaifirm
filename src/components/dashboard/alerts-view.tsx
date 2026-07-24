@@ -6,7 +6,7 @@ import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
 import { Switch } from '@/components/ui/switch';
 import { Checkbox } from '@/components/ui/checkbox';
-import { Bell, Check, Archive, Trash2, ExternalLink, RefreshCw, Filter, Target, AlertTriangle, Download, ThumbsUp, ThumbsDown, Square } from 'lucide-react';
+import { Bell, Check, Archive, Trash2, ExternalLink, RefreshCw, Filter, Target, AlertTriangle, Download, ThumbsUp, ThumbsDown, Square, RotateCcw } from 'lucide-react';
 import { toast } from 'sonner';
 import { cn } from '@/lib/utils';
 
@@ -141,6 +141,23 @@ export function AlertsView() {
       }
     } catch {
       toast.error('Napaka pri bulk operaciji');
+    }
+  };
+
+  // v3.3: Retry alert — re-send to all channels
+  const retryAlert = async (a: Alert) => {
+    try {
+      const res = await fetch(`/api/alerts/${a.id}/retry`, { method: 'POST' });
+      const data = await res.json();
+      if (data.ok) {
+        const sent = Object.values(data.results).filter((r: any) => r === 'success').length;
+        toast.success(`Alert ponovno poslan na ${sent} kanalov`);
+        await load();
+      } else {
+        toast.error('Napaka pri ponovnem pošiljanju');
+      }
+    } catch {
+      toast.error('Napaka');
     }
   };
 
@@ -304,6 +321,7 @@ export function AlertsView() {
                 onArchive={() => archive(a)}
                 onDelete={() => remove(a)}
                 onUserAction={(action) => markUserAction(a, action)}
+                onRetry={() => retryAlert(a)}
               />
             ))}
           </div>
@@ -321,6 +339,7 @@ function AlertCard({
   onArchive,
   onDelete,
   onUserAction,
+  onRetry,
 }: {
   alert: Alert;
   selected: boolean;
@@ -329,6 +348,7 @@ function AlertCard({
   onArchive: () => void;
   onDelete: () => void;
   onUserAction: (action: 'interested' | 'scam') => void;
+  onRetry: () => void;
 }) {
   const verdictColor =
     alert.aiVerdict === 'PRILIKA' ? 'text-primary terminal-glow' :
@@ -462,6 +482,10 @@ function AlertCard({
                 </Button>
               </>
             )}
+            {/* v3.3: Retry button */}
+            <Button size="sm" variant="ghost" onClick={onRetry} className="h-7 w-7 p-0" title="Ponovno pošlji na vse kanale">
+              <RotateCcw className="w-3.5 h-3.5" />
+            </Button>
             <Button size="sm" variant="ghost" onClick={onArchive} className="h-7 w-7 p-0" title="Arhiviraj">
               <Archive className="w-3.5 h-3.5" />
             </Button>

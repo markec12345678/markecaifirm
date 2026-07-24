@@ -211,6 +211,10 @@ export function ListingsView() {
           <Button size="sm" variant="outline" onClick={load} className="gap-2">
             <RefreshCw className="w-3.5 h-3.5" /> Osveži
           </Button>
+          {/* v3.3: JSON export */}
+          <Button size="sm" variant="outline" onClick={() => window.open('/api/listings/export-json', '_blank')} className="gap-2" title="Izvozi JSON za eksterno analizo">
+            <Download className="w-3.5 h-3.5" /> JSON
+          </Button>
           <Button size="sm" variant="outline" onClick={exportCsv} className="gap-2">
             <Download className="w-3.5 h-3.5" /> CSV
           </Button>
