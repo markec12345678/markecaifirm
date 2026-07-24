@@ -43,6 +43,7 @@ interface Listing {
   aiImageVerdict: string | null;
   aiImageAnalysis: string | null;
   isBookmarked: boolean;
+  contactStatus: string;
   monitor: { name: string; source: string };
 }
 
@@ -178,6 +179,27 @@ export function ListingsView() {
       toast.error('Napaka pri bulk operaciji');
     } finally {
       setBulkLoading(false);
+    }
+  };
+
+  // v3.9: Quick contact toggle — no modal needed
+  const quickContact = async (id: string, currentStatus: string) => {
+    const newStatus = currentStatus === 'none' ? 'contacted' : 'none';
+    setData(prev => prev ? {
+      ...prev,
+      listings: prev.listings.map(l =>
+        l.id === id ? { ...l, contactStatus: newStatus } : l
+      ),
+    } : prev);
+    try {
+      await fetch(`/api/listings/${id}/notes`, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ contactStatus: newStatus }),
+      });
+      toast.success(newStatus === 'contacted' ? '📞 Označeno kot kontaktirano' : 'Počiščeno');
+    } catch {
+      toast.error('Napaka');
     }
   };
 
@@ -392,6 +414,7 @@ export function ListingsView() {
                 isCompareSelected={compareIds.has(l.id)}
                 onToggleBulk={() => toggleBulk(l.id)}
                 isBulkSelected={bulkIds.has(l.id)}
+                onQuickContact={() => quickContact(l.id, l.contactStatus || 'none')}
               />
             ))}
           </div>
@@ -477,7 +500,7 @@ export function ListingsView() {
   );
 }
 
-function ListingRow({ listing, onOpenDetail, onToggleBookmark, onToggleCompare, isCompareSelected, onToggleBulk, isBulkSelected }: { listing: Listing; onOpenDetail: () => void; onToggleBookmark: () => void; onToggleCompare: () => void; isCompareSelected: boolean; onToggleBulk: () => void; isBulkSelected: boolean }) {
+function ListingRow({ listing, onOpenDetail, onToggleBookmark, onToggleCompare, isCompareSelected, onToggleBulk, isBulkSelected, onQuickContact }: { listing: Listing; onOpenDetail: () => void; onToggleBookmark: () => void; onToggleCompare: () => void; isCompareSelected: boolean; onToggleBulk: () => void; isBulkSelected: boolean; onQuickContact: () => void; }) {
   const verdictColor =
     listing.aiVerdict === 'PRILIKA' ? 'border-primary/40 text-primary' :
     listing.aiVerdict === 'SUMNJIVO' ? 'border-amber-400/40 text-amber-400' :
@@ -571,6 +594,19 @@ function ListingRow({ listing, onOpenDetail, onToggleBookmark, onToggleCompare, 
               title={isCompareSelected ? 'Odstrani iz primerjave' : 'Dodaj v primerjavo'}
             >
               <GitCompare className={cn('w-4 h-4', isCompareSelected && 'text-primary')} />
+            </button>
+            {/* v3.9: Quick contact toggle */}
+            <button
+              onClick={(e) => { e.stopPropagation(); onQuickContact(); }}
+              className={cn(
+                'shrink-0 p-1.5 rounded hover:bg-primary/10 transition-colors text-[10px]',
+                (listing.contactStatus && listing.contactStatus !== 'none')
+                  ? 'text-amber-400 bg-amber-400/5'
+                  : 'text-muted-foreground hover:text-amber-400'
+              )}
+              title={listing.contactStatus && listing.contactStatus !== 'none' ? 'Počisti kontakt status' : 'Označi kot kontaktirano'}
+            >
+              📞
             </button>
             <button
               onClick={(e) => { e.stopPropagation(); onToggleBookmark(); }}
