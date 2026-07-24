@@ -284,14 +284,61 @@ export function MonitorsView() {
             Konfigurirana iskanja na slovenskih trgih.
           </p>
         </div>
-        <Button
-          size="sm"
-          onClick={() => { setEditing(null); setShowForm(true); }}
-          className="gap-2 bg-primary text-primary-foreground hover:bg-primary/90"
-        >
-          <Plus className="w-3.5 h-3.5" />
-          Nov monitor
-        </Button>
+        <div className="flex items-center gap-2">
+          {/* v3.7: Pause all / Resume all */}
+          {monitors.some(m => m.isActive) && (
+            <Button
+              size="sm"
+              variant="outline"
+              onClick={async () => {
+                const activeIds = monitors.filter(m => m.isActive).map(m => m.id);
+                if (activeIds.length === 0) return;
+                try {
+                  await fetch('/api/monitors/batch-toggle', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ ids: activeIds, active: false }),
+                  });
+                  toast.success(`${activeIds.length} monitorjev pavziranih`);
+                  await load();
+                } catch { toast.error('Napaka'); }
+              }}
+              className="gap-2 text-xs h-8"
+            >
+              <PauseCircle className="w-3.5 h-3.5" /> Pavziraj vse
+            </Button>
+          )}
+          {monitors.some(m => !m.isActive) && (
+            <Button
+              size="sm"
+              variant="outline"
+              onClick={async () => {
+                const pausedIds = monitors.filter(m => !m.isActive).map(m => m.id);
+                if (pausedIds.length === 0) return;
+                try {
+                  await fetch('/api/monitors/batch-toggle', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ ids: pausedIds, active: true }),
+                  });
+                  toast.success(`${pausedIds.length} monitorjev aktiviranih`);
+                  await load();
+                } catch { toast.error('Napaka'); }
+              }}
+              className="gap-2 text-xs h-8 border-primary/40 text-primary hover:bg-primary/10"
+            >
+              <Play className="w-3.5 h-3.5" /> Aktiviraj vse
+            </Button>
+          )}
+          <Button
+            size="sm"
+            onClick={() => { setEditing(null); setShowForm(true); }}
+            className="gap-2 bg-primary text-primary-foreground hover:bg-primary/90"
+          >
+            <Plus className="w-3.5 h-3.5" />
+            Nov monitor
+          </Button>
+        </div>
       </div>
 
       {/* v3.2: Batch run toolbar */}

@@ -115,6 +115,46 @@ export function DashboardView({ onNavigate }: ViewProps) {
         </div>
       </div>
 
+      {/* v3.7: Quick filter chips */}
+      <div className="flex items-center gap-2 flex-wrap">
+        <button
+          onClick={() => onNavigate('alerts')}
+          className="px-3 py-1 rounded-full border border-primary/30 bg-primary/5 text-primary text-xs hover:bg-primary/10 transition-colors"
+        >
+          🎯 Priložnosti ({stats.prilikaAlerts})
+        </button>
+        <button
+          onClick={() => onNavigate('listings')}
+          className="px-3 py-1 rounded-full border border-amber-400/30 bg-amber-400/5 text-amber-400 text-xs hover:bg-amber-400/10 transition-colors"
+        >
+          ⚠️ Sumljivi ({stats.sumnjivoAlerts})
+        </button>
+        <button
+          onClick={() => onNavigate('listings')}
+          className="px-3 py-1 rounded-full border border-border bg-card/50 text-muted-foreground text-xs hover:border-primary/30 hover:text-primary transition-colors"
+        >
+          📉 Padci cen ({stats.priceDropCount || 0})
+        </button>
+        <button
+          onClick={() => onNavigate('listings')}
+          className="px-3 py-1 rounded-full border border-border bg-card/50 text-muted-foreground text-xs hover:border-primary/30 hover:text-primary transition-colors"
+        >
+          📞 Kontaktirani ({stats.contactedListings || 0})
+        </button>
+        <button
+          onClick={() => onNavigate('listings')}
+          className="px-3 py-1 rounded-full border border-border bg-card/50 text-muted-foreground text-xs hover:border-primary/30 hover:text-primary transition-colors"
+        >
+          ⭐ Priljubljeni ({stats.bookmarkedListings})
+        </button>
+        <button
+          onClick={() => onNavigate('trades')}
+          className="px-3 py-1 rounded-full border border-primary/30 bg-primary/5 text-primary text-xs hover:bg-primary/10 transition-colors"
+        >
+          🛒 Skladišče
+        </button>
+      </div>
+
       {/* Stat grid */}
       <div className="grid grid-cols-2 md:grid-cols-5 gap-4">
         <StatCard
