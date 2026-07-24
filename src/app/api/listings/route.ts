@@ -51,6 +51,7 @@ export async function GET(req: NextRequest) {
     score: 'aiScore',
     price: 'price',
     risk: 'aiRisk',
+    age: 'firstSeenAt', // v4.2: same field, but ascending for oldest first
   }[sortField] ?? 'firstSeenAt';
 
   const listings = await db.listing.findMany({

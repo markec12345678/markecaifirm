@@ -52,6 +52,10 @@ interface TradeStats {
   avgRoiPercent: number;
   byCategory: Array<{ category: string; count: number; profit: number; invested: number }>;
   byMonth: Array<{ month: string; profit: number; count: number }>;
+  // v4.2: Profit goal
+  thisMonthProfit: number;
+  monthlyGoal: number;
+  goalProgress: number;
 }
 
 const CATEGORIES = ['elektronika', 'avto', 'nepremičnina', 'pohištvo', 'oblačila', 'orodje', 'kolektorstvo', 'drugo'];
@@ -222,7 +226,7 @@ export function TradesView() {
         </>
       )}
 
-        {/* v4.1: This month P&L card */}
+        {/* v4.1: This month P&L card + v4.2: Goal progress */}
         {stats.byMonth.length > 0 && (() => {
           const now = new Date();
           const thisMonthKey = now.toISOString().slice(0, 7);
@@ -264,6 +268,34 @@ export function TradesView() {
                   </div>
                   <TrendingUp className={cn('w-8 h-8', (thisMonth?.profit ?? 0) >= 0 ? 'text-primary' : 'text-destructive')} />
                 </div>
+                {/* v4.2: Goal progress bar */}
+                {stats.monthlyGoal > 0 && (
+                  <div className="mt-3 pt-3 border-t border-border">
+                    <div className="flex items-center justify-between text-[11px] mb-1">
+                      <span className="text-muted-foreground uppercase tracking-wider">Cilj: {stats.monthlyGoal}€</span>
+                      <span className={cn('font-bold', stats.goalProgress >= 100 ? 'text-primary' : 'text-amber-400')}>
+                        {stats.goalProgress}%
+                      </span>
+                    </div>
+                    <div className="h-2 bg-muted rounded-full overflow-hidden">
+                      <div
+                        className={cn(
+                          'h-full rounded-full transition-all',
+                          stats.goalProgress >= 100 ? 'bg-primary' :
+                          stats.goalProgress >= 50 ? 'bg-primary/70' : 'bg-amber-400/70'
+                        )}
+                        style={{ width: `${Math.min(100, stats.goalProgress)}%` }}
+                      />
+                    </div>
+                    {stats.goalProgress >= 100 ? (
+                      <p className="text-[10px] text-primary mt-1">🎉 Cilj dosežen!</p>
+                    ) : (
+                      <p className="text-[10px] text-muted-foreground mt-1">
+                        Še {(stats.monthlyGoal - stats.thisMonthProfit).toFixed(2)}€ do cilja
+                      </p>
+                    )}
+                  </div>
+                )}
               </CardContent>
             </Card>
           );

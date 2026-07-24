@@ -325,6 +325,7 @@ export function ListingsView() {
                 <SelectTrigger className="mt-1 text-xs"><SelectValue /></SelectTrigger>
                 <SelectContent>
                   <SelectItem value="firstSeen">Prvič videno (najnovejše)</SelectItem>
+                  <SelectItem value="age">Najstarejši prvo (pogajalska moč)</SelectItem>
                   <SelectItem value="score">AI ocena prilike</SelectItem>
                   <SelectItem value="risk">AI tveganje</SelectItem>
                   <SelectItem value="price">Cena</SelectItem>
