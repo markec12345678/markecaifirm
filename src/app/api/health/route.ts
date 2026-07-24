@@ -247,6 +247,20 @@ export async function GET() {
     checks.push({ name: 'Push notifications', status: 'disabled', message: 'Ni konfigurirano' });
   }
 
+  // v3.2: AI usage tracking
+  try {
+    const today = new Date().toISOString().slice(0, 10);
+    const aiCalls = settings.aiCallsDate === today ? settings.aiCallsToday : 0;
+    checks.push({
+      name: 'AI uporaba danes',
+      status: aiCalls > 200 ? 'warn' : 'ok',
+      message: `${aiCalls} AI klicov danes${aiCalls > 200 ? ' (visoka poraba — preveri threshold)' : ''}`,
+      details: { aiCalls, date: today },
+    });
+  } catch {
+    checks.push({ name: 'AI uporaba danes', status: 'disabled', message: 'Ni podatkov' });
+  }
+
   // Overall
   const errorCount = checks.filter(c => c.status === 'error').length;
   const warnCount = checks.filter(c => c.status === 'warn').length;

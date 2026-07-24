@@ -23,7 +23,7 @@ import {
   DialogDescription,
   DialogFooter,
 } from '@/components/ui/dialog';
-import { Plus, Play, Pencil, Trash2, RefreshCw, ExternalLink, CheckCircle2, XCircle, Clock, Zap, AlertCircle, PauseCircle, Bell } from 'lucide-react';
+import { Plus, Play, Pencil, Trash2, RefreshCw, ExternalLink, CheckCircle2, XCircle, Clock, Zap, AlertCircle, PauseCircle, Bell, Copy, Square } from 'lucide-react';
 import { toast } from 'sonner';
 import { cn } from '@/lib/utils';
 
@@ -123,6 +123,8 @@ export function MonitorsView() {
   const [editing, setEditing] = useState<Monitor | null>(null);
   const [showForm, setShowForm] = useState(false);
   const [runningIds, setRunningIds] = useState<Set<string>>(new Set());
+  const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
+  const [batchRunning, setBatchRunning] = useState(false);
 
   const load = useCallback(async () => {
     try {
@@ -191,6 +193,55 @@ export function MonitorsView() {
     }
   };
 
+  // v3.2: Clone monitor
+  const cloneMonitor = async (m: Monitor) => {
+    try {
+      const res = await fetch(`/api/monitors/${m.id}/clone`, { method: 'POST' });
+      if (res.ok) {
+        toast.success(`Monitor kloniran: "${m.name} (kopija)" — aktiviraj v seznamu`);
+        await load();
+      } else {
+        toast.error('Napaka pri kloniranju');
+      }
+    } catch {
+      toast.error('Napaka');
+    }
+  };
+
+  // v3.2: Batch run selected monitors
+  const batchRun = async () => {
+    if (selectedIds.size === 0) return;
+    setBatchRunning(true);
+    try {
+      const res = await fetch('/api/monitors/batch-run', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ ids: Array.from(selectedIds) }),
+      });
+      const data = await res.json();
+      if (data.ok) {
+        const ok = data.results.filter((r: any) => r.status === 'ok').length;
+        const err = data.results.filter((r: any) => r.status === 'error').length;
+        toast.success(`Pognano ${ok} monitorjev${err > 0 ? `, ${err} napak` : ''}`);
+        setSelectedIds(new Set());
+        await load();
+      }
+    } catch {
+      toast.error('Napaka pri batch poganjanju');
+    } finally {
+      setBatchRunning(false);
+    }
+  };
+
+  const toggleSelect = (id: string) => {
+    setSelectedIds(prev => {
+      const next = new Set(prev);
+      if (next.has(id)) next.delete(id);
+      else next.add(id);
+      return next;
+    });
+  };
+
   return (
     <div className="space-y-4">
       <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3">
@@ -211,6 +262,24 @@ export function MonitorsView() {
           Nov monitor
         </Button>
       </div>
+
+      {/* v3.2: Batch run toolbar */}
+      {selectedIds.size > 0 && (
+        <Card className="bg-primary/5 border-primary/30">
+          <CardContent className="p-3">
+            <div className="flex items-center gap-2 flex-wrap">
+              <span className="text-sm font-medium text-primary">{selectedIds.size} izbranih</span>
+              <Button size="sm" onClick={batchRun} disabled={batchRunning} className="gap-2 bg-primary text-primary-foreground hover:bg-primary/90 h-7">
+                {batchRunning ? <RefreshCw className="w-3.5 h-3.5 animate-spin" /> : <Play className="w-3.5 h-3.5" />}
+                Zaženi izbrane ({selectedIds.size})
+              </Button>
+              <Button size="sm" variant="ghost" onClick={() => setSelectedIds(new Set())} className="h-7 text-xs">
+                Počisti
+              </Button>
+            </div>
+          </CardContent>
+        </Card>
+      )}
 
       {loading ? (
         <div className="space-y-2">
@@ -294,16 +363,28 @@ export function MonitorsView() {
                 )}
 
                 <div className="flex items-center justify-between gap-2">
-                  <div className="flex items-center gap-2 text-xs">
-                    {m.lastStatus === 'ok' && <CheckCircle2 className="w-3.5 h-3.5 text-primary" />}
-                    {m.lastStatus === 'error' && <XCircle className="w-3.5 h-3.5 text-destructive" />}
-                    {m.lastStatus === 'empty' && <Clock className="w-3.5 h-3.5 text-muted-foreground" />}
-                    {m.lastStatus === null && <span className="text-muted-foreground text-[11px]">še ni pognan</span>}
-                    {m.lastRunAt && (
-                      <span className="text-muted-foreground text-[11px]">
-                        {formatTimeAgo(m.lastRunAt)}
-                      </span>
-                    )}
+                  <div className="flex items-center gap-2">
+                    {/* v3.2: Batch select checkbox */}
+                    <button
+                      onClick={() => toggleSelect(m.id)}
+                      className={cn(
+                        'w-4 h-4 rounded border shrink-0 transition-colors',
+                        selectedIds.has(m.id) ? 'bg-primary border-primary' : 'border-border hover:border-primary'
+                      )}
+                    >
+                      {selectedIds.has(m.id) && <CheckCircle2 className="w-3 h-3 text-primary-foreground mx-auto" />}
+                    </button>
+                    <div className="flex items-center gap-2 text-xs">
+                      {m.lastStatus === 'ok' && <CheckCircle2 className="w-3.5 h-3.5 text-primary" />}
+                      {m.lastStatus === 'error' && <XCircle className="w-3.5 h-3.5 text-destructive" />}
+                      {m.lastStatus === 'empty' && <Clock className="w-3.5 h-3.5 text-muted-foreground" />}
+                      {m.lastStatus === null && <span className="text-muted-foreground text-[11px]">še ni pognan</span>}
+                      {m.lastRunAt && (
+                        <span className="text-muted-foreground text-[11px]">
+                          {formatTimeAgo(m.lastRunAt)}
+                        </span>
+                      )}
+                    </div>
                   </div>
                   <div className="flex items-center gap-1">
                     <Button
@@ -315,6 +396,15 @@ export function MonitorsView() {
                     >
                       {runningIds.has(m.id) ? <RefreshCw className="w-3 h-3 animate-spin" /> : <Play className="w-3 h-3" />}
                       Poženi
+                    </Button>
+                    <Button
+                      size="sm"
+                      variant="ghost"
+                      onClick={() => cloneMonitor(m)}
+                      className="h-7 w-7 p-0"
+                      title="Kloniraj monitor"
+                    >
+                      <Copy className="w-3 h-3" />
                     </Button>
                     <Button
                       size="sm"

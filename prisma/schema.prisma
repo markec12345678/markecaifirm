@@ -72,6 +72,9 @@ model Settings {
   autoCleanupEnabled   Boolean @default(false)
   autoCleanupAlertsDays Int    @default(30) // archive alerts older than N days
   autoCleanupListingsDays Int  @default(90) // delete listings older than N days
+  // v3.2: AI usage tracking
+  aiCallsToday         Int    @default(0)
+  aiCallsDate          String @default("") // YYYY-MM-DD for daily reset
   // Metadata
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
