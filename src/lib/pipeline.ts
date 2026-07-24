@@ -378,127 +378,95 @@ export async function runMonitor(monitorId: string): Promise<RunResult> {
             },
           });
 
-          // v2.2: Check quiet hours and monitor-specific channels
+          // v2.5: Check quiet hours and monitor-specific channels
           const inQuietHours = settings.quietHoursEnabled &&
             isInQuietHours(settings.quietStartHour, settings.quietEndHour);
           const monitorChannels = getMonitorChannels(monitor.notificationChannels);
-          // Use monitor-specific channels if set, otherwise fall back to global
           const useTelegram = monitorChannels ? monitorChannels.telegram : settings.telegramEnabled;
           const useDiscord = monitorChannels ? monitorChannels.discord : settings.discordEnabled;
           const useSlack = monitorChannels ? monitorChannels.slack : settings.slackEnabled;
           const usePush = monitorChannels ? monitorChannels.push : settings.pushEnabled;
-          // v2.7: Email always uses global settings (no per-monitor override yet)
           const useEmail = settings.emailEnabled;
+
+          // Delivery tracking data
+          const delivery: any = {};
 
           // Skip notifications during quiet hours (but still create alert in DB)
           if (!inQuietHours) {
             // Send Telegram if enabled
             if (useTelegram && settings.telegramBotToken && settings.telegramChatId) {
               const inlineButtons = settings.telegramInlineButtons
-                ? buildAlertInlineButtons({
-                    alertId: alert.id,
-                    listingUrl: listing.url,
-                    dashboardUrl: 'http://localhost:3000/alerts',
-                  })
+                ? buildAlertInlineButtons({ alertId: alert.id, listingUrl: listing.url, dashboardUrl: 'http://localhost:3000/alerts' })
                 : undefined;
               const tg = await sendTelegramMessage(
-                { botToken: settings.telegramBotToken, chatId: settings.telegramChatId },
-                alertBody,
-                { inlineButtons }
+                { botToken: settings.telegramBotToken, chatId: settings.telegramChatId }, alertBody, { inlineButtons }
               );
-              await db.alert.update({
-                where: { id: alert.id },
-                data: {
-                  sentTelegram: tg.ok,
-                  telegramSentAt: tg.ok ? new Date() : null,
-                  telegramError: tg.ok ? null : tg.error,
-                },
-              });
+              delivery.sentTelegram = tg.ok;
+              delivery.telegramSentAt = tg.ok ? new Date() : null;
+              delivery.telegramError = tg.ok ? null : tg.error;
               if (tg.ok) alertsSent++;
             }
 
-            // v1.4: Send Discord if enabled
             if (useDiscord && settings.discordWebhookUrl) {
               const embed = buildAlertEmbed({
-                monitorName: monitor.name,
-                title: listing.title,
-                priceText: listing.priceText,
-                url: listing.url,
-                location: listing.location || undefined,
-                aiScore: evaluation.ocena_prilike,
-                aiRisk: evaluation.ocena_tveganja,
-                aiVerdict: evaluation.verdict,
-                aiReason: evaluation.razlog,
+                monitorName: monitor.name, title: listing.title, priceText: listing.priceText,
+                url: listing.url, location: listing.location || undefined,
+                aiScore: evaluation.ocena_prilike, aiRisk: evaluation.ocena_tveganja,
+                aiVerdict: evaluation.verdict, aiReason: evaluation.razlog,
                 estimatedValue: evaluation.predvidena_trzna_vrednost ?? null,
-                imageAnalysis: evaluation.image_analysis ?? null,
-                imageUrl: listing.imageUrl ?? null,
+                imageAnalysis: evaluation.image_analysis ?? null, imageUrl: listing.imageUrl ?? null,
               });
-              const dc = await sendDiscordMessage(
-                { webhookUrl: settings.discordWebhookUrl },
-                embed
-              );
+              const dc = await sendDiscordMessage({ webhookUrl: settings.discordWebhookUrl }, embed);
+              delivery.sentDiscord = dc.ok;
+              delivery.discordError = dc.ok ? null : dc.error;
               if (dc.ok && alertsSent === 0) alertsSent++;
             }
 
-            // v2.1: Send Slack if enabled
             if (useSlack && settings.slackWebhookUrl) {
               const blocks = buildAlertSlackBlocks({
-                title: listing.title,
-                priceText: listing.priceText,
-                url: listing.url,
-                monitorName: monitor.name,
-                aiScore: evaluation.ocena_prilike,
-                aiRisk: evaluation.ocena_tveganja,
-                aiVerdict: evaluation.verdict,
-                aiReason: evaluation.razlog,
-                estimatedValue: evaluation.predvidena_trzna_vrednost ?? null,
+                title: listing.title, priceText: listing.priceText, url: listing.url,
+                monitorName: monitor.name, aiScore: evaluation.ocena_prilike,
+                aiRisk: evaluation.ocena_tveganja, aiVerdict: evaluation.verdict,
+                aiReason: evaluation.razlog, estimatedValue: evaluation.predvidena_trzna_vrednost ?? null,
               });
-              const sl = await sendSlackMessage(
-                { webhookUrl: settings.slackWebhookUrl },
-                `🎯 ${listing.title}`,
-                blocks
-              );
+              const sl = await sendSlackMessage({ webhookUrl: settings.slackWebhookUrl }, `🎯 ${listing.title}`, blocks);
+              delivery.sentSlack = sl.ok;
+              delivery.slackError = sl.ok ? null : sl.error;
               if (sl.ok && alertsSent === 0) alertsSent++;
             }
 
-            // v1.5: Send browser push notification if enabled
             if (usePush) {
-              await sendPushNotification({
+              const pushResult = await sendPushNotification({
                 title: `${evaluation.verdict === 'PRILIKA' ? '🎯' : evaluation.verdict === 'SUMNJIVO' ? '⚠️' : '•'} ${listing.title.slice(0, 60)}`,
                 body: `${listing.priceText} • ${monitor.name} (prilika ${evaluation.ocena_prilike}/10, tveganje ${evaluation.ocena_tveganja}/10)`,
                 url: '/alerts',
               });
+              delivery.sentPush = pushResult.sent > 0;
+              delivery.pushError = pushResult.sent > 0 ? null : (pushResult.errors[0] ?? null);
             }
 
-            // v2.7: Send Email if enabled
             if (useEmail && settings.emailSmtpHost && settings.emailTo) {
               const html = formatAlertEmail({
-                title: listing.title,
-                priceText: listing.priceText,
-                url: listing.url,
-                monitorName: monitor.name,
-                aiScore: evaluation.ocena_prilike,
-                aiRisk: evaluation.ocena_tveganja,
-                aiVerdict: evaluation.verdict,
-                aiReason: evaluation.razlog,
-                estimatedValue: evaluation.predvidena_trzna_vrednost ?? null,
+                title: listing.title, priceText: listing.priceText, url: listing.url,
+                monitorName: monitor.name, aiScore: evaluation.ocena_prilike,
+                aiRisk: evaluation.ocena_tveganja, aiVerdict: evaluation.verdict,
+                aiReason: evaluation.razlog, estimatedValue: evaluation.predvidena_trzna_vrednost ?? null,
               });
-              await sendEmail(
-                {
-                  smtpHost: settings.emailSmtpHost,
-                  smtpPort: settings.emailSmtpPort,
-                  smtpUser: settings.emailSmtpUser,
-                  smtpPassword: settings.emailSmtpPassword,
-                  from: settings.emailFrom,
-                  to: settings.emailTo,
-                },
-                `🎯 ${listing.title.slice(0, 60)}`,
-                html
+              const em = await sendEmail(
+                { smtpHost: settings.emailSmtpHost, smtpPort: settings.emailSmtpPort, smtpUser: settings.emailSmtpUser,
+                  smtpPassword: settings.emailSmtpPassword, from: settings.emailFrom, to: settings.emailTo },
+                `🎯 ${listing.title.slice(0, 60)}`, html
               );
+              delivery.sentEmail = em.ok;
+              delivery.emailError = em.ok ? null : em.error;
             }
           }
 
-          // If neither enabled or in quiet hours, still count as alert for stats
+          // Update alert with delivery status
+          if (Object.keys(delivery).length > 0) {
+            await db.alert.update({ where: { id: alert.id }, data: delivery });
+          }
+
           if (!useTelegram && !useDiscord && !useSlack && !usePush && !useEmail) {
             alertsSent++;
           }

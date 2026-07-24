@@ -472,6 +472,9 @@ function ListingRow({ listing, onOpenDetail, onToggleBookmark, onToggleCompare, 
                 return null;
               })()}
             </div>
+            {listing.isBookmarked && (
+              <span className="text-primary text-[10px]">⭐ shranjeno</span>
+            )}
           </div>
           <div className="flex items-center gap-1 shrink-0">
             <button

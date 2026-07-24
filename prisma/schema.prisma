@@ -246,6 +246,15 @@ model Alert {
   sentTelegram Boolean @default(false)
   telegramSentAt DateTime?
   telegramError String?
+  // v2.9: Notification delivery tracking
+  sentDiscord   Boolean @default(false)
+  discordError  String?
+  sentSlack     Boolean @default(false)
+  slackError    String?
+  sentEmail     Boolean @default(false)
+  emailError    String?
+  sentPush      Boolean @default(false)
+  pushError     String?
   // UI state
   isRead      Boolean  @default(false)
   isArchived  Boolean  @default(false)
