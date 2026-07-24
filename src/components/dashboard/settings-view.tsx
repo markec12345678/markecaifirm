@@ -16,7 +16,7 @@ import {
   SelectValue,
 } from '@/components/ui/select';
 import { Badge } from '@/components/ui/badge';
-import { RefreshCw, Save, Zap, Send, Cpu, Key, Bot, MessageSquare, AlertCircle, CheckCircle2, Download, Upload, Database, Trash2, Bell, Smartphone, SmartphoneCharging, Mail, Plus, X, FileText } from 'lucide-react';
+import { RefreshCw, Save, Zap, Send, Cpu, Key, Bot, MessageSquare, AlertCircle, CheckCircle2, Download, Upload, Database, Trash2, Bell, Smartphone, SmartphoneCharging, Mail, Plus, X, FileText, Target } from 'lucide-react';
 import { toast } from 'sonner';
 import { cn } from '@/lib/utils';
 
@@ -73,6 +73,8 @@ interface Settings {
   autoCleanupEnabled: boolean;
   autoCleanupAlertsDays: number;
   autoCleanupListingsDays: number;
+  // v4.2: Profit goal
+  monthlyProfitGoal: number;
   updatedAt: string;
 }
 
@@ -166,6 +168,8 @@ export function SettingsView() {
   const [autoCleanupEnabled, setAutoCleanupEnabled] = useState(false);
   const [autoCleanupAlertsDays, setAutoCleanupAlertsDays] = useState(30);
   const [autoCleanupListingsDays, setAutoCleanupListingsDays] = useState(90);
+  // v4.2: Profit goal
+  const [monthlyProfitGoal, setMonthlyProfitGoal] = useState(0);
   const [heartbeatSending, setHeartbeatSending] = useState(false);
 
   // Test states
@@ -213,6 +217,7 @@ export function SettingsView() {
         setAutoCleanupEnabled(data.autoCleanupEnabled ?? false);
         setAutoCleanupAlertsDays(data.autoCleanupAlertsDays ?? 30);
         setAutoCleanupListingsDays(data.autoCleanupListingsDays ?? 90);
+        setMonthlyProfitGoal(data.monthlyProfitGoal ?? 0);
       } catch {
         toast.error('Ne morem naložiti nastavitev');
       } finally {
@@ -292,6 +297,8 @@ export function SettingsView() {
         autoCleanupEnabled,
         autoCleanupAlertsDays,
         autoCleanupListingsDays,
+        // v4.2: Profit goal
+        monthlyProfitGoal,
       };
       if (apiKey) body.aiApiKey = apiKey;
       if (fallbackApiKey) body.fallbackApiKey = fallbackApiKey;
@@ -1287,6 +1294,40 @@ curl "https://api.telegram.org/bot<TOKEN>/setWebhook\\
               </div>
             </div>
           )}
+        </CardContent>
+      </Card>
+
+      {/* v4.2: Profit goal */}
+      <Card className="bg-card/50">
+        <CardHeader>
+          <CardTitle className="text-sm font-bold uppercase tracking-wider flex items-center gap-2">
+            <Target className="w-4 h-4 text-primary" />
+            Mesečni cilj zaslužka <Badge variant="outline" className="text-[10px] text-primary border-primary/40">v4.2</Badge>
+          </CardTitle>
+          <CardDescription>
+            Nastavi mesečni cilj profit-a. Progress bar v Skladišče prikazuje kako si na poti do cilja.
+          </CardDescription>
+        </CardHeader>
+        <CardContent>
+          <div className="flex items-center gap-3">
+            <div>
+              <Label className="text-xs uppercase">Cilj (€/mesec)</Label>
+              <Input
+                type="number"
+                min={0}
+                step={50}
+                value={monthlyProfitGoal}
+                onChange={(e) => setMonthlyProfitGoal(parseFloat(e.target.value) || 0)}
+                placeholder="0 = onemogočeno"
+                className="mt-1 font-mono text-center w-32"
+              />
+            </div>
+            <p className="text-[11px] text-muted-foreground mt-5">
+              {monthlyProfitGoal > 0
+                ? `Cilj: ${monthlyProfitGoal}€ na mesec. Progress bar se prikaže v Skladišče.`
+                : 'Onemogočeno — nastavi znesek za motivacijski progress bar.'}
+            </p>
+          </div>
         </CardContent>
       </Card>
 

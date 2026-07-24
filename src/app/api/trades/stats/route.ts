@@ -4,10 +4,6 @@ import { db } from '@/lib/db';
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
 
-/**
- * GET /api/trades/stats
- * Returns aggregated profit/loss stats.
- */
 export async function GET() {
   const trades = await db.trade.findMany({
     where: { status: { in: ['held', 'sold'] } },
@@ -26,19 +22,16 @@ export async function GET() {
   const held = trades.filter(t => t.status === 'held');
   const sold = trades.filter(t => t.status === 'sold' && t.sellPrice != null);
 
-  // Realized profit (from sold trades)
   const realizedProfit = sold.reduce((sum, t) => {
     const revenue = (t.sellPrice ?? 0) - (t.sellFees ?? 0);
     const cost = t.buyPrice + (t.buyFees ?? 0);
     return sum + (revenue - cost);
   }, 0);
 
-  // Unrealized profit estimate (potential if sold at AI estimated value — but we don't have that here, so use buyPrice as basis)
   const totalInvested = held.reduce((sum, t) => sum + t.buyPrice + (t.buyFees ?? 0), 0);
   const totalRealizedRevenue = sold.reduce((sum, t) => sum + (t.sellPrice ?? 0) - (t.sellFees ?? 0), 0);
   const totalRealizedCost = sold.reduce((sum, t) => sum + t.buyPrice + (t.buyFees ?? 0), 0);
 
-  // ROI on sold
   const avgRoi = sold.length > 0
     ? sold.reduce((sum, t) => {
         const profit = (t.sellPrice ?? 0) - (t.sellFees ?? 0) - t.buyPrice - (t.buyFees ?? 0);
@@ -47,7 +40,6 @@ export async function GET() {
       }, 0) / sold.length
     : 0;
 
-  // By category
   const byCategory: Record<string, { count: number; profit: number; invested: number }> = {};
   for (const t of trades) {
     const cat = t.category || 'brez kategorije';
@@ -59,12 +51,11 @@ export async function GET() {
     }
   }
 
-  // By month (last 12 months)
   const byMonth: Array<{ month: string; profit: number; count: number }> = [];
   const now = new Date();
   for (let i = 11; i >= 0; i--) {
     const d = new Date(now.getFullYear(), now.getMonth() - i, 1);
-    const monthKey = d.toISOString().slice(0, 7); // YYYY-MM
+    const monthKey = d.toISOString().slice(0, 7);
     const monthTrades = sold.filter(t => {
       if (!t.sellDate) return false;
       return t.sellDate.toISOString().slice(0, 7) === monthKey;
@@ -74,6 +65,16 @@ export async function GET() {
     }, 0);
     byMonth.push({ month: monthKey, profit, count: monthTrades.length });
   }
+
+  // v4.2: This month profit for goal tracking
+  const thisMonthKey = now.toISOString().slice(0, 7);
+  const thisMonthProfit = sold
+    .filter(t => t.sellDate && t.sellDate.toISOString().slice(0, 7) === thisMonthKey)
+    .reduce((sum, t) => sum + ((t.sellPrice ?? 0) - (t.sellFees ?? 0) - t.buyPrice - (t.buyFees ?? 0)), 0);
+
+  // v4.2: Get profit goal from settings
+  const settings = await db.settings.findUnique({ where: { id: 'singleton' }, select: { monthlyProfitGoal: true } });
+  const monthlyGoal = settings?.monthlyProfitGoal ?? 0;
 
   return NextResponse.json({
     totalTrades: trades.length,
@@ -91,5 +92,9 @@ export async function GET() {
       invested: Math.round(v.invested * 100) / 100,
     })),
     byMonth,
+    // v4.2: Profit goal
+    thisMonthProfit: Math.round(thisMonthProfit * 100) / 100,
+    monthlyGoal,
+    goalProgress: monthlyGoal > 0 ? Math.min(100, Math.round((thisMonthProfit / monthlyGoal) * 100)) : 0,
   });
 }

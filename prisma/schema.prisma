@@ -75,6 +75,8 @@ model Settings {
   // v3.2: AI usage tracking
   aiCallsToday         Int    @default(0)
   aiCallsDate          String @default("") // YYYY-MM-DD for daily reset
+  // v4.2: Profit goal tracking
+  monthlyProfitGoal    Float  @default(0)  // EUR per month, 0 = disabled
   // Metadata
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
