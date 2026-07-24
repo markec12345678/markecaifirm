@@ -21,6 +21,13 @@ interface Stats {
   priceDropCount: number;
   newListings24h: number;
   newAlerts24h: number;
+  today: {
+    newListings: number;
+    newAlerts: number;
+    priceDrops: number;
+    runs: number;
+    successfulRuns: number;
+  };
   recentRuns: Array<{
     id: string;
     status: string;
@@ -114,6 +121,51 @@ export function DashboardView({ onNavigate }: ViewProps) {
           </Button>
         </div>
       </div>
+
+      {/* v4.0: Danes summary card */}
+      {stats.today && (
+        <Card className="bg-card/50 border-primary/20">
+          <CardContent className="p-4">
+            <div className="flex items-center justify-between mb-3">
+              <h3 className="text-sm font-bold uppercase tracking-wider text-primary flex items-center gap-2">
+                <Clock className="w-4 h-4" />
+                Danes
+              </h3>
+              <span className="text-[10px] text-muted-foreground">
+                {new Date().toLocaleDateString('sl-SI', { weekday: 'long', day: 'numeric', month: 'long' })}
+              </span>
+            </div>
+            <div className="grid grid-cols-2 md:grid-cols-5 gap-3">
+              <div className="text-center">
+                <div className="text-[10px] text-muted-foreground uppercase">Novi oglasi</div>
+                <div className="text-xl font-bold font-mono text-primary">{stats.today.newListings}</div>
+              </div>
+              <div className="text-center">
+                <div className="text-[10px] text-muted-foreground uppercase">Novi alerti</div>
+                <div className="text-xl font-bold font-mono text-amber-400">{stats.today.newAlerts}</div>
+              </div>
+              <div className="text-center">
+                <div className="text-[10px] text-muted-foreground uppercase">Padci cen</div>
+                <div className="text-xl font-bold font-mono text-primary">{stats.today.priceDrops}</div>
+              </div>
+              <div className="text-center">
+                <div className="text-[10px] text-muted-foreground uppercase">Izvedbe</div>
+                <div className="text-xl font-bold font-mono">{stats.today.runs}</div>
+              </div>
+              <div className="text-center">
+                <div className="text-[10px] text-muted-foreground uppercase">Uspeh</div>
+                <div className={cn(
+                  'text-xl font-bold font-mono',
+                  stats.today.runs > 0 && (stats.today.successfulRuns / stats.today.runs) >= 0.9 ? 'text-primary' :
+                  stats.today.runs > 0 && (stats.today.successfulRuns / stats.today.runs) >= 0.7 ? 'text-amber-400' : 'text-destructive'
+                )}>
+                  {stats.today.runs > 0 ? Math.round((stats.today.successfulRuns / stats.today.runs) * 100) : 0}%
+                </div>
+              </div>
+            </div>
+          </CardContent>
+        </Card>
+      )}
 
       {/* v3.7: Quick filter chips */}
       <div className="flex items-center gap-2 flex-wrap">
