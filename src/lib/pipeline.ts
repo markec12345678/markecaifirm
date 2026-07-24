@@ -17,6 +17,19 @@ import { sendSlackMessage, buildAlertSlackBlocks } from './slack';
 import { sendPushNotification } from './push';
 import { sendEmail, formatAlertEmail } from './email';
 
+/** v3.2: Increment AI call counter, reset if date changed. */
+async function trackAiCall() {
+  const today = new Date().toISOString().slice(0, 10);
+  const settings = await db.settings.findUnique({ where: { id: 'singleton' }, select: { aiCallsToday: true, aiCallsDate: true } });
+  if (!settings) return;
+  if (settings.aiCallsDate !== today) {
+    // New day — reset counter
+    await db.settings.update({ where: { id: 'singleton' }, data: { aiCallsToday: 1, aiCallsDate: today } });
+  } else {
+    await db.settings.update({ where: { id: 'singleton' }, data: { aiCallsToday: { increment: 1 } } });
+  }
+}
+
 /** v2.2: Check if current time is within quiet hours. */
 function isInQuietHours(quietStart: number, quietEnd: number): boolean {
   const hour = new Date().getHours();
@@ -313,6 +326,9 @@ export async function runMonitor(monitorId: string): Promise<RunResult> {
         if (settings.imageAnalysisEnabled && listing.imageUrl) {
           imageBase64 = await downloadImageAsBase64(listing.imageUrl, { timeoutMs: 8000 });
         }
+
+        // v3.2: Track AI call
+        await trackAiCall();
 
         evaluation = await evaluateListing(aiSettings, {
           title: listing.title,

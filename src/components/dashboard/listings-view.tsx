@@ -1040,6 +1040,18 @@ function ListingDetailModal({ listingId, onClose }: { listingId: string | null; 
                   <ExternalLink className="w-3.5 h-3.5" /> Odpri oglas
                 </a>
               </Button>
+              {/* v3.2: Copy URL */}
+              <Button
+                size="sm"
+                variant="outline"
+                onClick={() => {
+                  navigator.clipboard.writeText(listing.url);
+                  toast.success('URL kopiran');
+                }}
+                className="gap-2"
+              >
+                <Copy className="w-3.5 h-3.5" /> Kopiraj URL
+              </Button>
               <Button
                 size="sm"
                 variant="outline"
