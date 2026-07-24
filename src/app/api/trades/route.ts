@@ -41,12 +41,20 @@ function tradesToCsv(trades: any[]): string {
     'buyPrice', 'buyFees', 'buyLocation',
     'sellPrice', 'sellFees', 'sellLocation',
     'profit', 'roiPercent', 'notes', 'url',
+    // v3.9: Davčne kategorije
+    'davcnaKategorija', 'davcnaOznaka', 'brutoPrihodek', 'stroski', 'davcnaOsnova',
   ];
   const rows = trades.map(t => {
     const totalCost = t.buyPrice + (t.buyFees || 0);
     const revenue = t.sellPrice != null ? t.sellPrice - (t.sellFees || 0) : null;
     const profit = revenue != null ? revenue - totalCost : null;
     const roi = (profit != null && totalCost > 0) ? (profit / totalCost) * 100 : null;
+    // v3.9: Davčne kategorije (Slovenija)
+    const davcnaKategorija = t.status === 'sold' ? 'Dohodek iz preprodaje' : '';
+    const davcnaOznaka = t.status === 'sold' ? 'Ostali dohodki' : '';
+    const brutoPrihodek = t.sellPrice != null ? t.sellPrice : '';
+    const stroski = totalCost + (t.sellFees || 0);
+    const davcnaOsnova = profit != null && profit > 0 ? profit : 0;
     return [
       t.buyDate ? new Date(t.buyDate).toISOString().slice(0, 10) : '',
       t.sellDate ? new Date(t.sellDate).toISOString().slice(0, 10) : '',
@@ -63,6 +71,12 @@ function tradesToCsv(trades: any[]): string {
       roi != null ? roi.toFixed(2) : '',
       csvEscape(t.notes ?? ''),
       csvEscape(t.url ?? ''),
+      // v3.9
+      davcnaKategorija,
+      davcnaOznaka,
+      brutoPrihodek,
+      stroski,
+      davcnaOsnova,
     ];
   });
   return [headers.join(','), ...rows.map(r => r.join(','))].join('\n');
