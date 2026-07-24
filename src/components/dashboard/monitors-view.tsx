@@ -27,6 +27,26 @@ import { Plus, Play, Pencil, Trash2, RefreshCw, ExternalLink, CheckCircle2, XCir
 import { toast } from 'sonner';
 import { cn } from '@/lib/utils';
 
+// v3.4: Mini SVG sparkline component
+function Sparkline({ data, width = 60, height = 20 }: { data: number[]; width?: number; height?: number }) {
+  if (!data || data.length === 0 || data.every(d => d === 0)) {
+    return <span className="text-[10px] text-muted-foreground">—</span>;
+  }
+  const max = Math.max(...data, 1);
+  const step = width / (data.length - 1 || 1);
+  const points = data.map((d, i) => `${i * step},${height - (d / max) * height}`).join(' ');
+  const lastIdx = data.length - 1;
+  const lastVal = data[lastIdx];
+  const lastX = lastIdx * step;
+  const lastY = height - (lastVal / max) * height;
+  return (
+    <svg width={width} height={height} className="inline-block">
+      <polyline points={points} fill="none" stroke="#4ade80" strokeWidth="1.5" />
+      <circle cx={lastX} cy={lastY} r="1.5" fill="#4ade80" />
+    </svg>
+  );
+}
+
 type Source = 'bolha' | 'nepremicnine' | 'avtonet' | 'salomon' | 'custom-rss' | 'vinted';
 
 interface Monitor {
@@ -125,13 +145,24 @@ export function MonitorsView() {
   const [runningIds, setRunningIds] = useState<Set<string>>(new Set());
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
   const [batchRunning, setBatchRunning] = useState(false);
+  // v3.4: Sparkline data
+  const [sparklines, setSparklines] = useState<Record<string, { sparkline: number[]; totalNew: number; totalAlerts: number; successRate: number }>>({});
 
   const load = useCallback(async () => {
     try {
-      const res = await fetch('/api/monitors');
-      if (!res.ok) throw new Error();
-      const data = await res.json();
-      setMonitors(data);
+      const [res, sparkRes] = await Promise.all([
+        fetch('/api/monitors'),
+        fetch('/api/monitors/sparkline'),
+      ]);
+      if (res.ok) setMonitors(await res.json());
+      if (sparkRes.ok) {
+        const sparkData = await sparkRes.json();
+        const map: Record<string, any> = {};
+        for (const s of sparkData.sparklines || []) {
+          map[s.id] = s;
+        }
+        setSparklines(map);
+      }
     } catch {
       toast.error('Ne morem naložiti monitorjev');
     } finally {
@@ -340,6 +371,24 @@ export function MonitorsView() {
                     </>
                   )}
                 </div>
+
+                {/* v3.4: Sparkline + stats */}
+                {sparklines[m.id] && (
+                  <div className="flex items-center gap-3 mt-1 text-[11px] text-muted-foreground">
+                    <Sparkline data={sparklines[m.id].sparkline} />
+                    <span>{sparklines[m.id].totalNew} novih v 14d</span>
+                    {sparklines[m.id].totalAlerts > 0 && (
+                      <span className="text-primary">{sparklines[m.id].totalAlerts} alertov</span>
+                    )}
+                    <span className={cn(
+                      'text-[10px]',
+                      sparklines[m.id].successRate >= 0.9 ? 'text-primary' :
+                      sparklines[m.id].successRate >= 0.7 ? 'text-amber-400' : 'text-destructive'
+                    )}>
+                      {Math.round(sparklines[m.id].successRate * 100)}% uspeh
+                    </span>
+                  </div>
+                )}
 
                 {/* v1.3: auto-paused warning */}
                 {m.autoPausedAt && (
