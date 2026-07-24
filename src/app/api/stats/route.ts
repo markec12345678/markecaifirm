@@ -14,6 +14,8 @@ export async function GET() {
     prilikaAlerts,
     sumnjivoAlerts,
     bookmarkedListings,
+    contactedListings,
+    priceDropCount,
     recentRuns,
   ] = await Promise.all([
     db.monitor.count(),
@@ -24,6 +26,10 @@ export async function GET() {
     db.alert.count({ where: { aiVerdict: 'PRILIKA' } }),
     db.alert.count({ where: { aiVerdict: 'SUMNJIVO' } }),
     db.listing.count({ where: { isBookmarked: true } }),
+    // v3.1: Contacted listings
+    db.listing.count({ where: { contactStatus: { in: ['contacted', 'responded'] } } }),
+    // v3.1: Price drops
+    db.listing.count({ where: { priceDroppedAt: { not: null } } }),
     db.runLog.findMany({
       take: 10,
       orderBy: { startedAt: 'desc' },
@@ -44,6 +50,9 @@ export async function GET() {
     prilikaAlerts,
     sumnjivoAlerts,
     bookmarkedListings,
+    // v3.1: New stats
+    contactedListings,
+    priceDropCount,
     newListings24h,
     newAlerts24h,
     recentRuns,
