@@ -17,6 +17,11 @@ model Settings {
   aiBaseUrl       String   @default("http://localhost:11434")
   aiApiKey        String   @default("")
   aiModel         String   @default("qwen2.5:7b")
+  // v2.6: AI fallback — when primary provider fails, use fallback
+  fallbackProvider String  @default("") // empty = disabled
+  fallbackBaseUrl  String  @default("")
+  fallbackApiKey   String  @default("")
+  fallbackModel    String  @default("")
   // Telegram config
   telegramBotToken String  @default("")
   telegramChatId   String  @default("")

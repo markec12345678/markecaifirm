@@ -28,6 +28,11 @@ interface Settings {
   aiApiKeySet: boolean;
   aiApiKeyMasked: string;
   aiModel: string;
+  // v2.6: AI fallback
+  fallbackProvider: string;
+  fallbackBaseUrl: string;
+  fallbackApiKeySet: boolean;
+  fallbackModel: string;
   telegramBotTokenSet: boolean;
   telegramChatId: string;
   telegramEnabled: boolean;
@@ -104,6 +109,11 @@ export function SettingsView() {
   const [baseUrl, setBaseUrl] = useState('http://localhost:11434');
   const [apiKey, setApiKey] = useState('');
   const [model, setModel] = useState('qwen2.5:7b');
+  // v2.6: AI fallback
+  const [fallbackProvider, setFallbackProvider] = useState<Provider | ''>('');
+  const [fallbackBaseUrl, setFallbackBaseUrl] = useState('');
+  const [fallbackApiKey, setFallbackApiKey] = useState('');
+  const [fallbackModel, setFallbackModel] = useState('');
   const [telegramBotToken, setTelegramBotToken] = useState('');
   const [telegramChatId, setTelegramChatId] = useState('');
   const [telegramEnabled, setTelegramEnabled] = useState(false);
@@ -156,6 +166,9 @@ export function SettingsView() {
         setProvider(data.aiProvider);
         setBaseUrl(data.aiBaseUrl);
         setModel(data.aiModel);
+        setFallbackProvider(data.fallbackProvider || '');
+        setFallbackBaseUrl(data.fallbackBaseUrl || '');
+        setFallbackModel(data.fallbackModel || '');
         setTelegramChatId(data.telegramChatId);
         setTelegramEnabled(data.telegramEnabled);
         setDiscordEnabled(data.discordEnabled);
@@ -220,6 +233,10 @@ export function SettingsView() {
         aiProvider: provider,
         aiBaseUrl: baseUrl,
         aiModel: model,
+        // v2.6: fallback
+        fallbackProvider,
+        fallbackBaseUrl,
+        fallbackModel,
         telegramChatId,
         telegramEnabled,
         // v1.4
@@ -246,6 +263,7 @@ export function SettingsView() {
         autoCleanupListingsDays,
       };
       if (apiKey) body.aiApiKey = apiKey;
+      if (fallbackApiKey) body.fallbackApiKey = fallbackApiKey;
       if (telegramBotToken) body.telegramBotToken = telegramBotToken;
       if (telegramWebhookSecret) body.telegramWebhookSecret = telegramWebhookSecret;
       // v1.4
@@ -555,6 +573,55 @@ export function SettingsView() {
               </span>
             )}
           </div>
+        </CardContent>
+      </Card>
+
+      {/* v2.6: AI Fallback card */}
+      <Card className="bg-card/50 border-primary/20">
+        <CardHeader>
+          <CardTitle className="text-sm font-bold uppercase tracking-wider flex items-center gap-2">
+            <Zap className="w-4 h-4 text-amber-400" />
+            AI Fallback <Badge variant="outline" className="text-[10px] text-primary border-primary/40">v2.6</Badge>
+          </CardTitle>
+          <CardDescription>
+            Ko primarni AI provider odpove (npr. Ollama offline), samodejno preklopi na backup providerja.
+          </CardDescription>
+        </CardHeader>
+        <CardContent className="space-y-3">
+          <div>
+            <Label className="text-xs uppercase tracking-wider">Fallback provider</Label>
+            <Select value={fallbackProvider || 'none'} onValueChange={(v) => setFallbackProvider(v === 'none' ? '' : v as Provider)}>
+              <SelectTrigger className="mt-1"><SelectValue /></SelectTrigger>
+              <SelectContent>
+                <SelectItem value="none">Izklopljeno</SelectItem>
+                <SelectItem value="ollama">Ollama (lokalno)</SelectItem>
+                <SelectItem value="openai">OpenAI</SelectItem>
+                <SelectItem value="anthropic">Anthropic Claude</SelectItem>
+                <SelectItem value="openai-compatible">OpenAI-kompatibilni</SelectItem>
+              </SelectContent>
+            </Select>
+          </div>
+          {fallbackProvider && (
+            <>
+              <div>
+                <Label className="text-xs uppercase tracking-wider">Base URL</Label>
+                <Input value={fallbackBaseUrl} onChange={(e) => setFallbackBaseUrl(e.target.value)} placeholder="https://api.openai.com" className="mt-1 font-mono text-xs" />
+              </div>
+              <div>
+                <Label className="text-xs uppercase tracking-wider">Model</Label>
+                <Input value={fallbackModel} onChange={(e) => setFallbackModel(e.target.value)} placeholder="gpt-4o-mini" className="mt-1 font-mono text-xs" />
+              </div>
+              <div>
+                <Label className="text-xs uppercase tracking-wider flex items-center gap-2">
+                  <Key className="w-3 h-3" /> API ključ
+                </Label>
+                <Input type="password" value={fallbackApiKey} onChange={(e) => setFallbackApiKey(e.target.value)} placeholder={settings?.fallbackApiKeySet ? 'shranjen — pusti prazno za ohranitev' : 'vnesi API ključ'} className="mt-1 font-mono text-xs" />
+              </div>
+              <p className="text-[11px] text-amber-400">
+                ⚠️ Fallback se aktivira samo ko primarni provider vrne napako. V normalnih razmerah se ne uporablja.
+              </p>
+            </>
+          )}
         </CardContent>
       </Card>
 

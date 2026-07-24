@@ -64,12 +64,21 @@ function toAiSettings(s: {
   aiBaseUrl: string;
   aiApiKey: string;
   aiModel: string;
+  fallbackProvider?: string;
+  fallbackBaseUrl?: string;
+  fallbackApiKey?: string;
+  fallbackModel?: string;
 }): AiSettings {
   return {
     provider: s.aiProvider as AiSettings['provider'],
     baseUrl: s.aiBaseUrl,
     apiKey: s.aiApiKey,
     model: s.aiModel,
+    // v2.6: fallback
+    fallbackProvider: (s.fallbackProvider || '') as AiProviderType | '',
+    fallbackBaseUrl: s.fallbackBaseUrl || '',
+    fallbackApiKey: s.fallbackApiKey || '',
+    fallbackModel: s.fallbackModel || '',
   };
 }
 
