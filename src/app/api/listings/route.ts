@@ -41,6 +41,10 @@ export async function GET(req: NextRequest) {
   if (hasImage) where.NOT = { imageUrl: null };
   if (bookmarked) where.isBookmarked = true;
   if (contactStatus) where.contactStatus = contactStatus;
+  // v4.1: Hide hidden listings by default (unless explicitly requested)
+  if (url.searchParams.get('showHidden') !== '1') {
+    where.isHidden = false;
+  }
 
   const orderBy: any = {
     firstSeen: 'firstSeenAt',

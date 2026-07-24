@@ -222,7 +222,54 @@ export function TradesView() {
         </>
       )}
 
-      {/* Filter */}
+        {/* v4.1: This month P&L card */}
+        {stats.byMonth.length > 0 && (() => {
+          const now = new Date();
+          const thisMonthKey = now.toISOString().slice(0, 7);
+          const lastMonthKey = new Date(now.getFullYear(), now.getMonth() - 1, 1).toISOString().slice(0, 7);
+          const thisMonth = stats.byMonth.find(m => m.month === thisMonthKey);
+          const lastMonth = stats.byMonth.find(m => m.month === lastMonthKey);
+          const monthName = now.toLocaleDateString('sl-SI', { month: 'long', year: 'numeric' });
+          return (
+            <Card className={cn(
+              'bg-card/50 border',
+              (thisMonth?.profit ?? 0) >= 0 ? 'border-primary/20' : 'border-destructive/20'
+            )}>
+              <CardContent className="p-4">
+                <div className="flex items-center justify-between">
+                  <div>
+                    <p className="text-[10px] text-muted-foreground uppercase tracking-wider">Ta mesec — {monthName}</p>
+                    <p className={cn(
+                      'text-2xl font-bold font-mono mt-1',
+                      (thisMonth?.profit ?? 0) >= 0 ? 'text-primary terminal-glow' : 'text-destructive'
+                    )}>
+                      {(thisMonth?.profit ?? 0) >= 0 ? '+' : ''}{(thisMonth?.profit ?? 0).toFixed(2)} €
+                    </p>
+                    <p className="text-[11px] text-muted-foreground mt-1">
+                      {thisMonth?.count ?? 0} prodanih tradev
+                      {lastMonth && (
+                        <span className="ml-2">
+                          • Prejšnji mesec: {lastMonth.profit >= 0 ? '+' : ''}{lastMonth.profit.toFixed(2)} €
+                          {thisMonth && lastMonth.profit !== 0 && thisMonth.profit !== 0 && (
+                            <span className={cn(
+                              'ml-1 font-bold',
+                              thisMonth.profit > lastMonth.profit ? 'text-primary' : 'text-destructive'
+                            )}>
+                              ({thisMonth.profit > lastMonth.profit ? '↑' : '↓'} {Math.abs(thisMonth.profit - lastMonth.profit).toFixed(2)} €)
+                            </span>
+                          )}
+                        </span>
+                      )}
+                    </p>
+                  </div>
+                  <TrendingUp className={cn('w-8 h-8', (thisMonth?.profit ?? 0) >= 0 ? 'text-primary' : 'text-destructive')} />
+                </div>
+              </CardContent>
+            </Card>
+          );
+        })()}
+
+        {/* Filter */}
       <div className="flex items-center gap-2 flex-wrap">
         {['all', 'held', 'sold', 'cancelled'].map(f => (
           <Button
