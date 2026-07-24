@@ -4,7 +4,7 @@ import { useEffect, useState, useCallback } from 'react';
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
-import { RefreshCw, BarChart3, TrendingUp, TrendingDown, Target, AlertTriangle, AlertCircle, Activity, ThumbsUp, ThumbsDown, Archive, Bell, Wallet } from 'lucide-react';
+import { RefreshCw, BarChart3, TrendingUp, TrendingDown, Target, AlertTriangle, AlertCircle, Activity, ThumbsUp, ThumbsDown, Archive, Bell, Wallet, GitCompare, ExternalLink } from 'lucide-react';
 import { toast } from 'sonner';
 import {
   ResponsiveContainer, LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, Legend,
@@ -82,13 +82,16 @@ const PIE_COLORS = ['#4ade80', '#fbbf24', '#6b7280'];
 export function AnalyticsView() {
   const [data, setData] = useState<AnalyticsData | null>(null);
   const [loading, setLoading] = useState(true);
+  const [arbitrage, setArbitrage] = useState<any>(null);
 
   const load = useCallback(async () => {
     try {
-      const res = await fetch('/api/analytics');
-      if (!res.ok) throw new Error();
-      const d = await res.json();
-      setData(d);
+      const [res, arbRes] = await Promise.all([
+        fetch('/api/analytics'),
+        fetch('/api/arbitrage'),
+      ]);
+      if (res.ok) setData(await res.json());
+      if (arbRes.ok) setArbitrage(await arbRes.json());
     } catch {
       toast.error('Ne morem naložiti analitike');
     } finally {
@@ -453,6 +456,48 @@ export function AnalyticsView() {
                       <Badge variant="outline" className="text-[10px]">
                         {seller.listingCount} oglasov
                       </Badge>
+                    </div>
+                  ))}
+                </div>
+              </CardContent>
+            </Card>
+          )}
+
+          {/* v3.0: Arbitrage opportunities */}
+          {arbitrage && arbitrage.opportunities && arbitrage.opportunities.length > 0 && (
+            <Card className="bg-card/50 lg:col-span-2 border-primary/30">
+              <CardHeader>
+                <CardTitle className="text-sm font-bold uppercase tracking-wider flex items-center gap-2">
+                  <GitCompare className="w-4 h-4 text-primary" />
+                  Arbitražne priložnosti ({arbitrage.total})
+                </CardTitle>
+                <CardDescription>
+                  Ista artikla na različnih portalih z različnimi cenami — kupi poceni, prodaj drago.
+                </CardDescription>
+              </CardHeader>
+              <CardContent>
+                <div className="space-y-2">
+                  {arbitrage.opportunities.slice(0, 10).map((opp: any, i: number) => (
+                    <div key={i} className="p-2 bg-background/30 rounded border border-border">
+                      <div className="flex items-center justify-between gap-2 mb-1">
+                        <span className="text-xs font-medium truncate flex-1">{opp.title}</span>
+                        <Badge variant="outline" className="text-[10px] border-primary/40 text-primary shrink-0">
+                          💰 +{opp.potentialProfit}€ ({opp.profitPct}%)
+                        </Badge>
+                      </div>
+                      <div className="grid grid-cols-2 gap-2 text-[11px]">
+                        {opp.listings.map((l: any, j: number) => (
+                          <a key={j} href={l.url} target="_blank" rel="noopener noreferrer" className={cn(
+                            'flex items-center justify-between gap-1 p-1.5 rounded hover:bg-card/50 transition-colors',
+                            l.price === opp.cheapestPrice && 'bg-primary/5 border border-primary/20'
+                          )}>
+                            <span className="text-muted-foreground truncate">{l.source}</span>
+                            <span className={cn('font-mono', l.price === opp.cheapestPrice ? 'text-primary font-bold' : 'text-amber-400')}>
+                              {l.price}€ <ExternalLink className="w-2.5 h-2.5 inline" />
+                            </span>
+                          </a>
+                        ))}
+                      </div>
                     </div>
                   ))}
                 </div>
