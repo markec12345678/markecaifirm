@@ -522,9 +522,16 @@ export function MonitorsView() {
                 </div>
 
                 {m.lastError && (
-                  <p className="text-xs text-destructive mt-2 truncate">
-                    ⚠ {m.lastError.slice(0, 100)}
-                  </p>
+                  <div className="text-xs text-destructive mt-2">
+                    <details className="cursor-pointer">
+                      <summary className="truncate select-none hover:text-destructive/80">
+                        ⚠ {m.lastError.slice(0, 80)}{m.lastError.length > 80 ? '...' : ''}
+                      </summary>
+                      <div className="mt-1 p-2 bg-destructive/5 border border-destructive/20 rounded text-[11px] font-mono whitespace-pre-wrap break-all">
+                        {m.lastError}
+                      </div>
+                    </details>
+                  </div>
                 )}
               </CardContent>
             </Card>

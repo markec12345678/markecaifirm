@@ -38,8 +38,16 @@ export async function GET() {
   ]);
 
   const last24h = new Date(Date.now() - 24 * 60 * 60 * 1000);
+  const todayStart = new Date();
+  todayStart.setHours(0, 0, 0, 0);
   const newListings24h = await db.listing.count({ where: { firstSeenAt: { gte: last24h } } });
   const newAlerts24h = await db.alert.count({ where: { createdAt: { gte: last24h } } });
+  // v4.0: Today's stats
+  const todayNewListings = await db.listing.count({ where: { firstSeenAt: { gte: todayStart } } });
+  const todayNewAlerts = await db.alert.count({ where: { createdAt: { gte: todayStart } } });
+  const todayPriceDrops = await db.listing.count({ where: { priceDroppedAt: { gte: todayStart } } });
+  const todayRuns = await db.runLog.count({ where: { startedAt: { gte: todayStart } } });
+  const todaySuccessfulRuns = await db.runLog.count({ where: { startedAt: { gte: todayStart }, status: 'ok' } });
 
   return NextResponse.json({
     totalMonitors,
@@ -50,11 +58,17 @@ export async function GET() {
     prilikaAlerts,
     sumnjivoAlerts,
     bookmarkedListings,
-    // v3.1: New stats
     contactedListings,
     priceDropCount,
     newListings24h,
     newAlerts24h,
+    today: {
+      newListings: todayNewListings,
+      newAlerts: todayNewAlerts,
+      priceDrops: todayPriceDrops,
+      runs: todayRuns,
+      successfulRuns: todaySuccessfulRuns,
+    },
     recentRuns,
   });
 }
