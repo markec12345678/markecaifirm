@@ -10,6 +10,11 @@ export interface AiSettings {
   baseUrl: string;
   apiKey: string;
   model: string;
+  // v2.6: fallback provider
+  fallbackProvider?: AiProviderType | '';
+  fallbackBaseUrl?: string;
+  fallbackApiKey?: string;
+  fallbackModel?: string;
 }
 
 export interface ListingEvaluationInput {
@@ -266,24 +271,47 @@ export async function evaluateListing(
 ): Promise<ListingEvaluation> {
   const userPrompt = buildUserPrompt(input);
   let raw = '';
-  switch (settings.provider) {
-    case 'ollama':
-      raw = await callOllama(settings, userPrompt, input.imageBase64);
-      break;
-    case 'openai':
-      raw = await callOpenAiCompatible(settings, userPrompt, input.imageBase64);
-      break;
-    case 'openai-compatible':
-      raw = await callOpenAiCompatible(settings, userPrompt, input.imageBase64);
-      break;
-    case 'anthropic':
-      raw = await callAnthropic(settings, userPrompt, input.imageBase64);
-      break;
-    default:
-      throw new Error(`Unknown AI provider: ${settings.provider}`);
+  try {
+    raw = await callProvider(settings, userPrompt, input.imageBase64);
+  } catch (primaryError: any) {
+    // v2.6: Try fallback provider if configured
+    if (settings.fallbackProvider && settings.fallbackModel) {
+      const fallbackSettings: AiSettings = {
+        provider: settings.fallbackProvider as AiProviderType,
+        baseUrl: settings.fallbackBaseUrl || '',
+        apiKey: settings.fallbackApiKey || '',
+        model: settings.fallbackModel,
+      };
+      try {
+        raw = await callProvider(fallbackSettings, userPrompt, input.imageBase64);
+      } catch (fallbackError: any) {
+        throw new Error(`Primary: ${primaryError?.message ?? 'failed'} | Fallback: ${fallbackError?.message ?? 'failed'}`);
+      }
+    } else {
+      throw primaryError;
+    }
   }
   const parsed = parseJsonLoose(raw);
   return normalizeEvaluation(parsed);
+}
+
+/** Call the appropriate provider based on settings.provider. */
+async function callProvider(
+  settings: AiSettings,
+  userPrompt: string,
+  imageBase64?: string | null
+): Promise<string> {
+  switch (settings.provider) {
+    case 'ollama':
+      return callOllama(settings, userPrompt, imageBase64);
+    case 'openai':
+    case 'openai-compatible':
+      return callOpenAiCompatible(settings, userPrompt, imageBase64);
+    case 'anthropic':
+      return callAnthropic(settings, userPrompt, imageBase64);
+    default:
+      throw new Error(`Unknown AI provider: ${settings.provider}`);
+  }
 }
 
 /**

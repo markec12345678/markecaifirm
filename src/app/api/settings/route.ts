@@ -15,6 +15,11 @@ export async function GET() {
     aiApiKeySet: !!s.aiApiKey,
     aiApiKeyMasked: s.aiApiKey ? maskKey(s.aiApiKey) : '',
     aiModel: s.aiModel,
+    // v2.6: AI fallback
+    fallbackProvider: s.fallbackProvider || '',
+    fallbackBaseUrl: s.fallbackBaseUrl || '',
+    fallbackApiKeySet: !!s.fallbackApiKey,
+    fallbackModel: s.fallbackModel || '',
     telegramBotTokenSet: !!s.telegramBotToken,
     telegramChatId: s.telegramChatId,
     telegramEnabled: s.telegramEnabled,
@@ -111,6 +116,13 @@ export async function POST(req: NextRequest) {
   if (typeof body.aiProvider === 'string') data.aiProvider = body.aiProvider;
   if (typeof body.aiBaseUrl === 'string') data.aiBaseUrl = body.aiBaseUrl;
   if (typeof body.aiModel === 'string') data.aiModel = body.aiModel;
+  // v2.6: AI fallback
+  if (typeof body.fallbackProvider === 'string') data.fallbackProvider = body.fallbackProvider;
+  if (typeof body.fallbackBaseUrl === 'string') data.fallbackBaseUrl = body.fallbackBaseUrl;
+  if (typeof body.fallbackModel === 'string') data.fallbackModel = body.fallbackModel;
+  if (typeof body.fallbackApiKey === 'string' && body.fallbackApiKey.trim() !== '') {
+    data.fallbackApiKey = body.fallbackApiKey.trim();
+  }
   if (typeof body.telegramChatId === 'string') data.telegramChatId = body.telegramChatId;
   if (typeof body.telegramEnabled === 'boolean') data.telegramEnabled = body.telegramEnabled;
   if (typeof body.heartbeatEnabled === 'boolean') data.heartbeatEnabled = body.heartbeatEnabled;
