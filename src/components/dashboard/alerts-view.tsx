@@ -23,6 +23,14 @@ interface Alert {
   userAction: string | null;
   sentTelegram: boolean;
   telegramError: string | null;
+  sentDiscord: boolean;
+  discordError: string | null;
+  sentSlack: boolean;
+  slackError: string | null;
+  sentEmail: boolean;
+  emailError: string | null;
+  sentPush: boolean;
+  pushError: string | null;
   createdAt: string;
   monitor: { name: string; source: string };
 }
@@ -379,13 +387,39 @@ function AlertCard({
               {alert.sentTelegram && (
                 <>
                   <span>•</span>
-                  <span className="text-primary">Telegram ✓</span>
+                  <span className="text-primary">TG ✓</span>
                 </>
               )}
-              {alert.telegramError && (
+              {alert.sentDiscord && (
                 <>
                   <span>•</span>
-                  <span className="text-destructive">Telegram napaka</span>
+                  <span className="text-primary">DC ✓</span>
+                </>
+              )}
+              {alert.sentSlack && (
+                <>
+                  <span>•</span>
+                  <span className="text-primary">SL ✓</span>
+                </>
+              )}
+              {alert.sentPush && (
+                <>
+                  <span>•</span>
+                  <span className="text-primary">Push ✓</span>
+                </>
+              )}
+              {alert.sentEmail && (
+                <>
+                  <span>•</span>
+                  <span className="text-primary">Email ✓</span>
+                </>
+              )}
+              {(alert.telegramError || alert.discordError || alert.slackError || alert.emailError) && (
+                <>
+                  <span>•</span>
+                  <span className="text-destructive" title={alert.telegramError || alert.discordError || alert.slackError || alert.emailError || ''}>
+                    ⚠ Napaka
+                  </span>
                 </>
               )}
             </div>

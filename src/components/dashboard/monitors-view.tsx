@@ -90,6 +90,31 @@ const SOURCE_PRESETS: Array<{ source: Source; label: string; url: string; hint: 
     url: 'https://www.vinted.si/api/v2/catalog/items?search_text=nike%20air%20max&order_by=newest_first',
     hint: 'Vinted API — zamenjaj search_text param',
   },
+  // v2.9: Additional templates
+  {
+    source: 'avtonet',
+    label: 'Avtonet — VW Golf do 8000€',
+    url: 'https://www.avto.net/adresults.asp?znamka=VOLKSWAGEN&model=GOLF&cenaMIN=0&cenaMAX=8000',
+    hint: 'Avtonet iskanje — zamenjaj znamko/model/ceno',
+  },
+  {
+    source: 'nepremicnine',
+    label: 'Nepremičnine — hiša Bela krajina',
+    url: 'https://www.nepremicnine.net/oglasi-prodaja/bela-krajina/hisa/?output=rss',
+    hint: 'Hiše v Beli krajini',
+  },
+  {
+    source: 'vinted',
+    label: 'Vinted — Levi\'s jeans',
+    url: 'https://www.vinted.si/api/v2/catalog/items?search_text=levis%20jeans&order_by=newest_first',
+    hint: 'Vinted — iskanje oblačil',
+  },
+  {
+    source: 'bolha',
+    label: 'Bolha — PlayStation 5',
+    url: 'https://www.bolha.com/index.php?ctl=search&A_3_1=playstation+5&sort=new',
+    hint: 'Igranje konzol na Bolhi',
+  },
 ];
 
 export function MonitorsView() {
