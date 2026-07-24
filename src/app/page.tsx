@@ -1,7 +1,7 @@
 'use client';
 
 import { useEffect, useState, useCallback } from 'react';
-import { Activity, Bell, Settings, ListPlus, Zap, RefreshCw, AlertCircle, LayoutGrid, BarChart3, Search, Heart, TrendingUp } from 'lucide-react';
+import { Activity, Bell, Settings, ListPlus, Zap, RefreshCw, AlertCircle, LayoutGrid, BarChart3, Search, Heart, TrendingUp, History } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
 import { Input } from '@/components/ui/input';
@@ -15,9 +15,10 @@ import { ListingsView } from '@/components/dashboard/listings-view';
 import { AnalyticsView } from '@/components/dashboard/analytics-view';
 import { HealthView } from '@/components/dashboard/health-view';
 import { TradesView } from '@/components/dashboard/trades-view';
+import { NotificationHistoryView } from '@/components/dashboard/notification-history-view';
 import { SearchModal } from '@/components/dashboard/search-modal';
 
-type View = 'dashboard' | 'monitors' | 'alerts' | 'listings' | 'analytics' | 'trades' | 'health' | 'settings';
+type View = 'dashboard' | 'monitors' | 'alerts' | 'listings' | 'analytics' | 'trades' | 'health' | 'notifications' | 'settings';
 
 const NAV: { id: View; label: string; icon: typeof Activity }[] = [
   { id: 'dashboard', label: 'Dashboard', icon: Activity },
@@ -26,6 +27,7 @@ const NAV: { id: View; label: string; icon: typeof Activity }[] = [
   { id: 'listings', label: 'Oglasi', icon: LayoutGrid },
   { id: 'trades', label: 'Skladišče', icon: TrendingUp },
   { id: 'analytics', label: 'Analitika', icon: BarChart3 },
+  { id: 'notifications', label: 'Obvestila', icon: History },
   { id: 'health', label: 'Zdravje', icon: Heart },
   { id: 'settings', label: 'Nastavitve', icon: Settings },
 ];
@@ -96,8 +98,9 @@ export default function Home() {
         '4': 'listings',
         '5': 'trades',
         '6': 'analytics',
-        '7': 'health',
-        '8': 'settings',
+        '7': 'notifications',
+        '8': 'health',
+        '9': 'settings',
       };
       if (navMap[e.key] && !e.ctrlKey && !e.metaKey && !e.altKey) {
         e.preventDefault();
@@ -108,7 +111,7 @@ export default function Home() {
       if (e.key === '?') {
         e.preventDefault();
         toast.info(
-          'Tipkovne bližnjice:\n1-8: navigacija med zavihki\nCtrl+K: iskanje\n?: ta pomoč',
+          'Tipkovne bližnjice:\n1-9: navigacija med zavihki\nCtrl+K: iskanje\n?: ta pomoč',
           { duration: 5000 }
         );
       }
@@ -205,6 +208,7 @@ export default function Home() {
         {view === 'listings' && <ListingsView />}
         {view === 'trades' && <TradesView />}
         {view === 'analytics' && <AnalyticsView />}
+        {view === 'notifications' && <NotificationHistoryView />}
         {view === 'health' && <HealthView />}
         {view === 'settings' && <SettingsView />}
       </main>
@@ -215,7 +219,7 @@ export default function Home() {
           <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-2 text-xs text-muted-foreground">
             <div className="flex items-center gap-3">
               <span className="text-primary">markec-ai-firm</span>
-              <span>v1.3.0</span>
+              <span>v3.5.0</span>
               <span>•</span>
               <span>local-first</span>
               <span>•</span>

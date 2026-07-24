@@ -35,7 +35,7 @@ interface Stats {
 }
 
 interface ViewProps {
-  onNavigate: (v: 'dashboard' | 'monitors' | 'alerts' | 'listings' | 'trades' | 'analytics' | 'health' | 'settings') => void;
+  onNavigate: (v: 'dashboard' | 'monitors' | 'alerts' | 'listings' | 'trades' | 'analytics' | 'health' | 'notifications' | 'settings') => void;
 }
 
 export function DashboardView({ onNavigate }: ViewProps) {
