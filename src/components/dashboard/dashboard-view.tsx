@@ -17,6 +17,8 @@ interface Stats {
   prilikaAlerts: number;
   sumnjivoAlerts: number;
   bookmarkedListings: number;
+  contactedListings: number;
+  priceDropCount: number;
   newListings24h: number;
   newAlerts24h: number;
   recentRuns: Array<{
@@ -141,7 +143,7 @@ export function DashboardView({ onNavigate }: ViewProps) {
         />
         <StatCard
           icon={<Target className="w-4 h-4" />}
-          label="Priložnosti (PRILIKA)"
+          label="Priložnosti"
           value={stats.prilikaAlerts}
           subtext={`${stats.sumnjivoAlerts} sumljivih`}
           color="primary"
@@ -151,10 +153,50 @@ export function DashboardView({ onNavigate }: ViewProps) {
           icon={<Bookmark className="w-4 h-4" />}
           label="Priljubljeni"
           value={stats.bookmarkedListings}
-          subtext="shranjeni oglasi"
+          subtext="shranjeni"
           color="amber"
           onClick={() => onNavigate('listings')}
         />
+      </div>
+
+      {/* v3.1: Quick action stats row */}
+      <div className="grid grid-cols-2 md:grid-cols-3 gap-3">
+        <Card
+          className="bg-card/50 hover:bg-card hover:border-primary/30 cursor-pointer transition-colors"
+          onClick={() => onNavigate('listings')}
+        >
+          <CardContent className="p-3 flex items-center gap-2">
+            <TrendingDown className="w-4 h-4 text-primary" />
+            <div>
+              <p className="text-xs font-bold text-primary">{stats.priceDropCount || 0}</p>
+              <p className="text-[10px] text-muted-foreground">Padci cen</p>
+            </div>
+          </CardContent>
+        </Card>
+        <Card
+          className="bg-card/50 hover:bg-card hover:border-primary/30 cursor-pointer transition-colors"
+          onClick={() => onNavigate('listings')}
+        >
+          <CardContent className="p-3 flex items-center gap-2">
+            <ShoppingCart className="w-4 h-4 text-amber-400" />
+            <div>
+              <p className="text-xs font-bold text-amber-400">{stats.contactedListings || 0}</p>
+              <p className="text-[10px] text-muted-foreground">Kontaktirani</p>
+            </div>
+          </CardContent>
+        </Card>
+        <Card
+          className="bg-card/50 hover:bg-card hover:border-primary/30 cursor-pointer transition-colors"
+          onClick={() => onNavigate('trades')}
+        >
+          <CardContent className="p-3 flex items-center gap-2">
+            <ShoppingCart className="w-4 h-4 text-primary" />
+            <div>
+              <p className="text-xs font-bold text-primary">Skladišče</p>
+              <p className="text-[10px] text-muted-foreground">Profit tracker</p>
+            </div>
+          </CardContent>
+        </Card>
       </div>
 
       {/* Quick links row */}

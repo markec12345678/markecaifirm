@@ -521,6 +521,8 @@ function ListingDetailModal({ listingId, onClose }: { listingId: string | null; 
   const [notesSaving, setNotesSaving] = useState(false);
   const [contactStatus, setContactStatus] = useState('none');
   const [sellerResponse, setSellerResponse] = useState('');
+  // v3.1: Refresh
+  const [refreshing, setRefreshing] = useState(false);
 
   const loadDetail = useCallback(async () => {
     if (!listingId) {
@@ -649,6 +651,33 @@ function ListingDetailModal({ listingId, onClose }: { listingId: string | null; 
     setCopied(true);
     toast.success('Sporočilo kopirano');
     setTimeout(() => setCopied(false), 2000);
+  };
+
+  // v3.1: Refresh listing from source
+  const refreshListing = async () => {
+    if (!listing) return;
+    setRefreshing(true);
+    try {
+      const res = await fetch(`/api/listings/${listing.id}/refresh`, { method: 'POST' });
+      const data = await res.json();
+      if (data.ok) {
+        if (data.priceChanged) {
+          toast.success(`Osveženo! Cena: ${data.oldPrice}€ → ${data.newPrice}€`);
+        } else {
+          toast.success('Osveženo! Cena nespremenjena.');
+        }
+        if (data.evaluation) {
+          toast.info(`AI: ${data.evaluation.verdict} (${data.evaluation.score}/10)`);
+        }
+        await loadDetail();
+      } else {
+        toast.error(data.error ?? 'Napaka pri osveževanju');
+      }
+    } catch {
+      toast.error('Napaka');
+    } finally {
+      setRefreshing(false);
+    }
   };
 
   // v2.4: Save notes
@@ -1030,6 +1059,17 @@ function ListingDetailModal({ listingId, onClose }: { listingId: string | null; 
               >
                 {fetchingDetail ? <RefreshCw className="w-3.5 h-3.5 animate-spin" /> : <Sparkles className="w-3.5 h-3.5" />}
                 Pridobi detail page
+              </Button>
+              {/* v3.1: Refresh from source */}
+              <Button
+                size="sm"
+                variant="outline"
+                onClick={refreshListing}
+                disabled={refreshing}
+                className="gap-2 border-primary/40 text-primary hover:bg-primary/10"
+              >
+                {refreshing ? <RefreshCw className="w-3.5 h-3.5 animate-spin" /> : <RefreshCw className="w-3.5 h-3.5" />}
+                Osveži iz vira
               </Button>
               {listing.trades && listing.trades.length > 0 ? (
                 <Badge variant="outline" className="border-primary/40 text-primary text-xs gap-1">
