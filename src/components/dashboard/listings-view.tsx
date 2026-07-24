@@ -1137,6 +1137,29 @@ function ListingDetailModal({ listingId, onClose }: { listingId: string | null; 
               >
                 <Copy className="w-3.5 h-3.5" /> Kopiraj URL
               </Button>
+              {/* v3.7: Copy all data */}
+              <Button
+                size="sm"
+                variant="outline"
+                onClick={() => {
+                  const text = [
+                    `📍 ${listing.title}`,
+                    `💰 ${listing.priceText}`,
+                    listing.location ? `📌 ${listing.location}` : '',
+                    listing.aiVerdict ? `AI: ${listing.aiVerdict} (prilika ${listing.aiScore}/10, tveganje ${listing.aiRisk}/10)` : '',
+                    listing.aiEstimatedValue ? `📈 Tržna vrednost: ~${listing.aiEstimatedValue}€` : '',
+                    listing.aiReason ? `💡 ${listing.aiReason}` : '',
+                    data?.marketComparison ? `📊 Tržno povprečje: ${data.marketComparison.average}€ (mediana ${data.marketComparison.median}€)` : '',
+                    `🔗 ${listing.url}`,
+                    `📦 ${listing.monitor?.name ?? ''}`,
+                  ].filter(Boolean).join('\n');
+                  navigator.clipboard.writeText(text);
+                  toast.success('Vsi podatki kopirani');
+                }}
+                className="gap-2"
+              >
+                <Copy className="w-3.5 h-3.5" /> Kopiraj vse
+              </Button>
               <Button
                 size="sm"
                 variant="outline"
