@@ -16,6 +16,9 @@ import {
 import { RefreshCw, Plus, Pencil, Trash2, TrendingUp, TrendingDown, Wallet, Target, ExternalLink, ShoppingCart, Tag, Download } from 'lucide-react';
 import { toast } from 'sonner';
 import { cn } from '@/lib/utils';
+import {
+  ResponsiveContainer, AreaChart, Area, XAxis, YAxis, CartesianGrid, Tooltip as RTooltip,
+} from 'recharts';
 
 interface Trade {
   id: string;
@@ -121,6 +124,7 @@ export function TradesView() {
 
       {/* Stats overview */}
       {stats && (
+        <>
         <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
           <StatBox
             icon={<Wallet className="w-4 h-4" />}
@@ -147,6 +151,75 @@ export function TradesView() {
             color="text-primary"
           />
         </div>
+
+        {/* v3.8: Profit chart */}
+        {stats.byMonth.some(m => m.count > 0) && (
+          <Card className="bg-card/50">
+            <CardHeader>
+              <CardTitle className="text-sm font-bold uppercase tracking-wider flex items-center gap-2">
+                <TrendingUp className="w-4 h-4 text-primary" />
+                Profit po mesecih
+              </CardTitle>
+            </CardHeader>
+            <CardContent>
+              <ResponsiveContainer width="100%" height={180}>
+                <AreaChart data={stats.byMonth}>
+                  <defs>
+                    <linearGradient id="profitGradient" x1="0" y1="0" x2="0" y2="1">
+                      <stop offset="5%" stopColor="#4ade80" stopOpacity={0.3} />
+                      <stop offset="95%" stopColor="#4ade80" stopOpacity={0} />
+                    </linearGradient>
+                  </defs>
+                  <CartesianGrid strokeDasharray="3 3" stroke="#1f2a1f" />
+                  <XAxis dataKey="month" tick={{ fill: '#6b7280', fontSize: 10 }} stroke="#1f2a1f" />
+                  <YAxis tick={{ fill: '#6b7280', fontSize: 10 }} stroke="#1f2a1f" />
+                  <RTooltip
+                    contentStyle={{ backgroundColor: '#11140f', border: '1px solid #1f2a1f', borderRadius: '4px', fontSize: '12px' }}
+                    labelStyle={{ color: '#d4d4d4' }}
+                    formatter={(value: any) => [`${Number(value).toFixed(2)} €`, 'Profit']}
+                  />
+                  <Area
+                    type="monotone"
+                    dataKey="profit"
+                    stroke="#4ade80"
+                    strokeWidth={2}
+                    fill="url(#profitGradient)"
+                  />
+                </AreaChart>
+              </ResponsiveContainer>
+            </CardContent>
+          </Card>
+        )}
+
+        {/* v3.8: Profit by category */}
+        {stats.byCategory.length > 0 && (
+          <Card className="bg-card/50">
+            <CardHeader>
+              <CardTitle className="text-sm font-bold uppercase tracking-wider flex items-center gap-2">
+                <Target className="w-4 h-4 text-primary" />
+                Profit po kategorijah
+              </CardTitle>
+            </CardHeader>
+            <CardContent>
+              <div className="space-y-2">
+                {stats.byCategory
+                  .sort((a, b) => b.profit - a.profit)
+                  .map(cat => (
+                    <div key={cat.category} className="flex items-center justify-between p-2 bg-background/30 rounded text-xs">
+                      <div>
+                        <div className="font-medium">{cat.category || 'brez kategorije'}</div>
+                        <div className="text-[10px] text-muted-foreground">{cat.count} tradev • {cat.invested.toFixed(0)}€ investirano</div>
+                      </div>
+                      <div className={cn('font-bold font-mono', cat.profit >= 0 ? 'text-primary' : 'text-destructive')}>
+                        {cat.profit >= 0 ? '+' : ''}{cat.profit.toFixed(2)} €
+                      </div>
+                    </div>
+                  ))}
+              </div>
+            </CardContent>
+          </Card>
+        )}
+        </>
       )}
 
       {/* Filter */}

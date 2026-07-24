@@ -1268,6 +1268,45 @@ function ListingDetailModal({ listingId, onClose }: { listingId: string | null; 
               )}
             </div>
 
+            {/* v3.8: Quick sell — mark as sold and add to Skladišče */}
+            {listing.trades && listing.trades.length > 0 && listing.trades.some((t: any) => t.status === 'held') && (
+              <div className="border-t border-border pt-3">
+                <h4 className="text-xs uppercase tracking-wider text-muted-foreground mb-2">⚡ Hitra prodaja</h4>
+                <div className="flex gap-2 items-end">
+                  <div className="flex-1">
+                    <Label className="text-[10px] uppercase">Prodajna cena (€)</Label>
+                    <Input
+                      type="number"
+                      id="quick-sell-price"
+                      placeholder={String(listing.price ?? 0)}
+                      className="mt-0.5 font-mono text-xs h-8"
+                    />
+                  </div>
+                  <Button
+                    size="sm"
+                    className="gap-2 bg-primary text-primary-foreground hover:bg-primary/90 h-8"
+                    onClick={async () => {
+                      const input = document.getElementById('quick-sell-price') as HTMLInputElement;
+                      const sellPrice = input?.value ? parseFloat(input.value) : listing.price ?? 0;
+                      const trade = listing.trades.find((t: any) => t.status === 'held');
+                      if (!trade) return;
+                      try {
+                        await fetch(`/api/trades/${trade.id}`, {
+                          method: 'PUT',
+                          headers: { 'Content-Type': 'application/json' },
+                          body: JSON.stringify({ sellPrice, status: 'sold', sellDate: new Date().toISOString() }),
+                        });
+                        toast.success(`✅ Prodano za ${sellPrice}€`);
+                        await loadDetail();
+                      } catch { toast.error('Napaka'); }
+                    }}
+                  >
+                    <ShoppingCart className="w-3.5 h-3.5" /> Prodano
+                  </Button>
+                </div>
+              </div>
+            )}
+
             {/* v1.8: AI Negotiator */}
             <div className="border-t border-border pt-3">
               <h4 className="text-xs uppercase tracking-wider text-muted-foreground mb-2 flex items-center gap-1.5">
