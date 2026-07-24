@@ -40,6 +40,14 @@ interface Settings {
   discordWebhookUrlSet: boolean;
   discordWebhookUrlMasked: string;
   discordEnabled: boolean;
+  // v2.7: Email
+  emailEnabled: boolean;
+  emailSmtpHost: string;
+  emailSmtpPort: number;
+  emailSmtpUser: string;
+  emailSmtpPasswordSet: boolean;
+  emailFrom: string;
+  emailTo: string;
   heartbeatEnabled: boolean;
   heartbeatHour: number;
   lastHeartbeatAt: string | null;
@@ -120,6 +128,16 @@ export function SettingsView() {
   // v1.4: Discord
   const [discordWebhookUrl, setDiscordWebhookUrl] = useState('');
   const [discordEnabled, setDiscordEnabled] = useState(false);
+  // v2.7: Email
+  const [emailEnabled, setEmailEnabled] = useState(false);
+  const [emailSmtpHost, setEmailSmtpHost] = useState('');
+  const [emailSmtpPort, setEmailSmtpPort] = useState(587);
+  const [emailSmtpUser, setEmailSmtpUser] = useState('');
+  const [emailSmtpPassword, setEmailSmtpPassword] = useState('');
+  const [emailFrom, setEmailFrom] = useState('');
+  const [emailTo, setEmailTo] = useState('');
+  const [testingEmail, setTestingEmail] = useState(false);
+  const [emailTestResult, setEmailTestResult] = useState<{ ok: boolean; message: string } | null>(null);
   const [testingDc, setTestingDc] = useState(false);
   const [dcTestResult, setDcTestResult] = useState<{ ok: boolean; message: string } | null>(null);
   const [heartbeatEnabled, setHeartbeatEnabled] = useState(true);
@@ -172,6 +190,12 @@ export function SettingsView() {
         setTelegramChatId(data.telegramChatId);
         setTelegramEnabled(data.telegramEnabled);
         setDiscordEnabled(data.discordEnabled);
+        setEmailEnabled(data.emailEnabled ?? false);
+        setEmailSmtpHost(data.emailSmtpHost ?? '');
+        setEmailSmtpPort(data.emailSmtpPort ?? 587);
+        setEmailSmtpUser(data.emailSmtpUser ?? '');
+        setEmailFrom(data.emailFrom ?? '');
+        setEmailTo(data.emailTo ?? '');
         setHeartbeatEnabled(data.heartbeatEnabled);
         setHeartbeatHour(data.heartbeatHour);
         setMinOpportunityScore(data.minOpportunityScore);
@@ -241,6 +265,13 @@ export function SettingsView() {
         telegramEnabled,
         // v1.4
         discordEnabled,
+        // v2.7: Email
+        emailEnabled,
+        emailSmtpHost,
+        emailSmtpPort,
+        emailSmtpUser,
+        emailFrom,
+        emailTo,
         heartbeatEnabled,
         heartbeatHour,
         minOpportunityScore,
@@ -265,6 +296,7 @@ export function SettingsView() {
       if (apiKey) body.aiApiKey = apiKey;
       if (fallbackApiKey) body.fallbackApiKey = fallbackApiKey;
       if (telegramBotToken) body.telegramBotToken = telegramBotToken;
+      if (emailSmtpPassword) body.emailSmtpPassword = emailSmtpPassword;
       if (telegramWebhookSecret) body.telegramWebhookSecret = telegramWebhookSecret;
       // v1.4
       if (discordWebhookUrl) body.discordWebhookUrl = discordWebhookUrl;
@@ -359,6 +391,34 @@ export function SettingsView() {
       setDcTestResult({ ok: false, message: e?.message ?? 'napaka' });
     } finally {
       setTestingDc(false);
+    }
+  };
+
+  // v2.7: Test Email
+  const testEmailFn = async () => {
+    setTestingEmail(true);
+    setEmailTestResult(null);
+    try {
+      const body: any = { action: 'test-email' };
+      if (emailSmtpHost) body.emailSmtpHost = emailSmtpHost;
+      if (emailSmtpPort) body.emailSmtpPort = emailSmtpPort;
+      if (emailSmtpUser) body.emailSmtpUser = emailSmtpUser;
+      if (emailSmtpPassword) body.emailSmtpPassword = emailSmtpPassword;
+      if (emailFrom) body.emailFrom = emailFrom;
+      if (emailTo) body.emailTo = emailTo;
+      const res = await fetch('/api/settings', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(body),
+      });
+      const data = await res.json();
+      setEmailTestResult(data);
+      if (data.ok) toast.success('Email test poslan');
+      else toast.error(`Email: ${data.message?.slice(0, 80)}`);
+    } catch (e: any) {
+      setEmailTestResult({ ok: false, message: e?.message ?? 'napaka' });
+    } finally {
+      setTestingEmail(false);
     }
   };
 
@@ -729,6 +789,117 @@ export function SettingsView() {
               {dcTestResult.message}
             </p>
           )}
+        </CardContent>
+      </Card>
+
+      {/* v2.7: Email card */}
+      <Card className="bg-card/50">
+        <CardHeader>
+          <CardTitle className="text-sm font-bold uppercase tracking-wider flex items-center gap-2">
+            <Mail className="w-4 h-4 text-primary" />
+            Email (SMTP) <Badge variant="outline" className="text-[10px] text-primary border-primary/40">v2.7</Badge>
+          </CardTitle>
+          <CardDescription>
+            Pošiljaj alerte na email. Podpira Gmail, Outlook, ali custom SMTP.
+          </CardDescription>
+        </CardHeader>
+        <CardContent className="space-y-3">
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+            <div>
+              <Label className="text-xs uppercase tracking-wider">SMTP Host</Label>
+              <Input value={emailSmtpHost} onChange={(e) => setEmailSmtpHost(e.target.value)} placeholder="smtp.gmail.com" className="mt-1 font-mono text-xs" />
+            </div>
+            <div>
+              <Label className="text-xs uppercase tracking-wider">SMTP Port</Label>
+              <Input type="number" value={emailSmtpPort} onChange={(e) => setEmailSmtpPort(parseInt(e.target.value, 10) || 587)} placeholder="587" className="mt-1 font-mono text-xs" />
+            </div>
+          </div>
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+            <div>
+              <Label className="text-xs uppercase tracking-wider">SMTP Uporabnik</Label>
+              <Input value={emailSmtpUser} onChange={(e) => setEmailSmtpUser(e.target.value)} placeholder="tvoj.email@gmail.com" className="mt-1 font-mono text-xs" />
+            </div>
+            <div>
+              <Label className="text-xs uppercase tracking-wider">SMTP Geslo</Label>
+              <Input type="password" value={emailSmtpPassword} onChange={(e) => setEmailSmtpPassword(e.target.value)} placeholder={settings?.emailSmtpPasswordSet ? 'shranjeno — pusti prazno' : 'app-specific password'} className="mt-1 font-mono text-xs" />
+            </div>
+          </div>
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+            <div>
+              <Label className="text-xs uppercase tracking-wider">Od (From)</Label>
+              <Input value={emailFrom} onChange={(e) => setEmailFrom(e.target.value)} placeholder="tvoj.email@gmail.com" className="mt-1 font-mono text-xs" />
+            </div>
+            <div>
+              <Label className="text-xs uppercase tracking-wider">Za (To)</Label>
+              <Input value={emailTo} onChange={(e) => setEmailTo(e.target.value)} placeholder="tvoj.email@gmail.com" className="mt-1 font-mono text-xs" />
+            </div>
+          </div>
+          <p className="text-[11px] text-muted-foreground">
+            Gmail: uporabi App Password (ne običajno geslo). Nastavi na myaccount.google.com → Security → App passwords.
+          </p>
+          <div className="flex items-center justify-between pt-2 border-t border-border">
+            <div className="flex items-center gap-3">
+              <Switch checked={emailEnabled} onCheckedChange={setEmailEnabled} />
+              <p className="text-sm font-medium">Omogoči Email</p>
+            </div>
+            <Button size="sm" variant="outline" onClick={testEmailFn} disabled={testingEmail} className="gap-2">
+              {testingEmail ? <RefreshCw className="w-3.5 h-3.5 animate-spin" /> : <Send className="w-3.5 h-3.5" />}
+              Test
+            </Button>
+          </div>
+          {emailTestResult && (
+            <p className={cn('text-xs flex items-center gap-1.5', emailTestResult.ok ? 'text-primary' : 'text-destructive')}>
+              {emailTestResult.ok ? <CheckCircle2 className="w-3.5 h-3.5" /> : <AlertCircle className="w-3.5 h-3.5" />}
+              {emailTestResult.message}
+            </p>
+          )}
+        </CardContent>
+      </Card>
+
+      {/* v2.8: Settings export/import */}
+      <Card className="bg-card/50">
+        <CardHeader>
+          <CardTitle className="text-sm font-bold uppercase tracking-wider flex items-center gap-2">
+            <Download className="w-4 h-4 text-primary" />
+            Backup konfiguracije <Badge variant="outline" className="text-[10px] text-primary border-primary/40">v2.8</Badge>
+          </CardTitle>
+          <CardDescription>
+            Izvozi/Uvozi nastavitve in monitorje kot JSON. API ključi in gesla niso vključeni.
+          </CardDescription>
+        </CardHeader>
+        <CardContent>
+          <div className="flex flex-wrap gap-2">
+            <Button size="sm" variant="outline" onClick={() => window.open('/api/settings/export', '_blank')} className="gap-2">
+              <Download className="w-3.5 h-3.5" /> Izvozi JSON
+            </Button>
+            <Button size="sm" variant="outline" onClick={() => {
+              const input = document.createElement('input');
+              input.type = 'file';
+              input.accept = '.json';
+              input.onchange = async (e) => {
+                const file = (e.target as HTMLInputElement).files?.[0];
+                if (!file) return;
+                try {
+                  const text = await file.text();
+                  const data = JSON.parse(text);
+                  const res = await fetch('/api/settings/export', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify(data),
+                  });
+                  const result = await res.json();
+                  if (result.ok) toast.success(`Importirano: ${result.imported.settings} nastavitev, ${result.imported.monitors} monitorjev`);
+                  else toast.error('Napaka pri importu');
+                } catch { toast.error('Napaka pri branju datoteke'); }
+              };
+              input.click();
+            }} className="gap-2">
+              <Upload className="w-3.5 h-3.5" /> Uvozi JSON
+            </Button>
+          </div>
+          <p className="text-[11px] text-muted-foreground mt-2">
+            Po importu moraš ročno vnesti API ključe in gesla (varnostni razlog).
+          </p>
         </CardContent>
       </Card>
 
