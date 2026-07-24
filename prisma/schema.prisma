@@ -198,9 +198,12 @@ model Listing {
   // Image analysis (v1.1)
   aiImageAnalysis String?  // AI description of the listing image
   aiImageVerdict  String?  // AUTHENTIC | SUSPICIOUS | STOCK_PHOTO | NO_IMAGE
-  // v1.4: bookmark/favorite
+  // v2.4: bookmark/favorite
   isBookmarked    Boolean  @default(false)
   bookmarkedAt    DateTime?
+  // v4.1: Hidden (hide without delete)
+  isHidden        Boolean  @default(false)
+  hiddenAt        DateTime?
   // v1.4: full detail page data (Bolha detail page scraper)
   detailDescription String? // full description from detail page (longer than listing description)
   detailImages      String? // JSON array of all image URLs
@@ -228,6 +231,7 @@ model Listing {
   @@index([monitorId, firstSeenAt])
   @@index([aiVerdict, aiScore])
   @@index([isBookmarked, firstSeenAt])
+  @@index([isHidden, firstSeenAt])
   @@index([price])
   @@index([sellerName])
 }

@@ -4,7 +4,7 @@ import { useEffect, useState, useCallback } from 'react';
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
-import { Activity, Bell, AlertTriangle, Target, TrendingUp, Play, RefreshCw, Clock, Zap, LayoutGrid, BarChart3, Bookmark, ShoppingCart, TrendingDown, ExternalLink } from 'lucide-react';
+import { Activity, Bell, AlertTriangle, Target, TrendingUp, Play, RefreshCw, Clock, Zap, LayoutGrid, BarChart3, Bookmark, ShoppingCart, TrendingDown, ExternalLink, Check } from 'lucide-react';
 import { toast } from 'sonner';
 import { cn } from '@/lib/utils';
 
@@ -111,6 +111,32 @@ export function DashboardView({ onNavigate }: ViewProps) {
           </p>
         </div>
         <div className="flex items-center gap-2">
+          {stats.unreadAlerts > 0 && (
+            <Button
+              variant="outline"
+              size="sm"
+              onClick={async () => {
+                try {
+                  const res = await fetch('/api/alerts?archived=0&limit=100');
+                  const alerts = await res.json();
+                  const unread = alerts.filter((a: any) => !a.isRead);
+                  if (unread.length === 0) return;
+                  await Promise.all(unread.map((a: any) =>
+                    fetch('/api/alerts', {
+                      method: 'PATCH',
+                      headers: { 'Content-Type': 'application/json' },
+                      body: JSON.stringify({ id: a.id, isRead: true }),
+                    })
+                  ));
+                  toast.success(`${unread.length} alertov označenih kot prebrani`);
+                  await load();
+                } catch { toast.error('Napaka'); }
+              }}
+              className="gap-2"
+            >
+              <Check className="w-3.5 h-3.5" /> Preberi vse ({stats.unreadAlerts})
+            </Button>
+          )}
           <Button variant="outline" size="sm" onClick={load} className="gap-2">
             <RefreshCw className="w-3.5 h-3.5" />
             Osveži

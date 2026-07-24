@@ -16,7 +16,7 @@ export async function POST(req: NextRequest) {
   if (ids.length === 0) return NextResponse.json({ error: 'Manjkajo ids' }, { status: 400 });
   if (ids.length > 500) return NextResponse.json({ error: 'Maksimalno 500 naenkrat' }, { status: 400 });
 
-  const valid = ['bookmark', 'unbookmark', 'delete', 'contact', 'clear_contact'];
+  const valid = ['bookmark', 'unbookmark', 'delete', 'contact', 'clear_contact', 'hide', 'unhide'];
   if (!valid.includes(action)) {
     return NextResponse.json({ error: `Neveljaven action: ${action}` }, { status: 400 });
   }
@@ -52,6 +52,18 @@ export async function POST(req: NextRequest) {
       const result = await db.listing.updateMany({
         where: { id: { in: ids } },
         data: { contactStatus: 'none', contactedAt: null, sellerResponse: null },
+      });
+      affected = result.count;
+    } else if (action === 'hide') {
+      const result = await db.listing.updateMany({
+        where: { id: { in: ids } },
+        data: { isHidden: true, hiddenAt: new Date() },
+      });
+      affected = result.count;
+    } else if (action === 'unhide') {
+      const result = await db.listing.updateMany({
+        where: { id: { in: ids } },
+        data: { isHidden: false, hiddenAt: null },
       });
       affected = result.count;
     }

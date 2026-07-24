@@ -21,7 +21,7 @@ import {
   DialogDescription,
 } from '@/components/ui/dialog';
 import { Textarea } from '@/components/ui/textarea';
-import { RefreshCw, Download, ExternalLink, ChevronLeft, ChevronRight, Filter, ImageIcon, AlertTriangle, Target, MapPin, Clock, Bookmark, Sparkles, ShoppingCart, MessageSquare, BarChart3, TrendingDown, TrendingUp, Copy, Check, GitCompare, StickyNote, Phone, Trash2 } from 'lucide-react';
+import { RefreshCw, Download, ExternalLink, ChevronLeft, ChevronRight, Filter, ImageIcon, AlertTriangle, Target, MapPin, Clock, Bookmark, Sparkles, ShoppingCart, MessageSquare, BarChart3, TrendingDown, TrendingUp, Copy, Check, GitCompare, StickyNote, Phone, Trash2, EyeOff } from 'lucide-react';
 import { toast } from 'sonner';
 import { cn } from '@/lib/utils';
 
@@ -458,6 +458,9 @@ export function ListingsView() {
               </Button>
               <Button size="sm" variant="outline" onClick={() => bulkAction('contact')} disabled={bulkLoading} className="gap-1.5 text-xs h-7">
                 📞 Kontaktiran
+              </Button>
+              <Button size="sm" variant="outline" onClick={() => bulkAction('hide')} disabled={bulkLoading} className="gap-1.5 text-xs h-7">
+                <EyeOff className="w-3 h-3" /> Skrij
               </Button>
               <Button size="sm" variant="outline" onClick={() => bulkAction('delete')} disabled={bulkLoading} className="gap-1.5 text-xs h-7 text-destructive">
                 <Trash2 className="w-3 h-3" /> Izbriši
