@@ -40,15 +40,21 @@ export function AlertsView() {
   const [loading, setLoading] = useState(true);
   const [showArchived, setShowArchived] = useState(false);
   const [filter, setFilter] = useState<'all' | 'PRILIKA' | 'SUMNJIVO' | 'NEZANIMIVO'>('all');
+  const [notifStats, setNotifStats] = useState<{ total: number; success: number; error: number; byChannel: Record<string, number> } | null>(null);
   // v1.3: multi-select for bulk actions
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
 
   const load = useCallback(async () => {
     try {
-      const res = await fetch(`/api/alerts?archived=${showArchived ? 1 : 0}&limit=100`);
-      if (!res.ok) throw new Error();
-      const data = await res.json();
-      setAlerts(data);
+      const [alertsRes, notifRes] = await Promise.all([
+        fetch(`/api/alerts?archived=${showArchived ? 1 : 0}&limit=100`),
+        fetch('/api/notifications?limit=100'),
+      ]);
+      if (alertsRes.ok) setAlerts(await alertsRes.json());
+      if (notifRes.ok) {
+        const notifData = await notifRes.json();
+        setNotifStats(notifData.stats);
+      }
     } catch {
       toast.error('Ne morem naložiti alertov');
     } finally {
@@ -207,6 +213,27 @@ export function AlertsView() {
           </Button>
         ))}
       </div>
+
+      {/* v3.0: Notification delivery stats */}
+      {notifStats && notifStats.total > 0 && (
+        <Card className="bg-card/50">
+          <CardContent className="p-3">
+            <div className="flex items-center gap-4 text-xs flex-wrap">
+              <span className="text-muted-foreground uppercase tracking-wider text-[10px]">Dostava:</span>
+              <span className="text-primary">✓ {notifStats.success} uspešnih</span>
+              {notifStats.error > 0 && <span className="text-destructive">✗ {notifStats.error} napak</span>}
+              <span className="text-muted-foreground">•</span>
+              {Object.entries(notifStats.byChannel).map(([ch, count]) => (
+                count > 0 ? (
+                  <span key={ch} className="text-muted-foreground">
+                    {ch === 'telegram' ? 'TG' : ch === 'discord' ? 'DC' : ch === 'slack' ? 'SL' : ch === 'email' ? '📧' : '🔔'}: {count}
+                  </span>
+                ) : null
+              ))}
+            </div>
+          </CardContent>
+        </Card>
+      )}
 
       {/* v1.3: Bulk action toolbar */}
       {selectedIds.size > 0 && (
