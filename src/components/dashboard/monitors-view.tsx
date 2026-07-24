@@ -434,6 +434,23 @@ export function MonitorsView() {
                     )}>
                       {Math.round(sparklines[m.id].successRate * 100)}% uspeh
                     </span>
+                    {/* v4.3: Next run preview */}
+                    {m.isActive && m.lastRunAt && (() => {
+                      const lastRun = new Date(m.lastRunAt);
+                      const nextRun = new Date(lastRun.getTime() + m.intervalMinutes * 60 * 1000);
+                      const now = new Date();
+                      const isOverdue = nextRun < now;
+                      if (isOverdue) {
+                        return <span className="text-amber-400 text-[10px]">⚡ zapadlo</span>;
+                      }
+                      const minsLeft = Math.round((nextRun.getTime() - now.getTime()) / 60000);
+                      if (minsLeft < 60) {
+                        return <span className="text-[10px]">⏱ čez {minsLeft}min</span>;
+                      }
+                      const hoursLeft = Math.floor(minsLeft / 60);
+                      const remMins = minsLeft % 60;
+                      return <span className="text-[10px]">⏱ čez {hoursLeft}h{remMins > 0 ? `${remMins}m` : ''}</span>;
+                    })()}
                   </div>
                 )}
 

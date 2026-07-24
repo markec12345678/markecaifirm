@@ -17,7 +17,7 @@ import { RefreshCw, Plus, Pencil, Trash2, TrendingUp, TrendingDown, Wallet, Targ
 import { toast } from 'sonner';
 import { cn } from '@/lib/utils';
 import {
-  ResponsiveContainer, AreaChart, Area, XAxis, YAxis, CartesianGrid, Tooltip as RTooltip,
+  ResponsiveContainer, AreaChart, Area, XAxis, YAxis, CartesianGrid, Tooltip as RTooltip, LineChart, Line,
 } from 'recharts';
 
 interface Trade {
@@ -296,6 +296,48 @@ export function TradesView() {
                     )}
                   </div>
                 )}
+              </CardContent>
+            </Card>
+          );
+        })()}
+
+        {/* v4.3: Cumulative profit timeline */}
+        {stats.byMonth.some(m => m.count > 0) && (() => {
+          let cumulative = 0;
+          const cumulativeData = stats.byMonth.map(m => {
+            cumulative += m.profit;
+            return { month: m.month, cumulative: Math.round(cumulative * 100) / 100, monthly: m.profit };
+          });
+          return (
+            <Card className="bg-card/50">
+              <CardHeader>
+                <CardTitle className="text-sm font-bold uppercase tracking-wider flex items-center gap-2">
+                  <TrendingUp className="w-4 h-4 text-primary" />
+                  Kumulativni profit (zadnjih 12 mesecev)
+                </CardTitle>
+              </CardHeader>
+              <CardContent>
+                <ResponsiveContainer width="100%" height={200}>
+                  <LineChart data={cumulativeData}>
+                    <CartesianGrid strokeDasharray="3 3" stroke="#1f2a1f" />
+                    <XAxis dataKey="month" tick={{ fill: '#6b7280', fontSize: 10 }} stroke="#1f2a1f" />
+                    <YAxis tick={{ fill: '#6b7280', fontSize: 10 }} stroke="#1f2a1f" />
+                    <RTooltip
+                      contentStyle={{ backgroundColor: '#11140f', border: '1px solid #1f2a1f', borderRadius: '4px', fontSize: '12px' }}
+                      labelStyle={{ color: '#d4d4d4' }}
+                      formatter={(value: any, name: any) => [
+                        `${Number(value).toFixed(2)} €`,
+                        name === 'cumulative' ? 'Kumulativno' : 'Mesečno'
+                      ]}
+                    />
+                    <Line type="monotone" dataKey="cumulative" stroke="#4ade80" strokeWidth={2} dot={{ fill: '#4ade80', r: 3 }} />
+                    <Line type="monotone" dataKey="monthly" stroke="#fbbf24" strokeWidth={1.5} strokeDasharray="3 3" dot={false} />
+                  </LineChart>
+                </ResponsiveContainer>
+                <div className="flex items-center gap-4 mt-2 text-[10px] text-muted-foreground">
+                  <span className="flex items-center gap-1"><span className="w-3 h-0.5 bg-primary inline-block" /> Kumulativni profit</span>
+                  <span className="flex items-center gap-1"><span className="w-3 h-0.5 bg-amber-400 inline-block" style={{borderTop: '1px dashed'}} /> Mesečni profit</span>
+                </div>
               </CardContent>
             </Card>
           );

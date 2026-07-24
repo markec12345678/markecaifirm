@@ -37,6 +37,7 @@ export default function Home() {
   const [unreadAlerts, setUnreadAlerts] = useState(0);
   const [now, setNow] = useState<Date | null>(null);
   const [searchOpen, setSearchOpen] = useState(false);
+  const [helpOpen, setHelpOpen] = useState(false);
 
   // Clock effect — only subscribe to setInterval, initial value set lazily to avoid setState in effect
   useEffect(() => {
@@ -107,13 +108,10 @@ export default function Home() {
         setView(navMap[e.key]);
         return;
       }
-      // ? → help toast
+      // ? → help overlay
       if (e.key === '?') {
         e.preventDefault();
-        toast.info(
-          'Tipkovne bližnjice:\n1-9: navigacija med zavihki\nCtrl+K: iskanje\n?: ta pomoč',
-          { duration: 5000 }
-        );
+        setHelpOpen(true);
       }
     };
     window.addEventListener('keydown', handler);
@@ -219,7 +217,7 @@ export default function Home() {
           <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-2 text-xs text-muted-foreground">
             <div className="flex items-center gap-3">
               <span className="text-primary">markec-ai-firm</span>
-              <span>v4.0.0</span>
+              <span>v4.3.0</span>
               <span>•</span>
               <span>local-first</span>
               <span>•</span>
@@ -231,6 +229,47 @@ export default function Home() {
           </div>
         </div>
       </footer>
+
+      {/* v4.3: Keyboard shortcut help overlay */}
+      {helpOpen && (
+        <div
+          className="fixed inset-0 bg-background/80 backdrop-blur-sm z-50 flex items-center justify-center p-4"
+          onClick={() => setHelpOpen(false)}
+        >
+          <div
+            className="bg-card border border-border rounded-lg max-w-md w-full p-6 shadow-xl"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <div className="flex items-center justify-between mb-4">
+              <h2 className="text-lg font-bold text-primary terminal-glow uppercase">Tipkovne bližnjice</h2>
+              <button onClick={() => setHelpOpen(false)} className="text-muted-foreground hover:text-foreground text-xl">×</button>
+            </div>
+            <div className="space-y-2 text-sm">
+              {[
+                { key: '1', desc: 'Dashboard' },
+                { key: '2', desc: 'Monitorji' },
+                { key: '3', desc: 'Alerti' },
+                { key: '4', desc: 'Oglasi' },
+                { key: '5', desc: 'Skladišče' },
+                { key: '6', desc: 'Analitika' },
+                { key: '7', desc: 'Obvestila' },
+                { key: '8', desc: 'Zdravje' },
+                { key: '9', desc: 'Nastavitve' },
+                { key: 'Ctrl+K', desc: 'Globalno iskanje' },
+                { key: '?', desc: 'Ta pomoč' },
+              ].map((s, i) => (
+                <div key={i} className="flex items-center justify-between py-1 border-b border-border/50">
+                  <span className="text-muted-foreground">{s.desc}</span>
+                  <kbd className="px-2 py-0.5 bg-background border border-border rounded text-xs font-mono text-primary">{s.key}</kbd>
+                </div>
+              ))}
+            </div>
+            <p className="text-[11px] text-muted-foreground mt-4 text-center">
+              Pritisni <kbd className="px-1 py-0.5 bg-background border border-border rounded text-xs">?</kbd> za prikaz tega okna.
+            </p>
+          </div>
+        </div>
+      )}
 
       {/* v1.3: Global search modal */}
       <SearchModal open={searchOpen} onOpenChange={setSearchOpen} onNavigate={setView} />
