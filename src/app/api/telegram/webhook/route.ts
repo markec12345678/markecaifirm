@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { db } from '@/lib/db';
-import { answerCallbackQuery, editMessageText, formatAlertMessage } from '@/lib/telegram';
+import { answerCallbackQuery, editMessageText, formatAlertMessage, sendTelegramMessage } from '@/lib/telegram';
 import { getSettingsRow } from '@/lib/pipeline';
 
 export const runtime = 'nodejs';
@@ -37,7 +37,32 @@ export async function POST(req: NextRequest) {
 
   const callbackQuery = update?.callback_query;
   if (!callbackQuery) {
-    // Not a callback — could be a regular message, just acknowledge
+    // v5.0: Handle /commands from regular messages
+    const message = update?.message;
+    if (message && typeof message.text === 'string' && message.text.startsWith('/')) {
+      const settings = await getSettingsRow();
+      if (!settings.telegramBotToken) {
+        return NextResponse.json({ ok: true });
+      }
+      // Admin whitelist — only configured chat ID can run commands
+      const senderChatId = String(message.chat?.id ?? '');
+      const adminChatId = String(settings.telegramChatId ?? '');
+      if (adminChatId && senderChatId !== adminChatId) {
+        return NextResponse.json({ ok: true }); // silently ignore non-admin
+      }
+      const tgCfg = {
+        botToken: settings.telegramBotToken,
+        chatId: senderChatId,
+      };
+      const { handleCommand } = await import('@/lib/telegram-bot');
+      const result = await handleCommand(message.text, tgCfg, senderChatId);
+      const responseText = result.ok ? result.response : `❌ ${result.error}`;
+      try {
+        await sendTelegramMessage(tgCfg, responseText ?? 'OK');
+      } catch { /* ignore send errors */ }
+      return NextResponse.json({ ok: true });
+    }
+    // Not a callback or command — just acknowledge
     return NextResponse.json({ ok: true });
   }
 

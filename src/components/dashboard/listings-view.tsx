@@ -3,6 +3,7 @@
 import { useEffect, useState, useCallback } from 'react';
 import { Card, CardContent } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
+import { useSwipe } from '@/lib/use-swipe';
 import { Badge } from '@/components/ui/badge';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
@@ -21,7 +22,7 @@ import {
   DialogDescription,
 } from '@/components/ui/dialog';
 import { Textarea } from '@/components/ui/textarea';
-import { RefreshCw, Download, ExternalLink, ChevronLeft, ChevronRight, Filter, ImageIcon, AlertTriangle, Target, MapPin, Clock, Bookmark, Sparkles, ShoppingCart, MessageSquare, BarChart3, TrendingDown, TrendingUp, Copy, Check, GitCompare, StickyNote, Phone, Trash2, EyeOff } from 'lucide-react';
+import { RefreshCw, Download, ExternalLink, ChevronLeft, ChevronRight, Filter, ImageIcon, AlertTriangle, Target, MapPin, Clock, Bookmark, Sparkles, ShoppingCart, MessageSquare, BarChart3, TrendingDown, TrendingUp, Copy, Check, GitCompare, StickyNote, Phone, Trash2, EyeOff, Zap } from 'lucide-react';
 import { toast } from 'sonner';
 import { cn } from '@/lib/utils';
 
@@ -522,10 +523,48 @@ function ListingRow({ listing, onOpenDetail, onToggleBookmark, onToggleCompare, 
     listing.aiVerdict === 'SUMNJIVO' ? <AlertTriangle className="w-3 h-3" /> :
     null;
 
+  // v5.0: Swipe gestures (mobile only — touch events)
+  const { swipeState, touchHandlers } = useSwipe({
+    onSwipeLeft: () => onToggleBookmark(), // swipe left = bookmark
+    onSwipeRight: () => onOpenDetail(), // swipe right = open detail
+  }, true);
+
+  // Visual feedback during swipe
+  const swipeOffset = swipeState.isSwiping ? swipeState.deltaX * 0.3 : 0;
+  const swipeOpacity = swipeState.isSwiping ? 1 - Math.min(0.4, Math.abs(swipeState.deltaX) / 300) : 1;
+  const swipeBgHint = swipeState.isSwiping
+    ? (swipeState.direction === 'left'
+        ? 'bg-amber-400/5'
+        : swipeState.direction === 'right'
+          ? 'bg-primary/5'
+          : '')
+    : '';
+
   return (
+    <div
+      {...touchHandlers}
+      className="relative"
+      style={{
+        transform: swipeState.isSwiping ? `translateX(${swipeOffset}px)` : 'translateX(0)',
+        opacity: swipeOpacity,
+        transition: swipeState.isSwiping ? 'none' : 'transform 200ms, opacity 200ms',
+      }}
+    >
+      {/* v5.0: Swipe hint background */}
+      {swipeState.isSwiping && swipeState.direction === 'left' && (
+        <div className="absolute inset-0 flex items-center justify-end pr-4 pointer-events-none">
+          <Bookmark className={cn('w-6 h-6', listing.isBookmarked ? 'text-primary' : 'text-amber-400')} />
+        </div>
+      )}
+      {swipeState.isSwiping && swipeState.direction === 'right' && (
+        <div className="absolute inset-0 flex items-center justify-start pl-4 pointer-events-none">
+          <ExternalLink className="w-6 h-6 text-primary" />
+        </div>
+      )}
     <Card className={cn(
-      'bg-card/50 hover:bg-card hover:border-primary/30 transition-colors cursor-pointer',
-      listing.isBookmarked && 'border-primary/50 ring-1 ring-primary/20'
+      'bg-card/50 hover:bg-card hover:border-primary/30 transition-colors cursor-pointer relative',
+      listing.isBookmarked && 'border-primary/50 ring-1 ring-primary/20',
+      swipeBgHint,
     )} onClick={onOpenDetail}>
       <CardContent className="p-3">
         <div className="flex items-start gap-3">
@@ -655,6 +694,7 @@ function ListingRow({ listing, onOpenDetail, onToggleBookmark, onToggleCompare, 
         </div>
       </CardContent>
     </Card>
+    </div>
   );
 }
 
@@ -687,6 +727,12 @@ function ListingDetailModal({ listingId, onClose }: { listingId: string | null; 
   const [comparing, setComparing] = useState(false);
   const [compareResults, setCompareResults] = useState<any[]>([]);
   const [compareModelsInput, setCompareModelsInput] = useState<string>(''); // comma-separated model names
+  // v5.0: AI auto-bid
+  const [bidding, setBidding] = useState(false);
+  const [bidResult, setBidResult] = useState<any>(null);
+  const [bidStrategy, setBidStrategy] = useState<'aggressive' | 'moderate' | 'conservative'>('moderate');
+  const [bidMaxBudget, setBidMaxBudget] = useState('');
+  const [bidCopied, setBidCopied] = useState(false);
 
   const loadDetail = useCallback(async () => {
     if (!listingId) {
@@ -707,6 +753,8 @@ function ListingDetailModal({ listingId, onClose }: { listingId: string | null; 
       setTargetPrice(d.listing?.targetPrice != null ? String(d.listing.targetPrice) : '');
       // v4.8: Reset comparison results when loading new listing
       setCompareResults([]);
+      // v5.0: Reset bid result
+      setBidResult(null);
     } catch {
       toast.error('Ne morem naložiti podrobnosti');
     } finally {
@@ -983,6 +1031,46 @@ function ListingDetailModal({ listingId, onClose }: { listingId: string | null; 
     } finally {
       setComparing(false);
     }
+  };
+
+  // v5.0: Generate AI auto-bid
+  const generateBid = async () => {
+    if (!listing) return;
+    setBidding(true);
+    setBidResult(null);
+    try {
+      const body: any = { strategy: bidStrategy };
+      if (bidMaxBudget.trim()) {
+        const budget = parseInt(bidMaxBudget, 10);
+        if (!Number.isNaN(budget) && budget > 0) {
+          body.maxBudget = budget;
+        }
+      }
+      const res = await fetch(`/api/listings/${listing.id}/auto-bid`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(body),
+      });
+      const data = await res.json();
+      if (data.ok) {
+        setBidResult(data.bid);
+        toast.success(`💡 Predlog: ${data.bid.suggestedPrice}€ (zaupanje ${data.bid.confidence}%)`);
+      } else {
+        toast.error(data.error ?? 'Napaka pri generiranju ponudbe');
+      }
+    } catch (e: any) {
+      toast.error(e?.message ?? 'Napaka');
+    } finally {
+      setBidding(false);
+    }
+  };
+
+  const copyBidMessage = () => {
+    if (!bidResult?.message) return;
+    navigator.clipboard.writeText(bidResult.message);
+    setBidCopied(true);
+    toast.success('Sporočilo kopirano');
+    setTimeout(() => setBidCopied(false), 2000);
   };
 
   return (
@@ -1888,6 +1976,141 @@ function ListingDetailModal({ listingId, onClose }: { listingId: string | null; 
                   </p>
                   <p className="text-[10px] text-muted-foreground mt-1">
                     💡 Preklopi jezik zgoraj — AI bo regeneriral v izbranem jeziku.
+                  </p>
+                </div>
+              )}
+            </div>
+
+            {/* v5.0: AI Auto-Bid — strategija + sporočilo prodajalcu */}
+            <div className="border-t border-border pt-3">
+              <h4 className="text-xs uppercase tracking-wider text-muted-foreground flex items-center gap-1.5 mb-2">
+                <Zap className="w-3.5 h-3.5 text-primary" />
+                AI Auto-Bid
+                <Badge variant="outline" className="text-[10px] text-primary border-primary/40">v5.0</Badge>
+              </h4>
+              <p className="text-[11px] text-muted-foreground mb-3">
+                AI analizira oglas, tržne podatke in zgodovino cene, nato predlaga ponudbo + sporočilo prodajalcu.
+              </p>
+
+              {/* Strategy picker */}
+              <div className="flex items-center gap-1.5 mb-2 flex-wrap">
+                <span className="text-[11px] text-muted-foreground">Strategija:</span>
+                {([
+                  { v: 'aggressive', l: '🔥 Agresivna', desc: '20-30% pod tržno' },
+                  { v: 'moderate', l: '⚖️ Zmerna', desc: '10-15% pod tržno' },
+                  { v: 'conservative', l: '🛡️ Konzervativna', desc: '5% pod tržno' },
+                ] as const).map(opt => (
+                  <button
+                    key={opt.v}
+                    onClick={() => setBidStrategy(opt.v)}
+                    className={cn(
+                      'px-2 py-1 rounded text-[11px] border transition-colors',
+                      bidStrategy === opt.v
+                        ? 'border-primary bg-primary/10 text-primary'
+                        : 'border-border text-muted-foreground hover:text-foreground'
+                    )}
+                    title={opt.desc}
+                  >
+                    {opt.l}
+                  </button>
+                ))}
+              </div>
+
+              {/* Optional budget */}
+              <div className="flex items-center gap-2 mb-2">
+                <span className="text-[11px] text-muted-foreground shrink-0">Max budget (opcionalno):</span>
+                <Input
+                  type="number"
+                  min="0"
+                  value={bidMaxBudget}
+                  onChange={(e) => setBidMaxBudget(e.target.value)}
+                  placeholder="EUR"
+                  className="text-xs font-mono h-7 w-32"
+                />
+                <Button
+                  size="sm"
+                  className="h-7 text-xs gap-1"
+                  onClick={generateBid}
+                  disabled={bidding}
+                >
+                  {bidding ? <RefreshCw className="w-3 h-3 animate-spin" /> : <Zap className="w-3 h-3" />}
+                  Generiraj ponudbo
+                </Button>
+              </div>
+
+              {bidding && (
+                <div className="py-4 text-center text-xs text-muted-foreground">
+                  <RefreshCw className="w-4 h-4 mx-auto mb-2 animate-spin opacity-50" />
+                  AI analizira oglas in tržne podatke...
+                </div>
+              )}
+
+              {bidResult && !bidding && (
+                <div className="space-y-2">
+                  {/* Bid summary */}
+                  <div className="bg-primary/5 border border-primary/20 rounded p-3">
+                    <div className="flex items-center justify-between mb-2">
+                      <span className="text-[10px] uppercase tracking-wider text-primary">💡 Predlagana ponudba</span>
+                      <Badge variant="outline" className={cn(
+                        'text-[10px]',
+                        bidResult.confidence >= 70 ? 'text-primary border-primary/40' :
+                        bidResult.confidence >= 40 ? 'text-amber-400 border-amber-400/40' :
+                        'text-red-500 border-red-500/40'
+                      )}>
+                        🎯 {bidResult.confidence}% zaupanje
+                      </Badge>
+                    </div>
+                    <div className="text-2xl font-bold font-mono text-primary">
+                      {bidResult.suggestedPrice}€
+                    </div>
+                    <div className="text-[10px] text-muted-foreground mt-1">
+                      Pozicija: {bidResult.marketPosition === 'below_market' ? 'pod tržno' :
+                                bidResult.marketPosition === 'above_market' ? 'nad tržno' : 'pri tržni ceni'}
+                      {listing.price && bidResult.suggestedPrice < listing.price &&
+                        ` • ${Math.round((1 - bidResult.suggestedPrice / listing.price) * 100)}% pod asking ceno`
+                      }
+                    </div>
+                  </div>
+
+                  {/* Reasoning */}
+                  {bidResult.reasoning && (
+                    <div className="bg-background/30 rounded p-2 text-xs">
+                      <div className="text-[10px] uppercase tracking-wider text-muted-foreground mb-1">📊 Razlog</div>
+                      <p className="italic">"{bidResult.reasoning}"</p>
+                    </div>
+                  )}
+
+                  {/* Message */}
+                  {bidResult.message && (
+                    <div className="bg-background/30 border border-border rounded p-2">
+                      <div className="flex items-center justify-between mb-1">
+                        <span className="text-[10px] uppercase tracking-wider text-muted-foreground">
+                          ✉️ Sporočilo prodajalcu
+                        </span>
+                        <Button
+                          size="sm"
+                          variant="ghost"
+                          className="h-6 px-2 text-[10px] gap-1"
+                          onClick={copyBidMessage}
+                        >
+                          {bidCopied ? <Check className="w-3 h-3 text-primary" /> : <Copy className="w-3 h-3" />}
+                          {bidCopied ? 'Kopirano' : 'Kopiraj'}
+                        </Button>
+                      </div>
+                      <p className="text-xs whitespace-pre-wrap">{bidResult.message}</p>
+                    </div>
+                  )}
+
+                  {/* Expected response */}
+                  {bidResult.expectedResponse && (
+                    <div className="bg-amber-400/5 border border-amber-400/20 rounded p-2 text-xs">
+                      <span className="text-[10px] uppercase tracking-wider text-amber-400">📈 Pričakovan odgovor: </span>
+                      <span>{bidResult.expectedResponse}</span>
+                    </div>
+                  )}
+
+                  <p className="text-[10px] text-muted-foreground text-center pt-1">
+                    ⚠️ Preglej in prilagodi pred pošiljanjem. AI ne pozna specifičnih detailov ki jih vidiš ti.
                   </p>
                 </div>
               )}
