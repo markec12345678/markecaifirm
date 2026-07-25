@@ -1,6 +1,6 @@
 'use client';
 
-import { useEffect, useState, useCallback } from 'react';
+import { useEffect, useState, useCallback, useRef } from 'react';
 import { Activity, Bell, Settings, ListPlus, Zap, RefreshCw, AlertCircle, LayoutGrid, BarChart3, Search, Heart, TrendingUp, History, Eye, PieChart, Menu, X } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
@@ -19,7 +19,9 @@ import { NotificationHistoryView } from '@/components/dashboard/notification-his
 import { WatchlistView } from '@/components/dashboard/watchlist-view';
 import { StatisticsView } from '@/components/dashboard/statistics-view';
 import { PwaInstallPrompt } from '@/components/dashboard/pwa-install-prompt';
+import { ProfileSwitcher } from '@/components/dashboard/profile-switcher';
 import { SearchModal } from '@/components/dashboard/search-modal';
+import { useAlertsStream } from '@/lib/use-alerts-stream';
 
 type View = 'dashboard' | 'monitors' | 'alerts' | 'listings' | 'watchlist' | 'analytics' | 'statistics' | 'trades' | 'health' | 'notifications' | 'settings';
 
@@ -45,6 +47,9 @@ export default function Home() {
   const [helpOpen, setHelpOpen] = useState(false);
   // v4.7: Mobile nav drawer
   const [mobileNavOpen, setMobileNavOpen] = useState(false);
+  // v4.9: Real-time alerts via SSE
+  const { connected: sseConnected, lastAlert, stats: sseStats } = useAlertsStream(true);
+  const lastSeenAlertId = useRef<string | null>(null);
 
   // Clock effect — only subscribe to setInterval, initial value set lazily to avoid setState in effect
   useEffect(() => {
@@ -82,6 +87,34 @@ export default function Home() {
       clearInterval(t);
     };
   }, [refreshUnread]);
+
+  // v4.9: SSE — update unreadAlerts from stats + show toast on new alert
+  useEffect(() => {
+    if (sseStats) {
+      setUnreadAlerts(sseStats.unreadAlerts);
+    }
+  }, [sseStats]);
+
+  useEffect(() => {
+    if (lastAlert && lastAlert.id !== lastSeenAlertId.current) {
+      lastSeenAlertId.current = lastAlert.id;
+      // Show toast only if user is not on alerts page
+      if (view !== 'alerts') {
+        const verdict = lastAlert.aiVerdict === 'PRILIKA' ? '🎯' :
+                        lastAlert.aiVerdict === 'SUMNJIVO' ? '⚠️' : '•';
+        toast.success(`${verdict} ${lastAlert.title?.slice(0, 60) ?? 'Nov alert'}`, {
+          description: lastAlert.monitor?.name
+            ? `${lastAlert.monitor.name} • klik za podrobnosti`
+            : 'Klik za podrobnosti',
+          action: {
+            label: 'Odpri',
+            onClick: () => setView('alerts'),
+          },
+          duration: 8000,
+        });
+      }
+    }
+  }, [lastAlert, view]);
 
   // Ctrl+K shortcut for global search
   useEffect(() => {
@@ -145,6 +178,8 @@ export default function Home() {
               </div>
             </div>
             <div className="hidden md:flex items-center gap-4 text-xs text-muted-foreground">
+              {/* v4.9: Profile switcher */}
+              <ProfileSwitcher />
               <button
                 onClick={() => setSearchOpen(true)}
                 className="flex items-center gap-2 px-3 py-1.5 rounded border border-border bg-card/50 hover:border-primary/30 hover:text-primary transition-colors"
@@ -162,6 +197,19 @@ export default function Home() {
               <span className="flex items-center gap-1.5">
                 <span className="w-1.5 h-1.5 rounded-full bg-primary pulse-dot" />
                 ONLINE
+              </span>
+              {/* v4.9: SSE live indicator */}
+              <span
+                className="flex items-center gap-1.5"
+                title={sseConnected ? 'Real-time povezava aktivna' : 'Real-time povezava prekinjena'}
+              >
+                <span className={cn(
+                  'w-1.5 h-1.5 rounded-full',
+                  sseConnected ? 'bg-primary pulse-dot' : 'bg-amber-400'
+                )} />
+                <span className={sseConnected ? 'text-primary' : 'text-amber-400'}>
+                  {sseConnected ? 'LIVE' : 'OFFLINE'}
+                </span>
               </span>
             </div>
             <button
@@ -301,7 +349,7 @@ export default function Home() {
           <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-2 text-xs text-muted-foreground">
             <div className="flex items-center gap-3">
               <span className="text-primary">markec-ai-firm</span>
-              <span>v4.8.0</span>
+              <span>v4.9.0</span>
               <span>•</span>
               <span>local-first</span>
               <span>•</span>

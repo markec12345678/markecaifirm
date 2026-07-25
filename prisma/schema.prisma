@@ -9,6 +9,21 @@ datasource db {
   url      = env("DATABASE_URL")
 }
 
+// v4.9: Profile — switchable profiles for different scenarios (e.g., "Avto", "Nepremicnine", "Test")
+// Settings has activeProfileId field; Monitor and Trade have optional profileId
+// When activeProfileId is null, all data is shown (default behavior)
+model Profile {
+  id          String   @id @default(cuid())
+  name        String
+  description String   @default("")
+  color       String   @default("primary") // tailwind color name for badge
+  icon        String   @default("📁") // emoji
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+  monitors    Monitor[]
+  trades      Trade[]
+}
+
 // Single-row table storing app configuration (AI provider, Telegram, etc.)
 model Settings {
   id              String   @id @default("singleton")
@@ -77,6 +92,8 @@ model Settings {
   aiCallsDate          String @default("") // YYYY-MM-DD for daily reset
   // v4.2: Profit goal tracking
   monthlyProfitGoal    Float  @default(0)  // EUR per month, 0 = disabled
+  // v4.9: Active profile (null = show all data, no profile filter)
+  activeProfileId      String?
   // Metadata
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
@@ -95,6 +112,9 @@ model PushSubscription {
 // v1.6: Trade — tracks bought + sold listings for profit calculation
 model Trade {
   id          String   @id @default(cuid())
+  // v4.9: Profile assignment (null = no profile / visible in all)
+  profileId   String?
+  profile     Profile? @relation(fields: [profileId], references: [id], onDelete: SetNull)
   // Link to original listing (nullable if user manually adds)
   listingId   String?
   listing     Listing? @relation(fields: [listingId], references: [id], onDelete: SetNull)
@@ -145,6 +165,9 @@ model Monitor {
   name        String
   source      String   // bolha | nepremicnine | avtonet | salomon | custom-rss
   sourceUrl   String   // the search URL or RSS URL
+  // v4.9: Profile assignment (null = no profile / visible in all)
+  profileId   String?
+  profile     Profile? @relation(fields: [profileId], references: [id], onDelete: SetNull)
   // Optional filters
   keywords    String   @default("") // comma-separated, must appear in title/description
   excludeKeywords String @default("")

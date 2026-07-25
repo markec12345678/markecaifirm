@@ -861,6 +861,8 @@ function MonitorFormDialog({
   const [maxPrice, setMaxPrice] = useState('');
   const [intervalMinutes, setIntervalMinutes] = useState(30);
   const [customPrompt, setCustomPrompt] = useState('');
+  // v4.9: AI prompt library modal
+  const [showPromptLibrary, setShowPromptLibrary] = useState(false);
   // v4.4: tags
   const [tags, setTags] = useState('');
   // v1.2: schedule window
@@ -1190,9 +1192,22 @@ function MonitorFormDialog({
           </div>
 
           <div>
-            <Label htmlFor="m-prompt" className="text-xs uppercase tracking-wider">
-              Dodatna AI navodila (izbirno)
-            </Label>
+            <div className="flex items-center justify-between mb-1">
+              <Label htmlFor="m-prompt" className="text-xs uppercase tracking-wider">
+                Dodatna AI navodila (izbirno)
+              </Label>
+              {/* v4.9: AI Prompt Library picker */}
+              <Button
+                type="button"
+                size="sm"
+                variant="ghost"
+                className="h-6 text-[10px] gap-1 text-primary"
+                onClick={() => setShowPromptLibrary(true)}
+              >
+                <Sparkles className="w-3 h-3" />
+                Knjižnica promptov
+              </Button>
+            </div>
             <Textarea
               id="m-prompt"
               value={customPrompt}
@@ -1340,6 +1355,100 @@ function MonitorFormDialog({
             {editing ? 'Shrani' : 'Dodaj monitor'}
           </Button>
         </DialogFooter>
+      </DialogContent>
+
+      {/* v4.9: AI Prompt Library Modal */}
+      <PromptLibraryModal
+        open={showPromptLibrary}
+        onOpenChange={setShowPromptLibrary}
+        onPick={(prompt) => {
+          setCustomPrompt(prompt);
+          setShowPromptLibrary(false);
+          toast.success('Prompt vstavljen — po potrebi uredi');
+        }}
+      />
+    </Dialog>
+  );
+}
+
+// v4.9: AI Prompt Library Modal — pick from pre-built prompts
+function PromptLibraryModal({
+  open,
+  onOpenChange,
+  onPick,
+}: {
+  open: boolean;
+  onOpenChange: (v: boolean) => void;
+  onPick: (prompt: string) => void;
+}) {
+  const [activeCategory, setActiveCategory] = useState('all');
+
+  if (!open) return null;
+
+  const { AI_PROMPT_TEMPLATES, PROMPT_CATEGORIES, getPromptsByCategory } = require('@/lib/ai-prompts');
+  const templates = getPromptsByCategory(activeCategory);
+
+  return (
+    <Dialog open={open} onOpenChange={onOpenChange}>
+      <DialogContent className="max-w-3xl max-h-[85vh] overflow-y-auto mx-4 sm:mx-6">
+        <DialogHeader>
+          <DialogTitle className="text-base flex items-center gap-2">
+            <Sparkles className="w-4 h-4 text-primary" />
+            Knjižnica AI promptov
+            <Badge variant="outline" className="text-[10px] text-primary border-primary/40">v4.9</Badge>
+          </DialogTitle>
+          <DialogDescription>
+            Prednastavljeni AI prompti za različne kategorije oglasov. Klikni za vstavljanje v polje "Dodatna AI navodila".
+          </DialogDescription>
+        </DialogHeader>
+
+        {/* Category tabs */}
+        <div className="flex items-center gap-1 flex-wrap mb-3">
+          {PROMPT_CATEGORIES.map((c: any) => (
+            <button
+              key={c.id}
+              onClick={() => setActiveCategory(c.id)}
+              className={cn(
+                'px-2 py-1 rounded text-xs border transition-colors',
+                activeCategory === c.id
+                  ? 'border-primary bg-primary/10 text-primary'
+                  : 'border-border text-muted-foreground hover:text-foreground hover:border-foreground/30'
+              )}
+            >
+              {c.icon} {c.label}
+            </button>
+          ))}
+        </div>
+
+        {/* Templates grid */}
+        <div className="grid grid-cols-1 md:grid-cols-2 gap-2">
+          {templates.map((tpl: any) => (
+            <div
+              key={tpl.id}
+              className="bg-card/50 border border-border rounded p-3 hover:border-primary/30 transition-colors cursor-pointer"
+              onClick={() => onPick(tpl.prompt)}
+            >
+              <div className="flex items-start gap-2 mb-1.5">
+                <span className="text-2xl shrink-0">{tpl.icon}</span>
+                <div className="flex-1 min-w-0">
+                  <h4 className="font-bold text-sm">{tpl.name}</h4>
+                  <p className="text-[11px] text-muted-foreground mt-0.5 line-clamp-2">{tpl.description}</p>
+                </div>
+              </div>
+              <div className="text-[10px] text-muted-foreground bg-background/30 rounded p-2 max-h-24 overflow-y-auto line-clamp-4">
+                {tpl.prompt}
+              </div>
+              <Button size="sm" className="w-full mt-2 h-7 text-xs gap-1">
+                <Sparkles className="w-3 h-3" />
+                Uporabi ta prompt
+              </Button>
+            </div>
+          ))}
+        </div>
+
+        <div className="text-[11px] text-muted-foreground text-center pt-2 border-t border-border">
+          💡 Prompt bo dodan k obstoječemu besedilu. Po potrebi ga uredi.
+        </div>
       </DialogContent>
     </Dialog>
   );
