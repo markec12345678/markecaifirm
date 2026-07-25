@@ -32,3 +32,51 @@ Stage Summary:
 - Skupno število vrstic kode: ~600 novih
 - Commit uspešen lokalno; push na GitHub zahteva token (uporabnik mora pushati ročno ali priskrbeti token)
 - Verzija aplikacije: v4.4.0
+
+---
+Task ID: v4.5
+Agent: main
+Task: Nadaljevanje razvoja aplikacije Markec AI Firm — Opportunity Monitor (v4.5)
+
+Work Log:
+- Prisma schema: dodana polja Listing.targetPrice, targetPriceSetAt, targetPriceAlertSent
+- prisma db push + prisma generate (additive)
+- src/app/api/listings/[id]/target/route.ts: PATCH endpoint za nastavitev ciljne cene (number | null)
+- src/lib/pipeline.ts: dodana v4.5 target price alert logika v runMonitor() —
+  po vsakem pregledu preveri listings s targetPrice in currentPrice <= target,
+  generira alert (🎯 CILJNA CENA DOSEŽENA) + pošlje Telegram/Discord/Push,
+  nastavi targetPriceAlertSent=true (anti-spam). Dodan v alertsSent count.
+- src/components/dashboard/listings-view.tsx: Listing interface + targetPrice polja +
+  badge v vrstici (🎯 XXX€) + detail modal sekcija z input poljem (Nastavi/Počisti),
+  prikaz trenutne/ciljne cene + razlike
+- src/app/api/digest/ai-summary/route.ts: POST endpoint — AI generira POVzetek
+  zadnjih N ur (6/24/72/168). Vzame top oglase (PRILIKA ali dealScore>=60),
+  AI prompt za TOP 3 + trendi + priporočilo. Vrne JSON {summary, topPick, recommendation, listings, stats}.
+  Bug fix: Number(undefined) = NaN (ne undefined) — uporabljen Number.isFinite check.
+- src/components/dashboard/dashboard-view.tsx: nov 'AI POVzetek' gumb (Sparkles ikona)
+  v quick action barju + modal s selectorjem obdobja (6h/24h/3d/7d), stats bar,
+  markdown summary, TOP izbor, priporočilo, seznam listingov z deal score badgei
+- src/app/api/trades/dashboard/route.ts: GET endpoint — vrača končne podatke za widget
+  (totalRealizedProfit, heldCount, soldCount, totalInvested, thisMonthProfit, lastMonthProfit,
+  trend, monthlyPnl z cumulative, topCategories z ROI, topTrades z ROI)
+- src/components/dashboard/dashboard-view.tsx: nova SkladisceWidget komponenta —
+  prikaz na dashboardu za ActivityFeed. 4 stat kartice + mesec trend + mini bar chart
+  12 mesecev (z tooltip) + top 3 najbolj dobičkonosne prodaje. Samodejno skrivanje če ni tradeov.
+- src/app/page.tsx: verzija posodobljena na v4.5.0
+- TypeScript check: nobenih novih napak
+- Testiranje:
+  - target API: set 400 (above current) → alreadyBelow=true ✓
+  - target API: set 200 (below current) → alreadyBelow=false ✓
+  - target API: invalid (-50) → error "Ciljna cena mora biti pozitivno število" ✓
+  - trades/dashboard: 2 testa tradea (1 sold +65€, 1 held 250€ investicije) ✓
+  - ai-summary: deluje, fallback na tekstovno sporočilo ko ni priložnosti ✓
+- Git commit: 'feat(v4.5): Target price alerts, AI daily summary, Skladišče dashboard widget'
+  (8 files changed, 973 insertions)
+
+Stage Summary:
+- 3 nove funkcionalnosti dodane v v4.5
+- 3 novi API ruti (target, ai-summary, trades/dashboard)
+- 3 nova polja v Prisma shemi (targetPrice, targetPriceSetAt, targetPriceAlertSent)
+- Pipeline nadgrajen z target price alert logiko (vključno z vsemi notification kanali)
+- ~973 novih vrstic kode
+- Verzija aplikacije: v4.5.0
