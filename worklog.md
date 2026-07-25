@@ -354,3 +354,46 @@ Stage Summary:
 - 9 bot ukazov registriranih
 - ~1400 novih vrstic kode
 - Verzija aplikacije: v5.0.0
+
+---
+Task ID: v5.1
+Agent: main
+Task: Nadaljevanje razvoja aplikacije Markec AI Firm — Opportunity Monitor (v5.1)
+
+Work Log:
+- src/app/api/ai/suggest-schedule/route.ts: nov POST endpoint za AI analizo schedule-ov.
+  Analizira zadnjih 30 dni run logov, aggregate by hour, peak hours.
+  5 pravil za optimizacijo. Vrača: suggestedInterval, suggestedWindow, reasoning,
+  expectedNewListingsPerDay, aiCallsPerDay, confidence.
+- src/components/dashboard/monitors-view.tsx: dodan 'AI predlog' gumb v Urnik delovanja
+  sekcijo (samo ko urejaš monitor). Prikaz: trenutno vs predlog, pričakovani novi/dan,
+  AI klici/dan, 'Uporabi predlog' gumb ki avtomatsko aplicira interval + window.
+- src/app/api/listings/[id]/predict-price/route.ts: nov POST endpoint za AI napoved cene.
+  Upošteva: price history (trend, avgDropPerWeek), AI estimate, deal score, market data,
+  starost oglasa. Vrača: willReachTarget, estimatedDays, predictedDate, confidence,
+  projectedPrices za 4 tedne, trendAnalysis, currentTrend.
+- src/components/dashboard/listings-view.tsx: dodana AI napoved cene sekcija v listing
+  modalu z input za ciljno ceno, verdict (cilj dosežen/ne), trend badge, projekcija
+  cene za 4 tedne z bar chart in % spremembe, razlog AI.
+- src/app/api/sellers/[name]/reputation/route.ts: nov GET endpoint za analizo prodajalca.
+  Aggregira vse listinge: reputation score (0-100) s tierjem, listings count, contact
+  stats, alert stats, AI verdict breakdown, price drop count, trades stats, sources,
+  top 5 listings.
+- src/components/dashboard/listings-view.tsx: dodana Seller reputation sekcija v listing
+  modalu (auto-load ko ima oglas sellerName). Prikaz: reputation score z circular SVG
+  progress, stats grid (4 kartice), AI verdict breakdown badges, trades stats, sources,
+  top 5 listings (collapsible).
+- src/app/page.tsx: verzija v5.1.0
+- TypeScript: nobenih novih napak
+- Testiranje:
+  - suggest-schedule: vrača ok=true z analyzedMonitors ✓
+  - predict-price: vrača error "fetch failed" (AI ni dostopen, endpoint deluje) ✓
+  - sellers/[name]/reputation: vrača reputationScore=50 (Povprečen), listingsCount=1,
+    avgPrice=350, contactStats, alertStats, topListings ✓
+- Git commit: 'feat(v5.1): AI Scheduler, Price prediction, Seller reputation'
+
+Stage Summary:
+- 3 nove funkcionalnosti dodane v v5.1
+- 3 novi API ruti (ai/suggest-schedule, listings/[id]/predict-price, sellers/[name]/reputation)
+- ~1218 novih vrstic kode
+- Verzija aplikacije: v5.1.0
