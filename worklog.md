@@ -80,3 +80,70 @@ Stage Summary:
 - Pipeline nadgrajen z target price alert logiko (vključno z vsemi notification kanali)
 - ~973 novih vrstic kode
 - Verzija aplikacije: v4.5.0
+
+---
+Task ID: v4.6
+Agent: main
+Task: Nadaljevanje razvoja aplikacije Markec AI Firm — Opportunity Monitor (v4.6)
+
+Work Log:
+- src/app/api/listings/watchlist/route.ts: GET endpoint — vrača bookmarked + listings
+  s targetPrice, z sortiranjem (recent/target/price/score), computed fields
+  (distanceToTarget, distancePct, targetHit, lowestEver/highestEver),
+  in stats (total, withTarget, bookmarked, targetsHit, totalValue,
+  totalPotentialSavings)
+- src/components/dashboard/watchlist-view.tsx: nova komponenta WatchlistView —
+  4 stat kartice, sort dropdown, thumbnail prikaz, badges, visual target
+  progress bar z min/max markers, gumbi za odstrani/počisti, empty state
+- src/app/page.tsx: dodan 'watchlist' v View type, NAV array (Eye ikona),
+  navMap (5=watchlist, 0=settings), render WatchlistView, help overlay posodobljen,
+  verzija v4.6.0
+- src/app/api/listings/[id]/negotiate/route.ts: dodana podpora za 'lang' paramter
+  (sl/en/de/it/hr), langConfig z navodili za vsak jezik (npr. 'Kleinanzeigen.de'
+  za nemščino), validation fallback na 'sl', lang/type vključena v error response
+- src/components/dashboard/listings-view.tsx: dodan negotiateLang in negotiateLangLabel
+  state, generateMessage() posreduje lang, jezikovni switcher z zastavicami
+  (🇸🇮🇬🇧🇩🇪🇮🇹🇭🇷), avtomatska regeneracija ob preklopu jezika,
+  prikaz 'Generirano sporočilo (SLO):'
+- src/lib/monitor-templates.ts: knjižnica 17 predlog v 7 kategorijah:
+  - Elektronika (4): iPhone 13 Pro, MacBook M1, PS5, RTV komponente
+  - Avto (3): VW Golf MK6, Audi A3 8L, Toyota Yaris Hybrid
+  - Nepremičnine (3): 2-sobno LJ, hiša Bela krajina, garaža LJ
+  - Moda (2): Nike Air Max, Levi's 501 (oba Vinted)
+  - Orodje (2): Bosch, Makita
+  - Sport (2): golf oprema, smuči
+  - Drugo (1): kolesa
+  Vsaka predloga vsebuje: source, URL, keywords, excludeKeywords, minPrice,
+  maxPrice, intervalMinutes, customPrompt (AI navodila), tags
+- src/app/api/monitors/from-template/route.ts: POST endpoint za kreiranje monitorja
+  iz predloge, preprečitev duplikatov (ime ali URL), podpora za customName in
+  override. GET endpoint za seznam predlog s kategorijami.
+- src/components/dashboard/monitors-view.tsx: nov 'Predloge' gumb (Sparkles ikona),
+  showTemplates state, TemplateModal komponenta z:
+  - kategorije tabs (Vse/Elektronika/Avto/...)
+  - grid kartic z ikono, imenom, opisom, badges (source, cena, interval, tags)
+  - gumb 'Ustvari monitor' z loading state
+  - preprečitev duplikatov prikazana kot toast.error
+- TypeScript check: nobenih novih napak
+- Testiranje:
+  - GET /api/monitors/from-template: 17 predlog v 7 kategorijah ✓
+  - POST /api/monitors/from-template: uspešno kreiran monitor z vsemi polji ✓
+  - POST duplicate: pravilno zavrnjen z existingId ✓
+  - POST s customName: deluje ✓
+  - GET /api/listings/watchlist: stats pravilni (1 listing, 50€ prihranek,
+    14% nad ciljem, targetHit=False) ✓
+  - GET /api/listings/watchlist?sort=target: sortiranje deluje ✓
+  - POST /api/listings/[id]/negotiate z lang=en: lang pravilno sprejet ✓
+  - POST z invalid lang=fr: fallback na 'sl' ✓
+  - Negotiate fallback na tekst ko AI ni dostopen ✓
+- Git commit: 'feat(v4.6): Watchlist tab, multi-language AI Negotiator, Monitor templates library'
+  (8 files changed, 1299 insertions, 30 deletions)
+
+Stage Summary:
+- 3 nove funkcionalnosti dodane v v4.6
+- 3 novi API ruti (watchlist, from-template POST+GET)
+- 1 nova knjižnica (monitor-templates.ts s 17 predlogami)
+- 1 nov zavihek v navigaciji (Watchlist)
+- ~1299 novih vrstic kode
+- 10 zavihkov skupno (prej 9)
+- Verzija aplikacije: v4.6.0
