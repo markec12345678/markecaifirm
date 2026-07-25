@@ -268,3 +268,45 @@ Stage Summary:
 - 1 nova statična stran (offline.html)
 - Service worker nadgrajen na v4.8 z offline fallback
 - Verzija aplikacije: v4.8.0
+
+---
+Task ID: v4.9
+Agent: main
+Task: Nadaljevanje razvoja aplikacije Markec AI Firm — Opportunity Monitor (v4.9)
+
+Work Log:
+- src/app/api/alerts/stream/route.ts: nov SSE endpoint z ReadableStream
+  - Polling vsakih 5s (SQLite ne podpira subscriptions)
+  - Eventi: 'hello', 'alert', 'listing', 'stats', 'heartbeat' (vsakih 30s)
+  - 5-min max duration, abort signal cleanup
+- src/lib/use-alerts-stream.ts: React hook za SSE
+  - connected, lastAlert, lastListingEvent, stats, lastEventAt state
+  - EventSource auto-reconnect
+- src/app/page.tsx: dodan useAlertsStream hook, SSE LIVE/OFFLINE indikator v headerju,
+  toast ob novem alertu (skip če si na alerts zavihku), auto-update unreadAlerts,
+  verzija v4.9.0
+- src/lib/ai-prompts.ts: knjižnica 14 AI promptov v 8 kategorijah
+  (avto, elektronika, nepremicnine, orodje, moda, sport, investicije, splosno)
+- src/components/dashboard/monitors-view.tsx: dodan PromptLibraryModal v MonitorFormDialog
+  z 'Knjižnica promptov' gumbom, kategorije tabs, grid kartic z prompt preview
+- prisma/schema.prisma: nova Profile tabela, Settings.activeProfileId,
+  Monitor.profileId in Trade.profileId (optional, SetNull on delete)
+- src/app/api/profiles/route.ts: GET (list + active), POST (create), PATCH (set active)
+- src/app/api/profiles/[id]/route.ts: PATCH (update), DELETE (with SetNull cleanup)
+- src/components/dashboard/profile-switcher.tsx: ProfileSwitcher dropdown komponenta
+  z Vsi profili + create + edit (inline) + delete, auto-reload po preklopu
+- ProfileSwitcher dodan v header (desktop only)
+- TypeScript check: nobenih novih napak
+- Testiranje:
+  - SSE stream: pravilno pošilja hello + stats event ✓
+  - Profiles CRUD: create, list, set active, delete — vse deluje ✓
+  - SET active → GET active → DELETE: konsistentno stanje ✓
+- Git commit: 'feat(v4.9): Real-time SSE alerts, AI prompt library, Profile switching'
+
+Stage Summary:
+- 3 nove funkcionalnosti dodane v v4.9
+- 4 novi API ruti (alerts/stream, profiles, profiles/[id])
+- 3 nove komponente (ProfileSwitcher, PromptLibraryModal, useAlertsStream hook)
+- 1 nova Prisma tabela (Profile) + 3 nova polja
+- ~1100 novih vrstic kode
+- Verzija aplikacije: v4.9.0
