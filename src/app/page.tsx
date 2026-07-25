@@ -1,7 +1,7 @@
 'use client';
 
 import { useEffect, useState, useCallback } from 'react';
-import { Activity, Bell, Settings, ListPlus, Zap, RefreshCw, AlertCircle, LayoutGrid, BarChart3, Search, Heart, TrendingUp, History, Eye } from 'lucide-react';
+import { Activity, Bell, Settings, ListPlus, Zap, RefreshCw, AlertCircle, LayoutGrid, BarChart3, Search, Heart, TrendingUp, History, Eye, PieChart, Menu, X } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
 import { Input } from '@/components/ui/input';
@@ -17,9 +17,10 @@ import { HealthView } from '@/components/dashboard/health-view';
 import { TradesView } from '@/components/dashboard/trades-view';
 import { NotificationHistoryView } from '@/components/dashboard/notification-history-view';
 import { WatchlistView } from '@/components/dashboard/watchlist-view';
+import { StatisticsView } from '@/components/dashboard/statistics-view';
 import { SearchModal } from '@/components/dashboard/search-modal';
 
-type View = 'dashboard' | 'monitors' | 'alerts' | 'listings' | 'watchlist' | 'analytics' | 'trades' | 'health' | 'notifications' | 'settings';
+type View = 'dashboard' | 'monitors' | 'alerts' | 'listings' | 'watchlist' | 'analytics' | 'statistics' | 'trades' | 'health' | 'notifications' | 'settings';
 
 const NAV: { id: View; label: string; icon: typeof Activity }[] = [
   { id: 'dashboard', label: 'Dashboard', icon: Activity },
@@ -29,6 +30,7 @@ const NAV: { id: View; label: string; icon: typeof Activity }[] = [
   { id: 'watchlist', label: 'Watchlist', icon: Eye },
   { id: 'trades', label: 'Skladišče', icon: TrendingUp },
   { id: 'analytics', label: 'Analitika', icon: BarChart3 },
+  { id: 'statistics', label: 'Statistike', icon: PieChart },
   { id: 'notifications', label: 'Obvestila', icon: History },
   { id: 'health', label: 'Zdravje', icon: Heart },
   { id: 'settings', label: 'Nastavitve', icon: Settings },
@@ -40,6 +42,8 @@ export default function Home() {
   const [now, setNow] = useState<Date | null>(null);
   const [searchOpen, setSearchOpen] = useState(false);
   const [helpOpen, setHelpOpen] = useState(false);
+  // v4.7: Mobile nav drawer
+  const [mobileNavOpen, setMobileNavOpen] = useState(false);
 
   // Clock effect — only subscribe to setInterval, initial value set lazily to avoid setState in effect
   useEffect(() => {
@@ -127,15 +131,16 @@ export default function Home() {
       <header className="border-b border-border bg-card/50 backdrop-blur-sm">
         <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
           <div className="flex items-center justify-between h-14">
-            <div className="flex items-center gap-3">
-              <div className="flex items-center gap-2">
-                <span className="pulse-dot text-primary text-lg">●</span>
-                <span className="text-primary terminal-glow font-bold tracking-tight">
-                  markec@ai-firm
+            <div className="flex items-center gap-3 min-w-0">
+              <div className="flex items-center gap-2 min-w-0">
+                <span className="pulse-dot text-primary text-lg shrink-0">●</span>
+                <span className="text-primary terminal-glow font-bold tracking-tight truncate">
+                  <span className="hidden sm:inline">markec@ai-firm</span>
+                  <span className="sm:hidden">markec</span>
                 </span>
-                <span className="text-muted-foreground">:</span>
-                <span className="text-amber-400 amber-glow">~/opportunity-monitor</span>
-                <span className="text-muted-foreground">$</span>
+                <span className="text-muted-foreground hidden sm:inline">:</span>
+                <span className="text-amber-400 amber-glow hidden sm:inline">~/opportunity-monitor</span>
+                <span className="text-muted-foreground hidden sm:inline">$</span>
               </div>
             </div>
             <div className="hidden md:flex items-center gap-4 text-xs text-muted-foreground">
@@ -165,12 +170,20 @@ export default function Home() {
             >
               <Search className="w-4 h-4" />
             </button>
+            {/* v4.7: Mobile nav hamburger */}
+            <button
+              onClick={() => setMobileNavOpen(true)}
+              className="md:hidden p-2 rounded border border-border bg-card/50 hover:border-primary/30"
+              aria-label="Meni"
+            >
+              <Menu className="w-4 h-4" />
+            </button>
           </div>
         </div>
       </header>
 
-      {/* Nav tabs */}
-      <nav className="border-b border-border bg-card/30">
+      {/* Nav tabs — desktop only */}
+      <nav className="hidden md:block border-b border-border bg-card/30">
         <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
           <div className="flex items-center gap-1 overflow-x-auto">
             {NAV.map((item) => {
@@ -201,8 +214,73 @@ export default function Home() {
         </div>
       </nav>
 
+      {/* v4.7: Mobile nav drawer */}
+      {mobileNavOpen && (
+        <div
+          className="md:hidden fixed inset-0 bg-background/80 backdrop-blur-sm z-50"
+          onClick={() => setMobileNavOpen(false)}
+        >
+          <div
+            className="bg-card border-r border-border h-full w-64 max-w-[80vw] p-4 overflow-y-auto"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <div className="flex items-center justify-between mb-4">
+              <span className="text-primary terminal-glow font-bold text-sm uppercase">Navigacija</span>
+              <button
+                onClick={() => setMobileNavOpen(false)}
+                className="text-muted-foreground hover:text-foreground p-1"
+                aria-label="Zapri"
+              >
+                <X className="w-4 h-4" />
+              </button>
+            </div>
+            <div className="space-y-1">
+              {NAV.map((item) => {
+                const Icon = item.icon;
+                const active = view === item.id;
+                return (
+                  <button
+                    key={item.id}
+                    onClick={() => { setView(item.id); setMobileNavOpen(false); }}
+                    className={cn(
+                      'w-full flex items-center gap-3 px-3 py-2.5 rounded text-sm transition-colors',
+                      active
+                        ? 'bg-primary/10 text-primary border border-primary/30'
+                        : 'text-muted-foreground hover:text-foreground hover:bg-card/50 border border-transparent'
+                    )}
+                  >
+                    <Icon className="w-4 h-4" />
+                    <span className="uppercase tracking-wider flex-1 text-left">{item.label}</span>
+                    {item.id === 'alerts' && unreadAlerts > 0 && (
+                      <Badge variant="destructive" className="px-1.5 py-0 text-xs">
+                        {unreadAlerts}
+                      </Badge>
+                    )}
+                  </button>
+                );
+              })}
+            </div>
+            <div className="mt-4 pt-4 border-t border-border space-y-2">
+              <button
+                onClick={() => { setSearchOpen(true); setMobileNavOpen(false); }}
+                className="w-full flex items-center gap-2 px-3 py-2 rounded border border-border bg-card/50 text-sm hover:border-primary/30"
+              >
+                <Search className="w-4 h-4" />
+                <span>Iskanje</span>
+                <kbd className="ml-auto text-[10px] bg-background/60 px-1.5 py-0.5 rounded border border-border">Ctrl+K</kbd>
+              </button>
+              {now && (
+                <div className="text-[10px] text-muted-foreground font-mono text-center pt-2">
+                  {now.toLocaleDateString('sl-SI')} {now.toLocaleTimeString('sl-SI')}
+                </div>
+              )}
+            </div>
+          </div>
+        </div>
+      )}
+
       {/* Main content */}
-      <main className="flex-1 max-w-7xl mx-auto w-full px-4 sm:px-6 lg:px-8 py-6">
+      <main className="flex-1 max-w-7xl mx-auto w-full px-4 sm:px-6 lg:px-8 py-4 md:py-6">
         {view === 'dashboard' && <DashboardView onNavigate={setView} />}
         {view === 'monitors' && <MonitorsView />}
         {view === 'alerts' && <AlertsView />}
@@ -210,6 +288,7 @@ export default function Home() {
         {view === 'watchlist' && <WatchlistView onNavigate={setView} />}
         {view === 'trades' && <TradesView />}
         {view === 'analytics' && <AnalyticsView />}
+        {view === 'statistics' && <StatisticsView />}
         {view === 'notifications' && <NotificationHistoryView />}
         {view === 'health' && <HealthView />}
         {view === 'settings' && <SettingsView />}
@@ -221,7 +300,7 @@ export default function Home() {
           <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-2 text-xs text-muted-foreground">
             <div className="flex items-center gap-3">
               <span className="text-primary">markec-ai-firm</span>
-              <span>v4.6.0</span>
+              <span>v4.7.0</span>
               <span>•</span>
               <span>local-first</span>
               <span>•</span>
