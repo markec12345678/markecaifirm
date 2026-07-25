@@ -11,14 +11,16 @@ export const maxDuration = 30;
  * POST /api/listings/:id/negotiate
  * Generates AI negotiation message for contacting the seller.
  *
- * Body: { type: 'initial' | 'low_offer' | 'polite_decline' }
+ * Body: { type: 'initial' | 'low_offer' | 'polite_decline', lang?: 'sl' | 'en' | 'de' | 'it' | 'hr' }
  *
- * Returns: { message: string, suggestedPrice?: number }
+ * Returns: { message: string, suggestedPrice?: number, lang: string, type: string }
  */
 export async function POST(req: NextRequest, { params }: { params: Promise<{ id: string }> }) {
   const { id } = await params;
   const body = await req.json();
   const type: string = body?.type ?? 'initial';
+  // v4.6: Multi-language support
+  const lang: string = ['sl', 'en', 'de', 'it', 'hr'].includes(body?.lang) ? body.lang : 'sl';
 
   const listing = await db.listing.findUnique({
     where: { id },
@@ -58,10 +60,35 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
     polite_decline: 'vljudno zavrnitev',
   };
 
+  // v4.6: Multi-language support
+  const langConfig: Record<string, { name: string; instructions: string }> = {
+    sl: {
+      name: 'slovenščini',
+      instructions: 'Vedno v slovenščini. Naravno, vljudno, tipično za slovenske oglase (Bolha, Avtonet, Nepremičnine, Vinted).',
+    },
+    en: {
+      name: 'English',
+      instructions: 'Always in English. Natural, polite, suitable for international marketplaces (eBay, Facebook Marketplace).',
+    },
+    de: {
+      name: 'Deutsch',
+      instructions: 'Immer auf Deutsch. Natürlich, höflich, typisch für deutsche Kleinanzeigen (Kleinanzeigen.de, willhaben.at).',
+    },
+    it: {
+      name: 'Italiano',
+      instructions: 'Sempre in italiano. Naturale, cortese, adatto per siti italiani (Subito.it, eBay Italia).',
+    },
+    hr: {
+      name: 'Hrvatski',
+      instructions: 'Uvijek na hrvatskom. Prirodno, pristojno, tipično za hrvatske oglase (Njuškalo, Index Oglasi).',
+    },
+  };
+  const langInfo = langConfig[lang] ?? langConfig.sl;
+
   const promptType = typeLabels[type] ?? typeLabels.initial;
 
-  const systemPrompt = `Si pomočnik za pogajanje na slovenskih spletnih oglasih (Bolha, Avtonet, Nepremičnine, Vinted).
-Tvoja naloga je napisati kratko, vljudno in naravno sporočilo prodajalcu v slovenščini.
+  const systemPrompt = `Si pomočnik za pogajanje na spletnih oglasnih mestih.
+Tvoja naloga je napisati kratko, vljudno in naravno sporočilo prodajalcu v ${langInfo.name}.
 
 Pravila:
 - Sporočilo naj bo kratko (2-4 stavki)
@@ -69,7 +96,7 @@ Pravila:
 - Vključi specifično povpraševanje (stanje, dodatki, možnost ogleda)
 - Če je nizka ponudba, utemelji zakaj (nižja tržna vrednost, poškodbe, starost)
 - Ne omenjaj AI-ja ali da si bot — piši kot da si pravi kupec
-- Vedno v slovenščini`;
+- ${langInfo.instructions}`;
 
   let userPrompt = `Napiši ${promptType} za naslednji oglas:
 
@@ -92,7 +119,7 @@ Napiši nizko ponudbo: vljudno predlagaj ceno, utemelji zakaj (primerjava z drug
     userPrompt += `\n\nNapiši vljudno zavrnitev: zahvali se za odgovor, ampak povej da ne ustreza (predrago, našel drugo, itd.). Pusti vrata odprta za prihodnje oglase.`;
   }
 
-  userPrompt += `\n\nVrni SAMO sporočilo (brez uvoda, brez oznak, brez "Tukaj je sporočilo:"). Samo besedilo sporočila.`;
+  userPrompt += `\n\nJezik: ${langInfo.name}. Vrni SAMO sporočilo (brez uvoda, brez oznak, brez "Tukaj je sporočilo:"). Samo besedilo sporočila.`;
 
   try {
     // Use the AI provider to generate the message
@@ -176,11 +203,14 @@ Napiši nizko ponudbo: vljudno predlagaj ceno, utemelji zakaj (primerjava z drug
       message,
       suggestedPrice,
       type,
+      lang,
     });
   } catch (e: any) {
     return NextResponse.json({
       ok: false,
       error: e?.message ?? 'Napaka pri generiranju sporočila',
+      lang,
+      type,
     }, { status: 200 });
   }
 }
