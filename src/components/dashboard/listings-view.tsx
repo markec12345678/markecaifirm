@@ -48,6 +48,10 @@ interface Listing {
   dealScore: number | null;
   dealScoreReason: string | null;
   dealScoreComputedAt: string | null;
+  // v4.5: Target price
+  targetPrice: number | null;
+  targetPriceSetAt: string | null;
+  targetPriceAlertSent: boolean;
   monitor: { name: string; source: string };
 }
 
@@ -559,6 +563,16 @@ function ListingRow({ listing, onOpenDetail, onToggleBookmark, onToggleCompare, 
                   🎯 {listing.dealScore}/100
                 </span>
               )}
+              {listing.targetPrice != null && (
+                <span className={cn(
+                  'text-[11px] font-mono px-1.5 py-0.5 rounded border',
+                  listing.price != null && listing.price <= listing.targetPrice
+                    ? 'border-primary/40 bg-primary/10 text-primary'
+                    : 'border-amber-400/40 bg-amber-400/5 text-amber-400'
+                )} title={`Ciljna cena: ${listing.targetPrice}€`}>
+                  🎯 {listing.targetPrice}€
+                </span>
+              )}
               {listing.aiImageVerdict && listing.aiImageVerdict !== 'NO_IMAGE' && (
                 <Badge variant="outline" className={cn(
                   'text-[10px]',
@@ -663,6 +677,9 @@ function ListingDetailModal({ listingId, onClose }: { listingId: string | null; 
   const [sellerResponse, setSellerResponse] = useState('');
   // v3.1: Refresh
   const [refreshing, setRefreshing] = useState(false);
+  // v4.5: Target price
+  const [targetPrice, setTargetPrice] = useState('');
+  const [targetSaving, setTargetSaving] = useState(false);
 
   const loadDetail = useCallback(async () => {
     if (!listingId) {
@@ -679,6 +696,8 @@ function ListingDetailModal({ listingId, onClose }: { listingId: string | null; 
       setNotes(d.listing?.userNotes ?? '');
       setContactStatus(d.listing?.contactStatus ?? 'none');
       setSellerResponse(d.listing?.sellerResponse ?? '');
+      // v4.5: Load target price
+      setTargetPrice(d.listing?.targetPrice != null ? String(d.listing.targetPrice) : '');
     } catch {
       toast.error('Ne morem naložiti podrobnosti');
     } finally {
@@ -866,6 +885,44 @@ function ListingDetailModal({ listingId, onClose }: { listingId: string | null; 
       toast.success('Odgovor shranjen');
     } catch {
       toast.error('Napaka');
+    }
+  };
+
+  // v4.5: Save target price
+  const saveTargetPrice = async (clear: boolean = false) => {
+    if (!listing) return;
+    setTargetSaving(true);
+    try {
+      const value = clear ? null : (targetPrice.trim() ? parseInt(targetPrice, 10) : null);
+      if (!clear && targetPrice.trim() && (Number.isNaN(value) || (value as number) <= 0)) {
+        toast.error('Ciljna cena mora biti pozitivno število');
+        setTargetSaving(false);
+        return;
+      }
+      const res = await fetch(`/api/listings/${listing.id}/target`, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ targetPrice: value }),
+      });
+      const d = await res.json();
+      if (d.ok) {
+        if (value === null) {
+          toast.success('Ciljna cena odstranjena');
+          setTargetPrice('');
+        } else {
+          toast.success(`Ciljna cena nastavljena: ${value}€`);
+          if (d.alreadyBelow) {
+            toast.info(`Trenutna cena (${d.currentPrice}€) je že pod ciljem — alert bo poslan ob naslednjem pregledu`);
+          }
+        }
+        await loadDetail();
+      } else {
+        toast.error(d.error ?? 'Napaka');
+      }
+    } catch {
+      toast.error('Napaka');
+    } finally {
+      setTargetSaving(false);
     }
   };
 
@@ -1118,6 +1175,87 @@ function ListingDetailModal({ listingId, onClose }: { listingId: string | null; 
                   </div>
                 </div>
               </div>
+            </div>
+
+            {/* v4.5: Target price — alert me when price drops at or below this */}
+            <div className="bg-card/30 border border-border rounded p-3">
+              <div className="flex items-center justify-between mb-2">
+                <h4 className="text-xs uppercase tracking-wider text-muted-foreground flex items-center gap-1.5">
+                  <Target className="w-3.5 h-3.5" />
+                  Ciljna cena — alert ko pade pod
+                  <Badge variant="outline" className="text-[10px] text-primary border-primary/40">v4.5</Badge>
+                </h4>
+                {listing.targetPrice != null && listing.targetPriceAlertSent && (
+                  <Badge variant="outline" className="text-[10px] text-primary border-primary/40">
+                    ✓ Alert poslan
+                  </Badge>
+                )}
+              </div>
+              <div className="flex items-center gap-2">
+                <div className="flex-1">
+                  <Input
+                    type="number"
+                    min="0"
+                    value={targetPrice}
+                    onChange={(e) => setTargetPrice(e.target.value)}
+                    placeholder="npr. 300 (EUR)"
+                    className="text-xs font-mono"
+                  />
+                </div>
+                <Button
+                  size="sm"
+                  className="h-8 text-xs"
+                  disabled={targetSaving || !targetPrice.trim()}
+                  onClick={() => saveTargetPrice(false)}
+                >
+                  {targetSaving ? <RefreshCw className="w-3 h-3 animate-spin" /> : <Target className="w-3 h-3" />}
+                  Nastavi
+                </Button>
+                {listing.targetPrice != null && (
+                  <Button
+                    size="sm"
+                    variant="outline"
+                    className="h-8 text-xs"
+                    disabled={targetSaving}
+                    onClick={() => { setTargetPrice(''); saveTargetPrice(true); }}
+                  >
+                    Počisti
+                  </Button>
+                )}
+              </div>
+              {listing.targetPrice != null && (
+                <div className="mt-2 text-xs space-y-1">
+                  <div className="flex items-center justify-between">
+                    <span className="text-muted-foreground">Trenutna cena:</span>
+                    <span className="font-mono text-amber-400">{listing.price ?? '?'} €</span>
+                  </div>
+                  <div className="flex items-center justify-between">
+                    <span className="text-muted-foreground">Ciljna cena:</span>
+                    <span className="font-mono text-primary">{listing.targetPrice} €</span>
+                  </div>
+                  {listing.price != null && (
+                    <div className="flex items-center justify-between pt-1 border-t border-border">
+                      <span className="text-muted-foreground">Razlika:</span>
+                      <span className={cn(
+                        'font-mono font-bold',
+                        listing.price <= listing.targetPrice ? 'text-primary' : 'text-amber-400'
+                      )}>
+                        {listing.price <= listing.targetPrice
+                          ? `✓ ${listing.targetPrice - listing.price}€ pod ciljem`
+                          : `še ${listing.price - listing.targetPrice}€ nad ciljem`}
+                      </span>
+                    </div>
+                  )}
+                  {listing.targetPriceSetAt && (
+                    <p className="text-[10px] text-muted-foreground pt-1">
+                      Nastavljeno: {new Date(listing.targetPriceSetAt).toLocaleString('sl-SI')}
+                    </p>
+                  )}
+                </div>
+              )}
+              <p className="text-[11px] text-muted-foreground mt-2">
+                Ko cena pade na ali pod ciljno mejo, dobiš alert na Telegram/Discord/Push/Email.
+              </p>
             </div>
 
             {/* v1.8: Market comparison — real data vs AI estimate */}
