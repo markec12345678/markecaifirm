@@ -175,6 +175,9 @@ export function SettingsView() {
   // Test states
   const [testingAi, setTestingAi] = useState(false);
   const [aiTestResult, setAiTestResult] = useState<{ ok: boolean; message: string } | null>(null);
+  // v4.4: Fallback AI test state
+  const [testingFallbackAi, setTestingFallbackAi] = useState(false);
+  const [fallbackAiTestResult, setFallbackAiTestResult] = useState<{ ok: boolean; message: string } | null>(null);
   const [testingTg, setTestingTg] = useState(false);
   const [tgTestResult, setTgTestResult] = useState<{ ok: boolean; message: string } | null>(null);
 
@@ -352,6 +355,39 @@ export function SettingsView() {
       toast.error('AI test ni uspel');
     } finally {
       setTestingAi(false);
+    }
+  };
+
+  // v4.4: Test fallback AI provider
+  const testFallbackAi = async () => {
+    if (!fallbackProvider || !fallbackModel) {
+      toast.error('Najprej izberi fallback provider in model');
+      return;
+    }
+    setTestingFallbackAi(true);
+    setFallbackAiTestResult(null);
+    try {
+      const body: any = {
+        action: 'test-fallback-ai',
+        fallbackProvider,
+        fallbackBaseUrl,
+        fallbackModel,
+      };
+      if (fallbackApiKey) body.fallbackApiKey = fallbackApiKey;
+      const res = await fetch('/api/settings', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(body),
+      });
+      const data = await res.json();
+      setFallbackAiTestResult(data);
+      if (data.ok) toast.success('Fallback AI povezava OK');
+      else toast.error(`Fallback AI: ${data.message?.slice(0, 80)}`);
+    } catch (e: any) {
+      setFallbackAiTestResult({ ok: false, message: e?.message ?? 'napaka' });
+      toast.error('Fallback AI test ni uspel');
+    } finally {
+      setTestingFallbackAi(false);
     }
   };
 
@@ -687,6 +723,24 @@ export function SettingsView() {
               <p className="text-[11px] text-amber-400">
                 ⚠️ Fallback se aktivira samo ko primarni provider vrne napako. V normalnih razmerah se ne uporablja.
               </p>
+
+              {/* v4.4: Test fallback AI button */}
+              <div className="pt-2 border-t border-border">
+                <Button size="sm" variant="outline" onClick={testFallbackAi} disabled={testingFallbackAi} className="gap-2">
+                  {testingFallbackAi ? <RefreshCw className="w-3 h-3 animate-spin" /> : <Zap className="w-3 h-3" />}
+                  Testiraj fallback povezavo
+                </Button>
+                {fallbackAiTestResult && (
+                  <div className={cn(
+                    'mt-2 p-2 rounded text-xs border',
+                    fallbackAiTestResult.ok
+                      ? 'border-primary/40 bg-primary/5 text-primary'
+                      : 'border-red-500/40 bg-red-500/5 text-red-500'
+                  )}>
+                    {fallbackAiTestResult.ok ? '✓' : '✗'} {fallbackAiTestResult.message}
+                  </div>
+                )}
+              </div>
             </>
           )}
         </CardContent>

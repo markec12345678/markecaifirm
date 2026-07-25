@@ -103,6 +103,26 @@ export async function POST(req: NextRequest) {
     return NextResponse.json(result);
   }
 
+  // v4.4: Test fallback AI provider
+  if (action === 'test-fallback-ai') {
+    const s = await getSettingsRow();
+    const fallbackProvider = (body.fallbackProvider ?? s.fallbackProvider) as AiProviderType | '';
+    if (!fallbackProvider) {
+      return NextResponse.json({ ok: false, message: 'Fallback provider ni nastavljen.' });
+    }
+    const testSettings = {
+      provider: fallbackProvider,
+      baseUrl: body.fallbackBaseUrl ?? s.fallbackBaseUrl,
+      apiKey: body.fallbackApiKey ?? s.fallbackApiKey,
+      model: body.fallbackModel ?? s.fallbackModel,
+    };
+    if (!testSettings.model) {
+      return NextResponse.json({ ok: false, message: 'Fallback model ni nastavljen.' });
+    }
+    const result = await testConnection(testSettings);
+    return NextResponse.json(result);
+  }
+
   if (action === 'test-telegram') {
     const s = await getSettingsRow();
     const result = await testTelegram({

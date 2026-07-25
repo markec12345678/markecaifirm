@@ -44,6 +44,10 @@ interface Listing {
   aiImageAnalysis: string | null;
   isBookmarked: boolean;
   contactStatus: string;
+  // v4.4: AI Deal Score 0-100
+  dealScore: number | null;
+  dealScoreReason: string | null;
+  dealScoreComputedAt: string | null;
   monitor: { name: string; source: string };
 }
 
@@ -544,6 +548,17 @@ function ListingRow({ listing, onOpenDetail, onToggleBookmark, onToggleCompare, 
               )}
               {listing.aiScore != null && <span className="text-[11px] text-primary">⭐ {listing.aiScore}</span>}
               {listing.aiRisk != null && <span className="text-[11px] text-amber-400">🛡 {listing.aiRisk}</span>}
+              {listing.dealScore != null && (
+                <span className={cn(
+                  'text-[11px] font-mono font-bold px-1.5 py-0.5 rounded',
+                  listing.dealScore >= 90 ? 'bg-primary/20 text-primary' :
+                  listing.dealScore >= 70 ? 'bg-primary/10 text-primary/80' :
+                  listing.dealScore >= 50 ? 'bg-amber-400/10 text-amber-400' :
+                  'bg-red-500/10 text-red-500'
+                )}>
+                  🎯 {listing.dealScore}/100
+                </span>
+              )}
               {listing.aiImageVerdict && listing.aiImageVerdict !== 'NO_IMAGE' && (
                 <Badge variant="outline" className={cn(
                   'text-[10px]',
@@ -962,6 +977,148 @@ function ListingDetailModal({ listingId, onClose }: { listingId: string | null; 
                 )}
               </div>
             )}
+
+            {/* v4.4: AI Deal Score (0-100) */}
+            <div className="bg-card/30 border border-border rounded p-3">
+              <div className="flex items-center justify-between mb-2">
+                <h4 className="text-xs uppercase tracking-wider text-muted-foreground flex items-center gap-1.5">
+                  <Sparkles className="w-3.5 h-3.5" />
+                  AI Deal Score (0-100)
+                </h4>
+                {listing.dealScore != null && (
+                  <span className="text-[10px] text-muted-foreground">
+                    {listing.dealScoreComputedAt && new Date(listing.dealScoreComputedAt).toLocaleString('sl-SI')}
+                  </span>
+                )}
+              </div>
+              {listing.dealScore != null ? (
+                <div>
+                  <div className="flex items-center gap-3 mb-2">
+                    <div className={cn(
+                      'text-3xl font-bold font-mono',
+                      listing.dealScore >= 90 ? 'text-primary' :
+                      listing.dealScore >= 70 ? 'text-primary/80' :
+                      listing.dealScore >= 50 ? 'text-amber-400' :
+                      'text-red-500'
+                    )}>
+                      {listing.dealScore}
+                    </div>
+                    <div className="flex-1">
+                      <div className="h-2 bg-background rounded overflow-hidden">
+                        <div
+                          className={cn(
+                            'h-full transition-all',
+                            listing.dealScore >= 90 ? 'bg-primary' :
+                            listing.dealScore >= 70 ? 'bg-primary/70' :
+                            listing.dealScore >= 50 ? 'bg-amber-400' :
+                            'bg-red-500'
+                          )}
+                          style={{ width: `${listing.dealScore}%` }}
+                        />
+                      </div>
+                      <div className="text-[10px] text-muted-foreground mt-1">
+                        {listing.dealScore >= 90 ? 'Izjemna priložnost' :
+                         listing.dealScore >= 70 ? 'Dobra priložnost' :
+                         listing.dealScore >= 50 ? 'Povprečen oglas' :
+                         listing.dealScore >= 30 ? 'Tvegano' :
+                         'Slaba priložnost'}
+                      </div>
+                    </div>
+                  </div>
+                  {listing.dealScoreReason && (
+                    <p className="text-xs text-muted-foreground italic">"{listing.dealScoreReason}"</p>
+                  )}
+                  <Button
+                    size="sm"
+                    variant="outline"
+                    className="mt-2 h-7 text-xs"
+                    onClick={async () => {
+                      try {
+                        toast.loading('Ponovno ocenjujem...', { id: 'score' });
+                        const r = await fetch(`/api/listings/${listing.id}/score`, { method: 'POST' });
+                        const d = await r.json();
+                        if (d.ok) {
+                          toast.success(`Score: ${d.dealScore}/100`, { id: 'score' });
+                          await loadDetail();
+                        } else {
+                          toast.error(d.error ?? 'Napaka', { id: 'score' });
+                        }
+                      } catch {
+                        toast.error('Napaka', { id: 'score' });
+                      }
+                    }}
+                  >
+                    <RefreshCw className="w-3 h-3 mr-1" /> Ponovno oceni
+                  </Button>
+                </div>
+              ) : (
+                <div className="text-center py-3">
+                  <p className="text-xs text-muted-foreground mb-2">Še ni ocenjen s Deal Score</p>
+                  <Button
+                    size="sm"
+                    className="h-7 text-xs"
+                    onClick={async () => {
+                      try {
+                        toast.loading('AI ocenjuje...', { id: 'score' });
+                        const r = await fetch(`/api/listings/${listing.id}/score`, { method: 'POST' });
+                        const d = await r.json();
+                        if (d.ok) {
+                          toast.success(`Score: ${d.dealScore}/100`, { id: 'score' });
+                          await loadDetail();
+                        } else {
+                          toast.error(d.error ?? 'Napaka', { id: 'score' });
+                        }
+                      } catch {
+                        toast.error('Napaka', { id: 'score' });
+                      }
+                    }}
+                  >
+                    <Sparkles className="w-3 h-3 mr-1" /> Izračunaj Deal Score
+                  </Button>
+                </div>
+              )}
+            </div>
+
+            {/* v4.4: QR code for sharing */}
+            <div className="bg-card/30 border border-border rounded p-3">
+              <div className="flex items-center justify-between mb-2">
+                <h4 className="text-xs uppercase tracking-wider text-muted-foreground flex items-center gap-1.5">
+                  <Copy className="w-3.5 h-3.5" />
+                  Deli oglas — QR koda
+                </h4>
+              </div>
+              <div className="flex items-center gap-4">
+                <img
+                  src={`/api/listings/${listing.id}/qr?size=160&t=${Date.now()}`}
+                  alt="QR koda"
+                  className="w-32 h-32 bg-white rounded border border-border p-1"
+                />
+                <div className="flex-1 space-y-1.5 text-xs">
+                  <p className="text-muted-foreground">Skeniraj s telefonom za odprtje oglasa na mobilni napravi.</p>
+                  <div className="flex gap-1.5">
+                    <Button
+                      size="sm"
+                      variant="outline"
+                      className="h-7 text-xs"
+                      onClick={() => {
+                        navigator.clipboard.writeText(listing.url);
+                        toast.success('URL kopiran');
+                      }}
+                    >
+                      <Copy className="w-3 h-3 mr-1" /> Kopiraj URL
+                    </Button>
+                    <a
+                      href={listing.url}
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      className="inline-flex items-center h-7 px-3 text-xs rounded border border-border bg-card hover:bg-card/70"
+                    >
+                      <ExternalLink className="w-3 h-3 mr-1" /> Odpri
+                    </a>
+                  </div>
+                </div>
+              </div>
+            </div>
 
             {/* v1.8: Market comparison — real data vs AI estimate */}
             {data?.marketComparison && (

@@ -167,6 +167,8 @@ model Monitor {
   notificationChannels String @default("{}") // empty = use global settings
   // AI prompt customization (optional)
   customPrompt String @default("")
+  // v4.4: Tags for grouping/filtering (comma-separated, e.g. "avto,ljubljana,investicija")
+  tags String @default("")
   createdAt  DateTime @default(now())
   updatedAt  DateTime @updatedAt
 
@@ -223,6 +225,10 @@ model Listing {
   contactStatus    String   @default("none") // none | contacted | responded | closed
   contactedAt      DateTime?
   sellerResponse   String?
+  // v4.4: AI Deal Score 0-100 (separate from aiScore 1-10)
+  dealScore        Int?     // 0-100, higher = better deal
+  dealScoreReason  String?  // short AI explanation
+  dealScoreComputedAt DateTime?
   // Alerts generated for this listing
   alerts      Alert[]
   priceHistory PriceHistory[]
