@@ -931,7 +931,7 @@ function ListingDetailModal({ listingId, onClose }: { listingId: string | null; 
 
   return (
     <Dialog open={!!listingId} onOpenChange={(open) => !open && onClose()}>
-      <DialogContent className="max-w-3xl max-h-[90vh] overflow-y-auto">
+      <DialogContent className="max-w-3xl max-h-[90vh] overflow-y-auto mx-4 sm:mx-6 p-4 sm:p-6">
         <DialogHeader>
           <DialogTitle className="text-base flex items-center gap-2">
             {listing?.aiVerdict === 'PRILIKA' && <Target className="w-4 h-4 text-primary" />}
@@ -1011,7 +1011,7 @@ function ListingDetailModal({ listingId, onClose }: { listingId: string | null; 
 
             {/* AI evaluation summary */}
             {(listing.aiScore != null || listing.aiRisk != null || listing.aiVerdict) && (
-              <div className="grid grid-cols-3 gap-2">
+              <div className="grid grid-cols-3 gap-2 sm:gap-3">
                 {listing.aiVerdict && (
                   <div className="bg-card/50 border border-border rounded p-2 text-center">
                     <div className="text-[10px] text-muted-foreground uppercase tracking-wider mb-1">Verdikt</div>
@@ -1147,7 +1147,7 @@ function ListingDetailModal({ listingId, onClose }: { listingId: string | null; 
                   Deli oglas — QR koda
                 </h4>
               </div>
-              <div className="flex items-center gap-4">
+              <div className="flex flex-col sm:flex-row items-center gap-4">
                 <img
                   src={`/api/listings/${listing.id}/qr?size=160&t=${Date.now()}`}
                   alt="QR koda"
@@ -1194,7 +1194,7 @@ function ListingDetailModal({ listingId, onClose }: { listingId: string | null; 
                   </Badge>
                 )}
               </div>
-              <div className="flex items-center gap-2">
+              <div className="flex flex-col sm:flex-row items-stretch sm:items-center gap-2">
                 <div className="flex-1">
                   <Input
                     type="number"
