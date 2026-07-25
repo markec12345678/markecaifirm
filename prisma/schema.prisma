@@ -229,6 +229,10 @@ model Listing {
   dealScore        Int?     // 0-100, higher = better deal
   dealScoreReason  String?  // short AI explanation
   dealScoreComputedAt DateTime?
+  // v4.5: User-defined target price — alert me when price drops at or below this
+  targetPrice      Int?     // EUR — alert when price <= this
+  targetPriceSetAt DateTime?
+  targetPriceAlertSent Boolean @default(false) // prevent alert spam
   // Alerts generated for this listing
   alerts      Alert[]
   priceHistory PriceHistory[]

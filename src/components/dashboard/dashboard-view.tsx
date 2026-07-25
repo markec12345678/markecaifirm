@@ -4,7 +4,7 @@ import { useEffect, useState, useCallback } from 'react';
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
-import { Activity, Bell, AlertTriangle, Target, TrendingUp, Play, RefreshCw, Clock, Zap, LayoutGrid, BarChart3, Bookmark, ShoppingCart, TrendingDown, ExternalLink, Check } from 'lucide-react';
+import { Activity, Bell, AlertTriangle, Target, TrendingUp, Play, RefreshCw, Clock, Zap, LayoutGrid, BarChart3, Bookmark, ShoppingCart, TrendingDown, ExternalLink, Check, Sparkles } from 'lucide-react';
 import { toast } from 'sonner';
 import { cn } from '@/lib/utils';
 
@@ -49,6 +49,11 @@ export function DashboardView({ onNavigate }: ViewProps) {
   const [stats, setStats] = useState<Stats | null>(null);
   const [loading, setLoading] = useState(true);
   const [running, setRunning] = useState(false);
+  // v4.5: AI Summary
+  const [summaryOpen, setSummaryOpen] = useState(false);
+  const [summaryLoading, setSummaryLoading] = useState(false);
+  const [summaryData, setSummaryData] = useState<any>(null);
+  const [summaryHours, setSummaryHours] = useState(24);
 
   const load = useCallback(async () => {
     try {
@@ -81,6 +86,31 @@ export function DashboardView({ onNavigate }: ViewProps) {
       toast.error('Napaka pri poganjanju');
     } finally {
       setRunning(false);
+    }
+  };
+
+  // v4.5: Generate AI summary
+  const generateSummary = async () => {
+    setSummaryOpen(true);
+    setSummaryLoading(true);
+    setSummaryData(null);
+    try {
+      const res = await fetch('/api/digest/ai-summary', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ hours: summaryHours, limit: 20 }),
+      });
+      const data = await res.json();
+      if (data.ok) {
+        setSummaryData(data);
+        toast.success(`Povzetek generiran (${data.stats.opportunitiesFound} priložnosti)`);
+      } else {
+        toast.error(data.error ?? 'Napaka pri generiranju povzetka');
+      }
+    } catch (e: any) {
+      toast.error(e?.message ?? 'Napaka');
+    } finally {
+      setSummaryLoading(false);
     }
   };
 
@@ -144,6 +174,18 @@ export function DashboardView({ onNavigate }: ViewProps) {
           <Button size="sm" onClick={runAll} disabled={running} className="gap-2 bg-primary text-primary-foreground hover:bg-primary/90">
             {running ? <RefreshCw className="w-3.5 h-3.5 animate-spin" /> : <Play className="w-3.5 h-3.5" />}
             Poženi vse monitorje
+          </Button>
+          {/* v4.5: AI Summary button */}
+          <Button
+            size="sm"
+            variant="outline"
+            onClick={generateSummary}
+            disabled={summaryLoading}
+            className="gap-2 border-primary/40 text-primary hover:bg-primary/10"
+            title="AI POVzetek zadnjih priložnosti"
+          >
+            {summaryLoading ? <RefreshCw className="w-3.5 h-3.5 animate-spin" /> : <Sparkles className="w-3.5 h-3.5" />}
+            AI POVzetek
           </Button>
         </div>
       </div>
@@ -391,6 +433,9 @@ export function DashboardView({ onNavigate }: ViewProps) {
       {/* v2.7: Activity feed */}
       <ActivityFeed />
 
+      {/* v4.5: Skladišče dashboard widget */}
+      <SkladisceWidget onNavigate={onNavigate} />
+
       {/* Quick start hint */}
       {stats.totalMonitors === 0 && (
         <Card className="border-primary/40 bg-primary/5">
@@ -416,6 +461,156 @@ export function DashboardView({ onNavigate }: ViewProps) {
             </div>
           </CardContent>
         </Card>
+      )}
+
+      {/* v4.5: AI Summary Modal */}
+      {summaryOpen && (
+        <div
+          className="fixed inset-0 bg-background/80 backdrop-blur-sm z-50 flex items-center justify-center p-4"
+          onClick={() => !summaryLoading && setSummaryOpen(false)}
+        >
+          <div
+            className="bg-card border border-border rounded-lg max-w-2xl w-full max-h-[85vh] overflow-y-auto p-6 shadow-xl"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <div className="flex items-center justify-between mb-4">
+              <h2 className="text-lg font-bold text-primary terminal-glow uppercase flex items-center gap-2">
+                <Sparkles className="w-5 h-5" />
+                AI POVzetek
+              </h2>
+              <button
+                onClick={() => !summaryLoading && setSummaryOpen(false)}
+                className="text-muted-foreground hover:text-foreground text-xl disabled:opacity-50"
+                disabled={summaryLoading}
+              >×</button>
+            </div>
+
+            {/* Hours selector */}
+            <div className="flex items-center gap-2 mb-4 text-xs">
+              <span className="text-muted-foreground">Obdobje:</span>
+              {[
+                { v: 6, l: '6h' },
+                { v: 24, l: '24h' },
+                { v: 72, l: '3 dni' },
+                { v: 168, l: '7 dni' },
+              ].map(opt => (
+                <button
+                  key={opt.v}
+                  onClick={() => setSummaryHours(opt.v)}
+                  className={cn(
+                    'px-2 py-0.5 rounded border text-xs transition-colors',
+                    summaryHours === opt.v
+                      ? 'border-primary bg-primary/10 text-primary'
+                      : 'border-border text-muted-foreground hover:text-foreground'
+                  )}
+                >
+                  {opt.l}
+                </button>
+              ))}
+              <Button
+                size="sm"
+                variant="outline"
+                className="ml-auto h-7 text-xs gap-1"
+                onClick={generateSummary}
+                disabled={summaryLoading}
+              >
+                {summaryLoading ? <RefreshCw className="w-3 h-3 animate-spin" /> : <RefreshCw className="w-3 h-3" />}
+                Osveži
+              </Button>
+            </div>
+
+            {summaryLoading ? (
+              <div className="py-12 text-center text-sm text-muted-foreground">
+                <RefreshCw className="w-5 h-5 mx-auto mb-3 animate-spin opacity-50" />
+                AI analizira oglase in generira povzetek...
+              </div>
+            ) : summaryData ? (
+              <div className="space-y-4">
+                {/* Stats bar */}
+                <div className="grid grid-cols-4 gap-2 text-xs">
+                  <div className="bg-background/30 rounded p-2 text-center">
+                    <div className="text-[10px] text-muted-foreground uppercase">Najdeno</div>
+                    <div className="font-mono font-bold text-primary">{summaryData.stats.opportunitiesFound}</div>
+                  </div>
+                  <div className="bg-background/30 rounded p-2 text-center">
+                    <div className="text-[10px] text-muted-foreground uppercase">Novi</div>
+                    <div className="font-mono">{summaryData.stats.totalNewListings}</div>
+                  </div>
+                  <div className="bg-background/30 rounded p-2 text-center">
+                    <div className="text-[10px] text-muted-foreground uppercase">Alertov</div>
+                    <div className="font-mono">{summaryData.stats.totalAlerts}</div>
+                  </div>
+                  <div className="bg-background/30 rounded p-2 text-center">
+                    <div className="text-[10px] text-muted-foreground uppercase">Shranjeni</div>
+                    <div className="font-mono">{summaryData.stats.totalBookmarked}</div>
+                  </div>
+                </div>
+
+                {/* Summary text */}
+                <div className="bg-background/30 rounded p-3 text-sm whitespace-pre-wrap leading-relaxed">
+                  {summaryData.summary}
+                </div>
+
+                {/* Top pick */}
+                {summaryData.topPick && (
+                  <div className="bg-primary/5 border border-primary/20 rounded p-3">
+                    <div className="text-[10px] uppercase tracking-wider text-primary mb-1">🏆 TOP izbor</div>
+                    <div className="text-sm font-medium">{summaryData.topPick}</div>
+                  </div>
+                )}
+
+                {/* Recommendation */}
+                {summaryData.recommendation && (
+                  <div className="bg-amber-400/5 border border-amber-400/20 rounded p-3">
+                    <div className="text-[10px] uppercase tracking-wider text-amber-400 mb-1">💡 Priporočilo</div>
+                    <div className="text-sm">{summaryData.recommendation}</div>
+                  </div>
+                )}
+
+                {/* Listings list */}
+                {summaryData.listings && summaryData.listings.length > 0 && (
+                  <div>
+                    <h4 className="text-xs uppercase tracking-wider text-muted-foreground mb-2">
+                      Oglasi v povzetku ({summaryData.listings.length})
+                    </h4>
+                    <div className="space-y-1">
+                      {summaryData.listings.map((l: any) => (
+                        <a
+                          key={l.id}
+                          href={l.url}
+                          target="_blank"
+                          rel="noopener noreferrer"
+                          className="flex items-center gap-2 p-2 bg-background/30 rounded hover:bg-background/50 transition-colors text-xs"
+                        >
+                          <div className="flex-1 min-w-0">
+                            <div className="truncate font-medium">{l.title}</div>
+                            <div className="text-[10px] text-muted-foreground">
+                              {l.priceText} • {l.monitor?.name}
+                            </div>
+                          </div>
+                          {l.dealScore != null && (
+                            <Badge variant="outline" className="text-[10px] text-primary border-primary/40 shrink-0">
+                              🎯 {l.dealScore}
+                            </Badge>
+                          )}
+                          <ExternalLink className="w-3 h-3 text-muted-foreground shrink-0" />
+                        </a>
+                      ))}
+                    </div>
+                  </div>
+                )}
+
+                <p className="text-[10px] text-muted-foreground text-center pt-2">
+                  Generirano: {new Date(summaryData.generatedAt).toLocaleString('sl-SI')}
+                </p>
+              </div>
+            ) : (
+              <div className="py-8 text-center text-sm text-muted-foreground">
+                Klikni "Osveži" za generiranje povzetka.
+              </div>
+            )}
+          </div>
+        </div>
       )}
     </div>
   );
@@ -575,6 +770,158 @@ function ActivityFeed() {
                 )}
               </div>
             ))}
+          </div>
+        )}
+      </CardContent>
+    </Card>
+  );
+}
+
+// v4.5: Skladišče dashboard widget — mini overview of trades + P&L
+function SkladisceWidget({ onNavigate }: { onNavigate: (v: any) => void }) {
+  const [data, setData] = useState<any>(null);
+  const [loading, setLoading] = useState(true);
+
+  const load = useCallback(async () => {
+    try {
+      const res = await fetch('/api/trades/dashboard');
+      if (res.ok) setData(await res.json());
+    } catch { /* ignore */ }
+    finally { setLoading(false); }
+  }, []);
+
+  useEffect(() => { load(); }, [load]);
+
+  if (loading) {
+    return (
+      <Card className="bg-card/50">
+        <CardContent className="p-4">
+          <div className="h-24 animate-pulse bg-muted rounded" />
+        </CardContent>
+      </Card>
+    );
+  }
+
+  if (!data || data.totalTrades === 0) {
+    return null; // Don't show widget if no trades yet
+  }
+
+  const hasMonthlyData = data.monthlyPnl?.some((m: any) => m.count > 0);
+
+  return (
+    <Card className="bg-card/50">
+      <CardContent className="p-4">
+        <div className="flex items-center justify-between mb-3">
+          <h3 className="text-sm font-bold uppercase tracking-wider text-primary flex items-center gap-2">
+            <TrendingUp className="w-4 h-4" />
+            Skladišče
+          </h3>
+          <Button
+            size="sm"
+            variant="ghost"
+            className="h-7 text-xs gap-1"
+            onClick={() => onNavigate('trades')}
+          >
+            Vsi <ExternalLink className="w-3 h-3" />
+          </Button>
+        </div>
+
+        <div className="grid grid-cols-2 md:grid-cols-4 gap-3 mb-3">
+          <div className="bg-background/30 rounded p-2 text-center">
+            <div className="text-[10px] text-muted-foreground uppercase">Skupni dobiček</div>
+            <div className={cn('text-lg font-bold font-mono', data.totalRealizedProfit >= 0 ? 'text-primary' : 'text-red-500')}>
+              {data.totalRealizedProfit >= 0 ? '+' : ''}{data.totalRealizedProfit.toFixed(0)}€
+            </div>
+          </div>
+          <div className="bg-background/30 rounded p-2 text-center">
+            <div className="text-[10px] text-muted-foreground uppercase">V skladišču</div>
+            <div className="text-lg font-bold font-mono text-amber-400">{data.heldCount}</div>
+          </div>
+          <div className="bg-background/30 rounded p-2 text-center">
+            <div className="text-[10px] text-muted-foreground uppercase">Prodani</div>
+            <div className="text-lg font-bold font-mono">{data.soldCount}</div>
+          </div>
+          <div className="bg-background/30 rounded p-2 text-center">
+            <div className="text-[10px] text-muted-foreground uppercase">V investiciji</div>
+            <div className="text-lg font-bold font-mono">{data.totalInvested.toFixed(0)}€</div>
+          </div>
+        </div>
+
+        {/* This month vs last month */}
+        <div className="flex items-center justify-between text-xs bg-background/30 rounded p-2 mb-3">
+          <span className="text-muted-foreground">Mesec {new Date().toLocaleDateString('sl-SI', { month: 'long' })}:</span>
+          <span className={cn('font-mono font-bold', data.thisMonthProfit >= 0 ? 'text-primary' : 'text-red-500')}>
+            {data.thisMonthProfit >= 0 ? '+' : ''}{data.thisMonthProfit.toFixed(2)}€
+          </span>
+          {data.trend !== 0 && (
+            <span className={cn('flex items-center gap-0.5 text-[10px]', data.trend > 0 ? 'text-primary' : 'text-red-500')}>
+              {data.trend > 0 ? <TrendingUp className="w-3 h-3" /> : <TrendingDown className="w-3 h-3" />}
+              {Math.abs(data.trend).toFixed(0)}€ vs prejšnji mesec
+            </span>
+          )}
+        </div>
+
+        {/* Mini bar chart: monthly P&L */}
+        {hasMonthlyData && (
+          <div className="mb-3">
+            <h4 className="text-[10px] uppercase tracking-wider text-muted-foreground mb-1.5">
+              Dobiček po mesecih (zadnjih 12)
+            </h4>
+            <div className="flex items-end gap-1 h-20">
+              {data.monthlyPnl.map((m: any, i: number) => {
+                const maxAbs = Math.max(...data.monthlyPnl.map((x: any) => Math.abs(x.profit)), 1);
+                const heightPct = Math.abs(m.profit) / maxAbs * 100;
+                const isPositive = m.profit >= 0;
+                return (
+                  <div
+                    key={i}
+                    className="flex-1 flex flex-col items-center gap-0.5 group relative"
+                    title={`${m.label}: ${m.profit >= 0 ? '+' : ''}${m.profit.toFixed(2)}€ (${m.count} prodaj)`}
+                  >
+                    <div className="text-[8px] text-muted-foreground h-2">
+                      {m.count > 0 ? m.count : ''}
+                    </div>
+                    <div className="w-full flex-1 flex flex-col justify-end relative">
+                      {m.profit === 0 ? (
+                        <div className="w-full h-px bg-border" />
+                      ) : (
+                        <div
+                          className={cn('w-full rounded-sm transition-all', isPositive ? 'bg-primary/70' : 'bg-red-500/70')}
+                          style={{ height: `${heightPct}%` }}
+                        />
+                      )}
+                    </div>
+                    <div className="text-[8px] text-muted-foreground">{m.label}</div>
+                  </div>
+                );
+              })}
+            </div>
+          </div>
+        )}
+
+        {/* Top 3 best trades */}
+        {data.topTrades && data.topTrades.length > 0 && (
+          <div>
+            <h4 className="text-[10px] uppercase tracking-wider text-muted-foreground mb-1.5">
+              Top 3 najbolj dobičkonosne prodaje
+            </h4>
+            <div className="space-y-1">
+              {data.topTrades.slice(0, 3).map((t: any, i: number) => (
+                <div key={t.id} className="flex items-center gap-2 p-1.5 bg-background/30 rounded text-xs">
+                  <span className="text-[10px] font-mono text-muted-foreground">#{i + 1}</span>
+                  <div className="flex-1 min-w-0">
+                    <div className="truncate">{t.title}</div>
+                    {t.category && <div className="text-[10px] text-muted-foreground">{t.category}</div>}
+                  </div>
+                  <div className="text-right shrink-0">
+                    <div className={cn('font-mono font-bold', t.profit >= 0 ? 'text-primary' : 'text-red-500')}>
+                      {t.profit >= 0 ? '+' : ''}{t.profit.toFixed(0)}€
+                    </div>
+                    <div className="text-[10px] text-muted-foreground">{t.roi >= 0 ? '+' : ''}{t.roi.toFixed(0)}%</div>
+                  </div>
+                </div>
+              ))}
+            </div>
           </div>
         )}
       </CardContent>

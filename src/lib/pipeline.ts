@@ -313,6 +313,89 @@ export async function runMonitor(monitorId: string): Promise<RunResult> {
       }
     }
 
+    // v4.5: Target price alerts — check ALL listings (existing + freshly updated) against their targetPrice
+    // Query current state from DB to get targetPrice fields
+    const listingsWithTargets = await db.listing.findMany({
+      where: {
+        monitorId: monitor.id,
+        targetPrice: { not: null },
+        targetPriceAlertSent: false,
+        price: { not: null },
+      },
+      select: {
+        id: true, title: true, url: true, price: true, priceText: true,
+        targetPrice: true, aiVerdict: true, monitor: { select: { name: true } },
+      },
+    });
+    let targetPriceAlerts = 0;
+    for (const l of listingsWithTargets) {
+      if (l.price == null || l.targetPrice == null) continue;
+      if (l.price <= l.targetPrice) {
+        const savings = l.targetPrice - l.price;
+        const alertBody = formatAlertMessage({
+          monitorName: l.monitor.name,
+          title: `🎯 CILJNA CENA DOSEŽENA: ${l.title}`,
+          priceText: `${l.priceText} (cilj ${l.targetPrice}€ — ${savings}€ pod ciljem)`,
+          url: l.url,
+          aiScore: null,
+          aiRisk: null,
+          aiVerdict: l.aiVerdict,
+          aiReason: `Cena je dosegla tvojo ciljno mejo ${l.targetPrice}€. Trenutna cena ${l.price}€ je za ${savings}€ pod ciljem — morda je pravi čas za nakup.`,
+          estimatedValue: null,
+        });
+
+        const alert = await db.alert.create({
+          data: {
+            monitorId: monitor.id,
+            listingId: l.id,
+            title: `🎯 ${l.title}`,
+            body: alertBody,
+            url: l.url,
+            aiVerdict: 'PRILIKA',
+          },
+        });
+
+        // Send notifications
+        if (settings.telegramEnabled && settings.telegramBotToken && settings.telegramChatId) {
+          const inlineButtons = settings.telegramInlineButtons
+            ? buildAlertInlineButtons({ alertId: alert.id, listingUrl: l.url, dashboardUrl: 'http://localhost:3000/alerts' })
+            : undefined;
+          await sendTelegramMessage(
+            { botToken: settings.telegramBotToken, chatId: settings.telegramChatId },
+            alertBody,
+            { inlineButtons }
+          );
+        }
+        if (settings.discordEnabled && settings.discordWebhookUrl) {
+          const embed = buildAlertEmbed({
+            monitorName: l.monitor.name,
+            title: `🎯 CILJNA CENA DOSEŽENA: ${l.title}`,
+            priceText: `${l.priceText} (cilj ${l.targetPrice}€)`,
+            url: l.url,
+            aiVerdict: 'PRILIKA',
+            aiReason: `Tvoja ciljna cena dosežena — ${savings}€ pod ciljem.`,
+            aiScore: null,
+            aiRisk: null,
+          });
+          await sendDiscordMessage({ webhookUrl: settings.discordWebhookUrl }, embed);
+        }
+        if (settings.pushEnabled) {
+          await sendPushNotification({
+            title: `🎯 Ciljna cena dosežena: ${l.title.slice(0, 50)}`,
+            body: `${l.priceText} — cilj ${l.targetPrice}€, ${savings}€ pod ciljem!`,
+            url: '/alerts',
+          });
+        }
+        targetPriceAlerts++;
+
+        // Mark alert as sent to prevent spam
+        await db.listing.update({
+          where: { id: l.id },
+          data: { targetPriceAlertSent: true },
+        });
+      }
+    }
+
     // Evaluate each fresh listing with AI
     for (let i = 0; i < createdListings.length; i++) {
       const listing = createdListings[i];
@@ -498,6 +581,8 @@ export async function runMonitor(monitorId: string): Promise<RunResult> {
 
     // v2.0: Add price drop alerts to total
     alertsSent += priceDropAlerts;
+    // v4.5: Add target price alerts to total
+    alertsSent += targetPriceAlerts;
 
     await db.runLog.update({
       where: { id: runLog.id },

@@ -217,7 +217,7 @@ export default function Home() {
           <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-2 text-xs text-muted-foreground">
             <div className="flex items-center gap-3">
               <span className="text-primary">markec-ai-firm</span>
-              <span>v4.4.0</span>
+              <span>v4.5.0</span>
               <span>•</span>
               <span>local-first</span>
               <span>•</span>
