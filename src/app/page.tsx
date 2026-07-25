@@ -1,7 +1,7 @@
 'use client';
 
 import { useEffect, useState, useCallback } from 'react';
-import { Activity, Bell, Settings, ListPlus, Zap, RefreshCw, AlertCircle, LayoutGrid, BarChart3, Search, Heart, TrendingUp, History } from 'lucide-react';
+import { Activity, Bell, Settings, ListPlus, Zap, RefreshCw, AlertCircle, LayoutGrid, BarChart3, Search, Heart, TrendingUp, History, Eye } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
 import { Input } from '@/components/ui/input';
@@ -16,15 +16,17 @@ import { AnalyticsView } from '@/components/dashboard/analytics-view';
 import { HealthView } from '@/components/dashboard/health-view';
 import { TradesView } from '@/components/dashboard/trades-view';
 import { NotificationHistoryView } from '@/components/dashboard/notification-history-view';
+import { WatchlistView } from '@/components/dashboard/watchlist-view';
 import { SearchModal } from '@/components/dashboard/search-modal';
 
-type View = 'dashboard' | 'monitors' | 'alerts' | 'listings' | 'analytics' | 'trades' | 'health' | 'notifications' | 'settings';
+type View = 'dashboard' | 'monitors' | 'alerts' | 'listings' | 'watchlist' | 'analytics' | 'trades' | 'health' | 'notifications' | 'settings';
 
 const NAV: { id: View; label: string; icon: typeof Activity }[] = [
   { id: 'dashboard', label: 'Dashboard', icon: Activity },
   { id: 'monitors', label: 'Monitorji', icon: ListPlus },
   { id: 'alerts', label: 'Alerti', icon: Bell },
   { id: 'listings', label: 'Oglasi', icon: LayoutGrid },
+  { id: 'watchlist', label: 'Watchlist', icon: Eye },
   { id: 'trades', label: 'Skladišče', icon: TrendingUp },
   { id: 'analytics', label: 'Analitika', icon: BarChart3 },
   { id: 'notifications', label: 'Obvestila', icon: History },
@@ -97,11 +99,12 @@ export default function Home() {
         '2': 'monitors',
         '3': 'alerts',
         '4': 'listings',
-        '5': 'trades',
-        '6': 'analytics',
-        '7': 'notifications',
-        '8': 'health',
-        '9': 'settings',
+        '5': 'watchlist',
+        '6': 'trades',
+        '7': 'analytics',
+        '8': 'notifications',
+        '9': 'health',
+        '0': 'settings',
       };
       if (navMap[e.key] && !e.ctrlKey && !e.metaKey && !e.altKey) {
         e.preventDefault();
@@ -204,6 +207,7 @@ export default function Home() {
         {view === 'monitors' && <MonitorsView />}
         {view === 'alerts' && <AlertsView />}
         {view === 'listings' && <ListingsView />}
+        {view === 'watchlist' && <WatchlistView onNavigate={setView} />}
         {view === 'trades' && <TradesView />}
         {view === 'analytics' && <AnalyticsView />}
         {view === 'notifications' && <NotificationHistoryView />}
@@ -217,7 +221,7 @@ export default function Home() {
           <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-2 text-xs text-muted-foreground">
             <div className="flex items-center gap-3">
               <span className="text-primary">markec-ai-firm</span>
-              <span>v4.5.0</span>
+              <span>v4.6.0</span>
               <span>•</span>
               <span>local-first</span>
               <span>•</span>
@@ -250,11 +254,12 @@ export default function Home() {
                 { key: '2', desc: 'Monitorji' },
                 { key: '3', desc: 'Alerti' },
                 { key: '4', desc: 'Oglasi' },
-                { key: '5', desc: 'Skladišče' },
-                { key: '6', desc: 'Analitika' },
-                { key: '7', desc: 'Obvestila' },
-                { key: '8', desc: 'Zdravje' },
-                { key: '9', desc: 'Nastavitve' },
+                { key: '5', desc: 'Watchlist' },
+                { key: '6', desc: 'Skladišče' },
+                { key: '7', desc: 'Analitika' },
+                { key: '8', desc: 'Obvestila' },
+                { key: '9', desc: 'Zdravje' },
+                { key: '0', desc: 'Nastavitve' },
                 { key: 'Ctrl+K', desc: 'Globalno iskanje' },
                 { key: '?', desc: 'Ta pomoč' },
               ].map((s, i) => (

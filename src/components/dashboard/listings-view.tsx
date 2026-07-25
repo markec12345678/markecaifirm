@@ -669,6 +669,9 @@ function ListingDetailModal({ listingId, onClose }: { listingId: string | null; 
   const [negotiating, setNegotiating] = useState(false);
   const [negotiateMessage, setNegotiateMessage] = useState<string | null>(null);
   const [negotiateType, setNegotiateType] = useState<string>('initial');
+  // v4.6: Multi-language support
+  const [negotiateLang, setNegotiateLang] = useState<string>('sl');
+  const [negotiateLangLabel, setNegotiateLangLabel] = useState<string>('SLO');
   const [copied, setCopied] = useState(false);
   // v2.4: Listing notes
   const [notes, setNotes] = useState('');
@@ -778,8 +781,8 @@ function ListingDetailModal({ listingId, onClose }: { listingId: string | null; 
     }
   };
 
-  // v1.8: AI Negotiator — generate message to seller
-  const generateMessage = async (type: string) => {
+  // v1.8: AI Negotiator — generate message to seller (v4.6: with language)
+  const generateMessage = async (type: string, lang?: string) => {
     if (!listing) return;
     setNegotiating(true);
     setNegotiateType(type);
@@ -788,12 +791,12 @@ function ListingDetailModal({ listingId, onClose }: { listingId: string | null; 
       const res = await fetch(`/api/listings/${listing.id}/negotiate`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ type }),
+        body: JSON.stringify({ type, lang: lang ?? negotiateLang }),
       });
       const data = await res.json();
       if (data.ok) {
         setNegotiateMessage(data.message);
-        toast.success('Sporočilo generirano');
+        toast.success(`Sporočilo generirano (${data.lang?.toUpperCase()})`);
       } else {
         toast.error(data.error ?? 'Napaka pri generiranju');
       }
@@ -1642,12 +1645,46 @@ function ListingDetailModal({ listingId, onClose }: { listingId: string | null; 
               </div>
             )}
 
-            {/* v1.8: AI Negotiator */}
+            {/* v1.8: AI Negotiator (v4.6: multi-language) */}
             <div className="border-t border-border pt-3">
-              <h4 className="text-xs uppercase tracking-wider text-muted-foreground mb-2 flex items-center gap-1.5">
-                <MessageSquare className="w-3.5 h-3.5" />
-                AI pogajalec
-              </h4>
+              <div className="flex items-center justify-between mb-2">
+                <h4 className="text-xs uppercase tracking-wider text-muted-foreground flex items-center gap-1.5">
+                  <MessageSquare className="w-3.5 h-3.5" />
+                  AI pogajalec
+                  <Badge variant="outline" className="text-[10px] text-primary border-primary/40">v4.6</Badge>
+                </h4>
+                {/* v4.6: Language switcher */}
+                <div className="flex items-center gap-1 text-[10px]">
+                  <span className="text-muted-foreground">Jezik:</span>
+                  {[
+                    { code: 'sl', label: '🇸🇮 SLO' },
+                    { code: 'en', label: '🇬🇧 EN' },
+                    { code: 'de', label: '🇩🇪 DE' },
+                    { code: 'it', label: '🇮🇹 IT' },
+                    { code: 'hr', label: '🇭🇷 HR' },
+                  ].map(l => (
+                    <button
+                      key={l.code}
+                      onClick={() => {
+                        setNegotiateLang(l.code);
+                        setNegotiateLangLabel(l.label);
+                        if (negotiateMessage) {
+                          // Regenerate with new language
+                          generateMessage(negotiateType, l.code);
+                        }
+                      }}
+                      className={cn(
+                        'px-1.5 py-0.5 rounded border text-[10px] transition-colors',
+                        negotiateLang === l.code
+                          ? 'border-primary bg-primary/10 text-primary'
+                          : 'border-border text-muted-foreground hover:text-foreground'
+                      )}
+                    >
+                      {l.label}
+                    </button>
+                  ))}
+                </div>
+              </div>
               <div className="flex flex-wrap gap-2 mb-2">
                 <Button size="sm" variant="outline" onClick={() => generateMessage('initial')} disabled={negotiating} className="gap-1.5 text-xs h-7">
                   {negotiating && negotiateType === 'initial' ? <RefreshCw className="w-3 h-3 animate-spin" /> : <MessageSquare className="w-3 h-3" />}
@@ -1665,7 +1702,9 @@ function ListingDetailModal({ listingId, onClose }: { listingId: string | null; 
               {negotiateMessage && (
                 <div className="bg-background/50 border border-border rounded p-3">
                   <div className="flex items-start justify-between gap-2 mb-2">
-                    <span className="text-[10px] text-muted-foreground uppercase tracking-wider">Generirano sporočilo:</span>
+                    <span className="text-[10px] text-muted-foreground uppercase tracking-wider">
+                      Generirano sporočilo ({negotiateLangLabel}):
+                    </span>
                     <Button size="sm" variant="ghost" onClick={copyMessage} className="h-6 px-2 text-xs gap-1">
                       {copied ? <Check className="w-3 h-3 text-primary" /> : <Copy className="w-3 h-3" />}
                       {copied ? 'Kopirano' : 'Kopiraj'}
@@ -1674,6 +1713,9 @@ function ListingDetailModal({ listingId, onClose }: { listingId: string | null; 
                   <p className="text-sm whitespace-pre-wrap">{negotiateMessage}</p>
                   <p className="text-[10px] text-muted-foreground mt-2">
                     ⚠️ Preglej in prilagodi pred pošiljanjem. AI ne pozna specifičnih detailov ki jih vidiš ti.
+                  </p>
+                  <p className="text-[10px] text-muted-foreground mt-1">
+                    💡 Preklopi jezik zgoraj — AI bo regeneriral v izbranem jeziku.
                   </p>
                 </div>
               )}
