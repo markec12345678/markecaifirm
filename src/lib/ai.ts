@@ -228,6 +228,112 @@ function parseJsonLoose(raw: string): unknown {
   return JSON.parse(s);
 }
 
+/** v4.4: Parse JSON loosely, exported for use in API routes. */
+export function parseJsonLooseExported(raw: string): unknown {
+  try {
+    return parseJsonLoose(raw);
+  } catch {
+    return null;
+  }
+}
+
+/** v4.4: Call AI provider with arbitrary prompt and return raw text. */
+export async function callProviderForRaw(
+  settings: AiSettings,
+  userPrompt: string
+): Promise<string> {
+  return callProvider(settings, userPrompt, null);
+}
+
+/** v4.4: AI Deal Score 0-100 with reasoning. */
+export interface DealScoreResult {
+  dealScore: number; // 0-100
+  reason: string;
+}
+
+export async function scoreDeal(
+  settings: AiSettings,
+  listing: {
+    title: string;
+    priceText: string;
+    price?: number | null;
+    location?: string;
+    description?: string;
+    detailDescription?: string | null;
+    source?: string;
+    aiEstimatedValue?: number | null;
+    previousPrice?: number | null;
+  }
+): Promise<DealScoreResult> {
+  const prompt = buildDealScorePrompt(listing);
+  let raw = '';
+  try {
+    raw = await callProvider(settings, prompt, null);
+  } catch (primaryError: any) {
+    if (settings.fallbackProvider && settings.fallbackModel) {
+      const fallbackSettings: AiSettings = {
+        provider: settings.fallbackProvider,
+        baseUrl: settings.fallbackBaseUrl || '',
+        apiKey: settings.fallbackApiKey || '',
+        model: settings.fallbackModel,
+      };
+      raw = await callProvider(fallbackSettings, prompt, null);
+    } else {
+      throw primaryError;
+    }
+  }
+  const parsed: any = parseJsonLooseExported(raw);
+  const score = clampInt(parsed?.deal_score ?? parsed?.dealScore ?? parsed?.score, 0, 100);
+  const reason = String(parsed?.reason ?? parsed?.reasoning ?? parsed?.explanation ?? '').slice(0, 1000);
+  if (score === null) {
+    throw new Error('AI ni vrnil veljavne ocene (deal_score 0-100).');
+  }
+  return { dealScore: score, reason };
+}
+
+function clampInt(v: any, min: number, max: number): number | null {
+  if (v === null || v === undefined || v === '') return null;
+  const n = typeof v === 'number' ? v : parseInt(String(v), 10);
+  if (Number.isNaN(n)) return null;
+  return Math.max(min, Math.min(max, n));
+}
+
+function buildDealScorePrompt(l: {
+  title: string;
+  priceText: string;
+  price?: number | null;
+  location?: string;
+  description?: string;
+  detailDescription?: string | null;
+  source?: string;
+  aiEstimatedValue?: number | null;
+  previousPrice?: number | null;
+}): string {
+  const parts: string[] = [
+    'Si ekspert za ocenjevanje priložnosti na slovenskih spletnih oglasnih mestih.',
+    'Oceni naslednji oglas s številsko oceno 0-100, kjer:',
+    '- 90-100 = izjemna priložnost (cena bistveno pod tržno, reden prodajalec, dobro stanje)',
+    '- 70-89 = dobra priložnost (cena pod tržno, jasno stanje)',
+    '- 50-69 = povprečen oglas (cena v rangu tržne)',
+    '- 30-49 = nadpovprečno tvegano (cena nad tržno ali sumljivo)',
+    '- 0-29 = slaba priložnost (zelo tvegano, previsoka cena, sum prevara)',
+    '',
+    `Naslov: ${l.title}`,
+    `Cena: ${l.priceText}${l.price ? ` (${l.price} EUR)` : ''}`,
+    `Lokacija: ${l.location || 'ni podatka'}`,
+    `Vir: ${l.source ?? 'neznan'}`,
+    `Opis: ${(l.detailDescription || l.description || '').slice(0, 1500)}`,
+  ];
+  if (l.aiEstimatedValue) {
+    parts.push(`AI ocenjena tržna vrednost: ${l.aiEstimatedValue} EUR`);
+  }
+  if (l.previousPrice && l.price && l.previousPrice > l.price) {
+    parts.push(`Prejšnja cena: ${l.previousPrice} EUR (padec za ${l.previousPrice - l.price} EUR)`);
+  }
+  parts.push('', 'Odgovori LE z JSON v tej obliki:', '{"deal_score": <0-100>, "reason": "<kratek slovenski razlog, max 200 znakov>"}');
+  return parts.join('\n');
+}
+
 function normalizeEvaluation(parsed: any): ListingEvaluation {
   const risk = clamp(parseInt(String(parsed?.ocena_tveganja ?? '5'), 10) || 5, 1, 10);
   const opp = clamp(parseInt(String(parsed?.ocena_prilike ?? '5'), 10) || 5, 1, 10);

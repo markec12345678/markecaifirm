@@ -34,6 +34,8 @@ export async function PUT(req: NextRequest, { params }: { params: Promise<{ id: 
   if (typeof body.maxPrice === 'number' || body.maxPrice === null) data.maxPrice = body.maxPrice;
   if (typeof body.intervalMinutes === 'number') data.intervalMinutes = body.intervalMinutes;
   if (typeof body.customPrompt === 'string') data.customPrompt = body.customPrompt;
+  // v4.4: tags
+  if (typeof body.tags === 'string') data.tags = body.tags;
   // v1.2: schedule window
   if (typeof body.runStartHour === 'number' || body.runStartHour === null) data.runStartHour = body.runStartHour;
   if (typeof body.runEndHour === 'number' || body.runEndHour === null) data.runEndHour = body.runEndHour;

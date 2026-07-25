@@ -82,6 +82,8 @@ function listingsToCsv(listings: any[]): string {
     'firstSeenAt', 'monitor', 'source', 'title', 'price', 'priceText',
     'location', 'url', 'aiScore', 'aiRisk', 'aiVerdict', 'aiReason',
     'aiEstimatedValue', 'aiImageVerdict', 'aiImageAnalysis',
+    // v4.4: deal score
+    'dealScore', 'dealScoreReason',
   ];
   const rows = listings.map(l => [
     l.firstSeenAt?.toISOString() ?? '',
@@ -99,6 +101,9 @@ function listingsToCsv(listings: any[]): string {
     l.aiEstimatedValue ?? '',
     l.aiImageVerdict ?? '',
     csvEscape(l.aiImageAnalysis ?? ''),
+    // v4.4
+    l.dealScore ?? '',
+    csvEscape(l.dealScoreReason ?? ''),
   ]);
   return [headers.join(','), ...rows.map(r => r.join(','))].join('\n');
 }

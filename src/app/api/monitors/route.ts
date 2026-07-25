@@ -35,6 +35,8 @@ export async function POST(req: NextRequest) {
       intervalMinutes: typeof body.intervalMinutes === 'number' ? body.intervalMinutes : 30,
       isActive: body.isActive !== false,
       customPrompt: body.customPrompt ?? '',
+      // v4.4: tags
+      tags: body.tags ?? '',
       // v1.2: schedule window
       runStartHour: typeof body.runStartHour === 'number' ? body.runStartHour : null,
       runEndHour: typeof body.runEndHour === 'number' ? body.runEndHour : null,

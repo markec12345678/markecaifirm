@@ -1,6 +1,6 @@
 'use client';
 
-import { useEffect, useState, useCallback } from 'react';
+import { useEffect, useState, useCallback, useMemo } from 'react';
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
@@ -23,7 +23,7 @@ import {
   DialogDescription,
   DialogFooter,
 } from '@/components/ui/dialog';
-import { Plus, Play, Pencil, Trash2, RefreshCw, ExternalLink, CheckCircle2, XCircle, Clock, Zap, AlertCircle, PauseCircle, Bell, Copy, Square } from 'lucide-react';
+import { Plus, Play, Pencil, Trash2, RefreshCw, ExternalLink, CheckCircle2, XCircle, Clock, Zap, AlertCircle, PauseCircle, Bell, Copy, Square, Tag } from 'lucide-react';
 import { toast } from 'sonner';
 import { cn } from '@/lib/utils';
 
@@ -72,6 +72,8 @@ interface Monitor {
   autoPausedAt: string | null;
   // v2.2: notification channels
   notificationChannels: string;
+  // v4.4: tags
+  tags: string;
   createdAt: string;
   _count?: { listings: number; alerts: number };
 }
@@ -147,6 +149,30 @@ export function MonitorsView() {
   const [batchRunning, setBatchRunning] = useState(false);
   // v3.4: Sparkline data
   const [sparklines, setSparklines] = useState<Record<string, { sparkline: number[]; totalNew: number; totalAlerts: number; successRate: number }>>({});
+  // v4.4: Tag filter
+  const [activeTag, setActiveTag] = useState<string>('all');
+
+  // v4.4: Collect all unique tags from monitors
+  const allTags = useMemo(() => {
+    const set = new Set<string>();
+    for (const m of monitors) {
+      if (m.tags) {
+        for (const t of m.tags.split(',').map(s => s.trim()).filter(Boolean)) {
+          set.add(t);
+        }
+      }
+    }
+    return Array.from(set).sort();
+  }, [monitors]);
+
+  // v4.4: Filtered monitors by active tag
+  const filteredMonitors = useMemo(() => {
+    if (activeTag === 'all') return monitors;
+    return monitors.filter(m => {
+      if (!m.tags) return false;
+      return m.tags.split(',').map(s => s.trim()).includes(activeTag);
+    });
+  }, [monitors, activeTag]);
 
   const load = useCallback(async () => {
     try {
@@ -375,15 +401,78 @@ export function MonitorsView() {
           </CardContent>
         </Card>
       ) : (
-        <div className="grid grid-cols-1 lg:grid-cols-2 gap-3">
-          {monitors.map((m) => (
-            <Card key={m.id} className={cn('bg-card/50 hover:bg-card transition-colors', !m.isActive && 'opacity-60')}>
+        <>
+          {/* v4.4: Tag filter chips */}
+          {allTags.length > 0 && (
+            <div className="flex items-center gap-1.5 flex-wrap mb-3">
+              <span className="text-[11px] text-muted-foreground uppercase tracking-wider flex items-center gap-1">
+                <Tag className="w-3 h-3" /> Filter:
+              </span>
+              <button
+                onClick={() => setActiveTag('all')}
+                className={cn(
+                  'px-2 py-0.5 rounded-full text-[11px] border transition-colors',
+                  activeTag === 'all'
+                    ? 'border-primary bg-primary/10 text-primary'
+                    : 'border-border text-muted-foreground hover:text-foreground hover:border-foreground/30'
+                )}
+              >
+                Vsi ({monitors.length})
+              </button>
+              {allTags.map(tag => {
+                const count = monitors.filter(m =>
+                  m.tags && m.tags.split(',').map(s => s.trim()).includes(tag)
+                ).length;
+                return (
+                  <button
+                    key={tag}
+                    onClick={() => setActiveTag(tag)}
+                    className={cn(
+                      'px-2 py-0.5 rounded-full text-[11px] border transition-colors',
+                      activeTag === tag
+                        ? 'border-primary bg-primary/10 text-primary'
+                        : 'border-border text-muted-foreground hover:text-foreground hover:border-foreground/30'
+                    )}
+                  >
+                    {tag} ({count})
+                  </button>
+                );
+              })}
+            </div>
+          )}
+
+          {filteredMonitors.length === 0 ? (
+            <Card className="bg-card/50">
+              <CardContent className="p-6 text-center text-xs text-muted-foreground">
+                Noben monitor nima taga "{activeTag}".
+              </CardContent>
+            </Card>
+          ) : (
+            <div className="grid grid-cols-1 lg:grid-cols-2 gap-3">
+              {filteredMonitors.map((m) => (
+                <Card key={m.id} className={cn('bg-card/50 hover:bg-card transition-colors', !m.isActive && 'opacity-60')}>
               <CardContent className="p-4">
                 <div className="flex items-start justify-between gap-2 mb-2">
                   <div className="min-w-0 flex-1">
-                    <div className="flex items-center gap-2 mb-1">
+                    <div className="flex items-center gap-2 mb-1 flex-wrap">
                       <h3 className="font-bold text-sm truncate">{m.name}</h3>
                       <Badge variant="outline" className="text-[10px]">{SOURCE_LABELS[m.source]}</Badge>
+                      {/* v4.4: tag badges */}
+                      {m.tags && m.tags.split(',').map(s => s.trim()).filter(Boolean).map(tag => (
+                        <button
+                          key={tag}
+                          onClick={() => setActiveTag(tag)}
+                          className={cn(
+                            'text-[10px] px-1.5 py-0.5 rounded-full border transition-colors',
+                            activeTag === tag
+                              ? 'border-primary bg-primary/10 text-primary'
+                              : 'border-primary/30 text-primary/70 hover:border-primary/60'
+                          )}
+                          title={`Filtriraj po: ${tag}`}
+                        >
+                          #{tag}
+                        </button>
+                      ))}
                     </div>
                     <a
                       href={m.sourceUrl}
@@ -553,7 +642,9 @@ export function MonitorsView() {
               </CardContent>
             </Card>
           ))}
-        </div>
+            </div>
+          )}
+        </>
       )}
 
       <MonitorFormDialog
@@ -586,6 +677,8 @@ function MonitorFormDialog({
   const [maxPrice, setMaxPrice] = useState('');
   const [intervalMinutes, setIntervalMinutes] = useState(30);
   const [customPrompt, setCustomPrompt] = useState('');
+  // v4.4: tags
+  const [tags, setTags] = useState('');
   // v1.2: schedule window
   const [useSchedule, setUseSchedule] = useState(false);
   const [runStartHour, setRunStartHour] = useState(7);
@@ -613,6 +706,7 @@ function MonitorFormDialog({
       setMaxPrice(editing.maxPrice?.toString() ?? '');
       setIntervalMinutes(editing.intervalMinutes);
       setCustomPrompt(editing.customPrompt);
+      setTags(editing.tags ?? '');
       setUseSchedule(editing.runStartHour != null && editing.runEndHour != null);
       setRunStartHour(editing.runStartHour ?? 7);
       setRunEndHour(editing.runEndHour ?? 23);
@@ -639,6 +733,7 @@ function MonitorFormDialog({
       setMaxPrice('');
       setIntervalMinutes(30);
       setCustomPrompt('');
+      setTags('');
       setUseSchedule(false);
       setRunStartHour(7);
       setRunEndHour(23);
@@ -711,6 +806,8 @@ function MonitorFormDialog({
         maxPrice: maxPrice ? parseInt(maxPrice, 10) : null,
         intervalMinutes,
         customPrompt: customPrompt.trim(),
+        // v4.4: tags
+        tags: tags.trim(),
         // v1.2: schedule window
         runStartHour: useSchedule ? runStartHour : null,
         runEndHour: useSchedule ? runEndHour : null,
@@ -921,6 +1018,24 @@ function MonitorFormDialog({
             />
             <p className="text-[11px] text-muted-foreground mt-1">
               Ta navodila se dodajo AI promptu samo za ta monitor.
+            </p>
+          </div>
+
+          {/* v4.4: Tags */}
+          <div>
+            <Label htmlFor="m-tags" className="text-xs uppercase tracking-wider flex items-center gap-1.5">
+              <Tag className="w-3 h-3" />
+              Oznake (tags) <Badge variant="outline" className="text-[10px] text-primary border-primary/40">v4.4</Badge>
+            </Label>
+            <Input
+              id="m-tags"
+              value={tags}
+              onChange={(e) => setTags(e.target.value)}
+              placeholder="npr. avto, ljubljana, investicija"
+              className="mt-1 text-xs"
+            />
+            <p className="text-[11px] text-muted-foreground mt-1">
+              Loči z vejicami. Uporabne za grupiranje in filtriranje v seznamu monitorjev.
             </p>
           </div>
 
