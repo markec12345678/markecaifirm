@@ -801,6 +801,64 @@ export function SettingsView() {
               {tgTestResult.message}
             </p>
           )}
+
+          {/* v5.0: Bot commands setup */}
+          <div className="border-t border-border pt-3 mt-3">
+            <h4 className="text-xs uppercase tracking-wider text-primary flex items-center gap-1.5 mb-2">
+              <Bot className="w-3.5 h-3.5" />
+              Bot ukazi (v5.0)
+              <Badge variant="outline" className="text-[10px] text-primary border-primary/40">NOVO</Badge>
+            </h4>
+            <p className="text-[11px] text-muted-foreground mb-2">
+              Registriraj /ukaze pri Telegramu (da jih bo bot predlagal ko začneš tipkati /).
+              Potrebujes nastavljen webhook URL.
+            </p>
+            <div className="flex items-center gap-2 mb-2">
+              <Button
+                size="sm"
+                variant="outline"
+                onClick={async () => {
+                  try {
+                    const res = await fetch('/api/telegram/setup-commands', { method: 'POST' });
+                    const data = await res.json();
+                    if (data.ok) {
+                      toast.success(`✓ ${data.message}`);
+                    } else {
+                      toast.error(data.message ?? data.error ?? 'Napaka');
+                    }
+                  } catch (e: any) {
+                    toast.error(e?.message ?? 'Napaka');
+                  }
+                }}
+                className="gap-2 h-8"
+              >
+                <Bot className="w-3.5 h-3.5" />
+                Registriraj ukaze
+              </Button>
+              <a
+                href="https://core.telegram.org/bots/webhooks"
+                target="_blank"
+                rel="noopener noreferrer"
+                className="text-[10px] text-primary hover:underline"
+              >
+                Kako nastaviti webhook?
+              </a>
+            </div>
+            <details className="text-[11px] text-muted-foreground">
+              <summary className="cursor-pointer hover:text-foreground">📋 Razpoložljivi ukazi</summary>
+              <div className="mt-2 space-y-1 bg-background/30 rounded p-2">
+                <div><code className="text-primary">/help</code> — ta pomoč</div>
+                <div><code className="text-primary">/status</code> — stanje sistema</div>
+                <div><code className="text-primary">/run [id]</code> — poženi vse ali specifičen monitor</div>
+                <div><code className="text-primary">/alerts [n]</code> — zadnjih N alertov</div>
+                <div><code className="text-primary">/listings [n]</code> — zadnjih N oglasov</div>
+                <div><code className="text-primary">/monitors</code> — seznam monitorjev</div>
+                <div><code className="text-primary">/trades</code> — pregled skladišča</div>
+                <div><code className="text-primary">/stats</code> — ključne statistike</div>
+                <div><code className="text-primary">/ping</code> — preveri ali bot deluje</div>
+              </div>
+            </details>
+          </div>
         </CardContent>
       </Card>
 
