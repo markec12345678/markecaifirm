@@ -866,6 +866,9 @@ function MonitorFormDialog({
   // v5.1: AI scheduler suggestion
   const [scheduleLoading, setScheduleLoading] = useState(false);
   const [scheduleSuggestion, setScheduleSuggestion] = useState<any>(null);
+  // v5.2: AI filter suggestion
+  const [filterLoading, setFilterLoading] = useState(false);
+  const [filterSuggestion, setFilterSuggestion] = useState<any>(null);
   // v4.4: tags
   const [tags, setTags] = useState('');
   // v1.2: schedule window
@@ -901,6 +904,7 @@ function MonitorFormDialog({
       setRunEndHour(editing.runEndHour ?? 23);
       setAutoPauseThreshold(editing.autoPauseThreshold ?? 5);
       setScheduleSuggestion(null); // v5.1: reset AI suggestion
+      setFilterSuggestion(null); // v5.2: reset filter suggestion
       // v2.5: Load notification channels
       try {
         const ch = JSON.parse(editing.notificationChannels || '{}');
@@ -929,6 +933,7 @@ function MonitorFormDialog({
       setRunEndHour(23);
       setAutoPauseThreshold(5);
       setScheduleSuggestion(null); // v5.1: reset AI suggestion
+      setFilterSuggestion(null); // v5.2: reset filter suggestion
       setUseCustomChannels(false);
       setChanTelegram(true);
       setChanDiscord(true);
@@ -1150,7 +1155,42 @@ function MonitorFormDialog({
 
           <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
             <div>
-              <Label htmlFor="m-kw" className="text-xs uppercase tracking-wider">Ključne besede (vejice)</Label>
+              <div className="flex items-center justify-between">
+                <Label htmlFor="m-kw" className="text-xs uppercase tracking-wider">Ključne besede (vejice)</Label>
+                {/* v5.2: AI filter suggestion */}
+                {editing && (
+                  <Button
+                    type="button"
+                    size="sm"
+                    variant="ghost"
+                    className="h-5 text-[10px] gap-1 text-primary px-1"
+                    disabled={filterLoading}
+                    onClick={async () => {
+                      if (!editing) return;
+                      setFilterLoading(true);
+                      setFilterSuggestion(null);
+                      try {
+                        const res = await fetch('/api/ai/suggest-filters', {
+                          method: 'POST',
+                          headers: { 'Content-Type': 'application/json' },
+                          body: JSON.stringify({ monitorId: editing.id }),
+                        });
+                        const data = await res.json();
+                        if (data.ok) {
+                          setFilterSuggestion(data);
+                          toast.success('AI predlog generiran');
+                        } else {
+                          toast.error(data.error ?? 'Napaka');
+                        }
+                      } catch (e: any) { toast.error(e?.message ?? 'Napaka'); }
+                      finally { setFilterLoading(false); }
+                    }}
+                  >
+                    {filterLoading ? <RefreshCw className="w-3 h-3 animate-spin" /> : <Sparkles className="w-3 h-3" />}
+                    AI filtri
+                  </Button>
+                )}
+              </div>
               <Input
                 id="m-kw"
                 value={keywords}
@@ -1170,6 +1210,67 @@ function MonitorFormDialog({
               />
             </div>
           </div>
+
+          {/* v5.2: AI Filter Suggestion display */}
+          {filterSuggestion && (
+            <div className="bg-primary/5 border border-primary/20 rounded p-3">
+              <div className="flex items-center justify-between mb-2">
+                <span className="text-[10px] uppercase tracking-wider text-primary flex items-center gap-1">
+                  <Sparkles className="w-3 h-3" />
+                  AI predlog filtrov
+                  <Badge variant="outline" className="text-[10px] text-primary border-primary/40">
+                    {filterSuggestion.suggestions.confidence}% zaupanje
+                  </Badge>
+                </span>
+                <button
+                  onClick={() => setFilterSuggestion(null)}
+                  className="text-muted-foreground hover:text-foreground text-xs"
+                >×</button>
+              </div>
+              <div className="grid grid-cols-2 gap-2 text-xs mb-2">
+                <div>
+                  <div className="text-[10px] text-muted-foreground uppercase">Trenutni keywords</div>
+                  <div className="font-mono text-[11px]">{filterSuggestion.currentKeywords || '(prazno)'}</div>
+                </div>
+                <div>
+                  <div className="text-[10px] text-primary uppercase">Predlog keywords</div>
+                  <div className="font-mono text-[11px] text-primary">{filterSuggestion.suggestions.keywords || '(brez sprememb)'}</div>
+                </div>
+                <div>
+                  <div className="text-[10px] text-muted-foreground uppercase">Trenutni exclude</div>
+                  <div className="font-mono text-[11px]">{filterSuggestion.currentExcludeKeywords || '(prazno)'}</div>
+                </div>
+                <div>
+                  <div className="text-[10px] text-primary uppercase">Predlog exclude</div>
+                  <div className="font-mono text-[11px] text-primary">{filterSuggestion.suggestions.excludeKeywords || '(brez sprememb)'}</div>
+                </div>
+              </div>
+              <p className="text-[11px] text-muted-foreground italic mb-2">"{filterSuggestion.suggestions.reasoning}"</p>
+              {filterSuggestion.analyzedListings != null && (
+                <p className="text-[10px] text-muted-foreground mb-2">
+                  📊 Analiziranih {filterSuggestion.analyzedListings} oglasov iz tega monitorja.
+                </p>
+              )}
+              <Button
+                type="button"
+                size="sm"
+                className="h-7 text-xs gap-1 w-full"
+                onClick={() => {
+                  if (filterSuggestion.suggestions.keywords) {
+                    setKeywords(filterSuggestion.suggestions.keywords);
+                  }
+                  if (filterSuggestion.suggestions.excludeKeywords) {
+                    setExcludeKeywords(filterSuggestion.suggestions.excludeKeywords);
+                  }
+                  toast.success('AI predlog filtrov apliciran');
+                  setFilterSuggestion(null);
+                }}
+              >
+                <Check className="w-3 h-3" />
+                Uporabi predlog
+              </Button>
+            </div>
+          )}
 
           <div className="grid grid-cols-2 gap-3">
             <div>

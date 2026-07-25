@@ -16,7 +16,7 @@ import {
   SelectValue,
 } from '@/components/ui/select';
 import { Badge } from '@/components/ui/badge';
-import { RefreshCw, Save, Zap, Send, Cpu, Key, Bot, MessageSquare, AlertCircle, CheckCircle2, Download, Upload, Database, Trash2, Bell, Smartphone, SmartphoneCharging, Mail, Plus, X, FileText, Target, FileJson } from 'lucide-react';
+import { RefreshCw, Save, Zap, Send, Cpu, Key, Bot, MessageSquare, AlertCircle, CheckCircle2, Download, Upload, Database, Trash2, Bell, Smartphone, SmartphoneCharging, Mail, Plus, X, FileText, Target, FileJson, Sparkles } from 'lucide-react';
 import { toast } from 'sonner';
 import { cn } from '@/lib/utils';
 
@@ -160,6 +160,9 @@ export function SettingsView() {
   const [digestMode, setDigestMode] = useState('instant');
   const [digestHour, setDigestHour] = useState(20);
   const [digestSending, setDigestSending] = useState(false);
+  // v5.2: AI daily summary
+  const [aiSummarySending, setAiSummarySending] = useState<'telegram' | 'email' | 'preview' | null>(null);
+  const [aiSummaryPreview, setAiSummaryPreview] = useState<any>(null);
   // v2.2: Quiet hours
   const [quietHoursEnabled, setQuietHoursEnabled] = useState(false);
   const [quietStartHour, setQuietStartHour] = useState(22);
@@ -1522,6 +1525,109 @@ curl "https://api.telegram.org/bot<TOKEN>/setWebhook\\
               {digestSending && <RefreshCw className="w-3.5 h-3.5 animate-spin" />}
               Pošlji testni digest
             </Button>
+          </div>
+
+          {/* v5.2: AI Daily Summary — AI generated report */}
+          <div className="border-t border-border pt-3 mt-3">
+            <h4 className="text-xs uppercase tracking-wider text-primary flex items-center gap-1.5 mb-2">
+              <Sparkles className="w-3.5 h-3.5" />
+              AI dnevni povzetek
+              <Badge variant="outline" className="text-[10px] text-primary border-primary/40">v5.2</Badge>
+            </h4>
+            <p className="text-[11px] text-muted-foreground mb-3">
+              AI analizira zadnje oglase in generira jedrnat povzetek s TOP 3 priložnostmi, trendi in priporočilom. Pošlje se na Telegram in/ali Email.
+            </p>
+            <div className="grid grid-cols-2 gap-2">
+              <Button
+                size="sm"
+                variant="outline"
+                className="gap-2 h-8"
+                disabled={aiSummarySending === 'telegram'}
+                onClick={async () => {
+                  setAiSummarySending('telegram');
+                  try {
+                    const res = await fetch('/api/ai/daily-summary', {
+                      method: 'POST',
+                      headers: { 'Content-Type': 'application/json' },
+                      body: JSON.stringify({ sendTelegram: true, hours: 24 }),
+                    });
+                    const data = await res.json();
+                    if (data.ok) {
+                      toast.success(`✓ AI povzetek poslan na Telegram (${data.stats.opportunitiesFound} priložnosti)`);
+                    } else {
+                      toast.error(data.error ?? 'Napaka');
+                    }
+                  } catch (e: any) { toast.error(e?.message ?? 'Napaka'); }
+                  finally { setAiSummarySending(null); }
+                }}
+              >
+                {aiSummarySending === 'telegram' ? <RefreshCw className="w-3.5 h-3.5 animate-spin" /> : <Send className="w-3.5 h-3.5" />}
+                Pošlji na Telegram
+              </Button>
+              <Button
+                size="sm"
+                variant="outline"
+                className="gap-2 h-8"
+                disabled={aiSummarySending === 'email'}
+                onClick={async () => {
+                  setAiSummarySending('email');
+                  try {
+                    const res = await fetch('/api/ai/daily-summary', {
+                      method: 'POST',
+                      headers: { 'Content-Type': 'application/json' },
+                      body: JSON.stringify({ sendEmail: true, hours: 24 }),
+                    });
+                    const data = await res.json();
+                    if (data.ok) {
+                      toast.success(`✓ AI povzetek poslan na Email (${data.stats.opportunitiesFound} priložnosti)`);
+                    } else {
+                      toast.error(data.error ?? 'Napaka');
+                    }
+                  } catch (e: any) { toast.error(e?.message ?? 'Napaka'); }
+                  finally { setAiSummarySending(null); }
+                }}
+              >
+                {aiSummarySending === 'email' ? <RefreshCw className="w-3.5 h-3.5 animate-spin" /> : <Mail className="w-3.5 h-3.5" />}
+                Pošlji na Email
+              </Button>
+            </div>
+            <details className="mt-2 text-[11px] text-muted-foreground">
+              <summary className="cursor-pointer hover:text-foreground">📋 Predogled povzetka</summary>
+              <div className="mt-2 space-y-2">
+                <Button
+                  size="sm"
+                  variant="ghost"
+                  className="h-7 text-[10px] gap-1"
+                  disabled={aiSummarySending === 'preview'}
+                  onClick={async () => {
+                    setAiSummarySending('preview');
+                    setAiSummaryPreview(null);
+                    try {
+                      const res = await fetch('/api/ai/daily-summary', {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify({ hours: 24 }),
+                      });
+                      const data = await res.json();
+                      if (data.ok) {
+                        setAiSummaryPreview(data);
+                      } else {
+                        toast.error(data.error ?? 'Napaka');
+                      }
+                    } catch (e: any) { toast.error(e?.message ?? 'Napaka'); }
+                    finally { setAiSummarySending(null); }
+                  }}
+                >
+                  {aiSummarySending === 'preview' ? <RefreshCw className="w-3 h-3 animate-spin" /> : <Sparkles className="w-3 h-3" />}
+                  Generiraj predogled
+                </Button>
+                {aiSummaryPreview && (
+                  <div className="bg-background/30 border border-border rounded p-2 text-xs whitespace-pre-wrap max-h-60 overflow-y-auto">
+                    {aiSummaryPreview.summary}
+                  </div>
+                )}
+              </div>
+            </details>
           </div>
         </CardContent>
       </Card>
