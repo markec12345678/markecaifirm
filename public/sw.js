@@ -1,17 +1,22 @@
 /**
  * Markec AI Firm Service Worker
- * v1.5 — basic offline support + background sync
+ * v4.8 — improved offline support + install prompt + background sync
  *
  * Strategy:
  * - App shell (HTML, JS, CSS, fonts): stale-while-revalidate
  * - API calls: network-first (fall back to cache if offline)
  * - Static assets (images): cache-first
+ * - Navigation requests: network-first with offline fallback page
  */
 
-const CACHE_VERSION = 'markec-ai-firm-v1.5';
+const CACHE_VERSION = 'markec-ai-firm-v4.8';
+const OFFLINE_URL = '/offline.html';
 const APP_SHELL = [
   '/',
   '/manifest.json',
+  '/offline.html',
+  '/icon-192.png',
+  '/icon-512.png',
 ];
 
 self.addEventListener('install', (event) => {
@@ -47,6 +52,12 @@ self.addEventListener('fetch', (event) => {
   // Skip Next.js HMR + dev artifacts
   if (url.pathname.startsWith('/_next/webpack-hmr')) return;
 
+  // v4.8: Navigation requests (HTML pages) — network-first with offline fallback
+  if (req.mode === 'navigate') {
+    event.respondWith(networkFirstWithOfflineFallback(req));
+    return;
+  }
+
   // API calls: network-first
   if (url.pathname.startsWith('/api/')) {
     event.respondWith(networkFirst(req));
@@ -62,6 +73,32 @@ self.addEventListener('fetch', (event) => {
   // App shell (HTML, JS, CSS): stale-while-revalidate
   event.respondWith(staleWhileRevalidate(req));
 });
+
+// v4.8: Network-first with offline.html fallback for navigation
+async function networkFirstWithOfflineFallback(req) {
+  try {
+    const res = await fetch(req);
+    if (res && res.ok) {
+      try {
+        const cache = await caches.open(CACHE_VERSION);
+        cache.put(req, res.clone());
+      } catch (e) { /* ignore */ }
+    }
+    return res;
+  } catch (e) {
+    // Try cached version first
+    try {
+      const cached = await caches.match(req);
+      if (cached) return cached;
+    } catch (ce) { /* ignore */ }
+    // Fall back to offline page
+    try {
+      const offline = await caches.match(OFFLINE_URL);
+      if (offline) return offline;
+    } catch (oe) { /* ignore */ }
+    return new Response('Offline', { status: 503, statusText: 'Offline' });
+  }
+}
 
 async function cacheFirst(req) {
   try {

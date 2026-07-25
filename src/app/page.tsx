@@ -18,6 +18,7 @@ import { TradesView } from '@/components/dashboard/trades-view';
 import { NotificationHistoryView } from '@/components/dashboard/notification-history-view';
 import { WatchlistView } from '@/components/dashboard/watchlist-view';
 import { StatisticsView } from '@/components/dashboard/statistics-view';
+import { PwaInstallPrompt } from '@/components/dashboard/pwa-install-prompt';
 import { SearchModal } from '@/components/dashboard/search-modal';
 
 type View = 'dashboard' | 'monitors' | 'alerts' | 'listings' | 'watchlist' | 'analytics' | 'statistics' | 'trades' | 'health' | 'notifications' | 'settings';
@@ -300,7 +301,7 @@ export default function Home() {
           <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-2 text-xs text-muted-foreground">
             <div className="flex items-center gap-3">
               <span className="text-primary">markec-ai-firm</span>
-              <span>v4.7.0</span>
+              <span>v4.8.0</span>
               <span>•</span>
               <span>local-first</span>
               <span>•</span>
@@ -357,6 +358,9 @@ export default function Home() {
 
       {/* v1.3: Global search modal */}
       <SearchModal open={searchOpen} onOpenChange={setSearchOpen} onNavigate={setView} />
+
+      {/* v4.8: PWA install prompt */}
+      <PwaInstallPrompt />
     </div>
   );
 }
