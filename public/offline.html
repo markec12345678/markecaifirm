@@ -1,0 +1,137 @@
+<!DOCTYPE html>
+<html lang="sl" class="dark">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Markec AI — Offline</title>
+  <link rel="manifest" href="/manifest.json">
+  <link rel="icon" type="image/png" href="/icon-192.png">
+  <style>
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    body {
+      font-family: 'Courier New', Consolas, Monaco, monospace;
+      background: #0a0e0a;
+      color: #e5e5e5;
+      min-height: 100vh;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      padding: 1rem;
+    }
+    .container {
+      max-width: 500px;
+      width: 100%;
+      text-align: center;
+      background: rgba(20, 20, 20, 0.5);
+      border: 1px solid #2a2a2a;
+      border-radius: 8px;
+      padding: 2rem;
+    }
+    .pulse-dot {
+      display: inline-block;
+      color: #10b981;
+      animation: pulse 2s infinite;
+    }
+    @keyframes pulse {
+      0%, 100% { opacity: 1; }
+      50% { opacity: 0.3; }
+    }
+    .terminal-glow {
+      color: #10b981;
+      text-shadow: 0 0 5px rgba(16, 185, 129, 0.5);
+    }
+    .amber-glow {
+      color: #f59e0b;
+      text-shadow: 0 0 5px rgba(245, 158, 11, 0.5);
+    }
+    h1 {
+      font-size: 1.25rem;
+      font-weight: bold;
+      margin-bottom: 0.5rem;
+    }
+    .path {
+      font-size: 0.875rem;
+      color: #737373;
+      margin-bottom: 1.5rem;
+    }
+    .icon {
+      font-size: 3rem;
+      margin-bottom: 1rem;
+      opacity: 0.6;
+    }
+    .title {
+      font-size: 1.125rem;
+      font-weight: bold;
+      margin-bottom: 0.5rem;
+      color: #f59e0b;
+    }
+    .desc {
+      font-size: 0.875rem;
+      color: #a3a3a3;
+      margin-bottom: 1.5rem;
+      line-height: 1.5;
+    }
+    .status {
+      background: rgba(245, 158, 11, 0.1);
+      border: 1px solid rgba(245, 158, 11, 0.3);
+      border-radius: 4px;
+      padding: 0.75rem;
+      margin-bottom: 1.5rem;
+      font-size: 0.75rem;
+      color: #f59e0b;
+    }
+    button {
+      background: #10b981;
+      color: #0a0e0a;
+      border: none;
+      padding: 0.625rem 1.25rem;
+      border-radius: 4px;
+      font-family: inherit;
+      font-weight: bold;
+      cursor: pointer;
+      font-size: 0.875rem;
+      transition: background 0.2s;
+    }
+    button:hover {
+      background: #059669;
+    }
+    .footer {
+      margin-top: 1.5rem;
+      font-size: 0.75rem;
+      color: #525252;
+    }
+  </style>
+</head>
+<body>
+  <div class="container">
+    <div class="path">
+      <span class="pulse-dot">●</span>
+      <span class="terminal-glow">markec@ai-firm</span>:<span class="amber-glow">~/offline</span>$
+    </div>
+    <div class="icon">📡</div>
+    <div class="title">Brez internetne povezave</div>
+    <div class="status">⚠ STATUS: OFFLINE — aplikacija je v načinu brez povezave</div>
+    <div class="desc">
+      Markec AI Firm trenutno ne more komunicirati z lokalnim strežnikom.
+      Prejšnje podatke iz predpomnilnika lahko še vedno pregleduješ, vendar
+      novi alerti in oglasi ne bodo pridobljeni dokler se povezava ne obnovi.
+    </div>
+    <button onclick="window.location.reload()">Poskusi znova</button>
+    <div class="footer">
+      Markec AI Firm v4.8 • local-first • zero-cloud
+    </div>
+  </div>
+  <script>
+    // Auto-retry when connection returns
+    window.addEventListener('online', () => {
+      window.location.reload();
+    });
+    // Also retry every 10 seconds
+    setInterval(() => {
+      if (navigator.onLine) {
+        window.location.reload();
+      }
+    }, 10000);
+  </script>
+</body>
+</html>

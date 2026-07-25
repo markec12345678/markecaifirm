@@ -683,6 +683,10 @@ function ListingDetailModal({ listingId, onClose }: { listingId: string | null; 
   // v4.5: Target price
   const [targetPrice, setTargetPrice] = useState('');
   const [targetSaving, setTargetSaving] = useState(false);
+  // v4.8: AI model comparison
+  const [comparing, setComparing] = useState(false);
+  const [compareResults, setCompareResults] = useState<any[]>([]);
+  const [compareModelsInput, setCompareModelsInput] = useState<string>(''); // comma-separated model names
 
   const loadDetail = useCallback(async () => {
     if (!listingId) {
@@ -701,6 +705,8 @@ function ListingDetailModal({ listingId, onClose }: { listingId: string | null; 
       setSellerResponse(d.listing?.sellerResponse ?? '');
       // v4.5: Load target price
       setTargetPrice(d.listing?.targetPrice != null ? String(d.listing.targetPrice) : '');
+      // v4.8: Reset comparison results when loading new listing
+      setCompareResults([]);
     } catch {
       toast.error('Ne morem naložiti podrobnosti');
     } finally {
@@ -929,6 +935,56 @@ function ListingDetailModal({ listingId, onClose }: { listingId: string | null; 
     }
   };
 
+  // v4.8: Compare AI models on this listing
+  const compareModels = async () => {
+    if (!listing) return;
+    const modelsList = compareModelsInput
+      .split(',')
+      .map(s => s.trim())
+      .filter(Boolean);
+    if (modelsList.length === 0) {
+      toast.error('Vnesi vsaj en model (npr. qwen2.5:7b, llama3.1:8b)');
+      return;
+    }
+    if (modelsList.length > 5) {
+      toast.error('Maksimalno 5 modelov na primerjavo');
+      return;
+    }
+    setComparing(true);
+    setCompareResults([]);
+    try {
+      // Use current AI provider settings but with different models
+      // We need to fetch current settings to get provider/baseUrl/apiKey
+      const settingsRes = await fetch('/api/settings');
+      if (!settingsRes.ok) throw new Error();
+      const s = await settingsRes.json();
+      const models = modelsList.map(m => ({
+        provider: s.aiProvider,
+        baseUrl: s.aiBaseUrl,
+        apiKey: '', // API key already in settings, we pass empty (backend will use stored)
+        model: m,
+        label: m,
+      }));
+      const res = await fetch(`/api/listings/${listing.id}/compare-models`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ models }),
+      });
+      const data = await res.json();
+      if (data.ok) {
+        setCompareResults(data.results);
+        const ok = data.results.filter((r: any) => r.ok).length;
+        toast.success(`Primerjava končana: ${ok}/${data.results.length} modelov uspešnih`);
+      } else {
+        toast.error(data.error ?? 'Napaka');
+      }
+    } catch (e: any) {
+      toast.error(e?.message ?? 'Napaka');
+    } finally {
+      setComparing(false);
+    }
+  };
+
   return (
     <Dialog open={!!listingId} onOpenChange={(open) => !open && onClose()}>
       <DialogContent className="max-w-3xl max-h-[90vh] overflow-y-auto mx-4 sm:mx-6 p-4 sm:p-6">
@@ -1037,6 +1093,122 @@ function ListingDetailModal({ listingId, onClose }: { listingId: string | null; 
                 )}
               </div>
             )}
+
+            {/* v4.8: AI Model Comparison */}
+            <div className="bg-card/30 border border-border rounded p-3">
+              <div className="flex items-center justify-between mb-2">
+                <h4 className="text-xs uppercase tracking-wider text-muted-foreground flex items-center gap-1.5">
+                  <GitCompare className="w-3.5 h-3.5" />
+                  Primerjava AI modelov
+                  <Badge variant="outline" className="text-[10px] text-primary border-primary/40">v4.8</Badge>
+                </h4>
+              </div>
+              <p className="text-[11px] text-muted-foreground mb-2">
+                Primerjaj ocene različnih AI modelov na istem oglasu. Vnesi modele (comma-separated) iz trenutno konfiguriranega providerja.
+              </p>
+              <div className="flex flex-col sm:flex-row items-stretch sm:items-center gap-2 mb-2">
+                <Input
+                  value={compareModelsInput}
+                  onChange={(e) => setCompareModelsInput(e.target.value)}
+                  placeholder="npr. qwen2.5:7b, llama3.1:8b, mistral:7b"
+                  className="text-xs font-mono"
+                />
+                <Button
+                  size="sm"
+                  className="h-8 text-xs gap-1.5"
+                  onClick={compareModels}
+                  disabled={comparing || !compareModelsInput.trim()}
+                >
+                  {comparing ? <RefreshCw className="w-3 h-3 animate-spin" /> : <GitCompare className="w-3 h-3" />}
+                  Primerjaj
+                </Button>
+              </div>
+              {comparing && (
+                <div className="py-4 text-center text-xs text-muted-foreground">
+                  <RefreshCw className="w-4 h-4 mx-auto mb-2 animate-spin opacity-50" />
+                  AI modeli ocenjujejo oglas... (to lahko traja)
+                </div>
+              )}
+              {compareResults.length > 0 && !comparing && (
+                <div className="space-y-2">
+                  <div className="grid grid-cols-1 gap-2">
+                    {compareResults.map((r, i) => (
+                      <div key={i} className={cn(
+                        'border rounded p-2 text-xs',
+                        r.ok ? 'border-border bg-background/30' : 'border-red-500/30 bg-red-500/5'
+                      )}>
+                        <div className="flex items-center justify-between mb-1">
+                          <span className="font-mono font-bold text-sm">{r.label}</span>
+                          {r.ok ? (
+                            <Badge variant="outline" className="text-[10px] text-primary border-primary/40">
+                              {(r.durationMs / 1000).toFixed(1)}s
+                            </Badge>
+                          ) : (
+                            <Badge variant="outline" className="text-[10px] text-red-500 border-red-500/40">
+                              napaka
+                            </Badge>
+                          )}
+                        </div>
+                        {r.ok && r.evaluation ? (
+                          <div className="grid grid-cols-4 gap-2 text-[10px]">
+                            <div>
+                              <div className="text-muted-foreground">Verdikt</div>
+                              <div className={cn(
+                                'font-bold',
+                                r.evaluation.verdict === 'PRILIKA' && 'text-primary',
+                                r.evaluation.verdict === 'SUMNJIVO' && 'text-amber-400',
+                                r.evaluation.verdict === 'NEZANIMIVO' && 'text-muted-foreground',
+                              )}>{r.evaluation.verdict}</div>
+                            </div>
+                            <div>
+                              <div className="text-muted-foreground">Prilika</div>
+                              <div className="font-mono font-bold text-primary">{r.evaluation.ocena_prilike}/10</div>
+                            </div>
+                            <div>
+                              <div className="text-muted-foreground">Tveganje</div>
+                              <div className="font-mono font-bold text-amber-400">{r.evaluation.ocena_tveganja}/10</div>
+                            </div>
+                            <div>
+                              <div className="text-muted-foreground">Tržna vred.</div>
+                              <div className="font-mono">{r.evaluation.predvidena_trzna_vrednost ?? '?'}€</div>
+                            </div>
+                          </div>
+                        ) : (
+                          <div className="text-[10px] text-red-500 truncate" title={r.error}>
+                            {r.error}
+                          </div>
+                        )}
+                        {r.ok && r.evaluation?.razlog && (
+                          <div className="text-[10px] text-muted-foreground italic mt-1 line-clamp-2">
+                            "{r.evaluation.razlog}"
+                          </div>
+                        )}
+                      </div>
+                    ))}
+                  </div>
+                  {/* Summary comparison */}
+                  {compareResults.filter(r => r.ok).length >= 2 && (
+                    <div className="bg-primary/5 border border-primary/20 rounded p-2 text-[10px]">
+                      <div className="text-primary font-bold mb-1">📊 Povzetek</div>
+                      {(() => {
+                        const valid = compareResults.filter(r => r.ok);
+                        const best = valid.reduce((a: any, b: any) =>
+                          (a.evaluation.ocena_prilike - a.evaluation.ocena_tveganja) >
+                          (b.evaluation.ocena_prilike - b.evaluation.ocena_tveganja) ? a : b
+                        );
+                        const fastest = valid.reduce((a: any, b: any) => a.durationMs < b.durationMs ? a : b);
+                        return (
+                          <div className="space-y-0.5">
+                            <div>🏆 <b>Najboljša ocena</b>: {best.label} (prilika {best.evaluation.ocena_prilike}/10, tveganje {best.evaluation.ocena_tveganja}/10)</div>
+                            <div>⚡ <b>Najhitrejši</b>: {fastest.label} ({(fastest.durationMs / 1000).toFixed(1)}s)</div>
+                          </div>
+                        );
+                      })()}
+                    </div>
+                  )}
+                </div>
+              )}
+            </div>
 
             {/* v4.4: AI Deal Score (0-100) */}
             <div className="bg-card/30 border border-border rounded p-3">
