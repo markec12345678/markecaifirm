@@ -23,7 +23,7 @@ import {
   DialogDescription,
   DialogFooter,
 } from '@/components/ui/dialog';
-import { Plus, Play, Pencil, Trash2, RefreshCw, ExternalLink, CheckCircle2, XCircle, Clock, Zap, AlertCircle, PauseCircle, Bell, Copy, Square, Tag, Sparkles } from 'lucide-react';
+import { Plus, Play, Pencil, Trash2, RefreshCw, ExternalLink, CheckCircle2, XCircle, Clock, Zap, AlertCircle, PauseCircle, Bell, Copy, Square, Tag, Sparkles, Check } from 'lucide-react';
 import { toast } from 'sonner';
 import { cn } from '@/lib/utils';
 
@@ -863,6 +863,9 @@ function MonitorFormDialog({
   const [customPrompt, setCustomPrompt] = useState('');
   // v4.9: AI prompt library modal
   const [showPromptLibrary, setShowPromptLibrary] = useState(false);
+  // v5.1: AI scheduler suggestion
+  const [scheduleLoading, setScheduleLoading] = useState(false);
+  const [scheduleSuggestion, setScheduleSuggestion] = useState<any>(null);
   // v4.4: tags
   const [tags, setTags] = useState('');
   // v1.2: schedule window
@@ -897,6 +900,7 @@ function MonitorFormDialog({
       setRunStartHour(editing.runStartHour ?? 7);
       setRunEndHour(editing.runEndHour ?? 23);
       setAutoPauseThreshold(editing.autoPauseThreshold ?? 5);
+      setScheduleSuggestion(null); // v5.1: reset AI suggestion
       // v2.5: Load notification channels
       try {
         const ch = JSON.parse(editing.notificationChannels || '{}');
@@ -924,6 +928,7 @@ function MonitorFormDialog({
       setRunStartHour(7);
       setRunEndHour(23);
       setAutoPauseThreshold(5);
+      setScheduleSuggestion(null); // v5.1: reset AI suggestion
       setUseCustomChannels(false);
       setChanTelegram(true);
       setChanDiscord(true);
@@ -1250,8 +1255,113 @@ function MonitorFormDialog({
                   Omeji delovanje monitorja na določene ure — prihrani AI klice v nočnem času.
                 </p>
               </div>
-              <Switch checked={useSchedule} onCheckedChange={setUseSchedule} />
+              <div className="flex items-center gap-2">
+                {/* v5.1: AI Scheduler suggestion */}
+                {editing && (
+                  <Button
+                    type="button"
+                    size="sm"
+                    variant="outline"
+                    className="h-7 text-[10px] gap-1 text-primary"
+                    disabled={scheduleLoading}
+                    onClick={async () => {
+                      if (!editing) return;
+                      setScheduleLoading(true);
+                      setScheduleSuggestion(null);
+                      try {
+                        const res = await fetch('/api/ai/suggest-schedule', {
+                          method: 'POST',
+                          headers: { 'Content-Type': 'application/json' },
+                          body: JSON.stringify({ monitorId: editing.id }),
+                        });
+                        const data = await res.json();
+                        if (data.ok && data.suggestions?.[0]) {
+                          setScheduleSuggestion(data.suggestions[0]);
+                          toast.success('AI predlog generiran');
+                        } else {
+                          toast.error(data.error ?? 'Napaka');
+                        }
+                      } catch (e: any) {
+                        toast.error(e?.message ?? 'Napaka');
+                      } finally {
+                        setScheduleLoading(false);
+                      }
+                    }}
+                  >
+                    {scheduleLoading ? <RefreshCw className="w-3 h-3 animate-spin" /> : <Sparkles className="w-3 h-3" />}
+                    AI predlog
+                  </Button>
+                )}
+                <Switch checked={useSchedule} onCheckedChange={setUseSchedule} />
+              </div>
             </div>
+
+            {/* v5.1: AI Scheduler suggestion display */}
+            {scheduleSuggestion && (
+              <div className="bg-primary/5 border border-primary/20 rounded p-3 mb-2">
+                <div className="flex items-center justify-between mb-2">
+                  <span className="text-[10px] uppercase tracking-wider text-primary flex items-center gap-1">
+                    <Sparkles className="w-3 h-3" />
+                    AI predlog urnika
+                    <Badge variant="outline" className="text-[10px] text-primary border-primary/40">
+                      {scheduleSuggestion.confidence}% zaupanje
+                    </Badge>
+                  </span>
+                  <button
+                    onClick={() => setScheduleSuggestion(null)}
+                    className="text-muted-foreground hover:text-foreground text-xs"
+                  >×</button>
+                </div>
+                <div className="grid grid-cols-2 gap-2 text-xs mb-2">
+                  <div>
+                    <div className="text-[10px] text-muted-foreground uppercase">Trenutno</div>
+                    <div className="font-mono">
+                      {scheduleSuggestion.currentInterval}min • {scheduleSuggestion.currentWindow}
+                    </div>
+                  </div>
+                  <div>
+                    <div className="text-[10px] text-primary uppercase">Predlog</div>
+                    <div className="font-mono text-primary">
+                      {scheduleSuggestion.suggestedInterval}min • {scheduleSuggestion.suggestedWindow}
+                    </div>
+                  </div>
+                </div>
+                <div className="grid grid-cols-2 gap-2 text-[10px] mb-2">
+                  <div className="bg-background/30 rounded p-1.5 text-center">
+                    <div className="text-muted-foreground">Pričakovani novi/dan</div>
+                    <div className="font-mono font-bold text-primary">~{scheduleSuggestion.expectedNewListingsPerDay}</div>
+                  </div>
+                  <div className="bg-background/30 rounded p-1.5 text-center">
+                    <div className="text-muted-foreground">AI klici/dan</div>
+                    <div className="font-mono">{scheduleSuggestion.aiCallsPerDay}</div>
+                  </div>
+                </div>
+                <p className="text-[11px] text-muted-foreground italic mb-2">"{scheduleSuggestion.reasoning}"</p>
+                <Button
+                  type="button"
+                  size="sm"
+                  className="h-7 text-xs gap-1 w-full"
+                  onClick={() => {
+                    setIntervalMinutes(scheduleSuggestion.suggestedInterval);
+                    if (scheduleSuggestion.suggestedWindow && scheduleSuggestion.suggestedWindow !== '24/7') {
+                      const match = scheduleSuggestion.suggestedWindow.match(/(\d+)-(\d+)/);
+                      if (match) {
+                        setUseSchedule(true);
+                        setRunStartHour(parseInt(match[1], 10));
+                        setRunEndHour(parseInt(match[2], 10));
+                      }
+                    } else {
+                      setUseSchedule(false);
+                    }
+                    toast.success('AI predlog apliciran');
+                    setScheduleSuggestion(null);
+                  }}
+                >
+                  <Check className="w-3 h-3" />
+                  Uporabi predlog
+                </Button>
+              </div>
+            )}
             {useSchedule && (
               <div className="grid grid-cols-2 gap-3 mt-2">
                 <div>

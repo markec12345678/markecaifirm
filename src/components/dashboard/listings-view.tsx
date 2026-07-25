@@ -22,7 +22,7 @@ import {
   DialogDescription,
 } from '@/components/ui/dialog';
 import { Textarea } from '@/components/ui/textarea';
-import { RefreshCw, Download, ExternalLink, ChevronLeft, ChevronRight, Filter, ImageIcon, AlertTriangle, Target, MapPin, Clock, Bookmark, Sparkles, ShoppingCart, MessageSquare, BarChart3, TrendingDown, TrendingUp, Copy, Check, GitCompare, StickyNote, Phone, Trash2, EyeOff, Zap } from 'lucide-react';
+import { RefreshCw, Download, ExternalLink, ChevronLeft, ChevronRight, Filter, ImageIcon, AlertTriangle, Target, MapPin, Clock, Bookmark, Sparkles, ShoppingCart, MessageSquare, BarChart3, TrendingDown, TrendingUp, Copy, Check, GitCompare, StickyNote, Phone, Trash2, EyeOff, Zap, User } from 'lucide-react';
 import { toast } from 'sonner';
 import { cn } from '@/lib/utils';
 
@@ -733,6 +733,13 @@ function ListingDetailModal({ listingId, onClose }: { listingId: string | null; 
   const [bidStrategy, setBidStrategy] = useState<'aggressive' | 'moderate' | 'conservative'>('moderate');
   const [bidMaxBudget, setBidMaxBudget] = useState('');
   const [bidCopied, setBidCopied] = useState(false);
+  // v5.1: Price prediction
+  const [predicting, setPredicting] = useState(false);
+  const [prediction, setPrediction] = useState<any>(null);
+  const [predictTarget, setPredictTarget] = useState('');
+  // v5.1: Seller reputation
+  const [sellerRep, setSellerRep] = useState<any>(null);
+  const [sellerLoading, setSellerLoading] = useState(false);
 
   const loadDetail = useCallback(async () => {
     if (!listingId) {
@@ -755,6 +762,15 @@ function ListingDetailModal({ listingId, onClose }: { listingId: string | null; 
       setCompareResults([]);
       // v5.0: Reset bid result
       setBidResult(null);
+      // v5.1: Reset prediction
+      setPrediction(null);
+      setPredictTarget(d.listing?.targetPrice != null ? String(d.listing.targetPrice) : '');
+      // v5.1: Reset seller reputation
+      setSellerRep(null);
+      // Auto-load seller reputation if listing has sellerName
+      if (d.listing?.sellerName) {
+        loadSellerRep(d.listing.sellerName);
+      }
     } catch {
       toast.error('Ne morem naložiti podrobnosti');
     } finally {
@@ -1071,6 +1087,54 @@ function ListingDetailModal({ listingId, onClose }: { listingId: string | null; 
     setBidCopied(true);
     toast.success('Sporočilo kopirano');
     setTimeout(() => setBidCopied(false), 2000);
+  };
+
+  // v5.1: Generate price prediction
+  const generatePrediction = async () => {
+    if (!listing) return;
+    const target = parseInt(predictTarget, 10);
+    if (Number.isNaN(target) || target <= 0) {
+      toast.error('Vnesi veljavno ciljno ceno');
+      return;
+    }
+    setPredicting(true);
+    setPrediction(null);
+    try {
+      const res = await fetch(`/api/listings/${listing.id}/predict-price`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ targetPrice: target }),
+      });
+      const data = await res.json();
+      if (data.ok) {
+        setPrediction(data);
+        if (data.prediction.willReachTarget) {
+          toast.success(`✓ AI napove: cilj dosežen v ~${data.prediction.estimatedDays ?? '?'} dneh (${data.prediction.confidence}%)`);
+        } else {
+          toast.info(`AI napove: cilj verjetno NE bo dosežen (${data.prediction.confidence}%)`);
+        }
+      } else {
+        toast.error(data.error ?? 'Napaka pri napovedi');
+      }
+    } catch (e: any) {
+      toast.error(e?.message ?? 'Napaka');
+    } finally {
+      setPredicting(false);
+    }
+  };
+
+  // v5.1: Load seller reputation
+  const loadSellerRep = async (sellerName: string) => {
+    setSellerLoading(true);
+    setSellerRep(null);
+    try {
+      const res = await fetch(`/api/sellers/${encodeURIComponent(sellerName)}/reputation`);
+      const data = await res.json();
+      if (data.ok) {
+        setSellerRep(data.seller);
+      }
+    } catch { /* ignore */ }
+    finally { setSellerLoading(false); }
   };
 
   return (
@@ -1440,6 +1504,190 @@ function ListingDetailModal({ listingId, onClose }: { listingId: string | null; 
               </div>
             </div>
 
+            {/* v5.1: Seller reputation */}
+            {listing.sellerName && (
+              <div className="bg-card/30 border border-border rounded p-3">
+                <div className="flex items-center justify-between mb-2">
+                  <h4 className="text-xs uppercase tracking-wider text-muted-foreground flex items-center gap-1.5">
+                    <User className="w-3.5 h-3.5" />
+                    Reputacija prodajalca
+                    <Badge variant="outline" className="text-[10px] text-primary border-primary/40">v5.1</Badge>
+                  </h4>
+                  <Button
+                    size="sm"
+                    variant="ghost"
+                    className="h-6 text-[10px] gap-1"
+                    onClick={() => listing.sellerName && loadSellerRep(listing.sellerName)}
+                    disabled={sellerLoading}
+                  >
+                    {sellerLoading ? <RefreshCw className="w-3 h-3 animate-spin" /> : <RefreshCw className="w-3 h-3" />}
+                    Osveži
+                  </Button>
+                </div>
+
+                <div className="text-xs text-muted-foreground mb-2">
+                  <span className="font-mono text-primary">{listing.sellerName}</span>
+                  {sellerRep?.daysActive != null && (
+                    <span> • aktiven {sellerRep.daysActive} dni</span>
+                  )}
+                </div>
+
+                {sellerLoading ? (
+                  <div className="py-3 text-center text-xs text-muted-foreground">
+                    <RefreshCw className="w-4 h-4 mx-auto mb-1 animate-spin opacity-50" />
+                    Nalagam...
+                  </div>
+                ) : sellerRep ? (
+                  <div className="space-y-2">
+                    {/* Reputation score */}
+                    <div className={cn(
+                      'border rounded p-2 flex items-center gap-3',
+                      sellerRep.reputationScore >= 65 ? 'bg-primary/5 border-primary/20' :
+                      sellerRep.reputationScore >= 45 ? 'bg-amber-400/5 border-amber-400/20' :
+                      'bg-red-500/5 border-red-500/20'
+                    )}>
+                      <div className={cn(
+                        'text-3xl font-bold font-mono',
+                        sellerRep.reputationScore >= 65 ? 'text-primary' :
+                        sellerRep.reputationScore >= 45 ? 'text-amber-400' : 'text-red-500'
+                      )}>
+                        {sellerRep.reputationScore}
+                      </div>
+                      <div className="flex-1">
+                        <div className="text-sm font-bold">
+                          {sellerRep.tier}
+                        </div>
+                        <div className="text-[10px] text-muted-foreground">
+                          {sellerRep.listingsCount} oglasov • {sellerRep.activeListingsCount} aktivnih
+                        </div>
+                      </div>
+                      <div className="w-16 h-16 relative shrink-0">
+                        <svg viewBox="0 0 36 36" className="w-16 h-16">
+                          <circle cx="18" cy="18" r="14" fill="none" stroke="#262626" strokeWidth="3" />
+                          <circle
+                            cx="18" cy="18" r="14" fill="none"
+                            stroke={sellerRep.reputationScore >= 65 ? '#10b981' : sellerRep.reputationScore >= 45 ? '#f59e0b' : '#ef4444'}
+                            strokeWidth="3"
+                            strokeDasharray={`${(sellerRep.reputationScore / 100) * 88} 88`}
+                            strokeLinecap="round"
+                            transform="rotate(-90 18 18)"
+                          />
+                        </svg>
+                      </div>
+                    </div>
+
+                    {/* Stats grid */}
+                    <div className="grid grid-cols-2 sm:grid-cols-4 gap-2 text-xs">
+                      <div className="bg-background/30 rounded p-2 text-center">
+                        <div className="text-[10px] text-muted-foreground uppercase">Povp. cena</div>
+                        <div className="font-mono font-bold">{sellerRep.avgPrice ?? '?'}€</div>
+                      </div>
+                      <div className="bg-background/30 rounded p-2 text-center">
+                        <div className="text-[10px] text-muted-foreground uppercase">Kontakt</div>
+                        <div className="font-mono font-bold">{sellerRep.contactStats.contactRate}%</div>
+                        <div className="text-[9px] text-muted-foreground">{sellerRep.contactStats.contacted}/{sellerRep.listingsCount}</div>
+                      </div>
+                      <div className="bg-background/30 rounded p-2 text-center">
+                        <div className="text-[10px] text-muted-foreground uppercase">Odgovor</div>
+                        <div className={cn(
+                          'font-mono font-bold',
+                          sellerRep.contactStats.responseRate >= 50 ? 'text-primary' :
+                          sellerRep.contactStats.responseRate > 0 ? 'text-amber-400' : 'text-red-500'
+                        )}>
+                          {sellerRep.contactStats.responseRate}%
+                        </div>
+                      </div>
+                      <div className="bg-background/30 rounded p-2 text-center">
+                        <div className="text-[10px] text-muted-foreground uppercase">Padci cen</div>
+                        <div className="font-mono font-bold text-amber-400">{sellerRep.priceDropCount}</div>
+                      </div>
+                    </div>
+
+                    {/* AI verdict breakdown */}
+                    {Object.keys(sellerRep.aiVerdictBreakdown).length > 0 && (
+                      <div className="bg-background/30 rounded p-2">
+                        <div className="text-[10px] uppercase tracking-wider text-muted-foreground mb-1">AI verdikti</div>
+                        <div className="flex items-center gap-2 text-xs">
+                          {sellerRep.aiVerdictBreakdown.PRILIKA > 0 && (
+                            <Badge variant="outline" className="text-[10px] text-primary border-primary/40">
+                              🎯 {sellerRep.aiVerdictBreakdown.PRILIKA}× prilika
+                            </Badge>
+                          )}
+                          {sellerRep.aiVerdictBreakdown.SUMNJIVO > 0 && (
+                            <Badge variant="outline" className="text-[10px] text-amber-400 border-amber-400/40">
+                              ⚠️ {sellerRep.aiVerdictBreakdown.SUMNJIVO}× sumljivo
+                            </Badge>
+                          )}
+                          {sellerRep.aiVerdictBreakdown.NEZANIMIVO > 0 && (
+                            <Badge variant="outline" className="text-[10px] text-muted-foreground">
+                              • {sellerRep.aiVerdictBreakdown.NEZANIMIVO}× nezanima
+                            </Badge>
+                          )}
+                        </div>
+                      </div>
+                    )}
+
+                    {/* Trades stats */}
+                    {sellerRep.tradesStats.sold > 0 && (
+                      <div className="bg-primary/5 border border-primary/20 rounded p-2 text-xs">
+                        <span className="text-primary font-bold">✓ {sellerRep.tradesStats.sold}</span>
+                        <span className="text-muted-foreground"> prodanih oglasov iz tega prodajalca</span>
+                        {sellerRep.tradesStats.avgSellTimeDays != null && (
+                          <span className="text-[10px] text-muted-foreground ml-2">
+                            (povp. {sellerRep.tradesStats.avgSellTimeDays} dni do prodaje)
+                          </span>
+                        )}
+                      </div>
+                    )}
+
+                    {/* Sources */}
+                    {sellerRep.sources.length > 0 && (
+                      <div className="text-[10px] text-muted-foreground">
+                        Viri: {sellerRep.sources.join(', ')}
+                      </div>
+                    )}
+
+                    {/* Top listings */}
+                    {sellerRep.topListings && sellerRep.topListings.length > 0 && (
+                      <details className="text-xs">
+                        <summary className="cursor-pointer hover:text-foreground text-muted-foreground">
+                          📋 Top {sellerRep.topListings.length} oglasov tega prodajalca
+                        </summary>
+                        <div className="mt-1 space-y-1">
+                          {sellerRep.topListings.map((l: any) => (
+                            <a
+                              key={l.id}
+                              href={l.url}
+                              target="_blank"
+                              rel="noopener noreferrer"
+                              className="flex items-center gap-2 p-1.5 bg-background/30 rounded hover:bg-background/50 text-xs"
+                            >
+                              <div className="flex-1 min-w-0">
+                                <div className="truncate">{l.title}</div>
+                                <div className="text-[10px] text-muted-foreground">
+                                  {l.priceText} • {l.monitor?.name}
+                                </div>
+                              </div>
+                              {l.dealScore != null && (
+                                <Badge variant="outline" className="text-[10px] text-primary border-primary/40 shrink-0">
+                                  🎯 {l.dealScore}
+                                </Badge>
+                              )}
+                              {l.isBookmarked && <Bookmark className="w-3 h-3 text-amber-400 shrink-0" />}
+                            </a>
+                          ))}
+                        </div>
+                      </details>
+                    )}
+                  </div>
+                ) : (
+                  <div className="py-3 text-center text-xs text-muted-foreground">
+                    Klikni "Osveži" za nalaganje reputacije.
+                  </div>
+                )}
+              </div>
+            )}
+
             {/* v4.5: Target price — alert me when price drops at or below this */}
             <div className="bg-card/30 border border-border rounded p-3">
               <div className="flex items-center justify-between mb-2">
@@ -1519,6 +1767,147 @@ function ListingDetailModal({ listingId, onClose }: { listingId: string | null; 
               <p className="text-[11px] text-muted-foreground mt-2">
                 Ko cena pade na ali pod ciljno mejo, dobiš alert na Telegram/Discord/Push/Email.
               </p>
+            </div>
+
+            {/* v5.1: AI Price Prediction — kdaj bo cena padla na cilj */}
+            <div className="bg-card/30 border border-border rounded p-3">
+              <div className="flex items-center justify-between mb-2">
+                <h4 className="text-xs uppercase tracking-wider text-muted-foreground flex items-center gap-1.5">
+                  <TrendingDown className="w-3.5 h-3.5" />
+                  AI napoved cene
+                  <Badge variant="outline" className="text-[10px] text-primary border-primary/40">v5.1</Badge>
+                </h4>
+              </div>
+              <p className="text-[11px] text-muted-foreground mb-2">
+                AI napove kdaj bo cena padla na tvojo ciljno mejo (glede na zgodovino cen in tržne podatke).
+              </p>
+              <div className="flex flex-col sm:flex-row items-stretch sm:items-center gap-2 mb-2">
+                <Input
+                  type="number"
+                  min="0"
+                  value={predictTarget}
+                  onChange={(e) => setPredictTarget(e.target.value)}
+                  placeholder="Ciljna cena (EUR)"
+                  className="text-xs font-mono"
+                />
+                <Button
+                  size="sm"
+                  className="h-8 text-xs gap-1.5"
+                  onClick={generatePrediction}
+                  disabled={predicting || !predictTarget.trim()}
+                >
+                  {predicting ? <RefreshCw className="w-3 h-3 animate-spin" /> : <TrendingDown className="w-3 h-3" />}
+                  Napovej
+                </Button>
+              </div>
+
+              {predicting && (
+                <div className="py-4 text-center text-xs text-muted-foreground">
+                  <RefreshCw className="w-4 h-4 mx-auto mb-2 animate-spin opacity-50" />
+                  AI analizira ceno, tržne podatke in trende...
+                </div>
+              )}
+
+              {prediction && !predicting && (
+                <div className="space-y-2">
+                  {/* Verdict */}
+                  <div className={cn(
+                    'border rounded p-3',
+                    prediction.prediction.willReachTarget
+                      ? 'bg-primary/5 border-primary/20'
+                      : 'bg-amber-400/5 border-amber-400/20'
+                  )}>
+                    <div className="flex items-center justify-between mb-1">
+                      <span className="text-[10px] uppercase tracking-wider">
+                        {prediction.prediction.willReachTarget ? '✅ Cilj bo dosežen' : '⚠️ Cilj verjetno ne bo dosežen'}
+                      </span>
+                      <Badge variant="outline" className={cn(
+                        'text-[10px]',
+                        prediction.prediction.confidence >= 70 ? 'text-primary border-primary/40' :
+                        prediction.prediction.confidence >= 40 ? 'text-amber-400 border-amber-400/40' :
+                        'text-red-500 border-red-500/40'
+                      )}>
+                        🎯 {prediction.prediction.confidence}%
+                      </Badge>
+                    </div>
+                    {prediction.prediction.estimatedDays != null && prediction.prediction.willReachTarget && (
+                      <div className="text-2xl font-bold font-mono text-primary">
+                        ~{prediction.prediction.estimatedDays} dni
+                      </div>
+                    )}
+                    {prediction.prediction.predictedDate && prediction.prediction.willReachTarget && (
+                      <div className="text-[10px] text-muted-foreground">
+                        Predvideni datum: {new Date(prediction.prediction.predictedDate).toLocaleDateString('sl-SI')}
+                      </div>
+                    )}
+                  </div>
+
+                  {/* Trend analysis */}
+                  <div className="bg-background/30 rounded p-2 text-xs">
+                    <div className="text-[10px] uppercase tracking-wider text-muted-foreground mb-1">📈 Trend</div>
+                    <div className="flex items-center gap-2 mb-1">
+                      <Badge variant="outline" className={cn(
+                        'text-[10px]',
+                        prediction.prediction.currentTrend === 'declining' && 'text-primary border-primary/40',
+                        prediction.prediction.currentTrend === 'rising' && 'text-red-500 border-red-500/40',
+                        prediction.prediction.currentTrend === 'stable' && 'text-amber-400 border-amber-400/40',
+                      )}>
+                        {prediction.prediction.currentTrend === 'declining' ? '📉 Pada' :
+                         prediction.prediction.currentTrend === 'rising' ? '📈 Raste' : '➡️ Stabilna'}
+                      </Badge>
+                      <span className="text-[10px] text-muted-foreground">
+                        ~{prediction.prediction.averageDropPerWeek}€/teden
+                      </span>
+                    </div>
+                    {prediction.prediction.trendAnalysis && (
+                      <p className="italic text-muted-foreground">{prediction.prediction.trendAnalysis}</p>
+                    )}
+                  </div>
+
+                  {/* Projected prices chart */}
+                  {prediction.prediction.projectedPrices && prediction.prediction.projectedPrices.length > 0 && (
+                    <div className="bg-background/30 rounded p-2">
+                      <div className="text-[10px] uppercase tracking-wider text-muted-foreground mb-2">🔮 Projekcija cene</div>
+                      <div className="space-y-1">
+                        {prediction.prediction.projectedPrices.map((p: any, i: number) => {
+                          const currentPrice = prediction.currentPrice;
+                          const targetPrice = prediction.targetPrice;
+                          const pct = currentPrice > 0 ? Math.round(((p.price - currentPrice) / currentPrice) * 100) : 0;
+                          const isAtTarget = p.price <= targetPrice;
+                          return (
+                            <div key={i} className="flex items-center gap-2 text-xs">
+                              <span className="text-muted-foreground w-20">{new Date(p.date).toLocaleDateString('sl-SI', { day: 'numeric', month: 'short' })}</span>
+                              <span className={cn('font-mono font-bold w-16', isAtTarget ? 'text-primary' : '')}>{p.price}€</span>
+                              <div className="flex-1 h-2 bg-background rounded overflow-hidden">
+                                <div
+                                  className={cn('h-full', isAtTarget ? 'bg-primary' : pct < 0 ? 'bg-amber-400' : 'bg-red-500')}
+                                  style={{ width: `${Math.min(100, Math.max(5, 100 - Math.abs(pct)))}%` }}
+                                />
+                              </div>
+                              <span className={cn('text-[10px] w-12 text-right', pct < 0 ? 'text-primary' : pct > 0 ? 'text-red-500' : 'text-muted-foreground')}>
+                                {pct > 0 ? '+' : ''}{pct}%
+                              </span>
+                              {isAtTarget && <Check className="w-3 h-3 text-primary" />}
+                            </div>
+                          );
+                        })}
+                      </div>
+                    </div>
+                  )}
+
+                  {/* Reasoning */}
+                  {prediction.prediction.reasoning && (
+                    <div className="bg-background/30 rounded p-2 text-xs">
+                      <div className="text-[10px] uppercase tracking-wider text-muted-foreground mb-1">💭 Razlog</div>
+                      <p className="italic">"{prediction.prediction.reasoning}"</p>
+                    </div>
+                  )}
+
+                  <p className="text-[10px] text-muted-foreground text-center pt-1">
+                    ⚠️ Napoved je samo napake AI. Dejanski rezultat je odvisen od prodajalca in trga.
+                  </p>
+                </div>
+              )}
             </div>
 
             {/* v1.8: Market comparison — real data vs AI estimate */}
