@@ -147,3 +147,72 @@ Stage Summary:
 - ~1299 novih vrstic kode
 - 10 zavihkov skupno (prej 9)
 - Verzija aplikacije: v4.6.0
+
+---
+Task ID: v4.7
+Agent: main
+Task: Nadaljevanje razvoja aplikacije Markec AI Firm — Opportunity Monitor (v4.7)
+
+Work Log:
+- src/app/api/stats/advanced/route.ts: nov GET endpoint z obsežnimi statistikami:
+  - keyMetrics (totalRealizedProfit, totalInvestedHeld, avgRoi, totalTrades, soldCount, heldCount, cancelledCount)
+  - monthlyPnl (12 mesecev s profit, count, cumulative, invested)
+  - conversion (totalListings, bookmarked, contacted, responded, closed, withTarget, targetsHit, tradesFromListings + 4 percentage metrics)
+  - aiAccuracy (sampleSize, avgAbsErrorPct, within15Pct, within30Pct, prilikaAccuracyPct + top 5 best/worst predictions)
+  - monitorPerformance (success rate, avg duration, total listings/alerts/runs, recent new listings/alerts)
+  - sourceBreakdown (listings + monitors per source)
+  - topCategories (profit, invested, sold, held, avgRoi, conversionRate)
+- src/components/dashboard/statistics-view.tsx: nova StatisticsView komponenta z:
+  - 4 key metric karticami
+  - P&L AreaChart (profit vs invested vs cumulative) z recharts
+  - Conversion funnel z bar visualization + 4 percentage cards
+  - AI accuracy sekcija (4 stats + PRILIKA accuracy badge + top 5 best/worst predictions)
+  - Source breakdown z bar charts
+  - Top categories horizontal bar chart
+  - Monitor performance tabela (success rate, avg čas, listings, alerti)
+- src/app/page.tsx: dodan 'statistics' v View type, NAV array (PieChart ikona),
+  render StatisticsView, verzija v4.7.0
+  - v4.7 Mobile: hamburger meni (md:hidden) z drawer-style navigacijo
+  - Skrčen terminal naslov na mobilcu (sm:inline za full path)
+  - Nav tabs hidden na mobilcu (md:block)
+  - Mobile drawer z vsemi zavihki + search button + clock
+  - Main content: py-4 md:py-6 za manj padding na mobilcu
+- src/components/dashboard/dashboard-view.tsx: flex-wrap na action baru za mobilce
+- src/components/dashboard/listings-view.tsx:
+  - Modal: mx-4 sm:mx-6 p-4 sm:p-6 za mobilne robove
+  - AI evaluation grid: sm:gap-3 za mobilne razmike
+  - Target price input: flex-col sm:flex-row za stacking na mobilcu
+  - QR section: flex-col sm:flex-row za stacking na mobilcu
+- src/app/api/backup/json/route.ts: nov GET in POST endpoint za JSON backup/restore
+  - GET: export vseh tabel (settings, monitors, listings, alerts, trades, runLogs,
+    heartbeats, priceHistory, digestLogs, pushSubs) kot JSON
+  - Sanitizacija: aiApiKey, fallbackApiKey, telegramBotToken, telegramWebhookSecret,
+    discordWebhookUrl, slackWebhookUrl, emailSmtpPassword, vapidPrivateKey so
+    REDACTANA v exportu
+  - POST: upsert (ustvari ali posodobi) vse zapise iz JSON
+  - Validacija: _meta.app === 'markec-ai-firm' required
+  - Safe fields whitelist za settings (brez sensitive fields)
+  - Skip orphans (listings brez monitorjev, alerti brez monitorjev)
+- src/components/dashboard/settings-view.tsx: nova JsonBackupControls komponenta
+  z 'Izvozi JSON' in 'Uvozi JSON' gumboma, import result prikaz z count per tabela,
+  confirmation dialog pred importom. Vstavljena v BackupSection.
+- TypeScript check: nobenih novih napak (prejšnje existing napake ostajajo)
+- Testiranje:
+  - GET /api/stats/advanced: pravilno vrača vse statistike (keyMetrics, conversion,
+    aiAccuracy, monitorPerformance, sourceBreakdown, topCategories, monthlyPnl) ✓
+  - GET /api/backup/json: pravilno exportira settings, monitors, listings, itd.
+    aiApiKey je pravilno REDACTAN kot '***REDACTED***' ✓
+  - POST /api/backup/json: uspešen upsert z restored counts ✓
+  - Validacija: _meta.app check deluje ✓
+  - Skip orphans: listings brez monitorjev so skipped ✓
+- Git commit: 'feat(v4.7): Statistics dashboard, mobile responsive, JSON backup/restore'
+  (8 files changed, 1536 insertions, 20 deletions)
+
+Stage Summary:
+- 3 nove funkcionalnosti dodane v v4.7
+- 2 novi API ruti (stats/advanced, backup/json)
+- 1 nov zavihek (Statistike, skupno 11)
+- 2 novi komponenti (StatisticsView, JsonBackupControls)
+- ~1536 novih vrstic kode
+- Mobile responsive izboljšave po vsej aplikaciji
+- Verzija aplikacije: v4.7.0
