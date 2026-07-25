@@ -216,3 +216,55 @@ Stage Summary:
 - ~1536 novih vrstic kode
 - Mobile responsive izboljšave po vsej aplikaciji
 - Verzija aplikacije: v4.7.0
+
+---
+Task ID: v4.8
+Agent: main
+Task: Nadaljevanje razvoja aplikacije Markec AI Firm — Opportunity Monitor (v4.8)
+
+Work Log:
+- public/sw.js: nadgrajen na v4.8 z networkFirstWithOfflineFallback strategijo za
+  navigation requests, OFFLINE_URL fallback, APP_SHELL vključuje offline.html in icons
+- public/offline.html: nova offline fallback stran (terminal-style z auto-retry
+  ob online event, retry vsakih 10s)
+- src/components/dashboard/pwa-install-prompt.tsx: nova komponenta za PWA install prompt
+  (capture beforeinstallprompt, 3s delay, localStorage persistence, auto-hide v standalone)
+- src/app/page.tsx: dodan PwaInstallPrompt v render, verzija v4.8.0
+- src/app/api/notifications/center/route.ts: nov GET in POST endpoint
+  - GET: vrača zadnje notifikacije z delivery statusom (sent/failed/pending)
+    in stats (total, sent, failed, pending, byChannel breakdown)
+  - POST: re-send alert na specific kanale (telegram, discord, slack, push, email)
+  - Vsak alert generira 5 zapisov (enega na kanal)
+  - Filter by channel in status
+- src/components/dashboard/notifications-center-view.tsx: nova NotificationsCenterView
+  komponenta z:
+  - 4 stat kartice (skupaj, poslano, spodletelo, na čakanju)
+  - Channel breakdown z ikonami (Telegram, Discord, Slack, Push, Email)
+  - Filter chips za kanal in status
+  - Lista notifikacij z re-send gumbi
+  - 'Ponovno pošlji vse failed' bulk akcija
+- src/app/api/listings/[id]/compare-models/route.ts: nov POST endpoint za AI model
+  comparison — sprejme array models (do 5), vrača evaluation + durationMs za vsak model,
+  inkrementira aiCallsToday counter
+- src/components/dashboard/listings-view.tsx: dodana AI Model Comparison sekcija v
+  listing modal z:
+  - Input za modele (comma-separated)
+  - 'Primerjaj' gumb z loading state
+  - Result cards z verdiktom, priliko, tveganjem, tržno vrednostjo
+  - Razlog ocene (line-clamp-2)
+  - Summary: 🏆 najboljša ocena + ⚡ najhitrejši model
+- TypeScript check: nobenih novih napak (samo pre-existing)
+- Testiranje:
+  - GET / offline.html: 200 ✓
+  - GET /api/notifications/center: vrača pravilen stats z vsemi kanali ✓
+  - POST /api/listings/[id]/compare-models: vrača pravilno strukturiran rezultat
+    (ok=true, model failed pričakovano ker Ollama ni zagnan) ✓
+- Git commit: 'feat(v4.8): PWA improvements, Notifications center, AI model comparison'
+
+Stage Summary:
+- 3 nove funkcionalnosti dodane v v4.8
+- 2 novi API ruti (notifications/center, listings/[id]/compare-models)
+- 3 nove komponente (PwaInstallPrompt, NotificationsCenterView, AI Model Comparison UI)
+- 1 nova statična stran (offline.html)
+- Service worker nadgrajen na v4.8 z offline fallback
+- Verzija aplikacije: v4.8.0
