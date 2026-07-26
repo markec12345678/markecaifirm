@@ -907,3 +907,29 @@ Stage Summary:
 - 3 novi API ruti (prioritize-alerts, budget-allocator, price-war)
 - ~732 novih vrstic kode
 - Verzija aplikacije: v6.6.0
+
+---
+Task ID: v6.7
+Agent: main
+Task: Nadaljevanje razvoja aplikacije Markec AI Firm — Opportunity Monitor (v6.7)
+
+Work Log:
+- src/app/api/trades/aging-alerts/route.ts: nov GET endpoint za aging alerts.
+  Depreciation 2%/week, urgency levels (critical/high/medium/low), holding cost.
+- src/app/api/ai/restock/route.ts: nov GET endpoint za restock recommendations.
+  Analizira sold trades po kategorijah, keyword extraction, iskanje trenutnih priložnosti.
+- src/app/api/trades/goal-tracker/route.ts: nov GET endpoint za goal tracker v2.
+  Realized/potential/projected profit, milestones, daily rate, MoM trend, 6-month history.
+- src/components/dashboard/trades-view.tsx: dodana 'Aging alerti' in 'AI Restock' gumba
+  z results panels.
+- src/components/dashboard/dashboard-view.tsx: dodana Profit Goal Tracker v2 card z
+  dual progress bar, milestone markers, stats grid, recommendation, history chart.
+- src/app/page.tsx: verzija v6.7.0
+- TypeScript: nobenih novih napak
+- Git commit: 'feat(v6.7): AI Inventory Aging Alerts, Smart Restock Recommendations, Profit Goal Tracker v2'
+
+Stage Summary:
+- 3 nove funkcionalnosti za maksimizacijo dobička
+- 3 novi API ruti (aging-alerts, restock, goal-tracker)
+- ~650 novih vrstic kode
+- Verzija aplikacije: v6.7.0
