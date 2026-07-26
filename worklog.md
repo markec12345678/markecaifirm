@@ -667,3 +667,34 @@ Stage Summary:
 - 9 novih polj v Prisma shemi
 - ~650 novih vrstic kode
 - Verzija aplikacije: v5.8.0
+
+---
+Task ID: v5.9
+Agent: main
+Task: Nadaljevanje razvoja aplikacije Markec AI Firm — Opportunity Monitor (v5.9)
+
+Work Log:
+- src/lib/tls-client.ts: nova knjižnica za TLS fingerprinting (čisti Node.js,
+  brez native deps). 3 TLS profili (Chrome 120, Firefox 121, Safari 17) z
+  custom cipher suites, ALPN, EC DH curves, sigalgs. JA3 fingerprint generation.
+  tlsFetchRequest() s custom HTTPS agent.
+- src/lib/captcha-solver.ts: nova knjižnica za multi-provider CAPTCHA reševanje.
+  4 providerji (2captcha, anti-captcha, capmonster, custom) z fallback chain.
+  Podpora za reCAPTCHA v2/v3, hCaptcha, Cloudflare challenge, generic.
+  SiteKey extraction, poll 3s interval, 60s timeout per provider.
+- prisma/schema.prisma: 4 nova polja (captchaProvider, captchaApiKeyAnticaptcha,
+  captchaApiKeyCapmonster, captchaCustomApiUrl).
+- src/app/api/settings/route.ts: vsa nova polja dodana v GET in POST.
+- src/components/dashboard/settings-view.tsx: ScrapingConfigSection posodobljena
+  z multi-provider CAPTCHA UI (primary selector, 3 API key inputi, custom URL,
+  fallback chain info) in TLS fingerprinting z opisom 3 profilov.
+- src/app/page.tsx: verzija v5.9.0
+- TypeScript: nobenih novih napak
+- Git commit: 'feat(v5.9): TLS fingerprinting (3 browser profiles) + Multi-provider CAPTCHA solver (4 providers with fallback chain)'
+
+Stage Summary:
+- 2 napredni anti-detection izboljšavi
+- 2 novi knjižnici (tls-client, captcha-solver)
+- 4 nova polja v Prisma shemi
+- ~666 novih vrstic kode
+- Verzija aplikacije: v5.9.0
