@@ -112,6 +112,13 @@ export function StatisticsView() {
   const [demandMonths, setDemandMonths] = useState('3');
   const [correlationData, setCorrelationData] = useState<any>(null);
   const [correlationLoading, setCorrelationLoading] = useState(false);
+  // v6.13: Competitor Intel + Cash Flow
+  const [competitorData, setCompetitorData] = useState<any>(null);
+  const [competitorLoading, setCompetitorLoading] = useState(false);
+  const [competitorCategory, setCompetitorCategory] = useState('');
+  const [cashflowData, setCashflowData] = useState<any>(null);
+  const [cashflowLoading, setCashflowLoading] = useState(false);
+  const [cashflowDays, setCashflowDays] = useState('30');
 
   const load = useCallback(async () => {
     try {
@@ -1596,6 +1603,351 @@ export function StatisticsView() {
             </div>
           ) : (
             <p className="text-[11px] text-muted-foreground text-center py-2">Klikni "Analiziraj korelacije" za AI analizo sinhronega tveganja portfolia.</p>
+          )}
+        </CardContent>
+      </Card>
+
+      {/* v6.13: AI Competitor Intelligence */}
+      <Card className="bg-card/50 border-primary/30">
+        <CardHeader className="pb-2">
+          <CardTitle className="text-sm uppercase tracking-wider flex items-center gap-2">
+            <Sparkles className="w-4 h-4 text-primary" />
+            AI Competitor Intelligence
+            <Badge variant="outline" className="text-[10px] text-primary border-primary/40">v6.13</Badge>
+          </CardTitle>
+          <CardDescription className="text-xs">AI analizira konkurenčne prodajalce, njihove strategije in šibkosti.</CardDescription>
+        </CardHeader>
+        <CardContent className="space-y-3">
+          <div className="flex gap-2 items-center">
+            <Input
+              type="text"
+              placeholder="Filter kategorije (opcijsko)"
+              value={competitorCategory}
+              onChange={(e) => setCompetitorCategory(e.target.value)}
+              className="h-7 text-xs flex-1"
+            />
+            <Button size="sm" className="gap-2 h-7 text-xs" disabled={competitorLoading}
+              onClick={async () => {
+                setCompetitorLoading(true); setCompetitorData(null);
+                try {
+                  const res = await fetch('/api/ai/competitor-intel', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ category: competitorCategory || undefined }),
+                  });
+                  const data = await res.json();
+                  if (data.ok) { setCompetitorData(data); toast.success('✓ Konkurenčna analiza generirana'); }
+                  else toast.error(data.error ?? data.message ?? 'Napaka');
+                } catch (e: any) { toast.error(e?.message ?? 'Napaka'); }
+                finally { setCompetitorLoading(false); }
+              }}>
+              {competitorLoading ? <RefreshCw className="w-3 h-3 animate-spin" /> : <Sparkles className="w-3 h-3" />}
+              Analiziraj
+            </Button>
+          </div>
+          {competitorLoading ? (
+            <div className="py-4 text-center text-xs text-muted-foreground"><RefreshCw className="w-4 h-4 mx-auto mb-2 animate-spin opacity-50" />AI analizira prodajalce in njihove strategije...</div>
+          ) : competitorData ? (
+            <div className="space-y-2 text-xs">
+              {competitorData.insights && (
+                <div className="bg-primary/5 border border-primary/20 rounded p-2 text-primary">{competitorData.insights}</div>
+              )}
+              {competitorData.summary && (
+                <div className="grid grid-cols-4 gap-2 text-[10px]">
+                  <div className="bg-background/40 rounded p-1.5 border">
+                    <div className="text-muted-foreground uppercase">Konkurentov</div>
+                    <div className="font-bold">{competitorData.summary.totalCompetitors ?? 0}</div>
+                  </div>
+                  <div className="bg-background/40 rounded p-1.5 border">
+                    <div className="text-muted-foreground uppercase">🔴 High threat</div>
+                    <div className="font-bold text-red-500">{competitorData.summary.threatBreakdown?.high ?? 0}</div>
+                  </div>
+                  <div className="bg-background/40 rounded p-1.5 border">
+                    <div className="text-muted-foreground uppercase">🌊 Blue ocean</div>
+                    <div className="font-bold text-primary">{competitorData.summary.blueOceanCount ?? 0}</div>
+                  </div>
+                  <div className="bg-background/40 rounded p-1.5 border">
+                    <div className="text-muted-foreground uppercase">Vseh prodajalcev</div>
+                    <div className="font-bold">{competitorData.summary.totalSellersAnalyzed ?? 0}</div>
+                  </div>
+                </div>
+              )}
+
+              {/* Competitor list */}
+              <div className="space-y-2 max-h-80 overflow-y-auto">
+                {competitorData.competitors?.map((c: any, i: number) => {
+                  const threatCfg: Record<string, { color: string; bg: string; icon: string }> = {
+                    high: { color: 'text-red-500', bg: 'border-red-500/20 bg-red-500/5', icon: '🔴' },
+                    medium: { color: 'text-amber-400', bg: 'border-amber-400/20 bg-amber-400/5', icon: '🟡' },
+                    low: { color: 'text-primary', bg: 'border-primary/20 bg-primary/5', icon: '🟢' },
+                  };
+                  const cfg = threatCfg[c.threat] || threatCfg.medium;
+                  const strategyLabels: Record<string, string> = {
+                    volume_player: 'Množični',
+                    premium_niche: 'Premium niša',
+                    discounter: 'Diskonter',
+                    specialist: 'Specialist',
+                    opportunity_hunter: 'Priložnostni',
+                  };
+                  return (
+                    <div key={i} className={cn('border rounded p-2 space-y-1.5', cfg.bg)}>
+                      <div className="flex items-center justify-between gap-2">
+                        <div className="flex items-center gap-1.5 flex-1 min-w-0">
+                          <span>{cfg.icon}</span>
+                          <Badge variant="outline" className="text-[9px] shrink-0 truncate max-w-[120px]">{c.sellerName}</Badge>
+                          <Badge variant="outline" className="text-[9px] shrink-0">{strategyLabels[c.strategy] || c.strategy}</Badge>
+                        </div>
+                        <div className="text-[9px] text-muted-foreground shrink-0">
+                          {c.listingCount} oglasov · {c.avgPrice}€
+                        </div>
+                      </div>
+                      <div className="grid grid-cols-4 gap-1 text-[9px]">
+                        <div><span className="text-muted-foreground">Range:</span> <span className="font-mono">{c.minPrice}-{c.maxPrice}€</span></div>
+                        <div><span className="text-muted-foreground">Aktiven:</span> <span className="font-mono">{c.daysActive}d</span></div>
+                        <div><span className="text-muted-foreground">Pril.:</span> <span className="font-mono">{c.opportunityRate}%</span></div>
+                        <div><span className="text-muted-foreground">Deal:</span> <span className="font-mono">{c.avgDealScore}/100</span></div>
+                      </div>
+                      {c.weaknesses?.length > 0 && (
+                        <div className="text-[9px]">
+                          <span className="text-red-500 font-semibold">Šibkosti:</span> {c.weaknesses.join(' · ')}
+                        </div>
+                      )}
+                      {c.opportunities?.length > 0 && (
+                        <div className="text-[9px]">
+                          <span className="text-primary font-semibold">Priložnosti:</span> {c.opportunities.join(' · ')}
+                        </div>
+                      )}
+                      {c.recommendedAction && (
+                        <div className="text-[9px] text-primary font-medium">→ {c.recommendedAction}</div>
+                      )}
+                    </div>
+                  );
+                })}
+                {competitorData.competitors?.length === 0 && (
+                  <p className="text-[11px] text-muted-foreground text-center py-2">Ni konkurentov z vsaj 2 listingoma.</p>
+                )}
+              </div>
+
+              {/* Blue ocean opportunities */}
+              {competitorData.blueOcean?.length > 0 && (
+                <div className="bg-primary/5 border border-primary/20 rounded p-2">
+                  <div className="text-[10px] uppercase text-primary mb-1">🌊 Blue ocean kategorije:</div>
+                  <div className="space-y-1">
+                    {competitorData.blueOcean.map((b: any, i: number) => (
+                      <div key={i} className="text-[10px]">
+                        <span className="font-bold">{b.category}</span>
+                        <span className="text-muted-foreground"> (ROI ~{b.potentialRoiPct}%) — {b.reasoning}</span>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              )}
+
+              {/* Differentiation */}
+              {competitorData.differentiation?.length > 0 && (
+                <div className="bg-amber-400/5 border border-amber-400/20 rounded p-2">
+                  <div className="text-[10px] uppercase text-amber-400 mb-1">💡 Predlogi diferenciacije:</div>
+                  <ul className="space-y-0.5 ml-3">
+                    {competitorData.differentiation.map((d: string, i: number) => (
+                      <li key={i} className="text-[10px] list-disc list-outside">{d}</li>
+                    ))}
+                  </ul>
+                </div>
+              )}
+            </div>
+          ) : (
+            <p className="text-[11px] text-muted-foreground text-center py-2">Klikni "Analiziraj" za AI analizo konkurenčnih prodajalcev.</p>
+          )}
+        </CardContent>
+      </Card>
+
+      {/* v6.13: AI Cash Flow Optimizer */}
+      <Card className="bg-card/50 border-primary/30">
+        <CardHeader className="pb-2">
+          <CardTitle className="text-sm uppercase tracking-wider flex items-center gap-2">
+            <Sparkles className="w-4 h-4 text-primary" />
+            AI Cash Flow Optimizer
+            <Badge variant="outline" className="text-[10px] text-primary border-primary/40">v6.13</Badge>
+          </CardTitle>
+          <CardDescription className="text-xs">AI analizira denarni tok, identificira bottlenecke in optimizira reinvesticije.</CardDescription>
+        </CardHeader>
+        <CardContent className="space-y-3">
+          <div className="flex gap-2 items-center">
+            <span className="text-[10px] text-muted-foreground shrink-0">Dni naprej:</span>
+            <Input
+              type="number"
+              min={7}
+              max={90}
+              value={cashflowDays}
+              onChange={(e) => setCashflowDays(e.target.value)}
+              className="h-7 text-xs w-20"
+            />
+            <Button size="sm" className="gap-2 h-7 text-xs" disabled={cashflowLoading}
+              onClick={async () => {
+                setCashflowLoading(true); setCashflowData(null);
+                try {
+                  const days = Math.max(7, Math.min(90, Number(cashflowDays) || 30));
+                  const res = await fetch('/api/ai/cashflow', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ forecastDays: days }),
+                  });
+                  const data = await res.json();
+                  if (data.ok) { setCashflowData(data); toast.success('✓ Cash flow analiza generirana'); }
+                  else toast.error(data.error ?? data.message ?? 'Napaka');
+                } catch (e: any) { toast.error(e?.message ?? 'Napaka'); }
+                finally { setCashflowLoading(false); }
+              }}>
+              {cashflowLoading ? <RefreshCw className="w-3 h-3 animate-spin" /> : <Sparkles className="w-3 h-3" />}
+              Optimiziraj
+            </Button>
+          </div>
+          {cashflowLoading ? (
+            <div className="py-4 text-center text-xs text-muted-foreground"><RefreshCw className="w-4 h-4 mx-auto mb-2 animate-spin opacity-50" />AI analizira denarne tokove in bottlenecke...</div>
+          ) : cashflowData ? (
+            <div className="space-y-2 text-xs">
+              {/* Current cash */}
+              <div className="grid grid-cols-3 gap-2 text-[10px]">
+                <div className={cn('rounded p-1.5 border',
+                  cashflowData.currentCash >= 0 ? 'bg-primary/5 border-primary/20' : 'bg-red-500/5 border-red-500/20')}>
+                  <div className="text-muted-foreground uppercase">💸 Trenutni cash</div>
+                  <div className={cn('font-mono font-bold text-[12px]',
+                    cashflowData.currentCash >= 0 ? 'text-primary' : 'text-destructive')}>
+                    {cashflowData.currentCash}€
+                  </div>
+                </div>
+                <div className="bg-background/40 rounded p-1.5 border">
+                  <div className="text-muted-foreground uppercase">📦 Vezan inventar</div>
+                  <div className="font-mono font-bold">{cashflowData.totalInvestedHeld}€</div>
+                </div>
+                <div className="bg-background/40 rounded p-1.5 border">
+                  <div className="text-muted-foreground uppercase">💰 Realizirano</div>
+                  <div className="font-mono font-bold text-primary">{cashflowData.totalRealized}€</div>
+                </div>
+              </div>
+
+              {cashflowData.analysis?.summary && (
+                <div className="bg-primary/5 border border-primary/20 rounded p-2 text-primary">{cashflowData.analysis.summary}</div>
+              )}
+
+              {/* Strategy */}
+              {cashflowData.analysis?.currentStrategy && cashflowData.analysis?.recommendedStrategy && (
+                <div className="bg-background/40 rounded p-1.5 border flex items-center justify-between text-[10px]">
+                  <span>Trenutna: <b className="text-amber-400">{cashflowData.analysis.currentStrategy.replace('_', ' ')}</b></span>
+                  <span>→</span>
+                  <span>Priporočena: <b className="text-primary">{cashflowData.analysis.recommendedStrategy.replace('_', ' ')}</b></span>
+                </div>
+              )}
+
+              {/* Optimal allocation */}
+              {cashflowData.analysis?.optimalAllocation && (
+                <div className="bg-background/40 rounded p-1.5 border">
+                  <div className="text-[10px] uppercase text-muted-foreground mb-1">📊 Optimalna alokacija:</div>
+                  <div className="grid grid-cols-2 gap-2 text-[10px]">
+                    <div>
+                      <span className="text-muted-foreground">Reinvestiraj:</span>
+                      <span className="font-mono font-bold text-primary"> {cashflowData.analysis.optimalAllocation.reinvestPct}%</span>
+                    </div>
+                    <div>
+                      <span className="text-muted-foreground">Rezerva:</span>
+                      <span className="font-mono font-bold text-amber-400"> {cashflowData.analysis.optimalAllocation.reservePct}%</span>
+                    </div>
+                  </div>
+                  {cashflowData.analysis.optimalAllocation.reasoning && (
+                    <div className="text-[9px] text-muted-foreground italic mt-1">{cashflowData.analysis.optimalAllocation.reasoning}</div>
+                  )}
+                </div>
+              )}
+
+              {/* Forecast summary */}
+              {cashflowData.summary && (
+                <div className="grid grid-cols-4 gap-2 text-[10px]">
+                  <div className="bg-background/40 rounded p-1.5 border">
+                    <div className="text-muted-foreground uppercase">Prič. prodaje</div>
+                    <div className="font-bold">{cashflowData.summary.expectedSales ?? 0}</div>
+                  </div>
+                  <div className="bg-background/40 rounded p-1.5 border">
+                    <div className="text-muted-foreground uppercase">Prič. prihodek</div>
+                    <div className="font-bold text-primary">{cashflowData.summary.expectedRevenue ?? 0}€</div>
+                  </div>
+                  <div className="bg-background/40 rounded p-1.5 border">
+                    <div className="text-muted-foreground uppercase">Reinvesticija</div>
+                    <div className="font-bold text-amber-400">{cashflowData.summary.expectedReinvestment ?? 0}€</div>
+                  </div>
+                  <div className={cn('rounded p-1.5 border',
+                    (cashflowData.summary.endingCash ?? 0) >= 0 ? 'bg-primary/5 border-primary/20' : 'bg-red-500/5 border-red-500/20')}>
+                    <div className="text-muted-foreground uppercase">Končni cash</div>
+                    <div className={cn('font-bold font-mono',
+                      (cashflowData.summary.endingCash ?? 0) >= 0 ? 'text-primary' : 'text-destructive')}>
+                      {cashflowData.summary.endingCash ?? 0}€
+                    </div>
+                  </div>
+                </div>
+              )}
+
+              {/* Bottlenecks */}
+              {cashflowData.analysis?.bottlenecks?.length > 0 && (
+                <div className="bg-red-500/5 border border-red-500/20 rounded p-2">
+                  <div className="text-[10px] uppercase text-red-500 mb-1">⚠️ Bottlenecks:</div>
+                  <div className="space-y-1">
+                    {cashflowData.analysis.bottlenecks.map((b: any, i: number) => (
+                      <div key={i} className="text-[10px]">
+                        <div className="flex items-center justify-between">
+                          <span className="font-medium">{b.type.replace('_', ' ')}</span>
+                          <span className="font-mono text-red-500">−{b.impactEur}€</span>
+                        </div>
+                        <div className="text-[9px] text-muted-foreground">{b.description}</div>
+                        <div className="text-[9px] text-primary">→ {b.fix}</div>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              )}
+
+              {/* Recommendations */}
+              {cashflowData.analysis?.recommendations?.length > 0 && (
+                <div className="bg-primary/5 border border-primary/20 rounded p-2">
+                  <div className="text-[10px] uppercase text-primary mb-1">💡 Priporočila:</div>
+                  <div className="space-y-1">
+                    {cashflowData.analysis.recommendations.map((r: any, i: number) => {
+                      const prColor = r.priority === 'high' ? 'text-red-500' : r.priority === 'medium' ? 'text-amber-400' : 'text-blue-400';
+                      return (
+                        <div key={i} className="text-[10px]">
+                          <div className="flex items-center justify-between gap-2">
+                            <span className="font-medium">{r.action}</span>
+                            <div className="flex items-center gap-1 shrink-0">
+                              <Badge variant="outline" className={cn('text-[9px]', prColor)}>{r.priority}</Badge>
+                              <span className="font-mono text-primary">+{r.expectedImpactEur}€</span>
+                            </div>
+                          </div>
+                          <div className="text-[9px] text-muted-foreground">⏱ {r.timeframe}</div>
+                        </div>
+                      );
+                    })}
+                  </div>
+                </div>
+              )}
+
+              {/* Cash flow gaps */}
+              {cashflowData.analysis?.cashFlowGaps?.length > 0 && (
+                <div className="bg-amber-400/5 border border-amber-400/20 rounded p-2">
+                  <div className="text-[10px] uppercase text-amber-400 mb-1">📉 Cash flow gap-i:</div>
+                  <div className="space-y-1">
+                    {cashflowData.analysis.cashFlowGaps.map((g: any, i: number) => (
+                      <div key={i} className="text-[10px]">
+                        <div className="flex items-center justify-between">
+                          <span className="font-medium">{g.dateRange}</span>
+                          <span className="font-mono text-red-500">−{g.expectedShortfallEur}€</span>
+                        </div>
+                        <div className="text-[9px] text-primary">→ {g.mitigation}</div>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              )}
+            </div>
+          ) : (
+            <p className="text-[11px] text-muted-foreground text-center py-2">Klikni "Optimiziraj" za AI analizo denarnega toka in reinvesticijske strategije.</p>
           )}
         </CardContent>
       </Card>
