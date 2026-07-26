@@ -24,7 +24,7 @@ import {
   DialogDescription,
 } from '@/components/ui/dialog';
 import { Textarea } from '@/components/ui/textarea';
-import { RefreshCw, Download, ExternalLink, ChevronLeft, ChevronRight, Filter, ImageIcon, AlertTriangle, Target, MapPin, Clock, Bookmark, Sparkles, ShoppingCart, MessageSquare, BarChart3, TrendingDown, TrendingUp, Copy, Check, GitCompare, StickyNote, Phone, Trash2, EyeOff, Zap, User, Wallet, BookOpen, Crosshair, ShieldAlert } from 'lucide-react';
+import { RefreshCw, Download, ExternalLink, ChevronLeft, ChevronRight, Filter, ImageIcon, AlertTriangle, Target, MapPin, Clock, Bookmark, Sparkles, ShoppingCart, MessageSquare, BarChart3, TrendingDown, TrendingUp, Copy, Check, GitCompare, StickyNote, Phone, Trash2, EyeOff, Zap, User, Wallet, BookOpen, Crosshair, ShieldAlert, Dice5 } from 'lucide-react';
 import { toast } from 'sonner';
 import { cn } from '@/lib/utils';
 
@@ -1176,6 +1176,11 @@ function ListingDetailModal({ listingId, onClose }: { listingId: string | null; 
   // v6.13: Fraud Detection
   const [fraud, setFraud] = useState<any>(null);
   const [fraudLoading, setFraudLoading] = useState(false);
+  // v6.14: Negotiation Outcome Predictor
+  const [outcome, setOutcome] = useState<any>(null);
+  const [outcomeLoading, setOutcomeLoading] = useState(false);
+  const [outcomeOffer, setOutcomeOffer] = useState('');
+  const [outcomeMessage, setOutcomeMessage] = useState('');
   // v5.1: Seller reputation
   const [sellerRep, setSellerRep] = useState<any>(null);
   const [sellerLoading, setSellerLoading] = useState(false);
@@ -1231,6 +1236,10 @@ function ListingDetailModal({ listingId, onClose }: { listingId: string | null; 
       setSnipe(null);
       // v6.13: Reset fraud detection
       setFraud(null);
+      // v6.14: Reset negotiation outcome
+      setOutcome(null);
+      setOutcomeOffer('');
+      setOutcomeMessage('');
       // v5.6: Reset external comparison
       setExtCompare(null);
       // v5.7: Reset similar listings
@@ -3869,6 +3878,198 @@ function ListingDetailModal({ listingId, onClose }: { listingId: string | null; 
               ) : (
                 <p className="text-[11px] text-muted-foreground text-center py-2">
                   AI kombinira hevristiko (30+ vzorcev prevare) z ML signali in kontekstno AI analizo.
+                </p>
+              )}
+            </div>
+
+            {/* v6.14: AI Negotiation Outcome Predictor */}
+            <div className="border-t border-border pt-3">
+              <div className="flex items-center justify-between mb-2">
+                <h4 className="text-xs uppercase tracking-wider text-muted-foreground flex items-center gap-1.5">
+                  <Dice5 className="w-3.5 h-3.5 text-primary" />
+                  AI Negotiation Outcome
+                  <Badge variant="outline" className="text-[10px] text-primary border-primary/40">v6.14</Badge>
+                </h4>
+              </div>
+
+              <div className="space-y-2 mb-2">
+                <div className="flex gap-2 items-center">
+                  <Input
+                    type="number"
+                    placeholder={`Moja ponudba (€) — npr. ${Math.round((listing.price ?? 100) * 0.85)}`}
+                    value={outcomeOffer}
+                    onChange={(e) => setOutcomeOffer(e.target.value)}
+                    className="h-7 text-[11px] flex-1"
+                  />
+                  <Button
+                    size="sm"
+                    variant="outline"
+                    className="h-7 text-[11px] gap-1.5 border-primary/40 text-primary hover:bg-primary/10 shrink-0"
+                    disabled={outcomeLoading}
+                    onClick={async () => {
+                      setOutcomeLoading(true);
+                      setOutcome(null);
+                      try {
+                        const res = await fetch('/api/ai/negotiation-outcome', {
+                          method: 'POST',
+                          headers: { 'Content-Type': 'application/json' },
+                          body: JSON.stringify({
+                            listingId: listing.id,
+                            offerPrice: outcomeOffer ? Number(outcomeOffer) : undefined,
+                            message: outcomeMessage || undefined,
+                          }),
+                        });
+                        const data = await res.json();
+                        if (data.ok) { setOutcome(data); toast.success('✓ Napoved izida generirana'); }
+                        else toast.error(data.error ?? 'Napaka');
+                      } catch (e: any) { toast.error(e?.message ?? 'Napaka'); }
+                      finally { setOutcomeLoading(false); }
+                    }}
+                  >
+                    {outcomeLoading ? <RefreshCw className="w-3 h-3 animate-spin" /> : <Dice5 className="w-3 h-3" />}
+                    Napovej izid
+                  </Button>
+                </div>
+                <Input
+                  type="text"
+                  placeholder="Sporočilo prodajalcu (opcijsko)"
+                  value={outcomeMessage}
+                  onChange={(e) => setOutcomeMessage(e.target.value)}
+                  className="h-7 text-[11px]"
+                />
+              </div>
+
+              {outcomeLoading ? (
+                <div className="py-3 text-center text-[11px] text-muted-foreground">
+                  <RefreshCw className="w-4 h-4 mx-auto mb-1 animate-spin opacity-50" />
+                  AI analizira prodajalca, tržne pogoje in verjetnost uspeha...
+                </div>
+              ) : outcome?.prediction ? (
+                <div className="space-y-2 text-[11px]">
+                  {/* Success probability */}
+                  <div className={cn('border rounded p-2',
+                    outcome.prediction.successProbabilityPct >= 70 ? 'bg-primary/10 border-primary/30' :
+                    outcome.prediction.successProbabilityPct >= 40 ? 'bg-amber-400/5 border-amber-400/20' : 'bg-red-500/5 border-red-500/20')}>
+                    <div className="flex items-center justify-between mb-1">
+                      <span className="font-bold uppercase text-[10px]">
+                        🎯 Verjetnost uspeha
+                      </span>
+                      <Badge variant="outline" className={cn('text-[9px] font-mono font-bold',
+                        outcome.prediction.successProbabilityPct >= 70 ? 'text-primary border-primary/40' :
+                        outcome.prediction.successProbabilityPct >= 40 ? 'text-amber-400 border-amber-400/40' : 'text-red-500 border-red-500/40')}>
+                        {outcome.prediction.successProbabilityPct}% (confidence {outcome.prediction.confidence}%)
+                      </Badge>
+                    </div>
+                    {/* Probability bar */}
+                    <div className="w-full h-2 bg-background rounded overflow-hidden mt-1">
+                      <div className={cn('h-full rounded',
+                        outcome.prediction.successProbabilityPct >= 70 ? 'bg-primary' :
+                        outcome.prediction.successProbabilityPct >= 40 ? 'bg-amber-400' : 'bg-red-500')}
+                        style={{ width: `${outcome.prediction.successProbabilityPct}%` }} />
+                    </div>
+                    <p className="text-[9px] text-muted-foreground mt-1">{outcome.prediction.reasoning}</p>
+                  </div>
+
+                  {/* Counter-offer and optimal offer */}
+                  <div className="grid grid-cols-3 gap-2">
+                    <div className="bg-background/40 rounded p-1.5 border text-center">
+                      <div className="text-[9px] uppercase text-muted-foreground">Tvoja ponudba</div>
+                      <div className="font-mono font-bold">{outcome.userOffer}€</div>
+                      <div className="text-[9px] text-amber-400">−{outcome.discountRequested}%</div>
+                    </div>
+                    <div className="bg-background/40 rounded p-1.5 border text-center">
+                      <div className="text-[9px] uppercase text-muted-foreground">Counter-offer</div>
+                      <div className="font-mono font-bold text-amber-400">{outcome.prediction.expectedCounterOfferEur}€</div>
+                      <div className="text-[9px] text-muted-foreground">predvideno</div>
+                    </div>
+                    <div className="bg-primary/5 rounded p-1.5 border border-primary/20 text-center">
+                      <div className="text-[9px] uppercase text-primary">Optimalna</div>
+                      <div className="font-mono font-bold text-primary">{outcome.prediction.suggestedOptimalOfferEur}€</div>
+                      <div className="text-[9px] text-primary">→ ponudi to</div>
+                    </div>
+                  </div>
+
+                  {/* Strategy */}
+                  {outcome.prediction.optimalStrategy?.approach && (
+                    <div className="bg-primary/5 border border-primary/20 rounded p-1.5">
+                      <div className="text-[10px] uppercase text-primary mb-1">
+                        🎯 Strategija: <b>{outcome.prediction.optimalStrategy.approach.replace('_', ' ')}</b>
+                      </div>
+                      <div className="text-[10px]">{outcome.prediction.optimalStrategy.timing}</div>
+                      {outcome.prediction.optimalStrategy.messageTips?.length > 0 && (
+                        <ul className="space-y-0.5 ml-3 mt-1">
+                          {outcome.prediction.optimalStrategy.messageTips.map((t: string, i: number) => (
+                            <li key={i} className="text-[9px] list-disc list-outside">{t}</li>
+                          ))}
+                        </ul>
+                      )}
+                    </div>
+                  )}
+
+                  {/* Factors */}
+                  {outcome.prediction.factors?.length > 0 && (
+                    <div className="bg-background/40 rounded p-1.5 border">
+                      <div className="text-[10px] uppercase text-muted-foreground mb-1">📊 Faktorji:</div>
+                      <div className="space-y-0.5">
+                        {outcome.prediction.factors.map((f: any, i: number) => {
+                          const impactColor = f.impact === 'positive' ? 'text-primary' :
+                                              f.impact === 'negative' ? 'text-red-500' : 'text-muted-foreground';
+                          return (
+                            <div key={i} className="text-[10px] flex items-center gap-1">
+                              <span className={cn('font-bold w-3', impactColor)}>
+                                {f.impact === 'positive' ? '+' : f.impact === 'negative' ? '−' : '○'}
+                              </span>
+                              <span className="font-medium">{f.factor}</span>
+                              <span className="text-muted-foreground text-[9px]">({f.weight}/10)</span>
+                            </div>
+                          );
+                        })}
+                      </div>
+                    </div>
+                  )}
+
+                  {/* Scenarios */}
+                  {outcome.prediction.scenarios?.length > 0 && (
+                    <div className="bg-background/40 rounded p-1.5 border">
+                      <div className="text-[10px] uppercase text-muted-foreground mb-1">🔮 Scenariji:</div>
+                      <div className="space-y-1">
+                        {outcome.prediction.scenarios.map((s: any, i: number) => (
+                          <div key={i} className="text-[10px]">
+                            <div className="flex items-center justify-between">
+                              <span className="font-bold">{s.name}</span>
+                              <span className="font-mono text-primary">{s.probabilityPct}% · {s.finalPriceEur}€</span>
+                            </div>
+                            <div className="text-[9px] text-muted-foreground">{s.outcome}</div>
+                          </div>
+                        ))}
+                      </div>
+                    </div>
+                  )}
+
+                  {/* Warnings */}
+                  {outcome.prediction.warnings?.length > 0 && (
+                    <div className="bg-red-500/5 border border-red-500/20 rounded p-1.5">
+                      <div className="text-[10px] uppercase text-red-500 mb-1">⚠️ Opozorila:</div>
+                      <ul className="space-y-0.5 ml-3">
+                        {outcome.prediction.warnings.map((w: string, i: number) => (
+                          <li key={i} className="text-[10px] list-disc list-outside">{w}</li>
+                        ))}
+                      </ul>
+                    </div>
+                  )}
+
+                  {/* Context */}
+                  {(outcome.marketContext || outcome.sellerHistory) && (
+                    <div className="text-[9px] text-muted-foreground border-t border-border pt-1 space-y-0.5">
+                      {outcome.marketContext && <div>📊 {outcome.marketContext}</div>}
+                      {outcome.sellerHistory && <div>👤 {outcome.sellerHistory}</div>}
+                      <div>📅 Oglas star {outcome.daysSincePosted} dni</div>
+                    </div>
+                  )}
+                </div>
+              ) : (
+                <p className="text-[11px] text-muted-foreground text-center py-2">
+                  Vnesi ponudbo — AI bo napovedal verjetnost uspeha, counter-offer in optimalno strategijo.
                 </p>
               )}
             </div>
