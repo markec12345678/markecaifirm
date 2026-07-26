@@ -98,6 +98,13 @@ export function ListingsView() {
   // v5.6: AI anomaly scan
   const [scanningAnomalies, setScanningAnomalies] = useState(false);
   const [anomalies, setAnomalies] = useState<any[]>([]);
+  // v6.1: AI deduplication
+  const [dedupLoading, setDedupLoading] = useState(false);
+  const [duplicates, setDuplicates] = useState<any[]>([]);
+  // v6.1: Saved searches
+  const [savedSearches, setSavedSearches] = useState<any[]>([]);
+  const [showSaveSearch, setShowSaveSearch] = useState(false);
+  const [newSearchName, setNewSearchName] = useState('');
   const limit = 50;
 
   const load = useCallback(async () => {
@@ -128,8 +135,15 @@ export function ListingsView() {
   useEffect(() => {
     (async () => {
       try {
-        const res = await fetch('/api/monitors');
-        if (res.ok) setMonitors(await res.json());
+        const [monRes, ssRes] = await Promise.all([
+          fetch('/api/monitors'),
+          fetch('/api/saved-searches'),
+        ]);
+        if (monRes.ok) setMonitors(await monRes.json());
+        if (ssRes.ok) {
+          const ssData = await ssRes.json();
+          setSavedSearches(ssData.searches || []);
+        }
       } catch { /* ignore */ }
     })();
   }, []);
@@ -355,6 +369,47 @@ export function ListingsView() {
             {scanningAnomalies ? <RefreshCw className="w-3.5 h-3.5 animate-spin" /> : <AlertTriangle className="w-3.5 h-3.5" />}
             AI anomaly scan
           </Button>
+          {/* v6.1: AI Deduplication */}
+          <Button
+            size="sm"
+            variant="outline"
+            className="gap-2 border-blue-400/40 text-blue-400 hover:bg-blue-400/10"
+            disabled={dedupLoading}
+            onClick={async () => {
+              setDedupLoading(true);
+              setDuplicates([]);
+              try {
+                const body: any = { days: 14, limit: 50 };
+                if (monitorId !== 'all') body.monitorId = monitorId;
+                const res = await fetch('/api/ai/deduplicate', {
+                  method: 'POST',
+                  headers: { 'Content-Type': 'application/json' },
+                  body: JSON.stringify(body),
+                });
+                const data = await res.json();
+                if (data.ok) {
+                  setDuplicates(data.duplicates || []);
+                  toast.success(`✓ ${data.duplicateGroups} duplikatov najdenih (${data.totalDuplicates} oglasov)`);
+                } else { toast.error(data.error ?? 'Napaka'); }
+              } catch (e: any) { toast.error(e?.message ?? 'Napaka'); }
+              finally { setDedupLoading(false); }
+            }}
+            title="AI najdi duplicirane oglase"
+          >
+            {dedupLoading ? <RefreshCw className="w-3.5 h-3.5 animate-spin" /> : <GitCompare className="w-3.5 h-3.5" />}
+            AI deduplikacija
+          </Button>
+          {/* v6.1: Save search */}
+          <Button
+            size="sm"
+            variant="outline"
+            className="gap-2"
+            onClick={() => setShowSaveSearch(!showSaveSearch)}
+            title="Shrani trenutno iskanje"
+          >
+            <Bookmark className="w-3.5 h-3.5" />
+            Shrani iskanje
+          </Button>
           <Button size="sm" variant="outline" onClick={load} className="gap-2">
             <RefreshCw className="w-3.5 h-3.5" /> Osveži
           </Button>
@@ -416,6 +471,185 @@ export function ListingsView() {
                 </div>
               ))}
             </div>
+          </CardContent>
+        </Card>
+      )}
+
+      {/* v6.1: Deduplication results */}
+      {duplicates.length > 0 && (
+        <Card className="bg-blue-400/5 border-blue-400/30">
+          <CardContent className="p-4">
+            <div className="flex items-center justify-between mb-3">
+              <h3 className="text-sm font-bold uppercase tracking-wider text-blue-400 flex items-center gap-2">
+                <GitCompare className="w-4 h-4" />
+                AI Deduplikacija — {duplicates.length} grup duplikatov
+                <Badge variant="outline" className="text-[10px] text-blue-400 border-blue-400/40">v6.1</Badge>
+              </h3>
+              <div className="flex items-center gap-2">
+                <Button
+                  size="sm"
+                  variant="outline"
+                  className="h-6 text-[10px] gap-1 text-amber-400 border-amber-400/40"
+                  onClick={async () => {
+                    const toHide = duplicates.flatMap(d => d.listings.slice(1).map((l: any) => l.id));
+                    if (toHide.length === 0) return;
+                    if (!confirm(`Skrijem ${toHide.length} duplikatov (obdržim prvi oglas v vsaki grupi)?`)) return;
+                    try {
+                      const res = await fetch('/api/listings/bulk-hide', {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify({ listingIds: toHide }),
+                      });
+                      const data = await res.json();
+                      if (data.ok) {
+                        toast.success(`✓ Skritih ${data.hidden} duplikatov`);
+                        setDuplicates([]);
+                        await load();
+                      }
+                    } catch { toast.error('Napaka'); }
+                  }}
+                >
+                  Skrij vse duplikate
+                </Button>
+                <Button size="sm" variant="ghost" onClick={() => setDuplicates([])} className="h-6 text-xs">×</Button>
+              </div>
+            </div>
+            <div className="space-y-2 max-h-80 overflow-y-auto">
+              {duplicates.map((dup, i) => (
+                <div key={i} className="p-2 bg-background/30 rounded border border-border">
+                  <div className="flex items-center justify-between mb-1">
+                    <Badge variant="outline" className="text-[9px] text-blue-400 border-blue-400/40">
+                      {dup.similarityScore}% podobnost
+                    </Badge>
+                    <span className="text-[10px] text-muted-foreground">{dup.reason}</span>
+                  </div>
+                  <div className="space-y-0.5">
+                    {dup.listings.map((l: any, j: number) => (
+                      <div key={l.id} className={cn(
+                        'flex items-center gap-2 p-1 rounded text-[11px]',
+                        j === 0 ? 'bg-primary/5' : 'bg-background/30'
+                      )}>
+                        {j === 0 && <Badge variant="outline" className="text-[8px] text-primary border-primary/40 shrink-0">PRVI</Badge>}
+                        <a href={l.url} target="_blank" rel="noopener noreferrer" className="truncate flex-1 hover:text-primary">
+                          {l.title}
+                        </a>
+                        <span className="text-muted-foreground shrink-0">{l.priceText}</span>
+                        <span className="text-[9px] text-muted-foreground shrink-0">{l.source}</span>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              ))}
+            </div>
+          </CardContent>
+        </Card>
+      )}
+
+      {/* v6.1: Saved searches panel */}
+      {(showSaveSearch || savedSearches.length > 0) && (
+        <Card className="bg-card/50">
+          <CardContent className="p-3">
+            <div className="flex items-center justify-between mb-2">
+              <h3 className="text-xs uppercase tracking-wider text-muted-foreground flex items-center gap-1.5">
+                <Bookmark className="w-3.5 h-3.5" />
+                Shranjena iskanja
+                <Badge variant="outline" className="text-[10px] text-primary border-primary/40">v6.1</Badge>
+              </h3>
+            </div>
+            {showSaveSearch && (
+              <div className="flex items-center gap-2 mb-2">
+                <Input
+                  value={newSearchName}
+                  onChange={(e) => setNewSearchName(e.target.value)}
+                  placeholder="Ime iskanja (npr. iPhone pod 300€)"
+                  className="text-xs h-7"
+                  onKeyDown={(e) => {
+                    if (e.key === 'Enter' && newSearchName.trim()) {
+                      (async () => {
+                        try {
+                          const res = await fetch('/api/saved-searches', {
+                            method: 'POST',
+                            headers: { 'Content-Type': 'application/json' },
+                            body: JSON.stringify({
+                              name: newSearchName.trim(),
+                              filters: { monitorId, verdict, minScore, maxRisk, hasImage, bookmarkedOnly, contactFilter, sort },
+                            }),
+                          });
+                          const data = await res.json();
+                          if (data.ok) {
+                            toast.success('Iskanje shranjeno');
+                            setNewSearchName('');
+                            setShowSaveSearch(false);
+                            setSavedSearches(prev => [...prev, data.search]);
+                          }
+                        } catch { toast.error('Napaka'); }
+                      })();
+                    }
+                  }}
+                />
+                <Button
+                  size="sm"
+                  className="h-7 text-xs"
+                  disabled={!newSearchName.trim()}
+                  onClick={async () => {
+                    try {
+                      const res = await fetch('/api/saved-searches', {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify({
+                          name: newSearchName.trim(),
+                          filters: { monitorId, verdict, minScore, maxRisk, hasImage, bookmarkedOnly, contactFilter, sort },
+                        }),
+                      });
+                      const data = await res.json();
+                      if (data.ok) {
+                        toast.success('Iskanje shranjeno');
+                        setNewSearchName('');
+                        setShowSaveSearch(false);
+                        setSavedSearches(prev => [...prev, data.search]);
+                      }
+                    } catch { toast.error('Napaka'); }
+                  }}
+                >
+                  Shrani
+                </Button>
+              </div>
+            )}
+            {savedSearches.length > 0 && (
+              <div className="flex items-center gap-1.5 flex-wrap">
+                {savedSearches.map((ss: any) => (
+                  <div key={ss.id} className="flex items-center gap-1 px-2 py-1 bg-background/30 rounded text-[11px] border border-border group">
+                    <button
+                      onClick={() => {
+                        const f = ss.filters;
+                        if (f.monitorId !== undefined) setMonitorId(f.monitorId);
+                        if (f.verdict !== undefined) setVerdict(f.verdict);
+                        if (f.minScore !== undefined) setMinScore(f.minScore);
+                        if (f.maxRisk !== undefined) setMaxRisk(f.maxRisk);
+                        if (f.hasImage !== undefined) setHasImage(f.hasImage);
+                        if (f.bookmarkedOnly !== undefined) setBookmarkedOnly(f.bookmarkedOnly);
+                        if (f.contactFilter !== undefined) setContactFilter(f.contactFilter);
+                        if (f.sort !== undefined) setSort(f.sort);
+                        toast.success(`Iskanje "${ss.name}" naloženo`);
+                      }}
+                      className="hover:text-primary"
+                    >
+                      {ss.name}
+                    </button>
+                    <button
+                      onClick={async () => {
+                        await fetch(`/api/saved-searches?id=${ss.id}`, { method: 'DELETE' });
+                        setSavedSearches(prev => prev.filter((s: any) => s.id !== ss.id));
+                        toast.success('Iskanje izbrisano');
+                      }}
+                      className="text-muted-foreground hover:text-red-500 opacity-0 group-hover:opacity-100"
+                    >
+                      <Trash2 className="w-3 h-3" />
+                    </button>
+                  </div>
+                ))}
+              </div>
+            )}
           </CardContent>
         </Card>
       )}
