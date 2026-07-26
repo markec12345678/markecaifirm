@@ -261,6 +261,8 @@ model Listing {
   priceHistory PriceHistory[]
   // v1.6: Trade (if this listing was bought)
   trades      Trade[]
+  // v5.4: Negotiation messages with seller
+  negotiationMessages NegotiationMessage[]
 
   @@unique([monitorId, externalId])
   @@index([monitorId, firstSeenAt])
@@ -379,6 +381,51 @@ model SmartRule {
   // Tracking
   lastTriggeredAt DateTime?
   triggerCount Int     @default(0)
+  // Metadata
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+}
+
+// v5.4: Negotiation messages — sledi pogajanjem z vsakim prodajalcem
+model NegotiationMessage {
+  id          String   @id @default(cuid())
+  listingId   String
+  listing     Listing  @relation(fields: [listingId], references: [id], onDelete: Cascade)
+  // Message direction: 'sent' (from user to seller) | 'received' (from seller to user)
+  direction   String
+  // Message content
+  text        String
+  // AI generated?
+  isAiGenerated Boolean @default(false)
+  // AI suggested next step (filled when message is sent)
+  aiNextStep  String?
+  // Negotiation status: 'initial' | 'offer_sent' | 'counter_received' | 'accepted' | 'declined' | 'no_response'
+  status      String   @default("initial")
+  // Suggested price in this message (if applicable)
+  suggestedPrice Int?
+  // Metadata
+  createdAt   DateTime @default(now())
+
+  @@index([listingId, createdAt])
+}
+
+// v5.4: Webhook endpoints — zunanji servisi (Zapier, Make) prejemajo alerte
+model WebhookEndpoint {
+  id          String   @id @default(cuid())
+  name        String
+  url         String
+  // Secret for HMAC signature verification
+  secret      String   @default("")
+  // Events to subscribe to (JSON array: ['alert.created', 'price.drop', 'target.hit', 'listing.new'])
+  events      String   @default("[]")
+  // Active?
+  isActive    Boolean  @default(true)
+  // Tracking
+  lastTriggeredAt DateTime?
+  lastResponseStatus Int?
+  lastError   String?
+  triggerCount Int     @default(0)
+  failCount   Int      @default(0)
   // Metadata
   createdAt   DateTime @default(now())
   updatedAt   DateTime @updatedAt

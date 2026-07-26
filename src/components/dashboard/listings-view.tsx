@@ -4,6 +4,7 @@ import { useEffect, useState, useCallback } from 'react';
 import { Card, CardContent } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { useSwipe } from '@/lib/use-swipe';
+import { NegotiationHistory } from '@/components/dashboard/negotiation-history';
 import { Badge } from '@/components/ui/badge';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
@@ -2504,6 +2505,9 @@ function ListingDetailModal({ listingId, onClose }: { listingId: string | null; 
                 </div>
               )}
             </div>
+
+            {/* v5.4: Negotiation History — sledi pogajanjem z AI naslednjim korakom */}
+            <NegotiationHistory listingId={listing.id} aiMessage={negotiateMessage} />
           </div>
         )}
       </DialogContent>
