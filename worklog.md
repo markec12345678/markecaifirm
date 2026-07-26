@@ -1170,3 +1170,52 @@ Stage Summary:
 - 3 novi API ruti (competitor-intel, fraud-detection, cashflow)
 - ~1381 novih vrstic kode
 - Verzija aplikacije: v6.13.0
+
+---
+Task ID: v6.14
+Agent: main
+Task: Nadaljevanje razvoja aplikacije Markec AI Firm — Opportunity Monitor (v6.14)
+
+Work Log:
+- src/app/api/ai/insurance-optimizer/route.ts: nov POST endpoint za AI insurance optimizer.
+  Kategorijski risk profili (10+ kategorij s theftRisk/damageRisk/depreciationRate/liquidityRisk).
+  Storage type multipliers (home/garage/storage_unit/shop). Per item: riskScore kombinacija
+  theft + damage + liquidity + stalled. AI predlaga strategijo (self_insured/home_extension/
+  business_policy/hybrid/per_item), policy (type, coverage, deductible, premium, providers
+  — Triglav/Adriatic/Sava), high_risk_items z recommendations, self_insurance_reserve.
+- src/app/api/ai/multimodal-listing/route.ts: nov POST endpoint za AI multi-modal listing generator.
+  Generira celovit listing za prodajo: title, priceRecommendation, priceStrategy, mainDescription,
+  platformsAdaptations (bolha/vinted/facebook z naslov/opis/cena prilagojeni za vsako platformo),
+  imageStrategy (mainShot, detailShots, contextShot, videoRecommended), tagsKeywords, seo
+  (primaryKeyword, searchTerms), callToAction, highlightFeatures, honestDisclosures.
+  Upošteva market benchmark iz podobnih oglasov.
+- src/app/api/ai/negotiation-outcome/route.ts: nov POST endpoint za AI negotiation outcome predictor.
+  Sprejme offerPrice + message. AI napove: successProbabilityPct (0-100), confidence,
+  expectedCounterOfferEur, suggestedOptimalOfferEur, factors (impact positive/negative/neutral
+  + weight 1-10), scenarios (3-4 možni izidi z verjetnostmi in finalPriceEur), warnings,
+  optimalStrategy (approach direct_offer/build_rapport/wait_for_drop/bundle_offer/walk_away,
+  timing, messageTips). Upošteva sellerHistory in marketContext.
+- src/components/dashboard/listings-view.tsx: dodana "AI Negotiation Outcome" sekcija
+  v detail drawer (med Fraud Detection in AI Auto-Bid). Input za ponudbo in sporočilo.
+  Prikazuje success probability z barvo in progress bar, counter-offer in optimal offer,
+  strategijo, faktorje (positive/negative/neutral), scenarije z verjetnostmi, opozorila
+  in kontekst (market, seller history, days since posted). State reset ob menjavi listing-a.
+- src/components/dashboard/statistics-view.tsx: dodana "AI Inventory Insurance Optimizer"
+  kartica z storage type select (home/garage/storage_unit/shop), risk analysis grid
+  (skupna vrednost/koncentracija/theft risk/amortizacija), strategy + policy (tip/pokritje/
+  premija/ponudniki), self-insurance reserve, high-risk items z recommendations, priporočila
+  z priority in savings.
+- src/components/dashboard/trades-view.tsx: dodan "Listing generator" gumb v orodno vrstico.
+  Prikaz rezultatov vključuje: title + cena, market benchmark, main description z copy button,
+  call to action, highlight features, honest disclosures, platform adaptations (bolha/facebook/
+  vinted), image strategy (glavna/detalji/kontekst/video), SEO (primary keyword, search terms),
+  tags.
+- src/app/page.tsx: verzija v6.14.0
+- TypeScript: nobenih novih napak uvedenih (vse 25 napak je pre-existing)
+- Git commit: 'feat(v6.14): AI Insurance Optimizer, Multi-Modal Listing Generator, Negotiation Outcome Predictor'
+
+Stage Summary:
+- 3 nove funkcionalnosti za maksimizacijo dobička in zmanjšanje tveganja
+- 3 novi API ruti (insurance-optimizer, multimodal-listing, negotiation-outcome)
+- ~1352 novih vrstic kode
+- Verzija aplikacije: v6.14.0
