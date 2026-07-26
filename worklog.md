@@ -633,3 +633,37 @@ Stage Summary:
 - 3 novi API ruti (similar, bulk, monthly-report)
 - ~715 novih vrstic kode
 - Verzija aplikacije: v5.7.0
+
+---
+Task ID: v5.8
+Agent: main
+Task: Nadaljevanje razvoja aplikacije Markec AI Firm — Opportunity Monitor (v5.8)
+
+Work Log:
+- prisma/schema.prisma: 9 novih polj v Settings za scraping config (proxyList,
+  proxyEnabled, realisticHeaders, requestMinDelay, requestMaxDelay, stealthMode,
+  captchaSolverEnabled, captchaApiKey, tlsFingerprinting).
+- src/lib/scraper-v2.ts: nova knjižnica z vsemi anti-detection tehnikami:
+  - 9 User-Agent stringov (Chrome/Firefox/Safari/Edge na Win/Mac/Linux)
+  - Rotacija Accept-Language, Referer, Sec-Fetch headers
+  - Round-robin proxy rotacija (HTTP/SOCKS5 z avtentikacijo)
+  - Randomizacija timing-a (configurable min/max delay)
+  - CAPTCHA detekcija (reCAPTCHA, hCaptcha, Cloudflare, generic)
+  - 2captcha API integracija (submit + poll za result)
+  - advancedFetch() ki kombinira vse tehnike
+  - stealthScrape() z Playwright anti-detection (override webdriver, plugins,
+    chrome runtime, permissions, viewport, locale, timezone)
+- src/app/api/settings/route.ts: vsa nova polja dodana v GET in POST.
+- src/components/dashboard/settings-view.tsx: ScrapingConfigSection komponenta
+  z vsemi toggle-i, inputi in priporočili.
+- src/app/page.tsx: verzija v5.8.0
+- TypeScript: nobenih novih napak
+- Git commit: 'feat(v5.8): Advanced scraping — proxy rotation, realistic headers, stealth mode, CAPTCHA solving'
+
+Stage Summary:
+- 6 tehnik za boljše scrapanje implementiranih
+- 1 nova knjižnica (scraper-v2.ts)
+- 1 nova komponenta (ScrapingConfigSection)
+- 9 novih polj v Prisma shemi
+- ~650 novih vrstic kode
+- Verzija aplikacije: v5.8.0
