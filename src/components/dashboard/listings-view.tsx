@@ -101,6 +101,9 @@ export function ListingsView() {
   // v6.1: AI deduplication
   const [dedupLoading, setDedupLoading] = useState(false);
   const [duplicates, setDuplicates] = useState<any[]>([]);
+  // v6.5: Bulk buy opportunities
+  const [bulkBuyLoading, setBulkBuyLoading] = useState(false);
+  const [bulkBuyData, setBulkBuyData] = useState<any>(null);
   // v6.1: Saved searches
   const [savedSearches, setSavedSearches] = useState<any[]>([]);
   const [showSaveSearch, setShowSaveSearch] = useState(false);
@@ -399,6 +402,27 @@ export function ListingsView() {
             {dedupLoading ? <RefreshCw className="w-3.5 h-3.5 animate-spin" /> : <GitCompare className="w-3.5 h-3.5" />}
             AI deduplikacija
           </Button>
+          {/* v6.5: Bulk Buy Opportunities */}
+          <Button
+            size="sm"
+            variant="outline"
+            className="gap-2 border-green-400/40 text-green-400 hover:bg-green-400/10"
+            disabled={bulkBuyLoading}
+            onClick={async () => {
+              setBulkBuyLoading(true); setBulkBuyData(null);
+              try {
+                const res = await fetch('/api/ai/bulk-buy?days=30&minListings=3');
+                const data = await res.json();
+                if (data.ok) { setBulkBuyData(data); toast.success(`✓ ${data.bulkOpportunities} bulk priložnosti (${data.totalPotentialSavings}€ prihranka)`); }
+                else toast.error(data.error ?? 'Napaka');
+              } catch (e: any) { toast.error(e?.message ?? 'Napaka'); }
+              finally { setBulkBuyLoading(false); }
+            }}
+            title="AI najdi bulk buy priložnosti (paketni nakup s popustom)"
+          >
+            {bulkBuyLoading ? <RefreshCw className="w-3.5 h-3.5 animate-spin" /> : <ShoppingCart className="w-3.5 h-3.5" />}
+            Bulk buy
+          </Button>
           {/* v6.1: Save search */}
           <Button
             size="sm"
@@ -537,6 +561,53 @@ export function ListingsView() {
                         <span className="text-[9px] text-muted-foreground shrink-0">{l.source}</span>
                       </div>
                     ))}
+                  </div>
+                </div>
+              ))}
+            </div>
+          </CardContent>
+        </Card>
+      )}
+
+      {/* v6.5: Bulk Buy results */}
+      {bulkBuyData && !bulkBuyLoading && (
+        <Card className="bg-green-400/5 border-green-400/30">
+          <CardContent className="p-4">
+            <div className="flex items-center justify-between mb-3">
+              <h3 className="text-sm font-bold uppercase tracking-wider text-green-400 flex items-center gap-2">
+                <ShoppingCart className="w-4 h-4" />
+                Bulk Buy priložnosti — {bulkBuyData.bulkOpportunities} prodajalcev, {bulkBuyData.totalPotentialSavings}€ prihranka
+                <Badge variant="outline" className="text-[10px] text-green-400 border-green-400/40">v6.5</Badge>
+              </h3>
+              <Button size="sm" variant="ghost" onClick={() => setBulkBuyData(null)} className="h-6 text-xs">×</Button>
+            </div>
+            <div className="space-y-2 max-h-80 overflow-y-auto">
+              {bulkBuyData.opportunities.map((opp: any, i: number) => (
+                <div key={i} className="p-2 bg-background/30 rounded border border-green-400/20">
+                  <div className="flex items-center justify-between mb-1">
+                    <span className="font-bold text-xs">{opp.sellerName}</span>
+                    <div className="flex items-center gap-1">
+                      <Badge variant="outline" className="text-[9px] text-green-400 border-green-400/40">
+                        {opp.discountPct}% popust
+                      </Badge>
+                      <Badge variant="outline" className="text-[9px] text-primary border-primary/40">
+                        💰 {opp.potentialSavings}€ prihranek
+                      </Badge>
+                    </div>
+                  </div>
+                  <div className="text-[10px] text-muted-foreground mb-1">
+                    {opp.listingCount} oglasov • skupna vrednost {opp.totalValue}€ → paketna cena {opp.suggestedBulkPrice}€
+                  </div>
+                  <div className="text-[10px] italic text-muted-foreground mb-1">{opp.reason}</div>
+                  <div className="space-y-0.5">
+                    {opp.listings.slice(0, 4).map((l: any, j: number) => (
+                      <a key={j} href={l.url} target="_blank" rel="noopener noreferrer" className="flex items-center gap-1.5 p-0.5 hover:bg-card/50 rounded text-[10px]">
+                        <span className="truncate flex-1">{l.title}</span>
+                        <span className="font-mono text-amber-400 shrink-0">{l.priceText}</span>
+                        {l.dealScore != null && <Badge variant="outline" className="text-[8px] text-primary border-primary/40 shrink-0">🎯{l.dealScore}</Badge>}
+                      </a>
+                    ))}
+                    {opp.listings.length > 4 && <div className="text-[9px] text-muted-foreground">... in {opp.listings.length - 4} več</div>}
                   </div>
                 </div>
               ))}
