@@ -478,3 +478,51 @@ Stage Summary:
 - 1 nova Prisma tabela (SmartRule)
 - ~1800 novih vrstic kode
 - Verzija aplikacije: v5.3.0
+
+---
+Task ID: v5.4
+Agent: main
+Task: Nadaljevanje razvoja aplikacije Markec AI Firm — Opportunity Monitor (v5.4)
+
+Work Log:
+- prisma/schema.prisma: 2 novi tabeli — NegotiationMessage (listingId, direction,
+  text, isAiGenerated, aiNextStep, status, suggestedPrice) in WebhookEndpoint
+  (name, url, secret, events, isActive, triggerCount, failCount, lastResponseStatus).
+  Listing.negotiationMessages relacija dodana.
+- src/app/api/listings/[id]/negotiations/route.ts: GET (list messages) in POST
+  (add message + AI suggest next step). AI prompt uporablja zgodovino sporočil
+  in listing podatke.
+- src/components/dashboard/negotiation-history.tsx: NegotiationHistory komponenta
+  z timeline pogovora, AI naslednji korak highlight, auto-fill iz AI Negotiator,
+  direction toggle, suggested price input.
+- src/components/dashboard/listings-view.tsx: NegotiationHistory dodan v listing
+  modal za AI Auto-Bid sekcijo.
+- src/app/api/trades/portfolio-ai/route.ts: GET endpoint za AI analizo portfolia.
+  5 pravil za analizo (stari inventar, AI > cost, AI < cost, star < 14d, etc.).
+  Vrača: recommendations z action (sell/hold/reduce/monitor), reasoning,
+  suggestedSellPrice, urgency. Portfolio summary z aiOverview in aiStrategy.
+- src/components/dashboard/trades-view.tsx: dodan 'AI Portfolio' gumb in AI
+  Portfolio Analysis sekcija z overview, strategy, recommendations list z
+  action badges in urgency.
+- src/lib/webhook-engine.ts: triggerWebhooks(event, data) — pošlje na vse aktivne
+  endpointe subscribrane na ta event. HMAC SHA-256 signature za varnost.
+- src/app/api/webhooks/route.ts: GET/POST/PATCH/DELETE + test mode za testni payload.
+- src/components/dashboard/settings-view.tsx: WebhooksSection komponenta z seznamom,
+  formo za nov webhook, test gumb, ON/OFF toggle, delete, dokumentacija.
+- src/app/page.tsx: verzija v5.4.0
+- TypeScript: nobenih novih napak
+- Testiranje:
+  - webhooks CRUD: create, list, delete — vse deluje ✓
+  - webhooks test: vrača status 404 (pričakovano — test URL ne obstaja) ✓
+  - portfolio-ai: vrača ok=true s pravilnim summary-jem (0 tradeov) ✓
+  - HOME: 200 ✓
+- Git commit: 'feat(v5.4): AI Negotiation history, Portfolio AI, Webhook integrations'
+
+Stage Summary:
+- 3 nove funkcionalnosti dodane v v5.4
+- 3 novi API ruti (negotiations, portfolio-ai, webhooks)
+- 2 novi komponenti (NegotiationHistory, WebhooksSection)
+- 2 novi knjižnici (webhook-engine, negotiation-history)
+- 2 novi Prisma tabeli (NegotiationMessage, WebhookEndpoint)
+- ~2200 novih vrstic kode
+- Verzija aplikacije: v5.4.0
