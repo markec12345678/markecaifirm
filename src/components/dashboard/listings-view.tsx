@@ -95,6 +95,9 @@ export function ListingsView() {
   const [bulkLoading, setBulkLoading] = useState(false);
   // v5.5: AI categorize loading
   const [categorizing, setCategorizing] = useState(false);
+  // v5.6: AI anomaly scan
+  const [scanningAnomalies, setScanningAnomalies] = useState(false);
+  const [anomalies, setAnomalies] = useState<any[]>([]);
   const limit = 50;
 
   const load = useCallback(async () => {
@@ -319,6 +322,39 @@ export function ListingsView() {
               AI kategoriziraj
             </Button>
           )}
+          {/* v5.6: AI Anomaly Scan */}
+          <Button
+            size="sm"
+            variant="outline"
+            className="gap-2 border-amber-400/40 text-amber-400 hover:bg-amber-400/10"
+            disabled={scanningAnomalies}
+            onClick={async () => {
+              setScanningAnomalies(true);
+              setAnomalies([]);
+              try {
+                const body: any = { days: 7, limit: 30 };
+                if (monitorId !== 'all') body.monitorId = monitorId;
+                const res = await fetch('/api/ai/detect-anomalies', {
+                  method: 'POST',
+                  headers: { 'Content-Type': 'application/json' },
+                  body: JSON.stringify(body),
+                });
+                const data = await res.json();
+                if (data.ok) {
+                  setAnomalies(data.anomalies || []);
+                  const suspicious = data.suspiciousCount ?? 0;
+                  toast.success(`✓ Analizirano ${data.analyzedCount} oglasov, ${suspicious} sumljivih`);
+                } else {
+                  toast.error(data.error ?? 'Napaka');
+                }
+              } catch (e: any) { toast.error(e?.message ?? 'Napaka'); }
+              finally { setScanningAnomalies(false); }
+            }}
+            title="AI skeniraj za sumljive oglase (prevarantski vzorci)"
+          >
+            {scanningAnomalies ? <RefreshCw className="w-3.5 h-3.5 animate-spin" /> : <AlertTriangle className="w-3.5 h-3.5" />}
+            AI anomaly scan
+          </Button>
           <Button size="sm" variant="outline" onClick={load} className="gap-2">
             <RefreshCw className="w-3.5 h-3.5" /> Osveži
           </Button>
@@ -331,6 +367,58 @@ export function ListingsView() {
           </Button>
         </div>
       </div>
+
+      {/* v5.6: Anomaly scan results */}
+      {anomalies.length > 0 && (
+        <Card className="bg-amber-400/5 border-amber-400/30">
+          <CardContent className="p-4">
+            <div className="flex items-center justify-between mb-3">
+              <h3 className="text-sm font-bold uppercase tracking-wider text-amber-400 flex items-center gap-2">
+                <AlertTriangle className="w-4 h-4" />
+                AI Anomaly Scan — {anomalies.filter(a => a.anomalyScore >= 50).length} sumljivih od {anomalies.length}
+                <Badge variant="outline" className="text-[10px] text-amber-400 border-amber-400/40">v5.6</Badge>
+              </h3>
+              <Button size="sm" variant="ghost" onClick={() => setAnomalies([])} className="h-6 text-xs">×</Button>
+            </div>
+            <div className="space-y-1.5 max-h-80 overflow-y-auto">
+              {anomalies.filter(a => a.anomalyScore >= 30).sort((a, b) => b.anomalyScore - a.anomalyScore).map((a, i) => (
+                <div key={i} className={cn(
+                  'flex items-start gap-2 p-2 rounded text-xs border',
+                  a.anomalyScore >= 70 ? 'bg-red-500/5 border-red-500/30' :
+                  a.anomalyScore >= 50 ? 'bg-amber-400/5 border-amber-400/30' :
+                  'bg-card/50 border-border'
+                )}>
+                  <Badge variant="outline" className={cn(
+                    'text-[9px] font-mono shrink-0',
+                    a.anomalyScore >= 70 ? 'text-red-500 border-red-500/40' :
+                    a.anomalyScore >= 50 ? 'text-amber-400 border-amber-400/40' :
+                    'text-muted-foreground'
+                  )}>
+                    {a.anomalyScore}
+                  </Badge>
+                  <div className="flex-1 min-w-0">
+                    <a href={a.url} target="_blank" rel="noopener noreferrer" className="font-medium hover:text-primary truncate block">
+                      {a.title}
+                    </a>
+                    <div className="text-[10px] text-muted-foreground mt-0.5">
+                      {a.price != null && `${a.price}€ • `}
+                      {a.flags?.join(', ') || 'brez flagov'}
+                    </div>
+                    {a.reasoning && (
+                      <div className="text-[10px] italic text-muted-foreground mt-0.5">{a.reasoning}</div>
+                    )}
+                    {a.recommendation && (
+                      <div className={cn('text-[10px] mt-0.5', a.recommendation === 'avoid' ? 'text-red-500' : a.recommendation === 'proceed_cautiously' ? 'text-amber-400' : 'text-muted-foreground')}>
+                        → {a.recommendation}
+                      </div>
+                    )}
+                  </div>
+                </div>
+              ))}
+            </div>
+          </CardContent>
+        </Card>
+      )}
 
       {/* Filters */}
       <Card className="bg-card/50">
@@ -775,6 +863,9 @@ function ListingDetailModal({ listingId, onClose }: { listingId: string | null; 
   // v5.1: Seller reputation
   const [sellerRep, setSellerRep] = useState<any>(null);
   const [sellerLoading, setSellerLoading] = useState(false);
+  // v5.6: External price comparison
+  const [extCompare, setExtCompare] = useState<any>(null);
+  const [extCompareLoading, setExtCompareLoading] = useState(false);
 
   const loadDetail = useCallback(async () => {
     if (!listingId) {
@@ -800,6 +891,8 @@ function ListingDetailModal({ listingId, onClose }: { listingId: string | null; 
       // v5.1: Reset prediction
       setPrediction(null);
       setPredictTarget(d.listing?.targetPrice != null ? String(d.listing.targetPrice) : '');
+      // v5.6: Reset external comparison
+      setExtCompare(null);
       // v5.1: Reset seller reputation
       setSellerRep(null);
       // Auto-load seller reputation if listing has sellerName
@@ -1948,6 +2041,103 @@ function ListingDetailModal({ listingId, onClose }: { listingId: string | null; 
             {/* v5.5: AI Price Forecast — vizualizacija cene z napovedmi */}
             {listing.price != null && (
               <PriceForecastChart listingId={listing.id} currentPrice={listing.price} />
+            )}
+
+            {/* v5.6: External Price Comparison — primerjaj z Amazon/eBay/AliExpress */}
+            {listing.price != null && (
+              <div className="bg-card/30 border border-border rounded p-3">
+                <div className="flex items-center justify-between mb-2">
+                  <h4 className="text-xs uppercase tracking-wider text-muted-foreground flex items-center gap-1.5">
+                    <GitCompare className="w-3.5 h-3.5" />
+                    Primerjava z zunanjimi viri
+                    <Badge variant="outline" className="text-[10px] text-primary border-primary/40">v5.6</Badge>
+                  </h4>
+                  <Button
+                    size="sm"
+                    variant="outline"
+                    className="h-7 text-xs gap-1"
+                    disabled={extCompareLoading}
+                    onClick={async () => {
+                      setExtCompareLoading(true);
+                      setExtCompare(null);
+                      try {
+                        const res = await fetch(`/api/listings/${listing.id}/external-compare`);
+                        const data = await res.json();
+                        if (data.ok) {
+                          setExtCompare(data);
+                          toast.success(`✓ ${data.comparisons?.length || 0} primerjav najdenih`);
+                        } else {
+                          toast.error(data.error ?? 'Napaka');
+                        }
+                      } catch (e: any) { toast.error(e?.message ?? 'Napaka'); }
+                      finally { setExtCompareLoading(false); }
+                    }}
+                  >
+                    {extCompareLoading ? <RefreshCw className="w-3 h-3 animate-spin" /> : <GitCompare className="w-3 h-3" />}
+                    Primerjaj
+                  </Button>
+                </div>
+                {extCompareLoading ? (
+                  <div className="py-4 text-center text-xs text-muted-foreground">
+                    <RefreshCw className="w-4 h-4 mx-auto mb-2 animate-spin opacity-50" />
+                    AI išče podobne izdelke na Amazon, eBay, AliExpress...
+                  </div>
+                ) : extCompare ? (
+                  <div className="space-y-2">
+                    {extCompare.comparisons?.length > 0 ? (
+                      <div className="space-y-1">
+                        {extCompare.comparisons.map((c: any, i: number) => {
+                          const isCheaper = c.priceDiff > 0; // local is more expensive = external is cheaper
+                          return (
+                            <a
+                              key={i}
+                              href={c.url || '#'}
+                              target="_blank"
+                              rel="noopener noreferrer"
+                              className={cn(
+                                'flex items-center gap-2 p-1.5 rounded text-xs border hover:bg-card/50 transition-colors',
+                                isCheaper ? 'bg-red-500/5 border-red-500/20' : 'bg-primary/5 border-primary/20'
+                              )}
+                            >
+                              <Badge variant="outline" className="text-[9px] shrink-0 uppercase">{c.source}</Badge>
+                              <div className="flex-1 min-w-0">
+                                <div className="truncate">{c.productName}</div>
+                                <div className="text-[10px] text-muted-foreground">
+                                  <span className={cn('font-mono font-bold', isCheaper ? 'text-red-500' : 'text-primary')}>
+                                    {c.price}€
+                                  </span>
+                                  {' '}
+                                  <span className={cn(isCheaper ? 'text-red-500' : 'text-primary')}>
+                                    ({c.priceDiff > 0 ? '+' : ''}{c.priceDiff}€ / {c.priceDiffPct > 0 ? '+' : ''}{c.priceDiffPct}%)
+                                  </span>
+                                </div>
+                              </div>
+                              <ExternalLink className="w-3 h-3 text-muted-foreground shrink-0" />
+                            </a>
+                          );
+                        })}
+                      </div>
+                    ) : (
+                      <p className="text-[11px] text-muted-foreground text-center py-2">Ni najdenih primerjav.</p>
+                    )}
+                    {extCompare.aiAnalysis && (
+                      <div className="bg-background/30 rounded p-2 text-[11px]">
+                        <div className="text-[10px] uppercase tracking-wider text-muted-foreground mb-1">📊 AI analiza</div>
+                        <p>{extCompare.aiAnalysis}</p>
+                      </div>
+                    )}
+                    {extCompare.aiRecommendation && (
+                      <div className="bg-primary/5 border border-primary/20 rounded p-2 text-[11px]">
+                        <span className="text-primary font-bold">💡 Priporočilo:</span> {extCompare.aiRecommendation}
+                      </div>
+                    )}
+                  </div>
+                ) : (
+                  <p className="text-[11px] text-muted-foreground text-center py-2">
+                    Klikni "Primerjaj" za AI primerjavo z Amazon, eBay, AliExpress.
+                  </p>
+                )}
+              </div>
             )}
 
             {/* v1.8: Market comparison — real data vs AI estimate */}
