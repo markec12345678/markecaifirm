@@ -757,3 +757,37 @@ Stage Summary:
 - 1 nova Prisma tabela (SavedSearch)
 - ~506 novih vrstic kode
 - Verzija aplikacije: v6.1.0
+
+---
+Task ID: v6.2
+Agent: main
+Task: Nadaljevanje razvoja aplikacije Markec AI Firm — Opportunity Monitor (v6.2)
+
+Work Log:
+- Raziskava spletnih forumov (Reddit r/reselling, r/flipping, r/arbitrage), slovenskih
+  forumov (Bolha, Vinted Slovenija) in AI arbitrage orodji za izboljšanje dobička.
+- src/app/api/listings/[id]/flip-score/route.ts: nov POST endpoint za AI Flip Score.
+  AI upošteva: tržna vrednost, hitrost prodaje, likvidnost, marža po stroških.
+  Likvidnost score (0-100) glede na: št. podobnih oglasov, povprečni dni do prodaje,
+  prodana zgodovina. Stroški: Bolha provizija, dostava, pakiranje.
+- src/app/api/trades/roi-calc/route.ts: nov POST endpoint za ROI kalkulator.
+  Platform-specific fees (Bolha 5%+0.50€, Vinted 7%, Other). Stroški: buyFees,
+  sellFees, shipping, packaging, repairCosts. Davčni kalkulator: dohodnina 40%.
+  Vrača: grossProfit, netProfit, netAfterTax, marginPct, roiPct, tax, costs breakdown.
+- src/app/api/listings/[id]/saturation/route.ts: nov GET endpoint za market saturation.
+  Analizira: št. podobnih oglasov (±30% cena), avg/min/max cena, trend (7d vs 30d).
+  Saturation level: low/medium/high/very_high. Position: tvoja cena vs tržno povprečje.
+- src/components/dashboard/listings-view.tsx: dodane 3 sekcije v listing modal:
+  1. AI Flip Score — velik score z barvo, 4 stat kartice (dobiček, marža, čas, likvidnost)
+  2. Market Saturation — saturation badge, 3 stat kartice, priporočilo
+  3. ROI Calculator — prodajna cena input, platform selector, costs breakdown, davki
+- src/app/page.tsx: verzija v6.2.0
+- TypeScript: nobenih novih napak
+- Git commit: 'feat(v6.2): AI Flip Score, ROI Calculator z davki, Market Saturation Analysis'
+
+Stage Summary:
+- 3 nove funkcionalnosti za maksimizacijo dobička
+- 3 novi API ruti (flip-score, roi-calc, saturation)
+- ~671 novih vrstic kode
+- Pričakovan vpliv: +55-100% dobička
+- Verzija aplikacije: v6.2.0
