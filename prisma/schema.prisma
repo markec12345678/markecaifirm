@@ -119,9 +119,25 @@ model Settings {
   tlsFingerprinting    Boolean @default(false)
   // v4.9: Active profile (null = show all data, no profile filter)
   activeProfileId      String?
+  // v6.1: Email digest template (HTML template with {{title}}, {{listings}}, etc.)
+  emailDigestTemplate  String @default("")
   // Metadata
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
+}
+
+// v6.1: Saved Searches — uporabnik shrani kompleksne iskalne filtrore
+model SavedSearch {
+  id          String   @id @default(cuid())
+  name        String
+  // JSON: { monitorId, verdict, minScore, maxRisk, hasImage, bookmarkedOnly, contactFilter, sort, keywords }
+  filters     String
+  // Optional: auto-run and notify when new results
+  autoNotify  Boolean  @default(false)
+  lastRunAt   DateTime?
+  lastResultCount Int  @default(0)
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
 }
 
 // v1.5: Push subscription — stores browser push endpoints
