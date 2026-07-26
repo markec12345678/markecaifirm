@@ -820,3 +820,32 @@ Stage Summary:
 - 3 novi API ruti (auto-reprice, niche-profitability, generate-listing)
 - ~720 novih vrstic kode
 - Verzija aplikacije: v6.3.0
+
+---
+Task ID: v6.4
+Agent: main
+Task: Nadaljevanje razvoja aplikacije Markec AI Firm — Opportunity Monitor (v6.4)
+
+Work Log:
+- src/app/api/stats/speed-to-sell/route.ts: nov GET endpoint za analizo časa prodaje.
+  Overall stats (avgDays, median, min/max, fastFlips, slowFlips), by category
+  (speedScore, speedLabel), by price range (5 rangov).
+- src/app/api/sellers/competitors/route.ts: nov GET endpoint za competitor tracking.
+  Per seller: listingCount, avgPrice, priceDrops, threatLevel (low/medium/high),
+  recentActivity (active/inactive), sources, prilika/sumnjivo counts.
+- src/app/api/trades/refurb-roi/route.ts: nov POST endpoint za refurbishment ROI.
+  Primerja profit brez/s popravilom, stroški (Bolha provizija, dostava, pakiranje,
+  refurb cost), davki (40%), 6 common scenarios.
+- src/components/dashboard/statistics-view.tsx: dodana Speed-to-Sell card z 5 stat
+  karticami, best/worst niche, category list z speed labels, price range grid.
+- src/components/dashboard/analytics-view.tsx: dodana Konkurenčni prodajalci card
+  z stats grid, competitor list z threat badges, activity indicators.
+- src/app/page.tsx: verzija v6.4.0
+- TypeScript: nobenih novih napak
+- Git commit: 'feat(v6.4): Speed-to-Sell Analytics, Competitor Seller Tracking, Refurbishment ROI Calculator'
+
+Stage Summary:
+- 3 nove funkcionalnosti za maksimizacijo dobička
+- 3 novi API ruti (speed-to-sell, competitors, refurb-roi)
+- ~650 novih vrstic kode
+- Verzija aplikacije: v6.4.0
