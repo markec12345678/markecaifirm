@@ -877,3 +877,33 @@ Stage Summary:
 - 3 novi API ruti (seasonal-calendar, bulk-buy, sync-listing)
 - ~644 novih vrstic kode
 - Verzija aplikacije: v6.5.0
+
+---
+Task ID: v6.6
+Agent: main
+Task: Nadaljevanje razvoja aplikacije Markec AI Firm — Opportunity Monitor (v6.6)
+
+Work Log:
+- src/app/api/ai/prioritize-alerts/route.ts: nov POST endpoint za AI alert prioritization.
+  Heuristic ranking (AI verdict, deal score, margin, bookmarked, target hit) + AI enhancement
+  (priority 1-5, reason, suggested_action) za top 10.
+- src/app/api/ai/budget-allocator/route.ts: nov POST endpoint za AI budget allocation.
+  Analiza niche profitability + market opportunities. Per category: suggestedBudget,
+  percentage, expectedROI, expectedProfit. Strategy + reserve + totalExpectedProfit.
+- src/app/api/ai/price-war/route.ts: nov GET endpoint za price war detection.
+  Analiza padcev cen po kategorijah. Price war indicators: 3+ sellers, 10%+ avg drop, 5+ drops.
+  trend (accelerating/decelerating/stable), isPriceWar, buyerMarket flags.
+- src/components/dashboard/alerts-view.tsx: dodan 'AI Prioriteta' gumb z results panel.
+- src/components/dashboard/statistics-view.tsx: dodana AI Budget Allocator card z input,
+  allocation list, progress bars, strategy, expected profit.
+- src/components/dashboard/analytics-view.tsx: dodana Detekcija cenovne vojne card z
+  stats grid, category list z 🔥 VOJNA / ✅ BUYER'S MARKET badges, top drops.
+- src/app/page.tsx: verzija v6.6.0
+- TypeScript: nobenih novih napak
+- Git commit: 'feat(v6.6): AI Alert Prioritization, Budget Allocator, Price War Detection'
+
+Stage Summary:
+- 3 nove funkcionalnosti za maksimizacijo dobička
+- 3 novi API ruti (prioritize-alerts, budget-allocator, price-war)
+- ~732 novih vrstic kode
+- Verzija aplikacije: v6.6.0
