@@ -62,6 +62,12 @@ export function DashboardView({ onNavigate }: ViewProps) {
   // v5.6: Dashboard customization
   const [widgetOrder, setWidgetOrder] = useState<WidgetId[]>([...WIDGET_IDS]);
   const [customizeMode, setCustomizeMode] = useState(false);
+  // v6.7: Goal tracker
+  const [goalData, setGoalData] = useState<any>(null);
+
+  useEffect(() => {
+    fetch('/api/trades/goal-tracker').then(r => r.ok ? r.json() : null).then(d => d && setGoalData(d)).catch(() => {});
+  }, []);
 
   // Load dashboard layout from settings
   useEffect(() => {
@@ -498,6 +504,128 @@ export function DashboardView({ onNavigate }: ViewProps) {
         <div className="bg-primary/5 border border-primary/20 rounded p-2 text-xs text-primary text-center">
           🔧 Customize mode — uporabi ↑↓ gumbe za preureditev widgetov. Spremembe se samodejno shranijo.
         </div>
+      )}
+
+      {/* v6.7: Profit Goal Tracker v2 */}
+      {goalData && goalData.goal?.monthlyGoal > 0 && (
+        <Card className={cn('bg-card/50 border-2',
+          goalData.recommendationLevel === 'good' ? 'border-primary/40' :
+          goalData.recommendationLevel === 'warning' ? 'border-amber-400/40' : 'border-red-500/40')}>
+          <CardContent className="p-4">
+            <div className="flex items-center justify-between mb-3">
+              <h3 className="text-sm font-bold uppercase tracking-wider text-primary flex items-center gap-2">
+                <Target className="w-4 h-4" />
+                Mesečni cilj dobička
+                <Badge variant="outline" className="text-[10px] text-primary border-primary/40">v6.7</Badge>
+              </h3>
+              <span className="text-xs text-muted-foreground">
+                {new Date().toLocaleDateString('sl-SI', { month: 'long', year: 'numeric' })}
+              </span>
+            </div>
+
+            {/* Progress bar */}
+            <div className="mb-3">
+              <div className="flex items-center justify-between text-xs mb-1">
+                <span className="text-muted-foreground">
+                  Realizirano: <span className="font-mono font-bold text-primary">{goalData.current.realizedProfit}€</span>
+                </span>
+                <span className="text-muted-foreground">
+                  Cilj: <span className="font-mono font-bold">{goalData.goal.monthlyGoal}€</span>
+                </span>
+              </div>
+              <div className="h-4 bg-background rounded-full overflow-hidden relative">
+                {/* Realized portion */}
+                <div
+                  className="h-full bg-primary transition-all"
+                  style={{ width: `${Math.min(100, goalData.goal.goalPct)}%` }}
+                />
+                {/* Projected portion (lighter) */}
+                {goalData.goal.projectedPct > goalData.goal.goalPct && (
+                  <div
+                    className="absolute top-0 h-full bg-primary/30 transition-all"
+                    style={{ width: `${Math.min(100, goalData.goal.projectedPct)}%` }}
+                  />
+                )}
+                {/* Milestone markers */}
+                {goalData.milestones?.map((m: any) => (
+                  <div key={m.pct} className="absolute top-0 bottom-0 w-px bg-foreground/30" style={{ left: `${m.pct}%` }} />
+                ))}
+              </div>
+              <div className="flex items-center justify-between text-[10px] mt-1">
+                <span className={cn('font-bold', goalData.goal.goalPct >= 100 ? 'text-primary' : 'text-muted-foreground')}>
+                  {goalData.goal.goalPct}%
+                </span>
+                {goalData.goal.projectedPct !== goalData.goal.goalPct && (
+                  <span className="text-primary/50">Pričakovano: {goalData.goal.projectedPct}%</span>
+                )}
+                <span className="text-muted-foreground">Še {goalData.goal.remainingToGoal}€ • {goalData.goal.daysRemaining}d</span>
+              </div>
+            </div>
+
+            {/* Stats grid */}
+            <div className="grid grid-cols-4 gap-2 text-xs mb-2">
+              <div className="bg-background/30 rounded p-1.5 text-center">
+                <div className="text-[9px] text-muted-foreground uppercase">Realizirano</div>
+                <div className="font-mono font-bold text-primary">{goalData.current.realizedProfit}€</div>
+              </div>
+              <div className="bg-background/30 rounded p-1.5 text-center">
+                <div className="text-[9px] text-muted-foreground uppercase">Potencial</div>
+                <div className="font-mono font-bold text-amber-400">{goalData.current.potentialProfit}€</div>
+              </div>
+              <div className="bg-background/30 rounded p-1.5 text-center">
+                <div className="text-[9px] text-muted-foreground uppercase">Dnevno potrebno</div>
+                <div className={cn('font-mono font-bold', goalData.goal.dailyNeeded > 50 ? 'text-red-500' : 'text-primary')}>
+                  {goalData.goal.dailyNeeded}€/dan
+                </div>
+              </div>
+              <div className="bg-background/30 rounded p-1.5 text-center">
+                <div className="text-[9px] text-muted-foreground uppercase">MoM trend</div>
+                <div className={cn('font-mono font-bold', (goalData.current.momTrend ?? 0) > 0 ? 'text-primary' : 'text-red-500')}>
+                  {goalData.current.momTrend != null ? `${goalData.current.momTrend > 0 ? '+' : ''}${goalData.current.momTrend}%` : '—'}
+                </div>
+              </div>
+            </div>
+
+            {/* Milestones */}
+            <div className="flex items-center gap-1 mb-2">
+              {goalData.milestones?.map((m: any) => (
+                <div key={m.pct} className={cn(
+                  'flex-1 text-center text-[9px] py-0.5 rounded border',
+                  m.achieved ? 'border-primary/40 bg-primary/10 text-primary' : 'border-border text-muted-foreground'
+                )}>
+                  {m.achieved ? '✓' : ''} {m.pct}% ({m.profit}€)
+                </div>
+              ))}
+            </div>
+
+            {/* Recommendation */}
+            <div className={cn('rounded p-2 text-xs font-medium',
+              goalData.recommendationLevel === 'good' ? 'bg-primary/5 text-primary' :
+              goalData.recommendationLevel === 'warning' ? 'bg-amber-400/5 text-amber-400' :
+              'bg-red-500/5 text-red-500')}>
+              {goalData.recommendation}
+            </div>
+
+            {/* History mini chart */}
+            {goalData.history?.length > 1 && (
+              <div className="mt-2 flex items-end gap-1 h-10">
+                {goalData.history.map((h: any, i: number) => {
+                  const maxProfit = Math.max(...goalData.history.map((x: any) => Math.abs(x.profit)), 1);
+                  const heightPct = (Math.abs(h.profit) / maxProfit) * 100;
+                  return (
+                    <div key={i} className="flex-1 group relative" title={`${h.label}: ${h.profit}€ (${h.count} prodaj)`}>
+                      <div
+                        className={cn('w-full rounded-sm', h.profit >= 0 ? 'bg-primary/60' : 'bg-red-500/60')}
+                        style={{ height: `${Math.max(4, heightPct)}%` }}
+                      />
+                      <div className="text-[7px] text-muted-foreground text-center mt-0.5 truncate">{h.label}</div>
+                    </div>
+                  );
+                })}
+              </div>
+            )}
+          </CardContent>
+        </Card>
       )}
 
       {/* v2.7: Activity feed */}
