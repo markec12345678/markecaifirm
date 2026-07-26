@@ -5,6 +5,7 @@ import { Card, CardContent } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { useSwipe } from '@/lib/use-swipe';
 import { NegotiationHistory } from '@/components/dashboard/negotiation-history';
+import { PriceForecastChart } from '@/components/dashboard/price-forecast-chart';
 import { Badge } from '@/components/ui/badge';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
@@ -92,6 +93,8 @@ export function ListingsView() {
   // v3.6: Bulk select for listings
   const [bulkIds, setBulkIds] = useState<Set<string>>(new Set());
   const [bulkLoading, setBulkLoading] = useState(false);
+  // v5.5: AI categorize loading
+  const [categorizing, setCategorizing] = useState(false);
   const limit = 50;
 
   const load = useCallback(async () => {
@@ -284,7 +287,38 @@ export function ListingsView() {
             Vsi scraped oglasi z AI oceno — vključno z NEZANIMIVO za validacijo.
           </p>
         </div>
-        <div className="flex items-center gap-2">
+        <div className="flex items-center gap-2 flex-wrap">
+          {/* v5.5: AI Bulk Categorize */}
+          {monitorId !== 'all' && (
+            <Button
+              size="sm"
+              variant="outline"
+              className="gap-2 border-primary/40 text-primary hover:bg-primary/10"
+              disabled={categorizing}
+              onClick={async () => {
+                setCategorizing(true);
+                try {
+                  const res = await fetch('/api/ai/categorize', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ monitorId, limit: 50 }),
+                  });
+                  const data = await res.json();
+                  if (data.ok) {
+                    toast.success(`✓ ${data.count} oglasov kategoriziranih`);
+                    await load();
+                  } else {
+                    toast.error(data.error ?? 'Napaka');
+                  }
+                } catch (e: any) { toast.error(e?.message ?? 'Napaka'); }
+                finally { setCategorizing(false); }
+              }}
+              title="AI kategoriziraj nekategorizirane oglase"
+            >
+              {categorizing ? <RefreshCw className="w-3.5 h-3.5 animate-spin" /> : <Sparkles className="w-3.5 h-3.5" />}
+              AI kategoriziraj
+            </Button>
+          )}
           <Button size="sm" variant="outline" onClick={load} className="gap-2">
             <RefreshCw className="w-3.5 h-3.5" /> Osveži
           </Button>
@@ -1910,6 +1944,11 @@ function ListingDetailModal({ listingId, onClose }: { listingId: string | null; 
                 </div>
               )}
             </div>
+
+            {/* v5.5: AI Price Forecast — vizualizacija cene z napovedmi */}
+            {listing.price != null && (
+              <PriceForecastChart listingId={listing.id} currentPrice={listing.price} />
+            )}
 
             {/* v1.8: Market comparison — real data vs AI estimate */}
             {data?.marketComparison && (

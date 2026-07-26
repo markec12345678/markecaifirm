@@ -66,6 +66,8 @@ export async function GET() {
     autoCleanupListingsDays: s.autoCleanupListingsDays,
     // v4.2: Profit goal
     monthlyProfitGoal: s.monthlyProfitGoal,
+    // v5.5: Category notifications
+    categoryNotifications: s.categoryNotifications || '{}',
     updatedAt: s.updatedAt,
   });
 }
@@ -212,6 +214,8 @@ export async function POST(req: NextRequest) {
   if (typeof body.autoCleanupListingsDays === 'number') data.autoCleanupListingsDays = body.autoCleanupListingsDays;
   // v4.2: Profit goal
   if (typeof body.monthlyProfitGoal === 'number') data.monthlyProfitGoal = body.monthlyProfitGoal;
+  // v5.5: Category notifications
+  if (typeof body.categoryNotifications === 'string') data.categoryNotifications = body.categoryNotifications;
   if (typeof body.aiApiKey === 'string' && body.aiApiKey.trim() !== '') {
     data.aiApiKey = body.aiApiKey.trim();
   }
