@@ -731,3 +731,29 @@ Stage Summary:
 - 3 novi API ruti (enrich, stats/scraper, ai/trend-predictions)
 - ~824 novih vrstic kode
 - Verzija aplikacije: v6.0.0
+
+---
+Task ID: v6.1
+Agent: main
+Task: Nadaljevanje razvoja aplikacije Markec AI Firm — Opportunity Monitor (v6.1)
+
+Work Log:
+- src/app/api/ai/deduplicate/route.ts: nov POST endpoint za AI deduplikacijo.
+  Fast path: normalized title match. AI fallback: similarity analysis.
+- src/app/api/listings/bulk-hide/route.ts: nov POST endpoint za bulk hide.
+- src/components/dashboard/listings-view.tsx: dodan 'AI deduplikacija' gumb z
+  results panel (grup duplikatov, similarity score, 'PRVI' badge, 'Skrij vse
+  duplikate' gumb). Dodana 'Shrani iskanje' funkcionalnost z input, chip list
+  shranjenih iskanj, click-to-load, delete.
+- prisma/schema.prisma: SavedSearch model + Settings.emailDigestTemplate.
+- src/app/api/saved-searches/route.ts: CRUD API za shranjena iskanja.
+- src/app/page.tsx: verzija v6.1.0
+- TypeScript: nobenih novih napak
+- Git commit: 'feat(v6.1): AI Listing Deduplication, Saved Searches, Email digest template field'
+
+Stage Summary:
+- 3 nove funkcionalnosti dodane v v6.1
+- 3 novi API ruti (deduplicate, bulk-hide, saved-searches)
+- 1 nova Prisma tabela (SavedSearch)
+- ~506 novih vrstic kode
+- Verzija aplikacije: v6.1.0
