@@ -1267,3 +1267,48 @@ Stage Summary:
 - 3 novi API ruti (predictive-stockout, tax-loss-harvesting, margin-optimizer)
 - ~1269 novih vrstic kode
 - Verzija aplikacije: v6.15.0
+
+---
+Task ID: v6.16
+Agent: main
+Task: Nadaljevanje razvoja aplikacije Markec AI Firm — Opportunity Monitor (v6.16)
+
+Work Log:
+- src/app/api/ai/email-campaign/route.ts: nov POST endpoint za AI email campaign generator.
+  6 tipov kampanj: win_back / new_buyers / bundle_offer / clearance / seasonal / newsletter.
+  AI generira: subject (<60 znakov), previewText, body (150-300 besed v slovenščini),
+  CTA, subjectVariants (A/B test), segments (z estimatedReach/openRate/clickRate),
+  sendStrategy (bestDay/bestTime/frequency/reasoning), followUp (waitDays/subject/body),
+  featuredItems. Uporablja zgodovino prodaj in inventory za kontekst.
+- src/app/api/ai/multi-vendor-bundle/route.ts: nov POST endpoint za AI multi-vendor bundle.
+  Kombinira iteme iz RAZLIČNIH virov (bolha + nepremicnine, avtonet + bolha, itd.) v bundle.
+  5 strategij: complete_setup / mixed_category / cross_source / premium_discount / starter_pack.
+  Per bundle: items, sources, individualTotal, bundlePrice, savingsPct, expectedProfit,
+  targetBuyer, reasoning. Vsak item je samo v enem bundleu, unbundled items ostanejo za posamično.
+- src/app/api/ai/customer-ltv/route.ts: nov POST endpoint za AI customer LTV predictor.
+  Agregira soldTrades po sellLocation (kupci). Formula: LTV = avgOrderValue × frequency × lifespan.
+  5 segmentov: vip (>500€ + repeat), loyal (>200€ + repeat), occasional (>50€), one_time,
+  at_risk (repeat ampak >90d brez nakupa). Per customer: predictedLtv12mEur, churnRiskPct,
+  retentionStrategy (win_back_email/bundle_offer/loyalty_discount/cross_sell/none),
+  crossSellCategories, personalizedOffer. Summary: totalRevenue, repeatCustomersPct,
+  avgCustomerLtv, vipCount, atRiskCount.
+- src/components/dashboard/statistics-view.tsx: dodani dve novi kartici:
+  1) AI Email Campaign Generator — select za tip kampanje (6 tipov), prikaz subject + preview,
+     A/B varianti, body z copy button, CTA, send strategy (dan/ura/frekvenca), segmenti z
+     open/click rates, follow-up kampanja, featured itemi.
+  2) AI Customer LTV Predictor — summary grid (prihodek/povp.LTV/repeat/VIP+at-risk),
+     per-customer prikaz s segment ikono, LTV 12m, churn risk, retention strategija,
+     personalized offer in cross-sell kategorije.
+- src/components/dashboard/trades-view.tsx: dodan "Multi-vendor" gumb v orodno vrstico.
+  Prikaz rezultatov vključuje: summary grid (bundle-i/itemov/dobiček/popust/virov),
+  per-deal prikaz z naslovom, strategijo, sources badges, individual→bundle cena,
+  dobiček/čas, target buyer, reasoning, itemi z navedbo vira. Unbundled items na koncu.
+- src/app/page.tsx: verzija v6.16.0
+- TypeScript: nobenih novih napak uvedenih (vse 25 napak je pre-existing)
+- Git commit: 'feat(v6.16): AI Email Campaign Generator, Multi-Vendor Bundle, Customer LTV Predictor'
+
+Stage Summary:
+- 3 nove funkcionalnosti za maksimizacijo dobička in customer outreach
+- 3 novi API ruti (email-campaign, multi-vendor-bundle, customer-ltv)
+- ~1128 novih vrstic kode
+- Verzija aplikacije: v6.16.0
