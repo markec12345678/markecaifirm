@@ -698,3 +698,36 @@ Stage Summary:
 - 4 nova polja v Prisma shemi
 - ~666 novih vrstic kode
 - Verzija aplikacije: v5.9.0
+
+---
+Task ID: v6.0
+Agent: main
+Task: Nadaljevanje razvoja aplikacije Markec AI Firm — Opportunity Monitor (v6.0 MILESTONE)
+
+Work Log:
+- src/app/api/listings/[id]/enrich/route.ts: nov POST endpoint za AI listing enrichment.
+  AI iz naslova/opisa izvleče: brand, model, condition, year, color, category, tags,
+  specs, summary.
+- src/components/dashboard/listings-view.tsx: dodana AI Obogatitev podatkov sekcija
+  v listing modal z 'Obogati' gumbom, results grid (brand, model, condition, year,
+  color, category), tags badges, specs collapsible.
+- src/app/api/stats/scraper/route.ts: nov GET endpoint za scraper statistike.
+  3 time windows (24h/7d/30d), per-source breakdown, per-monitor breakdown,
+  hourly activity (24h), recent errors (15).
+- src/components/dashboard/health-view.tsx: dodana Scraper statistike card z
+  time window stats, per-source breakdown, hourly bar chart, recent errors.
+- src/app/api/ai/trend-predictions/route.ts: nov POST endpoint za AI tržne napovedi.
+  Grupa oglase po 11 kategorijah, izračuna stats, AI napove trend, priceChange,
+  reasoning, confidence, recommendation per kategorija.
+- src/components/dashboard/analytics-view.tsx: dodana AI Tržne napovedi card z
+  'Napovej trende' gumbom, results z trend badges, % sprememba, confidence,
+  dataPoints, reasoning, recommendation.
+- src/app/page.tsx: verzija v6.0.0
+- TypeScript: nobenih novih napak
+- Git commit: 'feat(v6.0): AI Listing Enrichment, Scraper Stats Dashboard, AI Trend Predictions — MILESTONE'
+
+Stage Summary:
+- 3 nove funkcionalnosti dodane v v6.0 (MILESTONE)
+- 3 novi API ruti (enrich, stats/scraper, ai/trend-predictions)
+- ~824 novih vrstic kode
+- Verzija aplikacije: v6.0.0
