@@ -791,3 +791,32 @@ Stage Summary:
 - ~671 novih vrstic kode
 - Pričakovan vpliv: +55-100% dobička
 - Verzija aplikacije: v6.2.0
+
+---
+Task ID: v6.3
+Agent: main
+Task: Nadaljevanje razvoja aplikacije Markec AI Firm — Opportunity Monitor (v6.3)
+
+Work Log:
+- src/app/api/trades/auto-reprice/route.ts: nov POST endpoint za AI repricing.
+  Hevristična pravila (60+dni→10% drop, 30+dni→5% drop, market avg < buy→adjust).
+  AI upgrade za single trade z optimalno ceno in reasoning.
+- src/app/api/trades/niche-profitability/route.ts: nov GET endpoint za niche analysis.
+  Per category: soldCount, heldCount, totalProfit, avgRoi, avgDaysToSell,
+  sellThroughRate, score, recommendation. Summary z bestNiche/worstNiche.
+- src/app/api/ai/generate-listing/route.ts: nov POST endpoint za AI listing generator.
+  Generira: optimized naslov (SEO), opis (markdown), cena (tržno -5%), tags,
+  kategorija, tips, expected sell time, profit estimate.
+- src/components/dashboard/trades-view.tsx: dodan 'Auto-reprice' gumb z results panel.
+  Dodan Sparkles gumb na held trades za generate listing. Auto-copy v odložišče.
+- src/components/dashboard/statistics-view.tsx: dodana Profitabilnost niš card z
+  summary grid, best/worst niche, niche list z ROI in priporočili.
+- src/app/page.tsx: verzija v6.3.0
+- TypeScript: nobenih novih napak
+- Git commit: 'feat(v6.3): AI Repricing Engine, Niche Profitability Tracker, AI Auto-Listing Generator'
+
+Stage Summary:
+- 3 nove funkcionalnosti za maksimizacijo dobička
+- 3 novi API ruti (auto-reprice, niche-profitability, generate-listing)
+- ~720 novih vrstic kode
+- Verzija aplikacije: v6.3.0
