@@ -13,7 +13,7 @@ import {
 import {
   Select, SelectContent, SelectItem, SelectTrigger, SelectValue,
 } from '@/components/ui/select';
-import { RefreshCw, Plus, Pencil, Trash2, TrendingUp, TrendingDown, Wallet, Target, ExternalLink, ShoppingCart, Tag, Download, Sparkles, Check, Copy, AlertTriangle } from 'lucide-react';
+import { RefreshCw, Plus, Pencil, Trash2, TrendingUp, TrendingDown, Wallet, Target, ExternalLink, ShoppingCart, Tag, Download, Sparkles, Check, Copy, AlertTriangle, Boxes, Flame } from 'lucide-react';
 import { toast } from 'sonner';
 import { cn } from '@/lib/utils';
 import {
@@ -87,6 +87,11 @@ export function TradesView() {
   // v6.9: Tax report + Exit strategy
   const [exitData, setExitData] = useState<any>(null);
   const [exitLoading, setExitLoading] = useState<string | null>(null);
+  // v6.10: Bundle Optimizer + Liquidation
+  const [bundleData, setBundleData] = useState<any>(null);
+  const [bundleLoading, setBundleLoading] = useState(false);
+  const [liquidationData, setLiquidationData] = useState<any>(null);
+  const [liquidationLoading, setLiquidationLoading] = useState(false);
   // v5.7: Bulk trade operations
   const [bulkTradeIds, setBulkTradeIds] = useState<Set<string>>(new Set());
   const [bulkTradeLoading, setBulkTradeLoading] = useState(false);
@@ -308,6 +313,58 @@ export function TradesView() {
           >
             <Download className="w-3.5 h-3.5" />
             Davčno poročilo
+          </Button>
+          {/* v6.10: Bundle Optimizer */}
+          <Button
+            size="sm"
+            variant="outline"
+            className="gap-2 border-primary/40 text-primary hover:bg-primary/10"
+            disabled={bundleLoading}
+            onClick={async () => {
+              setBundleLoading(true); setBundleData(null);
+              try {
+                const ids = Array.from(bulkTradeIds);
+                const res = await fetch('/api/ai/bundle-optimizer', {
+                  method: 'POST',
+                  headers: { 'Content-Type': 'application/json' },
+                  body: JSON.stringify(ids.length > 0 ? { tradeIds: ids } : {}),
+                });
+                const data = await res.json();
+                if (data.ok) { setBundleData(data); toast.success('✓ Bundle predlogi generirani'); }
+                else toast.error(data.error ?? data.message ?? 'Napaka');
+              } catch (e: any) { toast.error(e?.message ?? 'Napaka'); }
+              finally { setBundleLoading(false); }
+            }}
+            title="AI kombinira inventar v bundle za maksimalni profit"
+          >
+            {bundleLoading ? <RefreshCw className="w-3.5 h-3.5 animate-spin" /> : <Boxes className="w-3.5 h-3.5" />}
+            Bundle optimizer
+          </Button>
+          {/* v6.10: Liquidation Strategy */}
+          <Button
+            size="sm"
+            variant="outline"
+            className="gap-2 border-amber-400/40 text-amber-400 hover:bg-amber-400/10"
+            disabled={liquidationLoading}
+            onClick={async () => {
+              setLiquidationLoading(true); setLiquidationData(null);
+              try {
+                const ids = Array.from(bulkTradeIds);
+                const res = await fetch('/api/ai/liquidation', {
+                  method: 'POST',
+                  headers: { 'Content-Type': 'application/json' },
+                  body: JSON.stringify(ids.length > 0 ? { tradeIds: ids } : {}),
+                });
+                const data = await res.json();
+                if (data.ok) { setLiquidationData(data); toast.success('✓ Likvidacijska strategija generirana'); }
+                else toast.error(data.error ?? data.message ?? 'Napaka');
+              } catch (e: any) { toast.error(e?.message ?? 'Napaka'); }
+              finally { setLiquidationLoading(false); }
+            }}
+            title="AI predlaga kako hitro likvidirati stalled inventar"
+          >
+            {liquidationLoading ? <RefreshCw className="w-3.5 h-3.5 animate-spin" /> : <Flame className="w-3.5 h-3.5" />}
+            Likvidacija
           </Button>
           <Button
             size="sm"
@@ -696,6 +753,201 @@ export function TradesView() {
                 📊 Tržno povprečje: {exitData.trade.marketAvg}€ • Konkurenca: {exitData.trade.marketCount} oglasov
                 • {exitData.trade.daysHeld}d v skladišču • Kategorija ROI: {exitData.trade.avgCatROI}%
               </div>
+            </div>
+          </CardContent>
+        </Card>
+      )}
+
+      {/* v6.10: AI Bundle Optimizer results */}
+      {bundleData && (
+        <Card className="bg-card/50 border-primary/30">
+          <CardContent className="p-4 space-y-3">
+            <div className="flex items-center justify-between">
+              <div className="flex items-center gap-2">
+                <Boxes className="w-4 h-4 text-primary" />
+                <span className="text-sm font-bold">AI Bundle optimizer</span>
+                <Badge variant="outline" className="text-[10px] text-primary border-primary/40">v6.10</Badge>
+              </div>
+              <Button size="sm" variant="ghost" onClick={() => setBundleData(null)} className="h-6 text-xs">×</Button>
+            </div>
+            {bundleData.strategy && (
+              <div className="bg-primary/5 border border-primary/20 rounded p-2 text-xs text-primary">{bundleData.strategy}</div>
+            )}
+            {bundleData.summary && (
+              <div className="grid grid-cols-2 md:grid-cols-5 gap-2 text-[10px]">
+                <div className="bg-background/40 rounded p-1.5 border">
+                  <div className="text-muted-foreground uppercase">Bundle-i</div>
+                  <div className="font-bold text-primary">{bundleData.summary.bundleItems ?? 0}</div>
+                </div>
+                <div className="bg-background/40 rounded p-1.5 border">
+                  <div className="text-muted-foreground uppercase">Posamično</div>
+                  <div className="font-bold">{bundleData.summary.individualItems ?? 0}</div>
+                </div>
+                <div className="bg-background/40 rounded p-1.5 border">
+                  <div className="text-muted-foreground uppercase">Bundle dobiček</div>
+                  <div className="font-bold text-primary">{bundleData.summary.totalBundleProfit ?? 0}€</div>
+                </div>
+                <div className="bg-background/40 rounded p-1.5 border">
+                  <div className="text-muted-foreground uppercase">Posamični dobiček</div>
+                  <div className="font-bold">{bundleData.summary.totalIndividualProfit ?? 0}€</div>
+                </div>
+                <div className="bg-background/40 rounded p-1.5 border">
+                  <div className="text-muted-foreground uppercase">Povp. popust</div>
+                  <div className="font-bold text-amber-400">{bundleData.summary.avgBundleSavings ?? 0}%</div>
+                </div>
+              </div>
+            )}
+            <div className="space-y-2">
+              {bundleData.bundles?.map((b: any, i: number) => (
+                <div key={i} className="border border-primary/20 bg-primary/5 rounded p-2 space-y-1.5">
+                  <div className="flex items-center justify-between gap-2">
+                    <div className="flex items-center gap-2 flex-wrap">
+                      <span className="font-bold text-xs">{b.name}</span>
+                      <Badge variant="outline" className="text-[9px] text-primary border-primary/40">{b.strategy}</Badge>
+                      <Badge variant="outline" className="text-[9px]">{b.items?.length ?? 0} itemov</Badge>
+                    </div>
+                    <div className="text-right">
+                      <div className="font-mono font-bold text-primary text-xs">{b.bundlePrice}€</div>
+                      <div className="text-[9px] text-muted-foreground line-through">{b.individualTotal}€</div>
+                    </div>
+                  </div>
+                  <div className="grid grid-cols-3 gap-2 text-[10px]">
+                    <div><span className="text-muted-foreground">Nabavna:</span> <span className="font-mono">{b.bundleCost}€</span></div>
+                    <div><span className="text-muted-foreground">Dobiček:</span> <span className="font-mono font-bold text-primary">{b.expectedProfit}€</span></div>
+                    <div><span className="text-muted-foreground">Čas:</span> <span className="font-mono">{b.expectedSellTimeDays}d</span></div>
+                  </div>
+                  <div className="text-[10px] text-muted-foreground">
+                    <span className="text-amber-400">−{b.savingsPct}%</span> popust · {b.reasoning}
+                  </div>
+                  <div className="text-[10px]">
+                    {b.items?.map((it: any, j: number) => (
+                      <span key={j} className="inline-block bg-background/60 px-1.5 py-0.5 rounded mr-1 mb-1 text-[9px]">{it.title}</span>
+                    ))}
+                  </div>
+                </div>
+              ))}
+              {bundleData.bundles?.length === 0 && (
+                <p className="text-[11px] text-muted-foreground text-center py-2">AI ni našel ugodnih bundle kombinacij.</p>
+              )}
+            </div>
+            {bundleData.individualSale?.length > 0 && (
+              <div className="text-[10px] text-muted-foreground">
+                <span className="font-semibold">Za posamično prodajo:</span>{' '}
+                {bundleData.individualSale.map((it: any) => it.title).join(', ')}
+              </div>
+            )}
+          </CardContent>
+        </Card>
+      )}
+
+      {/* v6.10: AI Liquidation Strategy results */}
+      {liquidationData && (
+        <Card className="bg-card/50 border-amber-400/30">
+          <CardContent className="p-4 space-y-3">
+            <div className="flex items-center justify-between">
+              <div className="flex items-center gap-2">
+                <Flame className="w-4 h-4 text-amber-400" />
+                <span className="text-sm font-bold">AI Likvidacijska strategija</span>
+                <Badge variant="outline" className="text-[10px] text-amber-400 border-amber-400/40">v6.10</Badge>
+              </div>
+              <Button size="sm" variant="ghost" onClick={() => setLiquidationData(null)} className="h-6 text-xs">×</Button>
+            </div>
+            {liquidationData.summary && (
+              <div className="bg-amber-400/5 border border-amber-400/20 rounded p-2 text-xs text-amber-400">{liquidationData.summary}</div>
+            )}
+            {liquidationData.totals && (
+              <div className="grid grid-cols-2 md:grid-cols-5 gap-2 text-[10px]">
+                <div className="bg-background/40 rounded p-1.5 border">
+                  <div className="text-muted-foreground uppercase">Itemov</div>
+                  <div className="font-bold">{liquidationData.totals.itemCount ?? 0}</div>
+                </div>
+                <div className="bg-background/40 rounded p-1.5 border">
+                  <div className="text-muted-foreground uppercase">Stalled</div>
+                  <div className="font-bold text-amber-400">{liquidationData.totals.stalledCount ?? 0}</div>
+                </div>
+                <div className="bg-background/40 rounded p-1.5 border">
+                  <div className="text-muted-foreground uppercase">Projekt. prihodek</div>
+                  <div className="font-bold text-primary">{liquidationData.totals.totalProjectedRevenue ?? 0}€</div>
+                </div>
+                <div className="bg-background/40 rounded p-1.5 border">
+                  <div className="text-muted-foreground uppercase">Projekt. izguba</div>
+                  <div className={cn('font-bold', (liquidationData.totals.totalProjectedLoss ?? 0) >= 0 ? 'text-primary' : 'text-destructive')}>
+                    {(liquidationData.totals.totalProjectedLoss ?? 0) >= 0 ? '+' : ''}{liquidationData.totals.totalProjectedLoss ?? 0}€
+                  </div>
+                </div>
+                <div className="bg-background/40 rounded p-1.5 border">
+                  <div className="text-muted-foreground uppercase">Povp. čas</div>
+                  <div className="font-bold">{liquidationData.totals.avgDaysToSell ?? 0}d</div>
+                </div>
+              </div>
+            )}
+            {liquidationData.totals?.urgencyBreakdown && (
+              <div className="flex gap-1 text-[10px]">
+                {(['critical', 'high', 'medium', 'low'] as const).map((u) => {
+                  const cfg: Record<string, string> = {
+                    critical: 'text-red-500 bg-red-500/5 border-red-500/20',
+                    high: 'text-amber-400 bg-amber-400/5 border-amber-400/20',
+                    medium: 'text-blue-400 bg-blue-400/5 border-blue-400/20',
+                    low: 'text-muted-foreground bg-background/40 border-border',
+                  };
+                  return (
+                    <span key={u} className={cn('px-2 py-0.5 rounded border', cfg[u])}>
+                      {u === 'critical' ? '🔴' : u === 'high' ? '🟡' : u === 'medium' ? '🔵' : '⚪'} {u}: <b>{liquidationData.totals.urgencyBreakdown[u] ?? 0}</b>
+                    </span>
+                  );
+                })}
+              </div>
+            )}
+            <div className="space-y-2">
+              {liquidationData.items?.map((it: any, i: number) => {
+                const urgencyCfg: Record<string, { color: string; bg: string; icon: string }> = {
+                  critical: { color: 'text-red-500', bg: 'border-red-500/20 bg-red-500/5', icon: '🔴' },
+                  high: { color: 'text-amber-400', bg: 'border-amber-400/20 bg-amber-400/5', icon: '🟡' },
+                  medium: { color: 'text-blue-400', bg: 'border-blue-400/20 bg-blue-400/5', icon: '🔵' },
+                  low: { color: 'text-muted-foreground', bg: 'border-border bg-background/30', icon: '⚪' },
+                };
+                const cfg = urgencyCfg[it.urgency] || urgencyCfg.medium;
+                const strategyLabels: Record<string, string> = {
+                  discount_progressive: 'Progresivni popust',
+                  auction_online: 'Online dražba',
+                  bundle_with_hot: 'Bundle s hitrim',
+                  part_out: 'Razstavi na dele',
+                  flash_sale: 'Flash sale',
+                  trade_in: 'Trade-in',
+                  wait_seasonal: 'Čakaj sezono',
+                  donation_tax: 'Donacija',
+                  relist_refresh: 'Ponovna objava',
+                };
+                return (
+                  <div key={i} className={cn('border rounded p-2 space-y-1', cfg.bg)}>
+                    <div className="flex items-center justify-between gap-2">
+                      <div className="flex items-center gap-2 flex-wrap">
+                        <span className="text-xs">{cfg.icon}</span>
+                        <span className="font-bold text-xs">{it.title}</span>
+                        <Badge variant="outline" className="text-[9px]">{it.category}</Badge>
+                      </div>
+                      <Badge variant="outline" className={cn('text-[9px] border', cfg.color)}>
+                        {strategyLabels[it.strategy] || it.strategy}
+                      </Badge>
+                    </div>
+                    <div className="grid grid-cols-4 gap-2 text-[10px]">
+                      <div><span className="text-muted-foreground">Cena:</span> <span className="font-mono font-bold text-primary">{it.expectedPrice}€</span></div>
+                      <div><span className="text-muted-foreground">Nabavna:</span> <span className="font-mono">{it.cost}€</span></div>
+                      <div><span className="text-muted-foreground">Izguba:</span> <span className={cn('font-mono font-bold', it.projectedLoss >= 0 ? 'text-primary' : 'text-destructive')}>{it.projectedLoss >= 0 ? '+' : ''}{it.projectedLoss}€</span></div>
+                      <div><span className="text-muted-foreground">Čas:</span> <span className="font-mono">{it.timeToSellDays}d</span></div>
+                    </div>
+                    {it.steps?.length > 0 && (
+                      <ol className="text-[10px] list-decimal list-inside space-y-0.5">
+                        {it.steps.map((s: string, j: number) => <li key={j}>{s}</li>)}
+                      </ol>
+                    )}
+                    <div className="text-[9px] text-muted-foreground italic">⏱ {it.daysHeld}d v skladišču · {it.reasoning}</div>
+                  </div>
+                );
+              })}
+              {liquidationData.items?.length === 0 && (
+                <p className="text-[11px] text-muted-foreground text-center py-2">Ni itemov za likvidacijo.</p>
+              )}
             </div>
           </CardContent>
         </Card>
