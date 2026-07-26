@@ -959,3 +959,32 @@ Stage Summary:
 - 3 novi API ruti (profit-forecast, deal-velocity, risk-score)
 - ~503 novih vrstic kode
 - Verzija aplikacije: v6.8.0
+
+---
+Task ID: v6.9
+Agent: main
+Task: Nadaljevanje razvoja aplikacije Markec AI Firm — Opportunity Monitor (v6.9)
+
+Work Log:
+- src/app/api/ai/rebalance/route.ts: nov POST endpoint za AI portfolio rebalancing.
+  Analizira current allocation + historical performance. Per category: action
+  (buy_more/reduce/hold/exit), current→suggested %, reason. Strategy.
+- src/app/api/trades/tax-report/route.ts: nov GET endpoint za davčno poročilo.
+  Per trade breakdown, totals, slovenian tax (5.000€ neoporečno, 40% dohodnina),
+  by category, by month, CSV export.
+- src/app/api/ai/exit-strategy/route.ts: nov POST endpoint za AI exit strategy.
+  recommendation (sell_now/sell_soon/hold/bundle), timing, suggestedPrice,
+  pricingStrategy, alternatives, market context.
+- src/components/dashboard/statistics-view.tsx: dodana AI Rebalancing card z
+  actions list, progress bars, strategy.
+- src/components/dashboard/trades-view.tsx: dodan 'Davčno poročilo' gumb (download).
+  Dodan Target gumb na held trades za exit strategy z results panel.
+- src/app/page.tsx: verzija v6.9.0
+- TypeScript: nobenih novih napak
+- Git commit: 'feat(v6.9): AI Portfolio Rebalancing, Tax Report Generator, AI Exit Strategy'
+
+Stage Summary:
+- 3 nove funkcionalnosti za maksimizacijo dobička
+- 3 novi API ruti (rebalance, tax-report, exit-strategy)
+- ~602 novih vrstic kode
+- Verzija aplikacije: v6.9.0
