@@ -433,3 +433,48 @@ Stage Summary:
 - 3 novi API ruti (ai/daily-summary, ai/suggest-filters, arbitrage/cross-portal)
 - ~971 novih vrstic kode
 - Verzija aplikacije: v5.2.0
+
+---
+Task ID: v5.3
+Agent: main
+Task: Nadaljevanje razvoja aplikacije Markec AI Firm — Opportunity Monitor (v5.3)
+
+Work Log:
+- src/app/api/ai/insights/route.ts: nov GET endpoint z 8 tipi insightov
+  (price drop trends, best/worst monitor, anomaly spike, AI accuracy, source
+  comparison, watchlist close-to-target, alert trends). Severity high/medium/low.
+- src/components/dashboard/ai-insights-widget.tsx: nova AiInsightsWidget komponenta
+  z period selector (7/30/90 dni), stats bar, insight cards z ikonami in barvami.
+- src/components/dashboard/dashboard-view.tsx: dodan AiInsightsWidget na Dashboard.
+- prisma/schema.prisma: nova SmartRule tabela (id, name, ruleType, config JSON,
+  channels JSON, isActive, lastTriggeredAt, triggerCount).
+- src/lib/smart-rules-engine.ts: nova knjižnica z evaluateRule() za 5 tipov pravil
+  (price_threshold, multiple_listings, price_drop_pct, ai_verdict_combo, time_based),
+  checkSmartRules(), sendNotifications().
+- src/lib/pipeline.ts: integracija checkSmartRules() po vsakem monitor run-u.
+- src/app/api/smart-rules/route.ts: GET/POST/PATCH/DELETE za SmartRule CRUD
+  + optional check parameter za takojšnjo evaluacijo.
+- src/components/dashboard/watchlist-view.tsx: dodana SmartRulesModal komponenta
+  z seznamom pravil, formo za novo pravilo (rule-specific fields), channel picker,
+  'Preveri zdaj' gumb.
+- src/lib/smart-push.ts: nova smart push knjižnica z:
+  - calculatePriority() — AI določi prioriteto (critical/high/medium/low)
+  - batchAlerts() — grupira alerte v 60s oknu, max 5 v enem notification
+  - sendSmartPush() — zbira pending, batch-a, pošlje, označi kot sent
+  - sendImmediatePush() — bypass batching za kritične alerte
+- src/app/api/push/smart/route.ts: GET (pending preview) in POST (trigger push).
+- src/app/page.tsx: verzija v5.3.0
+- TypeScript: nobenih novih napak (prejšnje existing ostajajo)
+- Testiranje:
+  - ai/insights: vrača ok=true s pravilnimi stats ✓
+  - smart-rules CRUD: create, list, delete — vse deluje ✓
+  - push/smart: vrača pendingCount=0, batch=None ✓
+- Git commit: 'feat(v5.3): AI Insights, Smart Rules, Smart Push notifications'
+
+Stage Summary:
+- 3 nove funkcionalnosti dodane v v5.3
+- 3 novi API ruti (ai/insights, smart-rules, push/smart)
+- 3 nove komponente/knjižnice (AiInsightsWidget, SmartRulesModal, smart-push, smart-rules-engine)
+- 1 nova Prisma tabela (SmartRule)
+- ~1800 novih vrstic kode
+- Verzija aplikacije: v5.3.0
