@@ -70,6 +70,16 @@ export async function GET() {
     categoryNotifications: s.categoryNotifications || '{}',
     // v5.6: Dashboard layout
     dashboardLayout: s.dashboardLayout || '[]',
+    // v5.8: Advanced scraping
+    proxyList: s.proxyList || '[]',
+    proxyEnabled: s.proxyEnabled,
+    realisticHeaders: s.realisticHeaders,
+    requestMinDelay: s.requestMinDelay,
+    requestMaxDelay: s.requestMaxDelay,
+    stealthMode: s.stealthMode,
+    captchaSolverEnabled: s.captchaSolverEnabled,
+    captchaApiKeySet: !!s.captchaApiKey,
+    tlsFingerprinting: s.tlsFingerprinting,
     updatedAt: s.updatedAt,
   });
 }
@@ -220,6 +230,18 @@ export async function POST(req: NextRequest) {
   if (typeof body.categoryNotifications === 'string') data.categoryNotifications = body.categoryNotifications;
   // v5.6: Dashboard layout
   if (typeof body.dashboardLayout === 'string') data.dashboardLayout = body.dashboardLayout;
+  // v5.8: Advanced scraping
+  if (typeof body.proxyList === 'string') data.proxyList = body.proxyList;
+  if (typeof body.proxyEnabled === 'boolean') data.proxyEnabled = body.proxyEnabled;
+  if (typeof body.realisticHeaders === 'boolean') data.realisticHeaders = body.realisticHeaders;
+  if (typeof body.requestMinDelay === 'number') data.requestMinDelay = body.requestMinDelay;
+  if (typeof body.requestMaxDelay === 'number') data.requestMaxDelay = body.requestMaxDelay;
+  if (typeof body.stealthMode === 'boolean') data.stealthMode = body.stealthMode;
+  if (typeof body.captchaSolverEnabled === 'boolean') data.captchaSolverEnabled = body.captchaSolverEnabled;
+  if (typeof body.tlsFingerprinting === 'boolean') data.tlsFingerprinting = body.tlsFingerprinting;
+  if (typeof body.captchaApiKey === 'string' && body.captchaApiKey.trim() !== '') {
+    data.captchaApiKey = body.captchaApiKey.trim();
+  }
   if (typeof body.aiApiKey === 'string' && body.aiApiKey.trim() !== '') {
     data.aiApiKey = body.aiApiKey.trim();
   }

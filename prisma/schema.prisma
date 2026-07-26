@@ -96,6 +96,22 @@ model Settings {
   categoryNotifications String @default("{}")
   // v5.6: Dashboard widget layout (JSON array of widget IDs in display order)
   dashboardLayout      String @default("[]")
+  // v5.8: Advanced scraping config
+  // Proxy: JSON array of { url, username?, password?, type: 'http'|'socks5' }
+  proxyList            String @default("[]")
+  proxyEnabled         Boolean @default(false)
+  // Realistic headers: rotate User-Agent strings
+  realisticHeaders     Boolean @default(true)
+  // Request randomization: random delay between requests (ms)
+  requestMinDelay      Int    @default(1000) // min delay between requests
+  requestMaxDelay      Int    @default(5000) // max delay
+  // Stealth mode: use Playwright with anti-detection
+  stealthMode          Boolean @default(false)
+  // CAPTCHA solving: 2captcha API key
+  captchaSolverEnabled Boolean @default(false)
+  captchaApiKey        String @default("")
+  // TLS fingerprinting: use custom TLS client
+  tlsFingerprinting    Boolean @default(false)
   // v4.9: Active profile (null = show all data, no profile filter)
   activeProfileId      String?
   // Metadata
