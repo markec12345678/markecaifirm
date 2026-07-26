@@ -1028,3 +1028,48 @@ Stage Summary:
 - 3 novi API ruti (sourcing, bundle-optimizer, liquidation)
 - ~1051 novih vrstic kode
 - Verzija aplikacije: v6.10.0
+
+---
+Task ID: v6.11
+Agent: main
+Task: Nadaljevanje razvoja aplikacije Markec AI Firm — Opportunity Monitor (v6.11)
+
+Work Log:
+- src/app/api/ai/negotiation-playbook/route.ts: nov POST endpoint za AI negotiation playbook.
+  Sprejme listingId ali listing objekt + maxBudget. AI pripravi celovit pogajalski scenarij:
+  strategy (soft/firm/creative/patient), openingOffer/targetPrice/walkAwayPrice, arguments,
+  counterOffers (trigger/response/price), psychologyTactics, redFlags, bestTiming,
+  messageTemplates (initial/follow_up/final v slovenščini). Vključuje market context
+  (povprečje podobnih oglasov) in fallback AI provider.
+- src/app/api/ai/pricing-abtest/route.ts: nov POST endpoint za AI A/B pricing test.
+  Analizira held tradeove + sold history. AI za vsak item predlaga 3 variante
+  (premium/fair/aggressive) z: price, positioning, expectedOutcome, timeToSellDays,
+  projectedProfit, probabilityPct, reasoning. Recommendation glede na stalled status
+  in kategorijo. Summary: totalItems, avgRecommendedProfit, avgRecommendedTimeToSell,
+  recommendationBreakdown.
+- src/app/api/ai/cross-border/route.ts: nov POST endpoint za AI cross-border arbitrage.
+  Primerja slovenske PRILIKA oglase s 6 tujimi trgi: DE (Kleinanzeigen), IT (Subito),
+  HR (Njuškalo), AT (Willhaben), PL (OLX), FR (Leboncoin). AI izračuna: foreignPrices
+  per market, arbitrage (strategy=import/export/domestic_only/wait, buyIn/sellIn, fees,
+  netMargin, roiPct), feasibility (easy/medium/hard), risk 1-10, action, reasoning.
+  Summary: totalOpportunities, exportOps, importOps, totalNetMargin, avgROI.
+- src/components/dashboard/listings-view.tsx: dodana "AI Negotiation Playbook" sekcija
+  v detail drawer (med AI Negotiator in AI Auto-Bid). Prikazuje strategijo, price targets
+  (opening/target/walk-away), market context, argumente, counter-offers, psihološke
+  taktike, red flags, best timing, in message templates z copy-to-clipboard. State
+  reset ob menjavi listing-a.
+- src/components/dashboard/statistics-view.tsx: dodani dve novi kartici:
+  1) Smart Pricing A/B Testing — summary grid (itemov/povp.dobiček/čas/premium-fair-aggressive),
+     per-item prikaz 3 variant z recommended badge in reasoning.
+  2) AI Cross-Border Arbitrage — query input, summary grid (priložnosti/export/import/ROI),
+     per-item prikaz strategije (export/import/wait), buyIn/sellIn/ROI/net, foreign prices,
+     risk in feasibility badge, action in reasoning.
+- src/app/page.tsx: verzija v6.11.0
+- TypeScript: nobenih novih napak uvedenih (vse 25 napak je pre-existing)
+- Git commit: 'feat(v6.11): AI Negotiation Playbook, Smart Pricing A/B Testing, Cross-Border Arbitrage'
+
+Stage Summary:
+- 3 nove funkcionalnosti za maksimizacijo dobička
+- 3 novi API ruti (negotiation-playbook, pricing-abtest, cross-border)
+- ~1103 novih vrstic kode
+- Verzija aplikacije: v6.11.0
