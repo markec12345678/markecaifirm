@@ -24,7 +24,7 @@ import {
   DialogDescription,
 } from '@/components/ui/dialog';
 import { Textarea } from '@/components/ui/textarea';
-import { RefreshCw, Download, ExternalLink, ChevronLeft, ChevronRight, Filter, ImageIcon, AlertTriangle, Target, MapPin, Clock, Bookmark, Sparkles, ShoppingCart, MessageSquare, BarChart3, TrendingDown, TrendingUp, Copy, Check, GitCompare, StickyNote, Phone, Trash2, EyeOff, Zap, User, Wallet } from 'lucide-react';
+import { RefreshCw, Download, ExternalLink, ChevronLeft, ChevronRight, Filter, ImageIcon, AlertTriangle, Target, MapPin, Clock, Bookmark, Sparkles, ShoppingCart, MessageSquare, BarChart3, TrendingDown, TrendingUp, Copy, Check, GitCompare, StickyNote, Phone, Trash2, EyeOff, Zap, User, Wallet, BookOpen } from 'lucide-react';
 import { toast } from 'sonner';
 import { cn } from '@/lib/utils';
 
@@ -1165,6 +1165,11 @@ function ListingDetailModal({ listingId, onClose }: { listingId: string | null; 
   const [predicting, setPredicting] = useState(false);
   const [prediction, setPrediction] = useState<any>(null);
   const [predictTarget, setPredictTarget] = useState('');
+  // v6.11: Negotiation Playbook
+  const [playbook, setPlaybook] = useState<any>(null);
+  const [playbookLoading, setPlaybookLoading] = useState(false);
+  const [playbookMaxBudget, setPlaybookMaxBudget] = useState('');
+  const [playbookCopied, setPlaybookCopied] = useState<string | null>(null);
   // v5.1: Seller reputation
   const [sellerRep, setSellerRep] = useState<any>(null);
   const [sellerLoading, setSellerLoading] = useState(false);
@@ -1213,6 +1218,9 @@ function ListingDetailModal({ listingId, onClose }: { listingId: string | null; 
       // v5.1: Reset prediction
       setPrediction(null);
       setPredictTarget(d.listing?.targetPrice != null ? String(d.listing.targetPrice) : '');
+      // v6.11: Reset negotiation playbook
+      setPlaybook(null);
+      setPlaybookCopied(null);
       // v5.6: Reset external comparison
       setExtCompare(null);
       // v5.7: Reset similar listings
@@ -3386,6 +3394,180 @@ function ListingDetailModal({ listingId, onClose }: { listingId: string | null; 
                     💡 Preklopi jezik zgoraj — AI bo regeneriral v izbranem jeziku.
                   </p>
                 </div>
+              )}
+            </div>
+
+            {/* v6.11: AI Negotiation Playbook — celovit pogajalski scenarij */}
+            <div className="border-t border-border pt-3">
+              <div className="flex items-center justify-between mb-2">
+                <h4 className="text-xs uppercase tracking-wider text-muted-foreground flex items-center gap-1.5">
+                  <BookOpen className="w-3.5 h-3.5 text-primary" />
+                  AI Negotiation Playbook
+                  <Badge variant="outline" className="text-[10px] text-primary border-primary/40">v6.11</Badge>
+                </h4>
+                <div className="flex items-center gap-1">
+                  <Input
+                    type="number"
+                    placeholder="Max budget (€)"
+                    value={playbookMaxBudget}
+                    onChange={(e) => setPlaybookMaxBudget(e.target.value)}
+                    className="h-6 w-24 text-[10px]"
+                  />
+                  <Button
+                    size="sm"
+                    variant="outline"
+                    className="h-6 text-[11px] gap-1.5 border-primary/40 text-primary hover:bg-primary/10"
+                    disabled={playbookLoading}
+                    onClick={async () => {
+                      setPlaybookLoading(true);
+                      setPlaybook(null);
+                      setPlaybookCopied(null);
+                      try {
+                        const budgetNum = playbookMaxBudget ? Number(playbookMaxBudget) : 0;
+                        const res = await fetch('/api/ai/negotiation-playbook', {
+                          method: 'POST',
+                          headers: { 'Content-Type': 'application/json' },
+                          body: JSON.stringify({ listingId: listing.id, maxBudget: budgetNum || undefined }),
+                        });
+                        const data = await res.json();
+                        if (data.ok) { setPlaybook(data); toast.success('✓ Pogajalski playbook generiran'); }
+                        else toast.error(data.error ?? 'Napaka');
+                      } catch (e: any) { toast.error(e?.message ?? 'Napaka'); }
+                      finally { setPlaybookLoading(false); }
+                    }}
+                  >
+                    {playbookLoading ? <RefreshCw className="w-3 h-3 animate-spin" /> : <BookOpen className="w-3 h-3" />}
+                    Generiraj
+                  </Button>
+                </div>
+              </div>
+
+              {playbookLoading ? (
+                <div className="py-3 text-center text-[11px] text-muted-foreground">
+                  <RefreshCw className="w-4 h-4 mx-auto mb-1 animate-spin opacity-50" />
+                  AI pripravlja celovit pogajalski scenarij...
+                </div>
+              ) : playbook?.playbook ? (
+                <div className="space-y-2 text-[11px]">
+                  {/* Strategy */}
+                  <div className="bg-primary/5 border border-primary/20 rounded p-2">
+                    <div className="flex items-center justify-between mb-1">
+                      <span className="font-bold text-primary uppercase text-[10px]">📋 Strategija: {playbook.playbook.strategy}</span>
+                      <Badge variant="outline" className="text-[9px] text-primary border-primary/40">
+                        {playbook.playbook.openingOffer}€ → {playbook.playbook.targetPrice}€ → {playbook.playbook.walkAwayPrice}€
+                      </Badge>
+                    </div>
+                    <p className="text-[10px] text-muted-foreground italic">{playbook.playbook.strategyReasoning}</p>
+                  </div>
+
+                  {/* Price targets */}
+                  <div className="grid grid-cols-3 gap-2">
+                    <div className="bg-background/40 rounded p-1.5 border text-center">
+                      <div className="text-[9px] uppercase text-muted-foreground">🎨 Opening</div>
+                      <div className="font-mono font-bold text-primary">{playbook.playbook.openingOffer}€</div>
+                    </div>
+                    <div className="bg-background/40 rounded p-1.5 border text-center">
+                      <div className="text-[9px] uppercase text-muted-foreground">🎯 Target</div>
+                      <div className="font-mono font-bold">{playbook.playbook.targetPrice}€</div>
+                    </div>
+                    <div className="bg-background/40 rounded p-1.5 border text-center">
+                      <div className="text-[9px] uppercase text-muted-foreground">🚫 Walk-away</div>
+                      <div className="font-mono font-bold text-destructive">{playbook.playbook.walkAwayPrice}€</div>
+                    </div>
+                  </div>
+
+                  {playbook.marketContext && (
+                    <div className="text-[10px] text-muted-foreground">📊 {playbook.marketContext}</div>
+                  )}
+
+                  {/* Arguments */}
+                  {playbook.playbook.arguments?.length > 0 && (
+                    <div>
+                      <div className="text-[10px] uppercase text-muted-foreground mb-1">Argumenti za pogajanje:</div>
+                      <ul className="space-y-0.5 ml-3">
+                        {playbook.playbook.arguments.map((arg: string, i: number) => (
+                          <li key={i} className="text-[10px] list-disc list-outside">{arg}</li>
+                        ))}
+                      </ul>
+                    </div>
+                  )}
+
+                  {/* Counter offers */}
+                  {playbook.playbook.counterOffers?.length > 0 && (
+                    <div>
+                      <div className="text-[10px] uppercase text-muted-foreground mb-1">Counter-offers:</div>
+                      <div className="space-y-1">
+                        {playbook.playbook.counterOffers.map((c: any, i: number) => (
+                          <div key={i} className="bg-background/40 rounded p-1.5 border">
+                            <div className="text-[10px] text-muted-foreground">Če: "{c.trigger}"</div>
+                            <div className="text-[10px] font-medium">{c.response} <Badge variant="outline" className="text-[9px] ml-1">{c.price}€</Badge></div>
+                          </div>
+                        ))}
+                      </div>
+                    </div>
+                  )}
+
+                  {/* Psychology tactics */}
+                  {playbook.playbook.psychologyTactics?.length > 0 && (
+                    <div className="bg-purple-500/5 border border-purple-500/20 rounded p-1.5">
+                      <div className="text-[10px] uppercase text-purple-400 mb-1">🧠 Psihološke taktike:</div>
+                      <ul className="space-y-0.5 ml-3">
+                        {playbook.playbook.psychologyTactics.map((t: string, i: number) => (
+                          <li key={i} className="text-[10px] list-disc list-outside">{t}</li>
+                        ))}
+                      </ul>
+                    </div>
+                  )}
+
+                  {/* Red flags */}
+                  {playbook.playbook.redFlags?.length > 0 && (
+                    <div className="bg-red-500/5 border border-red-500/20 rounded p-1.5">
+                      <div className="text-[10px] uppercase text-red-500 mb-1">🚩 Red flags:</div>
+                      <ul className="space-y-0.5 ml-3">
+                        {playbook.playbook.redFlags.map((r: string, i: number) => (
+                          <li key={i} className="text-[10px] list-disc list-outside">{r}</li>
+                        ))}
+                      </ul>
+                    </div>
+                  )}
+
+                  {/* Best timing */}
+                  {playbook.playbook.bestTiming && (
+                    <div className="text-[10px] text-muted-foreground">
+                      ⏰ <span className="font-semibold">Najboljši čas za kontakt:</span> {playbook.playbook.bestTiming}
+                    </div>
+                  )}
+
+                  {/* Message templates */}
+                  {playbook.playbook.messageTemplates?.length > 0 && (
+                    <div className="space-y-1.5">
+                      <div className="text-[10px] uppercase text-muted-foreground">Predloge sporočil:</div>
+                      {playbook.playbook.messageTemplates.map((m: any, i: number) => (
+                        <div key={i} className="bg-background/40 rounded p-1.5 border">
+                          <div className="flex items-center justify-between mb-1">
+                            <Badge variant="outline" className="text-[9px]">{m.type}</Badge>
+                            <button
+                              onClick={() => {
+                                navigator.clipboard.writeText(m.text);
+                                setPlaybookCopied(m.type);
+                                setTimeout(() => setPlaybookCopied(null), 1500);
+                                toast.success('Sporočilo kopirano');
+                              }}
+                              className="text-[9px] text-primary hover:underline"
+                            >
+                              {playbookCopied === m.type ? <Check className="w-3 h-3 inline" /> : <Copy className="w-3 h-3 inline" />} Kopiraj
+                            </button>
+                          </div>
+                          <p className="text-[10px] whitespace-pre-wrap">{m.text}</p>
+                        </div>
+                      ))}
+                    </div>
+                  )}
+                </div>
+              ) : (
+                <p className="text-[11px] text-muted-foreground text-center py-2">
+                  AI pripravi strategijo, argumente, counter-offers, psihološke taktike in predloge sporočil.
+                </p>
               )}
             </div>
 
