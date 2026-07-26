@@ -849,3 +849,31 @@ Stage Summary:
 - 3 novi API ruti (speed-to-sell, competitors, refurb-roi)
 - ~650 novih vrstic kode
 - Verzija aplikacije: v6.4.0
+
+---
+Task ID: v6.5
+Agent: main
+Task: Nadaljevanje razvoja aplikacije Markec AI Firm — Opportunity Monitor (v6.5)
+
+Work Log:
+- src/app/api/ai/seasonal-calendar/route.ts: nov GET endpoint za sezonsko analizo.
+  Analizira 2 leti historical listings, group by month, year-over-year comparison.
+  Best buy/sell month z sezonskim spread %. AI insights z current/next month prediction.
+- src/app/api/ai/bulk-buy/route.ts: nov GET endpoint za bulk buy priložnosti.
+  Group by seller, suggested bulk price (15-25% popust), potential savings, score.
+- src/app/api/trades/sync-listing/route.ts: nov POST endpoint za multi-platform listing.
+  AI generira optimized oglase za Bolha/Vinted/Facebook z platform-specific pravili.
+- src/components/dashboard/analytics-view.tsx: dodana Sezonski koledar card z insights,
+  best buy/sell, 12-mesečni calendar grid z barvami.
+- src/components/dashboard/listings-view.tsx: dodan 'Bulk buy' gumb z results panel.
+- src/components/dashboard/trades-view.tsx: dodan Multi-Platform Sync gumb na held trades
+  z results panel (per-platform listings z copy button).
+- src/app/page.tsx: verzija v6.5.0
+- TypeScript: nobenih novih napak
+- Git commit: 'feat(v6.5): Seasonal Trend Calendar, Bulk Buy Opportunities, Multi-Platform Listing Sync'
+
+Stage Summary:
+- 3 nove funkcionalnosti za maksimizacijo dobička
+- 3 novi API ruti (seasonal-calendar, bulk-buy, sync-listing)
+- ~644 novih vrstic kode
+- Verzija aplikacije: v6.5.0
