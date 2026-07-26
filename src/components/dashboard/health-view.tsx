@@ -4,7 +4,7 @@ import { useEffect, useState, useCallback } from 'react';
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
-import { RefreshCw, Heart, CheckCircle2, AlertCircle, AlertTriangle, XCircle, Server, Cpu, MessageSquare, Bell, Globe, Clock, Smartphone } from 'lucide-react';
+import { RefreshCw, Heart, CheckCircle2, AlertCircle, AlertTriangle, XCircle, Server, Cpu, MessageSquare, Bell, Globe, Clock, Smartphone, Activity } from 'lucide-react';
 import { toast } from 'sonner';
 import { cn } from '@/lib/utils';
 
@@ -46,6 +46,20 @@ const CHECK_ICONS: Record<string, any> = {
 };
 
 export function HealthView() {
+  // v6.0: Scraper stats
+  const [scraperStats, setScraperStats] = useState<any>(null);
+  const [scraperLoading, setScraperLoading] = useState(false);
+
+  const loadScraperStats = useCallback(async () => {
+    setScraperLoading(true);
+    try {
+      const res = await fetch('/api/stats/scraper');
+      if (res.ok) setScraperStats(await res.json());
+    } catch { /* ignore */ }
+    finally { setScraperLoading(false); }
+  }, []);
+
+  useEffect(() => { loadScraperStats(); }, [loadScraperStats]);
   const [data, setData] = useState<HealthData | null>(null);
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
@@ -198,6 +212,111 @@ export function HealthView() {
               <span className="text-muted-foreground font-medium">IZKLOPLJENO</span> — uporabnik je izklopil to funkcijo v nastavitvah.
             </div>
           </div>
+        </CardContent>
+      </Card>
+
+      {/* v6.0: Scraper Stats Dashboard */}
+      <Card className="bg-card/50 border-primary/30">
+        <CardHeader>
+          <div className="flex items-center justify-between">
+            <CardTitle className="text-sm font-bold uppercase tracking-wider flex items-center gap-2">
+              <Activity className="w-4 h-4 text-primary" />
+              Scraper statistike
+              <Badge variant="outline" className="text-[10px] text-primary border-primary/40">v6.0</Badge>
+            </CardTitle>
+            <Button size="sm" variant="ghost" onClick={loadScraperStats} disabled={scraperLoading} className="h-6 text-xs gap-1">
+              {scraperLoading ? <RefreshCw className="w-3 h-3 animate-spin" /> : <RefreshCw className="w-3 h-3" />}
+            </Button>
+          </div>
+        </CardHeader>
+        <CardContent>
+          {scraperStats ? (
+            <div className="space-y-3">
+              {/* Time window stats */}
+              <div className="grid grid-cols-3 gap-2 text-xs">
+                {[
+                  { label: '24 ur', stats: scraperStats.stats24h },
+                  { label: '7 dni', stats: scraperStats.stats7d },
+                  { label: '30 dni', stats: scraperStats.stats30d },
+                ].map(({ label, stats }) => stats && (
+                  <div key={label} className="bg-background/30 rounded p-2 text-center">
+                    <div className="text-[9px] text-muted-foreground uppercase">{label}</div>
+                    <div className="font-mono text-lg font-bold">{stats.total}</div>
+                    <div className={cn('text-[10px] font-mono', stats.successRate >= 80 ? 'text-primary' : stats.successRate >= 50 ? 'text-amber-400' : 'text-red-500')}>
+                      {stats.successRate}% uspeh
+                    </div>
+                    <div className="text-[9px] text-muted-foreground">{stats.avgDuration}ms povp</div>
+                    <div className="text-[9px] text-primary">{stats.totalNew} novih</div>
+                  </div>
+                ))}
+              </div>
+
+              {/* Per-source breakdown */}
+              {scraperStats.bySource?.length > 0 && (
+                <div>
+                  <div className="text-[10px] uppercase tracking-wider text-muted-foreground mb-1">Po viru</div>
+                  <div className="space-y-1">
+                    {scraperStats.bySource.map((s: any, i: number) => (
+                      <div key={i} className="flex items-center gap-2 p-1 bg-background/30 rounded text-[11px]">
+                        <span className="font-bold w-20 uppercase">{s.source}</span>
+                        <span className="text-muted-foreground">{s.total} runov</span>
+                        <span className={cn('font-mono', s.successRate >= 80 ? 'text-primary' : s.successRate >= 50 ? 'text-amber-400' : 'text-red-500')}>
+                          {s.successRate}%
+                        </span>
+                        <span className="text-muted-foreground">{s.newListings} novih</span>
+                        <span className="text-muted-foreground">{s.avgDuration}ms</span>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              )}
+
+              {/* Hourly activity (24h) */}
+              {scraperStats.byHour && (
+                <div>
+                  <div className="text-[10px] uppercase tracking-wider text-muted-foreground mb-1">Aktivnost po urah (24h)</div>
+                  <div className="flex items-end gap-0.5 h-12">
+                    {scraperStats.byHour.map((h: any, i: number) => {
+                      const maxTotal = Math.max(...scraperStats.byHour.map((x: any) => x.total), 1);
+                      const heightPct = (h.total / maxTotal) * 100;
+                      return (
+                        <div key={i} className="flex-1 group relative" title={`${h.hour}:00 — ${h.total} runov, ${h.newListings} novih`}>
+                          <div
+                            className={cn('w-full rounded-sm', h.ok === h.total ? 'bg-primary/60' : h.ok > 0 ? 'bg-amber-400/60' : 'bg-red-500/60')}
+                            style={{ height: `${Math.max(2, heightPct)}%` }}
+                          />
+                        </div>
+                      );
+                    })}
+                  </div>
+                  <div className="flex justify-between text-[8px] text-muted-foreground mt-0.5">
+                    <span>00:00</span><span>06:00</span><span>12:00</span><span>18:00</span><span>23:00</span>
+                  </div>
+                </div>
+              )}
+
+              {/* Recent errors */}
+              {scraperStats.recentErrors?.length > 0 && (
+                <details className="text-[11px]">
+                  <summary className="cursor-pointer hover:text-foreground text-red-500">
+                    ⚠️ Zadnje napake ({scraperStats.recentErrors.length})
+                  </summary>
+                  <div className="mt-1 space-y-0.5">
+                    {scraperStats.recentErrors.map((e: any, i: number) => (
+                      <div key={i} className="bg-red-500/5 border border-red-500/20 rounded p-1 text-[10px]">
+                        <span className="font-bold">{e.monitorName}:</span> {e.error?.slice(0, 100)}
+                        <span className="text-muted-foreground ml-1">({new Date(e.time).toLocaleString('sl-SI', { hour: '2-digit', minute: '2-digit' })})</span>
+                      </div>
+                    ))}
+                  </div>
+                </details>
+              )}
+            </div>
+          ) : (
+            <div className="py-4 text-center text-xs text-muted-foreground">
+              {scraperLoading ? 'Nalagam...' : 'Ni podatkov.'}
+            </div>
+          )}
         </CardContent>
       </Card>
     </div>
