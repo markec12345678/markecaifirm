@@ -109,7 +109,12 @@ model Settings {
   stealthMode          Boolean @default(false)
   // CAPTCHA solving: 2captcha API key
   captchaSolverEnabled Boolean @default(false)
-  captchaApiKey        String @default("")
+  captchaApiKey        String @default("") // primary provider key
+  // v5.9: Multi-provider CAPTCHA support
+  captchaProvider      String @default("2captcha") // 2captcha | anti-captcha | capmonster | custom
+  captchaApiKeyAnticaptcha String @default("")
+  captchaApiKeyCapmonster  String @default("")
+  captchaCustomApiUrl      String @default("") // for custom provider
   // TLS fingerprinting: use custom TLS client
   tlsFingerprinting    Boolean @default(false)
   // v4.9: Active profile (null = show all data, no profile filter)

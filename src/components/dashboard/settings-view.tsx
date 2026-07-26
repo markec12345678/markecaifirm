@@ -2437,6 +2437,10 @@ function ScrapingConfigSection() {
   const [stealthMode, setStealthMode] = useState(false);
   const [captchaEnabled, setCaptchaEnabled] = useState(false);
   const [captchaApiKey, setCaptchaApiKey] = useState('');
+  const [captchaProvider, setCaptchaProvider] = useState('2captcha');
+  const [captchaApiKeyAnticaptcha, setCaptchaApiKeyAnticaptcha] = useState('');
+  const [captchaApiKeyCapmonster, setCaptchaApiKeyCapmonster] = useState('');
+  const [captchaCustomApiUrl, setCaptchaCustomApiUrl] = useState('');
   const [tlsFingerprinting, setTlsFingerprinting] = useState(false);
   const [saving, setSaving] = useState(false);
   const [loaded, setLoaded] = useState(false);
@@ -2453,7 +2457,9 @@ function ScrapingConfigSection() {
         setMaxDelay(data.requestMaxDelay ?? 5000);
         setStealthMode(data.stealthMode ?? false);
         setCaptchaEnabled(data.captchaSolverEnabled ?? false);
+        setCaptchaProvider(data.captchaProvider || '2captcha');
         setTlsFingerprinting(data.tlsFingerprinting ?? false);
+        setCaptchaCustomApiUrl(data.captchaCustomApiUrl || '');
         setLoaded(true);
       }
     } catch { /* ignore */ }
@@ -2475,8 +2481,12 @@ function ScrapingConfigSection() {
           requestMaxDelay: maxDelay,
           stealthMode,
           captchaSolverEnabled: captchaEnabled,
+          captchaProvider,
           tlsFingerprinting,
+          captchaCustomApiUrl,
           ...(captchaApiKey ? { captchaApiKey } : {}),
+          ...(captchaApiKeyAnticaptcha ? { captchaApiKeyAnticaptcha } : {}),
+          ...(captchaApiKeyCapmonster ? { captchaApiKeyCapmonster } : {}),
         }),
       });
       toast.success('Scraping nastavitve shranjene');
@@ -2547,15 +2557,53 @@ function ScrapingConfigSection() {
         <div className="border-t border-border pt-3 space-y-2">
           <div className="flex items-center justify-between">
             <div>
-              <Label className="text-xs uppercase tracking-wider flex items-center gap-1.5">🔐 CAPTCHA reševanje (2captcha)</Label>
-              <p className="text-[10px] text-muted-foreground mt-0.5">Samodejno reševanje reCAPTCHA in hCaptcha.</p>
+              <Label className="text-xs uppercase tracking-wider flex items-center gap-1.5">🔐 CAPTCHA reševanje (multi-provider)</Label>
+              <p className="text-[10px] text-muted-foreground mt-0.5">Podpora za 4 providerje z avtomatskim fallback chain.</p>
             </div>
             <Switch checked={captchaEnabled} onCheckedChange={setCaptchaEnabled} />
           </div>
           {captchaEnabled && (
-            <div>
-              <Label className="text-[11px] text-muted-foreground">2captcha API ključ</Label>
-              <Input type="password" value={captchaApiKey} onChange={(e) => setCaptchaApiKey(e.target.value)} placeholder="•••••••• (pusti prazno za ohranitev)" className="mt-1 text-xs font-mono" />
+            <div className="space-y-2">
+              {/* Primary provider selector */}
+              <div>
+                <Label className="text-[11px] text-muted-foreground">Primarni provider</Label>
+                <select
+                  value={captchaProvider}
+                  onChange={(e) => setCaptchaProvider(e.target.value)}
+                  className="mt-1 w-full bg-card border border-border rounded px-2 py-1.5 text-xs"
+                >
+                  <option value="2captcha">2captcha (2captcha.com)</option>
+                  <option value="anti-captcha">Anti-Captcha (anti-captcha.com)</option>
+                  <option value="capmonster">CapMonster Cloud (capmonster.cloud)</option>
+                  <option value="custom">Custom provider</option>
+                </select>
+              </div>
+
+              {/* API keys for all providers */}
+              <div className="grid grid-cols-1 gap-2">
+                <div>
+                  <Label className="text-[11px] text-muted-foreground">2captcha API ključ {captchaProvider === '2captcha' && '(primarni)'}</Label>
+                  <Input type="password" value={captchaApiKey} onChange={(e) => setCaptchaApiKey(e.target.value)} placeholder={captchaProvider === '2captcha' ? '••••••••' : 'fallback (opcionalno)'} className="mt-1 text-xs font-mono" />
+                </div>
+                <div>
+                  <Label className="text-[11px] text-muted-foreground">Anti-Captcha API ključ {captchaProvider === 'anti-captcha' && '(primarni)'}</Label>
+                  <Input type="password" value={captchaApiKeyAnticaptcha} onChange={(e) => setCaptchaApiKeyAnticaptcha(e.target.value)} placeholder={captchaProvider === 'anti-captcha' ? '••••••••' : 'fallback (opcionalno)'} className="mt-1 text-xs font-mono" />
+                </div>
+                <div>
+                  <Label className="text-[11px] text-muted-foreground">CapMonster API ključ {captchaProvider === 'capmonster' && '(primarni)'}</Label>
+                  <Input type="password" value={captchaApiKeyCapmonster} onChange={(e) => setCaptchaApiKeyCapmonster(e.target.value)} placeholder={captchaProvider === 'capmonster' ? '••••••••' : 'fallback (opcionalno)'} className="mt-1 text-xs font-mono" />
+                </div>
+                {captchaProvider === 'custom' && (
+                  <div>
+                    <Label className="text-[11px] text-muted-foreground">Custom API URL</Label>
+                    <Input type="text" value={captchaCustomApiUrl} onChange={(e) => setCaptchaCustomApiUrl(e.target.value)} placeholder="https://my-captcha-solver.com/api" className="mt-1 text-xs font-mono" />
+                    <p className="text-[9px] text-muted-foreground mt-0.5">Mora podpirati /createTask in /getTaskResult (Anti-Captcha kompatibilen API).</p>
+                  </div>
+                )}
+              </div>
+              <div className="bg-blue-400/5 border border-blue-400/20 rounded p-2 text-[10px] text-blue-400">
+                💡 <b>Fallback chain:</b> Če primarni provider odpove, avtomatsko preizkusi ostale z nastavljenimi ključi. Tako si odporen proti izpadom posameznega providerja.
+              </div>
             </div>
           )}
         </div>
@@ -2563,7 +2611,10 @@ function ScrapingConfigSection() {
         <div className="flex items-center justify-between border-t border-border pt-3">
           <div>
             <Label className="text-xs uppercase tracking-wider flex items-center gap-1.5">🔒 TLS fingerprinting</Label>
-            <p className="text-[10px] text-muted-foreground mt-0.5">Custom TLS client za bypass detection na podlagi TLS fingerprint-a.</p>
+            <p className="text-[10px] text-muted-foreground mt-0.5">
+              Custom TLS handshake z 3 profili (Chrome 120, Firefox 121, Safari 17).
+              Mimicira cipher suites, ALPN, EC DH curves, signature algorithms, JA3 fingerprint.
+            </p>
           </div>
           <Switch checked={tlsFingerprinting} onCheckedChange={setTlsFingerprinting} />
         </div>
