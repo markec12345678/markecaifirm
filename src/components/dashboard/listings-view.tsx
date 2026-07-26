@@ -869,6 +869,9 @@ function ListingDetailModal({ listingId, onClose }: { listingId: string | null; 
   // v5.7: AI similar listings
   const [similarListings, setSimilarListings] = useState<any[]>([]);
   const [similarLoading, setSimilarLoading] = useState(false);
+  // v6.0: AI listing enrichment
+  const [enrichment, setEnrichment] = useState<any>(null);
+  const [enrichLoading, setEnrichLoading] = useState(false);
 
   const loadDetail = useCallback(async () => {
     if (!listingId) {
@@ -898,6 +901,8 @@ function ListingDetailModal({ listingId, onClose }: { listingId: string | null; 
       setExtCompare(null);
       // v5.7: Reset similar listings
       setSimilarListings([]);
+      // v6.0: Reset enrichment
+      setEnrichment(null);
       // v5.1: Reset seller reputation
       setSellerRep(null);
       // Auto-load seller reputation if listing has sellerName
@@ -2040,6 +2045,117 @@ function ListingDetailModal({ listingId, onClose }: { listingId: string | null; 
                     ⚠️ Napoved je samo napake AI. Dejanski rezultat je odvisen od prodajalca in trga.
                   </p>
                 </div>
+              )}
+            </div>
+
+            {/* v6.0: AI Listing Enrichment — AI izvleče strukturirane podatke */}
+            <div className="bg-card/30 border border-border rounded p-3">
+              <div className="flex items-center justify-between mb-2">
+                <h4 className="text-xs uppercase tracking-wider text-muted-foreground flex items-center gap-1.5">
+                  <Sparkles className="w-3.5 h-3.5" />
+                  AI Obogatitev podatkov
+                  <Badge variant="outline" className="text-[10px] text-primary border-primary/40">v6.0</Badge>
+                </h4>
+                <Button
+                  size="sm"
+                  variant="outline"
+                  className="h-7 text-xs gap-1"
+                  disabled={enrichLoading}
+                  onClick={async () => {
+                    setEnrichLoading(true);
+                    setEnrichment(null);
+                    try {
+                      const res = await fetch(`/api/listings/${listing.id}/enrich`, { method: 'POST' });
+                      const data = await res.json();
+                      if (data.ok) {
+                        setEnrichment(data.enrichment);
+                        toast.success('✓ AI obogatitev generirana');
+                      } else {
+                        toast.error(data.error ?? 'Napaka');
+                      }
+                    } catch (e: any) { toast.error(e?.message ?? 'Napaka'); }
+                    finally { setEnrichLoading(false); }
+                  }}
+                >
+                  {enrichLoading ? <RefreshCw className="w-3 h-3 animate-spin" /> : <Sparkles className="w-3 h-3" />}
+                  Obogati
+                </Button>
+              </div>
+              {enrichLoading ? (
+                <div className="py-4 text-center text-xs text-muted-foreground">
+                  <RefreshCw className="w-4 h-4 mx-auto mb-2 animate-spin opacity-50" />
+                  AI izvleče podatke iz oglasa...
+                </div>
+              ) : enrichment ? (
+                <div className="space-y-2 text-xs">
+                  {enrichment.summary && (
+                    <div className="bg-background/30 rounded p-2">
+                      <div className="text-[10px] uppercase tracking-wider text-muted-foreground mb-1">📝 Povzetek</div>
+                      <p>{enrichment.summary}</p>
+                    </div>
+                  )}
+                  <div className="grid grid-cols-2 sm:grid-cols-3 gap-2">
+                    {enrichment.brand && (
+                      <div className="bg-background/30 rounded p-1.5">
+                        <div className="text-[9px] text-muted-foreground uppercase">Znamka</div>
+                        <div className="font-bold">{enrichment.brand}</div>
+                      </div>
+                    )}
+                    {enrichment.model && (
+                      <div className="bg-background/30 rounded p-1.5">
+                        <div className="text-[9px] text-muted-foreground uppercase">Model</div>
+                        <div className="font-bold">{enrichment.model}</div>
+                      </div>
+                    )}
+                    {enrichment.condition && (
+                      <div className="bg-background/30 rounded p-1.5">
+                        <div className="text-[9px] text-muted-foreground uppercase">Stanje</div>
+                        <div className="font-bold">{enrichment.condition}</div>
+                      </div>
+                    )}
+                    {enrichment.year && (
+                      <div className="bg-background/30 rounded p-1.5">
+                        <div className="text-[9px] text-muted-foreground uppercase">Letnik</div>
+                        <div className="font-mono font-bold">{enrichment.year}</div>
+                      </div>
+                    )}
+                    {enrichment.color && (
+                      <div className="bg-background/30 rounded p-1.5">
+                        <div className="text-[9px] text-muted-foreground uppercase">Barva</div>
+                        <div className="font-bold">{enrichment.color}</div>
+                      </div>
+                    )}
+                    {enrichment.category && (
+                      <div className="bg-background/30 rounded p-1.5">
+                        <div className="text-[9px] text-muted-foreground uppercase">Kategorija</div>
+                        <div className="font-bold">{enrichment.category}</div>
+                      </div>
+                    )}
+                  </div>
+                  {enrichment.tags?.length > 0 && (
+                    <div className="flex items-center gap-1 flex-wrap">
+                      {enrichment.tags.map((tag: string, i: number) => (
+                        <Badge key={i} variant="outline" className="text-[9px]">#{tag}</Badge>
+                      ))}
+                    </div>
+                  )}
+                  {enrichment.specs && Object.keys(enrichment.specs).length > 0 && (
+                    <details className="text-[11px]">
+                      <summary className="cursor-pointer hover:text-foreground text-muted-foreground">📋 Specifikacije ({Object.keys(enrichment.specs).length})</summary>
+                      <div className="mt-1 grid grid-cols-2 gap-1">
+                        {Object.entries(enrichment.specs).map(([k, v]: any) => (
+                          <div key={k} className="bg-background/30 rounded px-2 py-0.5">
+                            <span className="text-muted-foreground">{k}:</span> <span className="font-bold">{String(v)}</span>
+                          </div>
+                        ))}
+                      </div>
+                    </details>
+                  )}
+                </div>
+              ) : (
+                <p className="text-[11px] text-muted-foreground text-center py-2">
+                  Klikni "Obogati" za AI izvleček strukturiranih podatkov (znamka, model, stanje, specifikacije).
+                </p>
               )}
             </div>
 
