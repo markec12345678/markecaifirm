@@ -1073,3 +1073,51 @@ Stage Summary:
 - 3 novi API ruti (negotiation-playbook, pricing-abtest, cross-border)
 - ~1103 novih vrstic kode
 - Verzija aplikacije: v6.11.0
+
+---
+Task ID: v6.12
+Agent: main
+Task: Nadaljevanje razvoja aplikacije Markec AI Firm — Opportunity Monitor (v6.12)
+
+Work Log:
+- src/app/api/ai/auction-sniper/route.ts: nov POST endpoint za AI auction sniper.
+  Analizira listing in tržne signale (drop rate, avg age). AI določi strategijo:
+  wait_drop / snipe_now / last_minute / patient_hold / aggressive_bid.
+  Per listing: maxBid, timing (wait/bid/deadline), snipeTime, reasoning, signals
+  (3-6), contingencies (2-4), priceDropProbability (0-100), competitionLevel
+  (low/medium/high), estimatedDealScore (0-100).
+- src/app/api/ai/demand-forecast/route.ts: nov POST endpoint za AI napoved povpraševanja.
+  Analizira 12-mesečno zgodovino prodaj + 90-dnevne listinge po kategorijah.
+  Upošteva slovensko sezonskost (zima: grelniki/gume/smuči; pomlad: kolesa/vrt;
+  poletje: kamp/čolni; jesen: šola/šport/ogrevanje). Per kategorija: trend
+  (growing/stable/declining), seasonality, currentDemand/forecastDemand (0-200),
+  peakMonths/lowMonths, recommendation (buy/hold/sell), expectedRoiPct,
+  opportunities (konkretni itemi), reasoning. Summary stats.
+- src/app/api/ai/portfolio-correlation/route.ts: nov POST endpoint za AI portfolio korelacijo.
+  Pearson correlation coefficient med mesečnimi profiti kategorij (zadnjih 12m).
+  HHI (Herfindahl-Hirschman) koncentracijski indeks. AI identificira:
+  clusters (skupine močno koreliranih kategorij z risk level), diversification
+  (score 0-100, concentrationRisk, topRisks, suggestions), hedgingOpportunities
+  (kategorije z negativno korelacijo). Top 10 korelacij z oznako strength
+  (strong_positive/weak_positive/strong_negative/weak_negative/neutral).
+- src/components/dashboard/listings-view.tsx: dodana "AI Auction Sniper" sekcija
+  v detail drawer (med Negotiation Playbook in AI Auto-Bid). Prikazuje mode,
+  maxBid, action, reasoning, timing grid (wait/bid/deadline), probability bars
+  (priceDropProbability, competitionLevel, dealScore), snipeTime, signals,
+  contingencies in market signals. State reset ob menjavi listing-a.
+- src/components/dashboard/statistics-view.tsx: dodani dve novi kartici:
+  1) AI Napoved povpraševanja — months input (1-6), summary grid
+     (kategorij/raste/pada/kupi/prodaj), per-category prikaz trenda, current/forecast
+     demand, peak/low months, opportunities in reasoning.
+  2) AI Portfolio korelacije — summary grid (kategorij/HHI/koncentracija/diverz.score),
+     top risks, suggestions, clusters, top 10 korelacij z barvno kodirano strength,
+     hedging opportunities.
+- src/app/page.tsx: verzija v6.12.0
+- TypeScript: nobenih novih napak uvedenih (vse 25 napak je pre-existing)
+- Git commit: 'feat(v6.12): AI Auction Sniper, Demand Forecast, Portfolio Correlation'
+
+Stage Summary:
+- 3 nove funkcionalnosti za maksimizacijo dobička
+- 3 novi API ruti (auction-sniper, demand-forecast, portfolio-correlation)
+- ~1181 novih vrstic kode
+- Verzija aplikacije: v6.12.0
