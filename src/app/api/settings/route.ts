@@ -79,6 +79,10 @@ export async function GET() {
     stealthMode: s.stealthMode,
     captchaSolverEnabled: s.captchaSolverEnabled,
     captchaApiKeySet: !!s.captchaApiKey,
+    captchaProvider: s.captchaProvider || '2captcha',
+    captchaApiKeyAnticaptchaSet: !!s.captchaApiKeyAnticaptcha,
+    captchaApiKeyCapmonsterSet: !!s.captchaApiKeyCapmonster,
+    captchaCustomApiUrl: s.captchaCustomApiUrl || '',
     tlsFingerprinting: s.tlsFingerprinting,
     updatedAt: s.updatedAt,
   });
@@ -239,9 +243,18 @@ export async function POST(req: NextRequest) {
   if (typeof body.stealthMode === 'boolean') data.stealthMode = body.stealthMode;
   if (typeof body.captchaSolverEnabled === 'boolean') data.captchaSolverEnabled = body.captchaSolverEnabled;
   if (typeof body.tlsFingerprinting === 'boolean') data.tlsFingerprinting = body.tlsFingerprinting;
+  if (typeof body.captchaProvider === 'string') data.captchaProvider = body.captchaProvider;
   if (typeof body.captchaApiKey === 'string' && body.captchaApiKey.trim() !== '') {
     data.captchaApiKey = body.captchaApiKey.trim();
   }
+  // v5.9: Multi-provider CAPTCHA keys
+  if (typeof body.captchaApiKeyAnticaptcha === 'string' && body.captchaApiKeyAnticaptcha.trim() !== '') {
+    data.captchaApiKeyAnticaptcha = body.captchaApiKeyAnticaptcha.trim();
+  }
+  if (typeof body.captchaApiKeyCapmonster === 'string' && body.captchaApiKeyCapmonster.trim() !== '') {
+    data.captchaApiKeyCapmonster = body.captchaApiKeyCapmonster.trim();
+  }
+  if (typeof body.captchaCustomApiUrl === 'string') data.captchaCustomApiUrl = body.captchaCustomApiUrl.trim();
   if (typeof body.aiApiKey === 'string' && body.aiApiKey.trim() !== '') {
     data.aiApiKey = body.aiApiKey.trim();
   }
