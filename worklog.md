@@ -568,3 +568,37 @@ Stage Summary:
 - 2 novi komponenti (PriceForecastChart, CategoryNotificationsSection)
 - ~920 novih vrstic kode
 - Verzija aplikacije: v5.5.0
+
+---
+Task ID: v5.6
+Agent: main
+Task: Nadaljevanje razvoja aplikacije Markec AI Firm — Opportunity Monitor (v5.6)
+
+Work Log:
+- src/app/api/ai/detect-anomalies/route.ts: nov POST endpoint za AI anomaly detection.
+  12 flagov (price_too_low, new_seller_many, stock_photo, generic_description,
+  urgent_sale, no_contact_info, duplicate_listing, price_inconsistent,
+  too_good_to_be_true, external_url, payment_upfront). Anomaly score 0-100,
+  recommendation (ignore/proceed_cautiously/avoid).
+- src/components/dashboard/listings-view.tsx: dodan 'AI anomaly scan' gumb v Oglasi
+  header z anomalies state in results panel z barvami (red ≥70, amber ≥50).
+- src/app/api/listings/[id]/external-compare/route.ts: nov GET endpoint za AI
+  primerjavo cen z zunanjimi viri (Amazon, eBay, AliExpress, Bolha, Vinted).
+- src/components/dashboard/listings-view.tsx: dodana External Price Comparison
+  sekcija v listing modal z 'Primerjaj' gumbom, results z source badges in
+  price diff.
+- prisma/schema.prisma: Settings.dashboardLayout (JSON array of widget IDs).
+- src/app/api/settings/route.ts: dashboardLayout dodan v GET in POST.
+- src/components/dashboard/dashboard-view.tsx: Dashboard customization z
+  WidgetWrapper komponento (up/down gumbi v customize mode), 'Uredi' gumb
+  v action bar, auto-save na spremembo, merge logic za nove widgete.
+- src/app/page.tsx: verzija v5.6.0
+- TypeScript: nobenih novih napak
+- Git commit: 'feat(v5.6): AI Anomaly Detection, External Price Comparison, Dashboard customization'
+
+Stage Summary:
+- 3 nove funkcionalnosti dodane v v5.6
+- 2 novi API ruti (detect-anomalies, external-compare)
+- 1 nova komponenta (WidgetWrapper)
+- ~654 novih vrstic kode
+- Verzija aplikacije: v5.6.0
