@@ -1219,3 +1219,51 @@ Stage Summary:
 - 3 novi API ruti (insurance-optimizer, multimodal-listing, negotiation-outcome)
 - ~1352 novih vrstic kode
 - Verzija aplikacije: v6.14.0
+
+---
+Task ID: v6.15
+Agent: main
+Task: Nadaljevanje razvoja aplikacije Markec AI Firm — Opportunity Monitor (v6.15)
+
+Work Log:
+- src/app/api/ai/predictive-stockout/route.ts: nov POST endpoint za AI predictive stockout.
+  Analizira held trades (current stock) in sold trades (depletion rate per kategorija).
+  Izračuna daysToStockout glede na stock/depletion. Severity: critical (≤7d) / high (≤14d) /
+  medium (≤30d) / stagnant (brez prodaj) / low. AI predlaga: action (restock_now/start_sourcing/
+  reduce/maintain/liquidate), suggestedQuantity, urgency 1-10, expectedRevenue, sourcingHint.
+  Restock alerti z deadlineDays in message.
+- src/app/api/ai/tax-loss-harvesting/route.ts: nov POST endpoint za AI tax loss harvesting.
+  Slovenski davčni zakon: 5.000€ neoporečno, 40% dohodnina, loss carryforward 3 leta.
+  Izračuna realizedGains/realizedLosses/netGain/taxableBase/taxDue. Pridobi prior years losses
+  za carryforward. Kandidati = held trades z projectedLoss > 0 (cost - estValue). AI predlaga
+  strategije: harvest_now / wait_year_end / wait_3yr_holding / hold / bundle_with_gain.
+  Year-end plan: shouldHarvest, targetLossEur, taxSavingsEur, deadline, steps.
+  Carryforward analysis: availableLosses, utilizedThisYear, remainingForFuture, optimalUsage.
+- src/app/api/ai/margin-optimizer/route.ts: nov POST endpoint za AI profit margin optimizer.
+  Realne pristojbine za 6 platform (bolha 0%, vinted 5%+0.30€, facebook 0%, avtonet 5€ fiksno,
+  ebay 10%+0.30€+4% konverzija, kleinanzeigen 0%). 5 shipping options (GLS/DPD/Pošta SI/DHL/
+  Personal pickup z SI in EU cenami). 8 optimizacijskih strategij (platform_switch,
+  shipping_optimization, bundle_strategy, fee_negotiation, tax_optimization, currency_optimization,
+  premium_positioning, volume_discount). Per item: optimizedPlatform, optimizedShipping,
+  optimizedPrice, currentMargin → optimizedMargin z improvement breakdown.
+- src/components/dashboard/statistics-view.tsx: dodani dve novi kartici:
+  1) AI Predictive Stockout Alerts — days input, summary grid (kategorij/critical/high/stagnant/
+     vrednost stocka), restock alerti, predictions table z severity ikonami in daysToStockout,
+     restock priporočila z action/urgency/sourcingHint.
+  2) AI Profit Margin Optimizer — summary grid (itemov/trenutna marža/optimirana/izboljšava),
+     per-item optimizacija z current→optimized maržo, platform + shipping badges, improvements
+     breakdown z savings, splošna priporočila.
+- src/components/dashboard/trades-view.tsx: dodan "Tax harvesting" gumb v orodno vrstico.
+  Prikaz rezultatov vključuje: harvesting summary (dobički/izgube/neto/davek/po carryforward),
+  tax strategy, year-end harvesting načrt (cilj izgube/prihranek/rok/steps), carryforward
+  analiza, harvesting kandidati z action (harvest_now/wait_year_end/wait_3yr_holding/hold/
+  bundle_with_gain) in davčno korist, davčna opozorila.
+- src/app/page.tsx: verzija v6.15.0
+- TypeScript: nobenih novih napak uvedenih (vse 25 napak je pre-existing)
+- Git commit: 'feat(v6.15): AI Predictive Stockout, Tax Loss Harvesting, Profit Margin Optimizer'
+
+Stage Summary:
+- 3 nove funkcionalnosti za maksimizacijo dobička in davčno optimizacijo
+- 3 novi API ruti (predictive-stockout, tax-loss-harvesting, margin-optimizer)
+- ~1269 novih vrstic kode
+- Verzija aplikacije: v6.15.0
