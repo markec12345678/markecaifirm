@@ -988,3 +988,43 @@ Stage Summary:
 - 3 novi API ruti (rebalance, tax-report, exit-strategy)
 - ~602 novih vrstic kode
 - Verzija aplikacije: v6.9.0
+
+---
+Task ID: v6.10
+Agent: main
+Task: Nadaljevanje razvoja aplikacije Markec AI Firm — Opportunity Monitor (v6.10)
+
+Work Log:
+- src/app/api/ai/sourcing/route.ts: nov POST endpoint za AI sourcing recommendations.
+  Analizira sold trades (po viru/kategoriji), held trades in nedavne oglase (14d).
+  AI predlaga kje/kdaj/kaj kupovati: source, category, timing, expectedROI, risk, action, reason.
+  Stats: bySource (count, profit, ROI, avgDays), byCategory (count, profit, ROI, held),
+  recentOpportunities (total, opportunities, rate, avgPrice, avgScore).
+- src/app/api/ai/bundle-optimizer/route.ts: nov POST endpoint za AI bundle optimizer.
+  Analizira held inventar. AI kombinira komplementarne iteme v bundle (5 strategij:
+  complete_set, upgrade_path, bulk_discount, starter_pack, premium_bundle).
+  Per bundle: name, strategy, items, individualTotal, bundlePrice, savingsPct,
+  expectedProfit, expectedSellTimeDays, reasoning. Individual sale fallback za preostale.
+- src/app/api/ai/liquidation/route.ts: nov POST endpoint za AI liquidation strategy.
+  Analizira stalled inventar (>30d). 9 strategij: discount_progressive, auction_online,
+  bundle_with_hot, part_out, flash_sale, trade_in, wait_seasonal, donation_tax,
+  relist_refresh. Per item: strategy, expectedPrice, timeToSellDays, projectedLoss,
+  urgency (critical/high/medium/low), steps, reasoning.
+  Totals: itemCount, stalledCount, totalProjectedRevenue, totalProjectedLoss, avgDaysToSell,
+  urgencyBreakdown.
+- src/components/dashboard/statistics-view.tsx: dodana "AI Sourcing priporočila" card
+  z budget input, stats grid (viri/kategorije/priložnosti) in recommendations list
+  (source, category, timing, ROI, risk, action, reason).
+- src/components/dashboard/trades-view.tsx: dodana "Bundle optimizer" in "Likvidacija"
+  gumba v orodno vrstico. Bundle panel prikazuje strategy, summary grid, bundle kartice
+  (ime, strategija, items, cena, popust, dobiček, čas, reasoning). Liquidation panel
+  prikazuje summary, urgency breakdown, per-item strategije s steps in reasoning.
+- src/app/page.tsx: verzija v6.10.0
+- TypeScript: nobenih novih napak uvedenih (vse 23 napak so pre-existing iz v6.9 in prej)
+- Git commit: 'feat(v6.10): AI Sourcing Recommendations, Bundle Profit Optimizer, Liquidation Strategy'
+
+Stage Summary:
+- 3 nove funkcionalnosti za maksimizacijo dobička
+- 3 novi API ruti (sourcing, bundle-optimizer, liquidation)
+- ~1051 novih vrstic kode
+- Verzija aplikacije: v6.10.0
