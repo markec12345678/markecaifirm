@@ -866,6 +866,9 @@ function ListingDetailModal({ listingId, onClose }: { listingId: string | null; 
   // v5.6: External price comparison
   const [extCompare, setExtCompare] = useState<any>(null);
   const [extCompareLoading, setExtCompareLoading] = useState(false);
+  // v5.7: AI similar listings
+  const [similarListings, setSimilarListings] = useState<any[]>([]);
+  const [similarLoading, setSimilarLoading] = useState(false);
 
   const loadDetail = useCallback(async () => {
     if (!listingId) {
@@ -893,6 +896,8 @@ function ListingDetailModal({ listingId, onClose }: { listingId: string | null; 
       setPredictTarget(d.listing?.targetPrice != null ? String(d.listing.targetPrice) : '');
       // v5.6: Reset external comparison
       setExtCompare(null);
+      // v5.7: Reset similar listings
+      setSimilarListings([]);
       // v5.1: Reset seller reputation
       setSellerRep(null);
       // Auto-load seller reputation if listing has sellerName
@@ -2139,6 +2144,86 @@ function ListingDetailModal({ listingId, onClose }: { listingId: string | null; 
                 )}
               </div>
             )}
+
+            {/* v5.7: AI Similar Listings — najdi podobne oglase */}
+            <div className="bg-card/30 border border-border rounded p-3">
+              <div className="flex items-center justify-between mb-2">
+                <h4 className="text-xs uppercase tracking-wider text-muted-foreground flex items-center gap-1.5">
+                  <GitCompare className="w-3.5 h-3.5" />
+                  Podobni oglasi (AI)
+                  <Badge variant="outline" className="text-[10px] text-primary border-primary/40">v5.7</Badge>
+                </h4>
+                <Button
+                  size="sm"
+                  variant="outline"
+                  className="h-7 text-xs gap-1"
+                  disabled={similarLoading}
+                  onClick={async () => {
+                    setSimilarLoading(true);
+                    setSimilarListings([]);
+                    try {
+                      const res = await fetch(`/api/listings/${listing.id}/similar`);
+                      const data = await res.json();
+                      if (data.ok) {
+                        setSimilarListings(data.similar || []);
+                        toast.success(`✓ ${data.similar?.length || 0} podobnih oglasov`);
+                      } else {
+                        toast.error(data.error ?? 'Napaka');
+                      }
+                    } catch (e: any) { toast.error(e?.message ?? 'Napaka'); }
+                    finally { setSimilarLoading(false); }
+                  }}
+                >
+                  {similarLoading ? <RefreshCw className="w-3 h-3 animate-spin" /> : <GitCompare className="w-3 h-3" />}
+                  Najdi podobne
+                </Button>
+              </div>
+              {similarLoading ? (
+                <div className="py-4 text-center text-xs text-muted-foreground">
+                  <RefreshCw className="w-4 h-4 mx-auto mb-2 animate-spin opacity-50" />
+                  AI išče podobne oglase v bazi...
+                </div>
+              ) : similarListings.length > 0 ? (
+                <div className="space-y-1">
+                  {similarListings.slice(0, 8).map((s: any, i: number) => (
+                    <a
+                      key={i}
+                      href={s.url}
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      className="flex items-center gap-2 p-1.5 bg-background/30 rounded hover:bg-background/50 text-xs"
+                    >
+                      {s.imageUrl && (
+                        <img src={s.imageUrl} alt="" className="w-8 h-8 object-cover rounded shrink-0" onError={(e) => { (e.target as HTMLImageElement).style.display = 'none'; }} />
+                      )}
+                      <div className="flex-1 min-w-0">
+                        <div className="truncate font-medium">{s.title}</div>
+                        <div className="text-[10px] text-muted-foreground">
+                          {s.priceText} • {s.monitor?.source} {s.location && `• ${s.location}`}
+                        </div>
+                      </div>
+                      <div className="text-right shrink-0">
+                        <Badge variant="outline" className={cn(
+                          'text-[9px] font-mono',
+                          s.similarityScore >= 70 ? 'text-primary border-primary/40' :
+                          s.similarityScore >= 50 ? 'text-amber-400 border-amber-400/40' :
+                          'text-muted-foreground'
+                        )}>
+                          {s.similarityScore}%
+                        </Badge>
+                        {s.dealScore != null && (
+                          <div className="text-[9px] text-primary mt-0.5">🎯 {s.dealScore}</div>
+                        )}
+                      </div>
+                    </a>
+                  ))}
+                </div>
+              ) : (
+                <p className="text-[11px] text-muted-foreground text-center py-2">
+                  Klikni "Najdi podobne" za AI iskanje podobnih oglasov v bazi.
+                </p>
+              )}
+            </div>
 
             {/* v1.8: Market comparison — real data vs AI estimate */}
             {data?.marketComparison && (
