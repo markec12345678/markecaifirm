@@ -13,7 +13,7 @@ import {
 import {
   Select, SelectContent, SelectItem, SelectTrigger, SelectValue,
 } from '@/components/ui/select';
-import { RefreshCw, Plus, Pencil, Trash2, TrendingUp, TrendingDown, Wallet, Target, ExternalLink, ShoppingCart, Tag, Download, Sparkles, Check, Copy } from 'lucide-react';
+import { RefreshCw, Plus, Pencil, Trash2, TrendingUp, TrendingDown, Wallet, Target, ExternalLink, ShoppingCart, Tag, Download, Sparkles, Check, Copy, AlertTriangle } from 'lucide-react';
 import { toast } from 'sonner';
 import { cn } from '@/lib/utils';
 import {
@@ -79,6 +79,11 @@ export function TradesView() {
   // v6.5: Multi-platform sync
   const [syncData, setSyncData] = useState<any>(null);
   const [syncLoading, setSyncLoading] = useState<string | null>(null);
+  // v6.7: Aging alerts + Restock
+  const [agingData, setAgingData] = useState<any>(null);
+  const [agingLoading, setAgingLoading] = useState(false);
+  const [restockData, setRestockData] = useState<any>(null);
+  const [restockLoading, setRestockLoading] = useState(false);
   // v5.7: Bulk trade operations
   const [bulkTradeIds, setBulkTradeIds] = useState<Set<string>>(new Set());
   const [bulkTradeLoading, setBulkTradeLoading] = useState(false);
@@ -247,6 +252,48 @@ export function TradesView() {
           >
             {repriceLoading ? <RefreshCw className="w-3.5 h-3.5 animate-spin" /> : <TrendingDown className="w-3.5 h-3.5" />}
             Auto-reprice
+          </Button>
+          {/* v6.7: Aging alerts */}
+          <Button
+            size="sm"
+            variant="outline"
+            className="gap-2 border-red-500/40 text-red-500 hover:bg-red-500/10"
+            disabled={agingLoading}
+            onClick={async () => {
+              setAgingLoading(true);
+              try {
+                const res = await fetch('/api/trades/aging-alerts');
+                const data = await res.json();
+                if (data.ok) { setAgingData(data); toast.success(`✓ ${data.summary.critical} kritičnih, ${data.summary.high} visokih`); }
+                else toast.error(data.error ?? 'Napaka');
+              } catch { toast.error('Napaka'); }
+              finally { setAgingLoading(false); }
+            }}
+            title="AI aging alerts — kateri itemi izgubljajo vrednost?"
+          >
+            {agingLoading ? <RefreshCw className="w-3.5 h-3.5 animate-spin" /> : <AlertTriangle className="w-3.5 h-3.5" />}
+            Aging alerti
+          </Button>
+          {/* v6.7: Restock recommendations */}
+          <Button
+            size="sm"
+            variant="outline"
+            className="gap-2 border-green-400/40 text-green-400 hover:bg-green-400/10"
+            disabled={restockLoading}
+            onClick={async () => {
+              setRestockLoading(true);
+              try {
+                const res = await fetch('/api/ai/restock');
+                const data = await res.json();
+                if (data.ok) { setRestockData(data); toast.success(`✓ ${data.recommendations.length} priporočil, ${data.totalOpportunities} priložnosti`); }
+                else toast.error(data.error ?? 'Napaka');
+              } catch { toast.error('Napaka'); }
+              finally { setRestockLoading(false); }
+            }}
+            title="AI restock — kaj ponovno kupiti za preprodajo?"
+          >
+            {restockLoading ? <RefreshCw className="w-3.5 h-3.5 animate-spin" /> : <ShoppingCart className="w-3.5 h-3.5" />}
+            AI Restock
           </Button>
           <Button
             size="sm"
@@ -500,6 +547,86 @@ export function TradesView() {
                   >
                     <Copy className="w-3 h-3" /> Kopiraj
                   </Button>
+                </div>
+              ))}
+            </div>
+          </CardContent>
+        </Card>
+      )}
+
+      {/* v6.7: Aging Alerts */}
+      {agingData && !agingLoading && (
+        <Card className="bg-red-500/5 border-red-500/30">
+          <CardContent className="p-4">
+            <div className="flex items-center justify-between mb-3">
+              <h3 className="text-sm font-bold uppercase tracking-wider text-red-500 flex items-center gap-2">
+                <AlertTriangle className="w-4 h-4" />
+                Aging Alerti — {agingData.summary.critical}🚨 {agingData.summary.high}🔴 {agingData.summary.medium}🟡
+                <Badge variant="outline" className="text-[10px] text-red-500 border-red-500/40">v6.7</Badge>
+              </h3>
+              <Button size="sm" variant="ghost" onClick={() => setAgingData(null)} className="h-6 text-xs">×</Button>
+            </div>
+            <div className="grid grid-cols-4 gap-2 text-xs mb-2">
+              <div className="bg-background/30 rounded p-1.5 text-center"><div className="text-[9px] text-muted-foreground uppercase">Skupna izguba</div><div className="font-mono font-bold text-red-500">{agingData.summary.totalValueLoss}€</div></div>
+              <div className="bg-background/30 rounded p-1.5 text-center"><div className="text-[9px] text-muted-foreground uppercase">Holding cost</div><div className="font-mono font-bold text-amber-400">{agingData.summary.totalHoldingCost}€</div></div>
+              <div className="bg-background/30 rounded p-1.5 text-center"><div className="text-[9px] text-muted-foreground uppercase">Investirano</div><div className="font-mono font-bold">{agingData.summary.totalInvested}€</div></div>
+              <div className="bg-background/30 rounded p-1.5 text-center"><div className="text-[9px] text-muted-foreground uppercase">Itemi</div><div className="font-mono font-bold">{agingData.summary.totalItems}</div></div>
+            </div>
+            <div className="space-y-1 max-h-60 overflow-y-auto">
+              {agingData.alerts.filter((a: any) => a.urgency !== 'low').map((a: any, i: number) => (
+                <div key={i} className={cn('flex items-center gap-2 p-1.5 rounded text-xs border',
+                  a.urgency === 'critical' ? 'bg-red-500/10 border-red-500/30' :
+                  a.urgency === 'high' ? 'bg-red-500/5 border-red-500/20' : 'bg-amber-400/5 border-amber-400/20')}>
+                  <span className={cn('font-bold shrink-0 text-[10px]', a.color)}>{a.urgencyLabel}</span>
+                  <div className="flex-1 min-w-0">
+                    <div className="truncate font-medium">{a.title}</div>
+                    <div className="text-[9px] text-muted-foreground">
+                      {a.daysHeld}d • {a.buyPrice}€ → ~{a.estimatedCurrentValue}€ ({a.valueLossPct}% izguba) • holding: {a.totalHoldingCost}€
+                    </div>
+                    <div className="text-[9px] text-muted-foreground italic">{a.recommendation}</div>
+                  </div>
+                </div>
+              ))}
+            </div>
+          </CardContent>
+        </Card>
+      )}
+
+      {/* v6.7: Restock Recommendations */}
+      {restockData && !restockLoading && (
+        <Card className="bg-green-400/5 border-green-400/30">
+          <CardContent className="p-4">
+            <div className="flex items-center justify-between mb-3">
+              <h3 className="text-sm font-bold uppercase tracking-wider text-green-400 flex items-center gap-2">
+                <ShoppingCart className="w-4 h-4" />
+                AI Restock — {restockData.recommendations.length} priporočil, {restockData.totalOpportunities} priložnosti
+                <Badge variant="outline" className="text-[10px] text-green-400 border-green-400/40">v6.7</Badge>
+              </h3>
+              <Button size="sm" variant="ghost" onClick={() => setRestockData(null)} className="h-6 text-xs">×</Button>
+            </div>
+            <div className="space-y-2 max-h-80 overflow-y-auto">
+              {restockData.recommendations.map((r: any, i: number) => (
+                <div key={i} className="p-2 bg-background/30 rounded border border-green-400/20">
+                  <div className="flex items-center justify-between mb-1">
+                    <Badge variant="outline" className="text-[9px] text-green-400 border-green-400/40">{r.category}</Badge>
+                    <div className="flex items-center gap-2 text-[10px]">
+                      <span className="text-primary font-mono font-bold">{r.avgRoi > 0 ? '+' : ''}{r.avgRoi}% ROI</span>
+                      <span className="text-muted-foreground">{r.soldCount} prodaj</span>
+                      <span className="text-muted-foreground">~{r.avgDaysToSell}d</span>
+                      <span className="text-primary font-mono">+{r.avgProfit}€ skupno</span>
+                    </div>
+                  </div>
+                  <p className="text-[10px] text-muted-foreground mb-1">{r.reason}</p>
+                  <div className="space-y-0.5">
+                    {r.opportunities.map((o: any, j: number) => (
+                      <a key={j} href={o.url} target="_blank" rel="noopener noreferrer" className="flex items-center gap-1.5 p-1 hover:bg-card/50 rounded text-[10px]">
+                        <span className="truncate flex-1">{o.title}</span>
+                        <span className="font-mono text-amber-400 shrink-0">{o.priceText}</span>
+                        {o.dealScore != null && <Badge variant="outline" className="text-[8px] text-primary border-primary/40 shrink-0">🎯{o.dealScore}</Badge>}
+                        <span className="font-mono text-green-400 shrink-0">+{o.potentialProfit}€</span>
+                      </a>
+                    ))}
+                  </div>
                 </div>
               ))}
             </div>
