@@ -24,7 +24,7 @@ import {
   DialogDescription,
 } from '@/components/ui/dialog';
 import { Textarea } from '@/components/ui/textarea';
-import { RefreshCw, Download, ExternalLink, ChevronLeft, ChevronRight, Filter, ImageIcon, AlertTriangle, Target, MapPin, Clock, Bookmark, Sparkles, ShoppingCart, MessageSquare, BarChart3, TrendingDown, TrendingUp, Copy, Check, GitCompare, StickyNote, Phone, Trash2, EyeOff, Zap, User } from 'lucide-react';
+import { RefreshCw, Download, ExternalLink, ChevronLeft, ChevronRight, Filter, ImageIcon, AlertTriangle, Target, MapPin, Clock, Bookmark, Sparkles, ShoppingCart, MessageSquare, BarChart3, TrendingDown, TrendingUp, Copy, Check, GitCompare, StickyNote, Phone, Trash2, EyeOff, Zap, User, Wallet } from 'lucide-react';
 import { toast } from 'sonner';
 import { cn } from '@/lib/utils';
 
@@ -1106,6 +1106,17 @@ function ListingDetailModal({ listingId, onClose }: { listingId: string | null; 
   // v6.0: AI listing enrichment
   const [enrichment, setEnrichment] = useState<any>(null);
   const [enrichLoading, setEnrichLoading] = useState(false);
+  // v6.2: AI Flip Score
+  const [flipScore, setFlipScore] = useState<any>(null);
+  const [flipLoading, setFlipLoading] = useState(false);
+  // v6.2: Market Saturation
+  const [saturation, setSaturation] = useState<any>(null);
+  const [satLoading, setSatLoading] = useState(false);
+  // v6.2: ROI Calculator
+  const [roiResult, setRoiResult] = useState<any>(null);
+  const [roiLoading, setRoiLoading] = useState(false);
+  const [roiSellPrice, setRoiSellPrice] = useState('');
+  const [roiPlatform, setRoiPlatform] = useState<'bolha' | 'vinted' | 'other'>('bolha');
 
   const loadDetail = useCallback(async () => {
     if (!listingId) {
@@ -1137,6 +1148,11 @@ function ListingDetailModal({ listingId, onClose }: { listingId: string | null; 
       setSimilarListings([]);
       // v6.0: Reset enrichment
       setEnrichment(null);
+      // v6.2: Reset flip score, saturation, ROI
+      setFlipScore(null);
+      setSaturation(null);
+      setRoiResult(null);
+      setRoiSellPrice(d.listing?.aiEstimatedValue ? String(d.listing.aiEstimatedValue) : '');
       // v5.1: Reset seller reputation
       setSellerRep(null);
       // Auto-load seller reputation if listing has sellerName
@@ -2392,6 +2408,273 @@ function ListingDetailModal({ listingId, onClose }: { listingId: string | null; 
                 </p>
               )}
             </div>
+
+            {/* v6.2: AI Flip Score — ali se splača kupiti za preprodajo? */}
+            {listing.price != null && (
+              <div className="bg-card/30 border border-border rounded p-3">
+                <div className="flex items-center justify-between mb-2">
+                  <h4 className="text-xs uppercase tracking-wider text-muted-foreground flex items-center gap-1.5">
+                    <TrendingUp className="w-3.5 h-3.5 text-primary" />
+                    AI Flip Score (profitnost)
+                    <Badge variant="outline" className="text-[10px] text-primary border-primary/40">v6.2</Badge>
+                  </h4>
+                  <Button size="sm" variant="outline" className="h-7 text-xs gap-1" disabled={flipLoading}
+                    onClick={async () => {
+                      setFlipLoading(true); setFlipScore(null);
+                      try {
+                        const res = await fetch(`/api/listings/${listing.id}/flip-score`, { method: 'POST' });
+                        const data = await res.json();
+                        if (data.ok) { setFlipScore(data); toast.success(`Flip Score: ${data.flipScore}/100`); }
+                        else toast.error(data.error ?? 'Napaka');
+                      } catch (e: any) { toast.error(e?.message ?? 'Napaka'); }
+                      finally { setFlipLoading(false); }
+                    }}>
+                    {flipLoading ? <RefreshCw className="w-3 h-3 animate-spin" /> : <TrendingUp className="w-3 h-3" />}
+                    Izračunaj
+                  </Button>
+                </div>
+                {flipLoading ? (
+                  <div className="py-4 text-center text-xs text-muted-foreground">
+                    <RefreshCw className="w-4 h-4 mx-auto mb-2 animate-spin opacity-50" />
+                    AI analizira profitnost...
+                  </div>
+                ) : flipScore ? (
+                  <div className="space-y-2">
+                    <div className={cn('border rounded p-2 flex items-center gap-3',
+                      flipScore.flipScore >= 80 ? 'bg-primary/5 border-primary/30' :
+                      flipScore.flipScore >= 50 ? 'bg-amber-400/5 border-amber-400/30' :
+                      'bg-red-500/5 border-red-500/30')}>
+                      <div className={cn('text-3xl font-bold font-mono',
+                        flipScore.flipScore >= 80 ? 'text-primary' :
+                        flipScore.flipScore >= 50 ? 'text-amber-400' : 'text-red-500')}>
+                        {flipScore.flipScore}
+                      </div>
+                      <div className="flex-1">
+                        <div className="text-sm font-bold">
+                          {flipScore.flipScore >= 80 ? '🟢 ODLIČNA PRILOŽNOST' :
+                           flipScore.flipScore >= 50 ? '🟡 ZMERNO DONOSNO' : '🔴 NE PRIPOROČAM'}
+                        </div>
+                        <div className="text-[10px] text-muted-foreground">{flipScore.reasoning}</div>
+                      </div>
+                      <Badge variant="outline" className={cn('text-[10px] shrink-0',
+                        flipScore.recommendation === 'kupi' ? 'text-primary border-primary/40' : 'text-muted-foreground')}>
+                        {flipScore.recommendation?.toUpperCase()}
+                      </Badge>
+                    </div>
+                    <div className="grid grid-cols-2 sm:grid-cols-4 gap-2 text-[10px]">
+                      <div className="bg-background/30 rounded p-1.5 text-center">
+                        <div className="text-muted-foreground uppercase">Dobiček</div>
+                        <div className={cn('font-mono font-bold', flipScore.estimatedProfit > 0 ? 'text-primary' : 'text-red-500')}>
+                          {flipScore.estimatedProfit > 0 ? '+' : ''}{flipScore.estimatedProfit}€
+                        </div>
+                      </div>
+                      <div className="bg-background/30 rounded p-1.5 text-center">
+                        <div className="text-muted-foreground uppercase">Marža</div>
+                        <div className="font-mono font-bold text-primary">{flipScore.estimatedMargin}%</div>
+                      </div>
+                      <div className="bg-background/30 rounded p-1.5 text-center">
+                        <div className="text-muted-foreground uppercase">Čas prodaje</div>
+                        <div className="font-mono font-bold">~{flipScore.estimatedDaysToSell}d</div>
+                      </div>
+                      <div className="bg-background/30 rounded p-1.5 text-center">
+                        <div className="text-muted-foreground uppercase">Likvidnost</div>
+                        <div className={cn('font-mono font-bold', flipScore.liquidityScore >= 70 ? 'text-primary' : flipScore.liquidityScore >= 40 ? 'text-amber-400' : 'text-red-500')}>
+                          {flipScore.liquidityLabel} ({flipScore.liquidityScore})
+                        </div>
+                      </div>
+                    </div>
+                    <div className="bg-background/30 rounded p-2 text-[10px] text-muted-foreground">
+                      💰 Predvidena prodajna cena: <b className="text-primary">{flipScore.estimatedSellPrice}€</b> (tržna povprečna: {flipScore.marketAvgPrice}€)
+                      {' • '}Stroški: {flipScore.totalCosts}€ (Bolha {flipScore.bolhaFee}€ + dostava {flipScore.shipping}€)
+                      {' • '}{flipScore.marketListingCount} podobnih oglasov na trgu
+                    </div>
+                  </div>
+                ) : (
+                  <p className="text-[11px] text-muted-foreground text-center py-2">
+                    Klikni "Izračunaj" za AI analizo profitnosti (marža, likvidnost, čas prodaje, stroški).
+                  </p>
+                )}
+              </div>
+            )}
+
+            {/* v6.2: Market Saturation — koliko konkurence je na trgu? */}
+            {listing.price != null && (
+              <div className="bg-card/30 border border-border rounded p-3">
+                <div className="flex items-center justify-between mb-2">
+                  <h4 className="text-xs uppercase tracking-wider text-muted-foreground flex items-center gap-1.5">
+                    <BarChart3 className="w-3.5 h-3.5" />
+                    Tržna nasičenost
+                    <Badge variant="outline" className="text-[10px] text-primary border-primary/40">v6.2</Badge>
+                  </h4>
+                  <Button size="sm" variant="outline" className="h-7 text-xs gap-1" disabled={satLoading}
+                    onClick={async () => {
+                      setSatLoading(true); setSaturation(null);
+                      try {
+                        const res = await fetch(`/api/listings/${listing.id}/saturation`);
+                        const data = await res.json();
+                        if (data.ok) { setSaturation(data.saturation); toast.success(`${data.saturation.levelLabel} nasičenost (${data.saturation.count} oglasov)`); }
+                        else toast.error(data.error ?? 'Napaka');
+                      } catch (e: any) { toast.error(e?.message ?? 'Napaka'); }
+                      finally { setSatLoading(false); }
+                    }}>
+                    {satLoading ? <RefreshCw className="w-3 h-3 animate-spin" /> : <BarChart3 className="w-3 h-3" />}
+                    Analiziraj
+                  </Button>
+                </div>
+                {satLoading ? (
+                  <div className="py-4 text-center text-xs text-muted-foreground">
+                    <RefreshCw className="w-4 h-4 mx-auto mb-2 animate-spin opacity-50" />
+                    Analyzing market saturation...
+                  </div>
+                ) : saturation ? (
+                  <div className="space-y-2">
+                    <div className={cn('border rounded p-2 text-xs',
+                      saturation.level === 'low' ? 'bg-primary/5 border-primary/20' :
+                      saturation.level === 'medium' ? 'bg-amber-400/5 border-amber-400/20' :
+                      'bg-red-500/5 border-red-500/20')}>
+                      <div className="flex items-center justify-between mb-1">
+                        <span className={cn('font-bold', saturation.color)}>
+                          {saturation.levelLabel} nasičenost ({saturation.count} oglasov)
+                        </span>
+                        <Badge variant="outline" className={cn('text-[9px]', saturation.color)}>
+                          Trend: {saturation.trendLabel}
+                        </Badge>
+                      </div>
+                      <p className="text-[11px]">{saturation.recommendation}</p>
+                    </div>
+                    <div className="grid grid-cols-3 gap-2 text-[10px]">
+                      <div className="bg-background/30 rounded p-1.5 text-center">
+                        <div className="text-muted-foreground uppercase">Tržna povp.</div>
+                        <div className="font-mono font-bold">{saturation.avgPrice}€</div>
+                      </div>
+                      <div className="bg-background/30 rounded p-1.5 text-center">
+                        <div className="text-muted-foreground uppercase">Min – Max</div>
+                        <div className="font-mono text-[10px]">{saturation.minPrice}–{saturation.maxPrice}€</div>
+                      </div>
+                      <div className="bg-background/30 rounded p-1.5 text-center">
+                        <div className="text-muted-foreground uppercase">Tvoj položaj</div>
+                        <div className={cn('font-mono font-bold', saturation.positionPct < 0 ? 'text-primary' : saturation.positionPct > 10 ? 'text-red-500' : 'text-amber-400')}>
+                          {saturation.positionPct > 0 ? '+' : ''}{saturation.positionPct}%
+                        </div>
+                      </div>
+                    </div>
+                  </div>
+                ) : (
+                  <p className="text-[11px] text-muted-foreground text-center py-2">
+                    Klikni "Analiziraj" za preverbo koliko podobnih oglasov je na trgu.
+                  </p>
+                )}
+              </div>
+            )}
+
+            {/* v6.2: ROI Calculator z vsemi stroški + davki */}
+            {listing.price != null && (
+              <div className="bg-card/30 border border-border rounded p-3">
+                <div className="flex items-center justify-between mb-2">
+                  <h4 className="text-xs uppercase tracking-wider text-muted-foreground flex items-center gap-1.5">
+                    <Wallet className="w-3.5 h-3.5" />
+                    ROI kalkulator (stroški + davki)
+                    <Badge variant="outline" className="text-[10px] text-primary border-primary/40">v6.2</Badge>
+                  </h4>
+                </div>
+                <div className="flex items-center gap-2 mb-2">
+                  <Input type="number" value={roiSellPrice} onChange={(e) => setRoiSellPrice(e.target.value)} placeholder="Prodajna cena (€)" className="text-xs font-mono h-7 flex-1" />
+                  <select value={roiPlatform} onChange={(e) => setRoiPlatform(e.target.value as any)} className="bg-card border border-border rounded px-2 py-1 text-[10px]">
+                    <option value="bolha">Bolha</option>
+                    <option value="vinted">Vinted</option>
+                    <option value="other">Drugo</option>
+                  </select>
+                  <Button size="sm" className="h-7 text-xs gap-1" disabled={roiLoading || !roiSellPrice.trim()}
+                    onClick={async () => {
+                      setRoiLoading(true); setRoiResult(null);
+                      try {
+                        const res = await fetch('/api/trades/roi-calc', {
+                          method: 'POST', headers: { 'Content-Type': 'application/json' },
+                          body: JSON.stringify({ buyPrice: listing.price, sellPrice: parseInt(roiSellPrice, 10), platform: roiPlatform }),
+                        });
+                        const data = await res.json();
+                        if (data.ok) { setRoiResult(data.roi); toast.success(`ROI: ${data.roi.roiPct}%`); }
+                        else toast.error(data.error ?? 'Napaka');
+                      } catch (e: any) { toast.error(e?.message ?? 'Napaka'); }
+                      finally { setRoiLoading(false); }
+                    }}>
+                    {roiLoading ? <RefreshCw className="w-3 h-3 animate-spin" /> : <Wallet className="w-3 h-3" />}
+                    Izračunaj
+                  </Button>
+                </div>
+                {roiResult && (
+                  <div className="space-y-2 text-xs">
+                    <div className={cn('border rounded p-2',
+                      roiResult.netAfterTax > 0 ? 'bg-primary/5 border-primary/20' : 'bg-red-500/5 border-red-500/20')}>
+                      <div className="flex items-center justify-between mb-1">
+                        <span className="font-bold">
+                          {roiResult.netAfterTax > 0 ? '✅ DONOSNO' : '❌ NEDONOSNO'}
+                        </span>
+                        <Badge variant="outline" className={cn('text-[10px] font-mono',
+                          roiResult.roiPct > 20 ? 'text-primary border-primary/40' :
+                          roiResult.roiPct > 0 ? 'text-amber-400 border-amber-400/40' : 'text-red-500 border-red-500/40')}>
+                          ROI: {roiResult.roiPct > 0 ? '+' : ''}{roiResult.roiPct}%
+                        </Badge>
+                      </div>
+                      <div className="grid grid-cols-2 gap-2 text-[10px]">
+                        <div>
+                          <span className="text-muted-foreground">Bruto dobiček:</span>
+                          <span className={cn('font-mono font-bold ml-1', roiResult.grossProfit > 0 ? 'text-primary' : 'text-red-500')}>
+                            {roiResult.grossProfit > 0 ? '+' : ''}{roiResult.grossProfit}€
+                          </span>
+                        </div>
+                        <div>
+                          <span className="text-muted-foreground">Neto (pred dajatvami):</span>
+                          <span className={cn('font-mono font-bold ml-1', roiResult.netProfit > 0 ? 'text-primary' : 'text-red-500')}>
+                            {roiResult.netProfit > 0 ? '+' : ''}{roiResult.netProfit}€
+                          </span>
+                        </div>
+                        <div>
+                          <span className="text-muted-foreground">Dohodnina (40%):</span>
+                          <span className="font-mono font-bold ml-1 text-red-500">-{roiResult.tax}€</span>
+                        </div>
+                        <div>
+                          <span className="text-muted-foreground">Neto po davku:</span>
+                          <span className={cn('font-mono font-bold ml-1', roiResult.netAfterTax > 0 ? 'text-primary' : 'text-red-500')}>
+                            {roiResult.netAfterTax > 0 ? '+' : ''}{roiResult.netAfterTax}€
+                          </span>
+                        </div>
+                      </div>
+                    </div>
+                    <div className="bg-background/30 rounded p-2 text-[10px]">
+                      <div className="flex items-center justify-between mb-0.5">
+                        <span className="text-muted-foreground">Kupna cena:</span>
+                        <span className="font-mono">{roiResult.buyPrice}€</span>
+                      </div>
+                      <div className="flex items-center justify-between mb-0.5">
+                        <span className="text-muted-foreground">Prov. nakup ({roiResult.platform}):</span>
+                        <span className="font-mono text-red-500">-{roiResult.costs.buyFees}€</span>
+                      </div>
+                      <div className="flex items-center justify-between mb-0.5">
+                        <span className="text-muted-foreground">Prov. prodaja:</span>
+                        <span className="font-mono text-red-500">-{roiResult.costs.sellFees}€</span>
+                      </div>
+                      <div className="flex items-center justify-between mb-0.5">
+                        <span className="text-muted-foreground">Dostava:</span>
+                        <span className="font-mono text-red-500">-{roiResult.costs.shipping}€</span>
+                      </div>
+                      <div className="flex items-center justify-between mb-0.5">
+                        <span className="text-muted-foreground">Pakiranje:</span>
+                        <span className="font-mono text-red-500">-{roiResult.costs.packaging}€</span>
+                      </div>
+                      <div className="flex items-center justify-between pt-0.5 border-t border-border">
+                        <span className="text-muted-foreground">Skupni stroški:</span>
+                        <span className="font-mono font-bold text-red-500">-{roiResult.costs.total}€</span>
+                      </div>
+                    </div>
+                    <p className={cn('text-[10px] font-bold text-center',
+                      roiResult.netAfterTax > 0 && roiResult.marginPct > 15 ? 'text-primary' : 'text-amber-400')}>
+                      💡 {roiResult.recommendation}
+                    </p>
+                  </div>
+                )}
+              </div>
+            )}
 
             {/* v5.5: AI Price Forecast — vizualizacija cene z napovedmi */}
             {listing.price != null && (
