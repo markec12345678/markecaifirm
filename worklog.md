@@ -602,3 +602,34 @@ Stage Summary:
 - 1 nova komponenta (WidgetWrapper)
 - ~654 novih vrstic kode
 - Verzija aplikacije: v5.6.0
+
+---
+Task ID: v5.7
+Agent: main
+Task: Nadaljevanje razvoja aplikacije Markec AI Firm — Opportunity Monitor (v5.7)
+
+Work Log:
+- src/app/api/listings/[id]/similar/route.ts: nov GET endpoint za AI podobnost.
+  AI primerja naslov, ceno, opis referenčnega oglasa z kandidati (zadnjih 30 dni).
+  Similarity score 0-100, reason. Filter ≥30%, sort by score desc.
+- src/components/dashboard/listings-view.tsx: dodana 'Podobni oglasi (AI)' sekcija
+  v listing modal z 'Najdi podobne' gumbom, results z thumbnail, similarity badge,
+  deal score.
+- src/app/api/trades/bulk/route.ts: nov POST endpoint za bulk trade operations.
+  4 akcije: sell (določi prodajno ceno), update (category/status/notes),
+  categorize (AI guess iz naslova), delete (masovni izbris).
+- src/components/dashboard/trades-view.tsx: dodan bulk select (checkbox per trade),
+  bulk toolbar z prodajna cena input, 'Prodaj vse', 'Kategoriziraj', 'Izbriši'.
+- src/app/api/ai/monthly-report/route.ts: nov POST endpoint za AI mesečno poročilo.
+  Analizira: listings, alerts, trades, sold trades, run logs, byCategory.
+  Vrača: report (markdown), stats (realizedProfit, avgRoi, byCategory).
+  Pošilja na Telegram in/ali Email.
+- src/app/page.tsx: verzija v5.7.0
+- TypeScript: nobenih novih napak
+- Git commit: 'feat(v5.7): AI Similar Listings, Bulk Trade Operations, AI Monthly Report'
+
+Stage Summary:
+- 3 nove funkcionalnosti dodane v v5.7
+- 3 novi API ruti (similar, bulk, monthly-report)
+- ~715 novih vrstic kode
+- Verzija aplikacije: v5.7.0
