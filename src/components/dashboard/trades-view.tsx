@@ -70,6 +70,10 @@ export function TradesView() {
   // v5.4: Portfolio AI
   const [portfolioAI, setPortfolioAI] = useState<any>(null);
   const [portfolioAILoading, setPortfolioAILoading] = useState(false);
+  // v5.7: Bulk trade operations
+  const [bulkTradeIds, setBulkTradeIds] = useState<Set<string>>(new Set());
+  const [bulkTradeLoading, setBulkTradeLoading] = useState(false);
+  const [bulkSellPrice, setBulkSellPrice] = useState('');
 
   const load = useCallback(async () => {
     try {
@@ -99,6 +103,82 @@ export function TradesView() {
   }, []);
 
   useEffect(() => { load(); }, [load]);
+
+  // v5.7: Bulk trade operations
+  const bulkSell = async () => {
+    if (bulkTradeIds.size === 0 || !bulkSellPrice.trim()) {
+      toast.error('Izberi tradee in vnesi prodajno ceno');
+      return;
+    }
+    setBulkTradeLoading(true);
+    try {
+      const res = await fetch('/api/trades/bulk', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          action: 'sell',
+          tradeIds: Array.from(bulkTradeIds),
+          data: { sellPrice: parseInt(bulkSellPrice, 10) },
+        }),
+      });
+      const data = await res.json();
+      if (data.ok) {
+        toast.success(`✓ Prodanih ${data.updated} tradeov`);
+        setBulkTradeIds(new Set());
+        setBulkSellPrice('');
+        await load();
+      } else { toast.error(data.error ?? 'Napaka'); }
+    } catch { toast.error('Napaka'); }
+    finally { setBulkTradeLoading(false); }
+  };
+
+  const bulkCategorize = async () => {
+    if (bulkTradeIds.size === 0) return;
+    setBulkTradeLoading(true);
+    try {
+      const res = await fetch('/api/trades/bulk', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ action: 'categorize', tradeIds: Array.from(bulkTradeIds) }),
+      });
+      const data = await res.json();
+      if (data.ok) {
+        toast.success(`✓ Kategoriziranih ${data.updated} tradeov`);
+        setBulkTradeIds(new Set());
+        await load();
+      } else { toast.error(data.error ?? 'Napaka'); }
+    } catch { toast.error('Napaka'); }
+    finally { setBulkTradeLoading(false); }
+  };
+
+  const bulkDelete = async () => {
+    if (bulkTradeIds.size === 0) return;
+    if (!confirm(`Izbrišem ${bulkTradeIds.size} tradeov?`)) return;
+    setBulkTradeLoading(true);
+    try {
+      const res = await fetch('/api/trades/bulk', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ action: 'delete', tradeIds: Array.from(bulkTradeIds) }),
+      });
+      const data = await res.json();
+      if (data.ok) {
+        toast.success(`✓ Izbrisanih ${data.updated} tradeov`);
+        setBulkTradeIds(new Set());
+        await load();
+      } else { toast.error(data.error ?? 'Napaka'); }
+    } catch { toast.error('Napaka'); }
+    finally { setBulkTradeLoading(false); }
+  };
+
+  const toggleBulkTrade = (id: string) => {
+    setBulkTradeIds(prev => {
+      const next = new Set(prev);
+      if (next.has(id)) next.delete(id);
+      else next.add(id);
+      return next;
+    });
+  };
 
   const deleteTrade = async (t: Trade) => {
     if (!confirm(`Izbrišem trade "${t.title}"?`)) return;
@@ -474,7 +554,49 @@ export function TradesView() {
         </Card>
       ) : (
         <div className="space-y-2">
-          {filtered.map(t => <TradeRow key={t.id} trade={t} onEdit={() => { setEditing(t); setShowForm(true); }} onDelete={() => deleteTrade(t)} />)}
+          {/* v5.7: Bulk trade toolbar */}
+          {bulkTradeIds.size > 0 && (
+            <Card className="bg-primary/5 border-primary/30">
+              <CardContent className="p-3">
+                <div className="flex items-center gap-2 flex-wrap text-xs">
+                  <span className="font-medium text-primary">{bulkTradeIds.size} izbranih</span>
+                  <Input
+                    type="number"
+                    value={bulkSellPrice}
+                    onChange={(e) => setBulkSellPrice(e.target.value)}
+                    placeholder="Prodajna cena (€)"
+                    className="h-7 w-32 text-xs font-mono"
+                  />
+                  <Button size="sm" className="h-7 text-xs gap-1" onClick={bulkSell} disabled={bulkTradeLoading}>
+                    {bulkTradeLoading ? <RefreshCw className="w-3 h-3 animate-spin" /> : <TrendingUp className="w-3 h-3" />}
+                    Prodaj vse
+                  </Button>
+                  <Button size="sm" variant="outline" className="h-7 text-xs gap-1" onClick={bulkCategorize} disabled={bulkTradeLoading}>
+                    <Tag className="w-3 h-3" /> Kategoriziraj
+                  </Button>
+                  <Button size="sm" variant="outline" className="h-7 text-xs gap-1 text-red-500" onClick={bulkDelete} disabled={bulkTradeLoading}>
+                    <Trash2 className="w-3 h-3" /> Izbriši
+                  </Button>
+                  <Button size="sm" variant="ghost" className="h-7 text-xs" onClick={() => setBulkTradeIds(new Set())}>
+                    Počisti
+                  </Button>
+                </div>
+              </CardContent>
+            </Card>
+          )}
+          {filtered.map(t => (
+            <div key={t.id} className="flex items-center gap-2">
+              <input
+                type="checkbox"
+                checked={bulkTradeIds.has(t.id)}
+                onChange={() => toggleBulkTrade(t.id)}
+                className="w-4 h-4 rounded border-border shrink-0"
+              />
+              <div className="flex-1 min-w-0">
+                <TradeRow trade={t} onEdit={() => { setEditing(t); setShowForm(true); }} onDelete={() => deleteTrade(t)} />
+              </div>
+            </div>
+          ))}
         </div>
       )}
 
