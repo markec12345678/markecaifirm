@@ -1121,3 +1121,52 @@ Stage Summary:
 - 3 novi API ruti (auction-sniper, demand-forecast, portfolio-correlation)
 - ~1181 novih vrstic kode
 - Verzija aplikacije: v6.12.0
+
+---
+Task ID: v6.13
+Agent: main
+Task: Nadaljevanje razvoja aplikacije Markec AI Firm — Opportunity Monitor (v6.13)
+
+Work Log:
+- src/app/api/ai/competitor-intel/route.ts: nov POST endpoint za AI competitor intelligence.
+  Agregira listinge po sellerName (count, avgPrice, priceRange, categories, sources, locations,
+  daysActive, avgDealScore, opportunityRate). AI klasificira strategijo prodajalca
+  (volume_player/premium_niche/discounter/specialist/opportunity_hunter), threat level
+  (low/medium/high), weaknesses, opportunities, recommended action. Identificira blue ocean
+  kategorije in predloge diferenciacije.
+- src/app/api/ai/fraud-detection/route.ts: nov POST endpoint za AI fraud detection.
+  Hevristika z 30+ regex patterni (payment/urgency/description/price/seller red flags) +
+  ML signali (cena vs est. value, seller count, image verdict, opis dolžina, posted timing,
+  stock photo URL). AI kombinira hevristiko + kontekstno analizo. Per listing: fraudScore,
+  riskLevel (critical/high/medium/low), scamType, aiAssessment, redFlags, mlSignals,
+  additionalRedFlags, verificationSteps, recommendation (buy_with_caution/verify_first/avoid/report),
+  similarFraudPatterns.
+- src/app/api/ai/cashflow/route.ts: nov POST endpoint za AI cash flow optimizer.
+  Izračuna currentCash (realizirano - vezano), forecast za N dni na podlagi povprečne
+  prodaje (avgSalesPerMonth, avgRevenuePerSale, avgDaysToSell). AI analizira bottlenecke
+  (inventory_tied_up/slow_moving/high_fees/reinvestment_rate/category_concentration),
+  recommendations (priority/expectedImpactEur/timeframe), cash flow gap-e, optimal
+  allocation (reinvest/reserve). Strategy: aggressive_reinvest/balanced/conservative/
+  liquidation_first.
+- src/components/dashboard/listings-view.tsx: dodana "AI Fraud Detection" sekcija
+  v detail drawer (med Auction Sniper in AI Auto-Bid). Prikazuje fraud score z risk
+  leveljem, scam type, recommendation badge, hevristika vs AI score breakdown,
+  red flags (z utežmi), ML signali, subtilni znaki, verification steps in similar
+  fraud patterns. State reset ob menjavi listing-a.
+- src/components/dashboard/statistics-view.tsx: dodani dve novi kartici:
+  1) AI Competitor Intelligence — category filter, summary grid (konkurentov/high threat/
+     blue ocean/vseh prodajalcev), per-competitor prikaz strategije, threat, šibkosti,
+     priložnosti, recommended action. Blue ocean kategorije z ROI. Predlogi diferenciacije.
+  2) AI Cash Flow Optimizer — days input, current cash/vezan inventar/realizirano,
+     strategy (trenutna vs priporočena), optimal allocation (reinvest/reserve), forecast
+     summary (prodaje/prihodek/reinvesticija/končni cash), bottlenecks z impact, priporočila
+     z priority/expectedImpact, cash flow gap-i z mitigation.
+- src/app/page.tsx: verzija v6.13.0
+- TypeScript: nobenih novih napak uvedenih (vse 25 napak je pre-existing)
+- Git commit: 'feat(v6.13): AI Competitor Intelligence, Predictive Fraud Detection, Cash Flow Optimizer'
+
+Stage Summary:
+- 3 nove funkcionalnosti za maksimizacijo dobička in zmanjšanje tveganja
+- 3 novi API ruti (competitor-intel, fraud-detection, cashflow)
+- ~1381 novih vrstic kode
+- Verzija aplikacije: v6.13.0
