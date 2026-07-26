@@ -84,6 +84,9 @@ export function TradesView() {
   const [agingLoading, setAgingLoading] = useState(false);
   const [restockData, setRestockData] = useState<any>(null);
   const [restockLoading, setRestockLoading] = useState(false);
+  // v6.9: Tax report + Exit strategy
+  const [exitData, setExitData] = useState<any>(null);
+  const [exitLoading, setExitLoading] = useState<string | null>(null);
   // v5.7: Bulk trade operations
   const [bulkTradeIds, setBulkTradeIds] = useState<Set<string>>(new Set());
   const [bulkTradeLoading, setBulkTradeLoading] = useState(false);
@@ -294,6 +297,17 @@ export function TradesView() {
           >
             {restockLoading ? <RefreshCw className="w-3.5 h-3.5 animate-spin" /> : <ShoppingCart className="w-3.5 h-3.5" />}
             AI Restock
+          </Button>
+          {/* v6.9: Tax Report */}
+          <Button
+            size="sm"
+            variant="outline"
+            className="gap-2"
+            onClick={() => window.open(`/api/trades/tax-report?year=${new Date().getFullYear()}`, '_blank')}
+            title="Generiraj davčno poročilo za računovodjo"
+          >
+            <Download className="w-3.5 h-3.5" />
+            Davčno poročilo
           </Button>
           <Button
             size="sm"
@@ -634,6 +648,59 @@ export function TradesView() {
         </Card>
       )}
 
+      {/* v6.9: AI Exit Strategy results */}
+      {exitData && (
+        <Card className="bg-amber-400/5 border-amber-400/30">
+          <CardContent className="p-4">
+            <div className="flex items-center justify-between mb-3">
+              <h3 className="text-sm font-bold uppercase tracking-wider text-amber-400 flex items-center gap-2">
+                <Target className="w-4 h-4" />
+                AI Izhodna strategija
+                <Badge variant="outline" className="text-[10px] text-amber-400 border-amber-400/40">v6.9</Badge>
+              </h3>
+              <Button size="sm" variant="ghost" onClick={() => setExitData(null)} className="h-6 text-xs">×</Button>
+            </div>
+            <div className="space-y-2 text-xs">
+              <div className={cn('border rounded p-2',
+                exitData.strategy.recommendation === 'sell_now' ? 'bg-red-500/5 border-red-500/20' :
+                exitData.strategy.recommendation === 'sell_soon' ? 'bg-amber-400/5 border-amber-400/20' :
+                exitData.strategy.recommendation === 'hold' ? 'bg-primary/5 border-primary/20' :
+                'bg-blue-400/5 border-blue-400/20')}>
+                <div className="flex items-center justify-between mb-1">
+                  <span className="font-bold text-sm">
+                    {exitData.strategy.recommendation === 'sell_now' ? '🔴 PRODAJ TAKOJ' :
+                     exitData.strategy.recommendation === 'sell_soon' ? '🟡 PRODAJ KMALU' :
+                     exitData.strategy.recommendation === 'hold' ? '🟢 OBDRŽI' : '📦 PAKETNA PRODAJA'}
+                  </span>
+                  <Badge variant="outline" className={cn('text-[9px]',
+                    exitData.strategy.confidence >= 70 ? 'text-primary border-primary/40' : 'text-muted-foreground')}>
+                    🎯 {exitData.strategy.confidence}%
+                  </Badge>
+                </div>
+                <div className="grid grid-cols-3 gap-2 text-[10px]">
+                  <div><span className="text-muted-foreground">Cena:</span> <span className="font-mono font-bold text-primary">{exitData.strategy.suggestedPrice}€</span></div>
+                  <div><span className="text-muted-foreground">Timing:</span> <span className="font-bold">{exitData.strategy.timing}</span></div>
+                  <div><span className="text-muted-foreground">Strategija:</span> <span className="font-bold">{exitData.strategy.pricingStrategy}</span></div>
+                </div>
+                <p className="text-[10px] italic mt-1">{exitData.strategy.reasoning}</p>
+              </div>
+              {exitData.strategy.alternatives?.length > 0 && (
+                <div className="bg-background/30 rounded p-2">
+                  <div className="text-[10px] uppercase text-muted-foreground mb-1">💡 Alternative prodajne poti</div>
+                  <ul className="list-disc list-inside space-y-0.5 text-[10px]">
+                    {exitData.strategy.alternatives.map((alt: string, i: number) => <li key={i}>{alt}</li>)}
+                  </ul>
+                </div>
+              )}
+              <div className="bg-background/30 rounded p-2 text-[10px] text-muted-foreground">
+                📊 Tržno povprečje: {exitData.trade.marketAvg}€ • Konkurenca: {exitData.trade.marketCount} oglasov
+                • {exitData.trade.daysHeld}d v skladišču • Kategorija ROI: {exitData.trade.avgCatROI}%
+              </div>
+            </div>
+          </CardContent>
+        </Card>
+      )}
+
       {/* Stats overview */}
       {stats && (
         <>
@@ -920,7 +987,8 @@ export function TradesView() {
                 className="w-4 h-4 rounded border-border shrink-0"
               />
               <div className="flex-1 min-w-0">
-                <TradeRow trade={t} onEdit={() => { setEditing(t); setShowForm(true); }} onDelete={() => deleteTrade(t)} onSync={async (tradeId) => {
+                <TradeRow trade={t} onEdit={() => { setEditing(t); setShowForm(true); }} onDelete={() => deleteTrade(t)}
+                onSync={async (tradeId) => {
                   setSyncLoading(tradeId);
                   try {
                     const res = await fetch('/api/trades/sync-listing', {
@@ -932,6 +1000,19 @@ export function TradesView() {
                     else toast.error(data.error ?? 'Napaka');
                   } catch { toast.error('Napaka'); }
                   finally { setSyncLoading(null); }
+                }}
+                onExit={async (tradeId) => {
+                  setExitLoading(tradeId);
+                  try {
+                    const res = await fetch('/api/ai/exit-strategy', {
+                      method: 'POST', headers: { 'Content-Type': 'application/json' },
+                      body: JSON.stringify({ tradeId }),
+                    });
+                    const data = await res.json();
+                    if (data.ok) { setExitData(data); toast.success(`✓ Izhodna strategija: ${data.strategy.recommendation}`); }
+                    else toast.error(data.error ?? 'Napaka');
+                  } catch { toast.error('Napaka'); }
+                  finally { setExitLoading(null); }
                 }} />
               </div>
             </div>
@@ -958,7 +1039,7 @@ function StatBox({ icon, label, value, color }: { icon: React.ReactNode; label: 
   );
 }
 
-function TradeRow({ trade, onEdit, onDelete, onSync }: { trade: Trade; onEdit: () => void; onDelete: () => void; onSync?: (tradeId: string) => void }) {
+function TradeRow({ trade, onEdit, onDelete, onSync, onExit }: { trade: Trade; onEdit: () => void; onDelete: () => void; onSync?: (tradeId: string) => void; onExit?: (tradeId: string) => void }) {
   const totalCost = trade.buyPrice + (trade.buyFees || 0);
   const revenue = trade.sellPrice != null ? trade.sellPrice - (trade.sellFees || 0) : null;
   const profit = revenue != null ? revenue - totalCost : null;
@@ -1044,6 +1125,18 @@ function TradeRow({ trade, onEdit, onDelete, onSync }: { trade: Trade; onEdit: (
                 onClick={() => onSync(trade.id)}
               >
                 <ExternalLink className="w-3.5 h-3.5" />
+              </Button>
+            )}
+            {/* v6.9: AI Exit Strategy */}
+            {trade.status === 'held' && onExit && (
+              <Button
+                size="sm"
+                variant="ghost"
+                className="h-7 w-7 p-0 text-amber-400"
+                title="AI izhodna strategija — kdaj in kako prodati"
+                onClick={() => onExit(trade.id)}
+              >
+                <Target className="w-3.5 h-3.5" />
               </Button>
             )}
             <Button size="sm" variant="ghost" onClick={onDelete} className="h-7 w-7 p-0 text-destructive"><Trash2 className="w-3.5 h-3.5" /></Button>
