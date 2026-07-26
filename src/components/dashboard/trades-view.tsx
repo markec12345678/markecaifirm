@@ -13,7 +13,7 @@ import {
 import {
   Select, SelectContent, SelectItem, SelectTrigger, SelectValue,
 } from '@/components/ui/select';
-import { RefreshCw, Plus, Pencil, Trash2, TrendingUp, TrendingDown, Wallet, Target, ExternalLink, ShoppingCart, Tag, Download, Sparkles } from 'lucide-react';
+import { RefreshCw, Plus, Pencil, Trash2, TrendingUp, TrendingDown, Wallet, Target, ExternalLink, ShoppingCart, Tag, Download, Sparkles, Check, Copy } from 'lucide-react';
 import { toast } from 'sonner';
 import { cn } from '@/lib/utils';
 import {
@@ -70,6 +70,12 @@ export function TradesView() {
   // v5.4: Portfolio AI
   const [portfolioAI, setPortfolioAI] = useState<any>(null);
   const [portfolioAILoading, setPortfolioAILoading] = useState(false);
+  // v6.3: Auto-reprice
+  const [repriceData, setRepriceData] = useState<any>(null);
+  const [repriceLoading, setRepriceLoading] = useState(false);
+  // v6.3: Auto-listing generator
+  const [generatedListing, setGeneratedListing] = useState<any>(null);
+  const [genListingLoading, setGenListingLoading] = useState<string | null>(null);
   // v5.7: Bulk trade operations
   const [bulkTradeIds, setBulkTradeIds] = useState<Set<string>>(new Set());
   const [bulkTradeLoading, setBulkTradeLoading] = useState(false);
@@ -218,6 +224,27 @@ export function TradesView() {
             {portfolioAILoading ? <RefreshCw className="w-3.5 h-3.5 animate-spin" /> : <Sparkles className="w-3.5 h-3.5" />}
             AI Portfolio
           </Button>
+          {/* v6.3: Auto-reprice button */}
+          <Button
+            size="sm"
+            variant="outline"
+            onClick={async () => {
+              setRepriceLoading(true); setRepriceData(null);
+              try {
+                const res = await fetch('/api/trades/auto-reprice', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({}) });
+                const data = await res.json();
+                if (data.ok) { setRepriceData(data); toast.success(`✓ ${data.needsReprice} od ${data.totalHeld} potrebuje reprice`); }
+                else toast.error(data.error ?? 'Napaka');
+              } catch (e: any) { toast.error(e?.message ?? 'Napaka'); }
+              finally { setRepriceLoading(false); }
+            }}
+            disabled={repriceLoading}
+            className="gap-2 border-amber-400/40 text-amber-400 hover:bg-amber-400/10"
+            title="AI predlagaj cene za neprodane tradee"
+          >
+            {repriceLoading ? <RefreshCw className="w-3.5 h-3.5 animate-spin" /> : <TrendingDown className="w-3.5 h-3.5" />}
+            Auto-reprice
+          </Button>
           <Button
             size="sm"
             variant="outline"
@@ -303,6 +330,124 @@ export function TradesView() {
                 })}
               </div>
             )}
+          </CardContent>
+        </Card>
+      )}
+
+      {/* v6.3: Auto-reprice results */}
+      {repriceData && !repriceLoading && (
+        <Card className="bg-amber-400/5 border-amber-400/30">
+          <CardContent className="p-4">
+            <div className="flex items-center justify-between mb-3">
+              <h3 className="text-sm font-bold uppercase tracking-wider text-amber-400 flex items-center gap-2">
+                <TrendingDown className="w-4 h-4" />
+                AI Auto-Reprice — {repriceData.needsReprice} od {repriceData.totalHeld} potrebuje popust
+                <Badge variant="outline" className="text-[10px] text-amber-400 border-amber-400/40">v6.3</Badge>
+              </h3>
+              <Button size="sm" variant="ghost" onClick={() => setRepriceData(null)} className="h-6 text-xs">×</Button>
+            </div>
+            <div className="space-y-1.5 max-h-80 overflow-y-auto">
+              {repriceData.repricing.filter((r: any) => r.needsReprice).map((r: any, i: number) => (
+                <div key={i} className="flex items-center gap-2 p-2 bg-background/30 rounded text-xs border border-amber-400/20">
+                  <div className="flex-1 min-w-0">
+                    <div className="font-medium truncate">{r.title}</div>
+                    <div className="text-[10px] text-muted-foreground">
+                      {r.currentPrice}€ → <span className="text-amber-400 font-bold">{r.suggestedPrice}€</span>
+                      {' '}({r.dropPct > 0 ? '-' : '+'}{Math.abs(r.dropPct)}%)
+                      {' • '}{r.daysHeld}d v skladišču
+                      {r.marketAvg && ` • tržno povp: ${r.marketAvg}€`}
+                    </div>
+                    <div className="text-[10px] italic text-muted-foreground mt-0.5">{r.reason}</div>
+                  </div>
+                  <Button
+                    size="sm"
+                    variant="outline"
+                    className="h-6 text-[10px] gap-1 shrink-0"
+                    onClick={async () => {
+                      try {
+                        await fetch('/api/trades', {
+                          method: 'PATCH',
+                          headers: { 'Content-Type': 'application/json' },
+                          body: JSON.stringify({ id: r.tradeId, sellPrice: r.suggestedPrice }),
+                        });
+                        toast.success(`Cena posodobljena: ${r.suggestedPrice}€`);
+                        await load();
+                      } catch { toast.error('Napaka'); }
+                    }}
+                  >
+                    <Check className="w-3 h-3" /> Uporabi
+                  </Button>
+                </div>
+              ))}
+              {repriceData.repricing.filter((r: any) => r.needsReprice).length === 0 && (
+                <p className="text-xs text-muted-foreground text-center py-3">✅ Vsi tradei imajo ustrezno ceno — reprice ni potreben.</p>
+              )}
+            </div>
+          </CardContent>
+        </Card>
+      )}
+
+      {/* v6.3: Auto-listing generator result */}
+      {generatedListing && (
+        <Card className="bg-primary/5 border-primary/30">
+          <CardContent className="p-4">
+            <div className="flex items-center justify-between mb-3">
+              <h3 className="text-sm font-bold uppercase tracking-wider text-primary flex items-center gap-2">
+                <Sparkles className="w-4 h-4" />
+                AI Generiran oglas za preprodajo
+                <Badge variant="outline" className="text-[10px] text-primary border-primary/40">v6.3</Badge>
+              </h3>
+              <Button size="sm" variant="ghost" onClick={() => setGeneratedListing(null)} className="h-6 text-xs">×</Button>
+            </div>
+            <div className="space-y-2 text-xs">
+              <div className="bg-background/30 rounded p-2">
+                <div className="text-[10px] uppercase text-muted-foreground mb-0.5">Naslov</div>
+                <div className="font-bold">{generatedListing.title}</div>
+              </div>
+              <div className="grid grid-cols-3 gap-2">
+                <div className="bg-background/30 rounded p-1.5 text-center">
+                  <div className="text-[9px] text-muted-foreground uppercase">Cena</div>
+                  <div className="font-mono font-bold text-primary">{generatedListing.price}€</div>
+                </div>
+                <div className="bg-background/30 rounded p-1.5 text-center">
+                  <div className="text-[9px] text-muted-foreground uppercase">Marža</div>
+                  <div className="font-mono font-bold text-primary">{generatedListing.marginPct > 0 ? '+' : ''}{generatedListing.marginPct}%</div>
+                </div>
+                <div className="bg-background/30 rounded p-1.5 text-center">
+                  <div className="text-[9px] text-muted-foreground uppercase">Čas prodaje</div>
+                  <div className="font-mono font-bold">~{generatedListing.expectedSellTimeDays}d</div>
+                </div>
+              </div>
+              <div className="bg-background/30 rounded p-2">
+                <div className="text-[10px] uppercase text-muted-foreground mb-1">Opis</div>
+                <p className="whitespace-pre-wrap text-[11px]">{generatedListing.description}</p>
+              </div>
+              {generatedListing.tags?.length > 0 && (
+                <div className="flex items-center gap-1 flex-wrap">
+                  {generatedListing.tags.map((t: string, i: number) => (
+                    <Badge key={i} variant="outline" className="text-[9px]">#{t}</Badge>
+                  ))}
+                </div>
+              )}
+              {generatedListing.tips?.length > 0 && (
+                <details className="text-[11px]">
+                  <summary className="cursor-pointer text-primary">💡 Nasveti za prodajo ({generatedListing.tips.length})</summary>
+                  <ul className="mt-1 space-y-0.5 list-disc list-inside">
+                    {generatedListing.tips.map((t: string, i: number) => <li key={i}>{t}</li>)}
+                  </ul>
+                </details>
+              )}
+              <Button
+                size="sm"
+                className="w-full gap-1"
+                onClick={() => {
+                  navigator.clipboard.writeText(`${generatedListing.title}\n\n${generatedListing.description}\n\nCena: ${generatedListing.price}€`);
+                  toast.success('Oglas kopiran — prilepi na Bolha/Vinted');
+                }}
+              >
+                <Copy className="w-3 h-3" /> Kopiraj oglas
+              </Button>
+            </div>
           </CardContent>
         </Card>
       )}
@@ -670,6 +815,31 @@ function TradeRow({ trade, onEdit, onDelete }: { trade: Trade; onEdit: () => voi
           </div>
           <div className="flex flex-col gap-1">
             <Button size="sm" variant="ghost" onClick={onEdit} className="h-7 w-7 p-0"><Pencil className="w-3.5 h-3.5" /></Button>
+            {/* v6.3: Generate listing for resale */}
+            {trade.status === 'held' && (
+              <Button
+                size="sm"
+                variant="ghost"
+                className="h-7 w-7 p-0 text-primary"
+                title="AI generiraj oglas za preprodajo"
+                onClick={async () => {
+                  try {
+                    const res = await fetch('/api/ai/generate-listing', {
+                      method: 'POST', headers: { 'Content-Type': 'application/json' },
+                      body: JSON.stringify({ tradeId: trade.id }),
+                    });
+                    const data = await res.json();
+                    if (data.ok) {
+                      // Copy to clipboard
+                      navigator.clipboard.writeText(`${data.listing.title}\n\n${data.listing.description}\n\nCena: ${data.listing.price}€`);
+                      toast.success(`✓ Oglas generiran (${data.listing.marginPct > 0 ? '+' : ''}${data.listing.marginPct}% marže, kopirano v odložišče)`);
+                    } else { toast.error(data.error ?? 'Napaka'); }
+                  } catch { toast.error('Napaka'); }
+                }}
+              >
+                <Sparkles className="w-3.5 h-3.5" />
+              </Button>
+            )}
             <Button size="sm" variant="ghost" onClick={onDelete} className="h-7 w-7 p-0 text-destructive"><Trash2 className="w-3.5 h-3.5" /></Button>
           </div>
         </div>
