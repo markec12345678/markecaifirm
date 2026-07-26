@@ -7,6 +7,7 @@ import { Badge } from '@/components/ui/badge';
 import { Activity, Bell, AlertTriangle, Target, TrendingUp, Play, RefreshCw, Clock, Zap, LayoutGrid, BarChart3, Bookmark, ShoppingCart, TrendingDown, ExternalLink, Check, Sparkles } from 'lucide-react';
 import { toast } from 'sonner';
 import { cn } from '@/lib/utils';
+import { AiInsightsWidget } from '@/components/dashboard/ai-insights-widget';
 
 interface Stats {
   totalMonitors: number;
@@ -432,6 +433,9 @@ export function DashboardView({ onNavigate }: ViewProps) {
 
       {/* v2.7: Activity feed */}
       <ActivityFeed />
+
+      {/* v5.3: AI Insights widget */}
+      <AiInsightsWidget />
 
       {/* v4.5: Skladišče dashboard widget */}
       <SkladisceWidget onNavigate={onNavigate} />

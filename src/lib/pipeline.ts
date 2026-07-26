@@ -584,6 +584,19 @@ export async function runMonitor(monitorId: string): Promise<RunResult> {
     // v4.5: Add target price alerts to total
     alertsSent += targetPriceAlerts;
 
+    // v5.3: Check smart rules (kompleksna pravila alertov)
+    try {
+      const { checkSmartRules } = await import('@/lib/smart-rules-engine');
+      const triggeredRules = await checkSmartRules();
+      if (triggeredRules.length > 0) {
+        const smartAlerts = triggeredRules.reduce((s, r) => s + r.matchedCount, 0);
+        alertsSent += smartAlerts;
+      }
+    } catch (e) {
+      // Smart rules are non-critical — don't fail the run
+      console.error('Smart rules check failed:', e);
+    }
+
     await db.runLog.update({
       where: { id: runLog.id },
       data: {

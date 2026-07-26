@@ -358,3 +358,28 @@ model PriceHistory {
 
   @@index([listingId, seenAt])
 }
+
+// v5.3: Smart Rules — kompleksna pravila za alerte (npr. "alert ko 3 podobni oglasi padejo pod X€")
+model SmartRule {
+  id          String   @id @default(cuid())
+  name        String
+  description String   @default("")
+  // Rule type: 'price_threshold' | 'multiple_listings' | 'price_drop_pct' | 'ai_verdict_combo' | 'time_based'
+  ruleType    String
+  // JSON configuration for the rule (depends on ruleType)
+  // price_threshold: { monitorId, priceBelow, minDealScore? }
+  // multiple_listings: { monitorId, count, withinHours, priceBelow? }
+  // price_drop_pct: { monitorId, dropPct, withinHours }
+  // ai_verdict_combo: { monitorId, minAiScore, maxAiRisk, minDealScore? }
+  // time_based: { monitorId, hoursOld, priceBelow? }
+  config      String   // JSON
+  // Channels (JSON array: ['telegram', 'discord', 'slack', 'push', 'email'])
+  channels    String   @default("[]")
+  isActive    Boolean  @default(true)
+  // Tracking
+  lastTriggeredAt DateTime?
+  triggerCount Int     @default(0)
+  // Metadata
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+}
