@@ -933,3 +933,29 @@ Stage Summary:
 - 3 novi API ruti (aging-alerts, restock, goal-tracker)
 - ~650 novih vrstic kode
 - Verzija aplikacije: v6.7.0
+
+---
+Task ID: v6.8
+Agent: main
+Task: Nadaljevanje razvoja aplikacije Markec AI Firm — Opportunity Monitor (v6.8)
+
+Work Log:
+- src/app/api/ai/profit-forecast/route.ts: nov POST endpoint za AI profit forecast.
+  Analizira 6-mesečno zgodovino, 3 scenariji (optimistic/realistic/pessimistic),
+  confidence, faktorji, priporočilo.
+- src/app/api/stats/deal-velocity/route.ts: nov GET endpoint za deal velocity.
+  Analiza po urah (24h), dnevih (7), virih. bestWindow, peakHours, insights.
+- src/app/api/trades/risk-score/route.ts: nov POST endpoint za risk score per trade.
+  Risk factors: time, market, AI verdict, deal score, price drops, category, price level.
+  Risk levels: critical/high/medium/low z recommendation.
+- src/components/dashboard/statistics-view.tsx: dodana AI Napoved dobička card z
+  scenarios grid, factors, recommendation, historical data.
+- src/app/page.tsx: verzija v6.8.0
+- TypeScript: nobenih novih napak
+- Git commit: 'feat(v6.8): AI Profit Forecast, Deal Velocity Tracker, AI Risk Score per Trade'
+
+Stage Summary:
+- 3 nove funkcionalnosti za maksimizacijo dobička
+- 3 novi API ruti (profit-forecast, deal-velocity, risk-score)
+- ~503 novih vrstic kode
+- Verzija aplikacije: v6.8.0
