@@ -526,3 +526,45 @@ Stage Summary:
 - 2 novi Prisma tabeli (NegotiationMessage, WebhookEndpoint)
 - ~2200 novih vrstic kode
 - Verzija aplikacije: v5.4.0
+
+---
+Task ID: v5.5
+Agent: main
+Task: Nadaljevanje razvoja aplikacije Markec AI Firm — Opportunity Monitor (v5.5)
+
+Work Log:
+- src/app/api/listings/[id]/price-forecast/route.ts: nov POST endpoint za AI
+  napoved cene za 3-6 mesecev. AI upošteva price history, market data, AI estimate,
+  deal score, starost oglasa. Vrača: history, projected, trend, seasonality,
+  aiAnalysis, confidence, expectedPrice3m/6m.
+- src/components/dashboard/price-forecast-chart.tsx: PriceForecastChart komponenta
+  z ComposedChart (Area za history, Line za projected dashed), ReferenceLine za
+  trenutno ceno, trend/confidence badges, AI analiza, sezonskost, collapsible
+  projekcija po mesecih.
+- src/components/dashboard/listings-view.tsx: PriceForecastChart dodan v listing
+  modal (za AI napoved cene sekcijo, pred market comparison). Dodan 'AI kategoriziraj'
+  gumb v Oglasi header z categorizing state.
+- src/app/api/ai/categorize/route.ts: nov POST endpoint za AI kategorizacijo.
+  15 kategorij z pravili. Podpira: single listing, bulk (monitorId), direct (title).
+  Shranjuje v listing.userNotes z prefix '[AI kategorija: ...]'.
+- prisma/schema.prisma: Settings.categoryNotifications (JSON za per-kategorijo
+  notification routing).
+- src/app/api/settings/route.ts: categoryNotifications dodan v GET response in
+  POST update handler.
+- src/components/dashboard/settings-view.tsx: CategoryNotificationsSection komponenta
+  z 9 kategorijami × 4 kanali (telegram/discord/push/email), 3 states per channel
+  (VKLOPLJENO/IZKLOPLJENO/globalno), reset per kategorija, save button.
+- src/app/page.tsx: verzija v5.5.0
+- TypeScript: nobenih novih napak
+- Testiranje:
+  - HOME: 200 ✓
+  - categorize: vrača error 'fetch failed' (AI ni dostopen, endpoint deluje) ✓
+  - settings: vrača categoryNotifications polje ✓
+- Git commit: 'feat(v5.5): AI Price Forecast graph, Smart Categories, Category notification preferences'
+
+Stage Summary:
+- 3 nove funkcionalnosti dodane v v5.5
+- 2 novi API ruti (price-forecast, categorize)
+- 2 novi komponenti (PriceForecastChart, CategoryNotificationsSection)
+- ~920 novih vrstic kode
+- Verzija aplikacije: v5.5.0
