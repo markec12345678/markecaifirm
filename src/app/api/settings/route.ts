@@ -68,6 +68,8 @@ export async function GET() {
     monthlyProfitGoal: s.monthlyProfitGoal,
     // v5.5: Category notifications
     categoryNotifications: s.categoryNotifications || '{}',
+    // v5.6: Dashboard layout
+    dashboardLayout: s.dashboardLayout || '[]',
     updatedAt: s.updatedAt,
   });
 }
@@ -216,6 +218,8 @@ export async function POST(req: NextRequest) {
   if (typeof body.monthlyProfitGoal === 'number') data.monthlyProfitGoal = body.monthlyProfitGoal;
   // v5.5: Category notifications
   if (typeof body.categoryNotifications === 'string') data.categoryNotifications = body.categoryNotifications;
+  // v5.6: Dashboard layout
+  if (typeof body.dashboardLayout === 'string') data.dashboardLayout = body.dashboardLayout;
   if (typeof body.aiApiKey === 'string' && body.aiApiKey.trim() !== '') {
     data.aiApiKey = body.aiApiKey.trim();
   }

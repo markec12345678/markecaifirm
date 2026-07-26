@@ -4,10 +4,14 @@ import { useEffect, useState, useCallback } from 'react';
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
-import { Activity, Bell, AlertTriangle, Target, TrendingUp, Play, RefreshCw, Clock, Zap, LayoutGrid, BarChart3, Bookmark, ShoppingCart, TrendingDown, ExternalLink, Check, Sparkles } from 'lucide-react';
+import { Activity, Bell, AlertTriangle, Target, TrendingUp, Play, RefreshCw, Clock, Zap, LayoutGrid, BarChart3, Bookmark, ShoppingCart, TrendingDown, ExternalLink, Check, Sparkles, ArrowUp, ArrowDown, Settings2 } from 'lucide-react';
 import { toast } from 'sonner';
 import { cn } from '@/lib/utils';
 import { AiInsightsWidget } from '@/components/dashboard/ai-insights-widget';
+
+// v5.6: Dashboard widget IDs
+const WIDGET_IDS = ['todaySummary', 'quickStats', 'activityFeed', 'aiInsights', 'skladisceWidget'] as const;
+type WidgetId = typeof WIDGET_IDS[number];
 
 interface Stats {
   totalMonitors: number;
@@ -55,6 +59,53 @@ export function DashboardView({ onNavigate }: ViewProps) {
   const [summaryLoading, setSummaryLoading] = useState(false);
   const [summaryData, setSummaryData] = useState<any>(null);
   const [summaryHours, setSummaryHours] = useState(24);
+  // v5.6: Dashboard customization
+  const [widgetOrder, setWidgetOrder] = useState<WidgetId[]>([...WIDGET_IDS]);
+  const [customizeMode, setCustomizeMode] = useState(false);
+
+  // Load dashboard layout from settings
+  useEffect(() => {
+    fetch('/api/settings')
+      .then(res => res.ok ? res.json() : null)
+      .then(data => {
+        if (data?.dashboardLayout) {
+          try {
+            const layout = JSON.parse(data.dashboardLayout);
+            if (Array.isArray(layout) && layout.length > 0) {
+              const merged = [...layout.filter((w: string) => WIDGET_IDS.includes(w as WidgetId)) as WidgetId[]];
+              for (const w of WIDGET_IDS) {
+                if (!merged.includes(w)) merged.push(w);
+              }
+              setWidgetOrder(merged);
+            }
+          } catch { /* ignore */ }
+        }
+      })
+      .catch(() => {});
+  }, []);
+
+  const saveLayout = useCallback(async (newOrder: WidgetId[]) => {
+    try {
+      await fetch('/api/settings', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ dashboardLayout: JSON.stringify(newOrder) }),
+      });
+    } catch { /* ignore */ }
+  }, []);
+
+  const moveWidget = (id: WidgetId, direction: 'up' | 'down') => {
+    setWidgetOrder(prev => {
+      const idx = prev.indexOf(id);
+      if (idx === -1) return prev;
+      const newIdx = direction === 'up' ? idx - 1 : idx + 1;
+      if (newIdx < 0 || newIdx >= prev.length) return prev;
+      const next = [...prev];
+      [next[idx], next[newIdx]] = [next[newIdx], next[idx]];
+      saveLayout(next);
+      return next;
+    });
+  };
 
   const load = useCallback(async () => {
     try {
@@ -187,6 +238,17 @@ export function DashboardView({ onNavigate }: ViewProps) {
           >
             {summaryLoading ? <RefreshCw className="w-3.5 h-3.5 animate-spin" /> : <Sparkles className="w-3.5 h-3.5" />}
             AI POVzetek
+          </Button>
+          {/* v5.6: Customize dashboard layout */}
+          <Button
+            size="sm"
+            variant="outline"
+            onClick={() => setCustomizeMode(!customizeMode)}
+            className={cn('gap-2', customizeMode && 'border-primary text-primary')}
+            title="Preuredi vrstni red widgetov"
+          >
+            <Settings2 className="w-3.5 h-3.5" />
+            {customizeMode ? 'Končaj' : 'Uredi'}
           </Button>
         </div>
       </div>
@@ -431,14 +493,27 @@ export function DashboardView({ onNavigate }: ViewProps) {
         </CardContent>
       </Card>
 
+      {/* v5.6: Customize mode info */}
+      {customizeMode && (
+        <div className="bg-primary/5 border border-primary/20 rounded p-2 text-xs text-primary text-center">
+          🔧 Customize mode — uporabi ↑↓ gumbe za preureditev widgetov. Spremembe se samodejno shranijo.
+        </div>
+      )}
+
       {/* v2.7: Activity feed */}
-      <ActivityFeed />
+      <WidgetWrapper id="activityFeed" order={widgetOrder} customizeMode={customizeMode} onMove={moveWidget}>
+        <ActivityFeed />
+      </WidgetWrapper>
 
       {/* v5.3: AI Insights widget */}
-      <AiInsightsWidget />
+      <WidgetWrapper id="aiInsights" order={widgetOrder} customizeMode={customizeMode} onMove={moveWidget}>
+        <AiInsightsWidget />
+      </WidgetWrapper>
 
       {/* v4.5: Skladišče dashboard widget */}
-      <SkladisceWidget onNavigate={onNavigate} />
+      <WidgetWrapper id="skladisceWidget" order={widgetOrder} customizeMode={customizeMode} onMove={moveWidget}>
+        <SkladisceWidget onNavigate={onNavigate} />
+      </WidgetWrapper>
 
       {/* Quick start hint */}
       {stats.totalMonitors === 0 && (
@@ -930,5 +1005,43 @@ function SkladisceWidget({ onNavigate }: { onNavigate: (v: any) => void }) {
         )}
       </CardContent>
     </Card>
+  );
+}
+
+// v5.6: WidgetWrapper — zavije widget z up/down gumbi v customize mode
+function WidgetWrapper({ id, order, customizeMode, onMove, children }: {
+  id: WidgetId;
+  order: WidgetId[];
+  customizeMode: boolean;
+  onMove: (id: WidgetId, dir: 'up' | 'down') => void;
+  children: React.ReactNode;
+}) {
+  const idx = order.indexOf(id);
+  const isFirst = idx === 0;
+  const isLast = idx === order.length - 1;
+
+  if (!customizeMode) return <>{children}</>;
+
+  return (
+    <div className="relative border-2 border-dashed border-primary/30 rounded-lg p-1">
+      <div className="absolute -top-3 left-2 flex items-center gap-1 bg-background px-2 z-10">
+        <span className="text-[9px] text-primary font-mono uppercase">{id}</span>
+        <button
+          onClick={() => onMove(id, 'up')}
+          disabled={isFirst}
+          className="text-primary hover:bg-primary/10 p-0.5 rounded disabled:opacity-30"
+        >
+          <ArrowUp className="w-3 h-3" />
+        </button>
+        <button
+          onClick={() => onMove(id, 'down')}
+          disabled={isLast}
+          className="text-primary hover:bg-primary/10 p-0.5 rounded disabled:opacity-30"
+        >
+          <ArrowDown className="w-3 h-3" />
+        </button>
+      </div>
+      <div className="pt-2">{children}</div>
+    </div>
   );
 }

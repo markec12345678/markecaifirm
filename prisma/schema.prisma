@@ -94,6 +94,8 @@ model Settings {
   monthlyProfitGoal    Float  @default(0)  // EUR per month, 0 = disabled
   // v5.5: Category-based notification preferences (JSON: { "avto": {telegram: false, push: true}, ... })
   categoryNotifications String @default("{}")
+  // v5.6: Dashboard widget layout (JSON array of widget IDs in display order)
+  dashboardLayout      String @default("[]")
   // v4.9: Active profile (null = show all data, no profile filter)
   activeProfileId      String?
   // Metadata
