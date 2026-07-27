@@ -2176,3 +2176,49 @@ Stage Summary:
 - Procurement: budget+risk input, expected outcomes, per-item plan z automation config
 - Automation: mode select (3 nivoji), buy/sell pipelines, safeguards, improvements
 - Verzija aplikacije: v6.31.0
+
+---
+Task ID: v6.32
+Agent: main
+Task: AI Continuous Learning, Performance Benchmarking, Smart Alert Router
+
+Work Log:
+- src/app/api/ai/continuous-learning/route.ts: nov POST endpoint za kontinuirano učenje.
+  Analizira AI napovedi vs dejanski rezultati: aiScoreAccuracy (score >= 7 → profitable?),
+  dealScoreAccuracy (score >= 70 → profitable?), verdictAccuracy (PRILIKA → profitable?),
+  estValueAccuracy (odstopanje est. value od dejanske prodajne cene). Per kategorija
+  primerja threshold za false positives (AI visok a izguba) in false negatives (AI nizek
+  a dobiček). Learned patterns z confidence in evidence count. Model improvements za 5
+  areas (ai_score, deal_score, est_value, verdict, risk_assessment). Category thresholds
+  (current vs recommended z reasoning). Feedback loop (positive/negative examples, false
+  positives/negatives, training data quality).
+- src/app/api/ai/performance-benchmark/route.ts: nov POST endpoint za benchmarking.
+  Izračuna lastne metrike (ROI, avgDaysToSell, successRate, profitMargin, turnoverRatio,
+  totalProfit). Industry benchmarki za slovenski trg 2024: avgROI 20%, avgDays 45, success
+  68%, margin 16%, turnover 4.5, top10% ROI 35%. Competitive position: overallPercentile
+  (0-100), tier (beginner/intermediate/advanced/expert/top_5pct), strengths, weaknesses.
+  Gaps (your vs benchmark z gapPct, gapDirection above/below/at_par, urgency, fix).
+  Improvements (current/target score, action, expectedImpact, timeline). Summary z
+  overallScore (0-100), grade (A+ do F), vsLastPeriod, projectedScore30d.
+- src/app/api/ai/smart-alert-router/route.ts: nov POST endpoint za pametni alert routing.
+  5 priority nivojev: critical (deal >= 90 + PRILIKA + risk <= 3 → instant vsi kanali,
+  tudi quiet hours), high (deal >= 80 → instant Telegram + Push), medium (deal >= 70 →
+  digest), low (deal >= 60 → samo dashboard), info (price drop → samo log). Per rule:
+  conditions, channels, timing (instant/delayed/digest/quiet_hours_override), maxPerHour,
+  cooldownMinutes. Channel priorities (telegram/discord/push/email/dashboard z bestFor,
+  responseTime, noiseLevel). Quiet hours config (enabled, start/end, critical override,
+  weekend mode). Escalation rules (trigger → escalateTo z delay in condition). Smart
+  filters (suppress/delay/priority_boost/priority_reduce). Expected improvements
+  (alertFatigueReduction, responseTimeImprovement, missedCriticalReduction).
+- src/app/page.tsx: verzija v6.32.0
+- TypeScript: 24 napak (enako kot prej) - nobenih novih napak uvedenih
+- Git commit: 'feat(v6.32): AI Continuous Learning, Performance Benchmarking, Smart Alert Router'
+
+Stage Summary:
+- 3 nove AI funkcionalnosti za samo-izboljšanje in benchmarking
+- 3 novi API ruti (continuous-learning, performance-benchmark, smart-alert-router)
+- ~665 novih vrstic kode
+- Continuous Learning: analiza AI accuracy z learned patterns in model improvements
+- Performance Benchmark: primerjava z industry benchmarki z competitive position in gaps
+- Smart Alert Router: 5-nivojski routing z escalation in smart filters
+- Verzija aplikacije: v6.32.0
