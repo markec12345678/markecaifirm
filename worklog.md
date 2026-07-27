@@ -2024,3 +2024,48 @@ Stage Summary:
 - Refurb ROI Predictor: vizualna analiza + 14 tipov izboljšav z ROI > 15% threshold
 - Tone Analyzer: 8 tonovnih profilov z rewrite in platform-specific priporočili
 - Verzija aplikacije: v6.28.0
+
+---
+Task ID: v6.29
+Agent: main
+Task: AI Price Elasticity Modeler, A/B Test Results Analyzer, Insurance Claim Predictor
+
+Work Log:
+- src/app/api/ai/price-elasticity/route.ts: nov POST endpoint za modeliranje cenovne
+  elasticnosti. Analizira sold trades po kategorijah (price/volume/daysToSell relacija).
+  Per kategorija: elasticityCoefficient (E, lahko negativen), elasticityType (elastic |E|>1
+  / inelastic |E|<1 / unitary |E|=1), currentAvgPrice, optimalPrice, priceChangePct,
+  expectedVolumeChangePct, expectedProfitChangePct. Price curve (5-7 cenovnih točk z
+  expectedVolumePct, expectedProfitEur, daysToSell). Sweet spot price. Held items pricing
+  z elasticityBasedPrice in expectedSellTimeDays. Summary z mostElastic/mostInelastic
+  category, avgElasticity, totalProfitOptimizationEur.
+- src/app/api/ai/abtest-results/route.ts: nov POST endpoint za analizo A/B testov.
+  Analizira 8 vzorcev v naslovih: includes_brand (iPhone/Samsung/Sony/...),
+  includes_condition (novo/rabljeno/odlično), includes_urgency (nujno/akcija/cena padla),
+  includes_guarantee (garancija/račun/original), short_title (<30 znakov),
+  long_title (>50 znakov), includes_number, includes_size (M/L/XL/42/43).
+  Per pattern: count, avgProfit, avgRoi, avgDaysToSell, performance (above/below average),
+  recommendation (always_include/sometimes_include/avoid/neutral). Winning formula z
+  titleStructure, mustInclude, mustAvoid, optimalLength, exampleTitle. Source-channel
+  analysis (best buy source → best sell channel per kategorijo). Summary z bestPattern,
+  worstPattern, winningFormulaConfidence, expectedImprovement.
+- src/app/api/ai/insurance-claim/route.ts: nov POST endpoint za napoved zavarovalnih
+  zahtevkov. 8 tipov: damage_in_transit (škoda pri transportu), not_as_described (ne
+  ustreza opisu), fake_counterfeit (ponaredek), theft_loss (kraja), seller_fraud
+  (prevare), warranty_claim (garancija), platform_protection (Bolha/Vinted zaščita),
+  payment_chargeback (chargeback prek banke/PayPal). Per claim: claimAmountEur,
+  successProbabilityPct (0-100), evidenceNeeded (screenshot, komunikacija, račun),
+  process (whereToFile, deadlineDays, steps), priority. Summary z totalClaimAmount,
+  expectedRecovery (ponderirano z verjetnostjo), highProbabilityCount, avgSuccessProbability.
+- src/app/page.tsx: verzija v6.29.0
+- TypeScript: 24 napak (enako kot prej) - nobenih novih napak uvedenih
+- Git commit: 'feat(v6.29): AI Price Elasticity Modeler, A/B Test Results Analyzer, Insurance Claim Predictor'
+
+Stage Summary:
+- 3 nove AI funkcionalnosti za cenovno optimizacijo, copywriting analizo in zaščito
+- 3 novi API ruti (price-elasticity, abtest-results, insurance-claim)
+- ~552 novih vrstic kode
+- Price Elasticity: modeliranje cenovne občutljivosti z E koeficientom in price curve (5-7 točk)
+- A/B Test Results: analiza 8 vzorcev naslovov z winning formula in source-channel analizo
+- Insurance Claim: 8 tipov zahtevkov z success probability, evidence needed in expected recovery
+- Verzija aplikacije: v6.29.0
