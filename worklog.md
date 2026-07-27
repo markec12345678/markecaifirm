@@ -1722,3 +1722,74 @@ Stage Summary:
 - Buyer Persona Generator: ustvari 3-4 kupce profile (5 tipov) z messaging strategijo,
   objection handling in marketinško strategijo za ciljano trženje
 - Verzija aplikacije: v6.22.0
+
+---
+Task ID: v6.23
+Agent: main
+Task: AI Description Optimizer, Cross-Platform Price Comparison, Depreciation Forecaster
+
+Work Log:
+- src/app/api/ai/description-optimizer/route.ts: nov POST endpoint.
+  4 strategije: BENEFIT_FOCUSED (koristi), STORYTELLING (osebna zgodba),
+  TECHNICAL (specifikacije), SCANNABLE (bullet list). Generira 4-5 variants z:
+  readabilityScore, persuasivenessScore, seoScore, trustScore (0-100),
+  overallScore, expectedInquiries, characterCount, bestForPlatform. Winner z
+  expectedImprovementPct in copy-to-clipboard. SEO ključne besede. Platform-
+  specific naslovi za Bolha (2000 znakov), Vinted (500), Facebook (5000 z emoji),
+  Avtonet (1000 tehnični), Kleinanzeigen (4000 z Versand info).
+- src/app/api/ai/cross-platform-price/route.ts: nov POST endpoint za primerjavo
+  cen na 10 platformah: Bolha, Vinted, Avtonet, Facebook (SI), Mobile.de,
+  Kleinanzeigen (DE), Subito (IT), Willhaben (AT), eBay (global), OLX (PL).
+  Per platform: estimatedPriceEur, minPriceEur, maxPriceEur, feeEur, netRevenueEur,
+  shippingEur, demandLevel (high/medium/low), sellTimeDays, urlTemplate.
+  5 arbitražnih strategij: domestic_resale, import_eu, export_eu, multi_platform,
+  wait. Per arbitrage: buyPlatform, sellPlatform, netProfitEur, roiPct,
+  feasibility, timeRequiredDays. Recommendation (buy_now/wait/avoid/monitor)
+  z bestBuyPlatform, bestSellPlatform, expectedProfitEur.
+- src/app/api/ai/depreciation-forecast/route.ts: nov POST endpoint za napoved
+  amortizacije. 13 kategorijskih profilov z mesečnim in letnim % padca:
+  - elektronika 30%/leto, telefoni 36%, racunalnistvo 24%
+  - avto 12%, kolesa 18%, pohistvo 10%
+  - nepremicnine 2.4% (zelo počasna), nakit 1.2%, orozje 4%
+  - umetnine -2.4% (NEGATIVNA — raste v vrednosti!)
+  - moda 42% (zelo hitra), luxury -6% (NEGATIVNA)
+  Per item: depreciationCurve za 24 mesecev (projectedValue, lossFromCurrent,
+  lossFromBuy), monthsToZeroProfit, projectedValue v 6/12/24m, loss v %.
+  Action: sell_now (≤1m do izgube), sell_soon (≤3m), monitor (≤6m), hold (>6m),
+  vintage_holding (negativna amortizacija). Portfolio summary z totalCurrentValue,
+  projectedLoss v 6/12/24m, highRiskCount, vintagePotentialCount.
+- src/components/dashboard/listings-view.tsx: dodana 'AI Description Optimizer'
+  sekcija (FileEdit ikona, pink) v detail drawer (med Refurbishment in Reverse
+  Image Search). Prikaz:
+  - currentAnalysis z score (0-100), strengths, weaknesses
+  - winner z copy-to-clipboard in expectedImprovementPct
+  - 4-5 variants z 4-stolpci scores (readability/persuasiveness/SEO/trust)
+    in copy-to-clipboard
+  - SEO ključne besede
+- src/components/dashboard/trades-view.tsx: dodana dva nova gumba v orodno
+  vrstico:
+  1) Cross-platform (Globe ikona, indigo):
+     - recommendation (action + bestBuy/bestSell platform + expectedProfitEur)
+     - prices table za 10 platform z country, demandLevel, netRevenueEur
+       (sortirano po ceni, cheapest označen)
+     - arbitrage opportunities z strategy, buy→sell, netProfitEur, roiPct,
+       feasibility, timeRequiredDays
+  2) Amortizacija (LineChartIcon ikona, orange):
+     - portfolio summary (trenutna vrednost + izguba 6/12/24m z barvami)
+     - per-item forecasts z action badge (5 tipov z ikonami):
+       sell_now 🔴, sell_soon 🟡, monitor 🔵, hold 🟢, vintage_holding 👑
+     - 4-stolpci: trenutno/6m/12m/24m z projectedValue in loss %
+     - monthsToZeroProfit, optimalSellWindow, reasoning
+- src/app/page.tsx: verzija v6.23.0
+- TypeScript: 24 napak (enako kot prej) - nobenih novih napak uvedenih
+- Git commit: 'feat(v6.23): AI Description Optimizer, Cross-Platform Price Comparison, Depreciation Forecaster'
+
+Stage Summary:
+- 3 nove AI funkcionalnosti za maksimizacijo dobička in zmanjšanje izgub
+- 3 novi API ruti (description-optimizer, cross-platform-price, depreciation-forecast)
+- ~1153 novih vrstic kode
+- Description Optimizer: 4 strategije opisov z A/B testi in platform-specific optimizacijo
+- Cross-Platform Price: primerja cene na 10 platformah z arbitražnimi priložnostmi
+- Depreciation Forecaster: napove padec vrednosti z 13 kategorijskimi profili
+  (vključno z NEGATIVNO amortizacijo za umetnine/luxury — ti rastejo v vrednosti!)
+- Verzija aplikacije: v6.23.0

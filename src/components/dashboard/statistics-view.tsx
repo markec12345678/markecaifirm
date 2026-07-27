@@ -136,6 +136,12 @@ export function StatisticsView() {
   const [campaignCopied, setCampaignCopied] = useState<string | null>(null);
   const [ltvData, setLtvData] = useState<any>(null);
   const [ltvLoading, setLtvLoading] = useState(false);
+  // v6.24: Inventory Aging + Smart Restock
+  const [agingData, setAgingData] = useState<any>(null);
+  const [agingLoading, setAgingLoading] = useState(false);
+  const [restockData, setRestockData] = useState<any>(null);
+  const [restockLoading, setRestockLoading] = useState(false);
+  const [restockBudget, setRestockBudget] = useState('');
 
   const load = useCallback(async () => {
     try {
@@ -2713,6 +2719,194 @@ export function StatisticsView() {
             </div>
           ) : (
             <p className="text-[11px] text-muted-foreground text-center py-2">Klikni "Analiziraj kupce" za AI napoved LTV in retention strategije.</p>
+          )}
+        </CardContent>
+      </Card>
+
+      {/* v6.24: AI Inventory Aging Alert System */}
+      <Card className="bg-card/50 border-primary/30">
+        <CardHeader className="pb-2">
+          <CardTitle className="text-sm uppercase tracking-wider flex items-center gap-2">
+            <Sparkles className="w-4 h-4 text-primary" />
+            AI Inventory Aging Alert System
+            <Badge variant="outline" className="text-[10px] text-primary border-primary/40">v6.24</Badge>
+          </CardTitle>
+          <CardDescription className="text-xs">AI sledi staranju inventarja in opozarja na zastarele iteme z holding cost.</CardDescription>
+        </CardHeader>
+        <CardContent className="space-y-3">
+          <Button size="sm" className="gap-2 h-7 text-xs" disabled={agingLoading}
+            onClick={async () => {
+              setAgingLoading(true); setAgingData(null);
+              try {
+                const res = await fetch('/api/ai/inventory-aging', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({}) });
+                const data = await res.json();
+                if (data.ok) { setAgingData(data); toast.success('✓ Aging analiza generirana'); }
+                else toast.error(data.error ?? data.message ?? 'Napaka');
+              } catch (e: any) { toast.error(e?.message ?? 'Napaka'); }
+              finally { setAgingLoading(false); }
+            }}>
+            {agingLoading ? <RefreshCw className="w-3 h-3 animate-spin" /> : <Sparkles className="w-3 h-3" />}
+            Analiziraj staranje
+          </Button>
+          {agingLoading ? (
+            <div className="py-4 text-center text-xs text-muted-foreground"><RefreshCw className="w-4 h-4 mx-auto mb-2 animate-spin opacity-50" />AI analizira staranje inventarja in holding cost...</div>
+          ) : agingData ? (
+            <div className="space-y-2 text-xs">
+              {agingData.insights && <div className="bg-primary/5 border border-primary/20 rounded p-2 text-primary">{agingData.insights}</div>}
+              {agingData.summary && (
+                <div className="grid grid-cols-4 gap-2 text-[10px]">
+                  <div className="bg-background/40 rounded p-1.5 border"><div className="text-muted-foreground uppercase">Itemov</div><div className="font-bold">{agingData.summary.totalItems ?? 0}</div></div>
+                  <div className="bg-amber-400/5 border border-amber-400/20 rounded p-1.5"><div className="text-amber-400 uppercase">Holding cost</div><div className="font-bold text-amber-400">{agingData.summary.totalHoldingCostEur ?? 0}€</div></div>
+                  <div className="bg-red-500/5 border border-red-500/20 rounded p-1.5"><div className="text-red-500 uppercase">Kritičnih</div><div className="font-bold text-red-500">{agingData.summary.criticalCount ?? 0}</div></div>
+                  <div className="bg-red-500/5 border border-red-500/20 rounded p-1.5"><div className="text-red-500 uppercase">Možna izguba</div><div className="font-bold text-destructive">{agingData.summary.potentialLossEur ?? 0}€</div></div>
+                </div>
+              )}
+              <div className="space-y-1 max-h-72 overflow-y-auto">
+                {agingData.alerts?.map((a: any, i: number) => {
+                  const urgencyCfg: Record<string, { color: string; bg: string; icon: string }> = {
+                    critical: { color: 'text-red-500', bg: 'border-red-500/20 bg-red-500/5', icon: '🔴' },
+                    high: { color: 'text-amber-400', bg: 'border-amber-400/20 bg-amber-400/5', icon: '🟡' },
+                    medium: { color: 'text-blue-400', bg: 'border-blue-400/20 bg-blue-400/5', icon: '🔵' },
+                    low: { color: 'text-primary', bg: 'border-primary/20 bg-primary/5', icon: '🟢' },
+                  };
+                  const cfg = urgencyCfg[a.urgency] || urgencyCfg.medium;
+                  return (
+                    <div key={i} className={cn('border rounded p-1.5 space-y-1', cfg.bg)}>
+                      <div className="flex items-center justify-between gap-2">
+                        <div className="flex items-center gap-1.5 flex-1 min-w-0">
+                          <span>{cfg.icon}</span>
+                          <span className="font-bold text-[11px] truncate">{a.title}</span>
+                        </div>
+                        <Badge variant="outline" className={cn('text-[8px] uppercase shrink-0', cfg.color)}>{a.agingStage}</Badge>
+                      </div>
+                      <div className="grid grid-cols-4 gap-1 text-[9px]">
+                        <div><span className="text-muted-foreground">Dan v skladišču:</span> <b>{a.daysHeld}d</b></div>
+                        <div><span className="text-muted-foreground">Holding:</span> <b className="text-amber-400">{a.totalHoldingCostEur}€</b></div>
+                        <div><span className="text-muted-foreground">Dobiček:</span> <b className={a.adjustedProfitEur >= 0 ? 'text-primary' : 'text-destructive'}>{a.adjustedProfitEur}€</b></div>
+                        <div><span className="text-muted-foreground">Popust:</span> <b className="text-amber-400">−{a.suggestedDiscountPct}%</b></div>
+                      </div>
+                      <div className="flex items-center justify-between text-[9px]">
+                        <Badge variant="outline" className="text-[8px]">→ {a.action.replace('_', ' ')}</Badge>
+                        <span className="text-primary font-bold">💡 {a.suggestedPriceEur}€ · ⏱ {a.deadlineDays}d</span>
+                      </div>
+                      {a.reasoning && <div className="text-[9px] italic">{a.reasoning}</div>}
+                    </div>
+                  );
+                })}
+              </div>
+            </div>
+          ) : (
+            <p className="text-[11px] text-muted-foreground text-center py-2">Klikni "Analiziraj staranje" za AI analizo zastarelega inventarja.</p>
+          )}
+        </CardContent>
+      </Card>
+
+      {/* v6.24: AI Smart Restock Predictor */}
+      <Card className="bg-card/50 border-primary/30">
+        <CardHeader className="pb-2">
+          <CardTitle className="text-sm uppercase tracking-wider flex items-center gap-2">
+            <Sparkles className="w-4 h-4 text-primary" />
+            AI Smart Restock Predictor
+            <Badge variant="outline" className="text-[10px] text-primary border-primary/40">v6.24</Badge>
+          </CardTitle>
+          <CardDescription className="text-xs">AI napove kaj, kje in kdaj kupovati za max dobiček z budget alokacijo.</CardDescription>
+        </CardHeader>
+        <CardContent className="space-y-3">
+          <div className="flex gap-2 items-center">
+            <Input type="number" placeholder="Budget (EUR, opcijsko)" value={restockBudget} onChange={(e) => setRestockBudget(e.target.value)} className="h-7 text-xs w-44" />
+            <Button size="sm" className="gap-2 h-7 text-xs" disabled={restockLoading}
+              onClick={async () => {
+                setRestockLoading(true); setRestockData(null);
+                try {
+                  const budgetNum = restockBudget ? Number(restockBudget) : 0;
+                  const res = await fetch('/api/ai/smart-restock', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ budget: budgetNum || undefined }) });
+                  const data = await res.json();
+                  if (data.ok) { setRestockData(data); toast.success('✓ Restock napoved generirana'); }
+                  else toast.error(data.error ?? data.message ?? 'Napaka');
+                } catch (e: any) { toast.error(e?.message ?? 'Napaka'); }
+                finally { setRestockLoading(false); }
+              }}>
+              {restockLoading ? <RefreshCw className="w-3 h-3 animate-spin" /> : <Sparkles className="w-3 h-3" />}
+              Napovej restock
+            </Button>
+          </div>
+          {restockLoading ? (
+            <div className="py-4 text-center text-xs text-muted-foreground"><RefreshCw className="w-4 h-4 mx-auto mb-2 animate-spin opacity-50" />AI analizira ROI kategorij in predvideva restock...</div>
+          ) : restockData ? (
+            <div className="space-y-2 text-xs">
+              {restockData.insights && <div className="bg-primary/5 border border-primary/20 rounded p-2 text-primary">{restockData.insights}</div>}
+              {restockData.summary && (
+                <div className="grid grid-cols-4 gap-2 text-[10px]">
+                  <div className="bg-background/40 rounded p-1.5 border"><div className="text-muted-foreground uppercase">Predlogov</div><div className="font-bold">{restockData.summary.totalPredictions ?? 0}</div></div>
+                  <div className="bg-red-500/5 border border-red-500/20 rounded p-1.5"><div className="text-red-500 uppercase">Kritično</div><div className="font-bold text-red-500">{restockData.summary.criticalCount ?? 0}</div></div>
+                  <div className="bg-amber-400/5 border border-amber-400/20 rounded p-1.5"><div className="text-amber-400 uppercase">Visoka</div><div className="font-bold text-amber-400">{restockData.summary.highCount ?? 0}</div></div>
+                  <div className="bg-primary/5 border border-primary/20 rounded p-1.5"><div className="text-primary uppercase">Povp. ROI</div><div className="font-bold text-primary">{restockData.summary.avgExpectedRoi ?? 0}%</div></div>
+                </div>
+              )}
+              <div className="space-y-1 max-h-60 overflow-y-auto">
+                {restockData.predictions?.map((p: any, i: number) => {
+                  const urgencyCfg: Record<string, { color: string; bg: string; icon: string }> = {
+                    critical: { color: 'text-red-500', bg: 'border-red-500/20 bg-red-500/5', icon: '🔴' },
+                    high: { color: 'text-amber-400', bg: 'border-amber-400/20 bg-amber-400/5', icon: '🟡' },
+                    medium: { color: 'text-blue-400', bg: 'border-blue-400/20 bg-blue-400/5', icon: '🔵' },
+                    low: { color: 'text-primary', bg: 'border-primary/20 bg-primary/5', icon: '🟢' },
+                  };
+                  const cfg = urgencyCfg[p.urgency] || urgencyCfg.medium;
+                  return (
+                    <div key={i} className={cn('border rounded p-1.5 space-y-1', cfg.bg)}>
+                      <div className="flex items-center justify-between gap-2">
+                        <div className="flex items-center gap-1.5 flex-1 min-w-0">
+                          <span>{cfg.icon}</span>
+                          <span className="font-bold text-[11px] truncate">{p.item}</span>
+                          <Badge variant="outline" className="text-[8px] shrink-0">{p.category}</Badge>
+                        </div>
+                        <Badge variant="outline" className={cn('text-[8px] shrink-0', cfg.color)}>{p.urgency}</Badge>
+                      </div>
+                      <div className="grid grid-cols-4 gap-1 text-[9px]">
+                        <div><span className="text-muted-foreground">Nakup:</span> <b className="font-mono">{p.expectedBuyPriceEur}€</b></div>
+                        <div><span className="text-muted-foreground">Prodaja:</span> <b className="font-mono text-primary">{p.expectedSellPriceEur}€</b></div>
+                        <div><span className="text-muted-foreground">ROI:</span> <b className={cn('font-mono', p.expectedRoiPct >= 30 ? 'text-primary' : 'text-amber-400')}>{p.expectedRoiPct}%</b></div>
+                        <div><span className="text-muted-foreground">Čas:</span> <b className="font-mono">{p.expectedDaysToSell}d</b></div>
+                      </div>
+                      <div className="text-[9px] text-muted-foreground">📍 {p.source} · 🔍 {p.searchKeywords} · ×{p.quantity}{p.budgetAllocationEur > 0 && ` · ${p.budgetAllocationEur}€`}</div>
+                      {p.reasoning && <div className="text-[9px] italic">{p.reasoning}</div>}
+                    </div>
+                  );
+                })}
+              </div>
+              {restockData.budgetAllocation?.allocation?.length > 0 && (
+                <div className="bg-primary/5 border border-primary/20 rounded p-2">
+                  <div className="text-[10px] uppercase text-primary mb-1">💰 Budget alokacija:</div>
+                  <div className="space-y-0.5">
+                    {restockData.budgetAllocation.allocation.map((a: any, i: number) => (
+                      <div key={i} className="text-[10px] flex items-center justify-between">
+                        <span><Badge variant="outline" className="text-[8px] mr-1">{a.category}</Badge> {a.reasoning}</span>
+                        <span className="font-mono font-bold text-primary">{a.amountEur}€ ({a.pct}%)</span>
+                      </div>
+                    ))}
+                    {restockData.budgetAllocation.reserveEur > 0 && (
+                      <div className="text-[10px] text-amber-400 mt-1">💾 Rezerva: {restockData.budgetAllocation.reserveEur}€ ({restockData.budgetAllocation.reservePct}%)</div>
+                    )}
+                  </div>
+                </div>
+              )}
+              {restockData.seasonalAlerts?.length > 0 && (
+                <div className="bg-amber-400/5 border border-amber-400/20 rounded p-2">
+                  <div className="text-[10px] uppercase text-amber-400 mb-1">🗓 Sezonska opozorila:</div>
+                  <div className="space-y-1">
+                    {restockData.seasonalAlerts.map((s: any, i: number) => (
+                      <div key={i} className="text-[10px]">
+                        <div className="font-bold capitalize">{s.season} — {s.deadline}</div>
+                        {s.itemsToBuy?.length > 0 && <div className="text-primary">🛒 Kupi: {s.itemsToBuy.join(' · ')}</div>}
+                        {s.itemsToSell?.length > 0 && <div className="text-amber-400">💰 Prodaj: {s.itemsToSell.join(' · ')}</div>}
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              )}
+            </div>
+          ) : (
+            <p className="text-[11px] text-muted-foreground text-center py-2">Klikni "Napovej restock" za AI napoved kaj in kje kupovati.</p>
           )}
         </CardContent>
       </Card>
