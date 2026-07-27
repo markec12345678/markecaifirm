@@ -1981,3 +1981,46 @@ Stage Summary:
 - Quality Aggregator: ponderirano povprečje 6 AI ocen v eno skupno (A+ do F) z benchmark
 - Turnover Optimizer: optimizacija obrtnosti z 5 akcijami, cash freed in projected revenue
 - Verzija aplikacije: v6.27.0
+
+---
+Task ID: v6.28
+Agent: main
+Task: AI Auction Timing Optimizer, Refurb ROI Predictor, Tone Analyzer
+
+Work Log:
+- src/app/api/ai/auction-timing/route.ts: nov POST endpoint za optimalni bidding timing.
+  5 strategij: snipe_last_second (3s pred koncom), early_high (visoka ponudba zgodaj),
+  incremental (postopno povišuj), wait_and_snipe (čakaj do zadnje minute), proxy_bid
+  (nastavi max bid). Per dražba: optimalBidTime, secondsBeforeEnd, maxBidEur,
+  suggestedBidEur. Bid sequence (1-3 koraki z timing, amount, condition). Competitor
+  analysis: estimatedBidders, competitionLevel (low/medium/high), likelyMaxCompetitorBid.
+  Signals in risk factors. Recommendation (bid_now/wait/set_proxy/skip).
+- src/app/api/ai/refurb-roi-predictor/route.ts: nov POST endpoint z vizualno analizo.
+  14 tipov izboljšav z ceno/časom/veščino: cleaning (5-30€), polishing (10-50€),
+  paint_touchup (15-60€), paint_full (80-350€), battery_replacement (20-100€),
+  screen_replacement (50-250€), keyboard_replacement (20-80€), upholstery_repair
+  (50-400€), rust_removal (20-150€), wood_restoration (30-300€), electrical_repair
+  (20-150€), part_replacement (10-200€), software_repair (0-50€), repackaging (5-30€).
+  Per improvement: costEur, timeHours, skillLevel (beginner/intermediate/expert),
+  valueAddedEur, netValueEur, priority, optional. ROI: totalCost, projectedRevenue,
+  projectedProfit, roiPct. Viable = ROI > 15%. Risk level. Skills in tools needed.
+  Market demand after refurb. Recommendation (refurb_and_sell/sell_as_is/part_out/avoid).
+- src/app/api/ai/tone-analyzer/route.ts: nov POST endpoint za analizo tona opisa.
+  Tone profile (8 tipov: formal/casual/friendly/urgent/desperate/professional/
+  enthusiastic/neutral). Sentiment (positive/negative/neutral/mixed z score -100 do 100).
+  4 scores (0-100): readability, persuasiveness, trust, overall. Word count in avg
+  sentence length. 7 tipov issues (jargon/long_sentences/missing_info/too_salesy/
+  grammar/tone_mismatch/repetition) z severity in fix. Rewrite z improvedDescription,
+  changesMade, improvementPct. Platform-specific tone za Bolha/Vinted/Facebook.
+- src/app/page.tsx: verzija v6.28.0
+- TypeScript: 24 napak (enako kot prej) - nobenih novih napak uvedenih
+- Git commit: 'feat(v6.28): AI Auction Timing Optimizer, Refurb ROI Predictor, Tone Analyzer'
+
+Stage Summary:
+- 3 nove AI funkcionalnosti za bidding, obnovo in copywriting
+- 3 novi API ruti (auction-timing, refurb-roi-predictor, tone-analyzer)
+- ~514 novih vrstic kode
+- Auction Timing: 5 bidding strategij z competitor analizo in bid sequence
+- Refurb ROI Predictor: vizualna analiza + 14 tipov izboljšav z ROI > 15% threshold
+- Tone Analyzer: 8 tonovnih profilov z rewrite in platform-specific priporočili
+- Verzija aplikacije: v6.28.0
