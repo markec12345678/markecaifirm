@@ -25,7 +25,7 @@ export interface ScraperFilters {
   maxPrice?: number | null;
 }
 
-export type SourceType = 'bolha' | 'nepremicnine' | 'avtonet' | 'salomon' | 'custom-rss' | 'vinted';
+export type SourceType = 'bolha' | 'nepremicnine' | 'avtonet' | 'salomon' | 'custom-rss' | 'vinted' | 'mobile-de';
 
 const USER_AGENTS = [
   'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36',
@@ -562,6 +562,11 @@ export async function scrape(
     case 'avtonet': return scrapeAvtonet(url, filters);
     case 'custom-rss': return scrapeCustomRss(url, filters);
     case 'vinted': return scrapeVinted(url, filters);
+    case 'mobile-de': {
+      // v6.17: mobile.de 3-stopenjski hibrid (JSON API → HTML → Playwright)
+      const { scrapeMobileDe } = await import('./scraper-mobile-de');
+      return scrapeMobileDe(url, filters, opts);
+    }
     default: throw new Error(`Unknown source: ${source}`);
   }
 }
