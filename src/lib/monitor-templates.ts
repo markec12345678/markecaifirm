@@ -2,7 +2,7 @@
 // Prednastavljeni monitorji za običajne scenarije.
 // Vsak template je povsem konfiguriran (source, URL, filters, prompt, tags).
 
-export type Source = 'bolha' | 'nepremicnine' | 'avtonet' | 'salomon' | 'vinted' | 'custom-rss';
+export type Source = 'bolha' | 'nepremicnine' | 'avtonet' | 'salomon' | 'vinted' | 'custom-rss' | 'mobile-de';
 
 export interface MonitorTemplate {
   id: string;
@@ -306,6 +306,91 @@ export const MONITOR_TEMPLATES: MonitorTemplate[] = [
     customPrompt: 'Preveri stanje membran in tuljav. Pazi na znamke: Bowers&Wilkins, KEF, Dynaudio, NAD, Marantz, Yamaha. Vintage ponavadi cenejše ampak boljše kvalitete.',
     tags: 'elektronika,rtv,bolha,audio',
     icon: '🔊',
+  },
+
+  // ===== MOBILE.DE (v6.17) — nemški trg za cross-border arbitražo =====
+  // Nemški avtomobili so običajno 10-20% cenejši kot v Sloveniji.
+  // Shipping do SI: 300-500€. Znotraj EU carina enostavna.
+  // Strategija: kupi v DE, prodaj v SI.
+  {
+    id: 'tpl-mobile-de-bmw-3',
+    name: 'BMW Series 3 — Mobile.de (DE→SI arbitraža)',
+    description: 'BMW 3 (E90/F30) do 10.000€ v DE. Cross-border: kupi DE, prodaj SI. Prihranek 10-20%.',
+    category: 'avto',
+    source: 'mobile-de',
+    sourceUrl: 'https://suchen.mobile.de/fahrzeuge/search.html?dam=false&isSearchRequest=true&make=BMW&model=SERIES_3&priceTo=10000&sortOption=price.asc',
+    keywords: 'bmw,320,330,318,320d,330d',
+    excludeKeywords: 'm3,sport,line,racing',
+    minPrice: 3000,
+    maxPrice: 10000,
+    intervalMinutes: 60,
+    customPrompt: 'CROSS-BORDER ARBITRAŽA: nemški avto cenejši 10-20% od SI. Preveri: VIN (vincheck.de), servisna zgodovina (Scheckheft), število lastnikov, NAPAKA v naslovu pomeni "poškodovan". Shipping DE→SI ~400€. Prihranek: če je cena v DE 7000€ in bi v SI stal 9000€, dobiček ~1600€ po stroških. Sumljivo: "unfallfrei" (brez nesreče) mora biti izrecno navedeno, drugače je avto verjetno poškodovan.',
+    tags: 'avto,bmw,mobile-de,cross-border,arbitraza',
+    icon: '🚗',
+  },
+  {
+    id: 'tpl-mobile-de-audi-a4',
+    name: 'Audi A4 — Mobile.de (DE→SI arbitraža)',
+    description: 'Audi A4 B8/B9 do 12.000€ v DE. Premium avto, dobro se prodaja v SI.',
+    category: 'avto',
+    source: 'mobile-de',
+    sourceUrl: 'https://suchen.mobile.de/fahrzeuge/search.html?dam=false&isSearchRequest=true&make=AUDI&model=A4&priceTo=12000&sortOption=price.asc',
+    keywords: 'audi,a4,2.0,tdi',
+    excludeKeywords: 'rs4,s4,quattro',
+    minPrice: 4000,
+    maxPrice: 12000,
+    intervalMinutes: 60,
+    customPrompt: 'CROSS-BORDER: Audi A4 je v SI zelo iskan. V DE cenejši za ~15%. Pazi na: TDI motor (bolj zaželen v SI), avtomatski menjalnik (S-tronic — preveri zadnjo službo), letnik >2008 (B8 generacija). "Scheckheftgepflegt" = servisno voden. Sumnjivo: cene pod 5000€ za letnik >2010.',
+    tags: 'avto,audi,mobile-de,cross-border,arbitraza',
+    icon: '🚗',
+  },
+  {
+    id: 'tpl-mobile-de-vw-golf-7',
+    name: 'VW Golf 7 — Mobile.de (DE→SI arbitraža)',
+    description: 'VW Golf 7 (2012-2017) do 10.000€ v DE. Najbolj prodajan avto v SI.',
+    category: 'avto',
+    source: 'mobile-de',
+    sourceUrl: 'https://suchen.mobile.de/fahrzeuge/search.html?dam=false&isSearchRequest=true&make=VOLKSWAGEN&model=GOLF&priceTo=10000&yearFrom=2012&sortOption=price.asc',
+    keywords: 'golf,1.6,2.0,tdi,gti',
+    excludeKeywords: 'golf 8,golf 6,variant',
+    minPrice: 5000,
+    maxPrice: 10000,
+    intervalMinutes: 45,
+    customPrompt: 'CROSS-BORDER: Golf 7 je v SI zelo prodajan. V DE ~15% cenejši. Pazi na: 1.6 TDI (najbolj ekonomičen), DSG menjalnik (preveri servis), letnik >2014 (boljši motorji). "Erstzulassung" = prva registracija. Prihranek: 7000€ v DE = ~9000€ v SI = ~1600€ dobička po stroških.',
+    tags: 'avto,vw,golf,mobile-de,cross-border,arbitraza',
+    icon: '🚗',
+  },
+  {
+    id: 'tpl-mobile-de-mercedes-c',
+    name: 'Mercedes C-Class — Mobile.de (DE→SI arbitraža)',
+    description: 'Mercedes C-razred W204/W205 do 13.000€ v DE. Premium, dobro se prodaja v SI.',
+    category: 'avto',
+    source: 'mobile-de',
+    sourceUrl: 'https://suchen.mobile.de/fahrzeuge/search.html?dam=false&isSearchRequest=true&make=MERCEDES-BENZ&model=C_CLASS&priceTo=13000&sortOption=price.asc',
+    keywords: 'mercedes,c180,c200,c220,cdi',
+    excludeKeywords: 'c63,amg,brabus',
+    minPrice: 5000,
+    maxPrice: 13000,
+    intervalMinutes: 60,
+    customPrompt: 'CROSS-BORDER: Mercedes C-razred premium avto. V DE ~12% cenejši. Pazi na: CDI motor (bolj zanesljiv), W205 (2014+) je bolj moderen, servisna zgodovina pri Mercedes centru (zelo pomembno!). "Unfallfrei" obvezno. Preveri: ZM (zobni menjalnik) in pakete (Avantgarde, Elegance).',
+    tags: 'avto,mercedes,mobile-de,cross-border,arbitraza',
+    icon: '🚗',
+  },
+  {
+    id: 'tpl-mobile-de-elektro',
+    name: 'Električni avtomobili — Mobile.de (DE→SI)',
+    description: 'EV avtomobili do 20.000€ v DE. Slovenska subvencija 4500€ za EV!',
+    category: 'avto',
+    source: 'mobile-de',
+    sourceUrl: 'https://suchen.mobile.de/fahrzeuge/search.html?dam=false&isSearchRequest=true&fuel=ELECTRIC&priceTo=20000&sortOption=price.asc',
+    keywords: 'electric,elektro,tesla,nissan,leaf,zoe,kona,i3',
+    excludeKeywords: 'hibrid,plug-in',
+    minPrice: 8000,
+    maxPrice: 20000,
+    intervalMinutes: 90,
+    customPrompt: 'CROSS-BORDER + SUBVENCIJA: Slovenija daje 4500€ subvencije za EV! To pomeni: avto za 18000€ v DE + 400€ shipping - 4500€ subvencija = efektivno 13900€. Če ga prodaš za 18000€ v SI, dobiček ~4100€. Pazi na: kapaciteta baterije (SOH >85%), Nissan Leaf (bolj zanesljiv), Renault Zoe (malo baterije). Preveri polnilnik (Type 2, CCS).',
+    tags: 'avto,elektro,ev,mobile-de,cross-border,subvencija',
+    icon: '⚡',
   },
 ];
 

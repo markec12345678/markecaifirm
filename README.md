@@ -493,6 +493,98 @@ Dodani so novi indeksi na Listing tabeli za hitrejše poizvedbe:
 
 Listing paginacija je zdaj ~3x hitreja pri velikih bazah (>10.000 oglasov).
 
+## v6.17: Mobile.de scraping (DE→SI cross-border arbitraža)
+
+Nemški avtomobili so običajno **10-20% cenejši** kot v Sloveniji. mobile.de je največja nemška platforma za avtomobile. Aplikacija zdaj podpira scrapanje mobile.de za cross-border arbitražo: **kupi v DE, prodaj v SI**.
+
+### Implementacija (3-stopenjski hibrid)
+
+Glede na raziskavo forumov (Reddit r/webscraping, Stack Overflow, GitHub projekti) je mobile.de težko scrapati ker:
+- Nima javnega RSS (razlika od Bolha)
+- Uporablja Cloudflare z JS challenge-om
+- Browser fingerprinting in rate limiting
+
+**Zato implementiramo 3-stopenjski hibrid** (`src/lib/scraper-mobile-de.ts`):
+
+1. **JSON API** (najhitrejši, ~70% uspešnost) — `https://suchen.mobile.de/fahrzeuge/search.json?...`
+2. **HTML z real headers** (~85% uspešnost) — `data-testid` selektorji z rotacijo User-Agent in `Sec-Fetch-*` headers
+3. **Playwright fallback** (~90% uspešnost) — za Cloudflare blokade z anti-detection scripti
+
+### Setup
+
+1. V Nastavitvah → "Anti-detection" vklopi **Playwright fallback** (za Cloudflare blokade)
+2. Dodaj monitor → vir: **Mobile.de (DE→SI arbitraža)**
+3. Izberi preset ali vnesi custom URL iz mobile.de
+4. AI bo samodejno prepoznal cross-border priložnosti (v promptu je slovenska subvencija 4500€ za EV!)
+
+### URL format
+
+```
+https://suchen.mobile.de/fahrzeuge/search.html?dam=false&isSearchRequest=true&make=BMW&model=SERIES_3&priceTo=10000&sortOption=price.asc
+```
+
+Koristni parametri:
+- `make` — znamka (BMW, AUDI, VOLKSWAGEN, MERCEDES-BENZ, etc.)
+- `model` — model koda (SERIES_3, A4, GOLF, C_CLASS)
+- `priceFrom`, `priceTo` — EUR
+- `mileageFrom`, `mileageTo` — km
+- `yearFrom`, `yearTo` — letnik
+- `fuel` — DIESEL, PETROL, ELECTRIC, HYBRID, LPG, CNG
+- `gearbox` — MANUAL, AUTOMATIC
+- `sortOption` — price.asc, price.desc, datespecification.registrationDate.desc
+
+### Pripravljeni monitor templates (v Monitorji → "Predloge")
+
+| Template | Znamka | Cena do | ROI potencial |
+|----------|--------|---------|---------------|
+| BMW Series 3 | BMW | 10.000€ | ~15% po stroških shippinga |
+| Audi A4 | Audi | 12.000€ | ~12% (TDI bolj zaželen v SI) |
+| VW Golf 7 | VW | 10.000€ | ~15% (najbolj prodajan v SI) |
+| Mercedes C-Class | Mercedes | 13.000€ | ~12% (premium, dobro se prodaja) |
+| Električni avti | več znamk | 20.000€ | ~25% **s 4500€ SI subvencijo** |
+
+### Cross-border arbitraža — pričakovan dobiček
+
+Primer BMW Series 3:
+- Cena v DE: **7.000€**
+- Shipping DE→SI: **~400€**
+- Skupni stroški: **7.400€**
+- Tržna cena v SI: **~9.000€**
+- **Dobiček: ~1.600€** (21% ROI)
+
+Za EV avtomobile z 4.500€ slovensko subvencijo:
+- Cena v DE: **18.000€**
+- Shipping: **400€**
+- Subvencija: **-4.500€**
+- Efektivni stroški: **13.900€**
+- Tržna cena v SI: **18.000€**
+- **Dobiček: ~4.100€** (29% ROI)
+
+### Pomembni nemški izrazi v oglasih
+
+- `Unfallfrei` — brez nesreče (OBVEZNO preveri!)
+- `Scheckheftgepflegt` — servisno voden
+- `Erstzulassung` — prva registracija
+- `Kilometerstand` — stanje kilometrov
+- `Getriebe` — menjalnik
+- `Kraftstoff` — gorivo
+- `Leistung` — moč (kW/PS)
+
+### Anti-detection tehnike
+
+Aplikacija že vključuje (v5.8/v5.9):
+- Rotacija 6 User-Agent stringov
+- Real browser headers (`Sec-Ch-Ua`, `Sec-Fetch-*`)
+- `de-DE,de` Accept-Language za nemški trg
+- Cloudflare challenge detekcija
+- CAPTCHA detekcija
+- Playwright z anti-detection scripti (skrij `navigator.webdriver`)
+
+Za maksimalno zanesljivost priporočamo tudi:
+- **Proxy rotacijo** (v Nastavitvah → "Anti-detection")
+- **TLS fingerprinting** (Chrome 120 profil)
+- **CAPTCHA solving** (2captcha/Anti-Captcha/CapMonster)
+
 ## Testirano z
 
 - **Ollama** + `qwen2.5:7b` — odlična podpora za slovenščino, brezplačno, lokalno

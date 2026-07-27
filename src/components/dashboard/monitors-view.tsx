@@ -47,7 +47,7 @@ function Sparkline({ data, width = 60, height = 20 }: { data: number[]; width?: 
   );
 }
 
-type Source = 'bolha' | 'nepremicnine' | 'avtonet' | 'salomon' | 'custom-rss' | 'vinted';
+type Source = 'bolha' | 'nepremicnine' | 'avtonet' | 'salomon' | 'custom-rss' | 'vinted' | 'mobile-de';
 
 interface Monitor {
   id: string;
@@ -85,6 +85,7 @@ const SOURCE_LABELS: Record<Source, string> = {
   salomon: 'Salomon.si',
   'custom-rss': 'Custom RSS',
   vinted: 'Vinted.si (API)',
+  'mobile-de': 'Mobile.de (DE→SI arbitraža)',
 };
 
 const SOURCE_PRESETS: Array<{ source: Source; label: string; url: string; hint: string }> = [
@@ -136,6 +137,25 @@ const SOURCE_PRESETS: Array<{ source: Source; label: string; url: string; hint: 
     label: 'Bolha — PlayStation 5',
     url: 'https://www.bolha.com/index.php?ctl=search&A_3_1=playstation+5&sort=new',
     hint: 'Igranje konzol na Bolhi',
+  },
+  // v6.17: mobile.de presets (DE→SI cross-border arbitraža)
+  {
+    source: 'mobile-de',
+    label: 'Mobile.de — BMW Series 3 do 10.000€ (DE→SI)',
+    url: 'https://suchen.mobile.de/fahrzeuge/search.html?dam=false&isSearchRequest=true&make=BMW&model=SERIES_3&priceTo=10000&sortOption=price.asc',
+    hint: 'Cross-border: kupi v DE (~15% cenejše), prodaj v SI. Shipping ~400€. Vklopi Playwright v nastavitvah za Cloudflare blokade.',
+  },
+  {
+    source: 'mobile-de',
+    label: 'Mobile.de — VW Golf 7 do 10.000€ (DE→SI)',
+    url: 'https://suchen.mobile.de/fahrzeuge/search.html?dam=false&isSearchRequest=true&make=VOLKSWAGEN&model=GOLF&priceTo=10000&yearFrom=2012&sortOption=price.asc',
+    hint: 'Najbolj prodajan avto v SI. V DE ~15% cenejši.',
+  },
+  {
+    source: 'mobile-de',
+    label: 'Mobile.de — EV avtomobili do 20.000€ (SI subvencija 4500€)',
+    url: 'https://suchen.mobile.de/fahrzeuge/search.html?dam=false&isSearchRequest=true&fuel=ELECTRIC&priceTo=20000&sortOption=price.asc',
+    hint: 'Slovenska subvencija 4500€ za EV! 18000€ v DE - 4500€ subvencija = 13900€ efektivno.',
   },
 ];
 
