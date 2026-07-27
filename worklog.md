@@ -2222,3 +2222,50 @@ Stage Summary:
 - Performance Benchmark: primerjava z industry benchmarki z competitive position in gaps
 - Smart Alert Router: 5-nivojski routing z escalation in smart filters
 - Verzija aplikacije: v6.32.0
+
+---
+Task ID: v6.33
+Agent: main
+Task: AI Listing Refresh, Cross-Category Bundle, Seasonal Price Optimizer
+
+Work Log:
+- src/app/api/ai/listing-refresh/route.ts: nov POST endpoint za osveževanje oglasov.
+  Napove kdaj osvežiti oglase glede na algoritmično izpostavljenost: prvih 3-7 dni =
+  max izpostavljenost, po 7d -50%, po 14d -80%, po 30d -95%. Per item:
+  currentExposurePct (0-100), refreshStrategy (7 strategij: relist_fresh, price_adjust,
+  title_swap, image_refresh, platform_switch, bundle_refresh, hold), refreshInDays,
+  changesNeeded (kaj spremeniti), suggestedTitle (nov naslov), suggestedPriceEur,
+  expectedExposureBoostPct, priority. Weekly schedule (dan/items/platforms/timeWindow).
+  Expected impact: avgExposureIncreasePct, expectedInquiriesIncreasePct,
+  expectedSellTimeReductionDays, itemsNeedingImmediateRefresh.
+- src/app/api/ai/cross-category-bundle/route.ts: nov POST endpoint za cross-category
+  bundle. Kombinira iteme iz RAZLIČNIH kategorij (razlika od v6.10 Bundle Optimizer
+  ki je ista kategorija). 6 konceptov: lifestyle_bundle (gaming setup: monitor + miza
+  + slušalke), seasonal_bundle (zimski paket: smuči + oblačila + čelada), upgrade_bundle
+  (star telefon + nov polnilec), gift_bundle (raznoliko za darila), starter_kit
+  (študentska oprema), complementary_bundle (avto + zimske gume + navigacija).
+  Per bundle: story (zakaj skupaj), items, categories, individualTotal vs bundlePrice,
+  savingsPct, totalCost, expectedProfit, expectedSellTimeDays, targetBuyer, platform.
+  Summary z totalBundleProfit, avgSavings, unbundledItems.
+- src/app/api/ai/seasonal-pricing/route.ts: nov POST endpoint za sezonsko ceno.
+  Analizira mesečne cenovne vzorce per kategorija iz soldTrades. Per item:
+  seasonalAdjustmentPct (npr. grelniki pozimi +20%, smuči poleti -30%),
+  seasonalPriceEur, currentSeason, seasonalDemand (peak/high/medium/low/offseason),
+  strategy (sell_peak: prodaj v vrhu, hold_for_peak: čakaj na vrh, discount_offseason:
+  znižaj izven sezone, preseason_buy: kupuj pred sezono), peakMonth, peakPriceEur,
+  waitForPeakDays, expectedProfitNowEur vs expectedProfitAtPeakEur. Seasonal factors
+  (hot/cold categories per season z avgPriceAdjustmentPct). Summary z itemsToSellNow,
+  itemsToHoldForPeak, itemsToDiscount, totalExpectedProfitNow vs optimized,
+  seasonalOptimizationGainEur.
+- src/app/page.tsx: verzija v6.33.0
+- TypeScript: 24 napak (enako kot prej) - nobenih novih napak uvedenih
+- Git commit: 'feat(v6.33): AI Listing Refresh, Cross-Category Bundle, Seasonal Price Optimizer'
+
+Stage Summary:
+- 3 nove AI funkcionalnosti za optimizacijo izpostavljenosti, bundlov in cen
+- 3 novi API ruti (listing-refresh, cross-category-bundle, seasonal-pricing)
+- ~542 novih vrstic kode
+- Listing Refresh: 7 strategij osveževanja z algoritmično izpostavljenostjo
+- Cross-Category Bundle: 6 konceptov za kombinacijo različnih kategorij
+- Seasonal Pricing: optimizacija cen z 4 strategijami in seasonal factors
+- Verzija aplikacije: v6.33.0
