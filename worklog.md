@@ -1854,3 +1854,47 @@ Stage Summary:
   performance z 5 priporočili (double_down/pivot/scale_up/diversify/exit)
 - Smart Restock: napove kaj/kje/kdaj kupovati z budget alokacijo in seasonal alerts
 - Verzija aplikacije: v6.24.0
+
+---
+Task ID: v6.25
+Agent: main
+Task: AI Risk Parity, Vendor Reliability Scorer, Geo Price Map
+
+Work Log:
+- src/app/api/ai/risk-parity/route.ts: nov POST endpoint.
+  Izračuna Sharpe ratio per kategorija: (avgReturn - 5% riskFreeRate) / volatility.
+  4 strategije: equal_risk (enako tveganje), sharpe_optimized (max Sharpe),
+  min_volatility (min tveganje), max_return (max dobiček). Optimalna alokacija z
+  currentPct vs optimalPct, action (buy_more/reduce/hold/exit/initiate), amountEur,
+  expectedReturn, expectedVolatility, sharpeRatio. Risk metrics: portfolioSharpe,
+  portfolioVolatility, portfolioExpectedReturn, diversificationRatio,
+  maxConcentration, riskLevel. Rebalancing z buys/sells list in cash reserve.
+  Correlation warnings (npr. elektronika + telefoni so korelirani).
+- src/app/api/ai/vendor-reliability/route.ts: nov POST endpoint.
+  Agregira sold trades po buyLocation (vendor). Per vendor: reliabilityScore (0-100),
+  5 tierjev (tier_1_platinum >80 + ROI >30% + success >80%, tier_2_gold >60,
+  tier_3_silver >40, tier_4_bronze >20, tier_5_avoid <20). Metrics: totalPurchases,
+  totalSpentEur, totalProfitEur, avgRoiPct, successRatePct, avgDaysToSell,
+  categoriesCount, daysActive. Strengths in riskFactors. Recommendation
+  (continue_buying/cautious/reduce/avoid). Best categories per vendor.
+- src/app/api/ai/geo-price-map/route.ts: nov POST endpoint.
+  Klasificira listinge po 12 regijah (8 slovenskih: Ljubljana, Maribor, Primorska,
+  Gorenjska, Dolenjska, Štajerska, Prekmurje, Notranjska + 4 tuje: DE, IT, AT, HR).
+  Per region: avgPriceEur, priceIndex (100 = globalno povprečje), listingCount,
+  opportunityCount, opportunityRatePct, avgDealScore, priceRange, recommendation
+  (buy_here/sell_here/avoid/monitor). 4 arbitražne strategije (domestic_arbitrage/
+  import_arbitrage/export_arbitrage/local_advantage) z buyRegion, sellRegion,
+  avgBuyPrice, avgSellPrice, potentialProfit, potentialRoi, shipping, feasibility.
+  Summary z cheapest/mostExpensive/bestOpportunity region in priceSpreadPct.
+- src/app/page.tsx: verzija v6.25.0
+- TypeScript: 24 napak (enako kot prej) - nobenih novih napak uvedenih
+- Git commit: 'feat(v6.25): AI Risk Parity, Vendor Reliability Scorer, Geo Price Map'
+
+Stage Summary:
+- 3 nove AI funkcionalnosti za portfolio optimizacijo in tržno analizo
+- 3 novi API ruti (risk-parity, vendor-reliability, geo-price-map)
+- ~739 novih vrstic kode
+- Risk Parity: pravi Sharpe ratio izračun z 4 strategijami in rebalancing
+- Vendor Reliability: 5 tierjev zanesljivosti prodajalcev (platinum/gold/silver/bronze/avoid)
+- Geo Price Map: 12 regij z price index in 4 geografskimi arbitražnimi strategijami
+- Verzija aplikacije: v6.25.0
