@@ -2269,3 +2269,50 @@ Stage Summary:
 - Cross-Category Bundle: 6 konceptov za kombinacijo različnih kategorij
 - Seasonal Pricing: optimizacija cen z 4 strategijami in seasonal factors
 - Verzija aplikacije: v6.33.0
+
+---
+Task ID: v6.34
+Agent: main
+Task: AI Inventory Lifecycle Manager, Profit Cascade Optimizer, Market Saturation Detector
+
+Work Log:
+- src/app/api/ai/inventory-lifecycle/route.ts: nov POST endpoint za lifecycle management.
+  7 lifecycle faz: acquisition (dan 0-3, sveže kupljeno), listing (3-7, objavi oglas),
+  active (7-21, aktivna prodaja), stale (21-45, padec izpostavljenosti, refresh),
+  stalled (45-90, nizko povpraševanje, agresivna akcija), dead (90-180, kritično,
+  likvidacija), write_off (180+, zapiši izgubo). Per item: currentStage, daysInStage vs
+  optimalDaysInStage, nextStage, transitionTrigger, actionNow, valueRetentionPct (0-100),
+  recommendedPriceEur, urgency. Stage distribution (count/value/avgDays per faza).
+  Lifecycle timeline (dayRange/stage/action/successProbability). Actions z priority in
+  expectedValueRecovery. Summary: healthy/atRisk/critical items, totalValueAtRisk,
+  avgLifecycleEfficiency.
+- src/app/api/ai/profit-cascade/route.ts: nov POST endpoint za kaskadno optimizacijo.
+  10 kaskadnih stopenj: sourcing (boljši vir = nižja nabavna), negotiation (-5-10%
+  nabavne), AI evaluation (manj slabih nakupov), holding (manj holding cost), pricing
+  (+5-15% prodajne), platform (nižje pristojbine), bundling (+10-25% na bundle), timing
+  (+5-20% v sezonskem vrhu), refurb (+15-40% vrednosti), reinvestment (+10-30%
+  sestavljeni). Per level: currentEfficiencyPct, currentContributionEur vs
+  optimizedContributionEur, gainEur, gainPct, action, tool (kateri AI modul), difficulty,
+  priority. Waterfall z cumulative. Quick wins z effort in timeline. Summary:
+  overallEfficiency, biggestOpportunity, totalOptimizationPotential, projectedRoiImprovement.
+- src/app/api/ai/market-saturation/route.ts: nov POST endpoint za nasičenost trga.
+  Analizira vse listinge po virih. 5 nivojev: saturated (veliko oglasov, <10% priložnosti,
+  padajoče cene), competitive (srednje, 10-20%), balanced (normalno, 20-30%), opportunity
+  (malo, >30%), blue_ocean (zelo malo, visoko povpraševanje). Per source: totalListings,
+  opportunityRatePct, saturationScore (0-100), priceTrend, opportunityTrend,
+  listingVelocityPerWeek, avgDealScore, action (increase_buying/maintain/reduce/exit/enter).
+  Market signals (positive/negative/neutral z impact). Recommendations per source.
+  Summary: overallSaturationScore, overallMarketState, bestOpportunitySource,
+  mostSaturatedSource, recommendedPortfolioShift.
+- src/app/page.tsx: verzija v6.34.0
+- TypeScript: 24 napak (enako kot prej) - nobenih novih napak uvedenih
+- Git commit: 'feat(v6.34): AI Inventory Lifecycle, Profit Cascade, Market Saturation Detector'
+
+Stage Summary:
+- 3 nove AI funkcionalnosti za lifecycle, kaskadno optimizacijo in tržno analizo
+- 3 novi API ruti (inventory-lifecycle, profit-cascade, market-saturation)
+- ~579 novih vrstic kode
+- Inventory Lifecycle: 7 faz z transition triggers, value retention in actions
+- Profit Cascade: 10-stopenjska kaskadna optimizacija z waterfall in quick wins
+- Market Saturation: 5 nivojev nasičenosti z market signals in portfolio shift
+- Verzija aplikacije: v6.34.0
