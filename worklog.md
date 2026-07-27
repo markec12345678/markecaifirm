@@ -1898,3 +1898,43 @@ Stage Summary:
 - Vendor Reliability: 5 tierjev zanesljivosti prodajalcev (platinum/gold/silver/bronze/avoid)
 - Geo Price Map: 12 regij z price index in 4 geografskimi arbitražnimi strategijami
 - Verzija aplikacije: v6.25.0
+
+---
+Task ID: v6.26
+Agent: main
+Task: AI Seasonal Planner, Listing Rotation Scheduler, Cash Reserve Optimizer
+
+Work Log:
+- src/app/api/ai/seasonal-planner/route.ts: nov POST endpoint za sezonsko načrtovanje.
+  Sezonski koledar za 1-12 mesecev naprej. Per mesec: season (Zima/Pomlad/Poletje/Jesen),
+  buyCategories z expectedDiscountPct (kdaj ceneje kupiti), sellCategories z
+  expectedPremiumPct (kdaj dražje prodati), heldItemsToSell (kateri held item v katerem
+  mesecu prodati), actions, priority. Slovenska sezonska logika: zima (grelniki, zimske
+  gume, smuči, peči, božič), pomlad (kolesa, vrtna oprema, motokulturke, kabrioleti),
+  poletje (kamp, čolni, klima, avto), jesen (šola, šport, ogrevanje, zimske gume).
+  Summary z bestBuyMonth, bestSellMonth, totalSeasonalOpportunities, expectedSeasonalProfit.
+- src/app/api/ai/listing-rotation/route.ts: nov POST endpoint za razpored objav.
+  Analizira prodaje po 7 dnevih in 24 urah. Per held item: platforms (1-4), primaryDay,
+  primaryHour (0-23), frequencyDays (vsakih koliko dni ponovno), durationDays,
+  strategy (staggered/concentrated/rolling), priority. Weekly calendar z dnevnimi
+  slots (hour/items/platform). Summary z bestDay, bestHour, estimatedSellThroughRate.
+- src/app/api/ai/cash-reserve/route.ts: nov POST endpoint za optimizacijo rezerve.
+  Izračuna currentCash (revenue - spent), optimalReserve (2-3 mesece povprečne
+  investicije), reserveRatio. 4 strategije: aggressive_growth (80% reinvest),
+  balanced (50/50), conservative (30% reinvest), opportunity_fund (60% rezerva za
+  blue moon priložnosti). Allocation: reinvestPct/reservePct/profitTakingPct.
+  6-mesečne projekcije cash flow (inflow/outflow/net/cumulative/invested).
+  Cash flow gaps z mitigation. Summary z surplusDeficit, expectedMonthlyGrowth,
+  breakEvenMonths.
+- src/app/page.tsx: verzija v6.26.0
+- TypeScript: 24 napak (enako kot prej) - nobenih novih napak uvedenih
+- Git commit: 'feat(v6.26): AI Seasonal Planner, Listing Rotation Scheduler, Cash Reserve Optimizer'
+
+Stage Summary:
+- 3 nove AI funkcionalnosti za operativno optimizacijo
+- 3 novi API ruti (seasonal-planner, listing-rotation, cash-reserve)
+- ~568 novih vrstic kode
+- Seasonal Planner: koledar nakupov/prodaj po 4 sezonah z discount/premium % in held items
+- Listing Rotation: razpored objav po dnevih/urah/platformah z 3 strategijami in weekly calendar
+- Cash Reserve: optimalna denarna rezerva z 4 strategijami, 6m projekcijami in cash flow gaps
+- Verzija aplikacije: v6.26.0
