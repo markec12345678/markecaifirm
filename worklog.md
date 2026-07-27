@@ -1569,3 +1569,81 @@ Stage Summary:
 - Chatbot: avtomatsko generira odgovore prodajalcu (multi-turn pogovor z AI)
 - Refurbishment: oceni ali se splača kupiti pokvarjen item za obnovo (z vizualno analizo)
 - Verzija aplikacije: v6.20.0
+
+---
+Task ID: v6.21
+Agent: main
+Task: AI Image Quality Assessor, Optimal Time Predictor, Fake Detection
+
+Work Log:
+- src/app/api/ai/image-quality/route.ts: nov POST endpoint za oceno kakovosti slik.
+  AI oceni 10 faktorjev (1-10): lighting, composition, background, focus,
+  color_accuracy, resolution, angle, cleanliness, context, selling_potential.
+  Identificira issues (10 tipov: low_light, cluttered_background, blurry,
+  wrong_angle, dirty_item, stock_photo, watermark, low_resolution, no_context,
+  wrong_color) z severity (high/medium/low) in fix navodili. Priporočila z
+  estimatedValueIncreaseEur (koliko več bo oglas vreden). Predlagane dodatne
+  slike: main, detail_brand, detail_damage, context, video. Platform-specific
+  nasveti za Bolha/Vinted/Facebook.
+- src/app/api/ai/optimal-time/route.ts: nov POST endpoint za napoved optimalnega
+  časa objave. Analizira zgodovinske prodaje po dnevih (7) in urah (24) iz
+  soldTrades. AI za vsak held item predlaga:
+  - optimalDay (ponedeljek-nedelja)
+  - optimalHour (0-23)
+  - optimalPlatform (bolha/vinted/facebook/avtonet)
+  - strategy: premium_time / off_peak / flash_sale / staggered / wait_seasonal
+  - expectedPriceEur
+  - expectedTimeToSellDays
+  - seasonalityNote
+  Summary z strategyBreakdown, platformBreakdown, avgExpectedPrice, avgTimeToSell,
+  totalExpectedRevenue. Historical data: salesByDay z 7 dnevi.
+- src/app/api/ai/fake-detection/route.ts: nov POST endpoint za zaznavanje
+  ponaredkov z vizualno analizo. Slovar BRAND_AUTHENTICITY_CHECKS za 7 znamk:
+  - Gucci: GG logotip simetričen, serijska številka, Made in Italy
+  - Prada: Re-Nylon material, trojna kartica
+  - Louis Vuitton: monogrami simetrični (rezani na sredini), date code
+  - Rolex: teža, gladka sekunda, cyclops lens 2.5x
+  - iPhone: IMEI v Settings, True Tone flash, original Apple logotip
+  - Samsung Galaxy: IMEI, Samsung Knox warranty bit
+  - Sony PlayStation: serial number, Sony logotip
+  AI določi: authenticityScore (0-100), isLikelyFake, fakeProbabilityPct,
+  imageFindings, indicators (authentic/suspicious/fake z utežmi 1-10),
+  brandSpecificChecks (present/missing/unclear), verificationSteps z howTo,
+  onlineVerification (recommendedTools, websites), recommendation
+  (buy/verify_first/avoid/report).
+- src/components/dashboard/listings-view.tsx: dodani dve novi sekciji v detail
+  drawer (med Negotiation Outcome in Sentiment Analysis):
+  1) AI Image Quality Assessor (Camera ikona, blue):
+     - overall score (0-100) z barvo (primary/amber/red)
+     - 10 faktorjev v 5-stolpci grid (vsak z 1-10 in barvo)
+     - issues z severity badge in fix navodili
+     - recommendations z impact badge in estimatedValueIncreaseEur
+     - suggested shots z type in priority
+  2) AI Fake Detection (ScanSearch ikona, red):
+     - authenticity score z isLikelyFake badge
+     - recommendation badge (NE NAKUPUJ/PRIJAVI/PREVERI/NAKUPI)
+     - indicators z type (authentic/suspicious/fake) in utežmi
+     - brand-specific checks z status (present/missing/unclear)
+     - verification steps z howTo in priority
+     - online verification tools
+- src/components/dashboard/trades-view.tsx: dodan 'Optimalni čas' gumb (Clock
+  ikona, blue) v orodno vrstico. Prikaz rezultatov vključuje:
+  - insights banner
+  - summary grid (itemov/povp.cena/čas/skupni prihodek)
+  - per-item predictions z 4-stolpci (dan/ura/platforma/cena)
+  - strategy badge z ikono (premium_time=⭐, off_peak=🔵, flash_sale=🔥,
+    staggered=📅, wait_seasonal=🎄)
+  - seasonalityNote in reasoning
+  - historical data: salesByDay grid z 7 dnevi (count + avgProfit)
+- src/app/page.tsx: verzija v6.21.0
+- TypeScript: 24 napak (enako kot prej) - nobenih novih napak uvedenih
+- Git commit: 'feat(v6.21): AI Image Quality Assessor, Optimal Time Predictor, Fake Detection'
+
+Stage Summary:
+- 3 nove AI funkcionalnosti za maksimizacijo dobička in zmanjšanje tveganja
+- 3 novi API ruti (image-quality, optimal-time, fake-detection)
+- ~1168 novih vrstic kode
+- Image Quality: oceni ali je slika dovolj dobra za prodajo (10 faktorjev + predlagane izboljšave)
+- Optimal Time: napove kdaj objaviti oglas za max ceno (analiza 7 dni + 24 ur)
+- Fake Detection: zazna ponaredke 7 luksuznih znamk z vizualno analizo + brand-specific checks
+- Verzija aplikacije: v6.21.0
