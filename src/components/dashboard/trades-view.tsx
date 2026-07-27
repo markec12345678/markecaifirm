@@ -13,7 +13,7 @@ import {
 import {
   Select, SelectContent, SelectItem, SelectTrigger, SelectValue,
 } from '@/components/ui/select';
-import { RefreshCw, Plus, Pencil, Trash2, TrendingUp, TrendingDown, Wallet, Target, ExternalLink, ShoppingCart, Tag, Download, Sparkles, Check, Copy, AlertTriangle, Boxes, Flame, FileText, Receipt, Network, Clock, Type, Users } from 'lucide-react';
+import { RefreshCw, Plus, Pencil, Trash2, TrendingUp, TrendingDown, Wallet, Target, ExternalLink, ShoppingCart, Tag, Download, Sparkles, Check, Copy, AlertTriangle, Boxes, Flame, FileText, Receipt, Network, Clock, Type, Users, Globe, LineChart as LineChartIcon } from 'lucide-react';
 import { toast } from 'sonner';
 import { cn } from '@/lib/utils';
 import {
@@ -113,6 +113,11 @@ export function TradesView() {
   const [titleAbTestCopied, setTitleAbTestCopied] = useState<string | null>(null);
   const [personaData, setPersonaData] = useState<any>(null);
   const [personaLoading, setPersonaLoading] = useState(false);
+  // v6.23: Cross-Platform Price + Depreciation
+  const [crossPriceData, setCrossPriceData] = useState<any>(null);
+  const [crossPriceLoading, setCrossPriceLoading] = useState(false);
+  const [depreciationData, setDepreciationData] = useState<any>(null);
+  const [depreciationLoading, setDepreciationLoading] = useState(false);
   // v5.7: Bulk trade operations
   const [bulkTradeIds, setBulkTradeIds] = useState<Set<string>>(new Set());
   const [bulkTradeLoading, setBulkTradeLoading] = useState(false);
@@ -546,6 +551,59 @@ export function TradesView() {
           >
             {personaLoading ? <RefreshCw className="w-3.5 h-3.5 animate-spin" /> : <Users className="w-3.5 h-3.5" />}
             Buyer persone
+          </Button>
+          {/* v6.23: Cross-Platform Price Comparison */}
+          <Button
+            size="sm"
+            variant="outline"
+            className="gap-2 border-indigo-400/40 text-indigo-400 hover:bg-indigo-400/10"
+            disabled={crossPriceLoading}
+            onClick={async () => {
+              if (trades.length === 0) { toast.error('Ni tradeov v skladišču'); return; }
+              const firstHeld = trades.find((t: any) => t.status === 'held');
+              if (!firstHeld) { toast.error('Ni held tradeov'); return; }
+              setCrossPriceLoading(true); setCrossPriceData(null);
+              try {
+                const res = await fetch('/api/ai/cross-platform-price', {
+                  method: 'POST',
+                  headers: { 'Content-Type': 'application/json' },
+                  body: JSON.stringify({ tradeId: firstHeld.id }),
+                });
+                const data = await res.json();
+                if (data.ok) { setCrossPriceData(data); toast.success('✓ Cross-platform primerjava generirana'); }
+                else toast.error(data.error ?? 'Napaka');
+              } catch (e: any) { toast.error(e?.message ?? 'Napaka'); }
+              finally { setCrossPriceLoading(false); }
+            }}
+            title="AI primerja cene na 10 platformah in identificira arbitražo"
+          >
+            {crossPriceLoading ? <RefreshCw className="w-3.5 h-3.5 animate-spin" /> : <Globe className="w-3.5 h-3.5" />}
+            Cross-platform
+          </Button>
+          {/* v6.23: Inventory Depreciation Forecaster */}
+          <Button
+            size="sm"
+            variant="outline"
+            className="gap-2 border-orange-400/40 text-orange-400 hover:bg-orange-400/10"
+            disabled={depreciationLoading}
+            onClick={async () => {
+              setDepreciationLoading(true); setDepreciationData(null);
+              try {
+                const res = await fetch('/api/ai/depreciation-forecast', {
+                  method: 'POST',
+                  headers: { 'Content-Type': 'application/json' },
+                  body: JSON.stringify({}),
+                });
+                const data = await res.json();
+                if (data.ok) { setDepreciationData(data); toast.success('✓ Napoved amortizacije generirana'); }
+                else toast.error(data.error ?? data.message ?? 'Napaka');
+              } catch (e: any) { toast.error(e?.message ?? 'Napaka'); }
+              finally { setDepreciationLoading(false); }
+            }}
+            title="AI napove padec vrednosti inventarja in kdaj prodati"
+          >
+            {depreciationLoading ? <RefreshCw className="w-3.5 h-3.5 animate-spin" /> : <LineChartIcon className="w-3.5 h-3.5" />}
+            Amortizacija
           </Button>
           <Button
             size="sm"
@@ -1886,6 +1944,194 @@ export function TradesView() {
                         ))}
                       </div>
                     )}
+                  </div>
+                );
+              })}
+            </div>
+          </CardContent>
+        </Card>
+      )}
+
+      {/* v6.23: AI Cross-Platform Price Comparison results */}
+      {crossPriceData?.comparison && (
+        <Card className="bg-card/50 border-indigo-400/30">
+          <CardContent className="p-4 space-y-3">
+            <div className="flex items-center justify-between">
+              <div className="flex items-center gap-2">
+                <Globe className="w-4 h-4 text-indigo-400" />
+                <span className="text-sm font-bold">AI Cross-Platform Price Comparison</span>
+                <Badge variant="outline" className="text-[10px] text-indigo-400 border-indigo-400/40">v6.23</Badge>
+              </div>
+              <Button size="sm" variant="ghost" onClick={() => setCrossPriceData(null)} className="h-6 text-xs">×</Button>
+            </div>
+
+            <div className="text-[10px] text-muted-foreground">Item: <b>{crossPriceData.comparison.itemTitle}</b></div>
+
+            {/* Recommendation */}
+            {crossPriceData.comparison.recommendation && (
+              <div className={cn('border rounded p-2',
+                crossPriceData.comparison.recommendation.action === 'buy_now' ? 'bg-primary/10 border-primary/30' :
+                crossPriceData.comparison.recommendation.action === 'avoid' ? 'bg-red-500/10 border-red-500/30' :
+                'bg-amber-400/10 border-amber-400/30')}>
+                <div className="flex items-center justify-between mb-1">
+                  <span className="text-[10px] uppercase font-bold">
+                    → {crossPriceData.comparison.recommendation.action.replace('_', ' ')}
+                  </span>
+                  <Badge variant="outline" className="text-[9px] text-primary border-primary/40">
+                    Pričakovan dobiček: {crossPriceData.comparison.recommendation.expectedProfitEur}€
+                  </Badge>
+                </div>
+                <div className="text-[10px] text-muted-foreground">
+                  🛒 Kupi na: <b>{crossPriceData.comparison.recommendation.bestBuyPlatform}</b> · 💰 Prodaj na: <b>{crossPriceData.comparison.recommendation.bestSellPlatform}</b>
+                </div>
+                <p className="text-[9px] italic mt-1">{crossPriceData.comparison.recommendation.reasoning}</p>
+              </div>
+            )}
+
+            {/* Prices table */}
+            {crossPriceData.comparison.prices?.length > 0 && (
+              <div>
+                <div className="text-[10px] uppercase text-muted-foreground mb-1">💰 Cene po platformah:</div>
+                <div className="space-y-1 max-h-60 overflow-y-auto">
+                  {crossPriceData.comparison.prices.map((p: any, i: number) => (
+                    <div key={i} className={cn('border rounded p-1.5 flex items-center justify-between gap-2',
+                      p === crossPriceData.comparison.cheapest ? 'bg-primary/5 border-primary/20' : 'bg-background/40')}>
+                      <div className="flex items-center gap-2 flex-1 min-w-0">
+                        <span className="text-[10px] font-bold truncate">{p.platformName}</span>
+                        <Badge variant="outline" className="text-[8px] shrink-0">{p.country}</Badge>
+                        <Badge variant="outline" className={cn('text-[8px] shrink-0',
+                          p.demandLevel === 'high' ? 'text-primary border-primary/30' :
+                          p.demandLevel === 'low' ? 'text-red-500 border-red-500/30' : 'text-amber-400 border-amber-400/30')}>
+                          {p.demandLevel}
+                        </Badge>
+                      </div>
+                      <div className="text-right shrink-0">
+                        <div className="font-mono font-bold text-[11px]">{p.estimatedPriceEur}€</div>
+                        <div className="text-[8px] text-muted-foreground">neto {p.netRevenueEur}€</div>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            )}
+
+            {/* Arbitrage opportunities */}
+            {crossPriceData.comparison.arbitrageOpportunities?.length > 0 && (
+              <div>
+                <div className="text-[10px] uppercase text-muted-foreground mb-1">⚡ Arbitražne priložnosti:</div>
+                <div className="space-y-1">
+                  {crossPriceData.comparison.arbitrageOpportunities.map((a: any, i: number) => (
+                    <div key={i} className="bg-indigo-400/5 border border-indigo-400/20 rounded p-1.5 text-[10px]">
+                      <div className="flex items-center justify-between">
+                        <span><Badge variant="outline" className="text-[8px] mr-1">{a.strategy.replace('_', ' ')}</Badge> {a.buyPlatform} → {a.sellPlatform}</span>
+                        <Badge variant="outline" className="text-[8px] text-primary border-primary/30">+{a.netProfitEur}€ ({a.roiPct}%)</Badge>
+                      </div>
+                      <div className="text-[8px] text-muted-foreground mt-0.5">
+                        Kupi {a.buyPriceEur}€ · Prodaj {a.sellPriceEur}€ · Shipping {a.shippingEur}€ · Provizije {a.feesEur}€ · {a.timeRequiredDays}d · {a.feasibility}
+                      </div>
+                      <div className="text-[8px] italic">{a.reasoning}</div>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            )}
+
+            {crossPriceData.insights && (
+              <div className="bg-indigo-400/5 border border-indigo-400/20 rounded p-2 text-xs text-indigo-400">{crossPriceData.insights}</div>
+            )}
+          </CardContent>
+        </Card>
+      )}
+
+      {/* v6.23: AI Inventory Depreciation Forecaster results */}
+      {depreciationData && (
+        <Card className="bg-card/50 border-orange-400/30">
+          <CardContent className="p-4 space-y-3">
+            <div className="flex items-center justify-between">
+              <div className="flex items-center gap-2">
+                <LineChartIcon className="w-4 h-4 text-orange-400" />
+                <span className="text-sm font-bold">AI Inventory Depreciation Forecaster</span>
+                <Badge variant="outline" className="text-[10px] text-orange-400 border-orange-400/40">v6.23</Badge>
+              </div>
+              <Button size="sm" variant="ghost" onClick={() => setDepreciationData(null)} className="h-6 text-xs">×</Button>
+            </div>
+
+            {depreciationData.insights && (
+              <div className="bg-orange-400/5 border border-orange-400/20 rounded p-2 text-xs text-orange-400">{depreciationData.insights}</div>
+            )}
+
+            {/* Portfolio summary */}
+            {depreciationData.portfolioSummary && (
+              <div className="grid grid-cols-4 gap-2 text-[10px]">
+                <div className="bg-background/40 rounded p-1.5 border">
+                  <div className="text-muted-foreground uppercase">Trenutna vrednost</div>
+                  <div className="font-bold text-primary">{depreciationData.portfolioSummary.totalCurrentValueEur}€</div>
+                </div>
+                <div className="bg-amber-400/5 border border-amber-400/20 rounded p-1.5">
+                  <div className="text-amber-400 uppercase">Izguba 6m</div>
+                  <div className="font-bold text-amber-400">−{depreciationData.portfolioSummary.projectedLoss6mEur}€</div>
+                </div>
+                <div className="bg-red-500/5 border border-red-500/20 rounded p-1.5">
+                  <div className="text-red-500 uppercase">Izguba 12m</div>
+                  <div className="font-bold text-red-500">−{depreciationData.portfolioSummary.projectedLoss12mEur}€</div>
+                </div>
+                <div className="bg-red-500/5 border border-red-500/20 rounded p-1.5">
+                  <div className="text-red-500 uppercase">Izguba 24m</div>
+                  <div className="font-bold text-red-500">−{depreciationData.portfolioSummary.projectedLoss24mEur}€</div>
+                </div>
+              </div>
+            )}
+
+            {/* Forecasts per item */}
+            <div className="space-y-2 max-h-80 overflow-y-auto">
+              {depreciationData.forecasts?.map((f: any, i: number) => {
+                const actionCfg: Record<string, { color: string; bg: string; icon: string }> = {
+                  sell_now: { color: 'text-red-500', bg: 'border-red-500/20 bg-red-500/5', icon: '🔴' },
+                  sell_soon: { color: 'text-amber-400', bg: 'border-amber-400/20 bg-amber-400/5', icon: '🟡' },
+                  monitor: { color: 'text-blue-400', bg: 'border-blue-400/20 bg-blue-400/5', icon: '🔵' },
+                  hold: { color: 'text-primary', bg: 'border-primary/20 bg-primary/5', icon: '🟢' },
+                  vintage_holding: { color: 'text-purple-400', bg: 'border-purple-400/20 bg-purple-400/5', icon: '👑' },
+                };
+                const cfg = actionCfg[f.action] || actionCfg.monitor;
+                return (
+                  <div key={i} className={cn('border rounded p-2 space-y-1.5', cfg.bg)}>
+                    <div className="flex items-center justify-between gap-2">
+                      <div className="flex items-center gap-1.5 flex-1 min-w-0">
+                        <span>{cfg.icon}</span>
+                        <span className="font-bold text-[11px] truncate">{f.title}</span>
+                      </div>
+                      <Badge variant="outline" className={cn('text-[8px] uppercase shrink-0', cfg.color)}>
+                        {f.action.replace('_', ' ')}
+                      </Badge>
+                    </div>
+                    <div className="grid grid-cols-4 gap-1 text-[9px]">
+                      <div className="bg-background/40 rounded p-1 border text-center">
+                        <div className="text-[8px] uppercase text-muted-foreground">Trenutno</div>
+                        <div className="font-mono font-bold">{f.currentValue}€</div>
+                      </div>
+                      <div className="bg-background/40 rounded p-1 border text-center">
+                        <div className="text-[8px] uppercase text-muted-foreground">6m</div>
+                        <div className="font-mono font-bold text-amber-400">{f.projectedValue6mEur}€</div>
+                        <div className="text-[7px] text-red-500">−{f.loss6mPct}%</div>
+                      </div>
+                      <div className="bg-background/40 rounded p-1 border text-center">
+                        <div className="text-[8px] uppercase text-muted-foreground">12m</div>
+                        <div className="font-mono font-bold text-orange-400">{f.projectedValue12mEur}€</div>
+                        <div className="text-[7px] text-red-500">−{f.loss12mPct}%</div>
+                      </div>
+                      <div className="bg-background/40 rounded p-1 border text-center">
+                        <div className="text-[8px] uppercase text-muted-foreground">24m</div>
+                        <div className="font-mono font-bold text-red-500">{f.projectedValue24mEur}€</div>
+                        <div className="text-[7px] text-red-500">−{f.loss24mPct}%</div>
+                      </div>
+                    </div>
+                    {f.monthsToZeroProfit != null && (
+                      <div className="text-[9px] text-amber-400">⏱ Do izgube dobička: <b>{f.monthsToZeroProfit} mesecev</b></div>
+                    )}
+                    {f.optimalSellWindow && (
+                      <div className="text-[9px] text-primary">📅 Optimalen čas prodaje: {f.optimalSellWindow}</div>
+                    )}
+                    {f.reasoning && <div className="text-[9px] italic">{f.reasoning}</div>}
                   </div>
                 );
               })}

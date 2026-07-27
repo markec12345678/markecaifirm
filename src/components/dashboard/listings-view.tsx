@@ -24,7 +24,7 @@ import {
   DialogDescription,
 } from '@/components/ui/dialog';
 import { Textarea } from '@/components/ui/textarea';
-import { RefreshCw, Download, ExternalLink, ChevronLeft, ChevronRight, Filter, ImageIcon, AlertTriangle, Target, MapPin, Clock, Bookmark, Sparkles, ShoppingCart, MessageSquare, BarChart3, TrendingDown, TrendingUp, Copy, Check, GitCompare, StickyNote, Phone, Trash2, EyeOff, Zap, User, Wallet, BookOpen, Crosshair, ShieldAlert, Dice5, Smile, Send, Wrench, Camera, ScanSearch, Search } from 'lucide-react';
+import { RefreshCw, Download, ExternalLink, ChevronLeft, ChevronRight, Filter, ImageIcon, AlertTriangle, Target, MapPin, Clock, Bookmark, Sparkles, ShoppingCart, MessageSquare, BarChart3, TrendingDown, TrendingUp, Copy, Check, GitCompare, StickyNote, Phone, Trash2, EyeOff, Zap, User, Wallet, BookOpen, Crosshair, ShieldAlert, Dice5, Smile, Send, Wrench, Camera, ScanSearch, Search, FileEdit } from 'lucide-react';
 import { toast } from 'sonner';
 import { cn } from '@/lib/utils';
 
@@ -1201,6 +1201,10 @@ function ListingDetailModal({ listingId, onClose }: { listingId: string | null; 
   // v6.22: Reverse Image Search
   const [reverseSearch, setReverseSearch] = useState<any>(null);
   const [reverseSearchLoading, setReverseSearchLoading] = useState(false);
+  // v6.23: Description Optimizer
+  const [descOpt, setDescOpt] = useState<any>(null);
+  const [descOptLoading, setDescOptLoading] = useState(false);
+  const [descOptCopied, setDescOptCopied] = useState<string | null>(null);
   // v5.1: Seller reputation
   const [sellerRep, setSellerRep] = useState<any>(null);
   const [sellerLoading, setSellerLoading] = useState(false);
@@ -1273,6 +1277,9 @@ function ListingDetailModal({ listingId, onClose }: { listingId: string | null; 
       setFakeDetect(null);
       // v6.22: Reset reverse image search
       setReverseSearch(null);
+      // v6.23: Reset description optimizer
+      setDescOpt(null);
+      setDescOptCopied(null);
       // v5.6: Reset external comparison
       setExtCompare(null);
       // v5.7: Reset similar listings
@@ -4370,6 +4377,154 @@ function ListingDetailModal({ listingId, onClose }: { listingId: string | null; 
               ) : (
                 <p className="text-[11px] text-muted-foreground text-center py-2">
                   {listing.imageUrl ? 'AI preveri znake ponarejanja (Gucci/LV/Rolex/iPhone/...).' : 'Ni slike za analizo.'}
+                </p>
+              )}
+            </div>
+
+            {/* v6.23: AI Description Optimizer */}
+            <div className="border-t border-border pt-3">
+              <div className="flex items-center justify-between mb-2">
+                <h4 className="text-xs uppercase tracking-wider text-muted-foreground flex items-center gap-1.5">
+                  <FileEdit className="w-3.5 h-3.5 text-pink-400" />
+                  AI Description Optimizer
+                  <Badge variant="outline" className="text-[10px] text-pink-400 border-pink-400/40">v6.23</Badge>
+                </h4>
+                <Button
+                  size="sm"
+                  variant="outline"
+                  className="h-6 text-[11px] gap-1.5 border-pink-400/40 text-pink-400 hover:bg-pink-400/10"
+                  disabled={descOptLoading}
+                  onClick={async () => {
+                    setDescOptLoading(true);
+                    setDescOpt(null);
+                    try {
+                      const res = await fetch('/api/ai/description-optimizer', {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify({
+                          currentDescription: listing.detailDescription || listing.description,
+                          title: listing.title,
+                          category: listing.monitor?.source,
+                          price: listing.price,
+                          targetPlatform: 'bolha',
+                        }),
+                      });
+                      const data = await res.json();
+                      if (data.ok) { setDescOpt(data); toast.success('✓ Optimizacija opisa generirana'); }
+                      else toast.error(data.error ?? 'Napaka');
+                    } catch (e: any) { toast.error(e?.message ?? 'Napaka'); }
+                    finally { setDescOptLoading(false); }
+                  }}
+                >
+                  {descOptLoading ? <RefreshCw className="w-3 h-3 animate-spin" /> : <FileEdit className="w-3 h-3" />}
+                  Optimiziraj opis
+                </Button>
+              </div>
+              {descOptLoading ? (
+                <div className="py-3 text-center text-[11px] text-muted-foreground">
+                  <RefreshCw className="w-4 h-4 mx-auto mb-1 animate-spin opacity-50" />
+                  AI optimizira opis z 4 strategijami (BENEFIT/STORY/TECHNICAL/SCANNABLE)...
+                </div>
+              ) : descOpt?.optimization ? (
+                <div className="space-y-2 text-[11px]">
+                  {/* Current analysis */}
+                  <div className="bg-background/40 border rounded p-2">
+                    <div className="flex items-center justify-between mb-1">
+                      <span className="text-[10px] uppercase text-muted-foreground">Trenutni opis:</span>
+                      <Badge variant="outline" className={cn('text-[9px] font-mono font-bold',
+                        descOpt.optimization.currentAnalysis.score >= 70 ? 'text-primary border-primary/40' :
+                        descOpt.optimization.currentAnalysis.score >= 40 ? 'text-amber-400 border-amber-400/40' : 'text-red-500 border-red-500/40')}>
+                        Score: {descOpt.optimization.currentAnalysis.score}/100
+                      </Badge>
+                    </div>
+                    {descOpt.optimization.currentAnalysis.strengths?.length > 0 && (
+                      <div className="text-[9px] text-primary">✓ {descOpt.optimization.currentAnalysis.strengths.join(' · ')}</div>
+                    )}
+                    {descOpt.optimization.currentAnalysis.weaknesses?.length > 0 && (
+                      <div className="text-[9px] text-red-500">⚠️ {descOpt.optimization.currentAnalysis.weaknesses.join(' · ')}</div>
+                    )}
+                  </div>
+
+                  {/* Winner */}
+                  {descOpt.optimization.winner?.description && (
+                    <div className="bg-primary/10 border border-primary/30 rounded p-2">
+                      <div className="flex items-center justify-between mb-1">
+                        <span className="text-[10px] uppercase text-primary font-bold">🏆 Zmagovalni opis:</span>
+                        <button
+                          onClick={() => {
+                            navigator.clipboard.writeText(descOpt.optimization.winner.description);
+                            setDescOptCopied('winner');
+                            setTimeout(() => setDescOptCopied(null), 1500);
+                            toast.success('Opis kopiran');
+                          }}
+                          className="text-[9px] text-primary hover:underline"
+                        >
+                          {descOptCopied === 'winner' ? '✓' : '📋'} Kopiraj
+                        </button>
+                      </div>
+                      <div className="text-[10px] whitespace-pre-wrap max-h-40 overflow-y-auto">{descOpt.optimization.winner.description}</div>
+                      <div className="text-[9px] text-muted-foreground mt-1">{descOpt.optimization.winner.why}</div>
+                      {descOpt.optimization.winner.expectedImprovementPct > 0 && (
+                        <Badge variant="outline" className="text-[9px] text-primary border-primary/40 mt-1">
+                          +{descOpt.optimization.winner.expectedImprovementPct}% izboljšava
+                        </Badge>
+                      )}
+                    </div>
+                  )}
+
+                  {/* Variants */}
+                  {descOpt.optimization.variants?.length > 0 && (
+                    <div>
+                      <div className="text-[10px] uppercase text-muted-foreground mb-1">📋 Variante opisov:</div>
+                      <div className="space-y-1 max-h-60 overflow-y-auto">
+                        {descOpt.optimization.variants.map((v: any, i: number) => (
+                          <div key={i} className="bg-background/40 border rounded p-1.5 space-y-1">
+                            <div className="flex items-center justify-between gap-2">
+                              <Badge variant="outline" className="text-[8px] text-pink-400 border-pink-400/30">{v.strategy.replace('_', ' ')}</Badge>
+                              <div className="flex items-center gap-1 shrink-0">
+                                <Badge variant="outline" className={cn('text-[8px] font-mono',
+                                  v.overallScore >= 70 ? 'text-primary border-primary/40' : 'text-amber-400 border-amber-400/40')}>{v.overallScore}</Badge>
+                                <button
+                                  onClick={() => {
+                                    navigator.clipboard.writeText(v.description);
+                                    setDescOptCopied(`v${i}`);
+                                    setTimeout(() => setDescOptCopied(null), 1500);
+                                    toast.success('Varianta kopirana');
+                                  }}
+                                  className="text-[9px] text-pink-400 hover:underline"
+                                >
+                                  {descOptCopied === `v${i}` ? '✓' : '📋'}
+                                </button>
+                              </div>
+                            </div>
+                            <div className="text-[9px] text-muted-foreground line-clamp-2">{v.description.slice(0, 150)}...</div>
+                            <div className="grid grid-cols-4 gap-1 text-[8px]">
+                              <div className="text-center"><span className="text-muted-foreground">Berljivost:</span> <b className={v.readabilityScore >= 70 ? 'text-primary' : 'text-amber-400'}>{v.readabilityScore}</b></div>
+                              <div className="text-center"><span className="text-muted-foreground">Prep.:</span> <b className={v.persuasivenessScore >= 70 ? 'text-primary' : 'text-amber-400'}>{v.persuasivenessScore}</b></div>
+                              <div className="text-center"><span className="text-muted-foreground">SEO:</span> <b className={v.seoScore >= 70 ? 'text-primary' : 'text-amber-400'}>{v.seoScore}</b></div>
+                              <div className="text-center"><span className="text-muted-foreground">Zaupanje:</span> <b className={v.trustScore >= 70 ? 'text-primary' : 'text-amber-400'}>{v.trustScore}</b></div>
+                            </div>
+                          </div>
+                        ))}
+                      </div>
+                    </div>
+                  )}
+
+                  {/* SEO keywords */}
+                  {descOpt.optimization.seoKeywords?.length > 0 && (
+                    <div className="bg-background/40 border rounded p-1.5">
+                      <div className="text-[10px] uppercase text-muted-foreground mb-1">🔍 SEO ključne besede:</div>
+                      <div className="flex flex-wrap gap-1">
+                        {descOpt.optimization.seoKeywords.map((k: string, i: number) => (
+                          <Badge key={i} variant="outline" className="text-[8px]">{k}</Badge>
+                        ))}
+                      </div>
+                    </div>
+                  )}
+                </div>
+              ) : (
+                <p className="text-[11px] text-muted-foreground text-center py-2">
+                  AI optimizira opis z 4 strategijami (BENEFIT/STORY/TECHNICAL/SCANNABLE) in A/B testi.
                 </p>
               )}
             </div>
