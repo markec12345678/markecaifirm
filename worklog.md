@@ -1428,3 +1428,63 @@ Stage Summary:
 - Skupaj aplikacija sedaj podpira 10 virov: 4 SI (Bolha/Nepremicnine/Avtonet/Vinted) + 6 tujih (mobile.de, Kleinanzeigen, Subito, Willhaben + Salomon/custom-RSS)
 - Pričakovan vpliv na dobiček: +20-35% (premium 30-50% prihranka, volume 10-20%)
 - Verzija aplikacije: v6.18.0
+
+---
+Task ID: v6.19
+Agent: main
+Task: Dodajanje OpenRouter in Google Gemini AI provider podpore
+
+Work Log:
+- Raziskava: aplikacija je imela 4 providerje (ollama/openai/anthropic/openai-compatible).
+  OpenRouter je bil delno podprt preko openai-compatible, ampak brez specifičnih headerjev
+  (HTTP-Referer, X-Title). Gemini pa ima popolnoma drugačen API (Generative Language API)
+  in NI bil podprt.
+- src/lib/ai.ts:
+  * Dodan 'openrouter' | 'gemini' v AiProviderType union (skupno 6 providerjev sedaj)
+  * callOpenRouter(): gateway do 100+ modelov (Anthropic, OpenAI, Meta, Mistral, Google)
+    - OpenAI-compatible format (choices[0].message.content)
+    - Dodatna headerja: HTTP-Referer (za leaderboard), X-Title (za dashboard)
+    - Podpora slika (image_url z data:image/jpeg;base64,...)
+    - response_format: { type: 'json_object' } za JSON output
+    - URL: https://openrouter.ai/api/v1/chat/completions
+  * callGemini(): Google Generative Language API
+    - Drugačen API format: contents: [{ role, parts: [{text}] }]
+    - Za slike: parts: [{text}, { inline_data: { mime_type, data } }]
+    - system_instruction (posebno polje, ne v messages)
+    - generationConfig.responseMimeType = 'application/json' (JSON output)
+    - API key kot query parameter (?key=API_KEY), ne Authorization header
+    - URL: https://generativelanguage.googleapis.com/v1beta/models/{model}:generateContent
+    - Detekcija promptFeedback.blockReason (Gemini safety filter)
+  * Registrirana oba v callProvider() switch
+- src/lib/pipeline.ts (BONUS): uvožen AiProviderType (prej je bil uporabljen brez uvoza).
+  To je odpravilo 1 pre-existing TypeScript napako.
+- prisma/schema.prisma: posodobljen komentar aiProvider field z vsemi 6 providerji.
+- src/components/dashboard/settings-view.tsx:
+  * Posodobljen Provider type union (dodana openrouter | gemini)
+  * Dodana PROVIDER_PRESETS:
+    - openrouter: baseUrl=https://openrouter.ai/api, model=anthropic/claude-3.5-sonnet,
+      label 'OpenRouter (gateway do 100+ modelov)', help z navodili
+    - gemini: baseUrl=https://generativelanguage.googleapis.com, model=gemini-2.0-flash-exp,
+      label 'Google Gemini (brezplačni tier)', help z brezplačnimi limti
+  * Glavni dropdown samodejno prikaže nove providerje (dinamično bere iz PROVIDER_PRESETS)
+  * Fallback dropdown posodobljen z 2 novima SelectItem (openrouter, gemini)
+- README.md: dodana obsežna v6.19 sekcija:
+  - OpenRouter opis (100+ modelov, free tier, format provider/model)
+  - Gemini opis (brezplačni tier: 15 req/min, 1500/dan za gemini-1.5-flash)
+  - Setup navodila za oba (kje dobiti API key)
+  - Prednosti za aplikacijo (multimodalni, JSON output, fallback)
+  - Priporočena fallback strategija (Gemini primarni + OpenRouter fallback)
+  - Posodobljena Testirano z sekcija z obema novima providerjema
+- src/app/page.tsx: verzija v6.19.0
+- TypeScript: 24 napak (prej 25) - odpravljena 1 pre-existing napaka (AiProviderType import v pipeline.ts)
+- Git commit: 'feat(v6.19): OpenRouter in Google Gemini AI provider podpora'
+
+Stage Summary:
+- 2 nova AI providerja (OpenRouter, Google Gemini) — skupno 6 providerjev sedaj
+- 2 novi funkciji v ai.ts (callOpenRouter, callGemini) — ~150 vrstic
+- 1 odpravljena pre-existing TypeScript napaka (AiProviderType import)
+- OpenRouter: en API key za 100+ modelov (testiraj različne brez menjave računov)
+- Gemini: brezplačni tier (15 req/min, 1500/dan) omogoča brezplačno poganjanje
+- Oba podpirata multimodalne zahtevke (analiza slik oglasov)
+- Oba podpirata JSON output
+- Verzija aplikacije: v6.19.0
