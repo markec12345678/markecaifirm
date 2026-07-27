@@ -1488,3 +1488,84 @@ Stage Summary:
 - Oba podpirata multimodalne zahtevke (analiza slik oglasov)
 - Oba podpirata JSON output
 - Verzija aplikacije: v6.19.0
+
+---
+Task ID: v6.20
+Agent: main
+Task: AI Sentiment Analysis, Negotiation Chatbot, Refurbishment Cost Estimator
+
+Work Log:
+- src/app/api/ai/sentiment-analysis/route.ts: nov POST endpoint.
+  Hevristika z 22 regex patterni (4 kategorije):
+  - URGENCY_PATTERNS (6): nujna prodaja, selitev, denar, time pressure, konkurenca, končni rok
+  - DECEPTION_PATTERNS (8): ne vprašuj, samo shipping, paysafecard, izogiba srečanju, dedovanje, ...
+  - LEVERAGE_PATTERNS (5): že zniževal, kompromis, redkost, ...
+  - GREEN_FLAGS (5): faktura, osebni prevzem, testiranje, zaupanje, več slik
+  AI oceni: overall (desperate/motivated/neutral/reluctant/suspicious),
+  urgency/leverage/deception 0-100%, motivation, toneProfile
+  (prijateljski/poslovni/agresivni/previdni/odlašujoči), red/green flags,
+  recommendedApproach (aggressive/firm/patient/walk_away), openingTactic.
+- src/app/api/ai/negotiation-chatbot/route.ts: nov POST endpoint za multi-turn
+  pogovor. Sprejme:
+  - messages: [{role: 'user'|'seller', text}]
+  - strategy: aggressive|firm|patient (15-25% / 10-15% / sprašuj)
+  - myGoal: {maxPrice, mustInclude[]}
+  - listingId za kontekst oglasa
+  AI generira naslednji odgovor prodajalcu:
+  - text (50-150 besed v slovenščini, naravno in osebno)
+  - suggestedPriceEur (ali null)
+  - tone (aggressive/firm/friendly/patient/questioning)
+  - nextStep (kaj če prodajalec odgovori)
+  - confidencePct (0-100)
+  - alternatives (2-3 alternativni odgovori)
+  - conversationState (opening/discovery/offer/counter/closing/stuck)
+  - warning (opozorilo če nekaj gre narobe)
+- src/app/api/ai/refurbishment-cost/route.ts: nov POST endpoint za oceno
+  stroškov obnove z vizualno analizo.
+  25 slovenskih cenovnih referenc (REFURB_PRICES): cleaning, paint, polishing,
+  battery/screen/keyboard/tire/brake/chain replacement, upholstery, rust removal,
+  wood restoration, electrical/motor/gasket repair, professional service, ...
+  AI oceni:
+  - imageFindings (kaj vidi na sliki glede stanja)
+  - items[]: name, costEur, complexity (easy/medium/hard), optional, reasoning
+  - totalRefurbCostEur (vsota vseh obveznih)
+  - refurbStrategy: cosmetical_only|functional_repair|full_restoration|part_out
+  - resaleValueEur (ocenjena cena po obnovi)
+  - profitPotentialEur = resaleValue - buyPrice - refurbCost
+  - roiPct
+  - recommendedAction: buy_and_refurb|buy_as_is|avoid|marginal
+  - timeRequiredDays, toolsNeeded[], skillsRequired, warnings[]
+- src/components/dashboard/listings-view.tsx: dodane 3 nove sekcije v detail
+  drawer (med Negotiation Outcome Predictor in AI Auto-Bid):
+  1) AI Sentiment Analysis (Smile ikona, purple):
+     - Input za sporočilo prodajalca (opcijsko)
+     - Prikaz: overall badge (barva glede na sentiment), motivation text
+     - 3-stolpci: Urgency/Leverage/Deception (z barvno kodiranimi vrednostmi)
+     - RecommendedApproach badge (barva glede na pristop)
+     - OpeningTactic (konkretno kaj reči v prvem kontaktu)
+     - Red flags + Green flags seznami
+     - Hevristika (kateri vzorci zaznani)
+  2) AI Negotiation Chatbot (MessageSquare ikona, primary):
+     - Strategy select (aggressive/firm/patient) + maxPrice input
+     - Chat interface z role-coded messages (jaz=primary, prodajalec=muted)
+     - AI predlog s suggestedPrice in copy-to-clipboard
+     - Enter key za hitro pošiljanje
+     - "Začni" gumb za začetni odgovor, "Odgovori" za nadaljevanje
+  3) AI Refurbishment Cost Estimator (Wrench ikona, amber):
+     - 4-stolpci grid: Nakup/Obnova/Prodaja/Dobiček (z barvno kodiranim dobičkom)
+     - ROI %, čas v dnevih, skillsRequired
+     - Items list z complexity badge (easy/medium/hard) in optional marker
+     - toolsNeeded (orodja potrebna)
+     - warnings (opozorila)
+- src/app/page.tsx: verzija v6.20.0
+- TypeScript: 24 napak (enako kot prej) - nobenih novih napak uvedenih
+- Git commit: 'feat(v6.20): AI Sentiment Analysis, Negotiation Chatbot, Refurbishment Cost Estimator'
+
+Stage Summary:
+- 3 nove AI funkcionalnosti za maksimizacijo dobička in zmanjšanje tveganja
+- 3 novi API ruti (sentiment-analysis, negotiation-chatbot, refurbishment-cost)
+- ~1033 novih vrstic kode
+- Sentiment: prepozna resnično motivacijo prodajalca (desperate = boljši za nakup)
+- Chatbot: avtomatsko generira odgovore prodajalcu (multi-turn pogovor z AI)
+- Refurbishment: oceni ali se splača kupiti pokvarjen item za obnovo (z vizualno analizo)
+- Verzija aplikacije: v6.20.0
