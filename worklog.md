@@ -1938,3 +1938,46 @@ Stage Summary:
 - Listing Rotation: razpored objav po dnevih/urah/platformah z 3 strategijami in weekly calendar
 - Cash Reserve: optimalna denarna rezerva z 4 strategijami, 6m projekcijami in cash flow gaps
 - Verzija aplikacije: v6.26.0
+
+---
+Task ID: v6.27
+Agent: main
+Task: AI Predictive Market Trends, Quality Score Aggregator, Turnover Optimizer
+
+Work Log:
+- src/app/api/ai/market-trends/route.ts: nov POST endpoint za napoved tržnih trendov.
+  Analizira 18-mesečno zgodovino prodaj po kategorijah (mesečni avg price, volume,
+  profit). Primerja zadnje 3 mesece s prejšnjimi 3 za trend gibanja. AI napove za
+  1-12 mesecev: currentTrend (rising/falling/stable), predictedTrend, priceDirection
+  z priceChangePct, demandDirection z demandChangePct, trendStrength (strong/moderate/
+  weak), confidence. 5 akcij: stock_up, sell_now, hold, exit, monitor. Macro faktorji
+  (inflacija 4%, sezonskost, EU trendi, AI/ChatGPT vpliv) z affectedCategories in
+  severity. Summary z hottestCategory, coldestCategory, risingCount, fallingCount,
+  overallMarketSentiment (bullish/bearish/neutral), recommendedPortfolioShift.
+- src/app/api/ai/quality-aggregator/route.ts: nov POST endpoint za agregacijo AI ocen.
+  Združi vse AI ocene v eno skupno: dealScore (35% utež), aiScore×10 (20%), aiRisk
+  inverzno (11-risk)×10 (15%), imageQuality (10%), sellerReputation (10%), priceValue
+  (10%). Overall score 0-100 z grade (A+/A/B+/B/C+/C/D/F). Breakdown per faktor z
+  contribution. Comparison to similar (percentile, betterThanPct, ranking top_5 do
+  bottom_10). Price analysis (listPrice, estValue, discountPct, isGoodDeal, fairPrice).
+  Recommendation (buy_now/buy_with_caution/monitor/wait/avoid) z action items.
+- src/app/api/ai/turnover-optimizer/route.ts: nov POST endpoint za optimizacijo obrtnosti.
+  Izračuna turnover ratio (annualizedSold / held) in avgDaysToSell. Per item:
+  turnoverAction (accelerate/hold/reduce_price/bundle/liquidate), suggestedPriceEur,
+  expectedSellTimeDays. Category optimization z action (stock_up/maintain/reduce/exit)
+  in currentAvgDays vs targetAvgDays. Recommendations z expectedImpactDays. Summary z
+  currentAnnualRevenue, projectedAnnualRevenue, improvementPct, cashFreedEur,
+  itemsToAccelerate, itemsToLiquidate. Optimalni turnover ratio: 4-8 na leto
+  (item prodati v 45-90 dneh).
+- src/app/page.tsx: verzija v6.27.0
+- TypeScript: 24 napak (enako kot prej) - nobenih novih napak uvedenih
+- Git commit: 'feat(v6.27): AI Predictive Market Trends, Quality Score Aggregator, Turnover Optimizer'
+
+Stage Summary:
+- 3 nove AI funkcionalnosti za tržno analizo in operativno optimizacijo
+- 3 novi API ruti (market-trends, quality-aggregator, turnover-optimizer)
+- ~641 novih vrstic kode
+- Market Trends: napoved tržnih trendov z macro faktorji in sentiment analizo (bullish/bearish)
+- Quality Aggregator: ponderirano povprečje 6 AI ocen v eno skupno (A+ do F) z benchmark
+- Turnover Optimizer: optimizacija obrtnosti z 5 akcijami, cash freed in projected revenue
+- Verzija aplikacije: v6.27.0
