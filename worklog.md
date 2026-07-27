@@ -1647,3 +1647,78 @@ Stage Summary:
 - Optimal Time: napove kdaj objaviti oglas za max ceno (analiza 7 dni + 24 ur)
 - Fake Detection: zazna ponaredke 7 luksuznih znamk z vizualno analizo + brand-specific checks
 - Verzija aplikacije: v6.21.0
+
+---
+Task ID: v6.22
+Agent: main
+Task: AI Reverse Image Search, Title A/B Tester, Buyer Persona Generator
+
+Work Log:
+- src/app/api/ai/reverse-image-search/route.ts: nov POST endpoint.
+  Hevristika: 18 stock domeni (shutterstock/istock/getty/depositphotos/
+  dreamstime/alamy/pexels/pixabay/unsplash/freepik/...), 16 URL patterni
+  (shutterstock/istock/gettyimages/preview/watermark/comp/...), 6 watermark
+  besed. AI vizualna analiza: isStockPhoto, stockPhotoProbabilityPct,
+  visualIndicators (stock/authentic/unclear z utežmi 1-10). URL analiza
+  (matchedStockDomains, matchedPatterns, matchedWatermarks, totalRedFlags).
+  Search URLs: Google Lens, TinEye, Bing Visual, Yandex (klikabilni linki).
+  Platform-specific concerns za Bolha/Vinted/Kleinanzeigen. Recommendation
+  (buy_with_caution/verify_first/avoid/report).
+- src/app/api/ai/title-abtest/route.ts: nov POST endpoint za A/B testiranje
+  naslovov. 5 strategij: KEYWORD_OPTIMIZED, BENEFIT_DRIVEN, URGENCY,
+  CURIOSITY, SPECIFICITY. Generira 5-6 variants z: ctrScore, searchVisibility,
+  conversionScore, overallScore (0-100), characterCount, strengths/weaknesses,
+  bestForPlatform. Winner z expectedImprovementPct. Platform-specific naslovi
+  za Bolha (60 znakov), Vinted (80), Facebook (100 z emoji), Kleinanzeigen (70).
+  Tips za copywriting.
+- src/app/api/ai/buyer-persona/route.ts: nov POST endpoint za generiranje
+  buyer person. 5 tipov: BUDGET_CONSCIOUS (študenti), QUALITY_SEEKER (družine),
+  PREMIUM (visok dohodek), COLLECTOR (zbiratelji), FLIPPER (preprodajalci).
+  Per persona: name, ageRange, location, occupation, incomeRangeEur,
+  motivations, painPoints, preferredChannels, willingnessToPayEur,
+  decisionTimeDays, messaging (hook/tone/keyArguments/CTA), priceSensitivity,
+  trustFactors, objectionHandling (objection/response pairs). Marketing
+  strategy z primaryPersona, secondaryPersona, recommendedPlatform,
+  optimalTiming, listingTone, mustInclude/avoidInListing.
+- src/components/dashboard/listings-view.tsx: dodana 'AI Reverse Image Search'
+  sekcija (Search ikona, cyan) v detail drawer med Fake Detection in Sentiment
+  Analysis. Prikaz:
+  - isStockPhoto badge z barvo (red/amber/primary)
+  - stockPhotoProbabilityPct
+  - recommendation badge (NE NAKUPUJ/PRIJAVI/PREVERI/NAKUPI S PREVIDNOSTJO)
+  - URL analiza (stock domeni, vzorci, watermarki)
+  - visualIndicators z utežmi (stock/authentic/unclear)
+  - klikabilni linki za Google Lens, TinEye, Bing Visual, Yandex (grid 2x2)
+- src/components/dashboard/trades-view.tsx: dodana dva nova gumba v orodno
+  vrstico:
+  1) Title A/B test (Type ikona, purple):
+     - currentTitle analysis z score (0-100)
+     - winner z expectedImprovementPct
+     - 5-6 variants z 4-stolpci scores (CTR/Search/Convert/Overall) in
+       copy-to-clipboard
+     - platform-specific naslovi z copy (Bolha/Vinted/Facebook/Kleinanzeigen)
+     - tips za copywriting
+  2) Buyer persone (Users ikona, emerald):
+     - marketing strategy (primary/secondary persona, recommendedPlatform,
+       optimalTiming, mustInclude/avoidInListing)
+     - 3-4 persone z 5 tipi (BUDGET/QUALITY/PREMIUM/COLLECTOR/FLIPPER)
+     - per-persona: ageRange/location/incomeRangeEur, motivations, painPoints,
+       preferredChannels, willingnessToPayEur, decisionTimeDays
+     - messaging (hook/tone/keyArguments/CTA)
+     - trustFactors
+     - objectionHandling (objection/response pairs)
+- src/app/page.tsx: verzija v6.22.0
+- TypeScript: 24 napak (enako kot prej) - nobenih novih napak uvedenih
+- Git commit: 'feat(v6.22): AI Reverse Image Search, Title A/B Tester, Buyer Persona Generator'
+
+Stage Summary:
+- 3 nove AI funkcionalnosti za maksimizacijo dobička in ciljano trženje
+- 3 novi API ruti (reverse-image-search, title-abtest, buyer-persona)
+- ~1097 novih vrstic kode
+- Reverse Image Search: odkrije stock fotografije (URL pattern + AI vizualna analiza)
+  z direktnimi linki na 4 reverse image search storitve (Google Lens, TinEye, Bing, Yandex)
+- Title A/B Tester: generira 5 variant naslovov z 4 scores (CTR/search/conversion/overall)
+  in platform-specific optimizacijo (4 platforme z različnimi limiti znakov)
+- Buyer Persona Generator: ustvari 3-4 kupce profile (5 tipov) z messaging strategijo,
+  objection handling in marketinško strategijo za ciljano trženje
+- Verzija aplikacije: v6.22.0
