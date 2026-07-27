@@ -24,7 +24,7 @@ import {
   DialogDescription,
 } from '@/components/ui/dialog';
 import { Textarea } from '@/components/ui/textarea';
-import { RefreshCw, Download, ExternalLink, ChevronLeft, ChevronRight, Filter, ImageIcon, AlertTriangle, Target, MapPin, Clock, Bookmark, Sparkles, ShoppingCart, MessageSquare, BarChart3, TrendingDown, TrendingUp, Copy, Check, GitCompare, StickyNote, Phone, Trash2, EyeOff, Zap, User, Wallet, BookOpen, Crosshair, ShieldAlert, Dice5 } from 'lucide-react';
+import { RefreshCw, Download, ExternalLink, ChevronLeft, ChevronRight, Filter, ImageIcon, AlertTriangle, Target, MapPin, Clock, Bookmark, Sparkles, ShoppingCart, MessageSquare, BarChart3, TrendingDown, TrendingUp, Copy, Check, GitCompare, StickyNote, Phone, Trash2, EyeOff, Zap, User, Wallet, BookOpen, Crosshair, ShieldAlert, Dice5, Smile, Send, Wrench } from 'lucide-react';
 import { toast } from 'sonner';
 import { cn } from '@/lib/utils';
 
@@ -1181,6 +1181,18 @@ function ListingDetailModal({ listingId, onClose }: { listingId: string | null; 
   const [outcomeLoading, setOutcomeLoading] = useState(false);
   const [outcomeOffer, setOutcomeOffer] = useState('');
   const [outcomeMessage, setOutcomeMessage] = useState('');
+  // v6.20: Sentiment + Chatbot + Refurb
+  const [sentiment, setSentiment] = useState<any>(null);
+  const [sentimentLoading, setSentimentLoading] = useState(false);
+  const [sentimentMessage, setSentimentMessage] = useState('');
+  const [chatbotMessages, setChatbotMessages] = useState<Array<{ role: 'user' | 'seller'; text: string }>>([]);
+  const [chatbotInput, setChatbotInput] = useState('');
+  const [chatbotLoading, setChatbotLoading] = useState(false);
+  const [chatbotStrategy, setChatbotStrategy] = useState<'aggressive' | 'firm' | 'patient'>('firm');
+  const [chatbotMaxPrice, setChatbotMaxPrice] = useState('');
+  const [chatbotLastReply, setChatbotLastReply] = useState<any>(null);
+  const [refurb, setRefurb] = useState<any>(null);
+  const [refurbLoading, setRefurbLoading] = useState(false);
   // v5.1: Seller reputation
   const [sellerRep, setSellerRep] = useState<any>(null);
   const [sellerLoading, setSellerLoading] = useState(false);
@@ -1240,6 +1252,14 @@ function ListingDetailModal({ listingId, onClose }: { listingId: string | null; 
       setOutcome(null);
       setOutcomeOffer('');
       setOutcomeMessage('');
+      // v6.20: Reset sentiment + chatbot + refurb
+      setSentiment(null);
+      setSentimentMessage('');
+      setChatbotMessages([]);
+      setChatbotInput('');
+      setChatbotMaxPrice('');
+      setChatbotLastReply(null);
+      setRefurb(null);
       // v5.6: Reset external comparison
       setExtCompare(null);
       // v5.7: Reset similar listings
@@ -4070,6 +4090,391 @@ function ListingDetailModal({ listingId, onClose }: { listingId: string | null; 
               ) : (
                 <p className="text-[11px] text-muted-foreground text-center py-2">
                   Vnesi ponudbo — AI bo napovedal verjetnost uspeha, counter-offer in optimalno strategijo.
+                </p>
+              )}
+            </div>
+
+            {/* v6.20: AI Sentiment Analysis */}
+            <div className="border-t border-border pt-3">
+              <div className="flex items-center justify-between mb-2">
+                <h4 className="text-xs uppercase tracking-wider text-muted-foreground flex items-center gap-1.5">
+                  <Smile className="w-3.5 h-3.5 text-purple-400" />
+                  AI Sentiment Analysis
+                  <Badge variant="outline" className="text-[10px] text-purple-400 border-purple-400/40">v6.20</Badge>
+                </h4>
+                <Button
+                  size="sm"
+                  variant="outline"
+                  className="h-6 text-[11px] gap-1.5 border-purple-400/40 text-purple-400 hover:bg-purple-400/10"
+                  disabled={sentimentLoading}
+                  onClick={async () => {
+                    setSentimentLoading(true);
+                    setSentiment(null);
+                    try {
+                      const res = await fetch('/api/ai/sentiment-analysis', {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify({ listingId: listing.id, sellerMessage: sentimentMessage || undefined }),
+                      });
+                      const data = await res.json();
+                      if (data.ok) { setSentiment(data); toast.success('✓ Sentiment analiza generirana'); }
+                      else toast.error(data.error ?? 'Napaka');
+                    } catch (e: any) { toast.error(e?.message ?? 'Napaka'); }
+                    finally { setSentimentLoading(false); }
+                  }}
+                >
+                  {sentimentLoading ? <RefreshCw className="w-3 h-3 animate-spin" /> : <Smile className="w-3 h-3" />}
+                  Analiziraj
+                </Button>
+              </div>
+              <Input
+                type="text"
+                placeholder="Sporočilo prodajalca (opcijsko) — prilepi za analizo"
+                value={sentimentMessage}
+                onChange={(e) => setSentimentMessage(e.target.value)}
+                className="h-7 text-[11px] mb-2"
+              />
+              {sentimentLoading ? (
+                <div className="py-3 text-center text-[11px] text-muted-foreground">
+                  <RefreshCw className="w-4 h-4 mx-auto mb-1 animate-spin opacity-50" />
+                  AI analizira ton, motivacijo in morebitne rdeče zastave...
+                </div>
+              ) : sentiment?.sentiment ? (
+                <div className="space-y-2 text-[11px]">
+                  <div className={cn('border rounded p-2',
+                    sentiment.sentiment.overall === 'desperate' ? 'bg-primary/10 border-primary/30' :
+                    sentiment.sentiment.overall === 'suspicious' ? 'bg-red-500/5 border-red-500/20' :
+                    sentiment.sentiment.overall === 'motivated' ? 'bg-primary/5 border-primary/20' :
+                    sentiment.sentiment.overall === 'reluctant' ? 'bg-amber-400/5 border-amber-400/20' : 'bg-background/40 border-border')}>
+                    <div className="flex items-center justify-between mb-1">
+                      <Badge variant="outline" className={cn('text-[9px] uppercase font-bold',
+                        sentiment.sentiment.overall === 'desperate' ? 'text-primary border-primary/40' :
+                        sentiment.sentiment.overall === 'suspicious' ? 'text-red-500 border-red-500/40' :
+                        sentiment.sentiment.overall === 'motivated' ? 'text-primary border-primary/30' : 'text-muted-foreground')}>
+                        {sentiment.sentiment.overall}
+                      </Badge>
+                      <span className="text-[9px] text-muted-foreground">ton: {sentiment.sentiment.toneProfile}</span>
+                    </div>
+                    <p className="text-[10px]">{sentiment.sentiment.motivation}</p>
+                  </div>
+                  <div className="grid grid-cols-3 gap-1 text-[10px]">
+                    <div className="bg-background/40 rounded p-1 border text-center">
+                      <div className="text-[9px] uppercase text-muted-foreground">Urgency</div>
+                      <div className={cn('font-mono font-bold', sentiment.sentiment.urgencyPct >= 70 ? 'text-primary' : sentiment.sentiment.urgencyPct >= 40 ? 'text-amber-400' : 'text-muted-foreground')}>{sentiment.sentiment.urgencyPct}%</div>
+                    </div>
+                    <div className="bg-background/40 rounded p-1 border text-center">
+                      <div className="text-[9px] uppercase text-muted-foreground">Leverage</div>
+                      <div className={cn('font-mono font-bold', sentiment.sentiment.leveragePct >= 60 ? 'text-primary' : 'text-amber-400')}>{sentiment.sentiment.leveragePct}%</div>
+                    </div>
+                    <div className="bg-background/40 rounded p-1 border text-center">
+                      <div className="text-[9px] uppercase text-muted-foreground">Deception</div>
+                      <div className={cn('font-mono font-bold', sentiment.sentiment.deceptionRiskPct >= 60 ? 'text-red-500' : sentiment.sentiment.deceptionRiskPct >= 30 ? 'text-amber-400' : 'text-primary')}>{sentiment.sentiment.deceptionRiskPct}%</div>
+                    </div>
+                  </div>
+                  <div className={cn('rounded p-1.5 text-[10px] text-center font-bold uppercase',
+                    sentiment.sentiment.recommendedApproach === 'aggressive' ? 'bg-primary/10 text-primary' :
+                    sentiment.sentiment.recommendedApproach === 'walk_away' ? 'bg-red-500/10 text-red-500' :
+                    sentiment.sentiment.recommendedApproach === 'patient' ? 'bg-blue-400/10 text-blue-400' : 'bg-amber-400/10 text-amber-400')}>
+                    → Pristop: {sentiment.sentiment.recommendedApproach.replace('_', ' ')}
+                  </div>
+                  {sentiment.sentiment.openingTactic && (
+                    <div className="bg-primary/5 border border-primary/20 rounded p-1.5 text-[10px]">
+                      💬 <b>Prvi kontakt:</b> {sentiment.sentiment.openingTactic}
+                    </div>
+                  )}
+                  {sentiment.sentiment.redFlags?.length > 0 && (
+                    <div className="bg-red-500/5 border border-red-500/20 rounded p-1.5">
+                      <div className="text-[10px] uppercase text-red-500 mb-1">🚩 Red flags:</div>
+                      <ul className="space-y-0.5 ml-3">
+                        {sentiment.sentiment.redFlags.map((r: string, i: number) => <li key={i} className="text-[10px] list-disc list-outside">{r}</li>)}
+                      </ul>
+                    </div>
+                  )}
+                  {sentiment.sentiment.greenFlags?.length > 0 && (
+                    <div className="bg-primary/5 border border-primary/20 rounded p-1.5">
+                      <div className="text-[10px] uppercase text-primary mb-1">✓ Green flags:</div>
+                      <ul className="space-y-0.5 ml-3">
+                        {sentiment.sentiment.greenFlags.map((g: string, i: number) => <li key={i} className="text-[10px] list-disc list-outside">{g}</li>)}
+                      </ul>
+                    </div>
+                  )}
+                  {sentiment.heuristics?.detectedUrgency?.length > 0 && (
+                    <div className="text-[9px] text-muted-foreground">
+                      📊 Hevristika: {sentiment.heuristics.detectedUrgency.map((u: any) => u.label).join(' · ')}
+                    </div>
+                  )}
+                </div>
+              ) : (
+                <p className="text-[11px] text-muted-foreground text-center py-2">
+                  AI analizira ton in motivacijo prodajalca (desperate / motivated / suspicious).
+                </p>
+              )}
+            </div>
+
+            {/* v6.20: AI Smart Negotiation Chatbot */}
+            <div className="border-t border-border pt-3">
+              <div className="flex items-center justify-between mb-2">
+                <h4 className="text-xs uppercase tracking-wider text-muted-foreground flex items-center gap-1.5">
+                  <MessageSquare className="w-3.5 h-3.5 text-primary" />
+                  AI Negotiation Chatbot
+                  <Badge variant="outline" className="text-[10px] text-primary border-primary/40">v6.20</Badge>
+                </h4>
+              </div>
+              <div className="grid grid-cols-2 gap-2 mb-2">
+                <select
+                  value={chatbotStrategy}
+                  onChange={(e) => setChatbotStrategy(e.target.value as any)}
+                  className="h-7 text-[11px] bg-background border rounded px-2"
+                >
+                  <option value="aggressive">🔥 Agresivna (15-25% pod)</option>
+                  <option value="firm">⚖️ Zmerna (10-15% pod)</option>
+                  <option value="patient">🛡️ Strpna (sprašuj)</option>
+                </select>
+                <Input
+                  type="number"
+                  placeholder="Max budget (€)"
+                  value={chatbotMaxPrice}
+                  onChange={(e) => setChatbotMaxPrice(e.target.value)}
+                  className="h-7 text-[11px]"
+                />
+              </div>
+              {chatbotMessages.length > 0 && (
+                <div className="space-y-1 mb-2 max-h-40 overflow-y-auto bg-background/40 rounded p-2 border">
+                  {chatbotMessages.map((m, i) => (
+                    <div key={i} className={cn('text-[10px] rounded p-1.5',
+                      m.role === 'user' ? 'bg-primary/10 text-primary ml-4' : 'bg-muted/30 mr-4')}>
+                      <div className="text-[8px] uppercase font-bold opacity-70">
+                        {m.role === 'user' ? 'JAZ' : 'PRODAJALEC'}
+                      </div>
+                      <div>{m.text}</div>
+                    </div>
+                  ))}
+                  {chatbotLastReply && (
+                    <div className="bg-primary/5 border border-primary/20 rounded p-1.5">
+                      <div className="text-[8px] uppercase font-bold text-primary">AI PREDLOG ↓</div>
+                      <div className="text-[10px] font-medium">{chatbotLastReply.text}</div>
+                      {chatbotLastReply.suggestedPriceEur != null && (
+                        <div className="text-[9px] text-primary mt-0.5">💰 Predlagana cena: {chatbotLastReply.suggestedPriceEur}€</div>
+                      )}
+                      <button
+                        onClick={() => {
+                          navigator.clipboard.writeText(chatbotLastReply.text);
+                          toast.success('Predlagani odgovor kopiran');
+                        }}
+                        className="text-[9px] text-primary hover:underline mt-1"
+                      >
+                        📋 Kopiraj
+                      </button>
+                    </div>
+                  )}
+                </div>
+              )}
+              <div className="flex gap-1">
+                <Input
+                  type="text"
+                  placeholder="Sporočilo prodajalca (ali prazno za začetek)"
+                  value={chatbotInput}
+                  onChange={(e) => setChatbotInput(e.target.value)}
+                  className="h-7 text-[11px] flex-1"
+                  onKeyDown={(e) => {
+                    if (e.key === 'Enter' && !chatbotLoading) {
+                      const newMessages = chatbotInput
+                        ? [...chatbotMessages, { role: 'seller' as const, text: chatbotInput }]
+                        : chatbotMessages;
+                      setChatbotMessages(newMessages);
+                      setChatbotInput('');
+                      setChatbotLoading(true);
+                      fetch('/api/ai/negotiation-chatbot', {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify({
+                          listingId: listing.id,
+                          messages: newMessages,
+                          strategy: chatbotStrategy,
+                          myGoal: { maxPrice: chatbotMaxPrice ? Number(chatbotMaxPrice) : undefined },
+                        }),
+                      })
+                        .then(r => r.json())
+                        .then(data => {
+                          if (data.ok) {
+                            setChatbotMessages([...newMessages, { role: 'user', text: data.reply.text }]);
+                            setChatbotLastReply(data.reply);
+                            toast.success(`✓ AI odgovor (${data.reply.confidencePct}% confidence)`);
+                          } else toast.error(data.error ?? 'Napaka');
+                        })
+                        .catch(err => toast.error(err?.message ?? 'Napaka'))
+                        .finally(() => setChatbotLoading(false));
+                    }
+                  }}
+                />
+                <Button
+                  size="sm"
+                  className="h-7 text-[11px] gap-1.5"
+                  disabled={chatbotLoading}
+                  onClick={() => {
+                    const newMessages = chatbotInput
+                      ? [...chatbotMessages, { role: 'seller' as const, text: chatbotInput }]
+                      : chatbotMessages;
+                    if (newMessages.length === 0) {
+                      // Začetni odgovor — generiraj prvo sporočilo
+                      setChatbotMessages([{ role: 'seller', text: '(začetek pogovora)' }]);
+                    }
+                    setChatbotMessages(newMessages.length > 0 ? newMessages : [{ role: 'seller', text: '(začetek)' }]);
+                    setChatbotInput('');
+                    setChatbotLoading(true);
+                    fetch('/api/ai/negotiation-chatbot', {
+                      method: 'POST',
+                      headers: { 'Content-Type': 'application/json' },
+                      body: JSON.stringify({
+                        listingId: listing.id,
+                        messages: newMessages.length > 0 ? newMessages : [{ role: 'seller', text: 'Pozdravljen, vaš oglas me zanima. Kakšna je najboljša cena?' }],
+                        strategy: chatbotStrategy,
+                        myGoal: { maxPrice: chatbotMaxPrice ? Number(chatbotMaxPrice) : undefined },
+                      }),
+                    })
+                      .then(r => r.json())
+                      .then(data => {
+                        if (data.ok) {
+                          setChatbotMessages([...(newMessages.length > 0 ? newMessages : [{ role: 'seller' as const, text: 'Pozdravljen, vaš oglas me zanima.' }]), { role: 'user' as const, text: data.reply.text }]);
+                          setChatbotLastReply(data.reply);
+                          toast.success(`✓ AI odgovor (${data.reply.confidencePct}% confidence)`);
+                        } else toast.error(data.error ?? 'Napaka');
+                      })
+                      .catch(err => toast.error(err?.message ?? 'Napaka'))
+                      .finally(() => setChatbotLoading(false));
+                  }}
+                >
+                  {chatbotLoading ? <RefreshCw className="w-3 h-3 animate-spin" /> : <Send className="w-3 h-3" />}
+                  {chatbotMessages.length === 0 ? 'Začni' : 'Odgovori'}
+                </Button>
+              </div>
+              <p className="text-[9px] text-muted-foreground mt-1">
+                💡 Prilepi prodajalčevo sporočilo in AI bo generiral tvoj naslednji odgovor. Strategija: {chatbotStrategy}.
+              </p>
+            </div>
+
+            {/* v6.20: AI Refurbishment Cost Estimator */}
+            <div className="border-t border-border pt-3">
+              <div className="flex items-center justify-between mb-2">
+                <h4 className="text-xs uppercase tracking-wider text-muted-foreground flex items-center gap-1.5">
+                  <Wrench className="w-3.5 h-3.5 text-amber-400" />
+                  AI Refurbishment Cost Estimator
+                  <Badge variant="outline" className="text-[10px] text-amber-400 border-amber-400/40">v6.20</Badge>
+                </h4>
+                <Button
+                  size="sm"
+                  variant="outline"
+                  className="h-6 text-[11px] gap-1.5 border-amber-400/40 text-amber-400 hover:bg-amber-400/10"
+                  disabled={refurbLoading}
+                  onClick={async () => {
+                    setRefurbLoading(true);
+                    setRefurb(null);
+                    try {
+                      const res = await fetch('/api/ai/refurbishment-cost', {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify({ listingId: listing.id }),
+                      });
+                      const data = await res.json();
+                      if (data.ok) { setRefurb(data); toast.success('✓ Refurbishment ocena generirana'); }
+                      else toast.error(data.error ?? 'Napaka');
+                    } catch (e: any) { toast.error(e?.message ?? 'Napaka'); }
+                    finally { setRefurbLoading(false); }
+                  }}
+                >
+                  {refurbLoading ? <RefreshCw className="w-3 h-3 animate-spin" /> : <Wrench className="w-3 h-3" />}
+                  Oceni obnovo
+                </Button>
+              </div>
+              {refurbLoading ? (
+                <div className="py-3 text-center text-[11px] text-muted-foreground">
+                  <RefreshCw className="w-4 h-4 mx-auto mb-1 animate-spin opacity-50" />
+                  AI analizira sliko in ocenjuje stroške obnove...
+                </div>
+              ) : refurb?.estimate ? (
+                <div className="space-y-2 text-[11px]">
+                  <div className={cn('border rounded p-2',
+                    refurb.estimate.recommendedAction === 'avoid' ? 'bg-red-500/5 border-red-500/20' :
+                    refurb.estimate.recommendedAction === 'buy_and_refurb' ? 'bg-primary/10 border-primary/30' :
+                    refurb.estimate.recommendedAction === 'marginal' ? 'bg-amber-400/5 border-amber-400/20' : 'bg-background/40 border-border')}>
+                    <div className="flex items-center justify-between mb-1">
+                      <Badge variant="outline" className={cn('text-[9px] uppercase font-bold',
+                        refurb.estimate.recommendedAction === 'avoid' ? 'text-red-500 border-red-500/40' :
+                        refurb.estimate.recommendedAction === 'buy_and_refurb' ? 'text-primary border-primary/40' :
+                        refurb.estimate.recommendedAction === 'marginal' ? 'text-amber-400 border-amber-400/40' : 'text-muted-foreground')}>
+                        {refurb.estimate.recommendedAction.replace('_', ' ')}
+                      </Badge>
+                      <span className="text-[9px]">{refurb.estimate.refurbStrategy.replace('_', ' ')}</span>
+                    </div>
+                    {refurb.estimate.imageFindings && (
+                      <p className="text-[10px] italic mb-1">📸 {refurb.estimate.imageFindings}</p>
+                    )}
+                    <p className="text-[10px]">{refurb.estimate.reasoning}</p>
+                  </div>
+                  <div className="grid grid-cols-4 gap-1 text-[10px]">
+                    <div className="bg-background/40 rounded p-1 border text-center">
+                      <div className="text-[9px] uppercase text-muted-foreground">Nakup</div>
+                      <div className="font-mono font-bold">{refurb.estimate.buyPrice}€</div>
+                    </div>
+                    <div className="bg-background/40 rounded p-1 border text-center">
+                      <div className="text-[9px] uppercase text-muted-foreground">Obnova</div>
+                      <div className="font-mono font-bold text-amber-400">{refurb.estimate.totalRefurbCostEur}€</div>
+                    </div>
+                    <div className="bg-background/40 rounded p-1 border text-center">
+                      <div className="text-[9px] uppercase text-muted-foreground">Prodaja</div>
+                      <div className="font-mono font-bold text-primary">{refurb.estimate.resaleValueEur}€</div>
+                    </div>
+                    <div className={cn('rounded p-1 border text-center',
+                      refurb.estimate.profitPotentialEur >= 0 ? 'bg-primary/10 border-primary/30' : 'bg-red-500/10 border-red-500/30')}>
+                      <div className="text-[9px] uppercase text-muted-foreground">Dobiček</div>
+                      <div className={cn('font-mono font-bold', refurb.estimate.profitPotentialEur >= 0 ? 'text-primary' : 'text-destructive')}>
+                        {refurb.estimate.profitPotentialEur >= 0 ? '+' : ''}{refurb.estimate.profitPotentialEur}€
+                      </div>
+                    </div>
+                  </div>
+                  <div className="text-[9px] text-muted-foreground">
+                    ROI: <b className={refurb.estimate.roiPct >= 20 ? 'text-primary' : 'text-amber-400'}>{refurb.estimate.roiPct}%</b>
+                    {' · '}⏱ {refurb.estimate.timeRequiredDays}d
+                    {' · '}🔧 {refurb.estimate.skillsRequired}
+                  </div>
+                  {refurb.estimate.items?.length > 0 && (
+                    <div>
+                      <div className="text-[10px] uppercase text-muted-foreground mb-1">Postopki obnove:</div>
+                      <div className="space-y-0.5">
+                        {refurb.estimate.items.map((it: any, i: number) => (
+                          <div key={i} className="text-[10px] flex items-center justify-between bg-background/40 rounded p-1 border">
+                            <div className="flex items-center gap-1.5">
+                              <Badge variant="outline" className={cn('text-[8px]',
+                                it.complexity === 'hard' ? 'text-red-500 border-red-500/30' :
+                                it.complexity === 'medium' ? 'text-amber-400 border-amber-400/30' : 'text-primary border-primary/30')}>
+                                {it.complexity}
+                              </Badge>
+                              {it.optional && <span className="text-[8px] text-muted-foreground">opcijsko</span>}
+                              <span>{it.name}</span>
+                            </div>
+                            <span className="font-mono font-bold text-amber-400">{it.costEur}€</span>
+                          </div>
+                        ))}
+                      </div>
+                    </div>
+                  )}
+                  {refurb.estimate.toolsNeeded?.length > 0 && (
+                    <div className="text-[9px] text-muted-foreground">
+                      🛠 Orodja: {refurb.estimate.toolsNeeded.join(' · ')}
+                    </div>
+                  )}
+                  {refurb.estimate.warnings?.length > 0 && (
+                    <div className="bg-red-500/5 border border-red-500/20 rounded p-1.5">
+                      <div className="text-[10px] uppercase text-red-500 mb-1">⚠️ Opozorila:</div>
+                      <ul className="space-y-0.5 ml-3">
+                        {refurb.estimate.warnings.map((w: string, i: number) => <li key={i} className="text-[10px] list-disc list-outside">{w}</li>)}
+                      </ul>
+                    </div>
+                  )}
+                </div>
+              ) : (
+                <p className="text-[11px] text-muted-foreground text-center py-2">
+                  AI oceni stroške obnove (vizualna analiza slike + kalkulacija dobička po preprodaji).
                 </p>
               )}
             </div>
