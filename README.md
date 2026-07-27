@@ -51,9 +51,54 @@ Odpri **Nastavitve** v aplikaciji in izberi provider:
   # Aplikacija se samodejno poveže na http://localhost:11434
   ```
 - **OpenAI / Anthropic**: vnesi API ključ.
-- **OpenAI-kompatibilni** (Groq, OpenRouter, Together, DeepSeek): vnesi base URL + API ključ.
+- **OpenAI-kompatibilni** (Groq, Together, DeepSeek): vnesi base URL + API ključ.
+- **OpenRouter** (v6.19): en API ključ za 100+ modelov (OpenAI, Anthropic, Meta, Mistral, Google).
+- **Google Gemini** (v6.19): brezplačni tier (15 req/min, 1500/dan za gemini-1.5-flash).
 
 Klikni "Testiraj povezavo" za validacijo.
+
+#### v6.19: OpenRouter in Google Gemini podpora
+
+**OpenRouter** (https://openrouter.ai) je gateway, ki omogoča dostop do 100+ AI modelov z enim API ključem:
+- Anthropic Claude (claude-3.5-sonnet, claude-3.5-haiku)
+- OpenAI (gpt-4o, gpt-4o-mini, o1)
+- Meta Llama (llama-3.3-70b)
+- Mistral (mistral-large, mistral-medium)
+- Google (gemini-flash-1.5, gemini-pro-1.5)
+- Free tier modeli (npr. `meta-llama/llama-3.2-3b-instruct:free`)
+
+Setup:
+1. Registriraj se na https://openrouter.ai
+2. Generiraj API key (format: `sk-or-v1-...`)
+3. V nastavitvah izberi **OpenRouter** in vnesi key
+4. Model: `provider/model` format (npr. `anthropic/claude-3.5-sonnet`)
+
+**Google Gemini** (https://aistudio.google.com) je Google-ov AI z velikodušnim brezplačnim tierjem:
+- `gemini-2.0-flash-exp` — najnovejši, hiter (brezplačno)
+- `gemini-1.5-flash` — 15 req/min, 1500/dan brezplačno
+- `gemini-1.5-pro` — najbolj natančno (omejen brezplačni tier)
+- Podpora multimodalnim zahtevkam (slike)
+
+Setup:
+1. Obišči https://aistudio.google.com/apikey
+2. Klikni "Create API key" (brezplačno)
+3. V nastavitvah izberi **Google Gemini** in vnesi key
+4. Model: `gemini-2.0-flash-exp` (privzeto) ali `gemini-1.5-flash`
+
+**Prednosti za aplikacijo**:
+- **OpenRouter**: en API key za vse modele — testiraj različne brez menjave računov
+- **Gemini**: brezplačni tier omogoča poganjanje brezplačno (idealno za testiranje)
+- Oba podpirata multimodalne zahtevke (analiza slik oglasov)
+- Oba podpirata JSON output (response_format / responseMimeType)
+- Oba se lahko uporabita kot fallback provider (v2.6 AI fallback)
+
+#### Fallback provider strategija (priporočena)
+
+Za maksimalno zanesljivost nastavi **primarni + fallback** provider:
+1. Primarni: **Gemini** (brezplačno, hiter)
+2. Fallback: **OpenRouter** (plačljiv ampak 100+ modelov)
+
+Če Gemini preseže brezplačni tier, samodejno preklopi na OpenRouter.
 
 ### 3. Telegram (izbirno)
 
@@ -713,6 +758,8 @@ Za maksimalno zanesljivost priporočamo:
 - **Ollama** + `qwen2.5:7b` — odlična podpora za slovenščino, brezplačno, lokalno
 - **OpenAI** `gpt-4o-mini` — najcenejši OpenAI model, dovolj dober za to nalogo
 - **Anthropic** `claude-3-5-haiku` — hiter in natančen
+- **OpenRouter** `anthropic/claude-3.5-sonnet` — gateway do 100+ modelov, en API key (v6.19)
+- **Google Gemini** `gemini-2.0-flash-exp` — brezplačni tier (15 req/min, 1500/dan) (v6.19)
 
 ## License
 
