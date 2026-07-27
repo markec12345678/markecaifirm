@@ -47,7 +47,7 @@ function Sparkline({ data, width = 60, height = 20 }: { data: number[]; width?: 
   );
 }
 
-type Source = 'bolha' | 'nepremicnine' | 'avtonet' | 'salomon' | 'custom-rss' | 'vinted' | 'mobile-de';
+type Source = 'bolha' | 'nepremicnine' | 'avtonet' | 'salomon' | 'custom-rss' | 'vinted' | 'mobile-de' | 'kleinanzeigen' | 'subito' | 'willhaben';
 
 interface Monitor {
   id: string;
@@ -86,6 +86,9 @@ const SOURCE_LABELS: Record<Source, string> = {
   'custom-rss': 'Custom RSS',
   vinted: 'Vinted.si (API)',
   'mobile-de': 'Mobile.de (DE→SI arbitraža)',
+  kleinanzeigen: 'Kleinanzeigen.de (Nemčija)',
+  subito: 'Subito.it (Italija)',
+  willhaben: 'Willhaben.at (Avstrija)',
 };
 
 const SOURCE_PRESETS: Array<{ source: Source; label: string; url: string; hint: string }> = [
@@ -156,6 +159,25 @@ const SOURCE_PRESETS: Array<{ source: Source; label: string; url: string; hint: 
     label: 'Mobile.de — EV avtomobili do 20.000€ (SI subvencija 4500€)',
     url: 'https://suchen.mobile.de/fahrzeuge/search.html?dam=false&isSearchRequest=true&fuel=ELECTRIC&priceTo=20000&sortOption=price.asc',
     hint: 'Slovenska subvencija 4500€ za EV! 18000€ v DE - 4500€ subvencija = 13900€ efektivno.',
+  },
+  // v6.18: Tujih trgov presets
+  {
+    source: 'kleinanzeigen',
+    label: 'Kleinanzeigen.de — iPhone 13/14 Pro do 600€ (DE→SI)',
+    url: 'https://www.kleinanzeigen.de/s-suchanfrage.html?keywords=iphone+13+pro&priceType:from=300&priceType:to=600',
+    hint: 'iPhone v DE ~15% cenejši. Shipping DHL ~12€. Pazi "Ohne iCloud Sperre".',
+  },
+  {
+    source: 'subito',
+    label: 'Subito.it — Luxury torbe (Gucci/Prada) do 500€ (IT→SI)',
+    url: 'https://www.subito.it/annunci-italia/vendita?q=gucci+borsa&prezzo=200-500',
+    hint: 'Italija = domovina Gucci/Prada. Prihranek 30-50% za preprodajo.',
+  },
+  {
+    source: 'willhaben',
+    label: 'Willhaben.at — Smuči (Atomic/Head) do 400€ (AT→SI)',
+    url: 'https://www.willhaben.at/iad/kaufen-und-verkaufen?keyword=atomic+head+ski&priceFrom=150&priceTo=400',
+    hint: 'Avstrija = smučarska država. Atomic in Head sta avstrijski znamki (boljše cene).',
   },
 ];
 
