@@ -1793,3 +1793,64 @@ Stage Summary:
 - Depreciation Forecaster: napove padec vrednosti z 13 kategorijskimi profili
   (vključno z NEGATIVNO amortizacijo za umetnine/luxury — ti rastejo v vrednosti!)
 - Verzija aplikacije: v6.23.0
+
+---
+Task ID: v6.24
+Agent: main
+Task: AI Inventory Aging Alerts, Listing Performance Tracker, Smart Restock Predictor
+
+Work Log:
+- src/app/api/ai/inventory-aging/route.ts: nov POST endpoint.
+  7 aging stages z barvami: fresh (≤7d, green), normal (≤30d, blue), aging (≤60d,
+  amber), stale (≤90d, orange), critical (≤180d, red), dead (≤365d, dark), zombie
+  (>365d, black). Per item: holdingCost (0.5%/teden od nabavne cene), opportunityCost
+  (5%/leto alternativna investicija), totalHoldingCost, expectedProfit, adjustedProfit
+  (po odbitku holding cost). Urgency (low/medium/high/critical glede na 2x povprečni
+  čas do prodaje per kategorija). 9 akcij: sell_aggressive, sell_bundle, sell_auction,
+  relist, refurbish, part_out, donate, hold_vintage, write_off. Per akcija:
+  suggestedDiscountPct (0-50%), suggestedPriceEur, deadlineDays. Summary z
+  totalHoldingCost, potentialLoss, criticalCount, deadCount.
+- src/app/api/ai/listing-performance/route.ts: nov POST endpoint za analizo
+  uspešnosti prodaj. Per sold trade metrike: profit, roiPct, daysToSell, profitPerDay.
+  Top 10 performers analiza z successFactors in replicate strategijami. Worst 5
+  performers z failureReasons in lessons. Held items forecast z predictedProfitEur,
+  recommendedPriceEur, recommendedPlatform, confidencePct. Category performance z
+  recommendation (5 tipov: double_down/pivot/scale_up/diversify/exit). Summary z
+  bestCategory, worstCategory, bestSource, recommendedStrategy.
+- src/app/api/ai/smart-restock/route.ts: nov POST endpoint za napoved restock.
+  Analiza uspešnosti per kategorija (count, totalProfit, avgRoi, avgDays) in per
+  vir (buyLocation). Per prediction: item, source (8 platform), expectedBuyPriceEur,
+  expectedSellPriceEur, expectedRoiPct, expectedDaysToSell, urgency (4 stopnje),
+  quantity, budgetAllocationEur, searchKeywords. Budget allocation per kategorija
+  z reasoning in reserve. Seasonal alerts (pomlad/poletje/jesen/zima) z
+  itemsToBuy/itemsToSell/deadline. Warnings.
+- src/components/dashboard/statistics-view.tsx: dodani dve novi kartici:
+  1) AI Inventory Aging Alert System: summary grid (itemov/holding cost/kritičnih/
+     možna izguba), per-item alerts z urgency badge (4 stopnje z ikonami 🔴🟡🔵🟢),
+     agingStage badge, holding cost, adjusted profit (z barvo), suggested discount
+     in price, action badge, deadline.
+  2) AI Smart Restock Predictor: budget input, summary grid (predlogov/kritičnih/
+     visoka/povp. ROI), per-prediction z urgency badge, 4-stolpci (nakup/prodaja/
+     ROI/čas), source + searchKeywords + quantity + budgetAllocation, budget
+     allocation per kategorija z reserve, seasonal alerts z itemsToBuy/itemsToSell.
+- src/components/dashboard/trades-view.tsx: dodan 'Uspešnost' gumb (Activity ikona,
+  teal) v orodno vrstico. Prikaz rezultatov:
+  - summary grid (skupni dobiček/povp. ROI/povp. dni/strategija)
+  - category performance z recommendation badge (5 tipov z ikonami 📈🔄⬆️➕❌)
+  - top performers z successFactors in replicate strategijami
+  - worst performers z failureReasons in lessons
+  - held items forecast z confidencePct in recommendedPrice/Platform
+  - splošna priporočila
+- src/app/page.tsx: verzija v6.24.0
+- TypeScript: 24 napak (enako kot prej) - nobenih novih napak uvedenih
+- Git commit: 'feat(v6.24): AI Inventory Aging Alerts, Listing Performance Tracker, Smart Restock Predictor'
+
+Stage Summary:
+- 3 nove AI funkcionalnosti za maksimizacijo dobička in optimizacijo inventarja
+- 3 novi API ruti (inventory-aging, listing-performance, smart-restock)
+- ~1700+ novih vrstic kode (vključno z UI komponentami)
+- Inventory Aging: 7 stages z holding cost kalkulacijo in 9 akcijami za zastarele iteme
+- Listing Performance: analiza top/worst prodaj z replicate strategijami in category
+  performance z 5 priporočili (double_down/pivot/scale_up/diversify/exit)
+- Smart Restock: napove kaj/kje/kdaj kupovati z budget alokacijo in seasonal alerts
+- Verzija aplikacije: v6.24.0
