@@ -3,7 +3,7 @@
  * Single interface for listing evaluation.
  */
 
-export type AiProviderType = 'ollama' | 'openai' | 'anthropic' | 'openai-compatible';
+export type AiProviderType = 'ollama' | 'openai' | 'anthropic' | 'openai-compatible' | 'openrouter' | 'gemini';
 
 export interface AiSettings {
   provider: AiProviderType;
