@@ -28,7 +28,7 @@ model Profile {
 model Settings {
   id              String   @id @default("singleton")
   // AI provider config
-  aiProvider      String   @default("ollama") // ollama | openai | anthropic | openai-compatible
+  aiProvider      String   @default("ollama") // ollama | openai | anthropic | openai-compatible | openrouter | gemini
   aiBaseUrl       String   @default("http://localhost:11434")
   aiApiKey        String   @default("")
   aiModel         String   @default("qwen2.5:7b")

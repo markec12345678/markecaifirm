@@ -10,7 +10,7 @@
 
 import { db } from './db';
 import { scrape, type SourceType, type ScraperFilters } from './scraper';
-import { evaluateListing, downloadImageAsBase64, type AiSettings, type ListingEvaluation } from './ai';
+import { evaluateListing, downloadImageAsBase64, type AiSettings, type AiProviderType, type ListingEvaluation } from './ai';
 import { sendTelegramMessage, formatAlertMessage, buildAlertInlineButtons } from './telegram';
 import { sendDiscordMessage, buildAlertEmbed } from './discord';
 import { sendSlackMessage, buildAlertSlackBlocks } from './slack';

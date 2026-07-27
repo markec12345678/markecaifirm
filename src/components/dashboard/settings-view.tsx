@@ -20,7 +20,7 @@ import { RefreshCw, Save, Zap, Send, Cpu, Key, Bot, MessageSquare, AlertCircle, 
 import { toast } from 'sonner';
 import { cn } from '@/lib/utils';
 
-type Provider = 'ollama' | 'openai' | 'anthropic' | 'openai-compatible';
+type Provider = 'ollama' | 'openai' | 'anthropic' | 'openai-compatible' | 'openrouter' | 'gemini';
 
 interface Settings {
   aiProvider: Provider;
@@ -104,8 +104,22 @@ const PROVIDER_PRESETS: Record<Provider, { baseUrl: string; model: string; needs
     baseUrl: 'https://api.groq.com/openai',
     model: 'llama-3.3-70b-versatile',
     needsKey: true,
-    label: 'OpenAI-kompatibilni (Groq, OpenRouter, Together, DeepSeek, ...)',
+    label: 'OpenAI-kompatibilni (Groq, Together, DeepSeek, ...)',
     help: 'Kateri koli endpoint, ki podpira OpenAI /v1/chat/completions format. Pusti baseUrl prazen za privzeto.',
+  },
+  openrouter: {
+    baseUrl: 'https://openrouter.ai/api',
+    model: 'anthropic/claude-3.5-sonnet',
+    needsKey: true,
+    label: 'OpenRouter (gateway do 100+ modelov)',
+    help: 'En API key za vse modele (OpenAI, Anthropic, Meta, Mistral, Google, ...). Key dobiš na openrouter.ai/keys. Free modeli: "meta-llama/llama-3.2-3b-instruct:free". Model format: "provider/model".',
+  },
+  gemini: {
+    baseUrl: 'https://generativelanguage.googleapis.com',
+    model: 'gemini-2.0-flash-exp',
+    needsKey: true,
+    label: 'Google Gemini (brezplačni tier)',
+    help: 'API key dobiš na aistudio.google.com/apikey (brezplačno). Brezplačni tier: 15 req/min, 1500/dan za gemini-1.5-flash. Modeli: gemini-2.0-flash-exp (najnovejši), gemini-1.5-flash (hitro), gemini-1.5-pro (najnatančneje).',
   },
 };
 
@@ -704,6 +718,8 @@ export function SettingsView() {
                 <SelectItem value="openai">OpenAI</SelectItem>
                 <SelectItem value="anthropic">Anthropic Claude</SelectItem>
                 <SelectItem value="openai-compatible">OpenAI-kompatibilni</SelectItem>
+                <SelectItem value="openrouter">OpenRouter</SelectItem>
+                <SelectItem value="gemini">Google Gemini</SelectItem>
               </SelectContent>
             </Select>
           </div>

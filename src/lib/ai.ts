@@ -228,6 +228,155 @@ function parseJsonLoose(raw: string): unknown {
   return JSON.parse(s);
 }
 
+/**
+ * v6.19: Call OpenRouter API — gateway do 100+ modelov (Anthropic, OpenAI, Meta, Mistral, ...).
+ *
+ * OpenRouter uporablja OpenAI-compatible format, ampak priporoča dodatne headerje:
+ * - HTTP-Referer: tvoja aplikacija (za ranking na OpenRouter leaderboard)
+ * - X-Title: ime aplikacije (za prikaz v dashboardu)
+ *
+ * URL: https://openrouter.ai/api/v1/chat/completions
+ * Avtentikacija: Bearer sk1-or-v1-...
+ *
+ * Model format: "provider/model" (npr. "anthropic/claude-3.5-sonnet",
+ * "openai/gpt-4o", "meta-llama/llama-3.3-70b-instruct", "google/gemini-flash-1.5")
+ *
+ * Prednosti:
+ * - En API key za 100+ modelov
+ * - Free tier: nekateri modeli so brezplačni (npr. "meta-llama/llama-3.2-3b-instruct:free")
+ * - Consistent pricing across providers
+ * - Boljše rate limits kot direktni API
+ *
+ * Podpora slika: da (za vision modele, npr. "openai/gpt-4o", "anthropic/claude-3.5-sonnet")
+ */
+async function callOpenRouter(settings: AiSettings, userPrompt: string, imageBase64?: string | null): Promise<string> {
+  const baseUrl = (settings.baseUrl || 'https://openrouter.ai/api').replace(/\/$/, '');
+  // OpenRouter: baseUrl je ponavadi https://openrouter.ai/api (brez /v1)
+  const url = baseUrl.endsWith('/v1/chat/completions')
+    ? baseUrl
+    : baseUrl.endsWith('/v1')
+    ? baseUrl + '/chat/completions'
+    : baseUrl + '/v1/chat/completions';
+
+  // Build content — OpenAI-compatible format (array za vision)
+  const content: any[] = [{ type: 'text', text: userPrompt }];
+  if (imageBase64) {
+    content.push({
+      type: 'image_url',
+      image_url: { url: `data:image/jpeg;base64,${imageBase64}`, detail: 'low' },
+    });
+  }
+
+  const res = await fetch(url, {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      ...(settings.apiKey ? { Authorization: `Bearer ${settings.apiKey}` } : {}),
+      // OpenRouter priporoča te headerje za leaderboard in tracking
+      'HTTP-Referer': 'https://markec-ai-firm.local',
+      'X-Title': 'Markec AI Firm',
+    },
+    body: JSON.stringify({
+      model: settings.model,
+      messages: [
+        { role: 'system', content: SYSTEM_PROMPT },
+        { role: 'user', content },
+      ],
+      temperature: 0.2,
+      response_format: { type: 'json_object' },
+    }),
+  });
+
+  if (!res.ok) {
+    const txt = await res.text();
+    throw new Error(`OpenRouter HTTP ${res.status}: ${txt.slice(0, 300)}`);
+  }
+  const data = await res.json();
+  // OpenRouter vrača enak format kot OpenAI: choices[0].message.content
+  return data?.choices?.[0]?.message?.content ?? '';
+}
+
+/**
+ * v6.19: Call Google Gemini API (Generative Language API).
+ *
+ * Gemini ima popolnoma drugačen API od OpenAI/Anthropic:
+ * - Endpoint: https://generativelanguage.googleapis.com/v1beta/models/{model}:generateContent
+ * - Avtentikacija: ?key=API_KEY (query parameter, ne header)
+ * - Content format: { parts: [{ text: "..." }] } za tekst
+ *   za slike: { parts: [{ text: "..." }, { inline_data: { mime_type, data } }] }
+ * - System instruction: posebno polje "system_instruction"
+ *
+ * Modeli:
+ * - gemini-2.0-flash-exp (najnovejši, hiter, brezplačni tier)
+ * - gemini-1.5-flash (hitro, cenejše)
+ * - gemini-1.5-pro (najbolj natančno, dražje)
+ * - gemini-flash-1.5 (alias)
+ *
+ * Brezplačni tier: 15 requestov/min, 1500/dan za gemini-1.5-flash
+ *
+ * GenerationConfig: responseMimeType = "application/json" za JSON output
+ */
+async function callGemini(settings: AiSettings, userPrompt: string, imageBase64?: string | null): Promise<string> {
+  const baseUrl = (settings.baseUrl || 'https://generativelanguage.googleapis.com').replace(/\/$/, '');
+  const model = settings.model || 'gemini-2.0-flash-exp';
+
+  // Gemini URL format: /v1beta/models/{model}:generateContent?key=API_KEY
+  const url = `${baseUrl}/v1beta/models/${model}:generateContent?key=${encodeURIComponent(settings.apiKey)}`;
+
+  // Build parts — tekst + optional slika
+  const parts: any[] = [{ text: userPrompt }];
+  if (imageBase64) {
+    parts.push({
+      inline_data: {
+        mime_type: 'image/jpeg',
+        data: imageBase64,
+      },
+    });
+  }
+
+  const body: any = {
+    // System instruction (posebno polje v Gemini API)
+    system_instruction: {
+      parts: [{ text: SYSTEM_PROMPT + '\n\nOdgovori SAMO z veljavnim JSON objektom.' }],
+    },
+    contents: [
+      {
+        role: 'user',
+        parts,
+      },
+    ],
+    generationConfig: {
+      temperature: 0.2,
+      // JSON output mode — Gemini podpira responseMimeType
+      responseMimeType: 'application/json',
+    },
+  };
+
+  const res = await fetch(url, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(body),
+  });
+
+  if (!res.ok) {
+    const txt = await res.text();
+    throw new Error(`Gemini HTTP ${res.status}: ${txt.slice(0, 300)}`);
+  }
+  const data = await res.json();
+  // Gemini vrača: { candidates: [{ content: { parts: [{ text: "..." }] } }] }
+  const candidates: any[] = data?.candidates ?? [];
+  if (candidates.length === 0) {
+    // Morda error v promptFeedback
+    const blockReason = data?.promptFeedback?.blockReason;
+    if (blockReason) {
+      throw new Error(`Gemini blokiral prompt: ${blockReason}`);
+    }
+    return '';
+  }
+  const parts2: any[] = candidates[0]?.content?.parts ?? [];
+  return parts2.filter(p => typeof p.text === 'string').map(p => p.text).join('\n');
+}
+
 /** v4.4: Parse JSON loosely, exported for use in API routes. */
 export function parseJsonLooseExported(raw: string): unknown {
   try {
@@ -415,6 +564,12 @@ async function callProvider(
       return callOpenAiCompatible(settings, userPrompt, imageBase64);
     case 'anthropic':
       return callAnthropic(settings, userPrompt, imageBase64);
+    case 'openrouter':
+      // v6.19: OpenRouter — gateway do 100+ modelov
+      return callOpenRouter(settings, userPrompt, imageBase64);
+    case 'gemini':
+      // v6.19: Google Gemini — Generative Language API
+      return callGemini(settings, userPrompt, imageBase64);
     default:
       throw new Error(`Unknown AI provider: ${settings.provider}`);
   }
