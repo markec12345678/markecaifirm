@@ -40,8 +40,9 @@ export async function POST(req: NextRequest) {
         firstSeenAt: { gte: new Date(Date.now() - 14 * 24 * 60 * 60 * 1000) },
         aiVerdict: 'PRILIKA',
       },
-      select: { title: true, price: true, category: true, source: true,
-        monitor: { select: { source: true } }, dealScore: true, firstSeenAt: true },
+      select: { title: true, price: true,
+        monitor: { select: { source: true, name: true } },
+        dealScore: true, firstSeenAt: true },
       take: 100,
       orderBy: { dealScore: 'desc' },
     });

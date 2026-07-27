@@ -47,7 +47,7 @@ export async function POST(req: NextRequest) {
 
     // 2. Pridobi sold trades za izračun povprečnega časa do prodaje per kategorija
     const soldTrades = await db.trade.findMany({
-      where: { status: 'sold', sellDate: { not: null }, buyDate: { not: null } },
+      where: { status: 'sold', sellDate: { not: null } },
       select: { category: true, buyDate: true, sellDate: true, buyPrice: true, sellPrice: true },
       take: 200,
     });
