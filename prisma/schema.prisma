@@ -204,7 +204,7 @@ model DigestLog {
 model Monitor {
   id          String   @id @default(cuid())
   name        String
-  source      String   // bolha | nepremicnine | avtonet | salomon | custom-rss | vinted | mobile-de
+  source      String   // bolha | nepremicnine | avtonet | salomon | custom-rss | vinted | mobile-de | kleinanzeigen | subito | willhaben
   sourceUrl   String   // the search URL or RSS URL
   // v4.9: Profile assignment (null = no profile / visible in all)
   profileId   String?

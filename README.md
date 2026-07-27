@@ -585,6 +585,129 @@ Za maksimalno zanesljivost priporočamo tudi:
 - **TLS fingerprinting** (Chrome 120 profil)
 - **CAPTCHA solving** (2captcha/Anti-Captcha/CapMonster)
 
+## v6.18: Tuji generalni trgovi (Kleinanzeigen DE, Subito IT, Willhaben AT)
+
+Po uspehu mobile.de dodajamo še 3 največje tuje generalne trge za popolno cross-border arbitražo:
+
+### Podprti viri
+
+| Vir | Država | Specializacija | Shipping do SI | Povprečni prihranek |
+|-----|--------|----------------|----------------|---------------------|
+| **Kleinanzeigen.de** | 🇩🇪 Nemčija | elektronika, pohištvo | 10-15€ | 10-20% |
+| **Subito.it** | 🇮🇹 Italija | moda, luxury, kolesa | 15-20€ | 10-15% |
+| **Willhaben.at** | 🇦🇹 Avstrija | avto deli, smuči, IKEA | 8-12€ | 5-10% |
+
+### Implementacija (3-stopenjski hibrid)
+
+`src/lib/scraper-foreign.ts` vsebuje 3 scraperje v enem modulu:
+
+1. **HTML scraping z real headers** (primarni)
+   - Specifični `Accept-Language` za vsak trg (de-DE / it-IT / de-AT)
+   - 5 rotacij User-Agent
+   - Real browser headers (`Sec-Ch-Ua`, `Sec-Fetch-*`)
+2. **Playwright fallback** (za Cloudflare blokade)
+   - Locale nastavljen na jezik trga
+   - Timezone nastavljen na prestolnico (Berlin/Rim/Dunaj)
+   - Anti-detection scripti (skrij `navigator.webdriver`)
+3. **Multi-format price parser** — podpira:
+   - Nemški format: `1.234,56 €`
+   - Italijanski format: `€ 1.234,56`
+   - Avstrijski format: `€ 1.234,56`
+   - `VB` (Verhandlungsbasis) → "po dogovoru"
+   - `Versand` (samo shipping) → null
+
+### Setup za tuje trge
+
+1. V Nastavitvah → "Anti-detection" vklopi **Playwright fallback** (zahtevan za Cloudflare)
+2. **Priporočljivo**: Proxy rotacija (Nemčija/Italija/Avstrija proxy za boljše rezultate)
+3. Dodaj monitor → izberi vir (Kleinanzeigen/Subito/Willhaben)
+4. Izberi preset ali vnesi custom URL iz izbranega trga
+
+### URL formati
+
+**Kleinanzeigen.de:**
+```
+https://www.kleinanzeigen.de/s-suchanfrage.html?keywords=iphone&priceType:from=300&priceType:to=600
+```
+
+**Subito.it:**
+```
+https://www.subito.it/annunci-italia/vendita?q=gucci+borsa&prezzo=200-500
+```
+
+**Willhaben.at:**
+```
+https://www.willhaben.at/iad/kaufen-und-verkaufen?keyword=ikea&priceFrom=50&priceTo=300
+```
+
+### Pripravljeni monitor templates (v Monitorji → "Predloge")
+
+| Template | Platforma | Cena do | Pričakovan dobiček |
+|----------|-----------|---------|---------------------|
+| iPhone 13/14 Pro | Kleinanzeigen | 600€ | ~150€/kos (15%) |
+| MacBook M1/M2 | Kleinanzeigen | 1000€ | ~200€/kos (20%) |
+| PlayStation 5 | Kleinanzeigen | 400€ | ~70€/kos (10%) |
+| Luxury torbe (Gucci/Prada) | Subito | 500€ | ~300€/kos (50%) |
+| Premium oblačila (Armani) | Subito | 200€ | ~150€/kos (30%) |
+| Premium kolesa (Pinarello) | Subito | 1500€ | ~700€/kos (30%) |
+| BMW original deli | Willhaben | 300€ | ~70€/kos (20%) |
+| Smuči (Atomic/Head) | Willhaben | 400€ | ~150€/kos (30%) |
+| IKEA / design pohištvo | Willhaben | 300€ | ~50€/kos (15%) |
+
+### Pomembni tuji izrazi
+
+**🇩🇪 Nemški (Kleinanzeigen):**
+- `VB` = Verhandlungsbasis (po dogovoru)
+- `Versand` = shipping
+- `Abholung` = osebni prevzem
+- `Defekt` = pokvarjen
+- `Reparaturbedürftig` = potreben popravila
+- `Originalverpackung` = original embalaža
+- `Ohne iCloud Sperre` = brez iCloud zaklepa
+- `Akku Zyklen` = cikli baterije
+- `Zustand` = stanje
+- `Nachbau` = aftermarket kopija
+
+**🇮🇹 Italijanski (Subito):**
+- `Originale` = original
+- `Replica` = kopija (sumljivo!)
+- `Falso` = ponaredek (sumnjivo!)
+- `Nuovo con etichetta` = novo z etiketo (najboljše)
+- `Stato` = stanje
+- `Spedizione` = shipping
+- `Ritiro` = osebni prevzem
+- `Prezzo trattabile` = cena po dogovoru
+- `Bambino/Ragazzo` = otroško/mladinsko (običajno izključi)
+
+**🇦🇹 Avstrijski (Willhaben):**
+- Ista nemščina kot Kleinanzeigen
+- `Teilenummer` = številka dela (za avto dele)
+- `Samoprevzem` pogosto opcija (Avstrija blizu SI)
+
+### Strategija za maksimalni dobiček
+
+1. **Volume items** (iPhone, PS5): nizek dobiček/kos ampak visok volumen
+2. **Premium items** (MacBook, Luxury torbe): visok dobiček/kos, nižji volumen
+3. **Bundle deals**: nekaj manjših itemov skupaj za zmanjšanje shippinga
+4. **Sezonska**: smuči pozimi, EV avti spomladi (prodaja v SI poleti)
+
+### Anti-detection (skupaj z mobile.de)
+
+Aplikacija uporablja za vse 4 tuje trge:
+- Rotacija 5+ User-Agent stringov
+- Real browser headers (`Sec-Ch-Ua`, `Sec-Fetch-*`)
+- Specifičen `Accept-Language` za vsak trg
+- Cloudflare challenge detekcija
+- CAPTCHA detekcija
+- Playwright z anti-detection scripti
+- Lazy import (zmanjša initial bundle)
+
+Za maksimalno zanesljivost priporočamo:
+- **Proxy rotacijo** z DE/IT/AT proxyji (boljše rezultate kot SI proxyji)
+- **TLS fingerprinting** (Chrome 120 profil)
+- **CAPTCHA solving** (2captcha/Anti-Captcha/CapMonster)
+- **Rate limiting** (interval >30 minut za tuje trge)
+
 ## Testirano z
 
 - **Ollama** + `qwen2.5:7b` — odlična podpora za slovenščino, brezplačno, lokalno

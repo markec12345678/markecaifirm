@@ -25,7 +25,7 @@ export interface ScraperFilters {
   maxPrice?: number | null;
 }
 
-export type SourceType = 'bolha' | 'nepremicnine' | 'avtonet' | 'salomon' | 'custom-rss' | 'vinted' | 'mobile-de';
+export type SourceType = 'bolha' | 'nepremicnine' | 'avtonet' | 'salomon' | 'custom-rss' | 'vinted' | 'mobile-de' | 'kleinanzeigen' | 'subito' | 'willhaben';
 
 const USER_AGENTS = [
   'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36',
@@ -566,6 +566,21 @@ export async function scrape(
       // v6.17: mobile.de 3-stopenjski hibrid (JSON API → HTML → Playwright)
       const { scrapeMobileDe } = await import('./scraper-mobile-de');
       return scrapeMobileDe(url, filters, opts);
+    }
+    case 'kleinanzeigen': {
+      // v6.18: Kleinanzeigen.de (Nemčija) — največji generalni oglasnik
+      const { scrapeKleinanzeigenFull } = await import('./scraper-foreign');
+      return scrapeKleinanzeigenFull(url, filters, opts);
+    }
+    case 'subito': {
+      // v6.18: Subito.it (Italija) — največji italijanski oglasnik
+      const { scrapeSubitoFull } = await import('./scraper-foreign');
+      return scrapeSubitoFull(url, filters, opts);
+    }
+    case 'willhaben': {
+      // v6.18: Willhaben.at (Avstrija) — največji avstrijski oglasnik
+      const { scrapeWillhabenFull } = await import('./scraper-foreign');
+      return scrapeWillhabenFull(url, filters, opts);
     }
     default: throw new Error(`Unknown source: ${source}`);
   }
