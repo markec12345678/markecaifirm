@@ -24,7 +24,7 @@ import {
   DialogDescription,
 } from '@/components/ui/dialog';
 import { Textarea } from '@/components/ui/textarea';
-import { RefreshCw, Download, ExternalLink, ChevronLeft, ChevronRight, Filter, ImageIcon, AlertTriangle, Target, MapPin, Clock, Bookmark, Sparkles, ShoppingCart, MessageSquare, BarChart3, TrendingDown, TrendingUp, Copy, Check, GitCompare, StickyNote, Phone, Trash2, EyeOff, Zap, User, Wallet, BookOpen, Crosshair, ShieldAlert, Dice5, Smile, Send, Wrench } from 'lucide-react';
+import { RefreshCw, Download, ExternalLink, ChevronLeft, ChevronRight, Filter, ImageIcon, AlertTriangle, Target, MapPin, Clock, Bookmark, Sparkles, ShoppingCart, MessageSquare, BarChart3, TrendingDown, TrendingUp, Copy, Check, GitCompare, StickyNote, Phone, Trash2, EyeOff, Zap, User, Wallet, BookOpen, Crosshair, ShieldAlert, Dice5, Smile, Send, Wrench, Camera, ScanSearch } from 'lucide-react';
 import { toast } from 'sonner';
 import { cn } from '@/lib/utils';
 
@@ -1193,6 +1193,11 @@ function ListingDetailModal({ listingId, onClose }: { listingId: string | null; 
   const [chatbotLastReply, setChatbotLastReply] = useState<any>(null);
   const [refurb, setRefurb] = useState<any>(null);
   const [refurbLoading, setRefurbLoading] = useState(false);
+  // v6.21: Image Quality + Fake Detection
+  const [imageQuality, setImageQuality] = useState<any>(null);
+  const [imageQualityLoading, setImageQualityLoading] = useState(false);
+  const [fakeDetect, setFakeDetect] = useState<any>(null);
+  const [fakeDetectLoading, setFakeDetectLoading] = useState(false);
   // v5.1: Seller reputation
   const [sellerRep, setSellerRep] = useState<any>(null);
   const [sellerLoading, setSellerLoading] = useState(false);
@@ -1260,6 +1265,9 @@ function ListingDetailModal({ listingId, onClose }: { listingId: string | null; 
       setChatbotMaxPrice('');
       setChatbotLastReply(null);
       setRefurb(null);
+      // v6.21: Reset image quality + fake detection
+      setImageQuality(null);
+      setFakeDetect(null);
       // v5.6: Reset external comparison
       setExtCompare(null);
       // v5.7: Reset similar listings
@@ -4090,6 +4098,273 @@ function ListingDetailModal({ listingId, onClose }: { listingId: string | null; 
               ) : (
                 <p className="text-[11px] text-muted-foreground text-center py-2">
                   Vnesi ponudbo — AI bo napovedal verjetnost uspeha, counter-offer in optimalno strategijo.
+                </p>
+              )}
+            </div>
+
+            {/* v6.21: AI Image Quality Assessor */}
+            <div className="border-t border-border pt-3">
+              <div className="flex items-center justify-between mb-2">
+                <h4 className="text-xs uppercase tracking-wider text-muted-foreground flex items-center gap-1.5">
+                  <Camera className="w-3.5 h-3.5 text-blue-400" />
+                  AI Image Quality Assessor
+                  <Badge variant="outline" className="text-[10px] text-blue-400 border-blue-400/40">v6.21</Badge>
+                </h4>
+                <Button
+                  size="sm"
+                  variant="outline"
+                  className="h-6 text-[11px] gap-1.5 border-blue-400/40 text-blue-400 hover:bg-blue-400/10"
+                  disabled={imageQualityLoading || !listing.imageUrl}
+                  onClick={async () => {
+                    setImageQualityLoading(true);
+                    setImageQuality(null);
+                    try {
+                      const res = await fetch('/api/ai/image-quality', {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify({ listingId: listing.id }),
+                      });
+                      const data = await res.json();
+                      if (data.ok) { setImageQuality(data); toast.success('✓ Analiza kakovosti slike generirana'); }
+                      else toast.error(data.error ?? 'Napaka');
+                    } catch (e: any) { toast.error(e?.message ?? 'Napaka'); }
+                    finally { setImageQualityLoading(false); }
+                  }}
+                >
+                  {imageQualityLoading ? <RefreshCw className="w-3 h-3 animate-spin" /> : <Camera className="w-3 h-3" />}
+                  Oceni sliko
+                </Button>
+              </div>
+              {imageQualityLoading ? (
+                <div className="py-3 text-center text-[11px] text-muted-foreground">
+                  <RefreshCw className="w-4 h-4 mx-auto mb-1 animate-spin opacity-50" />
+                  AI analizira kakovost slike (osvetlitev, kompozicija, ostrina)...
+                </div>
+              ) : imageQuality?.assessment ? (
+                <div className="space-y-2 text-[11px]">
+                  <div className={cn('border rounded p-2',
+                    imageQuality.assessment.overallScore >= 70 ? 'bg-primary/10 border-primary/30' :
+                    imageQuality.assessment.overallScore >= 40 ? 'bg-amber-400/5 border-amber-400/20' : 'bg-red-500/5 border-red-500/20')}>
+                    <div className="flex items-center justify-between mb-1">
+                      <span className="font-bold uppercase text-[10px]">Skupna kakovost</span>
+                      <Badge variant="outline" className={cn('text-[9px] font-mono font-bold',
+                        imageQuality.assessment.overallScore >= 70 ? 'text-primary border-primary/40' :
+                        imageQuality.assessment.overallScore >= 40 ? 'text-amber-400 border-amber-400/40' : 'text-red-500 border-red-500/40')}>
+                        {imageQuality.assessment.overallScore}/100
+                      </Badge>
+                    </div>
+                    {imageQuality.assessment.imageFindings && (
+                      <p className="text-[10px] italic">{imageQuality.assessment.imageFindings}</p>
+                    )}
+                  </div>
+                  {/* Quality factors grid */}
+                  <div className="grid grid-cols-5 gap-1 text-[9px]">
+                    {Object.entries(imageQuality.assessment.qualityFactors).map(([k, v]: [string, any]) => (
+                      <div key={k} className="bg-background/40 rounded p-1 border text-center">
+                        <div className="text-[8px] uppercase text-muted-foreground truncate">{k.replace(/([A-Z])/g, ' $1').trim()}</div>
+                        <div className={cn('font-mono font-bold',
+                          v >= 7 ? 'text-primary' : v >= 4 ? 'text-amber-400' : 'text-red-500')}>{v}/10</div>
+                      </div>
+                    ))}
+                  </div>
+                  {/* Issues */}
+                  {imageQuality.assessment.issues?.length > 0 && (
+                    <div className="bg-red-500/5 border border-red-500/20 rounded p-1.5">
+                      <div className="text-[10px] uppercase text-red-500 mb-1">⚠️ Težave:</div>
+                      <div className="space-y-1">
+                        {imageQuality.assessment.issues.map((i: any, j: number) => (
+                          <div key={j} className="text-[10px]">
+                            <div className="flex items-center justify-between">
+                              <span><Badge variant="outline" className="text-[8px] mr-1">{i.type}</Badge> {i.description}</span>
+                              <Badge variant="outline" className={cn('text-[8px]',
+                                i.severity === 'high' ? 'text-red-500 border-red-500/30' :
+                                i.severity === 'medium' ? 'text-amber-400 border-amber-400/30' : 'text-muted-foreground')}>{i.severity}</Badge>
+                            </div>
+                            <div className="text-[9px] text-primary">→ {i.fix}</div>
+                          </div>
+                        ))}
+                      </div>
+                    </div>
+                  )}
+                  {/* Recommendations */}
+                  {imageQuality.assessment.recommendations?.length > 0 && (
+                    <div className="bg-primary/5 border border-primary/20 rounded p-1.5">
+                      <div className="text-[10px] uppercase text-primary mb-1">💡 Priporočila:</div>
+                      <div className="space-y-1">
+                        {imageQuality.assessment.recommendations.map((r: any, j: number) => (
+                          <div key={j} className="text-[10px] flex items-center justify-between">
+                            <span>{r.action}</span>
+                            <div className="flex items-center gap-1 shrink-0">
+                              <Badge variant="outline" className={cn('text-[8px]',
+                                r.impact === 'high' ? 'text-primary border-primary/30' : 'text-muted-foreground')}>{r.impact}</Badge>
+                              {r.estimatedValueIncreaseEur > 0 && <span className="font-mono text-primary">+{r.estimatedValueIncreaseEur}€</span>}
+                            </div>
+                          </div>
+                        ))}
+                      </div>
+                    </div>
+                  )}
+                  {/* Suggested shots */}
+                  {imageQuality.assessment.suggestedShots?.length > 0 && (
+                    <div>
+                      <div className="text-[10px] uppercase text-muted-foreground mb-1">📸 Predlagane dodatne slike:</div>
+                      <div className="space-y-0.5">
+                        {imageQuality.assessment.suggestedShots.map((s: any, j: number) => (
+                          <div key={j} className="text-[10px] flex items-center justify-between">
+                            <span><Badge variant="outline" className="text-[8px] mr-1">{s.type}</Badge> {s.description}</span>
+                            <Badge variant="outline" className={cn('text-[8px]',
+                              s.priority === 'high' ? 'text-primary border-primary/30' : 'text-muted-foreground')}>{s.priority}</Badge>
+                          </div>
+                        ))}
+                      </div>
+                    </div>
+                  )}
+                </div>
+              ) : (
+                <p className="text-[11px] text-muted-foreground text-center py-2">
+                  {listing.imageUrl ? 'AI oceni kakovost slike (osvetlitev, kompozicija, ostrina, prodajni potencial).' : 'Ni slike za analizo.'}
+                </p>
+              )}
+            </div>
+
+            {/* v6.21: AI Fake Detection (luxury + electronics) */}
+            <div className="border-t border-border pt-3">
+              <div className="flex items-center justify-between mb-2">
+                <h4 className="text-xs uppercase tracking-wider text-muted-foreground flex items-center gap-1.5">
+                  <ScanSearch className="w-3.5 h-3.5 text-red-500" />
+                  AI Fake Detection
+                  <Badge variant="outline" className="text-[10px] text-red-500 border-red-500/40">v6.21</Badge>
+                </h4>
+                <Button
+                  size="sm"
+                  variant="outline"
+                  className="h-6 text-[11px] gap-1.5 border-red-500/40 text-red-500 hover:bg-red-500/10"
+                  disabled={fakeDetectLoading || !listing.imageUrl}
+                  onClick={async () => {
+                    setFakeDetectLoading(true);
+                    setFakeDetect(null);
+                    try {
+                      const res = await fetch('/api/ai/fake-detection', {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify({ listingId: listing.id }),
+                      });
+                      const data = await res.json();
+                      if (data.ok) { setFakeDetect(data); toast.success('✓ Fake detection analiza generirana'); }
+                      else toast.error(data.error ?? 'Napaka');
+                    } catch (e: any) { toast.error(e?.message ?? 'Napaka'); }
+                    finally { setFakeDetectLoading(false); }
+                  }}
+                >
+                  {fakeDetectLoading ? <RefreshCw className="w-3 h-3 animate-spin" /> : <ScanSearch className="w-3 h-3" />}
+                  Preveri pristnost
+                </Button>
+              </div>
+              {fakeDetectLoading ? (
+                <div className="py-3 text-center text-[11px] text-muted-foreground">
+                  <RefreshCw className="w-4 h-4 mx-auto mb-1 animate-spin opacity-50" />
+                  AI preverja znake ponarejanja z vizualno analizo...
+                </div>
+              ) : fakeDetect?.detection ? (
+                <div className="space-y-2 text-[11px]">
+                  <div className={cn('border rounded p-2',
+                    fakeDetect.detection.isLikelyFake ? 'bg-red-500/10 border-red-500/30' :
+                    fakeDetect.detection.authenticityScore >= 70 ? 'bg-primary/10 border-primary/30' :
+                    'bg-amber-400/5 border-amber-400/20')}>
+                    <div className="flex items-center justify-between mb-1">
+                      <span className="font-bold uppercase text-[10px]">
+                        {fakeDetect.detection.isLikelyFake ? '🚨 VERJETNO PONAREDEK' : '✓ Verjetno pristen'}
+                      </span>
+                      <Badge variant="outline" className={cn('text-[9px] font-mono font-bold',
+                        fakeDetect.detection.fakeProbabilityPct >= 60 ? 'text-red-500 border-red-500/40' :
+                        fakeDetect.detection.fakeProbabilityPct >= 30 ? 'text-amber-400 border-amber-400/40' : 'text-primary border-primary/40')}>
+                        Pristnost: {fakeDetect.detection.authenticityScore}%
+                      </Badge>
+                    </div>
+                    {fakeDetect.detection.detectedBrand && (
+                      <div className="text-[9px] text-muted-foreground">Znamka: <b>{fakeDetect.detection.detectedBrand}</b></div>
+                    )}
+                    {fakeDetect.detection.imageFindings && (
+                      <p className="text-[10px] italic mt-1">{fakeDetect.detection.imageFindings}</p>
+                    )}
+                  </div>
+                  <div className={cn('rounded p-1.5 text-[10px] text-center font-bold uppercase',
+                    fakeDetect.detection.recommendation === 'avoid' || fakeDetect.detection.recommendation === 'report'
+                      ? 'bg-red-500/10 text-red-500'
+                      : fakeDetect.detection.recommendation === 'verify_first'
+                      ? 'bg-amber-400/10 text-amber-400'
+                      : 'bg-primary/10 text-primary')}>
+                    → {fakeDetect.detection.recommendation === 'avoid' ? '🚫 NE NAKUPUJ' :
+                       fakeDetect.detection.recommendation === 'report' ? '🚨 PRIJAVI' :
+                       fakeDetect.detection.recommendation === 'verify_first' ? '⚠️ PREVERI PREJ' : '✓ NAKUPI'}
+                  </div>
+                  {fakeDetect.detection.reasoning && (
+                    <div className="text-[10px] text-muted-foreground italic">{fakeDetect.detection.reasoning}</div>
+                  )}
+                  {/* Indicators */}
+                  {fakeDetect.detection.indicators?.length > 0 && (
+                    <div>
+                      <div className="text-[10px] uppercase text-muted-foreground mb-1">Indikatorji:</div>
+                      <div className="space-y-0.5">
+                        {fakeDetect.detection.indicators.map((i: any, j: number) => (
+                          <div key={j} className="text-[10px] flex items-center justify-between">
+                            <span className={cn(i.type === 'authentic' ? 'text-primary' : i.type === 'fake' ? 'text-red-500' : 'text-amber-400')}>
+                              {i.type === 'authentic' ? '✓' : i.type === 'fake' ? '🚨' : '⚠️'} {i.description}
+                            </span>
+                            <span className="text-[8px] text-muted-foreground">({i.weight}/10)</span>
+                          </div>
+                        ))}
+                      </div>
+                    </div>
+                  )}
+                  {/* Brand-specific checks */}
+                  {fakeDetect.detection.brandSpecificChecks?.length > 0 && (
+                    <div className="bg-background/40 border rounded p-1.5">
+                      <div className="text-[10px] uppercase text-muted-foreground mb-1">Specifično za znamko:</div>
+                      <div className="space-y-0.5">
+                        {fakeDetect.detection.brandSpecificChecks.map((c: any, j: number) => (
+                          <div key={j} className="text-[10px] flex items-center justify-between">
+                            <span>{c.check}</span>
+                            <div className="flex items-center gap-1 shrink-0">
+                              <Badge variant="outline" className={cn('text-[8px]',
+                                c.status === 'present' ? 'text-primary border-primary/30' :
+                                c.status === 'missing' ? 'text-red-500 border-red-500/30' : 'text-amber-400 border-amber-400/30')}>
+                                {c.status}
+                              </Badge>
+                            </div>
+                          </div>
+                        ))}
+                      </div>
+                    </div>
+                  )}
+                  {/* Verification steps */}
+                  {fakeDetect.detection.verificationSteps?.length > 0 && (
+                    <div className="bg-primary/5 border border-primary/20 rounded p-1.5">
+                      <div className="text-[10px] uppercase text-primary mb-1">✓ Koraki za preverjanje:</div>
+                      <ol className="space-y-0.5 ml-3">
+                        {fakeDetect.detection.verificationSteps.map((s: any, j: number) => (
+                          <li key={j} className="text-[10px] list-decimal list-outside">
+                            <div className="flex items-center justify-between">
+                              <span className="font-medium">{s.step}</span>
+                              <Badge variant="outline" className={cn('text-[8px]',
+                                s.priority === 'high' ? 'text-red-500 border-red-500/30' : 'text-muted-foreground')}>{s.priority}</Badge>
+                            </div>
+                            <div className="text-[9px] text-muted-foreground">→ {s.howTo}</div>
+                          </li>
+                        ))}
+                      </ol>
+                    </div>
+                  )}
+                  {/* Online tools */}
+                  {fakeDetect.detection.onlineVerification?.recommendedTools?.length > 0 && (
+                    <div className="text-[10px] text-muted-foreground">
+                      🔍 Orodja: {fakeDetect.detection.onlineVerification.recommendedTools.join(' · ')}
+                    </div>
+                  )}
+                </div>
+              ) : (
+                <p className="text-[11px] text-muted-foreground text-center py-2">
+                  {listing.imageUrl ? 'AI preveri znake ponarejanja (Gucci/LV/Rolex/iPhone/...).' : 'Ni slike za analizo.'}
                 </p>
               )}
             </div>
