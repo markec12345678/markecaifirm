@@ -2316,3 +2316,48 @@ Stage Summary:
 - Profit Cascade: 10-stopenjska kaskadna optimizacija z waterfall in quick wins
 - Market Saturation: 5 nivojev nasičenosti z market signals in portfolio shift
 - Verzija aplikacije: v6.34.0
+
+---
+Task ID: v6.35
+Agent: main
+Task: AI Buyer Matchmaker, Listing Velocity Tracker, Profit Trail Visualizer
+
+Work Log:
+- src/app/api/ai/buyer-matchmaker/route.ts: nov POST endpoint za buyer matching.
+  Najde potencialne kupce za held inventar. 6 buyer person: deal_hunter (išče najnižjo
+  ceno, Facebook/Bolha), quality_seeker (stanje, Vinted/Bolha), collector (redki/vintage,
+  specifične skupine), reseller (išče margino, Bolha), first_time (študenti, Facebook),
+  enthusiast (pozna kategorijo, specifična vprašanja). Per item: matchScore (0-100),
+  buyerPersonas z likelihoodPct in maxWillingPriceEur, whereToFind in searchTerms.
+  recommendedChannels (bolha/facebook/vinted/avtonet/telegram). outreachStrategy: hook,
+  keySellingPoints, objectionHandling (objection/response pairs), bestContactTime.
+  complementaryItems (kaj še ta kupec morda išče). Summary z avgMatchScore in
+  expectedResponseRate.
+- src/app/api/ai/listing-velocity/route.ts: nov POST endpoint za velocity tracking.
+  Velocity score (0-100) = f(days, profit). 5 statusov: fast (≤7d, velocity 80-100),
+  good (8-21d, 60-79), average (22-45d, 40-59), slow (46-90d, 20-39), stalled (>90d, 0-19).
+  Per held item: predictedVelocityScore, predictedDaysToSell, velocityStatus,
+  accelerationActions (kaj storiti za pospešitev), priceAdjustmentEur,
+  expectedVelocityBoostPct. Velocity curve (day range → salesCount, avgProfit, velocityScore).
+  Category benchmarks (fastThresholdDays, avgDays, bestPricePointEur, velocityTip). Summary
+  z overallAvgVelocity, fastestCategory, slowestCategory, potentialTimeSavingsDays.
+- src/app/api/ai/profit-trail/route.ts: nov POST endpoint za vizualizacijo profit trail.
+  Rekonstruira dobičkovno pot vsakega prodanega itema z 8 mejniki: discovery (kdaj/kipodjal
+  oglas), ai_eval (AI score, verdict), acquisition (nabavna cena, vir), listing (objava,
+  platforma, prva cena), interest (prvo povpraševanje), negotiation (pogajanja, končna
+  cena), sale (prodajna cena, kanal), profit (neto dobiček, ROI). Per mejnik: day (od
+  nakupa), event, itemValueEur, cumulativeCostEur, cumulativeRevenueEur, netPositionEur.
+  keyMoments in lessonsLearned. replicable flag z replicateStrategy. Held item projections
+  z predictedTrail in confidencePct. Summary z mostCommonSuccessPattern in replicableCount.
+- src/app/page.tsx: verzija v6.35.0
+- TypeScript: 24 napak (enako kot prej) - nobenih novih napak uvedenih
+- Git commit: 'feat(v6.35): AI Buyer Matchmaker, Listing Velocity Tracker, Profit Trail Visualizer'
+
+Stage Summary:
+- 3 nove AI funkcionalnosti za buyer matching, velocity tracking in profit vizualizacijo
+- 3 novi API ruti (buyer-matchmaker, listing-velocity, profit-trail)
+- ~612 novih vrstic kode
+- Buyer Matchmaker: 6 buyer person z outreach strategy in objection handling
+- Listing Velocity: velocity score (0-100) z 5 statusi in acceleration actions
+- Profit Trail: 8-mejnikovska dobičkovna pot z projections za held items
+- Verzija aplikacije: v6.35.0
