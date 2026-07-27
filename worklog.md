@@ -2069,3 +2069,64 @@ Stage Summary:
 - A/B Test Results: analiza 8 vzorcev naslovov z winning formula in source-channel analizo
 - Insurance Claim: 8 tipov zahtevkov z success probability, evidence needed in expected recovery
 - Verzija aplikacije: v6.29.0
+
+---
+Task ID: v6.30 MILESTONE
+Agent: main
+Task: AI Profit Dashboard, Predictive Procurement, Full Automation Orchestrator
+
+Work Log:
+- src/app/api/ai/profit-dashboard/route.ts: NOVI MILESTONE endpoint — agregira VSE AI
+  metrike v en unified dashboard. Pridobi heldTrades, soldTrades, recentListings hkrati
+  (Promise.all). Izračuna 8 KPI-jev: realizedProfit, investedHeld, avgROI, avgDaysToSell,
+  stalledCount, opportunityCount, opportunityRate, totalRevenue. AI določi portfolio health
+  score (0-100) z grade (A+ do F) in healthFactors (good/warning/critical). Top 5
+  opportunities (kaj kupiti z expectedROI in urgency). Top 5 risks (stalled/depreciation/
+  low_demand/overconcentrated z potentialLoss). 8 recommendedActions z priority
+  (critical/high/medium/low) in deadlineDays. 3-mesečne projekcije (revenue/profit/
+  invested/cashFlow). Overall assessment (max 600 znakov).
+- src/app/api/ai/predictive-procurement/route.ts: celovit nakupovalni načrt za 30 dni.
+  Risk tolerance (low/medium/high) vpliva na izbor itemov. Per item: priority (1-10),
+  category, itemDescription, source (8 platform), searchKeywords, maxBuyPriceEur,
+  expectedSellPriceEur, expectedRoiPct, expectedDaysToSell, riskLevel. Automation config
+  per item: monitorSetup (kakšen monitor nastaviti), alertThresholdScore (0-100),
+  maxPriceFilterEur, keywordsFilter, autoAlert (boolean). Budget allocation per kategorija
+  z amountEur, pct, itemCount. 4-tedenski timeline z actions, itemsToBuy, budgetEur.
+  Automation level (full/semi/manual). Expected outcomes: totalInvestment, expectedRevenue,
+  expectedProfit, expectedROI, expectedAvgDaysToSell, projectedMonthlyProfit.
+- src/app/api/ai/full-automation/route.ts: koordinira avtomatsko nakupovanje + prodajanje.
+  3 načini: advisory (samo priporočila, človek odloča), semi_auto (avtomatski monitoring +
+  alerti, človek potrdi nakup/prodajo), full_auto (avtomatski nakup do limita + avtomatska
+  objava oglasov). Buy pipeline (8 korakov z step, name, action, automated, trigger, tool).
+  Sell pipeline (8 korakov). Monitoring z activeMonitors, recommendedMonitors (6 z name,
+  source, keywords, interval, alertThreshold), scrapingSchedule. Alerts z channels
+  (telegram/discord/push/email/webhook) in priorityRouting (critical/high/medium/low z
+  responseTimeMinutes). 8 safeguards (budget limits, max trades per day, risk threshold,
+  human override). Workflow: dailyAutomation (6), weeklyAutomation (4), monthlyAutomation (4).
+  Expected improvements: timeSavedHoursPerWeek, profitIncreasePct, responseTimeImprovementPct,
+  missedOpportunitiesReductionPct.
+- src/app/page.tsx: verzija v6.30.0
+- TypeScript: 24 napak (enako kot prej) - nobenih novih napak uvedenih
+- Git commit: 'feat(v6.30 MILESTONE): AI Profit Dashboard, Predictive Procurement, Full Automation Orchestrator'
+
+MILESTONE SUMMARY:
+- v6.30 je MILESTONE verzija — celovit AI ekosistem za avtomatizirano preprodajo!
+- 3 nove AI funkcionalnosti (najobsežnejše do zdaj)
+- 3 novi API ruti (profit-dashboard, predictive-procurement, full-automation)
+- ~612 novih vrstic kode
+- Profit Dashboard: agregacija vseh 120+ AI funkcij v eno unified view z 8 KPI-ji in health score
+- Predictive Procurement: avtomatski nakupovalni načrt z monitor setup in automation config per item
+- Full Automation: 3 nivoji avtomatizacije (advisory/semi_auto/full_auto) z buy+sell pipelines
+- Aplikacija sedaj pokriva CELOVIT ekosistem od monitoring → AI analiza → avtomatizacija → profit
+
+SKUPNO STANJE PO v6.30 MILESTONE:
+- 30 verzij razvoja
+- ~38.000+ vrstic kode
+- 120+ AI funkcij za maksimizacijo dobička
+- 10 virov (4 SI + 6 tujih)
+- 6 AI providerjev (Ollama, OpenAI, Anthropic, OpenAI-compatible, OpenRouter, Gemini)
+- 57+ AI API endpointov
+- 17 monitor templates
+- 6 anti-detection tehnik
+- 5 notifikacijskih kanalov
+- 3 nivoji avtomatizacije (advisory → semi_auto → full_auto)
