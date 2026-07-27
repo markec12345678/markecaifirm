@@ -24,7 +24,7 @@ import {
   DialogDescription,
 } from '@/components/ui/dialog';
 import { Textarea } from '@/components/ui/textarea';
-import { RefreshCw, Download, ExternalLink, ChevronLeft, ChevronRight, Filter, ImageIcon, AlertTriangle, Target, MapPin, Clock, Bookmark, Sparkles, ShoppingCart, MessageSquare, BarChart3, TrendingDown, TrendingUp, Copy, Check, GitCompare, StickyNote, Phone, Trash2, EyeOff, Zap, User, Wallet, BookOpen, Crosshair, ShieldAlert, Dice5, Smile, Send, Wrench, Camera, ScanSearch } from 'lucide-react';
+import { RefreshCw, Download, ExternalLink, ChevronLeft, ChevronRight, Filter, ImageIcon, AlertTriangle, Target, MapPin, Clock, Bookmark, Sparkles, ShoppingCart, MessageSquare, BarChart3, TrendingDown, TrendingUp, Copy, Check, GitCompare, StickyNote, Phone, Trash2, EyeOff, Zap, User, Wallet, BookOpen, Crosshair, ShieldAlert, Dice5, Smile, Send, Wrench, Camera, ScanSearch, Search } from 'lucide-react';
 import { toast } from 'sonner';
 import { cn } from '@/lib/utils';
 
@@ -1198,6 +1198,9 @@ function ListingDetailModal({ listingId, onClose }: { listingId: string | null; 
   const [imageQualityLoading, setImageQualityLoading] = useState(false);
   const [fakeDetect, setFakeDetect] = useState<any>(null);
   const [fakeDetectLoading, setFakeDetectLoading] = useState(false);
+  // v6.22: Reverse Image Search
+  const [reverseSearch, setReverseSearch] = useState<any>(null);
+  const [reverseSearchLoading, setReverseSearchLoading] = useState(false);
   // v5.1: Seller reputation
   const [sellerRep, setSellerRep] = useState<any>(null);
   const [sellerLoading, setSellerLoading] = useState(false);
@@ -1268,6 +1271,8 @@ function ListingDetailModal({ listingId, onClose }: { listingId: string | null; 
       // v6.21: Reset image quality + fake detection
       setImageQuality(null);
       setFakeDetect(null);
+      // v6.22: Reset reverse image search
+      setReverseSearch(null);
       // v5.6: Reset external comparison
       setExtCompare(null);
       // v5.7: Reset similar listings
@@ -4365,6 +4370,148 @@ function ListingDetailModal({ listingId, onClose }: { listingId: string | null; 
               ) : (
                 <p className="text-[11px] text-muted-foreground text-center py-2">
                   {listing.imageUrl ? 'AI preveri znake ponarejanja (Gucci/LV/Rolex/iPhone/...).' : 'Ni slike za analizo.'}
+                </p>
+              )}
+            </div>
+
+            {/* v6.22: AI Reverse Image Search (stock photo detection) */}
+            <div className="border-t border-border pt-3">
+              <div className="flex items-center justify-between mb-2">
+                <h4 className="text-xs uppercase tracking-wider text-muted-foreground flex items-center gap-1.5">
+                  <Search className="w-3.5 h-3.5 text-cyan-400" />
+                  AI Reverse Image Search
+                  <Badge variant="outline" className="text-[10px] text-cyan-400 border-cyan-400/40">v6.22</Badge>
+                </h4>
+                <Button
+                  size="sm"
+                  variant="outline"
+                  className="h-6 text-[11px] gap-1.5 border-cyan-400/40 text-cyan-400 hover:bg-cyan-400/10"
+                  disabled={reverseSearchLoading || !listing.imageUrl}
+                  onClick={async () => {
+                    setReverseSearchLoading(true);
+                    setReverseSearch(null);
+                    try {
+                      const res = await fetch('/api/ai/reverse-image-search', {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify({ listingId: listing.id }),
+                      });
+                      const data = await res.json();
+                      if (data.ok) { setReverseSearch(data); toast.success('✓ Reverse image search generiran'); }
+                      else toast.error(data.error ?? 'Napaka');
+                    } catch (e: any) { toast.error(e?.message ?? 'Napaka'); }
+                    finally { setReverseSearchLoading(false); }
+                  }}
+                >
+                  {reverseSearchLoading ? <RefreshCw className="w-3 h-3 animate-spin" /> : <Search className="w-3 h-3" />}
+                  Preveri sliko
+                </Button>
+              </div>
+              {reverseSearchLoading ? (
+                <div className="py-3 text-center text-[11px] text-muted-foreground">
+                  <RefreshCw className="w-4 h-4 mx-auto mb-1 animate-spin opacity-50" />
+                  AI preverja ali je slika stock fotografija...
+                </div>
+              ) : reverseSearch?.search ? (
+                <div className="space-y-2 text-[11px]">
+                  <div className={cn('border rounded p-2',
+                    reverseSearch.search.isStockPhoto ? 'bg-red-500/10 border-red-500/30' :
+                    reverseSearch.search.stockPhotoProbabilityPct >= 50 ? 'bg-amber-400/5 border-amber-400/20' : 'bg-primary/10 border-primary/30')}>
+                    <div className="flex items-center justify-between mb-1">
+                      <span className="font-bold uppercase text-[10px]">
+                        {reverseSearch.search.isStockPhoto ? '🚨 STOCK FOTOGRAFIJA' : '✓ Verjetno realna slika'}
+                      </span>
+                      <Badge variant="outline" className={cn('text-[9px] font-mono font-bold',
+                        reverseSearch.search.stockPhotoProbabilityPct >= 70 ? 'text-red-500 border-red-500/40' :
+                        reverseSearch.search.stockPhotoProbabilityPct >= 30 ? 'text-amber-400 border-amber-400/40' : 'text-primary border-primary/40')}>
+                        Stock verjetnost: {reverseSearch.search.stockPhotoProbabilityPct}%
+                      </Badge>
+                    </div>
+                    {reverseSearch.search.imageFindings && (
+                      <p className="text-[10px] italic">{reverseSearch.search.imageFindings}</p>
+                    )}
+                  </div>
+                  <div className={cn('rounded p-1.5 text-[10px] text-center font-bold uppercase',
+                    reverseSearch.search.recommendation === 'avoid' || reverseSearch.search.recommendation === 'report'
+                      ? 'bg-red-500/10 text-red-500'
+                      : reverseSearch.search.recommendation === 'verify_first'
+                      ? 'bg-amber-400/10 text-amber-400'
+                      : 'bg-primary/10 text-primary')}>
+                    → {reverseSearch.search.recommendation === 'avoid' ? '🚫 NE NAKUPUJ' :
+                       reverseSearch.search.recommendation === 'report' ? '🚨 PRIJAVI' :
+                       reverseSearch.search.recommendation === 'verify_first' ? '⚠️ PREVERI PREJ' : '✓ NAKUPI S PREVIDNOSTJO'}
+                  </div>
+                  {reverseSearch.search.reasoning && (
+                    <div className="text-[10px] text-muted-foreground italic">{reverseSearch.search.reasoning}</div>
+                  )}
+                  {/* URL analysis */}
+                  {reverseSearch.search.urlAnalysis && (
+                    <div className="bg-background/40 border rounded p-1.5">
+                      <div className="text-[10px] uppercase text-muted-foreground mb-1">🔗 URL analiza:</div>
+                      <div className="space-y-0.5 text-[10px]">
+                        {reverseSearch.search.urlAnalysis.matchedStockDomains?.length > 0 && (
+                          <div className="text-red-500">🚨 Stock domena: {reverseSearch.search.urlAnalysis.matchedStockDomains.join(', ')}</div>
+                        )}
+                        {reverseSearch.search.urlAnalysis.matchedPatterns?.length > 0 && (
+                          <div className="text-amber-400">⚠️ Stock vzorci: {reverseSearch.search.urlAnalysis.matchedPatterns.join(', ')}</div>
+                        )}
+                        {reverseSearch.search.urlAnalysis.matchedWatermarks?.length > 0 && (
+                          <div className="text-red-500">🚨 Watermark: {reverseSearch.search.urlAnalysis.matchedWatermarks.join(', ')}</div>
+                        )}
+                        {reverseSearch.search.urlAnalysis.totalRedFlags === 0 && (
+                          <div className="text-primary">✓ URL brez sumljivih vzorcev</div>
+                        )}
+                      </div>
+                    </div>
+                  )}
+                  {/* Visual indicators */}
+                  {reverseSearch.search.visualIndicators?.length > 0 && (
+                    <div>
+                      <div className="text-[10px] uppercase text-muted-foreground mb-1">📊 Vizualni indikatorji:</div>
+                      <div className="space-y-0.5">
+                        {reverseSearch.search.visualIndicators.map((v: any, j: number) => (
+                          <div key={j} className="text-[10px] flex items-center justify-between">
+                            <span className={cn(v.type === 'authentic' ? 'text-primary' : v.type === 'stock' ? 'text-red-500' : 'text-amber-400')}>
+                              {v.type === 'authentic' ? '✓' : v.type === 'stock' ? '🚨' : '⚠️'} {v.indicator}
+                            </span>
+                            <span className="text-[8px] text-muted-foreground">({v.weight}/10)</span>
+                          </div>
+                        ))}
+                      </div>
+                    </div>
+                  )}
+                  {/* Search URLs */}
+                  {reverseSearch.search.searchStrategy && (
+                    <div className="bg-cyan-400/5 border border-cyan-400/20 rounded p-1.5">
+                      <div className="text-[10px] uppercase text-cyan-400 mb-1">🔍 Preveri na:</div>
+                      <div className="grid grid-cols-2 gap-1 text-[9px]">
+                        {reverseSearch.search.searchStrategy.googleLensUrl && (
+                          <a href={reverseSearch.search.searchStrategy.googleLensUrl} target="_blank" rel="noopener noreferrer" className="flex items-center gap-1 text-cyan-400 hover:underline">
+                            <ExternalLink className="w-3 h-3" /> Google Lens
+                          </a>
+                        )}
+                        {reverseSearch.search.searchStrategy.tineyeUrl && (
+                          <a href={reverseSearch.search.searchStrategy.tineyeUrl} target="_blank" rel="noopener noreferrer" className="flex items-center gap-1 text-cyan-400 hover:underline">
+                            <ExternalLink className="w-3 h-3" /> TinEye
+                          </a>
+                        )}
+                        {reverseSearch.search.searchStrategy.bingVisualUrl && (
+                          <a href={reverseSearch.search.searchStrategy.bingVisualUrl} target="_blank" rel="noopener noreferrer" className="flex items-center gap-1 text-cyan-400 hover:underline">
+                            <ExternalLink className="w-3 h-3" /> Bing Visual
+                          </a>
+                        )}
+                        {reverseSearch.search.searchStrategy.yandexUrl && (
+                          <a href={reverseSearch.search.searchStrategy.yandexUrl} target="_blank" rel="noopener noreferrer" className="flex items-center gap-1 text-cyan-400 hover:underline">
+                            <ExternalLink className="w-3 h-3" /> Yandex
+                          </a>
+                        )}
+                      </div>
+                    </div>
+                  )}
+                </div>
+              ) : (
+                <p className="text-[11px] text-muted-foreground text-center py-2">
+                  {listing.imageUrl ? 'AI preveri ali je slika stock fotografija (URL + vizualna analiza).' : 'Ni slike za analizo.'}
                 </p>
               )}
             </div>
