@@ -2130,3 +2130,49 @@ SKUPNO STANJE PO v6.30 MILESTONE:
 - 6 anti-detection tehnik
 - 5 notifikacijskih kanalov
 - 3 nivoji avtomatizacije (advisory → semi_auto → full_auto)
+
+---
+Task ID: v6.31
+Agent: main
+Task: UI komponente za v6.30 MILESTONE funkcije
+
+Work Log:
+- src/components/dashboard/statistics-view.tsx: dodane 3 MILESTONE kartice za
+  v6.30 funkcije (Profit Dashboard, Predictive Procurement, Full Automation).
+  State: dashData/dashLoading, procData/procLoading/procBudget/procRisk,
+  autoData/autoLoading/autoMode.
+  
+  1) AI Profit Maximization Dashboard:
+     - Health score (0-100) z grade (A+ do F) in barvo
+     - 8 KPI-jev v 4-stolpci grid (realizedProfit, investedHeld, avgROI, avgDaysToSell)
+     - Top 3 opportunities (category, action, expectedROI)
+     - Top 3 risks (riskType, item, potentialLoss)
+     - 4 recommended actions (priority, expectedImpact)
+     - Overall assessment
+  
+  2) AI Predictive Procurement:
+     - Budget input + risk tolerance select (low/medium/high)
+     - 4-stolpci expected outcomes (investicija/prihodek/dobiček/ROI)
+     - Per-item plan z priority, source, buy/sell/ROI/days
+     - Automation config per item (monitorSetup, autoAlert)
+     - Insights banner
+  
+  3) AI Full Automation Orchestrator:
+     - Mode select (advisory/semi_auto/full_auto)
+     - Buy pipeline (5 korakov z auto badge)
+     - Sell pipeline (5 korakov z auto badge)
+     - Safeguards (4 z rules)
+     - Expected improvements (timeSaved, profitIncrease)
+     - Insights banner
+
+- src/app/page.tsx: verzija v6.31.0
+- TypeScript: 24 napak (enako kot prej) - nobenih novih napak uvedenih
+- Git commit: 'feat(v6.31): UI za v6.30 MILESTONE (Profit Dashboard, Procurement, Automation)'
+
+Stage Summary:
+- UI komponente za v6.30 MILESTONE funkcije (3 kartice v Statistike zavihku)
+- ~270 novih vrstic kode
+- Profit Dashboard: health score z grade, 8 KPI, top opportunities/risks/actions
+- Procurement: budget+risk input, expected outcomes, per-item plan z automation config
+- Automation: mode select (3 nivoji), buy/sell pipelines, safeguards, improvements
+- Verzija aplikacije: v6.31.0
