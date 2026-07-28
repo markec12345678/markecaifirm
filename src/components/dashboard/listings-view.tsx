@@ -183,7 +183,7 @@ export function ListingsView() {
     });
   };
 
-  const bulkAction = async (action: 'bookmark' | 'unbookmark' | 'delete' | 'contact' | 'clear_contact') => {
+  const bulkAction = async (action: 'bookmark' | 'unbookmark' | 'delete' | 'contact' | 'clear_contact' | 'hide') => {
     if (bulkIds.size === 0) return;
     if (action === 'delete' && !confirm(`Izbrišem ${bulkIds.size} oglasov?`)) return;
     setBulkLoading(true);
@@ -201,6 +201,7 @@ export function ListingsView() {
           delete: 'izbrisani',
           contact: 'označeni kot kontaktirani',
           clear_contact: 'počiščen kontakt status',
+          hide: 'skriti',
         };
         toast.success(`${data.affected} oglasov ${labels[action] || action}`);
         setBulkIds(new Set());

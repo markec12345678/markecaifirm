@@ -30,7 +30,6 @@ interface DigestData {
     url: string;
     aiScore: number | null;
     aiRisk: number | null;
-    aiReason: string | null;
     monitorName: string;
   }>;
 }
@@ -64,7 +63,6 @@ async function gatherDigestData(periodHours: number): Promise<DigestData> {
       url: a.url,
       aiScore: a.aiScore,
       aiRisk: a.aiRisk,
-      aiReason: a.aiReason,
       monitorName: a.monitor.name,
     })),
   };
@@ -86,7 +84,6 @@ function formatDigestMessage(data: DigestData, mode: string): string {
       lines.push(`${i + 1}. ${o.title.slice(0, 60)}`);
       if (o.priceText) lines.push(`   ${o.priceText}`);
       if (o.aiScore != null) lines.push(`   ⭐ Prilika: ${o.aiScore}/10`);
-      if (o.aiReason) lines.push(`   _${o.aiReason.slice(0, 100)}_`);
     });
   } else {
     lines.push('');

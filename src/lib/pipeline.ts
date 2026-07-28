@@ -127,11 +127,12 @@ export async function runMonitor(monitorId: string): Promise<RunResult> {
     runLogId = runLog.id;
 
     // 1. Scrape
+    const preSettings = await getSettingsRow();
     const listings = await scrape(
       monitor.source as SourceType,
       monitor.sourceUrl,
       filters,
-      { playwrightEnabled: settings.playwrightEnabled }
+      { playwrightEnabled: preSettings.playwrightEnabled }
     );
 
     if (listings.length === 0) {
