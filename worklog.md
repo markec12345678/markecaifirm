@@ -4110,3 +4110,92 @@ Stage Summary:
 - Skupno 159 AI endpointov (+3 od v6.59)
 - TypeScript: 0 napak (ohranjeno) ✨
 - Verzija aplikacije: v6.60.0
+
+---
+Task ID: v6.61
+Agent: main
+Task: AI Buyer Lifecycle Predictor, Listing Conversion Optimizer, Inventory Cash Flow Optimizer
+
+Work Log:
+- src/app/api/ai/buyer-lifecycle-predictor/route.ts: nov POST endpoint za lifecycle
+  prediction. 9 lifecycle faz: prospect (potencialni), first_time (1. nakup),
+  repeat_customer (2-3 nakupi), loyal_customer (4+ nakupi), advocate (5+ in 180d+),
+  at_risk (60d+ neaktiven, prej aktiven), churning (90d+ neaktiven), churned (180d+
+  neaktiven), reactivated (ponovno aktiven po churn). 5 ML modelov: markov_chain
+  (probabilistic stage transitions), lstm_sequence (deep learning za sequence),
+  random_forest (stage classification), survival_analysis (time-to-churn),
+  cox_proportional_hazards (churn hazard modeling). Per buyer: currentStage,
+  stageDurationDays, predictedNextStage, predictedTransitionDate, transitionProbabilityPct,
+  mlPredictions (retentionProbability12mPct, churnProbability6mPct, churnProbability12mPct,
+  nextPurchaseProbability30dPct, predictedClvEur, predictedRemainingPurchases,
+  modelConfidencePct), valueProjection (per month z predictedRevenueEur, cumulativeClvEur,
+  stageAtMonth), riskFactors, growthDrivers, recommendedIntervention (maintain/nurture/
+  reward/win_back/reactivate/let_go), interventionPriority, expectedInterventionImpactEur.
+  Lifecycle stages aggregation z buyerCount, avgClvEur, totalValueEur, avgDurationDays,
+  conversionRateToNextPct, churnRatePct, bestStrategy. Stage transitions z
+  transitionProbabilityPct, avgTimeToTransitionDays, buyerCount, keyDrivers,
+  interventionToEncourage. Value projection per timeframe z totalProjectedRevenueEur,
+  totalProjectedClvEur, retainedBuyers, churnedBuyers, newBuyersNeeded, netBuyerChange.
+  Summary z avgPredictedClvEur, totalProjectedClvEur, avgRetentionProbability12mPct,
+  avgChurnProbability12mPct, biggestChurnRiskStage, biggestGrowthOpportunityStage,
+  lifecycleEfficiencyScore.
+- src/app/api/ai/listing-conversion-optimizer/route.ts: nov POST endpoint za conversion
+  optimization. 12 conversion faktorjev: price_competitiveness, image_quality, title_clarity,
+  description_completeness, seller_reputation, location_convenience, shipping_options,
+  payment_methods, response_speed, trust_signals, urgency_elements, social_proof. 5 ML
+  modelov: gradient_boosting, neural_network, logistic_regression, random_forest, xgboost
+  z accuracyPct, precisionPct, recallPct, f1Score, weightInEnsemble, bestFor. Per listing:
+  currentConversionRatePct vs optimizedConversionRatePct, conversionLiftPct,
+  conversionFactors (12 z currentScore, optimizedScore, impactPct, priority), mlPredictions
+  (predictedConversionRatePct, predictedTimeToSaleDays, predictedFinalPriceEur,
+  confidencePct, modelConsensus), recommendedOptimizations (z optimization,
+  factorTargeted, expectedLiftPct, implementationEffort, timeToImplementHours),
+  expectedRevenueImpactEur, priority. Conversion factors aggregation z weight, avgScore,
+  benchmark, improvementPotential, bestPractice. 8 optimization tipov (price_adjustment,
+  image_improvement, title_rewrite, description_enhancement, urgency_addition,
+  trust_building, response_optimization, shipping_expansion) z expectedConversionLiftPct,
+  implementationDifficulty, bestForCategory. Multi-variate (A/B/n) tests per listing z
+  variants (4 z variantId, changeDescription, predictedConversionPct), testDurationDays,
+  sampleSizePerVariant, primaryMetric, statisticalSignificancePct, expectedWinner,
+  confidenceLevelPct. Summary z avgCurrentConversionRatePct vs avgOptimizedConversionRatePct,
+  avgConversionLiftPct, totalExpectedRevenueImpactEur, biggestConversionBlocker,
+  biggestConversionOpportunity, bestOptimizationOverall, conversionOptimizationScore.
+- src/app/api/ai/inventory-cash-flow-optimizer/route.ts: nov POST endpoint za cash flow
+  optimization. 6 cash flow strategij: accelerate_sales (hitrejša prodaja stalled inventarja),
+  delay_purchases (just-in-time nakupi), liquidate_dead (prodaj dead inventory za cash),
+  factor_receivables (proda invoices za takojšen cash), leverage_credit (kratkoročno kredit
+  za cash gap), seasonal_reserve (rezerva za seasonal slow). Current: monthlyRevenueEur,
+  monthlyCostEur, monthlyProfitEur, capitalInvestedEur, inventoryValueEur, staleCapitalEur,
+  deadCapitalEur, cashConversionCycleDays, workingCapitalEur, currentRatio, cashFlowScore.
+  ML forecast per month (1-12) z projectedInflowEur, projectedOutflowEur, netCashFlowEur,
+  cumulativeCashEur, confidencePct, keyAssumptions. 4 scenariji (base_case, optimized,
+  aggressive, conservative) z totalCashGeneratedEur, avgMonthlyCashFlowEur,
+  cashFlowStabilityPct, peakCashEur, troughCashEur, probabilityPct. Working capital
+  management (cash, inventory, receivables, payables, fees) z currentValueEur vs
+  optimizedValueEur, changeEur, optimizationAction, impactOnCashFlowEur. Summary z
+  currentMonthlyCashFlowEur vs projectedMonthlyCashFlowEur, improvementPct,
+  totalCashImprovementEur, cashFlowStabilityScore, biggestCashFlowBottleneck,
+  biggestCashOpportunity, cashFlowOptimizationScore.
+
+DOC UPDATES:
+- README.md: verzija v6.61.0, 162+ endpoints badge, "kaj je novega v v6.61" sekcija,
+  zadnje verzije posodobljene, changelog link do v6.61
+- CHANGELOG.md: v6.61.0 sekcija dodana z vsemi 3 novimi funkcijami in compare linki
+- AI_ENDPOINTS.md: avtomatsko regenerirano s 162 endpointi
+- package.json: version 6.61.0
+- src/app/page.tsx: verzija v6.61.0
+
+- TypeScript: 0 napak (ohranjeno) ✨
+- Git commit: 'feat(v6.61): AI Buyer Lifecycle Predictor, Listing Conversion Optimizer, Inventory Cash Flow Optimizer'
+- GitHub push: uspešen (26 files, 1113 insertions)
+
+Stage Summary:
+- 3 nove AI funkcionalnosti za lifecycle prediction, conversion optimization in cash flow management
+- 3 novi API ruti (buyer-lifecycle-predictor, listing-conversion-optimizer, inventory-cash-flow-optimizer)
+- ~1050 novih vrstic kode
+- Buyer Lifecycle Predictor: 9 faz z ML stage transitions in CLV projection
+- Listing Conversion Optimizer: 12 faktorjev z ML in A/B/n multi-variate testing
+- Inventory Cash Flow Optimizer: 6 strategij z ML forecasting in working capital
+- Skupno 162 AI endpointov (+3 od v6.60)
+- TypeScript: 0 napak (ohranjeno) ✨
+- Verzija aplikacije: v6.61.0
