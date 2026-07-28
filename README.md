@@ -1,8 +1,8 @@
 # Markec AI Firm — AI Trading Firm za slovenske oglase
 
-[![Version](https://img.shields.io/badge/version-v6.50.0-blue.svg)](./CHANGELOG.md)
+[![Version](https://img.shields.io/badge/version-v6.51.0-blue.svg)](./CHANGELOG.md)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](./LICENSE)
-[![AI Endpoints](https://img.shields.io/badge/AI%20endpoints-129+-green.svg)](./AI_ENDPOINTS.md)
+[![AI Endpoints](https://img.shields.io/badge/AI%20endpoints-132+-green.svg)](./AI_ENDPOINTS.md)
 [![Next.js](https://img.shields.io/badge/Next.js-16-black.svg)](https://nextjs.org/)
 [![TypeScript](https://img.shields.io/badge/TypeScript-5-blue.svg)](https://www.typescriptlang.org/)
 [![Prisma](https://img.shields.io/badge/Prisma-6-indigo.svg)](https://www.prisma.io/)
@@ -10,7 +10,7 @@
 [![PRs Welcome](https://img.shields.io/badge/PRs-welcome-brightgreen.svg)](./CONTRIBUTING.md)
 
 > **AI-powered trading firm** za Bolha, Facebook Marketplace, Vinted, Avtonet in Kleinanzeigen.
-> **129+ AI endpointov** za iskanje, ocenjevanje, kupovanje in preprodajo.
+> **132+ AI endpointov** za iskanje, ocenjevanje, kupovanje in preprodajo.
 > **Local-first** — vsi podatki ostanejo na tvojem računalniku. **Zero-cloud**.
 
 ---
@@ -45,9 +45,9 @@ računalniku — brez cloud storitev, brez mesečnih naročnin, brez deljenja po
 Lovi podcenjene oglase na Bolhi/Facebooku/Vintedu z AI, jih kupi poceni, preprodaj drago z
 AI-optimiziranimi oglasi, in avtomatiziraj celoten workflow od odkritja do prodaje.
 
-### Verzija v6.50.0 (28. julij 2026)
+### Verzija v6.51.0 (28. julij 2026)
 
-**129 AI endpointov** organiziranih v 7 kategorij:
+**132 AI endpointov** organiziranih v 7 kategorij:
 - **Statistike** (analytics, predictions, forecasting) — 35+ funkcij
 - **Skladišče** (inventory management, aging, depreciation) — 20+ funkcij
 - **Oglasi** (listing optimization, SEO, image analysis) — 25+ funkcij
@@ -56,13 +56,13 @@ AI-optimiziranimi oglasi, in avtomatiziraj celoten workflow od odkritja do proda
 - **Risk/Insurance** (hedging, fraud detection, claims) — 10+ funkcij
 - **Finance/Profit** (margin, ROI, compounding) — 16+ funkcij
 
-### Kaj je novega v v6.50
+### Kaj je novega v v6.51
 
-- **AI Buyer Journey Mapper** — 5-fazni buyer journey (awareness→advocacy) z touchpoints in stage optimizations
-- **AI Listing Virality Predictor** — 8 virality faktorjev in 6 share triggerjev, viral tier od low do super_viral
-- **AI Profit Margin Optimizer v2** — ML cross-category analiza z 10 strategijami in rebalancing priporočili
+- **AI Buyer Retention Predictor** — churn prediction z 5 stage-i in 8 win-back strategijami
+- **AI Listing Description Generator v2** — multi-platform (5), multi-tone (6) opisi z A/B variantami
+- **AI Inventory Performance Tracker** — 10 KPI-jev, trendi in benchmarks z alert sistemi
 
-▶️ Glej [CHANGELOG.md](./CHANGELOG.md) za popolno zgodovino v1.0 → v6.50.
+▶️ Glej [CHANGELOG.md](./CHANGELOG.md) za popolno zgodovino v1.0 → v6.51.
 
 ---
 
@@ -564,14 +564,14 @@ Z obveznostjo:
 
 ## 📋 Changelog
 
-Popolna zgodovina verzij v [CHANGELOG.md](./CHANGELOG.md) — od v1.0 (25. junij 2026) do v6.50 (28. julij 2026).
+Popolna zgodovina verzij v [CHANGELOG.md](./CHANGELOG.md) — od v1.0 (25. junij 2026) do v6.51 (28. julij 2026).
 
 ### Zadnje verzije
+- **v6.51.0** (28. jul 2026) — Buyer Retention Predictor, Listing Description Generator v2, Inventory Performance Tracker
 - **v6.50.0** (28. jul 2026) — Buyer Journey Mapper, Listing Virality Predictor, Profit Margin Optimizer v2
 - **v6.49.0** (28. jul 2026) — Price War Strategist, Seasonal Bundle Packager, Buyer Matchmaker v2
 - **v6.48.0** (28. jul 2026) — Inventory Aging Predictor, Seller Reliability v2, Bulk Listing Generator
 - **v6.47.0** (28. jul 2026) — Profit Margin Predictor, Listing Image Optimizer, Real-time Negotiation Bot
-- **v6.46.0** (28. jul 2026) — Cross-Sell Recommender, Buyer Trust Score, Auction Sniper v2
 
 ---
 
