@@ -21,7 +21,7 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ error: 'Maksimalno 20 monitorjev naenkrat' }, { status: 400 });
   }
 
-  const results = [];
+  const results: Array<Record<string, any>> = [];
   for (const id of ids) {
     try {
       const result = await runMonitor(id);

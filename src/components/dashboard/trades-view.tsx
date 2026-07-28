@@ -2403,8 +2403,6 @@ export function TradesView() {
             </CardContent>
           </Card>
         )}
-        </>
-      )}
 
         {/* v4.1: This month P&L card + v4.2: Goal progress */}
         {stats.byMonth.length > 0 && (() => {
@@ -2522,6 +2520,8 @@ export function TradesView() {
             </Card>
           );
         })()}
+        </>
+      )}
 
         {/* Filter */}
       <div className="flex items-center gap-2 flex-wrap">
