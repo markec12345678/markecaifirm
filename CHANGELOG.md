@@ -6,12 +6,31 @@ Format sledi [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), verzije s
 
 ## [Unreleased]
 
-Načrtovano za v6.65+:
-- UI komponente za v6.45-v6.64 funkcije v dashboard
+Načrtovano za v6.66+:
+- UI komponente za v6.45-v6.65 funkcije v dashboard
 - Unit testi za lib/ai.ts
 - Playwright E2E testi
 - WebSocket real-time negotiation
 - ML model za buyer matchmaker (fine-tuned na realni data)
+
+## [6.65.0] - 2026-07-28
+
+### Added
+- **AI Listing Performance Benchmark v2** — benchmarking z ML competitor analysis in ranking
+  - 6 industry benchmark metrik (margin_pct, days_to_sell, conversion_rate, ctr, revenue_per_item, profit_per_item)
+  - Competitor analysis z their strengths/weaknesses in your advantage
+  - Per-category ranking z rank change vs last month
+  - Performance gaps z closing action in expected impact
+- **AI Inventory Risk Assessor** — ocena tveganj z ML in 8-dimenzionalno risk matriko
+  - 8 risk tipov (market_risk, liquidity_risk, depreciation_risk, damage_risk, theft_risk, pricing_risk, competition_risk, seasonal_risk)
+  - Per-item risk scores z primary risk in capital at risk
+  - Risk matrix z avg score, items affected, capital at risk per risk type
+  - 5 ML modelov z accuracy in risk type prediction
+- **AI Buyer Referral Program Designer** — oblikuje referral program z ML in incentive optimization
+  - 5 program tipov (two_sided, one_sided_referrer, one_sided_referee, tiered, gamified)
+  - 6 incentive tipov (discount, cash, free_item, store_credit, early_access, bundle)
+  - 5 tier-ov (starter→ambassador) z referrer/referee rewards in bonus perks
+  - 12-mesečni projection z referrals, new buyers, revenue, cost, net profit, ROI
 
 ## [6.64.0] - 2026-07-28
 
@@ -579,7 +598,8 @@ Načrtovano za v6.65+:
 
 ---
 
-[Unreleased]: https://github.com/markec12345678/markecaifirm/compare/v6.64.0...HEAD
+[Unreleased]: https://github.com/markec12345678/markecaifirm/compare/v6.65.0...HEAD
+[6.65.0]: https://github.com/markec12345678/markecaifirm/compare/v6.64.0...v6.65.0
 [6.64.0]: https://github.com/markec12345678/markecaifirm/compare/v6.63.0...v6.64.0
 [6.63.0]: https://github.com/markec12345678/markecaifirm/compare/v6.62.0...v6.63.0
 [6.62.0]: https://github.com/markec12345678/markecaifirm/compare/v6.61.0...v6.62.0
