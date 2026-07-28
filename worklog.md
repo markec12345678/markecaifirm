@@ -4351,3 +4351,29 @@ Work Log:
 - TypeScript: 0 napak (ohranjeno) ✨
 - Skupno: 174 AI endpointov (+3 od v6.64)
 - Verzija aplikacije: v6.65.0
+
+---
+Task ID: v6.66
+Agent: main
+Task: AI Listing Cross-Platform Optimizer, Inventory Capital Allocator, Buyer Win-Back Campaign Designer
+
+Work Log:
+- listing-cross-platform-optimizer: 8 sync strategij (cross_post, price_sync, inventory_sync,
+  rotation_sync, bundle_sync, seasonal_sync, exclusive_deal, competitive_pricing). Per-platform
+  config z title, description, price, tags, language, CTA, expected views/inquiries, fee_pct,
+  net_revenue. Conflict detection (price_mismatch, double_sale, description_conflict,
+  platform_violation). Performance metrics z current vs optimized.
+- inventory-capital-allocator: 5 ML modelov (mean_variance, kelly_criterion, risk_parity,
+  momentum_tilting, ensemble). Per-category allocation z current vs target, rebalance amount
+  in direction. 3 scenariji (conservative, balanced, aggressive) z Sharpe ratio in max
+  drawdown. 5 rebalancing akcij (buy_more, sell_partial, exit_category, enter_new, hold).
+- buyer-win-back-campaign-designer: 8 campaign tipov (reactivation_discount, we_miss_you,
+  new_arrival_alert, exclusive_preview, bundle_offer, loyalty_reward, feedback_request,
+  last_chance). 8 segmentov (dormant_30d→churned_180d, one_time_buyer, high_value_lost,
+  seasonal_lapsed, price_sensitive_lost). Per-segment messages z subject line, body, tone,
+  personalization tokens, expected open/click rate. 90-dnevni timeline z per-day actions in
+  12-mesečni projection z ROI.
+
+- TypeScript: 0 napak (ohranjeno) ✨
+- Skupno: 177 AI endpointov (+3 od v6.65)
+- Verzija aplikacije: v6.66.0
