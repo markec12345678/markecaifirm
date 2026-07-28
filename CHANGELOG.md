@@ -6,12 +6,31 @@ Format sledi [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), verzije s
 
 ## [Unreleased]
 
-Načrtovano za v6.51+:
-- UI komponente za v6.45-v6.50 funkcije v dashboard
+Načrtovano za v6.52+:
+- UI komponente za v6.45-v6.51 funkcije v dashboard
 - Unit testi za lib/ai.ts
 - Playwright E2E testi
 - WebSocket real-time negotiation
 - ML model za buyer matchmaker (fine-tuned na realni data)
+
+## [6.51.0] - 2026-07-28
+
+### Added
+- **AI Buyer Retention Predictor** — churn prediction in win-back strategije
+  - 5 stage-ov (new/active/at_risk/churning/churned) z churn in retention probability
+  - 7 churn faktorjev (recency/frequency/monetary/categories/engagement/competition/seasonality)
+  - 8 win-back strategij z ROI score in expected LTV uplift
+  - 90-dnevni retention plan z message templates
+- **AI Listing Description Generator v2** — multi-platform, multi-tone opisi z A/B variantami
+  - 5 platform (bolha/facebook/vinted/ebay/kleinanzeigen) z jeziki (sl/en/de)
+  - 6 tonov (professional/friendly/urgent/luxury/playful/technical)
+  - 3 A/B variante per listing z expected conversion %
+  - A/B test plan z duration, primary metric in success threshold
+- **AI Inventory Performance Tracker** — KPI tracking, trendi in benchmarks
+  - 10 KPI-jev (revenue, profit, margin, days_to_sell, inventory_turnover, sell_through_rate, avg_sell_price, holding_cost, stale_rate, dead_inventory_ratio)
+  - Trendi z 30-dnevno napovedjo in confidence %
+  - Category benchmarks z industry avg in performance tier
+  - 5 alert tipov z severity in expected impact
 
 ## [6.50.0] - 2026-07-28
 
@@ -257,7 +276,8 @@ Načrtovano za v6.51+:
 
 ---
 
-[Unreleased]: https://github.com/markec12345678/markecaifirm/compare/v6.50.0...HEAD
+[Unreleased]: https://github.com/markec12345678/markecaifirm/compare/v6.51.0...HEAD
+[6.51.0]: https://github.com/markec12345678/markecaifirm/compare/v6.50.0...v6.51.0
 [6.50.0]: https://github.com/markec12345678/markecaifirm/compare/v6.49.0...v6.50.0
 [6.49.0]: https://github.com/markec12345678/markecaifirm/compare/v6.48.0...v6.49.0
 [6.48.0]: https://github.com/markec12345678/markecaifirm/compare/v6.47.0...v6.48.0
