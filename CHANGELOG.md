@@ -6,12 +6,33 @@ Format sledi [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), verzije s
 
 ## [Unreleased]
 
-Načrtovano za v6.74+:
-- UI komponente za v6.45-v6.73 funkcije v dashboard
+Načrtovano za v6.75+:
+- UI komponente za v6.45-v6.74 funkcije v dashboard
 - Unit testi za lib/ai.ts
 - Playwright E2E testi
 - WebSocket real-time negotiation
 - ML model za buyer matchmaker (fine-tuned na realni data)
+
+## [6.74.0] - 2026-07-28
+
+### Added
+- **AI Listing Price Elasticity Analyzer v2** — ML analiza cenovne elastičnosti z demand curve
+  - 5 elasticity tipov (elastic, inelastic, unitary, perfectly_elastic, perfectly_inelastic)
+  - Per-item: elasticity coefficient, optimal price, expected demand/revenue/profit change
+  - Demand curves per kategorija z price points, revenue-maximizing in profit-maximizing price
+  - 5 pricing strategij (penetration, skimming, premium, competitive, value)
+  - 5 ML modelov z prediction type (elasticity_coefficient, demand_at_price, optimal_price, revenue_forecast)
+- **AI Inventory Turnover Accelerator** — pospešuje obrtnost z ML in bottleneck analysis
+  - 8 bottleneck tipov (slow_category, overpriced, poor_listing, wrong_platform, seasonal_mismatch, competition, low_demand, bad_timing)
+  - 12 accelerator tipov (price_drop, bundle_creation, cross_post, refresh_listing, flash_sale, auction_listing, bundle_break, platform_switch, image_upgrade, description_rewrite, tag_optimization, urgency_injection)
+  - 10-step action plan z target items, expected days saved in revenue impact
+  - 5 ML modelov z prediction type (days_to_sell, acceleration_potential, optimal_action, turnover_forecast)
+- **AI Buyer Lifetime Value Optimizer** — optimizira LTV z ML in retention strategies
+  - 10 retention strategij (loyalty_program, personal_outreach, exclusive_offers, early_access, bundle_incentives, birthday_rewards, referral_bonuses, feedback_loops, price_locks, priority_support)
+  - Per-buyer: current vs optimized LTV, retention/churn probability, predicted remaining purchases/value
+  - 4 LTV projections (6m, 12m, 24m, 36m) z retained/churned buyers in confidence
+  - 5 recommended strategies (maintain, nurture, grow, maximize, salvage)
+  - 5 ML modelov z prediction type (ltv_forecast, churn_probability, retention_probability, optimal_intervention)
 
 ## [6.73.0] - 2026-07-28
 
@@ -760,7 +781,8 @@ Načrtovano za v6.74+:
 
 ---
 
-[Unreleased]: https://github.com/markec12345678/markecaifirm/compare/v6.73.0...HEAD
+[Unreleased]: https://github.com/markec12345678/markecaifirm/compare/v6.74.0...HEAD
+[6.74.0]: https://github.com/markec12345678/markecaifirm/compare/v6.73.0...v6.74.0
 [6.73.0]: https://github.com/markec12345678/markecaifirm/compare/v6.72.0...v6.73.0
 [6.72.0]: https://github.com/markec12345678/markecaifirm/compare/v6.71.0...v6.72.0
 [6.71.0]: https://github.com/markec12345678/markecaifirm/compare/v6.70.0...v6.71.0
