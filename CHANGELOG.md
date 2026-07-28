@@ -6,12 +6,34 @@ Format sledi [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), verzije s
 
 ## [Unreleased]
 
-Načrtovano za v6.77+:
-- UI komponente za v6.45-v6.76 funkcije v dashboard
+Načrtovano za v6.78+:
+- UI komponente za v6.45-v6.77 funkcije v dashboard
 - Unit testi za lib/ai.ts
 - Playwright E2E testi
 - WebSocket real-time negotiation
 - ML model za buyer matchmaker (fine-tuned na realni data)
+
+## [6.77.0] - 2026-07-28
+
+### Added
+- **AI Listing Social Proof Optimizer** — ML optimizacija social proof elementov z trust building
+  - 10 social proof tipov (testimonials, review_count, seller_rating, sales_history, social_mentions, view_count, saved_count, shared_count, repeat_buyers, certification_badges)
+  - Per-listing: current vs optimized social proof score z per-element analysis
+  - 6 trust signal types (authority, consensus, scarcity, reciprocity, commitment, liking)
+  - 10 optimization tipov z expected trust/conversion lift
+  - 5 ML modelov z prediction type (trust_score, conversion_probability, engagement_lift, proof_effectiveness)
+- **AI Inventory Profit Margin Tracker** — ML tracking profit marginov z trend analysis
+  - 5 trend metrik (margin_pct, profit, revenue, cost, roi) z 30d prediction in confidence
+  - Per-category: margin, profit, revenue, cost, trend, performance tier in recommended action
+  - Per-item: est margin, profit, rank, vs category avg in margin status
+  - 5 alert tipov (margin_decline, low_margin, cost_increase, price_too_low, category_underperforming)
+  - 5 ML modelov z prediction type (margin_forecast, trend_prediction, anomaly_detection, optimal_pricing)
+- **AI Buyer Retention Score Calculator** — ML kalkulator retention score z 12-faktorsko analizo
+  - 12 retention faktorjev (recency, frequency, monetary, engagement, satisfaction, loyalty_program_participation, referral_activity, communication_responsiveness, category_diversity, seasonal_consistency, price_sensitivity, platform_loyalty)
+  - 6 retention nivojev (platinum→churned) z buyer count, avg score in avg revenue
+  - Per-buyer: retention score, level, 6m/12m probability, predicted next purchase date, recommended intervention
+  - 5 interventions (maintain, nurture, reward, win_back, reactivate) z expected lift in revenue impact
+  - 5 ML modelov z prediction type (retention_score, retention_probability, churn_prediction, optimal_intervention)
 
 ## [6.76.0] - 2026-07-28
 
@@ -824,7 +846,8 @@ Načrtovano za v6.77+:
 
 ---
 
-[Unreleased]: https://github.com/markec12345678/markecaifirm/compare/v6.76.0...HEAD
+[Unreleased]: https://github.com/markec12345678/markecaifirm/compare/v6.77.0...HEAD
+[6.77.0]: https://github.com/markec12345678/markecaifirm/compare/v6.76.0...v6.77.0
 [6.76.0]: https://github.com/markec12345678/markecaifirm/compare/v6.75.0...v6.76.0
 [6.75.0]: https://github.com/markec12345678/markecaifirm/compare/v6.74.0...v6.75.0
 [6.74.0]: https://github.com/markec12345678/markecaifirm/compare/v6.73.0...v6.74.0
