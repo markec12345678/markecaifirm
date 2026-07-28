@@ -2411,3 +2411,51 @@ Stage Summary:
 - Inventory Health Monitor: 8 vital signs z 4 health statusi in alert sistemom
 - Competitor Price Tracker: real-time competitor tracking z 5 strategijami pozicioniranja
 - Verzija aplikacije: v6.36.0
+
+---
+Task ID: v6.37
+Agent: main
+Task: AI Stockout Prevention, Cross-Pollination, Margin Guardian
+
+Work Log:
+- src/app/api/ai/stockout-prevention/route.ts: nov POST endpoint za preprečevanje stockout.
+  3 risk nivoje: critical (0 held + ROI >15% + >= 2 prodaji), high (≤2 held + ROI >20% +
+  >= 3 prodaji), medium (≤5 held + ROI >25% + >= 5 prodaj). Per kategorija: heldCount,
+  soldCount, avgRoiPct, avgDaysToSell, depletionRatePerWeek, estimatedStockoutDate,
+  lostRevenuePerWeekEur, action (restock_urgent/start_sourcing/monitor), deadlineDays.
+  Restock plan z itemsToBuy (item, source, maxPriceEur, keywords), quantity, budgetEur,
+  expectedProfitEur, expectedRoiPct, monitorSetup (keywords, alertThreshold, source,
+  intervalMinutes). Alerts z severity. Summary z estimatedLostRevenue, restockBudgetNeeded,
+  expectedRecoveryProfit.
+- src/app/api/ai/cross-pollination/route.ts: nov POST endpoint za cross-pollination.
+  Povezuje oglase med platformami za sinergično prodajo. 6 synergy tipov: cross_post
+  (isti item na Bolha + Facebook + Vinted z različnim opisom), referral_chain ("glej tudi
+  moje druge oglase"), bundle_cross_ref (bundle na eni, posamezni na drugi), profile_link
+  (več oglasov v profilu), seasonal_cross (zimski na eni, poletni na drugi), complementary_cross
+  (telefon na Bolha + slušalke na Vinted z medsebojno referenco). Per synergy: primaryItem +
+  complementaryItem, expectedExposureBoostPct, expectedSellTimeReductionDays. Cross posts z
+  platform-specific titleAdapted, priceEur, descriptionSnippet. Referral chain z referralText.
+  Amplification: totalSynergies, totalCrossPosts, totalReferrals, expectedAvgExposureBoost.
+- src/app/api/ai/margin-guardian/route.ts: nov POST endpoint za ščitenje marže.
+  8 erosion faktorjev: holding_cost (0.5%/teden), price_drop (vsak padec 5% = 5% manj),
+  platform_fees (Bolha 0%, Vinted 5%, eBay 10%), shipping (10-20€ na item), depreciation
+  (elektronika 2.5%/mesec), competition (konkurenca podre ceno), seasonal (izven sezone),
+  negotiation (kupec zahteva popust -5-15%). 4 marža nivoji: healthy (>30%), ok (15-30%),
+  thin (5-15%), negative (<5%). Per item: currentMarginPct, marginStatus, projectedMargin30d/
+  60dPct, mainThreat, protectionAction, minAcceptablePriceEur. Threats z severity,
+  affectedItems, estimatedMarginErosionPct, estimatedLossEur, mitigation. Protections z
+  marginSavedPct in implementation. Actions z marginImpactPct in itemsAffected. Summary z
+  overallMarginHealth, marginProtectionScore, biggestThreat, totalProjectedErosion30dEur,
+  totalProtectableMarginEur.
+- src/app/page.tsx: verzija v6.37.0
+- TypeScript: 24 napak (enako kot prej) - nobenih novih napak uvedenih
+- Git commit: 'feat(v6.37): AI Stockout Prevention, Cross-Pollination, Margin Guardian'
+
+Stage Summary:
+- 3 nove AI funkcionalnosti za preprečevanje stockout, sinergično prodajo in ščitenje marže
+- 3 novi API ruti (stockout-prevention, cross-pollination, margin-guardian)
+- ~602 novih vrstic kode
+- Stockout Prevention: 3 risk nivoje z restock plan in monitor setup
+- Cross-Pollination: 6 synergy tipov za sinergično prodajo čez platforme
+- Margin Guardian: 8 erosion faktorjev z 4 marža nivoji in protection actions
+- Verzija aplikacije: v6.37.0
