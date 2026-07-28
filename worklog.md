@@ -4620,3 +4620,28 @@ Work Log:
 - TypeScript: 0 napak (ohranjeno) ✨
 - Skupno: 207 AI endpointov (+3 od v6.75)
 - Verzija aplikacije: v6.76.0
+
+---
+Task ID: v6.77
+Agent: main
+Task: AI Listing Social Proof Optimizer, Inventory Profit Margin Tracker, Buyer Retention Score Calculator
+
+Work Log:
+- listing-social-proof-optimizer: 10 social proof tipov (testimonials, review_count, seller_rating,
+  sales_history, social_mentions, view_count, saved_count, shared_count, repeat_buyers,
+  certification_badges). Per-listing: current vs optimized social proof score z per-element
+  analysis. 6 trust signal types. 10 optimization tipov. 5 ML modelov.
+- inventory-profit-margin-tracker: 5 trend metrik (margin_pct, profit, revenue, cost, roi) z 30d
+  prediction in confidence. Per-category: margin, profit, revenue, cost, trend, performance tier
+  in recommended action. Per-item: est margin, profit, rank, vs category avg. 5 alert tipov.
+  5 ML modelov.
+- buyer-retention-score-calculator: 12 retention faktorjev (recency, frequency, monetary,
+  engagement, satisfaction, loyalty_program_participation, referral_activity,
+  communication_responsiveness, category_diversity, seasonal_consistency, price_sensitivity,
+  platform_loyalty). 6 retention nivojev (platinum→churned). Per-buyer: retention score, level,
+  6m/12m probability, predicted next purchase date, recommended intervention. 5 interventions.
+  5 ML modelov.
+
+- TypeScript: 0 napak (ohranjeno) ✨
+- Skupno: 210 AI endpointov (+3 od v6.76)
+- Verzija aplikacije: v6.77.0
