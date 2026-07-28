@@ -1,8 +1,8 @@
 # Markec AI Firm — AI Trading Firm za slovenske oglase
 
-[![Version](https://img.shields.io/badge/version-v6.58.0-blue.svg)](./CHANGELOG.md)
+[![Version](https://img.shields.io/badge/version-v6.59.0-blue.svg)](./CHANGELOG.md)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](./LICENSE)
-[![AI Endpoints](https://img.shields.io/badge/AI%20endpoints-153+-green.svg)](./AI_ENDPOINTS.md)
+[![AI Endpoints](https://img.shields.io/badge/AI%20endpoints-156+-green.svg)](./AI_ENDPOINTS.md)
 [![Next.js](https://img.shields.io/badge/Next.js-16-black.svg)](https://nextjs.org/)
 [![TypeScript](https://img.shields.io/badge/TypeScript-5-blue.svg)](https://www.typescriptlang.org/)
 [![TypeScript Errors](https://img.shields.io/badge/TS%20errors-0-brightgreen.svg)](#)
@@ -11,7 +11,7 @@
 [![PRs Welcome](https://img.shields.io/badge/PRs-welcome-brightgreen.svg)](./CONTRIBUTING.md)
 
 > **AI-powered trading firm** za Bolha, Facebook Marketplace, Vinted, Avtonet in Kleinanzeigen.
-> **153+ AI endpointov** za iskanje, ocenjevanje, kupovanje in preprodajo.
+> **156+ AI endpointov** za iskanje, ocenjevanje, kupovanje in preprodajo.
 > **Local-first** — vsi podatki ostanejo na tvojem računalniku. **Zero-cloud**.
 
 ---
@@ -46,9 +46,9 @@ računalniku — brez cloud storitev, brez mesečnih naročnin, brez deljenja po
 Lovi podcenjene oglase na Bolhi/Facebooku/Vintedu z AI, jih kupi poceni, preprodaj drago z
 AI-optimiziranimi oglasi, in avtomatiziraj celoten workflow od odkritja do prodaje.
 
-### Verzija v6.58.0 (28. julij 2026)
+### Verzija v6.59.0 (28. julij 2026)
 
-**153 AI endpointov** organiziranih v 7 kategorij:
+**156 AI endpointov** organiziranih v 7 kategorij:
 - **Statistike** (analytics, predictions, forecasting) — 35+ funkcij
 - **Skladišče** (inventory management, aging, depreciation) — 20+ funkcij
 - **Oglasi** (listing optimization, SEO, image analysis) — 25+ funkcij
@@ -57,13 +57,13 @@ AI-optimiziranimi oglasi, in avtomatiziraj celoten workflow od odkritja do proda
 - **Risk/Insurance** (hedging, fraud detection, claims) — 10+ funkcij
 - **Finance/Profit** (margin, ROI, compounding) — 16+ funkcij
 
-### Kaj je novega v v6.58
+### Kaj je novega v v6.59
 
-- **AI Profit Margin Predictor v3** — 8-model ensemble z feature importance in 4 scenariji
-- **AI Seller Trust Score v2** — 12-dimenzionalni trust score z 5 ML modeli in 7 behavioral patterni
-- **AI Listing Image Generator** — AI prompts za 10 shot tipov z editing presets in A/B test plan
+- **AI Buyer Behavior Pattern Detector** — 12 patternov, 8 anomalij, 5 ML modelov (isolation_forest, k-means, dbscan, autoencoder, statistical)
+- **AI Listing Performance Forecaster v4** — 8 deep modelov (transformer, BERT, GPT, LSTM, GRU, CNN, multimodal) z multi-horizon in uncertainty quantification
+- **AI Inventory Health Monitor v2** — 8 health metrik, 8 alert tipov, 5 predictive warnings z ML
 
-▶️ Glej [CHANGELOG.md](./CHANGELOG.md) za popolno zgodovino v1.0 → v6.58.
+▶️ Glej [CHANGELOG.md](./CHANGELOG.md) za popolno zgodovino v1.0 → v6.59.
 
 ---
 
@@ -565,14 +565,14 @@ Z obveznostjo:
 
 ## 📋 Changelog
 
-Popolna zgodovina verzij v [CHANGELOG.md](./CHANGELOG.md) — od v1.0 (25. junij 2026) do v6.58 (28. julij 2026).
+Popolna zgodovina verzij v [CHANGELOG.md](./CHANGELOG.md) — od v1.0 (25. junij 2026) do v6.59 (28. julij 2026).
 
 ### Zadnje verzije
+- **v6.59.0** (28. jul 2026) — Buyer Behavior Pattern Detector, Listing Performance Forecaster v4, Inventory Health Monitor v2
 - **v6.58.0** (28. jul 2026) — Profit Margin Predictor v3, Seller Trust Score v2, Listing Image Generator
 - **v6.57.0** (28. jul 2026) — Listing Optimization Pipeline, Inventory Rebalancer v3, Buyer Conversion Funnel v2
 - **v6.56.0** (28. jul 2026) — Seller Negotiation Strategist, Inventory Lifecycle Optimizer v2, Buyer Persona Generator v2 + 24 TS napak popravljenih
 - **v6.55.0** (28. jul 2026) — Inventory Liquidation Strategist, Buyer Engagement Optimizer, Listing Performance Forecaster v3
-- **v6.54.0** (28. jul 2026) — Profit Margin Forecaster, Buyer Conversion Predictor, Listing Description A/B Test Optimizer
 
 ---
 

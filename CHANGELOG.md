@@ -6,12 +6,38 @@ Format sledi [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), verzije s
 
 ## [Unreleased]
 
-Načrtovano za v6.59+:
-- UI komponente za v6.45-v6.58 funkcije v dashboard
+Načrtovano za v6.60+:
+- UI komponente za v6.45-v6.59 funkcije v dashboard
 - Unit testi za lib/ai.ts
 - Playwright E2E testi
 - WebSocket real-time negotiation
 - ML model za buyer matchmaker (fine-tuned na realni data)
+
+## [6.59.0] - 2026-07-28
+
+### Added
+- **AI Buyer Behavior Pattern Detector** — ML detection z anomaly detection
+  - 12 pattern tipov (loyal_repeat, seasonal_buyer, impulse_buyer, deliberate_researcher,
+    bargain_hunter, premium_seeker, collector_enthusiast, reseller_flipper, occasional_buyer,
+    price_sensitive, brand_loyal, category_specialist)
+  - 8 anomaly tipov (sudden_high_value_purchase, unusual_frequency_spike, category_switch,
+    price_range_deviation, location_change, response_time_degradation, pattern_break, volume_anomaly)
+  - 5 ML modelov (isolation_forest, k-means, dbscan, autoencoder, statistical)
+  - Per-buyer: detectedPatterns, anomalies, behavioralConsistencyScore, anomalyRiskScore, mlClusterId
+- **AI Listing Performance Forecaster v4** — deep learning z transformer architecture
+  - 8 deep modelov (transformer_encoder, bert_listing, gpt_listing, lstm_sequential, gru_temporal,
+    cnn_image, multimodal_fusion, attention_mechanism)
+  - Multi-horizon forecasting (short_term 7d, medium_term 30d, long_term 90d)
+  - Attention weights per feature z interpretation
+  - Uncertainty quantification (epistemic, aleatoric, total) z predictive intervals
+- **AI Inventory Health Monitor v2** — real-time health z ML anomaly detection in predictive alerts
+  - 8 health metrik (turnover_rate, aging_score, profitability, liquidity, diversification,
+    risk_exposure, capital_efficiency, market_alignment)
+  - 8 alert tipov (stale_inventory, dead_inventory, low_margin, over_concentration, capital_tied,
+    demand_mismatch, risk_spike, performance_drop)
+  - 5 predictive warnings (predicted_stale, predicted_loss, predicted_dead, predicted_cashflow_issue,
+    predicted_overstock) z ML confidence
+  - Per-item health status (healthy/warning/critical/dead) z urgency score
 
 ## [6.58.0] - 2026-07-28
 
@@ -439,7 +465,8 @@ Načrtovano za v6.59+:
 
 ---
 
-[Unreleased]: https://github.com/markec12345678/markecaifirm/compare/v6.58.0...HEAD
+[Unreleased]: https://github.com/markec12345678/markecaifirm/compare/v6.59.0...HEAD
+[6.59.0]: https://github.com/markec12345678/markecaifirm/compare/v6.58.0...v6.59.0
 [6.58.0]: https://github.com/markec12345678/markecaifirm/compare/v6.57.0...v6.58.0
 [6.57.0]: https://github.com/markec12345678/markecaifirm/compare/v6.56.0...v6.57.0
 [6.56.0]: https://github.com/markec12345678/markecaifirm/compare/v6.55.0...v6.56.0
