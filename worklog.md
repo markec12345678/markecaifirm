@@ -4596,3 +4596,27 @@ Work Log:
 - TypeScript: 0 napak (ohranjeno) ✨
 - Skupno: 204 AI endpointov (+3 od v6.74)
 - Verzija aplikacije: v6.75.0
+
+---
+Task ID: v6.76
+Agent: main
+Task: AI Listing Engagement Predictor, Inventory Stockout Predictor, Buyer Acquisition Cost Optimizer
+
+Work Log:
+- listing-engagement-predictor: 10 engagement faktorjev (visual_appeal, title_attractiveness,
+  price_competitiveness, description_quality, category_demand, seller_reputation,
+  location_convenience, seasonal_relevance, social_proof, urgency_level). Per-listing:
+  engagement score, level, predicted views/inquiries/saves/shares 7d, conversion probability.
+  10 optimization tipov. 3 timeframe predictions. 5 ML modelov.
+- inventory-stockout-predictor: Per-category: current stock, daily sell rate, days until
+  stockout, stockout date, probability, recommended reorder day/quantity, urgency. 5 stock
+  statuses (well_stocked, adequate, low, critical, out_of_stock). 30-day reorder plan. 5 ML
+  modelov.
+- buyer-acquisition-cost-optimizer: 10 acquisition kanalov (bolha_organic, facebook_organic,
+  vinted_organic, referral, social_media, email_marketing, cross_posting, flash_sale,
+  bundle_attract, local_community). Per-channel: current vs optimized CAC, ROI, expected new
+  buyers, recommended action. 10 optimization tipov. 12-mesečni projections. 5 ML modelov.
+
+- TypeScript: 0 napak (ohranjeno) ✨
+- Skupno: 207 AI endpointov (+3 od v6.75)
+- Verzija aplikacije: v6.76.0
