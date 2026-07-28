@@ -51,10 +51,10 @@ export async function POST(req: NextRequest) {
         firstSeenAt: { gte: new Date(Date.now() - 30 * 24 * 60 * 60 * 1000) },
         isHidden: false,
         price: { not: null, gt: 0 },
-        ...(categoryFilter ? { category: { contains: categoryFilter } } : {}),
+        ...(categoryFilter ? { title: { contains: categoryFilter } } : {}),
       },
       select: {
-        id: true, title: true, price: true, category: true, sellerName: true,
+        id: true, title: true, price: true, sellerName: true,
         location: true, firstSeenAt: true, aiEstimatedValue: true,
       },
       take: 500,
@@ -79,7 +79,13 @@ export async function POST(req: NextRequest) {
     const categoryAgg = new Map<string, { listings: any[]; drops: any[]; }>();
 
     for (const l of recentListings) {
-      const cat = (l.category || 'drugo').toLowerCase();
+      // Kategorija iz naslova (Listing nima category polja)
+      const titleLower = (l.title || '').toLowerCase();
+      let cat = 'drugo';
+      const catKeywords = ['iphone', 'samsung', 'telefon', 'laptop', 'računalnik', 'kolo', 'avto', 'smuči', 'pohištvo', 'klima', 'tv', 'playstation', 'xbox'];
+      for (const kw of catKeywords) {
+        if (titleLower.includes(kw)) { cat = kw; break; }
+      }
       if (!categoryAgg.has(cat)) categoryAgg.set(cat, { listings: [], drops: [] });
       categoryAgg.get(cat)!.listings.push(l);
     }
