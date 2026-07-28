@@ -4328,3 +4328,26 @@ Work Log:
 - TypeScript: 0 napak (ohranjeno) ✨
 - Skupno: 171 AI endpointov (+3 od v6.63)
 - Verzija aplikacije: v6.64.0
+
+---
+Task ID: v6.65
+Agent: main
+Task: AI Listing Performance Benchmark v2, Inventory Risk Assessor, Buyer Referral Program Designer
+
+Work Log:
+- listing-performance-benchmark-v2: 6 industry benchmark metrik (margin_pct, days_to_sell,
+  conversion_rate, ctr, revenue_per_item, profit_per_item). Competitor analysis z their
+  strengths/weaknesses in your advantage. Per-category ranking z rank change vs last month.
+  Performance gaps z closing action in expected impact.
+- inventory-risk-assessor: 8 risk tipov (market_risk, liquidity_risk, depreciation_risk,
+  damage_risk, theft_risk, pricing_risk, competition_risk, seasonal_risk). Per-item risk
+  scores z primary risk in capital at risk. Risk matrix z avg score, items affected,
+  capital at risk per risk type. 5 ML modelov.
+- buyer-referral-program-designer: 5 program tipov (two_sided, one_sided_referrer,
+  one_sided_referee, tiered, gamified). 6 incentive tipov (discount, cash, free_item,
+  store_credit, early_access, bundle). 5 tier-ov (starter→ambassador). 12-mesečni
+  projection z referrals, new buyers, revenue, cost, net profit, ROI.
+
+- TypeScript: 0 napak (ohranjeno) ✨
+- Skupno: 174 AI endpointov (+3 od v6.64)
+- Verzija aplikacije: v6.65.0
