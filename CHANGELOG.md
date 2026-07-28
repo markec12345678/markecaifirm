@@ -6,12 +6,36 @@ Format sledi [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), verzije s
 
 ## [Unreleased]
 
-Načrtovano za v6.61+:
-- UI komponente za v6.45-v6.60 funkcije v dashboard
+Načrtovano za v6.62+:
+- UI komponente za v6.45-v6.61 funkcije v dashboard
 - Unit testi za lib/ai.ts
 - Playwright E2E testi
 - WebSocket real-time negotiation
 - ML model za buyer matchmaker (fine-tuned na realni data)
+
+## [6.61.0] - 2026-07-28
+
+### Added
+- **AI Buyer Lifecycle Predictor** — napove lifecycle kupca z ML stage transition modeling
+  - 9 lifecycle faz (prospect→first_time→repeat_customer→loyal_customer→advocate→at_risk→churning→churned→reactivated)
+  - 5 ML modelov (markov_chain, lstm_sequence, random_forest, survival_analysis, cox_proportional_hazards)
+  - Per-buyer: currentStage, predictedNextStage, transitionProbability, retentionProbability,
+    churnProbability, predictedClvEur, value projection per month
+  - Stage transitions z probability, avg time, key drivers, intervention
+- **AI Listing Conversion Optimizer** — optimizira conversion rate z ML in multi-variate testing
+  - 12 conversion faktorjev (price_competitiveness, image_quality, title_clarity, description_completeness,
+    seller_reputation, location_convenience, shipping_options, payment_methods, response_speed,
+    trust_signals, urgency_elements, social_proof)
+  - 5 ML modelov (gradient_boosting, neural_network, logistic_regression, random_forest, xgboost)
+  - Multi-variate (A/B/n) testing z variants, sample size, statistical significance
+  - Per-listing: currentConversionRate vs optimizedConversionRate z lift %
+- **AI Inventory Cash Flow Optimizer** — optimizira cash flow z ML forecasting in working capital
+  - 6 cash flow strategij (accelerate_sales, delay_purchases, liquidate_dead, factor_receivables,
+    leverage_credit, seasonal_reserve)
+  - Working capital management (cash, inventory, receivables, payables, fees)
+  - ML forecast per month (inflow, outflow, net, cumulative) z confidence
+  - 4 scenariji (base_case, optimized, aggressive, conservative) z stability score
+  - Cash conversion cycle in current ratio tracking
 
 ## [6.60.0] - 2026-07-28
 
@@ -493,7 +517,8 @@ Načrtovano za v6.61+:
 
 ---
 
-[Unreleased]: https://github.com/markec12345678/markecaifirm/compare/v6.60.0...HEAD
+[Unreleased]: https://github.com/markec12345678/markecaifirm/compare/v6.61.0...HEAD
+[6.61.0]: https://github.com/markec12345678/markecaifirm/compare/v6.60.0...v6.61.0
 [6.60.0]: https://github.com/markec12345678/markecaifirm/compare/v6.59.0...v6.60.0
 [6.59.0]: https://github.com/markec12345678/markecaifirm/compare/v6.58.0...v6.59.0
 [6.58.0]: https://github.com/markec12345678/markecaifirm/compare/v6.57.0...v6.58.0
