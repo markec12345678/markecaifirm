@@ -6,12 +6,33 @@ Format sledi [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), verzije s
 
 ## [Unreleased]
 
-Načrtovano za v6.55+:
-- UI komponente za v6.45-v6.54 funkcije v dashboard
+Načrtovano za v6.56+:
+- UI komponente za v6.45-v6.55 funkcije v dashboard
 - Unit testi za lib/ai.ts
 - Playwright E2E testi
 - WebSocket real-time negotiation
 - ML model za buyer matchmaker (fine-tuned na realni data)
+
+## [6.55.0] - 2026-07-28
+
+### Added
+- **AI Inventory Liquidation Strategist** — strategic liquidation z timing in channel optimization
+  - 10 liquidation strategij (flash_sale, bundle_clearance, auction_clearance, bulk_discount,
+    donation_tax_writeoff, part_out, trade_in_credit, wholesale_lot, garage_sale, recycle_scrap)
+  - Per-item recovery rate %, expected loss, best channel, best timing
+  - 4-tedenski timeline z strategy focus in expected recovery
+  - Bundle clearance z grouped items in target buyer
+- **AI Buyer Engagement Optimizer** — optimizira engagement z personalization
+  - 5 engagement tier-ov (champion/engaged/casual/dormant/lost)
+  - 8 engagement faktorjev (recency/frequency/monetary/diversity/responsiveness/advocacy/loyalty/satisfaction)
+  - 10 personalization strategij (category_targeted, price_based, cross_sell, upsell, repeat_buy...)
+  - 8 kampanj (welcome, loyalty, reactivation, vip, seasonal, birthday, new_arrival, exclusive_preview)
+- **AI Listing Performance Forecaster v3** — advanced ML z 8-model ensemble
+  - 8 ML modelov (linear_regression, random_forest, gradient_boosting, neural_network, arima, prophet,
+    lstm, ensemble_voting) z weight, accuracy in contribution
+  - 4 scenariji (base_case, best_case, worst_case, stress_test) z confidence intervals
+  - 30-dnevni time series z uncertainty band
+  - Sensitivity analysis za price, day_of_week, season, competition
 
 ## [6.54.0] - 2026-07-28
 
@@ -337,7 +358,8 @@ Načrtovano za v6.55+:
 
 ---
 
-[Unreleased]: https://github.com/markec12345678/markecaifirm/compare/v6.54.0...HEAD
+[Unreleased]: https://github.com/markec12345678/markecaifirm/compare/v6.55.0...HEAD
+[6.55.0]: https://github.com/markec12345678/markecaifirm/compare/v6.54.0...v6.55.0
 [6.54.0]: https://github.com/markec12345678/markecaifirm/compare/v6.53.0...v6.54.0
 [6.53.0]: https://github.com/markec12345678/markecaifirm/compare/v6.52.0...v6.53.0
 [6.52.0]: https://github.com/markec12345678/markecaifirm/compare/v6.51.0...v6.52.0
