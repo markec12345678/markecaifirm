@@ -4548,3 +4548,28 @@ Work Log:
 - TypeScript: 0 napak (ohranjeno) ✨
 - Skupno: 198 AI endpointov (+3 od v6.72)
 - Verzija aplikacije: v6.73.0
+
+---
+Task ID: v6.74
+Agent: main
+Task: AI Listing Price Elasticity Analyzer v2, Inventory Turnover Accelerator, Buyer Lifetime Value Optimizer
+
+Work Log:
+- listing-price-elasticity-analyzer-v2: 5 elasticity tipov (elastic, inelastic, unitary,
+  perfectly_elastic, perfectly_inelastic). Per-item: elasticity coefficient, optimal price,
+  expected demand/revenue/profit change. Demand curves per kategorija z price points,
+  revenue-maximizing in profit-maximizing price. 5 pricing strategij. 5 ML modelov.
+- inventory-turnover-accelerator: 8 bottleneck tipov (slow_category, overpriced, poor_listing,
+  wrong_platform, seasonal_mismatch, competition, low_demand, bad_timing). 12 accelerator tipov
+  (price_drop, bundle_creation, cross_post, refresh_listing, flash_sale, auction_listing,
+  bundle_break, platform_switch, image_upgrade, description_rewrite, tag_optimization,
+  urgency_injection). 10-step action plan. 5 ML modelov.
+- buyer-lifetime-value-optimizer: 10 retention strategij (loyalty_program, personal_outreach,
+  exclusive_offers, early_access, bundle_incentives, birthday_rewards, referral_bonuses,
+  feedback_loops, price_locks, priority_support). Per-buyer: current vs optimized LTV,
+  retention/churn probability, predicted remaining purchases/value. 4 LTV projections (6m, 12m,
+  24m, 36m). 5 recommended strategies. 5 ML modelov.
+
+- TypeScript: 0 napak (ohranjeno) ✨
+- Skupno: 201 AI endpointov (+3 od v6.73)
+- Verzija aplikacije: v6.74.0
