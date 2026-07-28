@@ -2924,3 +2924,57 @@ Stage Summary:
 - Listing SEO Optimizer: keyword research, title per platforma, expected views uplift
 - Reserve Price Optimizer: auction pricing z demand analizo in 14-dnevnim planom
 - Verzija aplikacije: v6.45.0
+
+---
+Task ID: v6.46
+Agent: main
+Task: AI Cross-Sell Recommender, Buyer Trust Score, Auction Sniper v2
+
+Work Log:
+- src/app/api/ai/cross-sell-recommender/route.ts: nov POST endpoint za cross-sell
+  priporočila per kupec. 8 cross-sell tipov: complementary (dopolnilni), upsell
+  (dražja verzija), bundle (paket), repeat_buy (nadomestitev), accessory (pribor),
+  warranty (garancija), related_category (povezana kategorija), seasonal (sezonsko).
+  Per opportunity: customerName, inventoryId, crossSellType, reasoning,
+  suggestedPriceEur, expectedAcceptancePct, profitEur, priority. Customer offers z
+  bundlePriceEur, individualTotalEur, savingsEur, pitchMessage, bestChannel.
+  Bundles z bundleName, itemIds, bundlePriceEur, discountPct, targetAudience,
+  sellingPoint. 8 strategij z expectedUpliftPct in implementationEffort. Summary z
+  totalOpportunities, expectedExtraRevenueEur, expectedExtraProfitEur,
+  avgAcceptanceRatePct, crossSellEfficiencyScore.
+- src/app/api/ai/buyer-trust-score/route.ts: nov POST endpoint za trust scoring.
+  6 trust levelov: platinum (top kupci), gold (zvesti), silver (regularni),
+  bronze (novi), risky (sumljivi), scammer (črni seznam). Per buyer: trustScore
+  (0-100), paymentReliability, communicationQuality, scamRisk, churnRisk,
+  lifetimeValuePotentialEur, riskFactors, greenFlags, recommendedAction
+  (accept_priority/standard/verify_first/decline/blacklist), maxSafeTransactionEur,
+  preferredPaymentMethod (paypal/bank_transfer/cash_on_delivery/platform_escrow/cash).
+  Risk factors summary z affectedBuyers, severity, mitigation. Trust levels z
+  buyerCount, avgTrustScore, totalRevenueEur, strategy. Summary z vsemi counti,
+  totalSafeTransactionValueEur, trustEfficiencyScore, biggestRisk, safestBuyer.
+- src/app/api/ai/auction-sniper-v2/route.ts: nov POST endpoint za auction sniper v2.
+  5 bid taktik: aggressive (visok začetni bid odvrača konkurenco), patient (čakaj
+  do zadnje sekunde), psychological (round numbers signaling moč), incremental
+  (postopno poviševanje), decoy (nizki začetni + high snipe). ML timing model z
+  waitUntilSecondsBeforeEnd, optimalBidWindowSeconds, earliestBidTime, latestBidTime,
+  delayBetweenBidsSeconds, antiSnipeBufferSeconds. Bid plan z startingBidEur,
+  incrementStrategy, maxBidEur, snipeBidEur, buyNowPriceEur, expectedWinningBidEur,
+  winProbabilityPct, expectedProfitEur, bidCountPlanned. 5 defenses (anti_snipe,
+  incremental, psychological, decoy, fallback) z trigger in responseAction.
+  5 scenarijev (no_competition, one_bidder, frenzy, anti_snipe_triggered, loss) z
+  probabilityPct in bestResponse. Competitor analysis z expectedBidders,
+  likelyMaxCompetitorBidEur, competitionLevel. Summary z winProbabilityPct,
+  expectedProfitEur, maxAcceptableBidEur, sniperEfficiencyScore, fallbackAction.
+- src/app/page.tsx: verzija v6.46.0
+- TypeScript: 24 napak (enako kot prej) - nobenih novih napak uvedenih
+- Git commit: 'feat(v6.46): AI Cross-Sell Recommender, Buyer Trust Score, Auction Sniper v2'
+- GitHub push: uspešen
+
+Stage Summary:
+- 3 nove AI funkcionalnosti za cross-sell, buyer trust in auction sniping v2
+- 3 novi API ruti (cross-sell-recommender, buyer-trust-score, auction-sniper-v2)
+- ~803 novih vrstic kode
+- Cross-Sell Recommender: 8 strategij per kupec z bundle priporočili in pitch messages
+- Buyer Trust Score: 6 levelov z scam/churn risk in preferred payment method
+- Auction Sniper v2: ML timing z 5 taktikami, anti-snipe defense, competitor analysis
+- Verzija aplikacije: v6.46.0
