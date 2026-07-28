@@ -3259,3 +3259,75 @@ Stage Summary:
 - Profit Margin Optimizer v2: ML cross-category z 10 strategijami in rebalancing
 - Skupno 129 AI endpointov (+3 od v6.49)
 - Verzija aplikacije: v6.50.0
+
+---
+Task ID: v6.51
+Agent: main
+Task: AI Buyer Retention Predictor, Listing Description Generator v2, Inventory Performance Tracker
+
+Work Log:
+- src/app/api/ai/buyer-retention-predictor/route.ts: nov POST endpoint za churn
+  prediction. 5 stage-ov: new (1. nakup v 30d), active (redni, nedavno),
+  at_risk (60-90d od zadnjega, padajoča frekvenca), churning (90-180d, visok churn
+  risk), churned (>180d, težko reaktivirati). Per buyer: churnProbabilityPct,
+  retentionProbabilityPct, stage, daysUntilChurn, projectedLtvEur, atRiskFactors,
+  retentionDrivers, recommendedStrategy (8 strategij), expectedRetentionProbabilityPct,
+  expectedLtvUpliftEur, bestContactChannel, bestContactTime. 7 churn faktorjev:
+  recency, frequency, monetary, categories, engagement, competition, seasonality z
+  impactWeight in mitigation. 8 win-back strategij: personal_outreach, exclusive_offer,
+  early_access, bundle_deal, loyalty_reward, reactivation_discount, check_in_message,
+  referral_request z expectedSuccessRatePct, implementationCostEur, expectedLtvUpliftEur,
+  roiScore. 90-dnevni retention plan z dayOffset, action, channel, messageTemplate,
+  expectedResponseRatePct. Predictions (4 timeframe) z active/atRisk/churned counts in
+  retained/lost revenue. Summary z vsemi stage counti, avg churn/retention probability,
+  totalProjectedLtvEur, totalAtRiskRevenueEur, retentionEfficiencyScore.
+- src/app/api/ai/listing-description-generator-v2/route.ts: nov POST endpoint za
+  multi-platform in multi-tone generacijo opisov. 5 platform: bolha (sl, technical,
+  4000c), facebook (sl, emotional, 5000c), vinted (sl, trendy, 1500c), ebay (en,
+  detailed, 8000c), kleinanzeigen (de, practical, 4000c). 6 tonov: professional,
+  friendly, urgent, luxury, playful, technical. Per listing per platform per tone:
+  description (500-800c), wordCount, charCount, hook, cta, keywordsIncluded,
+  emojisUsed, expectedEngagementScore, expectedConversionPct, language. 3 A/B
+  varianti per listing z recommendedVariant in reasoning. Platform optimizations z
+  titleRule, descriptionStructure, toneRecommendation, specialTips, wordCountTarget,
+  emojiUsage. A/B test plan z variantATone, variantBTone, testDurationDays,
+  primaryMetric, successThresholdPct, winnerSelectionCriteria. Summary z
+  avgEngagementScore, avgConversionPct, bestToneOverall, bestPlatformOverall,
+  bestCombination, generatorEfficiencyScore.
+- src/app/api/ai/inventory-performance-tracker/route.ts: nov POST endpoint za KPI
+  tracking. 10 KPI-jev: revenue, profit, margin_pct, days_to_sell, inventory_turnover,
+  sell_through_rate, avg_sell_price, holding_cost, stale_rate, dead_inventory_ratio
+  z currentValue, previousValue, changePct, trend (up/down/flat), benchmark,
+  benchmarkStatus, status (excellent→critical), description. Trendi z 30-dnevno
+  napovedjo (prediction30d), confidencePct in drivers. Category benchmarks z
+  yourMarginPct vs industryAvgMarginPct, yourDaysToSell vs industryAvgDaysToSell,
+  performanceTier, gapToBenchmarkPct. Category performance z revenue, profit,
+  marginPct, daysToSell, itemsSold, performanceTier, trend, recommendedAction.
+  5 alert tipov: low_margin, slow_moving, high_stale, dead_inventory,
+  underperforming_category z severity (info/warning/critical), description,
+  recommendedAction, expectedImpactEur. Summary z totalRevenueEur, totalProfitEur,
+  avgMarginPct, revenueChangeVsPrevPct, profitChangeVsPrevPct, inventoryHealthScore,
+  bestPerformingCategory, worstPerformingCategory, biggestThreat, biggestOpportunity,
+  performanceEfficiencyScore.
+
+DOC UPDATES:
+- README.md: verzija v6.51.0, 132+ endpoints badge, "kaj je novega v v6.51" sekcija,
+  zadnje verzije posodobljene, changelog link do v6.51
+- CHANGELOG.md: v6.51.0 sekcija dodana z vsemi 3 novimi funkcijami in compare linki
+- AI_ENDPOINTS.md: avtomatsko regenerirano s 132 endpointi
+- package.json: version 6.51.0
+- src/app/page.tsx: verzija v6.51.0
+
+- TypeScript: 24 napak (enako kot prej) - nobenih novih napak uvedenih
+- Git commit: 'feat(v6.51): AI Buyer Retention Predictor, Listing Description Generator v2, Inventory Performance Tracker'
+- GitHub push: uspešen (8 files, 1084 insertions)
+
+Stage Summary:
+- 3 nove AI funkcionalnosti za buyer retention, description generation v2 in performance tracking
+- 3 novi API ruti (buyer-retention-predictor, listing-description-generator-v2, inventory-performance-tracker)
+- ~970 novih vrstic kode
+- Buyer Retention Predictor: 5 stage-ov, 7 churn faktorjev, 8 win-back strategij, 90-dnevni plan
+- Listing Description Generator v2: 5 platform × 6 tonov z A/B variantami in test plan
+- Inventory Performance Tracker: 10 KPI-jev, trendi, benchmarks, 5 alert tipov
+- Skupno 132 AI endpointov (+3 od v6.50)
+- Verzija aplikacije: v6.51.0
