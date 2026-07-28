@@ -6,12 +6,31 @@ Format sledi [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), verzije s
 
 ## [Unreleased]
 
-Načrtovano za v6.71+:
-- UI komponente za v6.45-v6.70 funkcije v dashboard
+Načrtovano za v6.72+:
+- UI komponente za v6.45-v6.71 funkcije v dashboard
 - Unit testi za lib/ai.ts
 - Playwright E2E testi
 - WebSocket real-time negotiation
 - ML model za buyer matchmaker (fine-tuned na realni data)
+
+## [6.71.0] - 2026-07-28
+
+### Added
+- **AI Listing Multi-Variant Tester** — A/B/n testing z ML in statistical significance
+  - 8 variant elementov (title, description, price, image, tags, cta, timing, platform)
+  - 5 variantov per listing z ML predictions (CTR, conversion, views, inquiries, engagement, winner probability)
+  - Statistical analysis z confidence intervals, p-value, statistical power, sample size
+  - 5 ML modelov z prediction type (ctr, conversion, engagement, winner)
+- **AI Inventory Profit Maximizer** — maksimizira profit z ML optimization engine
+  - 10 optimization tipov (price_increase, price_decrease, bundle_creation, cross_sell, upsell, renovation, relist, platform_switch, timing_optimization, bundle_break)
+  - Per-item: current vs optimized profit z increase % in implementation steps
+  - 4 scenariji (current, optimized, aggressive, conservative) z net gain in probability
+  - 8-step action plan z expected profit increase in timeframe
+- **AI Buyer Predictive Modeler** — napove vedenje kupca z ML ensemble
+  - 8 prediction tipov (next_purchase, purchase_amount, category_preference, churn_probability, ltv_projection, referral_probability, response_probability, negotiation_outcome)
+  - Per-buyer: next purchase prediction (date, category, amount), LTV projection (6m/12m/24m), churn risk, referral probability
+  - 5 behavioral models z input features in accuracy
+  - 8 triggers z trigger condition in urgency
 
 ## [6.70.0] - 2026-07-28
 
@@ -698,7 +717,8 @@ Načrtovano za v6.71+:
 
 ---
 
-[Unreleased]: https://github.com/markec12345678/markecaifirm/compare/v6.70.0...HEAD
+[Unreleased]: https://github.com/markec12345678/markecaifirm/compare/v6.71.0...HEAD
+[6.71.0]: https://github.com/markec12345678/markecaifirm/compare/v6.70.0...v6.71.0
 [6.70.0]: https://github.com/markec12345678/markecaifirm/compare/v6.69.0...v6.70.0
 [6.69.0]: https://github.com/markec12345678/markecaifirm/compare/v6.68.0...v6.69.0
 [6.68.0]: https://github.com/markec12345678/markecaifirm/compare/v6.67.0...v6.68.0
