@@ -6,12 +6,31 @@ Format sledi [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), verzije s
 
 ## [Unreleased]
 
-Načrtovano za v6.64+:
-- UI komponente za v6.45-v6.63 funkcije v dashboard
+Načrtovano za v6.65+:
+- UI komponente za v6.45-v6.64 funkcije v dashboard
 - Unit testi za lib/ai.ts
 - Playwright E2E testi
 - WebSocket real-time negotiation
 - ML model za buyer matchmaker (fine-tuned na realni data)
+
+## [6.64.0] - 2026-07-28
+
+### Added
+- **AI Listing Tag Optimizer** — ML tag optimization z keyword research in search visibility
+  - 10 tag kategorij (primary, specification, condition, location, price, seasonal, long_tail, trending, competitor, niche)
+  - Per-tag ML scoring (search volume, competition, relevance, CTR, visibility)
+  - Keyword research z difficulty score, opportunity score in trend
+  - Per-listing: current vs optimized search visibility z improvement %
+- **AI Inventory Seasonal Planner v2** — advanced seasonal planning z ML in cross-category analysis
+  - 8 sezon (spring, summer, autumn, winter, christmas, easter, back_to_school, black_friday)
+  - 12-mesečni koledar z recommended actions, categories to stock/sell per mesec
+  - Per-category seasonal factor, peak season, stock action (build_up/maintain/reduce/liquidate)
+  - 5 ML modelov z seasonal accuracy in 5 seasonal strategij
+- **AI Buyer Loyalty Program Designer** — oblikuje loyalty program z ML in tier-based rewards
+  - 5 tier-ov (bronze, silver, gold, platinum, diamond) z perks, discount, exclusive access
+  - 7 reward tipov (discount, free_item, early_access, bundle, cashback, referral_bonus, birthday_gift)
+  - Point system z points per euro, bonus points, expiry in redemption options
+  - 12-mesečni projection z active members, points issued/redeemed, revenue uplift, retention improvement
 
 ## [6.63.0] - 2026-07-28
 
@@ -560,7 +579,8 @@ Načrtovano za v6.64+:
 
 ---
 
-[Unreleased]: https://github.com/markec12345678/markecaifirm/compare/v6.63.0...HEAD
+[Unreleased]: https://github.com/markec12345678/markecaifirm/compare/v6.64.0...HEAD
+[6.64.0]: https://github.com/markec12345678/markecaifirm/compare/v6.63.0...v6.64.0
 [6.63.0]: https://github.com/markec12345678/markecaifirm/compare/v6.62.0...v6.63.0
 [6.62.0]: https://github.com/markec12345678/markecaifirm/compare/v6.61.0...v6.62.0
 [6.61.0]: https://github.com/markec12345678/markecaifirm/compare/v6.60.0...v6.61.0
