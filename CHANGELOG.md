@@ -6,12 +6,33 @@ Format sledi [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), verzije s
 
 ## [Unreleased]
 
-Načrtovano za v6.62+:
-- UI komponente za v6.45-v6.61 funkcije v dashboard
+Načrtovano za v6.63+:
+- UI komponente za v6.45-v6.62 funkcije v dashboard
 - Unit testi za lib/ai.ts
 - Playwright E2E testi
 - WebSocket real-time negotiation
 - ML model za buyer matchmaker (fine-tuned na realni data)
+
+## [6.62.0] - 2026-07-28
+
+### Added
+- **AI Listing Title Generator v2** — ML naslovi z A/B testing in platform optimization
+  - 10 title strategij (keyword_front_loaded, brand_model_spec, benefit_focused, urgency_driven,
+    question_format, number_included, emotional_appeal, local_seo, comparison_format, scarcity_emphasis)
+  - 5 title variantov per listing z ML scoring (CTR, search visibility, conversion, engagement)
+  - Platform-specific optimizations z max chars, keyword placement, emoji usage
+  - A/B test plan z variant A/B, sample size, statistical significance
+- **AI Inventory Demand Forecaster** — napove povpraševanje po kategorijah z ML
+  - 5 ML modelov (arima, lstm, prophet, xgboost, ensemble) z accuracy, MAE, weight
+  - Per-category demand prediction z demand_supply_ratio in recommended action
+  - Demand trend detection z affected categories in opportunity level
+  - Monthly forecast z predicted demand, revenue, confidence, seasonal factor
+- **AI Buyer Purchase Pattern Analyzer** — analiza nakupnih vzorcev z ML sequence mining
+  - 10 pattern tipov (sequential_consistent, seasonal_cyclical, price_progression, category_expansion,
+    complementary_chain, replacement_cycle, upgrade_pattern, bulk_buyer, sporadic_random, declining_frequency)
+  - 5 ML modelov (sequence_mining, association_rules, markov_chain, lstm_sequence, clustering)
+  - Sequence patterns z next predicted item in association rules z support, confidence, lift
+  - Per-buyer predicted next purchase z category, price range, date, probability
 
 ## [6.61.0] - 2026-07-28
 
@@ -517,7 +538,8 @@ Načrtovano za v6.62+:
 
 ---
 
-[Unreleased]: https://github.com/markec12345678/markecaifirm/compare/v6.61.0...HEAD
+[Unreleased]: https://github.com/markec12345678/markecaifirm/compare/v6.62.0...HEAD
+[6.62.0]: https://github.com/markec12345678/markecaifirm/compare/v6.61.0...v6.62.0
 [6.61.0]: https://github.com/markec12345678/markecaifirm/compare/v6.60.0...v6.61.0
 [6.60.0]: https://github.com/markec12345678/markecaifirm/compare/v6.59.0...v6.60.0
 [6.59.0]: https://github.com/markec12345678/markecaifirm/compare/v6.58.0...v6.59.0
