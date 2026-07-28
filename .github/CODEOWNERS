@@ -1,0 +1,27 @@
+# CODEOWNERS
+# Each line is a file pattern followed by one or more owners
+# Owners with @username will be requested for review on PRs touching those files
+
+# Default owner for entire repo
+*                           @markec12345678
+
+# AI endpoints
+/src/app/api/ai/            @markec12345678
+
+# Core lib
+/src/lib/                   @markec12345678
+
+# Database schema
+/prisma/                    @markec12345678
+
+# Main UI
+/src/app/page.tsx           @markec12345678
+/src/components/dashboard/  @markec12345678
+
+# CI/CD
+/.github/workflows/         @markec12345678
+
+# Documentation
+/README.md                  @markec12345678
+/CHANGELOG.md               @markec12345678
+/CONTRIBUTING.md            @markec12345678

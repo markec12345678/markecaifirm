@@ -1,0 +1,45 @@
+name: AI Endpoints Count
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'src/app/api/ai/**'
+
+jobs:
+  count-endpoints:
+    name: Count AI Endpoints
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Count AI endpoint directories
+        id: count
+        run: |
+          ENDPOINT_COUNT=$(find src/app/api/ai -mindepth 1 -maxdepth 1 -type d | wc -l)
+          echo "count=$ENDPOINT_COUNT" >> $GITHUB_OUTPUT
+          echo "📊 Total AI endpoints: $ENDPOINT_COUNT"
+
+      - name: Generate endpoint list
+        run: |
+          echo "# AI Endpoints (auto-generated)" > AI_ENDPOINTS.md
+          echo "" >> AI_ENDPOINTS.md
+          echo "Total: ${{ steps.count.outputs.count }} endpoints" >> AI_ENDPOINTS.md
+          echo "" >> AI_ENDPOINTS.md
+          echo "| # | Endpoint | Path |" >> AI_ENDPOINTS.md
+          echo "|---|----------|------|" >> AI_ENDPOINTS.md
+          i=1
+          for dir in $(ls -1 src/app/api/ai/ | sort); do
+            echo "| $i | $dir | \`/api/ai/$dir\` |" >> AI_ENDPOINTS.md
+            i=$((i+1))
+          done
+
+      - name: Commit endpoint list
+        run: |
+          git config --local user.email "github-actions[bot]@users.noreply.github.com"
+          git config --local user.name "github-actions[bot]"
+          git add AI_ENDPOINTS.md
+          git diff --staged --quiet || git commit -m "docs: auto-update AI_ENDPOINTS.md (${{ steps.count.outputs.count }} endpoints)"
+          git push

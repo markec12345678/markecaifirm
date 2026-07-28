@@ -1,7 +1,611 @@
-# Markec AI Firm — Opportunity Monitor
+# Markec AI Firm — AI Trading Firm za slovenske oglase
 
-Lokalni AI lovec priložnosti za slovenske spletne portale (Bolha, Nepremičnine, Avtonet, ...).
-V lastnem API ključu in lastnem AI modelu (Ollama / OpenAI / Anthropic / OpenAI-kompatibilni).
+[![Version](https://img.shields.io/badge/version-v6.49.0-blue.svg)](./CHANGELOG.md)
+[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](./LICENSE)
+[![AI Endpoints](https://img.shields.io/badge/AI%20endpoints-126+-green.svg)](./AI_ENDPOINTS.md)
+[![Next.js](https://img.shields.io/badge/Next.js-16-black.svg)](https://nextjs.org/)
+[![TypeScript](https://img.shields.io/badge/TypeScript-5-blue.svg)](https://www.typescriptlang.org/)
+[![Prisma](https://img.shields.io/badge/Prisma-6-indigo.svg)](https://www.prisma.io/)
+[![Local-First](https://img.shields.io/badge/local-first-purple.svg)](#-local-first--zero-cloud)
+[![PRs Welcome](https://img.shields.io/badge/PRs-welcome-brightgreen.svg)](./CONTRIBUTING.md)
+
+> **AI-powered trading firm** za Bolha, Facebook Marketplace, Vinted, Avtonet in Kleinanzeigen.
+> **126+ AI endpointov** za iskanje, ocenjevanje, kupovanje in preprodajo.
+> **Local-first** — vsi podatki ostanejo na tvojem računalniku. **Zero-cloud**.
+
+---
+
+## 📑 Kazalo
+
+- [Overview](#-overview)
+- [Ključne funkcije](#-ključne-funkcije)
+- [Tehnologija](#-tehnologija)
+- [Hitri začetek](#-hitri-začetek)
+- [AI provider konfiguracija](#-ai-provider-konfiguracija)
+- [AI funkcije po kategorijah](#-ai-funkcije-po-kategorijah)
+- [Local-first & Zero-cloud](#-local-first--zero-cloud)
+- [Notifikacije](#-notifikacije)
+- [Anti-detection](#-anti-detection)
+- [API dokumentacija](#-api-dokumentacija)
+- [Development](#-development)
+- [Roadmap](#-roadmap)
+- [Contributing](#-contributing)
+- [License](#-license)
+- [Changelog](#-changelog)
+
+---
+
+## 🎯 Overview
+
+**Markec AI Firm** je celovit AI sistem za avtomatizirano iskanje, ocenjevanje, kupovanje in preprodajo
+oglasev na slovenskih (in srednjeevropskih) oglasnih platformah. Aplikacija teče lokalno na tvojem
+računalniku — brez cloud storitev, brez mesečnih naročnin, brez deljenja podatkov z zunanjimi strežniki.
+
+### Čisto v eni povedi
+Lovi podcenjene oglase na Bolhi/Facebooku/Vintedu z AI, jih kupi poceni, preprodaj drago z
+AI-optimiziranimi oglasi, in avtomatiziraj celoten workflow od odkritja do prodaje.
+
+### Verzija v6.49.0 (28. julij 2026)
+
+**126 AI endpointov** organiziranih v 7 kategorij:
+- **Statistike** (analytics, predictions, forecasting) — 35+ funkcij
+- **Skladišče** (inventory management, aging, depreciation) — 20+ funkcij
+- **Oglasi** (listing optimization, SEO, image analysis) — 25+ funkcij
+- **Negotiation** (real-time bot, chatbot, playbook) — 8+ funkcij
+- **Buyers/Customers** (segmentation, trust score, matching) — 12+ funkcij
+- **Risk/Insurance** (hedging, fraud detection, claims) — 10+ funkcij
+- **Finance/Profit** (margin, ROI, compounding) — 16+ funkcij
+
+### Kaj je novega v v6.49
+
+- **AI Price War Strategist** — defensive/offensive strategije za price war, 5 faz vojne, 10 taktik
+- **AI Seasonal Bundle Packager** — 8 sezon z bundle paketi (božič, black friday, back-to-school)
+- **AI Buyer Matchmaker v2 z ML** — 8-dimenzionalni scoring, 6 match tipov, 14-dnevni outreach plan
+
+▶️ Glej [CHANGELOG.md](./CHANGELOG.md) za popolno zgodovino v1.0 → v6.49.
+
+---
+
+## 🚀 Ključne funkcije
+
+### 🔍 Iskanje & odkrivanje
+- Multi-platform monitoring (Bolha, Facebook, Vinted, Avtonet, Kleinanzeigen, eBay, poljuben RSS)
+- AI Deal Score 0-100 z reasoning
+- Reverse image search za odkrivanje stock photos
+- Multi-image quality assessment z VLM
+- Fake detection in fraud detection
+- Real-time auction sniper v2 z ML timing
+
+### 🧠 AI analiza & ocenjevanje
+- AI Score 1-10 + Risk Score 1-10
+- AI Estimated Value (EUR) — koliko je item res vreden
+- AI Verdict: PRILIKA / SUMNJIVO / NEZANIMIVO
+- Multi-image VLM analiza (AUTHENTIC / SUSPICIOUS / STOCK_PHOTO)
+- Profit Margin Predictor (pred-nakupna analiza)
+- Profit Cycle Optimizer z 12m/24m/36m compounding
+
+### 💼 Trade management
+- Buy/sell tracking z automatic margin calculation
+- Inventory aging predictor z depreciation curve (4 tipi)
+- Inventory lifecycle, health monitor, stockout prevention
+- Cross-border arbitrage detection
+- Bulk listing generator za 5 platform hkrati
+
+### 🤝 Negotiation & buyers
+- Real-time negotiation bot z 10 taktikami
+- Buyer trust score (platinum→scammer, 6 levelov)
+- Buyer matchmaker v2 z ML matching (8 faktorjev)
+- Customer segmentation (RFM analiza, 5 segmentov)
+- Cross-sell recommender (8 strategij)
+- Buyer persona generator
+
+### 📈 Pricing & listing
+- Smart pricing engine z A/B testing
+- Listing SEO optimizer per platforma (Bolha/Facebook/Vinted)
+- Listing image optimizer z VLM (8 quality faktorjev)
+- Reserve price optimizer za dražbe
+- Price war strategist (defensive/offensive)
+- Seasonal bundle packager
+
+### 🛡️ Risk management
+- Risk hedging (8 strategij)
+- Insurance optimizer v2 z 4D risk matriko
+- Fraud detection in fake listing detection
+- Margin guardian (avtomatski margin alerts)
+- Tax loss harvesting
+
+### 📊 Analytics & dashboards
+- Master Dashboard z health score
+- Profit forecast in monthly reports
+- Performance benchmarks
+- Continuous learning sistem
+- Daily summary digest
+
+### 🔔 Notifikacije (5 kanalov)
+- **Telegram** z inline buttons in webhook support
+- **Discord** webhook z rich embeds
+- **Slack** webhook
+- **Email** SMTP
+- **Web Push** (VAPID) — mobile/desktop push notifications
+
+### 🕵️ Anti-detection (6 tehnik)
+- Proxy rotation (HTTP/SOCKS5)
+- Realistic headers (User-Agent rotation)
+- Request randomization (1-5s delay)
+- Stealth mode (Playwright z anti-detection)
+- CAPTCHA solving (2captcha, anti-captcha, capmonster, custom)
+- TLS fingerprinting
+
+---
+
+## 🛠️ Tehnologija
+
+| Layer | Technology |
+|-------|-----------|
+| **Framework** | Next.js 16 (App Router) |
+| **Language** | TypeScript 5 (strict mode) |
+| **Styling** | Tailwind CSS 4 + shadcn/ui |
+| **Database** | Prisma 6 + SQLite (local-first) |
+| **AI providers** | Ollama, OpenAI, Anthropic, OpenRouter, Gemini, OpenAI-compatible |
+| **Scraping** | cheerio (HTML), native fetch (RSS), Playwright (fallback) |
+| **Notifications** | Telegram Bot API, Discord/Slack webhooks, SMTP, Web Push (VAPID) |
+| **Anti-detection** | Proxy rotation, TLS fingerprinting, CAPTCHA solving |
+| **Runtime** | Bun (priporočeno) ali Node.js 20+ |
+| **CI/CD** | GitHub Actions (lint, typecheck, audit) |
+
+---
+
+## ⚡ Hitri začetek
+
+### Zahteve
+- Node.js >= 20.0.0 ali Bun >= 1.0.0
+- 4GB RAM (za lokalne AI modele)
+- ~500MB prostora
+
+### 1. Inštalacija
+
+```bash
+git clone https://github.com/markec12345678/markecaifirm.git
+cd markecaifirm
+
+# Priporočeno: Bun (hitrejši)
+bun install
+bun run db:generate
+bun run db:push
+bun run dev
+
+# Ali z npm/node
+npm install
+npx prisma generate
+npx prisma db push
+npm run dev
+```
+
+Aplikacija teče na **http://localhost:3000**
+
+### 2. Konfiguracija AI
+
+Odpri **http://localhost:3000/settings** in nastavi:
+
+#### Opcija A: Ollama (lokalno, brezplačno, priporočeno)
+```bash
+# Inštaliraj Ollama: https://ollama.com
+ollama pull qwen2.5:7b  # ali llama3.1:8b, mistral:7b
+# Ollama teče na http://localhost:11434
+```
+V Settings: Provider=Ollama, BaseURL=http://localhost:11434, Model=qwen2.5:7b
+
+#### Opcija B: OpenAI
+```bash
+# Set API key v Settings UI
+# Provider=OpenAI, Model=gpt-4o-mini (ali gpt-4o)
+```
+
+#### Opcija C: Anthropic Claude
+```bash
+# Provider=Anthropic, Model=claude-3-5-sonnet-20241022
+```
+
+#### Opcija D: OpenRouter (dostop do več modelov)
+```bash
+# Provider=OpenRouter, Model=anthropic/claude-3.5-sonnet
+```
+
+### 3. Nastavi monitoring
+
+1. Pojdi na **http://localhost:3000**
+2. Ustvari nov monitor (npr. "iPhone 13 Bolha")
+3. Nastavi iskalni URL na Bolhi
+4. Nastavi AI score threshold (default: 7/10)
+5. (Opcija) Nastavi Telegram bot za real-time alerts
+
+### 4. Aktiviraj cron (avtomatsko iskanje)
+
+```bash
+# Linux cron (vsakih 15 min)
+*/15 * * * * curl -X POST http://localhost:3000/api/scan
+
+# Ali Windows Task Scheduler z enakim URL
+```
+
+---
+
+## 🤖 AI provider konfiguracija
+
+Aplikacija podpira **6 AI providerjev** z **fallback sistemom**:
+
+| Provider | Models | Pricing | Best for |
+|----------|--------|---------|----------|
+| **Ollama** | qwen2.5:7b, llama3.1:8b, mistral:7b | Brezplačno | Lokalna slovenščina, zero-cloud |
+| **OpenAI** | gpt-4o, gpt-4o-mini, gpt-3.5-turbo | $0.15-5/1M tokens | Najboljša kvaliteta |
+| **Anthropic** | claude-3.5-sonnet, claude-3-opus | $0.25-15/1M tokens | Long context, reasoning |
+| **OpenRouter** | 200+ models prek enega API | Različno | Fleksibilnost |
+| **Gemini** | gemini-1.5-pro, gemini-1.5-flash | Brezplačno (z limiti) | Multimodal, spletni podatki |
+| **OpenAI-compatible** | poljuben | Različno | Local LLM (vLLM, LM Studio) |
+
+### Fallback sistem
+```typescript
+// v Settings: Nastavi primary + fallback
+// Če primary odpove, avtomatsko preklopi na fallback
+const aiSettings = {
+  provider: 'openai',
+  fallbackProvider: 'ollama',  // backup
+};
+```
+
+### AI usage tracking
+Vsak AI klic je zabeležen v bazi (`aiCallsToday`, `aiCallsDate`).
+Dnevni reset ob polnoči.
+
+---
+
+## 📚 AI funkcije po kategorijah
+
+### 📊 Statistike (35+ funkcij)
+- **Anomaly detection** — AI sam odkriva trende in anomalije
+- **Daily summary** — dnevni povzetek aktivnosti
+- **Demand forecast** — napoved povpraševanja po kategorijah
+- **Depreciation forecast** — napoved padca vrednosti
+- **Market trends** — trendi v kategorijah
+- **Market saturation** — nasičenost trga
+- **Performance forecaster** — napoved performance
+- **Profit forecast** — napoved dobička
+- **Profit dashboard** — centralni dashboard
+- **Trend predictions** — trendi za naslednje tedne
+- ...in 25+ več
+
+### 📦 Skladišče (20+ funkcij)
+- **Inventory aging** — sledi staranju inventarja (7 faz)
+- **Inventory aging predictor** — depreciation curve (4 tipi)
+- **Inventory health** — zdravje inventarja
+- **Inventory health monitor** — real-time monitoring
+- **Inventory lifecycle** — celoten lifecycle
+- **Stockout prevention** — preprečevanje izpodravitve
+- **Predictive procurement** — napovedna nabava
+- **Smart restock** — pametno dopolnjevanje
+- **Cash reserve** — rezerva gotovine
+- **Cashflow** — tok gotovine
+- ...in 10+ več
+
+### 📝 Oglasi (25+ funkcij)
+- **Generate listing** — AI generira oglas iz trade-a
+- **Listing SEO optimizer** — optimizacija za Bolha/Facebook/Vinted
+- **Listing image optimizer** — VLM analiza slik (8 faktorjev)
+- **Listing performance** — performansa oglasov
+- **Listing refresh** — osveževanje oglasov
+- **Listing rotation** — rotacija med platformami
+- **Listing velocity** — hitrost prodaje
+- **Title A/B test** — testiranje naslovov
+- **Description optimizer** — optimizacija opisov
+- **Bulk listing generator** — multi-platform generacija
+- ...in 15+ več
+
+### 🤝 Negotiation (8+ funkcij)
+- **Real-time negotiation bot** — real-time odgovori (10 taktik)
+- **Negotiation chatbot** — multi-turn pogovor
+- **Negotiation playbook** — strategija za vsak item
+- **Negotiation tracker** — sledi pogajanjem
+- **Negotiation outcome** — napoved izida
+- **Smart alert router** — pametno usmerjanje alertov
+
+### 👥 Buyers/Customers (12+ funkcij)
+- **Customer segmentation** — RFM analiza (5 segmentov)
+- **Buyer trust score** — 6 trust levelov (platinum→scammer)
+- **Buyer matchmaker v2** — ML matching (8 faktorjev)
+- **Buyer persona** — generiranje kupcev
+- **Buyer intent** — napoved nakupne intencije
+- **Customer LTV** — lifetime value napoved
+- **Cross-sell recommender** — 8 strategij
+- **Buyer matchmaker v1** — osnovni matching
+
+### 🛡️ Risk/Insurance (10+ funkcij)
+- **Risk hedging** — 8 hedging strategij
+- **Insurance optimizer v2** — 4D risk matrika
+- **Insurance claim** — upravljanje zahtevkov
+- **Fraud detection** — zaznavanje prevare
+- **Fake detection** — lažni oglasi
+- **Margin guardian** — avtomatski margin alerts
+- **Risk parity** — porazdelitev tveganja
+- **Tax loss harvesting** — davčna optimizacija
+
+### 💰 Finance/Profit (16+ funkcij)
+- **Profit margin predictor** — pred-nakupna analiza
+- **Profit cycle** — 8-fazni cikel z compounding
+- **Profit cascade** — kaskadni profit
+- **Profit dashboard** — centralni dashboard
+- **Profit forecast** — napoved dobička
+- **Profit trail** — sled dobička
+- **Profit playbook** — 8 faz playbook
+- **Master dashboard** — glavni dashboard z health score
+- **Autonomous trading** — paper/live mode
+- **Cash generator** — 8 strategij z 3-valovnim planom
+- **Smart bundle pricing** — 8 pricing modelov
+- **Margin optimizer** — optimizacija marž
+- **Budget allocator** — porazdelitev proračuna
+- ...in 4+ več
+
+▶️ **Glej [AI_ENDPOINTS.md](./AI_ENDPOINTS.md) za popoln seznam vseh 126 endpointov.**
+
+---
+
+## 🔒 Local-first & Zero-cloud
+
+### Kaj to pomeni?
+
+| Lastnost | Markec AI Firm | Tipična SaaS |
+|----------|---------------|--------------|
+| Podatki | Lokalno (SQLite) | Cloud |
+| AI model | Lokalno (Ollama) ali tvoj API | Njihov |
+| Mesečna naročnina | 0€ | 10-100€ |
+| Data sharing | Nikoli | Pogosto |
+| Customizacija | Polna | Omejena |
+| Offline delovanje | Da (z Ollama) | Ne |
+| Hitrost | Lokalna omrežja | Internet |
+
+### Zakaj local-first?
+1. **Privatnost** — tvoji podatki ne zapustijo računalnika
+2. **Stroški** — enkratna namestitev, brez mesečnih naročnin
+3. **Hitrost** — lokalna AI (Ollama) je hitrejša od cloud API-jev
+4. **Kontrola** — polna kontrola nad AI modelom in parametri
+5. **GDPR compliant** — podatki ostanejo pri tebi
+
+---
+
+## 🔔 Notifikacije
+
+### 5 kanalov
+1. **Telegram Bot** — real-time alerts z inline buttons
+2. **Discord Webhook** — rich embeds z barvami
+3. **Slack Webhook** — za team collaboration
+4. **Email SMTP** — za dnevne/porochne digeste
+5. **Web Push (VAPID)** — browser push na mobile/desktop
+
+### Notification modes
+- **Instant** — takoj ko pride nov listing
+- **Daily digest** — enkrat dnevno povzetek
+- **Weekly digest** — enkrat tedensko povzetek
+
+### Quiet hours
+- Onemogoči alerte v določenih urah (npr. 22:00-07:00)
+- Pomembni alerti (high score) še vedno pridejo skozi
+
+---
+
+## 🕵️ Anti-detection
+
+Za scraping Bolhe in drugih platform, aplikacija vključuje:
+
+### 6 tehnik
+1. **Proxy rotation** — HTTP/SOCKS5 proxy z avtentikacijo
+2. **Realistic headers** — rotacija User-Agent stringov
+3. **Request randomization** — 1-5s delay med requesti
+4. **Stealth mode** — Playwright z anti-detection plugin
+5. **CAPTCHA solving** — 2captcha, anti-captcha, capmonster, custom
+6. **TLS fingerprinting** — custom TLS client za fingerprint masking
+
+### Etika uporabe
+- Spoštuj robots.txt in ToS platform
+- Ne preobremeni strežnikov (rate limiting)
+- Ne uporabljaj za fraud ali zlonamerne namene
+
+---
+
+## 📡 API dokumentacija
+
+### Auth
+Ni avtentikacije (local-first). Aplikacija teče na localhost.
+
+### Endpointi (126 AI + sistemski)
+
+```bash
+# AI primeri
+POST /api/ai/insights                    # AI Insights (trendi, anomalije)
+POST /api/ai/customer-segmentation       # RFM analiza
+POST /api/ai/buyer-matchmaker-v2         # ML matching
+POST /api/ai/realtime-negotiation-bot    # Real-time negotiation
+POST /api/ai/profit-margin-predictor     # Pred-nakupna analiza
+POST /api/ai/auction-sniper-v2           # Auction sniper z ML timing
+
+# Sistemski
+GET  /api/health                         # Health check
+GET  /api/scan                           # Trigger monitoring scan
+POST /api/settings                       # Update nastavitve
+GET  /api/listings                       # Seznam listingov
+POST /api/trades                         # Ustvari trade
+```
+
+▶️ **Glej [AI_ENDPOINTS.md](./AI_ENDPOINTS.md) za popoln seznam.**
+
+---
+
+## 🛠️ Development
+
+### Setup
+```bash
+bun install
+bun run db:generate
+bun run db:push
+bun run dev
+```
+
+### Scripts
+```bash
+bun run dev          # Development server
+bun run build        # Production build
+bun run start        # Production server
+bun run lint         # ESLint
+bun run typecheck    # TypeScript check
+bun run db:push      # Push Prisma schema
+bun run db:generate  # Generate Prisma client
+bun run db:migrate   # Run migrations
+bun run db:reset     # Reset database
+```
+
+### Project structure
+```
+markec-ai-firm/
+├── src/
+│   ├── app/
+│   │   ├── api/
+│   │   │   └── ai/              # 126 AI endpointov
+│   │   ├── page.tsx             # Main dashboard
+│   │   ├── settings/            # Settings UI
+│   │   └── ...
+│   ├── components/
+│   │   ├── dashboard/           # Dashboard komponente
+│   │   └── ui/                  # shadcn/ui komponente
+│   └── lib/
+│       ├── ai.ts                # Multi-provider AI client
+│       ├── db.ts                # Prisma client
+│       └── pipeline.ts          # Scraping pipeline
+├── prisma/
+│   └── schema.prisma            # Database schema
+├── .github/
+│   ├── workflows/               # CI/CD
+│   ├── ISSUE_TEMPLATE/          # Issue templates
+│   ├── CODEOWNERS               # Code owners
+│   └── PULL_REQUEST_TEMPLATE.md
+├── public/                      # Static assets
+├── README.md                    # Ta datoteka
+├── CHANGELOG.md                 # Verzije v1.0 → v6.49
+├── CONTRIBUTING.md              # Navodila za prispevanje
+├── LICENSE                      # MIT
+├── SECURITY.md                  # Security policy
+└── package.json
+```
+
+### Coding standards
+- TypeScript strict mode
+- ESLint brez napak
+- 0 novih TS napak (trenutno 24 obstoječih)
+- Conventional Commits (`feat(v6.50): AI XYZ function`)
+- Vsi AI endpointi sledijo istemu vzorcu (glej [CONTRIBUTING.md](./CONTRIBUTING.md))
+
+▶️ **Glej [CONTRIBUTING.md](./CONTRIBUTING.md) za podrobnosti.**
+
+---
+
+## 🗺️ Roadmap
+
+### v6.50 (načrtovano)
+- [ ] UI komponente za v6.45-v6.49 funkcije v dashboard
+- [ ] WebSocket real-time negotiation (SSE namesto polling)
+- [ ] Playwright E2E testi za glavne flow-e
+
+### v6.51-v6.60
+- [ ] ML model za buyer matchmaker (fine-tuned na realnem data)
+- [ ] PostgreSQL support za multi-user deployment
+- [ ] Mobile app (React Native)
+- [ ] Plugin sistem za custom scrapers
+- [ ] Multi-language support (angleščina, nemščina)
+
+### v7.0 (long-term)
+- [ ] Cloud deployment option (Docker, Kubernetes)
+- [ ] Team collaboration (multi-user z avtentikacijo)
+- [ ] Marketplace za custom AI strategije
+- [ ] API za third-party integracije
+
+---
+
+## 🤝 Contributing
+
+Prispevki so dobrodošli! Preberi [CONTRIBUTING.md](./CONTRIBUTING.md) za:
+
+- Development setup
+- Coding standards
+- AI endpoint konvencije
+- Commit guidelines
+- Pull Request proces
+- Testing navodila
+
+### Hitri prispevek
+1. Fork repozitorija
+2. Ustvari branch: `git checkout -b feat/v6.50-ai-xyz`
+3. Commit: `feat(v6.50): AI XYZ function`
+4. Push: `git push origin feat/v6.50-ai-xyz`
+5. Odpri Pull Request
+
+---
+
+## 📄 License
+
+Projekt je licenciran pod **MIT License** — glej [LICENSE](./LICENSE).
+
+Lahko:
+- ✅ Uporabljaš komercialno
+- ✅ Modificiraš
+- ✅ Distribuiraš
+- ✅ Privatno uporabljaš
+
+Z obveznostjo:
+- ⚠️ Vključiti copyright notice in license v vse kopije
+
+---
+
+## 📋 Changelog
+
+Popolna zgodovina verzij v [CHANGELOG.md](./CHANGELOG.md) — od v1.0 (25. junij 2026) do v6.49 (28. julij 2026).
+
+### Zadnje verzije
+- **v6.49.0** (28. jul 2026) — Price War Strategist, Seasonal Bundle Packager, Buyer Matchmaker v2
+- **v6.48.0** (28. jul 2026) — Inventory Aging Predictor, Seller Reliability v2, Bulk Listing Generator
+- **v6.47.0** (28. jul 2026) — Profit Margin Predictor, Listing Image Optimizer, Real-time Negotiation Bot
+- **v6.46.0** (28. jul 2026) — Cross-Sell Recommender, Buyer Trust Score, Auction Sniper v2
+- **v6.45.0** (28. jul 2026) — Customer Segmentation, Listing SEO Optimizer, Reserve Price Optimizer
+
+---
+
+## 📞 Contact
+
+- **GitHub Issues** — za bug reporte in feature requeste
+- **GitHub Discussions** — za vprašanja in diskusije
+- **Email** — security@markec.local (samo za security issues)
+
+---
+
+## 🙏 Acknowledgments
+
+- [Next.js](https://nextjs.org/) — React framework
+- [Prisma](https://www.prisma.io/) — Database ORM
+- [shadcn/ui](https://ui.shadcn.com/) — UI components
+- [Ollama](https://ollama.com/) — Local AI models
+- [Radix UI](https://www.radix-ui.com/) — Accessible primitives
+- [Tailwind CSS](https://tailwindcss.com/) — Utility-first CSS
+- [Bun](https://bun.sh/) — JavaScript runtime
+
+---
+
+<div align="center">
+
+**[⬆ Nazaj na vrh](#markec-ai-firm--ai-trading-firm-za-slovenske-oglase)**
+
+Made with ❤️ by [markec12345678](https://github.com/markec12345678)
+
+</div>
+
+---
+
+## 📜 Starejše verzije (arhiv)
 
 **v1.5** — dodani: System Health endpoint z real-time monitoring (8 komponent), PWA podpora (installable mobile app z manifestom in service workerjem), browser push notifications (Web Push API z VAPID), Bolha RSS fallback (?output=rss pred HTML scraping), DB performance indeksi.
 
