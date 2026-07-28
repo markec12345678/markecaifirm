@@ -2560,3 +2560,98 @@ Stage Summary:
 - Performance Forecaster: 3 scenariji z timeline in benchmarks
 - Procurement Scheduler: 4-tedenski koledar z 8 timing faktorji in budget plan
 - Verzija aplikacije: v6.39.0
+
+---
+Task ID: v6.40 MILESTONE
+Agent: main
+Task: AI Master Dashboard, Autonomous Trading, Profit Playbook
+
+Work Log:
+- src/app/api/ai/master-dashboard/route.ts: MILESTONE endpoint — unified view vseh 160+ AI
+  funkcij. Pridobi heldTrades, soldTrades, recentListings, monitors hkrati (Promise.all).
+  8 sekcij:
+  1. EXECUTIVE: health score (0-100), grade (A+ do F), trend (improving/stable/declining),
+     top priority, one-line summary, profit trend (up/flat/down)
+  2. FINANCIAL: realized/unrealized profit, total revenue, avg ROI, margin, cash available,
+     invested, projected 30d/90d profit
+  3. INVENTORY: total items/value, healthy/stalled/dead, avg age, turnover ratio,
+     diversification score (0-100)
+  4. MARKET: active opportunities, opportunity rate, saturation, hottest category,
+     best source, competition level
+  5. RISK: risk score (0-100), concentration risk, high-risk items, margin at risk,
+     stockout risks, biggest threat
+  6. AUTOMATION: active monitors, automation level (advisory/semi_auto/full_auto),
+     alerts per week, time saved, missed opportunities
+  7. AI: aiScore/dealScore/estValue accuracy %, overall AI accuracy, learning trend,
+     recommendations followed %
+  8. ACTIONS: 8 prioritized actions z impact, deadline, category
+  Master summary (300 znakov executive paragraph).
+
+- src/app/api/ai/autonomous-trading/route.ts: MILESTONE endpoint — avtomatski nakup + prodaja.
+  2 načina: paper (simulacija brez realnega denarja) in live (pravi nakupi).
+  Config: maxBudget, maxTradesPerDay, maxBuyPrice (10% budgeta), reservePct (20%),
+  killSwitchEnabled, paperMode.
+  6 BUY RULES: deal score >= 80 AND verdict = PRILIKA AND risk <= 3, est. value >= 1.3x
+  nabavna, cena <= 10% budgeta, kategorija ROI > 20%, < maxTrades/day, cash available.
+  6 SELL RULES: >30d + profit → prodaj, >60d → 10% popust, >90d → 20% popust (likvidacija),
+  deal score se poslabša → hitro, konkurenca -15% → prodaj, sezonski vrh → premium.
+  8 SAFEGUARDS: max 1 buy/hour, max 20% per category, daily loss limit (3 zaporedne → 24h
+  pavza), weekly loss limit (-10% → 7d pavza), human override, kill switch, paper mode.
+  Status: trades today/week, profit, consecutive losses, isPaused, pauseReason.
+  Projected: monthly trades/profit/ROI, time saved, success probability.
+  Next actions z auto_execute flag. Summary z autonomousReadinessScore in confidencePct.
+
+- src/app/api/ai/profit-playbook/route.ts: MILESTONE endpoint — kombinira vseh 160+ AI
+  funkcij v optimiziran 8-fazni workflow.
+  8 faz:
+  1. SOURCING: iskanje priložnosti (ai_modules: smart-restock, procurement-scheduler,
+     market-trends, competitor-intel, geo-price-map)
+  2. EVALUATION: AI ocenjevanje (quality-aggregator, deal-score, fraud-detection,
+     fake-detection, reverse-image-search)
+  3. ACQUISITION: nakup + pogajanje (negotiation-playbook, auction-timing,
+     negotiation-chatbot, sentiment-analysis)
+  4. HOLDING: monitoring (inventory-health-monitor, inventory-aging, depreciation-forecast,
+     margin-guardian)
+  5. PRICING: določitev cene (smart-pricing-engine, price-elasticity, seasonal-pricing,
+     competitor-price-tracker)
+  6. LISTING: objava + marketing (multimodal-listing, title-abtest, description-optimizer,
+     tone-analyzer, image-quality, listing-rotation)
+  7. SELLING: pogajanje + prodaja (negotiation-outcome, buyer-matchmaker, buyer-intent,
+     cross-pollination)
+  8. POST-SALE: analiza + reinvestment (performance-benchmark, continuous-learning,
+     negotiation-tracker, profit-trail, abtest-results, cash-reserve)
+  Per faza: aiModules, actions (tool, frequency, impact), KPIs (target vs current),
+  checklist, timeRequired, automationLevel (full/semi/manual).
+  Workflow: daily (8), weekly (6), monthly (4), perNewListing (6), perSale (6).
+  Checklist: 15 itemov z phase, priority, impact.
+  Milestones: 6 z target date, metric, target/current value.
+  KPIs: 8 z current, target, unit, deadline.
+  Expected outcome: current vs projected monthly profit/ROI, time investment vs saved.
+  Summary: playbookScore (0-100), biggestOpportunity, quickestWin, longTermStrategy,
+  expected90dProfit.
+
+- src/app/page.tsx: verzija v6.40.0
+- TypeScript: 24 napak (enako kot prej) - nobenih novih napak uvedenih
+- Git commit: 'feat(v6.40 MILESTONE): AI Master Dashboard, Autonomous Trading, Profit Playbook'
+
+🎉 MILESTONE v6.40 SUMMARY:
+- 3 nove MILESTONE AI funkcionalnosti (najobsežnejše do zdaj)
+- 3 novi API ruti (master-dashboard, autonomous-trading, profit-playbook)
+- ~624 novih vrstic kode
+- Master Dashboard: 8 sekcij z vsemi metrikami v enem unified view
+- Autonomous Trading: 2 načina (paper/live) z 6 buy + 6 sell rules in 8 safeguards
+- Profit Playbook: 8-fazni workflow z 160+ AI moduli, checklist in milestones
+
+SKUPNO STANJE PO v6.40 MILESTONE:
+- 40 verzij razvoja
+- ~47.500+ vrstic kode
+- 160+ AI funkcij za maksimizacijo dobička
+- 10 virov (4 SI + 6 tujih)
+- 6 AI providerjev (Ollama, OpenAI, Anthropic, OpenAI-compatible, OpenRouter, Gemini)
+- 84+ AI API endpointov
+- 17 monitor templates
+- 6 anti-detection tehnik
+- 5 notifikacijskih kanalov
+- 3 nivoji avtomatizacije (advisory → semi_auto → full_auto)
+- 8-fazni profit maximization workflow
+- 2 autonomous trading načina (paper/live)
