@@ -3917,3 +3917,100 @@ Stage Summary:
 - Skupno 153 AI endpointov (+3 od v6.57)
 - TypeScript: 0 napak (ohranjeno) ✨
 - Verzija aplikacije: v6.58.0
+
+---
+Task ID: v6.59
+Agent: main
+Task: AI Buyer Behavior Pattern Detector, Listing Performance Forecaster v4, Inventory Health Monitor v2
+
+Work Log:
+- src/app/api/ai/buyer-behavior-pattern-detector/route.ts: nov POST endpoint za ML
+  pattern detection. 12 pattern tipov: loyal_repeat (cv < 0.5, 3+ purchases), seasonal_buyer
+  (4+ v istih mesecih), impulse_buyer (kratki intervali, visok volume), deliberate_researcher
+  (dolgi intervali), bargain_hunter (low avg price), premium_seeker (high avg price),
+  collector_enthusiast (specialized), reseller_flipper (3+ purchases/mesec), occasional_buyer
+  (1-2/year), price_sensitive (high price cv), brand_loyal, category_specialist. 8 anomaly
+  tipov: sudden_high_value_purchase (deviation > 2σ), unusual_frequency_spike (3x normal),
+  category_switch (nova kategorija po 5+ nakupih), price_range_deviation (>50% deviation),
+  location_change, response_time_degradation, purchase_pattern_break (long gap),
+  volume_anomaly (massive spike). 5 ML modelov: isolation_forest (anomaly detection),
+  k-means (pattern clustering), dbscan (density-based), autoencoder (neural anomaly),
+  statistical (z-score, IQR). Per buyer: detectedPatterns (pattern, confidencePct,
+  evidence, patternStrength), primaryPattern, anomalies (type, severity, probabilityPct,
+  description, detectedBy, recommendedAction), behavioralConsistencyScore, anomalyRiskScore,
+  predictedNextAction, mlClusterId, clusterDescription. Patterns aggregation z buyerCount,
+  avgSpentEur, avgFrequencyDays, retentionRatePct, valueToBusiness, bestStrategy. Anomalies
+  aggregation z buyerCount, avgSeverity, totalAnomalyValueEur, investigationPriority,
+  recommendedInvestigation. Interventions (personalized_outreach, loyalty_reward,
+  anomaly_investigation, win_back, prevention) z targetBuyers, expectedImpactEur, priority,
+  timeframeDays. Summary z totalPatternsDetected, totalAnomaliesDetected,
+  avgBehavioralConsistencyScore, mostCommonPattern, biggestAnomalyThreat,
+  patternDetectionScore.
+- src/app/api/ai/listing-performance-forecaster-v4/route.ts: nov POST endpoint za deep
+  learning forecasting. 8 deep modelov: transformer_encoder (self-attention za sequence),
+  bert_listing (BERT za text understanding), gpt_listing (GPT za generative forecasting),
+  lstm_sequential (long short-term memory za temporal), gru_temporal (gated recurrent
+  unit za time series), cnn_image (CNN za image features), multimodal_fusion (kombinacija
+  text + image + numerical), attention_mechanism (attention weights). Per model:
+  architecture, parametersMillions, trainingAccuracyPct, validationAccuracyPct,
+  inferenceTimeMs, weightInEnsemble, bestFor, contributionPct. Multi-horizon forecasting:
+  short_term_7d (visoka accuracy, nizka uncertainty), medium_term_30d (medium),
+  long_term_90d (nižja accuracy, višja uncertainty). Per horizon: predictedViews,
+  predictedInquiries, predictedSaleProbabilityPct, predictedSalePriceEur, confidencePct,
+  uncertaintyPct. Attention weights per feature (title_keywords, price_relative,
+  image_quality, description_length, seller_rating, category_demand, seasonality,
+  competition) z weight, rank, interpretation. Uncertainty quantification:
+  predictive_interval_95 (lowerEur, upperEur), epistemic_uncertainty_pct (model
+  uncertainty), aleatoric_uncertainty_pct (data noise), total_uncertainty_pct,
+  confidence_recommendation (high_confidence/medium_confidence/low_confidence/use_caution).
+  Per listing: deepEnsembleForecast (3 horizons + ensembleConsensus + modelAgreementPct),
+  attentionWeights, uncertaintyQuantification, keyDrivingFactors, recommendedOptimization,
+  expectedOptimizationLiftPct. Summary z avgShortTermConfidencePct, avgMediumTermConfidencePct,
+  avgLongTermConfidencePct, avgTotalUncertaintyPct, bestPerformingModel, mostImportantFeature,
+  deepLearningForecastScore.
+- src/app/api/ai/inventory-health-monitor-v2/route.ts: nov POST endpoint za real-time
+  health monitoring. 8 health metrik: turnover_rate (sold/held ratio), aging_score (manj
+  stale = višji), profitability (marža), liquidity (hitrost cash conversion),
+  diversification (porazdelitev), risk_exposure (dead inventory), capital_efficiency
+  (ROI na kapital), market_alignment (povpraševanje). Per metric: score, status
+  (excellent/good/average/poor/critical), trend (up/down/stable), benchmark, gap_pct.
+  Overall: healthScore, healthGrade (A-F), trend, trendChangePct, criticalIssuesCount,
+  lastAssessment, nextCheckupRecommended. 8 alert tipov: stale_inventory (>30d),
+  dead_inventory (>180d), low_margin (<10%), over_concentration (>30% v eni kategoriji),
+  capital_tied, demand_mismatch, risk_spike, performance_drop. Per alert: type, severity
+  (info/warning/critical/emergency), category, description, affectedItems,
+  financialImpactEur, recommendedAction, timeSensitivity (immediate/24h/7d/30d). 5
+  predictive warnings: predicted_stale (v 14d), predicted_loss, predicted_dead (v 30d),
+  predicted_cashflow_issue, predicted_overstock. Per warning: warningType, probabilityPct,
+  timeframeDays, affectedItems, predictedImpactEur, preventionAction, mlConfidencePct.
+  Per item: healthStatus (healthy/warning/critical/dead), daysHeld, holdingCostEur,
+  predictedStatus30d (sold/stale/critical/dead), recommendedAction
+  (hold/refresh/price_drop/bundle/liquidate/write_off), urgencyScore. Per category:
+  healthScore, heldCount, soldCount, revenueEur, profitEur, marginPct, issues,
+  recommendedAction. Summary z totalItemsMonitored, totalInventoryValueEur,
+  totalInvestedEur, totalUnrealizedProfitEur, healthy/warning/critical/dead items count,
+  totalAlerts, criticalAlerts, totalPredictedWarnings, biggestHealthThreat,
+  biggestImprovementOpportunity, inventoryHealthScore.
+
+DOC UPDATES:
+- README.md: verzija v6.59.0, 156+ endpoints badge, "kaj je novega v v6.59" sekcija,
+  zadnje verzije posodobljene, changelog link do v6.59
+- CHANGELOG.md: v6.59.0 sekcija dodana z vsemi 3 novimi funkcijami in compare linki
+- AI_ENDPOINTS.md: avtomatsko regenerirano s 156 endpointi
+- package.json: version 6.59.0
+- src/app/page.tsx: verzija v6.59.0
+
+- TypeScript: 0 napak (ohranjeno) ✨
+- Git commit: 'feat(v6.59): AI Buyer Behavior Pattern Detector, Listing Performance Forecaster v4, Inventory Health Monitor v2'
+- GitHub push: uspešen (8 files, 1277 insertions)
+
+Stage Summary:
+- 3 nove AI funkcionalnosti za behavior pattern detection, deep learning forecasting in real-time health monitoring
+- 3 novi API ruti (buyer-behavior-pattern-detector, listing-performance-forecaster-v4, inventory-health-monitor-v2)
+- ~1150 novih vrstic kode
+- Buyer Behavior Pattern Detector: 12 patternov, 8 anomalij, 5 ML modelov
+- Listing Performance Forecaster v4: 8 deep modelov z multi-horizon in uncertainty quantification
+- Inventory Health Monitor v2: 8 health metrik, 8 alert tipov, 5 predictive warnings
+- Skupno 156 AI endpointov (+3 od v6.58)
+- TypeScript: 0 napak (ohranjeno) ✨
+- Verzija aplikacije: v6.59.0
