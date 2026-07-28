@@ -51,7 +51,7 @@ export async function POST(req: NextRequest) {
     if (customerName && inputMessages.length === 0) {
       const listings = await db.listing.findMany({
         where: { sellerName: customerName, contactStatus: { not: 'none' } },
-        select: { id: true, title: true, contactStatus: true, contactedAt: true, sellerResponse: true, description: true },
+        select: { id: true, title: true, contactStatus: true, contactedAt: true, sellerResponse: true, description: true, firstSeenAt: true },
         take: 50,
       });
       dbMessages = listings.flatMap(l => [
@@ -66,7 +66,7 @@ export async function POST(req: NextRequest) {
       // Default: pridobi zadnje negotiation messages iz baze
       const listings = await db.listing.findMany({
         where: { contactStatus: { not: 'none' }, sellerResponse: { not: null } },
-        select: { id: true, title: true, contactStatus: true, contactedAt: true, sellerResponse: true, description: true },
+        select: { id: true, title: true, contactStatus: true, contactedAt: true, sellerResponse: true, description: true, firstSeenAt: true },
         take: 30,
         orderBy: { contactedAt: 'desc' },
       });

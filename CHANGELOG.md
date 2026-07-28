@@ -6,12 +6,40 @@ Format sledi [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), verzije s
 
 ## [Unreleased]
 
-Načrtovano za v6.60+:
-- UI komponente za v6.45-v6.59 funkcije v dashboard
+Načrtovano za v6.61+:
+- UI komponente za v6.45-v6.60 funkcije v dashboard
 - Unit testi za lib/ai.ts
 - Playwright E2E testi
 - WebSocket real-time negotiation
 - ML model za buyer matchmaker (fine-tuned na realni data)
+
+## [6.60.0] - 2026-07-28
+
+### Added
+- **AI Buyer Sentiment Analyzer v2** — NLP sentiment z emotion detection in intent classification
+  - 8 čustev (Plutchik model: joy, trust, fear, surprise, sadness, disgust, anger, anticipation)
+  - 12 intentov (purchase_intent, price_inquiry, condition_inquiry, negotiation_intent,
+    comparison_shopping, urgency_expression, skepticism, complaint, compliment, bargaining,
+    closing_intent, walk_away_intent)
+  - 6 ML modelov (bert_multilingual, roberta_sentiment, distilbert_slavic, xlm_roberta,
+    svm_classifier, lstm_sentiment)
+  - Per-buyer: sentimentScore, dominantEmotion, primaryIntent, purchaseProbabilityPct,
+    churnProbabilityPct, satisfactionScore, recommendedResponseTone
+- **AI Listing SEO Optimizer v2** — advanced SEO z keyword research, competitor analysis in ML ranking
+  - 10 SEO faktorjev (title_optimization, keyword_density, meta_description, image_alt_text,
+    url_structure, tag_optimization, content_quality, mobile_optimization, page_load_speed,
+    social_signals)
+  - Keyword research z search volume, competition, difficulty score, opportunity score, CPC, trend
+  - Competitor analysis z keyword overlap, advantages, counter strategy
+  - ML ranking z predicted search position, CTR, conversion rate, engagement score
+  - Per-listing: currentSeoScore vs optimizedSeoScore, optimized title per platforma
+- **AI Inventory Profitability Analyzer** — globoka analiza z ML profit decomposition
+  - 10 profit driverjev (purchase_price_efficiency, selling_price_optimization, fee_minimization,
+    shipping_optimization, holding_cost_minimization, category_selection, timing_optimization,
+    negotiation_effectiveness, renovation_value_add, bundle_strategy)
+  - ML decomposition per metric (revenue, cost, profit, margin, ROI, days_to_sell)
+  - 4 scenariji (current, optimized, aggressive_optimization, conservative)
+  - Per-category profitability tier (excellent→loss) z recommended action (scale_up→exit)
 
 ## [6.59.0] - 2026-07-28
 
@@ -465,7 +493,8 @@ Načrtovano za v6.60+:
 
 ---
 
-[Unreleased]: https://github.com/markec12345678/markecaifirm/compare/v6.59.0...HEAD
+[Unreleased]: https://github.com/markec12345678/markecaifirm/compare/v6.60.0...HEAD
+[6.60.0]: https://github.com/markec12345678/markecaifirm/compare/v6.59.0...v6.60.0
 [6.59.0]: https://github.com/markec12345678/markecaifirm/compare/v6.58.0...v6.59.0
 [6.58.0]: https://github.com/markec12345678/markecaifirm/compare/v6.57.0...v6.58.0
 [6.57.0]: https://github.com/markec12345678/markecaifirm/compare/v6.56.0...v6.57.0
