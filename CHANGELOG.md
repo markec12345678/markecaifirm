@@ -6,12 +6,31 @@ Format sledi [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), verzije s
 
 ## [Unreleased]
 
-Načrtovano za v6.66+:
-- UI komponente za v6.45-v6.65 funkcije v dashboard
+Načrtovano za v6.67+:
+- UI komponente za v6.45-v6.66 funkcije v dashboard
 - Unit testi za lib/ai.ts
 - Playwright E2E testi
 - WebSocket real-time negotiation
 - ML model za buyer matchmaker (fine-tuned na realni data)
+
+## [6.66.0] - 2026-07-28
+
+### Added
+- **AI Listing Cross-Platform Optimizer** — optimizira oglase čez 5 platform z ML in sync strategy
+  - 8 sync strategij (cross_post, price_sync, inventory_sync, rotation_sync, bundle_sync, seasonal_sync, exclusive_deal, competitive_pricing)
+  - Per-platform config z title, description, price, tags, language, CTA, expected views/inquiries
+  - Conflict detection (price_mismatch, double_sale, description_conflict, platform_violation)
+  - Performance metrics z current vs optimized values
+- **AI Inventory Capital Allocator** — alokacija kapitala z ML in portfolio optimization
+  - 5 ML modelov (mean_variance, kelly_criterion, risk_parity, momentum_tilting, ensemble)
+  - Per-category allocation z current vs target, rebalance amount in direction
+  - 3 scenariji (conservative, balanced, aggressive) z Sharpe ratio in max drawdown
+  - 5 rebalancing akcij (buy_more, sell_partial, exit_category, enter_new, hold)
+- **AI Buyer Win-Back Campaign Designer** — oblikuje win-back kampanje z ML in multi-touch
+  - 8 campaign tipov (reactivation_discount, we_miss_you, new_arrival_alert, exclusive_preview, bundle_offer, loyalty_reward, feedback_request, last_chance)
+  - 8 segmentov (dormant_30d→churned_180d, one_time_buyer, high_value_lost, seasonal_lapsed, price_sensitive_lost)
+  - Per-segment messages z subject line, body, tone, personalization tokens, expected open/click rate
+  - 90-dnevni timeline z per-day actions in 12-mesečni projection z ROI
 
 ## [6.65.0] - 2026-07-28
 
@@ -598,7 +617,8 @@ Načrtovano za v6.66+:
 
 ---
 
-[Unreleased]: https://github.com/markec12345678/markecaifirm/compare/v6.65.0...HEAD
+[Unreleased]: https://github.com/markec12345678/markecaifirm/compare/v6.66.0...HEAD
+[6.66.0]: https://github.com/markec12345678/markecaifirm/compare/v6.65.0...v6.66.0
 [6.65.0]: https://github.com/markec12345678/markecaifirm/compare/v6.64.0...v6.65.0
 [6.64.0]: https://github.com/markec12345678/markecaifirm/compare/v6.63.0...v6.64.0
 [6.63.0]: https://github.com/markec12345678/markecaifirm/compare/v6.62.0...v6.63.0
