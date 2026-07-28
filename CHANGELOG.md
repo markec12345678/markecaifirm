@@ -6,12 +6,33 @@ Format sledi [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), verzije s
 
 ## [Unreleased]
 
-Načrtovano za v6.72+:
-- UI komponente za v6.45-v6.71 funkcije v dashboard
+Načrtovano za v6.73+:
+- UI komponente za v6.45-v6.72 funkcije v dashboard
 - Unit testi za lib/ai.ts
 - Playwright E2E testi
 - WebSocket real-time negotiation
 - ML model za buyer matchmaker (fine-tuned na realni data)
+
+## [6.72.0] - 2026-07-28
+
+### Added
+- **AI Listing Emotional Trigger Analyzer** — analiza čustvenih sprožilcev z ML NLP
+  - 12 emotional trigger tipov (scarcity, urgency, social_proof, authority, reciprocity, loss_aversion, aspiration, nostalgia, belonging, achievement, security, novelty)
+  - Per-listing: detected triggers z intensity, missing triggers, recommended triggers z implementation in example phrases
+  - 8 emotions z trigger association in conversion correlation
+  - 4 optimization tipov (trigger_addition, trigger_intensification, trigger_removal, trigger_combination)
+  - 5 ML modelov z prediction type (trigger_detection, emotion_classification, conversion_prediction, engagement_forecast)
+- **AI Inventory Capital Efficiency Optimizer** — optimizira kapitalsko učinkovitost z ML
+  - 7 efficiency metrik (roi, turnover_rate, days_to_sell, profit_per_euro_invested, capital_utilization, holding_cost_ratio, opportunity_cost)
+  - 8 optimization tipov (faster_turnover, reduce_holding, increase_roi, capital_reallocation, cost_reduction, price_optimization, bundle_efficiency, liquidation_acceleration)
+  - Monthly projections z ROI, turnover rate, capital efficiency % in confidence
+  - 5 ML modelov z prediction type (efficiency_forecast, optimal_allocation, turnover_prediction, roi_optimization)
+- **AI Buyer Network Expansion Strategist** — širi mrežo kupcev z ML in network analysis
+  - 10 expansion strategij (referral_program, social_media_outreach, cross_platform_expansion, bundle_attract_new, seasonal_campaign, local_community, niche_targeting, partnership_leverage, content_marketing, flash_sale_attraction)
+  - 10 channels z potential new buyers, acquisition cost, conversion % in best strategy
+  - 6 campaigns z target audience, duration, expected new buyers, revenue, cost, ROI
+  - 12-mesečni projection z new buyers, total buyers, revenue, cost, net profit
+  - 5 ML modelov z prediction type (buyer_acquisition, revenue_forecast, channel_performance, network_growth)
 
 ## [6.71.0] - 2026-07-28
 
@@ -717,7 +738,8 @@ Načrtovano za v6.72+:
 
 ---
 
-[Unreleased]: https://github.com/markec12345678/markecaifirm/compare/v6.71.0...HEAD
+[Unreleased]: https://github.com/markec12345678/markecaifirm/compare/v6.72.0...HEAD
+[6.72.0]: https://github.com/markec12345678/markecaifirm/compare/v6.71.0...v6.72.0
 [6.71.0]: https://github.com/markec12345678/markecaifirm/compare/v6.70.0...v6.71.0
 [6.70.0]: https://github.com/markec12345678/markecaifirm/compare/v6.69.0...v6.70.0
 [6.69.0]: https://github.com/markec12345678/markecaifirm/compare/v6.68.0...v6.69.0
