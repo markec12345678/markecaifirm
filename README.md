@@ -1,8 +1,8 @@
 # Markec AI Firm — AI Trading Firm za slovenske oglase
 
-[![Version](https://img.shields.io/badge/version-v6.76.0-blue.svg)](./CHANGELOG.md)
+[![Version](https://img.shields.io/badge/version-v6.77.0-blue.svg)](./CHANGELOG.md)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](./LICENSE)
-[![AI Endpoints](https://img.shields.io/badge/AI%20endpoints-207+-green.svg)](./AI_ENDPOINTS.md)
+[![AI Endpoints](https://img.shields.io/badge/AI%20endpoints-210+-green.svg)](./AI_ENDPOINTS.md)
 [![Next.js](https://img.shields.io/badge/Next.js-16-black.svg)](https://nextjs.org/)
 [![TypeScript](https://img.shields.io/badge/TypeScript-5-blue.svg)](https://www.typescriptlang.org/)
 [![TypeScript Errors](https://img.shields.io/badge/TS%20errors-0-brightgreen.svg)](#)
@@ -11,7 +11,7 @@
 [![PRs Welcome](https://img.shields.io/badge/PRs-welcome-brightgreen.svg)](./CONTRIBUTING.md)
 
 > **AI-powered trading firm** za Bolha, Facebook Marketplace, Vinted, Avtonet in Kleinanzeigen.
-> **207+ AI endpointov** za iskanje, ocenjevanje, kupovanje in preprodajo.
+> **210+ AI endpointov** za iskanje, ocenjevanje, kupovanje in preprodajo.
 > **Local-first** — vsi podatki ostanejo na tvojem računalniku. **Zero-cloud**.
 
 ---
@@ -46,9 +46,9 @@ računalniku — brez cloud storitev, brez mesečnih naročnin, brez deljenja po
 Lovi podcenjene oglase na Bolhi/Facebooku/Vintedu z AI, jih kupi poceni, preprodaj drago z
 AI-optimiziranimi oglasi, in avtomatiziraj celoten workflow od odkritja do prodaje.
 
-### Verzija v6.76.0 (28. julij 2026)
+### Verzija v6.77.0 (28. julij 2026)
 
-**207 AI endpointov** organiziranih v 7 kategorij:
+**210 AI endpointov** organiziranih v 7 kategorij:
 - **Statistike** (analytics, predictions, forecasting) — 35+ funkcij
 - **Skladišče** (inventory management, aging, depreciation) — 20+ funkcij
 - **Oglasi** (listing optimization, SEO, image analysis) — 25+ funkcij
@@ -57,13 +57,13 @@ AI-optimiziranimi oglasi, in avtomatiziraj celoten workflow od odkritja do proda
 - **Risk/Insurance** (hedging, fraud detection, claims) — 10+ funkcij
 - **Finance/Profit** (margin, ROI, compounding) — 16+ funkcij
 
-### Kaj je novega v v6.76
+### Kaj je novega v v6.77
 
-- **AI Listing Engagement Predictor** — 10 engagement faktorjev z ML, predicted views/inquiries/saves/shares, 10 optimization tipov
-- **AI Inventory Stockout Predictor** — per-category stockout timing z ML, 5 stock statuses, 30-day reorder plan
-- **AI Buyer Acquisition Cost Optimizer** — 10 acquisition kanalov z ML, CAC optimization, 12-mesečni projections
+- **AI Listing Social Proof Optimizer** — 10 social proof tipov z ML, 6 trust signals, 10 optimization tipov
+- **AI Inventory Profit Margin Tracker** — 5 trend metrik z ML, per-category margin tracking, 5 alert tipov
+- **AI Buyer Retention Score Calculator** — 12 retention faktorjev z ML, 6 retention nivojev, 5 interventions
 
-▶️ Glej [CHANGELOG.md](./CHANGELOG.md) za popolno zgodovino v1.0 → v6.76.
+▶️ Glej [CHANGELOG.md](./CHANGELOG.md) za popolno zgodovino v1.0 → v6.77.
 
 ---
 
@@ -565,14 +565,14 @@ Z obveznostjo:
 
 ## 📋 Changelog
 
-Popolna zgodovina verzij v [CHANGELOG.md](./CHANGELOG.md) — od v1.0 (25. junij 2026) do v6.76 (28. julij 2026).
+Popolna zgodovina verzij v [CHANGELOG.md](./CHANGELOG.md) — od v1.0 (25. junij 2026) do v6.77 (28. julij 2026).
 
 ### Zadnje verzije
+- **v6.77.0** (28. jul 2026) — Listing Social Proof Optimizer, Inventory Profit Margin Tracker, Buyer Retention Score Calculator
 - **v6.76.0** (28. jul 2026) — Listing Engagement Predictor, Inventory Stockout Predictor, Buyer Acquisition Cost Optimizer
 - **v6.75.0** (28. jul 2026) — Listing CTR Optimizer, Inventory Cost Minimizer, Buyer Revenue Forecaster
 - **v6.74.0** (28. jul 2026) — Listing Price Elasticity Analyzer v2, Inventory Turnover Accelerator, Buyer Lifetime Value Optimizer
 - **v6.73.0** (28. jul 2026) — Listing Conversion Funnel Optimizer, Inventory Supply Chain Optimizer, Buyer Engagement Scoring Engine
-- **v6.72.0** (28. jul 2026) — Listing Emotional Trigger Analyzer, Inventory Capital Efficiency Optimizer, Buyer Network Expansion Strategist
 
 ---
 
