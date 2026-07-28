@@ -6,12 +6,38 @@ Format sledi [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), verzije s
 
 ## [Unreleased]
 
-Načrtovano za v6.58+:
-- UI komponente za v6.45-v6.57 funkcije v dashboard
+Načrtovano za v6.59+:
+- UI komponente za v6.45-v6.58 funkcije v dashboard
 - Unit testi za lib/ai.ts
 - Playwright E2E testi
 - WebSocket real-time negotiation
 - ML model za buyer matchmaker (fine-tuned na realni data)
+
+## [6.58.0] - 2026-07-28
+
+### Added
+- **AI Profit Margin Predictor v3** — advanced ML z 8-model ensemble in feature importance
+  - 8 ML modelov (gradient_boosting, random_forest, neural_network, linear_regression,
+    ridge_regression, lasso_regression, xgboost, lightgbm) z weight, accuracy, r2, MAE
+  - Per-item ensemble prediction z confidence interval in model consensus
+  - 4 scenariji (optimistic, realistic, pessimistic, stress_test) z verjetnostmi
+  - Feature importance (top 10) z direction (positive/negative) in optimal values
+  - Per-item key drivers z importance in current vs optimal value
+- **AI Seller Trust Score v2** — advanced seller scoring z ML in 12-dimenzionalno analizo
+  - 12-dimenzionalni trust score (transaction_history, responsiveness, consistency,
+    transparency, fairness, professionalism, reliability_of_delivery, financial_integrity,
+    communication_quality, listing_accuracy, post_sale_support, market_reputation)
+  - 5 ML modelov (random_forest, gradient_boosting, neural_network, logistic_regression,
+    ensemble_voting) z accuracy, precision, recall, f1
+  - 7 behavioral patternov (consistent_buyer, diverse_buyer, high_frequency...)
+  - 6 trust levelov (verified_trader→blacklisted) z ML classification
+- **AI Listing Image Generator** — AI-generated image concepts z VLM prompts
+  - 10 shot tipov (hero_shot, detail_closeup, context_lifestyle, angle_side, angle_top,
+    damage_honest, size_reference, accessory_bundle, before_after, seasonal_themed)
+  - AI prompts za Midjourney/DALL-E/Flux/Stable Diffusion z negative prompts
+  - 6 editing presetov (brightness_boost, contrast_enhance, color_correction,
+    background_cleanup, sharpness_enhance, crop_optimize) z step-by-step
+  - A/B test plan za shot variant comparison
 
 ## [6.57.0] - 2026-07-28
 
@@ -413,7 +439,8 @@ Načrtovano za v6.58+:
 
 ---
 
-[Unreleased]: https://github.com/markec12345678/markecaifirm/compare/v6.57.0...HEAD
+[Unreleased]: https://github.com/markec12345678/markecaifirm/compare/v6.58.0...HEAD
+[6.58.0]: https://github.com/markec12345678/markecaifirm/compare/v6.57.0...v6.58.0
 [6.57.0]: https://github.com/markec12345678/markecaifirm/compare/v6.56.0...v6.57.0
 [6.56.0]: https://github.com/markec12345678/markecaifirm/compare/v6.55.0...v6.56.0
 [6.55.0]: https://github.com/markec12345678/markecaifirm/compare/v6.54.0...v6.55.0
