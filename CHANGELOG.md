@@ -6,12 +6,33 @@ Format sledi [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), verzije s
 
 ## [Unreleased]
 
-Načrtovano za v6.52+:
-- UI komponente za v6.45-v6.51 funkcije v dashboard
+Načrtovano za v6.53+:
+- UI komponente za v6.45-v6.52 funkcije v dashboard
 - Unit testi za lib/ai.ts
 - Playwright E2E testi
 - WebSocket real-time negotiation
 - ML model za buyer matchmaker (fine-tuned na realni data)
+
+## [6.52.0] - 2026-07-28
+
+### Added
+- **AI Buyer Behavior Predictor** — napove naslednji nakup kupca in behavioral pattern
+  - 5 pattern-ov (regular/irregular/seasonal/burst/one_time) z ML detection
+  - 7 trigger-jev (seasonal/life_event/replacement/upgrade/complementary/impulse/need_based)
+  - Per-buyer: nextPurchaseProbability, predictedNextPurchaseDays, predictedNextCategory
+  - 5 behavior segment-ov (high_value_loyal→new_potential)
+- **AI Pricing Psychology Optimizer** — psihološke cene z 12 tehnikami
+  - 12 tehnik (charm_pricing, round_number, price_anchoring, decoy_pricing, bundle_pricing,
+    penetration, premium_pricing, psychological_threshold, odd_even_pricing, loss_leader,
+    dynamic_pricing, tiered_pricing)
+  - Anchor analysis z savings display in perceived value
+  - A/B test plan z variant A/B in confidence threshold
+- **AI Listing Performance Tracker v2** — ML predikcija konverzije z demographic data
+  - 8 ML predictions (conversion_probability, time_to_sell, final_price, profit, inquiry_rate,
+    view_rate, bounce_rate, negotiation_probability)
+  - 4 demographic faktorji (location_impact, source_preference, audience_match, seasonal_fit)
+  - Channel analysis za 5 platform z fee in net revenue
+  - 30-dnevni time series z cumulative revenue
 
 ## [6.51.0] - 2026-07-28
 
@@ -276,7 +297,8 @@ Načrtovano za v6.52+:
 
 ---
 
-[Unreleased]: https://github.com/markec12345678/markecaifirm/compare/v6.51.0...HEAD
+[Unreleased]: https://github.com/markec12345678/markecaifirm/compare/v6.52.0...HEAD
+[6.52.0]: https://github.com/markec12345678/markecaifirm/compare/v6.51.0...v6.52.0
 [6.51.0]: https://github.com/markec12345678/markecaifirm/compare/v6.50.0...v6.51.0
 [6.50.0]: https://github.com/markec12345678/markecaifirm/compare/v6.49.0...v6.50.0
 [6.49.0]: https://github.com/markec12345678/markecaifirm/compare/v6.48.0...v6.49.0
