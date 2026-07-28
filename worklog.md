@@ -4403,3 +4403,27 @@ Work Log:
 - TypeScript: 0 napak (ohranjeno) ✨
 - Skupno: 180 AI endpointov (+3 od v6.66)
 - Verzija aplikacije: v6.67.0
+
+---
+Task ID: v6.68
+Agent: main
+Task: AI Listing Price History Analyzer, Inventory Opportunity Scanner, Buyer Review Generator
+
+Work Log:
+- listing-price-history-analyzer: 5 ML modelov (arima, lstm, prophet, xgboost, ensemble)
+  za trend detection. Price trends z direction, strength, affected categories in opportunity
+  level. Per-category price points z avg, median, min, max, volatility in trend change.
+  Opportunities z deal score, discount %, urgency in recommended action.
+- inventory-opportunity-scanner: 10 opportunity tipov (undervalued_listing, price_mismatch,
+  bundle_potential, cross_sell, upsell, seasonal_opportunity, market_gap, arbitrage,
+  renovation_flip, bulk_discount). Per-item opportunity score z estimated uplift in
+  recommended action. 5 ML scoring metrik. 8-step action plan.
+- buyer-review-generator: 6 review tipov (seller_review, buyer_feedback, post_sale_review,
+  testimonial, referral_message, social_proof_quote). Per-buyer review z text, rating (1-5),
+  sentiment, key points, suggested platform. 4 sentiment kategorije. 6 templates z fill-in-
+  blanks. 5 ML scoring metrik (sentiment_accuracy, authenticity, persuasiveness, relevance,
+  readability).
+
+- TypeScript: 0 napak (ohranjeno) ✨
+- Skupno: 183 AI endpointov (+3 od v6.67)
+- Verzija aplikacije: v6.68.0
