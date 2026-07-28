@@ -18,7 +18,7 @@ export async function POST(req: NextRequest) {
   try {
     const body = await req.json().catch(() => ({}));
     const customerName = body?.customerName ? String(body.customerName).trim() : null;
-    const reviewType = REVIEW_TYPES.includes(String(body?.reviewType)) ? String(body.reviewType) : 'seller_review';
+    const reviewType: string = REVIEW_TYPES.includes(String(body?.reviewType) as any) ? String(body.reviewType) : 'seller_review';
 
     const soldTrades = await db.trade.findMany({
       where: { status: 'sold', sellPrice: { not: null }, sellLocation: { not: '' }, sellDate: { not: null } },

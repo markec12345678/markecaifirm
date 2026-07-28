@@ -6,12 +6,32 @@ Format sledi [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), verzije s
 
 ## [Unreleased]
 
-Načrtovano za v6.68+:
-- UI komponente za v6.45-v6.67 funkcije v dashboard
+Načrtovano za v6.69+:
+- UI komponente za v6.45-v6.68 funkcije v dashboard
 - Unit testi za lib/ai.ts
 - Playwright E2E testi
 - WebSocket real-time negotiation
 - ML model za buyer matchmaker (fine-tuned na realni data)
+
+## [6.68.0] - 2026-07-28
+
+### Added
+- **AI Listing Price History Analyzer** — analiza cenovne zgodovine z ML trend detection
+  - 5 ML modelov (arima, lstm, prophet, xgboost, ensemble) z prediction type per model
+  - Price trends z direction, strength, affected categories in opportunity level
+  - Per-category price points z avg, median, min, max, volatility in trend change
+  - Opportunities z deal score, discount %, urgency in recommended action
+- **AI Inventory Opportunity Scanner** — skenira inventar za skrite priložnosti z ML
+  - 10 opportunity tipov (undervalued_listing, price_mismatch, bundle_potential, cross_sell, upsell, seasonal_opportunity, market_gap, arbitrage, renovation_flip, bulk_discount)
+  - Per-item opportunity score z estimated uplift in recommended action
+  - 5 ML scoring metrik (opportunity_score, uplift_potential, time_sensitivity, feasibility, roi)
+  - Action plan z 8 koraki zexpected impact in timeframe
+- **AI Buyer Review Generator** — generira review-e z ML sentiment optimization
+  - 6 review tipov (seller_review, buyer_feedback, post_sale_review, testimonial, referral_message, social_proof_quote)
+  - Per-buyer review z text, rating (1-5), sentiment, key points, suggested platform
+  - 4 sentiment kategorije z buyer count in avg rating
+  - 6 templates z fill-in-blanks in best for sentiment
+  - 5 ML scoring metrik (sentiment_accuracy, authenticity, persuasiveness, relevance, readability)
 
 ## [6.67.0] - 2026-07-28
 
@@ -638,7 +658,8 @@ Načrtovano za v6.68+:
 
 ---
 
-[Unreleased]: https://github.com/markec12345678/markecaifirm/compare/v6.67.0...HEAD
+[Unreleased]: https://github.com/markec12345678/markecaifirm/compare/v6.68.0...HEAD
+[6.68.0]: https://github.com/markec12345678/markecaifirm/compare/v6.67.0...v6.68.0
 [6.67.0]: https://github.com/markec12345678/markecaifirm/compare/v6.66.0...v6.67.0
 [6.66.0]: https://github.com/markec12345678/markecaifirm/compare/v6.65.0...v6.66.0
 [6.65.0]: https://github.com/markec12345678/markecaifirm/compare/v6.64.0...v6.65.0
