@@ -6,12 +6,33 @@ Format sledi [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), verzije s
 
 ## [Unreleased]
 
-Načrtovano za v6.54+:
-- UI komponente za v6.45-v6.53 funkcije v dashboard
+Načrtovano za v6.55+:
+- UI komponente za v6.45-v6.54 funkcije v dashboard
 - Unit testi za lib/ai.ts
 - Playwright E2E testi
 - WebSocket real-time negotiation
 - ML model za buyer matchmaker (fine-tuned na realni data)
+
+## [6.54.0] - 2026-07-28
+
+### Added
+- **AI Profit Margin Forecaster** — napove maržo in profit za naslednje N mesecev
+  - 5 napovednih modelov (linear, seasonal, momentum, regression, growth)
+  - Per-month forecast z margin %, revenue, cost, profit, confidence %
+  - 4 scenariji (pessimistic, realistic, optimistic, stretch) z 12m projekcijami
+  - Category projections z recommendation (invest_more/maintain/reduce/exit)
+- **AI Buyer Conversion Predictor** — napove konverzijo povpraševanja v nakup
+  - 7-fazni conversion funnel (awareness→interest→inquiry→consideration→negotiation→decision→purchase)
+  - 10 conversion faktorjev (price_match, item_relevance, seller_trust, urgency...)
+  - 10 intervention taktik (personal_outreach, limited_time_offer, bundle_deal...)
+  - Per-buyer conversion probability z biggest blocker/accelerator
+- **AI Listing Description A/B Test Optimizer** — ML testiranje opisov z multi-variantami
+  - 10 variant tipov (control, emotional_appeal, urgency_focused, social_proof_heavy,
+    specification_rich, story_driven, benefit_oriented, scarcity_emphasis,
+    price_anchored, problem_solution)
+  - 7 ML predictions per variant (views, inquiries, conversion_rate, time_to_sale, final_price, engagement, confidence)
+  - Statistična analiza z confidence interval, p-value, statistical power
+  - Test matrix z duration, sample size, primary metric, stopping rule
 
 ## [6.53.0] - 2026-07-28
 
@@ -316,7 +337,8 @@ Načrtovano za v6.54+:
 
 ---
 
-[Unreleased]: https://github.com/markec12345678/markecaifirm/compare/v6.53.0...HEAD
+[Unreleased]: https://github.com/markec12345678/markecaifirm/compare/v6.54.0...HEAD
+[6.54.0]: https://github.com/markec12345678/markecaifirm/compare/v6.53.0...v6.54.0
 [6.53.0]: https://github.com/markec12345678/markecaifirm/compare/v6.52.0...v6.53.0
 [6.52.0]: https://github.com/markec12345678/markecaifirm/compare/v6.51.0...v6.52.0
 [6.51.0]: https://github.com/markec12345678/markecaifirm/compare/v6.50.0...v6.51.0
