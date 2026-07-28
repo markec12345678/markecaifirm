@@ -2509,3 +2509,54 @@ Stage Summary:
 - Quality Predictor: 8 komponent z grade (A+ do D) in projected performance
 - Rotation Engine: 6 faz z rotation plan in cash flow reinvestment cycle
 - Verzija aplikacije: v6.38.0
+
+---
+Task ID: v6.39
+Agent: main
+Task: AI Negotiation Tracker, Performance Forecaster, Procurement Scheduler
+
+Work Log:
+- src/app/api/ai/negotiation-tracker/route.ts: nov POST endpoint za tracking pogajanj.
+  Analizira sold trades z achievedVsEst (% prodajne cena vs est. vrednost). Win rate
+  (profit > 0). 4 outcome kategorije: big_win (achievedVsEst > 110%), win (90-110%),
+  small_loss (75-90%), big_loss (< 75%). Patterni pogajanj z frequency, avgOutcomePct,
+  bestFor, recommendation. Category performance (negotiations, winRatePct, avgAchievedPct,
+  bestStrategy). Source performance (avgProfitEur, bestSellChannel, negotiationTip).
+  Strategije z successRatePct, avgProfitEur, whenToUse, example. Improvements z
+  expectedImprovementPct. Held items forecast z predictedNegotiationOutcomePct in
+  recommendedStrategy. Summary z overallNegotiationScore, best/worst category,
+  projectedProfitIncreasePct.
+- src/app/api/ai/performance-forecaster/route.ts: nov POST endpoint za napoved performance.
+  Performance: predictedViews7d/30d, predictedInquiries7d/30d, sellProbability7d/14d/30dPct,
+  predictedFinalPriceEur, predictedDaysToSell, predictedProfitEur, predictedRoiPct,
+  confidencePct. Timeline (6 točk: day, cumulativeViews, cumulativeInquiries,
+  sellProbabilityPct, event). 3 scenariji (optimistic/realistic/pessimistic z
+  sellProbability, finalPrice, daysToSell, profit, probabilityOfScenario). Benchmarks
+  (categoryAvgDaysToSell, categoryAvgRoiPct, yourPredictedVsAvg, percentile). Optimization
+  actions z metricImproved in expectedImprovementPct. Summary z overallForecastScore (0-100),
+  forecastGrade (A+ do D), best/worst/expected profit, recommendation (list_now/improve_first/
+  wait/avoid).
+- src/app/api/ai/procurement-scheduler/route.ts: nov POST endpoint za scheduling nakupov.
+  8 timing faktorjev: seasonal (kupuj pred sezono), payday_cycle (1. in 15. = več oglasov),
+  weekend (več novih), month_end (nujna prodaja = ceneje), holiday (po praznikih ceneje),
+  market_cycle (buyer's market), stockout (urgentno), cash_flow (čakaj na prodajo).
+  4 strategije: bulk_buy, staggered, opportunistic, just_in_time. 4-tedenski koledar z
+  bestBuyDays, bestBuyTime, categoriesToBuy (z urgency), expectedDealQuality,
+  budgetAllocationEur. Per item: itemToBuy, source, searchKeywords, maxBuyPriceEur,
+  expectedSellPriceEur, expectedRoiPct, bestTimeToBuy, monitorSetup (keywords,
+  alertThreshold, intervalMinutes). Budget plan (4 tedne z spend/return/cumulative).
+  Timing (bestOverallBuyWindow, avoidPeriods, paydayAlerts, seasonalDeadlines). Alerts
+  (stockout/seasonal/price_drop/opportunity). Summary z totalBudgetPlanned,
+  totalExpectedProfit, avgExpectedRoi, procurementEfficiencyScore.
+- src/app/page.tsx: verzija v6.39.0
+- TypeScript: 24 napak (enako kot prej) - nobenih novih napak uvedenih
+- Git commit: 'feat(v6.39): AI Negotiation Tracker, Performance Forecaster, Procurement Scheduler'
+
+Stage Summary:
+- 3 nove AI funkcionalnosti za negotiation tracking, performance forecasting in procurement scheduling
+- 3 novi API ruti (negotiation-tracker, performance-forecaster, procurement-scheduler)
+- ~615 novih vrstic kode
+- Negotiation Tracker: win rate z 4 outcome kategorijami in pattern analysis
+- Performance Forecaster: 3 scenariji z timeline in benchmarks
+- Procurement Scheduler: 4-tedenski koledar z 8 timing faktorji in budget plan
+- Verzija aplikacije: v6.39.0
