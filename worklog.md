@@ -2764,3 +2764,58 @@ Stage Summary:
 - Deal Accelerator: 7-fazna bottleneck analiza z accelerator strategijami
 - README: celovit pregled vseh funkcij v1.0→v6.41
 - Verzija aplikacije: v6.42.0
+
+---
+Task ID: v6.43
+Agent: main
+Task: AI Smart Bundle Pricing, Cash Generator, Profit Cycle Optimizer
+
+Work Log:
+- src/app/api/ai/smart-bundle-pricing/route.ts: nov POST endpoint za bundle pricing.
+  8 pricing modelov: volume_discount (5-15% popust), anchor_pricing (drago sidro +
+  cenejši bonus), loss_leader (en blizu nabavne, drugi z visoko maržo), tiered_pricing
+  (bronze/silver/gold paketi), psychological_pricing (99€/199€/299€ pragovi),
+  dynamic_pricing (prilagaja se demand), auction_bundle (začetna nižja,竞价 dvigne),
+  flash_sale (24-48h akcijska cena). Per bundle: 4 pricing modeli z bundlePriceEur,
+  savingsPct, profitEur, marginPct, expectedSellDays, buyerPerception (great_deal/fair/
+  premium), recommended flag. Best price/model selection. Target buyer. Pricing
+  recommendations z expectedRevenueIncreasePct. Summary z avgMarginPct, avgSavingsPct,
+  bestPricingModel, expectedSellTimeReductionPct.
+- src/app/api/ai/cash-generator/route.ts: nov POST endpoint za cash generation.
+  Generira cash iz inventarja z minimalno izgubo dobička. 8 strategij: fast_sale
+  (visokovredni z 5-10% popustom), bundle_liquidation (stalled z 10-15% popustom),
+  flash_sale (24-48h akcija), partial_sell (prodaj del, obdrži profitabilne),
+  staged_sale (3 valovi: danes/7d/14d), reserve_sale (samo >20% marže), panic_sale
+  (likvidiraj vse z minimalnim popustom), selective_liquidation (samo stalled/dead).
+  3-valovni cash plan (wave 1-3 z timing, itemsToSell, expectedCashEur, avgDiscountPct,
+  profitRetainedPct, items z sellPriceEur/discountPct/profitEur/reason). Per item:
+  recommendedSellPriceEur, discountPct, cashGeneratedEur, profitRetainedEur, urgency,
+  strategy. Projected: totalCashGeneratableEur, totalProfitRetainedEur,
+  totalProfitLostEur, profitRetentionPct, itemsRemainingAfter, timeToGenerateCashDays.
+  Summary z cashGenerationEfficiency (0-100), fastestCashOptionEur, highestProfitOptionEur,
+  recommendedBalanceEur.
+- src/app/api/ai/profit-cycle/route.ts: nov POST endpoint za profit cycle optimization.
+  8-fazni cikel: capital_allocation (koliko kam vložiti), sourcing (iskanje),
+  acquisition (nakup), holding (držanje), selling (prodaja), profit_realization
+  (realizacija), reinvestment (reinvestiranje), compounding (sestavljeni dobiček).
+  Per faza: currentEfficiencyPct vs optimizedEfficiencyPct z improvementPct, action,
+  expectedImpactEur. Optimizations (5 področij: cycle_time, roi, reinvestment,
+  capital_efficiency, risk_adjusted z current vs optimized in improvementPct).
+  12-mesečni reinvestment plan (month, capitalEur, reinvestEur, reserveEur,
+  expectedProfitEur, cumulativeCapitalEur). Compounding: currentAnnualProfitEur vs
+  optimizedAnnualProfitEur, compounding12m/24m/36mEur z growthRatePct. Summary z
+  cycleEfficiencyScore (0-100), biggestBottleneck, quickestImprovement,
+  expectedAnnualImprovementEur, projected3yearValueEur.
+- src/app/page.tsx: verzija v6.43.0
+- TypeScript: 24 napak (enako kot prej) - nobenih novih napak uvedenih
+- Git commit: 'feat(v6.43): AI Smart Bundle Pricing, Cash Generator, Profit Cycle Optimizer'
+- GitHub push: uspešen (v6.42 + v6.43 sinhronizirano)
+
+Stage Summary:
+- 3 nove AI funkcionalnosti za bundle pricing, cash generation in profit cycle
+- 3 novi API ruti (smart-bundle-pricing, cash-generator, profit-cycle)
+- ~544 novih vrstic kode
+- Smart Bundle Pricing: 8 pricing modelov z optimalno ceno in buyer perception
+- Cash Generator: 8 strategij z 3-valovnim planom in profit retention
+- Profit Cycle Optimizer: 8-fazni cikel z compounding projekcijami (12m/24m/36m)
+- Verzija aplikacije: v6.43.0
