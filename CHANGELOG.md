@@ -6,12 +6,34 @@ Format sledi [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), verzije s
 
 ## [Unreleased]
 
-Načrtovano za v6.63+:
-- UI komponente za v6.45-v6.62 funkcije v dashboard
+Načrtovano za v6.64+:
+- UI komponente za v6.45-v6.63 funkcije v dashboard
 - Unit testi za lib/ai.ts
 - Playwright E2E testi
 - WebSocket real-time negotiation
 - ML model za buyer matchmaker (fine-tuned na realni data)
+
+## [6.63.0] - 2026-07-28
+
+### Added
+- **AI Listing Description Generator v3** — ML opisi z personalization in sentiment optimization
+  - 10 description stilov (storytelling, technical_specifications, benefit_driven, emotional_appeal,
+    urgency_focused, social_proof, comparison_oriented, problem_solution, luxury_premium, minimalist_clean)
+  - 5 opisov per listing z ML scoring (sentiment, readability, keyword density, engagement, conversion)
+  - Persona-based personalization (10 personas z best style, hook, CTA, keywords)
+  - A/B test plan z variant A/B, primary metric, confidence level
+- **AI Inventory Turnover Predictor** — napove obrtnost inventarja z ML
+  - 5 ML modelov (arima, lstm, prophet, xgboost, ensemble) z accuracy, MAE days, weight
+  - Per-category turnover prediction z recommended action (accelerate/maintain/reduce/increase)
+  - Monthly forecast z predicted turnover rate, items sold, revenue, days to sell
+  - Capital efficiency tracking in turnover grade (A-F)
+- **AI Buyer Churn Prevention Strategist** — preprečevanje odhoda kupcev z ML
+  - 10 prevention strategij (personal_outreach, exclusive_offer, loyalty_reward, early_access,
+    bundle_deal, price_lock, birthday_bonus, referral_incentive, feedback_request, re_engagement_campaign)
+  - 5 ML modelov (logistic_regression, random_forest, gradient_boosting, neural_network, survival_analysis)
+  - 7 churn risk faktorjev (recency, frequency, monetary, engagement, category_diversity, purchase_pattern, competition)
+  - Per-buyer: churnRiskPct, churnRiskLevel, predictedChurnDate, retentionProbability, valueAtRisk
+  - 30-dnevni intervention plan z message templates in expected response rate
 
 ## [6.62.0] - 2026-07-28
 
@@ -538,7 +560,8 @@ Načrtovano za v6.63+:
 
 ---
 
-[Unreleased]: https://github.com/markec12345678/markecaifirm/compare/v6.62.0...HEAD
+[Unreleased]: https://github.com/markec12345678/markecaifirm/compare/v6.63.0...HEAD
+[6.63.0]: https://github.com/markec12345678/markecaifirm/compare/v6.62.0...v6.63.0
 [6.62.0]: https://github.com/markec12345678/markecaifirm/compare/v6.61.0...v6.62.0
 [6.61.0]: https://github.com/markec12345678/markecaifirm/compare/v6.60.0...v6.61.0
 [6.60.0]: https://github.com/markec12345678/markecaifirm/compare/v6.59.0...v6.60.0
