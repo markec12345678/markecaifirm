@@ -3749,3 +3749,90 @@ Stage Summary:
 - Buyer Persona Generator v2: 10 persona tipov z ML clustering in behavioral models
 - Skupno 147 AI endpointov (+3 od v6.55)
 - Verzija aplikacije: v6.56.0
+
+---
+Task ID: v6.57
+Agent: main
+Task: AI Listing Optimization Pipeline, Inventory Rebalancer v3, Buyer Conversion Funnel v2
+
+Work Log:
+- src/app/api/ai/listing-optimization-pipeline/route.ts: nov POST endpoint za
+  celovit optimization pipeline. 10 faz: analysis (analiza trenutnega oglasa),
+  title_optimization (SEO naslov), description_optimization (strukturiran opis),
+  price_optimization (psihološke cene), image_optimization (VLM analiza),
+  tag_optimization (ključne besede), timing_optimization (optimalen dan/ura),
+  platform_adaptation (per-platforma), final_review (consistency check), launch.
+  Per item: analysis z 7 score-ovi (currentScore, titleScore, descriptionScore,
+  priceScore, imageScore, tagScore, overallScore) in issuesFound. Optimizations
+  z title (before/after/improvementPct), description (before/after), price
+  (beforeEur/afterEur/technique), tags (before/after), timing (bestDay/bestHour/
+  reasoning). optimizedScore, expectedViewsIncreasePct, expectedInquiriesIncreasePct,
+  expectedConversionIncreasePct, expectedSaleSpeedupDays. 7 optimization kategorij
+  z expectedLiftPct in implementationEffort. Platform versions per platforma z
+  title, description, priceEur, tags, language, cta, expectedPerformanceScore.
+  Before/after metrics z changePct in confidencePct. Summary z avgScoreBefore vs
+  avgScoreAfter, pipelineEfficiencyScore.
+- src/app/api/ai/inventory-rebalancer-v3/route.ts: nov POST endpoint za advanced
+  rebalancing. 5 ML modelov: mean_variance (Markowitz portfolio theory),
+  kelly_criterion (optimal bet size glede na edge in odds), risk_parity (enak
+  risk contribution per kategorija), momentum_tilting (povečaj nedavno dobre),
+  mean_reversion (povečaj nedavno slabe). Per model: recommendedAllocation per
+  kategorija z allocationPct, expectedReturnPct, expectedRiskPct, sharpeRatio,
+  confidencePct. 4 scenariji (aggressive, balanced, conservative, defensive) z
+  totalExpectedReturnPct, totalExpectedRiskPct, sharpeRatio, maxDrawdownPct,
+  bestFor. 6 rebalancing ciljev: maximize_risk_adjusted_return, diversification,
+  liquidity, seasonality, momentum, contrarian. Per kategorija:
+  currentAllocationPct vs targetAllocationPct, currentInvestedEur vs
+  targetInvestedEur, rebalanceAmountEur, rebalanceDirection (increase/decrease/
+  maintain), reasoning, expectedReturnPct, expectedRiskPct. 5 akcij (buy_more,
+  sell_partial, exit_category, enter_new, hold) z amountEur, priority,
+  timeframeDays, expectedImpactEur. Current portfolio z riskScore,
+  diversificationScore, liquidityScore, concentrationRisk. Summary z
+  currentPortfolioScore vs targetPortfolioScore, improvementPct,
+  expectedAnnualReturnImprovementEur, riskReductionPct, bestModel,
+  rebalancingEfficiencyScore.
+- src/app/api/ai/buyer-conversion-funnel-v2/route.ts: nov POST endpoint za
+  advanced funnel. 10 faz: impression (oglas viden v search), view (klik in
+  ogled), engagement (like/share/save), inquiry (sporočilo), qualification
+  (preveri stanje), consideration (razmišlja), negotiation (pogaja se),
+  commitment (obljubi nakup), payment (plača), completion (prevzame). Per stage:
+  count, conversionRateToNextPct, dropOffCount, dropOffPct, avgTimeInStageHours,
+  mlPredictions (stageConversionProbabilityPct, dropOffProbabilityPct,
+  optimizationPotentialPct), biggestDropReason, improvementAction. Dropoffs per
+  transition z dropOffCount, dropOffPct, primaryReason, secondaryReasons,
+  recoverablePct, recoveryStrategy. ML analysis per metric
+  (stage_conversion_rate, drop_off_probability, time_in_stage,
+  optimization_potential) z avgValue, minValue, maxValue, bestPerformingStage,
+  worstPerformingStage, trend, confidencePct. 8 optimization tipov
+  (title_improvement, description_improvement, price_adjustment, response_speed,
+  trust_building, urgency_injection, follow_up, payment_options) per stage z
+  expectedConversionLiftPct, implementationEffort, expectedRevenueImpactEur,
+  priority. 6 A/B experimentov z experimentName, stageTargeted, hypothesis,
+  variantA, variantB, primaryMetric, expectedLiftPct, testDurationDays,
+  sampleSizeNeeded. Summary z totalImpressions, totalCompletions,
+  overallConversionRatePct, biggestDropoffStage, biggestDropoffPct,
+  bestPerformingStage, totalRecoverableConversions, totalRecoverableRevenueEur,
+  avgTimeToCompletionDays, funnelEfficiencyScore.
+
+DOC UPDATES:
+- README.md: verzija v6.57.0, 150+ endpoints badge, "kaj je novega v v6.57" sekcija,
+  zadnje verzije posodobljene, changelog link do v6.57
+- CHANGELOG.md: v6.57.0 sekcija dodana z vsemi 3 novimi funkcijami in compare linki
+- AI_ENDPOINTS.md: avtomatsko regenerirano s 150 endpointi
+- package.json: version 6.57.0
+- src/app/page.tsx: verzija v6.57.0
+
+- TypeScript: 0 napak (ohranjeno iz v6.56) ✨
+- Git commit: 'feat(v6.57): AI Listing Optimization Pipeline, Inventory Rebalancer v3, Buyer Conversion Funnel v2'
+- GitHub push: uspešen (8 files, 1084 insertions)
+
+Stage Summary:
+- 3 nove AI funkcionalnosti za listing optimization, inventory rebalancing in conversion funnel
+- 3 novi API ruti (listing-optimization-pipeline, inventory-rebalancer-v3, buyer-conversion-funnel-v2)
+- ~960 novih vrstic kode
+- Listing Optimization Pipeline: 10-fazni pipeline z per-item before/after in platform versions
+- Inventory Rebalancer v3: 5 ML modelov z 4 scenariji in 6 rebalancing cilji
+- Buyer Conversion Funnel v2: 10-fazni funnel z ML predictions in 6 A/B experimenti
+- Skupno 150 AI endpointov (+3 od v6.56)
+- TypeScript: 0 napak (ohranjeno) ✨
+- Verzija aplikacije: v6.57.0
