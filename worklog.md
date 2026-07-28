@@ -3088,3 +3088,104 @@ Stage Summary:
 - Seller Reliability v2: 8-dimenzionalni trust score z 6 levels in behavior patterns
 - Bulk Listing Generator: 5 platform z per-platform optimizacijo in 7-dnevnim batch plan
 - Verzija aplikacije: v6.48.0
+
+---
+Task ID: v6.49
+Agent: main
+Task: AI Price War Strategist, Seasonal Bundle Packager, Buyer Matchmaker v2 + Professional GitHub Setup
+
+Work Log:
+- src/app/api/ai/price-war-strategist/route.ts: nov POST endpoint za
+  defensive/offensive strategije v price war. 5 war phases (erupting/escalating/
+  intense/exhausting/resolved). 10 strategij: 5 defensive (hold_price, add_value,
+  differentiate, bundle, niche) + 5 offensive (undercut_5, undercut_10, price_match,
+  flash_sale, loss_leader). Per war: warPhase, intensityScore, yourStrategy,
+  specificTactic, yourRecommendedPriceEur, expectedCompetitorResponse, profitImpactEur,
+  timeToResolveDays, shouldEngage. Competitor analysis z dropPattern in threatLevel.
+  5 scenarijev (war_won/war_lost/stalemate/war_escalates/competitor_quits) z
+  probabilityPct in yourProfitEur. Summary z activeWars, intenseWars, warsWinning,
+  totalProfitAtRiskEur, warStrategyScore.
+- src/app/api/ai/seasonal-bundle-packager/route.ts: nov POST endpoint za
+  season-aware bundle pakete. 8 sezon (spring/summer/autumn/winter/christmas/easter/
+  back_to_school/black_friday) z month mapping, buyerPersonas, hotCategories,
+  coldCategories, premiumMultiplier. 8 bundle tipov: christmas_gift_pack,
+  summer_outing_kit, back_to_school_bundle, winter_warmth_pack, spring_cleaning_kit,
+  student_pack, family_pack, hobby_starter. Per bundle: individualTotalEur,
+  bundlePriceEur, discountPct, seasonalPremiumPct, profitEur, marginPct,
+  sellingPoint, bestPlatform, expectedSellDays. Targeting z demographics,
+  preferredChannel, bestTimeToContact, expectedConversionPct. 5 pricing strategij
+  (volume_discount/seasonal_premium/psychological/anchor/loss_leader). 4-fazni
+  timeline (prep/launch/peak/clearance). Summary z seasonalEfficiencyScore.
+- src/app/api/ai/buyer-matchmaker-v2/route.ts: nov POST endpoint za ML matching.
+  8 ML scoring faktorjev: category_fit, price_fit, recency, frequency, affinity,
+  predicted_conversion, engagement, seasonal_timing. 6 match tipov: direct_match,
+  cross_sell_match, upsell_match, repeat_match, new_category_match,
+  reactivation_match. Per match: overallMatchScore (0-100), individual scores per
+  faktor, recommendedPriceEur, recommendedChannel (email/sms/in_person/social_dm/
+  none), outreachMessage, bestTimeToContact, expectedValueEur, priority. 14-dnevni
+  outreach plan z buyersContacted, expectedResponses, expectedConversions. Predictions
+  z confidencePct. Summary z totalMatches, highPriorityMatches, expectedTotalRevenueEur,
+  expectedConversionRatePct, matchingEfficiencyScore.
+
+PROFESSIONAL GITHUB SETUP (vse v enakem commitu):
+- LICENSE: MIT licenca z copyright 2024-2026
+- CONTRIBUTING.md: development setup, coding standards, AI endpoint konvencije
+  z vzorcem kode, commit guidelines (Conventional Commits), PR proces, testing
+- CHANGELOG.md: popolna zgodovina v1.0 (25. junij 2026) → v6.49 (28. julij 2026)
+  z vsemi večjimi funkcijami in compare linki
+- SECURITY.md: vulnerability reporting (private email), security best practices
+  za deployment, anti-detection ethics, GDPR compliance, dependency security
+- .github/CODEOWNERS: code ownership za AI endpoints, lib, prisma, CI/CD, docs
+- .github/PULL_REQUEST_TEMPLATE.md: PR checklist z vsemi koraki
+- .github/ISSUE_TEMPLATE/bug_report.md: strukturirana prijava napak
+- .github/ISSUE_TEMPLATE/feature_request.md: predlog funkcij z endpoint spec
+- .github/ISSUE_TEMPLATE/ai_endpoint_request.md: specifična predloga za AI endpoint
+- .github/workflows/ci.yml: GitHub Actions CI (lint + typecheck + build + audit)
+  z bun cache in continue-on-error za toleranco obstoječih napak
+- .github/workflows/ai-endpoints.yml: avtomatsko generira AI_ENDPOINTS.md ob
+  spremembah v src/app/api/ai/ in commita nazaj v repo
+- AI_ENDPOINTS.md: tabela vseh 126 endpointov (avtomatsko generirano)
+- .env.example: vse environment spremenljivke dokumentirane (DATABASE_URL,
+  AI provider, Telegram, Discord, Slack, Email, VAPID, CAPTCHA, proxy)
+- README.md: popolnoma preoblikovan z:
+  - 8 badge-i (version, license, AI endpoints, Next.js, TypeScript, Prisma,
+    local-first, PRs welcome)
+  - Kazalo z 15 sekcijami
+  - Overview z "v eni povedi" opisom
+  - Ključne funkcije po 9 kategorijah
+  - Tehnologija tabela
+  - Hitri začetek z 4 koraki
+  - AI provider konfiguracija (6 providerjev)
+  - AI funkcije po 7 kategorijah s counts
+  - Local-first & Zero-cloud primerjava s SaaS
+  - Notifikacije (5 kanalov)
+  - Anti-detection (6 tehnik)
+  - API dokumentacija
+  - Development z project structure drevo
+  - Roadmap (v6.50, v6.51-v6.60, v7.0)
+  - Contributing z hitrim prispevkom
+  - License, Changelog, Contact, Acknowledgments
+- package.json: popolna metadata posodobitev
+  - name: markec-ai-firm (prej nextjs_tailwind_shadcn_ts)
+  - version: 6.49.0 (prej 0.2.1)
+  - private: false (prej true)
+  - description, license, author, homepage, repository, keywords (13), engines
+  - nov script: typecheck (tsc --noEmit)
+
+- src/app/page.tsx: verzija v6.49.0
+- TypeScript: 24 napak (enako kot prej) - nobenih novih napak uvedenih
+- Git commit: 'feat(v6.49): AI Price War Strategist, Seasonal Bundle Packager, Buyer Matchmaker v2 + professional GitHub setup'
+- GitHub push: uspešen (16 files, 1908 insertions)
+
+Stage Summary:
+- 3 nove AI funkcionalnosti za price war, seasonal bundles in ML buyer matching
+- 3 novi API ruti (price-war-strategist, seasonal-bundle-packager, buyer-matchmaker-v2)
+- ~950 novih vrstic kode v AI endpointih
+- PROFESIONALNA GITHUB SINHRONIZACIJA: 13 novih datotek za profesionalni open-source
+  projekt (LICENSE, CONTRIBUTING, CHANGELOG, SECURITY, CODEOWNERS, PR template,
+  3 issue templates, 2 CI workflows, AI_ENDPOINTS.md, .env.example)
+- README popolnoma preoblikovan z badges in 15 sekcijami
+- package.json z popolno metadata (name, version, license, repository, keywords)
+- Skupno 126 AI endpointov (avtomatsko dokumentiranih v AI_ENDPOINTS.md)
+- CI/CD: GitHub Actions z lint + typecheck + build + audit
+- Verzija aplikacije: v6.49.0
