@@ -4199,3 +4199,85 @@ Stage Summary:
 - Skupno 162 AI endpointov (+3 od v6.60)
 - TypeScript: 0 napak (ohranjeno) ✨
 - Verzija aplikacije: v6.61.0
+
+---
+Task ID: v6.62
+Agent: main
+Task: AI Listing Title Generator v2, Inventory Demand Forecaster, Buyer Purchase Pattern Analyzer
+
+Work Log:
+- src/app/api/ai/listing-title-generator-v2/route.ts: nov POST endpoint za ML title
+  generacijo. 10 title strategij: keyword_front_loaded (ključne besede spredaj),
+  brand_model_spec (brand + model + specifikacije), benefit_focused (korist za kupca),
+  urgency_driven (nujnost), question_format (vprašanje), number_included (številke),
+  emotional_appeal (čustven apel), local_seo (lokalna optimizacija), comparison_format
+  (primerjava), scarcity_emphasis (redkost). Per listing: 5 title variantov (a-e) z
+  variantId, title, strategy, characterCount, mlScores (ctrPredictionPct,
+  searchVisibilityPct, conversionProbabilityPct, engagementScore, overallScore),
+  keywordsIncluded, platformFit (5 platform z fitScore), expectedCtrLiftPct,
+  winnerProbabilityPct. recommendedTitle z recommendedStrategy, expectedCtrIncreasePct,
+  expectedViewsIncreasePct. Platform optimizations per platforma z maxChars, bestStrategy,
+  exampleTitle, keywordPlacement (front/middle/end), emojiUsage (recommended/optional/
+  avoid), expectedPerformancePct. A/B test plan z variantATitle, variantBTitle,
+  testDurationDays, sampleSizeNeeded, expectedWinner, confidenceLevelPct. ML scoring
+  per metric (ctr_prediction, search_visibility, conversion_probability,
+  engagement_score, overall_score) z weight, description, benchmark, optimizationTip.
+  Summary z avgCurrentTitleScore vs avgRecommendedTitleScore, bestStrategyOverall,
+  biggestTitleIssue, quickestTitleWin, titleGenerationScore.
+- src/app/api/ai/inventory-demand-forecaster/route.ts: nov POST endpoint za napoved
+  povpraševanja. 5 ML modelov: arima (time series forecasting), lstm (deep learning za
+  sequential patterns), prophet (Facebook Prophet za seasonal), xgboost (gradient
+  boosting), ensemble (kombinacija vseh). Per model: accuracyPct, mae, weightInEnsemble,
+  bestFor, predictionHorizonDays. Current metrics: totalSold12m, totalRevenue12mEur,
+  avgItemsPerMonth, topCategory, fastestMovingCategory, slowestMovingCategory. Monthly
+  forecast (1-12 mesecev): predictedDemandItems, predictedRevenueEur, confidencePct,
+  seasonalFactor (high/medium/low/negative), keyDrivers. Per category:
+  currentMonthlyDemand vs predictedMonthlyDemand, demandChangePct, currentHeldCount,
+  demandSupplyRatio, recommendedAction (stock_up/maintain/reduce/exit),
+  predictedRevenueEur, trend (rising/stable/falling), seasonalityImpact. Trends z
+  trendName, description, affectedCategories, trendStrength, timeframe (short_term/
+  medium_term/long_term), opportunityLevel. Summary z totalCategoriesAnalyzed,
+  totalPredictedDemandMonths, totalPredictedRevenueEur, avgConfidencePct, bestModel,
+  biggestDemandOpportunity, biggestDemandThreat, demandForecastScore.
+- src/app/api/ai/buyer-purchase-pattern-analyzer/route.ts: nov POST endpoint za analizo
+  nakupnih vzorcev z ML sequence mining. 10 pattern tipov: sequential_consistent
+  (consistent purchase order), seasonal_cyclical (seasonal nakupi), price_progression
+  (napredovanje v ceni), category_expansion (širjenje kategorij), complementary_chain
+  (complementary nakupi: telefon → etui → polnilec), replacement_cycle (nadomestitev
+  vsake N let), upgrade_pattern (iPhone 12 → 13 → 14), bulk_buyer (več itemov hkrati),
+  sporadic_random (naključni), declining_frequency (upadajoča frekvenca). 5 ML modelov:
+  sequence_mining (PrefixSpan, GSP algoritmi), association_rules (Apriori, FP-Growth),
+  markov_chain (probabilistic next purchase), lstm_sequence (deep learning za next
+  purchase prediction), clustering (K-means za buyer segmentation). Per buyer:
+  detectedPatterns (z confidencePct, evidence, patternStrength), primaryPattern,
+  purchaseSequenceAnalysis (totalPurchases, avgIntervalDays, intervalConsistency,
+  priceTrend, categoryDiversification), predictedNextPurchase (predictedCategory,
+  predictedPriceRangeEur min/max, predictedDate, probabilityPct, basedOnPattern),
+  mlClusterId, clusterDescription, lifetimeValueProjectionEur. Sequence patterns z
+  sequenceName, sequencePattern (list of items), buyerCount, frequency, confidencePct,
+  supportPct, nextPredictedItem. Association rules z rule, antecedent, consequent,
+  supportPct, confidencePct, lift, buyerCount. Patterns aggregation z buyerCount,
+  avgSpentEur, avgFrequencyDays, valueToBusiness, predictionAccuracyPct, bestStrategy.
+
+DOC UPDATES:
+- README.md: verzija v6.62.0, 165+ endpoints badge, "kaj je novega v v6.62" sekcija,
+  zadnje verzije posodobljene, changelog link do v6.62
+- CHANGELOG.md: v6.62.0 sekcija dodana z vsemi 3 novimi funkcijami in compare linki
+- AI_ENDPOINTS.md: avtomatsko regenerirano s 165 endpointi
+- package.json: version 6.62.0
+- src/app/page.tsx: verzija v6.62.0
+
+- TypeScript: 0 napak (ohranjeno) ✨
+- Git commit: 'feat(v6.62): AI Listing Title Generator v2, Inventory Demand Forecaster, Buyer Purchase Pattern Analyzer'
+- GitHub push: uspešen (8 files, 1084 insertions)
+
+Stage Summary:
+- 3 nove AI funkcionalnosti za ML title generation, demand forecasting in purchase pattern analysis
+- 3 novi API ruti (listing-title-generator-v2, inventory-demand-forecaster, buyer-purchase-pattern-analyzer)
+- ~1050 novih vrstic kode
+- Listing Title Generator v2: 10 strategij, 5 variantov z ML scoring, A/B testing, platform optimizations
+- Inventory Demand Forecaster: 5 ML modelov z monthly forecast in per-category demand prediction
+- Buyer Purchase Pattern Analyzer: 10 patternov, 5 ML modelov, sequence mining z association rules
+- Skupno 165 AI endpointov (+3 od v6.61)
+- TypeScript: 0 napak (ohranjeno) ✨
+- Verzija aplikacije: v6.62.0
