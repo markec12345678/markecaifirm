@@ -2978,3 +2978,57 @@ Stage Summary:
 - Buyer Trust Score: 6 levelov z scam/churn risk in preferred payment method
 - Auction Sniper v2: ML timing z 5 taktikami, anti-snipe defense, competitor analysis
 - Verzija aplikacije: v6.46.0
+
+---
+Task ID: v6.47
+Agent: main
+Task: AI Profit Margin Predictor, Listing Image Optimizer, Real-time Negotiation Bot
+
+Work Log:
+- src/app/api/ai/profit-margin-predictor/route.ts: nov POST endpoint za pred-nakupno
+  oceno dobička. 7 kategorij z profili (avgMarginPct, avgDaysToSell, riskLevel,
+  liquidityScore, demandStability, seasonalityImpact). Per listing: buyPriceEur,
+  estimatedSellPriceEur, buyFeesEur, sellingFeesEur, holdingCostsEur, totalCostEur,
+  expectedProfitEur, marginPct, roiPct, expectedDaysToSell, dailyProfitEur,
+  profitabilityTier (excellent/good/average/poor/loss), recommendation
+  (strong_buy/buy/consider/avoid/strong_avoid), bestSellingPlatform, renovationNeeded
+  (none/cleaning/minor_repair/major_repair/professional), renovationCostEur.
+  Profitability tiers z count, totalProfitEur, avgMarginPct. 3 scenariji
+  (best_case/expected_case/worst_case z probabilityPct, totalProfitEur, totalInvestmentEur).
+  Risk factors z impactEur, probabilityPct, mitigation. Summary z profitabilityScore,
+  bestOpportunityId, worstOpportunityId, budgetRecommendation.
+- src/app/api/ai/listing-image-optimizer/route.ts: nov POST endpoint za VLM analizo
+  slik oglasov. 8 quality faktorjev (overallScore, primaryImageScore, imageCountScore,
+  qualityScore, compositionScore, lightingScore, backgroundScore, detailCoverageScore).
+  Per image: score, issues, improvement. 10 suggested shot tipov (primary, angle_left,
+  angle_right, back, top, detail_brand, detail_damage, context, accessories,
+  size_reference) z howToShoot navodili. 7 improvement kategorij (lighting/background/
+  composition/angle/detail/context/editing) z fix in expectedViewsIncreasePct.
+  Editing tips za Snapseed/Lightroom/Photoshop/Canva z stepByStep navodili.
+  Summary z currentImageQualityScore, optimizedImageQualityScore, expectedViewsIncreasePct,
+  expectedInquiriesIncreasePct, expectedSaleSpeedupDays, biggestIssue, quickestFix.
+- src/app/api/ai/realtime-negotiation-bot/route.ts: nov POST endpoint za real-time
+  negotiation. 10 negotiation taktik (anchoring, scarcity, urgency, empathy, concession,
+  trade_off, walk_away, split_difference, silence, value_focus). 4 strategije
+  (aggressive/firm/patient/friendly). Per response: text (max 200c), suggestedPriceEur,
+  tone (friendly/professional/firm/playful/empathetic/urgent), nextStep (wait/ask/
+  counteroffer/close/walk_away), confidence, tacticsUsed, 3 alternativni odgovori z
+  različnim tonom. Conversation state: phase (opening/inquiring/negotiating/closing/
+  closed), buyerSentiment (positive/neutral/curious/hesitant/negative/hostile),
+  roundNumber, currentAskEur, currentBidEur, spreadEur, agreementProbabilityPct,
+  estimatedFinalPriceEur, myPosition (strong/comfortable/stretched/risky/walk_away),
+  keyObjections. Warnings za lowball/scam_signal/stalling/off_platform/aggressive z
+  action. Samodejno prepozna ceno v sporočilu kupca (regex).
+- src/app/page.tsx: verzija v6.47.0
+- TypeScript: 24 napak (enako kot prej) - nobenih novih napak uvedenih
+- Git commit: 'feat(v6.47): AI Profit Margin Predictor, Listing Image Optimizer, Real-time Negotiation Bot'
+- GitHub push: uspešen
+
+Stage Summary:
+- 3 nove AI funkcionalnosti za pred-nakupno analizo, optimizacijo slik in real-time negotiation
+- 3 novi API ruti (profit-margin-predictor, listing-image-optimizer, realtime-negotiation-bot)
+- ~825 novih vrstic kode
+- Profit Margin Predictor: pred-nakupna analiza z ROI, daily profit in 3 scenariji
+- Listing Image Optimizer: VLM analiza z 8 quality faktorji in 10 shot tipi
+- Real-time Negotiation Bot: 10 taktik z conversation state in 3 alternativami
+- Verzija aplikacije: v6.47.0
