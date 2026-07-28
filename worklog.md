@@ -3032,3 +3032,59 @@ Stage Summary:
 - Listing Image Optimizer: VLM analiza z 8 quality faktorji in 10 shot tipi
 - Real-time Negotiation Bot: 10 taktik z conversation state in 3 alternativami
 - Verzija aplikacije: v6.47.0
+
+---
+Task ID: v6.48
+Agent: main
+Task: AI Inventory Aging Predictor, Seller Reliability v2, Bulk Listing Generator
+
+Work Log:
+- src/app/api/ai/inventory-aging-predictor/route.ts: nov POST endpoint za
+  depreciation curve analizo inventarja. 7 kategorij z profili (annualDepreciationPct,
+  curveType, firstYearDropPct, saturationAgeDays, floorValuePct, seasonalFactor,
+  liquidityHalfLifeDays). 4 curve tipi: exponential (telefoni, elektronika — 35-45%
+  v 1. letu), linear (avto, kolesa), logarithmic (pohištvo, nepremičnine),
+  step (elektronika). Per item: currentValueEur, projectedValue30d/90dEur,
+  recommendedAction (hold/list_again/price_drop_5/price_drop_10/bundle_offer/
+  liquidate/write_off), recommendedPriceEur, urgencyScore, daysUntilLoss,
+  lossIfNoActionEur. Sell-by deadlines z status (safe/warning/critical/overdue).
+  7 aging phases (fresh/normal/aging/stale/critical/dead/zombie). Holding cost
+  tracking (opportunity cost). Summary z totalCurrentValueEur, totalDepreciationLossEur,
+  itemsLosingMoney, next30dProjectedLossEur.
+- src/app/api/ai/seller-reliability-v2/route.ts: nov POST endpoint za napredno
+  analizo prodajalcev. 8-dimenzionalni trust score: transactionHistory,
+  responsiveness, consistency, transparency, fairness, professionalism,
+  reliabilityOfDelivery, financialIntegrity. 6 trust levelov: verified_trader
+  (85-100), trusted (70-84), neutral (50-69), cautious (30-49), suspicious
+  (15-29), blacklisted (0-14). Scam signal detection (single_high_value_purchase,
+  multiple_locations, low_response_rate, inactive_long_time, erratic_pricing).
+  Trust signal tracking (high_value_buyer, repeat_customer, responsive,
+  long_term_relationship, consistent_location). Per seller: recommendedAction
+  (strong_buy_from→blacklist), maxSafeTransactionEur, specialty, negotiationLeverage.
+  Behavior patterns (positive/negative/neutral impact). Risk indicators z
+  severity. Recommendations z sellersAffected.
+- src/app/api/ai/bulk-listing-generator/route.ts: nov POST endpoint za bulk
+  generacijo listingov. 5 platform z konfiguracijo (bolha, facebook, vinted,
+  ebay, kleinanzeigen). Per platform: titleMax, descMax, tagMax, priceStrategy,
+  supportsAuction, supportsBuyNow, audience, feePct. Per trade per platform:
+  optimiziran title, description, priceEur, tags (5-15), category, location,
+  listingType (fixed/auction/both), cta, language (sl/en/de), expectedViewsPerWeek,
+  expectedInquiriesPerWeek. Cross-platform strategy per item z bestPlatform in
+  bestPlatformReason. Platform adaptations z title/description/pricing/tag strategy,
+  expectedReach (local/national/international). 7-dnevni batch plan z scheduledDate,
+  expectedTotalRevenueEur, estimatedFeesEur, netRevenueEur. Summary z
+  totalExpectedRevenueEur, totalEstimatedFeesEur, netRevenueEur, avgListingsPerItem,
+  bestPlatform, bulkEfficiencyScore.
+- src/app/page.tsx: verzija v6.48.0
+- TypeScript: 24 napak (enako kot prej) - nobenih novih napak uvedenih
+- Git commit: 'feat(v6.48): AI Inventory Aging Predictor, Seller Reliability v2, Bulk Listing Generator'
+- GitHub push: uspešen
+
+Stage Summary:
+- 3 nove AI funkcionalnosti za inventory aging, seller scoring in bulk listing generation
+- 3 novi API ruti (inventory-aging-predictor, seller-reliability-v2, bulk-listing-generator)
+- ~900 novih vrstic kode
+- Inventory Aging Predictor: 4 depreciation curves z sell-by deadline in 7 aging phases
+- Seller Reliability v2: 8-dimenzionalni trust score z 6 levels in behavior patterns
+- Bulk Listing Generator: 5 platform z per-platform optimizacijo in 7-dnevnim batch plan
+- Verzija aplikacije: v6.48.0
