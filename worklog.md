@@ -4377,3 +4377,29 @@ Work Log:
 - TypeScript: 0 napak (ohranjeno) ✨
 - Skupno: 177 AI endpointov (+3 od v6.65)
 - Verzija aplikacije: v6.66.0
+
+---
+Task ID: v6.67
+Agent: main
+Task: AI Listing Image Quality Assessor v2, Inventory Depreciation Tracker, Buyer Satisfaction Predictor
+
+Work Log:
+- listing-image-quality-assessor-v2: VLM analiza z 10 quality faktorji (composition, lighting,
+  background, focus, color_accuracy, angle, detail_visibility, item_proportion, image_resolution,
+  emotional_appeal). Per-listing: current vs optimized score z per-factor issue in fix. 8
+  recommended shots z how-to-shoot navodili. 6 editing recommendations z step-by-step in tool
+  recommendation. Shot plan in editing plan za systematic improvement.
+- inventory-depreciation-tracker: 4 depreciation curve tipi (exponential, linear, logarithmic,
+  step). Per-item: current value, depreciation %, projected 30d/90d/180d, floor value,
+  break-even date, urgent sell threshold. Recommended action (hold/sell_now/sell_30d/sell_90d/
+  write_off) z reasoning. Write-off schedule z tax deduction in alternative action. 4 ML modelov
+  z accuracy in MAE per curve type.
+- buyer-satisfaction-predictor: 10 satisfaction faktorjev (price_fairness, item_quality,
+  communication_quality, shipping_speed, packaging_quality, description_accuracy,
+  seller_responsiveness, post_sale_support, overall_experience, value_for_money). NPS prediction
+  (promoter/passive/detractor) z NPS score. Per-buyer: satisfactionScore, predicted repeat
+  purchase/referral/churn probability, LTV. 5 ML modelov z accuracy per prediction type.
+
+- TypeScript: 0 napak (ohranjeno) ✨
+- Skupno: 180 AI endpointov (+3 od v6.66)
+- Verzija aplikacije: v6.67.0
