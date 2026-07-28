@@ -6,12 +6,30 @@ Format sledi [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), verzije s
 
 ## [Unreleased]
 
-Načrtovano za v6.50+:
-- UI komponente za v6.45-v6.49 funkcije v dashboard
+Načrtovano za v6.51+:
+- UI komponente za v6.45-v6.50 funkcije v dashboard
 - Unit testi za lib/ai.ts
 - Playwright E2E testi
 - WebSocket real-time negotiation
 - ML model za buyer matchmaker (fine-tuned na realni data)
+
+## [6.50.0] - 2026-07-28
+
+### Added
+- **AI Buyer Journey Mapper** — 5-fazni buyer journey (awareness→consideration→decision→retention→advocacy)
+  - Per-buyer stage probability in stage progression
+  - Touchpoints per stage z message templates in expected engagement
+  - Stage optimizations z revenue uplift in implementation effort
+- **AI Listing Virality Predictor** — napove viral potential oglasa
+  - 8 virality faktorjev (scarcity, emotional, controversy, utility, social_proof, price_anchor, timeliness, uniqueness)
+  - 6 share triggerjev (emotional, utility, status, controversy, humor, identity)
+  - 5 viral tier-ov (low→super_viral), expected shares in views multiplier
+  - 5 content strategij z viral lift % in effort
+- **AI Profit Margin Optimizer v2** — ML cross-category analiza
+  - 10 optimizacijskih strategij (price_increase, cross_category_rebalance, specialization...)
+  - Cross-category correlation analysis (positive/negative/neutral)
+  - Rebalancing priporočila z amount, expected uplift in timeframe
+  - 4 scenariji (current/optimized/aggressive/conservative)
 
 ## [6.49.0] - 2026-07-28
 
@@ -239,7 +257,8 @@ Načrtovano za v6.50+:
 
 ---
 
-[Unreleased]: https://github.com/markec12345678/markecaifirm/compare/v6.49.0...HEAD
+[Unreleased]: https://github.com/markec12345678/markecaifirm/compare/v6.50.0...HEAD
+[6.50.0]: https://github.com/markec12345678/markecaifirm/compare/v6.49.0...v6.50.0
 [6.49.0]: https://github.com/markec12345678/markecaifirm/compare/v6.48.0...v6.49.0
 [6.48.0]: https://github.com/markec12345678/markecaifirm/compare/v6.47.0...v6.48.0
 [6.47.0]: https://github.com/markec12345678/markecaifirm/compare/v6.46.0...v6.47.0
