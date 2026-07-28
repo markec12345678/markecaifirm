@@ -3331,3 +3331,82 @@ Stage Summary:
 - Inventory Performance Tracker: 10 KPI-jev, trendi, benchmarks, 5 alert tipov
 - Skupno 132 AI endpointov (+3 od v6.50)
 - Verzija aplikacije: v6.51.0
+
+---
+Task ID: v6.52
+Agent: main
+Task: AI Buyer Behavior Predictor, Pricing Psychology Optimizer, Listing Performance Tracker v2
+
+Work Log:
+- src/app/api/ai/buyer-behavior-predictor/route.ts: nov POST endpoint za
+  behavioral prediction. 5 pattern-ov: regular (cv < 0.3, enakomeren),
+  irregular (0.3-1.0, z varianco), seasonal (4+ purchase v istih mesecih),
+  burst (cv > 1.0, impulziven), one_time (1 nakup). Per buyer:
+  nextPurchaseProbabilityPct, predictedNextPurchaseDays, predictedNextCategory,
+  predictedNextPriceRangeEur, primaryTrigger (7 triggerjev), triggerReasoning,
+  preferredContactDay (pon-ned), preferredContactHour (0-23), bestOutreachWindow,
+  predictedAnnualSpendEur, behaviorSegment (5 segmentov: high_value_loyal,
+  medium_value_regular, low_value_occasional, at_risk, new_potential). Patterns
+  z buyerCount, avgSpendEur, avgFrequencyDays, retentionRatePct, bestStrategy.
+  Predictions z predictedPurchaseDate, predictedCategory, predictedPriceEur,
+  confidencePct. 7 triggerjev (seasonal_trigger, life_event, replacement,
+  upgrade, complementary, impulse, need_based) z bestOutreachTime in
+  expectedConversionPct. Summary z vsemi pattern counti, avg probability,
+  total predicted annual spend, mostCommonTrigger, behaviorPredictionScore.
+- src/app/api/ai/pricing-psychology-optimizer/route.ts: nov POST endpoint za
+  psihološke cene. 12 tehnik: charm_pricing (99€ namesto 100€), round_number
+  (premium feel), price_anchoring (visoka referenca), decoy_pricing (drago sidro
+  da drugi izgleda ugodno), bundle_pricing (paket ceneje), penetration (nizka
+  začetna), premium_pricing (višja za prestiž), psychological_threshold
+  (99/199/299/499/999 pragovi), odd_even_pricing (lihe za deal, sode za
+  premium), loss_leader (pod cost), dynamic_pricing (prilagodljiva), tiered_pricing
+  (bronze/silver/gold). Per item: currentPriceEur, recommendedTechnique,
+  recommendedPriceEur, anchorPriceEur, psychologicalSavingsEur,
+  expectedConversionLiftPct, expectedProfitEur, buyerPerception (cheap/fair/
+  premium/luxury/deal/overpriced), reasoning. Anchor analysis z proposedAnchorEur,
+  anchorType (high_reference/comparable/bundle/original_msrp), savingsDisplayEur,
+  savingsDisplayPct, expectedPerceivedValueEur, psychologicalImpact. A/B test
+  plan z variantAPriceEur, variantATechnique, variantBPriceEur, variantBTechnique,
+  testDurationDays, primaryMetric (conversion_rate/revenue/time_to_sell),
+  expectedWinner, confidenceThresholdPct. Summary z avg prices, total lift,
+  bestTechniqueOverall, pricingPsychologyScore.
+- src/app/api/ai/listing-performance-tracker-v2/route.ts: nov POST endpoint za
+  ML predikcijo performance. 8 ML predictions per listing:
+  conversionProbability30dPct, predictedTimeToSellDays, predictedFinalPriceEur,
+  predictedProfitEur, predictedInquiries7d, predictedViews7d, bounceRatePct,
+  negotiationProbabilityPct. 4 demographic faktorji: locationImpactScore,
+  bestSource, audienceMatchScore, seasonalFitScore. Performance forecast:
+  next7dViews, next7dInquiries, next30dSaleProbabilityPct, next90dSaleProbabilityPct.
+  Per listing: riskFactors, opportunityFactors, recommendedAction (hold/
+  price_adjust/relist/cross_post/bundle/liquidate), confidenceScore. ML
+  predictions agregacija z avgValue, minValue, maxValue, stdDev, trend,
+  confidencePct. Demographic faktorji z weight, bestPerformingValue,
+  impactOnConversionPct. Channel analysis za 5 platform z itemsRecommended,
+  avgPredictedConversionPct, avgPredictedDaysToSell, totalPredictedRevenueEur,
+  feePct, netRevenueEur. 30-dnevni time series z dayOffset, predictedViews,
+  predictedInquiries, predictedSales, cumulativeRevenueEur. Summary z
+  avgConversionProbability30dPct, totalPredictedRevenueEur, bestPerformingSource,
+  mlConfidenceAvgPct, biggestOpportunityId, biggestRiskId,
+  performancePredictionScore.
+
+DOC UPDATES:
+- README.md: verzija v6.52.0, 135+ endpoints badge, "kaj je novega v v6.52" sekcija,
+  zadnje verzije posodobljene, changelog link do v6.52
+- CHANGELOG.md: v6.52.0 sekcija dodana z vsemi 3 novimi funkcijami in compare linki
+- AI_ENDPOINTS.md: avtomatsko regenerirano s 135 endpointi
+- package.json: version 6.52.0
+- src/app/page.tsx: verzija v6.52.0
+
+- TypeScript: 24 napak (enako kot prej) - nobenih novih napak uvedenih
+- Git commit: 'feat(v6.52): AI Buyer Behavior Predictor, Pricing Psychology Optimizer, Listing Performance Tracker v2'
+- GitHub push: uspešen (8 files, 1159 insertions)
+
+Stage Summary:
+- 3 nove AI funkcionalnosti za buyer behavior, pricing psychology in ML performance tracking
+- 3 novi API ruti (buyer-behavior-predictor, pricing-psychology-optimizer, listing-performance-tracker-v2)
+- ~1010 novih vrstic kode
+- Buyer Behavior Predictor: 5 pattern-ov, 7 trigger-jev, 5 behavior segment-ov
+- Pricing Psychology Optimizer: 12 tehnik z anchor analysis in A/B test plan
+- Listing Performance Tracker v2: 8 ML predictions, 4 demographic faktorji, channel analysis
+- Skupno 135 AI endpointov (+3 od v6.51)
+- Verzija aplikacije: v6.52.0
