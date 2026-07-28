@@ -2361,3 +2361,53 @@ Stage Summary:
 - Listing Velocity: velocity score (0-100) z 5 statusi in acceleration actions
 - Profit Trail: 8-mejnikovska dobičkovna pot z projections za held items
 - Verzija aplikacije: v6.35.0
+
+---
+Task ID: v6.36
+Agent: main
+Task: AI Smart Pricing Engine, Inventory Health Monitor, Competitor Price Tracker
+
+Work Log:
+- src/app/api/ai/smart-pricing-engine/route.ts: nov POST endpoint za dynamic pricing.
+  10 faktorjev: days_held (>30d → -5%, >60d → -10%), deal_score (>=80 → +5%), velocity
+  (fast → +5%), seasonal (v sezoni → +10%), demand (high → +5%), history (že padla → manjši),
+  competition (veliko → -5%), margin (>40% → lahko znižaš), urgency (stalled → agresivno),
+  confidence (visok deal → zaupaj ceni). 5 strategij: hold_price, small_discount (-3-5%),
+  medium_discount (-5-10%), large_discount (-10-20%), price_increase (+3-5%). Per item:
+  currentPriceEur vs recommendedPriceEur, priceChangeEur/Pct, 10 faktorjev z impactPct in
+  direction (up/down/neutral), expectedSellProbabilityPct, expectedDaysToSell,
+  projectedProfitEur. Pricing rules z trigger/action/priority. Summary z itemsPriceIncreased/
+  Held/Decreased, totalProjectedRevenue/Profit, avgPriceChangePct.
+- src/app/api/ai/inventory-health-monitor/route.ts: nov POST endpoint za health monitoring.
+  8 'vital signs' (kot pri bolniku): heart_rate (turnover ratio), blood_pressure
+  (concentration risk %), temperature (stalled %), cholesterol (dead inventory %),
+  immune_system (diversification = kategorije), bone_density (avg deal score), vision
+  (AI accuracy %), stamina (avg ROI %). 4 health statusi: green (vsi normalni), yellow
+  (1-2 izven norme), orange (3+ izven norme), red (kritični). Per item: healthScore (0-100),
+  status (healthy/warning/critical/dead), primaryIssue, recommendedAction, urgency.
+  6 tipov alertov: stalled, concentration, dead_inventory, high_risk, low_diversification,
+  margin_erosion. Trends (improving/stable/declining). Recommendations z vitalsImproved in
+  expectedImpact. Summary z healthy/warning/critical/dead items, valueAtRiskEur,
+  projectedRecoveryEur.
+- src/app/api/ai/competitor-price-tracker/route.ts: nov POST endpoint za competitor tracking.
+  Analizira vse aktivne listinge kot konkurenco. Market overview: totalCompetitorListings,
+  avgMarketPriceEur, priceTrend (rising/falling/stable), priceDropRatePct, competitionLevel.
+  Competitors by source: listingCount, avgPriceEur, priceDropCount, avgDealScore, priceTrend,
+  threatLevel. Our position per held item: ourEstPriceEur vs competitorAvgPriceEur,
+  priceDifferencePct, position (above_market/below_market/at_par), strategy
+  (undercut/premium/match/wait_competitor/bundle_advantage), recommendedPriceEur,
+  competitiveAdvantage. Price changes (old→new z changePct in daysAgo). Actions z
+  affectedItems in expectedImpactEur. Summary z ourAvgPosition, bestPricedSource,
+  mostAggressiveSource, itemsToReprice, potentialCompetitiveGainEur.
+- src/app/page.tsx: verzija v6.36.0
+- TypeScript: 24 napak (enako kot prej) - nobenih novih napak uvedenih
+- Git commit: 'feat(v6.36): AI Smart Pricing Engine, Inventory Health Monitor, Competitor Price Tracker'
+
+Stage Summary:
+- 3 nove AI funkcionalnosti za dynamic pricing, health monitoring in competitor tracking
+- 3 novi API ruti (smart-pricing-engine, inventory-health-monitor, competitor-price-tracker)
+- ~529 novih vrstic kode
+- Smart Pricing Engine: 10-faktorski dynamic pricing z 5 strategijami
+- Inventory Health Monitor: 8 vital signs z 4 health statusi in alert sistemom
+- Competitor Price Tracker: real-time competitor tracking z 5 strategijami pozicioniranja
+- Verzija aplikacije: v6.36.0
