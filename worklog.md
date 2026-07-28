@@ -3569,3 +3569,82 @@ Stage Summary:
 - Listing Description A/B Test Optimizer: 10 variant tipov z ML predictions in statistiko
 - Skupno 141 AI endpointov (+3 od v6.53)
 - Verzija aplikacije: v6.54.0
+
+---
+Task ID: v6.55
+Agent: main
+Task: AI Inventory Liquidation Strategist, Buyer Engagement Optimizer, Listing Performance Forecaster v3
+
+Work Log:
+- src/app/api/ai/inventory-liquidation-strategist/route.ts: nov POST endpoint za
+  strategic liquidation. 10 strategij: flash_sale (24-48h akcija z 30-50% popustom),
+  bundle_clearance (paket z deep discount 40-60%), auction_clearance (dražba od 1€),
+  bulk_discount (količinski popust za reseller), donation_tax_writeoff (donacija za
+  davčno olajšavo), part_out (razstavi na dele), trade_in_credit (trade-in pri novem
+  nakupu), wholesale_lot (prodaj lot reseller-ju z 60-70% discount), garage_sale
+  (lokalna garažna prodaja), recycle_scrap (recikliraj kot scrap). Per item:
+  recommendedStrategy, currentValueEur, recommendedPriceEur, discountPct,
+  expectedRecoveryEur, recoveryRatePct, expectedLossEur, bestChannel, bestTiming,
+  expectedDaysToSell, reasoning, priority. 5 channel-ov (bolha, facebook, vinted,
+  ebay, local_pickup) z itemsRecommended, avgRecoveryRatePct, feePct, netRecoveryEur.
+  4-tedenski timeline z itemsToLiquidate, strategyFocus, expectedRecoveryEur,
+  expectedLossEur, actions. Bundle clearance z grouped items in target buyer. Summary
+  z totalItemsToLiquidate, totalCostEur, totalCurrentValueEur, totalExpectedRecoveryEur,
+  totalExpectedLossEur, avgRecoveryRatePct, liquidationEfficiencyScore.
+- src/app/api/ai/buyer-engagement-optimizer/route.ts: nov POST endpoint za engagement
+  optimization. 5 engagement tier-ov: champion (top kupci), engaged (redni), casual
+  (občasni), dormant (>90d neaktivni), lost (>180d). 8 engagement faktorjev: recency,
+  frequency, monetary, diversity, responsiveness, advocacy, loyalty, satisfaction z
+  weight, avgScore, benchmark, improvementAction. 10 personalization strategij:
+  category_targeted, price_based, cross_sell, upsell, repeat_buy, seasonal, trending,
+  exclusive, winback, referral z bestForTier, expectedEngagementUpliftPct,
+  implementationDifficulty. 8 kampanj: welcome (novi kupci), loyalty (repeat),
+  reactivation (dormant), vip (high-value), seasonal, birthday, new_arrival,
+  exclusive_preview z targetSegment, buyerCount, channel, frequency,
+  expectedConversionPct, expectedRevenueEur. 5 channel-ov z buyerCount,
+  avgEngagementRatePct, avgResponseTimeHours, bestForCampaign, costPerMessageEur.
+  Per buyer: engagementScore, engagementTier, personalizationStrategy,
+  recommendedCampaign, preferredChannel, preferredTiming, personalizedMessage,
+  recommendedOffers, expectedEngagementUpliftPct, expectedRevenueEur, priority.
+  Summary z vsemi tier counti, bestPersonalizationStrategy, bestChannelOverall,
+  engagementOptimizationScore.
+- src/app/api/ai/listing-performance-forecaster-v3/route.ts: nov POST endpoint za
+  advanced ML forecasting. 8-model ensemble: linear_regression (fast, interpretable),
+  random_forest (non-linear, robust), gradient_boosting (boosting za accuracy),
+  neural_network (deep learning), arima (time series), prophet (Facebook Prophet za
+  seasonal), lstm (recurrent neural network za sequential), ensemble_voting
+  (kombinacija vseh z weighted voting). Per listing: ensembleForecast z baseCase,
+  bestCase, worstCase, confidenceInterval (lowerBoundPriceEur, upperBoundPriceEur,
+  confidencePct), modelConsensus (strong/moderate/weak), predictionStdDev. 4 scenariji
+  (base_case, best_case, worst_case, stress_test) z probabilityPct,
+  totalPredictedRevenueEur, totalPredictedProfitEur, avgSaleProbabilityPct,
+  avgDaysToSale, keyAssumption. 30-dnevni time series z dayOffset, baseCaseViews,
+  baseCaseInquiries, baseCaseSaleProbabilityPct, bestCaseViews, worstCaseViews,
+  uncertaintyBand. Sensitivity analysis za price, day_of_week, season, competition z
+  currentValue, bestValue, impactOnSaleProbabilityPct, recommendedAdjustment. Per model:
+  weightInEnsemble, accuracyScore, predictionVariance, bestFor,
+  contributionToEnsemblePct. Summary z avgPredictedSaleProbability30dPct,
+  totalPredictedRevenueBaseCaseEur/BestCase/WorstCase, avgModelConsensusScore,
+  bestPerformingModel, forecastConfidenceScore.
+
+DOC UPDATES:
+- README.md: verzija v6.55.0, 144+ endpoints badge, "kaj je novega v v6.55" sekcija,
+  zadnje verzije posodobljene, changelog link do v6.55
+- CHANGELOG.md: v6.55.0 sekcija dodana z vsemi 3 novimi funkcijami in compare linki
+- AI_ENDPOINTS.md: avtomatsko regenerirano s 144 endpointi
+- package.json: version 6.55.0
+- src/app/page.tsx: verzija v6.55.0
+
+- TypeScript: 24 napak (enako kot prej) - nobenih novih napak uvedenih
+- Git commit: 'feat(v6.55): AI Inventory Liquidation Strategist, Buyer Engagement Optimizer, Listing Performance Forecaster v3'
+- GitHub push: uspešen (40 files, 1078 insertions)
+
+Stage Summary:
+- 3 nove AI funkcionalnosti za liquidation, engagement in advanced ML forecasting
+- 3 novi API ruti (inventory-liquidation-strategist, buyer-engagement-optimizer, listing-performance-forecaster-v3)
+- ~970 novih vrstic kode
+- Inventory Liquidation Strategist: 10 strategij z timing in channel optimization
+- Buyer Engagement Optimizer: 5 tier-ov, 8 faktorjev, 10 personalization, 8 kampanj
+- Listing Performance Forecaster v3: 8-model ensemble z 4 scenariji in sensitivity analysis
+- Skupno 144 AI endpointov (+3 od v6.54)
+- Verzija aplikacije: v6.55.0
