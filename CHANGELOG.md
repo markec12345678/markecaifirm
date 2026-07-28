@@ -6,12 +6,34 @@ Format sledi [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), verzije s
 
 ## [Unreleased]
 
-Načrtovano za v6.75+:
-- UI komponente za v6.45-v6.74 funkcije v dashboard
+Načrtovano za v6.76+:
+- UI komponente za v6.45-v6.75 funkcije v dashboard
 - Unit testi za lib/ai.ts
 - Playwright E2E testi
 - WebSocket real-time negotiation
 - ML model za buyer matchmaker (fine-tuned na realni data)
+
+## [6.75.0] - 2026-07-28
+
+### Added
+- **AI Listing CTR Optimizer** — ML optimizacija click-through rate z 10-faktorsko analizo
+  - 10 CTR faktorjev (title_relevance, thumbnail_quality, price_appeal, position_ranking, category_match, search_keywords, freshness, seller_rating, location_proximity, urgency_signals)
+  - Per-listing: current vs optimized CTR z per-factor scores in optimized title/thumbnail recommendation
+  - 10 optimization tipov (title_rewrite, thumbnail_upgrade, price_adjustment, tag_optimization, refresh_posting, keyword_injection, urgency_addition, category_correction, location_emphasis, seller_boost)
+  - A/B experiments z variant A/B in statistical significance
+  - 5 ML modelov z prediction type (ctr_prediction, element_importance, view_forecast, inquiry_forecast)
+- **AI Inventory Cost Minimizer** — minimizira skupne stroške z ML in cost decomposition
+  - 10 cost kategorij (sourcing_cost, platform_fees, payment_fees, shipping_cost, storage_cost, holding_cost, renovation_cost, opportunity_cost, insurance_cost, return_cost)
+  - Per-category: current vs optimized cost z savings in optimization action
+  - 10 optimization tipov (fee_negotiation, platform_switch, bulk_shipping, faster_turnover, bundle_savings, supplier_renegotiation, storage_optimization, insurance_reduction, return_prevention, opportunity_cost_reduction)
+  - Monthly projections z total cost, savings, net cost in profit increase
+  - 5 ML modelov z prediction type (cost_forecast, optimal_cost, savings_potential, cost_attribution)
+- **AI Buyer Revenue Forecaster** — napoveduje prihodek per kupec z ML in revenue decomposition
+  - 10 revenue driverjev (purchase_frequency, order_value, retention_rate, cross_sell, upsell, referral, seasonality, market_trend, pricing, category_expansion)
+  - Per-buyer: current vs projected revenue z drivers/risks in recommended action
+  - 24-mesečni revenue projections z active buyers, avg order value in cumulative revenue
+  - 4 scenariji (pessimistic, realistic, optimistic, stretch) z probability
+  - 5 ML modelov z prediction type (revenue_forecast, buyer_spend, purchase_frequency, order_value)
 
 ## [6.74.0] - 2026-07-28
 
@@ -781,7 +803,8 @@ Načrtovano za v6.75+:
 
 ---
 
-[Unreleased]: https://github.com/markec12345678/markecaifirm/compare/v6.74.0...HEAD
+[Unreleased]: https://github.com/markec12345678/markecaifirm/compare/v6.75.0...HEAD
+[6.75.0]: https://github.com/markec12345678/markecaifirm/compare/v6.74.0...v6.75.0
 [6.74.0]: https://github.com/markec12345678/markecaifirm/compare/v6.73.0...v6.74.0
 [6.73.0]: https://github.com/markec12345678/markecaifirm/compare/v6.72.0...v6.73.0
 [6.72.0]: https://github.com/markec12345678/markecaifirm/compare/v6.71.0...v6.72.0
