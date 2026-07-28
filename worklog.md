@@ -2876,3 +2876,51 @@ Stage Summary:
 - Deal Aggregator: rangirana lista priložnosti iz vseh virov z trending categories
 - Insurance Optimizer v2: 4D risk matrika z 5 policami in claim scenariji
 - Verzija aplikacije: v6.44.0
+
+---
+Task ID: v6.45
+Agent: main
+Task: AI Customer Segmentation, Listing SEO Optimizer, Reserve Price Optimizer
+
+Work Log:
+- src/app/api/ai/customer-segmentation/route.ts: nov POST endpoint za RFM analizo kupcev.
+  5 segmentov: champions (nedavni+pogosti+visoka vrednost), loyal (zvesti povratniki),
+  potential (novi z možnostjo rasti), at_risk (>90d nedejavni nekdaj aktivni),
+  lost (>180d nedejavni). RFM scoring 1-10 per dimenzija (Recency/Frequency/Monetary),
+  rfmScore 0-100. Per segment: customerCount, totalSpentEur, totalPurchases, avgRfmScore,
+  revenueSharePct, AI strategy/tactic, expectedRevenueUpliftEur, retentionProbabilityPct,
+  priorityAction. Per customer: nextBestAction, expectedValueEur, churnRiskPct,
+  recommendedChannel (email/sms/call/in_person/none). Recommendations z targetSegment,
+  expectedImpactEur, implementationCostEur, roiScore. Summary z champions/atRisk/lost count,
+  segmentationEfficiencyScore, biggestOpportunity, projectedRevenueUpliftEur.
+- src/app/api/ai/listing-seo-optimizer/route.ts: nov POST endpoint za SEO optimizacijo
+  oglasov na Bolha/Facebook/Vinted. Per listing: optimizedTitle per platforma (60/80/50c
+  limit), optimizedDescription (500c), primaryKeywords, longTailKeywords, tags,
+  currentSeoScore vs optimizedSeoScore, expectedViewsIncreasePct, expectedInquiriesIncreasePct.
+  Keyword research z searchVolume, competition, opportunityScore, category.
+  Platform adaptations z titleRule, descRule, tagCount, specialTip. Recommendations z
+  priority, expectedImpactPct, implementationEffort. Summary z avgSeoScore, seoImprovementPct,
+  seoEfficiencyScore, biggestSeoIssue, quickestSeoWin.
+- src/app/api/ai/reserve-price-optimizer/route.ts: nov POST endpoint za auction reserve
+  price optimization. 7 kategorij z auction profili (auctionSuitability, avgBidders,
+  priceVolatility, optimalDuration, reservePctOfValue). Per item: demandLevel (high/medium/
+  low), expectedBidders, startingPriceEur, reservePriceEur, buyNowPriceEur,
+  optimalDurationDays, auctionStrategy, expectedFinalPriceEur, probabilityOfSalePct,
+  sniperProtection flag, listingDay (pon-tor-sre-cet-pet-sob-ned). Demand analysis per
+  kategorija z trend, avgBidders, bestAuctionDay, saturationLevel. Reserve strategies
+  (aggressive/moderate/conservative z reservePct, startingPct). 14-dnevni auction plan z
+  itemsToList, categories, expectedRevenueEur. Summary z totalReserveValueEur,
+  expectedTotalRevenueEur, expectedTotalProfitEur, reserveOptimizationScore.
+- src/app/page.tsx: verzija v6.45.0
+- TypeScript: 24 napak (enako kot prej) - nobenih novih napak uvedenih
+- Git commit: 'feat(v6.45): AI Customer Segmentation, Listing SEO Optimizer, Reserve Price Optimizer'
+- GitHub push: uspešen
+
+Stage Summary:
+- 3 nove AI funkcionalnosti za customer segmentation, listing SEO in auction pricing
+- 3 novi API ruti (customer-segmentation, listing-seo-optimizer, reserve-price-optimizer)
+- ~823 novih vrstic kode
+- Customer Segmentation: RFM analiza z 5 segmenti, per-customer strategija in churn risk
+- Listing SEO Optimizer: keyword research, title per platforma, expected views uplift
+- Reserve Price Optimizer: auction pricing z demand analizo in 14-dnevnim planom
+- Verzija aplikacije: v6.45.0
