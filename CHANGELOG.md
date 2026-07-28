@@ -6,12 +6,33 @@ Format sledi [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), verzije s
 
 ## [Unreleased]
 
-Načrtovano za v6.67+:
-- UI komponente za v6.45-v6.66 funkcije v dashboard
+Načrtovano za v6.68+:
+- UI komponente za v6.45-v6.67 funkcije v dashboard
 - Unit testi za lib/ai.ts
 - Playwright E2E testi
 - WebSocket real-time negotiation
 - ML model za buyer matchmaker (fine-tuned na realni data)
+
+## [6.67.0] - 2026-07-28
+
+### Added
+- **AI Listing Image Quality Assessor v2** — VLM analiza z 10-dimenzionalno analizo in improvement roadmap
+  - 10 quality faktorjev (composition, lighting, background, focus, color_accuracy, angle, detail_visibility, item_proportion, image_resolution, emotional_appeal)
+  - Per-listing: current vs optimized score z per-factor issue in fix
+  - 8 recommended shots z how-to-shoot navodili
+  - 6 editing recommendations z step-by-step in tool recommendation
+  - Shot plan in editing plan za systematic improvement
+- **AI Inventory Depreciation Tracker** — sledi padcu vrednosti z ML forecasting
+  - 4 depreciation curve tipi (exponential, linear, logarithmic, step)
+  - Per-item: current value, depreciation %, projected 30d/90d/180d, floor value, break-even date
+  - Recommended action (hold/sell_now/sell_30d/sell_90d/write_off) z reasoning
+  - Write-off schedule z tax deduction in alternative action
+  - 4 ML modelov z accuracy in MAE per curve type
+- **AI Buyer Satisfaction Predictor** — napove zadovoljstvo z ML in NPS prediction
+  - 10 satisfaction faktorjev (price_fairness, item_quality, communication_quality, shipping_speed, packaging_quality, description_accuracy, seller_responsiveness, post_sale_support, overall_experience, value_for_money)
+  - NPS prediction (promoter/passive/detractor) z NPS score
+  - Per-buyer: satisfactionScore, predicted repeat purchase/referral/churn probability, LTV
+  - 5 ML modelov z accuracy per prediction type (satisfaction, NPS, churn, repeat_purchase)
 
 ## [6.66.0] - 2026-07-28
 
@@ -617,7 +638,8 @@ Načrtovano za v6.67+:
 
 ---
 
-[Unreleased]: https://github.com/markec12345678/markecaifirm/compare/v6.66.0...HEAD
+[Unreleased]: https://github.com/markec12345678/markecaifirm/compare/v6.67.0...HEAD
+[6.67.0]: https://github.com/markec12345678/markecaifirm/compare/v6.66.0...v6.67.0
 [6.66.0]: https://github.com/markec12345678/markecaifirm/compare/v6.65.0...v6.66.0
 [6.65.0]: https://github.com/markec12345678/markecaifirm/compare/v6.64.0...v6.65.0
 [6.64.0]: https://github.com/markec12345678/markecaifirm/compare/v6.63.0...v6.64.0
