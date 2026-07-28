@@ -4474,3 +4474,28 @@ Work Log:
 - TypeScript: 0 napak (ohranjeno) ✨
 - Skupno: 189 AI endpointov (+3 od v6.69)
 - Verzija aplikacije: v6.70.0
+
+---
+Task ID: v6.71
+Agent: main
+Task: AI Listing Multi-Variant Tester, Inventory Profit Maximizer, Buyer Predictive Modeler
+
+Work Log:
+- listing-multi-variant-tester: 8 variant elementov (title, description, price, image, tags,
+  cta, timing, platform). 5 variantov per listing z ML predictions (CTR, conversion, views,
+  inquiries, engagement, winner probability). Statistical analysis z confidence intervals,
+  p-value, statistical power, sample size. 5 ML modelov.
+- inventory-profit-maximizer: 10 optimization tipov (price_increase, price_decrease,
+  bundle_creation, cross_sell, upsell, renovation, relist, platform_switch,
+  timing_optimization, bundle_break). Per-item: current vs optimized profit z increase %.
+  4 scenariji z net gain in probability. 8-step action plan. 5 ML modelov.
+- buyer-predictive-modeler: 8 prediction tipov (next_purchase, purchase_amount,
+  category_preference, churn_probability, ltv_projection, referral_probability,
+  response_probability, negotiation_outcome). Per-buyer: next purchase prediction (date,
+  category, amount), LTV projection (6m/12m/24m), churn risk, referral probability.
+  5 behavioral models z input features. 8 triggers z trigger condition in urgency.
+  5 ML modelov.
+
+- TypeScript: 0 napak (ohranjeno) ✨
+- Skupno: 192 AI endpointov (+3 od v6.70)
+- Verzija aplikacije: v6.71.0
