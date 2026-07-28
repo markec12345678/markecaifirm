@@ -4523,3 +4523,28 @@ Work Log:
 - TypeScript: 0 napak (ohranjeno) ✨
 - Skupno: 195 AI endpointov (+3 od v6.71)
 - Verzija aplikacije: v6.72.0
+
+---
+Task ID: v6.73
+Agent: main
+Task: AI Listing Conversion Funnel Optimizer, Inventory Supply Chain Optimizer, Buyer Engagement Scoring Engine
+
+Work Log:
+- listing-conversion-funnel-optimizer: 10 funnel faz (impression→completion) z ML predictions
+  (conversion probability, optimization potential). Per-stage drop-off analysis z primary/
+  secondary reasons in recovery strategy. 10 optimization tipov. 6 A/B experiments z hypothesis,
+  variant A/B in statistical significance. 5 ML modelov.
+- inventory-supply-chain-optimizer: 10 sourcing tipov (bulk_purchase, individual_sourcing,
+  auction_buying, wholesale_lot, private_seller, estate_sale, retail_arbitrage, online_arbitrage,
+  import, local_pickup). Per-supplier: invested, profit, margin, reliability, response time,
+  recommended action, negotiation leverage. 6 logistics components (transport, storage, packaging,
+  shipping, insurance, handling) z cost savings. Monthly projections. 5 ML modelov.
+- buyer-engagement-scoring-engine: 10 scoring faktorjev (recency, frequency, monetary,
+  engagement_depth, response_rate, social_engagement, referral_activity, content_interaction,
+  purchase_consistency, platform_activity). 6 engagement nivojev (super_engaged→churned).
+  Per-buyer: engagement score, level, trend, velocity, 30d/90d prediction, key drivers/barriers.
+  5 interventions. 5 ML modelov.
+
+- TypeScript: 0 napak (ohranjeno) ✨
+- Skupno: 198 AI endpointov (+3 od v6.72)
+- Verzija aplikacije: v6.73.0
