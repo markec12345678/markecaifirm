@@ -6,12 +6,31 @@ Format sledi [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), verzije s
 
 ## [Unreleased]
 
-Načrtovano za v6.69+:
-- UI komponente za v6.45-v6.68 funkcije v dashboard
+Načrtovano za v6.70+:
+- UI komponente za v6.45-v6.69 funkcije v dashboard
 - Unit testi za lib/ai.ts
 - Playwright E2E testi
 - WebSocket real-time negotiation
 - ML model za buyer matchmaker (fine-tuned na realni data)
+
+## [6.69.0] - 2026-07-28
+
+### Added
+- **AI Listing Competitor Price Tracker v2** — ML competitor tracking z price intelligence
+  - 5 ML modelov (arima, lstm, prophet, xgboost, ensemble) z prediction type per model
+  - Per-competitor: avg/min/max price, discount %, threat level, strength/weakness, counter strategy
+  - Price changes tracking z impact on you in recommended response
+  - Per-category positioning z recommended position in expected impact
+- **AI Inventory Liquidation Timeline** — timeline likvidacije z ML scheduling
+  - 5 timeline faz (immediate→write_off) z day range in strategy
+  - Per-item: scheduled day, recommended price, discount %, recovery rate, strategy (flash_sale/bundle/auction/discount/bulk/donate/write_off)
+  - Daily schedule z items to list, expected revenue/loss in cumulative recovery
+  - 5 ML modelov z prediction type (sell_probability, optimal_price, time_to_sell, recovery_rate)
+- **AI Buyer Communication Style Analyzer** — analiza komunikacijskega stila z ML NLP
+  - 10 komunikacijskih stilov (direct, indirect, formal, informal, analytical, emotional, assertive, passive, persuasive, collaborative)
+  - Per-buyer: primary/secondary style, confidence %, communication score, preferred tone/channel/response time, negotiation style
+  - Style adaptations z do/don't say lists in example messages
+  - 5 ML modelov (bert, roberta, distilbert, xlm_roberta, ensemble) z prediction type
 
 ## [6.68.0] - 2026-07-28
 
@@ -658,7 +677,8 @@ Načrtovano za v6.69+:
 
 ---
 
-[Unreleased]: https://github.com/markec12345678/markecaifirm/compare/v6.68.0...HEAD
+[Unreleased]: https://github.com/markec12345678/markecaifirm/compare/v6.69.0...HEAD
+[6.69.0]: https://github.com/markec12345678/markecaifirm/compare/v6.68.0...v6.69.0
 [6.68.0]: https://github.com/markec12345678/markecaifirm/compare/v6.67.0...v6.68.0
 [6.67.0]: https://github.com/markec12345678/markecaifirm/compare/v6.66.0...v6.67.0
 [6.66.0]: https://github.com/markec12345678/markecaifirm/compare/v6.65.0...v6.66.0
