@@ -6,12 +6,31 @@ Format sledi [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), verzije s
 
 ## [Unreleased]
 
-Načrtovano za v6.53+:
-- UI komponente za v6.45-v6.52 funkcije v dashboard
+Načrtovano za v6.54+:
+- UI komponente za v6.45-v6.53 funkcije v dashboard
 - Unit testi za lib/ai.ts
 - Playwright E2E testi
 - WebSocket real-time negotiation
 - ML model za buyer matchmaker (fine-tuned na realni data)
+
+## [6.53.0] - 2026-07-28
+
+### Added
+- **AI Profit Distribution Optimizer** — optimizira porazdelitev dobička čez kategorije
+  - 8 kategorij distribucije (reinvest, reserve, cash_out, tax_reserve, emergency_fund, growth_fund, debt_repayment, education)
+  - 4 scenariji (aggressive_growth, balanced, conservative, cash_focus) z 12m/24m/36m projekcijami
+  - Tax plan z deductions in optimization tips
+  - 12-mesečni reinvest plan z cumulative capital
+- **AI Listing Description Sentiment Optimizer** — optimizira opise za max emotional response
+  - 8 sentiment faktorjev (trust, urgency, excitement, scarcity, social_proof, emotional, professional, persuasive)
+  - 10 optimizacijskih strategij (add_trust, add_urgency, restructure, remove_negative...)
+  - A/B test plan z variant A/B in focus faktorji
+  - Per-listing current vs optimized sentiment z improvement %
+- **AI Buyer Networking Strategist** — identificira povezave med kupci za network effects
+  - 10 network tipov (referral_program, community_building, cross_introduction, bundle_split, group_discount, category_ambassador, local_network, seasonal_network, family_network, collector_network)
+  - 5 network effects (direct, indirect, two_sided, data, platform)
+  - Referral opportunities z incentive in conversion rate
+  - Cluster analysis z member count in total spent
 
 ## [6.52.0] - 2026-07-28
 
@@ -297,7 +316,8 @@ Načrtovano za v6.53+:
 
 ---
 
-[Unreleased]: https://github.com/markec12345678/markecaifirm/compare/v6.52.0...HEAD
+[Unreleased]: https://github.com/markec12345678/markecaifirm/compare/v6.53.0...HEAD
+[6.53.0]: https://github.com/markec12345678/markecaifirm/compare/v6.52.0...v6.53.0
 [6.52.0]: https://github.com/markec12345678/markecaifirm/compare/v6.51.0...v6.52.0
 [6.51.0]: https://github.com/markec12345678/markecaifirm/compare/v6.50.0...v6.51.0
 [6.50.0]: https://github.com/markec12345678/markecaifirm/compare/v6.49.0...v6.50.0
