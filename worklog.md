@@ -2459,3 +2459,53 @@ Stage Summary:
 - Cross-Pollination: 6 synergy tipov za sinergično prodajo čez platforme
 - Margin Guardian: 8 erosion faktorjev z 4 marža nivoji in protection actions
 - Verzija aplikacije: v6.37.0
+
+---
+Task ID: v6.38
+Agent: main
+Task: AI Buyer Intent, Quality Predictor, Inventory Rotation Engine
+
+Work Log:
+- src/app/api/ai/buyer-intent/route.ts: nov POST endpoint za napoved buyer intent.
+  8 faktorjev: search_volume, seasonal_demand, price_attractiveness, listing_quality,
+  urgency_signals, competition, social_proof, local_demand. 4 intent nivoji: hot (80-100%,
+  prodaja v 3-7d), warm (50-79%, 7-21d), cool (20-49%, 21-60d), cold (0-19%, nizko).
+  Per item: intentScore (0-100), predictedSellProbability7d/30dPct, 8 faktorjev z score
+  in impact (positive/negative/neutral), buyerSignals, recommendedActions,
+  optimalContactWindow. Market signals (market/seasonal/competitive/social z strength).
+  Conversion predictions: hot/warm/cool/cold count, expectedSales7d/30d,
+  expectedRevenue30dEur. Outreach timing (bestDay, bestHour, bestPlatform). Summary z
+  avgIntentScore, hottestItem, coldestItem, expectedPortfolioSellThrough30dPct.
+- src/app/api/ai/quality-predictor/route.ts: nov POST endpoint za napoved kakovosti.
+  8 komponent: title_quality (ključne besede, brand, model, stanje), description_quality
+  (stanje, specifikacije, kontakt), price_competitiveness, image_quality, seo_score,
+  trust_score (račun, garancija, prevzem), completeness, conversion_potential. Grade
+  (A+ 90+, A 80+, B+ 70+, B 60+, C 50+, D <50). Per komponenta: score (0-100), weightPct,
+  issues, strengths. 8 tipov issues (missing_info, poor_image, bad_title, overpriced,
+  underpriced, low_seo, low_trust, incomplete) z severity in fix. Improvements z
+  expectedScoreIncrease in difficulty. Projected performance: expectedViews7d,
+  expectedInquiries7d, expectedSellProbability30dPct, expectedSellTimeDays,
+  expectedFinalPriceEur. Quick fixes.
+- src/app/api/ai/rotation-engine/route.ts: nov POST endpoint za rotation optimization.
+  6 rotation faz: acquire (dan 0, kupi), list (1-3, objavi), sell (3-30, aktivna prodaja),
+  reinvest (30, cash → nov nakup), accelerate (30-60, refresh/popust/bundle), liquidate
+  (60+, deep discount/part_out). Per item: rotationPhase, daysInPhase, rotationAction
+  (sell_now/refresh/discount/bundle/hold/liquidate/reinvest_proceeds), actionDetail,
+  cashImpactEur, rotationPriority (1-10), reinvestmentTarget (kaj kupiti s cash-om).
+  4-tedenski rotation plan (week, itemsToSell, expectedCashInEur, itemsToBuy, cashOutEur,
+  netCashFlowEur). Cash flow impact: cashFreedFromLiquidation, cashFromFastSales,
+  totalCashAvailable, reinvestmentBudget, projectedProfitFromReinvestment. Summary z
+  currentRotationEfficiency vs target, itemsToRotateNow, itemsToLiquidate,
+  expectedCashFlowImprovement, projectedMonthlyRotationCycles.
+- src/app/page.tsx: verzija v6.38.0
+- TypeScript: 24 napak (enako kot prej) - nobenih novih napak uvedenih
+- Git commit: 'feat(v6.38): AI Buyer Intent, Quality Predictor, Inventory Rotation Engine'
+
+Stage Summary:
+- 3 nove AI funkcionalnosti za buyer intent, quality prediction in rotation optimization
+- 3 novi API ruti (buyer-intent, quality-predictor, rotation-engine)
+- ~516 novih vrstic kode
+- Buyer Intent: 8 faktorjev z 4 nivoji (hot/warm/cool/cold) in conversion predictions
+- Quality Predictor: 8 komponent z grade (A+ do D) in projected performance
+- Rotation Engine: 6 faz z rotation plan in cash flow reinvestment cycle
+- Verzija aplikacije: v6.38.0
