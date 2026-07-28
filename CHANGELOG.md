@@ -6,12 +6,32 @@ Format sledi [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), verzije s
 
 ## [Unreleased]
 
-Načrtovano za v6.57+:
-- UI komponente za v6.45-v6.56 funkcije v dashboard
+Načrtovano za v6.58+:
+- UI komponente za v6.45-v6.57 funkcije v dashboard
 - Unit testi za lib/ai.ts
 - Playwright E2E testi
 - WebSocket real-time negotiation
 - ML model za buyer matchmaker (fine-tuned na realni data)
+
+## [6.57.0] - 2026-07-28
+
+### Added
+- **AI Listing Optimization Pipeline** — celovit 10-fazni pipeline za optimization oglasa
+  - 10 faz (analysis→title→description→price→image→tag→timing→platform_adaptation→final_review→launch)
+  - Per-item before/after za vsako kategorijo optimizacije
+  - Platform-specific naslov, opis, cena, tagi, jezik, CTA
+  - Before/after metric z confidence interval
+- **AI Inventory Rebalancer v3** — advanced rebalancing z ML portfolio optimization
+  - 5 ML modelov (mean_variance, kelly_criterion, risk_parity, momentum_tilting, mean_reversion)
+  - 4 scenariji (aggressive, balanced, conservative, defensive) z Sharpe ratio in max drawdown
+  - 6 rebalancing ciljev (maximize_risk_adjusted_return, diversification, liquidity, seasonality, momentum, contrarian)
+  - Per-category target allocation z rebalance amount in direction
+- **AI Buyer Conversion Funnel v2** — advanced funnel z ML stage analysis
+  - 10-fazni funnel (impression→view→engagement→inquiry→qualification→consideration→
+    negotiation→commitment→payment→completion)
+  - ML predictions per stage (conversion_probability, drop_off_probability, optimization_potential)
+  - 8 optimization tipov (title_improvement, response_speed, trust_building, urgency_injection...)
+  - A/B experimenti z hypothesis, variant A/B, sample size in test duration
 
 ## [6.56.0] - 2026-07-28
 
@@ -393,7 +413,8 @@ Načrtovano za v6.57+:
 
 ---
 
-[Unreleased]: https://github.com/markec12345678/markecaifirm/compare/v6.56.0...HEAD
+[Unreleased]: https://github.com/markec12345678/markecaifirm/compare/v6.57.0...HEAD
+[6.57.0]: https://github.com/markec12345678/markecaifirm/compare/v6.56.0...v6.57.0
 [6.56.0]: https://github.com/markec12345678/markecaifirm/compare/v6.55.0...v6.56.0
 [6.55.0]: https://github.com/markec12345678/markecaifirm/compare/v6.54.0...v6.55.0
 [6.54.0]: https://github.com/markec12345678/markecaifirm/compare/v6.53.0...v6.54.0

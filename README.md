@@ -1,8 +1,8 @@
 # Markec AI Firm — AI Trading Firm za slovenske oglase
 
-[![Version](https://img.shields.io/badge/version-v6.56.0-blue.svg)](./CHANGELOG.md)
+[![Version](https://img.shields.io/badge/version-v6.57.0-blue.svg)](./CHANGELOG.md)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](./LICENSE)
-[![AI Endpoints](https://img.shields.io/badge/AI%20endpoints-147+-green.svg)](./AI_ENDPOINTS.md)
+[![AI Endpoints](https://img.shields.io/badge/AI%20endpoints-150+-green.svg)](./AI_ENDPOINTS.md)
 [![Next.js](https://img.shields.io/badge/Next.js-16-black.svg)](https://nextjs.org/)
 [![TypeScript](https://img.shields.io/badge/TypeScript-5-blue.svg)](https://www.typescriptlang.org/)
 [![TypeScript Errors](https://img.shields.io/badge/TS%20errors-0-brightgreen.svg)](#)
@@ -11,7 +11,7 @@
 [![PRs Welcome](https://img.shields.io/badge/PRs-welcome-brightgreen.svg)](./CONTRIBUTING.md)
 
 > **AI-powered trading firm** za Bolha, Facebook Marketplace, Vinted, Avtonet in Kleinanzeigen.
-> **147+ AI endpointov** za iskanje, ocenjevanje, kupovanje in preprodajo.
+> **150+ AI endpointov** za iskanje, ocenjevanje, kupovanje in preprodajo.
 > **Local-first** — vsi podatki ostanejo na tvojem računalniku. **Zero-cloud**.
 
 ---
@@ -46,9 +46,9 @@ računalniku — brez cloud storitev, brez mesečnih naročnin, brez deljenja po
 Lovi podcenjene oglase na Bolhi/Facebooku/Vintedu z AI, jih kupi poceni, preprodaj drago z
 AI-optimiziranimi oglasi, in avtomatiziraj celoten workflow od odkritja do prodaje.
 
-### Verzija v6.56.0 (28. julij 2026)
+### Verzija v6.57.0 (28. julij 2026)
 
-**147 AI endpointov** organiziranih v 7 kategorij:
+**150 AI endpointov** organiziranih v 7 kategorij:
 - **Statistike** (analytics, predictions, forecasting) — 35+ funkcij
 - **Skladišče** (inventory management, aging, depreciation) — 20+ funkcij
 - **Oglasi** (listing optimization, SEO, image analysis) — 25+ funkcij
@@ -57,14 +57,13 @@ AI-optimiziranimi oglasi, in avtomatiziraj celoten workflow od odkritja do proda
 - **Risk/Insurance** (hedging, fraud detection, claims) — 10+ funkcij
 - **Finance/Profit** (margin, ROI, compounding) — 16+ funkcij
 
-### Kaj je novega v v6.56
+### Kaj je novega v v6.57
 
-- ✨ **Vseh 24 TypeScript napak popravljenih** - 0 napak zdaj!
-- **AI Seller Negotiation Strategist** — 12 taktik za pogajanje kot prodajalec z counter strategijami
-- **AI Inventory Lifecycle Optimizer v2** — 12 faz z ML stage transitions in predictions
-- **AI Buyer Persona Generator v2** — 10 persona tipov z ML clustering in behavioral models
+- **AI Listing Optimization Pipeline** — 10-fazni pipeline (analiza→title→desc→price→image→tag→timing→platform→review→launch)
+- **AI Inventory Rebalancer v3** — ML portfolio z 5 modeli (mean_variance, kelly, risk_parity, momentum, mean_reversion)
+- **AI Buyer Conversion Funnel v2** — 10-fazni funnel z ML predictions in A/B experimenti
 
-▶️ Glej [CHANGELOG.md](./CHANGELOG.md) za popolno zgodovino v1.0 → v6.56.
+▶️ Glej [CHANGELOG.md](./CHANGELOG.md) za popolno zgodovino v1.0 → v6.57.
 
 ---
 
@@ -566,14 +565,14 @@ Z obveznostjo:
 
 ## 📋 Changelog
 
-Popolna zgodovina verzij v [CHANGELOG.md](./CHANGELOG.md) — od v1.0 (25. junij 2026) do v6.56 (28. julij 2026).
+Popolna zgodovina verzij v [CHANGELOG.md](./CHANGELOG.md) — od v1.0 (25. junij 2026) do v6.57 (28. julij 2026).
 
 ### Zadnje verzije
+- **v6.57.0** (28. jul 2026) — Listing Optimization Pipeline, Inventory Rebalancer v3, Buyer Conversion Funnel v2
 - **v6.56.0** (28. jul 2026) — Seller Negotiation Strategist, Inventory Lifecycle Optimizer v2, Buyer Persona Generator v2 + 24 TS napak popravljenih
 - **v6.55.0** (28. jul 2026) — Inventory Liquidation Strategist, Buyer Engagement Optimizer, Listing Performance Forecaster v3
 - **v6.54.0** (28. jul 2026) — Profit Margin Forecaster, Buyer Conversion Predictor, Listing Description A/B Test Optimizer
 - **v6.53.0** (28. jul 2026) — Profit Distribution Optimizer, Description Sentiment Optimizer, Buyer Networking Strategist
-- **v6.52.0** (28. jul 2026) — Buyer Behavior Predictor, Pricing Psychology Optimizer, Listing Performance Tracker v2
 
 ---
 
