@@ -2819,3 +2819,60 @@ Stage Summary:
 - Cash Generator: 8 strategij z 3-valovnim planom in profit retention
 - Profit Cycle Optimizer: 8-fazni cikel z compounding projekcijami (12m/24m/36m)
 - Verzija aplikacije: v6.43.0
+
+---
+Task ID: v6.44
+Agent: main
+Task: AI Refresh Calendar, Deal Aggregator, Insurance Optimizer v2
+
+Work Log:
+- src/app/api/ai/refresh-calendar/route.ts: nov POST endpoint za 30-dnevni refresh koledar.
+  7 refresh strategij: title_swap (nov naslov z drugačnimi ključnimi besedami), image_refresh
+  (nove slike, drugačen kot), price_drop (znižanje 5-15%), platform_switch (prestavi na
+  drugo platformo), relist_full (popolnoma nova objava), bundle_refresh (objavi kot del
+  bundla), hold (ne osvežuj še). Refresh pravila glede na starost: sveži (1-7d) = ne
+  osvežuj, aktivni (7-14d) = pripravi, padajoči (14-21d) = osveži, stale (21-30d) =
+  refresh + 5% popust, stalled (30-45d) = agresiven + 10%, dead (45+) = likvidacija + 15%.
+  Per dan 1-30: itemsToRefresh, refreshActions (item_id, title, action, detail, newPriceEur),
+  priority. Per item: currentExposurePct (0-100), nextRefreshDay, refreshStrategy,
+  refreshDetail, newTitle, newPriceEur, expectedExposureBoostPct. Strategy z refreshFrequency
+  (daily/every_3_days/weekly), totalRefreshes30d, priceDrops/titleSwaps/relists count.
+  Expected impact: avgExposureIncreasePct, expectedInquiriesIncreasePct,
+  expectedSellTimeReductionDays, expectedExtraSales30d, expectedExtraProfitEur. Summary z
+  calendarCompletenessPct, itemsCovered, refreshEfficiencyScore.
+- src/app/api/ai/deal-aggregator/route.ts: nov POST endpoint za agregacijo priložnosti.
+  Pridobi vse listinge z dealScore >= minDealScore (default 60) iz zadnjih 14 dni. Filtri:
+  minDealScore, maxPrice, category. Per deal: rank, source, priceEur, estValueEur,
+  discountPct, dealScore, aiRisk, aiVerdict, location, potentialProfitEur, potentialRoiPct,
+  category, dealOfDay flag, reasoning. By source (count, avgDealScore, avgDiscountPct,
+  bestDealTitle, opportunityRate high/medium/low). Top picks (10 z why in urgency).
+  Trending categories (listingCount, avgDealScore, trend rising/stable/falling, action
+  buy_more/monitor/avoid). Summary z dealOfDay, bestSource, avgDealScore, avgDiscountPct,
+  totalPotentialProfitEur, aggregatorEfficiencyScore.
+- src/app/api/ai/insurance-optimizer-v2/route.ts: nov POST endpoint za napredno zavarovanje.
+  4-dimenzionalna risk matrika: theft (1-10, telefoni=10, nepremicnine=2), damage (1-10,
+  avto=8, pohištvo=7), depreciation rate (letni %, elektronika=30%, nepremicnine=3%),
+  liquidity (1-10, nepremicnine=8, telefoni=2). 7 kategorijskih profilov (elektronika,
+  telefoni, avto, nepremicnine, kolesa, pohištvo, drugo). 5 zavarovalnih polic:
+  home_insurance (do 5.000€/10.000€), business_insurance (za preprodajalce), per_item
+  (individualno za >500€), self_insurance (rezerva), transit_insurance (shipping).
+  Per item: riskScore (0-100), riskLevel (low/medium/high/critical), primaryRisk
+  (theft/damage/depreciation/liquidity), recommendedAction (insure/self_insure/sell_now/
+  monitor), insuranceValueEur. Claim scenariji (theft/damage/total_loss/depreciation z
+  probabilityPct, expectedLossEur, coveredBy, uncoveredEur, mitigation). Recommendations
+  z riskAddressed in expectedSavingsEur. Summary z overallRiskScore, totalInsuredValueEur,
+  totalUninsuredValueEur, recommendedAnnualPremiumEur, expectedAnnualLossEur,
+  insuranceEfficiencyScore.
+- src/app/page.tsx: verzija v6.44.0
+- TypeScript: 24 napak (enako kot prej) - nobenih novih napak uvedenih
+- Git commit: 'feat(v6.44): AI Refresh Calendar, Deal Aggregator, Insurance Optimizer v2'
+- GitHub push: uspešen
+
+Stage Summary:
+- 3 nove AI funkcionalnosti za refresh planning, deal aggregation in insurance v2
+- 3 novi API ruti (refresh-calendar, deal-aggregator, insurance-optimizer-v2)
+- ~650 novih vrstic kode
+- Refresh Calendar: 30-dnevni koledar z 7 strategijami in expected extra profit
+- Deal Aggregator: rangirana lista priložnosti iz vseh virov z trending categories
+- Insurance Optimizer v2: 4D risk matrika z 5 policami in claim scenariji
+- Verzija aplikacije: v6.44.0
