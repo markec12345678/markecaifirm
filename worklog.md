@@ -3836,3 +3836,84 @@ Stage Summary:
 - Skupno 150 AI endpointov (+3 od v6.56)
 - TypeScript: 0 napak (ohranjeno) ✨
 - Verzija aplikacije: v6.57.0
+
+---
+Task ID: v6.58
+Agent: main
+Task: AI Profit Margin Predictor v3, Seller Trust Score v2, Listing Image Generator
+
+Work Log:
+- src/app/api/ai/profit-margin-predictor-v3/route.ts: nov POST endpoint za advanced
+  ML prediction. 8-model ensemble: gradient_boosting (boosting za visoko accuracy),
+  random_forest (non-linear, robust), neural_network (deep learning), linear_regression
+  (interpretable), ridge_regression (L2), lasso_regression (L1 feature selection),
+  xgboost (extreme gradient boosting), lightgbm (fast). Per model: weightInEnsemble,
+  accuracyScore, r2Score, maeEur, contributionToEnsemblePct, bestFor. Per item:
+  ensemblePrediction z predictedMarginPct, predictedProfitEur, predictedRoiPct,
+  confidencePct, predictionInterval (lowerPct/upperPct), modelConsensus (strong/
+  moderate/weak). 4 scenariji (optimistic/realistic/pessimistic/stress_test) z
+  marginPct, profitEur, probabilityPct. keyDrivers per item z feature, importancePct,
+  direction (positive/negative), currentValue, optimalValue. recommendation
+  (strong_buy/buy/consider/avoid/strong_avoid), reasoning, expectedDaysToSell,
+  breakEvenPriceEur. featureImportance (top 10) z importancePct, direction,
+  description, optimalValue, currentAvgValue. Summary z avgPredictedMarginPct,
+  avgPredictedProfitEur, avgConfidencePct, bestPerformingModel, mostImportantFeature,
+  biggestOpportunityId, biggestRiskId, predictionQualityScore.
+- src/app/api/ai/seller-trust-score-v2/route.ts: nov POST endpoint za advanced
+  seller scoring. 12-dimenzionalni trust score: transaction_history, responsiveness,
+  consistency, transparency, fairness, professionalism, reliability_of_delivery,
+  financial_integrity, communication_quality, listing_accuracy, post_sale_support,
+  market_reputation. 5 ML modelov: random_forest (classifier), gradient_boosting
+  (prediction), neural_network (kompleksni vzorci), logistic_regression
+  (interpretable binary), ensemble_voting (kombinacija) z accuracyPct, precisionPct,
+  recallPct, f1Score, weightInEnsemble, bestFor. 7 behavioral patternov:
+  consistent_buyer (vedno iste kategorije), diverse_buyer (raznolike), high_frequency
+  (reseller signal), low_frequency (casual), seasonal (določeni meseci), reactive
+  (odgovori), unresponsive (ne odgovarja). 6 trust levelov: verified_trader (85-100),
+  trusted (70-84), neutral (50-69), cautious (30-49), suspicious (15-29), blacklisted
+  (0-14). Per seller: trustScore, trustLevel, mlScores (5 modelov scores + consensus),
+  dimensionScores (12 dimenzij 0-100), behavioralPattern, redFlags, greenFlags,
+  recommendedAction (strong_buy_from→blacklist), maxSafeTransactionEur, specialty,
+  riskAssessment. Summary z vsemi level counti, bestModel, biggestRiskSeller,
+  safestSeller, trustEfficiencyScore.
+- src/app/api/ai/listing-image-generator/route.ts: nov POST endpoint za AI image
+  generation concepts. 10 shot tipov: hero_shot (glavna slika), detail_closeup
+  (blagovna znamka), context_lifestyle (v uporabi), angle_side (stranski 3D),
+  angle_top (od zgoraj), damage_honest (poškodbe za trust), size_reference (z
+  referenco), accessory_bundle (z dodatki), before_after (obnova), seasonal_themed
+  (sezonski kontekst). Per item: currentImageScore, recommendedShotCount, primaryShot,
+  imagePrompts (z shotType, prompt, negativePrompt, expectedQualityScore, priority,
+  technicalSpecs), editingPresets, expectedViewsIncreasePct,
+  expectedInquiriesIncreasePct. AI prompts za Midjourney/DALL-E/Flux/Stable Diffusion
+  z detailed description, lighting, composition, mood, technical specs, negative
+  prompts. 6 editing presetov: brightness_boost, contrast_enhance, color_correction,
+  background_cleanup, sharpness_enhance, crop_optimize z description, intensityPct,
+  bestForShotType, toolRecommendation (snapseed/lightroom/photoshop/canva/phone_default),
+  stepByStep. shotPlans per shot tip z description, bestForCategory, cameraAngle,
+  lightingSetup, backgroundRecommendation, priority. A/B test plan z variantAShot,
+  variantBShot, testDurationDays, primaryMetric, expectedWinner, successThresholdPct.
+  Summary z avgCurrentImageScore vs avgTargetImageScore, bestShotTypeOverall,
+  biggestImageIssue, quickestImageWin, imageGenerationScore.
+
+DOC UPDATES:
+- README.md: verzija v6.58.0, 153+ endpoints badge, "kaj je novega v v6.58" sekcija,
+  zadnje verzije posodobljene, changelog link do v6.58
+- CHANGELOG.md: v6.58.0 sekcija dodana z vsemi 3 novimi funkcijami in compare linki
+- AI_ENDPOINTS.md: avtomatsko regenerirano s 153 endpointi
+- package.json: version 6.58.0
+- src/app/page.tsx: verzija v6.58.0
+
+- TypeScript: 0 napak (ohranjeno) ✨
+- Git commit: 'feat(v6.58): AI Profit Margin Predictor v3, Seller Trust Score v2, Listing Image Generator'
+- GitHub push: uspešen (8 files, 1156 insertions)
+
+Stage Summary:
+- 3 nove AI funkcionalnosti za advanced ML margin prediction, seller trust in image generation
+- 3 novi API ruti (profit-margin-predictor-v3, seller-trust-score-v2, listing-image-generator)
+- ~1050 novih vrstic kode
+- Profit Margin Predictor v3: 8-model ensemble z feature importance in 4 scenariji
+- Seller Trust Score v2: 12-dimenzionalni trust z 5 ML modeli in 7 behavioral patterni
+- Listing Image Generator: 10 shot tipov z AI prompts in 6 editing presets
+- Skupno 153 AI endpointov (+3 od v6.57)
+- TypeScript: 0 napak (ohranjeno) ✨
+- Verzija aplikacije: v6.58.0
