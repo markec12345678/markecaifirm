@@ -6,12 +6,33 @@ Format sledi [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), verzije s
 
 ## [Unreleased]
 
-Načrtovano za v6.70+:
-- UI komponente za v6.45-v6.69 funkcije v dashboard
+Načrtovano za v6.71+:
+- UI komponente za v6.45-v6.70 funkcije v dashboard
 - Unit testi za lib/ai.ts
 - Playwright E2E testi
 - WebSocket real-time negotiation
 - ML model za buyer matchmaker (fine-tuned na realni data)
+
+## [6.70.0] - 2026-07-28
+
+### Added
+- **AI Listing Performance Dashboard** — centralni dashboard z ML insights in KPI tracking
+  - 10 KPI-jev (revenue, profit, margin, items_sold, avg_days_to_sell, conversion_rate, avg_sell_price, profit_per_item, holding_cost, roi)
+  - 8 insight tipov (trend, anomaly, opportunity, warning, info) z severity in impact
+  - 6 trend metrik z 30d prediction in confidence
+  - Top 10 performers z performance score in key success factor
+  - 6 alert tipov z financial impact in recommended action
+- **AI Inventory Growth Planner** — načrt rasti inventarja z ML in capital projection
+  - 24-mesečni growth plan z reinvest amount, expected profit, cumulative capital
+  - 3 scenariji (conservative, realistic, aggressive) z probability
+  - 6 milestones z target month in achievement probability
+  - 5 ML modelov (arima, lstm, prophet, xgboost, ensemble) z prediction type
+- **AI Buyer Journey Optimizer** — optimizira buyer journey z ML in touchpoint mapping
+  - 8 journey faz (awareness→advocacy) z stage probabilities in velocity score
+  - Per-buyer: current stage, journey progress, blockers, accelerators, recommended touchpoint
+  - Touchpoints per stage z channel, timing, message template, engagement in conversion lift
+  - 5 optimization tipov (stage_acceleration, drop_off_reduction, touchpoint_addition, timing, channel)
+  - 5 ML modelov (random_forest, gradient_boosting, lstm, markov_chain, ensemble)
 
 ## [6.69.0] - 2026-07-28
 
@@ -677,7 +698,8 @@ Načrtovano za v6.70+:
 
 ---
 
-[Unreleased]: https://github.com/markec12345678/markecaifirm/compare/v6.69.0...HEAD
+[Unreleased]: https://github.com/markec12345678/markecaifirm/compare/v6.70.0...HEAD
+[6.70.0]: https://github.com/markec12345678/markecaifirm/compare/v6.69.0...v6.70.0
 [6.69.0]: https://github.com/markec12345678/markecaifirm/compare/v6.68.0...v6.69.0
 [6.68.0]: https://github.com/markec12345678/markecaifirm/compare/v6.67.0...v6.68.0
 [6.67.0]: https://github.com/markec12345678/markecaifirm/compare/v6.66.0...v6.67.0
