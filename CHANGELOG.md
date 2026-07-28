@@ -6,12 +6,33 @@ Format sledi [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), verzije s
 
 ## [Unreleased]
 
-Načrtovano za v6.76+:
-- UI komponente za v6.45-v6.75 funkcije v dashboard
+Načrtovano za v6.77+:
+- UI komponente za v6.45-v6.76 funkcije v dashboard
 - Unit testi za lib/ai.ts
 - Playwright E2E testi
 - WebSocket real-time negotiation
 - ML model za buyer matchmaker (fine-tuned na realni data)
+
+## [6.76.0] - 2026-07-28
+
+### Added
+- **AI Listing Engagement Predictor** — ML napoved engagement z 10-dimenzionalno analizo
+  - 10 engagement faktorjev (visual_appeal, title_attractiveness, price_competitiveness, description_quality, category_demand, seller_reputation, location_convenience, seasonal_relevance, social_proof, urgency_level)
+  - Per-listing: engagement score, level, predicted views/inquiries/saves/shares 7d, conversion probability
+  - 10 optimization tipov z expected engagement lift in implementation effort
+  - 3 timeframe predictions (24h, 7d, 30d) z confidence
+  - 5 ML modelov z prediction type (engagement_score, view_prediction, inquiry_prediction, conversion_probability)
+- **AI Inventory Stockout Predictor** — napoveduje izpodrpitev z ML in reorder timing
+  - Per-category: current stock, daily sell rate, days until stockout, stockout date, probability, recommended reorder day/quantity, urgency
+  - 5 stock statuses (well_stocked, adequate, low, critical, out_of_stock)
+  - 30-day reorder plan z categories to reorder, estimated cost in revenue protection
+  - 5 ML modelov z prediction type (stockout_timing, demand_forecast, optimal_reorder, stock_level)
+- **AI Buyer Acquisition Cost Optimizer** — optimizira CAC z ML in channel analysis
+  - 10 acquisition kanalov (bolha_organic, facebook_organic, vinted_organic, referral, social_media, email_marketing, cross_posting, flash_sale, bundle_attract, local_community)
+  - Per-channel: current vs optimized CAC, ROI, expected new buyers, recommended action (scale_up/maintain/reduce/exit)
+  - 10 optimization tipov (channel_reallocation, budget_optimization, referral_boost, content_marketing, cross_posting_expansion, bundle_strategy, flash_sale_optimization, community_building, email_automation, social_proof_leverage)
+  - 12-mesečni projections z new buyers, avg CAC, total CAC, revenue, ROI in confidence
+  - 5 ML modelov z prediction type (cac_forecast, channel_performance, buyer_acquisition, optimal_allocation)
 
 ## [6.75.0] - 2026-07-28
 
@@ -803,7 +824,8 @@ Načrtovano za v6.76+:
 
 ---
 
-[Unreleased]: https://github.com/markec12345678/markecaifirm/compare/v6.75.0...HEAD
+[Unreleased]: https://github.com/markec12345678/markecaifirm/compare/v6.76.0...HEAD
+[6.76.0]: https://github.com/markec12345678/markecaifirm/compare/v6.75.0...v6.76.0
 [6.75.0]: https://github.com/markec12345678/markecaifirm/compare/v6.74.0...v6.75.0
 [6.74.0]: https://github.com/markec12345678/markecaifirm/compare/v6.73.0...v6.74.0
 [6.73.0]: https://github.com/markec12345678/markecaifirm/compare/v6.72.0...v6.73.0
