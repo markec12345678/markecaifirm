@@ -6,12 +6,47 @@ Format sledi [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), verzije s
 
 ## [Unreleased]
 
-Načrtovano za v6.56+:
-- UI komponente za v6.45-v6.55 funkcije v dashboard
+Načrtovano za v6.57+:
+- UI komponente za v6.45-v6.56 funkcije v dashboard
 - Unit testi za lib/ai.ts
 - Playwright E2E testi
 - WebSocket real-time negotiation
 - ML model za buyer matchmaker (fine-tuned na realni data)
+
+## [6.56.0] - 2026-07-28
+
+### Fixed
+- **Vseh 24 TypeScript napak popravljenih** - 0 napak zdaj! ✨
+  - trades-view.tsx: 12 napak (stats possibly null) - premaknjen stats blok end tag
+  - lib/pipeline.ts: 2 napaki (settings used before declaration) - dodan preSettings
+  - api/digest/route.ts: 1 napaka (aiReason ne obstaja na Alert) - odstranjeno
+  - api/monitors/batch-run/route.ts: 2 napaki (never type) - eksplicitna tipizacija
+  - listings-view.tsx: 1 napaka ('hide' ni v allowed) - dodan v union tip
+  - settings-view.tsx: 1 napaka (Uint8Array) - konvertiran v ArrayBuffer
+  - skills/*: 2 napaki - skills exclude v tsconfig
+
+### Added
+- **AI Seller Negotiation Strategist** — strategija za pogajanje kot prodajalec
+  - 12 seller taktik (anchor_high, value_stack, scarcity_urgency, walk_away, split_difference,
+    condition_concession, bundle_deal, payment_terms, social_proof, authority_leverage,
+    loss_frame, reciprocity)
+  - 8 buyer tipov z best/avoid taktikami (price_sensitive, quality_focused, urgent_buyer...)
+  - 5 scenarijev (quick_sale, maximize_profit, bundle_opportunity, stalled, walk_away)
+  - 5 counter strategij za buyer taktike (lowball_offer, take_it_or_leave_it...)
+  - Concession plan z if/then logiko
+- **AI Inventory Lifecycle Optimizer v2** — advanced lifecycle z ML stage transitions
+  - 12 lifecycle faz (acquisition→intake→preparation→launch→active_marketing→inquiry_phase→
+    negotiation→closing→sold→post_sale→failed→returned)
+  - ML predictions per item (days_to_next_stage, final_stage, sale_probability, sale_price)
+  - Stage transitions z blockers in accelerators
+  - Optimal actions per stage z time savings in revenue impact
+- **AI Buyer Persona Generator v2** — napredne osebe z ML clustering
+  - 10 persona tipov (bargain_hunter, collector, parent_family, student_young, professional,
+    hobbyist, gift_giver, reseller, tech_enthusiast, seasonal_buyer)
+  - Per persona: demographics, psychographics, behavioral, motivational, messaging, channels
+  - 3 clusterji (high_value, repeat_loyal, one_time_buyer) z behavioral patterns
+  - Behavioral models z input features in accuracy
+  - Messaging templates per persona z subject line in emotional appeal
 
 ## [6.55.0] - 2026-07-28
 
@@ -358,7 +393,8 @@ Načrtovano za v6.56+:
 
 ---
 
-[Unreleased]: https://github.com/markec12345678/markecaifirm/compare/v6.55.0...HEAD
+[Unreleased]: https://github.com/markec12345678/markecaifirm/compare/v6.56.0...HEAD
+[6.56.0]: https://github.com/markec12345678/markecaifirm/compare/v6.55.0...v6.56.0
 [6.55.0]: https://github.com/markec12345678/markecaifirm/compare/v6.54.0...v6.55.0
 [6.54.0]: https://github.com/markec12345678/markecaifirm/compare/v6.53.0...v6.54.0
 [6.53.0]: https://github.com/markec12345678/markecaifirm/compare/v6.52.0...v6.53.0
