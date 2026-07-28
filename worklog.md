@@ -3486,3 +3486,86 @@ Stage Summary:
 - Buyer Networking Strategist: 10 network tipov, 5 network effects, referral opportunities
 - Skupno 138 AI endpointov (+3 od v6.52)
 - Verzija aplikacije: v6.53.0
+
+---
+Task ID: v6.54
+Agent: main
+Task: AI Profit Margin Forecaster, Buyer Conversion Predictor, Listing Description A/B Test Optimizer
+
+Work Log:
+- src/app/api/ai/profit-margin-forecaster/route.ts: nov POST endpoint za napoved
+  marže in profita. 5 napovednih modelov: linear (trend se nadaljuje linearno),
+  seasonal (upošteva sezonska nihanja), momentum (nedavni 90d trend pospeši),
+  regression (če marža pada, projectira nadaljnji padec), growth (optimističen z
+  izboljšavami). Current metrics: currentMarginPct, currentMonthlyProfitEur,
+  currentMonthlyPurchases, trend3m/6m (rising/falling/stable), bestMonthProfitEur,
+  worstMonthProfitEur. Per-month forecast (1-24 mesecev): projectedMarginPct,
+  projectedRevenueEur, projectedCostEur, projectedProfitEur, projectedPurchases,
+  cumulativeProfitEur, confidencePct, keyAssumptions. 4 scenariji: pessimistic,
+  realistic, optimistic, stretch z avgMarginPct, totalProfitEur, totalRevenueEur,
+  avgMonthlyProfitEur, probabilityPct, keyDriver. Category projections per kategorija
+  z currentMarginPct vs projectedMarginPct, projectedPurchases, projectedProfitEur,
+  trend, recommendation (invest_more/maintain/reduce/exit), reasoning. Summary z
+  currentMonthlyProfitEur, projectedMonthlyProfitMonthsEur, totalProjectedProfitEur,
+  avgProjectedMarginPct, marginImprovementPct, bestCaseScenario, worstCaseScenario,
+  biggestMarginDriver, biggestMarginThreat, forecastConfidenceScore.
+- src/app/api/ai/buyer-conversion-predictor/route.ts: nov POST endpoint za napoved
+  konverzije. 7-fazni conversion funnel: awareness (10% v naslednjo), interest (30%),
+  inquiry (40%), consideration (50%), negotiation (60%), decision (75%), purchase
+  (100%). Per buyer: currentStage, conversionProbabilityPct, predictedPurchaseDate,
+  predictedPurchaseAmountEur, conversionFactors (10 faktorjev: price_match,
+  item_relevance, seller_trust, urgency, social_proof, competition, listing_quality,
+  negotiation_flexibility, location_convenience, payment_options), biggestConversionBlocker,
+  biggestConversionAccelerator, recommendedIntervention (10 taktik), expectedConversionUpliftPct,
+  priority. 10 intervention taktik: personal_outreach, limited_time_offer, bundle_deal,
+  price_drop, social_proof_boost, urgency_injection, trust_building, negotiation_invite,
+  free_shipping, extended_warranty z bestForStage, expectedConversionLiftPct,
+  implementationCostEur, expectedRevenueImpactEur, roiScore. Funnels per stage z
+  buyerCount, conversionRateToNextPct, avgTimeInStageDays, dropOffPct, biggestDropReason.
+  Predictions (4 timeframe) z expectedInquiries, expectedConversions, expectedRevenueEur,
+  confidencePct. Summary z avgConversionProbabilityPct, totalExpectedConversions30d,
+  totalExpectedRevenue30dEur, biggestConversionBlocker, bestIntervention,
+  funnelEfficiencyScore, conversionPredictionScore.
+- src/app/api/ai/listing-description-abtest-optimizer/route.ts: nov POST endpoint za
+  ML A/B testiranje opisov. 10 variant tipov: control (original), emotional_appeal
+  (darilo, spomin), urgency_focused (danes, omejeno), social_proof_heavy (popularno,
+  bestseller), specification_rich (tehnične specifikacije), story_driven (zgodba),
+  benefit_oriented (koristi za kupca), scarcity_emphasis (redkost), price_anchored
+  (prej 350€, sedaj 199€), problem_solution (problem-rešitev). Per listing:
+  controlDescription + 2-5 variants z variantId, variantType, description,
+  mlPredictions (7 predictions: expectedViews7d, expectedInquiries7d,
+  expectedConversionRatePct, expectedTimeToSaleDays, expectedFinalPriceEur,
+  engagementScore, statisticalConfidencePct), keyChangesFromControl,
+  psychologicalTechniqueUsed, expectedWinnerProbabilityPct. predictedWinner z
+  winnerReasoning. ML predictions agregacija per metric z controlAvg, variantAAvg,
+  variantBAvg, variantCAvg, bestVariant, improvementPct, confidencePct. Test matrix
+  per listing z variantAType, variantBType, variantCType, testDurationDays,
+  sampleSizePerVariant, primaryMetric, secondaryMetrics, stoppingRule. Statistična
+  analiza z comparison (a_vs_control, b_vs_control, c_vs_control, a_vs_b, a_vs_c,
+  b_vs_c), expectedLiftPct, confidenceInterval (lower, upper), pValueEstimate,
+  statisticalPower, sampleSizeNeeded, significant. Summary z totalListingsTested,
+  totalVariantsGenerated, avgExpectedConversionLiftPct, bestVariantTypeOverall,
+  bestVariantAvgLiftPct, totalTestDurationDays, totalSampleSizeNeeded,
+  avgStatisticalConfidencePct, abTestOptimizationScore.
+
+DOC UPDATES:
+- README.md: verzija v6.54.0, 141+ endpoints badge, "kaj je novega v v6.54" sekcija,
+  zadnje verzije posodobljene, changelog link do v6.54
+- CHANGELOG.md: v6.54.0 sekcija dodana z vsemi 3 novimi funkcijami in compare linki
+- AI_ENDPOINTS.md: avtomatsko regenerirano s 141 endpointi
+- package.json: version 6.54.0
+- src/app/page.tsx: verzija v6.54.0
+
+- TypeScript: 24 napak (enako kot prej) - nobenih novih napak uvedenih
+- Git commit: 'feat(v6.54): AI Profit Margin Forecaster, Buyer Conversion Predictor, Listing Description A/B Test Optimizer'
+- GitHub push: uspešen (8 files, 1055 insertions)
+
+Stage Summary:
+- 3 nove AI funkcionalnosti za profit forecasting, conversion prediction in A/B test optimization
+- 3 novi API ruti (profit-margin-forecaster, buyer-conversion-predictor, listing-description-abtest-optimizer)
+- ~920 novih vrstic kode
+- Profit Margin Forecaster: 5 modelov, 4 scenariji, category projections
+- Buyer Conversion Predictor: 7-fazni funnel, 10 faktorjev, 10 intervention taktik
+- Listing Description A/B Test Optimizer: 10 variant tipov z ML predictions in statistiko
+- Skupno 141 AI endpointov (+3 od v6.53)
+- Verzija aplikacije: v6.54.0
