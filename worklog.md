@@ -2655,3 +2655,52 @@ SKUPNO STANJE PO v6.40 MILESTONE:
 - 3 nivoji avtomatizacije (advisory → semi_auto → full_auto)
 - 8-fazni profit maximization workflow
 - 2 autonomous trading načina (paper/live)
+
+---
+Task ID: v6.41
+Agent: main
+Task: UI komponente za v6.40 MILESTONE funkcije
+
+Work Log:
+- src/components/dashboard/statistics-view.tsx: dodane 3 MILESTONE kartice za
+  v6.40 funkcije. State: masterData/masterLoading, tradeData/tradeLoading/
+  tradeMode/tradeBudget, playbookData/playbookLoading. Check in X ikoni dodani
+  v lucide-react import.
+
+  1) AI Master Dashboard:
+     - Health score (0-100) z grade (A+ do F) in barvo
+     - One-line summary (150 znakov executive povzetek)
+     - 6-stolpci grid: dobiček (realizedProfit + ROI), inventar (totalItems +
+       stalled), priložnosti (activeOpportunities + competitionLevel), tveganja
+       (riskScore + highRiskItems), avtomatizacija (monitors + automationLevel),
+       AI accuracy (overallAiAccuracyPct + learningTrend)
+     - Top 4 akcije z priority in impact
+     - Master summary paragraph (300 znakov)
+
+  2) AI Autonomous Trading:
+     - Mode select (paper/live) + budget input
+     - Autonomous readiness score (0-100) z recommended mode
+     - Buy rules (4 z enabled/disabled Check/X ikono)
+     - Sell rules (4 z enabled/disabled)
+     - Safeguards (4 z trigger → action)
+     - Projected monthly profit/ROI grid
+     - Insights banner
+
+  3) AI Profit Playbook:
+     - 8 faz z phase number, name, description, automationLevel badge
+     - AI modules per phase (3 prikazani)
+     - First action per phase z expectedImpactEur
+     - Expected outcome grid (current vs projected monthly profit)
+     - Summary: playbookScore, quickestWin, biggestOpportunity, expected90dProfit
+
+- src/app/page.tsx: verzija v6.41.0
+- TypeScript: 24 napak (enako kot prej) - nobenih novih napak uvedenih
+- Git commit: 'feat(v6.41): UI za v6.40 MILESTONE (Master Dashboard, Autonomous Trading, Profit Playbook)'
+
+Stage Summary:
+- UI komponente za v6.40 MILESTONE funkcije (3 kartice v Statistike zavihku)
+- ~236 novih vrstic kode
+- Master Dashboard: health score z grade, 8 sekcij, top akcije, master summary
+- Autonomous Trading: paper/live mode, buy/sell rules z safeguards, projected
+- Profit Playbook: 8 faz z AI moduli, expected outcome, summary z quick wins
+- Verzija aplikacije: v6.41.0
