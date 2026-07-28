@@ -6,12 +6,34 @@ Format sledi [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), verzije s
 
 ## [Unreleased]
 
-Načrtovano za v6.73+:
-- UI komponente za v6.45-v6.72 funkcije v dashboard
+Načrtovano za v6.74+:
+- UI komponente za v6.45-v6.73 funkcije v dashboard
 - Unit testi za lib/ai.ts
 - Playwright E2E testi
 - WebSocket real-time negotiation
 - ML model za buyer matchmaker (fine-tuned na realni data)
+
+## [6.73.0] - 2026-07-28
+
+### Added
+- **AI Listing Conversion Funnel Optimizer** — optimizira conversion funnel z ML in drop-off analysis
+  - 10 funnel faz (impression→completion) z ML predictions (conversion probability, optimization potential)
+  - Per-stage drop-off analysis z primary/secondary reasons in recovery strategy
+  - 10 optimization tipov (title_improvement, image_enhancement, price_adjustment, description_optimization, response_speed, trust_building, urgency_injection, follow_up, payment_options, shipping_options)
+  - 6 A/B experiments z hypothesis, variant A/B in statistical significance
+  - 5 ML modelov z prediction type (stage_conversion, drop_off_probability, recovery_potential, optimal_intervention)
+- **AI Inventory Supply Chain Optimizer** — optimizira supply chain z ML in sourcing strategy
+  - 10 sourcing tipov (bulk_purchase, individual_sourcing, auction_buying, wholesale_lot, private_seller, estate_sale, retail_arbitrage, online_arbitrage, import, local_pickup)
+  - Per-supplier: invested, profit, margin, reliability, response time, recommended action, negotiation leverage
+  - 6 logistics components (transport, storage, packaging, shipping, insurance, handling) z cost savings
+  - Monthly projections z sourcing cost, revenue, profit, margin in confidence
+  - 5 ML modelov z prediction type (demand_forecast, price_prediction, supplier_reliability, optimal_sourcing)
+- **AI Buyer Engagement Scoring Engine** — ML scoring engine za engagement z real-time tracking
+  - 10 scoring faktorjev (recency, frequency, monetary, engagement_depth, response_rate, social_engagement, referral_activity, content_interaction, purchase_consistency, platform_activity)
+  - 6 engagement nivojev (super_engaged→churned) z buyer count, avg score, avg revenue
+  - Per-buyer: engagement score, level, trend, velocity, 30d/90d prediction, key drivers/barriers
+  - 5 interventions (maintain, nurture, activate, reactivate, escalate) z expected lift in revenue impact
+  - 5 ML modelov z prediction type (engagement_score, engagement_trend, churn_probability, intervention_response)
 
 ## [6.72.0] - 2026-07-28
 
@@ -738,7 +760,8 @@ Načrtovano za v6.73+:
 
 ---
 
-[Unreleased]: https://github.com/markec12345678/markecaifirm/compare/v6.72.0...HEAD
+[Unreleased]: https://github.com/markec12345678/markecaifirm/compare/v6.73.0...HEAD
+[6.73.0]: https://github.com/markec12345678/markecaifirm/compare/v6.72.0...v6.73.0
 [6.72.0]: https://github.com/markec12345678/markecaifirm/compare/v6.71.0...v6.72.0
 [6.71.0]: https://github.com/markec12345678/markecaifirm/compare/v6.70.0...v6.71.0
 [6.70.0]: https://github.com/markec12345678/markecaifirm/compare/v6.69.0...v6.70.0
