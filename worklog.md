@@ -4303,3 +4303,28 @@ Work Log:
 - TypeScript: 0 napak (ohranjeno) ✨
 - Skupno: 168 AI endpointov (+3 od v6.62)
 - Verzija aplikacije: v6.63.0
+
+---
+Task ID: v6.64
+Agent: main
+Task: AI Listing Tag Optimizer, Inventory Seasonal Planner v2, Buyer Loyalty Program Designer
+
+Work Log:
+- listing-tag-optimizer: ML tag optimization z 10 kategorijami (primary, specification,
+  condition, location, price, seasonal, long_tail, trending, competitor, niche). Per-tag
+  ML scoring (search volume, competition, relevance, CTR, visibility). Keyword research
+  z difficulty score, opportunity score in trend. Per-listing: current vs optimized
+  search visibility z improvement %.
+- inventory-seasonal-planner-v2: 8 sezon (spring, summer, autumn, winter, christmas,
+  easter, back_to_school, black_friday). 12-mesečni koledar z recommended actions,
+  categories to stock/sell per mesec. Per-category seasonal factor, peak season, stock
+  action (build_up/maintain/reduce/liquidate). 5 ML modelov z seasonal accuracy.
+- buyer-loyalty-program-designer: 5 tier-ov (bronze, silver, gold, platinum, diamond)
+  z perks, discount, exclusive access, priority support, free shipping. 7 reward tipov
+  (discount, free_item, early_access, bundle, cashback, referral_bonus, birthday_gift).
+  Point system z points per euro, bonus points, expiry in redemption options. 12-mesečni
+  projection z active members, points issued/redeemed, revenue uplift, retention improvement.
+
+- TypeScript: 0 napak (ohranjeno) ✨
+- Skupno: 171 AI endpointov (+3 od v6.63)
+- Verzija aplikacije: v6.64.0
