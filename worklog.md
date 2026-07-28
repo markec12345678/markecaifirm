@@ -4427,3 +4427,28 @@ Work Log:
 - TypeScript: 0 napak (ohranjeno) ✨
 - Skupno: 183 AI endpointov (+3 od v6.67)
 - Verzija aplikacije: v6.68.0
+
+---
+Task ID: v6.69
+Agent: main
+Task: AI Listing Competitor Price Tracker v2, Inventory Liquidation Timeline, Buyer Communication Style Analyzer
+
+Work Log:
+- listing-competitor-price-tracker-v2: 5 ML modelov (arima, lstm, prophet, xgboost, ensemble).
+  Per-competitor: avg/min/max price, discount %, threat level, strength/weakness, counter
+  strategy. Price changes z impact on you in recommended response. Per-category positioning
+  z recommended position in expected impact.
+- inventory-liquidation-timeline: 5 timeline faz (immediate, short_term, medium_term,
+  extended, write_off) z day range in strategy. Per-item: scheduled day, recommended price,
+  discount %, recovery rate, strategy (flash_sale/bundle/auction/discount/bulk/donate/
+  write_off). Daily schedule z items to list, expected revenue/loss, cumulative recovery.
+  5 ML modelov z prediction type.
+- buyer-communication-style-analyzer: 10 komunikacijskih stilov (direct, indirect, formal,
+  informal, analytical, emotional, assertive, passive, persuasive, collaborative). Per-buyer:
+  primary/secondary style, confidence %, communication score, preferred tone/channel/response
+  time, negotiation style. Style adaptations z do/don't say lists in example messages.
+  5 ML modelov (bert, roberta, distilbert, xlm_roberta, ensemble).
+
+- TypeScript: 0 napak (ohranjeno) ✨
+- Skupno: 186 AI endpointov (+3 od v6.68)
+- Verzija aplikacije: v6.69.0
