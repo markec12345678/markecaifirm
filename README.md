@@ -1,8 +1,8 @@
 # Markec AI Firm — AI Trading Firm za slovenske oglase
 
-[![Version](https://img.shields.io/badge/version-v6.66.0-blue.svg)](./CHANGELOG.md)
+[![Version](https://img.shields.io/badge/version-v6.67.0-blue.svg)](./CHANGELOG.md)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](./LICENSE)
-[![AI Endpoints](https://img.shields.io/badge/AI%20endpoints-177+-green.svg)](./AI_ENDPOINTS.md)
+[![AI Endpoints](https://img.shields.io/badge/AI%20endpoints-180+-green.svg)](./AI_ENDPOINTS.md)
 [![Next.js](https://img.shields.io/badge/Next.js-16-black.svg)](https://nextjs.org/)
 [![TypeScript](https://img.shields.io/badge/TypeScript-5-blue.svg)](https://www.typescriptlang.org/)
 [![TypeScript Errors](https://img.shields.io/badge/TS%20errors-0-brightgreen.svg)](#)
@@ -11,7 +11,7 @@
 [![PRs Welcome](https://img.shields.io/badge/PRs-welcome-brightgreen.svg)](./CONTRIBUTING.md)
 
 > **AI-powered trading firm** za Bolha, Facebook Marketplace, Vinted, Avtonet in Kleinanzeigen.
-> **177+ AI endpointov** za iskanje, ocenjevanje, kupovanje in preprodajo.
+> **180+ AI endpointov** za iskanje, ocenjevanje, kupovanje in preprodajo.
 > **Local-first** — vsi podatki ostanejo na tvojem računalniku. **Zero-cloud**.
 
 ---
@@ -46,9 +46,9 @@ računalniku — brez cloud storitev, brez mesečnih naročnin, brez deljenja po
 Lovi podcenjene oglase na Bolhi/Facebooku/Vintedu z AI, jih kupi poceni, preprodaj drago z
 AI-optimiziranimi oglasi, in avtomatiziraj celoten workflow od odkritja do prodaje.
 
-### Verzija v6.66.0 (28. julij 2026)
+### Verzija v6.67.0 (28. julij 2026)
 
-**177 AI endpointov** organiziranih v 7 kategorij:
+**180 AI endpointov** organiziranih v 7 kategorij:
 - **Statistike** (analytics, predictions, forecasting) — 35+ funkcij
 - **Skladišče** (inventory management, aging, depreciation) — 20+ funkcij
 - **Oglasi** (listing optimization, SEO, image analysis) — 25+ funkcij
@@ -57,13 +57,13 @@ AI-optimiziranimi oglasi, in avtomatiziraj celoten workflow od odkritja do proda
 - **Risk/Insurance** (hedging, fraud detection, claims) — 10+ funkcij
 - **Finance/Profit** (margin, ROI, compounding) — 16+ funkcij
 
-### Kaj je novega v v6.66
+### Kaj je novega v v6.67
 
-- **AI Listing Cross-Platform Optimizer** — 8 sync strategij, 5 platform, conflict detection, per-platform configs
-- **AI Inventory Capital Allocator** — 5 ML modelov portfolio optimization, 3 scenariji z Sharpe ratio, rebalancing akcije
-- **AI Buyer Win-Back Campaign Designer** — 8 campaign tipov, 8 segmentov, 90-dnevni timeline, 12-mesečni projection
+- **AI Listing Image Quality Assessor v2** — 10 quality faktorjev z VLM analizo, shot plan in editing plan
+- **AI Inventory Depreciation Tracker** — 4 depreciation curve tipi z ML forecasting in write-off schedule
+- **AI Buyer Satisfaction Predictor** — 10 satisfaction faktorjev z NPS prediction in LTV projection
 
-▶️ Glej [CHANGELOG.md](./CHANGELOG.md) za popolno zgodovino v1.0 → v6.66.
+▶️ Glej [CHANGELOG.md](./CHANGELOG.md) za popolno zgodovino v1.0 → v6.67.
 
 ---
 
@@ -565,14 +565,14 @@ Z obveznostjo:
 
 ## 📋 Changelog
 
-Popolna zgodovina verzij v [CHANGELOG.md](./CHANGELOG.md) — od v1.0 (25. junij 2026) do v6.66 (28. julij 2026).
+Popolna zgodovina verzij v [CHANGELOG.md](./CHANGELOG.md) — od v1.0 (25. junij 2026) do v6.67 (28. julij 2026).
 
 ### Zadnje verzije
+- **v6.67.0** (28. jul 2026) — Listing Image Quality Assessor v2, Inventory Depreciation Tracker, Buyer Satisfaction Predictor
 - **v6.66.0** (28. jul 2026) — Listing Cross-Platform Optimizer, Inventory Capital Allocator, Buyer Win-Back Campaign Designer
 - **v6.65.0** (28. jul 2026) — Listing Performance Benchmark v2, Inventory Risk Assessor, Buyer Referral Program Designer
 - **v6.64.0** (28. jul 2026) — Listing Tag Optimizer, Inventory Seasonal Planner v2, Buyer Loyalty Program Designer
 - **v6.63.0** (28. jul 2026) — Listing Description Generator v3, Inventory Turnover Predictor, Buyer Churn Prevention Strategist
-- **v6.62.0** (28. jul 2026) — Listing Title Generator v2, Inventory Demand Forecaster, Buyer Purchase Pattern Analyzer
 
 ---
 
