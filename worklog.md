@@ -3410,3 +3410,79 @@ Stage Summary:
 - Listing Performance Tracker v2: 8 ML predictions, 4 demographic faktorji, channel analysis
 - Skupno 135 AI endpointov (+3 od v6.51)
 - Verzija aplikacije: v6.52.0
+
+---
+Task ID: v6.53
+Agent: main
+Task: AI Profit Distribution Optimizer, Description Sentiment Optimizer, Buyer Networking Strategist
+
+Work Log:
+- src/app/api/ai/profit-distribution-optimizer/route.ts: nov POST endpoint za
+  profit distribution. 8 kategorij distribucije: reinvest (30-50% za aggressive,
+  20-30% steady, 10-20% conservative), reserve (3-6 mesecev operativnih stroškov),
+  cash_out (10-30% glede na osebne potrebe), tax_reserve (25% slovenska dohodnina),
+  emergency_fund (10-15% do 5000€), growth_fund (5-15% za tools/marketing),
+  debt_repayment, education. Per kategorija: recommendedPct, amountEur,
+  monthlyAmountEur, purpose, rationale, expectedGrowthContributionPct, riskLevel,
+  timeHorizon. 4 scenariji: aggressive_growth, balanced, conservative, cash_focus z
+  reinvestPct, reservePct, cashOutPct, taxPct, growthPct, projected12m/24m/36mValueEur,
+  annualGrowthRatePct, riskScore, bestFor. Tax plan z year, grossProfitEur,
+  estimatedTaxEur, netProfitEur, effectiveTaxRatePct, deductionsAvailable,
+  taxOptimizationTips. 12-mesečni reinvest plan z month, reinvestAmountEur,
+  categoryFocus, expectedInventoryCount, expectedMonthlyProfitIncreaseEur,
+  cumulativeCapitalEur. Summary z recommended amounts za vsako kategorijo,
+  projected12mGrowthPct, projected24mValueEur, bestScenario, biggestRisk,
+  biggestOpportunity, distributionEfficiencyScore.
+- src/app/api/ai/listing-description-sentiment-optimizer/route.ts: nov POST endpoint
+  za sentiment optimizacijo opisov. 8 sentiment faktorjev z hevristično analizo:
+  trust (garancija, original), urgency (danes, zdaj, omejeno), excitement (super,
+  odlično), scarcity (redko, edinstveno), social_proof (popularno, bestseller),
+  emotional (darilo, spomin, družina), professional (specifikacije, model),
+  persuasive (popust, prihranek). Per listing: currentSentiment (8 faktorjev + overall)
+  vs optimizedSentiment, improvementPct, currentDescription vs optimizedDescription,
+  keyChanges, expectedEngagementIncreasePct, expectedConversionIncreasePct,
+  buyerEmotionalResponse (curious/excited/trusted/urgent/indifferent/skeptical).
+  Sentiment analysis per faktor z avgScore, benchmark, gapPct, improvementPotential,
+  tactic. 10 optimizacijskih strategij z expectedLiftPct in examplePhrase. A/B test
+  plan z variantADescription, variantBDescription, testDurationDays, primaryMetric,
+  expectedWinner, successThresholdPct. Summary z avgCurrentOverallScore vs
+  avgOptimizedOverallScore, weakestFactor, strongestFactor, biggestOpportunityFactor,
+  sentimentOptimizationScore.
+- src/app/api/ai/buyer-networking-strategist/route.ts: nov POST endpoint za
+  networking. Network connections based on shared categories med kupci z strength
+  score (sharedCats × 25 + purchases × 5). 10 network tipov: referral_program,
+  community_building, cross_introduction, bundle_split, group_discount,
+  category_ambassador, local_network, seasonal_network, family_network,
+  collector_network. Per network: networkName, type, members, sharedInterest,
+  networkStrengthScore, potentialRevenueEur, implementationDifficulty,
+  expectedParticipationRatePct. Cluster analysis z clusterName, categoryFocus,
+  memberCount, totalSpentEur, avgSpentPerMemberEur, keyMembers, clusterStrength,
+  growthPotential. Referral opportunities z referrer, potentialReferrals,
+  sharedCategory, referralIncentiveEur, expectedConversionRatePct,
+  potentialRevenueEur, bestChannel. 5 network effects (direct, indirect, two_sided,
+  data, platform) z currentStrength vs potentialStrength, improvementAction,
+  expectedRevenueImpactEur. Summary z totalBuyersAnalyzed, totalConnectionsFound,
+  avgNetworkScore, strongestNetwork, biggestNetworkOpportunity,
+  potentialNetworkRevenueEur, referralConversionRatePct, networkingEfficiencyScore.
+
+DOC UPDATES:
+- README.md: verzija v6.53.0, 138+ endpoints badge, "kaj je novega v v6.53" sekcija,
+  zadnje verzije posodobljene, changelog link do v6.53
+- CHANGELOG.md: v6.53.0 sekcija dodana z vsemi 3 novimi funkcijami in compare linki
+- AI_ENDPOINTS.md: avtomatsko regenerirano s 138 endpointi
+- package.json: version 6.53.0
+- src/app/page.tsx: verzija v6.53.0
+
+- TypeScript: 24 napak (enako kot prej) - nobenih novih napak uvedenih
+- Git commit: 'feat(v6.53): AI Profit Distribution Optimizer, Description Sentiment Optimizer, Buyer Networking Strategist'
+- GitHub push: uspešen (8 files, 1098 insertions)
+
+Stage Summary:
+- 3 nove AI funkcionalnosti za profit distribution, sentiment optimizacijo in networking
+- 3 novi API ruti (profit-distribution-optimizer, listing-description-sentiment-optimizer, buyer-networking-strategist)
+- ~960 novih vrstic kode
+- Profit Distribution Optimizer: 8 kategorij, 4 scenariji z 12m/24m/36m projekcijami
+- Description Sentiment Optimizer: 8 faktorjev z 10 strategijami in A/B test plan
+- Buyer Networking Strategist: 10 network tipov, 5 network effects, referral opportunities
+- Skupno 138 AI endpointov (+3 od v6.52)
+- Verzija aplikacije: v6.53.0
