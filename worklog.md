@@ -4014,3 +4014,99 @@ Stage Summary:
 - Skupno 156 AI endpointov (+3 od v6.58)
 - TypeScript: 0 napak (ohranjeno) ✨
 - Verzija aplikacije: v6.59.0
+
+---
+Task ID: v6.60
+Agent: main
+Task: AI Buyer Sentiment Analyzer v2, Listing SEO Optimizer v2, Inventory Profitability Analyzer
+
+Work Log:
+- src/app/api/ai/buyer-sentiment-analyzer-v2/route.ts: nov POST endpoint za NLP
+  sentiment. 8 čustev (Plutchik model): joy (veselje), trust (zaupanje), fear (strah),
+  surprise (presenečenje), sadness (žalost), disgust (gnus), anger (jeza), anticipation
+  (pričakovanje). 12 intentov: purchase_intent (kupec želi kupiti), price_inquiry
+  (vpraša za ceno), condition_inquiry (vpraša za stanje), negotiation_intent (želi se
+  pogajati), comparison_shopping (primerja), urgency_expression (nujnost), skepticism
+  (skeptičen), complaint (pritožba), compliment (pohvala), bargaining (pogaja),
+  closing_intent (želi zaključiti), walk_away_intent (grozi da odide). 6 ML modelov:
+  bert_multilingual (slovensko-angleški), roberta_sentiment (optimized za sentiment),
+  distilbert_slavic (lažji za slovanske), xlm_roberta (cross-lingual), svm_classifier
+  (tradicionalni), lstm_sentiment (recurrent). Per buyer: overallSentiment (very_positive
+  → very_negative), sentimentScore (-100 do 100), emotions (8 z intensity in confidence),
+  dominantEmotion, intents (12 z probability in confidence), primaryIntent,
+  purchaseProbabilityPct, churnProbabilityPct, satisfactionScore, engagementLevel
+  (high/medium/low), recommendedResponseTone (professional/friendly/empathetic/urgent/
+  apologetic/enthusiastic), keyPhrases, concerns, opportunities. Emotions aggregation
+  z avgIntensity, frequency, buyerCount, triggerPattern, recommendedResponse. Intents
+  aggregation z frequency, buyerCount, conversionCorrelationPct, bestResponseStrategy.
+  Summary z avgSentimentScore, avgPurchaseProbabilityPct, avgSatisfactionScore,
+  mostCommonEmotion, mostCommonIntent, biggestConcern, biggestOpportunity,
+  sentimentAnalysisScore.
+- src/app/api/ai/listing-seo-optimizer-v2/route.ts: nov POST endpoint za advanced SEO.
+  10 SEO faktorjev: title_optimization (ključne besede spredaj), keyword_density
+  (1-3% optimal), meta_description (search preview), image_alt_text (alt z keywords),
+  url_structure (clean URL), tag_optimization (5-10 relevant), content_quality
+  (strukturiran opis), mobile_optimization (mobilni prikaz), page_load_speed (hitrost),
+  social_signals (share, like, save). Per listing: currentSeoScore vs optimizedSeoScore,
+  seoFactors (10 z current/optimized score, improvementPct, priority), optimizedTitlePerPlatform
+  (per platforma naslov), optimizedDescription, primaryKeywords, longTailKeywords,
+  tags, mlPredictions (predictedSearchPosition 1-50, predictedCtrPct, predictedConversionRatePct,
+  predictedEngagementScore, confidencePct), expectedViewsIncreasePct,
+  expectedInquiriesIncreasePct. Keyword research z searchVolume (low/medium/high/very_high),
+  competition, difficultyScore, opportunityScore, cpcEur, trend (rising/stable/falling),
+  bestForPlatform. Competitor analysis z competitorTitle, competitorPriceEur,
+  keywordOverlap, theirAdvantages, ourAdvantages, recommendedCounterStrategy. ML ranking
+  per listing z currentPredictedPosition vs optimizedPredictedPosition, positionImprovement,
+  rankingFactors (factor, weight, currentValue, optimalValue). 8-step optimization plan
+  z factorTargeted, expectedLiftPct, implementationEffort, timeToCompleteMinutes.
+  Summary z avgCurrentSeoScore vs avgOptimizedSeoScore, avgImprovementPct,
+  totalKeywordsResearched, bestKeywordOpportunity, biggestSeoIssue, quickestSeoWin,
+  seoOptimizationScore.
+- src/app/api/ai/inventory-profitability-analyzer/route.ts: nov POST endpoint za globoko
+  profitability analizo. 10 profit driverjev: purchase_price_efficiency (kako dobro
+  kupuješ), selling_price_optimization (kako dobro prodajaš), fee_minimization (minimalne
+  fees), shipping_optimization (optimalne shipping), holding_cost_minimization (hitra
+  prodaja), category_selection (izbor profitabilnih kategorij), timing_optimization
+  (pravi čas), negotiation_effectiveness (uspešnost pogajanja), renovation_value_add
+  (dodana vrednost obnove), bundle_strategy (paketna prodaja). Per driver:
+  currentContributionPct, currentValueEur, optimizationPotentialPct, optimizationValueEur,
+  implementationDifficulty (low/medium/high), roiOfOptimization, priority,
+  recommendedAction. Overall: totalRevenueEur, totalCostEur, totalProfitEur, totalFeesEur,
+  feePercentageOfRevenue, avgMarginPct, avgRoiPct, avgProfitPerItemEur, avgDaysToSell,
+  dailyProfitRateEur, profitabilityScore, profitabilityGrade (A-F). Per category:
+  itemCount, revenueEur, costEur, profitEur, feesEur, marginPct, avgDaysToSell,
+  profitPerDayEur, roiPct, profitabilityTier (excellent/good/average/poor/loss),
+  optimizationPotentialEur, recommendedAction (scale_up/maintain/reduce/exit). Per item:
+  buyPriceEur, sellPriceEur, profitEur, marginPct, daysToSell, profitPerDayEur,
+  profitabilityRank, performanceVsCategoryAvgPct, keySuccessFactor. ML decomposition per
+  metric (revenue, cost, profit, margin, roi, days_to_sell) z driverBreakdown (10 driverjev
+  z contributionPct in contributionValue), totalExplainedPct, unexplainedPct,
+  modelConfidencePct. 4 scenariji (current, optimized, aggressive_optimization,
+  conservative) z totalProfitEur, avgMarginPct, totalRevenueEur, implementationEffortEur,
+  netGainEur, timeframeMonths, probabilityPct. Summary z totalItemsAnalyzed,
+  totalProfitEur, avgProfitabilityScore, bestProfitDriver, biggestOptimizationOpportunity,
+  bestPerformingCategory, worstPerformingCategory, totalOptimizationPotentialEur,
+  profitabilityEfficiencyScore.
+
+DOC UPDATES:
+- README.md: verzija v6.60.0, 159+ endpoints badge, "kaj je novega v v6.60" sekcija,
+  zadnje verzije posodobljene, changelog link do v6.60
+- CHANGELOG.md: v6.60.0 sekcija dodana z vsemi 3 novimi funkcijami in compare linki
+- AI_ENDPOINTS.md: avtomatsko regenerirano s 159 endpointi
+- package.json: version 6.60.0
+- src/app/page.tsx: verzija v6.60.0
+
+- TypeScript: 0 napak (ohranjeno) ✨
+- Git commit: 'feat(v6.60): AI Buyer Sentiment Analyzer v2, Listing SEO Optimizer v2, Inventory Profitability Analyzer'
+- GitHub push: uspešen (7 files, 546 insertions)
+
+Stage Summary:
+- 3 nove AI funkcionalnosti za NLP sentiment, advanced SEO in profitability analysis
+- 3 novi API ruti (buyer-sentiment-analyzer-v2, listing-seo-optimizer-v2, inventory-profitability-analyzer)
+- ~1000 novih vrstic kode
+- Buyer Sentiment Analyzer v2: 8 čustev, 12 intentov, 6 ML modelov z NLP
+- Listing SEO Optimizer v2: 10 SEO faktorjev, keyword research, competitor analysis, ML ranking
+- Inventory Profitability Analyzer: 10 profit driverjev z ML decomposition in 4 scenariji
+- Skupno 159 AI endpointov (+3 od v6.59)
+- TypeScript: 0 napak (ohranjeno) ✨
+- Verzija aplikacije: v6.60.0
