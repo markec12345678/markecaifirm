@@ -4573,3 +4573,26 @@ Work Log:
 - TypeScript: 0 napak (ohranjeno) ✨
 - Skupno: 201 AI endpointov (+3 od v6.73)
 - Verzija aplikacije: v6.74.0
+
+---
+Task ID: v6.75
+Agent: main
+Task: AI Listing CTR Optimizer, Inventory Cost Minimizer, Buyer Revenue Forecaster
+
+Work Log:
+- listing-ctr-optimizer: 10 CTR faktorjev (title_relevance, thumbnail_quality, price_appeal,
+  position_ranking, category_match, search_keywords, freshness, seller_rating, location_proximity,
+  urgency_signals). Per-listing: current vs optimized CTR z per-factor scores in optimized
+  title/thumbnail recommendation. 10 optimization tipov. A/B experiments. 5 ML modelov.
+- inventory-cost-minimizer: 10 cost kategorij (sourcing_cost, platform_fees, payment_fees,
+  shipping_cost, storage_cost, holding_cost, renovation_cost, opportunity_cost, insurance_cost,
+  return_cost). Per-category: current vs optimized cost z savings in optimization action. 10
+  optimization tipov. Monthly projections. 5 ML modelov.
+- buyer-revenue-forecaster: 10 revenue driverjev (purchase_frequency, order_value, retention_rate,
+  cross_sell, upsell, referral, seasonality, market_trend, pricing, category_expansion). Per-buyer:
+  current vs projected revenue z drivers/risks in recommended action. 24-mesečni projections. 4
+  scenariji. 5 ML modelov.
+
+- TypeScript: 0 napak (ohranjeno) ✨
+- Skupno: 204 AI endpointov (+3 od v6.74)
+- Verzija aplikacije: v6.75.0
