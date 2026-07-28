@@ -3189,3 +3189,73 @@ Stage Summary:
 - Skupno 126 AI endpointov (avtomatsko dokumentiranih v AI_ENDPOINTS.md)
 - CI/CD: GitHub Actions z lint + typecheck + build + audit
 - Verzija aplikacije: v6.49.0
+
+---
+Task ID: v6.50
+Agent: main
+Task: AI Buyer Journey Mapper, Listing Virality Predictor, Profit Margin Optimizer v2
+
+Work Log:
+- src/app/api/ai/buyer-journey-mapper/route.ts: nov POST endpoint za 5-fazni
+  buyer journey. 5 faz: awareness (zavedanje), consideration (razmislek),
+  decision (odločitev), retention (zadržanje), advocacy (zagovorništvo).
+  Per buyer: currentStage, stageProbabilities (0-100 per fazo), stageProgressionPct,
+  nextStage, timeInCurrentStageDays, stageConversionProbabilityPct, blockers,
+  accelerators. Stages z description, buyerCount, avgTimeInStageDays,
+  conversionRateToNextPct, keyActions, commonBlockers. Touchpoints per stage z
+  touchpoint, channel (bolha/facebook/vinted/email/sms/social/in_person), timing,
+  messageTemplate, expectedEngagementPct, conversionLiftPct. Optimizations per stage
+  z currentConversionPct vs optimizedConversionPct, improvementAction,
+  expectedRevenueUpliftEur, implementationEffort. Summary z vsemi stage counti,
+  biggestStageBottleneck, journeyEfficiencyScore, expectedTotalRevenueUpliftEur.
+- src/app/api/ai/listing-virality-predictor/route.ts: nov POST endpoint za
+  virality analizo. 8 virality faktorjev z hevrističnim izračunom: scarcity
+  (redkost), emotional (čustveni trigger), controversy (kontroverznost),
+  utility (uporabnost), social_proof (socialno dokazilo), price_anchor (cena),
+  timeliness (aktualnost), uniqueness (edinstvenost). 6 share triggerjev:
+  emotional_share, utility_share, status_share, controversy_share, humor_share,
+  identity_share. Per listing: viralScore (0-100), viralTier (low/medium/high/
+  viral/super_viral), shareProbabilityPct, expectedShares, expectedViewsMultiplier,
+  primaryTrigger, viralStrengths, viralWeaknesses, viralOptimizationPotentialPct,
+  optimizedTitle, optimizedDescriptionHook, expectedViewsIncreasePct,
+  expectedSellSpeedupDays. 5 content strategij (title_opt, desc_hook, image_viral,
+  call_share, urgency) z expectedViralLiftPct in effort. 3 timeframe predictions
+  (24h/7d/30d) z expectedViews, expectedInquiries, expectedShares,
+  expectedSaleProbabilityPct. Summary z viralCount, superViralCount, lowViralCount,
+  biggestViralOpportunityId, viralityEfficiencyScore.
+- src/app/api/ai/profit-margin-optimizer-v2/route.ts: nov POST endpoint za
+  ML cross-category margin optimization. 10 optimizacijskih strategij: price_increase,
+  price_decrease, bundle_optimization, cross_category_rebalance, fee_optimization,
+  shipping_opt, timing_opt, renovation_opt, liquidation_opt, specialization.
+  Per item: currentMarginPct vs optimizedMarginPct, optimizationStrategy,
+  currentPriceEur vs optimizedPriceEur, expectedProfitIncreaseEur,
+  implementationSteps, priority. Cross-category analiza z correlation
+  (positive/negative/neutral), correlationStrength (0-100), insight,
+  recommendation. Rebalancing priporočila z fromCategory, toCategory, amountEur,
+  currentMarginPct vs targetMarginPct, expectedProfitUpliftEur, reasoning,
+  timeframeDays. 4 scenariji (current/optimized/aggressive/conservative) z
+  totalProfitEur, avgMarginPct, totalRevenueEur, capitalEfficiencyPct. Summary z
+  currentTotalProfitEur vs optimizedTotalProfitEur, expectedProfitUpliftEur,
+  expectedProfitUpliftPct, bestCategory, worstCategory, marginOptimizationScore.
+
+DOC UPDATES:
+- README.md: verzija v6.50.0, 129+ endpoints badge, "kaj je novega v v6.50" sekcija,
+  zadnje verzije posodobljene, changelog link popolnoma posodobljen do v6.50
+- CHANGELOG.md: v6.50.0 sekcija dodana z vsemi 3 novimi funkcijami in compare linki
+- AI_ENDPOINTS.md: avtomatsko regenerirano s 129 endpointi
+- package.json: version 6.50.0
+- src/app/page.tsx: verzija v6.50.0
+
+- TypeScript: 24 napak (enako kot prej) - nobenih novih napak uvedenih
+- Git commit: 'feat(v6.50): AI Buyer Journey Mapper, Listing Virality Predictor, Profit Margin Optimizer v2'
+- GitHub push: uspešen (8 files, 1155 insertions)
+
+Stage Summary:
+- 3 nove AI funkcionalnosti za buyer journey, listing virality in margin optimization v2
+- 3 novi API ruti (buyer-journey-mapper, listing-virality-predictor, profit-margin-optimizer-v2)
+- ~970 novih vrstic kode
+- Buyer Journey Mapper: 5 faz z touchpoints, message templates in stage optimizations
+- Listing Virality Predictor: 8 faktorjev, 6 share triggerjev, 5 viral tier-ov
+- Profit Margin Optimizer v2: ML cross-category z 10 strategijami in rebalancing
+- Skupno 129 AI endpointov (+3 od v6.49)
+- Verzija aplikacije: v6.50.0
