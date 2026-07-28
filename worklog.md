@@ -4452,3 +4452,25 @@ Work Log:
 - TypeScript: 0 napak (ohranjeno) ✨
 - Skupno: 186 AI endpointov (+3 od v6.68)
 - Verzija aplikacije: v6.69.0
+
+---
+Task ID: v6.70
+Agent: main
+Task: AI Listing Performance Dashboard, Inventory Growth Planner, Buyer Journey Optimizer
+
+Work Log:
+- listing-performance-dashboard: 10 KPI-jev (revenue, profit, margin, items_sold, avg_days_to_sell,
+  conversion_rate, avg_sell_price, profit_per_item, holding_cost, roi). 8 insight tipov (trend,
+  anomaly, opportunity, warning, info). 6 trend metrik z 30d prediction in confidence. Top 10
+  performers z performance score in key success factor. 6 alert tipov z financial impact.
+- inventory-growth-planner: 24-mesečni growth plan z reinvest amount, expected profit,
+  cumulative capital per month. 3 scenariji (conservative, realistic, aggressive) z probability.
+  6 milestones z target month in achievement probability. 5 ML modelov.
+- buyer-journey-optimizer: 8 journey faz (awareness, interest, consideration, intent, evaluation,
+  purchase, retention, advocacy). Per-buyer: current stage, journey progress, stage probabilities,
+  velocity score, blockers, accelerators, recommended touchpoint. Touchpoints per stage z channel,
+  timing, message template, engagement, conversion lift. 5 optimization tipov. 5 ML modelov.
+
+- TypeScript: 0 napak (ohranjeno) ✨
+- Skupno: 189 AI endpointov (+3 od v6.69)
+- Verzija aplikacije: v6.70.0
