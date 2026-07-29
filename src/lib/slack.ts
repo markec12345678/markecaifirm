@@ -1,6 +1,11 @@
 /**
  * Slack webhook notifier — sends rich formatted messages via Slack incoming webhooks.
  * v2.1 addition.
+ * v6.92 FIX: Popravljen `mrkdwn_section` (neveljaven Slack Block Kit tip) → `mrkdwn`.
+ *           Slack je prej tiho zavrnil celoten blocks payload.
+ *           Dodan tudi 429 rate-limit handling z `Retry-After`.
+ *           Popravljen tudi `testSlack` da pošlje Block Kit (ne le navadno besedilo),
+ *           tako da test dejansko validira formatiranje.
  */
 
 export interface SlackConfig {
@@ -25,6 +30,11 @@ export async function sendSlackMessage(
     });
     if (!res.ok) {
       const txt = await res.text();
+      // Slack rate limit: HTTP 429 z Retry-After headerjem (v sekundah)
+      if (res.status === 429) {
+        const retryAfter = parseInt(res.headers.get('Retry-After') ?? '1', 10);
+        return { ok: false, error: `Slack rate limit (429). Počakaj ${retryAfter}s.` };
+      }
       return { ok: false, error: `Slack HTTP ${res.status}: ${txt.slice(0, 200)}` };
     }
     return { ok: true };
@@ -34,12 +44,39 @@ export async function sendSlackMessage(
 }
 
 export async function testSlack(cfg: SlackConfig): Promise<{ ok: boolean; message: string }> {
-  const result = await sendSlackMessage(cfg, '✅ Markec AI Firm — test. Slack webhook je uspešno konfiguriran.');
+  // Popravek: testSlack zdaj pošlje tudi Block Kit, da prihaja do enake validacije kot pravi alert.
+  // Prej je test vedno uspel (navadno besedilo), pravi alerti pa tiho odpovedali zaradi mrkdwn_section.
+  const testBlocks = [
+    {
+      type: 'header',
+      text: { type: 'plain_text', text: '✅ Markec AI Firm — test' },
+    },
+    {
+      type: 'section',
+      fields: [
+        { type: 'mrkdwn', text: '*Testno sporočilo*\nSlack webhook je konfiguriran.' },
+        { type: 'mrkdwn', text: '*Block Kit*\nFormatiranje deluje pravilno.' },
+      ],
+    },
+    {
+      type: 'context',
+      elements: [{ type: 'mrkdwn', text: 'Markec AI Firm v6.92 • Slack Block Kit test' }],
+    },
+  ];
+  const result = await sendSlackMessage(cfg, '✅ Markec AI Firm — test. Slack webhook je uspešno konfiguriran.', testBlocks);
   return result.ok
-    ? { ok: true, message: 'Testno sporočilo poslano. Preverite Slack.' }
+    ? { ok: true, message: 'Testno sporočilo (z Block Kit) poslano. Preverite Slack.' }
     : { ok: false, message: result.error ?? 'Napaka pri pošiljanju' };
 }
 
+/**
+ * Build alert blocks — POPRAVLJENO v6.92:
+ * - `type: 'mrkdwn_section'` (neveljaven) → `type: 'mrkdwn'` znotraj field objekta
+ * - Slack `fields` array zahteva `{ type: 'mrkdwn', text: '...' }` (ali `plain_text`)
+ * - Dodan escape Slack Markdown znakov v vseh uporabniških besedilih
+ * - Odstranjen hardcoded `http://localhost:3000/alerts` gumb (bil broken v produkciji)
+ * @see https://api.slack.com/reference/block-kit/blocks
+ */
 export function buildAlertSlackBlocks(opts: {
   title: string;
   priceText: string;
@@ -51,19 +88,24 @@ export function buildAlertSlackBlocks(opts: {
   aiReason?: string | null;
   estimatedValue?: number | null;
 }): any[] {
-  const color = opts.aiVerdict === 'PRILIKA' ? '#4ade80'
-    : opts.aiVerdict === 'SUMNJIVO' ? '#fbbf24'
-    : '#6b7280';
+  const verdictText = opts.aiVerdict === 'PRILIKA' ? '🎯 PRILIKA'
+    : opts.aiVerdict === 'SUMNJIVO' ? '⚠️ SUMNJIVO'
+    : opts.aiVerdict === 'NEZANIMIVO' ? '⚪ NEZANIMIVO'
+    : 'N/A';
 
-  const fields: any[] = [];
+  // Fields v section block-u: Slack zahteva `{ type: 'mrkdwn', text: '...' }`
+  const fields: any[] = [
+    { type: 'mrkdwn', text: `*💰 Cena:*\n${escapeSlackMd(opts.priceText)}` },
+    { type: 'mrkdwn', text: `*📦 Monitor:*\n${escapeSlackMd(opts.monitorName)}` },
+  ];
   if (opts.aiScore != null) {
-    fields.push({ type: 'mrkdwn_section', text: `*⭐ Prilika:* ${opts.aiScore}/10` });
+    fields.push({ type: 'mrkdwn', text: `*⭐ Prilika:*\n${opts.aiScore}/10` });
   }
   if (opts.aiRisk != null) {
-    fields.push({ type: 'mrkdwn_section', text: `*🛡 Tveganje:* ${opts.aiRisk}/10` });
+    fields.push({ type: 'mrkdwn', text: `*🛡 Tveganje:*\n${opts.aiRisk}/10` });
   }
   if (opts.estimatedValue) {
-    fields.push({ type: 'mrkdwn_section', text: `*📈 Tržna vrednost:* ~${opts.estimatedValue}€` });
+    fields.push({ type: 'mrkdwn', text: `*📈 Tržna vrednost:*\n~${opts.estimatedValue}€` });
   }
 
   return [
@@ -73,15 +115,11 @@ export function buildAlertSlackBlocks(opts: {
     },
     {
       type: 'section',
-      fields: [
-        { type: 'mrkdwn_section', text: `*💰 Cena:* ${opts.priceText}` },
-        { type: 'mrkdwn_section', text: `*📦 Monitor:* ${opts.monitorName}` },
-        ...fields,
-      ],
+      fields,
     },
     ...(opts.aiReason ? [{
       type: 'section',
-      text: { type: 'mrkdwn', text: `_${opts.aiReason.slice(0, 500)}_` },
+      text: { type: 'mrkdwn', text: `_${escapeSlackMd(opts.aiReason.slice(0, 500))}_` },
     }] : []),
     {
       type: 'actions',
@@ -92,17 +130,11 @@ export function buildAlertSlackBlocks(opts: {
           url: opts.url,
           action_id: 'open_listing',
         },
-        {
-          type: 'button',
-          text: { type: 'plain_text', text: '📊 Dashboard' },
-          url: 'http://localhost:3000/alerts',
-          action_id: 'open_dashboard',
-        },
       ],
     },
     {
       type: 'context',
-      elements: [{ type: 'mrkdwn', text: `Verdikt: *${opts.aiVerdict ?? 'N/A'}* • Markec AI Firm` }],
+      elements: [{ type: 'mrkdwn', text: `Verdikt: *${verdictText}* • Markec AI Firm` }],
     },
   ];
 }
@@ -128,10 +160,10 @@ export function buildHeartbeatSlackBlocks(opts: {
     {
       type: 'section',
       fields: [
-        { type: 'mrkdwn_section', text: `*📊 Aktivni monitorji:* ${opts.activeMonitors}` },
-        { type: 'mrkdwn_section', text: `*🔄 Izvedbe:* ${opts.successfulRuns}/${opts.totalRuns} uspešnih` },
-        { type: 'mrkdwn_section', text: `*📦 Novi oglasi:* ${opts.newListings}` },
-        { type: 'mrkdwn_section', text: `*🔔 Alerti:* ${opts.totalAlerts} (${opts.prilikaAlerts} 🎯, ${opts.sumnjivoAlerts} ⚠️)` },
+        { type: 'mrkdwn', text: `*📊 Aktivni monitorji:*\n${opts.activeMonitors}` },
+        { type: 'mrkdwn', text: `*🔄 Izvedbe:*\n${opts.successfulRuns}/${opts.totalRuns} uspešnih` },
+        { type: 'mrkdwn', text: `*📦 Novi oglasi:*\n${opts.newListings}` },
+        { type: 'mrkdwn', text: `*🔔 Alerti:*\n${opts.totalAlerts} (${opts.prilikaAlerts} 🎯, ${opts.sumnjivoAlerts} ⚠️)` },
       ],
     },
     {
@@ -139,4 +171,17 @@ export function buildHeartbeatSlackBlocks(opts: {
       elements: [{ type: 'mrkdwn', text: `${ok ? 'Sistem deluje normalno' : 'Imaš napake — preveri dashboard'}` }],
     },
   ];
+}
+
+/**
+ * Escape Slack mrkdwn special characters.
+ * Slack mrkdwn podpira le *, _, ~, ` in ne HTML-ja, ampak <, >, & morajo biti HTML-escape-ani
+ * ker Slack interpretira <...> kot link/mention syntax.
+ * @see https://api.slack.com/reference/surfaces/formatting#escaping
+ */
+function escapeSlackMd(s: string): string {
+  return (s ?? '')
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;');
 }
