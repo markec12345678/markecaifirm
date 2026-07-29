@@ -4645,3 +4645,29 @@ Work Log:
 - TypeScript: 0 napak (ohranjeno) ✨
 - Skupno: 210 AI endpointov (+3 od v6.76)
 - Verzija aplikacije: v6.77.0
+
+---
+Task ID: v6.78
+Agent: main
+Task: AI Listing Thumbnail Optimizer, Inventory Portfolio Analyzer, Buyer Spend Pattern Analyzer
+
+Work Log:
+- listing-thumbnail-optimizer: 10 thumbnail faktorjev (composition, lighting, color_saturation,
+  item_visibility, background_cleanliness, angle_optimization, size_proportion, emotion_trigger,
+  brand_visibility, resolution_quality). Per-listing: current vs optimized thumbnail score z
+  per-factor issue in fix. 10 editing tipov z step-by-step in tool recommendation. AI prompts
+  za image generation. 5 ML modelov (cnn, resnet, vit, efficientnet, ensemble).
+- inventory-portfolio-analyzer: Modern portfolio theory z portfolio metrics (total assets,
+  return, risk, Sharpe ratio, diversification score, efficiency, grade). Per-category: current
+  vs optimal allocation z rebalance action in Sharpe ratio. 7 risk-return metrik. Cross-category
+  correlations z hedging opportunity detection. 5 ML modelov (mean_variance, risk_parity,
+  monte_carlo, black_litterman, ensemble).
+- buyer-spend-pattern-analyzer: 10 spend pattern tipov (consistent_high, consistent_medium,
+  consistent_low, increasing, decreasing, volatile_high, volatile_low, seasonal_spike,
+  one_time_large, gradual_growth). Per-buyer: spend pattern, confidence, volatility, trend,
+  anomalies, predicted next spend/date. 5 anomaly tipov. 3 timeframe predictions. 5 ML modelov
+  (isolation_forest, k-means, autoencoder, lstm, ensemble).
+
+- TypeScript: 0 napak (ohranjeno) ✨
+- Skupno: 213 AI endpointov (+3 od v6.77)
+- Verzija aplikacije: v6.78.0
