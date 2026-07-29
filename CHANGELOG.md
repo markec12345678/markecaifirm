@@ -6,12 +6,35 @@ Format sledi [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), verzije s
 
 ## [Unreleased]
 
-Načrtovano za v6.84+:
-- UI komponente za v6.45-v6.83 funkcije v dashboard
+Načrtovano za v6.85+:
+- UI komponente za v6.45-v6.84 funkcije v dashboard
 - Unit testi za lib/ai.ts
 - Playwright E2E testi
 - WebSocket real-time negotiation
 - ML model za buyer matchmaker (fine-tuned na realni data)
+
+## [6.84.0] - 2026-07-29
+
+### Added
+- **AI Listing Content Improver** — ML izboljšava vsebine oglasov z NLP in readability analysis
+  - 10 sekcij vsebine (headline, introduction, features, specifications, condition, usage_history, reason_for_selling, shipping_info, call_to_action, faq_preview)
+  - Per-listing: current vs improved content score, readability grade, word count, improvement grade
+  - 10 tipov izboljšav (clarity, persuasion, specificity, emotion, urgency, credibility, readability, seo_optimization, mobile_optimization, accessibility) z current vs improved score in difficulty
+  - 10 generated content sections z improved text, tone, key changes, expected impact %
+  - 5 ML modelov (gpt, t5, bart, pegasus, ensemble) z prediction type (content_generation, readability_scoring, persuasion_analysis, seo_optimization)
+- **AI Inventory Storage Optimizer** — ML optimizacija skladiščnih prostorov z layout analysis
+  - 8 con skladišča (fast_access, bulk_storage, fragile_zone, climate_controlled, high_value, overflow, returns, staging)
+  - 5 storage tierjev (tier_1_premium → tier_5_offsite)
+  - Overview: total items/value, estimated storage cost €, storage efficiency %, space utilization %, grade
+  - Per-zone: recommended categories, item count, value €, utilization %, access frequency, climate required, security level
+  - 6 layout optimizations z space saved %, access time reduction %, cost/savings € monthly
+  - 5 ML modelov (k-means, dbscan, linear_regression, neural_net, ensemble) z prediction type (layout_optimization, demand_prediction, space_forecast, access_pattern)
+- **AI Buyer Journey Mapper v2** — ML mapiranje buyer journey z omnichannel touchpoints
+  - 8 stadijev journey (awareness, consideration, intent, evaluation, purchase, onboarding, retention, advocacy)
+  - 10 touchpointov (social_media_ad, search_result, marketplace_listing, email_campaign, word_of_mouth, influencer_referral, direct_visit, retargeting_ad, forum_discussion, comparison_site) z ROI %
+  - 10 kanalov (bolha, facebook, vinted, avtonet, kleinanzeigen, email, website, phone, whatsapp, in_person) z conversion rate, CPA €, efficiency score
+  - Per-stage: buyer count, completion %, avg time, drop off %, key actions, optimization opportunity
+  - 5 ML modelov (markov_chain, lstm, bert, xgboost, ensemble) z prediction type (journey_prediction, touchpoint_attribution, conversion_forecast, drop_off_prediction)
 
 ## [6.83.0] - 2026-07-29
 
@@ -988,7 +1011,8 @@ Načrtovano za v6.84+:
 
 ---
 
-[Unreleased]: https://github.com/markec12345678/markecaifirm/compare/v6.83.0...HEAD
+[Unreleased]: https://github.com/markec12345678/markecaifirm/compare/v6.84.0...HEAD
+[6.84.0]: https://github.com/markec12345678/markecaifirm/compare/v6.83.0...v6.84.0
 [6.83.0]: https://github.com/markec12345678/markecaifirm/compare/v6.82.0...v6.83.0
 [6.82.0]: https://github.com/markec12345678/markecaifirm/compare/v6.81.0...v6.82.0
 [6.81.0]: https://github.com/markec12345678/markecaifirm/compare/v6.80.0...v6.81.0
