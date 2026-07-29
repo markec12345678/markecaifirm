@@ -24,7 +24,7 @@ import {
   DialogDescription,
 } from '@/components/ui/dialog';
 import { Textarea } from '@/components/ui/textarea';
-import { RefreshCw, Download, ExternalLink, ChevronLeft, ChevronRight, Filter, ImageIcon, AlertTriangle, Target, MapPin, Clock, Bookmark, Sparkles, ShoppingCart, BarChart3, TrendingDown, TrendingUp, Copy, Check, GitCompare, StickyNote, Phone, Trash2, EyeOff, Zap, User, Wallet } from 'lucide-react';
+import { RefreshCw, Download, ExternalLink, ChevronLeft, ChevronRight, Filter, ImageIcon, AlertTriangle, Target, MapPin, Clock, Bookmark, Sparkles, ShoppingCart, BarChart3, TrendingDown, TrendingUp, Copy, Check, GitCompare, Trash2, EyeOff, Zap, User, Wallet } from 'lucide-react';
 import { toast } from 'sonner';
 import { cn } from '@/lib/utils';
 // v6.95: AI panel-i izvlečeni v samostojne komponente (ListingDetailModal razbit).
@@ -37,6 +37,8 @@ import { FraudDetectionPanel } from '@/components/dashboard/listing-detail/fraud
 import { ImageAnalysisPanel } from '@/components/dashboard/listing-detail/image-analysis-panel';
 // v6.98: NegotiationPanel — združuje Negotiator + Playbook + Outcome + Chatbot (4 v 1)
 import { NegotiationPanel } from '@/components/dashboard/listing-detail/negotiation-panel';
+// v6.99: ListingActionsBar — združuje Notes + Contact Tracker
+import { ListingActionsBar } from '@/components/dashboard/listing-detail/listing-actions-bar';
 
 interface Listing {
   id: string;
@@ -57,6 +59,9 @@ interface Listing {
   aiImageAnalysis: string | null;
   isBookmarked: boolean;
   contactStatus: string;
+  // v6.99: dodano za ListingActionsBar (obstoječa polja v DB, prej niso bila v interfacu)
+  sellerResponse?: string | null;
+  userNotes?: string | null;
   // v4.4: AI Deal Score 0-100
   dealScore: number | null;
   dealScoreReason: string | null;
@@ -1145,11 +1150,7 @@ function ListingDetailModal({ listingId, onClose }: { listingId: string | null; 
   const [togglingBookmark, setTogglingBookmark] = useState(false);
   const [addingToTrade, setAddingToTrade] = useState(false);
   // v6.98: Negotiator + Playbook + Outcome + Chatbot so v NegotiationPanel (lastni state)
-  // v2.4: Listing notes
-  const [notes, setNotes] = useState('');
-  const [notesSaving, setNotesSaving] = useState(false);
-  const [contactStatus, setContactStatus] = useState('none');
-  const [sellerResponse, setSellerResponse] = useState('');
+  // v6.99: notes + contactStatus + sellerResponse so v ListingActionsBar (lastni state)
   // v3.1: Refresh
   const [refreshing, setRefreshing] = useState(false);
   // v4.5: Target price
@@ -1205,10 +1206,7 @@ function ListingDetailModal({ listingId, onClose }: { listingId: string | null; 
       if (!res.ok) throw new Error();
       const d = await res.json();
       setData(d);
-      // v2.4: Load notes
-      setNotes(d.listing?.userNotes ?? '');
-      setContactStatus(d.listing?.contactStatus ?? 'none');
-      setSellerResponse(d.listing?.sellerResponse ?? '');
+      // v6.99: notes + contactStatus + sellerResponse so v ListingActionsBar (lastni state, sync z initial*)
       // v4.5: Load target price
       setTargetPrice(d.listing?.targetPrice != null ? String(d.listing.targetPrice) : '');
       // v4.8: Reset comparison results when loading new listing
@@ -1346,54 +1344,7 @@ function ListingDetailModal({ listingId, onClose }: { listingId: string | null; 
     }
   };
 
-  // v2.4: Save notes
-  const saveNotes = async () => {
-    if (!listing) return;
-    setNotesSaving(true);
-    try {
-      await fetch(`/api/listings/${listing.id}/notes`, {
-        method: 'PATCH',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ notes }),
-      });
-      toast.success('Opombe shranjene');
-    } catch {
-      toast.error('Napaka pri shranjevanju');
-    } finally {
-      setNotesSaving(false);
-    }
-  };
-
-  // v2.4: Update contact status
-  const updateContact = async (status: string) => {
-    if (!listing) return;
-    setContactStatus(status);
-    try {
-      await fetch(`/api/listings/${listing.id}/notes`, {
-        method: 'PATCH',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ contactStatus: status, sellerResponse }),
-      });
-      toast.success(`Status: ${status}`);
-    } catch {
-      toast.error('Napaka');
-    }
-  };
-
-  // v2.4: Save seller response
-  const saveSellerResponse = async () => {
-    if (!listing) return;
-    try {
-      await fetch(`/api/listings/${listing.id}/notes`, {
-        method: 'PATCH',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ sellerResponse }),
-      });
-      toast.success('Odgovor shranjen');
-    } catch {
-      toast.error('Napaka');
-    }
-  };
+  // v6.99: saveNotes + updateContact + saveSellerResponse so v ListingActionsBar (lastni state + funkcije)
 
   // v4.5: Save target price
   const saveTargetPrice = async (clear: boolean = false) => {
@@ -3191,63 +3142,13 @@ function ListingDetailModal({ listingId, onClose }: { listingId: string | null; 
               )}
             </div>
 
-            {/* v2.4: Personal notes */}
-            <div className="border-t border-border pt-3">
-              <h4 className="text-xs uppercase tracking-wider text-muted-foreground mb-2 flex items-center gap-1.5">
-                <StickyNote className="w-3.5 h-3.5" />
-                Moje opombe
-              </h4>
-              <Textarea
-                value={notes}
-                onChange={(e) => setNotes(e.target.value)}
-                placeholder="npr. Poklical sem prodajalca, razpoložljiv od petka. Dogovor za 350€."
-                className="text-xs min-h-[60px]"
-              />
-              <Button size="sm" variant="outline" onClick={saveNotes} disabled={notesSaving} className="mt-1.5 gap-1.5 h-7 text-xs">
-                {notesSaving ? <RefreshCw className="w-3 h-3 animate-spin" /> : <StickyNote className="w-3 h-3" />}
-                Shrani opombe
-              </Button>
-            </div>
-
-            {/* v2.4: Contact tracker */}
-            <div className="border-t border-border pt-3">
-              <h4 className="text-xs uppercase tracking-wider text-muted-foreground mb-2 flex items-center gap-1.5">
-                <Phone className="w-3.5 h-3.5" />
-                Sledenje kontakta <Badge variant="outline" className="text-[10px] text-primary border-primary/40">v2.4</Badge>
-              </h4>
-              <div className="flex flex-wrap gap-1.5 mb-2">
-                {[
-                  { val: 'none', label: 'Ni kontakt', cls: 'border-muted text-muted-foreground' },
-                  { val: 'contacted', label: '📞 Kontaktiran', cls: 'border-amber-400/40 text-amber-400' },
-                  { val: 'responded', label: '✉️ Odgovoril', cls: 'border-primary/40 text-primary' },
-                  { val: 'closed', label: '✅ Zaključeno', cls: 'border-muted text-muted-foreground' },
-                ].map(opt => (
-                  <button
-                    key={opt.val}
-                    onClick={() => updateContact(opt.val)}
-                    className={cn(
-                      'px-2 py-1 rounded border text-[10px] uppercase tracking-wider transition-colors',
-                      contactStatus === opt.val ? opt.cls + ' bg-card' : 'border-border text-muted-foreground hover:text-foreground'
-                    )}
-                  >
-                    {opt.label}
-                  </button>
-                ))}
-              </div>
-              {contactStatus !== 'none' && (
-                <>
-                  <Textarea
-                    value={sellerResponse}
-                    onChange={(e) => setSellerResponse(e.target.value)}
-                    placeholder="Kaj je prodajalec odgovoril? (npr. 'Cena je fiksna, lahko pridete v ponedeljek')"
-                    className="text-xs min-h-[40px]"
-                  />
-                  <Button size="sm" variant="ghost" onClick={saveSellerResponse} className="mt-1 h-6 text-xs gap-1">
-                    Shrani odgovor
-                  </Button>
-                </>
-              )}
-            </div>
+            {/* v6.99: ListingActionsBar — združuje Notes + Contact Tracker (prej 57 vrstic inline) */}
+            <ListingActionsBar
+              listingId={listing.id}
+              initialContactStatus={listing.contactStatus}
+              initialSellerResponse={listing.sellerResponse}
+              initialNotes={listing.userNotes}
+            />
 
             {/* v3.8: Quick sell — mark as sold and add to Skladišče */}
             {listing.trades && listing.trades.length > 0 && listing.trades.some((t: any) => t.status === 'held') && (
