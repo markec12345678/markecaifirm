@@ -5114,3 +5114,51 @@ Work Log:
 - TypeScript: 0 napak (ohranjeno) ✨
 - Skupno: 242 AI endpointov (+3 od v6.87)
 - Verzija aplikacije: v6.88.0
+
+---
+Task ID: v6.89
+Agent: main
+Task: AI Listing Color Psychology, Inventory Aging Strategist, Buyer Engagement Predictor v2
+
+Work Log:
+- listing-color-psychology: 10 barvnih psihologij (red_urgency, blue_trust, green_natural,
+  yellow_optimism, purple_luxury, orange_energy, black_premium, white_minimal,
+  pink_playful, brown_earthy). 10 čustvenih odzivov (excitement, trust, calm, urgency,
+  luxury, happiness, professionalism, warmth, sophistication, approachability). Per-listing:
+  current vs optimized color score, current vs optimized emotional response, grade (A-F).
+  10 color analyses z hex code, current vs recommended usage %, emotional trigger, cultural
+  consideration, best for element (background/accent/cta/text/border). 10 emotional impacts
+  z current vs optimized intensity %, primary color driver, buyer segment appeal,
+  conversion correlation %. 10 recommendations z action, color psychology, target element,
+  expected conversion lift %, implementation difficulty, priority. 5 ML modelov (cnn,
+  resnet, vit, efficientnet, ensemble) z prediction type (color_analysis, emotion_prediction,
+  conversion_forecast, aesthetic_scoring).
+- inventory-aging-strategist: 6 strategijskih tierjev (aggressive_disposal, discount_heavy,
+  moderate_discount, strategic_hold, opportunistic_sale, premium_positioning). 6 faz
+  staranja (introduction, growth, maturity, decline, critical, terminal). Overview: total
+  items/value, avg age, critical items/value, devaluation at risk €, grade. Per-phase: item
+  count, total value €, value %, recommended strategy, time window days, expected recovery
+  %, action urgency (immediate/within_7d/within_30d/within_90d). Per-category: total items,
+  avg/oldest age days, critical count, devaluation risk €, category strategy, trend
+  (improving/stable/worsening). 10 action plans z strategy tier, target items count,
+  expected recovery €, loss acceptance €, implementation days, priority, success
+  probability %. 5 ML modelov (prophet, lstm, arima, xgboost, ensemble) z prediction type
+  (aging_forecast, devaluation_prediction, recovery_optimization, lifecycle_analysis).
+- buyer-engagement-predictor-v2: 6 nivojev engagementa (highly_engaged, engaged,
+  moderately_engaged, low_engagement, disengaged, dormant). 10 dejavnikov engagementa
+  (purchase_recency, purchase_frequency, browsing_activity, email_open_rate,
+  message_response_time, review_activity, wishlist_adds, price_alert_engagement,
+  social_shares, community_participation) z avg score, weight %, impact on engagement,
+  improvement potential %, improvement strategy. Per-buyer: engagement score, level,
+  predicted 30d/90d engagement %, engagement trend (improving/stable/declining), primary
+  driver, risk of disengagement %, recommended action (maintain/boost/reactivate/win_back/
+  monitor). 8 engagement channels (email, sms, whatsapp, push_notification, social_media,
+  in_app, phone, direct_mail) z avg engagement rate %, best segment, optimal frequency,
+  preferred content type, ROI %. 10 recommendations z action, channel, expected engagement
+  lift %, implementation days, priority, personalization factor. 5 ML modelov
+  (random_forest, xgboost, neural_net, lstm, ensemble) z prediction type
+  (engagement_prediction, churn_risk, channel_optimization, content_personalization).
+
+- TypeScript: 0 napak (ohranjeno) ✨
+- Skupno: 245 AI endpointov (+3 od v6.88)
+- Verzija aplikacije: v6.89.0

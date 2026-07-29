@@ -6,12 +6,38 @@ Format sledi [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), verzije s
 
 ## [Unreleased]
 
-Načrtovano za v6.89+:
-- UI komponente za v6.45-v6.88 funkcije v dashboard
+Načrtovano za v6.90+:
+- UI komponente za v6.45-v6.89 funkcije v dashboard
 - Unit testi za lib/ai.ts
 - Playwright E2E testi
 - WebSocket real-time negotiation
 - ML model za buyer matchmaker (fine-tuned na realni data)
+
+## [6.89.0] - 2026-07-29
+
+### Added
+- **AI Listing Color Psychology** — ML optimizacija barvne psihologije z color theory
+  - 10 barvnih psihologij (red_urgency, blue_trust, green_natural, yellow_optimism, purple_luxury, orange_energy, black_premium, white_minimal, pink_playful, brown_earthy)
+  - 10 čustvenih odzivov (excitement, trust, calm, urgency, luxury, happiness, professionalism, warmth, sophistication, approachability)
+  - Per-listing: current vs optimized color score, current vs optimized emotional response, grade
+  - 10 color analyses z hex code, current/recommended usage %, emotional trigger, cultural consideration, best for element
+  - 10 emotional impacts z current/optimized intensity %, primary color driver, buyer segment appeal, conversion correlation %
+  - 5 ML modelov (cnn, resnet, vit, efficientnet, ensemble) z prediction type (color_analysis, emotion_prediction, conversion_forecast, aesthetic_scoring)
+- **AI Inventory Aging Strategist** — ML strategija za staranje z lifecycle analysis in action planning
+  - 6 strategijskih tierjev (aggressive_disposal, discount_heavy, moderate_discount, strategic_hold, opportunistic_sale, premium_positioning)
+  - 6 faz staranja (introduction, growth, maturity, decline, critical, terminal)
+  - Overview: total items/value, avg age, critical items/value, devaluation at risk €, grade
+  - Per-phase: item count, value, value %, recommended strategy, time window days, expected recovery %, action urgency
+  - Per-category: total items, avg/oldest age, critical count, devaluation risk €, category strategy, trend
+  - 10 action plans z strategy tier, target items count, expected recovery €, loss acceptance €, success probability %
+  - 5 ML modelov (prophet, lstm, arima, xgboost, ensemble) z prediction type (aging_forecast, devaluation_prediction, recovery_optimization, lifecycle_analysis)
+- **AI Buyer Engagement Predictor v2** — ML napoved engagementa z multi-channel scoring
+  - 6 nivojev engagementa (highly_engaged, engaged, moderately_engaged, low_engagement, disengaged, dormant)
+  - 10 dejavnikov engagementa (purchase_recency, purchase_frequency, browsing_activity, email_open_rate, message_response_time, review_activity, wishlist_adds, price_alert_engagement, social_shares, community_participation)
+  - Per-buyer: engagement score, level, predicted 30d/90d engagement %, trend, primary driver, risk of disengagement %, recommended action
+  - 8 engagement channels z avg engagement rate %, best segment, optimal frequency, preferred content type, ROI %
+  - 10 recommendations z channel, expected engagement lift %, personalization factor
+  - 5 ML modelov (random_forest, xgboost, neural_net, lstm, ensemble) z prediction type (engagement_prediction, churn_risk, channel_optimization, content_personalization)
 
 ## [6.88.0] - 2026-07-29
 
@@ -1114,7 +1140,8 @@ Načrtovano za v6.89+:
 
 ---
 
-[Unreleased]: https://github.com/markec12345678/markecaifirm/compare/v6.88.0...HEAD
+[Unreleased]: https://github.com/markec12345678/markecaifirm/compare/v6.89.0...HEAD
+[6.89.0]: https://github.com/markec12345678/markecaifirm/compare/v6.88.0...v6.89.0
 [6.88.0]: https://github.com/markec12345678/markecaifirm/compare/v6.87.0...v6.88.0
 [6.87.0]: https://github.com/markec12345678/markecaifirm/compare/v6.86.0...v6.87.0
 [6.86.0]: https://github.com/markec12345678/markecaifirm/compare/v6.85.0...v6.86.0
