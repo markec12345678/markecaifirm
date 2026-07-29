@@ -5257,3 +5257,52 @@ Work Log:
 - TypeScript: 0 napak (ohranjeno) ✨
 - Skupno: 251 AI endpointov (+3 od v6.90)
 - Verzija aplikacije: v6.91.0
+
+---
+Task ID: v6.92
+Agent: main
+Task: AI Listing Image Background Cleaner, Inventory Damage Prevention, Buyer Social Influence Scorer
+
+Work Log:
+- listing-image-background-cleaner: 10 tipov težav z ozadjem (cluttered, messy, distracting,
+  low_contrast, busy_pattern, unrelated_objects, poor_lighting_bg, other_people, text_overlay,
+  watermark). 10 nadomestnih ozadij (pure_white, pure_black, studio_gray, gradient_blue,
+  gradient_warm, lifestyle_context, neutral_office, seamless_paper, transparent, branded).
+  Per-listing: current vs cleaned background score, current vs cleaned CTR %, grade (A-F).
+  10 background analyses z issue type, severity (critical/high/medium/low), affected area %,
+  impact on CTR %, detection confidence %, description. 10 cleaning actions z action,
+  technique (background_removal/object_inpainting/color_replacement/blur/crop/mask_refinement),
+  tool recommended (photoshop/canva/remove_bg/gimp/affinity_photo/lightroom), difficulty, time
+  required minutes, expected CTR lift %, priority. 5 ML modelov (u2net, sam, deeplabv3,
+  mask_rcnn, ensemble) z prediction type (background_detection, segmentation, ctr_prediction,
+  aesthetic_scoring).
+- inventory-damage-prevention: 10 tipov škode (physical_damage, moisture_damage,
+  temperature_damage, uv_damage, pest_damage, theft_risk, fire_risk, electrical_damage,
+  chemical_damage, handling_damage). 5 nivojev preprečevanja (critical_prevention,
+  high_prevention, moderate_prevention, low_prevention, no_prevention_needed). Overview: total
+  items/value, at risk items/value, damage probability avg %, grade. 15 risk items z primary
+  damage risk, risk probability %, potential loss €, prevention level, recommended action
+  (inspect/secure/relocate/insure/sell_fast/climate_control). Per-damage-type: affected items
+  count, affected value €, avg probability %, primary cause, prevention cost €, prevention ROI
+  %. 10 prevention measures z measure, damage type, cost €, implementation days, items
+  protected count, value protected €, ROI %, priority. 5 ML modelov (random_forest, xgboost,
+  neural_net, isolation_forest, ensemble) z prediction type (damage_prediction,
+  risk_assessment, loss_forecast, anomaly_detection).
+- buyer-social-influence-scorer: 7 vplivnih tierjev (mega_influencer, macro_influencer,
+  micro_influencer, local_influencer, connected_buyer, average_buyer, isolated_buyer). 10
+  dejavnikov vpliva (network_size, social_proof_generation, referral_frequency, review_impact,
+  community_standing, cross_platform_presence, engagement_magnitude, trust_amplification,
+  viral_potential, advocacy_consistency) z avg score, weight %, impact on influence,
+  improvement potential %, improvement strategy. Per-buyer: influence score, influence tier,
+  estimated network reach, estimated referral value €, advocacy score, viral coefficient,
+  recommended partnership (brand_ambassador/affiliate/reviewer/testimonial/referral_partner/
+  none). 25 network metrics z buyer name, betweenness centrality, eigenvector centrality,
+  clustering coefficient, network position (hub/bridge/peripheral/isolated), influence radius.
+  10 recommendations z buyer name, action, partnership type, expected reach, expected revenue
+  €, cost €, ROI %, priority. 5 ML modelov (graph_neural_net, random_forest, xgboost,
+  neural_net, ensemble) z prediction type (influence_prediction, network_analysis,
+  referral_forecast, viral_prediction).
+
+- TypeScript: 0 napak (ohranjeno) ✨
+- Skupno: 254 AI endpointov (+3 od v6.91)
+- Verzija aplikacije: v6.92.0

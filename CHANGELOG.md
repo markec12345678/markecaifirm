@@ -6,12 +6,38 @@ Format sledi [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), verzije s
 
 ## [Unreleased]
 
-Načrtovano za v6.92+:
-- UI komponente za v6.45-v6.91 funkcije v dashboard
+Načrtovano za v6.93+:
+- UI komponente za v6.45-v6.92 funkcije v dashboard
 - Unit testi za lib/ai.ts
 - Playwright E2E testi
 - WebSocket real-time negotiation
 - ML model za buyer matchmaker (fine-tuned na realni data)
+
+## [6.92.0] - 2026-07-29
+
+### Added
+- **AI Listing Image Background Cleaner** — ML čiščenje ozadja slik z image segmentation
+  - 10 tipov težav z ozadjem (cluttered, messy, distracting, low_contrast, busy_pattern, unrelated_objects, poor_lighting_bg, other_people, text_overlay, watermark)
+  - 10 nadomestnih ozadij (pure_white, pure_black, studio_gray, gradient_blue, gradient_warm, lifestyle_context, neutral_office, seamless_paper, transparent, branded)
+  - Per-listing: current vs cleaned background score, CTR %, grade
+  - 10 background analyses z severity, affected area %, CTR impact %, detection confidence %
+  - 10 cleaning actions z technique (background_removal, object_inpainting, color_replacement, blur, crop, mask_refinement), tool recommended, time required
+  - 5 ML modelov (u2net, sam, deeplabv3, mask_rcnn, ensemble) z prediction type (background_detection, segmentation, ctr_prediction, aesthetic_scoring)
+- **AI Inventory Damage Prevention** — ML preprečevanje škode z risk assessment
+  - 10 tipov škode (physical_damage, moisture_damage, temperature_damage, uv_damage, pest_damage, theft_risk, fire_risk, electrical_damage, chemical_damage, handling_damage)
+  - 5 nivojev preprečevanja (critical_prevention → no_prevention_needed)
+  - Overview: total items/value, at-risk items/value, damage probability avg %, grade
+  - 15 risk items z primary damage risk, probability %, potential loss €, prevention level, recommended action
+  - Per-damage-type: affected items count, value €, avg probability %, primary cause, prevention cost/ROI %
+  - 10 prevention measures z cost €, implementation days, items protected, value protected €, ROI %
+  - 5 ML modelov (random_forest, xgboost, neural_net, isolation_forest, ensemble) z prediction type (damage_prediction, risk_assessment, loss_forecast, anomaly_detection)
+- **AI Buyer Social Influence Scorer** — ML ocena socialnega vpliva z network analysis
+  - 7 vplivnih tierjev (mega_influencer, macro_influencer, micro_influencer, local_influencer, connected_buyer, average_buyer, isolated_buyer)
+  - 10 dejavnikov vpliva (network_size, social_proof_generation, referral_frequency, review_impact, community_standing, cross_platform_presence, engagement_magnitude, trust_amplification, viral_potential, advocacy_consistency)
+  - Per-buyer: influence score, tier, network reach, referral value €, advocacy score, viral coefficient, recommended partnership
+  - 25 network metrics z betweenness/eigenvector centrality, clustering coefficient, network position, influence radius
+  - 10 recommendations z partnership type, expected reach, revenue/cost €, ROI %
+  - 5 ML modelov (graph_neural_net, random_forest, xgboost, neural_net, ensemble) z prediction type (influence_prediction, network_analysis, referral_forecast, viral_prediction)
 
 ## [6.91.0] - 2026-07-29
 
@@ -1192,7 +1218,8 @@ Načrtovano za v6.92+:
 
 ---
 
-[Unreleased]: https://github.com/markec12345678/markecaifirm/compare/v6.91.0...HEAD
+[Unreleased]: https://github.com/markec12345678/markecaifirm/compare/v6.92.0...HEAD
+[6.92.0]: https://github.com/markec12345678/markecaifirm/compare/v6.91.0...v6.92.0
 [6.91.0]: https://github.com/markec12345678/markecaifirm/compare/v6.90.0...v6.91.0
 [6.90.0]: https://github.com/markec12345678/markecaifirm/compare/v6.89.0...v6.90.0
 [6.89.0]: https://github.com/markec12345678/markecaifirm/compare/v6.88.0...v6.89.0
