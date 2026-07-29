@@ -5162,3 +5162,53 @@ Work Log:
 - TypeScript: 0 napak (ohranjeno) ✨
 - Skupno: 245 AI endpointov (+3 od v6.88)
 - Verzija aplikacije: v6.89.0
+
+---
+Task ID: v6.90
+Agent: main
+Task: AI Listing Typography Optimizer, Inventory Procurement Optimizer, Buyer Trust Builder
+
+Work Log:
+- listing-typography-optimizer: 10 tipografskih elementov (headline, subheadline, body_text,
+  price_display, specs_label, specs_value, cta_text, caption, footer, badge). 8 font družin
+  (serif, sans_serif, monospace, display, handwritten, condensed, wide, slab). Per-listing:
+  current vs optimized typography score, current vs optimized readability level
+  (poor/fair/good/excellent), grade (A-F). 10 typography elements z current vs recommended
+  font family, size px, weight (light/regular/medium/bold/black), line height, issue, fix.
+  8 readability metrics (font_size, line_height, letter_spacing, contrast, font_complexity,
+  text_length, word_spacing, paragraph_spacing) z current vs optimized score, weight %,
+  improvement %, recommendation. 8 font pairings z primary/secondary font, pairing score,
+  use case (headline_body/display_text/modern_classic/elegant_casual), psychological impact,
+  best for category. 5 ML modelov (cnn, resnet, vit, efficientnet, ensemble) z prediction
+  type (readability_scoring, font_optimization, hierarchy_analysis, conversion_prediction).
+- inventory-procurement-optimizer: 5 strategij nabave (bulk_procurement,
+  strategic_procurement, opportunistic_procurement, just_in_time, consignment_procurement).
+  8 kriterijev dobaviteljev (price, quality, delivery_speed, reliability, minimum_order,
+  payment_terms, geographic_proximity, exclusivity). Overview: total suppliers, total spent
+  €, avg purchase €, budget utilization %, procurement efficiency %, grade. 12 procurement
+  plans z category, procurement tier, quantity to procure, estimated cost €, expected margin
+  %, timeframe days, priority, rationale. 12 supplier comparisons z price/quality/delivery
+  speed/reliability score, overall score, recommended spend %, risk level, best criterion.
+  12 category strategies z recommended tier, primary/backup supplier, expected cost savings
+  %, quality target (budget/standard/premium/luxury), reorder frequency days. 5 ML modelov
+  (random_forest, xgboost, neural_net, linear_regression, ensemble) z prediction type
+  (price_prediction, supplier_scoring, demand_forecast, procurement_optimization).
+- buyer-trust-builder: 6 nivojev zaupanja (trusted_partner, highly_trusted, trusted,
+  building_trust, neutral, suspicious). 10 dejavnikov zaupanja (transaction_history,
+  communication_quality, payment_reliability, review_score, dispute_history, response_time,
+  transparency, consistency, social_proof, verification_status) z avg score, weight %,
+  impact on trust, improvement potential %, improvement strategy. Per-buyer: current trust
+  score, trust level, predicted 6m trust %, weakest/strongest factor, trust trend
+  (improving/stable/declining), recommended action (reward/maintain/strengthen/verify/
+  monitor). 10 trust signals (verified_identity, transaction_history, review_count,
+  response_rate, dispute_free_streak, loyalty_badge, social_proof, payment_consistency,
+  communication_quality, longevity) z current status (present/absent/partial), impact %,
+  implementation difficulty, priority, description. 8 verification steps (identity/payment/
+  address/phone/email/social/business/product) z buyer coverage %, trust lift %,
+  implementation days, cost €. 5 ML modelov (random_forest, xgboost, neural_net,
+  gradient_boosting, ensemble) z prediction type (trust_prediction, risk_assessment,
+  fraud_detection, behavior_analysis).
+
+- TypeScript: 0 napak (ohranjeno) ✨
+- Skupno: 248 AI endpointov (+3 od v6.89)
+- Verzija aplikacije: v6.90.0
