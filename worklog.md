@@ -4918,3 +4918,52 @@ Work Log:
 - TypeScript: 0 napak (ohranjeno) ✨
 - Skupno: 230 AI endpointov (+3 od v6.83)
 - Verzija aplikacije: v6.84.0
+
+---
+Task ID: v6.85
+Agent: main
+Task: AI Listing Mobile Optimizer, Inventory Supplier Evaluator, Buyer Feedback Analyzer
+
+Work Log:
+- listing-mobile-optimizer: 10 UX faktorjev (load_speed, image_optimization,
+  text_readability, tap_targets, viewport_config, touch_friendly_navigation,
+  form_usability, cta_visibility, scroll_depth_optimization, offline_capability).
+  Per-listing: current vs optimized mobile score, mobile conversion rate %,
+  optimized mobile conversion rate %, grade (A-F). 10 optimizations z implementation
+  difficulty (easy/medium/hard), expected load time reduction ms, expected
+  conversion lift %, time to implement hours. 8 tipov naprav (iphone_se,
+  iphone_standard, iphone_pro_max, android_compact, android_standard, android_tablet,
+  ipad, foldable) z compatibility score, rendering issues, load time ms, conversion
+  rate %, specific optimization. 5 ML modelov (cnn, resnet, vit, efficientnet,
+  ensemble) z prediction type (ux_scoring, conversion_prediction, rendering_optimization,
+  device_compatibility).
+- inventory-supplier-evaluator: 6 reliability tierjev (platinum, gold, silver, bronze,
+  risk, blacklisted) z recommended action (continue/reduce_volume/monitor/
+  find_alternative/terminate). Per-supplier: reliability score, tier, total purchases,
+  total spent €, avg order value €, categories count, successful sales %, cancellation
+  rate %, last purchase date. Reliability scoring z 5 dimenzijami (quality, delivery,
+  price_stability, communication, consistency) z overall reliability % in tier. 8 tipov
+  tveganj (price_volatility, supply_disruption, quality_inconsistency, delivery_delays,
+  communication_gaps, financial_instability, regulatory_issues, capacity_constraints) z
+  severity, probability %, financial impact €, mitigation strategy, monitoring
+  frequency. 5 ML modelov (random_forest, xgboost, neural_net, gradient_boosting,
+  ensemble) z prediction type (reliability_prediction, risk_assessment,
+  supplier_classification, performance_forecast).
+- buyer-feedback-analyzer: 8 tipov feedbacka (product_quality, shipping_experience,
+  communication, pricing, listing_accuracy, customer_service, return_process,
+  overall_satisfaction). 5 sentimentov (very_positive, positive, neutral, negative,
+  very_negative) z buyer count, buyer %, avg satisfaction score, primary driver, trend
+  (improving/declining/stable). 10 tematskih kategorij (quality_praise, quality_complaint,
+  speed_praise, speed_complaint, price_positive, price_negative, communication_praise,
+  communication_complaint, improvement_suggestion, recommendation) z occurrence count/%,
+  sentiment correlation, key phrases, impact score, recommended response. Per-buyer
+  feedback: feedback type, inferred sentiment, satisfaction score, inferred feedback
+  text, purchase count, total spent €, action required. 8 action items z priority
+  (critical/high/medium/low), target buyer count, expected satisfaction lift %,
+  implementation days, responsible area (product/shipping/communication/pricing/service).
+  5 ML modelov (bert, roberta, distilbert, t5, ensemble) z prediction type
+  (sentiment_analysis, theme_extraction, satisfaction_prediction, feedback_classification).
+
+- TypeScript: 0 napak (ohranjeno) ✨
+- Skupno: 233 AI endpointov (+3 od v6.84)
+- Verzija aplikacije: v6.85.0
