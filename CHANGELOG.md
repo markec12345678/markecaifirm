@@ -6,12 +6,37 @@ Format sledi [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), verzije s
 
 ## [Unreleased]
 
-Načrtovano za v6.79+:
-- UI komponente za v6.45-v6.78 funkcije v dashboard
+Načrtovano za v6.80+:
+- UI komponente za v6.45-v6.79 funkcije v dashboard
 - Unit testi za lib/ai.ts
 - Playwright E2E testi
 - WebSocket real-time negotiation
 - ML model za buyer matchmaker (fine-tuned na realni data)
+
+## [6.79.0] - 2026-07-29
+
+### Added
+- **AI Listing Question Optimizer** — ML napoved vprašanj kupcev in preventivni FAQ z NLP
+  - 10 tipov vprašanj kupcev (condition, price_negotiation, shipping, specs, availability, history, warranty, compatibility, authenticity, logistics)
+  - Per-listing: current vs suggested price, question optimization score, FAQ completeness, listing readiness grade
+  - 12 predicted questions z likelihood %, urgency, buyer persona, impact on sale
+  - 10 FAQ entries z question/answer, placement (top/middle/bottom), tone, priority
+  - 6 gap analysis tipov (missing_info, unclear_pricing, no_shipping_info, no_condition_photo, no_warranty, no_specs) z expected conversion lift %
+  - 5 ML modelov (bert, gpt, t5, roberta, ensemble) z prediction type (question_prediction, faq_generation, gap_detection, sentiment_analysis)
+- **AI Inventory Shrinkage Detector** — ML detekcija izgub inventarja z anomaly detection
+  - Overview: total inventory value, shrinkage value, shrinkage %, expected vs actual revenue, revenue gap, trend, grade
+  - 8 tipov shrinkage (theft, damage, misplacement, administrative_error, spoilage, obsolescence, loss_in_transit, unrecorded_sale)
+  - Per-event: lost value, severity (critical/high/medium/low), date detected, root cause, preventive action
+  - Per-category: total items, shrinkage value/pct, primary shrinkage type, trend, risk level
+  - 12 risk items z risk factors, recommended action (inspect/secure/relocate/sell_fast/audit), priority
+  - 5 ML modelov (isolation_forest, autoencoder, lstm, gradient_boosting, ensemble) z prediction type (anomaly_detection, risk_forecast, pattern_recognition, trend_analysis)
+- **AI Buyer Payment Reliability** — ML napoved zanesljivosti plačila kupca z risk assessment
+  - 6 reliability tierjev (platinum, gold, silver, bronze, risk, blocked) z recommended action (accept/accept_with_caution/require_deposit/require_escrow/decline)
+  - Per-buyer: reliability score, tier, total purchases, total spent, cancellations, total lost, preferred payment method, predicted reliability %
+  - 7 plačilnih metod (cash, bank_transfer, paypal, card, crypto, cod, installments)
+  - 8 dejavnikov tveganja (late_payment_history, partial_payments, disputed_transactions, no_show, cancelled_deals, communication_breakdown, price_renegotiation, payment_method_risk) z mitigation strategy
+  - Per-recommendation: deposit amount %, rationale, expected risk reduction %
+  - 5 ML modelov (gradient_boosting, random_forest, neural_net, logistic_regression, ensemble) z prediction type (payment_reliability, risk_score, default_probability, tier_classification)
 
 ## [6.78.0] - 2026-07-28
 
@@ -868,7 +893,8 @@ Načrtovano za v6.79+:
 
 ---
 
-[Unreleased]: https://github.com/markec12345678/markecaifirm/compare/v6.78.0...HEAD
+[Unreleased]: https://github.com/markec12345678/markecaifirm/compare/v6.79.0...HEAD
+[6.79.0]: https://github.com/markec12345678/markecaifirm/compare/v6.78.0...v6.79.0
 [6.78.0]: https://github.com/markec12345678/markecaifirm/compare/v6.77.0...v6.78.0
 [6.77.0]: https://github.com/markec12345678/markecaifirm/compare/v6.76.0...v6.77.0
 [6.76.0]: https://github.com/markec12345678/markecaifirm/compare/v6.75.0...v6.76.0
