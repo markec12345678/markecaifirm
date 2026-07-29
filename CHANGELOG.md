@@ -6,12 +6,35 @@ Format sledi [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), verzije s
 
 ## [Unreleased]
 
-Načrtovano za v6.85+:
-- UI komponente za v6.45-v6.84 funkcije v dashboard
+Načrtovano za v6.86+:
+- UI komponente za v6.45-v6.85 funkcije v dashboard
 - Unit testi za lib/ai.ts
 - Playwright E2E testi
 - WebSocket real-time negotiation
 - ML model za buyer matchmaker (fine-tuned na realni data)
+
+## [6.85.0] - 2026-07-29
+
+### Added
+- **AI Listing Mobile Optimizer** — ML optimizacija oglasov za mobilne naprave z UX analysis
+  - 10 UX faktorjev (load_speed, image_optimization, text_readability, tap_targets, viewport_config, touch_friendly_navigation, form_usability, cta_visibility, scroll_depth_optimization, offline_capability)
+  - Per-listing: current vs optimized mobile score, mobile conversion rate %, grade
+  - 10 optimizations z implementation difficulty, expected load time reduction ms, conversion lift %, time to implement hours
+  - 8 tipov naprav (iphone_se, iphone_standard, iphone_pro_max, android_compact, android_standard, android_tablet, ipad, foldable) z compatibility score, rendering issues, load time ms, conversion rate %
+  - 5 ML modelov (cnn, resnet, vit, efficientnet, ensemble) z prediction type (ux_scoring, conversion_prediction, rendering_optimization, device_compatibility)
+- **AI Inventory Supplier Evaluator** — ML evalvacija dobaviteljev z reliability scoring in risk assessment
+  - 6 reliability tierjev (platinum, gold, silver, bronze, risk, blacklisted) z recommended action (continue/reduce_volume/monitor/find_alternative/terminate)
+  - Per-supplier: reliability score, tier, total purchases/spent, avg order, successful sales %, cancellation rate %, last purchase date
+  - Reliability scoring z 5 dimenzijami (quality, delivery, price_stability, communication, consistency)
+  - 8 tipov tveganj (price_volatility, supply_disruption, quality_inconsistency, delivery_delays, communication_gaps, financial_instability, regulatory_issues, capacity_constraints) z mitigation strategy in monitoring frequency
+  - 5 ML modelov (random_forest, xgboost, neural_net, gradient_boosting, ensemble) z prediction type (reliability_prediction, risk_assessment, supplier_classification, performance_forecast)
+- **AI Buyer Feedback Analyzer** — ML analiza povratnih informacij kupcev z NLP in sentiment analysis
+  - 8 tipov feedbacka (product_quality, shipping_experience, communication, pricing, listing_accuracy, customer_service, return_process, overall_satisfaction)
+  - 5 sentimentov (very_positive → very_negative) z buyer count, satisfaction score, trend
+  - 10 tematskih kategorij (quality_praise → recommendation) z occurrence %, sentiment correlation, key phrases, recommended response
+  - Per-buyer feedback: feedback type, inferred sentiment, satisfaction score, inferred feedback text, action required
+  - 8 action items z priority (critical→low), target buyer count, expected satisfaction lift %, responsible area
+  - 5 ML modelov (bert, roberta, distilbert, t5, ensemble) z prediction type (sentiment_analysis, theme_extraction, satisfaction_prediction, feedback_classification)
 
 ## [6.84.0] - 2026-07-29
 
@@ -1011,7 +1034,8 @@ Načrtovano za v6.85+:
 
 ---
 
-[Unreleased]: https://github.com/markec12345678/markecaifirm/compare/v6.84.0...HEAD
+[Unreleased]: https://github.com/markec12345678/markecaifirm/compare/v6.85.0...HEAD
+[6.85.0]: https://github.com/markec12345678/markecaifirm/compare/v6.84.0...v6.85.0
 [6.84.0]: https://github.com/markec12345678/markecaifirm/compare/v6.83.0...v6.84.0
 [6.83.0]: https://github.com/markec12345678/markecaifirm/compare/v6.82.0...v6.83.0
 [6.82.0]: https://github.com/markec12345678/markecaifirm/compare/v6.81.0...v6.82.0
