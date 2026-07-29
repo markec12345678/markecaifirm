@@ -6,12 +6,36 @@ Format sledi [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), verzije s
 
 ## [Unreleased]
 
-Načrtovano za v6.82+:
-- UI komponente za v6.45-v6.81 funkcije v dashboard
+Načrtovano za v6.83+:
+- UI komponente za v6.45-v6.82 funkcije v dashboard
 - Unit testi za lib/ai.ts
 - Playwright E2E testi
 - WebSocket real-time negotiation
 - ML model za buyer matchmaker (fine-tuned na realni data)
+
+## [6.82.0] - 2026-07-29
+
+### Added
+- **AI Listing Meta Tag Optimizer** — ML optimizacija meta tagov z NLP in SEO scoring
+  - 10 tipov meta tagov (title, description, keywords, og_title, og_description, og_image_alt, twitter_card, canonical, schema_markup, robots)
+  - Per-listing: current SEO score, predicted SERP position, current vs optimized CTR %, grade
+  - 10 SEO faktorjev (keyword_density, title_length, description_length, readability, keyword_relevance, search_intent_match, competitor_alignment, click_through_predictor, serp_position_predictor, mobile_optimization) z current vs optimized score in weight %
+  - 8 optimization actions z expected SEO/traffic lift %, implementation difficulty, time to impact days
+  - 5 ML modelov (bert, t5, roberta, distilbert, ensemble) z prediction type (serp_prediction, ctr_prediction, keyword_extraction, content_optimization)
+- **AI Inventory Slow Mover Analyzer** — ML analiza počasi premikajočega inventarja z predictive analytics
+  - 5 slowness tierjev (fast_mover, normal_mover, slow_mover, very_slow_mover, dead_stock) glede na category avg
+  - Overview: total items/value, slow movers count/value/%, avg age, tied-up capital €, grade
+  - 15 slow movers z slowness ratio, current vs predicted sell value €, predicted days to sell, recommended action
+  - 8 akcijskih tipov (discount_15, discount_30, discount_50, bundle_deal, auction, liquidate, donate, return_supplier)
+  - Per-category: slow mover count/%, avg age, tied-up capital, primary issue, category action
+  - 5 ML modelov (random_forest, xgboost, lstm, prophet, ensemble) z prediction type (sell_time_prediction, value_degradation, risk_score, action_recommendation)
+- **AI Buyer Segmentation Engine** — ML segmentacija kupcev z RFM analizo in clustering
+  - 11 RFM segmentov (champions, loyal, potential_loyalists, new_customers, promising, need_attention, about_to_sleep, at_risk, cannot_lose_them, hibernating, lost)
+  - Overview: total buyers/revenue, avg R/F/M scores, segmentation confidence %, grade
+  - Per-segment: buyer count/%, revenue €/%, avg R/F/M scores, avg order value, retention rate %
+  - Per-buyer RFM: recency/frequency/monetary score (0-100), RFM segment, combined score, predicted CLV €, recommended strategy
+  - 8 strategij (reward, retain, activate, reactivate, win_back, educate, upsell, say_goodbye) z estimated cost, expected revenue lift, conversion rate %
+  - 5 ML modelov (k-means, dbscan, gmm, hdbscan, ensemble) z prediction type (segment_classification, clv_prediction, churn_risk, behavior_pattern)
 
 ## [6.81.0] - 2026-07-29
 
@@ -940,7 +964,8 @@ Načrtovano za v6.82+:
 
 ---
 
-[Unreleased]: https://github.com/markec12345678/markecaifirm/compare/v6.81.0...HEAD
+[Unreleased]: https://github.com/markec12345678/markecaifirm/compare/v6.82.0...HEAD
+[6.82.0]: https://github.com/markec12345678/markecaifirm/compare/v6.81.0...v6.82.0
 [6.81.0]: https://github.com/markec12345678/markecaifirm/compare/v6.80.0...v6.81.0
 [6.80.0]: https://github.com/markec12345678/markecaifirm/compare/v6.79.0...v6.80.0
 [6.79.0]: https://github.com/markec12345678/markecaifirm/compare/v6.78.0...v6.79.0

@@ -4787,3 +4787,43 @@ Work Log:
 - TypeScript: 0 napak (ohranjeno) ✨
 - Skupno: 221 AI endpointov (+3 od v6.80)
 - Verzija aplikacije: v6.81.0
+
+---
+Task ID: v6.82
+Agent: main
+Task: AI Listing Meta Tag Optimizer, Inventory Slow Mover Analyzer, Buyer Segmentation Engine
+
+Work Log:
+- listing-meta-tag-optimizer: 10 tipov meta tagov (title, description, keywords, og_title,
+  og_description, og_image_alt, twitter_card, canonical, schema_markup, robots). Per-listing:
+  current SEO score, predicted SERP position (1-100), current vs optimized CTR %, grade (A-F).
+  10 SEO faktorjev (keyword_density, title_length, description_length, readability,
+  keyword_relevance, search_intent_match, competitor_alignment, click_through_predictor,
+  serp_position_predictor, mobile_optimization) z current vs optimized score in weight %.
+  8 optimization actions z expected SEO/traffic lift %, implementation difficulty
+  (easy/medium/hard), time to impact days. 5 ML modelov (bert, t5, roberta, distilbert,
+  ensemble) z prediction type (serp_prediction, ctr_prediction, keyword_extraction,
+  content_optimization).
+- inventory-slow-mover-analyzer: 5 slowness tierjev (fast_mover, normal_mover, slow_mover,
+  very_slow_mover, dead_stock) glede na category avg days. Overview: total items/value,
+  slow movers count/value/%, avg age, tied-up capital €, grade. 15 slow movers z slowness
+  ratio, current vs predicted sell value €, predicted days to sell, recommended action
+  (discount_15/discount_30/discount_50/bundle_deal/auction/liquidate/donate/return_supplier).
+  Per-category: slow mover count/%, avg age, tied-up capital, primary issue, category action.
+  8 recommendations z expected recovery €, loss acceptance €, implementation days, priority.
+  5 ML modelov (random_forest, xgboost, lstm, prophet, ensemble) z prediction type
+  (sell_time_prediction, value_degradation, risk_score, action_recommendation).
+- buyer-segmentation-engine: 11 RFM segmentov (champions, loyal, potential_loyalists,
+  new_customers, promising, need_attention, about_to_sleep, at_risk, cannot_lose_them,
+  hibernating, lost). Overview: total buyers/revenue, avg R/F/M scores, segmentation
+  confidence %, grade. Per-segment: buyer count/%, revenue €/%, avg R/F/M scores, avg order
+  value, retention rate %. Per-buyer RFM: recency/frequency/monetary score (0-100), RFM
+  segment, combined score, predicted CLV €, recommended strategy. 8 strategij (reward,
+  retain, activate, reactivate, win_back, educate, upsell, say_goodbye) z estimated cost €,
+  expected revenue lift €, conversion rate %, implementation days. 5 ML modelov (k-means,
+  dbscan, gmm, hdbscan, ensemble) z prediction type (segment_classification, clv_prediction,
+  churn_risk, behavior_pattern).
+
+- TypeScript: 0 napak (ohranjeno) ✨
+- Skupno: 224 AI endpointov (+3 od v6.81)
+- Verzija aplikacije: v6.82.0
