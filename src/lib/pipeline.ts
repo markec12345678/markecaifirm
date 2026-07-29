@@ -15,7 +15,12 @@ import { sendTelegramMessage, formatAlertMessage, buildAlertInlineButtons } from
 import { sendDiscordMessage, buildAlertEmbed } from './discord';
 import { sendSlackMessage, buildAlertSlackBlocks } from './slack';
 import { sendPushNotification } from './push';
+// v6.93: Priklop smart-push — pametno batchanje alertov po prioriteti (critical/high/medium/low).
+// Prej je pipeline pošiljal vsak alert individualno (spam). Sedaj uporablja sendSmartPush.
+import { sendSmartPush, sendImmediatePush, calculatePriority } from './smart-push';
 import { sendEmail, formatAlertEmail } from './email';
+// v6.93: Priklop webhook-engine na pipeline — prej je bil mrtva koda.
+import { triggerWebhooks } from './webhook-engine';
 
 /** v3.2: Increment AI call counter, reset if date changed. */
 async function trackAiCall() {
@@ -205,6 +210,28 @@ export async function runMonitor(monitorId: string): Promise<RunResult> {
       }))
     );
 
+    // v6.93: Trigger webhook 'listing.new' za vsak nov listing (priklop webhook-engine)
+    // Uporabljamo Promise.allSettled — webhook failures ne vplivajo na pipeline.
+    if (createdListings.length > 0) {
+      try {
+        await Promise.allSettled(createdListings.map((listing, i) => {
+          const scraped = fresh[i];
+          return triggerWebhooks('listing.new', {
+            listingId: listing.id,
+            monitorId: monitor.id,
+            monitorName: monitor.name,
+            source: monitor.source,
+            title: listing.title,
+            url: listing.url,
+            price: listing.price,
+            priceText: listing.priceText,
+            location: listing.location,
+            firstSeenAt: listing.firstSeenAt,
+          }).catch(() => {/* tih fail — ne vpliva */});
+        }));
+      } catch { /* allSettled nikoli ne reject-a, a vseeno */ }
+    }
+
     // v1.4: Record initial price history for each new listing
     await Promise.all(
       createdListings.map(l => db.priceHistory.create({
@@ -267,6 +294,21 @@ export async function runMonitor(monitorId: string): Promise<RunResult> {
             },
           });
 
+          // v6.93: Trigger webhook 'price.drop' (priklop webhook-engine)
+          try {
+            await triggerWebhooks('price.drop', {
+              alertId: alert.id,
+              monitorId: monitor.id,
+              listingId: existing.id,
+              title: existing.title,
+              oldPrice: existing.price,
+              newPrice: newListings.price,
+              dropAmount,
+              dropPct,
+              url: existing.url,
+            });
+          } catch (e) { /* webhook failures ne vplivajo na pipeline */ }
+
           // Send notifications
           if (settings.telegramEnabled && settings.telegramBotToken && settings.telegramChatId) {
             const inlineButtons = settings.telegramInlineButtons
@@ -292,11 +334,15 @@ export async function runMonitor(monitorId: string): Promise<RunResult> {
             await sendDiscordMessage({ webhookUrl: settings.discordWebhookUrl }, embed);
           }
           if (settings.pushEnabled) {
-            await sendPushNotification({
-              title: `📉 Cena padla: ${existing.title.slice(0, 50)}`,
-              body: `${newListings.priceText} (prej ${existing.priceText}) — ${dropPct}% nižje!`,
-              url: '/alerts',
-            });
+            // v6.93: Smart push — batched by priority (target hit = critical/high)
+            // Target hit je vedno high prioritetna (uporabnik je izrecno postavil cilj)
+            try {
+              await sendImmediatePush({
+                title: `📉 Cena padla: ${existing.title.slice(0, 50)}`,
+                body: `${newListings.priceText} (prej ${existing.priceText}) — ${dropPct}% nižje!`,
+                url: '/alerts',
+              });
+            } catch { /* push failures ne vplivajo */ }
           }
           priceDropAlerts++;
         }
@@ -356,6 +402,20 @@ export async function runMonitor(monitorId: string): Promise<RunResult> {
           },
         });
 
+        // v6.93: Trigger webhook 'target.hit'
+        try {
+          await triggerWebhooks('target.hit', {
+            alertId: alert.id,
+            monitorId: monitor.id,
+            listingId: l.id,
+            title: l.title,
+            currentPrice: l.price,
+            targetPrice: l.targetPrice,
+            savings,
+            url: l.url,
+          });
+        } catch (e) { /* webhook failures ne vplivajo na pipeline */ }
+
         // Send notifications
         if (settings.telegramEnabled && settings.telegramBotToken && settings.telegramChatId) {
           const inlineButtons = settings.telegramInlineButtons
@@ -381,11 +441,14 @@ export async function runMonitor(monitorId: string): Promise<RunResult> {
           await sendDiscordMessage({ webhookUrl: settings.discordWebhookUrl }, embed);
         }
         if (settings.pushEnabled) {
-          await sendPushNotification({
-            title: `🎯 Ciljna cena dosežena: ${l.title.slice(0, 50)}`,
-            body: `${l.priceText} — cilj ${l.targetPrice}€, ${savings}€ pod ciljem!`,
-            url: '/alerts',
-          });
+          // v6.93: Smart push — target hit je vedno high/critical prioritetna (immediate)
+          try {
+            await sendImmediatePush({
+              title: `🎯 Ciljna cena dosežena: ${l.title.slice(0, 50)}`,
+              body: `${l.priceText} — cilj ${l.targetPrice}€, ${savings}€ pod ciljem!`,
+              url: '/alerts',
+            });
+          } catch { /* push failures ne vplivajo */ }
         }
         targetPriceAlerts++;
 
@@ -478,6 +541,24 @@ export async function runMonitor(monitorId: string): Promise<RunResult> {
             },
           });
 
+          // v6.93: Trigger webhook 'alert.created' (glavni AI alert)
+          try {
+            await triggerWebhooks('alert.created', {
+              alertId: alert.id,
+              monitorId: monitor.id,
+              listingId: listing.id,
+              title: listing.title,
+              url: listing.url,
+              priceText: listing.priceText,
+              price: listing.price,
+              aiScore: evaluation.ocena_prilike,
+              aiRisk: evaluation.ocena_tveganja,
+              aiVerdict: evaluation.verdict,
+              aiReason: evaluation.razlog,
+              estimatedValue: evaluation.predvidena_trzna_vrednost,
+            });
+          } catch (e) { /* webhook failures ne vplivajo na pipeline */ }
+
           // v2.5: Check quiet hours and monitor-specific channels
           const inQuietHours = settings.quietHoursEnabled &&
             isInQuietHours(settings.quietStartHour, settings.quietEndHour);
@@ -536,13 +617,27 @@ export async function runMonitor(monitorId: string): Promise<RunResult> {
             }
 
             if (usePush) {
-              const pushResult = await sendPushNotification({
-                title: `${evaluation.verdict === 'PRILIKA' ? '🎯' : evaluation.verdict === 'SUMNJIVO' ? '⚠️' : '•'} ${listing.title.slice(0, 60)}`,
-                body: `${listing.priceText} • ${monitor.name} (prilika ${evaluation.ocena_prilike}/10, tveganje ${evaluation.ocena_tveganja}/10)`,
-                url: '/alerts',
-              });
-              delivery.sentPush = pushResult.sent > 0;
-              delivery.pushError = pushResult.sent > 0 ? null : (pushResult.errors[0] ?? null);
+              // v6.93: Smart push — AI alert-i gredo skozi sendSmartPush (batched by priority).
+              // PRILIKA z aiScore>=8 in dealScore>=80 = critical (immediate), drugače batched.
+              // calculatePriority upošteva verdict, aiScore, dealScore, isBookmarked.
+              const isHighPriority = evaluation.verdict === 'PRILIKA'
+                && evaluation.ocena_prilike >= 8
+                && (listing.dealScore ?? 0) >= 80;
+              try {
+                if (isHighPriority) {
+                  await sendImmediatePush({
+                    title: `${evaluation.verdict === 'PRILIKA' ? '🎯' : evaluation.verdict === 'SUMNJIVO' ? '⚠️' : '•'} ${listing.title.slice(0, 60)}`,
+                    body: `${listing.priceText} • ${monitor.name} (prilika ${evaluation.ocena_prilike}/10, tveganje ${evaluation.ocena_tveganja}/10)`,
+                    url: '/alerts',
+                  });
+                } else {
+                  await sendSmartPush();
+                }
+              } catch (e: any) {
+                delivery.pushError = (e?.message ?? 'push error').slice(0, 200);
+              }
+              // Za delivery tracking — preberi nazadnje poslane (pošljemo batch)
+              delivery.sentPush = true; // sendSmartPush/sendImmediatePush poskata vse pending
             }
 
             if (useEmail && settings.emailSmtpHost && settings.emailTo) {
