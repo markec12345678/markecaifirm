@@ -4708,3 +4708,42 @@ Work Log:
 - TypeScript: 0 napak (ohranjeno) ✨
 - Skupno: 216 AI endpointov (+3 od v6.78)
 - Verzija aplikacije: v6.79.0
+
+---
+Task ID: v6.80
+Agent: main
+Task: AI Listing Seasonality Optimizer, Inventory Aging Predictor v2, Buyer Loyalty Tiers
+
+Work Log:
+- listing-seasonality-optimizer: 10 tipov sezon (holiday, back_to_school, summer, winter,
+  spring_cleaning, black_friday, christmas, easter, tax_season, wedding_season). Per-listing:
+  current vs peak vs off-season price, seasonality score, optimal sell window (YYYY-MM),
+  seasonality grade (A-F). 12-mesečni seasonality profile z demand level (peak/high/medium/
+  low/off_season), demand %, price multiplier (0.5-2.0), competition level, recommended action
+  (sell_now/hold/list/delist). 8 peak windows z start/end/peak month, expected demand/price
+  lift %, days until peak, preparation days. 8 recommendations z timing (immediate/within_7d/
+  within_30d/within_90d), expected revenue lift €, confidence %. 5 ML modelov (prophet, lstm,
+  arima, xgboost, ensemble) z prediction type (demand_forecast, price_forecast,
+  seasonality_detection, trend_analysis).
+- inventory-aging-predictor-v2: 6 aging bucketov (fresh_0_30d, aging_30_60d, stale_60_90d,
+  old_90_180d, stale_180_365d, dead_365d_plus). Overview: total items, total value, avg age,
+  stale items/value/%, devaluation at risk €, aging grade. Per-bucket: item count, value,
+  value %, avg age, devaluation %, risk level (critical→low), recommended action (sell_fast/
+  discount/bundle/liquidate/hold). 10-point devaluation curve z expected value %, devaluation
+  tier (minimal/moderate/significant/severe/critical), action threshold (sell_now/discount_10/
+  discount_20/discount_30/liquidate). 15 risk items z current vs predicted value (30d/90d),
+  devaluation tier, urgency. 5 ML modelov (arima, prophet, lstm, xgboost, ensemble) z
+  prediction type (age_forecast, devaluation_forecast, sell_probability, risk_score).
+- buyer-loyalty-tiers: 5 loyalty tierjev (bronze, silver, gold, platinum, diamond). Per-buyer:
+  current/next tier, loyalty score (0-100), total purchases/spent, lifetime days, tier progress
+  %, purchases/spend to next tier, tier benefits. 8 reward tipov (discount_pct, free_shipping,
+  priority_access, exclusive_deals, cashback, early_bird, bundle_bonus, referral_bonus).
+  Tier distribution z buyer count, revenue %, avg spend, retention rate, churn risk %.
+  Rewards program z reward value, eligibility, estimated cost/revenue lift € per tier.
+  Migration paths z required purchases/spend, estimated days, intervention, success
+  probability %. 5 ML modelov (k-means, dbscan, random_forest, xgboost, ensemble) z
+  prediction type (tier_classification, churn_prediction, lifetime_value, risk_score).
+
+- TypeScript: 0 napak (ohranjeno) ✨
+- Skupno: 219 AI endpointov (+3 od v6.79)
+- Verzija aplikacije: v6.80.0
