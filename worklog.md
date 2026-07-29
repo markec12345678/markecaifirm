@@ -4671,3 +4671,40 @@ Work Log:
 - TypeScript: 0 napak (ohranjeno) ✨
 - Skupno: 213 AI endpointov (+3 od v6.77)
 - Verzija aplikacije: v6.78.0
+
+---
+Task ID: v6.79
+Agent: main
+Task: AI Listing Question Optimizer, Inventory Shrinkage Detector, Buyer Payment Reliability
+
+Work Log:
+- listing-question-optimizer: 10 tipov vprašanj kupcev (condition, price_negotiation, shipping,
+  specs, availability, history, warranty, compatibility, authenticity, logistics). Per-listing:
+  current vs suggested price, question optimization score, FAQ completeness, listing readiness
+  grade (A-F). 12 predicted questions z likelihood %, urgency (critical→low), buyer persona,
+  impact on sale. 10 FAQ entries z question/answer, placement (top/middle/bottom), tone
+  (formal/friendly/concise), priority. 6 gap analysis tipov z expected conversion lift %.
+  5 ML modelov (bert, gpt, t5, roberta, ensemble) z prediction type.
+- inventory-shrinkage-detector: 8 tipov shrinkage (theft, damage, misplacement,
+  administrative_error, spoilage, obsolescence, loss_in_transit, unrecorded_sale). Overview:
+  total inventory value, shrinkage value, shrinkage %, expected vs actual revenue, revenue gap,
+  trend, grade. Per-event: lost value, severity (critical→low), date detected, root cause,
+  preventive action. Per-category: total items, shrinkage value/pct, primary shrinkage type,
+  trend, risk level. 12 risk items z risk factors, recommended action (inspect/secure/relocate/
+  sell_fast/audit), priority. 5 recommendations z expected savings €, implementation days,
+  category (process/security/audit/insurance/training). 5 ML modelov (isolation_forest,
+  autoencoder, lstm, gradient_boosting, ensemble).
+- buyer-payment-reliability: 6 reliability tierjev (platinum, gold, silver, bronze, risk,
+  blocked). Per-buyer: reliability score, tier, total purchases, total spent, cancellations,
+  total lost, preferred payment method (cash/bank_transfer/paypal/card/crypto/cod/installments),
+  predicted reliability %, recommended action (accept/accept_with_caution/require_deposit/
+  require_escrow/decline). 8 dejavnikov tveganja (late_payment_history, partial_payments,
+  disputed_transactions, no_show, cancelled_deals, communication_breakdown, price_renegotiation,
+  payment_method_risk) z mitigation strategy. Per-recommendation: deposit amount %, rationale,
+  expected risk reduction %. 5 ML modelov (gradient_boosting, random_forest, neural_net,
+  logistic_regression, ensemble) z prediction type (payment_reliability, risk_score,
+  default_probability, tier_classification).
+
+- TypeScript: 0 napak (ohranjeno) ✨
+- Skupno: 216 AI endpointov (+3 od v6.78)
+- Verzija aplikacije: v6.79.0
