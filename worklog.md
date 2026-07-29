@@ -4827,3 +4827,49 @@ Work Log:
 - TypeScript: 0 napak (ohranjeno) ✨
 - Skupno: 224 AI endpointov (+3 od v6.81)
 - Verzija aplikacije: v6.82.0
+
+---
+Task ID: v6.83
+Agent: main
+Task: AI Listing Trend Detector, Inventory Reorder Point, Buyer Persona Enricher
+
+Work Log:
+- listing-trend-detector: 10 tipov trendov (rising_star, viral, hot, emerging,
+  stable_grower, plateau, declining, fading, dead, seasonal_spike). Overview: total
+  categories, recent vs older sold, growth rate %, trend confidence %, grade (A-F).
+  Per-category trends z momentum score (0-100), growth %, price trend %, volume trend %,
+  predicted duration days, opportunity score. Per-category historical: current vs previous
+  volume, avg price change %, trend strength (strong/moderate/weak/none), direction
+  (up/down/flat). 10 momentum signalov (price_increase, demand_surge, supply_shortage,
+  category_breakout, cross_category_shift, demographic_shift, seasonal_onset,
+  competitor_exit, platform_algorithm_change, macro_event) z detected categories,
+  strength %, duration days, monetary impact €, action required (capitalize/exit/hold/
+  double_down/monitor). 5 ML modelov (prophet, lstm, arima, gradient_boosting, ensemble)
+  z prediction type (trend_detection, momentum_analysis, growth_forecast,
+  seasonality_decomposition).
+- inventory-reorder-point: 6 reorder statusov (urgent_reorder, reorder_now,
+  monitor_closely, adequate_stock, overstocked, no_restock_needed). 8 demand patternov
+  (steady, increasing, decreasing, volatile, seasonal_high, seasonal_low, sporadic,
+  new_product). Per-category: current stock, avg daily demand, lead time days, reorder
+  point, safety stock, days until stockout, reorder status, demand pattern. Safety stock
+  z avg demand, demand std dev, service level % (0-100), lead time, current vs
+  calculated safety stock, status (adequate/low/critical/excess). 5 recommendations z
+  quantity to reorder, expected cost €, expected revenue €, supplier lead time, priority.
+  5 ML modelov (prophet, arima, lstm, gradient_boosting, ensemble) z prediction type
+  (demand_forecast, reorder_optimization, stockout_prediction, lead_time_forecast).
+- buyer-persona-enricher: 10 tipov personas (bargain_hunter, quality_seeker, collector,
+  reseller, first_time_buyer, business_buyer, gift_buyer, enthusiast, casual_browser,
+  power_buyer). 5 demographic tierjev (gen_z, millennial, gen_x, boomer, unknown).
+  Per-buyer: persona type, confidence %, demographic tier, estimated age range, spending
+  power (low/medium/high/premium), purchase motivation, preferred categories,
+  communication preference (formal/friendly/casual/technical), persona score. Per-persona:
+  buyer count/%, avg order value, total revenue, retention rate, lifetime value, primary
+  motivation, best channel. Per-demographic: buyer count/%, preferred categories, avg
+  order value, purchase frequency, tech savviness %, price sensitivity %. 8 behavior
+  patterns z frequency %, avg revenue per occurrence, trigger, opportunity. 5 ML modelov
+  (bert, gpt, roberta, distilbert, ensemble) z prediction type (persona_classification,
+  demographic_inference, behavior_prediction, motivation_analysis).
+
+- TypeScript: 0 napak (ohranjeno) ✨
+- Skupno: 227 AI endpointov (+3 od v6.82)
+- Verzija aplikacije: v6.83.0

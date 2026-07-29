@@ -6,12 +6,36 @@ Format sledi [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), verzije s
 
 ## [Unreleased]
 
-Načrtovano za v6.83+:
-- UI komponente za v6.45-v6.82 funkcije v dashboard
+Načrtovano za v6.84+:
+- UI komponente za v6.45-v6.83 funkcije v dashboard
 - Unit testi za lib/ai.ts
 - Playwright E2E testi
 - WebSocket real-time negotiation
 - ML model za buyer matchmaker (fine-tuned na realni data)
+
+## [6.83.0] - 2026-07-29
+
+### Added
+- **AI Listing Trend Detector** — ML detekcija trendov z momentum analysis
+  - 10 tipov trendov (rising_star, viral, hot, emerging, stable_grower, plateau, declining, fading, dead, seasonal_spike)
+  - Overview: total categories, recent vs older sold, growth rate %, trend confidence %, grade
+  - Per-category trends z momentum score (0-100), growth %, price trend %, volume trend %, predicted duration days, opportunity score
+  - Per-category historical: current vs previous volume, avg price change %, trend strength (strong→none), direction (up/down/flat)
+  - 10 momentum signalov (price_increase, demand_surge, supply_shortage, category_breakout, cross_category_shift, demographic_shift, seasonal_onset, competitor_exit, platform_algorithm_change, macro_event) z action required
+  - 5 ML modelov (prophet, lstm, arima, gradient_boosting, ensemble) z prediction type (trend_detection, momentum_analysis, growth_forecast, seasonality_decomposition)
+- **AI Inventory Reorder Point** — ML izračun reorder pointov z demand variability
+  - 6 reorder statusov (urgent_reorder, reorder_now, monitor_closely, adequate_stock, overstocked, no_restock_needed)
+  - 8 demand patternov (steady, increasing, decreasing, volatile, seasonal_high, seasonal_low, sporadic, new_product)
+  - Per-category: current stock, avg daily demand, lead time, reorder point, safety stock, days until stockout, status, pattern
+  - Safety stock z avg demand, std dev, service level %, lead time, current vs calculated stock, status (adequate/low/critical/excess)
+  - 5 ML modelov (prophet, arima, lstm, gradient_boosting, ensemble) z prediction type (demand_forecast, reorder_optimization, stockout_prediction, lead_time_forecast)
+- **AI Buyer Persona Enricher** — ML obogatitev buyer personas z demographics in behavior inference
+  - 10 tipov personas (bargain_hunter, quality_seeker, collector, reseller, first_time_buyer, business_buyer, gift_buyer, enthusiast, casual_browser, power_buyer)
+  - 5 demographic tierjev (gen_z, millennial, gen_x, boomer, unknown)
+  - Per-buyer: persona type, confidence %, demographic tier, age range, spending power (low→premium), purchase motivation, preferred categories, communication preference, persona score
+  - Per-persona: buyer count/%, avg order, total revenue, retention rate, lifetime value, primary motivation, best channel
+  - Per-demographic: buyer count/%, preferred categories, purchase frequency, tech savviness %, price sensitivity %
+  - 5 ML modelov (bert, gpt, roberta, distilbert, ensemble) z prediction type (persona_classification, demographic_inference, behavior_prediction, motivation_analysis)
 
 ## [6.82.0] - 2026-07-29
 
@@ -964,7 +988,8 @@ Načrtovano za v6.83+:
 
 ---
 
-[Unreleased]: https://github.com/markec12345678/markecaifirm/compare/v6.82.0...HEAD
+[Unreleased]: https://github.com/markec12345678/markecaifirm/compare/v6.83.0...HEAD
+[6.83.0]: https://github.com/markec12345678/markecaifirm/compare/v6.82.0...v6.83.0
 [6.82.0]: https://github.com/markec12345678/markecaifirm/compare/v6.81.0...v6.82.0
 [6.81.0]: https://github.com/markec12345678/markecaifirm/compare/v6.80.0...v6.81.0
 [6.80.0]: https://github.com/markec12345678/markecaifirm/compare/v6.79.0...v6.80.0
