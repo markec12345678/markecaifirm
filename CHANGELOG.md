@@ -6,12 +6,34 @@ Format sledi [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), verzije s
 
 ## [Unreleased]
 
-Načrtovano za v6.78+:
-- UI komponente za v6.45-v6.77 funkcije v dashboard
+Načrtovano za v6.79+:
+- UI komponente za v6.45-v6.78 funkcije v dashboard
 - Unit testi za lib/ai.ts
 - Playwright E2E testi
 - WebSocket real-time negotiation
 - ML model za buyer matchmaker (fine-tuned na realni data)
+
+## [6.78.0] - 2026-07-28
+
+### Added
+- **AI Listing Thumbnail Optimizer** — ML optimizacija thumbnail slik z VLM in A/B testing
+  - 10 thumbnail faktorjev (composition, lighting, color_saturation, item_visibility, background_cleanliness, angle_optimization, size_proportion, emotion_trigger, brand_visibility, resolution_quality)
+  - Per-listing: current vs optimized thumbnail score z per-factor issue in fix
+  - 10 editing tipov z step-by-step in tool recommendation (snapseed/lightroom/photoshop/canva/phone)
+  - AI prompts za image generation z VLM
+  - 5 ML modelov (cnn, resnet, vit, efficientnet, ensemble) z prediction type (thumbnail_score, ctr_prediction, conversion_prediction, aesthetic_score)
+- **AI Inventory Portfolio Analyzer** — ML analiza inventarja kot portfolio z modern portfolio theory
+  - Portfolio metrics: total assets, return, risk, Sharpe ratio, diversification score, efficiency, grade
+  - Per-category: current vs optimal allocation z rebalance action in Sharpe ratio
+  - 7 risk-return metrik (return, volatility, Sharpe, max drawdown, beta, alpha, correlation)
+  - Cross-category correlations z hedging opportunity detection
+  - 5 ML modelov (mean_variance, risk_parity, monte_carlo, black_litterman, ensemble)
+- **AI Buyer Spend Pattern Analyzer** — ML analiza porabnih vzorcev z anomaly detection
+  - 10 spend pattern tipov (consistent_high→gradual_growth)
+  - Per-buyer: spend pattern, confidence, volatility, trend, anomalies, predicted next spend/date
+  - 5 anomaly tipov (spend_spike, spend_drop, frequency_change, category_shift, price_sensitivity_change)
+  - 3 timeframe predictions (30d, 90d, 12m) z confidence
+  - 5 ML modelov (isolation_forest, k-means, autoencoder, lstm, ensemble)
 
 ## [6.77.0] - 2026-07-28
 
@@ -846,7 +868,8 @@ Načrtovano za v6.78+:
 
 ---
 
-[Unreleased]: https://github.com/markec12345678/markecaifirm/compare/v6.77.0...HEAD
+[Unreleased]: https://github.com/markec12345678/markecaifirm/compare/v6.78.0...HEAD
+[6.78.0]: https://github.com/markec12345678/markecaifirm/compare/v6.77.0...v6.78.0
 [6.77.0]: https://github.com/markec12345678/markecaifirm/compare/v6.76.0...v6.77.0
 [6.76.0]: https://github.com/markec12345678/markecaifirm/compare/v6.75.0...v6.76.0
 [6.75.0]: https://github.com/markec12345678/markecaifirm/compare/v6.74.0...v6.75.0
