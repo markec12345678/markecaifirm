@@ -4747,3 +4747,43 @@ Work Log:
 - TypeScript: 0 napak (ohranjeno) ✨
 - Skupno: 219 AI endpointov (+3 od v6.79)
 - Verzija aplikacije: v6.80.0
+
+---
+Task ID: v6.81
+Agent: main
+Task: AI Listing Cross-Sell Optimizer, Inventory Demand Forecaster, Buyer Churn Predictor v2
+
+Work Log:
+- listing-cross-sell-optimizer: 8 tipov cross-sell (complementary, accessory, upgrade,
+  replacement, bundled, warranty, service, subscription). Per-listing: current price,
+  cross-sell opportunity score, potential revenue lift %, bundle readiness %, grade (A-F).
+  10 cross-sell opportunities z estimated price, probability %, expected revenue lift €,
+  buyer persona. 8 bundle suggestions z 6 strategijami (fixed_bundle, dynamic_bundle,
+  tiered_bundle, optional_addon, loyalty_bundle, seasonal_bundle), individual vs bundle
+  price, discount %, expected conversion lift %, margin impact %. 5 ML modelov (apriori,
+  fp_growth, collaborative_filtering, neural_net, ensemble) z prediction type
+  (association_rules, bundle_optimization, cross_sell_probability, conversion_forecast).
+- inventory-demand-forecaster: 5 trend smeri (rising, stable, declining, volatile, seasonal).
+  5 demand tierjev (oversupply, balanced, undersupply, critical_shortage, no_supply).
+  Per-category: current demand score, predicted demand 30d/90d, trend, tier, supply vs
+  demand ratio (0-3), recommended stock level, urgency (critical→low). 12 trend analysis
+  z trend strength %, seasonality factor (0.5-2.0), anomaly detection. 8 recommendations
+  z action type (restock/liquidate/hold/source/diversify), expected revenue impact €,
+  implementation days, priority. 5 ML modelov (prophet, arima, lstm, gradient_boosting,
+  ensemble) z prediction type (demand_forecast, trend_analysis, seasonality_detection,
+  anomaly_detection).
+- buyer-churn-predictor-v2: 6 churn tierjev (safe, low_risk, medium_risk, high_risk,
+  critical, churned). Per-buyer: churn probability %, tier, predicted churn date (YYYY-MM),
+  primary driver, days since last purchase, lifetime value €, at-risk revenue €,
+  recommended intervention. 8 churn driverjev (inactivity, price_sensitivity,
+  competitor_switch, poor_experience, no_engagement, category_disinterest, seasonal_gap,
+  communication_failure) z mitigation strategy. 7 intervencijskih tipov (win_back_offer,
+  personalized_outreach, loyalty_upgrade, discount_campaign, product_recommendation,
+  feedback_request, reactivation_bundle) z estimated cost €, expected recovery rate %,
+  expected revenue recovered €, ROI %, implementation days. 5 ML modelov (random_forest,
+  xgboost, neural_net, survival_analysis, ensemble) z prediction type (churn_probability,
+  risk_score, lifetime_value, intervention_response).
+
+- TypeScript: 0 napak (ohranjeno) ✨
+- Skupno: 221 AI endpointov (+3 od v6.80)
+- Verzija aplikacije: v6.81.0

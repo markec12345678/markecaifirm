@@ -6,12 +6,35 @@ Format sledi [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), verzije s
 
 ## [Unreleased]
 
-Načrtovano za v6.81+:
-- UI komponente za v6.45-v6.80 funkcije v dashboard
+Načrtovano za v6.82+:
+- UI komponente za v6.45-v6.81 funkcije v dashboard
 - Unit testi za lib/ai.ts
 - Playwright E2E testi
 - WebSocket real-time negotiation
 - ML model za buyer matchmaker (fine-tuned na realni data)
+
+## [6.81.0] - 2026-07-29
+
+### Added
+- **AI Listing Cross-Sell Optimizer** — ML optimizacija cross-sell priložnosti z market basket analysis
+  - 8 tipov cross-sell (complementary, accessory, upgrade, replacement, bundled, warranty, service, subscription)
+  - Per-listing: current price, cross-sell opportunity score, potential revenue lift %, bundle readiness %, grade
+  - 10 cross-sell opportunities z estimated price, probability %, expected revenue lift €, buyer persona
+  - 8 bundle suggestions z 6 strategijami (fixed_bundle, dynamic_bundle, tiered_bundle, optional_addon, loyalty_bundle, seasonal_bundle), individual vs bundle price, discount %, conversion lift %
+  - 5 ML modelov (apriori, fp_growth, collaborative_filtering, neural_net, ensemble) z prediction type (association_rules, bundle_optimization, cross_sell_probability, conversion_forecast)
+- **AI Inventory Demand Forecaster** — ML napoved povpraševanja za kategorije z time series forecasting
+  - 5 trend smeri (rising, stable, declining, volatile, seasonal)
+  - 5 demand tierjev (oversupply, balanced, undersupply, critical_shortage, no_supply)
+  - Per-category: current demand score, predicted demand 30d/90d, trend, tier, supply vs demand ratio, recommended stock level, urgency
+  - 12 trend analysis z trend strength %, seasonality factor, anomaly detection
+  - 8 recommendations z action type (restock/liquidate/hold/source/diversify), expected revenue impact €
+  - 5 ML modelov (prophet, arima, lstm, gradient_boosting, ensemble) z prediction type (demand_forecast, trend_analysis, seasonality_detection, anomaly_detection)
+- **AI Buyer Churn Predictor v2** — ML napoved odhoda kupcev z intervention strategy design
+  - 6 churn tierjev (safe, low_risk, medium_risk, high_risk, critical, churned)
+  - Per-buyer: churn probability %, tier, predicted churn date, primary driver, days since last, lifetime value, at-risk revenue, recommended intervention
+  - 8 churn driverjev (inactivity, price_sensitivity, competitor_switch, poor_experience, no_engagement, category_disinterest, seasonal_gap, communication_failure) z mitigation strategy
+  - 7 intervencijskih tipov (win_back_offer, personalized_outreach, loyalty_upgrade, discount_campaign, product_recommendation, feedback_request, reactivation_bundle) z estimated cost, recovery rate %, revenue recovered €, ROI %
+  - 5 ML modelov (random_forest, xgboost, neural_net, survival_analysis, ensemble) z prediction type (churn_probability, risk_score, lifetime_value, intervention_response)
 
 ## [6.80.0] - 2026-07-29
 
@@ -917,7 +940,8 @@ Načrtovano za v6.81+:
 
 ---
 
-[Unreleased]: https://github.com/markec12345678/markecaifirm/compare/v6.80.0...HEAD
+[Unreleased]: https://github.com/markec12345678/markecaifirm/compare/v6.81.0...HEAD
+[6.81.0]: https://github.com/markec12345678/markecaifirm/compare/v6.80.0...v6.81.0
 [6.80.0]: https://github.com/markec12345678/markecaifirm/compare/v6.79.0...v6.80.0
 [6.79.0]: https://github.com/markec12345678/markecaifirm/compare/v6.78.0...v6.79.0
 [6.78.0]: https://github.com/markec12345678/markecaifirm/compare/v6.77.0...v6.78.0
