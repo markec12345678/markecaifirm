@@ -5065,3 +5065,52 @@ Work Log:
 - TypeScript: 0 napak (ohranjeno) ✨
 - Skupno: 239 AI endpointov (+3 od v6.86)
 - Verzija aplikacije: v6.87.0
+
+---
+Task ID: v6.88
+Agent: main
+Task: AI Listing Visual Hierarchy, Inventory Liquidation Optimizer, Buyer Referral Predictor
+
+Work Log:
+- listing-visual-hierarchy: 10 vizualnih elementov (hero_image, secondary_images,
+  title_block, price_block, description_block, specs_table, cta_button, trust_badges,
+  social_proof, shipping_info). 9 con pozornosti (top_left, top_center, top_right,
+  middle_left, middle_center, middle_right, bottom_left, bottom_center, bottom_right) z
+  current vs optimized attention %, primary element, fixation time ms, conversion impact
+  %. Per-listing: current vs optimized visual score, current vs optimized attention
+  efficiency %, grade (A-F). 8 design principov (contrast, alignment, proximity,
+  repetition, balance, emphasis, rhythm, unity) z current vs optimized score, weight %,
+  improvement %, recommendation. 10 optimizations z action, element, change type
+  (reposition/resize/recolor/reorder/emphasize/de_emphasize), expected conversion lift %,
+  implementation difficulty, priority. 5 ML modelov (cnn, resnet, vit, efficientnet,
+  ensemble) z prediction type (attention_prediction, visual_scoring, conversion_forecast,
+  eye_tracking_simulation).
+- inventory-liquidation-optimizer: 5 liquidation tierjev (urgent, aggressive, moderate,
+  strategic, patient). 10 izstopnih kanalov (auction, bulk_buyer, wholesale,
+  discount_retail, online_marketplace, consignment, donation, scrap, trade_in,
+  bundle_deal). Overview: total items/value, urgent items/value, potential recovery €,
+  recovery rate %, grade. 15 liquidation items z tier, recommended exit channel,
+  recommended price €, expected recovery %, time to liquidate days, loss acceptance €.
+  Per-channel strategy z items count, total value €, avg recovery %, time to complete
+  days, effort level, fees %. Per-tier pricing strategy z discount from cost %,
+  psychological pricing (charm/premium/bundle/anchor), price anchors, expected sell-through
+  rate %. 5 ML modelov (random_forest, xgboost, prophet, neural_net, ensemble) z
+  prediction type (recovery_prediction, sell_time_forecast, channel_optimization,
+  pricing_strategy).
+- buyer-referral-predictor: 6 referral tierjev (super_advocate, advocate,
+  potential_referrer, passive, unlikely, detractor). 8 tipov spodbud (cash_reward,
+  discount_coupon, free_item, loyalty_points, exclusive_access, recognition,
+  charity_donation, tier_upgrade). Per-buyer: referral probability %, tier, estimated
+  referrals per year, estimated referral value €, network reach score, influence score,
+  recommended incentive. Per-buyer referral potential z current/potential 12m referrals,
+  conversion rate of referrals %, avg referred buyer value €, total referral value €,
+  best timing (post_purchase/holiday/milestone/anytime). Per-buyer network analysis z
+  network size estimate, network influence %, social proof potential, viral coefficient,
+  amplification factor. 8 incentives z cost per referral €, expected referral count,
+  expected revenue €, ROI %, target tier. 5 ML modelov (random_forest, xgboost,
+  neural_net, graph_neural_net, ensemble) z prediction type (referral_probability,
+  network_influence, conversion_prediction, viral_forecast).
+
+- TypeScript: 0 napak (ohranjeno) ✨
+- Skupno: 242 AI endpointov (+3 od v6.87)
+- Verzija aplikacije: v6.88.0

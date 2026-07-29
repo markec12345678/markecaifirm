@@ -6,12 +6,39 @@ Format sledi [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), verzije s
 
 ## [Unreleased]
 
-Načrtovano za v6.88+:
-- UI komponente za v6.45-v6.87 funkcije v dashboard
+Načrtovano za v6.89+:
+- UI komponente za v6.45-v6.88 funkcije v dashboard
 - Unit testi za lib/ai.ts
 - Playwright E2E testi
 - WebSocket real-time negotiation
 - ML model za buyer matchmaker (fine-tuned na realni data)
+
+## [6.88.0] - 2026-07-29
+
+### Added
+- **AI Listing Visual Hierarchy** — ML optimizacija vizualne hierarhije z eye-tracking simulation
+  - 10 vizualnih elementov (hero_image, secondary_images, title_block, price_block, description_block, specs_table, cta_button, trust_badges, social_proof, shipping_info)
+  - 9 con pozornosti (top_left → bottom_right) z attention %, fixation time ms, conversion impact %
+  - Per-listing: current vs optimized visual score, attention efficiency %, grade
+  - 8 design principov (contrast, alignment, proximity, repetition, balance, emphasis, rhythm, unity) z current vs optimized score
+  - 10 optimizations z change type (reposition/resize/recolor/reorder/emphasize/de_emphasize), conversion lift %
+  - 5 ML modelov (cnn, resnet, vit, efficientnet, ensemble) z prediction type (attention_prediction, visual_scoring, conversion_forecast, eye_tracking_simulation)
+- **AI Inventory Liquidation Optimizer** — ML optimizacija likvidacije z exit strategy
+  - 5 liquidation tierjev (urgent, aggressive, moderate, strategic, patient)
+  - 10 izstopnih kanalov (auction, bulk_buyer, wholesale, discount_retail, online_marketplace, consignment, donation, scrap, trade_in, bundle_deal)
+  - Overview: total items/value, urgent items/value, potential recovery €, recovery rate %, grade
+  - 15 liquidation items z tier, exit channel, recommended price €, recovery %, time to liquidate days, loss acceptance €
+  - Per-channel strategy z items count, value €, avg recovery %, time to complete, effort level, fees %
+  - Per-tier pricing strategy z discount from cost %, psychological pricing, price anchors, sell-through rate %
+  - 5 ML modelov (random_forest, xgboost, prophet, neural_net, ensemble) z prediction type (recovery_prediction, sell_time_forecast, channel_optimization, pricing_strategy)
+- **AI Buyer Referral Predictor** — ML napoved referral vedenja z network analysis
+  - 6 referral tierjev (super_advocate, advocate, potential_referrer, passive, unlikely, detractor)
+  - 8 tipov spodbud (cash_reward, discount_coupon, free_item, loyalty_points, exclusive_access, recognition, charity_donation, tier_upgrade)
+  - Per-buyer: referral probability %, tier, estimated referrals/year, value €, network reach score, influence score, recommended incentive
+  - Per-buyer referral potential z current/potential 12m referrals, conversion rate %, referred buyer value €, total value €, best timing
+  - Per-buyer network analysis z network size, influence %, social proof potential, viral coefficient, amplification factor
+  - 8 incentives z cost per referral €, expected count, revenue €, ROI %, target tier
+  - 5 ML modelov (random_forest, xgboost, neural_net, graph_neural_net, ensemble) z prediction type (referral_probability, network_influence, conversion_prediction, viral_forecast)
 
 ## [6.87.0] - 2026-07-29
 
@@ -1087,7 +1114,8 @@ Načrtovano za v6.88+:
 
 ---
 
-[Unreleased]: https://github.com/markec12345678/markecaifirm/compare/v6.87.0...HEAD
+[Unreleased]: https://github.com/markec12345678/markecaifirm/compare/v6.88.0...HEAD
+[6.88.0]: https://github.com/markec12345678/markecaifirm/compare/v6.87.0...v6.88.0
 [6.87.0]: https://github.com/markec12345678/markecaifirm/compare/v6.86.0...v6.87.0
 [6.86.0]: https://github.com/markec12345678/markecaifirm/compare/v6.85.0...v6.86.0
 [6.85.0]: https://github.com/markec12345678/markecaifirm/compare/v6.84.0...v6.85.0
