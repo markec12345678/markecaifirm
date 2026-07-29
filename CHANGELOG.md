@@ -6,12 +6,39 @@ Format sledi [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), verzije s
 
 ## [Unreleased]
 
-Načrtovano za v6.90+:
-- UI komponente za v6.45-v6.89 funkcije v dashboard
+Načrtovano za v6.91+:
+- UI komponente za v6.45-v6.90 funkcije v dashboard
 - Unit testi za lib/ai.ts
 - Playwright E2E testi
 - WebSocket real-time negotiation
 - ML model za buyer matchmaker (fine-tuned na realni data)
+
+## [6.90.0] - 2026-07-29
+
+### Added
+- **AI Listing Typography Optimizer** — ML optimizacija tipografije z readability in hierarchy
+  - 10 tipografskih elementov (headline, subheadline, body_text, price_display, specs_label, specs_value, cta_text, caption, footer, badge)
+  - 8 font družin (serif, sans_serif, monospace, display, handwritten, condensed, wide, slab)
+  - Per-listing: current vs optimized typography score, readability level (poor→excellent), grade
+  - 10 typography elements z current/recommended font family, size px, weight, line height, issue, fix
+  - 8 readability metrics z current vs optimized score, weight %, improvement %
+  - 8 font pairings z pairing score, use case, psychological impact, best for category
+  - 5 ML modelov (cnn, resnet, vit, efficientnet, ensemble) z prediction type (readability_scoring, font_optimization, hierarchy_analysis, conversion_prediction)
+- **AI Inventory Procurement Optimizer** — ML optimizacija nabave z supplier comparison
+  - 5 strategij nabave (bulk_procurement, strategic_procurement, opportunistic_procurement, just_in_time, consignment_procurement)
+  - 8 kriterijev dobaviteljev (price, quality, delivery_speed, reliability, minimum_order, payment_terms, geographic_proximity, exclusivity)
+  - Overview: total suppliers/spent, avg purchase, budget utilization %, efficiency %, grade
+  - 12 procurement plans z quantity, cost €, margin %, timeframe, priority, rationale
+  - 12 supplier comparisons z 4 scoring dimensions, overall score, recommended spend %, risk level, best criterion
+  - 12 category strategies z primary/backup supplier, cost savings %, quality target, reorder frequency
+  - 5 ML modelov (random_forest, xgboost, neural_net, linear_regression, ensemble) z prediction type (price_prediction, supplier_scoring, demand_forecast, procurement_optimization)
+- **AI Buyer Trust Builder** — ML gradnja zaupanja z trust signals in verification
+  - 6 nivojev zaupanja (trusted_partner, highly_trusted, trusted, building_trust, neutral, suspicious)
+  - 10 dejavnikov zaupanja (transaction_history, communication_quality, payment_reliability, review_score, dispute_history, response_time, transparency, consistency, social_proof, verification_status)
+  - Per-buyer: trust score, level, predicted 6m trust %, weakest/strongest factor, trend, recommended action
+  - 10 trust signals z current status (present/absent/partial), impact %, implementation difficulty
+  - 8 verification steps z buyer coverage %, trust lift %, implementation days, cost €
+  - 5 ML modelov (random_forest, xgboost, neural_net, gradient_boosting, ensemble) z prediction type (trust_prediction, risk_assessment, fraud_detection, behavior_analysis)
 
 ## [6.89.0] - 2026-07-29
 
@@ -1140,7 +1167,8 @@ Načrtovano za v6.90+:
 
 ---
 
-[Unreleased]: https://github.com/markec12345678/markecaifirm/compare/v6.89.0...HEAD
+[Unreleased]: https://github.com/markec12345678/markecaifirm/compare/v6.90.0...HEAD
+[6.90.0]: https://github.com/markec12345678/markecaifirm/compare/v6.89.0...v6.90.0
 [6.89.0]: https://github.com/markec12345678/markecaifirm/compare/v6.88.0...v6.89.0
 [6.88.0]: https://github.com/markec12345678/markecaifirm/compare/v6.87.0...v6.88.0
 [6.87.0]: https://github.com/markec12345678/markecaifirm/compare/v6.86.0...v6.87.0

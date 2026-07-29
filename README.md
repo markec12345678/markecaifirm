@@ -1,8 +1,8 @@
 # Markec AI Firm — AI Trading Firm za slovenske oglase
 
-[![Version](https://img.shields.io/badge/version-v6.89.0-blue.svg)](./CHANGELOG.md)
+[![Version](https://img.shields.io/badge/version-v6.90.0-blue.svg)](./CHANGELOG.md)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](./LICENSE)
-[![AI Endpoints](https://img.shields.io/badge/AI%20endpoints-245+-green.svg)](./AI_ENDPOINTS.md)
+[![AI Endpoints](https://img.shields.io/badge/AI%20endpoints-248+-green.svg)](./AI_ENDPOINTS.md)
 [![Next.js](https://img.shields.io/badge/Next.js-16-black.svg)](https://nextjs.org/)
 [![TypeScript](https://img.shields.io/badge/TypeScript-5-blue.svg)](https://www.typescriptlang.org/)
 [![TypeScript Errors](https://img.shields.io/badge/TS%20errors-0-brightgreen.svg)](#)
@@ -11,7 +11,7 @@
 [![PRs Welcome](https://img.shields.io/badge/PRs-welcome-brightgreen.svg)](./CONTRIBUTING.md)
 
 > **AI-powered trading firm** za Bolha, Facebook Marketplace, Vinted, Avtonet in Kleinanzeigen.
-> **245+ AI endpointov** za iskanje, ocenjevanje, kupovanje in preprodajo.
+> **248+ AI endpointov** za iskanje, ocenjevanje, kupovanje in preprodajo.
 > **Local-first** — vsi podatki ostanejo na tvojem računalniku. **Zero-cloud**.
 
 ---
@@ -46,9 +46,9 @@ računalniku — brez cloud storitev, brez mesečnih naročnin, brez deljenja po
 Lovi podcenjene oglase na Bolhi/Facebooku/Vintedu z AI, jih kupi poceni, preprodaj drago z
 AI-optimiziranimi oglasi, in avtomatiziraj celoten workflow od odkritja do prodaje.
 
-### Verzija v6.89.0 (29. julij 2026)
+### Verzija v6.90.0 (29. julij 2026)
 
-**245 AI endpointov** organiziranih v 7 kategorij:
+**248 AI endpointov** organiziranih v 7 kategorij:
 - **Statistike** (analytics, predictions, forecasting) — 35+ funkcij
 - **Skladišče** (inventory management, aging, depreciation) — 20+ funkcij
 - **Oglasi** (listing optimization, SEO, image analysis) — 25+ funkcij
@@ -57,13 +57,13 @@ AI-optimiziranimi oglasi, in avtomatiziraj celoten workflow od odkritja do proda
 - **Risk/Insurance** (hedging, fraud detection, claims) — 10+ funkcij
 - **Finance/Profit** (margin, ROI, compounding) — 16+ funkcij
 
-### Kaj je novega v v6.89
+### Kaj je novega v v6.90
 
-- **AI Listing Color Psychology** — 10 barvnih psihologij z color theory, 10 čustvenih odzivov, 5 ML modelov
-- **AI Inventory Aging Strategist** — 6 strategijskih tierjev z lifecycle analysis, 6 faz staranja, 5 ML modelov
-- **AI Buyer Engagement Predictor v2** — 6 nivojev engagementa z multi-channel scoring, 10 dejavnikov, 5 ML modelov
+- **AI Listing Typography Optimizer** — 10 tipografskih elementov z readability in hierarchy, 8 font družin, 5 ML modelov
+- **AI Inventory Procurement Optimizer** — 5 strategij nabave z supplier comparison, 8 kriterijev dobaviteljev, 5 ML modelov
+- **AI Buyer Trust Builder** — 6 nivojev zaupanja z trust signals in verification, 10 dejavnikov zaupanja, 5 ML modelov
 
-▶️ Glej [CHANGELOG.md](./CHANGELOG.md) za popolno zgodovino v1.0 → v6.89.
+▶️ Glej [CHANGELOG.md](./CHANGELOG.md) za popolno zgodovino v1.0 → v6.90.
 
 ---
 
@@ -565,9 +565,10 @@ Z obveznostjo:
 
 ## 📋 Changelog
 
-Popolna zgodovina verzij v [CHANGELOG.md](./CHANGELOG.md) — od v1.0 (25. junij 2026) do v6.89 (29. julij 2026).
+Popolna zgodovina verzij v [CHANGELOG.md](./CHANGELOG.md) — od v1.0 (25. junij 2026) do v6.90 (29. julij 2026).
 
 ### Zadnje verzije
+- **v6.90.0** (29. jul 2026) — Listing Typography Optimizer, Inventory Procurement Optimizer, Buyer Trust Builder
 - **v6.89.0** (29. jul 2026) — Listing Color Psychology, Inventory Aging Strategist, Buyer Engagement Predictor v2
 - **v6.88.0** (29. jul 2026) — Listing Visual Hierarchy, Inventory Liquidation Optimizer, Buyer Referral Predictor
 - **v6.87.0** (29. jul 2026) — Listing Audience Targeting, Inventory Cost Forecast, Buyer CLV Predictor
@@ -576,7 +577,6 @@ Popolna zgodovina verzij v [CHANGELOG.md](./CHANGELOG.md) — od v1.0 (25. junij
 - **v6.84.0** (29. jul 2026) — Listing Content Improver, Inventory Storage Optimizer, Buyer Journey Mapper v2
 - **v6.83.0** (29. jul 2026) — Listing Trend Detector, Inventory Reorder Point, Buyer Persona Enricher
 - **v6.82.0** (29. jul 2026) — Listing Meta Tag Optimizer, Inventory Slow Mover Analyzer, Buyer Segmentation Engine
-- **v6.81.0** (29. jul 2026) — Listing Cross-Sell Optimizer, Inventory Demand Forecaster, Buyer Churn Predictor v2
 
 ---
 
