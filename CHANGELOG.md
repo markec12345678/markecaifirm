@@ -6,12 +6,37 @@ Format sledi [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), verzije s
 
 ## [Unreleased]
 
-Načrtovano za v6.86+:
-- UI komponente za v6.45-v6.85 funkcije v dashboard
+Načrtovano za v6.87+:
+- UI komponente za v6.45-v6.86 funkcije v dashboard
 - Unit testi za lib/ai.ts
 - Playwright E2E testi
 - WebSocket real-time negotiation
 - ML model za buyer matchmaker (fine-tuned na realni data)
+
+## [6.86.0] - 2026-07-29
+
+### Added
+- **AI Listing Emotional Trigger** — ML optimizacija čustvenih sprožilcev z behavioral psychology
+  - 10 čustvenih sprožilcev (scarcity, urgency, exclusivity, social_proof, fear_of_missing_out, aspiration, nostalgia, trust, belonging, achievement)
+  - 10 psiholoških dejavnikov (loss_aversion, reciprocity, authority, commitment, liking, consensus, contrast, anchoring, framing, endowment) z ethical concern
+  - Per-listing: current vs optimized emotional score, conversion %, grade
+  - 10 emotional triggers z intensity %, trigger phrase, buyer segment, conversion lift %, difficulty
+  - 10 optimizations z phrase to add, placement (headline/description/cta/image_caption), priority
+  - 5 ML modelov (bert, gpt, roberta, distilbert, ensemble) z prediction type (emotion_detection, conversion_prediction, sentiment_analysis, trigger_optimization)
+- **AI Inventory Purchase Timing** — ML optimalen čas nakupa z market timing in price forecasting
+  - 5 timing tierjev (excellent, good, fair, poor, avoid)
+  - 10 tržnih razmer (bull_market, bear_market, stable, volatile, seasonal_low, seasonal_high, post_holiday, pre_holiday, economic_uncertainty, clearance_period)
+  - Per-category: best/worst purchase window (YYYY-MM), timing confidence %, expected savings %, days until optimal
+  - Per-category analysis: current vs predicted lowest/highest price, volatility %, seasonal pattern, best season, market trend
+  - 12 price forecasts (30d/90d/180d) z confidence %, trend direction, volatility %
+  - 5 ML modelov (prophet, lstm, arima, xgboost, ensemble) z prediction type (price_forecast, timing_optimization, seasonality_detection, volatility_prediction)
+- **AI Buyer Loyalty Predictor v2** — ML napoved loyalnosti z behavior prediction in intervention design
+  - 6 nivojev loyalnosti (devoted, committed, engaged, casual, at_risk, disengaged)
+  - 10 dejavnikov loyalnosti (purchase_frequency, avg_order_growth, category_diversity, engagement_score, referral_activity, feedback_provision, seasonal_consistency, price_insensitivity, communication_responsiveness, brand_advocacy) z improvement strategy
+  - Per-buyer: loyalty score, level, predicted 6m/12m loyalty %, lifetime value €, churn probability %, trend, primary action
+  - 25 predictions z next purchase date/value, loyalty trajectory, risk/opportunity, confidence %
+  - 6 intervencijskih tipov (loyalty_reward, personal_offer, exclusive_access, feedback_request, check_in, upgrade_tier) z expected lift %, cost/revenue €
+  - 5 ML modelov (random_forest, xgboost, neural_net, survival_analysis, ensemble) z prediction type (loyalty_prediction, churn_probability, lifetime_value, behavior_forecast)
 
 ## [6.85.0] - 2026-07-29
 
@@ -1034,7 +1059,8 @@ Načrtovano za v6.86+:
 
 ---
 
-[Unreleased]: https://github.com/markec12345678/markecaifirm/compare/v6.85.0...HEAD
+[Unreleased]: https://github.com/markec12345678/markecaifirm/compare/v6.86.0...HEAD
+[6.86.0]: https://github.com/markec12345678/markecaifirm/compare/v6.85.0...v6.86.0
 [6.85.0]: https://github.com/markec12345678/markecaifirm/compare/v6.84.0...v6.85.0
 [6.84.0]: https://github.com/markec12345678/markecaifirm/compare/v6.83.0...v6.84.0
 [6.83.0]: https://github.com/markec12345678/markecaifirm/compare/v6.82.0...v6.83.0

@@ -4967,3 +4967,51 @@ Work Log:
 - TypeScript: 0 napak (ohranjeno) ✨
 - Skupno: 233 AI endpointov (+3 od v6.84)
 - Verzija aplikacije: v6.85.0
+
+---
+Task ID: v6.86
+Agent: main
+Task: AI Listing Emotional Trigger, Inventory Purchase Timing, Buyer Loyalty Predictor v2
+
+Work Log:
+- listing-emotional-trigger: 10 čustvenih sprožilcev (scarcity, urgency, exclusivity,
+  social_proof, fear_of_missing_out, aspiration, nostalgia, trust, belonging,
+  achievement). 10 psiholoških dejavnikov (loss_aversion, reciprocity, authority,
+  commitment, liking, consensus, contrast, anchoring, framing, endowment) z current vs
+  optimized usage %, effectiveness score, ethical concern (none/low/medium/high).
+  Per-listing: current vs optimized emotional score, current vs optimized conversion %,
+  grade (A-F). 10 emotional triggers z current vs optimized intensity %, trigger phrase,
+  buyer segment, expected conversion lift %, implementation difficulty. 10 optimizations
+  z action, emotion, driver, phrase to add, expected conversion lift %, priority,
+  placement (headline/description/cta/image_caption). 5 ML modelov (bert, gpt, roberta,
+  distilbert, ensemble) z prediction type (emotion_detection, conversion_prediction,
+  sentiment_analysis, trigger_optimization).
+- inventory-purchase-timing: 5 timing tierjev (excellent, good, fair, poor, avoid).
+  10 tržnih razmer (bull_market, bear_market, stable, volatile, seasonal_low,
+  seasonal_high, post_holiday, pre_holiday, economic_uncertainty, clearance_period).
+  Per-category: current timing tier, best/worst purchase window (YYYY-MM), timing
+  confidence %, expected savings %, days until optimal, rationale. Per-category analysis:
+  current avg price €, predicted lowest/highest price €, price volatility %, seasonal
+  pattern (strong/moderate/weak/none), best season (spring/summer/autumn/winter), market
+  trend (rising/falling/stable). 12 price forecasts (30d/90d/180d) z confidence %, trend
+  direction (up/down/flat), volatility %. 5 ML modelov (prophet, lstm, arima, xgboost,
+  ensemble) z prediction type (price_forecast, timing_optimization, seasonality_detection,
+  volatility_prediction).
+- buyer-loyalty-predictor-v2: 6 nivojev loyalnosti (devoted, committed, engaged, casual,
+  at_risk, disengaged). 10 dejavnikov loyalnosti (purchase_frequency, avg_order_growth,
+  category_diversity, engagement_score, referral_activity, feedback_provision,
+  seasonal_consistency, price_insensitivity, communication_responsiveness, brand_advocacy)
+  z avg score, weight %, impact on loyalty (high/medium/low), improvement potential %,
+  improvement strategy. Per-buyer: loyalty score, level, predicted 6m/12m loyalty %,
+  lifetime value €, churn probability %, loyalty trend (improving/stable/declining),
+  primary action (reward/maintain/re_engage/save/monitor). 25 predictions z next purchase
+  date (YYYY-MM), next purchase value €, loyalty trajectory (ascending/plateau/descending),
+  key risk factor, key opportunity, confidence %. 6 intervencijskih tipov (loyalty_reward,
+  personal_offer, exclusive_access, feedback_request, check_in, upgrade_tier) z expected
+  loyalty lift %, cost €, expected revenue €, implementation days, priority. 5 ML modelov
+  (random_forest, xgboost, neural_net, survival_analysis, ensemble) z prediction type
+  (loyalty_prediction, churn_probability, lifetime_value, behavior_forecast).
+
+- TypeScript: 0 napak (ohranjeno) ✨
+- Skupno: 236 AI endpointov (+3 od v6.85)
+- Verzija aplikacije: v6.86.0
