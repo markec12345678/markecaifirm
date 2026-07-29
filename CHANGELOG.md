@@ -6,12 +6,37 @@ Format sledi [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), verzije s
 
 ## [Unreleased]
 
-Načrtovano za v6.91+:
-- UI komponente za v6.45-v6.90 funkcije v dashboard
+Načrtovano za v6.92+:
+- UI komponente za v6.45-v6.91 funkcije v dashboard
 - Unit testi za lib/ai.ts
 - Playwright E2E testi
 - WebSocket real-time negotiation
 - ML model za buyer matchmaker (fine-tuned na realni data)
+
+## [6.91.0] - 2026-07-29
+
+### Added
+- **AI Listing Image Quality Scorer** — ML ocena kakovosti slik z VLM in aesthetic scoring
+  - 10 dimenzij kakovosti (resolution, lighting, composition, color_accuracy, sharpness, background_cleanliness, angle_variety, detail_visibility, white_balance, noise_level)
+  - Per-listing: current vs optimized quality score, CTR prediction %, grade
+  - 8 image analyses (format, size, orientation, file_type, color_profile, transparency, metadata) z compliance status
+  - 10 improvement actions z tool recommended (snapseed/lightroom/photoshop/canva/phone_camera/dslr/tripod/light_box), quality/CTR lift %, time required minutes
+  - 5 ML modelov (cnn, resnet, vit, efficientnet, clip) z prediction type (quality_scoring, aesthetic_prediction, ctr_forecast, defect_detection)
+- **AI Inventory Carrying Cost** — ML analiza stroškov držanja inventarja z optimization
+  - 10 komponent stroškov (capital_cost, storage_cost, insurance_cost, depreciation_cost, obsolescence_cost, shrinkage_cost, handling_cost, administrative_cost, opportunity_cost, tax_cost)
+  - Overview: total inventory value, daily/monthly/annual carrying cost €, carrying cost %, grade
+  - Per-component: monthly/annual cost €, cost %, trend, controllable flag, optimization potential %
+  - Per-category: item count, inventory value €, monthly carrying cost €, cost efficiency score, recommended action
+  - 10 optimizations z expected monthly savings €, implementation days, difficulty, ROI %
+  - 5 ML modelov (prophet, arima, lstm, xgboost, ensemble) z prediction type (cost_forecast, optimization_prediction, trend_analysis, risk_assessment)
+- **AI Buyer Reactivation Engine** — ML reaktivacija neaktivnih kupcev z win-back strategy
+  - 6 reactivation tierjev (highly_reactivatable, reactivatable, difficult_to_reactivate, hard_to_reactivate, unlikely_to_reactivate, lost)
+  - 8 strategij reaktivacije (win_back_discount, personalized_outreach, new_product_alert, loyalty_reward, feedback_request, exclusive_offer, milestone_celebration, re_engagement_campaign)
+  - Overview: total inactive buyers/value, avg inactive days, avg reactivation probability %, grade
+  - Per-buyer: days inactive, lifetime value €, reactivation probability %, tier, preferred strategy
+  - 8 reactivation strategies z target buyer count, cost €, expected reactivations, revenue €, ROI %
+  - 5-phase campaign plan (awareness, consideration, incentive, follow_up, retention) z channel, timing, response rate %
+  - 5 ML modelov (random_forest, xgboost, neural_net, survival_analysis, ensemble) z prediction type (reactivation_probability, churn_prediction, response_forecast, value_prediction)
 
 ## [6.90.0] - 2026-07-29
 
@@ -1167,7 +1192,8 @@ Načrtovano za v6.91+:
 
 ---
 
-[Unreleased]: https://github.com/markec12345678/markecaifirm/compare/v6.90.0...HEAD
+[Unreleased]: https://github.com/markec12345678/markecaifirm/compare/v6.91.0...HEAD
+[6.91.0]: https://github.com/markec12345678/markecaifirm/compare/v6.90.0...v6.91.0
 [6.90.0]: https://github.com/markec12345678/markecaifirm/compare/v6.89.0...v6.90.0
 [6.89.0]: https://github.com/markec12345678/markecaifirm/compare/v6.88.0...v6.89.0
 [6.88.0]: https://github.com/markec12345678/markecaifirm/compare/v6.87.0...v6.88.0
