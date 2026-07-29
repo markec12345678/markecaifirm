@@ -6,7 +6,8 @@ Trenutno podpiramo samo najnovejjo verzijo. Varnostne popravke bomo izdajali sam
 
 | Version | Supported          |
 |---------|--------------------|
-| 6.49.x  | ✅ Active support   |
+| 6.92.x  | ✅ Active support   |
+| 6.49.x - 6.91.x | ⚠️ Security fixes only |
 | < 6.49  | ❌ No support       |
 
 ## Reporting a Vulnerability
@@ -45,7 +46,7 @@ VAPID_PRIVATE_KEY="..."
 
 ### 2. AI Provider security
 - API ključi so shranjeni samo v bazi (Settings tabelo)
-- API ključi se nikoli ne vračajo v API response
+- API ključi se nikoli ne vračajo v API response (samo `apiKeySet: boolean` in `apiKeyMasked`)
 - Fallback provider ima ločen ključ
 - Priporočeno: uporabi Ollama za lokalno AI (zero-cloud)
 
@@ -56,6 +57,19 @@ Projekt vključuje anti-detection funkcije za Bolha.com:
 - **User-Agent rotation**: realni browser signaturi
 - **Proxy rotation**: priporočeno za production scraping
 - **CAPTCHA solving**: samo kadar nujno potrebno
+
+### 3.5. SSRF zaščita (v6.92)
+- Webhook URL in monitor sourceUrl so validirani preko `lib/url-safety.ts`
+- Blokirani: privatni IP (10.x, 172.16-31.x, 192.168.x), localhost, AWS metadata (169.254.169.254), link-local (169.254.x), IPv6 ULA/link-local
+- Dovoljeni samo http:// in https:// (http blokirano razen z `ALLOW_HTTP_URLS=1`)
+- Test webhook (POST `/api/webhooks?test=`) naredi tudi DNS check prepreči DNS rebinding
+
+### 3.6. API avtentikacija (v6.92)
+- Vsi API endpoint-i zahtevajo `X-App-Key` header ali `app-key` cookie (enak `APP_API_KEY` env)
+- Če `APP_API_KEY` env ni nastavljen, je avtentikacija izklopljena (za local dev)
+- Javni (brez avtentikacije): `/`, PWA datoteke, `/api/health`, `/api/telegram/webhook` (ima svoj secret), `/api/push/subscribe`
+- Za production: nastavi `APP_API_KEY` z `openssl rand -hex 32`
+- Frontend (TODO): settings UI naj ima modal za vnos ključa, ki ga shrani v cookie
 
 ### 4. Database security
 - SQLite za local-first (privzeto)
@@ -68,6 +82,10 @@ Projekt vključuje anti-detection funkcije za Bolha.com:
 - Discord/Slack webhooks v bazi
 - Email SMTP credentials v bazi
 - VAPID keys za Web Push v bazi
+- v6.92: Slack Block Kit popravljen (prej `mrkdwn_section` neveljaven — tiho zavrnil payload)
+- v6.92: Email HTML-escape vseh uporabniških vsebin (XSS zaščita)
+- v6.92: Telegram MarkdownV2 (prej Markdown V1 — zastarelo)
+- v6.92: Rate-limit (429) handling za Telegram, Slack
 
 ### 6. Known security considerations
 

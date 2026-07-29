@@ -275,7 +275,18 @@ Do takrat testiraj ročno:
 
 ## Verzija
 
-Trenutna verzija: **v6.49.0**
+Trenutna verzija: **v6.92.0**
+
+### v6.92 Security fixes (obvezno preberi)
+
+Pri v6.92 so popravljene resne varnostne težave. Pri dodajanju novih funkcij **upostevaj**:
+
+1. **SSRF zaščita**: vsi outbound URL-ji (webhook, monitor sourceUrl) morajo iti skozi `isUrlSafe()` iz `@/lib/url-safety`. Nikoli ne kliči `fetch()` z uporabniško podanim URL-jem brez validacije.
+2. **Email XSS**: vsi uporabniški vsebinski deli v email HTML-ju morajo biti HTML-escape-ani z `escapeHtml()` iz `@/lib/email`. Naslov oglasa pride iz scraper-ja — ne zaupamo mu.
+3. **Slack Block Kit**: uporabljaj `type: 'mrkdwn'` (ne `mrkdwn_section` — neveljaven). Fields v `section` bloku: `{ type: 'mrkdwn', text: '...' }`.
+4. **Telegram MarkdownV2**: `parse_mode: 'MarkdownV2'` (ne `Markdown`). Vsi uporabniški teksti morajo biti escape-ani z `escapeMd()`.
+5. **CI ne tolerira napak**: `continue-on-error: true` je odstranjen. Build/lint/typecheck failure bo ustavil CI.
+6. **TypeScript**: `ignoreBuildErrors: false` in `reactStrictMode: true` v `next.config.ts`. TS napake bodo lomile build.
 Verzija je v formatu `vMAJOR.MINOR.PATCH` kjer:
 - MAJOR: velike arhitekturne spremembe
 - MINOR: nove AI funkcije (vsak sprint ~3 nove funkcije)

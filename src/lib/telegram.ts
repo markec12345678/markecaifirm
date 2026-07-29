@@ -1,10 +1,17 @@
 /**
- * Telegram Bot API notifier — sends Markdown-formatted alerts with inline buttons.
+ * Telegram Bot API notifier — sends MarkdownV2-formatted alerts with inline buttons.
  *
  * v1.1 additions:
  * - Inline URL buttons (Odpri oglas, Odpri dashboard)
  * - Inline callback buttons (Arhiviraj, Označi kot prevaro) — requires webhook setup
  * - answerCallbackQuery for webhook callbacks
+ *
+ * v6.92 FIX:
+ * - parse_mode: 'Markdown' (V1, deprecated) → 'MarkdownV2'
+ * - escapeMd prej escape-a V2 znake, a V1 parse_mode — mešano, literalni backslash-i v sporočilih
+ * - Telegram 429 rate-limit (retry_after) handling
+ * - testTelegram hardcoded `http://localhost:3000` → odstavljen (broken v produkciji)
+ * - Odstranjen header v testTelegram (ker dashboard URL ne deluje v prod)
  */
 
 export interface TelegramConfig {
@@ -35,7 +42,7 @@ export async function sendTelegramMessage(
     const body: any = {
       chat_id: cfg.chatId,
       text,
-      parse_mode: 'Markdown',
+      parse_mode: 'MarkdownV2',
       disable_web_page_preview: options?.disablePreview ?? false,
     };
     if (options?.inlineButtons && options.inlineButtons.length > 0) {
@@ -60,6 +67,10 @@ export async function sendTelegramMessage(
     );
     const data = await res.json();
     if (!data.ok) {
+      // Telegram 429 rate-limit vrača parameters.retry_after (sekunde)
+      if (data.error_code === 429 && data.parameters?.retry_after) {
+        return { ok: false, error: `Telegram rate limit (429). Počakaj ${data.parameters.retry_after}s.` };
+      }
       return { ok: false, error: data.description ?? `HTTP ${res.status}` };
     }
     return { ok: true, messageId: data.result?.message_id };
@@ -69,14 +80,11 @@ export async function sendTelegramMessage(
 }
 
 export async function testTelegram(cfg: TelegramConfig): Promise<{ ok: boolean; message: string }> {
+  // v6.92: Odstranjen hardcoded `http://localhost:3000` dashboard gumb — broken v produkciji.
+  // Uporabnik naj odpre dashboard prek brskalnika, ne prek test sporočila.
   const result = await sendTelegramMessage(
     cfg,
-    `✅ *Test* — Markec AI Firm monitor je uspešno povezan s Telegramom.\n\nv1.1: inline tipke, analiza slik, heartbeat.`,
-    {
-      inlineButtons: [[
-        { text: '📊 Odpri dashboard', url: 'http://localhost:3000' },
-      ]],
-    }
+    `✅ *Test* — Markec AI Firm monitor je uspešno povezan s Telegramom\.\n\nv6\.92: inline tipke, analiza slik, heartbeat, MarkdownV2\.`
   );
   return result.ok
     ? { ok: true, message: 'Testno sporočilo poslano. Preverite Telegram.' }
@@ -118,7 +126,7 @@ export async function editMessageText(
       chat_id: cfg.chatId,
       message_id: messageId,
       text,
-      parse_mode: 'Markdown',
+      parse_mode: 'MarkdownV2',
       disable_web_page_preview: true,
     };
     if (inlineButtons) {
@@ -160,6 +168,7 @@ export interface AlertMessageOptions {
 }
 
 export function formatAlertMessage(opts: AlertMessageOptions): string {
+  // v6.92: formatAlertMessage zdaj vrne MarkdownV2 (da se ujema s parse_mode)
   const verdictEmoji =
     opts.aiVerdict === 'PRILIKA' ? '🎯' :
     opts.aiVerdict === 'SUMNJIVO' ? '⚠️' :
@@ -182,7 +191,8 @@ export function formatAlertMessage(opts: AlertMessageOptions): string {
   if (opts.imageAnalysis) {
     lines.push(`\n📸 *Analiza slike:* ${escapeMd(opts.imageAnalysis.slice(0, 200))}`);
   }
-  lines.push(`\n[Odpri oglas](${opts.url})`);
+  // v6.92: escapeMd na URL (MarkdownV2 escape-a tudi . - ! v URL-jih)
+  lines.push(`\n[Odpri oglas](${escapeMd(opts.url)})`);
   lines.push(`\n📦 Monitor: ${escapeMd(opts.monitorName)}`);
   return lines.join('\n');
 }
@@ -232,11 +242,15 @@ export function formatHeartbeatMessage(opts: {
   sumnjivoAlerts: number;
   activeMonitors: number;
 }): string {
+  // v6.92: formatHeartbeatMessage — MarkdownV2 escape
   const ok = opts.failedRuns === 0;
   const emoji = ok ? '✅' : '⚠️';
   const lines: string[] = [];
   lines.push(`${emoji} *Heartbeat — Markec AI Firm*`);
-  lines.push(`_Obdobje: ${opts.periodStart.toLocaleString('sl-SI')} → ${opts.periodEnd.toLocaleString('sl-SI')}_`);
+  // v6.92: toLocaleString vrača nize s pikami in vejicami, ki jih MarkdownV2 escape-a
+  const startStr = escapeMd(opts.periodStart.toLocaleString('sl-SI'));
+  const endStr = escapeMd(opts.periodEnd.toLocaleString('sl-SI'));
+  lines.push(`_Obdobje: ${startStr} → ${endStr}_`);
   lines.push('');
   lines.push(`📊 *Aktivni monitorji:* ${opts.activeMonitors}`);
   lines.push(`🔄 *Izvedbe:* ${opts.successfulRuns}/${opts.totalRuns} uspešnih${opts.failedRuns > 0 ? ` (${opts.failedRuns} napak)` : ''}`);
@@ -252,8 +266,12 @@ export function formatHeartbeatMessage(opts: {
   return lines.join('\n');
 }
 
+/**
+ * Escape MarkdownV2 special characters.
+ * Telegram MarkdownV2 zahteva escape teh znakov: _ * [ ] ( ) ~ ` > # + - = | { } . !
+ * @see https://core.telegram.org/bots/api#markdownv2-style
+ */
 function escapeMd(s: string): string {
-  // Escape Markdown special chars in Markdown mode
   return (s ?? '').replace(/([_*\[\]()~`>#+\-=|{}.!\\])/g, '\\$1');
 }
 

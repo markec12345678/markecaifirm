@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { db } from '@/lib/db';
+import { isUrlSafe } from '@/lib/url-safety';
 
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
@@ -21,6 +22,14 @@ export async function POST(req: NextRequest) {
     if (!body?.[f] || typeof body[f] !== 'string') {
       return NextResponse.json({ error: `Manjka obvezno polje: ${f}` }, { status: 400 });
     }
+  }
+
+  // v6.92: SSRF zaščita za monitor sourceUrl.
+  // Monitor.sourceUrl kliče scraper s strežnika — uporabnik naj ne more dosegati internih IP-jev.
+  // Dovolimo http:// za lokalne Bolha/Nepremičnine URL-je (prek ALLOW_HTTP_URLS env).
+  const urlSafe = isUrlSafe(body.sourceUrl);
+  if (!urlSafe.safe) {
+    return NextResponse.json({ error: `sourceUrl ni varen: ${urlSafe.reason}` }, { status: 400 });
   }
 
   const monitor = await db.monitor.create({
