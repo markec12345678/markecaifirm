@@ -8,6 +8,8 @@
 
 import { NextRequest, NextResponse } from 'next/server';
 import { db } from '@/lib/db';
+// v6.93: Priklop webhook-engine — trigger 'trade.sold' ob prodaji
+import { triggerWebhooks } from '@/lib/webhook-engine';
 
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
@@ -34,6 +36,8 @@ export async function POST(req: NextRequest) {
         }
         for (const id of tradeIds) {
           try {
+            // Fetch trade before update, da dobimo podatke za webhook
+            const trade = await db.trade.findUnique({ where: { id }, select: { title: true, buyPrice: true, buyFees: true, category: true, listingId: true } });
             await db.trade.update({
               where: { id },
               data: {
@@ -44,6 +48,22 @@ export async function POST(req: NextRequest) {
                 sellLocation: data.sellLocation ?? '',
               },
             });
+            // v6.93: Trigger webhook 'trade.sold'
+            if (trade) {
+              try {
+                await triggerWebhooks('trade.sold', {
+                  tradeId: id,
+                  title: trade.title,
+                  buyPrice: trade.buyPrice,
+                  buyFees: trade.buyFees,
+                  sellPrice: data.sellPrice,
+                  sellFees: data.sellFees ?? 0,
+                  category: trade.category,
+                  profit: data.sellPrice - (data.sellFees ?? 0) - trade.buyPrice - (trade.buyFees ?? 0),
+                  listingId: trade.listingId,
+                });
+              } catch { /* webhook failures ne vplivajo */ }
+            }
             updated++;
           } catch { errors++; }
         }
