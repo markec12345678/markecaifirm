@@ -4873,3 +4873,48 @@ Work Log:
 - TypeScript: 0 napak (ohranjeno) ✨
 - Skupno: 227 AI endpointov (+3 od v6.82)
 - Verzija aplikacije: v6.83.0
+
+---
+Task ID: v6.84
+Agent: main
+Task: AI Listing Content Improver, Inventory Storage Optimizer, Buyer Journey Mapper v2
+
+Work Log:
+- listing-content-improver: 10 sekcij vsebine (headline, introduction, features,
+  specifications, condition, usage_history, reason_for_selling, shipping_info,
+  call_to_action, faq_preview). Per-listing: current vs improved content score,
+  readability grade (A-F), word count, improved word count, content improvement grade.
+  10 tipov izboljšav (clarity, persuasion, specificity, emotion, urgency, credibility,
+  readability, seo_optimization, mobile_optimization, accessibility) z current vs
+  improved score, improvement %, implementation difficulty (easy/medium/hard). 10
+  generated content sections z improved text, character count, tone (formal/friendly/
+  enthusiastic/professional/concise), key changes, expected impact %. 5 ML modelov
+  (gpt, t5, bart, pegasus, ensemble) z prediction type (content_generation,
+  readability_scoring, persuasion_analysis, seo_optimization).
+- inventory-storage-optimizer: 8 con skladišča (fast_access, bulk_storage, fragile_zone,
+  climate_controlled, high_value, overflow, returns, staging). 5 storage tierjev
+  (tier_1_premium, tier_2_standard, tier_3_economy, tier_4_overflow, tier_5_offsite).
+  Overview: total items/value, estimated storage cost €, storage efficiency %, space
+  utilization %, avg item value €, grade. Per-zone: recommended categories, item count,
+  value €, utilization %, access frequency (high/medium/low), climate required, security
+  level (standard/enhanced/maximum). 6 layout optimizations z current vs optimized layout,
+  space saved %, access time reduction %, implementation days, cost €, savings € monthly.
+  8 recommendations z action, zone type, tier, affected items, expected cost savings €
+  monthly, implementation days, priority. 5 ML modelov (k-means, dbscan,
+  linear_regression, neural_net, ensemble) z prediction type (layout_optimization,
+  demand_prediction, space_forecast, access_pattern).
+- buyer-journey-mapper-v2: 8 stadijev journey (awareness, consideration, intent,
+  evaluation, purchase, onboarding, retention, advocacy). 10 touchpointov (social_media_ad,
+  search_result, marketplace_listing, email_campaign, word_of_mouth, influencer_referral,
+  direct_visit, retargeting_ad, forum_discussion, comparison_site) z buyer reach %,
+  conversion contribution %, engagement score, cost per touchpoint €, revenue attributed
+  €, ROI %. 10 kanalov (bolha, facebook, vinted, avtonet, kleinanzeigen, email, website,
+  phone, whatsapp, in_person) z buyer count, revenue €/%, avg order value, conversion
+  rate %, cost per acquisition €, channel efficiency score. Per-stage: buyer count,
+  stage completion %, avg time in stage days, drop off %, key actions, optimization
+  opportunity. 5 ML modelov (markov_chain, lstm, bert, xgboost, ensemble) z prediction
+  type (journey_prediction, touchpoint_attribution, conversion_forecast, drop_off_prediction).
+
+- TypeScript: 0 napak (ohranjeno) ✨
+- Skupno: 230 AI endpointov (+3 od v6.83)
+- Verzija aplikacije: v6.84.0
