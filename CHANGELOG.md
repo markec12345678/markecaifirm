@@ -6,12 +6,40 @@ Format sledi [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), verzije s
 
 ## [Unreleased]
 
-Načrtovano za v6.87+:
-- UI komponente za v6.45-v6.86 funkcije v dashboard
+Načrtovano za v6.88+:
+- UI komponente za v6.45-v6.87 funkcije v dashboard
 - Unit testi za lib/ai.ts
 - Playwright E2E testi
 - WebSocket real-time negotiation
 - ML model za buyer matchmaker (fine-tuned na realni data)
+
+## [6.87.0] - 2026-07-29
+
+### Added
+- **AI Listing Audience Targeting** — ML optimizacija ciljanja publike z demographic analysis
+  - 10 segmentske publike (bargain_hunters, collectors, resellers, enthusiasts, first_time_buyers, business_buyers, gift_shoppers, luxury_buyers, vintage_lovers, tech_early_adopters)
+  - 10 kanalov ciljanja (facebook_marketplace, bolha_targeted, vinted_promoted, google_ads, instagram_shopping, tiktok_shop, email_campaign, whatsapp_broadcast, forum_posting, influencer_collab)
+  - Per-listing: current vs optimized reach estimate, conversion %, grade
+  - Per-segment: match score, audience size, conversion rate %, avg order value, competition level, priority
+  - Targeting strategy z key message, best time/day to post, CPC €, CTR %
+  - Channel mix z audience fit %, reach, cost €, conversions, revenue €, ROI %, budget %
+  - 5 ML modelov (random_forest, xgboost, neural_net, k-means, ensemble) z prediction type (audience_classification, conversion_prediction, reach_forecast, channel_optimization)
+- **AI Inventory Cost Forecast** — ML napoved stroškov inventarja z budget planning
+  - 10 kategorij stroškov (purchase_cost, shipping_cost, storage_cost, maintenance_cost, insurance_cost, platform_fees, marketing_cost, packaging_cost, return_cost, opportunity_cost)
+  - 5 forecast tierjev (under_budget, on_budget, slightly_over, over_budget, critical)
+  - Overview: total current/forecasted costs, cost change %, avg cost per item, efficiency %, grade
+  - Per-category cost forecast z current vs forecasted €, change %, trend, volatility %, tier
+  - Per-category breakdown z cost % of total, optimization potential %
+  - 8 cost drivers z impact %, controllable flag, mitigation strategy, expected savings €
+  - 5 ML modelov (prophet, arima, lstm, xgboost, ensemble) z prediction type (cost_forecast, trend_analysis, budget_optimization, volatility_prediction)
+- **AI Buyer CLV Predictor** — ML napoved Customer Lifetime Value z behavior modeling
+  - 6 CLV tierjev (vip, high_value, medium_value, low_value, marginal, unprofitable)
+  - 10 value driverjev (purchase_frequency, avg_order_value, category_breadth, referral_value, retention_length, price_premium_acceptance, cross_sell_receptiveness, feedback_value, advocacy_impact, lifetime_engagement)
+  - Per-buyer: current CLV, predicted 12m/24m/lifetime CLV, tier, trend, ROI %, investment recommended €
+  - Per-driver: current vs potential contribution €, improvement %, weight in CLV %, improvement strategy
+  - Per-buyer predictions z next purchase probability %, value €, frequency 12m, churn probability %, growth driver, confidence %
+  - Per-buyer recommendations z expected CLV lift €, investment €, expected ROI %, timeframe months
+  - 5 ML modelov (random_forest, xgboost, neural_net, survival_analysis, ensemble) z prediction type (clv_prediction, churn_probability, purchase_forecast, value_optimization)
 
 ## [6.86.0] - 2026-07-29
 
@@ -1059,7 +1087,8 @@ Načrtovano za v6.87+:
 
 ---
 
-[Unreleased]: https://github.com/markec12345678/markecaifirm/compare/v6.86.0...HEAD
+[Unreleased]: https://github.com/markec12345678/markecaifirm/compare/v6.87.0...HEAD
+[6.87.0]: https://github.com/markec12345678/markecaifirm/compare/v6.86.0...v6.87.0
 [6.86.0]: https://github.com/markec12345678/markecaifirm/compare/v6.85.0...v6.86.0
 [6.85.0]: https://github.com/markec12345678/markecaifirm/compare/v6.84.0...v6.85.0
 [6.84.0]: https://github.com/markec12345678/markecaifirm/compare/v6.83.0...v6.84.0
