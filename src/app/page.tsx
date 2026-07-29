@@ -2,7 +2,7 @@
 
 import { useEffect, useState, useCallback, useRef } from 'react';
 import dynamic from 'next/dynamic';
-import { Activity, Bell, Settings, ListPlus, Zap, RefreshCw, AlertCircle, LayoutGrid, BarChart3, Search, Heart, TrendingUp, History, Eye, PieChart, Menu, X } from 'lucide-react';
+import { Activity, Bell, Settings, ListPlus, Zap, RefreshCw, AlertCircle, LayoutGrid, BarChart3, Search, Heart, TrendingUp, History, Eye, PieChart, Menu, X, Users } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
 import { Input } from '@/components/ui/input';
@@ -22,6 +22,8 @@ const TradesView = dynamic(() => import('@/components/dashboard/trades-view').th
 const NotificationHistoryView = dynamic(() => import('@/components/dashboard/notification-history-view').then(m => ({ default: m.NotificationHistoryView })), { ssr: false, loading: () => <LoadingFallback /> });
 const WatchlistView = dynamic(() => import('@/components/dashboard/watchlist-view').then(m => ({ default: m.WatchlistView })), { ssr: false, loading: () => <LoadingFallback /> });
 const StatisticsView = dynamic(() => import('@/components/dashboard/statistics-view').then(m => ({ default: m.StatisticsView })), { ssr: false, loading: () => <LoadingFallback /> });
+// v7.00: BuyersView — nov pogled za upravljanje kupcev (40 orphan buyer endpointi)
+const BuyersView = dynamic(() => import('@/components/dashboard/buyers-view').then(m => ({ default: m.BuyersView })), { ssr: false, loading: () => <LoadingFallback /> });
 import { PwaInstallPrompt } from '@/components/dashboard/pwa-install-prompt';
 import { ProfileSwitcher } from '@/components/dashboard/profile-switcher';
 import { SearchModal } from '@/components/dashboard/search-modal';
@@ -40,7 +42,7 @@ function LoadingFallback() {
   );
 }
 
-type View = 'dashboard' | 'monitors' | 'alerts' | 'listings' | 'watchlist' | 'analytics' | 'statistics' | 'trades' | 'health' | 'notifications' | 'settings';
+type View = 'dashboard' | 'monitors' | 'alerts' | 'listings' | 'watchlist' | 'analytics' | 'statistics' | 'trades' | 'health' | 'notifications' | 'settings' | 'buyers';
 
 const NAV: { id: View; label: string; icon: typeof Activity }[] = [
   { id: 'dashboard', label: 'Dashboard', icon: Activity },
@@ -49,6 +51,7 @@ const NAV: { id: View; label: string; icon: typeof Activity }[] = [
   { id: 'listings', label: 'Oglasi', icon: LayoutGrid },
   { id: 'watchlist', label: 'Watchlist', icon: Eye },
   { id: 'trades', label: 'Skladišče', icon: TrendingUp },
+  { id: 'buyers', label: 'Kupci', icon: Users },
   { id: 'analytics', label: 'Analitika', icon: BarChart3 },
   { id: 'statistics', label: 'Statistike', icon: PieChart },
   { id: 'notifications', label: 'Obvestila', icon: History },
@@ -162,6 +165,7 @@ export default function Home() {
         '8': 'notifications',
         '9': 'health',
         '0': 'settings',
+        'b': 'buyers', // v7.00: shortcut za kupce
       };
       if (navMap[e.key] && !e.ctrlKey && !e.metaKey && !e.altKey) {
         e.preventDefault();
@@ -355,6 +359,7 @@ export default function Home() {
         {view === 'listings' && <ListingsView />}
         {view === 'watchlist' && <WatchlistView onNavigate={setView} />}
         {view === 'trades' && <TradesView />}
+        {view === 'buyers' && <BuyersView />}
         {view === 'analytics' && <AnalyticsView />}
         {view === 'statistics' && <StatisticsView />}
         {view === 'notifications' && <NotificationHistoryView />}
