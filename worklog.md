@@ -5015,3 +5015,53 @@ Work Log:
 - TypeScript: 0 napak (ohranjeno) ✨
 - Skupno: 236 AI endpointov (+3 od v6.85)
 - Verzija aplikacije: v6.86.0
+
+---
+Task ID: v6.87
+Agent: main
+Task: AI Listing Audience Targeting, Inventory Cost Forecast, Buyer CLV Predictor
+
+Work Log:
+- listing-audience-targeting: 10 segmentske publike (bargain_hunters, collectors,
+  resellers, enthusiasts, first_time_buyers, business_buyers, gift_shoppers,
+  luxury_buyers, vintage_lovers, tech_early_adopters). 10 kanalov ciljanja
+  (facebook_marketplace, bolha_targeted, vinted_promoted, google_ads, instagram_shopping,
+  tiktok_shop, email_campaign, whatsapp_broadcast, forum_posting, influencer_collab).
+  Per-listing: current vs optimized reach estimate, current vs optimized conversion %,
+  grade (A-F). Per-segment: match score, estimated audience size, estimated conversion
+  rate %, avg order value €, competition level (low/medium/high), priority
+  (primary/secondary/tertiary). Targeting strategy z strategy, key message, best time to
+  post (morning/afternoon/evening/night), best day (weekday/weekend/any), estimated CPC
+  €, expected CTR %. Channel mix z audience fit %, estimated reach, estimated cost €,
+  expected conversions, expected revenue €, ROI %, recommended budget %. 5 ML modelov
+  (random_forest, xgboost, neural_net, k-means, ensemble) z prediction type
+  (audience_classification, conversion_prediction, reach_forecast, channel_optimization).
+- inventory-cost-forecast: 10 kategorij stroškov (purchase_cost, shipping_cost,
+  storage_cost, maintenance_cost, insurance_cost, platform_fees, marketing_cost,
+  packaging_cost, return_cost, opportunity_cost). 5 forecast tierjev (under_budget,
+  on_budget, slightly_over, over_budget, critical). Overview: total current costs €,
+  forecasted costs €, cost change %, avg cost per item €, cost efficiency %, grade.
+  Per-category cost forecast z current vs forecasted €, change %, trend
+  (increasing/decreasing/stable), volatility %, forecast tier. Per-category breakdown z
+  current/forecasted cost €, cost % of total, avg cost per item €, trend, cost
+  optimization potential %. 8 cost drivers z impact %, affected categories, controllable
+  flag, mitigation strategy, expected savings €. 5 ML modelov (prophet, arima, lstm,
+  xgboost, ensemble) z prediction type (cost_forecast, trend_analysis,
+  budget_optimization, volatility_prediction).
+- buyer-clv-predictor: 6 CLV tierjev (vip, high_value, medium_value, low_value,
+  marginal, unprofitable). 10 value driverjev (purchase_frequency, avg_order_value,
+  category_breadth, referral_value, retention_length, price_premium_acceptance,
+  cross_sell_receptiveness, feedback_value, advocacy_impact, lifetime_engagement) z
+  current vs potential contribution €, improvement %, weight in CLV %, improvement
+  strategy. Per-buyer: current CLV €, predicted CLV 12m/24m/lifetime €, tier, trend
+  (growing/stable/declining), ROI %, investment recommended €. Per-buyer predictions z
+  next purchase probability %, predicted next purchase value €, predicted purchase
+  frequency 12m, churn probability %, key growth driver, confidence %. Per-buyer
+  recommendations z action, expected CLV lift €, investment €, expected ROI %, timeframe
+  months, priority. 5 ML modelov (random_forest, xgboost, neural_net, survival_analysis,
+  ensemble) z prediction type (clv_prediction, churn_probability, purchase_forecast,
+  value_optimization).
+
+- TypeScript: 0 napak (ohranjeno) ✨
+- Skupno: 239 AI endpointov (+3 od v6.86)
+- Verzija aplikacije: v6.87.0
