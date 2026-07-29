@@ -38,20 +38,22 @@ jobs:
         env:
           DATABASE_URL: "file:./dev.db"
 
+      # v6.92 FIX: Odstranjen `continue-on-error: true` — CI je bil dekorativen.
+      # Prej je CI vedno uspel, ne glede na dejansko stanje (lint, typecheck, build).
+      # Sedaj bo CI realno preprečil merge, če kaj odpove.
+
       - name: Run ESLint
         run: bun run lint
-        continue-on-error: true
+        # lint warning-i so OK (ESLint exit code 0), napake (exit 1) bodo ustavile CI
 
       - name: Run TypeScript check
         run: bun run typecheck
-        continue-on-error: true
 
       - name: Build check
         run: bun run build
         env:
           DATABASE_URL: "file:./dev.db"
           NEXT_TELEMETRY_DISABLED: "1"
-        continue-on-error: true
 
   security-audit:
     name: Security Audit
@@ -69,6 +71,7 @@ jobs:
       - name: Install dependencies
         run: bun install --frozen-lockfile
 
+      # v6.92 FIX: Odstranjen `continue-on-error: true` — security audit naj bo realen.
       - name: Run security audit
         run: bun audit
-        continue-on-error: true
+        # `bun audit` vrača exit 1, če najde vulnerabilities — sedaj bo CI ustavil

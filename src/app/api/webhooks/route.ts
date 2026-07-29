@@ -8,6 +8,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { db } from '@/lib/db';
 import { triggerWebhooks } from '@/lib/webhook-engine';
+import { isUrlSafeWithDns, isUrlSafe } from '@/lib/url-safety';
 
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
@@ -35,6 +36,11 @@ export async function POST(req: NextRequest) {
     const endpoint = await db.webhookEndpoint.findUnique({ where: { id: testId } });
     if (!endpoint) {
       return NextResponse.json({ error: 'Webhook ne obstaja' }, { status: 404 });
+    }
+    // v6.92: SSRF check — endpoint URL je bil morda nastavljen pred fixom
+    const safe = await isUrlSafeWithDns(endpoint.url);
+    if (!safe.safe) {
+      return NextResponse.json({ ok: false, error: `Webhook URL ni varen: ${safe.reason}` });
     }
     try {
       const testPayload = {
@@ -86,6 +92,12 @@ export async function POST(req: NextRequest) {
       return NextResponse.json({ error: 'URL mora biti veljaven HTTP(S) URL' }, { status: 400 });
     }
 
+    // v6.92: SSRF zaščita — prepreči webhook URL-je na internih/privatnih IP-jih
+    const urlSafe = isUrlSafe(webhookUrl);
+    if (!urlSafe.safe) {
+      return NextResponse.json({ error: `URL ni varen: ${urlSafe.reason}` }, { status: 400 });
+    }
+
     const eventList: string[] = Array.isArray(events) ? events.filter((e: string) => VALID_EVENTS.includes(e)) : [];
     if (eventList.length === 0) {
       return NextResponse.json({ error: 'Izberi vsaj en event' }, { status: 400 });
@@ -129,7 +141,14 @@ export async function PATCH(req: NextRequest) {
 
     const data: any = {};
     if (typeof name === 'string') data.name = name.trim();
-    if (typeof webhookUrl === 'string') data.url = webhookUrl.trim();
+    if (typeof webhookUrl === 'string') {
+      // v6.92: SSRF zaščita tudi pri PATCH update
+      const urlSafe = isUrlSafe(webhookUrl);
+      if (!urlSafe.safe) {
+        return NextResponse.json({ error: `URL ni varen: ${urlSafe.reason}` }, { status: 400 });
+      }
+      data.url = webhookUrl.trim();
+    }
     if (typeof secret === 'string') data.secret = secret.trim();
     if (Array.isArray(events)) {
       data.events = JSON.stringify(events.filter((e: string) => VALID_EVENTS.includes(e)));

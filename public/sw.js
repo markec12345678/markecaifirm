@@ -1,6 +1,6 @@
 /**
  * Markec AI Firm Service Worker
- * v4.8 — improved offline support + install prompt + background sync
+ * v6.92 — improved offline support + install prompt + background sync
  *
  * Strategy:
  * - App shell (HTML, JS, CSS, fonts): stale-while-revalidate
@@ -9,7 +9,7 @@
  * - Navigation requests: network-first with offline fallback page
  */
 
-const CACHE_VERSION = 'markec-ai-firm-v4.8';
+const CACHE_VERSION = 'markec-ai-firm-v6.92';
 const OFFLINE_URL = '/offline.html';
 const APP_SHELL = [
   '/',

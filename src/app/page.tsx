@@ -22,6 +22,7 @@ import { PwaInstallPrompt } from '@/components/dashboard/pwa-install-prompt';
 import { ProfileSwitcher } from '@/components/dashboard/profile-switcher';
 import { SearchModal } from '@/components/dashboard/search-modal';
 import { useAlertsStream } from '@/lib/use-alerts-stream';
+import { useAuth, LoginModal } from '@/components/dashboard/login-modal';
 
 type View = 'dashboard' | 'monitors' | 'alerts' | 'listings' | 'watchlist' | 'analytics' | 'statistics' | 'trades' | 'health' | 'notifications' | 'settings';
 
@@ -50,6 +51,8 @@ export default function Home() {
   // v4.9: Real-time alerts via SSE
   const { connected: sseConnected, lastAlert, stats: sseStats } = useAlertsStream(true);
   const lastSeenAlertId = useRef<string | null>(null);
+  // v6.92: Auth check — prikaži login modal, če je APP_API_KEY nastavljen in uporabnik ni prijavljen
+  const { needsAuth } = useAuth();
 
   // Clock effect — only subscribe to setInterval, initial value set lazily to avoid setState in effect
   useEffect(() => {
@@ -409,6 +412,9 @@ export default function Home() {
 
       {/* v4.8: PWA install prompt */}
       <PwaInstallPrompt />
+
+      {/* v6.92: Auth login modal — prikaže se, če APP_API_KEY zahteva avtentikacijo */}
+      {needsAuth && <LoginModal onSuccess={() => window.location.reload()} />}
     </div>
   );
 }
