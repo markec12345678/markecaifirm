@@ -24,7 +24,7 @@ import {
   DialogDescription,
 } from '@/components/ui/dialog';
 import { Textarea } from '@/components/ui/textarea';
-import { RefreshCw, Download, ExternalLink, ChevronLeft, ChevronRight, Filter, ImageIcon, AlertTriangle, Target, MapPin, Clock, Bookmark, Sparkles, ShoppingCart, MessageSquare, BarChart3, TrendingDown, TrendingUp, Copy, Check, GitCompare, StickyNote, Phone, Trash2, EyeOff, Zap, User, Wallet, BookOpen, Dice5, Send } from 'lucide-react';
+import { RefreshCw, Download, ExternalLink, ChevronLeft, ChevronRight, Filter, ImageIcon, AlertTriangle, Target, MapPin, Clock, Bookmark, Sparkles, ShoppingCart, BarChart3, TrendingDown, TrendingUp, Copy, Check, GitCompare, StickyNote, Phone, Trash2, EyeOff, Zap, User, Wallet } from 'lucide-react';
 import { toast } from 'sonner';
 import { cn } from '@/lib/utils';
 // v6.95: AI panel-i izvlečeni v samostojne komponente (ListingDetailModal razbit).
@@ -35,6 +35,8 @@ import { AuctionSniperPanel } from '@/components/dashboard/listing-detail/auctio
 import { FraudDetectionPanel } from '@/components/dashboard/listing-detail/fraud-detection-panel';
 // v6.97: ImageAnalysisPanel — združuje image-quality + description-optimizer + refurbishment-cost
 import { ImageAnalysisPanel } from '@/components/dashboard/listing-detail/image-analysis-panel';
+// v6.98: NegotiationPanel — združuje Negotiator + Playbook + Outcome + Chatbot (4 v 1)
+import { NegotiationPanel } from '@/components/dashboard/listing-detail/negotiation-panel';
 
 interface Listing {
   id: string;
@@ -1142,14 +1144,7 @@ function ListingDetailModal({ listingId, onClose }: { listingId: string | null; 
   const [fetchingDetail, setFetchingDetail] = useState(false);
   const [togglingBookmark, setTogglingBookmark] = useState(false);
   const [addingToTrade, setAddingToTrade] = useState(false);
-  // v1.8: AI Negotiator
-  const [negotiating, setNegotiating] = useState(false);
-  const [negotiateMessage, setNegotiateMessage] = useState<string | null>(null);
-  const [negotiateType, setNegotiateType] = useState<string>('initial');
-  // v4.6: Multi-language support
-  const [negotiateLang, setNegotiateLang] = useState<string>('sl');
-  const [negotiateLangLabel, setNegotiateLangLabel] = useState<string>('SLO');
-  const [copied, setCopied] = useState(false);
+  // v6.98: Negotiator + Playbook + Outcome + Chatbot so v NegotiationPanel (lastni state)
   // v2.4: Listing notes
   const [notes, setNotes] = useState('');
   const [notesSaving, setNotesSaving] = useState(false);
@@ -1174,23 +1169,6 @@ function ListingDetailModal({ listingId, onClose }: { listingId: string | null; 
   const [predicting, setPredicting] = useState(false);
   const [prediction, setPrediction] = useState<any>(null);
   const [predictTarget, setPredictTarget] = useState('');
-  // v6.11: Negotiation Playbook
-  const [playbook, setPlaybook] = useState<any>(null);
-  const [playbookLoading, setPlaybookLoading] = useState(false);
-  const [playbookMaxBudget, setPlaybookMaxBudget] = useState('');
-  const [playbookCopied, setPlaybookCopied] = useState<string | null>(null);
-  // v6.14: Negotiation Outcome Predictor (fraud + fake-detection + reverse-image-search so v FraudDetectionPanel od v6.96)
-  const [outcome, setOutcome] = useState<any>(null);
-  const [outcomeLoading, setOutcomeLoading] = useState(false);
-  const [outcomeOffer, setOutcomeOffer] = useState('');
-  const [outcomeMessage, setOutcomeMessage] = useState('');
-  // v6.20: Chatbot + Refurb (sentiment in snipe sta v podkomponentah v6.95)
-  const [chatbotMessages, setChatbotMessages] = useState<Array<{ role: 'user' | 'seller'; text: string }>>([]);
-  const [chatbotInput, setChatbotInput] = useState('');
-  const [chatbotLoading, setChatbotLoading] = useState(false);
-  const [chatbotStrategy, setChatbotStrategy] = useState<'aggressive' | 'firm' | 'patient'>('firm');
-  const [chatbotMaxPrice, setChatbotMaxPrice] = useState('');
-  const [chatbotLastReply, setChatbotLastReply] = useState<any>(null);
   // v6.97: refurb + imageQuality + descOpt so v ImageAnalysisPanel
   // v5.1: Seller reputation
   const [sellerRep, setSellerRep] = useState<any>(null);
@@ -1240,18 +1218,7 @@ function ListingDetailModal({ listingId, onClose }: { listingId: string | null; 
       // v5.1: Reset prediction
       setPrediction(null);
       setPredictTarget(d.listing?.targetPrice != null ? String(d.listing.targetPrice) : '');
-      // v6.11: Reset negotiation playbook
-      setPlaybook(null);
-      setPlaybookCopied(null);
-      // v6.14: Reset negotiation outcome (fraud + fake-detection + reverse-image-search so v FraudDetectionPanel od v6.96)
-      setOutcome(null);
-      setOutcomeOffer('');
-      setOutcomeMessage('');
-      // v6.20: Reset chatbot + refurb (sentiment + snipe sta v podkomponentah v6.95)
-      setChatbotMessages([]);
-      setChatbotInput('');
-      setChatbotMaxPrice('');
-      setChatbotLastReply(null);
+      // v6.98: NegotiationPanel ima svoj state (playbook + outcome + chatbot + negotiator)
       // v6.97: refurb + imageQuality + descOpt so v ImageAnalysisPanel (lastni state)
       // v5.6: Reset external comparison
       setExtCompare(null);
@@ -1350,39 +1317,7 @@ function ListingDetailModal({ listingId, onClose }: { listingId: string | null; 
     }
   };
 
-  // v1.8: AI Negotiator — generate message to seller (v4.6: with language)
-  const generateMessage = async (type: string, lang?: string) => {
-    if (!listing) return;
-    setNegotiating(true);
-    setNegotiateType(type);
-    setNegotiateMessage(null);
-    try {
-      const res = await fetch(`/api/listings/${listing.id}/negotiate`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ type, lang: lang ?? negotiateLang }),
-      });
-      const data = await res.json();
-      if (data.ok) {
-        setNegotiateMessage(data.message);
-        toast.success(`Sporočilo generirano (${data.lang?.toUpperCase()})`);
-      } else {
-        toast.error(data.error ?? 'Napaka pri generiranju');
-      }
-    } catch {
-      toast.error('Napaka');
-    } finally {
-      setNegotiating(false);
-    }
-  };
-
-  const copyMessage = () => {
-    if (!negotiateMessage) return;
-    navigator.clipboard.writeText(negotiateMessage);
-    setCopied(true);
-    toast.success('Sporočilo kopirano');
-    setTimeout(() => setCopied(false), 2000);
-  };
+  // v6.98: generateMessage in copyMessage sta v NegotiationPanel (lastni state)
 
   // v3.1: Refresh listing from source
   const refreshListing = async () => {
@@ -3353,453 +3288,14 @@ function ListingDetailModal({ listingId, onClose }: { listingId: string | null; 
               </div>
             )}
 
-            {/* v1.8: AI Negotiator (v4.6: multi-language) */}
-            <div className="border-t border-border pt-3">
-              <div className="flex items-center justify-between mb-2">
-                <h4 className="text-xs uppercase tracking-wider text-muted-foreground flex items-center gap-1.5">
-                  <MessageSquare className="w-3.5 h-3.5" />
-                  AI pogajalec
-                  <Badge variant="outline" className="text-[10px] text-primary border-primary/40">v4.6</Badge>
-                </h4>
-                {/* v4.6: Language switcher */}
-                <div className="flex items-center gap-1 text-[10px]">
-                  <span className="text-muted-foreground">Jezik:</span>
-                  {[
-                    { code: 'sl', label: '🇸🇮 SLO' },
-                    { code: 'en', label: '🇬🇧 EN' },
-                    { code: 'de', label: '🇩🇪 DE' },
-                    { code: 'it', label: '🇮🇹 IT' },
-                    { code: 'hr', label: '🇭🇷 HR' },
-                  ].map(l => (
-                    <button
-                      key={l.code}
-                      onClick={() => {
-                        setNegotiateLang(l.code);
-                        setNegotiateLangLabel(l.label);
-                        if (negotiateMessage) {
-                          // Regenerate with new language
-                          generateMessage(negotiateType, l.code);
-                        }
-                      }}
-                      className={cn(
-                        'px-1.5 py-0.5 rounded border text-[10px] transition-colors',
-                        negotiateLang === l.code
-                          ? 'border-primary bg-primary/10 text-primary'
-                          : 'border-border text-muted-foreground hover:text-foreground'
-                      )}
-                    >
-                      {l.label}
-                    </button>
-                  ))}
-                </div>
-              </div>
-              <div className="flex flex-wrap gap-2 mb-2">
-                <Button size="sm" variant="outline" onClick={() => generateMessage('initial')} disabled={negotiating} className="gap-1.5 text-xs h-7">
-                  {negotiating && negotiateType === 'initial' ? <RefreshCw className="w-3 h-3 animate-spin" /> : <MessageSquare className="w-3 h-3" />}
-                  Začetno sporočilo
-                </Button>
-                <Button size="sm" variant="outline" onClick={() => generateMessage('low_offer')} disabled={negotiating} className="gap-1.5 text-xs h-7">
-                  {negotiating && negotiateType === 'low_offer' ? <RefreshCw className="w-3 h-3 animate-spin" /> : <TrendingDown className="w-3 h-3" />}
-                  Nizka ponudba
-                </Button>
-                <Button size="sm" variant="outline" onClick={() => generateMessage('polite_decline')} disabled={negotiating} className="gap-1.5 text-xs h-7">
-                  {negotiating && negotiateType === 'polite_decline' ? <RefreshCw className="w-3 h-3 animate-spin" /> : null}
-                  Vljudna zavrnitev
-                </Button>
-              </div>
-              {negotiateMessage && (
-                <div className="bg-background/50 border border-border rounded p-3">
-                  <div className="flex items-start justify-between gap-2 mb-2">
-                    <span className="text-[10px] text-muted-foreground uppercase tracking-wider">
-                      Generirano sporočilo ({negotiateLangLabel}):
-                    </span>
-                    <Button size="sm" variant="ghost" onClick={copyMessage} className="h-6 px-2 text-xs gap-1">
-                      {copied ? <Check className="w-3 h-3 text-primary" /> : <Copy className="w-3 h-3" />}
-                      {copied ? 'Kopirano' : 'Kopiraj'}
-                    </Button>
-                  </div>
-                  <p className="text-sm whitespace-pre-wrap">{negotiateMessage}</p>
-                  <p className="text-[10px] text-muted-foreground mt-2">
-                    ⚠️ Preglej in prilagodi pred pošiljanjem. AI ne pozna specifičnih detailov ki jih vidiš ti.
-                  </p>
-                  <p className="text-[10px] text-muted-foreground mt-1">
-                    💡 Preklopi jezik zgoraj — AI bo regeneriral v izbranem jeziku.
-                  </p>
-                </div>
-              )}
-            </div>
-
-            {/* v6.11: AI Negotiation Playbook — celovit pogajalski scenarij */}
-            <div className="border-t border-border pt-3">
-              <div className="flex items-center justify-between mb-2">
-                <h4 className="text-xs uppercase tracking-wider text-muted-foreground flex items-center gap-1.5">
-                  <BookOpen className="w-3.5 h-3.5 text-primary" />
-                  AI Negotiation Playbook
-                  <Badge variant="outline" className="text-[10px] text-primary border-primary/40">v6.11</Badge>
-                </h4>
-                <div className="flex items-center gap-1">
-                  <Input
-                    type="number"
-                    placeholder="Max budget (€)"
-                    value={playbookMaxBudget}
-                    onChange={(e) => setPlaybookMaxBudget(e.target.value)}
-                    className="h-6 w-24 text-[10px]"
-                  />
-                  <Button
-                    size="sm"
-                    variant="outline"
-                    className="h-6 text-[11px] gap-1.5 border-primary/40 text-primary hover:bg-primary/10"
-                    disabled={playbookLoading}
-                    onClick={async () => {
-                      setPlaybookLoading(true);
-                      setPlaybook(null);
-                      setPlaybookCopied(null);
-                      try {
-                        const budgetNum = playbookMaxBudget ? Number(playbookMaxBudget) : 0;
-                        const res = await fetch('/api/ai/negotiation-playbook', {
-                          method: 'POST',
-                          headers: { 'Content-Type': 'application/json' },
-                          body: JSON.stringify({ listingId: listing.id, maxBudget: budgetNum || undefined }),
-                        });
-                        const data = await res.json();
-                        if (data.ok) { setPlaybook(data); toast.success('✓ Pogajalski playbook generiran'); }
-                        else toast.error(data.error ?? 'Napaka');
-                      } catch (e: any) { toast.error(e?.message ?? 'Napaka'); }
-                      finally { setPlaybookLoading(false); }
-                    }}
-                  >
-                    {playbookLoading ? <RefreshCw className="w-3 h-3 animate-spin" /> : <BookOpen className="w-3 h-3" />}
-                    Generiraj
-                  </Button>
-                </div>
-              </div>
-
-              {playbookLoading ? (
-                <div className="py-3 text-center text-[11px] text-muted-foreground">
-                  <RefreshCw className="w-4 h-4 mx-auto mb-1 animate-spin opacity-50" />
-                  AI pripravlja celovit pogajalski scenarij...
-                </div>
-              ) : playbook?.playbook ? (
-                <div className="space-y-2 text-[11px]">
-                  {/* Strategy */}
-                  <div className="bg-primary/5 border border-primary/20 rounded p-2">
-                    <div className="flex items-center justify-between mb-1">
-                      <span className="font-bold text-primary uppercase text-[10px]">📋 Strategija: {playbook.playbook.strategy}</span>
-                      <Badge variant="outline" className="text-[9px] text-primary border-primary/40">
-                        {playbook.playbook.openingOffer}€ → {playbook.playbook.targetPrice}€ → {playbook.playbook.walkAwayPrice}€
-                      </Badge>
-                    </div>
-                    <p className="text-[10px] text-muted-foreground italic">{playbook.playbook.strategyReasoning}</p>
-                  </div>
-
-                  {/* Price targets */}
-                  <div className="grid grid-cols-3 gap-2">
-                    <div className="bg-background/40 rounded p-1.5 border text-center">
-                      <div className="text-[9px] uppercase text-muted-foreground">🎨 Opening</div>
-                      <div className="font-mono font-bold text-primary">{playbook.playbook.openingOffer}€</div>
-                    </div>
-                    <div className="bg-background/40 rounded p-1.5 border text-center">
-                      <div className="text-[9px] uppercase text-muted-foreground">🎯 Target</div>
-                      <div className="font-mono font-bold">{playbook.playbook.targetPrice}€</div>
-                    </div>
-                    <div className="bg-background/40 rounded p-1.5 border text-center">
-                      <div className="text-[9px] uppercase text-muted-foreground">🚫 Walk-away</div>
-                      <div className="font-mono font-bold text-destructive">{playbook.playbook.walkAwayPrice}€</div>
-                    </div>
-                  </div>
-
-                  {playbook.marketContext && (
-                    <div className="text-[10px] text-muted-foreground">📊 {playbook.marketContext}</div>
-                  )}
-
-                  {/* Arguments */}
-                  {playbook.playbook.arguments?.length > 0 && (
-                    <div>
-                      <div className="text-[10px] uppercase text-muted-foreground mb-1">Argumenti za pogajanje:</div>
-                      <ul className="space-y-0.5 ml-3">
-                        {playbook.playbook.arguments.map((arg: string, i: number) => (
-                          <li key={i} className="text-[10px] list-disc list-outside">{arg}</li>
-                        ))}
-                      </ul>
-                    </div>
-                  )}
-
-                  {/* Counter offers */}
-                  {playbook.playbook.counterOffers?.length > 0 && (
-                    <div>
-                      <div className="text-[10px] uppercase text-muted-foreground mb-1">Counter-offers:</div>
-                      <div className="space-y-1">
-                        {playbook.playbook.counterOffers.map((c: any, i: number) => (
-                          <div key={i} className="bg-background/40 rounded p-1.5 border">
-                            <div className="text-[10px] text-muted-foreground">Če: "{c.trigger}"</div>
-                            <div className="text-[10px] font-medium">{c.response} <Badge variant="outline" className="text-[9px] ml-1">{c.price}€</Badge></div>
-                          </div>
-                        ))}
-                      </div>
-                    </div>
-                  )}
-
-                  {/* Psychology tactics */}
-                  {playbook.playbook.psychologyTactics?.length > 0 && (
-                    <div className="bg-purple-500/5 border border-purple-500/20 rounded p-1.5">
-                      <div className="text-[10px] uppercase text-purple-400 mb-1">🧠 Psihološke taktike:</div>
-                      <ul className="space-y-0.5 ml-3">
-                        {playbook.playbook.psychologyTactics.map((t: string, i: number) => (
-                          <li key={i} className="text-[10px] list-disc list-outside">{t}</li>
-                        ))}
-                      </ul>
-                    </div>
-                  )}
-
-                  {/* Red flags */}
-                  {playbook.playbook.redFlags?.length > 0 && (
-                    <div className="bg-red-500/5 border border-red-500/20 rounded p-1.5">
-                      <div className="text-[10px] uppercase text-red-500 mb-1">🚩 Red flags:</div>
-                      <ul className="space-y-0.5 ml-3">
-                        {playbook.playbook.redFlags.map((r: string, i: number) => (
-                          <li key={i} className="text-[10px] list-disc list-outside">{r}</li>
-                        ))}
-                      </ul>
-                    </div>
-                  )}
-
-                  {/* Best timing */}
-                  {playbook.playbook.bestTiming && (
-                    <div className="text-[10px] text-muted-foreground">
-                      ⏰ <span className="font-semibold">Najboljši čas za kontakt:</span> {playbook.playbook.bestTiming}
-                    </div>
-                  )}
-
-                  {/* Message templates */}
-                  {playbook.playbook.messageTemplates?.length > 0 && (
-                    <div className="space-y-1.5">
-                      <div className="text-[10px] uppercase text-muted-foreground">Predloge sporočil:</div>
-                      {playbook.playbook.messageTemplates.map((m: any, i: number) => (
-                        <div key={i} className="bg-background/40 rounded p-1.5 border">
-                          <div className="flex items-center justify-between mb-1">
-                            <Badge variant="outline" className="text-[9px]">{m.type}</Badge>
-                            <button
-                              onClick={() => {
-                                navigator.clipboard.writeText(m.text);
-                                setPlaybookCopied(m.type);
-                                setTimeout(() => setPlaybookCopied(null), 1500);
-                                toast.success('Sporočilo kopirano');
-                              }}
-                              className="text-[9px] text-primary hover:underline"
-                            >
-                              {playbookCopied === m.type ? <Check className="w-3 h-3 inline" /> : <Copy className="w-3 h-3 inline" />} Kopiraj
-                            </button>
-                          </div>
-                          <p className="text-[10px] whitespace-pre-wrap">{m.text}</p>
-                        </div>
-                      ))}
-                    </div>
-                  )}
-                </div>
-              ) : (
-                <p className="text-[11px] text-muted-foreground text-center py-2">
-                  AI pripravi strategijo, argumente, counter-offers, psihološke taktike in predloge sporočil.
-                </p>
-              )}
-            </div>
+            {/* v6.98: NegotiationPanel — združuje Negotiator + Playbook + Outcome + Chatbot (4 v 1, prej 580 vrstic inline) */}
+            <NegotiationPanel listingId={listing.id} price={listing.price} />
 
             {/* v6.95: AuctionSniperPanel — izvlečen v samostojno komponento (prej 138 vrstic inline) */}
             <AuctionSniperPanel listingId={listing.id} />
 
             {/* v6.96: FraudDetectionPanel — združuje fraud-detection + fake-detection + reverse-image-search (prej 434 vrstic inline) */}
             <FraudDetectionPanel listingId={listing.id} imageUrl={listing.imageUrl} />
-
-            {/* v6.14: AI Negotiation Outcome Predictor */}
-            <div className="border-t border-border pt-3">
-              <div className="flex items-center justify-between mb-2">
-                <h4 className="text-xs uppercase tracking-wider text-muted-foreground flex items-center gap-1.5">
-                  <Dice5 className="w-3.5 h-3.5 text-primary" />
-                  AI Negotiation Outcome
-                  <Badge variant="outline" className="text-[10px] text-primary border-primary/40">v6.14</Badge>
-                </h4>
-              </div>
-
-              <div className="space-y-2 mb-2">
-                <div className="flex gap-2 items-center">
-                  <Input
-                    type="number"
-                    placeholder={`Moja ponudba (€) — npr. ${Math.round((listing.price ?? 100) * 0.85)}`}
-                    value={outcomeOffer}
-                    onChange={(e) => setOutcomeOffer(e.target.value)}
-                    className="h-7 text-[11px] flex-1"
-                  />
-                  <Button
-                    size="sm"
-                    variant="outline"
-                    className="h-7 text-[11px] gap-1.5 border-primary/40 text-primary hover:bg-primary/10 shrink-0"
-                    disabled={outcomeLoading}
-                    onClick={async () => {
-                      setOutcomeLoading(true);
-                      setOutcome(null);
-                      try {
-                        const res = await fetch('/api/ai/negotiation-outcome', {
-                          method: 'POST',
-                          headers: { 'Content-Type': 'application/json' },
-                          body: JSON.stringify({
-                            listingId: listing.id,
-                            offerPrice: outcomeOffer ? Number(outcomeOffer) : undefined,
-                            message: outcomeMessage || undefined,
-                          }),
-                        });
-                        const data = await res.json();
-                        if (data.ok) { setOutcome(data); toast.success('✓ Napoved izida generirana'); }
-                        else toast.error(data.error ?? 'Napaka');
-                      } catch (e: any) { toast.error(e?.message ?? 'Napaka'); }
-                      finally { setOutcomeLoading(false); }
-                    }}
-                  >
-                    {outcomeLoading ? <RefreshCw className="w-3 h-3 animate-spin" /> : <Dice5 className="w-3 h-3" />}
-                    Napovej izid
-                  </Button>
-                </div>
-                <Input
-                  type="text"
-                  placeholder="Sporočilo prodajalcu (opcijsko)"
-                  value={outcomeMessage}
-                  onChange={(e) => setOutcomeMessage(e.target.value)}
-                  className="h-7 text-[11px]"
-                />
-              </div>
-
-              {outcomeLoading ? (
-                <div className="py-3 text-center text-[11px] text-muted-foreground">
-                  <RefreshCw className="w-4 h-4 mx-auto mb-1 animate-spin opacity-50" />
-                  AI analizira prodajalca, tržne pogoje in verjetnost uspeha...
-                </div>
-              ) : outcome?.prediction ? (
-                <div className="space-y-2 text-[11px]">
-                  {/* Success probability */}
-                  <div className={cn('border rounded p-2',
-                    outcome.prediction.successProbabilityPct >= 70 ? 'bg-primary/10 border-primary/30' :
-                    outcome.prediction.successProbabilityPct >= 40 ? 'bg-amber-400/5 border-amber-400/20' : 'bg-red-500/5 border-red-500/20')}>
-                    <div className="flex items-center justify-between mb-1">
-                      <span className="font-bold uppercase text-[10px]">
-                        🎯 Verjetnost uspeha
-                      </span>
-                      <Badge variant="outline" className={cn('text-[9px] font-mono font-bold',
-                        outcome.prediction.successProbabilityPct >= 70 ? 'text-primary border-primary/40' :
-                        outcome.prediction.successProbabilityPct >= 40 ? 'text-amber-400 border-amber-400/40' : 'text-red-500 border-red-500/40')}>
-                        {outcome.prediction.successProbabilityPct}% (confidence {outcome.prediction.confidence}%)
-                      </Badge>
-                    </div>
-                    {/* Probability bar */}
-                    <div className="w-full h-2 bg-background rounded overflow-hidden mt-1">
-                      <div className={cn('h-full rounded',
-                        outcome.prediction.successProbabilityPct >= 70 ? 'bg-primary' :
-                        outcome.prediction.successProbabilityPct >= 40 ? 'bg-amber-400' : 'bg-red-500')}
-                        style={{ width: `${outcome.prediction.successProbabilityPct}%` }} />
-                    </div>
-                    <p className="text-[9px] text-muted-foreground mt-1">{outcome.prediction.reasoning}</p>
-                  </div>
-
-                  {/* Counter-offer and optimal offer */}
-                  <div className="grid grid-cols-3 gap-2">
-                    <div className="bg-background/40 rounded p-1.5 border text-center">
-                      <div className="text-[9px] uppercase text-muted-foreground">Tvoja ponudba</div>
-                      <div className="font-mono font-bold">{outcome.userOffer}€</div>
-                      <div className="text-[9px] text-amber-400">−{outcome.discountRequested}%</div>
-                    </div>
-                    <div className="bg-background/40 rounded p-1.5 border text-center">
-                      <div className="text-[9px] uppercase text-muted-foreground">Counter-offer</div>
-                      <div className="font-mono font-bold text-amber-400">{outcome.prediction.expectedCounterOfferEur}€</div>
-                      <div className="text-[9px] text-muted-foreground">predvideno</div>
-                    </div>
-                    <div className="bg-primary/5 rounded p-1.5 border border-primary/20 text-center">
-                      <div className="text-[9px] uppercase text-primary">Optimalna</div>
-                      <div className="font-mono font-bold text-primary">{outcome.prediction.suggestedOptimalOfferEur}€</div>
-                      <div className="text-[9px] text-primary">→ ponudi to</div>
-                    </div>
-                  </div>
-
-                  {/* Strategy */}
-                  {outcome.prediction.optimalStrategy?.approach && (
-                    <div className="bg-primary/5 border border-primary/20 rounded p-1.5">
-                      <div className="text-[10px] uppercase text-primary mb-1">
-                        🎯 Strategija: <b>{outcome.prediction.optimalStrategy.approach.replace('_', ' ')}</b>
-                      </div>
-                      <div className="text-[10px]">{outcome.prediction.optimalStrategy.timing}</div>
-                      {outcome.prediction.optimalStrategy.messageTips?.length > 0 && (
-                        <ul className="space-y-0.5 ml-3 mt-1">
-                          {outcome.prediction.optimalStrategy.messageTips.map((t: string, i: number) => (
-                            <li key={i} className="text-[9px] list-disc list-outside">{t}</li>
-                          ))}
-                        </ul>
-                      )}
-                    </div>
-                  )}
-
-                  {/* Factors */}
-                  {outcome.prediction.factors?.length > 0 && (
-                    <div className="bg-background/40 rounded p-1.5 border">
-                      <div className="text-[10px] uppercase text-muted-foreground mb-1">📊 Faktorji:</div>
-                      <div className="space-y-0.5">
-                        {outcome.prediction.factors.map((f: any, i: number) => {
-                          const impactColor = f.impact === 'positive' ? 'text-primary' :
-                                              f.impact === 'negative' ? 'text-red-500' : 'text-muted-foreground';
-                          return (
-                            <div key={i} className="text-[10px] flex items-center gap-1">
-                              <span className={cn('font-bold w-3', impactColor)}>
-                                {f.impact === 'positive' ? '+' : f.impact === 'negative' ? '−' : '○'}
-                              </span>
-                              <span className="font-medium">{f.factor}</span>
-                              <span className="text-muted-foreground text-[9px]">({f.weight}/10)</span>
-                            </div>
-                          );
-                        })}
-                      </div>
-                    </div>
-                  )}
-
-                  {/* Scenarios */}
-                  {outcome.prediction.scenarios?.length > 0 && (
-                    <div className="bg-background/40 rounded p-1.5 border">
-                      <div className="text-[10px] uppercase text-muted-foreground mb-1">🔮 Scenariji:</div>
-                      <div className="space-y-1">
-                        {outcome.prediction.scenarios.map((s: any, i: number) => (
-                          <div key={i} className="text-[10px]">
-                            <div className="flex items-center justify-between">
-                              <span className="font-bold">{s.name}</span>
-                              <span className="font-mono text-primary">{s.probabilityPct}% · {s.finalPriceEur}€</span>
-                            </div>
-                            <div className="text-[9px] text-muted-foreground">{s.outcome}</div>
-                          </div>
-                        ))}
-                      </div>
-                    </div>
-                  )}
-
-                  {/* Warnings */}
-                  {outcome.prediction.warnings?.length > 0 && (
-                    <div className="bg-red-500/5 border border-red-500/20 rounded p-1.5">
-                      <div className="text-[10px] uppercase text-red-500 mb-1">⚠️ Opozorila:</div>
-                      <ul className="space-y-0.5 ml-3">
-                        {outcome.prediction.warnings.map((w: string, i: number) => (
-                          <li key={i} className="text-[10px] list-disc list-outside">{w}</li>
-                        ))}
-                      </ul>
-                    </div>
-                  )}
-
-                  {/* Context */}
-                  {(outcome.marketContext || outcome.sellerHistory) && (
-                    <div className="text-[9px] text-muted-foreground border-t border-border pt-1 space-y-0.5">
-                      {outcome.marketContext && <div>📊 {outcome.marketContext}</div>}
-                      {outcome.sellerHistory && <div>👤 {outcome.sellerHistory}</div>}
-                      <div>📅 Oglas star {outcome.daysSincePosted} dni</div>
-                    </div>
-                  )}
-                </div>
-              ) : (
-                <p className="text-[11px] text-muted-foreground text-center py-2">
-                  Vnesi ponudbo — AI bo napovedal verjetnost uspeha, counter-offer in optimalno strategijo.
-                </p>
-              )}
-            </div>
 
 
             {/* v6.97: ImageAnalysisPanel — združuje image-quality + description-optimizer + refurbishment-cost (prej 396 vrstic inline) */}
@@ -3815,148 +3311,6 @@ function ListingDetailModal({ listingId, onClose }: { listingId: string | null; 
 
             {/* v6.95: SentimentPanel — izvlečen v samostojno komponento (prej 117 vrstic inline) */}
             <SentimentPanel listingId={listing.id} />
-
-            {/* v6.20: AI Smart Negotiation Chatbot */}
-            <div className="border-t border-border pt-3">
-              <div className="flex items-center justify-between mb-2">
-                <h4 className="text-xs uppercase tracking-wider text-muted-foreground flex items-center gap-1.5">
-                  <MessageSquare className="w-3.5 h-3.5 text-primary" />
-                  AI Negotiation Chatbot
-                  <Badge variant="outline" className="text-[10px] text-primary border-primary/40">v6.20</Badge>
-                </h4>
-              </div>
-              <div className="grid grid-cols-2 gap-2 mb-2">
-                <select
-                  value={chatbotStrategy}
-                  onChange={(e) => setChatbotStrategy(e.target.value as any)}
-                  className="h-7 text-[11px] bg-background border rounded px-2"
-                >
-                  <option value="aggressive">🔥 Agresivna (15-25% pod)</option>
-                  <option value="firm">⚖️ Zmerna (10-15% pod)</option>
-                  <option value="patient">🛡️ Strpna (sprašuj)</option>
-                </select>
-                <Input
-                  type="number"
-                  placeholder="Max budget (€)"
-                  value={chatbotMaxPrice}
-                  onChange={(e) => setChatbotMaxPrice(e.target.value)}
-                  className="h-7 text-[11px]"
-                />
-              </div>
-              {chatbotMessages.length > 0 && (
-                <div className="space-y-1 mb-2 max-h-40 overflow-y-auto bg-background/40 rounded p-2 border">
-                  {chatbotMessages.map((m, i) => (
-                    <div key={i} className={cn('text-[10px] rounded p-1.5',
-                      m.role === 'user' ? 'bg-primary/10 text-primary ml-4' : 'bg-muted/30 mr-4')}>
-                      <div className="text-[8px] uppercase font-bold opacity-70">
-                        {m.role === 'user' ? 'JAZ' : 'PRODAJALEC'}
-                      </div>
-                      <div>{m.text}</div>
-                    </div>
-                  ))}
-                  {chatbotLastReply && (
-                    <div className="bg-primary/5 border border-primary/20 rounded p-1.5">
-                      <div className="text-[8px] uppercase font-bold text-primary">AI PREDLOG ↓</div>
-                      <div className="text-[10px] font-medium">{chatbotLastReply.text}</div>
-                      {chatbotLastReply.suggestedPriceEur != null && (
-                        <div className="text-[9px] text-primary mt-0.5">💰 Predlagana cena: {chatbotLastReply.suggestedPriceEur}€</div>
-                      )}
-                      <button
-                        onClick={() => {
-                          navigator.clipboard.writeText(chatbotLastReply.text);
-                          toast.success('Predlagani odgovor kopiran');
-                        }}
-                        className="text-[9px] text-primary hover:underline mt-1"
-                      >
-                        📋 Kopiraj
-                      </button>
-                    </div>
-                  )}
-                </div>
-              )}
-              <div className="flex gap-1">
-                <Input
-                  type="text"
-                  placeholder="Sporočilo prodajalca (ali prazno za začetek)"
-                  value={chatbotInput}
-                  onChange={(e) => setChatbotInput(e.target.value)}
-                  className="h-7 text-[11px] flex-1"
-                  onKeyDown={(e) => {
-                    if (e.key === 'Enter' && !chatbotLoading) {
-                      const newMessages = chatbotInput
-                        ? [...chatbotMessages, { role: 'seller' as const, text: chatbotInput }]
-                        : chatbotMessages;
-                      setChatbotMessages(newMessages);
-                      setChatbotInput('');
-                      setChatbotLoading(true);
-                      fetch('/api/ai/negotiation-chatbot', {
-                        method: 'POST',
-                        headers: { 'Content-Type': 'application/json' },
-                        body: JSON.stringify({
-                          listingId: listing.id,
-                          messages: newMessages,
-                          strategy: chatbotStrategy,
-                          myGoal: { maxPrice: chatbotMaxPrice ? Number(chatbotMaxPrice) : undefined },
-                        }),
-                      })
-                        .then(r => r.json())
-                        .then(data => {
-                          if (data.ok) {
-                            setChatbotMessages([...newMessages, { role: 'user', text: data.reply.text }]);
-                            setChatbotLastReply(data.reply);
-                            toast.success(`✓ AI odgovor (${data.reply.confidencePct}% confidence)`);
-                          } else toast.error(data.error ?? 'Napaka');
-                        })
-                        .catch(err => toast.error(err?.message ?? 'Napaka'))
-                        .finally(() => setChatbotLoading(false));
-                    }
-                  }}
-                />
-                <Button
-                  size="sm"
-                  className="h-7 text-[11px] gap-1.5"
-                  disabled={chatbotLoading}
-                  onClick={() => {
-                    const newMessages = chatbotInput
-                      ? [...chatbotMessages, { role: 'seller' as const, text: chatbotInput }]
-                      : chatbotMessages;
-                    if (newMessages.length === 0) {
-                      // Začetni odgovor — generiraj prvo sporočilo
-                      setChatbotMessages([{ role: 'seller', text: '(začetek pogovora)' }]);
-                    }
-                    setChatbotMessages(newMessages.length > 0 ? newMessages : [{ role: 'seller', text: '(začetek)' }]);
-                    setChatbotInput('');
-                    setChatbotLoading(true);
-                    fetch('/api/ai/negotiation-chatbot', {
-                      method: 'POST',
-                      headers: { 'Content-Type': 'application/json' },
-                      body: JSON.stringify({
-                        listingId: listing.id,
-                        messages: newMessages.length > 0 ? newMessages : [{ role: 'seller', text: 'Pozdravljen, vaš oglas me zanima. Kakšna je najboljša cena?' }],
-                        strategy: chatbotStrategy,
-                        myGoal: { maxPrice: chatbotMaxPrice ? Number(chatbotMaxPrice) : undefined },
-                      }),
-                    })
-                      .then(r => r.json())
-                      .then(data => {
-                        if (data.ok) {
-                          setChatbotMessages([...(newMessages.length > 0 ? newMessages : [{ role: 'seller' as const, text: 'Pozdravljen, vaš oglas me zanima.' }]), { role: 'user' as const, text: data.reply.text }]);
-                          setChatbotLastReply(data.reply);
-                          toast.success(`✓ AI odgovor (${data.reply.confidencePct}% confidence)`);
-                        } else toast.error(data.error ?? 'Napaka');
-                      })
-                      .catch(err => toast.error(err?.message ?? 'Napaka'))
-                      .finally(() => setChatbotLoading(false));
-                  }}
-                >
-                  {chatbotLoading ? <RefreshCw className="w-3 h-3 animate-spin" /> : <Send className="w-3 h-3" />}
-                  {chatbotMessages.length === 0 ? 'Začni' : 'Odgovori'}
-                </Button>
-              </div>
-              <p className="text-[9px] text-muted-foreground mt-1">
-                💡 Prilepi prodajalčevo sporočilo in AI bo generiral tvoj naslednji odgovor. Strategija: {chatbotStrategy}.
-              </p>
-            </div>
 
 
             {/* v5.0: AI Auto-Bid — strategija + sporočilo prodajalcu */}
@@ -4095,7 +3449,7 @@ function ListingDetailModal({ listingId, onClose }: { listingId: string | null; 
             </div>
 
             {/* v5.4: Negotiation History — sledi pogajanjem z AI naslednjim korakom */}
-            <NegotiationHistory listingId={listing.id} aiMessage={negotiateMessage} />
+            <NegotiationHistory listingId={listing.id} aiMessage={null} />
           </div>
         )}
       </DialogContent>
