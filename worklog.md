@@ -5212,3 +5212,48 @@ Work Log:
 - TypeScript: 0 napak (ohranjeno) ✨
 - Skupno: 248 AI endpointov (+3 od v6.89)
 - Verzija aplikacije: v6.90.0
+
+---
+Task ID: v6.91
+Agent: main
+Task: AI Listing Image Quality Scorer, Inventory Carrying Cost, Buyer Reactivation Engine
+
+Work Log:
+- listing-image-quality-scorer: 10 dimenzij kakovosti (resolution, lighting, composition,
+  color_accuracy, sharpness, background_cleanliness, angle_variety, detail_visibility,
+  white_balance, noise_level). Per-listing: current vs optimized quality score, current vs
+  optimized CTR prediction %, grade (A-F). 8 image analyses (format, size, orientation,
+  file_type, color_profile, transparency, metadata) z current vs optimal value, compliant,
+  fix required, fix description. 10 quality dimensions z current vs optimized score, weight
+  %, improvement %, issue description, fix recommendation. 10 improvement actions z action,
+  dimension, tool recommended (snapseed/lightroom/photoshop/canva/phone_camera/dslr/tripod/
+  light_box), difficulty (easy/medium/hard), expected quality lift %, expected CTR lift %,
+  time required minutes, priority. 5 ML modelov (cnn, resnet, vit, efficientnet, clip) z
+  prediction type (quality_scoring, aesthetic_prediction, ctr_forecast, defect_detection).
+- inventory-carrying-cost: 10 komponent stroškov (capital_cost, storage_cost, insurance_cost,
+  depreciation_cost, obsolescence_cost, shrinkage_cost, handling_cost, administrative_cost,
+  opportunity_cost, tax_cost). Overview: total inventory value €, daily/monthly/annual
+  carrying cost €, carrying cost %, grade. Per-component: monthly/annual cost €, cost %,
+  trend (increasing/decreasing/stable), controllable, optimization potential %. Per-category:
+  item count, inventory value €, monthly carrying cost €, carrying cost %, avg age days, cost
+  efficiency score, recommended action (sell_fast/discount/hold/liquidate/relocate). 10
+  optimizations z action, component, expected monthly savings €, implementation days,
+  difficulty, priority, ROI %. 5 ML modelov (prophet, arima, lstm, xgboost, ensemble) z
+  prediction type (cost_forecast, optimization_prediction, trend_analysis, risk_assessment).
+- buyer-reactivation-engine: 6 reactivation tierjev (highly_reactivatable, reactivatable,
+  difficult_to_reactivate, hard_to_reactivate, unlikely_to_reactivate, lost). 8 strategij
+  reaktivacije (win_back_discount, personalized_outreach, new_product_alert, loyalty_reward,
+  feedback_request, exclusive_offer, milestone_celebration, re_engagement_campaign).
+  Overview: total inactive buyers/value €, avg inactive days, avg reactivation probability %,
+  highly reactivatable count, grade. Per-buyer: days inactive, lifetime value €, last
+  purchase value €, reactivation probability %, reactivation tier, preferred strategy. 8
+  reactivation strategies z target buyer count, estimated cost €, expected reactivations,
+  expected revenue €, ROI %, best for tier. 5-phase campaign plan (awareness, consideration,
+  incentive, follow_up, retention) z channel (email/sms/whatsapp/push/social/phone), timing
+  days, message theme, estimated cost €, expected response rate %. 5 ML modelov
+  (random_forest, xgboost, neural_net, survival_analysis, ensemble) z prediction type
+  (reactivation_probability, churn_prediction, response_forecast, value_prediction).
+
+- TypeScript: 0 napak (ohranjeno) ✨
+- Skupno: 251 AI endpointov (+3 od v6.90)
+- Verzija aplikacije: v6.91.0
