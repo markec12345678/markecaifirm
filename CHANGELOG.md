@@ -6,12 +6,36 @@ Format sledi [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), verzije s
 
 ## [Unreleased]
 
-Načrtovano za v6.80+:
-- UI komponente za v6.45-v6.79 funkcije v dashboard
+Načrtovano za v6.81+:
+- UI komponente za v6.45-v6.80 funkcije v dashboard
 - Unit testi za lib/ai.ts
 - Playwright E2E testi
 - WebSocket real-time negotiation
 - ML model za buyer matchmaker (fine-tuned na realni data)
+
+## [6.80.0] - 2026-07-29
+
+### Added
+- **AI Listing Seasonality Optimizer** — ML optimizacija oglasov glede na sezonskost z time series forecasting
+  - 10 tipov sezon (holiday, back_to_school, summer, winter, spring_cleaning, black_friday, christmas, easter, tax_season, wedding_season)
+  - Per-listing: current vs peak vs off-season price, seasonality score, optimal sell window, grade
+  - 12-mesečni seasonality profile z demand level (peak→off_season), demand %, price multiplier, competition level, recommended action
+  - 8 peak windows z start/end month, expected demand/price lift %, days until peak, preparation days
+  - 5 ML modelov (prophet, lstm, arima, xgboost, ensemble) z prediction type (demand_forecast, price_forecast, seasonality_detection, trend_analysis)
+- **AI Inventory Aging Predictor v2** — ML napoved staranja inventarja z devaluation curve modeling
+  - 6 aging bucketov (fresh_0_30d, aging_30_60d, stale_60_90d, old_90_180d, stale_180_365d, dead_365d_plus)
+  - Overview: total items, total value, avg age, stale items/value/%, devaluation at risk, grade
+  - Per-bucket: item count, value, %, avg age, devaluation %, risk level, recommended action (sell_fast/discount/bundle/liquidate/hold)
+  - 10-point devaluation curve z expected value %, devaluation tier (minimal→critical), action threshold
+  - 15 risk items z current vs predicted value (30d/90d), devaluation tier, urgency
+  - 5 ML modelov (arima, prophet, lstm, xgboost, ensemble) z prediction type (age_forecast, devaluation_forecast, sell_probability, risk_score)
+- **AI Buyer Loyalty Tiers** — ML klasifikacija kupcev v 5 loyalty tierjev z rewards program design
+  - 5 loyalty tierjev (bronze, silver, gold, platinum, diamond) z 8 reward tipi (discount_pct, free_shipping, priority_access, exclusive_deals, cashback, early_bird, bundle_bonus, referral_bonus)
+  - Per-buyer: current/next tier, loyalty score, total purchases/spent, lifetime days, tier progress %, purchases/spend to next tier, tier benefits
+  - Tier distribution z buyer count, revenue %, avg spend, retention rate, churn risk
+  - Rewards program z reward value, eligibility, estimated cost/revenue lift per tier
+  - Migration paths z required purchases/spend, estimated days, intervention, success probability %
+  - 5 ML modelov (k-means, dbscan, random_forest, xgboost, ensemble) z prediction type (tier_classification, churn_prediction, lifetime_value, risk_score)
 
 ## [6.79.0] - 2026-07-29
 
@@ -893,7 +917,8 @@ Načrtovano za v6.80+:
 
 ---
 
-[Unreleased]: https://github.com/markec12345678/markecaifirm/compare/v6.79.0...HEAD
+[Unreleased]: https://github.com/markec12345678/markecaifirm/compare/v6.80.0...HEAD
+[6.80.0]: https://github.com/markec12345678/markecaifirm/compare/v6.79.0...v6.80.0
 [6.79.0]: https://github.com/markec12345678/markecaifirm/compare/v6.78.0...v6.79.0
 [6.78.0]: https://github.com/markec12345678/markecaifirm/compare/v6.77.0...v6.78.0
 [6.77.0]: https://github.com/markec12345678/markecaifirm/compare/v6.76.0...v6.77.0
