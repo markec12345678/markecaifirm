@@ -1,28 +1,44 @@
 'use client';
 
 import { useEffect, useState, useCallback, useRef } from 'react';
+import dynamic from 'next/dynamic';
 import { Activity, Bell, Settings, ListPlus, Zap, RefreshCw, AlertCircle, LayoutGrid, BarChart3, Search, Heart, TrendingUp, History, Eye, PieChart, Menu, X } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
 import { Input } from '@/components/ui/input';
 import { toast } from 'sonner';
 import { cn } from '@/lib/utils';
-import { DashboardView } from '@/components/dashboard/dashboard-view';
-import { MonitorsView } from '@/components/dashboard/monitors-view';
-import { AlertsView } from '@/components/dashboard/alerts-view';
-import { SettingsView } from '@/components/dashboard/settings-view';
-import { ListingsView } from '@/components/dashboard/listings-view';
-import { AnalyticsView } from '@/components/dashboard/analytics-view';
-import { HealthView } from '@/components/dashboard/health-view';
-import { TradesView } from '@/components/dashboard/trades-view';
-import { NotificationHistoryView } from '@/components/dashboard/notification-history-view';
-import { WatchlistView } from '@/components/dashboard/watchlist-view';
-import { StatisticsView } from '@/components/dashboard/statistics-view';
+// v6.94: Lazy-load dashboard pogledov z next/dynamic.
+// Prej so se vsi 11 pogledi (skupaj ~17K vrstic komponent) statično naložili ob prvem loadu.
+// Sedaj se naloži samo aktivni pogled — prvi load je ~3-5K namesto ~17K vrstic.
+const DashboardView = dynamic(() => import('@/components/dashboard/dashboard-view').then(m => ({ default: m.DashboardView })), { ssr: false, loading: () => <LoadingFallback /> });
+const MonitorsView = dynamic(() => import('@/components/dashboard/monitors-view').then(m => ({ default: m.MonitorsView })), { ssr: false, loading: () => <LoadingFallback /> });
+const AlertsView = dynamic(() => import('@/components/dashboard/alerts-view').then(m => ({ default: m.AlertsView })), { ssr: false, loading: () => <LoadingFallback /> });
+const SettingsView = dynamic(() => import('@/components/dashboard/settings-view').then(m => ({ default: m.SettingsView })), { ssr: false, loading: () => <LoadingFallback /> });
+const ListingsView = dynamic(() => import('@/components/dashboard/listings-view').then(m => ({ default: m.ListingsView })), { ssr: false, loading: () => <LoadingFallback /> });
+const AnalyticsView = dynamic(() => import('@/components/dashboard/analytics-view').then(m => ({ default: m.AnalyticsView })), { ssr: false, loading: () => <LoadingFallback /> });
+const HealthView = dynamic(() => import('@/components/dashboard/health-view').then(m => ({ default: m.HealthView })), { ssr: false, loading: () => <LoadingFallback /> });
+const TradesView = dynamic(() => import('@/components/dashboard/trades-view').then(m => ({ default: m.TradesView })), { ssr: false, loading: () => <LoadingFallback /> });
+const NotificationHistoryView = dynamic(() => import('@/components/dashboard/notification-history-view').then(m => ({ default: m.NotificationHistoryView })), { ssr: false, loading: () => <LoadingFallback /> });
+const WatchlistView = dynamic(() => import('@/components/dashboard/watchlist-view').then(m => ({ default: m.WatchlistView })), { ssr: false, loading: () => <LoadingFallback /> });
+const StatisticsView = dynamic(() => import('@/components/dashboard/statistics-view').then(m => ({ default: m.StatisticsView })), { ssr: false, loading: () => <LoadingFallback /> });
 import { PwaInstallPrompt } from '@/components/dashboard/pwa-install-prompt';
 import { ProfileSwitcher } from '@/components/dashboard/profile-switcher';
 import { SearchModal } from '@/components/dashboard/search-modal';
 import { useAlertsStream } from '@/lib/use-alerts-stream';
 import { useAuth, LoginModal } from '@/components/dashboard/login-modal';
+
+/** v6.94: Loading fallback za lazy-loaded poglede. */
+function LoadingFallback() {
+  return (
+    <div className="flex items-center justify-center min-h-[60vh] text-muted-foreground">
+      <div className="flex flex-col items-center gap-3">
+        <RefreshCw className="w-6 h-6 animate-spin text-primary" />
+        <span className="text-sm terminal-glow">Nalagam...</span>
+      </div>
+    </div>
+  );
+}
 
 type View = 'dashboard' | 'monitors' | 'alerts' | 'listings' | 'watchlist' | 'analytics' | 'statistics' | 'trades' | 'health' | 'notifications' | 'settings';
 
