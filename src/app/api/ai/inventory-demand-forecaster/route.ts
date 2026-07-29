@@ -1,7 +1,7 @@
-// v6.62: AI Inventory Demand Forecaster — napove povpraševanje po kategorijah z ML
+// v6.81: AI Inventory Demand Forecaster — ML napoved povpraševanja za kategorije inventarja
 // POST /api/ai/inventory-demand-forecaster
-// Body: { monthsAhead?: number, category?: string }
-// Returns: { ok, forecaster: { current, forecast, categories, trends, mlModels, recommendations, summary } }
+// Body: { days?: number, horizonDays?: number }
+// Returns: { ok, forecaster: { overview, categoryForecasts, trendAnalysis, recommendations, mlModels, summary } }
 
 import { NextRequest, NextResponse } from 'next/server';
 import { db } from '@/lib/db';
@@ -12,243 +12,94 @@ export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
 export const maxDuration = 90;
 
+const TREND_DIRECTIONS = ['rising', 'stable', 'declining', 'volatile', 'seasonal'] as const;
+const DEMAND_TIERS = ['oversupply', 'balanced', 'undersupply', 'critical_shortage', 'no_supply'] as const;
+
 export async function POST(req: NextRequest) {
   try {
     const body = await req.json().catch(() => ({}));
-    const monthsAhead = Math.max(1, Math.min(12, Number(body?.monthsAhead ?? 6)));
-    const categoryFilter = body?.category ? String(body.category).toLowerCase() : null;
+    const days = Math.max(7, Math.min(365, Number(body?.days ?? 90)));
+    const horizonDays = Math.max(7, Math.min(180, Number(body?.horizonDays ?? 30)));
+    const since = new Date(Date.now() - days * 24 * 60 * 60 * 1000);
 
-    const since12m = new Date(Date.now() - 365 * 24 * 60 * 60 * 1000);
-    const soldTrades = await db.trade.findMany({
-      where: { status: 'sold', sellPrice: { not: null }, sellDate: { gte: since12m, not: null } },
-      select: { id: true, title: true, category: true, sellPrice: true, sellFees: true, sellDate: true, buyDate: true },
-      take: 1000,
-      orderBy: { sellDate: 'desc' },
-    });
+    const soldTrades = await db.trade.findMany({ where: { status: 'sold', sellPrice: { not: null }, sellDate: { gte: since, not: null } }, select: { id: true, title: true, category: true, sellPrice: true, sellDate: true, buyDate: true }, take: 1000, orderBy: { sellDate: 'desc' } });
+    const heldTrades = await db.trade.findMany({ where: { status: 'held' }, select: { id: true, title: true, category: true, buyPrice: true, buyDate: true }, take: 200 });
+    if (soldTrades.length === 0 && heldTrades.length === 0) return NextResponse.json({ ok: true, forecaster: null, message: 'Ni podatkov za demand forecast.' });
 
-    const heldTrades = await db.trade.findMany({
-      where: { status: 'held' },
-      select: { id: true, title: true, category: true, buyPrice: true, buyFees: true, buyDate: true,
-        listing: { select: { aiEstimatedValue: true } } },
-      take: 100,
-    });
-
-    if (soldTrades.length === 0) {
-      return NextResponse.json({ ok: true, forecaster: null, message: 'Ni prodaj za demand forecast.' });
-    }
-
-    // Compute category demand stats
-    const catMap = new Map<string, { count: number; revenue: number; avgPrice: number; avgDaysToSell: number; monthlyAvg: number; trend: string }>();
+    const categoryStats = new Map<string, { sold: number; held: number; revenue: number; avgPrice: number }>();
     for (const t of soldTrades) {
-      const cat = (t.category || 'drugo').toLowerCase();
-      if (categoryFilter && !cat.includes(categoryFilter)) continue;
-      const revenue = (t.sellPrice ?? 0) - (t.sellFees ?? 0);
-      const days = Math.max(0, Math.round((t.sellDate!.getTime() - t.buyDate.getTime()) / (24*60*60*1000)));
-      if (!catMap.has(cat)) catMap.set(cat, { count: 0, revenue: 0, avgPrice: 0, avgDaysToSell: 0, monthlyAvg: 0, trend: 'stable' });
-      const c = catMap.get(cat)!;
-      c.count += 1; c.revenue += revenue; c.avgDaysToSell += days;
+      const cat = t.category || 'unknown';
+      if (!categoryStats.has(cat)) categoryStats.set(cat, { sold: 0, held: 0, revenue: 0, avgPrice: 0 });
+      const s = categoryStats.get(cat)!;
+      s.sold += 1; s.revenue += (t.sellPrice ?? 0);
     }
-    catMap.forEach(c => {
-      c.avgPrice = Math.round(c.revenue / c.count);
-      c.avgDaysToSell = Math.round(c.avgDaysToSell / c.count);
-      c.monthlyAvg = Math.round(c.count / 12 * 10) / 10;
-    });
-
-    const categoryStats = Array.from(catMap.entries()).map(([cat, c]) => ({ category: cat, ...c, revenue: Math.round(c.revenue) }))
-      .sort((a, b) => b.count - a.count);
-
-    // Current inventory by category
-    const heldByCategory = new Map<string, number>();
     for (const t of heldTrades) {
-      const cat = (t.category || 'drugo').toLowerCase();
-      heldByCategory.set(cat, (heldByCategory.get(cat) ?? 0) + 1);
+      const cat = t.category || 'unknown';
+      if (!categoryStats.has(cat)) categoryStats.set(cat, { sold: 0, held: 0, revenue: 0, avgPrice: 0 });
+      categoryStats.get(cat)!.held += 1;
     }
+    for (const s of categoryStats.values()) { s.avgPrice = s.sold > 0 ? Math.round(s.revenue / s.sold) : 0; }
+
+    const totalSold = soldTrades.length;
+    const totalHeld = heldTrades.length;
+    const totalRevenue = soldTrades.reduce((s, t) => s + (t.sellPrice ?? 0), 0);
 
     const settings = await getSettingsRow();
-    const aiSettings: AiSettings = {
-      provider: settings.aiProvider as AiProviderType,
-      baseUrl: settings.aiBaseUrl, apiKey: settings.aiApiKey, model: settings.aiModel,
-      fallbackProvider: (settings.fallbackProvider || '') as AiProviderType | '',
-      fallbackBaseUrl: settings.fallbackBaseUrl || '', fallbackApiKey: settings.fallbackApiKey || '',
-      fallbackModel: settings.fallbackModel || '',
-    };
+    const aiSettings: AiSettings = { provider: settings.aiProvider as AiProviderType, baseUrl: settings.aiBaseUrl, apiKey: settings.aiApiKey, model: settings.aiModel, fallbackProvider: (settings.fallbackProvider || '') as AiProviderType | '', fallbackBaseUrl: settings.fallbackBaseUrl || '', fallbackApiKey: settings.fallbackApiKey || '', fallbackModel: settings.fallbackModel || '' };
 
-    const catStr = categoryStats.slice(0, 10).map(c =>
-      `- ${c.category}: ${c.count}x sold (12m), ${c.monthlyAvg}/mesec, ${c.avgPrice}€ povp, ${c.avgDaysToSell}d povp, held: ${heldByCategory.get(c.category) ?? 0}`
-    ).join('\n');
+    const catList = Array.from(categoryStats.entries()).slice(0, 12).map(([cat, s]) => `- ${cat} | sold: ${s.sold} | held: ${s.held} | rev: ${Math.round(s.revenue)}€ | avg: ${s.avgPrice}€`).join('\n');
 
-    const prompt = `Si AI inventory demand forecaster z ML za napoved povpraševanja.
-Napove povpraševanje po kategorijah za naslednjih ${monthsAhead} mesecev.
+    const prompt = `Si AI inventory demand forecaster z ML in time series forecasting.
+Napoveduje povpraševanje za kategorije inventarja na ${horizonDays} dni naprej.
 
-KATEGORIJE (zadnjih 12m):
-${catStr}
+STATS (zadnjih ${days} dni):
+- Skupno prodano: ${totalSold} | vrednost: ${Math.round(totalRevenue)}€
+- Skupno na zalogi: ${totalHeld}
 
-ML modeli za demand forecasting:
-- ARIMA: time series forecasting
-- LSTM: deep learning za sequential patterns
-- PROPHET: Facebook Prophet za seasonal
-- XGBOOST: gradient boosting
-- ENSEMBLE: kombinacija vseh
+KATEGORIJE:
+${catList}
 
-Demand faktorji:
-- HISTORICAL_TREND: zadnjih 12m trend
-- SEASONALITY: mesečna nihanja
-- MARKET_CONDITIONS: splošno povpraševanje
-- COMPETITION: število konkurentov
-- ECONOMIC_INDICATORS: gospodarski kazalci
-- LOCAL_DEMAND: lokalno povpraševanje
+5 trend smeri: rising, stable, declining, volatile, seasonal
+5 demand tierjev: oversupply, balanced, undersupply, critical_shortage, no_supply
 
 Odgovori LE z JSON:
 {
   "insights": "<max 200 znakov>",
-  "current": {
-    "total_sold_12m": <number>,
-    "total_revenue_12m_eur": <number>,
-    "avg_items_per_month": <number>,
-    "top_category": "<max 50 znakov>",
-    "fastest_moving_category": "<max 50 znakov>",
-    "slowest_moving_category": "<max 50 znakov>"
-  },
-  "forecast": [
-    {
-      "month": <1-12>,
-      "predicted_demand_items": <number>,
-      "predicted_revenue_eur": <number>,
-      "confidence_pct": <number 0-100>,
-      "seasonal_factor": "<high|medium|low|negative>",
-      "key_drivers": ["<max 80 znakov>"]
-    }
+  "overview": { "total_categories": <number>, "total_sold_items": <number>, "total_held_items": <number>, "total_revenue_eur": <number>, "avg_demand_score": <number 0-100>, "forecast_confidence_pct": <number 0-100>, "demand_forecast_grade": "<A|B|C|D|F>" },
+  "categoryForecasts": [
+    { "category": "<string>", "current_demand_score": <number 0-100>, "predicted_demand_30d": <number>, "predicted_demand_90d": <number>, "demand_trend": "<${TREND_DIRECTIONS.join('|')}>", "demand_tier": "<${DEMAND_TIERS.join('|')}>", "supply_vs_demand_ratio": <number 0-3>, "recommended_stock_level": <number>, "urgency": "<critical|high|medium|low>" }
   ],
-  "categories": [
-    {
-      "category": "<kategorija>",
-      "current_monthly_demand": <number>,
-      "predicted_monthly_demand": <number>,
-      "demand_change_pct": <number>,
-      "current_held_count": <number>,
-      "demand_supply_ratio": <number>,
-      "recommended_action": "<stock_up|maintain|reduce|exit>",
-      "predicted_revenue_eur": <number>,
-      "trend": "<rising|stable|falling>",
-      "seasonality_impact": "<high|medium|low>"
-    }
-  ],
-  "trends": [
-    {
-      "trend_name": "<max 80 znakov>",
-      "description": "<max 120 znakov>",
-      "affected_categories": ["<kategorija>"],
-      "trend_strength": <number 0-100>,
-      "timeframe": "<short_term|medium_term|long_term>",
-      "opportunity_level": "<high|medium|low>"
-    }
-  ],
-  "ml_models": [
-    {
-      "model": "<arima|lstm|prophet|xgboost|ensemble>",
-      "accuracy_pct": <number 0-100>,
-      "mae": <number>,
-      "weight_in_ensemble": <number 0-100>,
-      "best_for": "<max 80 znakov>",
-      "prediction_horizon_days": <number>
-    }
+  "trendAnalysis": [
+    { "category": "<string>", "trend_direction": "<${TREND_DIRECTIONS.join('|')}>", "trend_strength_pct": <number 0-100>, "seasonality_factor": <number 0.5-2.0>, "anomaly_detected": <boolean>, "anomaly_description": "<max 100 znakov>", "forecast_horizon_days": <number> }
   ],
   "recommendations": [
-    { "action": "<max 150 znakov>", "priority": "<high|medium|low>", "category_targeted": "<kategorija ali all>", "expected_revenue_impact_eur": <number>, "timeframe_days": <number> }
+    { "action": "<max 150 znakov>", "category": "<string>", "action_type": "<restock|liquidate|hold|source|diversify>", "expected_revenue_impact_eur": <number>, "implementation_days": <number>, "priority": "<high|medium|low>" }
+  ],
+  "mlModels": [
+    { "model": "<prophet|arima|lstm|gradient_boosting|ensemble>", "accuracy_pct": <number 0-100>, "prediction_type": "<demand_forecast|trend_analysis|seasonality_detection|anomaly_detection>", "weight_in_ensemble": <number 0-100> }
   ],
   "summary": {
-    "total_categories_analyzed": <number>,
-    "total_predicted_demand_${monthsAhead}m": <number>,
-    "total_predicted_revenue_eur": <number>,
-    "avg_confidence_pct": <number>,
-    "best_model": "<max 80 znakov>",
-    "biggest_demand_opportunity": "<max 100 znakov>",
-    "biggest_demand_threat": "<max 100 znakov>",
-    "demand_forecast_score": <number 0-100>
+    "demand_forecast_score": <number 0-100>, "demand_forecast_grade": "<A|B|C|D|F>", "total_predicted_demand_30d": <number>,
+    "critical_categories_count": <number>, "oversupply_categories_count": <number>,
+    "biggest_demand_risk": "<max 100 znakov>", "biggest_demand_opportunity": "<max 100 znakov>",
+    "quickest_demand_win": "<max 100 znakov>", "demand_forecast_analysis_score": <number 0-100>
   }
 }`;
 
     let raw = '';
     try { raw = await callProviderForRaw(aiSettings, prompt); }
-    catch (primaryError: any) {
-      if (aiSettings.fallbackProvider && aiSettings.fallbackModel) {
-        const fb: AiSettings = { provider: aiSettings.fallbackProvider, baseUrl: aiSettings.fallbackBaseUrl || '', apiKey: aiSettings.fallbackApiKey || '', model: aiSettings.fallbackModel };
-        raw = await callProviderForRaw(fb, prompt);
-      } else { return NextResponse.json({ error: primaryError?.message ?? 'AI failed' }, { status: 500 }); }
-    }
+    catch (e: any) { if (aiSettings.fallbackProvider && aiSettings.fallbackModel) { const fb: AiSettings = { provider: aiSettings.fallbackProvider, baseUrl: aiSettings.fallbackBaseUrl || '', apiKey: aiSettings.fallbackApiKey || '', model: aiSettings.fallbackModel }; raw = await callProviderForRaw(fb, prompt); } else { return NextResponse.json({ error: e?.message ?? 'AI failed' }, { status: 500 }); } }
 
     const parsed: any = parseJsonLooseExported(raw);
-    const validCats = new Set(categoryStats.map(c => c.category));
 
     const forecaster = {
       insights: String(parsed?.insights ?? '').slice(0, 500),
-      current: {
-        totalSold12m: Math.max(0, Number(parsed?.current?.total_sold_12m ?? soldTrades.length)),
-        totalRevenue12mEur: Math.round(Number(parsed?.current?.total_revenue_12m_eur ?? soldTrades.reduce((s, t) => s + ((t.sellPrice ?? 0) - (t.sellFees ?? 0)), 0))),
-        avgItemsPerMonth: Math.round(Number(parsed?.current?.avg_items_per_month ?? soldTrades.length / 12) * 10) / 10,
-        topCategory: String(parsed?.current?.top_category ?? categoryStats[0]?.category ?? '').slice(0, 80),
-        fastestMovingCategory: String(parsed?.current?.fastest_moving_category ?? '').slice(0, 80),
-        slowestMovingCategory: String(parsed?.current?.slowest_moving_category ?? '').slice(0, 80),
-      },
-      forecast: (parsed?.forecast || []).slice(0, monthsAhead).map((f: any) => ({
-        month: Math.max(1, Math.min(12, Number(f?.month ?? 1))),
-        predictedDemandItems: Math.max(0, Math.round(Number(f?.predicted_demand_items ?? 0))),
-        predictedRevenueEur: Math.round(Number(f?.predicted_revenue_eur ?? 0)),
-        confidencePct: Math.max(0, Math.min(100, Number(f?.confidence_pct ?? 60))),
-        seasonalFactor: ['high', 'medium', 'low', 'negative'].includes(String(f?.seasonal_factor)) ? String(f.seasonal_factor) : 'medium',
-        keyDrivers: (f?.key_drivers || []).slice(0, 4).map((d: any) => String(d).slice(0, 150)),
-      })),
-      categories: (parsed?.categories || [])
-        .filter((c: any) => validCats.has(String(c?.category ?? '')))
-        .slice(0, 12)
-        .map((c: any) => {
-          const orig = categoryStats.find(x => x.category === String(c?.category));
-          return {
-            category: String(c?.category ?? '').slice(0, 50),
-            currentMonthlyDemand: Math.round(Number(c?.current_monthly_demand ?? orig?.monthlyAvg ?? 0) * 10) / 10,
-            predictedMonthlyDemand: Math.round(Number(c?.predicted_monthly_demand ?? 0) * 10) / 10,
-            demandChangePct: Math.round(Number(c?.demand_change_pct ?? 0) * 10) / 10,
-            currentHeldCount: Math.max(0, Number(c?.current_held_count ?? heldByCategory.get(String(c?.category)) ?? 0)),
-            demandSupplyRatio: Math.round(Number(c?.demand_supply_ratio ?? 1) * 100) / 100,
-            recommendedAction: ['stock_up', 'maintain', 'reduce', 'exit'].includes(String(c?.recommended_action)) ? String(c.recommended_action) : 'maintain',
-            predictedRevenueEur: Math.round(Number(c?.predicted_revenue_eur ?? 0)),
-            trend: ['rising', 'stable', 'falling'].includes(String(c?.trend)) ? String(c.trend) : 'stable',
-            seasonalityImpact: ['high', 'medium', 'low'].includes(String(c?.seasonality_impact)) ? String(c.seasonality_impact) : 'medium',
-          };
-        }),
-      trends: (parsed?.trends || []).slice(0, 6).map((t: any) => ({
-        trendName: String(t?.trend_name ?? '').slice(0, 150),
-        description: String(t?.description ?? '').slice(0, 250),
-        affectedCategories: (t?.affected_categories || []).slice(0, 5).map((c: any) => String(c).slice(0, 50)),
-        trendStrength: Math.max(0, Math.min(100, Number(t?.trend_strength ?? 50))),
-        timeframe: ['short_term', 'medium_term', 'long_term'].includes(String(t?.timeframe)) ? String(t.timeframe) : 'medium_term',
-        opportunityLevel: ['high', 'medium', 'low'].includes(String(t?.opportunity_level)) ? String(t.opportunity_level) : 'medium',
-      })),
-      mlModels: (parsed?.ml_models || []).slice(0, 5).map((m: any) => ({
-        model: ['arima', 'lstm', 'prophet', 'xgboost', 'ensemble'].includes(String(m?.model)) ? String(m.model) : 'ensemble',
-        accuracyPct: Math.max(0, Math.min(100, Number(m?.accuracy_pct ?? 70))),
-        mae: Math.round(Number(m?.mae ?? 0) * 100) / 100,
-        weightInEnsemble: Math.max(0, Math.min(100, Number(m?.weight_in_ensemble ?? 20))),
-        bestFor: String(m?.best_for ?? '').slice(0, 150),
-        predictionHorizonDays: Math.max(7, Number(m?.prediction_horizon_days ?? 30)),
-      })),
-      recommendations: (parsed?.recommendations || []).slice(0, 6).map((r: any) => ({
-        action: String(r?.action ?? '').slice(0, 300),
-        priority: ['high', 'medium', 'low'].includes(String(r?.priority)) ? String(r.priority) : 'medium',
-        categoryTargeted: String(r?.category_targeted ?? 'all').slice(0, 50),
-        expectedRevenueImpactEur: Math.round(Number(r?.expected_revenue_impact_eur ?? 0)),
-        timeframeDays: Math.max(1, Number(r?.timeframe_days ?? 7)),
-      })),
-      summary: {
-        totalCategoriesAnalyzed: categoryStats.length,
-        totalPredictedDemandMonths: Math.max(0, Number(parsed?.summary?.[`total_predicted_demand_${monthsAhead}m`] ?? parsed?.summary?.total_predicted_demand_6m ?? 0)),
-        totalPredictedRevenueEur: Math.round(Number(parsed?.summary?.total_predicted_revenue_eur ?? 0)),
-        avgConfidencePct: Math.max(0, Math.min(100, Number(parsed?.summary?.avg_confidence_pct ?? 60))),
-        bestModel: ['arima', 'lstm', 'prophet', 'xgboost', 'ensemble'].includes(String(parsed?.summary?.best_model)) ? String(parsed.summary.best_model) : 'ensemble',
-        biggestDemandOpportunity: String(parsed?.summary?.biggest_demand_opportunity ?? '').slice(0, 200),
-        biggestDemandThreat: String(parsed?.summary?.biggest_demand_threat ?? '').slice(0, 200),
-        demandForecastScore: Math.max(0, Math.min(100, Number(parsed?.summary?.demand_forecast_score ?? 60))),
-      },
+      overview: { totalCategories: Math.max(0, Number(parsed?.overview?.total_categories ?? categoryStats.size)), totalSoldItems: Math.max(0, Number(parsed?.overview?.total_sold_items ?? totalSold)), totalHeldItems: Math.max(0, Number(parsed?.overview?.total_held_items ?? totalHeld)), totalRevenueEur: Math.round(Number(parsed?.overview?.total_revenue_eur ?? totalRevenue)), avgDemandScore: Math.max(0, Math.min(100, Number(parsed?.overview?.avg_demand_score ?? 50))), forecastConfidencePct: Math.max(0, Math.min(100, Number(parsed?.overview?.forecast_confidence_pct ?? 70))), demandForecastGrade: ['A', 'B', 'C', 'D', 'F'].includes(String(parsed?.overview?.demand_forecast_grade)) ? String(parsed.overview.demand_forecast_grade) : 'C' },
+      categoryForecasts: (parsed?.categoryForecasts || []).slice(0, 12).map((c: any) => ({ category: String(c?.category ?? '').slice(0, 50), currentDemandScore: Math.max(0, Math.min(100, Number(c?.current_demand_score ?? 50))), predictedDemand30d: Math.max(0, Number(c?.predicted_demand_30d ?? 0)), predictedDemand90d: Math.max(0, Number(c?.predicted_demand_90d ?? 0)), demandTrend: (TREND_DIRECTIONS as readonly string[]).includes(String(c?.demand_trend)) ? String(c.demand_trend) : 'stable', demandTier: (DEMAND_TIERS as readonly string[]).includes(String(c?.demand_tier)) ? String(c.demand_tier) : 'balanced', supplyVsDemandRatio: Math.max(0, Math.min(3, Number(c?.supply_vs_demand_ratio ?? 1))), recommendedStockLevel: Math.max(0, Number(c?.recommended_stock_level ?? 0)), urgency: ['critical', 'high', 'medium', 'low'].includes(String(c?.urgency)) ? String(c.urgency) : 'medium' })),
+      trendAnalysis: (parsed?.trendAnalysis || []).slice(0, 12).map((t: any) => ({ category: String(t?.category ?? '').slice(0, 50), trendDirection: (TREND_DIRECTIONS as readonly string[]).includes(String(t?.trend_direction)) ? String(t.trend_direction) : 'stable', trendStrengthPct: Math.max(0, Math.min(100, Number(t?.trend_strength_pct ?? 50))), seasonalityFactor: Math.max(0.5, Math.min(2.0, Number(t?.seasonality_factor ?? 1.0))), anomalyDetected: Boolean(t?.anomaly_detected ?? false), anomalyDescription: String(t?.anomaly_description ?? '').slice(0, 200), forecastHorizonDays: Math.max(1, Number(t?.forecast_horizon_days ?? horizonDays)) })),
+      recommendations: (parsed?.recommendations || []).slice(0, 8).map((r: any) => ({ action: String(r?.action ?? '').slice(0, 300), category: String(r?.category ?? '').slice(0, 50), actionType: ['restock', 'liquidate', 'hold', 'source', 'diversify'].includes(String(r?.action_type)) ? String(r.action_type) : 'hold', expectedRevenueImpactEur: Math.round(Number(r?.expected_revenue_impact_eur ?? 0)), implementationDays: Math.max(1, Number(r?.implementation_days ?? 7)), priority: ['high', 'medium', 'low'].includes(String(r?.priority)) ? String(r.priority) : 'medium' })),
+      mlModels: (parsed?.mlModels || []).slice(0, 5).map((m: any) => ({ model: ['prophet', 'arima', 'lstm', 'gradient_boosting', 'ensemble'].includes(String(m?.model)) ? String(m.model) : 'ensemble', accuracyPct: Math.max(0, Math.min(100, Number(m?.accuracy_pct ?? 75))), predictionType: ['demand_forecast', 'trend_analysis', 'seasonality_detection', 'anomaly_detection'].includes(String(m?.prediction_type)) ? String(m.prediction_type) : 'demand_forecast', weightInEnsemble: Math.max(0, Math.min(100, Number(m?.weight_in_ensemble ?? 20))) })),
+      summary: { demandForecastScore: Math.max(0, Math.min(100, Number(parsed?.summary?.demand_forecast_score ?? 50))), demandForecastGrade: ['A', 'B', 'C', 'D', 'F'].includes(String(parsed?.summary?.demand_forecast_grade)) ? String(parsed.summary.demand_forecast_grade) : 'C', totalPredictedDemand30d: Math.max(0, Number(parsed?.summary?.total_predicted_demand_30d ?? 0)), criticalCategoriesCount: Math.max(0, Number(parsed?.summary?.critical_categories_count ?? 0)), oversupplyCategoriesCount: Math.max(0, Number(parsed?.summary?.oversupply_categories_count ?? 0)), biggestDemandRisk: String(parsed?.summary?.biggest_demand_risk ?? '').slice(0, 200), biggestDemandOpportunity: String(parsed?.summary?.biggest_demand_opportunity ?? '').slice(0, 200), quickestDemandWin: String(parsed?.summary?.quickest_demand_win ?? '').slice(0, 200), demandForecastAnalysisScore: Math.max(0, Math.min(100, Number(parsed?.summary?.demand_forecast_analysis_score ?? 50))) },
     };
 
     const today = new Date().toISOString().slice(0, 10);
