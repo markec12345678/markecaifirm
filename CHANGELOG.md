@@ -13,6 +13,61 @@ Načrtovano za v6.93+:
 - WebSocket real-time negotiation
 - ML model za buyer matchmaker (fine-tuned na realni data)
 
+## [7.02.0] - 2026-07-29
+
+### Added — New Features
+- **InventoryView** (v7.02) — nov zavihek "Skladišče AI" z 5 AI funkcijami:
+  - AI Inventory Aging (alerti za staranje, stagnirajoči itemi)
+  - AI Stockout Predictor (napoved zmanjkanja zaloge)
+  - AI Shrinkage Detector (detekcija izgub — krađa, poškodbe)
+  - AI Liquidation Strategist (strategija likvidacije)
+  - AI Portfolio Rebalancer v3 (Markowitz, Kelly, risk-parity)
+- **AI Hub** (v7.01) — nov zavihek z iskalnikom vseh 254 AI endpointov:
+  - 8 kategorij (buyer, inventory, listing, pricing, risk, negotiation, reports, misc)
+  - AI Runner modal (generični POST + JSON rezultat)
+  - /api/ai-list nov read endpoint (bere route.ts datoteke)
+  - Reši 194 orphan AI endpointov (76 % ni imelo UI)
+- **BuyersView** (v7.00) — nov zavihek "Kupci" z 5 AI funkcijami:
+  - AI Buyer Persona (kategorizacija: bargain hunter, collector, flipper)
+  - AI Trust Score (6 tierjev: platinum → scammer)
+  - AI Journey Optimizer (8-stopnjska pot)
+  - AI Review Generator (testimonial, referral, social proof)
+  - AI Lifecycle Predictor (9 faz življenjskega cikla)
+
+### Changed — Refactoring (v6.95-v6.99)
+- **ListingDetailModal razbit** z 4070 na ~2227 vrstic (−45 %):
+  - SentimentPanel (v6.95) — sentiment-analysis
+  - AuctionSniperPanel (v6.95) — auction-sniper
+  - FraudDetectionPanel (v6.96) — fraud-detection + fake-detection + reverse-image-search (3 v 1)
+  - ImageAnalysisPanel (v6.97) — image-quality + description-optimizer + refurbishment-cost (3 v 1)
+  - NegotiationPanel (v6.98) — Negotiator + Playbook + Outcome + Chatbot (4 v 1)
+  - ListingActionsBar (v6.99) — Notes + Contact Tracker (2 v 1)
+- **Lazy-load dashboard views** (v6.94) — ~83 % manj JS na prvem loadu (next/dynamic)
+
+### Security (v6.92.1)
+- **API avtentikacija** — APP_API_KEY env, X-App-Key header, app-key cookie, middleware.ts
+- **SSRF zaščita** — lib/url-safety.ts blokira privatne IP, AWS metadata, link-local
+- **Email XSS fix** — HTML escape vseh uporabniških vsebin v formatAlertEmail
+- **Slack Block Kit fix** — mrkdwn_section → mrkdwn (Slack je prej tiho zavrajal bloke)
+- **Telegram MarkdownV2** — parse_mode Markdown (V1) → MarkdownV2 + 429 handling
+- **CI fix** — continue-on-error: true odstranjen (CI je bil dekorativen)
+- **Next.js config fix** — ignoreBuildErrors: false, reactStrictMode: true
+
+### Removed — Cleanup (v6.93)
+- **265.615 vrstic smeti** izbrisanih:
+  - 38 comp*.json + idea*.json + search*.json (LLM Bing SERP research artifacts)
+  - 69 skills/ podmap (ClawHub vendored scripts, 0 referenc v src/)
+  - 2 dashboard-*.png (LLM screenshoti)
+- **980 vrstic mrtve kode** izbrisanih:
+  - src/lib/scraper-v2.ts (391 vrst., 0 importov)
+  - src/lib/captcha-solver.ts (302 vrst., 0 importov)
+  - src/lib/tls-client.ts (287 vrst., 0 importov)
+- **14 skoraj identičnih Python skript** konsolidiranih v 1 parametrizirano
+
+### Fixed — Dead Code Wired (v6.93)
+- **webhook-engine priklopljen** na pipeline — 5 eventov (alert.created, price.drop, target.hit, listing.new, trade.sold) sedaj dejansko sproži
+- **smart-push priklopljen** na pipeline — pametno batchanje alertov po prioriteti (critical/high/medium/low) namesto spam-a
+
 ## [6.92.0] - 2026-07-29
 
 ### Added
