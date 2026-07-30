@@ -59,15 +59,66 @@ AI-optimiziranimi oglasi, in avtomatiziraj celoten workflow od odkritja do proda
 
 ### Kaj je novega v v7.06
 
-- **AI Listing Image Background Cleaner** — 10 tipov težav z ozadjem z image segmentation, 10 nadomestnih ozadij, 5 ML modelov
-- **AI Inventory Damage Prevention** — 10 tipov škode z risk assessment, 5 nivojev preprečevanja, 5 ML modelov
-- **AI Buyer Social Influence Scorer** — 7 vplivnih tierjev z network analysis, 10 dejavnikov vpliva, 5 ML modelov
+**🎉 6 novih AI pogledov z 30 AI funkcijami — Domain Coverage Complete!**
+
+- **👥 Kupci (BuyersView)** — 5 AI funkcij: Buyer Persona, Trust Score (6 tierjev), Journey Optimizer (8 stopenj), Review Generator, Lifecycle Predictor (9 faz)
+- **📦 Skladišče AI (InventoryView)** — 5 AI funkcij: Inventory Aging, Stockout Predictor, Shrinkage Detector, Liquidation Strategist, Portfolio Rebalancer v3 (Markowitz)
+- **💰 Cene AI (PricingView)** — 5 AI funkcij: Smart Pricing Engine (10 faktorjev), Profit Forecast (3 scenariji), Margin Optimizer, Price War Strategist, Seasonal Pricing
+- **📝 Oglasi AI (ListingOptimizationView)** — 5 AI funkcij: Image Generator (VLM prompti), Description Generator v3 (10 stilov), SEO Optimizer v2, Virality Predictor (8 heuristik), CTR Optimizer
+- **🛡️ Tveganja AI (RiskView)** — 5 AI funkcij: Risk Hedging (8 strategij), Insurance Optimizer v2 (4D matrix), Market Saturation (5 nivojev), Risk Parity, Margin Guardian
+- **🤖 AI Hub** — centralen pregled vseh 254 AI endpointov z iskalnikom, kategorijami in generičnim runner-jem (POST + JSON rezultat)
+
+**🔒 Varnostni popravki (v6.92.1):**
+- API avtentikacija (APP_API_KEY, middleware)
+- SSRF zaščita (lib/url-safety.ts)
+- Email XSS fix (HTML escape)
+- Slack Block Kit fix (mrkdwn_section → mrkdwn)
+- Telegram MarkdownV2 + 429 rate-limit handling
+- CI fix (continue-on-error odstranjen)
+- Next.js config fix (ignoreBuildErrors: false, reactStrictMode: true)
+
+**🧹 Čiščenje (v6.93):**
+- -265.615 vrstic smeti (skills/, comp/idea/search JSON, mrtva koda)
+- webhook-engine priklopljen na pipeline (5 eventov)
+- smart-push priklopljen (priority batching)
+
+**⚡ Performanse (v6.94):**
+- ~83% manj JS na prvem loadu (next/dynamic lazy-load)
+
+**🔧 Refactoring (v6.95-v6.99):**
+- ListingDetailModal razbit z 4070 na ~2227 vrstic (−45%)
+- 6 podkomponent izvlečenih (SentimentPanel, AuctionSniperPanel, FraudDetectionPanel, ImageAnalysisPanel, NegotiationPanel, ListingActionsBar)
+
+**Aplikacija sedaj ima 17 zavihkov** (prej 11) z keyboard shortcuts:
+`1-9/0` (osnovni), `b` (kupci), `a` (AI Hub), `i` (skladišče AI), `p` (cene AI), `l` (oglasi AI), `r` (tveganja AI)
 
 ▶️ Glej [CHANGELOG.md](./CHANGELOG.md) za popolno zgodovino v1.0 → v7.06.
 
 ---
 
 ## 🚀 Ključne funkcije
+
+### 📱 17 zavihkov v aplikaciji
+
+| # | Zavihek | Shortcut | Kaj |
+|---|---|---|---|
+| 1 | Dashboard | `1` | Pregled aktivnosti, statistike, AI insights |
+| 2 | Monitorji | `2` | Upravljanje iskalnih monitorjev (10 virov) |
+| 3 | Alerti | `3` | Real-time alerti (SSE) z AI verdict |
+| 4 | Oglasi | `4` | Brskanje po najdenih oglasih z AI analizo |
+| 5 | Watchlist | `5` | Priljubljeni oglasi z target price |
+| 6 | Skladišče | `6` | Trade management (buy/sell, ROI) |
+| 7 | **Skladišče AI** | `i` | AI: aging, stockout, shrinkage, liquidation, rebalancer |
+| 8 | **Cene AI** | `p` | AI: smart-pricing, profit-forecast, margin, price-war, seasonal |
+| 9 | **Oglasi AI** | `l` | AI: image-gen, desc-gen, SEO, virality, CTR |
+| 10 | **Tveganja AI** | `r` | AI: hedging, insurance, saturation, parity, guardian |
+| 11 | **Kupci** | `b` | AI: persona, trust, journey, review, lifecycle |
+| 12 | Analitika | `7` | Arbitraža, trendi, sezonski vzorci |
+| 13 | Statistike | `8` | 23 AI funkcij: budget, forecast, rebalance... |
+| 14 | Obvestila | `9` | Zgodovina notifikacij |
+| 15 | Zdravje | `0` | Sistemski health, scraper stats |
+| 16 | Nastavitve | — | AI provider, Telegram, Discord, Email, Push... |
+| 17 | **AI Hub** | `a` | Vsi 254 AI endpointov z iskalnikom in runner-jem |
 
 ### 🔍 Iskanje & odkrivanje
 - Multi-platform monitoring (Bolha, Facebook, Vinted, Avtonet, Kleinanzeigen, eBay, poljuben RSS)
