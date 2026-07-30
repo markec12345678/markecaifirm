@@ -34,6 +34,8 @@ const PricingView = memo(dynamic(() => import('@/components/dashboard/pricing-vi
 const ListingOptimizationView = memo(dynamic(() => import('@/components/dashboard/listing-optimization-view').then(m => ({ default: m.ListingOptimizationView })), { ssr: false, loading: () => <LoadingFallback /> }));
 // v7.06: RiskView — AI analiza tveganj (hedging, insurance, saturation, parity, guardian)
 const RiskView = memo(dynamic(() => import('@/components/dashboard/risk-view').then(m => ({ default: m.RiskView })), { ssr: false, loading: () => <LoadingFallback /> }));
+// v7.19: ErrorBoundary — prepreči bel zaslon ob crashu komponente
+import { ErrorBoundary } from '@/components/error-boundary';
 import { PwaInstallPrompt } from '@/components/dashboard/pwa-install-prompt';
 import { ProfileSwitcher } from '@/components/dashboard/profile-switcher';
 import { SearchModal } from '@/components/dashboard/search-modal';
@@ -355,23 +357,23 @@ export default function Home() {
 
       {/* Main content */}
       <main className="flex-1 max-w-7xl mx-auto w-full px-4 sm:px-6 lg:px-8 py-4 md:py-6">
-        {view === 'dashboard' && <DashboardView onNavigate={setView} />}
-        {view === 'monitors' && <MonitorsView />}
-        {view === 'alerts' && <AlertsView />}
-        {view === 'listings' && <ListingsView />}
-        {view === 'watchlist' && <WatchlistView onNavigate={setView} />}
-        {view === 'trades' && <TradesView />}
-        {view === 'inventory' && <InventoryView />}
-        {view === 'pricing' && <PricingView />}
-        {view === 'listing-opt' && <ListingOptimizationView />}
-        {view === 'risk' && <RiskView />}
-        {view === 'buyers' && <BuyersView />}
-        {view === 'analytics' && <AnalyticsView />}
-        {view === 'statistics' && <StatisticsView />}
-        {view === 'notifications' && <NotificationHistoryView />}
-        {view === 'health' && <HealthView />}
-        {view === 'settings' && <SettingsView />}
-        {view === 'ai-hub' && <AIHubView />}
+        {view === 'dashboard' && <ErrorBoundary viewName="Dashboard"><DashboardView onNavigate={setView} /></ErrorBoundary>}
+        {view === 'monitors' && <ErrorBoundary viewName="Monitorji"><MonitorsView /></ErrorBoundary>}
+        {view === 'alerts' && <ErrorBoundary viewName="Alerti"><AlertsView /></ErrorBoundary>}
+        {view === 'listings' && <ErrorBoundary viewName="Oglasi"><ListingsView /></ErrorBoundary>}
+        {view === 'watchlist' && <ErrorBoundary viewName="Watchlist"><WatchlistView onNavigate={setView} /></ErrorBoundary>}
+        {view === 'trades' && <ErrorBoundary viewName="Skladišče"><TradesView /></ErrorBoundary>}
+        {view === 'inventory' && <ErrorBoundary viewName="Skladišče AI"><InventoryView /></ErrorBoundary>}
+        {view === 'pricing' && <ErrorBoundary viewName="Cene AI"><PricingView /></ErrorBoundary>}
+        {view === 'listing-opt' && <ErrorBoundary viewName="Oglasi AI"><ListingOptimizationView /></ErrorBoundary>}
+        {view === 'risk' && <ErrorBoundary viewName="Tveganja AI"><RiskView /></ErrorBoundary>}
+        {view === 'buyers' && <ErrorBoundary viewName="Kupci"><BuyersView /></ErrorBoundary>}
+        {view === 'analytics' && <ErrorBoundary viewName="Analitika"><AnalyticsView /></ErrorBoundary>}
+        {view === 'statistics' && <ErrorBoundary viewName="Statistike"><StatisticsView /></ErrorBoundary>}
+        {view === 'notifications' && <ErrorBoundary viewName="Obvestila"><NotificationHistoryView /></ErrorBoundary>}
+        {view === 'health' && <ErrorBoundary viewName="Zdravje"><HealthView /></ErrorBoundary>}
+        {view === 'settings' && <ErrorBoundary viewName="Nastavitve"><SettingsView /></ErrorBoundary>}
+        {view === 'ai-hub' && <ErrorBoundary viewName="AI Hub"><AIHubView /></ErrorBoundary>}
       </main>
 
       {/* Footer */}
