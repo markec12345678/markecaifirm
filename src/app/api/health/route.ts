@@ -42,7 +42,13 @@ export async function GET() {
     checks.push({ name: 'Baza (SQLite)', status: 'error', message: e?.message ?? 'Napaka' });
   }
 
-  // 2. AI provider
+  // 2. AI provider — v7.26: preverja dejanski provider, ne vedno Ollama
+  const providerLabel = settings.aiProvider === 'ollama' ? 'Ollama' :
+                        settings.aiProvider === 'openai' ? 'OpenAI' :
+                        settings.aiProvider === 'anthropic' ? 'Anthropic' :
+                        settings.aiProvider === 'openrouter' ? 'OpenRouter' :
+                        settings.aiProvider === 'gemini' ? 'Gemini' : 'OpenAI-kompatibilni';
+
   if (settings.aiProvider === 'ollama') {
     try {
       const start = Date.now();
@@ -54,24 +60,72 @@ export async function GET() {
         const models = data?.models ?? [];
         const hasModel = models.some((m: any) => m.name === settings.aiModel);
         checks.push({
-          name: 'AI (Ollama)',
+          name: `AI (${providerLabel})`,
           status: hasModel ? 'ok' : 'warn',
           message: hasModel
-            ? `Ollama OK, model "${settings.aiModel}" dosegljiv (${latency}ms)`
-            : `Ollama OK, ampak model "${settings.aiModel}" NI nameščen. Imate: ${models.map((m: any) => m.name).slice(0, 3).join(', ')}`,
+            ? `${providerLabel} OK, model "${settings.aiModel}" dosegljiv (${latency}ms)`
+            : `${providerLabel} OK, ampak model "${settings.aiModel}" NI nameščen. Imate: ${models.map((m: any) => m.name).slice(0, 3).join(', ')}`,
           latencyMs: latency,
           details: { models: models.map((m: any) => m.name) },
         });
       } else {
-        checks.push({ name: 'AI (Ollama)', status: 'error', message: `Ollama HTTP ${res.status}` });
+        checks.push({ name: `AI (${providerLabel})`, status: 'error', message: `${providerLabel} HTTP ${res.status}` });
       }
-    } catch (e: any) {
-      checks.push({ name: 'AI (Ollama)', status: 'error', message: `Ne morem doseči Ollama na ${settings.aiBaseUrl}. Ali teče?` });
+    } catch {
+      checks.push({ name: `AI (${providerLabel})`, status: 'error', message: `Ne morem doseči ${providerLabel} na ${settings.aiBaseUrl}. Ali teče?` });
+    }
+  } else if (settings.aiProvider === 'openrouter') {
+    // v7.26: OpenRouter — dejansko testiraj povezavo z /api/v1/models
+    if (!settings.aiApiKey) {
+      checks.push({ name: `AI (${providerLabel})`, status: 'error', message: 'API ključ manjka' });
+    } else {
+      try {
+        const start = Date.now();
+        const res = await fetch('https://openrouter.ai/api/v1/models', {
+          headers: { Authorization: `Bearer ${settings.aiApiKey}` },
+          signal: AbortSignal.timeout(5000),
+        });
+        const latency = Date.now() - start;
+        if (res.ok) {
+          checks.push({
+            name: `AI (${providerLabel})`,
+            status: 'ok',
+            message: `${providerLabel} OK, model: ${settings.aiModel} (${latency}ms)`,
+            latencyMs: latency,
+          });
+        } else {
+          checks.push({ name: `AI (${providerLabel})`, status: 'error', message: `${providerLabel} HTTP ${res.status} — preveri API ključ` });
+        }
+      } catch {
+        checks.push({ name: `AI (${providerLabel})`, status: 'error', message: `Ne morem doseči ${providerLabel} API-ja` });
+      }
+    }
+  } else if (settings.aiProvider === 'gemini') {
+    // v7.26: Gemini — testiraj z listModels
+    if (!settings.aiApiKey) {
+      checks.push({ name: `AI (${providerLabel})`, status: 'error', message: 'API ključ manjka' });
+    } else {
+      try {
+        const start = Date.now();
+        const url = `https://generativelanguage.googleapis.com/v1beta/models?key=${settings.aiApiKey}`;
+        const res = await fetch(url, { signal: AbortSignal.timeout(5000) });
+        const latency = Date.now() - start;
+        if (res.ok) {
+          checks.push({
+            name: `AI (${providerLabel})`,
+            status: 'ok',
+            message: `${providerLabel} OK, model: ${settings.aiModel} (${latency}ms)`,
+            latencyMs: latency,
+          });
+        } else {
+          checks.push({ name: `AI (${providerLabel})`, status: 'error', message: `${providerLabel} HTTP ${res.status} — preveri API ključ` });
+        }
+      } catch {
+        checks.push({ name: `AI (${providerLabel})`, status: 'error', message: `Ne morem doseči ${providerLabel} API-ja` });
+      }
     }
   } else {
-    // For OpenAI/Anthropic/OpenAI-compatible, we just verify API key is set
-    const providerLabel = settings.aiProvider === 'openai' ? 'OpenAI' :
-                          settings.aiProvider === 'anthropic' ? 'Anthropic' : 'OpenAI-kompatibilni';
+    // OpenAI / Anthropic / OpenAI-compatible — verify API key is set
     if (settings.aiApiKey) {
       checks.push({ name: `AI (${providerLabel})`, status: 'ok', message: `API ključ nastavljen, model: ${settings.aiModel}` });
     } else {
