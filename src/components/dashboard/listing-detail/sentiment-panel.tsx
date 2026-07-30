@@ -137,25 +137,25 @@ export function SentimentPanel({ listingId }: { listingId: string }) {
               💬 <b>Prvi kontakt:</b> {sentiment.sentiment.openingTactic}
             </div>
           )}
-          {sentiment.sentiment.redFlags?.length > 0 && (
+          {(sentiment.sentiment.redFlags?.length ?? 0) > 0 && (
             <div className="bg-red-500/5 border border-red-500/20 rounded p-1.5">
               <div className="text-[10px] uppercase text-red-500 mb-1">🚩 Red flags:</div>
               <ul className="space-y-0.5 ml-3">
-                {sentiment.sentiment.redFlags.map((r: string, i: number) => <li key={i} className="text-[10px] list-disc list-outside">{r}</li>)}
+                {sentiment.sentiment.redFlags?.map((r: string, i: number) => <li key={i} className="text-[10px] list-disc list-outside">{r}</li>)}
               </ul>
             </div>
           )}
-          {sentiment.sentiment.greenFlags?.length > 0 && (
+          {(sentiment.sentiment.greenFlags?.length ?? 0) > 0 && (
             <div className="bg-primary/5 border border-primary/20 rounded p-1.5">
               <div className="text-[10px] uppercase text-primary mb-1">✓ Green flags:</div>
               <ul className="space-y-0.5 ml-3">
-                {sentiment.sentiment.greenFlags.map((g: string, i: number) => <li key={i} className="text-[10px] list-disc list-outside">{g}</li>)}
+                {sentiment.sentiment.greenFlags?.map((g: string, i: number) => <li key={i} className="text-[10px] list-disc list-outside">{g}</li>)}
               </ul>
             </div>
           )}
-          {sentiment.heuristics?.detectedUrgency?.length > 0 && (
+          {(sentiment.heuristics?.detectedUrgency?.length ?? 0) > 0 && (
             <div className="text-[9px] text-muted-foreground">
-              📊 Hevristika: {sentiment.heuristics.detectedUrgency.map((u: any) => u.label).join(' · ')}
+              📊 Hevristika: {sentiment.heuristics?.detectedUrgency?.map((u: any) => u.label).join(' · ')}
             </div>
           )}
         </div>
