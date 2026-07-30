@@ -2,7 +2,7 @@
 
 import { useEffect, useState, useCallback, useRef } from 'react';
 import dynamic from 'next/dynamic';
-import { Activity, Bell, Settings, ListPlus, Zap, RefreshCw, AlertCircle, LayoutGrid, BarChart3, Search, Heart, TrendingUp, History, Eye, PieChart, Menu, X, Users, Sparkles } from 'lucide-react';
+import { Activity, Bell, Settings, ListPlus, Zap, RefreshCw, AlertCircle, LayoutGrid, BarChart3, Search, Heart, TrendingUp, History, Eye, PieChart, Menu, X, Users, Sparkles, Package } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
 import { Input } from '@/components/ui/input';
@@ -26,6 +26,8 @@ const StatisticsView = dynamic(() => import('@/components/dashboard/statistics-v
 const BuyersView = dynamic(() => import('@/components/dashboard/buyers-view').then(m => ({ default: m.BuyersView })), { ssr: false, loading: () => <LoadingFallback /> });
 // v7.01: AIHubView — centralen pregled vseh 254 AI endpointov z iskalnikom
 const AIHubView = dynamic(() => import('@/components/dashboard/ai-hub-view').then(m => ({ default: m.AIHubView })), { ssr: false, loading: () => <LoadingFallback /> });
+// v7.02: InventoryView — AI analiza skladišča (aging, stockout, shrinkage, liquidation, rebalancer)
+const InventoryView = dynamic(() => import('@/components/dashboard/inventory-view').then(m => ({ default: m.InventoryView })), { ssr: false, loading: () => <LoadingFallback /> });
 import { PwaInstallPrompt } from '@/components/dashboard/pwa-install-prompt';
 import { ProfileSwitcher } from '@/components/dashboard/profile-switcher';
 import { SearchModal } from '@/components/dashboard/search-modal';
@@ -44,7 +46,7 @@ function LoadingFallback() {
   );
 }
 
-type View = 'dashboard' | 'monitors' | 'alerts' | 'listings' | 'watchlist' | 'analytics' | 'statistics' | 'trades' | 'health' | 'notifications' | 'settings' | 'buyers' | 'ai-hub';
+type View = 'dashboard' | 'monitors' | 'alerts' | 'listings' | 'watchlist' | 'analytics' | 'statistics' | 'trades' | 'health' | 'notifications' | 'settings' | 'buyers' | 'ai-hub' | 'inventory';
 
 const NAV: { id: View; label: string; icon: typeof Activity }[] = [
   { id: 'dashboard', label: 'Dashboard', icon: Activity },
@@ -53,6 +55,7 @@ const NAV: { id: View; label: string; icon: typeof Activity }[] = [
   { id: 'listings', label: 'Oglasi', icon: LayoutGrid },
   { id: 'watchlist', label: 'Watchlist', icon: Eye },
   { id: 'trades', label: 'Skladišče', icon: TrendingUp },
+  { id: 'inventory', label: 'Skladišče AI', icon: Package },
   { id: 'buyers', label: 'Kupci', icon: Users },
   { id: 'analytics', label: 'Analitika', icon: BarChart3 },
   { id: 'statistics', label: 'Statistike', icon: PieChart },
@@ -170,6 +173,7 @@ export default function Home() {
         '0': 'settings',
         'b': 'buyers', // v7.00: shortcut za kupce
         'a': 'ai-hub', // v7.01: shortcut za AI Hub
+        'i': 'inventory', // v7.02: shortcut za skladišče AI
       };
       if (navMap[e.key] && !e.ctrlKey && !e.metaKey && !e.altKey) {
         e.preventDefault();
@@ -363,6 +367,7 @@ export default function Home() {
         {view === 'listings' && <ListingsView />}
         {view === 'watchlist' && <WatchlistView onNavigate={setView} />}
         {view === 'trades' && <TradesView />}
+        {view === 'inventory' && <InventoryView />}
         {view === 'buyers' && <BuyersView />}
         {view === 'analytics' && <AnalyticsView />}
         {view === 'statistics' && <StatisticsView />}
