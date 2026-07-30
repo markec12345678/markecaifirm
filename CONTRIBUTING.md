@@ -275,7 +275,7 @@ Do takrat testiraj ročno:
 
 ## Verzija
 
-Trenutna verzija: **v6.92.0**
+Trenutna verzija: **v7.02.0**
 
 ### v6.92 Security fixes (obvezno preberi)
 
