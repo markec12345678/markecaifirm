@@ -214,11 +214,11 @@ export function FraudDetectionPanel({ listingId, imageUrl }: { listingId: string
             </div>
 
             {/* Red flags */}
-            {fraud.analysis.redFlags?.length > 0 && (
+            {(fraud.analysis.redFlags?.length ?? 0) > 0 && (
               <div className="bg-red-500/5 border border-red-500/20 rounded p-1.5">
-                <div className="text-[10px] uppercase text-red-500 mb-1">🚩 Red flags ({fraud.analysis.redFlags.length}):</div>
+                <div className="text-[10px] uppercase text-red-500 mb-1">🚩 Red flags ({fraud.analysis.redFlags?.length ?? 0}):</div>
                 <ul className="space-y-0.5 ml-3">
-                  {fraud.analysis.redFlags.slice(0, 8).map((r: any, i: number) => (
+                  {fraud.analysis.redFlags?.slice(0, 8).map((r: any, i: number) => (
                     <li key={i} className="text-[10px] list-disc list-outside">
                       <span className="font-medium">{r.pattern}</span>
                       <span className="text-muted-foreground"> (+{r.weight}pt)</span>
@@ -229,11 +229,11 @@ export function FraudDetectionPanel({ listingId, imageUrl }: { listingId: string
             )}
 
             {/* ML signals */}
-            {fraud.analysis.mlSignals?.length > 0 && (
+            {(fraud.analysis.mlSignals?.length ?? 0) > 0 && (
               <div className="bg-blue-400/5 border border-blue-400/20 rounded p-1.5">
                 <div className="text-[10px] uppercase text-blue-400 mb-1">🤖 ML signali:</div>
                 <ul className="space-y-0.5 ml-3">
-                  {fraud.analysis.mlSignals.map((s: any, i: number) => (
+                  {fraud.analysis.mlSignals?.map((s: any, i: number) => (
                     <li key={i} className="text-[10px] list-disc list-outside">
                       {s.signal} <span className="text-muted-foreground">(+{s.riskContribution}pt)</span>
                     </li>
@@ -243,11 +243,11 @@ export function FraudDetectionPanel({ listingId, imageUrl }: { listingId: string
             )}
 
             {/* Additional red flags */}
-            {fraud.analysis.additionalRedFlags?.length > 0 && (
+            {(fraud.analysis.additionalRedFlags?.length ?? 0) > 0 && (
               <div className="bg-amber-400/5 border border-amber-400/20 rounded p-1.5">
                 <div className="text-[10px] uppercase text-amber-400 mb-1">🔍 Subtilni znaki:</div>
                 <ul className="space-y-0.5 ml-3">
-                  {fraud.analysis.additionalRedFlags.map((r: string, i: number) => (
+                  {fraud.analysis.additionalRedFlags?.map((r: string, i: number) => (
                     <li key={i} className="text-[10px] list-disc list-outside">{r}</li>
                   ))}
                 </ul>
@@ -255,11 +255,11 @@ export function FraudDetectionPanel({ listingId, imageUrl }: { listingId: string
             )}
 
             {/* Verification steps */}
-            {fraud.analysis.verificationSteps?.length > 0 && (
+            {(fraud.analysis.verificationSteps?.length ?? 0) > 0 && (
               <div className="bg-primary/5 border border-primary/20 rounded p-1.5">
                 <div className="text-[10px] uppercase text-primary mb-1">✓ Koraki za preverjanje:</div>
                 <ol className="space-y-0.5 ml-3">
-                  {fraud.analysis.verificationSteps.map((s: string, i: number) => (
+                  {fraud.analysis.verificationSteps?.map((s: string, i: number) => (
                     <li key={i} className="text-[10px] list-decimal list-outside">{s}</li>
                   ))}
                 </ol>
@@ -267,9 +267,9 @@ export function FraudDetectionPanel({ listingId, imageUrl }: { listingId: string
             )}
 
             {/* Similar fraud patterns */}
-            {fraud.analysis.similarFraudPatterns?.length > 0 && (
+            {(fraud.analysis.similarFraudPatterns?.length ?? 0) > 0 && (
               <div className="text-[9px] text-muted-foreground border-t border-border pt-1">
-                🔗 Podobni sumljivi oglasi: {fraud.analysis.similarFraudPatterns.length}
+                🔗 Podobni sumljivi oglasi: {fraud.analysis.similarFraudPatterns?.length ?? 0}
               </div>
             )}
           </div>
@@ -341,11 +341,11 @@ export function FraudDetectionPanel({ listingId, imageUrl }: { listingId: string
               <div className="text-[10px] text-muted-foreground italic">{fakeDetect.detection.reasoning}</div>
             )}
             {/* Indicators */}
-            {fakeDetect.detection.indicators?.length > 0 && (
+            {(fakeDetect.detection.indicators?.length ?? 0) > 0 && (
               <div>
                 <div className="text-[10px] uppercase text-muted-foreground mb-1">Indikatorji:</div>
                 <div className="space-y-0.5">
-                  {fakeDetect.detection.indicators.map((i: any, j: number) => (
+                  {fakeDetect.detection.indicators?.map((i: any, j: number) => (
                     <div key={j} className="text-[10px] flex items-center justify-between">
                       <span className={cn(i.type === 'authentic' ? 'text-primary' : i.type === 'fake' ? 'text-red-500' : 'text-amber-400')}>
                         {i.type === 'authentic' ? '✓' : i.type === 'fake' ? '🚨' : '⚠️'} {i.description}
@@ -357,11 +357,11 @@ export function FraudDetectionPanel({ listingId, imageUrl }: { listingId: string
               </div>
             )}
             {/* Brand-specific checks */}
-            {fakeDetect.detection.brandSpecificChecks?.length > 0 && (
+            {(fakeDetect.detection.brandSpecificChecks?.length ?? 0) > 0 && (
               <div className="bg-background/40 border rounded p-1.5">
                 <div className="text-[10px] uppercase text-muted-foreground mb-1">Specifično za znamko:</div>
                 <div className="space-y-0.5">
-                  {fakeDetect.detection.brandSpecificChecks.map((c: any, j: number) => (
+                  {fakeDetect.detection.brandSpecificChecks?.map((c: any, j: number) => (
                     <div key={j} className="text-[10px] flex items-center justify-between">
                       <span>{c.check}</span>
                       <div className="flex items-center gap-1 shrink-0">
@@ -377,11 +377,11 @@ export function FraudDetectionPanel({ listingId, imageUrl }: { listingId: string
               </div>
             )}
             {/* Verification steps */}
-            {fakeDetect.detection.verificationSteps?.length > 0 && (
+            {(fakeDetect.detection.verificationSteps?.length ?? 0) > 0 && (
               <div className="bg-primary/5 border border-primary/20 rounded p-1.5">
                 <div className="text-[10px] uppercase text-primary mb-1">✓ Koraki za preverjanje:</div>
                 <ol className="space-y-0.5 ml-3">
-                  {fakeDetect.detection.verificationSteps.map((s: any, j: number) => (
+                  {fakeDetect.detection.verificationSteps?.map((s: any, j: number) => (
                     <li key={j} className="text-[10px] list-decimal list-outside">
                       <div className="flex items-center justify-between">
                         <span className="font-medium">{s.step}</span>
@@ -395,9 +395,9 @@ export function FraudDetectionPanel({ listingId, imageUrl }: { listingId: string
               </div>
             )}
             {/* Online tools */}
-            {fakeDetect.detection.onlineVerification?.recommendedTools?.length > 0 && (
+            {(fakeDetect.detection.onlineVerification?.recommendedTools?.length ?? 0) > 0 && (
               <div className="text-[10px] text-muted-foreground">
-                🔍 Orodja: {fakeDetect.detection.onlineVerification.recommendedTools.join(' · ')}
+                🔍 Orodja: {fakeDetect.detection.onlineVerification?.recommendedTools?.join(' · ')}
               </div>
             )}
           </div>
@@ -469,14 +469,14 @@ export function FraudDetectionPanel({ listingId, imageUrl }: { listingId: string
               <div className="bg-background/40 border rounded p-1.5">
                 <div className="text-[10px] uppercase text-muted-foreground mb-1">🔗 URL analiza:</div>
                 <div className="space-y-0.5 text-[10px]">
-                  {reverseSearch.search.urlAnalysis.matchedStockDomains?.length > 0 && (
-                    <div className="text-red-500">🚨 Stock domena: {reverseSearch.search.urlAnalysis.matchedStockDomains.join(', ')}</div>
+                  {(reverseSearch.search.urlAnalysis?.matchedStockDomains?.length ?? 0) > 0 && (
+                    <div className="text-red-500">🚨 Stock domena: {reverseSearch.search.urlAnalysis?.matchedStockDomains?.join(', ')}</div>
                   )}
-                  {reverseSearch.search.urlAnalysis.matchedPatterns?.length > 0 && (
-                    <div className="text-amber-400">⚠️ Stock vzorci: {reverseSearch.search.urlAnalysis.matchedPatterns.join(', ')}</div>
+                  {(reverseSearch.search.urlAnalysis?.matchedPatterns?.length ?? 0) > 0 && (
+                    <div className="text-amber-400">⚠️ Stock vzorci: {reverseSearch.search.urlAnalysis?.matchedPatterns?.join(', ')}</div>
                   )}
-                  {reverseSearch.search.urlAnalysis.matchedWatermarks?.length > 0 && (
-                    <div className="text-red-500">🚨 Watermark: {reverseSearch.search.urlAnalysis.matchedWatermarks.join(', ')}</div>
+                  {(reverseSearch.search.urlAnalysis?.matchedWatermarks?.length ?? 0) > 0 && (
+                    <div className="text-red-500">🚨 Watermark: {reverseSearch.search.urlAnalysis?.matchedWatermarks?.join(', ')}</div>
                   )}
                   {reverseSearch.search.urlAnalysis.totalRedFlags === 0 && (
                     <div className="text-primary">✓ URL brez sumljivih vzorcev</div>
@@ -485,11 +485,11 @@ export function FraudDetectionPanel({ listingId, imageUrl }: { listingId: string
               </div>
             )}
             {/* Visual indicators */}
-            {reverseSearch.search.visualIndicators?.length > 0 && (
+            {(reverseSearch.search.visualIndicators?.length ?? 0) > 0 && (
               <div>
                 <div className="text-[10px] uppercase text-muted-foreground mb-1">📊 Vizualni indikatorji:</div>
                 <div className="space-y-0.5">
-                  {reverseSearch.search.visualIndicators.map((v: any, j: number) => (
+                  {reverseSearch.search.visualIndicators?.map((v: any, j: number) => (
                     <div key={j} className="text-[10px] flex items-center justify-between">
                       <span className={cn(v.type === 'authentic' ? 'text-primary' : v.type === 'stock' ? 'text-red-500' : 'text-amber-400')}>
                         {v.type === 'authentic' ? '✓' : v.type === 'stock' ? '🚨' : '⚠️'} {v.indicator}

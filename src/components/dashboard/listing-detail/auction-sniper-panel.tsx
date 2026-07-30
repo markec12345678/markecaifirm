@@ -147,11 +147,11 @@ export function AuctionSniperPanel({ listingId }: { listingId: string }) {
           )}
 
           {/* Signals */}
-          {snipe.strategy.signals?.length > 0 && (
+          {(snipe.strategy.signals?.length ?? 0) > 0 && (
             <div className="bg-blue-400/5 border border-blue-400/20 rounded p-1.5">
               <div className="text-[10px] uppercase text-blue-400 mb-1">📊 Signali:</div>
               <ul className="space-y-0.5 ml-3">
-                {snipe.strategy.signals.map((s: string, i: number) => (
+                {snipe.strategy.signals?.map((s: string, i: number) => (
                   <li key={i} className="text-[10px] list-disc list-outside">{s}</li>
                 ))}
               </ul>
@@ -159,11 +159,11 @@ export function AuctionSniperPanel({ listingId }: { listingId: string }) {
           )}
 
           {/* Contingencies */}
-          {snipe.strategy.contingencies?.length > 0 && (
+          {(snipe.strategy.contingencies?.length ?? 0) > 0 && (
             <div className="bg-amber-400/5 border border-amber-400/20 rounded p-1.5">
               <div className="text-[10px] uppercase text-amber-400 mb-1">🔄 Če ne uspe:</div>
               <ul className="space-y-0.5 ml-3">
-                {snipe.strategy.contingencies.map((c: string, i: number) => (
+                {snipe.strategy.contingencies?.map((c: string, i: number) => (
                   <li key={i} className="text-[10px] list-disc list-outside">{c}</li>
                 ))}
               </ul>
@@ -171,9 +171,9 @@ export function AuctionSniperPanel({ listingId }: { listingId: string }) {
           )}
 
           {/* Market signals */}
-          {snipe.marketSignals?.length > 0 && (
+          {(snipe.marketSignals?.length ?? 0) > 0 && (
             <div className="text-[10px] text-muted-foreground border-t border-border pt-1.5">
-              📈 Tržni signali: {snipe.marketSignals.join(' · ')}
+              📈 Tržni signali: {snipe.marketSignals?.join(' · ')}
             </div>
           )}
         </div>
