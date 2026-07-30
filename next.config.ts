@@ -3,12 +3,12 @@ import type { NextConfig } from "next";
 const nextConfig: NextConfig = {
   output: "standalone",
 
-  // v6.92 FIX: `ignoreBuildErrors: true` odstranjen.
-  // Prej so se TypeScript napake tiho ignorirale pri buildu — claim "0 TS errors" v README
-  // je bil zavajajoč. Sedaj bo build fail-al, če so TS napake.
-  // (types: { ignoreBuildErrors: true } je default, a eksplicitno dokumentiramo)
+  // v7.24: ignoreBuildErrors: false — sedaj ko smo popravili vseh 48 TS napak (0 remaining)
+  // je to varno. Build bo fail-al, če kdorkoli vnese novo TS napako.
+  // Prej (v6.92-v7.21) je bil true, ker so bile pre-existing napake (playwright, TS18048).
+  // PR #31 (v7.22) je popravil vse napake → sedaj lahko false.
   typescript: {
-    ignoreBuildErrors: true,
+    ignoreBuildErrors: false,
   },
 
   // v6.92 FIX: `reactStrictMode: false` odstranjen (default je true).
