@@ -23,7 +23,7 @@ import { Label } from '@/components/ui/label';
 import {
   Select, SelectContent, SelectItem, SelectTrigger, SelectValue,
 } from '@/components/ui/select';
-import { RefreshCw, Camera, FileText, Search, Flame, MousePointerClick, Sparkles, Image as ImageIcon } from 'lucide-react';
+import { RefreshCw, Camera, FileText, Search, Flame, MousePointerClick, Sparkles, Image as ImageIcon, Type, Tag, ImagePlus, Users, RefreshCw as RefreshIcon } from 'lucide-react';
 import { toast } from 'sonner';
 import { cn } from '@/lib/utils';
 
@@ -50,6 +50,17 @@ export function ListingOptimizationView() {
   const [viralityLoading, setViralityLoading] = useState(false);
   const [ctrOpt, setCtrOpt] = useState<any>(null);
   const [ctrOptLoading, setCtrOptLoading] = useState(false);
+  // v7.15: 5 novih listing AI funkcij
+  const [titleGen, setTitleGen] = useState<any>(null);
+  const [titleGenLoading, setTitleGenLoading] = useState(false);
+  const [tagOpt, setTagOpt] = useState<any>(null);
+  const [tagOptLoading, setTagOptLoading] = useState(false);
+  const [thumbnailOpt, setThumbnailOpt] = useState<any>(null);
+  const [thumbnailOptLoading, setThumbnailOptLoading] = useState(false);
+  const [socialProof, setSocialProof] = useState<any>(null);
+  const [socialProofLoading, setSocialProofLoading] = useState(false);
+  const [refresh, setRefresh] = useState<any>(null);
+  const [refreshLoading, setRefreshLoading] = useState(false);
 
   const load = useCallback(async () => {
     try {
@@ -129,9 +140,16 @@ export function ListingOptimizationView() {
     finally { setCtrOptLoading(false); }
   };
 
+  // v7.15: 6-10. Pet novih listing AI funkcij
+  const runTitleGen = async () => { if (!selectedTradeId) { toast.error('Izberi item'); return; } setTitleGenLoading(true); setTitleGen(null); try { const r = await fetch('/api/ai/listing-title-generator-v2', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ tradeId: selectedTradeId }) }); const d = await r.json(); if (d.ok) { setTitleGen(d); toast.success('✓ Naslovi generirani'); } else toast.error(d.error ?? 'Napaka'); } catch (e: any) { toast.error(e?.message ?? 'Napaka'); } finally { setTitleGenLoading(false); } };
+  const runTagOpt = async () => { if (!selectedTradeId) { toast.error('Izberi item'); return; } setTagOptLoading(true); setTagOpt(null); try { const r = await fetch('/api/ai/listing-tag-optimizer', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ tradeId: selectedTradeId }) }); const d = await r.json(); if (d.ok) { setTagOpt(d); toast.success('✓ Tag optimizacija generirana'); } else toast.error(d.error ?? 'Napaka'); } catch (e: any) { toast.error(e?.message ?? 'Napaka'); } finally { setTagOptLoading(false); } };
+  const runThumbnailOpt = async () => { if (!selectedTradeId) { toast.error('Izberi item'); return; } setThumbnailOptLoading(true); setThumbnailOpt(null); try { const r = await fetch('/api/ai/listing-thumbnail-optimizer', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ tradeId: selectedTradeId }) }); const d = await r.json(); if (d.ok) { setThumbnailOpt(d); toast.success('✓ Thumbnail optimizacija generirana'); } else toast.error(d.error ?? 'Napaka'); } catch (e: any) { toast.error(e?.message ?? 'Napaka'); } finally { setThumbnailOptLoading(false); } };
+  const runSocialProof = async () => { if (!selectedTradeId) { toast.error('Izberi item'); return; } setSocialProofLoading(true); setSocialProof(null); try { const r = await fetch('/api/ai/listing-social-proof-optimizer', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ tradeId: selectedTradeId }) }); const d = await r.json(); if (d.ok) { setSocialProof(d); toast.success('✓ Social proof generiran'); } else toast.error(d.error ?? 'Napaka'); } catch (e: any) { toast.error(e?.message ?? 'Napaka'); } finally { setSocialProofLoading(false); } };
+  const runRefresh = async () => { if (!selectedTradeId) { toast.error('Izberi item'); return; } setRefreshLoading(true); setRefresh(null); try { const r = await fetch('/api/ai/listing-refresh', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ tradeId: selectedTradeId }) }); const d = await r.json(); if (d.ok) { setRefresh(d); toast.success('✓ Refresh strategija generirana'); } else toast.error(d.error ?? 'Napaka'); } catch (e: any) { toast.error(e?.message ?? 'Napaka'); } finally { setRefreshLoading(false); } };
+
   const runAll = async () => {
     if (!selectedTradeId) { toast.error('Izberi item'); return; }
-    await Promise.all([runImageGen(), runDescGen(), runSeoOpt(), runVirality(), runCtrOpt()]);
+    await Promise.all([runImageGen(), runDescGen(), runSeoOpt(), runVirality(), runCtrOpt(), runTitleGen(), runTagOpt(), runThumbnailOpt(), runSocialProof(), runRefresh()]);
   };
 
   if (loading) {
@@ -368,6 +386,161 @@ export function ListingOptimizationView() {
               </div>
             ) : (
               <p className="text-xs text-muted-foreground text-center py-4">AI optimizira click-through rate (naslovi, thumbnaili, časi objave, A/B testi).</p>
+            )}
+          </CardContent>
+        </Card>
+      </div>
+
+      {/* v7.15: 5 novih listing AI panelov */}
+      <div className="grid md:grid-cols-2 gap-4">
+        {/* 6. Title Generator v2 */}
+        <Card>
+          <CardHeader>
+            <CardTitle className="text-sm flex items-center justify-between">
+              <span className="flex items-center gap-2"><Type className="w-4 h-4 text-primary" /> AI Title Generator v2</span>
+              <Button size="sm" variant="outline" onClick={runTitleGen} disabled={titleGenLoading} className="h-6 text-xs gap-1.5">
+                {titleGenLoading ? <RefreshCw className="w-3 h-3 animate-spin" /> : <Type className="w-3 h-3" />} Generiraj
+              </Button>
+            </CardTitle>
+          </CardHeader>
+          <CardContent>
+            {titleGenLoading ? (
+              <div className="py-4 text-center text-xs text-muted-foreground"><RefreshCw className="w-4 h-4 mx-auto mb-1 animate-spin opacity-50" /> AI generira naslove...</div>
+            ) : titleGen?.generator ? (
+              <div className="space-y-2 text-xs">
+                {titleGen.generator.titles?.slice(0, 4).map((t: any, i: number) => (
+                  <div key={i} className="bg-card/30 border rounded p-2">
+                    <div className="flex items-center justify-between mb-1">
+                      <span className="text-[10px] font-medium">{t.title || t.text}</span>
+                      {t.score != null && <Badge variant="outline" className="text-[9px] text-primary border-primary/30">{t.score}/100</Badge>}
+                    </div>
+                    {t.reason && <div className="text-[9px] text-muted-foreground">{t.reason}</div>}
+                  </div>
+                ))}
+                {titleGen.generator.insights && <div className="text-[9px] text-muted-foreground">💡 {titleGen.generator.insights}</div>}
+              </div>
+            ) : (
+              <p className="text-xs text-muted-foreground text-center py-4">AI generira optimizirane naslove z A/B test scoring.</p>
+            )}
+          </CardContent>
+        </Card>
+
+        {/* 7. Tag Optimizer */}
+        <Card>
+          <CardHeader>
+            <CardTitle className="text-sm flex items-center justify-between">
+              <span className="flex items-center gap-2"><Tag className="w-4 h-4 text-blue-400" /> AI Tag Optimizer</span>
+              <Button size="sm" variant="outline" onClick={runTagOpt} disabled={tagOptLoading} className="h-6 text-xs gap-1.5">
+                {tagOptLoading ? <RefreshCw className="w-3 h-3 animate-spin" /> : <Tag className="w-3 h-3" />} Generiraj
+              </Button>
+            </CardTitle>
+          </CardHeader>
+          <CardContent>
+            {tagOptLoading ? (
+              <div className="py-4 text-center text-xs text-muted-foreground"><RefreshCw className="w-4 h-4 mx-auto mb-1 animate-spin opacity-50" /> AI optimizira oznake...</div>
+            ) : tagOpt?.optimizer ? (
+              <div className="space-y-2 text-xs">
+                <div className="flex flex-wrap gap-1">
+                  {tagOpt.optimizer.suggestedTags?.slice(0, 8).map((t: string, i: number) => (
+                    <Badge key={i} variant="outline" className="text-[9px] text-blue-400 border-blue-400/30">{t}</Badge>
+                  ))}
+                </div>
+                {tagOpt.optimizer.insights && <div className="text-[9px] text-muted-foreground">💡 {tagOpt.optimizer.insights}</div>}
+              </div>
+            ) : (
+              <p className="text-xs text-muted-foreground text-center py-4">AI optimizira oznake/Tag-e za boljšo vidljivost.</p>
+            )}
+          </CardContent>
+        </Card>
+
+        {/* 8. Thumbnail Optimizer */}
+        <Card>
+          <CardHeader>
+            <CardTitle className="text-sm flex items-center justify-between">
+              <span className="flex items-center gap-2"><ImagePlus className="w-4 h-4 text-purple-400" /> AI Thumbnail Optimizer</span>
+              <Button size="sm" variant="outline" onClick={runThumbnailOpt} disabled={thumbnailOptLoading} className="h-6 text-xs gap-1.5">
+                {thumbnailOptLoading ? <RefreshCw className="w-3 h-3 animate-spin" /> : <ImagePlus className="w-3 h-3" />} Generiraj
+              </Button>
+            </CardTitle>
+          </CardHeader>
+          <CardContent>
+            {thumbnailOptLoading ? (
+              <div className="py-4 text-center text-xs text-muted-foreground"><RefreshCw className="w-4 h-4 mx-auto mb-1 animate-spin opacity-50" /> AI optimizira thumbnail...</div>
+            ) : thumbnailOpt?.optimizer ? (
+              <div className="space-y-2 text-xs">
+                {thumbnailOpt.optimizer.recommendations?.slice(0, 3).map((r: any, i: number) => (
+                  <div key={i} className="bg-purple-500/5 border border-purple-500/20 rounded p-2">
+                    <div className="text-[10px] font-medium text-purple-400">{r.action || r.type}</div>
+                    <div className="text-[9px] text-muted-foreground">{r.description || r.detail}</div>
+                  </div>
+                ))}
+                {thumbnailOpt.optimizer.insights && <div className="text-[9px] text-muted-foreground">💡 {thumbnailOpt.optimizer.insights}</div>}
+              </div>
+            ) : (
+              <p className="text-xs text-muted-foreground text-center py-4">AI optimizira thumbnail sliko za večji CTR.</p>
+            )}
+          </CardContent>
+        </Card>
+
+        {/* 9. Social Proof Optimizer */}
+        <Card>
+          <CardHeader>
+            <CardTitle className="text-sm flex items-center justify-between">
+              <span className="flex items-center gap-2"><Users className="w-4 h-4 text-primary" /> AI Social Proof Optimizer</span>
+              <Button size="sm" variant="outline" onClick={runSocialProof} disabled={socialProofLoading} className="h-6 text-xs gap-1.5">
+                {socialProofLoading ? <RefreshCw className="w-3 h-3 animate-spin" /> : <Users className="w-3 h-3" />} Generiraj
+              </Button>
+            </CardTitle>
+          </CardHeader>
+          <CardContent>
+            {socialProofLoading ? (
+              <div className="py-4 text-center text-xs text-muted-foreground"><RefreshCw className="w-4 h-4 mx-auto mb-1 animate-spin opacity-50" /> AI dodaja social proof...</div>
+            ) : socialProof?.optimizer ? (
+              <div className="space-y-2 text-xs">
+                {socialProof.optimizer.elements?.slice(0, 3).map((e: any, i: number) => (
+                  <div key={i} className="bg-primary/5 border border-primary/20 rounded p-2">
+                    <div className="text-[10px] font-medium text-primary">{e.type || e.element}</div>
+                    <div className="text-[9px] text-muted-foreground">{e.content || e.description}</div>
+                  </div>
+                ))}
+                {socialProof.optimizer.insights && <div className="text-[9px] text-muted-foreground">💡 {socialProof.optimizer.insights}</div>}
+              </div>
+            ) : (
+              <p className="text-xs text-muted-foreground text-center py-4">AI doda social proof elemente (review-i, rating-i, trust badges).</p>
+            )}
+          </CardContent>
+        </Card>
+
+        {/* 10. Listing Refresh */}
+        <Card className="md:col-span-2">
+          <CardHeader>
+            <CardTitle className="text-sm flex items-center justify-between">
+              <span className="flex items-center gap-2"><RefreshIcon className="w-4 h-4 text-amber-400" /> AI Listing Refresh</span>
+              <Button size="sm" variant="outline" onClick={runRefresh} disabled={refreshLoading} className="h-6 text-xs gap-1.5">
+                {refreshLoading ? <RefreshCw className="w-3 h-3 animate-spin" /> : <RefreshIcon className="w-3 h-3" />} Generiraj
+              </Button>
+            </CardTitle>
+          </CardHeader>
+          <CardContent>
+            {refreshLoading ? (
+              <div className="py-4 text-center text-xs text-muted-foreground"><RefreshCw className="w-4 h-4 mx-auto mb-1 animate-spin opacity-50" /> AI pripravlja refresh strategijo...</div>
+            ) : refresh ? (
+              <div className="space-y-2 text-xs">
+                {refresh.strategy && (
+                  <div className="bg-amber-400/5 border border-amber-400/20 rounded p-2">
+                    <div className="text-[10px] font-medium text-amber-400">Strategija: {refresh.strategy}</div>
+                  </div>
+                )}
+                {refresh.actions?.slice(0, 3).map((a: any, i: number) => (
+                  <div key={i} className="flex items-center justify-between bg-card/30 border rounded p-1.5">
+                    <span className="text-[10px]">{a.action || a.description}</span>
+                    {a.impact && <Badge variant="outline" className="text-[9px] text-primary border-primary/30">{a.impact}</Badge>}
+                  </div>
+                ))}
+                {refresh.insights && <div className="text-[9px] text-muted-foreground">💡 {refresh.insights}</div>}
+              </div>
+            ) : (
+              <p className="text-xs text-muted-foreground text-center py-4">AI pripravi strategijo za osvežitev oglasa (nov naslov, slika, cena) za boljši ranking.</p>
             )}
           </CardContent>
         </Card>
