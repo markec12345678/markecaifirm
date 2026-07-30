@@ -341,6 +341,7 @@ export async function runMonitor(monitorId: string): Promise<RunResult> {
                 title: `📉 Cena padla: ${existing.title.slice(0, 50)}`,
                 body: `${newListings.priceText} (prej ${existing.priceText}) — ${dropPct}% nižje!`,
                 url: '/alerts',
+                priority: 'high',
               });
             } catch { /* push failures ne vplivajo */ }
           }
@@ -447,6 +448,7 @@ export async function runMonitor(monitorId: string): Promise<RunResult> {
               title: `🎯 Ciljna cena dosežena: ${l.title.slice(0, 50)}`,
               body: `${l.priceText} — cilj ${l.targetPrice}€, ${savings}€ pod ciljem!`,
               url: '/alerts',
+              priority: 'critical',
             });
           } catch { /* push failures ne vplivajo */ }
         }
@@ -629,6 +631,7 @@ export async function runMonitor(monitorId: string): Promise<RunResult> {
                     title: `${evaluation.verdict === 'PRILIKA' ? '🎯' : evaluation.verdict === 'SUMNJIVO' ? '⚠️' : '•'} ${listing.title.slice(0, 60)}`,
                     body: `${listing.priceText} • ${monitor.name} (prilika ${evaluation.ocena_prilike}/10, tveganje ${evaluation.ocena_tveganja}/10)`,
                     url: '/alerts',
+                    priority: isHighPriority ? 'critical' : 'medium',
                   });
                 } else {
                   await sendSmartPush();
