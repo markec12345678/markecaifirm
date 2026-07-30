@@ -17,7 +17,7 @@ import { useEffect, useState, useCallback } from 'react';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
-import { RefreshCw, Shield, Umbrella, Waves, Scale, ShieldCheck, Sparkles } from 'lucide-react';
+import { RefreshCw, Shield, Umbrella, Waves, Scale, ShieldCheck, Sparkles, FileClaim, AlertCircle, ClipboardCheck, BarChart3 } from 'lucide-react';
 import { toast } from 'sonner';
 import { cn } from '@/lib/utils';
 
@@ -43,6 +43,17 @@ export function RiskView() {
   const [parityLoading, setParityLoading] = useState(false);
   const [guardian, setGuardian] = useState<any>(null);
   const [guardianLoading, setGuardianLoading] = useState(false);
+  // v7.16: 5 novih risk AI funkcij
+  const [claim, setClaim] = useState<any>(null);
+  const [claimLoading, setClaimLoading] = useState(false);
+  const [anomalies, setAnomalies] = useState<any>(null);
+  const [anomaliesLoading, setAnomaliesLoading] = useState(false);
+  const [invRisk, setInvRisk] = useState<any>(null);
+  const [invRiskLoading, setInvRiskLoading] = useState(false);
+  const [qualityPred, setQualityPred] = useState<any>(null);
+  const [qualityPredLoading, setQualityPredLoading] = useState(false);
+  const [qualityAgg, setQualityAgg] = useState<any>(null);
+  const [qualityAggLoading, setQualityAggLoading] = useState(false);
 
   const load = useCallback(async () => {
     try {
@@ -125,8 +136,15 @@ export function RiskView() {
     finally { setGuardianLoading(false); }
   };
 
+  // v7.16: 6-10. Pet novih risk AI funkcij
+  const runClaim = async () => { setClaimLoading(true); setClaim(null); try { const r = await fetch('/api/ai/insurance-claim', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: '{}' }); const d = await r.json(); if (d.ok) { setClaim(d); toast.success('✓ Claim analiza generirana'); } else toast.error(d.error ?? 'Napaka'); } catch (e: any) { toast.error(e?.message ?? 'Napaka'); } finally { setClaimLoading(false); } };
+  const runAnomalies = async () => { setAnomaliesLoading(true); setAnomalies(null); try { const r = await fetch('/api/ai/detect-anomalies', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: '{}' }); const d = await r.json(); if (d.ok) { setAnomalies(d); toast.success('✓ Anomalije detektirane'); } else toast.error(d.error ?? 'Napaka'); } catch (e: any) { toast.error(e?.message ?? 'Napaka'); } finally { setAnomaliesLoading(false); } };
+  const runInvRisk = async () => { setInvRiskLoading(true); setInvRisk(null); try { const r = await fetch('/api/ai/inventory-risk-assessor', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: '{}' }); const d = await r.json(); if (d.ok) { setInvRisk(d); toast.success('✓ Inventory risk ocenjen'); } else toast.error(d.error ?? 'Napaka'); } catch (e: any) { toast.error(e?.message ?? 'Napaka'); } finally { setInvRiskLoading(false); } };
+  const runQualityPred = async () => { setQualityPredLoading(true); setQualityPred(null); try { const r = await fetch('/api/ai/quality-predictor', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: '{}' }); const d = await r.json(); if (d.ok) { setQualityPred(d); toast.success('✓ Quality napoved generirana'); } else toast.error(d.error ?? 'Napaka'); } catch (e: any) { toast.error(e?.message ?? 'Napaka'); } finally { setQualityPredLoading(false); } };
+  const runQualityAgg = async () => { setQualityAggLoading(true); setQualityAgg(null); try { const r = await fetch('/api/ai/quality-aggregator', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: '{}' }); const d = await r.json(); if (d.ok) { setQualityAgg(d); toast.success('✓ Quality aggregator generiran'); } else toast.error(d.error ?? 'Napaka'); } catch (e: any) { toast.error(e?.message ?? 'Napaka'); } finally { setQualityAggLoading(false); } };
+
   const runAll = async () => {
-    await Promise.all([runHedging(), runInsurance(), runSaturation(), runParity(), runGuardian()]);
+    await Promise.all([runHedging(), runInsurance(), runSaturation(), runParity(), runGuardian(), runClaim(), runAnomalies(), runInvRisk(), runQualityPred(), runQualityAgg()]);
   };
 
   if (loading) {
@@ -384,6 +402,178 @@ export function RiskView() {
               <p className="text-xs text-muted-foreground text-center py-4">
                 AI avtomatsko spremlja marže in opozarja na iteme z nizko/zapadajočo maržo.
               </p>
+            )}
+          </CardContent>
+        </Card>
+      </div>
+
+      {/* v7.16: 5 novih risk AI panelov */}
+      <div className="grid md:grid-cols-2 gap-4">
+        {/* 6. Insurance Claim */}
+        <Card>
+          <CardHeader>
+            <CardTitle className="text-sm flex items-center justify-between">
+              <span className="flex items-center gap-2"><FileClaim className="w-4 h-4 text-blue-400" /> AI Insurance Claim</span>
+              <Button size="sm" variant="outline" onClick={runClaim} disabled={claimLoading} className="h-6 text-xs gap-1.5">
+                {claimLoading ? <RefreshCw className="w-3 h-3 animate-spin" /> : <FileClaim className="w-3 h-3" />} Generiraj
+              </Button>
+            </CardTitle>
+          </CardHeader>
+          <CardContent>
+            {claimLoading ? (
+              <div className="py-4 text-center text-xs text-muted-foreground"><RefreshCw className="w-4 h-4 mx-auto mb-1 animate-spin opacity-50" /> AI analizira zavarovalne zahtevke...</div>
+            ) : claim ? (
+              <div className="space-y-2 text-xs">
+                {claim.claims?.slice(0, 3).map((c: any, i: number) => (
+                  <div key={i} className="bg-card/30 border rounded p-2">
+                    <div className="flex items-center justify-between mb-1">
+                      <span className="text-[10px] font-medium">{c.type || c.category}</span>
+                      <Badge variant="outline" className={cn('text-[9px]', c.approved ? 'text-primary border-primary/30' : 'text-amber-400 border-amber-400/30')}>{c.status || (c.approved ? 'Odobren' : 'Čaka')}</Badge>
+                    </div>
+                    <div className="text-[9px] text-muted-foreground">{c.amount ?? '?'}€ — {c.reason || c.description}</div>
+                  </div>
+                ))}
+                {claim.insights && <div className="text-[9px] text-muted-foreground">💡 {claim.insights}</div>}
+              </div>
+            ) : (
+              <p className="text-xs text-muted-foreground text-center py-4">AI analizira zavarovalne zahtevke (odobritev, znesek, utemeljitev).</p>
+            )}
+          </CardContent>
+        </Card>
+
+        {/* 7. Detect Anomalies */}
+        <Card>
+          <CardHeader>
+            <CardTitle className="text-sm flex items-center justify-between">
+              <span className="flex items-center gap-2"><AlertCircle className="w-4 h-4 text-red-500" /> AI Anomaly Detection</span>
+              <Button size="sm" variant="outline" onClick={runAnomalies} disabled={anomaliesLoading} className="h-6 text-xs gap-1.5">
+                {anomaliesLoading ? <RefreshCw className="w-3 h-3 animate-spin" /> : <AlertCircle className="w-3 h-3" />} Generiraj
+              </Button>
+            </CardTitle>
+          </CardHeader>
+          <CardContent>
+            {anomaliesLoading ? (
+              <div className="py-4 text-center text-xs text-muted-foreground"><RefreshCw className="w-4 h-4 mx-auto mb-1 animate-spin opacity-50" /> AI detektira anomalije...</div>
+            ) : anomalies?.anomalies?.length > 0 ? (
+              <div className="space-y-2 text-xs">
+                {anomalies.anomalies.slice(0, 4).map((a: any, i: number) => (
+                  <div key={i} className={cn('border rounded p-2', a.severity === 'critical' ? 'bg-red-500/5 border-red-500/20' : 'bg-card/30 border-border')}>
+                    <div className="flex items-center justify-between mb-1">
+                      <span className="text-[10px] font-medium truncate flex-1">{a.title || a.description}</span>
+                      <Badge variant="outline" className={cn('text-[9px] ml-1', a.severity === 'critical' ? 'text-red-500 border-red-500/30' : a.severity === 'high' ? 'text-amber-400 border-amber-400/30' : 'text-muted-foreground')}>{a.severity}</Badge>
+                    </div>
+                    <div className="text-[9px] text-muted-foreground">{a.action || a.recommendation}</div>
+                  </div>
+                ))}
+                {anomalies.insights && <div className="text-[9px] text-muted-foreground">💡 {anomalies.insights}</div>}
+              </div>
+            ) : (
+              <p className="text-xs text-muted-foreground text-center py-4">AI detektira anomalije v cenah, vedenju, vzorcih nakupov.</p>
+            )}
+          </CardContent>
+        </Card>
+
+        {/* 8. Inventory Risk Assessor */}
+        <Card>
+          <CardHeader>
+            <CardTitle className="text-sm flex items-center justify-between">
+              <span className="flex items-center gap-2"><Shield className="w-4 h-4 text-amber-400" /> AI Inventory Risk Assessor</span>
+              <Button size="sm" variant="outline" onClick={runInvRisk} disabled={invRiskLoading} className="h-6 text-xs gap-1.5">
+                {invRiskLoading ? <RefreshCw className="w-3 h-3 animate-spin" /> : <Shield className="w-3 h-3" />} Generiraj
+              </Button>
+            </CardTitle>
+          </CardHeader>
+          <CardContent>
+            {invRiskLoading ? (
+              <div className="py-4 text-center text-xs text-muted-foreground"><RefreshCw className="w-4 h-4 mx-auto mb-1 animate-spin opacity-50" /> AI ocenjuje tveganja inventarja...</div>
+            ) : invRisk?.assessor ? (
+              <div className="space-y-2 text-xs">
+                {invRisk.assessor.risks?.slice(0, 3).map((r: any, i: number) => (
+                  <div key={i} className="bg-card/30 border rounded p-2">
+                    <div className="flex items-center justify-between mb-1">
+                      <span className="text-[10px] font-medium">{r.risk || r.type}</span>
+                      <Badge variant="outline" className={cn('text-[9px]', (r.score ?? r.probability ?? 0) >= 70 ? 'text-red-500 border-red-500/30' : 'text-amber-400 border-amber-400/30')}>{r.score ?? r.probability ?? '?'}%</Badge>
+                    </div>
+                    <div className="text-[9px] text-muted-foreground">{r.mitigation || r.action}</div>
+                  </div>
+                ))}
+                {invRisk.assessor.insights && <div className="text-[9px] text-muted-foreground">💡 {invRisk.assessor.insights}</div>}
+              </div>
+            ) : (
+              <p className="text-xs text-muted-foreground text-center py-4">AI oceni tveganja inventarja (poškodbe, zastaranje, krađa, likvidnost).</p>
+            )}
+          </CardContent>
+        </Card>
+
+        {/* 9. Quality Predictor */}
+        <Card>
+          <CardHeader>
+            <CardTitle className="text-sm flex items-center justify-between">
+              <span className="flex items-center gap-2"><ClipboardCheck className="w-4 h-4 text-primary" /> AI Quality Predictor</span>
+              <Button size="sm" variant="outline" onClick={runQualityPred} disabled={qualityPredLoading} className="h-6 text-xs gap-1.5">
+                {qualityPredLoading ? <RefreshCw className="w-3 h-3 animate-spin" /> : <ClipboardCheck className="w-3 h-3" />} Generiraj
+              </Button>
+            </CardTitle>
+          </CardHeader>
+          <CardContent>
+            {qualityPredLoading ? (
+              <div className="py-4 text-center text-xs text-muted-foreground"><RefreshCw className="w-4 h-4 mx-auto mb-1 animate-spin opacity-50" /> AI napoveduje kakovost...</div>
+            ) : qualityPred?.prediction ? (
+              <div className="space-y-2 text-xs">
+                <div className="bg-primary/10 border border-primary/30 rounded p-2">
+                  <div className="flex items-center justify-between">
+                    <span className="text-[10px] uppercase text-primary font-bold">Quality Score</span>
+                    <span className="font-mono font-bold text-primary text-lg">{qualityPred.prediction.score ?? qualityPred.prediction.qualityScore ?? '?'}/100</span>
+                  </div>
+                </div>
+                {qualityPred.prediction.factors?.slice(0, 3).map((f: any, i: number) => (
+                  <div key={i} className="flex items-center justify-between bg-card/30 border rounded p-1.5">
+                    <span className="text-[10px]">{f.factor || f.name}</span>
+                    <span className="font-mono text-[10px] text-primary">{f.score ?? f.value}/10</span>
+                  </div>
+                ))}
+                {qualityPred.prediction.insights && <div className="text-[9px] text-muted-foreground">💡 {qualityPred.prediction.insights}</div>}
+              </div>
+            ) : (
+              <p className="text-xs text-muted-foreground text-center py-4">AI napove kakovost item-a pred nakupom (score 0-100, faktorji).</p>
+            )}
+          </CardContent>
+        </Card>
+
+        {/* 10. Quality Aggregator */}
+        <Card className="md:col-span-2">
+          <CardHeader>
+            <CardTitle className="text-sm flex items-center justify-between">
+              <span className="flex items-center gap-2"><BarChart3 className="w-4 h-4 text-blue-400" /> AI Quality Aggregator</span>
+              <Button size="sm" variant="outline" onClick={runQualityAgg} disabled={qualityAggLoading} className="h-6 text-xs gap-1.5">
+                {qualityAggLoading ? <RefreshCw className="w-3 h-3 animate-spin" /> : <BarChart3 className="w-3 h-3" />} Generiraj
+              </Button>
+            </CardTitle>
+          </CardHeader>
+          <CardContent>
+            {qualityAggLoading ? (
+              <div className="py-4 text-center text-xs text-muted-foreground"><RefreshCw className="w-4 h-4 mx-auto mb-1 animate-spin opacity-50" /> AI agregira kakovost...</div>
+            ) : qualityAgg?.aggregator ? (
+              <div className="space-y-2 text-xs">
+                <div className="bg-blue-400/5 border border-blue-400/20 rounded p-2">
+                  <div className="flex items-center justify-between">
+                    <span className="text-[10px] uppercase text-blue-400">Skupna kakovost</span>
+                    <span className="font-mono font-bold text-blue-400">{qualityAgg.aggregator.overallScore ?? qualityAgg.aggregator.aggregateScore ?? '?'}/100</span>
+                  </div>
+                </div>
+                {qualityAgg.aggregator.categories?.slice(0, 4).map((c: any, i: number) => (
+                  <div key={i} className="flex items-center justify-between bg-card/30 border rounded p-1.5">
+                    <span className="text-[10px] font-medium">{c.category || c.name}</span>
+                    <div className="flex items-center gap-2">
+                      <span className="text-[9px] text-muted-foreground">{c.itemCount ?? c.count} itemov</span>
+                      <span className="font-mono text-primary text-[10px]">{c.avgScore ?? c.score ?? '?'}/100</span>
+                    </div>
+                  </div>
+                ))}
+                {qualityAgg.aggregator.insights && <div className="text-[9px] text-muted-foreground">💡 {qualityAgg.aggregator.insights}</div>}
+              </div>
+            ) : (
+              <p className="text-xs text-muted-foreground text-center py-4">AI agregira kakovost vsega inventarja (po kategorijah, skupni score).</p>
             )}
           </CardContent>
         </Card>
