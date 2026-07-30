@@ -18,7 +18,7 @@ import { useEffect, useState, useCallback } from 'react';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
-import { RefreshCw, DollarSign, TrendingUp, Percent, Swords, Calendar, Sparkles } from 'lucide-react';
+import { RefreshCw, DollarSign, TrendingUp, Percent, Swords, Calendar, Sparkles, BarChart3, BookOpen, Target, MapPin, Brain } from 'lucide-react';
 import { toast } from 'sonner';
 import { cn } from '@/lib/utils';
 
@@ -46,6 +46,17 @@ export function PricingView() {
   const [priceWarLoading, setPriceWarLoading] = useState(false);
   const [seasonal, setSeasonal] = useState<any>(null);
   const [seasonalLoading, setSeasonalLoading] = useState(false);
+  // v7.14: 5 novih pricing AI funkcij
+  const [profitDash, setProfitDash] = useState<any>(null);
+  const [profitDashLoading, setProfitDashLoading] = useState(false);
+  const [playbook, setPlaybook] = useState<any>(null);
+  const [playbookLoading, setPlaybookLoading] = useState(false);
+  const [reservePrice, setReservePrice] = useState<any>(null);
+  const [reservePriceLoading, setReservePriceLoading] = useState(false);
+  const [psychology, setPsychology] = useState<any>(null);
+  const [psychologyLoading, setPsychologyLoading] = useState(false);
+  const [geoPrice, setGeoPrice] = useState<any>(null);
+  const [geoPriceLoading, setGeoPriceLoading] = useState(false);
 
   const load = useCallback(async () => {
     try {
@@ -128,8 +139,15 @@ export function PricingView() {
     finally { setSeasonalLoading(false); }
   };
 
+  // v7.14: 6-10. Pet novih pricing AI funkcij
+  const runProfitDash = async () => { setProfitDashLoading(true); setProfitDash(null); try { const r = await fetch('/api/ai/profit-dashboard', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: '{}' }); const d = await r.json(); if (d.ok) { setProfitDash(d); toast.success('✓ Profit dashboard generiran'); } else toast.error(d.error ?? 'Napaka'); } catch (e: any) { toast.error(e?.message ?? 'Napaka'); } finally { setProfitDashLoading(false); } };
+  const runPlaybook = async () => { setPlaybookLoading(true); setPlaybook(null); try { const r = await fetch('/api/ai/profit-playbook', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: '{}' }); const d = await r.json(); if (d.ok) { setPlaybook(d); toast.success('✓ Profit playbook generiran'); } else toast.error(d.error ?? 'Napaka'); } catch (e: any) { toast.error(e?.message ?? 'Napaka'); } finally { setPlaybookLoading(false); } };
+  const runReservePrice = async () => { setReservePriceLoading(true); setReservePrice(null); try { const r = await fetch('/api/ai/reserve-price-optimizer', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: '{}' }); const d = await r.json(); if (d.ok) { setReservePrice(d); toast.success('✓ Reserve price generiran'); } else toast.error(d.error ?? 'Napaka'); } catch (e: any) { toast.error(e?.message ?? 'Napaka'); } finally { setReservePriceLoading(false); } };
+  const runPsychology = async () => { setPsychologyLoading(true); setPsychology(null); try { const r = await fetch('/api/ai/pricing-psychology-optimizer', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: '{}' }); const d = await r.json(); if (d.ok) { setPsychology(d); toast.success('✓ Pricing psychology generiran'); } else toast.error(d.error ?? 'Napaka'); } catch (e: any) { toast.error(e?.message ?? 'Napaka'); } finally { setPsychologyLoading(false); } };
+  const runGeoPrice = async () => { setGeoPriceLoading(true); setGeoPrice(null); try { const r = await fetch('/api/ai/geo-price-map', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: '{}' }); const d = await r.json(); if (d.ok) { setGeoPrice(d); toast.success('✓ Geo price map generiran'); } else toast.error(d.error ?? 'Napaka'); } catch (e: any) { toast.error(e?.message ?? 'Napaka'); } finally { setGeoPriceLoading(false); } };
+
   const runAll = async () => {
-    await Promise.all([runSmartPricing(), runForecast(), runMargin(), runPriceWar(), runSeasonal()]);
+    await Promise.all([runSmartPricing(), runForecast(), runMargin(), runPriceWar(), runSeasonal(), runProfitDash(), runPlaybook(), runReservePrice(), runPsychology(), runGeoPrice()]);
   };
 
   if (loading) {
@@ -482,6 +500,161 @@ export function PricingView() {
               <p className="text-xs text-muted-foreground text-center py-4">
                 AI analizira sezonske vzorce cen (12-mesečni patterni, 4 letni časi: Zima/Pomlad/Poletje/Jesen).
               </p>
+            )}
+          </CardContent>
+        </Card>
+      </div>
+
+      {/* v7.14: 5 novih pricing AI panelov */}
+      <div className="grid md:grid-cols-2 gap-4">
+        {/* 6. Profit Dashboard */}
+        <Card>
+          <CardHeader>
+            <CardTitle className="text-sm flex items-center justify-between">
+              <span className="flex items-center gap-2"><BarChart3 className="w-4 h-4 text-primary" /> AI Profit Dashboard</span>
+              <Button size="sm" variant="outline" onClick={runProfitDash} disabled={profitDashLoading} className="h-6 text-xs gap-1.5">
+                {profitDashLoading ? <RefreshCw className="w-3 h-3 animate-spin" /> : <BarChart3 className="w-3 h-3" />} Generiraj
+              </Button>
+            </CardTitle>
+          </CardHeader>
+          <CardContent>
+            {profitDashLoading ? (
+              <div className="py-4 text-center text-xs text-muted-foreground"><RefreshCw className="w-4 h-4 mx-auto mb-1 animate-spin opacity-50" /> AI gradi profit dashboard...</div>
+            ) : profitDash?.dashboard ? (
+              <div className="space-y-2 text-xs">
+                {profitDash.dashboard.summary && (
+                  <div className="bg-primary/5 border border-primary/20 rounded p-2 text-[10px]">💡 {profitDash.dashboard.summary}</div>
+                )}
+                {profitDash.dashboard.metrics?.slice(0, 4).map((m: any, i: number) => (
+                  <div key={i} className="flex items-center justify-between bg-card/30 border rounded p-1.5">
+                    <span className="text-[10px]">{m.label || m.name}</span>
+                    <span className="font-mono text-primary text-[10px]">{m.value}{m.unit ?? '€'}</span>
+                  </div>
+                ))}
+                {profitDash.dashboard.insights && <div className="text-[9px] text-muted-foreground">💡 {profitDash.dashboard.insights}</div>}
+              </div>
+            ) : (
+              <p className="text-xs text-muted-foreground text-center py-4">AI zgradi celovit profit dashboard z metrikami.</p>
+            )}
+          </CardContent>
+        </Card>
+
+        {/* 7. Profit Playbook */}
+        <Card>
+          <CardHeader>
+            <CardTitle className="text-sm flex items-center justify-between">
+              <span className="flex items-center gap-2"><BookOpen className="w-4 h-4 text-primary" /> AI Profit Playbook</span>
+              <Button size="sm" variant="outline" onClick={runPlaybook} disabled={playbookLoading} className="h-6 text-xs gap-1.5">
+                {playbookLoading ? <RefreshCw className="w-3 h-3 animate-spin" /> : <BookOpen className="w-3 h-3" />} Generiraj
+              </Button>
+            </CardTitle>
+          </CardHeader>
+          <CardContent>
+            {playbookLoading ? (
+              <div className="py-4 text-center text-xs text-muted-foreground"><RefreshCw className="w-4 h-4 mx-auto mb-1 animate-spin opacity-50" /> AI pripravlja profit playbook...</div>
+            ) : playbook?.playbook ? (
+              <div className="space-y-2 text-xs">
+                {playbook.playbook.strategies?.slice(0, 3).map((s: any, i: number) => (
+                  <div key={i} className="bg-primary/5 border border-primary/20 rounded p-2">
+                    <div className="text-[10px] font-medium text-primary">{s.strategy || s.name}</div>
+                    <div className="text-[9px] text-muted-foreground">{s.description || s.action}</div>
+                  </div>
+                ))}
+                {playbook.playbook.insights && <div className="text-[9px] text-muted-foreground">💡 {playbook.playbook.insights}</div>}
+              </div>
+            ) : (
+              <p className="text-xs text-muted-foreground text-center py-4">AI pripravi strategije za maksimiranje dobička (v6.40 MILESTONE).</p>
+            )}
+          </CardContent>
+        </Card>
+
+        {/* 8. Reserve Price Optimizer */}
+        <Card>
+          <CardHeader>
+            <CardTitle className="text-sm flex items-center justify-between">
+              <span className="flex items-center gap-2"><Target className="w-4 h-4 text-amber-400" /> AI Reserve Price Optimizer</span>
+              <Button size="sm" variant="outline" onClick={runReservePrice} disabled={reservePriceLoading} className="h-6 text-xs gap-1.5">
+                {reservePriceLoading ? <RefreshCw className="w-3 h-3 animate-spin" /> : <Target className="w-3 h-3" />} Generiraj
+              </Button>
+            </CardTitle>
+          </CardHeader>
+          <CardContent>
+            {reservePriceLoading ? (
+              <div className="py-4 text-center text-xs text-muted-foreground"><RefreshCw className="w-4 h-4 mx-auto mb-1 animate-spin opacity-50" /> AI optimizira reserve price...</div>
+            ) : reservePrice?.optimizer ? (
+              <div className="space-y-2 text-xs">
+                <div className="bg-amber-400/5 border border-amber-400/20 rounded p-2">
+                  <div className="flex items-center justify-between">
+                    <span className="text-[10px] uppercase text-amber-400">Priporočen reserve price</span>
+                    <span className="font-mono font-bold text-amber-400">{reservePrice.optimizer.reservePrice ?? reservePrice.optimizer.suggestedPrice ?? '?'}€</span>
+                  </div>
+                </div>
+                {reservePrice.optimizer.reasoning && <div className="text-[9px] text-muted-foreground">{reservePrice.optimizer.reasoning}</div>}
+                {reservePrice.optimizer.insights && <div className="text-[9px] text-muted-foreground">💡 {reservePrice.optimizer.insights}</div>}
+              </div>
+            ) : (
+              <p className="text-xs text-muted-foreground text-center py-4">AI optimizira reserve price za dražbe (minimalna sprejemljiva cena).</p>
+            )}
+          </CardContent>
+        </Card>
+
+        {/* 9. Pricing Psychology Optimizer */}
+        <Card>
+          <CardHeader>
+            <CardTitle className="text-sm flex items-center justify-between">
+              <span className="flex items-center gap-2"><Brain className="w-4 h-4 text-purple-400" /> AI Pricing Psychology</span>
+              <Button size="sm" variant="outline" onClick={runPsychology} disabled={psychologyLoading} className="h-6 text-xs gap-1.5">
+                {psychologyLoading ? <RefreshCw className="w-3 h-3 animate-spin" /> : <Brain className="w-3 h-3" />} Generiraj
+              </Button>
+            </CardTitle>
+          </CardHeader>
+          <CardContent>
+            {psychologyLoading ? (
+              <div className="py-4 text-center text-xs text-muted-foreground"><RefreshCw className="w-4 h-4 mx-auto mb-1 animate-spin opacity-50" /> AI analizira psihologijo cen...</div>
+            ) : psychology?.optimizer ? (
+              <div className="space-y-2 text-xs">
+                {psychology.optimizer.tactics?.slice(0, 3).map((t: any, i: number) => (
+                  <div key={i} className="bg-purple-500/5 border border-purple-500/20 rounded p-2">
+                    <div className="text-[10px] font-medium text-purple-400">{t.tactic || t.name}</div>
+                    <div className="text-[9px] text-muted-foreground">{t.description || t.effect}</div>
+                  </div>
+                ))}
+                {psychology.optimizer.insights && <div className="text-[9px] text-muted-foreground">💡 {psychology.optimizer.insights}</div>}
+              </div>
+            ) : (
+              <p className="text-xs text-muted-foreground text-center py-4">AI optimizira cene s psihološkimi taktikami (charm pricing, anchoring...).</p>
+            )}
+          </CardContent>
+        </Card>
+
+        {/* 10. Geo Price Map */}
+        <Card className="md:col-span-2">
+          <CardHeader>
+            <CardTitle className="text-sm flex items-center justify-between">
+              <span className="flex items-center gap-2"><MapPin className="w-4 h-4 text-cyan-400" /> AI Geo Price Map</span>
+              <Button size="sm" variant="outline" onClick={runGeoPrice} disabled={geoPriceLoading} className="h-6 text-xs gap-1.5">
+                {geoPriceLoading ? <RefreshCw className="w-3 h-3 animate-spin" /> : <MapPin className="w-3 h-3" />} Generiraj
+              </Button>
+            </CardTitle>
+          </CardHeader>
+          <CardContent>
+            {geoPriceLoading ? (
+              <div className="py-4 text-center text-xs text-muted-foreground"><RefreshCw className="w-4 h-4 mx-auto mb-1 animate-spin opacity-50" /> AI gradi geo price map...</div>
+            ) : geoPrice?.map ? (
+              <div className="space-y-2 text-xs">
+                {geoPrice.map.regions?.slice(0, 4).map((r: any, i: number) => (
+                  <div key={i} className="flex items-center justify-between bg-card/30 border rounded p-1.5">
+                    <span className="text-[10px] font-medium">{r.region || r.location || r.name}</span>
+                    <div className="flex items-center gap-2">
+                      <span className="text-[9px] text-muted-foreground">{r.listingCount ?? r.count} oglasov</span>
+                      <span className="font-mono text-primary text-[10px]">{r.avgPrice ?? r.averagePrice ?? '?'}€</span>
+                    </div>
+                  </div>
+                ))}
+                {geoPrice.map.insights && <div className="text-[9px] text-muted-foreground">💡 {geoPrice.map.insights}</div>}
+              </div>
+            ) : (
+              <p className="text-xs text-muted-foreground text-center py-4">AI gradi zemljevid cen po regijah (kje je najdražje/najceneje prodati).</p>
             )}
           </CardContent>
         </Card>
