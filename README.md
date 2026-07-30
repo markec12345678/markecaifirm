@@ -220,7 +220,10 @@ AI-optimiziranimi oglasi, in avtomatiziraj celoten workflow od odkritja do proda
 git clone https://github.com/markec12345678/markecaifirm.git
 cd markecaifirm
 
-# Priporočeno: Bun (hitrejši)
+# 🚀 Hitri setup (avtomatizirano — ustvari .env, generira ključe, namesti bazo)
+bun run setup
+
+# Ali ročno:
 bun install
 bun run db:generate
 bun run db:push
