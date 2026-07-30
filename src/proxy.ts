@@ -1,5 +1,5 @@
 /**
- * v6.92: Minimalna avtentikacija — API key middleware.
+ * v6.92: Minimalna avtentikacija — API key proxy.
  *
  * Prej so bili VSI API-ji javno dostopni (344 endpointov).
  * Kdor je poznal URL, je lahko:
@@ -24,7 +24,7 @@
  *   - `/api/telegram/webhook` (Telegram pošlje sem — ima svoj secret prek `?secret=`)
  *   - `/api/push/subscribe` (brskalnik se prijavi za push — pred avtentikacijo)
  *
- * @see https://nextjs.org/docs/app/api-reference/file-conventions/middleware
+ * @see https://nextjs.org/docs/app/api-reference/file-conventions/proxy
  */
 
 import { NextRequest, NextResponse } from 'next/server';
@@ -61,7 +61,7 @@ function isPublic(pathname: string): boolean {
   return PUBLIC_PATHS.some(re => re.test(pathname));
 }
 
-export function middleware(req: NextRequest) {
+export function proxy(req: NextRequest) {
   // 1. Če APP_API_KEY ni nastavljen, je avtentikacija izklopljena (local dev)
   if (DISABLED) {
     return NextResponse.next();
@@ -107,7 +107,7 @@ export const config = {
      * Zaženi na vsem razen:
      * - _next/static (static files)
      * - _next/image (image optimization)
-     * - favicon.ico (sicer match-a PUBLIC_PATHS, a middleware ne teče za to)
+     * - favicon.ico (sicer match-a PUBLIC_PATHS, a proxy ne teče za to)
      */
     '/((?!_next/static|_next/image).*)',
   ],
