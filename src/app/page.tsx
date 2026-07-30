@@ -2,7 +2,7 @@
 
 import { useEffect, useState, useCallback, useRef } from 'react';
 import dynamic from 'next/dynamic';
-import { Activity, Bell, Settings, ListPlus, Zap, RefreshCw, AlertCircle, LayoutGrid, BarChart3, Search, Heart, TrendingUp, History, Eye, PieChart, Menu, X, Users, Sparkles, Package, DollarSign, FileText } from 'lucide-react';
+import { Activity, Bell, Settings, ListPlus, Zap, RefreshCw, AlertCircle, LayoutGrid, BarChart3, Search, Heart, TrendingUp, History, Eye, PieChart, Menu, X, Users, Sparkles, Package, DollarSign, FileText, Shield } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
 import { Input } from '@/components/ui/input';
@@ -32,6 +32,8 @@ const InventoryView = dynamic(() => import('@/components/dashboard/inventory-vie
 const PricingView = dynamic(() => import('@/components/dashboard/pricing-view').then(m => ({ default: m.PricingView })), { ssr: false, loading: () => <LoadingFallback /> });
 // v7.05: ListingOptimizationView — AI optimizacija oglasov (image-gen, desc-gen, seo, virality, ctr)
 const ListingOptimizationView = dynamic(() => import('@/components/dashboard/listing-optimization-view').then(m => ({ default: m.ListingOptimizationView })), { ssr: false, loading: () => <LoadingFallback /> });
+// v7.06: RiskView — AI analiza tveganj (hedging, insurance, saturation, parity, guardian)
+const RiskView = dynamic(() => import('@/components/dashboard/risk-view').then(m => ({ default: m.RiskView })), { ssr: false, loading: () => <LoadingFallback /> });
 import { PwaInstallPrompt } from '@/components/dashboard/pwa-install-prompt';
 import { ProfileSwitcher } from '@/components/dashboard/profile-switcher';
 import { SearchModal } from '@/components/dashboard/search-modal';
@@ -50,7 +52,7 @@ function LoadingFallback() {
   );
 }
 
-type View = 'dashboard' | 'monitors' | 'alerts' | 'listings' | 'watchlist' | 'analytics' | 'statistics' | 'trades' | 'health' | 'notifications' | 'settings' | 'buyers' | 'ai-hub' | 'inventory' | 'pricing' | 'listing-opt';
+type View = 'dashboard' | 'monitors' | 'alerts' | 'listings' | 'watchlist' | 'analytics' | 'statistics' | 'trades' | 'health' | 'notifications' | 'settings' | 'buyers' | 'ai-hub' | 'inventory' | 'pricing' | 'listing-opt' | 'risk';
 
 const NAV: { id: View; label: string; icon: typeof Activity }[] = [
   { id: 'dashboard', label: 'Dashboard', icon: Activity },
@@ -62,6 +64,7 @@ const NAV: { id: View; label: string; icon: typeof Activity }[] = [
   { id: 'inventory', label: 'Skladišče AI', icon: Package },
   { id: 'pricing', label: 'Cene AI', icon: DollarSign },
   { id: 'listing-opt', label: 'Oglasi AI', icon: FileText },
+  { id: 'risk', label: 'Tveganja AI', icon: Shield },
   { id: 'buyers', label: 'Kupci', icon: Users },
   { id: 'analytics', label: 'Analitika', icon: BarChart3 },
   { id: 'statistics', label: 'Statistike', icon: PieChart },
@@ -182,6 +185,7 @@ export default function Home() {
         'i': 'inventory', // v7.02: shortcut za skladišče AI
         'p': 'pricing', // v7.04: shortcut za cene AI
         'l': 'listing-opt', // v7.05: shortcut za oglasi AI
+        'r': 'risk', // v7.06: shortcut za tveganja AI
       };
       if (navMap[e.key] && !e.ctrlKey && !e.metaKey && !e.altKey) {
         e.preventDefault();
@@ -378,6 +382,7 @@ export default function Home() {
         {view === 'inventory' && <InventoryView />}
         {view === 'pricing' && <PricingView />}
         {view === 'listing-opt' && <ListingOptimizationView />}
+        {view === 'risk' && <RiskView />}
         {view === 'buyers' && <BuyersView />}
         {view === 'analytics' && <AnalyticsView />}
         {view === 'statistics' && <StatisticsView />}
