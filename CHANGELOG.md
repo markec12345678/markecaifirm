@@ -13,6 +13,39 @@ Načrtovano za v6.93+:
 - WebSocket real-time negotiation
 - ML model za buyer matchmaker (fine-tuned na realni data)
 
+## [7.06.0] - 2026-07-29
+
+### Added — New Domain Views (v7.04-v7.06)
+- **PricingView** (v7.04) — nov zavihek "Cene AI" z 5 AI funkcijami:
+  - AI Smart Pricing Engine (dinamično določanje cen, 10 faktorjev)
+  - AI Profit Forecast (napoved dobička, 3 scenariji)
+  - AI Margin Optimizer (optimizacija marže)
+  - AI Price War Strategist (cenovne vojne)
+  - AI Seasonal Pricing (sezonski vzorci, 4 letni časi)
+- **ListingOptimizationView** (v7.05) — nov zavihek "Oglasi AI" z 5 AI funkcijami:
+  - AI Image Generator (VLM prompti za Midjourney/DALL-E)
+  - AI Description Generator v3 (10 stilov, A/B test)
+  - AI SEO Optimizer v2 (keyword research, competitor analysis)
+  - AI Virality Predictor (8 heuristik v TypeScript)
+  - AI CTR Optimizer (click-through rate)
+- **RiskView** (v7.06) — nov zavihek "Tveganja AI" z 5 AI funkcijami:
+  - AI Risk Hedging (8 hedge strategij)
+  - AI Insurance Optimizer v2 (4D risk matrix, 7 kategorij)
+  - AI Market Saturation (5 nivojev: saturated → blue_ocean)
+  - AI Risk Parity (alokacija z enakim riskom)
+  - AI Margin Guardian (avtomatski margin alerti)
+
+### Domain Coverage Complete
+- **6 dedicated AI pogledov** z **30 AI funkcijami** pokrivajo vse domene:
+  - BuyersView (5) — kupci
+  - InventoryView (5) — skladišče
+  - PricingView (5) — cene
+  - ListingOptimizationView (5) — oglasi
+  - RiskView (5) — tveganja
+  - AI Hub (254) — vsi endpointi z iskalnikom
+- **17 zavihkov** v aplikaciji (prej 11)
+- **Keyboard shortcuts**: b (buyers), a (ai-hub), i (inventory), p (pricing), l (listing-opt), r (risk)
+
 ## [7.02.0] - 2026-07-29
 
 ### Added — New Features
