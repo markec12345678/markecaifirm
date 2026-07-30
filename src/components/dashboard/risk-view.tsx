@@ -17,7 +17,7 @@ import { useEffect, useState, useCallback } from 'react';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
-import { RefreshCw, Shield, Umbrella, Waves, Scale, ShieldCheck, Sparkles, FileClaim, AlertCircle, ClipboardCheck, BarChart3 } from 'lucide-react';
+import { RefreshCw, Shield, Umbrella, Waves, Scale, ShieldCheck, Sparkles, FileText, AlertCircle, ClipboardCheck, BarChart3 } from 'lucide-react';
 import { toast } from 'sonner';
 import { cn } from '@/lib/utils';
 
@@ -413,9 +413,9 @@ export function RiskView() {
         <Card>
           <CardHeader>
             <CardTitle className="text-sm flex items-center justify-between">
-              <span className="flex items-center gap-2"><FileClaim className="w-4 h-4 text-blue-400" /> AI Insurance Claim</span>
+              <span className="flex items-center gap-2"><FileText className="w-4 h-4 text-blue-400" /> AI Insurance Claim</span>
               <Button size="sm" variant="outline" onClick={runClaim} disabled={claimLoading} className="h-6 text-xs gap-1.5">
-                {claimLoading ? <RefreshCw className="w-3 h-3 animate-spin" /> : <FileClaim className="w-3 h-3" />} Generiraj
+                {claimLoading ? <RefreshCw className="w-3 h-3 animate-spin" /> : <FileText className="w-3 h-3" />} Generiraj
               </Button>
             </CardTitle>
           </CardHeader>

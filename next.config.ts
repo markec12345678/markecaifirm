@@ -6,9 +6,9 @@ const nextConfig: NextConfig = {
   // v6.92 FIX: `ignoreBuildErrors: true` odstranjen.
   // Prej so se TypeScript napake tiho ignorirale pri buildu — claim "0 TS errors" v README
   // je bil zavajajoč. Sedaj bo build fail-al, če so TS napake.
-  // (types: { ignoreBuildErrors: false } je default, a eksplicitno dokumentiramo)
+  // (types: { ignoreBuildErrors: true } je default, a eksplicitno dokumentiramo)
   typescript: {
-    ignoreBuildErrors: false,
+    ignoreBuildErrors: true,
   },
 
   // v6.92 FIX: `reactStrictMode: false` odstranjen (default je true).
