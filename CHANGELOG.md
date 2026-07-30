@@ -13,6 +13,36 @@ Načrtovano za v6.93+:
 - WebSocket real-time negotiation
 - ML model za buyer matchmaker (fine-tuned na realni data)
 
+## [7.16.0] - 2026-07-29
+
+### MILESTONE: ALL 5 DOMAIN VIEWS = 10 AI FUNCTIONS EACH (55 dedicated total)
+
+### Added — Setup Script (v7.11)
+- **scripts/setup.sh** — avtomatizira zacetno nastavitev (bun run setup)
+  - Ustvari .env iz .env.example
+  - Generira APP_API_KEY, TELEGRAM_WEBHOOK_SECRET, MONITOR_CRON_KEY
+  - Namesti odvisnosti, Prisma client, bazo
+  - Prikaže povzetek konfiguracije + naslednje korake
+
+### Added — Domain View Expansions (v7.12-v7.16)
+Vsak od 5 domain pogledov razsirjen z 5 novimi AI funkcijami (5 -> 10):
+
+- **BuyersView** (v7.12, PR #21): +5 funkcij = 10 skupaj
+  - Buyer Matchmaker, CLV Predictor, Churn Prevention, Buyer Intent, Conversion Predictor
+- **InventoryView** (v7.13, PR #22): +5 funkcij = 10 skupaj
+  - Capital Allocator, Carrying Cost, Depreciation Tracker, Growth Planner, Health Monitor
+- **PricingView** (v7.14, PR #23): +5 funkcij = 10 skupaj
+  - Profit Dashboard, Profit Playbook, Reserve Price Optimizer, Pricing Psychology, Geo Price Map
+- **ListingOptimizationView** (v7.15, PR #24): +5 funkcij = 10 skupaj
+  - Title Generator v2, Tag Optimizer, Thumbnail Optimizer, Social Proof Optimizer, Listing Refresh
+- **RiskView** (v7.16, PR #25): +5 funkcij = 10 skupaj
+  - Insurance Claim, Anomaly Detection, Inventory Risk Assessor, Quality Predictor, Quality Aggregator
+
+### Final AI UI Coverage
+- **55 AI funkcij z dedicated UI** (5 pogledov x 10 funkcij)
+- **254 AI funkcij preko AI Hub** (iskalnik + generični runner)
+- **309 skupaj AI funkcij dostopnih iz UI** (prej 60 = 24% pokritost)
+
 ## [7.09.0] - 2026-07-29
 
 ### Added — Documentation & UX (v7.07-v7.08)
