@@ -18,7 +18,7 @@ import { useEffect, useState, useCallback } from 'react';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
-import { RefreshCw, Package, Clock, TrendingDown, AlertTriangle, Recycle, Sparkles } from 'lucide-react';
+import { RefreshCw, Package, Clock, TrendingDown, AlertTriangle, Recycle, Sparkles, DollarSign, Wallet, TrendingUp, BarChart3, Activity } from 'lucide-react';
 import { toast } from 'sonner';
 import { cn } from '@/lib/utils';
 
@@ -46,6 +46,17 @@ export function InventoryView() {
   const [liquidationLoading, setLiquidationLoading] = useState(false);
   const [rebalancer, setRebalancer] = useState<any>(null);
   const [rebalancerLoading, setRebalancerLoading] = useState(false);
+  // v7.13: 5 novih inventory AI funkcij
+  const [capitalAlloc, setCapitalAlloc] = useState<any>(null);
+  const [capitalAllocLoading, setCapitalAllocLoading] = useState(false);
+  const [carryingCost, setCarryingCost] = useState<any>(null);
+  const [carryingCostLoading, setCarryingCostLoading] = useState(false);
+  const [depreciation, setDepreciation] = useState<any>(null);
+  const [depreciationLoading, setDepreciationLoading] = useState(false);
+  const [growth, setGrowth] = useState<any>(null);
+  const [growthLoading, setGrowthLoading] = useState(false);
+  const [health, setHealth] = useState<any>(null);
+  const [healthLoading, setHealthLoading] = useState(false);
 
   const load = useCallback(async () => {
     try {
@@ -128,8 +139,15 @@ export function InventoryView() {
     finally { setRebalancerLoading(false); }
   };
 
+  // v7.13: 6-10. Pet novih inventory AI funkcij
+  const runCapitalAlloc = async () => { setCapitalAllocLoading(true); setCapitalAlloc(null); try { const r = await fetch('/api/ai/inventory-capital-allocator', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: '{}' }); const d = await r.json(); if (d.ok) { setCapitalAlloc(d); toast.success('✓ Capital allocator generiran'); } else toast.error(d.error ?? 'Napaka'); } catch (e: any) { toast.error(e?.message ?? 'Napaka'); } finally { setCapitalAllocLoading(false); } };
+  const runCarryingCost = async () => { setCarryingCostLoading(true); setCarryingCost(null); try { const r = await fetch('/api/ai/inventory-carrying-cost', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: '{}' }); const d = await r.json(); if (d.ok) { setCarryingCost(d); toast.success('✓ Carrying cost analiza generirana'); } else toast.error(d.error ?? 'Napaka'); } catch (e: any) { toast.error(e?.message ?? 'Napaka'); } finally { setCarryingCostLoading(false); } };
+  const runDepreciation = async () => { setDepreciationLoading(true); setDepreciation(null); try { const r = await fetch('/api/ai/inventory-depreciation-tracker', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: '{}' }); const d = await r.json(); if (d.ok) { setDepreciation(d); toast.success('✓ Depreciation tracker generiran'); } else toast.error(d.error ?? 'Napaka'); } catch (e: any) { toast.error(e?.message ?? 'Napaka'); } finally { setDepreciationLoading(false); } };
+  const runGrowth = async () => { setGrowthLoading(true); setGrowth(null); try { const r = await fetch('/api/ai/inventory-growth-planner', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: '{}' }); const d = await r.json(); if (d.ok) { setGrowth(d); toast.success('✓ Growth planner generiran'); } else toast.error(d.error ?? 'Napaka'); } catch (e: any) { toast.error(e?.message ?? 'Napaka'); } finally { setGrowthLoading(false); } };
+  const runHealth = async () => { setHealthLoading(true); setHealth(null); try { const r = await fetch('/api/ai/inventory-health-monitor', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: '{}' }); const d = await r.json(); if (d.ok) { setHealth(d); toast.success('✓ Health monitor generiran'); } else toast.error(d.error ?? 'Napaka'); } catch (e: any) { toast.error(e?.message ?? 'Napaka'); } finally { setHealthLoading(false); } };
+
   const runAll = async () => {
-    await Promise.all([runAging(), runStockout(), runShrinkage(), runLiquidation(), runRebalancer()]);
+    await Promise.all([runAging(), runStockout(), runShrinkage(), runLiquidation(), runRebalancer(), runCapitalAlloc(), runCarryingCost(), runDepreciation(), runGrowth(), runHealth()]);
   };
 
   if (loading) {
@@ -506,6 +524,186 @@ export function InventoryView() {
               <p className="text-xs text-muted-foreground text-center py-4">
                 AI rebalansira portfelj (Markowitz mean-variance, Kelly criterion, risk-parity) za optimalno alokacijo.
               </p>
+            )}
+          </CardContent>
+        </Card>
+      </div>
+
+      {/* v7.13: 5 novih inventory AI panelov */}
+      <div className="grid md:grid-cols-2 gap-4">
+        {/* 6. Capital Allocator */}
+        <Card>
+          <CardHeader>
+            <CardTitle className="text-sm flex items-center justify-between">
+              <span className="flex items-center gap-2"><DollarSign className="w-4 h-4 text-primary" /> AI Capital Allocator</span>
+              <Button size="sm" variant="outline" onClick={runCapitalAlloc} disabled={capitalAllocLoading} className="h-6 text-xs gap-1.5">
+                {capitalAllocLoading ? <RefreshCw className="w-3 h-3 animate-spin" /> : <DollarSign className="w-3 h-3" />} Generiraj
+              </Button>
+            </CardTitle>
+          </CardHeader>
+          <CardContent>
+            {capitalAllocLoading ? (
+              <div className="py-4 text-center text-xs text-muted-foreground"><RefreshCw className="w-4 h-4 mx-auto mb-1 animate-spin opacity-50" /> AI alokira kapital po kategorijah...</div>
+            ) : capitalAlloc?.allocator ? (
+              <div className="space-y-2 text-xs">
+                {capitalAlloc.allocator.allocations?.slice(0, 4).map((a: any, i: number) => (
+                  <div key={i} className="flex items-center justify-between bg-card/30 border rounded p-1.5">
+                    <span className="text-[10px] font-medium">{a.category || a.name}</span>
+                    <span className="font-mono text-primary">{a.allocationEur ?? a.amount ?? '?'}€</span>
+                  </div>
+                ))}
+                {capitalAlloc.allocator.insights && <div className="text-[9px] text-muted-foreground">💡 {capitalAlloc.allocator.insights}</div>}
+              </div>
+            ) : (
+              <p className="text-xs text-muted-foreground text-center py-4">AI alokira kapital po kategorijah za maksimalni ROI.</p>
+            )}
+          </CardContent>
+        </Card>
+
+        {/* 7. Carrying Cost */}
+        <Card>
+          <CardHeader>
+            <CardTitle className="text-sm flex items-center justify-between">
+              <span className="flex items-center gap-2"><Wallet className="w-4 h-4 text-amber-400" /> AI Carrying Cost</span>
+              <Button size="sm" variant="outline" onClick={runCarryingCost} disabled={carryingCostLoading} className="h-6 text-xs gap-1.5">
+                {carryingCostLoading ? <RefreshCw className="w-3 h-3 animate-spin" /> : <Wallet className="w-3 h-3" />} Generiraj
+              </Button>
+            </CardTitle>
+          </CardHeader>
+          <CardContent>
+            {carryingCostLoading ? (
+              <div className="py-4 text-center text-xs text-muted-foreground"><RefreshCw className="w-4 h-4 mx-auto mb-1 animate-spin opacity-50" /> AI analizira stroške držanja inventarja...</div>
+            ) : carryingCost?.analyzer ? (
+              <div className="space-y-2 text-xs">
+                <div className="bg-amber-400/5 border border-amber-400/20 rounded p-2">
+                  <div className="flex items-center justify-between">
+                    <span className="text-[10px] uppercase text-amber-400">Skupni stroški/mesec</span>
+                    <span className="font-mono font-bold text-amber-400">{carryingCost.analyzer.totalCarryingCost ?? carryingCost.analyzer.monthlyCost ?? '?'}€</span>
+                  </div>
+                </div>
+                {carryingCost.analyzer.breakdown?.slice(0, 3).map((b: any, i: number) => (
+                  <div key={i} className="flex items-center justify-between bg-card/30 border rounded p-1.5">
+                    <span className="text-[10px]">{b.category || b.type}</span>
+                    <span className="font-mono text-[10px]">{b.costEur ?? b.amount ?? '?'}€</span>
+                  </div>
+                ))}
+                {carryingCost.analyzer.insights && <div className="text-[9px] text-muted-foreground">💡 {carryingCost.analyzer.insights}</div>}
+              </div>
+            ) : (
+              <p className="text-xs text-muted-foreground text-center py-4">AI analizira stroške držanja inventarja (shranjevanje, zavarovanje, kapital).</p>
+            )}
+          </CardContent>
+        </Card>
+
+        {/* 8. Depreciation Tracker */}
+        <Card>
+          <CardHeader>
+            <CardTitle className="text-sm flex items-center justify-between">
+              <span className="flex items-center gap-2"><TrendingDown className="w-4 h-4 text-red-500" /> AI Depreciation Tracker</span>
+              <Button size="sm" variant="outline" onClick={runDepreciation} disabled={depreciationLoading} className="h-6 text-xs gap-1.5">
+                {depreciationLoading ? <RefreshCw className="w-3 h-3 animate-spin" /> : <TrendingDown className="w-3 h-3" />} Generiraj
+              </Button>
+            </CardTitle>
+          </CardHeader>
+          <CardContent>
+            {depreciationLoading ? (
+              <div className="py-4 text-center text-xs text-muted-foreground"><RefreshCw className="w-4 h-4 mx-auto mb-1 animate-spin opacity-50" /> AI sledi depreciaciji inventarja...</div>
+            ) : depreciation?.tracker ? (
+              <div className="space-y-2 text-xs">
+                {depreciation.tracker.items?.slice(0, 4).map((item: any, i: number) => (
+                  <div key={i} className="bg-card/30 border rounded p-2">
+                    <div className="flex items-center justify-between mb-1">
+                      <span className="text-[10px] font-medium truncate flex-1">{item.title || item.name}</span>
+                      <Badge variant="outline" className={cn('text-[9px]', (item.depreciationPct ?? 0) > 30 ? 'text-red-500 border-red-500/30' : 'text-amber-400 border-amber-400/30')}>
+                        -{item.depreciationPct ?? item.lossPct ?? '?'}%
+                      </Badge>
+                    </div>
+                    <div className="text-[9px] text-muted-foreground">
+                      {item.originalValue ?? item.buyPrice}€ → <b className="text-red-500">{item.currentValue ?? item.depreciatedValue ?? '?'}€</b>
+                    </div>
+                  </div>
+                ))}
+                {depreciation.tracker.insights && <div className="text-[9px] text-muted-foreground">💡 {depreciation.tracker.insights}</div>}
+              </div>
+            ) : (
+              <p className="text-xs text-muted-foreground text-center py-4">AI sledi depreciaciji vrednosti inventarja skozi čas.</p>
+            )}
+          </CardContent>
+        </Card>
+
+        {/* 9. Growth Planner */}
+        <Card>
+          <CardHeader>
+            <CardTitle className="text-sm flex items-center justify-between">
+              <span className="flex items-center gap-2"><TrendingUp className="w-4 h-4 text-primary" /> AI Growth Planner</span>
+              <Button size="sm" variant="outline" onClick={runGrowth} disabled={growthLoading} className="h-6 text-xs gap-1.5">
+                {growthLoading ? <RefreshCw className="w-3 h-3 animate-spin" /> : <TrendingUp className="w-3 h-3" />} Generiraj
+              </Button>
+            </CardTitle>
+          </CardHeader>
+          <CardContent>
+            {growthLoading ? (
+              <div className="py-4 text-center text-xs text-muted-foreground"><RefreshCw className="w-4 h-4 mx-auto mb-1 animate-spin opacity-50" /> AI načrtuje rast inventarja...</div>
+            ) : growth?.planner ? (
+              <div className="space-y-2 text-xs">
+                {growth.planner.recommendations?.slice(0, 3).map((r: any, i: number) => (
+                  <div key={i} className="bg-primary/5 border border-primary/20 rounded p-2">
+                    <div className="text-[10px] font-medium text-primary">{r.action || r.strategy}</div>
+                    <div className="text-[9px] text-muted-foreground">{r.description || r.detail}</div>
+                  </div>
+                ))}
+                {growth.planner.projections?.slice(0, 2).map((p: any, i: number) => (
+                  <div key={i} className="flex items-center justify-between bg-card/30 border rounded p-1.5">
+                    <span className="text-[10px]">{p.month || p.period}</span>
+                    <span className="font-mono text-primary">{p.projectedValue ?? p.revenue ?? '?'}€</span>
+                  </div>
+                ))}
+                {growth.planner.insights && <div className="text-[9px] text-muted-foreground">💡 {growth.planner.insights}</div>}
+              </div>
+            ) : (
+              <p className="text-xs text-muted-foreground text-center py-4">AI načrtuje rast inventarja (progekcije, priporočila za širitev).</p>
+            )}
+          </CardContent>
+        </Card>
+
+        {/* 10. Health Monitor */}
+        <Card className="md:col-span-2">
+          <CardHeader>
+            <CardTitle className="text-sm flex items-center justify-between">
+              <span className="flex items-center gap-2"><Activity className="w-4 h-4 text-primary" /> AI Inventory Health Monitor</span>
+              <Button size="sm" variant="outline" onClick={runHealth} disabled={healthLoading} className="h-6 text-xs gap-1.5">
+                {healthLoading ? <RefreshCw className="w-3 h-3 animate-spin" /> : <Activity className="w-3 h-3" />} Generiraj
+              </Button>
+            </CardTitle>
+          </CardHeader>
+          <CardContent>
+            {healthLoading ? (
+              <div className="py-4 text-center text-xs text-muted-foreground"><RefreshCw className="w-4 h-4 mx-auto mb-1 animate-spin opacity-50" /> AI preverja zdravje inventarja...</div>
+            ) : health ? (
+              <div className="space-y-2 text-xs">
+                {health.healthScore != null && (
+                  <div className={cn('border rounded p-2',
+                    health.healthScore >= 70 ? 'bg-primary/10 border-primary/30' :
+                    health.healthScore >= 40 ? 'bg-amber-400/10 border-amber-400/30' : 'bg-red-500/10 border-red-500/30')}>
+                    <div className="flex items-center justify-between">
+                      <span className="font-bold uppercase text-[10px]">Health Score</span>
+                      <span className="font-mono font-bold text-lg">{health.healthScore}/100</span>
+                    </div>
+                    {health.grade && <Badge variant="outline" className="text-[9px] mt-1">Grade: {health.grade}</Badge>}
+                  </div>
+                )}
+                {health.metrics?.slice(0, 4).map((m: any, i: number) => (
+                  <div key={i} className="flex items-center justify-between bg-card/30 border rounded p-1.5">
+                    <span className="text-[10px]">{m.metric || m.name}</span>
+                    <span className={cn('font-mono text-[10px]', m.status === 'good' ? 'text-primary' : m.status === 'warning' ? 'text-amber-400' : 'text-red-500')}>
+                      {m.value}{m.unit ?? ''}
+                    </span>
+                  </div>
+                ))}
+                {health.insights && <div className="text-[9px] text-muted-foreground">💡 {health.insights}</div>}
+              </div>
+            ) : (
+              <p className="text-xs text-muted-foreground text-center py-4">AI preverja zdravje inventarja (health score, metrike, grade A-F).</p>
             )}
           </CardContent>
         </Card>
