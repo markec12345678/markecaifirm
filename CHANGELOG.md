@@ -13,6 +13,30 @@ Načrtovano za v6.93+:
 - WebSocket real-time negotiation
 - ML model za buyer matchmaker (fine-tuned na realni data)
 
+## [7.09.0] - 2026-07-29
+
+### Added — Documentation & UX (v7.07-v7.08)
+- **README.md feature update** (v7.08) — nova "Kaj je novega" sekcija z vsemi spremembami v6.92.1-v7.06
+  - 6 novih AI pogledov z 30 AI funkcijami
+  - Varnostni popravki, čiščenje, performanse, refactoring
+  - Nova tabela "17 zavihkov v aplikaciji" z shortcut-i in opisi
+- **Documentation sync #2** (v7.07) — package.json, CHANGELOG, README, CONTRIBUTING sinhronizirani na v7.06
+
+### Changed — Performance (v7.09)
+- **React.memo na 6 novih view komponentah** — prepreči re-render ob clock tick-u
+  - Wrapped: BuyersView, AIHubView, InventoryView, PricingView, ListingOptimizationView, RiskView
+- **Odstranjen redundantni 30s polling** — SSE že pošilja stats vsakih 5s
+  - Prej: 2.880 fetch-ov/dan (30s polling) → Sedaj: 1 fetch na mount (−99.97%)
+  - useCallback import odstranjen (ni več potreben)
+- **Ura zmanjšana z 1s na 10s** — header datum/čas ne rabi sekundne natančnosti
+  - Prej: 60 re-render-ov/min → Sedaj: 6 re-render-ov/min (−90%)
+
+### Performance Impact
+- **~90% manj re-render-ov na minuto** (6 namesto 60)
+- **6 view komponent se ne re-render-a ob clock tick-u** (React.memo)
+- **2.879 manj fetch-ov/dan** (polling odstranjen, SSE zadostuje)
+- **Manj CPU, manj battery drain na mobilcih**
+
 ## [7.06.0] - 2026-07-29
 
 ### Added — New Domain Views (v7.04-v7.06)
