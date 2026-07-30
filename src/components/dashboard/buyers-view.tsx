@@ -27,7 +27,7 @@ import {
   SelectTrigger,
   SelectValue,
 } from '@/components/ui/select';
-import { Users, User, ShieldCheck, Map, Star, RefreshCw, Sparkles, TrendingUp } from 'lucide-react';
+import { Users, User, ShieldCheck, Map, Star, RefreshCw, Sparkles, TrendingUp, Heart, Crosshair, GitBranch, Target } from 'lucide-react';
 import { toast } from 'sonner';
 import { cn } from '@/lib/utils';
 
@@ -62,6 +62,17 @@ export function BuyersView({ onNavigate }: BuyersViewProps) {
   const [reviewLoading, setReviewLoading] = useState(false);
   const [lifecycle, setLifecycle] = useState<any>(null);
   const [lifecycleLoading, setLifecycleLoading] = useState(false);
+  // v7.12: 5 novih buyer AI funkcij
+  const [matchmaker, setMatchmaker] = useState<any>(null);
+  const [matchmakerLoading, setMatchmakerLoading] = useState(false);
+  const [clv, setClv] = useState<any>(null);
+  const [clvLoading, setClvLoading] = useState(false);
+  const [churn, setChurn] = useState<any>(null);
+  const [churnLoading, setChurnLoading] = useState(false);
+  const [intent, setIntent] = useState<any>(null);
+  const [intentLoading, setIntentLoading] = useState(false);
+  const [conversion, setConversion] = useState<any>(null);
+  const [conversionLoading, setConversionLoading] = useState(false);
 
   const load = useCallback(async () => {
     try {
@@ -178,9 +189,16 @@ export function BuyersView({ onNavigate }: BuyersViewProps) {
     finally { setLifecycleLoading(false); }
   };
 
+  // v7.12: 6-10. Pet novih buyer AI funkcij
+  const runMatchmaker = async () => { setMatchmakerLoading(true); setMatchmaker(null); try { const r = await fetch('/api/ai/buyer-matchmaker', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: '{}' }); const d = await r.json(); if (d.ok) { setMatchmaker(d); toast.success('✓ Matchmaker generiran'); } else toast.error(d.error ?? 'Napaka'); } catch (e: any) { toast.error(e?.message ?? 'Napaka'); } finally { setMatchmakerLoading(false); } };
+  const runClv = async () => { if (!selectedBuyer) { toast.error('Izberi kupca'); return; } setClvLoading(true); setClv(null); try { const r = await fetch('/api/ai/buyer-clv-predictor', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ customerName: selectedBuyer }) }); const d = await r.json(); if (d.ok) { setClv(d); toast.success('✓ CLV napoved generirana'); } else toast.error(d.error ?? 'Napaka'); } catch (e: any) { toast.error(e?.message ?? 'Napaka'); } finally { setClvLoading(false); } };
+  const runChurn = async () => { if (!selectedBuyer) { toast.error('Izberi kupca'); return; } setChurnLoading(true); setChurn(null); try { const r = await fetch('/api/ai/buyer-churn-prevention-strategist', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ customerName: selectedBuyer }) }); const d = await r.json(); if (d.ok) { setChurn(d); toast.success('✓ Churn strategija generirana'); } else toast.error(d.error ?? 'Napaka'); } catch (e: any) { toast.error(e?.message ?? 'Napaka'); } finally { setChurnLoading(false); } };
+  const runIntent = async () => { setIntentLoading(true); setIntent(null); try { const r = await fetch('/api/ai/buyer-intent', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: '{}' }); const d = await r.json(); if (d.ok) { setIntent(d); toast.success('✓ Intent analiza generirana'); } else toast.error(d.error ?? 'Napaka'); } catch (e: any) { toast.error(e?.message ?? 'Napaka'); } finally { setIntentLoading(false); } };
+  const runConversion = async () => { if (!selectedBuyer) { toast.error('Izberi kupca'); return; } setConversionLoading(true); setConversion(null); try { const r = await fetch('/api/ai/buyer-conversion-predictor', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ customerName: selectedBuyer }) }); const d = await r.json(); if (d.ok) { setConversion(d); toast.success('✓ Conversion napoved generirana'); } else toast.error(d.error ?? 'Napaka'); } catch (e: any) { toast.error(e?.message ?? 'Napaka'); } finally { setConversionLoading(false); } };
+
   const runAll = async () => {
     if (!selectedBuyer) { toast.error('Izberi kupca'); return; }
-    await Promise.all([runPersona(), runTrust(), runJourney(), runReview(), runLifecycle()]);
+    await Promise.all([runPersona(), runTrust(), runJourney(), runReview(), runLifecycle(), runMatchmaker(), runClv(), runChurn(), runIntent(), runConversion()]);
   };
 
   if (loading) {
@@ -508,6 +526,182 @@ export function BuyersView({ onNavigate }: BuyersViewProps) {
               <p className="text-xs text-muted-foreground text-center py-4">
                 AI napove 9 faz (prospect → first_time → loyal → advocate → churned → reactivated).
               </p>
+            )}
+          </CardContent>
+        </Card>
+      </div>
+
+      {/* v7.12: 5 novih buyer AI panelov */}
+      <div className="grid md:grid-cols-2 gap-4">
+        {/* 6. Buyer Matchmaker */}
+        <Card>
+          <CardHeader>
+            <CardTitle className="text-sm flex items-center justify-between">
+              <span className="flex items-center gap-2"><Crosshair className="w-4 h-4 text-primary" /> AI Buyer Matchmaker</span>
+              <Button size="sm" variant="outline" onClick={runMatchmaker} disabled={matchmakerLoading} className="h-6 text-xs gap-1.5">
+                {matchmakerLoading ? <RefreshCw className="w-3 h-3 animate-spin" /> : <Crosshair className="w-3 h-3" />} Generiraj
+              </Button>
+            </CardTitle>
+          </CardHeader>
+          <CardContent>
+            {matchmakerLoading ? (
+              <div className="py-4 text-center text-xs text-muted-foreground"><RefreshCw className="w-4 h-4 mx-auto mb-1 animate-spin opacity-50" /> AI išče match-e med kupci in inventarjem...</div>
+            ) : matchmaker?.matches?.length > 0 ? (
+              <div className="space-y-2 text-xs">
+                {matchmaker.matches.slice(0, 4).map((m: any, i: number) => (
+                  <div key={i} className="bg-card/30 border rounded p-2">
+                    <div className="flex items-center justify-between mb-1">
+                      <span className="font-medium text-[10px] truncate flex-1">{m.buyerName || m.name || `Match ${i+1}`}</span>
+                      <Badge variant="outline" className="text-[9px] text-primary border-primary/30">{m.matchScore ?? m.score ?? '?'}%</Badge>
+                    </div>
+                    <div className="text-[9px] text-muted-foreground">{m.reason || m.rationale || m.description}</div>
+                  </div>
+                ))}
+                {matchmaker.insights && <div className="text-[9px] text-muted-foreground">💡 {matchmaker.insights}</div>}
+              </div>
+            ) : (
+              <p className="text-xs text-muted-foreground text-center py-4">AI poišče match-e med kupci in held inventarjem (channel-specific outreach).</p>
+            )}
+          </CardContent>
+        </Card>
+
+        {/* 7. Buyer CLV Predictor */}
+        <Card>
+          <CardHeader>
+            <CardTitle className="text-sm flex items-center justify-between">
+              <span className="flex items-center gap-2"><TrendingUp className="w-4 h-4 text-primary" /> AI CLV Predictor</span>
+              <Button size="sm" variant="outline" onClick={runClv} disabled={clvLoading} className="h-6 text-xs gap-1.5">
+                {clvLoading ? <RefreshCw className="w-3 h-3 animate-spin" /> : <TrendingUp className="w-3 h-3" />} Generiraj
+              </Button>
+            </CardTitle>
+          </CardHeader>
+          <CardContent>
+            {clvLoading ? (
+              <div className="py-4 text-center text-xs text-muted-foreground"><RefreshCw className="w-4 h-4 mx-auto mb-1 animate-spin opacity-50" /> AI napoveduje Customer Lifetime Value...</div>
+            ) : clv?.predictor ? (
+              <div className="space-y-2 text-xs">
+                <div className="bg-primary/10 border border-primary/30 rounded p-2">
+                  <div className="flex items-center justify-between">
+                    <span className="text-[10px] uppercase text-primary font-bold">Pričakovan CLV</span>
+                    <span className="font-mono font-bold text-primary text-lg">{clv.predictor.clv ?? clv.predictor.lifetimeValue ?? '?'}€</span>
+                  </div>
+                </div>
+                {clv.predictor.tier && <div className="text-[10px]"><Badge variant="outline" className="text-[9px]">{clv.predictor.tier}</Badge></div>}
+                {clv.predictor.insights && <div className="text-[9px] text-muted-foreground">💡 {clv.predictor.insights}</div>}
+              </div>
+            ) : (
+              <p className="text-xs text-muted-foreground text-center py-4">AI napove Customer Lifetime Value (napoved dolgoročne vrednosti kupca).</p>
+            )}
+          </CardContent>
+        </Card>
+
+        {/* 8. Buyer Churn Prevention */}
+        <Card>
+          <CardHeader>
+            <CardTitle className="text-sm flex items-center justify-between">
+              <span className="flex items-center gap-2"><Heart className="w-4 h-4 text-red-500" /> AI Churn Prevention</span>
+              <Button size="sm" variant="outline" onClick={runChurn} disabled={churnLoading} className="h-6 text-xs gap-1.5">
+                {churnLoading ? <RefreshCw className="w-3 h-3 animate-spin" /> : <Heart className="w-3 h-3" />} Generiraj
+              </Button>
+            </CardTitle>
+          </CardHeader>
+          <CardContent>
+            {churnLoading ? (
+              <div className="py-4 text-center text-xs text-muted-foreground"><RefreshCw className="w-4 h-4 mx-auto mb-1 animate-spin opacity-50" /> AI pripravlja strategijo proti izgubi kupca...</div>
+            ) : churn?.strategist ? (
+              <div className="space-y-2 text-xs">
+                {churn.strategist.churnRisk != null && (
+                  <div className={cn('border rounded p-2', churn.strategist.churnRisk >= 70 ? 'bg-red-500/10 border-red-500/30' : churn.strategist.churnRisk >= 40 ? 'bg-amber-400/10 border-amber-400/30' : 'bg-primary/10 border-primary/30')}>
+                    <div className="flex items-center justify-between">
+                      <span className="text-[10px] uppercase font-bold">Tveganje izgube</span>
+                      <span className="font-mono font-bold">{churn.strategist.churnRisk}%</span>
+                    </div>
+                  </div>
+                )}
+                {churn.strategist.strategies?.slice(0, 3).map((s: any, i: number) => (
+                  <div key={i} className="bg-card/30 border rounded p-2">
+                    <div className="text-[10px] font-medium">{s.strategy || s.action || s.name}</div>
+                    <div className="text-[9px] text-muted-foreground">{s.description || s.detail}</div>
+                  </div>
+                ))}
+                {churn.strategist.insights && <div className="text-[9px] text-muted-foreground">💡 {churn.strategist.insights}</div>}
+              </div>
+            ) : (
+              <p className="text-xs text-muted-foreground text-center py-4">AI predlaga strategijo za preprečitev izgube kupca (churn prevention).</p>
+            )}
+          </CardContent>
+        </Card>
+
+        {/* 9. Buyer Intent */}
+        <Card>
+          <CardHeader>
+            <CardTitle className="text-sm flex items-center justify-between">
+              <span className="flex items-center gap-2"><Target className="w-4 h-4 text-amber-400" /> AI Buyer Intent</span>
+              <Button size="sm" variant="outline" onClick={runIntent} disabled={intentLoading} className="h-6 text-xs gap-1.5">
+                {intentLoading ? <RefreshCw className="w-3 h-3 animate-spin" /> : <Target className="w-3 h-3" />} Generiraj
+              </Button>
+            </CardTitle>
+          </CardHeader>
+          <CardContent>
+            {intentLoading ? (
+              <div className="py-4 text-center text-xs text-muted-foreground"><RefreshCw className="w-4 h-4 mx-auto mb-1 animate-spin opacity-50" /> AI analizira nakupne namene kupcev...</div>
+            ) : intent?.intent ? (
+              <div className="space-y-2 text-xs">
+                {intent.intent.buyers?.slice(0, 4).map((b: any, i: number) => (
+                  <div key={i} className="flex items-center justify-between bg-card/30 border rounded p-1.5">
+                    <span className="text-[10px] font-medium truncate flex-1">{b.name || b.buyerName}</span>
+                    <Badge variant="outline" className={cn('text-[9px]', (b.intentScore ?? b.score ?? 0) >= 70 ? 'text-primary border-primary/30' : 'text-muted-foreground')}>
+                      {b.intentScore ?? b.score ?? '?'}%
+                    </Badge>
+                  </div>
+                ))}
+                {intent.intent.insights && <div className="text-[9px] text-muted-foreground">💡 {intent.intent.insights}</div>}
+              </div>
+            ) : (
+              <p className="text-xs text-muted-foreground text-center py-4">AI analizira nakupne namene kupcev (kdo bo verjetno kupil znova).</p>
+            )}
+          </CardContent>
+        </Card>
+
+        {/* 10. Buyer Conversion Predictor */}
+        <Card className="md:col-span-2">
+          <CardHeader>
+            <CardTitle className="text-sm flex items-center justify-between">
+              <span className="flex items-center gap-2"><GitBranch className="w-4 h-4 text-blue-400" /> AI Conversion Predictor</span>
+              <Button size="sm" variant="outline" onClick={runConversion} disabled={conversionLoading} className="h-6 text-xs gap-1.5">
+                {conversionLoading ? <RefreshCw className="w-3 h-3 animate-spin" /> : <GitBranch className="w-3 h-3" />} Generiraj
+              </Button>
+            </CardTitle>
+          </CardHeader>
+          <CardContent>
+            {conversionLoading ? (
+              <div className="py-4 text-center text-xs text-muted-foreground"><RefreshCw className="w-4 h-4 mx-auto mb-1 animate-spin opacity-50" /> AI napoveduje verjetnost konverzije...</div>
+            ) : conversion?.predictor ? (
+              <div className="space-y-2 text-xs">
+                <div className={cn('border rounded p-2',
+                  (conversion.predictor.conversionProbability ?? conversion.predictor.probability ?? 0) >= 70 ? 'bg-primary/10 border-primary/30' :
+                  (conversion.predictor.conversionProbability ?? conversion.predictor.probability ?? 0) >= 40 ? 'bg-amber-400/5 border-amber-400/20' : 'bg-red-500/5 border-red-500/20')}>
+                  <div className="flex items-center justify-between">
+                    <span className="font-bold uppercase text-[10px]">Verjetnost konverzije</span>
+                    <Badge variant="outline" className="text-[9px] font-mono font-bold text-primary border-primary/40">
+                      {conversion.predictor.conversionProbability ?? conversion.predictor.probability ?? '?'}%
+                    </Badge>
+                  </div>
+                  {conversion.predictor.reasoning && <p className="text-[10px] text-muted-foreground mt-1">{conversion.predictor.reasoning}</p>}
+                </div>
+                {conversion.predictor.factors?.slice(0, 3).map((f: any, i: number) => (
+                  <div key={i} className="flex items-center gap-2 bg-card/30 border rounded p-1.5">
+                    <span className={cn('font-bold w-3', f.impact === 'positive' ? 'text-primary' : f.impact === 'negative' ? 'text-red-500' : 'text-muted-foreground')}>
+                      {f.impact === 'positive' ? '+' : f.impact === 'negative' ? '−' : '○'}
+                    </span>
+                    <span className="text-[10px] font-medium">{f.factor || f.name}</span>
+                    <span className="text-[9px] text-muted-foreground ml-auto">({f.weight ?? f.score}/10)</span>
+                  </div>
+                ))}
+                {conversion.predictor.insights && <div className="text-[9px] text-muted-foreground">💡 {conversion.predictor.insights}</div>}
+              </div>
+            ) : (
+              <p className="text-xs text-muted-foreground text-center py-4">AI napove verjetnost konverzije (ali bo kupec kupil znova) z analizo faktorjev.</p>
             )}
           </CardContent>
         </Card>
