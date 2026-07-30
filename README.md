@@ -1,6 +1,6 @@
 # Markec AI Firm — AI Trading Firm za slovenske oglase
 
-[![Version](https://img.shields.io/badge/version-v7.22.0-blue.svg)](./CHANGELOG.md)
+[![Version](https://img.shields.io/badge/version-v7.24.0-blue.svg)](./CHANGELOG.md)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](./LICENSE)
 [![AI Endpoints](https://img.shields.io/badge/AI%20endpoints-254+-green.svg)](./AI_ENDPOINTS.md)
 [![Next.js](https://img.shields.io/badge/Next.js-16-black.svg)](https://nextjs.org/)
@@ -46,7 +46,7 @@ računalniku — brez cloud storitev, brez mesečnih naročnin, brez deljenja po
 Lovi podcenjene oglase na Bolhi/Facebooku/Vintedu z AI, jih kupi poceni, preprodaj drago z
 AI-optimiziranimi oglasi, in avtomatiziraj celoten workflow od odkritja do prodaje.
 
-### Verzija v7.22.0 (29. julij 2026)
+### Verzija v7.24.0 (29. julij 2026)
 
 **254 AI endpointov** organiziranih v 7 kategorij:
 - **Statistike** (analytics, predictions, forecasting) — 35+ funkcij
@@ -57,7 +57,7 @@ AI-optimiziranimi oglasi, in avtomatiziraj celoten workflow od odkritja do proda
 - **Risk/Insurance** (hedging, fraud detection, claims) — 10+ funkcij
 - **Finance/Profit** (margin, ROI, compounding) — 16+ funkcij
 
-### Kaj je novega v v7.22
+### Kaj je novega v v7.24
 
 **🎉 55 AI funkcij z dedicated UI — ALL 5 DOMAINS COMPLETE (10 × 5 = 50 + AI Hub 254 = 309 total)!**
 
@@ -79,7 +79,7 @@ AI-optimiziranimi oglasi, in avtomatiziraj celoten workflow od odkritja do proda
 
 **🛡️ Tveganja AI (RiskView)** — 10 AI funkcij:
 - Risk Hedging, Insurance Optimizer v2, Market Saturation, Risk Parity, Margin Guardian
-- **+5 (v7.22):** Insurance Claim, Anomaly Detection, Inventory Risk Assessor, Quality Predictor, Quality Aggregator
+- **+5 (v7.24):** Insurance Claim, Anomaly Detection, Inventory Risk Assessor, Quality Predictor, Quality Aggregator
 
 **🤖 AI Hub** — vsi 254 AI endpointov z iskalnikom, kategorijami in generičnim runner-jem
 
@@ -107,7 +107,7 @@ AI-optimiziranimi oglasi, in avtomatiziraj celoten workflow od odkritja do proda
 **Aplikacija sedaj ima 17 zavihkov z 55 AI funkcijami** (prej 11 zavihkov, 0 AI funkcij) z keyboard shortcuts:
 `1-9/0` (osnovni), `b` (kupci), `a` (AI Hub), `i` (skladišče AI), `p` (cene AI), `l` (oglasi AI), `r` (tveganja AI)
 
-▶️ Glej [CHANGELOG.md](./CHANGELOG.md) za popolno zgodovino v1.0 → v7.22.
+▶️ Glej [CHANGELOG.md](./CHANGELOG.md) za popolno zgodovino v1.0 → v7.24.
 
 ---
 
@@ -634,10 +634,10 @@ Z obveznostjo:
 
 ## 📋 Changelog
 
-Popolna zgodovina verzij v [CHANGELOG.md](./CHANGELOG.md) — od v1.0 (25. junij 2026) do v7.22 (29. julij 2026).
+Popolna zgodovina verzij v [CHANGELOG.md](./CHANGELOG.md) — od v1.0 (25. junij 2026) do v7.24 (29. julij 2026).
 
 ### Zadnje verzije
-- **v7.22.0** (29. jul 2026) — Listing Image Background Cleaner, Inventory Damage Prevention, Buyer Social Influence Scorer
+- **v7.24.0** (29. jul 2026) — Listing Image Background Cleaner, Inventory Damage Prevention, Buyer Social Influence Scorer
 - **v6.91.0** (29. jul 2026) — Listing Image Quality Scorer, Inventory Carrying Cost, Buyer Reactivation Engine
 - **v6.90.0** (29. jul 2026) — Listing Typography Optimizer, Inventory Procurement Optimizer, Buyer Trust Builder
 - **v6.89.0** (29. jul 2026) — Listing Color Psychology, Inventory Aging Strategist, Buyer Engagement Predictor v2

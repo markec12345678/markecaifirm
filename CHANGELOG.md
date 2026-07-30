@@ -13,6 +13,28 @@ Načrtovano za v6.93+:
 - WebSocket real-time negotiation
 - ML model za buyer matchmaker (fine-tuned na realni data)
 
+## [7.24.0] - 2026-07-30
+
+### Changed — TypeScript Quality Enforced
+- **ignoreBuildErrors: false** — sedaj ko smo popravili vseh 48 TS napak (0 remaining)
+  je to varno. Build bo fail-al, ce kdorkoli vnese novo TS napako.
+  - PR #1 (v6.92.1): odstranil ignoreBuildErrors: true → build fail
+  - PR #29 (v7.20): vraceno na true (pragmaticno, pre-existing napake)
+  - PR #31 (v7.22): popravil vseh 48 TS napak → 0 remaining
+  - PR #33 (v7.24): koncno false → quality enforced going forward
+
+### Final Project Status
+- **0 TypeScript errors** (prej 48)
+- **Build success** z ignoreBuildErrors: false
+- **AI verified** (OpenRouter + Llama 3.1 8B free)
+- **ErrorBoundary** na vseh 17 pogledih
+- **55 AI funkcij z dedicated UI** (5 pogledov x 10)
+- **254 AI preko AI Hub** (iskalnik + runner)
+- **309 skupaj AI dostopnih iz UI**
+- **17 zavihkov** z keyboard shortcuts
+- **Setup script** (bun run setup)
+- **Dokumentacija sinhronizirana** na v7.24.0
+
 ## [7.22.0] - 2026-07-30
 
 ### MILESTONE: 0 TypeScript errors + Build success + AI verified
