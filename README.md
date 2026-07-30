@@ -59,14 +59,29 @@ AI-optimiziranimi oglasi, in avtomatiziraj celoten workflow od odkritja do proda
 
 ### Kaj je novega v v7.16
 
-**🎉 6 novih AI pogledov z 30 AI funkcijami — Domain Coverage Complete!**
+**🎉 55 AI funkcij z dedicated UI — ALL 5 DOMAINS COMPLETE (10 × 5 = 50 + AI Hub 254 = 309 total)!**
 
-- **👥 Kupci (BuyersView)** — 5 AI funkcij: Buyer Persona, Trust Score (6 tierjev), Journey Optimizer (8 stopenj), Review Generator, Lifecycle Predictor (9 faz)
-- **📦 Skladišče AI (InventoryView)** — 5 AI funkcij: Inventory Aging, Stockout Predictor, Shrinkage Detector, Liquidation Strategist, Portfolio Rebalancer v3 (Markowitz)
-- **💰 Cene AI (PricingView)** — 5 AI funkcij: Smart Pricing Engine (10 faktorjev), Profit Forecast (3 scenariji), Margin Optimizer, Price War Strategist, Seasonal Pricing
-- **📝 Oglasi AI (ListingOptimizationView)** — 5 AI funkcij: Image Generator (VLM prompti), Description Generator v3 (10 stilov), SEO Optimizer v2, Virality Predictor (8 heuristik), CTR Optimizer
-- **🛡️ Tveganja AI (RiskView)** — 5 AI funkcij: Risk Hedging (8 strategij), Insurance Optimizer v2 (4D matrix), Market Saturation (5 nivojev), Risk Parity, Margin Guardian
-- **🤖 AI Hub** — centralen pregled vseh 254 AI endpointov z iskalnikom, kategorijami in generičnim runner-jem (POST + JSON rezultat)
+**👥 Kupci (BuyersView)** — 10 AI funkcij:
+- Buyer Persona, Trust Score (6 tierjev), Journey Optimizer (8 stopenj), Review Generator, Lifecycle Predictor (9 faz)
+- **+5 (v7.12):** Matchmaker, CLV Predictor, Churn Prevention, Buyer Intent, Conversion Predictor
+
+**📦 Skladišče AI (InventoryView)** — 10 AI funkcij:
+- Inventory Aging, Stockout Predictor, Shrinkage Detector, Liquidation Strategist, Portfolio Rebalancer v3
+- **+5 (v7.13):** Capital Allocator, Carrying Cost, Depreciation Tracker, Growth Planner, Health Monitor
+
+**💰 Cene AI (PricingView)** — 10 AI funkcij:
+- Smart Pricing Engine, Profit Forecast, Margin Optimizer, Price War Strategist, Seasonal Pricing
+- **+5 (v7.14):** Profit Dashboard, Profit Playbook, Reserve Price Optimizer, Pricing Psychology, Geo Price Map
+
+**📝 Oglasi AI (ListingOptimizationView)** — 10 AI funkcij:
+- Image Generator, Description Generator v3, SEO Optimizer v2, Virality Predictor, CTR Optimizer
+- **+5 (v7.15):** Title Generator v2, Tag Optimizer, Thumbnail Optimizer, Social Proof Optimizer, Listing Refresh
+
+**🛡️ Tveganja AI (RiskView)** — 10 AI funkcij:
+- Risk Hedging, Insurance Optimizer v2, Market Saturation, Risk Parity, Margin Guardian
+- **+5 (v7.16):** Insurance Claim, Anomaly Detection, Inventory Risk Assessor, Quality Predictor, Quality Aggregator
+
+**🤖 AI Hub** — vsi 254 AI endpointov z iskalnikom, kategorijami in generičnim runner-jem
 
 **🔒 Varnostni popravki (v6.92.1):**
 - API avtentikacija (APP_API_KEY, middleware)
@@ -89,7 +104,7 @@ AI-optimiziranimi oglasi, in avtomatiziraj celoten workflow od odkritja do proda
 - ListingDetailModal razbit z 4070 na ~2227 vrstic (−45%)
 - 6 podkomponent izvlečenih (SentimentPanel, AuctionSniperPanel, FraudDetectionPanel, ImageAnalysisPanel, NegotiationPanel, ListingActionsBar)
 
-**Aplikacija sedaj ima 17 zavihkov** (prej 11) z keyboard shortcuts:
+**Aplikacija sedaj ima 17 zavihkov z 55 AI funkcijami** (prej 11 zavihkov, 0 AI funkcij) z keyboard shortcuts:
 `1-9/0` (osnovni), `b` (kupci), `a` (AI Hub), `i` (skladišče AI), `p` (cene AI), `l` (oglasi AI), `r` (tveganja AI)
 
 ▶️ Glej [CHANGELOG.md](./CHANGELOG.md) za popolno zgodovino v1.0 → v7.16.
@@ -108,11 +123,11 @@ AI-optimiziranimi oglasi, in avtomatiziraj celoten workflow od odkritja do proda
 | 4 | Oglasi | `4` | Brskanje po najdenih oglasih z AI analizo |
 | 5 | Watchlist | `5` | Priljubljeni oglasi z target price |
 | 6 | Skladišče | `6` | Trade management (buy/sell, ROI) |
-| 7 | **Skladišče AI** | `i` | AI: aging, stockout, shrinkage, liquidation, rebalancer |
-| 8 | **Cene AI** | `p` | AI: smart-pricing, profit-forecast, margin, price-war, seasonal |
-| 9 | **Oglasi AI** | `l` | AI: image-gen, desc-gen, SEO, virality, CTR |
-| 10 | **Tveganja AI** | `r` | AI: hedging, insurance, saturation, parity, guardian |
-| 11 | **Kupci** | `b` | AI: persona, trust, journey, review, lifecycle |
+| 7 | **Skladišče AI** | `i` | AI: 10 funkcij (aging, stockout, shrinkage, liquidation, rebalancer, capital, carrying, depreciation, growth, health) |
+| 8 | **Cene AI** | `p` | AI: 10 funkcij (smart-pricing, forecast, margin, price-war, seasonal, dashboard, playbook, reserve, psychology, geo) |
+| 9 | **Oglasi AI** | `l` | AI: 10 funkcij (image-gen, desc-gen, SEO, virality, CTR, title, tag, thumbnail, social-proof, refresh) |
+| 10 | **Tveganja AI** | `r` | AI: 10 funkcij (hedging, insurance, saturation, parity, guardian, claim, anomalies, inv-risk, quality-pred, quality-agg) |
+| 11 | **Kupci** | `b` | AI: 10 funkcij (persona, trust, journey, review, lifecycle, matchmaker, CLV, churn, intent, conversion) |
 | 12 | Analitika | `7` | Arbitraža, trendi, sezonski vzorci |
 | 13 | Statistike | `8` | 23 AI funkcij: budget, forecast, rebalance... |
 | 14 | Obvestila | `9` | Zgodovina notifikacij |
