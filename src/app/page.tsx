@@ -1,6 +1,6 @@
 'use client';
 
-import { useEffect, useState, useCallback, useRef } from 'react';
+import { useEffect, useState, useRef, memo } from 'react';
 import dynamic from 'next/dynamic';
 import { Activity, Bell, Settings, ListPlus, Zap, RefreshCw, AlertCircle, LayoutGrid, BarChart3, Search, Heart, TrendingUp, History, Eye, PieChart, Menu, X, Users, Sparkles, Package, DollarSign, FileText, Shield } from 'lucide-react';
 import { Button } from '@/components/ui/button';
@@ -23,17 +23,17 @@ const NotificationHistoryView = dynamic(() => import('@/components/dashboard/not
 const WatchlistView = dynamic(() => import('@/components/dashboard/watchlist-view').then(m => ({ default: m.WatchlistView })), { ssr: false, loading: () => <LoadingFallback /> });
 const StatisticsView = dynamic(() => import('@/components/dashboard/statistics-view').then(m => ({ default: m.StatisticsView })), { ssr: false, loading: () => <LoadingFallback /> });
 // v7.00: BuyersView — nov pogled za upravljanje kupcev (40 orphan buyer endpointi)
-const BuyersView = dynamic(() => import('@/components/dashboard/buyers-view').then(m => ({ default: m.BuyersView })), { ssr: false, loading: () => <LoadingFallback /> });
+const BuyersView = memo(dynamic(() => import('@/components/dashboard/buyers-view').then(m => ({ default: m.BuyersView })), { ssr: false, loading: () => <LoadingFallback /> }));
 // v7.01: AIHubView — centralen pregled vseh 254 AI endpointov z iskalnikom
-const AIHubView = dynamic(() => import('@/components/dashboard/ai-hub-view').then(m => ({ default: m.AIHubView })), { ssr: false, loading: () => <LoadingFallback /> });
+const AIHubView = memo(dynamic(() => import('@/components/dashboard/ai-hub-view').then(m => ({ default: m.AIHubView })), { ssr: false, loading: () => <LoadingFallback /> }));
 // v7.02: InventoryView — AI analiza skladišča (aging, stockout, shrinkage, liquidation, rebalancer)
-const InventoryView = dynamic(() => import('@/components/dashboard/inventory-view').then(m => ({ default: m.InventoryView })), { ssr: false, loading: () => <LoadingFallback /> });
+const InventoryView = memo(dynamic(() => import('@/components/dashboard/inventory-view').then(m => ({ default: m.InventoryView })), { ssr: false, loading: () => <LoadingFallback /> }));
 // v7.04: PricingView — AI analiza cen in dobička (smart-pricing, forecast, margin, price-war, seasonal)
-const PricingView = dynamic(() => import('@/components/dashboard/pricing-view').then(m => ({ default: m.PricingView })), { ssr: false, loading: () => <LoadingFallback /> });
+const PricingView = memo(dynamic(() => import('@/components/dashboard/pricing-view').then(m => ({ default: m.PricingView })), { ssr: false, loading: () => <LoadingFallback /> }));
 // v7.05: ListingOptimizationView — AI optimizacija oglasov (image-gen, desc-gen, seo, virality, ctr)
-const ListingOptimizationView = dynamic(() => import('@/components/dashboard/listing-optimization-view').then(m => ({ default: m.ListingOptimizationView })), { ssr: false, loading: () => <LoadingFallback /> });
+const ListingOptimizationView = memo(dynamic(() => import('@/components/dashboard/listing-optimization-view').then(m => ({ default: m.ListingOptimizationView })), { ssr: false, loading: () => <LoadingFallback /> }));
 // v7.06: RiskView — AI analiza tveganj (hedging, insurance, saturation, parity, guardian)
-const RiskView = dynamic(() => import('@/components/dashboard/risk-view').then(m => ({ default: m.RiskView })), { ssr: false, loading: () => <LoadingFallback /> });
+const RiskView = memo(dynamic(() => import('@/components/dashboard/risk-view').then(m => ({ default: m.RiskView })), { ssr: false, loading: () => <LoadingFallback /> }));
 import { PwaInstallPrompt } from '@/components/dashboard/pwa-install-prompt';
 import { ProfileSwitcher } from '@/components/dashboard/profile-switcher';
 import { SearchModal } from '@/components/dashboard/search-modal';
@@ -88,42 +88,24 @@ export default function Home() {
   // v6.92: Auth check — prikaži login modal, če je APP_API_KEY nastavljen in uporabnik ni prijavljen
   const { needsAuth } = useAuth();
 
-  // Clock effect — only subscribe to setInterval, initial value set lazily to avoid setState in effect
+  // v7.09: Clock effect — reduced from 1s to 10s (header time doesn't need second precision)
   useEffect(() => {
-    // Defer first set to next tick to avoid synchronous setState warning
     const raf = requestAnimationFrame(() => setNow(new Date()));
-    const t = setInterval(() => setNow(new Date()), 1000);
+    const t = setInterval(() => setNow(new Date()), 10_000);
     return () => {
       cancelAnimationFrame(raf);
       clearInterval(t);
     };
   }, []);
 
-  const refreshUnread = useCallback(async () => {
-    try {
-      const statsRes = await fetch('/api/stats');
-      if (statsRes.ok) {
-        const stats = await statsRes.json();
-        setUnreadAlerts(stats.unreadAlerts ?? 0);
-      }
-    } catch {
-      /* ignore */
-    }
-  }, []);
-
+  // v7.09: Removed redundant 30s polling — SSE already sends stats every 5s
+  // (useAlertsStream sends 'stats' event with unreadAlerts, which updates state below)
+  // Only do initial fetch on mount:
   useEffect(() => {
-    let mounted = true;
-    const doRefresh = async () => {
-      await refreshUnread();
-      if (!mounted) return;
-    };
-    doRefresh();
-    const t = setInterval(refreshUnread, 30_000);
-    return () => {
-      mounted = false;
-      clearInterval(t);
-    };
-  }, [refreshUnread]);
+    fetch('/api/stats').then(r => r.ok ? r.json() : null).then(s => {
+      if (s) setUnreadAlerts(s.unreadAlerts ?? 0);
+    }).catch(() => {});
+  }, []);
 
   // v4.9: SSE — update unreadAlerts from stats + show toast on new alert
   useEffect(() => {
