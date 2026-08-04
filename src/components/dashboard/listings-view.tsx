@@ -37,6 +37,7 @@ import { FraudDetectionPanel } from '@/components/dashboard/listing-detail/fraud
 import { ImageAnalysisPanel } from '@/components/dashboard/listing-detail/image-analysis-panel';
 // v6.98: NegotiationPanel — združuje Negotiator + Playbook + Outcome + Chatbot (4 v 1)
 import { NegotiationPanel } from '@/components/dashboard/listing-detail/negotiation-panel';
+import { PriceHistoryPanel } from '@/components/dashboard/listing-detail/price-history-panel';
 // v6.99: ListingActionsBar — združuje Notes + Contact Tracker
 import { ListingActionsBar } from '@/components/dashboard/listing-detail/listing-actions-bar';
 
@@ -2905,7 +2906,12 @@ function ListingDetailModal({ listingId, onClose }: { listingId: string | null; 
               </div>
             )}
 
-            {/* v1.4: Price history */}
+            {/* v7.34: Price History Panel — chart + buy recommendation (Keepa-style) */}
+            {listing.price != null && (
+              <PriceHistoryPanel listingId={listing.id} />
+            )}
+
+            {/* v1.4: Price history (text log) */}
             {priceHistory.length > 1 && (
               <div>
                 <h4 className="text-xs uppercase tracking-wider text-muted-foreground mb-2 flex items-center gap-1.5">
