@@ -39,6 +39,7 @@ import { ImageAnalysisPanel } from '@/components/dashboard/listing-detail/image-
 import { NegotiationPanel } from '@/components/dashboard/listing-detail/negotiation-panel';
 import { PriceHistoryPanel } from '@/components/dashboard/listing-detail/price-history-panel';
 import { SellerIntelligencePanel } from '@/components/dashboard/listing-detail/seller-intelligence-panel';
+import { MakeOfferPanel } from '@/components/dashboard/listing-detail/make-offer-panel';
 // v6.99: ListingActionsBar — združuje Notes + Contact Tracker
 import { ListingActionsBar } from '@/components/dashboard/listing-detail/listing-actions-bar';
 
@@ -2916,6 +2917,14 @@ function ListingDetailModal({ listingId, onClose }: { listingId: string | null; 
             {listing.sellerName && (
               <SellerIntelligencePanel sellerName={listing.sellerName} />
             )}
+
+            {/* v7.35: Make Offer — 1-click AI offer generator */}
+            <MakeOfferPanel
+              listingId={listing.id}
+              listingUrl={listing.url}
+              listingTitle={listing.title}
+              askingPrice={listing.price}
+            />
 
             {/* v1.4: Price history (text log) */}
             {priceHistory.length > 1 && (

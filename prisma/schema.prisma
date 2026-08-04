@@ -180,6 +180,9 @@ model Trade {
   status      String   @default("held") // held | sold | cancelled
   // Notes
   notes       String   @default("")
+  // v7.35: Flip Workflow checklist — JSON array of {step, completedAt}
+  // Steps: received, cleaned, photographed, described, listed_bolha, listed_vinted, listed_other, price_review_7d, price_drop_14d, price_drop_30d
+  flipChecklist String @default("[]")
   // Metadata
   createdAt   DateTime @default(now())
   updatedAt   DateTime @updatedAt
