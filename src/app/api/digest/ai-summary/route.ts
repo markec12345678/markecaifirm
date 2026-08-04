@@ -199,7 +199,7 @@ function buildSummaryPrompt(listings: any[], stats: any): string {
   lines.push('4. Na koncu dodaj praktično priporočilo za uporabnika (kaj naj stori).');
   lines.push('5. Skupna dolžina: 200-500 besed. Slovenščina, neposredno in jedrnato.');
   lines.push('');
-  'Odgovori LE z JSON v tej obliki:';
+  lines.push('Odgovori LE z JSON v tej obliki:');
   lines.push('{"summary": "<celoten povzetek v markdown formatu>", "top_pick": "<naslov najboljšega oglasa ali null>", "recommendation": "<kratko priporočilo>"}');
   return lines.join('\n');
 }
