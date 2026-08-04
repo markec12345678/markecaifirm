@@ -1,36 +1,43 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { db } from '@/lib/db';
+import { logger } from '@/lib/logger';
 
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
 
 export async function GET(req: NextRequest) {
-  const url = new URL(req.url);
-  const archived = url.searchParams.get('archived') === '1';
-  const limit = parseInt(url.searchParams.get('limit') ?? '50', 10);
-  const monitorId = url.searchParams.get('monitorId');
-  const format = url.searchParams.get('format') ?? 'json';
+  try {
+    const url = new URL(req.url);
+    const archived = url.searchParams.get('archived') === '1';
+    const limit = parseInt(url.searchParams.get('limit') ?? '50', 10);
+    const monitorId = url.searchParams.get('monitorId');
+    const format = url.searchParams.get('format') ?? 'json';
 
-  const where: any = { isArchived: archived };
-  if (monitorId) where.monitorId = monitorId;
+    const where: any = { isArchived: archived };
+    if (monitorId) where.monitorId = monitorId;
 
-  const alerts = await db.alert.findMany({
-    where,
-    orderBy: { createdAt: 'desc' },
-    take: Math.min(limit, 1000),
-    include: { monitor: { select: { name: true, source: true } } },
-  });
-
-  if (format === 'csv') {
-    const csv = alertsToCsv(alerts);
-    return new NextResponse(csv, {
-      headers: {
-        'Content-Type': 'text/csv; charset=utf-8',
-        'Content-Disposition': `attachment; filename="alerts-${new Date().toISOString().slice(0, 10)}.csv"`,
-      },
+    const alerts = await db.alert.findMany({
+      where,
+      orderBy: { createdAt: 'desc' },
+      take: Math.min(limit, 1000),
+      include: { monitor: { select: { name: true, source: true } } },
     });
+
+    if (format === 'csv') {
+      const csv = alertsToCsv(alerts);
+      return new NextResponse(csv, {
+        headers: {
+          'Content-Type': 'text/csv; charset=utf-8',
+          'Content-Disposition': `attachment; filename="alerts-${new Date().toISOString().slice(0, 10)}.csv"`,
+        },
+      });
+    }
+    return NextResponse.json(alerts);
+
+  } catch (err) {
+    logger.error("/api/alerts", "GET handler failed", err);
+    return NextResponse.json({ error: err instanceof Error ? err.message : 'Napaka' }, { status: 500 });
   }
-  return NextResponse.json(alerts);
 }
 
 function alertsToCsv(alerts: any[]): string {
@@ -64,29 +71,41 @@ function csvEscape(s: string): string {
 }
 
 export async function PATCH(req: NextRequest) {
-  const body = await req.json();
-  const { id, isRead, isArchived, userAction } = body;
-  if (!id) return NextResponse.json({ error: 'Manjka id' }, { status: 400 });
-  const data: any = {};
-  if (typeof isRead === 'boolean') data.isRead = isRead;
-  if (typeof isArchived === 'boolean') data.isArchived = isArchived;
-  // v1.2: user feedback tracking
-  if (typeof userAction === 'string') {
-    const valid = ['interested', 'archived', 'scam', 'ignored'];
-    if (!valid.includes(userAction)) {
-      return NextResponse.json({ error: `Neveljaven userAction: ${userAction}` }, { status: 400 });
+  try {
+    const body = await req.json();
+    const { id, isRead, isArchived, userAction } = body;
+    if (!id) return NextResponse.json({ error: 'Manjka id' }, { status: 400 });
+    const data: any = {};
+    if (typeof isRead === 'boolean') data.isRead = isRead;
+    if (typeof isArchived === 'boolean') data.isArchived = isArchived;
+    // v1.2: user feedback tracking
+    if (typeof userAction === 'string') {
+      const valid = ['interested', 'archived', 'scam', 'ignored'];
+      if (!valid.includes(userAction)) {
+        return NextResponse.json({ error: `Neveljaven userAction: ${userAction}` }, { status: 400 });
+      }
+      data.userAction = userAction;
+      data.userActionedAt = new Date();
     }
-    data.userAction = userAction;
-    data.userActionedAt = new Date();
+    const updated = await db.alert.update({ where: { id }, data });
+    return NextResponse.json(updated);
+
+  } catch (err) {
+    logger.error("/api/alerts", "PATCH handler failed", err);
+    return NextResponse.json({ error: err instanceof Error ? err.message : 'Napaka' }, { status: 500 });
   }
-  const updated = await db.alert.update({ where: { id }, data });
-  return NextResponse.json(updated);
 }
 
 export async function DELETE(req: NextRequest) {
-  const url = new URL(req.url);
-  const id = url.searchParams.get('id');
-  if (!id) return NextResponse.json({ error: 'Manjka id' }, { status: 400 });
-  await db.alert.delete({ where: { id } });
-  return NextResponse.json({ ok: true });
+  try {
+    const url = new URL(req.url);
+    const id = url.searchParams.get('id');
+    if (!id) return NextResponse.json({ error: 'Manjka id' }, { status: 400 });
+    await db.alert.delete({ where: { id } });
+    return NextResponse.json({ ok: true });
+
+  } catch (err) {
+    logger.error("/api/alerts", "DELETE handler failed", err);
+    return NextResponse.json({ error: err instanceof Error ? err.message : 'Napaka' }, { status: 500 });
+  }
 }

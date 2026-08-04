@@ -8,6 +8,7 @@ import { db } from '@/lib/db';
 import { getSettingsRow } from '@/lib/pipeline';
 import { callProviderForRaw, parseJsonLooseExported, type AiProviderType, type AiSettings } from '@/lib/ai';
 import { evaluateListing, type ListingEvaluationInput } from '@/lib/ai';
+import { logger } from '@/lib/logger';
 
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
@@ -224,6 +225,7 @@ Odgovori LE z JSON:
       source: listing ? 'listing' : 'trade',
     });
   } catch (e: any) {
+    logger.error("/api/ai/refurbishment-cost", "POST handler failed", e);
     return NextResponse.json({ error: e?.message ?? 'Napaka' }, { status: 500 });
   }
 }

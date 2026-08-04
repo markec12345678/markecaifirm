@@ -7,86 +7,88 @@ import { NextRequest, NextResponse } from 'next/server';
 import { db } from '@/lib/db';
 import { getSettingsRow } from '@/lib/pipeline';
 import { callProviderForRaw, parseJsonLooseExported, type AiProviderType, type AiSettings } from '@/lib/ai';
+import { logger } from '@/lib/logger';
 
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
 export const maxDuration = 60;
 
 export async function POST(_req: NextRequest, { params }: { params: Promise<{ id: string }> }) {
-  const { id } = await params;
+  try {
+    const { id } = await params;
 
-  const listing = await db.listing.findUnique({
-    where: { id },
-    select: {
-      id: true, title: true, price: true, priceText: true, url: true,
-      description: true, detailDescription: true,
-      aiVerdict: true, aiScore: true, aiRisk: true, aiEstimatedValue: true,
-      dealScore: true, monitorId: true, monitor: { select: { source: true, name: true } },
-    },
-  });
-  if (!listing) return NextResponse.json({ error: 'Listing ne obstaja' }, { status: 404 });
-  if (!listing.price) return NextResponse.json({ error: 'Brez cene' }, { status: 400 });
+    const listing = await db.listing.findUnique({
+      where: { id },
+      select: {
+        id: true, title: true, price: true, priceText: true, url: true,
+        description: true, detailDescription: true,
+        aiVerdict: true, aiScore: true, aiRisk: true, aiEstimatedValue: true,
+        dealScore: true, monitorId: true, monitor: { select: { source: true, name: true } },
+      },
+    });
+    if (!listing) return NextResponse.json({ error: 'Listing ne obstaja' }, { status: 404 });
+    if (!listing.price) return NextResponse.json({ error: 'Brez cene' }, { status: 400 });
 
-  // Gather market data: similar listings + sold trades for liquidity
-  const minP = Math.floor(listing.price * 0.6);
-  const maxP = Math.ceil(listing.price * 1.5);
-  const [similarListings, soldTrades] = await Promise.all([
-    db.listing.findMany({
-      where: { id: { not: id }, price: { gte: minP, lte: maxP }, isHidden: false, monitorId: listing.monitorId },
-      select: { price: true, firstSeenAt: true, aiVerdict: true, dealScore: true },
-      take: 30,
-    }),
-    db.trade.findMany({
-      where: { status: 'sold', sellPrice: { not: null }, buyPrice: { gte: minP, lte: maxP } },
-      select: { buyPrice: true, sellPrice: true, buyDate: true, sellDate: true, title: true },
-      take: 20,
-    }),
-  ]);
+    // Gather market data: similar listings + sold trades for liquidity
+    const minP = Math.floor(listing.price * 0.6);
+    const maxP = Math.ceil(listing.price * 1.5);
+    const [similarListings, soldTrades] = await Promise.all([
+      db.listing.findMany({
+        where: { id: { not: id }, price: { gte: minP, lte: maxP }, isHidden: false, monitorId: listing.monitorId },
+        select: { price: true, firstSeenAt: true, aiVerdict: true, dealScore: true },
+        take: 30,
+      }),
+      db.trade.findMany({
+        where: { status: 'sold', sellPrice: { not: null }, buyPrice: { gte: minP, lte: maxP } },
+        select: { buyPrice: true, sellPrice: true, buyDate: true, sellDate: true, title: true },
+        take: 20,
+      }),
+    ]);
 
-  // Calculate liquidity stats
-  const prices = similarListings.map(l => l.price!).filter(Boolean);
-  const avgMarketPrice = prices.length > 0 ? Math.round(prices.reduce((a, b) => a + b, 0) / prices.length) : listing.price;
-  const minMarket = prices.length > 0 ? Math.min(...prices) : listing.price;
-  const maxMarket = prices.length > 0 ? Math.max(...prices) : listing.price;
+    // Calculate liquidity stats
+    const prices = similarListings.map(l => l.price!).filter(Boolean);
+    const avgMarketPrice = prices.length > 0 ? Math.round(prices.reduce((a, b) => a + b, 0) / prices.length) : listing.price;
+    const minMarket = prices.length > 0 ? Math.min(...prices) : listing.price;
+    const maxMarket = prices.length > 0 ? Math.max(...prices) : listing.price;
 
-  // Sold trades stats (for speed estimation)
-  const soldWithDates = soldTrades.filter(t => t.sellDate && t.buyDate);
-  const avgDaysToSell = soldWithDates.length > 0
-    ? Math.round(soldWithDates.reduce((s, t) => s + (t.sellDate!.getTime() - t.buyDate.getTime()) / (24 * 60 * 60 * 1000), 0) / soldWithDates.length)
-    : null;
-  const avgSellMargin = soldWithDates.length > 0
-    ? Math.round(soldWithDates.reduce((s, t) => s + ((t.sellPrice! - t.buyPrice) / t.buyPrice) * 100, 0) / soldWithDates.length)
-    : null;
+    // Sold trades stats (for speed estimation)
+    const soldWithDates = soldTrades.filter(t => t.sellDate && t.buyDate);
+    const avgDaysToSell = soldWithDates.length > 0
+      ? Math.round(soldWithDates.reduce((s, t) => s + (t.sellDate!.getTime() - t.buyDate.getTime()) / (24 * 60 * 60 * 1000), 0) / soldWithDates.length)
+      : null;
+    const avgSellMargin = soldWithDates.length > 0
+      ? Math.round(soldWithDates.reduce((s, t) => s + ((t.sellPrice! - t.buyPrice) / t.buyPrice) * 100, 0) / soldWithDates.length)
+      : null;
 
-  // Bolha fee: 5% + 0.50€ (for items > 50€)
-  const bolhaFee = listing.price > 50 ? listing.price * 0.05 + 0.5 : listing.price * 0.05;
-  // Estimated shipping: 5€ (packet.si)
-  const shipping = 5;
-  // Total costs
-  const totalCosts = listing.price + bolhaFee + shipping;
-  // Estimated sell price (market average - 5% for faster sale)
-  const estimatedSellPrice = Math.round(avgMarketPrice * 0.95);
-  // Estimated profit
-  const estimatedProfit = estimatedSellPrice - totalCosts - (estimatedSellPrice * 0.05 + 0.5) - 5; // sell fees too
-  const estimatedMarginPct = Math.round((estimatedProfit / listing.price) * 100);
+    // Bolha fee: 5% + 0.50€ (for items > 50€)
+    const bolhaFee = listing.price > 50 ? listing.price * 0.05 + 0.5 : listing.price * 0.05;
+    // Estimated shipping: 5€ (packet.si)
+    const shipping = 5;
+    // Total costs
+    const totalCosts = listing.price + bolhaFee + shipping;
+    // Estimated sell price (market average - 5% for faster sale)
+    const estimatedSellPrice = Math.round(avgMarketPrice * 0.95);
+    // Estimated profit
+    const estimatedProfit = estimatedSellPrice - totalCosts - (estimatedSellPrice * 0.05 + 0.5) - 5; // sell fees too
+    const estimatedMarginPct = Math.round((estimatedProfit / listing.price) * 100);
 
-  // Liquidity score (0-100): how fast can you sell?
-  const listingCount = similarListings.length;
-  const liquidityScore = Math.min(100, Math.round(
-    (listingCount > 20 ? 40 : listingCount * 2) + // more listings = more demand
-    (avgDaysToSell != null ? Math.max(0, 40 - avgDaysToSell) : 20) + // faster = better
-    (soldWithDates.length > 5 ? 20 : soldWithDates.length * 4) // sold history
-  ));
+    // Liquidity score (0-100): how fast can you sell?
+    const listingCount = similarListings.length;
+    const liquidityScore = Math.min(100, Math.round(
+      (listingCount > 20 ? 40 : listingCount * 2) + // more listings = more demand
+      (avgDaysToSell != null ? Math.max(0, 40 - avgDaysToSell) : 20) + // faster = better
+      (soldWithDates.length > 5 ? 20 : soldWithDates.length * 4) // sold history
+    ));
 
-  // Build AI prompt for flip analysis
-  const settings = await getSettingsRow();
-  const aiSettings: AiSettings = {
-    provider: settings.aiProvider as AiProviderType,
-    baseUrl: settings.aiBaseUrl, apiKey: settings.aiApiKey, model: settings.aiModel,
-    fallbackProvider: (settings.fallbackProvider || '') as AiProviderType | '',
-    fallbackBaseUrl: settings.fallbackBaseUrl || '', fallbackApiKey: settings.fallbackApiKey || '',
-    fallbackModel: settings.fallbackModel || '',
-  };
+    // Build AI prompt for flip analysis
+    const settings = await getSettingsRow();
+    const aiSettings: AiSettings = {
+      provider: settings.aiProvider as AiProviderType,
+      baseUrl: settings.aiBaseUrl, apiKey: settings.aiApiKey, model: settings.aiModel,
+      fallbackProvider: (settings.fallbackProvider || '') as AiProviderType | '',
+      fallbackBaseUrl: settings.fallbackBaseUrl || '', fallbackApiKey: settings.fallbackApiKey || '',
+      fallbackModel: settings.fallbackModel || '',
+    };
 
   const prompt = `Si ekspert za preprodajo (flipping) na slovenskih spletnih oglasih.
 Oceni ali se splača kupiti ta oglas za preprodajo.
@@ -120,46 +122,51 @@ Oceni:
 Odgovori LE z JSON:
 {"flip_score": <0-100>, "estimated_days_to_sell": <number>, "reasoning": "<razlog>", "recommendation": "<kupi|razmisli|ne>"}`;
 
-  let raw = '';
-  try {
-    raw = await callProviderForRaw(aiSettings, prompt);
-  } catch (primaryError: any) {
-    if (aiSettings.fallbackProvider && aiSettings.fallbackModel) {
-      const fb: AiSettings = { provider: aiSettings.fallbackProvider, baseUrl: aiSettings.fallbackBaseUrl || '', apiKey: aiSettings.fallbackApiKey || '', model: aiSettings.fallbackModel };
-      raw = await callProviderForRaw(fb, prompt);
-    } else { return NextResponse.json({ error: primaryError?.message ?? 'AI failed' }, { status: 500 }); }
+    let raw = '';
+    try {
+      raw = await callProviderForRaw(aiSettings, prompt);
+    } catch (primaryError: any) {
+      if (aiSettings.fallbackProvider && aiSettings.fallbackModel) {
+        const fb: AiSettings = { provider: aiSettings.fallbackProvider, baseUrl: aiSettings.fallbackBaseUrl || '', apiKey: aiSettings.fallbackApiKey || '', model: aiSettings.fallbackModel };
+        raw = await callProviderForRaw(fb, prompt);
+      } else { return NextResponse.json({ error: primaryError?.message ?? 'AI failed' }, { status: 500 }); }
+    }
+
+    const parsed: any = parseJsonLooseExported(raw);
+    const flipScore = clampInt(parsed?.flip_score, 0, 100) ?? 50;
+
+    // Increment AI usage
+    const today = new Date().toISOString().slice(0, 10);
+    if (settings.aiCallsDate !== today) {
+      await db.settings.update({ where: { id: 'singleton' }, data: { aiCallsDate: today, aiCallsToday: 1 } });
+    } else {
+      await db.settings.update({ where: { id: 'singleton' }, data: { aiCallsToday: { increment: 1 } } });
+    }
+
+    return NextResponse.json({
+      ok: true,
+      flipScore,
+      estimatedMargin: estimatedMarginPct,
+      estimatedProfit: Math.round(estimatedProfit),
+      estimatedSellPrice,
+      estimatedDaysToSell: clampInt(parsed?.estimated_days_to_sell, 1, 365) ?? avgDaysToSell ?? 14,
+      liquidityScore,
+      liquidityLabel: liquidityScore >= 70 ? 'Visoka' : liquidityScore >= 40 ? 'Srednja' : 'Nizka',
+      marketAvgPrice: avgMarketPrice,
+      marketMin: minMarket,
+      marketMax: maxMarket,
+      marketListingCount: listingCount,
+      bolhaFee: Math.round(bolhaFee * 100) / 100,
+      shipping,
+      totalCosts: Math.round(totalCosts * 100) / 100,
+      reasoning: String(parsed?.reasoning ?? '').slice(0, 300),
+      recommendation: String(parsed?.recommendation ?? '').slice(0, 50),
+    });
+
+  } catch (err) {
+    logger.error("/api/listings/[id]/flip-score", "POST handler failed", err);
+    return NextResponse.json({ error: err instanceof Error ? err.message : 'Napaka' }, { status: 500 });
   }
-
-  const parsed: any = parseJsonLooseExported(raw);
-  const flipScore = clampInt(parsed?.flip_score, 0, 100) ?? 50;
-
-  // Increment AI usage
-  const today = new Date().toISOString().slice(0, 10);
-  if (settings.aiCallsDate !== today) {
-    await db.settings.update({ where: { id: 'singleton' }, data: { aiCallsDate: today, aiCallsToday: 1 } });
-  } else {
-    await db.settings.update({ where: { id: 'singleton' }, data: { aiCallsToday: { increment: 1 } } });
-  }
-
-  return NextResponse.json({
-    ok: true,
-    flipScore,
-    estimatedMargin: estimatedMarginPct,
-    estimatedProfit: Math.round(estimatedProfit),
-    estimatedSellPrice,
-    estimatedDaysToSell: clampInt(parsed?.estimated_days_to_sell, 1, 365) ?? avgDaysToSell ?? 14,
-    liquidityScore,
-    liquidityLabel: liquidityScore >= 70 ? 'Visoka' : liquidityScore >= 40 ? 'Srednja' : 'Nizka',
-    marketAvgPrice: avgMarketPrice,
-    marketMin: minMarket,
-    marketMax: maxMarket,
-    marketListingCount: listingCount,
-    bolhaFee: Math.round(bolhaFee * 100) / 100,
-    shipping,
-    totalCosts: Math.round(totalCosts * 100) / 100,
-    reasoning: String(parsed?.reasoning ?? '').slice(0, 300),
-    recommendation: String(parsed?.recommendation ?? '').slice(0, 50),
-  });
 }
 
 function clampInt(v: any, min: number, max: number): number | null {

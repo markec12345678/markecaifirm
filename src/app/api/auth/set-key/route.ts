@@ -20,6 +20,7 @@
  */
 
 import { NextRequest, NextResponse } from 'next/server';
+import { logger } from '@/lib/logger';
 
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
@@ -28,34 +29,40 @@ const APP_API_KEY = process.env.APP_API_KEY;
 const DISABLED = !APP_API_KEY;
 
 export async function POST(req: NextRequest) {
-  if (DISABLED) {
-    return NextResponse.json({ ok: true, message: 'Avtentikacija izklopljena (APP_API_KEY ni nastavljen).' });
-  }
-
-  const body = await req.json().catch(() => ({}));
-  const key = typeof body?.key === 'string' ? body.key.trim() : '';
-
-  if (!key) {
-    return NextResponse.json({ error: 'Manjka ključ' }, { status: 400 });
-  }
-
-  if (key !== APP_API_KEY) {
-    // Constant-time comparison (preprečevanje timing napada)
-    // Pri 64-znakovnem hex ključu je timing razlika marginalna, a good practice
-    if (key.length !== APP_API_KEY!.length || !timingSafeEqual(key, APP_API_KEY!)) {
-      return NextResponse.json({ error: 'Napačen ključ' }, { status: 401 });
+  try {
+    if (DISABLED) {
+      return NextResponse.json({ ok: true, message: 'Avtentikacija izklopljena (APP_API_KEY ni nastavljen).' });
     }
-  }
 
-  const res = NextResponse.json({ ok: true, message: 'Ključ nastavljen. Cookie bo veljal 30 dni.' });
-  res.cookies.set('app-key', key, {
-    httpOnly: false,        // EventSource (SSE) ne podpira custom headers
-    secure: process.env.NODE_ENV === 'production',
-    sameSite: 'lax',        // CSRF zaščita
-    maxAge: 30 * 24 * 60 * 60, // 30 dni
-    path: '/',
-  });
-  return res;
+    const body = await req.json().catch(() => ({}));
+    const key = typeof body?.key === 'string' ? body.key.trim() : '';
+
+    if (!key) {
+      return NextResponse.json({ error: 'Manjka ključ' }, { status: 400 });
+    }
+
+    if (key !== APP_API_KEY) {
+      // Constant-time comparison (preprečevanje timing napada)
+      // Pri 64-znakovnem hex ključu je timing razlika marginalna, a good practice
+      if (key.length !== APP_API_KEY!.length || !timingSafeEqual(key, APP_API_KEY!)) {
+        return NextResponse.json({ error: 'Napačen ključ' }, { status: 401 });
+      }
+    }
+
+    const res = NextResponse.json({ ok: true, message: 'Ključ nastavljen. Cookie bo veljal 30 dni.' });
+    res.cookies.set('app-key', key, {
+      httpOnly: false,        // EventSource (SSE) ne podpira custom headers
+      secure: process.env.NODE_ENV === 'production',
+      sameSite: 'lax',        // CSRF zaščita
+      maxAge: 30 * 24 * 60 * 60, // 30 dni
+      path: '/',
+    });
+    return res;
+
+  } catch (err) {
+    logger.error("/api/auth/set-key", "POST handler failed", err);
+    return NextResponse.json({ error: err instanceof Error ? err.message : 'Napaka' }, { status: 500 });
+  }
 }
 
 /** Constant-time string comparison (preprečevanje timing napada). */

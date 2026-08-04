@@ -4,6 +4,7 @@
 
 import { NextRequest, NextResponse } from 'next/server';
 import { db } from '@/lib/db';
+import { logger } from '@/lib/logger';
 
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
@@ -79,6 +80,7 @@ export async function GET() {
       },
     });
   } catch (e: any) {
+    logger.error("/api/backup/json", "GET handler failed", e);
     return NextResponse.json({ error: e?.message ?? 'Backup failed' }, { status: 500 });
   }
 }
@@ -430,6 +432,7 @@ export async function POST(req: NextRequest) {
       restoredAt: new Date().toISOString(),
     });
   } catch (e: any) {
+    logger.error("/api/backup/json", "POST handler failed", e);
     return NextResponse.json({ error: e?.message ?? 'Restore failed' }, { status: 500 });
   }
 }

@@ -4,6 +4,7 @@ import { getSettingsRow } from '@/lib/pipeline';
 import { sendTelegramMessage } from '@/lib/telegram';
 import { sendDiscordMessage, buildHeartbeatEmbed } from '@/lib/discord';
 import { sendPushNotification } from '@/lib/push';
+import { logger } from '@/lib/logger';
 
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
@@ -162,16 +163,22 @@ async function sendDigest(data: DigestData, mode: string) {
 }
 
 export async function GET() {
-  const settings = await getSettingsRow();
-  const lastDigest = await db.digestLog.findFirst({
-    orderBy: { sentAt: 'desc' },
-  });
-  return NextResponse.json({
-    mode: settings.digestMode,
-    hour: settings.digestHour,
-    lastDigestAt: lastDigest?.sentAt ?? null,
-    lastDigestType: lastDigest?.type ?? null,
-  });
+  try {
+    const settings = await getSettingsRow();
+    const lastDigest = await db.digestLog.findFirst({
+      orderBy: { sentAt: 'desc' },
+    });
+    return NextResponse.json({
+      mode: settings.digestMode,
+      hour: settings.digestHour,
+      lastDigestAt: lastDigest?.sentAt ?? null,
+      lastDigestType: lastDigest?.type ?? null,
+    });
+
+  } catch (err) {
+    logger.error("/api/digest", "GET handler failed", err);
+    return NextResponse.json({ error: err instanceof Error ? err.message : 'Napaka' }, { status: 500 });
+  }
 }
 
 /** Should digest fire now? Returns mode if yes, null if no. */
@@ -198,22 +205,28 @@ async function shouldDigestFire(): Promise<'daily' | 'weekly' | null> {
 }
 
 export async function POST(req: NextRequest) {
-  const url = new URL(req.url);
-  const force = url.searchParams.get('force') === '1';
+  try {
+    const url = new URL(req.url);
+    const force = url.searchParams.get('force') === '1';
 
-  if (force) {
-    const settings = await getSettingsRow();
-    const data = await gatherDigestData(settings.digestMode === 'weekly' ? 168 : 24);
-    const result = await sendDigest(data, settings.digestMode === 'weekly' ? 'weekly' : 'daily');
-    return NextResponse.json({ ok: true, sent: true, ...result, data });
+    if (force) {
+      const settings = await getSettingsRow();
+      const data = await gatherDigestData(settings.digestMode === 'weekly' ? 168 : 24);
+      const result = await sendDigest(data, settings.digestMode === 'weekly' ? 'weekly' : 'daily');
+      return NextResponse.json({ ok: true, sent: true, ...result, data });
+    }
+
+    const mode = await shouldDigestFire();
+    if (!mode) {
+      return NextResponse.json({ ok: true, sent: false, reason: 'Ni čas ali instant mode' });
+    }
+
+    const data = await gatherDigestData(mode === 'weekly' ? 168 : 24);
+    const result = await sendDigest(data, mode);
+    return NextResponse.json({ ok: true, sent: true, mode, ...result });
+
+  } catch (err) {
+    logger.error("/api/digest", "POST handler failed", err);
+    return NextResponse.json({ error: err instanceof Error ? err.message : 'Napaka' }, { status: 500 });
   }
-
-  const mode = await shouldDigestFire();
-  if (!mode) {
-    return NextResponse.json({ ok: true, sent: false, reason: 'Ni čas ali instant mode' });
-  }
-
-  const data = await gatherDigestData(mode === 'weekly' ? 168 : 24);
-  const result = await sendDigest(data, mode);
-  return NextResponse.json({ ok: true, sent: true, mode, ...result });
 }

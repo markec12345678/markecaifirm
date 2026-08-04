@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { db } from '@/lib/db';
+import { logger } from '@/lib/logger';
 
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
@@ -19,62 +20,68 @@ export const dynamic = 'force-dynamic';
  *   format        — "csv" for CSV export, "json" (default)
  */
 export async function GET(req: NextRequest) {
-  const url = new URL(req.url);
-  const monitorId = url.searchParams.get('monitorId') ?? undefined;
-  const verdict = url.searchParams.get('verdict') ?? undefined;
-  const minScore = url.searchParams.get('minScore') ? parseInt(url.searchParams.get('minScore')!, 10) : undefined;
-  const maxRisk = url.searchParams.get('maxRisk') ? parseInt(url.searchParams.get('maxRisk')!, 10) : undefined;
-  const hasImage = url.searchParams.get('hasImage') === '1' ? true : undefined;
-  const bookmarked = url.searchParams.get('bookmarked') === '1' ? true : undefined;
-  const contactStatus = url.searchParams.get('contactStatus') ?? undefined;
-  const limit = Math.min(parseInt(url.searchParams.get('limit') ?? '100', 10), 500);
-  const offset = parseInt(url.searchParams.get('offset') ?? '0', 10);
-  const sortField = url.searchParams.get('sort') ?? 'firstSeen';
-  const sortOrder = url.searchParams.get('order') ?? 'desc';
-  const format = url.searchParams.get('format') ?? 'json';
+  try {
+    const url = new URL(req.url);
+    const monitorId = url.searchParams.get('monitorId') ?? undefined;
+    const verdict = url.searchParams.get('verdict') ?? undefined;
+    const minScore = url.searchParams.get('minScore') ? parseInt(url.searchParams.get('minScore')!, 10) : undefined;
+    const maxRisk = url.searchParams.get('maxRisk') ? parseInt(url.searchParams.get('maxRisk')!, 10) : undefined;
+    const hasImage = url.searchParams.get('hasImage') === '1' ? true : undefined;
+    const bookmarked = url.searchParams.get('bookmarked') === '1' ? true : undefined;
+    const contactStatus = url.searchParams.get('contactStatus') ?? undefined;
+    const limit = Math.min(parseInt(url.searchParams.get('limit') ?? '100', 10), 500);
+    const offset = parseInt(url.searchParams.get('offset') ?? '0', 10);
+    const sortField = url.searchParams.get('sort') ?? 'firstSeen';
+    const sortOrder = url.searchParams.get('order') ?? 'desc';
+    const format = url.searchParams.get('format') ?? 'json';
 
-  const where: any = {};
-  if (monitorId) where.monitorId = monitorId;
-  if (verdict) where.aiVerdict = verdict;
-  if (minScore != null) where.aiScore = { gte: minScore };
-  if (maxRisk != null) where.aiRisk = { lte: maxRisk };
-  if (hasImage) where.NOT = { imageUrl: null };
-  if (bookmarked) where.isBookmarked = true;
-  if (contactStatus) where.contactStatus = contactStatus;
-  // v4.1: Hide hidden listings by default (unless explicitly requested)
-  if (url.searchParams.get('showHidden') !== '1') {
-    where.isHidden = false;
-  }
+    const where: any = {};
+    if (monitorId) where.monitorId = monitorId;
+    if (verdict) where.aiVerdict = verdict;
+    if (minScore != null) where.aiScore = { gte: minScore };
+    if (maxRisk != null) where.aiRisk = { lte: maxRisk };
+    if (hasImage) where.NOT = { imageUrl: null };
+    if (bookmarked) where.isBookmarked = true;
+    if (contactStatus) where.contactStatus = contactStatus;
+    // v4.1: Hide hidden listings by default (unless explicitly requested)
+    if (url.searchParams.get('showHidden') !== '1') {
+      where.isHidden = false;
+    }
 
-  const orderBy: any = {
-    firstSeen: 'firstSeenAt',
-    score: 'aiScore',
-    price: 'price',
-    risk: 'aiRisk',
-    age: 'firstSeenAt', // v4.2: same field, but ascending for oldest first
-  }[sortField] ?? 'firstSeenAt';
+    const orderBy: any = {
+      firstSeen: 'firstSeenAt',
+      score: 'aiScore',
+      price: 'price',
+      risk: 'aiRisk',
+      age: 'firstSeenAt', // v4.2: same field, but ascending for oldest first
+    }[sortField] ?? 'firstSeenAt';
 
-  const listings = await db.listing.findMany({
-    where,
-    orderBy: { [orderBy]: sortOrder === 'asc' ? 'asc' : 'desc' },
-    take: limit,
-    skip: offset,
-    include: { monitor: { select: { name: true, source: true } } },
-  });
-
-  if (format === 'csv') {
-    const csv = listingsToCsv(listings);
-    return new NextResponse(csv, {
-      headers: {
-        'Content-Type': 'text/csv; charset=utf-8',
-        'Content-Disposition': `attachment; filename="listings-${new Date().toISOString().slice(0, 10)}.csv"`,
-      },
+    const listings = await db.listing.findMany({
+      where,
+      orderBy: { [orderBy]: sortOrder === 'asc' ? 'asc' : 'desc' },
+      take: limit,
+      skip: offset,
+      include: { monitor: { select: { name: true, source: true } } },
     });
-  }
 
-  // For JSON, also return total count for pagination
-  const total = await db.listing.count({ where });
-  return NextResponse.json({ listings, total, offset, limit });
+    if (format === 'csv') {
+      const csv = listingsToCsv(listings);
+      return new NextResponse(csv, {
+        headers: {
+          'Content-Type': 'text/csv; charset=utf-8',
+          'Content-Disposition': `attachment; filename="listings-${new Date().toISOString().slice(0, 10)}.csv"`,
+        },
+      });
+    }
+
+    // For JSON, also return total count for pagination
+    const total = await db.listing.count({ where });
+    return NextResponse.json({ listings, total, offset, limit });
+
+  } catch (err) {
+    logger.error("/api/listings", "GET handler failed", err);
+    return NextResponse.json({ error: err instanceof Error ? err.message : 'Napaka' }, { status: 500 });
+  }
 }
 
 function listingsToCsv(listings: any[]): string {

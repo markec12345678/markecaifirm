@@ -6,6 +6,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { db } from '@/lib/db';
 import { getTemplateById } from '@/lib/monitor-templates';
+import { logger } from '@/lib/logger';
 
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
@@ -76,24 +77,31 @@ export async function POST(req: NextRequest) {
       templateName: template.name,
     });
   } catch (e: any) {
+    logger.error("/api/monitors/from-template", "POST handler failed", e);
     return NextResponse.json({ error: e?.message ?? 'Napaka pri ustvarjanju monitorja' }, { status: 500 });
   }
 }
 
 // GET returns list of available templates
 export async function GET() {
-  const { MONITOR_TEMPLATES, getTemplatesByCategory } = await import('@/lib/monitor-templates');
-  return NextResponse.json({
-    templates: MONITOR_TEMPLATES,
-    byCategory: {
-      all: getTemplatesByCategory('all').length,
-      elektronika: getTemplatesByCategory('elektronika').length,
-      avto: getTemplatesByCategory('avto').length,
-      nepremicnine: getTemplatesByCategory('nepremicnine').length,
-      moda: getTemplatesByCategory('moda').length,
-      orodje: getTemplatesByCategory('orodje').length,
-      sport: getTemplatesByCategory('sport').length,
-      drugo: getTemplatesByCategory('drugo').length,
-    },
-  });
+  try {
+    const { MONITOR_TEMPLATES, getTemplatesByCategory } = await import('@/lib/monitor-templates');
+    return NextResponse.json({
+      templates: MONITOR_TEMPLATES,
+      byCategory: {
+        all: getTemplatesByCategory('all').length,
+        elektronika: getTemplatesByCategory('elektronika').length,
+        avto: getTemplatesByCategory('avto').length,
+        nepremicnine: getTemplatesByCategory('nepremicnine').length,
+        moda: getTemplatesByCategory('moda').length,
+        orodje: getTemplatesByCategory('orodje').length,
+        sport: getTemplatesByCategory('sport').length,
+        drugo: getTemplatesByCategory('drugo').length,
+      },
+    });
+
+  } catch (err) {
+    logger.error("/api/monitors/from-template", "GET handler failed", err);
+    return NextResponse.json({ error: err instanceof Error ? err.message : 'Napaka' }, { status: 500 });
+  }
 }

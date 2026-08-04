@@ -4,6 +4,7 @@
 // Returns: { ok, roi: { gross, net, margin, costs, tax, netAfterTax } }
 
 import { NextRequest, NextResponse } from 'next/server';
+import { logger } from '@/lib/logger';
 
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
@@ -110,6 +111,7 @@ export async function POST(req: NextRequest) {
       },
     });
   } catch (e: any) {
+    logger.error("/api/trades/roi-calc", "POST handler failed", e);
     return NextResponse.json({ error: e?.message ?? 'Napaka' }, { status: 500 });
   }
 }

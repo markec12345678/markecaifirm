@@ -4,29 +4,36 @@
 
 import { NextRequest, NextResponse } from 'next/server';
 import { getPendingAlertsForBatch, sendSmartPush, batchAlerts } from '@/lib/smart-push';
+import { logger } from '@/lib/logger';
 
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
 
 export async function GET() {
-  const pending = await getPendingAlertsForBatch();
-  const batch = batchAlerts(pending);
-  return NextResponse.json({
-    pendingCount: pending.length,
-    batch: batch ? {
-      title: batch.title,
-      body: batch.body.slice(0, 200),
-      priority: batch.priority,
-      alertCount: batch.alertCount,
-      categories: batch.categories,
-    } : null,
-    pendingByPriority: {
-      critical: pending.filter(a => a.priority === 'critical').length,
-      high: pending.filter(a => a.priority === 'high').length,
-      medium: pending.filter(a => a.priority === 'medium').length,
-      low: pending.filter(a => a.priority === 'low').length,
-    },
-  });
+  try {
+    const pending = await getPendingAlertsForBatch();
+    const batch = batchAlerts(pending);
+    return NextResponse.json({
+      pendingCount: pending.length,
+      batch: batch ? {
+        title: batch.title,
+        body: batch.body.slice(0, 200),
+        priority: batch.priority,
+        alertCount: batch.alertCount,
+        categories: batch.categories,
+      } : null,
+      pendingByPriority: {
+        critical: pending.filter(a => a.priority === 'critical').length,
+        high: pending.filter(a => a.priority === 'high').length,
+        medium: pending.filter(a => a.priority === 'medium').length,
+        low: pending.filter(a => a.priority === 'low').length,
+      },
+    });
+
+  } catch (err) {
+    logger.error("/api/push/smart", "GET handler failed", err);
+    return NextResponse.json({ error: err instanceof Error ? err.message : 'Napaka' }, { status: 500 });
+  }
 }
 
 export async function POST(req: NextRequest) {
@@ -50,6 +57,7 @@ export async function POST(req: NextRequest) {
     const result = await sendSmartPush();
     return NextResponse.json(result);
   } catch (e: any) {
+    logger.error("/api/push/smart", "POST handler failed", e);
     return NextResponse.json({ ok: false, error: e?.message ?? 'Napaka' }, { status: 500 });
   }
 }

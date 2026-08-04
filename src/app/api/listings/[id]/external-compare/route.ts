@@ -7,98 +7,105 @@ import { NextRequest, NextResponse } from 'next/server';
 import { db } from '@/lib/db';
 import { getSettingsRow } from '@/lib/pipeline';
 import { callProviderForRaw, parseJsonLooseExported, type AiProviderType, type AiSettings } from '@/lib/ai';
+import { logger } from '@/lib/logger';
 
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
 export const maxDuration = 60;
 
 export async function GET(_req: NextRequest, { params }: { params: Promise<{ id: string }> }) {
-  const { id } = await params;
-
-  const listing = await db.listing.findUnique({
-    where: { id },
-    select: {
-      id: true, title: true, price: true, priceText: true, url: true,
-      description: true, detailDescription: true,
-      aiVerdict: true, aiScore: true, aiEstimatedValue: true, dealScore: true,
-      monitor: { select: { name: true, source: true } },
-    },
-  });
-  if (!listing) {
-    return NextResponse.json({ error: 'Listing ne obstaja' }, { status: 404 });
-  }
-  if (listing.price == null) {
-    return NextResponse.json({ error: 'Oglas nima znane cene' }, { status: 400 });
-  }
-
-  const settings = await getSettingsRow();
-  const aiSettings: AiSettings = {
-    provider: settings.aiProvider as AiProviderType,
-    baseUrl: settings.aiBaseUrl,
-    apiKey: settings.aiApiKey,
-    model: settings.aiModel,
-    fallbackProvider: (settings.fallbackProvider || '') as AiProviderType | '',
-    fallbackBaseUrl: settings.fallbackBaseUrl || '',
-    fallbackApiKey: settings.fallbackApiKey || '',
-    fallbackModel: settings.fallbackModel || '',
-  };
-
-  const prompt = buildComparePrompt(listing);
-
-  let raw = '';
   try {
-    raw = await callProviderForRaw(aiSettings, prompt);
-  } catch (primaryError: any) {
-    if (aiSettings.fallbackProvider && aiSettings.fallbackModel) {
-      const fallbackSettings: AiSettings = {
-        provider: aiSettings.fallbackProvider,
-        baseUrl: aiSettings.fallbackBaseUrl || '',
-        apiKey: aiSettings.fallbackApiKey || '',
-        model: aiSettings.fallbackModel,
-      };
-      raw = await callProviderForRaw(fallbackSettings, prompt);
-    } else {
-      return NextResponse.json({ error: primaryError?.message ?? 'AI call failed' }, { status: 500 });
+    const { id } = await params;
+
+    const listing = await db.listing.findUnique({
+      where: { id },
+      select: {
+        id: true, title: true, price: true, priceText: true, url: true,
+        description: true, detailDescription: true,
+        aiVerdict: true, aiScore: true, aiEstimatedValue: true, dealScore: true,
+        monitor: { select: { name: true, source: true } },
+      },
+    });
+    if (!listing) {
+      return NextResponse.json({ error: 'Listing ne obstaja' }, { status: 404 });
     }
-  }
+    if (listing.price == null) {
+      return NextResponse.json({ error: 'Oglas nima znane cene' }, { status: 400 });
+    }
 
-  const parsed: any = parseJsonLooseExported(raw);
-  const currentPrice = listing.price;
-  const comparisons = (parsed?.comparisons || []).map((c: any) => {
-    const extPrice = clampInt(c?.price, 0, 1_000_000);
-    return {
-      source: String(c?.source ?? 'neznan'),
-      productName: String(c?.product_name ?? c?.productName ?? '').slice(0, 200),
-      price: extPrice,
-      url: String(c?.url ?? '').slice(0, 500),
-      priceDiff: currentPrice - (extPrice ?? 0),
-      priceDiffPct: extPrice != null && extPrice > 0
-        ? Math.round(((currentPrice - extPrice) / extPrice) * 100)
-        : null,
+    const settings = await getSettingsRow();
+    const aiSettings: AiSettings = {
+      provider: settings.aiProvider as AiProviderType,
+      baseUrl: settings.aiBaseUrl,
+      apiKey: settings.aiApiKey,
+      model: settings.aiModel,
+      fallbackProvider: (settings.fallbackProvider || '') as AiProviderType | '',
+      fallbackBaseUrl: settings.fallbackBaseUrl || '',
+      fallbackApiKey: settings.fallbackApiKey || '',
+      fallbackModel: settings.fallbackModel || '',
     };
-  }).filter((c: any) => c.price != null);
 
-  // Increment AI usage counter
-  const today = new Date().toISOString().slice(0, 10);
-  if (settings.aiCallsDate !== today) {
-    await db.settings.update({
-      where: { id: 'singleton' },
-      data: { aiCallsDate: today, aiCallsToday: 1 },
+    const prompt = buildComparePrompt(listing);
+
+    let raw = '';
+    try {
+      raw = await callProviderForRaw(aiSettings, prompt);
+    } catch (primaryError: any) {
+      if (aiSettings.fallbackProvider && aiSettings.fallbackModel) {
+        const fallbackSettings: AiSettings = {
+          provider: aiSettings.fallbackProvider,
+          baseUrl: aiSettings.fallbackBaseUrl || '',
+          apiKey: aiSettings.fallbackApiKey || '',
+          model: aiSettings.fallbackModel,
+        };
+        raw = await callProviderForRaw(fallbackSettings, prompt);
+      } else {
+        return NextResponse.json({ error: primaryError?.message ?? 'AI call failed' }, { status: 500 });
+      }
+    }
+
+    const parsed: any = parseJsonLooseExported(raw);
+    const currentPrice = listing.price;
+    const comparisons = (parsed?.comparisons || []).map((c: any) => {
+      const extPrice = clampInt(c?.price, 0, 1_000_000);
+      return {
+        source: String(c?.source ?? 'neznan'),
+        productName: String(c?.product_name ?? c?.productName ?? '').slice(0, 200),
+        price: extPrice,
+        url: String(c?.url ?? '').slice(0, 500),
+        priceDiff: currentPrice - (extPrice ?? 0),
+        priceDiffPct: extPrice != null && extPrice > 0
+          ? Math.round(((currentPrice - extPrice) / extPrice) * 100)
+          : null,
+      };
+    }).filter((c: any) => c.price != null);
+
+    // Increment AI usage counter
+    const today = new Date().toISOString().slice(0, 10);
+    if (settings.aiCallsDate !== today) {
+      await db.settings.update({
+        where: { id: 'singleton' },
+        data: { aiCallsDate: today, aiCallsToday: 1 },
+      });
+    } else {
+      await db.settings.update({
+        where: { id: 'singleton' },
+        data: { aiCallsToday: { increment: 1 } },
+      });
+    }
+
+    return NextResponse.json({
+      ok: true,
+      comparisons,
+      aiAnalysis: String(parsed?.analysis ?? '').slice(0, 1000),
+      aiRecommendation: String(parsed?.recommendation ?? '').slice(0, 300),
+      currentPrice,
     });
-  } else {
-    await db.settings.update({
-      where: { id: 'singleton' },
-      data: { aiCallsToday: { increment: 1 } },
-    });
+
+  } catch (err) {
+    logger.error("/api/listings/[id]/external-compare", "GET handler failed", err);
+    return NextResponse.json({ error: err instanceof Error ? err.message : 'Napaka' }, { status: 500 });
   }
-
-  return NextResponse.json({
-    ok: true,
-    comparisons,
-    aiAnalysis: String(parsed?.analysis ?? '').slice(0, 1000),
-    aiRecommendation: String(parsed?.recommendation ?? '').slice(0, 300),
-    currentPrice,
-  });
 }
 
 function buildComparePrompt(listing: any): string {

@@ -5306,3 +5306,48 @@ Work Log:
 - TypeScript: 0 napak (ohranjeno) ✨
 - Skupno: 254 AI endpointov (+3 od v6.91)
 - Verzija aplikacije: v6.92.0
+
+---
+Task ID: 12
+Agent: general-purpose (sub agent)
+Task: P0-5 + P1-7 — Add try/catch + logger to all API route handlers in src/app/api/**/route.ts
+
+Work Log:
+- Prebral worklog.md in potrdil obstoječe stanje (v6.92.0)
+- identificiral 349 route.ts datotek v src/app/api/ (catch-all [...path]/route.ts ne obstaja; scaffold
+  src/app/api/route.ts = Hello World — izključen)
+- Napisal AST transformacijski script (scripts/add-trycatch-logger.ts) z TypeScript compiler API:
+  - Za vsak exportan HTTP method handler (GET/POST/PUT/PATCH/DELETE) preveri, če je body zavít v
+    try/catch (prva izjava = TryStatement in edina)
+  - TASK A: če ni zavito — zavit cel body v `try { ... } catch (err) { logger.error(...); return
+    NextResponse.json({ error: err instanceof Error ? err.message : 'Napaka' }, { status: 500 }); }`
+  - TASK B: če je zavito — preveri, če catch block že vsebuje logger.error klic. Če ne, dodaj
+    `logger.error('/api/path', 'METHOD handler failed', <catchVar>);` pred return
+  - API path se izračuna iz file poti (npr. src/app/api/monitors/[id]/route.ts → /api/monitors/[id])
+  - Indentacija: +2 presledki za vsako vrstico body-ja, razen za vrstice znotraj multi-line
+    template literalov (zaščita pred spremembo string content-a)
+  - Dodan `import { logger } from '@/lib/logger';` na vrh vsake modificirane datoteke (če manjka)
+- Pognal scripto — rezultat:
+  - TASK A: 111 handlerjev zavitih v try/catch (brez prejšnjega)
+  - TASK B: 273 catch blokom dodan logger.error klic
+  - 347 datotek modificiranih, 1 skipped (Hello World scaffold)
+- Tipcheck FAILED na 1 datoteki: src/app/api/alerts/stream/route.ts — NextResponse ni bil importan
+  (original je vrnil `Response`, ne NextResponse). Popravek: napisal drugi script
+  (scripts/fix-nextresponse-import.ts) ki poskrbi, da je NextResponse importan v vseh route.ts
+  datotekah, ki ga uporabljajo. 1 datoteka popravljena.
+- TypeScript: 0 napak ✨ (po popravku)
+- ESLint: 0 napak in 0 opozoril ✨
+- Skupno sprememb: 350 datotek (347 route.ts + 2 helper scripti + 1 tool-results cache)
+- Commit: `P0-5 + P1-7: Add try/catch + logger to API routes` (45066da)
+
+Stage Summary:
+- TASK A (try/catch wrapping): 111 handlerjev uspešno zavitih — vsi API route handlerji sedaj
+  vračajo strukturiran 500 response z error message namesto da padejo z unhandled exception
+- TASK B (logger.error in existing catch blocks): 273 catch blokom dodan logger.error klic —
+  vsi API route handlerji sedaj logirajo errore prek strukturiranega logger-ja (z ISO timestamp,
+  route, message in stack trace)
+- Skupno 384 error-handling izboljšav prek 347 route.ts datotek
+- Poslovna logika nespremenjena — samo error handling + logging dodan
+- TypeScript: 0 napak ✨
+- ESLint: 0 napak in 0 opozoril ✨
+- Verzija aplikacije: v7.24.0 (nespremenjena — to je error handling infra, ne feature)

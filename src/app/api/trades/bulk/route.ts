@@ -10,6 +10,7 @@ import { NextRequest, NextResponse } from 'next/server';
 import { db } from '@/lib/db';
 // v6.93: Priklop webhook-engine — trigger 'trade.sold' ob prodaji
 import { triggerWebhooks } from '@/lib/webhook-engine';
+import { logger } from '@/lib/logger';
 
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
@@ -121,6 +122,7 @@ export async function POST(req: NextRequest) {
       total: tradeIds.length,
     });
   } catch (e: any) {
+    logger.error("/api/trades/bulk", "POST handler failed", e);
     return NextResponse.json({ error: e?.message ?? 'Napaka' }, { status: 500 });
   }
 }

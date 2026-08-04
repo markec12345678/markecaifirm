@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { db } from '@/lib/db';
+import { logger } from '@/lib/logger';
 
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
@@ -9,23 +10,29 @@ export const dynamic = 'force-dynamic';
  * Returns all price changes for a listing, ordered by time.
  */
 export async function GET(_req: NextRequest, { params }: { params: Promise<{ id: string }> }) {
-  const { id } = await params;
-  const listing = await db.listing.findUnique({
-    where: { id },
-    select: { id: true, title: true, price: true, priceText: true },
-  });
-  if (!listing) return NextResponse.json({ error: 'Ne najdem' }, { status: 404 });
+  try {
+    const { id } = await params;
+    const listing = await db.listing.findUnique({
+      where: { id },
+      select: { id: true, title: true, price: true, priceText: true },
+    });
+    if (!listing) return NextResponse.json({ error: 'Ne najdem' }, { status: 404 });
 
-  const history = await db.priceHistory.findMany({
-    where: { listingId: id },
-    orderBy: { seenAt: 'asc' },
-  });
+    const history = await db.priceHistory.findMany({
+      where: { listingId: id },
+      orderBy: { seenAt: 'asc' },
+    });
 
-  return NextResponse.json({
-    listing,
-    history,
-    priceChanges: history.length > 1 ? computeChanges(history) : [],
-  });
+    return NextResponse.json({
+      listing,
+      history,
+      priceChanges: history.length > 1 ? computeChanges(history) : [],
+    });
+
+  } catch (err) {
+    logger.error("/api/listings/[id]/price-history", "GET handler failed", err);
+    return NextResponse.json({ error: err instanceof Error ? err.message : 'Napaka' }, { status: 500 });
+  }
 }
 
 function computeChanges(history: any[]): Array<{ from: number | null; to: number | null; fromText: string; toText: string; diff: number | null; pctChange: number | null; seenAt: string }> {

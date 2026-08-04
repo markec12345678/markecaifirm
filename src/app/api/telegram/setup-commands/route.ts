@@ -4,6 +4,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { getSettingsRow } from '@/lib/pipeline';
 import { setupBotCommands, getBotCommandsList } from '@/lib/telegram-bot';
+import { logger } from '@/lib/logger';
 
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
@@ -24,13 +25,20 @@ export async function POST(req: NextRequest) {
       commands: getBotCommandsList(),
     });
   } catch (e: any) {
+    logger.error("/api/telegram/setup-commands", "POST handler failed", e);
     return NextResponse.json({ error: e?.message ?? 'Napaka' }, { status: 500 });
   }
 }
 
 export async function GET() {
-  return NextResponse.json({
-    commands: getBotCommandsList(),
-    count: getBotCommandsList().length,
-  });
+  try {
+    return NextResponse.json({
+      commands: getBotCommandsList(),
+      count: getBotCommandsList().length,
+    });
+
+  } catch (err) {
+    logger.error("/api/telegram/setup-commands", "GET handler failed", err);
+    return NextResponse.json({ error: err instanceof Error ? err.message : 'Napaka' }, { status: 500 });
+  }
 }

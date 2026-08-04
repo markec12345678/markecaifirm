@@ -7,95 +7,102 @@ import { NextRequest, NextResponse } from 'next/server';
 import { db } from '@/lib/db';
 import { getSettingsRow } from '@/lib/pipeline';
 import { callProviderForRaw, parseJsonLooseExported, type AiProviderType, type AiSettings } from '@/lib/ai';
+import { logger } from '@/lib/logger';
 
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
 export const maxDuration = 60;
 
 export async function POST(_req: NextRequest, { params }: { params: Promise<{ id: string }> }) {
-  const { id } = await params;
-
-  const listing = await db.listing.findUnique({
-    where: { id },
-    select: {
-      id: true, title: true, price: true, priceText: true,
-      description: true, detailDescription: true, imageUrl: true,
-      location: true, monitor: { select: { source: true, name: true } },
-    },
-  });
-  if (!listing) {
-    return NextResponse.json({ error: 'Listing ne obstaja' }, { status: 404 });
-  }
-
-  const settings = await getSettingsRow();
-  const aiSettings: AiSettings = {
-    provider: settings.aiProvider as AiProviderType,
-    baseUrl: settings.aiBaseUrl,
-    apiKey: settings.aiApiKey,
-    model: settings.aiModel,
-    fallbackProvider: (settings.fallbackProvider || '') as AiProviderType | '',
-    fallbackBaseUrl: settings.fallbackBaseUrl || '',
-    fallbackApiKey: settings.fallbackApiKey || '',
-    fallbackModel: settings.fallbackModel || '',
-  };
-
-  const prompt = buildEnrichPrompt(listing);
-
-  let raw = '';
   try {
-    raw = await callProviderForRaw(aiSettings, prompt);
-  } catch (primaryError: any) {
-    if (aiSettings.fallbackProvider && aiSettings.fallbackModel) {
-      const fallbackSettings: AiSettings = {
-        provider: aiSettings.fallbackProvider,
-        baseUrl: aiSettings.fallbackBaseUrl || '',
-        apiKey: aiSettings.fallbackApiKey || '',
-        model: aiSettings.fallbackModel,
-      };
-      raw = await callProviderForRaw(fallbackSettings, prompt);
-    } else {
-      return NextResponse.json({ error: primaryError?.message ?? 'AI call failed' }, { status: 500 });
+    const { id } = await params;
+
+    const listing = await db.listing.findUnique({
+      where: { id },
+      select: {
+        id: true, title: true, price: true, priceText: true,
+        description: true, detailDescription: true, imageUrl: true,
+        location: true, monitor: { select: { source: true, name: true } },
+      },
+    });
+    if (!listing) {
+      return NextResponse.json({ error: 'Listing ne obstaja' }, { status: 404 });
     }
-  }
 
-  const parsed: any = parseJsonLooseExported(raw);
-  const enrichment = {
-    brand: String(parsed?.brand ?? parsed?.znamka ?? '').slice(0, 100),
-    model: String(parsed?.model ?? parsed?.model ?? '').slice(0, 200),
-    condition: String(parsed?.condition ?? parsed?.stanje ?? '').slice(0, 100),
-    year: clampInt(parsed?.year ?? parsed?.letnik, 1900, 2030),
-    color: String(parsed?.color ?? parsed?.barva ?? '').slice(0, 50),
-    category: String(parsed?.category ?? parsed?.kategorija ?? 'drugo').slice(0, 50),
-    tags: Array.isArray(parsed?.tags) ? parsed.tags.slice(0, 10).map((t: any) => String(t).slice(0, 50)) : [],
-    specs: parsed?.specs ?? parsed?.specifikacije ?? {},
-    summary: String(parsed?.summary ?? parsed?.povzetek ?? '').slice(0, 500),
-  };
+    const settings = await getSettingsRow();
+    const aiSettings: AiSettings = {
+      provider: settings.aiProvider as AiProviderType,
+      baseUrl: settings.aiBaseUrl,
+      apiKey: settings.aiApiKey,
+      model: settings.aiModel,
+      fallbackProvider: (settings.fallbackProvider || '') as AiProviderType | '',
+      fallbackBaseUrl: settings.fallbackBaseUrl || '',
+      fallbackApiKey: settings.fallbackApiKey || '',
+      fallbackModel: settings.fallbackModel || '',
+    };
 
-  // Save enrichment to listing userNotes (with prefix to avoid overwriting user's notes)
-  const existingNotes = listing.detailDescription || '';
-  const enrichmentJson = JSON.stringify(enrichment);
-  // Store in userNotes if empty, otherwise store in description prefix
-  const enrichmentPrefix = `[AI_ENRICH:${enrichmentJson}]`;
+    const prompt = buildEnrichPrompt(listing);
 
-  // Increment AI usage counter
-  const today = new Date().toISOString().slice(0, 10);
-  if (settings.aiCallsDate !== today) {
-    await db.settings.update({
-      where: { id: 'singleton' },
-      data: { aiCallsDate: today, aiCallsToday: 1 },
+    let raw = '';
+    try {
+      raw = await callProviderForRaw(aiSettings, prompt);
+    } catch (primaryError: any) {
+      if (aiSettings.fallbackProvider && aiSettings.fallbackModel) {
+        const fallbackSettings: AiSettings = {
+          provider: aiSettings.fallbackProvider,
+          baseUrl: aiSettings.fallbackBaseUrl || '',
+          apiKey: aiSettings.fallbackApiKey || '',
+          model: aiSettings.fallbackModel,
+        };
+        raw = await callProviderForRaw(fallbackSettings, prompt);
+      } else {
+        return NextResponse.json({ error: primaryError?.message ?? 'AI call failed' }, { status: 500 });
+      }
+    }
+
+    const parsed: any = parseJsonLooseExported(raw);
+    const enrichment = {
+      brand: String(parsed?.brand ?? parsed?.znamka ?? '').slice(0, 100),
+      model: String(parsed?.model ?? parsed?.model ?? '').slice(0, 200),
+      condition: String(parsed?.condition ?? parsed?.stanje ?? '').slice(0, 100),
+      year: clampInt(parsed?.year ?? parsed?.letnik, 1900, 2030),
+      color: String(parsed?.color ?? parsed?.barva ?? '').slice(0, 50),
+      category: String(parsed?.category ?? parsed?.kategorija ?? 'drugo').slice(0, 50),
+      tags: Array.isArray(parsed?.tags) ? parsed.tags.slice(0, 10).map((t: any) => String(t).slice(0, 50)) : [],
+      specs: parsed?.specs ?? parsed?.specifikacije ?? {},
+      summary: String(parsed?.summary ?? parsed?.povzetek ?? '').slice(0, 500),
+    };
+
+    // Save enrichment to listing userNotes (with prefix to avoid overwriting user's notes)
+    const existingNotes = listing.detailDescription || '';
+    const enrichmentJson = JSON.stringify(enrichment);
+    // Store in userNotes if empty, otherwise store in description prefix
+    const enrichmentPrefix = `[AI_ENRICH:${enrichmentJson}]`;
+
+    // Increment AI usage counter
+    const today = new Date().toISOString().slice(0, 10);
+    if (settings.aiCallsDate !== today) {
+      await db.settings.update({
+        where: { id: 'singleton' },
+        data: { aiCallsDate: today, aiCallsToday: 1 },
+      });
+    } else {
+      await db.settings.update({
+        where: { id: 'singleton' },
+        data: { aiCallsToday: { increment: 1 } },
+      });
+    }
+
+    return NextResponse.json({
+      ok: true,
+      enrichment,
+      listingId: id,
     });
-  } else {
-    await db.settings.update({
-      where: { id: 'singleton' },
-      data: { aiCallsToday: { increment: 1 } },
-    });
-  }
 
-  return NextResponse.json({
-    ok: true,
-    enrichment,
-    listingId: id,
-  });
+  } catch (err) {
+    logger.error("/api/listings/[id]/enrich", "POST handler failed", err);
+    return NextResponse.json({ error: err instanceof Error ? err.message : 'Napaka' }, { status: 500 });
+  }
 }
 
 function buildEnrichPrompt(l: any): string {

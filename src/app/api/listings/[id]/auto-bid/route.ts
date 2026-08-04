@@ -11,6 +11,7 @@ import { NextRequest, NextResponse } from 'next/server';
 import { db } from '@/lib/db';
 import { getSettingsRow } from '@/lib/pipeline';
 import { callProviderForRaw, parseJsonLooseExported, type AiProviderType, type AiSettings } from '@/lib/ai';
+import { logger } from '@/lib/logger';
 
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
@@ -33,123 +34,124 @@ interface BidResult {
 }
 
 export async function POST(req: NextRequest, { params }: { params: Promise<{ id: string }> }) {
-  const { id } = await params;
-  const body: BidRequest = await req.json();
-  const strategy = body.strategy ?? 'moderate';
-
-  if (!['aggressive', 'moderate', 'conservative'].includes(strategy)) {
-    return NextResponse.json({ error: 'Strategija mora biti aggressive/moderate/conservative' }, { status: 400 });
-  }
-
-  const listing = await db.listing.findUnique({
-    where: { id },
-    include: {
-      monitor: { select: { name: true, source: true } },
-      priceHistory: {
-        orderBy: { seenAt: 'asc' },
-        select: { price: true, priceText: true, seenAt: true },
-        take: 20,
-      },
-    },
-  });
-  if (!listing) {
-    return NextResponse.json({ error: 'Listing ne obstaja' }, { status: 404 });
-  }
-
-  // Get market data (similar listings)
-  let marketData: any = null;
-  if (listing.price != null) {
-    const min = Math.floor(listing.price * 0.7);
-    const max = Math.ceil(listing.price * 1.3);
-    const similar = await db.listing.findMany({
-      where: {
-        monitorId: listing.monitorId,
-        id: { not: listing.id },
-        price: { gte: min, lte: max },
-        isHidden: false,
-      },
-      select: { price: true, aiVerdict: true, aiScore: true, dealScore: true, firstSeenAt: true },
-      take: 50,
-    });
-    if (similar.length > 0) {
-      const prices = similar.map(s => s.price!).filter(Boolean);
-      marketData = {
-        count: similar.length,
-        average: Math.round(prices.reduce((a, b) => a + b, 0) / prices.length),
-        min: Math.min(...prices),
-        max: Math.max(...prices),
-        median: prices.sort((a, b) => a - b)[Math.floor(prices.length / 2)],
-      };
-    }
-  }
-
-  const settings = await getSettingsRow();
-  const aiSettings: AiSettings = {
-    provider: settings.aiProvider as AiProviderType,
-    baseUrl: settings.aiBaseUrl,
-    apiKey: settings.aiApiKey,
-    model: settings.aiModel,
-    fallbackProvider: (settings.fallbackProvider || '') as AiProviderType | '',
-    fallbackBaseUrl: settings.fallbackBaseUrl || '',
-    fallbackApiKey: settings.fallbackApiKey || '',
-    fallbackModel: settings.fallbackModel || '',
-  };
-
-  const prompt = buildBidPrompt(listing, strategy, body.maxBudget, marketData);
-
-  let raw = '';
   try {
-    raw = await callProviderForRaw(aiSettings, prompt);
-  } catch (primaryError: any) {
-    if (aiSettings.fallbackProvider && aiSettings.fallbackModel) {
-      const fallbackSettings: AiSettings = {
-        provider: aiSettings.fallbackProvider,
-        baseUrl: aiSettings.fallbackBaseUrl || '',
-        apiKey: aiSettings.fallbackApiKey || '',
-        model: aiSettings.fallbackModel,
-      };
-      try {
-        raw = await callProviderForRaw(fallbackSettings, prompt);
-      } catch (fallbackError: any) {
-        return NextResponse.json(
-          { error: `Primary: ${primaryError?.message ?? 'failed'} | Fallback: ${fallbackError?.message ?? 'failed'}` },
-          { status: 500 }
-        );
-      }
-    } else {
-      return NextResponse.json({ error: primaryError?.message ?? 'AI call failed' }, { status: 500 });
+    const { id } = await params;
+    const body: BidRequest = await req.json();
+    const strategy = body.strategy ?? 'moderate';
+
+    if (!['aggressive', 'moderate', 'conservative'].includes(strategy)) {
+      return NextResponse.json({ error: 'Strategija mora biti aggressive/moderate/conservative' }, { status: 400 });
     }
-  }
 
-  const parsed: any = parseJsonLooseExported(raw);
-  const bid: BidResult = {
-    suggestedPrice: clampInt(parsed?.suggested_price ?? parsed?.suggestedPrice ?? parsed?.price, 0, 1_000_000) ?? (listing.price ?? 0),
-    strategy,
-    reasoning: String(parsed?.reasoning ?? parsed?.razlog ?? '').slice(0, 1000),
-    message: String(parsed?.message ?? parsed?.sporocilo ?? '').slice(0, 2000),
-    expectedResponse: String(parsed?.expected_response ?? parsed?.pričakovan_odgovor ?? parsed?.expectedResponse ?? '').slice(0, 500),
-    confidence: clampInt(parsed?.confidence ?? parsed?.zaupanje, 0, 100) ?? 50,
-    marketPosition: String(parsed?.market_position ?? parsed?.trg_pozicija ?? 'at_market'),
-  };
-
-  // Increment AI usage counter
-  const today = new Date().toISOString().slice(0, 10);
-  if (settings.aiCallsDate !== today) {
-    await db.settings.update({
-      where: { id: 'singleton' },
-      data: { aiCallsDate: today, aiCallsToday: 1 },
+    const listing = await db.listing.findUnique({
+      where: { id },
+      include: {
+        monitor: { select: { name: true, source: true } },
+        priceHistory: {
+          orderBy: { seenAt: 'asc' },
+          select: { price: true, priceText: true, seenAt: true },
+          take: 20,
+        },
+      },
     });
-  } else {
-    await db.settings.update({
-      where: { id: 'singleton' },
-      data: { aiCallsToday: { increment: 1 } },
-    });
-  }
+    if (!listing) {
+      return NextResponse.json({ error: 'Listing ne obstaja' }, { status: 404 });
+    }
 
-  // Optional: send to Telegram for review
-  if (body.sendToTelegram && settings.telegramEnabled && settings.telegramBotToken && settings.telegramChatId) {
+    // Get market data (similar listings)
+    let marketData: any = null;
+    if (listing.price != null) {
+      const min = Math.floor(listing.price * 0.7);
+      const max = Math.ceil(listing.price * 1.3);
+      const similar = await db.listing.findMany({
+        where: {
+          monitorId: listing.monitorId,
+          id: { not: listing.id },
+          price: { gte: min, lte: max },
+          isHidden: false,
+        },
+        select: { price: true, aiVerdict: true, aiScore: true, dealScore: true, firstSeenAt: true },
+        take: 50,
+      });
+      if (similar.length > 0) {
+        const prices = similar.map(s => s.price!).filter(Boolean);
+        marketData = {
+          count: similar.length,
+          average: Math.round(prices.reduce((a, b) => a + b, 0) / prices.length),
+          min: Math.min(...prices),
+          max: Math.max(...prices),
+          median: prices.sort((a, b) => a - b)[Math.floor(prices.length / 2)],
+        };
+      }
+    }
+
+    const settings = await getSettingsRow();
+    const aiSettings: AiSettings = {
+      provider: settings.aiProvider as AiProviderType,
+      baseUrl: settings.aiBaseUrl,
+      apiKey: settings.aiApiKey,
+      model: settings.aiModel,
+      fallbackProvider: (settings.fallbackProvider || '') as AiProviderType | '',
+      fallbackBaseUrl: settings.fallbackBaseUrl || '',
+      fallbackApiKey: settings.fallbackApiKey || '',
+      fallbackModel: settings.fallbackModel || '',
+    };
+
+    const prompt = buildBidPrompt(listing, strategy, body.maxBudget, marketData);
+
+    let raw = '';
     try {
-      const { sendTelegramMessage } = await import('@/lib/telegram');
+      raw = await callProviderForRaw(aiSettings, prompt);
+    } catch (primaryError: any) {
+      if (aiSettings.fallbackProvider && aiSettings.fallbackModel) {
+        const fallbackSettings: AiSettings = {
+          provider: aiSettings.fallbackProvider,
+          baseUrl: aiSettings.fallbackBaseUrl || '',
+          apiKey: aiSettings.fallbackApiKey || '',
+          model: aiSettings.fallbackModel,
+        };
+        try {
+          raw = await callProviderForRaw(fallbackSettings, prompt);
+        } catch (fallbackError: any) {
+          return NextResponse.json(
+            { error: `Primary: ${primaryError?.message ?? 'failed'} | Fallback: ${fallbackError?.message ?? 'failed'}` },
+            { status: 500 }
+          );
+        }
+      } else {
+        return NextResponse.json({ error: primaryError?.message ?? 'AI call failed' }, { status: 500 });
+      }
+    }
+
+    const parsed: any = parseJsonLooseExported(raw);
+    const bid: BidResult = {
+      suggestedPrice: clampInt(parsed?.suggested_price ?? parsed?.suggestedPrice ?? parsed?.price, 0, 1_000_000) ?? (listing.price ?? 0),
+      strategy,
+      reasoning: String(parsed?.reasoning ?? parsed?.razlog ?? '').slice(0, 1000),
+      message: String(parsed?.message ?? parsed?.sporocilo ?? '').slice(0, 2000),
+      expectedResponse: String(parsed?.expected_response ?? parsed?.pričakovan_odgovor ?? parsed?.expectedResponse ?? '').slice(0, 500),
+      confidence: clampInt(parsed?.confidence ?? parsed?.zaupanje, 0, 100) ?? 50,
+      marketPosition: String(parsed?.market_position ?? parsed?.trg_pozicija ?? 'at_market'),
+    };
+
+    // Increment AI usage counter
+    const today = new Date().toISOString().slice(0, 10);
+    if (settings.aiCallsDate !== today) {
+      await db.settings.update({
+        where: { id: 'singleton' },
+        data: { aiCallsDate: today, aiCallsToday: 1 },
+      });
+    } else {
+      await db.settings.update({
+        where: { id: 'singleton' },
+        data: { aiCallsToday: { increment: 1 } },
+      });
+    }
+
+    // Optional: send to Telegram for review
+    if (body.sendToTelegram && settings.telegramEnabled && settings.telegramBotToken && settings.telegramChatId) {
+      try {
+        const { sendTelegramMessage } = await import('@/lib/telegram');
       const msg = `🤖 *AI Auto-Bid predlog*
 
 *${listing.title}*
@@ -168,14 +170,19 @@ ${bid.message}
 
 ⚠️ Preglej in prilagodi pred pošiljanjem!`;
 
-      await sendTelegramMessage(
-        { botToken: settings.telegramBotToken, chatId: settings.telegramChatId },
-        msg
-      );
-    } catch { /* ignore telegram errors */ }
-  }
+        await sendTelegramMessage(
+          { botToken: settings.telegramBotToken, chatId: settings.telegramChatId },
+          msg
+        );
+      } catch { /* ignore telegram errors */ }
+    }
 
-  return NextResponse.json({ ok: true, bid, marketData });
+    return NextResponse.json({ ok: true, bid, marketData });
+
+  } catch (err) {
+    logger.error("/api/listings/[id]/auto-bid", "POST handler failed", err);
+    return NextResponse.json({ error: err instanceof Error ? err.message : 'Napaka' }, { status: 500 });
+  }
 }
 
 function buildBidPrompt(l: any, strategy: string, maxBudget: number | null | undefined, marketData: any): string {

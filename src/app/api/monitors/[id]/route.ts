@@ -1,69 +1,94 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { db } from '@/lib/db';
 import { runMonitor } from '@/lib/pipeline';
+import { logger } from '@/lib/logger';
 
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
 
 export async function GET(_req: NextRequest, { params }: { params: Promise<{ id: string }> }) {
-  const { id } = await params;
-  const monitor = await db.monitor.findUnique({
-    where: { id },
-    include: {
-      listings: {
-        orderBy: { firstSeenAt: 'desc' },
-        take: 50,
+  try {
+    const { id } = await params;
+    const monitor = await db.monitor.findUnique({
+      where: { id },
+      include: {
+        listings: {
+          orderBy: { firstSeenAt: 'desc' },
+          take: 50,
+        },
+        _count: { select: { alerts: true, listings: true, runLogs: true } },
       },
-      _count: { select: { alerts: true, listings: true, runLogs: true } },
-    },
-  });
-  if (!monitor) return NextResponse.json({ error: 'Ne najdem' }, { status: 404 });
-  return NextResponse.json(monitor);
+    });
+    if (!monitor) return NextResponse.json({ error: 'Ne najdem' }, { status: 404 });
+    return NextResponse.json(monitor);
+
+  } catch (err) {
+    logger.error("/api/monitors/[id]", "GET handler failed", err);
+    return NextResponse.json({ error: err instanceof Error ? err.message : 'Napaka' }, { status: 500 });
+  }
 }
 
 export async function PUT(req: NextRequest, { params }: { params: Promise<{ id: string }> }) {
-  const { id } = await params;
-  const body = await req.json();
-  const data: any = {};
-  if (typeof body.name === 'string') data.name = body.name;
-  if (typeof body.source === 'string') data.source = body.source;
-  if (typeof body.sourceUrl === 'string') data.sourceUrl = body.sourceUrl;
-  if (typeof body.keywords === 'string') data.keywords = body.keywords;
-  if (typeof body.excludeKeywords === 'string') data.excludeKeywords = body.excludeKeywords;
-  if (typeof body.minPrice === 'number' || body.minPrice === null) data.minPrice = body.minPrice;
-  if (typeof body.maxPrice === 'number' || body.maxPrice === null) data.maxPrice = body.maxPrice;
-  if (typeof body.intervalMinutes === 'number') data.intervalMinutes = body.intervalMinutes;
-  if (typeof body.customPrompt === 'string') data.customPrompt = body.customPrompt;
-  // v4.4: tags
-  if (typeof body.tags === 'string') data.tags = body.tags;
-  // v1.2: schedule window
-  if (typeof body.runStartHour === 'number' || body.runStartHour === null) data.runStartHour = body.runStartHour;
-  if (typeof body.runEndHour === 'number' || body.runEndHour === null) data.runEndHour = body.runEndHour;
-  // v1.3: auto-pause threshold
-  if (typeof body.autoPauseThreshold === 'number') data.autoPauseThreshold = body.autoPauseThreshold;
-  // v2.5: notification channels
-  if (typeof body.notificationChannels === 'string') data.notificationChannels = body.notificationChannels;
-  // Handle isActive: when manually reactivating, reset auto-pause state
-  if (body.isActive === true) {
-    data.isActive = true;
-    data.consecutiveErrors = 0;
-    data.autoPausedAt = null;
-  } else if (body.isActive === false) {
-    data.isActive = false;
-  }
+  try {
+    const { id } = await params;
+    const body = await req.json();
+    const data: any = {};
+    if (typeof body.name === 'string') data.name = body.name;
+    if (typeof body.source === 'string') data.source = body.source;
+    if (typeof body.sourceUrl === 'string') data.sourceUrl = body.sourceUrl;
+    if (typeof body.keywords === 'string') data.keywords = body.keywords;
+    if (typeof body.excludeKeywords === 'string') data.excludeKeywords = body.excludeKeywords;
+    if (typeof body.minPrice === 'number' || body.minPrice === null) data.minPrice = body.minPrice;
+    if (typeof body.maxPrice === 'number' || body.maxPrice === null) data.maxPrice = body.maxPrice;
+    if (typeof body.intervalMinutes === 'number') data.intervalMinutes = body.intervalMinutes;
+    if (typeof body.customPrompt === 'string') data.customPrompt = body.customPrompt;
+    // v4.4: tags
+    if (typeof body.tags === 'string') data.tags = body.tags;
+    // v1.2: schedule window
+    if (typeof body.runStartHour === 'number' || body.runStartHour === null) data.runStartHour = body.runStartHour;
+    if (typeof body.runEndHour === 'number' || body.runEndHour === null) data.runEndHour = body.runEndHour;
+    // v1.3: auto-pause threshold
+    if (typeof body.autoPauseThreshold === 'number') data.autoPauseThreshold = body.autoPauseThreshold;
+    // v2.5: notification channels
+    if (typeof body.notificationChannels === 'string') data.notificationChannels = body.notificationChannels;
+    // Handle isActive: when manually reactivating, reset auto-pause state
+    if (body.isActive === true) {
+      data.isActive = true;
+      data.consecutiveErrors = 0;
+      data.autoPausedAt = null;
+    } else if (body.isActive === false) {
+      data.isActive = false;
+    }
 
-  const updated = await db.monitor.update({ where: { id }, data });
-  return NextResponse.json(updated);
+    const updated = await db.monitor.update({ where: { id }, data });
+    return NextResponse.json(updated);
+
+  } catch (err) {
+    logger.error("/api/monitors/[id]", "PUT handler failed", err);
+    return NextResponse.json({ error: err instanceof Error ? err.message : 'Napaka' }, { status: 500 });
+  }
 }
 
 export async function DELETE(_req: NextRequest, { params }: { params: Promise<{ id: string }> }) {
-  const { id } = await params;
-  await db.monitor.delete({ where: { id } });
-  return NextResponse.json({ ok: true });
+  try {
+    const { id } = await params;
+    await db.monitor.delete({ where: { id } });
+    return NextResponse.json({ ok: true });
+
+  } catch (err) {
+    logger.error("/api/monitors/[id]", "DELETE handler failed", err);
+    return NextResponse.json({ error: err instanceof Error ? err.message : 'Napaka' }, { status: 500 });
+  }
 }
 
 export async function POST(_req: NextRequest, { params }: { params: Promise<{ id: string }> }) {
-  const { id } = await params;
-  const result = await runMonitor(id);
-  return NextResponse.json(result);
+  try {
+    const { id } = await params;
+    const result = await runMonitor(id);
+    return NextResponse.json(result);
+
+  } catch (err) {
+    logger.error("/api/monitors/[id]", "POST handler failed", err);
+    return NextResponse.json({ error: err instanceof Error ? err.message : 'Napaka' }, { status: 500 });
+  }
 }

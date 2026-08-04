@@ -7,116 +7,123 @@ import { NextRequest, NextResponse } from 'next/server';
 import { db } from '@/lib/db';
 import { getSettingsRow } from '@/lib/pipeline';
 import { callProviderForRaw, parseJsonLooseExported, type AiProviderType, type AiSettings } from '@/lib/ai';
+import { logger } from '@/lib/logger';
 
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
 export const maxDuration = 60;
 
 export async function GET(_req: NextRequest, { params }: { params: Promise<{ id: string }> }) {
-  const { id } = await params;
-
-  const listing = await db.listing.findUnique({
-    where: { id },
-    select: {
-      id: true, title: true, price: true, priceText: true, url: true,
-      description: true, detailDescription: true,
-      aiVerdict: true, aiScore: true, aiEstimatedValue: true, dealScore: true,
-      monitor: { select: { name: true, source: true } },
-    },
-  });
-  if (!listing) {
-    return NextResponse.json({ error: 'Listing ne obstaja' }, { status: 404 });
-  }
-
-  // Get candidate listings (same or different monitors, recent, with price)
-  const candidates = await db.listing.findMany({
-    where: {
-      id: { not: id },
-      isHidden: false,
-      price: { not: null },
-      firstSeenAt: { gte: new Date(Date.now() - 30 * 24 * 60 * 60 * 1000) },
-    },
-    select: {
-      id: true, title: true, price: true, priceText: true, url: true,
-      location: true, aiVerdict: true, aiScore: true, dealScore: true,
-      firstSeenAt: true, imageUrl: true,
-      monitor: { select: { name: true, source: true } },
-    },
-    take: 50,
-    orderBy: { firstSeenAt: 'desc' },
-  });
-
-  if (candidates.length === 0) {
-    return NextResponse.json({ ok: true, similar: [], message: 'Ni kandidatov za primerjavo.' });
-  }
-
-  const settings = await getSettingsRow();
-  const aiSettings: AiSettings = {
-    provider: settings.aiProvider as AiProviderType,
-    baseUrl: settings.aiBaseUrl,
-    apiKey: settings.aiApiKey,
-    model: settings.aiModel,
-    fallbackProvider: (settings.fallbackProvider || '') as AiProviderType | '',
-    fallbackBaseUrl: settings.fallbackBaseUrl || '',
-    fallbackApiKey: settings.fallbackApiKey || '',
-    fallbackModel: settings.fallbackModel || '',
-  };
-
-  const prompt = buildSimilarPrompt(listing, candidates.slice(0, 30));
-
-  let raw = '';
   try {
-    raw = await callProviderForRaw(aiSettings, prompt);
-  } catch (primaryError: any) {
-    if (aiSettings.fallbackProvider && aiSettings.fallbackModel) {
-      const fallbackSettings: AiSettings = {
-        provider: aiSettings.fallbackProvider,
-        baseUrl: aiSettings.fallbackBaseUrl || '',
-        apiKey: aiSettings.fallbackApiKey || '',
-        model: aiSettings.fallbackModel,
-      };
-      raw = await callProviderForRaw(fallbackSettings, prompt);
-    } else {
-      return NextResponse.json({ error: primaryError?.message ?? 'AI call failed' }, { status: 500 });
+    const { id } = await params;
+
+    const listing = await db.listing.findUnique({
+      where: { id },
+      select: {
+        id: true, title: true, price: true, priceText: true, url: true,
+        description: true, detailDescription: true,
+        aiVerdict: true, aiScore: true, aiEstimatedValue: true, dealScore: true,
+        monitor: { select: { name: true, source: true } },
+      },
+    });
+    if (!listing) {
+      return NextResponse.json({ error: 'Listing ne obstaja' }, { status: 404 });
     }
-  }
 
-  const parsed: any = parseJsonLooseExported(raw);
-  const similar = (parsed?.similar || []).map((s: any, i: number) => ({
-    listingId: candidates[i]?.id ?? null,
-    title: candidates[i]?.title ?? '',
-    price: candidates[i]?.price ?? null,
-    priceText: candidates[i]?.priceText ?? '',
-    url: candidates[i]?.url ?? '',
-    location: candidates[i]?.location ?? '',
-    imageUrl: candidates[i]?.imageUrl ?? null,
-    monitor: candidates[i]?.monitor ?? null,
-    aiVerdict: candidates[i]?.aiVerdict ?? null,
-    dealScore: candidates[i]?.dealScore ?? null,
-    similarityScore: clampInt(s?.similarity_score ?? s?.similarityScore, 0, 100) ?? 0,
-    reason: String(s?.reason ?? '').slice(0, 200),
-  })).filter((s: any) => s.listingId && s.similarityScore >= 30)
-    .sort((a: any, b: any) => b.similarityScore - a.similarityScore);
-
-  // Increment AI usage counter
-  const today = new Date().toISOString().slice(0, 10);
-  if (settings.aiCallsDate !== today) {
-    await db.settings.update({
-      where: { id: 'singleton' },
-      data: { aiCallsDate: today, aiCallsToday: 1 },
+    // Get candidate listings (same or different monitors, recent, with price)
+    const candidates = await db.listing.findMany({
+      where: {
+        id: { not: id },
+        isHidden: false,
+        price: { not: null },
+        firstSeenAt: { gte: new Date(Date.now() - 30 * 24 * 60 * 60 * 1000) },
+      },
+      select: {
+        id: true, title: true, price: true, priceText: true, url: true,
+        location: true, aiVerdict: true, aiScore: true, dealScore: true,
+        firstSeenAt: true, imageUrl: true,
+        monitor: { select: { name: true, source: true } },
+      },
+      take: 50,
+      orderBy: { firstSeenAt: 'desc' },
     });
-  } else {
-    await db.settings.update({
-      where: { id: 'singleton' },
-      data: { aiCallsToday: { increment: 1 } },
-    });
-  }
 
-  return NextResponse.json({
-    ok: true,
-    similar,
-    analyzedCount: candidates.length,
-  });
+    if (candidates.length === 0) {
+      return NextResponse.json({ ok: true, similar: [], message: 'Ni kandidatov za primerjavo.' });
+    }
+
+    const settings = await getSettingsRow();
+    const aiSettings: AiSettings = {
+      provider: settings.aiProvider as AiProviderType,
+      baseUrl: settings.aiBaseUrl,
+      apiKey: settings.aiApiKey,
+      model: settings.aiModel,
+      fallbackProvider: (settings.fallbackProvider || '') as AiProviderType | '',
+      fallbackBaseUrl: settings.fallbackBaseUrl || '',
+      fallbackApiKey: settings.fallbackApiKey || '',
+      fallbackModel: settings.fallbackModel || '',
+    };
+
+    const prompt = buildSimilarPrompt(listing, candidates.slice(0, 30));
+
+    let raw = '';
+    try {
+      raw = await callProviderForRaw(aiSettings, prompt);
+    } catch (primaryError: any) {
+      if (aiSettings.fallbackProvider && aiSettings.fallbackModel) {
+        const fallbackSettings: AiSettings = {
+          provider: aiSettings.fallbackProvider,
+          baseUrl: aiSettings.fallbackBaseUrl || '',
+          apiKey: aiSettings.fallbackApiKey || '',
+          model: aiSettings.fallbackModel,
+        };
+        raw = await callProviderForRaw(fallbackSettings, prompt);
+      } else {
+        return NextResponse.json({ error: primaryError?.message ?? 'AI call failed' }, { status: 500 });
+      }
+    }
+
+    const parsed: any = parseJsonLooseExported(raw);
+    const similar = (parsed?.similar || []).map((s: any, i: number) => ({
+      listingId: candidates[i]?.id ?? null,
+      title: candidates[i]?.title ?? '',
+      price: candidates[i]?.price ?? null,
+      priceText: candidates[i]?.priceText ?? '',
+      url: candidates[i]?.url ?? '',
+      location: candidates[i]?.location ?? '',
+      imageUrl: candidates[i]?.imageUrl ?? null,
+      monitor: candidates[i]?.monitor ?? null,
+      aiVerdict: candidates[i]?.aiVerdict ?? null,
+      dealScore: candidates[i]?.dealScore ?? null,
+      similarityScore: clampInt(s?.similarity_score ?? s?.similarityScore, 0, 100) ?? 0,
+      reason: String(s?.reason ?? '').slice(0, 200),
+    })).filter((s: any) => s.listingId && s.similarityScore >= 30)
+      .sort((a: any, b: any) => b.similarityScore - a.similarityScore);
+
+    // Increment AI usage counter
+    const today = new Date().toISOString().slice(0, 10);
+    if (settings.aiCallsDate !== today) {
+      await db.settings.update({
+        where: { id: 'singleton' },
+        data: { aiCallsDate: today, aiCallsToday: 1 },
+      });
+    } else {
+      await db.settings.update({
+        where: { id: 'singleton' },
+        data: { aiCallsToday: { increment: 1 } },
+      });
+    }
+
+    return NextResponse.json({
+      ok: true,
+      similar,
+      analyzedCount: candidates.length,
+    });
+
+  } catch (err) {
+    logger.error("/api/listings/[id]/similar", "GET handler failed", err);
+    return NextResponse.json({ error: err instanceof Error ? err.message : 'Napaka' }, { status: 500 });
+  }
 }
 
 function buildSimilarPrompt(target: any, candidates: any[]): string {

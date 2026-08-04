@@ -7,126 +7,139 @@ import { NextRequest, NextResponse } from 'next/server';
 import { db } from '@/lib/db';
 import { getSettingsRow } from '@/lib/pipeline';
 import { callProviderForRaw, parseJsonLooseExported, type AiProviderType, type AiSettings } from '@/lib/ai';
+import { logger } from '@/lib/logger';
 
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
 export const maxDuration = 60;
 
 export async function GET(_req: NextRequest, { params }: { params: Promise<{ id: string }> }) {
-  const { id } = await params;
-  const messages = await db.negotiationMessage.findMany({
-    where: { listingId: id },
-    orderBy: { createdAt: 'asc' },
-  });
-  return NextResponse.json({ messages });
+  try {
+    const { id } = await params;
+    const messages = await db.negotiationMessage.findMany({
+      where: { listingId: id },
+      orderBy: { createdAt: 'asc' },
+    });
+    return NextResponse.json({ messages });
+
+  } catch (err) {
+    logger.error("/api/listings/[id]/negotiations", "GET handler failed", err);
+    return NextResponse.json({ error: err instanceof Error ? err.message : 'Napaka' }, { status: 500 });
+  }
 }
 
 export async function POST(req: NextRequest, { params }: { params: Promise<{ id: string }> }) {
-  const { id } = await params;
-  const body = await req.json();
-
-  if (!body?.direction || !['sent', 'received'].includes(body.direction)) {
-    return NextResponse.json({ error: 'Direction mora biti sent ali received' }, { status: 400 });
-  }
-  if (!body?.text || typeof body.text !== 'string') {
-    return NextResponse.json({ error: 'Text je obvezen' }, { status: 400 });
-  }
-
-  const listing = await db.listing.findUnique({
-    where: { id },
-    select: {
-      id: true, title: true, price: true, priceText: true, url: true,
-      aiVerdict: true, aiScore: true, aiRisk: true, aiEstimatedValue: true,
-      aiReason: true, dealScore: true, targetPrice: true,
-    },
-  });
-  if (!listing) {
-    return NextResponse.json({ error: 'Listing ne obstaja' }, { status: 404 });
-  }
-
-  // Get previous messages for context
-  const previousMessages = await db.negotiationMessage.findMany({
-    where: { listingId: id },
-    orderBy: { createdAt: 'asc' },
-    take: 20,
-  });
-
-  // Determine status
-  let status = body.status ?? 'initial';
-  if (body.direction === 'sent') {
-    if (body.suggestedPrice != null) {
-      status = 'offer_sent';
-    } else if (previousMessages.length === 0) {
-      status = 'initial';
-    }
-  } else if (body.direction === 'received') {
-    if (previousMessages.some(m => m.direction === 'sent' && m.suggestedPrice != null)) {
-      status = 'counter_received';
-    }
-  }
-
-  // Create message
-  const message = await db.negotiationMessage.create({
-    data: {
-      listingId: id,
-      direction: body.direction,
-      text: body.text,
-      isAiGenerated: body.isAiGenerated === true,
-      status,
-      suggestedPrice: body.suggestedPrice ?? null,
-    },
-  });
-
-  // AI suggest next step
-  let aiNextStep: string | null = null;
   try {
-    const settings = await getSettingsRow();
-    const aiSettings: AiSettings = {
-      provider: settings.aiProvider as AiProviderType,
-      baseUrl: settings.aiBaseUrl,
-      apiKey: settings.aiApiKey,
-      model: settings.aiModel,
-      fallbackProvider: (settings.fallbackProvider || '') as AiProviderType | '',
-      fallbackBaseUrl: settings.fallbackBaseUrl || '',
-      fallbackApiKey: settings.fallbackApiKey || '',
-      fallbackModel: settings.fallbackModel || '',
-    };
+    const { id } = await params;
+    const body = await req.json();
 
-    const prompt = buildNextStepPrompt(listing, [...previousMessages, message]);
-    const raw = await callProviderForRaw(aiSettings, prompt);
-    const parsed: any = parseJsonLooseExported(raw);
-    aiNextStep = String(parsed?.next_step ?? parsed?.naslednji_korak ?? '').slice(0, 1000);
-
-    // Update message with AI next step
-    if (aiNextStep) {
-      await db.negotiationMessage.update({
-        where: { id: message.id },
-        data: { aiNextStep },
-      });
+    if (!body?.direction || !['sent', 'received'].includes(body.direction)) {
+      return NextResponse.json({ error: 'Direction mora biti sent ali received' }, { status: 400 });
+    }
+    if (!body?.text || typeof body.text !== 'string') {
+      return NextResponse.json({ error: 'Text je obvezen' }, { status: 400 });
     }
 
-    // Increment AI usage counter
-    const today = new Date().toISOString().slice(0, 10);
-    if (settings.aiCallsDate !== today) {
-      await db.settings.update({
-        where: { id: 'singleton' },
-        data: { aiCallsDate: today, aiCallsToday: 1 },
-      });
-    } else {
-      await db.settings.update({
-        where: { id: 'singleton' },
-        data: { aiCallsToday: { increment: 1 } },
-      });
+    const listing = await db.listing.findUnique({
+      where: { id },
+      select: {
+        id: true, title: true, price: true, priceText: true, url: true,
+        aiVerdict: true, aiScore: true, aiRisk: true, aiEstimatedValue: true,
+        aiReason: true, dealScore: true, targetPrice: true,
+      },
+    });
+    if (!listing) {
+      return NextResponse.json({ error: 'Listing ne obstaja' }, { status: 404 });
     }
-  } catch (e) {
-    // AI failure is non-critical
-    console.error('AI next step failed:', e);
+
+    // Get previous messages for context
+    const previousMessages = await db.negotiationMessage.findMany({
+      where: { listingId: id },
+      orderBy: { createdAt: 'asc' },
+      take: 20,
+    });
+
+    // Determine status
+    let status = body.status ?? 'initial';
+    if (body.direction === 'sent') {
+      if (body.suggestedPrice != null) {
+        status = 'offer_sent';
+      } else if (previousMessages.length === 0) {
+        status = 'initial';
+      }
+    } else if (body.direction === 'received') {
+      if (previousMessages.some(m => m.direction === 'sent' && m.suggestedPrice != null)) {
+        status = 'counter_received';
+      }
+    }
+
+    // Create message
+    const message = await db.negotiationMessage.create({
+      data: {
+        listingId: id,
+        direction: body.direction,
+        text: body.text,
+        isAiGenerated: body.isAiGenerated === true,
+        status,
+        suggestedPrice: body.suggestedPrice ?? null,
+      },
+    });
+
+    // AI suggest next step
+    let aiNextStep: string | null = null;
+    try {
+      const settings = await getSettingsRow();
+      const aiSettings: AiSettings = {
+        provider: settings.aiProvider as AiProviderType,
+        baseUrl: settings.aiBaseUrl,
+        apiKey: settings.aiApiKey,
+        model: settings.aiModel,
+        fallbackProvider: (settings.fallbackProvider || '') as AiProviderType | '',
+        fallbackBaseUrl: settings.fallbackBaseUrl || '',
+        fallbackApiKey: settings.fallbackApiKey || '',
+        fallbackModel: settings.fallbackModel || '',
+      };
+
+      const prompt = buildNextStepPrompt(listing, [...previousMessages, message]);
+      const raw = await callProviderForRaw(aiSettings, prompt);
+      const parsed: any = parseJsonLooseExported(raw);
+      aiNextStep = String(parsed?.next_step ?? parsed?.naslednji_korak ?? '').slice(0, 1000);
+
+      // Update message with AI next step
+      if (aiNextStep) {
+        await db.negotiationMessage.update({
+          where: { id: message.id },
+          data: { aiNextStep },
+        });
+      }
+
+      // Increment AI usage counter
+      const today = new Date().toISOString().slice(0, 10);
+      if (settings.aiCallsDate !== today) {
+        await db.settings.update({
+          where: { id: 'singleton' },
+          data: { aiCallsDate: today, aiCallsToday: 1 },
+        });
+      } else {
+        await db.settings.update({
+          where: { id: 'singleton' },
+          data: { aiCallsToday: { increment: 1 } },
+        });
+      }
+    } catch (e) {
+      // AI failure is non-critical
+      console.error('AI next step failed:', e);
+    }
+
+    return NextResponse.json({
+      ok: true,
+      message: { ...message, aiNextStep },
+    });
+
+  } catch (err) {
+    logger.error("/api/listings/[id]/negotiations", "POST handler failed", err);
+    return NextResponse.json({ error: err instanceof Error ? err.message : 'Napaka' }, { status: 500 });
   }
-
-  return NextResponse.json({
-    ok: true,
-    message: { ...message, aiNextStep },
-  });
 }
 
 function buildNextStepPrompt(listing: any, messages: any[]): string {

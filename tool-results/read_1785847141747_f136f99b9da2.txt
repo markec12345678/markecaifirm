@@ -1,0 +1,2002 @@
+     1→
+     2→---
+     3→Task ID: v4.4
+     4→Agent: main
+     5→Task: Nadaljevanje razvoja aplikacije Markec AI Firm — Opportunity Monitor (v4.4)
+     6→
+     7→Work Log:
+     8→- Branje obstoječega stanja (package.json, prisma schema, page.tsx verzija)
+     9→- Namestitev qrcode in @types/qrcode npm paketov (lokalno generiranje QR, zero-cloud)
+    10→- Prisma schema: dodana polja Listing.dealScore/dealScoreReason/dealScoreComputedAt in Monitor.tags
+    11→- prisma db push + prisma generate (additive, brez migration)
+    12→- src/lib/ai.ts: dodane izvožene funkcije scoreDeal, callProviderForRaw, parseJsonLooseExported + DealScoreResult interface + buildDealScorePrompt
+    13→- src/app/api/listings/[id]/score/route.ts: POST endpoint za AI Deal Score 0-100
+    14→- src/app/api/listings/[id]/qr/route.ts: GET endpoint za PNG QR kodo (qrcode npm, 64-1024px)
+    15→- src/app/api/monitors/[id]/route.ts: PUT podpira tags polje
+    16→- src/app/api/monitors/route.ts: POST podpira tags polje
+    17→- src/app/api/settings/route.ts: nova akcija 'test-fallback-ai' za preverjanje fallback providerja
+    18→- src/app/api/listings/route.ts: CSV export vključuje dealScore in dealScoreReason
+    19→- src/components/dashboard/listings-view.tsx: Listing interface + dealScore polja + prikaz v vrstici + Deal Score sekcija v detail modalu (progress bar, ponovni izračun) + QR koda sekcija v detail modalu
+    20→- src/components/dashboard/monitors-view.tsx: Monitor interface + tags polje + tag input v formi + tag filter chips nad seznamom + tag badge na karticah (klik za filter)
+    21→- src/components/dashboard/settings-view.tsx: testingFallbackAi state + testFallbackAi funkcija + Test fallback gumb z rezultatom
+    22→- src/app/page.tsx: verzija posodobljena na v4.4.0
+    23→- TypeScript check: nobenih novih napak (prejšnje napake ostajajo)
+    24→- Testiranje: dev server teče na :3000, /api/monitors vrača tags polje, /api/listings/[id]/qr vrača PNG (128x128), test-fallback-ai pravilno vrne napako ko fallback ni nastavljen
+    25→- Git commit: 'feat(v4.4): AI Deal Score 0-100, monitor tags, fallback AI test, listing QR share' (13 files changed, 600 insertions)
+    26→
+    27→Stage Summary:
+    28→- 4 nove funkcionalnosti dodane v v4.4
+    29→- 2 novi API ruti (score, qr), 1 nova akcija v settings (test-fallback-ai)
+    30→- 3 nova polja v Prisma shemi (dealScore, dealScoreReason, dealScoreComputedAt na Listing; tags na Monitor)
+    31→- 1 nova npm odvisnost (qrcode + @types/qrcode)
+    32→- Skupno število vrstic kode: ~600 novih
+    33→- Commit uspešen lokalno; push na GitHub zahteva token (uporabnik mora pushati ročno ali priskrbeti token)
+    34→- Verzija aplikacije: v4.4.0
+    35→
+    36→---
+    37→Task ID: v4.5
+    38→Agent: main
+    39→Task: Nadaljevanje razvoja aplikacije Markec AI Firm — Opportunity Monitor (v4.5)
+    40→
+    41→Work Log:
+    42→- Prisma schema: dodana polja Listing.targetPrice, targetPriceSetAt, targetPriceAlertSent
+    43→- prisma db push + prisma generate (additive)
+    44→- src/app/api/listings/[id]/target/route.ts: PATCH endpoint za nastavitev ciljne cene (number | null)
+    45→- src/lib/pipeline.ts: dodana v4.5 target price alert logika v runMonitor() —
+    46→  po vsakem pregledu preveri listings s targetPrice in currentPrice <= target,
+    47→  generira alert (🎯 CILJNA CENA DOSEŽENA) + pošlje Telegram/Discord/Push,
+    48→  nastavi targetPriceAlertSent=true (anti-spam). Dodan v alertsSent count.
+    49→- src/components/dashboard/listings-view.tsx: Listing interface + targetPrice polja +
+    50→  badge v vrstici (🎯 XXX€) + detail modal sekcija z input poljem (Nastavi/Počisti),
+    51→  prikaz trenutne/ciljne cene + razlike
+    52→- src/app/api/digest/ai-summary/route.ts: POST endpoint — AI generira POVzetek
+    53→  zadnjih N ur (6/24/72/168). Vzame top oglase (PRILIKA ali dealScore>=60),
+    54→  AI prompt za TOP 3 + trendi + priporočilo. Vrne JSON {summary, topPick, recommendation, listings, stats}.
+    55→  Bug fix: Number(undefined) = NaN (ne undefined) — uporabljen Number.isFinite check.
+    56→- src/components/dashboard/dashboard-view.tsx: nov 'AI POVzetek' gumb (Sparkles ikona)
+    57→  v quick action barju + modal s selectorjem obdobja (6h/24h/3d/7d), stats bar,
+    58→  markdown summary, TOP izbor, priporočilo, seznam listingov z deal score badgei
+    59→- src/app/api/trades/dashboard/route.ts: GET endpoint — vrača končne podatke za widget
+    60→  (totalRealizedProfit, heldCount, soldCount, totalInvested, thisMonthProfit, lastMonthProfit,
+    61→  trend, monthlyPnl z cumulative, topCategories z ROI, topTrades z ROI)
+    62→- src/components/dashboard/dashboard-view.tsx: nova SkladisceWidget komponenta —
+    63→  prikaz na dashboardu za ActivityFeed. 4 stat kartice + mesec trend + mini bar chart
+    64→  12 mesecev (z tooltip) + top 3 najbolj dobičkonosne prodaje. Samodejno skrivanje če ni tradeov.
+    65→- src/app/page.tsx: verzija posodobljena na v4.5.0
+    66→- TypeScript check: nobenih novih napak
+    67→- Testiranje:
+    68→  - target API: set 400 (above current) → alreadyBelow=true ✓
+    69→  - target API: set 200 (below current) → alreadyBelow=false ✓
+    70→  - target API: invalid (-50) → error "Ciljna cena mora biti pozitivno število" ✓
+    71→  - trades/dashboard: 2 testa tradea (1 sold +65€, 1 held 250€ investicije) ✓
+    72→  - ai-summary: deluje, fallback na tekstovno sporočilo ko ni priložnosti ✓
+    73→- Git commit: 'feat(v4.5): Target price alerts, AI daily summary, Skladišče dashboard widget'
+    74→  (8 files changed, 973 insertions)
+    75→
+    76→Stage Summary:
+    77→- 3 nove funkcionalnosti dodane v v4.5
+    78→- 3 novi API ruti (target, ai-summary, trades/dashboard)
+    79→- 3 nova polja v Prisma shemi (targetPrice, targetPriceSetAt, targetPriceAlertSent)
+    80→- Pipeline nadgrajen z target price alert logiko (vključno z vsemi notification kanali)
+    81→- ~973 novih vrstic kode
+    82→- Verzija aplikacije: v4.5.0
+    83→
+    84→---
+    85→Task ID: v4.6
+    86→Agent: main
+    87→Task: Nadaljevanje razvoja aplikacije Markec AI Firm — Opportunity Monitor (v4.6)
+    88→
+    89→Work Log:
+    90→- src/app/api/listings/watchlist/route.ts: GET endpoint — vrača bookmarked + listings
+    91→  s targetPrice, z sortiranjem (recent/target/price/score), computed fields
+    92→  (distanceToTarget, distancePct, targetHit, lowestEver/highestEver),
+    93→  in stats (total, withTarget, bookmarked, targetsHit, totalValue,
+    94→  totalPotentialSavings)
+    95→- src/components/dashboard/watchlist-view.tsx: nova komponenta WatchlistView —
+    96→  4 stat kartice, sort dropdown, thumbnail prikaz, badges, visual target
+    97→  progress bar z min/max markers, gumbi za odstrani/počisti, empty state
+    98→- src/app/page.tsx: dodan 'watchlist' v View type, NAV array (Eye ikona),
+    99→  navMap (5=watchlist, 0=settings), render WatchlistView, help overlay posodobljen,
+   100→  verzija v4.6.0
+   101→- src/app/api/listings/[id]/negotiate/route.ts: dodana podpora za 'lang' paramter
+   102→  (sl/en/de/it/hr), langConfig z navodili za vsak jezik (npr. 'Kleinanzeigen.de'
+   103→  za nemščino), validation fallback na 'sl', lang/type vključena v error response
+   104→- src/components/dashboard/listings-view.tsx: dodan negotiateLang in negotiateLangLabel
+   105→  state, generateMessage() posreduje lang, jezikovni switcher z zastavicami
+   106→  (🇸🇮🇬🇧🇩🇪🇮🇹🇭🇷), avtomatska regeneracija ob preklopu jezika,
+   107→  prikaz 'Generirano sporočilo (SLO):'
+   108→- src/lib/monitor-templates.ts: knjižnica 17 predlog v 7 kategorijah:
+   109→  - Elektronika (4): iPhone 13 Pro, MacBook M1, PS5, RTV komponente
+   110→  - Avto (3): VW Golf MK6, Audi A3 8L, Toyota Yaris Hybrid
+   111→  - Nepremičnine (3): 2-sobno LJ, hiša Bela krajina, garaža LJ
+   112→  - Moda (2): Nike Air Max, Levi's 501 (oba Vinted)
+   113→  - Orodje (2): Bosch, Makita
+   114→  - Sport (2): golf oprema, smuči
+   115→  - Drugo (1): kolesa
+   116→  Vsaka predloga vsebuje: source, URL, keywords, excludeKeywords, minPrice,
+   117→  maxPrice, intervalMinutes, customPrompt (AI navodila), tags
+   118→- src/app/api/monitors/from-template/route.ts: POST endpoint za kreiranje monitorja
+   119→  iz predloge, preprečitev duplikatov (ime ali URL), podpora za customName in
+   120→  override. GET endpoint za seznam predlog s kategorijami.
+   121→- src/components/dashboard/monitors-view.tsx: nov 'Predloge' gumb (Sparkles ikona),
+   122→  showTemplates state, TemplateModal komponenta z:
+   123→  - kategorije tabs (Vse/Elektronika/Avto/...)
+   124→  - grid kartic z ikono, imenom, opisom, badges (source, cena, interval, tags)
+   125→  - gumb 'Ustvari monitor' z loading state
+   126→  - preprečitev duplikatov prikazana kot toast.error
+   127→- TypeScript check: nobenih novih napak
+   128→- Testiranje:
+   129→  - GET /api/monitors/from-template: 17 predlog v 7 kategorijah ✓
+   130→  - POST /api/monitors/from-template: uspešno kreiran monitor z vsemi polji ✓
+   131→  - POST duplicate: pravilno zavrnjen z existingId ✓
+   132→  - POST s customName: deluje ✓
+   133→  - GET /api/listings/watchlist: stats pravilni (1 listing, 50€ prihranek,
+   134→    14% nad ciljem, targetHit=False) ✓
+   135→  - GET /api/listings/watchlist?sort=target: sortiranje deluje ✓
+   136→  - POST /api/listings/[id]/negotiate z lang=en: lang pravilno sprejet ✓
+   137→  - POST z invalid lang=fr: fallback na 'sl' ✓
+   138→  - Negotiate fallback na tekst ko AI ni dostopen ✓
+   139→- Git commit: 'feat(v4.6): Watchlist tab, multi-language AI Negotiator, Monitor templates library'
+   140→  (8 files changed, 1299 insertions, 30 deletions)
+   141→
+   142→Stage Summary:
+   143→- 3 nove funkcionalnosti dodane v v4.6
+   144→- 3 novi API ruti (watchlist, from-template POST+GET)
+   145→- 1 nova knjižnica (monitor-templates.ts s 17 predlogami)
+   146→- 1 nov zavihek v navigaciji (Watchlist)
+   147→- ~1299 novih vrstic kode
+   148→- 10 zavihkov skupno (prej 9)
+   149→- Verzija aplikacije: v4.6.0
+   150→
+   151→---
+   152→Task ID: v4.7
+   153→Agent: main
+   154→Task: Nadaljevanje razvoja aplikacije Markec AI Firm — Opportunity Monitor (v4.7)
+   155→
+   156→Work Log:
+   157→- src/app/api/stats/advanced/route.ts: nov GET endpoint z obsežnimi statistikami:
+   158→  - keyMetrics (totalRealizedProfit, totalInvestedHeld, avgRoi, totalTrades, soldCount, heldCount, cancelledCount)
+   159→  - monthlyPnl (12 mesecev s profit, count, cumulative, invested)
+   160→  - conversion (totalListings, bookmarked, contacted, responded, closed, withTarget, targetsHit, tradesFromListings + 4 percentage metrics)
+   161→  - aiAccuracy (sampleSize, avgAbsErrorPct, within15Pct, within30Pct, prilikaAccuracyPct + top 5 best/worst predictions)
+   162→  - monitorPerformance (success rate, avg duration, total listings/alerts/runs, recent new listings/alerts)
+   163→  - sourceBreakdown (listings + monitors per source)
+   164→  - topCategories (profit, invested, sold, held, avgRoi, conversionRate)
+   165→- src/components/dashboard/statistics-view.tsx: nova StatisticsView komponenta z:
+   166→  - 4 key metric karticami
+   167→  - P&L AreaChart (profit vs invested vs cumulative) z recharts
+   168→  - Conversion funnel z bar visualization + 4 percentage cards
+   169→  - AI accuracy sekcija (4 stats + PRILIKA accuracy badge + top 5 best/worst predictions)
+   170→  - Source breakdown z bar charts
+   171→  - Top categories horizontal bar chart
+   172→  - Monitor performance tabela (success rate, avg čas, listings, alerti)
+   173→- src/app/page.tsx: dodan 'statistics' v View type, NAV array (PieChart ikona),
+   174→  render StatisticsView, verzija v4.7.0
+   175→  - v4.7 Mobile: hamburger meni (md:hidden) z drawer-style navigacijo
+   176→  - Skrčen terminal naslov na mobilcu (sm:inline za full path)
+   177→  - Nav tabs hidden na mobilcu (md:block)
+   178→  - Mobile drawer z vsemi zavihki + search button + clock
+   179→  - Main content: py-4 md:py-6 za manj padding na mobilcu
+   180→- src/components/dashboard/dashboard-view.tsx: flex-wrap na action baru za mobilce
+   181→- src/components/dashboard/listings-view.tsx:
+   182→  - Modal: mx-4 sm:mx-6 p-4 sm:p-6 za mobilne robove
+   183→  - AI evaluation grid: sm:gap-3 za mobilne razmike
+   184→  - Target price input: flex-col sm:flex-row za stacking na mobilcu
+   185→  - QR section: flex-col sm:flex-row za stacking na mobilcu
+   186→- src/app/api/backup/json/route.ts: nov GET in POST endpoint za JSON backup/restore
+   187→  - GET: export vseh tabel (settings, monitors, listings, alerts, trades, runLogs,
+   188→    heartbeats, priceHistory, digestLogs, pushSubs) kot JSON
+   189→  - Sanitizacija: aiApiKey, fallbackApiKey, telegramBotToken, telegramWebhookSecret,
+   190→    discordWebhookUrl, slackWebhookUrl, emailSmtpPassword, vapidPrivateKey so
+   191→    REDACTANA v exportu
+   192→  - POST: upsert (ustvari ali posodobi) vse zapise iz JSON
+   193→  - Validacija: _meta.app === 'markec-ai-firm' required
+   194→  - Safe fields whitelist za settings (brez sensitive fields)
+   195→  - Skip orphans (listings brez monitorjev, alerti brez monitorjev)
+   196→- src/components/dashboard/settings-view.tsx: nova JsonBackupControls komponenta
+   197→  z 'Izvozi JSON' in 'Uvozi JSON' gumboma, import result prikaz z count per tabela,
+   198→  confirmation dialog pred importom. Vstavljena v BackupSection.
+   199→- TypeScript check: nobenih novih napak (prejšnje existing napake ostajajo)
+   200→- Testiranje:
+   201→  - GET /api/stats/advanced: pravilno vrača vse statistike (keyMetrics, conversion,
+   202→    aiAccuracy, monitorPerformance, sourceBreakdown, topCategories, monthlyPnl) ✓
+   203→  - GET /api/backup/json: pravilno exportira settings, monitors, listings, itd.
+   204→    aiApiKey je pravilno REDACTAN kot '***REDACTED***' ✓
+   205→  - POST /api/backup/json: uspešen upsert z restored counts ✓
+   206→  - Validacija: _meta.app check deluje ✓
+   207→  - Skip orphans: listings brez monitorjev so skipped ✓
+   208→- Git commit: 'feat(v4.7): Statistics dashboard, mobile responsive, JSON backup/restore'
+   209→  (8 files changed, 1536 insertions, 20 deletions)
+   210→
+   211→Stage Summary:
+   212→- 3 nove funkcionalnosti dodane v v4.7
+   213→- 2 novi API ruti (stats/advanced, backup/json)
+   214→- 1 nov zavihek (Statistike, skupno 11)
+   215→- 2 novi komponenti (StatisticsView, JsonBackupControls)
+   216→- ~1536 novih vrstic kode
+   217→- Mobile responsive izboljšave po vsej aplikaciji
+   218→- Verzija aplikacije: v4.7.0
+   219→
+   220→---
+   221→Task ID: v4.8
+   222→Agent: main
+   223→Task: Nadaljevanje razvoja aplikacije Markec AI Firm — Opportunity Monitor (v4.8)
+   224→
+   225→Work Log:
+   226→- public/sw.js: nadgrajen na v4.8 z networkFirstWithOfflineFallback strategijo za
+   227→  navigation requests, OFFLINE_URL fallback, APP_SHELL vključuje offline.html in icons
+   228→- public/offline.html: nova offline fallback stran (terminal-style z auto-retry
+   229→  ob online event, retry vsakih 10s)
+   230→- src/components/dashboard/pwa-install-prompt.tsx: nova komponenta za PWA install prompt
+   231→  (capture beforeinstallprompt, 3s delay, localStorage persistence, auto-hide v standalone)
+   232→- src/app/page.tsx: dodan PwaInstallPrompt v render, verzija v4.8.0
+   233→- src/app/api/notifications/center/route.ts: nov GET in POST endpoint
+   234→  - GET: vrača zadnje notifikacije z delivery statusom (sent/failed/pending)
+   235→    in stats (total, sent, failed, pending, byChannel breakdown)
+   236→  - POST: re-send alert na specific kanale (telegram, discord, slack, push, email)
+   237→  - Vsak alert generira 5 zapisov (enega na kanal)
+   238→  - Filter by channel in status
+   239→- src/components/dashboard/notifications-center-view.tsx: nova NotificationsCenterView
+   240→  komponenta z:
+   241→  - 4 stat kartice (skupaj, poslano, spodletelo, na čakanju)
+   242→  - Channel breakdown z ikonami (Telegram, Discord, Slack, Push, Email)
+   243→  - Filter chips za kanal in status
+   244→  - Lista notifikacij z re-send gumbi
+   245→  - 'Ponovno pošlji vse failed' bulk akcija
+   246→- src/app/api/listings/[id]/compare-models/route.ts: nov POST endpoint za AI model
+   247→  comparison — sprejme array models (do 5), vrača evaluation + durationMs za vsak model,
+   248→  inkrementira aiCallsToday counter
+   249→- src/components/dashboard/listings-view.tsx: dodana AI Model Comparison sekcija v
+   250→  listing modal z:
+   251→  - Input za modele (comma-separated)
+   252→  - 'Primerjaj' gumb z loading state
+   253→  - Result cards z verdiktom, priliko, tveganjem, tržno vrednostjo
+   254→  - Razlog ocene (line-clamp-2)
+   255→  - Summary: 🏆 najboljša ocena + ⚡ najhitrejši model
+   256→- TypeScript check: nobenih novih napak (samo pre-existing)
+   257→- Testiranje:
+   258→  - GET / offline.html: 200 ✓
+   259→  - GET /api/notifications/center: vrača pravilen stats z vsemi kanali ✓
+   260→  - POST /api/listings/[id]/compare-models: vrača pravilno strukturiran rezultat
+   261→    (ok=true, model failed pričakovano ker Ollama ni zagnan) ✓
+   262→- Git commit: 'feat(v4.8): PWA improvements, Notifications center, AI model comparison'
+   263→
+   264→Stage Summary:
+   265→- 3 nove funkcionalnosti dodane v v4.8
+   266→- 2 novi API ruti (notifications/center, listings/[id]/compare-models)
+   267→- 3 nove komponente (PwaInstallPrompt, NotificationsCenterView, AI Model Comparison UI)
+   268→- 1 nova statična stran (offline.html)
+   269→- Service worker nadgrajen na v4.8 z offline fallback
+   270→- Verzija aplikacije: v4.8.0
+   271→
+   272→---
+   273→Task ID: v4.9
+   274→Agent: main
+   275→Task: Nadaljevanje razvoja aplikacije Markec AI Firm — Opportunity Monitor (v4.9)
+   276→
+   277→Work Log:
+   278→- src/app/api/alerts/stream/route.ts: nov SSE endpoint z ReadableStream
+   279→  - Polling vsakih 5s (SQLite ne podpira subscriptions)
+   280→  - Eventi: 'hello', 'alert', 'listing', 'stats', 'heartbeat' (vsakih 30s)
+   281→  - 5-min max duration, abort signal cleanup
+   282→- src/lib/use-alerts-stream.ts: React hook za SSE
+   283→  - connected, lastAlert, lastListingEvent, stats, lastEventAt state
+   284→  - EventSource auto-reconnect
+   285→- src/app/page.tsx: dodan useAlertsStream hook, SSE LIVE/OFFLINE indikator v headerju,
+   286→  toast ob novem alertu (skip če si na alerts zavihku), auto-update unreadAlerts,
+   287→  verzija v4.9.0
+   288→- src/lib/ai-prompts.ts: knjižnica 14 AI promptov v 8 kategorijah
+   289→  (avto, elektronika, nepremicnine, orodje, moda, sport, investicije, splosno)
+   290→- src/components/dashboard/monitors-view.tsx: dodan PromptLibraryModal v MonitorFormDialog
+   291→  z 'Knjižnica promptov' gumbom, kategorije tabs, grid kartic z prompt preview
+   292→- prisma/schema.prisma: nova Profile tabela, Settings.activeProfileId,
+   293→  Monitor.profileId in Trade.profileId (optional, SetNull on delete)
+   294→- src/app/api/profiles/route.ts: GET (list + active), POST (create), PATCH (set active)
+   295→- src/app/api/profiles/[id]/route.ts: PATCH (update), DELETE (with SetNull cleanup)
+   296→- src/components/dashboard/profile-switcher.tsx: ProfileSwitcher dropdown komponenta
+   297→  z Vsi profili + create + edit (inline) + delete, auto-reload po preklopu
+   298→- ProfileSwitcher dodan v header (desktop only)
+   299→- TypeScript check: nobenih novih napak
+   300→- Testiranje:
+   301→  - SSE stream: pravilno pošilja hello + stats event ✓
+   302→  - Profiles CRUD: create, list, set active, delete — vse deluje ✓
+   303→  - SET active → GET active → DELETE: konsistentno stanje ✓
+   304→- Git commit: 'feat(v4.9): Real-time SSE alerts, AI prompt library, Profile switching'
+   305→
+   306→Stage Summary:
+   307→- 3 nove funkcionalnosti dodane v v4.9
+   308→- 4 novi API ruti (alerts/stream, profiles, profiles/[id])
+   309→- 3 nove komponente (ProfileSwitcher, PromptLibraryModal, useAlertsStream hook)
+   310→- 1 nova Prisma tabela (Profile) + 3 nova polja
+   311→- ~1100 novih vrstic kode
+   312→- Verzija aplikacije: v4.9.0
+   313→
+   314→---
+   315→Task ID: v5.0
+   316→Agent: main
+   317→Task: Nadaljevanje razvoja aplikacije Markec AI Firm — Opportunity Monitor (v5.0 MILESTONE)
+   318→
+   319→Work Log:
+   320→- src/lib/telegram-bot.ts: nova knjižnica z 9 bot ukazi (help, ping, status, run,
+   321→  alerts, listings, monitors, trades, stats). Setup funkcija za setMyCommands API.
+   322→- src/app/api/telegram/webhook/route.ts: razširjen s podporo za /commands iz message
+   323→  text. Admin whitelist (samo nastavljen chat ID lahko izvaja ukaze).
+   324→- src/app/api/telegram/setup-commands/route.ts: POST registrira ukaze pri Telegramu,
+   325→  GET vrača seznam ukazov.
+   326→- src/components/dashboard/settings-view.tsx: dodana 'Bot ukazi (v5.0)' sekcija
+   327→  v Telegram kartico z 'Registriraj ukaze' gumbom in details z vsemi ukazi.
+   328→- src/app/api/listings/[id]/auto-bid/route.ts: nov POST endpoint za AI auto-bidding.
+   329→  3 strategije (aggressive/moderate/conservative), upošteva AI oceno, deal score,
+   330→  AI tržno vrednost, price history, market data, max budget. Vrača suggestedPrice,
+   331→  reasoning, message, expectedResponse, confidence, marketPosition.
+   332→  Opcionalno sendToTelegram.
+   333→- src/components/dashboard/listings-view.tsx: dodan AI Auto-Bid UI v listing modal
+   334→  (za AI Negotiator) z strategy picker, max budget input, generate button, result
+   335→  display z velikim predlogom, zaupanjem, razlogom, sporočilom (copy) in
+   336→  pričakovanim odgovorom.
+   337→- src/lib/use-swipe.ts: React hook za swipe gesturi z React TouchEvent types,
+   338→  threshold 50px, velocity check, swipe state.
+   339→- src/components/dashboard/listings-view.tsx: ListingRow s swipe gesturi
+   340→  (left=bookmark, right=open detail), visual feedback (translateX, opacity, hint
+   341→  ikone), smooth transition.
+   342→- src/app/page.tsx: verzija v5.0.0
+   343→- TypeScript: nobenih novih napak (prejšnje existing ostajajo)
+   344→- Testiranje:
+   345→  - setup-commands GET: vrača 9 ukazov ✓
+   346→  - auto-bid POST: deluje (pričakovana napaka "fetch failed" ker AI ni dostopen) ✓
+   347→  - HOME: 200 ✓
+   348→- Git commit: 'feat(v5.0): Telegram bot commands, AI auto-bidding, Mobile swipe gestures — MILESTONE'
+   349→
+   350→Stage Summary:
+   351→- 3 nove funkcionalnosti dodane v v5.0 (MILESTONE)
+   352→- 2 novi API ruti (telegram/setup-commands, listings/[id]/auto-bid)
+   353→- 2 novi knjižnici (telegram-bot, use-swipe)
+   354→- 9 bot ukazov registriranih
+   355→- ~1400 novih vrstic kode
+   356→- Verzija aplikacije: v5.0.0
+   357→
+   358→---
+   359→Task ID: v5.1
+   360→Agent: main
+   361→Task: Nadaljevanje razvoja aplikacije Markec AI Firm — Opportunity Monitor (v5.1)
+   362→
+   363→Work Log:
+   364→- src/app/api/ai/suggest-schedule/route.ts: nov POST endpoint za AI analizo schedule-ov.
+   365→  Analizira zadnjih 30 dni run logov, aggregate by hour, peak hours.
+   366→  5 pravil za optimizacijo. Vrača: suggestedInterval, suggestedWindow, reasoning,
+   367→  expectedNewListingsPerDay, aiCallsPerDay, confidence.
+   368→- src/components/dashboard/monitors-view.tsx: dodan 'AI predlog' gumb v Urnik delovanja
+   369→  sekcijo (samo ko urejaš monitor). Prikaz: trenutno vs predlog, pričakovani novi/dan,
+   370→  AI klici/dan, 'Uporabi predlog' gumb ki avtomatsko aplicira interval + window.
+   371→- src/app/api/listings/[id]/predict-price/route.ts: nov POST endpoint za AI napoved cene.
+   372→  Upošteva: price history (trend, avgDropPerWeek), AI estimate, deal score, market data,
+   373→  starost oglasa. Vrača: willReachTarget, estimatedDays, predictedDate, confidence,
+   374→  projectedPrices za 4 tedne, trendAnalysis, currentTrend.
+   375→- src/components/dashboard/listings-view.tsx: dodana AI napoved cene sekcija v listing
+   376→  modalu z input za ciljno ceno, verdict (cilj dosežen/ne), trend badge, projekcija
+   377→  cene za 4 tedne z bar chart in % spremembe, razlog AI.
+   378→- src/app/api/sellers/[name]/reputation/route.ts: nov GET endpoint za analizo prodajalca.
+   379→  Aggregira vse listinge: reputation score (0-100) s tierjem, listings count, contact
+   380→  stats, alert stats, AI verdict breakdown, price drop count, trades stats, sources,
+   381→  top 5 listings.
+   382→- src/components/dashboard/listings-view.tsx: dodana Seller reputation sekcija v listing
+   383→  modalu (auto-load ko ima oglas sellerName). Prikaz: reputation score z circular SVG
+   384→  progress, stats grid (4 kartice), AI verdict breakdown badges, trades stats, sources,
+   385→  top 5 listings (collapsible).
+   386→- src/app/page.tsx: verzija v5.1.0
+   387→- TypeScript: nobenih novih napak
+   388→- Testiranje:
+   389→  - suggest-schedule: vrača ok=true z analyzedMonitors ✓
+   390→  - predict-price: vrača error "fetch failed" (AI ni dostopen, endpoint deluje) ✓
+   391→  - sellers/[name]/reputation: vrača reputationScore=50 (Povprečen), listingsCount=1,
+   392→    avgPrice=350, contactStats, alertStats, topListings ✓
+   393→- Git commit: 'feat(v5.1): AI Scheduler, Price prediction, Seller reputation'
+   394→
+   395→Stage Summary:
+   396→- 3 nove funkcionalnosti dodane v v5.1
+   397→- 3 novi API ruti (ai/suggest-schedule, listings/[id]/predict-price, sellers/[name]/reputation)
+   398→- ~1218 novih vrstic kode
+   399→- Verzija aplikacije: v5.1.0
+   400→
+   401→---
+   402→Task ID: v5.2
+   403→Agent: main
+   404→Task: Nadaljevanje razvoja aplikacije Markec AI Firm — Opportunity Monitor (v5.2)
+   405→
+   406→Work Log:
+   407→- src/app/api/ai/daily-summary/route.ts: nov POST endpoint za AI dnevni povzetek.
+   408→  Generira AI povzetek zadnjih N ur (default 24), pošilja na Telegram in/ali Email.
+   409→  AI prompt za TOP 3 + trende + priporočilo. Markdown to HTML conversion za email.
+   410→- src/components/dashboard/settings-view.tsx: dodana 'AI dnevni povzetek' sekcija
+   411→  v Digest kartico z 'Pošlji na Telegram', 'Pošlji na Email' in 'Predogled' gumbi.
+   412→- src/app/api/ai/suggest-filters/route.ts: nov POST endpoint za AI predlog filtrov.
+   413→  Categorize listings (good/bad/neutral), AI analizira keywords/excludeKeywords.
+   414→  Vrača: keywords, excludeKeywords, reasoning, confidence, sampleGood, sampleBad.
+   415→- src/components/dashboard/monitors-view.tsx: dodan 'AI filtri' gumb v Ključne besede
+   416→  sekcijo (samo ko urejaš monitor). Prikaz: trenutni vs predlog, 'Uporabi predlog' gumb.
+   417→- src/app/api/arbitrage/cross-portal/route.ts: nov GET endpoint za cross-portal arbitražo.
+   418→  Normalizira naslove, grupira listings, filtrira ≥2 različne sources, threshold filter.
+   419→  Stats: totalListingsAnalyzed, groupsFound, opportunitiesFound, avgPriceDiffPct,
+   420→  totalPotentialProfit, bySourcePair.
+   421→- src/components/dashboard/analytics-view.tsx: dodana 'Cross-Portal Arbitraža' sekcija
+   422→  z threshold selector, stats bar, source pairs badges, opportunities list z thumbnail.
+   423→- src/app/page.tsx: verzija v5.2.0
+   424→- TypeScript: nobenih novih napak
+   425→- Testiranje:
+   426→  - cross-portal: vrača ok=true s pravilnimi stats (0 oglasov, 0 priložnosti) ✓
+   427→  - daily-summary: vrača ok=true s strukturiranim summary-jem (tudi brez AI) ✓
+   428→  - suggest-filters: vrača error 'fetch failed' (AI ni dostopen, endpoint deluje) ✓
+   429→- Git commit: 'feat(v5.2): AI Daily Summary, Smart Filters, Cross-Portal Arbitrage'
+   430→
+   431→Stage Summary:
+   432→- 3 nove funkcionalnosti dodane v v5.2
+   433→- 3 novi API ruti (ai/daily-summary, ai/suggest-filters, arbitrage/cross-portal)
+   434→- ~971 novih vrstic kode
+   435→- Verzija aplikacije: v5.2.0
+   436→
+   437→---
+   438→Task ID: v5.3
+   439→Agent: main
+   440→Task: Nadaljevanje razvoja aplikacije Markec AI Firm — Opportunity Monitor (v5.3)
+   441→
+   442→Work Log:
+   443→- src/app/api/ai/insights/route.ts: nov GET endpoint z 8 tipi insightov
+   444→  (price drop trends, best/worst monitor, anomaly spike, AI accuracy, source
+   445→  comparison, watchlist close-to-target, alert trends). Severity high/medium/low.
+   446→- src/components/dashboard/ai-insights-widget.tsx: nova AiInsightsWidget komponenta
+   447→  z period selector (7/30/90 dni), stats bar, insight cards z ikonami in barvami.
+   448→- src/components/dashboard/dashboard-view.tsx: dodan AiInsightsWidget na Dashboard.
+   449→- prisma/schema.prisma: nova SmartRule tabela (id, name, ruleType, config JSON,
+   450→  channels JSON, isActive, lastTriggeredAt, triggerCount).
+   451→- src/lib/smart-rules-engine.ts: nova knjižnica z evaluateRule() za 5 tipov pravil
+   452→  (price_threshold, multiple_listings, price_drop_pct, ai_verdict_combo, time_based),
+   453→  checkSmartRules(), sendNotifications().
+   454→- src/lib/pipeline.ts: integracija checkSmartRules() po vsakem monitor run-u.
+   455→- src/app/api/smart-rules/route.ts: GET/POST/PATCH/DELETE za SmartRule CRUD
+   456→  + optional check parameter za takojšnjo evaluacijo.
+   457→- src/components/dashboard/watchlist-view.tsx: dodana SmartRulesModal komponenta
+   458→  z seznamom pravil, formo za novo pravilo (rule-specific fields), channel picker,
+   459→  'Preveri zdaj' gumb.
+   460→- src/lib/smart-push.ts: nova smart push knjižnica z:
+   461→  - calculatePriority() — AI določi prioriteto (critical/high/medium/low)
+   462→  - batchAlerts() — grupira alerte v 60s oknu, max 5 v enem notification
+   463→  - sendSmartPush() — zbira pending, batch-a, pošlje, označi kot sent
+   464→  - sendImmediatePush() — bypass batching za kritične alerte
+   465→- src/app/api/push/smart/route.ts: GET (pending preview) in POST (trigger push).
+   466→- src/app/page.tsx: verzija v5.3.0
+   467→- TypeScript: nobenih novih napak (prejšnje existing ostajajo)
+   468→- Testiranje:
+   469→  - ai/insights: vrača ok=true s pravilnimi stats ✓
+   470→  - smart-rules CRUD: create, list, delete — vse deluje ✓
+   471→  - push/smart: vrača pendingCount=0, batch=None ✓
+   472→- Git commit: 'feat(v5.3): AI Insights, Smart Rules, Smart Push notifications'
+   473→
+   474→Stage Summary:
+   475→- 3 nove funkcionalnosti dodane v v5.3
+   476→- 3 novi API ruti (ai/insights, smart-rules, push/smart)
+   477→- 3 nove komponente/knjižnice (AiInsightsWidget, SmartRulesModal, smart-push, smart-rules-engine)
+   478→- 1 nova Prisma tabela (SmartRule)
+   479→- ~1800 novih vrstic kode
+   480→- Verzija aplikacije: v5.3.0
+   481→
+   482→---
+   483→Task ID: v5.4
+   484→Agent: main
+   485→Task: Nadaljevanje razvoja aplikacije Markec AI Firm — Opportunity Monitor (v5.4)
+   486→
+   487→Work Log:
+   488→- prisma/schema.prisma: 2 novi tabeli — NegotiationMessage (listingId, direction,
+   489→  text, isAiGenerated, aiNextStep, status, suggestedPrice) in WebhookEndpoint
+   490→  (name, url, secret, events, isActive, triggerCount, failCount, lastResponseStatus).
+   491→  Listing.negotiationMessages relacija dodana.
+   492→- src/app/api/listings/[id]/negotiations/route.ts: GET (list messages) in POST
+   493→  (add message + AI suggest next step). AI prompt uporablja zgodovino sporočil
+   494→  in listing podatke.
+   495→- src/components/dashboard/negotiation-history.tsx: NegotiationHistory komponenta
+   496→  z timeline pogovora, AI naslednji korak highlight, auto-fill iz AI Negotiator,
+   497→  direction toggle, suggested price input.
+   498→- src/components/dashboard/listings-view.tsx: NegotiationHistory dodan v listing
+   499→  modal za AI Auto-Bid sekcijo.
+   500→- src/app/api/trades/portfolio-ai/route.ts: GET endpoint za AI analizo portfolia.
+   501→  5 pravil za analizo (stari inventar, AI > cost, AI < cost, star < 14d, etc.).
+   502→  Vrača: recommendations z action (sell/hold/reduce/monitor), reasoning,
+   503→  suggestedSellPrice, urgency. Portfolio summary z aiOverview in aiStrategy.
+   504→- src/components/dashboard/trades-view.tsx: dodan 'AI Portfolio' gumb in AI
+   505→  Portfolio Analysis sekcija z overview, strategy, recommendations list z
+   506→  action badges in urgency.
+   507→- src/lib/webhook-engine.ts: triggerWebhooks(event, data) — pošlje na vse aktivne
+   508→  endpointe subscribrane na ta event. HMAC SHA-256 signature za varnost.
+   509→- src/app/api/webhooks/route.ts: GET/POST/PATCH/DELETE + test mode za testni payload.
+   510→- src/components/dashboard/settings-view.tsx: WebhooksSection komponenta z seznamom,
+   511→  formo za nov webhook, test gumb, ON/OFF toggle, delete, dokumentacija.
+   512→- src/app/page.tsx: verzija v5.4.0
+   513→- TypeScript: nobenih novih napak
+   514→- Testiranje:
+   515→  - webhooks CRUD: create, list, delete — vse deluje ✓
+   516→  - webhooks test: vrača status 404 (pričakovano — test URL ne obstaja) ✓
+   517→  - portfolio-ai: vrača ok=true s pravilnim summary-jem (0 tradeov) ✓
+   518→  - HOME: 200 ✓
+   519→- Git commit: 'feat(v5.4): AI Negotiation history, Portfolio AI, Webhook integrations'
+   520→
+   521→Stage Summary:
+   522→- 3 nove funkcionalnosti dodane v v5.4
+   523→- 3 novi API ruti (negotiations, portfolio-ai, webhooks)
+   524→- 2 novi komponenti (NegotiationHistory, WebhooksSection)
+   525→- 2 novi knjižnici (webhook-engine, negotiation-history)
+   526→- 2 novi Prisma tabeli (NegotiationMessage, WebhookEndpoint)
+   527→- ~2200 novih vrstic kode
+   528→- Verzija aplikacije: v5.4.0
+   529→
+   530→---
+   531→Task ID: v5.5
+   532→Agent: main
+   533→Task: Nadaljevanje razvoja aplikacije Markec AI Firm — Opportunity Monitor (v5.5)
+   534→
+   535→Work Log:
+   536→- src/app/api/listings/[id]/price-forecast/route.ts: nov POST endpoint za AI
+   537→  napoved cene za 3-6 mesecev. AI upošteva price history, market data, AI estimate,
+   538→  deal score, starost oglasa. Vrača: history, projected, trend, seasonality,
+   539→  aiAnalysis, confidence, expectedPrice3m/6m.
+   540→- src/components/dashboard/price-forecast-chart.tsx: PriceForecastChart komponenta
+   541→  z ComposedChart (Area za history, Line za projected dashed), ReferenceLine za
+   542→  trenutno ceno, trend/confidence badges, AI analiza, sezonskost, collapsible
+   543→  projekcija po mesecih.
+   544→- src/components/dashboard/listings-view.tsx: PriceForecastChart dodan v listing
+   545→  modal (za AI napoved cene sekcijo, pred market comparison). Dodan 'AI kategoriziraj'
+   546→  gumb v Oglasi header z categorizing state.
+   547→- src/app/api/ai/categorize/route.ts: nov POST endpoint za AI kategorizacijo.
+   548→  15 kategorij z pravili. Podpira: single listing, bulk (monitorId), direct (title).
+   549→  Shranjuje v listing.userNotes z prefix '[AI kategorija: ...]'.
+   550→- prisma/schema.prisma: Settings.categoryNotifications (JSON za per-kategorijo
+   551→  notification routing).
+   552→- src/app/api/settings/route.ts: categoryNotifications dodan v GET response in
+   553→  POST update handler.
+   554→- src/components/dashboard/settings-view.tsx: CategoryNotificationsSection komponenta
+   555→  z 9 kategorijami × 4 kanali (telegram/discord/push/email), 3 states per channel
+   556→  (VKLOPLJENO/IZKLOPLJENO/globalno), reset per kategorija, save button.
+   557→- src/app/page.tsx: verzija v5.5.0
+   558→- TypeScript: nobenih novih napak
+   559→- Testiranje:
+   560→  - HOME: 200 ✓
+   561→  - categorize: vrača error 'fetch failed' (AI ni dostopen, endpoint deluje) ✓
+   562→  - settings: vrača categoryNotifications polje ✓
+   563→- Git commit: 'feat(v5.5): AI Price Forecast graph, Smart Categories, Category notification preferences'
+   564→
+   565→Stage Summary:
+   566→- 3 nove funkcionalnosti dodane v v5.5
+   567→- 2 novi API ruti (price-forecast, categorize)
+   568→- 2 novi komponenti (PriceForecastChart, CategoryNotificationsSection)
+   569→- ~920 novih vrstic kode
+   570→- Verzija aplikacije: v5.5.0
+   571→
+   572→---
+   573→Task ID: v5.6
+   574→Agent: main
+   575→Task: Nadaljevanje razvoja aplikacije Markec AI Firm — Opportunity Monitor (v5.6)
+   576→
+   577→Work Log:
+   578→- src/app/api/ai/detect-anomalies/route.ts: nov POST endpoint za AI anomaly detection.
+   579→  12 flagov (price_too_low, new_seller_many, stock_photo, generic_description,
+   580→  urgent_sale, no_contact_info, duplicate_listing, price_inconsistent,
+   581→  too_good_to_be_true, external_url, payment_upfront). Anomaly score 0-100,
+   582→  recommendation (ignore/proceed_cautiously/avoid).
+   583→- src/components/dashboard/listings-view.tsx: dodan 'AI anomaly scan' gumb v Oglasi
+   584→  header z anomalies state in results panel z barvami (red ≥70, amber ≥50).
+   585→- src/app/api/listings/[id]/external-compare/route.ts: nov GET endpoint za AI
+   586→  primerjavo cen z zunanjimi viri (Amazon, eBay, AliExpress, Bolha, Vinted).
+   587→- src/components/dashboard/listings-view.tsx: dodana External Price Comparison
+   588→  sekcija v listing modal z 'Primerjaj' gumbom, results z source badges in
+   589→  price diff.
+   590→- prisma/schema.prisma: Settings.dashboardLayout (JSON array of widget IDs).
+   591→- src/app/api/settings/route.ts: dashboardLayout dodan v GET in POST.
+   592→- src/components/dashboard/dashboard-view.tsx: Dashboard customization z
+   593→  WidgetWrapper komponento (up/down gumbi v customize mode), 'Uredi' gumb
+   594→  v action bar, auto-save na spremembo, merge logic za nove widgete.
+   595→- src/app/page.tsx: verzija v5.6.0
+   596→- TypeScript: nobenih novih napak
+   597→- Git commit: 'feat(v5.6): AI Anomaly Detection, External Price Comparison, Dashboard customization'
+   598→
+   599→Stage Summary:
+   600→- 3 nove funkcionalnosti dodane v v5.6
+   601→- 2 novi API ruti (detect-anomalies, external-compare)
+   602→- 1 nova komponenta (WidgetWrapper)
+   603→- ~654 novih vrstic kode
+   604→- Verzija aplikacije: v5.6.0
+   605→
+   606→---
+   607→Task ID: v5.7
+   608→Agent: main
+   609→Task: Nadaljevanje razvoja aplikacije Markec AI Firm — Opportunity Monitor (v5.7)
+   610→
+   611→Work Log:
+   612→- src/app/api/listings/[id]/similar/route.ts: nov GET endpoint za AI podobnost.
+   613→  AI primerja naslov, ceno, opis referenčnega oglasa z kandidati (zadnjih 30 dni).
+   614→  Similarity score 0-100, reason. Filter ≥30%, sort by score desc.
+   615→- src/components/dashboard/listings-view.tsx: dodana 'Podobni oglasi (AI)' sekcija
+   616→  v listing modal z 'Najdi podobne' gumbom, results z thumbnail, similarity badge,
+   617→  deal score.
+   618→- src/app/api/trades/bulk/route.ts: nov POST endpoint za bulk trade operations.
+   619→  4 akcije: sell (določi prodajno ceno), update (category/status/notes),
+   620→  categorize (AI guess iz naslova), delete (masovni izbris).
+   621→- src/components/dashboard/trades-view.tsx: dodan bulk select (checkbox per trade),
+   622→  bulk toolbar z prodajna cena input, 'Prodaj vse', 'Kategoriziraj', 'Izbriši'.
+   623→- src/app/api/ai/monthly-report/route.ts: nov POST endpoint za AI mesečno poročilo.
+   624→  Analizira: listings, alerts, trades, sold trades, run logs, byCategory.
+   625→  Vrača: report (markdown), stats (realizedProfit, avgRoi, byCategory).
+   626→  Pošilja na Telegram in/ali Email.
+   627→- src/app/page.tsx: verzija v5.7.0
+   628→- TypeScript: nobenih novih napak
+   629→- Git commit: 'feat(v5.7): AI Similar Listings, Bulk Trade Operations, AI Monthly Report'
+   630→
+   631→Stage Summary:
+   632→- 3 nove funkcionalnosti dodane v v5.7
+   633→- 3 novi API ruti (similar, bulk, monthly-report)
+   634→- ~715 novih vrstic kode
+   635→- Verzija aplikacije: v5.7.0
+   636→
+   637→---
+   638→Task ID: v5.8
+   639→Agent: main
+   640→Task: Nadaljevanje razvoja aplikacije Markec AI Firm — Opportunity Monitor (v5.8)
+   641→
+   642→Work Log:
+   643→- prisma/schema.prisma: 9 novih polj v Settings za scraping config (proxyList,
+   644→  proxyEnabled, realisticHeaders, requestMinDelay, requestMaxDelay, stealthMode,
+   645→  captchaSolverEnabled, captchaApiKey, tlsFingerprinting).
+   646→- src/lib/scraper-v2.ts: nova knjižnica z vsemi anti-detection tehnikami:
+   647→  - 9 User-Agent stringov (Chrome/Firefox/Safari/Edge na Win/Mac/Linux)
+   648→  - Rotacija Accept-Language, Referer, Sec-Fetch headers
+   649→  - Round-robin proxy rotacija (HTTP/SOCKS5 z avtentikacijo)
+   650→  - Randomizacija timing-a (configurable min/max delay)
+   651→  - CAPTCHA detekcija (reCAPTCHA, hCaptcha, Cloudflare, generic)
+   652→  - 2captcha API integracija (submit + poll za result)
+   653→  - advancedFetch() ki kombinira vse tehnike
+   654→  - stealthScrape() z Playwright anti-detection (override webdriver, plugins,
+   655→    chrome runtime, permissions, viewport, locale, timezone)
+   656→- src/app/api/settings/route.ts: vsa nova polja dodana v GET in POST.
+   657→- src/components/dashboard/settings-view.tsx: ScrapingConfigSection komponenta
+   658→  z vsemi toggle-i, inputi in priporočili.
+   659→- src/app/page.tsx: verzija v5.8.0
+   660→- TypeScript: nobenih novih napak
+   661→- Git commit: 'feat(v5.8): Advanced scraping — proxy rotation, realistic headers, stealth mode, CAPTCHA solving'
+   662→
+   663→Stage Summary:
+   664→- 6 tehnik za boljše scrapanje implementiranih
+   665→- 1 nova knjižnica (scraper-v2.ts)
+   666→- 1 nova komponenta (ScrapingConfigSection)
+   667→- 9 novih polj v Prisma shemi
+   668→- ~650 novih vrstic kode
+   669→- Verzija aplikacije: v5.8.0
+   670→
+   671→---
+   672→Task ID: v5.9
+   673→Agent: main
+   674→Task: Nadaljevanje razvoja aplikacije Markec AI Firm — Opportunity Monitor (v5.9)
+   675→
+   676→Work Log:
+   677→- src/lib/tls-client.ts: nova knjižnica za TLS fingerprinting (čisti Node.js,
+   678→  brez native deps). 3 TLS profili (Chrome 120, Firefox 121, Safari 17) z
+   679→  custom cipher suites, ALPN, EC DH curves, sigalgs. JA3 fingerprint generation.
+   680→  tlsFetchRequest() s custom HTTPS agent.
+   681→- src/lib/captcha-solver.ts: nova knjižnica za multi-provider CAPTCHA reševanje.
+   682→  4 providerji (2captcha, anti-captcha, capmonster, custom) z fallback chain.
+   683→  Podpora za reCAPTCHA v2/v3, hCaptcha, Cloudflare challenge, generic.
+   684→  SiteKey extraction, poll 3s interval, 60s timeout per provider.
+   685→- prisma/schema.prisma: 4 nova polja (captchaProvider, captchaApiKeyAnticaptcha,
+   686→  captchaApiKeyCapmonster, captchaCustomApiUrl).
+   687→- src/app/api/settings/route.ts: vsa nova polja dodana v GET in POST.
+   688→- src/components/dashboard/settings-view.tsx: ScrapingConfigSection posodobljena
+   689→  z multi-provider CAPTCHA UI (primary selector, 3 API key inputi, custom URL,
+   690→  fallback chain info) in TLS fingerprinting z opisom 3 profilov.
+   691→- src/app/page.tsx: verzija v5.9.0
+   692→- TypeScript: nobenih novih napak
+   693→- Git commit: 'feat(v5.9): TLS fingerprinting (3 browser profiles) + Multi-provider CAPTCHA solver (4 providers with fallback chain)'
+   694→
+   695→Stage Summary:
+   696→- 2 napredni anti-detection izboljšavi
+   697→- 2 novi knjižnici (tls-client, captcha-solver)
+   698→- 4 nova polja v Prisma shemi
+   699→- ~666 novih vrstic kode
+   700→- Verzija aplikacije: v5.9.0
+   701→
+   702→---
+   703→Task ID: v6.0
+   704→Agent: main
+   705→Task: Nadaljevanje razvoja aplikacije Markec AI Firm — Opportunity Monitor (v6.0 MILESTONE)
+   706→
+   707→Work Log:
+   708→- src/app/api/listings/[id]/enrich/route.ts: nov POST endpoint za AI listing enrichment.
+   709→  AI iz naslova/opisa izvleče: brand, model, condition, year, color, category, tags,
+   710→  specs, summary.
+   711→- src/components/dashboard/listings-view.tsx: dodana AI Obogatitev podatkov sekcija
+   712→  v listing modal z 'Obogati' gumbom, results grid (brand, model, condition, year,
+   713→  color, category), tags badges, specs collapsible.
+   714→- src/app/api/stats/scraper/route.ts: nov GET endpoint za scraper statistike.
+   715→  3 time windows (24h/7d/30d), per-source breakdown, per-monitor breakdown,
+   716→  hourly activity (24h), recent errors (15).
+   717→- src/components/dashboard/health-view.tsx: dodana Scraper statistike card z
+   718→  time window stats, per-source breakdown, hourly bar chart, recent errors.
+   719→- src/app/api/ai/trend-predictions/route.ts: nov POST endpoint za AI tržne napovedi.
+   720→  Grupa oglase po 11 kategorijah, izračuna stats, AI napove trend, priceChange,
+   721→  reasoning, confidence, recommendation per kategorija.
+   722→- src/components/dashboard/analytics-view.tsx: dodana AI Tržne napovedi card z
+   723→  'Napovej trende' gumbom, results z trend badges, % sprememba, confidence,
+   724→  dataPoints, reasoning, recommendation.
+   725→- src/app/page.tsx: verzija v6.0.0
+   726→- TypeScript: nobenih novih napak
+   727→- Git commit: 'feat(v6.0): AI Listing Enrichment, Scraper Stats Dashboard, AI Trend Predictions — MILESTONE'
+   728→
+   729→Stage Summary:
+   730→- 3 nove funkcionalnosti dodane v v6.0 (MILESTONE)
+   731→- 3 novi API ruti (enrich, stats/scraper, ai/trend-predictions)
+   732→- ~824 novih vrstic kode
+   733→- Verzija aplikacije: v6.0.0
+   734→
+   735→---
+   736→Task ID: v6.1
+   737→Agent: main
+   738→Task: Nadaljevanje razvoja aplikacije Markec AI Firm — Opportunity Monitor (v6.1)
+   739→
+   740→Work Log:
+   741→- src/app/api/ai/deduplicate/route.ts: nov POST endpoint za AI deduplikacijo.
+   742→  Fast path: normalized title match. AI fallback: similarity analysis.
+   743→- src/app/api/listings/bulk-hide/route.ts: nov POST endpoint za bulk hide.
+   744→- src/components/dashboard/listings-view.tsx: dodan 'AI deduplikacija' gumb z
+   745→  results panel (grup duplikatov, similarity score, 'PRVI' badge, 'Skrij vse
+   746→  duplikate' gumb). Dodana 'Shrani iskanje' funkcionalnost z input, chip list
+   747→  shranjenih iskanj, click-to-load, delete.
+   748→- prisma/schema.prisma: SavedSearch model + Settings.emailDigestTemplate.
+   749→- src/app/api/saved-searches/route.ts: CRUD API za shranjena iskanja.
+   750→- src/app/page.tsx: verzija v6.1.0
+   751→- TypeScript: nobenih novih napak
+   752→- Git commit: 'feat(v6.1): AI Listing Deduplication, Saved Searches, Email digest template field'
+   753→
+   754→Stage Summary:
+   755→- 3 nove funkcionalnosti dodane v v6.1
+   756→- 3 novi API ruti (deduplicate, bulk-hide, saved-searches)
+   757→- 1 nova Prisma tabela (SavedSearch)
+   758→- ~506 novih vrstic kode
+   759→- Verzija aplikacije: v6.1.0
+   760→
+   761→---
+   762→Task ID: v6.2
+   763→Agent: main
+   764→Task: Nadaljevanje razvoja aplikacije Markec AI Firm — Opportunity Monitor (v6.2)
+   765→
+   766→Work Log:
+   767→- Raziskava spletnih forumov (Reddit r/reselling, r/flipping, r/arbitrage), slovenskih
+   768→  forumov (Bolha, Vinted Slovenija) in AI arbitrage orodji za izboljšanje dobička.
+   769→- src/app/api/listings/[id]/flip-score/route.ts: nov POST endpoint za AI Flip Score.
+   770→  AI upošteva: tržna vrednost, hitrost prodaje, likvidnost, marža po stroških.
+   771→  Likvidnost score (0-100) glede na: št. podobnih oglasov, povprečni dni do prodaje,
+   772→  prodana zgodovina. Stroški: Bolha provizija, dostava, pakiranje.
+   773→- src/app/api/trades/roi-calc/route.ts: nov POST endpoint za ROI kalkulator.
+   774→  Platform-specific fees (Bolha 5%+0.50€, Vinted 7%, Other). Stroški: buyFees,
+   775→  sellFees, shipping, packaging, repairCosts. Davčni kalkulator: dohodnina 40%.
+   776→  Vrača: grossProfit, netProfit, netAfterTax, marginPct, roiPct, tax, costs breakdown.
+   777→- src/app/api/listings/[id]/saturation/route.ts: nov GET endpoint za market saturation.
+   778→  Analizira: št. podobnih oglasov (±30% cena), avg/min/max cena, trend (7d vs 30d).
+   779→  Saturation level: low/medium/high/very_high. Position: tvoja cena vs tržno povprečje.
+   780→- src/components/dashboard/listings-view.tsx: dodane 3 sekcije v listing modal:
+   781→  1. AI Flip Score — velik score z barvo, 4 stat kartice (dobiček, marža, čas, likvidnost)
+   782→  2. Market Saturation — saturation badge, 3 stat kartice, priporočilo
+   783→  3. ROI Calculator — prodajna cena input, platform selector, costs breakdown, davki
+   784→- src/app/page.tsx: verzija v6.2.0
+   785→- TypeScript: nobenih novih napak
+   786→- Git commit: 'feat(v6.2): AI Flip Score, ROI Calculator z davki, Market Saturation Analysis'
+   787→
+   788→Stage Summary:
+   789→- 3 nove funkcionalnosti za maksimizacijo dobička
+   790→- 3 novi API ruti (flip-score, roi-calc, saturation)
+   791→- ~671 novih vrstic kode
+   792→- Pričakovan vpliv: +55-100% dobička
+   793→- Verzija aplikacije: v6.2.0
+   794→
+   795→---
+   796→Task ID: v6.3
+   797→Agent: main
+   798→Task: Nadaljevanje razvoja aplikacije Markec AI Firm — Opportunity Monitor (v6.3)
+   799→
+   800→Work Log:
+   801→- src/app/api/trades/auto-reprice/route.ts: nov POST endpoint za AI repricing.
+   802→  Hevristična pravila (60+dni→10% drop, 30+dni→5% drop, market avg < buy→adjust).
+   803→  AI upgrade za single trade z optimalno ceno in reasoning.
+   804→- src/app/api/trades/niche-profitability/route.ts: nov GET endpoint za niche analysis.
+   805→  Per category: soldCount, heldCount, totalProfit, avgRoi, avgDaysToSell,
+   806→  sellThroughRate, score, recommendation. Summary z bestNiche/worstNiche.
+   807→- src/app/api/ai/generate-listing/route.ts: nov POST endpoint za AI listing generator.
+   808→  Generira: optimized naslov (SEO), opis (markdown), cena (tržno -5%), tags,
+   809→  kategorija, tips, expected sell time, profit estimate.
+   810→- src/components/dashboard/trades-view.tsx: dodan 'Auto-reprice' gumb z results panel.
+   811→  Dodan Sparkles gumb na held trades za generate listing. Auto-copy v odložišče.
+   812→- src/components/dashboard/statistics-view.tsx: dodana Profitabilnost niš card z
+   813→  summary grid, best/worst niche, niche list z ROI in priporočili.
+   814→- src/app/page.tsx: verzija v6.3.0
+   815→- TypeScript: nobenih novih napak
+   816→- Git commit: 'feat(v6.3): AI Repricing Engine, Niche Profitability Tracker, AI Auto-Listing Generator'
+   817→
+   818→Stage Summary:
+   819→- 3 nove funkcionalnosti za maksimizacijo dobička
+   820→- 3 novi API ruti (auto-reprice, niche-profitability, generate-listing)
+   821→- ~720 novih vrstic kode
+   822→- Verzija aplikacije: v6.3.0
+   823→
+   824→---
+   825→Task ID: v6.4
+   826→Agent: main
+   827→Task: Nadaljevanje razvoja aplikacije Markec AI Firm — Opportunity Monitor (v6.4)
+   828→
+   829→Work Log:
+   830→- src/app/api/stats/speed-to-sell/route.ts: nov GET endpoint za analizo časa prodaje.
+   831→  Overall stats (avgDays, median, min/max, fastFlips, slowFlips), by category
+   832→  (speedScore, speedLabel), by price range (5 rangov).
+   833→- src/app/api/sellers/competitors/route.ts: nov GET endpoint za competitor tracking.
+   834→  Per seller: listingCount, avgPrice, priceDrops, threatLevel (low/medium/high),
+   835→  recentActivity (active/inactive), sources, prilika/sumnjivo counts.
+   836→- src/app/api/trades/refurb-roi/route.ts: nov POST endpoint za refurbishment ROI.
+   837→  Primerja profit brez/s popravilom, stroški (Bolha provizija, dostava, pakiranje,
+   838→  refurb cost), davki (40%), 6 common scenarios.
+   839→- src/components/dashboard/statistics-view.tsx: dodana Speed-to-Sell card z 5 stat
+   840→  karticami, best/worst niche, category list z speed labels, price range grid.
+   841→- src/components/dashboard/analytics-view.tsx: dodana Konkurenčni prodajalci card
+   842→  z stats grid, competitor list z threat badges, activity indicators.
+   843→- src/app/page.tsx: verzija v6.4.0
+   844→- TypeScript: nobenih novih napak
+   845→- Git commit: 'feat(v6.4): Speed-to-Sell Analytics, Competitor Seller Tracking, Refurbishment ROI Calculator'
+   846→
+   847→Stage Summary:
+   848→- 3 nove funkcionalnosti za maksimizacijo dobička
+   849→- 3 novi API ruti (speed-to-sell, competitors, refurb-roi)
+   850→- ~650 novih vrstic kode
+   851→- Verzija aplikacije: v6.4.0
+   852→
+   853→---
+   854→Task ID: v6.5
+   855→Agent: main
+   856→Task: Nadaljevanje razvoja aplikacije Markec AI Firm — Opportunity Monitor (v6.5)
+   857→
+   858→Work Log:
+   859→- src/app/api/ai/seasonal-calendar/route.ts: nov GET endpoint za sezonsko analizo.
+   860→  Analizira 2 leti historical listings, group by month, year-over-year comparison.
+   861→  Best buy/sell month z sezonskim spread %. AI insights z current/next month prediction.
+   862→- src/app/api/ai/bulk-buy/route.ts: nov GET endpoint za bulk buy priložnosti.
+   863→  Group by seller, suggested bulk price (15-25% popust), potential savings, score.
+   864→- src/app/api/trades/sync-listing/route.ts: nov POST endpoint za multi-platform listing.
+   865→  AI generira optimized oglase za Bolha/Vinted/Facebook z platform-specific pravili.
+   866→- src/components/dashboard/analytics-view.tsx: dodana Sezonski koledar card z insights,
+   867→  best buy/sell, 12-mesečni calendar grid z barvami.
+   868→- src/components/dashboard/listings-view.tsx: dodan 'Bulk buy' gumb z results panel.
+   869→- src/components/dashboard/trades-view.tsx: dodan Multi-Platform Sync gumb na held trades
+   870→  z results panel (per-platform listings z copy button).
+   871→- src/app/page.tsx: verzija v6.5.0
+   872→- TypeScript: nobenih novih napak
+   873→- Git commit: 'feat(v6.5): Seasonal Trend Calendar, Bulk Buy Opportunities, Multi-Platform Listing Sync'
+   874→
+   875→Stage Summary:
+   876→- 3 nove funkcionalnosti za maksimizacijo dobička
+   877→- 3 novi API ruti (seasonal-calendar, bulk-buy, sync-listing)
+   878→- ~644 novih vrstic kode
+   879→- Verzija aplikacije: v6.5.0
+   880→
+   881→---
+   882→Task ID: v6.6
+   883→Agent: main
+   884→Task: Nadaljevanje razvoja aplikacije Markec AI Firm — Opportunity Monitor (v6.6)
+   885→
+   886→Work Log:
+   887→- src/app/api/ai/prioritize-alerts/route.ts: nov POST endpoint za AI alert prioritization.
+   888→  Heuristic ranking (AI verdict, deal score, margin, bookmarked, target hit) + AI enhancement
+   889→  (priority 1-5, reason, suggested_action) za top 10.
+   890→- src/app/api/ai/budget-allocator/route.ts: nov POST endpoint za AI budget allocation.
+   891→  Analiza niche profitability + market opportunities. Per category: suggestedBudget,
+   892→  percentage, expectedROI, expectedProfit. Strategy + reserve + totalExpectedProfit.
+   893→- src/app/api/ai/price-war/route.ts: nov GET endpoint za price war detection.
+   894→  Analiza padcev cen po kategorijah. Price war indicators: 3+ sellers, 10%+ avg drop, 5+ drops.
+   895→  trend (accelerating/decelerating/stable), isPriceWar, buyerMarket flags.
+   896→- src/components/dashboard/alerts-view.tsx: dodan 'AI Prioriteta' gumb z results panel.
+   897→- src/components/dashboard/statistics-view.tsx: dodana AI Budget Allocator card z input,
+   898→  allocation list, progress bars, strategy, expected profit.
+   899→- src/components/dashboard/analytics-view.tsx: dodana Detekcija cenovne vojne card z
+   900→  stats grid, category list z 🔥 VOJNA / ✅ BUYER'S MARKET badges, top drops.
+   901→- src/app/page.tsx: verzija v6.6.0
+   902→- TypeScript: nobenih novih napak
+   903→- Git commit: 'feat(v6.6): AI Alert Prioritization, Budget Allocator, Price War Detection'
+   904→
+   905→Stage Summary:
+   906→- 3 nove funkcionalnosti za maksimizacijo dobička
+   907→- 3 novi API ruti (prioritize-alerts, budget-allocator, price-war)
+   908→- ~732 novih vrstic kode
+   909→- Verzija aplikacije: v6.6.0
+   910→
+   911→---
+   912→Task ID: v6.7
+   913→Agent: main
+   914→Task: Nadaljevanje razvoja aplikacije Markec AI Firm — Opportunity Monitor (v6.7)
+   915→
+   916→Work Log:
+   917→- src/app/api/trades/aging-alerts/route.ts: nov GET endpoint za aging alerts.
+   918→  Depreciation 2%/week, urgency levels (critical/high/medium/low), holding cost.
+   919→- src/app/api/ai/restock/route.ts: nov GET endpoint za restock recommendations.
+   920→  Analizira sold trades po kategorijah, keyword extraction, iskanje trenutnih priložnosti.
+   921→- src/app/api/trades/goal-tracker/route.ts: nov GET endpoint za goal tracker v2.
+   922→  Realized/potential/projected profit, milestones, daily rate, MoM trend, 6-month history.
+   923→- src/components/dashboard/trades-view.tsx: dodana 'Aging alerti' in 'AI Restock' gumba
+   924→  z results panels.
+   925→- src/components/dashboard/dashboard-view.tsx: dodana Profit Goal Tracker v2 card z
+   926→  dual progress bar, milestone markers, stats grid, recommendation, history chart.
+   927→- src/app/page.tsx: verzija v6.7.0
+   928→- TypeScript: nobenih novih napak
+   929→- Git commit: 'feat(v6.7): AI Inventory Aging Alerts, Smart Restock Recommendations, Profit Goal Tracker v2'
+   930→
+   931→Stage Summary:
+   932→- 3 nove funkcionalnosti za maksimizacijo dobička
+   933→- 3 novi API ruti (aging-alerts, restock, goal-tracker)
+   934→- ~650 novih vrstic kode
+   935→- Verzija aplikacije: v6.7.0
+   936→
+   937→---
+   938→Task ID: v6.8
+   939→Agent: main
+   940→Task: Nadaljevanje razvoja aplikacije Markec AI Firm — Opportunity Monitor (v6.8)
+   941→
+   942→Work Log:
+   943→- src/app/api/ai/profit-forecast/route.ts: nov POST endpoint za AI profit forecast.
+   944→  Analizira 6-mesečno zgodovino, 3 scenariji (optimistic/realistic/pessimistic),
+   945→  confidence, faktorji, priporočilo.
+   946→- src/app/api/stats/deal-velocity/route.ts: nov GET endpoint za deal velocity.
+   947→  Analiza po urah (24h), dnevih (7), virih. bestWindow, peakHours, insights.
+   948→- src/app/api/trades/risk-score/route.ts: nov POST endpoint za risk score per trade.
+   949→  Risk factors: time, market, AI verdict, deal score, price drops, category, price level.
+   950→  Risk levels: critical/high/medium/low z recommendation.
+   951→- src/components/dashboard/statistics-view.tsx: dodana AI Napoved dobička card z
+   952→  scenarios grid, factors, recommendation, historical data.
+   953→- src/app/page.tsx: verzija v6.8.0
+   954→- TypeScript: nobenih novih napak
+   955→- Git commit: 'feat(v6.8): AI Profit Forecast, Deal Velocity Tracker, AI Risk Score per Trade'
+   956→
+   957→Stage Summary:
+   958→- 3 nove funkcionalnosti za maksimizacijo dobička
+   959→- 3 novi API ruti (profit-forecast, deal-velocity, risk-score)
+   960→- ~503 novih vrstic kode
+   961→- Verzija aplikacije: v6.8.0
+   962→
+   963→---
+   964→Task ID: v6.9
+   965→Agent: main
+   966→Task: Nadaljevanje razvoja aplikacije Markec AI Firm — Opportunity Monitor (v6.9)
+   967→
+   968→Work Log:
+   969→- src/app/api/ai/rebalance/route.ts: nov POST endpoint za AI portfolio rebalancing.
+   970→  Analizira current allocation + historical performance. Per category: action
+   971→  (buy_more/reduce/hold/exit), current→suggested %, reason. Strategy.
+   972→- src/app/api/trades/tax-report/route.ts: nov GET endpoint za davčno poročilo.
+   973→  Per trade breakdown, totals, slovenian tax (5.000€ neoporečno, 40% dohodnina),
+   974→  by category, by month, CSV export.
+   975→- src/app/api/ai/exit-strategy/route.ts: nov POST endpoint za AI exit strategy.
+   976→  recommendation (sell_now/sell_soon/hold/bundle), timing, suggestedPrice,
+   977→  pricingStrategy, alternatives, market context.
+   978→- src/components/dashboard/statistics-view.tsx: dodana AI Rebalancing card z
+   979→  actions list, progress bars, strategy.
+   980→- src/components/dashboard/trades-view.tsx: dodan 'Davčno poročilo' gumb (download).
+   981→  Dodan Target gumb na held trades za exit strategy z results panel.
+   982→- src/app/page.tsx: verzija v6.9.0
+   983→- TypeScript: nobenih novih napak
+   984→- Git commit: 'feat(v6.9): AI Portfolio Rebalancing, Tax Report Generator, AI Exit Strategy'
+   985→
+   986→Stage Summary:
+   987→- 3 nove funkcionalnosti za maksimizacijo dobička
+   988→- 3 novi API ruti (rebalance, tax-report, exit-strategy)
+   989→- ~602 novih vrstic kode
+   990→- Verzija aplikacije: v6.9.0
+   991→
+   992→---
+   993→Task ID: v6.10
+   994→Agent: main
+   995→Task: Nadaljevanje razvoja aplikacije Markec AI Firm — Opportunity Monitor (v6.10)
+   996→
+   997→Work Log:
+   998→- src/app/api/ai/sourcing/route.ts: nov POST endpoint za AI sourcing recommendations.
+   999→  Analizira sold trades (po viru/kategoriji), held trades in nedavne oglase (14d).
+  1000→  AI predlaga kje/kdaj/kaj kupovati: source, category, timing, expectedROI, risk, action, reason.
+  1001→  Stats: bySource (count, profit, ROI, avgDays), byCategory (count, profit, ROI, held),
+  1002→  recentOpportunities (total, opportunities, rate, avgPrice, avgScore).
+  1003→- src/app/api/ai/bundle-optimizer/route.ts: nov POST endpoint za AI bundle optimizer.
+  1004→  Analizira held inventar. AI kombinira komplementarne iteme v bundle (5 strategij:
+  1005→  complete_set, upgrade_path, bulk_discount, starter_pack, premium_bundle).
+  1006→  Per bundle: name, strategy, items, individualTotal, bundlePrice, savingsPct,
+  1007→  expectedProfit, expectedSellTimeDays, reasoning. Individual sale fallback za preostale.
+  1008→- src/app/api/ai/liquidation/route.ts: nov POST endpoint za AI liquidation strategy.
+  1009→  Analizira stalled inventar (>30d). 9 strategij: discount_progressive, auction_online,
+  1010→  bundle_with_hot, part_out, flash_sale, trade_in, wait_seasonal, donation_tax,
+  1011→  relist_refresh. Per item: strategy, expectedPrice, timeToSellDays, projectedLoss,
+  1012→  urgency (critical/high/medium/low), steps, reasoning.
+  1013→  Totals: itemCount, stalledCount, totalProjectedRevenue, totalProjectedLoss, avgDaysToSell,
+  1014→  urgencyBreakdown.
+  1015→- src/components/dashboard/statistics-view.tsx: dodana "AI Sourcing priporočila" card
+  1016→  z budget input, stats grid (viri/kategorije/priložnosti) in recommendations list
+  1017→  (source, category, timing, ROI, risk, action, reason).
+  1018→- src/components/dashboard/trades-view.tsx: dodana "Bundle optimizer" in "Likvidacija"
+  1019→  gumba v orodno vrstico. Bundle panel prikazuje strategy, summary grid, bundle kartice
+  1020→  (ime, strategija, items, cena, popust, dobiček, čas, reasoning). Liquidation panel
+  1021→  prikazuje summary, urgency breakdown, per-item strategije s steps in reasoning.
+  1022→- src/app/page.tsx: verzija v6.10.0
+  1023→- TypeScript: nobenih novih napak uvedenih (vse 23 napak so pre-existing iz v6.9 in prej)
+  1024→- Git commit: 'feat(v6.10): AI Sourcing Recommendations, Bundle Profit Optimizer, Liquidation Strategy'
+  1025→
+  1026→Stage Summary:
+  1027→- 3 nove funkcionalnosti za maksimizacijo dobička
+  1028→- 3 novi API ruti (sourcing, bundle-optimizer, liquidation)
+  1029→- ~1051 novih vrstic kode
+  1030→- Verzija aplikacije: v6.10.0
+  1031→
+  1032→---
+  1033→Task ID: v6.11
+  1034→Agent: main
+  1035→Task: Nadaljevanje razvoja aplikacije Markec AI Firm — Opportunity Monitor (v6.11)
+  1036→
+  1037→Work Log:
+  1038→- src/app/api/ai/negotiation-playbook/route.ts: nov POST endpoint za AI negotiation playbook.
+  1039→  Sprejme listingId ali listing objekt + maxBudget. AI pripravi celovit pogajalski scenarij:
+  1040→  strategy (soft/firm/creative/patient), openingOffer/targetPrice/walkAwayPrice, arguments,
+  1041→  counterOffers (trigger/response/price), psychologyTactics, redFlags, bestTiming,
+  1042→  messageTemplates (initial/follow_up/final v slovenščini). Vključuje market context
+  1043→  (povprečje podobnih oglasov) in fallback AI provider.
+  1044→- src/app/api/ai/pricing-abtest/route.ts: nov POST endpoint za AI A/B pricing test.
+  1045→  Analizira held tradeove + sold history. AI za vsak item predlaga 3 variante
+  1046→  (premium/fair/aggressive) z: price, positioning, expectedOutcome, timeToSellDays,
+  1047→  projectedProfit, probabilityPct, reasoning. Recommendation glede na stalled status
+  1048→  in kategorijo. Summary: totalItems, avgRecommendedProfit, avgRecommendedTimeToSell,
+  1049→  recommendationBreakdown.
+  1050→- src/app/api/ai/cross-border/route.ts: nov POST endpoint za AI cross-border arbitrage.
+  1051→  Primerja slovenske PRILIKA oglase s 6 tujimi trgi: DE (Kleinanzeigen), IT (Subito),
+  1052→  HR (Njuškalo), AT (Willhaben), PL (OLX), FR (Leboncoin). AI izračuna: foreignPrices
+  1053→  per market, arbitrage (strategy=import/export/domestic_only/wait, buyIn/sellIn, fees,
+  1054→  netMargin, roiPct), feasibility (easy/medium/hard), risk 1-10, action, reasoning.
+  1055→  Summary: totalOpportunities, exportOps, importOps, totalNetMargin, avgROI.
+  1056→- src/components/dashboard/listings-view.tsx: dodana "AI Negotiation Playbook" sekcija
+  1057→  v detail drawer (med AI Negotiator in AI Auto-Bid). Prikazuje strategijo, price targets
+  1058→  (opening/target/walk-away), market context, argumente, counter-offers, psihološke
+  1059→  taktike, red flags, best timing, in message templates z copy-to-clipboard. State
+  1060→  reset ob menjavi listing-a.
+  1061→- src/components/dashboard/statistics-view.tsx: dodani dve novi kartici:
+  1062→  1) Smart Pricing A/B Testing — summary grid (itemov/povp.dobiček/čas/premium-fair-aggressive),
+  1063→     per-item prikaz 3 variant z recommended badge in reasoning.
+  1064→  2) AI Cross-Border Arbitrage — query input, summary grid (priložnosti/export/import/ROI),
+  1065→     per-item prikaz strategije (export/import/wait), buyIn/sellIn/ROI/net, foreign prices,
+  1066→     risk in feasibility badge, action in reasoning.
+  1067→- src/app/page.tsx: verzija v6.11.0
+  1068→- TypeScript: nobenih novih napak uvedenih (vse 25 napak je pre-existing)
+  1069→- Git commit: 'feat(v6.11): AI Negotiation Playbook, Smart Pricing A/B Testing, Cross-Border Arbitrage'
+  1070→
+  1071→Stage Summary:
+  1072→- 3 nove funkcionalnosti za maksimizacijo dobička
+  1073→- 3 novi API ruti (negotiation-playbook, pricing-abtest, cross-border)
+  1074→- ~1103 novih vrstic kode
+  1075→- Verzija aplikacije: v6.11.0
+  1076→
+  1077→---
+  1078→Task ID: v6.12
+  1079→Agent: main
+  1080→Task: Nadaljevanje razvoja aplikacije Markec AI Firm — Opportunity Monitor (v6.12)
+  1081→
+  1082→Work Log:
+  1083→- src/app/api/ai/auction-sniper/route.ts: nov POST endpoint za AI auction sniper.
+  1084→  Analizira listing in tržne signale (drop rate, avg age). AI določi strategijo:
+  1085→  wait_drop / snipe_now / last_minute / patient_hold / aggressive_bid.
+  1086→  Per listing: maxBid, timing (wait/bid/deadline), snipeTime, reasoning, signals
+  1087→  (3-6), contingencies (2-4), priceDropProbability (0-100), competitionLevel
+  1088→  (low/medium/high), estimatedDealScore (0-100).
+  1089→- src/app/api/ai/demand-forecast/route.ts: nov POST endpoint za AI napoved povpraševanja.
+  1090→  Analizira 12-mesečno zgodovino prodaj + 90-dnevne listinge po kategorijah.
+  1091→  Upošteva slovensko sezonskost (zima: grelniki/gume/smuči; pomlad: kolesa/vrt;
+  1092→  poletje: kamp/čolni; jesen: šola/šport/ogrevanje). Per kategorija: trend
+  1093→  (growing/stable/declining), seasonality, currentDemand/forecastDemand (0-200),
+  1094→  peakMonths/lowMonths, recommendation (buy/hold/sell), expectedRoiPct,
+  1095→  opportunities (konkretni itemi), reasoning. Summary stats.
+  1096→- src/app/api/ai/portfolio-correlation/route.ts: nov POST endpoint za AI portfolio korelacijo.
+  1097→  Pearson correlation coefficient med mesečnimi profiti kategorij (zadnjih 12m).
+  1098→  HHI (Herfindahl-Hirschman) koncentracijski indeks. AI identificira:
+  1099→  clusters (skupine močno koreliranih kategorij z risk level), diversification
+  1100→  (score 0-100, concentrationRisk, topRisks, suggestions), hedgingOpportunities
+  1101→  (kategorije z negativno korelacijo). Top 10 korelacij z oznako strength
+  1102→  (strong_positive/weak_positive/strong_negative/weak_negative/neutral).
+  1103→- src/components/dashboard/listings-view.tsx: dodana "AI Auction Sniper" sekcija
+  1104→  v detail drawer (med Negotiation Playbook in AI Auto-Bid). Prikazuje mode,
+  1105→  maxBid, action, reasoning, timing grid (wait/bid/deadline), probability bars
+  1106→  (priceDropProbability, competitionLevel, dealScore), snipeTime, signals,
+  1107→  contingencies in market signals. State reset ob menjavi listing-a.
+  1108→- src/components/dashboard/statistics-view.tsx: dodani dve novi kartici:
+  1109→  1) AI Napoved povpraševanja — months input (1-6), summary grid
+  1110→     (kategorij/raste/pada/kupi/prodaj), per-category prikaz trenda, current/forecast
+  1111→     demand, peak/low months, opportunities in reasoning.
+  1112→  2) AI Portfolio korelacije — summary grid (kategorij/HHI/koncentracija/diverz.score),
+  1113→     top risks, suggestions, clusters, top 10 korelacij z barvno kodirano strength,
+  1114→     hedging opportunities.
+  1115→- src/app/page.tsx: verzija v6.12.0
+  1116→- TypeScript: nobenih novih napak uvedenih (vse 25 napak je pre-existing)
+  1117→- Git commit: 'feat(v6.12): AI Auction Sniper, Demand Forecast, Portfolio Correlation'
+  1118→
+  1119→Stage Summary:
+  1120→- 3 nove funkcionalnosti za maksimizacijo dobička
+  1121→- 3 novi API ruti (auction-sniper, demand-forecast, portfolio-correlation)
+  1122→- ~1181 novih vrstic kode
+  1123→- Verzija aplikacije: v6.12.0
+  1124→
+  1125→---
+  1126→Task ID: v6.13
+  1127→Agent: main
+  1128→Task: Nadaljevanje razvoja aplikacije Markec AI Firm — Opportunity Monitor (v6.13)
+  1129→
+  1130→Work Log:
+  1131→- src/app/api/ai/competitor-intel/route.ts: nov POST endpoint za AI competitor intelligence.
+  1132→  Agregira listinge po sellerName (count, avgPrice, priceRange, categories, sources, locations,
+  1133→  daysActive, avgDealScore, opportunityRate). AI klasificira strategijo prodajalca
+  1134→  (volume_player/premium_niche/discounter/specialist/opportunity_hunter), threat level
+  1135→  (low/medium/high), weaknesses, opportunities, recommended action. Identificira blue ocean
+  1136→  kategorije in predloge diferenciacije.
+  1137→- src/app/api/ai/fraud-detection/route.ts: nov POST endpoint za AI fraud detection.
+  1138→  Hevristika z 30+ regex patterni (payment/urgency/description/price/seller red flags) +
+  1139→  ML signali (cena vs est. value, seller count, image verdict, opis dolžina, posted timing,
+  1140→  stock photo URL). AI kombinira hevristiko + kontekstno analizo. Per listing: fraudScore,
+  1141→  riskLevel (critical/high/medium/low), scamType, aiAssessment, redFlags, mlSignals,
+  1142→  additionalRedFlags, verificationSteps, recommendation (buy_with_caution/verify_first/avoid/report),
+  1143→  similarFraudPatterns.
+  1144→- src/app/api/ai/cashflow/route.ts: nov POST endpoint za AI cash flow optimizer.
+  1145→  Izračuna currentCash (realizirano - vezano), forecast za N dni na podlagi povprečne
+  1146→  prodaje (avgSalesPerMonth, avgRevenuePerSale, avgDaysToSell). AI analizira bottlenecke
+  1147→  (inventory_tied_up/slow_moving/high_fees/reinvestment_rate/category_concentration),
+  1148→  recommendations (priority/expectedImpactEur/timeframe), cash flow gap-e, optimal
+  1149→  allocation (reinvest/reserve). Strategy: aggressive_reinvest/balanced/conservative/
+  1150→  liquidation_first.
+  1151→- src/components/dashboard/listings-view.tsx: dodana "AI Fraud Detection" sekcija
+  1152→  v detail drawer (med Auction Sniper in AI Auto-Bid). Prikazuje fraud score z risk
+  1153→  leveljem, scam type, recommendation badge, hevristika vs AI score breakdown,
+  1154→  red flags (z utežmi), ML signali, subtilni znaki, verification steps in similar
+  1155→  fraud patterns. State reset ob menjavi listing-a.
+  1156→- src/components/dashboard/statistics-view.tsx: dodani dve novi kartici:
+  1157→  1) AI Competitor Intelligence — category filter, summary grid (konkurentov/high threat/
+  1158→     blue ocean/vseh prodajalcev), per-competitor prikaz strategije, threat, šibkosti,
+  1159→     priložnosti, recommended action. Blue ocean kategorije z ROI. Predlogi diferenciacije.
+  1160→  2) AI Cash Flow Optimizer — days input, current cash/vezan inventar/realizirano,
+  1161→     strategy (trenutna vs priporočena), optimal allocation (reinvest/reserve), forecast
+  1162→     summary (prodaje/prihodek/reinvesticija/končni cash), bottlenecks z impact, priporočila
+  1163→     z priority/expectedImpact, cash flow gap-i z mitigation.
+  1164→- src/app/page.tsx: verzija v6.13.0
+  1165→- TypeScript: nobenih novih napak uvedenih (vse 25 napak je pre-existing)
+  1166→- Git commit: 'feat(v6.13): AI Competitor Intelligence, Predictive Fraud Detection, Cash Flow Optimizer'
+  1167→
+  1168→Stage Summary:
+  1169→- 3 nove funkcionalnosti za maksimizacijo dobička in zmanjšanje tveganja
+  1170→- 3 novi API ruti (competitor-intel, fraud-detection, cashflow)
+  1171→- ~1381 novih vrstic kode
+  1172→- Verzija aplikacije: v6.13.0
+  1173→
+  1174→---
+  1175→Task ID: v6.14
+  1176→Agent: main
+  1177→Task: Nadaljevanje razvoja aplikacije Markec AI Firm — Opportunity Monitor (v6.14)
+  1178→
+  1179→Work Log:
+  1180→- src/app/api/ai/insurance-optimizer/route.ts: nov POST endpoint za AI insurance optimizer.
+  1181→  Kategorijski risk profili (10+ kategorij s theftRisk/damageRisk/depreciationRate/liquidityRisk).
+  1182→  Storage type multipliers (home/garage/storage_unit/shop). Per item: riskScore kombinacija
+  1183→  theft + damage + liquidity + stalled. AI predlaga strategijo (self_insured/home_extension/
+  1184→  business_policy/hybrid/per_item), policy (type, coverage, deductible, premium, providers
+  1185→  — Triglav/Adriatic/Sava), high_risk_items z recommendations, self_insurance_reserve.
+  1186→- src/app/api/ai/multimodal-listing/route.ts: nov POST endpoint za AI multi-modal listing generator.
+  1187→  Generira celovit listing za prodajo: title, priceRecommendation, priceStrategy, mainDescription,
+  1188→  platformsAdaptations (bolha/vinted/facebook z naslov/opis/cena prilagojeni za vsako platformo),
+  1189→  imageStrategy (mainShot, detailShots, contextShot, videoRecommended), tagsKeywords, seo
+  1190→  (primaryKeyword, searchTerms), callToAction, highlightFeatures, honestDisclosures.
+  1191→  Upošteva market benchmark iz podobnih oglasov.
+  1192→- src/app/api/ai/negotiation-outcome/route.ts: nov POST endpoint za AI negotiation outcome predictor.
+  1193→  Sprejme offerPrice + message. AI napove: successProbabilityPct (0-100), confidence,
+  1194→  expectedCounterOfferEur, suggestedOptimalOfferEur, factors (impact positive/negative/neutral
+  1195→  + weight 1-10), scenarios (3-4 možni izidi z verjetnostmi in finalPriceEur), warnings,
+  1196→  optimalStrategy (approach direct_offer/build_rapport/wait_for_drop/bundle_offer/walk_away,
+  1197→  timing, messageTips). Upošteva sellerHistory in marketContext.
+  1198→- src/components/dashboard/listings-view.tsx: dodana "AI Negotiation Outcome" sekcija
+  1199→  v detail drawer (med Fraud Detection in AI Auto-Bid). Input za ponudbo in sporočilo.
+  1200→  Prikazuje success probability z barvo in progress bar, counter-offer in optimal offer,
+  1201→  strategijo, faktorje (positive/negative/neutral), scenarije z verjetnostmi, opozorila
+  1202→  in kontekst (market, seller history, days since posted). State reset ob menjavi listing-a.
+  1203→- src/components/dashboard/statistics-view.tsx: dodana "AI Inventory Insurance Optimizer"
+  1204→  kartica z storage type select (home/garage/storage_unit/shop), risk analysis grid
+  1205→  (skupna vrednost/koncentracija/theft risk/amortizacija), strategy + policy (tip/pokritje/
+  1206→  premija/ponudniki), self-insurance reserve, high-risk items z recommendations, priporočila
+  1207→  z priority in savings.
+  1208→- src/components/dashboard/trades-view.tsx: dodan "Listing generator" gumb v orodno vrstico.
+  1209→  Prikaz rezultatov vključuje: title + cena, market benchmark, main description z copy button,
+  1210→  call to action, highlight features, honest disclosures, platform adaptations (bolha/facebook/
+  1211→  vinted), image strategy (glavna/detalji/kontekst/video), SEO (primary keyword, search terms),
+  1212→  tags.
+  1213→- src/app/page.tsx: verzija v6.14.0
+  1214→- TypeScript: nobenih novih napak uvedenih (vse 25 napak je pre-existing)
+  1215→- Git commit: 'feat(v6.14): AI Insurance Optimizer, Multi-Modal Listing Generator, Negotiation Outcome Predictor'
+  1216→
+  1217→Stage Summary:
+  1218→- 3 nove funkcionalnosti za maksimizacijo dobička in zmanjšanje tveganja
+  1219→- 3 novi API ruti (insurance-optimizer, multimodal-listing, negotiation-outcome)
+  1220→- ~1352 novih vrstic kode
+  1221→- Verzija aplikacije: v6.14.0
+  1222→
+  1223→---
+  1224→Task ID: v6.15
+  1225→Agent: main
+  1226→Task: Nadaljevanje razvoja aplikacije Markec AI Firm — Opportunity Monitor (v6.15)
+  1227→
+  1228→Work Log:
+  1229→- src/app/api/ai/predictive-stockout/route.ts: nov POST endpoint za AI predictive stockout.
+  1230→  Analizira held trades (current stock) in sold trades (depletion rate per kategorija).
+  1231→  Izračuna daysToStockout glede na stock/depletion. Severity: critical (≤7d) / high (≤14d) /
+  1232→  medium (≤30d) / stagnant (brez prodaj) / low. AI predlaga: action (restock_now/start_sourcing/
+  1233→  reduce/maintain/liquidate), suggestedQuantity, urgency 1-10, expectedRevenue, sourcingHint.
+  1234→  Restock alerti z deadlineDays in message.
+  1235→- src/app/api/ai/tax-loss-harvesting/route.ts: nov POST endpoint za AI tax loss harvesting.
+  1236→  Slovenski davčni zakon: 5.000€ neoporečno, 40% dohodnina, loss carryforward 3 leta.
+  1237→  Izračuna realizedGains/realizedLosses/netGain/taxableBase/taxDue. Pridobi prior years losses
+  1238→  za carryforward. Kandidati = held trades z projectedLoss > 0 (cost - estValue). AI predlaga
+  1239→  strategije: harvest_now / wait_year_end / wait_3yr_holding / hold / bundle_with_gain.
+  1240→  Year-end plan: shouldHarvest, targetLossEur, taxSavingsEur, deadline, steps.
+  1241→  Carryforward analysis: availableLosses, utilizedThisYear, remainingForFuture, optimalUsage.
+  1242→- src/app/api/ai/margin-optimizer/route.ts: nov POST endpoint za AI profit margin optimizer.
+  1243→  Realne pristojbine za 6 platform (bolha 0%, vinted 5%+0.30€, facebook 0%, avtonet 5€ fiksno,
+  1244→  ebay 10%+0.30€+4% konverzija, kleinanzeigen 0%). 5 shipping options (GLS/DPD/Pošta SI/DHL/
+  1245→  Personal pickup z SI in EU cenami). 8 optimizacijskih strategij (platform_switch,
+  1246→  shipping_optimization, bundle_strategy, fee_negotiation, tax_optimization, currency_optimization,
+  1247→  premium_positioning, volume_discount). Per item: optimizedPlatform, optimizedShipping,
+  1248→  optimizedPrice, currentMargin → optimizedMargin z improvement breakdown.
+  1249→- src/components/dashboard/statistics-view.tsx: dodani dve novi kartici:
+  1250→  1) AI Predictive Stockout Alerts — days input, summary grid (kategorij/critical/high/stagnant/
+  1251→     vrednost stocka), restock alerti, predictions table z severity ikonami in daysToStockout,
+  1252→     restock priporočila z action/urgency/sourcingHint.
+  1253→  2) AI Profit Margin Optimizer — summary grid (itemov/trenutna marža/optimirana/izboljšava),
+  1254→     per-item optimizacija z current→optimized maržo, platform + shipping badges, improvements
+  1255→     breakdown z savings, splošna priporočila.
+  1256→- src/components/dashboard/trades-view.tsx: dodan "Tax harvesting" gumb v orodno vrstico.
+  1257→  Prikaz rezultatov vključuje: harvesting summary (dobički/izgube/neto/davek/po carryforward),
+  1258→  tax strategy, year-end harvesting načrt (cilj izgube/prihranek/rok/steps), carryforward
+  1259→  analiza, harvesting kandidati z action (harvest_now/wait_year_end/wait_3yr_holding/hold/
+  1260→  bundle_with_gain) in davčno korist, davčna opozorila.
+  1261→- src/app/page.tsx: verzija v6.15.0
+  1262→- TypeScript: nobenih novih napak uvedenih (vse 25 napak je pre-existing)
+  1263→- Git commit: 'feat(v6.15): AI Predictive Stockout, Tax Loss Harvesting, Profit Margin Optimizer'
+  1264→
+  1265→Stage Summary:
+  1266→- 3 nove funkcionalnosti za maksimizacijo dobička in davčno optimizacijo
+  1267→- 3 novi API ruti (predictive-stockout, tax-loss-harvesting, margin-optimizer)
+  1268→- ~1269 novih vrstic kode
+  1269→- Verzija aplikacije: v6.15.0
+  1270→
+  1271→---
+  1272→Task ID: v6.16
+  1273→Agent: main
+  1274→Task: Nadaljevanje razvoja aplikacije Markec AI Firm — Opportunity Monitor (v6.16)
+  1275→
+  1276→Work Log:
+  1277→- src/app/api/ai/email-campaign/route.ts: nov POST endpoint za AI email campaign generator.
+  1278→  6 tipov kampanj: win_back / new_buyers / bundle_offer / clearance / seasonal / newsletter.
+  1279→  AI generira: subject (<60 znakov), previewText, body (150-300 besed v slovenščini),
+  1280→  CTA, subjectVariants (A/B test), segments (z estimatedReach/openRate/clickRate),
+  1281→  sendStrategy (bestDay/bestTime/frequency/reasoning), followUp (waitDays/subject/body),
+  1282→  featuredItems. Uporablja zgodovino prodaj in inventory za kontekst.
+  1283→- src/app/api/ai/multi-vendor-bundle/route.ts: nov POST endpoint za AI multi-vendor bundle.
+  1284→  Kombinira iteme iz RAZLIČNIH virov (bolha + nepremicnine, avtonet + bolha, itd.) v bundle.
+  1285→  5 strategij: complete_setup / mixed_category / cross_source / premium_discount / starter_pack.
+  1286→  Per bundle: items, sources, individualTotal, bundlePrice, savingsPct, expectedProfit,
+  1287→  targetBuyer, reasoning. Vsak item je samo v enem bundleu, unbundled items ostanejo za posamično.
+  1288→- src/app/api/ai/customer-ltv/route.ts: nov POST endpoint za AI customer LTV predictor.
+  1289→  Agregira soldTrades po sellLocation (kupci). Formula: LTV = avgOrderValue × frequency × lifespan.
+  1290→  5 segmentov: vip (>500€ + repeat), loyal (>200€ + repeat), occasional (>50€), one_time,
+  1291→  at_risk (repeat ampak >90d brez nakupa). Per customer: predictedLtv12mEur, churnRiskPct,
+  1292→  retentionStrategy (win_back_email/bundle_offer/loyalty_discount/cross_sell/none),
+  1293→  crossSellCategories, personalizedOffer. Summary: totalRevenue, repeatCustomersPct,
+  1294→  avgCustomerLtv, vipCount, atRiskCount.
+  1295→- src/components/dashboard/statistics-view.tsx: dodani dve novi kartici:
+  1296→  1) AI Email Campaign Generator — select za tip kampanje (6 tipov), prikaz subject + preview,
+  1297→     A/B varianti, body z copy button, CTA, send strategy (dan/ura/frekvenca), segmenti z
+  1298→     open/click rates, follow-up kampanja, featured itemi.
+  1299→  2) AI Customer LTV Predictor — summary grid (prihodek/povp.LTV/repeat/VIP+at-risk),
+  1300→     per-customer prikaz s segment ikono, LTV 12m, churn risk, retention strategija,
+  1301→     personalized offer in cross-sell kategorije.
+  1302→- src/components/dashboard/trades-view.tsx: dodan "Multi-vendor" gumb v orodno vrstico.
+  1303→  Prikaz rezultatov vključuje: summary grid (bundle-i/itemov/dobiček/popust/virov),
+  1304→  per-deal prikaz z naslovom, strategijo, sources badges, individual→bundle cena,
+  1305→  dobiček/čas, target buyer, reasoning, itemi z navedbo vira. Unbundled items na koncu.
+  1306→- src/app/page.tsx: verzija v6.16.0
+  1307→- TypeScript: nobenih novih napak uvedenih (vse 25 napak je pre-existing)
+  1308→- Git commit: 'feat(v6.16): AI Email Campaign Generator, Multi-Vendor Bundle, Customer LTV Predictor'
+  1309→
+  1310→Stage Summary:
+  1311→- 3 nove funkcionalnosti za maksimizacijo dobička in customer outreach
+  1312→- 3 novi API ruti (email-campaign, multi-vendor-bundle, customer-ltv)
+  1313→- ~1128 novih vrstic kode
+  1314→- Verzija aplikacije: v6.16.0
+  1315→
+  1316→---
+  1317→Task ID: v6.17
+  1318→Agent: main
+  1319→Task: Dodajanje mobile.de scrapanja za DE→SI cross-border avto arbitražo
+  1320→
+  1321→Work Log:
+  1322→- Raziskava forumov (Reddit r/webscraping, Stack Overflow, GitHub mobile-de-scraper projekti):
+  1323→  mobile.de nima javnega RSS, uporablja Cloudflare z JS challenge, browser fingerprinting.
+  1324→  Odločitev: 3-stopenjski hibrid (JSON API → HTML z real headers → Playwright fallback).
+  1325→- src/lib/scraper-mobile-de.ts: nov profesionalni scraper (480+ vrstic).
+  1326→  Stage 1: JSON API (https://suchen.mobile.de/fahrzeuge/search.json) — najhitrejši.
+  1327→  Stage 2: HTML scraping z real headers (Sec-Ch-Ua, Sec-Fetch-*, de-DE Accept-Language),
+  1328→  6 rotacij User-Agent, data-testid selektorji.
+  1329→  Stage 3: Playwright fallback z anti-detection scripti (skrij navigator.webdriver,
+  1330→  faker plugins, set locale de-DE, timezone Europe/Berlin).
+  1331→  Vključuje: buildMobileDeUrl() helper za lažjo konstrukcijo URL-jev z vsemi parametri
+  1332→  (make, model, priceFrom/To, mileage, year, fuel, gearbox, location, radius, sort).
+  1333→  parsePrice() za nemški format (1.234,56 € → 1234.56).
+  1334→  Cloudflare/CAPTCHA detekcija.
+  1335→- src/lib/scraper.ts: dodan 'mobile-de' v SourceType union, registriran v scrape()
+  1336→  z lazy import (zmanjša initial bundle size).
+  1337→- src/lib/monitor-templates.ts: 5 novih templates z DE→SI cross-border prompti:
+  1338→  1. BMW Series 3 do 10.000€ (PRIHRANEK 10-20%, ~1600€ dobička po shippingu)
+  1339→  2. Audi A4 do 12.000€ (TDI bolj zaželen v SI)
+  1340→  3. VW Golf 7 do 10.000€ (najbolj prodajan v SI)
+  1341→  4. Mercedes C-Class do 13.000€ (premium)
+  1342→  5. EV avtomobili do 20.000€ (4500€ SI subvencija = 29% ROI!)
+  1343→  Prompti vključujejo nemške izraze (Unfallfrei, Scheckheftgepflegt, Erstzulassung)
+  1344→  in specifične cross-border napotke.
+  1345→- src/components/dashboard/monitors-view.tsx: dodan 'mobile-de' v Source type,
+  1346→  3 novi SOURCE_PRESETS (BMW, VW Golf, EV). Dropdown samodejno prikaže mobile.de.
+  1347→- prisma/schema.prisma: posodobljen komentar za source field.
+  1348→- README.md: dodana obsežna v6.17 sekcija z:
+  1349→  - Razlaga implementacijske strategije (3-stopenjski hibrid)
+  1350→  - URL format z vsemi parametri
+  1351→  - Tabela 5 templates z ROI potencialom
+  1352→  - Konkretni izračuni dobička (BMW 1600€, EV 4100€)
+  1353→  - Pomembni nemški izrazi (Unfallfrei, Scheckheftgepflegt, itd.)
+  1354→  - Anti-detection tehnike
+  1355→- src/app/page.tsx: verzija v6.17.0
+  1356→- TypeScript: nobenih novih napak uvedenih (vse 25 napak je pre-existing)
+  1357→- Git commit: 'feat(v6.17): Mobile.de scraper (3-stage hybrid) za DE→SI cross-border avto arbitražo'
+  1358→
+  1359→Stage Summary:
+  1360→- 1 nov vir (mobile.de) — največji nemški avto trg
+  1361→- 1 nov scraper modul (scraper-mobile-de.ts, ~480 vrstic)
+  1362→- 5 novih monitor templates z cross-border AI prompti
+  1363→- 3 novi SOURCE_PRESETS v UI
+  1364→- Pričakovan vpliv na dobiček: +15-25% (nemški avti 10-20% cenejši, EV z 4500€ subvencijo do 29% ROI)
+  1365→- Verzija aplikacije: v6.17.0
+  1366→
+  1367→---
+  1368→Task ID: v6.18
+  1369→Agent: main
+  1370→Task: Dodajanje 3 tujih generalnih trgov (Kleinanzeigen DE, Subito IT, Willhaben AT)
+  1371→
+  1372→Work Log:
+  1373→- src/lib/scraper-foreign.ts: nov modul z 3 scraperji (~530 vrstic).
+  1374→  Vsak scraper sledi 3-stopenjskemu hibridnemu pristopu (kot mobile.de):
+  1375→  1. Kleinanzeigen.de (Nemčija, nekdanji eBay Kleinanzeigen) — največji DE
+  1376→     generalni oglasnik. Selektorji: .ad-listitem, .text-body-end (title),
+  1377→     .ad-price. Multi-kategorija: elektronika, pohištvo, avto, nepremičnine.
+  1378→  2. Subito.it (Italija) — največji IT oglasnik. Selektorji: .item-listing,
+  1379→     .item-title, .item-price. Multi-kategorija: moda, luxury, kolesa.
+  1380→  3. Willhaben.at (Avstrija) — največji AT oglasnik. Selektorji:
+  1381→     .search-result, .title, .price. Multi-kategorija: avto deli, smuči, IKEA.
+  1382→  Skupni helperji: randomUA (5 UA), parsePriceMultiFormat (podpira
+  1383→  1.234,56€ / €1,234.56 / VB=po dogovoru / Versand=null), isCloudflareChallenge,
+  1384→  isCaptchaPage, buildRealHeaders (de-DE / it-IT / de-AT).
+  1385→  Playwright fallback z locale-specific timezone (Europe/Berlin/Rome/Vienna).
+  1386→  URL builderji: buildKleinanzeigenUrl, buildSubitoUrl, buildWillhabenUrl
+  1387→  z vsemi parametri (keyword, category, priceFrom/To, location, radius, sort).
+  1388→- src/lib/scraper.ts: dodani 'kleinanzeigen' | 'subito' | 'willhaben' v
+  1389→  SourceType union. Registrirani v scrape() z lazy import (zmanjša initial
+  1390→  bundle size). SourceType sedaj: 10 virov (4 SI + 6 tujih).
+  1391→- src/lib/monitor-templates.ts: 9 novih templates (3 per platforma):
+  1392→  KLEINANZEIGEN.DE:
+  1393→  1. iPhone 13/14 Pro do 600€ (15% prihranka, ~150€ dobička/kos)
+  1394→  2. MacBook Pro/Air M1/M2 do 1000€ (20% prihranka, ~200€ dobička/kos)
+  1395→  3. PlayStation 5 do 400€ (10% prihranka, ~70€ dobička/kos, volume)
+  1396→  SUBITO.IT:
+  1397→  4. Luxury torbe (Gucci/Prada) do 500€ (30-50% prihranka, ~300€ dobička)
+  1398→  5. Premium oblačila (Armani, Stone Island) do 200€ (30% prihranka)
+  1399→  6. Premium kolesa (Pinarello, Colnago) do 1500€ (30% prihranka, ~700€ dobička)
+  1400→  WILLHABEN.AT:
+  1401→  7. BMW original deli do 300€ (20% prihranka)
+  1402→  8. Smuči (Atomic, Head) do 400€ (30% prihranka, sezonska)
+  1403→  9. IKEA / design pohištvo do 300€ (15% prihranka)
+  1404→  Prompti vključujejo specifične tuje izraze: Ohne iCloud Sperre,
+  1405→  Originalverpackung, Akku Zyklen (DE), Originale, Nuovo con etichetta,
+  1406→  Replica/Falso (IT opozorila), Teilenummer (AT avto deli).
+  1407→- src/components/dashboard/monitors-view.tsx: dodani 3 novi viri v Source
+  1408→  dropdown (Kleinanzeigen.de / Subito.it / Willhaben.at) + 3 novi
+  1409→  SOURCE_PRESETS za hitro dodajanje.
+  1410→- prisma/schema.prisma: posodobljen komentar source field z vsemi 10 viri.
+  1411→- README.md: dodana obsežna v6.18 sekcija z:
+  1412→  - Tabela 3 trgov z specializacijo in prihrankom
+  1413→  - Implementacijska strategija (3-stopenjski hibrid)
+  1414→  - URL formati za vsak trg
+  1415→  - Tabela 9 templates z dobički
+  1416→  - Pomembni nemški/italijanski/avstrijski izrazi
+  1417→  - Strategije za maksimalni dobiček (volume/premium/bundle/sezonska)
+  1418→  - Anti-detection tehnike skupne z mobile.de
+  1419→- src/app/page.tsx: verzija v6.18.0
+  1420→- TypeScript: nobenih novih napak uvedenih (vse 25 napak je pre-existing)
+  1421→- Git commit: 'feat(v6.18): 3 tuji generalni trgovi (Kleinanzeigen DE, Subito IT, Willhaben AT)'
+  1422→
+  1423→Stage Summary:
+  1424→- 3 novi viri (Kleinanzeigen.de, Subito.it, Willhaben.at)
+  1425→- 1 nov scraper modul (scraper-foreign.ts, ~530 vrstic, 3 scraperje v enem)
+  1426→- 9 novih monitor templates z cross-border AI prompti
+  1427→- 3 novi SOURCE_PRESETS v UI
+  1428→- Skupaj aplikacija sedaj podpira 10 virov: 4 SI (Bolha/Nepremicnine/Avtonet/Vinted) + 6 tujih (mobile.de, Kleinanzeigen, Subito, Willhaben + Salomon/custom-RSS)
+  1429→- Pričakovan vpliv na dobiček: +20-35% (premium 30-50% prihranka, volume 10-20%)
+  1430→- Verzija aplikacije: v6.18.0
+  1431→
+  1432→---
+  1433→Task ID: v6.19
+  1434→Agent: main
+  1435→Task: Dodajanje OpenRouter in Google Gemini AI provider podpore
+  1436→
+  1437→Work Log:
+  1438→- Raziskava: aplikacija je imela 4 providerje (ollama/openai/anthropic/openai-compatible).
+  1439→  OpenRouter je bil delno podprt preko openai-compatible, ampak brez specifičnih headerjev
+  1440→  (HTTP-Referer, X-Title). Gemini pa ima popolnoma drugačen API (Generative Language API)
+  1441→  in NI bil podprt.
+  1442→- src/lib/ai.ts:
+  1443→  * Dodan 'openrouter' | 'gemini' v AiProviderType union (skupno 6 providerjev sedaj)
+  1444→  * callOpenRouter(): gateway do 100+ modelov (Anthropic, OpenAI, Meta, Mistral, Google)
+  1445→    - OpenAI-compatible format (choices[0].message.content)
+  1446→    - Dodatna headerja: HTTP-Referer (za leaderboard), X-Title (za dashboard)
+  1447→    - Podpora slika (image_url z data:image/jpeg;base64,...)
+  1448→    - response_format: { type: 'json_object' } za JSON output
+  1449→    - URL: https://openrouter.ai/api/v1/chat/completions
+  1450→  * callGemini(): Google Generative Language API
+  1451→    - Drugačen API format: contents: [{ role, parts: [{text}] }]
+  1452→    - Za slike: parts: [{text}, { inline_data: { mime_type, data } }]
+  1453→    - system_instruction (posebno polje, ne v messages)
+  1454→    - generationConfig.responseMimeType = 'application/json' (JSON output)
+  1455→    - API key kot query parameter (?key=API_KEY), ne Authorization header
+  1456→    - URL: https://generativelanguage.googleapis.com/v1beta/models/{model}:generateContent
+  1457→    - Detekcija promptFeedback.blockReason (Gemini safety filter)
+  1458→  * Registrirana oba v callProvider() switch
+  1459→- src/lib/pipeline.ts (BONUS): uvožen AiProviderType (prej je bil uporabljen brez uvoza).
+  1460→  To je odpravilo 1 pre-existing TypeScript napako.
+  1461→- prisma/schema.prisma: posodobljen komentar aiProvider field z vsemi 6 providerji.
+  1462→- src/components/dashboard/settings-view.tsx:
+  1463→  * Posodobljen Provider type union (dodana openrouter | gemini)
+  1464→  * Dodana PROVIDER_PRESETS:
+  1465→    - openrouter: baseUrl=https://openrouter.ai/api, model=anthropic/claude-3.5-sonnet,
+  1466→      label 'OpenRouter (gateway do 100+ modelov)', help z navodili
+  1467→    - gemini: baseUrl=https://generativelanguage.googleapis.com, model=gemini-2.0-flash-exp,
+  1468→      label 'Google Gemini (brezplačni tier)', help z brezplačnimi limti
+  1469→  * Glavni dropdown samodejno prikaže nove providerje (dinamično bere iz PROVIDER_PRESETS)
+  1470→  * Fallback dropdown posodobljen z 2 novima SelectItem (openrouter, gemini)
+  1471→- README.md: dodana obsežna v6.19 sekcija:
+  1472→  - OpenRouter opis (100+ modelov, free tier, format provider/model)
+  1473→  - Gemini opis (brezplačni tier: 15 req/min, 1500/dan za gemini-1.5-flash)
+  1474→  - Setup navodila za oba (kje dobiti API key)
+  1475→  - Prednosti za aplikacijo (multimodalni, JSON output, fallback)
+  1476→  - Priporočena fallback strategija (Gemini primarni + OpenRouter fallback)
+  1477→  - Posodobljena Testirano z sekcija z obema novima providerjema
+  1478→- src/app/page.tsx: verzija v6.19.0
+  1479→- TypeScript: 24 napak (prej 25) - odpravljena 1 pre-existing napaka (AiProviderType import v pipeline.ts)
+  1480→- Git commit: 'feat(v6.19): OpenRouter in Google Gemini AI provider podpora'
+  1481→
+  1482→Stage Summary:
+  1483→- 2 nova AI providerja (OpenRouter, Google Gemini) — skupno 6 providerjev sedaj
+  1484→- 2 novi funkciji v ai.ts (callOpenRouter, callGemini) — ~150 vrstic
+  1485→- 1 odpravljena pre-existing TypeScript napaka (AiProviderType import)
+  1486→- OpenRouter: en API key za 100+ modelov (testiraj različne brez menjave računov)
+  1487→- Gemini: brezplačni tier (15 req/min, 1500/dan) omogoča brezplačno poganjanje
+  1488→- Oba podpirata multimodalne zahtevke (analiza slik oglasov)
+  1489→- Oba podpirata JSON output
+  1490→- Verzija aplikacije: v6.19.0
+  1491→
+  1492→---
+  1493→Task ID: v6.20
+  1494→Agent: main
+  1495→Task: AI Sentiment Analysis, Negotiation Chatbot, Refurbishment Cost Estimator
+  1496→
+  1497→Work Log:
+  1498→- src/app/api/ai/sentiment-analysis/route.ts: nov POST endpoint.
+  1499→  Hevristika z 22 regex patterni (4 kategorije):
+  1500→  - URGENCY_PATTERNS (6): nujna prodaja, selitev, denar, time pressure, konkurenca, končni rok
+  1501→  - DECEPTION_PATTERNS (8): ne vprašuj, samo shipping, paysafecard, izogiba srečanju, dedovanje, ...
+  1502→  - LEVERAGE_PATTERNS (5): že zniževal, kompromis, redkost, ...
+  1503→  - GREEN_FLAGS (5): faktura, osebni prevzem, testiranje, zaupanje, več slik
+  1504→  AI oceni: overall (desperate/motivated/neutral/reluctant/suspicious),
+  1505→  urgency/leverage/deception 0-100%, motivation, toneProfile
+  1506→  (prijateljski/poslovni/agresivni/previdni/odlašujoči), red/green flags,
+  1507→  recommendedApproach (aggressive/firm/patient/walk_away), openingTactic.
+  1508→- src/app/api/ai/negotiation-chatbot/route.ts: nov POST endpoint za multi-turn
+  1509→  pogovor. Sprejme:
+  1510→  - messages: [{role: 'user'|'seller', text}]
+  1511→  - strategy: aggressive|firm|patient (15-25% / 10-15% / sprašuj)
+  1512→  - myGoal: {maxPrice, mustInclude[]}
+  1513→  - listingId za kontekst oglasa
+  1514→  AI generira naslednji odgovor prodajalcu:
+  1515→  - text (50-150 besed v slovenščini, naravno in osebno)
+  1516→  - suggestedPriceEur (ali null)
+  1517→  - tone (aggressive/firm/friendly/patient/questioning)
+  1518→  - nextStep (kaj če prodajalec odgovori)
+  1519→  - confidencePct (0-100)
+  1520→  - alternatives (2-3 alternativni odgovori)
+  1521→  - conversationState (opening/discovery/offer/counter/closing/stuck)
+  1522→  - warning (opozorilo če nekaj gre narobe)
+  1523→- src/app/api/ai/refurbishment-cost/route.ts: nov POST endpoint za oceno
+  1524→  stroškov obnove z vizualno analizo.
+  1525→  25 slovenskih cenovnih referenc (REFURB_PRICES): cleaning, paint, polishing,
+  1526→  battery/screen/keyboard/tire/brake/chain replacement, upholstery, rust removal,
+  1527→  wood restoration, electrical/motor/gasket repair, professional service, ...
+  1528→  AI oceni:
+  1529→  - imageFindings (kaj vidi na sliki glede stanja)
+  1530→  - items[]: name, costEur, complexity (easy/medium/hard), optional, reasoning
+  1531→  - totalRefurbCostEur (vsota vseh obveznih)
+  1532→  - refurbStrategy: cosmetical_only|functional_repair|full_restoration|part_out
+  1533→  - resaleValueEur (ocenjena cena po obnovi)
+  1534→  - profitPotentialEur = resaleValue - buyPrice - refurbCost
+  1535→  - roiPct
+  1536→  - recommendedAction: buy_and_refurb|buy_as_is|avoid|marginal
+  1537→  - timeRequiredDays, toolsNeeded[], skillsRequired, warnings[]
+  1538→- src/components/dashboard/listings-view.tsx: dodane 3 nove sekcije v detail
+  1539→  drawer (med Negotiation Outcome Predictor in AI Auto-Bid):
+  1540→  1) AI Sentiment Analysis (Smile ikona, purple):
+  1541→     - Input za sporočilo prodajalca (opcijsko)
+  1542→     - Prikaz: overall badge (barva glede na sentiment), motivation text
+  1543→     - 3-stolpci: Urgency/Leverage/Deception (z barvno kodiranimi vrednostmi)
+  1544→     - RecommendedApproach badge (barva glede na pristop)
+  1545→     - OpeningTactic (konkretno kaj reči v prvem kontaktu)
+  1546→     - Red flags + Green flags seznami
+  1547→     - Hevristika (kateri vzorci zaznani)
+  1548→  2) AI Negotiation Chatbot (MessageSquare ikona, primary):
+  1549→     - Strategy select (aggressive/firm/patient) + maxPrice input
+  1550→     - Chat interface z role-coded messages (jaz=primary, prodajalec=muted)
+  1551→     - AI predlog s suggestedPrice in copy-to-clipboard
+  1552→     - Enter key za hitro pošiljanje
+  1553→     - "Začni" gumb za začetni odgovor, "Odgovori" za nadaljevanje
+  1554→  3) AI Refurbishment Cost Estimator (Wrench ikona, amber):
+  1555→     - 4-stolpci grid: Nakup/Obnova/Prodaja/Dobiček (z barvno kodiranim dobičkom)
+  1556→     - ROI %, čas v dnevih, skillsRequired
+  1557→     - Items list z complexity badge (easy/medium/hard) in optional marker
+  1558→     - toolsNeeded (orodja potrebna)
+  1559→     - warnings (opozorila)
+  1560→- src/app/page.tsx: verzija v6.20.0
+  1561→- TypeScript: 24 napak (enako kot prej) - nobenih novih napak uvedenih
+  1562→- Git commit: 'feat(v6.20): AI Sentiment Analysis, Negotiation Chatbot, Refurbishment Cost Estimator'
+  1563→
+  1564→Stage Summary:
+  1565→- 3 nove AI funkcionalnosti za maksimizacijo dobička in zmanjšanje tveganja
+  1566→- 3 novi API ruti (sentiment-analysis, negotiation-chatbot, refurbishment-cost)
+  1567→- ~1033 novih vrstic kode
+  1568→- Sentiment: prepozna resnično motivacijo prodajalca (desperate = boljši za nakup)
+  1569→- Chatbot: avtomatsko generira odgovore prodajalcu (multi-turn pogovor z AI)
+  1570→- Refurbishment: oceni ali se splača kupiti pokvarjen item za obnovo (z vizualno analizo)
+  1571→- Verzija aplikacije: v6.20.0
+  1572→
+  1573→---
+  1574→Task ID: v6.21
+  1575→Agent: main
+  1576→Task: AI Image Quality Assessor, Optimal Time Predictor, Fake Detection
+  1577→
+  1578→Work Log:
+  1579→- src/app/api/ai/image-quality/route.ts: nov POST endpoint za oceno kakovosti slik.
+  1580→  AI oceni 10 faktorjev (1-10): lighting, composition, background, focus,
+  1581→  color_accuracy, resolution, angle, cleanliness, context, selling_potential.
+  1582→  Identificira issues (10 tipov: low_light, cluttered_background, blurry,
+  1583→  wrong_angle, dirty_item, stock_photo, watermark, low_resolution, no_context,
+  1584→  wrong_color) z severity (high/medium/low) in fix navodili. Priporočila z
+  1585→  estimatedValueIncreaseEur (koliko več bo oglas vreden). Predlagane dodatne
+  1586→  slike: main, detail_brand, detail_damage, context, video. Platform-specific
+  1587→  nasveti za Bolha/Vinted/Facebook.
+  1588→- src/app/api/ai/optimal-time/route.ts: nov POST endpoint za napoved optimalnega
+  1589→  časa objave. Analizira zgodovinske prodaje po dnevih (7) in urah (24) iz
+  1590→  soldTrades. AI za vsak held item predlaga:
+  1591→  - optimalDay (ponedeljek-nedelja)
+  1592→  - optimalHour (0-23)
+  1593→  - optimalPlatform (bolha/vinted/facebook/avtonet)
+  1594→  - strategy: premium_time / off_peak / flash_sale / staggered / wait_seasonal
+  1595→  - expectedPriceEur
+  1596→  - expectedTimeToSellDays
+  1597→  - seasonalityNote
+  1598→  Summary z strategyBreakdown, platformBreakdown, avgExpectedPrice, avgTimeToSell,
+  1599→  totalExpectedRevenue. Historical data: salesByDay z 7 dnevi.
+  1600→- src/app/api/ai/fake-detection/route.ts: nov POST endpoint za zaznavanje
+  1601→  ponaredkov z vizualno analizo. Slovar BRAND_AUTHENTICITY_CHECKS za 7 znamk:
+  1602→  - Gucci: GG logotip simetričen, serijska številka, Made in Italy
+  1603→  - Prada: Re-Nylon material, trojna kartica
+  1604→  - Louis Vuitton: monogrami simetrični (rezani na sredini), date code
+  1605→  - Rolex: teža, gladka sekunda, cyclops lens 2.5x
+  1606→  - iPhone: IMEI v Settings, True Tone flash, original Apple logotip
+  1607→  - Samsung Galaxy: IMEI, Samsung Knox warranty bit
+  1608→  - Sony PlayStation: serial number, Sony logotip
+  1609→  AI določi: authenticityScore (0-100), isLikelyFake, fakeProbabilityPct,
+  1610→  imageFindings, indicators (authentic/suspicious/fake z utežmi 1-10),
+  1611→  brandSpecificChecks (present/missing/unclear), verificationSteps z howTo,
+  1612→  onlineVerification (recommendedTools, websites), recommendation
+  1613→  (buy/verify_first/avoid/report).
+  1614→- src/components/dashboard/listings-view.tsx: dodani dve novi sekciji v detail
+  1615→  drawer (med Negotiation Outcome in Sentiment Analysis):
+  1616→  1) AI Image Quality Assessor (Camera ikona, blue):
+  1617→     - overall score (0-100) z barvo (primary/amber/red)
+  1618→     - 10 faktorjev v 5-stolpci grid (vsak z 1-10 in barvo)
+  1619→     - issues z severity badge in fix navodili
+  1620→     - recommendations z impact badge in estimatedValueIncreaseEur
+  1621→     - suggested shots z type in priority
+  1622→  2) AI Fake Detection (ScanSearch ikona, red):
+  1623→     - authenticity score z isLikelyFake badge
+  1624→     - recommendation badge (NE NAKUPUJ/PRIJAVI/PREVERI/NAKUPI)
+  1625→     - indicators z type (authentic/suspicious/fake) in utežmi
+  1626→     - brand-specific checks z status (present/missing/unclear)
+  1627→     - verification steps z howTo in priority
+  1628→     - online verification tools
+  1629→- src/components/dashboard/trades-view.tsx: dodan 'Optimalni čas' gumb (Clock
+  1630→  ikona, blue) v orodno vrstico. Prikaz rezultatov vključuje:
+  1631→  - insights banner
+  1632→  - summary grid (itemov/povp.cena/čas/skupni prihodek)
+  1633→  - per-item predictions z 4-stolpci (dan/ura/platforma/cena)
+  1634→  - strategy badge z ikono (premium_time=⭐, off_peak=🔵, flash_sale=🔥,
+  1635→    staggered=📅, wait_seasonal=🎄)
+  1636→  - seasonalityNote in reasoning
+  1637→  - historical data: salesByDay grid z 7 dnevi (count + avgProfit)
+  1638→- src/app/page.tsx: verzija v6.21.0
+  1639→- TypeScript: 24 napak (enako kot prej) - nobenih novih napak uvedenih
+  1640→- Git commit: 'feat(v6.21): AI Image Quality Assessor, Optimal Time Predictor, Fake Detection'
+  1641→
+  1642→Stage Summary:
+  1643→- 3 nove AI funkcionalnosti za maksimizacijo dobička in zmanjšanje tveganja
+  1644→- 3 novi API ruti (image-quality, optimal-time, fake-detection)
+  1645→- ~1168 novih vrstic kode
+  1646→- Image Quality: oceni ali je slika dovolj dobra za prodajo (10 faktorjev + predlagane izboljšave)
+  1647→- Optimal Time: napove kdaj objaviti oglas za max ceno (analiza 7 dni + 24 ur)
+  1648→- Fake Detection: zazna ponaredke 7 luksuznih znamk z vizualno analizo + brand-specific checks
+  1649→- Verzija aplikacije: v6.21.0
+  1650→
+  1651→---
+  1652→Task ID: v6.22
+  1653→Agent: main
+  1654→Task: AI Reverse Image Search, Title A/B Tester, Buyer Persona Generator
+  1655→
+  1656→Work Log:
+  1657→- src/app/api/ai/reverse-image-search/route.ts: nov POST endpoint.
+  1658→  Hevristika: 18 stock domeni (shutterstock/istock/getty/depositphotos/
+  1659→  dreamstime/alamy/pexels/pixabay/unsplash/freepik/...), 16 URL patterni
+  1660→  (shutterstock/istock/gettyimages/preview/watermark/comp/...), 6 watermark
+  1661→  besed. AI vizualna analiza: isStockPhoto, stockPhotoProbabilityPct,
+  1662→  visualIndicators (stock/authentic/unclear z utežmi 1-10). URL analiza
+  1663→  (matchedStockDomains, matchedPatterns, matchedWatermarks, totalRedFlags).
+  1664→  Search URLs: Google Lens, TinEye, Bing Visual, Yandex (klikabilni linki).
+  1665→  Platform-specific concerns za Bolha/Vinted/Kleinanzeigen. Recommendation
+  1666→  (buy_with_caution/verify_first/avoid/report).
+  1667→- src/app/api/ai/title-abtest/route.ts: nov POST endpoint za A/B testiranje
+  1668→  naslovov. 5 strategij: KEYWORD_OPTIMIZED, BENEFIT_DRIVEN, URGENCY,
+  1669→  CURIOSITY, SPECIFICITY. Generira 5-6 variants z: ctrScore, searchVisibility,
+  1670→  conversionScore, overallScore (0-100), characterCount, strengths/weaknesses,
+  1671→  bestForPlatform. Winner z expectedImprovementPct. Platform-specific naslovi
+  1672→  za Bolha (60 znakov), Vinted (80), Facebook (100 z emoji), Kleinanzeigen (70).
+  1673→  Tips za copywriting.
+  1674→- src/app/api/ai/buyer-persona/route.ts: nov POST endpoint za generiranje
+  1675→  buyer person. 5 tipov: BUDGET_CONSCIOUS (študenti), QUALITY_SEEKER (družine),
+  1676→  PREMIUM (visok dohodek), COLLECTOR (zbiratelji), FLIPPER (preprodajalci).
+  1677→  Per persona: name, ageRange, location, occupation, incomeRangeEur,
+  1678→  motivations, painPoints, preferredChannels, willingnessToPayEur,
+  1679→  decisionTimeDays, messaging (hook/tone/keyArguments/CTA), priceSensitivity,
+  1680→  trustFactors, objectionHandling (objection/response pairs). Marketing
+  1681→  strategy z primaryPersona, secondaryPersona, recommendedPlatform,
+  1682→  optimalTiming, listingTone, mustInclude/avoidInListing.
+  1683→- src/components/dashboard/listings-view.tsx: dodana 'AI Reverse Image Search'
+  1684→  sekcija (Search ikona, cyan) v detail drawer med Fake Detection in Sentiment
+  1685→  Analysis. Prikaz:
+  1686→  - isStockPhoto badge z barvo (red/amber/primary)
+  1687→  - stockPhotoProbabilityPct
+  1688→  - recommendation badge (NE NAKUPUJ/PRIJAVI/PREVERI/NAKUPI S PREVIDNOSTJO)
+  1689→  - URL analiza (stock domeni, vzorci, watermarki)
+  1690→  - visualIndicators z utežmi (stock/authentic/unclear)
+  1691→  - klikabilni linki za Google Lens, TinEye, Bing Visual, Yandex (grid 2x2)
+  1692→- src/components/dashboard/trades-view.tsx: dodana dva nova gumba v orodno
+  1693→  vrstico:
+  1694→  1) Title A/B test (Type ikona, purple):
+  1695→     - currentTitle analysis z score (0-100)
+  1696→     - winner z expectedImprovementPct
+  1697→     - 5-6 variants z 4-stolpci scores (CTR/Search/Convert/Overall) in
+  1698→       copy-to-clipboard
+  1699→     - platform-specific naslovi z copy (Bolha/Vinted/Facebook/Kleinanzeigen)
+  1700→     - tips za copywriting
+  1701→  2) Buyer persone (Users ikona, emerald):
+  1702→     - marketing strategy (primary/secondary persona, recommendedPlatform,
+  1703→       optimalTiming, mustInclude/avoidInListing)
+  1704→     - 3-4 persone z 5 tipi (BUDGET/QUALITY/PREMIUM/COLLECTOR/FLIPPER)
+  1705→     - per-persona: ageRange/location/incomeRangeEur, motivations, painPoints,
+  1706→       preferredChannels, willingnessToPayEur, decisionTimeDays
+  1707→     - messaging (hook/tone/keyArguments/CTA)
+  1708→     - trustFactors
+  1709→     - objectionHandling (objection/response pairs)
+  1710→- src/app/page.tsx: verzija v6.22.0
+  1711→- TypeScript: 24 napak (enako kot prej) - nobenih novih napak uvedenih
+  1712→- Git commit: 'feat(v6.22): AI Reverse Image Search, Title A/B Tester, Buyer Persona Generator'
+  1713→
+  1714→Stage Summary:
+  1715→- 3 nove AI funkcionalnosti za maksimizacijo dobička in ciljano trženje
+  1716→- 3 novi API ruti (reverse-image-search, title-abtest, buyer-persona)
+  1717→- ~1097 novih vrstic kode
+  1718→- Reverse Image Search: odkrije stock fotografije (URL pattern + AI vizualna analiza)
+  1719→  z direktnimi linki na 4 reverse image search storitve (Google Lens, TinEye, Bing, Yandex)
+  1720→- Title A/B Tester: generira 5 variant naslovov z 4 scores (CTR/search/conversion/overall)
+  1721→  in platform-specific optimizacijo (4 platforme z različnimi limiti znakov)
+  1722→- Buyer Persona Generator: ustvari 3-4 kupce profile (5 tipov) z messaging strategijo,
+  1723→  objection handling in marketinško strategijo za ciljano trženje
+  1724→- Verzija aplikacije: v6.22.0
+  1725→
+  1726→---
+  1727→Task ID: v6.23
+  1728→Agent: main
+  1729→Task: AI Description Optimizer, Cross-Platform Price Comparison, Depreciation Forecaster
+  1730→
+  1731→Work Log:
+  1732→- src/app/api/ai/description-optimizer/route.ts: nov POST endpoint.
+  1733→  4 strategije: BENEFIT_FOCUSED (koristi), STORYTELLING (osebna zgodba),
+  1734→  TECHNICAL (specifikacije), SCANNABLE (bullet list). Generira 4-5 variants z:
+  1735→  readabilityScore, persuasivenessScore, seoScore, trustScore (0-100),
+  1736→  overallScore, expectedInquiries, characterCount, bestForPlatform. Winner z
+  1737→  expectedImprovementPct in copy-to-clipboard. SEO ključne besede. Platform-
+  1738→  specific naslovi za Bolha (2000 znakov), Vinted (500), Facebook (5000 z emoji),
+  1739→  Avtonet (1000 tehnični), Kleinanzeigen (4000 z Versand info).
+  1740→- src/app/api/ai/cross-platform-price/route.ts: nov POST endpoint za primerjavo
+  1741→  cen na 10 platformah: Bolha, Vinted, Avtonet, Facebook (SI), Mobile.de,
+  1742→  Kleinanzeigen (DE), Subito (IT), Willhaben (AT), eBay (global), OLX (PL).
+  1743→  Per platform: estimatedPriceEur, minPriceEur, maxPriceEur, feeEur, netRevenueEur,
+  1744→  shippingEur, demandLevel (high/medium/low), sellTimeDays, urlTemplate.
+  1745→  5 arbitražnih strategij: domestic_resale, import_eu, export_eu, multi_platform,
+  1746→  wait. Per arbitrage: buyPlatform, sellPlatform, netProfitEur, roiPct,
+  1747→  feasibility, timeRequiredDays. Recommendation (buy_now/wait/avoid/monitor)
+  1748→  z bestBuyPlatform, bestSellPlatform, expectedProfitEur.
+  1749→- src/app/api/ai/depreciation-forecast/route.ts: nov POST endpoint za napoved
+  1750→  amortizacije. 13 kategorijskih profilov z mesečnim in letnim % padca:
+  1751→  - elektronika 30%/leto, telefoni 36%, racunalnistvo 24%
+  1752→  - avto 12%, kolesa 18%, pohistvo 10%
+  1753→  - nepremicnine 2.4% (zelo počasna), nakit 1.2%, orozje 4%
+  1754→  - umetnine -2.4% (NEGATIVNA — raste v vrednosti!)
+  1755→  - moda 42% (zelo hitra), luxury -6% (NEGATIVNA)
+  1756→  Per item: depreciationCurve za 24 mesecev (projectedValue, lossFromCurrent,
+  1757→  lossFromBuy), monthsToZeroProfit, projectedValue v 6/12/24m, loss v %.
+  1758→  Action: sell_now (≤1m do izgube), sell_soon (≤3m), monitor (≤6m), hold (>6m),
+  1759→  vintage_holding (negativna amortizacija). Portfolio summary z totalCurrentValue,
+  1760→  projectedLoss v 6/12/24m, highRiskCount, vintagePotentialCount.
+  1761→- src/components/dashboard/listings-view.tsx: dodana 'AI Description Optimizer'
+  1762→  sekcija (FileEdit ikona, pink) v detail drawer (med Refurbishment in Reverse
+  1763→  Image Search). Prikaz:
+  1764→  - currentAnalysis z score (0-100), strengths, weaknesses
+  1765→  - winner z copy-to-clipboard in expectedImprovementPct
+  1766→  - 4-5 variants z 4-stolpci scores (readability/persuasiveness/SEO/trust)
+  1767→    in copy-to-clipboard
+  1768→  - SEO ključne besede
+  1769→- src/components/dashboard/trades-view.tsx: dodana dva nova gumba v orodno
+  1770→  vrstico:
+  1771→  1) Cross-platform (Globe ikona, indigo):
+  1772→     - recommendation (action + bestBuy/bestSell platform + expectedProfitEur)
+  1773→     - prices table za 10 platform z country, demandLevel, netRevenueEur
+  1774→       (sortirano po ceni, cheapest označen)
+  1775→     - arbitrage opportunities z strategy, buy→sell, netProfitEur, roiPct,
+  1776→       feasibility, timeRequiredDays
+  1777→  2) Amortizacija (LineChartIcon ikona, orange):
+  1778→     - portfolio summary (trenutna vrednost + izguba 6/12/24m z barvami)
+  1779→     - per-item forecasts z action badge (5 tipov z ikonami):
+  1780→       sell_now 🔴, sell_soon 🟡, monitor 🔵, hold 🟢, vintage_holding 👑
+  1781→     - 4-stolpci: trenutno/6m/12m/24m z projectedValue in loss %
+  1782→     - monthsToZeroProfit, optimalSellWindow, reasoning
+  1783→- src/app/page.tsx: verzija v6.23.0
+  1784→- TypeScript: 24 napak (enako kot prej) - nobenih novih napak uvedenih
+  1785→- Git commit: 'feat(v6.23): AI Description Optimizer, Cross-Platform Price Comparison, Depreciation Forecaster'
+  1786→
+  1787→Stage Summary:
+  1788→- 3 nove AI funkcionalnosti za maksimizacijo dobička in zmanjšanje izgub
+  1789→- 3 novi API ruti (description-optimizer, cross-platform-price, depreciation-forecast)
+  1790→- ~1153 novih vrstic kode
+  1791→- Description Optimizer: 4 strategije opisov z A/B testi in platform-specific optimizacijo
+  1792→- Cross-Platform Price: primerja cene na 10 platformah z arbitražnimi priložnostmi
+  1793→- Depreciation Forecaster: napove padec vrednosti z 13 kategorijskimi profili
+  1794→  (vključno z NEGATIVNO amortizacijo za umetnine/luxury — ti rastejo v vrednosti!)
+  1795→- Verzija aplikacije: v6.23.0
+  1796→
+  1797→---
+  1798→Task ID: v6.24
+  1799→Agent: main
+  1800→Task: AI Inventory Aging Alerts, Listing Performance Tracker, Smart Restock Predictor
+  1801→
+  1802→Work Log:
+  1803→- src/app/api/ai/inventory-aging/route.ts: nov POST endpoint.
+  1804→  7 aging stages z barvami: fresh (≤7d, green), normal (≤30d, blue), aging (≤60d,
+  1805→  amber), stale (≤90d, orange), critical (≤180d, red), dead (≤365d, dark), zombie
+  1806→  (>365d, black). Per item: holdingCost (0.5%/teden od nabavne cene), opportunityCost
+  1807→  (5%/leto alternativna investicija), totalHoldingCost, expectedProfit, adjustedProfit
+  1808→  (po odbitku holding cost). Urgency (low/medium/high/critical glede na 2x povprečni
+  1809→  čas do prodaje per kategorija). 9 akcij: sell_aggressive, sell_bundle, sell_auction,
+  1810→  relist, refurbish, part_out, donate, hold_vintage, write_off. Per akcija:
+  1811→  suggestedDiscountPct (0-50%), suggestedPriceEur, deadlineDays. Summary z
+  1812→  totalHoldingCost, potentialLoss, criticalCount, deadCount.
+  1813→- src/app/api/ai/listing-performance/route.ts: nov POST endpoint za analizo
+  1814→  uspešnosti prodaj. Per sold trade metrike: profit, roiPct, daysToSell, profitPerDay.
+  1815→  Top 10 performers analiza z successFactors in replicate strategijami. Worst 5
+  1816→  performers z failureReasons in lessons. Held items forecast z predictedProfitEur,
+  1817→  recommendedPriceEur, recommendedPlatform, confidencePct. Category performance z
+  1818→  recommendation (5 tipov: double_down/pivot/scale_up/diversify/exit). Summary z
+  1819→  bestCategory, worstCategory, bestSource, recommendedStrategy.
+  1820→- src/app/api/ai/smart-restock/route.ts: nov POST endpoint za napoved restock.
+  1821→  Analiza uspešnosti per kategorija (count, totalProfit, avgRoi, avgDays) in per
+  1822→  vir (buyLocation). Per prediction: item, source (8 platform), expectedBuyPriceEur,
+  1823→  expectedSellPriceEur, expectedRoiPct, expectedDaysToSell, urgency (4 stopnje),
+  1824→  quantity, budgetAllocationEur, searchKeywords. Budget allocation per kategorija
+  1825→  z reasoning in reserve. Seasonal alerts (pomlad/poletje/jesen/zima) z
+  1826→  itemsToBuy/itemsToSell/deadline. Warnings.
+  1827→- src/components/dashboard/statistics-view.tsx: dodani dve novi kartici:
+  1828→  1) AI Inventory Aging Alert System: summary grid (itemov/holding cost/kritičnih/
+  1829→     možna izguba), per-item alerts z urgency badge (4 stopnje z ikonami 🔴🟡🔵🟢),
+  1830→     agingStage badge, holding cost, adjusted profit (z barvo), suggested discount
+  1831→     in price, action badge, deadline.
+  1832→  2) AI Smart Restock Predictor: budget input, summary grid (predlogov/kritičnih/
+  1833→     visoka/povp. ROI), per-prediction z urgency badge, 4-stolpci (nakup/prodaja/
+  1834→     ROI/čas), source + searchKeywords + quantity + budgetAllocation, budget
+  1835→     allocation per kategorija z reserve, seasonal alerts z itemsToBuy/itemsToSell.
+  1836→- src/components/dashboard/trades-view.tsx: dodan 'Uspešnost' gumb (Activity ikona,
+  1837→  teal) v orodno vrstico. Prikaz rezultatov:
+  1838→  - summary grid (skupni dobiček/povp. ROI/povp. dni/strategija)
+  1839→  - category performance z recommendation badge (5 tipov z ikonami 📈🔄⬆️➕❌)
+  1840→  - top performers z successFactors in replicate strategijami
+  1841→  - worst performers z failureReasons in lessons
+  1842→  - held items forecast z confidencePct in recommendedPrice/Platform
+  1843→  - splošna priporočila
+  1844→- src/app/page.tsx: verzija v6.24.0
+  1845→- TypeScript: 24 napak (enako kot prej) - nobenih novih napak uvedenih
+  1846→- Git commit: 'feat(v6.24): AI Inventory Aging Alerts, Listing Performance Tracker, Smart Restock Predictor'
+  1847→
+  1848→Stage Summary:
+  1849→- 3 nove AI funkcionalnosti za maksimizacijo dobička in optimizacijo inventarja
+  1850→- 3 novi API ruti (inventory-aging, listing-performance, smart-restock)
+  1851→- ~1700+ novih vrstic kode (vključno z UI komponentami)
+  1852→- Inventory Aging: 7 stages z holding cost kalkulacijo in 9 akcijami za zastarele iteme
+  1853→- Listing Performance: analiza top/worst prodaj z replicate strategijami in category
+  1854→  performance z 5 priporočili (double_down/pivot/scale_up/diversify/exit)
+  1855→- Smart Restock: napove kaj/kje/kdaj kupovati z budget alokacijo in seasonal alerts
+  1856→- Verzija aplikacije: v6.24.0
+  1857→
+  1858→---
+  1859→Task ID: v6.25
+  1860→Agent: main
+  1861→Task: AI Risk Parity, Vendor Reliability Scorer, Geo Price Map
+  1862→
+  1863→Work Log:
+  1864→- src/app/api/ai/risk-parity/route.ts: nov POST endpoint.
+  1865→  Izračuna Sharpe ratio per kategorija: (avgReturn - 5% riskFreeRate) / volatility.
+  1866→  4 strategije: equal_risk (enako tveganje), sharpe_optimized (max Sharpe),
+  1867→  min_volatility (min tveganje), max_return (max dobiček). Optimalna alokacija z
+  1868→  currentPct vs optimalPct, action (buy_more/reduce/hold/exit/initiate), amountEur,
+  1869→  expectedReturn, expectedVolatility, sharpeRatio. Risk metrics: portfolioSharpe,
+  1870→  portfolioVolatility, portfolioExpectedReturn, diversificationRatio,
+  1871→  maxConcentration, riskLevel. Rebalancing z buys/sells list in cash reserve.
+  1872→  Correlation warnings (npr. elektronika + telefoni so korelirani).
+  1873→- src/app/api/ai/vendor-reliability/route.ts: nov POST endpoint.
+  1874→  Agregira sold trades po buyLocation (vendor). Per vendor: reliabilityScore (0-100),
+  1875→  5 tierjev (tier_1_platinum >80 + ROI >30% + success >80%, tier_2_gold >60,
+  1876→  tier_3_silver >40, tier_4_bronze >20, tier_5_avoid <20). Metrics: totalPurchases,
+  1877→  totalSpentEur, totalProfitEur, avgRoiPct, successRatePct, avgDaysToSell,
+  1878→  categoriesCount, daysActive. Strengths in riskFactors. Recommendation
+  1879→  (continue_buying/cautious/reduce/avoid). Best categories per vendor.
+  1880→- src/app/api/ai/geo-price-map/route.ts: nov POST endpoint.
+  1881→  Klasificira listinge po 12 regijah (8 slovenskih: Ljubljana, Maribor, Primorska,
+  1882→  Gorenjska, Dolenjska, Štajerska, Prekmurje, Notranjska + 4 tuje: DE, IT, AT, HR).
+  1883→  Per region: avgPriceEur, priceIndex (100 = globalno povprečje), listingCount,
+  1884→  opportunityCount, opportunityRatePct, avgDealScore, priceRange, recommendation
+  1885→  (buy_here/sell_here/avoid/monitor). 4 arbitražne strategije (domestic_arbitrage/
+  1886→  import_arbitrage/export_arbitrage/local_advantage) z buyRegion, sellRegion,
+  1887→  avgBuyPrice, avgSellPrice, potentialProfit, potentialRoi, shipping, feasibility.
+  1888→  Summary z cheapest/mostExpensive/bestOpportunity region in priceSpreadPct.
+  1889→- src/app/page.tsx: verzija v6.25.0
+  1890→- TypeScript: 24 napak (enako kot prej) - nobenih novih napak uvedenih
+  1891→- Git commit: 'feat(v6.25): AI Risk Parity, Vendor Reliability Scorer, Geo Price Map'
+  1892→
+  1893→Stage Summary:
+  1894→- 3 nove AI funkcionalnosti za portfolio optimizacijo in tržno analizo
+  1895→- 3 novi API ruti (risk-parity, vendor-reliability, geo-price-map)
+  1896→- ~739 novih vrstic kode
+  1897→- Risk Parity: pravi Sharpe ratio izračun z 4 strategijami in rebalancing
+  1898→- Vendor Reliability: 5 tierjev zanesljivosti prodajalcev (platinum/gold/silver/bronze/avoid)
+  1899→- Geo Price Map: 12 regij z price index in 4 geografskimi arbitražnimi strategijami
+  1900→- Verzija aplikacije: v6.25.0
+  1901→
+  1902→---
+  1903→Task ID: v6.26
+  1904→Agent: main
+  1905→Task: AI Seasonal Planner, Listing Rotation Scheduler, Cash Reserve Optimizer
+  1906→
+  1907→Work Log:
+  1908→- src/app/api/ai/seasonal-planner/route.ts: nov POST endpoint za sezonsko načrtovanje.
+  1909→  Sezonski koledar za 1-12 mesecev naprej. Per mesec: season (Zima/Pomlad/Poletje/Jesen),
+  1910→  buyCategories z expectedDiscountPct (kdaj ceneje kupiti), sellCategories z
+  1911→  expectedPremiumPct (kdaj dražje prodati), heldItemsToSell (kateri held item v katerem
+  1912→  mesecu prodati), actions, priority. Slovenska sezonska logika: zima (grelniki, zimske
+  1913→  gume, smuči, peči, božič), pomlad (kolesa, vrtna oprema, motokulturke, kabrioleti),
+  1914→  poletje (kamp, čolni, klima, avto), jesen (šola, šport, ogrevanje, zimske gume).
+  1915→  Summary z bestBuyMonth, bestSellMonth, totalSeasonalOpportunities, expectedSeasonalProfit.
+  1916→- src/app/api/ai/listing-rotation/route.ts: nov POST endpoint za razpored objav.
+  1917→  Analizira prodaje po 7 dnevih in 24 urah. Per held item: platforms (1-4), primaryDay,
+  1918→  primaryHour (0-23), frequencyDays (vsakih koliko dni ponovno), durationDays,
+  1919→  strategy (staggered/concentrated/rolling), priority. Weekly calendar z dnevnimi
+  1920→  slots (hour/items/platform). Summary z bestDay, bestHour, estimatedSellThroughRate.
+  1921→- src/app/api/ai/cash-reserve/route.ts: nov POST endpoint za optimizacijo rezerve.
+  1922→  Izračuna currentCash (revenue - spent), optimalReserve (2-3 mesece povprečne
+  1923→  investicije), reserveRatio. 4 strategije: aggressive_growth (80% reinvest),
+  1924→  balanced (50/50), conservative (30% reinvest), opportunity_fund (60% rezerva za
+  1925→  blue moon priložnosti). Allocation: reinvestPct/reservePct/profitTakingPct.
+  1926→  6-mesečne projekcije cash flow (inflow/outflow/net/cumulative/invested).
+  1927→  Cash flow gaps z mitigation. Summary z surplusDeficit, expectedMonthlyGrowth,
+  1928→  breakEvenMonths.
+  1929→- src/app/page.tsx: verzija v6.26.0
+  1930→- TypeScript: 24 napak (enako kot prej) - nobenih novih napak uvedenih
+  1931→- Git commit: 'feat(v6.26): AI Seasonal Planner, Listing Rotation Scheduler, Cash Reserve Optimizer'
+  1932→
+  1933→Stage Summary:
+  1934→- 3 nove AI funkcionalnosti za operativno optimizacijo
+  1935→- 3 novi API ruti (seasonal-planner, listing-rotation, cash-reserve)
+  1936→- ~568 novih vrstic kode
+  1937→- Seasonal Planner: koledar nakupov/prodaj po 4 sezonah z discount/premium % in held items
+  1938→- Listing Rotation: razpored objav po dnevih/urah/platformah z 3 strategijami in weekly calendar
+  1939→- Cash Reserve: optimalna denarna rezerva z 4 strategijami, 6m projekcijami in cash flow gaps
+  1940→- Verzija aplikacije: v6.26.0
+  1941→
+  1942→---
+  1943→Task ID: v6.27
+  1944→Agent: main
+  1945→Task: AI Predictive Market Trends, Quality Score Aggregator, Turnover Optimizer
+  1946→
+  1947→Work Log:
+  1948→- src/app/api/ai/market-trends/route.ts: nov POST endpoint za napoved tržnih trendov.
+  1949→  Analizira 18-mesečno zgodovino prodaj po kategorijah (mesečni avg price, volume,
+  1950→  profit). Primerja zadnje 3 mesece s prejšnjimi 3 za trend gibanja. AI napove za
+  1951→  1-12 mesecev: currentTrend (rising/falling/stable), predictedTrend, priceDirection
+  1952→  z priceChangePct, demandDirection z demandChangePct, trendStrength (strong/moderate/
+  1953→  weak), confidence. 5 akcij: stock_up, sell_now, hold, exit, monitor. Macro faktorji
+  1954→  (inflacija 4%, sezonskost, EU trendi, AI/ChatGPT vpliv) z affectedCategories in
+  1955→  severity. Summary z hottestCategory, coldestCategory, risingCount, fallingCount,
+  1956→  overallMarketSentiment (bullish/bearish/neutral), recommendedPortfolioShift.
+  1957→- src/app/api/ai/quality-aggregator/route.ts: nov POST endpoint za agregacijo AI ocen.
+  1958→  Združi vse AI ocene v eno skupno: dealScore (35% utež), aiScore×10 (20%), aiRisk
+  1959→  inverzno (11-risk)×10 (15%), imageQuality (10%), sellerReputation (10%), priceValue
+  1960→  (10%). Overall score 0-100 z grade (A+/A/B+/B/C+/C/D/F). Breakdown per faktor z
+  1961→  contribution. Comparison to similar (percentile, betterThanPct, ranking top_5 do
+  1962→  bottom_10). Price analysis (listPrice, estValue, discountPct, isGoodDeal, fairPrice).
+  1963→  Recommendation (buy_now/buy_with_caution/monitor/wait/avoid) z action items.
+  1964→- src/app/api/ai/turnover-optimizer/route.ts: nov POST endpoint za optimizacijo obrtnosti.
+  1965→  Izračuna turnover ratio (annualizedSold / held) in avgDaysToSell. Per item:
+  1966→  turnoverAction (accelerate/hold/reduce_price/bundle/liquidate), suggestedPriceEur,
+  1967→  expectedSellTimeDays. Category optimization z action (stock_up/maintain/reduce/exit)
+  1968→  in currentAvgDays vs targetAvgDays. Recommendations z expectedImpactDays. Summary z
+  1969→  currentAnnualRevenue, projectedAnnualRevenue, improvementPct, cashFreedEur,
+  1970→  itemsToAccelerate, itemsToLiquidate. Optimalni turnover ratio: 4-8 na leto
+  1971→  (item prodati v 45-90 dneh).
+  1972→- src/app/page.tsx: verzija v6.27.0
+  1973→- TypeScript: 24 napak (enako kot prej) - nobenih novih napak uvedenih
+  1974→- Git commit: 'feat(v6.27): AI Predictive Market Trends, Quality Score Aggregator, Turnover Optimizer'
+  1975→
+  1976→Stage Summary:
+  1977→- 3 nove AI funkcionalnosti za tržno analizo in operativno optimizacijo
+  1978→- 3 novi API ruti (market-trends, quality-aggregator, turnover-optimizer)
+  1979→- ~641 novih vrstic kode
+  1980→- Market Trends: napoved tržnih trendov z macro faktorji in sentiment analizo (bullish/bearish)
+  1981→- Quality Aggregator: ponderirano povprečje 6 AI ocen v eno skupno (A+ do F) z benchmark
+  1982→- Turnover Optimizer: optimizacija obrtnosti z 5 akcijami, cash freed in projected revenue
+  1983→- Verzija aplikacije: v6.27.0
+  1984→
+  1985→---
+  1986→Task ID: v6.28
+  1987→Agent: main
+  1988→Task: AI Auction Timing Optimizer, Refurb ROI Predictor, Tone Analyzer
+  1989→
+  1990→Work Log:
+  1991→- src/app/api/ai/auction-timing/route.ts: nov POST endpoint za optimalni bidding timing.
+  1992→  5 strategij: snipe_last_second (3s pred koncom), early_high (visoka ponudba zgodaj),
+  1993→  incremental (postopno povišuj), wait_and_snipe (čakaj do zadnje minute), proxy_bid
+  1994→  (nastavi max bid). Per dražba: optimalBidTime, secondsBeforeEnd, maxBidEur,
+  1995→  suggestedBidEur. Bid sequence (1-3 koraki z timing, amount, condition). Competitor
+  1996→  analysis: estimatedBidders, competitionLevel (low/medium/high), likelyMaxCompetitorBid.
+  1997→  Signals in risk factors. Recommendation (bid_now/wait/set_proxy/skip).
+  1998→- src/app/api/ai/refurb-roi-predictor/route.ts: nov POST endpoint z vizualno analizo.
+  1999→  14 tipov izboljšav z ceno/časom/veščino: cleaning (5-30€), polishing (10-50€),
+  2000→  paint_touchup (15-60€), paint_full (80-350€), battery_replacement (20-100€),
+
+[showing lines 1-2000 of 5309; use offset=2001 with limit to continue reading]

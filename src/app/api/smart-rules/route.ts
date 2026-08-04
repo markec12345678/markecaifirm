@@ -8,32 +8,39 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { db } from '@/lib/db';
 import { checkSmartRules } from '@/lib/smart-rules-engine';
+import { logger } from '@/lib/logger';
 
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
 
 export async function GET(req: NextRequest) {
-  const url = new URL(req.url);
-  const check = url.searchParams.get('check') === '1';
+  try {
+    const url = new URL(req.url);
+    const check = url.searchParams.get('check') === '1';
 
-  const rules = await db.smartRule.findMany({
-    orderBy: { createdAt: 'desc' },
-  });
+    const rules = await db.smartRule.findMany({
+      orderBy: { createdAt: 'desc' },
+    });
 
-  // Optional: check all rules immediately
-  let checkResults: any[] = [];
-  if (check) {
-    checkResults = await checkSmartRules();
+    // Optional: check all rules immediately
+    let checkResults: any[] = [];
+    if (check) {
+      checkResults = await checkSmartRules();
+    }
+
+    return NextResponse.json({
+      rules: rules.map(r => ({
+        ...r,
+        config: JSON.parse(r.config),
+        channels: JSON.parse(r.channels),
+      })),
+      checkResults,
+    });
+
+  } catch (err) {
+    logger.error("/api/smart-rules", "GET handler failed", err);
+    return NextResponse.json({ error: err instanceof Error ? err.message : 'Napaka' }, { status: 500 });
   }
-
-  return NextResponse.json({
-    rules: rules.map(r => ({
-      ...r,
-      config: JSON.parse(r.config),
-      channels: JSON.parse(r.channels),
-    })),
-    checkResults,
-  });
 }
 
 export async function POST(req: NextRequest) {
@@ -71,6 +78,7 @@ export async function POST(req: NextRequest) {
       },
     });
   } catch (e: any) {
+    logger.error("/api/smart-rules", "POST handler failed", e);
     return NextResponse.json({ error: e?.message ?? 'Napaka' }, { status: 500 });
   }
 }
@@ -106,20 +114,27 @@ export async function PATCH(req: NextRequest) {
       },
     });
   } catch (e: any) {
+    logger.error("/api/smart-rules", "PATCH handler failed", e);
     return NextResponse.json({ error: e?.message ?? 'Napaka' }, { status: 500 });
   }
 }
 
 export async function DELETE(req: NextRequest) {
-  const url = new URL(req.url);
-  const id = url.searchParams.get('id');
-  if (!id) {
-    return NextResponse.json({ error: 'ID je obvezen' }, { status: 400 });
-  }
   try {
-    await db.smartRule.delete({ where: { id } });
-    return NextResponse.json({ ok: true });
-  } catch (e: any) {
-    return NextResponse.json({ error: e?.message ?? 'Napaka' }, { status: 500 });
+    const url = new URL(req.url);
+    const id = url.searchParams.get('id');
+    if (!id) {
+      return NextResponse.json({ error: 'ID je obvezen' }, { status: 400 });
+    }
+    try {
+      await db.smartRule.delete({ where: { id } });
+      return NextResponse.json({ ok: true });
+    } catch (e: any) {
+      return NextResponse.json({ error: e?.message ?? 'Napaka' }, { status: 500 });
+    }
+
+  } catch (err) {
+    logger.error("/api/smart-rules", "DELETE handler failed", err);
+    return NextResponse.json({ error: err instanceof Error ? err.message : 'Napaka' }, { status: 500 });
   }
 }

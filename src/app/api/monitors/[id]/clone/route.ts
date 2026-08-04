@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { db } from '@/lib/db';
+import { logger } from '@/lib/logger';
 
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
@@ -9,27 +10,33 @@ export const dynamic = 'force-dynamic';
  * Duplicates a monitor with "(kopija)" suffix and reset state.
  */
 export async function POST(_req: NextRequest, { params }: { params: Promise<{ id: string }> }) {
-  const { id } = await params;
-  const original = await db.monitor.findUnique({ where: { id } });
-  if (!original) return NextResponse.json({ error: 'Monitor ne obstaja' }, { status: 404 });
+  try {
+    const { id } = await params;
+    const original = await db.monitor.findUnique({ where: { id } });
+    if (!original) return NextResponse.json({ error: 'Monitor ne obstaja' }, { status: 404 });
 
-  const cloned = await db.monitor.create({
-    data: {
-      name: `${original.name} (kopija)`,
-      source: original.source,
-      sourceUrl: original.sourceUrl,
-      keywords: original.keywords,
-      excludeKeywords: original.excludeKeywords,
-      minPrice: original.minPrice,
-      maxPrice: original.maxPrice,
-      intervalMinutes: original.intervalMinutes,
-      isActive: false, // Start paused — user activates manually
-      runStartHour: original.runStartHour,
-      runEndHour: original.runEndHour,
-      autoPauseThreshold: original.autoPauseThreshold,
-      notificationChannels: original.notificationChannels,
-      customPrompt: original.customPrompt,
-    },
-  });
-  return NextResponse.json(cloned, { status: 201 });
+    const cloned = await db.monitor.create({
+      data: {
+        name: `${original.name} (kopija)`,
+        source: original.source,
+        sourceUrl: original.sourceUrl,
+        keywords: original.keywords,
+        excludeKeywords: original.excludeKeywords,
+        minPrice: original.minPrice,
+        maxPrice: original.maxPrice,
+        intervalMinutes: original.intervalMinutes,
+        isActive: false, // Start paused — user activates manually
+        runStartHour: original.runStartHour,
+        runEndHour: original.runEndHour,
+        autoPauseThreshold: original.autoPauseThreshold,
+        notificationChannels: original.notificationChannels,
+        customPrompt: original.customPrompt,
+      },
+    });
+    return NextResponse.json(cloned, { status: 201 });
+
+  } catch (err) {
+    logger.error("/api/monitors/[id]/clone", "POST handler failed", err);
+    return NextResponse.json({ error: err instanceof Error ? err.message : 'Napaka' }, { status: 500 });
+  }
 }

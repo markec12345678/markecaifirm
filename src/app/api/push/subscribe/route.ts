@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { subscribeToPush, unsubscribeFromPush, ensureVapidKeys } from '@/lib/push';
 import { getSettingsRow } from '@/lib/pipeline';
+import { logger } from '@/lib/logger';
 
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
@@ -10,16 +11,22 @@ export const dynamic = 'force-dynamic';
  * Returns VAPID public key for browser subscription.
  */
 export async function GET() {
-  const settings = await getSettingsRow();
-  // Ensure keys exist (generate on first call)
-  if (!settings.vapidPublicKey) {
-    await ensureVapidKeys();
+  try {
+    const settings = await getSettingsRow();
+    // Ensure keys exist (generate on first call)
+    if (!settings.vapidPublicKey) {
+      await ensureVapidKeys();
+    }
+    const fresh = await getSettingsRow();
+    return NextResponse.json({
+      pushEnabled: fresh.pushEnabled,
+      vapidPublicKey: fresh.vapidPublicKey,
+    });
+
+  } catch (err) {
+    logger.error("/api/push/subscribe", "GET handler failed", err);
+    return NextResponse.json({ error: err instanceof Error ? err.message : 'Napaka' }, { status: 500 });
   }
-  const fresh = await getSettingsRow();
-  return NextResponse.json({
-    pushEnabled: fresh.pushEnabled,
-    vapidPublicKey: fresh.vapidPublicKey,
-  });
 }
 
 /**
@@ -28,17 +35,23 @@ export async function GET() {
  * or { action: 'unsubscribe', endpoint: '...' }
  */
 export async function POST(req: NextRequest) {
-  const body = await req.json();
+  try {
+    const body = await req.json();
 
-  if (body?.action === 'unsubscribe') {
-    const result = await unsubscribeFromPush(body.endpoint);
-    return NextResponse.json(result);
+    if (body?.action === 'unsubscribe') {
+      const result = await unsubscribeFromPush(body.endpoint);
+      return NextResponse.json(result);
+    }
+
+    if (!body?.subscription?.endpoint || !body?.subscription?.keys?.p256dh || !body?.subscription?.keys?.auth) {
+      return NextResponse.json({ error: 'Manjkajo podatki o naročnini' }, { status: 400 });
+    }
+
+    const result = await subscribeToPush(body.subscription);
+    return NextResponse.json(result, { status: result.ok ? 200 : 500 });
+
+  } catch (err) {
+    logger.error("/api/push/subscribe", "POST handler failed", err);
+    return NextResponse.json({ error: err instanceof Error ? err.message : 'Napaka' }, { status: 500 });
   }
-
-  if (!body?.subscription?.endpoint || !body?.subscription?.keys?.p256dh || !body?.subscription?.keys?.auth) {
-    return NextResponse.json({ error: 'Manjkajo podatki o naročnini' }, { status: 400 });
-  }
-
-  const result = await subscribeToPush(body.subscription);
-  return NextResponse.json(result, { status: result.ok ? 200 : 500 });
 }

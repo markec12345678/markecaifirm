@@ -7,37 +7,44 @@
 
 import { NextRequest, NextResponse } from 'next/server';
 import { db } from '@/lib/db';
+import { logger } from '@/lib/logger';
 
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
 
 // GET: List all profiles + active profile ID + counts
 export async function GET() {
-  const settings = await db.settings.findFirst({ where: { id: 'singleton' } });
-  const activeProfileId = settings?.activeProfileId ?? null;
+  try {
+    const settings = await db.settings.findFirst({ where: { id: 'singleton' } });
+    const activeProfileId = settings?.activeProfileId ?? null;
 
-  const profiles = await db.profile.findMany({
-    orderBy: { createdAt: 'asc' },
-    include: {
-      _count: {
-        select: { monitors: true, trades: true },
+    const profiles = await db.profile.findMany({
+      orderBy: { createdAt: 'asc' },
+      include: {
+        _count: {
+          select: { monitors: true, trades: true },
+        },
       },
-    },
-  });
+    });
 
-  return NextResponse.json({
-    profiles: profiles.map(p => ({
-      id: p.id,
-      name: p.name,
-      description: p.description,
-      icon: p.icon,
-      color: p.color,
-      createdAt: p.createdAt,
-      monitorsCount: p._count.monitors,
-      tradesCount: p._count.trades,
-    })),
-    activeProfileId,
-  });
+    return NextResponse.json({
+      profiles: profiles.map(p => ({
+        id: p.id,
+        name: p.name,
+        description: p.description,
+        icon: p.icon,
+        color: p.color,
+        createdAt: p.createdAt,
+        monitorsCount: p._count.monitors,
+        tradesCount: p._count.trades,
+      })),
+      activeProfileId,
+    });
+
+  } catch (err) {
+    logger.error("/api/profiles", "GET handler failed", err);
+    return NextResponse.json({ error: err instanceof Error ? err.message : 'Napaka' }, { status: 500 });
+  }
 }
 
 // POST: Create new profile
@@ -61,6 +68,7 @@ export async function POST(req: NextRequest) {
 
     return NextResponse.json({ ok: true, profile });
   } catch (e: any) {
+    logger.error("/api/profiles", "POST handler failed", e);
     return NextResponse.json({ error: e?.message ?? 'Napaka pri ustvarjanju profila' }, { status: 500 });
   }
 }
@@ -92,6 +100,7 @@ export async function PATCH(req: NextRequest) {
 
     return NextResponse.json({ ok: true, activeProfileId });
   } catch (e: any) {
+    logger.error("/api/profiles", "PATCH handler failed", e);
     return NextResponse.json({ error: e?.message ?? 'Napaka' }, { status: 500 });
   }
 }

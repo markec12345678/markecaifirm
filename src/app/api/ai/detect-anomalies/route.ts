@@ -9,6 +9,7 @@ import { NextRequest, NextResponse } from 'next/server';
 import { db } from '@/lib/db';
 import { getSettingsRow } from '@/lib/pipeline';
 import { callProviderForRaw, parseJsonLooseExported, type AiProviderType, type AiSettings } from '@/lib/ai';
+import { logger } from '@/lib/logger';
 
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
@@ -131,6 +132,7 @@ export async function POST(req: NextRequest) {
       suspiciousCount: results.filter(r => r.anomalyScore >= 50).length,
     });
   } catch (e: any) {
+    logger.error("/api/ai/detect-anomalies", "POST handler failed", e);
     return NextResponse.json({ error: e?.message ?? 'Napaka pri AI analizi anomalij' }, { status: 500 });
   }
 }

@@ -3,6 +3,7 @@
 // Body: { listingIds: string[] }
 import { NextRequest, NextResponse } from 'next/server';
 import { db } from '@/lib/db';
+import { logger } from '@/lib/logger';
 
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
@@ -20,6 +21,7 @@ export async function POST(req: NextRequest) {
     });
     return NextResponse.json({ ok: true, hidden: result.count });
   } catch (e: any) {
+    logger.error("/api/listings/bulk-hide", "POST handler failed", e);
     return NextResponse.json({ error: e?.message ?? 'Napaka' }, { status: 500 });
   }
 }

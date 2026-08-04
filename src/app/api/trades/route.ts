@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { db } from '@/lib/db';
+import { logger } from '@/lib/logger';
 
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
@@ -9,30 +10,36 @@ export const dynamic = 'force-dynamic';
  * Returns all trades, optionally filtered by status, optionally as CSV.
  */
 export async function GET(req: NextRequest) {
-  const url = new URL(req.url);
-  const status = url.searchParams.get('status') ?? undefined;
-  const format = url.searchParams.get('format') ?? 'json';
-  const where: any = {};
-  if (status && ['held', 'sold', 'cancelled'].includes(status)) {
-    where.status = status;
-  }
-  const trades = await db.trade.findMany({
-    where,
-    orderBy: { buyDate: 'desc' },
-    include: { listing: { select: { id: true, title: true, url: true, imageUrl: true, monitor: { select: { name: true } } } } },
-  });
-
-  if (format === 'csv') {
-    const csv = tradesToCsv(trades);
-    return new NextResponse(csv, {
-      headers: {
-        'Content-Type': 'text/csv; charset=utf-8',
-        'Content-Disposition': `attachment; filename="trades-${new Date().toISOString().slice(0, 10)}.csv"`,
-      },
+  try {
+    const url = new URL(req.url);
+    const status = url.searchParams.get('status') ?? undefined;
+    const format = url.searchParams.get('format') ?? 'json';
+    const where: any = {};
+    if (status && ['held', 'sold', 'cancelled'].includes(status)) {
+      where.status = status;
+    }
+    const trades = await db.trade.findMany({
+      where,
+      orderBy: { buyDate: 'desc' },
+      include: { listing: { select: { id: true, title: true, url: true, imageUrl: true, monitor: { select: { name: true } } } } },
     });
-  }
 
-  return NextResponse.json(trades);
+    if (format === 'csv') {
+      const csv = tradesToCsv(trades);
+      return new NextResponse(csv, {
+        headers: {
+          'Content-Type': 'text/csv; charset=utf-8',
+          'Content-Disposition': `attachment; filename="trades-${new Date().toISOString().slice(0, 10)}.csv"`,
+        },
+      });
+    }
+
+    return NextResponse.json(trades);
+
+  } catch (err) {
+    logger.error("/api/trades", "GET handler failed", err);
+    return NextResponse.json({ error: err instanceof Error ? err.message : 'Napaka' }, { status: 500 });
+  }
 }
 
 function tradesToCsv(trades: any[]): string {
@@ -96,52 +103,58 @@ function csvEscape(s: string): string {
  * Body: { listingId?, title, category, buyPrice, buyDate?, buyLocation?, buyFees?, notes?, imageUrl?, url? }
  */
 export async function POST(req: NextRequest) {
-  const body = await req.json();
+  try {
+    const body = await req.json();
 
-  // v1.7: Support "convert from listing" mode
-  if (body?.fromListingId) {
-    const listing = await db.listing.findUnique({
-      where: { id: body.fromListingId },
-      select: { id: true, title: true, url: true, imageUrl: true, price: true, priceText: true, monitor: { select: { name: true } } },
-    });
-    if (!listing) {
-      return NextResponse.json({ error: 'Listing ne obstaja' }, { status: 404 });
+    // v1.7: Support "convert from listing" mode
+    if (body?.fromListingId) {
+      const listing = await db.listing.findUnique({
+        where: { id: body.fromListingId },
+        select: { id: true, title: true, url: true, imageUrl: true, price: true, priceText: true, monitor: { select: { name: true } } },
+      });
+      if (!listing) {
+        return NextResponse.json({ error: 'Listing ne obstaja' }, { status: 404 });
+      }
+      // Parse price from listing (use AI estimated value if available, otherwise listing price)
+      const buyPrice = body.buyPrice ?? listing.price ?? 0;
+      const trade = await db.trade.create({
+        data: {
+          listingId: listing.id,
+          title: listing.title,
+          category: body.category ?? '',
+          imageUrl: listing.imageUrl,
+          url: listing.url,
+          buyPrice: Number(buyPrice),
+          buyDate: body.buyDate ? new Date(body.buyDate) : new Date(),
+          buyLocation: body.buyLocation ?? listing.monitor?.name ?? 'Bolha',
+          buyFees: Number(body.buyFees ?? 0),
+          notes: body.notes ?? '',
+        },
+      });
+      return NextResponse.json(trade, { status: 201 });
     }
-    // Parse price from listing (use AI estimated value if available, otherwise listing price)
-    const buyPrice = body.buyPrice ?? listing.price ?? 0;
+
+    if (!body?.title || typeof body.buyPrice !== 'number') {
+      return NextResponse.json({ error: 'Manjkajo title ali buyPrice' }, { status: 400 });
+    }
     const trade = await db.trade.create({
       data: {
-        listingId: listing.id,
-        title: listing.title,
-        category: body.category ?? '',
-        imageUrl: listing.imageUrl,
-        url: listing.url,
-        buyPrice: Number(buyPrice),
+        listingId: body.listingId || null,
+        title: String(body.title),
+        category: String(body.category ?? ''),
+        imageUrl: body.imageUrl ?? null,
+        url: body.url ?? null,
+        buyPrice: Number(body.buyPrice),
         buyDate: body.buyDate ? new Date(body.buyDate) : new Date(),
-        buyLocation: body.buyLocation ?? listing.monitor?.name ?? 'Bolha',
+        buyLocation: String(body.buyLocation ?? ''),
         buyFees: Number(body.buyFees ?? 0),
-        notes: body.notes ?? '',
+        notes: String(body.notes ?? ''),
       },
     });
     return NextResponse.json(trade, { status: 201 });
-  }
 
-  if (!body?.title || typeof body.buyPrice !== 'number') {
-    return NextResponse.json({ error: 'Manjkajo title ali buyPrice' }, { status: 400 });
+  } catch (err) {
+    logger.error("/api/trades", "POST handler failed", err);
+    return NextResponse.json({ error: err instanceof Error ? err.message : 'Napaka' }, { status: 500 });
   }
-  const trade = await db.trade.create({
-    data: {
-      listingId: body.listingId || null,
-      title: String(body.title),
-      category: String(body.category ?? ''),
-      imageUrl: body.imageUrl ?? null,
-      url: body.url ?? null,
-      buyPrice: Number(body.buyPrice),
-      buyDate: body.buyDate ? new Date(body.buyDate) : new Date(),
-      buyLocation: String(body.buyLocation ?? ''),
-      buyFees: Number(body.buyFees ?? 0),
-      notes: String(body.notes ?? ''),
-    },
-  });
-  return NextResponse.json(trade, { status: 201 });
 }
