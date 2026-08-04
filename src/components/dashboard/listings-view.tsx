@@ -38,6 +38,7 @@ import { ImageAnalysisPanel } from '@/components/dashboard/listing-detail/image-
 // v6.98: NegotiationPanel — združuje Negotiator + Playbook + Outcome + Chatbot (4 v 1)
 import { NegotiationPanel } from '@/components/dashboard/listing-detail/negotiation-panel';
 import { PriceHistoryPanel } from '@/components/dashboard/listing-detail/price-history-panel';
+import { SellerIntelligencePanel } from '@/components/dashboard/listing-detail/seller-intelligence-panel';
 // v6.99: ListingActionsBar — združuje Notes + Contact Tracker
 import { ListingActionsBar } from '@/components/dashboard/listing-detail/listing-actions-bar';
 
@@ -2909,6 +2910,11 @@ function ListingDetailModal({ listingId, onClose }: { listingId: string | null; 
             {/* v7.34: Price History Panel — chart + buy recommendation (Keepa-style) */}
             {listing.price != null && (
               <PriceHistoryPanel listingId={listing.id} />
+            )}
+
+            {/* v7.34: Seller Intelligence — reputation + risk assessment */}
+            {listing.sellerName && (
+              <SellerIntelligencePanel sellerName={listing.sellerName} />
             )}
 
             {/* v1.4: Price history (text log) */}
