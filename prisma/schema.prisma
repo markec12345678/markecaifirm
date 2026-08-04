@@ -186,6 +186,10 @@ model Trade {
 
   @@index([status, buyDate])
   @@index([category])
+  // v7.32: Missing indexes for common queries
+  @@index([sellDate])
+  @@index([sellLocation])
+  @@index([profileId])
 }
 
 // v1.6: Digest log — when digests were sent (for scheduling)
@@ -241,6 +245,9 @@ model Monitor {
   listings   Listing[]
   alerts     Alert[]
   runLogs    RunLog[]
+  // v7.32: Missing indexes
+  @@index([isActive])
+  @@index([profileId])
 }
 
 // A scraped listing — kept for deduplication & history
@@ -314,6 +321,11 @@ model Listing {
   @@index([isHidden, firstSeenAt])
   @@index([price])
   @@index([sellerName])
+  // v7.32: Missing indexes
+  @@index([contactStatus])
+  @@index([dealScore])
+  @@index([targetPrice])
+  @@index([priceDroppedAt])
 }
 
 // An alert that was sent (Telegram/email/dashboard)
@@ -353,6 +365,9 @@ model Alert {
   @@index([monitorId, createdAt])
   @@index([isArchived, createdAt])
   @@index([userAction])
+  // v7.32: Missing indexes
+  @@index([isRead, createdAt])
+  @@index([aiVerdict])
 }
 
 // Run log — every monitor execution record
@@ -370,6 +385,8 @@ model RunLog {
   durationMs  Int?
 
   @@index([monitorId, startedAt])
+  // v7.32: Missing index
+  @@index([status])
 }
 
 // Heartbeat log — daily system health report (v1.1)

@@ -15,12 +15,36 @@ export const maxDuration = 60;
 export async function POST(req: NextRequest) {
   try {
     const body = await req.json().catch(() => ({}));
-    const { tradeId } = body;
+    const { tradeId, customerName } = body;
     let category: string = body?.category ?? '';
     let priceMin: number = body?.priceRange?.min ?? 0;
     let priceMax: number = body?.priceRange?.max ?? 0;
     let title = '';
     let description = '';
+
+    // v7.32: Frontend BuyersView sends { customerName } (derived from sellLocation).
+    // Resolve it to the buyer's most common category + actual spend range.
+    if (!tradeId && !category && customerName) {
+      const buyerTrades = await db.trade.findMany({
+        where: { sellLocation: String(customerName), status: 'sold', sellPrice: { not: null } },
+        select: { title: true, category: true, sellPrice: true, sellDate: true },
+        take: 30,
+        orderBy: { sellDate: 'desc' },
+      });
+      if (buyerTrades.length === 0) {
+        return NextResponse.json({ error: `Za kupca "${customerName}" ni prodaj v zgodovini.` }, { status: 404 });
+      }
+      const catCounts: Record<string, number> = {};
+      for (const t of buyerTrades) { const c = (t.category || 'drugo').trim(); catCounts[c] = (catCounts[c] || 0) + 1; }
+      category = Object.entries(catCounts).sort((a, b) => b[1] - a[1])[0][0];
+      const prices = buyerTrades.map(t => t.sellPrice ?? 0).filter(p => p > 0).sort((a, b) => a - b);
+      if (prices.length) {
+        priceMin = Math.min(priceMin || prices[0], prices[0]);
+        priceMax = Math.max(priceMax || prices[prices.length - 1], prices[prices.length - 1]);
+      }
+      title = `${customerName} — ${buyerTrades.length} nakupov`;
+      description = `Zadnji nakupi: ` + buyerTrades.slice(0, 5).map(t => `${t.title} (${t.sellPrice}€)`).join(', ');
+    }
 
     if (tradeId) {
       const trade = await db.trade.findUnique({
@@ -38,8 +62,8 @@ export async function POST(req: NextRequest) {
       description = trade.listing?.detailDescription || trade.listing?.description || '';
     }
 
-    if (!category && !tradeId) {
-      return NextResponse.json({ error: 'category ali tradeId je obvezen' }, { status: 400 });
+    if (!category && !tradeId && !customerName) {
+      return NextResponse.json({ error: 'category, tradeId ali customerName je obvezen' }, { status: 400 });
     }
 
     // 1. Pridobi sold trades za kontekst kupcev

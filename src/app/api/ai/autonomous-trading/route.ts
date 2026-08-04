@@ -176,7 +176,8 @@ Odgovori LE z JSON:
         action: String(a?.action ?? '').slice(0, 200),
         type: ['buy', 'sell', 'monitor', 'wait'].includes(String(a?.type)) ? String(a.type) : 'wait',
         priority: ['high', 'medium', 'low'].includes(String(a?.priority)) ? String(a.priority) : 'medium',
-        autoExecute: Boolean(a?.auto_execute ?? false),
+        autoExecuteEligible: Boolean(a?.auto_execute ?? false),
+        requiresHumanApproval: true,
       })),
       summary: {
         autonomousReadinessScore: Math.max(0, Math.min(100, Number(parsed?.summary?.autonomous_readiness_score ?? 50))),
