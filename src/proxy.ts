@@ -14,7 +14,7 @@
  * Konfiguracija:
  *   - Env var: `APP_API_KEY=nek-naključni-niz` v `.env`
  *   - Če env ni nastavljen: avtentikacija je izklopljena (za local dev)
- *   - Frontend sam nastavi cookie ob prvem vnosu ključa (prek /settings UI — TODO)
+ *   - Frontend sam nastavi cookie ob prvem vnosu ključa (prek /settings UI — glej LoginModal komponento)
  *
  * Endpoint-i, ki so vedno javni (whitelist):
  *   - `/` (glavna stran)
@@ -89,7 +89,7 @@ export function proxy(req: NextRequest) {
     //    (zaenkrat samo 401 — frontend UI naj sam ponovno zahteva ključ)
     const accept = req.headers.get('accept') ?? '';
     if (accept.includes('text/html')) {
-      // Frontend bo imel modal za vnos ključa (TODO v settings)
+      // Frontend prikaže LoginModal komponento za vnos ključa (glej src/components/dashboard/login-modal.tsx)
       return NextResponse.json(
         { error: 'Avtentikacija zahtevana. Nastavi X-App-Key header ali app-key cookie.', needsAuth: true },
         { status: 401 }

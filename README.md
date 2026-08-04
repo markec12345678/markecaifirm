@@ -293,7 +293,7 @@ V Settings: Provider=Ollama, BaseURL=http://localhost:11434, Model=qwen2.5:7b
 
 ```bash
 # Linux cron (vsakih 15 min)
-*/15 * * * * curl -X POST http://localhost:3000/api/scan
+*/15 * * * * curl -s "http://localhost:3000/api/cron/run-all?key=$MONITOR_CRON_KEY"
 
 # Ali Windows Task Scheduler z enakim URL
 ```
@@ -485,11 +485,11 @@ Za scraping Bolhe in drugih platform, aplikacija vključuje:
 ### Auth
 Ni avtentikacije (local-first). Aplikacija teče na localhost.
 
-### Endpointi (126 AI + sistemski)
+### Endpointi (254 AI + sistemski)
 
 ```bash
 # AI primeri
-POST /api/ai/insights                    # AI Insights (trendi, anomalije)
+GET  /api/ai/insights  ?days=30                    # AI Insights (trendi, anomalije)
 POST /api/ai/customer-segmentation       # RFM analiza
 POST /api/ai/buyer-matchmaker-v2         # ML matching
 POST /api/ai/realtime-negotiation-bot    # Real-time negotiation
@@ -498,7 +498,8 @@ POST /api/ai/auction-sniper-v2           # Auction sniper z ML timing
 
 # Sistemski
 GET  /api/health                         # Health check
-GET  /api/scan                           # Trigger monitoring scan
+POST /api/run?id=<monitorId>             # Sproži scan enega monitorja
+GET  /api/cron/run-all?key=<secret>  # Cron: vsi zapadli monitorji
 POST /api/settings                       # Update nastavitve
 GET  /api/listings                       # Seznam listingov
 POST /api/trades                         # Ustvari trade
@@ -537,7 +538,7 @@ markec-ai-firm/
 ├── src/
 │   ├── app/
 │   │   ├── api/
-│   │   │   └── ai/              # 126 AI endpointov
+│   │   │   └── ai/              # 254 AI endpointov
 │   │   ├── page.tsx             # Main dashboard
 │   │   ├── settings/            # Settings UI
 │   │   └── ...

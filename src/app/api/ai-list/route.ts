@@ -1,14 +1,20 @@
 // v7.01: AI Hub — vrne seznam vseh AI endpointov z opisi in body shemo
 // GET /api/ai-list
 // Returns: { endpoints: [{ name, description, bodyHint, category }] }
+//
+// v7.32: Memoized for 5 minutes — was re-reading 254 route.ts files per request.
 
 import { NextResponse } from 'next/server';
-import { readdirSync, readFileSync } from 'fs';
+import { readdirSync, readFileSync, statSync } from 'fs';
 import { join } from 'path';
 import { logger } from '@/lib/logger';
 
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
+
+// Cache: 5-min TTL, invalidated by directory mtime change
+let cache: { result: any; builtAt: number; dirMtime: number } | null = null;
+const CACHE_TTL_MS = 5 * 60 * 1000;
 
 function categorize(name: string): string {
   const n = name.toLowerCase();
@@ -25,6 +31,14 @@ function categorize(name: string): string {
 export async function GET() {
   try {
     const aiDir = join(process.cwd(), 'src', 'app', 'api', 'ai');
+
+    // v7.32: Serve from cache if fresh
+    const dirMtime = statSync(aiDir).mtimeMs;
+    const now = Date.now();
+    if (cache && (now - cache.builtAt < CACHE_TTL_MS) && cache.dirMtime === dirMtime) {
+      return NextResponse.json(cache.result);
+    }
+
     const entries = readdirSync(aiDir, { withFileTypes: true });
     const endpoints: Array<{ name: string; description: string; bodyHint: string; category: string }> = [];
 
@@ -69,7 +83,7 @@ export async function GET() {
     // Sortiraj abecedno
     endpoints.sort((a, b) => a.name.localeCompare(b.name));
 
-    return NextResponse.json({
+    const result = {
       ok: true,
       total: endpoints.length,
       endpoints,
@@ -83,7 +97,12 @@ export async function GET() {
         reports: endpoints.filter(e => e.category === 'reports').length,
         misc: endpoints.filter(e => e.category === 'misc').length,
       },
-    });
+    };
+
+    // v7.32: Store in cache
+    cache = { result, builtAt: Date.now(), dirMtime };
+
+    return NextResponse.json(result);
   } catch (e: any) {
     logger.error("/api/ai-list", "GET handler failed", e);
     return NextResponse.json({ error: e?.message ?? 'Napaka' }, { status: 500 });
