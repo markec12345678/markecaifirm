@@ -3,6 +3,7 @@ import { db } from '@/lib/db';
 import { testConnection, type AiProviderType } from '@/lib/ai';
 import { testTelegram } from '@/lib/telegram';
 import { getSettingsRow } from '@/lib/pipeline';
+import { encryptSettingsForStorage } from '@/lib/secrets';
 
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
@@ -269,10 +270,12 @@ export async function POST(req: NextRequest) {
     data.discordWebhookUrl = body.discordWebhookUrl.trim();
   }
 
+  // v7.32: Encrypt sensitive fields before writing
+  const encryptedData = encryptSettingsForStorage(data);
   const updated = await db.settings.upsert({
     where: { id: 'singleton' },
-    update: data,
-    create: { id: 'singleton', ...data },
+    update: encryptedData,
+    create: { id: 'singleton', ...encryptedData },
   });
 
   return NextResponse.json({ ok: true, updatedAt: updated.updatedAt });

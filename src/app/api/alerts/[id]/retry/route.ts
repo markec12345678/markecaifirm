@@ -6,6 +6,7 @@ import { sendDiscordMessage, buildAlertEmbed } from '@/lib/discord';
 import { sendSlackMessage, buildAlertSlackBlocks } from '@/lib/slack';
 import { sendPushNotification } from '@/lib/push';
 import { sendEmail, formatAlertEmail } from '@/lib/email';
+import { getAppUrl } from '@/lib/app-url';
 
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
@@ -29,7 +30,7 @@ export async function POST(_req: NextRequest, { params }: { params: Promise<{ id
   // Telegram
   if (settings.telegramEnabled && settings.telegramBotToken && settings.telegramChatId) {
     const inlineButtons = settings.telegramInlineButtons
-      ? buildAlertInlineButtons({ alertId: alert.id, listingUrl: alert.url, dashboardUrl: 'http://localhost:3000/alerts' })
+      ? buildAlertInlineButtons({ alertId: alert.id, listingUrl: alert.url, dashboardUrl: getAppUrl() + '/alerts' })
       : undefined;
     const tg = await sendTelegramMessage(
       { botToken: settings.telegramBotToken, chatId: settings.telegramChatId },

@@ -28,9 +28,14 @@
  */
 
 import { NextRequest, NextResponse } from 'next/server';
+import { checkRateLimit, rateLimitResponse } from '@/lib/rate-limit';
 
 const APP_API_KEY = process.env.APP_API_KEY;
 const DISABLED = !APP_API_KEY;
+
+// v7.32: Rate limit AI endpoints (LLM calls cost real money)
+const AI_PATH_PATTERN = /^\/api\/ai\//;
+const AI_RATE_LIMIT = 20; // per minute per IP
 
 // Javni endpoint-i (nikoli ne zahtevajo avtentikacije)
 const PUBLIC_PATHS = [
@@ -95,6 +100,12 @@ export function proxy(req: NextRequest) {
       { error: 'Unauthorized — manjka ali napačen API ključ', needsAuth: true },
       { status: 401 }
     );
+  }
+
+  // v7.32: Rate limit AI endpoints (after auth — only authenticated users limited)
+  if (AI_PATH_PATTERN.test(pathname)) {
+    const rl = checkRateLimit(req, 'ai-global', AI_RATE_LIMIT);
+    if (!rl.allowed) return rateLimitResponse(rl);
   }
 
   return NextResponse.next();

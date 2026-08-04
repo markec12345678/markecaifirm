@@ -20,6 +20,9 @@ import { sendPushNotification } from './push';
 import { sendSmartPush, sendImmediatePush, calculatePriority } from './smart-push';
 import { sendEmail, formatAlertEmail } from './email';
 // v6.93: Priklop webhook-engine na pipeline — prej je bil mrtva koda.
+// v7.32: Transparent encryption for Settings + env-var app URL
+import { decryptSettingsFromStorage } from './secrets';
+import { getAppUrl } from './app-url';
 import { triggerWebhooks } from './webhook-engine';
 
 /** v3.2: Increment AI call counter, reset if date changed. */
@@ -75,7 +78,8 @@ export async function getSettingsRow() {
   if (!s) {
     return db.settings.create({ data: { id: 'singleton' } });
   }
-  return s;
+  // v7.32: Decrypt sensitive fields on read (no-op if APP_API_KEY unset)
+  return decryptSettingsFromStorage(s);
 }
 
 function toAiSettings(s: {
@@ -312,7 +316,7 @@ export async function runMonitor(monitorId: string): Promise<RunResult> {
           // Send notifications
           if (settings.telegramEnabled && settings.telegramBotToken && settings.telegramChatId) {
             const inlineButtons = settings.telegramInlineButtons
-              ? buildAlertInlineButtons({ alertId: alert.id, listingUrl: existing.url, dashboardUrl: 'http://localhost:3000/alerts' })
+              ? buildAlertInlineButtons({ alertId: alert.id, listingUrl: existing.url, dashboardUrl: getAppUrl() + '/alerts' })
               : undefined;
             await sendTelegramMessage(
               { botToken: settings.telegramBotToken, chatId: settings.telegramChatId },
@@ -420,7 +424,7 @@ export async function runMonitor(monitorId: string): Promise<RunResult> {
         // Send notifications
         if (settings.telegramEnabled && settings.telegramBotToken && settings.telegramChatId) {
           const inlineButtons = settings.telegramInlineButtons
-            ? buildAlertInlineButtons({ alertId: alert.id, listingUrl: l.url, dashboardUrl: 'http://localhost:3000/alerts' })
+            ? buildAlertInlineButtons({ alertId: alert.id, listingUrl: l.url, dashboardUrl: getAppUrl() + '/alerts' })
             : undefined;
           await sendTelegramMessage(
             { botToken: settings.telegramBotToken, chatId: settings.telegramChatId },
@@ -579,7 +583,7 @@ export async function runMonitor(monitorId: string): Promise<RunResult> {
             // Send Telegram if enabled
             if (useTelegram && settings.telegramBotToken && settings.telegramChatId) {
               const inlineButtons = settings.telegramInlineButtons
-                ? buildAlertInlineButtons({ alertId: alert.id, listingUrl: listing.url, dashboardUrl: 'http://localhost:3000/alerts' })
+                ? buildAlertInlineButtons({ alertId: alert.id, listingUrl: listing.url, dashboardUrl: getAppUrl() + '/alerts' })
                 : undefined;
               const tg = await sendTelegramMessage(
                 { botToken: settings.telegramBotToken, chatId: settings.telegramChatId }, alertBody, { inlineButtons }
@@ -894,7 +898,7 @@ export async function maybeSendHeartbeat(): Promise<{ sent: boolean; reason: str
 
   // Send to Telegram
   if (settings.telegramEnabled && settings.telegramBotToken && settings.telegramChatId) {
-    const inlineButtons = buildHeartbeatInlineButtons('http://localhost:3000');
+    const inlineButtons = buildHeartbeatInlineButtons(getAppUrl());
     const tg = await sendTelegramMessage(
       { botToken: settings.telegramBotToken, chatId: settings.telegramChatId },
       message,

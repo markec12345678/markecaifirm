@@ -8,6 +8,7 @@ import { Activity, Bell, AlertTriangle, Target, TrendingUp, Play, RefreshCw, Clo
 import { toast } from 'sonner';
 import { cn } from '@/lib/utils';
 import { AiInsightsWidget } from '@/components/dashboard/ai-insights-widget';
+import { DealFlowWidget } from '@/components/dashboard/deal-flow-widget';
 
 // v5.6: Dashboard widget IDs
 const WIDGET_IDS = ['todaySummary', 'quickStats', 'activityFeed', 'aiInsights', 'skladisceWidget'] as const;
@@ -636,6 +637,7 @@ export function DashboardView({ onNavigate }: ViewProps) {
       {/* v5.3: AI Insights widget */}
       <WidgetWrapper id="aiInsights" order={widgetOrder} customizeMode={customizeMode} onMove={moveWidget}>
         <AiInsightsWidget />
+        <DealFlowWidget onNavigate={onNavigate} />
       </WidgetWrapper>
 
       {/* v4.5: Skladišče dashboard widget */}

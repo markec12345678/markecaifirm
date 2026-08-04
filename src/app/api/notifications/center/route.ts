@@ -9,6 +9,7 @@ import { getSettingsRow } from '@/lib/pipeline';
 import { sendTelegramMessage, buildAlertInlineButtons, formatAlertMessage } from '@/lib/telegram';
 import { sendDiscordMessage, buildAlertEmbed } from '@/lib/discord';
 import { sendPushNotification } from '@/lib/push';
+import { getAppUrl } from '@/lib/app-url';
 
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
@@ -145,7 +146,7 @@ export async function POST(req: NextRequest) {
       if (settings.telegramEnabled && settings.telegramBotToken && settings.telegramChatId) {
         try {
           const inlineButtons = settings.telegramInlineButtons
-            ? buildAlertInlineButtons({ alertId: alert.id, listingUrl: alert.url, dashboardUrl: 'http://localhost:3000/alerts' })
+            ? buildAlertInlineButtons({ alertId: alert.id, listingUrl: alert.url, dashboardUrl: getAppUrl() + '/alerts' })
             : undefined;
           await sendTelegramMessage(
             { botToken: settings.telegramBotToken, chatId: settings.telegramChatId },

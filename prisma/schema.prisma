@@ -22,6 +22,7 @@ model Profile {
   updatedAt   DateTime @updatedAt
   monitors    Monitor[]
   trades      Trade[]
+  settings    Settings?
 }
 
 // Single-row table storing app configuration (AI provider, Telegram, etc.)
@@ -118,7 +119,8 @@ model Settings {
   // TLS fingerprinting: use custom TLS client
   tlsFingerprinting    Boolean @default(false)
   // v4.9: Active profile (null = show all data, no profile filter)
-  activeProfileId      String?
+  activeProfileId      String? @unique
+  activeProfile        Profile? @relation(fields: [activeProfileId], references: [id], onDelete: SetNull)
   // v6.1: Email digest template (HTML template with {{title}}, {{listings}}, etc.)
   emailDigestTemplate  String @default("")
   // Metadata

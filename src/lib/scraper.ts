@@ -82,29 +82,20 @@ function applyFilters(listings: ScrapedListing[], f: ScraperFilters): ScrapedLis
   return out;
 }
 
+// v7.32: Import anti-detection fetch helper (proxy + delay + realistic headers)
+import { fetchWithAntiDetection } from './anti-detection';
+
 async function fetchHtml(url: string): Promise<string> {
-  const res = await fetch(url, {
-    headers: {
-      'User-Agent': randomUA(),
-      'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',
-      'Accept-Language': 'sl-SI,sl;q=0.9,en;q=0.8',
-      'Cache-Control': 'no-cache',
-    },
-    redirect: 'follow',
+  const res = await fetchWithAntiDetection(url, {
+    headers: { 'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8', 'Accept-Language': 'sl-SI,sl;q=0.9,en;q=0.8' },
   });
-  if (!res.ok) {
-    throw new Error(`HTTP ${res.status} ${res.statusText} for ${url}`);
-  }
+  if (!res.ok) throw new Error(`HTTP ${res.status} ${res.statusText} for ${url}`);
   return await res.text();
 }
 
 async function fetchRss(url: string): Promise<string> {
-  const res = await fetch(url, {
-    headers: {
-      'User-Agent': randomUA(),
-      'Accept': 'application/rss+xml, application/xml, text/xml;q=0.9, */*;q=0.8',
-    },
-    redirect: 'follow',
+  const res = await fetchWithAntiDetection(url, {
+    headers: { 'Accept': 'application/rss+xml, application/xml, text/xml;q=0.9, */*;q=0.8' },
   });
   if (!res.ok) throw new Error(`HTTP ${res.status} for ${url}`);
   return await res.text();
