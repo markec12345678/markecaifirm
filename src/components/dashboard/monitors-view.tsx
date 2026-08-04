@@ -26,6 +26,7 @@ import {
 import { Plus, Play, Pencil, Trash2, RefreshCw, ExternalLink, CheckCircle2, XCircle, Clock, Zap, AlertCircle, PauseCircle, Bell, Copy, Square, Tag, Sparkles, Check } from 'lucide-react';
 import { toast } from 'sonner';
 import { cn } from '@/lib/utils';
+import { PROMPT_CATEGORIES, getPromptsByCategory } from '@/lib/ai-prompts';
 
 // v3.4: Mini SVG sparkline component
 function Sparkline({ data, width = 60, height = 20 }: { data: number[]; width?: number; height?: number }) {
@@ -1638,7 +1639,6 @@ function PromptLibraryModal({
 
   if (!open) return null;
 
-  const { AI_PROMPT_TEMPLATES, PROMPT_CATEGORIES, getPromptsByCategory } = require('@/lib/ai-prompts');
   const templates = getPromptsByCategory(activeCategory);
 
   return (
