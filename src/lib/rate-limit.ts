@@ -31,3 +31,5 @@ export function rateLimitResponse(rl: RateLimitResult): Response {
     headers: { 'Content-Type': 'application/json', 'Retry-After': String(rl.retryAfterSeconds), 'X-RateLimit-Limit': String(rl.limit), 'X-RateLimit-Remaining': '0', 'X-RateLimit-Reset': String(Math.floor(rl.resetAt / 1000)) },
   });
 }
+
+export function resetRateLimits(): void { buckets.clear(); }

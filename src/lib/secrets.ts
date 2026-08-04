@@ -54,3 +54,5 @@ export function decryptSettingsFromStorage<T extends Record<string, unknown>>(s:
   for (const f of SENSITIVE_FIELDS) if (f in r && typeof r[f] === 'string') r[f] = decryptSecret(r[f] as string);
   return r as T;
 }
+
+export function resetEncryptionCache(): void { cachedKey = undefined; }
