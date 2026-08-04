@@ -62,7 +62,7 @@ search*.json
 # (Bing SERP rezultati iz raziskovanja konkurence/ideje — nikoli referencirani v kodi)
 comp*.json
 idea*.json
-tests/
+
 examples/
 download/
 
