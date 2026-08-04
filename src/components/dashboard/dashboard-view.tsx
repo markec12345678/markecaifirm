@@ -10,6 +10,7 @@ import { cn } from '@/lib/utils';
 import { AiInsightsWidget } from '@/components/dashboard/ai-insights-widget';
 import { DealFlowWidget } from '@/components/dashboard/deal-flow-widget';
 import { DealFunnelWidget } from '@/components/dashboard/deal-funnel-widget';
+import { NicheScoreWidget } from '@/components/dashboard/niche-score-widget';
 
 // v5.6: Dashboard widget IDs
 const WIDGET_IDS = ['todaySummary', 'quickStats', 'activityFeed', 'aiInsights', 'skladisceWidget'] as const;
@@ -640,6 +641,7 @@ export function DashboardView({ onNavigate }: ViewProps) {
         <AiInsightsWidget />
         <DealFlowWidget onNavigate={onNavigate} />
         <DealFunnelWidget />
+        <NicheScoreWidget onNavigate={onNavigate} />
       </WidgetWrapper>
 
       {/* v4.5: Skladišče dashboard widget */}
