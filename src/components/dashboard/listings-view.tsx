@@ -40,6 +40,7 @@ import { NegotiationPanel } from '@/components/dashboard/listing-detail/negotiat
 import { PriceHistoryPanel } from '@/components/dashboard/listing-detail/price-history-panel';
 import { SellerIntelligencePanel } from '@/components/dashboard/listing-detail/seller-intelligence-panel';
 import { MakeOfferPanel } from '@/components/dashboard/listing-detail/make-offer-panel';
+import { SoldCompsPanel } from '@/components/dashboard/listing-detail/sold-comps-panel';
 // v6.99: ListingActionsBar — združuje Notes + Contact Tracker
 import { ListingActionsBar } from '@/components/dashboard/listing-detail/listing-actions-bar';
 
@@ -2923,6 +2924,13 @@ function ListingDetailModal({ listingId, onClose }: { listingId: string | null; 
               listingId={listing.id}
               listingUrl={listing.url}
               listingTitle={listing.title}
+              askingPrice={listing.price}
+            />
+
+            {/* v7.37: Sold Comps — "za koliko so se podobni prodali?" (Keepa-style) */}
+            <SoldCompsPanel
+              listingId={listing.id}
+              title={listing.title}
               askingPrice={listing.price}
             />
 
