@@ -6,11 +6,129 @@ Format sledi [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), verzije s
 
 ## [Unreleased]
 
-Načrtovano za v7.62+:
+Načrtovano za v7.63+:
 - WebSocket real-time negotiation (SSE namesto polling)
 - Playwright E2E testi za glavne flow-e
 - TLS fingerprinting (curl-impersonate)
 - ML model za buyer matchmaker (fine-tuned na realnem data)
+
+## [7.62.0] - 2026-08-08
+
+### Added — Trade Replication Engine & Market Momentum Indicator & Cash Conversion Cycle Analyzer (3 funkcije)
+- **Trade Replication Engine** — `GET+POST /api/ai/trade-replication-engine`
+  - AI analizira najbolj USPEŠNE past trades (highest ROI) in predlaga NOVE search
+    monitorje, ki bi replicirali te winning pattern-e. Razlika od reinvestment-advisor
+    (ki svetuje KATEGORIJE) — ta konkretno predlaga monitor konfiguracije (platform,
+    keywords, price range) za vsak winner.
+  - Body param: `limit` (optional, 1-50, default 10) — koliko winnerjev analizirati.
+  - Query SOLD trades z profit > 0, sortirani po ROI desc, top 10 (default).
+  - Za vsak winner izvleče: title, category, buyPrice, sellPrice, profit, roi, holdDays,
+    source (iz listing.monitor.source ali trade.buyLocation), keywords (extracted iz
+    title — brand + model + key terms, 3-5 keywords).
+  - AI prompt z GROUNDING_PROMPT_SUFFIX — seznam winnerjev z vsemi metrikami.
+  - AI generira 1-2 novih monitor konfiguracij per winner:
+    - `monitorName` (opisen, max 80 znakov, npr. "PS5 Digital Bolha < 300€")
+    - `platform` (bolha | vinted | facebook | mobile.de | kleinanzeigen | avtonet)
+    - `searchKeywords` (2-5 ključnih besed iz winner.title)
+    - `priceMin` (~70% winner.buyPrice), `priceMax` (~110% winner.buyPrice)
+    - `expectedROI` (baziran na winner.roi, clamped [5, 80] %)
+    - `expectedProfit` (= priceMin × expectedROI/100, clamped [0, historical profit × 2])
+    - `categoryFocus` (iz winner.category)
+    - `confidenceScore` (0-100, višje = bolj verjetno da se bo pattern ponovil)
+    - `reasoning` (1-2 stavka — ZAKAJ ta monitor replicira winner)
+  - Anti-hallucination:
+    * expectedROI clamped na [5%, 80%] (realen razpon za preprodajo)
+    * expectedProfit clamped na [0, historical profit × 2] (ne pretiravaj)
+    * priceMin clamped na [1, winner.buyPrice × 1.5]
+    * priceMax clamped na [priceMin, winner.buyPrice × 2]
+    * confidenceScore clamped na [0, 100]
+    * platform validacija (samo 6 dovoljenih vrednosti)
+    * Bug fix: Number(null) === 0 → dodatni check `raw == null` v vseh clamp funkcijah
+  - Ranking: suggestions sortirani po expectedProfit desc
+  - Summary: totalWinners, totalSuggestions, bestOpportunity (top suggestion string),
+    estimatedMonthlyProfit (avg profit × 4)
+  - AI cache key `trade-replication:${JSON.stringify(winnerTradeIds)}` (6h TTL)
+  - Cache only ko aiUsed=true
+  - Deterministic fallback (deterministicSuggestion): monitorName iz keywords+platform+
+    priceMax, expectedROI = winner.roi × 0.85 clamped [5,80], expectedProfit =
+    priceMin × expectedROI/100 clamped [0, profit×2]
+  - Empty-state fallback: "Ni prodanih trade-ov — najprej prodi kak item da zgeneriraš
+    replication suggestions."
+  - 'PS5 35% ROI → Bolha monitor "PS5 Digital < 308€", expected 27% ROI, 53€ profit'
+
+- **Market Momentum Indicator** — `GET /api/analytics/market-momentum`
+  - Real-time market momentum score (BULLISH / NEUTRAL / BEARISH 0-100) baziran na
+    listing velocity, price trend in deal frequency v zadnjih 7 dneh vs prejšnjih 7.
+    Pure DB analytics — NO AI.
+  - Razlika od weekly-trend-radar (ki prikaže shifts) — ta klasificira的整体 market
+    sentiment v eno številko + akcijo (BUY_AGGRESSIVELY/BUY_NORMAL/HOLD/SELL_FAST).
+  - Razlika od deal-velocity (ki gleda PRILIKA count in temperature) — ta združi 4
+    indikatorje (velocity, price, deal quality, opportunity) v momentum score.
+  - 4 momentum indikatorji:
+    * `listingVelocityChange` = (currentWeek.totalListings - previousWeek.totalListings) /
+      previousWeek.totalListings × 100 (% sprememba v novih oglasih)
+    * `priceTrend` = (currentWeek.avgPrice - previousWeek.avgPrice) /
+      previousWeek.avgPrice × 100 (% sprememba v povprečni ceni)
+    * `dealQualityChange` = currentWeek.avgDealScore - previousWeek.avgDealScore
+      (abs sprememba v deal score za PRILIKA oglase)
+    * `opportunityChange` = (currentWeek.prilikaCount - previousWeek.prilikaCount) /
+      previousWeek.prilikaCount × 100 (% sprememba v PRILIKA count)
+  - Per-window metrics: totalListings, avgPrice, prilikaCount, avgDealScore, soldCount
+  - Momentum score (0-100):
+    * +30 če listingVelocityChange > 10 (več supply = bearish za prodajalce, a good za kupce)
+    * +20 če priceTrend > 5 (cene rastejo = bullish)
+    * +20 če dealQualityChange > 0 (boljši deals na voljo)
+    * +30 če opportunityChange > 20 (več priložnosti)
+    * Negativni multiplikatorji za padajoče indikatorje
+  - Klasifikacija: BULLISH (>60), NEUTRAL (40-60), BEARISH (<40)
+  - Per-source breakdown (Bolha vs Vinted vs Facebook vs ...) z displayName, momentumScore,
+    classification, listingCount, avgPrice — sortiran po listingCount desc
+  - Recommendation action: BUY_AGGRESSIVELY (bullish + več PRILIKA), BUY_NORMAL
+    (neutral ali bearish z PRILIKA), HOLD (bearish brez PRILIKA), SELL_FAST (bullish
+    z malo PRILIKA — cene visoke, prodi drago zdaj)
+  - Reasoning: slovensko, razlaga zakaj ta akcija
+  - 'Market momentum: 72/100 BULLISH — listings +15%, prices +8%, več priložnosti. BUY'
+
+- **Cash Conversion Cycle Analyzer** — `GET /api/analytics/cash-conversion-cycle`
+  - Finančna metrika kako učinkovito kapital teče skozi business. CCC = DIO + DSO - DPO.
+    Za cash flipping: DSO=0 (cash sales, no credit), DPO=0 (cash purchases, no supplier
+    credit), CCC = DIO = avg hold days. Pure DB analytics — NO AI.
+  - Razlika od time-to-profit (ki gleda cycle time posameznega item-a) — ta gleda
+    FINANČNO učinkovitost portfelja (capitalTurnoverRatio, annualizedROI, cash recovery).
+  - Razlika od deal-velocity (ki gleda listing flux) — ta gleda financial velocity
+    kapitala.
+  - Query SOLD trades z sellDate, compute DIO = avg(buyDate → sellDate) = avg hold days.
+  - Classification: EXCELLENT (<15d), GOOD (15-30), AVERAGE (30-45), SLOW (45-60),
+    VERY_SLOW (>60). Benchmark: 30 dni target za fast flipping.
+  - Monthly trend (zadnjih 6 mesecev): za vsak mesec avg hold days, itemsSold, trend
+    (IMPROVING/STABLE/WORSENING glede na prejšnji mesec).
+  - Per-category breakdown: za vsako kategorijo avgCCC, itemsSold, classification,
+    capitalEfficiency (1/ccc × 365 = cycles per year) — sortiran po avgCCC asc
+    (fastest first).
+  - Capital efficiency metrics:
+    * `avgInventory` = avgInvestedPerTrade × (CCC / 30) — koliko kapitala je povprečno
+      vezanega (estimate items held simultaneously)
+    * `annualRevenue` = vsota revenue-ja v zadnjih 365 dneh
+    * `capitalTurnoverRatio` = annualRevenue / avgInventory (kolikokrat se kapital
+      obrne na leto)
+    * `avgROI` = avg ROI % vseh sold trade-ov
+    * `annualizedROI` = avgROI × capitalTurnoverRatio (compounding effect)
+    * `cashRecoveryTime` = CCC (dnevi od nakupa do gotovine)
+  - Recommendations: fastestCategories (top 3), slowestCategories (top 3),
+    improvementPotential (€ če skrajšaš CCC za 10 dni = (10/30) × turnover × inventory × ROI),
+    advice (slovensko glede na classification)
+  - Empty-state fallback: "Ni prodanih trade-ov — CCC analiza ni mogoča."
+  - 'CCC: 28 dni (GOOD). Elektronika 22d, avto 45d. Letni turnover: 13x. Če skrajšaš
+    CCC za 10d → +15% profit'
+
+### Changed
+- AI_ENDPOINTS.md: regenerated → 287 → 288 endpoints (+1 AI: trade-replication-engine)
+- README.md: version badge v7.61.0 → v7.62.0, AI Endpoints 287 → 288, API Routes
+  422 → 425, "287 AI + 30 analytics" → "288 AI + 32 analytics", "~108 funkcij" →
+  "~111 funkcij", added v7.62 block at top of "Kaj je novega", profit pipeline
+  (v7.32-v7.61) → (v7.32-v7.62), Analytics (30) → (32), v7.62.0 entry in "Zadnje
+  verzije"
+- CHANGELOG.md: [Unreleased] "v7.62+" → "v7.63+", added [7.62.0] section
 
 ## [7.61.0] - 2026-08-07
 

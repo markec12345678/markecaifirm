@@ -6484,3 +6484,230 @@ Stage Summary:
 - Dokumentacija sinhrono posodobljena (AI_ENDPOINTS.md, README, CHANGELOG, GitHub About)
 - GitHub sinhroniziran (0 commit-ov ahead)
 - Verzija aplikacije: v7.61.0
+
+---
+Task ID: v7.62
+Agent: full-stack-developer
+Task: Add 3 new features for v7.62 — Trade Replication Engine, Market Momentum Indicator, Cash Conversion Cycle Analyzer
+
+Work Log:
+- Prebral worklog.md (zadnjih ~150 vrstic) — projekt je na v7.61.1 (3 nove funkcije v7.61:
+  Negotiation Script Generator, Inventory Insurance Calculator, Photo Enhancement Advisor).
+  AI endpointov: 287, analytics: 30, total API routes: 422.
+- Preučil obstoječe vzorce:
+  * src/app/api/ai/multi-platform-listing-generator/route.ts (v7.60 — AI z GET+POST shared handler, 5 platform)
+  * src/app/api/ai/negotiation-script-generator/route.ts (v7.61 — AI z anchoring/walkaway clamps + 6h cache)
+  * src/app/api/analytics/portfolio-stress-test/route.ts (v7.59 — pure DB analytics z 3 scenariji)
+  * src/app/api/analytics/roi-leaderboard/route.ts (v7.55 — brand/model extraction, grouping)
+  * src/app/api/analytics/weekly-trend-radar/route.ts (v7.50 — 7d vs 7d window comparison)
+  * src/app/api/analytics/deal-velocity/route.ts (v7.37 — PRILIKA grouping, trend)
+- Prisma schema pregledan: Trade (status, buyDate, sellDate, buyPrice, sellPrice, buyFees,
+  sellFees, listing → monitor.source), Listing (aiVerdict, dealScore, price, monitor.source),
+  Monitor (source, sourceUrl). buyDate je non-nullable (DateTime @default(now())).
+
+- Feature #1: Trade Replication Engine (src/app/api/ai/trade-replication-engine/route.ts):
+  * AI-enhanced (GET + POST shared handler handleTradeReplication), runtime='nodejs',
+    dynamic='force-dynamic', maxDuration=60
+  * Rate limit: checkRateLimit(req, 'ai-trade-replication-engine', 20)
+  * Body param: `limit` (optional, 1-50, default 10)
+  * Query SOLD trades z sellPrice, sellDate, buyPrice > 0 (take 500)
+  * Za vsak trade compute: profit = (sellPrice - sellFees) - (buyPrice + buyFees),
+    roi = profit/buyPrice × 100, holdDays = (sellDate - buyDate) / 86400000
+  * Filter profit > 0, sort by ROI desc, slice(0, limit) → top winners
+  * extractKeywords(title) — KNOWN_BRANDS (40+ brandov: apple, samsung, ps5, xbox, nintendo,
+    vw, audi, bmw, canon, nikon, dyson, ...) + STOP_WORDS (slovenski/angleski) + model številke
+  * Winner data: tradeId, title, category, buyPrice, sellPrice, profit, roi, holdDays,
+    source (iz listing.monitor.source ali trade.buyLocation), keywords (3-5)
+  * AI cache key `trade-replication:${JSON.stringify(winnerTradeIds)}` (6h TTL prek
+    getCachedAI/setCachedAI) — cache only ko aiUsed=true
+  * AI prompt z GROUNDING_PROMPT_SUFFIX — zahteva 1-2 novih monitor konfiguracij per winner
+  * AI generira: monitorName, platform, searchKeywords, priceMin, priceMax, expectedROI,
+    expectedProfit, categoryFocus, confidenceScore, reasoning
+  * Anti-hallucination:
+    * expectedROI clamped na [5, 80] % (realen razpon za preprodajo, ne pretiravaj)
+    * expectedProfit clamped na [0, historical profit × 2] (ne pretiravaj dobička)
+    * priceMin clamped na [1, buyPrice × 1.5]
+    * priceMax clamped na [priceMin, buyPrice × 2] (zagotovi priceMax > priceMin)
+    * confidenceScore clamped na [0, 100]
+    * platform validacija (bolha/vinted/facebook/mobile.de/kleinanzeigen/avtonet)
+    * Bug fix: Number(null) === 0 → dodatni check `raw == null` v clampNumber za fallback
+  * Ranking: suggestions sortirani po expectedProfit desc
+  * Summary: totalWinners, totalSuggestions, bestOpportunity (top suggestion string),
+    estimatedMonthlyProfit (avg profit × 4 mesece)
+  * Deterministic fallback (deterministicSuggestion): monitorName iz keywords+platform+
+    priceMax, expectedROI = winner.roi × 0.85 clamped [5,80], expectedProfit =
+    priceMin × expectedROI/100 clamped [0, profit×2], confidence 40-85 based on ROI magnitude
+  * pickPlatform(winner) — default iz source ali kategorija (avto → mobile.de, moda → vinted,
+    default → bolha)
+  * buildMonitorName(winner, platform) — "ps5 digital bolha < 308€" (max 80 znakov)
+  * Empty-state fallback: "Ni prodanih trade-ov — najprej prodi kak item da zgeneriraš
+    replication suggestions."
+  * 'PS5 35% ROI → Bolha monitor "ps5 digital bolha < 308€" (bolha, expROI 27%, profit 53€)'
+
+- Feature #2: Market Momentum Indicator (src/app/api/analytics/market-momentum/route.ts):
+  * Pure DB analytics (NO AI), GET only, runtime='nodejs', dynamic='force-dynamic'
+  * Razlika od weekly-trend-radar (ki prikaže shifts) — ta klasificira整体 market sentiment
+    v eno številko + akcijo (BUY_AGGRESSIVELY/BUY_NORMAL/HOLD/SELL_FAST).
+  * Razlika od deal-velocity (ki gleda PRILIKA count in temperature) — ta združi 4
+    indikatorje (velocity, price, deal quality, opportunity) v momentum score.
+  * 2 window-a: currentWeek (zadnjih 7 dni), previousWeek (7-14 dni nazaj)
+  * Promise.all: listings currentWeek + listings previousWeek + sold trades currentWeek +
+    sold trades previousWeek (4 query-ji)
+  * computeWindow(listings, soldCount) → totalListings, avgPrice (samo priced listings),
+    prilikaCount (aiVerdict='PRILIKA'), avgDealScore (avg dealScore od PRILIKA), soldCount
+  * 4 momentum indikatorji:
+    * listingVelocityChange = (current.totalListings - prev.totalListings) / prev × 100
+    * priceTrend = (current.avgPrice - prev.avgPrice) / prev × 100
+    * dealQualityChange = current.avgDealScore - prev.avgDealScore (abs)
+    * opportunityChange = (current.prilikaCount - prev.prilikaCount) / prev × 100
+  * Momentum score (0-100, baseline 50):
+    * +30 če listingVelocityChange > 10, +15 če > 0, -10 če < 0, -20 če < -10
+    * +20 če priceTrend > 5, +10 če > 0, -8 če < 0, -15 če < -5
+    * +20 če dealQualityChange > 0, -15 če < 0
+    * +30 če opportunityChange > 20, +15 če > 0, -12 če < 0, -25 če < -20
+  * Classification: BULLISH (>60), NEUTRAL (40-60), BEARISH (<40)
+  * Summary string: "Momentum 72/100 (BULLISH) • listings +15% • cena +8% • priložnosti +20%"
+  * Per-source breakdown: za vsak source (bolha, vinted, ...) compute sourceScore
+    (30 baseline + volume factor max 40 + opportunity density max 30) → displayName
+    (SOURCE_DISPLAY map z 13 entry-ji: bolha→Bolha, mobile-de→mobile.de, itd.),
+    momentumScore, classification, listingCount, avgPrice — sortiran po listingCount desc
+  * Recommendation action:
+    * BUY_AGGRESSIVELY (BULLISH + currentWeek.prilikaCount >= 3)
+    * SELL_FAST (BULLISH + prilikaCount < 3 — cene visoke, prodi drago zdaj)
+    * BUY_NORMAL (BEARISH + prilikaCount >= 3 — poceni nakup)
+    * HOLD (BEARISH + prilikaCount < 3)
+    * BUY_NORMAL (NEUTRAL)
+  * Reasoning: slovensko, razlaga zakaj ta akcija
+  * 'Market momentum: 72/100 BULLISH — listings +15%, prices +8%, več priložnosti. BUY'
+
+- Feature #3: Cash Conversion Cycle Analyzer (src/app/api/analytics/cash-conversion-cycle/route.ts):
+  * Pure DB analytics (NO AI), GET only, runtime='nodejs', dynamic='force-dynamic'
+  * Razlika od time-to-profit (ki gleda cycle time posameznega item-a) — ta gleda
+    FINANČNO učinkovitost portfelja (capitalTurnoverRatio, annualizedROI, cash recovery).
+  * Razlika od deal-velocity (ki gleda listing flux) — ta gleda financial velocity kapitala.
+  * Query SOLD trades z sellDate (buyDate je non-nullable)
+  * Bug fix: removed `buyDate: { not: null }` filter — buyDate je DateTime @default(now())
+    (non-nullable per schema), Prisma 6 strict type check rejects `not: null` za non-nullable
+    field ("Type 'null' is not assignable to type 'string | Date | NestedDateTimeFilter'")
+  * Za vsak trade compute: holdDays = (sellDate - buyDate) / 86400000, profit =
+    (sellPrice - sellFees) - (buyPrice + buyFees), invested = buyPrice + buyFees,
+    revenue = sellPrice - sellFees. Filter invested > 0.
+  * DIO = avg hold days, DSO = 0 (cash sales), DPO = 0 (cash purchases), CCC = DIO + DSO - DPO
+  * Classification: EXCELLENT (<15d), GOOD (15-30), AVERAGE (30-45), SLOW (45-60),
+    VERY_SLOW (>60). Benchmark: 30 dni (target za fast flipping).
+  * Monthly trend (zadnjih 6 mesecev): za vsak mesec avgCCC, itemsSold, trend
+    (IMPROVING če CCC < prevCcc - 2, WORSENING če CCC > prevCcc + 2, sicer STABLE)
+  * Per-category breakdown: za vsako kategorijo avgCCC, itemsSold, classification,
+    capitalEfficiency = 365 / avgCCC (cycles per year) — sortiran po avgCCC asc (fastest first)
+  * Capital efficiency metrics:
+    * avgInventory = avgInvestedPerTrade × (CCC / 30) — koliko kapitala je povprečno vezanega
+    * annualRevenue = vsota revenue-ja v zadnjih 365 dneh
+    * capitalTurnoverRatio = annualRevenue / avgInventory
+    * avgROI = avg (profit/invested) × 100
+    * annualizedROI = avgROI × capitalTurnoverRatio (compounding effect)
+    * cashRecoveryTime = CCC (dnevi od nakupa do gotovine)
+  * Recommendations: fastestCategories (top 3 z itemsSold >= 1), slowestCategories (top 3),
+    improvementPotential (€ če skrajšaš CCC za 10 dni = (10/30) × turnover × inventory × ROI),
+    advice (slovensko, 5 variant glede na classification)
+  * Empty-state fallback: "Ni prodanih trade-ov — CCC analiza ni mogoča."
+  * 'CCC: 28 dni (GOOD). Elektronika 22d, avto 45d. Letni turnover: 13x. Če skrajšaš
+    CCC za 10d → +15% profit'
+
+- Testiranje vseh 3 endpointov (curl localhost:3000):
+  * Najprej seed testni podatki prek bun skripte (3 trades: PS5 elektronika 35% ROI, Samsung
+    Galaxy 38% ROI, Nike jakna moda 57.9% ROI; 8 listings z firstSeenAt v currentWeek +
+    previousWeek; PRILIKA aiVerdict za nekaj) + linked monitor z source='bolha'
+  * GET /api/ai/trade-replication-engine (prazen body) → 200, aiUsed=false (no AI provider),
+    winners=3 (Nike 57.9%, Samsung 38%, PS5 35%), suggestions=3.
+    Top winner: Nike jakna hoodie — ROI 57.9%.
+    Top suggestion: "ps5 digital bolha < 308€" (bolha, expROI 27%, expProfit 53€).
+    Deterministic fallback deluje pravilno.
+  * POST /api/ai/trade-replication-engine -d '{"limit":5}' → 200, identično kot GET
+    (AI Hub runner kompatibilnost potrjena)
+  * GET /api/analytics/market-momentum → 200, score=100, classification=BULLISH,
+    currentWeek.totalListings=5, previousWeek.totalListings=3 (velocityChange=+66%),
+    perSource=1 (bolha), recommendation=SELL_FAST (bullish + few PRILIKA = sell at high prices)
+  * GET /api/analytics/cash-conversion-cycle → 200, CCC=22d (GOOD), DIO=22, DSO=0, DPO=0,
+    monthlyTrend=6 mesecev, categoryBreakdown=2 kategoriji (elektronika, moda),
+    capitalTurnoverRatio=5.4x, annualizedROI=216%, improvementPotential=92€
+  * Cleanup seed podatkov (8 listings, 3 trades, 1 monitor) — baza nazaj v prazno stanje
+  * Finalni empty-state test: vsi 3 endpointi vračajo 200 z opisno slovensko message
+
+- TypeScript: `npx tsc --noEmit` → 0 napak ✨ (po fixu buyDate filter)
+- ESLint: `bun run lint` → 0 napak, 0 opozoril ✨
+- dev.log: vsi 4 HTTP requesti (GET×3 + POST×1) vračajo 200 OK. Brez ERROR logov.
+
+- Dokumentacijska sinhronizacija (CRITICAL):
+  * AI_ENDPOINTS.md: regeneriran z Python skripto → "Total: 288 endpoints" (287 → 288, +1 AI:
+    trade-replication-engine)
+  * README.md (MultiEdit z 20 urejanji):
+    - Badge version: v7.61.0 → v7.62.0
+    - Badge AI Endpoints: 287 → 288
+    - Badge API Routes: 422 → 425
+    - Tagline: "287 AI endpointov + 30 analytics" → "288 AI endpointov + 32 analytics"
+    - Overview: "Verzija v7.61.0" → "Verzija v7.62.0", counts posodobljeni,
+      "~108 funkcij" → "~111 funkcij"
+    - "Kaj je novega v v7.56–v7.61 (6 verzij, 18 novih funkcij)" → "...v7.56–v7.62
+      (7 verzij, 21 novih funkcij)", dodan v7.62 blok (3 funkcije) na vrh
+    - "v1.0 → v7.61" → "v1.0 → v7.62" (2 mesti: archive ref + changelog ref)
+    - AI Hub badge v tabeli: "Vsi 287 AI endpointov" → "Vsi 288 AI endpointov"
+    - "Endpointi (287 AI + 30 analytics + 10 cron + sistemski = 422)" →
+      "...(288 AI + 32 analytics + 10 cron + sistemski = 425)"
+    - Dodan 1 nov AI endpoint v AI primeri blok (trade-replication-engine, v7.62)
+    - "Profit pipeline (v7.32-v7.61)" → "...(v7.32-v7.62)"
+    - Dodana 2 nova analytics endpointa v profit pipeline blok (market-momentum, v7.62;
+      cash-conversion-cycle, v7.62)
+    - Dodan 1 nov AI endpoint v profit pipeline listo (Trade Replication Engine, v7.62)
+    - Project structure: "287 AI endpointov" → "288 AI endpointov"
+    - Coding standards: "422 routes" → "425 routes"
+    - Roadmap: "v7.61 (trenutno — ~108 funkcij)" → "v7.62 (trenutno — ~111 funkcij)"
+    - Profit pipeline list: dodana 1 nova funkcija (Trade Replication Engine) na konec
+    - "Analytics (30)" → "Analytics (32)", dodana 2 novi (Market Momentum, Cash Conversion Cycle)
+    - Testing: "422 API routes" → "425 API routes"
+    - "Naslednji koraki": "v7.50-v7.61 funkcije" → "...v7.50-v7.62 funkcije"
+    - "Zadnje verzije": dodan "v7.62.0 (avgust 2026) — Trade Replication Engine, Market
+      Momentum Indicator, Cash Conversion Cycle Analyzer" na vrh
+    - "vseh 287 AI endpointov" → "vseh 288 AI endpointov"
+  * CHANGELOG.md:
+    - "[Unreleased] Načrtovano za v7.62+" → "...za v7.63+"
+    - Dodana nova "[7.62.0] - 2026-08-08" sekcija (nad [7.61.0])
+    - "### Added — Trade Replication Engine & Market Momentum Indicator & Cash Conversion
+      Cycle Analyzer (3 funkcije)" z vsemi 3 endpoint-i in podrobnimi opisi (response shape,
+      anti-hallucination rules, AI cache key, deterministic fallback, example comment,
+      razlika od podobnih obstoječih endpoint-ov)
+    - "### Changed" pod-sekcija z doc sync opisi (AI_ENDPOINTS.md, README.md, CHANGELOG.md)
+
+Stage Summary:
+- 3 novi endpointi dodani (skupno +3 od v7.61.1):
+  - trade-replication-engine (GET+POST, AI-enhanced z winner analysis + monitor
+    replication suggestions + anti-hallucination clamps [5,80]% ROI / [0, profit×2] profit
+    + 6h cache + deterministic fallback z keyword extraction in platform picking)
+  - market-momentum (GET, pure DB analytics z 4 indikatorji (velocity/price/quality/
+    opportunity) + 0-100 momentum score + BULLISH/NEUTRAL/BEARISH classification +
+    per-source breakdown + BUY_AGGRESSIVELY/BUY_NORMAL/HOLD/SELL_FAST recommendation)
+  - cash-conversion-cycle (GET, pure DB analytics z DIO+DSO-DPO formula + EXCELLENT/GOOD/
+    AVERAGE/SLOW/VERY_SLOW classification + 6-month monthly trend + per-category breakdown +
+    capitalTurnoverRatio + annualizedROI + improvementPotential)
+- Trade Replication Engine: AI analizira TOP N winnerjev (highest ROI) in predlaga 1-2
+  novih monitor konfiguracij per winner z konkretnimi keywords+platform+price range.
+  Razlika od reinvestment-advisor (ki svetuje KATEGORIJE) — ta konkretne MONITOR konfiguracije.
+- Market Momentum Indicator: 4 indikatorji (listingVelocityChange, priceTrend,
+  dealQualityChange, opportunityChange) združeni v 0-100 momentum score z action
+  recommendation. Razlika od weekly-trend-radar (ki prikaže shifts brez klasifikacije) —
+  ta vrne ENO klasifikacijo + akcijo. Razlika od deal-velocity (ki gleda le PRILIKA flux)
+  — ta vključuje še price trend in deal quality.
+- Cash Conversion Cycle Analyzer: CCC = DIO + DSO - DPO (za cash flipping = avg hold days
+  ker DSO=DPO=0). Capital efficiency metrics (avgInventory, annualRevenue,
+  capitalTurnoverRatio, annualizedROI = avgROI × turnover) in improvement potential če
+  skrajšaš CCC za 10 dni. Razlika od time-to-profit (ki gleda cycle time posameznega
+  item-a) — ta gleda financial velocity portfelja.
+- Vsi 3 endpointi vračajo veljaven JSON tudi ob prazni bazi (graceful fallback z opisno
+  slovensko message). AI endpointi imajo aiUsed flag v responsu za transparentnost.
+- AI_ENDPOINTS.md: "Total: 288 endpoints" ✓ (287 → 288, +1 AI)
+- README.md: v7.62.0 badge (14 referenc), 288 AI (6 referenc), 425 routes (4 reference),
+  32 analytics (3 reference), ~111 funkcij (2 referenci) ✓
+- CHANGELOG.md: [7.62.0] sekcija dodana z 3 endpoint-i in Changed pod-sekcijo, [Unreleased]
+  posodobljen na v7.63+ ✓
+- ESLint: 0 napak ✨
+- TypeScript: 0 napak ✨
+- Verzija aplikacije: v7.62.0
