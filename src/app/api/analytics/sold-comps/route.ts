@@ -18,6 +18,7 @@ import { db } from '@/lib/db';
 import { getSettingsRow } from '@/lib/pipeline';
 import { callProviderForRaw, parseJsonLooseExported, type AiProviderType, type AiSettings } from '@/lib/ai';
 import { logger } from '@/lib/logger';
+import { validateAIFinancialOutput, evaluateConfidence, GROUNDING_PROMPT_STRICT } from '@/lib/anti-hallucination';
 
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
@@ -128,7 +129,7 @@ Odgovori LE z JSON:
   ],
   "recommendation": "<1-2 stavka: ali kupiti in zakaj>",
   "risk_factors": ["<string>", "..."]
-}`;
+}${GROUNDING_PROMPT_STRICT}`;
 
     let raw = '';
     try {
@@ -165,18 +166,44 @@ Odgovori LE z JSON:
 
     const parsed: any = parseJsonLooseExported(raw);
 
+    // v7.52: Anti-hallucination validation
+    const historicalPrices = soldData.map(d => d.soldPrice!);
+    const aiFairValue = Math.round(Number(parsed?.fair_market_value_eur ?? 0));
+    const aiConfidence = Math.max(0, Math.min(100, Number(parsed?.confidence ?? 50)));
+    const aiRecommendation = String(parsed?.recommendation ?? '');
+
+    // Evaluate confidence with sample size penalty
+    const confEval = evaluateConfidence(aiConfidence, soldData.length, 30, 3);
+
+    // Validate fair market value against real historical prices
+    const validation = validateAIFinancialOutput({
+      estimatedValue: aiFairValue,
+      historicalPrices,
+      confidence: aiConfidence,
+      sampleSize: soldData.length,
+      text: aiRecommendation,
+      minConfidence: 30,
+    });
+
+    // Use clamped value if AI price was out of bounds
+    const finalFairValue = validation.clampedValue ?? aiFairValue;
+    const finalConfidence = confEval.adjustedConfidence;
+
     return NextResponse.json({
       ok: true,
-      fairMarketValue: Math.round(Number(parsed?.fair_market_value_eur ?? 0)),
-      confidence: Math.max(0, Math.min(100, Number(parsed?.confidence ?? 50))),
-      marginEur: Math.round(Number(parsed?.margin_eur ?? 0)),
+      fairMarketValue: finalFairValue,
+      confidence: finalConfidence,
+      trusted: validation.trusted && confEval.trusted,
+      validationWarnings: validation.warnings.length > 0 ? validation.warnings : undefined,
+      marginEur: askingPrice ? Math.round(finalFairValue - askingPrice) : Math.round(Number(parsed?.margin_eur ?? 0)),
       marginPct: Math.round(Number(parsed?.margin_pct ?? 0) * 10) / 10,
-      isRealDeal: Boolean(parsed?.is_real_deal ?? false),
+      isRealDeal: Boolean(parsed?.is_real_deal ?? false) && validation.trusted,
       marketStats: {
         avgSoldPriceEur: Math.round(Number(parsed?.market_stats?.avg_sold_price_eur ?? 0)),
         minSoldPriceEur: Math.round(Number(parsed?.market_stats?.min_sold_price_eur ?? 0)),
         maxSoldPriceEur: Math.round(Number(parsed?.market_stats?.max_sold_price_eur ?? 0)),
         sampleSize: Number(parsed?.market_stats?.sample_size ?? soldData.length),
+        realSampleSize: soldData.length,
         avgDaysToSell: Math.round(Number(parsed?.market_stats?.avg_days_to_sell ?? 0)),
       },
       comps: (parsed?.comps || []).slice(0, 10).map((c: any) => ({
@@ -185,10 +212,18 @@ Odgovori LE z JSON:
         daysAgo: Math.max(0, Number(c?.days_ago ?? 0)),
         similarity: Math.max(0, Math.min(100, Number(c?.similarity ?? 50))),
         platform: String(c?.platform ?? 'Bolha').slice(0, 30),
+        verified: soldData.some(d => d.title.toLowerCase().includes(String(c?.title ?? '').toLowerCase().split(/\s+/)[0] || '___')),
       })),
       activeListings: activeData.slice(0, 10),
-      recommendation: String(parsed?.recommendation ?? '').slice(0, 300),
+      recommendation: validation.trusted ? aiRecommendation.slice(0, 300) : `⚠️ ${aiRecommendation.slice(0, 200)} (NIZKO ZAUPANJE — preveri ročno)`,
       riskFactors: (parsed?.risk_factors || []).slice(0, 5).map((r: any) => String(r).slice(0, 150)),
+      grounding: {
+        historicalMin: historicalPrices.length > 0 ? Math.min(...historicalPrices) : null,
+        historicalMax: historicalPrices.length > 0 ? Math.max(...historicalPrices) : null,
+        realSampleSize: soldData.length,
+        aiPriceClamped: aiFairValue !== finalFairValue,
+        confidenceReduced: aiConfidence !== finalConfidence,
+      },
     });
   } catch (err: any) {
     logger.error('/api/analytics/sold-comps', 'POST handler failed', err);

@@ -62,7 +62,13 @@ Oceniš:
 7. IMAGE_ANALYSIS — v 1 stavku v slovenščini opiši, kaj vidiš na sliki (kakovost, ali je realna ali stock foto, ali se ujema z opisom)
 8. IMAGE_VERDICT — AUTHENTIC (realna amaterska fotografija) | SUSPICIOUS (sumljivo — stock foto, vodeni žig, neresnično) | STOCK_PHOTO (profesionalna stock fotografija) | NO_IMAGE (slike ni)
 
-Vedno odgovori JSON, nič drugega.`;
+Vedno odgovori JSON, nič drugega.
+
+ANTI-HALLUCINATION PRAVILA:
+- PREDVIDENA_TRZNA_VREDNOST mora biti realna. Ne pretiravaj (ne reci 5000€ za iPhone 12).
+- Če si negotov o vrednosti, nastavi null — ne izmišljaj.
+- RAZLOG mora vsebovati specifične podatke iz oglasa (ne generične fraze).
+- Oceni s strogo realnostjo — bolje je konzervativen kot preveč optimističen.`;
 
 const JSON_SCHEMA = {
   type: 'object',
@@ -483,7 +489,7 @@ function buildDealScorePrompt(l: {
   return parts.join('\n');
 }
 
-function normalizeEvaluation(parsed: any): ListingEvaluation {
+function normalizeEvaluation(parsed: any, askingPrice?: number | null): ListingEvaluation {
   const risk = clamp(parseInt(String(parsed?.ocena_tveganja ?? '5'), 10) || 5, 1, 10);
   const opp = clamp(parseInt(String(parsed?.ocena_prilike ?? '5'), 10) || 5, 1, 10);
   const prilika = parsed?.prilika ?? (opp >= 7 && risk <= 3);
@@ -497,6 +503,18 @@ function normalizeEvaluation(parsed: any): ListingEvaluation {
   if (estVal !== null && estVal !== undefined) {
     const n = parseInt(String(estVal), 10);
     estVal = isNaN(n) ? null : n;
+  }
+
+  // v7.52: Anti-hallucination — validate estimated value against asking price
+  // If AI claims value > 3x asking price or < 0.3x, it's likely hallucinating
+  if (estVal != null && askingPrice && askingPrice > 0) {
+    const ratio = estVal / askingPrice;
+    if (ratio > 3) {
+      estVal = Math.round(askingPrice * 2);
+    } else if (ratio < 0.3) {
+      estVal = Math.round(askingPrice * 0.5);
+    }
+    if (estVal < 0) estVal = null;
   }
   // v1.1: image analysis fields
   const imageVerdictRaw = parsed?.image_verdict;
@@ -547,7 +565,7 @@ export async function evaluateListing(
     }
   }
   const parsed = parseJsonLoose(raw);
-  return normalizeEvaluation(parsed);
+  return normalizeEvaluation(parsed, input.price);
 }
 
 /** Call the appropriate provider based on settings.provider. */
