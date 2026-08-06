@@ -6450,3 +6450,37 @@ Stage Summary:
 - ESLint: 0 napak ✨
 - TypeScript: 0 napak ✨
 - Verzija aplikacije: v7.61.0
+
+---
+Task ID: v7.61.1
+Agent: main
+Task: v7.61 commit + push + GitHub About + Agent Browser verification
+
+Work Log:
+- Prejel poročilo od full-stack-developer podagenta (Task v7.61)
+- Preveril 3 nove endpoint-e: negotiation-script-generator (200 GET+POST), inventory-insurance-calculator (200 GET), photo-enhancement-advisor (200 GET+POST)
+- Preveril doc sync: AI_ENDPOINTS.md (287 ✅), README v7.61 (15 refs ✅), README 287 AI (6 refs ✅), CHANGELOG v7.61 ✅
+- Preveril lint: 0 napak ✨
+- Preveril typecheck: 0 napak ✨
+- Posodobil GitHub About opis: 285 AI → 287 AI, 419 routes → 422 routes (via API PATCH)
+- Commit: "v7.61: Negotiation Script Generator + Inventory Insurance Calculator + Photo Enhancement Advisor" (79a939d)
+- Push na GitHub: uspešen ✅, PAT očiščen ✅
+- Agent Browser self-verification:
+  - Stran se pravilno naloži (HTTP 200)
+  - AI Hub prikazuje photo-enhancement-advisor (v7.61) v iskalniku ✅
+  - AI Hub prikazuje negotiation-script-generator (v7.61) v iskalniku ✅
+  - Runner test photo-enhancement-advisor: POST → valid JSON ✅
+    Response: {"ok":true, "items":[], "summary":{...}, "aiUsed":false, "message":"Ni held item-ov s slikami..."}
+  - Runner test negotiation-script-generator: POST → valid JSON ✅
+    Response: {"ok":true, "context":null, "script":null, "aiUsed":false, "message":"Ni najdenega oglasa..."}
+  - Brez runtime napak v dev.log
+
+Stage Summary:
+- v7.61 uspešno dokončana in potisnjena na GitHub
+- 3 nove funkcije: Negotiation Script Generator, Inventory Insurance Calculator, Photo Enhancement Advisor
+- AI endpointi: 285 → 287 (+2)
+- Analytics endpointi: 29 → 30 (+1)
+- Total API routes: 419 → 422 (+3)
+- Dokumentacija sinhrono posodobljena (AI_ENDPOINTS.md, README, CHANGELOG, GitHub About)
+- GitHub sinhroniziran (0 commit-ov ahead)
+- Verzija aplikacije: v7.61.0
