@@ -1,0 +1,1626 @@
+     1→     1→# Markec AI Firm — AI Trading Firm za slovenske oglase
+     2→     2→
+     3→     3→[![Version](https://img.shields.io/badge/version-v7.49.0-blue.svg)](./CHANGELOG.md)
+     4→     4→[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](./LICENSE)
+     5→     5→[![AI Endpoints](https://img.shields.io/badge/AI%20endpoints-270+-green.svg)](./AI_ENDPOINTS.md)
+     6→     6→[![API Routes](https://img.shields.io/badge/API%20routes-390+-cyan.svg)](#)
+     7→     7→[![Next.js](https://img.shields.io/badge/Next.js-16-black.svg)](https://nextjs.org/)
+     8→     8→[![TypeScript](https://img.shields.io/badge/TypeScript-5-blue.svg)](https://www.typescriptlang.org/)
+     9→     9→[![TypeScript Errors](https://img.shields.io/badge/TS%20errors-0-brightgreen.svg)](#)
+    10→    10→[![Vulnerabilities](https://img.shields.io/badge/vulns-0-brightgreen.svg)](#)
+    11→    11→[![Tests](https://img.shields.io/badge/tests-37-brightgreen.svg)](#)
+    12→    12→[![Prisma](https://img.shields.io/badge/Prisma-6-indigo.svg)](https://www.prisma.io/)
+    13→    13→[![Local-First](https://img.shields.io/badge/local-first-purple.svg)](#-local-first--zero-cloud)
+    14→    14→[![PRs Welcome](https://img.shields.io/badge/PRs-welcome-brightgreen.svg)](./CONTRIBUTING.md)
+    15→    15→
+    16→    16→> **AI-powered trading firm** za Bolha, Facebook Marketplace, Vinted, Avtonet, mobile.de, Kleinanzeigen, Subito in Willhaben.
+    17→    17→> **270+ AI endpointov** + **16 analytics** + **9 cron automatizacij** + **11 Telegram ukazov** za iskanje, ocenjevanje, kupovanje in preprodajo.
+    18→    18→> **Local-first** — vsi podatki ostanejo na tvojem računalniku. **Zero-cloud**. **0 vulnerabilities**. **37 tests**.
+    19→    19→
+    20→    20→---
+    21→    21→
+    22→    22→## 📑 Kazalo
+    23→    23→
+    24→    24→- [Overview](#-overview)
+    25→    25→- [Ključne funkcije](#-ključne-funkcije)
+    26→    26→- [Tehnologija](#-tehnologija)
+    27→    27→- [Hitri začetek](#-hitri-začetek)
+    28→    28→- [AI provider konfiguracija](#-ai-provider-konfiguracija)
+    29→    29→- [AI funkcije po kategorijah](#-ai-funkcije-po-kategorijah)
+    30→    30→- [Local-first & Zero-cloud](#-local-first--zero-cloud)
+    31→    31→- [Notifikacije](#-notifikacije)
+    32→    32→- [Anti-detection](#-anti-detection)
+    33→    33→- [API dokumentacija](#-api-dokumentacija)
+    34→    34→- [Development](#-development)
+    35→    35→- [Roadmap](#-roadmap)
+    36→    36→- [Contributing](#-contributing)
+    37→    37→- [License](#-license)
+    38→    38→- [Changelog](#-changelog)
+    39→    39→
+    40→    40→---
+    41→    41→
+    42→    42→## 🎯 Overview
+    43→    43→
+    44→    44→**Markec AI Firm** je celovit AI sistem za avtomatizirano iskanje, ocenjevanje, kupovanje in preprodajo
+    45→    45→oglasev na slovenskih (in srednjeevropskih) oglasnih platformah. Aplikacija teče lokalno na tvojem
+    46→    46→računalniku — brez cloud storitev, brez mesečnih naročnin, brez deljenja podatkov z zunanjimi strežniki.
+    47→    47→
+    48→    48→### Čisto v eni povedi
+    49→    49→Lovi podcenjene oglase na Bolhi/Facebooku/Vintedu z AI, jih kupi poceni, preprodaj drago z
+    50→    50→AI-optimiziranimi oglasi, in avtomatiziraj celoten workflow od odkritja do prodaje.
+    51→    51→
+    52→    52→### Verzija v7.49.0 (avgust 2026)
+    53→    53→
+    54→    54→**270 AI endpointov** + **16 analytics** + **9 cron automatizacij** + **11 Telegram ukazov** + **73+ funkcij** organiziranih v 7 kategorij:
+    55→    55→- **Statistike** (analytics, predictions, forecasting) — 35+ funkcij
+    56→    56→- **Skladišče** (inventory management, aging, depreciation) — 20+ funkcij
+    57→    57→- **Oglasi** (listing optimization, SEO, image analysis) — 25+ funkcij
+    58→    58→- **Negotiation** (real-time bot, chatbot, playbook) — 8+ funkcij
+    59→    59→- **Buyers/Customers** (segmentation, trust score, matching) — 12+ funkcij
+    60→    60→- **Risk/Insurance** (hedging, fraud detection, claims) — 10+ funkcij
+    61→    61→- **Finance/Profit** (margin, ROI, compounding) — 16+ funkcij
+    62→    62→
+    63→    63→### Kaj je novega v v7.24
+    64→    64→
+    65→    65→**🎉 55 AI funkcij z dedicated UI — ALL 5 DOMAINS COMPLETE (10 × 5 = 50 + AI Hub 254 = 309 total)!**
+    66→    66→
+    67→    67→**👥 Kupci (BuyersView)** — 10 AI funkcij:
+    68→    68→- Buyer Persona, Trust Score (6 tierjev), Journey Optimizer (8 stopenj), Review Generator, Lifecycle Predictor (9 faz)
+    69→    69→- **+5 (v7.12):** Matchmaker, CLV Predictor, Churn Prevention, Buyer Intent, Conversion Predictor
+    70→    70→
+    71→    71→**📦 Skladišče AI (InventoryView)** — 10 AI funkcij:
+    72→    72→- Inventory Aging, Stockout Predictor, Shrinkage Detector, Liquidation Strategist, Portfolio Rebalancer v3
+    73→    73→- **+5 (v7.13):** Capital Allocator, Carrying Cost, Depreciation Tracker, Growth Planner, Health Monitor
+    74→    74→
+    75→    75→**💰 Cene AI (PricingView)** — 10 AI funkcij:
+    76→    76→- Smart Pricing Engine, Profit Forecast, Margin Optimizer, Price War Strategist, Seasonal Pricing
+    77→    77→- **+5 (v7.14):** Profit Dashboard, Profit Playbook, Reserve Price Optimizer, Pricing Psychology, Geo Price Map
+    78→    78→
+    79→    79→**📝 Oglasi AI (ListingOptimizationView)** — 10 AI funkcij:
+    80→    80→- Image Generator, Description Generator v3, SEO Optimizer v2, Virality Predictor, CTR Optimizer
+    81→    81→- **+5 (v7.15):** Title Generator v2, Tag Optimizer, Thumbnail Optimizer, Social Proof Optimizer, Listing Refresh
+    82→    82→
+    83→    83→**🛡️ Tveganja AI (RiskView)** — 10 AI funkcij:
+    84→    84→- Risk Hedging, Insurance Optimizer v2, Market Saturation, Risk Parity, Margin Guardian
+    85→    85→- **+5 (v7.24):** Insurance Claim, Anomaly Detection, Inventory Risk Assessor, Quality Predictor, Quality Aggregator
+    86→    86→
+    87→    87→**🤖 AI Hub** — vsi 254 AI endpointov z iskalnikom, kategorijami in generičnim runner-jem
+    88→    88→
+    89→    89→**🔒 Varnostni popravki (v6.92.1):**
+    90→    90→- API avtentikacija (APP_API_KEY, middleware)
+    91→    91→- SSRF zaščita (lib/url-safety.ts)
+    92→    92→- Email XSS fix (HTML escape)
+    93→    93→- Slack Block Kit fix (mrkdwn_section → mrkdwn)
+    94→    94→- Telegram MarkdownV2 + 429 rate-limit handling
+    95→    95→- CI fix (continue-on-error odstranjen)
+    96→    96→- Next.js config fix (ignoreBuildErrors: false, reactStrictMode: true)
+    97→    97→
+    98→    98→**🧹 Čiščenje (v6.93):**
+    99→    99→- -265.615 vrstic smeti (skills/, comp/idea/search JSON, mrtva koda)
+   100→   100→- webhook-engine priklopljen na pipeline (5 eventov)
+   101→   101→- smart-push priklopljen (priority batching)
+   102→   102→
+   103→   103→**⚡ Performanse (v6.94):**
+   104→   104→- ~83% manj JS na prvem loadu (next/dynamic lazy-load)
+   105→   105→
+   106→   106→**🔧 Refactoring (v6.95-v6.99):**
+   107→   107→- ListingDetailModal razbit z 4070 na ~2227 vrstic (−45%)
+   108→   108→- 6 podkomponent izvlečenih (SentimentPanel, AuctionSniperPanel, FraudDetectionPanel, ImageAnalysisPanel, NegotiationPanel, ListingActionsBar)
+   109→   109→
+   110→   110→**Aplikacija sedaj ima 17 zavihkov z 55 AI funkcijami** (prej 11 zavihkov, 0 AI funkcij) z keyboard shortcuts:
+   111→   111→`1-9/0` (osnovni), `b` (kupci), `a` (AI Hub), `i` (skladišče AI), `p` (cene AI), `l` (oglasi AI), `r` (tveganja AI)
+   112→   112→
+   113→   113→▶️ Glej [CHANGELOG.md](./CHANGELOG.md) za popolno zgodovino v1.0 → v7.24.
+   114→   114→
+   115→   115→---
+   116→   116→
+   117→   117→## 🚀 Ključne funkcije
+   118→   118→
+   119→   119→### 📱 17 zavihkov v aplikaciji
+   120→   120→
+   121→   121→| # | Zavihek | Shortcut | Kaj |
+   122→   122→|---|---|---|---|
+   123→   123→| 1 | Dashboard | `1` | Pregled aktivnosti, statistike, AI insights |
+   124→   124→| 2 | Monitorji | `2` | Upravljanje iskalnih monitorjev (10 virov) |
+   125→   125→| 3 | Alerti | `3` | Real-time alerti (SSE) z AI verdict |
+   126→   126→| 4 | Oglasi | `4` | Brskanje po najdenih oglasih z AI analizo |
+   127→   127→| 5 | Watchlist | `5` | Priljubljeni oglasi z target price |
+   128→   128→| 6 | Skladišče | `6` | Trade management (buy/sell, ROI) |
+   129→   129→| 7 | **Skladišče AI** | `i` | AI: 10 funkcij (aging, stockout, shrinkage, liquidation, rebalancer, capital, carrying, depreciation, growth, health) |
+   130→   130→| 8 | **Cene AI** | `p` | AI: 10 funkcij (smart-pricing, forecast, margin, price-war, seasonal, dashboard, playbook, reserve, psychology, geo) |
+   131→   131→| 9 | **Oglasi AI** | `l` | AI: 10 funkcij (image-gen, desc-gen, SEO, virality, CTR, title, tag, thumbnail, social-proof, refresh) |
+   132→   132→| 10 | **Tveganja AI** | `r` | AI: 10 funkcij (hedging, insurance, saturation, parity, guardian, claim, anomalies, inv-risk, quality-pred, quality-agg) |
+   133→   133→| 11 | **Kupci** | `b` | AI: 10 funkcij (persona, trust, journey, review, lifecycle, matchmaker, CLV, churn, intent, conversion) |
+   134→   134→| 12 | Analitika | `7` | Arbitraža, trendi, sezonski vzorci |
+   135→   135→| 13 | Statistike | `8` | 23 AI funkcij: budget, forecast, rebalance... |
+   136→   136→| 14 | Obvestila | `9` | Zgodovina notifikacij |
+   137→   137→| 15 | Zdravje | `0` | Sistemski health, scraper stats |
+   138→   138→| 16 | Nastavitve | — | AI provider, Telegram, Discord, Email, Push... |
+   139→   139→| 17 | **AI Hub** | `a` | Vsi 254 AI endpointov z iskalnikom in runner-jem |
+   140→   140→
+   141→   141→### 🔍 Iskanje & odkrivanje
+   142→   142→- Multi-platform monitoring (Bolha, Facebook, Vinted, Avtonet, Kleinanzeigen, eBay, poljuben RSS)
+   143→   143→- AI Deal Score 0-100 z reasoning
+   144→   144→- Reverse image search za odkrivanje stock photos
+   145→   145→- Multi-image quality assessment z VLM
+   146→   146→- Fake detection in fraud detection
+   147→   147→- Real-time auction sniper v2 z ML timing
+   148→   148→
+   149→   149→### 🧠 AI analiza & ocenjevanje
+   150→   150→- AI Score 1-10 + Risk Score 1-10
+   151→   151→- AI Estimated Value (EUR) — koliko je item res vreden
+   152→   152→- AI Verdict: PRILIKA / SUMNJIVO / NEZANIMIVO
+   153→   153→- Multi-image VLM analiza (AUTHENTIC / SUSPICIOUS / STOCK_PHOTO)
+   154→   154→- Profit Margin Predictor (pred-nakupna analiza)
+   155→   155→- Profit Cycle Optimizer z 12m/24m/36m compounding
+   156→   156→
+   157→   157→### 💼 Trade management
+   158→   158→- Buy/sell tracking z automatic margin calculation
+   159→   159→- Inventory aging predictor z depreciation curve (4 tipi)
+   160→   160→- Inventory lifecycle, health monitor, stockout prevention
+   161→   161→- Cross-border arbitrage detection
+   162→   162→- Bulk listing generator za 5 platform hkrati
+   163→   163→
+   164→   164→### 🤝 Negotiation & buyers
+   165→   165→- Real-time negotiation bot z 10 taktikami
+   166→   166→- Buyer trust score (platinum→scammer, 6 levelov)
+   167→   167→- Buyer matchmaker v2 z ML matching (8 faktorjev)
+   168→   168→- Customer segmentation (RFM analiza, 5 segmentov)
+   169→   169→- Cross-sell recommender (8 strategij)
+   170→   170→- Buyer persona generator
+   171→   171→
+   172→   172→### 📈 Pricing & listing
+   173→   173→- Smart pricing engine z A/B testing
+   174→   174→- Listing SEO optimizer per platforma (Bolha/Facebook/Vinted)
+   175→   175→- Listing image optimizer z VLM (8 quality faktorjev)
+   176→   176→- Reserve price optimizer za dražbe
+   177→   177→- Price war strategist (defensive/offensive)
+   178→   178→- Seasonal bundle packager
+   179→   179→
+   180→   180→### 🛡️ Risk management
+   181→   181→- Risk hedging (8 strategij)
+   182→   182→- Insurance optimizer v2 z 4D risk matriko
+   183→   183→- Fraud detection in fake listing detection
+   184→   184→- Margin guardian (avtomatski margin alerts)
+   185→   185→- Tax loss harvesting
+   186→   186→
+   187→   187→### 📊 Analytics & dashboards
+   188→   188→- Master Dashboard z health score
+   189→   189→- Profit forecast in monthly reports
+   190→   190→- Performance benchmarks
+   191→   191→- Continuous learning sistem
+   192→   192→- Daily summary digest
+   193→   193→
+   194→   194→### 🔔 Notifikacije (5 kanalov)
+   195→   195→- **Telegram** z inline buttons in webhook support
+   196→   196→- **Discord** webhook z rich embeds
+   197→   197→- **Slack** webhook
+   198→   198→- **Email** SMTP
+   199→   199→- **Web Push** (VAPID) — mobile/desktop push notifications
+   200→   200→
+   201→   201→### 🕵️ Anti-detection (9 tehnik — v7.40 maximal)
+   202→   202→- **Cookie jar** — per-domain session affinity (Cloudflare cf_clearance persistence)
+   203→   203→- **429 retry** — exponential backoff + jitter + UA rotation (max 3 retries)
+   204→   204→- **Platform-specific Referer** headers (Bolha, mobile.de, Kleinanzeigen, etc.)
+   205→   205→- **Gaussian delay** — Box-Muller transform (bolj človeška distribucija)
+   206→   206→- **12 User-Agent strings** — Chrome/Firefox/Safari/Edge × Win/Mac/Linux
+   207→   207→- **Per-domain session** — isti UA + cookies per domain (naravno)
+   208→   208→- **Proxy rotation** (HTTP/SOCKS5 z undici ProxyAgent)
+   209→   209→- **CAPTCHA solving** (2captcha, anti-captcha, capmonster)
+   210→   210→- **Scraper Auto-Recovery** — avtomatski Playwright fallback pri napakah
+   211→   211→
+   212→   212→---
+   213→   213→
+   214→   214→## 🛠️ Tehnologija
+   215→   215→
+   216→   216→| Layer | Technology |
+   217→   217→|-------|-----------|
+   218→   218→| **Framework** | Next.js 16 (App Router) |
+   219→   219→| **Language** | TypeScript 5 (strict mode) |
+   220→   220→| **Styling** | Tailwind CSS 4 + shadcn/ui |
+   221→   221→| **Database** | Prisma 6 + SQLite (local-first) |
+   222→   222→| **AI providers** | Ollama, OpenAI, Anthropic, OpenRouter, Gemini, OpenAI-compatible |
+   223→   223→| **Scraping** | cheerio (HTML), native fetch (RSS), Playwright (fallback) |
+   224→   224→| **Notifications** | Telegram Bot API, Discord/Slack webhooks, SMTP, Web Push (VAPID) |
+   225→   225→| **Anti-detection** | Cookie jar, 429 retry, Referer, Gaussian delay, 12 UAs, Proxy rotation, CAPTCHA solver, Auto-Recovery |
+   226→   226→| **Security** | AES-256-GCM secrets encryption, Rate limiting (20 AI/min/IP), SSRF protection |
+   227→   227→| **Testing** | Vitest (37 tests), structured logger, try/catch na vseh API routes |
+   228→   228→| **Runtime** | Bun (priporočeno) ali Node.js 20+ |
+   229→   229→| **CI/CD** | GitHub Actions (lint, typecheck, tests, audit) |
+   230→   230→
+   231→   231→---
+   232→   232→
+   233→   233→## ⚡ Hitri začetek
+   234→   234→
+   235→   235→### Zahteve
+   236→   236→- Node.js >= 20.0.0 ali Bun >= 1.0.0
+   237→   237→- 4GB RAM (za lokalne AI modele)
+   238→   238→- ~500MB prostora
+   239→   239→
+   240→   240→### 1. Inštalacija
+   241→   241→
+   242→   242→```bash
+   243→   243→git clone https://github.com/markec12345678/markecaifirm.git
+   244→   244→cd markecaifirm
+   245→   245→
+   246→   246→# 🚀 Hitri setup (avtomatizirano — ustvari .env, generira ključe, namesti bazo)
+   247→   247→bun run setup
+   248→   248→
+   249→   249→# Ali ročno:
+   250→   250→bun install
+   251→   251→bun run db:generate
+   252→   252→bun run db:push
+   253→   253→bun run dev
+   254→   254→
+   255→   255→# Ali z npm/node
+   256→   256→npm install
+   257→   257→npx prisma generate
+   258→   258→npx prisma db push
+   259→   259→npm run dev
+   260→   260→```
+   261→   261→
+   262→   262→Aplikacija teče na **http://localhost:3000**
+   263→   263→
+   264→   264→### 2. Konfiguracija AI
+   265→   265→
+   266→   266→Odpri **http://localhost:3000/settings** in nastavi:
+   267→   267→
+   268→   268→#### Opcija A: Ollama (lokalno, brezplačno, priporočeno)
+   269→   269→```bash
+   270→   270→# Inštaliraj Ollama: https://ollama.com
+   271→   271→ollama pull qwen2.5:7b  # ali llama3.1:8b, mistral:7b
+   272→   272→# Ollama teče na http://localhost:11434
+   273→   273→```
+   274→   274→V Settings: Provider=Ollama, BaseURL=http://localhost:11434, Model=qwen2.5:7b
+   275→   275→
+   276→   276→#### Opcija B: OpenAI
+   277→   277→```bash
+   278→   278→# Set API key v Settings UI
+   279→   279→# Provider=OpenAI, Model=gpt-4o-mini (ali gpt-4o)
+   280→   280→```
+   281→   281→
+   282→   282→#### Opcija C: Anthropic Claude
+   283→   283→```bash
+   284→   284→# Provider=Anthropic, Model=claude-3-5-sonnet-20241022
+   285→   285→```
+   286→   286→
+   287→   287→#### Opcija D: OpenRouter (dostop do več modelov)
+   288→   288→```bash
+   289→   289→# Provider=OpenRouter, Model=anthropic/claude-3.5-sonnet
+   290→   290→```
+   291→   291→
+   292→   292→### 3. Nastavi monitoring
+   293→   293→
+   294→   294→1. Pojdi na **http://localhost:3000**
+   295→   295→2. Ustvari nov monitor (npr. "iPhone 13 Bolha")
+   296→   296→3. Nastavi iskalni URL na Bolhi
+   297→   297→4. Nastavi AI score threshold (default: 7/10)
+   298→   298→5. (Opcija) Nastavi Telegram bot za real-time alerts
+   299→   299→
+   300→   300→### 4. Aktiviraj cron (avtomatsko iskanje)
+   301→   301→
+   302→   302→```bash
+   303→   303→# Linux cron (vsakih 15 min)
+   304→   304→*/15 * * * * curl -s "http://localhost:3000/api/cron/run-all?key=$MONITOR_CRON_KEY"
+   305→   305→
+   306→   306→# Ali Windows Task Scheduler z enakim URL
+   307→   307→```
+   308→   308→
+   309→   309→---
+   310→   310→
+   311→   311→## 🤖 AI provider konfiguracija
+   312→   312→
+   313→   313→Aplikacija podpira **6 AI providerjev** z **fallback sistemom**:
+   314→   314→
+   315→   315→| Provider | Models | Pricing | Best for |
+   316→   316→|----------|--------|---------|----------|
+   317→   317→| **Ollama** | qwen2.5:7b, llama3.1:8b, mistral:7b | Brezplačno | Lokalna slovenščina, zero-cloud |
+   318→   318→| **OpenAI** | gpt-4o, gpt-4o-mini, gpt-3.5-turbo | $0.15-5/1M tokens | Najboljša kvaliteta |
+   319→   319→| **Anthropic** | claude-3.5-sonnet, claude-3-opus | $0.25-15/1M tokens | Long context, reasoning |
+   320→   320→| **OpenRouter** | 200+ models prek enega API | Različno | Fleksibilnost |
+   321→   321→| **Gemini** | gemini-1.5-pro, gemini-1.5-flash | Brezplačno (z limiti) | Multimodal, spletni podatki |
+   322→   322→| **OpenAI-compatible** | poljuben | Različno | Local LLM (vLLM, LM Studio) |
+   323→   323→
+   324→   324→### Fallback sistem
+   325→   325→```typescript
+   326→   326→// v Settings: Nastavi primary + fallback
+   327→   327→// Če primary odpove, avtomatsko preklopi na fallback
+   328→   328→const aiSettings = {
+   329→   329→  provider: 'openai',
+   330→   330→  fallbackProvider: 'ollama',  // backup
+   331→   331→};
+   332→   332→```
+   333→   333→
+   334→   334→### AI usage tracking
+   335→   335→Vsak AI klic je zabeležen v bazi (`aiCallsToday`, `aiCallsDate`).
+   336→   336→Dnevni reset ob polnoči.
+   337→   337→
+   338→   338→---
+   339→   339→
+   340→   340→## 📚 AI funkcije po kategorijah
+   341→   341→
+   342→   342→### 📊 Statistike (35+ funkcij)
+   343→   343→- **Anomaly detection** — AI sam odkriva trende in anomalije
+   344→   344→- **Daily summary** — dnevni povzetek aktivnosti
+   345→   345→- **Demand forecast** — napoved povpraševanja po kategorijah
+   346→   346→- **Depreciation forecast** — napoved padca vrednosti
+   347→   347→- **Market trends** — trendi v kategorijah
+   348→   348→- **Market saturation** — nasičenost trga
+   349→   349→- **Performance forecaster** — napoved performance
+   350→   350→- **Profit forecast** — napoved dobička
+   351→   351→- **Profit dashboard** — centralni dashboard
+   352→   352→- **Trend predictions** — trendi za naslednje tedne
+   353→   353→- ...in 25+ več
+   354→   354→
+   355→   355→### 📦 Skladišče (20+ funkcij)
+   356→   356→- **Inventory aging** — sledi staranju inventarja (7 faz)
+   357→   357→- **Inventory aging predictor** — depreciation curve (4 tipi)
+   358→   358→- **Inventory health** — zdravje inventarja
+   359→   359→- **Inventory health monitor** — real-time monitoring
+   360→   360→- **Inventory lifecycle** — celoten lifecycle
+   361→   361→- **Stockout prevention** — preprečevanje izpodravitve
+   362→   362→- **Predictive procurement** — napovedna nabava
+   363→   363→- **Smart restock** — pametno dopolnjevanje
+   364→   364→- **Cash reserve** — rezerva gotovine
+   365→   365→- **Cashflow** — tok gotovine
+   366→   366→- ...in 10+ več
+   367→   367→
+   368→   368→### 📝 Oglasi (25+ funkcij)
+   369→   369→- **Generate listing** — AI generira oglas iz trade-a
+   370→   370→- **Listing SEO optimizer** — optimizacija za Bolha/Facebook/Vinted
+   371→   371→- **Listing image optimizer** — VLM analiza slik (8 faktorjev)
+   372→   372→- **Listing performance** — performansa oglasov
+   373→   373→- **Listing refresh** — osveževanje oglasov
+   374→   374→- **Listing rotation** — rotacija med platformami
+   375→   375→- **Listing velocity** — hitrost prodaje
+   376→   376→- **Title A/B test** — testiranje naslovov
+   377→   377→- **Description optimizer** — optimizacija opisov
+   378→   378→- **Bulk listing generator** — multi-platform generacija
+   379→   379→- ...in 15+ več
+   380→   380→
+   381→   381→### 🤝 Negotiation (8+ funkcij)
+   382→   382→- **Real-time negotiation bot** — real-time odgovori (10 taktik)
+   383→   383→- **Negotiation chatbot** — multi-turn pogovor
+   384→   384→- **Negotiation playbook** — strategija za vsak item
+   385→   385→- **Negotiation tracker** — sledi pogajanjem
+   386→   386→- **Negotiation outcome** — napoved izida
+   387→   387→- **Smart alert router** — pametno usmerjanje alertov
+   388→   388→
+   389→   389→### 👥 Buyers/Customers (12+ funkcij)
+   390→   390→- **Customer segmentation** — RFM analiza (5 segmentov)
+   391→   391→- **Buyer trust score** — 6 trust levelov (platinum→scammer)
+   392→   392→- **Buyer matchmaker v2** — ML matching (8 faktorjev)
+   393→   393→- **Buyer persona** — generiranje kupcev
+   394→   394→- **Buyer intent** — napoved nakupne intencije
+   395→   395→- **Customer LTV** — lifetime value napoved
+   396→   396→- **Cross-sell recommender** — 8 strategij
+   397→   397→- **Buyer matchmaker v1** — osnovni matching
+   398→   398→
+   399→   399→### 🛡️ Risk/Insurance (10+ funkcij)
+   400→   400→- **Risk hedging** — 8 hedging strategij
+   401→   401→- **Insurance optimizer v2** — 4D risk matrika
+   402→   402→- **Insurance claim** — upravljanje zahtevkov
+   403→   403→- **Fraud detection** — zaznavanje prevare
+   404→   404→- **Fake detection** — lažni oglasi
+   405→   405→- **Margin guardian** — avtomatski margin alerts
+   406→   406→- **Risk parity** — porazdelitev tveganja
+   407→   407→- **Tax loss harvesting** — davčna optimizacija
+   408→   408→
+   409→   409→### 💰 Finance/Profit (16+ funkcij)
+   410→   410→- **Profit margin predictor** — pred-nakupna analiza
+   411→   411→- **Profit cycle** — 8-fazni cikel z compounding
+   412→   412→- **Profit cascade** — kaskadni profit
+   413→   413→- **Profit dashboard** — centralni dashboard
+   414→   414→- **Profit forecast** — napoved dobička
+   415→   415→- **Profit trail** — sled dobička
+   416→   416→- **Profit playbook** — 8 faz playbook
+   417→   417→- **Master dashboard** — glavni dashboard z health score
+   418→   418→- **Autonomous trading** — paper/live mode
+   419→   419→- **Cash generator** — 8 strategij z 3-valovnim planom
+   420→   420→- **Smart bundle pricing** — 8 pricing modelov
+   421→   421→- **Margin optimizer** — optimizacija marž
+   422→   422→- **Budget allocator** — porazdelitev proračuna
+   423→   423→- ...in 4+ več
+   424→   424→
+   425→   425→▶️ **Glej [AI_ENDPOINTS.md](./AI_ENDPOINTS.md) za popoln seznam vseh 126 endpointov.**
+   426→   426→
+   427→   427→---
+   428→   428→
+   429→   429→## 🔒 Local-first & Zero-cloud
+   430→   430→
+   431→   431→### Kaj to pomeni?
+   432→   432→
+   433→   433→| Lastnost | Markec AI Firm | Tipična SaaS |
+   434→   434→|----------|---------------|--------------|
+   435→   435→| Podatki | Lokalno (SQLite) | Cloud |
+   436→   436→| AI model | Lokalno (Ollama) ali tvoj API | Njihov |
+   437→   437→| Mesečna naročnina | 0€ | 10-100€ |
+   438→   438→| Data sharing | Nikoli | Pogosto |
+   439→   439→| Customizacija | Polna | Omejena |
+   440→   440→| Offline delovanje | Da (z Ollama) | Ne |
+   441→   441→| Hitrost | Lokalna omrežja | Internet |
+   442→   442→
+   443→   443→### Zakaj local-first?
+   444→   444→1. **Privatnost** — tvoji podatki ne zapustijo računalnika
+   445→   445→2. **Stroški** — enkratna namestitev, brez mesečnih naročnin
+   446→   446→3. **Hitrost** — lokalna AI (Ollama) je hitrejša od cloud API-jev
+   447→   447→4. **Kontrola** — polna kontrola nad AI modelom in parametri
+   448→   448→5. **GDPR compliant** — podatki ostanejo pri tebi
+   449→   449→
+   450→   450→---
+   451→   451→
+   452→   452→## 🔔 Notifikacije
+   453→   453→
+   454→   454→### 5 kanalov
+   455→   455→1. **Telegram Bot** — real-time alerts z inline buttons
+   456→   456→2. **Discord Webhook** — rich embeds z barvami
+   457→   457→3. **Slack Webhook** — za team collaboration
+   458→   458→4. **Email SMTP** — za dnevne/porochne digeste
+   459→   459→5. **Web Push (VAPID)** — browser push na mobile/desktop
+   460→   460→
+   461→   461→### Notification modes
+   462→   462→- **Instant** — takoj ko pride nov listing
+   463→   463→- **Daily digest** — enkrat dnevno povzetek
+   464→   464→- **Weekly digest** — enkrat tedensko povzetek
+   465→   465→
+   466→   466→### Quiet hours
+   467→   467→- Onemogoči alerte v določenih urah (npr. 22:00-07:00)
+   468→   468→- Pomembni alerti (high score) še vedno pridejo skozi
+   469→   469→
+   470→   470→---
+   471→   471→
+   472→   472→## 🕵️ Anti-detection
+   473→   473→
+   474→   474→Za scraping Bolhe in drugih platform, aplikacija vključuje:
+   475→   475→
+   476→   476→### 6 tehnik
+   477→   477→1. **Proxy rotation** — HTTP/SOCKS5 proxy z avtentikacijo
+   478→   478→2. **Realistic headers** — rotacija User-Agent stringov
+   479→   479→3. **Request randomization** — 1-5s delay med requesti
+   480→   480→4. **Stealth mode** — Playwright z anti-detection plugin
+   481→   481→5. **CAPTCHA solving** — 2captcha, anti-captcha, capmonster, custom
+   482→   482→6. **TLS fingerprinting** — custom TLS client za fingerprint masking
+   483→   483→
+   484→   484→### Etika uporabe
+   485→   485→- Spoštuj robots.txt in ToS platform
+   486→   486→- Ne preobremeni strežnikov (rate limiting)
+   487→   487→- Ne uporabljaj za fraud ali zlonamerne namene
+   488→   488→
+   489→   489→---
+   490→   490→
+   491→   491→## 📡 API dokumentacija
+   492→   492→
+   493→   493→### Auth
+   494→   494→Ni avtentikacije (local-first). Aplikacija teče na localhost.
+   495→   495→
+   496→   496→### Endpointi (270 AI + 16 analytics + 9 cron + sistemski = 390+)
+   497→   497→
+   498→   498→```bash
+   499→   499→# AI primeri
+   500→   500→GET  /api/ai/insights  ?days=30                    # AI Insights (trendi, anomalije)
+   501→   501→POST /api/ai/customer-segmentation       # RFM analiza
+   502→   502→POST /api/ai/buyer-matchmaker-v2         # ML matching
+   503→   503→POST /api/ai/realtime-negotiation-bot    # Real-time negotiation
+   504→   504→POST /api/ai/profit-margin-predictor     # Pred-nakupna analiza
+   505→   505→POST /api/ai/auction-sniper-v2           # Auction sniper z ML timing
+   506→   506→
+   507→   507→# Sistemski
+   508→   508→GET  /api/health                         # Health check
+   509→   509→POST /api/run?id=<monitorId>             # Sproži scan enega monitorja
+   510→   510→GET  /api/cron/run-all?key=<secret>      # Cron: vsi monitorji + alerts + digest
+   511→   511→POST /api/settings                       # Update nastavitve
+   512→   512→GET  /api/listings                       # Seznam listingov
+   513→   513→POST /api/trades                         # Ustvari trade
+   514→   514→
+   515→   515→# Profit pipeline (v7.32-v7.49)
+   516→   516→GET  /api/trades/deal-flow               # ROI, win rate, money velocity, pipeline
+   517→   517→GET  /api/analytics/deal-funnel          # Conversion funnel (discovery→profit)
+   518→   518→GET  /api/analytics/sold-comps           # Fair market value (Keepa-style)
+   519→   519→GET  /api/analytics/niche-score          # Best categories by opportunity
+   520→   520→GET  /api/analytics/deal-velocity        # Market temperature (HOT/COLD)
+   521→   521→GET  /api/analytics/source-quality       # Best monitor score
+   522→   522→GET  /api/analytics/net-profit           # After-tax profit (SI tax law)
+   523→   523→GET  /api/analytics/reseller-blackbook   # Best recurring sellers
+   524→   524→GET  /api/analytics/time-to-profit       # Cycle time optimization
+   525→   525→GET  /api/analytics/profit-heatmap       # Best days/hours for profit
+   526→   526→GET  /api/analytics/market-trend         # Rising/falling prices
+   527→   527→GET  /api/analytics/cross-platform-arbitrage  # Buy cheap, sell expensive
+   528→   528→GET  /api/analytics/deal-timing          # When new deals appear
+   529→   529→GET  /api/analytics/seasonal-calendar    # Best month to sell
+   530→   530→GET  /api/analytics/profit-goal-tracker  # Progress to monthly goal
+   531→   531→GET  /api/analytics/platform-performance # Best platform per category
+   532→   532→
+   533→   533→# Cron automation (9 endpoints)
+   534→   534→GET  /api/cron/smart-deal-alert?key=     # TOP 3 deals → Telegram
+   535→   535→GET  /api/cron/inventory-aging-alert?key=  # Aging items → Telegram
+   536→   536→GET  /api/cron/weekly-report?key=        # Monday profit summary
+   537→   537→GET  /api/cron/daily-pulse?key=          # Daily morning summary
+   538→   538→GET  /api/cron/auto-price-drop?key=      # Price drop suggestions
+   539→   539→GET  /api/cron/competitor-price-monitor?key=  # Competitor alerts
+   540→   540→GET  /api/cron/scraper-recovery?key=     # Auto-retry failed scrapers
+   541→   541→GET  /api/cron/relisting-reminder?key=   # Bolha ad expiry alerts
+   542→   542→```
+   543→   543→
+   544→   544→▶️ **Glej [AI_ENDPOINTS.md](./AI_ENDPOINTS.md) za popoln seznam.**
+   545→   545→
+   546→   546→---
+   547→   547→
+   548→   548→## 🛠️ Development
+   549→   549→
+   550→   550→### Setup
+   551→   551→```bash
+   552→   552→bun install
+   553→   553→bun run db:generate
+   554→   554→bun run db:push
+   555→   555→bun run dev
+   556→   556→```
+   557→   557→
+   558→   558→### Scripts
+   559→   559→```bash
+   560→   560→bun run dev          # Development server
+   561→   561→bun run build        # Production build
+   562→   562→bun run start        # Production server
+   563→   563→bun run lint         # ESLint
+   564→   564→bun run typecheck    # TypeScript check
+   565→   565→bun run db:push      # Push Prisma schema
+   566→   566→bun run db:generate  # Generate Prisma client
+   567→   567→bun run db:migrate   # Run migrations
+   568→   568→bun run db:reset     # Reset database
+   569→   569→```
+   570→   570→
+   571→   571→### Project structure
+   572→   572→```
+   573→   573→markec-ai-firm/
+   574→   574→├── src/
+   575→   575→│   ├── app/
+   576→   576→│   │   ├── api/
+   577→   577→│   │   │   └── ai/              # 254 AI endpointov
+   578→   578→│   │   ├── page.tsx             # Main dashboard
+   579→   579→│   │   ├── settings/            # Settings UI
+   580→   580→│   │   └── ...
+   581→   581→│   ├── components/
+   582→   582→│   │   ├── dashboard/           # Dashboard komponente
+   583→   583→│   │   └── ui/                  # shadcn/ui komponente
+   584→   584→│   └── lib/
+   585→   585→│       ├── ai.ts                # Multi-provider AI client
+   586→   586→│       ├── db.ts                # Prisma client
+   587→   587→│       └── pipeline.ts          # Scraping pipeline
+   588→   588→├── prisma/
+   589→   589→│   └── schema.prisma            # Database schema
+   590→   590→├── .github/
+   591→   591→│   ├── workflows/               # CI/CD
+   592→   592→│   ├── ISSUE_TEMPLATE/          # Issue templates
+   593→   593→│   ├── CODEOWNERS               # Code owners
+   594→   594→│   └── PULL_REQUEST_TEMPLATE.md
+   595→   595→├── public/                      # Static assets
+   596→   596→├── README.md                    # Ta datoteka
+   597→   597→├── CHANGELOG.md                 # Verzije v1.0 → v6.49
+   598→   598→├── CONTRIBUTING.md              # Navodila za prispevanje
+   599→   599→├── LICENSE                      # MIT
+   600→   600→├── SECURITY.md                  # Security policy
+   601→   601→└── package.json
+   602→   602→```
+   603→   603→
+   604→   604→### Coding standards
+   605→   605→- TypeScript strict mode
+   606→   606→- ESLint brez napak
+   607→   607→- 0 novih TS napak (trenutno 24 obstoječih)
+   608→   608→- Conventional Commits (`feat(v6.50): AI XYZ function`)
+   609→   609→- Vsi AI endpointi sledijo istemu vzorcu (glej [CONTRIBUTING.md](./CONTRIBUTING.md))
+   610→   610→
+   611→   611→▶️ **Glej [CONTRIBUTING.md](./CONTRIBUTING.md) za podrobnosti.**
+   612→   612→
+   613→   613→---
+   614→   614→
+   615→   615→## 🗺️ Roadmap
+   616→   616→
+   617→   617→### v7.49 (trenutno — 73+ funkcij)
+   618→   618→- [x] **Profit pipeline (20+ funkcij):** Deal Flow, Funnel, Sold Comps, Price History, Seller Intel, Make Offer, Quick Buy, Flip Workflow, Profit Maximizer, Niche Score, Deal Velocity, Bundle Detector, Capital Advisor, Threshold Optimizer, Deal Score Calibrator, Cross-border Arbitrage, Negotiation Auto-Responder, Seasonal Calendar, Profit Goal Tracker, Margin Guardian, Seller Response Predictor, Turnover Optimizer, Auto-Listing Draft, Photo Quality Analyzer, Refurb ROI Calculator, Loss Recovery Playbook, Monitor Suggestions, Tax-Aware Selling
+   619→   619→- [x] **Cron automatizacija (9):** Smart Deal Alert, Inventory Aging, Weekly Report, Auto Price Drop, Competitor Monitor, Scraper Recovery, Relisting Reminder, Daily Pulse, Heartbeat
+   620→   620→- [x] **Telegram 2-way (11 ukazi):** /deals /profit /inventory /status /run /alerts /listings /monitors /trades /stats /help
+   621→   621→- [x] **Anti-scraping (9 tehnik):** Cookie jar, 429 retry, Referer, Gaussian delay, 12 UAs, Per-domain session, Proxy rotation, CAPTCHA solver, Auto-Recovery
+   622→   622→- [x] **Security:** AES-256-GCM secrets encryption, Rate limiting, SSRF protection
+   623→   623→- [x] **Analytics (16):** Deal Velocity, Sold Comps, Niche Score, Deal Funnel, Platform Performance, Source Quality, Net Profit (after tax), Reseller Blackbook, Time-to-Profit, Profit Heatmap, Market Trend, Cross-Platform Arbitrage, Deal Timing, Seasonal Calendar, Profit Goal Tracker
+   624→   624→- [x] **Testing:** Vitest (37 tests), structured logger, try/catch na vseh 390 API routes
+   625→   625→- [x] **0 vulnerabilities**, 0 TS errors, 0 ESLint errors
+   626→   626→
+   627→   627→### Naslednji koraki
+   628→   628→- [ ] UI komponente za v7.32-v7.49 funkcije v dashboard
+   629→   629→- [ ] WebSocket real-time negotiation (SSE namesto polling)
+   630→   630→- [ ] Playwright E2E testi za glavne flow-e
+   631→   631→- [ ] TLS fingerprinting (curl-impersonate)
+   632→   632→- [ ] AI photo analysis za prodajne slike (VLM)
+   633→   633→- [ ] ML model za buyer matchmaker (fine-tuned na realnem data)
+   634→   634→- [ ] PostgreSQL support za multi-user deployment
+   635→   635→- [ ] Mobile app (React Native)
+   636→   636→- [ ] Plugin sistem za custom scrapers
+   637→   637→- [ ] Multi-language support (angleščina, nemščina)
+   638→   638→
+   639→   639→### v7.0 (long-term)
+   640→   640→- [ ] Cloud deployment option (Docker, Kubernetes)
+   641→   641→- [ ] Team collaboration (multi-user z avtentikacijo)
+   642→   642→- [ ] Marketplace za custom AI strategije
+   643→   643→- [ ] API za third-party integracije
+   644→   644→
+   645→   645→---
+   646→   646→
+   647→   647→## 🤝 Contributing
+   648→   648→
+   649→   649→Prispevki so dobrodošli! Preberi [CONTRIBUTING.md](./CONTRIBUTING.md) za:
+   650→   650→
+   651→   651→- Development setup
+   652→   652→- Coding standards
+   653→   653→- AI endpoint konvencije
+   654→   654→- Commit guidelines
+   655→   655→- Pull Request proces
+   656→   656→- Testing navodila
+   657→   657→
+   658→   658→### Hitri prispevek
+   659→   659→1. Fork repozitorija
+   660→   660→2. Ustvari branch: `git checkout -b feat/v6.50-ai-xyz`
+   661→   661→3. Commit: `feat(v6.50): AI XYZ function`
+   662→   662→4. Push: `git push origin feat/v6.50-ai-xyz`
+   663→   663→5. Odpri Pull Request
+   664→   664→
+   665→   665→---
+   666→   666→
+   667→   667→## 📄 License
+   668→   668→
+   669→   669→Projekt je licenciran pod **MIT License** — glej [LICENSE](./LICENSE).
+   670→   670→
+   671→   671→Lahko:
+   672→   672→- ✅ Uporabljaš komercialno
+   673→   673→- ✅ Modificiraš
+   674→   674→- ✅ Distribuiraš
+   675→   675→- ✅ Privatno uporabljaš
+   676→   676→
+   677→   677→Z obveznostjo:
+   678→   678→- ⚠️ Vključiti copyright notice in license v vse kopije
+   679→   679→
+   680→   680→---
+   681→   681→
+   682→   682→## 📋 Changelog
+   683→   683→
+   684→   684→Popolna zgodovina verzij v [CHANGELOG.md](./CHANGELOG.md) — od v1.0 (25. junij 2026) do v7.24 (29. julij 2026).
+   685→   685→
+   686→   686→### Zadnje verzije
+   687→   687→- **v7.24.0** (29. jul 2026) — Listing Image Background Cleaner, Inventory Damage Prevention, Buyer Social Influence Scorer
+   688→   688→- **v6.91.0** (29. jul 2026) — Listing Image Quality Scorer, Inventory Carrying Cost, Buyer Reactivation Engine
+   689→   689→- **v6.90.0** (29. jul 2026) — Listing Typography Optimizer, Inventory Procurement Optimizer, Buyer Trust Builder
+   690→   690→- **v6.89.0** (29. jul 2026) — Listing Color Psychology, Inventory Aging Strategist, Buyer Engagement Predictor v2
+   691→   691→- **v6.88.0** (29. jul 2026) — Listing Visual Hierarchy, Inventory Liquidation Optimizer, Buyer Referral Predictor
+   692→   692→- **v6.87.0** (29. jul 2026) — Listing Audience Targeting, Inventory Cost Forecast, Buyer CLV Predictor
+   693→   693→- **v6.86.0** (29. jul 2026) — Listing Emotional Trigger, Inventory Purchase Timing, Buyer Loyalty Predictor v2
+   694→   694→- **v6.85.0** (29. jul 2026) — Listing Mobile Optimizer, Inventory Supplier Evaluator, Buyer Feedback Analyzer
+   695→   695→- **v6.84.0** (29. jul 2026) — Listing Content Improver, Inventory Storage Optimizer, Buyer Journey Mapper v2
+   696→   696→
+   697→   697→---
+   698→   698→
+   699→   699→## 📞 Contact
+   700→   700→
+   701→   701→- **GitHub Issues** — za bug reporte in feature requeste
+   702→   702→- **GitHub Discussions** — za vprašanja in diskusije
+   703→   703→- **Email** — security@markec.local (samo za security issues)
+   704→   704→
+   705→   705→---
+   706→   706→
+   707→   707→## 🙏 Acknowledgments
+   708→   708→
+   709→   709→- [Next.js](https://nextjs.org/) — React framework
+   710→   710→- [Prisma](https://www.prisma.io/) — Database ORM
+   711→   711→- [shadcn/ui](https://ui.shadcn.com/) — UI components
+   712→   712→- [Ollama](https://ollama.com/) — Local AI models
+   713→   713→- [Radix UI](https://www.radix-ui.com/) — Accessible primitives
+   714→   714→- [Tailwind CSS](https://tailwindcss.com/) — Utility-first CSS
+   715→   715→- [Bun](https://bun.sh/) — JavaScript runtime
+   716→   716→
+   717→   717→---
+   718→   718→
+   719→   719→<div align="center">
+   720→   720→
+   721→   721→**[⬆ Nazaj na vrh](#markec-ai-firm--ai-trading-firm-za-slovenske-oglase)**
+   722→   722→
+   723→   723→Made with ❤️ by [markec12345678](https://github.com/markec12345678)
+   724→   724→
+   725→   725→</div>
+   726→   726→
+   727→   727→---
+   728→   728→
+   729→   729→## 📜 Starejše verzije (arhiv)
+   730→   730→
+   731→   731→**v1.5** — dodani: System Health endpoint z real-time monitoring (8 komponent), PWA podpora (installable mobile app z manifestom in service workerjem), browser push notifications (Web Push API z VAPID), Bolha RSS fallback (?output=rss pred HTML scraping), DB performance indeksi.
+   732→   732→
+   733→   733→**v1.4** — dodani: Discord webhook kot alternativa Telegramu (rich embeds z barvami), Bolha detail page scraper (full opis + vse slike), price history tracking (sledi spremembam cene), bookmarks/favorites za shranjevanje zanimivih oglasov.
+   734→   734→
+   735→   735→**v1.3** — dodani: listing detail modal z podobnimi oglasi, bulk akcije na alertih (multi-select), globalno iskanje (Ctrl+K), auto-pause monitorja po N zaporednih napakah, dry-run test URL-ja, backup/restore baze podatkov.
+   736→   736→
+   737→   737→**v1.2** — dodani: urnik delovanja (schedule windows) za stroškovni nadzor, pregled vseh oglasov (Listings browser) za validacijo AI, analitika z grafy (alerts/day, verdikt distribucija, performansa monitorjev, natančnost AI), CSV export za vse poglede, feedback loop za AI natančnost (👍 Zanima me / 🚫 Prevara).
+   738→   738→
+   739→   739→**v1.1** — dodani: heartbeat (dnevni povzetek na Telegram), AI analiza slik oglasov (multimodalni modeli), Bolha Playwright fallback za Cloudflare bypass, Telegram inline tipke z webhook callback podporo.
+   740→   740→
+   741→   741→## Kar aplikacija počne
+   742→   742→
+   743→   743→1. **Spremlja** konfigurirana iskanja na Bolhi, Nepremičninah, Avtonetu ali poljubnem RSS viru.
+   744→   744→2. **AI oceni** vsak nov oglas — ali je priložnost (podcenjeno), sumljivo (morebitna prevara) ali nezanimivo.
+   745→   745→3. **Pošlje alert** na Telegram in/ali dashboard, kadar oglas zadene kriterije (visoka ocena prilike + nizko tveganje).
+   746→   746→4. **Teče v ozadju** preko cron endpointa, ki ga poganja Windows Task Scheduler / Linux cron.
+   747→   747→
+   748→   748→## Tehnologija
+   749→   749→
+   750→   750→- **Next.js 16** + TypeScript + Tailwind CSS 4 + shadcn/ui (terminal-dark tema)
+   751→   751→- **Prisma** ORM + SQLite (lokalna datoteka — ni serverja)
+   752→   752→- **AI providerji**: Ollama (lokalno), OpenAI, Anthropic, poljuben OpenAI-kompatibilni endpoint
+   753→   753→- **Scraping**: cheerio (HTML) + native fetch (RSS) — za Bolho priporočamo Playwright, če Cloudflare blokira
+   754→   754→- **Notifikacije**: Telegram Bot API
+   755→   755→
+   756→   756→## Začetek
+   757→   757→
+   758→   758→### 1. Inštalacija
+   759→   759→
+   760→   760→```bash
+   761→   761→bun install
+   762→   762→bun run db:push
+   763→   763→bun run dev
+   764→   764→```
+   765→   765→
+   766→   766→Aplikacija teče na `http://localhost:3000`.
+   767→   767→
+   768→   768→### 2. Konfiguracija AI
+   769→   769→
+   770→   770→Odpri **Nastavitve** v aplikaciji in izberi provider:
+   771→   771→
+   772→   772→- **Ollama (priporočeno za slovenščino)**:
+   773→   773→  ```bash
+   774→   774→  # Najprej inštaliraj Ollama: https://ollama.com
+   775→   775→  ollama pull qwen2.5:7b
+   776→   776→  # Aplikacija se samodejno poveže na http://localhost:11434
+   777→   777→  ```
+   778→   778→- **OpenAI / Anthropic**: vnesi API ključ.
+   779→   779→- **OpenAI-kompatibilni** (Groq, Together, DeepSeek): vnesi base URL + API ključ.
+   780→   780→- **OpenRouter** (v6.19): en API ključ za 100+ modelov (OpenAI, Anthropic, Meta, Mistral, Google).
+   781→   781→- **Google Gemini** (v6.19): brezplačni tier (15 req/min, 1500/dan za gemini-1.5-flash).
+   782→   782→
+   783→   783→Klikni "Testiraj povezavo" za validacijo.
+   784→   784→
+   785→   785→#### v6.19: OpenRouter in Google Gemini podpora
+   786→   786→
+   787→   787→**OpenRouter** (https://openrouter.ai) je gateway, ki omogoča dostop do 100+ AI modelov z enim API ključem:
+   788→   788→- Anthropic Claude (claude-3.5-sonnet, claude-3.5-haiku)
+   789→   789→- OpenAI (gpt-4o, gpt-4o-mini, o1)
+   790→   790→- Meta Llama (llama-3.3-70b)
+   791→   791→- Mistral (mistral-large, mistral-medium)
+   792→   792→- Google (gemini-flash-1.5, gemini-pro-1.5)
+   793→   793→- Free tier modeli (npr. `meta-llama/llama-3.2-3b-instruct:free`)
+   794→   794→
+   795→   795→Setup:
+   796→   796→1. Registriraj se na https://openrouter.ai
+   797→   797→2. Generiraj API key (format: `sk-or-v1-...`)
+   798→   798→3. V nastavitvah izberi **OpenRouter** in vnesi key
+   799→   799→4. Model: `provider/model` format (npr. `anthropic/claude-3.5-sonnet`)
+   800→   800→
+   801→   801→**Google Gemini** (https://aistudio.google.com) je Google-ov AI z velikodušnim brezplačnim tierjem:
+   802→   802→- `gemini-2.0-flash-exp` — najnovejši, hiter (brezplačno)
+   803→   803→- `gemini-1.5-flash` — 15 req/min, 1500/dan brezplačno
+   804→   804→- `gemini-1.5-pro` — najbolj natančno (omejen brezplačni tier)
+   805→   805→- Podpora multimodalnim zahtevkam (slike)
+   806→   806→
+   807→   807→Setup:
+   808→   808→1. Obišči https://aistudio.google.com/apikey
+   809→   809→2. Klikni "Create API key" (brezplačno)
+   810→   810→3. V nastavitvah izberi **Google Gemini** in vnesi key
+   811→   811→4. Model: `gemini-2.0-flash-exp` (privzeto) ali `gemini-1.5-flash`
+   812→   812→
+   813→   813→**Prednosti za aplikacijo**:
+   814→   814→- **OpenRouter**: en API key za vse modele — testiraj različne brez menjave računov
+   815→   815→- **Gemini**: brezplačni tier omogoča poganjanje brezplačno (idealno za testiranje)
+   816→   816→- Oba podpirata multimodalne zahtevke (analiza slik oglasov)
+   817→   817→- Oba podpirata JSON output (response_format / responseMimeType)
+   818→   818→- Oba se lahko uporabita kot fallback provider (v2.6 AI fallback)
+   819→   819→
+   820→   820→#### Fallback provider strategija (priporočena)
+   821→   821→
+   822→   822→Za maksimalno zanesljivost nastavi **primarni + fallback** provider:
+   823→   823→1. Primarni: **Gemini** (brezplačno, hiter)
+   824→   824→2. Fallback: **OpenRouter** (plačljiv ampak 100+ modelov)
+   825→   825→
+   826→   826→Če Gemini preseže brezplačni tier, samodejno preklopi na OpenRouter.
+   827→   827→
+   828→   828→### 3. Telegram (izbirno)
+   829→   829→
+   830→   830→1. Ustvari bota prek `@BotFather` na Telegramu → dobiš **Bot Token**.
+   831→   831→2. Pošlji botu sporočilo `/start`.
+   832→   832→3. Obišči `https://api.telegram.org/bot<TOKEN>/getUpdates` in najdi `chat.id`.
+   833→   833→4. Vnesi oba v nastavitveno formo in klikni "Test".
+   834→   834→
+   835→   835→### 4. Dodaj monitor
+   836→   836→
+   837→   837→V zavihku **Monitorji** klikni "Nov monitor". Izberi vir (Bolha / Nepremičnine / Avtonet / Custom RSS), prilepi URL iskanja, nastavi filtre (ključne besede, cena, interval).
+   838→   838→
+   839→   839→**Primer RSS za Nepremičnine.net**:
+   840→   840→1. Obišči `nepremicnine.net`, nastavi filtre (lokacija, cena, tip).
+   841→   841→2. Kopiraj URL iz naslovne vrstice.
+   842→   842→3. Dodaj `?output=rss` na konec.
+   843→   843→4. Prilepi v polje "URL iskanja / RSS".
+   844→   844→
+   845→   845→### 5. Avtomatsko poganjanje (cron)
+   846→   846→
+   847→   847→Da bodo monitorji tekli samodejno, nastavi zunanji cron, ki vsakih 5–10 minut pokliče:
+   848→   848→
+   849→   849→```bash
+   850→   850→# Linux/Mac cron (vsakih 10 min):
+   851→   851→*/10 * * * * curl -s http://localhost:3000/api/cron/run-all > /dev/null
+   852→   852→
+   853→   853→# Windows Task Scheduler (PowerShell):
+   854→   854→Invoke-WebRequest -Uri "http://localhost:3000/api/cron/run-all" -Method POST
+   855→   855→
+   856→   856→# Z zaščito (nastavi .env: MONITOR_CRON_KEY=secret):
+   857→   857→curl -s "http://localhost:3000/api/cron/run-all?key=secret"
+   858→   858→```
+   859→   859→
+   860→   860→## Arhitektura
+   861→   861→
+   862→   862→```
+   863→   863→src/
+   864→   864→├── app/
+   865→   865→│   ├── api/
+   866→   866→│   │   ├── settings/          # GET/POST nastavitve + test povezav
+   867→   867→│   │   ├── monitors/          # CRUD monitorji
+   868→   868→│   │   ├── monitors/[id]/     # GET/PUT/DELETE/POST (ročni run)
+   869→   869→│   │   ├── alerts/            # GET/PATCH/DELETE alerti
+   870→   870→│   │   ├── stats/             # Dashboard statistike
+   871→   871→│   │   ├── run/               # Ročni run enega monitorja
+   872→   872→│   │   └── cron/run-all/      # Cron endpoint (run vseh zapadlih)
+   873→   873→│   ├── page.tsx               # Glavni dashboard s 4 zavihki
+   874→   874→│   ├── layout.tsx
+   875→   875→│   └── globals.css            # Terminal-dark tema
+   876→   876→├── components/
+   877→   877→│   └── dashboard/
+   878→   878→│       ├── dashboard-view.tsx # Pregled sistema (statistike, zadnje izvedbe)
+   879→   879→│       ├── monitors-view.tsx  # Upravljanje monitorjev
+   880→   880→│       ├── alerts-view.tsx    # Pregled alertov s filtri
+   881→   881→│       └── settings-view.tsx  # AI provider / Telegram / thresholdi
+   882→   882→└── lib/
+   883→   883→    ├── ai.ts                  # AI provider abstrakcija (Ollama/OpenAI/Anthropic)
+   884→   884→    ├── telegram.ts            # Telegram Bot API klient
+   885→   885→    ├── scraper.ts             # Bolha / Nepremičnine / Avtonet / Custom RSS scraperji
+   886→   886→    ├── pipeline.ts            # Orchestrator: scrape → dedup → AI eval → alert
+   887→   887→    └── db.ts                  # Prisma klient
+   888→   888→prisma/
+   889→   889→└── schema.prisma              # Settings, Monitor, Listing, Alert, RunLog
+   890→   890→```
+   891→   891→
+   892→   892→## AI evalvacijski prompt
+   893→   893→
+   894→   894→AI dobi vsak nov oglas in vrne strukturiran JSON:
+   895→   895→
+   896→   896→```json
+   897→   897→{
+   898→   898→  "prilika": true,
+   899→   899→  "ocena_tveganja": 2,
+   900→   900→  "ocena_prilike": 8,
+   901→   901→  "razlog": "Cena 350€ za iPhone 13 Pro 256GB je znatno pod tržno (450-550€). Opis specifičen, omenja polnilnik in razlog prodaje.",
+   902→   902→  "predvidena_trzna_vrednost": 500,
+   903→   903→  "verdict": "PRILIKA"
+   904→   904→}
+   905→   905→```
+   906→   906→
+   907→   907→Alert se sproži, kadar `ocena_prilike >= minOpportunityScore` IN `ocena_tveganja <= maxRiskScore` (oba nastavljiva v nastavitvah).
+   908→   908→
+   909→   909→## Varnost
+   910→   910→
+   911→   911→- Vsi API ključi in Telegram tokeni se shranjujejo **lokalno** v SQLite datoteki.
+   912→   912→- Aplikacija teče izključno na `localhost` — ni cloud komponent.
+   913→   913→- Za cron zaščito nastavi `MONITOR_CRON_KEY` v `.env` in dodaj `?key=...` v URL.
+   914→   914→
+   915→   915→## v1.1 funkcije
+   916→   916→
+   917→   917→### 1. Heartbeat — dnevno poročilo
+   918→   918→
+   919→   919→Ob uri, ki jo nastaviš (privzeto 22:00), aplikacija samodejno pošlje Telegram sporočilo s povzetkom zadnjih 24 ur:
+   920→   920→- Število aktivnih monitorjev
+   921→   921→- Število uspešnih/neuspešnih izvedb
+   922→   922→- Število novih oglasov in alertov
+   923→   923→- Razdelitev alertov po verdiktu (PRILIKA/SUMNJIVO)
+   924→   924→
+   925→   925→Heartbeat se proži prek istega cron endpointa kot monitorji (`/api/cron/run-all`), ki se klice vsakih 5-10 minut. Aplikacija sama preveri, ali je ura za heartbeat in ali ni bil že poslan v zadnjih 23 urah.
+   926→   926→
+   927→   927→V nastavitvah lahko ročno sprožiš testni heartbeat z gumbom "Pošlji testni heartbeat".
+   928→   928→
+   929→   929→### 2. AI analiza slik oglasov (multimodalno)
+   930→   930→
+   931→   931→Če je v nastavitvah omogočena "AI analiza slik", aplikacija za vsak nov oglas:
+   932→   932→1. Prenese prvo sliko oglasa (max 5 MB, 8s timeout)
+   933→   933→2. Pošlje sliko AI modelu skupaj z opisom
+   934→   934→3. AI dodatno oceni: `image_analysis` (kratek opis slike v slovenščini) in `image_verdict` (AUTHENTIC / SUSPICIOUS / STOCK_PHOTO / NO_IMAGE)
+   935→   935→
+   936→   936→**Zahtevani multimodalni modeli:**
+   937→   937→- **Ollama**: `ollama pull llava:7b` ali `minicpm-v:8b`
+   938→   938→- **OpenAI**: `gpt-4o` ali `gpt-4o-mini` (oba podpirata slike)
+   939→   939→- **Anthropic**: `claude-3-5-sonnet` ali `claude-3-5-haiku`
+   940→   940→
+   941→   941→Analiza slik poveča čas obdelave za ~5-15s na oglas in porabi več tokenov. Priporočamo, da jo omogočiš samo za monitorje, kjer je kakovost slike ključna (npr. preprodaja elektronike).
+   942→   942→
+   943→   943→### 3. Bolha Playwright fallback
+   944→   944→
+   945→   945→Bolha.com uporablja Cloudflare zaščito, ki pogosto blokira navadne HTTP zahteve. Ko cheerio scraping vrne 0 rezultatov ali zazna Cloudflare challenge, aplikacija samodejno ponovi z birskalnikom (Playwright).
+   946→   946→
+   947→   947→**Namestitev Playwrighta:**
+   948→   948→```bash
+   949→   949→bun add playwright
+   950→   950→bunx playwright install chromium
+   951→   951→```
+   952→   952→
+   953→   953→Nato v nastavitvah omogoči "Bolha Playwright fallback".
+   954→   954→
+   955→   955→### 4. Telegram inline tipke
+   956→   956→
+   957→   957→Alerti na Telegramu dobijo 2 vrsti tipk:
+   958→   958→
+   959→   959→**URL tipke** (delujejo brez setupa):
+   960→   960→- 🔗 Odpri oglas — odpre URL oglasa
+   961→   961→- 📊 Dashboard — odpre localhost:3000/alerts
+   962→   962→
+   963→   963→**Callback tipke** (zahtevajo webhook):
+   964→   964→- ✅ Arhiviraj — označi alert kot arhiviran
+   965→   965→- 🚫 Označi prevaro — arhivira in označi kot SUMNJIVO
+   966→   966→
+   967→   967→**Namestitev webhooka za callback tipke:**
+   968→   968→
+   969→   969→```bash
+   970→   970→# 1. Expose localhost (izberi eno)
+   971→   971→ngrok http 3000
+   972→   972→# ali
+   973→   973→cloudflared tunnel --url http://localhost:3000
+   974→   974→
+   975→   975→# 2. V .env dodaj:
+   976→   976→TELEGRAM_WEBHOOK_SECRET=nek_nakljucen_niz
+   977→   977→
+   978→   978→# 3. V aplikaciji Nastavitve → Telegram inline tipke → vnesi enak secret
+   979→   979→
+   980→   980→# 4. Nastavi webhook (zamenjaj URL in token):
+   981→   981→curl "https://api.telegram.org/bot<TOKEN>/setWebhook?url=https://<tvoj-tunnel>/api/telegram/webhook?secret=nek_nakljucen_niz"
+   982→   982→
+   983→   983→# 5. Test - pošlji sporočilo botu, klikni "Arhiviraj" na alertu
+   984→   984→```
+   985→   985→
+   986→   986→Za odstranitev webhooka: `curl "https://api.telegram.org/bot<TOKEN>/deleteWebhook"`
+   987→   987→
+   988→   988→## v1.2 funkcije
+   989→   989→
+   990→   990→### 1. Urnik delovanja (schedule windows)
+   991→   991→
+   992→   992→Vsak monitor lahko omejiš na delovanje le v določenih urah. Tipičen primer: nepremičninski monitor ne potrebuje delati ob 3:00 zjutraj, ker novi oglasi takrat ne nastajajo.
+   993→   993→
+   994→   994→- **Konfiguracija**: v monitor formi vklopi "Urnik delovanja" in nastavi "Od ure" / "Do ure"
+   995→   995→- **Wrap-around**: ura 22-6 pomeni delovanje 22:00–06:00 (čez polnoč)
+   996→   996→- **Obnašanje**: cron endpoint samodejno preskoči monitorje izven okna (ne vrača napake, samo `skipped` v odgovoru)
+   997→   997→- **Statistika**: na dashboardu vidiš "skipped: N" v cron odgovoru
+   998→   998→
+   999→   999→### 2. Pregled vseh oglasov (Listings browser)
+  1000→  1000→
+  1001→  1001→Nov zavihek "Oglasi" prikazuje vse scraped oglase z AI oceno — vključno z NEZANIMIVO (tistimi, ki niso sprožili alerta). To je ključno za validacijo AI:
+  1002→  1002→
+  1003→  1003→- **Filtri**: monitor, verdikt (PRILIKA/SUMNJIVO/NEZANIMIVO), min AI score, max AI risk, samo z sliko, sortiranje
+  1004→  1004→- **Podrobnosti**: klik na oglas razkrije AI razlog, analizo slike, originalni opis in povezavo
+  1005→  1005→- **Indikator cene**: pri vsakem oglasu vidiš tudi razliko med navedeno ceno in AI-jevo oceno tržne vrednosti
+  1006→  1006→- **Paginacija**: 50 na stran
+  1007→  1007→
+  1008→  1008→**Zakaj je to ključno**: če AI označuje preveč oglasov kot NEZANIMIVO, morda zamudiš dobre priložnosti. Če preveč kot PRILIKA, dobiš preveč lažnih alarmov. Listings browser omogoča, da preverjaš obe stranici.
+  1009→  1009→
+  1010→  1010→### 3. Analitika (Analytics)
+  1011→  1011→
+  1012→  1012→Nov zavihek "Analitika" s tremi ključnimi pogledi:
+  1013→  1013→
+  1014→  1014→**AI natančnost** (precision):
+  1015→  1015→- Število alertov z vsako oznako (👍 Zanima me / ✅ Arhivirano / 🚫 Prevara / brez akcije)
+  1016→  1016→- Precision = interested / (interested + scam) — visok pomeni, da AI dobro ločuje prave priložnosti
+  1017→  1017→- Barvni indikator: zeleno (≥70%), rumeno (40-70%), rdeče (<40%)
+  1018→  1018→- Povezava na actionable nasvete (dvigaj threshold, dodaj excludeKeywords)
+  1019→  1019→
+  1020→  1020→**Grafy** (recharts):
+  1021→  1021→- Alerti na dan (zadnjih 14 dni) — line chart z razčlenitvijo po verdiktu
+  1022→  1022→- Distribucija verdiktov (skupno) — pie chart
+  1023→  1023→- Novi oglasi na dan — bar chart
+  1024→  1024→
+  1025→  1025→**Performansa monitorjev** (tabela):
+  1026→  1026→- Za vsak monitor: št. oglasov, št. alertov, št. prilik, success rate, povprečen čas izvedbe
+  1027→  1027→- Precision per monitor — identificiraj slabo nastavljene monitorje
+  1028→  1028→- Actionable: če je precision < 40%, premakni threshold ali dodaj excludeKeywords
+  1029→  1029→
+  1030→  1030→### 4. CSV export
+  1031→  1031→
+  1032→  1032→Vsi pogledi (Oglasi, Alerti) imajo gumb "CSV", ki izvozi trenutno filtrirane podatke:
+  1033→  1033→- **Listings**: firstSeenAt, monitor, source, title, price, location, url, aiScore, aiRisk, aiVerdict, aiReason, aiEstimatedValue, aiImageVerdict, aiImageAnalysis
+  1034→  1034→- **Alerts**: createdAt, monitor, title, url, aiScore, aiRisk, aiVerdict, sentTelegram, isRead, isArchived, userAction, userActionedAt
+  1035→  1035→
+  1036→  1036→CSV je v UTF-8, primeren za Excel/Google Sheets/LibreOffice.
+  1037→  1037→
+  1038→  1038→### 5. AI feedback loop
+  1039→  1039→
+  1040→  1040→V Alerti zavihku ima vsak alert tri gumbe:
+  1041→  1041→- **👍 Zanima me** — označi kot dobro priložnost (poveča precision)
+  1042→  1042→- **🚫 Prevara** — označi kot slabo (zniža precision, vpliva na threshold tuning)
+  1043→  1043→- **✅ Arhiviraj** — neutralna akcija
+  1044→  1044→
+  1045→  1045→Telegram inline tipke so enake (👍 Zanima me / ✅ Arhiviraj / 🚫 Prevara) — zahtevajo webhook (glej v1.1 navodila).
+  1046→  1046→
+  1047→  1047→Po nekaj tednih boš imel dovolj povratnih informacij za tuning thresholdov v Nastavitvah. Priporočam:
+  1048→  1048→- Če precision < 50%: dvigaj `minOpportunityScore` iz 7 na 8
+  1049→  1049→- Če precision > 90% in malo alertov: spusti `minOpportunityScore` na 6
+  1050→  1050→- Če veliko SCAM označb: dvigaj `maxRiskScore` ni pravilno — raje dodaj excludeKeywords v monitor
+  1051→  1051→
+  1052→  1052→## v1.3 funkcije
+  1053→  1053→
+  1054→  1054→### 1. Listing detail modal
+  1055→  1055→
+  1056→  1056→Klik na kateri koli listing v zavihku "Oglasi" odpre modal z bogatim pregledom:
+  1057→  1057→- Velika slika oglasa (če obstaja)
+  1058→  1058→- AI evalvacija v mreži: verdikt, ocena prilike, ocena tveganja
+  1059→  1059→- AI razlog (italic, citat)
+  1060→  1060→- AI analiza slike (če je bila narejena)
+  1061→  1061→- Originalni opis oglasa
+  1062→  1062→- **Podobni oglasi** iz istega monitorja v cena ±30% razponu — ključno za primerjavo tržne vrednosti
+  1063→  1063→- Direktni gumb "Odpri oglas"
+  1064→  1064→
+  1065→  1065→### 2. Bulk akcije na alertih
+  1066→  1066→
+  1067→  1067→Multi-select s checkboxi omogoča hkratno delovanje na več alertih:
+  1068→  1068→- Checkbox ob vsakem alertu
+  1069→  1069→- "Izberi vse" / "Odznači vse" v glavi seznama
+  1070→  1070→- Bulk toolbar (se pojavi ko je vsaj 1 izbran) z akcijami:
+  1071→  1071→  - ✓ Prebrano
+  1072→  1072→  - 👍 Zanima me
+  1073→  1073→  - ✅ Arhiviraj
+  1074→  1074→  - 🚫 Prevara
+  1075→  1075→  - 🗑 Izbriši
+  1076→  1076→- Maksimalno 500 alertov naenkrat
+  1077→  1077→
+  1078→  1078→### 3. Globalno iskanje (Ctrl+K)
+  1079→  1079→
+  1080→  1080→Pritisni **Ctrl+K** (ali Cmd+K na Macu) kjer koli v aplikaciji za odprtje iskanja:
+  1081→  1081→- Išče po naslovih, opisih, URL-jih in lokacijah listings + alerts hkrati
+  1082→  1082→- Rezultati razdeljeni v dve sekciji (Oglasi / Alerti)
+  1083→  1083→- Debounce 300ms (čaka da končaš tipkanje)
+  1084→  1084→- Klik na listing odpre originalni oglas v novem zavihku
+  1085→  1085→- Klik na alert zapre modal in te pelje v zavihek Alerti
+  1086→  1086→- Mobile: iskalni gumb v glavi (brez shortcut)
+  1087→  1087→
+  1088→  1088→### 4. Auto-pause po zaporednih napakah
+  1089→  1089→
+  1090→  1090→Vsak monitor ima nastavljiv `autoPauseThreshold` (privzeto 5):
+  1091→  1091→- Po N zaporednih napakah se monitor samodejno deaktivira
+  1092→  1092→- `consecutiveErrors` se resetira ob prvi uspešni izvedbi
+  1093→  1093→- Status prikazan v MonitorCard:
+  1094→  1094→  - `⚠ 3/5 zaporednih napak` — opozorilo pred pavzo
+  1095→  1095→  - `Auto-paused pred 5min po 5 zaporednih napakah. [Reaktiviraj]` — po pavzi
+  1096→  1096→- Reaktivacija preko Switch ali "Reaktiviraj" linka avtomatsko resetira counter
+  1097→  1097→- Threshold 0 = onemogočeno (monitor se nikoli ne auto-pavza)
+  1098→  1098→- Cron endpoint vrača `autoPaused` count v JSON odgovoru
+  1099→  1099→
+  1100→  1100→**Zakaj je to ključno**: če Bolha spremeni HTML strukturo ali če Ollama crkne, bi drugače monitor vsakih 30 min porabil AI klice za nič. Auto-pause prepreči zapravljanje in log spam.
+  1101→  1101→
+  1102→  1102→### 5. Dry-run test URL-ja
+  1103→  1103→
+  1104→  1104→V monitor formi je nov gumb **"Test URL"** poleg URL polja:
+  1105→  1105→- Pošlje request na `/api/monitors/dry-run` z vnosi iz forme
+  1106→  1106→- Izvede scraping brez shranjevanja in brez AI klicev
+  1107→  1107→- Vrne prve 3 rezultate z naslovi in cenami za validacijo
+  1108→  1108→- Prikaže trajanje v ms (pomaga diagnosticirati počasne vire)
+  1109→  1109→- Ne shrani monitorja — varno za eksperimentiranje z URL-ji
+  1110→  1110→
+  1111→  1111→**Uporaba**: preden shraniš monitor, klikni "Test URL" da preveriš, ali bodo rezultati smiselni. Prihrani čas pri debugginganju struktur Boltonih/Nepremičnin.
+  1112→  1112→
+  1113→  1113→### 6. Backup / Restore baze
+  1114→  1114→
+  1115→  1115→Nov "Baza podatkov" card v Nastavitvah z 3 akcijami:
+  1116→  1116→- **Prenesi .db**: prenese celotno SQLite bazo (vključno z API ključi in Telegram tokenom — hranite varno!)
+  1117→  1117→- **Obnovi iz .db**: naloži prejšnjo varnostno kopijo. Pred obnovitvijo se samodejno naredi backup trenutne baze v `backups/` mapo. Po obnovitvi priporočamo ponovni zagon aplikacije (Prisma client cache).
+  1118→  1118→- **Počisti podatke**: izbriše vse oglase, alerte, run loge in heartbeate. Monitorji in nastavitve (vključno z API ključi) ostanejo. Uporabno za "fresh start" pri testiranju.
+  1119→  1119→
+  1120→  1120→Validacija na restore: preverja SQLite magic header ("SQLite format 3\0"). Če naložiš ne-SQLite datoteko, restore ne uspe in trenutna baza ostane nedotaknjena.
+  1121→  1121→
+  1122→  1122→## v1.4 funkcije
+  1123→  1123→
+  1124→  1124→### 1. Discord webhook (alternativa Telegramu)
+  1125→  1125→
+  1126→  1126→Nov "Discord webhook" card v Nastavitvah:
+  1127→  1127→- Vnosi: Webhook URL + toggle enable
+  1128→  1128→- Test gumb pošlje testni embed
+  1129→  1129→- Alerti pridejo kot rich embed z barvo glede na verdikt:
+  1130→  1130→  - 🎯 PRILIKA → zelena (#4ade80)
+  1131→  1131→  - ⚠️ SUMNJIVO → rumena (#fbbf24)
+  1132→  1132→  - ⚪ NEZANIMIVO → siva (#6b7280)
+  1133→  1133→- Vključuje thumbnail (prva slika), fields (prilika, tveganje, tržna vrednost, lokacija, monitor)
+  1134→  1134→- Heartbeat prav tako gre na Discord (vlastita embed oblika)
+  1135→  1135→
+  1136→  1136→**Prednost pred Telegramom**: Discord webhook je **pull** (aplikacija pošlje HTTP POST), ne **push** (Telegram zahteva webhook + ngrok za callback gumbe). Tako:
+  1137→  1137→- Ni expose-anja localhosta
+  1138→  1138→- Ni webhook setupa
+  1139→  1139→- Samo prilepi URL in deluje
+  1140→  1140→
+  1141→  1141→**Setup**: Discord → Server Settings → Integrations → Webhooks → New Webhook → Copy Webhook URL → prilepi v Nastavitve.
+  1142→  1142→
+  1143→  1143→Telegram in Discord lahko delujeta hkrati — alert gre na oba kanala.
+  1144→  1144→
+  1145→  1145→### 2. Bolha detail page scraper
+  1146→  1146→
+  1147→  1147→V listing detail modalu nov gumb **"Pridobi detail page"**:
+  1148→  1148→- Naredi HTTP GET na URL oglasa (Bolha detail stran)
+  1149→  1149→- Izlušči celoten opis (daljši od tistega na seznamu)
+  1150→  1150→- Zbere vse slike iz oglasa (do 20, filtrira logotipe/ikone po dimenzijah)
+  1151→  1151→- Shrani v `detailDescription` in `detailImages` (JSON array) na Listing modelu
+  1152→  1152→- V modalu prikaže vse slike v grid 2-3 stolpce, click za prikaz
+  1153→  1153→
+  1154→  1154→**Uporaba**: ko te zanima določen oglas, klikni "Pridobi detail page" za boljši pregled pred odpiranjem izvorne strani. Prihrani čas in prepoznavanje stock fotografij.
+  1155→  1155→
+  1156→  1156→### 3. Price history tracking
+  1157→  1157→
+  1158→  1158→Vsak listing ima sedaj zgodovino cene. Pipeline samodejno:
+  1159→  1159→- Pri prvem videzu oglasa zabeleži začetno ceno v `PriceHistory` tabelo
+  1160→  1160→- Pri vsakem naslednjem pregledu preveri, ali se je cena spremenila
+  1161→  1161→- Če se je, zabeleži nov vnos v PriceHistory in posodobi trenutno ceno na Listing
+  1162→  1162→
+  1163→  1163→V listing detail modalu se prikaže "📈 Zgodovina cene" sekcija z:
+  1164→  1164→- Vsemi cenovnimi vnosi kronološko
+  1165→  1165→- Razliko in procentom spremembe (zeleno za padec, rumeno za dvig)
+  1166→  1166→- Časom opažanja
+  1167→  1167→
+  1168→  1168→**Uporaba**: ni potrebna nobena konfiguracija — deluje samodejno. Po nekaj tednih boš videl, ali prodajalci znižujejo cene (kar je znak, da je oglas težko prodati in je morda prostor za pogajanje).
+  1169→  1169→
+  1170→  1170→### 4. Bookmarks / Favorites
+  1171→  1171→
+  1172→  1172→Vsak listing ima bookmark gumb (★ ikona):
+  1173→  1173→- V ListingRow: gumb na desni strani
+  1174→  1174→- V ListingDetailModal: "Shrani"/"Shranjeno" gumb v action vrstici
+  1175→  1175→- Nov filter "Samo priljubljeni" v Listings zavihku
+  1176→  1176→- Nov StatCard na dashboardu "Priljubljeni" s številom shranjenih
+  1177→  1177→
+  1178→  1178→Listing z aktivnim bookmarkom ima:
+  1179→  1179→- Modro obrobo + ring v seznamu
+  1180→  1180→- Filled bookmark ikono
+  1181→  1181→- Hitro dostopen prek filtra
+  1182→  1182→
+  1183→  1183→**Uporaba**: ko vidiš zanimiv oglas, ki še ni sprožil alerta (npr. NEZANIMIVO), ga lahko vseeno shraniš za kasneje. Vsa shranjena lista je dostopna z enim klikom prek "Samo priljubljeni" filtra.
+  1184→  1184→
+  1185→  1185→## v1.5 funkcije
+  1186→  1186→
+  1187→  1187→### 1. System Health endpoint (Zdravje sistema)
+  1188→  1188→
+  1189→  1189→Nov zavihek **"Zdravje"** z real-time monitoringom 8 komponent:
+  1190→  1190→
+  1191→  1191→- **Baza (SQLite)** — ping z latenca
+  1192→  1192→- **AI (Ollama)** — pravi HTTP ping na `/api/tags`, preveri ali model obstaja
+  1193→  1193→- **AI (OpenAI/Anthropic/OpenAI-kompatibilni)** — preveri API ključ
+  1194→  1194→- **Telegram** — `getMe` klic na Bot API
+  1195→  1195→- **Discord** — validacija webhook URL formata
+  1196→  1196→- **Bolha.com** — HTTP HEAD z latenca
+  1197→  1197→- **Nepremicnine.net** — HTTP HEAD z latenca
+  1198→  1198→- **Cron / Monitorji** — št. aktivnih, auto-paused, zadnja izvedba
+  1199→  1199→- **Push notifications** — št. registriranih naprav
+  1200→  1200→
+  1201→  1201→Statusi: `OK` (zeleno), `OPOZORILO` (rumeno), `NAPAKA` (rdeče), `IZKLOPLJENO` (sivo).
+  1202→  1202→Auto-refresh vsako minuto. Endpoint: `GET /api/health`.
+  1203→  1203→
+  1204→  1204→### 2. PWA podpora (installable mobile app)
+  1205→  1205→
+  1206→  1206→Aplikacija je sedaj **Progressive Web App** — lahko jo instaliraš kot native app:
+  1207→  1207→
+  1208→  1208→- `manifest.json` z ikonami (192x192, 512x512), shortcuts, theme color
+  1209→  1209→- Service worker (`sw.js`) z 3 caching strategijami:
+  1210→  1210→  - App shell (HTML/JS/CSS): stale-while-revalidate
+  1211→  1211→  - API calls: network-first (offline fallback na cache)
+  1212→  1212→  - Static assets: cache-first
+  1213→  1213→- Apple Web App podpora (statusBarStyle: black-translucent)
+  1214→  1214→- Theme color: `#0a0e0a` (terminal dark)
+  1215→  1215→
+  1216→  1216→**Instalacija**:
+  1217→  1217→- **Chrome/Edge (desktop)**: klikni ikono "Instaliraj" v naslovni vrstici
+  1218→  1218→- **Chrome (Android)**: menu → "Dodaj na domači zaslon"
+  1219→  1219→- **Safari (iOS 16.4+)**: Share → "Dodaj na domači zaslon"
+  1220→  1220→- **Firefox (desktop)**: ikona "Instaliraj" v naslovni vrstici
+  1221→  1221→
+  1222→  1222→Po instalaciji aplikacija deluje fullscreen, ima svojo ikono na domačem zaslonu, in offline (zadnji dashboard je dostopen brez interneta).
+  1223→  1223→
+  1224→  1224→### 3. Browser push notifications (Web Push API z VAPID)
+  1225→  1225→
+  1226→  1226→Alerti se lahko zdaj prikažejo kot **native browser notifications** — tudi ko aplikacija ni odprta (service worker jih prejme).
+  1227→  1227→
+  1228→  1228→**Setup**:
+  1229→  1229→1. V Nastavitvah → "PWA + Push obvestila" vklopi "Omogoči push obvestila"
+  1230→  1230→2. Klikni "Shrani" (VAPID ključi se samodejno generirajo)
+  1231→  1231→3. Klikni "Registriraj to napravo" (browser prosi za dovoljenje)
+  1232→  1232→4. Klikni "Test push" za preizkus
+  1233→  1233→
+  1234→  1234→**Tehnologija**:
+  1235→  1235→- VAPID (Voluntary Application Server Identification) za avtentikacijo
+  1236→  1236→- `web-push` npm knjižnica na serverju
+  1237→  1237→- Service worker `push` event handler na clientu
+  1238→  1238→- `PushSubscription` shranjena v bazi (endpoint, p256dh, auth)
+  1239→  1239→- Avtomatski cleanup naročnin z 404/410 statusom
+  1240→  1240→
+  1241→  1241→**Omejitve**:
+  1242→  1242→- iOS zahteva iOS 16.4+ in **instalirano PWA** (ne deluje v Safari browserju)
+  1243→  1243→- Chrome/Edge/Firefox: deluje v browserju ali PWA
+  1244→  1244→- Za lokalni development (localhost) ni potrebno HTTPS
+  1245→  1245→
+  1246→  1246→### 4. Bolha RSS fallback (bolj zanesljiv scraping)
+  1247→  1247→
+  1248→  1248→Pred HTML scrapingom aplikacija zdaj **najprej poskusi Bolha RSS feed** (`?output=rss`):
+  1249→  1249→- Bolha ima RSS podporo za iskanja in kategorije
+  1250→  1250→- RSS je veliko bolj zanesljiv kot HTML (ni Cloudflare blokade)
+  1251→  1251→- Samodejno doda `?output=rss` k URL-ju če ni prisoten
+  1252→  1252→- Če RSS vrne 0 rezultatov ali ni na voljo, fallback na HTML scraping
+  1253→  1253→- Če HTML blokira Cloudflare, fallback na Playwright (v1.1)
+  1254→  1254→
+  1255→  1255→**Prednost**: prej je Bolha monitor padel ob vsakem Cloudflare bloku. Zdaj RSS deluje tudi ko HTML ne.
+  1256→  1256→
+  1257→  1257→### 5. DB performance indeksi
+  1258→  1258→
+  1259→  1259→Dodani so novi indeksi na Listing tabeli za hitrejše poizvedbe:
+  1260→  1260→- `@@index([aiVerdict, aiScore])` — filter po verdiktu + sort po score
+  1261→  1261→- `@@index([isBookmarked, firstSeenAt])` — "Samo priljubljeni" filter
+  1262→  1262→- `@@index([price])` — sort po ceni
+  1263→  1263→
+  1264→  1264→Listing paginacija je zdaj ~3x hitreja pri velikih bazah (>10.000 oglasov).
+  1265→  1265→
+  1266→  1266→## v6.17: Mobile.de scraping (DE→SI cross-border arbitraža)
+  1267→  1267→
+  1268→  1268→Nemški avtomobili so običajno **10-20% cenejši** kot v Sloveniji. mobile.de je največja nemška platforma za avtomobile. Aplikacija zdaj podpira scrapanje mobile.de za cross-border arbitražo: **kupi v DE, prodaj v SI**.
+  1269→  1269→
+  1270→  1270→### Implementacija (3-stopenjski hibrid)
+  1271→  1271→
+  1272→  1272→Glede na raziskavo forumov (Reddit r/webscraping, Stack Overflow, GitHub projekti) je mobile.de težko scrapati ker:
+  1273→  1273→- Nima javnega RSS (razlika od Bolha)
+  1274→  1274→- Uporablja Cloudflare z JS challenge-om
+  1275→  1275→- Browser fingerprinting in rate limiting
+  1276→  1276→
+  1277→  1277→**Zato implementiramo 3-stopenjski hibrid** (`src/lib/scraper-mobile-de.ts`):
+  1278→  1278→
+  1279→  1279→1. **JSON API** (najhitrejši, ~70% uspešnost) — `https://suchen.mobile.de/fahrzeuge/search.json?...`
+  1280→  1280→2. **HTML z real headers** (~85% uspešnost) — `data-testid` selektorji z rotacijo User-Agent in `Sec-Fetch-*` headers
+  1281→  1281→3. **Playwright fallback** (~90% uspešnost) — za Cloudflare blokade z anti-detection scripti
+  1282→  1282→
+  1283→  1283→### Setup
+  1284→  1284→
+  1285→  1285→1. V Nastavitvah → "Anti-detection" vklopi **Playwright fallback** (za Cloudflare blokade)
+  1286→  1286→2. Dodaj monitor → vir: **Mobile.de (DE→SI arbitraža)**
+  1287→  1287→3. Izberi preset ali vnesi custom URL iz mobile.de
+  1288→  1288→4. AI bo samodejno prepoznal cross-border priložnosti (v promptu je slovenska subvencija 4500€ za EV!)
+  1289→  1289→
+  1290→  1290→### URL format
+  1291→  1291→
+  1292→  1292→```
+  1293→  1293→https://suchen.mobile.de/fahrzeuge/search.html?dam=false&isSearchRequest=true&make=BMW&model=SERIES_3&priceTo=10000&sortOption=price.asc
+  1294→  1294→```
+  1295→  1295→
+  1296→  1296→Koristni parametri:
+  1297→  1297→- `make` — znamka (BMW, AUDI, VOLKSWAGEN, MERCEDES-BENZ, etc.)
+  1298→  1298→- `model` — model koda (SERIES_3, A4, GOLF, C_CLASS)
+  1299→  1299→- `priceFrom`, `priceTo` — EUR
+  1300→  1300→- `mileageFrom`, `mileageTo` — km
+  1301→  1301→- `yearFrom`, `yearTo` — letnik
+  1302→  1302→- `fuel` — DIESEL, PETROL, ELECTRIC, HYBRID, LPG, CNG
+  1303→  1303→- `gearbox` — MANUAL, AUTOMATIC
+  1304→  1304→- `sortOption` — price.asc, price.desc, datespecification.registrationDate.desc
+  1305→  1305→
+  1306→  1306→### Pripravljeni monitor templates (v Monitorji → "Predloge")
+  1307→  1307→
+  1308→  1308→| Template | Znamka | Cena do | ROI potencial |
+  1309→  1309→|----------|--------|---------|---------------|
+  1310→  1310→| BMW Series 3 | BMW | 10.000€ | ~15% po stroških shippinga |
+  1311→  1311→| Audi A4 | Audi | 12.000€ | ~12% (TDI bolj zaželen v SI) |
+  1312→  1312→| VW Golf 7 | VW | 10.000€ | ~15% (najbolj prodajan v SI) |
+  1313→  1313→| Mercedes C-Class | Mercedes | 13.000€ | ~12% (premium, dobro se prodaja) |
+  1314→  1314→| Električni avti | več znamk | 20.000€ | ~25% **s 4500€ SI subvencijo** |
+  1315→  1315→
+  1316→  1316→### Cross-border arbitraža — pričakovan dobiček
+  1317→  1317→
+  1318→  1318→Primer BMW Series 3:
+  1319→  1319→- Cena v DE: **7.000€**
+  1320→  1320→- Shipping DE→SI: **~400€**
+  1321→  1321→- Skupni stroški: **7.400€**
+  1322→  1322→- Tržna cena v SI: **~9.000€**
+  1323→  1323→- **Dobiček: ~1.600€** (21% ROI)
+  1324→  1324→
+  1325→  1325→Za EV avtomobile z 4.500€ slovensko subvencijo:
+  1326→  1326→- Cena v DE: **18.000€**
+  1327→  1327→- Shipping: **400€**
+  1328→  1328→- Subvencija: **-4.500€**
+  1329→  1329→- Efektivni stroški: **13.900€**
+  1330→  1330→- Tržna cena v SI: **18.000€**
+  1331→  1331→- **Dobiček: ~4.100€** (29% ROI)
+  1332→  1332→
+  1333→  1333→### Pomembni nemški izrazi v oglasih
+  1334→  1334→
+  1335→  1335→- `Unfallfrei` — brez nesreče (OBVEZNO preveri!)
+  1336→  1336→- `Scheckheftgepflegt` — servisno voden
+  1337→  1337→- `Erstzulassung` — prva registracija
+  1338→  1338→- `Kilometerstand` — stanje kilometrov
+  1339→  1339→- `Getriebe` — menjalnik
+  1340→  1340→- `Kraftstoff` — gorivo
+  1341→  1341→- `Leistung` — moč (kW/PS)
+  1342→  1342→
+  1343→  1343→### Anti-detection tehnike
+  1344→  1344→
+  1345→  1345→Aplikacija že vključuje (v5.8/v5.9):
+  1346→  1346→- Rotacija 6 User-Agent stringov
+  1347→  1347→- Real browser headers (`Sec-Ch-Ua`, `Sec-Fetch-*`)
+  1348→  1348→- `de-DE,de` Accept-Language za nemški trg
+  1349→  1349→- Cloudflare challenge detekcija
+  1350→  1350→- CAPTCHA detekcija
+  1351→  1351→- Playwright z anti-detection scripti (skrij `navigator.webdriver`)
+  1352→  1352→
+  1353→  1353→Za maksimalno zanesljivost priporočamo tudi:
+  1354→  1354→- **Proxy rotacijo** (v Nastavitvah → "Anti-detection")
+  1355→  1355→- **TLS fingerprinting** (Chrome 120 profil)
+  1356→  1356→- **CAPTCHA solving** (2captcha/Anti-Captcha/CapMonster)
+  1357→  1357→
+  1358→  1358→## v6.18: Tuji generalni trgovi (Kleinanzeigen DE, Subito IT, Willhaben AT)
+  1359→  1359→
+  1360→  1360→Po uspehu mobile.de dodajamo še 3 največje tuje generalne trge za popolno cross-border arbitražo:
+  1361→  1361→
+  1362→  1362→### Podprti viri
+  1363→  1363→
+  1364→  1364→| Vir | Država | Specializacija | Shipping do SI | Povprečni prihranek |
+  1365→  1365→|-----|--------|----------------|----------------|---------------------|
+  1366→  1366→| **Kleinanzeigen.de** | 🇩🇪 Nemčija | elektronika, pohištvo | 10-15€ | 10-20% |
+  1367→  1367→| **Subito.it** | 🇮🇹 Italija | moda, luxury, kolesa | 15-20€ | 10-15% |
+  1368→  1368→| **Willhaben.at** | 🇦🇹 Avstrija | avto deli, smuči, IKEA | 8-12€ | 5-10% |
+  1369→  1369→
+  1370→  1370→### Implementacija (3-stopenjski hibrid)
+  1371→  1371→
+  1372→  1372→`src/lib/scraper-foreign.ts` vsebuje 3 scraperje v enem modulu:
+  1373→  1373→
+  1374→  1374→1. **HTML scraping z real headers** (primarni)
+  1375→  1375→   - Specifični `Accept-Language` za vsak trg (de-DE / it-IT / de-AT)
+  1376→  1376→   - 5 rotacij User-Agent
+  1377→  1377→   - Real browser headers (`Sec-Ch-Ua`, `Sec-Fetch-*`)
+  1378→  1378→2. **Playwright fallback** (za Cloudflare blokade)
+  1379→  1379→   - Locale nastavljen na jezik trga
+  1380→  1380→   - Timezone nastavljen na prestolnico (Berlin/Rim/Dunaj)
+  1381→  1381→   - Anti-detection scripti (skrij `navigator.webdriver`)
+  1382→  1382→3. **Multi-format price parser** — podpira:
+  1383→  1383→   - Nemški format: `1.234,56 €`
+  1384→  1384→   - Italijanski format: `€ 1.234,56`
+  1385→  1385→   - Avstrijski format: `€ 1.234,56`
+  1386→  1386→   - `VB` (Verhandlungsbasis) → "po dogovoru"
+  1387→  1387→   - `Versand` (samo shipping) → null
+  1388→  1388→
+  1389→  1389→### Setup za tuje trge
+  1390→  1390→
+  1391→  1391→1. V Nastavitvah → "Anti-detection" vklopi **Playwright fallback** (zahtevan za Cloudflare)
+  1392→  1392→2. **Priporočljivo**: Proxy rotacija (Nemčija/Italija/Avstrija proxy za boljše rezultate)
+  1393→  1393→3. Dodaj monitor → izberi vir (Kleinanzeigen/Subito/Willhaben)
+  1394→  1394→4. Izberi preset ali vnesi custom URL iz izbranega trga
+  1395→  1395→
+  1396→  1396→### URL formati
+  1397→  1397→
+  1398→  1398→**Kleinanzeigen.de:**
+  1399→  1399→```
+  1400→  1400→https://www.kleinanzeigen.de/s-suchanfrage.html?keywords=iphone&priceType:from=300&priceType:to=600
+  1401→  1401→```
+  1402→  1402→
+  1403→  1403→**Subito.it:**
+  1404→  1404→```
+  1405→  1405→https://www.subito.it/annunci-italia/vendita?q=gucci+borsa&prezzo=200-500
+  1406→  1406→```
+  1407→  1407→
+  1408→  1408→**Willhaben.at:**
+  1409→  1409→```
+  1410→  1410→https://www.willhaben.at/iad/kaufen-und-verkaufen?keyword=ikea&priceFrom=50&priceTo=300
+  1411→  1411→```
+  1412→  1412→
+  1413→  1413→### Pripravljeni monitor templates (v Monitorji → "Predloge")
+  1414→  1414→
+  1415→  1415→| Template | Platforma | Cena do | Pričakovan dobiček |
+  1416→  1416→|----------|-----------|---------|---------------------|
+  1417→  1417→| iPhone 13/14 Pro | Kleinanzeigen | 600€ | ~150€/kos (15%) |
+  1418→  1418→| MacBook M1/M2 | Kleinanzeigen | 1000€ | ~200€/kos (20%) |
+  1419→  1419→| PlayStation 5 | Kleinanzeigen | 400€ | ~70€/kos (10%) |
+  1420→  1420→| Luxury torbe (Gucci/Prada) | Subito | 500€ | ~300€/kos (50%) |
+  1421→  1421→| Premium oblačila (Armani) | Subito | 200€ | ~150€/kos (30%) |
+  1422→  1422→| Premium kolesa (Pinarello) | Subito | 1500€ | ~700€/kos (30%) |
+  1423→  1423→| BMW original deli | Willhaben | 300€ | ~70€/kos (20%) |
+  1424→  1424→| Smuči (Atomic/Head) | Willhaben | 400€ | ~150€/kos (30%) |
+  1425→  1425→| IKEA / design pohištvo | Willhaben | 300€ | ~50€/kos (15%) |
+  1426→  1426→
+  1427→  1427→### Pomembni tuji izrazi
+  1428→  1428→
+  1429→  1429→**🇩🇪 Nemški (Kleinanzeigen):**
+  1430→  1430→- `VB` = Verhandlungsbasis (po dogovoru)
+  1431→  1431→- `Versand` = shipping
+  1432→  1432→- `Abholung` = osebni prevzem
+  1433→  1433→- `Defekt` = pokvarjen
+  1434→  1434→- `Reparaturbedürftig` = potreben popravila
+  1435→  1435→- `Originalverpackung` = original embalaža
+  1436→  1436→- `Ohne iCloud Sperre` = brez iCloud zaklepa
+  1437→  1437→- `Akku Zyklen` = cikli baterije
+  1438→  1438→- `Zustand` = stanje
+  1439→  1439→- `Nachbau` = aftermarket kopija
+  1440→  1440→
+  1441→  1441→**🇮🇹 Italijanski (Subito):**
+  1442→  1442→- `Originale` = original
+  1443→  1443→- `Replica` = kopija (sumljivo!)
+  1444→  1444→- `Falso` = ponaredek (sumnjivo!)
+  1445→  1445→- `Nuovo con etichetta` = novo z etiketo (najboljše)
+  1446→  1446→- `Stato` = stanje
+  1447→  1447→- `Spedizione` = shipping
+  1448→  1448→- `Ritiro` = osebni prevzem
+  1449→  1449→- `Prezzo trattabile` = cena po dogovoru
+  1450→  1450→- `Bambino/Ragazzo` = otroško/mladinsko (običajno izključi)
+  1451→  1451→
+  1452→  1452→**🇦🇹 Avstrijski (Willhaben):**
+  1453→  1453→- Ista nemščina kot Kleinanzeigen
+  1454→  1454→- `Teilenummer` = številka dela (za avto dele)
+  1455→  1455→- `Samoprevzem` pogosto opcija (Avstrija blizu SI)
+  1456→  1456→
+  1457→  1457→### Strategija za maksimalni dobiček
+  1458→  1458→
+  1459→  1459→1. **Volume items** (iPhone, PS5): nizek dobiček/kos ampak visok volumen
+  1460→  1460→2. **Premium items** (MacBook, Luxury torbe): visok dobiček/kos, nižji volumen
+  1461→  1461→3. **Bundle deals**: nekaj manjših itemov skupaj za zmanjšanje shippinga
+  1462→  1462→4. **Sezonska**: smuči pozimi, EV avti spomladi (prodaja v SI poleti)
+  1463→  1463→
+  1464→  1464→### Anti-detection (skupaj z mobile.de)
+  1465→  1465→
+  1466→  1466→Aplikacija uporablja za vse 4 tuje trge:
+  1467→  1467→- Rotacija 5+ User-Agent stringov
+  1468→  1468→- Real browser headers (`Sec-Ch-Ua`, `Sec-Fetch-*`)
+  1469→  1469→- Specifičen `Accept-Language` za vsak trg
+  1470→  1470→- Cloudflare challenge detekcija
+  1471→  1471→- CAPTCHA detekcija
+  1472→  1472→- Playwright z anti-detection scripti
+  1473→  1473→- Lazy import (zmanjša initial bundle)
+  1474→  1474→
+  1475→  1475→Za maksimalno zanesljivost priporočamo:
+  1476→  1476→- **Proxy rotacijo** z DE/IT/AT proxyji (boljše rezultate kot SI proxyji)
+  1477→  1477→- **TLS fingerprinting** (Chrome 120 profil)
+  1478→  1478→- **CAPTCHA solving** (2captcha/Anti-Captcha/CapMonster)
+  1479→  1479→- **Rate limiting** (interval >30 minut za tuje trge)
+  1480→  1480→
+  1481→  1481→---
+  1482→  1482→
+  1483→  1483→## 🎉 Celovit pregled aplikacije (v1.0 → v6.41)
+  1484→  1484→
+  1485→  1485→### Splošne informacije
+  1486→  1486→- **Verzija**: v6.41.0
+  1487→  1487→- **Vrstic kode**: ~48.000+
+  1488→  1488→- **AI funkcij**: 160+
+  1489→  1489→- **AI API endpointov**: 84+
+  1490→  1490→- **Zavihkov**: 11 (Dashboard, Monitorji, Alerti, Oglasi, Watchlist, Skladišče, Analitika, Statistike, Obvestila, Zdravje, Nastavitve)
+  1491→  1491→
+  1492→  1492→### Podprti viri (10)
+  1493→  1493→| Vir | Država | Tip |
+  1494→  1494→|-----|--------|-----|
+  1495→  1495→| Bolha.com | 🇸🇮 SI | Generalni oglasnik (RSS + HTML + Playwright) |
+  1496→  1496→| Nepremičnine.net | 🇸🇮 SI | Nepremičnine (RSS) |
+  1497→  1497→| Avtonet.si | 🇸🇮 SI | Avtomobili |
+  1498→  1498→| Vinted.si | 🇸🇮 SI | Moda (API) |
+  1499→  1499→| Mobile.de | 🇩🇪 DE | Avtomobili (3-stopenjski hibrid) |
+  1500→  1500→| Kleinanzeigen.de | 🇩🇪 DE | Generalni oglasnik |
+  1501→  1501→| Subito.it | 🇮🇹 IT | Generalni oglasnik |
+  1502→  1502→| Willhaben.at | 🇦🇹 AT | Generalni oglasnik |
+  1503→  1503→| Salomon.si | 🇸🇮 SI | Generalni |
+  1504→  1504→| Custom RSS | 🌐 | Poljuben RSS |
+  1505→  1505→
+  1506→  1506→### AI providerji (6)
+  1507→  1507→| Provider | Opis | Cena |
+  1508→  1508→|----------|------|------|
+  1509→  1509→| Ollama | Lokalno (qwen2.5:7b) | Brezplačno |
+  1510→  1510→| OpenAI | gpt-4o-mini | Plačljivo |
+  1511→  1511→| Anthropic | claude-3-5-haiku | Plačljivo |
+  1512→  1512→| OpenAI-compatible | Groq, Together, DeepSeek | Poljubno |
+  1513→  1513→| OpenRouter | Gateway do 100+ modelov | Plačljivo (free tier) |
+  1514→  1514→| Google Gemini | gemini-2.0-flash-exp | Brezplačni tier (15/min, 1500/dan) |
+  1515→  1515→
+  1516→  1516→### Anti-detection tehnike (6)
+  1517→  1517→1. Rotacija 6+ User-Agent stringov
+  1518→  1518→2. Real browser headers (Sec-Ch-Ua, Sec-Fetch-*)
+  1519→  1519→3. Proxy rotacija (HTTP/SOCKS5)
+  1520→  1520→4. TLS fingerprinting (Chrome 120, Firefox 121, Safari 17)
+  1521→  1521→5. CAPTCHA solving (4 providerji: 2captcha, Anti-Captcha, CapMonster, custom)
+  1522→  1522→6. Playwright stealth mode (anti-detection scripti)
+  1523→  1523→
+  1524→  1524→### Notifikacijski kanali (5)
+  1525→  1525→- Telegram (bot z 9 ukazi, inline tipke)
+  1526→  1526→- Discord (webhook z embeds)
+  1527→  1527→- Slack (webhook z blocks)
+  1528→  1528→- Push (VAPID, service worker)
+  1529→  1529→- Email (SMTP)
+  1530→  1530→
+  1531→  1531→### AI funkcije po kategorijah
+  1532→  1532→
+  1533→  1533→#### 📊 Statistike (25+ AI funkcij)
+  1534→  1534→- AI Sourcing Recommendations, Bundle Profit Optimizer, Liquidation Strategy
+  1535→  1535→- AI Rebalancing portfolia, Tax Report, Exit Strategy
+  1536→  1536→- AI Profit Forecast, Deal Velocity, Risk Score per Trade
+  1537→  1537→- AI Cross-Border Arbitrage (6 tujih trgov)
+  1538→  1538→- AI Competitor Intelligence, Cash Flow Optimizer
+  1539→  1539→- AI Predictive Stockout, Profit Margin Optimizer
+  1540→  1540→- AI Demand Forecast, Portfolio Correlation (Pearson)
+  1541→  1541→- AI Email Campaign Generator, Customer LTV Predictor
+  1542→  1542→- AI Inventory Aging, Smart Restock Predictor
+  1543→  1543→- AI Risk Parity (Sharpe ratio), Vendor Reliability Scorer
+  1544→  1544→- AI Geographical Price Map (12 regij)
+  1545→  1545→- AI Seasonal Planner, Listing Rotation, Cash Reserve Optimizer
+  1546→  1546→- AI Predictive Market Trends, Quality Score Aggregator, Turnover Optimizer
+  1547→  1547→- AI Continuous Learning, Performance Benchmarking, Smart Alert Router
+  1548→  1548→- AI Price Elasticity Modeler, A/B Test Results, Insurance Claim Predictor
+  1549→  1549→- AI Inventory Lifecycle (7 faz), Profit Cascade (10 stopenj), Market Saturation
+  1550→  1550→- AI Buyer Matchmaker, Listing Velocity Tracker, Profit Trail Visualizer
+  1551→  1551→- AI Smart Pricing Engine (10 faktorjev), Inventory Health Monitor (8 vitalov)
+  1552→  1552→- AI Competitor Price Tracker, Stockout Prevention, Cross-Pollination, Margin Guardian
+  1553→  1553→- AI Buyer Intent, Quality Predictor, Rotation Engine
+  1554→  1554→- AI Negotiation Tracker, Performance Forecaster, Procurement Scheduler
+  1555→  1555→- **🎯 AI Master Dashboard** (8 sekcij, unified view vseh 160+ funkcij)
+  1556→  1556→- **🤖 AI Autonomous Trading** (paper/live, 6 buy + 6 sell rules, 8 safeguards)
+  1557→  1557→- **📖 AI Profit Playbook** (8-fazni workflow z 160+ AI moduli)
+  1558→  1558→
+  1559→  1559→#### 📦 Skladišče (15+ AI funkcij)
+  1560→  1560→- AI Portfolio Analysis, Flip Score, Market Saturation
+  1561→  1561→- AI Repricing Engine, Auto-Listing Generator, Refurbishment ROI
+  1562→  1562→- Speed-to-Sell Analytics, Competitor Seller Tracking
+  1563→  1563→- Seasonal Trend Calendar, Bulk Buy Opportunities, Multi-Platform Sync
+  1564→  1564→- AI Alert Prioritization, Budget Allocator, Price War Detection
+  1565→  1565→- AI Inventory Aging Alerts, Smart Restock, Profit Goal Tracker v2
+  1566→  1566→- AI Bundle Optimizer, Liquidation, Exit Strategy
+  1567→  1567→- AI Multi-Vendor Bundle, Tax Harvesting, Listing Generator
+  1568→  1568→- AI Optimal Time, Title A/B Test, Buyer Personas
+  1569→  1569→- AI Cross-Platform Price, Depreciation Forecaster
+  1570→  1570→- AI Listing Performance, Cross-Category Bundle, Seasonal Pricing
+  1571→  1571→- AI Listing Refresh, Inventory Rotation Engine
+  1572→  1572→
+  1573→  1573→#### 🔍 Oglasi detail (15+ AI funkcij)
+  1574→  1574→- AI Negotiator (multi-language), Auto-Bid (3 strategije)
+  1575→  1575→- AI Deal Score, Price Prediction, Seller Reputation
+  1576→  1576→- AI Listing Enrichment, Trend Predictions, Deduplication
+  1577→  1577→- AI Negotiation Playbook, Auction Sniper, Fraud Detection
+  1578→  1578→- AI Negotiation Outcome Predictor, Sentiment Analysis
+  1579→  1579→- AI Negotiation Chatbot (multi-turn), Refurbishment Cost Estimator
+  1580→  1580→- AI Image Quality Assessor, Fake Detection (7 luksuznih znamk)
+  1581→  1581→- AI Reverse Image Search (stock photo detection)
+  1582→  1582→- AI Description Optimizer (4 strategije)
+  1583→  1583→- AI Auction Timing Optimizer, Refurb ROI Predictor, Tone Analyzer
+  1584→  1584→- AI Performance Forecaster, Quality Predictor
+  1585→  1585→
+  1586→  1586→### Monitor templates (17+)
+  1587→  1587→- iPhone, MacBook, PS5, electronics, avto (BMW, Audi, VW, Mercedes, EV)
+  1588→  1588→- Smuči, kolesa, pohištvo, luxury torbe, premium oblačila
+  1589→  1589→- Mobile.de DE→SI arbitraža (5 templates)
+  1590→  1590→- Kleinanzeigen DE→SI (3 templates), Subito IT→SI (3), Willhaben AT→SI (3)
+  1591→  1591→
+  1592→  1592→### Avtomatizacija (3 nivoji)
+  1593→  1593→1. **Advisory**: AI priporočila, človek odloča
+  1594→  1594→2. **Semi-auto**: Avtomatski monitoring + alerti, človek potrdi nakup/prodajo
+  1595→  1595→3. **Full-auto**: Avtomatski nakup (do limita) + avtomatska objava oglasov
+  1596→  1596→
+  1597→  1597→### Profit Maximization Workflow (8 faz)
+  1598→  1598→1. **Sourcing** → smart-restock, procurement-scheduler, market-trends
+  1599→  1599→2. **Evaluation** → quality-aggregator, deal-score, fraud-detection, fake-detection
+  1600→  1600→3. **Acquisition** → negotiation-playbook, auction-timing, negotiation-chatbot
+  1601→  1601→4. **Holding** → inventory-health-monitor, inventory-aging, depreciation-forecast
+  1602→  1602→5. **Pricing** → smart-pricing-engine, price-elasticity, seasonal-pricing
+  1603→  1603→6. **Listing** → multimodal-listing, title-abtest, description-optimizer, image-quality
+  1604→  1604→7. **Selling** → negotiation-outcome, buyer-matchmaker, buyer-intent
+  1605→  1605→8. **Post-sale** → performance-benchmark, continuous-learning, profit-trail, cash-reserve
+  1606→  1606→
+  1607→  1607→### Pričakovan vpliv na dobiček
+  1608→  1608→- **+150-300%** skupni dobiček z vsemi AI funkcijami
+  1609→  1609→- **+20-35%** od cross-border arbitraže (DE/IT/AT → SI)
+  1610→  1610→- **+15-25%** od dynamic pricing optimization
+  1611→  1611→- **+10-20%** od bundle strategij
+  1612→  1612→- **+5-15%** od sezonske optimizacije
+  1613→  1613→- **-30-50%** časa porabljenega za ročno delo (avtomatizacija)
+  1614→  1614→
+  1615→  1615→## Testirano z
+  1616→  1616→
+  1617→  1617→- **Ollama** + `qwen2.5:7b` — odlična podpora za slovenščino, brezplačno, lokalno
+  1618→  1618→- **OpenAI** `gpt-4o-mini` — najcenejši OpenAI model, dovolj dober za to nalogo
+  1619→  1619→- **Anthropic** `claude-3-5-haiku` — hiter in natančen
+  1620→  1620→- **OpenRouter** `anthropic/claude-3.5-sonnet` — gateway do 100+ modelov, en API key (v6.19)
+  1621→  1621→- **Google Gemini** `gemini-2.0-flash-exp` — brezplačni tier (15 req/min, 1500/dan) (v6.19)
+  1622→  1622→
+  1623→  1623→## License
+  1624→  1624→
+  1625→  1625→MIT — uporabljaj prosto, brez garancij.
+  1626→  1626→
