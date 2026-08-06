@@ -48,6 +48,25 @@ export async function GET(req: NextRequest) {
       }
     } catch { /* ignore cleanup errors */ }
 
+    // v7.36: Smart Deal Alert — push TOP 3 deals to Telegram/Discord/Push
+    const cronKey = new URL(req.url).searchParams.get('key') || '';
+    let dealAlertResult = { skipped: true, reason: 'not checked' };
+    try {
+      const dealAlertRes = await fetch(`${req.nextUrl.origin}/api/cron/smart-deal-alert?key=${cronKey}`);
+      if (dealAlertRes.ok) {
+        dealAlertResult = await dealAlertRes.json();
+      }
+    } catch { /* ignore deal alert errors */ }
+
+    // v7.36: Inventory Aging Alert — warn about items held too long
+    let agingAlertResult = { skipped: true, reason: 'not checked' };
+    try {
+      const agingRes = await fetch(`${req.nextUrl.origin}/api/cron/inventory-aging-alert?key=${cronKey}`);
+      if (agingRes.ok) {
+        agingAlertResult = await agingRes.json();
+      }
+    } catch { /* ignore aging alert errors */ }
+
     return NextResponse.json({
       ran: monitorsResult.ran,
       skipped: monitorsResult.skipped,
@@ -56,6 +75,8 @@ export async function GET(req: NextRequest) {
       heartbeat: heartbeatResult,
       digest: digestResult,
       cleanup: cleanupResult,
+      dealAlert: dealAlertResult,
+      agingAlert: agingAlertResult,
       timestamp: new Date().toISOString(),
     });
 
