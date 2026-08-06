@@ -6040,3 +6040,188 @@ Stage Summary:
 - Dokumentacija sinhrono posodobljena (AI_ENDPOINTS.md, README, CHANGELOG, GitHub About)
 - GitHub sinhroniziran (0 commit-ov ahead)
 - Verzija aplikacije: v7.59.0
+
+---
+Task ID: v7.60
+Agent: full-stack-developer
+Task: Add 3 new features for v7.60 — Demand Forecast AI, Margin Guardian Pro, Multi-Platform Listing Generator
+
+Work Log:
+- Prebral worklog (v7.59.1 — 282 AI endpointov, 416 API routes, verzija v7.59.0).
+- Proučil vzorce iz obstoječih endpoint-ov:
+  * src/app/api/ai/bundle-profit-optimizer/route.ts (GET+POST shared handler + AI cache + grounding + anti-hallucination + deterministic fallback)
+  * src/app/api/analytics/portfolio-stress-test/route.ts (pure DB analytics z scenarios)
+  * src/lib/anti-hallucination.ts (GROUNDING_PROMPT_SUFFIX export)
+  * src/lib/rate-limit.ts (checkRateLimit + rateLimitResponse, 20/min/IP)
+  * src/lib/ai-cache.ts (getCachedAI + setCachedAI, 6h TTL)
+  * src/lib/ai.ts (callProviderForRaw, parseJsonLooseExported, AiSettings, AiProviderType)
+
+- Feature #1: Demand Forecast AI (src/app/api/ai/demand-forecast/route.ts):
+  * AI-enhanced (GET + POST shared handler handleDemandForecast), runtime='nodejs', dynamic='force-dynamic', maxDuration=60
+  * Rate limit: checkRateLimit(req, 'ai-demand-forecast', 20)
+  * Query listings zadnjih 90 dni + SOLD trades zadnjih 90 dni
+  * Kategorija extractana iz title keywordsov (PS5/iPhone → elektronika, VW/Audi/BMW → avto, MTB/Trek → kolesa, jakna/čevelj → moda, ...)
+    z fallback na monitor.tags
+  * Per category agregacija: listingsNow4w, listingsPrev4w, soldCount, avgPrice now/prev
+  * frequencyTrend: INCREASING/STABLE/DECREASING (delta >= 15% v 4 tednih)
+  * sellThroughRate: soldTrades / totalListings (%)
+  * avgPriceTrend: UP/DOWN/STABLE (delta >= 10%)
+  * seasonalityScore 0-100 (mesečni boost-i: elektronika Nov/Dec, fitness Jan/Feb, kolesa Mar/Maj, zimske gume Sep-Nov, nepremičnine Apr/Maj/Sep)
+  * AI prompt z GROUNDING_PROMPT_SUFFIX — prosi za categories[] s {predictedDemand, confidenceScore, expectedPriceMovement, recommendedAction, reasoning}
+  * Anti-hallucination (validateAiForecast):
+    * predictedDemand HIGH ni dovoljen če frequencyTrend=DECREASING in seasonalityScore<60 (halucinirani optimizem)
+    * predictedDemand HIGH ni dovoljen če sellThroughRate<10% in frequencyTrend=DECREASING (realno mrtev trg)
+    * confidenceScore clamp [10, 95], reasoning slice(0, 280)
+  * AI cache key `demand-forecast:${currentMonth}` (6h TTL prek getCachedAI/setCachedAI)
+  * Cache only ko aiUsed=true
+  * Deterministic fallback (če AI faila ali 0 valid predictions): score iz
+    sellThrough × frequencyTrend × seasonality → HIGH/MEDIUM/LOW
+  * Sort: HIGH first, nato confidenceScore desc; top 10 categories
+  * Summary: totalCategories, highDemand, bestOpportunity (first BUY_MORE), worstCategory (first AVOID/REDUCE), reasoning
+  * Empty-state fallback: "Ni zgodovinskih oglasov v zadnjih 90 dneh..."
+
+- Feature #2: Margin Guardian Pro (src/app/api/ai/margin-guardian-pro/route.ts):
+  * AI-enhanced (GET + POST shared handler handleMarginGuardian), runtime='nodejs', dynamic='force-dynamic', maxDuration=60
+  * Rate limit: checkRateLimit(req, 'ai-margin-guardian-pro', 20)
+  * Query HELD trades z linked Listing (aiEstimatedValue, dealScore)
+  * estValue fallback: listing.aiEstimatedValue ?? buyPrice × 1.2 (enako kot bundle-profit-optimizer)
+  * carryingCost = daysHeld × 0.50€/dan (storage + opportunity cost)
+  * breakevenPrice = buyPrice + buyFees + carryingCost
+  * currentMargin = ((aiEstimatedValue - buyPrice - buyFees - carryingCost) / buyPrice) × 100
+  * marginStatus: HEALTHY (>15%) | WARNING (5-15%) | AT_RISK (0-5%) | LOSS (<0%)
+  * Filter na at-risk item-e (WARNING / AT_RISK / LOSS) — HEALTHY ne potrebujejo AI
+  * AI prompt z grounding — prosi za alerts[] s {tradeId, action, newPrice, urgency, reasoning}
+  * Anti-hallucination (validateAiAlert + clampNewPrice):
+    * newPrice clamped na [breakevenPrice, aiEstimatedValue × 1.1] — ne prodaj pod breakeven
+    * LIQUIDATE exception: 0.9× breakeven dovoljen za sprostitev kapitala (kapital > cena item-a)
+    * action validacija (HOLD | PRICE_DROP_5% | PRICE_DROP_10% | PRICE_DROP_15% | LIQUIDATE)
+    * urgency validacija (IMMEDIATE | THIS_WEEK | THIS_MONTH)
+  * Deterministic fallback (deterministicAlert): action glede na status + daysHeld,
+    newPrice iz estValue × (1 - dropPercent)
+  * Sort alerts po urgency (IMMEDIATE first), nato currentMargin asc
+  * Summary: totalItems, healthy/warning/atRisk/loss counts, potentialLossEur
+    (skupna izguba če margin gre negativno), avgMargin
+  * AI cache key `margin-guardian-pro:${JSON.stringify(sortedIds)}` (6h TTL)
+  * Empty-state fallback: "Ni held inventarja — Margin Guardian nima kaj čuvati."
+  * All-healthy fallback: "Vsi held item-i imajo zdrav margin (>=15%)."
+
+- Feature #3: Multi-Platform Listing Generator (src/app/api/ai/multi-platform-listing-generator/route.ts):
+  * AI-enhanced (GET + POST shared handler handleMultiPlatformListing), runtime='nodejs', dynamic='force-dynamic', maxDuration=60
+  * Rate limit: checkRateLimit(req, 'ai-multi-platform-listing-generator', 20)
+  * Body param `tradeId` (optional) — če ni podan, procesira vse held item-e (cap 30 za AI prompt)
+  * Query HELD trades z linked Listing (aiEstimatedValue, imageUrl)
+  * 5 platform specifikacij:
+    - bolha: max 60 chars, slo, 10 tags, prijateljski ton
+    - vinted: max 80 chars, slo/ang, 5 tags, modno usmerjen
+    - facebook: max 100 chars, slo, 6 tags, lahkoten ton, emoji OK, lokalno
+    - mobilede: max 50 chars, nem, 8 tags, tehničen profesionalen
+    - kleinanzeigen: max 70 chars, nem, 6 tags, podroben transakcijski
+  * AI prompt z grounding — prosi za listings[] s {tradeId, platforms{bolha,vinted,facebook,mobilede,kleinanzeigen},
+    reasoning} kjer vsaka platforma ima {title, description, tags, suggestedPrice, seoScore}
+  * Anti-hallucination (validatePlatformEntry + clampPrice + clampString + clampTags + clampSeoScore):
+    * title clamped na max chars platforme (fallback: original title)
+    * suggestedPrice clamped na [0.7×, 1.2×] aiEstimatedValue (realističen range)
+    * seoScore clamped [0, 100]
+    * tags validacija (slice na max tag count platforme)
+  * bestPlatform = platform z najvišjim seoScore za ta item
+  * Deterministic fallback (deterministicPlatformListing):
+    * generični title (trunciran na max chars)
+    * description v ustreznem jeziku (slo za bolha/vinted/fb, nem za mobilede/kleinanzeigen)
+    * suggestedPrice = estValue × platformFactor (0.88-0.98 odvisno od platforme — Vinted nižja, mobilede višja)
+    * seoScore = 60 (deterministic baseline)
+  * Summary: totalItems, listingsGenerated, avgSeoScore, bestPlatformOverall (platforma z največ bestPlatform)
+  * AI cache key `multi-platform-listing:${JSON.stringify(sortedIds)}` (6h TTL)
+  * Empty-state fallback: "Ni held inventarja — ni item-ov za generiranje oglasov."
+
+- BACKWARD COMPATIBILITY — v6.12 demand-forecast migration:
+  * Odkril, da je v HEAD obstajal starec v6.12 endpoint na /api/ai/demand-forecast
+    (3-mesečna napoved z drugačno response shapo: forecasts[] z forecastDemand, trend, recommendation).
+    Implementacija 256 vrstic, POST-only, brez anti-hallucination/cache/deterministic fallback.
+  * Da ne zlomim frontend-a (statistics-view.tsx kliče POST /api/ai/demand-forecast z body {months}
+    in pričakuje data.insights + data.summary.growingCats + data.forecasts[]), sem premaknil
+    original v6.12 endpoint na /api/ai/demand-forecast-v6 (preserve vsebine + dodan komentar).
+  * Frontend statistics-view.tsx update-an: kliče sedaj /api/ai/demand-forecast-v6.
+  * Nova v7.60 implementacija na /api/ai/demand-forecast (per task spec).
+  * Net: +3 endpointi (demand-forecast-v6 kot nov path z ohranjeno v6.12 vsebino,
+    demand-forecast z novo v7.60 vsebino, margin-guardian-pro, multi-platform-listing-generator)
+    — dejanskih 4 endpoint fileov vendar +3 odštejemo starec demand-forecast ki je bil premaknjen
+    (file count: 282 + 3 = 285 ✓)
+
+- Testiranje vseh 4 endpointov (curl localhost:3000) — empty-state (DB je prazno po čiščenju):
+  * GET /api/ai/demand-forecast → 200, {"ok":true,"categories":[],"summary":{"totalCategories":0,"highDemand":0,
+    "bestOpportunity":null,"worstCategory":null,"reasoning":"Ni zgodovinskih oglasov v zadnjih 90 dneh..."},
+    "aiUsed":false,"message":"Ni zgodovinskih oglasov v zadnjih 90 dneh — napoved povpraševanja ni mogoča."}
+  * POST /api/ai/demand-forecast -d '{}' → 200, identično kot GET (AI Hub runner kompatibilnost)
+  * GET /api/ai/margin-guardian-pro → 200, {"ok":true,"alerts":[],"summary":{"totalItems":0,"healthy":0,
+    "warning":0,"atRisk":0,"loss":0,"potentialLossEur":0,"avgMargin":0},"aiUsed":false,
+    "message":"Ni held inventarja — Margin Guardian nima kaj čuvati."}
+  * POST /api/ai/margin-guardian-pro -d '{}' → 200, identično kot GET
+  * GET /api/ai/multi-platform-listing-generator → 200, {"ok":true,"listings":[],"summary":{"totalItems":0,
+    "listingsGenerated":0,"avgSeoScore":0,"bestPlatformOverall":""},"aiUsed":false,
+    "message":"Ni held inventarja — ni item-ov za generiranje oglasov."}
+  * POST /api/ai/multi-platform-listing-generator -d '{}' → 200, identično kot GET
+  * POST /api/ai/demand-forecast-v6 -d '{"months":3}' → 200, {"ok":true,"forecasts":[],
+    "message":"Ni dovolj podatkov za napoved povpraševanja (potrebnih vsaj nekaj prodaj ali oglasov)."}
+  * BONUS: Tested tudi z seedanimi podatki (10 trades, 25 listings, 4 monitors) — vsi 4 endpointi
+    pravilno vračajo strukturiran JSON z ustreznimi kategorijami/alerts/listings. Cleanup po testu.
+
+- TypeScript: `npx tsc --noEmit` → 0 napak ✨
+- ESLint: `bun run lint` → 0 napak, 0 opozoril ✨
+- dev.log: vsi 5 HTTP requesti (GET×3 + POST×2 + v6 POST×1) vračajo 200 OK. Brez runtime napak.
+
+- Dokumentacijska sinhronizacija (CRITICAL):
+  * AI_ENDPOINTS.md: regeneriran z Python skripto → "Total: 285 endpoints" (282 → 285, +3)
+  * README.md:
+    - Badge version: v7.59.0 → v7.60.0
+    - Badge AI Endpoints: 282 → 285
+    - Badge API Routes: 416 → 419
+    - Tagline: "282 AI endpointov + 29 analytics" → "285 AI endpointov + 29 analytics"
+    - Overview: "Verzija v7.59.0" → "Verzija v7.60.0", counts posodobljeni, "~103 funkcij" → "~105 funkcij"
+    - "Kaj je novega v v7.56–v7.59 (4 verzije, 12 novih funkcij)" → "...v7.56–v7.60 (5 verzij, 15 novih funkcij)",
+      dodan v7.60 blok (3 funkcije) na vrh
+    - "zgodovino v1.0 → v7.59" → "v1.0 → v7.60"
+    - AI Hub badge v tabeli: "Vsi 282 AI endpointov" → "Vsi 285 AI endpointov"
+    - AI_ENDPOINTS.md link: "vseh 282 AI endpointov" → "vseh 285 AI endpointov"
+    - "Endpointi (282 AI + 29 analytics + 10 cron + sistemski = 416)" → "...(285 AI + 29 analytics + ... = 419)"
+    - Dodani 3 novi AI endpointi v API primeri blok (demand-forecast, margin-guardian-pro, multi-platform-listing-generator)
+    - "Profit pipeline (v7.32-v7.59)" → "...(v7.32-v7.60)"
+    - Dodani 3 novi AI endpointi v profit pipeline listo (Demand Forecast AI, Margin Guardian Pro, Multi-Platform Listing Generator)
+    - Project structure: "282 AI endpointov" → "285 AI endpointov"
+    - Coding standards: "416 routes" → "419 routes"
+    - Roadmap: "v7.59 (trenutno — ~103 funkcij)" → "v7.60 (trenutno — ~105 funkcij)"
+    - Profit pipeline list: dodane 3 nove funkcije
+    - Testing: "416 API routes" → "419 API routes"
+    - "Naslednji koraki": "UI komponente za v7.50-v7.59 funkcije" → "...v7.50-v7.60 funkcije"
+    - "Zadnje verzije": dodan "v7.60.0 (avgust 2026) — Demand Forecast AI, Margin Guardian Pro, Multi-Platform Listing Generator"
+  * CHANGELOG.md:
+    - "[Unreleased] Načrtovano za v7.60+" → "...za v7.61+"
+    - Dodana nova "[7.60.0] - 2026-08-06" sekcija (nad [7.59.0])
+    - "### Added — Demand Forecast AI & Margin Guardian Pro & Multi-Platform Listing Generator (3 funkcije)"
+      z vsemi 3 endpoint-i in podrobnimi opisi (response shape, anti-hallucination rules, AI cache key, deterministic fallback)
+    - "### Changed — v6.12 endpoint migration" sekcija: demand-forecast premaknjen na -v6, nova v7.60 implementacija na original path
+  * Frontend: src/components/dashboard/statistics-view.tsx — fetch('/api/ai/demand-forecast') → fetch('/api/ai/demand-forecast-v6')
+
+Stage Summary:
+- 3 novi AI endpointi dodani (skupno +3 od v7.59.1):
+  - demand-forecast (GET+POST, AI-enhanced z cache + grounding + anti-hallucination + deterministic fallback)
+  - margin-guardian-pro (GET+POST, AI-enhanced z carrying cost + breakeven + clamp + cache + fallback)
+  - multi-platform-listing-generator (GET+POST, AI-enhanced z 5 platform specs + clamp + cache + fallback)
+- Demand Forecast AI: 30-dnevna napoved povpraševanja po kategorijah. Anti-hallucination preprečuje
+  HIGH prediction za kategorije ki padajo brez sezonskega razloga. AI cache po currentMonth.
+- Margin Guardian Pro: real-time margin monitoring za HELD inventar. Carrying cost 0.50€/dan,
+  4 marginStatus tiers, AI priporoča action (HOLD/PRICE_DROP_5-15%/LIQUIDATE) + newPrice + urgency.
+  Anti-hallucination: newPrice clamped na [breakeven, estValue × 1.1].
+- Multi-Platform Listing Generator: AI generira oglase za 5 platform hkrati (Bolha, Vinted, FB,
+  mobile.de, Kleinanzeigen). Vsaka platforma ima svoj max chars, jezik, ton, tag count.
+  Anti-hallucination: suggestedPrice clamped na [0.7×, 1.2×] estValue.
+- v6.12 demand-forecast endpoint MIGRATED na /api/ai/demand-forecast-v6 (preserve vsebine za
+  backward compatibility). Frontend statistics-view.tsx update-an. Nova v7.60 implementacija
+  na original path /api/ai/demand-forecast (per task spec).
+- Vsi 4 endpointi vračajo veljaven JSON tudi ob prazni bazi (graceful fallback z opisno slovensko message).
+  AI endpointi imajo aiUsed flag v responsu za transparentnost.
+- AI_ENDPOINTS.md: "Total: 285 endpoints" ✓ (282 → 285)
+- README.md: v7.60.0 badge, 285 AI, 419 routes, 16 v7.60 referenc, 6 "285 AI" referenc ✓
+- CHANGELOG.md: [7.60.0] sekcija dodana ✓
+- ESLint: 0 napak ✨
+- TypeScript: 0 napak ✨
+- Verzija aplikacije: v7.60.0

@@ -1380,7 +1380,7 @@ export function StatisticsView() {
                 setDemandLoading(true); setDemandData(null);
                 try {
                   const months = Math.max(1, Math.min(6, Number(demandMonths) || 3));
-                  const res = await fetch('/api/ai/demand-forecast', {
+                  const res = await fetch('/api/ai/demand-forecast-v6', {
                     method: 'POST',
                     headers: { 'Content-Type': 'application/json' },
                     body: JSON.stringify({ months }),

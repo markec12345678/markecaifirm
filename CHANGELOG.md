@@ -6,11 +6,81 @@ Format sledi [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), verzije s
 
 ## [Unreleased]
 
-Načrtovano za v7.60+:
+Načrtovano za v7.61+:
 - WebSocket real-time negotiation (SSE namesto polling)
 - Playwright E2E testi za glavne flow-e
 - TLS fingerprinting (curl-impersonate)
 - ML model za buyer matchmaker (fine-tuned na realnem data)
+
+## [7.60.0] - 2026-08-06
+
+### Added — Demand Forecast AI & Margin Guardian Pro & Multi-Platform Listing Generator (3 funkcije)
+- **Demand Forecast AI** — `GET+POST /api/ai/demand-forecast`
+  - AI napoved katere kategorije bodo v HIGH povpraševanju naslednjih 30 dni
+  - Pomaga odločiti KAM investirati kapital (ne le kateri item-i so na zalogi,
+    ampak kaj se bo prodalo)
+  - Query listings zadnjih 90 dni, grupirano po kategoriji (extract iz title
+    keywordsov ali monitor.tags)
+  - Per kategorija: listingFrequency (per week), frequencyTrend (last4w vs
+    prev4w — INCREASING/STABLE/DECREASING), sellThroughRate (soldTrades /
+    totalListings), avgPriceTrend, seasonalityScore 0-100
+  - AI generira: predictedDemand (HIGH/MEDIUM/LOW), confidenceScore 0-100,
+    expectedPriceMovement (UP/STABLE/DOWN), recommendedAction
+    (BUY_MORE/HOLD/REDUCE/AVOID), reasoning
+  - Anti-hallucination: kategorija, ki pada 8 tednov BREZ sezonskega razloga,
+    NE more biti HIGH (to bi bila halucinacija optimism-a). Sell-through <10%
+    + DECREASING → ne more biti HIGH
+  - AI cache `demand-forecast:${currentMonth}` (6h TTL — dnevni refresh)
+  - Deterministic fallback: score iz sellThrough × frequencyTrend × season
+  - 'Elektronika: HIGH demand next 30d (sell-through 65%, trend ↑) → kupuj več'
+  - Top 10 kategorij sortiranih po predicted demand + confidence
+- **Margin Guardian Pro** — `GET+POST /api/ai/margin-guardian-pro`
+  - Real-time margin monitoring z AI-driven pricing priporočili za HELD inventar
+  - Skenira vsak held item, izračuna carrying cost (daysHeld × 0.50€/dan) in
+    trenutni margin glede na AI estimated value
+  - marginStatus: HEALTHY (>15%) | WARNING (5-15%) | AT_RISK (0-5%) | LOSS (<0%)
+  - breakevenPrice = buyPrice + buyFees + carryingCost
+  - AI generira per-item: action (HOLD | PRICE_DROP_5% | PRICE_DROP_10% |
+    PRICE_DROP_15% | LIQUIDATE), newPrice (specifična EUR cena), urgency
+    (IMMEDIATE | THIS_WEEK | THIS_MONTH), reasoning
+  - Anti-hallucination: newPrice clamped na [breakevenPrice, estValue × 1.1]
+    — ne prodaj pod breakeven (razen LIQUIDATE, kjer je 0.9× breakeven
+    dovoljen za sprostitev kapitala)
+  - LIQUIDATE samo za LOSS ali item-e držane >60 dni z AT_RISK
+  - AI cache `margin-guardian-pro:${JSON.stringify(heldItemIds)}` (6h TTL)
+  - Deterministic fallback: newPrice = breakeven × 1.10 (z 10% varnostjo)
+  - 'PS5 držan 45 dni — carrying cost 22.5€, margin 8% (WARNING) → znižaj
+    ceno za 10% na 380€'
+  - Summary: totalItems, healthy/warning/atRisk/loss counts,
+    potentialLossEur (skupna izguba če margin gre negativno), avgMargin
+- **Multi-Platform Listing Generator** — `GET+POST /api/ai/multi-platform-listing-generator`
+  - AI generira optimizirano vsebino za 5 platform hkrati iz enega held item-a
+  - Vsaka platforma ima različne SEO zahteve, omejitve dolžine naslova,
+    sistem tag-ov in ton občinstva:
+    - **Bolha** — max 60 char naslov, slovenščina, 10 tag-ov, prijateljski ton
+    - **Vinted** — max 80 char, slo/ang, 5 tag-ov, modno usmerjen ton
+    - **Facebook Marketplace** — max 100 char, slo, 6 tag-ov, lahkoten ton,
+      emoji OK, poudarek lokalno
+    - **mobile.de** — max 50 char, nemščina, 8 tag-ov, tehničen profesionalen ton
+    - **Kleinanzeigen** — max 70 char, nemščina, 6 tag-ov, podroben transakcijski ton
+  - Per platform: title, description, tags, suggestedPrice, seoScore (0-100)
+  - Anti-hallucination: suggestedPrice clamped na [0.7×, 1.2×] aiEstimatedValue
+    — realističen range, ne preveč pod cenom (ne izgubi denarja) in ne preveč
+    nad (ne bodi nerealističen)
+  - bestPlatform = najvišji seoScore za ta item
+  - AI cache `multi-platform-listing:${JSON.stringify(tradeIds)}` (6h TTL)
+  - Deterministic fallback: generični naslov (trunciran na max chars) +
+    suggestedPrice = estValue × 0.88-0.98 (odvisno od platforme)
+  - 'PS5 → Bolha: "PS5 Digital 2024 + 2 controllerja" (380€, SEO 92),
+    Vinted: "PlayStation 5 Digital" (320€, SEO 88)'
+  - Body param `tradeId` (optional) — če ni podan, procesira vse held item-e
+
+### Changed — v6.12 endpoint migration
+- **demand-forecast** (v6.12) premaknjen na `/api/ai/demand-forecast-v6` —
+  original v6.12 implementacija (3-mesečna napoved) ohranjena za backward
+  compatibility. Frontend statistics-view.tsx sedaj kliče `/api/ai/demand-forecast-v6`
+- `/api/ai/demand-forecast` je sedaj nova v7.60 implementacija (30-dnevna napoved
+  z anti-hallucination + cache + GET handler za AI Hub runner compat)
 
 ## [7.59.0] - 2026-08-06
 
