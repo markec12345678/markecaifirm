@@ -5859,3 +5859,153 @@ Stage Summary:
 - ARCHIVE.md: 0 → 907 vrstic (ločen arhiv za starejše verzije)
 - GitHub sinhroniziran (0 commit-ov ahead)
 - Verzija aplikacije: v7.58.2 (dokumentacijska)
+
+---
+Task ID: v7.59
+Agent: full-stack-developer
+Task: Add 3 new features for v7.59 — Portfolio Stress Test, Supplier CRM, Bundle Profit Optimizer
+
+Work Log:
+- Prebral worklog.md (zadnjih ~150 vrstic) — projekt na v7.58.2, 281 AI + 27 analytics = 413 routes
+- Studiral existing endpoint patterns:
+  * src/app/api/analytics/roi-leaderboard/route.ts (grouping by brand/model)
+  * src/app/api/ai/profit-maximizer-v2/route.ts (AI cache + scenarios + anti-hallucination + GET+POST shared handler)
+  * src/app/api/analytics/competitor-tracker/route.ts (batched seller queries)
+  * src/app/api/ai/liquidation-strategist/route.ts (exit strategy s platform fees)
+  * src/app/api/analytics/listing-performance/route.ts (held trades query pattern)
+  * src/lib/anti-hallucination.ts (GROUNDING_PROMPT_SUFFIX export)
+  * src/lib/rate-limit.ts (checkRateLimit + rateLimitResponse)
+  * src/lib/ai-cache.ts (getCachedAI + setCachedAI, 6h TTL)
+  * src/lib/ai.ts (callProviderForRaw, parseJsonLooseExported, AiSettings, AiProviderType)
+
+- Feature #1: Portfolio Stress Test (src/app/api/analytics/portfolio-stress-test/route.ts):
+  * Pure DB analytics (NO AI), runtime='nodejs', dynamic='force-dynamic'
+  * Query HELD trades z linked Listing (aiEstimatedValue, dealScore)
+  * Compute currentPortfolio: totalHeldCapital, totalEstimatedValue, unrealizedProfit, itemCount, avgDealScore
+  * estValue fallback: listing.aiEstimatedValue ?? buyPrice × 1.2 (enako kot liquidation-strategist)
+  * 3 stresni scenariji: MILD (×0.90, -10%), MODERATE (×0.75, -25%), SEVERE (×0.60, -40%)
+  * Per scenario: stressedValue, capitalLoss, lossPercent, itemsUnderwater, worstCategory, bestCategory
+  * worstCategory/bestCategory normalization: loss/Invested per category (da primerjamo kategorije pošteno)
+  * categoryVulnerability: per category itemCount, invested, currentValue, mild/moderate/severe stressValue,
+    vulnerabilityScore 0-100 (80% severeLossPct + concentrationBoost do 20)
+  * Recommendation: immediateLiquidate (items underwater under MILD), holdStrong (resilient even under SEVERE),
+    hedgingAdvice (slovensko besedilo z loss in worst category)
+  * Historical context: soldTradesAnalyzed + historicalWinRate (informational)
+  * Empty-state fallback: "Ni held inventarja — stresni test ni mogoč."
+
+- Feature #2: Supplier CRM (src/app/api/analytics/supplier-crm/route.ts):
+  * Pure DB analytics (NO AI), runtime='nodejs', dynamic='force-dynamic'
+  * Query SOLD + HELD trades z linked Listing (sellerName, dealScore, aiEstimatedValue)
+  * Filter na sellerje z non-null sellerName (existing pattern iz competitor-tracker)
+  * Per supplier agregacija: purchasesCount, totalSpent (buyPrice + buyFees), firstBuyDate, lastBuyDate,
+    categories Set, dealScores array, profitFromSupplier (sellPrice - sellFees - buyPrice - buyFees za SOLD),
+    itemsStillHeld, soldCount, profitCount, reliabilitySamples (estValue vs actualSell), notesConcat, recentTrades[5]
+  * Trust tiers: PLATINUM (5+ nakupov AND 80%+ profitabilnost) | GOLD (3+ AND 60%+) | SILVER (2+) | BRONZE (1)
+  * reliabilityScore 0-100: 100 × (1 - avgDeviation(estValue, actualSell)), clamped [0, 100]; default 50 če no data
+  * preferredContactMethod: telegram/phone/bolha-msg — inferred iz notes (keyword + SI phone pattern)
+  * relationshipDuration: days med firstBuyDate in lastBuyDate
+  * Sort: trustTier (PLATINUM first), nato totalSpent desc
+  * Summary: totalSuppliers, count per tier, totalLifetimeSpend, totalProfitFromSuppliers, topSupplier
+  * Empty-state fallback: "Ni sledenih dobaviteljev — sellerName ni populiran..."
+
+- Feature #3: Bundle Profit Optimizer (src/app/api/ai/bundle-profit-optimizer/route.ts):
+  * AI-enhanced (GET + POST shared handler handleBundleOptimizer), runtime='nodejs', dynamic='force-dynamic', maxDuration=60
+  * Rate limit: checkRateLimit(req, 'ai-bundle-profit-optimizer', 20)
+  * Query HELD trades z linked Listing (aiEstimatedValue, dealScore)
+  * Per item: category (lowercased), estValue (fallback buyPrice × 1.2), potentialProfit, bundleCompatibility
+  * COMPLEMENTARY slovar (komplementarne kategorije): elektronika+igre/aksesoiri/pohistvo, moda+aksesoiri/obutev,
+    avto+gume, dom+pohistvo/kuhinja, orodje+gradnja, sport+moda/aksesoiri, kolesa+aksesoiri/sport
+  * AI prompt z GROUNDING_PROMPT_SUFFIX — prosi za bundles[] s {itemIds[2-4], suggestedBundlePrice,
+    bundleDiscountPercent, expectedSellTimeDays, reasoning}
+  * Anti-hallucination (clampBundleSuggestion):
+    * itemIds: 2-4 valid trade IDs, ne-uporabljeni (an item can only be in 1 bundle)
+    * suggestedBundlePrice: clamp na [0.8×, 1.1×] sum of estValues (5-15% popust realističen); floor: must cover buyPrice
+    * bundleDiscountPercent: ((sumEst - bundlePrice) / sumEst) × 100
+    * expectedSellTimeDays: clamp na [1, 60]
+    * reasoning: slice(0, 300) če valid string, drugače deterministic fallback
+  * AI cache key: `bundle-profit-optimizer:${JSON.stringify(sortedIds)}` (6h TTL prek getCachedAI/setCachedAI)
+  * Cache only ko aiUsed=true (ne deterministic fallback — ki je cheap in se spremeni ko se item-i spremenijo)
+  * Deterministic fallback (če AI faila ali vrne 0 valid bundles): grupira po kategoriji, bundle 2-4 item-ov
+    z combined value > 100€, 8% popust, 14 dni sell time
+  * Summary: totalBundles, itemsBundled, itemsUnbundled, expectedTotalProfitBundled,
+    expectedTotalProfitStandalone (samo za bundled item-e, apples-to-apples primerjava), profitUplift %
+  * recommendation slovensko (glede na profitUplift)
+  * aiUsed flag v responsu za transparentnost
+  * Empty-state fallback: "Ni held inventarja — nič za pakiranje."
+
+- Testiranje vseh 3 endpointov (curl localhost:3000):
+  * GET /api/analytics/portfolio-stress-test → 200, {"ok":true,"currentPortfolio":{"totalHeldCapital":0,
+    "totalEstimatedValue":0,"unrealizedProfit":0,"itemCount":0,"avgDealScore":0},"scenarios":[],
+    "categoryVulnerability":[],"recommendation":{"immediateLiquidate":[],"holdStrong":[],
+    "hedgingAdvice":"Skladišče je prazno — ni inventarja za stresni test."},
+    "message":"Ni held inventarja — stresni test ni mogoč."}
+  * GET /api/analytics/supplier-crm → 200, {"ok":true,"suppliers":[],"summary":{"totalSuppliers":0,
+    "platinum":0,"gold":0,"silver":0,"bronze":0,"totalLifetimeSpend":0,"totalProfitFromSuppliers":0,
+    "topSupplier":null},"message":"Ni sledenih dobaviteljev — sellerName ni populiran..."}
+  * GET /api/ai/bundle-profit-optimizer → 200, {"ok":true,"standaloneAnalysis":{"totalItems":0,
+    "totalInvested":0,"totalEstimatedValue":0,"standaloneProfit":0},"bundles":[],"summary":{"totalBundles":0,
+    "itemsBundled":0,"itemsUnbundled":0,"expectedTotalProfitBundled":0,"expectedTotalProfitStandalone":0,
+    "profitUplift":0,"recommendation":"Ni held inventarja — nič za pakiranje."},"aiUsed":false,
+    "message":"Ni held inventarja — nič za pakiranje."}
+  * POST /api/ai/bundle-profit-optimizer -d '{}' → 200, identičen kot GET (AI Hub runner kompatibilnost
+    potrjena tudi v empty state)
+- TypeScript: `npx tsc --noEmit` → 0 napak ✨
+  * (en workaround: AiBundleResponse['bundles'][number] tipa ne dela ker `bundles?` je optional in undefined
+    nima index signature — refaktoriral v ekspliciten AiBundleEntry interface)
+- ESLint: `bun run lint` → 0 napak, 0 opozoril ✨
+- dev.log: vsi 4 HTTP requesti (GET×3 + POST×1) vračajo 200 OK. Brez runtime napak v mojih endpointih.
+  (Browser RSC fetch warnings so unrelated — preview environment infra, ne moja koda.)
+
+- Dokumentacijska sinhronizacija (CRITICAL):
+  * AI_ENDPOINTS.md: regeneriran z Python skripto → "Total: 282 endpoints" (281 → 282, +1 bundle-profit-optimizer)
+  * README.md:
+    - Badge version: v7.58.0 → v7.59.0
+    - Badge AI Endpoints: 281 → 282
+    - Badge API Routes: 413 → 416
+    - Tagline (> quote): "281 AI endpointov + 27 analytics" → "282 AI endpointov + 29 analytics"
+    - Overview: "Verzija v7.58.0" → "Verzija v7.59.0", counts posodobljeni, "~100 funkcij" → "~103 funkcij"
+    - "Kaj je novega v v7.56–v7.58" → "...v7.56–v7.59 (4 verzije, 12 novih funkcij)", dodan v7.59 blok (3 funkcije)
+    - "zgodovino v1.0 → v7.58" → "v1.0 → v7.59"
+    - AI Hub badge v tabeli: "281 AI endpointov" → "282 AI endpointov"
+    - AI_ENDPOINTS.md link: "vseh 281 AI endpointov" → "vseh 282 AI endpointov"
+    - "Endpointi (281 AI + 27 analytics + 10 cron + sistemski = 413)" → "...(282 AI + 29 analytics + ... = 416)"
+    - Dodan bundle-profit-optimizer v AI primeri blok
+    - "Profit pipeline (v7.32-v7.58)" → "...(v7.32-v7.59)"
+    - Dodana 2 nova analytics endpointa v API docs (portfolio-stress-test, supplier-crm)
+    - Project structure: "281 AI endpointov" → "282 AI endpointov"
+    - Coding standards: "413 routes" → "416 routes"
+    - Roadmap: "v7.58 (trenutno — ~100 funkcij)" → "v7.59 (trenutno — ~103 funkcij)"
+    - Profit pipeline list: dodani 3 novi funkciji (Portfolio Stress Test, Supplier CRM, Bundle Profit Optimizer)
+    - Analytics (27) → (29), dodana 2 nova
+    - Testing: "413 API routes" → "416 API routes"
+    - "Naslednji koraki": odstranjena 3 items (Supplier CRM, Portfolio Stress Test, Bundle Profit Optimizer — zdaj done)
+    - "UI komponente za v7.50-v7.58 funkcije" → "...v7.50-v7.59 funkcije"
+    - "Zadnje verzije": dodan "v7.59.0 (avgust 2026) — Portfolio Stress Test, Supplier CRM, Bundle Profit Optimizer"
+  * CHANGELOG.md:
+    - "[Unreleased] Načrtovano za v7.59+" → "...za v7.60+"
+    - Dodana nova "[7.59.0] - 2026-08-06" sekcija (nad [7.58.0])
+    - "### Added — Tveganje & CRM & paketiranje (3 funkcije)" z vsemi 3 endpoint-i in podrobnimi opisi
+
+Stage Summary:
+- 3 novi endpointi dodani (skupno +3 od v7.58.2):
+  - 2 analytics endpointi (pure DB, NO AI): portfolio-stress-test, supplier-crm
+  - 1 AI endpoint (AI-enhanced z cache + grounding + anti-hallucination + deterministic fallback):
+    bundle-profit-optimizer (GET+POST za AI Hub runner kompatibilnost)
+- Portfolio Stress Test: simulacija kako portfolio preživi MILD/MODERATE/SEVERE market drop (-10/-25/-40%).
+  Per scenario stressedValue/capitalLoss/lossPercent/itemsUnderwater/worstCategory/bestCategory +
+  per-category vulnerability breakdown + recommendation (immediateLiquidate/holdStrong/hedgingAdvice).
+- Supplier CRM: relationship management za stalne dobavitelje (PLATINUM/GOLD/SILVER/BRONZE trust tiers,
+  reliabilityScore 0-100, preferredContactMethod inferred iz notes, profitFromSupplier, relationshipDuration).
+  Razlika od competitor-tracker: ta je RELATIONSHIP MANAGEMENT (trust tiers, reliability), competitor-tracker
+  je LISTING TRACKING.
+- Bundle Profit Optimizer: AI paketi za cross-sell (PS5 + controller + igra = višji profit). Anti-hallucination:
+  suggestedBundlePrice clamped na [0.8×, 1.1×] sumEstValues + must cover buyPrice; expectedSellTimeDays [1, 60].
+  AI cache 6h TTL z deterministic fallback (group by category, 8% popust, 14 dni sell time).
+- Vsi 3 endpointi vračajo veljaven JSON tudi ob prazni bazi (graceful fallback z opisno slovensko message).
+  AI endpoint ima aiUsed flag v responsu za transparentnost.
+- AI_ENDPOINTS.md: "Total: 282 endpoints" ✓ (281 → 282)
+- README.md: v7.59.0 badge, 282 AI, 29 analytics, 416 routes, 13 v7.59 referenc ✓
+- CHANGELOG.md: [7.59.0] sekcija dodana ✓
+- ESLint: 0 napak ✨
+- TypeScript: 0 napak ✨
+- Verzija aplikacije: v7.59.0

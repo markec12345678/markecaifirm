@@ -6,11 +6,58 @@ Format sledi [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), verzije s
 
 ## [Unreleased]
 
-Načrtovano za v7.59+:
+Načrtovano za v7.60+:
 - WebSocket real-time negotiation (SSE namesto polling)
 - Playwright E2E testi za glavne flow-e
 - TLS fingerprinting (curl-impersonate)
 - ML model za buyer matchmaker (fine-tuned na realnem data)
+
+## [7.59.0] - 2026-08-06
+
+### Added — Tveganje & CRM & paketiranje (3 funkcije)
+- **Portfolio Stress Test** — `GET /api/analytics/portfolio-stress-test`
+  - Simulacija kako portfolio preživi različne tržne scenarije
+  - 3 stresni scenariji: MILD (-10% drop, ×0.90), MODERATE (-25%, ×0.75), SEVERE (-40%, ×0.60)
+  - Per scenario: stressedValue, capitalLoss, lossPercent, itemsUnderwater,
+    worstCategory, bestCategory
+  - Per-category vulnerability breakdown (vulnerabilityScore 0-100)
+  - Recommendation: immediateLiquidate (items underwater under MILD),
+    holdStrong (resilient even under SEVERE), hedgingAdvice
+  - 'Pri -25% padcu trga izgubiš 450€ (18% kapitala). Najbolj ranljiva: elektronika.'
+  - Pure DB analytics (NO AI) — uporablja listing.aiEstimatedValue za trenutno vrednost
+- **Supplier Relationship Manager (CRM)** — `GET /api/analytics/supplier-crm`
+  - CRM za stalne dobavitelje (sellerji od katerih si kupoval)
+  - Trust tiers: PLATINUM (5+ nakupov, 80%+ profitabilnost) | GOLD (3+, 60%+)
+    | SILVER (2+) | BRONZE (1)
+  - Per supplier: purchasesCount, totalSpent, avgPurchasePrice, relationshipDuration,
+    categories, avgDealScore, profitFromSupplier, itemsStillHeld, reliabilityScore,
+    preferredContactMethod (telegram/phone/bolha-msg — inferred iz notes)
+  - reliabilityScore 0-100 — kako blizu je bil AI estimate dejanski sell ceni
+  - Sort: trustTier (PLATINUM first), nato totalSpent desc
+  - Summary: totalSuppliers, count per tier, totalLifetimeSpend,
+    totalProfitFromSuppliers, topSupplier
+  - Razlika od competitor-tracker: ta je RELATIONSHIP MANAGEMENT (trust tiers,
+    reliability, contact method), competitor-tracker je LISTING TRACKING
+- **Bundle Profit Optimizer** — `GET+POST /api/ai/bundle-profit-optimizer`
+  - AI analiza kateri held inventar združiti v pakete za cross-sell
+  - Paketiranje komplementarnih item-ov (PS5 + controller + igra) lahko da
+    višji skupni profit kot prodaja posebej
+  - AI prompt z grounding + GROUNDING_PROMPT_SUFFIX — prosi za bundles[] s
+    {itemIds[2-4], suggestedBundlePrice, bundleDiscountPercent,
+    expectedSellTimeDays, reasoning}
+  - Anti-hallucination: suggestedBundlePrice clamped na [0.8×, 1.1×] sum of
+    estValues (realističen 5-15% popust); floor: must cover buyPrice
+  - expectedSellTimeDays clamped na [1, 60]; reasoning clamped na 300 chars
+  - bundleCompatibility slovar (komplementarne kategorije: elektronika+igre,
+    moda+aksesoiri, avto+gume, dom+pohistvo, itd.)
+  - AI cache 6h TTL — key: `bundle-profit-optimizer:${JSON.stringify(sortedIds)}`
+  - Deterministic fallback ko AI ni na voljo: grupira po kategoriji, bundle 2-4
+    item-ov z combined value > 100€, 8% popust, 14 dni sell time
+  - Summary: totalBundles, itemsBundled, itemsUnbundled,
+    expectedTotalProfitBundled, expectedTotalProfitStandalone, profitUplift %
+  - GET+POST za AI Hub runner kompatibilnost (enaka handleBundleOptimizer f-ja)
+  - 'PS5 (380€) + Extra Controller (45€) + FIFA 24 (35€) → bundle 420€
+    (save 10%), profit 110€ vs 80€ standalone'
 
 ## [7.58.0] - 2026-08-06
 
