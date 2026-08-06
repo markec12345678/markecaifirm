@@ -6259,3 +6259,194 @@ Stage Summary:
 - Dokumentacija sinhrono posodobljena (AI_ENDPOINTS.md, README, CHANGELOG, GitHub About)
 - GitHub sinhroniziran (0 commit-ov ahead)
 - Verzija aplikacije: v7.60.0
+
+---
+Task ID: v7.61
+Agent: full-stack-developer
+Task: Add 3 new features for v7.61 — AI Negotiation Script Generator, Inventory Insurance Calculator, AI Photo Enhancement Advisor
+
+Work Log:
+- Prebral worklog (zadnji v7.60.1 — 285 AI endpointov, 419 API routes, verzija v7.60.0).
+- Proučil vzorce iz obstoječih endpoint-ov:
+  * src/app/api/ai/multi-platform-listing-generator/route.ts (GET+POST shared handler + AI cache + grounding + anti-hallucination + deterministic fallback)
+  * src/app/api/ai/margin-guardian-pro/route.ts (AI z per-item recommendations + breakeven)
+  * src/app/api/analytics/portfolio-stress-test/route.ts (pure DB analytics z scenarios)
+  * src/app/api/analytics/supplier-crm/route.ts (grouping + tiers)
+  * src/lib/anti-hallucination.ts (GROUNDING_PROMPT_SUFFIX)
+  * src/lib/ai-cache.ts (getCachedAI/setCachedAI, 6h TTL)
+  * src/lib/rate-limit.ts (checkRateLimit/rateLimitResponse, 20/min/IP)
+
+- Feature #1: AI Negotiation Script Generator (src/app/api/ai/negotiation-script-generator/route.ts):
+  * AI-enhanced (GET + POST shared handler handleNegotiationScript), runtime='nodejs', dynamic='force-dynamic', maxDuration=60
+  * Rate limit: checkRateLimit(req, 'ai-negotiation-script-generator', 20)
+  * Body params: optional listingId ali tradeId — če noben ne podan, izbere
+    najnovejši PRILIKA listing (fallback na najnovejši listing z cena>0)
+  * Resolva listing ali trade s polnim kontekstom: title, askingPrice, aiEstimatedValue,
+    aiScore, aiRisk, sellerName, category, daysListed, dealScore
+  * AI prompt z GROUNDING_PROMPT_SUFFIX — prosi za openingLine, anchoringOffer,
+    offerLadder (3-5 korakov), walkawayPrice, targetPrice, psychologicalTactics (2-3),
+    objectionHandlers (2-5), closingLine, negotiationStyle
+  * Anti-hallucination (clampAnchoring, clampWalkaway, clampTarget):
+    * anchoringOffer clamped na [0.5×, 0.85×] askingPrice
+    * walkawayPrice clamped na [estValue × 0.8, estValue × 1.1]
+    * targetPrice clamped na [estValue × 0.7, estValue × 1.05]
+    * negotiationStyle validacija (AGGRESSIVE/BALANCED/FRIENDLY)
+    * offerLadder offers validirani znotraj [anchoring, askingPrice]
+    * Bug fix: Number(null) === 0 → dodatni check `raw == null` za fallback
+  * Deterministic fallback (deterministicScript): anchoring=asking×0.75, target=estValue×0.9,
+    walkaway=estValue×1.05, 3-step ladder, 3 taktike (Cash&urgency, Anchoring, Walkaway leverage),
+    3 objection handlers, style glede na dealScore+askingPrice
+  * AI cache key `negotiation-script:${listingId}` (6h TTL prek getCachedAI/setCachedAI)
+  * Cache only ko aiUsed=true
+  * Empty-state fallback: "Ni najdenega oglasa ali trade-a — negotiation script ni mogoče generirati."
+  * 'PS5 350€ → anchoring 263€, target 288€, walkaway 336€. Style: AGGRESSIVE (dealScore 85).'
+
+- Feature #2: Inventory Insurance Calculator (src/app/api/analytics/inventory-insurance-calculator/route.ts):
+  * Pure DB analytics (NO AI), GET only, runtime='nodejs', dynamic='force-dynamic'
+  * Query HELD trades z linked Listing (aiEstimatedValue)
+  * Per-item currentValue = aiEstimatedValue ?? buyPrice (fallback)
+  * categoryRiskMultiplier:
+    - elektronika: 1.5 (high theft risk, easily resold)
+    - avto: 2.0 (highest value, mandatory)
+    - moda: 0.5 (low value, low risk)
+    - orodje: 1.0
+    - drugo: 1.0
+  * normalizeCategory() — mapira sin-onime (elektron/phone/ps5/laptop → elektronika;
+    avto/vw/bmw/audi → avto; moda/jakna/čevelj → moda; orodj/tool → orodje)
+  * Portfolio totals: totalInventoryValue, totalReplacementCost (×risk),
+    highValueItems (>500€), avgItemValue
+  * categoryBreakdown per kategorija: itemCount, totalValue, riskMultiplier,
+    riskScore (0-100, kombinacija vrednosti + multiplikatorja + high-value boost),
+    highValueCount — sortiran po riskScore desc
+  * 3 insurance coverage options:
+    - BASIC (kraja + požar): premium = totalReplacementCost × 0.02/leto, 10% deductible
+    - STANDARD (kraja + požar + voda + vandalizem): premium × 0.035/leto, 5% deductible
+    - PREMIUM (all-risk + transport + deprecijacija): premium × 0.05/leto, 2% deductible
+  * Per option: coverageAmount, annualPremium, monthlyPremium, deductible,
+    coveredPerils[], description
+  * Recommendation: HIGH-risk (total > 5000€ ali high-value > 3 ali avg > 400€ ali maxRiskScore >= 70)
+    → PREMIUM; MEDIUM-risk (maxRiskScore >= 35) → STANDARD; LOW-risk → BASIC
+  * 'Skladišče 9518€ replacement cost → PREMIUM (HIGH-risk z VW Golf 4500€). 476€/leto.'
+
+- Feature #3: AI Photo Enhancement Advisor (src/app/api/ai/photo-enhancement-advisor/route.ts):
+  * AI-enhanced (GET + POST shared handler handlePhotoEnhancement), runtime='nodejs', dynamic='force-dynamic', maxDuration=60
+  * Rate limit: checkRateLimit(req, 'ai-photo-enhancement-advisor', 20)
+  * Query HELD trades kjer Trade.imageUrl ali Listing.imageUrl ni null (OR pogoj)
+  * Per item AI generira:
+    - currentPhotoScore (0-100)
+    - improvements[]: aspect (LIGHTING/BACKGROUND/ANGLE/COMPOSITION/STAGING/RETAKE),
+      issue, suggestion, impact (LOW/MEDIUM/HIGH)
+    - recommendedShots[] (MAIN, DETAIL, SCALE, CONTEXT)
+    - expectedSaleTimeReduction (dni)
+    - estimatedPriceUplift (EUR)
+    - overallAdvice (1-2 stavka povzetka)
+  * Anti-hallucination:
+    * expectedSaleTimeReduction clamped na [0, 30] dni
+    * estimatedPriceUplift clamped na [0, estValue × 0.15] (max 15% dvig)
+    * aspect validacija (samo 6 dovoljenih vrednosti)
+    * impact validacija (LOW/MEDIUM/HIGH)
+    * Bug fix: Number(null) === 0 → dodatni check `n == null` za fallback v vseh clamp funkcijah
+  * AI prompt z GROUNDING_PROMPT_SUFFIX — prosi za items[] s polnim photo advice
+  * Cap na 30 item-ov za AI (deterministic fallback za ostale)
+  * Summary: totalItems, itemsNeedingPhotos (score < 70), avgPhotoScore,
+    totalEstimatedUplift, bestPhotoTip (najbolj pogost aspect across items)
+  * AI cache key `photo-enhancement-advisor:${JSON.stringify(sortedIds)}` (6h TTL)
+  * Cache only ko aiUsed=true
+  * Deterministic fallback (deterministicAdvice): 55 photoScore, 3 generične improvements
+    (LIGHTING/BACKGROUND/ANGLE) + 1 kategorija-specifična (elektronika → COMPOSITION
+    detail priključkov; moda → STAGING na modelu), 4 recommended shots, 7 dni reduction,
+    estValue × 8% uplift
+  * Empty-state fallback: "Ni held item-ov s slikami — najprej dodaj slike k item-om."
+
+- Testiranje vseh 3 endpointov (curl localhost:3000):
+  * Najprej seed testni podatki (3 trades: PS5 elektronika, jakna moda, VW Golf avto;
+    2 listings z imageUrl + PRILIKA verdict + dealScore)
+  * GET /api/ai/negotiation-script-generator (prazen body) → 200, izbral najnovejši
+    PRILIKA listing (jakna 80€), generiral script z anchoring=60€, target=68€, walkaway=79€,
+    style=FRIENDLY, 3-step ladder, 3 taktike, 3 objection handlers. aiUsed=false (no provider)
+  * POST /api/ai/negotiation-script-generator -d '{"tradeId":"test-trade-v761-1"}' → 200,
+    PS5 (350€ askingPrice, 320€ estValue, dealScore 85) → anchoring=263€, target=288€,
+    walkaway=336€, style=AGGRESSIVE. aiUsed=false
+  * GET /api/analytics/inventory-insurance-calculator → 200, portfolio 3 item-i
+    (totalInventoryValue=4895, totalReplacementCost=9518, highValueItems=1, avgItemValue=1632),
+    categoryBreakdown 3 kategorije (avto riskScore=62, elektronika=11, moda=1),
+    coverageOptions 3 (BASIC 190€/leto, STANDARD 333€/leto, PREMIUM 476€/leto),
+    recommendation PREMIUM/HIGH-risk
+  * GET /api/ai/photo-enhancement-advisor → 200, 3 item-i (vsi score 55), totalEstimatedUplift=464€
+    (PS5 26€, jakna 6€, VW Golf 432€), bestPhotoTip=LIGHTING (najbolj pogost aspect).
+    aiUsed=false
+  * POST /api/ai/photo-enhancement-advisor -d '{}' → 200, identično kot GET (AI Hub runner kompatibilnost)
+  * Bug fix med testiranjem: Number(null) === 0 je povzročil, da so bile AI null vrednosti
+    zamenjane z 0 namesto fallback. Dodan ekspliciten `n == null` check v vseh clamp
+    funkcijah (clampScore, clampReduction, clampUplift, clampAnchoring, clampWalkaway, clampTarget)
+  * Cleanup seed podatkov (3 trades, 2 listings, 1 monitor) — baza nazaj v prazno stanje
+  * Finalni empty-state test: vsi 3 endpointi vračajo 200 z opisno slovensko message
+
+- TypeScript: `npx tsc --noEmit` → 0 napak ✨
+- ESLint: `bun run lint` → 0 napak, 0 opozoril ✨
+- dev.log: vsi 5 HTTP requesti (GET×3 + POST×2) vračajo 200 OK. 2 WARN logs
+  ("AI call failed — using deterministic fallback") — pričakovano saj v dev env
+  ni konfiguriran AI provider. Brez ERROR logov.
+
+- Dokumentacijska sinhronizacija (CRITICAL):
+  * AI_ENDPOINTS.md: regeneriran z Python skripto → "Total: 287 endpoints" (285 → 287, +2 AI)
+  * README.md (20 urejanj prek MultiEdit):
+    - Badge version: v7.60.0 → v7.61.0
+    - Badge AI Endpoints: 285 → 287
+    - Badge API Routes: 419 → 422
+    - Tagline: "285 AI endpointov + 29 analytics" → "287 AI endpointov + 30 analytics"
+    - Overview: "Verzija v7.60.0" → "Verzija v7.61.0", counts posodobljeni,
+      "~105 funkcij" → "~108 funkcij"
+    - "Kaj je novega v v7.56–v7.60 (5 verzij, 15 novih funkcij)" → "...v7.56–v7.61 (6 verzij, 18 novih funkcij)",
+      dodan v7.61 blok (3 funkcije) na vrh
+    - "zgodovino v1.0 → v7.60" → "v1.0 → v7.61"
+    - AI Hub badge v tabeli: "Vsi 285 AI endpointov" → "Vsi 287 AI endpointov"
+    - "Endpointi (285 AI + 29 analytics + 10 cron + sistemski = 419)" →
+      "...(287 AI + 30 analytics + 10 cron + sistemski = 422)"
+    - Dodana 2 nova AI endpointa v AI primeri blok (negotiation-script-generator, photo-enhancement-advisor)
+    - Dodan 1 nov analytics endpoint v profit pipeline blok (inventory-insurance-calculator)
+    - Dodana 2 nova AI endpointa v profit pipeline listo (Negotiation Script Generator, Photo Enhancement Advisor)
+    - "Profit pipeline (v7.32-v7.60)" → "...(v7.32-v7.61)"
+    - Project structure: "285 AI endpointov" → "287 AI endpointov"
+    - Coding standards: "419 routes" → "422 routes"
+    - Roadmap: "v7.60 (trenutno — ~105 funkcij)" → "v7.61 (trenutno — ~108 funkcij)"
+    - Profit pipeline list: dodane 3 nove funkcije (Negotiation Script Generator,
+      Inventory Insurance Calculator, Photo Enhancement Advisor)
+    - "Analytics (29)" → "Analytics (30)", dodan Inventory Insurance Calculator
+    - Testing: "419 API routes" → "422 API routes"
+    - "Naslednji koraki": "UI komponente za v7.50-v7.60 funkcije" → "...v7.50-v7.61 funkcije"
+    - "Zadnje verzije": dodan "v7.61.0 (avgust 2026) — AI Negotiation Script Generator, Inventory Insurance Calculator, AI Photo Enhancement Advisor"
+    - "vseh 285 AI endpointov" → "vseh 287 AI endpointov"
+  * CHANGELOG.md:
+    - "[Unreleased] Načrtovano za v7.61+" → "...za v7.62+"
+    - Dodana nova "[7.61.0] - 2026-08-07" sekcija (nad [7.60.0])
+    - "### Added — AI Negotiation Script Generator & Inventory Insurance Calculator & AI Photo Enhancement Advisor (3 funkcije)"
+      z vsemi 3 endpoint-i in podrobnimi opisi (response shape, anti-hallucination rules,
+      AI cache key, deterministic fallback, example comment)
+
+Stage Summary:
+- 3 novi endpointi dodani (skupno +3 od v7.60.1):
+  - negotiation-script-generator (GET+POST, AI-enhanced z anchoring/ladder/walkaway +
+    anti-hallucination clamps + 6h cache + deterministic fallback)
+  - inventory-insurance-calculator (GET, pure DB analytics z 3 coverage options +
+    category risk multipliers + recommendation)
+  - photo-enhancement-advisor (GET+POST, AI-enhanced z per-item improvements + shots +
+    uplift + 6h cache + deterministic fallback z category-specifičnimi nasveti)
+- AI Negotiation Script Generator: structured negotiation STRATEGY document (ne chatbot),
+  clamped anchoring [0.5×, 0.85×] askingPrice, walkaway [estValue × 0.8, estValue × 1.1].
+  Razlika od realtime-negotiation-bot (chatbot) in seller-negotiation-strategist (prodajalec).
+- Inventory Insurance Calculator: 3 opcije (BASIC/STANDARD/PREMIUM) z premium rates
+  2%/3.5%/5% letno, category risk multipliers (elektronika 1.5×, avto 2.0×, moda 0.5×).
+  Recommendation glede na portfolio size + risk profile.
+- AI Photo Enhancement Advisor: structured enhancement advice (LIGHTING/BACKGROUND/ANGLE/
+  COMPOSITION/STAGING/RETAKE) z quantified uplift [0, estValue × 0.15] in reduction [0, 30d].
+  Razlika od photo-quality-analyzer (ki analizira obstoječe aiImageAnalysis) — ta predlaga
+  BOLJŠE slike za naslednji listing.
+- Vsi 3 endpointi vračajo veljaven JSON tudi ob prazni bazi (graceful fallback z opisno slovensko message).
+  AI endpointi imajo aiUsed flag v responsu za transparentnost.
+- AI_ENDPOINTS.md: "Total: 287 endpoints" ✓ (285 → 287, +2 AI)
+- README.md: v7.61.0 badge, 287 AI (5 referenc), 422 routes (3 reference), 15 v7.61 referenc ✓
+- CHANGELOG.md: [7.61.0] sekcija dodana, [Unreleased] posodobljen na v7.62+ ✓
+- ESLint: 0 napak ✨
+- TypeScript: 0 napak ✨
+- Verzija aplikacije: v7.61.0

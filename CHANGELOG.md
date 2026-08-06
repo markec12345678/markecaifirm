@@ -6,11 +6,101 @@ Format sledi [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), verzije s
 
 ## [Unreleased]
 
-Načrtovano za v7.61+:
+Načrtovano za v7.62+:
 - WebSocket real-time negotiation (SSE namesto polling)
 - Playwright E2E testi za glavne flow-e
 - TLS fingerprinting (curl-impersonate)
 - ML model za buyer matchmaker (fine-tuned na realnem data)
+
+## [7.61.0] - 2026-08-07
+
+### Added — AI Negotiation Script Generator & Inventory Insurance Calculator & AI Photo Enhancement Advisor (3 funkcije)
+- **AI Negotiation Script Generator** — `GET+POST /api/ai/negotiation-script-generator`
+  - AI generira CEL STRATEGIA DOKUMENT za pogajanje kot KUPEC za specifičen
+    listing/trade. Razlika od realtime-negotiation-bot (ki je chatbot) — ta
+    vrne strukturiran dokument z vnaprej pripravljenimi ponudbami in taktikami.
+  - Body param: `listingId` ali `tradeId` (optional) — če ne podan, izbere
+    najnovejši PRILIKA listing
+  - Query listing/trade s polnim kontekstom: title, askingPrice, aiEstimatedValue,
+    aiScore, aiRisk, sellerName, category, daysListed, dealScore
+  - AI generira strukturiran script:
+    - `openingLine` (slovenski, prijateljsko-strateški)
+    - `anchoringOffer` (initial low offer)
+    - `offerLadder` (3-5 postopnih counter-offerjev z reasoning)
+    - `walkawayPrice` (max acceptable price)
+    - `targetPrice` (realističen cilj, običajno estValue × 0.9)
+    - `psychologicalTactics` (2-3 taktike: cash/urgency, anchoring, walkaway leverage)
+    - `objectionHandlers` (2-5 pričakovanih ugovorov + odgovori)
+    - `closingLine` (ko je dogovor dosežen)
+    - `negotiationStyle` (AGGRESSIVE | BALANCED | FRIENDLY)
+  - Anti-hallucination:
+    - anchoringOffer clamped na [0.5×, 0.85×] askingPrice (realen razpon za
+      anchoring — ne preveč nizko, ne preveč blizu cene)
+    - walkawayPrice clamped na [estValue × 0.8, estValue × 1.1] (ne plačaj
+      preveč nad tržno vrednostjo — ne preveč pod, da ne bi zamudili deala)
+    - targetPrice clamped na [estValue × 0.7, estValue × 1.05]
+    - negotiationStyle validacija (AGGRESSIVE/BALANCED/FRIENDLY)
+    - offerLadder offers validirani znotraj [anchoring, askingPrice]
+  - AI cache `negotiation-script:${listingId}` (6h TTL)
+  - Deterministic fallback: anchoring = askingPrice × 0.75, target = estValue × 0.9,
+    walkaway = estValue × 1.05, 3-step ladder, 3 taktike, 3 objection handlers
+  - 'PS5 350€ → anchoring 280€, target 320€, walkaway 340€. Taktika: "imam cash zdaj"'
+- **Inventory Insurance Calculator** — `GET /api/analytics/inventory-insurance-calculator`
+  - Pure DB analytics (NO AI) — izračun zavarovalnih potreb za HELD inventar
+  - Query HELD trades z linked Listing (aiEstimatedValue)
+  - Per-item currentValue = aiEstimatedValue ?? buyPrice (fallback)
+  - categoryRiskMultiplier:
+    - elektronika: 1.5 (high theft risk, easily resold on black market)
+    - avto: 2.0 (highest value, mandatory insurance in most countries)
+    - moda: 0.5 (low value, low risk)
+    - orodje: 1.0 (medium)
+    - drugo: 1.0
+  - Portfolio totals: totalInventoryValue, totalReplacementCost (×risk),
+    highValueItems (>500€), avgItemValue
+  - categoryBreakdown per kategorija: itemCount, totalValue, riskMultiplier,
+    riskScore (0-100, kombinacija vrednosti + multiplikatorja + high-value count),
+    highValueCount
+  - 3 insurance coverage options:
+    - **BASIC** (kraja + požar): premium = totalReplacementCost × 0.02/leto,
+      10% deductible
+    - **STANDARD** (kraja + požar + voda + vandalizem): premium × 0.035/leto,
+      5% deductible
+    - **PREMIUM** (all-risk + transport + deprecijacija + vsi riziki): premium ×
+      0.05/leto, 2% deductible
+  - Per option: coverageAmount, annualPremium, monthlyPremium, deductible,
+    coveredPerils[], description
+  - Recommendation: HIGH-risk (total > 5000€ ali high-value > 3) → PREMIUM,
+    MEDIUM-risk → STANDARD, LOW-risk → BASIC
+  - 'Skladišče 4500€ vrednosti → STANDARD zavarovanje, 157€/leto, pokrije 6750€'
+- **AI Photo Enhancement Advisor** — `GET+POST /api/ai/photo-enhancement-advisor`
+  - AI svetuje izboljšave fotografij za HELD item-e s slikami (imageUrl).
+    Razlika od photo-quality-analyzer (ki analizira obstoječe aiImageAnalysis) —
+    ta je ENHANCEMENT advisor: predlaga kako posneti BOLJŠE slike za naslednji
+    listing z quantified uplift.
+  - Query HELD trades s slikami (Trade.imageUrl ali Listing.imageUrl)
+  - Per item AI generira:
+    - `currentPhotoScore` (0-100)
+    - `improvements[]`: aspect (LIGHTING/BACKGROUND/ANGLE/COMPOSITION/STAGING/RETAKE),
+      issue, suggestion, impact (LOW/MEDIUM/HIGH)
+    - `recommendedShots[]` (MAIN, DETAIL, SCALE, CONTEXT)
+    - `expectedSaleTimeReduction` (dni hitrejše prodaje)
+    - `estimatedPriceUplift` (€ — za koliko se dvigne cena)
+    - `overallAdvice` (1-2 stavka povzetka)
+  - Anti-hallucination:
+    - expectedSaleTimeReduction clamped na [0, 30] dni (ne pretiravaj z >= 30)
+    - estimatedPriceUplift clamped na [0, estValue × 0.15] (max 15% dvig)
+    - aspect validacija (samo 6 dovoljenih vrednosti)
+    - impact validacija (LOW/MEDIUM/HIGH)
+  - Summary: totalItems, itemsNeedingPhotos (score < 70), avgPhotoScore,
+    totalEstimatedUplift, bestPhotoTip (najbolj pogost aspect across items)
+  - AI cache `photo-enhancement-advisor:${JSON.stringify(heldItemIds)}` (6h TTL)
+  - Deterministic fallback: 55 photoScore, 3 generične improvements (LIGHTING,
+    BACKGROUND, ANGLE) + 1 kategorija-specifična (elektronika → COMPOSITION detail
+    priključkov; moda → STAGING na modelu), 4 recommended shots, 7 dni reduction,
+    estValue × 8% uplift
+  - 'PS5 photo score 45/100 — slaba osvetlitev, dodaj naravno svetlobo.
+    Popravek: +15% šansa prodaje, +25€ višja cena'
+  - Empty-state fallback: 'Ni held item-ov s slikami — najprej dodaj slike k item-om.'
 
 ## [7.60.0] - 2026-08-06
 
