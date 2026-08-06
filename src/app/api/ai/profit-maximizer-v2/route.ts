@@ -137,6 +137,16 @@ interface AiRecommendation {
 }
 
 export async function GET(req: NextRequest) {
+  return handleProfitMaximizer(req);
+}
+
+// v7.56: POST handler — AI Hub runner always sends POST with JSON body.
+// Body is ignored (this endpoint takes no input) — logic is identical to GET.
+export async function POST(req: NextRequest) {
+  return handleProfitMaximizer(req);
+}
+
+async function handleProfitMaximizer(req: NextRequest) {
   try {
     // v7.32: AI rate limit
     const rl = checkRateLimit(req, 'ai-profit-maximizer-v2', 20);

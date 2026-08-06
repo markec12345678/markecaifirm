@@ -160,6 +160,16 @@ interface AiRefreshPlan {
 }
 
 export async function GET(req: NextRequest) {
+  return handleListingRefreshScheduler(req);
+}
+
+// v7.56: POST handler — AI Hub runner always sends POST with JSON body.
+// Body is ignored (this endpoint takes no input) — logic is identical to GET.
+export async function POST(req: NextRequest) {
+  return handleListingRefreshScheduler(req);
+}
+
+async function handleListingRefreshScheduler(req: NextRequest) {
   try {
     // v7.32: AI rate limit (20/min/IP)
     const rl = checkRateLimit(req, 'ai-listing-refresh-scheduler', 20);
