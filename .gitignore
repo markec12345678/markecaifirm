@@ -79,10 +79,11 @@ skills/
 .claude/
 CLAUDE.md
 *.png
-# Exception: PWA icons in public/
+# Exception: PWA icons + README dashboard preview in public/
 !public/icon-*.png
 !public/favicon-*.png
 !public/favicon.ico
+!public/dashboard-preview.png
 package-lock.json
 
 # Tool results cache (should not be committed)
