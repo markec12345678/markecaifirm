@@ -5626,3 +5626,174 @@ Stage Summary:
 - Total API routes: 407 → 410 (+3)
 - GitHub sinhroniziran (0 commit-ov ahead)
 - Verzija aplikacije: v7.57.0
+
+---
+Task ID: v7.58
+Agent: full-stack-developer
+Task: Add 3 new features for v7.58 — Deal Source ROI Analyzer, Listing Performance Tracker, Auto-Relisting Scheduler
+
+Work Log:
+- Prebral worklog.md (zadnjih ~150 vrstic) — projekt je na v7.57.1, zadnjič dodani tax-report +
+  reinvestment-advisor + competitor-tracker. Uporabljeni obstoječi patterni (source-quality, roi-leaderboard,
+  listing-refresh-scheduler, competitor-tracker) kot reference.
+- Preverjene knjižnice: db.ts, logger.ts, ai.ts (callProviderForRaw, parseJsonLooseExported, AiSettings,
+  AiProviderType), pipeline.ts (getSettingsRow), anti-hallucination.ts (GROUNDING_PROMPT_SUFFIX),
+  ai-cache.ts (getCachedAI, setCachedAI 6h TTL), rate-limit.ts (checkRateLimit, rateLimitResponse).
+- Preverjena Prisma shema: Trade (id, profileId, listingId, title, category, buyPrice, buyDate, buyLocation,
+  buyFees, sellPrice, sellDate, sellLocation, sellFees, status, notes, flipChecklist, listing relation) +
+  Listing (id, monitorId, firstSeenAt, contactStatus, priceDroppedAt, isBookmarked, dealScore,
+  aiEstimatedValue, monitor relation) + Monitor (id, source).
+- FEATURE #1: `src/app/api/analytics/deal-source-roi/route.ts` (GET, pure DB, NO AI)
+  - GET /api/analytics/deal-source-roi — analiza FINANČNEGA ROIja po viru nakupa (Bolha, Vinted,
+    Facebook, mobile.de, Avtonet, ...)
+  - db.trade.findMany where status='sold' AND sellPrice not null AND sellDate not null (take 2000) —
+    select z listing.monitor.source in listing.dealScore (relational select)
+  - Per-trade: source določen iz listing.monitor.source (preferred) ali normalizeBuyLocation(buyLocation)
+    (fallback za ročno dodane trade-e brez listinga)
+  - normalizeBuyLocation: hevristika za "FB" → facebook, "Facebook Marketplace" → facebook, "mobile.de" →
+    mobilede, "Kleinanzeigen" → kleinanzeigen, itd. (10 known sources)
+  - SOURCE_DISPLAY map: bolha→"Bolha", vinted→"Vinted", facebook→"Facebook", mobilede→"mobile.de", ...
+  - Per-source aggregation: totalTrades, totalInvested (sum buyPrice+buyFees), totalRevenue (sum
+    sellPrice-sellFees), totalProfit (revenue-invested), avgROI (profit/invested×100, 1 dec), avgHoldDays
+    (sellDate-buyDate v dnevih, avg), winRate (% trades z profit>0, 1 dec), avgDealScore (avg
+    listing.dealScore za linked listings), bestCategory (kategorija z max profit)
+  - Per-source categories array: {category, trades, profit, roi} sort po profit desc
+  - matrix: flatten vseh source×category kombinacij (za prikaz heat-mape)
+  - Sort sources po avgROI desc
+  - recommendation.bestSource (najvišji ROI) + worstSource (najnižji) + reasoning string ("Najboljši vir:
+    Bolha (30.6% ROI, 2 trgovin, winRate 100%). Najšibkejši: Vinted (-1.3% ROI, 1 trgovin). → kupuj več
+    na Bolha.")
+  - summary: totalSources, totalTrades, totalProfit
+  - Graceful empty state: če 0 sold trades → {ok:true, sources:[], matrix:[], recommendation:{...},
+    summary:{...}, message:"Ni prodanih trgovin..."}
+- FEATURE #2: `src/app/api/analytics/listing-performance/route.ts` (GET, pure DB, NO AI)
+  - GET /api/analytics/listing-performance — track performanse HELD inventarja (FRESH/ACTIVE/AGING/STALE/DEAD)
+  - db.trade.findMany where status='held' (take 1000) — select z listing relation (firstSeenAt,
+    contactStatus, priceDroppedAt, isBookmarked, dealScore, aiEstimatedValue)
+  - Per-item computation:
+    * daysHeld = floor((now - buyDate) / DAY_MS)
+    * daysListed = floor((now - listing.firstSeenAt) / DAY_MS) ali daysHeld če listing manjka
+    * contactCount = 1 če listing.contactStatus != 'none' (drugače 0)
+    * priceDropped = listing.priceDroppedAt !== null
+    * daysSincePriceDrop = floor((now - priceDroppedAt) / DAY_MS) ali null
+    * isBookmarked, dealScore, aiEstimatedValue iz listinga
+    * potentialProfit = aiEstimatedValue - buyPrice (če AI estValue obstaja)
+    * staleScore = daysHeld * (1 + priceDrops*0.5) - contactCount*2  (1 dec natančnost)
+    * status: FRESH (≤7d) | ACTIVE (7-30d) | AGING (30-60d) | STALE (60-90d) | DEAD (>90d)
+    * recommendedAction: DEAD→LIQUIDATE, STALE→RELIST, AGING+no contacts→PRICE_DROP, AGING+contacts→KEEP,
+      FRESH/ACTIVE→KEEP
+  - Sort items po staleScore desc (najbolj stale prvi)
+  - summary: totalHeld, avgDaysHeld, fresh/active/aging/stale/dead counts, totalCapitalTied (sum buyPrice),
+    potentialTotalProfit (sum potentialProfit kjer obstaja)
+  - actionPlan: priceDropItems, relistItems, liquidateItems (counti glede na recommendedAction)
+  - Graceful empty state: če 0 held → {ok:true, items:[], summary:{...vse 0...}, actionPlan:{0,0,0},
+    message:"Ni held inventarja..."}
+- FEATURE #3: `src/app/api/ai/auto-relisting-scheduler/route.ts` (GET+POST, AI-enhanced)
+  - handleAutoRelistingScheduler(req) shared funkcija — obe HTTP metodi kličeta isto logiko (AI Hub
+    runner kompatibilnost, enak pattern kot listing-refresh-scheduler in reinvestment-advisor)
+  - checkRateLimit z routeKey 'ai-auto-relisting-scheduler' (20/min/IP), rateLimitResponse za 429
+  - db.trade.findMany where status='held' (take 200) — select z listing.monitor.source in
+    listing.{contactStatus, isBookmarked, priceDroppedAt, dealScore, firstSeenAt}
+  - Filter za relisting: daysHeld > 14 ALI priceDroppedAt set ALI (daysHeld >= 7 && hasNoInterest) —
+    hasNoInterest = contactStatus == 'none' ali null
+  - currentPlatform določen iz listing.monitor.source (SOURCE_TO_PLATFORM map) ali normalizePlatform(buyLocation)
+  - urgency: CRITICAL (>30d) | HIGH (14-30d) | MEDIUM (7-14d z no interest)
+  - listingPerformance: {contacts, bookmarks, priceDrops} — vsi 0 ali 1 (ker 1 listing per trade)
+  - AI cache key: `auto-relisting-scheduler:${JSON.stringify(heldItemIds)}` (6h TTL prek getCachedAI/setCachedAI)
+  - Cached response vsebuje {schedule, summary, aiUsed} — cached:true flag v responsu če cache hit
+  - AI prompt z GROUNDING_PROMPT_SUFFIX — prosi za JSON: plans[] s {tradeId, recommendedPlatform,
+    newTitle (max 70 chars), newPrice (EUR), bestDayOfWeek, bestHour (0-23), listingStrategy,
+    expectedSellTimeDays (1-60), reasoning}
+  - AI settings iz getSettingsRow() (primary + fallback provider) — enak AiSettings objekt kot listing-refresh
+  - Anti-hallucination validacija (per-item):
+    * recommendedPlatform — normalizePlatform() naredi canonical "Bolha"|"Vinted"|"Facebook" (drugace fallback)
+    * newTitle — slice(0, 70) če valid string (drugače fallback)
+    * newPrice — clampPrice() clamp na [0.5×, 1.2×] buyPrice (spec zahteva); če AI ne da veljavne → fallback
+    * bestDayOfWeek — DAYS_OF_WEEK whitelist (7 dni); kapitalizacija prve črke
+    * bestHour — Number.isFinite + [0, 23] range check
+    * listingStrategy — VALID_STRATEGIES whitelist (FRESH_LISTING, CROSS_POST, PRICE_DROP_RELIST,
+      BUNDLE_WITH_OTHER); drugace fallback
+    * expectedSellTimeDays — clampExpectedDays() clamp na [1, 60] (spec)
+    * reasoning — slice(0, 240) če valid string
+  - Deterministic fallback (če AI faila ali vrne invalid):
+    * newPrice = buyPrice × 0.9, clamped v [0.5×, 1.2×]
+    * recommendedPlatform = cross-post platforma (Vinted če current=Bolha, Bolha če current=Vinted/Facebook)
+      — razen CRITICAL urgency, kjer ostane current platform
+    * listingStrategy = CROSS_POST (default) ali PRICE_DROP_RELIST (če CRITICAL)
+    * newTitle = item.title.slice(0, 55) + " | kategorija" (max 70 chars)
+    * bestDayOfWeek = Saturday, bestHour = 10 (peak traffic za slovenske klasifide)
+    * expectedSellTimeDays = 14 (CRITICAL) / 18 (HIGH) / 25 (MEDIUM)
+    * reasoning = "${daysHeld}d v zalogi, urgency=${urgency} → ${strategy} na ${platform} z ${price}€."
+  - Sort schedule po urgency (CRITICAL→HIGH→MEDIUM), sekundarno po daysHeld desc
+  - summary: total, critical, high, medium, estimatedRevenueIfRelisted (sum newPrice),
+    estimatedDaysToClear (max expectedSellTimeDays vseh item-ov — longest pole in tent)
+  - Logger.warn ob AI failure z "AI call failed — using deterministic fallback" — ne crash, vrne 200 OK
+- Testiranje vseh 3 endpointov (curl localhost:3000):
+  - GET /api/analytics/deal-source-roi (empty DB) → 200, {"ok":true,"sources":[],"matrix":[],
+    "recommendation":{"bestSource":null,"worstSource":null,"reasoning":"Ni prodanih trgovin."},
+    "summary":{"totalSources":0,"totalTrades":0,"totalProfit":0},
+    "message":"Ni prodanih trgovin — analiziraj znova ko bo vsaj 1 prodaja."}
+  - GET /api/analytics/listing-performance (empty DB) → 200, {"ok":true,"items":[],
+    "summary":{"totalHeld":0,"avgDaysHeld":0,"fresh":0,"active":0,"aging":0,"stale":0,"dead":0,
+    "totalCapitalTied":0,"potentialTotalProfit":0},"actionPlan":{"priceDropItems":0,"relistItems":0,
+    "liquidateItems":0},"message":"Ni held inventarja — nič za slediti."}
+  - GET /api/ai/auto-relisting-scheduler (empty DB) → 200, {"ok":true,"schedule":[],
+    "summary":{"total":0,"critical":0,"high":0,"medium":0,"estimatedRevenueIfRelisted":0,
+    "estimatedDaysToClear":0},"aiUsed":false,"message":"Ni held inventarja — nič za ponovno objaviti."}
+  - POST /api/ai/auto-relisting-scheduler (empty DB) → 200, identičen kot GET (AI Hub runner kompatibilnost
+    potrjena tudi v empty state)
+- Seed test podatki (za realno verifikacijo): 2 monitorja (Bolha + Vinted), 2 listinga (iPhone 13 Pro
+  z dealScore 78/aiEstimatedValue 520, Samsung S22 z dealScore 55/estValue 290), 3 sold trades
+  (2 Bolha: +130€/+105€, 1 Vinted: -3€), 3 held trades (fresh 3d, stale 70d, dead 120d)
+- Re-test s seeded podatki:
+  - GET deal-source-roi → 200, Bolha 30.6% ROI (2 trades, winRate 100%, avgDealScore 78, bestCategory
+    elektronika), Vinted -1.3% ROI (1 trade, winRate 0%, avgDealScore 55). recommendation.bestSource=bolha,
+    worstSource=vinted, reasoning "Najboljši vir: Bolha (30.6% ROI, 2 trgovin, winRate 100%). Najšibkejši:
+    Vinted (-1.3% ROI, 1 trgovin). → kupuj več na Bolha." matrix: 2 vrstici (bolha×elektronika,
+    vinted×elektronika). summary: totalSources 2, totalTrades 3, totalProfit 222.
+  - GET listing-performance → 200, 3 items sortirani po staleScore desc: Nikon (120d, DEAD, LIQUIDATE,
+    staleScore 120) → Samsung (70d, STALE, RELIST, staleScore 70, potentialProfit 60) → iPhone (3d, FRESH,
+    KEEP, staleScore 2.5, potentialProfit 140, contactCount 1, priceDropped true). summary: totalHeld 3,
+    avgDaysHeld 64, fresh 1, stale 1, dead 1, totalCapitalTied 730, potentialTotalProfit 200. actionPlan:
+    priceDropItems 0, relistItems 1, liquidateItems 1.
+  - GET auto-relisting-scheduler → 200, 3 items sortirani po urgency: Nikon CRITICAL (120d) → Samsung
+    CRITICAL (70d) → iPhone MEDIUM (3d, priceDropped). Anti-hallucination clamping: Nikon buyPrice 120€
+    → newPrice 108€ (120×0.9 v [60,144]) ✓, Samsung buyPrice 230€ → 207€ (v [115,276]) ✓, iPhone buyPrice
+    380€ → 342€ (v [190,456]) ✓. iPhone CROSS_POST na Vinted (ker je na Bolha in ni CRITICAL). bestTimeToList
+    za vse Saturday 10:00 (deterministic fallback). summary: total 3, critical 2, high 0, medium 1,
+    estimatedRevenueIfRelisted 657, estimatedDaysToClear 25. aiUsed:false (AI fallback, ker ni nastavljen
+    provider v dev env).
+  - POST auto-relisting-scheduler (2nd POST) → 200, cached:true (6h cache deluje kot pričakovano).
+- Cleanup seedanih test podatkov (6 trades, 2 listings, 2 monitors izbrisani).
+- ESLint: `bun run lint` → 0 napak, 0 opozoril ✨
+- TypeScript: `npx tsc --noEmit` → 0 napak ✨
+- dev.log: vsi 5 HTTP requesti (GET×3 + POST×2) vračajo 200 OK. Ena WARN entry
+  "AI call failed — using deterministic fallback fetch failed" — to je PRIČAKOVANO v dev okolju (AI
+  provider ni konfiguriran) in fallback path deluje pravilno (deterministicPlan generira veljaven schedule).
+
+Stage Summary:
+- 3 novi endpointi dodani (skupno +3 od v7.57.1):
+  - 2 analytics endpointi (pure DB, NO AI): deal-source-roi, listing-performance
+  - 1 AI endpoint (AI-enhanced z cache + grounding + anti-hallucination): auto-relisting-scheduler
+    (GET+POST za AI Hub runner kompatibilnost)
+- Deal Source ROI Analyzer: group SOLD trades po source platformi (monitor.source ali buyLocation
+  fallback), compute totalTrades/invested/revenue/profit/avgROI/avgHoldDays/winRate/avgDealScore/
+  bestCategory per source + source×category matrix + recommendation (best/worst source z reasoning).
+  Razlika od source-quality: source-quality ocenjuje monitore po listing quality, deal-source-roi gleda
+  dejansko FINANČNO uspešnost (profit, ROI, winRate).
+- Listing Performance Tracker: za HELD inventar compute daysHeld/daysListed/contactCount/priceDropped/
+  isBookmarked/dealScore/aiEstimatedValue/potentialProfit/staleScore/status
+  (FRESH/ACTIVE/AGING/STALE/DEAD)/recommendedAction (KEEP/PRICE_DROP/RELIST/LIQUIDATE). Sort po staleScore
+  desc. summary z totalHeld/avgDaysHeld/status counts/totalCapitalTied/potentialTotalProfit. actionPlan z
+  counts per akcijo.
+- Auto-Relisting Scheduler: AI generira FULL relisting plan per item (recommendedPlatform, newTitle SEO,
+  newPrice, bestTimeToList day+hour, listingStrategy, expectedSellTimeDays, reasoning). Anti-hallucination:
+  newPrice clamped na [0.5×, 1.2×] buyPrice, expectedSellTimeDays clamped na [1, 60]. AI cache 6h TTL z
+  deterministic fallback če AI faila (newPrice=0.9×buyPrice, Saturday 10:00, urgency-based strategija).
+  Razlika od listing-refresh-scheduler: ta generira FULL relisting plan z novim naslovom + ceno + uro +
+  strategijo, listing-refresh-scheduler samo predlaga KDAJ osvežiti.
+- Vsi 3 endpointi vračajo veljaven JSON tudi ob prazni bazi (graceful fallback z opisno slovensko
+  message). AI endpoint ima aiUsed flag v responsu za transparentnost.
+- ESLint: 0 napak ✨
+- TypeScript: 0 napak ✨
+- Verzija aplikacije: v7.58

@@ -6,11 +6,33 @@ Format sledi [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), verzije s
 
 ## [Unreleased]
 
-Načrtovano za v7.58+:
+Načrtovano za v7.59+:
 - WebSocket real-time negotiation (SSE namesto polling)
 - Playwright E2E testi za glavne flow-e
 - TLS fingerprinting (curl-impersonate)
 - ML model za buyer matchmaker (fine-tuned na realnem data)
+
+## [7.58.0] - 2026-08-06
+
+### Added — Optimizacija virov & sledenje oglasom & avtomatska ponovna objava (3 funkcije)
+- **Deal Source ROI Analyzer** — `GET /api/analytics/deal-source-roi`
+  - Analizira ROI po viru nakupa (Bolha, Vinted, Facebook, mobile.de, itd.)
+  - Per source: totalTrades, invested, revenue, profit, avgROI, avgHoldDays, winRate
+  - Source × category matrix za poglobljeno analizo
+  - Priporočilo: bestSource / worstSource z utemeljitvijo
+  - 'Bolha: 30.6% ROI (12 trgovin) → kupuj več na Bolhi'
+- **Listing Performance Tracker** — `GET /api/analytics/listing-performance`
+  - Za HELD inventar: staleScore, status (FRESH/ACTIVE/AGING/STALE/DEAD)
+  - Per item: daysHeld, contactCount, priceDrops, potentialProfit, recommendedAction
+  - Summary: totalHeld, avgDaysHeld, capital tied up, action plan
+  - Action plan: koliko itemov potrebuje PRICE_DROP / RELIST / LIQUIDATE
+- **Auto-Relisting Scheduler** — `GET+POST /api/ai/auto-relisting-scheduler`
+  - AI generira full relisting plan za zastarele item-e
+  - Per item: recommendedPlatform, newTitle (SEO), newPrice, bestTimeToList,
+    listingStrategy (FRESH/CROSS_POST/PRICE_DROP/BUNDLE), expectedSellTimeDays
+  - Anti-hallucination: newPrice clamped [0.5x, 1.2x] buyPrice, sellTime [1, 60]
+  - AI cache (6h TTL) + GET+POST za AI Hub runner compat
+  - Deterministic fallback ko AI ni na voljo
 
 ## [7.57.0] - 2026-08-06
 
