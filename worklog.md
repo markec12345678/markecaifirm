@@ -5797,3 +5797,33 @@ Stage Summary:
 - ESLint: 0 napak ✨
 - TypeScript: 0 napak ✨
 - Verzija aplikacije: v7.58
+
+---
+Task ID: v7.58.1
+Agent: main
+Task: v7.58 commit + push + Agent Browser self-verification
+
+Work Log:
+- Prejel poročilo od full-stack-developer podagenta (Task v7.58)
+- Preveril 3 nove endpoint-e: deal-source-roi (200), listing-performance (200), auto-relisting-scheduler (200 GET + 200 POST)
+- Preveril lint: 0 napak, 0 opozoril ✨
+- Preveril typecheck: 0 napak ✨
+- Posodobil README badge-e: v7.57→v7.58, 280→281 AI, 410→413 routes, 25→27 analytics
+- Posodobil CHANGELOG: dodal [7.58.0] sekcijo
+- Commit: "v7.58: Deal Source ROI Analyzer + Listing Performance Tracker + Auto-Relisting Scheduler" (690a3b1)
+- Push na GitHub: uspešen ✅, PAT očiščen ✅
+- Agent Browser self-verification:
+  - Stran se pravilno naloži (HTTP 200)
+  - AI Hub prikazuje auto-relisting-scheduler (v7.58) v iskalniku ✅
+  - Runner test: klik na auto-relisting-scheduler → POST request → valid JSON ✅
+  - Response: {"ok":true, "schedule":[], "summary":{...}, "aiUsed":false, "message":"Ni held inventarja..."}
+  - Brez runtime napak v dev.log
+
+Stage Summary:
+- v7.58 uspešno dokončana in potisnjena na GitHub
+- 3 nove funkcije: Deal Source ROI Analyzer, Listing Performance Tracker, Auto-Relisting Scheduler
+- AI endpointi: 280 → 281 (+1)
+- Analytics endpointi: 25 → 27 (+2)
+- Total API routes: 410 → 413 (+3)
+- GitHub sinhroniziran (0 commit-ov ahead)
+- Verzija aplikacije: v7.58.0
