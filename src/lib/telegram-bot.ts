@@ -20,6 +20,9 @@ export const BOT_COMMANDS: BotCommand[] = [
       return `🤖 *Markec AI Firm — Bot ukazi*
 
 */help* — ta pomoč
+*/deals* — 🎯 TOP 5 priložnosti (deal 70+)
+*/profit* — 💰 dobiček ta mesec + ROI
+*/inventory* — 📦 skladišče z aging statusom
 */status* — stanje sistema (monitorji, alerti, oglasi)
 */run* — poženi vse monitorje
 */run <id>* — poženi specifičen monitor
@@ -239,6 +242,102 @@ Alerti: ${result.alertsSent ?? 0}
         const profit = t.status === 'sold' && t.sellPrice ? ` (+${(t.sellPrice - t.buyPrice).toFixed(0)}€)` : '';
         lines.push(`${emoji} *${t.title?.slice(0, 50)}* ${t.buyPrice}€${profit}`);
       }
+      return lines.join('\n');
+    },
+  },
+  {
+    command: 'deals',
+    description: 'TOP 5 priložnosti (deal score 70+)',
+    handler: async () => {
+      const deals = await db.listing.findMany({
+        where: {
+          aiVerdict: 'PRILIKA',
+          isHidden: false,
+          contactStatus: 'none',
+          dealScore: { gte: 70 },
+        },
+        select: {
+          id: true, title: true, price: true, priceText: true, url: true,
+          dealScore: true, aiScore: true, aiRisk: true, aiEstimatedValue: true,
+          location: true, monitor: { select: { name: true, source: true } },
+        },
+        orderBy: { dealScore: 'desc' },
+        take: 5,
+      });
+      if (deals.length === 0) {
+        return 'ℹ️ Trenutno ni TOP deal-ov (score 70+). Počakaj na naslednji scan.';
+      }
+      const lines = [`🎯 *TOP ${deals.length} PRILIKNOSTI:`, ''];
+      for (const d of deals) {
+        const savings = d.aiEstimatedValue && d.price ? ` (est. ${d.aiEstimatedValue}€ — prihranek ${d.aiEstimatedValue - d.price}€)` : '';
+        const risk = (d.aiRisk ?? 0) <= 2 ? '✅' : (d.aiRisk ?? 0) <= 5 ? '⚠️' : '🔴';
+        lines.push(`*${d.dealScore}/100* ${risk} ${d.title?.slice(0, 50)}`);
+        lines.push(`   💰 ${d.priceText}${savings}`);
+        if (d.location) lines.push(`   📍 ${d.location}`);
+        lines.push(`   🔗 ${d.url}`);
+        lines.push('');
+      }
+      return lines.join('\n');
+    },
+  },
+  {
+    command: 'profit',
+    description: 'Dobiček ta mesec + ROI',
+    handler: async () => {
+      const now = new Date();
+      const monthStart = new Date(now.getFullYear(), now.getMonth(), 1);
+      const soldThisMonth = await db.trade.findMany({
+        where: { status: 'sold', sellDate: { gte: monthStart, not: null } },
+        select: { buyPrice: true, buyFees: true, sellPrice: true, sellFees: true },
+      });
+      const profit = soldThisMonth.reduce((s, t) => s + ((t.sellPrice ?? 0) - (t.sellFees ?? 0) - t.buyPrice - (t.buyFees ?? 0)), 0);
+      const invested = soldThisMonth.reduce((s, t) => s + t.buyPrice + (t.buyFees ?? 0), 0);
+      const roi = invested > 0 ? Math.round((profit / invested) * 100) : 0;
+
+      const heldTrades = await db.trade.findMany({
+        where: { status: 'held' },
+        select: { buyPrice: true, buyDate: true },
+      });
+      const heldValue = heldTrades.reduce((s, t) => s + t.buyPrice, 0);
+      const agingItems = heldTrades.filter(t => Math.floor((now.getTime() - new Date(t.buyDate).getTime()) / 86400000) > 30);
+
+      const monthName = now.toLocaleDateString('sl-SI', { month: 'long' });
+      return `💰 *DOBIČEK — ${monthName}*
+
+Prodano: ${soldThisMonth.length} item-ov
+Dobiček: ${profit >= 0 ? '+' : ''}${profit}€
+ROI: ${roi}%
+Investirano: ${invested}€
+
+📦 Inventar: ${heldTrades.length} held (${heldValue}€)
+${agingItems.length > 0 ? `⚠️ ${agingItems.length} item-ov 30+ dni — zastara!` : '✅ Brez zastarelih item-ov'}`;
+    },
+  },
+  {
+    command: 'inventory',
+    description: 'Skladišče z aging statusom',
+    handler: async () => {
+      const heldTrades = await db.trade.findMany({
+        where: { status: 'held' },
+        select: { id: true, title: true, buyPrice: true, buyDate: true, category: true, flipChecklist: true },
+        orderBy: { buyDate: 'asc' },
+      });
+      if (heldTrades.length === 0) {
+        return 'ℹ️ Skladišče je prazno.';
+      }
+      const now = Date.now();
+      const lines = [`📦 *SKLADIŠČE (${heldTrades.length})*`, ''];
+      for (const t of heldTrades) {
+        const days = Math.floor((now - new Date(t.buyDate).getTime()) / 86400000);
+        const emoji = days > 90 ? '🔴' : days > 60 ? '🔴' : days > 30 ? '🟡' : '🟢';
+        // Parse flip checklist
+        let steps = 0;
+        try { steps = JSON.parse(t.flipChecklist || '[]').length; } catch { /* */ }
+        lines.push(`${emoji} *${t.title?.slice(0, 40)}* — ${t.buyPrice}€`);
+        lines.push(`   ${days}d • ${steps}/9 flip korakov • ${t.category || '?'}`);
+      }
+      const totalValue = heldTrades.reduce((s, t) => s + t.buyPrice, 0);
+      lines.push('', `💼 Skupaj: ${totalValue}€ vezano`);
       return lines.join('\n');
     },
   },
