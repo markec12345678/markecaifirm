@@ -84,3 +84,6 @@ CLAUDE.md
 !public/favicon-*.png
 !public/favicon.ico
 package-lock.json
+
+# Tool results cache (should not be committed)
+tool-results/
