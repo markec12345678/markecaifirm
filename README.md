@@ -1,18 +1,21 @@
 # Markec AI Firm — AI Trading Firm za slovenske oglase
 
-[![Version](https://img.shields.io/badge/version-v7.24.0-blue.svg)](./CHANGELOG.md)
+[![Version](https://img.shields.io/badge/version-v7.49.0-blue.svg)](./CHANGELOG.md)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](./LICENSE)
-[![AI Endpoints](https://img.shields.io/badge/AI%20endpoints-254+-green.svg)](./AI_ENDPOINTS.md)
+[![AI Endpoints](https://img.shields.io/badge/AI%20endpoints-270+-green.svg)](./AI_ENDPOINTS.md)
+[![API Routes](https://img.shields.io/badge/API%20routes-390+-cyan.svg)](#)
 [![Next.js](https://img.shields.io/badge/Next.js-16-black.svg)](https://nextjs.org/)
 [![TypeScript](https://img.shields.io/badge/TypeScript-5-blue.svg)](https://www.typescriptlang.org/)
 [![TypeScript Errors](https://img.shields.io/badge/TS%20errors-0-brightgreen.svg)](#)
+[![Vulnerabilities](https://img.shields.io/badge/vulns-0-brightgreen.svg)](#)
+[![Tests](https://img.shields.io/badge/tests-37-brightgreen.svg)](#)
 [![Prisma](https://img.shields.io/badge/Prisma-6-indigo.svg)](https://www.prisma.io/)
 [![Local-First](https://img.shields.io/badge/local-first-purple.svg)](#-local-first--zero-cloud)
 [![PRs Welcome](https://img.shields.io/badge/PRs-welcome-brightgreen.svg)](./CONTRIBUTING.md)
 
-> **AI-powered trading firm** za Bolha, Facebook Marketplace, Vinted, Avtonet in Kleinanzeigen.
-> **254+ AI endpointov** za iskanje, ocenjevanje, kupovanje in preprodajo.
-> **Local-first** — vsi podatki ostanejo na tvojem računalniku. **Zero-cloud**.
+> **AI-powered trading firm** za Bolha, Facebook Marketplace, Vinted, Avtonet, mobile.de, Kleinanzeigen, Subito in Willhaben.
+> **270+ AI endpointov** + **16 analytics** + **9 cron automatizacij** + **11 Telegram ukazov** za iskanje, ocenjevanje, kupovanje in preprodajo.
+> **Local-first** — vsi podatki ostanejo na tvojem računalniku. **Zero-cloud**. **0 vulnerabilities**. **37 tests**.
 
 ---
 
@@ -46,9 +49,9 @@ računalniku — brez cloud storitev, brez mesečnih naročnin, brez deljenja po
 Lovi podcenjene oglase na Bolhi/Facebooku/Vintedu z AI, jih kupi poceni, preprodaj drago z
 AI-optimiziranimi oglasi, in avtomatiziraj celoten workflow od odkritja do prodaje.
 
-### Verzija v7.24.0 (29. julij 2026)
+### Verzija v7.49.0 (avgust 2026)
 
-**254 AI endpointov** organiziranih v 7 kategorij:
+**270 AI endpointov** + **16 analytics** + **9 cron automatizacij** + **11 Telegram ukazov** + **73+ funkcij** organiziranih v 7 kategorij:
 - **Statistike** (analytics, predictions, forecasting) — 35+ funkcij
 - **Skladišče** (inventory management, aging, depreciation) — 20+ funkcij
 - **Oglasi** (listing optimization, SEO, image analysis) — 25+ funkcij
@@ -195,13 +198,16 @@ AI-optimiziranimi oglasi, in avtomatiziraj celoten workflow od odkritja do proda
 - **Email** SMTP
 - **Web Push** (VAPID) — mobile/desktop push notifications
 
-### 🕵️ Anti-detection (6 tehnik)
-- Proxy rotation (HTTP/SOCKS5)
-- Realistic headers (User-Agent rotation)
-- Request randomization (1-5s delay)
-- Stealth mode (Playwright z anti-detection)
-- CAPTCHA solving (2captcha, anti-captcha, capmonster, custom)
-- TLS fingerprinting
+### 🕵️ Anti-detection (9 tehnik — v7.40 maximal)
+- **Cookie jar** — per-domain session affinity (Cloudflare cf_clearance persistence)
+- **429 retry** — exponential backoff + jitter + UA rotation (max 3 retries)
+- **Platform-specific Referer** headers (Bolha, mobile.de, Kleinanzeigen, etc.)
+- **Gaussian delay** — Box-Muller transform (bolj človeška distribucija)
+- **12 User-Agent strings** — Chrome/Firefox/Safari/Edge × Win/Mac/Linux
+- **Per-domain session** — isti UA + cookies per domain (naravno)
+- **Proxy rotation** (HTTP/SOCKS5 z undici ProxyAgent)
+- **CAPTCHA solving** (2captcha, anti-captcha, capmonster)
+- **Scraper Auto-Recovery** — avtomatski Playwright fallback pri napakah
 
 ---
 
@@ -216,9 +222,11 @@ AI-optimiziranimi oglasi, in avtomatiziraj celoten workflow od odkritja do proda
 | **AI providers** | Ollama, OpenAI, Anthropic, OpenRouter, Gemini, OpenAI-compatible |
 | **Scraping** | cheerio (HTML), native fetch (RSS), Playwright (fallback) |
 | **Notifications** | Telegram Bot API, Discord/Slack webhooks, SMTP, Web Push (VAPID) |
-| **Anti-detection** | Proxy rotation, TLS fingerprinting, CAPTCHA solving |
+| **Anti-detection** | Cookie jar, 429 retry, Referer, Gaussian delay, 12 UAs, Proxy rotation, CAPTCHA solver, Auto-Recovery |
+| **Security** | AES-256-GCM secrets encryption, Rate limiting (20 AI/min/IP), SSRF protection |
+| **Testing** | Vitest (37 tests), structured logger, try/catch na vseh API routes |
 | **Runtime** | Bun (priporočeno) ali Node.js 20+ |
-| **CI/CD** | GitHub Actions (lint, typecheck, audit) |
+| **CI/CD** | GitHub Actions (lint, typecheck, tests, audit) |
 
 ---
 
@@ -485,7 +493,7 @@ Za scraping Bolhe in drugih platform, aplikacija vključuje:
 ### Auth
 Ni avtentikacije (local-first). Aplikacija teče na localhost.
 
-### Endpointi (254 AI + sistemski)
+### Endpointi (270 AI + 16 analytics + 9 cron + sistemski = 390+)
 
 ```bash
 # AI primeri
@@ -499,10 +507,38 @@ POST /api/ai/auction-sniper-v2           # Auction sniper z ML timing
 # Sistemski
 GET  /api/health                         # Health check
 POST /api/run?id=<monitorId>             # Sproži scan enega monitorja
-GET  /api/cron/run-all?key=<secret>  # Cron: vsi zapadli monitorji
+GET  /api/cron/run-all?key=<secret>      # Cron: vsi monitorji + alerts + digest
 POST /api/settings                       # Update nastavitve
 GET  /api/listings                       # Seznam listingov
 POST /api/trades                         # Ustvari trade
+
+# Profit pipeline (v7.32-v7.49)
+GET  /api/trades/deal-flow               # ROI, win rate, money velocity, pipeline
+GET  /api/analytics/deal-funnel          # Conversion funnel (discovery→profit)
+GET  /api/analytics/sold-comps           # Fair market value (Keepa-style)
+GET  /api/analytics/niche-score          # Best categories by opportunity
+GET  /api/analytics/deal-velocity        # Market temperature (HOT/COLD)
+GET  /api/analytics/source-quality       # Best monitor score
+GET  /api/analytics/net-profit           # After-tax profit (SI tax law)
+GET  /api/analytics/reseller-blackbook   # Best recurring sellers
+GET  /api/analytics/time-to-profit       # Cycle time optimization
+GET  /api/analytics/profit-heatmap       # Best days/hours for profit
+GET  /api/analytics/market-trend         # Rising/falling prices
+GET  /api/analytics/cross-platform-arbitrage  # Buy cheap, sell expensive
+GET  /api/analytics/deal-timing          # When new deals appear
+GET  /api/analytics/seasonal-calendar    # Best month to sell
+GET  /api/analytics/profit-goal-tracker  # Progress to monthly goal
+GET  /api/analytics/platform-performance # Best platform per category
+
+# Cron automation (9 endpoints)
+GET  /api/cron/smart-deal-alert?key=     # TOP 3 deals → Telegram
+GET  /api/cron/inventory-aging-alert?key=  # Aging items → Telegram
+GET  /api/cron/weekly-report?key=        # Monday profit summary
+GET  /api/cron/daily-pulse?key=          # Daily morning summary
+GET  /api/cron/auto-price-drop?key=      # Price drop suggestions
+GET  /api/cron/competitor-price-monitor?key=  # Competitor alerts
+GET  /api/cron/scraper-recovery?key=     # Auto-retry failed scrapers
+GET  /api/cron/relisting-reminder?key=   # Bolha ad expiry alerts
 ```
 
 ▶️ **Glej [AI_ENDPOINTS.md](./AI_ENDPOINTS.md) za popoln seznam.**
@@ -578,12 +614,22 @@ markec-ai-firm/
 
 ## 🗺️ Roadmap
 
-### v6.50 (načrtovano)
-- [ ] UI komponente za v6.45-v6.49 funkcije v dashboard
+### v7.49 (trenutno — 73+ funkcij)
+- [x] **Profit pipeline (20+ funkcij):** Deal Flow, Funnel, Sold Comps, Price History, Seller Intel, Make Offer, Quick Buy, Flip Workflow, Profit Maximizer, Niche Score, Deal Velocity, Bundle Detector, Capital Advisor, Threshold Optimizer, Deal Score Calibrator, Cross-border Arbitrage, Negotiation Auto-Responder, Seasonal Calendar, Profit Goal Tracker, Margin Guardian, Seller Response Predictor, Turnover Optimizer, Auto-Listing Draft, Photo Quality Analyzer, Refurb ROI Calculator, Loss Recovery Playbook, Monitor Suggestions, Tax-Aware Selling
+- [x] **Cron automatizacija (9):** Smart Deal Alert, Inventory Aging, Weekly Report, Auto Price Drop, Competitor Monitor, Scraper Recovery, Relisting Reminder, Daily Pulse, Heartbeat
+- [x] **Telegram 2-way (11 ukazi):** /deals /profit /inventory /status /run /alerts /listings /monitors /trades /stats /help
+- [x] **Anti-scraping (9 tehnik):** Cookie jar, 429 retry, Referer, Gaussian delay, 12 UAs, Per-domain session, Proxy rotation, CAPTCHA solver, Auto-Recovery
+- [x] **Security:** AES-256-GCM secrets encryption, Rate limiting, SSRF protection
+- [x] **Analytics (16):** Deal Velocity, Sold Comps, Niche Score, Deal Funnel, Platform Performance, Source Quality, Net Profit (after tax), Reseller Blackbook, Time-to-Profit, Profit Heatmap, Market Trend, Cross-Platform Arbitrage, Deal Timing, Seasonal Calendar, Profit Goal Tracker
+- [x] **Testing:** Vitest (37 tests), structured logger, try/catch na vseh 390 API routes
+- [x] **0 vulnerabilities**, 0 TS errors, 0 ESLint errors
+
+### Naslednji koraki
+- [ ] UI komponente za v7.32-v7.49 funkcije v dashboard
 - [ ] WebSocket real-time negotiation (SSE namesto polling)
 - [ ] Playwright E2E testi za glavne flow-e
-
-### v6.51-v6.60
+- [ ] TLS fingerprinting (curl-impersonate)
+- [ ] AI photo analysis za prodajne slike (VLM)
 - [ ] ML model za buyer matchmaker (fine-tuned na realnem data)
 - [ ] PostgreSQL support za multi-user deployment
 - [ ] Mobile app (React Native)
