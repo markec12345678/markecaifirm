@@ -1,4 +1,52 @@
 /**
+ * v7.56: Generic in-memory AI output cache (6h TTL).
+ *
+ * Used by AI endpoints that take heavy input (e.g. profit-maximizer-v2,
+ * listing-refresh-scheduler) to skip re-calling the LLM when the same input
+ * shape was just seen. Keyed by a caller-supplied string (typically a hash
+ * of the input ids / capital value).
+ *
+ * Memory-only — process restart clears the cache (acceptable for AI hints).
+ */
+
+interface AiCacheEntry<T> {
+  value: T;
+  expiresAt: number;
+}
+
+const AI_CACHE_TTL_MS = 6 * 60 * 60 * 1000; // 6 hours
+const aiCacheStore = new Map<string, AiCacheEntry<unknown>>();
+let aiCacheLastPruneAt = 0;
+
+/** Get a cached AI output value, or null if missing/expired. */
+export function getCachedAI<T>(key: string): T | null {
+  const now = Date.now();
+  if (now - aiCacheLastPruneAt > 300000) {
+    aiCacheLastPruneAt = now;
+    for (const [k, e] of aiCacheStore) {
+      if (e.expiresAt < now) aiCacheStore.delete(k);
+    }
+  }
+  const entry = aiCacheStore.get(key) as AiCacheEntry<T> | undefined;
+  if (!entry) return null;
+  if (entry.expiresAt < now) {
+    aiCacheStore.delete(key);
+    return null;
+  }
+  return entry.value;
+}
+
+/** Store an AI output value with the default 6h TTL. */
+export function setCachedAI<T>(key: string, value: T, ttlMs: number = AI_CACHE_TTL_MS): void {
+  aiCacheStore.set(key, { value, expiresAt: Date.now() + ttlMs });
+}
+
+/** Test helper: clear the in-memory AI cache. */
+export function clearAICache(): void {
+  aiCacheStore.clear();
+}
+
+/**
  * v7.53: AI Output Cache — skip re-evaluation of already-scored listings.
  *
  * Problem: When a monitor runs every 15 min, the same listing may appear

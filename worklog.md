@@ -5351,3 +5351,68 @@ Stage Summary:
 - TypeScript: 0 napak ✨
 - ESLint: 0 napak in 0 opozoril ✨
 - Verzija aplikacije: v7.24.0 (nespremenjena — to je error handling infra, ne feature)
+
+---
+Task ID: v7.56
+Agent: full-stack-developer
+Task: Add 3 new AI features for v7.56 — Market Gap Finder, Listing Refresh Scheduler, Profit Maximizer v2
+
+Work Log:
+- Prebral worklog.md (zadnjih ~200 vrstic) za kontekst — zadnje stanje v6.92 + Task 12 (P0-5/P1-7 error handling infra, v7.24.0). Preveril da obstoječi endpointi `/api/analytics/market-gap-finder`, `/api/ai/listing-refresh-scheduler`, `/api/ai/profit-maximizer-v2` ŠE NE obstajajo (ni konfliktov).
+- Preštudiral obstoječe vzorce:
+  - `src/app/api/ai/liquidation-strategist/route.ts` (GET AI pattern, try/catch + logger.error)
+  - `src/app/api/analytics/roi-leaderboard/route.ts` (pure DB analytics, brand/model/category grouping)
+  - `src/app/api/ai/negotiation-outcome-predictor/route.ts` (POST AI + getSettingsRow + callProviderForRaw + GROUNDING_PROMPT_SUFFIX + parseJsonLooseExported)
+  - `src/app/api/analytics/cash-flow-forecast/route.ts` (forecasting pattern, flipChecklist parsing)
+- Preveril knjižnice: `src/lib/ai-cache.ts` (imel samo shouldEvaluateListing za listing-e), `src/lib/anti-hallucination.ts` (GROUNDING_PROMPT_SUFFIX, validatePrice, evaluateConfidence, detectHallucination), `src/lib/rate-limit.ts` (checkRateLimit + rateLimitResponse), `src/lib/ai.ts` (callProviderForRaw, parseJsonLooseExported, AiSettings).
+- DODAL v `src/lib/ai-cache.ts`: nova generics `getCachedAI<T>(key)` in `setCachedAI<T>(key, value, ttlMs=6h)` — in-memory Map z lazy pruning (vsakih 5min). Default TTL 6 ur. Plus `clearAICache()` helper. Brez sprememb obstoječi funkciji (shouldEvaluateListing, filterForEvaluation, getCacheStats).
+- FEATURE #1: `src/app/api/analytics/market-gap-finder/route.ts` (GET, pure DB, NO AI)
+  - Čista DB analitika: db.listing.findMany (vsi listings = povpraševanje) + db.trade.findMany (status='sold' = ponudba)
+  - Kategorije: 20 znanih matcherjev (iphone, samsung, playstation, xbox, nintendo, avto, kolo, pohistvo, orodje, racunalnik, telefon, televizor, kamera, ura, oblecilo, sport, instrument, knjige, igrace, leplo) — fallback na monitor.source ali prvo non-stopword besedo v naslovu
+  - Stopword set (slovenski + angleški + generični filtri)
+  - Per kategorija: listingsFound, soldCount, demandScore (=listingsFound), supplyScore (=soldCount), gapScore = round(demandScore / (supplyScore + 1), 2), avgPrice (avg listings price), topKeywords (top-10 iz naslovov, frekvenca)
+  - opportunity: HIGH_GAP (gapScore>=5) | BALANCED (gapScore>=1.5) | SATURATED
+  - recommendation string per kategorija (slovenski)
+  - Top-10 gaps sortirano po gapScore desc, nato listingsFound desc
+  - summary: totalCategories, highGapCount, bestOpportunity, totalListings, totalSold
+- FEATURE #2: `src/app/api/ai/listing-refresh-scheduler/route.ts` (GET, AI-enhanced)
+  - db.trade.findMany where status='held' z listing relacijo (aiEstimatedValue, firstSeenAt, priceDroppedAt — schema nima lastSeenAt, uporabljen priceDroppedAt ?? firstSeenAt ?? buyDate kot "zadnja aktivnost")
+  - parsePlatformsListed(flipChecklist) — JSON parse, gleda completed korake `listed_bolha`, `listed_vinted`, `listed_other` → array ['Bolha', 'Vinted', 'Facebook']
+  - Per held item: daysHeld, lastRefreshDay, platformsListed, urgency (OVERDUE>14d | DUE_SOON 7-14d | OK <7d)
+  - AI cache: key `listing-refresh-scheduler:${heldItemIds}` (TTL 6h) prek getCachedAI/setCachedAI
+  - AI prompt z groundingom (GROUNDING_PROMPT_SUFFIX) — prosi za JSON: { plans: [{ tradeId, nextRefreshDate (ISO), platform (Bolha|Vinted|Facebook), action (REFRESH|RELIST|PRICE_DROP_AND_REFRESH|CROSS_POST), newTitleSuggestion, priceSuggestionEur, reasoning }] }
+  - Deterministic fallback (deterministicPlan) če AI faila: CROSS_POST za 1-platform 7+d items, PRICE_DROP_AND_REFRESH za 14+d, REFRESH za OVERDUE/DUE_SOON
+  - Anti-hallucination: VALID_ACTIONS + KNOWN_PLATFORMS whitelist, nextRefreshDate validacija (Date parse + >= danes-1d), newTitleSuggestion cap 70 chars, priceSuggestionEur clamp na [0.5×, 2×] buyPrice, reasoning cap 240 chars
+  - Sort: urgency (OVERDUE→DUE_SOON→OK) nato lastRefreshDay desc
+  - summary: total, overdue, dueSoon, estimatedRevenueBoost (carrying cost 0.50€/d × povprečna prihranjena dni)
+- FEATURE #3: `src/app/api/ai/profit-maximizer-v2/route.ts` (GET, AI-enhanced ML compounding)
+  - db.trade.findMany where status='sold' in sellPrice+sellDate not null → historical metrics
+  - db.trade.findMany where status='held' → capital tied up
+  - Historical: avgROI=round(totalProfit/totalInvested × 1000)/10, avgHoldDays, winRate (profitableTrades/totalTrades), avgProfitPerTrade, avgTradeSize, capitalAvailable (sum sellPrice-sellFees iz zadnjih 30d), avgMonthlyProfit (totalProfit / monthSpan, kjer monthSpan = razpon med najstarejšo in najnovejšo prodajo v mesecih)
+  - projectionStartCapital = max(capitalAvailable, heldCapitalTied × 0.5, 100€ floor)
+  - AI cache: key `profit-maximizer-v2:${projectionStartCapital}` (TTL 6h)
+  - 3 SCENARIO_DEFS: conservative (5%/m, LOW), balanced (10%/m, MEDIUM), aggressive (15%/m, HIGH)
+  - projectScenario: 24-mesečna projekcija, mesec-po-mesecu: tradesExecuted=floor(startCap/avgTradeSize) (min 1), profitPerTrade compounding (×(1+rate)^month), projectedProfit=trades×profitPerTrade
+  - Anti-hallucination: clamp vsak monthProfit na [0.5×, 3×] historical avgMonthlyProfit (validacija da projekcija ne pobegne iz realnosti)
+  - AI prompt: prosi za recommendation (scenario, reasoning 1-2 stavka, confidence 0-100, riskTolerance, notes) — ne za številke (te so deterministične)
+  - Deterministic fallback za scenario choice: winRate<50 OR avgROI<5 → conservative; winRate>70 AND avgROI>20 → aggressive; sicer balanced
+  - Confidence validacija (0-100 clamp) + reasoning cap 400 chars
+  - Response: ok, historical, scenarios (3×24 month rows), recommendation { scenario, reasoning, confidence, riskTolerance, notes }, aiUsed, projectionStartCapital, heldCapitalTied
+- Testiranje vseh 3 endpointov (curl localhost:3000):
+  - GET /api/analytics/market-gap-finder → 200, {"ok":true,"gaps":[],"summary":{...},"message":"Ni dovolj podatkov..."} (prazna baza)
+  - GET /api/ai/listing-refresh-scheduler → 200, {"ok":true,"schedule":[],"summary":{...},"message":"Ni held inventarja..."}
+  - GET /api/ai/profit-maximizer-v2 → 200, {"ok":true,"historical":{...},"scenarios":[],"recommendation":{...},"message":"Ni dovolj zgodovinskih podatkov."}
+- ESLint: 0 napak, 0 opozoril ✨
+- TypeScript: 0 napak ✨ (popravil 1 napako — odstranil `buyDate: { not: null }` filter, ker je buyDate `@default(now())` in non-nullable v shemi — Prisma ne dovoli `not: null` za non-nullable polja)
+- dev.log: zadnje 30 vrstic preverjeno — vsi 3 endpointi vračajo 200 OK z application-code časom ~13-46ms, brez errorjev/exceptionov
+
+Stage Summary:
+- 3 novi AI/analytics endpointi dodani (skupno 257 AI/analytics endpointov, +3 od prejšnje)
+- 1 novi lib helper dodan v `src/lib/ai-cache.ts` (getCachedAI/setCachedAI, in-memory 6h TTL, generic)
+- 1 TypeScript error najden in popravljena (Prisma filter na non-nullable polju)
+- Vsi 3 endpointi vračajo veljaven JSON tudi ob prazni bazi (graceful fallback z opisno message)
+- Anti-hallucination integrirana v obeh AI endpointih (action/platform whitelist, price clamping na [0.5×, 2×] buyPrice, projectedProfit clamping na [0.5×, 3×] avgMonthlyProfit, GROUNDING_PROMPT_SUFFIX v promptih)
+- AI cache integriran v obeh AI endpointih (deterministic fallback, tako da AI cache miss ne bloka funkcionalnosti)
+- ESLint: 0 napak ✨
+- TypeScript: 0 napak ✨
+- Verzija aplikacije: v7.56.0
