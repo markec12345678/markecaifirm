@@ -5457,3 +5457,141 @@ Stage Summary:
 - GitHub: 3 lokalni commit-i (0626ace, 0fd2801, 1161805) — push čaka na nov PAT (stari kompromitiran)
 - Dev server: HTTP 200, 0 strežniških napak
 - Verzija aplikacije: v7.56.1
+
+---
+Task ID: v7.57
+Agent: full-stack-developer
+Task: Add 3 new features for v7.57 — Tax Report Generator, Reinvestment Advisor, Competitor Listing Tracker
+
+Work Log:
+- Prebral worklog.md (zadnje ~200 vrstic) za kontekst — zadnje stanje v7.56.1 (Market Gap Finder, Listing
+  Refresh Scheduler, Profit Maximizer v2 + POST handlerji fix). Preveril da endpointi
+  /api/analytics/tax-report, /api/ai/reinvestment-advisor, /api/analytics/competitor-tracker ŠE NE
+  obstajajo (ni konfliktov — mkdir uspešen).
+- Preštudiral obstoječe vzorce:
+  - `src/app/api/analytics/net-profit/route.ts` (letna davčna logika: TAX_FREE_ALLOWANCE=5000,
+    TAX_RATE=0.40, LOSS_CARRYFORWARD_YEARS=3, monthly breakdown, prevLosses per year)
+  - `src/app/api/analytics/roi-leaderboard/route.ts` (extractBrandModel z knownBrands array,
+    brandMap grouping z trades/profit/invested/holdDays, win/loss rate)
+  - `src/app/api/ai/profit-maximizer-v2/route.ts` (GET+POST shared handler pattern, ai-cache z
+    getCachedAI/setCachedAI<T> generic, anti-hallucination z validScenarios whitelist + clamping,
+    GROUNDING_PROMPT_SUFFIX, deterministic fallback če AI faila)
+  - `src/app/api/ai/listing-refresh-scheduler/route.ts` (checkRateLimit z routeKey,
+    `ai-listing-refresh-scheduler` format, rateLimitResponse za 429)
+  - `src/lib/anti-hallucination.ts` (GROUNDING_PROMPT_SUFFIX = 5 pravil "uporabljaj samo podatke
+    iz konteksta, ne izmišljaj")
+  - `src/lib/ai-cache.ts` (generic getCachedAI<T> + setCachedAI<T> z 6h TTL, Map+prune na 5min)
+- FEATURE #1: `src/app/api/analytics/tax-report/route.ts` (GET, pure DB, NO AI)
+  - GET /api/analytics/tax-report?year=2026 — Letno davčno poročilo za FURS (Slovenian format)
+  - db.trade.findMany where status='sold' AND sellDate within [yearStart, yearEnd] (take 2000)
+  - Per-trade: costBasis=buyPrice+buyFees, netProceeds=sellPrice-sellFees, profit=netProceeds-costBasis,
+    holdDays=(sellDate-buyDate)/86400000, isLongTermHolding=holdDays>1095 (3 leta)
+  - grossProfit=sum positive profits, grossLoss=sum negative profits (abs), netProfit=gross-grossLoss
+  - Loss carryforward: query SOLD trades za prejšnja 3 leta (letne zanke), če je letni profit <0
+    zabeleži kot loss — uporabljeno za zmanjšanje davčne osnove v trenutnem letu
+  - Tax calc: taxableBase=max(0, netProfit-5000-lossCarryforward); taxRate=allLongTerm?0.2667:0.40
+    (1/3 znižanja za >3 leta držanja); taxAmount=round(taxableBase*taxRate); efektivnaStopnja=2 dec
+  - Monthly breakdown (Jan-Dec): steviloTrgovin, dobicek, kumulativniDobicek, kumulativniDavek
+  - Per-category breakdown: kategorija, steviloTrgovin, dobicek, delezDobicka (1 dec %), davek
+    (proportional estimate glede na profit)
+  - Individual trades (trgovine): id, naslov, kategorija, datumNakupa (ISO), datumProdaje (ISO),
+    dniZadrzevanja, nabavnaCena, prodajnaCena, stroški (fees), dobicek, dolgorocnoDrzanje (bool)
+  - 4-6 opombe (notes) glede na scenarij (znotraj limita, nad limitom, izguba, prenesene izgube,
+    dolgoročno držanje, opozorilo da je poročilo osnutek za FURS)
+  - Response: { ok, year, generatedAt (ISO), report: { davcniZavezanec, povzetek, mesecniPregled,
+    poKategorijah, trgovine, opombe } } — slovenska imena polj za printanje
+- FEATURE #2: `src/app/api/ai/reinvestment-advisor/route.ts` (GET+POST, AI-enhanced)
+  - handleReinvestmentAdvisor(req) shared funkcija — obe HTTP metodi kličeta isto logiko (AI Hub
+    runner kompatibilnost)
+  - db.trade.findMany where status='sold' (1000 zadnjih) → ROI analiza po brandu
+  - db.trade.findMany where status='held' (500) → current allocation per kategorija
+  - db.trade recent (zadnji 30d) → cashAvailable=sum(sellPrice-sellFees)
+  - extractBrand (KNOWN_BRANDS array z 22 brand-i: apple, iphone, samsung, galaxy, huawei, xiaomi,
+    sony, playstation, xbox, nintendo, lg, bosch, makita, dewalt, ikea, lego, nike, adidas, canon,
+    nikon, dyson, bosch)
+  - Brand grouping: min 3 prodaje za leaderboard; topPerformers (top 5 po ROI desc) in
+    underperformers (top 5 po ROI asc, samo negativni)
+  - Best price range: 5 cenovnih bucketov (0-100, 100-300, 300-700, 700-1500, 1500+) — najdeš bucket
+    z najvišjim ROI (min 2 prodaji)
+  - Current allocation per kategorija (held) — % in capital; overexposedCategories >30% threshold
+  - AI cache key: `reinvestment-advisor:${cashAvailable}` (6h TTL prek getCachedAI/setCachedAI)
+  - AI prompt z GROUNDING_PROMPT_SUFFIX — prosi za JSON: reinvestAmount, recommendedCategories
+    (name, expectedROI, reasoning), recommendedBrands (brand, confidence, reason), priceRangeTarget
+    (min, max), diversificationAdvice, avoidList, reasoning, confidence
+  - Anti-hallucination validacija:
+    * reinvestAmount clamped na [0, cashAvailable]
+    * recommendedBrands — samo brand-i ki obstajajo v historicalBrands set ali KNOWN_BRANDS list
+      (drugace discarded)
+    * avoidList — samo brand-i ki obstajajo v zgodovini (drugace discarded)
+    * expectedROI clamped na [0, 500]%
+    * confidence clamped na [0, 100]
+    * priceRangeTarget min/max — validacija min>=0, max>min, max<=100000
+    * reasoning/advice string-i sliced na max dolžino (240-600 chars)
+  - Deterministic fallback če AI faila:
+    * reinvestAmount = 80% × cashAvailable
+    * recommendedCategories = top 3 brand-i po ROI iz topPerformers
+    * recommendedBrands = top 3 brand-i z confidence=40+trades×5
+    * priceRangeTarget = bestPriceRange iz cenovnih bucketov
+    * diversificationAdvice glede na overexposedCategories (če obstajajo)
+    * avoidList = top 3 underperformers
+    * confidence = 40 + (sampleFactor × 50) kjer sampleFactor=min(1, soldTrades/30)
+  - Response: { ok, available, performance, currentAllocation, recommendations, reasoning,
+    confidence, aiUsed }
+- FEATURE #3: `src/app/api/analytics/competitor-tracker/route.ts` (GET, pure DB, NO AI)
+  - db.trade.findMany where status in ['sold','held'] AND listing isNot null (2000 zadnjih) —
+    extract sellerName iz povezanega Listing-a
+  - sellerToPurchases map: count, totalSpent (sum buyPrice), categories Set
+  - Graceful handling: če sellerToPurchases.size === 0 → vrne empty array z sporočilom da sellerName
+    ni populiran (predlog: Bolha/Vinted detail scraper naj izvleče ime prodajalca)
+  - Single batched db.listing.findMany where sellerName in [...] (5000 listings) — Map grouped po
+    sellerName (veliko hitrejše od N+1 queryev)
+  - Per competitor (seller):
+    * relationship: SUPPLIER (2+ nakupov) | ONE_TIME (1 nakup)
+    * totalListings, purchasesFromThem, totalSpent, avgPrice (iz listing prices)
+    * categoriesSold — kombinacija trade.category + hevristični category hints iz listing naslovov
+      (5 regex matcherji: elektronika, avto, pohistvo, orodje, moda)
+    * firstSeen/lastSeen (ISO) iz listing firstSeenAt
+    * listingFrequencyPerWeek = totalListings / weeks(earliest→latest)
+    * recentListings (top 5 z najnovejšim firstSeenAt)
+  - Dodaten query za WATCHED competitors: db.listing.findMany where (isBookmarked=true ALI
+    contactStatus!='none') AND sellerName not null — sellers ki smo jih opazovali a od njih nismo
+    kupili. Top 5 z največ listings dodanih v rezultat.
+  - Sort: SUPPLIER+ONE_TIME po totalSpent desc, WATCHED po totalListings desc. Top 20 vrnjenih.
+  - Summary: totalCompetitors, suppliers, oneTimeSellers, watchedOnly, totalSpentWithSuppliers,
+    topSupplier
+- Testiranje vseh 3 endpointov (curl localhost:3000):
+  - GET /api/analytics/tax-report?year=2026 → 200, {"ok":true,"year":2026,"generatedAt":"2026-08-
+    06T16:05:35.379Z","report":{"davcniZavezanec":{"leto":2026,"opis":"Letno poročilo o dobičku iz
+    preprodaje"},"povzetek":{"skupniDobicek":0,...}}} (prazna baza — prazen poročilo z veljavnno strukturo)
+  - GET /api/ai/reinvestment-advisor → 200, {"ok":true,"available":{...},"performance":{...},
+    "recommendations":{"reinvestAmount":0,...},"message":"Ni dovolj zgodovinskih podatkov."}
+    (deterministic fallback ker AI nima dovolj podatkov)
+  - POST /api/ai/reinvestment-advisor → 200, identičen odgovor kot GET (AI Hub runner kompatibilnost
+    potrjena)
+  - GET /api/analytics/competitor-tracker → 200, {"ok":true,"competitors":[],"summary":{...},
+    "message":"Ni sledenih prodajalcev — sellerName ni populiran..."}
+- ESLint: 0 napak, 0 opozoril ✨
+- TypeScript: 0 napak ✨ (npx tsc --noEmit)
+- dev.log: zadnje 200 vrstic preverjeno — vsi 4 HTTP requesti (GET+POST za reinvestment-advisor,
+  GET za tax-report in competitor-tracker) vračajo 200 OK brez errorjev/exceptionov
+
+Stage Summary:
+- 3 novi AI/analytics endpointi dodani (skupno 260 AI/analytics endpointov, +3 od prejšnje)
+  - 1 analytics endpoint (pure DB, NO AI): tax-report
+  - 1 AI endpoint (AI-enhanced z cache+grounding): reinvestment-advisor (GET+POST)
+  - 1 analytics endpoint (pure DB, NO AI): competitor-tracker
+- Tax Report Generator: formalno slovensko davčno poročilo z davcniZavezanec, povzetek, mesecniPregled,
+  poKategorijah, trgovine, opombe — primerno za predajo FURS-u. 3 slovenska davčna pravila implementirana
+  (5000€ neoporečno, 40% dohodnina, 3-letni prenos izgub, 1/3 znižanja za >3 leta držanja)
+- Reinvestment Advisor: AI priporoča kam reinvestirati (categories, brands, price range, amount) z
+  anti-hallucination (brand whitelist, amount clamping na [0, cashAvailable], historical brand set
+  validacija za avoidList in recommendedBrands). AI cache 6h TTL z deterministic fallback če AI faila.
+- Competitor Listing Tracker: sledi "competitors" (seller-i od katerih si kupoval — SUPPLIER za 2+
+  nakupov, ONE_TIME za 1, WATCHED za bookmarked/contacted ki niso postali trades). Batch query za
+  vse seller listings (5k listings) namesto N+1. Hevristični category hints iz naslovov (5 regex
+  matcherji) kot dopolnitev trade.category.
+- Vsi 3 endpointi vračajo veljaven JSON tudi ob prazni bazi (graceful fallback z opisno slovensko
+  message)
+- ESLint: 0 napak ✨
+- TypeScript: 0 napak ✨
+- Verzija aplikacije: v7.57.0

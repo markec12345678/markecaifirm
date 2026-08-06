@@ -6,13 +6,49 @@ Format sledi [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), verzije s
 
 ## [Unreleased]
 
-Načrtovano za v7.56+:
-- Profit Maximizer v2 z ML compounding
-- Market Gap Finder — prazne niše z visokim povpraševanjem
-- Listing Refresh Scheduler — avtomatska obnova oglasov
-- UI komponente za v7.50-v7.55 funkcije v dashboard
-- Playwright E2E testi za glavne flow-e
+Načrtovano za v7.58+:
 - WebSocket real-time negotiation (SSE namesto polling)
+- Playwright E2E testi za glavne flow-e
+- TLS fingerprinting (curl-impersonate)
+- ML model za buyer matchmaker (fine-tuned na realnem data)
+
+## [7.57.0] - 2026-08-06
+
+### Added — Davčna poročila & reinvesticije & konkurenčna obveščenost (3 funkcije)
+- **Tax Report Generator** — `GET /api/analytics/tax-report?year=2026`
+  - Letno davčno poročilo v slovenskem formatu (FURS-ready)
+  - Implementira SI davčni zakon: 5000€ neoporečno, 40% dohodnina, 3-letni loss carryforward
+  - Dolgoročno držanje (>3 leta): 1/3 znižanja davka (efektivno 26.67%)
+  - Mesečni pregled, razčlenitev po kategorijah, seznam vseh trgovin
+  - Slovenska imena polj (davcniZavezanec, povzetek, mesecniPregled, poKategorijah, trgovine, opombe)
+- **Reinvestment Advisor** — `GET+POST /api/ai/reinvestment-advisor`
+  - Na podlagi ROI leaderboard-a priporoči kam reinvestirati dobiček
+  - Top performers (visok ROI) vs underperformers (negativen ROI)
+  - AI priporočila: kategorije, brand-i, cenovni rang, diversifikacija
+  - Anti-hallucination: reinvestAmount clamped na [0, cashAvailable]
+  - AI cache (6h TTL) + GET+POST za AI Hub runner compat
+- **Competitor Listing Tracker** — `GET /api/analytics/competitor-tracker`
+  - Sledi prodajalcem od katerih si kupoval (suppliers)
+  - Relationship: SUPPLIER (2+ nakupov) | ONE_TIME | WATCHED
+  - Per seller: totalListings, purchasesFromThem, avgPrice, categories, listingFrequency
+  - Batched query (ne N+1) za 5k listings
+  - 'Top supplier: Elektro Marjan — 12 nakupov, 2400€ porabljeno'
+
+## [7.56.0] - 2026-08-06
+
+### Added — Niche discovery & listing visibility & compounding (3 funkcije)
+- **Market Gap Finder** — `GET /api/analytics/market-gap-finder`
+  - Prazne niše z visokim povpraševanjem in nizko ponudbo
+  - gapScore = demandScore / (supplyScore + 1)
+  - opportunity: HIGH_GAP / BALANCED / SATURATED
+- **Listing Refresh Scheduler** — `GET+POST /api/ai/listing-refresh-scheduler`
+  - Za held inventar: urgency = OVERDUE/DUE_SOON/OK
+  - AI priporoča kdaj in kako osvežiti oglase
+  - AI cache (6h TTL) + GET+POST za AI Hub runner compat
+- **Profit Maximizer v2 (ML Compounding)** — `GET+POST /api/ai/profit-maximizer-v2`
+  - 3 scenariji (conservative 5% / balanced 10% / aggressive 15% mesečne rasti)
+  - 24-mesečna projekcija z reinvesticijo
+  - Anti-hallucination: projectedProfit clamped na [0.5x, 3x] avgMonthlyProfit
 
 ## [7.55.0] - 2026-08-06
 
