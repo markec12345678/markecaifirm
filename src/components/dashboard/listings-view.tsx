@@ -41,6 +41,7 @@ import { PriceHistoryPanel } from '@/components/dashboard/listing-detail/price-h
 import { SellerIntelligencePanel } from '@/components/dashboard/listing-detail/seller-intelligence-panel';
 import { MakeOfferPanel } from '@/components/dashboard/listing-detail/make-offer-panel';
 import { SoldCompsPanel } from '@/components/dashboard/listing-detail/sold-comps-panel';
+import { QuickBuyButton } from '@/components/dashboard/listing-detail/quick-buy-button';
 // v6.99: ListingActionsBar — združuje Notes + Contact Tracker
 import { ListingActionsBar } from '@/components/dashboard/listing-detail/listing-actions-bar';
 
@@ -2932,6 +2933,13 @@ function ListingDetailModal({ listingId, onClose }: { listingId: string | null; 
               listingId={listing.id}
               title={listing.title}
               askingPrice={listing.price}
+            />
+
+            {/* v7.38: Quick Buy — 1-click "Kupil" → instant Trade creation */}
+            <QuickBuyButton
+              listingId={listing.id}
+              buyPrice={listing.price}
+              estValue={listing.aiEstimatedValue}
             />
 
             {/* v1.4: Price history (text log) */}
