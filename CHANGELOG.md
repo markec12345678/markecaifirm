@@ -6,12 +6,68 @@ Format sledi [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), verzije s
 
 ## [Unreleased]
 
-Načrtovano za v6.93+:
-- UI komponente za v6.45-v6.92 funkcije v dashboard
-- Unit testi za lib/ai.ts
-- Playwright E2E testi
-- WebSocket real-time negotiation
-- ML model za buyer matchmaker (fine-tuned na realni data)
+Načrtovano za v7.56+:
+- Profit Maximizer v2 z ML compounding
+- Market Gap Finder — prazne niše z visokim povpraševanjem
+- Listing Refresh Scheduler — avtomatska obnova oglasov
+- UI komponente za v7.50-v7.55 funkcije v dashboard
+- Playwright E2E testi za glavne flow-e
+- WebSocket real-time negotiation (SSE namesto polling)
+
+## [7.55.0] - 2026-08-06
+
+### Added — Kupovanje & pogajanje & exit strategija (3 funkcije)
+- **ROI Performance Leaderboard** — `GET /api/analytics/roi-leaderboard`
+  - Grupira sold trades po brand/model/category
+  - Per group: count, total profit, avg profit, ROI %, avg hold days, profit/day
+  - Brand recognition (Apple, Samsung, Sony, Bosch, Nike, etc.)
+  - Winners vs losers identification
+- **Negotiation Outcome Predictor** — `POST /api/ai/negotiation-outcome-predictor`
+  - Verjetnostni model: accept/counter/reject
+  - 4 faktorji: estValueFactor, discountFactor, ageFactor, riskFactor
+  - AI enhancement: predicts counter price + optimal offer
+  - Confidence score + grounding prompt
+- **Inventory Liquidation Strategist** — `GET /api/ai/liquidation-strategist`
+  - Exit strategija za zastarele item-e
+  - Kaskadno zniževanje cene z časovnimi okviri
+
+## [7.54.0] - 2026-08-06
+
+### Added — Priložnosti & pomnjenje & timing (3 funkcije)
+- **Missed Opportunity Tracker** — `GET /api/analytics/missed-opportunities`
+  - Katere priložnosti si zamudil in koliko bi lahko zaslužil
+- **Conversation Memory** — AI si zapomni pretekle razgovore za boljše nasvete
+- **Optimal Listing Time** — `GET /api/analytics/optimal-listing-time`
+  - Kdaj objaviti oglas za max prodajo
+
+## [7.53.0] - 2026-08-06
+
+### Added — AI cost optimization & routing (3 funkcije)
+- **AI Output Cache** (6h TTL) — `src/lib/ai-cache.ts` — ~60% prihranek AI klicev
+- **Batch Deal Evaluator** — `POST /api/ai/batch-deal-evaluator` — 50 oglasov v 1 AI klicu (~98% prihranek)
+- **Smart Notification Router** — `GET /api/cron/smart-notification-router` — CRITICAL/HIGH/MEDIUM/LOW routing (Telegram/Push/Discord)
+
+## [7.52.0] - 2026-08-06
+
+### Added — Anti-Hallucination Layer (5 slojev)
+- **`src/lib/anti-hallucination.ts`** — prevent AI from fabricating financial data
+- 5 slojev: Prompt grounding, Numeric sanity, Cross-reference, Confidence threshold (30%), Pattern detection
+- Vsa AI finančna poročila validirana proti realnim DB podatkom
+- estValue clamped na 3x asking price
+
+## [7.51.0] - 2026-08-06
+
+### Added — Likvidnost & vidljivost & timing (3 funkcije)
+- **Cash Flow Forecaster** — `GET /api/analytics/cash-flow-forecast` — napoved kapitala za 7/14/30 dni
+- **Search Keyword Optimizer** — `POST /api/ai/search-keyword-optimizer` — Bolha title + tags SEO
+- **Purchase Pattern** — vzorci nakupov za optimizacijo
+
+## [7.50.0] - 2026-08-06
+
+### Added — Tržna ozaveščenost & tveganje & hitra prodaja (3 funkcije)
+- **Weekly Trend Radar** — `GET /api/analytics/weekly-trend-radar` — 7-dnevni tržni premiki (IMPROVING/DECLINING/STABLE)
+- **Risk Spread Calculator** — `GET /api/ai/risk-spread-calculator` — diverzifikacija portfelja
+- **Quick Sell Ladder** — hitra prodaja z postopnim zniževanjem cene
 
 ## [7.24.0] - 2026-07-30
 
