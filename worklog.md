@@ -6225,3 +6225,37 @@ Stage Summary:
 - ESLint: 0 napak ✨
 - TypeScript: 0 napak ✨
 - Verzija aplikacije: v7.60.0
+
+---
+Task ID: v7.60.1
+Agent: main
+Task: v7.60 commit + push + GitHub About + Agent Browser verification
+
+Work Log:
+- Prejel poročilo od full-stack-developer podagenta (Task v7.60)
+- Preveril 3 nove endpoint-e: demand-forecast (200 GET+POST), margin-guardian-pro (200 GET+POST), multi-platform-listing-generator (200 GET+POST)
+- Preveril migracijo v6.12 demand-forecast → demand-forecast-v6 (POST 200 ✅, GET 405 pričakovan)
+- Preveril doc sync: AI_ENDPOINTS.md (285 ✅), README v7.60 (16 refs ✅), README 285 AI (6 refs ✅), CHANGELOG v7.60 ✅
+- Preveril lint: 0 napak ✨
+- Preveril typecheck: 0 napak ✨
+- Posodobil GitHub About opis: 282 AI → 285 AI, 416 routes → 419 routes (via API PATCH)
+- Commit: "v7.60: Demand Forecast AI + Margin Guardian Pro + Multi-Platform Listing Generator" (5a8ff5a)
+- Push na GitHub: uspešen ✅, PAT očiščen ✅
+- Agent Browser self-verification:
+  - Stran se pravilno naloži (HTTP 200)
+  - AI Hub prikazuje margin-guardian-pro (v7.60) v iskalniku ✅
+  - Runner test: klik na margin-guardian-pro → POST request → valid JSON ✅
+  - Response: {"ok":true, "alerts":[], "summary":{...}, "aiUsed":false, "message":"Ni held inventarja..."}
+  - Statistics tab: deluje brez napak (demand-forecast-v6 migracija uspešna)
+  - Dev.log: vse zahteve 200, nobenih runtime napak
+
+Stage Summary:
+- v7.60 uspešno dokončana in potisnjena na GitHub
+- 3 nove funkcije: Demand Forecast AI, Margin Guardian Pro, Multi-Platform Listing Generator
+- Bonus: v6.12 demand-forecast migriran v demand-forecast-v6 (backward compat)
+- AI endpointi: 282 → 285 (+3 nove, +1 migrirana)
+- Analytics endpointi: 29 (nespremenjeno)
+- Total API routes: 416 → 419 (+3)
+- Dokumentacija sinhrono posodobljena (AI_ENDPOINTS.md, README, CHANGELOG, GitHub About)
+- GitHub sinhroniziran (0 commit-ov ahead)
+- Verzija aplikacije: v7.60.0
