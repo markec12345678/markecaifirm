@@ -34,6 +34,7 @@
  */
 
 import type { ScrapedListing, ScraperFilters } from './scraper';
+import { fetchWithAntiDetection, isCloudflareChallenge } from './anti-detection';
 
 const MOBILE_DE_BASE = 'https://suchen.mobile.de';
 const MOBILE_DE_OGLASI_BASE = 'https://www.mobile.de';
@@ -71,17 +72,6 @@ function parsePrice(text: string): { priceText: string; price: number | null } {
   return { priceText: text.trim(), price: null };
 }
 
-function isCloudflareChallenge(html: string): boolean {
-  const lower = html.toLowerCase();
-  return (
-    lower.includes('cf-challenge') ||
-    lower.includes('cf-mitigated') ||
-    lower.includes('cloudflare') && (lower.includes('challenge') || lower.includes('ray id')) ||
-    lower.includes('just a moment') ||
-    lower.includes('cf-please-wait') ||
-    lower.includes('enable javascript and cookies')
-  );
-}
 
 function isCaptchaPage(html: string): boolean {
   const lower = html.toLowerCase();
@@ -166,14 +156,13 @@ async function scrapeMobileDeJsonApi(url: string, filters: ScraperFilters): Prom
     apiUrl = url;
   }
 
-  const res = await fetch(apiUrl, {
+  const res = await fetchWithAntiDetection(apiUrl, {
     headers: {
       ...buildRealHeaders(),
       'Accept': 'application/json, text/plain, */*',
       'X-Requested-With': 'XMLHttpRequest',
       'Referer': MOBILE_DE_BASE + '/',
     },
-    redirect: 'follow',
   });
 
   if (!res.ok) {
@@ -247,9 +236,8 @@ async function scrapeMobileDeJsonApi(url: string, filters: ScraperFilters): Prom
  * Forumi: deluje v ~85% primerov z real headers + rotacijo UA.
  */
 async function scrapeMobileDeHtml(url: string, filters: ScraperFilters): Promise<ScrapedListing[]> {
-  const res = await fetch(url, {
+  const res = await fetchWithAntiDetection(url, {
     headers: buildRealHeaders(),
-    redirect: 'follow',
   });
 
   if (!res.ok) {

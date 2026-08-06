@@ -33,6 +33,7 @@
  */
 
 import type { ScrapedListing, ScraperFilters } from './scraper';
+import { fetchWithAntiDetection, isCloudflareChallenge } from './anti-detection';
 
 // Skupni helperji (deljeni z mobile.de, vendar neodvisni)
 
@@ -98,17 +99,6 @@ function parsePriceMultiFormat(text: string): { priceText: string; price: number
   return { priceText: text.trim(), price: null };
 }
 
-function isCloudflareChallenge(html: string): boolean {
-  const lower = html.toLowerCase();
-  return (
-    lower.includes('cf-challenge') ||
-    lower.includes('cf-mitigated') ||
-    (lower.includes('cloudflare') && (lower.includes('challenge') || lower.includes('ray id'))) ||
-    lower.includes('just a moment') ||
-    lower.includes('enable javascript and cookies') ||
-    lower.includes('ddos protection')
-  );
-}
 
 function isCaptchaPage(html: string): boolean {
   const lower = html.toLowerCase();
@@ -179,9 +169,8 @@ function applyFilters(listings: ScrapedListing[], f: ScraperFilters): ScrapedLis
  */
 async function scrapeKleinanzeigen(url: string, filters: ScraperFilters): Promise<ScrapedListing[]> {
   // Stage 1: poskusi najprej preprost fetch z real headers
-  const res = await fetch(url, {
+  const res = await fetchWithAntiDetection(url, {
     headers: buildRealHeaders('de-DE'),
-    redirect: 'follow',
   });
 
   if (!res.ok) {
@@ -316,9 +305,8 @@ async function scrapeKleinanzeigen(url: string, filters: ScraperFilters): Promis
  * https://www.subito.it/elettronica/iphone/
  */
 async function scrapeSubito(url: string, filters: ScraperFilters): Promise<ScrapedListing[]> {
-  const res = await fetch(url, {
+  const res = await fetchWithAntiDetection(url, {
     headers: buildRealHeaders('it-IT'),
-    redirect: 'follow',
   });
 
   if (!res.ok) {
@@ -450,9 +438,8 @@ async function scrapeSubito(url: string, filters: ScraperFilters): Promise<Scrap
  * https://www.willhaben.at/iad/kaufen-und-verkaufen/marktplatz/elektronik/iphone
  */
 async function scrapeWillhaben(url: string, filters: ScraperFilters): Promise<ScrapedListing[]> {
-  const res = await fetch(url, {
+  const res = await fetchWithAntiDetection(url, {
     headers: buildRealHeaders('de-AT'),
-    redirect: 'follow',
   });
 
   if (!res.ok) {

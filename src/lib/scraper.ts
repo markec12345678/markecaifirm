@@ -485,9 +485,9 @@ async function scrapeVinted(url: string, filters: ScraperFilters): Promise<Scrap
   if (filters.minPrice != null) apiUrl += `&price_from=${filters.minPrice}`;
   if (filters.maxPrice != null) apiUrl += `&price_to=${filters.maxPrice}`;
 
-  const res = await fetch(apiUrl, {
+  // v7.40: Routed through fetchWithAntiDetection (was bare fetch — no proxy/delay/cookies)
+  const res = await fetchWithAntiDetection(apiUrl, {
     headers: {
-      'User-Agent': randomUA(),
       'Accept': 'application/json, text/plain, */*',
       'Accept-Language': 'sl-SI,sl;q=0.9,en;q=0.8',
     },
