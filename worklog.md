@@ -8129,3 +8129,238 @@ Stage Summary:
 - Dokumentacija sinhrono posodobljena (AI_ENDPOINTS.md, README, CHANGELOG, GitHub About)
 - GitHub sinhroniziran (0 commit-ov ahead)
 - Verzija aplikacije: v7.67.0
+
+---
+Task ID: v7.68
+Agent: full-stack-developer
+Task: Add 3 new features for v7.68 — AI Supply Demand Balance Analyzer, Market Depth Analyzer, AI Risk Reward Calculator
+
+Work Log:
+- Prebral worklog.md (zadnji ~150 vrstic) — projekt pri v7.67.1, 295 AI endpointov,
+  440 total routes. Preučil obstoječe patterns: market-share-analyzer (AI z
+  per-category + cache), portfolio-health-dashboard (pure DB z scores).
+- Preveril prisma schema — Listing ima `monitorId`, `isBookmarked`, `contactStatus`,
+  `priceDroppedAt`, `price`, `firstSeenAt`, `aiEstimatedValue`, `aiRisk`, `dealScore`,
+  `aiScore`, relacija na `trades` (preko Listing.trades back-relation) in `monitor`
+  (z `tags`). Trade ima `id`, `title`, `category`, `buyPrice`, `status` (held|sold|
+  cancelled), `listing` (z aiEstimatedValue, dealScore, aiRisk). BuyDate non-nullable.
+- Feature #1: AI Supply Demand Balance Analyzer — `src/app/api/ai/supply-demand-balance/route.ts`
+  - AI-enhanced z GET+POST handlerjema (AI Hub runner compatibility), shared
+    funkcija `handleSupplyDemand(req)`.
+  - Query all listings z firstSeenAt >= 30 dni nazaj, isHidden=false. Za vsak listing
+    ekstrakt category iz monitor.tags (prvi tag, lowercase) ali "drugo".
+  - Per kategorija compute:
+    * `supply` = listings brez sold trade-a (preverjam `l.trades.some(t => t.status === 'sold')`)
+    * `demand` = listings z isBookmarked=true ALI contactStatus != 'none' ALI sold
+    * `sellThroughRate` = demand / supply × 100 (round na 1 decimalko)
+    * `avgDaysListed` = avg (now - firstSeenAt) / day
+    * `priceStability` = % listings brez priceDroppedAt
+  - AI prompt z GROUNDING_PROMPT_SUFFIX — top 15 kategorij z vsemi podatki. AI
+    generira per category: balanceStatus (SELLER_MARKET/BALANCED/BUYER_MARKET),
+    demandStrength 0-100, supplyPressure 0-100, priceOutlook (RISING/STABLE/
+    FALLING), recommendedAction (SELL_AGGRESSIVELY/SELL_NORMAL/HOLD/BUY_AGGRESSIVELY),
+    reasoning.
+  - Anti-hallucination: balanceStatus/priceOutlook/recommendedAction validirani
+    enum-i (clampEnum), demandStrength/supplyPressure clamped [0, 100], reasoning
+    clamped na 400 chars. AI vrne LE assessments (supply/demand/sellThroughRate
+    ostanejo iz DB — ne zaupamo AI-ju za osnovne metrike).
+  - Deterministic fallback: balanceStatus iz sellThroughRate (>=70% SELLER,
+    >=40% BALANCED, <40% BUYER), outlook iz balance, action iz balance,
+    demandStrength = sellThroughRate + bonus za demand volumen (5/10/20),
+    supplyPressure = 100 - sellThroughRate + bonus za supply volumen (2/5/10).
+    Reasoning generiran slovensko (s kategorijo in sell-through %).
+  - Overall summary: avgSellThroughRate, sellerMarketCategories,
+    buyerMarketCategories, bestCategoryToSell (highest demandStrength),
+    bestCategoryToBuy (highest supplyPressure), marketBalance message
+    (PRODAJALCEM/KUPCEM/RAVNOVESJU glede na razmerje seller/buyer).
+  - AI cache key `supply-demand-balance:${weekKey}` (weekKey = `YYYY-WW` glede
+    na dan v mesecu). 6h TTL. Cache se združi nazaj v DB rows (matched by category).
+  - Rate limit 20/min/IP. Empty-state z opisno slovensko message.
+- Feature #2: Market Depth Analyzer — `src/app/api/analytics/market-depth-analyzer/route.ts`
+  - Pure DB analytics (NO AI). GET handler.
+  - Query all active listings z isHidden=false, price > 0. Per kategorija
+    (iz monitor.tags, prvi tag):
+    * `totalListings` = count
+    * `priceRange` = { min, max, median } (median = srednji element sorted-a)
+    * `avgPrice` = mean
+    * `priceStdDev` = sqrt(variance)
+    * `priceDistribution` = 10 cenovnih bucketov (range / 10), z count + percentage
+    * `depthScore` 0-100 = listing count score (0-50: <5=5, <10=10, <20=20, <30=30,
+      <50=40, >=50=50) + distribution evenness score (0-50: coefficient of
+      variation bucket counts, lower CV = higher score)
+    * `liquidityAssessment` = HIGH (>100), MEDIUM (30-100), LOW (10-30), VERY_LOW (<10)
+    * `pricingConfidence` 0-100 = listing count (0-60: >=100=60, >=50=50, >=30=40,
+      >=15=25, >=5=10, sicer=5) + coefficient of variation (0-40: cv<0.2=40,
+      <0.4=30, <0.6=20, <1.0=10, sicer=5)
+    * `priceGap` = prvi prazen cenovni bucket (count=0), z range string
+    * `sweetSpot` = bucket z največ oglasi (most liquid)
+    * `outlierCount` = listings priced >2 std dev from mean
+  - Summary: totalCategories, deepMarkets (depthScore>=70), thinMarkets
+    (depthScore<40), safestCategory (deepest, top sort), riskiestCategory
+    (thinnest, bottom sort), advice (GLOBOKO/TANKO/MEŠAN glede na razmerje).
+  - Empty-state z opisno slovensko message.
+- Feature #3: AI Risk Reward Calculator — `src/app/api/ai/risk-reward-calculator/route.ts`
+  - AI-enhanced z GET+POST handlerjema, shared funkcija `handleRiskReward(req)`.
+  - Request body (optional): `{ listingId?, tradeId? }`. Brez body-ja analizira
+    vse HELD trade-e.
+  - Za vsak trade izračuna deterministične metrike:
+    * `potentialReward` = aiEstimatedValue - buyPrice (upside, max 0)
+    * `potentialLoss` = buyPrice × 0.3 (assume max 30% downside)
+    * `rewardToRiskRatio` = potentialReward / potentialLoss (round na 1 decimalko)
+    * `probabilityOfProfit` = clamp(dealScore × 0.95, 5, 95) % (dealScore 0-100
+      → 5-95% probability)
+    * `expectedValue` = (pWin × potentialReward) - (pLoss × potentialLoss) v EUR
+  - AI prompt z GROUNDING_PROMPT_SUFFIX — top 20 item-ov z vsemi podatki. AI
+    generira per item: riskLevel (LOW/MEDIUM/HIGH/VERY_HIGH), rewardLevel,
+    riskRewardGrade (A+/A/B/C/D/F), confidenceInAssessment 0-100, keyRiskFactors
+    (2-5), mitigationStrategies (2-5), finalRecommendation (STRONG_BUY/BUY/HOLD/
+    AVOID/STRONG_SELL).
+  - Anti-hallucination: probabilityOfProfit clamped [5, 95], ratio uporablja
+    ACTUAL computed potentialReward/potentialLoss (ne AI-jeve — AI-ju ne
+    zaupamo osnovnih metrik), keyRiskFactors in mitigationStrategies sanitize-ani
+    (max 5, max 200 chars), grade in enum-i validirani (clampEnum z special-case
+    za A+). AI vrne LE assessments (DB numbers se ohranijo — tradeId, title,
+    category, buyPrice, aiEstimatedValue, potentialReward, potentialLoss,
+    rewardToRiskRatio, probabilityOfProfit, expectedValue ostanejo iz DB).
+  - Deterministic fallback: riskLevel iz ratio (>=2 LOW, >=1 MEDIUM, >=0.5 HIGH,
+    <0.5 VERY_HIGH), rewardLevel iz rewardPct (<15 LOW, <30 MEDIUM, <50 HIGH,
+    sicer VERY_HIGH), grade iz ratio (>3 A+, 2-3 A, 1-2 B, 0.5-1 C, 0.25-0.5 D,
+    <0.25 F), recommendation iz ratio + EV (STRONG_BUY za ratio>=3+EV>0,
+    BUY za 2-3+EV>0, HOLD za 1-2+EV>=0 ali 0.5-1, AVOID za EV<0, STRONG_SELL
+    za ratio<0.25). confidenceInAssessment iz dealScore + aiRisk (50 base +
+    10/20 bonus za visok dealScore, +15/+5 bonus za nizek aiRisk, -10/-10
+    penalty). keyRiskFactors generirani iz metrik (nizka ratio, negativna EV,
+    visok aiRisk, nizek dealScore, brez reward-a). mitigationStrategies
+    generirane glede na slabosti.
+  - Portfolio summary: totalItems, avgRiskLevel (numeric map 1-4 reverse),
+    avgRewardLevel, portfolioGrade (numeric map 1-6 reverse A+ do F),
+    strongBuyCount, avoidCount (AVOID + STRONG_SELL), totalExpectedValue
+    (vsota EV-jev), portfolioRecommendation (MOČAN če strongBuy>=50% + EV>0,
+    ŠIBAK če avoidCount>=40% ali EV<0, MEŠAN sicer).
+  - AI cache key `risk-reward-calc:${JSON.stringify(sortedItemIds)}` (key per
+    specifičnih item-ov, 6h TTL). Cache se združi nazaj z DB numbers.
+  - Rate limit 20/min/IP. Empty-state z opisno slovensko message.
+- TypeScript check: `npx tsc --noEmit` → 2 napaki prvotno v
+  risk-reward-calculator (`as const[]` je TypeScript razumel kot `as const`
+  + empty array literal — Cannot find name 'const'). Popravljeno — sem deklariral
+  `const statuses: ('held' | 'sold')[] = ['held', 'sold'];` na vrhu funkcije
+  in uporabil `status: { in: statuses }`. Final: 0 napak ✨
+- ESLint: `bun run lint` → 0 napak, 0 opozoril ✨
+- curl testi (vsak endpoint prazen state, brez AI provider-ja v sandboxu):
+  * GET /api/ai/supply-demand-balance → HTTP 200, {"ok":true,"categories":[],
+    "overall":{...},"aiUsed":false,"message":"Ni oglasov v zadnjih 30 dneh..."}
+  * POST /api/ai/supply-demand-balance (body {}) → HTTP 200, isti response
+  * GET /api/analytics/market-depth-analyzer → HTTP 200, {"ok":true,"categories":[],
+    "summary":{...},"message":"Ni oglasov z veljavno ceno..."}
+  * GET /api/ai/risk-reward-calculator → HTTP 200, {"ok":true,"items":[],
+    "portfolioRiskSummary":{...},"aiUsed":false,"message":"Ni held trade-ov..."}
+  * POST /api/ai/risk-reward-calculator (body {}) → HTTP 200, isti response
+  * dev.log: vsi requesti 200 OK, brez error/warn (ker je empty-state —
+    AI se sploh ne kliče).
+- Dokumentacijska sinhronizacija (CRITICAL):
+  * AI_ENDPOINTS.md: regeneriran z Python skripto → "Total: 297 endpoints"
+    (295 → 297, +2 AI: supply-demand-balance #288, risk-reward-calculator #266)
+  * README.md (MultiEdit z 18 urejanji):
+    - Badge version: v7.67.0 → v7.68.0
+    - Badge AI Endpoints: 295 → 297
+    - Badge API Routes: 440 → 443 (+3: 1 analytics + 2 AI)
+    - Tagline: "295 AI endpointov + 40 analytics" → "297 AI endpointov + 41 analytics"
+    - Overview: "Verzija v7.67.0" → "Verzija v7.68.0", counts posodobljeni,
+      "~126 funkcij" → "~129 funkcij"
+    - "Kaj je novega v v7.56–v7.67 (12 verzij, 36 novih funkcij)" →
+      "...v7.56–v7.68 (13 verzij, 39 novih funkcij)", dodan v7.68 blok
+      (3 funkcije) na vrh
+    - AI Hub badge v tabeli: "Vsi 295 AI endpointov" → "Vsi 297 AI endpointov"
+    - "Endpointi (295 AI + 40 analytics + 10 cron + sistemski = 440)" →
+      "...(297 AI + 41 analytics + 10 cron + sistemski = 443)"
+    - Dodana 2 nova AI endpointa v AI primeri blok (supply-demand-balance,
+      risk-reward-calculator, v7.68)
+    - "Profit pipeline (v7.32-v7.67)" → "...(v7.32-v7.68)"
+    - Dodan 1 nov analytics endpoint v profit pipeline blok
+      (market-depth-analyzer, v7.68)
+    - Dodana 2 nova AI endpointa v profit pipeline listo
+      (supply-demand-balance, risk-reward-calculator, v7.68)
+    - Project structure: "295 AI endpointov" → "297 AI endpointov"
+    - Coding standards: "440 routes" → "443 routes"
+    - Roadmap: "v7.67 (trenutno — ~126 funkcij)" → "v7.68 (trenutno — ~129
+      funkcij)", profit pipeline list: dodane 3 nove funkcije (AI Supply Demand
+      Balance Analyzer, Market Depth Analyzer, AI Risk Reward Calculator),
+      "Profit pipeline (67+ funkcij)" → "(70+ funkcij)"
+    - Analytics (40) → (41), dodan 1 nov (Market Depth Analyzer)
+    - Testing: "440 API routes" → "443 API routes"
+    - "Naslednji koraki": "v7.50-v7.67 funkcije" → "...v7.50-v7.68 funkcije"
+    - "Zadnje verzije": dodan "v7.68.0 (avgust 2026) — AI Supply Demand Balance
+      Analyzer, Market Depth Analyzer, AI Risk Reward Calculator" na vrh
+    - AI_ENDPOINTS.md link: "vseh 295 AI endpointov" → "vseh 297 AI endpointov"
+    - "do v7.67 (avgust 2026)" → "do v7.68 (avgust 2026)"
+  * CHANGELOG.md:
+    - "[Unreleased] Načrtovano za v7.68+" → "...za v7.69+"
+    - Dodana nova "[7.68.0] - 2026-08-10" sekcija (nad [7.67.0])
+    - "### Added — AI Supply Demand Balance Analyzer & Market Depth Analyzer
+      & AI Risk Reward Calculator (3 funkcije)" z vsemi 3 endpoint-i in
+      podrobnimi opisi (response shape, anti-hallucination rules, AI cache key,
+      deterministic fallback, example comment, razlika od podobnih obstoječih
+      endpoint-ov — supply-demand-balance vs market-saturation/market-momentum/
+      market-trend; market-depth-analyzer vs market-saturation/
+      price-history-forecaster/deal-velocity; risk-reward-calculator vs
+      risk-spread-calculator/portfolio-stress-test/portfolio-concentration-risk)
+    - "### Changed" pod-sekcija z doc sync opisi (AI_ENDPOINTS.md, README.md,
+      CHANGELOG.md, verzija aplikacije)
+
+Stage Summary:
+- 3 novi endpointi dodani (skupno +3 od v7.67.1):
+  - supply-demand-balance (GET+POST, AI-enhanced — analizira razmerje med
+    ponudbo (supply = aktivni oglasi) in povpraševanjem (demand = bookmarked/
+    contacted/sold) per kategorija. sellThroughRate = demand/supply×100,
+    balanceStatus (SELLER_MARKET >=70%, BALANCED 40-70%, BUYER_MARKET <40%),
+    demandStrength 0-100, supplyPressure 0-100, priceOutlook (RISING/STABLE/
+    FALLING), recommendedAction (SELL_AGGRESSIVELY/SELL_NORMAL/HOLD/
+    BUY_AGGRESSIVELY). Anti-hallucination clamps + validacija enum-ov +
+    deterministic fallback. Cache key `supply-demand-balance:${weekKey}` 6h TTL.
+    Razlika od market-saturation (volumen oglasov brez demand podatkov) — ta
+    gleda RAZMERJE supply vs demand. Razlika od market-momentum (7-dnevni
+    BULLISH/BEARISH trend) — ta gleda STRUKTURNO stanje danes. Razlika od
+    market-trend (rising/falling cene) — ta gleda balance in predlaga akcijo.)
+  - market-depth-analyzer (GET, pure DB analytics — meri "globino" trga per
+    kategorija: 10 cenovnih bucketov z count + percentage, depthScore 0-100
+    (50% listing count + 50% distribution evenness), liquidityAssessment
+    (HIGH >100, MEDIUM 30-100, LOW 10-30, VERY_LOW <10), pricingConfidence
+    0-100, priceGap (največji prazen cenovni razpon), sweetSpot (cenovni
+    razpon z največ oglasi), outlierCount (>2 std dev). Razlika od
+    market-saturation (volumen brez distribucije) — ta gleda DISTRIBUCIJO cen.
+    Razlika od price-history-forecaster (napoveduje cene) — ta gleda KAKO
+    GLOBOH je trg danes. Razlika od deal-velocity (hitrost prodaje) — ta
+    meri GLOBINO in likvidnost.)
+  - risk-reward-calculator (GET+POST, AI-enhanced — izračuna risk-adjusted
+    reward za posamezne trade-e (held inventar ali specific listingId/
+    tradeId). potentialReward = aiEstimatedValue - buyPrice (upside),
+    potentialLoss = buyPrice × 0.3 (max 30% downside), rewardToRiskRatio,
+    probabilityOfProfit (iz dealScore 0-100 → 5-95%), expectedValue = (pWin ×
+    reward) - (pLoss × loss) v EUR. AI generira riskLevel/rewardLevel/
+    riskRewardGrade (A+ do F), confidenceInAssessment, keyRiskFactors (2-5),
+    mitigationStrategies (2-5), finalRecommendation (STRONG_BUY..STRONG_SELL).
+    Portfolio summary: totalItems, avgRiskLevel, avgRewardLevel, portfolioGrade,
+    strongBuyCount, avoidCount, totalExpectedValue, portfolioRecommendation.
+    Anti-hallucination clamps + validacija enum-ov + deterministic fallback
+    (grade iz ratio: >3=A+, 2-3=A, 1-2=B, 0.5-1=C, 0.25-0.5=D, <0.25=F).
+    Cache key `risk-reward-calc:${JSON.stringify(sortedItemIds)}` 6h TTL.
+    Razlika od risk-spread-calculator (portfelj diverzifikacija) — ta gleda
+    POSAMEZEN item risk-reward. Razlika od portfolio-stress-test (simulacije
+    -10/-25/-40%) — ta ocenjuje AKTUALNO tveganje danes. Razlika od
+    portfolio-concentration-risk (Pareto + Herfindahl) — ta gleda POSAMEZEN
+    item risk-reward in EV.)
+- Vsi 3 endpointi vračajo veljaven JSON tudi ob prazni bazi (graceful fallback
+  z opisno slovensko message). AI endpointa (supply-demand-balance,
+  risk-reward-calculator) imata aiUsed flag v responsu za transparentnost in
+  GET+POST kompatibilnost z AI Hub runner-jem.
+- AI_ENDPOINTS.md: "Total: 297 endpoints" ✓ (295 → 297, +2 AI)
+- README.md: v7.68.0 badge (14 referenc), 297 AI (6 referenc), 443 routes
+  (4 reference), 41 analytics (3 reference), ~129 funkcij (2 referenci) ✓
+- CHANGELOG.md: [7.68.0] sekcija dodana z 3 endpoint-i in Changed pod-sekcijo,
+  [Unreleased] posodobljen na v7.69+ ✓
+- ESLint: 0 napak ✨
+- TypeScript: 0 napak ✨ (initially 2 napaki — `as const[]` invalid; popravljeno
+  z explicitno deklaracijo `const statuses: ('held' | 'sold')[]`)
+- dev.log: vsi HTTP requesti vračajo 200 OK, brez error/warn (empty-state —
+  AI se sploh ne kliče brez podatkov).
+- Verzija aplikacije: v7.68.0

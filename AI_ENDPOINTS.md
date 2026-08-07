@@ -1,6 +1,6 @@
 # AI Endpoints
 
-**Total: 295 endpoints**
+**Total: 297 endpoints**
 
 Avtomatsko generirano iz `src/app/api/ai/`.
 
@@ -271,33 +271,35 @@ Avtomatsko generirano iz `src/app/api/ai/`.
 | 263 | reverse-image-search | `/api/ai/reverse-image-search` |
 | 264 | risk-hedging | `/api/ai/risk-hedging` |
 | 265 | risk-parity | `/api/ai/risk-parity` |
-| 266 | risk-spread-calculator | `/api/ai/risk-spread-calculator` |
-| 267 | rotation-engine | `/api/ai/rotation-engine` |
-| 268 | search-keyword-optimizer | `/api/ai/search-keyword-optimizer` |
-| 269 | seasonal-bundle-packager | `/api/ai/seasonal-bundle-packager` |
-| 270 | seasonal-calendar | `/api/ai/seasonal-calendar` |
-| 271 | seasonal-planner | `/api/ai/seasonal-planner` |
-| 272 | seasonal-pricing | `/api/ai/seasonal-pricing` |
-| 273 | seasonal-timing-optimizer | `/api/ai/seasonal-timing-optimizer` |
-| 274 | seller-negotiation-strategist | `/api/ai/seller-negotiation-strategist` |
-| 275 | seller-reliability-v2 | `/api/ai/seller-reliability-v2` |
-| 276 | seller-response-predictor | `/api/ai/seller-response-predictor` |
-| 277 | seller-trust-score-v2 | `/api/ai/seller-trust-score-v2` |
-| 278 | sentiment-analysis | `/api/ai/sentiment-analysis` |
-| 279 | smart-alert-router | `/api/ai/smart-alert-router` |
-| 280 | smart-bundle-pricing | `/api/ai/smart-bundle-pricing` |
-| 281 | smart-pricing-engine | `/api/ai/smart-pricing-engine` |
-| 282 | smart-restock | `/api/ai/smart-restock` |
-| 283 | sourcing | `/api/ai/sourcing` |
-| 284 | stockout-prevention | `/api/ai/stockout-prevention` |
-| 285 | suggest-filters | `/api/ai/suggest-filters` |
-| 286 | suggest-schedule | `/api/ai/suggest-schedule` |
-| 287 | tax-aware-selling | `/api/ai/tax-aware-selling` |
-| 288 | tax-loss-harvesting | `/api/ai/tax-loss-harvesting` |
-| 289 | title-abtest | `/api/ai/title-abtest` |
-| 290 | tone-analyzer | `/api/ai/tone-analyzer` |
-| 291 | trade-replication-engine | `/api/ai/trade-replication-engine` |
-| 292 | trading-coach | `/api/ai/trading-coach` |
-| 293 | trend-predictions | `/api/ai/trend-predictions` |
-| 294 | turnover-optimizer | `/api/ai/turnover-optimizer` |
-| 295 | vendor-reliability | `/api/ai/vendor-reliability` |
+| 266 | risk-reward-calculator | `/api/ai/risk-reward-calculator` |
+| 267 | risk-spread-calculator | `/api/ai/risk-spread-calculator` |
+| 268 | rotation-engine | `/api/ai/rotation-engine` |
+| 269 | search-keyword-optimizer | `/api/ai/search-keyword-optimizer` |
+| 270 | seasonal-bundle-packager | `/api/ai/seasonal-bundle-packager` |
+| 271 | seasonal-calendar | `/api/ai/seasonal-calendar` |
+| 272 | seasonal-planner | `/api/ai/seasonal-planner` |
+| 273 | seasonal-pricing | `/api/ai/seasonal-pricing` |
+| 274 | seasonal-timing-optimizer | `/api/ai/seasonal-timing-optimizer` |
+| 275 | seller-negotiation-strategist | `/api/ai/seller-negotiation-strategist` |
+| 276 | seller-reliability-v2 | `/api/ai/seller-reliability-v2` |
+| 277 | seller-response-predictor | `/api/ai/seller-response-predictor` |
+| 278 | seller-trust-score-v2 | `/api/ai/seller-trust-score-v2` |
+| 279 | sentiment-analysis | `/api/ai/sentiment-analysis` |
+| 280 | smart-alert-router | `/api/ai/smart-alert-router` |
+| 281 | smart-bundle-pricing | `/api/ai/smart-bundle-pricing` |
+| 282 | smart-pricing-engine | `/api/ai/smart-pricing-engine` |
+| 283 | smart-restock | `/api/ai/smart-restock` |
+| 284 | sourcing | `/api/ai/sourcing` |
+| 285 | stockout-prevention | `/api/ai/stockout-prevention` |
+| 286 | suggest-filters | `/api/ai/suggest-filters` |
+| 287 | suggest-schedule | `/api/ai/suggest-schedule` |
+| 288 | supply-demand-balance | `/api/ai/supply-demand-balance` |
+| 289 | tax-aware-selling | `/api/ai/tax-aware-selling` |
+| 290 | tax-loss-harvesting | `/api/ai/tax-loss-harvesting` |
+| 291 | title-abtest | `/api/ai/title-abtest` |
+| 292 | tone-analyzer | `/api/ai/tone-analyzer` |
+| 293 | trade-replication-engine | `/api/ai/trade-replication-engine` |
+| 294 | trading-coach | `/api/ai/trading-coach` |
+| 295 | trend-predictions | `/api/ai/trend-predictions` |
+| 296 | turnover-optimizer | `/api/ai/turnover-optimizer` |
+| 297 | vendor-reliability | `/api/ai/vendor-reliability` |
