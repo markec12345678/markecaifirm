@@ -9906,3 +9906,34 @@ Stage Summary:
 - TypeScript: 0 napak ✨
 - dev.log: vsi HTTP requesti vračajo 200 OK, brez error/warn (empty-state — AI se sploh ne kliče brez podatkov)
 - Verzija aplikacije: v7.76.0
+
+---
+Task ID: v7.76.1
+Agent: main
+Task: v7.76 commit + push + GitHub About + Agent Browser verification
+
+Work Log:
+- Prejel poročilo od full-stack-developer podagenta (Task v7.76)
+- Preveril 3 nove endpoint-e: capital-deployment-planner (200 GET+POST), market-intelligence-engine (200 GET+POST), deal-pipeline-forecaster (200 GET)
+- Preveril doc sync: AI_ENDPOINTS.md (310 ✅), README v7.76 (14 refs ✅), README 310 AI (6 refs ✅), CHANGELOG v7.76 ✅
+- Preveril lint: 0 napak ✨
+- Preveril typecheck: 0 napak ✨
+- Posodobil GitHub About opis: 308 AI → 310 AI, 464 routes → 467 routes (via API PATCH)
+- Commit: "v7.76: Capital Deployment Planner + Market Intelligence Engine + Deal Pipeline Forecaster" (b84e879)
+- Push na GitHub: uspešen ✅, PAT očiščen ✅
+- Agent Browser self-verification:
+  - Stran se pravilno naloži (HTTP 200)
+  - AI Hub prikazuje capital-deployment-planner (v7.76) v iskalniku ✅
+  - Runner test: klik na capital-deployment-planner → POST request → valid JSON ✅
+  - Response: {"ok":true, "capital":{...}, "deploymentStrategy":"CONSERVATIVE", "schedule":[], "aiUsed":false, "message":"Ni razpoložljivega kapitala..."}
+  - Brez runtime napak v dev.log
+
+Stage Summary:
+- v7.76 uspešno dokončana in potisnjena na GitHub
+- 3 nove funkcije: AI Capital Deployment Planner, Market Intelligence Engine, Deal Pipeline Forecaster
+- AI endpointi: 308 → 310 (+2)
+- Analytics endpointi: 51 → 52 (+1)
+- Total API routes: 464 → 467 (+3)
+- Dokumentacija sinhrono posodobljena (AI_ENDPOINTS.md, README, CHANGELOG, GitHub About)
+- GitHub sinhroniziran (0 commit-ov ahead)
+- Verzija aplikacije: v7.76.0
