@@ -7006,3 +7006,335 @@ Stage Summary:
 - Dokumentacija sinhrono posodobljena (AI_ENDPOINTS.md, README, CHANGELOG, GitHub About)
 - GitHub sinhroniziran (0 commit-ov ahead)
 - Verzija aplikacije: v7.63.0
+
+---
+Task ID: v7.64
+Agent: full-stack-developer
+Task: Add 3 new features for v7.64 — AI Trading Coach, Deal Fatigue Detector, Seasonal Timing Optimizer
+
+Work Log:
+- Prebral worklog.md (zadnji ~200 vrstic) — v7.63.1 končana (289 AI, 428 routes, ~114 funkcij)
+- Pregledal obstoječe vzorce (reference):
+  * src/app/api/ai/capital-allocation-optimizer/route.ts (885 vrstic — AI+cache+fallback pattern)
+  * src/app/api/ai/trade-replication-engine/route.ts (589 vrstic — winner+suggestions pattern)
+  * src/app/api/analytics/market-momentum/route.ts (318 vrstic — pure DB z windows)
+  * src/app/api/analytics/profit-margin-heatmap/route.ts (296 vrstic — 2D matrika pure DB)
+- Preveril AI Hub runner (ai-hub-view.tsx) — POTRDI: vedno POST request → vsi AI endpointi
+  morajo imeti GET+POST shared handler pattern
+- Preveril prisma schema (Trade, Listing, Monitor) + ai-cache.ts (6h TTL) +
+  anti-hallucination.ts (GROUNDING_PROMPT_SUFFIX) + rate-limit.ts (checkRateLimit)
+
+- Feature #1: AI Trading Coach (src/app/api/ai/trading-coach/route.ts):
+  * AI-enhanced (GET + POST shared handler handleTradingCoach), runtime='nodejs',
+    dynamic='force-dynamic', maxDuration=60
+  * Razlika od trade-replication-engine (ki predlaga nove MONITOR-je) — ta
+    ANALIZIRA TRADERSKO POTEKAVANJO (win rate by day/category, koncentracija,
+    recent trend). Razlika od capital-allocation-optimizer (ki svetuje
+    alokacijo) — ta gleda osebne vzorce in slabosti (overtrading, vikend-kupi).
+  * Rate limit: checkRateLimit(req, 'ai-trading-coach', 20)
+  * Query 3 datasets:
+    * SOLD trades z buy+sell prices+dates (5000 max) za winRate, ROI, holdDays,
+      dayOfWeek breakdown, category breakdown, price range breakdown, recent
+      trend (last 30d vs previous 30d)
+    * HELD trades za heldCount + heldCapital
+    * cancelled count za cancellationRate
+  * Compute per-trade metrics (profit, roi, isWin, holdDays, buyDayOfWeek,
+    category, priceRange) in aggregate statistiko:
+    * totalTrades, totalSold, winRate, avgROI, avgHoldDays, tradesPerWeek
+    * topCategory + categoryConcentration (% v top kategoriji)
+    * bestDayOfWeek + worstDayOfWeek (by winRate, requires >= 2 trades/day)
+    * recentTrend: IMPROVING/STABLE/DECLINING (winRate delta >= 10 / between / <= -10)
+    * categoryBreakdown (top 8), dayBreakdown, priceRangeBreakdown (6 razponov)
+  * AI cache key `trading-coach:${totalSold}` (6h TTL prek getCachedAI/setCachedAI) —
+    invalidates ko nova prodaja spremeni totalSold
+  * AI prompt z GROUNDING_PROMPT_SUFFIX — vsa statistika (kategorije, dnevi,
+    cenovni razponi, recent trend). AI generira coaching z:
+    * strengths (2-3 stringi — kaj trader dela dobro)
+    * weaknesses (2-3 stringi — področja za izboljšavo)
+    * patterns (2-4 vzorci z impact POSITIVE/NEGATIVE/NEUTRAL in detail)
+    * recommendations (3-5 akcij z priority HIGH/MEDIUM/LOW in expectedImpact)
+    * riskProfile (CONSERVATIVE/BALANCED/AGGRESSIVE baziran na avgROI,
+      hold time, koncentraciji in top category win rate)
+    * skillLevel (BEGINNER/INTERMEDIATE/ADVANCED/EXPERT baziran na volume +
+      win rate + ROI)
+    * nextSteps (1-2 immediate akcije)
+    * summary (1-2 povedi overall assessment slovensko)
+  * Anti-hallucination:
+    * Vsi string-ovi clamped na max 240 znakov (clampString)
+    * riskProfile validiran (CONSERVATIVE/BALANCED/AGGRESSIVE), fallback
+      computeRiskProfile deterministic
+    * skillLevel validiran (BEGINNER/INTERMEDIATE/ADVANCED/EXPERT), fallback
+      computeSkillLevel deterministic
+    * priority validirana (HIGH/MEDIUM/LOW)
+    * impact validiran (POSITIVE/NEGATIVE/NEUTRAL)
+    * Če AI ne vrne patterns/recommendations, fallback na deterministic
+  * Deterministic fallback (buildDeterministicCoaching):
+    * Strengths: winRate >= 60%, avgROI >= 20%, hold <= 14d, volume >= 30
+    * Weaknesses: koncentracija >= 70%, winRate < 50%, hold > 45d, day-of-week
+      variacija >= 20pp, DECLINING trend
+    * Patterns: koncentracija >= 60% (NEGATIVE), quick-flip (hold <= 10d +
+      volume >= 10, POSITIVE če avgROI >= 15), cancelRate >= 15% (NEGATIVE),
+      IMPROVING trend (POSITIVE), tradesPerWeek >= 5 (POSITIVE če winRate >= 60)
+    * Recommendations: diverzifikacija (HIGH), strožji filter (HIGH), krajši
+      hold (MEDIUM), best day nakupe (MEDIUM), decline volumen (HIGH če DECLINING)
+    * riskProfile = computeRiskProfile (avgROI, holdDays, koncentracija,
+      topCategoryWinRate) — score >= 5 AGGRESSIVE, <= 2 CONSERVATIVE, else BALANCED
+    * skillLevel = computeSkillLevel (totalSold, winRate, avgROI) —
+      BEGINNER (< 10 sold ali winRate < 40%), EXPERT (>= 40 sold AND winRate
+      >= 70% AND avgROI >= 25%), ADVANCED (>= 25 sold AND winRate >= 55%),
+      INTERMEDIATE (sicer)
+  * Empty-state: "Ni prodanih trade-ov — Trading Coach potrebuje sold trades
+    za analizo vzorcev." z BEGINNER skillLevel in CONSERVATIVE riskProfile.
+  * '80% koncentracija v elektronika — diverzificiraj v moda. Win rate 40% ob
+    vikendih — kupuj med tednom.'
+
+- Feature #2: Deal Fatigue Detector (src/app/api/analytics/deal-fatigue-detector/route.ts):
+  * Pure DB analytics (NO AI). GET handler. runtime='nodejs', dynamic='force-dynamic'.
+  * Razlika od market-momentum (ki gleda TRG kot celoto) — ta gleda TRADERJA in
+    njegovo odločanje. Razlika od inventory-aging-predictor (ki gleda held
+    inventar) — ta gleda traderjevo POTEKAVANJO v 3 časovnih oknih.
+  * Query trades iz zadnjih 90 dni, razdeljeni v 3 okna (po buyDate):
+    * recent30 (zadnji 30 dni)
+    * previous30 (30-60 dni nazaj)
+    * older30 (60-90 dni nazaj)
+  * Compute per-window metrike:
+    * tradeCount = število trade-ov kupljenih v oknu
+    * tradeFrequency = trades per week = (count / 30) × 7
+    * winRate = % dobičkonosnih (sold in window, profit > 0)
+    * avgDealScore = avg dealScore od linked listings v oknu
+    * avgBuyPrice = avg buyPrice v oknu
+    * cancellationRate = cancelled / total × 100
+  * Compute fatigue indicators:
+    * frequencyIncrease = recent30.tradeFrequency / previous30.tradeFrequency
+      (>1.5 = warning, >2.0 = severe; če previous=0 a recent>0 → 2.5 severe)
+    * winRateDecline = previous30.winRate - recent30.winRate (pp, >15 = severe,
+      >5 = moderate)
+    * dealScoreDecline = previous30.avgDealScore - recent30.avgDealScore
+      (>10 = warning)
+    * cancellationIncrease = recent30.cancellationRate -
+      previous30.cancellationRate (pp, >10 = warning)
+  * Compute fatigue score (0-100):
+    * +25 if frequencyIncrease >= 2.0 (severe overtrading)
+    * +15 if frequencyIncrease >= 1.5 (moderate overtrading)
+    * +25 if winRateDecline >= 15%
+    * +15 if winRateDecline >= 5%
+    * +20 if dealScoreDecline >= 10
+    * +10 if dealScoreDecline >= 5
+    * +15 if cancellationIncrease >= 10%
+    * +8 if cancellationIncrease >= 5%
+  * Klasifikacija: FRESH (0-20) / NORMAL (21-40) / MILD_FATIGUE (41-60) /
+    FATIGUED (61-80) / BURNOUT (81-100)
+  * Recommendation bazirana na klasifikaciji:
+    * FRESH/NORMAL → CONTINUE, 0 days break
+    * MILD_FATIGUE → SLOW_DOWN, 3 days break
+    * FATIGUED → TAKE_BREAK, 7 days break
+    * BURNOUT → STOP_TRADING, 30 days break
+  * Trend: IMPPROVING / STABLE / DECLINING (recent vs previous win rate delta
+    >= 10 / between / <= -10)
+  * Warnings: specific slovensko za vsak aktiviran indikator (npr.
+    "Overtrading: trade frequency +180% (recent 1.4/teden vs previous 0.5/teden).",
+    "Win rate padel za 20pp (previous 65% → recent 45%).",
+    "Stopnja preklicev narasla za +25pp (previous 0% → recent 25%).")
+  * Empty-state: "Ni trade-ov v zadnjih 90 dneh — Deal Fatigue Detector
+    potrebuje vsaj 1 trade v tem obdobju." z FRESH klasifikacijo in CONTINUE.
+  * 'Fatigue 68/100 (FATIGUED) — frequency +180%, win rate -20%. Vzemi 7-dnevni
+    premor.'
+
+- Feature #3: Seasonal Timing Optimizer (src/app/api/ai/seasonal-timing-optimizer/route.ts):
+  * AI-enhanced (GET + POST shared handler handleSeasonalTimingOptimizer),
+    runtime='nodejs', dynamic='force-dynamic', maxDuration=60
+  * Razlika od seasonal-calendar (statika) — ta upošteva TRENUTNI datum, held
+    inventar in predvidi najboljše 2-tedensko okno. Razlika od seasonal-planner
+    (ki načrtuje mesece za buy/sell kategorije) — ta gleda posamezne HELD
+    item-e in da per-item timing. Razlika od seasonal-pricing (ki prilagodi
+    cene) — ta optimira TIMING (kdaj prodati) ne ceno.
+  * Rate limit: checkRateLimit(req, 'ai-seasonal-timing-optimizer', 20)
+  * Query 2 datasets:
+    * SOLD trades iz zadnjih 24 mesecev (grupirano po category × month) za
+      seasonal patterns (bestSellingMonths, worstSellingMonths, pricePremium,
+      currentMonthScore, monthlyAvgPrices)
+    * HELD trades (current inventory za prodajo) za per-item sell timing
+  * Compute per-category seasonal patterns:
+    * bestSellingMonths = meseci z najvišjo avg sell price (top 3)
+    * worstSellingMonths = meseci z najnižjo avg sell price (bottom 3)
+    * pricePremium = % razlika med best in worst month
+    * currentMonthScore = kako dober je trenutni mesec (0-100, normaliziran
+      med min in max monthly avg price)
+    * recommendation = GOOD_TIME_TO_SELL (score >= 70) / NEUTRAL (40-70) /
+      WAIT (21-39) / GOOD_TIME_TO_BUY (<= 20)
+    * monthlyAvgPrices = per-mesec avg sellPrice + count (zadnjih 24 mesecev)
+  * AI cache key `seasonal-timing:${currentMonthIdx}` (6h TTL) — invalidates
+    dnevno/mesečno ko se mesec spremeni
+  * AI prompt z GROUNDING_PROMPT_SUFFIX — seasonal patterns + held inventar.
+    AI generira per-item timing:
+    * action = SELL_NOW | WAIT_FOR_PEAK | HOLD_THEN_SELL
+    * optimalSellWindow = { startMonth, endMonth } (slovenske kratke oznake)
+    * daysToWait = dni do začetka okna
+    * expectedPriceUplift = % višja cena v vrhu vs trenutni mesec
+    * reasoning (1 stavek slovensko)
+  * AI generira BUY timing per kategorija:
+    * recommendation = BUY_NOW (off-season popust >= 10%) | WAIT (5-10%) |
+      AVOID (cena blizu vrha)
+    * expectedDiscount = % popust od vrha sezone
+    * reasoning (1 stavek slovensko)
+  * Anti-hallucination:
+    * expectedPriceUplift clamped na [0%, 30%]
+    * expectedDiscount clamped na [0%, 30%]
+    * daysToWait clamped na [0, 180]
+    * optimalSellWindow.startMonth / endMonth validirana proti slovenskim
+      kratkim oznakam mesecev (Jan-Dec), fallback na deterministic
+    * action validiran (SELL_NOW/WAIT_FOR_PEAK/HOLD_THEN_SELL), fallback
+      deterministic
+    * recommendation validiran (BUY_NOW/WAIT/AVOID), fallback deterministic
+    * tradeId validiran (mora biti v heldTrades), če AI izmisli ID → skip
+    * category validiran (mora imeti sezonske podatke), če AI izmisli → skip
+    * Če AI ne pokrije held trade-a ali kategorije, fallback na deterministic
+  * Deterministic fallback:
+    * Sell timing (deterministicSellTiming): najdi optimal window (top mesec
+      - 1 do top mesec), daysToWait = dni do startMonth, uplift = % razlika
+      med current in best month avgPrice. Action = SELL_NOW če daysToWait <
+      14, WAIT_FOR_PEAK če < 90 in uplift >= 5%, HOLD_THEN_SELL če uplift
+      >= 3%, sicer SELL_NOW.
+    * Buy timing (deterministicBuyTiming): find peak avgPrice za kategorijo,
+      expectedDiscount = (peak - current) / peak × 100. BUY_NOW če >= 10%,
+      WAIT če 5-10%, AVOID sicer.
+  * Empty-state: "Ni held inventarja" — vrne seasonal patterns če so na voljo
+    (prazen če ni zgodovine prodaj).
+  * 'PS5: WAIT_FOR_PEAK (Nov-Dec), +12% price uplift, 45 days to wait. Moda:
+    BUY_NOW (off-season, -15%)'
+
+- Testiranje vseh 3 endpointov (curl localhost:3000):
+  * Seed testni podatki (1 monitor + 3 listings + 1 HELD trade + 8 SOLD trades
+    + 1 cancelled, v različnih časovnih oknih in kategorijah):
+    * HELD: PS5 280€ elektronika 18d držano
+    * SOLD (last 30d): PS4 Pro 200→280€ (40% ROI), iPhone 12 350→500€ (43% ROI)
+    * Cancelled (last 30d): Samsung S22 700€ (cancellationRate 25%)
+    * SOLD (previous 30d): iPhone 11 250→320€ (28% ROI), Bosch vijačnik
+      80→110€ (37.5% ROI)
+    * SOLD (seasonal Nov/Dec/Jul): PS5 Disc Nov 400→550€, Dec 420→580€,
+      Jul 400→440€ (off-season low)
+    * SOLD moda (Mar/Jan): Nike Air Max 30→50€, Adidas jakna 40→60€
+  * GET /api/ai/trading-coach → 200. stats: totalTrades=11, totalSold=9,
+    winRate=100%, avgROI=39%, avgHoldDays=20, topCategory=elektronika (67%
+    koncentracija), categoryBreakdown 3 entries (elektronika 6/moda 2/
+    orodje 1), dayBreakdown 6 entries, priceRangeBreakdown 4 entries.
+    coaching: 2 strengths, 1 weakness (default "brez očitnih slabosti" ker
+    winRate=100%), 1 pattern (NEGATIVE koncentracija 67%), recommendations
+    HIGH diverzifikacija. aiUsed=false (no AI provider, deterministic
+    fallback).
+  * POST /api/ai/trading-coach -d '{}' → 200, identično kot GET (AI Hub runner
+    kompatibilnost potrjena)
+  * GET /api/analytics/deal-fatigue-detector → 200. fatigueScore=30 (NORMAL),
+    indicators: frequencyIncrease=1.8 (1.8× between 1.5 in 2.0 → moderate +15),
+    winRateDecline=0 (100% v obeh oknih), dealScoreDecline=-72 (recent
+    višji od previous — IMPROVING dejansko, a drugi signal pride od drugje),
+    cancellationIncrease=25pp (severe +15). 2 warnings: "Povečan trade volume
+    +80%" in "Stopnja preklicev narasla za +25pp". recommendation: CONTINUE
+    (NORMAL klasifikacija 21-40 → 0 days break).
+  * GET /api/ai/seasonal-timing-optimizer → 200. 3 seasonalPatterns:
+    elektronika (best Nov/Dec/Avg, premium 53%, currentScore 5 → GOOD_TIME_TO_BUY),
+    moda (best Jan/Mar, premium 20%, currentScore 50 → NEUTRAL),
+    orodje (samo 1 trade, premium 0%, NEUTRAL). sellTiming 1 entry: PS5
+    WAIT_FOR_PEAK (Nov-Dec okno, 86 dni do, +30% uplift). buyTiming 2 entries:
+    elektronika BUY_NOW (30% off-season popust), moda WAIT. aiUsed=false
+    (deterministic fallback deluje pravilno).
+  * POST /api/ai/seasonal-timing-optimizer -d '{}' → 200, identično kot GET
+  * Cleanup seed podatkov (3 listings, 10 trades, 1 monitor) — baza nazaj
+    v prazno stanje
+  * Finalni empty-state test: vsi 3 endpointi vračajo 200 z opisno slovensko
+    message
+
+- TypeScript: `npx tsc --noEmit` → 0 napak ✨
+- ESLint: `bun run lint` → 0 napak, 0 opozoril ✨
+- dev.log: vsi HTTP requesti (GET×3 + POST×2) vračajo 200 OK. WARN logi o
+  "AI call failed — using deterministic fallback fetch failed" so pričakovani
+  (no AI provider v sandbox-u) in deterministični fallback pravilno prevzame.
+  Brez ERROR logov.
+
+- Dokumentacijska sinhronizacija (CRITICAL):
+  * AI_ENDPOINTS.md: regeneriran z Python skripto → "Total: 291 endpoints"
+    (289 → 291, +2 AI: trading-coach, seasonal-timing-optimizer)
+  * README.md (MultiEdit z 18 urejanji):
+    - Badge version: v7.63.0 → v7.64.0
+    - Badge AI Endpoints: 289 → 291
+    - Badge API Routes: 428 → 431
+    - Tagline: "289 AI endpointov + 34 analytics" → "291 AI endpointov + 35 analytics"
+    - Overview: "Verzija v7.63.0" → "Verzija v7.64.0", counts posodobljeni,
+      "~114 funkcij" → "~117 funkcij"
+    - "Kaj je novega v v7.56–v7.63 (8 verzij, 24 novih funkcij)" →
+      "...v7.56–v7.64 (9 verzij, 27 novih funkcij)", dodan v7.64 blok
+      (3 funkcije) na vrh
+    - "v1.0 → v7.63" → "v1.0 → v7.64" (1 mesto: changelog ref)
+    - AI Hub badge v tabeli: "Vsi 289 AI endpointov" → "Vsi 291 AI endpointov"
+    - "Endpointi (289 AI + 34 analytics + 10 cron + sistemski = 428)" →
+      "...(291 AI + 35 analytics + 10 cron + sistemski = 431)"
+    - Dodana 2 nova AI endpointa v AI primeri blok (trading-coach, v7.64;
+      seasonal-timing-optimizer, v7.64)
+    - "Profit pipeline (v7.32-v7.63)" → "...(v7.32-v7.64)"
+    - Dodan 1 nov analytics endpoint v profit pipeline blok
+      (deal-fatigue-detector, v7.64)
+    - Dodana 2 nova AI endpointa v profit pipeline listo (trading-coach, v7.64;
+      seasonal-timing-optimizer, v7.64)
+    - Project structure: "289 AI endpointov" → "291 AI endpointov"
+    - Coding standards: "428 routes" → "431 routes"
+    - Roadmap: "v7.63 (trenutno — ~114 funkcij)" → "v7.64 (trenutno — ~117
+      funkcij)", profit pipeline list: dodane 3 nove funkcije (AI Trading
+      Coach, Deal Fatigue Detector, Seasonal Timing Optimizer)
+    - Analytics (34) → (35), dodan 1 nov (Deal Fatigue Detector)
+    - Testing: "428 API routes" → "431 API routes"
+    - "Naslednji koraki": "v7.50-v7.63 funkcije" → "...v7.50-v7.64 funkcije"
+    - "Zadnje verzije": dodan "v7.64.0 (avgust 2026) — AI Trading Coach, Deal
+      Fatigue Detector, Seasonal Timing Optimizer" na vrh
+  * CHANGELOG.md:
+    - "[Unreleased] Načrtovano za v7.64+" → "...za v7.65+"
+    - Dodana nova "[7.64.0] - 2026-08-08" sekcija (nad [7.63.0])
+    - "### Added — AI Trading Coach & Deal Fatigue Detector & Seasonal Timing
+      Optimizer (3 funkcije)" z vsemi 3 endpoint-i in podrobnimi opisi
+      (response shape, anti-hallucination rules, AI cache key, deterministic
+      fallback, example comment, razlika od podobnih obstoječih endpoint-ov)
+    - "### Changed" pod-sekcija z doc sync opisi (AI_ENDPOINTS.md, README.md,
+      CHANGELOG.md)
+
+Stage Summary:
+- 3 novi endpointi dodani (skupno +3 od v7.63.1):
+  - trading-coach (GET+POST, AI-enhanced z osebnim coaching — strengths,
+    weaknesses, patterns, recommendations, riskProfile CONSERVATIVE/BALANCED/
+    AGGRESSIVE, skillLevel BEGINNER/INTERMEDIATE/ADVANCED/EXPERT, nextSteps,
+    nextSteps. Analizira winRate by day/category, koncentracijo, recent trend.
+    Anti-hallucination clamps na stringe, validacija enum-ov + deterministic
+    fallback z rule-based coaching)
+  - deal-fatigue-detector (GET, pure DB analytics — 3 časovna okna (30d vsako),
+    4 indikatorji (frequencyIncrease, winRateDecline, dealScoreDecline,
+    cancellationIncrease), fatigue score 0-100 s klasifikacijo FRESH/NORMAL/
+    MILD_FATIGUE/FATIGUED/BURNOUT, recommendation CONTINUE/SLOW_DOWN/TAKE_BREAK/
+    STOP_TRADING z suggestedBreakDays 0/3/7/30, specific warnings per indikator)
+  - seasonal-timing-optimizer (GET+POST, AI-enhanced z per-item sell timing
+    (SELL_NOW/WAIT_FOR_PEAK/HOLD_THEN_SELL z optimalSellWindow, daysToWait,
+    expectedPriceUplift) in per-category buy timing (BUY_NOW/WAIT/AVOID z
+    expectedDiscount). Razlika od seasonal-calendar (statika) — ta upošteva
+    TRENUTNI datum in held inventar. Anti-hallucination clamps [0,30]% uplift/
+    discount in [0,180] daysToWait + validacija month names + deterministic
+    fallback z rule-based timing)
+- AI Trading Coach: osebni coach ki identificira vzorce (overtrading, vikend-kupi,
+  koncentracija). Razlika od trade-replication-engine (ki predlaga MONITOR-je) —
+  ta ANALIZIRA TRADERJA in da advice za izboljšavo. computeRiskProfile (avgROI,
+  holdDays, koncentracija, topWinRate) + computeSkillLevel (volume, winRate, ROI).
+- Deal Fatigue Detector: 3-okenska analiza (30/60/90 dni) z 4 indikatorji.
+  Pure DB analytics, NO AI. Razlika od market-momentum (ki gleda TRG) — ta
+  gleda TRADERJA in njegovo odločanje. BURNOUT klasifikacija s suggestedBreakDays
+  30 vrne STOP_TRADING akcijo.
+- Seasonal Timing Optimizer: AI optimira TIMING za buy/sell (per held item +
+  per category). Razlika od seasonal-calendar (statika) — ta upošteva TRENUTNI
+  datum, held inventar in predvidi najboljše 2-tedensko okno. Razlika od
+  seasonal-pricing (ki prilagodi cene) — ta optimira TIMING (kdaj prodati).
+- Vsi 3 endpointi vračajo veljaven JSON tudi ob prazni bazi (graceful fallback
+  z opisno slovensko message). AI endpointa (trading-coach in seasonal-timing-
+  optimizer) imata aiUsed flag v responsu za transparentnost.
+- AI_ENDPOINTS.md: "Total: 291 endpoints" ✓ (289 → 291, +2 AI)
+- README.md: v7.64.0 badge (15 referenc), 291 AI (6 referenc), 431 routes
+  (4 reference), 35 analytics (3 reference), ~117 funkcij (2 referenci) ✓
+- CHANGELOG.md: [7.64.0] sekcija dodana z 3 endpoint-i in Changed pod-sekcijo,
+  [Unreleased] posodobljen na v7.65+ ✓
+- ESLint: 0 napak ✨
+- TypeScript: 0 napak ✨
+- Verzija aplikacije: v7.64.0
