@@ -8395,3 +8395,271 @@ Stage Summary:
 - Dokumentacija sinhrono posodobljena (AI_ENDPOINTS.md, README, CHANGELOG, GitHub About)
 - GitHub sinhroniziran (0 commit-ov ahead)
 - Verzija aplikacije: v7.68.0
+
+---
+Task ID: v7.69
+Agent: full-stack-developer
+Task: Add 3 new features for v7.69 — AI Profit Leakage Detector, AI Deal Scoring Model v2, Market Saturation Forecaster
+
+Work Log:
+- Prebral worklog.md (zadnji ~150 vrstic) — v7.68.1 dokončana, 297 AI endpointov, 41 analytics, 443 routes. Studiral obstoječe pattern-e:
+  * src/app/api/ai/risk-reward-calculator/route.ts (v7.68 AI z GET+POST, anti-hallucination, 6h cache, deterministic fallback)
+  * src/app/api/analytics/market-depth-analyzer/route.ts (v7.68 pure DB analytics)
+  * src/app/api/analytics/profit-efficiency-analyzer/route.ts (v7.67 pure DB)
+  * src/app/api/ai/trading-coach/route.ts (v7.64 AI z stats)
+  * src/lib/anti-hallucination.ts (GROUNDING_PROMPT_SUFFIX, validatePrice, evaluateConfidence)
+  * src/lib/ai-cache.ts (getCachedAI, setCachedAI — 6h TTL)
+  * src/lib/rate-limit.ts (checkRateLimit, rateLimitResponse — 20/min/IP)
+  * src/lib/pipeline.ts (getSettingsRow)
+  * prisma/schema.prisma (Trade, Listing, Monitor modeli — Trade.sellPrice/sellDate/sellFees, Listing.aiEstimatedValue/aiRisk/dealScore/sellerListingCount/firstSeenAt/isBookmarked, Monitor.tags)
+- Feature #1: AI Profit Leakage Detector — `src/app/api/ai/profit-leakage-detector/route.ts`
+  - AI-enhanced z GET+POST handlerjema, shared funkcija `handleProfitLeakage(req)`.
+  - Query SOLD trades (z buyPrice>0, sellPrice!=null), HELD trades (z buyPrice>0),
+    CANCELLED trades (z buyPrice>0) z listing relation (aiEstimatedValue).
+  - Za vsak SOLD trade izračuna:
+    * `actualProfit` = sellPrice - sellFees - buyPrice - buyFees
+    * `idealProfit` = max(0, aiEstimatedValue - buyPrice)
+    * `pricingLeakage` = max(0, aiEstimatedValue - sellPrice)
+    * `feeLeakage` = max(0, (buyFees + sellFees) - (sellPrice + buyPrice) × 0.05)
+    * `holdingCostLeakage` = max(0, (daysHeld - 14) × 0.50€) (14-dnevni grace)
+  - CANCELLED trades → `opportunityLeakage` = max(0, aiEstimatedValue - buyPrice).
+  - HELD trades → `heldCarryingCost` = sum((daysHeld - 14) × 0.50€) za items >14 dni.
+  - Aggregate totals: totalActualProfit, totalIdealProfit, totalLeakage
+    (= sum vseh leakage virov + heldCarryingCost), leakagePercent,
+    estimatedAnnualLeakage (annualFactor = 365 / dateRangeSpanDays × totalLeakage).
+  - Per-source breakdown: pricingLeakage/feeLeakage/holdingCostLeakage/opportunityLeakage
+    z { amount, count, avgPercent/avgDays }.
+  - AI prompt z GROUNDING_PROMPT_SUFFIX — top 20 hotspots + top 10 systemic issues
+    z vsemi podatki. AI generira leakageHotspots (top 10 z primaryLeakageSource
+    PRICING/FEE/HOLDING_COST/OPPORTUNITY in detail), systemicIssues (3-7 z vzorci),
+    estimatedAnnualLeakage, fixPriorities (3-5 z HIGH/MEDIUM/LOW priority, fix,
+    estimatedRecovery EUR, effort), expectedRecovery.
+  - Anti-hallucination: AI hotspots morajo match-at DB tradeIds (samo tradeIds ki
+    jih poznamo so dovoljeni — DB numbers (actualProfit, idealProfit, leakage,
+    leakagePercent) ostanejo iz DB). primaryLeakageSource validiran enum (clampEnum).
+    detail clamped 300 chars. systemicIssues.estimatedLoss clamped [0, totalLeakage×2].
+    fixPriorities.estimatedRecovery clamped [0, totalLeakage×0.8]. expectedRecovery
+    clamped [0, totalLeakage×0.8]. priority validiran enum (HIGH/MEDIUM/LOW).
+    estimatedAnnualLeakage clamped [0, estimatedAnnualLeakage×2].
+  - Deterministic fallback: leakageHotspots iz baseline (top 10 z leakage desc),
+    systemicIssues iz byCatPricing (group by category za pricing leakage) + feeItems
+    + longHeld (>45 dni) + oppItems. fixPriorities iz systemicIssues (70%
+    recoverable), priority=HIGH za #1, MEDIUM za #2-3, LOW za ostale.
+    estimatedAnnualLeakage = totalLeakage × annualFactor. expectedRecovery = sum
+    fixPriorities.estimatedRecovery.
+  - AI cache key `profit-leakage-detector:${totalSold}` (6h TTL). Cache se združi
+    nazaj z DB numbers (in cached.estimatedAnnualLeakage prevzame pred izračunanim).
+  - Rate limit 20/min/IP. Empty-state z opisno slovensko message.
+- Feature #2: AI Deal Scoring Model v2 — `src/app/api/ai/deal-scoring-model-v2/route.ts`
+  - AI-enhanced z GET+POST handlerjema, shared funkcija `handleDealScoringModelV2(req)`.
+  - Request body (optional): `{ listingId? }`. Brez body-ja score-a vse aktivne
+    PRILIKA listings (aiVerdict='PRILIKA', price>0), sort po dealScore desc, take 200.
+  - Za vsak listing izračuna 7 faktorjev (0-1 normalizirano):
+    * `priceFactor` = (aiEstimatedValue - price) / aiEstimatedValue (clamp01)
+    * `demandFactor` = sellThroughRate za kategorijo (bookmarked / total, /0.3 capped)
+    * `riskFactor` = aiRisk != null ? clamp01(1 - aiRisk/10) : 0.5
+    * `marketDepthFactor` = clamp01(categoryListingCount / 100)
+    * `sellerReliabilityFactor` = sellerListingCount 0-50 → 0.4-0.95
+    * `categoryPerformanceFactor` = clamp01(0.5 + ROI/100) (null če <3 sold v kat)
+    * `timeFactor` = sweet spot 3-14 dni = 1.0; ramp up/down (<3 = d/3, 15-30 =
+      1 - (d-14)/32, 31-60 = 0.5, >60 = 0.2)
+  - Query kategorije statistike:
+    * categoryListingCounts (count aktivnih listings per kat)
+    * categoryDemand (bookmarked/total per kat)
+    * categoryROI (sold trades per kat — avg ROI)
+  - AI prompt z GROUNDING_PROMPT_SUFFIX — top 30 listings z vsemi faktorji.
+    AI generira factorWeights (7 uteži % vsota 100) in listings (per listing
+    weightedScore 0-100, confidenceLevel, grade, recommendation, keyStrengths/
+    keyWeaknesses top 2).
+  - Grade logika: S (90+), A (80-89), B (70-79), C (60-69), D (50-59), F (<50).
+    Recommendation logika: STRONG_BUY (S/A), BUY (B/C), CONSIDER (D), PASS (F).
+  - confidenceLevel iz data completeness (30 base + 25 estValue + 15 aiRisk +
+    10 sellerName + 20 categoryHistory).
+  - Anti-hallucination: factorWeights normalizirani na 100% (če AI vrne vsoto
+    !=100, normaliziramo). weightedScore clamped [0, 100]. grade in recommendation
+    validirani enum-i (clampEnum z izpeljavo iz score-a). keyStrengths/
+    keyWeaknesses sanitize-ani (max 2, max 200 chars). DB numbers (listingId,
+    title, price, aiEstimatedValue, factors, weightedScore, scoreBreakdown,
+    confidenceLevel) ostanejo iz DB — AI vrne LE factorWeights + keyStrengths/
+    keyWeaknesses (dodatne kvalitative podatke).
+  - Deterministic fallback (ko AI ni na voljo): enake uteži (14.3% vsak faktor —
+    EQUAL_WEIGHTS konstanta), weightedScore = sum(factors × utež × 100), grade in
+    rec iz score, keyStrengths/keyWeaknesses top 2 faktorja z visokimi/nizkimi
+    vrednostmi.
+  - modelInfo: factorWeights, totalListingsScored, avgScore, topGrade, strongBuyCount.
+  - Cache key `deal-scoring-model-v2:${JSON.stringify(sortedListingIds)}` (key per
+    specifičnih listing IDs, 6h TTL). Cache se združi nazaj z DB factors (price
+    se lahko spremeni — recompute weightedScore z cached factorWeights).
+  - Rate limit 20/min/IP. Empty-state z opisno slovensko message.
+- Feature #3: Market Saturation Forecaster — `src/app/api/analytics/market-saturation-forecaster/route.ts`
+  - Pure DB analytics (NO AI). GET handler.
+  - Query listings (firstSeenAt >= 90 dni nazaj = 13 tednov, isHidden=false),
+    select id/price/firstSeenAt/isBookmarked/contactStatus/monitor.tags.
+  - Group by category AND week index (WEEKS_TO_ANALYZE-1 - ageDays/7 = reverseWeek
+    kjer 0 = oldest, 12 = current week).
+  - Za vsak teden per kategorija: newListingsCount, prices[], bookmarked, contacted.
+  - Linear regression (xs = week index, ys = values): slope, intercept.
+  - Trend derivacija:
+    * `listingTrend` INCREASING (slope/mean >5%), DECREASING (<-5%), STABLE sicer
+    * `priceTrend` RISING (slope/mean >1%), FALLING (<-1%), STABLE sicer
+    * `saturationVelocity` = listingReg.slope (listings/week² — acceleration)
+  - Forecast:
+    * `currentSaturation` = newListingsThisWeek / meanWeekly (1.0 = normal)
+    * `weeklySaturationSlope` = listingReg.slope / meanWeekly
+    * `projected30d/60d/90d` = currentSaturation + weeklySlope × (30/7, 60/7, 90/7)
+    * `saturationStatus` UNDERSTARTED (<0.7), HEALTHY (0.7-1.3), SATURATING
+      (1.3-1.7), OVERSATURATED (>1.7)
+    * `timeToOversaturation` = (1.7 - currentSaturation) / weeklySlope × 7 (dni;
+      null če already oversaturated ali not trending up ali >4 leta = 208 weeks)
+  - Recommendation:
+    * `action` ENTER_NOW (UNDERSTARTED + not decreasing; ali HEALTHY + DECREASING
+      + RISING), CONTINUE (HEALTHY; ali UNDERSTARTED decreasing), SLOW_DOWN
+      (SATURATING + not increasing; ali HEALTHY + INCREASING + FALLING), EXIT_NOW
+      (OVERSATURATED; ali SATURATING + INCREASING)
+    * `pricePressureExpected` % = (saturation - 1) × 30 capped 20% za INCREASING +
+      saturation >1.0; 2% za INCREASING + saturation ≤1.0; 3% za DECREASING +
+      saturation >1.3; 0 sicer
+    * `reasoning` slovenski opis s key facts
+  - Summary: totalCategories, healthyCategories, saturatingCategories,
+    oversaturatedCategories, bestExitCategory (highest saturation ali SATURATING +
+    INCREASING), bestEntryCategory (UNDERSTARTED + not DECREASING), advice
+    (slovenska priporočila glede na stanje).
+  - Skip kategorije z <5 listings v 90 dneh.
+  - Empty-state z opisno slovensko message.
+  - Sort categories by current.saturation desc (most saturated first).
+- TypeScript check: `npx tsc --noEmit` → 0 napak ✨
+- ESLint: `bun run lint` → 0 napak, 0 opozoril ✨
+- curl testi (vsak endpoint prazen state, brez AI provider-ja v sandboxu):
+  * GET /api/ai/profit-leakage-detector → HTTP 200, {"ok":true,"summary":
+    {"totalActualProfit":0,"totalIdealProfit":0,"totalLeakage":0,
+    "leakagePercent":0,"estimatedAnnualLeakage":0},"leakageSources":{...},
+    "aiUsed":false,"message":"Ni prodanih, aktivnih ali preklicanih trade-ov..."}
+  * POST /api/ai/profit-leakage-detector (body {}) → HTTP 200, isti response
+  * GET /api/ai/deal-scoring-model-v2 → HTTP 200, {"ok":true,"listings":[],
+    "modelInfo":{"factorWeights":[{"factor":"priceFactor","weight":14.3},...],
+    "totalListingsScored":0,"avgScore":0,"topGrade":"N/A","strongBuyCount":0},
+    "aiUsed":false,"message":"Ni aktivnih PRILIKA oglasov..."}
+  * POST /api/ai/deal-scoring-model-v2 (body {}) → HTTP 200, isti response
+  * GET /api/analytics/market-saturation-forecaster → HTTP 200, {"ok":true,
+    "categories":[],"summary":{...},"message":"Ni oglasov v zadnjih 90 dneh..."}
+  * dev.log: vsi requesti 200 OK, brez error/warn (ker je empty-state — AI se
+    sploh ne kliče).
+- Dokumentacijska sinhronizacija (CRITICAL):
+  * AI_ENDPOINTS.md: regeneriran z Python skripto → "Total: 299 endpoints"
+    (297 → 299, +2 AI: profit-leakage-detector #244, deal-scoring-model-v2 #88)
+  * README.md (MultiEdit z 19 urejanji):
+    - Badge version: v7.68.0 → v7.69.0
+    - Badge AI Endpoints: 297 → 299
+    - Badge API Routes: 443 → 446 (+3: 2 AI + 1 analytics)
+    - Tagline: "297 AI endpointov + 41 analytics" → "299 AI endpointov + 42 analytics"
+    - Overview: "Verzija v7.68.0" → "Verzija v7.69.0", counts posodobljeni,
+      "~129 funkcij" → "~132 funkcij"
+    - "Kaj je novega v v7.56–v7.68 (13 verzij, 39 novih funkcij)" →
+      "...v7.56–v7.69 (14 verzij, 42 novih funkcij)", dodan v7.69 blok (3 funkcije)
+      na vrh z podrobnimi opisi vseh 3 endpoint-ov
+    - AI Hub badge v tabeli: "Vsi 297 AI endpointov" → "Vsi 299 AI endpointov"
+    - "Endpointi (297 AI + 41 analytics + 10 cron + sistemski = 443)" →
+      "...(299 AI + 42 analytics + 10 cron + sistemski = 446)"
+    - Dodana 2 nova AI endpointa v AI primeri blok (profit-leakage-detector,
+      deal-scoring-model-v2, v7.69)
+    - "Profit pipeline (v7.32-v7.68)" → "...(v7.32-v7.69)"
+    - Dodan 1 nov analytics endpoint v profit pipeline blok
+      (market-saturation-forecaster, v7.69)
+    - Dodana 2 nova AI endpointa v profit pipeline listo
+      (profit-leakage-detector, deal-scoring-model-v2, v7.69)
+    - Project structure: "297 AI endpointov" → "299 AI endpointov"
+    - Coding standards: "443 routes" → "446 routes"
+    - Roadmap: "v7.68 (trenutno — ~129 funkcij)" → "v7.69 (trenutno — ~132
+      funkcij)", profit pipeline list: dodane 3 nove funkcije (AI Profit Leakage
+      Detector, AI Deal Scoring Model v2, Market Saturation Forecaster),
+      "Profit pipeline (70+ funkcij)" → "(73+ funkcij)"
+    - Analytics (41) → (42), dodan 1 nov (Market Saturation Forecaster)
+    - Testing: "443 API routes" → "446 API routes"
+    - "Naslednji koraki": "v7.50-v7.68 funkcije" → "...v7.50-v7.69 funkcije"
+    - "Zadnje verzije": dodan "v7.69.0 (avgust 2026) — AI Profit Leakage Detector,
+      AI Deal Scoring Model v2, Market Saturation Forecaster" na vrh
+    - AI_ENDPOINTS.md link: "vseh 297 AI endpointov" → "vseh 299 AI endpointov"
+    - "do v7.68 (avgust 2026)" → "do v7.69 (avgust 2026)"
+    - "v1.0 → v7.66" (zastarelo iz prejšnjih verzij) → "v1.0 → v7.69"
+  * CHANGELOG.md:
+    - "[Unreleased] Načrtovano za v7.69+" → "...za v7.70+"
+    - Dodana nova "[7.69.0] - 2026-08-11" sekcija (nad [7.68.0])
+    - "### Added — AI Profit Leakage Detector & AI Deal Scoring Model v2 &
+      Market Saturation Forecaster (3 funkcije)" z vsemi 3 endpoint-i in
+      podrobnimi opisi (response shape, anti-hallucination rules, AI cache key,
+      deterministic fallback, example comment, razlika od podobnih obstoječih
+      endpoint-ov — profit-leakage-detector vs profit-efficiency-analyzer/
+      net-profit/price-elasticity/inventory-capital-efficiency-optimizer;
+      deal-scoring-model-v2 vs deal-score-calibrator/batch-deal-evaluator/
+      deal-quality-forecaster/risk-reward-calculator; market-saturation-
+      forecaster vs market-saturation/market-depth-analyzer/market-momentum/
+      deal-velocity)
+    - "### Changed" pod-sekcija z doc sync opisi (AI_ENDPOINTS.md, README.md,
+      CHANGELOG.md, verzija aplikacije)
+
+Stage Summary:
+- 3 novi endpointi dodani (skupno +3 od v7.68.1):
+  - profit-leakage-detector (GET+POST, AI-enhanced — AI identificira kje profit
+    teče. Leakage = idealProfit - actualProfit (max possible if sold at estValue
+    minus actual). Per-trade: pricingLeakage (sold < estValue), feeLeakage
+    (>5% trade value), holdingCostLeakage (days × 0.50€ over 14-day grace),
+    opportunityLeakage (cancelled trades). Per-source breakdown (pricing/fee/
+    holding/opportunity) z { amount, count, avgPercent/avgDays }. AI generira
+    leakageHotspots top 10, systemicIssues (3-7 vzorcev), estimatedAnnualLeakage,
+    fixPriorities ranked (HIGH/MEDIUM/LOW z estimatedRecovery EUR in effort),
+    expectedRecovery. Anti-hallucination: AI hotspots morajo match-at DB tradeIds
+    (samo znani tradeIds), zneski clamped [0, totalLeakage×2] / [0, totalLeakage×
+    0.8], priority validiran enum. Deterministic fallback. Cache key
+    `profit-leakage-detector:${totalSold}` 6h TTL. Razlika od
+    profit-efficiency-analyzer (ki meri kako učinkovito pretvarjaš čas v profit) —
+    ta gleda RAZLIKOM med actual in ideal profitom in identificira vire izgub.
+    Razlika od net-profit (ki prikazuje skupni profit) — ta meri koliko profita
+    MANJKA. Razlika od price-elasticity (ki gleda kako cena vpliva na prodajo) —
+    ta gleda kako suboptimalna prodajna cena pušča profit na mizi. Razlika od
+    inventory-capital-efficiency-optimizer (ki optimizira kapitalsko alokacijo)
+    — ta identificira FINANCNE POMAKANJA v prodajni/procesu.)
+  - deal-scoring-model-v2 (GET+POST, AI-enhanced — advanced ML-style deal scoring
+    z 7 faktorji (priceFactor, demandFactor, riskFactor, marketDepthFactor,
+    sellerReliabilityFactor, categoryPerformanceFactor, timeFactor). AI določi
+    uteži (% vsota 100), weightedScore 0-100, scoreBreakdown per faktor,
+    confidenceLevel 0-100, grade (S/A/B/C/D/F), recommendation (STRONG_BUY/BUY/
+    CONSIDER/PASS), keyStrengths/keyWeaknesses top 2. Anti-hallucination:
+    factorWeights normalizirani na 100%, weightedScore clamped [0, 100], grade
+    in rec validirani enum-i iz score-a. Deterministic fallback (enake uteži
+    14.3%). Cache key `deal-scoring-model-v2:${JSON.stringify(sortedListingIds)}`
+    6h TTL. Razlika od deal-score-calibrator (ki preverja ali AI deal score-i
+    dejansko točni) — ta GENERIRA NOVE weighted score iz več faktorjev. Razlika
+    od batch-deal-evaluator (ki evaluira listing-e z AI) — ta uporablja MULTI-
+    FACTOR model z 7 faktorji in weighted contributions. Razlika od
+    deal-quality-forecaster (ki napoveduje po dnevih v tednu) — ta ocenjuje
+    KVALITETO DEAL-A danes. Razlika od risk-reward-calculator (ki gleda
+    potentialReward/loss) — ta gleda 7 različnih faktorjev.)
+  - market-saturation-forecaster (GET, pure DB analytics — projektira saturacijo
+    trga 30/60/90 dni vnaprej z linearno regresijo na 13 tednov (90 dni)
+    zgodovine. Per kategorija: current saturation (1.0 = normal), listingTrend
+    (INCREASING/STABLE/DECREASING), priceTrend (RISING/STABLE/FALLING),
+    saturationVelocity (listings/week²), projected30d/60d/90d, saturationStatus
+    (UNDERSTARTED/HEALTHY/SATURATING/OVERSATURATED), timeToOversaturation (dni),
+    action (ENTER_NOW/CONTINUE/SLOW_DOWN/EXIT_NOW), pricePressureExpected (%).
+    Razlika od market-saturation (ki gleda AKTUALNO saturacijo) — ta gleda
+    NAPREDOVANJE saturacije v času z linearno regresijo + projekcijo 30/60/90 dni
+    vnaprej. Razlika od market-depth-analyzer (ki meri GLOBINO trga z cenovno
+    distribucijo) — ta meri SATURACIJO (current vs historical avg). Razlika od
+    market-momentum (ki gleda 7-dnevni BULLISH/BEARISH trend) — ta gleda 90-dnevno
+    saturacijo z napovedjo in EXIT/ENTER signali. Razlika od deal-velocity
+    (ki meri hitrost prodaje) — ta meri KOLIKO je trg nasičen z oglasi in ali se
+    bo še bolj nasičil.)
+- Vsi 3 endpointi vračajo veljaven JSON tudi ob prazni bazi (graceful fallback
+  z opisno slovensko message). AI endpointa (profit-leakage-detector,
+  deal-scoring-model-v2) imata aiUsed flag v responsu za transparentnost in
+  GET+POST kompatibilnost z AI Hub runner-jem.
+- AI_ENDPOINTS.md: "Total: 299 endpoints" ✓ (297 → 299, +2 AI)
+- README.md: v7.69.0 badge (15 referenc), 299 AI (6 referenc), 446 routes
+  (4 reference), 42 analytics (3 reference), ~132 funkcij (2 referenci) ✓
+- CHANGELOG.md: [7.69.0] sekcija dodana z 3 endpoint-i in Changed pod-sekcijo,
+  [Unreleased] posodobljen na v7.70+ ✓
+- ESLint: 0 napak ✨
+- TypeScript: 0 napak ✨
+- dev.log: vsi HTTP requesti vračajo 200 OK, brez error/warn (empty-state —
+  AI se sploh ne kliče brez podatkov).
+- Verzija aplikacije: v7.69.0
