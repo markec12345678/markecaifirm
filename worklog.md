@@ -10061,3 +10061,40 @@ Stage Summary:
 - dev.log: vsi HTTP requesti vračajo 200 OK, brez error/warn (empty-state — AI se sploh ne kliče brez podatkov)
 - Real data verification: seed 11 SOLD trades (W W W L W W W W L L W pattern) → streaks.currentStreak=1 WINNING, longestWinningStreak=4, longestLosingStreak=2, totalStreaks=5, avgWinningStreakLength=2.7, avgLosingStreakLength=1.5, bestCategoryForStreaks=elektronika, bestPriceRangeForStreaks=50-150€ — vse kot pričakovano ✓ (po testu cleanup 11 trades deleted)
 - Verzija aplikacije: v7.77.0
+
+---
+Task ID: v7.77.1
+Agent: main
+Task: v7.77 commit + push + GitHub About + Agent Browser verification + README sync fix
+
+Work Log:
+- Prejel poročilo od full-stack-developer podagenta (Task v7.77)
+- Preveril 3 nove endpoint-e: deal-winning-streak-analyzer (200 GET+POST), seller-performance-analytics (200 GET), market-cycle-detector (200 GET)
+- Preveril doc sync: AI_ENDPOINTS.md (311 ✅), README v7.77 (14 refs ✅), README 311 AI (6 refs ✅), CHANGELOG v7.77 ✅
+- Preveril lint: 0 napak ✨
+- Preveril typecheck: 0 napak ✨
+- Posodobil GitHub About opis: 310 AI → 311 AI, 467 routes → 470 routes (via API PATCH)
+- Commit: "v7.77: Deal Winning Streak Analyzer + Seller Performance Analytics + Market Cycle Detector" (26b7b3b)
+- Push na GitHub: uspešen ✅, PAT očiščen ✅
+- Agent Browser self-verification:
+  - Stran se pravilno naloži (HTTP 200)
+  - AI Hub prikazuje deal-winning-streak-analyzer (v7.77) v iskalniku ✅
+  - Runner test: klik na deal-winning-streak-analyzer → POST request → valid JSON ✅
+  - Response: {"ok":true, "streaks":{...}, "patterns":{...}, "analysis":{...}, "aiUsed":false, "message":"Ni SOLD trade-ov..."}
+  - Brez runtime napak v dev.log
+
+Bonus (pred v7.77):
+- Temeljita sinhronizacija README z dejansko kodo
+- Popravljena zastarela referenca 'v1.0 → v7.71' → 'v1.0 → v7.76'
+- Commit: "docs: Fix stale changelog reference v7.71 → v7.76" (1517358)
+- Vsi števci konsistentni: 310 AI, 52 analytics, 467 routes, ~153 funkcij (pred v7.77)
+
+Stage Summary:
+- v7.77 uspešno dokončana in potisnjena na GitHub
+- 3 nove funkcije: AI Deal Winning Streak Analyzer, Seller Performance Analytics, Market Cycle Detector
+- AI endpointi: 310 → 311 (+1)
+- Analytics endpointi: 52 → 54 (+2)
+- Total API routes: 467 → 470 (+3)
+- Dokumentacija sinhrono posodobljena (AI_ENDPOINTS.md, README, CHANGELOG, GitHub About)
+- GitHub sinhroniziran (0 commit-ov ahead)
+- Verzija aplikacije: v7.77.0
