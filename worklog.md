@@ -9937,3 +9937,127 @@ Stage Summary:
 - Dokumentacija sinhrono posodobljena (AI_ENDPOINTS.md, README, CHANGELOG, GitHub About)
 - GitHub sinhroniziran (0 commit-ov ahead)
 - Verzija aplikacije: v7.76.0
+
+---
+Task ID: v7.77
+Agent: full-stack-developer
+Task: Add 3 new features for v7.77 — AI Deal Winning Streak Analyzer, Seller Performance Analytics, Market Cycle Detector
+
+Work Log:
+- Prebral worklog.md (zadnji ~150 vrstic) — projekt v7.76.1, 310 AI endpointov, 467 total routes, 52 analytics
+- Preučil obstoječe vzorce v capital-deployment-planner (v7.76 AI s phased plan), market-sentiment-pulse (v7.75 pure DB z signali), deal-pipeline-forecaster (v7.76 pure DB z stages)
+- Preveril prisma schema — Listing ima sellerName (nullable), dealScore, price; Trade ima buyPrice/buyFees/sellPrice/sellFees/sellDate/category/status; Listing.monitor.source za category dimenzijo
+- Verificiral non-duplication proti vsem obstoječim endpointom iz speca (deal-quality-forecaster, deal-scoring-model-v2, deal-anatomy-analyzer, deal-velocity, deal-source-roi, deal-source-comparison-matrix, deal-pipeline-forecaster, deal-profitability-matrix, deal-quality-distribution, deal-fatigue-detector, profit-momentum-tracker, profit-trajectory-forecaster, profit-stream-predictor, profit-accelerator, profit-leakage-detector, market-momentum, market-sentiment-pulse, market-trend-momentum, market-saturation-forecaster, seller-trust-score-v2, seller-reliability-v2, seller-response-predictor, seller-negotiation-strategist, competitor-tracker, supplier-crm)
+- Feature #1: AI Deal Winning Streak Analyzer (GET+POST /api/ai/deal-winning-streak-analyzer)
+  * Query SOLD trades sorted by sellDate asc (status=sold, sellDate not null, buyPrice > 0, take 100000)
+  * Classify each as WIN (profit = sellPrice - sellFees - buyPrice - buyFees > 0) ali LOSS (profit ≤ 0)
+  * Compute streaks via consecutive run detection (computeStreaks helper): currentStreak + currentStreakType (WINNING/LOSING), longestWinningStreak, longestLosingStreak, avgWinningStreakLength, avgLosingStreakLength, totalStreaks
+  * Patterns deterministično izračunane (buildDeterministicPatterns helper):
+    - bestCategoryForStreaks (kategorija z najvišjo win rate, min 2 deal-a)
+    - bestPriceRangeForStreaks (cenovni bucket 0-50€/50-150€/150-400€/400-1000€/1000-5000€/5000€+ z najvišjo win rate)
+    - bestTimeForStreaks (dan v tednu s najvišjo win rate — slovenski dnevi)
+    - streakCorrelationFactors (top 3 kategorije + 1 cenovni razpon + 1 dan, s correlation 0-1 (delta × 2, clamped [-1, 1]) in type POSITIVE/NEGATIVE glede na delta vs overall win rate)
+  * AI generira analysis: streakAssessment (max 500 znakov), streakTriggers (3-5 faktorjev, max 200 znakov vsak), streakBreakers (3-5), streakForecast (max 400), streakAdvice (max 500), confidenceLevel 0-100
+  * AI prompt z grounding — streak data + patterns + timeline zadnjih 50 deal-ov (format: index:type:category:priceBucket:dayOfWeek)
+  * Anti-hallucination: streak counts validated against actual data (deterministic compute), confidenceLevel clamped [0, 100], streakTriggers/Breakers max 5 elementov, vsak string clamped na max 200 znakov, fallback na deterministic ko AI manjka ali paše
+  * AI cache key `deal-winning-streak:${totalSold}` (6h TTL — cache za isti sold count snapshot)
+  * Deterministic fallback (buildDeterministicAnalysis): streakAssessment glede na currentStreak vs longestStreak/avgLength (WINNING/LOSING scenario), triggers iz bestCategory/PriceRange/Time, breakers = generic disciplinarni faktorji, forecast glede na currentStreak vs avgLength, advice glede na WINNING/LOSING streak type (OHRANI momentum / PREKINI losing streak)
+  * Empty state: če ni SOLD trade-ov → vrne vse 0 + message "Ni SOLD trade-ov — Deal Winning Streak Analyzer ni mogoč."
+  * GET+POST z handleDealWinningStreakAnalyzer(req) shared function (AI Hub runner kompatibilnost — AI Hub UI vedno pošlje POST)
+  * maxDuration = 60, runtime = 'nodejs', dynamic = 'force-dynamic'
+  * Summary (buildSummary helper) — deterministično iz streaks + analysis (ne iz AI), max 500 znakov
+  * VERIFIED z real data: seed 11 SOLD trades (W W W L W W W W L L W pattern) → currentStreak=1 WINNING, longestWinningStreak=4, longestLosingStreak=2, totalStreaks=5, avgWinningStreakLength=2.7, avgLosingStreakLength=1.5, bestCategoryForStreaks=elektronika, bestPriceRangeForStreaks=50-150€ — vse kot pričakovano ✓ (po testu cleanup)
+- Feature #2: Seller Performance Analytics (GET /api/analytics/seller-performance-analytics, pure DB)
+  * Query SOLD + HELD trades z listingId (Listing povezan) z listing.sellerName izpolnjen (filter na non-empty sellerName), take 100000
+  * Per seller (grouped by listing.sellerName):
+    - totalDeals, totalSpent (sum buyPrice + buyFees), totalProfit (sum profit za SOLD; HELD=0)
+    - avgDealScore (avg listing.dealScore za povezane listinge z dealScore > 0)
+    - avgDiscount (avg (listing.price - buyPrice) / listing.price × 100)
+    - avgHoldDays (avg days od buyDate do sellDate, samo SOLD)
+    - successRate (soldCount z profit > 0 / soldCount × 100)
+    - firstDealDate / lastDealDate (ISO iz buyDate)
+    - categories (distinct kategorije sorted)
+    - reliabilityTier: PLATINUM (5+ deals & 80%+ success), GOLD (3+ & 60%+), SILVER (2+), BRONZE (1)
+    - profitabilityScore 0-100 (log-scale profit component 0-50 + success rate component 0-50)
+    - pricingBehavior: FIRM (<5%), FLEXIBLE (5-15%), GENEROUS (>15% avg discount)
+  * comparison: bestSeller (highest profitabilityScore, >0), mostReliableSeller (highest successRate, min 3 deals), mostGenerousSeller (highest avgDiscount, min 1 deal with discount > 0)
+  * byCategory: per-category sellerCount, topSeller (by profit), totalProfit, avgSuccessRate
+  * summary: totalSellers, platinumCount, goldCount, silverCount, bronzeCount, totalSpentAll, totalProfitAll, advice (scenario-based: PLATINUM > 0 / GOLD > 0 / drugače)
+  * Sort sellers by profitabilityScore desc
+  * Empty state: če ni trade-ov z vezanimi Listing-i z sellerName → prazni array-i + advice o dodajanju sellerName
+  * Pure DB analytics — NO AI, GET handler only (analytics endpoint)
+- Feature #3: Market Cycle Detector (GET /api/analytics/market-cycle-detector, pure DB)
+  * Query listings zadnjih 180 dni (firstSeenAt >= cutoff, isHidden false) z monitor.source, price, firstSeenAt, dealScore, take 200000
+  * Group by ISO week (week starts Monday — isoWeekStart helper)
+  * Compute indicators (overall + per-source):
+    - priceTrend90d (linear regression slope na weekly avg price čez zadnjih 13 tednov + direction UP/FLAT/DOWN glede na rel. slope threshold 1.5%/ted)
+    - priceTrend30d (4 tedne, threshold 2.5%/ted)
+    - volumeTrend90d (linear regression na weekly listing count čez 13 tednov, threshold 5%/ted)
+    - volumeTrend30d (4 tedne, threshold 8%/ted)
+    - volatilityIndex (stdDev of weekly avg prices / mean × 100, %)
+    - dealQualityTrend (IMPROVING/STABLE/DECLINING glede na delta recent 4 tedne vs older 4 tedne avg dealScore, threshold ±2)
+  * 4-fazna klasifikacija (Wyckoff-inspired) — votes per phase (classifyPhase helper):
+    - ACCUMULATION: price flat/down + volume flat/down + volatility low (<25)
+    - MARKUP: price UP (90d + 30d) + volume rising + volatility 15-35
+    - DISTRIBUTION: price UP 90d & FLAT 30d + volume peaking + high volatility (≥35)
+    - DECLINE: price DOWN + volume declining
+    - phaseConfidence = top score / total score × 100, clamped [15, 95]
+  * cycleProgress 0-100% (computeProgress heuristic glede na phase + 30d signale — npr. ACCUMULATION z volume 30d UP = 80% mature, blizu Markup)
+  * cycleDuration (heuristic weeks v trenutni fazi, 6-12 glede na fazo in volatilnost)
+  * byCategory: per-source (Bolha/Vinted/mobile.de) phase + confidence + price/volume trend direction (sourceDisplayName helper za slovenska imena)
+  * historical: phasesLast180d (reconstructed week-by-week phase z 3-tedenskim sliding window — vsak teden dobi phase, zaporedne enake faze mergane v range z weeks/startDate/endDate), mostCommonPhase (phase z največ tedni v 180d)
+  * recommendation: action (BUY_AGGRESSIVELY/BUY/HOLD/SELL/SELL_AGGRESSIVELY/WAIT glede na phase), reasoning (slovenski z confidence %), timeHorizon (npr. "30-90 dni (do Markup faze)")
+  * Empty state 1: če ni listing-ov v 180 dneh → ACCUMULATION s confidence 0 + WAIT recommendation z opisno message
+  * Empty state 2: če manj kot 4 tedni podatkov → ACCUMULATION s confidence 10 + WAIT recommendation z "Premalo tedenskih podatkov" message
+  * Pure DB analytics — NO AI, GET handler only (analytics endpoint)
+- Vsi 3 endpointi imajo try/catch z logger.error in NextResponse.json { error: err?.message ?? 'Napaka' }, status 500. AI endpoint (deal-winning-streak-analyzer) ima maxDuration = 60. Vsi imajo export const runtime = 'nodejs' in export const dynamic = 'force-dynamic'
+- TypeScript check: `npx tsc --noEmit` → 0 napak ✨
+- ESLint: `bun run lint` → 0 napak, 0 opozoril ✨ (EXIT 0)
+- curl testi (vsak endpoint prazen state, brez AI provider-ja v sandboxu):
+  * GET /api/ai/deal-winning-streak-analyzer → HTTP 200, {"ok":true,"streaks":{"currentStreak":0,"currentStreakType":"WINNING","longestWinningStreak":0,"longestLosingStreak":0,"avgWinningStreakLength":0,"avgLosingStreakLength":0,"totalStreaks":0},"patterns":{"bestCategoryForStreaks":null,"bestPriceRangeForStreaks":null,"bestTimeForStreaks":null,"streakCorrelationFactors":[]},"analysis":{"streakAssessment":"Ni SOLD trade-ov — Deal Winning Streak Analyzer ni mogoč.","streakTriggers":[],"streakBreakers":[],"streakForecast":"Ni podatkov za napoved.","streakAdvice":"Dodaj SOLD trade-e (status \"sold\", sellDate in sellPrice izpolnjeni, buyPrice > 0) z...","confidenceLevel":0},"summary":"Ni SOLD trade-ov — Deal Winning Streak Analyzer ni mogoč.","aiUsed":false,"message":"Ni SOLD trade-ov — Deal Winning Streak Analyzer ni mogoč."}
+  * GET /api/analytics/seller-performance-analytics → HTTP 200, {"ok":true,"sellers":[],"comparison":{"bestSeller":null,"mostReliableSeller":null,"mostGenerousSeller":null},"summary":{"totalSellers":0,"platinumCount":0,"goldCount":0,"silverCount":0,"bronzeCount":0,"totalSpentAll":0,"totalProfitAll":0,"advice":"Ni trade-ov z vezanimi Listing-i (z sellerName) — Seller Performance Analytics ni mogoč. Dodaj Listing-e z izpolnjenim sellerName poljem in jih poveži s Trade-i prek listingId."},"message":"Ni trade-ov z vezanimi Listing-i (z sellerName) — Seller Performance Analytics ni mogoč."}
+  * GET /api/analytics/market-cycle-detector → HTTP 200, {"ok":true,"cycle":{"currentPhase":"ACCUMULATION","cycleProgress":0,"cycleDuration":0,"phaseConfidence":0,"phaseDescription":"Ni listing-ov v zadnjih 180 dneh — Market Cycle Detector ni mogoč."},"indicators":{"priceTrend90d":{"slope":0,"direction":"FLAT"},"priceTrend30d":{"slope":0,"direction":"FLAT"},"volumeTrend90d":{"slope":0,"direction":"FLAT"},"volumeTrend30d":{"slope":0,"direction":"FLAT"},"volatilityIndex":0,"dealQualityTrend":"STABLE"},"byCategory":[],"historical":{"phasesLast180d":[],"mostCommonPhase":null},"recommendation":{"action":"WAIT","reasoning":"Ni listing podatkov — doda..."}}
+  * POST /api/ai/deal-winning-streak-analyzer (body {}) → HTTP 200, isti response kot GET (handleDealWinningStreakAnalyzer(req) shared function)
+  * REAL DATA VERIFICATION: seed 11 SOLD trades (W W W L W W W W L L W pattern) → GET → streaks.currentStreak=1, currentStreakType=WINNING, longestWinningStreak=4, longestLosingStreak=2, totalStreaks=5, avgWinningStreakLength=2.7, avgLosingStreakLength=1.5, patterns.bestCategoryForStreaks=elektronika, bestPriceRangeForStreaks=50-150€, streakCorrelationFactors=3 entries. Deterministic fallback aktiven (aiUsed=false ker ni AI provider v sandboxu). Po testu cleanup (deleteMany z title startsWith 'Test-' → 11 deleted).
+  * dev.log: vsi requesti 200 OK, brez error/warn (empty-state — AI se sploh ne kliče brez podatkov)
+- Dokumentacijska sinhronizacija (CRITICAL):
+  * AI_ENDPOINTS.md: regeneriran z Python skripto → "Total: 311 endpoints" (310 → 311, +1 AI: deal-winning-streak-analyzer #92). Verificirano z grep.
+  * README.md (MultiEdit z 17 urejanji):
+    - Badge version: v7.76.0 → v7.77.0
+    - Badge AI Endpoints: 310 → 311
+    - Badge API Routes: 467 → 470 (+3: 1 AI + 2 analytics)
+    - Tagline: "310 AI endpointov + 52 analytics" → "311 AI endpointov + 54 analytics" (+2 analytics: seller-performance-analytics, market-cycle-detector)
+    - Overview: "Verzija v7.76.0" → "Verzija v7.77.0", counts posodobljeni, "310 AI + 52 analytics + 10 cron + ~153 funkcij" → "311 AI + 54 analytics + 10 cron + ~156 funkcij"
+    - "Kaj je novega v v7.56–v7.76 (21 verzij, 63 novih funkcij)" → "...v7.56–v7.77 (22 verzij, 66 novih funkcij)", dodan v7.77 blok (3 funkcije) na vrh z detajlnimi opisi vseh 3 endpoint-ov (response shape, anti-hallucination pravila, AI cache key, deterministic fallback, razlika od podobnih obstoječih endpoint-ov)
+    - AI Hub badge v tabeli: "Vsi 310 AI endpointov" → "Vsi 311 AI endpointov"
+    - "Endpointi (310 AI + 52 analytics + 10 cron + sistemski = 467)" → "...(311 AI + 54 analytics + 10 cron + sistemski = 470)"
+    - Dodana 3 nova endpointa v AI primeri blok (deal-winning-streak-analyzer v7.77, seller-performance-analytics v7.77, market-cycle-detector v7.77)
+    - "Profit pipeline (v7.32-v7.76)" → "...(v7.32-v7.77)"
+    - Project structure: "310 AI endpointov" → "311 AI endpointov"
+    - Coding standards: "467 routes" → "470 routes"
+    - Roadmap: "v7.76 (trenutno — ~153 funkcij)" → "v7.77 (trenutno — ~156 funkcij)", profit pipeline list (94+ funkcij) → (97+ funkcij), dodane 3 nove funkcije (AI Deal Winning Streak Analyzer, Seller Performance Analytics, Market Cycle Detector)
+    - Analytics (52) → (54), dodana 2 nova (Seller Performance Analytics, Market Cycle Detector)
+    - Testing: "467 API routes" → "470 API routes"
+    - "Naslednji koraki": "v7.50-v7.76 funkcije" → "...v7.50-v7.77 funkcije"
+    - "Zadnje verzije": dodan "v7.77.0 (avgust 2026) — AI Deal Winning Streak Analyzer, Seller Performance Analytics, Market Cycle Detector" na vrh
+    - AI_ENDPOINTS.md link: "vseh 310 AI endpointov" → "vseh 311 AI endpointov"
+    - "do v7.76 (avgust 2026)" → "do v7.77 (avgust 2026)"
+  * CHANGELOG.md (Edit z 1 velikim urejanjem):
+    - "[Unreleased] Načrtovano za v7.77+" → "...za v7.78+"
+    - Dodana nova "[7.77.0] - 2026-08-19" sekcija (nad [7.76.0]) z vsemi 3 endpoint-i in podrobnimi opisi (response shape, anti-hallucination rules, AI cache key, deterministic fallback, example comment, razlika od podobnih obstoječih endpoint-ov — deal-winning-streak-analyzer vs deal-quality-forecaster/deal-scoring-model-v2/deal-anatomy-analyzer/profit-momentum-tracker; seller-performance-analytics vs supplier-crm/reseller-blackbook/competitor-tracker/seller-trust-score-v2/seller-reliability-v2; market-cycle-detector vs market-momentum/market-trend-momentum/market-sentiment-pulse/market-saturation-forecaster/market-depth-analyzer)
+    - "### Changed" pod-sekcija z doc sync opisi (AI_ENDPOINTS.md, README.md, CHANGELOG.md, verzija aplikacije)
+
+Stage Summary:
+- 3 novi endpointi dodani (skupno +3 od v7.76.1):
+  - deal-winning-streak-analyzer (GET+POST, AI-enhanced — AI analizira tvoje winning in losing streak-e (zaporedne dobičkonosne deal-e vs zaporedne izgube). "Current: 5-win streak! Best ever: 8. Trigger: elektronika deals. Keep buying elektronika." streaks: currentStreak, currentStreakType (WINNING/LOSING), longestWinningStreak, longestLosingStreak, avgWinningStreakLength, avgLosingStreakLength, totalStreaks (compute via consecutive run detection). patterns: bestCategoryForStreaks, bestPriceRangeForStreaks, bestTimeForStreaks, streakCorrelationFactors (top kategorije/cenovni razponi/dnevi z delta vs overall win rate — POSITIVE/NEGATIVE correlation clamped [-1, 1]). analysis: streakAssessment, streakTriggers (3-5 faktorjev, ki start/maintain winning streak-e), streakBreakers (3-5 faktorjev, ki end winning streak-e), streakForecast, streakAdvice, confidenceLevel 0-100. AI-enhanced z grounding + anti-hallucination (streak counts validated against actual data, confidenceLevel clamped [0, 100], arrays max-length validirane) + 6h cache (key per totalSold) + deterministic fallback (compute iz streak data + patterns). GET+POST (AI Hub runner kompatibilnost). Razlika od deal-quality-forecaster (v7.65, ki napove quality posameznega deal-a po dnevih v tednu) — ta gleda STREAK-E (zaporedja win/loss). Razlika od deal-scoring-model-v2 (v7.69, ki score-a posamezne deal-e) — ta gleda KONTEKST zaporednih rezultatov. Razlika od deal-anatomy-analyzer (v7.71, ki analizira anatomijo winnerjev vs losersov) — ta gleda STREAK momentum in TRIGGER-e. Razlika od profit-momentum-tracker (v7.75, ki gleda profit momentum čez mesece) — ta gleda DEAL-level streak-e (micro-pattern).)
+  - seller-performance-analytics (GET, pure DB analytics — NO AI — celovita analiza prodajalcev, s katerimi si posloval. "Top seller: Elektro Marjan (PLATINUM, 12 deals, 85% success, 3200€ profit). Most generous: Modna Kraljica (18% avg discount)." sellers: per seller totalDeals, totalSpent, totalProfit, avgDealScore, avgDiscount (negotiated off asking price %), avgHoldDays, successRate, firstDealDate, lastDealDate, categories, reliabilityTier (PLATINUM 5+ deals & 80%+ success / GOLD 3+ & 60%+ / SILVER 2+ / BRONZE 1), profitabilityScore 0-100 (log-scale profit component + success rate component), pricingBehavior (FIRM <5% / FLEXIBLE 5-15% / GENEROUS >15% avg discount). comparison: bestSeller, mostReliableSeller (min 3 deals), mostGenerousSeller. byCategory: per-category seller count, topSeller, totalProfit, avgSuccessRate. summary: totalSellers, platinumCount, goldCount, silverCount, bronzeCount, totalSpentAll, totalProfitAll, advice. Pure DB analytics. Razlika od supplier-crm (v7.59, ki je CRM za stalne dobavitelje z osnovnimi metrikami) — ta da RELIABILITY TIERS + PRICING BEHAVIOR + PROFITABILITY SCORE. Razlika od reseller-blackbook (v7.33, ki gleda top sellerje per listing) — ta gleda TVOJE deal-e s sellerji in success rate. Razlika od competitor-tracker (v7.57, ki sledi supplier-jem kot konkurenci) — ta analizira TVOJE odnose s prodajalci. Razlika od seller-trust-score-v2 (AI score zaupanja posameznemu sellerju) — ta je AGGREGATE analytics čez vse prodajalce z ranked tiers. Razlika od seller-reliability-v2 (AI napoved zanesljivosti) — ta je descriptivna analiza zgodovine deal-ov.)
+  - market-cycle-detector (GET, pure DB analytics — NO AI — identificira v kateri fazi tržnega cikla smo trenutno. "Market cycle: MARKUP (60% progress, 8 weeks). Prices +5%/mo, volume +10%. BUY before DISTRIBUTION phase." cycle: currentPhase (4-fazni Wyckoff-inspired cycle: ACCUMULATION/MARKUP/DISTRIBUTION/DECLINE), cycleProgress 0-100%, cycleDuration (weeks), phaseConfidence 0-100, phaseDescription. indicators: priceTrend90d/30d (linear regression slope + UP/FLAT/DOWN direction), volumeTrend90d/30d (slope + direction), volatilityIndex (stdDev of weekly avg prices / mean × 100), dealQualityTrend (IMPROVING/STABLE/DECLINING). byCategory: per-source (Bolha/Vinted/mobile.de) phase + confidence + price/volume trend. historical: phasesLast180d (reconstructed weekly phases z weeks/startDate/endDate), mostCommonPhase. recommendation: action (BUY_AGGRESSIVELY/BUY/HOLD/SELL/SELL_AGGRESSIVELY/WAIT), reasoning, timeHorizon. Compute: query listings zadnjih 180 dni, group by ISO week, linear regression na weekly avg price + weekly volume. 4-fazna klasifikacija (ACCUMULATION = flat/low prices + low volatility, MARKUP = rising prices + rising volume, DISTRIBUTION = high/flat prices + peaking volume + high volatility, DECLINE = falling prices + declining volume). Pure DB analytics. Razlika od market-momentum (v7.62, ki da BULLISH/BEARISH/NEUTRAL score glede na trend) — ta identificira 4-fazni CYCLE (Wyckoff-inspired). Razlika od market-trend-momentum (v7.73, ki gleda ACCELERATION per kategorija) — ta gleda GLOBAL phase trga + per-category phase. Razlika od market-sentiment-pulse (v7.75, ki kombinira 5 signalov v 0-100 pulse) — ta gleda CENOVNE in VOLUMSKE trende za fazno klasifikacijo. Razlika od market-saturation-forecaster (v7.69, ki forecast-a saturacijo) — ta gleda 4-fazni cikel z volatilnostjo. Razlika od market-depth-analyzer (v7.68, ki gleda likvidnost) — ta gleda phase-timing za buy/sell odločitve.)
+- Vsi 3 endpointi vračajo veljaven JSON tudi ob prazni bazi (graceful fallback z opisno slovensko message). AI endpoint (deal-winning-streak-analyzer) ima aiUsed flag v responsu za transparentnost in GET+POST kompatibilnost z AI Hub runner-jem (handleX(req) shared function).
+- AI_ENDPOINTS.md: "Total: 311 endpoints" ✓ (310 → 311, +1 AI: deal-winning-streak-analyzer #92)
+- README.md: v7.77.0 badge (14 referenc), 311 AI (6 referenc), 470 routes (4 reference), 54 analytics (3 reference), ~156 funkcij ✓
+- CHANGELOG.md: [7.77.0] sekcija dodana z 3 endpoint-i in Changed pod-sekcijo, [Unreleased] posodobljen na v7.78+ ✓
+- ESLint: 0 napak ✨ (EXIT 0)
+- TypeScript: 0 napak ✨ (EXIT 0)
+- dev.log: vsi HTTP requesti vračajo 200 OK, brez error/warn (empty-state — AI se sploh ne kliče brez podatkov)
+- Real data verification: seed 11 SOLD trades (W W W L W W W W L L W pattern) → streaks.currentStreak=1 WINNING, longestWinningStreak=4, longestLosingStreak=2, totalStreaks=5, avgWinningStreakLength=2.7, avgLosingStreakLength=1.5, bestCategoryForStreaks=elektronika, bestPriceRangeForStreaks=50-150€ — vse kot pričakovano ✓ (po testu cleanup 11 trades deleted)
+- Verzija aplikacije: v7.77.0
