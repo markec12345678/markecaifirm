@@ -8364,3 +8364,34 @@ Stage Summary:
 - dev.log: vsi HTTP requesti vračajo 200 OK, brez error/warn (empty-state —
   AI se sploh ne kliče brez podatkov).
 - Verzija aplikacije: v7.68.0
+
+---
+Task ID: v7.68.1
+Agent: main
+Task: v7.68 commit + push + GitHub About + Agent Browser verification
+
+Work Log:
+- Prejel poročilo od full-stack-developer podagenta (Task v7.68)
+- Preveril 3 nove endpoint-e: supply-demand-balance (200 GET+POST), market-depth-analyzer (200 GET), risk-reward-calculator (200 GET+POST)
+- Preveril doc sync: AI_ENDPOINTS.md (297 ✅), README v7.68 (14 refs ✅), README 297 AI (6 refs ✅), CHANGELOG v7.68 ✅
+- Preveril lint: 0 napak ✨
+- Preveril typecheck: 0 napak ✨
+- Posodobil GitHub About opis: 295 AI → 297 AI, 440 routes → 443 routes (via API PATCH)
+- Commit: "v7.68: Supply Demand Balance + Market Depth Analyzer + Risk Reward Calculator" (b6afe6e)
+- Push na GitHub: uspešen ✅, PAT očiščen ✅
+- Agent Browser self-verification:
+  - Stran se pravilno naloži (HTTP 200)
+  - AI Hub prikazuje supply-demand-balance (v7.68) v iskalniku ✅
+  - Runner test: klik na supply-demand-balance → POST request → valid JSON ✅
+  - Response: {"ok":true, "categories":[], "overall":{...}, "aiUsed":false, "message":"Ni oglasov v zadnjih 30 dneh..."}
+  - Brez runtime napak v dev.log
+
+Stage Summary:
+- v7.68 uspešno dokončana in potisnjena na GitHub
+- 3 nove funkcije: AI Supply Demand Balance Analyzer, Market Depth Analyzer, AI Risk Reward Calculator
+- AI endpointi: 295 → 297 (+2)
+- Analytics endpointi: 40 → 41 (+1)
+- Total API routes: 440 → 443 (+3)
+- Dokumentacija sinhrono posodobljena (AI_ENDPOINTS.md, README, CHANGELOG, GitHub About)
+- GitHub sinhroniziran (0 commit-ov ahead)
+- Verzija aplikacije: v7.68.0
