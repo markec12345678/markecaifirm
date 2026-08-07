@@ -1,6 +1,6 @@
 # AI Endpoints
 
-**Total: 305 endpoints**
+**Total: 306 endpoints**
 
 Avtomatsko generirano iz `src/app/api/ai/`.
 
@@ -296,18 +296,19 @@ Avtomatsko generirano iz `src/app/api/ai/`.
 | 288 | smart-alert-router | `/api/ai/smart-alert-router` |
 | 289 | smart-bundle-pricing | `/api/ai/smart-bundle-pricing` |
 | 290 | smart-pricing-engine | `/api/ai/smart-pricing-engine` |
-| 291 | smart-restock | `/api/ai/smart-restock` |
-| 292 | sourcing | `/api/ai/sourcing` |
-| 293 | stockout-prevention | `/api/ai/stockout-prevention` |
-| 294 | suggest-filters | `/api/ai/suggest-filters` |
-| 295 | suggest-schedule | `/api/ai/suggest-schedule` |
-| 296 | supply-demand-balance | `/api/ai/supply-demand-balance` |
-| 297 | tax-aware-selling | `/api/ai/tax-aware-selling` |
-| 298 | tax-loss-harvesting | `/api/ai/tax-loss-harvesting` |
-| 299 | title-abtest | `/api/ai/title-abtest` |
-| 300 | tone-analyzer | `/api/ai/tone-analyzer` |
-| 301 | trade-replication-engine | `/api/ai/trade-replication-engine` |
-| 302 | trading-coach | `/api/ai/trading-coach` |
-| 303 | trend-predictions | `/api/ai/trend-predictions` |
-| 304 | turnover-optimizer | `/api/ai/turnover-optimizer` |
-| 305 | vendor-reliability | `/api/ai/vendor-reliability` |
+| 291 | smart-reorder-advisor | `/api/ai/smart-reorder-advisor` |
+| 292 | smart-restock | `/api/ai/smart-restock` |
+| 293 | sourcing | `/api/ai/sourcing` |
+| 294 | stockout-prevention | `/api/ai/stockout-prevention` |
+| 295 | suggest-filters | `/api/ai/suggest-filters` |
+| 296 | suggest-schedule | `/api/ai/suggest-schedule` |
+| 297 | supply-demand-balance | `/api/ai/supply-demand-balance` |
+| 298 | tax-aware-selling | `/api/ai/tax-aware-selling` |
+| 299 | tax-loss-harvesting | `/api/ai/tax-loss-harvesting` |
+| 300 | title-abtest | `/api/ai/title-abtest` |
+| 301 | tone-analyzer | `/api/ai/tone-analyzer` |
+| 302 | trade-replication-engine | `/api/ai/trade-replication-engine` |
+| 303 | trading-coach | `/api/ai/trading-coach` |
+| 304 | trend-predictions | `/api/ai/trend-predictions` |
+| 305 | turnover-optimizer | `/api/ai/turnover-optimizer` |
+| 306 | vendor-reliability | `/api/ai/vendor-reliability` |

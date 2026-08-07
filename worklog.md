@@ -9444,3 +9444,130 @@ Stage Summary:
 - Dokumentacija sinhrono posodobljena (AI_ENDPOINTS.md, README, CHANGELOG, GitHub About)
 - GitHub sinhroniziran (0 commit-ov ahead)
 - Verzija aplikacije: v7.73.0
+
+---
+Task ID: v7.74
+Agent: full-stack-developer
+Task: Add 3 new features for v7.74 — AI Smart Reorder Advisor, Cash Flow Velocity Tracker, Deal Quality Distribution Analyzer
+
+Work Log:
+- Prebral worklog.md (zadnjih ~150 vrstic) — kontekst: v7.73.1 dosežen 305 AI endpointov, 458 routes, verzija v7.73.0
+- Pregledal obstoječe vzorce endpoint-ov:
+  * src/app/api/ai/listing-conversion-forecaster/route.ts (v7.73 AI z probability prediction, GET+POST shared function, 6h cache, anti-hallucination, parseJsonLooseExported, clampNumber/clampString/clampEnum helpers)
+  * src/app/api/ai/price-intelligence-engine/route.ts (v7.72 AI z market analysis)
+  * src/app/api/analytics/inventory-value-predictor/route.ts (v7.73 pure DB z 3 scenariji)
+  * src/app/api/analytics/market-trend-momentum/route.ts (v7.73 pure DB z 2nd derivative, classifyMomentum, linearRegressionSlope, computeAcceleration)
+- Preveril schema.prisma — Trade (id, profileId, listingId, listing, title, category, buyPrice, buyDate, buyFees, sellPrice?, sellDate?, sellFees, status, etc.), Listing (id, monitorId, monitor, price Int?, firstSeenAt, aiEstimatedValue Int?, dealScore Int?, imageUrl, isBookmarked, contactStatus, aiVerdict, isHidden). Listing nima `category` polja — v deal-quality-distribution sem uporabil monitor.source kot pseudo-kategorijo (`vir:${source}`) — enako kot price-intelligence-engine in market-trend-momentum.
+- Preveril obstoječe podobne endpoint-e (da se izognem duplikaciji):
+  * /api/ai/inventory-reorder-point (matematični reorder point — razlika: smart-reorder-advisor da AI STRATEGIJO)
+  * /api/ai/smart-restock (restock priporočila za posamezne item-e — razlika: smart-reorder-advisor gleda kategorijo-level)
+  * /api/analytics/cash-conversion-cycle (CCC finančna metrika — razlika: cash-flow-velocity gleda €/ted VELOCITY + trend)
+  * /api/analytics/cash-flow-forecast (7/14/30d capital forecast — razlika: cash-flow-velocity diagnosticira bottleneck-e in velocity score)
+  * /api/analytics/deal-velocity (market temperature — razlika: cash-flow-velocity gleda cash flow, deal-quality-distribution gleda quality distribucijo)
+  * /api/ai/deal-quality-forecaster (napove quality posameznega deal-a — razlika: deal-quality-distribution analizira DISTRIBUCIJO čez vse listinge)
+  * /api/ai/deal-scoring-model-v2 (score-a posamezne deal-e — razlika: deal-quality-distribution gleda statistiko distribucije)
+  * /api/analytics/profit-distribution-optimizer (optimira profit distribucijo — razlika: deal-quality-distribution gleda deal quality distribucijo)
+  * /api/analytics/deal-profitability-matrix (profit po kategorija×hold — razlika: deal-quality-distribution gleda quality score statistiko)
+  * /api/ai/inventory-cash-flow-optimizer (optimizira cash flow — razlika: smart-reorder-advisor priporoča KDAJ/ZAKAJ reorder)
+- Preveril AI Hub runner kompatibilnost — vsi AI endpointi morajo imeti GET+POST handler-ja z shared function pattern (handleX(req))
+- Preveril AI cache (getCachedAI/setCachedAI 6h TTL), rate-limit (checkRateLimit 20/min), logger, anti-hallucination (GROUNDING_PROMPT_SUFFIX), AI client (callProviderForRaw, parseJsonLooseExported), settings helper (getSettingsRow)
+- Feature #1: AI Smart Reorder Advisor (GET+POST /api/ai/smart-reorder-advisor)
+  * Query SOLD trades zadnjih 90 dni (status=sold, sellDate >= cutoff, buyPrice > 0, sellPrice not null), grouped by category
+  * Query HELD trades (status=held, buyPrice > 0) za current stock per category
+  * Aggregate sold trades per cat: count, totalBuyPrice, totalSellPrice, cycleDays (sum of sellMs - buyMs / DAY_MS)
+  * Aggregate HELD trades per cat: count, totalBuyPrice
+  * Per kategorija izračuna:
+    - avgMonthlySales = soldCount / 3 (3 mesece)
+    - currentStock = held count v kategoriji
+    - weeksOfSupply = currentStock / (avgMonthlySales / 4), če 0 prodaj → 99 (čez zaloge) ali 0
+    - reorderPoint = ceil(avgMonthlySales / 4) (1 teden zaloge)
+    - optimalReorderQuantity = round(avgMonthlySales) (1 mesec zaloge)
+    - reorderStatus (deterministic): weeksOfSupply <1 → REORDER_NOW, <2 → REORDER_SOON, ≤8 → ADEQUATE_STOCK, >8 → OVERSTOCKED
+    - recommendedQuantity (deterministic): 0 za OVERSTOCKED/ADEQUATE, sicer max(1, optimalReorderQuantity - currentStock)
+    - recommendedTiming (deterministic): REORDER_NOW=0, REORDER_SOON=max(1, min(14, daysUntilStockout - 7)), OVERSTOCKED=weeksOfSupply × 7, ADEQUATE=weeksOfSupply × 7 × 0.6
+    - expectedStockoutDate (YYYY-MM-DD ali null): če sales > 0 in stock > 0, compute (currentStock / avgMonthlySales) × 30 days, clamped ≤ 365
+    - reorderStrategy (deterministic): OVERSTOCKED → WAIT_FOR_DEALS, avgMonthlySales ≥ 10 → BATCH_BUY, REORDER_NOW/REORDER_SOON → SINGLE_BUY
+    - budgetAllocation (deterministic): recommendedQuantity × avgBuyPrice
+    - reasoning (slovenski, buildReasoning helper — opis s status, timing, strategijo)
+  * availableCapital (ocena za anti-hallucination clamp): max(recentSpend30d × 2, heldCapital × 0.3, 1000€)
+  * Sortiranje: REORDER_NOW > REORDER_SOON > ADEQUATE_STOCK > OVERSTOCKED, znotraj skupine po avgMonthlySales desc
+  * Summary: totalCategories, reorderNowCount, adequateStockCount, overstockedCount, totalBudgetNeeded, advice (slovenski — prioritizacija REORDER_NOW, preusmeritev iz overstocked)
+  * AI prompt z grounding — vključuje catsForPrompt (top 30 kategorij z vsemi deterministic baseline vrednostmi) + availableCapital kontekst
+  * AI generira posodobljen reorder plan per kategorija: reorderStatus (validiran proti enum), recommendedQuantity (clamped na [1, avgMonthlySales × 2] za aktivne reorder, [0, 0] za OVERSTOCKED/ADEQUATE — anti-hallucination), recommendedTiming (clamped [0, 90] dni), expectedStockoutDate (regex \d{4}-\d{2}-\d{2} validacija, samo za REORDER_NOW/REORDER_SOON), reorderStrategy (validiran proti enum), budgetAllocation (clamped na [0, availableCapital]), reasoning (clamped na 300 znakov)
+  * Anti-hallucination: recommendedQuantity clamped, budgetAllocation clamped na availableCapital, recommendedTiming [0,90], reorderStatus/reorderStrategy validirana, expectedStockoutDate regex, reasoning/advice clamped na max dolžino
+  * AI cache key `smart-reorder-advisor:${isoWeek}` (YYYY-Www ISO week, 6h TTL — cache veljaven teden dni, ker so sell-through podatki stabilni znotraj tedna). ISO week izračunana iz tmpDate, dayOfWeek (Mon=0), weekThursday, yearStart (Jan 4)
+  * Deterministic fallback (compute iz weeksOfSupply) — AI uporablja deterministic baseline kot starting point in ga rafinira z additional context (trg, sezona, konkurenca)
+  * Empty state: prazne categories[], slovenski advice "Ni podatkov o prodajah ali zalogi..."
+  * GET+POST z handleSmartReorderAdvisor(req) shared function
+- Feature #2: Cash Flow Velocity Tracker (GET /api/analytics/cash-flow-velocity)
+  * Pure DB analytics, NO AI
+  * Query SOLD trades zadnjih 90 dni za cash inflow (sellPrice - sellFees per trade). Query recent buys (buyDate >= cutoff) za cash outflow (buyPrice + buyFees). Query HELD trades za projected velocity (z linked Listing.aiEstimatedValue).
+  * Inflow analiza: totalInflow = sum(sellPrice - sellFees), inflowCycleDays array (sellMs - buyMs / DAY_MS, filter [0, 365]), inflowByWeek mapa (weekIdx → inflow €) za trend analizo
+  * Outflow analiza: totalOutflow = sum(buyPrice + buyFees), outflowByWeek mapa (weekIdx → outflow €)
+  * velocity: totalInflow, totalOutflow, avgInflowPerWeek (totalInflow / 13 tednov), avgOutflowPerWeek, netCashVelocity (€/ted = inflow - outflow), cashTurnoverRate (inflow / outflow ratio), capitalCycleTime (mean inflowCycleDays), velocityScore 0-100 (composite: netCashVelocity × 40pts max + (cashTurnoverRate - 1) × 30pts max + (20 - capitalCycleTime/90 × 20) max + velocityTrend × 10pts max), velocityTrend (ACCELERATING / STABLE / DECELERATING glede na zadnje 4 tedne vs prejšnje 4 — changeRatio > 0.1 = ACCELERATING, < -0.1 = DECELERATING)
+  * byCategory: per kategorija — inflow (sum sellPrice - sellFees), outflow (sum buyPrice + buyFees), avgCycleDays (mean buy-to-sell cycle), cashConversionRate ((profit / capital / timeFactor) × 100, timeFactor = avgCycleDays / 30, capital = max(outflow, 1)), velocityRank (1 = najhitrejša, sortirano po avgCycleDays asc)
+  * projection: currentVelocity (€/ted net), projectedVelocity30d (iz HELD inventory × 0.9 fees / projectedCycleWeeks = max(1, capitalCycleTime / 7)), velocityBottleneck (katera kategorija blokira cash flow — počasen cikel z visokim volumenom, slovenski opis), bottleneckImpact (€/ted izgubljen — potencial če bi skrajšali cycle na 14 dni: (c.inflow × (cycleDays/14 - 1)) / 13 tednov)
+  * recommendations: fastestCategory (rank #1 z avgCycleDays > 0), slowestCategory (zadnja z avgCycleDays > 0), velocityAdvice (slovenski — 4 scenariji glede na netCashVelocity in velocityScore), bottleneckFix (kratek slovenski nasvet za najpočasnejšo kategorijo)
+  * Empty state: velocity z vsemi 0 + STABLE, prazne byCategory[], slovenski velocityAdvice in bottleneckFix
+  * Math helpers: mean() (povprečje), median() (sort + middle), stdDev() (population std)
+- Feature #3: Deal Quality Distribution Analyzer (GET /api/analytics/deal-quality-distribution)
+  * Pure DB analytics, NO AI
+  * Query listings zadnjih 90 dni (firstSeenAt >= cutoff, isHidden false, dealScore not null). Filter na valid dealScore [0, 100].
+  * distribution: mean (povprečje), median (sort + middle), mode (bucket label z max count iz findModeBucket), stdDev (population std), skewness (Fisher-Pearson — (1/n) × Σ((x-mean)/std)³), kurtosis (excess — (1/n) × Σ((x-mean)/std)⁴ - 3), distributionType (NORMAL / RIGHT_SKEWED / LEFT_SKEWED / BIMODAL / UNIFORM)
+  * classifyDistribution: najprej detect BIMODAL (2+ peaks z ≥2 bucket gap, vsak peak > 10% totala in > obeh sosedov), nato skewness > 0.5 → RIGHT_SKEWED, < -0.5 → LEFT_SKEWED, nato kurtosis < -1 → UNIFORM, sicer NORMAL
+  * buckets (10 bucketov 0-10, 10-20, ..., 90-100 z labelami TERRIBLE, POOR, BELOW_AVG, AVERAGE, ABOVE_AVG, GOOD, GREAT, EXCELLENT, OUTSTANDING, ELITE): count, percentage (count / total × 100), cumulativePercentage (za percentile analizo). Zadnji bucket [90, 100], ostali [min, max).
+  * byCategory: per kategorija (iz monitor.source "vir:...") — mean, median, stdDev, distributionType, eliteCount (90+ deals), qualityRank (1 = best quality, sortirano po mean desc). Min 3 podatkovne točke za veljavno statistiko.
+  * insights: topQuartileThreshold (75. percentil), eliteDealsCount (90+), poorDealsCount (<20), qualityTrend (IMPROVING / STABLE / DECLINING glede na zadnje 4 tedne vs prejšnje 4 — change > 3 točke = IMPROVING, < -3 = DECLINING), advice v slovenščini (BIMODAL/LEFT/RIGHT/UNIFORM/NORMAL specifičen nasvet + trend povzetek)
+  * Empty state: distribution z vsemi 0 + UNIFORM, prazne buckets (count 0, percentage 0), prazne byCategory[], slovenski advice
+  * Math helpers: mean(), median() (sort + middle), stdDev() (population), skewness() (Fisher-Pearson, n >= 3), kurtosis() (excess, n >= 4), topQuartile() (75. percentil)
+- Vsi 3 endpointi imajo try/catch z logger.error in NextResponse.json { error: err?.message ?? 'Napaka' }, status 500. AI endpoint (smart-reorder-advisor) ima maxDuration = 60. Vsi imajo export const runtime = 'nodejs' in export const dynamic = 'force-dynamic'.
+- TypeScript check: `npx tsc --noEmit` → 0 napak ✨
+- ESLint: `bun run lint` → 0 napak, 0 opozoril ✨
+- curl testi (vsak endpoint prazen state, brez AI provider-ja v sandboxu):
+  * GET /api/ai/smart-reorder-advisor → HTTP 200, {"ok":true,"categories":[],"summary":{"totalCategories":0,"reorderNowCount":0,"adequateStockCount":0,"overstockedCount":0,"totalBudgetNeeded":0,"advice":"Ni podatkov o prodajah ali zalogi — dodaj trade-e (status \"sold\" ali \"held\") za AI reorder nasvet."},"aiUsed":false,"message":"Ni SOLD ali HELD trade-ov — Smart Reorder Advisor ni mogoč."}
+  * POST /api/ai/smart-reorder-advisor (body {}) → HTTP 200, isti response (handleSmartReorderAdvisor(req) shared function)
+  * GET /api/analytics/cash-flow-velocity → HTTP 200, {"ok":true,"velocity":{"totalInflow":0,"totalOutflow":0,"avgInflowPerWeek":0,"avgOutflowPerWeek":0,"netCashVelocity":0,"cashTurnoverRate":0,"capitalCycleTime":0,"velocityScore":0,"velocityTrend":"STABLE"},"byCategory":[],"projection":{"currentVelocity":0,"projectedVelocity30d":0,"velocityBottleneck":"Ni podatkov — dodaj trade-e za analizo.","bottleneckImpact":0},"recommendations":{"fastestCategory":null,"slowestCategory":null,"velocityAdvice":"Ni SOLD/HELD trade-ov — Cash Flow Velocity ni mogoč.","bottleneckFix":"Dodaj trade-e (status \"sold\" ali \"held\") za analizo hitrosti denarja."}, ...}
+  * GET /api/analytics/deal-quality-distribution → HTTP 200, {"ok":true,"distribution":{"mean":0,"median":0,"mode":"AVERAGE","stdDev":0,"skewness":0,"kurtosis":0,"distributionType":"UNIFORM"},"buckets":[{"range":"0-10","label":"TERRIBLE","count":0,"percentage":0,"cumulativePercentage":0},...10 buckets...], ...}
+  * dev.log: vsi requesti 200 OK, brez error/warn (empty-state — AI se sploh ne kliče brez podatkov za smart-reorder-advisor)
+- Dokumentacijska sinhronizacija (CRITICAL):
+  * AI_ENDPOINTS.md: regeneriran z Python skripto → "Total: 306 endpoints" (305 → 306, +1 AI: smart-reorder-advisor #291). Verificirano z grep.
+  * README.md (MultiEdit z 17 urejanji):
+    - Badge version: v7.73.0 → v7.74.0
+    - Badge AI Endpoints: 305 → 306
+    - Badge API Routes: 458 → 461 (+3: 1 AI + 2 analytics)
+    - Tagline: "305 AI endpointov + 48 analytics" → "306 AI endpointov + 50 analytics"
+    - Overview: "Verzija v7.73.0" → "Verzija v7.74.0", counts posodobljeni, "~144 funkcij" → "~147 funkcij"
+    - "Kaj je novega v v7.56–v7.73 (18 verzij, 54 novih funkcij)" → "...v7.56–v7.74 (19 verzij, 57 novih funkcij)", dodan v7.74 blok (3 funkcije) na vrh z podrobnimi opisi vseh 3 endpoint-ov (response shape, anti-hallucination pravila, AI cache key, deterministic fallback, razlika od podobnih obstoječih endpoint-ov)
+    - AI Hub badge v tabeli: "Vsi 305 AI endpointov" → "Vsi 306 AI endpointov"
+    - "Endpointi (305 AI + 48 analytics + 10 cron + sistemski = 458)" → "...(306 AI + 50 analytics + 10 cron + sistemski = 461)"
+    - Dodan 1 nov AI endpoint v AI primeri blok (smart-reorder-advisor, v7.74)
+    - "Profit pipeline (v7.32-v7.73)" → "...(v7.32-v7.74)"
+    - Dodana 2 nova analytics endpointa v profit pipeline blok (cash-flow-velocity, deal-quality-distribution, v7.74)
+    - Dodan 1 nov AI endpoint v profit pipeline listo (smart-reorder-advisor, v7.74)
+    - Project structure: "305 AI endpointov" → "306 AI endpointov"
+    - Coding standards: "458 routes" → "461 routes"
+    - Roadmap: "v7.73 (trenutno — ~144 funkcij)" → "v7.74 (trenutno — ~147 funkcij)", profit pipeline list: dodane 3 nove funkcije (AI Smart Reorder Advisor, Cash Flow Velocity Tracker, Deal Quality Distribution Analyzer), "Profit pipeline (85+ funkcij)" → "(88+ funkcij)"
+    - Analytics (48) → (50), dodana 2 nova (Cash Flow Velocity, Deal Quality Distribution)
+    - Testing: "458 API routes" → "461 API routes"
+    - "Naslednji koraki": "v7.50-v7.73 funkcije" → "...v7.50-v7.74 funkcije"
+    - "Zadnje verzije": dodan "v7.74.0 (avgust 2026) — AI Smart Reorder Advisor, Cash Flow Velocity Tracker, Deal Quality Distribution Analyzer" na vrh
+    - AI_ENDPOINTS.md link: "vseh 305 AI endpointov" → "vseh 306 AI endpointov"
+    - "do v7.73 (avgust 2026)" → "do v7.74 (avgust 2026)"
+  * CHANGELOG.md (Edit z 1 velikim urejanjem):
+    - "[Unreleased] Načrtovano za v7.74+" → "...za v7.75+"
+    - Dodana nova "[7.74.0] - 2026-08-16" sekcija (nad [7.73.0]) z vsemi 3 endpoint-i in podrobnimi opisi (response shape, anti-hallucination rules, AI cache key, deterministic fallback, example comment, razlika od podobnih obstoječih endpoint-ov — smart-reorder-advisor vs inventory-reorder-point/smart-restock/restock/inventory-cash-flow-optimizer/cash-flow-forecast; cash-flow-velocity vs cash-conversion-cycle/cash-flow-forecast/inventory-cash-flow-optimizer/profit-efficiency-analyzer/deal-velocity; deal-quality-distribution vs deal-quality-forecaster/deal-scoring-model-v2/deal-velocity/profit-distribution-optimizer/deal-profitability-matrix)
+    - "### Changed" pod-sekcija z doc sync opisi (AI_ENDPOINTS.md, README.md, CHANGELOG.md, verzija aplikacije)
+
+Stage Summary:
+- 3 novi endpointi dodani (skupno +3 od v7.73.1):
+  - smart-reorder-advisor (GET+POST, AI-enhanced — AI svetuje KDAJ in KOLIKO naročiti (reorder) za vsako kategorijo na podlagi sell-through rate, trenutne zaloge in demand forecast. "Elektronika: 5 prodaj/mesec, 2 na zalogi → REORDER_NOW, 3 item-i, 900€ budget." Per kategorija: avgMonthlySales (sold/3 mesece), currentStock (HELD trades), weeksOfSupply = currentStock / (avgMonthlySales / 4), reorderPoint (1 teden zaloge), optimalReorderQuantity (1 mesec zaloge). AI generira reorder plan per kategorija: reorderStatus (REORDER_NOW / REORDER_SOON / ADEQUATE_STOCK / OVERSTOCKED), recommendedQuantity (clamped na [1, avgMonthlySales × 2]), recommendedTiming (0-90 dni do naročila), expectedStockoutDate (YYYY-MM-DD ali null), reorderStrategy (SINGLE_BUY / BATCH_BUY / WAIT_FOR_DEALS), budgetAllocation (clamped na [0, availableCapital]), reasoning (slovenski). Summary: totalCategories, reorderNowCount, adequateStockCount, overstockedCount, totalBudgetNeeded, advice. Anti-hallucination: recommendedQuantity clamped, budgetAllocation clamped, recommendedTiming [0,90], reorderStatus/reorderStrategy validirana proti enum, expectedStockoutDate regex. Cache key `smart-reorder-advisor:${isoWeek}` (YYYY-Www ISO week, 6h TTL). Deterministic fallback (compute iz weeksOfSupply). Razlika od inventory-reorder-point (ki izračuna matematični reorder point) — ta AI svetuje STRATEGIJO naročanja. Razlika od smart-restock (ki priporoča kaj restockati) — ta gleda celotno kategorijo in allocate budget. Razlika od restock (ki restock-a posamezne item-e) — ta gleda kategorijo-level reorder plan. Razlika od inventory-cash-flow-optimizer (ki optimizira cash flow) — ta gleda KDAJ/ZAKAJ reorder. Razlika od cash-flow-forecast (ki napove cash flow) — ta priporoča akcijo (reorder).)
+  - cash-flow-velocity (GET, pure DB analytics — sledi KAKO HITRO denar teče skozi posel — inflow velocity vs outflow velocity. Višja hitrost = bolj učinkovita raba kapitala. "Cash velocity: +125€/ted, turnover 1.8x, cycle 28d. Najhitrejša: elektronika (18d). Bottleneck: avto (65d)." velocity: totalInflow, totalOutflow, avgInflowPerWeek, avgOutflowPerWeek, netCashVelocity (€/ted), cashTurnoverRate (ratio), capitalCycleTime (days), velocityScore 0-100 (composite: netCashVelocity 40pts + cashTurnoverRate 30pts + cycleTime 20pts + trend 10pts), velocityTrend (ACCELERATING/STABLE/DECELERATING). byCategory: inflow, outflow, avgCycleDays, cashConversionRate, velocityRank (1 = fastest). projection: currentVelocity, projectedVelocity30d (iz HELD inventory conversion), velocityBottleneck, bottleneckImpact (€/week lost). recommendations: fastestCategory, slowestCategory, velocityAdvice, bottleneckFix. Razlika od cash-conversion-cycle (ki meri CCC finančno metriko) — ta gleda VELOCITY (€/ted) in trend acceleration. Razlika od cash-flow-forecast (ki napove 7/14/30d capital forecast) — ta diagnosticira hitrost pretoka in bottleneck-e. Razlika od inventory-cash-flow-optimizer (ki optimizira cash flow) — ta diagnosticira bottleneck-e in velocity score. Razlika od profit-efficiency-analyzer (ki meri profit per day) — ta gleda €/ted net cash velocity. Razlika od deal-velocity (ki meri market temperature) — ta gleda cash flow velocity.)
+  - deal-quality-distribution (GET, pure DB analytics — analizira DISTRIBUCIJO deal quality score-ov čez vse listinge — ali so normalno distribuirani, skewed toward high/low quality, ali bimodal? "Deal quality: mean 52, LEFT_SKEWED (more high-quality). Top 25%: 65+. Elite deals: 12. Elektronika rank #1 (avg 58)." distribution: mean, median, mode (bucket label), stdDev (spread), skewness (Fisher-Pearson — pozitivna = več low-quality, negativna = več high-quality), kurtosis (excess — pozitivna = peaked, negativna = flat), distributionType (NORMAL/RIGHT_SKEWED/LEFT_SKEWED/BIMODAL/UNIFORM). buckets (10 bucketov 0-10 do 90-100 z labelami TERRIBLE/POOR/BELOW_AVG/AVERAGE/ABOVE_AVG/GOOD/GREAT/EXCELLENT/OUTSTANDING/ELITE): count, percentage, cumulativePercentage. byCategory: mean, median, stdDev, distributionType, eliteCount (90+), qualityRank (1 = best). insights: topQuartileThreshold, eliteDealsCount, poorDealsCount (<20), qualityTrend (IMPROVING/STABLE/DECLINING), advice. Razlika od deal-quality-forecaster (ki napove quality posameznega deal-a) — ta analizira DISTRIBUCIJO quality-ja čez vse listinge. Razlika od deal-scoring-model-v2 (ki score-a posamezne deal-e) — ta gleda statistiko distribucije. Razlika od deal-velocity (ki meri market temperature) — ta gleda quality distribucijo. Razlika od profit-distribution-optimizer (ki optimira profit distribucijo) — ta gleda deal quality distribucijo. Razlika od deal-profitability-matrix (ki gleda profit po kategorija×hold) — ta gleda quality score statistiko čez vse listinge.)
+- Vsi 3 endpointi vračajo veljaven JSON tudi ob prazni bazi (graceful fallback z opisno slovensko message). AI endpoint (smart-reorder-advisor) ima aiUsed flag v responsu za transparentnost in GET+POST kompatibilnost z AI Hub runner-jem (handleSmartReorderAdvisor(req) shared function).
+- AI_ENDPOINTS.md: "Total: 306 endpoints" ✓ (305 → 306, +1 AI: smart-reorder-advisor #291)
+- README.md: v7.74.0 badge (13 referenc), 306 AI (6 referenc), 461 routes (4 reference), 50 analytics (4 reference), ~147 funkcij ✓
+- CHANGELOG.md: [7.74.0] sekcija dodana z 3 endpoint-i in Changed pod-sekcijo, [Unreleased] posodobljen na v7.75+ ✓
+- ESLint: 0 napak ✨
+- TypeScript: 0 napak ✨
+- dev.log: vsi HTTP requesti vračajo 200 OK, brez error/warn (empty-state — AI se sploh ne kliče brez podatkov)
+- Verzija aplikacije: v7.74.0
