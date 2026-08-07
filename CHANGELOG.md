@@ -6,11 +6,191 @@ Format sledi [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), verzije s
 
 ## [Unreleased]
 
-Načrtovano za v7.73+:
+Načrtovano za v7.74+:
 - WebSocket real-time negotiation (SSE namesto polling)
 - Playwright E2E testi za glavne flow-e
 - TLS fingerprinting (curl-impersonate)
 - ML model za buyer matchmaker (fine-tuned na realnem data)
+
+## [7.73.0] - 2026-08-15
+
+### Added — AI Listing Conversion Forecaster & Inventory Value Predictor & Market Trend Momentum Analyzer (3 funkcije)
+
+- **AI Listing Conversion Forecaster** — `GET+POST /api/ai/listing-conversion-forecaster`
+  - AI napove verjetnost konverzije (0-100%) za vsak HELD inventar —
+    ali se bo prodal v 7/14/30 dneh? Pomaga prioritizirati katere item-e
+    potisniti, katere relistati, katere likvidirati. "PS5 350€: 75% prob
+    v 7d (cena -12%, dealScore 85). Jakna 80€: 25% prob (brez slike,
+    zastarel)." Razlika od listing-conversion-optimizer (ki optimizira
+    listing za konverzijo) — ta NAPOVE verjetnost konverzije. Razlika od
+    listing-conversion-funnel-optimizer (ki gleda funnel) — ta gleda
+    PROBABILITETA prodaje v časovnem oknu. Razlika od buyer-conversion-predictor
+    (ki napoveduje konverzijo kupca) — ta napoveduje konverzijo TVOJEGA
+    inventarja. Razlika od listing-trend-detector (ki zazna trend) — ta
+    napoveduje konverzijo na podlagi multi-faktorjev.
+  - Query HELD trades z njihovim linked Listing-om. Query SOLD trades
+    zadnjih 365 dni za sell-through rate per kategorija (sold / (sold + held),
+    min 3 podatkovne točke za veljaven rate, drugače default 50).
+  - Per HELD trade izračuna konverzijske faktorje: priceCompetitiveness
+    ((aiEstimatedValue - buyPrice) / aiEstimatedValue, clamped [-1, 1],
+    pozitivno = pod estValue = dobra cena za kupca), listingAgeScore
+    (svež 0-3d=100, 7d=85, 14d=65, 21d=50, 30d=35, 60d=20, >60d=10),
+    categoryDemandScore (sell-through rate), dealScoreFactor (dealScore/100,
+    clamped [0, 1]), imageScore (1=slika prisotna, 0=brez), contactActivityScore
+    (contactStatus: responded=100, contacted=70, closed=30, none=10 + isBookmarked
+    +20 bonus, capped 100).
+  - conversionProbability7d/14d/30d: weighted score × horizon multiplier
+    (7d=1.0×, 14d=1.4×, 30d=1.8× diminishing returns). Stale listing
+    penalty: >60d × 0.7, >30d × 0.85. Weights: priceCompetitiveness×25,
+    listingAgeScore×0.2, categoryDemandScore×0.2, dealScoreFactor×15,
+    imageScore×10, contactActivityScore×0.1, baseline 50.
+  - expectedSellDate: { earliest, latest } YYYY-MM-DD — glede na
+    conversionProbability30d (≥70% → 1-10 dni, 40-70% → 5-25, 20-40% →
+    14-45, <20% → 30-90).
+  - confidenceScore 0-100 (dataCompleteness×70 + 15 če categoryDemandScore
+    veljaven + 15 če aiEstimatedValue poznan).
+  - keyFactors: top 3 faktorji z { factor, impact POSITIVE/NEGATIVE, detail
+    v slovenščini } (Cena pod/nad estValue, Svež/Zastarel listing, Visok/Nizek
+    dealScore, Brez slike/Slika prisotna, Visoko/Nizka povpraševanja kategorija,
+    Aktivna interakcija).
+  - improvementActions: 2-3 konkretne akcije v slovenščini (Dodaj sliko,
+    Prenovi listing, Spusti ceno za 5-10%, Aktivno odgovarjaj na povpraševanja,
+    Izboljšaj opis).
+  - summary: totalItems, highProbabilityCount (>70% 7d), mediumProbabilityCount
+    (40-70%), lowProbabilityCount (<40%), avgConversionProbability7d, advice.
+  - Anti-hallucination: vse verjetnosti clamped [0, 100], OBVEZNO
+    conversionProbability7d ≤ conversionProbability14d ≤ conversionProbability30d
+    (sort + assign), confidenceScore clamped [0, 100], impact validiran
+    proti enum [POSITIVE, NEGATIVE], vse stringi clamped na max dolžino.
+  - AI cache key `listing-conversion-forecast:${JSON.stringify(heldItemIds).slice(0, 200)}`
+    (6h TTL — cache invalidiran ko se spremeni HELD inventar).
+  - Deterministic fallback: compute iz faktorjev (weighted sum × horizon
+    multiplier) — AI uporablja deterministic baseline kot starting point
+    in ga rafinira z additional context.
+  - GET+POST kompatibilnost z AI Hub runner-jem
+    (handleListingConversionForecast(req) shared function).
+
+- **Inventory Value Predictor** — `GET /api/analytics/inventory-value-predictor`
+  - Napove SKUPNO REALIZABILNO vrednost trenutnega HELD inventarja — kaj
+    bi dejansko dobil če bi vse prodal danes vs v 30/60/90 dneh.
+    "Skladišče: 3500€ buy price, 4200€ estValue. Quick sale: 3150€
+    (profit 150€). Patient: 4200€ (profit 700€)." Razlika od
+    inventory-profit-maximizer (ki AI optimizira inventory profit) — ta
+    napove REALIZABILNO vrednost (cash flow projekcija). Razlika od
+    inventory-profitability-analyzer (ki analizira profitability) — ta
+    modelira 3 scenarije realizacije. Razlika od cash-conversion-cycle
+    (ki meri CCC finančno metriko) — ta modelira 3 scenarije realizacije.
+    Razlika od profit-trajectory-forecaster (ki napove rast profita) — ta
+    napove vrednost obstoječega inventarja.
+  - Per HELD trade: buyPrice, aiEstimatedValue (ali fallback buyPrice × 1.15
+    če estValue neznan), quickSaleValue (estValue × 0.75 — cena za hitro
+    prodajo v 7 dneh), normalSaleValue (estValue × 0.90 — normalna prodaja
+    v 30 dneh), patientSaleValue (estValue × 1.00 — čakanje na najboljšo
+    ceno v 90+ dneh), carryingCostAccrued (daysHeld × 0.50€/dan),
+    netRealizableValue (normalSaleValue - carryingCost - 5% fees),
+    daysHeld (od buyDate do zdaj).
+  - portfolio totals: totalItems, totalBuyPrice (kapital investiran),
+    totalEstimatedValue, totalUnrealizedProfit (estValue - buyPrice),
+    totalCarryingCostAccrued.
+  - scenarios: immediateLiquidation (vse quick sale, 7 dni),
+    balancedRealization (1/3 quick + 1/3 normal + 1/3 patient razdeljeno
+    po estValue desc, 30-90 dni), patientRealization (vse patient,
+    90+ dni z additional 60×CARRYING_COST_PER_DAY carrying cost).
+  - byCategory: per kategorija — itemCount, totalBuyPrice, totalEstValue,
+    avgROI % (estValue - buyPrice) / buyPrice × 100.
+  - recommendation: bestScenario (pacient/balanced/immediate glede na
+    max net profit), reasoning (slovenski), expectedCashFlow.
+  - Pure DB analytics, NO AI.
+
+- **Market Trend Momentum Analyzer** — `GET /api/analytics/market-trend-momentum`
+  - Analizira MOMENTUM tržnih trendov — ne le "ali raste?" ampak "kako
+    hitro pospešuje?". Izračuna trend acceleration/velocity (2. derivat)
+    za vsako kategorijo. "Elektronika: ACCELERATING_UP (cena +8€/ted,
+    pospešek +2€/ted²). Hot rising. Moda: DECELERATING_DOWN. Exit moda."
+    Razlika od market-momentum (ki da BULLISH/BEARISH/NEUTRAL score 0-100
+    za cel trg) — ta gleda ACCELERATION (2. derivat) per kategorija.
+    Razlika od market-trend (ki pove ali cena raste/pada) — ta pove KAKO
+    HITRO se trend pospešuje. Razlika od weekly-trend-radar (7-dnevni trende)
+    — ta gleda 13-tedensko zgodovino z 2. derivatom. Razlika od
+    market-trends (AI-generated) — ta je pure DB analytics. Razlika od
+    trend-predictions (AI predictions) — ta izračuna matematiko trend
+    accel/velocity.
+  - Query listings zadnjih 90 dni, bucketed per kategorija (iz monitor.source
+    "vir:...") per week index (0..12 glede na 90-dnevno okno).
+  - Per kategorija × week: avgPrice (sum/pricedListings), listingCount,
+    prilikaRate (% PRILIKA listings).
+  - priceTrend: slope (€/ted — linear regression least squares),
+    acceleration (€/ted² — 2. derivat = razlika slope med drugo in prvo
+    polovico podatkov), momentum (ACCELERATING_UP / RISING_STEADY /
+    DECELERATING_UP / FLAT / DECELERATING_DOWN / FALLING_STEADY /
+    ACCELERATING_DOWN glede na znak slope + accel + threshold 2% current
+    value), currentAvgPrice, projectedPrice30d (currentAvgPrice + slope ×
+    4.3 tednov).
+  - volumeTrend: slope (listings/ted), acceleration, momentum, currentListingCount,
+    projectedVolume30d.
+  - prilikaTrend: slope, currentRate, projectedRate30d (clamped [0, 100]).
+  - momentumScore 0-100 (baseline 50, +25 ACCELERATING_UP, +15 RISING_STEADY,
+    +5 DECELERATING_UP, 0 FLAT, -5 DECELERATING_DOWN, -15 FALLING_STEADY,
+    -25 ACCELERATING_DOWN za price; +10/+5/+3/-3/-5/-10 za volume;
+    ±15 za prilika slope × 3).
+  - classification: HOT_RISING (score ≥70 + ACCELERATING_UP/RISING_STEADY),
+    WARM_RISING (≥55 + rising), STABLE (srednja), COOLING (≤45 + falling),
+    COLD_FALLING (≤30 + ACCELERATING_DOWN/FALLING_STEADY).
+  - summary: totalCategories, hotRisingCount, coldFallingCount,
+    bestMomentumCategory, worstMomentumCategory, advice (slovenski).
+  - Pure DB analytics, NO AI.
+
+### Changed
+
+- **AI_ENDPOINTS.md** regeneriran z Python skripto — "Total: 305 endpoints"
+  (304 → 305, +1 AI: listing-conversion-forecaster #158).
+- **README.md** posodobljen z MultiEdit (17 urejanj):
+  - Version badge: v7.72.0 → v7.73.0
+  - AI Endpoints badge: 304 → 305
+  - API Routes badge: 455 → 458 (+3: 1 AI + 2 analytics)
+  - Tagline: "304 AI endpointov + 46 analytics" → "305 AI endpointov + 48 analytics"
+  - Overview: "Verzija v7.72.0" → "Verzija v7.73.0", counts posodobljeni,
+    "~141 funkcij" → "~144 funkcij"
+  - "Kaj je novega v v7.56–v7.72 (17 verzij, 51 novih funkcij)" → "...v7.56–v7.73
+    (18 verzij, 54 novih funkcij)", dodan v7.73 blok (3 funkcije) na vrh z
+    podrobnimi opisi vseh 3 endpoint-ov (response shape, anti-hallucination
+    pravila, AI cache key, deterministic fallback, razlika od podobnih
+    obstoječih endpoint-ov)
+  - AI Hub badge v tabeli: "Vsi 304 AI endpointov" → "Vsi 305 AI endpointov"
+  - "Endpointi (304 AI + 46 analytics + 10 cron + sistemski = 455)" → "...305 AI
+    + 48 analytics + 10 cron + sistemski = 458)"
+  - Dodan 1 nov AI endpoint v AI primeri blok (listing-conversion-forecaster,
+    v7.73)
+  - "Profit pipeline (v7.32-v7.72)" → "...v7.32-v7.73)"
+  - Dodana 2 nova analytics endpointa v profit pipeline blok
+    (inventory-value-predictor, market-trend-momentum, v7.73)
+  - Dodan 1 nov AI endpoint v profit pipeline listo (listing-conversion-forecaster,
+    v7.73)
+  - Project structure: "304 AI endpointov" → "305 AI endpointov"
+  - Coding standards: "455 routes" → "458 routes"
+  - Roadmap: "v7.72 (trenutno — ~141 funkcij)" → "v7.73 (trenutno — ~144 funkcij)",
+    profit pipeline list: dodane 3 nove funkcije (AI Listing Conversion Forecaster,
+    Inventory Value Predictor, Market Trend Momentum Analyzer),
+    "Profit pipeline (82+ funkcij)" → "(85+ funkcij)"
+  - Analytics (46) → (48), dodana 2 nova (Inventory Value Predictor, Market
+    Trend Momentum)
+  - Testing: "455 API routes" → "458 API routes"
+  - "Naslednji koraki": "v7.50-v7.72 funkcije" → "...v7.50-v7.73 funkcije"
+  - "Zadnje verzije": dodan "v7.73.0 (avgust 2026) — AI Listing Conversion
+    Forecaster, Inventory Value Predictor, Market Trend Momentum Analyzer" na vrh
+  - AI_ENDPOINTS.md link: "vseh 304 AI endpointov" → "vseh 305 AI endpointov"
+  - "do v7.72 (avgust 2026)" → "do v7.73 (avgust 2026)"
+- **CHANGELOG.md**: dodana nova "[7.73.0] - 2026-08-15" sekcija (nad [7.72.0])
+  z vsemi 3 endpoint-i in podrobnimi opisi (response shape, anti-hallucination
+  rules, AI cache key, deterministic fallback, example comment, razlika od
+  podobnih obstoječih endpoint-ov — listing-conversion-forecaster vs
+  listing-conversion-optimizer/listing-conversion-funnel-optimizer/buyer-conversion-predictor/listing-trend-detector;
+  inventory-value-predictor vs inventory-profit-maximizer/inventory-profitability-analyzer/
+  cash-conversion-cycle/profit-trajectory-forecaster; market-trend-momentum vs
+  market-momentum/market-trend/weekly-trend-radar/market-trends/trend-predictions)
+  - "### Changed" pod-sekcija z doc sync opisi (AI_ENDPOINTS.md, README.md,
+    CHANGELOG.md, verzija aplikacije)
+- Verzija aplikacije: v7.73.0
 
 ## [7.72.0] - 2026-08-14
 
