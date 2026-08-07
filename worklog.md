@@ -9571,3 +9571,34 @@ Stage Summary:
 - TypeScript: 0 napak ✨
 - dev.log: vsi HTTP requesti vračajo 200 OK, brez error/warn (empty-state — AI se sploh ne kliče brez podatkov)
 - Verzija aplikacije: v7.74.0
+
+---
+Task ID: v7.74.1
+Agent: main
+Task: v7.74 commit + push + GitHub About + Agent Browser verification
+
+Work Log:
+- Prejel poročilo od full-stack-developer podagenta (Task v7.74)
+- Preveril 3 nove endpoint-e: smart-reorder-advisor (200 GET+POST), cash-flow-velocity (200 GET), deal-quality-distribution (200 GET)
+- Preveril doc sync: AI_ENDPOINTS.md (306 ✅), README v7.74 (13 refs ✅), README 306 AI (6 refs ✅), CHANGELOG v7.74 ✅
+- Preveril lint: 0 napak ✨
+- Preveril typecheck: 0 napak ✨
+- Posodobil GitHub About opis: 305 AI → 306 AI, 458 routes → 461 routes (via API PATCH)
+- Commit: "v7.74: Smart Reorder Advisor + Cash Flow Velocity Tracker + Deal Quality Distribution Analyzer" (3d611a4)
+- Push na GitHub: uspešen ✅, PAT očiščen ✅
+- Agent Browser self-verification:
+  - Stran se pravilno naloži (HTTP 200)
+  - AI Hub prikazuje smart-reorder-advisor (v7.74) v iskalniku ✅
+  - Runner test: klik na smart-reorder-advisor → POST request → valid JSON ✅
+  - Response: {"ok":true, "categories":[], "summary":{...}, "aiUsed":false, "message":"Ni SOLD ali HELD trade-ov..."}
+  - Brez runtime napak v dev.log
+
+Stage Summary:
+- v7.74 uspešno dokončana in potisnjena na GitHub
+- 3 nove funkcije: AI Smart Reorder Advisor, Cash Flow Velocity Tracker, Deal Quality Distribution Analyzer
+- AI endpointi: 305 → 306 (+1)
+- Analytics endpointi: 48 → 50 (+2)
+- Total API routes: 458 → 461 (+3)
+- Dokumentacija sinhrono posodobljena (AI_ENDPOINTS.md, README, CHANGELOG, GitHub About)
+- GitHub sinhroniziran (0 commit-ov ahead)
+- Verzija aplikacije: v7.74.0
