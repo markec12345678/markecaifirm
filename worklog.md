@@ -9015,3 +9015,109 @@ Stage Summary:
 - Dokumentacija sinhrono posodobljena (AI_ENDPOINTS.md, README, CHANGELOG, GitHub About)
 - GitHub sinhroniziran (0 commit-ov ahead)
 - Verzija aplikacije: v7.70.0
+
+---
+Task ID: v7.71
+Agent: full-stack-developer
+Task: Add 3 new features for v7.71 — AI Deal Anatomy Analyzer, Market Gap Forecaster, Profit Accelerator
+
+Work Log:
+- Prebral worklog.md (zadnjih ~200 vrstic) — kontekst: v7.70.1 dosežen milestone 300 AI endpointov, 449 routes, verzija v7.70.0
+- Pregledal obstoječe vzorce endpoint-ov:
+  * src/app/api/ai/profit-stream-predictor/route.ts (v7.70 AI z multi-source + cache + deterministic fallback)
+  * src/app/api/analytics/deal-source-comparison-matrix/route.ts (v7.70 pure DB z normalizacijo)
+  * src/app/api/ai/profit-leakage-detector/route.ts (v7.69 AI z anti-hallucination)
+- Preveril schema.prisma — Trade, Listing, Monitor modeli. Listing nima `category` polja — uporabil `vir:${monitor.source}` fallback v market-gap-forecaster + linked trade.category za kategorijo
+- Preveril AI Hub runner kompatibilnost — vsi AI endpointi morajo imeti GET+POST handler-ja z shared function pattern (handleX(req))
+- Preveril AI cache (getCachedAI/setCachedAI 6h TTL), rate-limit (checkRateLimit 20/min), logger, anti-hallucination (GROUNDING_PROMPT_SUFFIX), AI client (callProviderForRaw, parseJsonLooseExported), settings helper (getSettingsRow)
+- Feature #1: AI Deal Anatomy Analyzer (GET+POST /api/ai/deal-anatomy-analyzer)
+  * Query vseh SOLD trades z linked Listing (dealScore, aiEstimatedValue, sellerName, monitor.source)
+  * Split v winners (profit > 0) in losers (profit <= 0)
+  * computeAnatomyGroup: count, avgDiscountAtBuy ((estValue - buyPrice) / estValue × 100), avgDealScore, avgHoldDays, avgProfit, avgROI, topCategory, topSource (buyLocation → monitor.source normaliziran), topDayOfWeek (iz buyDate)
+  * buildDeterministicDealDNA: 4 faktorji (Discount, DealScore, HoldDays inverted, ROI) z delta = winnerAvg - loserAvg, winningFactors sort po delta desc (top 5), losingFactors sort po delta asc (top 5), weights normalizirani na 0-100 s floor 5
+  * dealDNAProfile: idealPriceRange iz winner buyPrices (min-max), idealCategories top 3 iz winner kategorij, idealDealScoreRange iz winner dealScores, idealSource iz top winner source, idealHoldDays iz winner avg
+  * avoidanceProfile: avoidCategories top 3 iz loser kategorij ki niso v idealCategories, avoidSources top 2 iz loser virov ki niso idealSource, avoidPriceRanges string "lo€-hi€" iz loser buyPrices, avoidDealScoreBelow iz loser avg dealScore (default 40)
+  * scoringRubric: 3-5 kriterijev iz winningFactors z criterion, weight, scoringMethod
+  * AI prompt z grounding — vključuje anatomy skupine + top 10 winnerjev + top 10 losersov podrobnosti
+  * Anti-hallucination: vsi weights clamped [0, 100], winnerAvg/loserAvg [-100000, 100000], idealDealScoreRange [0, 100], idealHoldDays [0, 365], avoidDealScoreBelow [0, 100], stringi clamped na max dolžino, arrays max 5 items
+  * AI cache key `deal-anatomy-analyzer:${totalSold}` (6h TTL — invalidiran ko se spremeni število sold)
+  * Deterministic fallback ko AI unavailable (compute factors iz winner vs. loser averages)
+  * Empty state: { anatomy winners/losers vse 0, dealDNA prazni, aiUsed: false }
+  * GET+POST z handleDealAnatomy(req) shared function
+- Feature #2: Market Gap Forecaster (GET /api/analytics/market-gap-forecaster)
+  * Pure DB analytics, NO AI
+  * Query listings iz zadnjih 90 dni (z isBookmarked, contactStatus, monitor.source)
+  * Map listing-ov v kategorije — listing nima `category` polja, uporabil linked trade.category (iz tradesForCats) ali `vir:${monitor.source}` fallback
+  * Group listings by category × week (13 tednov zgodovine, 0 = oldest, 12 = newest)
+  * Per kategorija:
+    - current: demandScore (avg weekly bookmarked+contacted v zadnjih 4 tednih), supplyScore (avg weekly new listings), gapScore = demand/(supply+1)×10, weeklyDemand, weeklySupply
+    - trends: demandTrend (INCREASING/STABLE/DECREASING glede na linear regression slope > 0.5), supplyTrend, gapTrend = demandSlope - supplySlope
+    - forecast: projected30dGapScore (current + slope × 4 tedne), projected60dGapScore (× 8 tednov), gapStatus (EMERGING če gapTrend > 0.5 in projected30d > 50, CLOSING če gapTrend < -0.5, drugače STABLE), timeToEmergingGap (tedni do gap > 50, null če nikoli)
+    - priceRangeGaps: 7 cenovnih razponov (0-50€, 50-100€, 100-250€, 250-500€, 500-1000€, 1000-2500€, 2500€+) z demandCount, supplyCount, gapScore — sortirano desc
+  * Sortiranje: EMERGING first, nato STABLE, nato CLOSING, znotraj skupine po projected30dGapScore desc
+  * Summary: totalCategories, emergingGaps, closingGaps, bestEmergingGap (top EMERGING kategorija), advice slovenski z top priložnostjo
+  * Empty state: prazne categories[], slovenski advice "Aktiviraj monitorje..."
+- Feature #3: AI Profit Accelerator (GET+POST /api/ai/profit-accelerator)
+  * Query SOLD trades zadnjih 4 tednov (currentWeeklyProfit, winRate), SOLD this year (totalProfitThisYear), HELD trades (capitalDeployed, listingFrequency, avgHoldDays)
+  * currentMetrics: weeklyProfit (avg zadnje 4 tedne), avgHoldDays, listingFrequency (novi HELD / 4 tedne), winRate (% profitable), capitalDeployed (vsota buyPrice + buyFees HELD), profitVelocity (€/week)
+  * timeline: timeTo5000Profit ((5000 - totalProfitThisYear) / weeklyProfit v tednih), timeTo10000Profit, totalProfitThisYear (od leta start)
+  * buildDeterministicPlan: pravila-based akcije — če avgHoldDays > 30 suggest "skrajšaj hold", če listingFrequency < 2 suggest "povečaj listing freq", če winRate < 60% suggest "izboljšaj sourcing", če capitalDeployed > 500 suggest "sprosti kapital" (vsaj 5 akcij max), bottleneckAnalysis po prioriteti (hold > freq > winRate > capital), quickWins top 2 LOW-effort akcije, longTermAccelerators 3 strukturne spremembe
+  * accelerationPlan: accelerationActions (3-5 z action, expectedImpact, expectedProfitIncrease €/week, timeToImplement dni 1-90, effort LOW/MEDIUM/HIGH, riskLevel LOW/MEDIUM/HIGH), projectedTimeline (newWeeklyProfit, acceleratedTimeTo5000/10000, timeSaved5000/10000 v tednih), bottleneckAnalysis, quickWins, longTermAccelerators
+  * AI prompt z grounding — vključuje currentMetrics + timeline + pravila za plan
+  * Anti-hallucination: newWeeklyProfit clamped [current, current × 3], timeSaved5000/10000 clamped [0, 50% of current time], expectedProfitIncrease clamped [0, max(1000, weeklyProfit × 2)], timeToImplement clamped [1, 90 dni], effort/riskLevel validirana proti enum [LOW, MEDIUM, HIGH]
+  * AI cache key `profit-accelerator:${currentWeek}` (YYYY-Www ISO teden, 6h TTL — invalidiran vsak teden)
+  * Deterministic fallback ko AI unavailable
+  * Empty state: prazne accelerationActions[], bottleneckAnalysis "Ni prodanih trade-ov..."
+  * GET+POST z handleProfitAccelerator(req) shared function
+- Vsi 3 endpointi imajo try/catch z logger.error in NextResponse.json { error: err?.message ?? 'Napaka' }, status 500. AI endpointa imata tudi maxDuration = 60. Vsi imajo export const runtime = 'nodejs' in export const dynamic = 'force-dynamic'.
+- TypeScript check: `npx tsc --noEmit` → 0 napak ✨
+- ESLint: `bun run lint` → 0 napak, 0 opozoril ✨
+- curl testi (vsak endpoint prazen state, brez AI provider-ja v sandboxu):
+  * GET /api/ai/deal-anatomy-analyzer → HTTP 200, {"ok":true,"anatomy":{"winners":{count:0,...},"losers":{count:0,...}},"dealDNA":{"winningFactors":[],"losingFactors":[],...},"summary":"Ni prodanih trade-ov...","aiUsed":false,"message":"Ni prodanih trade-ov..."}
+  * POST /api/ai/deal-anatomy-analyzer (body {}) → HTTP 200, isti response (handleDealAnatomy(req) shared function)
+  * GET /api/analytics/market-gap-forecaster → HTTP 200, {"ok":true,"categories":[],"summary":{"totalCategories":0,"emergingGaps":0,"closingGaps":0,"bestEmergingGap":null,"advice":"Ni listing-ov v zadnjih 90 dneh..."},"message":"Ni listing-ov..."}
+  * GET /api/ai/profit-accelerator → HTTP 200, {"ok":true,"currentMetrics":{weeklyProfit:0,...},"timeline":{"timeTo5000Profit":0,...},"accelerationPlan":{"accelerationActions":[],"projectedTimeline":{...},"bottleneckAnalysis":"Ni prodanih trade-ov...","quickWins":[],"longTermAccelerators":[]},"summary":"Ni prodanih trade-ov...","aiUsed":false,"message":"..."}
+  * POST /api/ai/profit-accelerator (body {}) → HTTP 200, isti response (handleProfitAccelerator(req) shared function)
+  * dev.log: vsi requesti 200 OK, brez error/warn (empty-state — AI se sploh ne kliče brez podatkov)
+- Dokumentacijska sinhronizacija (CRITICAL):
+  * AI_ENDPOINTS.md: regeneriran z Python skripto → "Total: 302 endpoints" (300 → 302, +2 AI: deal-anatomy-analyzer #85, profit-accelerator #240). Verificirano z grep.
+  * README.md (MultiEdit z 16 urejanji):
+    - Badge version: v7.70.0 → v7.71.0
+    - Badge AI Endpoints: 300 → 302
+    - Badge API Routes: 449 → 452 (+3: 2 AI + 1 analytics)
+    - Tagline: "300 AI endpointov + 44 analytics" → "302 AI endpointov + 45 analytics"
+    - Overview: "Verzija v7.70.0" → "Verzija v7.71.0", counts posodobljeni, "~135 funkcij" → "~138 funkcij"
+    - "Kaj je novega v v7.56–v7.70 (15 verzij, 45 novih funkcij)" → "...v7.56–v7.71 (16 verzij, 48 novih funkcij)", dodan v7.71 blok (3 funkcije) na vrh z podrobnimi opisi vseh 3 endpoint-ov
+    - AI Hub badge v tabeli: "Vsi 300 AI endpointov" → "Vsi 302 AI endpointov"
+    - "Endpointi (300 AI + 44 analytics + 10 cron + sistemski = 449)" → "...(302 AI + 45 analytics + 10 cron + sistemski = 452)"
+    - Dodana 2 nova AI endpointa v AI primeri blok (deal-anatomy-analyzer, profit-accelerator, v7.71)
+    - "Profit pipeline (v7.32-v7.70)" → "...(v7.32-v7.71)"
+    - Dodan 1 nov analytics endpoint v profit pipeline blok (market-gap-forecaster, v7.71)
+    - Dodana 2 nova AI endpointa v profit pipeline listo (deal-anatomy-analyzer, profit-accelerator, v7.71)
+    - Project structure: "300 AI endpointov" → "302 AI endpointov"
+    - Coding standards: "449 routes" → "452 routes"
+    - Roadmap: "v7.70 (trenutno — ~135 funkcij)" → "v7.71 (trenutno — ~138 funkcij)", profit pipeline list: dodane 3 nove funkcije (AI Deal Anatomy Analyzer, Market Gap Forecaster, AI Profit Accelerator), "Profit pipeline (76+ funkcij)" → "(79+ funkcij)"
+    - Analytics (44) → (45), dodan 1 nov (Market Gap Forecaster)
+    - Testing: "449 API routes" → "452 API routes"
+    - "Naslednji koraki": "v7.50-v7.70 funkcije" → "...v7.50-v7.71 funkcije"
+    - "Zadnje verzije": dodan "v7.71.0 (avgust 2026) — AI Deal Anatomy Analyzer, Market Gap Forecaster, AI Profit Accelerator" na vrh
+    - AI_ENDPOINTS.md link: "vseh 300 AI endpointov" → "vseh 302 AI endpointov"
+    - "do v7.70 (avgust 2026)" → "do v7.71 (avgust 2026)"
+  * CHANGELOG.md (MultiEdit z 1 velikim urejanjem):
+    - "[Unreleased] Načrtovano za v7.71+" → "...za v7.72+"
+    - Dodana nova "[7.71.0] - 2026-08-13" sekcija (nad [7.70.0]) z vsemi 3 endpoint-i in podrobnimi opisi (response shape, anti-hallucination rules, AI cache key, deterministic fallback, example comment, razlika od podobnih obstoječih endpoint-ov — deal-anatomy-analyzer vs deal-scoring-model-v2/profit-leakage-detector/deal-source-comparison-matrix/profit-stream-predictor; market-gap-forecaster vs market-gap-finder/market-saturation-forecaster/market-depth-analyzer/profit-margin-heatmap; profit-accelerator vs profit-maximizer-v2/profit-forecast/profit-stream-predictor/profit-leakage-detector)
+    - "### Changed" pod-sekcija z doc sync opisi (AI_ENDPOINTS.md, README.md, CHANGELOG.md, verzija aplikacije)
+
+Stage Summary:
+- 3 novi endpointi dodani (skupno +3 od v7.70.1):
+  - deal-anatomy-analyzer (GET+POST, AI-enhanced — AI "anatomizira" tvoje najboljše in najslabše posle — razčleni KAJ je naredilo posel uspešnega ali ne. Anatomy skupine (winners vs. losers): count, avgDiscountAtBuy (popust glede na estValue), avgDealScore (iz listing.dealScore), avgHoldDays (sellDate - buyDate), avgProfit, avgROI, topCategory, topSource (buyLocation → monitor.source normaliziran), topDayOfWeek (iz buyDate). AI generira dealDNA: winningFactors (top 5 z weight 0-100, detail, winnerAvg, loserAvg), losingFactors (top 5), dealDNAProfile (idealPriceRange, idealCategories, idealDealScoreRange, idealSource, idealHoldDays), avoidanceProfile (avoidCategories, avoidSources, avoidPriceRanges, avoidDealScoreBelow), scoringRubric (kako ocenjevati bodoče posle). "Winning deals: 15% discount, dealScore 78, 22d hold. Losing: 5% discount, dealScore 45, 65d hold. DNA: buy at 15%+ discount, dealScore 70+." Anti-hallucination: vsi weights clamped [0, 100], winnerAvg/loserAvg [-100000, 100000], dealScoreRange [0, 100], holdDays [0, 365]. Cache key `deal-anatomy-analyzer:${totalSold}` (6h TTL). Deterministic fallback (compute factors iz winner vs. loser averages). Razlika od deal-scoring-model-v2 (ki ocenjuje POSAMEZEN deal z ML) — ta primerja ANATOMIJO winnerjev vs. losersov da izlušči skupne vzorce. Razlika od profit-leakage-detector (ki gleda kje profit "teče") — ta gleda KAJ loči zmagovalne od izgubljenih poslov (DNA profila). Razlika od deal-source-comparison-matrix (ki primerja vire) — ta primerja same trade-e. Razlika od profit-stream-predictor (ki napoveduje tok profita) — ta identificira faktorje uspeha v preteklih poslih.)
+  - market-gap-forecaster (GET, pure DB analytics — projektira katere market gap-ovi se bodo POJAVILI v naslednjih 30-60 dneh. Razlika od market-gap-finder (ki najde TRENUTNE gap-ove) — ta NAPOVE prihodnje gap-ove. Per kategorija (določena iz linked trade.category ali `vir:${source}` fallback): current (demandScore, supplyScore, gapScore = demand/(supply+1)×10, weeklyDemand, weeklySupply), trends (demandTrend, supplyTrend, gapTrend = demandSlope - supplySlope), forecast (projected30dGapScore, projected60dGapScore, gapStatus EMERGING/STABLE/CLOSING, timeToEmergingGap weeks), priceRangeGaps (7 cenovnih razponov z gapScore). Summary z emergingGaps, closingGaps, bestEmergingGap, advice. "Elektronika 250-500€: EMERGING gap (demand +15%/wk, supply -5%/wk). 30d projection: gap 85. BUY opportunity." Razlika od market-gap-finder (ki najde trenutne prazne niše) — ta PROJICIRA kdaj bodo nove niše postale prazne v prihodnosti. Razlika od market-saturation-forecaster (ki napoveduje nasičenost trga) — ta gleda DEMAND vs SUPPLY razliko v kategorijah in cenovnih razponih. Razlika od market-depth-analyzer (ki meri globino trga) — ta napoveduje prihodnje priložnosti kjer bo povprašanje preseglo oskrbo. Razlika od profit-margin-heatmap (ki prikazuje margine) — ta napoveduje EMERGING priložnosti v katerih je najbolj vredno vstopiti.)
+  - profit-accelerator (GET+POST, AI-enhanced — AI identificira specifične akcije da POSPEŠI rast profita — ne samo maksimizira, ampak pohitri. currentMetrics (weeklyProfit zadnjih 4 tednov, avgHoldDays, listingFrequency, winRate %, capitalDeployed €, profitVelocity €/week), timeline (timeTo5000Profit, timeTo10000Profit v tednih, totalProfitThisYear €). AI generira accelerationPlan: accelerationActions (3-5 konkretnih akcij z action, expectedImpact, expectedProfitIncrease €/week, timeToImplement dni 1-90, effort LOW/MEDIUM/HIGH, riskLevel LOW/MEDIUM/HIGH), projectedTimeline (newWeeklyProfit, acceleratedTimeTo5000/10000, timeSaved5000/10000 v tednih), bottleneckAnalysis, quickWins (1-2 akcije za danes), longTermAccelerators (2-3 strukturne spremembe). "Accelerate: list 3/week (+150€/wk), cut hold 5d (+80€/wk). Time to 5000€: 12wk → 7wk (save 5wk)." Anti-hallucination: newWeeklyProfit clamped [current, current × 3], timeSaved5000/10000 clamped [0, 50% of current time], expectedProfitIncrease clamped [0, max(1000, weeklyProfit × 2)], timeToImplement [1, 90 dni], effort/riskLevel validirana proti enum [LOW, MEDIUM, HIGH]. Cache key `profit-accelerator:${currentWeek}` (YYYY-Www, 6h TTL). Deterministic fallback (pravila-based: če holdDays>30 suggest reduce hold, če listingFrequency<2 suggest list more, če winRate<60% suggest improve sourcing, če capitalDeployed>500 suggest free capital). Razlika od profit-maximizer-v2 (ki ML maksimizira profit na posameznem trade-u) — ta gleda SISTEMSKE akcije za pohitritev rasti. Razlika od profit-forecast (ki napoveduje profit za obdobje) — ta daje KONKRETNE akcije za pospešitev. Razlika od profit-stream-predictor (ki napoveduje profit tok) — ta generira akcijski načrt za pospešitev. Razlika od profit-leakage-detector (ki gleda kje profit teče) — ta gleda kako POHITRITI rast profita.)
+- Vsi 3 endpointi vračajo veljaven JSON tudi ob prazni bazi (graceful fallback z opisno slovensko message). AI endpointa (deal-anatomy-analyzer, profit-accelerator) imata aiUsed flag v responsu za transparentnost in GET+POST kompatibilnost z AI Hub runner-jem (handleDealAnatomy(req), handleProfitAccelerator(req) shared function).
+- AI_ENDPOINTS.md: "Total: 302 endpoints" ✓ (300 → 302, +2 AI)
+- README.md: v7.71.0 badge (15 referenc), 302 AI (6 referenc), 452 routes (3 reference), 45 analytics (2 referenci), ~138 funkcij (2 referenci) ✓
+- CHANGELOG.md: [7.71.0] sekcija dodana z 3 endpoint-i in Changed pod-sekcijo, [Unreleased] posodobljen na v7.72+ ✓
+- ESLint: 0 napak ✨
+- TypeScript: 0 napak ✨
+- dev.log: vsi HTTP requesti vračajo 200 OK, brez error/warn (empty-state — AI se sploh ne kliče brez podatkov).
+- Verzija aplikacije: v7.71.0
