@@ -6,11 +6,218 @@ Format sledi [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), verzije s
 
 ## [Unreleased]
 
-Načrtovano za v7.78+:
+Načrtovano za v7.79+:
 - WebSocket real-time negotiation (SSE namesto polling)
 - Playwright E2E testi za glavne flow-e
 - TLS fingerprinting (curl-impersonate)
 - ML model za buyer matchmaker (fine-tuned na realnem data)
+
+## [7.78.0] - 2026-08-20
+
+### Added — AI Inventory Turnover Forecast & Market Trend Forecaster Pro & Deal Conversion Funnel Analyzer (3 funkcije)
+
+- **AI Inventory Turnover Forecast** — `GET+POST /api/ai/inventory-turnover-forecast`
+  - AI napove turnover rate (koliko item-ov/month prodaš) za naslednje
+    30/60/90 dni glede na historično prodajno hitrost, trenutno zalogo
+    in tržne razmere. "Tvoj turnover: 3.2x/mesec, projected 2.5x v 30
+    dneh (aging stock). Action: likvidiraj 3 item-e >60d → nazaj na
+    3.5x." Razlika od inventory-turnover-predictor (ki napove turnover
+    za posamezno kategorijo z basic predikcijo) — ta da 30/60/90d
+    PROJECTION z AI-jevo analizo aging stock-a, bottleneck item-ov in
+    optimization actions. Razlika od inventory-turnover-optimizer (ki
+    optimizira turnover strategijo) — ta FORECAST-a prihodnji turnover
+    rate z explicitnim bottleneck item tracking-om. Razlika od
+    inventory-turnover-accelerator (ki pospeši turnover) — ta gleda
+    PROJECTION in RISK FACTORS za naslednje 90 dni. Razlika od
+    turnover-optimizer (basic turnover optimization) — ta da TIME-PHASED
+    forecast 30/60/90 dni z confidence score in bottleneck items.
+    Razlika od cash-conversion-cycle (CCC = DIO+DSO-DPO finance metric)
+    — ta gleda OPERATIVNI turnover rate (koliko item-ov/month prodas)
+    z AI projection. Razlika od cash-flow-velocity (v7.74 cash velocity)
+    — ta gleda TURNOVER VELOCITY (item-i/month) z aging stock analysis
+    in bottleneck identification.
+  - Query SOLD trades zadnjih 90 dni za avg monthly turnover (sold/3)
+    + avg turnover rate (sold / avg inventory held) + avg hold days
+    (days from buyDate to sellDate).
+  - Query current HELD trades: currentStock, totalHeldCapital (sum
+    buyPrice), agingItems (>30 dni), freshItems (<7 dni).
+  - Compute turnoverTrend (IMPROVING/STABLE/DECLINING) glede na
+    mesečni slope (linear regression na mesečne sold counts zadnja 3
+    mesece z 15% threshold).
+  - Compute deterministic forecast 30/60/90d z trend multiplier,
+    aging drag (vsak aging item zmanjša rate za 2%, max 50%), fresh
+    boost, in stock ratio (če currentStock < monthlyTurnover, se
+    rate zmanjša).
+  - Build bottleneckItems: top 10 HELD item-ov z daysHeld >21 ali
+    dealScore <40 (iz Listing.dealScore), z bottleneckReason in
+    recommendedAction (HIGH priority za >60d, MEDIUM za >30d ali
+    low dealScore, LOW za >21d).
+  - AI generira: forecast (projectedTurnover30d/60d/90d clamped
+    [0, 20], turnoverAssessment max 500 znakov, confidence 0-100),
+    actions (3-5 konkretnih ukrepov z HIGH/MEDIUM/LOW priority in
+    expectedTurnoverImprovement %, sort po priority in improvement),
+    summary (expectedTurnoverRate clamped [0, 20], riskFactors 3-5,
+    advice max 500 znakov).
+  - AI-enhanced z grounding + anti-hallucination (turnover rates
+    clamped [0, 20], projections validirane proti historical,
+    actions priority validirana proti enum, kategorije validirane)
+    + 6h cache (key `inventory-turnover-forecast:${YYYY-MM}`) +
+    deterministic fallback (compute iz trend + aging drag + stock
+    ratio).
+  - GET+POST z handleInventoryTurnoverForecast(req) shared function
+    (AI Hub runner kompatibilnost — AI Hub UI vedno pošlje POST).
+  - maxDuration = 60, runtime = 'nodejs', dynamic = 'force-dynamic'.
+  - Empty state: če ni SOLD trade-ov v zadnjih 90 dneh in ni HELD
+    inventarja, vrne vse 0 + message "Ni SOLD trade-ov v zadnjih 90
+    dneh in ni HELD inventarja — Inventory Turnover Forecast ni mogoč."
+
+- **Market Trend Forecaster Pro** — `GET+POST /api/ai/market-trend-forecaster-pro`
+  - Napreden AI trend forecaster, ki kombinira 4 trend signale (price,
+    volume, deal quality, demand) v celovit 90-dnevni trend forecast
+    z scenario analizo. "Elektronika: STRONG_UP (price +8%, volume
+    +12%, demand +15%). BULL 40%, BASE 45%, BEAR 15%. BUY." Razlika
+    od market-trends (basic trend analysis) — ta da 4-signals
+    COMPOSITE trend forecast z BULL/BASE/BEAR scenarios. Razlika od
+    trend-predictions (basic predictions) — ta da SCENARIO MODELING
+    z probabilities in trend convergence/divergence analysis. Razlika
+    od listing-trend-detector (listing-level trend detection) — ta
+    gleda KATEGORIJSKE tržne trende z 4 signali. Razlika od
+    market-trend (basic rising/falling prices) — ta kombinira 4
+    signale (price, volume, quality, demand) v composite score.
+    Razlika od market-trend-momentum (v7.73 trend acceleration per
+    kategorija) — ta da SCENARIO ANALYSIS (BULL/BASE/BEAR) z
+    probabilities in actionable insights. Razlika od weekly-trend-radar
+    (7-day trends) — ta gleda 90-dnevni forecast z 4 signali. Razlika
+    od price-history-forecaster (v7.71 price forecast) — ta gleda 4
+    signale + scenarios, ne le ceno. Razlika od market-cycle-detector
+    (v7.77 4-fazni Wyckoff cycle) — ta je PRO verzija z SCENARIO
+    MODELING in convergence analysis.
+  - Query listings zadnjih 180 dni (isHidden false) z monitor.source,
+    price, firstSeenAt, dealScore, isBookmarked, contactStatus.
+  - Group by kategorija (monitor.source) in ISO week (week starts
+    Monday), compute weekly avg price, weekly count, weekly avg
+    dealScore, weekly demand rate ((bookmarked + contacted) / count
+    × 100).
+  - Compute 4 signala per kategorija:
+    - priceSignal: slope (linear regression), acceleration (recent vs
+      older slope), volatility (stdDev/mean × 100), normalized 0-100
+      (50 = neutral, +5%/ted → +25 score, -5%/ted → -25 score).
+    - volumeSignal: slope, acceleration, normalized 0-100.
+    - qualitySignal: slope, normalized 0-100 (glede na dealScore).
+    - demandSignal: slope, normalized 0-100 (glede na bookmarked/
+      contacted rate).
+  - compositeScore 0-100 (weighted: price 35% + volume 20% + quality
+    20% + demand 25%), trendDirection (STRONG_UP ≥80, UP ≥60, FLAT
+    40-60, DOWN ≥20, STRONG_DOWN <20).
+  - Forecast per kategorija: predictedPriceChange30d/90d, predictedVolumeChange30d,
+    predictedDemandChange30d (vsi clamped [-50, 50] iz slope extrapolation),
+    confidenceScore 0-100 (glede na signal agreement + composite score).
+  - Scenarios per kategorija: BULL_CASE/BASE_CASE/BEAR_CASE z priceChange
+    (bull = base × 1.8, bear = base × -1.5, clamped [-50, 50]) in
+    probability (vsota 100%, glede na direction + confidence).
+  - Deterministic analysis: trendConvergence (HIGH/MEDIUM/LOW glede
+    na stdDev composite-a <10/25), trendDivergence (kategorije s
+    konflikti — price UP + volume DOWN), keyTrendDrivers (top 5 z
+    weight 0-1), actionableInsights (BUY/SELL/HOLD per kategorija
+    z reasoning glede na trendDirection in scenarios).
+  - AI generira analysis (trendConvergence, trendDivergence z
+    categories validirane proti actual seznamu, keyTrendDrivers 3-5,
+    actionableInsights 3-8 z BUY/SELL/HOLD enum validacija in
+    categories validirane) in summary (max 500 znakov).
+  - AI-enhanced z grounding + anti-hallucination (vsi % changes clamped
+    [-50, 50], confidenceScore clamped [0, 100], kategorije validirane
+    proti actual seznamu, actions validirane proti enum) + 6h cache
+    (key `market-trend-forecaster-pro:${YYYY-MM}`) + deterministic
+    fallback (compute iz signal averages + scenario modeling).
+  - GET+POST z handleMarketTrendForecasterPro(req) shared function.
+  - maxDuration = 60, runtime = 'nodejs', dynamic = 'force-dynamic'.
+  - Empty state 1: če ni listing-ov v 180 dneh → prazni arrays +
+    message. Empty state 2: če manj kot 2 tedna podatkov za vse
+    kategorije → prazni arrays + message.
+
+- **Deal Conversion Funnel Analyzer** — `GET /api/analytics/deal-conversion-funnel-analyzer`
+  - Analizira celoten deal conversion funnel od odkritja listing-a do
+    finalne prodaje in identificira kje izgubljaš deal-e. "Funnel: 500
+    odkritih → 25 prodanih (5%). Največji padec: contact stage (70%
+    izgube). Fix: boljši outreach → +12 prodaj, +3600€." Razlika od
+    buyer-conversion-funnel-v2 (ki gleda buyer-side conversion) — ta
+    gleda TVOJ full deal funnel od discovery do sold z 8 fazami.
+    Razlika od listing-conversion-funnel-optimizer (AI optimization
+    nasveti) — ta je descriptivna analiza z bottleneck identification
+    in optimization potential. Razlika od listing-conversion-optimizer
+    (AI optimization) — ta gleda conversion RATE med fazami z
+    bottleneck analysis. Razlika od deal-pipeline-forecaster (v7.76
+    pipeline stages) — ta gleda conversion funnel z bottleneck in
+    optimization potential (projected additional sales). Razlika od
+    deal-velocity (market temperature) — ta gleda WHERE deals are
+    lost v funnel-u z stage-level conversion rates.
+  - Query vse listings (isHidden false) z aiScore, dealScore,
+    contactStatus, firstSeenAt, contactedAt, aiEvaluatedAt,
+    isBookmarked, monitor.source.
+  - Query vse trades (status held/sold/cancelled) z listingId,
+    status, category, buyPrice, buyDate, sellDate, sellPrice,
+    flipChecklist (JSON array).
+  - Build 8-fazni funnel:
+    - DISCOVERED = total listings
+    - AI_ANALYZED = listings z aiScore > 0
+    - HIGH_QUALITY = listings z dealScore > 50
+    - CONTACTED = listings z contactStatus ≠ 'none'
+    - NEGOTIATED = listings povezani s trades (unique listingId)
+    - PURCHASED = trades z status 'held' ali 'sold'
+    - LISTED_FOR_SALE = purchased trades z flipChecklist progress > 50%
+    - SOLD = trades z status 'sold'
+  - Compute conversion rates med fazami: analysisRate, qualityRate,
+    contactRate, negotiationRate, purchaseRate, listingRate, saleRate,
+    overallConversion.
+  - Compute avg time per stage: avgAnalyzeDays (firstSeenAt →
+    aiEvaluatedAt), avgContactDays (aiEvaluatedAt → contactedAt),
+    avgPurchaseDays (contactedAt → buyDate), avgSaleDays (buyDate →
+    sellDate).
+  - Analysis: biggestDropoff (faza z največjim % padcem z impact
+    opisom), weakestStage (faza z najnižjo conversion rate z
+    specifično recommendation per fazo), strongestStage (faza z
+    najvišjo conversion rate).
+  - byCategory: per kategorija (monitor.source) discovered, sold,
+    conversionRate, weakestStage, rank (sort po conversionRate desc).
+  - Optimization: weakestStageImprovement (% če bi izboljšal na
+    povprečje), projectedAdditionalSales (cascade iz improved weakest
+    stage do SOLD z remaining stage conversions), projectedAdditionalRevenue
+    (avg sellPrice × additional sales), recommendation.
+  - Pure DB analytics — NO AI. GET handler only (analytics endpoint).
+  - runtime = 'nodejs', dynamic = 'force-dynamic'.
+  - Empty state: če ni podatkov, vrne vse 0 + prazni arrays.
+
+### Changed
+
+- **AI_ENDPOINTS.md**: regeneriran z Python skripto → "Total: 313
+  endpoints" (311 → 313, +2 AI: inventory-turnover-forecast,
+  market-trend-forecaster-pro).
+- **README.md**: verzija v7.77.0 → v7.78.0, AI Endpoints badge 311 →
+  313, API Routes badge 470 → 473 (+3), tagline "311 AI endpointov +
+  54 analytics" → "313 AI endpointov + 55 analytics" (+1 analytics:
+  deal-conversion-funnel-analyzer), overview "v7.77.0 / ~156 funkcij"
+  → "v7.78.0 / ~159 funkcij", dodan v7.78 blok (3 funkcije) v "Kaj
+  je novega", AI Hub badge v tabeli 311 → 313, endpointi v AI primeri
+  blok (2 AI + 1 analytics dodani), profit pipeline list (97+ → 100+
+  funkcij), analytics list (54 → 55), testing "470 routes" → "473
+  routes", roadmap "v7.77 (trenutno)" → "v7.78 (trenutno)",
+  naslednji koraki "v7.50-v7.77" → "v7.50-v7.78", zadnje verzije
+  dodan v7.78.0 na vrh, AI_ENDPOINTS.md link 311 → 313, "do v7.77"
+  → "do v7.78".
+- **CHANGELOG.md**: dodana nova [7.78.0] sekcija nad [7.77.0] z
+  vsemi 3 endpoint-i in podrobnimi opisi (response shape, anti-
+  hallucination rules, AI cache key, deterministic fallback, example
+  comment, razlika od podobnih obstoječih endpoint-ov — inventory-
+  turnover-forecast vs inventory-turnover-predictor/optimizer/
+  accelerator/turnover-optimizer/cash-conversion-cycle/cash-flow-
+  velocity; market-trend-forecaster-pro vs market-trends/trend-
+  predictions/listing-trend-detector/market-trend/market-trend-
+  momentum/weekly-trend-radar/price-history-forecaster/market-cycle-
+  detector; deal-conversion-funnel-analyzer vs buyer-conversion-
+  funnel-v2/listing-conversion-funnel-optimizer/listing-conversion-
+  optimizer/deal-pipeline-forecaster/deal-velocity), [Unreleased]
+  posodobljen na v7.79+.
+- Verzija aplikacije: v7.78.0
 
 ## [7.77.0] - 2026-08-19
 
