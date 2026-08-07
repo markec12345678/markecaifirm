@@ -9152,3 +9152,110 @@ Stage Summary:
 - Dokumentacija sinhrono posodobljena (AI_ENDPOINTS.md, README, CHANGELOG, GitHub About)
 - GitHub sinhroniziran (0 commit-ov ahead)
 - Verzija aplikacije: v7.71.0
+
+---
+Task ID: v7.72
+Agent: full-stack-developer
+Task: Add 3 new features for v7.72 — AI Price Intelligence Engine, Deal Profitability Matrix, Profit Trajectory Forecaster
+
+Work Log:
+- Prebral worklog.md (zadnjih ~150 vrstic) — kontekst: v7.71.1 dosežen 302 AI endpointov, 452 routes, verzija v7.71.0
+- Pregledal obstoječe vzorce endpoint-ov:
+  * src/app/api/ai/deal-anatomy-analyzer/route.ts (v7.71 AI z anatomy + cache + deterministic fallback, GET+POST shared function)
+  * src/app/api/ai/profit-accelerator/route.ts (v7.71 AI z acceleration plan + ISO week cache key)
+  * src/app/api/analytics/market-gap-forecaster/route.ts (v7.71 pure DB z 13-tedensko zgodovino + linear regression)
+  * src/app/api/analytics/deal-source-comparison-matrix/route.ts (v7.70 pure DB z 2D matriko)
+- Preveril schema.prisma — Trade (category, buyPrice, sellPrice?, buyDate, sellDate?, buyFees, sellFees, status, listingId?, listing?), Listing (price Int?, sellerName String?, monitorId, monitor.source), Monitor (source). Listing nima `category` polja — v price-intelligence-engine sem uporabil monitor.source kot pseudo-kategorijo za competitor listings (`vir:${source}`)
+- Preveril AI Hub runner kompatibilnost — vsi AI endpointi morajo imeti GET+POST handler-ja z shared function pattern (handleX(req))
+- Preveril AI cache (getCachedAI/setCachedAI 6h TTL), rate-limit (checkRateLimit 20/min), logger, anti-hallucination (GROUNDING_PROMPT_SUFFIX), AI client (callProviderForRaw, parseJsonLooseExported), settings helper (getSettingsRow)
+- Feature #1: AI Price Intelligence Engine (GET+POST /api/ai/price-intelligence-engine)
+  * Query HELD trades (tvoje asking cene preko linked listing.price, fallback buyPrice)
+  * Query SOLD trades zadnjih 180 dni (marketAvgPrice iz sellPrice — kaj je dejansko delovalo)
+  * Query competitor listings zadnjih 90 dni (s sellerName nastavljen — competitorAvgPrice iz price)
+  * Per kategorija: yourAvgPrice, marketAvgPrice, competitorAvgPrice, pricePosition (BELOW/AT/ABOVE glede na ±5% tolerance), priceElasticityScore 0-100 (iz holdDays razlik med below/at/above market prodajami — visok score = elastičen trg), optimalPricePoint (max profit × sell prob; >60 elasticity → market, <30 → market×1.1 premium, srednja → blend)
+  * dynamicPricing per HELD trade: currentPrice (listing.price ali buyPrice), recommendedPrice, adjustAction (UP/DOWN/KEEP glede na ±15% od trga: >1.15 → DOWN na 0.95× market, <0.85 → UP na 0.95× market, drugače KEEP), expectedImpact, confidence 0-1
+  * competitorStrategy: commonStrategy (UNDERCUT/PREMIUM/MATCH glede na katera kategorija prevladuje), avgCompetitorDiscount %, strategyAdvice
+  * optimalWindows: 2-3 časovna okna za prilagajanje cen (deterministično: Nedelja zvečer — 5% popust; Sreda dopoldne — test 5-10% dvig)
+  * AI prompt z grounding — vključuje marketPricing, dynamicPricing, competitorStrategy, pravila za AI
+  * Anti-hallucination: recommendedPrice clamped na [0.5×, 1.3×] currentPrice, adjustAction validiran proti enum [UP, DOWN, KEEP], commonStrategy validiran proti enum [UNDERCUT, PREMIUM, MATCH], avgCompetitorDiscount clamped na [0, 100], confidence clamped na [0, 1], vse stringi clamped na max dolžino
+  * AI cache key `price-intelligence:${currentWeek}` (YYYY-Www ISO teden, 6h TTL)
+  * Deterministic fallback ko AI unavailable (compute iz price position + elasticity)
+  * Empty state: prazne marketPricing[], dynamicPricing[], optimalWindows[], competitorStrategy default MATCH
+  * GET+POST z handlePriceIntelligence(req) shared function
+- Feature #2: Deal Profitability Matrix (GET /api/analytics/deal-profitability-matrix)
+  * Pure DB analytics, NO AI
+  * Query SOLD trades z buyDate, sellDate, category, profit fields
+  * Hold-time ranges: 0-7d, 7-14d, 14-30d, 30-60d, 60-90d, 90d+
+  * Per celica (category × hold-time-range): tradeCount, totalProfit, avgProfit, avgROI %, winRate %, profitabilityScore = avgProfit × log10(tradeCount + 1), classification (HIGHLY_PROFITABLE ≥50, PROFITABLE 20-50, MARGINAL 5-20, UNPROFITABLE <5)
+  * Prazne celice vključene za polno matriko strukturo s score=0
+  * Insights: bestCombination (najvišji score), worstCombination (najnižji score), sweetSpots per kategorija (najboljši hold-time range), advice (slovenski z top priložnostjo)
+  * Summary: totalCategories, totalCombinations, highlyProfitableCells, unprofitableCells
+  * Sortiranje kategorij po totalProfit desc
+  * Empty state: prazne matrix[], slovenski advice
+- Feature #3: AI Profit Trajectory Forecaster (GET+POST /api/ai/profit-trajectory-forecaster)
+  * Query SOLD trades zadnjih 12 mesecev, bucket profit po mesecu (YYYY-MM)
+  * trajectory: monthlyGrowthRate (linear regression slope — EUR/month), growthPattern (LINEAR/EXPONENTIAL/PLATEAUING/FLAT glede na slope in velocity), growthVelocity (2nd derivative — slope razlika med drugo in prvo polovico mesecev), currentTrajectory (slovenski opis shape-a)
+  * projections za 3 scenarije (CONTINUE_CURRENT, ACCELERATED, DECELERATED) z month6/month12/month24/totalProfit24m:
+    - CONTINUE_CURRENT: linear extrapolation (baseMonth + slope × months)
+    - ACCELERATED: 1.5× slope + max(50, baseMonth × 5%) boost
+    - DECELERATED: 0.5× slope - max(20, baseMonth × 2%) cool-down
+  * analysis: inflectionPoint (kdaj se growth pattern spremeni ali null), growthBottleneck (kaj omejuje rast), trajectoryAdvice (kako vzdrževati/pospešiti)
+  * AI prompt z grounding — vključuje monthly profit history, deterministic trajectory, projections
+  * Anti-hallucination: month6/12/24 clamped na [0, max(current×4, 50000)], totalProfit24m clamped na [0, max×24], ACCELERATED ≥ CONTINUE_CURRENT ≥ DECELERATED enforcement (samodejno popravljeno če AI vrne napačen vrstni red)
+  * AI cache key `profit-trajectory:${currentMonth}` (YYYY-MM ISO mesec, 6h TTL)
+  * Deterministic fallback ko AI unavailable (linearna regresija na zadnjih 12 mesecih)
+  * Empty state: trajectory FLAT s "Ni prodanih trade-ov" message, vse projections 0
+  * GET+POST z handleProfitTrajectory(req) shared function
+- Prisma 6 fix: DateTime filter ne sprejema `not: null` — uporabil `gte: new Date(0)` ali samo `gte: cutoff` (ki implicitno izključi nulls) namesto `not: null` za sellDate/buyDate filtre. `not: null` še vedno deluje za Float? (sellPrice). Initial tsc error je bil: "Type 'null' is not assignable to type 'string | Date | NestedDateTimeFilter<\"Trade\"> | undefined'" — popravljeno v vseh 3 datotekah (deal-profitability-matrix, price-intelligence-engine, profit-trajectory-forecaster)
+- Vsi 3 endpointi imajo try/catch z logger.error in NextResponse.json { error: err?.message ?? 'Napaka' }, status 500. AI endpointa imata tudi maxDuration = 60. Vsi imajo export const runtime = 'nodejs' in export const dynamic = 'force-dynamic'.
+- TypeScript check: `npx tsc --noEmit` → 0 napak ✨
+- ESLint: `bun run lint` → 0 napak, 0 opozoril ✨
+- curl testi (vsak endpoint prazen state, brez AI provider-ja v sandboxu):
+  * GET /api/ai/price-intelligence-engine → HTTP 200, {"ok":true,"marketPricing":[],"dynamicPricing":[],"competitorStrategy":{"commonStrategy":"MATCH","avgCompetitorDiscount":0,"strategyAdvice":"Ni podatkov o konkurenci."},"optimalWindows":[],"summary":"Ni podatkov za Price Intelligence — dodaj HELD trades in listinge s sellerName za analizo.","aiUsed":false,"message":"Ni HELD trade-ov, prodanih trade-ov ali listing-ov s sellerName — Price Intell..."}
+  * POST /api/ai/price-intelligence-engine (body {}) → HTTP 200, isti response (handlePriceIntelligence(req) shared function)
+  * GET /api/analytics/deal-profitability-matrix → HTTP 200, {"ok":true,"matrix":[],"insights":{"bestCombination":null,"worstCombination":null,"sweetSpots":[],"advice":"Ni prodanih trade-ov — Profitability Matrix ni mogoče izračunati. Dodaš trades z buyDate, sellDate, buyPrice in sellPrice za začetek."},"summary":{"totalCategories":0,"totalCombinations":0,"highlyProfitableCells":0,"unprofitableCells":0},"message":"Ni prodanih trade-ov — Profitability Matrix ni mogoče izračunati."}
+  * GET /api/ai/profit-trajectory-forecaster → HTTP 200, {"ok":true,"trajectory":{"monthlyGrowthRate":0,"growthPattern":"FLAT","growthVelocity":0,"currentTrajectory":"Ni prodanih trade-ov — trajektorija ni mogoča."},"projections":{"CONTINUE_CURRENT":{"month6":0,"month12":0,"month24":0,"totalProfit24m":0},"ACCELERATED":{...},"DECELERATED":{...}},"analysis":{...},"summary":"Ni prodanih trade-ov — Profit Trajectory Forecaster ne more delovati.","aiUsed":false,"message":"Ni prodanih trade-ov — Profit Trajectory ni mogoča."}
+  * POST /api/ai/profit-trajectory-forecaster (body {}) → HTTP 200, isti response (handleProfitTrajectory(req) shared function)
+  * dev.log: vsi requesti 200 OK, brez error/warn (empty-state — AI se sploh ne kliče brez podatkov)
+- Dokumentacijska sinhronizacija (CRITICAL):
+  * AI_ENDPOINTS.md: regeneriran z Python skripto → "Total: 304 endpoints" (302 → 304, +2 AI: price-intelligence-engine #234, profit-trajectory-forecaster #257). Verificirano z grep.
+  * README.md (MultiEdit z 17 urejanji):
+    - Badge version: v7.71.0 → v7.72.0
+    - Badge AI Endpoints: 302 → 304
+    - Badge API Routes: 452 → 455 (+3: 2 AI + 1 analytics)
+    - Tagline: "302 AI endpointov + 45 analytics" → "304 AI endpointov + 46 analytics"
+    - Overview: "Verzija v7.71.0" → "Verzija v7.72.0", counts posodobljeni, "~138 funkcij" → "~141 funkcij"
+    - "Kaj je novega v v7.56–v7.71 (16 verzij, 48 novih funkcij)" → "...v7.56–v7.72 (17 verzij, 51 novih funkcij)", dodan v7.72 blok (3 funkcije) na vrh z podrobnimi opisi vseh 3 endpoint-ov (response shape, anti-hallucination pravila, AI cache key, deterministic fallback, razlika od podobnih obstoječih endpoint-ov)
+    - AI Hub badge v tabeli: "Vsi 302 AI endpointov" → "Vsi 304 AI endpointov"
+    - "Endpointi (302 AI + 45 analytics + 10 cron + sistemski = 452)" → "...(304 AI + 46 analytics + 10 cron + sistemski = 455)"
+    - Dodana 2 nova AI endpointa v AI primeri blok (price-intelligence-engine, profit-trajectory-forecaster, v7.72)
+    - "Profit pipeline (v7.32-v7.71)" → "...(v7.32-v7.72)"
+    - Dodan 1 nov analytics endpoint v profit pipeline blok (deal-profitability-matrix, v7.72)
+    - Dodana 2 nova AI endpointa v profit pipeline listo (price-intelligence-engine, profit-trajectory-forecaster, v7.72)
+    - Project structure: "302 AI endpointov" → "304 AI endpointov"
+    - Coding standards: "452 routes" → "455 routes"
+    - Roadmap: "v7.71 (trenutno — ~138 funkcij)" → "v7.72 (trenutno — ~141 funkcij)", profit pipeline list: dodane 3 nove funkcije (AI Price Intelligence Engine, Deal Profitability Matrix, AI Profit Trajectory Forecaster), "Profit pipeline (79+ funkcij)" → "(82+ funkcij)"
+    - Analytics (45) → (46), dodan 1 nov (Deal Profitability Matrix)
+    - Testing: "452 API routes" → "455 API routes"
+    - "Naslednji koraki": "v7.50-v7.71 funkcije" → "...v7.50-v7.72 funkcije"
+    - "Zadnje verzije": dodan "v7.72.0 (avgust 2026) — AI Price Intelligence Engine, Deal Profitability Matrix, AI Profit Trajectory Forecaster" na vrh
+    - AI_ENDPOINTS.md link: "vseh 302 AI endpointov" → "vseh 304 AI endpointov"
+    - "do v7.71 (avgust 2026)" → "do v7.72 (avgust 2026)"
+  * CHANGELOG.md (MultiEdit z 1 velikim urejanjem):
+    - "[Unreleased] Načrtovano za v7.72+" → "...za v7.73+"
+    - Dodana nova "[7.72.0] - 2026-08-14" sekcija (nad [7.71.0]) z vsemi 3 endpoint-i in podrobnimi opisi (response shape, anti-hallucination rules, AI cache key, deterministic fallback, example comment, razlika od podobnih obstoječih endpoint-ov — price-intelligence-engine vs smart-pricing-engine/price-elasticity/cross-platform-price/listing-price-elasticity-analyzer-v2; deal-profitability-matrix vs profit-margin-heatmap/deal-source-comparison-matrix/profit-heatmap/time-to-profit; profit-trajectory-forecaster vs profit-forecast/profit-stream-predictor/profit-accelerator/deal-quality-forecaster)
+    - "### Changed" pod-sekcija z doc sync opisi (AI_ENDPOINTS.md, README.md, CHANGELOG.md, verzija aplikacije)
+
+Stage Summary:
+- 3 novi endpointi dodani (skupno +3 od v7.71.1):
+  - price-intelligence-engine (GET+POST, AI-enhanced — AI-powered "price intelligence" ki analizira pricing vzorce čez tvoje listinge + konkurenco + trg. Per kategorija: yourAvgPrice vs marketAvgPrice vs competitorAvgPrice, pricePosition (BELOW/AT/ABOVE), priceElasticityScore 0-100 (kako občutljiva je prodaja na ceno — izračunano iz holdDays razlik med below/at/above market prodajami), optimalPricePoint (max profit × sell prob). dynamicPricing per HELD item: adjustAction (UP/DOWN/KEEP glede na ±15% od trga), recommendedPrice clamped na [0.5×, 1.3×] currentPrice, confidence 0-1. competitorStrategy (UNDERCUT/PREMIUM/MATCH), avgCompetitorDiscount %, strategyAdvice. optimalWindows 2-3 časovna okna za prilagajanje cen. "Elektronika: your price 280€ vs market 310€ (BELOW). Opportunity: raise to 305€ (+9% profit, -5% sell prob)." Anti-hallucination: recommendedPrice clamped na [0.5×, 1.3×] currentPrice. Cache key `price-intelligence:${currentWeek}` (YYYY-Www, 6h TTL). Deterministic fallback (compute iz price position + elasticity). Razlika od smart-pricing-engine (ki priporoča ceno za POSAMEZEN listing) — ta gleda TRŽNO inteligenco čez kategorije. Razlika od price-elasticity (ki meri elastičnost za posamezni listing) — ta gleda kategorijo-elastičnost in competitor strategije. Razlika od cross-platform-price (ki primerja cene čez platforme) — ta primerja tvoje cene proti market in competitors. Razlika od listing-price-elasticity-analyzer-v2 (ki gleda posamezni listing) — ta generira dynamic pricing recommendations za vse HELD item-e hkrati.)
+  - deal-profitability-matrix (GET, pure DB analytics — 2D matrika ki prikazuje dobičkonosnost po kategoriji × hold-time-range (0-7d, 7-14d, 14-30d, 30-60d, 60-90d, 90d+). Per celica: tradeCount, totalProfit, avgProfit, avgROI %, winRate %, profitabilityScore = avgProfit × log10(tradeCount + 1) (nagrajuje tako margin kot volumen), classification (HIGHLY_PROFITABLE ≥50, PROFITABLE 20-50, MARGINAL 5-20, UNPROFITABLE <5). Insights: bestCombination, worstCombination, sweetSpots per kategorija (najboljši hold-time range), advice. "Elektronika × 14-30d: HIGHLY_PROFITABLE (score 85, 35% ROI). Moda × 60-90d: UNPROFITABLE (score 2)." Razlika od profit-margin-heatmap (ki gleda kategorija × cena razpon) — ta gleda kategorija × HOLD-TIME. Razlika od deal-source-comparison-matrix (ki primerja vire čez metrike) — ta primerja hold-time range-e znotraj vsake kategorije. Razlika od profit-heatmap (ki prikazuje dneve/ure prodaje) — ta prikazuje hold-time intervale. Razlika od time-to-profit (ki meri čas do profit na posameznem trade-u) — ta klasificira profitability celotnih kategorij × hold-time celic.)
+  - profit-trajectory-forecaster (GET+POST, AI-enhanced — AI napove "trajektorijo" rasti profita čez 6/12/24 mesecev pod 3 scenariji (CONTINUE_CURRENT, ACCELERATED, DECELERATED). Pokaže OBLIKO krivulje rasti — LINEAR (stabilen prirast), EXPONENTIAL (pospešujoča), PLATEAUING (upočasnjujoča) ali FLAT. trajectory (monthlyGrowthRate = linear regression slope EUR/month, growthPattern, growthVelocity = 2nd derivative EUR/month² — kako hitro rast pospešuje). projections za 3 scenarije z month6/month12/month24/totalProfit24m. analysis (inflectionPoint kdaj se bo growth pattern spremenil, growthBottleneck kaj omejuje rast, trajectoryAdvice kako vzdrževati/pospešiti). "Trajectory: EXPONENTIAL (growth velocity +15%/mo). 24m projection: 12,000€ (accelerated) vs 6,000€ (current). Bottleneck: capital." Anti-hallucination: month6/12/24 clamped na [0, max(current×4, 50000)], totalProfit24m clamped na [0, max×24], ACCELERATED ≥ CONTINUE_CURRENT ≥ DECELERATED enforcement. Cache key `profit-trajectory:${currentMonth}` (YYYY-MM, 6h TTL). Deterministic fallback (linearna regresija na zadnjih 12 mesecih). Razlika od profit-forecast (ki napove profit za obdobje) — ta gleda OBLIKO rasti in inflection points. Razlika od profit-stream-predictor (ki napove tok profita po virih) — ta gleda 3 scenarije rasti. Razlika od profit-accelerator (ki daje akcije za pospešitev) — ta modelira PROJEKCIJO profit trajektorije čez 24 mesecev. Razlika od deal-quality-forecaster (ki napoveduje quality posameznega deal-a) — ta napoveduje celotno profit rast.)
+- Vsi 3 endpointi vračajo veljaven JSON tudi ob prazni bazi (graceful fallback z opisno slovensko message). AI endpointa (price-intelligence-engine, profit-trajectory-forecaster) imata aiUsed flag v responsu za transparentnost in GET+POST kompatibilnost z AI Hub runner-jem (handlePriceIntelligence(req), handleProfitTrajectory(req) shared function).
+- AI_ENDPOINTS.md: "Total: 304 endpoints" ✓ (302 → 304, +2 AI: price-intelligence-engine #234, profit-trajectory-forecaster #257)
+- README.md: v7.72.0 badge (14 referenc), 304 AI (6 referenc), 455 routes (4 reference), 46 analytics (3 reference), ~141 funkcij ✓
+- CHANGELOG.md: [7.72.0] sekcija dodana z 3 endpoint-i in Changed pod-sekcijo, [Unreleased] posodobljen na v7.73+ ✓
+- ESLint: 0 napak ✨
+- TypeScript: 0 napak ✨
+- dev.log: vsi HTTP requesti vračajo 200 OK, brez error/warn (empty-state — AI se sploh ne kliče brez podatkov)
+- Verzija aplikacije: v7.72.0
