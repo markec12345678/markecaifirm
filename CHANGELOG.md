@@ -6,11 +6,122 @@ Format sledi [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), verzije s
 
 ## [Unreleased]
 
-Načrtovano za v7.63+:
+Načrtovano za v7.64+:
 - WebSocket real-time negotiation (SSE namesto polling)
 - Playwright E2E testi za glavne flow-e
 - TLS fingerprinting (curl-impersonate)
 - ML model za buyer matchmaker (fine-tuned na realnem data)
+
+## [7.63.0] - 2026-08-08
+
+### Added — Profit Margin Heatmap & Listing Exposure Score & Capital Allocation Optimizer (3 funkcije)
+- **Profit Margin Heatmap** — `GET /api/analytics/profit-margin-heatmap`
+  - 2D matrica (kategorija × cenovni razpon) ki prikazuje kombinacije z najvišjim
+    profitnim margin-om. Pomaga identificirati "sweet spot" segmente — npr.
+    "Elektronika 250-500€ = HOT, 35% margin, 12 trades". Pure DB analytics — NO AI.
+  - Razlika od profit-heatmap (ki gleda dneve/ure z največ dobička) — ta gleda
+    KATEGORIJO × CENO. Razlika od roi-leaderboard (ki rank-a kategorije) — ta
+    gleda 2D mrežo s klasifikacijo HOT/WARM/COOL/COLD.
+  - 6 cenovnih razponov: 0-50€, 50-100€, 100-250€, 250-500€, 500-1000€, 1000€+.
+  - Za vsako celico (category × priceRange) compute:
+    * `tradeCount` = število sold trades v celici
+    * `avgMargin` = avg((sellPrice - buyPrice) / buyPrice × 100)
+    * `avgProfit` = avg(sellPrice - buyPrice - fees)
+    * `winRate` = % profitable
+    * `heatScore` = avgMargin × log10(tradeCount + 1) — rewards both high margin
+      AND volume (visok margin + 1 trade = nizko; visok margin + 10 trade-ov = HOT)
+  - Klasifikacija celic: HOT (heatScore > 50), WARM (20-50), COOL (5-20), COLD (<5).
+  - Response: matrix (rows = categories, columns = priceRanges), topCells (top 5
+    hottest z insight string), summary (totalCategories, totalCells, hotCells,
+    coldCells, bestCombination, worstCombination, advice).
+  - Empty-state fallback: "Ni prodanih trade-ov — Profit Margin Heatmap analiza ni
+    mogoča."
+  - 'Elektronika 250-500€ = HOT (35% margin, 12 trades). Moda 0-50€ = COLD (3%)'
+
+- **Listing Exposure Score** — `GET /api/analytics/listing-exposure-score`
+  - Oceni kako dobro je vsak HELD inventar "izpostavljen" kupcem — listing age,
+    price competitiveness, contact activity, deal score, image presence in title
+    quality. Pure DB analytics — NO AI.
+  - Razlika od margin-guardian-pro (ki gleda margin-健康) — ta gleda EXPOSURE
+    (komercialna vidika). Razlika od listing-ctr-optimizer (ki gleda naslove in
+    slike) — ta gleda celotno sliko: starost + cena + kontakt + deal score.
+  - Query HELD trades z linked Listing.
+  - Za vsak held item compute 6 faktorjev:
+    * `listingAgeDays` (days since firstSeenAt ali buyDate)
+    * `priceCompetitiveness` = (aiEstimatedValue - price) / aiEstimatedValue × 100
+    * `contactActivity` = 0 (none) | 1 (contacted) | 2 (bookmarked)
+    * `dealScore` = listing.dealScore (0-100)
+    * `hasImage` (boolean — trade.imageUrl ali listing.imageUrl)
+    * `titleLength` (chars — 50-100 = best)
+  - Exposure score (0-100):
+    * ageScore: <7d=30, 7-14d=25, 14-30d=15, 30-60d=5, >60d=0
+    * priceScore: >20%=25, 10-20%=20, 0-10%=10, <0%=5
+    * activityScore: 2=15, 1=10, 0=5
+    * dealScorePoints: >70=15, 50-70=10, <50=5
+    * imageScore: 1=8, 0=0
+    * titleScore: 50-100 chars=7, else=3
+  - Klasifikacija: EXCELLENT (80+), GOOD (60-79), AVERAGE (40-59), POOR (20-39),
+    CRITICAL (<20).
+  - Response: items (sorted by exposureScore ASC — needs most attention first),
+    summary (totalItems, excellent/good/average/poor/critical counts,
+    avgExposureScore, needsAttention = poor + critical).
+  - recommendedActions: concrete actions per item (npr. "Listing star 45 dni —
+    razmisli o osvežitvi", "Ni kontaktov — kontaktiraj prodajalce",
+    "Dodaj fotografije — poveča CTR za ~30%", "Cena 5% nad estValue — znižaj za 5%").
+  - Empty-state fallback: "Ni held inventarja — Exposure Score analiza ni mogoča."
+  - 'PS5 exposure 45/100 (AVERAGE) — listing 18d, price -5%, no contacts.
+    Action: add photos, drop 10%'
+
+- **Capital Allocation Optimizer** — `GET+POST /api/ai/capital-allocation-optimizer`
+  - AI optimira alokacijo razpoložljivega kapitala čez kategorije z 3 strategijami
+    (CONSERVATIVE/BALANCED/AGGRESSIVE) baziranimi na zgodovinskih ROI + volatilnosti
+    (Sharpe-like ratio = expectedROI / riskScore).
+  - Razlika od capital-allocation-advisor (ki svetuje STATIČNO alokacijo po
+    kategorijah) — ta je DINAMIČNA: upošteva trenutno portfeljsko alokacijo,
+    računa volatilnost ROI (std dev), in optimira Sharpe-like ratio. Generira 3
+    strategije namesto 1.
+  - Body param: `availableCapital` (optional, override — če ne podan, izračuna iz
+    sold trades zadnjih 30 dni).
+  - Query 3 datasets:
+    * SOLD trades (last 30d) za availableCapital = Σ(sellPrice - sellFees)
+    * HELD trades za currentAllocation (% per category)
+    * ALL sold trades za historicalROI in volatility (std dev) per kategorija
+  - Compute per category: avgROI, vol (std dev of ROI-jev), riskScore (0-100,
+    baziran na volatilnosti — 10 + min(80, vol × 1.2)).
+  - AI prompt z GROUNDING_PROMPT_SUFFIX — zgodovina ROI/vol per kategorija +
+    trenutna alokacija. AI generira 3 strategije z allocations[] (category,
+    percentage, expectedROI, riskScore, reasoning) + bestStrategy + rebalanceActions.
+  - Anti-hallucination:
+    * expectedROI clamped na [-20%, 100%] (realen razpon)
+    * riskScore clamped na [5, 95]
+    * percentage clamped na [0, 100] + sum normaliziran na 100
+    * amountToInvest = percentage / 100 × availableCapital
+    * sharpeLikeRatio = expectedROI / riskScore (per allocation in strategy)
+    * strategy-level: expectedTotalROI = Σ(expectedROI × percentage / 100),
+      sharpeLikeRatio = expectedTotalROI / Σ(riskScore × percentage / 100)
+    * če AI sum != 100 (off by >1%), fallback na deterministic za to strategijo
+    * če AI skipne kategorije, fallback na deterministic
+  - Rebalance actions: BUY (underexposed), SELL (overexposed >5%), HOLD
+    (znotraj ±5%). Amount (€) in reason (slovensko).
+  - AI cache key `capital-allocation-optimizer:${availableCapital}` (6h TTL).
+  - Deterministic fallback: 3 strategije z weights = (1 + max(0, avgROI/20)) /
+    max(1, riskScore/30) × riskMultiplier (CONSERVATIVE 0.5, BALANCED 1.0,
+    AGGRESSIVE 1.5). CONSERVATIVE sortira po riskScore asc, AGGRESSIVE po ROI desc.
+  - Both GET and POST handlers (AI Hub runner compatibility).
+  - Empty-state: "Ni razpoložljivega kapitala (0€ iz prodaj zadnjih 30 dni)" ali
+    "Ni zgodovine prodaj — Capital Allocation Optimizer potrebuje sold trade-ove."
+  - '2000€ available → BALANCED: 40% elektronika (25% ROI), 30% moda (15%),
+    30% orodje (20%)'
+
+### Changed
+- AI_ENDPOINTS.md: regenerated → 288 → 289 endpoints (+1 AI: capital-allocation-optimizer)
+- README.md: version badge v7.62.0 → v7.63.0, AI Endpoints 288 → 289, API Routes
+  425 → 428, "288 AI + 32 analytics" → "289 AI + 34 analytics", "~111 funkcij" →
+  "~114 funkcij", added v7.63 block at top of "Kaj je novega", profit pipeline
+  (v7.32-v7.62) → (v7.32-v7.63), Analytics (32) → (34) z 2 novima
+  (Profit Margin Heatmap, Listing Exposure Score), v7.63.0 entry in "Zadnje
+  verzije"
+- CHANGELOG.md: [Unreleased] "v7.63+" → "v7.64+", added [7.63.0] section
 
 ## [7.62.0] - 2026-08-08
 
