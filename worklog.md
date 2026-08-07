@@ -9756,3 +9756,34 @@ Stage Summary:
 - TypeScript: 0 napak ✨
 - dev.log: vsi HTTP requesti vračajo 200 OK, brez error/warn (empty-state — AI se sploh ne kliče brez podatkov)
 - Verzija aplikacije: v7.75.0
+
+---
+Task ID: v7.75.1
+Agent: main
+Task: v7.75 commit + push + GitHub About + Agent Browser verification
+
+Work Log:
+- Prejel poročilo od full-stack-developer podagenta (Task v7.75)
+- Preveril 3 nove endpoint-e: buyer-retention-forecaster (200 GET+POST), market-sentiment-pulse (200 GET), profit-momentum-tracker (200 GET+POST)
+- Preveril doc sync: AI_ENDPOINTS.md (308 ✅), README v7.75 (14 refs ✅), README 308 AI (6 refs ✅), CHANGELOG v7.75 ✅
+- Preveril lint: 0 napak ✨
+- Preveril typecheck: 0 napak ✨
+- Posodobil GitHub About opis: 306 AI → 308 AI, 461 routes → 464 routes (via API PATCH)
+- Commit: "v7.75: Buyer Retention Forecaster + Market Sentiment Pulse + Profit Momentum Tracker" (bbc7549)
+- Push na GitHub: uspešen ✅, PAT očiščen ✅
+- Agent Browser self-verification:
+  - Stran se pravilno naloži (HTTP 200)
+  - AI Hub prikazuje buyer-retention-forecaster (v7.75) v iskalniku ✅
+  - Runner test: klik na buyer-retention-forecaster → POST request → valid JSON ✅
+  - Response: {"ok":true, "buyers":[], "summary":{...}, "aiUsed":false, "message":"Ni SOLD trade-ov..."}
+  - Brez runtime napak v dev.log
+
+Stage Summary:
+- v7.75 uspešno dokončana in potisnjena na GitHub
+- 3 nove funkcije: AI Buyer Retention Forecaster, Market Sentiment Pulse, AI Profit Momentum Tracker
+- AI endpointi: 306 → 308 (+2)
+- Analytics endpointi: 50 → 51 (+1)
+- Total API routes: 461 → 464 (+3)
+- Dokumentacija sinhrono posodobljena (AI_ENDPOINTS.md, README, CHANGELOG, GitHub About)
+- GitHub sinhroniziran (0 commit-ov ahead)
+- Verzija aplikacije: v7.75.0
