@@ -6,11 +6,238 @@ Format sledi [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), verzije s
 
 ## [Unreleased]
 
-Načrtovano za v7.70+:
+Načrtovano za v7.71+:
 - WebSocket real-time negotiation (SSE namesto polling)
 - Playwright E2E testi za glavne flow-e
 - TLS fingerprinting (curl-impersonate)
 - ML model za buyer matchmaker (fine-tuned na realnem data)
+
+## [7.70.0] - 2026-08-12
+
+### Added — AI Profit Stream Predictor & Inventory Lifecycle Stage Classifier & Deal Source Comparison Matrix (3 funkcije)
+
+- **AI Profit Stream Predictor** — `GET+POST /api/ai/profit-stream-predictor`
+  - AI napoveduje "profit stream" — vzorce ponavljajočega se profita skozi
+    čas. Identificira katere kategorije prinašajo stalen (STEADY) vs.
+    sporadičen (ERRATIC) profit in projektira 90-dnevni tok profita z
+    intervali zaupanja. Razlika od profit-forecast (ki vrne eno številko)
+    — ta prikaze VZOREC profita (steady vs. lumpy) po tednih.
+  - AI-enhanced z grounding + anti-hallucination + 6h cache
+    (`profit-stream-predictor:${currentMonth}`) + deterministic fallback
+    (linearna regresija na zadnjih 8 tednih).
+  - Razlika od profit-forecast (ki vrne skupno napovedano številko za
+    obdobje) — ta prikaze VZOREC profita po tednih z intervali zaupanja.
+    Razlika od profit-dashboard (ki je real-time dashboard) — ta je napoved
+    90 dni vnaprej. Razlika od cash-flow-forecast (ki gleda cash flow
+    in/out) — ta gleda samo profit tok. Razlika od profit-efficiency-
+    analyzer (ki meri profit per dan) — ta gleda konsistentnost profita
+    skozi čas. Razlika od profit-margin-heatmap (ki gleda margine po
+    kategoriji/ceni) — ta gleda tok profita skozi čas.
+  - Query SOLD trades (status='sold', sellDate >= 180 dni nazaj,
+    buyPrice>0, sellPrice!=null). Group by week (26 tednov, W0 =
+    najstarejši, W25 = najnovejši). Za vsak teden: profit (sellPrice -
+    sellFees - buyPrice - buyFees), trades.
+  - Stream characteristics:
+    * `avgWeeklyProfit` = mean(weeklyProfits)
+    * `profitVolatility` = stdev / mean (nižje = bolj stabilno)
+    * `consistencyScore` = 0-100 ((1 - min(1, volatilnost)) × 100)
+    * `streamType` = STEADY (vol <0.3), VARIABLE (0.3-0.6), ERRATIC
+      (>0.6)
+    * `totalWeeksAnalyzed` = 26
+  - Per-category profit stream (categoryStreams): za vsako kategorijo z
+    ≥1 trade-om: weeklyProfit, reliability (consistency 0-100), streamType
+    (STEADY/VARIABLE/ERRATIC), contribution (% od skupnega profita).
+    Sort by contribution desc (most profit-bearing first).
+  - AI prompt z GROUNDING_PROMPT_SUFFIX — 26 tednov zgodovine + top 15
+    kategorij z značilnostmi. AI generira:
+    * `projection` 13 tednov (90 dni) projekcija. Za vsak teden:
+      - `projectedProfit` EUR (lahko trend-up/down glede na zgodovino)
+      - `confidenceLow` / `confidenceHigh` ±1 stdev interval (širši
+        naprej)
+    * `summary.projectedTotalProfit90d` = vsota vseh 13 tednov
+    * `summary.bestWeek` = teden z najvišjim projectedProfit (week 1-13,
+      profit)
+    * `summary.worstWeek` = teden z najnižjim projectedProfit
+    * `summary.profitStabilityAdvice` konkreten nasvet (1-2 stavka)
+  - Anti-hallucination: vsak projectedProfit clamped na [0,
+    avgWeeklyProfit × 3] (maxCap). confidenceLow clamped na [0,
+    projectedProfit], confidenceHigh clamped na [projectedProfit, maxCap].
+    week validiran [1, 13]. Če AI manjka teden, dopolnjeno iz baseline.
+    projectedTotalProfit90d clamped na [0, maxCap × 13 × 2]. bestWeek/
+    worstWeek.profit clamped na [0, maxCap]. profitStabilityAdvice
+    clamped na 500 chars (fallback na deterministic advice glede na
+    streamType). DB streamAnalysis in categoryStreams ostanejo iz DB.
+  - Deterministic fallback (ko AI ni na voljo): linear projection iz
+    zadnjih 8 tednov (recentMean + recentSlope × i), confidence interval
+    ±1 stdev × (1 + i × 0.05). bestWeek/worstWeek iz projekcije.
+    profitStabilityAdvice glede na streamType (STEADY/VARIABLE/ERRATIC).
+  - Cache key `profit-stream-predictor:${currentMonth}` (YYYY-MM, 6h TTL).
+    Cache se združi nazaj z DB streamAnalysis in categoryStreams.
+  - Rate limit 20/min/IP. Empty-state z opisno slovensko message.
+  - Example: "Profit stream: STEADY (volatility 0.2, consistency 85/100).
+    90d projection: 2400€. Najbolj zanesljiva: elektronika."
+
+- **Inventory Lifecycle Stage Classifier** — `GET /api/analytics/inventory-lifecycle-stage-classifier`
+  - Klasificira vsak HELD inventar v eno od 7 lifecycle stadijev
+    (INTAKE → PROCESSING → LISTED → ACTIVE → AGING → STALE → DEAD) glede
+    na daysSinceBuy, daysSinceFirstSeen, hasContacts, hasPriceDrops,
+    flipChecklistProgress. Prikaže v katerem stadiju je vsak item in kaj
+    storiti. Pure DB analytics — NO AI.
+  - Razlika od inventory-lifecycle (ki upravlja lifecycle workflow) — ta
+    KLASIFICIRA vsak item v eno od 7 stadijev. Razlika od
+    inventory-lifecycle-optimizer-v2 (ki optimizira prehode med stadiji)
+    — ta samo pokaže trenutni stadij in priporočilo. Razlika od
+    inventory-aging-predictor-v2 (ki napoveduje kdaj bo item zastarel) —
+    ta pove KAJ STORITI ZDaj glede na trenutni stadij. Razlika od
+    listing-performance (ki spremlja aktivne listing-e) — ta vključuje
+    tudi INTAKE/PROCESSING stadije ki še niso listed. Razlika od
+    cash-conversion-cycle (ki meri DIO+DSO-DPO) — ta gleda lifecycle
+    stadij vsakega item-a posebej.
+  - Query HELD trades z linked Listing (firstSeenAt, contactStatus,
+    priceDroppedAt, isBookmarked). Za vsak item izračuna:
+    * `daysSinceBuy` = round((now - buyDate) / DAY_MS)
+    * `daysSinceFirstSeen` = round((now - listing.firstSeenAt) / DAY_MS)
+      (ali daysSinceBuy če listing null)
+    * `hasContacts` = listing.contactStatus != 'none' && != ''
+    * `hasPriceDrops` = listing.priceDroppedAt != null
+    * `flipChecklistProgress` = % completed steps iz flipChecklist JSON
+      ([{step, completedAt}] — štej completedAt != null)
+  - Classification (7 stadijev z cumulative thresholds):
+    * `INTAKE` (daysSinceBuy ≤2, checklist <10%) — registriraj v sistem
+    * `PROCESSING` (checklist <50%, daysSinceBuy ≤7) — fotografiraj,
+      opis, objavi
+    * `LISTED` (checklist ≥50%, daysListed <7) — spremljaj ogledi/kontakti
+    * `ACTIVE` (daysListed 7-30, hasContacts OR hasPriceDrops) — odzovi
+      se hitro, ponudi discount za hitro sklenitev
+    * `LISTED` (daysListed <30, brez kontaktov) — izboljšaj naslov/sliko
+    * `AGING` (daysListed 30-60) — znižaj ceno 10-15%, osveži fotografije
+    * `STALE` (daysListed 60-90) — kritično, znižaj pod break-even ali
+      bundle prodaja
+    * `DEAD` (daysListed >90) — likvidiraj, prodaj pod ceno ali doniraj
+  - Per item: currentStage, stageProgress 0-100% (koliko je v tem
+    stadiju), nextStage, daysInStage, recommendedAction (specifično za
+    vsak stadij), urgency (LOW/MEDIUM/HIGH/CRITICAL).
+  - portfolioDistribution: { intake, processing, listed, active, aging,
+    stale, dead } — koliko item-ov v vsakem stadiju.
+  - actionPlan:
+    * `immediateActions` ranked (CRITICAL→LOW): DEAD (likvidiraj), STALE
+      (znižaj pod break-even), AGING (znižaj 10-15%), LISTED (izboljšaj
+      naslove), PROCESSING (pospeši fotografiranje)
+    * `bottleneckStage` = stadij z največ item-ov (PROCESSING/LISTED/
+      AGING/STALE/DEAD — izključi INTAKE in ACTIVE ki sta zdrava)
+    * `advice` slovenski opis bottleneck-a in kaj storiti
+  - Sort: urgency CRITICAL→LOW, nato daysInStage desc (najstarejši
+    najprej).
+  - Empty-state z opisno slovensko message.
+  - Example: "INTAKE: 2, PROCESSING: 1, LISTED: 3, ACTIVE: 2, AGING: 1,
+    STALE: 1, DEAD: 0. Bottleneck: LISTED (3 item-ov čaka aktivnost)."
+
+- **Deal Source Comparison Matrix** — `GET /api/analytics/deal-source-comparison-matrix`
+  - 2D matrika ki primerja vire (Bolha, Vinted, Facebook, mobile.de, itd.)
+    čez 5+ metrik (ROI, win rate, avg hold days, deal score, volume).
+    Pomaga odločati katere vire prioritetizirati. Pure DB analytics —
+    NO AI.
+  - Razlika od deal-source-roi (ki meri ROI per vir — eno metriko) — ta
+    primerja vire čez 5+ metrik z normalizacijo in overall score. Razlika
+    od source-quality (ki ocenjuje listing quality per vir) — ta gleda
+    FINANČNE metrike (ROI, win rate, profit per day, capital efficiency).
+    Razlika od listing-performance (ki spremlja listing aktivnost) — ta
+    gleda sales performance per vir.
+  - Query SOLD trades z linked Listing (monitor.source, aiRisk, dealScore).
+    Source določen iz buyLocation (free-form) → fallback monitor.source.
+    normalizeSource() mapira "Bolha"/"FB"/"Facebook Marketplace"/...
+    na bolha/facebook/vinted/...
+  - Per source metrike:
+    * `totalTrades` = count
+    * `totalInvested` = sum(buyPrice + buyFees)
+    * `totalProfit` = sum(profit) (sellPrice - sellFees - buyPrice -
+      buyFees)
+    * `avgROI` = totalProfit / totalInvested × 100
+    * `winRate` = % profitable (profit >0)
+    * `avgHoldDays` = avg(sellDate - buyDate)
+    * `avgDealScore` = avg(listing.dealScore)
+    * `avgProfitPerTrade` = totalProfit / totalTrades
+    * `profitPerDay` = avgProfitPerTrade / avgHoldDays
+    * `capitalEfficiency` = totalProfit / totalInvested (turnover ratio)
+    * `riskScore` = avg(listing.aiRisk) (0-10, nižje = varnejše)
+  - Normalizacija vsake metrike na 0-100 score glede na min/max v
+    cohortu (če so vse vrednosti iste → 50):
+    * `roiScore` (higher = better)
+    * `winRateScore` (higher = better)
+    * `holdDaysScore` (lower = better, faster)
+    * `dealScoreScore` (higher = better)
+    * `riskScore` (10 - riskScore → higher = safer)
+  - `overallScore` = weighted average (ROI 30%, winRate 25%, holdDays
+    15%, dealScore 15%, risk 15%). `rank` 1 = najboljši (sort by
+    overallScore desc).
+  - Per-source × per-category breakdown: za vsak (source, category)
+    par: trades, profit, roi.
+  - Recommendations:
+    * `bestSourceOverall` = rank 1 source
+    * `bestSourceByMetric`: roi (max avgROI), winRate (max winRate),
+      speed (min avgHoldDays), safety (min riskScore)
+    * `sourcePriorityAdvice` slovenski opis — top vir + worst vir +
+      nasvet za preusmeritev kapitala
+    * `categorySourceMatch` per kategorija: best vir (≥3 trades) z
+      reasoning (ROI, št. prodaj, profit)
+  - Empty-state z opisno slovensko message.
+  - Example: "Bolha: #1 (score 85, ROI 32%, win 70%). Vinted: #2 (score
+    72, ROI 18%). Best for elektronika: Bolha. Best for moda: Vinted."
+
+### Changed
+- AI_ENDPOINTS.md: regeneriran z Python skripto → "Total: 300 endpoints"
+  (299 → 300, +1 AI: profit-stream-predictor #252)
+- README.md (MultiEdit z 19 urejanji):
+  - Badge version: v7.69.0 → v7.70.0
+  - Badge AI Endpoints: 299 → 300
+  - Badge API Routes: 446 → 449 (+3: 1 AI + 2 analytics)
+  - Tagline: "299 AI endpointov + 42 analytics" → "300 AI endpointov +
+    44 analytics"
+  - Overview: "Verzija v7.69.0" → "Verzija v7.70.0", counts posodobljeni,
+    "~132 funkcij" → "~135 funkcij"
+  - "Kaj je novega v v7.56–v7.69 (14 verzij, 42 novih funkcij)" →
+    "...v7.56–v7.70 (15 verzij, 45 novih funkcij)", dodan v7.70 blok
+    (3 funkcije) na vrh z podrobnimi opisi vseh 3 endpoint-ov
+  - AI Hub badge v tabeli: "Vsi 299 AI endpointov" → "Vsi 300 AI
+    endpointov"
+  - "Endpointi (299 AI + 42 analytics + 10 cron + sistemski = 446)" →
+    "...(300 AI + 44 analytics + 10 cron + sistemski = 449)"
+  - Dodan 1 nov AI endpoint v AI primeri blok
+    (profit-stream-predictor, v7.70)
+  - "Profit pipeline (v7.32-v7.69)" → "...(v7.32-v7.70)"
+  - Dodana 2 nova analytics endpointa v profit pipeline blok
+    (inventory-lifecycle-stage-classifier, deal-source-comparison-matrix,
+    v7.70)
+  - Dodan 1 nov AI endpoint v profit pipeline listo
+    (profit-stream-predictor, v7.70)
+  - Project structure: "299 AI endpointov" → "300 AI endpointov"
+  - Coding standards: "446 routes" → "449 routes"
+  - Roadmap: "v7.69 (trenutno — ~132 funkcij)" → "v7.70 (trenutno — ~135
+    funkcij)", profit pipeline list: dodane 3 nove funkcije (AI Profit
+    Stream Predictor, Inventory Lifecycle Stage Classifier, Deal Source
+    Comparison Matrix), "Profit pipeline (73+ funkcij)" → "(76+ funkcij)"
+  - Analytics (42) → (44), dodana 2 nova (Inventory Lifecycle Stage
+    Classifier, Deal Source Comparison Matrix)
+  - Testing: "446 API routes" → "449 API routes"
+  - "Naslednji koraki": "v7.50-v7.69 funkcije" → "...v7.50-v7.70 funkcije"
+  - "Zadnje verzije": dodan "v7.70.0 (avgust 2026) — AI Profit Stream
+    Predictor, Inventory Lifecycle Stage Classifier, Deal Source
+    Comparison Matrix" na vrh
+  - AI_ENDPOINTS.md link: "vseh 299 AI endpointov" → "vseh 300 AI
+    endpointov"
+  - "do v7.69 (avgust 2026)" → "do v7.70 (avgust 2026)"
+- CHANGELOG.md: "[Unreleased] Načrtovano za v7.70+" → "...za v7.71+",
+  dodana nova "[7.70.0] - 2026-08-12" sekcija (nad [7.69.0]) z vsemi 3
+  endpoint-i in podrobnimi opisi (response shape, anti-hallucination
+  rules, AI cache key, deterministic fallback, example comment, razlika
+  od podobnih obstoječih endpoint-ov — profit-stream-predictor vs
+  profit-forecast/profit-dashboard/cash-flow-forecast/profit-efficiency-
+  analyzer/profit-margin-heatmap; inventory-lifecycle-stage-classifier
+  vs inventory-lifecycle/inventory-lifecycle-optimizer-v2/inventory-
+  aging-predictor-v2/listing-performance/cash-conversion-cycle;
+  deal-source-comparison-matrix vs deal-source-roi/source-quality/
+  listing-performance)
+- Verzija aplikacije: v7.69.0 → v7.70.0
 
 ## [7.69.0] - 2026-08-11
 
