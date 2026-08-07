@@ -1,10 +1,10 @@
 # Markec AI Firm — AI Trading Firm za slovenske oglase
 
-[![Version](https://img.shields.io/badge/version-v7.74.0-blue.svg)](./CHANGELOG.md)
+[![Version](https://img.shields.io/badge/version-v7.75.0-blue.svg)](./CHANGELOG.md)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](./LICENSE)
 [![GitHub Stars](https://img.shields.io/github/stars/markec12345678/markecaifirm?style=social)](https://github.com/markec12345678/markecaifirm/stargazers)
-[![AI Endpoints](https://img.shields.io/badge/AI%20endpoints-306-green.svg)](./AI_ENDPOINTS.md)
-[![API Routes](https://img.shields.io/badge/API%20routes-461-cyan.svg)](#)
+[![AI Endpoints](https://img.shields.io/badge/AI%20endpoints-308-green.svg)](./AI_ENDPOINTS.md)
+[![API Routes](https://img.shields.io/badge/API%20routes-464-cyan.svg)](#)
 [![Next.js](https://img.shields.io/badge/Next.js-16-black.svg)](https://nextjs.org/)
 [![TypeScript](https://img.shields.io/badge/TypeScript-5-blue.svg)](https://www.typescriptlang.org/)
 [![TypeScript Errors](https://img.shields.io/badge/TS%20errors-0-brightgreen.svg)](#)
@@ -20,7 +20,7 @@
 </div>
 
 > **AI-powered trading firm** za Bolha, Facebook Marketplace, Vinted, Avtonet, mobile.de, Kleinanzeigen, Subito in Willhaben.
-> **306 AI endpointov** + **50 analytics** + **10 cron automatizacij** + **11 Telegram ukazov** za iskanje, ocenjevanje, kupovanje in preprodajo.
+> **308 AI endpointov** + **51 analytics** + **10 cron automatizacij** + **11 Telegram ukazov** za iskanje, ocenjevanje, kupovanje in preprodajo.
 > **Local-first** — vsi podatki ostanejo na tvojem računalniku. **Zero-cloud**. **0 vulnerabilities**. **37 tests**.
 
 ---
@@ -55,9 +55,9 @@ računalniku — brez cloud storitev, brez mesečnih naročnin, brez deljenja po
 Lovi podcenjene oglase na Bolhi/Facebooku/Vintedu z AI, jih kupi poceni, preprodaj drago z
 AI-optimiziranimi oglasi, in avtomatiziraj celoten workflow od odkritja do prodaje.
 
-### Verzija v7.74.0 (avgust 2026)
+### Verzija v7.75.0 (avgust 2026)
 
-**306 AI endpointov** + **50 analytics** + **10 cron automatizacij** + **11 Telegram ukazov** + **~147 funkcij** organiziranih v 7 kategorij:
+**308 AI endpointov** + **51 analytics** + **10 cron automatizacij** + **11 Telegram ukazov** + **~150 funkcij** organiziranih v 7 kategorij:
 - **Statistike** (analytics, predictions, forecasting) — 35+ funkcij
 - **Skladišče** (inventory management, aging, depreciation) — 20+ funkcij
 - **Oglasi** (listing optimization, SEO, image analysis) — 25+ funkcij
@@ -66,7 +66,12 @@ AI-optimiziranimi oglasi, in avtomatiziraj celoten workflow od odkritja do proda
 - **Risk/Insurance** (hedging, fraud detection, claims) — 10+ funkcij
 - **Finance/Profit** (margin, ROI, compounding, tax) — 16+ funkcij
 
-### Kaj je novega v v7.56–v7.74 (19 verzij, 57 novih funkcij)
+### Kaj je novega v v7.56–v7.75 (20 verzij, 60 novih funkcij)
+
+**v7.75 — AI Buyer Retention Forecaster & Market Sentiment Pulse & AI Profit Momentum Tracker (3 funkcije):**
+- **AI Buyer Retention Forecaster** — AI napove KATERI kupci bodo postal repeat customers in KDAJ bodo verjetno ponovno kupili. Identificira buyers z visoko retention probability in priporoča outreach timing. "Marjan: 5 kupov, retention 85/100, predicted next buy 2026-09-15. Outreach: 'Pridejo novi iPhone-i!'" Per buyer: purchaseCount, firstPurchaseDate, lastPurchaseDate, avgDaysBetweenPurchases, daysSinceLastPurchase, buyerLifetimeValue (sum sellPrice - sellFees), avgOrderValue (LTV/count), retentionScore 0-100 (RFM-style: Frequency 40pts + Recency 30pts + Monetary 30pts + regularity bonus), retentionProbability 0-100% (segment + churnRisk adjustment), predictedNextPurchaseDate (lastPurchase + avgInterval, clamped future), predictedNextPurchaseWindow (earliest + latest ±50% interval), retentionSegment (LOYAL 5+ / REPEAT 3-4 / OCCASIONAL 2 / ONE_TIME 1), churnRisk (LOW/MEDIUM/HIGH glede na overdueRatio = daysSinceLast / avgInterval), recommendedOutreachDate (7-14 dni pred predicted purchase), outreachMessage (personalizirano slovenski), expectedLifetimeValue (avgOrderValue × expectedFuturePurchases), reasoning. Summary: totalBuyers, loyalCount, repeatCount, occasionalCount, oneTimeCount, avgRetentionProbability, highChurnRiskCount, advice. AI-enhanced z grounding + anti-hallucination (retentionProbability/retentionScore clamped [0, 100], predictedNextPurchaseDate in recommendedOutreachDate validirana kot FUTURE YYYY-MM-DD, retentionSegment in churnRisk validirana proti enum) + 6h cache (key per totalBuyers) + deterministic fallback (RFM compute). GET+POST (AI Hub runner kompatibilnost). Razlika od buyer-retention-predictor (ki napove retention za posameznega kupca v časovnem oknu) — ta forecast-a FUTURE retention TIMELINE čez vse kupce. Razlika od buyer-retention-score-calculator (ki izračuna retention score) — ta napove retention TIMELINE in outreach timing. Razlika od buyer-churn-predictor-v2 (ki napove churn tveganje) — ta forecast-a retention segment, churn risk in outreach date.
+- **Market Sentiment Pulse** — real-time "pulse" tržnega sentimenta — kombinira 5 signalov (listing velocity, price trend, deal quality trend, sell-through rate, prilika rate) v en sam 0-100 sentiment score, dnevno osvežen. "Market pulse: 72/100 (HOT, RISING +8). Sell-through 65%, prilika 40%. BUY_AGGRESSIVELY." pulse: score 0-100 (weighted: listingVelocity 20% + priceTrend 20% + dealQualityTrend 15% + sellThroughRate 25% + prilikaRate 20%), classification (VERY_HOT 80-100 / HOT 60-79 / WARM 40-59 / COOL 20-39 / COLD 0-19), interpretation (slovenski), trend (RISING/STABLE/FALLING glede na prejšnji 7d pulse), trendDelta. signals: 5 signalov z value, normalized 0-100, interpretation (listingVelocity listings/dan, priceTrend %, dealQualityTrend točke, sellThroughRate % aktivnih, prilikaRate % PRILIKA). perSource: per-source pulse (Bolha vs Vinted vs Facebook itd.) z displayName, pulseScore, classification, listingCount. recommendation: action (BUY_AGGRESSIVELY / BUY_NORMAL / HOLD / SELL_FAST / WAIT) + reasoning (slovenski). Pure DB analytics, NO AI. Razlika od market-momentum (ki da BULLISH/BEARISH/NEUTRAL 0-100 score glede na trend) — ta je HOLISTIČNI PULSE, ki kombinira VEČ signalov. Razlika od market-trend-momentum (ki gleda ACCELERATION per kategorija) — ta gleda CEL TRG kot eno številko. Razlika od weekly-trend-radar (ki gleda 7-dnevne trende) — ta gleda KOMBINACIJO signalov v realnem času.
+- **AI Profit Momentum Tracker** — AI sledi MOMENTUM rasti profita — ali profit pospešuje, upočasnjuje ali stagnira? Identificira kaj pogan momentum in kako ga vzdrževati. "Profit momentum: ACCELERATING (growth +15%, accel +5%). Driver: volume (+3 trades). Sustain: list 2 more/week." momentum: currentMonthlyProfit, previousMonthlyProfit, profitGrowthRate (% (current-previous)/|previous|), profitAcceleration (change in growth rate — 2. derivat iz 3. meseca), momentumStatus (ACCELERATING / STEADY / DECELERATING / PLATEAUING / DECLINING), momentumScore 0-100 (growth + accel + status bonus). drivers: volumeDriver (change v trade count), priceDriver (change v avg profit/trade), efficiencyDriver (change v cycle days — faster = positive), categoryDriver (topContributor kategorija + contribution). analysis: momentumAssessment (slovenski), keyDrivers (top 3 z impact POSITIVE/NEGATIVE, weight, detail), sustainabilityScore 0-100 (kako trajen je momentum — growth moderate 10-30% = +20, sample size, status), momentumForecast (slovenski), momentumActions (3-5 akcij z priority HIGH/MEDIUM/LOW + expectedImpact), riskFactors (5 tveganj). AI-enhanced z grounding + anti-hallucination (profitGrowthRate clamped [-100, 500], profitAcceleration clamped [-100, 500], sustainabilityScore [0, 100], momentumStatus validiran proti enum) + 6h cache (key per currentMonth YYYY-MM) + deterministic fallback (compute iz growth rate + acceleration + drivers). GET+POST (AI Hub runner kompatibilnost). Razlika od profit-trajectory-forecaster (ki napove FUTURE growth trajectory) — ta tracks CURRENT momentum (acceleration/deceleration right now). Razlika od profit-accelerator (ki pospešuje profit preko akcij) — ta diagnosticira stanje momentum-a in drivere. Razlika od profit-stream-predictor (ki napove stream prihodka) — ta gleda profit GROWTH RATE in njegovo ACCELERATION.
 
 **v7.74 — AI Smart Reorder Advisor & Cash Flow Velocity Tracker & Deal Quality Distribution Analyzer (3 funkcije):**
 - **AI Smart Reorder Advisor** — AI svetuje KDAJ in KOLIKO naročiti (reorder) za vsako kategorijo na podlagi sell-through rate, trenutne zaloge in demand forecast. "Elektronika: 5 prodaj/mesec, 2 na zalogi → REORDER_NOW, 3 item-i, 900€ budget." Per kategorija: avgMonthlySales (sold/3 mesece), currentStock (HELD trades), weeksOfSupply = currentStock / (avgMonthlySales / 4), reorderPoint (1 teden zaloge), optimalReorderQuantity (1 mesec zaloge). AI generira reorder plan per kategorija: reorderStatus (REORDER_NOW / REORDER_SOON / ADEQUATE_STOCK / OVERSTOCKED), recommendedQuantity (clamped na [1, avgMonthlySales × 2]), recommendedTiming (0-90 dni do naročila), expectedStockoutDate (YYYY-MM-DD ali null), reorderStrategy (SINGLE_BUY / BATCH_BUY / WAIT_FOR_DEALS), budgetAllocation (clamped na [0, availableCapital]), reasoning (slovenski). Summary: totalCategories, reorderNowCount, adequateStockCount, overstockedCount, totalBudgetNeeded, advice. AI-enhanced z grounding + anti-hallucination (recommendedQuantity clamped, budgetAllocation clamped) + 6h cache (key per ISO week YYYY-Www) + deterministic fallback (compute iz weeksOfSupply). Razlika od inventory-reorder-point (ki izračuna matematični reorder point) — ta AI svetuje STRATEGIJO naročanja. Razlika od smart-restock (ki priporoča kaj restockati) — ta gleda celotno kategorijo in allocate budget.
@@ -221,7 +226,7 @@ AI-optimiziranimi oglasi, in avtomatiziraj celoten workflow od odkritja do proda
 | 14 | Obvestila | `9` | Zgodovina notifikacij |
 | 15 | Zdravje | `0` | Sistemski health, scraper stats |
 | 16 | Nastavitve | — | AI provider, Telegram, Discord, Email, Push... |
-| 17 | **AI Hub** | `a` | Vsi 306 AI endpointov z iskalnikom in runner-jem |
+| 17 | **AI Hub** | `a` | Vsi 308 AI endpointov z iskalnikom in runner-jem |
 
 ### 🔍 Iskanje & odkrivanje
 - Multi-platform monitoring (Bolha, Facebook, Vinted, Avtonet, Kleinanzeigen, eBay, poljuben RSS)
@@ -507,7 +512,7 @@ Dnevni reset ob polnoči.
 - **Budget allocator** — porazdelitev proračuna
 - ...in 4+ več
 
-▶️ **Glej [AI_ENDPOINTS.md](./AI_ENDPOINTS.md) za popoln seznam vseh 306 AI endpointov.**
+▶️ **Glej [AI_ENDPOINTS.md](./AI_ENDPOINTS.md) za popoln seznam vseh 308 AI endpointov.**
 
 ---
 
@@ -578,7 +583,7 @@ Za scraping Bolhe in drugih platform, aplikacija vključuje:
 ### Auth
 Ni avtentikacije (local-first). Aplikacija teče na localhost.
 
-### Endpointi (306 AI + 50 analytics + 10 cron + sistemski = 461)
+### Endpointi (308 AI + 51 analytics + 10 cron + sistemski = 464)
 
 ```bash
 # AI primeri
@@ -619,6 +624,8 @@ GET  /api/ai/price-intelligence-engine                # AI pricing inteligenca �
 GET  /api/ai/profit-trajectory-forecaster             # AI profit trajektorija — LINEAR/EXPONENTIAL/PLATEAUING/FLAT, 3 scenariji 6/12/24m, inflection point (v7.72)
 GET  /api/ai/listing-conversion-forecaster            # AI napoved verjetnosti konverzije 0-100% za HELD inventar v 7/14/30 dneh, keyFactors, improvementActions (v7.73)
 GET  /api/ai/smart-reorder-advisor                      # AI svetuje KDAJ in KOLIKO naročiti per kategorija — REORDER_NOW/REORDER_SOON/ADEQUATE_STOCK/OVERSTOCKED, recommendedQuantity, timing, budget (v7.74)
+GET  /api/ai/buyer-retention-forecaster                  # AI napove retention timeline kupcev — retentionSegment, churnRisk, predictedNextPurchaseDate, outreachMessage (v7.75)
+GET  /api/ai/profit-momentum-tracker                     # AI sledi profit momentum — ACCELERATING/STEADY/DECELERATING/PLATEAUING/DECLINING, drivers, sustainabilityScore (v7.75)
 
 # Sistemski
 GET  /api/health                         # Health check
@@ -628,7 +635,7 @@ POST /api/settings                       # Update nastavitve
 GET  /api/listings                       # Seznam listingov
 POST /api/trades                         # Ustvari trade
 
-# Profit pipeline (v7.32-v7.74)
+# Profit pipeline (v7.32-v7.75)
 GET  /api/trades/deal-flow               # ROI, win rate, money velocity, pipeline
 GET  /api/analytics/deal-funnel          # Conversion funnel (discovery→profit)
 GET  /api/analytics/sold-comps           # Fair market value (Keepa-style)
@@ -678,6 +685,7 @@ GET  /api/analytics/inventory-value-predictor              # Napove realizabilno
 GET  /api/analytics/market-trend-momentum                  # Trend MOMENTUM per kategorija — acceleration (2. derivat), ACCELERATING_UP/FLAT/ACCELERATING_DOWN, HOT_RISING/COLD_FALLING (v7.73)
 GET  /api/analytics/cash-flow-velocity                       # Cash flow VELOCITY — inflow/outflow €/ted, turnover rate, cycle time, bottleneck, velocityScore 0-100 (v7.74)
 GET  /api/analytics/deal-quality-distribution                 # Deal quality DISTRIBUCIJA — mean/median/stdDev/skewness/kurtosis, NORMAL/RIGHT_SKEWED/LEFT_SKEWED/BIMODAL (v7.74)
+GET  /api/analytics/market-sentiment-pulse                     # Market SENTIMENT PULSE 0-100 — 5 signalov (listingVelocity, priceTrend, dealQuality, sellThrough, prilika), VERY_HOT/COLD, BUY_AGGRESSIVELY/WAIT (v7.75)
 GET  /api/ai/demand-forecast              # AI napoved povpraševanja 30 dni (v7.60)
 GET  /api/ai/margin-guardian-pro           # Real-time margin monitoring + AI pricing (v7.60)
 GET  /api/ai/multi-platform-listing-generator  # AI oglasi za 5 platform (v7.60)
@@ -702,6 +710,8 @@ GET  /api/ai/price-intelligence-engine      # AI pricing inteligenca — your vs
 GET  /api/ai/profit-trajectory-forecaster   # AI profit trajektorija — LINEAR/EXPONENTIAL/PLATEAUING, 3 scenariji 6/12/24m, inflection point (v7.72)
 GET  /api/ai/listing-conversion-forecaster  # AI napoved konverzije 0-100% za HELD inventar v 7/14/30 dneh, keyFactors, improvementActions (v7.73)
 GET  /api/ai/smart-reorder-advisor           # AI reorder nasvet per kategorija — REORDER_NOW/REORDER_SOON/ADEQUATE_STOCK/OVERSTOCKED, recommendedQuantity, timing, budget (v7.74)
+GET  /api/ai/buyer-retention-forecaster      # AI retention forecast per kupec — retentionSegment, churnRisk, predictedNextPurchaseDate, outreachMessage (v7.75)
+GET  /api/ai/profit-momentum-tracker         # AI profit momentum — ACCELERATING/STEADY/DECELERATING/PLATEAUING/DECLINING, drivers, sustainabilityScore (v7.75)
 
 # Cron automation (10 endpoints)
 GET  /api/cron/smart-deal-alert?key=     # TOP 3 deals → Telegram
@@ -749,7 +759,7 @@ markec-ai-firm/
 ├── src/
 │   ├── app/
 │   │   ├── api/
-│   │   │   └── ai/              # 306 AI endpointov
+│   │   │   └── ai/              # 308 AI endpointov
 │   │   ├── page.tsx             # Main dashboard
 │   │   ├── settings/            # Settings UI
 │   │   └── ...
@@ -782,7 +792,7 @@ markec-ai-firm/
 - 0 TS napak
 - Conventional Commits (`feat(v7.56): AI XYZ function`)
 - Vsi AI endpointi sledijo istemu vzorcu (glej [CONTRIBUTING.md](./CONTRIBUTING.md))
-- Vsi API route handlerji imajo try/catch z logger.error (461 routes)
+- Vsi API route handlerji imajo try/catch z logger.error (464 routes)
 
 ▶️ **Glej [CONTRIBUTING.md](./CONTRIBUTING.md) za podrobnosti.**
 
@@ -790,20 +800,20 @@ markec-ai-firm/
 
 ## 🗺️ Roadmap
 
-### v7.74 (trenutno — ~147 funkcij)
-- [x] **Profit pipeline (88+ funkcij):** Deal Flow, Funnel, Sold Comps, Price History, Seller Intel, Make Offer, Quick Buy, Flip Workflow, Profit Maximizer v2, Niche Score, Deal Velocity, Bundle Detector, Capital Advisor, Threshold Optimizer, Deal Score Calibrator, Cross-border Arbitrage, Negotiation Auto-Responder, Seasonal Calendar, Profit Goal Tracker, Margin Guardian, Seller Response Predictor, Turnover Optimizer, Auto-Listing Draft, Photo Quality Analyzer, Refurb ROI Calculator, Loss Recovery Playbook, Monitor Suggestions, Tax-Aware Selling, Quick Sell Ladder, Risk Spread Calculator, Liquidation Strategist, Market Gap Finder, Listing Refresh Scheduler, Tax Report Generator, Reinvestment Advisor, Competitor Tracker, Deal Source ROI, Listing Performance, Auto-Relisting Scheduler, Negotiation Outcome Predictor, Portfolio Stress Test, Supplier CRM, Bundle Profit Optimizer, Demand Forecast AI, Margin Guardian Pro, Multi-Platform Listing Generator, Negotiation Script Generator, Inventory Insurance Calculator, Photo Enhancement Advisor, Trade Replication Engine, Profit Margin Heatmap, Listing Exposure Score, Capital Allocation Optimizer, AI Trading Coach, Deal Fatigue Detector, Seasonal Timing Optimizer, AI Deal Quality Forecaster, Negotiation Success Rate Analyzer, Portfolio Concentration Risk Analyzer, AI Competitive Landscape Analyzer, Price History Forecaster, FOMO/Scarcity Trigger Generator, Profit Efficiency Analyzer, Portfolio Health Dashboard, AI Market Share Analyzer, AI Supply Demand Balance Analyzer, Market Depth Analyzer, AI Risk Reward Calculator, AI Profit Leakage Detector, AI Deal Scoring Model v2, Market Saturation Forecaster, AI Profit Stream Predictor, Inventory Lifecycle Stage Classifier, Deal Source Comparison Matrix, AI Deal Anatomy Analyzer, Market Gap Forecaster, AI Profit Accelerator, AI Price Intelligence Engine, Deal Profitability Matrix, AI Profit Trajectory Forecaster, AI Listing Conversion Forecaster, Inventory Value Predictor, Market Trend Momentum Analyzer, AI Smart Reorder Advisor, Cash Flow Velocity Tracker, Deal Quality Distribution Analyzer
+### v7.75 (trenutno — ~150 funkcij)
+- [x] **Profit pipeline (91+ funkcij):** Deal Flow, Funnel, Sold Comps, Price History, Seller Intel, Make Offer, Quick Buy, Flip Workflow, Profit Maximizer v2, Niche Score, Deal Velocity, Bundle Detector, Capital Advisor, Threshold Optimizer, Deal Score Calibrator, Cross-border Arbitrage, Negotiation Auto-Responder, Seasonal Calendar, Profit Goal Tracker, Margin Guardian, Seller Response Predictor, Turnover Optimizer, Auto-Listing Draft, Photo Quality Analyzer, Refurb ROI Calculator, Loss Recovery Playbook, Monitor Suggestions, Tax-Aware Selling, Quick Sell Ladder, Risk Spread Calculator, Liquidation Strategist, Market Gap Finder, Listing Refresh Scheduler, Tax Report Generator, Reinvestment Advisor, Competitor Tracker, Deal Source ROI, Listing Performance, Auto-Relisting Scheduler, Negotiation Outcome Predictor, Portfolio Stress Test, Supplier CRM, Bundle Profit Optimizer, Demand Forecast AI, Margin Guardian Pro, Multi-Platform Listing Generator, Negotiation Script Generator, Inventory Insurance Calculator, Photo Enhancement Advisor, Trade Replication Engine, Profit Margin Heatmap, Listing Exposure Score, Capital Allocation Optimizer, AI Trading Coach, Deal Fatigue Detector, Seasonal Timing Optimizer, AI Deal Quality Forecaster, Negotiation Success Rate Analyzer, Portfolio Concentration Risk Analyzer, AI Competitive Landscape Analyzer, Price History Forecaster, FOMO/Scarcity Trigger Generator, Profit Efficiency Analyzer, Portfolio Health Dashboard, AI Market Share Analyzer, AI Supply Demand Balance Analyzer, Market Depth Analyzer, AI Risk Reward Calculator, AI Profit Leakage Detector, AI Deal Scoring Model v2, Market Saturation Forecaster, AI Profit Stream Predictor, Inventory Lifecycle Stage Classifier, Deal Source Comparison Matrix, AI Deal Anatomy Analyzer, Market Gap Forecaster, AI Profit Accelerator, AI Price Intelligence Engine, Deal Profitability Matrix, AI Profit Trajectory Forecaster, AI Listing Conversion Forecaster, Inventory Value Predictor, Market Trend Momentum Analyzer, AI Smart Reorder Advisor, Cash Flow Velocity Tracker, Deal Quality Distribution Analyzer, AI Buyer Retention Forecaster, Market Sentiment Pulse, AI Profit Momentum Tracker
 - [x] **Cron automatizacija (10):** Smart Deal Alert, Inventory Aging, Weekly Report, Auto Price Drop, Competitor Monitor, Scraper Recovery, Relisting Reminder, Daily Pulse, Heartbeat, Smart Notification Router
 - [x] **Telegram 2-way (11 ukazi):** /deals /profit /inventory /status /run /alerts /listings /monitors /trades /stats /help
 - [x] **Anti-scraping (9 tehnik):** Cookie jar, 429 retry, Referer, Gaussian delay, 12 UAs, Per-domain session, Proxy rotation, CAPTCHA solver, Auto-Recovery
 - [x] **Anti-hallucination (5 slojev):** Prompt grounding, Numeric sanity, Cross-reference, Confidence threshold (30%), Pattern detection
 - [x] **AI cost optimization:** AI Output Cache (6h TTL, ~60% prihranek) + Batch Deal Evaluator (50 oglasov/klic, ~98% prihranek)
 - [x] **Security:** AES-256-GCM secrets encryption, Rate limiting, SSRF protection
-- [x] **Analytics (50):** Deal Velocity, Sold Comps, Niche Score, Deal Funnel, Platform Performance, Source Quality, Net Profit (after tax), Reseller Blackbook, Time-to-Profit, Profit Heatmap, Market Trend, Cross-Platform Arbitrage, Deal Timing, Seasonal Calendar, Profit Goal Tracker, Weekly Trend Radar, Cash Flow Forecast, ROI Leaderboard, Missed Opportunities, Optimal Listing Time, Purchase Pattern, Tax Report, Competitor Tracker, Deal Source ROI, Listing Performance, Market Gap Finder, Portfolio Stress Test, Supplier CRM, Optimal Listing Time, Inventory Insurance Calculator, Market Momentum, Cash Conversion Cycle, Profit Margin Heatmap, Listing Exposure Score, Deal Fatigue Detector, Negotiation Success Rate, Portfolio Concentration Risk, Price History Forecaster, Profit Efficiency Analyzer, Portfolio Health Dashboard, Market Depth Analyzer, Market Saturation Forecaster, Inventory Lifecycle Stage Classifier, Deal Source Comparison Matrix, Market Gap Forecaster, Deal Profitability Matrix, Inventory Value Predictor, Market Trend Momentum, Cash Flow Velocity, Deal Quality Distribution
-- [x] **Testing:** Vitest (37 tests), structured logger, try/catch na vseh 461 API routes
+- [x] **Analytics (51):** Deal Velocity, Sold Comps, Niche Score, Deal Funnel, Platform Performance, Source Quality, Net Profit (after tax), Reseller Blackbook, Time-to-Profit, Profit Heatmap, Market Trend, Cross-Platform Arbitrage, Deal Timing, Seasonal Calendar, Profit Goal Tracker, Weekly Trend Radar, Cash Flow Forecast, ROI Leaderboard, Missed Opportunities, Optimal Listing Time, Purchase Pattern, Tax Report, Competitor Tracker, Deal Source ROI, Listing Performance, Market Gap Finder, Portfolio Stress Test, Supplier CRM, Optimal Listing Time, Inventory Insurance Calculator, Market Momentum, Cash Conversion Cycle, Profit Margin Heatmap, Listing Exposure Score, Deal Fatigue Detector, Negotiation Success Rate, Portfolio Concentration Risk, Price History Forecaster, Profit Efficiency Analyzer, Portfolio Health Dashboard, Market Depth Analyzer, Market Saturation Forecaster, Inventory Lifecycle Stage Classifier, Deal Source Comparison Matrix, Market Gap Forecaster, Deal Profitability Matrix, Inventory Value Predictor, Market Trend Momentum, Cash Flow Velocity, Deal Quality Distribution, Market Sentiment Pulse
+- [x] **Testing:** Vitest (37 tests), structured logger, try/catch na vseh 464 API routes
 - [x] **0 vulnerabilities**, 0 TS errors, 0 ESLint errors
 
 ### Naslednji koraki
-- [ ] UI komponente za v7.50-v7.74 funkcije v dashboard
+- [ ] UI komponente za v7.50-v7.75 funkcije v dashboard
 - [ ] WebSocket real-time negotiation (SSE namesto polling)
 - [ ] Playwright E2E testi za glavne flow-e
 - [ ] TLS fingerprinting (curl-impersonate)
@@ -859,9 +869,10 @@ Z obveznostjo:
 
 ## 📋 Changelog
 
-Popolna zgodovina verzij v [CHANGELOG.md](./CHANGELOG.md) — od v1.0 (25. junij 2026) do v7.74 (avgust 2026). Starejše verzije (v1.0–v6.x) so arhivirane v [ARCHIVE.md](./ARCHIVE.md).
+Popolna zgodovina verzij v [CHANGELOG.md](./CHANGELOG.md) — od v1.0 (25. junij 2026) do v7.75 (avgust 2026). Starejše verzije (v1.0–v6.x) so arhivirane v [ARCHIVE.md](./ARCHIVE.md).
 
 ### Zadnje verzije
+- **v7.75.0** (avgust 2026) — AI Buyer Retention Forecaster, Market Sentiment Pulse, AI Profit Momentum Tracker
 - **v7.74.0** (avgust 2026) — AI Smart Reorder Advisor, Cash Flow Velocity Tracker, Deal Quality Distribution Analyzer
 - **v7.73.0** (avgust 2026) — AI Listing Conversion Forecaster, Inventory Value Predictor, Market Trend Momentum Analyzer
 - **v7.72.0** (avgust 2026) — AI Price Intelligence Engine, Deal Profitability Matrix, AI Profit Trajectory Forecaster

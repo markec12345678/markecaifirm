@@ -6,11 +6,240 @@ Format sledi [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), verzije s
 
 ## [Unreleased]
 
-Načrtovano za v7.75+:
+Načrtovano za v7.76+:
 - WebSocket real-time negotiation (SSE namesto polling)
 - Playwright E2E testi za glavne flow-e
 - TLS fingerprinting (curl-impersonate)
 - ML model za buyer matchmaker (fine-tuned na realnem data)
+
+## [7.75.0] - 2026-08-17
+
+### Added — AI Buyer Retention Forecaster & Market Sentiment Pulse & AI Profit Momentum Tracker (3 funkcije)
+
+- **AI Buyer Retention Forecaster** — `GET+POST /api/ai/buyer-retention-forecaster`
+  - AI napove KATERI kupci bodo postal repeat customers in KDAJ bodo
+    verjetno ponovno kupili. Identificira buyers z visoko retention
+    probability in priporoča outreach timing. "Marjan: 5 kupov,
+    retention 85/100, predicted next buy 2026-09-15. Outreach: 'Pridejo
+    novi iPhone-i!'" Razlika od buyer-retention-predictor (ki napove
+    retention za posameznega kupca v časovnem oknu) — ta forecast-a
+    FUTURE retention TIMELINE čez vse kupce. Razlika od
+    buyer-retention-score-calculator (ki izračuna retention score) — ta
+    napove retention TIMELINE in outreach timing. Razlika od
+    buyer-sentiment-analyzer-v2 (ki analizira sentiment) — ta napove
+    retention verjetnost in predictedNextPurchaseDate. Razlika od
+    buyer-clv-predictor (ki napove customer lifetime value) — ta napove
+    RETENTION TIMELINE in outreach timing. Razlika od
+    buyer-churn-predictor-v2 (ki napove churn tveganje) — ta forecast-a
+    retention segment, churn risk in outreach date.
+  - Query vseh SOLD trades (status=sold, sellPrice not null, sellDate not
+    null). Group by buyerName (iz sellLocation). Skip empty/short imena
+    (<2 znaka).
+  - Per buyer: purchaseCount, firstPurchaseDate (sort asc, prvi),
+    lastPurchaseDate (zadnji), avgDaysBetweenPurchases (sum razlik / (n-1)),
+    daysSinceLastPurchase (now - lastPurchase v dnevih),
+    buyerLifetimeValue (sum sellPrice - sellFees), avgOrderValue
+    (LTV / purchaseCount).
+  - retentionScore 0-100 (RFM-style): Frequency 40pts (1 buy=0, 5+ buys=40),
+    Recency 30pts (≤7d=30, ≤30d=25, ≤60d=18, ≤90d=12, ≤180d=6, >180d=0),
+    Monetary 30pts (LTV / 2000€ × 30), regularity bonus +5 (purchaseCount≥3
+    in avgDays>0).
+  - retentionProbability 0-100%: retentionScore × 0.8 + segment adjustment
+    (LOYAL +15, REPEAT +8, OCCASIONAL -5, ONE_TIME -15) + churnRisk
+    adjustment (HIGH -20, MEDIUM -8, LOW +5).
+  - retentionSegment: LOYAL (5+ kupov) / REPEAT (3-4) / OCCASIONAL (2) /
+    ONE_TIME (1).
+  - churnRisk: ONE_TIME (HIGH >60d, MEDIUM >21d, LOW drugače) ali repeat
+    buyers z overdueRatio = daysSinceLast / avgInterval (>1.5=HIGH,
+    >1.0=MEDIUM, drugače LOW).
+  - predictedNextPurchaseDate: lastPurchase + avgInterval (ali 90d default
+    za ONE_TIME). Če predicted v preteklosti → now + max(7, interval × 0.3).
+  - predictedNextPurchaseWindow: { earliest, latest } ±50% interval,
+    earliest clamped na today.
+  - recommendedOutreachDate: predictedPurchase - 7/10/14 dni (LOYAL/REPEAT/
+    OCCASIONAL+ONE_TIME). Če outreach v preteklosti → now + 1-3 dni.
+  - expectedLifetimeValue: avgOrderValue × (segmentBaseline ×
+    retentionProbability / 100). segmentBaseline: LOYAL=5, REPEAT=3,
+    OCCASIONAL=1.5, ONE_TIME=0.5.
+  - outreachMessage: personalizirano slovenski (4 segment scenariji, max 400
+    znakov). reasoning: kratek slovenski opis (max 300 znakov).
+  - Summary: totalBuyers, loyalCount, repeatCount, occasionalCount,
+    oneTimeCount, avgRetentionProbability, highChurnRiskCount, advice
+    (4 scenariji glede na segment distribucijo).
+  - AI prompt z grounding — vključuje top 25 buyers z vsemi RFM podatki +
+    deterministic baseline vrednostmi (segment, churnRisk, predictedDate,
+    outreachDate). AI generira posodobljen retention segment, churnRisk,
+    dates, outreachMessage, expectedLifetimeValue, reasoning.
+  - Anti-hallucination: retentionProbability/retentionScore clamped [0, 100],
+    predictedNextPurchaseDate in recommendedOutreachDate validirana kot
+    FUTURE YYYY-MM-DD (regex + timestamp preverba), predictedNextPurchaseWindow
+    dates validirana (YYYY-MM-DD), retentionSegment in churnRisk validirana
+    proti enum, expectedLifetimeValue clamped [0, 100000], outreachMessage
+    clamped na 400 znakov, reasoning clamped na 300 znakov, advice clamped
+    na 800 znakov.
+  - AI cache key `buyer-retention-forecast:${totalBuyers}` (6h TTL —
+    cache veljaven za isti buyer base). Deterministic fallback (RFM
+    compute iz purchaseCount, daysSinceLast, LTV, avgInterval).
+  - GET+POST z handleBuyerRetentionForecast(req) shared function (AI Hub
+    runner kompatibilnost). Empty state: prazne buyers[], slovenski advice.
+
+- **Market Sentiment Pulse** — `GET /api/analytics/market-sentiment-pulse`
+  - Real-time "pulse" tržnega sentimenta — kombinira 5 signalov
+    (listing velocity, price trend, deal quality trend, sell-through rate,
+    prilika rate) v en sam 0-100 sentiment score, dnevno osvežen.
+    "Market pulse: 72/100 (HOT, RISING +8). Sell-through 65%, prilika 40%.
+    BUY_AGGRESSIVELY." Razlika od market-momentum (ki da
+    BULLISH/BEARISH/NEUTRAL 0-100 score glede na trend) — ta je HOLISTIČNI
+    PULSE, ki kombinira VEČ signalov. Razlika od market-trend-momentum (ki
+    gleda ACCELERATION per kategorija) — ta gleda CEL TRG kot eno številko.
+    Razlika od weekly-trend-radar (ki gleda 7-dnevne trende) — ta gleda
+    KOMBINACIJO signalov v realnem času. Razlika od market-trend (ki gleda
+    cenovne trende) — ta gleda deal quality in sell-through rate poleg cen.
+    Razlika od deal-velocity (ki meri market temperature per listing) — ta
+    gleda holističen PULSE na nivoju trga.
+  - Pure DB analytics, NO AI. Query listings zadnjih 14 dni (firstSeenAt >=
+    cutoff - 14d, isHidden false) z monitor.source, price, dealScore,
+    aiVerdict, isBookmarked, contactStatus.
+  - Split v current (last 7d) in previous (7-14d) agregate. Per source
+    (Bolha/Vinted/Facebook itd.) tudi.
+  - Signal A (listingVelocity): new listings/dan (last 7d). Normalize: 0/dan=0,
+    20+/dan=100. Interpretation v slovenščini (visoka/zmerna/nizka aktivnost).
+  - Signal B (priceTrend): % change avg price last 7d vs previous 7d.
+    Normalize: 0%=50, +20%=100, -20%=0 (50 + value × 2.5). Rising =
+    positive (visoko povpraševanje).
+  - Signal C (dealQualityTrend): sprememba avg dealScore (točke).
+    Normalize: 50 + value × 5. >2 = izboljšuje se, <-2 = slabša.
+  - Signal D (sellThroughRate): % aktivnih (bookmarked + contacted) listingov
+    v last 7d. Normalize: 0%=0, 50%=100 (value × 2).
+  - Signal E (prilikaRate): % PRILIKA listingov v last 7d. Normalize:
+    0%=0, 50%=100 (value × 2).
+  - pulse.score: weighted average (listingVelocity 20% + priceTrend 20% +
+    dealQualityTrend 15% + sellThroughRate 25% + prilikaRate 20%).
+  - pulse.classification: VERY_HOT (80-100) / HOT (60-79) / WARM (40-59) /
+    COOL (20-39) / COLD (0-19).
+  - pulse.interpretation: 5 slovenskih scenarijev (odlični/slabi pogoji).
+  - pulse.trend: RISING/STABLE/FALLING glede na previous-period pulse
+    (last 7d vs prejšnji 7d, isti weights). trendDelta = pulse.score -
+    previousPulseScore. Threshold ±3.
+  - signals: 5 signalov z { value, normalized 0-100, interpretation v
+    slovenščini }.
+  - perSource: per source (Bolha vs Vinted vs Facebook itd.) pulseScore
+    (same 5 signals z same weights), classification, displayName, listingCount.
+    Sortirano po pulseScore desc.
+  - recommendation: action (BUY_AGGRESSIVELY / BUY_NORMAL / HOLD / SELL_FAST /
+    WAIT) + reasoning (slovenski). BUY_AGGRESSIVELY (score≥70 + RISING/STABLE),
+    BUY_NORMAL (score≥55), HOLD (score≥35), SELL_FAST (FALLING + score<30),
+    WAIT (drugače).
+  - Empty state: pulse score 0 + COLD + STABLE, prazne signals z
+    "Ni podatkov", prazne perSource[], recommendation WAIT z "Ni listing
+    podatkov".
+
+- **AI Profit Momentum Tracker** — `GET+POST /api/ai/profit-momentum-tracker`
+  - AI sledi MOMENTUM rasti profita — ali profit pospešuje, upočasnjuje
+    ali stagnira? Identificira kaj pogan momentum in kako ga vzdrževati.
+    "Profit momentum: ACCELERATING (growth +15%, accel +5%). Driver:
+    volume (+3 trades). Sustain: list 2 more/week." Razlika od
+    profit-trajectory-forecaster (ki napove FUTURE growth trajectory) — ta
+    tracks CURRENT momentum (acceleration/deceleration right now).
+    Razlika od profit-accelerator (ki pospešuje profit preko akcij) — ta
+    diagnosticira stanje momentum-a in drivere. Razlika od
+    profit-stream-predictor (ki napove stream prihodka) — ta gleda
+    profit GROWTH RATE in njegovo ACCELERATION. Razlika od cash-flow-velocity
+    (ki gleda velocity cash flow-a) — ta gleda PROFIT momentum (growth rate
+    + acceleration). Razlika od profit-efficiency-analyzer (ki meri profit
+    per day) — ta gleda MOMENTUM (smer + hitrost spremembe).
+  - Query SOLD trades zadnjih 6 mesecev (status=sold, sellDate >= cutoff,
+    buyPrice > 0, sellPrice not null). Aggregate monthly po YYYY-MM.
+  - Per month: profit (sum sellPrice - sellFees - buyPrice - buyFees),
+    tradeCount, avgProfitPerTrade, avgCycleDays (sellMs - buyMs / DAY_MS).
+  - momentum.currentMonthlyProfit (zadnji mesec s podatki),
+    previousMonthlyProfit (predzadnji), profitGrowthRate = (current -
+    previous) / |previous| × 100 (ali 100% če previous≈0 in current>0),
+    profitAcceleration = growthRate - prevGrowthRate (iz 3. meseca).
+  - Anti-hallucination: profitGrowthRate clamped [-100, 500],
+    profitAcceleration clamped [-100, 500].
+  - momentum.momentumStatus: DECLINING (growth <-5), PLATEAUING (|growth|≤2),
+    ACCELERATING (growth >2 + accel >2), DECELERATING (growth >2 + accel <-2),
+    STEADY (growth >2 drugače).
+  - momentum.momentumScore 0-100: 50 baseline + growthRate × 0.5 (max ±25)
+    + acceleration × 0.6 (max ±15) + status bonus (ACCELERATING +15,
+    STEADY +5, DECELERATING -5, PLATEAUING -10, DECLINING -20).
+  - drivers.volumeDriver: change v trade count (currentTradeCount -
+    previousTradeCount). impact POSITIVE/NEGATIVE/NEUTRAL.
+  - drivers.priceDriver: change v avg profit/trade (current - previous).
+  - drivers.efficiencyDriver: change v avg cycle days (faster = positive,
+    negativna sprememba = POSITIVE impact).
+  - drivers.categoryDriver: topContributor kategorija + contribution
+    (max |profit change| med current vs previous month po kategorijah).
+  - analysis.momentumAssessment: slovenski opis (5 status scenarijev,
+    max 400 znakov).
+  - analysis.keyDrivers: top 3 driverji (Volumen, Profit na trade, Hitrost
+    cikla) s impact POSITIVE/NEGATIVE, weight (|change| × scale), detail.
+  - analysis.sustainabilityScore 0-100: 50 baseline + growth moderate
+    (10-30% = +20, 0-10% = +10, >50% = -10, <0% = -20) + accel >0 &
+    growth >0 = +10, accel <-5 = -15, sample size (≥10 trades = +15,
+    ≥5 = +5, <3 = -10), status adjustments.
+  - analysis.momentumForecast: 5 slovenskih scenarijev glede na status
+    (ACCELERATING → +20% growth, STEADY → isti, DECELERATING → zmanjšana,
+    PLATEAUING → stagnira, DECLINING → pada).
+  - analysis.momentumActions: 3-5 akcij v slovenščini z priority HIGH/MEDIUM/LOW
+    + expectedImpact. Deterministic: volumeChange ≤0 → povečaj volumen
+    (HIGH), priceChange <0 → izboljšaj profit/trade (HIGH), cycleChange >0 →
+    pospeši cikel (MEDIUM), ACCELERATING/STEADY → vzdržuj strategijo
+    (MEDIUM).
+  - analysis.riskFactors: 5 tveganj v slovenščini (majhen volumen, ekstremna
+    rast/padec, močno upočasnjujoč trend, top kategorija negativna, else
+    "Ni specifičnih tveganj").
+  - AI prompt z grounding — vključuje monthlyHistory (vsi meseci z
+    profit/tradeCount/avgProfitPerTrade/avgCycleDays), momentum (current,
+    previous, growth, accel, status, score, deterministicSustainability),
+    drivers (volume, price, efficiency, category z vsemi current/previous
+    vrednostmi in current kategorije list). AI generira analysis object:
+    momentumAssessment, keyDrivers, sustainabilityScore, momentumForecast,
+    momentumActions, riskFactors.
+  - Anti-hallucination: profitGrowthRate/profitAcceleration clamped
+    [-100, 500] (pri izračunu, AI ne more vračati — AI samo analysis objekt),
+    sustainabilityScore clamped [0, 100], momentumStatus validiran proti
+    enum, momentumAssessment clamped 400 znakov, momentumForecast clamped 400
+    znakov, keyDrivers (max 5, driver 100 znakov, detail 300 znakov, weight
+    [0, 100]), momentumActions (max 5, action 300 znakov, priority validirana,
+    expectedImpact 200 znakov), riskFactors (max 5, 300 znakov vsak).
+  - AI cache key `profit-momentum-tracker:${currentMonth}` (YYYY-MM, 6h TTL).
+    Deterministic fallback (compute iz growth rate + acceleration + drivers).
+  - GET+POST z handleProfitMomentumTracker(req) shared function (AI Hub
+    runner kompatibilnost). Empty state: momentum z vsemi 0 + PLATEAUING,
+    drivers z NEUTRAL/"Ni podatkov", analysis z "Ni SOLD trade-ov".
+
+### Changed
+
+- **AI_ENDPOINTS.md**: regeneriran z Python skripto → "Total: 308 endpoints"
+  (306 → 308, +2 AI: buyer-retention-forecaster #50, profit-momentum-tracker
+  #256). Verificirano z grep.
+- **README.md**: posodobljen badge v7.74.0 → v7.75.0, badge 306 AI → 308 AI,
+  badge 461 routes → 464 routes (+3), tagline "306 AI endpointov + 50 analytics"
+  → "308 AI endpointov + 51 analytics" (+1 analytics: market-sentiment-pulse),
+  Overview "306 AI + 50 analytics + 10 cron + ~147 funkcij" → "308 AI + 51
+  analytics + 10 cron + ~150 funkcij", dodan v7.75 blok v "Kaj je novega"
+  (3 funkcije z detajlnimi opisi), dodana 2 nova AI endpointa v AI primeri
+  blok (buyer-retention-forecaster, profit-momentum-tracker), dodan 1 nov
+  analytics endpoint v profit pipeline (market-sentiment-pulse), AI Hub
+  badge "Vsi 306 AI endpointov" → "Vsi 308 AI endpointov", project structure
+  "306 AI endpointov" → "308 AI endpointov", coding standards "461 routes" →
+  "464 routes", Roadmap v7.74 → v7.75, profit pipeline list dodane 3 nove
+  funkcije, Analytics (50) → (51) z dodanim Market Sentiment Pulse, Testing
+  "461 API routes" → "464 API routes", "Naslednji koraki" v7.50-v7.74 →
+  v7.50-v7.75, "Zadnje verzije" dodan v7.75.0, AI_ENDPOINTS.md link
+  "vseh 306 AI endpointov" → "vseh 308 AI endpointov", "do v7.74 (avgust
+  2026)" → "do v7.75 (avgust 2026)".
+- **CHANGELOG.md**: dodana nova [7.75.0] sekcija (nad [7.74.0]) z vsemi 3
+  endpoint-i in podrobnimi opisi (response shape, anti-hallucination rules,
+  AI cache key, deterministic fallback, example comment, razlika od podobnih
+  obstoječih endpoint-ov — buyer-retention-forecaster vs
+  buyer-retention-predictor/buyer-retention-score-calculator/buyer-sentiment-analyzer-v2/buyer-clv-predictor/buyer-churn-predictor-v2;
+  market-sentiment-pulse vs market-momentum/market-trend-momentum/weekly-trend-radar/market-trend/deal-velocity;
+  profit-momentum-tracker vs profit-trajectory-forecaster/profit-accelerator/profit-stream-predictor/cash-flow-velocity/profit-efficiency-analyzer).
+  [Unreleased] posodobljen na v7.76+.
+- **Verzija aplikacije**: v7.74.0 → v7.75.0
 
 ## [7.74.0] - 2026-08-16
 
