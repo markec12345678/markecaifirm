@@ -6,11 +6,285 @@ Format sledi [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), verzije s
 
 ## [Unreleased]
 
-Načrtovano za v7.76+:
+Načrtovano za v7.77+:
 - WebSocket real-time negotiation (SSE namesto polling)
 - Playwright E2E testi za glavne flow-e
 - TLS fingerprinting (curl-impersonate)
 - ML model za buyer matchmaker (fine-tuned na realnem data)
+
+## [7.76.0] - 2026-08-18
+
+### Added — AI Capital Deployment Planner & Market Intelligence Engine & Deal Pipeline Forecaster (3 funkcije)
+
+- **AI Capital Deployment Planner** — `GET+POST /api/ai/capital-deployment-planner`
+  - AI načrtuje KAKO deploy-ati razpoložljivi kapital v naslednjih 30/60/90
+    dneh — katere kategorije prioritizirati, koliko investirati, in timing
+    deployment-ov. "2000€ deployable → Phase 1 (30d): 800€ elektronika (25%
+    ROI). Phase 2 (60d): 700€ moda. Phase 3 (90d): 500€ reserve." Razlika
+    od capital-allocation-optimizer (v7.63, ki da statično % alokacijo čez
+    kategorije) — ta da TIME-PHASED deployment schedule z timing-om.
+    Razlika od capital-allocator (ki je basic capital allocation) — ta
+    vključuje historične ROI-je per kategorija in časovno razporeditev.
+    Razlika od budget-allocator (ki razdeli budget) — ta načrtuje deploy
+    kapitala čez časovne faze. Razlika od cash-flow-forecast (ki napove
+    capital 7/14/30d) — ta planira AKTIVNO deploy-anje kapitala, ne
+    projection. Razlika od reinvestment-advisor (ki svetuje kam reinvestirat
+    dobiček) — ta da strukturiran deployment plan z risk mitigation in
+    timing-om.
+  - Query SOLD trades zadnjih 30 dni (status=sold, sellDate >= cutoff,
+    sellPrice not null). availableCapital = sum(sellPrice - sellFees).
+  - Query HELD trades (status=held). heldCapital = sum(buyPrice).
+  - Query SOLD trades zadnjih 90 dni z buyPrice > 0 za ROI per kategorija.
+    Per kategorija: cost = sum(buyPrice + buyFees), revenue = sum(sellPrice
+    - sellFees), profit = revenue - cost, roi = profit / cost × 100.
+    Sortirano desc po ROI, top 10 za AI prompt.
+  - reserveAmount = 10% availableCapital (cash buffer), deployableCapital
+    = max(0, availableCapital - reserveAmount).
+  - capital: { availableCapital, heldCapital, deployableCapital,
+    reserveAmount }.
+  - deploymentStrategy: AGGRESSIVE (60% v Phase 1) / BALANCED (40% v
+    Phase 1) / CONSERVATIVE (30% v Phase 1). Deterministic pick:
+    CONSERVATIVE če deployableCapital < 500€ ali categoryCount < 2 ali
+    heldCapital > 5000€. AGGRESSIVE če deployableCapital > 2000€ in
+    heldCapital < 1000€. BALANCED drugače.
+  - schedule: 3 faze (Phase 1/2/3) z:
+    - phase (1, 2, 3)
+    - phaseName (slovensko, max 60 znakov)
+    - timeWindow ("Days 0-30" / "Days 30-60" / "Days 60-90" — regex
+      validiran)
+    - categories (1-3 z category, amount, expectedROI, expectedReturn,
+      reasoning)
+    - totalDeployment (vsota amount v fazi, ≤ deployableCapital × phase pct)
+    - expectedReturn (vsota expectedReturn v fazi)
+    - riskLevel (LOW / MEDIUM / HIGH — validiran proti enum)
+  - riskMitigation: diversificationRule (slovenski, max 200 znakov),
+    maxPerCategory (≤ deployableCapital × 0.4), reserveAdvice (slovenski,
+    max 200 znakov).
+  - summary: totalToDeploy (vsota vseh faz ≈ deployableCapital),
+    totalExpectedReturn, overallROI (totalExpectedReturn / totalToDeploy
+    × 100), deploymentTimeline (slovenski, max 100 znakov), advice
+    (slovenski, max 500 znakov).
+  - AI prompt z grounding — vključuje capital (4 vrednosti),
+    deterministicStrategy, top 10 kategorij z ROI + trades + totalCost.
+    AI generira deploymentStrategy, schedule (3 faze z categories),
+    riskMitigation, summary.
+  - Anti-hallucination:
+    - amounts clamped [0, deployableCapital]
+    - categories validirane proti historical list (samo kategorije z ≥1
+      SOLD trade v zadnjih 90 dneh)
+    - timeWindow regex validiran (`/^Days \d+-\d+$/`)
+    - deploymentStrategy validiran proti enum (AGGRESSIVE/BALANCED/
+      CONSERVATIVE)
+    - riskLevel validiran proti enum (LOW/MEDIUM/HIGH)
+    - expectedROI clamped [-50, 200]
+    - expectedReturn clamped [-deployableCapital, deployableCapital × 2]
+    - totalScheduled ≤ deployableCapital (vsota faz ne sme preseči)
+    - maxPerCategory clamped [0, deployableCapital × 0.4]
+    - phaseName 60 znakov, reasoning 200 znakov, diversificationRule 200
+      znakov, reserveAdvice 200 znakov, deploymentTimeline 100 znakov,
+      advice 500 znakov
+    - summary totals recomputed iz dejanskega schedule (ne zaupamo AI
+      totals)
+  - AI cache key `capital-deployment-planner:${availableCapital}` (6h
+    TTL — cache veljaven za isti capital snapshot). Deterministic
+    fallback (equal split across top 3 ROI kategorije v 3 fazah glede
+    na strategy phase split).
+  - GET+POST z handleCapitalDeploymentPlanner(req) shared function (AI
+    Hub runner kompatibilnost). Empty state 1: deployableCapital ≤ 0
+    (slovenski advice "Ni razpoložljivega kapitala..."). Empty state 2:
+    categoryRoi.length === 0 (slovenski advice "Ni zgodovinskih ROI
+    podatkov...").
+
+- **Market Intelligence Engine** — `GET+POST /api/ai/market-intelligence-engine`
+  - AI-powered celovit "executive dashboard" view trga, ki kombinira
+    VSE market signale (sentiment, depth, saturation, momentum, gaps,
+    trends) v en sam izvršni povzetek. "Market: EXPAND. Opportunities:
+    elektronika (HOT+DEEP+RISING). Threats: avto (saturating).
+    Confidence: 82%." Razlika od market-sentiment-pulse (v7.75, ki da
+    0-100 pulse iz 5 signalov) — ta je EXECUTIVE SUMMARY z
+    opportunities, threats, per-source scorecard in strategic
+    recommendation. Razlika od competitive-landscape-analyzer (v7.66,
+    ki gleda konkurente) — ta gleda lasten trg holistično. Razlika od
+    market-share-analyzer (v7.67, ki gleda market share) — ta da
+    STRATEGIC action EXPAND/MAINTAIN/CONTRACT/EXIT. Razlika od
+    market-gap-finder (v7.56, ki gleda trenutne prazne niše) — ta
+    kombinira VSE signale v executive view. Razlika od
+    market-trend-momentum (v7.73, ki gleda acceleration per kategorija)
+    — ta gleda 6 različnih signalov hkrati in overall strategijo.
+    Razlika od market-depth-analyzer (v7.68, ki gleda globino trga) —
+    ta integrira globino kot enega od 6 signalov v executive povzetek.
+  - Query listings zadnjih 14 dni (firstSeenAt >= cutoff - 14d,
+    isHidden false) z monitor.source, price, dealScore, aiVerdict,
+    isBookmarked, contactStatus. NOTE: Listing nima category polja
+    (samo Trade) — zato groupamo po monitor.source (Bolha / Vinted /
+    Facebook / mobile.de / itd.) kot "category" dimenzijo za executive
+    market view.
+  - Split v current (last 7d) in previous (7-14d) agregate per source.
+  - 6 signalov per source (vsi 0-100):
+    - sentimentScore: prilikaRate × 2 × 0.4 + avgDealScore × 0.3 +
+      sellThroughRate × 2 × 0.3 (kombinacija PRILIKA %, dealScore,
+      sell-through)
+    - depthScore: log10(listingCount) × 40 (5 listingov=27, 50=68,
+      200+=92, clamped [0, 100])
+    - saturationScore: glede na velocityRatio = currentListings /
+      previousListings (0.5→90, 1.0→80, 1.5→65, 2.0→50, 3.0→30, 3.0+→15)
+      — nižji ratio = manj saturiran
+    - momentumScore: 50 + (velocityRatio - 1) × 30 (clamped [0, 100])
+    - gapScore: (demand / supply) × 200 (demand = bookmarked + contacted,
+      supply = currentListings, clamped [0, 100])
+    - trendScore: 50 + priceTrendPct × 2.5 (clamped [0, 100], priceTrendPct
+      = % change avg price current vs previous)
+  - overallScore weighted (sentiment 25% + depth 15% + saturation 15%
+    + momentum 20% + gap 15% + trend 10%).
+  - classification: OPPORTUNITY (70-100) / STABLE (50-69) / RISK (30-49)
+    / AVOID (0-29).
+  - Sortirano po overallScore desc, top 15 za AI prompt.
+  - marketOverview: 1-2 stavka povzetek (max 300 znakov, slovensko).
+  - keyFindings: top 5 insights z { finding, signal, category, impact
+    (POSITIVE/NEGATIVE/NEUTRAL) }. Deterministic: top 5 kategorij z
+    signal labels (HOT sentiment / DEEP market / SATURATING / RISING /
+    HIGH demand gap / PRICES UP / STABLE).
+  - opportunities: top 3 OPPORTUNITY kategorije z { opportunity,
+    category, expectedProfit (heuristic: overallScore × 8 + gapScore × 3
+    + sentimentScore × 2, min 100€), timeFrame, action }.
+  - threats: top 3 RISK/AVOID kategorije z { threat, category, severity
+    (LOW/MEDIUM/HIGH), mitigation (slovenski, scenario-based) }.
+  - strategicRecommendation: action (EXPAND/MAINTAIN/CONTRACT/EXIT)
+    glede na avgOverall + opportunityCount + riskCount. reasoning
+    (slovenski, max 300 znakov). confidenceLevel 0-100 (40 base +
+    topCategories.length × 4 + listings/1000 × 20).
+  - summary: slovenski (max 500 znakov).
+  - AI prompt z grounding — vključuje categorySignals (top 15 z 6
+    signal scores + currentListings + previousListings), avgOverall,
+    opportunityCount, riskCount, deterministicAction, confidenceLevel.
+    AI generira marketOverview, keyFindings, opportunities, threats,
+    categoryIntelligence (posodobljeni scores), strategicRecommendation,
+    summary.
+  - Anti-hallucination:
+    - vsi scores clamped [0, 100] (sentimentScore, depthScore,
+      saturationScore, momentumScore, gapScore, trendScore, overallScore)
+    - classifications validirane proti enum (OPPORTUNITY/STABLE/RISK/AVOID)
+    - impact validiran proti enum (POSITIVE/NEGATIVE/NEUTRAL)
+    - severity validiran proti enum (LOW/MEDIUM/HIGH)
+    - action validiran proti enum (EXPAND/MAINTAIN/CONTRACT/EXIT)
+    - expectedProfit clamped [0, 50000]
+    - finding max 200 znakov, opportunity 200, action 200, threat 200,
+      mitigation 200, reasoning 300, marketOverview 300, summary 500,
+      signal 50, category 50, timeFrame 30
+    - keyFindings max 5, opportunities max 3, threats max 3,
+      categoryIntelligence max 15
+    - sort by overallScore desc after AI parsing
+  - AI cache key `market-intelligence:${currentWeek}` (ISO week YYYY-Www,
+    6h TTL — cache veljaven za trenutni teden). Deterministic fallback
+    (compute iz 6 signalov + avg overall + classification).
+  - GET+POST z handleMarketIntelligence(req) shared function (AI Hub
+    runner kompatibilnost). Empty state: prazne keyFindings/opportunities/
+    threats/categoryIntelligence, strategicRecommendation MAINTAIN z
+    "Ni dovolj podatkov", confidenceLevel 0.
+
+- **Deal Pipeline Forecaster** — `GET /api/analytics/deal-pipeline-forecaster`
+  - Napoved KOLIKO deal-ov bo prešlo skozi vsako stopnjo pipeline-a
+    (discovery → analysis → contact → negotiation → purchase → listing →
+    sale) v naslednjih 30 dneh. Pure DB analytics — NO AI. "Pipeline:
+    100 discovery → 5 sales (5% overall). Bottleneck: contact (30%
+    conversion). Fix: boljše outreach. Projected: 120 discovery → 6
+    sales → 1800€." Razlika od deal-funnel (v7.33, ki gleda statičen
+    konverzijski lijak zadnjih 90 dni) — ta FORECAST-a naslednje 30 dni
+    glede na recent discovery rate + conversion rates. Razlika od
+    deal-source-roi (ki gleda ROI po viru) — ta gleda konverzijo čez
+    pipeline STAG-E. Razlika od deal-quality-distribution (ki gleda
+    distribucijo score-ov) — ta gleda KOLIKO deal-ov teče skozi
+    stopnje. Razlika od deal-source-comparison-matrix (ki primerja vire)
+    — ta gleda celoten PIPELINE flow. Razlika od deal-velocity (ki meri
+    market temperature) — ta gleda internal pipeline conversion.
+  - Pipeline window = 30 dni (cutoff za vse stage count-e).
+  - Stage 1 DISCOVERY = listings z firstSeenAt >= cutoff, isHidden false.
+  - Stage 2 ANALYSIS = listings z aiScore > 0 (AI evaluated).
+  - Stage 3 CONTACT = listings z contactStatus != 'none' / '' / 'new'.
+  - Stage 4 NEGOTIATION = max(purchaseCount, respondedListingsCount)
+    kjer respondedListingsCount = listings z contactStatus 'responded'
+    ali 'closed', purchaseCount = trades z status='held'.
+  - Stage 5 PURCHASE = trades z status='held' (bought, not sold).
+  - Stage 6 LISTING = held trades z flipChecklist progress (any step
+    z completedAt ali step field).
+  - Stage 7 SALE = trades z status='sold'.
+  - currentPipeline: { discovery, analysis, contact, negotiation,
+    purchase, listing, sale }.
+  - conversionRates (vsi %, rounded 1 decimal):
+    - analysisRate = analysis / discovery × 100
+    - contactRate = contact / analysis × 100
+    - negotiationRate = negotiation / contact × 100
+    - purchaseRate = purchase / negotiation × 100
+    - listingRate = listing / purchase × 100
+    - saleRate = sale / listing × 100
+    - overallConversion = sale / discovery × 100
+  - stageMetrics: per stage (count, avgTimeDays, conversionRate,
+    conversionFromPrevious). avgTimeDays computed iz historical
+    timestamps:
+    - analysis: avg(firstSeenAt → aiEvaluatedAt)
+    - contact: avg(firstSeenAt → contactedAt)
+    - sale: avg(buyDate → sellDate) (cycle time)
+    - drugi: 0 (no timestamps available)
+  - forecast:
+    - projectedDiscovery30d: (recentListingsCount zadnje 14 dni / 2) × 4
+      (tedenski discovery rate × 4 tedne = 30 dni)
+    - projectedSales30d: projectedDiscovery30d × overallConversionDecimal
+    - projectedRevenue30d: projectedSales30d × avgSellPrice
+    - projectedProfit30d: projectedSales30d × avgProfitPerTrade
+    - confidence: 60 base + 25 discovery volume (max at 100 listings)
+      + 15 sale volume (max at 20 sales), clamped [0, 100]
+  - bottleneck: stage z lowest conversionRate (razen discovery).
+    Filter out stages z 0 previous-stage count (avoid phantom
+    bottleneck). impact: "Če izboljšaš {stage} na 50% konverzijo, bi
+    pridobil ~N dodatnih prodaj/mesec." fixRecommendation: per-stage
+    slovenski concrete fix (analysis → cron job + batch evaluator;
+    contact → boljši templates + multi-platform; negotiation → opening
+    offer + walk-away + AI bot; purchase → faster buy workflow; listing
+    → AI listing generator; sale → better prices + FOMO + optimal
+    timing).
+  - recommendations:
+    - bestStageToOptimize = bottleneck.stage ali 'discovery' fallback
+    - expectedLift: "+N prodaj/mesec ob 20% izboljšanju"
+    - advice: 5 scenarijev (Ni podatkov / 0 sales / <5% / <15% / ≥15%)
+  - Pure DB analytics, NO AI.
+  - Empty state: vsi counts 0, conversionRates 0, forecast 0,
+    bottleneck null z "Ni dovolj podatkov", advice "Ni podatkov o
+    discovery-ju...".
+
+### Changed
+
+- **AI_ENDPOINTS.md**: regeneriran z Python skripto → "Total: 310
+  endpoints" (308 → 310, +2 AI: capital-deployment-planner #65,
+  market-intelligence-engine #211). Verificirano z grep.
+- **README.md**: posodobljen badge v7.75.0 → v7.76.0, badge 308 AI → 310
+  AI, badge 464 routes → 467 routes (+3), tagline "308 AI endpointov + 51
+  analytics" → "310 AI endpointov + 52 analytics" (+1 analytics:
+  deal-pipeline-forecaster), Overview "308 AI + 51 analytics + 10 cron +
+  ~150 funkcij" → "310 AI + 52 analytics + 10 cron + ~153 funkcij",
+  dodan v7.76 blok v "Kaj je novega" (3 funkcije z detajlnimi opisi),
+  dodana 2 nova AI endpointa v AI primeri blok
+  (capital-deployment-planner, market-intelligence-engine), dodan 1 nov
+  analytics endpoint v profit pipeline (deal-pipeline-forecaster), AI Hub
+  badge "Vsi 308 AI endpointov" → "Vsi 310 AI endpointov", project
+  structure "308 AI endpointov" → "310 AI endpointov", coding standards
+  "464 routes" → "467 routes", Roadmap v7.75 → v7.76, profit pipeline
+  list dodane 3 nove funkcije, Analytics (51) → (52) z dodanim Deal
+  Pipeline Forecaster, Testing "464 API routes" → "467 API routes",
+  "Naslednji koraki" v7.50-v7.75 → v7.50-v7.76, "Zadnje verzije" dodan
+  v7.76.0, AI_ENDPOINTS.md link "vseh 308 AI endpointov" → "vseh 310 AI
+  endpointov", "do v7.75 (avgust 2026)" → "do v7.76 (avgust 2026)".
+- **CHANGELOG.md**: dodana nova [7.76.0] sekcija (nad [7.75.0]) z vsemi 3
+  endpoint-i in podrobnimi opisi (response shape, anti-hallucination
+  rules, AI cache key, deterministic fallback, example comment, razlika
+  od podobnih obstoječih endpoint-ov — capital-deployment-planner vs
+  capital-allocation-optimizer/capital-allocator/budget-allocator/
+  cash-flow-forecast/reinvestment-advisor; market-intelligence-engine
+  vs market-sentiment-pulse/competitive-landscape-analyzer/
+  market-share-analyzer/market-gap-finder/market-trend-momentum/
+  market-depth-analyzer; deal-pipeline-forecaster vs deal-funnel/
+  deal-source-roi/deal-quality-distribution/deal-source-comparison-matrix/
+  deal-velocity). [Unreleased] posodobljen na v7.77+.
+- **Verzija aplikacije**: v7.75.0 → v7.76.0
 
 ## [7.75.0] - 2026-08-17
 
