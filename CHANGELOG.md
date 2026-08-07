@@ -6,11 +6,149 @@ Format sledi [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), verzije s
 
 ## [Unreleased]
 
-Načrtovano za v7.67+:
+Načrtovano za v7.68+:
 - WebSocket real-time negotiation (SSE namesto polling)
 - Playwright E2E testi za glavne flow-e
 - TLS fingerprinting (curl-impersonate)
 - ML model za buyer matchmaker (fine-tuned na realnem data)
+
+## [7.67.0] - 2026-08-09
+
+### Added — Profit Efficiency Analyzer & Portfolio Health Dashboard & AI Market Share Analyzer (3 funkcije)
+- **Profit Efficiency Analyzer** — `GET /api/analytics/profit-efficiency-analyzer`
+  - Meri kako učinkovito pretvarjaš čas + kapital v profit. Pure DB analytics
+    (NO AI) — profit-per-day, profit-per-hold-day, capital efficiency ratio in
+    time-weighted ROI z letno projekcijo in 0-100 efficiency scores.
+  - Razlika od profit-dashboard (ki prikazuje splošen profit presek) — ta
+    meri EFFICIENCY (profit per dan/hold-day/trade) in letno projekcijo.
+    Razlika od roi-leaderboard (ki rank-a kategorije po ROI) — ta gleda
+    profit-per-hold-day (€ earned per dan vezave kapitala) in annualized.
+    Razlika od cash-conversion-cycle (ki meri koliko dni od nakupa do
+    prodaje) — ta računa € earned per dan aktivnosti + per dan vezanega
+    kapitala, z 0-100 time/capital efficiency score.
+  - Query all SOLD trades z veljavnimi buyDate < sellDate. Za vsak trade:
+    * `profit` = sellPrice - sellFees - buyPrice - buyFees
+    * `holdDays` = (sellDate - buyDate) / day
+  - Aggregate totals:
+    * `totalProfit`, `totalInvested`, `totalHoldDays`, `totalTradingDays`
+      (first buyDate → last sellDate), `tradeCount`
+  - Efficiency metrics:
+    * `profitPerDay` = totalProfit / totalTradingDays (€ earned per dan aktivnosti)
+    * `profitPerTrade` = totalProfit / tradeCount
+    * `profitPerHoldDay` = totalProfit / totalHoldDays (€ earned per dan vezave kapitala)
+    * `capitalEfficiencyRatio` = totalProfit / totalInvested × 100 (%, kot ROI vendar jasneje)
+    * `annualizedProfitPerDay` = profitPerDay × 365 (letna projekcija)
+    * `timeEfficiencyScore` 0-100 (avg hold <15d=100, 15-30=80, 30-45=60, 45-60=40, >60=20)
+    * `capitalUtilizationScore` 0-100 = totalInvested / (totalInvested + heldCapital) × 100
+      (% aktivno deploy-anega kapitala vs idle — held inventar)
+  - Per-category efficiency: tradeCount, totalProfit, avgHoldDays, profitPerHoldDay,
+    efficiencyRank (1 = najboljša, sort desc po profitPerHoldDay)
+  - Per-price-range efficiency (0-100€, 100-500€, 500€+): tradeCount, totalProfit,
+    avgHoldDays, profitPerHoldDay
+  - Recommendations: mostEfficientCategory, leastEfficientCategory, efficiencyAdvice
+    (glede na time/capital score), targetImprovements (4-5 concrete akcij:
+    povečaj volumen v top kategoriji, zmanjšaj v slabši, skrajšaj hold time,
+    povečaj capital utilization, +20% profitPerTrade target).
+  - Empty-state: "Ni prodanih trade-ov — Profit Efficiency analiza ni mogoča."
+  - 'Profit 2000€ v 90 dneh = 22€/dan. Najbolj učinkovita: elektronika
+    (1.5€/hold-day). Letna projekcija: 8030€.'
+
+- **Portfolio Health Dashboard** — `GET /api/analytics/portfolio-health-dashboard`
+  - Celovit health score (0-100) za trenutni portfelj glede na 5 dimenzij
+    zdravja: Diversification, Liquidity, Risk Exposure, Aging in Profit Potential.
+    Pure DB analytics (NO AI) z weighted-average klasifikacijo
+    EXCELLENT/GOOD/AVERAGE/POOR/CRITICAL.
+  - Razlika od portfolio-concentration-risk (ki gleda PARETO + HERFINDAHL
+    koncentracijsko tveganje) — ta gleda 5 DIMENZIJ zdravja portfelja z
+    weighted-score 0-100 in klasifikacijo. Razlika od inventory-health-monitor-v2
+    (ki AI-analizira inventar) — ta je pure DB analytics z eksplicitnimi health
+    dimensions in severity-tagged issues. Razlika od portfolio-stress-test (ki
+    simulira -10/-25/-40% scenarije) — ta gleda AKTUALNO zdravje portfelja danes.
+  - Query all HELD trades + njihove povezane listings (za aiRisk, aiEstimatedValue).
+    Query SOLD trades za historical context (avg hold reference).
+  - 5 health dimensions (vsaka 0-100):
+    * `diversification` — based on Herfindahl index kategorij (<0.2=100, 0.2-0.4=80,
+      0.4-0.6=60, >0.6=30). Status: DIVERZIFICIRANO/DOBRO/ZMERNJO/KONCENTRIRANO.
+    * `liquidity` — based on avg hold days held inventarja (<15d=100, 15-30=80,
+      30-45=60, 45-60=40, >60=20). Status: ODLIČNA/DOBRA/ZMERNA/POOR/KRITIČNA.
+    * `riskExposure` — based on avg aiRisk held listings (<3=100, 3-5=80, 5-7=60,
+      >7=30). Status: NIZKO/ZMERNJO/POVIŠANO/VISOKO (NEZNANO če ni AI podatkov).
+    * `aging` — % held <30 dni (>80%=100, 60-80%=80, 40-60%=60, <40%=30).
+      Status: FRESH/DOBRO/ZMERNJO/STAR.
+    * `profitPotential` — unrealized profit (estValue - buyPrice) / buyPrice
+      (>30%=100, 20-30%=80, 10-20%=60, <10%=30, negativno=30). Status:
+      ODLIČEN/DOBRO/ZMEREN/NIZKO/NEGATIVNO.
+  - Overall health = weighted average: Diversification 20%, Liquidity 25%,
+    Risk 20%, Aging 15%, Profit Potential 20%.
+  - Classification: EXCELLENT (80+), GOOD (60-79), AVERAGE (40-59), POOR (20-39),
+    CRITICAL (<20).
+  - Issues array: per dimension LOW/MEDIUM/HIGH severity + issue opis + recommendation.
+  - Summary: "Portfolio health 72/100 (GOOD). 3 težav — naslovite likvidnost in aging."
+  - Portfolio summary: totalItems, totalCapital, totalEstValue, unrealizedProfit,
+    avgHoldDays, avgRisk, freshItemsPct.
+  - Empty-state: "Ni held trade-ov — portfelj je prazen. Začni z nakupi za health analizo."
+  - 'Portfolio health 72/100 (GOOD). Likvidnost 40/100 (POOR — avg hold 52d).
+    Prodi starejše item-e za izboljšanje.'
+
+- **AI Market Share Analyzer** — `GET+POST /api/ai/market-share-analyzer`
+  - AI ocenjuje tvoj market share v kategorijah kjer trguješ, glede na volumen
+    oglasov vs total market listings. Prikazuje tvojo pozicijo vs konkurenco
+    z klasifikacijo LEADER/CHALLENGER/FOLLOWER/NICHE.
+  - Razlika od competitive-landscape-analyzer (ki analizira druge prodajalce/
+    konkurente aktivne v tvojih kategorijah) — ta ocenjuje TVOJ delež na trgu
+    (market share % per kategorija). Razlika od analytics/market-gap-finder
+    (ki išče praznine v trgu) — ta ANALIZIRA tvojo pozicijo in growth opportunities.
+    Razlika od analytics/competitor-tracker (ki sledi dobaviteljem) — ta gleda
+    TVOJO aktivnost vs celoten trg.
+  - Query all held + sold trades — distinct category = "tvoje kategorije".
+    Za vsako kategorijo: ekstrakt matchingMonitorIds iz povezanih listings.
+  - Query listings z bookmarked=true OR contactStatus != 'none' = "tvoja
+    aktivnost". Per-monitor count za yourListingsInteracted.
+  - Per category row:
+    * `yourListingsInteracted` (bookmarked + contacted v matching monitors)
+    * `totalMarketListings` (count of all listings v matching monitors)
+    * `yourTradesInCategory` (held + sold)
+    * `yourSoldInCategory`
+    * `estimatedMarketShare` = yourTradesInCategory / (totalMarketListings × 0.1) × 100
+      (predpostavka: ~10% listings rezultira v prodajo → tvoj delež nakupov vs
+      ocenjene total sales). Clamped na [0, 100].
+    * `competitivePosition` LEADER/CHALLENGER/FOLLOWER/NICHE (deterministic glede
+      na share percentiles: top 25%=LEADER, 25-50%=CHALLENGER, 50-75%=FOLLOWER,
+      bottom 25%=NICHE)
+    * `confidenceScore` 0-100 (base 50, +25 če >=100 listings, +15 če >=30, +5 če
+      >=10, -10 če manj; +15 če >=5 trades, +5 če >=2, -10 če 0; +10 če >=5
+      interakcij)
+  - AI prompt z GROUNDING_PROMPT_SUFFIX — top 15 kategorij z vsemi podatki.
+    AI generira:
+    * `dominantCategories` (top 2-3 z najvišjim share, z reasoning)
+    * `untappedCategories` (2-3 z velikim trgom >=20 oglasov kjer nisi aktiven)
+    * `overallPosition` (1-2 povedi slovensko — kakovost pozicije)
+    * `growthOpportunity` (2-3 kategorije kjer lahko rasteš, potentialShare + strategy)
+  - Anti-hallucination:
+    * estimatedMarketShare clamped na [0, 100]
+    * category, reasoning, strategy, overallPosition clamped na max chars
+    * share, marketSize, potentialShare clamped na [0, max]
+  - Deterministična osnova (buildDeterministicAnalysis): dominant = top 3 po
+    share, untapped = market >=20 + 0 trades, growthOpportunity = market >=15 +
+    share <10 z 2× projection.
+  - AI cache key `market-share-analyzer:${currentMonth}` (6h TTL — refreshes ~4x/day,
+    monthly cache rotation).
+  - Both GET and POST handlers (AI Hub runner compatibility).
+  - Empty-state: "Ni held ali sold trade-ov — Market Share analiza ni mogoča."
+  - 'Elektronika: 12% market share (CHALLENGER). Moda: 2% (NICHE). Priložnost:
+    razširi v avto (velik trg, 0% share).'
+
+### Changed
+- AI_ENDPOINTS.md: regeneriran z Python skripto → "Total: 295 endpoints"
+  (294 → 295, +1 AI: market-share-analyzer #207)
+- README.md: posodobljen z v7.67.0 (badge, 13 referenc), 295 AI (6 referenc),
+  440 routes (5 referenc), 40 analytics (3 reference), ~126 funkcij (2 referenci),
+  dodan v7.67 blok v "Kaj je novega" (3 funkcije), dodan v7.67.0 v "Zadnje verzije",
+  Roadmap posodobljen na v7.67 (trenutno — ~126 funkcij), Analytics (38) → (40)
+  z 2 novima (Profit Efficiency Analyzer, Portfolio Health Dashboard), Profit
+  pipeline list dodane 3 nove funkcije, Profit pipeline (v7.32-v7.66) → (v7.32-v7.67),
+  "v1.0 → v7.66" → "v1.0 → v7.67", "v7.50-v7.66 funkcije" → "v7.50-v7.67 funkcije"
+- Verzija aplikacije: v7.66.0 → v7.67.0
 
 ## [7.66.0] - 2026-08-08
 

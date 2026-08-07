@@ -7918,3 +7918,183 @@ Stage Summary:
 - Dokumentacija sinhrono posodobljena (AI_ENDPOINTS.md, README, CHANGELOG, GitHub About)
 - GitHub sinhroniziran (0 commit-ov ahead)
 - Verzija aplikacije: v7.66.0
+
+---
+Task ID: v7.67
+Agent: full-stack-developer
+Task: Add 3 new features for v7.67 — Profit Efficiency Analyzer, Portfolio Health Dashboard, Market Share Analyzer
+
+Work Log:
+- Prebral worklog.md (zadnjih 150 vrstic) — projekt pri v7.66.1, 294 AI endpointov,
+  437 total routes, ~123 funkcij. Razumel pattern iz competitive-landscape-analyzer,
+  portfolio-concentration-risk in profit-margin-heatmap (AI + DB endpoints).
+- Študiral obstoječe lib helperje: anti-hallucination.ts (GROUNDING_PROMPT_SUFFIX),
+  ai-cache.ts (getCachedAI/setCachedAI 6h TTL), rate-limit.ts (checkRateLimit 20/min),
+  pipeline.ts (getSettingsRow), ai.ts (callProviderForRaw, parseJsonLooseExported,
+  AiProviderType, AiSettings).
+- Preveril prisma schema — Trade (id, profileId, listingId, title, category, buyPrice,
+  buyDate, buyFees, sellPrice, sellDate, sellFees, status, notes, flipChecklist),
+  Listing (aiRisk, aiEstimatedValue, aiScore, isBookmarked, contactStatus, monitorId),
+  Monitor (id, name, source, url, isActive, tags). buyDate je non-nullable (DateTime
+  @default(now())) — pomembno za Prisma query (ne morem uporabiti `buyDate: { not: null }`).
+- Feature #1: Profit Efficiency Analyzer — `src/app/api/analytics/profit-efficiency-analyzer/route.ts`
+  - Pure DB analytics (NO AI). GET handler.
+  - Query SOLD trades z veljavnimi buyDate < sellDate, compute profit + holdDays per trade.
+  - Aggregate: totalProfit, totalInvested, totalHoldDays, totalTradingDays (first buy → last sell),
+    tradeCount.
+  - Efficiency metrics: profitPerDay, profitPerTrade, profitPerHoldDay (ključna metrika),
+    capitalEfficiencyRatio (%), annualizedProfitPerDay (×365), timeEfficiencyScore 0-100
+    (<15d=100, 15-30=80, 30-45=60, 45-60=40, >60=20), capitalUtilizationScore
+    (totalInvested / (totalInvested + heldCapital) × 100).
+  - Per-category efficiency z efficiencyRank (sort desc po profitPerHoldDay).
+  - Per-price-range efficiency (0-100€, 100-500€, 500€+).
+  - Recommendations: mostEfficientCategory, leastEfficientCategory, efficiencyAdvice
+    (4 nivoje), targetImprovements (5 konkretnih akcij).
+  - Empty-state z opisno slovensko message.
+  - Query tudi held trades (posebej) za capitalUtilizationScore.
+- Feature #2: Portfolio Health Dashboard — `src/app/api/analytics/portfolio-health-dashboard/route.ts`
+  - Pure DB analytics (NO AI). GET handler.
+  - Query HELD trades + njihove povezane listings (za aiRisk, aiEstimatedValue).
+    Query SOLD trades za historical context (avg hold reference).
+  - 5 health dimensions (vsaka 0-100):
+    * diversification (Herfindahl index kategorij: <0.2=100, 0.2-0.4=80, 0.4-0.6=60, >0.6=30)
+    * liquidity (avg hold days: <15d=100, 15-30=80, 30-45=60, 45-60=40, >60=20)
+    * riskExposure (avg aiRisk: <3=100, 3-5=80, 5-7=60, >7=30; NEZNANO=60 če ni AI podatkov)
+    * aging (% held <30d: >80%=100, 60-80%=80, 40-60%=60, <40%=30)
+    * profitPotential (unrealized %: >30%=100, 20-30%=80, 10-20%=60, <10%=30, neg=30)
+  - Overall = weighted avg (Diverzifikacija 20%, Likvidnost 25%, Tveganje 20%, Aging 15%,
+    Profit 20%).
+  - Classification EXCELLENT (80+), GOOD (60-79), AVERAGE (40-59), POOR (20-39),
+    CRITICAL (<20).
+  - Issues array z LOW/MEDIUM/HIGH severity per dimension + recommendation.
+  - Portfolio summary: totalItems, totalCapital, totalEstValue, unrealizedProfit,
+    avgHoldDays, avgRisk, freshItemsPct.
+  - Empty-state z CRITICAL classification.
+- Feature #3: AI Market Share Analyzer — `src/app/api/ai/market-share-analyzer/route.ts`
+  - AI-enhanced z GET+POST handlers (AI Hub runner compatibility).
+  - Query all held + sold trades — distinct category = "tvoje kategorije".
+    Za vsako: ekstrakt matchingMonitorIds iz povezanih listings.
+  - Query listings z bookmarked=true OR contactStatus != 'none' = "tvoja aktivnost".
+    Per-monitor count za yourListingsInteracted.
+  - Per category row: yourListingsInteracted, totalMarketListings (count v matching
+    monitors), yourTradesInCategory, yourSoldInCategory,
+    estimatedMarketShare = yourTradesInCategory / (totalMarketListings × 0.1) × 100
+    (predpostavka: ~10% listings rezultira v prodajo). Clamped na [0, 100].
+    competitivePosition LEADER/CHALLENGER/FOLLOWER/NICHE (percentile-based).
+    confidenceScore 0-100 (data quality formula).
+  - AI prompt z GROUNDING_PROMPT_SUFFIX — top 15 kategorij z vsemi podatki.
+    AI generira dominantCategories, untappedCategories, overallPosition, growthOpportunity.
+  - Anti-hallucination: estimatedMarketShare clamped [0, 100], category/reasoning/
+    strategy/overallPosition clamped na max chars, share/marketSize/potentialShare
+    clamped na [0, max]. Deterministic fallback (percentile-based position,
+    composite-score confidence).
+  - AI cache key `market-share-analyzer:${currentMonth}` (6h TTL).
+  - Rate limit 20/min/IP. Empty-state z opisno slovensko message.
+- TypeScript check: `npx tsc --noEmit` → 1 napaka prvotno (buyDate: { not: null }
+  je invalid ker buyDate je non-nullable). Popravljeno — odstranil `buyDate: { not: null }`
+  filter. Final: 0 napak ✨
+- ESLint: `bun run lint` → 0 napak, 0 opozoril ✨
+- Seed test (5 held + 8 sold trades, 25 listings, 1 monitor):
+  * profit-efficiency-analyzer: totalProfit=296€, profitPerDay=1.91€/dan,
+    annualized=697.15€/year, timeEfficiencyScore=80, capitalUtilizationScore=62.
+    byCategory: elektronika rank #1 (2.47€/hold-day), moda rank #2.
+  * portfolio-health-dashboard: overallScore=52/100 (AVERAGE). diversification=30
+    (KONCENTRIRANO, HHI=1000, 100% v elektronika), liquidity=60 (avg hold 30d),
+    riskExposure=100 (avg aiRisk=2/10), aging=30 (40% fresh), profitPotential=30
+    (-15% unrealized). 3 issues z HIGH/MEDIUM/MEDIUM severity.
+  * market-share-analyzer: 2 kategoriji (elektronika: 9 trades, 4 sold, 25 market
+    listings → 100% share LEADER conf=70; moda: 4 trades, 4 sold, 25 market listings →
+    100% share LEADER conf=60). aiUsed=false (deterministic fallback ker ni AI
+    provider-ja v sandboxu). Summary: "LEADER v 2 od 2 kategorijah. Avg market share
+    100%."
+  * Cleanup seed podatkov — baza nazaj v prazno stanje.
+- Finalni empty-state test: vsi 3 endpointi vračajo 200 z opisno slovensko message.
+- Dokumentacijska sinhronizacija (CRITICAL):
+  * AI_ENDPOINTS.md: regeneriran z Python skripto → "Total: 295 endpoints"
+    (294 → 295, +1 AI: market-share-analyzer #207)
+  * README.md (MultiEdit z 15 urejanji):
+    - Badge version: v7.66.0 → v7.67.0
+    - Badge AI Endpoints: 294 → 295
+    - Badge API Routes: 437 → 440 (+3: 2 analytics + 1 AI)
+    - Tagline: "294 AI endpointov + 38 analytics" → "295 AI endpointov + 40 analytics"
+    - Overview: "Verzija v7.66.0" → "Verzija v7.67.0", counts posodobljeni,
+      "~123 funkcij" → "~126 funkcij"
+    - "Kaj je novega v v7.56–v7.66 (11 verzij, 33 novih funkcij)" →
+      "...v7.56–v7.67 (12 verzij, 36 novih funkcij)", dodan v7.67 blok
+      (3 funkcije) na vrh
+    - AI Hub badge v tabeli: "Vsi 294 AI endpointov" → "Vsi 295 AI endpointov"
+    - "Endpointi (294 AI + 38 analytics + 10 cron + sistemski = 437)" →
+      "...(295 AI + 40 analytics + 10 cron + sistemski = 440)"
+    - Dodan 1 nov AI endpoint v AI primeri blok (market-share-analyzer, v7.67)
+    - "Profit pipeline (v7.32-v7.66)" → "...(v7.32-v7.67)"
+    - Dodana 2 nova analytics endpointa v profit pipeline blok
+      (profit-efficiency-analyzer, portfolio-health-dashboard, v7.67)
+    - Dodan 1 nov AI endpoint v profit pipeline listo
+      (market-share-analyzer, v7.67)
+    - Project structure: "294 AI endpointov" → "295 AI endpointov"
+    - Coding standards: "437 routes" → "440 routes"
+    - Roadmap: "v7.66 (trenutno — ~123 funkcij)" → "v7.67 (trenutno — ~126
+      funkcij)", profit pipeline list: dodane 3 nove funkcije
+      (Profit Efficiency Analyzer, Portfolio Health Dashboard, AI Market Share Analyzer),
+      "Profit pipeline (64+ funkcij)" → "(67+ funkcij)"
+    - Analytics (38) → (40), dodani 2 novi (Profit Efficiency Analyzer, Portfolio
+      Health Dashboard)
+    - Testing: "437 API routes" → "440 API routes"
+    - "Naslednji koraki": "v7.50-v7.66 funkcije" → "...v7.50-v7.67 funkcije"
+    - "Zadnje verzije": dodan "v7.67.0 (avgust 2026) — Profit Efficiency Analyzer,
+      Portfolio Health Dashboard, AI Market Share Analyzer" na vrh
+    - AI_ENDPOINTS.md link: "vseh 294 AI endpointov" → "vseh 295 AI endpointov"
+    - "v1.0 → v7.66" → "v1.0 → v7.67"
+  * CHANGELOG.md:
+    - "[Unreleased] Načrtovano za v7.67+" → "...za v7.68+"
+    - Dodana nova "[7.67.0] - 2026-08-09" sekcija (nad [7.66.0])
+    - "### Added — Profit Efficiency Analyzer & Portfolio Health Dashboard & AI
+      Market Share Analyzer (3 funkcije)" z vsemi 3 endpoint-i in podrobnimi opisi
+      (response shape, anti-hallucination rules, AI cache key, deterministic fallback,
+      example comment, razlika od podobnih obstoječih endpoint-ov)
+    - "### Changed" pod-sekcija z doc sync opisi (AI_ENDPOINTS.md, README.md,
+      CHANGELOG.md, verzija aplikacije)
+
+Stage Summary:
+- 3 novi endpointi dodani (skupno +3 od v7.66.1):
+  - profit-efficiency-analyzer (GET, pure DB analytics — profit-per-day,
+    profit-per-hold-day, capital efficiency ratio, annualized profit, time/capital
+    efficiency score 0-100, per-category efficiency rank, recommendations.
+    Razlika od profit-dashboard (splošen profit) — ta meri EFFICIENCY per dan/
+    hold-day/trade z annualized projekcijo in 0-100 scores. Razlika od roi-leaderboard
+    (rank po ROI) — ta gleda profit/hold-day (€ per dan vezave kapitala).
+    Razlika od cash-conversion-cycle (dni od nakupa do prodaje) — ta računa
+    € earned per dan aktivnosti z letno projekcijo in efficiency scores.)
+  - portfolio-health-dashboard (GET, pure DB analytics — 5 health dimensions
+    (diversification/liquidity/riskExposure/aging/profitPotential) z weighted
+    avg 0-100 in klasifikacijo EXCELLENT/GOOD/AVERAGE/POOR/CRITICAL. Per dimension
+    issues z LOW/MEDIUM/HIGH severity + recommendations. Razlika od portfolio-
+    concentration-risk (Pareto + HHI) — ta gleda 5 dimenzij zdravja z weighted
+    score. Razlika od inventory-health-monitor-v2 (AI inventar) — ta je pure DB
+    z explicit dimensions. Razlika od portfolio-stress-test (simulacije) — ta
+    gleda aktualno zdravje danes.)
+  - market-share-analyzer (GET+POST, AI-enhanced — ocenjuje TVOJ market share per
+    kategorija z estimatedMarketShare = yourTrades / (totalMarketListings × 0.1) × 100
+    (10% listings = sales predpostavka). competitivePosition LEADER/CHALLENGER/
+    FOLLOWER/NICHE (percentile-based). AI generira dominantCategories,
+    untappedCategories, growthOpportunity. Anti-hallucination clamps + validacija
+    enum-ov + deterministic fallback. Cache key `market-share-analyzer:${currentMonth}`
+    6h TTL. Razlika od competitive-landscape-analyzer (analizira KONKURENCO) — ta
+    ocenjuje TVOJ delež. Razlika od market-gap-finder (išče praznine) — ta ANALIZIRA
+    tvojo pozicijo. Razlika od analytics/competitor-tracker (dobavitelji) — ta gleda
+    TVOJO aktivnost vs cel trg.)
+- Vsi 3 endpointi vračajo veljaven JSON tudi ob prazni bazi (graceful fallback z
+  opisno slovensko message). AI endpoint (market-share-analyzer) ima aiUsed flag
+  v responsu za transparentnost in GET+POST kompatibilnost z AI Hub runner-jem.
+- AI_ENDPOINTS.md: "Total: 295 endpoints" ✓ (294 → 295, +1 AI)
+- README.md: v7.67.0 badge (13 referenc), 295 AI (6 referenc), 440 routes
+  (5 referenc), 40 analytics (3 reference), ~126 funkcij (2 referenci) ✓
+- CHANGELOG.md: [7.67.0] sekcija dodana z 3 endpoint-i in Changed pod-sekcijo,
+  [Unreleased] posodobljen na v7.68+ ✓
+- ESLint: 0 napak ✨
+- TypeScript: 0 napak ✨ (initially 1 napaka — `buyDate: { not: null }` invalid ker
+  buyDate je non-nullable; odstranil filter; popravljeno)
+- dev.log: vsi HTTP requesti vračajo 200 OK. Ena WARN ("/api/ai/market-share-analyzer
+  AI call failed — using deterministic fallback fetch failed") je expected behavior
+  v sandboxu brez AI provider-ja — deterministic fallback pravilno prevzame.
+- Verzija aplikacije: v7.67.0
