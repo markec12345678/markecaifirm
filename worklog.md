@@ -9413,3 +9413,34 @@ Stage Summary:
 - TypeScript: 0 napak ✨
 - dev.log: vsi HTTP requesti vračajo 200 OK, brez error/warn (empty-state — AI se sploh ne kliče brez podatkov)
 - Verzija aplikacije: v7.73.0
+
+---
+Task ID: v7.73.1
+Agent: main
+Task: v7.73 commit + push + GitHub About + Agent Browser verification
+
+Work Log:
+- Prejel poročilo od full-stack-developer podagenta (Task v7.73)
+- Preveril 3 nove endpoint-e: listing-conversion-forecaster (200 GET+POST), inventory-value-predictor (200 GET), market-trend-momentum (200 GET)
+- Preveril doc sync: AI_ENDPOINTS.md (305 ✅), README v7.73 (13 refs ✅), README 305 AI (6 refs ✅), CHANGELOG v7.73 ✅
+- Preveril lint: 0 napak ✨
+- Preveril typecheck: 0 napak ✨
+- Posodobil GitHub About opis: 304 AI → 305 AI, 455 routes → 458 routes (via API PATCH)
+- Commit: "v7.73: Listing Conversion Forecaster + Inventory Value Predictor + Market Trend Momentum Analyzer" (adbd279)
+- Push na GitHub: uspešen ✅, PAT očiščen ✅
+- Agent Browser self-verification:
+  - Stran se pravilno naloži (HTTP 200)
+  - AI Hub prikazuje listing-conversion-forecaster (v7.73) v iskalniku ✅
+  - Runner test: klik na listing-conversion-forecaster → POST request → valid JSON ✅
+  - Response: {"ok":true, "items":[], "summary":{...}, "aiUsed":false, "message":"Ni HELD trade-ov..."}
+  - Brez runtime napak v dev.log
+
+Stage Summary:
+- v7.73 uspešno dokončana in potisnjena na GitHub
+- 3 nove funkcije: AI Listing Conversion Forecaster, Inventory Value Predictor, Market Trend Momentum Analyzer
+- AI endpointi: 304 → 305 (+1)
+- Analytics endpointi: 46 → 48 (+2)
+- Total API routes: 455 → 458 (+3)
+- Dokumentacija sinhrono posodobljena (AI_ENDPOINTS.md, README, CHANGELOG, GitHub About)
+- GitHub sinhroniziran (0 commit-ov ahead)
+- Verzija aplikacije: v7.73.0
