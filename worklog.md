@@ -7625,3 +7625,265 @@ Stage Summary:
 - Dokumentacija sinhrono posodobljena (AI_ENDPOINTS.md, README, CHANGELOG, GitHub About)
 - GitHub sinhroniziran (0 commit-ov ahead)
 - Verzija aplikacije: v7.65.0
+
+---
+Task ID: v7.66
+Agent: full-stack-developer
+Task: Add 3 new features for v7.66 — AI Competitive Landscape Analyzer, Price History Forecaster, FOMO/Scarcity Trigger Generator
+
+Work Log:
+- Prebral worklog.md (zadnjih ~150 vrstic) — project at v7.65.1, 292 AI endpoints, 434 total routes, 37 analytics, ~120 funkcij.
+- Studiral existing AI endpoint pattern (deal-quality-forecaster/route.ts) za v7.65 — GET+POST shared handler, AI cache, anti-hallucination clamps, deterministic fallback, GROUNDING_PROMPT_SUFFIX.
+- Studiral pure DB analytics pattern (portfolio-concentration-risk/route.ts) za v7.65 — pareto + herfindahl, no AI, slovenski empty-state messages.
+- Preveril Listing schema: sellerName (String?), price (Int?), dealScore (Int?), firstSeenAt (DateTime), monitor relation z name/source. Listing nima category field — uporabljen monitor.name kot category proxy (enako kot deal-quality-forecaster).
+
+- Feature #1 (AI Competitive Landscape Analyzer) — implementacija:
+  * `src/app/api/ai/competitive-landscape-analyzer/route.ts` (462 vrstic)
+  * Query all listings iz zadnjih 30 dni z sellerName populatanim (select: id, title,
+    price, firstSeenAt, sellerName, dealScore, monitor.name/source)
+  * Group by sellerName — samo prodajalci z 3+ oglasov = potencialni konkurenti
+    (OneOff seller-ji z <3 oglasov izpuščeni)
+  * Per competitor: totalListings, categories (distinct monitor.name), avgPrice,
+    priceRange [min,max], listingFrequency (listings/week computed iz firstSeen→lastSeen
+    window × 7), avgDealScore, marketShare (their listings / total listings in their
+    categories × 100, clamped [0,100]), firstSeen/lastSeen (ISO dates)
+  * Top 20 konkurentov poslanih AI (top 10 v prompt za token budget)
+  * AI prompt z GROUNDING_PROMPT_SUFFIX — competitor block + your avg price + market
+    avg/range + deterministic basis (top competitor, your position)
+  * AI generira: analysis array (per competitor: pricingStrategy PREMIUM/MID_MARKET/
+    BUDGET, specialization, threatLevel LOW/MEDIUM/HIGH, yourAdvantage, recommendedAction),
+    marketPosition (yourAvgPrice, competitorAvgPrice, yourPosition BELOW_MARKET/AT_MARKET/
+    ABOVE_MARKET, positioningAdvice), competitiveActions (3-5 z priority + expectedImpact),
+    differentiationOpportunity (2-3 manj zasedene niše z reasoning + potentialProfit),
+    summary (1-2 povedi slovensko)
+  * Anti-hallucination: marketShare clamped [0,100], cene clamped na actual data range,
+    pricingStrategy/threatLevel/yourPosition/priority validirani enum-i z fallback na
+    deterministic (percentile-based p33/p67 za pricing, composite score za threat),
+    sellerName validiran da obstaja v competitors listi (prepreči AI hallucinations
+    nereálnih prodajalcev), summary clamped na 500 znakov
+  * Deterministic fallback (buildDeterministicAnalysis): pricing strategy iz avgPrice
+    percentilov (p33=BUDGET, p67=PREMIUM), threat level iz composite score (marketShare
+    >=30/+3, >=15/+2, >=5/+1; listings >=15/+2, >=7/+1; dealScore >=70/+2, >=55/+1;
+    score>=5=HIGH, >=3=MEDIUM, druga=LOW)
+  * yourAvgPrice computed iz HELD trades buyPrice (proxy za tvojo cenovno raven)
+  * AI cache key `competitive-landscape:${currentMonth}` (YYYY-MM, 6h TTL — refreshes
+    ~4x/day, monthly cache rotation)
+  * Both GET and POST handlers (AI Hub runner compatibility — POST body parsed but
+    ignored, analysis uses global listing data)
+  * Empty-state: "Ni oglasov z sellerName v zadnjih 30 dneh — Competitive Landscape
+    potrebuje vsaj nekaj oglasov z identificiranimi prodajalci."
+  * Secondary empty-state (ima oglase z sellerName ampak vsi imajo <3): "Ni ponavljajočih
+    se prodajalcev (3+ oglasov) v zadnjih 30 dneh — potrebuješ več oglasov za smiselno
+    analizo konkurence."
+
+- Feature #2 (Price History Forecaster) — implementacija:
+  * `src/app/api/analytics/price-history-forecaster/route.ts` (298 vrstic)
+  * Pure DB analytics — NO AI (hitro, deterministic, brez AI stroškov)
+  * Query all listings iz zadnjih 90 dni z veljavnimi cenami (price > 0)
+  * Group by category (monitor.name kot proxy, fallback 'drugo') + by week (Monday-start)
+  * Za vsako kategorijo z 4+ tedni podatkov:
+    - weeklyPrices array (časovna serija do 13 tednov z week=ISO date + avgPrice)
+    - currentAvgPrice (povprečje zadnjih 4 tednov)
+    - previousAvgPrice (povprečje tednov 5-8)
+    - priceChangePercent ((current - previous) / previous × 100, rounded 1 decimal)
+    - volatility (stdDev / mean weekly prices, 3 decimale)
+    - linear regression (slope + intercept na x=weekIndex, y=avgPrice)
+    - forecast30d (projecija čez 30 dni = ~4.3 weeks: slope × (lastIdx + 30/7) + intercept,
+      clamped >= 0)
+    - forecastDirection (RISING če slope > 1% avg/week, FALLING če < -1%, STABLE drugače)
+    - confidenceScore (0-100): base 20 + 30/20/10 za 8+/6+/4+ tednov, +20/10 za
+      volatility < 0.15/< 0.30, +20 če slope sign matches change direction, +10 če
+      slope skoraj 0 (stable), +10 če zadnji week znotraj 14 dni. Clamped [0,100]
+    - recommendation: GOOD_TIME_TO_BUY (FALLING + change < -5%), GOOD_TIME_TO_SELL
+      (RISING + change > +5%), HOLD (STABLE + change < 3%), NEUTRAL (drugače)
+  - Sort by confidence desc, then by abs(change) desc
+  - Summary: totalCategories, risingCount, fallingCount, stableCount,
+    bestBuyCategory (FALLING z najvišjo confidence), bestSellCategory (RISING z
+    najvišjo confidence)
+  - Advice: slovensko besedilo z najboljšimi buy/sell priložnostmi (concrete številke)
+  - Empty-state: "Ni oglasov s cenami v zadnjih 90 dneh — Price History Forecaster
+    potrebuje vsaj nekaj oglasov z veljavnimi cenami."
+
+- Feature #3 (FOMO/Scarcity Trigger Generator) — implementacija:
+  * `src/app/api/ai/fomo-scarcity-generator/route.ts` (650 vrstic)
+  * Query all HELD trades z linked Listing (select: id, title, category, buyPrice,
+    buyDate, listing.id/title/price/monitor.name)
+  * Recent listings (30 dni) za similarity count computation
+  * Per held item gather context: title, category (Trade.category ali monitor.name
+    fallback 'drugo'), buyPrice, daysHeld ((now - buyDate) / dayMs), estValue
+    (linked listing.price ali buyPrice × 1.3 kot estimate), similarListingsCount
+    (listings v istem monitor + cena ±30% estValue v zadnjih 30 dneh, fallback:
+    title prefix match), isSeasonal (current month Nov/Dec/Jan in seasonal category
+    [elektronika, moda, sport, igrače, avto]), isRare (similarListingsCount <= 3)
+  * AI prompt z GROUNDING_PROMPT_SUFFIX — per item block z vsemi podatki + pravila
+    za FOMO messaging (urgencyLevel, scarcityType, fomoPhrases, listingAddition,
+    callToAction, psychologicalHook, expectedConversionLift)
+  * AI generira per item: urgencyLevel (LOW/MEDIUM/HIGH/CRITICAL), scarcityType
+    (TIME_LIMITED/QUANTITY_LIMITED/SEASONAL/RARE_FIND), fomoPhrases (3-5 slovenskih),
+    listingAddition (1-2 povedi max 200 znakov), callToAction (specifičen CTA),
+    psychologicalHook (scarcity/urgency/social proof/loss aversion), expectedConversionLift
+    (0-50%)
+  * Anti-hallucination: expectedConversionLift clamped [0,50], urgencyLevel/scarcityType
+    validirani enum-i z fallback na deterministic, fomoPhrases clamped 5 max / 120
+    chars each, listingAddition clamped 200 chars, AI prompt izrecno prepove lažno
+    redkost (mora utemeljiti z dejanskimi similarListingsCount/daysHeld)
+  * Deterministic fallback:
+    - urgencyLevel: CRITICAL (rare OR >60 days), HIGH (>30 days OR <=2 similar OR
+      seasonal), MEDIUM (>14 days), LOW (drugače)
+    - scarcityType: RARE_FIND (rare), SEASONAL (seasonal), TIME_LIMITED (>45 days
+      urgent sale ali default), QUANTITY_LIMITED (1 kos, <=3 similar)
+    - 4 nivoji generičnih FOMO fraz slovensko (LOW/MEDIUM/HIGH/CRITICAL z 2 frazama
+      vsak)
+    - listingAddition generirana glede na scarcityType + urgency
+    - callToAction glede na urgency (4 variant)
+    - psychologicalHook glede na scarcityType
+    - expectedConversionLift: CRITICAL=35, HIGH=22, MEDIUM=12, LOW=5
+  * Merge logic: AI items mapirani po tradeId, če AI manjka za item → uporabi
+    deterministic. Vsi AI value-ji validirani + clamped.
+  * AI cache key `fomo-scarcity:${JSON.stringify(heldItemIds sorted)}` (6h TTL —
+    invalidira ko se spremeni held inventar)
+  * Both GET and POST handlers (AI Hub runner compatibility)
+  * Summary: totalItems, criticalCount, highUrgencyCount, avgExpectedLift,
+    bestPractices (4-5 slovenskih nasvetov o uporabi FOMO messaging-a)
+  * Empty-state: "Ni held trade-ov — FOMO/Scarcity Generator potrebuje held
+    inventar za generiranje messaging-a."
+
+- Seed test podatki (2 monitorja, 12 listings z 3 seller-ji, 3 held trades) —
+  verify pravilna funkcionalnost:
+  * GET /api/ai/competitive-landscape-analyzer → 200. 2 konkurenta (Elektro Marjan
+    z 6 oglasi 75% share 475€ avg, Modna Kraljica z 4 oglasi). OneOff seller z 2
+    oglasi pravilno izpuščen (<3 threshold). Top: BUDGET strategija (475€ <= p33
+    485€), MEDIUM threat (75% share +3, 6 listings +1, 60 dealScore +0 = 4 = MEDIUM).
+    marketPosition BELOW_MARKET (your 317€ < competitor 485€, diff > 10%). 3
+    competitiveActions, 2 differentiationOpportunities. aiUsed=false (no AI provider
+    v sandbox-u, deterministic fallback deluje pravilno).
+  * GET /api/analytics/price-history-forecaster → 200. 2 kategoriji (iPhone 13 test,
+    PS5 test). Category[0]: "iPhone 13 test" currentAvg=431€ prevAvg=600€
+    change=-28.2% (FALLING), confidence=70% (5 weeklyPrices, volatility low, slope
+    sign consistent), forecastDirection=FALLING, recommendation=GOOD_TIME_TO_BUY.
+    weeklyPrices count=5. summary: total=2, rising=0, falling=2, stable=0,
+    bestBuy=iPhone 13 test, bestSell=null (no rising). advice slovensko z concrete
+    številkami.
+  * GET /api/ai/fomo-scarcity-generator → 200. 3 items:
+    - iPhone 13 (35 days held) → CRITICAL urgency (held > 30 days), RARE_FIND
+      scarcity, +35% lift, CTA "Piši zdaj, preden je prepozno!"
+    - PS5 (5 days held) → LOW urgency (recent), TIME_LIMITED, +5% lift, CTA
+      "Zanimiv te? Pošlji sporočilo."
+    - Leica (no similar listings, 3 days held) → CRITICAL urgency (rare=true),
+      RARE_FIND, +35% lift
+    summary: total=3, critical=2, high=0, avgLift=25%. aiUsed=false (deterministic
+    fallback pravilno prevzame).
+  * POST /api/ai/fomo-scarcity-generator -d '{}' → 200, identično kot GET (AI Hub
+    runner kompatibilnost potrjena — same 3 items, same aiUsed=false)
+  * Cleanup seed podatkov (3 trades, 12 listings, 2 monitorji) — baza nazaj v
+    prazno stanje
+  * Finalni empty-state test: vsi 3 endpointi vračajo 200 z opisno slovensko
+    message
+
+- TypeScript: `npx tsc --noEmit` → 0 napak ✨ (initially 1 napaka — `tradeId`
+  manjkal v AiFomoItemResponse interface, dodan; popravljeno)
+- ESLint: `bun run lint` → 0 napak, 0 opozoril ✨ (initially 1 napaka —
+  unterminated string literal v bestPractices array ( newline v string literalu),
+  popravljeno z enkapsulacijo v eno vrstico)
+- dev.log: vsi HTTP requesti (GET×3 + POST×1) vračajo 200 OK. Brez ERROR logov.
+  Brez AI call failed WARN logov ker vsi 3 endpointi imajo deterministic fallback
+  ki ne proži AI call-a ko ni AI providerja konfiguriranega v sandbox-u
+  (getSettingsRow vrne prazno → aiSettings.provider bo prazen → callProviderForRaw
+  vrže error → catch blok prevzame deterministic — to je expected behavior v
+  sandboxu brez AI provider-ja).
+
+- Dokumentacijska sinhronizacija (CRITICAL):
+  * AI_ENDPOINTS.md: regeneriran z Python skripto → "Total: 294 endpoints"
+    (292 → 294, +2 AI: competitive-landscape-analyzer #68, fomo-scarcity-generator #97)
+  * README.md (MultiEdit z 20 urejanji):
+    - Badge version: v7.65.0 → v7.66.0
+    - Badge AI Endpoints: 292 → 294
+    - Badge API Routes: 434 → 437 (+3)
+    - Tagline: "292 AI endpointov + 37 analytics" → "294 AI endpointov + 38 analytics"
+    - Overview: "Verzija v7.65.0" → "Verzija v7.66.0", counts posodobljeni,
+      "~120 funkcij" → "~123 funkcij"
+    - "Kaj je novega v v7.56–v7.65 (10 verzij, 30 novih funkcij)" →
+      "...v7.56–v7.66 (11 verzij, 33 novih funkcij)", dodan v7.66 blok
+      (3 funkcije) na vrh
+    - "v1.0 → v7.65" → "v1.0 → v7.66" (1 mesto: changelog ref)
+    - AI Hub badge v tabeli: "Vsi 292 AI endpointov" → "Vsi 294 AI endpointov"
+    - "Endpointi (292 AI + 37 analytics + 10 cron + sistemski = 434)" →
+      "...(294 AI + 38 analytics + 10 cron + sistemski = 437)"
+    - Dodana 2 nova AI endpointa v AI primeri blok (competitive-landscape-analyzer,
+      fomo-scarcity-generator, v7.66)
+    - "Profit pipeline (v7.32-v7.65)" → "...(v7.32-v7.66)"
+    - Dodan 1 nov analytics endpoint v profit pipeline blok
+      (price-history-forecaster, v7.66)
+    - Dodana 2 nova AI endpointa v profit pipeline listo
+      (competitive-landscape-analyzer, fomo-scarcity-generator, v7.66)
+    - Project structure: "292 AI endpointov" → "294 AI endpointov"
+    - Coding standards: "434 routes" → "437 routes"
+    - Roadmap: "v7.65 (trenutno — ~120 funkcij)" → "v7.66 (trenutno — ~123
+      funkcij)", profit pipeline list: dodane 3 nove funkcije (AI Competitive
+      Landscape Analyzer, Price History Forecaster, FOMO/Scarcity Trigger Generator)
+    - Analytics (37) → (38), dodana 1 nova (Price History Forecaster)
+    - Testing: "434 API routes" → "437 API routes"
+    - "Naslednji koraki": "v7.50-v7.65 funkcije" → "...v7.50-v7.66 funkcije"
+    - "Zadnje verzije": dodan "v7.66.0 (avgust 2026) — AI Competitive Landscape
+      Analyzer, Price History Forecaster, FOMO/Scarcity Trigger Generator" na vrh
+    - AI_ENDPOINTS.md link: "vseh 292 AI endpointov" → "vseh 294 AI endpointov"
+  * CHANGELOG.md:
+    - "[Unreleased] Načrtovano za v7.66+" → "...za v7.67+"
+    - Dodana nova "[7.66.0] - 2026-08-08" sekcija (nad [7.65.0])
+    - "### Added — AI Competitive Landscape Analyzer & Price History Forecaster &
+      FOMO/Scarcity Trigger Generator (3 funkcije)" z vsemi 3 endpoint-i in
+      podrobnimi opisi (response shape, anti-hallucination rules, AI cache key,
+      deterministic fallback, example comment, razlika od podobnih obstoječih
+      endpoint-ov)
+    - "### Changed" pod-sekcija z doc sync opisi (AI_ENDPOINTS.md, README.md,
+      CHANGELOG.md)
+
+Stage Summary:
+- 3 novi endpointi dodani (skupno +3 od v7.65.1):
+  - competitive-landscape-analyzer (GET+POST, AI-enhanced z 2 konkurentoma v top 10,
+    per competitor: pricingStrategy/threatLevel/yourAdvantage/recommendedAction +
+    marketPosition + competitiveActions + differentiationOpportunity + summary.
+    Anti-hallucination clamps + validacija enum-ov + sellerName existence check +
+    deterministic fallback z percentile-based pricing + composite-score threat.
+    Cache key `competitive-landscape:${currentMonth}` 6h TTL.)
+  - price-history-forecaster (GET, pure DB analytics — linear regression na 13-tedenski
+    časovni seriji, forecast30d projection, forecastDirection RISING/STABLE/FALLING,
+    volatility (stdDev/mean), confidenceScore (sample size + volatility + slope
+    consistency + recency), recommendation GOOD_TIME_TO_BUY/GOOD_TIME_TO_SELL/HOLD/
+    NEUTRAL. Razlika od market-trend (ki gleda rising/falling counts) — ta PROJICIRA
+    ceno čez 30 dni z linearno regresijo. Razlika od listings/[id]/price-forecast
+    (ki napove EN listing) — ta napove CELO KATEGORIJO z BUY/SELL/HOLD)
+  - fomo-scarcity-generator (GET+POST, AI-enhanced per held item: urgencyLevel
+    LOW/MEDIUM/HIGH/CRITICAL, scarcityType TIME_LIMITED/QUANTITY_LIMITED/SEASONAL/
+    RARE_FIND, fomoPhrases 3-5 slovenskih, listingAddition 200 chars, callToAction,
+    psychologicalHook, expectedConversionLift 0-50%. Anti-hallucination clamps +
+    validacija enum-ov + deterministic fallback z 4 nivoji generičnih FOMO fraz.
+    Cache key `fomo-scarcity:${JSON.stringify(heldItemIds)}` 6h TTL — invalidira
+    ko se spremeni held inventar. Razlika od listing-emotional-trigger (ki generira
+    čustvene sprožilce za EN oglas) — ta je specifično za HELD inventar z
+    expectedConversionLift % in scarcityType klasifikacijo)
+- AI Competitive Landscape Analyzer: AI-analizira AKTIVNE PRODAJALCE (3+ oglasov)
+  v tvojih kategorijah. Razlika od competitor-price-tracker (ki spremlja cene
+  posameznih oglasov) — ta ANALIZIRA prodajalce kot celoto (strategije, frekvence,
+  market share, threat level). Razlika od analytics/competitor-tracker (ki sledi
+  supplier-jem) — ta gleda KONKURENCO.
+- Price History Forecaster: linear regression forecast. Razlika od market-trend
+  (ki gleda rising/falling counts) — ta PROJICIRA ceno čez 30 dni z linearno
+  regresijo. Razlika od seasonal-calendar (statika mesečnih vzorcev) — ta gleda
+  AKTUALNO 13-tedensko zgodovino z linear projection.
+- FOMO/Scarcity Trigger Generator: urgency + conversion lift. Razlika od
+  listing-emotional-trigger (ki generira čustvene sprožilce za EN oglas) — ta je
+  specifično za HELD inventar z expectedConversionLift (%) in scarcityType
+  klasifikacijo. Razlika od listing-conversion-optimizer (ki A/B testira naslove)
+  — ta GENERIRA SCARCITY/FOMO besedilo specifično za urgency.
+- Vsi 3 endpointi vračajo veljaven JSON tudi ob prazni bazi (graceful fallback
+  z opisno slovensko message). AI endpointi (competitive-landscape-analyzer,
+  fomo-scarcity-generator) imata aiUsed flag v responsu za transparentnost.
+- AI_ENDPOINTS.md: "Total: 294 endpoints" ✓ (292 → 294, +2 AI)
+- README.md: v7.66.0 badge (14 referenc), 294 AI (6 referenc), 437 routes
+  (5 referenc), 38 analytics (3 reference), ~123 funkcij (2 referenci) ✓
+- CHANGELOG.md: [7.66.0] sekcija dodana z 3 endpoint-i in Changed pod-sekcijo,
+  [Unreleased] posodobljen na v7.67+ ✓
+- ESLint: 0 napak ✨
+- TypeScript: 0 napak ✨
+- Verzija aplikacije: v7.66.0
