@@ -10216,3 +10216,34 @@ Stage Summary:
 - TypeScript: 0 napak ✨ (EXIT 0)
 - dev.log: vsi HTTP requesti vračajo 200 OK, brez error/warn (empty-state — AI se sploh ne kliče brez podatkov)
 - Verzija aplikacije: v7.78.0
+
+---
+Task ID: v7.78.1
+Agent: main
+Task: v7.78 commit + push + GitHub About + Agent Browser verification
+
+Work Log:
+- Prejel poročilo od full-stack-developer podagenta (Task v7.78)
+- Preveril 3 nove endpoint-e: inventory-turnover-forecast (200 GET+POST), market-trend-forecaster-pro (200 GET+POST), deal-conversion-funnel-analyzer (200 GET)
+- Preveril doc sync: AI_ENDPOINTS.md (313 ✅), README v7.78 (15 refs ✅), README 313 AI (6 refs ✅), CHANGELOG v7.78 ✅
+- Preveril lint: 0 napak ✨
+- Preveril typecheck: 0 napak ✨
+- Posodobil GitHub About opis: 311 AI → 313 AI, 470 routes → 473 routes (via API PATCH)
+- Commit: "v7.78: Inventory Turnover Forecast + Market Trend Forecaster Pro + Deal Conversion Funnel Analyzer" (8bf95d2)
+- Push na GitHub: uspešen ✅, PAT očiščen ✅
+- Agent Browser self-verification:
+  - Stran se pravilno naloži (HTTP 200)
+  - AI Hub prikazuje inventory-turnover-forecast (v7.78) v iskalniku ✅
+  - Runner test: klik na inventory-turnover-forecast → POST request → valid JSON ✅
+  - Response: {"ok":true, "current":{...}, "forecast":{...}, "aiUsed":false, "message":"Ni SOLD trade-ov..."}
+  - Brez runtime napak v dev.log
+
+Stage Summary:
+- v7.78 uspešno dokončana in potisnjena na GitHub
+- 3 nove funkcije: AI Inventory Turnover Forecast, Market Trend Forecaster Pro, Deal Conversion Funnel Analyzer
+- AI endpointi: 311 → 313 (+2)
+- Analytics endpointi: 54 → 55 (+1)
+- Total API routes: 470 → 473 (+3)
+- Dokumentacija sinhrono posodobljena (AI_ENDPOINTS.md, README, CHANGELOG, GitHub About)
+- GitHub sinhroniziran (0 commit-ov ahead)
+- Verzija aplikacije: v7.78.0
