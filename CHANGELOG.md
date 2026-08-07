@@ -6,11 +6,170 @@ Format sledi [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), verzije s
 
 ## [Unreleased]
 
-Načrtovano za v7.65+:
+Načrtovano za v7.66+:
 - WebSocket real-time negotiation (SSE namesto polling)
 - Playwright E2E testi za glavne flow-e
 - TLS fingerprinting (curl-impersonate)
 - ML model za buyer matchmaker (fine-tuned na realnem data)
+
+## [7.65.0] - 2026-08-08
+
+### Added — AI Deal Quality Forecaster & Negotiation Success Rate Analyzer & Portfolio Concentration Risk Analyzer (3 funkcije)
+- **AI Deal Quality Forecaster** — `GET+POST /api/ai/deal-quality-forecaster`
+  - AI napove kvaliteto deal-ov za naslednjih 7 dni na podlagi zgodovinskih
+    vzorcev po dnevih v tednu (zadnjih 90 dni). Za vsak dan: predictedDealScore,
+    predictedListingCount, predictedPrilikaCount, confidenceScore in
+    recommendation (SCAN_ACTIVELY/SKIP/CHECK_MORNING/CHECK_EVENING).
+  - Razlika od deal-timing (ki gleda kdaj se pojavijo PRILIKA oglasi po dnevih/urah
+    — zgodovinski pregled) — ta PREDVIDI prihodnje 7 dni (forecast) z AI za vsak
+    dan posebej. Razlika od seasonal-timing-optimizer (ki priporoča buy/sell
+    timing za held inventar) — ta gleda najboljše dni za SKENIRANJE trga (kdaj
+    obnoviti monitore in pričakovati nove dobre oglase).
+  - Query all listings iz zadnjih 90 dni z dealScore in aiEstimatedValue, groupirani
+    po dnevu v tednu (Sunday-Saturday). Compute per-day:
+    * `avgDealScore` (povprečen dealScore za ta dan v tednu)
+    * `avgEstValue` (povprečna AI estimated value)
+    * `listingCount` (koliko oglasov se pojavi ta dan)
+    * `prilikaRate` (% z aiVerdict = 'PRILIKA' za ta dan)
+  - Query zadnjih 14 dni za recent trend (is this week better or worse than usual?).
+  - Compute trend: IMPROVING (recent > 90d avg +5), STABLE (±5), DECLINING (recent
+    < 90d avg -5).
+  - Deterministična osnova (buildDeterministicForecast): za vsak od naslednjih 7
+    dni (start jutri):
+    * predictedDealScore = historical avg za ta dan v tednu, prilagojen za trend
+      (×1.05 improving / ×0.95 declining)
+    * predictedListingCount = blend 80% historical + 20% recent (ali 60/40 če
+      trend shifting)
+    * predictedPrilikaCount = predictedListingCount × prilikaRate / 100
+    * confidenceScore baziran na sample size (listingCount) + consistenci
+      (varianca od 90d avg) + trend stability (0-100)
+    * recommendation: SCAN_ACTIVELY (dealScore >= 65 in prilika >= 2) / SCAN_NORMAL
+      (50-64 in prilika >= 1) / SKIP (< 35 in < 4 listings) / CHECK_MORNING
+      (45+ z malo prilik) / CHECK_EVENING (drugače)
+  - AI prompt z GROUNDING_PROMPT_SUFFIX — historical day-of-week stats + recent
+    trend + deterministic basis (za referenco, AI lahko prilagodi ±20%).
+  - Anti-hallucination:
+    * predictedDealScore clamped na [0, 100]
+    * predictedListingCount clamped na [0, 2 × max historical listingCount]
+    * predictedPrilikaCount clamped na [0, predictedListingCount]
+    * confidenceScore clamped na [0, 100]
+    * recommendation validiran (SCAN_ACTIVELY/SCAN_NORMAL/SKIP/CHECK_MORNING/
+      CHECK_EVENING), fallback na deterministic
+    * trend validiran (IMPROVING/STABLE/DECLINING), fallback na deterministic
+    * bestDayReasoning clamped na 400 znakov, fallback na deterministic
+  - AI cache key `deal-quality-forecaster:${currentWeek}` (6h TTL — refreshes
+    4x/day).
+  - Both GET and POST handlers (AI Hub runner compatibility).
+  - Empty-state: "Ni oglasov v zadnjih 90 dneh — Deal Quality Forecaster
+    potrebuje vsaj nekaj zgodovine."
+  - 'Torek = najboljši dan za skeniranje (avg dealScore 72, 15 oglasov). Petek =
+    najslabši (45, 8 oglasov). Načrtuj nakupe za torek.'
+
+- **Negotiation Success Rate Analyzer** — `GET /api/analytics/negotiation-success-rate`
+  - Analizira zgodovinske izide pogajanj in izračuna success rate glede na
+    kategorijo, cenovni razpon, offer depth in vrsto prodajalca. Pure DB
+    analytics — NO AI.
+  - Razlika od negotiation-outcome-predictor (ki pred pošiljanjem ponudbe AI
+    napove ACCEPT/COUNTER/REJECT verjetnosti za EN oglas) — ta ANALIZIRA
+    ZGODOVINO vseh tvojih pogajanj in izračuna aggregate success rate po
+    kategorijah, cenovnih razponih in offer depth-ih. Razlika od negotiation-
+    playbook (ki generira strategijo za eno pogajanje) — ta da DATA-DRIVEN
+    insight o tem, kje tvoja pogajanja dejansko delujejo.
+  - Query all trades z linked Listing (za asking price + sellerName). Asking
+    price = linked Listing.price; če ni linked Listing-a, trade izpuščen iz
+    negotiated analize (razen če contactStatus != 'none').
+  - Compute per-trade:
+    * `askingPrice` = linked listing price
+    * `discountPct` = (asking - buyPrice) / asking × 100
+    * `savingsEur` = asking - buyPrice
+    * `isNegotiated` = savingsEur > 0 (strogo pod asking)
+    * `success` = negotiated AND status = 'sold'
+    * `failed` = status = 'cancelled' (karkoli)
+  - Compute overall:
+    * `totalNegotiations` = trades z buyPrice < asking
+    * `successRate` = % ki so sold
+    * `avgDiscountAchieved` = avg discountPct
+    * `avgSavingsEur` = avg savings v EUR
+    * `bestCategory` = kategorija z najvišjo success rate (min 2 trades)
+    * `bestPriceRange` = cenovni razpon z najvišjo success rate (min 2 trades)
+  - Compute breakdowns:
+    * `byCategory` — per kategorija: totalNegotiated, successRate, avgDiscount,
+      avgSavingsEur
+    * `byPriceRange` — per 3 razponi (0-100€, 100-500€, 500€+): totalNegotiated,
+      successRate, avgDiscount
+    * `byOfferDepth` — per 4 globine (0-5%, 5-15%, 15-30%, 30%+): totalOffered,
+      successRate, avgCounterPrice (če sold)
+    * `bySellerType` — RECURRING (sellerName se pojavi 2+ krat) vs ONE_TIME:
+      totalNegotiated, successRate, avgDiscount
+  - Recommendations:
+    * `optimalOfferDepth` = najvišja success rate med depth-i z >= 2 trades
+    * `easiestCategory` = bestCategory
+    * `hardestCategory` = najnižja success rate z >= 2 trades
+    * `advice` = 1-3 povedi slovensko z specificnimi številkami
+  - Empty-state: "Ni trade-ov — Negotiation Success Rate Analyzer potrebuje
+    trades z linked Listing-om za asking ceno."
+  - 'Elektronika: 65% success rate pri 10% popusta. Avto: 30% success rate.
+    Optimal offer: 5-15% below asking.'
+
+- **Portfolio Concentration Risk Analyzer** — `GET /api/analytics/portfolio-concentration-risk`
+  - Pareto analiza (% trade-ov = % profita) in Herfindahl-Hirschman Index
+    (0=diversified, 10000=monopoly) za identifikacijo koncentracijskega
+    tveganja portfelja. Pure DB analytics — NO AI.
+  - Razlika od risk-spread-calculator (ki priporoča AI kapitalsko alokacijo
+    glede na kategorijo) — ta računa PARETO analizo in HERFINDAHL index z
+    eksplicitno DIVERSIFIED/MODERATE/CONCENTRATED/HIGH_RISK klasifikacijo.
+    Razlika od portfolio-stress-test (ki simulira tržne scenarije -10/-25/-
+    40%) — ta gleda STRUKTURO portfelja (koliko je v eni kategoriji/brandu)
+    in priporoča diverzifikacijo.
+  - Query all HELD trades za current portfolio + all SOLD trades za historical
+    profit distribution.
+  - Compute current portfolio concentration:
+    * `byCategory` — per kategorija: itemCount, capital, percentage
+    * `byBrand` — per brand (extractBrand iz naslova, enaka logika kot
+      roi-leaderboard z known brands: apple, samsung, sony, iphone, ...):
+      itemCount, capital, percentage
+    * `byPriceRange` — per 4 razponi (0-100€, 100-500€, 500-1000€, 1000€+):
+      itemCount, capital, percentage
+  - Compute Pareto analysis na SOLD trades:
+    * Sort sold trades by profit desc
+    * `top20PercentProfitShare` = % profita iz top 20% trade-ov
+    * `tradesFor80PercentProfit` = koliko trade-ov = 80% profita
+    * `paretoRatio` = npr. "20/80" (20% trade-ov = 80% profita)
+    * `insight` = 1 stavek slovensko z specificnimi številkami
+  - Compute risk metrics:
+    * `herfindahlIndex` = sum of (category% squared), scaled 0-10000 (0 =
+      perfectly diversified, 10000 = monopoly)
+    * `topCategoryShare` = % v največji kategoriji
+    * `topBrandShare` = % v največjem brandu
+    * `concentrationLevel` = DIVERSIFIED (< 25%) | MODERATE (25-40%) |
+      CONCENTRATED (40-60%) | HIGH_RISK (> 60%)
+    * `riskScore` = topCategoryShare × 0.5 + topBrandShare × 0.2 + HHI/100
+      (clamped 0-100)
+  - Recommendations:
+    * `overexposedCategories` — kategorije z share >= 30%: currentShare,
+      suggestedReduction (na < 25%)
+    * `underrepresentedCategories` — top 3 zgodovinsko profitabilne kategorije
+      (< 15% current share) z suggestedIncrease in reasoning
+    * `diversificationAdvice` = 1 stavek slovensko glede na concentrationLevel
+    * `targetAction` = konkretna naslednja akcija (npr. "Zmanjšaj 'avto' s 73%
+      na <25%... nove nakupe usmeri v moda.")
+  - Empty-state: "Ni held ali sold trade-ov — Concentration Risk analiza ni
+    mogoča."
+  - '65% kapitala v elektronika = HIGH_RISK. Herfindahl 4200. Top 20% trade-ov
+    = 75% profita. Diverzificiraj v moda.'
+
+### Changed
+- AI_ENDPOINTS.md: regenerated → 291 → 292 endpoints (+1 AI: deal-quality-
+  forecaster)
+- README.md: version badge v7.64.0 → v7.65.0, AI Endpoints 291 → 292, API
+  Routes 431 → 434, "291 AI + 35 analytics" → "292 AI + 37 analytics", "~117
+  funkcij" → "~120 funkcij", added v7.65 block at top of "Kaj je novega",
+  profit pipeline (v7.32-v7.64) → (v7.32-v7.65), Analytics (35) → (37) z 2
+  novima (Negotiation Success Rate, Portfolio Concentration Risk), v7.65.0
+  entry in "Zadnje verzije", Roadmap v7.64 → v7.65, profit pipeline list +3
+  (AI Deal Quality Forecaster, Negotiation Success Rate Analyzer, Portfolio
+  Concentration Risk Analyzer)
+- CHANGELOG.md: [Unreleased] "v7.65+" → "v7.66+", added [7.65.0] section
 
 ## [7.64.0] - 2026-08-08
 

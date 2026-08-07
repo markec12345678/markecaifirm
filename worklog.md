@@ -7369,3 +7369,228 @@ Stage Summary:
 - Dokumentacija sinhrono posodobljena (AI_ENDPOINTS.md, README, CHANGELOG, GitHub About)
 - GitHub sinhroniziran (0 commit-ov ahead)
 - Verzija aplikacije: v7.64.0
+
+---
+Task ID: v7.65
+Agent: full-stack-developer
+Task: Add 3 new features for v7.65 — AI Deal Quality Forecaster, Negotiation Success Rate Analyzer, Portfolio Concentration Risk Analyzer
+
+Work Log:
+- Prebral worklog.md (zadnjih ~150 vrstic) — projekt je na v7.64.1, 291 AI
+  endpointov, 431 total routes
+- Proučil obstoječe vzorce:
+  * src/app/api/ai/trading-coach/route.ts (v7.64 AI z stats + coaching +
+    cache, GET+POST handler pattern)
+  * src/app/api/analytics/profit-margin-heatmap/route.ts (v7.63 pure DB
+    analytics z 2D matrix)
+  * src/app/api/analytics/deal-timing/route.ts (v7.48 day×hour matrix)
+  * src/app/api/ai/negotiation-outcome-predictor/route.ts (v7.55 single
+    offer outcome prediction — za razliko od mojega success rate analyzerja)
+  * src/app/api/ai/risk-spread-calculator/route.ts (v7.50 AI diversification
+    — za razliko od mojega concentration risk analyzerja z Pareto + HHI)
+  * src/lib/anti-hallucination.ts (GROUNDING_PROMPT_SUFFIX)
+  * src/lib/ai-cache.ts (getCachedAI/setCachedAI, 6h TTL)
+  * src/lib/rate-limit.ts (checkRateLimit, 20/min/IP)
+  * prisma/schema.prisma (Trade, Listing, Monitor, NegotiationMessage)
+  * roi-leaderboard extractBrandModel funkcija (za brand extraction v
+    portfolio-concentration-risk)
+- Ustvaril 3 nove endpointe:
+  * Feature #1: src/app/api/ai/deal-quality-forecaster/route.ts
+    (GET+POST, AI-enhanced z 7-day forecast po dnevih v tednu)
+  * Feature #2: src/app/api/analytics/negotiation-success-rate/route.ts
+    (GET, pure DB analytics z byCategory/byPriceRange/byOfferDepth/bySellerType)
+  * Feature #3: src/app/api/analytics/portfolio-concentration-risk/route.ts
+    (GET, pure DB analytics z Pareto + Herfindahl + concentrationLevel)
+- Feature #1 (AI Deal Quality Forecaster) — implementacija:
+  * Query all listings iz zadnjih 90 dni z dealScore in aiEstimatedValue
+  * Group by day of week (Sunday-Saturday), compute avgDealScore, avgEstValue,
+    listingCount, prilikaRate per day
+  * Query zadnjih 14 dni za recent trend (IMPROVING/STABLE/DECLINING)
+  * buildDeterministicForecast: za vsak od naslednjih 7 dni (start jutri)
+    compute predictedDealScore (×1.05/×0.95 za trend), predictedListingCount
+    (80/20 blend historical+recent), predictedPrilikaCount (×prilikaRate),
+    confidenceScore (sample size + variance + trend stability 0-100),
+    recommendation (SCAN_ACTIVELY/SKIP/CHECK_MORNING/CHECK_EVENING glede na
+    score + prilika count)
+  * AI prompt z GROUNDING_PROMPT_SUFFIX — historical day-of-week stats +
+    recent trend + deterministic basis (za referenco, AI lahko prilagodi ±20%)
+  * Anti-hallucination: predictedDealScore clamped [0,100],
+    predictedListingCount clamped [0, 2×max historical], predictedPrilikaCount
+    clamped [0, predictedListingCount], confidenceScore clamped [0,100],
+    recommendation + trend validirana z enum-om
+  * AI cache key `deal-quality-forecaster:${currentWeek}` (6h TTL — refreshes
+    4x/day)
+  * Both GET and POST handlers (AI Hub runner compatibility)
+  * Empty-state: "Ni oglasov v zadnjih 90 dneh — Deal Quality Forecaster
+    potrebuje vsaj nekaj zgodovine."
+- Feature #2 (Negotiation Success Rate Analyzer) — implementacija:
+  * Query all trades z linked Listing (za asking price + sellerName)
+  * Asking price = linked Listing.price; če ni linked listing, trade izpuščen
+    (razen če contactStatus != 'none')
+  * Compute per-trade: askingPrice, discountPct, savingsEur, isNegotiated,
+    success (negotiated AND sold), failed (cancelled)
+  * Overall: totalNegotiations, successRate, avgDiscountAchieved,
+    avgSavingsEur, bestCategory, bestPriceRange
+  * byCategory: per category success rate + avgDiscount + avgSavingsEur
+  * byPriceRange: per 3 razponi (0-100€, 100-500€, 500€+) success rate
+  * byOfferDepth: per 4 globine (0-5%, 5-15%, 15-30%, 30%+) success rate +
+    avgCounterPrice (če sold)
+  * bySellerType: RECURRING (sellerName 2+ krat) vs ONE_TIME
+  * Recommendations: optimalOfferDepth, easiestCategory, hardestCategory,
+    advice (1-3 povedi slovensko)
+  * Empty-state: "Ni trade-ov — Negotiation Success Rate Analyzer potrebuje
+    trades z linked Listing-om za asking ceno."
+- Feature #3 (Portfolio Concentration Risk Analyzer) — implementacija:
+  * Query all HELD trades za current portfolio + all SOLD trades za Pareto
+  * Current portfolio concentration: byCategory, byBrand (extractBrand z
+    known brands enak roi-leaderboard), byPriceRange (4 razponi)
+  * Pareto analysis na SOLD trades: sort by profit desc, compute
+    top20PercentProfitShare (% profita iz top 20%), tradesFor80PercentProfit
+    (koliko trade-ov = 80% profita), paretoRatio (npr. "20/80"), insight
+  * Risk metrics: herfindahlIndex (sum of category% squared, 0-10000),
+    topCategoryShare, topBrandShare, concentrationLevel (DIVERSIFIED < 25%,
+    MODERATE 25-40%, CONCENTRATED 40-60%, HIGH_RISK > 60%), riskScore
+    (topCategoryShare×0.5 + topBrandShare×0.2 + HHI/100, clamped 0-100)
+  * Recommendations: overexposedCategories (share >= 30%, suggestedReduction
+    na <25%), underrepresentedCategories (top 3 zgodovinsko profitabilne
+    z < 15% current share z suggestedIncrease + reasoning),
+    diversificationAdvice (slovensko glede na concentrationLevel),
+    targetAction (konkretna naslednja akcija)
+  * Empty-state: "Ni held ali sold trade-ov — Concentration Risk analiza ni
+    mogoča."
+- Seed test podatki (1 monitor, 30 listings, 7 held, 10 sold, 3 cancelled
+  trades) — verify pravilna funkcionalnost:
+  * GET /api/ai/deal-quality-forecaster → 200. historical.byDayOfWeek
+    pravilno identificira Tuesday (avgDealScore 73, 100% prilika) in Wednesday
+    (70, 100%) kot najboljša dneva. forecast 7 dni: Tuesday SCAN_ACTIVELY
+    (predictedDealScore 77, predictedPrilikaCount 4), Wednesday SCAN_ACTIVELY
+    (74, 3), drugi dnevi CHECK_MORNING/CHECK_EVENING/SKIP. bestDayToScan =
+    Tuesday (date 2026-08-11). trend STABLE. aiUsed=false (no AI provider v
+    sandbox-u, deterministic fallback deluje pravilno).
+  * POST /api/ai/deal-quality-forecaster -d '{}' → 200, identično kot GET
+    (AI Hub runner kompatibilnost potrjena)
+  * GET /api/analytics/negotiation-success-rate → 200. overall.totalNegotiations=9,
+    successRate=33%, avgDiscountAchieved=51.6%, avgSavingsEur=178. byCategory:
+    elektronika (6 trades, 33% success, 36.5% avg discount), moda (3, 33%, 81.8%).
+    byPriceRange: 100-500€ (6, 33%), 0-100€ (3, 33%). byOfferDepth: 5-15% (1
+    trade, 100% success), 30%+ (7 trades, 29% success, avgCounterPrice 140€).
+    recommendations: optimalOfferDepth="30%+", easiestCategory="elektronika",
+    advice slovensko z specificnimi številkami.
+  * GET /api/analytics/portfolio-concentration-risk → 200.
+    currentPortfolio.totalItems=7, totalCapital=4100. byCategory: avto (73%),
+    elektronika (24%), moda (2%). byBrand: drugo (73%), iphone (12%), samsung
+    (12%), nike (2%). Pareto: top20PercentProfitShare=53%,
+    tradesFor80PercentProfit=4, paretoRatio="40/53", insight slovensko.
+    riskMetrics: herfindahlIndex=5909, topCategoryShare=73%, topBrandShare=73%,
+    concentrationLevel=HIGH_RISK, riskScore=100. recommendations:
+    overexposedCategories=[avto (73%, suggestedReduction 48%)],
+    underrepresentedCategories=[moda, orodje, drugo z reasoning],
+    targetAction="Zmanjšaj 'avto' s 73% na <25%... nove nakupe usmeri v moda."
+  * Cleanup seed podatkov (30 listings, 20 trades, 1 monitor) — baza nazaj
+    v prazno stanje
+  * Finalni empty-state test: vsi 3 endpointi vračajo 200 z opisno slovensko
+    message
+
+- TypeScript: `npx tsc --noEmit` → 0 napak ✨ (initially 1 napaka — typo `b.`
+  namesto `bestDay.` v bestDayReasoning, popravljeno)
+- ESLint: `bun run lint` → 0 napak, 0 opozoril ✨
+- dev.log: vsi HTTP requesti (GET×3 + POST×1) vračajo 200 OK. 1 WARN log
+  "AI call failed — using deterministic fallback fetch failed" je pričakovan
+  (no AI provider v sandbox-u) in deterministični fallback pravilno prevzame.
+  Brez ERROR logov.
+
+- Dokumentacijska sinhronizacija (CRITICAL):
+  * AI_ENDPOINTS.md: regeneriran z Python skripto → "Total: 292 endpoints"
+    (291 → 292, +1 AI: deal-quality-forecaster)
+  * README.md (MultiEdit z 19 urejanji):
+    - Badge version: v7.64.0 → v7.65.0
+    - Badge AI Endpoints: 291 → 292
+    - Badge API Routes: 431 → 434
+    - Tagline: "291 AI endpointov + 35 analytics" → "292 AI endpointov + 37
+      analytics"
+    - Overview: "Verzija v7.64.0" → "Verzija v7.65.0", counts posodobljeni,
+      "~117 funkcij" → "~120 funkcij"
+    - "Kaj je novega v v7.56–v7.64 (9 verzij, 27 novih funkcij)" →
+      "...v7.56–v7.65 (10 verzij, 30 novih funkcij)", dodan v7.65 blok
+      (3 funkcije) na vrh
+    - "v1.0 → v7.64" → "v1.0 → v7.65" (2 mesti: changelog ref)
+    - AI Hub badge v tabeli: "Vsi 291 AI endpointov" → "Vsi 292 AI endpointov"
+    - "Endpointi (291 AI + 35 analytics + 10 cron + sistemski = 431)" →
+      "...(292 AI + 37 analytics + 10 cron + sistemski = 434)"
+    - Dodan 1 nov AI endpoint v AI primeri blok (deal-quality-forecaster, v7.65)
+    - "Profit pipeline (v7.32-v7.64)" → "...(v7.32-v7.65)"
+    - Dodana 2 nova analytics endpointa v profit pipeline blok
+      (negotiation-success-rate, v7.65; portfolio-concentration-risk, v7.65)
+    - Dodan 1 nov AI endpoint v profit pipeline listo (deal-quality-forecaster, v7.65)
+    - Project structure: "291 AI endpointov" → "292 AI endpointov"
+    - Coding standards: "431 routes" → "434 routes"
+    - Roadmap: "v7.64 (trenutno — ~117 funkcij)" → "v7.65 (trenutno — ~120
+      funkcij)", profit pipeline list: dodane 3 nove funkcije (AI Deal Quality
+      Forecaster, Negotiation Success Rate Analyzer, Portfolio Concentration
+      Risk Analyzer)
+    - Analytics (35) → (37), dodana 2 novi (Negotiation Success Rate,
+      Portfolio Concentration Risk)
+    - Testing: "431 API routes" → "434 API routes"
+    - "Naslednji koraki": "v7.50-v7.64 funkcije" → "...v7.50-v7.65 funkcije"
+    - "Zadnje verzije": dodan "v7.65.0 (avgust 2026) — AI Deal Quality
+      Forecaster, Negotiation Success Rate Analyzer, Portfolio Concentration
+      Risk Analyzer" na vrh
+    - AI_ENDPOINTS.md link: "vseh 291 AI endpointov" → "vseh 292 AI endpointov"
+  * CHANGELOG.md:
+    - "[Unreleased] Načrtovano za v7.65+" → "...za v7.66+"
+    - Dodana nova "[7.65.0] - 2026-08-08" sekcija (nad [7.64.0])
+    - "### Added — AI Deal Quality Forecaster & Negotiation Success Rate
+      Analyzer & Portfolio Concentration Risk Analyzer (3 funkcije)" z vsemi
+      3 endpoint-i in podrobnimi opisi (response shape, anti-hallucination
+      rules, AI cache key, deterministic fallback, example comment, razlika
+      od podobnih obstoječih endpoint-ov)
+    - "### Changed" pod-sekcija z doc sync opisi (AI_ENDPOINTS.md, README.md,
+      CHANGELOG.md)
+
+Stage Summary:
+- 3 novi endpointi dodani (skupno +3 od v7.64.1):
+  - deal-quality-forecaster (GET+POST, AI-enhanced z 7-day forecast po dnevih
+    v tednu — predictedDealScore, predictedListingCount, predictedPrilikaCount,
+    confidenceScore, recommendation SCAN_ACTIVELY/SKIP/CHECK_MORNING/
+    CHECK_EVENING. Analizira 90d zgodovino po dnevih v tednu + recent 14d
+    trend. Anti-hallucination clamps + validacija enum-ov + deterministic
+    fallback z rule-based forecast. Cache key `deal-quality-forecaster:
+    ${currentWeek}` 6h TTL.)
+  - negotiation-success-rate (GET, pure DB analytics — overall (totalNegotiations,
+    successRate, avgDiscountAchieved, avgSavingsEur, bestCategory,
+    bestPriceRange), byCategory, byPriceRange (0-100/100-500/500+), byOfferDepth
+    (0-5/5-15/15-30/30+%), bySellerType (RECURRING/ONE_TIME), recommendations
+    (optimalOfferDepth, easiestCategory, hardestCategory, advice). Razlika od
+    negotiation-outcome-predictor (ki napove EN offer) — ta ANALIZIRA ZGODOVINO
+    vseh pogajanj)
+  - portfolio-concentration-risk (GET, pure DB analytics — currentPortfolio
+    (byCategory, byBrand, byPriceRange), paretoAnalysis (top20PercentProfitShare,
+    tradesFor80PercentProfit, paretoRatio, insight), riskMetrics (herfindahlIndex
+    0-10000, topCategoryShare, topBrandShare, concentrationLevel DIVERSIFIED/
+    MODERATE/CONCENTRATED/HIGH_RISK, riskScore 0-100), recommendations
+    (overexposedCategories, underrepresentedCategories, diversificationAdvice,
+    targetAction). Razlika od risk-spread-calculator (ki AI svetuje alokacijo) —
+    ta računa PARETO + HERFINDAHL z eksplicitno klasifikacijo)
+- AI Deal Quality Forecaster: napove prihodnje 7 dni. Razlika od deal-timing
+  (ki gleda zgodovino kdaj se pojavijo PRILIKA oglasi) — ta PREDVIDI prihodnje
+  dni z AI. Razlika od seasonal-timing-optimizer (ki optimira held inventar) —
+  ta gleda SKENIRANJE trga (kdaj obnoviti monitore).
+- Negotiation Success Rate Analyzer: data-driven insight kje tvoja pogajanja
+  delujejo. Razlika od negotiation-outcome-predictor (ki napove EN offer) — ta
+  agregira vso zgodovino. Razlika od negotiation-playbook (ki generira strategijo)
+  — ta da STATISTIČNO analizo success rate-ov.
+- Portfolio Concentration Risk Analyzer: Herfindahl + Pareto. Razlika od
+  risk-spread-calculator (ki AI svetuje alokacijo) — ta računa strukturno
+  koncentracijo. Razlika od portfolio-stress-test (ki simulira tržne scenarije)
+  — ta gleda STRUKTURO portfelja.
+- Vsi 3 endpointi vračajo veljaven JSON tudi ob prazni bazi (graceful fallback
+  z opisno slovensko message). AI endpoint (deal-quality-forecaster) ima
+  aiUsed flag v responsu za transparentnost.
+- AI_ENDPOINTS.md: "Total: 292 endpoints" ✓ (291 → 292, +1 AI)
+- README.md: v7.65.0 badge (14 referenc), 292 AI (6 referenc), 434 routes
+  (5 referenc), 37 analytics (3 reference), ~120 funkcij (2 referenci) ✓
+- CHANGELOG.md: [7.65.0] sekcija dodana z 3 endpoint-i in Changed pod-sekcijo,
+  [Unreleased] posodobljen na v7.66+ ✓
+- ESLint: 0 napak ✨
+- TypeScript: 0 napak ✨
+- Verzija aplikacije: v7.65.0
