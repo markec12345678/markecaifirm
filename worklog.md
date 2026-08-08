@@ -10508,3 +10508,34 @@ Stage Summary:
 - TypeScript: 0 napak ✨ (EXIT 0)
 - dev.log: vsi HTTP requesti vračajo 200 OK, brez error/warn (empty-state — AI se sploh ne kliče brez podatkov)
 - Verzija aplikacije: v7.80.0
+
+---
+Task ID: v7.80.1
+Agent: main
+Task: v7.80 commit + push + GitHub About + Agent Browser verification
+
+Work Log:
+- Prejel poročilo od full-stack-developer podagenta (Task v7.80)
+- Preveril 3 nove endpoint-e: trade-performance-forecaster (200 GET+POST), market-liquidity-analyzer (200 GET), seller-reliability-scorecard (200 GET)
+- Preveril doc sync: AI_ENDPOINTS.md (315 ✅), README v7.80 (14 refs ✅), README 315 AI (6 refs ✅), CHANGELOG v7.80 ✅
+- Preveril lint: 0 napak ✨
+- Preveril typecheck: 0 napak ✨
+- Posodobil GitHub About opis: 314 AI → 315 AI, 476 routes → 479 routes (via API PATCH)
+- Commit: "v7.80: Trade Performance Forecaster + Market Liquidity Analyzer + Seller Reliability Scorecard" (b25f126)
+- Push na GitHub: uspešen ✅, PAT očiščen ✅
+- Agent Browser self-verification:
+  - Stran se pravilno naloži (HTTP 200)
+  - AI Hub prikazuje trade-performance-forecaster (v7.80) v iskalniku ✅
+  - Runner test: klik na trade-performance-forecaster → POST request → valid JSON ✅
+  - Response: {"ok":true, "items":[], "portfolio":{...}, "aiUsed":false, "message":"Ni HELD inventarja..."}
+  - Brez runtime napak v dev.log
+
+Stage Summary:
+- v7.80 uspešno dokončana in potisnjena na GitHub
+- 3 nove funkcije: AI Trade Performance Forecaster, Market Liquidity Analyzer, Seller Reliability Scorecard
+- AI endpointi: 314 → 315 (+1)
+- Analytics endpointi: 57 → 59 (+2)
+- Total API routes: 476 → 479 (+3)
+- Dokumentacija sinhrono posodobljena (AI_ENDPOINTS.md, README, CHANGELOG, GitHub About)
+- GitHub sinhroniziran (0 commit-ov ahead)
+- Verzija aplikacije: v7.80.0
