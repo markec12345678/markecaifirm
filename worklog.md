@@ -11429,3 +11429,34 @@ Stage Summary:
 - TypeScript: 0 napak ✨ (EXIT 0)
 - dev.log: vsi HTTP requesti vračajo 200 OK, brez error/warn (empty-state — AI se sploh ne kliče brez SOLD/HELD podatkov/listingov; analytics endpoint vrača prazne arrays z opisi brez errorja)
 - Verzija aplikacije: v7.86.0
+
+---
+Task ID: v7.86.1
+Agent: main
+Task: v7.86 commit + push + GitHub About + Agent Browser verification
+
+Work Log:
+- Prejel poročilo od full-stack-developer podagenta (Task v7.86)
+- Preveril 3 nove endpoint-e: price-volatility-analyzer (200 GET+POST), inventory-performance-forecaster (200 GET+POST), deal-source-quality-tracker (200 GET)
+- Preveril doc sync: AI_ENDPOINTS.md (325 ✅), README v7.86 (14 refs ✅), README 325 AI (6 refs ✅), CHANGELOG v7.86 ✅
+- Preveril lint: 0 napak ✨
+- Preveril typecheck: 0 napak ✨
+- Posodobil GitHub About opis: 323 AI → 325 AI, 494 routes → 497 routes (via API PATCH)
+- Commit: "v7.86: Price Volatility Analyzer + Inventory Performance Forecaster + Deal Source Quality Tracker" (a10a452)
+- Push na GitHub: uspešen ✅, PAT očiščen ✅
+- Agent Browser self-verification:
+  - Stran se pravilno naloži (HTTP 200)
+  - AI Hub prikazuje price-volatility-analyzer (v7.86) v iskalniku ✅
+  - Runner test: klik na price-volatility-analyzer → POST request → valid JSON ✅
+  - Response: {"ok":true, "categories":[], "analysis":{...}, "aiUsed":false, "message":"Ni oglasov z ceno..."}
+  - Brez runtime napak v dev.log
+
+Stage Summary:
+- v7.86 uspešno dokončana in potisnjena na GitHub
+- 3 nove funkcije: AI Price Volatility Analyzer, AI Inventory Performance Forecaster, Deal Source Quality Tracker
+- AI endpointi: 323 → 325 (+2)
+- Analytics endpointi: 66 → 67 (+1)
+- Total API routes: 494 → 497 (+3)
+- Dokumentacija sinhrono posodobljena (AI_ENDPOINTS.md, README, CHANGELOG, GitHub About)
+- GitHub sinhroniziran (0 commit-ov ahead)
+- Verzija aplikacije: v7.86.0
