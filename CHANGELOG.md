@@ -6,11 +6,216 @@ Format sledi [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), verzije s
 
 ## [Unreleased]
 
-Načrtovano za v7.86+:
+Načrtovano za v7.87+:
 - WebSocket real-time negotiation (SSE namesto polling)
 - Playwright E2E testi za glavne flow-e
 - TLS fingerprinting (curl-impersonate)
 - ML model za buyer matchmaker (fine-tuned na realnem data)
+
+## [7.86.0] - 2026-08-09
+
+### Added — AI Price Volatility Analyzer & AI Inventory Performance Forecaster & Deal Source Quality Tracker (3 funkcije)
+
+- **AI Price Volatility Analyzer** — `GET+POST /api/ai/price-volatility-analyzer`
+  - AI analizira PRICE VOLATILITY (nihanje cen) čez kategorije zadnjih
+    90 dni z coefficient of variation (stddev / mean × 100 tedenskih
+    povprečnih cen). Identificira high-volatility (risky but profitable)
+    vs low-volatility (safe but lower profit) kategorije. "Elektronika:
+    HIGH volatility (22%), AGGRESSIVE. Buy low, sell quick. Avto:
+    VERY_LOW (3%), hold longer."
+  - categories: per category (iz monitor.source) — priceVolatility (%),
+    volatilityLevel (VERY_HIGH >30% / HIGH 20-30% / MODERATE 10-20% /
+    LOW 5-10% / VERY_LOW <5%), riskProfile (AGGRESSIVE / BALANCED /
+    CONSERVATIVE iz volatilityLevel), priceRange { min, max } (90d),
+    priceChangePercent (% od first week do last week), priceDropFrequency
+    (% listings z priceDroppedAt set), weeklyAvgPrices (13 weeks array,
+    gap-fill z previous week), listingCount, tradingStrategy (slovenski
+    max 250 chars — HIGH_VOL kupuj nizko/prodaj hitro/watch for dips,
+    LOW_VOL drži dlje/stabilne marže), arbitragePotential (0-100 iz
+    volScore 60% + dropScore 40%).
+  - analysis: volatilityAssessment (slovenski povzetek max 500 chars),
+    bestVolatilityCategories (2-3 z optimal risk/reward — MODERATE/LOW
+    volatilnost z visokim arbitragePotential), worstVolatilityCategories
+    (2-3 z VERY_HIGH ali VERY_LOW volatilnostjo — preveč tveganje ali
+    premajhna profit priložnost), riskMitigationActions (3-4 z action/
+    priority HIGH/MEDIUM/LOW/detail).
+  - Compute: query listings zadnjih 90 dni z price/firstSeenAt/
+    priceDroppedAt/monitor.source, group by category (monitor.source) ×
+    week (13 weeks), compute weeklyAvgPrices (gap-fill z previous week),
+    coefficient of variation per category, classify volatilityLevel +
+    riskProfile, build deterministic analysis z best/worst/actions.
+  - AI-enhanced z grounding (top 8 categories by listing count) +
+    anti-hallucination (categoriesPatch: tradingStrategy max 250 chars
+    + arbitragePotential ±20 od deterministic in clamped [0, 100];
+    volatilityAssessment max 500 chars; best/worstVolatilityCategories
+    reasoning max 250 chars; riskMitigationActions action max 200 /
+    detail max 250; max lengths na vseh opisih) + 6h cache (key
+    `price-volatility-analyzer:${currentMonth}`) + deterministic
+    fallback (compute iz coefficientOfVariation + thresholds).
+    GET+POST (AI Hub runner kompatibilnost — handlePriceVolatilityAnalyzer
+    shared function).
+  - Razlika od market-trend-momentum (v7.73 ki gleda ACCELERATION cen)
+    — ta meri VOLATILITY (stddev cen) in classification VERY_HIGH..VERY_LOW.
+    Razlika od market-trend (rising/falling prices) — ta gleda MAGNITUDE
+    nihanja ne smer. Razlika od market-trend-forecaster-pro (v7.78 AI ki
+    forecast-a future trend) — ta analizira HISTORICAL volatility in
+    risk profile per category. Razlika od deal-quality-trend-analyzer
+    (v7.83 pure DB ki analizira quality trends) — ta gleda CENOVNO
+    volatilnost ne quality. Razlika od price-elasticity (ki meri kako
+    demand odgovarja na ceno) — ta meri kako cene NIHajo čez čas.
+    Razlika od price-history-forecaster (v7.83 ki forecast-a future
+    cene) — ta meri HISTORICAL volatility coefficient of variation.
+
+- **AI Inventory Performance Forecaster** — `GET+POST /api/ai/inventory-performance-forecaster`
+  - AI napove PORTFOLIO-level PERFORMANCE celotnega inventarja za
+    naslednje 30/60/90 dni — projected profit, turnover, capital
+    efficiency. Razlika od individual item forecasters (ki napovedujejo
+    posamezne item-e) — ta je PORTFOLIO-level prediction. "Inventory:
+    8 items, 2400€ invested, estValue 3100€. 30d forecast: +450€
+    profit. Grade: B. Action: sell 2 aging items → grade A."
+  - inventory: totalItems, totalInvested (sum buyPrice), totalEstValue
+    (sum aiEstimatedValue ali buyPrice fallback), categoryDistribution
+    (array { category, percentage }), avgDealScore (avg dealScore čez
+    held items z listing.dealScore), avgDaysHeld (avg age of inventory).
+  - historical: avgProfitPerItem (iz SOLD trades zadnjih 12m),
+    avgHoldDays (avg daysBetween buyDate/sellDate), avgROI (%),
+    sellRatePerWeek (items sold per week).
+  - forecast: projectedProfit30d/60d/90d (sellRate × weeks ×
+    avgProfitPerItem, clamped [0, totalEstValue × 0.5 / ×0.9 / ×1.2]),
+    projectedSellRate30d (items/week, dealScoreBoost 0.7-1.2x),
+    projectedCapitalEfficiency (% projected ROI = projectedProfit90d /
+    totalInvested × 100 + avgROI × 0.5), projectedTurnoverRate
+    (turns/year = projectedSellRate30d × 52 / totalItems),
+    confidenceLevel (0-100 iz 6 dejavnikov: historical data sample +
+    inventory size + avgDealScore - aged inventory), projectedPerformanceGrade
+    (A+ do F iz weighted composite score: 30% capital efficiency + 25%
+    turnover + 20% dealScore + 15% profit rel. + 10% confidence).
+  - analysis: performanceFactors (3-5 z factor/impact POSITIVE|NEGATIVE/
+    weight 0-100/detail), performanceRisks (2-4 z risk/severity
+    LOW|MEDIUM|HIGH/mitigation), performanceActions (3-5 z action/
+    priority HIGH|MEDIUM|LOW/expectedImpact).
+  - Compute: query HELD trades z linked Listing (za aiEstimatedValue +
+    dealScore) + SOLD trades zadnjih 12m za historical baseline
+    (avgProfitPerItem/avgHoldDays/avgROI/sellRatePerWeek), compute
+    inventory composition + historical baseline, build deterministic
+    forecast z projected profit/turnover/grade.
+  - AI-enhanced z grounding (inventory + historical +
+    deterministicForecast + profitCaps) + anti-hallucination
+    (projectedProfit30d/60d/90d ±20% od deterministic in clamped
+    [0, profitCap × 0.5/0.9/1.2]; projectedSellRate30d ±30% in
+    clamped [0, 20]; projectedCapitalEfficiency ±10 in clamped
+    [-30, 100]; projectedTurnoverRate ±2 in clamped [0, 30];
+    confidenceLevel ±15 in clamped [0, 100]; projectedPerformanceGrade
+    validirana proti enum A+/A/B/C/D/F; max lengths na opisih —
+    factor 100/detail 250, risk 100/mitigation 250, action 200/
+    expectedImpact 200, summary 400) + 6h cache (key
+    `inventory-performance-forecaster:${JSON.stringify(sorted heldItemIds)}`)
+    + deterministic fallback (compute iz historical avg × current
+    inventory). GET+POST (AI Hub runner kompatibilnost —
+    handleInventoryPerformanceForecaster shared function).
+  - Razlika od inventory-profit-maximizer (ki optimira profit za
+    posamezne item-e) — ta forecast-a PORTFOLIO-level profit 30/60/90
+    dni. Razlika od inventory-value-tracker (v7.81 ki track-a current
+    value) — ta napove FUTURE performance z projectedProfit in grade.
+    Razlika od inventory-value-predictor (v7.73 ki predict-a future
+    value) — ta gleda PERFORMANCE (profit + sell rate + capital
+    efficiency) ne samo value. Razlika od inventory-aging-predictor-pro
+    (v7.83 ki predict-a aging risk) — ta forecast-a PROFIT/turnover/
+    capital efficiency ne aging. Razlika od profit-margin-forecaster-pro
+    (v7.85 ki forecast-a margin) — ta gleda PORTFOLIO profit v EUR +
+    performance grade ne margin %. Razlika od trade-performance-forecaster
+    (ki forecast-a trade performance) — ta je INVENTORY-focused z
+    current inventory composition.
+
+- **Deal Source Quality Tracker** — `GET /api/analytics/deal-source-quality-tracker`
+  - Tracks DEAL QUALITY per source over time — avg dealScore, prilika
+    rate, aiRisk trends per source. Razlika od deal-source-performance-tracker
+    (v7.85 ki track-a profit/ROI) — ta track-a QUALITY metrics
+    (dealScore, aiScore, aiRisk, prilikaRate). "Bolha: quality 78/100
+    (IMPROVING, +1.2/mo). Vinted: 62/100 (STABLE). Best month: Jul
+    (85). Rank: #1."
+  - sources: per source (iz listing.monitor.source) — currentMonth
+    { avgDealScore, avgAiScore, avgAiRisk, prilikaRate (% listings z
+    aiVerdict='PRILIKA'), qualityScore (0-100 composite: dealScore 40%
+    + aiScore 20% + aiRisk inverse 20% + prilikaRate 20%) }, trends
+    { dealScoreTrend12m (linear regression slope), qualityTrend
+    (IMPROVING/STABLE/DECLINING iz quality slope ±0.5), qualityVolatility
+    (stddev monthly quality scores), qualityConsistency (0-100, višja =
+    bolj konsistenten) }, qualityScorecard { currentQualityScore,
+    avgQualityScore12m, bestQualityMonth/worstQualityMonth { month,
+    score }, qualityRank (1 = best, sort by currentQualityScore desc) },
+    monthlyData [{ month (YYYY-MM), avgDealScore, avgAiScore, avgAiRisk,
+    prilikaRate, qualityScore }] (12 months).
+  - summary: totalSources, avgQualityAcrossSources, bestQualitySource,
+    worstQualitySource, improvingSources, decliningSources, advice
+    (slovenski povzetek z diversifikacijo/fokus priporočili).
+  - Compute: query SOLD trades zadnjih 12 mesecev z linked Listing
+    (za monitor.source/dealScore/aiScore/aiRisk/aiVerdict), group by
+    source AND month, compute monthly quality metrics (avgDealScore,
+    avgAiScore, avgAiRisk, prilikaRate, qualityScore composite),
+    linear regression slope za dealScore in quality scores, classify
+    qualityTrend, compute quality volatility/consistency, rank by
+    currentQualityScore desc. Pure DB analytics — NO AI.
+  - Razlika od source-quality (v7.43 ki da CURRENT snapshot quality
+    per monitor) — ta track-a QUALITY TRENDS čez 12 mesecev z monthly
+    aggregation in quality scorecard 0-100. Razlika od deal-source-roi
+    (ki meri ROI per source) — ta meri QUALITY ne profit. Razlika od
+    deal-source-comparison-matrix (v7.70 ki primerja trenutne atribute)
+    — ta gleda TIME-SERIES quality trende. Razlika od deal-source-intelligence
+    (v7.82 AI ki da intelligence) — ta je pure DB HISTORICAL quality
+    tracking. Razlika od deal-quality-trend-analyzer (v7.83 ki analizira
+    quality trend overall) — ta track-a quality PER SOURCE z rank-om.
+    Razlika od deal-quality-distribution (ki da quality distribution) —
+    ta gleda SOURCE × quality over time.
+
+### Changed
+- **AI_ENDPOINTS.md** regeneriran z `python3 scripts/update_ai_endpoints.py`
+  — 323 AI → 325 AI (+2: inventory-performance-forecaster na poziciji 138,
+  price-volatility-analyzer na poziciji 249).
+- **README.md** posodobljen:
+  - Version badge v7.85.0 → v7.86.0
+  - AI Endpoints badge 323 → 325
+  - API Routes badge 494 → 497 (+3: 2 AI + 1 analytics)
+  - Tagline: "323 AI endpointov + 66 analytics" → "325 AI endpointov +
+    67 analytics" (+1 analytics: deal-source-quality-tracker)
+  - Overview: "Verzija v7.85.0" → "Verzija v7.86.0", counts posodobljeni,
+    "323 AI + 66 analytics + ~180 funkcij" → "325 AI + 67 analytics +
+    ~183 funkcij"
+  - "Kaj je novega v v7.56–v7.85 (30 verzij, 90 novih funkcij)" →
+    "...v7.56–v7.86 (31 verzij, 93 novih funkcij)", dodan v7.86 blok
+    (3 funkcije) na vrh z detajlnimi opisi vseh 3 endpoint-ov.
+  - AI Hub badge v tabeli: "Vsi 323 AI endpointov" → "Vsi 325 AI
+    endpointov"
+  - "Glej AI_ENDPOINTS.md za popoln seznam vseh 323 AI endpointov" →
+    "...325 AI endpointov"
+  - "Endpointi (323 AI + 66 analytics + 10 cron + sistemski = 494)" →
+    "...(325 AI + 67 analytics + 10 cron + sistemski = 497)"
+  - "Profit pipeline (v7.32-v7.85)" → "...(v7.32-v7.86)"
+  - Dodan 1 nov analytics endpoint v analytics seznam (deal-source-quality-tracker
+    v7.86 po deal-source-performance-tracker).
+  - Dodana 2 nova AI endpointa v AI primeri blok (price-volatility-analyzer
+    v7.86, inventory-performance-forecaster v7.86) — vsak z detajlnim
+    enoline komentarjem (po 2 lokaciji v AI seznamu).
+  - "Profit pipeline (121+ funkcij)" → "...(124+ funkcij)", dodane 3
+    nove funkcije (AI Price Volatility Analyzer, AI Inventory Performance
+    Forecaster, Deal Source Quality Tracker).
+  - Analytics (66) → (67), dodan 1 nov (Deal Source Quality Tracker).
+  - Testing: "494 API routes" → "497 API routes", "try/catch na vseh
+    494 API routes" → "...497 API routes".
+  - Project structure: "323 AI endpointov" → "325 AI endpointov".
+  - Roadmap: "v7.85 (trenutno — ~180 funkcij)" → "v7.86 (trenutno —
+    ~183 funkcij)", dodane 3 nove funkcije v completed list.
+  - "UI komponente za v7.50-v7.85 funkcije" → "...v7.50-v7.86 funkcije".
+  - "do v7.85 (avgust 2026)" → "do v7.86 (avgust 2026)".
+  - "Zadnje verzije": dodan "v7.86.0 (avgust 2026) — AI Price Volatility
+    Analyzer, AI Inventory Performance Forecaster, Deal Source Quality
+    Tracker" na vrh.
+- **Verzija aplikacije:** v7.85.0 → v7.86.0.
+- AI endpointi: 323 → 325 (+2).
+- Analytics endpointi: 66 → 67 (+1).
+- Total API routes: 494 → 497 (+3).
+- Funkcije v profit pipeline: 121+ → 124+ (+3).
+- Skupno funkcij: ~180 → ~183 (+3).
 
 ## [7.85.0] - 2026-08-08
 
