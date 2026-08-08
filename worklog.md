@@ -12042,3 +12042,34 @@ Stage Summary:
 - dev.log: vsi HTTP requesti vračajo 200 OK (GET in POST za vse 3 endpoint-e), brez error/warn (empty-state — AI se sploh ne kliče brez podatkov)
 - curl testi: vsi 6 (GET+POST za vsak od 3 endpoint-ov) → 200 OK z veljavnim JSON in aiUsed=false (empty-state)
 - Verzija aplikacije: v7.91.0
+
+---
+Task ID: v7.91.1
+Agent: main
+Task: v7.91 commit + push + GitHub About + Agent Browser verification
+
+Work Log:
+- Prejel poročilo od full-stack-developer podagenta (Task v7.91)
+- Preveril 3 nove endpoint-e: deal-source-momentum-analyzer (200 GET+POST), market-volatility-forecaster (200 GET+POST), inventory-performance-trend-tracker (200 GET+POST)
+- Preveril doc sync: AI_ENDPOINTS.md (335 ✅), README v7.91 (12 refs ✅), README 335 AI (6 refs ✅), CHANGELOG v7.91 ✅
+- Preveril lint: 0 napak ✨
+- Preveril typecheck: 0 napak ✨
+- Posodobil GitHub About opis: 332 AI → 335 AI, 509 routes → 512 routes (via API PATCH)
+- Commit: "v7.91: Deal Source Momentum Analyzer + Market Volatility Forecaster + Inventory Performance Trend Tracker" (7465f6f)
+- Push na GitHub: uspešen ✅, PAT očiščen ✅
+- Agent Browser self-verification:
+  - Stran se pravilno naloži (HTTP 200)
+  - AI Hub prikazuje deal-source-momentum-analyzer (v7.91) v iskalniku ✅
+  - Runner test: klik na deal-source-momentum-analyzer → POST request → valid JSON ✅
+  - Response: {"ok":true, "sources":[], "insights":{...}, "aiUsed":false, "message":"Ni SOLD trgovin..."}
+  - Brez runtime napak v dev.log
+
+Stage Summary:
+- v7.91 uspešno dokončana in potisnjena na GitHub
+- 3 nove funkcije: AI Deal Source Momentum Analyzer, AI Market Volatility Forecaster, AI Inventory Performance Trend Tracker
+- AI endpointi: 332 → 335 (+3)
+- Analytics endpointi: 72 (nespremenjeno — vsi 3 so AI)
+- Total API routes: 509 → 512 (+3)
+- Dokumentacija sinhrono posodobljena (AI_ENDPOINTS.md, README, CHANGELOG, GitHub About)
+- GitHub sinhroniziran (0 commit-ov ahead)
+- Verzija aplikacije: v7.91.0
