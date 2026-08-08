@@ -6,11 +6,283 @@ Format sledi [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), verzije s
 
 ## [Unreleased]
 
-Načrtovano za v7.90+:
+Načrtovano za v7.91+:
 - WebSocket real-time negotiation (SSE namesto polling)
 - Playwright E2E testi za glavne flow-e
 - TLS fingerprinting (curl-impersonate)
 - ML model za buyer matchmaker (fine-tuned na realnem data)
+
+## [7.90.0] - 2026-08-13
+
+### Added — AI Portfolio Risk Forecaster & Market Sentiment Trend Analyzer & Inventory Value Appreciation Tracker (3 funkcije)
+
+- **AI Portfolio Risk Forecaster** — `GET+POST /api/ai/portfolio-risk-forecaster`
+  - AI forecast-a FUTURE RISK portfolia 30/60/90 dni vnaprej — projected
+    risk score, emerging risk factors, in risk mitigation plan. Razlika
+    od portfolio-stress-test (v7.59 ki test-a CURRENT portfolio pod
+    stresnimi scenariji) — ta FORECAST-a kako bo portfolio RISK
+    EVOLVIRAL čez čas. "Risk: 42/100 (MEDIUM), projected 55 in 30d
+    (WORSENING). Emerging: aging +10 items. Mitigation: sell 5 items
+    >60d → risk -15."
+  - current: { concentrationRisk (Herfindahl-Hirschman Index by category,
+    scaled 0-100), agingRisk (% items held >60d, weighted: >90d = full,
+    60-90d = half), marketRisk (iz recent SOLD profit trend slope ±5/1
+    thresholds + volatility CV adjust), liquidityRisk (avg hold days iz
+    SOLD history + no-contact rate adjustment), categoryRisk (avg aiRisk
+    1-10 across held items × 10), overallRiskScore 0-100 (25%
+    concentration + 25% aging + 20% market + 15% liquidity + 15%
+    category), currentRiskLevel LOW / MEDIUM / HIGH / CRITICAL iz score
+    thresholds 30/55/75 }.
+  - forecast: { projectedRisk30d / 60d / 90d (clamped [0, 100], ±15 od
+    deterministic z daily composite change iz aging growth 0.012/d +
+    concentration growth 0.05/d if >50 + market mean reversion (50 -
+    marketRisk) × 0.01/d + liquidity growth 0.03/d weighted), riskTrend
+    IMPROVING / STABLE / WORSENING iz 90d delta ±4, projectedRiskLevel
+    LOW / MEDIUM / HIGH / CRITICAL, confidenceLevel 0-100 (base 55 +
+    concentration stickiness +10 if >60 + aging stickiness +8 if >60 -
+    market volatility -12 if >70 + risk visibility ±10) }.
+  - analysis.emergingRiskFactors: 2-5 faktorjev { risk (max 200 chars),
+    probability 0-100, impact (max 150 chars), timeline (max 30 chars) }
+    — iz kateri komponente rastejo (aging, concentration, market,
+    liquidity, category).
+  - analysis.riskHotspots: 2-5 top risk items { item (max 80 chars),
+    category (max 40 chars), riskScore 0-100, reason (max 150 chars) }
+    — top 5 highest-risk items z daysHeld + aiRisk + contactStatus +
+    dealScore reasons.
+  - analysis.riskMitigationPlan: 2-5 akcij { action (max 200 chars),
+    priority HIGH / MEDIUM / LOW, riskReduction 0-100, timeline (max 30
+    chars) } — iz highest risk komponent (aging → sell 5 items,
+    concentration → diversify, market → reduce buying, liquidity →
+    promote no-contact items, category → re-evaluate z AI).
+  - analysis.riskTolerance: { level CONSERVATIVE / BALANCED /
+    AGGRESSIVE iz portfolio size (<5 CONSERVATIVE, >20 AGGRESSIVE),
+    assessment (max 400 chars), acceptable boolean (overallRiskScore < 60) }.
+  - summary: slovenski povzetek (max 400 znakov). NE izmišljuj številk —
+    uporabi deterministične.
+  - Compute: query HELD trades z linked Listing (aiRisk,
+    aiEstimatedValue, dealScore, contactStatus, monitor.source); query
+    SOLD trades 12m za historical risk patterns (profit trend + hold
+    days); compute current risk metrics (HHI concentration, aging
+    weighted, market trend + volatility CV, liquidity hold days +
+    contact rate, category avg aiRisk × 10); build deterministic forecast
+    (daily composite change × 30/60/90d z mean reversion za market);
+    build deterministic emerging risks (5 iz highest komponent), risk
+    hotspots (top 5 items), mitigation plan (5 iz highest komponent),
+    risk tolerance (iz portfolio size + overall score).
+  - AI-enhanced z grounding (current + deterministicForecast +
+    deterministicAnalysis + portfolio summary z heldItems top 30 +
+    caps) + anti-hallucination (projectedRisk30d/60d/90d ±15 od
+    deterministic in clamped [0, 100], confidenceLevel ±15 in clamped
+    [0, 100]; riskTrend / projectedRiskLevel / riskTolerance.level /
+    priority validirana proti enum; emergingRiskFactors risk max 200 /
+    impact max 150 / timeline max 30, probability clamped [0, 100];
+    riskHotspots item max 80 / category max 40 / riskScore clamped
+    [0, 100] / reason max 150; riskMitigationPlan action max 200 /
+    riskReduction clamped [0, 100] / timeline max 30;
+    riskTolerance.assessment max 400; summary max 400) + 6h cache (key
+    `portfolio-risk-forecaster:${JSON.stringify(heldItemIds)}`) +
+    deterministic fallback (compute iz current risk × daily change).
+    GET+POST (handlePortfolioRiskForecaster shared function — AI Hub
+    runner kompatibilnost).
+  - Razlika od portfolio-stress-test (v7.59 ki test-a current portfolio
+    pod stresnimi scenariji) — ta FORECAST-a future risk evolution z
+    emerging risk + mitigation plan. Razlika od portfolio-concentration-
+    risk (v7.65 ki da current concentration HHI + Pareto) — ta
+    forecast-a composite RISK z 5 dimenzijami (concentration + aging +
+    market + liquidity + category). Razlika od portfolio-health-
+    dashboard (v7.67 ki da current health 0-100 + 5 dimenzij) — ta
+    forecast-a future RISK z tolerance assessment in mitigation plan.
+    Razlika od risk-reward-calculator (v7.68 ki računa risk/reward per
+    item) — ta je PORTFOLIO-level z emerging risk factors in mitigation
+    plan. Razlika od risk-spread-calculator (ki meri diversification) —
+    ta forecast-a composite risk evolution. Razlika od risk-hedging (ki
+    generira hedging strategies) — ta je forward-looking z emerging
+    risks. Razlika od risk-parity (ki računa risk parity allocations) —
+    ta gleda concentration + aging + market + liquidity + category risks
+    composite z mitigation actions.
+
+- **Market Sentiment Trend Analyzer** — `GET /api/analytics/market-sentiment-trend-analyzer`
+  - Pure DB analizira kako SENTIMENT trga spreminja čez čas — track-a
+    sentiment score trends čez 26 tednov, identificira sentiment cikle
+    in detektira sentiment turning points. Razlika od market-sentiment-
+    pulse (v7.75 ki da current snapshot 0-100) — ta track-a SENTIMENT
+    TRENDS čez čas z turning points in cikli. "Sentiment: 72/100 (HOT),
+    phase EXPANSION. Trend: +2.1/wk (IMPROVING). Last trough: W12.
+    Next peak: ~W22."
+  - current: { sentimentScore 0-100, classification VERY_HOT / HOT /
+    WARM / COOL / COLD (thresholds 80/60/40/20), currentSentimentPhase
+    RECOVERY / EXPANSION / PEAK / CONTRACTION / TROUGH (iz current score
+    + 26w trend + acceleration + percentile rank — PEAK if score≥65 +
+    trend≤1, TROUGH if score≤35 + trend≥-1, EXPANSION if trend>1 +
+    score≥40, RECOVERY if trend>0.5 + score<40, CONTRACTION if trend
+    <-0.5, fallback percentile rank) }.
+  - trends: { sentimentTrend26w (linear regression slope per week),
+    sentimentTrend3m (last 13 weeks slope), sentimentDirection IMPROVING
+    / STABLE / DECLINING iz ±0.5 threshold, sentimentVolatility (stddev
+    of weekly sentiment scores), sentimentMomentum (acceleration = slope
+    second half - slope first half, ≥4 weeks required) }.
+  - weeklyData: [ { week (ISO date = Monday), sentimentScore,
+    classification, listingVelocity (new listings that week),
+    sellThroughRate (% engagement), prilikaRate (% PRILIKA listings) } ]
+    (26 tednov z istimi 5 signalnimi utežmi kot market-sentiment-pulse:
+    20% listingVelocity + 20% priceTrend + 15% dealQualityTrend + 25%
+    sellThroughRate + 20% prilikaRate — vendar per-week z previous-week
+    baseline za trend komponente).
+  - turningPoints: { sentimentPeaks [ { week, score } ] (local maxima:
+    score[i] > score[i-1] AND score[i] > score[i+1]), sentimentTroughs
+    [ { week, score } ] (local minima: score[i] < score[i-1] AND
+    score[i] < score[i+1]), lastTurningPoint { week, direction UP / DOWN,
+    score } | null (latest among peaks + troughs) }.
+  - cycleAnalysis: { avgSentimentCycleLength (avg weeks between peaks,
+    fallback to troughs if no peaks), sentimentCyclePosition
+    (EARLY_RECOVERY / MID_EXPANSION / LATE_EXPANSION / AT_PEAK /
+    EARLY_CONTRACTION / AT_TROUGH iz phase + percentile rank),
+    nextPredictedPeak (ISO date ali null — iz last peak + avg cycle
+    length, only if predicted in future) }.
+  - byCategory: [ { category (iz monitor.source — Listing nima category
+    polja), currentSentiment, trend, direction IMPROVING / STABLE /
+    DECLINING iz ±0.3 threshold, rank (1 = highest current sentiment) } ]
+    (≥4 weeks required per category).
+  - insights: { bestImprovingCategory (highest positive trend z
+    IMPROVING direction), worstDecliningCategory (lowest negative trend
+    z DECLINING direction), advice (max 500 chars slovensko — iz phase
+    + direction + best/worst category — PEAK: reduce buying + avoid
+    worst; TROUGH: prepare capital + buy best; RECOVERY/EXPANSION:
+    increase buying z best category; CONTRACTION: reduce exposure z
+    worst) }.
+  - Compute: query listings zadnjih 180 dni (price, dealScore, aiVerdict,
+    firstSeenAt, isBookmarked, contactStatus, monitor.source); group by
+    ISO week (26 weeks aligned to Monday); per week compute sentiment
+    (5-signal weighted composite — ista logika kot market-sentiment-pulse
+    vendar per-week z previous-week baseline za trend komponente);
+    linear regression slopes za 26w + 3m (last 13 weeks); compute
+    volatility (stddev) in momentum (acceleration = slope second half -
+    slope first half); classify phase iz score + trend + acceleration +
+    percentile rank; detect turning points (local maxima/minima); compute
+    avg cycle length between peaks/troughs; predict next peak iz avg
+    cycle + last peak; per-category analysis (≥4 weeks) z rank.
+  - Pure DB (NO AI). GET handler only.
+  - Razlika od market-sentiment-pulse (v7.75 ki da current snapshot 0-100
+    z 5 signalov zadnjih 14 dni) — ta track-a SENTIMENT TRENDS čez 26
+    tednov z turning points in cikli. Razlika od market-trend-momentum
+    (v7.73 ki track-a momentum 1st derivative per metric) — ta gleda
+    SENTIMENT composite (5 signalov) ne enega metrike. Razlika od
+    market-trend-acceleration-tracker (v7.89 ki track-a acceleration
+    2nd derivative) — ta gleda sentiment phasing z RECOVERY / EXPANSION
+    / PEAK / CONTRACTION / TROUGH. Razlika od market-cycle-detector
+    (v7.77 ki klasificira Wyckoff phase iz price/volume) — ta gleda
+    SENTIMENT specifično (ne price cycle). Razlika od market-cycle-phase-
+    predictor (v7.87 AI ki predict-a phase transition timing) — ta je
+    pure DB z sentiment cycle detection čez 26 tednov + nextPredictedPeak
+    iz avg cycle.
+
+- **Inventory Value Appreciation Tracker** — `GET /api/analytics/inventory-value-appreciation-tracker`
+  - Pure DB track-a kako VREDNOST HELD inventarja APRECIRA ali
+    DEPRECIRA čez čas — ali inventar pridobiva vrednost (dobre
+    investicije) ali izgublja vrednost (slabe investicije)? Razlika od
+    inventory-value-tracker (v7.81 ki da current snapshot unrealized
+    gain/loss) — ta track-a VALUE CHANGES čez čas z monthly appreciation
+    rate in byAgeBucket analysis. "Portfolio: +15.6% appreciation
+    (5200€ vs 4500€). Elektronika: +22% (collectible). Avto: -5%
+    (depreciating). 65% of items appreciating."
+  - portfolio: { totalBuyPrice (sum buyPrice), totalCurrentEstValue
+    (sum aiEstimatedValue ali buyPrice fallback), totalUnrealizedGain
+    (= totalCurrentEstValue - totalBuyPrice), portfolioAppreciationPercent
+    (= totalUnrealizedGain / totalBuyPrice × 100), avgAppreciationRate
+    (mean monthly appreciation rate across items), appreciatingItemCount
+    (count z gainPercent > +2%), depreciatingItemCount (count z
+    gainPercent < -2%), flatItemCount (count z gainPercent ±2%),
+    appreciationRatio (= appreciatingItemCount / totalItems × 100) }.
+  - perItem: [ { tradeId, title, category, buyPrice, currentEstValue,
+    unrealizedGain, unrealizedGainPercent, daysHeld, appreciationRate
+    (monthly % = unrealizedGainPercent / daysHeld × 30),
+    appreciationStatus APPRECIATING / FLAT / DEPRECIATING iz ±2%
+    threshold } ] (sorted by unrealizedGainPercent desc).
+  - byCategory: [ { category, itemCount, totalBuyPrice, totalEstValue,
+    avgAppreciationPercent, appreciationRank (1 = best appreciating) } ]
+    (sorted by avgAppreciationPercent desc).
+  - byAgeBucket: [ { ageBucket (0-7d / 7-14d / 14-30d / 30-60d / 60-90d
+    / 90d+), itemCount, avgAppreciationPercent, trend APPRECIATING_MORE
+    / STABLE / DEPRECIATING_MORE (vs first bucket ±5%) } ].
+  - trend: { recentItemsAppreciation (<30d items avg unrealizedGain%),
+    olderItemsAppreciation (>60d items avg unrealizedGain%),
+    appreciationTrend ACCELERATING / STABLE / DECELERATING iz delta ±5
+    (ACCELERATING if recent appreciate more than older) }.
+  - insights: { bestAppreciatingCategory (highest avgAppreciationPercent
+    > 0), worstDepreciatingCategory (lowest avgAppreciationPercent < 0),
+    collectibleCandidates (items >60d held AND APPRECIATING — top 5),
+    liquidationCandidates (items >30d held AND DEPRECIATING — top 5),
+    advice (max 500 chars slovensko — iz portfolio appreciationPercent
+    + best/worst category + collectible/liquidation candidates) }.
+  - Compute: query HELD trades z linked Listing (aiEstimatedValue,
+    monitor.source); per item compute currentEstValue (aiEstimatedValue
+    ali buyPrice fallback), unrealizedGain, unrealizedGainPercent,
+    daysHeld, appreciationRate (monthly = unrealizedGainPercent / daysHeld
+    × 30), appreciationStatus (±2% threshold); portfolio aggregation
+    (totalBuyPrice, totalCurrentEstValue, appreciationRatio); per-category
+    analysis z avg appreciation + rank; age bucket analysis (6 buckets)
+    z trend (APPRECIATING_MORE if older buckets appreciate more than
+    first ±5%); trend (recent <30d vs older >60d items — ACCELERATING
+    if recent appreciate more); collectible candidates (top 5 >60d +
+    appreciating); liquidation candidates (top 5 >30d + depreciating).
+  - Pure DB (NO AI). GET handler only.
+  - Razlika od inventory-value-tracker (v7.81 ki da current snapshot
+    unrealized gain/loss per HELD item) — ta track-a VALUE CHANGES čez
+    čas z monthly appreciation rate in byAgeBucket analysis z
+    collectible/liquidation identification. Razlika od inventory-value-
+    predictor (v7.73 ki napove future value 3 scenarije) — ta je CURRENT
+    appreciation tracking z aging buckets. Razlika od inventory-roi-
+    optimizer (v7.79 ki optimira ROI per item z rebalance actions) — ta
+    gleda VALUE appreciation/depreciation ne ROI optimization. Razlika od
+    inventory-depreciation-tracker (ki track-a depreciation only) — ta
+    gleda APPRECIATION + DEPRECIATION z unrealized gain/loss + aging
+    buckets. Razlika od inventory-aging-trend-analyzer (v7.88 AI ki
+    track-a aging trends čez mesece) — ta gleda VALUE trends z
+    collectible/liquidation identification. Razlika od profit-margin-
+    trend-analyzer (v7.82 ki track-a margin trends) — ta gleda UNREALIZED
+    value changes per HELD item ne realized margin.
+
+### Changed
+- **Dokumentacija sinhronizirana z novimi endpointi:**
+  - **AI_ENDPOINTS.md:** regeneriran z python3 skripto — "Total: 332
+    endpoints" (331 → 332, +1 AI: portfolio-risk-forecaster pos 250).
+  - **README.md** (20+ urejanj): version badge v7.89.0 → v7.90.0; AI
+    Endpoints badge 331 → 332; API Routes badge 506 → 509 (+3); tagline
+    "331 AI endpointov + 70 analytics" → "332 AI endpointov + 72
+    analytics" (2 new analytics: market-sentiment-trend-analyzer,
+    inventory-value-appreciation-tracker); Overview "Verzija v7.89.0"
+    → "v7.90.0" in "331 AI + 70 analytics + ~192 funkcij" → "332 AI +
+    72 analytics + ~195 funkcij"; "Kaj je novega v v7.56–v7.89 (34
+    verzij, 102 novih funkcij)" → "...v7.56–v7.90 (35 verzij, 105
+    novih funkcij)"; dodan v7.90 blok (3 funkcije) na vrh z detajlnimi
+    opisi vseh 3 endpoint-ov (response shape, anti-hallucination
+    pravila, AI cache key, deterministic fallback, example comment,
+    razlika od podobnih obstoječih endpoint-ov); AI Hub badge v tabeli
+    "Vsi 331 AI endpointov" → "Vsi 332 AI endpointov"; "Glej
+    AI_ENDPOINTS.md za popoln seznam vseh 331 AI endpointov" → "...332
+    AI endpointov"; "Endpointi (331 AI + 70 analytics + 10 cron +
+    sistemski = 506)" → "...(332 AI + 72 analytics + 10 cron +
+    sistemski = 509)"; dodana 3 nova endpointa v API primeri blok
+    (portfolio-risk-forecaster v7.90 v AI seznamu,
+    market-sentiment-trend-analyzer v7.90 v analytics seznamu,
+    inventory-value-appreciation-tracker v7.90 v analytics seznamu);
+    "Profit pipeline (v7.32-v7.89)" → "...v7.32-v7.90"; "331 AI
+    endpointov" v Project structure → "332 AI endpointov"; "506 routes"
+    v Coding standards → "509 routes"; "506 API routes" v Testing →
+    "509 API routes"; Roadmap "v7.89 (trenutno — ~192 funkcij)" →
+    "v7.90 (trenutno — ~195 funkcij)"; profit pipeline "(133+ funkcij)"
+    → "(136+ funkcij)" in dodane 3 nove funkcije (AI Portfolio Risk
+    Forecaster, Market Sentiment Trend Analyzer, Inventory Value
+    Appreciation Tracker); analytics seznam "(70)" → "(72)" in dodana
+    2 nova analytics (Market Sentiment Trend Analyzer, Inventory Value
+    Appreciation Tracker); "UI komponente za v7.50-v7.89 funkcije" →
+    "...v7.50-v7.90 funkcije"; "do v7.89 (avgust 2026)" → "do v7.90
+    (avgust 2026)"; "Zadnje verzije": dodan "v7.90.0 (avgust 2026) —
+    AI Portfolio Risk Forecaster, Market Sentiment Trend Analyzer,
+    Inventory Value Appreciation Tracker" na vrh.
+  - **CHANGELOG.md** (to sekcija): dodana nova "[7.90.0] - 2026-08-13"
+    sekcija z vsemi 3 endpoint-i in podrobnimi opisi; "[Unreleased]
+    Načrtovano za v7.90+" → "...za v7.91+".
 
 ## [7.89.0] - 2026-08-12
 
