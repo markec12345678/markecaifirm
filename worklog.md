@@ -11140,3 +11140,34 @@ Stage Summary:
 - TypeScript: 0 napak ✨ (EXIT 0)
 - dev.log: vsi HTTP requesti vračajo 200 OK, brez error/warn (empty-state — AI se sploh ne kliče brez SOLD/HELD podatkov/listingov/prodajalcev)
 - Verzija aplikacije: v7.84.0
+
+---
+Task ID: v7.84.1
+Agent: main
+Task: v7.84 commit + push + GitHub About + Agent Browser verification
+
+Work Log:
+- Prejel poročilo od full-stack-developer podagenta (Task v7.84)
+- Preveril 3 nove endpoint-e: capital-efficiency-forecaster (200 GET+POST), market-depth-forecaster (200 GET), seller-churn-predictor (200 GET+POST)
+- Preveril doc sync: AI_ENDPOINTS.md (321 ✅), README v7.84 (14 refs ✅), README 321 AI (6 refs ✅), CHANGELOG v7.84 ✅
+- Preveril lint: 0 napak ✨
+- Preveril typecheck: 0 napak ✨
+- Posodobil GitHub About opis: 319 AI → 321 AI, 488 routes → 491 routes (via API PATCH)
+- Commit: "v7.84: Capital Efficiency Forecaster + Market Depth Forecaster + Seller Churn Predictor" (b6d710d)
+- Push na GitHub: uspešen ✅, PAT očiščen ✅
+- Agent Browser self-verification:
+  - Stran se pravilno naloži (HTTP 200)
+  - AI Hub prikazuje capital-efficiency-forecaster (v7.84) v iskalniku ✅
+  - Runner test: klik na capital-efficiency-forecaster → POST request → valid JSON ✅
+  - Response: {"ok":true, "current":{...}, "forecast":{...}, "analysis":{...}, "aiUsed":false, "message":"Ni SOLD zgodovine..."}
+  - Brez runtime napak v dev.log
+
+Stage Summary:
+- v7.84 uspešno dokončana in potisnjena na GitHub
+- 3 nove funkcije: AI Capital Efficiency Forecaster, Market Depth Forecaster, AI Seller Churn Predictor
+- AI endpointi: 319 → 321 (+2)
+- Analytics endpointi: 64 → 65 (+1)
+- Total API routes: 488 → 491 (+3)
+- Dokumentacija sinhrono posodobljena (AI_ENDPOINTS.md, README, CHANGELOG, GitHub About)
+- GitHub sinhroniziran (0 commit-ov ahead)
+- Verzija aplikacije: v7.84.0
