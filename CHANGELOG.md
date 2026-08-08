@@ -6,11 +6,201 @@ Format sledi [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), verzije s
 
 ## [Unreleased]
 
-Načrtovano za v7.85+:
+Načrtovano za v7.86+:
 - WebSocket real-time negotiation (SSE namesto polling)
 - Playwright E2E testi za glavne flow-e
 - TLS fingerprinting (curl-impersonate)
 - ML model za buyer matchmaker (fine-tuned na realnem data)
+
+## [7.85.0] - 2026-08-08
+
+### Added — AI Profit Margin Forecaster Pro & Inventory Turnover Accelerator Pro & Deal Source Performance Tracker (3 funkcije)
+
+- **AI Profit Margin Forecaster Pro** — `GET+POST /api/ai/profit-margin-forecaster-pro`
+  - AI-powered PRO verzija ki forecast-a profit marže 30/60/90 dni naprej
+    z SCENARIO analizo (BEST/BASE/WORST case marže) in confidence
+    intervalsi. "Margin: 22% → base 20% v 30d, best 25%, worst 15%.
+    Risk: cost increases. Action: negotiate lower prices."
+  - current: currentMargin (avg profit/revenue × 100 zadnjih 30 dni),
+    avgMargin3m, avgMargin12m, marginVolatility (stddev monthly margins),
+    marginTrend (linear regression slope).
+  - influencers: priceTrend (UP/FLAT/DOWN + impact), costTrend, feeTrend,
+    categoryMixShift (prva polovica vs druga polovica mesecev —
+    kategorije ki izginjajo ali se pojavljajo).
+  - forecast: baseCase { margin30d/60d/90d } (currentMargin + trend ×
+    1/2/3, clamped [-50, 100]), bestCase (base + volatility, ≥ baseCase),
+    worstCase (base - volatility, ≤ baseCase), confidenceInterval { low,
+    high } (base ± 0.7 stddev za 30d, low ≤ high), scenarioProbability
+    { base, best, worst } (vsota 100, trend-weighted — IMPROVING trend →
+    best prob 30; DECLINING → worst prob 30; ±15 od deterministic in
+    renormalize), projectedMarginTrend (IMPROVING/STABLE/DECLINING iz
+    marginTrend ±0.5).
+  - analysis: keyMarginDrivers (3 z driver/impact POSITIVE|NEGATIVE/
+    weight 0-100/detail), marginRiskFactors (2-4 z risk/severity
+    LOW|MEDIUM|HIGH/mitigation), marginProtectionActions (3-4 z action/
+    priority HIGH|MEDIUM|LOW/expectedMarginLift 0-15 percentage points).
+  - Compute: query SOLD trades zadnjih 12 mesecev, monthly aggregation
+    (invested/profit/tradeCount/avgSellPrice/avgBuyPrice/avgFeePct/
+    categorySet), linear regression slope za margin/price/cost/fee,
+    influencers iz slopes (±2 za price/cost, ±0.3 za fee), deterministic
+    forecast z base/best/worst scenariji (vol = max(2, marginVolatility)).
+  - AI-enhanced z grounding (current metrics + monthlyMargins +
+    influencerSlopes + deterministicForecast) + anti-hallucination
+    (baseCase ±10 od deterministic, bestCase ±5 in ≥ baseCase, worstCase
+    ±5 in ≤ baseCase, confidenceInterval ±5 in low ≤ high,
+    scenarioProbability ±15 in renormalize na 100, projectedMarginTrend
+    validirana proti enum, expectedMarginLift clamped [0, 15], max
+    lengths na opisih — driver 80, detail 200, risk 100, mitigation 250,
+    action 200, summary 400) + 6h cache (key
+    `profit-margin-forecaster-pro:${currentMonth}`) + deterministic
+    fallback (compute iz marginTrend + volatility). GET+POST (AI Hub
+    runner kompatibilnost — handleProfitMarginForecasterPro shared
+    function).
+  - Razlika od profit-margin-forecaster (basic ki da single margin
+    forecast) — ta PRO verzija da SCENARIO-based margin forecasting z
+    confidence intervals in scenarioProbability weights. Razlika od
+    profit-margin-optimizer-v2 (ki optimira margin) — ta FORECAST-a
+    future marže z base/best/worst scenariji. Razlika od
+    profit-margin-trend-analyzer (v7.82 pure DB ki analizira historical
+    margin trend) — ta je AI PRO ki forecast-a FUTURE margin z
+    scenariji. Razlika od profit-margin-heatmap (ki prikaže category ×
+    price matrix) — ta projicira dinamične margin scenarije 30/60/90
+    dni. Razlika od profit-margin-predictor (basic ki da single margin
+    prediction) — ta da scenario-based forecast z keyMarginDrivers in
+    marginRiskFactors.
+
+- **Inventory Turnover Accelerator Pro** — `GET+POST /api/ai/inventory-turnover-accelerator-pro`
+  - AI-powered PRO verzija ki identificira SPECIFIČNE akcije za
+    pospešitev inventory turnover-a — ne samo "turn faster" ampak
+    natančno kateri item-i, kakšno akcijo in pričakovane dni
+    prihranjene. "PS5: 28d held, avg 22d → PRICE_DROP_5%, save 7d,
+    sell by Sep 5. Priority: HIGH."
+  - items: per HELD item — tradeId, title, category, buyPrice, daysHeld,
+    categoryAvgHoldDays (iz SOLD trades historical hold times per
+    category — computeCategoryAvgHoldDays iz avg daysBetween(buyDate,
+    sellDate) per category, default 30d če ni zgodovine),
+    turnoverRiskScore 0-100 (computeTurnoverRiskScore iz ratio daysHeld
+    vs categoryAvg — <0.5x LOW 0-30, 1x MEDIUM 30-60, 2x HIGH 60-80, 3x+
+    CRITICAL 80-100), accelerationPotential 0-100 (roomScore 0-50 iz
+    daysHeld - categoryAvg×0.5 + riskComponent 0-50 iz riskScore × 0.5),
+    recommendedAction (PRICE_DROP_5% / PRICE_DROP_10% / PRICE_DROP_15% /
+    RELIST_FRESH / CROSS_POST / BUNDLE / LIQUIDATE / HOLD — iz ratio
+    thresholds: <0.5x HOLD, 0.5-1x RELIST_FRESH, 1-1.5x PRICE_DROP_5%
+    ali CROSS_POST če >200€, 1.5-2x PRICE_DROP_10%, 2-3x PRICE_DROP_15%,
+    3x+ LIQUIDATE), expectedDaysSaved (clamp [0, 60]), newTargetPrice
+    (samo za PRICE_DROP_*/LIQUIDATE — 0.95x/0.9x/0.85x/0.85x buyPrice,
+    clamped [0.5x, 1.2x] buyPrice, drugače null), expectedSellDate (ISO
+    v prihodnosti — now + max(7, daysSaved × 2) days), actionPriority
+    (URGENT/HIGH/MEDIUM/LOW), reasoning (slovenski opis max 250 znakov
+    z ratio, prices, daysSaved).
+  - portfolio: currentAvgTurnoverDays (avg daysHeld čez items),
+    projectedTurnoverWithActions (currentAvg - totalDaysSaved/items),
+    totalDaysSaved (sum expectedDaysSaved), accelerationROI (EUR
+    dodatnega profita iz hitrejšega turnover-ja — sum buyPrice ×
+    daysSaved × 0.005), urgencyLevel (LOW/MEDIUM/HIGH/CRITICAL iz %
+    URGENT/HIGH item-ov — CRITICAL če ≥3 URGENT ali ≥30% urgent,
+    HIGH če ≥3 high ali ≥40% high, MEDIUM če ≥1 high, LOW sicer).
+  - Compute: query HELD trades z id/title/category/buyPrice/buyDate,
+    query SOLD trades zadnjih 12 mesecev za historical hold times per
+    category, compute per-item deterministic plan (turnoverRiskScore,
+    accelerationPotential, recommendedAction, daysSaved, newTargetPrice,
+    expectedSellDate, priority), portfolio summary.
+  - AI-enhanced z grounding (top 50 item-ov by risk za AI prompt —
+    vsemi deterministic vrednostmi za referenco) + anti-hallucination
+    (recommendedAction validirana proti enum, expectedDaysSaved ±10 od
+    deterministic in clamped [0, 60], newTargetPrice clamped [0.5x, 1.2x]
+    buyPrice (samo za PRICE_DROP_*/LIQUIDATE), expectedSellDate validiran
+    v prihodnost (> now + 1 dan), actionPriority validirana proti enum,
+    reasoning max 250 chars, portfolio currentAvgTurnoverDays ±5 in
+    clamped [0, 3650], projectedTurnoverWithActions ±5 in clamped [0,
+    3650], totalDaysSaved = sum clamped items (ne AI direktno),
+    accelerationROI ±200 in clamped [0, 10000], urgencyLevel validirana
+    proti enum) + 6h cache (key
+    `inventory-turnover-accelerator-pro:${JSON.stringify(sorted
+    heldItemIds)}` — invalidiran ko se spremeni sestava HELD inventarja)
+    + deterministic fallback (compute iz daysHeld vs categoryAvg ratio
+    thresholds). GET+POST (AI Hub runner kompatibilnost —
+    handleInventoryTurnoverAcceleratorPro shared function).
+  - Razlika od inventory-turnover-accelerator (basic ki da general
+    advice) — ta PRO verzija da PER-ITEM acceleration plan z
+    recommendedAction, expectedDaysSaved in newTargetPrice. Razlika od
+    inventory-turnover-optimizer (ki optimira turnover strategijo) — ta
+    je PREDICTOR ki za vsak HELD item predlaga konkretne akcije. Razlika
+    od inventory-turnover-predictor (ki napove future turnover) — ta je
+    ACTION-oriented z per-item plan. Razlika od
+    inventory-turnover-forecast (v7.78 ki forecast-a portfolio turnover)
+    — ta je per-item accelerator z accelerationPotential in
+    actionPriority. Razlika od inventory-aging-predictor-pro (v7.83 ki
+    predict-a aging risk) — ta je ACTION-oriented z konkretnimi akcijami
+    (PRICE_DROP/RELIST/CROSS_POST/BUNDLE/LIQUIDATE).
+
+- **Deal Source Performance Tracker** — `GET /api/analytics/deal-source-performance-tracker`
+  - Tracks performance metrics of each deal source over time —
+    monthly ROI, win rate, trade volume trends, in performance
+    scorecard. Pure DB analytics — NO AI. "Bolha: performance 82/100
+    (IMPROVING, ROI +2%/mo). Vinted: 58/100 (DECLINING). Best month:
+    Jul (1200€)."
+  - sources: per source (iz listing.monitor.source) — currentMonth
+    { profit, roi, winRate, volume, avgDealScore } (current month or
+    last available month če current prazen), trends { profitTrend12m
+    (linear regression slope €/mo), roiTrend12m (%/mo), volumeTrend12m
+    (trades/mo), winRateTrend12m (%/mo), performanceDirection
+    (IMPROVING/STABLE/DECLINING iz compositeTrend = (profitTrend/200 +
+    roiTrend/5)/2, ±0.1 threshold) }, performanceScore 0-100 (30% ROI
+    trend normalized ±5%/mo + 25% profit trend ±200€/mo + 20% volume
+    trend ±3 trades/mo + 15% win rate trend ±5%/mo + 10% consistency iz
+    100 - stddev/500 × 100), performanceRank (1 = best, sort by score
+    desc), monthlyData [{ month (YYYY-MM), profit, roi, winRate, volume }]
+    (12 months), bestMonth/worstMonth { month, profit } (iz vseh monthov
+    z max/min profit).
+  - summary: totalSources, improvingSources (count IMPROVING),
+    decliningSources (count DECLINING), bestPerformingSource
+    (displayName top source), worstPerformingSource (displayName bottom
+    source), advice (slovenski povzetek z diversifikacijo/fokus
+    priporočili — decliningSources > improvingSources → razmisli o
+    diversifikaciji; improvingSources > declining → povečaj volumen v
+    top virih; else stabilen).
+  - Compute: query SOLD trades zadnjih 12 mesecev z linked Listing (za
+    monitor.source in dealScore), group by source AND month
+    (SrcMonthAgg — invested/profit/wins/trades/dealScoreSum),
+    compute monthly metrics (profit, roi, winRate, volume, avgDealScore),
+    linear regression slope za 4 trende (profit/roi/volume/winRate),
+    performance score weighted composite, rank by score desc.
+  - Pure DB analytics — NO AI. Razlika od deal-source-roi (ki da
+    current snapshot ROI per source) — ta tracks PERFORMANCE TRENDS čez
+    12 mesecev z monthly ROI/win rate/volume trendi. Razlika od
+    deal-source-comparison-matrix (v7.70 ki primerja trenutne atribute
+    source-ov) — ta gleda TIME-SERIES trende in performance direction.
+    Razlika od deal-source-intelligence (v7.82 AI ki da source
+    intelligence) — ta je pure DB HISTORICAL performance tracking. Razlika
+    od source-quality (ki meri quality) — ta gleda PERFORMANCE TRENDS z
+    performance scorecard 0-100 in rank.
+
+### Changed
+
+- AI_ENDPOINTS.md: regeneriran z Python skripto → "Total: 323 endpoints"
+  (321 → 323, +2 AI: profit-margin-forecaster-pro na poziciji 263,
+  inventory-turnover-accelerator-pro na poziciji 157).
+- README.md: badge version v7.84.0 → v7.85.0, AI Endpoints 321 → 323,
+  API Routes 491 → 494, tagline "321 AI + 65 analytics" → "323 AI + 66
+  analytics", overview "~177 funkcij" → "~180 funkcij", dodan v7.85
+  blok (3 funkcije) na vrh "Kaj je novega", AI Hub badge "321 AI" →
+  "323 AI", endpoint seznam "+323 AI + 66 analytics + 10 cron +
+  sistemski = 494", dodana 3 nova endpointa v AI/analytics sezname (2
+  lokaciji), profit pipeline "118+ funkcij" → "121+ funkcij" z 3 novimi
+  funkcijami, analytics (65) → (66) z 1 novim, testing "491 routes" →
+  "494 routes", project structure "321 AI" → "323 AI", roadmap "v7.84
+  (trenutno — ~177 funkcij)" → "v7.85 (trenutno — ~180 funkcij)",
+  "v7.50-v7.84 funkcije" → "v7.50-v7.85 funkcije", "do v7.84 (avgust
+  2026)" → "do v7.85 (avgust 2026)", dodan "v7.85.0 (avgust 2026) —
+  AI Profit Margin Forecaster Pro, Inventory Turnover Accelerator Pro,
+  Deal Source Performance Tracker" v Zadnje verzije na vrh.
+- CHANGELOG.md: dodana nova [7.85.0] sekcija (nad [7.84.0]) z vsemi 3
+  endpoint-i in Changed pod-sekcijo. [Unreleased] posodobljen iz
+  "Načrtovano za v7.85+" → "za v7.86+".
+- Skupno: 321 AI → 323 AI (+2), 65 analytics → 66 analytics (+1), 491
+  routes → 494 routes (+3), ~177 funkcij → ~180 funkcij (+3), 118+
+  funkcij v profit pipeline → 121+ funkcij (+3).
 
 ## [7.84.0] - 2026-08-27
 
