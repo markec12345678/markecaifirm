@@ -11753,3 +11753,34 @@ Stage Summary:
 - dev.log: vsi HTTP requesti vračajo 200 OK (GET in POST), brez error/warn (empty-state — AI se sploh ne kliče brez SOLD trgovin z sellerName/listingov; market-trend-acceleration-tracker vrača prazno metrics z advice "Ni oglasov v zadnjih 180 dneh"; deal-source-profitability-analyzer vrača prazno sources z advice "Ni SOLD trgovin v zadnjih 12 mesecih")
 - curl testi (zgodnji — pred doc edits): vsi 4 (GET+POST seller-performance-forecaster, GET market-trend-acceleration-tracker, GET deal-source-profitability-analyzer) → 200 OK z veljavnim JSON
 - Verzija aplikacije: v7.89.0
+
+---
+Task ID: v7.89.1
+Agent: main
+Task: v7.89 commit + push + GitHub About + Agent Browser verification
+
+Work Log:
+- Prejel poročilo od full-stack-developer podagenta (Task v7.89)
+- Preveril 3 nove endpoint-e: seller-performance-forecaster (200 GET+POST), market-trend-acceleration-tracker (200 GET), deal-source-profitability-analyzer (200 GET)
+- Preveril doc sync: AI_ENDPOINTS.md (331 ✅), README v7.89 (12 refs ✅), README 331 AI (6 refs ✅), CHANGELOG v7.89 ✅
+- Preveril lint: 0 napak ✨
+- Preveril typecheck: 0 napak ✨
+- Posodobil GitHub About opis: 330 AI → 331 AI, 503 routes → 506 routes (via API PATCH)
+- Commit: "v7.89: Seller Performance Forecaster + Market Trend Acceleration Tracker + Deal Source Profitability Analyzer" (c50c947)
+- Push na GitHub: uspešen ✅, PAT očiščen ✅
+- Agent Browser self-verification:
+  - Stran se pravilno naloži (HTTP 200)
+  - AI Hub prikazuje seller-performance-forecaster (v7.89) v iskalniku ✅
+  - Runner test: klik na seller-performance-forecaster → POST request → valid JSON ✅
+  - Response: {"ok":true, "sellers":[], "summary":{...}, "aiUsed":false, "message":"Ni seller-jev..."}
+  - Brez runtime napak v dev.log
+
+Stage Summary:
+- v7.89 uspešno dokončana in potisnjena na GitHub
+- 3 nove funkcije: AI Seller Performance Forecaster, Market Trend Acceleration Tracker, Deal Source Profitability Analyzer
+- AI endpointi: 330 → 331 (+1)
+- Analytics endpointi: 68 → 70 (+2)
+- Total API routes: 503 → 506 (+3)
+- Dokumentacija sinhrono posodobljena (AI_ENDPOINTS.md, README, CHANGELOG, GitHub About)
+- GitHub sinhroniziran (0 commit-ov ahead)
+- Verzija aplikacije: v7.89.0
