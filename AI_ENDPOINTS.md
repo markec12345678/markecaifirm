@@ -1,6 +1,6 @@
 # AI Endpoints
 
-**Total: 314 endpoints**
+**Total: 315 endpoints**
 
 Avtomatsko generirano iz `src/app/api/ai/`.
 
@@ -315,8 +315,9 @@ Avtomatsko generirano iz `src/app/api/ai/`.
 | 307 | tax-loss-harvesting | `/api/ai/tax-loss-harvesting` |
 | 308 | title-abtest | `/api/ai/title-abtest` |
 | 309 | tone-analyzer | `/api/ai/tone-analyzer` |
-| 310 | trade-replication-engine | `/api/ai/trade-replication-engine` |
-| 311 | trading-coach | `/api/ai/trading-coach` |
-| 312 | trend-predictions | `/api/ai/trend-predictions` |
-| 313 | turnover-optimizer | `/api/ai/turnover-optimizer` |
-| 314 | vendor-reliability | `/api/ai/vendor-reliability` |
+| 310 | trade-performance-forecaster | `/api/ai/trade-performance-forecaster` |
+| 311 | trade-replication-engine | `/api/ai/trade-replication-engine` |
+| 312 | trading-coach | `/api/ai/trading-coach` |
+| 313 | trend-predictions | `/api/ai/trend-predictions` |
+| 314 | turnover-optimizer | `/api/ai/turnover-optimizer` |
+| 315 | vendor-reliability | `/api/ai/vendor-reliability` |

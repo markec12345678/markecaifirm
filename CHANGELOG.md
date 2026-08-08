@@ -6,11 +6,236 @@ Format sledi [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), verzije s
 
 ## [Unreleased]
 
-Načrtovano za v7.80+:
+Načrtovano za v7.81+:
 - WebSocket real-time negotiation (SSE namesto polling)
 - Playwright E2E testi za glavne flow-e
 - TLS fingerprinting (curl-impersonate)
 - ML model za buyer matchmaker (fine-tuned na realnem data)
+
+## [7.80.0] - 2026-08-22
+
+### Added — AI Trade Performance Forecaster & Market Liquidity Analyzer & Seller Reliability Scorecard (3 funkcije)
+
+- **AI Trade Performance Forecaster** — `GET+POST /api/ai/trade-performance-forecaster`
+  - AI napove individualno trade performance za vsak HELD item —
+    predvidi izid (profit, hold time, sell probability) glede na
+    zgodovinske vzorce. "PS5 bo verjetno prodan v 18 dneh za 380€
+    (72% verjetnost)." Razlika od inventory-roi-optimizer (v7.79,
+    ki optimira ROI z rebalance actions) — ta FORECAST-a individual
+    trade performance z sell probability in date range. Razlika od
+    inventory-turnover-forecast (v7.78, ki napove turnover RATE za
+    portfolio) — ta gleda POSAMEZNE HELD item-e z sellProbability in
+    predictedSellDate. Razlika od deal-quality-forecaster (ki napove
+    quality po dnevih) — ta gleda POSAMEZNE HELD inventar z per-item
+    prediction. Razlika od deal-pipeline-forecaster (v7.76, ki napove
+    pipeline faze) — ta da PREDICTED SELL DATE in PRICE za held
+    item-e. Razlika od profit-trajectory-forecaster (ki napove
+    growth trajectory) — ta forecast-a POSAMEZNE held trade-e z
+    sellProbability in confidence. Razlika od deal-source-roi (ki
+    gleda ROI po viru) — ta forecast-a PER ITEM z date range in
+    probability. Razlika od inventory-profitability-analyzer (ki
+    analizira profitabilnost kategorij) — ta forecast-a POSAMEZNE
+    held item-e z actionable prediction. Razlika od cash-flow-
+    velocity (ki gleda cash velocity) — ta gleda SELL PROBABILITY
+    in PREDICTED SELL DATE za held inventar. Razlika od profit-
+    efficiency-analyzer (ki gleda profit/day) — ta da PROBABILITY-
+    BASED forecast per item z date range in outlook.
+  - Query HELD trades z linked Listing za aiEstimatedValue in
+    dealScore (take 100000).
+  - Query historical SOLD trades za prediction model:
+    - Per-category avg hold time, avg profit, avg ROI, sell
+      probability.
+    - Per-price-range patterns (buckets: <100, 100-500, 500-2000,
+      2000+).
+    - recentSellRate (sold/day v zadnjih 30 dneh — market
+      momentum).
+  - For each HELD item compute prediction factors:
+    - categoryFactor (historical performance for this category).
+    - priceFactor (current price vs estValue — discount/premium).
+    - ageFactor (daysHeld vs avg za category).
+    - dealScoreFactor (listing.dealScore).
+    - marketFactor (current market conditions iz recent sell rate).
+  - AI generira per-item forecast:
+    - predictedSellDate = date range (earliest, latest) — 0.6×
+      in 1.4× predictedHoldDays.
+    - predictedSellPrice (clamped [0.5x, 1.3x] aiEstimatedValue —
+      anti-hallucination; ali [0.5x, 1.3x] buyPrice če manjka
+      estValue).
+    - predictedProfit = predictedSellPrice - buyPrice - fees.
+    - predictedROI = predictedProfit / buyPrice × 100 (clamped
+      [-100, 500]).
+    - sellProbability 0-100% (clamped [0, 100]) — verjetnost
+      prodaje v 30 dneh.
+    - predictedHoldDays = dodatni dnevi do prodaje (min 1, max
+      180).
+    - confidenceLevel 0-100 (clamped [10, 95]) — based on sample
+      size, estValue, dealScore presence.
+    - keyFactors = top 3 z impact POSITIVE/NEGATIVE in weight
+      0-100 (validirana proti enum).
+    - performanceOutlook = EXCELLENT / GOOD / AVERAGE / POOR /
+      VERY_POOR (validirana proti enum).
+  - portfolio: totalItems, avgSellProbability, avgPredictedROI,
+    totalPredictedProfit, avgConfidence, outlookDistribution
+    (count per 5 levels).
+  - AI-enhanced z grounding + anti-hallucination (predictedSellPrice
+    clamped [0.5x, 1.3x] estValue, sellProbability clamped [0, 100],
+    predictedROI clamped [-100, 500], confidenceLevel clamped [10,
+    95], predictedHoldDays clamped [1, 180], performanceOutlook
+    validirana proti enum, keyFactors impact validirana proti
+    POSITIVE/NEGATIVE, weight clamped [0, 100]) + 6h cache (key per
+    heldItemIds JSON sorted) + deterministic fallback (compute iz
+    category averages z aging decay in confidence modifiers).
+  - GET+POST z handleTradePerformanceForecaster(req) shared
+    function (AI Hub runner kompatibilnost — AI Hub UI vedno pošlje
+    POST).
+  - maxDuration = 60, runtime = 'nodejs', dynamic = 'force-dynamic'.
+  - Empty state: če ni HELD inventarja, vrne prazne arrays +
+    message "Ni HELD inventarja — Trade Performance Forecaster ni
+    mogoč."
+
+- **Market Liquidity Analyzer** — `GET /api/analytics/market-liquidity-analyzer`
+  - Meri kako "likvidna" je vsaka kategorija — kako hitro lahko
+    inventar pretvoriš v gotovino? Kombinira sell-through rate,
+    povprečne dni na trgu, stabilnost cen in volume. "Elektronika:
+    HIGHLY_LIQUID (85/100, 14d cash conversion). Avto: ILLIQUID
+    (25/100, 65d). Najboljši za quick cash: elektronika." Pure DB
+    analytics — NO AI. Razlika od market-depth-analyzer (v7.68, ki
+    gleda market depth bid/ask) — ta gleda LIKVIDNOST kategorij z
+    5-metričnim score-om in cash conversion time. Razlika od
+    market-sentiment-pulse (v7.75, ki gleda sentiment) — ta gleda
+    LIKVIDNOST (how fast you can sell). Razlika od market-momentum
+    (ki gleda BULLISH/BEARISH) — ta gleda CASH CONVERTIBILITY per
+    kategorija. Razlika od market-cycle-detector (v7.77, ki
+    detektira cycle faze) — ta gleda LIKVIDNOST 0-100 z 5-level
+    klasifikacijo. Razlika od listing-engagement-analytics (v7.79,
+    ki gleda engagement listingov) — ta gleda LIKVIDNOST kategorij
+    z cash conversion time. Razlika od deal-pipeline-forecaster
+    (v7.76, ki napove pipeline faze) — ta gleda AKTUALNO likvidnost
+    per kategorija z rank. Razlika od inventory-turnover-forecast
+    (v7.78, ki napove turnover rate) — ta analizira LIKVIDNOST
+    KATEGORIJ z 5 dimenzijami in cash conversion time. Razlika od
+    cash-flow-velocity (ki gleda cash velocity portfelja) — ta
+    gleda LIKVIDNOST KATEGORIJ na trgu (sell-through, price
+    stability).
+  - Query listings zadnjih 90 dni (isHidden false, firstSeenAt gte
+    cutoff90d) z monitor.source, contactStatus, isBookmarked,
+    firstSeenAt, priceDroppedAt, price, previousPrice (take 200000).
+  - Per kategorija compute metrics:
+    - sellThroughRate = (bookmarked + contacted) / total × 100.
+    - avgDaysToList = avg days from firstSeenAt to now (or sale).
+    - priceStabilityIndex = 100 - (CV × 100), kjer CV = stddev/mean
+      (higher = more stable prices = more liquid).
+    - volumeIndex = listing count normalized 0-100.
+    - demandIndex = (bookmarked + contacted) normalized 0-100.
+  - liquidityScore 0-100 (30% sellThroughRate + 25% (100-avgDays
+    norm) + 20% priceStabilityIndex + 15% volumeIndex + 10%
+    demandIndex).
+  - classification (HIGHLY_LIQUID 80+ / LIQUID 60-79 / MODERATE 40-59
+    / ILLIQUID 20-39 / HIGHLY_ILLIQUID <20).
+  - cashConversionTime = estimated days to convert to cash =
+    avgDaysToList (min 1).
+  - liquidityRank (1 = most liquid).
+  - trend: currentAvgLiquidity (zadnje 4 tedne) vs
+    previousAvgLiquidity (prejšnje 4 tedne) + trend
+    (IMPROVING/STABLE/DECLINING ±5%).
+  - summary: totalCategories, highlyLiquidCount, illiquidCount,
+    bestCategory, worstCategory, avgCashConversionTime, advice
+    (slovenski concrete nasvet z beste/worst kategorije + cash
+    conversion).
+  - Pure DB analytics — NO AI. GET handler only (analytics endpoint).
+  - Empty state: če ni listingov v 90 dneh, vrne prazne arrays +
+    message "Ni listingov v zadnjih 90 dneh — Market Liquidity
+    Analyzer ni mogoč."
+
+- **Seller Reliability Scorecard** — `GET /api/analytics/seller-reliability-scorecard`
+  - Celovit scorecard za vsakega prodajalca, s katerim si posloval —
+    oceni 5 dimenzij (deal quality, pricing, consistency, value,
+    reliability) z grade A+ do F. "Top seller: Elektro Marjan (A
+    grade, 88/100). Best dimension: reliability (95). Buy more
+    from: Marjan, Modna Kraljica." Pure DB analytics — NO AI.
+    Razlika od seller-reliability-v2 (AI seller reliability v2) —
+    ta je descriptivna analiza ZGODOVINSKIH trade-ov z
+    5-dimenzionalnim scorecard in grade per seller. Razlika od
+    seller-trust-score-v2 (AI trust score) — ta da SCORECARD z 5
+    dimenzijami in grade distribucijo. Razlika od vendor-reliability
+    (vendor reliability) — ta gleda POSAMEZNE sellerje z
+    dimensional scoring. Razlika od seller-performance-analytics
+    (v7.77, seller analytics) — ta da 5-DIMENZIONALNI scorecard z
+    A+ do F grade in buyMoreFrom/avoidSellers priporočila. Razlika
+    od deal-quality-scorecard (v7.79, ki oceni TRADE-e) — ta oceni
+    SELLERJE z 5 dimenzijami in recommendations. Razlika od
+    deal-source-comparison-matrix (v7.70, ki primerja vire) — ta
+    gleda POSAMEZNE sellerje z dimensional scoring. Razlika od
+    deal-source-roi (ki gleda ROI po viru) — ta da 5-DIMENZIONALNI
+    scorecard per seller z grade in recommendations.
+  - Query SOLD in HELD trades z linked Listing za sellerName,
+    dealScore, sellPrice, fees (take 100000, sorted by buyDate desc).
+  - Group by sellerName, compute 5 dimenzij per seller (0-100):
+    - dealQualityScore: avg dealScore listings tega sellerja.
+    - pricingScore: avg ROI/profit iz sold trades (50 + avgProfit/
+      200 × 50, clamped 0-100).
+    - consistencyScore: 100 - variance/500 × 100 (low variance v
+      dealScore = consistent).
+    - valueScore: avg profit iz sold trades (50 + avgProfit/500 ×
+      50, clamped 0-100).
+    - reliabilityScore: % profitabilnih prodaj (profitableCount/
+      soldCount × 100).
+  - overallScore = weighted average (dealQuality 20% + pricing 20%
+    + consistency 20% + value 20% + reliability 20%).
+  - grade: A+ (90+) / A (80-89) / B (70-79) / C (60-69) / D (50-59)
+    / F (<50).
+  - Per-seller scorecard: dimensions (5 dimenzij), overallScore,
+    grade, insights (top 2-3 — strongest/weakest dimenzija, deal
+    count), improvementAreas (2-3 konkretni nasveti glede na šibke
+    dimenzije <60).
+  - portfolio: avgOverallScore, gradeDistribution (count per A+/
+    A/B/C/D/F), bestDimension (slovensko ime), weakestDimension,
+    totalSellers.
+  - byCategory: per kategorija bestSeller, avgSellerScore,
+    dealCount.
+  - recommendations: buyMoreFrom (top 3 z grade A+/A), avoidSellers
+    (bottom 3 z grade D/F), advice (slovenski povzetek z dimenzije,
+    grade distribucija, buyMoreFrom/avoid).
+  - Pure DB analytics — NO AI. GET handler only (analytics
+    endpoint).
+  - Empty state: če ni trade-ov z znanim sellerName, vrne prazne
+    arrays + message "Ni trade-ov z znanim sellerName — Seller
+    Reliability Scorecard ni mogoč."
+
+### Changed
+
+- **AI_ENDPOINTS.md**: regeneriran z Python skripto — "Total: 315
+  endpoints" (314 → 315, +1 AI: trade-performance-forecaster).
+- **README.md**: verzija v7.79.0 → v7.80.0, AI Endpoints badge 314 →
+  315, API Routes badge 476 → 479 (+3: 1 AI + 2 analytics), tagline
+  "314 AI endpointov + 57 analytics" → "315 AI endpointov + 59
+  analytics" (+2 analytics: market-liquidity-analyzer,
+  seller-reliability-scorecard), overview "v7.79.0 / ~162 funkcij"
+  → "v7.80.0 / ~165 funkcij", dodan v7.80 blok (3 funkcije) v "Kaj
+  je novega", AI Hub badge v tabeli 314 → 315, endpointi v AI primeri
+  blok (1 AI + 2 analytics dodani), profit pipeline list (103+ →
+  106+ funkcij), analytics list (57 → 59), testing "476 routes" →
+  "479 routes", roadmap "v7.79 (trenutno)" → "v7.80 (trenutno)",
+  naslednji koraki "v7.50-v7.79" → "v7.50-v7.80", zadnje verzije
+  dodan v7.80.0 na vrh, AI_ENDPOINTS.md link 314 → 315, "do v7.79"
+  → "do v7.80".
+- **CHANGELOG.md**: dodana nova [7.80.0] sekcija nad [7.79.0] z
+  vsemi 3 endpoint-i in podrobnimi opisi (response shape, anti-
+  hallucination rules, AI cache key, deterministic fallback, example
+  comment, razlika od podobnih obstoječih endpoint-ov — trade-
+  performance-forecaster vs inventory-roi-optimizer/inventory-
+  turnover-forecast/deal-quality-forecaster/deal-pipeline-
+  forecaster/profit-trajectory-forecaster/deal-source-roi/
+  inventory-profitability-analyzer/cash-flow-velocity/profit-
+  efficiency-analyzer; market-liquidity-analyzer vs market-depth-
+  analyzer/market-sentiment-pulse/market-momentum/market-cycle-
+  detector/listing-engagement-analytics/deal-pipeline-forecaster/
+  inventory-turnover-forecast/cash-flow-velocity; seller-
+  reliability-scorecard vs seller-reliability-v2/seller-trust-
+  score-v2/vendor-reliability/seller-performance-analytics/deal-
+  quality-scorecard/deal-source-comparison-matrix/deal-source-roi),
+  [Unreleased] posodobljen na v7.81+.
+- Verzija aplikacije: v7.80.0
 
 ## [7.79.0] - 2026-08-21
 
