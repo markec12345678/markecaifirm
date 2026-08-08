@@ -10539,3 +10539,133 @@ Stage Summary:
 - Dokumentacija sinhrono posodobljena (AI_ENDPOINTS.md, README, CHANGELOG, GitHub About)
 - GitHub sinhroniziran (0 commit-ov ahead)
 - Verzija aplikacije: v7.80.0
+
+---
+Task ID: v7.81
+Agent: full-stack-developer
+Task: Add 3 new features for v7.81 — AI Profit Growth Predictor, Market Demand Forecaster Pro, Inventory Value Tracker
+
+Work Log:
+- Prebral worklog.md (zadnji ~150 vrstic) — projekt v7.80.1, 315 AI endpointov, 479 total routes, 59 analytics
+- Preučil obstoječe vzorce v trade-performance-forecaster (v7.80 AI z per-item forecast + cache + deterministic fallback + GET+POST shared function), inventory-roi-optimizer (v7.79 AI z rebalance), market-liquidity-analyzer (v7.80 pure DB z 5-metričnim liquidity score), seller-reliability-scorecard (v7.80 pure DB z 5-dimenzionalnim scorecard)
+- Verificiral non-duplication proti vsem obstoječim endpointom iz speca — preveril vse "profit*" in "demand*" in "value*" endpoint-e (profit-forecast, profit-stream-predictor, profit-trajectory-forecaster, profit-momentum-tracker, profit-accelerator, profit-leakage-detector, demand-forecast, demand-forecast-v6, inventory-demand-forecaster, cash-flow-forecast, inventory-value-predictor, profit-efficiency-analyzer, inventory-profit-margin-tracker) — vsi 3 novi endpointi so GENUINELY NEW
+- Preveril prisma schema — Trade ima buyPrice/buyDate/buyFees/sellPrice/sellDate/sellFees/category/status/listingId (nullable relacija na Listing z aiEstimatedValue/aiRisk/dealScore/sellerName); Listing ima monitor.source/isBookmarked/contactStatus/contactedAt/bookmarkedAt/priceDroppedAt/previousPrice/price/firstSeenAt/aiEstimatedValue; Monitor.source kot proxy za kategorijo
+- Feature #1: AI Profit Growth Predictor (GET+POST /api/ai/profit-growth-predictor)
+  * Query SOLD trades zadnjih 12 mesecev (status='sold', sellDate not null + gte cutoff12m, take 100000, orderBy sellDate asc)
+  * Mesečna agregacija (buildMonthlyAgg): per YYYY-MM bucket — profit (sellPrice-sellFees-buyPrice-buyFees), tradeCount, avgHoldDays. Sorted by monthKey asc. last12 = zadnjih 12 mesecev, last6 = zadnjih 6 mesecev.
+  * Growth metrics:
+    - currentMonthlyProfit = profit v zadnjem mesecu (last12[-1] ali 0 če prazno)
+    - currentMonthlyGrowth = zadnji mesečni growth rate % ((cur-prev)/|prev|×100; če prev ≤ 0 in cur > 0 → 100; če oba 0 → 0)
+    - avgMonthlyGrowth6m = average zadnjih 6 monthly growth ratov
+    - growthAcceleration = (avg zadnjih 3 growth ratov) - (avg prejšnjih 3 growth ratov)
+    - growthVolatility = stddev mesečnih growth ratov (stdDev helper)
+  * Drivers (deterministično, z linear trend slope):
+    - volumeGrowth: trendSlope(tradeCount series) — POSITIVE če slope > 0.5, NEGATIVE < -0.5, NEUTRAL. Detail npr. "Trades/mesec rastejo (+3/mo)"
+    - priceGrowth: trendSlope(profit/trade series) — POSITIVE če slope > 1, NEGATIVE < -1, NEUTRAL
+    - efficiencyGrowth: trendSlope(avgHoldDays series) — za efficiency DOWN = good. Impact POSITIVE če -slope > 0.5 (hold days se zmanjšujejo), NEGATIVE če -slope < -0.5
+    - topGrowthCategory: computeCategoryGrowth(soldTrades, now) — per kategorija profit v zadnjih 6m vs prior 6m. growthRate = (recent-prior)/|prior|×100 (ali 100 če prior ≤ 0 in recent > 0). Skip kategorije z < 2 recent sales. Sort by growthRate desc. Top če growthRate > 0, else null.
+  * Deterministic prediction (base za AI override):
+    - growthRate6m = clampNumber(avgMonthlyGrowth6m, -50, 200, 0)
+    - compoundGrowthRate = clampNumber(computeCompoundRate(last12), -50, 200, 0) — computeCompoundRate: če first ≤ 0 → ratio (last/n) clamp 200; če last ≤ 0 → -50; else (Math.pow(last/first, 1/(n-1)) - 1)×100 clamp [-50, 200]
+    - growthPrediction6m = projectProfit(currentMonthlyProfit, growthRate6m, 6) = round0(currentMonthlyProfit × Math.pow(1+r, 6))
+    - growthPotential (0-100): base 50 + clamp(growthRate6m × 0.6, -30, 30) + clamp(growthAcceleration × 0.4, -20, 20) - clamp(growthVolatility × 0.3, 0, 15) - 15 če < 6 mesecev. Clamp [0, 100].
+    - growthStage (computeGrowthStage): EARLY če < 6 mesecev; SATURATING če volatility > 50 in growth6m < 5 ALI acceleration < -5 in growth6m < 10; ACCELERATING če acceleration > 2 in growth6m > 0; MATURING če growth6m ≥ 0; SATURATING sicer
+    - projectedMilestones: za vsak [2, 3, 5] multiple — monthsToReach = ceil(log(target/current) / log(1+r)) če currentMonthlyProfit > 0 in growthRate6m > 0; projectedDate = ISO date now + months × 30d. Prazni če growth ≤ 0.
+  * AI prompt z grounding — current state (5 metrik), drivers (4 dimenzije z trend/impact/detail), deterministična prediction (za referenco), monthly data (zadnjih 12 mesecev z profit/tradeCount/avgHoldDays), top 10 growth kategorij (6m vs prior 6m)
+  * AI generira prediction z anti-hallucination override:
+    - growthRate6m: clampNumber(AI.value, -50, 200, deterministic)
+    - compoundGrowthRate: clampNumber(AI.value, -50, 200, deterministic)
+    - growthPrediction6m: recompute deterministično iz AI growthRate6m (projectProfit) — ne AI direktno (anti-hallucination: če AI predlaga absurdno visoko growthRate, projection je kljub temu vezana na matematiko). Math.max(0, projected).
+    - growthPotential: clampNumber(AI.value, 0, 100, deterministic)
+    - growthStage: clampEnum(AI.value, ['EARLY','ACCELERATING','MATURING','SATURATING'], deterministic)
+    - projectedMilestones: recompute iz AI growthRate6m (ne AI direktno) — monthsToReach(currentMonthlyProfit, aiGrowthRate6m, 2/3/5)
+  * AI generira analysis: growthDrivers (top 3 z driver/weight 0-100/detail), growthInhibitors (top 3 z inhibitor/impact/mitigation), growthActions (3-5 z action/priority HIGH/MEDIUM/LOW validirana proti enum/expectedGrowthLift string)
+  * summary: AI generira slovenski povzetek (max 500 znakov). Deterministic fallback vključuje stage, profit, growth rate, accel, volatilnost, 6m projection, potential, top category, milestones.
+  * AI cache key `profit-growth-predictor:${currentMonth}` (6h TTL — invalidated ko se mesec spremeni)
+  * Deterministic fallback (compute iz 6m avg growth rate in driver trend slopes) — aktiven ko AI manjka
+  * Empty state: če ni SOLD trade-ov v zadnjih 12 mesecih → vse 0 + growthStage EARLY + message "Ni zgodovinskih prodaj (SOLD) v zadnjih 12 mesecih — Profit Growth Predictor ni mogoč."
+  * GET+POST z handleProfitGrowthPredictor(req) shared function (AI Hub runner kompatibilnost)
+  * maxDuration = 60, runtime = 'nodejs', dynamic = 'force-dynamic'
+- Feature #2: Market Demand Forecaster Pro (GET /api/analytics/market-demand-forecaster-pro, pure DB)
+  * Query listings zadnjih 90 dni (isHidden false, firstSeenAt gte cutoff90d) z monitor.source, contactStatus, isBookmarked, bookmarkedAt, contactedAt, priceDroppedAt, firstSeenAt (take 200000). Plus SOLD trades zadnjih 90 dni z listingId in category za sell-through (take 100000).
+  * Per kategorija (monitor.source lowercase):
+    - searchDemandScore: normalize(total, 1, maxSearch) — več listingov = več iskanj/interesa
+    - bookmarkDemandScore: normalize(bookmarkedCount, 0, maxBookmark)
+    - contactDemandScore: normalize(contactedCount, 0, maxContact)
+    - sellThroughDemandScore: clamp0_100(soldCount / total × 100) — najbolj zanesljiv signal (dejanska prodaja)
+    - velocityDemandScore: 0 če ni engagement; sicer clamp0_100(100 - (avgDaysToFirstEngagement / maxVelocityDays) × 100). DaysToFirstEngagement = min(bookmarkedAt, contactedAt) - firstSeenAt za listing-e z engagement.
+  * demandIndex (0-100 composite): 25% sellThrough + 25% contact + 20% bookmark + 15% search + 15% velocity. Round 1 decimal.
+  * demandLevel (classifyDemandLevel): VERY_HIGH 80+, HIGH 60-79, MODERATE 40-59, LOW 20-39, VERY_LOW <20
+  * demandSupplyRatio = (engaged + soldCount) / total (round 1). ≥ 1.3 = TIGHT, ≤ 0.7 = LOOSE, else BALANCED.
+  * Forecast per kategorija: zadnje 4 tedne vs prejšnje 4 tedne engagement rate. demandMomentum = (curEngaged/curTotal - prevEngaged/prevTotal) × 100, round 1. demandDirection RISING (>5) / FALLING (<-5) / STABLE. projectedDemand30d = clamp0_100(demandIndex × (1 + momentum/100)).
+  * demandRank (1 = highest demand) — sortiranje po demandIndex desc
+  * trend: currentAvgDemand (zadnje 4 tedne) vs previousAvgDemand (prejšnje 4 tedne) + trend (IMPROVING/STABLE/DECLINING ±5%)
+  * summary: totalCategories, veryHighDemandCount (HIGH + VERY_HIGH), lowDemandCount (LOW + VERY_LOW), bestDemandCategory, tightestMarket (kategorija z najvišjo demandSupplyRatio), advice (slovenski concrete nasvet z beste/worst/tightest kategorije + trend + buyAggressively/reducePurchasing priporočila)
+  * Pure DB analytics — NO AI. GET handler only (analytics endpoint)
+  * Empty state: če ni listingov v 90 dneh → prazne arrays + message "Ni listingov v zadnjih 90 dneh — Market Demand Forecaster Pro ni mogoč."
+- Feature #3: Inventory Value Tracker (GET /api/analytics/inventory-value-tracker, pure DB)
+  * Query HELD trades z linked Listing za aiEstimatedValue in monitor.source (take 100000, orderBy buyDate asc)
+  * Per item compute:
+    - buyPrice (cost basis)
+    - currentEstValue = aiEstimatedValue (ali buyPrice fallback)
+    - unrealizedGain = round0(currentEstValue - buyPrice)
+    - unrealizedGainPercent = round1(unrealizedGain / buyPrice × 100) (0 če buyPrice 0)
+    - daysHeld = daysBetween(buyDate, now)
+    - valueChangeRate = round1(unrealizedGain / daysHeld) €/day (0 če daysHeld 0)
+    - appreciationStatus (classifyAppreciation): APPRECIATING če gainPercent > 2, DEPRECIATING če < -2, FLAT sicer
+  * portfolio: totalItems, totalBuyPrice (invested capital), totalEstValue, totalUnrealizedGain, totalUnrealizedGainPercent (vs totalBuyPrice), avgDaysHeld, avgValueChangeRate (€/day)
+  * byCategory: per kategorija (category ali monitor.source lowercase) — itemCount, totalBuyPrice, totalEstValue, avgUnrealizedGainPercent, appreciationRank (1 = best appreciating, sort by avgUnrealizedGainPercent desc)
+  * valueTrend: appreciatingItems, depreciatingItems, flatItems, appreciationRate (%)
+  * valueByAge: per age bucket ('<7d', '7-30d', '30-60d', '60-90d', '90d+') — itemCount, totalEstValue, avgUnrealizedGainPercent (older items may have lower value)
+  * insights: bestAppreciatingCategory (top če avgUnrealizedGainPercent > 0), worstDepreciatingCategory (bottom če < 0), valueAdvice (slovenski concrete nasvet z portfolio unrealized %, appreciation/depreciation/flat counts, best/worst kategorije, hold/liquidate/rebalancing recommendation glede na appreciationRate in avgDaysHeld)
+  * Pure DB analytics — NO AI. GET handler only (analytics endpoint)
+  * Empty state: če ni HELD inventarja → vse 0 + prazne arrays + message "Ni HELD inventarja — Inventory Value Tracker ni mogoč."
+- Vsi 3 endpointi imajo try/catch z logger.error in NextResponse.json { error: err?.message ?? 'Napaka' }, status 500. AI endpoint (profit-growth-predictor) ima maxDuration = 60. Vsi imajo export const runtime = 'nodejs' in export const dynamic = 'force-dynamic'
+- TypeScript check: `npx tsc --noEmit` → 0 napak ✨ (EXIT 0)
+- ESLint: `bun run lint` → 0 napak, 0 opozoril ✨ (EXIT 0)
+- curl testi (vsak endpoint prazen state, brez AI provider-ja v sandboxu):
+  * GET /api/ai/profit-growth-predictor → HTTP 200, {"ok":true,"current":{"currentMonthlyProfit":0,"currentMonthlyGrowth":0,"avgMonthlyGrowth6m":0,"growthAcceleration":0,"growthVolatility":0},"drivers":{"volumeGrowth":{"trend":0,"impact":"NEUTRAL","detail":""},"priceGrowth":{"trend":0,"impact":"NEUTRAL","detail":""},"efficiencyGrowth":{"trend":0,"impact":"NEUTRAL","detail":""},"topGrowthCategory":null},"prediction":{"growthPrediction6m":0,"growthRate6m":0,"compoundGrowthRate":0,"growthPotential":0,"growthStage":"EARLY","projectedMilestones":[]},"analysis":{"growthDrivers":[],"growthInhibitors":[],"growthActions":[]},"summary":"Ni zgodovinskih prodaj (SOLD) v zadnjih 12 mesecih — Profit Growth Predictor ni mogoč.","aiUsed":false,"message":"Ni zgodovinskih prodaj (SOLD) v zadnjih 12 mesecih — Profit Growth Predictor ni mogoč."}
+  * GET /api/analytics/market-demand-forecaster-pro → HTTP 200, {"ok":true,"categories":[],"trend":{"currentAvgDemand":0,"previousAvgDemand":0,"trend":"STABLE"},"summary":{"totalCategories":0,"veryHighDemandCount":0,"lowDemandCount":0,"bestDemandCategory":null,"tightestMarket":null,"advice":"Ni listingov v zadnjih 90 dneh — Market Demand Forecaster Pro ni mogoč."},"message":"Ni listingov v zadnjih 90 dneh — Market Demand Forecaster Pro ni mogoč."}
+  * GET /api/analytics/inventory-value-tracker → HTTP 200, {"ok":true,"portfolio":{"totalItems":0,"totalBuyPrice":0,"totalEstValue":0,"totalUnrealizedGain":0,"totalUnrealizedGainPercent":0,"avgDaysHeld":0,"avgValueChangeRate":0},"perItem":[],"byCategory":[],"valueTrend":{"appreciatingItems":0,"depreciatingItems":0,"flatItems":0,"appreciationRate":0},"valueByAge":[],"insights":{"bestAppreciatingCategory":null,"worstDepreciatingCategory":null,"valueAdvice":"Ni HELD inventarja — Inventory Value Tracker ni mogoč."},"message":"Ni HELD inventarja — Inventory Value Tracker ni mogoč."}
+  * POST /api/ai/profit-growth-predictor (body {}) → HTTP 200, isti response kot GET (handleProfitGrowthPredictor(req) shared function)
+- dev.log: vsi HTTP requesti vračajo 200 OK, brez error/warn (empty-state — AI se sploh ne kliče brez SOLD podatkov; analytics endpointa vračata prazne arrays z opisi brez errorja)
+- Dokumentacijska sinhronizacija (CRITICAL):
+  * AI_ENDPOINTS.md: regeneriran z Python skripto → "Total: 316 endpoints" (315 → 316, +1 AI: profit-growth-predictor). Verificirano z grep — profit-growth-predictor je v seznamu na poziciji 255.
+  * README.md (MultiEdit z 16 urejanji):
+    - Badge version: v7.80.0 → v7.81.0
+    - Badge AI Endpoints: 315 → 316
+    - Badge API Routes: 479 → 482 (+3: 1 AI + 2 analytics)
+    - Tagline: "315 AI endpointov + 59 analytics" → "316 AI endpointov + 61 analytics" (+2 analytics: market-demand-forecaster-pro, inventory-value-tracker)
+    - Overview: "Verzija v7.80.0" → "Verzija v7.81.0", counts posodobljeni, "315 AI + 59 analytics + 10 cron + ~165 funkcij" → "316 AI + 61 analytics + 10 cron + ~168 funkcij"
+    - "Kaj je novega v v7.56–v7.80 (25 verzij, 75 novih funkcij)" → "...v7.56–v7.81 (26 verzij, 78 novih funkcij)", dodan v7.81 blok (3 funkcije) na vrh z detajlnimi opisi vseh 3 endpoint-ov (response shape, anti-hallucination pravila, AI cache key, deterministic fallback, razlika od podobnih obstoječih endpoint-ov)
+    - AI Hub badge v tabeli: "Vsi 315 AI endpointov" → "Vsi 316 AI endpointov"
+    - "Endpointi (315 AI + 59 analytics + 10 cron + sistemski = 479)" → "...(316 AI + 61 analytics + 10 cron + sistemski = 482)"
+    - Dodana 3 nova endpointa v AI primeri blok (profit-growth-predictor v7.81, market-demand-forecaster-pro v7.81, inventory-value-tracker v7.81)
+    - "Profit pipeline (106+ funkcij)" → "...(109+ funkcij)", dodane 3 nove funkcije (AI Profit Growth Predictor, Market Demand Forecaster Pro, Inventory Value Tracker)
+    - Analytics (59) → (61), dodana 2 nova (Market Demand Forecaster Pro, Inventory Value Tracker)
+    - Testing: "479 API routes" → "482 API routes"
+    - "Naslednji koraki": "v7.50-v7.80 funkcije" → "...v7.50-v7.81 funkcije"
+    - "Zadnje verzije": dodan "v7.81.0 (avgust 2026) — AI Profit Growth Predictor, Market Demand Forecaster Pro, Inventory Value Tracker" na vrh
+    - AI_ENDPOINTS.md link: "vseh 315 AI endpointov" → "vseh 316 AI endpointov"
+    - "do v7.80 (avgust 2026)" → "do v7.81 (avgust 2026)"
+    - Project structure: "315 AI endpointov" → "316 AI endpointov"
+    - Coding standards: "479 routes" → "482 routes"
+    - Roadmap: "v7.80 (trenutno — ~165 funkcij)" → "v7.81 (trenutno — ~168 funkcij)"
+  * CHANGELOG.md (Edit z 1 velikim urejanjem):
+    - "[Unreleased] Načrtovano za v7.81+" → "...za v7.82+"
+    - Dodana nova "[7.81.0] - 2026-08-23" sekcija (nad [7.80.0]) z vsemi 3 endpoint-i in podrobnimi opisi (response shape, anti-hallucination rules, AI cache key, deterministic fallback, example comment, razlika od podobnih obstoječih endpoint-ov — profit-growth-predictor vs profit-trajectory-forecaster/profit-forecast/profit-stream-predictor/profit-momentum-tracker/profit-accelerator/profit-leakage-detector/inventory-roi-optimizer/trade-performance-forecaster; market-demand-forecaster-pro vs demand-forecast/demand-forecast-v6/inventory-demand-forecaster/supply-demand-balance/market-liquidity-analyzer/market-sentiment-pulse/market-momentum/market-trend-forecaster-pro; inventory-value-tracker vs inventory-value-predictor/inventory-roi-optimizer/inventory-profitability-analyzer/inventory-profit-maximizer/inventory-profit-margin-tracker/inventory-lifecycle-stage-classifier/inventory-insurance-calculator/inventory-aging-tracker/inventory-depreciation-tracker)
+    - "### Changed" pod-sekcija z doc sync opisi (AI_ENDPOINTS.md, README.md, CHANGELOG.md, verzija aplikacije)
+
+Stage Summary:
+- 3 novi endpointi dodani (skupno +3 od v7.80.1):
+  - profit-growth-predictor (GET+POST, AI-enhanced — AI napove profit GROWTH rate za naslednjih 6 mesecev — kako hitro bo profit rastel in kateri faktorji bodo to gnali ali zavirali. "Growth: ACCELERATING (+15%/mo, accel +5%). 6m projection: 3,200€. Driver: volume (+3 trades/mo). Hit 2x in 5 months." current: currentMonthlyProfit, currentMonthlyGrowth, avgMonthlyGrowth6m, growthAcceleration (recent 3m vs prior 3m), growthVolatility. drivers: volumeGrowth (trend tradeCount), priceGrowth (trend profit/trade), efficiencyGrowth (trend hold days inverted), topGrowthCategory (6m vs prior 6m). prediction: growthPrediction6m (€), growthRate6m (clamped [-50, 200]), compoundGrowthRate (CAGR clamped [-50, 200]), growthPotential 0-100 (headroom), growthStage (EARLY/ACCELERATING/MATURING/SATURATING), projectedMilestones (2x, 3x, 5x z monthsToReach in projectedDate). analysis: growthDrivers (top 3 z weight 0-100), growthInhibitors (top 3 z mitigation), growthActions (3-5 z priority HIGH/MEDIUM/LOW + expectedGrowthLift). Compute: query SOLD trades zadnjih 12 mesecev, mesečna agregacija (profit/tradeCount/avgHoldDays), compute monthly growth rates, trend slope za drivers, per-category growth (6m vs prior 6m). AI-enhanced z grounding + anti-hallucination (growthRate6m clamped [-50, 200], compoundGrowthRate clamped [-50, 200], growthPotential clamped [0, 100], growthStage validirana proti enum, milestones recompute iz AI growth rate — ne AI generation) + 6h cache (key `profit-growth-predictor:${currentMonth}`) + deterministic fallback. GET+POST (AI Hub runner kompatibilnost). Razlika od profit-trajectory-forecaster (v7.72, ki napove growth trajectory scenarije) — ta identificira GROWTH DRIVERS in inhibitors z growth stage classification. Razlika od profit-momentum-tracker (v7.75, ki track-a momentum) — ta forecast-a future growth rate z drivers/inhibitors in milestone projections. Razlika od trade-performance-forecaster (v7.80, ki forecast-a individual trades) — ta gleda AGGREGATE profit growth trajectory z drivers + actions.)
+  - market-demand-forecaster-pro (GET, pure DB analytics — NO AI — napredno demand forecasting ki kombinatorično združi 5 demand signalov (search/bookmark/contact/sell-through/velocity) v celovit demand index 0-100 per kategorija. "Elektronika: VERY_HIGH demand (88/100, RISING). Tight market (ratio 1.8). Buy aggressively. Moda: LOW demand (25)." categories: per kategorija (monitor.source) — demandIndex 0-100 (25% sellThrough + 25% contact + 20% bookmark + 15% search + 15% velocity), demandLevel (VERY_HIGH 80+ / HIGH 60-79 / MODERATE 40-59 / LOW 20-39 / VERY_LOW <20), signals (searchDemandScore 0-100 iz total listings count, bookmarkDemandScore 0-100 iz bookmarked count, contactDemandScore 0-100 iz contacted count, sellThroughDemandScore 0-100 iz sold listings %, velocityDemandScore 0-100 iz 100-avgDaysToFirstEngagement/maxDays norm), forecast (projectedDemand30d, demandDirection RISING/STABLE/FALLING glede na ±5 momentum, demandMomentum = current 4w engagement rate - previous 4w engagement rate), demandSupplyRatio (engaged + sold) / total (≥ 1.3 = TIGHT, ≤ 0.7 = LOOSE, else BALANCED), demandRank (1 = highest demand). trend: currentAvgDemand vs previousAvgDemand + trend (IMPROVING/STABLE/DECLINING ±5%). summary: totalCategories, veryHighDemandCount (HIGH + VERY_HIGH), lowDemandCount (LOW + VERY_LOW), bestDemandCategory, tightestMarket, advice. Compute: query listings zadnjih 90 dni z contactStatus/isBookmarked/bookmarkedAt/contactedAt + SOLD trades za sell-through; group by kategorija, compute 5 signalov, normalize 0-100, composite index z weighted avg. Pure DB analytics. Razlika od demand-forecast (ki napove demand za posamezno kategorijo) — ta kombinatorično združi 5 signalov v demand INDEX 0-100 z demand level classification in demand-supply ratio. Razlika od supply-demand-balance (v7.68, ki gleda balance) — ta da demand INDEX 0-100 per kategorija z demand direction in market tightness. Razlika od market-liquidity-analyzer (v7.80, ki gleda likvidnost) — ta gleda DEMAND (interest signals) z demand forecast 30d in momentum.)
+  - inventory-value-tracker (GET, pure DB analytics — NO AI — track-a VREDNOTE HELD inventarja skozi čas — ali inventar aprecira, deprecira ali je stabilen. "Inventory value: 4500€ invested, 5200€ estValue (+15.6% unrealized). Elektronika appreciating +22%. Avto depreciating -5%." portfolio: totalItems, totalBuyPrice (invested capital), totalEstValue (sum aiEstimatedValue ali buyPrice fallback), totalUnrealizedGain, totalUnrealizedGainPercent, avgDaysHeld, avgValueChangeRate (€/day). perItem: per HELD trade z linked Listing — buyPrice, currentEstValue (aiEstimatedValue ali buyPrice fallback), unrealizedGain, unrealizedGainPercent, daysHeld, valueChangeRate (unrealizedGain / daysHeld €/day), appreciationStatus (APPRECIATING gain>2% / FLAT |gain|≤2% / DEPRECIATING gain<-2%). byCategory: per kategorija — itemCount, totalBuyPrice, totalEstValue, avgUnrealizedGainPercent, appreciationRank (1 = best appreciating). valueTrend: appreciatingItems, depreciatingItems, flatItems, appreciationRate (%). valueByAge: total estValue per age bucket (<7d, 7-30d, 30-60d, 60-90d, 90d+) z avgUnrealizedGainPercent. insights: bestAppreciatingCategory, worstDepreciatingCategory, valueAdvice (slovenski concrete nasvet z appreciation rate, best/worst kategorije, hold/liquidate recommendation). Compute: query HELD trades z linked Listing za aiEstimatedValue, compute unrealized gain/loss per item, group by category in age bucket. Pure DB analytics. Razlika od inventory-value-predictor (v7.73, ki napove future value) — ta track-a CURRENT value z unrealized gains in appreciation status per item. Razlika od inventory-roi-optimizer (v7.79, ki optimira ROI) — ta gleda VREDNOST inventarja (appreciation/depreciation) z value aging buckets. Razlika od inventory-depreciation-tracker (ki track-a depreciation) — ta gleda APPRECIATION + DEPRECIATION z unrealized gain/loss in byCategory.)
+- Vsi 3 endpointi vračajo veljaven JSON tudi ob prazni bazi (graceful fallback z opisno slovensko message). AI endpoint (profit-growth-predictor) ima aiUsed flag v responsu za transparentnost in GET+POST kompatibilnost z AI Hub runner-jem (handleX(req) shared function). Analytics endpointa (market-demand-forecaster-pro, inventory-value-tracker) vračata prazne arrays z opisi tudi pri prazni bazi (prikazujeta strukturo brez errorja).
+- AI_ENDPOINTS.md: "Total: 316 endpoints" ✓ (315 → 316, +1 AI: profit-growth-predictor)
+- README.md: v7.81.0 badge (12 referenc), 316 AI (6 referenc), 482 routes (4 reference), 61 analytics (3 reference), ~168 funkcij, 109+ funkcij v profit pipeline ✓
+- CHANGELOG.md: [7.81.0] sekcija dodana z 3 endpoint-i in Changed pod-sekcijo, [Unreleased] posodobljen na v7.82+ ✓
+- ESLint: 0 napak ✨ (EXIT 0)
+- TypeScript: 0 napak ✨ (EXIT 0)
+- dev.log: vsi HTTP requesti vračajo 200 OK, brez error/warn (empty-state — AI se sploh ne kliče brez SOLD podatkov)
+- Verzija aplikacije: v7.81.0
