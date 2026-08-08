@@ -10669,3 +10669,34 @@ Stage Summary:
 - TypeScript: 0 napak ✨ (EXIT 0)
 - dev.log: vsi HTTP requesti vračajo 200 OK, brez error/warn (empty-state — AI se sploh ne kliče brez SOLD podatkov)
 - Verzija aplikacije: v7.81.0
+
+---
+Task ID: v7.81.1
+Agent: main
+Task: v7.81 commit + push + GitHub About + Agent Browser verification
+
+Work Log:
+- Prejel poročilo od full-stack-developer podagenta (Task v7.81)
+- Preveril 3 nove endpoint-e: profit-growth-predictor (200 GET+POST), market-demand-forecaster-pro (200 GET), inventory-value-tracker (200 GET)
+- Preveril doc sync: AI_ENDPOINTS.md (316 ✅), README v7.81 (12 refs ✅), README 316 AI (6 refs ✅), CHANGELOG v7.81 ✅
+- Preveril lint: 0 napak ✨
+- Preveril typecheck: 0 napak ✨
+- Posodobil GitHub About opis: 315 AI → 316 AI, 479 routes → 482 routes (via API PATCH)
+- Commit: "v7.81: Profit Growth Predictor + Market Demand Forecaster Pro + Inventory Value Tracker" (5d047a4)
+- Push na GitHub: uspešen ✅, PAT očiščen ✅
+- Agent Browser self-verification:
+  - Stran se pravilno naloži (HTTP 200)
+  - AI Hub prikazuje profit-growth-predictor (v7.81) v iskalniku ✅
+  - Runner test: klik na profit-growth-predictor → POST request → valid JSON ✅
+  - Response: {"ok":true, "current":{...}, "drivers":{...}, "prediction":{...}, "aiUsed":false, "message":"Ni zgodovinskih prodaj..."}
+  - Brez runtime napak v dev.log
+
+Stage Summary:
+- v7.81 uspešno dokončana in potisnjena na GitHub
+- 3 nove funkcije: AI Profit Growth Predictor, Market Demand Forecaster Pro, Inventory Value Tracker
+- AI endpointi: 315 → 316 (+1)
+- Analytics endpointi: 59 → 61 (+2)
+- Total API routes: 479 → 482 (+3)
+- Dokumentacija sinhrono posodobljena (AI_ENDPOINTS.md, README, CHANGELOG, GitHub About)
+- GitHub sinhroniziran (0 commit-ov ahead)
+- Verzija aplikacije: v7.81.0
