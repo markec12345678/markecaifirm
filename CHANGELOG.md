@@ -6,11 +6,329 @@ Format sledi [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), verzije s
 
 ## [Unreleased]
 
-Načrtovano za v7.84+:
+Načrtovano za v7.85+:
 - WebSocket real-time negotiation (SSE namesto polling)
 - Playwright E2E testi za glavne flow-e
 - TLS fingerprinting (curl-impersonate)
 - ML model za buyer matchmaker (fine-tuned na realnem data)
+
+## [7.84.0] - 2026-08-27
+
+### Added — AI Capital Efficiency Forecaster & Market Depth Forecaster & Seller Churn Predictor (3 funkcije)
+
+- **AI Capital Efficiency Forecaster** — `GET+POST /api/ai/capital-efficiency-forecaster`
+  - AI napove kako učinkovito bo kapital uporabljen v naslednjih 30/60/90
+    dneh — projected utilization rate, idle capital in ROI per euro
+    deployed. "Capital efficiency: 72% utilization, projected 65% v
+    30d (declining). Bottleneck: 3 items >60d. Action: liquidate →
+    +8% efficiency." Razlika od
+    inventory-capital-efficiency-optimizer (ki optimira CURRENT
+    capital allocation) — ta FORECAST-a future capital efficiency
+    30/60/90 dni. Razlika od capital-allocation-optimizer (ki statično
+    alocira kapital čez kategorije) — ta projicira DINAMIČNO capital
+    efficiency (utilization rate, idle capital, ROI per euro) v
+    prihodnost. Razlika od cash-flow-velocity (ki meri cash flow
+    hitrost) — ta gleda CAPITAL EFFICIENCY z utilization in idle
+    capital projekcijami. Razlika od cash-conversion-cycle (ki meri
+    CCC) — ta forecast-a capital efficiency score 0-100 in
+    drivers/bottlenecks. Razlika od profit-efficiency-analyzer (ki
+    meri profit per dan) — ta gleda capital DEPLOYMENT efficiency z
+    ROI per euro deployed.
+  - Query SOLD trades zadnjih 90 dni (sellDate gte cutoff90d) z
+    buyPrice, buyFees, buyDate, sellPrice, sellFees, sellDate. Query
+    HELD trades (status='held') za current capital state.
+  - Compute capital metrics (computeCapitalMetrics):
+    - totalInvested = sum(buyPrice + buyFees) za SOLD v 90d.
+    - totalProfit = sum((sellPrice - sellFees) - (buyPrice + buyFees)).
+    - avgCapitalUtilization = totalInvested / (totalInvested +
+      heldCapital) × 100 (kako delež kapitala je aktivno deployed).
+    - avgROIperEuroDeployed = totalProfit / totalInvested × 100.
+    - avgCapitalCycleTime = avg days buy→sell (kako dolgo je kapital
+      zaklenjen).
+    - idleCapitalRate = heldCapital / (heldCapital + totalInvested) ×
+      100 (kako delež kapitala sedi v HELD inventarju).
+    - heldCapital = sum buyPrice za HELD trades.
+    - availableCapital = net proceeds iz SOLD v zadnjih 30 dneh
+      (sum max(0, sellPrice - sellFees)).
+  - Monthly slopes (computeMonthlySlopes): group SOLD trades po
+    mesecu za zadnjih 6 mesecev (180 dni). Per mesec: utilization =
+    invested / (invested + heldCapital) × 100, ROI = profit / invested
+    × 100. Linear regression slope za utilization in ROI series.
+  - Deterministic forecast (buildDeterministicForecast):
+    - projectedUtilization30d/60d/90d = current + utilSlope × 1/2/3
+      mesece, clamped [0, 100].
+    - projectedROIperEuro30d/60d/90d = current + roiSlope × 1/2/3,
+      clamped [-50, 200].
+    - projectedIdleCapital = heldCapital × (1 - utilization90d/100).
+    - capitalEfficiencyTrend = IMPROVING če utilSlope > 2 / DECLINING
+      < -2 / STABLE sicer.
+    - projectedEfficiencyScore 0-100 = utilization90d × 0.35 +
+      ROI normalized × 0.35 + cycleScore × 0.3.
+    - efficiencyDrivers (3-5 z driver/impact POSITIVE|NEGATIVE/weight
+      0-100/detail) — iz utilization, ROI, cycle time, held capital.
+    - capitalBottlenecks (2-4 z bottleneck/impact/mitigation) — iz
+      idle capital, dolg cycle time, nizek ROI, nizka utilization.
+    - optimizationActions (3-5 z action/priority HIGH|MEDIUM|LOW/
+      expectedEfficiencyGain) — likvidiraj stale items, optimiraj
+      pricing, premakni v višje-margin kategorije, reinvestiraj.
+  - AI prompt z grounding — current metrics + monthly slopes +
+    deterministic forecast + drivers za referenco, slovenska pravila
+    za AI response (projectedUtilization AI can adjust max ±15 od
+    deterministic, projectedROIperEuro ±20 od deterministic,
+    projectedIdleCapital clamped [0, heldCapital],
+    projectedEfficiencyScore ±10 od deterministic,
+    capitalEfficiencyTrend validirana proti enum, efficiencyDrivers
+    max 5 z driver 80 chars / detail 200 chars, capitalBottlenecks
+    max 4 z bottleneck 100 / impact 150 / mitigation 250 chars,
+    optimizationActions max 5 z action 200 / expectedEfficiencyGain
+    100 chars).
+  - AI generira: forecast (override projected utilization/ROI/idle
+    capital/trend/score z anti-hallucination clamping), analysis
+    (override efficiencyDrivers/capitalBottlenecks/optimizationActions
+    z validacijo), summary (slovenski max 400 znakov).
+  - Anti-hallucination: projectedUtilization AI adjustment clamped
+    [-15, +15] od deterministic, projectedROIperEuro clamped [-20,
+    +20] od deterministic, projectedIdleCapital clamped [0,
+    heldCapital], projectedEfficiencyScore clamped [-10, +10] od
+    deterministic, capitalEfficiencyTrend validirana proti enum,
+    impact validiran proti POSITIVE|NEGATIVE, priority validirana
+    proti HIGH|MEDIUM|LOW, max lengths na vseh string poljih.
+  - AI cache key `capital-efficiency-forecaster:${currentMonth}` (6h
+    TTL — invalidated ko se mesec spremeni).
+  - Deterministic fallback aktiven ko AI manjka (compute iz monthly
+    slopes).
+  - GET+POST z handleCapitalEfficiencyForecaster(req) shared
+    function (AI Hub runner kompatibilnost).
+  - Empty state: če ni SOLD zgodovine AND HELD inventarja → prazne
+    arrays + message "Ni SOLD zgodovine in HELD inventarja — Capital
+    Efficiency Forecaster ni mogoč."
+  - maxDuration = 60, runtime = 'nodejs', dynamic = 'force-dynamic'.
+
+- **Market Depth Forecaster** — `GET /api/analytics/market-depth-forecaster`
+  - Projicira tržno GLOBINO 30/60/90 dni v prihodnost — ali bo trg
+    postal globlji (bolj likviden) ali plitvejši (tanjši)?
+    "Market depth: 65/100 (MEDIUM). Forecast: SHALLOWING v 60d (-8).
+    Elektronika deepening (+12). Avto shallowing (-15)." Pure DB
+    analytics — NO AI. Razlika od market-depth-analyzer (v7.68, ki
+    meri CURRENT depth in liquidity) — ta FORECAST-a future depth
+    30/60/90 dni z listingCountTrend in sellThroughRateTrend. Razlika
+    od market-cycle-forecaster (v7.83, ki projicira 4-fazne cikle) —
+    ta gleda DEPTH/GLOBINO specifično z listingCountAcceleration in
+    depthVolatility. Razlika od market-saturation-forecaster (ki
+    forecast-a saturacijo) — ta gleda DEPTH (koliko oglasov, kako
+    porazdeljeni) ne saturacijo. Razlika od market-trend-momentum (ki
+    gleda ACCELERATION cen) — ta gleda listingCountTrend +
+    sellThroughRateTrend za depth projekcijo.
+  - Query listings zadnjih 180 dni (firstSeenAt gte cutoff180d,
+    isHidden false) z price, firstSeenAt, aiVerdict, monitor.source.
+    take 200000.
+  - Weekly aggregation per ISO week (isoWeekStart Monday) — overall +
+    per source (category): totalListings, pricedListings, sumPrice,
+    prilikaCount (aiVerdict='PRILIKA' kot sell-through proxy).
+  - Need at least 6 tednov za forecasting (MIN_WEEKS_FOR_FORECAST =
+    6, sicer fallback z "Premalo tedenskih podatkov").
+  - Per-week depth (WeekDepthEntry): listingCount, pricedListings,
+    priceStability (1 - CV × 100, kjer CV = stdDev/mean cen v tednu
+    — višja stabilnost = globlji trg), sellThroughRate (% prilika
+    listings), depthScore 0-100 (computeDepthScore iz listing count
+    component 0-50 + price stability 0-50).
+  - Current depth = last week's depth. listingCountTrend (linear
+    regression slope za listingCount), sellThroughTrend (slope za
+    sellThroughRate), listingCountAcceleration (2nd derivative —
+    acceleration() function: slope druge polovice - slope prve
+    polovice).
+  - Forecast future depth: depthChangePerWeek = listingCountTrend ×
+    2 (ker 1 listing ≈ 2 depth units glede na 50 max listing count
+    score). projectedDepth30d/60d/90d = current + depthChangePerWeek
+    × 4/8/13 tednov, clamped [0, 100].
+  - depthDirection: DEEPENING če depthChangePerWeek > 0.5 /
+    SHALLOWING < -0.5 / STABLE sicer.
+  - depthMomentum = listingCountAcceleration × 2 (2. derivat —
+    pospešek spremembe globine).
+  - projectedLiquidity30d/60d/90d: forecasted liquidity
+    classification (HIGH/MEDIUM/LOW/VERY_LOW) iz projected depth
+    scores.
+  - byCategory: per source z currentDepth, projectedDepth30d,
+    projectedDepth90d, depthDirection, listingCountTrend. Skip
+    kategorije z <3 tednov podatkov. Sort by projectedDepth90d desc.
+  - Historical depth analysis: deepestWeek (week z max depthScore),
+    shallowestWeek (week z min depthScore), depthVolatility (stddev
+    weekly depthScores).
+  - Recommendations: bestDeepeningCategory (top DEEPENING kategorija),
+    shallowingCategories (array SHALLOWING kategorij, max 5), advice
+    (slovenski povzetek z direction, projected change, best/worst
+    kategorije, in buy/diversify priporočilo — SHALLOWING → zmanjšaj
+    fokus; DEEPENING → povečaj fokus na deepening kat; STABLE →
+    vzdržuj strategijo).
+  - Pure DB analytics — NO AI. GET handler only.
+  - Empty state: če ni listing-ov v 180 dneh → vse 0 + VERY_LOW
+    liquidity + prazne arrays + message "Ni listing-ov v zadnjih 180
+    dneh — Market Depth Forecaster ni mogoč." Če <6 tednov → prazni
+    arrays z opisom "Premalo tedenskih podatkov".
+  - runtime = 'nodejs', dynamic = 'force-dynamic'.
+
+- **AI Seller Churn Predictor** — `GET+POST /api/ai/seller-churn-predictor`
+  - AI napove kateri PRODAJALCI (dobavitelji) bodo verjetno prenehali
+    prodajati (churn) in kdaj. Pomaga proaktivno vzdrževati odnose z
+    dobavitelji. "Marjan: HIGH churn risk (45d since last trade, avg
+    20d). Retention: 'Imam nove iPhone-e!' URGENT." Razlika od
+    buyer-churn-predictor-v2 (v6.81, ki napove odhod KUPCEV) — ta
+    napove odhod PRODAJALCEV (supplier side). Razlika od
+    buyer-churn-prevention-strategist (ki predlaga strategije za
+    kupce) — ta forecast-a churn za prodajalce z retentionActions +
+    retentionMessage. Razlika od seller-reliability-scorecard
+    (v7.80, ki ocenjuje reliability prodajalcev) — ta PREDICT-a
+    future churn z daysUntilChurn in predictedChurnDate. Razlika od
+    seller-performance-analytics (v7.77, ki meri performance) — ta
+    gleda CHURN RISK z retention priority. Razlika od supplier-crm
+    (ki je CRM za spremljanje) — ta je AI PREDICTOR churn-a z
+    supplierHealthScore.
+  - Query all trades z linked Listing (za sellerName, dealScore) —
+    filter `listing: { sellerName: { not: null } }`. Select id,
+    buyDate, buyPrice, buyFees, sellPrice, sellFees, sellDate,
+    status, listing.dealScore, listing.sellerName. orderBy buyDate
+    asc. take 100000.
+  - Aggregate per seller (aggregateBySeller): sellerName, tradeDates
+    (array buy dates), totalSpent (sum buyPrice + buyFees),
+    dealScores (array listing.dealScore), successCount (count
+    profitable SOLD — profit > 0), soldCount (count SOLD trades z
+    sellDate).
+  - Filter to sellers z 2+ trades (eligibleSellers).
+  - Per seller deterministic churn metrics (buildDeterministicSellerRow):
+    - lastTradeMs = max(buyDates).
+    - daysSinceLastTrade = daysBetween(lastTradeMs, now).
+    - avgDaysBetweenTrades = totalSpan / (count - 1) kjer totalSpan
+      = daysBetween(first, last).
+    - expectedNextTradeDate = lastTrade + avgDaysBetweenTrades (ali
+      +30d default če ni zgodovine).
+    - tradeFrequency = tradesCount / totalDays × 30 (trades/month).
+    - tradeFrequencyTrend (freqTrendFromTrades): INCREASING /
+      STABLE / DECREASING iz first-half vs second-half gaps (ratio
+      change ±0.25 threshold).
+    - totalSpent = round0(sum buyPrice + buyFees).
+    - avgDealScore = round1(avg dealScores).
+    - successRate = successCount / soldCount × 100.
+    - churnRiskScore (computeChurnRiskScore 0-100):
+      - Ratio component (0-60): daysSinceLastTrade vs
+        avgDaysBetweenTrades ratio. <1x → 0-20, 1-2x → 20-40, 2-3x
+        → 40-60, >3x → 60.
+      - Trend component (0-20): DECREASING = 20, STABLE = 10.
+      - Success rate component (0-20): <30% = 20, <60% = 10, <80% =
+        5.
+    - churnRiskLevel (riskLevelFromScore): LOW (<35) / MEDIUM (35-59)
+      / HIGH (60-79) / CRITICAL (80+).
+    - predictedChurnDate = expectedNextTradeDate + grace period
+      (avgDaysBetweenTrades).
+    - daysUntilChurn = max(0, daysBetween(now, predictedChurnMs)).
+    - retentionPriority (priorityFromScore): URGENT (≥80) / HIGH
+      (60-79) / MEDIUM (35-59) / LOW (<35).
+    - churnAssessment (buildDeterministicChurnAssessment): slovenski
+      opis z risk level, daysSinceLastTrade, avgDaysBetweenTrades,
+      ratio × overdue, trend, successRate, in action hint per
+      level.
+    - retentionActions (buildDeterministicRetentionActions): 2-4
+      slovenske konkretne akcije glede na risk level (CRITICAL/HIGH
+      → takojšen osebni kontakt + povzetek uspešnih trgovin; MEDIUM
+      → preventivni kontakt v 7d; LOW → monthly check-in) +
+      dodatne akcije če DECREASING trend ali nizek successRate.
+    - retentionMessage (buildDeterministicRetentionMessage):
+      slovensko personalizirano sporočilo za prodajalca glede na
+      risk level (CRITICAL/HIGH → urgent outreach z vrednostjo
+      sodelovanja; MEDIUM → naključno povpraševanje; LOW → hvala +
+      odprto za nove priložnosti).
+  - Sort sellers by churnRiskScore desc. Limit to top 50 za AI
+    prompt.
+  - Deterministic summary: totalSellers, lowRiskCount,
+    mediumRiskCount, highRiskCount, criticalRiskCount,
+    supplierHealthScore (computeSupplierHealthScore = 100 - avg
+    churnRiskScore), urgentRetentionCount, advice (slovenski
+    povzetek z counts, health score, urgent številom in
+    priporočilom).
+  - AI prompt z grounding — sellers z vsemi deterministic churn
+    metriami za referenco, slovenska pravila za AI response
+    (churnRiskScore AI can adjust max ±10 od deterministic,
+    churnRiskLevel ALWAYS recomputed iz clamped score — ne AI,
+    retentionPriority validirana proti enum, predictedChurnDate v
+    prihodnosti, daysUntilChurn clamped [0, 365], supplierHealthScore
+    ±5 od deterministic, churnAssessment max 350 chars,
+    retentionActions max 4 z 200 chars na akcijo, retentionMessage
+    max 400 chars).
+  - AI generira: sellers (override churnRiskScore z ±10 clamp,
+    override churnRiskLevel recomputed iz score, override
+    churnAssessment, override retentionActions, override
+    retentionMessage, override predictedChurnDate v prihodnosti,
+    override daysUntilChurn), summary (override supplierHealthScore
+    z ±5 clamp, override advice, recompute counts iz clamped
+    sellers).
+  - Anti-hallucination: churnRiskScore AI adjustment clamped [-10,
+    +10] od deterministic, churnRiskLevel ALWAYS recomputed iz
+    clamped score, retentionPriority validirana proti enum,
+    predictedChurnDate validiran v prihodnosti (churnMs > now),
+    daysUntilChurn clamped [0, 365], supplierHealthScore recomputed
+    iz clamped seller scores (100 - avg clamped churnRiskScore) z
+    AI ±5 clamp, urgentRetentionCount recomputed iz clamped sellers,
+    counts (low/medium/high/critical) recomputed iz clamped sellers,
+    churnAssessment max 350 chars, retentionActions max 4 z 200 chars
+    na akcijo, retentionMessage max 400 chars.
+  - AI cache key `seller-churn-predictor:${totalSellers}` (6h TTL —
+    invalidated ko se spremeni število prodajalcev).
+  - Deterministic fallback aktiven ko AI manjka (compute iz
+    daysSinceLastTrade vs avgDaysBetweenTrades).
+  - GET+POST z handleSellerChurnPredictor(req) shared function (AI
+    Hub runner kompatibilnost).
+  - Empty state: če ni prodajalcev z 2+ trgovinami → prazne sellers
+    array + summary z 0 counts + message "Ni prodajalcev z 2+
+    trgovinami — Seller Churn Predictor ni mogoč."
+  - maxDuration = 60, runtime = 'nodejs', dynamic = 'force-dynamic'.
+
+### Changed
+- AI_ENDPOINTS.md: regeneriran z Python skripto → "Total: 321
+  endpoints" (319 → 321, +2 AI: capital-efficiency-forecaster na
+  poziciji 66, seller-churn-predictor na poziciji 296).
+- README.md: verzija badge v7.83.0 → v7.84.0, AI Endpoints badge 319
+  → 321, API Routes badge 488 → 491 (+3: 2 AI + 1 analytics),
+  tagline "319 AI endpointov + 64 analytics" → "321 AI endpointov +
+  65 analytics", Overview "v7.83.0" → "v7.84.0", counts posodobljeni,
+  "319 AI + 64 analytics + ~174 funkcij" → "321 AI + 65 analytics +
+  ~177 funkcij", "Kaj je novega v v7.56–v7.83 (28 verzij, 84 novih
+  funkcij)" → "...v7.56–v7.84 (29 verzij, 87 novih funkcij)", dodan
+  v7.84 blok (3 funkcije) na vrh z detajlnimi opisi vseh 3 endpoint-ov
+  (response shape, anti-hallucination pravila, AI cache key,
+  deterministic fallback, razlika od podobnih obstoječih endpoint-ov),
+  AI Hub badge v tabeli "Vsi 319 AI endpointov" → "Vsi 321 AI
+  endpointov", "Endpointi (319 AI + 64 analytics + 10 cron + sistemski
+  = 488)" → "...(321 AI + 65 analytics + 10 cron + sistemski = 491)",
+  dodani 3 novi endpointi v AI primeri blok (capital-efficiency-
+  forecaster v7.84, market-depth-forecaster v7.84, seller-churn-
+  predictor v7.84) — vsi z detajlnim enoline komentarjem, "Profit
+  pipeline (115+ funkcij)" → "...(118+ funkcij)", dodane 3 nove
+  funkcije (AI Capital Efficiency Forecaster, Market Depth Forecaster,
+  AI Seller Churn Predictor), Analytics (64) → (65), dodan 1 nov
+  (Market Depth Forecaster), Testing "488 API routes" → "491 API
+  routes", "Vsi API route handlerji (488 routes)" → "491 routes",
+  Project structure "319 AI endpointov" → "321 AI endpointov",
+  Roadmap "v7.83 (trenutno — ~174 funkcij)" → "v7.84 (trenutno — ~177
+  funkcij)", "UI komponente za v7.50-v7.83 funkcije" → "...v7.50-v7.84
+  funkcije", "do v7.83 (avgust 2026)" → "do v7.84 (avgust 2026)",
+  "Zadnje verzije": dodan "v7.84.0 (avgust 2026) — AI Capital
+  Efficiency Forecaster, Market Depth Forecaster, AI Seller Churn
+  Predictor" na vrh.
+- CHANGELOG.md: dodana nova `[7.84.0]` sekcija (nad `[7.83.0]`) z
+  vsemi 3 endpoint-i in podrobnimi opisi (response shape,
+  anti-hallucination rules, AI cache key, deterministic fallback,
+  example comment, razlika od podobnih obstoječih endpoint-ov —
+  capital-efficiency-forecaster vs inventory-capital-efficiency-
+  optimizer/capital-allocation-optimizer/cash-flow-velocity/cash-
+  conversion-cycle/profit-efficiency-analyzer; market-depth-forecaster
+  vs market-depth-analyzer/market-cycle-forecaster/market-saturation-
+  forecaster/market-trend-momentum; seller-churn-predictor vs
+  buyer-churn-predictor-v2/buyer-churn-prevention-strategist/seller-
+  reliability-scorecard/seller-performance-analytics/supplier-crm).
+  "[Unreleased]" posodobljen z "v7.84+" → "v7.85+".
+- Verzija aplikacije: v7.84.0
+- AI endpointi: 319 → 321 (+2)
+- Analytics endpointi: 64 → 65 (+1)
+- Total API routes: 488 → 491 (+3)
 
 ## [7.83.0] - 2026-08-26
 
