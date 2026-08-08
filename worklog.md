@@ -11866,3 +11866,34 @@ Stage Summary:
 - dev.log: vsi HTTP requesti vračajo 200 OK (GET in POST), brez error/warn (empty-state — AI se sploh ne kliče brez HELD inventarja; market-sentiment-trend-analyzer vrača prazno weeklyData z advice "Ni oglasov v zadnjih 180 dneh"; inventory-value-appreciation-tracker vrača prazno perItem z advice "Ni HELD inventarja")
 - curl testi: vsi 4 (GET+POST portfolio-risk-forecaster, GET market-sentiment-trend-analyzer, GET inventory-value-appreciation-tracker) → 200 OK z veljavnim JSON
 - Verzija aplikacije: v7.90.0
+
+---
+Task ID: v7.90.1
+Agent: main
+Task: v7.90 commit + push + GitHub About + Agent Browser verification
+
+Work Log:
+- Prejel poročilo od full-stack-developer podagenta (Task v7.90)
+- Preveril 3 nove endpoint-e: portfolio-risk-forecaster (200 GET+POST), market-sentiment-trend-analyzer (200 GET), inventory-value-appreciation-tracker (200 GET)
+- Preveril doc sync: AI_ENDPOINTS.md (332 ✅), README v7.90 (12 refs ✅), README 332 AI (6 refs ✅), CHANGELOG v7.90 ✅
+- Preveril lint: 0 napak ✨
+- Preveril typecheck: 0 napak ✨
+- Posodobil GitHub About opis: 331 AI → 332 AI, 506 routes → 509 routes (via API PATCH)
+- Commit: "v7.90: Portfolio Risk Forecaster + Market Sentiment Trend Analyzer + Inventory Value Appreciation Tracker" (db1049c)
+- Push na GitHub: uspešen ✅, PAT očiščen ✅
+- Agent Browser self-verification:
+  - Stran se pravilno naloži (HTTP 200)
+  - AI Hub prikazuje portfolio-risk-forecaster (v7.90) v iskalniku ✅
+  - Runner test: klik na portfolio-risk-forecaster → POST request → valid JSON ✅
+  - Response: {"ok":true, "current":{...}, "forecast":{...}, "analysis":{...}, "aiUsed":false, "message":"Ni HELD inventarja..."}
+  - Brez runtime napak v dev.log
+
+Stage Summary:
+- v7.90 uspešno dokončana in potisnjena na GitHub
+- 3 nove funkcije: AI Portfolio Risk Forecaster, Market Sentiment Trend Analyzer, Inventory Value Appreciation Tracker
+- AI endpointi: 331 → 332 (+1)
+- Analytics endpointi: 70 → 72 (+2)
+- Total API routes: 506 → 509 (+3)
+- Dokumentacija sinhrono posodobljena (AI_ENDPOINTS.md, README, CHANGELOG, GitHub About)
+- GitHub sinhroniziran (0 commit-ov ahead)
+- Verzija aplikacije: v7.90.0
