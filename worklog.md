@@ -10247,3 +10247,116 @@ Stage Summary:
 - Dokumentacija sinhrono posodobljena (AI_ENDPOINTS.md, README, CHANGELOG, GitHub About)
 - GitHub sinhroniziran (0 commit-ov ahead)
 - Verzija aplikacije: v7.78.0
+
+---
+Task ID: v7.79
+Agent: full-stack-developer
+Task: Add 3 new features for v7.79 — AI Inventory ROI Optimizer, Listing Engagement Analytics, Deal Quality Scorecard
+
+Work Log:
+- Prebral worklog.md (zadnji ~150 vrstic) — projekt v7.78.1, 313 AI endpointov, 473 total routes, 55 analytics
+- Preučil obstoječe vzorce v inventory-turnover-forecast (v7.78 AI z forecast + cache + deterministic fallback + GET+POST shared function), market-trend-forecaster-pro (v7.78 AI z scenario analysis), deal-conversion-funnel-analyzer (v7.78 pure DB z 8-faznim funnel), market-cycle-detector (v7.77 pure DB z 4-faznim cycle)
+- Verificiral non-duplication proti vsem obstoječim endpointom iz speca (inventory-profit-maximizer, inventory-profitability-analyzer, refurb-roi-calculator, roi-leaderboard, deal-source-roi, inventory-liquidation-optimizer, inventory-rebalancer-v3, inventory-capital-allocator, profit-margin-forecaster, profit-margin-optimizer-v2; listing-exposure-score, listing-engagement-predictor, buyer-engagement-optimizer, buyer-engagement-predictor-v2, deal-conversion-funnel-analyzer, listing-performance; deal-scoring-model-v2, deal-quality-forecaster, deal-quality-distribution, deal-winning-streak-analyzer, deal-anatomy-analyzer, deal-profitability-matrix)
+- Preveril prisma schema — Trade ima buyPrice/buyDate/buyFees/sellPrice/sellDate/sellFees/category/status/listingId (nullable relacija na Listing z aiEstimatedValue/aiRisk/dealScore/sellerName/sellerListingCount); Listing ima monitor.source/isBookmarked/bookmarkedAt/contactStatus/contactedAt/priceDroppedAt/previousPrice/price/imageUrl/firstSeenAt
+- Feature #1: AI Inventory ROI Optimizer (GET+POST /api/ai/inventory-roi-optimizer)
+  * Query HELD trades (status='held') z linked Listing za aiEstimatedValue in dealScore (take 100000)
+  * Per HELD item izračunaj:
+    - currentROI = (aiEstimatedValue - buyPrice) / buyPrice × 100 (unrealized; 0 če manjka aiEstimatedValue)
+    - projectedROI z computeProjectedROI: AI target × achievementFactor (fresh <14d → 0.95, mid 14-30d → 0.8, aging 30-60d → 0.65, old >60d → 0.5) - holdingCostImpact (daysHeld × 0.50€ / buyPrice × 100), clamped [-50, 200]
+    - roiPotential = projectedROI - currentROI (clamped)
+    - urgencyScore 0-100 (computeUrgencyScore: <7d=20, <14d=35, <30d=50, <45d=70, <60d=85, >60d=95)
+    - roiCategory (HIGH_ROI >30% / MEDIUM_ROI 10-30% / LOW_ROI 0-10% / NEGATIVE_ROI <0%)
+    - action deterministično (determineAction: NEGATIVE+potential<0 → LIQUIDATE, NEGATIVE+potential≥0 → PRICE_ADJUST, potential<0 → SELL_NOW, LOW+potential<5 → BUNDLE_WITH_OTHER, else HOLD)
+    - expectedROIAfterAction (computeExpectedROIAfterAction: SELL_NOW=current, LIQUIDATE=current-5, PRICE_ADJUST=current+potential×0.6, BUNDLE=current+potential×0.4, HOLD=projected), clamped [-50, 200]
+    - timingAdvice in reasoning deterministično (buildTimingAdvice, buildDeterministicReasoning)
+  * portfolio: totalItems, totalInvested, totalEstimatedValue, currentAvgROI (avg currentROI), projectedAvgROI (avg projectedROI), roiOptimizationPotential (max(0, projected - current))
+  * AI generira optimization (portfolioROIOptimization max 500 znakov, projectedPortfolioROI clamped [-50, 200], riskMitigation max 400 znakov, totalExpectedImprovement € clamped [0, 100000]) in override per-item actions (action validirana proti enum HOLD/SELL_NOW/PRICE_ADJUST/BUNDLE_WITH_OTHER/LIQUIDATE, newTargetPrice clampTargetPrice [0.5x, 1.3x] buyPrice če PRICE_ADJUST drugače null, expectedROIAfterAction clamped [-50, 200], timingAdvice max 200 znakov, reasoning max 300 znakov) in summary (max 500 znakov)
+  * AI prompt z grounding — portfolio stanje (totalItems, totalInvested, totalEstimatedValue, currentAvgROI, projectedAvgROI, roiOptimizationPotential, ROI distribution counts) + top 20 items z buyPrice/aiEstimatedValue/currentROI/projectedROI/roiPotential/urgencyScore/roiCategory/deterministicAction/deterministicExpectedROI + pravila za AI odgovor (clamping, enum validacija)
+  * Anti-hallucination: newTargetPrice clamped [0.5x, 1.3x] buyPrice (clampTargetPrice), ROI projections clamped [-50, 200], actions validirane proti enum (clampEnum), urgencyScore clamped [0, 100], kategorije niso od AI-ja (deterministic iz t.category || listing.monitor.source), totalExpectedImprovement clamped [0, 100000]
+  * AI cache key `inventory-roi-optimizer:${JSON.stringify(sorted heldItemIds)}` (6h TTL — invalidated ko se held item-i spremenijo)
+  * Deterministic fallback (compute iz ROI categories in aging decay) — aktiven ko AI manjka
+  * Empty state: če ni HELD inventarja → vse 0 + message "Ni HELD inventarja — Inventory ROI Optimizer ni mogoč."
+  * GET+POST z handleInventoryRoiOptimizer(req) shared function (AI Hub runner kompatibilnost)
+  * maxDuration = 60, runtime = 'nodejs', dynamic = 'force-dynamic'
+- Feature #2: Listing Engagement Analytics (GET /api/analytics/listing-engagement-analytics, pure DB)
+  * Query listings zadnjih 90 dni (isHidden false, firstSeenAt gte cutoff90d) z monitor.source, contactStatus, contactedAt, firstSeenAt, isBookmarked, bookmarkedAt, priceDroppedAt, previousPrice, price, imageUrl (take 200000)
+  * Per listing compute:
+    - engagementScore = (hasContact ? 40 : 0) + (isBookmarked ? 30 : 0) + (hasPriceDrop ? 20 : 0) + (hasImage ? 10 : 0) — 0-100
+    - engagementLevel (HIGH 70+ / MEDIUM 40-69 / LOW 10-39 / NONE 0-9)
+    - daysToFirstEngagement = days from firstSeenAt to earliest signal (min(contactMs/bookmarkMs/dropMs))
+    - hadPriceDrop (boolean), priceDropPercent (prevPrice→currPrice % reduction), engagedAfterPriceDrop (contact/bookmark AFTER dropMs)
+    - firstSeenWeek (ISO week bucket, week starts Monday — Math.floor(seenMs / weekMs))
+  * portfolio: totalListings, engagedCount, highEngagementCount, mediumEngagementCount, lowEngagementCount, noEngagementCount, avgEngagementScore, engagementRate (%), avgDaysToEngagement
+  * byCategory: per kategorija (monitor.source lowercase) totalListings, engagedCount, engagementRate, avgEngagementScore, avgDaysToEngagement, rank (sort po engagementRate desc, nato avgEngagementScore desc, 1 = most engaging)
+  * trend: currentWeekEngagement (zadnje 4 tedne ≥ cutoff28dWeek) vs previousWeekEngagement (cutoff56dWeek do cutoff28dWeek) + trend (IMPROVING če delta > 5, DECLINING če < -5, drugače STABLE)
+  * priceDropAnalysis: priceDropCount, avgPriceDropPercent (% reduction glede na previousPrice, samo listings z valid prevPrice > currPrice), engagementAfterPriceDrop (% listings z drop-om, ki so dobile contact/bookmark PO drop-u), recommendation (slovenski concrete nasvet glede na stopnjo: ≥40% aggressive drops, ≥20% moderate, <20% wrong timing)
+  * recommendations: bestEngagingCategory (byCategory[0]), worstEngagingCategory (byCategory zadnji, različen od best), advice (slovenski z rate, trend, top category, price drop impact), improvementActions (top 5 konkretni nasveti)
+  * Pure DB analytics — NO AI. GET handler only (analytics endpoint)
+  * Empty state: če ni listingov v 90 dneh → vse 0 + message "Ni listingov v zadnjih 90 dneh — Listing Engagement Analytics ni mogoč."
+- Feature #3: Deal Quality Scorecard (GET /api/analytics/deal-quality-scorecard, pure DB)
+  * Query SOLD trades (status='sold', sellDate not null) z linked Listing za aiEstimatedValue, aiRisk, dealScore, sellerName, sellerListingCount (take 100000, sorted by sellDate desc)
+  * Per SOLD trade compute 6 dimenzij (0-100 vsaka):
+    - priceScore (scorePrice): (aiEstimatedValue - buyPrice) / aiEstimatedValue × 100 → 50 + discount × 1.6 (clamped 0-100); 50 če manjkajo podatki
+    - timingScore (scoreTiming): dayOfWeekTimingScore × 0.4 + holdScore × 0.6 (hold 0-7d=100, 7-14d=80, 14-30d=65, 30-60d=50, >60d=30; dow: Sun=70, Mon=45, Tue=55, Wed=60, Thu=65, Fri=75, Sat=80)
+    - riskScore (scoreRisk): (100 - aiRisk × 9) × 0.5 + dealScore × 0.5 (clamped 0-100); 60 če manjkajo podatki
+    - marketScore (scoreMarket): marketFitScore (50 + (estValue/buyPrice - 1) × 100) × 0.6 + dealScore × 0.4 (clamped 0-100)
+    - sellerScore (scoreSeller): 50 če unknown sellerName; 30-95 glede na sellerListingCount (1=30, 2=45, 5+=60, 10+=70, 20+=80, 50+=95)
+    - outcomeScore (scoreOutcome): unsold → 35/50/60 glede na holdDays; sold → 50 + roi × 0.8 ± hold penalty (>60d=-15, >30d=-8, ≤7d=+5), clamped 0-100
+  * overallScore = priceScore × 0.20 + timingScore × 0.15 + riskScore × 0.20 + marketScore × 0.15 + sellerScore × 0.10 + outcomeScore × 0.20 (weighted)
+  * grade (gradeFromScore): A+ (90+) / A (80-89) / B (70-79) / C (60-69) / D (50-59) / F (<50)
+  * Per-trade scorecard: dimensions (6 dimenzij), overallScore, grade, insights (top 2-3: strongest/weakest dimenzija z dimensionName slovensko, ROI % če sold), improvementAreas (2-3 konkretni nasveti glede na šibke dimenzije <60)
+  * portfolio: avgOverallScore, gradeDistribution (count per A+/A/B/C/D/F), bestDimension (dim z najvišjo avg, slovensko ime), weakestDimension (dim z najnižjo avg), totalTrades
+  * byCategory: per kategorija avgOverallScore, avgGrade (iz gradeValue average — A+=95, A=85, B=75, C=65, D=55, F=25), bestDimension, rank (sort po avgOverallScore desc, 1 = best deals)
+  * trend: recentScore (zadnjih 30 dni, sellDate gte cutoff30d) vs previousScore (30-60 dni, cutoff60d do cutoff30d) + trend (IMPROVING če delta > 5, DECLINING če < -5, drugače STABLE)
+  * recommendations: bestCategory (byCategory[0]), improvementFocus (glede na weakest dimension z avg), advice (slovenski povzetek z grade, trend, dimenzije, kategorije)
+  * Pure DB analytics — NO AI. GET handler only (analytics endpoint)
+  * Empty state: če ni SOLD trade-ov → prazne arrays + message "Ni SOLD trade-ov — Deal Quality Scorecard ni mogoč."
+- Vsi 3 endpointi imajo try/catch z logger.error in NextResponse.json { error: err?.message ?? 'Napaka' }, status 500. AI endpoint (inventory-roi-optimizer) ima maxDuration = 60. Vsi imajo export const runtime = 'nodejs' in export const dynamic = 'force-dynamic'
+- TypeScript check: `npx tsc --noEmit` → 0 napak ✨ (EXIT 0)
+- ESLint: `bun run lint` → 0 napak, 0 opozoril ✨ (EXIT 0)
+- curl testi (vsak endpoint prazen state, brez AI provider-ja v sandboxu):
+  * GET /api/ai/inventory-roi-optimizer → HTTP 200, {"ok":true,"portfolio":{"totalItems":0,"totalInvested":0,"totalEstimatedValue":0,"currentAvgROI":0,"projectedAvgROI":0,"roiOptimizationPotential":0},"items":[],"optimization":{"portfolioROIOptimization":"Ni HELD inventarja — Inventory ROI Optimizer ni mogoč.","projectedPortfolioROI":0,"riskMitigation":"Dodaj HELD trade-e (status \"held\", buyPrice > 0) za optimizacijo ROI-ja portfelja.","totalExpectedImprovement":0},"summary":"Ni HELD inventarja — Inventory ROI Optimizer ni mogoč.","aiUsed":false,"message":"Ni HELD inventarja — Inventory ROI Optimizer ni mogoč."}
+  * GET /api/analytics/listing-engagement-analytics → HTTP 200, {"ok":true,"portfolio":{"totalListings":0,"engagedCount":0,"highEngagementCount":0,"mediumEngagementCount":0,"lowEngagementCount":0,"noEngagementCount":0,"avgEngagementScore":0,"engagementRate":0,"avgDaysToEngagement":0},"byCategory":[],"trend":{"currentWeekEngagement":0,"previousWeekEngagement":0,"trend":"STABLE"},"priceDropAnalysis":{"priceDropCount":0,"avgPriceDropPercent":0,"engagementAfterPriceDrop":0,"recommendation":"Ni listingov v zadnjih 90 dneh — Listing Engagement Analytics ni mogoč."},"recommendations":{"bestEngagingCategory":null,"worstEngagingCategory":null,"advice":"Dodaj listinge..."}}
+  * GET /api/analytics/deal-quality-scorecard → HTTP 200, {"ok":true,"scorecards":[],"portfolio":{"avgOverallScore":0,"gradeDistribution":{"A+":0,"A":0,"B":0,"C":0,"D":0,"F":0},"bestDimension":null,"weakestDimension":null,"totalTrades":0},"byCategory":[],"trend":{"recentScore":0,"previousScore":0,"trend":"STABLE"},"recommendations":{"bestCategory":null,"improvementFocus":"Dodaj SOLD trade-e za scorecard analizo.","advice":"Ni SOLD trade-ov — Deal Quality Scorecard ni mogoč."},"message":"Ni SOLD trade-ov — Deal Quality Scorecard ni mogoč."}
+  * POST /api/ai/inventory-roi-optimizer (body {}) → HTTP 200, isti response kot GET (handleInventoryRoiOptimizer(req) shared function)
+  * dev.log: vsi HTTP requesti vračajo 200 OK, brez error/warn (empty-state — AI se sploh ne kliče brez podatkov; analytics endpointa vračata prazne arrays z opisi brez errorja)
+- Dokumentacijska sinhronizacija (CRITICAL):
+  * AI_ENDPOINTS.md: regeneriran z Python skripto → "Total: 314 endpoints" (313 → 314, +1 AI: inventory-roi-optimizer). Verificirano z grep.
+  * README.md (MultiEdit z 16 urejanji):
+    - Badge version: v7.78.0 → v7.79.0
+    - Badge AI Endpoints: 313 → 314
+    - Badge API Routes: 473 → 476 (+3: 1 AI + 2 analytics)
+    - Tagline: "313 AI endpointov + 55 analytics" → "314 AI endpointov + 57 analytics" (+2 analytics: listing-engagement-analytics, deal-quality-scorecard)
+    - Overview: "Verzija v7.78.0" → "Verzija v7.79.0", counts posodobljeni, "313 AI + 55 analytics + 10 cron + ~159 funkcij" → "314 AI + 57 analytics + 10 cron + ~162 funkcij"
+    - "Kaj je novega v v7.56–v7.78 (23 verzij, 69 novih funkcij)" → "...v7.56–v7.79 (24 verzij, 72 novih funkcij)", dodan v7.79 blok (3 funkcije) na vrh z detajlnimi opisi vseh 3 endpoint-ov (response shape, anti-hallucination pravila, AI cache key, deterministic fallback, razlika od podobnih obstoječih endpoint-ov)
+    - AI Hub badge v tabeli: "Vsi 313 AI endpointov" → "Vsi 314 AI endpointov"
+    - "Endpointi (313 AI + 55 analytics + 10 cron + sistemski = 473)" → "...(314 AI + 57 analytics + 10 cron + sistemski = 476)"
+    - Dodana 3 nova endpointa v AI primeri blok (inventory-roi-optimizer v7.79, listing-engagement-analytics v7.79, deal-quality-scorecard v7.79)
+    - "Profit pipeline (v7.32-v7.78)" → "...(v7.32-v7.79)"
+    - Project structure: "313 AI endpointov" → "314 AI endpointov"
+    - Coding standards: "473 routes" → "476 routes"
+    - Roadmap: "v7.78 (trenutno — ~159 funkcij)" → "v7.79 (trenutno — ~162 funkcij)", profit pipeline list (100+ funkcij) → (103+ funkcij), dodane 3 nove funkcije (AI Inventory ROI Optimizer, Listing Engagement Analytics, Deal Quality Scorecard)
+    - Analytics (55) → (57), dodana 2 nova (Listing Engagement Analytics, Deal Quality Scorecard)
+    - Testing: "473 API routes" → "476 API routes"
+    - "Naslednji koraki": "v7.50-v7.78 funkcije" → "...v7.50-v7.79 funkcije"
+    - "Zadnje verzije": dodan "v7.79.0 (avgust 2026) — AI Inventory ROI Optimizer, Listing Engagement Analytics, Deal Quality Scorecard" na vrh
+    - AI_ENDPOINTS.md link: "vseh 313 AI endpointov" → "vseh 314 AI endpointov"
+    - "do v7.78 (avgust 2026)" → "do v7.79 (avgust 2026)"
+  * CHANGELOG.md (MultiEdit z 1 velikim urejanjem):
+    - "[Unreleased] Načrtovano za v7.79+" → "...za v7.80+"
+    - Dodana nova "[7.79.0] - 2026-08-21" sekcija (nad [7.78.0]) z vsemi 3 endpoint-i in podrobnimi opisi (response shape, anti-hallucination rules, AI cache key, deterministic fallback, example comment, razlika od podobnih obstoječih endpoint-ov — inventory-roi-optimizer vs inventory-profit-maximizer/inventory-profitability-analyzer/refurb-roi-calculator/roi-leaderboard/deal-source-roi/inventory-liquidation-optimizer/inventory-rebalancer-v3; listing-engagement-analytics vs listing-exposure-score/listing-engagement-predictor/buyer-engagement-optimizer/buyer-engagement-predictor-v2/deal-conversion-funnel-analyzer/listing-performance; deal-quality-scorecard vs deal-scoring-model-v2/deal-quality-forecaster/deal-quality-distribution/deal-winning-streak-analyzer/deal-conversion-funnel-analyzer/deal-anatomy-analyzer/deal-profitability-matrix)
+    - "### Changed" pod-sekcija z doc sync opisi (AI_ENDPOINTS.md, README.md, CHANGELOG.md, verzija aplikacije)
+
+Stage Summary:
+- 3 novi endpointi dodani (skupno +3 od v7.78.1):
+  - inventory-roi-optimizer (GET+POST, AI-enhanced — AI optimira ROI čez celoten HELD inventar. "Portfolio ROI: 18% → projected 24% z optimizacijami. Sell 2 negativnih item-ov, hold 3 visoko-ROI. +320€ izboljšanje." portfolio: totalItems, totalInvested, totalEstimatedValue, currentAvgROI, projectedAvgROI, roiOptimizationPotential. items: per HELD item — buyPrice, aiEstimatedValue, currentROI (unrealized), projectedROI (z aging decay in holding cost impact), roiPotential, urgencyScore 0-100 (aging-based), roiCategory (HIGH_ROI/MEDIUM_ROI/LOW_ROI/NEGATIVE_ROI), action (HOLD/SELL_NOW/PRICE_ADJUST/BUNDLE_WITH_OTHER/LIQUIDATE), newTargetPrice (clamped [0.5x, 1.3x] buyPrice če PRICE_ADJUST), expectedROIAfterAction, timingAdvice, reasoning. optimization: portfolioROIOptimization, projectedPortfolioROI (clamped [-50, 200]), riskMitigation, totalExpectedImprovement € (clamped [0, 100000]). Compute: query HELD trades z linked Listing, compute per-item currentROI in projectedROI z aging decay (fresh <14d → 95%, mid 14-30d → 80%, aging 30-60d → 65%, old >60d → 50%) in holding cost impact (daysHeld × 0.50€/buyPrice × 100), categorize in 4 buckets, determine action deterministično. AI-enhanced z grounding + anti-hallucination + 6h cache (key per heldItemIds JSON sorted) + deterministic fallback. GET+POST (AI Hub runner kompatibilnost). Razlika od inventory-profit-maximizer (per-item profit) — ta optimira PORTFOLIO ROI z rebalancing actions. Razlika od inventory-profitability-analyzer (kategorije profitabilnost) — ta gleda POSAMEZNE HELD item-e z ROI potential in urgency. Razlika od refurb-roi-calculator (refurb ROI) — ta gleda UNREALIZED ROI na current HELD inventar z AI projection. Razlika od roi-leaderboard (best brands) — ta optimira TRENUTNI inventar z actionable rebalance. Razlika od deal-source-roi (ROI po viru) — ta gleda INDIVIDUAL held item-e z urgency. Razlika od inventory-liquidation-optimizer (likvidira zastarele) — ta optimira ROI z diversified rebalance. Razlika od inventory-rebalancer-v3 (kategorije) — ta optimira ROI na posameznem item-u z AI projection.)
+  - listing-engagement-analytics (GET, pure DB analytics — NO AI — celovita analiza engagement-a listingov. "Engagement rate: 35% (175/500 listingov). Najboljši: elektronika (52% engagement). Price drops povečajo engagement +40%." portfolio: totalListings (zadnjih 90 dni), engagedCount, highEngagementCount (score 70+), mediumEngagementCount (40-69), lowEngagementCount (10-39), noEngagementCount (0-9), avgEngagementScore, engagementRate (%), avgDaysToEngagement. engagementScore = (hasContact ? 40 : 0) + (isBookmarked ? 30 : 0) + (hasPriceDrop ? 20 : 0) + (hasImage ? 10 : 0) — 0-100. engagementLevel (HIGH/MEDIUM/LOW/NONE). byCategory: per kategorija (monitor.source) totalListings, engagedCount, engagementRate, avgEngagementScore, avgDaysToEngagement, rank. trend: currentWeekEngagement (zadnje 4 tedne) vs previousWeekEngagement + trend (IMPROVING/STABLE/DECLINING ±5%). priceDropAnalysis: priceDropCount, avgPriceDropPercent, engagementAfterPriceDrop (% listings z drop-om, ki so dobile engagement PO drop-u), recommendation. recommendations: bestEngagingCategory, worstEngagingCategory, advice, improvementActions. Compute: query listings zadnjih 90 dni, compute engagement score per listing, group by kategorija in ISO week. Pure DB analytics. Razlika od listing-exposure-score (per HELD inventar) — ta je PORTFOLIO analiza engagement-a čez vse listinge. Razlika od listing-engagement-predictor (AI napove) — ta je descriptivna analiza zgodovine. Razlika od buyer-engagement-optimizer (buyer engagement) — ta gleda LISTING engagement. Razlika od deal-conversion-funnel-analyzer (funnel) — ta gleda ENGAGEMENT signale z levels in trend.)
+  - deal-quality-scorecard (GET, pure DB analytics — NO AI — generira celovit scorecard za vsak SOLD deal. "Portfolio scorecard: povprečno 72/100 (B). Najmočnejša dimenzija: cena (85). Najšibkejša: timing (58). Trend: IZBOLJŠUJOČ (+8)." scorecards: per SOLD trade — 6 dimenzij (priceScore 0-100 glede na discount vs aiEstimatedValue, timingScore 0-100 glede na day-of-week + hold time, riskScore 0-100 glede na aiRisk + dealScore, marketScore 0-100 glede na aiEstimatedValue/buyPrice ratio + dealScore, sellerScore 0-100 glede na sellerListingCount + sellerName, outcomeScore 0-100 glede na ROI + hold days), overallScore (weighted: price 20% + timing 15% + risk 20% + market 15% + seller 10% + outcome 20%), grade (A+/A/B/C/D/F), insights (top 2-3), improvementAreas (2-3 nasveti). portfolio: avgOverallScore, gradeDistribution (count per A+/A/B/C/D/F), bestDimension, weakestDimension, totalTrades. byCategory: per kategorija avgOverallScore, avgGrade, bestDimension, rank. trend: recentScore (zadnjih 30 dni) vs previousScore (30-60 dni) + trend. recommendations: bestCategory, improvementFocus, advice. Compute: query SOLD trades z linked Listing za aiEstimatedValue/aiRisk/dealScore/sellerName/sellerListingCount, compute 6 dimenzij in weighted overall, grade distribucija. Pure DB analytics. Razlika od deal-scoring-model-v2 (AI multi-factor za posamezni deal) — ta je descriptivna analiza ZGODOVINSKIH deal-ov z 6-dimenzionalnim scorecard. Razlika od deal-quality-forecaster (napove quality po dnevih) — ta oceni PROŠLE deals z 6 dimenzijami z grade. Razlika od deal-quality-distribution (distribucija dealScore) — ta da SCORECARD z 6 dimenzijami in grade per trade. Razlika od deal-winning-streak-analyzer (streak-e) — ta gleda POSAMEZNE deal-e z multi-dimenzionalnim scorecard. Razlika od deal-conversion-funnel-analyzer (funnel) — ta gleda KVALITETO deal-ov z 6 dimenzijami in grade distribucijo.)
+- Vsi 3 endpointi vračajo veljaven JSON tudi ob prazni bazi (graceful fallback z opisno slovensko message). AI endpoint (inventory-roi-optimizer) ima aiUsed flag v responsu za transparentnost in GET+POST kompatibilnost z AI Hub runner-jem (handleX(req) shared function). Analytics endpointa (listing-engagement-analytics, deal-quality-scorecard) vračata prazne arrays z opisi tudi pri prazni bazi (prikazujeta strukturo brez errorja).
+- AI_ENDPOINTS.md: "Total: 314 endpoints" ✓ (313 → 314, +1 AI: inventory-roi-optimizer)
+- README.md: v7.79.0 badge (14 referenc), 314 AI (6 referenc), 476 routes (4 reference), 57 analytics (3 reference), ~162 funkcij (2 referenci) ✓
+- CHANGELOG.md: [7.79.0] sekcija dodana z 3 endpoint-i in Changed pod-sekcijo, [Unreleased] posodobljen na v7.80+ ✓
+- ESLint: 0 napak ✨ (EXIT 0)
+- TypeScript: 0 napak ✨ (EXIT 0)
+- dev.log: vsi HTTP requesti vračajo 200 OK, brez error/warn (empty-state — AI se sploh ne kliče brez podatkov)
+- Verzija aplikacije: v7.79.0

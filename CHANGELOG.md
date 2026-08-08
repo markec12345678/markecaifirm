@@ -6,11 +6,223 @@ Format sledi [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), verzije s
 
 ## [Unreleased]
 
-Načrtovano za v7.79+:
+Načrtovano za v7.80+:
 - WebSocket real-time negotiation (SSE namesto polling)
 - Playwright E2E testi za glavne flow-e
 - TLS fingerprinting (curl-impersonate)
 - ML model za buyer matchmaker (fine-tuned na realnem data)
+
+## [7.79.0] - 2026-08-21
+
+### Added — AI Inventory ROI Optimizer & Listing Engagement Analytics & Deal Quality Scorecard (3 funkcije)
+
+- **AI Inventory ROI Optimizer** — `GET+POST /api/ai/inventory-roi-optimizer`
+  - AI optimira ROI čez celoten HELD inventar — identificira kateri
+    item-i imajo najboljši/najslabši ROI potencial in predlaga
+    rebalancing (sell nizko-ROI item-e, hold visoko-ROI). "Portfolio
+    ROI: 18% → projected 24% z optimizacijami. Sell 2 negativnih
+    item-ov, hold 3 visoko-ROI. +320€ izboljšanje." Razlika od
+    inventory-profit-maximizer (ki maksimizira profit na posameznem
+    item-u) — ta optimira PORTFOLIO ROI z rebalancing actions.
+    Razlika od inventory-profitability-analyzer (ki analizira
+    profitabilnost kategorij) — ta gleda POSAMEZNE HELD item-e z
+    ROI potential in urgency. Razlika od refurb-roi-calculator (ki
+    računa ROI za refurb projekt) — ta gleda UNREALIZED ROI na
+    current HELD inventar z AI projection. Razlika od roi-leaderboard
+    (ki rank-a best brands by ROI) — ta optimira TRENUTNI inventar
+    z actionable rebalance plan. Razlika od deal-source-roi (ki
+    gleda ROI po viru nakupa) — ta gleda INDIVIDUAL held item-e z
+    urgency score. Razlika od inventory-liquidation-optimizer (ki
+    likvidira zastarele item-e) — ta optimira ROI z diversified
+    rebalance (HOLD/SELL/PRICE_ADJUST/BUNDLE/LIQUIDATE). Razlika od
+    inventory-rebalancer-v3 (ki rebalancira po kategorijah) — ta
+    optimira ROI na posameznem item-u z AI projection + urgency.
+  - Query HELD trades z linked Listing za aiEstimatedValue in
+    dealScore.
+  - Per HELD item izračunaj:
+    - currentROI = (aiEstimatedValue - buyPrice) / buyPrice × 100
+      (unrealized ROI; 0 če manjka aiEstimatedValue)
+    - projectedROI z AI projection z aging decay (fresh <14d → 95%
+      achievement, mid 14-30d → 80%, aging 30-60d → 65%, old >60d →
+      50%) in holding cost impact (daysHeld × 0.50€/buyPrice × 100).
+    - roiPotential = projectedROI - currentROI (upside če hold).
+    - urgencyScore 0-100 (aging-based: <7d=20, <14d=35, <30d=50,
+      <45d=70, <60d=85, >60d=95).
+    - roiCategory (HIGH_ROI >30% / MEDIUM_ROI 10-30% / LOW_ROI
+      0-10% / NEGATIVE_ROI <0%).
+    - action deterministično (NEGATIVE+potential<0 → LIQUIDATE,
+      NEGATIVE+potential≥0 → PRICE_ADJUST, potential<0 → SELL_NOW,
+      LOW+potential<5 → BUNDLE_WITH_OTHER, else HOLD).
+    - expectedROIAfterAction (SELL_NOW=current, LIQUIDATE=current-5,
+      PRICE_ADJUST=current+potential×0.6, BUNDLE=current+potential×0.4,
+      HOLD=projected).
+  - portfolio: totalItems, totalInvested, totalEstimatedValue,
+    currentAvgROI, projectedAvgROI, roiOptimizationPotential (%).
+  - AI generira optimization: portfolioROIOptimization (strategija,
+    max 500 znakov), projectedPortfolioROI (clamped [-50, 200]),
+    riskMitigation (diversifikacija, max 400 znakov),
+    totalExpectedImprovement € (clamped [0, 100000]).
+  - AI override za per-item actions: action (validirana proti enum
+    HOLD/SELL_NOW/PRICE_ADJUST/BUNDLE_WITH_OTHER/LIQUIDATE),
+    newTargetPrice (če PRICE_ADJUST, clamped na [0.5x, 1.3x]
+    buyPrice — anti-hallucination), expectedROIAfterAction (clamped
+    [-50, 200]), timingAdvice (max 200 znakov), reasoning (max 300
+    znakov).
+  - AI-enhanced z grounding + anti-hallucination (newTargetPrice
+    clamped [0.5x, 1.3x] buyPrice, ROI projections clamped [-50,
+    200], actions validirane proti enum, urgencyScore clamped [0,
+    100], kategorije niso od AI-ja — deterministic, totalExpected-
+    Improvement clamped [0, 100000]) + 6h cache (key per heldItemIds
+    JSON, sorted) + deterministic fallback (compute iz ROI categories
+    in aging decay).
+  - GET+POST z handleInventoryRoiOptimizer(req) shared function
+    (AI Hub runner kompatibilnost — AI Hub UI vedno pošlje POST).
+  - maxDuration = 60, runtime = 'nodejs', dynamic = 'force-dynamic'.
+  - Empty state: če ni HELD inventarja, vrne vse 0 + message "Ni
+    HELD inventarja — Inventory ROI Optimizer ni mogoč."
+
+- **Listing Engagement Analytics** — `GET /api/analytics/listing-engagement-analytics`
+  - Celovita analiza engagement-a listingov — track-a views (prek
+    contactStatus kot proxy), bookmarks, price drops in time-to-
+    engagement vzorce. Pure DB analytics — NO AI. "Engagement rate:
+    35% (175/500 listingov). Najboljši: elektronika (52% engagement).
+    Price drops povečajo engagement +40%." Razlika od
+    listing-exposure-score (v7.63, ki da EXPOSURE score za posamezni
+    HELD inventar) — ta je PORTFOLIO analiza engagement-a čez vse
+    listinge z byCategory breakdown, trend in price drop analysis.
+    Razlika od listing-engagement-predictor (ki napove engagement za
+    posamezni listing) — ta je descriptivna analiza zgodovine
+    engagement-a z engagement levels in time-to-engagement. Razlika
+    od buyer-engagement-optimizer (ki optimira buyer engagement) — ta
+    gleda LISTING engagement (contact/bookmark/price drop). Razlika
+    od buyer-engagement-predictor-v2 (ki napove buyer engagement) —
+    ta gleda AKTUALNI listing engagement z rate in trend. Razlika od
+    deal-conversion-funnel-analyzer (v7.78, ki gleda funnel fazami)
+    — ta gleda ENGAGEMENT signale z levels in trend. Razlika od
+    listing-performance (ki gleda performance held inventarja) — ta
+    gleda engagement signale vseh listingov z byCategory in time-to-
+    engagement.
+  - Query listings zadnjih 90 dni (isHidden false) z monitor.source,
+    contactStatus, contactedAt, firstSeenAt, isBookmarked,
+    bookmarkedAt, priceDroppedAt, previousPrice, price, imageUrl.
+  - Per listing izračunaj engagement score:
+    engagementScore = (hasContact ? 40 : 0) + (isBookmarked ? 30 :
+    0) + (hasPriceDrop ? 20 : 0) + (hasImage ? 10 : 0) — 0-100.
+    engagementLevel (HIGH 70+ / MEDIUM 40-69 / LOW 10-39 / NONE 0-9).
+    daysToFirstEngagement (prvi signal od firstSeenAt — najmanjši
+    od contactMs/bookmarkMs/dropMs).
+  - portfolio: totalListings, engagedCount, highEngagementCount,
+    mediumEngagementCount, lowEngagementCount, noEngagementCount,
+    avgEngagementScore, engagementRate (%), avgDaysToEngagement.
+  - byCategory: per kategorija (monitor.source) totalListings,
+    engagedCount, engagementRate, avgEngagementScore,
+    avgDaysToEngagement, rank (1 = most engaging, sort po
+    engagementRate desc, nato avgEngagementScore desc).
+  - trend: currentWeekEngagement (zadnje 4 tedne) vs
+    previousWeekEngagement (prejšnje 4 tedne) + trend
+    (IMPROVING/STABLE/DECLINING glede na ±5% delta).
+  - priceDropAnalysis: priceDropCount, avgPriceDropPercent (%
+    reduction glede na previousPrice), engagementAfterPriceDrop (%
+    listingov z drop-om, ki so dobili contact/bookmark PO drop-u),
+    recommendation (slovenski concrete nasvet glede na stopnjo).
+  - recommendations: bestEngagingCategory, worstEngagingCategory,
+    advice (slovenski povzetek z rate, trend, top kategorija, price
+    drop impact), improvementActions (top 5 konkretni nasveti).
+  - Pure DB analytics — NO AI. GET handler only (analytics endpoint).
+  - Empty state: če ni listingov v 90 dneh, vrne vse 0 + message.
+
+- **Deal Quality Scorecard** — `GET /api/analytics/deal-quality-scorecard`
+  - Generira celovit "scorecard" za vsak SOLD deal — oceni 6
+    dimenzij (cena, timing, risk, tržne razmere, prodajalec,
+    rezultat) z grade A+ do F. Pure DB analytics — NO AI. "Portfolio
+    scorecard: povprečno 72/100 (B). Najmočnejša dimenzija: cena
+    (85). Najšibkejša: timing (58). Trend: IZBOLJŠUJOČ (+8)."
+    Razlika od deal-scoring-model-v2 (ki AI weighted multi-factor
+    score za posamezni deal) — ta je descriptivna analiza
+    ZGODOVINSKIH deal-ov z 6-dimenzionalnim scorecard-om in
+    portfolio grading. Razlika od deal-quality-forecaster (ki napove
+    quality po dnevih v tednu) — ta oceni PROŠLE deals čez 6 dimenzij
+    z grade A+ do F. Razlika od deal-quality-distribution (v7.74,
+    ki prikaže distribucijo dealScore) — ta da SCORECARD z 6
+    dimenzijami in grade per trade. Razlika od deal-winning-streak-
+    analyzer (v7.77, ki gleda streak-e) — ta gleda POSAMEZNE deal-e
+    z multi-dimenzionalnim scorecard-om. Razlika od deal-conversion-
+    funnel-analyzer (v7.78, ki gleda funnel) — ta gleda KVALITETO
+    deal-ov z 6 dimenzijami in grade distribucijo. Razlika od
+    deal-anatomy-analyzer (ki AI anatomija winnerjev) — ta je
+    descriptivna analiza zgodovine z byCategory in trend. Razlika od
+    deal-profitability-matrix (ki da 2D matrika kategorija × hold-
+    time) — ta da 6-dimenzionalni scorecard per trade z grade.
+  - Query SOLD trades z linked Listing za aiEstimatedValue, aiRisk,
+    dealScore, sellerName, sellerListingCount.
+  - Per SOLD trade izračunaj 6 dimenzij (0-100 vsaka):
+    - priceScore: kako dobra je bila buy cena? (discount vs
+      aiEstimatedValue — 0% discount=50, 30%+ discount=100, -10%
+      overpaid=30).
+    - timingScore: ali je bil kupljen ob dobrem času? (day-of-week
+      + hold time — vikendi boljši; 0-7d hold=100, >60d=30).
+    - riskScore: kako tvegana? (aiRisk invertiran 0-100 + dealScore
+      0-100, weighted 50/50).
+    - marketScore: ali so bile tržne razmere ugodne?
+      (aiEstimatedValue/buyPrice ratio + dealScore, weighted 60/40).
+    - sellerScore: seller reliability (sellerListingCount — 1=30,
+      5+=60, 20+=80, 50+=95).
+    - outcomeScore: kako se je izteklo? (ROI + hold time — ROI
+      mapping -50%=0, 0%=50, +50%=90, +100%+=100; penalty za
+      slow sell >60d=-15).
+  - overallScore = weighted average (price 20% + timing 15% +
+    risk 20% + market 15% + seller 10% + outcome 20%).
+  - grade: A+ (90+) / A (80-89) / B (70-79) / C (60-69) / D (50-59)
+    / F (<50).
+  - Per-trade scorecard: 6 dimenzij, overallScore, grade, insights
+    (top 2-3 — strongest/weakest dimenzija, ROI %), improvementAreas
+    (2-3 konkretni nasveti glede na šibke dimenzije <60).
+  - portfolio: avgOverallScore, gradeDistribution (count per A+/
+    A/B/C/D/F), bestDimension (slovensko ime), weakestDimension,
+    totalTrades.
+  - byCategory: per kategorija avgOverallScore, avgGrade (iz
+    gradeValue average), bestDimension, rank (1 = best deals).
+  - trend: recentScore (zadnjih 30 dni) vs previousScore (30-60
+    dni) + trend (IMPROVING/STABLE/DECLINING glede na ±5 delta).
+  - recommendations: bestCategory, improvementFocus (glede na
+    weakest dimension), advice (slovenski povzetek z grade, trend,
+    dimenzije, kategorije).
+  - Pure DB analytics — NO AI. GET handler only (analytics endpoint).
+  - Empty state: če ni SOLD trade-ov, vrne prazne arrays + message
+    "Ni SOLD trade-ov — Deal Quality Scorecard ni mogoč."
+
+### Changed
+
+- **AI_ENDPOINTS.md**: regeneriran z Python skripto — "Total: 314
+  endpoints" (313 → 314, +1 AI: inventory-roi-optimizer).
+- **README.md**: verzija v7.78.0 → v7.79.0, AI Endpoints badge 313 →
+  314, API Routes badge 473 → 476 (+3: 1 AI + 2 analytics), tagline
+  "313 AI endpointov + 55 analytics" → "314 AI endpointov + 57
+  analytics" (+2 analytics: listing-engagement-analytics,
+  deal-quality-scorecard), overview "v7.78.0 / ~159 funkcij" →
+  "v7.79.0 / ~162 funkcij", dodan v7.79 blok (3 funkcije) v "Kaj
+  je novega", AI Hub badge v tabeli 313 → 314, endpointi v AI primeri
+  blok (1 AI + 2 analytics dodani), profit pipeline list (100+ →
+  103+ funkcij), analytics list (55 → 57), testing "473 routes" →
+  "476 routes", roadmap "v7.78 (trenutno)" → "v7.79 (trenutno)",
+  naslednji koraki "v7.50-v7.78" → "v7.50-v7.79", zadnje verzije
+  dodan v7.79.0 na vrh, AI_ENDPOINTS.md link 313 → 314, "do v7.78"
+  → "do v7.79".
+- **CHANGELOG.md**: dodana nova [7.79.0] sekcija nad [7.78.0] z
+  vsemi 3 endpoint-i in podrobnimi opisi (response shape, anti-
+  hallucination rules, AI cache key, deterministic fallback, example
+  comment, razlika od podobnih obstoječih endpoint-ov — inventory-
+  roi-optimizer vs inventory-profit-maximizer/inventory-profitabil-
+  ity-analyzer/refurb-roi-calculator/roi-leaderboard/deal-source-
+  roi/inventory-liquidation-optimizer/inventory-rebalancer-v3;
+  listing-engagement-analytics vs listing-exposure-score/listing-
+  engagement-predictor/buyer-engagement-optimizer/buyer-engagement-
+  predictor-v2/deal-conversion-funnel-analyzer/listing-performance;
+  deal-quality-scorecard vs deal-scoring-model-v2/deal-quality-
+  forecaster/deal-quality-distribution/deal-winning-streak-analyzer/
+  deal-conversion-funnel-analyzer/deal-anatomy-analyzer/deal-prof-
+  itability-matrix), [Unreleased] posodobljen na v7.80+.
+- Verzija aplikacije: v7.79.0
 
 ## [7.78.0] - 2026-08-20
 
