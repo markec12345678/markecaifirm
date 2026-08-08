@@ -11285,3 +11285,34 @@ Stage Summary:
 - TypeScript: 0 napak ✨ (EXIT 0)
 - dev.log: vsi HTTP requesti vračajo 200 OK, brez error/warn (empty-state — AI se sploh ne kliče brez SOLD/HELD podatkov/listingov; analytics endpoint vrača prazne arrays z opisi brez errorja)
 - Verzija aplikacije: v7.85.0
+
+---
+Task ID: v7.85.1
+Agent: main
+Task: v7.85 commit + push + GitHub About + Agent Browser verification
+
+Work Log:
+- Prejel poročilo od full-stack-developer podagenta (Task v7.85)
+- Preveril 3 nove endpoint-e: profit-margin-forecaster-pro (200 GET+POST), inventory-turnover-accelerator-pro (200 GET+POST), deal-source-performance-tracker (200 GET)
+- Preveril doc sync: AI_ENDPOINTS.md (323 ✅), README v7.85 (14 refs ✅), README 323 AI (6 refs ✅), CHANGELOG v7.85 ✅
+- Preveril lint: 0 napak ✨
+- Preveril typecheck: 0 napak ✨
+- Posodobil GitHub About opis: 321 AI → 323 AI, 491 routes → 494 routes (via API PATCH)
+- Commit: "v7.85: Profit Margin Forecaster Pro + Inventory Turnover Accelerator Pro + Deal Source Performance Tracker" (d5e542a)
+- Push na GitHub: uspešen ✅, PAT očiščen ✅
+- Agent Browser self-verification:
+  - Stran se pravilno naloži (HTTP 200)
+  - AI Hub prikazuje profit-margin-forecaster-pro (v7.85) v iskalniku ✅
+  - Runner test: klik na profit-margin-forecaster-pro → POST request → valid JSON ✅
+  - Response: {"ok":true, "current":{...}, "influencers":{...}, "forecast":{baseCase, bestCase, worstCase}, "analysis":{...}, "aiUsed":false, "message":"Ni SOLD zgodovine..."}
+  - Brez runtime napak v dev.log
+
+Stage Summary:
+- v7.85 uspešno dokončana in potisnjena na GitHub
+- 3 nove funkcije: AI Profit Margin Forecaster Pro, Inventory Turnover Accelerator Pro, Deal Source Performance Tracker
+- AI endpointi: 321 → 323 (+2)
+- Analytics endpointi: 65 → 66 (+1)
+- Total API routes: 491 → 494 (+3)
+- Dokumentacija sinhrono posodobljena (AI_ENDPOINTS.md, README, CHANGELOG, GitHub About)
+- GitHub sinhroniziran (0 commit-ov ahead)
+- Verzija aplikacije: v7.85.0
