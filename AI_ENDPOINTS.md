@@ -1,6 +1,6 @@
 # AI Endpoints
 
-**Total: 330 endpoints**
+**Total: 331 endpoints**
 
 Avtomatsko generirano iz `src/app/api/ai/`.
 
@@ -312,27 +312,28 @@ Avtomatsko generirano iz `src/app/api/ai/`.
 | 304 | seasonal-timing-optimizer | `/api/ai/seasonal-timing-optimizer` |
 | 305 | seller-churn-predictor | `/api/ai/seller-churn-predictor` |
 | 306 | seller-negotiation-strategist | `/api/ai/seller-negotiation-strategist` |
-| 307 | seller-reliability-v2 | `/api/ai/seller-reliability-v2` |
-| 308 | seller-response-predictor | `/api/ai/seller-response-predictor` |
-| 309 | seller-trust-score-v2 | `/api/ai/seller-trust-score-v2` |
-| 310 | sentiment-analysis | `/api/ai/sentiment-analysis` |
-| 311 | smart-alert-router | `/api/ai/smart-alert-router` |
-| 312 | smart-bundle-pricing | `/api/ai/smart-bundle-pricing` |
-| 313 | smart-pricing-engine | `/api/ai/smart-pricing-engine` |
-| 314 | smart-reorder-advisor | `/api/ai/smart-reorder-advisor` |
-| 315 | smart-restock | `/api/ai/smart-restock` |
-| 316 | sourcing | `/api/ai/sourcing` |
-| 317 | stockout-prevention | `/api/ai/stockout-prevention` |
-| 318 | suggest-filters | `/api/ai/suggest-filters` |
-| 319 | suggest-schedule | `/api/ai/suggest-schedule` |
-| 320 | supply-demand-balance | `/api/ai/supply-demand-balance` |
-| 321 | tax-aware-selling | `/api/ai/tax-aware-selling` |
-| 322 | tax-loss-harvesting | `/api/ai/tax-loss-harvesting` |
-| 323 | title-abtest | `/api/ai/title-abtest` |
-| 324 | tone-analyzer | `/api/ai/tone-analyzer` |
-| 325 | trade-performance-forecaster | `/api/ai/trade-performance-forecaster` |
-| 326 | trade-replication-engine | `/api/ai/trade-replication-engine` |
-| 327 | trading-coach | `/api/ai/trading-coach` |
-| 328 | trend-predictions | `/api/ai/trend-predictions` |
-| 329 | turnover-optimizer | `/api/ai/turnover-optimizer` |
-| 330 | vendor-reliability | `/api/ai/vendor-reliability` |
+| 307 | seller-performance-forecaster | `/api/ai/seller-performance-forecaster` |
+| 308 | seller-reliability-v2 | `/api/ai/seller-reliability-v2` |
+| 309 | seller-response-predictor | `/api/ai/seller-response-predictor` |
+| 310 | seller-trust-score-v2 | `/api/ai/seller-trust-score-v2` |
+| 311 | sentiment-analysis | `/api/ai/sentiment-analysis` |
+| 312 | smart-alert-router | `/api/ai/smart-alert-router` |
+| 313 | smart-bundle-pricing | `/api/ai/smart-bundle-pricing` |
+| 314 | smart-pricing-engine | `/api/ai/smart-pricing-engine` |
+| 315 | smart-reorder-advisor | `/api/ai/smart-reorder-advisor` |
+| 316 | smart-restock | `/api/ai/smart-restock` |
+| 317 | sourcing | `/api/ai/sourcing` |
+| 318 | stockout-prevention | `/api/ai/stockout-prevention` |
+| 319 | suggest-filters | `/api/ai/suggest-filters` |
+| 320 | suggest-schedule | `/api/ai/suggest-schedule` |
+| 321 | supply-demand-balance | `/api/ai/supply-demand-balance` |
+| 322 | tax-aware-selling | `/api/ai/tax-aware-selling` |
+| 323 | tax-loss-harvesting | `/api/ai/tax-loss-harvesting` |
+| 324 | title-abtest | `/api/ai/title-abtest` |
+| 325 | tone-analyzer | `/api/ai/tone-analyzer` |
+| 326 | trade-performance-forecaster | `/api/ai/trade-performance-forecaster` |
+| 327 | trade-replication-engine | `/api/ai/trade-replication-engine` |
+| 328 | trading-coach | `/api/ai/trading-coach` |
+| 329 | trend-predictions | `/api/ai/trend-predictions` |
+| 330 | turnover-optimizer | `/api/ai/turnover-optimizer` |
+| 331 | vendor-reliability | `/api/ai/vendor-reliability` |

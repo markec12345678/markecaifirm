@@ -6,11 +6,221 @@ Format sledi [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), verzije s
 
 ## [Unreleased]
 
-Načrtovano za v7.89+:
+Načrtovano za v7.90+:
 - WebSocket real-time negotiation (SSE namesto polling)
 - Playwright E2E testi za glavne flow-e
 - TLS fingerprinting (curl-impersonate)
 - ML model za buyer matchmaker (fine-tuned na realnem data)
+
+## [7.89.0] - 2026-08-12
+
+### Added — AI Seller Performance Forecaster & Market Trend Acceleration Tracker & Deal Source Profitability Analyzer (3 funkcije)
+
+- **AI Seller Performance Forecaster** — `GET+POST /api/ai/seller-performance-forecaster`
+  - AI forecast-a FUTURE performance vsakega sellerja — predicted deal
+    volume, profit, in reliability čez naslednjih 30/60/90 dni z
+    lifecycle stage + recommended engagement + outreach timing. Razlika
+    od seller-performance-analytics (v7.77 ki da current performance
+    snapshot) — ta FORECAST-a future performance z lifecycle stage +
+    engagement + outreach timing. "Marjan: 12 trades, +8%/mo trend.
+    30d forecast: 3 trades, +450€. Stage: GROWING. Increase engagement."
+  - sellers: per seller (z 2+ SOLD trgovinami v 12m) — historical {
+    totalTrades, totalProfit, avgProfitPerTrade, avgROI, tradeFrequency
+    (trades per month), frequencyTrend (INCREASING / STABLE /
+    DECREASING iz monthly counts slope ±0.15), profitTrend (IMPROVING
+    / STABLE / DECLINING iz profit-per-trade slope ±5),
+    daysSinceLastTrade, reliabilityTier (PLATINUM / GOLD / SILVER /
+    BRONZE iz profitScore 40% + volumeScore 30% + roiScore 20% +
+    recencyScore 10%) }, forecast { predictedTrades30d / 60d / 90d
+    (clamped [0, 50], trend-adjusted z 1.15/0.85 multiplier iz
+    frequencyTrend), predictedProfit30d (clamped [0, 10000], profit-
+    trend adjusted z 1.10/0.90 multiplier), predictedAvgROI (clamped
+    [-100, 500], ±10 adj od historical), performanceForecast (IMPROVING
+    / STABLE / DECLINING iz combined frequency + profit trends),
+    forecastConfidence 0-100 (iz volume + recency + tier: base 30 +
+    min(40, totalTrades × 4) + recency 20/10/0 + tier 10/5/0),
+    sellerLifecycleStage (EMERGING / GROWING / MATURE / DECLINING iz
+    totalTrades + frequency + profit trends + recency),
+    recommendedEngagement (INCREASE / MAINTAIN / REDUCE / EXIT iz stage
+    + perfForecast + tier), outreachTiming (max 200 chars — KDAJ
+    kontaktirati sellerja za najboljše pogoje), reasoning (max 300
+    chars — zakaj ta forecast) }.
+  - summary: totalSellers, improvingCount, decliningCount,
+    bestForecastSeller (highest predictedProfit30d z non-DECLINING
+    trend), totalPredictedProfit30d, advice (max 400 chars slovensko —
+    iz improving vs declining count + best seller).
+  - Compute: query SOLD trades 12m z linked Listing (za sellerName);
+    aggregate per seller (totalTrades, profitSum, profitPerTrade[],
+    buyCostSum, tradeDates[], monthlyTradeCounts[12]); compute
+    frequencyTrend iz monthly slope, profitTrend iz per-trade slope;
+    build deterministic forecast (predictedTrades = frequency ×
+    months × trendMult, predictedProfit = trades × avgProfit ×
+    profitMult, lifecycle stage iz totalTrades + frequency + profit
+    trends + recency, engagement iz stage + tier + perfForecast).
+  - AI-enhanced z grounding (sellers + historical + deterministicForecast
+    + caps) + anti-hallucination (predictedTrades30d ±5 / 60d ±10 / 90d
+    ±15, predictedProfit30d ±20%, predictedAvgROI ±10, forecastConfidence
+    ±15; performanceForecast / sellerLifecycleStage / recommendedEngagement
+    validirana proti enum; outreachTiming max 200 chars, reasoning max
+    300 chars; summary max 400) + 6h cache (key
+    `seller-performance-forecaster:${totalSellers}`) + deterministic
+    fallback (compute iz frequency × avgProfit). GET+POST (AI Hub runner
+    kompatibilnost — handleSellerPerformanceForecaster shared function).
+  - Razlika od seller-performance-analytics (v7.77 ki da current
+    performance snapshot) — ta FORECAST-a future performance z lifecycle
+    + engagement. Razlika od seller-reliability-scorecard (v7.80 ki da
+    current reliability scorecard) — ta forecast-a future reliability +
+    engagement. Razlika od seller-churn-predictor (v7.84 ki predict-a
+    churn risk) — ta forecast-a PERFORMANCE (volume + profit) ne churn.
+    Razlika od seller-reliability-v2 / seller-trust-score-v2 (ki merita
+    reliability/trust) — ta forecast-a lifecycle + engagement action.
+
+- **Market Trend Acceleration Tracker** — `GET /api/analytics/market-trend-acceleration-tracker`
+  - Pure DB track-a ACCELERATION (2nd derivative) market trend-ov — ne
+    samo "is it rising?" temveč "is the rate of rise speeding up or
+    slowing down?". Razlika od market-trend-momentum (v7.73 ki track-a
+    momentum 1st derivative) — ta track-a ACCELERATION (2nd derivative
+    — change in momentum). "Overall: ACCELERATING_UP (score 72). Price
+    momentum +5€/wk, accel +1€/wk². Volume speeding up. Best:
+    elektronika (ACCEL_UP)."
+  - overall: accelerationScore 0-100 (iz weighted classToScore: 30%
+    price + 25% volume + 20% quality + 25% opportunity), classification
+    (ACCELERATING_UP / DECELERATING_UP / FLAT / DECELERATING_DOWN /
+    ACCELERATING_DOWN iz score thresholds 75/60/40/25), summary (max
+    400 chars slovensko).
+  - metrics: { price, volume, quality, opportunity } — vsak z momentum
+    (1st derivative = linear regression slope per week), acceleration
+    (2nd derivative = slope second half - slope first half, requires
+    ≥4 weeks), classification (iz momentum sign + acceleration sign),
+    interpretation (max ~250 chars slovensko — ali trend raste/pada
+    in pospešuje/upočasnjuje) }.
+  - byCategory: [ { category (iz monitor.source — Listing nima category
+    polja), accelerationScore 0-100, classification, priceAcceleration,
+    volumeAcceleration } ] (≥4 weeks required per category).
+  - historical: accelerationPattern [ { week (ISO date), acceleration
+    (2nd derivative value), event (accelerating_up / accelerating_down /
+    decelerating_up / decelerating_down / stable) } ] (sliding 5-week
+    window za vsak week from index 4 onwards), lastAccelerationUp (ISO
+    date), lastAccelerationDown (ISO date).
+  - insights: accelerationTrend (SPEEDING_UP / STABLE / SLOWING_DOWN iz
+    recent 8-week acceleration), bestAcceleratingCategory, worstDeceleratingCategory,
+    advice (max 500 chars slovensko — iz overall classification + best/
+    worst category).
+  - Compute: query listings zadnjih 180 dni (price, dealScore, aiVerdict,
+    firstSeenAt, monitor.source), group by ISO week (26 weeks aligned to
+    Monday), compute weekly avg price/volume/quality (avg dealScore)/
+    opportunity (prilika rate = PRILIKA listings / total × 100); linear
+    regression slopes za 1st derivative (momentum) per metric;
+    computeAcceleration = slope second half - slope first half za 2nd
+    derivative; classifyAcceleration iz momentum sign + acceleration sign
+    (positive momentum + positive accel = ACCELERATING_UP, positive
+    momentum + negative accel = DECELERATING_UP, near-zero momentum =
+    FLAT, negative momentum + positive accel = DECELERATING_DOWN,
+    negative momentum + negative accel = ACCELERATING_DOWN); compute
+    overall score iz weighted classifications; per-category analysis
+    (≥4 weeks); historical sliding-window acceleration pattern;
+    acceleration trend iz last 8 weeks.
+  - Pure DB (NO AI). GET handler only.
+  - Razlika od market-trend-momentum (v7.73 ki track-a momentum 1st
+    derivative) — ta track-a ACCELERATION (2nd derivative — change in
+    momentum). Razlika od market-trend-forecaster-pro (v7.78 AI ki
+    forecast-a trend) — ta je pure DB ANALYSIS čez 26 tednov z 2nd
+    derivative. Razlika od market-trend (ki rising/falling) — ta gleda
+    acceleration (speeding up / slowing down). Razlika od weekly-trend-
+    radar (7-day) — ta je 26-tedenski z 2nd derivative.
+
+- **Deal Source Profitability Analyzer** — `GET /api/analytics/deal-source-profitability-analyzer`
+  - Pure DB deep profitability analiza per deal source — razčleni
+    profit na komponente (price margin, volume contribution, fee impact,
+    efficiency) in identificira kaj profitabilnost per source poganja.
+    Razlika od deal-source-roi (ki da simple ROI calculation) — ta
+    DECOMPOSES profitability na drivers (price/cost/volume/efficiency).
+    "Bolha: profit 3200€, margin 28%, markup 42%, score 85/100 (#1).
+    Driver: cost (-15% below estValue). Vinted: 800€, score 58/100 (#2)."
+  - sources: [ { source, displayName, components { grossProfit, revenue
+    (= sellPrice - sellFees), cost (= buyPrice + buyFees), grossMargin
+    (= grossProfit / revenue × 100), markupPercent (= (revenue - cost) /
+    cost × 100), feeImpactPercent (= totalFees / revenue × 100 — lower
+    is better), volumeContribution (= tradeCount × avgProfitPerTrade),
+    efficiencyScore (= grossProfit / avgHoldDays, € per day held),
+    tradeCount, avgProfitPerTrade }, drivers { priceDriver { value (avg
+    sell price), impact POSITIVE/NEGATIVE/NEUTRAL, detail max 200 chars }
+    (vs market avg sell price ±5%), costDriver { value, impact, detail }
+    (avg buy price vs avg estValue — buy below estValue = POSITIVE),
+    volumeDriver { value (trade count), impact, detail } (vs market avg
+    per source ±10%), efficiencyDriver { value (avgHoldDays), impact,
+    detail } (vs market avg hold days ±10% — lower hold days = POSITIVE)
+    }, profitabilityScore 0-100 (30% grossMargin + 25% markupPercent +
+    20% volumeContribution relative to top source + 15% efficiencyScore
+    relative to top + 10% feeImpact inverse — lower fees = higher
+    score), profitabilityRank (1 = best), trend { recent3mProfit,
+    previous3mProfit, trendDirection (IMPROVING / STABLE / DECLINING iz
+    delta ±10%), trendPercent } } ].
+  - summary: totalProfit, bestProfitSource, worstProfitSource,
+    mostImprovedSource (highest positive trendPercent), avgProfitabilityScore,
+    advice (max 500 chars slovensko — iz top/bottom source + most
+    improved + recommendation).
+  - Compute: query SOLD trades 12m z linked Listing (za monitor.source +
+    aiEstimatedValue); aggregate per source (grossProfit, revenue, cost,
+    fees, tradeCount, totalHoldDays, estValueSum, sellPriceSum, buyPriceSum,
+    recent3mProfit, previous3mProfit); compute components (grossMargin,
+    markupPercent, feeImpact, volumeContribution, efficiencyScore);
+    compute market averages (across all sources) za driver comparisons;
+    classify each driver impact (POSITIVE/NEGATIVE/NEUTRAL); compute
+    profitability score z weighted formula; rank sources by score desc;
+    trend (recent 3m vs previous 3m profit).
+  - Pure DB (NO AI). GET handler only.
+  - Razlika od deal-source-roi (ki da simple ROI calculation) — ta
+    DECOMPOSES profitability na drivers (price/cost/volume/efficiency).
+    Razlika od deal-source-comparison-matrix (v7.70 ki primerja trenutne
+    atribute source-ov) — ta gleda PROFITABILITY components + drivers +
+    rank. Razlika od deal-source-intelligence (v7.82 AI ki da source
+    intelligence) — ta je pure DB z decomposition. Razlika od deal-
+    source-trend-analyzer (v7.87 ki analizira trends) — ta gleda
+    PROFITABILITY komponente ne trends. Razlika od deal-source-
+    performance-tracker (v7.85) in deal-source-quality-tracker (v7.86)
+    — ta gleda PROFITABILITY z driver analysis.
+
+### Changed
+- **Dokumentacija sinhronizirana z novimi endpointi:**
+  - **AI_ENDPOINTS.md:** regeneriran z python3 skripto — "Total: 331
+    endpoints" (330 → 331, +1 AI: seller-performance-forecaster pos 307).
+  - **README.md** (20 urejanj): version badge v7.88.0 → v7.89.0; AI
+    Endpoints badge 330 → 331; API Routes badge 503 → 506 (+3); tagline
+    "330 AI endpointov + 68 analytics" → "331 AI endpointov + 70
+    analytics"; Overview "Verzija v7.88.0" → "v7.89.0" in "330 AI + 68
+    analytics + ~189 funkcij" → "331 AI + 70 analytics + ~192 funkcij";
+    "Kaj je novega v v7.56–v7.88 (33 verzij, 99 novih funkcij)" →
+    "...v7.56–v7.89 (34 verzij, 102 novih funkcij)"; dodan v7.89 blok
+    (3 funkcije) na vrh z detajlnimi opisi vseh 3 endpoint-ov
+    (response shape, anti-hallucination pravila, AI cache key,
+    deterministic fallback, example comment, razlika od podobnih
+    obstoječih endpoint-ov); AI Hub badge v tabeli "Vsi 330 AI
+    endpointov" → "Vsi 331 AI endpointov"; "Glej AI_ENDPOINTS.md za
+    popoln seznam vseh 330 AI endpointov" → "...331 AI endpointov";
+    "Endpointi (330 AI + 68 analytics + 10 cron + sistemski = 503)" →
+    "...(331 AI + 70 analytics + 10 cron + sistemski = 506)"; dodana 3
+    nova endpointa v AI primeri blok (seller-performance-forecaster
+    v7.89 v 1 lokaciji, market-trend-acceleration-tracker v7.89 v
+    analytics seznamu, deal-source-profitability-analyzer v7.89 v
+    analytics seznamu); "Profit pipeline (v7.32-v7.88)" →
+    "...v7.32-v7.89"; "330 AI endpointov" v Project structure → "331 AI
+    endpointov"; "503 routes" v Coding standards → "506 routes"; "503
+    API routes" v Testing → "506 API routes"; Roadmap "v7.88 (trenutno
+    — ~189 funkcij)" → "v7.89 (trenutno — ~192 funkcij)"; profit
+    pipeline "(130+ funkcij)" → "(133+ funkcij)" in dodane 3 nove
+    funkcije (AI Seller Performance Forecaster, Market Trend
+    Acceleration Tracker, Deal Source Profitability Analyzer);
+    analytics seznam "(68)" → "(70)" in dodana 2 nova analytics
+    (Market Trend Acceleration Tracker, Deal Source Profitability
+    Analyzer); "UI komponente za v7.50-v7.88 funkcije" → "...v7.50-v7.89
+    funkcije"; "do v7.88 (avgust 2026)" → "do v7.89 (avgust 2026)";
+    "Zadnje verzije": dodan "v7.89.0 (avgust 2026) — AI Seller
+    Performance Forecaster, Market Trend Acceleration Tracker, Deal
+    Source Profitability Analyzer" na vrh.
+  - **CHANGELOG.md** (to sekcija): dodana nova "[7.89.0] - 2026-08-12"
+    sekcija z vsemi 3 endpoint-i in podrobnimi opisi; "[Unreleased]
+    Načrtovano za v7.89+" → "...za v7.90+".
 
 ## [7.88.0] - 2026-08-11
 
