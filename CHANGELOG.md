@@ -6,11 +6,350 @@ Format sledi [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), verzije s
 
 ## [Unreleased]
 
-Načrtovano za v7.82+:
+Načrtovano za v7.83+:
 - WebSocket real-time negotiation (SSE namesto polling)
 - Playwright E2E testi za glavne flow-e
 - TLS fingerprinting (curl-impersonate)
 - ML model za buyer matchmaker (fine-tuned na realnem data)
+
+## [7.82.0] - 2026-08-24
+
+### Added — AI Deal Source Intelligence & Market Opportunity Scanner & Profit Margin Trend Analyzer (3 funkcije)
+
+- **AI Deal Source Intelligence** — `GET+POST /api/ai/deal-source-intelligence`
+  - AI generira celovit INTELLIGENCE report za vsak deal source
+    (Bolha, Vinted, Facebook, mobile.de, Avtonet) — kombinira
+    ROI, risk, reliability, opportunity in trend v eno
+    intelligence scorecard per source. "Bolha: A grade (88/100,
+    HIGH strategic value). Strengths: high ROI, fast turnover.
+    Increase focus." Razlika od deal-source-roi (v7.58, ki
+    gleda ROI per source) — ta generira COMPOSITE intelligence
+    scorecard (overall 0-100 + grade A+ do F) z
+    strengths/weaknesses/strategicValue/recommendedAction per
+    source + cross-source opportunities + risk assessment.
+    Razlika od deal-source-comparison-matrix (v7.70, ki
+    primerja source × category) — ta gleda STRATEGIC
+    intelligence per source z recommended action
+    (INCREASE_FOCUS/MAINTAIN/REDUCE/EXIT) +
+    crossSourceOpportunities. Razlika od source-quality (ki
+    ocenjuje monitore po listing quality) — ta gleda celovit
+    INTELLIGENCE (ROI + reliability + opportunity + trend) z
+    composite score + grade. Razlika od
+    seller-reliability-scorecard (v7.80, ki ocenjuje
+    POSAMEZNE sellerje) — ta ocenjuje SOURCES (platforme) z
+    composite intelligence score + recommended action.
+  - Query SOLD trades (status='sold', sellDate not null,
+    sellPrice not null) z linked Listing (select dealScore,
+    aiRisk, monitor.source) + buyLocation. orderBy sellDate
+    asc. take 100000.
+  - Agregacija per source (aggregateBySource): source iz
+    monitor.source (fallback buyLocation, normalizeSource
+    funkcija skrbi za bolha/vinted/facebook/avtonet/mobilede/
+    kleinanzeigen/subito/willhaben/nepremicnine/salomon/custom-rss
+    normalizacijo). Per trade compute profit/revenue/cost/win/
+    dealScore/aiRisk/holdDays/sellMs.
+  - Per-source metrics (computeSourceMetrics, 10 metrik):
+    - totalTrades = število SOLD trade-ov.
+    - totalProfit = sum profit (rounded 0).
+    - avgROI = (totalProfit / totalCost) × 100 (rounded 1).
+    - winRate = (wins / totalTrades) × 100 (rounded 1).
+    - avgDealScore = avg listing.dealScore (če > 0).
+    - avgRiskScore = avg listing.aiRisk (1-10) × 10 → 0-100.
+    - avgHoldDays = avg daysBetween(buyDate, sellDate).
+    - reliabilityScore = winRate × 0.6 + profitStability × 0.4
+      (profitStability = 100 - clampedCv × 100/3, kjer CV =
+      stddev/|mean|, clamp 0-3).
+    - opportunityScore = volumeComponent × 0.3 + profitPotential ×
+      0.4 + dealQuality × 0.3 (volumeComponent = min(100,
+      totalTrades/20 × 100); profitPotential = min(100, max(0,
+      avgProfitPerTrade/100 × 100)); dealQuality = avgDealScore).
+    - trendScore = 50 + trendPct/2, kjer trendPct =
+      (recentProfit - priorProfit) / |priorProfit| × 100
+      (recent 6m vs prior 6m, clamped 0-100). Če recent > 0 in
+      prior ≤ 0 → 80 (emerging). Če recent ≤ 0 in prior > 0 →
+      20 (declining).
+  - Deterministic scorecard (buildDeterministicScorecard):
+    - overallIntelligenceScore = weighted composite 0-100:
+      reliabilityScore × 0.25 + opportunityScore × 0.25 +
+      roiNormalized × 0.25 (cap 100) + winRate × 0.15 + trendScore
+      × 0.1. Round 0.
+    - intelligenceGrade = A+ (≥90) / A (80-89) / B (70-79) /
+      C (55-69) / D (40-54) / F (<40). Vedno izračunaj iz
+      score-a (anti-hallucination: ne AI generation).
+    - strategicValue = HIGH (≥70) / MEDIUM (45-69) / LOW (<45).
+    - recommendedAction = INCREASE_FOCUS (score ≥75 in winRate
+      ≥60) / MAINTAIN (50-74) / REDUCE (30-49) / EXIT (<30).
+    - strengths: 2-3 deterministično iz metrik (Visok ROI
+      ≥30%, Soliden ROI ≥15%, Visoka win rate ≥70%, Hiter
+      turnover ≤14 dni, Visoka zanesljivost ≥70, Rastoči trend
+      ≥65, Kvalitetne ponudbe ≥60). Max 3, fallback "Brez
+      izrazitih prednosti".
+    - weaknesses: 2-3 deterministično (Nizek ROI <10, Nizka win
+      rate <50, Počasen turnover >45 dni, Nizka zanesljivost
+      <40, Padajoči trend ≤35, Visoko tveganje ≥60, Majhen
+      vzorec <3). Max 3, fallback "Brez izrazitih slabosti".
+  - ranking: sources sort by overallIntelligenceScore desc,
+    rank 1 = best.
+  - riskAssessment: per source z riskLevel (LOW/MEDIUM/HIGH —
+    HIGH če avgRiskScore ≥60 ali winRate <40; MEDIUM če ≥40 ali
+    <60; LOW sicer) in riskFactors (2-4 deterministično iz
+    metrik: Visok AI risk, Nizka win rate, Dolgi hold, Majhen
+    vzorec, Negativen ROI, Padajoči trend).
+  - crossSourceOpportunities (deterministic fallback): 0-3
+    multi-source synergies. Kategorije z opportunityScore ≥50
+    in reliabilityScore ≥50 — predlog "Povečaj nabavo na X in
+    distribucijo prek Y" z expectedProfit =
+    (totalProfit/totalTrades) × 3.
+  - AI prompt z grounding — metrics per source (z
+    deterministicScorecard za referenco), slovenska pravila
+    za AI response (overallIntelligenceScore AI can adjust max
+    ±15 od deterministic, grade/strategic/action validirani
+    proti enum in recomputed iz score-a, strengths/weaknesses
+    max 80 chars, expectedProfit clamped [0, 10000],
+    crossSourceOpportunities z ≥2 sources, riskAssessment z
+    riskLevel validirana proti enum in riskFactors 2-4).
+  - AI generira: scorecards (override overallIntelligenceScore
+    z anti-hallucination clamp ±15, override strengths/
+    weaknesses/riskFactors z max lengths),
+    crossSourceOpportunities (0-3 z opportunity/sources/
+    expectedProfit), riskAssessment (per source z riskLevel/
+    riskFactors), summary (slovenski povzetek max 400 znakov).
+  - Anti-hallucination: overallIntelligenceScore AI adjustment
+    clamped [-15, +15] od deterministic vrednosti (prepreči
+    AI-ju da bi povedal 100/100 brez osnove). Grade, strategic
+    in action VEDNO recomputed iz clamped score — AI ne more
+    direktno postaviti. expectedProfit clamped [0, 10000].
+    recommendedAction in riskLevel validirani proti enum
+    (INCREASE_FOCUS/MAINTAIN/REDUCE/EXIT, LOW/MEDIUM/HIGH).
+  - AI cache key `deal-source-intelligence:${currentMonth}`
+    (6h TTL — invalidated ko se mesec spremeni).
+  - Deterministic fallback aktiven ko AI manjka (compute iz
+    10 metrik in weighted composite).
+  - GET+POST z handleDealSourceIntelligence(req) shared
+    function (AI Hub runner kompatibilnost).
+  - Empty state: če ni SOLD trade-ov → prazne arrays + message
+    "Ni zgodovinskih prodaj (SOLD) s povezanim Listing — Deal
+    Source Intelligence ni mogoč."
+  - maxDuration = 60, runtime = 'nodejs', dynamic =
+    'force-dynamic'.
+
+- **Market Opportunity Scanner** — `GET+POST /api/ai/market-opportunity-scanner`
+  - AI skenira trg za NOVIMI priložnostmi — underserved
+    kategorije, price discrepancies, emerging trendi,
+    arbitrage možnosti. "Top opportunity: UNDERSERVED_CATEGORY
+    (moda accessories, +400€ potential, 85% confidence).
+    Action: search Bolha za 'nakit'." Razlika od market-gap-
+    finder (ki najde current gaps) — ta je AI-powered
+    opportunity DISCOVERY z opportunity type klasifikacijo
+    (UNDERSERVED/PRICE_DISCREPANCY/EMERGING_TREND/ARBITRAGE) in
+    prioritized actions. Razlika od market-gap-forecaster
+    (v7.71, ki napove future gaps) — ta generira ranked top
+    opportunities z confidence 0-100 + timeWindow +
+    actionRequired. Razlika od bundle-opportunity-detector
+    (ki išče bundle priložnosti) — ta gleda MARKET-WIDE
+    priložnosti (underserved, discrepancy, trend, arbitrage) z
+    riskFlags + prioritizedActions. Razlika od inventory-
+    opportunity-scanner (ki išče inventory priložnosti) — ta
+    gleda MARKET priložnosti (ne inventory) z opportunityType
+    klasifikacijo. Razlika od market-intelligence-engine (v7.76,
+    ki je executive dashboard) — ta je opportunity DISCOVERY z
+    top opportunities ranked + prioritizedActions.
+  - Query listings zadnjih 30 dni (isHidden false, firstSeenAt
+    gte cutoff30d) z monitor.source/aiEstimatedValue/dealScore/
+    isBookmarked/contactStatus. take 200000. Plus SOLD trades
+    za historical patterns (category, sellPrice, buyPrice).
+    take 100000.
+  - Per-kategorija agregacija (aggregateByCategory): category =
+    monitor.source (Listing nima category field, uporabimo
+    monitor.source kot proxy). Per kategorija — total,
+    bookmarked, contacted, recentCount (14 dni), priorCount
+    (14-28 dni), avgPrice, avgEstValue, priceDiscrepancySum
+    (sum estValue - price za underpriced), priceDiscrepancyCount,
+    avgDealScore (sum za povprečje), sources Set (za arbitrage
+    detection če >1 vir).
+  - Opportunity signals (computeOpportunitySignals, 4 tipi):
+    - underserved: demandScore (min(100, (sold+engaged)/
+      max(10, total) × 100)) vs supplyScore (min(100, total/50
+      × 100)). gapScore = 50 + (demand - supply) × 0.5 (clamped
+      0-100). Trigger če gapScore ≥55 in demandRaw ≥2.
+      expectedProfit = min(10000, max(50, avgPrice × 0.3)).
+    - priceDiscrepancies: avgDiscountPercent =
+      (priceDiscrepancySum / count) / max(1, avgPrice) × 100.
+      Trigger če count ≥2 in avgDiscount ≥10%. expectedProfit =
+      min(10000, max(50, priceDiscrepancySum / count)).
+      confidence = min(95, 40 + avgDiscount).
+    - emergingTrends: recentCount vs priorCount. growthRate =
+      (recent - prior) / prior × 100 (ali 100 če prior = 0).
+      Trigger če recentCount ≥3 in growthRate ≥50%. confidence =
+      min(90, 40 + growthRate/5).
+    - arbitrage: kategorije z ≥2 sources (več platform).
+      priceSpread = min(50, max(10, avgPrice × 0.001)).
+      expectedProfit = min(10000, max(50, avgPrice × 0.15)).
+      confidence = 50 (sintetično).
+  - Deterministic top opportunities (buildDeterministicTop
+    Opportunities): top 3 underserved + top 3 priceDiscrepancies
+    + top 2 emergingTrends + top 2 arbitrage. Sort by
+    confidenceScore desc, slice 10. Vsaka z opportunityType,
+    category, description (slovenski, max 250), expectedProfit
+    (0-10000), confidenceScore (0-100), timeWindow, actionRequired
+    (2-4 konkretne slovenske akcije).
+  - marketGaps: top 5 underserved z gap/category/gapScore 0-100/
+    potential.
+  - trendingOpportunities: top 5 emergingTrends z trend/category/
+    growthRate/stage (ACCELERATING ≥200% / GROWING ≥100% /
+    EARLY sicer).
+  - riskFlags: 2-5 iz signals — visok popust ≥40% (skrite
+    napake), hitra rast ≥200% (modni hit), arbitrage spread
+    (iluzorni spread zaradi fees). Vsak z opportunity/risk/
+    mitigation (slovenski).
+  - prioritizedActions: top 5 iz topOpportunities z action/
+    priority (HIGH ≥75 / MEDIUM ≥50 / LOW) / expectedROI
+    ("{profit}€ expected") / timeline (timeWindow).
+  - AI prompt z grounding — top 20 kategorij (z total/bookmarked/
+    contacted/avgPrice/avgEstValue/avgDealScore/sources/
+    recentCount/priorCount), 4 opportunity signals, deterministic
+    top opportunities (za referenco).
+  - AI generira: topOpportunities (5-10 z opportunityType/
+    category/description/expectedProfit/confidenceScore/
+    timeWindow/actionRequired), marketGaps (3-5), trending-
+    Opportunities (3-5), riskFlags (2-4 z opportunity/risk/
+    mitigation), prioritizedActions (3-5 z action/priority/
+    expectedROI/timeline), summary (slovenski max 400 znakov).
+  - Anti-hallucination: expectedProfit clamped [0, 10000],
+    confidenceScore clamped [0, 100], growthRate clamped [0,
+    500], opportunityType validirana proti enum
+    (UNDERSERVED_CATEGORY/PRICE_DISCREPANCY/EMERGING_TREND/
+    ARBITRAGE), priority validirana proti enum (HIGH/MEDIUM/
+    LOW), max lengths na opisih (description 250, actionRequired
+    200, opportunity 150, risk 250, mitigation 250, action 250,
+    timeWindow 80, expectedROI 50, timeline 80).
+  - AI cache key `market-opportunity-scanner:${currentWeek}`
+    (6h TTL — invalidated ko se teden spremeni). weekKeyOf
+    funkcija (YYYY-Www ISO-ish).
+  - Deterministic fallback aktiven ko AI manjka (compute iz 4
+    signalov in buildDeterministic* funkcij).
+  - GET+POST z handleMarketOpportunityScanner(req) shared
+    function (AI Hub runner kompatibilnost).
+  - Empty state: če ni listingov v 30 dneh → prazne arrays +
+    message "Ni listingov v zadnjih 30 dneh — Market
+    Opportunity Scanner ni mogoč."
+  - maxDuration = 60, runtime = 'nodejs', dynamic =
+    'force-dynamic'.
+
+- **Profit Margin Trend Analyzer** — `GET /api/analytics/profit-margin-trend-analyzer`
+  - Analizira profit margin TRENDE čez čas — ali se marže
+    izboljšujejo, stabilne ali padajo? Identificira kaj gnani
+    spremembe marže. "Margin trend: IMPROVING (+2.3%/mo,
+    momentum +0.5). Driver: price increases. Best: elektronika
+    (+5%/mo). Worst: avto (-2%/mo)." Pure DB analytics — NO AI.
+    Razlika od profit-margin-heatmap (ki prikaže category ×
+    price matrix) — ta gleda margin TREND čez 12 mesecev z
+    direction (IMPROVING/STABLE/DECLINING) in drivers
+    (price/cost/fee/efficiency). Razlika od profit-margin-
+    forecaster (v7.80, AI ki napove future margin) — ta
+    analizira HISTORICAL margin trend z 12m/3m linear
+    regression + momentum. Razlika od profit-margin-optimizer-
+    v2 (ki optimira margin) — ta gleda DRIVERS margin sprememb
+    (price/cost/fee/efficiency trend). Razlika od profit-
+    efficiency-analyzer (ki gleda profit per day) — ta gleda
+    margin PERCENT trend z drivers. Razlika od profit-margin-
+    predictor (AI ki napove future margin) — ta je pure DB
+    HISTORICAL analysis. Razlika od inventory-profit-margin-
+    tracker (ki track-a margin za inventar) — ta gleda margin
+    trend čez 12 mesecev z drivers in per-category rank.
+  - Query SOLD trades zadnjih 12 mesecev (status='sold',
+    sellDate not null + gte cutoff12m, sellPrice not null). take
+    100000, orderBy sellDate asc.
+  - Mesečna agregacija (buildMonthlyAgg): per YYYY-MM bucket —
+    profitSum, revenueSum, costSum, feesSum, tradeCount,
+    holdDaysSum, holdCount, roiSum (per trade ROI %), marginSum
+    (per trade margin % = profit/revenue × 100).
+  - trend: per-month avgMargin (marginSum/tradeCount) series.
+    - currentMargin = avgMargin zadnjega meseca.
+    - avgMargin12m = avg vseh mesecev.
+    - bestMargin12m = max, worstMargin12m = min.
+    - marginTrend12m = trendSlope (linear regression) over 12
+      months (%/mo).
+    - marginTrend3m = trendSlope nad zadnjimi 3 meseci.
+    - marginDirection = IMPROVING (slope > 0.5) / DECLINING
+      (< -0.5) / STABLE (sicer).
+    - marginVolatility = stdDev(monthlyMargins).
+    - marginMomentum = recent3Slope - prior3Slope (recent3 vs
+      prior3 mesece — acceleration of trend).
+  - monthlyData: per YYYY-MM z avgMargin, avgProfit, avgROI,
+    tradeCount (finalizeMonthly).
+  - drivers: 4 dimenzije z trend (linear slope), impact
+    (POSITIVE/NEGATIVE/NEUTRAL), detail (slovenski opis):
+    - priceDriver: trend revenue/trade (POSITIVE če ↑ — prodajne
+      cene rastejo).
+    - costDriver: trend cost/trade (POSITIVE če ↓ — nižji
+      stroški, inverted logika: -slope).
+    - feeDriver: trend fees/revenue ratio (POSITIVE če ↓ — manj
+      overhead, inverted: -slope).
+    - efficiencyDriver: trend holdDays (POSITIVE če ↓ — hitrejši
+      turnover, inverted: -slope).
+  - byCategory: per kategorija z currentMargin (avg zadnjih 3
+    mesecev), trend12m (slope per-category monthly margins),
+    direction (IMPROVING/STABLE/DECLINING ±0.5), rank (1 = best
+    trend, sort by trend12m desc). Skip kategorije z <3 total
+    trades ali <2 meseci podatkov.
+  - insights:
+    - marginPercentile = % mesecev z margin ≤ currentMargin
+      (koliko zgodovine je slabše od trenutnega).
+    - bestImprovingCategory: top 1 če trend12m > 0.
+    - worstDecliningCategory: bottom 1 če trend12m < 0.
+    - advice: slovenski concrete povzetek z direction, momentum,
+      volatilnost, best/worst 12m, percentile, drivers (price/
+      cost/fees/hold directions), best/worst kategorija, in
+      buy/rebalance priporočilo (DECLINING → zmanjšaj nabavo v
+      declining kat; IMPROVING+momentum > 0 → povečaj fokus na
+      improving; STABLE → optimiraj mix za višji avg margin).
+  - Pure DB analytics — NO AI. GET handler only (analytics
+    endpoint).
+  - Empty state: če ni SOLD trade-ov v 12m → vse 0 + STABLE
+    direction + prazne arrays + message "Ni zgodovinskih prodaj
+    (SOLD) v zadnjih 12 mesecih — Profit Margin Trend Analyzer
+    ni mogoč."
+  - runtime = 'nodejs', dynamic = 'force-dynamic'.
+
+### Changed
+
+- **AI_ENDPOINTS.md**: regeneriran z Python skripto → "Total: 318
+  endpoints" (316 → 318, +2 AI: deal-source-intelligence,
+  market-opportunity-scanner). Verificirano — deal-source-
+  intelligence na poziciji 92, market-opportunity-scanner na
+  poziciji 216.
+- **README.md**: verzija v7.81.0 → v7.82.0, AI Endpoints badge
+  316 → 318, API Routes badge 482 → 485 (+3: 2 AI + 1
+  analytics), tagline "316 AI endpointov + 61 analytics" →
+  "318 AI endpointov + 62 analytics" (+1 analytics: profit-
+  margin-trend-analyzer), overview "v7.81.0 / ~168 funkcij" →
+  "v7.82.0 / ~171 funkcij", dodan v7.82 blok (3 funkcije) v
+  "Kaj je novega v v7.56–v7.82 (27 verzij, 81 novih funkcij)",
+  AI Hub badge v tabeli 316 → 318, endpointi v AI primeri blok
+  (2 AI + 1 analytics dodani — deal-source-intelligence v7.82,
+  market-opportunity-scanner v7.82, profit-margin-trend-
+  analyzer v7.82), profit pipeline list (109+ → 112+ funkcij,
+  dodane 3 nove funkcije), analytics list (61 → 62, dodan 1 nov:
+  Profit Margin Trend Analyzer), testing "482 routes" →
+  "485 routes", roadmap "v7.81 (trenutno — ~168 funkcij)" →
+  "v7.82 (trenutno — ~171 funkcij)", naslednji koraki "v7.50-
+  v7.81" → "v7.50-v7.82", zadnje verzije dodan v7.82.0 na vrh,
+  AI_ENDPOINTS.md link 316 → 318, "do v7.81" → "do v7.82".
+- **CHANGELOG.md**: dodana nova [7.82.0] sekcija nad [7.81.0] z
+  vsemi 3 endpoint-i in podrobnimi opisi (response shape, anti-
+  hallucination rules, AI cache key, deterministic fallback,
+  example comment, razlika od podobnih obstoječih endpoint-ov —
+  deal-source-intelligence vs deal-source-roi/deal-source-
+  comparison-matrix/source-quality/seller-reliability-scorecard;
+  market-opportunity-scanner vs market-gap-finder/market-gap-
+  forecaster/bundle-opportunity-detector/inventory-opportunity-
+  scanner/market-intelligence-engine; profit-margin-trend-
+  analyzer vs profit-margin-heatmap/profit-margin-forecaster/
+  profit-margin-optimizer-v2/profit-efficiency-analyzer/
+  profit-margin-predictor/inventory-profit-margin-tracker),
+  [Unreleased] posodobljen na v7.83+.
+- Verzija aplikacije: v7.82.0
 
 ## [7.81.0] - 2026-08-23
 
