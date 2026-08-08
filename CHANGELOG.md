@@ -6,11 +6,204 @@ Format sledi [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), verzije s
 
 ## [Unreleased]
 
-Načrtovano za v7.88+:
+Načrtovano za v7.89+:
 - WebSocket real-time negotiation (SSE namesto polling)
 - Playwright E2E testi za glavne flow-e
 - TLS fingerprinting (curl-impersonate)
 - ML model za buyer matchmaker (fine-tuned na realnem data)
+
+## [7.88.0] - 2026-08-11
+
+### Added — AI Listing Performance Forecaster Pro & Deal Quality Distribution Forecaster & AI Inventory Aging Trend Analyzer (3 funkcije)
+
+- **AI Listing Performance Forecaster Pro** — `GET+POST /api/ai/listing-performance-forecaster-pro`
+  - AI forecast-a FULL performance spectrum vsakega HELD listing-a —
+    predicted views, contacts, bookmarks v 30 dni + sell timeline
+    (predictedSellDate earliest/latest, predictedDaysToSale) + sell
+    probability 7d/14d/30d + performance grade (A+ do F) + performanceFactors
+    (top 3 z impact POSITIVE/NEGATIVE in weight 0-100) + optimizationActions
+    (2-3 konkretne akcije) + confidenceLevel 0-100. "PS5: 85 views, 12
+    contacts in 30d, sell 72% in 14d. Grade: A. Factor: price -12% below
+    estValue."
+  - items: per HELD trade (z linked Listing) — tradeId, title, category,
+    buyPrice, aiEstimatedValue, daysListed, predictedViews30d / Contacts30d
+    / Bookmarks30d (clamped [0, 500]), predictedSellDate { earliest, latest }
+    (ISO YYYY-MM-DD), predictedDaysToSale (clamped [0, 365]),
+    sellProbability7d / 14d / 30d (clamped [0, 100]), performanceGrade
+    (A+ / A / B / C / D / F), performanceFactors [ { factor, impact,
+    weight } ] (top 3), optimizationActions [] (2-3 akcije),
+    confidenceLevel 0-100.
+  - portfolio: totalItems, avgSellProbability30d, avgPredictedDaysToSale,
+    gradeDistribution { A+/A/B/C/D/F counts }, avgConfidence.
+  - Compute: query HELD trades z linked Listing (aiEstimatedValue,
+    dealScore, aiScore, aiRisk, aiVerdict, imageUrl, firstSeenAt,
+    contactStatus, contactedAt, monitor.source); query SOLD trades 12m
+    za historical patterns (avgDaysToFirstContact, avgDaysToSale,
+    avgContactsBeforeSale, contactToSaleRate). Per held item compute
+    priceCompetitiveness = (estValue - price) / estValue, daysListed,
+    imageScore, categoryDemandScore (sell-through rate per source —
+    Listing nima category polja, uporablja monitor.source). Build
+    deterministic engagement forecast (views = dealScore × 3,
+    contacts = views × 0.12, bookmarks = views × 0.18, daysToSale =
+    history + competitiveness adj, probBase = dealFactor 0.5 +
+    priceFactor 0.3 + ageFactor 0.2).
+  - AI-enhanced z grounding (heldItems + historicalPatterns +
+    deterministicForecasts + caps) + anti-hallucination (predictedViews30d
+    ±50, predictedContacts30d ±10, predictedBookmarks30d ±15,
+    predictedDaysToSale ±7, sellProbability7d/14d/30d ±15, confidenceLevel
+    ±15; performanceGrade validirana proti enum, performanceFactors factor
+    max 100 chars + weight clamped [0, 100] + impact validirana proti enum,
+    optimizationActions max 150 chars vsak; summary max 400) + 6h cache (key
+    `listing-performance-forecaster-pro:${JSON.stringify(heldItemIds)}`) +
+    deterministic fallback (compute iz dealScore + competitiveness + age).
+    GET+POST (AI Hub runner kompatibilnost —
+    handleListingPerformanceForecasterPro shared function).
+  - Razlika od listing-performance-forecaster-v4 (ki se osredotoča na sell
+    probability) — ta forecast-a FULL performance spectrum z engagement
+    metrics (views/contacts/bookmarks) + sell timeline + price
+    optimization + performance grade. Razlika od listing-performance-
+    forecaster-v3 (ki forecast-a eno listing) — ta forecast-a celoten HELD
+    portfolio z engagement metrics. Razlika od listing-performance
+    (analytics ki da historical performance) — ta forecast-a future
+    performance. Razlika od listing-exposure-score (v7.63 ki meri exposure
+    score) — ta forecast-a engagement + sell timeline. Razlika od
+    inventory-performance-forecaster (v7.86 ki forecast-a portfolio profit)
+    — ta forecast-a per-item engagement metrics z views/contacts/bookmarks
+    + grade.
+
+- **Deal Quality Distribution Forecaster** — `GET /api/analytics/deal-quality-distribution-forecaster`
+  - Pure DB forecast-a kako se bo distribution deal quality spremenil v
+    naslednjih 30/60/90 dneh — ali bo market produciral več high-quality
+    deal-ov ali manj? "Quality outlook: IMPROVING. High-quality deals:
+    32% → projected 38% in 30d. Best: elektronika (avg 58 → 62)."
+  - current: distribution (10 buckets TERRIBLE 0-10, POOR 10-20,
+    BELOW_AVG 20-30, AVERAGE 30-40, ABOVE_AVG 40-50, GOOD 50-60, GREAT
+    60-70, EXCELLENT 70-80, OUTSTANDING 80-90, ELITE 90-100 — vsak z count
+    + percentage), avgDealScore, highQualityRate (% 50+), lowQualityRate
+    (% <30).
+  - trends: highQualityTrend (slope of 50+ listings per week),
+    lowQualityTrend (slope of <30 listings per week), avgDealScoreTrend
+    (slope of avg dealScore per week), distributionShift (TOWARD_HIGHER /
+    STABLE / TOWARD_LOWER iz high-low slope diff ±0.3).
+  - forecast: projectedDistribution30d / 60d / 90d (count + percentage
+    per bucket), projectedAvgDealScore30d / 60d / 90d, projectedHighQualityRate30d,
+    qualityOutlook (IMPROVING / STABLE / DECLINING iz highQualityTrend -
+    lowQualityTrend + avgDealScoreTrend).
+  - byCategory: per source (Listing nima category — uporablja monitor.source)
+    currentAvgScore, projectedAvgScore30d, qualityOutlook.
+  - recommendations: bestImprovingCategory, advice.
+  - Compute: query listings zadnjih 180 dni z dealScore, group by ISO week
+    (26 weeks), compute weekly distribution per bucket, linear regression
+    slopes per bucket, project 30/60/90 days ahead (projCount = lastCount
+    + slope × weeks), compute distributionShift + qualityOutlook.
+  - Pure DB (NO AI). GET handler only (handleDealQualityDistributionForecaster).
+  - Razlika od deal-quality-distribution (ki da current snapshot) — ta
+    FORECAST-a future distribution 30/60/90 dni. Razlika od deal-quality-
+    trend-analyzer (v7.83 ki analizira quality trend overall) — ta gleda
+    DISTRIBUTION shift per quality bucket z 30/60/90d projection. Razlika
+    od deal-quality-scorecard (v7.79 ki da quality scorecard) — ta
+    forecast-a distribution shift. Razlika od deal-quality-forecaster (AI
+    ki forecast-a day-of-week) — ta je pure DB distribution forecast čez
+    26 tednov. Razlika od deal-source-quality-tracker (v7.86 ki track-a
+    quality per source) — ta gleda quality BUCKETS (TERRIBLE do ELITE) ne
+    sources.
+
+- **AI Inventory Aging Trend Analyzer** — `GET+POST /api/ai/inventory-aging-trend-analyzer`
+  - AI analizira kako inventory aging pattern-i se spreminjajo čez čas —
+    ali aging pospešuje ali upočasnjuje? Identificira aging trend-e per
+    kategorijo in napove future aging issues. "Aging trend: IMPROVING
+    (hold days -2.5/mo). Current: 28d avg, 15% stale. 30d forecast: 25d
+    avg, 2 stale items. Best: elektronika (18d)."
+  - trends: avgHoldDaysTrend12m (linear regression slope per month),
+    staleRateTrend, agingDirection (IMPROVING / STABLE / WORSENING iz
+    holdDaysTrend ±0.5), agingMomentum (acceleration = slope second
+    half - slope first half), currentAvgHoldDays, currentStaleRate,
+    currentFastTurnoverRate.
+  - monthlyData [{ month, avgHoldDays, staleRate, fastTurnoverRate,
+    agingDistribution (Record<string, %>) }] (12 months).
+  - current: avgDaysHeld (from HELD trades), agingDistribution (6 buckets
+    0-7d / 7-14d / 14-30d / 30-60d / 60-90d / 90d+), staleCount (>60d),
+    freshCount (<7d).
+  - forecast: projectedAvgHoldDays30d (clamped [0, 180]),
+    projectedStaleItems30d, agingRiskLevel (LOW / MEDIUM / HIGH iz score
+    iz holdDays + staleRate + direction), agingTrendAssessment (max 800
+    chars).
+  - analysis: categoryAgingAnalysis [ { category, avgHoldDays, trend,
+    direction IMPROVING/STABLE/WORSENING, riskLevel } ], agingDrivers
+    (3-4 z driver max 100 / impact POSITIVE/NEGATIVE / weight 0-100 /
+    detail max 200), agingMitigationActions (3-5 z action max 200 /
+    priority HIGH/MEDIUM/LOW / expectedImpact max 200).
+  - Compute: query SOLD trades 12m z buyDate/sellDate/category, group by
+    month AND category, compute avgHoldDays/staleRate/fastTurnoverRate/
+    agingDistribution per month, linear regression slopes, classify
+    agingDirection + agingMomentum; query current HELD trades za current
+    aging state; build deterministic forecast + drivers + mitigation
+    actions.
+  - AI-enhanced z grounding (trends + monthlyData + current +
+    categoryAgingAnalysis + deterministicForecast + drivers + actions) +
+    anti-hallucination (agingTrendAssessment max 800, agingRiskLevel
+    validirana proti enum, agingDrivers driver max 100 + weight clamped
+    [0, 100] + detail max 200 + impact validirana proti enum,
+    agingMitigationActions action max 200 + expectedImpact max 200 +
+    priority validirana proti enum, categoryAgingAnalysis direction
+    validirana proti enum; summary max 400) + 6h cache (key
+    `inventory-aging-trend-analyzer:${currentMonth}`) + deterministic
+    fallback (compute iz trend slopes). GET+POST (AI Hub runner
+    kompatibilnost — handleInventoryAgingTrendAnalyzer shared function).
+  - Razlika od inventory-aging-predictor-pro (v7.83 ki napove aging per
+    item) — ta track-a AGING TRENDS na portfolio level čez 12 mesecev z
+    monthlyData series. Razlika od inventory-aging-predictor (basic) — ta
+    gleda TREND (acceleration) ne single prediction. Razlika od
+    inventory-lifecycle-stage-classifier (v7.70 ki klasificira lifecycle
+    stages) — ta gleda aging TIME SERIES čez mesece. Razlika od
+    inventory-turnover-accelerator-pro (v7.85 ki pospešuje turnover) — ta
+    analizira aging trajectory. Razlika od inventory-carrying-cost (ki
+    meri holding cost) — ta gleda aging duration trend.
+
+### Changed
+- **Dokumentacija sinhronizirana z novimi endpointi:**
+  - **AI_ENDPOINTS.md:** regeneriran z python3 skripto — "Total: 330
+    endpoints" (328 → 330, +2 AI: inventory-aging-trend-analyzer pos 120,
+    listing-performance-forecaster-pro pos 196).
+  - **README.md** (16 urejanj): version badge v7.87.0 → v7.88.0; AI
+    Endpoints badge 328 → 330; API Routes badge 500 → 503 (+3); tagline
+    "328 AI endpointov + 67 analytics" → "330 AI endpointov + 68 analytics";
+    Overview "Verzija v7.87.0" → "v7.88.0" in "328 AI + 67 analytics +
+    ~186 funkcij" → "330 AI + 68 analytics + ~189 funkcij"; "Kaj je novega
+    v v7.56–v7.87 (32 verzij, 96 novih funkcij)" → "...v7.56–v7.88 (33
+    verzij, 99 novih funkcij)"; dodan v7.88 blok (3 funkcije) na vrh z
+    detajlnimi opisi vseh 3 endpoint-ov (response shape, anti-hallucination
+    pravila, AI cache key, deterministic fallback, example comment,
+    razlika od podobnih obstoječih endpoint-ov); AI Hub badge v tabeli
+    "Vsi 328 AI endpointov" → "Vsi 330 AI endpointov"; "Glej
+    AI_ENDPOINTS.md za popoln seznam vseh 328 AI endpointov" → "...330 AI
+    endpointov"; "Endpointi (328 AI + 67 analytics + 10 cron + sistemski =
+    500)" → "... (330 AI + 68 analytics + 10 cron + sistemski = 503)";
+    dodana 3 nova endpointa v AI primeri blok (listing-performance-
+    forecaster-pro v7.88 v 2 lokacijah, inventory-aging-trend-analyzer
+    v7.88 v 2 lokacijah, deal-quality-distribution-forecaster v7.88 v
+    analytics seznamu); "Profit pipeline (v7.32-v7.87)" → "...v7.32-v7.88";
+    "328 AI endpointov" v Project structure → "330 AI endpointov"; "500
+    API routes" v Testing → "503 API routes"; "500 routes" v Coding
+    standards → "503 routes"; Roadmap "v7.87 (trenutno — ~186 funkcij)" →
+    "v7.88 (trenutno — ~189 funkcij)"; profit pipeline "(127+ funkcij)"
+    → "(130+ funkcij)" in dodane 3 nove funkcije; analytics seznam
+    "(67)" → "(68)" in dodan deal-quality-distribution-forecaster;
+    "UI komponente za v7.50-v7.87 funkcije" → "...v7.50-v7.88 funkcije";
+    "do v7.87 (avgust 2026)" → "do v7.88 (avgust 2026)"; "Zadnje
+    verzije": dodan "v7.88.0 (avgust 2026) — AI Listing Performance
+    Forecaster Pro, Deal Quality Distribution Forecaster, AI Inventory
+    Aging Trend Analyzer" na vrh.
+  - **CHANGELOG.md** (to sekcija): dodana nova "[7.88.0] - 2026-08-11"
+    sekcija z vsemi 3 endpoint-i in podrobnimi opisi; "[Unreleased]
+    Načrtovano za v7.88+" → "...za v7.89+".
+- **Verzija aplikacije:** v7.87.0 → v7.88.0.
+- AI endpointi: 328 → 330 (+2 — listing-performance-forecaster-pro,
+  inventory-aging-trend-analyzer).
+- Analytics endpointi: 67 → 68 (+1 — deal-quality-distribution-forecaster).
+- Total API routes: 500 → 503 (+3).
+- Funkcije v profit pipeline: 127+ → 130+ (+3).
+- Skupno funkcij: ~186 → ~189 (+3).
 
 ## [7.87.0] - 2026-08-10
 
