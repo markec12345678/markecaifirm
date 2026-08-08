@@ -6,11 +6,206 @@ Format sledi [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), verzije s
 
 ## [Unreleased]
 
-Načrtovano za v7.87+:
+Načrtovano za v7.88+:
 - WebSocket real-time negotiation (SSE namesto polling)
 - Playwright E2E testi za glavne flow-e
 - TLS fingerprinting (curl-impersonate)
 - ML model za buyer matchmaker (fine-tuned na realnem data)
+
+## [7.87.0] - 2026-08-10
+
+### Added — AI Deal Source Trend Analyzer & AI Market Cycle Phase Predictor & AI Inventory ROI Trend Tracker (3 funkcije)
+
+- **AI Deal Source Trend Analyzer** — `GET+POST /api/ai/deal-source-trend-analyzer`
+  - AI analizira TREND PATTERNS per deal source — kateri viri pridobivajo
+    momentum in kateri upadajo, ter napove future source performance z
+    lifecycle stage in recommended action. "Bolha: GROWING (momentum 78,
+    +12%/mo). Vinted: DECLINING (-8%/mo). Action: scale up Bolha,
+    diversify."
+  - sources: per source (iz listing.monitor.source) — trends {
+    monthlyProfitTrend (linear regression €/mo), monthlyROITrend (%/mo),
+    monthlyVolumeTrend (trades/mo), momentumScore 0-100 (35% profit slope
+    + 35% ROI slope + 20% volume slope + 10% consistency), sourceMomentum
+    (GAINING_MOMENTUM / STABLE / LOSING_MOMENTUM iz composite slope ±0.5) },
+    analysis { trendAnalysis (max 600 chars), predictedPerformance30d
+    (max 400 chars), trendConfidence 0-100 (iz monthsActive + totalTrades
+    + momentum strength), sourceLifecycleStage (EMERGING <3m+gaining /
+    GROWING gaining+young / MATURE stable+established / DECLINING losing),
+    recommendedSourceAction (SCALE_UP / MAINTAIN / DIVERSIFY /
+    SCALE_DOWN / EXIT iz lifecycle+momentum) }.
+  - portfolio: sourceDiversificationScore 0-100 (Herfindahl-Hirschman
+    Index normalized), dominantSource (≥50% trades), concentrationRisk
+    (LOW / MEDIUM / HIGH iz score), diversificationAdvice (max 500 chars),
+    sourceRiskAssessment (max 500 chars).
+  - Compute: query SOLD trades zadnjih 12 mesecev z linked Listing (za
+    monitor.source), group by source AND month, compute monthly
+    profit/ROI/volume, linear regression slopes, classify sourceMomentum,
+    compute momentumScore, classify lifecycleStage, recommend action.
+  - AI-enhanced z grounding (sources + portfolio) + anti-hallucination
+    (sourcesPatch: trendAnalysis max 600 chars, predictedPerformance30d
+    max 400, trendConfidence ±15 od deterministic in clamped [0, 100],
+    sourceLifecycleStage validirana proti enum, recommendedSourceAction
+    validirana proti enum; portfolio sourceDiversificationScore ±10 in
+    clamped [0, 100], concentrationRisk validirana proti enum,
+    diversificationAdvice / sourceRiskAssessment max 500 chars; summary
+    max 400) + 6h cache (key `deal-source-trend-analyzer:${currentMonth}`)
+    + deterministic fallback (compute iz trend slopes). GET+POST (AI Hub
+    runner kompatibilnost — handleDealSourceTrendAnalyzer shared function).
+  - Razlika od deal-source-performance-tracker (v7.85 ki track-a profit/ROI
+    metrics) — ta ANALYZIRA TRENDS in PREDICTS future source performance z
+    lifecycleStage in recommendedSourceAction. Razlika od deal-source-roi
+    (ki da current snapshot ROI per source) — ta analizira TREND acceleration
+    per source. Razlika od deal-source-comparison-matrix (v7.70 ki primerja
+    trenutne atribute source-ov) — ta gleda TIME-SERIES momentum + lifecycle
+    stage. Razlika od deal-source-intelligence (v7.82 AI ki da source
+    intelligence) — ta je TREND-focused z momentum + lifecycle prediction.
+    Razlika od deal-source-quality-tracker (v7.86 ki track-a quality trends)
+    — ta analizira MOMENTUM (acceleration) in lifecycle ne quality.
+
+- **AI Market Cycle Phase Predictor** — `GET+POST /api/ai/market-cycle-phase-predictor`
+  - AI napove EXACT TIMING market cycle phase transitions — kdaj se bo
+    MARKUP končal in DISTRIBUTION začel? Uporablja multiple indicators
+    (price / volume / dealQuality / sentiment momentum) za prediction
+    phase transition dates z confidence. "Current: MARKUP (LATE phase,
+    85% maturity). Next: DISTRIBUTION in ~18d. Action: start selling NOW."
+  - currentPhase { phase (ACCUMULATION / MARKUP / DISTRIBUTION / DECLINE),
+    phaseIntensityScore 0-100 (iz phaseConfidence 50% + price slope 25%
+    + volume slope 25%), phaseMaturity (EARLY / MID / LATE iz cycleProgress
+    + trend deceleration), weeksInPhase }.
+  - indicators { priceMomentum { slope, acceleration, signal },
+    volumeMomentum { slope, acceleration, signal }, dealQualityMomentum
+    { slope, signal }, sentimentMomentum { slope, signal } }.
+  - prediction { nextPhase (Wyckoff cycle naslednik —
+    ACCUMULATION→MARKUP→DISTRIBUTION→DECLINE→ACCUMULATION),
+    predictedTransitionDate (ISO YYYY-MM-DD), daysUntilTransition
+    (0-180), transitionConfidence 0-100 (iz maturity + intensity +
+    weeksInPhase), transitionSignals (2-5 z utemeljitvijo, max 200 chars
+    vsak) }.
+  - strategy { preTransitionActions (2-4 z action max 200 / priority
+    HIGH|MEDIUM|LOW / timing max 80), postTransitionStrategy (max 400
+    chars), phaseStrategy (max 400 chars) }.
+  - Compute: query listings zadnjih 365 dni (price / firstSeenAt /
+    dealScore), group by ISO week, compute weekly avg price / volume /
+    dealScore / sentiment ratio, linear regression slopes + acceleration,
+    classify phase (Wyckoff logic iz market-cycle-detector), compute
+    cycleProgress + phaseMaturity + phaseIntensity, estimate
+    weeksUntilTransition iz maturity + intensity + acceleration, build
+    deterministic prediction + strategy.
+  - AI-enhanced z grounding (currentPhase + indicators + weeklyData +
+    deterministicPrediction + deterministicStrategy) + anti-hallucination
+    (nextPhase validirana proti Wyckoff cycle, predictedTransitionDate
+    ±7 dni od deterministic, daysUntilTransition ±14 in clamped [0, 180],
+    transitionConfidence ±15 in clamped [0, 100], transitionSignals max
+    200 chars vsak; preTransitionActions action max 200 / timing max 80,
+    priority validirana proti enum; postTransitionStrategy / phaseStrategy
+    max 400 chars; summary max 400) + 6h cache (key
+    `market-cycle-phase-predictor:${currentWeekMs}`) + deterministic
+    fallback (compute iz momentum + maturity). GET+POST (AI Hub runner
+    kompatibilnost — handleMarketCyclePhasePredictor shared function).
+  - Razlika od market-cycle-detector (v7.77 ki detektira current phase)
+    — ta PREDICT-a transition timing z daysUntilTransition. Razlika od
+    market-cycle-forecaster (v7.83 ki projicira phases) — ta napove
+    TRANSITION TIMING z daysUntilTransition in preTransitionActions.
+    Razlika od market-trend-forecaster-pro (v7.78 ki forecast-a trend)
+    — ta je CYCLE-focused z Wyckoff 4-faznim transition prediction.
+
+- **AI Inventory ROI Trend Tracker** — `GET+POST /api/ai/inventory-roi-trend-tracker`
+  - AI track-a ROI TRENDS čez čas — ali se ROI izboljšuje, upada ali je
+    stabilen? Identificira kaj driver-ja spremembe ROI in napove future
+    ROI trajectory. "ROI trend: IMPROVING (+1.5%/mo, momentum +0.4).
+    30d projection: 28%. Driver: price increases. Best: elektronika."
+  - trends { currentROI, avgROI12m, bestROI12m, roiTrend12m (linear
+    regression slope %/mo), roiTrend3m (last 3 months slope),
+    roiDirection (IMPROVING / STABLE / DECLINING iz composite ±0.5),
+    roiVolatility (stddev monthly ROI), roiMomentum (acceleration = slope
+    second half - slope first half), roiPercentile (0-100 kako current
+    se primerja z 12m history) }.
+  - monthlyData [{ month, avgROI, totalProfit, avgProfitPerTrade,
+    capitalDeployed, capitalReturned }] (12 months).
+  - drivers { priceDriver { trend, impact POSITIVE/NEGATIVE/NEUTRAL,
+    detail } (trend capitalReturned/trades), costDriver { trend, impact,
+    detail } (trend capitalDeployed/trades), efficiencyDriver { trend,
+    impact, detail } (trend avgProfitPerTrade), categoryDriver {
+    bestCategory, worstCategory } }.
+  - analysis { roiTrendAssessment (max 800 chars), projectedROI30d/60d/90d
+    (clamped [-50, 200], ±3/5/8 od deterministic z diminishing weight 60d
+    × 0.85, 90d × 0.7), roiSustainabilityScore 0-100 (iz direction +
+    volatility + percentile + history length), roiImprovementActions
+    (3-5 z action max 200 / priority HIGH|MEDIUM|LOW / expectedROILift
+    0-30), roiRiskFactors (2-4 z risk max 150 / severity LOW|MEDIUM|HIGH
+    / mitigation max 250) }.
+  - Compute: query SOLD trades zadnjih 12 mesecev, group by month AND
+    category, compute monthly ROI / profit / avgProfitPerTrade /
+    capitalDeployed / capitalReturned, linear regression slopes za 4
+    trende (12m in 3m), classify roiDirection, compute
+    roiVolatility / roiMomentum / roiPercentile, compute drivers
+    (price/cost/efficiency trend + best/worst category).
+  - AI-enhanced z grounding (trends + monthlyData + drivers +
+    deterministicAnalysis + roiCaps) + anti-hallucination
+    (roiTrendAssessment max 800 chars, projectedROI30d/60d/90d ±3/5/8
+    od deterministic in clamped [-50, 200], roiSustainabilityScore ±10
+    in clamped [0, 100], roiImprovementActions action max 200 /
+    expectedROILift clamped [0, 30], roiRiskFactors risk max 150 /
+    mitigation max 250; summary max 400) + 6h cache (key
+    `inventory-roi-trend-tracker:${currentMonth}`) + deterministic
+    fallback (compute iz trend slopes). GET+POST (AI Hub runner
+    kompatibilnost — handleInventoryRoiTrendTracker shared function).
+  - Razlika od inventory-roi-optimizer (v7.79 ki optimira current ROI za
+    posamezne items) — ta je PORTFOLIO-level trend tracker z 12-mesečno
+    monthly ROI series. Razlika od profit-margin-forecaster-pro (v7.85
+    ki forecast-a margin) — ta gleda ROI (% profit / invested) ne margin
+    (% profit / revenue). Razlika od profit-margin-trend-analyzer (v7.82
+    ki analizira margin trends) — ta gleda ROI trends z drivers
+    (price/cost/efficiency/category). Razlika od profit-efficiency-analyzer
+    (ki meri profit per day) — ta gleda ROI % trend trajectory. Razlika
+    od inventory-performance-forecaster (v7.86 ki forecast-a portfolio
+    profit/turnover) — ta gleda ROI specifically (z category-level drivers).
+
+### Changed
+- **AI_ENDPOINTS.md** regeneriran z `python3 -c "..."` — 325 AI → 328 AI
+  (+3: deal-source-trend-analyzer na poziciji 94, inventory-roi-trend-tracker
+  na poziciji 151, market-cycle-phase-predictor na poziciji 221).
+- **README.md** posodobljen:
+  - Version badge v7.86.0 → v7.87.0
+  - AI Endpoints badge 325 → 328
+  - API Routes badge 497 → 500 (+3 AI)
+  - Tagline: "325 AI endpointov + 67 analytics" → "328 AI endpointov +
+    67 analytics" (0 new analytics — vsi 3 so AI)
+  - Overview: "Verzija v7.86.0" → "Verzija v7.87.0", counts posodobljeni,
+    "325 AI + 67 analytics + ~183 funkcij" → "328 AI + 67 analytics +
+    ~186 funkcij"
+  - "Kaj je novega v v7.56–v7.86 (31 verzij, 93 novih funkcij)" →
+    "...v7.56–v7.87 (32 verzij, 96 novih funkcij)", dodan v7.87 blok
+    (3 funkcije) na vrh z detajlnimi opisi vseh 3 endpoint-ov.
+  - AI Hub badge v tabeli: "Vsi 325 AI endpointov" → "Vsi 328 AI
+    endpointov"
+  - "Glej AI_ENDPOINTS.md za popoln seznam vseh 325 AI endpointov" →
+    "...328 AI endpointov"
+  - "Endpointi (325 AI + 67 analytics + 10 cron + sistemski = 497)" →
+    "...(328 AI + 67 analytics + 10 cron + sistemski = 500)"
+  - "Profit pipeline (v7.32-v7.86)" → "...(v7.32-v7.87)"
+  - Dodana 3 nova AI endpointa v AI primeri blok (deal-source-trend-analyzer
+    v7.87, market-cycle-phase-predictor v7.87, inventory-roi-trend-tracker
+    v7.87) — vsak z detajlnim enoline komentarjem (po 2 lokaciji v AI
+    seznamu).
+  - "Profit pipeline (124+ funkcij)" → "...(127+ funkcij)", dodane 3
+    nove funkcije (AI Deal Source Trend Analyzer, AI Market Cycle Phase
+    Predictor, AI Inventory ROI Trend Tracker).
+  - Testing: "497 API routes" → "500 API routes" (2 lokaciji).
+  - Project structure: "325 AI endpointov" → "328 AI endpointov".
+  - Roadmap: "v7.86 (trenutno — ~183 funkcij)" → "v7.87 (trenutno —
+    ~186 funkcij)", dodane 3 nove funkcije v completed list.
+  - "UI komponente za v7.50-v7.86 funkcije" → "...v7.50-v7.87 funkcije".
+  - "do v7.86 (avgust 2026)" → "do v7.87 (avgust 2026)".
+  - "Zadnje verzije": dodan "v7.87.0 (avgust 2026) — AI Deal Source Trend
+    Analyzer, AI Market Cycle Phase Predictor, AI Inventory ROI Trend
+    Tracker" na vrh.
+- **Verzija aplikacije:** v7.86.0 → v7.87.0.
+- AI endpointi: 325 → 328 (+3).
+- Analytics endpointi: 67 → 67 (+0 — vsi 3 so AI).
+- Total API routes: 497 → 500 (+3).
+- Funkcije v profit pipeline: 124+ → 127+ (+3).
+- Skupno funkcij: ~183 → ~186 (+3).
 
 ## [7.86.0] - 2026-08-09
 
