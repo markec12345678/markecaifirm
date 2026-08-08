@@ -6,11 +6,255 @@ Format sledi [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), verzije s
 
 ## [Unreleased]
 
-Načrtovano za v7.91+:
+Načrtovano za v7.92+:
 - WebSocket real-time negotiation (SSE namesto polling)
 - Playwright E2E testi za glavne flow-e
 - TLS fingerprinting (curl-impersonate)
 - ML model za buyer matchmaker (fine-tuned na realnem data)
+
+## [7.91.0] - 2026-08-14
+
+### Added — AI Deal Source Momentum Analyzer & AI Market Volatility Forecaster & AI Inventory Performance Trend Tracker (3 funkcije)
+
+- **AI Deal Source Momentum Analyzer** — `GET+POST /api/ai/deal-source-momentum-analyzer`
+  - AI analizira MOMENTUM (2nd derivative — pospešek trenda) per deal
+    source — kateri viri pridobivajo momentum najhitreje in kateri
+    bodo najboljši v 30 dneh. Razlika od deal-source-trend-analyzer
+    (v7.87 ki track-a 1st-derivative trend per source) — ta gleda
+    2nd-derivative MOMENTUM (ali rast pospešuje ali upada). "Bolha:
+    ACCELERATING (momentum 82, +15%/mo²). Vinted: DECELERATING (38).
+    Emerging: Facebook (momentum 65, +20%/mo²)."
+  - momentum: { profitMomentum 0-100, roiMomentum 0-100,
+    volumeMomentum 0-100, compositeMomentumScore 0-100 (45% profit +
+    30% roi + 25% volume acceleration), momentumDirection ACCELERATING
+    / STEADY / DECELERATING iz thresholds ≥60/≤40 }.
+  - analysis: { momentumAssessment (max 400 chars slovensko), predictedRank30d
+    1-100 (±2 od currentRank), momentumSustainability 0-100 (iz active months
+    + total volume + direction stability), momentumDrivers 1-3 { driver max
+    100, impact POSITIVE | NEGATIVE, weight 0-100, detail max 200 },
+    momentumRisks 1-3 { risk max 200, severity LOW | MEDIUM | HIGH,
+    mitigation max 200 } }.
+  - insights: { bestMomentumSource (highest compositeMomentumScore),
+    emergingSource (highest profitMomentum z below-median total volume —
+    dark horse), decliningSource (lowest compositeMomentumScore),
+    advice (max 400 chars slovensko) }.
+  - Compute: query SOLD trades 12m z linked Listing (monitor.source);
+    group by source × month (12 month buckets, index 0 = oldest,
+    11 = newest); per source compute 1st-derivative trend (linear
+    regression slope) in 2nd-derivative momentum (acceleration = slope
+    second half - slope first half) za profit, ROI, in volume; normalize
+    momentum to 0-100 score (50 at zero, 100 at +maxAbs, 0 at -maxAbs);
+    composite weighted (45% profit + 30% roi + 25% volume); classify
+    direction iz composite score thresholds; rank sources by current
+    total profit; build deterministic analysis (assessment, sustainability
+    iz months + volume, predictedRank30d ±1/2 iz direction, drivers top 3
+    by magnitude, risks iz direction + sample size + extreme score);
+    pick emerging source (highest profitMomentum z below-median volume).
+  - AI-enhanced z grounding (sources z momentum + analysis + monthly
+    breakdown + totalVolume + totalProfit + currentRank + caps) +
+    anti-hallucination (predictedRank30d ±2 od currentRank in clamped
+    [1, 100]; momentumSustainability ±15 od deterministic in clamped
+    [0, 100]; momentumDrivers.driver max 100 / impact validiran POSITIVE
+    | NEGATIVE / weight clamped [0, 100] / detail max 200; momentumRisks.
+    risk max 200 / severity validiran LOW | MEDIUM | HIGH / mitigation
+    max 200; insights.advice max 400; summary max 400; unknown sources
+    skipped — anti-hallucination preprečuje AI-ju izmišljanje virov) +
+    6h cache (key `deal-source-momentum-analyzer:${currentMonth}`) +
+    deterministic fallback (compute iz monthly acceleration × normalization).
+    GET+POST (handleDealSourceMomentumAnalyzer shared function — AI Hub
+    runner kompatibilnost).
+  - Razlika od deal-source-trend-analyzer (v7.87 ki track-a 1st-derivative
+    trend per source) — ta gleda 2nd-derivative MOMENTUM (ali rast
+    pospešuje ali upada). Razlika od deal-source-intelligence (v7.82 AI
+    ki da composite scorecard) — ta forecast-a FUTURE ranking z momentum
+    sustainability. Razlika od deal-source-profitability-analyzer (v7.89
+    ki decomposes profit) — ta gleda MOMENTUM composite (profit + roi +
+    volume acceleration). Razlika od deal-source-performance-tracker
+    (v7.85 ki track-a performance metrics) — ta forecast-a future source
+    rank z momentum drivers/risks. Razlika od deal-source-quality-tracker
+    (v7.86 ki track-a quality) — ta gleda MOMENTUM z emergingSource
+    identification.
+
+- **AI Market Volatility Forecaster** — `GET+POST /api/ai/market-volatility-forecaster`
+  - AI forecast-a FUTURE market volatiliteto 30/60/90 dni vnaprej —
+    bodo cene bolj nestabilne (risk) ali bolj stabilne (safe)? Razlika
+    od price-volatility-analyzer (v7.86 ki analizira CURRENT volatility
+    per category) — ta FORECAST-a FUTURE volatility z outlook + risk
+    implication + mitigation actions. "Volatility outlook: INCREASING.
+    Elektronika: 22% → 28% in 30d (riskier). Moda: 8% → 6% (stable).
+    Action: shift to moda."
+  - current: { avgVolatility % (cross-category mean CV), mostVolatileCategory,
+    mostStableCategory, volatilityTrend26w (linear regression slope per week),
+    volatilityMomentum (acceleration = 2nd deriv), volatilityDirection
+    INCREASING | STABLE | DECREASING iz slope + acceleration sign + CV
+    delta (first half vs second half) }.
+  - forecast: { projectedAvgVolatility30d / 60d / 90d (clamped [0, 200],
+    ±15 od deterministic z daily change × momentum factor [0.5-1.5]),
+    volatilityOutlook INCREASING | STABLE | DECREASING iz 90d delta ±2,
+    confidenceLevel 0-100 (base 40 + category count × 4 + trend strength
+    × 3 + momentum × 5) }.
+  - byCategory: [ { category (iz monitor.source — Listing nima category
+    polja), currentVolatility, projectedVolatility30d, projectedVolatility90d,
+    trend INCREASING | STABLE | DECREASING } ] (require ≥4 weeks).
+  - analysis: { riskImplication (max 500 chars slovensko — kaj pomeni
+    projected volatility za trgovanje), volatilityHotspots 1-3 (top 3
+    highest projected volatility) { category max 60, projectedVolatility
+    0-200, risk max 200 }, stabilityZones 1-3 (bottom 3 lowest volatility)
+    { category max 60, projectedVolatility 0-200, benefit max 200 },
+    volatilityMitigationActions 2-4 { action max 200, priority HIGH |
+    MEDIUM | LOW, detail max 200 }, tradingStrategyAdjustment (max 400
+    chars slovensko — DEFENZIVNA / AGRESIVNA / VZDRŽUJOČA) }.
+  - Compute: query listings 180 dni (price + monitor.source); group by
+    ISO week (26 weeks aligned to Monday) AND by source; per source
+    compute CV (coefficient of variation = stddev/mean × 100) of weekly
+    avg prices; build weekly volatility series per source; overall weekly
+    avg price series; linear regression slope za volatilityTrend26w +
+    2nd derivative za volatilityMomentum; classify direction iz slope +
+    acceleration sign + CV delta (first half vs second half ±2);
+    project 30/60/90d z daily change × momentum factor [0.5-1.5];
+    per-category forecast z same momentum factor approach; identify
+    hotspots (top 3 highest projected) in stability zones (bottom 3 lowest).
+  - AI-enhanced z grounding (current + deterministicForecast +
+    deterministicAnalysis + categoryProjections + caps) +
+    anti-hallucination (projectedAvgVolatility30d/60d/90d ±15 od
+    deterministic in clamped [0, 200]; confidenceLevel ±15 od deterministic
+    in clamped [0, 100]; volatilityOutlook validiran INCREASING | STABLE
+    | DECREASING; volatilityHotspots/stabilityZones.category max 60 /
+    projectedVolatility clamped [0, 200] / risk/benefit max 200;
+    volatilityMitigationActions.action max 200 / priority validiran
+    HIGH | MEDIUM | LOW / detail max 200; tradingStrategyAdjustment max
+    400; riskImplication max 500; summary max 400) + 6h cache (key
+    `market-volatility-forecaster:${currentMonth}`) + deterministic
+    fallback (compute iz current volatility + daily change × momentum).
+    GET+POST (handleMarketVolatilityForecaster shared function — AI Hub
+    runner kompatibilnost).
+  - Razlika od price-volatility-analyzer (v7.86 ki da current volatility
+    per category z CV iz 90 dni) — ta FORECAST-a FUTURE volatility z
+    outlook + risk implication + mitigation actions. Razlika od
+    market-trend-forecaster-pro (v7.78 ki forecast-a trend direction
+    BULL/BASE/BEAR) — ta forecast-a VOLATILITY (variabilnost cen) ne
+    trend direction. Razlika od market-trend-acceleration-tracker (v7.89
+    ki track-a acceleration 2nd deriv per metric) — ta gleda volatility
+    trend + momentum z 30/60/90d projection in hotspots/stability zones.
+    Razlika od market-sentiment-trend-analyzer (v7.90 ki track-a sentiment
+    trends) — ta gleda PRICE volatility ne sentiment.
+
+- **AI Inventory Performance Trend Tracker** — `GET+POST /api/ai/inventory-performance-trend-tracker`
+  - AI track-a kako PERFORMANCE inventarja spreminja čez čas — so
+    tvoje trgovine vedno bolj profitabilne, hitrejše, ali boljše
+    kvalitete? Identificira performance trajektorijo in napove future
+    performance. Razlika od inventory-performance-forecaster (v7.86 ki
+    forecast-a CURRENT inventory 30/60/90d z grade) — ta track-a
+    HISTORICAL performance TRENDS čez 12 mesecev z drivers/risks/actions.
+    "Performance: IMPROVING (profit +8%/mo, ROI +2%/mo, hold days
+    -1.5/mo). Grade: B+. 30d forecast: +1800€. Best month: Jul (2200€)."
+  - trends: { profitTrend12m (linear regression slope per month),
+    roiTrend12m, holdDaysTrend12m (negative = better — faster sales),
+    winRateTrend12m, performanceDirection IMPROVING | STABLE | DECLINING
+    iz 3-signal majority (profit + roi + winRate trend sign), performanceMomentum
+    (acceleration of profit trend — 2nd deriv), performanceVolatility
+    (stddev of monthly profits) }.
+  - monthlyData: [ { month (ISO date — month start), profit, avgROI %,
+    avgHoldDays, avgDealScore, winRate % (profitable trades / total),
+    volume, capitalEfficiency % (profit / capital deployed × 100) } ]
+    (12 months, only active months with ≥1 trade).
+  - forecast: { performanceTrajectory (max 500 chars slovensko — opis
+    kam performance pelje), projectedProfit30d / 60d / 90d (clamped [0,
+    historical max × 3], ±20% od deterministic z momentum factor × 1/2/3
+    months), projectedROI30d (clamped [-50, 200], ±10 od deterministic),
+    performanceGrade A+ | A | B | C | D | F (iz composite score: profitScore
+    35% + roiScore 30% + winRateScore 25% + 50 base 10% + direction bonus
+    ±10 — thresholds 90/80/70/55/40), performanceConsistencyScore 0-100
+    (100 - CV × 30 + STEADY bonus +5 + sample size bonus +5 if ≥6 months) }.
+  - analysis: { performanceDrivers 1-3 (top 3 trends by absolute
+    magnitude — hold days negativ = POSITIVE) { driver max 100, impact
+    POSITIVE | NEGATIVE, weight 0-100 (|trend| × 2), detail max 200 },
+    performanceRisks 1-3 (DECLINING direction, high CV > 1.0,
+    lengthening hold days > 2/mo, low consistency < 40) { risk max 200,
+    severity LOW | MEDIUM | HIGH, mitigation max 200 },
+    performanceOptimizationActions 1-4 { action max 200, priority HIGH |
+    MEDIUM | LOW, expectedImpact max 200 }, bestPerformingMonth { month
+    ISO date, profit, reason max 300 } | null (highest profit month
+    validated against monthlyData — anti-hallucination) }.
+  - Compute: query SOLD trades 12m z linked Listing (dealScore); group by
+    month (12 month buckets aligned to month start, oldest first); per
+    month compute profit/ROI/hold days/dealScore/winRate/volume/capital
+    efficiency; linear regression slopes za 4 trends (profit/roi/holdDays/
+    winRate); compute performanceMomentum (acceleration = slope second
+    half - slope first half) + performanceVolatility (stddev monthly
+    profits); classify direction from 3-signal majority (positive signals
+    ≥2 and negative = 0 → IMPROVING, etc.); project 30/60/90d z last
+    month profit + trend × months × momentum factor [0.7-1.3]; compute
+    grade from composite score (profitScore normalized to historical max,
+    roiScore = 50 + ROI × 0.5, winRateScore = avgWinRate, direction bonus
+    ±10); compute consistency from CV (lower CV = higher consistency).
+  - AI-enhanced z grounding (trends + monthlyData + deterministicForecast
+    + deterministicAnalysis + caps including profitCap = historical max × 3) +
+    anti-hallucination (projectedProfit30d/60d/90d ±20% od deterministic
+    in clamped [0, profitCap = historical max × 3]; projectedROI30d ±10
+    od deterministic in clamped [-50, 200]; performanceGrade validiran
+    against enum A+ | A | B | C | D | F; performanceConsistencyScore ±15
+    od deterministic in clamped [0, 100]; bestPerformingMonth.month
+    validated against monthlyData — anti-hallucination preprečuje AI-ju
+    izmišljanje meseca; performanceDrivers.driver max 100 / impact
+    validiran POSITIVE | NEGATIVE / weight clamped [0, 100] / detail max
+    200; performanceRisks.risk max 200 / severity validiran LOW | MEDIUM
+    | HIGH / mitigation max 200; performanceOptimizationActions.action max
+    200 / priority validiran HIGH | MEDIUM | LOW / expectedImpact max 200;
+    performanceTrajectory max 500; summary max 400) + 6h cache (key
+    `inventory-performance-trend-tracker:${currentMonth}`) +
+    deterministic fallback (compute iz monthly trends + last month
+    profit). GET+POST (handleInventoryPerformanceTrendTracker shared
+    function — AI Hub runner kompatibilnost).
+  - Razlika od inventory-performance-forecaster (v7.86 ki forecast-a
+    current portfolio 30/60/90d z grade iz current composition) — ta
+    track-a HISTORICAL trends čez 12 mesecev z momentum (acceleration) in
+    monthlyData. Razlika od inventory-roi-trend-tracker (v7.87 ki track-a
+    ROI trends only) — ta gleda PERFORMANCE composite (profit + ROI +
+    hold days + win rate + capital efficiency). Razlika od inventory-aging-
+    trend-analyzer (v7.88 ki track-a aging trends) — ta gleda PROFITABILITY
+    + efficiency trends ne aging. Razlika od inventory-value-appreciation-
+    tracker (v7.90 ki track-a value appreciation per HELD item) — ta gleda
+    REALIZED performance (SOLD trades) z monthly trajectory in grade.
+
+### Changed
+- **Dokumentacija sinhronizirana z novimi endpointi:**
+  - **AI_ENDPOINTS.md:** regeneriran z python3 skripto — "Total: 335
+    endpoints" (332 → 335, +3 AI: deal-source-momentum-analyzer pos 94,
+    inventory-performance-trend-tracker pos 143, market-volatility-
+    forecaster pos 232).
+  - **README.md** (15+ urejanj): version badge v7.90.0 → v7.91.0; AI
+    Endpoints badge 332 → 335; API Routes badge 509 → 512 (+3); tagline
+    "332 AI endpointov + 72 analytics" → "335 AI endpointov + 72
+    analytics" (0 new analytics — all 3 are AI); Overview "Verzija
+    v7.90.0" → "v7.91.0" in "332 AI + 72 analytics + ~195 funkcij" →
+    "335 AI + 72 analytics + ~198 funkcij"; "Kaj je novega v v7.56–v7.90
+    (35 verzij, 105 novih funkcij)" → "...v7.56–v7.91 (36 verzij, 108
+    novih funkcij)"; dodan v7.91 blok (3 funkcije) na vrh z detajlnimi
+    opisi vseh 3 endpoint-ov (response shape, anti-hallucination pravila,
+    AI cache key, deterministic fallback, example comment, razlika od
+    podobnih obstoječih endpoint-ov); AI Hub badge v tabeli "Vsi 332 AI
+    endpointov" → "Vsi 335 AI endpointov"; "Glej AI_ENDPOINTS.md za
+    popoln seznam vseh 332 AI endpointov" → "...335 AI endpointov";
+    "Endpointi (332 AI + 72 analytics + 10 cron + sistemski = 509)" →
+    "...(335 AI + 72 analytics + 10 cron + sistemski = 512)"; dodana 3
+    nova endpointa v API primeri blok (deal-source-momentum-analyzer
+    v7.91, market-volatility-forecaster v7.91, inventory-performance-
+    trend-tracker v7.91, vse v AI seznamu); "Profit pipeline (v7.32-v7.90)"
+    → "...v7.32-v7.91"; "332 AI endpointov" v Project structure → "335
+    AI endpointov"; "509 routes" v Coding standards → "512 routes";
+    "509 API routes" v Testing → "512 API routes"; Roadmap "v7.90
+    (trenutno — ~195 funkcij)" → "v7.91 (trenutno — ~198 funkcij)";
+    profit pipeline "(136+ funkcij)" → "(139+ funkcij)" in dodane 3 nove
+    funkcije (AI Deal Source Momentum Analyzer, AI Market Volatility
+    Forecaster, AI Inventory Performance Trend Tracker); "UI komponente
+    za v7.50-v7.90 funkcije" → "...v7.50-v7.91 funkcije"; "do v7.90
+    (avgust 2026)" → "do v7.91 (avgust 2026)"; "Zadnje verzije": dodan
+    "v7.91.0 (avgust 2026) — AI Deal Source Momentum Analyzer, AI Market
+    Volatility Forecaster, AI Inventory Performance Trend Tracker" na vrh.
+  - **CHANGELOG.md** (to sekcija): dodana nova "[7.91.0] - 2026-08-14"
+    sekcija z vsemi 3 endpoint-i in podrobnimi opisi; "[Unreleased]
+    Načrtovano za v7.91+" → "...za v7.92+".
 
 ## [7.90.0] - 2026-08-13
 

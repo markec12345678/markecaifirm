@@ -11897,3 +11897,148 @@ Stage Summary:
 - Dokumentacija sinhrono posodobljena (AI_ENDPOINTS.md, README, CHANGELOG, GitHub About)
 - GitHub sinhroniziran (0 commit-ov ahead)
 - Verzija aplikacije: v7.90.0
+
+---
+Task ID: v7.91
+Agent: full-stack-developer
+Task: Add 3 new features for v7.91 — AI Deal Source Momentum Analyzer, AI Market Volatility Forecaster, AI Inventory Performance Trend Tracker
+
+Work Log:
+- Prebral worklog.md (zadnji ~200 vrstic) — projekt je na v7.90.1 z 332 AI endpointi in 509 total routes
+- Preučil obstoječe vzorce:
+  * src/app/api/ai/portfolio-risk-forecaster/route.ts (1040 vrstic, v7.90 AI z forecast + mitigation plan, GET+POST shared function pattern)
+  * src/app/api/ai/seller-performance-forecaster/route.ts (768 vrstic, v7.89 AI z per-seller forecast, multi-entry AI merge pattern)
+  * src/app/api/analytics/deal-source-profitability-analyzer/route.ts (565 vrstic, v7.89 pure DB z decomposition, source-grouping pattern)
+  * src/app/api/analytics/market-trend-acceleration-tracker/route.ts (v7.89 pure DB z 2nd derivative computation pattern)
+- Preveril `/agent-ctx` — direktorij ne obstaja, delam po lastni presoji
+- Preveril AI_ENDPOINTS.md — 332 endpointov (v7.90.1)
+- Preveril dev.log — server teče, brez errorjev
+- Ustvaril direktorije za 3 nove endpointe
+- Built Feature #1: AI Deal Source Momentum Analyzer (src/app/api/ai/deal-source-momentum-analyzer/route.ts, ~925 vrstic):
+  * GET+POST handler shared function `handleDealSourceMomentumAnalyzer(req)` — AI Hub runner kompatibilnost
+  * Query SOLD trades 12m z linked Listing (monitor.source kot source)
+  * Group by source × month (12 month buckets, index 0 = oldest, 11 = newest)
+  * Per source compute 1st-derivative trend (linear regression slope) za profit, ROI, in volume
+  * Per source compute 2nd-derivative momentum (acceleration = slope second half - slope first half)
+  * Normalize momentum to 0-100 score (50 at zero, 100 at +maxAbs, 0 at -maxAbs z adaptive maxAbs reference)
+  * Composite weighted: 45% profit + 30% roi + 25% volume acceleration
+  * momentumDirection: ACCELERATING (≥60) / STEADY / DECELERATING (≤40)
+  * Rank sources by current total profit (1 = highest)
+  * Deterministic analysis: momentumAssessment (max 400), predictedRank30d (±1/2 iz direction), momentumSustainability (iz months + volume + direction stability), momentumDrivers top 3 (iz |score-50| × 2), momentumRisks (iz direction + sample size + extreme score)
+  * insights: bestMomentumSource (top by composite), emergingSource (highest profitMomentum z below-median total volume — dark horse), decliningSource (bottom by composite), advice
+  * AI-enhanced z grounding + anti-hallucination (predictedRank30d ±2 od currentRank clamped [1, 100], momentumSustainability ±15 od deterministic clamped [0, 100], enums validirana POSITIVE/NEGATIVE/LOW/MEDIUM/HIGH, string length limits — driver max 100/detail max 200/risk max 200/mitigation max 200/advice max 400/summary max 400, unknown sources skipped — preprečuje AI-ju izmišljanje virov) + 6h cache (key `deal-source-momentum-analyzer:${currentMonth}`) + deterministic fallback
+  * Empty state: prazen sources array z opisno slovensko message "Ni SOLD trgovin v zadnjih 12 mesecih — Deal Source Momentum Analyzer ni mogoč."
+  * runtime='nodejs' + dynamic='force-dynamic' + maxDuration=60
+- Built Feature #2: AI Market Volatility Forecaster (src/app/api/ai/market-volatility-forecaster/route.ts, ~750 vrstic):
+  * GET+POST handler shared function `handleMarketVolatilityForecaster(req)` — AI Hub runner kompatibilnost
+  * Query listings 180 dni (price + monitor.source kot category proxy — Listing nima category polja)
+  * Group by ISO week (26 weeks aligned to Monday) AND by source
+  * Per source compute CV (coefficient of variation = stddev/mean × 100) of weekly avg prices (require ≥4 weeks)
+  * Build overall weekly avg price series (cross-category)
+  * Linear regression slope za volatilityTrend26w + 2nd derivative za volatilityMomentum
+  * Classify volatilityDirection iz slope + acceleration sign + CV delta (first half vs second half ±2 threshold)
+  * Project 30/60/90d z daily change × momentum factor [0.5-1.5]
+  * Per-category forecast z same momentum factor approach
+  * Identify hotspots (top 3 highest projected volatility) in stability zones (bottom 3 lowest)
+  * current: { avgVolatility %, mostVolatileCategory, mostStableCategory, volatilityTrend26w, volatilityMomentum, volatilityDirection INCREASING/STABLE/DECREASING }
+  * forecast: { projectedAvgVolatility30d/60d/90d (clamped [0, 200], ±15 od deterministic z momentum factor), volatilityOutlook (iz 90d delta ±2), confidenceLevel 0-100 (base 40 + category count × 4 + trend strength × 3 + momentum × 5) }
+  * byCategory: [{ category, currentVolatility, projectedVolatility30d/90d, trend }]
+  * analysis: { riskImplication max 500, volatilityHotspots 1-3, stabilityZones 1-3, volatilityMitigationActions 2-4, tradingStrategyAdjustment max 400 (DEFENZIVNA/AGRESIVNA/VZDRŽUJOČA) }
+  * AI-enhanced z grounding + anti-hallucination (projected volatility ±15 od deterministic clamped [0, 200], confidenceLevel ±15 clamped [0, 100], enums validirana INCREASING/STABLE/DECREASING in HIGH/MEDIUM/LOW, string length limits — category max 60/risk max 200/benefit max 200/action max 200/detail max 200/tradingStrategyAdjustment max 400/riskImplication max 500/summary max 400) + 6h cache (key `market-volatility-forecaster:${currentMonth}`) + deterministic fallback
+  * Empty state: zero volatility z opisno slovensko message "Ni oglasov v zadnjih 180 dneh — Market Volatility Forecaster ni mogoč." (tudi fallback za <4 tednov in <1 kategorija z ≥4 tedni)
+  * runtime='nodejs' + dynamic='force-dynamic' + maxDuration=60
+- Built Feature #3: AI Inventory Performance Trend Tracker (src/app/api/ai/inventory-performance-trend-tracker/route.ts, ~810 vrstic):
+  * GET+POST handler shared function `handleInventoryPerformanceTrendTracker(req)` — AI Hub runner kompatibilnost
+  * Query SOLD trades 12m z linked Listing (dealScore)
+  * Group by month (12 month buckets aligned to month start, oldest first; only active months z ≥1 trade)
+  * Per month compute: profit, avgROI, avgHoldDays, avgDealScore, winRate (% profitable), volume, capitalEfficiency (profit/cost × 100)
+  * Linear regression slopes za 4 trends: profitTrend12m, roiTrend12m, holdDaysTrend12m (negative = better), winRateTrend12m
+  * Compute performanceMomentum (acceleration = slope second half - slope first half of monthly profits) + performanceVolatility (stddev monthly profits)
+  * Classify performanceDirection iz 3-signal majority (profit + roi + winRate trend sign — ≥2 positive and 0 negative → IMPROVING, etc.)
+  * Project 30/60/90d z last month profit + trend × months × momentum factor [0.7-1.3]
+  * Compute performanceGrade A+/A/B/C/D/F iz composite score (profitScore 35% normalized to historical max + roiScore 30% [50 + ROI × 0.5] + winRateScore 25% [avgWinRate] + 50 base 10% + direction bonus ±10 — thresholds 90/80/70/55/40)
+  * Compute performanceConsistencyScore iz CV (100 - CV × 30 + STEADY bonus +5 + sample size bonus +5 if ≥6 months)
+  * trends: { profitTrend12m, roiTrend12m, holdDaysTrend12m, winRateTrend12m, performanceDirection IMPROVING/STABLE/DECLINING, performanceMomentum, performanceVolatility }
+  * monthlyData: [{ month ISO date, profit, avgROI, avgHoldDays, avgDealScore, winRate, volume, capitalEfficiency }] (12 months)
+  * forecast: { performanceTrajectory max 500, projectedProfit30d/60d/90d (clamped [0, historical max × 3], ±20% od deterministic z momentum factor), projectedROI30d (clamped [-50, 200], ±10), performanceGrade, performanceConsistencyScore 0-100 }
+  * analysis: { performanceDrivers 1-3 (top 3 trends by absolute magnitude, hold days negativ = POSITIVE — driver max 100, impact POSITIVE/NEGATIVE, weight 0-100 = |trend| × 2, detail max 200), performanceRisks 1-3 (DECLINING direction, high CV > 1.0, lengthening hold days > 2/mo, low consistency < 40 — risk max 200, severity LOW/MEDIUM/HIGH, mitigation max 200), performanceOptimizationActions 1-4 (action max 200, priority HIGH/MEDIUM/LOW, expectedImpact max 200), bestPerformingMonth { month ISO date, profit, reason max 300 } | null (highest profit month) }
+  * AI-enhanced z grounding + anti-hallucination (projectedProfit ±20% od deterministic clamped [0, profitCap = historical max × 3], projectedROI30d ±10 od deterministic clamped [-50, 200], performanceGrade validiran against enum A+/A/B/C/D/F, consistencyScore ±15 clamped [0, 100], bestPerformingMonth.month validated against monthlyData — preprečuje AI-ju izmišljanje meseca, enums validirana POSITIVE/NEGATIVE/LOW/MEDIUM/HIGH/HIGH/MEDIUM/LOW, string length limits — driver max 100/detail max 200/risk max 200/mitigation max 200/action max 200/expectedImpact max 200/performanceTrajectory max 500/summary max 400) + 6h cache (key `inventory-performance-trend-tracker:${currentMonth}`) + deterministic fallback
+  * Empty state: zero trends z opisno slovensko message "Ni SOLD trgovin v zadnjih 12 mesecih — Inventory Performance Trend Tracker ni mogoč." (tudi fallback za <2 aktivna meseca)
+  * runtime='nodejs' + dynamic='force-dynamic' + maxDuration=60
+- Build popravki:
+  * deal-source-momentum-analyzer: odstranil unused `VALID_DIRECTION` konstanto (direction se compute-ja deterministično, ne clamp-a iz AI)
+  * deal-source-momentum-analyzer: popravil TS error `top.momentum.momentumSustainability` → `top.analysis.momentumSustainability` (sustainability je v analysis objektu, ne v momentum)
+  * inventory-performance-trend-tracker: odstranil unused `VALID_DIRECTION` konstanto (direction se compute-ja iz 3-signal majority, ne clamp-a iz AI)
+- Testiranje:
+  * ESLint: 0 napak ✨ (EXIT 0 — `bun run lint` praznina output)
+  * TypeScript: 0 napak ✨ (EXIT 0 — `npx tsc --noEmit` praznina output)
+  * curl testi (prazna baza — 0 listings in 0 trades):
+    - GET /api/ai/deal-source-momentum-analyzer → 200 OK, ~11ms, {"ok":true,"sources":[],"insights":{"bestMomentumSource":null,"emergingSource":null,"decliningSource":null,"advice":"Ni SOLD trgovin v zadnjih 12 mesecih — Deal Source Momentum Analyzer ni mogoč."},"summary":"...","aiUsed":false,"message":"..."}
+    - GET /api/ai/market-volatility-forecaster → 200 OK, ~9ms, {"ok":true,"current":{"avgVolatility":0,"mostVolatileCategory":null,"mostStableCategory":null,"volatilityTrend26w":0,"volatilityMomentum":0,"volatilityDirection":"STABLE"},"forecast":{"projectedAvgVolatility30d":0,"projectedAvgVolatility60d":0,"projectedAvgVolatility90d":0,"volatilityOutlook":"STABLE","confidenceLevel":30},"byCategory":[],"analysis":{"riskImplication":"Ni oglasov v zadnjih 180 dneh — Market Volatility Forecaster ni mogoč.","volatilityHotspots":[],"stabilityZones":[],"volatilityMitigationActions":[{"action":"Dodaj oglase v bazo...","priority":"LOW","detail":"Volatility analiza zahteva vsaj 4 tedne podatkov per kategorija."}],"tradingStrategyAdjustment":"Ni podatkov za strategijo."},"summary":"...","aiUsed":false,"message":"..."}
+    - GET /api/ai/inventory-performance-trend-tracker → 200 OK, ~8ms, {"ok":true,"trends":{"profitTrend12m":0,"roiTrend12m":0,"holdDaysTrend12m":0,"winRateTrend12m":0,"performanceDirection":"STABLE","performanceMomentum":0,"performanceVolatility":0},"monthlyData":[],"forecast":{"performanceTrajectory":"Ni SOLD trgovin — Inventory Performance Trend Tracker ni mogoč.","projectedProfit30d":0,"projectedProfit60d":0,"p...","aiUsed":false,"message":"..."}
+    - POST /api/ai/deal-source-momentum-analyzer ({} body) → 200 OK, ~9ms (isti response kot GET — handleDealSourceMomentumAnalyzer shared function — AI Hub runner kompatibilnost potrjena)
+    - POST /api/ai/market-volatility-forecaster ({} body) → 200 OK, ~9ms (isti response kot GET)
+    - POST /api/ai/inventory-performance-trend-tracker ({} body) → 200 OK, ~8ms (isti response kot GET)
+  * dev.log: vsi HTTP requesti vračajo 200 OK (GET in POST za vse 3 endpoint-e), brez error/warn (empty-state — AI se sploh ne kliče brez podatkov)
+- Dokumentacija sinhrono posodobljena:
+  * AI_ENDPOINTS.md: regeneriran z python3 skripto — "Total: 335 endpoints" (332 → 335, +3 AI: deal-source-momentum-analyzer pos 94, inventory-performance-trend-tracker pos 143, market-volatility-forecaster pos 232)
+  * README.md (MultiEdit z 8 urejanji):
+    - Version badge: v7.90.0 → v7.91.0
+    - AI Endpoints badge: 332 → 335
+    - API Routes badge: 509 → 512 (+3)
+    - Tagline: "332 AI endpointov + 72 analytics" → "335 AI endpointov + 72 analytics" (0 new analytics — all 3 are AI)
+    - Overview: "Verzija v7.90.0" → "Verzija v7.91.0", "332 AI + 72 analytics + ~195 funkcij" → "335 AI + 72 analytics + ~198 funkcij"
+    - "Kaj je novega v v7.56–v7.90 (35 verzij, 105 novih funkcij)" → "...v7.56–v7.91 (36 verzij, 108 novih funkcij)", dodan v7.91 blok (3 funkcije) na vrh z detajlnimi opisi vseh 3 endpoint-ov (response shape, anti-hallucination pravila, AI cache key, deterministic fallback, example comment, razlika od podobnih obstoječih endpoint-ov — deal-source-momentum-analyzer vs deal-source-trend-analyzer/deal-source-intelligence/deal-source-profitability-analyzer/deal-source-performance-tracker/deal-source-quality-tracker; market-volatility-forecaster vs price-volatility-analyzer/market-trend-forecaster-pro/market-trend-acceleration-tracker/market-sentiment-trend-analyzer; inventory-performance-trend-tracker vs inventory-performance-forecaster/inventory-roi-trend-tracker/inventory-aging-trend-analyzer/inventory-value-appreciation-tracker)
+    - AI Hub badge v tabeli: "Vsi 332 AI endpointov" → "Vsi 335 AI endpointov"
+    - "Glej AI_ENDPOINTS.md za popoln seznam vseh 332 AI endpointov" → "...335 AI endpointov"
+    - "Endpointi (332 AI + 72 analytics + 10 cron + sistemski = 509)" → "...(335 AI + 72 analytics + 10 cron + sistemski = 512)"
+    - Dodani 3 novi endpointi v API primeri blok (deal-source-momentum-analyzer v7.91, market-volatility-forecaster v7.91, inventory-performance-trend-tracker v7.91, vse v AI seznamu za portfolio-risk-forecaster)
+    - "Profit pipeline (v7.32-v7.90)" → "...(v7.32-v7.91)"
+    - "332 AI endpointov" v Project structure → "335 AI endpointov"
+    - "509 routes" v Coding standards → "512 routes"
+    - "509 API routes" v Testing → "512 API routes"
+    - Roadmap: "v7.90 (trenutno — ~195 funkcij)" → "v7.91 (trenutno — ~198 funkcij)"
+    - Profit pipeline: "(136+ funkcij)" → "(139+ funkcij)" in dodane 3 nove funkcije (AI Deal Source Momentum Analyzer, AI Market Volatility Forecaster, AI Inventory Performance Trend Tracker)
+    - "UI komponente za v7.50-v7.90 funkcije" → "...v7.50-v7.91 funkcije"
+    - "do v7.90 (avgust 2026)" → "do v7.91 (avgust 2026)"
+    - "Zadnje verzije": dodan "v7.91.0 (avgust 2026) — AI Deal Source Momentum Analyzer, AI Market Volatility Forecaster, AI Inventory Performance Trend Tracker" na vrh
+  * CHANGELOG.md (Edit z 1 urejanjem):
+    - "[Unreleased] Načrtovano za v7.91+" → "...za v7.92+"
+    - Dodana nova "[7.91.0] - 2026-08-14" sekcija (nad [7.90.0]) z vsemi 3 endpoint-i in podrobnimi opisi (response shape, anti-hallucination rules, AI cache key, deterministic fallback, example comment, razlika od podobnih obstoječih endpoint-ov — deal-source-momentum-analyzer vs deal-source-trend-analyzer/deal-source-intelligence/deal-source-profitability-analyzer/deal-source-performance-tracker/deal-source-quality-tracker; market-volatility-forecaster vs price-volatility-analyzer/market-trend-forecaster-pro/market-trend-acceleration-tracker/market-sentiment-trend-analyzer; inventory-performance-trend-tracker vs inventory-performance-forecaster/inventory-roi-trend-tracker/inventory-aging-trend-analyzer/inventory-value-appreciation-tracker)
+    - "### Changed" pod-sekcija z doc sync opisi (AI_ENDPOINTS.md, README.md, CHANGELOG.md, verzija aplikacije). Skupno 332 AI → 335 AI (+3), 72 analytics nespremenjeno (0 new), 509 routes → 512 routes (+3), ~195 funkcij → ~198 funkcij (+3), 136+ funkcij → 139+ funkcij v profit pipeline (+3).
+- Verification:
+  * AI_ENDPOINTS.md "Total: 335 endpoints" ✓
+  * README.md v7.91 refs: 12 ✓ (badges, tagline, overview, kaj-novega, AI Hub, AI_ENDPOINTS.md link, endpointi seznam, profit pipeline, testing, coding standards, project structure, roadmap, zadnje verzije)
+  * README.md "335 AI" refs: 6 ✓ (tagline, Overview, AI Hub badge, AI_ENDPOINTS.md link, Endpointi section, Project structure)
+  * README.md "512" refs: 4 ✓ (badge, Endpointi, coding standards, testing)
+  * README.md "72 analytics" refs: 3 ✓ (tagline, Overview, Endpointi section) — nespremenjeno (0 new analytics)
+  * README.md "198 funkcij" refs: 2 ✓ (Overview + Roadmap)
+  * README.md "139+ funkcij" refs: 1 ✓ (Roadmap profit pipeline)
+  * README.md 0 "332 AI" refs ✓
+  * README.md 0 "509 routes" refs ✓
+  * README.md 0 "195 funkcij" refs ✓
+  * README.md 0 "136+ funkcij" refs ✓
+  * README.md 0 "do v7.90 (avgust" refs ✓
+  * CHANGELOG.md "## [7.91.0] - 2026-08-14" ✓
+  * CHANGELOG.md "Načrtovano za v7.92+" ✓
+  * AI_ENDPOINTS.md: deal-source-momentum-analyzer (pos 94), inventory-performance-trend-tracker (pos 143), market-volatility-forecaster (pos 232) ✓
+- ESLint: 0 napak ✨ (EXIT 0)
+- TypeScript: 0 napak ✨ (EXIT 0 — npx tsc --noEmit EXIT 0)
+- dev.log: vsi HTTP requesti vračajo 200 OK (GET in POST za vse 3 endpoint-e), brez error/warn (empty-state — AI se sploh ne kliče brez podatkov; deal-source-momentum-analyzer vrača prazno sources z advice "Ni SOLD trgovin v zadnjih 12 mesecih"; market-volatility-forecaster vrača zero volatility z advice "Ni oglasov v zadnjih 180 dneh"; inventory-performance-trend-tracker vrača zero trends z advice "Ni SOLD trgovin")
+- curl testi: vsi 6 (GET+POST za vsak od 3 endpoint-ov) → 200 OK z veljavnim JSON in aiUsed=false (empty-state — AI se ne kliče)
+- Verzija aplikacije: v7.91.0
+
+Stage Summary:
+- 3 novi endpointi dodani (skupno +3 od v7.90.1):
+  - deal-source-momentum-analyzer (GET+POST, AI-enhanced — AI analizira MOMENTUM (2nd derivative — pospešek trenda) per deal source — kateri viri pridobivajo momentum najhitreje in kateri bodo najboljši v 30 dneh. "Bolha: ACCELERATING (momentum 82, +15%/mo²). Vinted: DECELERATING (38). Emerging: Facebook (momentum 65, +20%/mo²)." momentum { profitMomentum 0-100, roiMomentum 0-100, volumeMomentum 0-100, compositeMomentumScore 0-100 (45% profit + 30% roi + 25% volume acceleration), momentumDirection ACCELERATING/STEADY/DECELERATING (≥60/≤40 threshold) }. analysis { momentumAssessment max 400, predictedRank30d 1-100 (±2 od currentRank), momentumSustainability 0-100 (iz months + volume + direction stability), momentumDrivers 1-3 z driver max 100/impact POSITIVE-NEGATIVE/weight 0-100/detail max 200, momentumRisks 1-3 z risk max 200/severity LOW-MEDIUM-HIGH/mitigation max 200 }. insights { bestMomentumSource, emergingSource (highest profitMomentum z below-median volume — dark horse), decliningSource, advice max 400 }. Compute: query SOLD trades 12m z linked Listing (monitor.source), group by source × month (12 buckets), per source compute momentum (profit/roi/volume acceleration = 2nd derivative = slope second half - slope first half), normalize to 0-100, composite direction, rank sources by total profit, build deterministic analysis. AI-enhanced z grounding + anti-hallucination (predictedRank30d ±2 od currentRank, sustainability ±15 od deterministic, enums validirana, string length limits, unknown sources skipped) + 6h cache (key `deal-source-momentum-analyzer:${currentMonth}`) + deterministic fallback. GET+POST (handleDealSourceMomentumAnalyzer shared function). Razlika od deal-source-trend-analyzer (v7.87 ki track-a 1st-derivative trend per source) — ta gleda 2nd-derivative MOMENTUM. Razlika od deal-source-intelligence (v7.82 AI ki da composite scorecard) — ta forecast-a FUTURE ranking z momentum sustainability. Razlika od deal-source-profitability-analyzer (v7.89 ki decomposes profit) — ta gleda MOMENTUM composite (profit + roi + volume acceleration). Razlika od deal-source-performance-tracker (v7.85 ki track-a performance metrics) — ta forecast-a future source rank z momentum drivers/risks. Razlika od deal-source-quality-tracker (v7.86 ki track-a quality) — ta gleda MOMENTUM z emergingSource identification.)
+  - market-volatility-forecaster (GET+POST, AI-enhanced — AI forecast-a FUTURE market volatiliteto 30/60/90 dni vnaprej — bodo cene bolj nestabilne (risk) ali bolj stabilne (safe)? Razlika od price-volatility-analyzer (v7.86 ki analizira CURRENT volatility) — ta FORECAST-a FUTURE volatility z outlook + risk implication + mitigation actions. "Volatility outlook: INCREASING. Elektronika: 22% → 28% in 30d (riskier). Moda: 8% → 6% (stable). Action: shift to moda." current { avgVolatility % (cross-category mean CV), mostVolatileCategory, mostStableCategory, volatilityTrend26w (linear regression slope per week), volatilityMomentum (acceleration = 2nd deriv), volatilityDirection INCREASING/STABLE/DECREASING (iz slope + acceleration sign + CV delta first half vs second half) }. forecast { projectedAvgVolatility30d/60d/90d (clamped [0, 200], ±15 od deterministic z daily change × momentum factor [0.5-1.5]), volatilityOutlook INCREASING/STABLE/DECREASING (iz 90d delta ±2), confidenceLevel 0-100 (base 40 + category count × 4 + trend strength × 3 + momentum × 5) }. byCategory [{ category (iz monitor.source), currentVolatility, projectedVolatility30d/90d, trend }] (require ≥4 weeks). analysis { riskImplication max 500, volatilityHotspots 1-3 (top 3 highest projected) z category max 60/projectedVolatility 0-200/risk max 200, stabilityZones 1-3 (bottom 3 lowest) z benefit max 200, volatilityMitigationActions 2-4 z action max 200/priority HIGH-MEDIUM-LOW/detail max 200, tradingStrategyAdjustment max 400 (DEFENZIVNA/AGRESIVNA/VZDRŽUJOČA) }. Compute: query listings 180 dni (price + monitor.source), group by ISO week (26 weeks) AND by source, per source compute CV (coefficient of variation) of weekly avg prices, build weekly volatility series, linear regression slope za trend + 2nd derivative za momentum, classify direction, project 30/60/90d z momentum factor, per-category forecast. AI-enhanced z grounding + anti-hallucination (projected volatility ±15 od deterministic clamped [0, 200], confidenceLevel ±15 clamped [0, 100], enums validirana, string length limits) + 6h cache (key `market-volatility-forecaster:${currentMonth}`) + deterministic fallback. GET+POST (handleMarketVolatilityForecaster shared function). Razlika od price-volatility-analyzer (v7.86 ki da current volatility per category z CV iz 90 dni) — ta FORECAST-a FUTURE volatility z outlook + risk implication + mitigation. Razlika od market-trend-forecaster-pro (v7.78 ki forecast-a trend direction BULL/BASE/BEAR) — ta forecast-a VOLATILITY (variabilnost cen). Razlika od market-trend-acceleration-tracker (v7.89 ki track-a acceleration 2nd deriv per metric) — ta gleda volatility trend + momentum z 30/60/90d projection in hotspots/stability zones. Razlika od market-sentiment-trend-analyzer (v7.90 ki track-a sentiment trends) — ta gleda PRICE volatility ne sentiment.)
+  - inventory-performance-trend-tracker (GET+POST, AI-enhanced — AI track-a kako PERFORMANCE inventarja spreminja čez čas — so tvoje trgovine vedno bolj profitabilne, hitrejše, ali boljše kvalitete? Identificira performance trajektorijo in napove future performance. Razlika od inventory-performance-forecaster (v7.86 ki forecast-a CURRENT inventory 30/60/90d z grade) — ta track-a HISTORICAL performance TRENDS čez 12 mesecev z drivers/risks/actions. "Performance: IMPROVING (profit +8%/mo, ROI +2%/mo, hold days -1.5/mo). Grade: B+. 30d forecast: +1800€. Best month: Jul (2200€)." trends { profitTrend12m/roiTrend12m/holdDaysTrend12m (negative = better)/winRateTrend12m (linear regression slope per month), performanceDirection IMPROVING/STABLE/DECLINING (iz 3-signal majority: profit + roi + winRate trend sign), performanceMomentum (acceleration of profit trend — 2nd deriv), performanceVolatility (stddev monthly profits) }. monthlyData [{ month ISO date, profit, avgROI %, avgHoldDays, avgDealScore, winRate %, volume, capitalEfficiency % (profit/capital deployed × 100) }] (12 months, only active months). forecast { performanceTrajectory max 500, projectedProfit30d/60d/90d (clamped [0, historical max × 3], ±20% od deterministic z momentum factor [0.7-1.3] × 1/2/3 months), projectedROI30d (clamped [-50, 200], ±10), performanceGrade A+/A/B/C/D/F (iz composite score: profitScore 35% normalized to historical max + roiScore 30% [50 + ROI × 0.5] + winRateScore 25% + 50 base 10% + direction bonus ±10 — thresholds 90/80/70/55/40), performanceConsistencyScore 0-100 (100 - CV × 30 + STEADY bonus +5 + sample size bonus +5 if ≥6 months) }. analysis { performanceDrivers 1-3 (top 3 trends by absolute magnitude, hold days negativ = POSITIVE) z driver max 100/impact POSITIVE-NEGATIVE/weight 0-100/detail max 200, performanceRisks 1-3 (DECLINING, high CV > 1.0, lengthening hold days > 2/mo, low consistency < 40) z risk max 200/severity LOW-MEDIUM-HIGH/mitigation max 200, performanceOptimizationActions 1-4 z action max 200/priority HIGH-MEDIUM-LOW/expectedImpact max 200, bestPerformingMonth { month ISO date, profit, reason max 300 } | null (highest profit month validated against monthlyData — anti-hallucination) }. Compute: query SOLD trades 12m z linked Listing (dealScore), group by month (12 buckets), per month compute profit/ROI/hold days/dealScore/winRate/volume/capital efficiency, linear regression slopes za 4 trends, compute momentum + volatility, classify direction from 3-signal majority, project 30/60/90d z momentum factor, compute grade from composite score, compute consistency from CV. AI-enhanced z grounding + anti-hallucination (projectedProfit ±20% od deterministic clamped [0, profitCap = historical max × 3], projectedROI30d ±10 clamped [-50, 200], performanceGrade validiran against enum, consistencyScore ±15 clamped [0, 100], bestPerformingMonth.month validated against monthlyData — preprečuje AI-ju izmišljanje meseca, enums validirana, string length limits) + 6h cache (key `inventory-performance-trend-tracker:${currentMonth}`) + deterministic fallback. GET+POST (handleInventoryPerformanceTrendTracker shared function). Razlika od inventory-performance-forecaster (v7.86 ki forecast-a current portfolio 30/60/90d z grade iz current composition) — ta track-a HISTORICAL trends čez 12 mesecev z momentum in monthlyData. Razlika od inventory-roi-trend-tracker (v7.87 ki track-a ROI trends only) — ta gleda PERFORMANCE composite (profit + ROI + hold days + win rate + capital efficiency). Razlika od inventory-aging-trend-analyzer (v7.88 ki track-a aging trends) — ta gleda PROFITABILITY + efficiency trends ne aging. Razlika od inventory-value-appreciation-tracker (v7.90 ki track-a value appreciation per HELD item) — ta gleda REALIZED performance (SOLD trades) z monthly trajectory in grade.)
+- Vsi 3 endpointi vračajo veljaven JSON tudi ob prazni bazi (graceful fallback z opisno slovensko message). Vsi 3 imajo aiUsed flag v responsu za transparentnost in GET+POST kompatibilnost z AI Hub runner-jem (shared function pattern `handleXxx(req)`). Vsi 3 uporabljajo runtime='nodejs' + dynamic='force-dynamic' + maxDuration=60.
+- AI_ENDPOINTS.md: "Total: 335 endpoints" ✓ (332 → 335, +3 AI: deal-source-momentum-analyzer pos 94, inventory-performance-trend-tracker pos 143, market-volatility-forecaster pos 232)
+- README.md: v7.91.0 badge (12 referenc), 335 AI (6 referenc), 512 routes (4 referenc — badge, endpointi, coding standards, testing), 72 analytics (3 reference), ~198 funkcij (2 referenci), 139+ funkcij v profit pipeline (1 referenca), 0 stale refs (332/509/195/136+/v7.90 avgust) ✓
+- CHANGELOG.md: [7.91.0] sekcija dodana z 3 endpoint-i in Changed pod-sekcijo, [Unreleased] posodobljen na v7.92+ ✓
+- ESLint: 0 napak ✨ (EXIT 0)
+- TypeScript: 0 napak ✨ (EXIT 0 — npx tsc --noEmit oba EXIT 0)
+- dev.log: vsi HTTP requesti vračajo 200 OK (GET in POST za vse 3 endpoint-e), brez error/warn (empty-state — AI se sploh ne kliče brez podatkov)
+- curl testi: vsi 6 (GET+POST za vsak od 3 endpoint-ov) → 200 OK z veljavnim JSON in aiUsed=false (empty-state)
+- Verzija aplikacije: v7.91.0
