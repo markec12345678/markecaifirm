@@ -10831,3 +10831,34 @@ Stage Summary:
 - TypeScript: 0 napak ✨ (EXIT 0)
 - dev.log: vsi HTTP requesti vračajo 200 OK, brez error/warn (empty-state — AI se sploh ne kliče brez SOLD podatkov/listingov)
 - Verzija aplikacije: v7.82.0
+
+---
+Task ID: v7.82.1
+Agent: main
+Task: v7.82 commit + push + GitHub About + Agent Browser verification
+
+Work Log:
+- Prejel poročilo od full-stack-developer podagenta (Task v7.82)
+- Preveril 3 nove endpoint-e: deal-source-intelligence (200 GET+POST), market-opportunity-scanner (200 GET+POST), profit-margin-trend-analyzer (200 GET)
+- Preveril doc sync: AI_ENDPOINTS.md (318 ✅), README v7.82 (14 refs ✅), README 318 AI (6 refs ✅), CHANGELOG v7.82 ✅
+- Preveril lint: 0 napak ✨
+- Preveril typecheck: 0 napak ✨
+- Posodobil GitHub About opis: 316 AI → 318 AI, 482 routes → 485 routes (via API PATCH)
+- Commit: "v7.82: Deal Source Intelligence + Market Opportunity Scanner + Profit Margin Trend Analyzer" (04a437c)
+- Push na GitHub: uspešen ✅, PAT očiščen ✅
+- Agent Browser self-verification:
+  - Stran se pravilno naloži (HTTP 200)
+  - AI Hub prikazuje deal-source-intelligence (v7.82) v iskalniku ✅
+  - Runner test: klik na deal-source-intelligence → POST request → valid JSON ✅
+  - Response: {"ok":true, "sources":[], "ranking":[], "aiUsed":false, "message":"Ni zgodovinskih prodaj..."}
+  - Brez runtime napak v dev.log
+
+Stage Summary:
+- v7.82 uspešno dokončana in potisnjena na GitHub
+- 3 nove funkcije: AI Deal Source Intelligence, AI Market Opportunity Scanner, Profit Margin Trend Analyzer
+- AI endpointi: 316 → 318 (+2)
+- Analytics endpointi: 61 → 62 (+1)
+- Total API routes: 482 → 485 (+3)
+- Dokumentacija sinhrono posodobljena (AI_ENDPOINTS.md, README, CHANGELOG, GitHub About)
+- GitHub sinhroniziran (0 commit-ov ahead)
+- Verzija aplikacije: v7.82.0
