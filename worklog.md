@@ -11534,3 +11534,35 @@ Stage Summary:
   * POST /api/ai/market-cycle-phase-predictor ({} body) → 200 OK
   * POST /api/ai/inventory-roi-trend-tracker ({} body) → 200 OK
 - Verzija aplikacije: v7.87.0
+
+---
+Task ID: v7.87.1
+Agent: main
+Task: v7.87 commit + push + GitHub About + Agent Browser verification + 500 routes milestone
+
+Work Log:
+- Prejel poročilo od full-stack-developer podagenta (Task v7.87)
+- Preveril 3 nove endpoint-e: deal-source-trend-analyzer (200 GET+POST), market-cycle-phase-predictor (200 GET+POST), inventory-roi-trend-tracker (200 GET+POST)
+- Preveril doc sync: AI_ENDPOINTS.md (328 ✅), README v7.87 (15 refs ✅), README 328 AI (6 refs ✅), CHANGELOG v7.87 ✅
+- Preveril lint: 0 napak ✨
+- Preveril typecheck: 0 napak ✨
+- Posodobil GitHub About opis: 325 AI → 328 AI, 497 routes → 500 routes (via API PATCH)
+- Commit: "v7.87: Deal Source Trend Analyzer + Market Cycle Phase Predictor + Inventory ROI Trend Tracker" (41ee361)
+- Push na GitHub: uspešen ✅, PAT očiščen ✅
+- Agent Browser self-verification:
+  - Stran se pravilno naloži (HTTP 200)
+  - AI Hub prikazuje deal-source-trend-analyzer (v7.87) v iskalniku ✅
+  - Runner test: klik na deal-source-trend-analyzer → POST request → valid JSON ✅
+  - Response: {"ok":true, "sources":[], "portfolio":{...}, "aiUsed":false, "message":"Ni SOLD trgovin..."}
+  - Brez runtime napak v dev.log
+
+Stage Summary:
+- v7.87 uspešno dokončana in potisnjena na GitHub
+- MILESTONE: 500 API routes dosežen! 🎉
+- 3 nove funkcije: AI Deal Source Trend Analyzer, AI Market Cycle Phase Predictor, AI Inventory ROI Trend Tracker
+- AI endpointi: 325 → 328 (+3)
+- Analytics endpointi: 67 (nespremenjeno — vsi 3 so AI)
+- Total API routes: 497 → 500 (+3)
+- Dokumentacija sinhrono posodobljena (AI_ENDPOINTS.md, README, CHANGELOG, GitHub About)
+- GitHub sinhroniziran (0 commit-ov ahead)
+- Verzija aplikacije: v7.87.0
