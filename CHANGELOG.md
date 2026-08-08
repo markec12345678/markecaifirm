@@ -6,11 +6,361 @@ Format sledi [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), verzije s
 
 ## [Unreleased]
 
-Načrtovano za v7.83+:
+Načrtovano za v7.84+:
 - WebSocket real-time negotiation (SSE namesto polling)
 - Playwright E2E testi za glavne flow-e
 - TLS fingerprinting (curl-impersonate)
 - ML model za buyer matchmaker (fine-tuned na realnem data)
+
+## [7.83.0] - 2026-08-26
+
+### Added — AI Inventory Aging Predictor Pro & Market Cycle Forecaster & Deal Quality Trend Analyzer (3 funkcije)
+
+- **AI Inventory Aging Predictor Pro** — `GET+POST /api/ai/inventory-aging-predictor-pro`
+  - AI napove KDAJ bo vsak HELD item postal "stale" (problematsko
+    staranje) in priporoči PROAKTIVNE akcije PREDEN staranje
+    postane problem. "PS5: 28d held, avg 22d → MEDIUM risk.
+    Stale in 32d. Preventive: drop 5% in 14d." Razlika od
+    inventory-aging-predictor-v2 (v6.80, ki analizira CURRENT
+    aging buckets in devaluation curve) — ta PREDICT-a future
+    aging z predictedStaleDate/predictedDeadDate/daysUntilStale
+    in PROACTIVE preventive actions. Razlika od
+    inventory-aging-strategist (ki generira strategijo za aging
+    items) — ta forecast-a WHEN item bo postal problem z
+    priceAdjustmentTimeline in optimalSellWindow. Razlika od
+    inventory-aging (osnovni aging report) — ta je AI-powered
+    PROACTIVE prediction z agingRiskScore 0-100 + agingRiskLevel
+    + portfolio aging risk scorecard. Razlika od
+    inventory-lifecycle-stage-classifier (v7.70, ki klasificira
+    lifecycle stage) — ta gleda AGING RISK z dni-do-stale
+    countdown in preventive plan.
+  - Query HELD trades (status='held') z linked Listing (select
+    firstSeenAt, dealScore) + buyDate, buyPrice, category, title.
+    orderBy buyDate asc. take 100000.
+  - Compute categoryAvgHoldDays iz SOLD trades per category
+    (status='sold', sellDate not null, select buyDate, sellDate,
+    category). Per kategorija sum(daysBetween(buyDate, sellDate))
+    / count. Default 30 dni če ni SOLD zgodovine za kategorijo.
+  - Per-item aging metrics (buildPreparedItem):
+    - daysHeld = daysBetween(buyDate, now).
+    - daysListed = daysBetween(firstSeenAt ali buyDate, now).
+    - categoryAvgHoldDays iz SOLD history.
+    - agingRiskScore 0-100 (computeAgingRiskScore iz ratio
+      daysHeld vs max(STALE_THRESHOLD_DAYS, categoryAvgHoldDays)):
+      - ratio < 0.5 → 10-25 (LOW).
+      - ratio 0.5-1.0 → 25-55 (MEDIUM).
+      - ratio > 1.0 in daysHeld < 60 → 55-80 (HIGH).
+      - daysHeld 60-90 → 80-90 (CRITICAL, stale).
+      - daysHeld > 90 → 90-100 (CRITICAL, dead).
+    - agingRiskLevel LOW (<25) / MEDIUM (25-54) / HIGH (55-79) /
+      CRITICAL (80+). Vedno izračunaj iz score-a (anti-
+      hallucination).
+    - daysUntilStale = max(0, 60 - daysHeld).
+  - Deterministic preventive plan (buildDeterministicPreventive
+    Action): slovenski concrete action glede na risk level —
+    CRITICAL: "Znižaj 15-20% v 7 dneh in aktivno ponovno objavi
+    na vseh platformah. Razmisli o bundle ali likvidaciji.",
+    HIGH: "Znižaj 10% v 14 dneh, osveži fotografije in naslov.",
+    MEDIUM: "Pripravi price drop 5-8% v 21 dneh in monitor
+    prodajnih signala.", LOW: "Vzdržuj ceno, spremljaj
+    engagement, weekly review."
+  - Deterministic optimal sell window (buildDeterministic
+    OptimalSellWindow): start = now ali kmalu (max 7 dni),
+    end = 14 dni pred predictedStaleDate (da imamo čas prodati
+    pred problematičnim staranjem). Min sell window 7 dni.
+  - Deterministic price adjustment timeline (buildDeterministic
+    PriceTimeline): 2-3 koraki z trigger/daysFromNow/adjustment.
+    - CRITICAL: takoj -15% na 0.85×buyPrice, v 7d dodatno -10%.
+    - HIGH: v 14d -10% na 0.9×buyPrice, v 30d dodatno -10%.
+    - MEDIUM: v 21d -5% na 0.95×buyPrice, v 45d dodatno -8%.
+    - LOW: v 30d oceni ceno, če ni zanimanja -5%.
+  - Portfolio aging risk (buildDeterministicPortfolioRisk):
+    - totalAgingRiskScore = avg vseh item agingRiskScore (0-100).
+    - itemsAtRisk = count HIGH/CRITICAL.
+    - projectedStaleItems30d = count items z daysUntilStale ≤ 30.
+    - projectedDeadItems60d = count items z daysHeld + 60 ≥ 90 in
+      daysHeld < 90 (bodo dosegli dead threshold v 60 dneh).
+    - urgencyLevel LOW/MEDIUM/HIGH/CRITICAL iz totalAgingRiskScore.
+  - AI prompt z grounding — items per held trade (z deterministic
+    riskScore in riskLevel za referenco), portfolio stats,
+    slovenska pravila za AI response (agingRiskScore AI can
+    adjust max ±10 od deterministic, agingRiskLevel vedno
+    recomputed iz score, preventiveAction max 250 chars,
+    optimalSellWindow datumi validirani, portfolioRisk score
+    recomputed iz clamped individual scores, urgencyLevel
+    validirana proti enum, projected counts clamped [0,
+    items.length]).
+  - AI generira: items (override agingRiskScore z anti-
+    hallucination clamp ±10, override agingRiskLevel recomputed
+    iz clamped score, override preventiveAction max 250 chars,
+    override optimalSellWindow z validiranimi datumi),
+    portfolioRisk (override totalAgingRiskScore z clamp ±5 od
+    deterministic, urgencyLevel validirana proti enum,
+    projectedStaleItems30d in projectedDeadItems60d clamped
+    [0, items.length]), summary (slovenski povzetek max 400
+    znakov).
+  - Anti-hallucination:
+    - agingRiskScore AI adjustment clamped [-10, +10] od
+      deterministic vrednosti.
+    - agingRiskLevel VEDNO recomputed iz clamped score — AI ne
+      more direktno postaviti LOW/MEDIUM/HIGH/CRITICAL.
+    - urgencyLevel validirana proti enum (LOW/MEDIUM/HIGH/
+      CRITICAL).
+    - portfolioRisk.totalAgingRiskScore recomputed iz clamped
+      individual item scores (avg vseh clamped itemov) — AI
+      ne more postaviti poljubnega portfolio score brez osnove.
+    - projectedStaleItems30d in projectedDeadItems60d clamped
+      [0, items.length].
+    - preventiveAction max 250 chars.
+    - optimalSellWindow start/end validirani (string clamped na
+      30 chars, fallback na deterministic).
+  - AI cache key
+    `inventory-aging-predictor-pro:${JSON.stringify(sorted heldItemIds)}`
+    (6h TTL — invalidated ko se spremeni set HELD itemov).
+  - Deterministic fallback aktiven ko AI manjka (compute iz
+    daysHeld vs category avg in risk level klasifikacija).
+  - GET+POST z handleInventoryAgingPredictorPro(req) shared
+    function (AI Hub runner kompatibilnost).
+  - Empty state: če ni HELD trade-ov → prazne arrays +
+    portfolioRisk z 0 + urgencyLevel LOW + message "Ni HELD
+    inventarja — Inventory Aging Predictor Pro ni mogoč."
+  - maxDuration = 60, runtime = 'nodejs', dynamic =
+    'force-dynamic'.
+
+- **Market Cycle Forecaster** — `GET /api/analytics/market-cycle-forecaster`
+  - Projicira tržne cikle faz 90 dni v prihodnost — kdaj se bo
+    končal ACCUMULATION? Kdaj bo MARKUP dosegel vrh? Kdaj bo
+    začel DISTRIBUTION? Pure DB analytics — NO AI. "Current:
+    MARKUP (70% progress, ends ~Sep 15). Next: DISTRIBUTION (est.
+    6 weeks). Prepare to SELL." Razlika od market-cycle-detector
+    (v7.77, ki identificira current phase) — ta FORECAST-a
+    future phases 90 dni vnaprej z projectedPhaseEnd,
+    projectedNextPhaseStart in phaseTransitionConfidence.
+    Razlika od market-trend-momentum (ki gleda ACCELERATION) —
+    ta gleda 4-fazni cikel z avg phase duration in cycle length.
+    Razlika od market-saturation-forecaster (ki forecast-a
+    saturacijo) — ta gleda CYLE PHASE projections (kdaj markup →
+    distribution). Razlika od market-gap-forecaster (ki napove
+    market gaps) — ta gleda CYCLE timing za buy/sell odločitve.
+  - Query listings zadnjih 365 dni (firstSeenAt gte cutoff365d,
+    isHidden false) z monitor.source, price, dealScore,
+    firstSeenAt. take 200000.
+  - Weekly aggregation (overallByWeek + perSourceByWeek): per
+    ISO week (isoWeekStart Monday) — totalListings, pricedListings,
+    sumPrice, sumDealScore, dealScoreCount. Sort week keys
+    ascending. Need at least 8 weeks za forecasting (sicer
+    fallback z "Premalo tedenskih podatkov").
+  - computeWeekPhases: za vsak teden klasificiraj fazo iz
+    trailing 4-week window (zadnji 4 tedni vključno s trenutnim).
+    Za vsako okno:
+    - priceSeries = pricedListings > 0 ? sumPrice / pricedListings
+      : 0 (per week).
+    - volumeSeries = totalListings per week.
+    - priceDir = directionFromSlope(linearRegression(priceSeries)
+      .slope, 1.5%, meanPrice) — UP/DOWN/FLAT.
+    - volDir = directionFromSlope(linearRegression(volumeSeries)
+      .slope, 5, meanVolume) — UP/DOWN/FLAT.
+    - volIndex = stddev(priced) / mean(priced) × 100 (%
+      volatility).
+    - price30d = directionFromSlope zadnjih 2 tednov v oknu
+      (sproximation za 30d trend).
+    - vol30d = directionFromSlope zadnjih 2 tednov v oknu.
+    - phase = classifyPhase(priceDir, price30d, volDir, vol30d,
+      volIndex) — Wyckoff-inspired klasifikacija.
+  - groupPhaseRuns: grupiraj consecutive weeks of same phase v
+    runs z startMs, endMs, weeks. Iz runs zračunaj phaseStats
+    (occurrences per phase + totalWeeks per phase).
+  - avgPhaseDuration: per phase round1(totalWeeks / occurrences).
+    Default 0 če ni zgodovine za fazo.
+  - cycleLength: total weeks / complete cycles, kjer complete
+    cycle = floor(transitions / 4), transitions = število faznih
+    prehodov v canonical order (accumulation→markup→distribution→
+    decline→accumulation).
+  - Current phase + progress:
+    - currentPhase = zadnji teden iz weekPhaseEntries.
+    - weeksInPhase = število consecutive enakih faz na koncu.
+    - avgDurForCurrent = avgPhaseDuration[currentPhase] ?? 8
+      (default 8 tednov).
+    - phaseProgress = min(95, (weeksInPhase / avgDurForCurrent) ×
+      100) — 0-95% (max 95 da vedno ostane prostor za
+      napako).
+    - projectedPhaseEndMs = now + max(1, round(avgDurForCurrent -
+      weeksInPhase)) × WEEK_MS.
+  - Forecast next phase:
+    - nextPhase = nextPhaseInCycle(currentPhase) — canonical
+      cycle ACCUMULATION → MARKUP → DISTRIBUTION → DECLINE →
+      ACCUMULATION.
+    - nextPhaseDuration = avgPhaseDuration[nextPhase] ?? 6
+      (default 6 tednov).
+    - projectedNextPhaseStartMs = projectedPhaseEndMs.
+    - projectedPhase90d: walk through phases from now dokler ne
+      doseže 90d vnaprej. Začne z currentPhase, nato po vsaki
+      avgDuration preide v nextPhase. Konča ko cursor ≥ 90d.
+  - phaseTransitionConfidence: 50% phaseProgress + 50%
+    phaseStability (phaseStability = min(100, (occurrences /
+    totalOccurrences) × 200) — kako pogosto je bila ta faza v
+    zgodovini).
+  - byCategory: per source (category) z currentPhase, phaseProgress,
+    projectedPhaseEnd, nextPhase. Compute per-source weekly
+    aggregates + weekPhases. Skip sources z <4 tednov podatkov.
+  - Historical analysis:
+    - phaseFrequency: per phase { phase, occurrences, avgDuration
+      }. Sort by occurrences desc.
+    - avgPhaseDuration: Record phase→weeks.
+    - cycleLength: total weeks / complete cycles.
+  - Recommendations:
+    - currentPhaseAction (BUY_AGGRESSIVELY v ACCUMULATION / BUY v
+      MARKUP / SELL v DISTRIBUTION / WAIT v DECLINE — slovenski
+      concrete action z reasoning in time horizon).
+    - nextPhasePreparation (kaj pripraviti za naslednjo fazo —
+      npr. "Pripravi kapital za ACCUMULATION", "Povečaj nabavo v
+      ACCUMULATION kategorijah", "Planiraj prodajo inventarja",
+      "Zmanjšaj nabavo, dvigni cash rezerve").
+    - timeHorizon (npr. "3 tednov do DISTRIBUTION (~21 dni)").
+    - advice (slovenski povzetek z direction, projected dates,
+      90d outlook in concrete action).
+  - Pure DB analytics — NO AI. GET handler only (analytics
+    endpoint).
+  - Empty state: če ni listing-ov v 365 dneh → ACCUMULATION z
+    0 progress + message "Ni listing-ov v zadnjih 365 dneh —
+    Market Cycle Forecaster ni mogoč." Če <8 tednov podatkov →
+    ACCUMULATION z 10% confidence + message "Premalo tedenskih
+    podatkov (X tednov) — zberi vsaj 8 tednov za zanesljiv
+    cycle forecast."
+  - runtime = 'nodejs', dynamic = 'force-dynamic'.
+
+- **Deal Quality Trend Analyzer** — `GET /api/analytics/deal-quality-trend-analyzer`
+  - Analizira kako se deal QUALITY spreminja čez čas — ali trg
+    producira boljše ali slabše deal-e? Track-a dealScore,
+    estValue accuracy, in prilika rate trends. Pure DB analytics
+    — NO AI. "Quality trend: IMPROVING (+1.2/wk, momentum +0.3).
+    Prilika rate: 32% (+5%/mo). Best: elektronika (+2.1/wk)."
+    Razlika od deal-quality-distribution (v7.74, snapshot
+    distribucije dealScore) — ta analizira TREND quality-ja čez
+    26 tednov z linear regression + momentum. Razlika od
+    deal-quality-forecaster (v7.79, AI ki napove quality
+    posameznega deal-a po dnevu tedna) — ta gleda HISTORICAL
+    quality trend čez celoten portfelj z direction (IMPROVING/
+    STABLE/DECLINING). Razlika od deal-quality-scorecard (v7.79,
+    ki score-a posamezne deal-e) — ta gleda aggregate quality
+    trend z byCategory ranking. Razlika od deal-conversion-funnel-
+    analyzer (ki gleda conversion) — ta gleda quality SCORE trend
+    in prilika rate trend. Razlika od deal-velocity (ki meri
+    market temperature) — ta gleda QUALITY direction z momentum
+    in volatility.
+  - Query listings zadnjih 180 dni (firstSeenAt gte cutoff180d,
+    isHidden false) z dealScore, aiScore, aiRisk, aiVerdict,
+    aiEstimatedValue, firstSeenAt, monitor.source. take 200000.
+  - Weekly aggregation per ISO week (isoWeekStart Monday): per
+    week — dealScoreSum/count, aiScoreSum/count, aiRiskSum/count,
+    prilikaCount (aiVerdict='PRILIKA'), totalListings,
+    estValueSum/count. weekKey (YYYY-Www ISO format).
+  - Need at least 4 weeks za trend analysis (sicer fallback z
+    "Premalo tedenskih podatkov").
+  - Take last 26 weeks (or all if fewer) za trend computation.
+  - trend (QualityTrend):
+    - currentDealScore = zadnji teden avg dealScore (round1).
+    - avgDealScore26w = avg vseh 26 tednov (round1).
+    - bestDealScore26w = max (round1).
+    - dealScoreTrend = round2(trendSlope(dealScores)) — linear
+      regression slope per week.
+    - dealScoreTrend3m = round2(trendSlope(last 13 weeks)) —
+      zadnji 3 meseci slope.
+    - qualityDirection = IMPROVING (slope > 0.2) / DECLINING
+      (< -0.2) / STABLE (sicer). Threshold 0.2/wk = 1.4 v 7
+      tednih — meaningful change.
+    - qualityVolatility = round1(stdDev(weekly dealScores)) —
+      stabiliteta quality-ja čez čas.
+    - qualityMomentum = round2(recent13Slope - prior13Slope) —
+      acceleration of quality change. Pozitivna momentum =
+      quality pospešeno raste.
+  - weeklyData: per "YYYY-Www" z avgDealScore, avgAiScore,
+    avgAiRisk, prilikaRate (% listings z aiVerdict='PRILIKA'),
+    avgEstValue, listingCount.
+  - byCategory: per source (category). Per kategorija weekly
+    aggregation (dealScoreSum/count per week), skip z <3 scored
+    listings ali <2 tednov podatkov. currentDealScore = avg
+    zadnjih 4 tednov (round1). trend26w = round2(trendSlope(
+    weeklyScores)). direction = IMPROVING/STABLE/DECLINING (±0.2
+    threshold). Sort by trend26w desc (best improving first),
+    qualityRank = 1 = best.
+  - prilikaAnalysis:
+    - currentPrilikaRate = zadnji teden prilikaCount /
+      totalListings × 100 (round1).
+    - prilikaTrend = round2(trendSlope(prilikaRates per week)).
+    - bestPrilikaWeek = teden z najvišjo prilika rate z ≥5
+      listings (meaningful sample) — { week, rate }.
+    - opportunityOutlook = INCREASING (slope > 0.2) /
+      DECREASING (< -0.2) / STABLE (sicer).
+  - insights:
+    - qualityPercentile = % tednov z dealScore ≤ currentDealScore
+      (koliko tednov je imelo enak ali slabši deal score).
+    - bestImprovingCategory = top 1 kategorija če trend26w > 0.
+    - worstDecliningCategory = bottom 1 če trend26w < 0.
+    - advice: slovenski concrete povzetek z direction, momentum,
+      volatilnost, best/worst 26w, percentile, prilika rate,
+      outlook, in buy/rebalance priporočilo — DECLINING →
+      zmanjšaj fokus na declining kategorije, povečaj v
+      improving; IMPROVING+momentum > 0 → povečaj fokus na
+      improving kategorije; STABLE → optimiraj mix za višji avg
+      deal score.
+  - Pure DB analytics — NO AI. GET handler only (analytics
+    endpoint).
+  - Empty state: če ni listing-ov v 180 dneh → vse 0 + STABLE
+    direction + prazne arrays + message "Ni listing-ov v
+    zadnjih 180 dneh — Deal Quality Trend Analyzer ni mogoč."
+    Če <4 tednov podatkov → prazni arrays z opisom "Premalo
+    tedenskih podatkov (X tednov) — zberi vsaj 4 tedne za
+    zanesljiv quality trend."
+  - runtime = 'nodejs', dynamic = 'force-dynamic'.
+
+### Changed
+
+- AI_ENDPOINTS.md: regeneriran z Python skripto → "Total: 319
+  endpoints" (318 → 319, +1 AI: inventory-aging-predictor-pro na
+  poziciji 115).
+- README.md: badge version v7.82.0 → v7.83.0, badge AI Endpoints
+  318 → 319, badge API Routes 485 → 488 (+3: 1 AI + 2 analytics),
+  tagline "318 AI endpointov + 62 analytics" → "319 AI endpointov
+  + 64 analytics", Overview "v7.82.0 / ~171 funkcij" → "v7.83.0 /
+  ~174 funkcij", dodan v7.83 blok (3 funkcije) na vrh "Kaj je
+  novega" z detajlnimi opisi vseh 3 endpoint-ov (response shape,
+  anti-hallucination pravila, AI cache key, deterministic
+  fallback, razlika od podobnih obstoječih endpoint-ov), AI Hub
+  badge "Vsi 318 AI endpointov" → "Vsi 319 AI endpointov",
+  Endpointi header "(318 AI + 62 analytics + 10 cron + sistemski
+  = 485)" → "(319 AI + 64 analytics + 10 cron + sistemski = 488)",
+  dodana 3 nova endpointa v AI primeri blok (inventory-aging-
+  predictor-pro v7.83, market-cycle-forecaster v7.83, deal-
+  quality-trend-analyzer v7.83), Profit pipeline 112+ funkcij →
+  115+ funkcij z 3 novimi funkcijami dodanimi na konec seznama,
+  Analytics (62) → (64) z 2 novima (Market Cycle Forecaster,
+  Deal Quality Trend Analyzer), Testing "485 API routes" → "488
+  API routes", "Vsi API route handlerji (485 routes)" → "488
+  routes", Project structure "318 AI endpointov" → "319 AI
+  endpointov", Roadmap "v7.82 (trenutno — ~171 funkcij)" → "v7.83
+  (trenutno — ~174 funkcij)", "UI komponente za v7.50-v7.82
+  funkcije" → "...v7.50-v7.83 funkcije", "do v7.82 (avgust 2026)"
+  → "do v7.83 (avgust 2026)", Zadnje verzije dodan "v7.83.0
+  (avgust 2026) — AI Inventory Aging Predictor Pro, Market Cycle
+  Forecaster, Deal Quality Trend Analyzer" na vrh.
+- CHANGELOG.md: dodana nova "[7.83.0] - 2026-08-26" sekcija (nad
+  [7.82.0]) z vsemi 3 endpoint-i in podrobnimi opisi (response
+  shape, anti-hallucination rules, AI cache key, deterministic
+  fallback, example comment, razlika od podobnih obstoječih
+  endpoint-ov — inventory-aging-predictor-pro vs
+  inventory-aging-predictor-v2/inventory-aging-strategist/
+  inventory-aging/inventory-lifecycle-stage-classifier;
+  market-cycle-forecaster vs market-cycle-detector/market-trend-
+  momentum/market-saturation-forecaster/market-gap-forecaster;
+  deal-quality-trend-analyzer vs deal-quality-distribution/deal-
+  quality-forecaster/deal-quality-scorecard/deal-conversion-
+  funnel-analyzer/deal-velocity). "### Changed" pod-sekcija z doc
+  sync opisi (AI_ENDPOINTS.md, README.md, CHANGELOG.md, verzija
+  aplikacije). [Unreleased] posodobljen na "v7.84+".
+- Verzija aplikacije: v7.82.0 → v7.83.0.
+- Skupno: 318 AI → 319 AI (+1), 62 analytics → 64 analytics (+2),
+  485 routes → 488 routes (+3).
 
 ## [7.82.0] - 2026-08-24
 
