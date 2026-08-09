@@ -6,11 +6,92 @@ Format sledi [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), verzije s
 
 ## [Unreleased]
 
-Načrtovano za v8.05+:
+Načrtovano za v8.06+:
 - WebSocket real-time negotiation (SSE namesto polling)
 - Playwright E2E testi za glavne flow-e
 - TLS fingerprinting (curl-impersonate)
 - ML model za buyer matchmaker (fine-tuned na realnem data)
+
+## [8.05.0] - 2026-08-18
+
+### Added — Profit Acceleration Maximizer + Deal Source Capital Efficiency Maximizer + Inventory Turnover Yield Maximizer (3 funkcije)
+
+- **AI Profit Acceleration Maximizer** — `GET+POST /api/ai/profit-acceleration-maximizer`
+  - AI MAXIMIZES GROWTH RATE of profit — not just profit but HOW FAST profit is growing
+  - "Your profit grows 8% per month. With these 5 acceleration actions, it could grow 15% per month —
+    reaching 10,000€ in 8 months instead of 14."
+  - current { currentMonthlyProfit (avg last 3 months), currentGrowthRate (1st derivative = monthly CAGR %),
+    growthAcceleration (2nd derivative = difference of slopes in %/mo²), growthVelocity (€/mo linear regression slope),
+    monthsAnalyzed, latestMonthProfit, firstMonthProfit }
+  - accelerationScenarios: 3 entries — CONSERVATIVE (≈1.4× current growth), BALANCED (≈1.9×), AGGRESSIVE (≈2.8×) —
+    each with projectedGrowthRate, timeToTarget (months to reach 10,000€/mo profit), requirements (2-4 strings),
+    projectedProfit6m/12m, finalMonthlyProfit (= starting × (1+g)^12)
+  - accelerationLevers: 5-7 levers { lever, currentState, potential, growthUplift %/mo, action }
+    (Faster Sourcing, Higher Volume, Better Pricing, Shorter Hold Time, More Categories, Better Quality)
+  - maximizedGrowthRate (typically BALANCED scenario — sustainable)
+  - growthAccelerationActions (4-7 prioritized actions to accelerate growth)
+  - projectedProfit6m/12m at maximized rate
+  - timeTo10kProfit (months to reach 10,000€/mo at maximized growth rate)
+  - accelerationGrade (A+ to F based on maximized growth or uplift vs current)
+  - accelerationRisks (3-5 risks of aggressive growth: burnout, capital injection, market saturation, focus dilution)
+  - AI cache (6h TTL) keyed by currentMonth
+  - 'Your profit grows 8% per month. With 5 acceleration actions, it could grow 15% — reaching 10,000€ in 8 months
+    instead of 14.'
+  - Anti-hallucination: growth rates [-50, 200], profits [0, 200000]
+  - Empty-state fallback če 0 SOLD trades → grade F
+
+- **AI Deal Source Capital Efficiency Maximizer** — `GET+POST /api/ai/deal-source-capital-efficiency-maximizer`
+  - AI MAXIMIZES CAPITAL EFFICIENCY per source — which sources use capital most efficiently
+    (profit per euro deployed per day)
+  - "Bolha gives 0.85€ profit per euro per day, Vinted gives 0.42€ — shift 500€ from Vinted to Bolha for +35% efficiency."
+  - Per source metrics { totalInvested, totalProfit, avgHoldDays, tradeCount,
+    profitPerEuroDeployed (= total profit / total invested), profitPerEuroPerDay (= profitPerEuro / avgHoldDays),
+    capitalEfficiencyScore (0-100) }
+  - Per source maximization: efficiencyMaximizationAction
+    (INCREASE_CAPITAL / REDUCE_HOLD_TIME / IMPROVE_PROFIT_MARGIN / DIVERSIFY_WITHIN / REDUCE_CAPITAL),
+    projectedEfficiency (≥ current, ≤ × 1.5 ali +2.0), efficiencyUplift, capitalReallocation
+    (positive = shift TO this source, negative = shift FROM)
+  - Portfolio: currentCapitalEfficiency (weighted avg by invested), maximizedCapitalEfficiency,
+    totalEfficiencyUplift, capitalReallocationPlan (Array<{ fromSource, toSource, amount, rationale,
+    projectedEfficiencyGain }>), totalCapital
+  - AI cache (6h TTL) keyed by currentMonth
+  - 'Bolha 0.85€/€/d → 0.98 (INCREASE_CAPITAL, +800€). Vinted 0.42 → 0.21 (REDUCE_CAPITAL, -500€).
+    Portfolio: 0.65 → 0.78 (+0.13 uplift, +20% efficiency).'
+  - Anti-hallucination: scores [0, 100], efficiency [0, 10], projectedEfficiency ∈ [current, × 1.5 ali +2.0]
+  - Empty-state fallback če 0 SOLD trades
+
+- **AI Inventory Turnover Yield Maximizer** — `GET+POST /api/ai/inventory-turnover-yield-maximizer`
+  - AI finds the OPTIMAL TURNOVER RATE that maximizes ANNUALIZED YIELD
+  - Too fast = low margin per trade. Too slow = capital tied up.
+  - "Your optimal turnover is 3.2x/month giving 85% annual yield — faster than current 2.5x and more profitable."
+  - current { currentTurnoverRate (x/month = (30/avgHoldDays) × scaling factor), currentYield (% annualized =
+    avgROI × turnover × 12), currentMonthlyProfit, avgROIPerTrade, avgHoldDays, heldInventoryCount,
+    heldCapitalDeployed }
+  - yieldCurve: 7 points for turnoverRate 1, 2, 3, 4, 5, 6, 7 (x/month) — each with projectedYield (ROI drops 8%
+    per unit above base, so yield = (ROI × turnover × 12)), projectedMonthlyProfit, projectedAnnualProfit,
+    isOptimal (max yield point), description (slovenski)
+  - optimalTurnoverRate (turnover rate z max projectedYield — typically 2-4x)
+  - maximizedYield (% annualized at optimal turnover rate)
+  - yieldUplift (pp = maximized − current)
+  - turnoverYieldActions (4-7 actions to achieve optimal turnover: pricing, listing quality, category shifts,
+    inventory size, reinvestment, cycle time)
+  - optimalInventorySize (ideal # items for optimal turnover rate)
+  - turnoverYieldGrade (A+ to F — A+ če maximized ≥ 200% ali uplift ≥ 50pp)
+  - breakEvenTurnover (minimum turnover to maintain positive annual yield)
+  - AI cache (6h TTL) keyed by currentMonth
+  - 'Yield curve: 1x → 360% (premium, slow), 3x → 850% (optimal), 7x → 240% (margin squeeze).
+    Optimal turnover: 3.2x/mo → 85% annual yield (+25pp uplift). Grade: B. Break-even: 0.5x/mo.'
+  - Anti-hallucination: rates [0, 20], yields [-100, 1000]
+  - Empty-state fallback če 0 SOLD and 0 HELD trades → grade F
+
+### Changed — Documentation sync
+- **AI_ENDPOINTS.md** regenerated: 374 → 377 AI endpoints (+3)
+- **README.md**: version v8.04.0 → v8.05.0, AI Endpoints badge 374 → 377, API Routes badge 551 → 554,
+  tagline "374 AI endpointov + 72 analytics" → "377 AI endpointov + 72 analytics", Overview "v8.04.0" → "v8.05.0",
+  funkcij count ~237 → ~240, "Kaj je novega" v7.56-v8.04 → v7.56-v8.05, Roadmap v8.04 → v8.05,
+  Changelog zadnje verzije list v8.04.0 → v8.05.0 (added at top)
+- Total API routes: 551 → 554 (+3)
+- Analytics endpoints: 72 (nespremenjeno — vsi 3 novi so AI)
 
 ## [8.04.0] - 2026-08-17
 
