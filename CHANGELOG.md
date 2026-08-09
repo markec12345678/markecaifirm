@@ -6,11 +6,284 @@ Format sledi [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), verzije s
 
 ## [Unreleased]
 
-Načrtovano za v7.98+:
+Načrtovano za v7.99+:
 - WebSocket real-time negotiation (SSE namesto polling)
 - Playwright E2E testi za glavne flow-e
 - TLS fingerprinting (curl-impersonate)
 - ML model za buyer matchmaker (fine-tuned na realnem data)
+
+## [7.98.0] - 2026-08-15
+
+### Added — AI Profit Velocity Maximizer & AI Deal Quality Profit Optimizer & AI Inventory Cash Conversion Maximizer (3 funkcije — VELOCITY & QUALITY-PROFIT & CASH CONVERSION focus)
+
+- **AI Profit Velocity Maximizer** — `GET+POST /api/ai/profit-velocity-maximizer`
+  - AI maksimizira VELOCITY of profit generation — kako hitro
+    profit accumulira over time (€/day, acceleration, time-to-
+    double). Identificira bottlenecks v profit flow in actions da
+    pospeši profit generation. The "ultimate profit velocity
+    maximizer." Razlika od profit-maximizer-pro (v7.94 ki
+    maksimizira profit preko 7 levers) — ta maksimizira VELOCITY
+    (€/day, acceleration, time-to-double). Razlika od deal-source-
+    profit-maximizer (v7.97 ki maksimizira per-source) — ta
+    maksimizira per-VELOCITY (kako hitro profit accumulira).
+    Razlika od market-timing-profit-optimizer (v7.97 ki optimira
+    timing) — ta optimira VELOCITY (rate of profit accumulation).
+    Razlika od inventory-value-maximizer (v7.97 ki maksimizira
+    value) — ta maksimizira cash velocity (kako hitro capital
+    cikla). Razlika od cash-recovery-accelerator (v7.96 ki
+    accelerira cash recovery) — ta maksimizira VELOCITY of profit
+    generation (€/day rate + acceleration). Razlika od profit-
+    accelerator (v7.96 ki accelera profit) — ta KOMBINIRA velocity
+    + acceleration + bottleneck analysis + time-to-double
+    forecast. Razlika od profit-momentum-tracker (ki track-a
+    momentum) — ta maksimizira velocity z actionable bottleneck
+    removal. Razlika od profit-trajectory-forecaster (ki napove
+    trajectory) — ta daje velocity-maximization actions + time-to-
+    double projection. "Your profit velocity is 45€/day, but could
+    be 72€/day if you reduce hold time by 5 days. Hold
+    bottleneck: 12€/day lost (avg 28d hold, target 14d). Pricing
+    bottleneck: 8€/day lost (12% below estValue). Volume
+    bottleneck: 5€/day lost (2.1 trades/wk, target 3.5). Projected
+    monthly: 2,160€ (grade B). Time to double profit: 47 days at
+    maximized velocity."
+  - current: { currentDailyProfitRate €/dan (= last 30d profit /
+    30, [0, 10000]), avgDailyProfitRate90d €/dan (= last 90d
+    profit / 90), profitVelocity €/dan (linear regression slope
+    of daily profit over last 30d — positive = accelerating),
+    profitAcceleration €/dan (2nd derivative — change in slope
+    between first half (0-44d) in second half (45-89d) of last
+    90d), profitVelocityScore 0-100 (30% absolute daily rate vs
+    100€/dan target + 30% velocity slope + 20% acceleration +
+    20% volume) }
+  - bottlenecks: { holdTimeBottleneck { profitLost €/dan,
+    avgHoldDays, potentialGain €/dan (current rate ×
+    (avgHoldDays/target − 1), target = 14 dni) }, pricingBottleneck
+    { profitLost €/dan, priceGap % (max(0, 30 − avgBuyEstGap)),
+    potentialGain €/dan }, volumeBottleneck { profitLost €/dan,
+    tradeCountGap (max(0, 3.5 − tradesPerWeek)), potentialGain
+    €/dan }, categoryBottleneck Array<{ category, velocityImpact
+    €/dan, action }> (top 5 kategorij z slowest velocity) }
+  - maximization: { maximizedDailyProfitRate €/dan [0, 10000]
+    (CLAMPED [current, current × 3] anti-hallucination),
+    profitVelocityUplift €/dan [0, 10000] (= maximized −
+    current), velocityMaximizationActions 3-5 [{ action max 200
+    (slovenski), priority HIGH/MEDIUM/LOW, expectedVelocityGain
+    €/dan [0, 10000] }], projectedMonthlyProfit € [0, 100000] (=
+    maximized × 30), velocityGrade A+/A/B/C/D/F (iz
+    profitVelocityScore: ≥90 A+, ≥80 A, ≥70 B, ≥55 C, ≥40 D,
+    else F), timeToDoubleProfit dni [1, 3650] (cumulative profit
+    / maximized daily rate), capitalVelocityOptimization max 400
+    (slovenski — kako ciklati kapital hitreje) }
+  - Compute: query SOLD 12m z buyDate + sellDate +
+    aiEstimatedValue, per trade compute sellDayIdx30/90 (0-based
+    within 30/90 days, -1 if older), holdDays, profit,
+    buyEstGapPct (estValue/buyPrice ratio), category; aggregate
+    into 30-day + 90-day daily buckets + category stats; compute
+    currentDailyProfitRate (sum30/30), avgDailyProfitRate90d
+    (sum90/90), profitVelocity (linear regression slope of 30
+    daily buckets), profitAcceleration (slope of last 45 days −
+    slope of first 45 days), profitVelocityScore (weighted
+    formula), bottlenecks (holdTime iz avgHoldDays/target,
+    pricing iz gap, volume iz tradeCount/target, category iz
+    hold+profit impact), maximized = current + sum(potentialGains),
+    grade iz score, timeToDouble = cumulativeProfit / maximized.
+  - AI-enhanced z grounding prompt (tradeCount12m +
+    totalProfit12m + current + bottlenecks + caps + deterministic
+    baseline) + anti-hallucination (maximizedDailyProfitRate
+    CLAMPED [current, current × 3], profitVelocityUplift =
+    maximized − current within ±10% tolerance else recompute,
+    expectedVelocityGain [0, 10000], projectedMonthlyProfit =
+    maximized × 30, velocityGrade validirana A+/A/B/C/D/F,
+    timeToDoubleProfit [1, 3650], capitalVelocityOptimization max
+    400, summary max 400, enums validirana HIGH/MEDIUM/LOW) + 6h
+    cache (key `profit-velocity-maximizer:${currentMonth}` —
+    YYYY-MM, invalidira monthly) + deterministic fallback
+    (maximized = current + sum bottlenecks, grade iz score,
+    timeToDouble = cumulative/maximized). GET+POST
+    (handleProfitVelocityMaximizer shared function — AI Hub
+    runner kompatibilnost). Empty-state fallback če 0 SOLD trades
+    → "Ni SOLD trgovin v zadnjih 12 mesecih — velocity
+    maximization ni mogoč." z aiUsed=false + empty current (vsi
+    0) + empty bottlenecks + empty maximization z grade F +
+    timeToDouble 365.
+
+- **AI Deal Quality Profit Optimizer** — `GET+POST /api/ai/deal-quality-profit-optimizer`
+  - AI identificira RELATIONSHIP med deal quality scores in actual
+    profit — kateri quality range-i produkujejo največ profit-a?
+    Priporoči katere quality deals ciljati za maximum profit.
+    The "ultimate deal-quality → profit optimizer." Razlika od
+    deal-quality-forecaster (v7.96 ki napove deal quality) — ta
+    RELATES quality → actual profit in optimira sourcing za max
+    profit. Razlika od deal-quality-distribution-analyzer (ki
+    analizira quality distribution) — ta MAXIMIZIRA profit iz
+    quality ranges z actionable filtering advice. Razlika od
+    deal-quality-trend-analyzer (ki track-a quality trend) — ta
+    daje quality → profit correlation + optimal range targeting.
+    Razlika od deal-quality-scorecard (ki scor-a deals) — ta
+    optimira KATERI quality range ciljati za max profit. Razlika
+    od deal-quality-distribution-forecaster (ki napove quality
+    distribution) — ta daje PER-RANGE profit optimization. Razlika
+    od profit-maximizer-pro (v7.94 ki maksimizira profit preko 7
+    levers) — ta fokusira na QUALITY-PROFIT correlation. Razlika
+    od deal-source-profit-maximizer (v7.97 ki maksimizira per-
+    source) — ta maksimizira per-QUALITY-RANGE. Razlika od
+    profit-velocity-maximizer (v7.98 ki maksimizira velocity) —
+    ta maksimizira per-quality profit. "Deals z dealScore 60-80
+    produce 78% of total profit (avg 145€, ROI 92%, winRate
+    84%). Optimal range: 60-80 → projected 4,800€ (+1,200€
+    uplift). Min dealScore filter: 55. Risk: too-high-only filter
+    → 60% lower volume. Diversification: 80% deals v 60-80 range,
+    20% v 80-100 range."
+  - analysis: { qualityBuckets Array<{ range "0-20"/"20-40"/
+    "40-60"/"60-80"/"80-100", avgProfit €, avgROI % [−100, 500],
+    winRate 0-100 %, tradeCount, totalProfit €, profitPerDeal €
+    (= avgProfit) }>, mostProfitableRange (bucket z highest
+    totalProfit), bestROIRange (bucket z highest avgROI),
+    bestWinRateRange (bucket z highest winRate),
+    qualityProfitCorrelation STRONG_POSITIVE/WEAK_POSITIVE/NONE/
+    NEGATIVE (Pearson r: ≥0.5 STRONG, ≥0.2 WEAK, ≤−0.2 NEGATIVE,
+    else NONE) }
+  - optimization: { optimalQualityRange (MORA biti ena iz
+    qualityBuckets ranges — anti-hallucination), qualityProfitStrategy
+    max 400 (slovenski — kako prilagoditi sourcing),
+    qualityFilterRecommendation { minDealScore [0, 100],
+    reasoning max 400 (slovenski) }, projectedProfitWithOptimalQuality
+    € [0, 100000] (CLAMPED [totalCurrentProfit, totalCurrentProfit
+    × 2.5] anti-hallucination), profitUpliftFromQualityOptimization
+    € [0, 100000] (= projected − totalCurrentProfit),
+    qualityRiskAssessment 2-4 [{ risk max 200, mitigation max 200
+    }], qualityDiversificationAdvice max 400 (slovenski) }
+  - Compute: query SOLD 12m z linked Listing.dealScore, per
+    trade compute profit (sellPrice − sellFees − buyPrice −
+    buyFees), cost, isWin (profit > 0), bucketIdx (0-4 by
+    dealScore: 0-19/20-39/40-59/60-79/80-100); group by bucket
+    compute avgProfit, avgROI, winRate, tradeCount, totalProfit,
+    profitPerDeal; find mostProfitableRange (highest totalProfit),
+    bestROIRange (highest avgROI), bestWinRateRange (highest
+    winRate); compute Pearson correlation between dealScore and
+    profit → qualityProfitCorrelation; build optimalQualityRange =
+    mostProfitableRange, minDealScore = lower bound of optimal
+    range, projected = optimalBucket.avgProfit × allTradeCount,
+    uplift = projected − totalCurrentProfit, risk assessment
+    (volume drop, sourcing cost, seasonal), diversification
+    advice.
+  - AI-enhanced z grounding prompt (tradeCount12m +
+    totalCurrentProfit + analysis + deterministicOptimization +
+    caps) + anti-hallucination (optimalQualityRange MORA biti
+    valid bucket label, minDealScore [0, 100],
+    projectedProfitWithOptimalQuality CLAMPED [totalCurrent,
+    totalCurrent × 2.5], profitUplift = projected − totalCurrent
+    within ±10% tolerance else recompute, risk/mitigation max
+    200, qualityDiversificationAdvice max 400, summary max 400) +
+    6h cache (key `deal-quality-profit-optimizer:${currentMonth}`
+    — YYYY-MM, invalidira monthly) + deterministic fallback
+    (optimalRange = mostProfitableRange, projected = avgProfit ×
+    allTradeCount). GET+POST
+    (handleDealQualityProfitOptimizer shared function — AI Hub
+    runner kompatibilnost). Empty-state fallback če 0 SOLD trades
+    ali 0 z veljavnim dealScore → "Ni SOLD trgovin/veljavnih
+    dealScore v zadnjih 12 mesecih" z aiUsed=false + empty
+    qualityBuckets (5 praznih) + mostProfitableRange/bestROIRange/
+    bestWinRateRange default "60-80" + correlation NONE + empty
+    optimization z minDealScore 60.
+
+- **AI Inventory Cash Conversion Maximizer** — `GET+POST /api/ai/inventory-cash-conversion-maximizer`
+  - AI maksimizira cash conversion rate of held inventorija — kako
+    hitro in profitably lahko ALL held items se convert-a v cash?
+    Identificira optimal sell order in pricing za maximum cash
+    recovery. The "ultimate cash conversion maximizer." Razlika
+    od inventory-value-maximizer (v7.97 ki maksimizira value) —
+    ta maksimizira CASH conversion (koliko cash dobiš po fees).
+    Razlika od cash-recovery-accelerator (v7.96 ki accelerira
+    cash recovery) — ta maksimizira CASH RATE per item +
+    optimal sell order. Razlika od inventory-profit-maximizer
+    (ki maksimizira profit) — ta maksimizira cash conversion
+    (koliko cash se sprosti iz buyPrice capital). Razlika od
+    inventory-liquidation-strategist (ki likvidira) — ta daje
+    OPTIMAL SELL ORDER za max cash flow. Razlika od inventory-
+    aging-strategist (ki strategizes aging) — ta daje CASH
+    CONVERSION TIMELINE + capital recycling plan. Razlika od
+    inventory-roi-optimizer (ki optimira ROI) — ta optimira
+    cash conversion rate. Razlika od profit-velocity-maximizer
+    (v7.98 ki maksimizira velocity) — ta maksimizira per-item
+    cash conversion. Razlika od deal-quality-profit-optimizer
+    (v7.98 ki optimira quality-profit) — ta maksimizira cash
+    conversion held inventorija. "iPhone 13: netCashIfSoldNow
+    412€ (rate 137%, urgency 85), sell first. PS5:
+    netCashIfSoldNow 345€ (rate 92%, urgency 70), sell second.
+    Old laptop: netCashIfSoldNow 95€ (rate 63%, urgency 95 —
+    declining fast), sell third. Total cash recovery: 852€
+    (grade B). Timeline: 14 days. Capital recycling: reinvest
+    500€ v Bolha, 350€ v Vinted (expected ROI 78%/85%)."
+  - items: Array<{ tradeId, title, buyPrice €, aiEstimatedValue € |
+    null, carryingCostAccrued € (daysHeld × 0.10€/day),
+    netCashIfSoldNow € (estValue − carrying − 5% fees),
+    cashConversionRate % [0, 500] (netCashIfSoldNow/buyPrice ×
+    100), conversionUrgency 0-100 (daysHeld × 1.5 + declining
+    multiplier 1.8 + lowRate penalty 0.3(100 − rate)),
+    conversionEfficiency €/dan (netCashIfSoldNow/daysHeld),
+    optimalPrice € (CLAMPED [0.5×, 1.2×] buyPrice anti-
+    hallucination; urgent/declining: estValue × 0.95, else
+    estValue), sellOrderRank 1-based (1 = sell first; rank by
+    urgency DESC) }>
+  - maximization: { optimalSellOrder Array<{ tradeId (MORA
+    match-at heldItems — anti-hallucination), rank 1-based,
+    reason max 200 (slovenski) }>, projectedCashRecovery € [0,
+    100000] (sum (optimalPrice − 5% fees − carrying)),
+    cashConversionTimeline dni [1, 365] (avg days per item:
+    urgent > 70 → 7d, > 40 → 14d, else 21d),
+    cashFlowOptimizationActions 3-5 [{ action max 200
+    (slovenski), priority HIGH/MEDIUM/LOW, cashImpact € [0,
+    50000] }], capitalRecyclingPlan 2-4 [{ category max 80
+    (slovenski — Bolha/Vinted/Avtonet/...), amount € [0, 100000],
+    expectedROI % [−100, 500] }], cashConversionGrade A+/A/B/C/D/F
+    (iz recoveryRatio = projectedRecovery/totalBuyCapital: ≥1.20
+    A+, ≥1.10 A, ≥1.00 B, ≥0.90 C, ≥0.75 D, else F),
+    totalProfitIfConverted € [−50000, 100000] (sum
+    (netCashIfSoldNow − buyPrice)) }
+  - Compute: query HELD trades z linked Listing (aiEstimatedValue,
+    price, aiScore, dealScore, monitor.source/tags), per item
+    compute estValue (listing.aiEstimatedValue ali price ali
+    buyPrice × 1.1), daysHeld, carryingCostAccrued (daysHeld ×
+    0.10), netCashIfSoldNow (estValue − carrying − 5% fees),
+    cashConversionRate (netCash/buyPrice × 100), isDeclining
+    (estValue < buyPrice), conversionUrgency (daysHeld × 1.5 +
+    declining multiplier + lowRate penalty),
+    conversionEfficiency (netCash/daysHeld), optimalPrice
+    (urgent/declining: estValue × 0.95 clamped [0.5×, 1.2×]
+    buyPrice, else estValue clamped), sellOrderRank (by urgency
+    DESC), assignSellOrderRanks. Build optimalSellOrder (sorted
+    by rank), projectedCashRecovery (sum),
+    cashConversionTimeline (avg per item),
+    cashFlowOptimizationActions (urgent count, declining count,
+    lowRate count), capitalRecyclingPlan (40% Bolha/35% Vinted/
+    25% Avtonet), grade iz recoveryRatio, totalProfitIfConverted
+    (sum netCash − buyPrice).
+  - AI-enhanced z grounding prompt (top 40 items by urgency +
+    caps + deterministic baseline) + anti-hallucination (tradeId
+    MORA match-at heldItems — skip unknown — anti-hallucination,
+    optimalPrice CLAMPED [0.5×, 1.2×] buyPrice,
+    cashConversionTimeline [1, 365], cashImpact [0, 50000],
+    amount [0, 100000], expectedROI [−100, 500],
+    cashConversionGrade validirana A+/A/B/C/D/F, enums
+    validirana HIGH/MEDIUM/LOW, string length limits — reason
+    max 200, action max 200, category max 80, summary max 400) +
+    6h cache (key `inventory-cash-conversion-maximizer:${
+    JSON.stringify(heldItemIds)}` — invalidira ko held inventory
+    se spremeni) + deterministic fallback (urgency iz daysHeld
+    + declining + lowRate, sellOrderRank iz urgency, grade iz
+    recoveryRatio). GET+POST
+    (handleInventoryCashConversionMaximizer shared function —
+    AI Hub runner kompatibilnost). Empty-state fallback če 0
+    HELD trades → "Ni HELD trgovin v inventarju — Inventory
+    Cash Conversion Maximizer ni mogoč." z aiUsed=false +
+    empty items + empty maximization z grade F + timeline 14 dni.
+
+### Changed
+- AI_ENDPOINTS.md: 353 → 356 endpoints (+3 AI: profit-velocity-maximizer pos 304, deal-quality-profit-optimizer pos 93, inventory-cash-conversion-maximizer pos 131)
+- README.md: v7.97.0 → v7.98.0 badge, 353 → 356 AI endpoints, 530 → 533 API routes, ~216 → ~219 funkcij, 154+ → 157+ profit pipeline funkcij, dodan v7.98 "Kaj je novega" block (3 features z full descriptions), posodobljen Roadmap (v7.98 trenutno, 42 → 43 verzij, 126 → 129 novih funkcij), dodana 3 endpoint line v Profit pipeline section, dodana Zadnje verzije entry, tagline 353 → 356 AI endpointov
+- CHANGELOG.md: [Unreleased] Načrtovano za v7.98+ → ...za v7.99+, dodana nova [7.98.0] sekcija z vsemi 3 endpoint-i in podrobnimi opisi (response shape, anti-hallucination rules, AI cache key, deterministic fallback, example comment, razlika od podobnih obstoječih endpoint-ov). Skupno 353 AI → 356 AI (+3), 72 analytics nespremenjeno (0 new), 530 routes → 533 routes (+3), ~216 funkcij → ~219 funkcij (+3), 154+ funkcij → 157+ funkcij v profit pipeline (+3).
+- Verzija aplikacije: v7.98.0
 
 ## [7.97.0] - 2026-08-15
 
