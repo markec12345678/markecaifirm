@@ -6,11 +6,265 @@ Format sledi [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), verzije s
 
 ## [Unreleased]
 
-Načrtovano za v7.92+:
+Načrtovano za v7.93+:
 - WebSocket real-time negotiation (SSE namesto polling)
 - Playwright E2E testi za glavne flow-e
 - TLS fingerprinting (curl-impersonate)
 - ML model za buyer matchmaker (fine-tuned na realnem data)
+
+## [7.92.0] - 2026-08-14
+
+### Added — AI Capital Flow Analyzer & AI Market Cycle Transition Predictor & AI Inventory Turnover Momentum Tracker (3 funkcije)
+
+- **AI Capital Flow Analyzer** — `GET+POST /api/ai/capital-flow-analyzer`
+  - AI analizira kako kapital FLOW-a skozi business — tracks
+    inflow (sales), outflow (purchases), in net flow patterns.
+    Identificira capital flow bottlenecks in optimizira cash flow
+    timing. Razlika od cash-flow-velocity (v7.74 ki meri hitrost
+    cash flow-a) — ta gleda FLOW PATTERN in direction
+    (POSITIVE/NEGATIVE/BALANCED) z bottlenecks in cash reserve
+    recommendation. "Capital flow: POSITIVE (+350€/mo, ratio 1.4).
+    Bottleneck: 3 items >60d. Reserve: 700€. Efficiency: 72%."
+  - flow: { avgMonthlyInflow, avgMonthlyOutflow, avgNetFlow,
+    flowRatio, flowConsistency 0-100 (lower CV = higher
+    consistency), flowVolatility (stddev net flow), flowTrend
+    (linear regression slope), flowDirection POSITIVE/NEGATIVE/
+    BALANCED (iz ratio thresholds 1.15/0.85) }.
+  - monthlyData: [{ month ISO date, inflow, outflow, netFlow,
+    flowRatio, accumulatedCapital (running total) }] (12 months).
+  - analysis: { flowAssessment (max 500 chars slovensko),
+    bottlenecks 1-4 { bottleneck max 200, impact max 200, severity
+    LOW | MEDIUM | HIGH, solution max 200 }, flowOptimizationActions
+    1-4 { action max 200, priority HIGH | MEDIUM | LOW,
+    expectedFlowImprovement max 200 }, projectedFlow30d clamped
+    [-10000, 10000] ±50% od deterministic, capitalEfficiency 0-100
+    (60% netToInflow + 40% consistency), flowRiskAssessment
+    { riskLevel LOW | MEDIUM | HIGH, riskFactors 1-4 max 200 each,
+    daysOfCashRunway 0-365 (iz reserves / netBurn × 30, cap 365 za
+    positive cash flow) }, recommendedCashReserve clamped [0,
+    avgMonthlyInflow × 2] (1.5x outflow default, 2x za NEGATIVE,
+    1x za POSITIVE+consistent) }.
+  - Compute: query SOLD trades (inflows — sellPrice - sellFees) +
+    trades z buyDate (outflows — buyPrice + buyFees) 12m z linked
+    Listing (monitor.source); group by month (12 buckets aligned
+    to month start); per month compute inflow / outflow / netFlow
+    / flowRatio / accumulatedCapital (running total); compute flow
+    metrics (averages, CV za consistency 100 - cv × 50, stddev za
+    volatility, linear regression za trend, classify direction iz
+    ratio 1.15/0.85 thresholds); identify bottlenecks (held >60d,
+    NEGATIVE direction, low consistency <50, long hold time >45d);
+    compute runway (reserves = inflow × 2, / netBurn × 30, cap 365
+    za positive); compute reserve (1.5x outflow default, 2x za
+    NEGATIVE, 1x za POSITIVE+consistent).
+  - AI-enhanced z grounding + anti-hallucination (projectedFlow
+    ±50% od deterministic clamped [-10000, 10000], capitalEfficiency
+    ±15 clamped [0, 100], daysOfCashRunway ±30 clamped [0, 365],
+    recommendedCashReserve clamped [0, avgMonthlyInflow × 2 = 2x
+    inflow cap], enums validirana LOW | MEDIUM | HIGH (severity +
+    riskLevel) in HIGH | MEDIUM | LOW (priority), string length
+    limits — bottleneck/impact/solution/action/expectedFlowImprovement/
+    riskFactor max 200, flowAssessment max 500, summary max 400) +
+    6h cache (key `capital-flow-analyzer:${currentMonth}`) +
+    deterministic fallback. GET+POST (handleCapitalFlowAnalyzer
+    shared function — AI Hub runner kompatibilnost).
+  - Razlika od cash-flow-velocity (v7.74 ki meri cash velocity) —
+    ta gleda FLOW PATTERN direction z bottlenecks. Razlika od
+    cash-flow-forecast (ki forecast-a cash position) — ta
+    analizira flow pattern + bottlenecks. Razlika od
+    cash-conversion-cycle (v7.74 ki meri CCC) — ta gleda net flow
+    direction in capital efficiency. Razlika od
+    capital-allocation-optimizer (v7.63 ki optimira allocation) —
+    ta analizira flow health in reserve. Razlika od
+    capital-deployment-planner (v7.76 ki planira deployment) — ta
+    gleda flow bottlenecks in cash runway. Razlika od
+    capital-efficiency-forecaster (v7.84 ki forecast-a efficiency)
+    — ta analizira flow pattern direction in reserve sizing.
+
+- **AI Market Cycle Transition Predictor** — `GET+POST /api/ai/market-cycle-transition-predictor`
+  - AI napove KDAJ se bo zgodil naslednji market cycle transition
+    in kaj storiti PRED in PO prehodu. Razlika od
+    market-cycle-phase-predictor (v7.87 ki napove phase timing —
+    nextPhase + date) — ta se fokúsira na TRANSITION sam — signale,
+    verjetnost in strategijo za navigacijo spremembe. "Transition
+    probability: 75% within 30d. Type: BEARISH (markup→
+    distribution). Pre-transition: start selling. Confidence: 68%."
+  - current: { phase ACCUMULATION | MARKUP | DISTRIBUTION |
+    DECLINE, phaseProgress 0-100, weeksInPhase }.
+  - signals: { priceReversalSignals [{ signal max 200, strength
+    STRONG | MODERATE | WEAK, direction BULLISH | BEARISH |
+    NEUTRAL }] (slope reversal + momentum weakening + acceleration
+    change), volumeDivergenceSignals [{ signal, strength,
+    direction }] (bearish divergence = price up + volume down,
+    bullish divergence = price down + volume up, volume peak/trough
+    signals), sentimentShiftSignals [{ signal, strength,
+    direction }] (AI score delta + slope reversal),
+    dealQualityShiftSignals [{ signal, strength, direction }]
+    (dealScore delta + late-cycle peak/decline) }.
+  - prediction: { transitionProbability 0-100 (iz signal intensity
+    × 0.4 + directionality × 25 + base 25), predictedTransitionType
+    BULLISH_TRANSITION | BEARISH_TRANSITION | NO_TRANSITION
+    (BULLISH = decline→accumulation ali accumulation→markup;
+    BEARISH = markup→distribution ali distribution→decline; iz
+    current phase + dominant signal direction), transitionTimeline
+    { earliest/mostLikely/latest ISO date v prihodnosti (iz
+    probability — višja = bližja, base 60d - probability × 0.5) },
+    transitionConfidence 0-100 (iz probability + signal count),
+    preTransitionSignals 1-5 (top signals) }.
+  - strategy: { preTransitionStrategy max 500 (BEARISH: sell long
+    positions, reduce buys; BULLISH: prep accumulation, watchlist;
+    NO: maintain), postTransitionStrategy max 500 (BEARISH: hold
+    cash 60-70%, wait stabilization; BULLISH: increase exposure z
+    DCA; NO: continue execution), transitionRiskManagement 1-3
+    { risk max 200, mitigation max 200, priority HIGH | MEDIUM |
+    LOW }, historicalTransitionAccuracy 0-100 (iz 55 + probability
+    × 0.3) }.
+  - Compute: query listings 365 dni; group by ISO week (52 weeks
+    aligned to Monday); compute current phase (Wyckoff
+    classification — price90d/30d + volume90d/30d + volatility CV
+    from prices); estimate weeksInPhase (consecutive weeks matching
+    phase direction); detect 4 signal categories (price reversal
+    iz slope changes + 2nd deriv; volume divergence iz price vs
+    volume slope direction; sentiment shift iz AI score delta;
+    deal quality shift iz dealScore delta); compute deterministic
+    transition probability + type from signal direction × current
+    phase; compute timeline from probability (60d - prob × 0.5);
+    build pre/post transition strategy iz type.
+  - AI-enhanced z grounding + anti-hallucination (transitionProbability
+    ±20 od deterministic clamped [0, 100], transitionConfidence
+    ±15 clamped [0, 100], historicalTransitionAccuracy ±10 clamped
+    [0, 100], transitionTimeline dates validirana da so v
+    prihodnosti (fallback to deterministic — preprečuje AI-ju
+    izmišljanje preteklih datumov), predictedTransitionType
+    validiran against enum BULLISH_TRANSITION | BEARISH_TRANSITION
+    | NO_TRANSITION, enums validirana LOW | MEDIUM | HIGH in HIGH
+    | MEDIUM | LOW, string length limits — signal/preTransitionSignal/
+    risk/mitigation max 200, strategies max 500, summary max 400) +
+    6h cache (key `market-cycle-transition-predictor:${currentWeek}`)
+    + deterministic fallback. GET+POST
+    (handleMarketCycleTransitionPredictor shared function — AI Hub
+    runner kompatibilnost).
+  - Razlika od market-cycle-detector (v7.77 ki detektira current
+    phase) — ta napove TRANSITION (ali se bo faza spremenila v 30
+    dneh). Razlika od market-cycle-forecaster (v7.83 ki projicira
+    future phases) — ta gleda transition signals (price/volume/
+    sentiment divergence). Razlika od market-cycle-phase-predictor
+    (v7.87 ki napove nextPhase + date) — ta gleda transition
+    probability + type (BULLISH/BEARISH) + multi-signal divergence
+    detection + pre/post transition strategy + risk management.
+
+- **AI Inventory Turnover Momentum Tracker** — `GET+POST /api/ai/inventory-turnover-momentum-tracker`
+  - AI track-a MOMENTUM (acceleration) inventory turnover-a — ali
+    turnover pospešuje ali upada? Compute-a acceleration of
+    turnover rate in napove future turnover trajectory. Razlika od
+    inventory-turnover-forecast (v7.78 ki projicira turnover rate)
+    — ta track-a MOMENTUM (2nd derivative — pospešek turnover-a).
+    "Turnover momentum: ACCELERATING (strength 72, +0.5/mo²).
+    30d forecast: 3.8x turnover, 22d hold. Sustainable for 4 months."
+  - momentum: { turnoverRateTrend (slope per month), holdDaysTrend
+    (slope per month, negative = improving), turnoverMomentum (2nd
+    derivative = slope second half - slope first half),
+    momentumDirection ACCELERATING | STEADY | DECELERATING (iz
+    trend sign + momentum sign + strength ≥60 threshold),
+    momentumStrength 0-100 (iz trendMag × 100 + momentumMag × 200
+    + direction bonus 10) }.
+  - monthlyData: [{ month ISO date, turnoverRate (sold / (held+sold)),
+    avgHoldDays, sellThroughRate % (sold / (held+sold) × 100),
+    capitalTurnover (revenue / invested capital) }] (12 months).
+  - forecast: { projectedTurnoverRate30d clamped [0, 20] ±20% od
+    deterministic (iz last + trend + 0.5 × momentum),
+    projectedHoldDays30d clamped [0, 180] ±15 od deterministic (iz
+    last + holdDaysTrend), momentumSustainability 0-100 (iz months
+    + strength + direction stability, ±15 clamped), momentumAssessment
+    max 500, momentumRiskLevel LOW | MEDIUM | HIGH (DECELERATING +
+    strength ≥60 → HIGH) }.
+  - analysis: { momentumDrivers 1-3 (top 3 iz trend components —
+    turnover rate/hold days/acceleration, z impact POSITIVE |
+    NEGATIVE in weight 0-100 = |score-50| × 2) { driver max 100,
+    impact POSITIVE | NEGATIVE, weight 0-100, detail max 200 },
+    momentumInhibitors 1-4 (hold days lengthening, DECELERATING,
+    low strength, low sample size — z impact max 200 in solution
+    max 200) { inhibitor max 200, impact max 200, solution max 200 },
+    momentumActions 1-4 (iz direction — ACCELERATING: increase
+    inventory; DECELERATING: shift category mix; hold days up:
+    price drop) { action max 200, priority HIGH | MEDIUM | LOW,
+    expectedMomentumLift max 200 } }.
+  - Compute: query SOLD + HELD trades 12m; group by month (12
+    buckets aligned to month start); per month compute turnoverRate
+    (sold / (held+sold)) / avgHoldDays (avg days from buy to sell) /
+    sellThroughRate (sold / (held+sold) × 100) / capitalTurnover
+    (revenue / invested capital); linear regression slopes za
+    turnoverRate + holdDays; compute 2nd derivative momentum
+    (acceleration = slope second half - slope first half);
+    classify direction (ACCELERATING if trend > 0.1 + momentum ≥ 0
+    ali momentum > 0.1 + trend ≥ 0 ali strength ≥ 60 + trend > 0;
+    DECELERATING if trend < -0.1 + momentum ≤ 0 ali momentum < -0.1
+    + trend ≤ 0 ali strength ≥ 60 + trend < 0); project 30d z trend
+    + 0.5 × momentum factor.
+  - AI-enhanced z grounding + anti-hallucination (projectedTurnoverRate30d
+    ±20% od deterministic clamped [0, 20], projectedHoldDays30d
+    ±15 clamped [0, 180], momentumSustainability ±15 clamped [0,
+    100], enums validirana LOW | MEDIUM | HIGH (riskLevel) in
+    POSITIVE | NEGATIVE (driverImpact) in HIGH | MEDIUM | LOW
+    (priority), string length limits — driver max 100/detail max
+    200, inhibitor/impact/solution/action/expectedMomentumLift max
+    200, momentumAssessment max 500, summary max 400) + 6h cache
+    (key `inventory-turnover-momentum-tracker:${currentMonth}`)
+    + deterministic fallback. GET+POST
+    (handleInventoryTurnoverMomentumTracker shared function — AI
+    Hub runner kompatibilnost).
+  - Razlika od inventory-turnover-forecast (v7.78 ki projicira
+    turnover rate) — ta gleda MOMENTUM (2nd derivative — pospešek).
+    Razlika od inventory-turnover-accelerator-pro (v7.85 ki daje
+    acceleration actions) — ta track-a HISTORICAL momentum čez 12
+    mesecev z projected trajectory in sustainability. Razlika od
+    inventory-turnover-optimizer (ki optimizira turnover) — ta
+    gleda momentum direction z drivers/inhibitors/actions. Razlika
+    od inventory-performance-trend-tracker (v7.91 ki track-a
+    performance trends) — ta gleda TURNOVER specifično (turnover
+    rate + hold days + sell-through + capital turnover) z
+    2nd-derivative momentum. Razlika od inventory-aging-trend-
+    analyzer (v7.88 ki track-a aging trends) — ta gleda TURNOVER
+    momentum ne aging.
+
+### Changed
+- **Dokumentacija sinhronizirana z novimi endpointi:**
+  - **AI_ENDPOINTS.md:** regeneriran z python3 skripto — "Total: 338
+    endpoints" (335 → 338, +3 AI: capital-flow-analyzer pos 67,
+    inventory-turnover-momentum-tracker pos 166, market-cycle-
+    transition-predictor pos 228).
+  - **README.md** (15+ urejanj): version badge v7.91.0 → v7.92.0; AI
+    Endpoints badge 335 → 338; API Routes badge 512 → 515 (+3); tagline
+    "335 AI endpointov + 72 analytics" → "338 AI endpointov + 72
+    analytics" (0 new analytics — all 3 are AI); Overview "Verzija
+    v7.91.0" → "v7.92.0" in "335 AI + 72 analytics + ~198 funkcij" →
+    "338 AI + 72 analytics + ~201 funkcij"; "Kaj je novega v v7.56–v7.91
+    (36 verzij, 108 novih funkcij)" → "...v7.56–v7.92 (37 verzij, 111
+    novih funkcij)"; dodan v7.92 blok (3 funkcije) na vrh z detajlnimi
+    opisi vseh 3 endpoint-ov (response shape, anti-hallucination pravila,
+    AI cache key, deterministic fallback, example comment, razlika od
+    podobnih obstoječih endpoint-ov); AI Hub badge v tabeli "Vsi 335 AI
+    endpointov" → "Vsi 338 AI endpointov"; "Glej AI_ENDPOINTS.md za
+    popoln seznam vseh 335 AI endpointov" → "...338 AI endpointov";
+    "Endpointi (335 AI + 72 analytics + 10 cron + sistemski = 512)" →
+    "...(338 AI + 72 analytics + 10 cron + sistemski = 515)"; dodana 3
+    nova endpointa v API primeri blok (capital-flow-analyzer v7.92,
+    market-cycle-transition-predictor v7.92, inventory-turnover-
+    momentum-tracker v7.92, vse v AI seznamu za inventory-performance-
+    trend-tracker); "Profit pipeline (v7.32-v7.91)" → "...v7.32-v7.92";
+    "335 AI endpointov" v Project structure → "338 AI endpointov";
+    "512 routes" v Coding standards → "515 routes"; "512 API routes" v
+    Testing → "515 API routes"; Roadmap "v7.91 (trenutno — ~198 funkcij)"
+    → "v7.92 (trenutno — ~201 funkcij)"; profit pipeline "(139+ funkcij)"
+    → "(142+ funkcij)" in dodane 3 nove funkcije (AI Capital Flow
+    Analyzer, AI Market Cycle Transition Predictor, AI Inventory
+    Turnover Momentum Tracker); "UI komponente za v7.50-v7.91 funkcije"
+    → "...v7.50-v7.92 funkcije"; "do v7.91 (avgust 2026)" → "do v7.92
+    (avgust 2026)"; "Zadnje verzije": dodan "v7.92.0 (avgust 2026) — AI
+    Capital Flow Analyzer, AI Market Cycle Transition Predictor, AI
+    Inventory Turnover Momentum Tracker" na vrh.
+  - **CHANGELOG.md** (to sekcija): dodana nova "[7.92.0] - 2026-08-14"
+    sekcija z vsemi 3 endpoint-i in podrobnimi opisi; "[Unreleased]
+    Načrtovano za v7.92+" → "...za v7.93+".
 
 ## [7.91.0] - 2026-08-14
 
