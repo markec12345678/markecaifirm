@@ -13639,3 +13639,34 @@ Stage Summary:
 - Total API routes: 551 → 554 (+3)
 - Dokumentacija sinhrono posodobljena (AI_ENDPOINTS.md, README, CHANGELOG)
 - Verzija aplikacije: v8.05.0
+
+---
+Task ID: v8.05.1
+Agent: main
+Task: v8.05 commit + push + GitHub About + Agent Browser verification
+
+Work Log:
+- Prejel poročilo od full-stack-developer podagenta (Task v8.05)
+- Preveril 3 nove endpoint-e: profit-acceleration-maximizer (200 GET+POST), deal-source-capital-efficiency-maximizer (200 GET+POST), inventory-turnover-yield-maximizer (200 GET+POST)
+- Preveril doc sync: AI_ENDPOINTS.md (377 ✅), README v8.05 (10 refs ✅), README 377 AI (6 refs ✅), CHANGELOG v8.05 ✅
+- Preveril lint: 0 napak ✨
+- Preveril typecheck: 0 napak ✨
+- Posodobil GitHub About opis: 374 AI → 377 AI, 551 routes → 554 routes (via API PATCH)
+- Commit: "v8.05: Profit Acceleration Maximizer + Deal Source Capital Efficiency Maximizer + Inventory Turnover Yield Maximizer" (6daff33)
+- Push na GitHub: uspešen ✅, PAT očiščen ✅
+- Agent Browser self-verification:
+  - Stran se pravilno naloži (HTTP 200)
+  - AI Hub prikazuje profit-acceleration-maximizer (v8.05) v iskalniku ✅
+  - Runner test: klik na profit-acceleration-maximizer → POST request → valid JSON ✅
+  - Response: {"ok":true, "current":{growthRate, growthAcceleration, growthVelocity}, "maximization":{accelerationScenarios, maximizedGrowthRate, timeTo10kProfit, accelerationGrade:F}, "aiUsed":false}
+  - Brez runtime napak v dev.log
+
+Stage Summary:
+- v8.05 uspešno dokončana in potisnjena na GitHub
+- 3 PROFIT-MAXIMIZING funkcije: AI Profit Acceleration Maximizer, AI Deal Source Capital Efficiency Maximizer, AI Inventory Turnover Yield Maximizer
+- AI endpointi: 374 → 377 (+3)
+- Analytics endpointi: 72 (nespremenjeno — vsi 3 so AI)
+- Total API routes: 551 → 554 (+3)
+- Dokumentacija sinhrono posodobljena (AI_ENDPOINTS.md, README, CHANGELOG, GitHub About)
+- GitHub sinhroniziran (0 commit-ov ahead)
+- Verzija aplikacije: v8.05.0
