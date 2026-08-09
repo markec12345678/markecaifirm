@@ -12219,3 +12219,34 @@ Stage Summary:
 - dev.log: vsi HTTP requesti vračajo 200 OK (GET in POST za vse 3 endpoint-e), brez error/warn (empty-state — AI se sploh ne kliče brez podatkov)
 - curl testi: vsi 6 (GET+POST za vsak od 3 endpoint-ov) → 200 OK z veljavnim JSON in aiUsed=false (empty-state)
 - Verzija aplikacije: v7.92.0
+
+---
+Task ID: v7.92.1
+Agent: main
+Task: v7.92 commit + push + GitHub About + Agent Browser verification
+
+Work Log:
+- Prejel poročilo od full-stack-developer podagenta (Task v7.92)
+- Preveril 3 nove endpoint-e: capital-flow-analyzer (200 GET+POST), market-cycle-transition-predictor (200 GET+POST), inventory-turnover-momentum-tracker (200 GET+POST)
+- Preveril doc sync: AI_ENDPOINTS.md (338 ✅), README v7.92 (12 refs ✅), README 338 AI (6 refs ✅), CHANGELOG v7.92 ✅
+- Preveril lint: 0 napak ✨
+- Preveril typecheck: 0 napak ✨
+- Posodobil GitHub About opis: 335 AI → 338 AI, 512 routes → 515 routes (via API PATCH)
+- Commit: "v7.92: Capital Flow Analyzer + Market Cycle Transition Predictor + Inventory Turnover Momentum Tracker" (7fbe02a)
+- Push na GitHub: uspešen ✅, PAT očiščen ✅
+- Agent Browser self-verification:
+  - Stran se pravilno naloži (HTTP 200)
+  - AI Hub prikazuje capital-flow-analyzer (v7.92) v iskalniku ✅
+  - Runner test: klik na capital-flow-analyzer → POST request → valid JSON ✅
+  - Response: {"ok":true, "flow":{...}, "monthlyData":[12 months], "analysis":{...}, "aiUsed":false, "message":"Ni trgovin..."}
+  - Brez runtime napak v dev.log
+
+Stage Summary:
+- v7.92 uspešno dokončana in potisnjena na GitHub
+- 3 nove funkcije: AI Capital Flow Analyzer, AI Market Cycle Transition Predictor, AI Inventory Turnover Momentum Tracker
+- AI endpointi: 335 → 338 (+3)
+- Analytics endpointi: 72 (nespremenjeno — vsi 3 so AI)
+- Total API routes: 512 → 515 (+3)
+- Dokumentacija sinhrono posodobljena (AI_ENDPOINTS.md, README, CHANGELOG, GitHub About)
+- GitHub sinhroniziran (0 commit-ov ahead)
+- Verzija aplikacije: v7.92.0
