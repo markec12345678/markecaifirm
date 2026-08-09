@@ -12341,3 +12341,34 @@ Stage Summary:
 - dev.log: vsi HTTP requesti vračajo 200 OK (GET in POST za vse 3 endpoint-e), brez error/warn (empty-state — AI se sploh ne kliče brez podatkov)
 - curl testi: vsi 6 (GET+POST za vsak od 3 endpoint-ov) → 200 OK z veljavnim JSON in aiUsed=false (empty-state)
 - Verzija aplikacije: v7.93.0
+
+---
+Task ID: v7.93.1
+Agent: main
+Task: v7.93 commit + push + GitHub About + Agent Browser verification
+
+Work Log:
+- Prejel poročilo od full-stack-developer podagenta (Task v7.93)
+- Preveril 3 nove endpoint-e: profit-margin-acceleration-tracker (200 GET+POST), market-depth-trend-analyzer (200 GET+POST), inventory-turnover-efficiency-forecaster (200 GET+POST)
+- Preveril doc sync: AI_ENDPOINTS.md (341 ✅), README v7.93 (12 refs ✅), README 341 AI (6 refs ✅), CHANGELOG v7.93 ✅
+- Preveril lint: 0 napak ✨
+- Preveril typecheck: 0 napak ✨
+- Posodobil GitHub About opis: 338 AI → 341 AI, 515 routes → 518 routes (via API PATCH)
+- Commit: "v7.93: Profit Margin Acceleration Tracker + Market Depth Trend Analyzer + Inventory Turnover Efficiency Forecaster" (b6c049b)
+- Push na GitHub: uspešen ✅, PAT očiščen ✅
+- Agent Browser self-verification:
+  - Stran se pravilno naloži (HTTP 200)
+  - AI Hub prikazuje profit-margin-acceleration-tracker (v7.93) v iskalniku ✅
+  - Runner test: klik na profit-margin-acceleration-tracker → POST request → valid JSON ✅
+  - Response: {"ok":true, "derivatives":{...}, "classification":"FLAT", "aiUsed":false, "message":"Ni SOLD trgovin..."}
+  - Brez runtime napak v dev.log
+
+Stage Summary:
+- v7.93 uspešno dokončana in potisnjena na GitHub
+- 3 nove funkcije: AI Profit Margin Acceleration Tracker, AI Market Depth Trend Analyzer, AI Inventory Turnover Efficiency Forecaster
+- AI endpointi: 338 → 341 (+3)
+- Analytics endpointi: 72 (nespremenjeno — vsi 3 so AI)
+- Total API routes: 515 → 518 (+3)
+- Dokumentacija sinhrono posodobljena (AI_ENDPOINTS.md, README, CHANGELOG, GitHub About)
+- GitHub sinhroniziran (0 commit-ov ahead)
+- Verzija aplikacije: v7.93.0
