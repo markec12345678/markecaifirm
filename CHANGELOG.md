@@ -6,11 +6,251 @@ Format sledi [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), verzije s
 
 ## [Unreleased]
 
-Načrtovano za v7.94+:
+Načrtovano za v7.95+:
 - WebSocket real-time negotiation (SSE namesto polling)
 - Playwright E2E testi za glavne flow-e
 - TLS fingerprinting (curl-impersonate)
 - ML model za buyer matchmaker (fine-tuned na realnem data)
+
+## [7.94.0] - 2026-08-15
+
+### Added — AI Profit Maximizer Pro & AI Deal Profitability Forecaster & AI Revenue Stream Optimizer (3 funkcije — PROFIT MAXIMIZATION focus)
+
+- **AI Profit Maximizer Pro** — `GET+POST /api/ai/profit-maximizer-pro`
+  - ULTIMATIVNI profit maximization engine ki kombinira VSE profit
+    levers (pricing, timing, bundling, sourcing, inventory mix,
+    turnover, fees) v en sam AI-driven profit maximization plan z
+    quick wins in month-by-month projection. Razlika od
+    profit-maximizer (basic sell price optimization) — ta je
+    COMPREHENSIVE engine z 7 levers in quick wins. Razlika od
+    profit-maximizer-v2 (v7.56 ki dela ML compounding projections)
+    — ta identificira KATERE levers so na voljo in kaj prinesejo.
+    Razlika od profit-accelerator (v7.71 ki da acceleration actions)
+    — ta identificira VSE profit levers in jih rangira po ROI.
+    "Annual profit: 12,000€ → maximized 21,000€ (+75% uplift).
+    Quick win: raise elektronika prices 5% → +150€/mo. Lever #1:
+    pricing (+3,200€/yr)."
+  - baseline: { currentAnnualProfit € (sum profit 12m),
+    currentMonthlyAvg € (= currentAnnualProfit / 12),
+    maximizedAnnualProfit € (clamped [current, current × 3]
+    anti-hallucination), profitUpliftPercent 0-300 (= upliftEuros /
+    current × 100), profitUpliftEuros € (= maximized - current) }.
+  - levers: 7 vzvodov — pricingLever (estValue vs current price gap
+    × annualTurnover × 0.6 capture), timingLever (sezonski CV analysis
+    × maxMonth - avgMonth × 6 optimal months), bundleLever (held ≥3
+    per category × 0.15 bundle premium × 4 cycles/year), sourcingLever
+    (avgBuy/avgRev × 0.12 reduction × count), inventoryMixLever
+    (topCats avgProfit - bottomCats avgProfit × 20% bottom volume
+    shift), turnoverLever (avgHold 70% optimization × extraCycles ×
+    avgProfitPerTrade), feeLever (feeRate > 8% × 30% reduction).
+    Vsak lever: { currentGap €, maximizationPotential € [0, 500000],
+    difficulty LOW | MEDIUM | HIGH, requiredActions string[]
+    (max 200 each), expectedProfitLift € (= potential × capture
+    factor 0.6-0.85) }.
+  - plan: { prioritizedActions 5-10 ranked by ROI { action max 200,
+    lever eno od 7, priority CRITICAL | HIGH | MEDIUM | LOW,
+    expectedProfitLift € [0, 500000], effort LOW | MEDIUM | HIGH,
+    timeline max 50 (1-7 dni / 2-4 tedne / 1-3 mesece),
+    roi 0-100 (= expectedLift / effortWeight) },
+    quickWins 3 (LOW effort, immediate), mediumTermOptimizations 3
+    (MEDIUM effort, 30 dni), longTermStrategy 3 (HIGH effort,
+    1-3 mesece) }.
+  - projection: { profitMaximizationScore 0-100 (= 100 -
+    upliftPercent / 3 — višji uplift = nižji score = več prostora
+    za improvement), maximizedProfitProjection 12 mesecev
+    [{ month 1-12, currentProfit € (flat at currentMonthlyAvg),
+    maximizedProfit € (ramp up 6 mesecev do maxMonthly,
+    clamped [current, current × 3] anti-hallucination),
+    cumulativeLift € (running sum of lift) }], riskTradeoffs 2-3
+    { risk max 200, severity LOW | MEDIUM | HIGH, mitigation
+    max 200 }, confidenceLevel 0-100 (base 30 + 25 trades + 20
+    sample size + 10 momentum, ±10 od AI) }.
+  - Compute: query SOLD 12m + HELD trades + active HELD listings
+    (z estValue + dealScore), compute 7 levers (pricing gap iz
+    estValue vs price, timing iz monthly profit CV, bundle iz
+    held per cat count, sourcing iz buy/revenue ratio, mix iz top
+    vs low-profit diff, turnover iz 365/avgHoldDays × profit, fee
+    iz feeRate), buildBaseline (maximized = current + sum × 0.85
+    overlap factor, clamped ×3), buildDeterministicPlan z ramp-up
+    6 mesecev do max, sort prioritizedActions by ROI desc.
+  - AI-enhanced z grounding prompt (deterministic baseline + caps)
+    + anti-hallucination (expectedProfitLift clamped [0, 500000],
+    maximizedProfit clamped [current, current × 3] per month
+    anti-hallucination, profitMaximizationScore ±10 od deterministic
+    clamped [0, 100], confidenceLevel ±10 clamped [0, 100], enums
+    validirana CRITICAL | HIGH | MEDIUM | LOW in LOW | MEDIUM |
+    HIGH in LOW | MEDIUM | HIGH, string length limits — action
+    max 200, lever max 100, timeline max 50, risk max 200,
+    mitigation max 200, summary max 400) + 6h cache (key
+    `profit-maximizer-pro:${currentMonth}`) + deterministic fallback
+    (ko AI failne ali ni podatkov). GET+POST
+    (handleProfitMaximizerPro shared function — AI Hub runner
+    kompatibilnost). Empty-state fallback ce 0 SOLD trades →
+    returns "Ni SOLD trgovin v zadnjih 12 mesecih" z aiUsed=false
+    + empty baseline + empty levers + empty plan + empty projection.
+- **AI Deal Profitability Forecaster** — `GET+POST /api/ai/deal-profitability-forecaster`
+  - AI napove PROFITABILITY potencialnih deal-ov PRED nakupom —
+    "ali naj kupim ta item?". Za vsak PRILIKA listing AI predvidi:
+    expected profit, ROI, hold time, sell probability in
+    risk-adjusted return. PRE-PURCHASE profitability predictor.
+    Razlika od deal-profitability-matrix (v7.72 ki gleda
+    category × hold-time kot matriko) — ta forecast-a POSAMEZEN
+    listing per-item. Razlika od deal-anatomy-analyzer (v7.71 ki
+    analizira deal DNA) — ta forecast-a PROFITABILITY (expected
+    profit + ROI + sell probability). Razlika od deal-scoring-model-v2
+    (v7.69 ki računa deal score 0-100) — ta daje PROFITABILITY
+    forecast z buy recommendation in optimal buy/sell prices.
+    "PS5 350€ (estValue 500€, -30% discount): expected +120€
+    profit, 35% ROI, 22d hold. Grade: A. STRONG_BUY. Optimal buy:
+    ≤380€."
+  - listings: [{ listingId, title, askingPrice € (= price),
+    estValue € | null (= aiEstimatedValue), discountPercent -100
+    do 100 (= (estValue - askingPrice) / estValue × 100),
+    dealScore 0-100 | null (= listing.dealScore), category (iz
+    monitor.tags first tag ali 'drugo'), forecast { ... } }].
+  - forecast (per listing): { expectedProfit € clamped
+    [-estValue, +estValue] anti-hallucination (iz catAvgProfit +
+    discountBonus + profitFromDiscount × 0.7 capture rate),
+    expectedROI % clamped [-100, 1000] (= profit / cost × 100),
+    expectedHoldDays 1-365 (iz category avg hold days ali 30
+    default), sellProbability30d 0-100 (base 50 + dealScore
+    deviation + discount boost + catWinRate - aiRisk penalty),
+    riskAdjustedReturn € (= expectedProfit × sellProbability /
+    100), profitabilityGrade A+ | A | B | C | D | F (iz
+    composite score 0-100: ROI 0-30 + sellProb 0-20 + discount
+    0-20 - aiRisk 0-20 + base 50), buyRecommendation STRONG_BUY |
+    BUY | CONSIDER | PASS | STRONG_AVOID (iz grade + ROI +
+    sellProb), optimalBuyPrice € [0, askingPrice] (= estValue / 1.25
+    za 25% ROI target), optimalSellPrice € [askingPrice × 0.8,
+    estValue × 1.2] (= estValue × 0.95 default), keyProfitDrivers
+    1-3 { driver max 100, impact POSITIVE | NEGATIVE, weight 0-100,
+    detail max 200 } (discount depth, dealScore, aiRisk, catWinRate),
+    profitRisks 1-3 { risk max 200, severity LOW | MEDIUM | HIGH,
+    mitigation max 200 } (high aiRisk, missing estValue, low
+    sampleSize, low sellProb), profitOptimizationTips 1-4 (max 200
+    each) (izkoristi discount, kupi hitro, prodaj višje, preveri
+    listing), confidenceLevel 0-100 (base 30 + 20 estValue + 20
+    catBaseline + 10 dealScore + 10 low risk, ±10 od AI) }.
+  - summary: { totalAnalyzed, strongBuyCount, buyCount,
+    considerCount, passCount, avoidCount, totalExpectedProfit €
+    (sum), avgROI % (avg), bestDeal { listingId, title,
+    expectedProfit } | null, advice max 300 (slovenski overall
+    nasvet — strongCount > 0 / buyCount > 0 / considerCount > 0 /
+    else "ni izrazitih priložnosti") }.
+  - Compute: parse body (optional listingId, default top 50
+    PRILIKA listings ordered by dealScore desc), query listings
+    (PRILIKA + price > 0) + historical SOLD trades per category
+    za baseline (avgROI/avgHoldDays/winRate/avgProfit/sampleSize),
+    per listing compute discountPercent + deterministični forecast
+    (expectedProfit iz catAvg + discount bonus + profitFromDiscount,
+    expectedROI iz profit/cost, sellProb iz dealScore + discount +
+    catWinRate - aiRisk, grade iz composite, recommendation iz
+    grade + ROI + sellProb), AI-enhanced z grounding +
+    anti-hallucination (expectedProfit clamped [-estValue,
+    +estValue] anti-hallucination, optimalBuyPrice [0, askingPrice],
+    optimalSellPrice [askingPrice × 0.8, estValue × 1.2],
+    sellProbability30d [0, 100], expectedROI [-100, 1000],
+    expectedHoldDays [1, 365], enums validirana A+ | A | B | C |
+    D | F in STRONG_BUY | BUY | CONSIDER | PASS | STRONG_AVOID in
+    POSITIVE | NEGATIVE in LOW | MEDIUM | HIGH, string length
+    limits — driver max 100, detail max 200, risk max 200,
+    mitigation max 200, action max 200, advice max 300) + 6h cache
+    (key `deal-profitability-forecaster:${JSON.stringify(listingIds)}`)
+    + deterministic fallback (compute iz category avg × discount).
+    GET+POST (handleDealProfitabilityForecaster shared function —
+    AI Hub runner kompatibilnost). Body accepts optional listingId
+    (če manjka, analiziraj top 50 aktivnih PRILIKA listings).
+    Empty-state fallback ce 0 PRILIKA listings → returns "Ni
+    aktivnih PRILIKA oglasov za analizo" z aiUsed=false + empty
+    listings + empty summary.
+- **AI Revenue Stream Optimizer** — `GET+POST /api/ai/revenue-stream-optimizer`
+  - AI optimizira REVENUE streams — identificira kateri viri
+    prihodka (kategorije × platforme) so najbolj profitabilni in
+    priporoča kako rebalancirati za maksimalni revenue. Fokus na
+    REVENUE (ne le profit) — volume × margin optimizacija z
+    concentration risk assessment. Razlika od buyer-revenue-forecaster
+    (ki napove revenue per buyer) — ta optimizira REVENUE STREAMS
+    per category × source. Razlika od capital-allocation-optimizer
+    (v7.63 ki alocira capital per kategorija) — ta optimizira
+    REVENUE preko stream rebalancing. Razlika od profit-stream-predictor
+    (v7.70 ki napove profit stream pattern) — ta identificira KATERI
+    revenue streams so najbolj profitabilni. Razlika od
+    deal-source-profitability-analyzer (v7.89 ki gleda profitability
+    per source) — ta optimizira REVENUE z diversifikacijskim planom.
+    "Revenue: 15,000€/yr from 8 streams. Optimization score: 62/100.
+    Scale elektronika×Bolha (+2,400€/yr). Enter moda×Vinted
+    (+800€/yr). Diversify from 65% concentration."
+  - current: { totalRevenue € (sum sellPrice - sellFees 12m),
+    totalProfit € (sum profit), avgMargin % (= profit / revenue × 100,
+    clamped [-100, 200]), revenueConcentration HHI 0-10000 (= sum
+    squared market shares × 10000 — višji = bolj koncentriran),
+    streamCount }.
+  - streams: [{ category (iz trade.category lowercased), source
+    (iz sellLocation lowercased), revenue €, profit €, margin %
+    [-100, 200], volume (trade count), avgRevenuePerTrade € (= revenue
+    / volume), revenueGrowthRate % [-100, 1000] (= monthlySlope ×
+    100 / avgMonthly), streamType TOP_REVENUE | HIGH_MARGIN |
+    HIGH_GROWTH | DECLINING | UNDERUTILIZED (priority: DECLINING >
+    HIGH_GROWTH > HIGH_MARGIN > TOP_REVENUE > UNDERUTILIZED —
+    thresholds: highGrowthPct > 10, decliningPct < -10, highMarginPct
+    > 25, underutilizedMaxVol ≤ 3) }] (sorted by revenue desc).
+  - analysis: { topRevenueStreams 5 (by revenue z share % = revenue /
+    totalRevenue × 100), highMarginStreams 5 (margin > 0, sort by
+    margin desc), highGrowthStreams 5 (growth > 0, sort by growth
+    desc), decliningStreams 5 (growth < 0, sort by decline asc),
+    underutilizedStreams 5 (margin > 15% in volume ≤ 3, z
+    scalingPotential = "Skaliraj iz N na 5+ trgov/mesec →
+    +X€/mo") }.
+  - optimization: { revenueOptimizationScore 0-100 (višji = bolje,
+    ±10 od AI; base 50 + concentration factor (2500 - HHI) / 50
+    [-30, 20] + streamCount bonus 1-15 - declining penalty 5/stream
+    - underutilized penalty 5), revenueMaximizationActions 3-6
+    { action max 200, stream max 100 (format "kategorija × vir"),
+    priority CRITICAL | HIGH | MEDIUM | LOW, expectedRevenueLift €
+    [0, 10000000], timeline max 50 }, projectedRevenue30d/60d/90d €
+    clamped [0, monthlyRevenue × 2.5] anti-hallucination (ramp up
+    30%/60%/100% of total action lift / 12), revenueDiversificationPlan
+    max 400 (slovenski tekst — topShare > 40% → diverzificiraj, else
+    zdravo), revenueStreamPriorities 3-5 { stream, rank 1-5, reason
+    max 200, expectedRevenue € }, revenueRiskAssessment 2-3
+    { risk max 200, severity LOW | MEDIUM | HIGH, mitigation max 200 }
+    (HHI > 2500 → HIGH concentration; declining > 0 → HIGH;
+    streamCount < 3 → MEDIUM), confidenceLevel 0-100 (base 30 + 20
+    streamCount + 20 sampleSize + 10 highGrowth + 5 noDeclining,
+    ±10 od AI) }.
+  - Compute: query SOLD 12m z sellLocation + category, group by
+    category × source (12 monthly revenue buckets), per stream
+    compute revenue/profit/margin/volume/avgRevenue/growthRate
+    (linear regression slope × 100 / avg), classify streamType
+    (priority: DECLINING > HIGH_GROWTH > HIGH_MARGIN > TOP_REVENUE >
+    UNDERUTILIZED), compute HHI concentration (sum squared shares ×
+    10000), build analysis (top/margin/growth/declining/underutilized),
+    buildDeterministicOptimization z actions (scale underutilized,
+    enter high-growth, exit declining, optimize low-margin), priorities
+    (top 5 z reason by streamType), risks (concentration > 2500 = HIGH,
+    declining > 0 = HIGH, streamCount < 3 = MEDIUM), score (50 base +
+    concentration factor + stream count + declining penalty).
+  - AI-enhanced z grounding prompt (current + streams + analysis +
+    deterministic baseline + caps) + anti-hallucination (revenue
+    projections clamped [0, monthlyRevenue × 2.5] anti-hallucination,
+    revenueOptimizationScore ±10 od deterministic clamped [0, 100],
+    expectedRevenueLift clamped [0, 10000000], confidenceLevel ±10
+    clamped [0, 100], enums validirana CRITICAL | HIGH | MEDIUM | LOW
+    in LOW | MEDIUM | HIGH, string length limits — action max 200,
+    stream max 100, timeline max 50, reason max 200, risk max 200,
+    mitigation max 200, diversificationPlan max 400, summary max 400)
+    + 6h cache (key `revenue-stream-optimizer:${currentMonth}`) +
+    deterministic fallback (ko AI failne ali ni podatkov). GET+POST
+    (handleRevenueStreamOptimizer shared function — AI Hub runner
+    kompatibilnost). Empty-state fallback ce 0 SOLD trades →
+    returns "Ni SOLD trgovin v zadnjih 12 mesecih" z aiUsed=false
+    + empty current + empty streams + empty analysis + empty
+    optimization.
+
+### Changed
+- AI_ENDPOINTS.md: 341 → 344 endpoints (+3 AI: deal-profitability-forecaster pos 90, profit-maximizer-pro pos 286, revenue-stream-optimizer pos 305)
+- README.md: v7.93.0 → v7.94.0 badge, 341 → 344 AI endpoints, 518 → 521 API routes, ~204 → ~207 funkcij, 145+ → 148+ profit pipeline funkcij, dodan v7.94 "Kaj je novega" block, posodobljen Roadmap (v7.94 trenutno), dodana 3 endpoint line v Profit pipeline section, dodana Zadnje verzije entry
+- Verzija aplikacije: v7.94.0
 
 ## [7.93.0] - 2026-08-14
 
