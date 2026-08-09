@@ -6,11 +6,318 @@ Format sledi [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), verzije s
 
 ## [Unreleased]
 
-Načrtovano za v7.93+:
+Načrtovano za v7.94+:
 - WebSocket real-time negotiation (SSE namesto polling)
 - Playwright E2E testi za glavne flow-e
 - TLS fingerprinting (curl-impersonate)
 - ML model za buyer matchmaker (fine-tuned na realnem data)
+
+## [7.93.0] - 2026-08-14
+
+### Added — AI Profit Margin Acceleration Tracker & AI Market Depth Trend Analyzer & AI Inventory Turnover Efficiency Forecaster (3 funkcije)
+
+- **AI Profit Margin Acceleration Tracker** — `GET+POST /api/ai/profit-margin-acceleration-tracker`
+  - AI track-a POSPEŠEK (2nd derivative — acceleration) profitne
+    marže. Ne samo "ali se marža izboljšuje?" (ki ga pokriva
+    profit-margin-trend-analyzer v7.82) temveč "ali se HITROST
+    izboljševanja marže pospešuje ali upočasnuje?". Compute-a
+    2nd derivative of monthly margin trends in klasificira
+    acceleration stanje. Razlika od profit-margin-trend-analyzer
+    (v7.82 ki track-a 1st-derivative margin trend) — ta gleda
+    2nd-derivative ACCELERATION (ali hitrost izboljševanja marže
+    pospešuje ali upada). Razlika od profit-margin-forecaster-pro
+    (v7.85 ki forecast-a margin z scenarios) — ta gleda ACCELERATION
+    z inflection point detection. Razlika od profit-margin-optimizer-v2
+    (ki optimira margin) — ta gleda acceleration drivers in risks.
+    "Margin: ACCELERATING_UP (momentum +2%/mo, accel +0.5%/mo²).
+    Inflection: no reversal expected. 30d projection: 28%. Driver:
+    price increases."
+  - derivatives: { momentum { marginMomentum, markupMomentum,
+    profitPerTradeMomentum (slope per month, 1st derivative) },
+    acceleration { marginAcceleration, markupAcceleration,
+    profitAcceleration (2nd derivative = slope second half - slope
+    first half), compositeAccelerationScore 0-100 weighted (45%
+    margin + 30% markup + 25% profit) }, classification
+    ACCELERATING_UP | STEADY_UP | DECELERATING_UP | FLAT |
+    DECELERATING_DOWN | ACCELERATING_DOWN (iz momentum sign +
+    acceleration sign + composite threshold — momentum 0.3%/mo,
+    accel 0.15%/mo²) }.
+  - monthlyData: [{ month ISO date (month start), avgMargin %
+    (profit/revenue × 100), avgMarkup % (profit/cost × 100),
+    avgProfitPerTrade € }] (12 months, index 0 = oldest, 11 = newest).
+  - analysis: { accelerationAssessment (max 500 chars slovensko),
+    marginInflectionPoint (max 300 chars slovensko | null — kada
+    se bo margin trend obrnil; za DECELERATING_UP → peak margin
+    estimate čez monthsToZero = -momentum/acceleration mesecev;
+    za DECELERATING_DOWN → recovery estimate; za ACCELERATING_UP /
+    STEADY_UP → "ne vidimo inflection signala"), accelerationDrivers
+    1-3 { driver max 100, impact POSITIVE | NEGATIVE, weight 0-100,
+    detail max 200 }, projectedMargin30d clamped [-50, 100] ±5% od
+    deterministic (iz lastMargin + momentum + 0.5 × acceleration
+    2nd-order extrapolation), marginOptimizationActions 1-3
+    { action max 200, priority HIGH | MEDIUM | LOW, expectedMarginLift
+    v procentnih točkah [-5, 20] }, accelerationRiskFactors 1-3
+    { risk max 200, severity LOW | MEDIUM | HIGH, mitigation max 200 },
+    confidenceLevel 0-100 ±10 od deterministic (base 30 + 4/mesec +
+    0.4/trade, cap ±10 od AI) }.
+  - Compute: query SOLD trades 12m z sellDate >= cutoff12m, group by
+    month (12 buckets aligned to month start), per month compute
+    avgMargin (profit/revenue × 100) / avgMarkup (profit/cost × 100) /
+    avgProfitPerTrade, linear regression trendSlope za 1st deriv
+    momentum (marginMomentum, markupMomentum, profitPerTradeMomentum),
+    computeAcceleration za 2nd deriv (slope second half - slope first
+    half), normalizeScore za composite (map [-6, +6] → [0, 100]: 50
+    at zero, 100 at +6, 0 at -6), classifyAcceleration z momentum sign
+    + acceleration sign + thresholds, buildDeterministicAnalysis z
+    inflection point (monthsToZero = -marginMomentum/marginAcceleration
+    ce sta ista sega, else null), actions per classification
+    (ACCELERATING_UP → increase volume + price 3-5%; STEADY_UP →
+    maintain + optimize B-side; DECELERATING_UP → maximize profit pred
+    inflection + diversificiraj; FLAT → A/B test pricing; DECELERATING_DOWN
+    → exit stagnirajoče; ACCELERATING_DOWN → emergency action), risks
+    per classification + sample size risk (ce <20 trades → MEDIUM).
+  - AI-enhanced z grounding prompt (deterministic baseline + caps)
+    + anti-hallucination (projectedMargin30d ±5 clamped [-50, 100],
+    confidenceLevel ±10 clamped [0, 100], enums POSITIVE/NEGATIVE,
+    LOW/MEDIUM/HIGH, HIGH/MEDIUM/LOW validirana, string length limits
+    — driver max 100, detail max 200, action max 200, risk max 200,
+    mitigation max 200, assessment max 500, inflectionPoint max 300,
+    summary max 400) + 6h cache (key
+    `profit-margin-acceleration-tracker:${currentMonth}`) +
+    deterministic fallback (ko AI failne ali ni podatkov). GET+POST
+    (handleProfitMarginAccelerationTracker shared function — AI Hub
+    runner kompatibilnost). Empty-state fallback ce 0 SOLD trades →
+    returns "Ni SOLD trgovin v zadnjih 12 mesecih" z aiUsed=false.
+  - Razlika od profit-margin-trend-analyzer (v7.82 ki track-a
+    1st-derivative margin trend) — ta gleda 2nd-derivative ACCELERATION.
+    Razlika od profit-margin-forecaster-pro (v7.85 ki forecast-a margin
+    z scenarios) — ta gleda ACCELERATION z inflection point detection.
+    Razlika od profit-margin-optimizer-v2 (ki optimira margin) — ta
+    gleda acceleration drivers in risks. Razlika od profit-margin-heatmap
+    (ki prikazuje margin distribution) — ta gleda časovno trajektorijo.
+    Razlika od profit-momentum-tracker (v7.75 ki track-a profit momentum)
+    — ta gleda MARGIN-specifično acceleration. Razlika od
+    profit-accelerator (v7.71 ki da acceleration actions) — ta track-a
+    HISTORICAL margin acceleration čez 12 mesecev z projected trajectory.
+
+- **AI Market Depth Trend Analyzer** — `GET+POST /api/ai/market-depth-trend-analyzer`
+  - AI analizira kako se GLOBINA trga (market depth) spreminja čez
+    čas — track-a depth trend (26 tednov), identificira depth cycles
+    (peaks/troughs) in napove kdaj bo trg globlji (bolj likviden)
+    ali plitvejši. Razlika od market-depth-analyzer (v7.68 ki da
+    snapshot depth-a per category) — ta gleda HISTORICAL trend čez
+    26 tednov z cycle detection. Razlika od market-depth-forecaster
+    (v7.84 ki projicira future depth) — ta gleda HISTORICAL cycles
+    z peak/trough detection. Razlika od market-liquidity-analyzer
+    (ki meri liquidity) — ta gleda DEPTH trend direction
+    (DEEPENING/STABLE/SHALLOWING). "Depth: DEEPENING (+2.5/wk,
+    momentum +0.5). Cycle position: MID_EXPANSION. Liquidity forecast:
+    improving. Best: elektronika (+4/wk)."
+  - trends: { depthTrend26w (slope per week, 1st derivative),
+    depthMomentum (2nd derivative = slope second half - slope first
+    half), depthDirection DEEPENING | STABLE | SHALLOWING (iz trend
+    threshold ±0.5), depthVolatility (stddev weekly depth scores),
+    currentDepthScore 0-100, currentLiquidity HIGH | MEDIUM | LOW |
+    VERY_LOW (iz listing count thresholds 100/30/10) }.
+  - weeklyData: [{ week ISO date (Monday), depthScore 0-100, liquidity,
+    listingCount, avgPrice, pricingConfidence 0-100 }] (26 weeks,
+    index 0 = oldest, 25 = newest). depthScore = listing count score
+    (0-50, max at >=50) + distribution evenness score (0-50, iz 10-bucket
+    coefficient of variation — lower CV = higher score). pricingConfidence
+    = count score (0-60) + CV score (0-40, max at CV<0.2).
+  - cycles: { depthPeaks [{ week, score }], depthTroughs [{ week,
+    score }], avgCycleLength weeks (avg distance between consecutive
+    peaks, clamped [0, 52]), currentCyclePosition EARLY_EXPANSION |
+    MID_EXPANSION | LATE_EXPANSION | PEAK | EARLY_CONTRACTION |
+    MID_CONTRACTION | LATE_CONTRACTION | TROUGH | UNCLEAR (iz 3-week
+    smoothed MA + lastPeak/lastTrough distance from lastIdx + level
+    — peak/trough detekcija z curr > prev AND curr > next AND
+    curr >= 40 za peak, curr < prev AND curr < next AND curr <= 60
+    za trough) }.
+  - byCategory: [{ category (iz monitor.tags first tag), depthTrend
+    slope, direction DEEPENING | STABLE | SHALLOWING, currentDepth
+    0-100 }] (per-tag grouped, sorted by trend desc).
+  - analysis: { depthTrendAssessment (max 500 chars slovensko),
+    predictedDepthDirection30d (max 300 chars), depthCycleInsight
+    (max 400 chars — kaj pomeni trenutni cycle position),
+    liquidityForecast (max 300 chars — ali bo likvidnost višja ali
+    nižja), tradingImplications (max 400 chars — kako prilagoditi
+    strategijo), depthOptimizationActions 1-3 { action max 200,
+    priority HIGH | MEDIUM | LOW, detail max 200 }, confidenceLevel
+    0-100 ±10 od deterministic (base 35 + 3/kategorijo + 0.3/listing
+    + 10 za strong trend + 5 za cycles detected) }.
+  - Compute: query listings 180d z isHidden=false AND price > 0 AND
+    firstSeenAt >= cutoff180d, group by ISO week (26 buckets aligned
+    to Monday), per week compute depthScore (count 0-50 + evenness
+    0-50 iz 10-bucket CV), liquidity (iz count thresholds), avgPrice,
+    pricingConfidence (count 0-60 + CV 0-40), trendSlope za 1st deriv
+    (depthTrend26w), computeAcceleration za 2nd deriv (depthMomentum),
+    stdDev za volatility, directionFromTrend zang threshold ±0.5,
+    detectCycles z 3-week MA smoothing + local maxima/minima z
+    significance thresholds (40 za peak, 60 za trough), classifyCyclePosition
+    zang lastPeak/lastTrough distance + level + recent trend, per-category
+    trend iz monitor.tags first tag. AI-enhanced z grounding prompt
+    (deterministic baseline + caps) + anti-hallucination (depth scores
+    [0, 100], cycle lengths [0, 52], confidenceLevel ±10 clamped
+    [0, 100], enums DEEPENING/STABLE/SHALLOWING in HIGH/MEDIUM/LOW
+    validirana, string length limits — assessment max 500, prediction
+    max 300, insight max 400, forecast max 300, implications max 400,
+    action max 200, detail max 200, summary max 400) + 6h cache (key
+    `market-depth-trend-analyzer:${currentMonth}`) + deterministic
+    fallback. GET+POST (handleMarketDepthTrendAnalyzer shared function).
+    Empty-state fallback ce 0 listings → returns "Ni oglasov v zadnjih
+    180 dneh" z aiUsed=false.
+  - Razlika od market-depth-analyzer (v7.68 ki da snapshot depth-a per
+    category) — ta gleda časovni trend depth-a (26 tednov). Razlika od
+    market-depth-forecaster (v7.84 ki forecast-a future depth) — ta
+    gleda HISTORICAL cycles z peak/trough detection. Razlika od
+    market-liquidity-analyzer (ki meri liquidity) — ta gleda DEPTH trend
+    direction (DEEPENING/STABLE/SHALLOWING). Razlika od market-trend-
+    momentum (ki gleda price momentum) — ta gleda DEPTH momentum
+    (2nd derivative depth-a). Razlika od market-trend-acceleration-
+    tracker (v7.78 ki track-a price acceleration) — ta gleda DEPTH-
+    specific acceleration.
+
+- **AI Inventory Turnover Efficiency Forecaster** — `GET+POST /api/ai/inventory-turnover-efficiency-forecaster`
+  - AI napove TURNOVER EFFICIENCY — kako učinkovito bo kapital krozen
+    skozi inventar v naslednjih 30/60/90 dneh. Kombinira turnover
+    rate z capital efficiency metrikami (profit per turnover cycle,
+    ROI per cycle). Razlika od inventory-turnover-forecast (v7.78
+    ki forecast-a turnover rate) — ta gleda EFFICIENCY (profit per
+    cycle + capital efficiency per cycle). Razlika od inventory-
+    turnover-accelerator-pro (v7.85 ki da acceleration actions) — ta
+    forecast-a FUTURE efficiency z grade. Razlika od inventory-
+    turnover-momentum-tracker (v7.92 ki track-a turnover momentum) —
+    ta forecast-a future efficiency z bottlenecks. "Turnover
+    efficiency: 85/100 (A grade). Profit per cycle: 45€. 30d
+    forecast: 90/100, 50€/cycle. Bottleneck: aging items. Action:
+    liquidate >60d → +10% efficiency."
+  - current: { turnoverRate (sold/heldAtStart, clamped [0, 50]),
+    capitalEfficiency % (profit/capital deployed × 100, clamped [-100,
+    500]), profitPerTurnover € (profit/turnoverRate, clamped [0,
+    10000]), capitalCycleTime days (avg sell-buy, clamped [0, 365]),
+    roiPerCycle % (profit/capital deployed × 100), efficiencyGrade
+    A+ | A | B | C | D | F (iz computeEfficiencyScore: 90+=A+,
+    80+=A, 70+=B, 55+=C, 40+=D, else F) }.
+  - trends: { turnoverEfficiencyTrend (slope of profitPerTurnover per
+    month, 1st derivative), capitalEfficiencyTrend (slope of
+    capitalEfficiency per month, 1st derivative), efficiencyDirection
+    IMPROVING | STABLE | DECLINING (iz composite score slope threshold
+    ±0.5), efficiencyMomentum (2nd derivative = slope second half -
+    slope first half) }.
+  - monthlyData: [{ month ISO date (month start), turnoverRate,
+    capitalEfficiency, profitPerTurnover, capitalCycleTime, roiPerCycle }]
+    (12 months, index 0 = oldest, 11 = newest).
+  - forecast: { projectedEfficiency30d 0-100, projectedEfficiency60d 0-100,
+    projectedEfficiency90d 0-100 (iz last + N×trend + N×0.5×momentum
+    2nd-order extrapolation), projectedProfitPerCycle30d € clamped
+    [0, 10000], projectedCapitalEfficiency30d % clamped [-100, 500],
+    projectedCyclesPerMonth30d, confidenceLevel 0-100 (base 30 +
+    4/mesec + 0.4/trade + 10 za strong momentum + 5 za non-STABLE,
+    cap ±10 od AI) }.
+  - analysis: { efficiencyDrivers 1-3 { driver max 100, impact
+    POSITIVE | NEGATIVE, weight 0-100, detail max 200 },
+    efficiencyBottlenecks 1-3 { bottleneck max 200, impact max 200,
+    mitigation max 200 }, efficiencyOptimizationActions 1-3
+    { action max 200, priority HIGH | MEDIUM | LOW,
+    expectedEfficiencyGain v procentnih točkah [-5, 30] } }.
+  - Compute: query SOLD trades 12m z sellDate >= cutoff12m + HELD
+    trades (current inventory), group by month (12 buckets aligned
+    to month start), per month compute heldAtStartCount (held
+    trades z buyDate <= month start + sold during month / 2 —
+    approximation), turnoverRate (soldCount / heldAtStartCount),
+    capitalEfficiency (totalProfit / totalCapitalDeployed × 100),
+    profitPerTurnover (totalProfit / turnoverRate), capitalCycleTime
+    (avg sell-buy days), roiPerCycle (totalProfit / totalCapitalDeployed
+    × 100), computeEfficiencyScore composite (turnover 0-30 + capEff
+    0-30 + profit 0-25 + cycle 0-15), gradeFromScore, trendSlope za
+    1st deriv (turnoverEfficiencyTrend, capitalEfficiencyTrend),
+    computeAcceleration za 2nd deriv (efficiencyMomentum),
+    directionFromTrend z threshold ±0.5, project 30/60/90d z N×trend +
+    N×0.5×momentum 2nd-order extrapolation. AI-enhanced z grounding
+    prompt (deterministic baseline + caps) + anti-hallucination
+    (efficiency scores [0, 100], profitPerCycle [0, 10000],
+    capitalCycleTime [0, 365], roiPerCycle [-100, 500], turnoverRate
+    [0, 50], expectedEfficiencyGain [-5, 30], enums POSITIVE/NEGATIVE,
+    HIGH/MEDIUM/LOW validirana, string length limits — driver max 100,
+    detail max 200, bottleneck max 200, impact max 200, mitigation max 200,
+    action max 200, summary max 400) + 6h cache (key
+    `inventory-turnover-efficiency-forecaster:${currentMonth}`) +
+    deterministic fallback. GET+POST
+    (handleInventoryTurnoverEfficiencyForecaster shared function).
+    Empty-state fallback ce 0 SOLD trades → returns "Ni SOLD trgovin
+    v zadnjih 12 mesecih" z aiUsed=false.
+  - Razlika od inventory-turnover-forecast (v7.78 ki forecast-a turnover
+    rate) — ta gleda EFFICIENCY (profit per cycle + capital efficiency
+    per cycle). Razlika od inventory-turnover-accelerator-pro (v7.85
+    ki da acceleration actions) — ta forecast-a FUTURE efficiency z
+    grade. Razlika od inventory-turnover-optimizer (ki optimizira
+    turnover) — ta gleda efficiency z bottlenecks in drivers. Razlika
+    od inventory-turnover-predictor (ki napove turnover) — ta gleda
+    EFFICIENCY composite (turnover × capital efficiency × profit per
+    cycle). Razlika od inventory-turnover-momentum-tracker (v7.92 ki
+    track-a turnover momentum) — ta forecast-a future efficiency z
+    bottlenecks. Razlika od inventory-roi-trend-tracker (v7.87 ki
+    track-a ROI trends) — ta gleda TURNOVER-specifično efficiency (per
+    cycle). Razlika od capital-efficiency-forecaster (v7.84 ki forecast-a
+    capital efficiency) — ta gleda TURNOVER efficiency (profit per cycle
+    + cycles per month). Razlika od profit-efficiency-analyzer (ki
+    analizira profit efficiency) — ta gleda INVENTORY turnover efficiency
+    z cycle forecast.
+
+### Changed
+
+- **AI_ENDPOINTS.md** regenerated: 338 → 341 endpoints (+3 AI — profit-
+  margin-acceleration-tracker pos 278, market-depth-trend-analyzer
+  pos 230, inventory-turnover-efficiency-forecaster pos 165).
+- **README.md** updated: version badge v7.92.0 → v7.93.0, AI endpoints
+  badge 338 → 341, API routes badge 515 → 518, tagline "338 AI
+  endpointov + 72 analytics" → "341 AI endpointov + 72 analytics"
+  (0 new analytics — vsi 3 so AI), Overview "Verzija v7.92.0" →
+  "Verzija v7.93.0", "338 AI + 72 analytics + ~201 funkcij" →
+  "341 AI + 72 analytics + ~204 funkcij", "Kaj je novega v v7.56–v7.92
+  (37 verzij, 111 novih funkcij)" → "...v7.56–v7.93 (38 verzij, 114
+  novih funkcij)", dodan v7.93 blok (3 funkcije) na vrh z detajlnimi
+  opisi vseh 3 endpoint-ov (response shape, anti-hallucination pravila,
+  AI cache key, deterministic fallback, example comment, razlika od
+  podobnih obstoječih endpoint-ov — profit-margin-acceleration-tracker
+  vs profit-margin-trend-analyzer/profit-margin-forecaster-pro/profit-
+  margin-optimizer-v2/profit-margin-heatmap/profit-momentum-tracker/
+  profit-accelerator; market-depth-trend-analyzer vs market-depth-
+  analyzer/market-depth-forecaster/market-liquidity-analyzer/market-
+  trend-momentum/market-trend-acceleration-tracker; inventory-turnover-
+  efficiency-forecaster vs inventory-turnover-forecast/inventory-
+  turnover-accelerator-pro/inventory-turnover-optimizer/inventory-
+  turnover-predictor/inventory-turnover-momentum-tracker/inventory-
+  roi-trend-tracker/capital-efficiency-forecaster/profit-efficiency-
+  analyzer), AI Hub badge "Vsi 338 AI endpointov" → "Vsi 341 AI
+  endpointov", AI_ENDPOINTS.md link "...vseh 338 AI endpointov" →
+  "...341 AI endpointov", Endpointi section "(338 AI + 72 analytics +
+  10 cron + sistemski = 515)" → "...(341 AI + 72 analytics + 10 cron
+  + sistemski = 518)", dodani 3 novi endpointi v API primeri blok
+  (profit-margin-acceleration-tracker v7.93, market-depth-trend-
+  analyzer v7.93, inventory-turnover-efficiency-forecaster v7.93),
+  "Profit pipeline (v7.32-v7.92)" → "...(v7.32-v7.93)", "338 AI
+  endpointov" v Project structure → "341 AI endpointov", "515
+  routes" v Coding standards → "518 routes", "515 API routes" v
+  Testing → "518 API routes", Roadmap "v7.92 (trenutno — ~201
+  funkcij)" → "v7.93 (trenutno — ~204 funkcij)", Profit pipeline
+  "(142+ funkcij)" → "(145+ funkcij)" in dodane 3 nove funkcije
+  (AI Profit Margin Acceleration Tracker, AI Market Depth Trend
+  Analyzer, AI Inventory Turnover Efficiency Forecaster), "UI
+  komponente za v7.50-v7.92 funkcije" → "...v7.50-v7.93 funkcije",
+  "do v7.92 (avgust 2026)" → "do v7.93 (avgust 2026)", "Zadnje
+  verzije": dodan "v7.93.0 (avgust 2026) — AI Profit Margin
+  Acceleration Tracker, AI Market Depth Trend Analyzer, AI Inventory
+  Turnover Efficiency Forecaster" na vrh.
+- **CHANGELOG.md**: "[Unreleased] Načrtovano za v7.93+" → "...za
+  v7.94+", dodana nova "[7.93.0] - 2026-08-14" sekcija (nad [7.92.0])
+  z vsemi 3 endpoint-i in podrobnimi opisi (response shape, anti-
+  hallucination rules, AI cache key, deterministic fallback, example
+  comment, razlika od podobnih obstoječih endpoint-ov). Skupno 338 AI
+  → 341 AI (+3), 72 analytics nespremenjeno (0 new), 515 routes →
+  518 routes (+3), ~201 funkcij → ~204 funkcij (+3), 142+ funkcij →
+  145+ funkcij v profit pipeline (+3).
 
 ## [7.92.0] - 2026-08-14
 
