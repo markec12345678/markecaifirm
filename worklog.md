@@ -12560,3 +12560,34 @@ Stage Summary:
 - Profit pipeline funkcije: 151+ → 154+ (+3)
 - Dokumentacija sinhrono posodobljena (AI_ENDPOINTS.md, README.md, CHANGELOG.md)
 - Verzija aplikacije: v7.96.0
+
+---
+Task ID: v7.96.1
+Agent: main
+Task: v7.96 commit + push + GitHub About + Agent Browser verification
+
+Work Log:
+- Prejel poročilo od full-stack-developer podagenta (Task v7.96)
+- Preveril 3 nove endpoint-e: cash-recovery-accelerator (200 GET+POST), market-opportunity-maximizer (200 GET+POST), inventory-profit-margin-optimizer-pro (200 GET+POST)
+- Preveril doc sync: AI_ENDPOINTS.md (350 ✅), README v7.96 (10 refs ✅), README 350 AI (6 refs ✅), CHANGELOG v7.96 ✅
+- Preveril lint: 0 napak ✨
+- Preveril typecheck: 0 napak ✨
+- Posodobil GitHub About opis: 347 AI → 350 AI, 524 routes → 527 routes (via API PATCH)
+- Commit: "v7.96: Cash Recovery Accelerator + Market Opportunity Maximizer + Inventory Profit Margin Optimizer Pro" (8f5133a)
+- Push na GitHub: uspešen ✅, PAT očiščen ✅
+- Agent Browser self-verification:
+  - Stran se pravilno naloži (HTTP 200)
+  - AI Hub prikazuje market-opportunity-maximizer (v7.96) v iskalniku ✅
+  - Runner test: klik na market-opportunity-maximizer → POST request → valid JSON ✅
+  - Response: {"ok":true, "topOpportunity":{...}, "top5Opportunities":[], "profitStrategy":{...}, "aiUsed":false}
+  - Brez runtime napak v dev.log
+
+Stage Summary:
+- v7.96 uspešno dokončana in potisnjena na GitHub
+- 3 PROFIT-MAXIMIZING funkcije: AI Cash Recovery Accelerator, AI Market Opportunity Maximizer, AI Inventory Profit Margin Optimizer Pro
+- AI endpointi: 347 → 350 (+3)
+- Analytics endpointi: 72 (nespremenjeno — vsi 3 so AI)
+- Total API routes: 524 → 527 (+3)
+- Dokumentacija sinhrono posodobljena (AI_ENDPOINTS.md, README, CHANGELOG, GitHub About)
+- GitHub sinhroniziran (0 commit-ov ahead)
+- Verzija aplikacije: v7.96.0
