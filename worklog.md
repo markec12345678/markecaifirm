@@ -12591,3 +12591,131 @@ Stage Summary:
 - Dokumentacija sinhrono posodobljena (AI_ENDPOINTS.md, README, CHANGELOG, GitHub About)
 - GitHub sinhroniziran (0 commit-ov ahead)
 - Verzija aplikacije: v7.96.0
+
+---
+Task ID: v7.97
+Agent: full-stack-developer
+Task: Add 3 new profit-maximizing features for v7.97 — AI Deal Source Profit Maximizer, AI Market Timing Profit Optimizer, AI Inventory Value Maximizer
+
+Work Log:
+- Prebral worklog.md (zadnjih ~200 vrstic) — projekt na v7.96.1, 350 AI endpointov, 527 total routes
+- Prebral reference datoteke za vzorce:
+  * src/app/api/ai/market-opportunity-maximizer/route.ts (v7.96 — 6-dimensions composite score, weekly cache, AI-enhanced z grounding + anti-hallucination + deterministic fallback)
+  * src/app/api/ai/cash-recovery-accelerator/route.ts (v7.96 — per-item recovery z action enum, per-item cache, urgency computation)
+  * src/app/api/ai/inventory-profit-margin-optimizer-pro/route.ts (v7.96 — per-item optimalPrice z [0.5x, 1.3x] estValue clamping, portfolio grade A+/A/B/C/D/F, ±1 grade tolerance od AI)
+  * prisma/schema.prisma (Trade z buyPrice/buyFees/buyDate/sellPrice/sellFees/sellDate/buyLocation/status/listingId, Listing z aiEstimatedValue/price/aiScore/aiRisk/dealScore/monitorId, Monitor z source/tags)
+  * src/lib/ai-cache.ts, src/lib/rate-limit.ts, src/lib/anti-hallucination.ts (GROUNDING_PROMPT_SUFFIX), src/lib/pipeline.ts (getSettingsRow)
+- Prebral AI_ENDPOINTS.md (350 endpoints), README.md (v7.96.0 badge, 350 AI, 527 routes), CHANGELOG.md ([7.96.0] sekcija + [Unreleased] "v7.97+")
+- Preveril LS src/app/api/ai/ — potrdil da deal-source-profit-maximizer, market-timing-profit-optimizer, inventory-value-maximizer so vsi NEW (genuinely new)
+
+- Build Feature #1: AI Deal Source Profit Maximizer (src/app/api/ai/deal-source-profit-maximizer/route.ts)
+  * Endpoint: GET+POST /api/ai/deal-source-profit-maximizer (handleDealSourceProfitMaximizer shared function — AI Hub runner kompatibilnost)
+  * Query: SOLD trades z sellDate >= 12m ago + sellPrice > 0 z linked Listing (za monitor.source, fallback na buyLocation keyword detection: bolha/vinted/avtonet/mobile.de/kleinanzeigen/subito/willhaben/salomon/nepremicnine)
+  * Per-source compute: totalProfit (= sum (sellPrice - sellFees - buyPrice - buyFees)), avgProfitPerTrade, avgROI [−100, 500] (= avg (profit/cost) × 100), winRate 0-100, tradeCount, profitPerWeek (= totalProfit / 52), profitEfficiencyScore 0-100 (40% profitNorm + 30% volumeNorm + 30% consistencyNorm, kjer profitNorm = min(100, totalProfit/100), volumeNorm = min(100, tradeCount × 4), consistencyNorm = winRate), profitGrowthTrend INCREASING/STABLE/DECREASING (iz first-half vs second-half avg profit ratio: ≥1.10 INCREASING, ≤0.90 DECREASING, else STABLE — requires ≥4 trades)
+  * decideAction: SCALE_UP (INCREASING + winRate≥60 + efficiency≥60 + ROI>0), EXIT (totalProfit≤0 + winRate<30 + ROI<0), SCALE_DOWN (efficiency<20 ali winRate<35), OPTIMIZE (efficiency<50 ali winRate<50 ali ROI<30), else MAINTAIN
+  * buildLevers 4: Trade Volume (gap = 100 - tradeCount×4, lift = gap% × tradeCount × avgProfit × 0.5), Win Rate (gap = 100 - winRate, lift = gap% × tradeCount × avgProfit × 0.2), Profit Margin (gap = max(0, 80-ROI), lift = gap% × avgCapitalPerTrade × tradeCount × 0.3), Source Diversification (gap = 30 constant, lift = totalProfit × 0.05)
+  * expectedProfitUplift = sum(levers.potentialLift) × actionFactor (SCALE_UP 0.8, MAINTAIN 0.3, OPTIMIZE 0.6, SCALE_DOWN 0.1, EXIT 0)
+  * projectedProfitWithAction = totalProfit + uplift (CLAMPED [totalProfit, totalProfit × 3] anti-hallucination)
+  * capitalReallocation = totalCapital × reallocationRate (SCALE_UP +25%, MAINTAIN 0, OPTIMIZE 0, SCALE_DOWN -25%, EXIT -100%)
+  * sourceOptimizationStrategy per action (slovenski, max 400)
+  * portfolio: totalCurrentProfit (sum), totalProjectedProfit (sum, clamped [0, 100000]), profitUpliftPotential (= projected - current, [0, 100000]), sourceRebalancingAdvice (grouped by SCALE_UP/SCALE_DOWN/EXIT actions, max 400), bestProfitSource (top by efficiency)
+  * AI-enhanced z grounding prompt (top 15 sources by efficiency + portfolio + caps + deterministic baseline) + anti-hallucination (source MORA biti iz knownSources — skip unknown, projectedProfitWithAction CLAMPED [totalProfit, totalProfit × 3], expectedProfitUplift [0, 100000] ≤ projected - totalProfit, capitalReallocation [-100000, 100000], all lever currentGap [0, 100], lever potentialLift [0, 50000], enums validirana SCALE_UP/MAINTAIN/OPTIMIZE/SCALE_DOWN/EXIT, string length limits — sourceOptimizationStrategy max 400, lever action max 200, lever name max 80, sourceRebalancingAdvice max 400, summary max 400)
+  * 6h cache (key `deal-source-profit-maximizer:${currentMonth}` — YYYY-MM, invalidira monthly)
+  * Deterministic fallback (action iz efficiency + winRate + trend, uplift iz levers × actionFactor)
+  * Empty-state fallback če 0 SOLD trades → "Ni SOLD trgovin v zadnjih 12 mesecih" z aiUsed=false + empty sources + empty portfolio z bestProfitSource null
+  * Fixed TS error (Pass `sourceName: string` to buildLevers since SourceMetrics doesn't have .source field — source is on SourceEntry/agg)
+
+- Build Feature #2: AI Market Timing Profit Optimizer (src/app/api/ai/market-timing-profit-optimizer/route.ts)
+  * Endpoint: GET+POST /api/ai/market-timing-profit-optimizer (handleMarketTimingProfitOptimizer shared function)
+  * Query: SOLD trades z sellDate >= 12m ago + sellPrice > 0 z listing.aiEstimatedValue
+  * Per-trade compute: buyDayIdx/sellDayIdx (0-6, 0=Sunday), buyMonthIdx/sellMonthIdx (0-11), holdDays = (sellMs - buyMs) / DAY_MS, profit, buyEstRatio (buyPrice / aiEstimatedValue)
+  * Aggregate by day (7 buckets) + month (12 buckets) + hold bucket (6 buckets: 0-7/8-14/15-30/31-60/61-90/91+ midpoints 4/11/22/45/75/120)
+  * patterns: bestBuyDay (slovenski — Nedelja/Ponedeljek/Torek/Sreda/Četrtek/Petek/Sobota, dan z najnižjim avg buyPrice min 2 buys — fallback na dan z največ buys), bestSellDay (dan z najvišjim avg sellPrice min 2 sells), bestBuyMonth (Jan-Dec, mesec z najnižjim avg buy/estValue ratio ali avg buyPrice min 2 buys), bestSellMonth (mesec z najvišjim avg sellPrice min 2 sells), optimalHoldPeriod days [1, 365] (hold bucket z najvišjim avg profit midpoint), avgProfitByDayOfWeek 7 [{ day (Ned/Pon/Tor/Sre/Čet/Pet/Sob), avgProfit € }], avgProfitByMonth 12 [{ month (Jan-Dec), avgProfit € }]
+  * timingProfitScore 0-100 (30 baseline + 70 iz alignment of trades with best timing weighted by profit: alignedWeighted/totalWeighted × 100; ±15 od AI)
+  * projectedProfitWithOptimalTiming = totalProfit × (1 + (100-score)/100 × 0.5) — max uplift 50% če poorly timed (CLAMPED [totalProfit, totalProfit × 2] anti-hallucination)
+  * profitUpliftFromTiming = projected - totalProfit [0, 50000] (če AI vrne uplift ki odstopa >10% od expected, recompute iz projected - total)
+  * urgencyLevel: <25 CRITICAL, <50 HIGH, <75 MEDIUM, else LOW
+  * timingOptimizationActions 3-5: { action max 200 (slovenski), priority HIGH/MEDIUM/LOW, expectedProfitImpact € [0, 50000] } (Buy on bestBuyDay, Sell on bestSellDay, Wait for bestBuyMonth, Wait for bestSellMonth, Hold for optimalHoldPeriod)
+  * AI-enhanced z grounding prompt (tradeCount + totalProfit + patterns + deterministic optimization + caps) + anti-hallucination (timingProfitScore ±15 clamped [0, 100], projectedProfitWithOptimalTiming CLAMPED [totalProfit, totalProfit × 2], profitUpliftFromTiming [0, 50000] = projected - totalProfit within ±10% tolerance else recompute, expectedProfitImpact [0, 50000], enums validirana HIGH/MEDIUM/LOW in LOW/MEDIUM/HIGH/CRITICAL, string length limits — optimalBuyWindow max 200, optimalSellWindow max 200, action max 200, seasonalAdvice max 400, summary max 400)
+  * 6h cache (key `market-timing-profit-optimizer:${currentMonth}` — YYYY-MM, invalidira monthly)
+  * Deterministic fallback (timingProfitScore iz alignment, projected = total × (1 + (100-score)/100 × 0.5), urgencyLevel iz score)
+  * Empty-state fallback če 0 SOLD trades → "Ni SOLD trgovin v zadnjih 12 mesecih" z aiUsed=false + empty patterns z defaults (Ponedeljek/Petek/Jan/Nov/11 dni) + empty optimization z urgencyLevel LOW
+
+- Build Feature #3: AI Inventory Value Maximizer (src/app/api/ai/inventory-value-maximizer/route.ts)
+  * Endpoint: GET+POST /api/ai/inventory-value-maximizer (handleInventoryValueMaximizer shared function)
+  * Query: HELD trades z linked Listing (aiEstimatedValue, price, aiScore, dealScore, monitor.source/tags)
+  * Per-item compute: currentValue (listing.aiEstimatedValue || listing.price || buyPrice × 1.15, CLAMPED [0.5x, 2x] buyPrice anti-hallucination), ratio (currentValue / buyPrice), valueTrajectory APPRECIATING/PEAK/DEPRECIATING (ratio ≥1.25 APPRECIATING, ≤0.85 DEPRECIATING, else PEAK), appreciationRate % per month (APPRECIATING: (ratio - 1.25) / 3 × 100; DEPRECIATING: (ratio - 0.85) / 3 × 100; PEAK: 0; clamped [-50, 100]), daysUntilValueDecline [0, 365] (APPRECIATING: 30 + apprec × 3; PEAK/DEPRECIATING: 0), holdValue (currentValue × (1 + apprec/100), clamped [0.5x, 2x] buyPrice), sellNowValue (currentValue × 0.92 — 8% est fees)
+  * decideAction: HOLD_FOR_APPRECIATION (APPRECIATING + apprec > 5), LIQUIDATE_BEFORE_DECLINE (DEPRECIATING + daysHeld > 60), REPLACE_WITH_HIGHER_VALUE (DEPRECIATING + currentValue < 200), UPGRADE_ITEM (PEAK + currentValue > 1000), else SELL_AT_PEAK
+  * expectedValueWithAction per action (CLAMPED [0.5x, 2x] buyPrice anti-hallucination): HOLD = holdValue × 0.92, SELL = sellNowValue, UPGRADE = sellNowValue × 1.15, REPLACE = buyPrice × 1.20, LIQUIDATE = sellNowValue × 0.85
+  * valueUplift = expectedValueWithAction - sellNowValue (signed [-50000, 50000] — positive = action is better than selling now, negative = action chosen to prevent bigger loss)
+  * optimalSellDate: HOLD = +30 days od danes (YYYY-MM-DD), SELL/UPGRADE/REPLACE/LIQUIDATE = "now"
+  * holdOrSellReasoning max 400 (slovenski — zakaj hold/sell/upgrade/replace/liquidate)
+  * upgradeRecommendation: string | null max 250 (SAMO za UPGRADE_ITEM ali REPLACE_WITH_HIGHER_VALUE — slovenski nasvet kaj kupiti namesto tega; null za ostale actions)
+  * portfolio: currentTotalValue (sum currentValue), maximizedTotalValue (sum max(expectedValue, sellNowValue), clamped [0, 100000]), valueMaximizationPotential (= sum max(0, valueUplift)), valueOptimizationGrade A+/A/B/C/D/F (iz optimizationScore = wellPositionedPct - upliftPct × 2, kjer wellPositionedPct = % APPRECIATING+PEAK, upliftPct = upliftPotential / currentTotalValue × 100; ≥90 A+, ≥80 A, ≥70 B, ≥55 C, ≥40 D, else F), itemsToHold count (HOLD_FOR_APPRECIATION), itemsToSell count (SELL_AT_PEAK + LIQUIDATE), itemsToUpgrade count (UPGRADE + REPLACE)
+  * AI-enhanced z grounding prompt (top 40 items by abs(valueUplift) + portfolio + caps + deterministic baseline) + anti-hallucination (tradeId MORA match-at heldItems — skip unknown, expectedValueWithAction CLAMPED [0.5x, 2x] buyPrice, valueUplift [-50000, 50000] recomputed v backendu, appreciationRate [-50, 100], daysUntilValueDecline [0, 365], optimalSellDate validirana "now" ali YYYY-MM-DD format (else fallback na det), upgradeRecommendation null za non-UPGRADE/REPLACE actions, enums validirana HOLD_FOR_APPRECIATION/SELL_AT_PEAK/UPGRADE_ITEM/REPLACE_WITH_HIGHER_VALUE/LIQUIDATE_BEFORE_DECLINE, string length limits — holdOrSellReasoning max 400, upgradeRecommendation max 250, summary max 400)
+  * 6h cache (key `inventory-value-maximizer:${JSON.stringify(heldItemIds)}` — invalidira ko held inventory se spremeni)
+  * Deterministic fallback (action iz trajectory + apprec + daysHeld + currentValue, expectedValueWithAction per action formula, valueUplift = expected - sellNowValue)
+  * Empty-state fallback če 0 HELD trades → "Ni HELD trgovin v inventarju" z aiUsed=false + empty items + empty portfolio z grade F
+
+- Documentation sync:
+  * Regeneriral AI_ENDPOINTS.md z Python script (sorted set route.ts parent names) → 353 endpoints (350 → 353, +3): deal-source-profit-maximizer pos 98, market-timing-profit-optimizer pos 242, inventory-value-maximizer pos 175
+  * Posodobil README.md (15 edits via MultiEdit):
+    - Version badge: v7.96.0 → v7.97.0
+    - AI Endpoints badge: 350 → 353
+    - API Routes badge: 527 → 530
+    - Tagline: 350 → 353 AI endpointov, v7.96.0 → v7.97.0 z novimi feature imeni (Deal Source Profit Maximizer + Market Timing Profit Optimizer + Inventory Value Maximizer)
+    - Verzija v7.96.0 → v7.97.0, 350 → 353 AI, ~213 → ~216 funkcij
+    - "Kaj je novega v v7.56-v7.96" → "v7.56-v7.97" (41 → 42 verzij, 123 → 126 novih funkcij)
+    - Added "v7.97 — AI Deal Source Profit Maximizer & AI Market Timing Profit Optimizer & AI Inventory Value Maximizer (3 funkcije — SOURCE & TIMING & VALUE MAXIMIZATION focus)" block z 3 full feature descriptions pred v7.96 block
+    - AI Hub tab: 350 → 353 AI endpointov
+    - AI_ENDPOINTS.md reference: 350 → 353 AI endpointov
+    - Endpointi section: 350 AI + 527 → 353 AI + 530
+    - Profit pipeline section: v7.32-v7.96 → v7.32-v7.97
+    - Directory tree: 350 → 353 AI endpointov
+    - Roadmap: v7.96 (trenutno) → v7.97 (trenutno), ~213 → ~216 funkcij, dodana 3 nova imena (AI Deal Source Profit Maximizer, AI Market Timing Profit Optimizer, AI Inventory Value Maximizer) v profit pipeline list (154+ → 157+)
+    - "527 API routes" → "530 API routes" (testing + try/catch lines)
+    - "v7.50-v7.96 funkcije" → "v7.50-v7.97 funkcije" v naslednji koraki
+    - Changelog reference: v7.96 → v7.97
+    - Zadnje verzije: dodana v7.97.0 entry pred v7.96.0
+  * Posodobil CHANGELOG.md:
+    - [Unreleased] "Načrtovano za v7.97+" → "...za v7.98+"
+    - Dodana nova [7.97.0] sekcija (2026-08-15) z vsemi 3 endpoint-i:
+      * AI Deal Source Profit Maximizer (sources z metrics + maximization z 4 levers + portfolio z totalCurrentProfit/totalProjectedProfit/profitUpliftPotential/sourceRebalancingAdvice/bestProfitSource)
+      * AI Market Timing Profit Optimizer (patterns z bestBuyDay/Month/bestSellDay/Month/optimalHoldPeriod/avgProfitByDayOfWeek/avgProfitByMonth + optimization z optimalBuyWindow/optimalSellWindow/timingProfitScore/timingOptimizationActions/projectedProfitWithOptimalTiming/profitUpliftFromTiming/seasonalAdvice/urgencyLevel)
+      * AI Inventory Value Maximizer (items z currentValue/appreciationRate/valueTrajectory/daysUntilValueDecline/holdValue/sellNowValue/valueMaximizationAction/expectedValueWithAction/valueUplift/optimalSellDate/holdOrSellReasoning/upgradeRecommendation, portfolio z currentTotalValue/maximizedTotalValue/valueMaximizationPotential/valueOptimizationGrade/itemsToHold/itemsToSell/itemsToUpgrade)
+      * Razlika od podobnih obstoječih endpoint-ov (6+ razlik per endpoint)
+      * Anti-hallucination rules per endpoint
+      * AI cache keys per endpoint
+      * Deterministic fallback per endpoint
+      * Empty-state fallback per endpoint
+    - ### Changed section: 350 → 353 AI, 527 → 530 routes, ~213 → ~216 funkcij, 154+ → 157+ profit pipeline funkcij
+
+- Quality checks:
+  * `bun run lint` → 0 errors ✨
+  * `npx tsc --noEmit` → 0 errors ✨
+  * curl tests (GET + POST for all 3 endpoints) → vseh 6 vrne 200 ✅:
+    - GET /api/ai/deal-source-profit-maximizer → 200 (empty-state response: portfolio z 0 + empty sources z bestProfitSource null, aiUsed=false, message)
+    - POST /api/ai/deal-source-profit-maximizer → 200
+    - GET /api/ai/market-timing-profit-optimizer → 200 (empty-state response: patterns z defaults Ponedeljek/Petek/Jan/Nov/11 dni + empty avgProfit arrays, optimization z 0/Low, aiUsed=false)
+    - POST /api/ai/market-timing-profit-optimizer → 200
+    - GET /api/ai/inventory-value-maximizer → 200 (empty-state response: items=[], portfolio z 0+grade F, aiUsed=false)
+    - POST /api/ai/inventory-value-maximizer → 200
+  * Verify grep "Total:" AI_ENDPOINTS.md → 353 ✅
+  * Verify grep -c "v7.97" README.md → 11 (>= 10) ✅
+  * Verify grep "353 AI" README.md → obstaja (6 refs) ✅
+  * Verify grep "## \[7.97.0\]" CHANGELOG.md → obstaja ✅
+  * Verify [Unreleased] "v7.98+" v CHANGELOG.md ✅
+  * dev.log brez error-jev za nove endpoint-e (samo 200 responses) ✅
+
+Stage Summary:
+- v7.97 uspešno dokončana — 3 PROFIT-MAXIMIZING funkcije dodane
+- AI Deal Source Profit Maximizer: AI identifies which deal SOURCES generate MOST PROFIT in 12m + per-source SCALE_UP/OPTIMIZE/EXIT plan z 4 profit levers + capital reallocation advice + portfolio z totalCurrentProfit → totalProjectedProfit uplift + sourceRebalancingAdvice grouped by action
+- AI Market Timing Profit Optimizer: AI določi OPTIMAL TIMING za buy (najnižje cene) + sell (najvišje cene) z day-of-week + month + hold-period analysis + timingProfitScore 0-100 (alignment based) + projectedProfitWithOptimalTiming uplift (max 50% če poorly timed) + urgencyLevel LOW/MEDIUM/HIGH/CRITICAL
+- AI Inventory Value Maximizer: AI identifies kako MAXIMIZIRATI total value of HELD inventorija z per-item HOLD_FOR_APPRECIATION/SELL_AT_PEAK/UPGRADE_ITEM/REPLACE_WITH_HIGHER_VALUE/LIQUIDATE_BEFORE_DECLINE actions + currentValue/holdValue/sellNowValue/expectedValueWithAction/valueUplift + portfolio z currentTotalValue → maximizedTotalValue + valueOptimizationGrade A+/A/B/C/D/F
+- AI endpointi: 350 → 353 (+3)
+- Analytics endpointi: 72 (nespremenjeno — vsi 3 so AI)
+- Total API routes: 527 → 530 (+3)
+- Funkcije: ~213 → ~216 (+3)
+- Profit pipeline funkcije: 154+ → 157+ (+3)
+- Dokumentacija sinhrono posodobljena (AI_ENDPOINTS.md, README.md, CHANGELOG.md)
+- Verzija aplikacije: v7.97.0
