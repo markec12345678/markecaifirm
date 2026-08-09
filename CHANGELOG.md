@@ -6,11 +6,251 @@ Format sledi [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), verzije s
 
 ## [Unreleased]
 
-Načrtovano za v8.00+:
+Načrtovano za v8.01+:
 - WebSocket real-time negotiation (SSE namesto polling)
 - Playwright E2E testi za glavne flow-e
 - TLS fingerprinting (curl-impersonate)
 - ML model za buyer matchmaker (fine-tuned na realnem data)
+
+## [8.00.0] - 2026-08-15
+
+### Added — AI Profit Multiplier Engine & AI Deal Source ROI Maximizer & AI Inventory Turnover Profit Maximizer (3 funkcije — PROFIT MULTIPLICATION & ROI MAXIMIZATION & TURNOVER-PROFIT MAXIMIZATION focus)
+
+- **AI Profit Multiplier Engine** — `GET+POST /api/ai/profit-multiplier-engine`
+  - AI identificira VSE možne načine za MULTIPLICIRATI profit z enim
+    UNIFIED multiplication engine-om. Kombinira 8 profit levers
+    (pricing, timing, volume, sourcing, efficiency, channel, bundle,
+    refurb) v en COMPOUNDING cumulativni multiplier. The "ultimate
+    profit multiplier." Razlika od capital-growth-maximizer (v7.99 ki
+    maksimizira compounding capital growth) — ta MULTIPLICIRA profit
+    z UNIFIED multiplication engine (8 levers v en produkt), ne
+    compounding growth rate. Razlika od deal-profit-accelerator-pro
+    (v7.99 ki accelera profit per item) — ta daje GLOBAL profit
+    multiplier (ne per-item). Razlika od inventory-roi-maximizer-pro
+    (v7.99 ki maksimizira ROI per item) — ta maksimizira
+    MULTIPLICATION of monthly profit (ne ROI %). Razlika od
+    profit-maximizer-pro (v7.94 ki maksimizira profit z 7 levers) — ta
+    KOMBINIRA 8 levers v COMPOUNDING multiplication effect (produkt
+    vseh multiplier-jev). Razlika od profit-velocity-maximizer (v7.98
+    ki maksimizira €/day velocity) — ta maksimizira TOTAL monthly
+    profit multiplication (ne velocity). Razlika od deal-source-
+    profit-maximizer (v7.97 ki maksimizira profit per source) — ta
+    daje UNIFIED multiplication engine (ne per-source). "Current:
+    2000€/mo, ROI 35%, hold 22 dni, winRate 70%. Multipliers:
+    pricing 1.15x (EASY, +300€), timing 1.10x (EASY, +200€), volume
+    1.30x (MEDIUM, +600€), sourcing 1.12x (EASY, +240€), efficiency
+    1.20x (MEDIUM, +400€), channel 1.08x (HARD, +160€), bundle
+    1.15x (EASY, +300€), refurb 1.18x (MEDIUM, +360€). Cumulative:
+    2.4x → maximized 4800€/mo, +2800€ uplift, grade A. Quick wins:
+    pricing, timing, sourcing, bundle (EASY + high impact).
+    Projection 3m: 7800€, 6m: 15600€, 12m: 31200€."
+  - baseline: { currentMonthlyProfit € (= avg monthly profit last 3
+    months, [0, 100000]), currentAvgROI % [-100, 500],
+    currentAvgHoldDays dni [0, 730], currentWinRate % [0, 100] }
+  - multipliers: 8 levers [{ lever max 50 (pricing/timing/volume/
+    sourcing/efficiency/channel/bundle/refurb), currentGap % [0, 100],
+    potentialMultiplier [1.0, 3.0] (anti-hallucination), difficulty
+    EASY/MEDIUM/HARD, expectedProfitGain € [0, 50000] (= baseline ×
+    (mult-1)), actions 2-4 stringov (max 200 vsak, slovenski) }]
+    (pricing gap = 100-winRate, timing gap = holdDays×1.5, volume gap
+    = max(0,(24-soldCount3m)/24×100), sourcing gap = max(0,60-ROI),
+    efficiency gap = holdDays×1.8, channel gap = 35 (constant),
+    bundle gap = min(100,heldCount×8), refurb gap = max(0,50-ROI×0.5))
+  - engine: { cumulativeMultiplier [1.0, 3.0] (CLAMPED produkt vseh
+    multiplier-jev — anti-hallucination), maximizedMonthlyProfit €
+    [0, 100000] (= baseline × cumulative), totalProfitUplift € [0,
+    100000] (= maximized − baseline), multiplicationGrade A+/A/B/C/D/F
+    (≥2.5 A+, ≥2.0 A, ≥1.6 B, ≥1.3 C, ≥1.1 D, else F), quickWins
+    top 4 (EASY + highest impact, { lever max 50, multiplier [1.0,
+    3.0], action max 200 (slovenski) }), multiplicationProjection 12
+    entries [{ month 1-12, currentProfit € [0, 100000],
+    multipliedProfit € [0, 100000] }], prioritizedActions 5-10 [{
+    action max 200 (slovenski), multiplier max 50 (lever name),
+    priority HIGH/MEDIUM/LOW, expectedGain € [0, 50000] }] }
+  - Compute: parallel query SOLD 12m (currentMonthlyProfit = avg last
+    3m, currentAvgROI, currentAvgHoldDays, currentWinRate) + HELD
+    trades (heldCount), build 8 lever specs (gap in [0,100],
+    potentialMultiplier [1.0, 3.0], difficulty, actions),
+    expectedProfitGain per lever = baseline × (mult-1), cumulative =
+    clamp(product of multipliers, 1, 3), maximizedMonthly = baseline ×
+    cumulative, uplift = maximized − baseline, grade from cumulative,
+    quickWins = top 4 EASY by expectedProfitGain, projection 12 months
+    (currentProfit = baseline × month, multipliedProfit = maximized ×
+    month), prioritizedActions sorted by priority + expectedGain.
+  - AI-enhanced z grounding prompt (soldCount12m + 3m + profit3m +
+    profit12m + heldCount + baseline + deterministic multipliers +
+    engine + caps) + anti-hallucination (potentialMultiplier CLAMPED
+    [1.0, 3.0], cumulativeMultiplier CLAMPED [1.0, 3.0], gap [0, 100],
+    gain [0, 50000], profit [0, 100000], enums validirana
+    EASY/MEDIUM/HARD in A+/A/B/C/D/F in HIGH/MEDIUM/LOW, string
+    length limits — lever max 50, action max 200, summary max 400) +
+    6h cache (key `profit-multiplier-engine:${currentMonth}` — YYYY-MM,
+    invalidira monthly) + deterministic fallback (multiplier iz baseline
+    hevristika per lever, grade iz cumulative).
+  - GET+POST (handleProfitMultiplierEngine shared function — AI Hub
+    runner kompatibilnost). Empty-state fallback če 0 SOLD trades in
+    0 HELD trades → "Ni SOLD trgovin in HELD inventorija" z aiUsed=false
+    + empty baseline z 0 + empty multipliers + empty engine z grade F
+    + cumulativeMultiplier 1.
+
+- **AI Deal Source ROI Maximizer** — `GET+POST /api/ai/deal-source-roi-maximizer`
+  - AI maksimizira ROI PERCENTAGE per deal source — kateri source-i
+    dajejo najvišji ROI in kako iz njih izvleči MAXIMUM ROI %.
+    Razlika od deal-source-profit-maximizer (v7.97 ki maksimizira
+    TOTAL PROFIT per source) — ta maksimizira ROI PERCENTAGE per
+    source (koliko % return na investiran kapital). Razlika od
+    deal-source-trend-analyzer (ki track-a trend) — ta MAXIMIZIRA ROI
+    z actionable levers (negotiate prices, target higher-value,
+    reduce fees). Razlika od deal-source-intelligence (ki primerja
+    sources) — ta daje PER-SOURCE ROI maximization plan z capital
+    reallocation advice. Razlika od deal-source-momentum-analyzer (ki
+    gleda momentum) — ta KOMBINIRA momentum z ROI za maximization.
+    Razlika od capital-growth-maximizer (v7.99 ki maksimizira capital
+    growth) — ta maksimizira ROI PER SOURCE (ne compounding growth).
+    Razlika od profit-multiplier-engine (v8.00 ki multiplicira profit
+    z 8 levers) — ta fokusira na PER-SOURCE ROI maximization. Razlika
+    od inventory-roi-maximizer-pro (v7.99 ki maksimizira ROI per held
+    item) — ta maksimizira ROI per SOURCE (ne per item). "Bolha: ROI
+    145%, totalInvested 2,800€, totalReturned 6,860€, margin 59%,
+    efficiency 84/100, INCREASING trend. Action: IMPROVE_MARGIN →
+    projected ROI 175% (+30% uplift). Levers: negotiate better
+    prices (+15%), reduce fees (+5%), target higher-value items
+    (+10%). Vinted: ROI 85%, action INCREASE_VOLUME → projected 105%
+    (+20% uplift). Portfolio: current 110% → maximized 145% (+35%
+    uplift, shift 800€ to Bolha)."
+  - sources: [{ source, displayName, metrics: { avgROI % [-50, 300],
+    totalInvested € [0, 100000], totalReturned € [0, 100000],
+    profitMargin % [0, 100], roiEfficiencyScore 0-100 (40% ROI + 30%
+    volume + 30% consistency), roiGrowthTrend INCREASING/STABLE/
+    DECREASING, tradeCount }, maximization: { roiMaximizationAction
+    INCREASE_VOLUME/IMPROVE_MARGIN/REDUCE_COSTS/EXIT, projectedROI %
+    [-50, 300] (CLAMPED [current, current × 1.5 ali +50] anti-
+    hallucination), roiUplift % [0, 200] (= projected − current),
+    roiMaximizationLevers 2-4 [{ lever max 50, currentGap % [0, 100],
+    potentialGain % [0, 50], action max 200 (slovenski) }],
+    capitalEfficiencyAdvice max 400 (slovenski) } }]
+  - portfolio: { currentPortfolioROI % [-50, 300] (weighted avg by
+    totalInvested), maximizedPortfolioROI % [-50, 300] (weighted avg
+    of projectedROI), totalROIUplift % [0, 200] (= maximized −
+    current), capitalReallocationAdvice max 400 (slovenski),
+    sourceROIRanking Array<{ source, currentROI %, projectedROI %,
+    rank 1-based }> (sorted by projectedROI DESC) }
+  - Compute: query SOLD 12m z linked Listing.monitor.source (ali
+    buyLocation fallback), per trade compute cost (buyPrice + buyFees),
+    netReturn (sellPrice − sellFees), profit, roi (profit/cost × 100);
+    aggregate by source (totalInvested, totalReturned, totalProfit,
+    rois, dates); per source compute avgROI, profitMargin
+    (profit/totalReturned × 100), roiEfficiencyScore (40% ROI norm +
+    30% volume norm + 30% consistency), roiGrowthTrend (split trades
+    by date, compare avg ROI of first vs second half); decide
+    roiMaximizationAction (EXIT če ROI<0 in margin<30, INCREASE_VOLUME
+    če ROI>60 in volume<10, REDUCE_COSTS če margin<40 ali ROI<30, else
+    IMPROVE_MARGIN); build 4 levers (margin gap, sourcing cost gap,
+    fees gap, volume gap); roiUplift = sum(levers × action factor),
+    CLAMPED [0, max(10, currentROI × 0.5)]; projectedROI = current +
+    roiUplift; portfolio: weighted avg by totalInvested; ranking by
+    projectedROI DESC.
+  - AI-enhanced z grounding prompt (totalTrades + totalSources +
+    sources z metrics + deterministicMaximization per source + caps)
+    + anti-hallucination (source MORA match-at deterministic sources —
+    skip unknown, projectedROI CLAMPED [current, max(current × 1.5 +
+    20, current + 50)], roiUplift [0, 200], lever gap [0, 100], lever
+    gain [0, 50], enums validirana INCREASE_VOLUME/IMPROVE_MARGIN/
+    REDUCE_COSTS/EXIT, string length limits — lever max 50, action
+    max 200, advice max 400, summary max 400) + 6h cache (key
+    `deal-source-roi-maximizer:${currentMonth}` — YYYY-MM, invalidira
+    monthly) + deterministic fallback (action iz hevristika, levers iz
+    metrics, projectedROI = current + uplift).
+  - GET+POST (handleDealSourceRoiMaximizer shared function — AI Hub
+    runner kompatibilnost). Empty-state fallback če 0 SOLD trades →
+    "Ni SOLD trgovin v zadnjih 12 mesecih" z aiUsed=false + empty
+    sources + empty portfolio z 0 ROI + empty sourceROIRanking.
+
+- **AI Inventory Turnover Profit Maximizer** — `GET+POST /api/ai/inventory-turnover-profit-maximizer`
+  - AI maksimizira profit preko OPTIMAL inventory turnover — najde
+    popolno ravnovesje med turnover speed (hitrejši = več ciklov) in
+    profit per cycle (višja margin = več € na prodajo). Razlika od
+    capital-growth-maximizer (v7.99 ki maksimizira capital growth) —
+    ta maksimizira TURNOVER-PROFIT balance (ne compounding growth).
+    Razlika od deal-profit-accelerator-pro (v7.99 ki accelera profit
+    per item) — ta daje GLOBAL turnover-profit optimization (ne
+    per-item). Razlika od inventory-roi-maximizer-pro (v7.99 ki
+    maksimizira ROI per item) — ta maksimizira MONTHLY PROFIT preko
+    turnover optimization (ne ROI %). Razlika od profit-multiplier-
+    engine (v8.00 ki multiplicira profit z 8 levers) — ta fokusira na
+    TURNOVER-PROFIT curve optimization. Razlika od inventory-cash-
+    conversion-maximizer (v7.98 ki maksimizira cash conversion) — ta
+    maksimizira PROFIT (ne cash conversion speed). Razlika od
+    inventory-roi-optimizer (v7.79 ki optimira ROI z rebalance) — ta
+    maksimizira turnover-profit curve (ne ROI rebalance). Razlika od
+    profit-velocity-maximizer (v7.98 ki maksimizira €/day velocity) —
+    ta maksimizira MONTHLY PROFIT preko optimal turnover rate.
+    "Current: turnover 2.8x/mo, profit/cycle 320€, monthly 896€ (12
+    items). Optimal: 3.5x/mo, 340€/cycle → 1190€/mo (+294€ uplift,
+    grade A). Turnover actions: price -5% za stagnant items (HIGH,
+    +0.4x), refresh listings weekly (MEDIUM, +0.3x). Profit actions:
+    bundle for upsell (HIGH, +15€/cycle), premium photo (MEDIUM,
+    +8€/cycle). Optimal inventory: 8 items (rebalance -4 items)."
+  - current: { currentTurnoverRate [0, 20] (= soldPerMonth /
+    inventorySize), currentProfitPerCycle € [0, 10000] (= avg profit
+    per sale), currentMonthlyProfit € [0, 50000] (= turnover ×
+    inventory × profitPerCycle), currentInventorySize [0, 1000] (HELD
+    count) }
+  - turnoverProfitCurve: 7 entries [{ turnoverRate [0, 20],
+    profitPerCycle € [0, 10000], monthlyProfit € [0, 50000] }]
+    (multipliers 0.5x, 0.75x, 1x, 1.25x, 1.5x, 2x, 2.75x of current
+    rate, profitPerCycle DECREASES as rate INCREASES — cycleMult =
+    1.15 − (mult-0.5) × 0.18)
+  - maximization: { optimalTurnoverRate [0, 20] (CLAMPED [current,
+    current × 1.25 + 0.5] anti-hallucination — peak of curve),
+    optimalProfitPerCycle € [0, 10000], maximizedMonthlyProfit € [0,
+    50000] (= optimalTurnover × inventory × optimalProfit),
+    turnoverProfitUplift € [0, 50000] (= maximized − current),
+    turnoverActions 3-5 [{ action max 200 (slovenski), priority
+    HIGH/MEDIUM/LOW, expectedTurnoverImpact [0, 10] (koliko x rate
+    impact) }], profitActions 3-5 [{ action max 200 (slovenski),
+    priority HIGH/MEDIUM/LOW, expectedProfitImpact € [0, 5000] (koliko
+    €/cycle impact) }], turnoverProfitGrade A+/A/B/C/D/F (A+ če uplift
+    ≥ 50%, A ≥ 35%, B ≥ 20%, C ≥ 10%, D ≥ 5%, else F),
+    optimalInventorySize [0, 1000] (ideal število item-ov za max
+    profit), rebalancePlan max 400 (slovenski — kako adjust-at
+    inventory size in pricing) }
+  - Compute: parallel query SOLD 12m (soldCount12m, totalProfit12m,
+    soldCount1m) + HELD trades (heldCount), currentTurnoverRate =
+    (soldCount12m/12) / max(1, heldCount), currentProfitPerCycle =
+    totalProfit12m/soldCount12m, currentMonthlyProfit = turnover ×
+    inventory × profitPerCycle; build curve with 7 multipliers around
+    current rate (cycleMult = 1.15 − (mult-0.5) × 0.18, profitPerCycle
+    = current × cycleMult, monthlyProfit = rate × inventory ×
+    profitPerCycle); findOptimalRate = curve point with highest
+    monthlyProfit; optimalTurnoverRate CLAMPED [current, current × 1.25
+    + 0.5]; optimalInventorySize: ratio > 1.1 → reduce 20%, ratio < 0.9
+    → add 20%, else same; turnoverActions (auto-discount, refresh
+    listings, cross-post, weekend peak); profitActions (bundle, premium
+    photo, negotiate prices, urgency); grade from uplift%.
+  - AI-enhanced z grounding prompt (soldCount12m + soldCount1m +
+    totalProfit12m + heldCount + current + curve +
+    deterministicMaximization + caps) + anti-hallucination
+    (optimalTurnoverRate CLAMPED [current, current × 1.25 + 0.5],
+    optimalProfitPerCycle v dosegljivem rangu od current,
+    optimalInventorySize [0, 1000], expectedTurnoverImpact [0, 10],
+    expectedProfitImpact [0, 5000], enums validirana HIGH/MEDIUM/LOW in
+    A+/A/B/C/D/F, string length limits — action max 200, rebalancePlan
+    max 400, summary max 400) + 6h cache (key `inventory-turnover-profit-
+    maximizer:${currentMonth}` — YYYY-MM, invalidira monthly) +
+    deterministic fallback (optimalTurnoverRate iz curve peak,
+    optimalProfitPerCycle iz curve, grade iz uplift%).
+  - GET+POST (handleInventoryTurnoverProfitMaximizer shared function —
+    AI Hub runner kompatibilnost). Empty-state fallback če 0 SOLD
+    trades in 0 HELD trades → "Ni SOLD trgovin in HELD inventorija" z
+    aiUsed=false + empty current z 0 + empty curve + empty maximization
+    z grade F.
+
+### Changed
+- AI_ENDPOINTS.md: 359 → 362 endpoints (+3 AI: deal-source-roi-maximizer pos 102, inventory-turnover-profit-maximizer pos 181, profit-multiplier-engine pos 305)
+- README.md: v7.99.0 → v8.00.0 badge, 359 → 362 AI endpoints, 536 → 539 API routes, ~222 → ~225 funkcij, 160+ → 163+ profit pipeline funkcij, dodan v8.00 "Kaj je novega" block (3 features z full descriptions), posodobljen Roadmap (v8.00 trenutno, 44 → 45 verzij, 132 → 135 novih funkcij), dodana 3 endpoint line v Profit pipeline section, dodana Zadnje verzije entry, tagline 359 → 362 AI endpointov
+- CHANGELOG.md: [Unreleased] Načrtovano za v8.00+ → ...za v8.01+, dodana nova [8.00.0] sekcija z vsemi 3 endpoint-i in podrobnimi opisi (response shape, anti-hallucination rules, AI cache key, deterministic fallback, example comment, razlika od podobnih obstoječih endpoint-ov). Skupno 359 AI → 362 AI (+3), 72 analytics nespremenjeno (0 new), 536 routes → 539 routes (+3), ~222 funkcij → ~225 funkcij (+3), 160+ funkcij → 163+ funkcij v profit pipeline (+3).
+- Verzija aplikacije: v8.00.0
 
 ## [7.99.0] - 2026-08-15
 
