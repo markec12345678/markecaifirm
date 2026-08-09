@@ -13218,3 +13218,35 @@ Stage Summary:
 - Profit pipeline funkcije: 160+ → 163+ (+3)
 - Dokumentacija sinhrono posodobljena (AI_ENDPOINTS.md, README.md, CHANGELOG.md)
 - Verzija aplikacije: v8.00.0
+
+---
+Task ID: v8.00.1
+Agent: main
+Task: v8.00 commit + push + GitHub About + Agent Browser verification — MILESTONE v8.00
+
+Work Log:
+- Prejel poročilo od full-stack-developer podagenta (Task v8.00)
+- Preveril 3 nove endpoint-e: profit-multiplier-engine (200 GET+POST), deal-source-roi-maximizer (200 GET+POST), inventory-turnover-profit-maximizer (200 GET+POST)
+- Preveril doc sync: AI_ENDPOINTS.md (362 ✅), README v8.00 (12 refs ✅), README 362 AI (6 refs ✅), CHANGELOG v8.00 ✅
+- Preveril lint: 0 napak ✨
+- Preveril typecheck: 0 napak ✨
+- Posodobil GitHub About opis: 359 AI → 362 AI, 536 routes → 539 routes (via API PATCH)
+- Commit: "v8.00: Profit Multiplier Engine + Deal Source ROI Maximizer + Inventory Turnover Profit Maximizer" (11fcf7f)
+- Push na GitHub: uspešen ✅, PAT očiščen ✅
+- Agent Browser self-verification:
+  - Stran se pravilno naloži (HTTP 200)
+  - AI Hub prikazuje profit-multiplier-engine (v8.00) v iskalniku ✅
+  - Runner test: klik na profit-multiplier-engine → POST request → valid JSON ✅
+  - Response: {"ok":true, "baseline":{...}, "engine":{cumulativeMultiplier, multiplicationGrade, multiplicationProjection}, "aiUsed":false}
+  - Brez runtime napak v dev.log
+
+Stage Summary:
+- v8.00 uspešno dokončana in potisnjena na GitHub
+- MILESTONE: v8.00 dosežen! 🎉
+- 3 PROFIT-MAXIMIZING funkcije: AI Profit Multiplier Engine (8 levers, cumulative multiplier), AI Deal Source ROI Maximizer (per-source ROI maximization), AI Inventory Turnover Profit Maximizer (optimal turnover-profit balance)
+- AI endpointi: 359 → 362 (+3)
+- Analytics endpointi: 72 (nespremenjeno — vsi 3 so AI)
+- Total API routes: 536 → 539 (+3)
+- Dokumentacija sinhrono posodobljena (AI_ENDPOINTS.md, README, CHANGELOG, GitHub About)
+- GitHub sinhroniziran (0 commit-ov ahead)
+- Verzija aplikacije: v8.00.0
