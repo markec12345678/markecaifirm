@@ -6,11 +6,35 @@ Format sledi [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), verzije s
 
 ## [Unreleased]
 
-Načrtovano za v8.02+:
+Načrtovano za v8.03+:
 - WebSocket real-time negotiation (SSE namesto polling)
 - Playwright E2E testi za glavne flow-e
 - TLS fingerprinting (curl-impersonate)
 - ML model za buyer matchmaker (fine-tuned na realnem data)
+
+## [8.02.0] - 2026-08-16
+
+### Added — Profit Scale Engine + Volume Maximizer + Profit Per Day Maximizer (3 funkcije)
+- **AI Profit Scale Engine** — `GET+POST /api/ai/profit-scale-engine`
+  - AI identifies how to SCALE profit for exponential growth
+  - targetMonthlyProfit, scaleMultiplier, scaleRequirements (inventory/turnover/margin/capital)
+  - scaleBottlenecks, scaleActionPlan (phased 2x/3x/5x), scaleTimeline, scaleRiskAssessment, scaleGrade
+  - AI cache (6h TTL) keyed by currentMonth
+  - 'Current: 2000€/mo → Target: 10,000€/mo (5x). Need: 3x inventory, 2x turnover, 1.5x margins.'
+- **AI Deal Source Volume Maximizer** — `GET+POST /api/ai/deal-source-volume-maximizer`
+  - AI maximizes trade VOLUME per source without diluting quality
+  - Per source: volumeMaximizationAction, projectedVolume30d, volumeUplift, volumeMaximizationLevers,
+    qualityMaintenanceStrategy, capitalRequirement, volumeGrowthProjection
+  - Portfolio: totalProjectedVolume, totalVolumeUplift, bestVolumeSource
+  - AI cache (6h TTL) keyed by currentMonth
+  - 'Bolha: SCALE_GRADUALLY (+5 trades/mo). Volume uplift: +12 trades/mo. Quality maintained.'
+- **AI Inventory Profit Per Day Maximizer** — `GET+POST /api/ai/inventory-profit-per-day-maximizer`
+  - AI maximizes PROFIT PER DAY — the ultimate efficiency metric
+  - current: dailyProfit, profitPerTrade, holdDays, profitPerHoldDay, tradeFrequency, breakdown
+  - maximization: maximizedDailyProfit, profitPerDayUplift, optimizationLevers (4 levers),
+    optimalInventoryMix, optimalHoldTime, profitPerDayProjection, profitPerDayGrade, bottleneckAnalysis
+  - AI cache (6h TTL) keyed by currentMonth
+  - 'Current: 45€/day → Maximized: 85€/day. Bottleneck: slow turnover. Optimal hold: 14 days.'
 
 ## [8.01.0] - 2026-08-15
 
