@@ -13670,3 +13670,79 @@ Stage Summary:
 - Dokumentacija sinhrono posodobljena (AI_ENDPOINTS.md, README, CHANGELOG, GitHub About)
 - GitHub sinhroniziran (0 commit-ov ahead)
 - Verzija aplikacije: v8.05.0
+
+---
+Task ID: v8.06
+Agent: full-stack-developer
+Task: Add 3 new profit-maximizing features for v8.06 — AI Revenue Per Trade Maximizer, AI Deal Source Cash Flow Maximizer, AI Inventory Annualized Return Maximizer
+
+Work Log:
+- Prebral worklog.md (v8.05.1 zadnji entry: 377 AI endpointov, 554 total routes, GitHub sinhroniziran)
+- Studiral v8.05 pattern: `src/app/api/ai/profit-acceleration-maximizer/route.ts` (1111 vrstic — monthly series CAGR + 1st/2nd deriv + 3 scenarios z multiplier + 6 levers + timeTo10kProfit + grade)
+- Studiral v8.04 pattern: `src/app/api/ai/profit-compounding-maximizer/route.ts` (993 vrstice — 6 reinvest scenarios + 24m projection + linear-vs-compounding)
+- Studiral per-source pattern: `src/app/api/ai/deal-source-capital-efficiency-maximizer/route.ts` (893 vrstic — per-source aggregation z capitalReallocation + portfolio plan-from-low-to-high efficiency)
+- Studiral per-source profit-per-trade pattern: `src/app/api/ai/deal-source-profit-per-trade-maximizer/route.ts`
+- Studiral HELD inventory pattern: `src/app/api/ai/inventory-turnover-yield-maximizer/route.ts` (958 vrstic — HELD + SOLD parallel query z yieldCurve z ROI-pressure model)
+- Studiral HELD inventory cash-yield pattern: `src/app/api/ai/inventory-cash-yield-maximizer/route.ts` (Listing.aiEstimatedValue fallback chain, aiRisk per item)
+- Buildal Feature #1: `src/app/api/ai/revenue-per-trade-maximizer/route.ts`
+  - Pattern: GET+POST shared handler, `runtime='nodejs'`, `dynamic='force-dynamic'`, rate limit 20/min, 6h AI cache keyed by currentMonth, deterministic fallback, anti-hallucination clamping
+  - Logic: SOLD trades 12m z sellPrice > 0 → per-trade {sellPrice, sellFees, buyPrice, netRevenue, markup, sellMs, category} → current {avgRevenuePerTrade, avgSellPrice, avgSellFees, avgNetRevenue, avgBuyPrice, avgMarkup, revenuePerTradeTrend (% slope older vs recent half), soldCount12m}
+  - Maximization: 6 revenueMaximizationActions {action: INCREASE_SELL_PRICE/IMPROVE_LISTING_QUALITY/TARGET_PREMIUM_BUYERS/TIMING_THE_SALE/CROSS_PLATFORM_PREMIUM, expectedRevenueGain %, difficulty LOW/MEDIUM/HIGH, implementation} z ACTION_UPLIFT map (TARGET_PREMIUM_BUYERS ~22%, INCREASE_SELL_PRICE ~18%, CROSS_PLATFORM_PREMIUM ~16%, IMPROVE_LISTING_QUALITY ~14%, TIMING_THE_SALE ~10%)
+  - Top-3 actions compound z diminishing returns (× 0.7) → maximizedRevenuePerTrade, revenueUpliftPerTrade, revenueMultiplier [1.0, 3.0]
+  - portfolioRevenueProjection = maximizedRevenuePerTrade × soldCount12m
+  - revenueGrade: A+ (mult≥1.6 ali uplift≥50%) / A (1.4/35) / B (1.25/20) / C (1.15/12) / D (1.05/5) / F
+  - bestRevenueCategory: anti-hallucination — MORA biti ena iz DB categoryStats (AI override validira)
+  - pricingStrategyAdvice: slovenski (max 400 znakov) — kako ceniti za max revenue per trade
+  - Anti-hallucination: revenue [0, 50000], multiplier [1.0, 3.0], projectedCashFlow30d ∈ [current, current × 3.0]
+  - Empty-state fallback če 0 SOLD trades → grade F
+- Buildal Feature #2: `src/app/api/ai/deal-source-cash-flow-maximizer/route.ts`
+  - Logic: SOLD trades 12m z linked Listing za monitor.source → per-source aggregation {totalRevenue, totalFees, totalInvested, totalHoldDays}
+  - Per-source metrics: totalRevenue, totalFees (= buyFees + sellFees), totalCarryingCosts (= invested × (avgHoldDays/30) × 0.5%/mo), netCashFlow (= revenue − fees − carrying), cashFlowPerMonth (= netCashFlow / 12), cashFlowEfficiency (= netCashFlow / revenue × 100), avgHoldDays, totalInvested
+  - Per-source maximization: cashFlowMaximizationAction (REDUCE_FEES/FASTER_TURNOVER/HIGHER_PRICES/MORE_VOLUME/LOWER_CARRYING_COSTS) — decideAction hevristika (carrying > 10% rev → LOWER_CARRYING_COSTS, fees > 15% rev → REDUCE_FEES, hold > 45d → FASTER_TURNOVER, ...)
+  - projectedCashFlow30d = current × upliftMultiplier (FASTER_TURNOVER 1.25, MORE_VOLUME 1.30, REDUCE_FEES 1.18, HIGHER_PRICES 1.15, LOWER_CARRYING_COSTS 1.12)
+  - cashFlowUplift, feeOptimizationPlan (slovenski — bundle shipping, Bolha Top insertion samo za premium, Vinted free listing window), carryingCostReduction (slovenski — skrajšaj hold, bundle stagnirajoče, premakni na platforme z nižjimi carrying costs)
+  - cashFlowVelocityScore = (cashFlowPerMonth/50) × 0.5 + cashFlowEfficiency × 0.5 [0, 100]
+  - Portfolio: totalCurrentCashFlow, totalMaximizedCashFlow, totalCashFlowUplift, sourceCashFlowRanking (sorted by cashFlowPerMonth desc)
+  - Anti-hallucination: cash flows [0, 100000], scores [0, 100], projectedCashFlow30d ∈ [current, current × 1.5 ali +5000€]
+  - Empty-state fallback če 0 SOLD trades
+- Buildal Feature #3: `src/app/api/ai/inventory-annualized-return-maximizer/route.ts`
+  - Logic: Parallel query HELD trades (z listing.aiEstimatedValue, aiRisk) + SOLD trades 12m za historical benchmark
+  - Per-item HeldComputed: capital (buyPrice + buyFees), estValue (aiEstimatedValue → listing.price → buyPrice fallback chain), unrealizedProfit, holdDays, annualizedReturn = (unrealizedProfit/capital) × (365/holdDays) × 100, currentReturn, aiRisk
+  - Current: totalCapitalDeployed, heldInventoryCount, avgHoldDays, portfolioAnnualizedReturn (weighted by capital), benchmarkReturn (10% = S&P 500 default), excessReturn (= portfolio − benchmark), avgUnrealizedProfit
+  - Maximization: 4 returnMaximizationLevers {FASTER_TURNOVER (potentialGain 30-100), HIGHER_MARGIN (15-120), BETTER_SOURCING (20-150), LOWER_FEES (8-60)}
+  - Top-2 levers compound z × 0.7 → maximizedAnnualizedReturn, returnUplift (pp)
+  - returnVsBenchmark = maximized − benchmark
+  - optimalHoldTime = max(7, round(sold12m avgHold × 0.7)) [1, 365]
+  - returnProjection: 3 entries {months 3/6/12, projectedReturn % (= maximized × months/12), projectedProfit € (= totalCapital × projectedReturn/100)}
+  - returnGrade: A+ (maximized ≥ 5× benchmark ali uplift ≥ 100pp) / A (3×/60) / B (2×/30) / C (1.5×/15) / D (1×/5) / F
+  - riskAdjustedReturn = maximized − (avgAiRisk/100) × 0.30 × maximized
+  - AI cache keyed by heldItemIdsHash (invalidira ko held inventory se spremeni)
+  - Anti-hallucination: returns [-100, 1000], hold time [1, 365], maximizedAnnualizedReturn ∈ [current, current × 1.8 ali +300pp]
+  - Empty-state fallback če 0 HELD (z estValue) in 0 SOLD trades → grade F
+- Smoke test (data seeding): vstavil 5 SOLD trgovin (z listing.aiEstimatedValue, aiRisk) in 3 HELD trgovine v DB, klical vse 3 endpoint-e, verificiral deterministic computation fires correctly:
+  * revenue-per-trade-maximizer: avgRevenuePerTrade=230€ (5 trades z sellPrice 180-280), avgMarkup=1.68× (218/130), revenuePerTradeTrend=32.47% (positive — improving), maximizedRevenuePerTrade=314€, revenueUpliftPerTrade=84€, revenueMultiplier=1.37× ✓, portfolioRevenueProjection=1570€ (314×5), revenueGrade=A (multiplier 1.37 ≥ 1.25 = B ampak upliftPct 36.5 ≥ 35 = A), bestRevenueCategory="mobilni" (highest avg sell price) ✓
+  * deal-source-cash-flow-maximizer: Bolha source — totalRevenue=1150€, totalFees=85€ (5×5 buy + 5×12 sell = 25+60=85 ✓), totalCarryingCosts=8€ (675 invested × 74d/30 × 0.005 = 8.3 ✓), netCashFlow=1057€ (1150-85-8=1057 ✓), cashFlowPerMonth=88€ (1057/12 ✓), cashFlowEfficiency=92% (1057/1150×100 ✓), action FASTER_TURNOVER (avgHoldDays 74 > 45 ✓), projectedCashFlow30d=110€ (88×1.25 ✓), cashFlowUplift=22€, cashFlowVelocityScore=47 ((88/50)×0.5 + 92×0.5 ✓). Portfolio: totalCurrentCashFlow=88, totalMaximizedCashFlow=110, totalCashFlowUplift=22 ✓
+  * inventory-annualized-return-maximizer: 3 HELD items z capitalDeployed 208+258+308=774€, estValue 220+250+280=750€, avgHoldDays=25, portfolioAnnualizedReturn=-26.59% (weighted avg: 105.29×208 + (-45.27)×258 + (-100)×308 / 774 ✓), benchmarkReturn=10%, excessReturn=-36.59pp, maximizedAnnualizedReturn=20.65%, returnUplift=+47.24pp, returnVsBenchmark=+10.65pp, optimalHoldTime=52 (max(7, round(74×0.7)) ✓), returnProjection: 3m→5.16%/40€, 6m→10.33%/80€, 12m→20.65%/160€ ✓, returnGrade=B (20.65 ≥ 2× benchmark = 20), riskAdjustedReturn=19.10 (20.65 - (25/100)×0.30×20.65 = 20.65 - 1.55 ✓)
+  * Cleanup: izbrisal vseh 8 test trgovin (notes='TEST-v806-SMOKE') + 5 listings + 1 monitor
+- Dokumentacija sinhronizirana:
+  * AI_ENDPOINTS.md: regenerated s Python skripto — 377 → 380 endpoints (+3)
+  * README.md: version badge v8.05.0 → v8.06.0, AI Endpoints badge 377 → 380, API Routes badge 554 → 557, tagline "377 AI endpointov + 72 analytics" → "380 AI endpointov + 72 analytics", Overview "v8.05.0" → "v8.06.0", funkcij count ~240 → ~243, "Kaj je novega" v7.56-v8.05 (50 verzij, 150 novih) → v7.56-v8.06 (51 verzij, 153 novih), dodal v8.06 blok z vsemi 3 endpoint-i z razlikami od v8.05/v8.04/v8.03/v8.02/v8.01/v8.00/v7.99/v7.98/v7.96/v7.85/v7.70/v7.50/v7.40 (REVENUE PER TRADE & CASH FLOW PER SOURCE & ANNUALIZED RETURN focus), Roadmap v8.05 → v8.06 (dodal 3 nove maximizer-je v profit pipeline list 169+ funkcij), API routes count 554 → 557, AI Hub "Vsi 377 AI endpointov" → "Vsi 380 AI endpointov", Endpointi section "(377 AI + ... = 554)" → "(380 AI + ... = 557)", Changelog zadnje verzije list dodal v8.06.0 entry na vrh, popolna zgodovina "do v8.05" → "do v8.06"
+  * CHANGELOG.md: [Unreleased] "v8.06+" → "v8.07+", dodal [8.06.0] sekcijo (2026-08-19) z vsemi 3 endpoint-i + Changed — Documentation sync sekcijo (377 → 380 AI, 554 → 557 routes, funkcij ~240 → ~243, tagline/overview/roadmap posodobitve)
+- Kvaliteta:
+  * `bun run lint` → 0 errors ✅
+  * `npx tsc --noEmit` → 0 errors ✅
+  * curl GET+POST na vseh 3 endpointih → HTTP 200 ✅ (empty-state fallback ker 0 SOLD/HELD trgovin v DB po cleanup)
+  * `grep "Total:" AI_ENDPOINTS.md` → "380 endpoints" ✅
+  * `grep -c "v8.06" README.md` → 10 (≥10 ✅)
+  * `grep "380 AI" README.md` → 3 mestih (≥1 ✅)
+  * `grep "## \[8.06.0\]" CHANGELOG.md` → obstaja ✅
+  * dev.log: samo WARN o AI call failed (ni AI provider konfiguriran v dev) — deterministic fallback pravilno aktiviran, vsi 3 endpoint-i še vedno vračajo 200
+
+Stage Summary:
+- v8.06 uspešno dokončana (pending commit + push od main agent-a)
+- 3 PROFIT-MAXIMIZING funkcije: AI Revenue Per Trade Maximizer (top-line sell price per deal z 6 actions in revenueMultiplier + portfolioRevenueProjection + bestRevenueCategory), AI Deal Source Cash Flow Maximizer (per-source net cash flow after fees + carrying costs z 5 actions + feeOptimizationPlan + carryingCostReduction + cashFlowVelocityScore + sourceCashFlowRanking), AI Inventory Annualized Return Maximizer (annualized ROI per HELD item z 4 levers + benchmark comparison S&P 500 + optimalHoldTime + 3/6/12m returnProjection + riskAdjustedReturn)
+- AI endpointi: 377 → 380 (+3)
+- Analytics endpointi: 72 (nespremenjeno — vsi 3 so AI)
+- Total API routes: 554 → 557 (+3)
+- Dokumentacija sinhrono posodobljena (AI_ENDPOINTS.md, README, CHANGELOG)
+- Verzija aplikacije: v8.06.0

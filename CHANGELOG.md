@@ -6,11 +6,118 @@ Format sledi [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), verzije s
 
 ## [Unreleased]
 
-Načrtovano za v8.06+:
+Načrtovano za v8.07+:
 - WebSocket real-time negotiation (SSE namesto polling)
 - Playwright E2E testi za glavne flow-e
 - TLS fingerprinting (curl-impersonate)
 - ML model za buyer matchmaker (fine-tuned na realnem data)
+
+## [8.06.0] - 2026-08-19
+
+### Added — Revenue Per Trade Maximizer + Deal Source Cash Flow Maximizer + Inventory Annualized Return Maximizer (3 funkcije)
+
+- **AI Revenue Per Trade Maximizer** — `GET+POST /api/ai/revenue-per-trade-maximizer`
+  - AI MAXIMIZES REVENUE PER TRADE — top-line SELL PRICE per individual deal (not profit-after-costs)
+  - "Your avg sell price is 180€, with 6 revenue actions it could be 245€ — multiplier 1.36x and 17800€
+    more portfolio revenue per year."
+  - Different from deal-source-profit-per-trade-maximizer (v8.04 which maximizes PROFIT per trade €
+    after costs) — this maximizes REVENUE per trade (top-line sell price)
+  - Different from profit-per-trade-maximizer (v8.03 which maximizes profit per trade €) — this maximizes
+    SELL PRICE / top-line revenue per trade, not bottom-line profit
+  - Different from revenue-growth-maximizer (v8.01 which maximizes revenue GROWTH RATE) — this maximizes
+    REVENUE PER TRADE (avg sell price per deal), not growth rate
+  - current { avgRevenuePerTrade € (= avgSellPrice), avgSellPrice €, avgSellFees €, avgNetRevenue €
+    (= sellPrice − sellFees), avgBuyPrice €, avgMarkup × (= avgNetRevenue / avgBuyPrice),
+    revenuePerTradeTrend % (slope of revenue per trade over time), soldCount12m }
+  - revenueMaximizationActions: 4-6 entries { action: INCREASE_SELL_PRICE | IMPROVE_LISTING_QUALITY |
+    TARGET_PREMIUM_BUYERS | TIMING_THE_SALE | CROSS_PLATFORM_PREMIUM, expectedRevenueGain %
+    (TARGET_PREMIUM_BUYERS ~22%, INCREASE_SELL_PRICE ~18%, CROSS_PLATFORM_PREMIUM ~16%,
+    IMPROVE_LISTING_QUALITY ~14%, TIMING_THE_SALE ~10%), difficulty LOW/MEDIUM/HIGH, implementation
+    (slovenski) }
+  - maximizedRevenuePerTrade € (≥ current, ≤ current × 3.0)
+  - revenueUpliftPerTrade € (improvement = maximized − current)
+  - revenueMultiplier (maximized / current ratio, [1.0, 3.0])
+  - portfolioRevenueProjection € (annual revenue if all trades at maximized revenue =
+    maximizedRevenuePerTrade × soldCount12m)
+  - revenueGrade (A+ to F — A+ if multiplier ≥ 1.6 or uplift ≥ 50%, A ≥ 1.4/35, B ≥ 1.25/20,
+    C ≥ 1.15/12, D ≥ 1.05/5, else F)
+  - bestRevenueCategory (category with highest avg sell price — anti-hallucination: MUST be one from
+    DB categoryStats)
+  - pricingStrategyAdvice (slovenski — how to price for maximum revenue per trade)
+  - AI cache (6h TTL) keyed by currentMonth
+  - 'Current: 230€/trade, markup 1.68×, trend 32.47%. Maximized: 314€/trade (multiplier 1.37×, grade A).
+    Uplift: +84€/trade → portfolio 1570€/leto.'
+  - Anti-hallucination: revenue [0, 50000], multiplier [1.0, 3.0]
+  - Empty-state fallback če 0 SOLD trades → grade F
+
+- **AI Deal Source Cash Flow Maximizer** — `GET+POST /api/ai/deal-source-cash-flow-maximizer`
+  - AI MAXIMIZES CASH FLOW per source — not just profit but actual cash generated per source per month
+    (accounting for fees, carrying costs, and time value of money)
+  - "Bolha generates 3200€ cash flow/month but could be 4800€ with 3 actions — Vinted only 800€."
+  - Different from deal-source-capital-efficiency-maximizer (v8.05 which maximizes capital efficiency =
+    profit per euro per day) — this maximizes CASH FLOW per source per month (after fees + carrying costs)
+  - Different from deal-source-profit-maximizer (v7.97 which maximizes total profit per source) — this
+    maximizes NET CASH FLOW (revenue − fees − carrying costs) with cashFlowEfficiency
+  - Different from cashflow engine (v7.40 which analyzes portfolio cashflow) — this maximizes PER-SOURCE
+    cash flow with cashFlowMaximizationAction
+  - Per source metrics { totalRevenue, totalFees (= buyFees + sellFees), totalCarryingCosts
+    (= invested × (avgHoldDays/30) × 0.5%/mo), netCashFlow (= revenue − fees − carrying),
+    tradeCount, cashFlowPerMonth (= netCashFlow / 12), cashFlowEfficiency (= netCashFlow / revenue × 100),
+    avgHoldDays, totalInvested }
+  - Per source maximization: cashFlowMaximizationAction (REDUCE_FEES / FASTER_TURNOVER / HIGHER_PRICES /
+    MORE_VOLUME / LOWER_CARRYING_COSTS), projectedCashFlow30d (≥ current, ≤ × 1.5 ali +5000€),
+    cashFlowUplift, feeOptimizationPlan (slovenski — specific fee reduction strategies),
+    carryingCostReduction (slovenski — how to reduce holding costs), cashFlowVelocityScore 0-100
+  - Portfolio: totalCurrentCashFlow, totalMaximizedCashFlow, totalCashFlowUplift (all €/mo),
+    sourceCashFlowRanking (Array<{ source, displayName, currentCashFlow, maximizedCashFlow, rank }>)
+  - AI cache (6h TTL) keyed by currentMonth
+  - 'Bolha 1150€ revenue, 85€ fees, 8€ carrying, 1057€ net cash flow, 88€/mo → 110€/mo (+22€,
+    FASTER_TURNOVER). Vinted 800€/mo → 1100€/mo (+300€, REDUCE_FEES). Portfolio: 4000€ → 5900€/mo
+    (+1900€ uplift).'
+  - Anti-hallucination: cash flows [0, 100000], scores [0, 100],
+    projectedCashFlow30d ∈ [current, current × 1.5 ali +5000€]
+  - Empty-state fallback če 0 SOLD trades
+
+- **AI Inventory Annualized Return Maximizer** — `GET+POST /api/ai/inventory-annualized-return-maximizer`
+  - AI MAXIMIZES ANNUALIZED RETURN on held inventory — converts per-trade ROI into annualized rate
+    to compare with other investments (stocks, bonds, real estate)
+  - "Your annualized return is 52% — better than stocks (10%), but could be 95% with optimal turnover
+    and 4 return levers."
+  - Different from inventory-cash-yield-maximizer (v8.04 which maximizes annualized cash yield with
+    yieldComparisonTable) — this maximizes ANNUALIZED RETURN with returnMaximizationLevers and
+    returnVsBenchmark
+  - Different from inventory-turnover-yield-maximizer (v8.05 which maximizes yield with yieldCurve and
+    optimalTurnoverRate) — this maximizes ANNUALIZED RETURN (not yield curve) with optimalHoldTime and
+    returnProjection
+  - current { totalCapitalDeployed €, heldInventoryCount, avgHoldDays, portfolioAnnualizedReturn %
+    (weighted by capital), benchmarkReturn % (default 10% = S&P 500), excessReturn pp (= portfolio −
+    benchmark), avgUnrealizedProfit € }
+  - perItem: Array<{ tradeId, title, category, capitalDeployed, estValue (from Listing.aiEstimatedValue
+    fallback chain), unrealizedProfit, holdDays, annualizedReturn (= (unrealizedProfit/capital) ×
+    (365/holdDays) × 100), currentReturn (non-annualized), aiRisk (from Listing.aiRisk) }>
+  - maximization: maximizedAnnualizedReturn % (≥ current, ≤ current × 1.8 ali +300pp), returnUplift pp
+    (= maximized − current), returnMaximizationLevers 4 entries { lever: FASTER_TURNOVER |
+    HIGHER_MARGIN | BETTER_SOURCING | LOWER_FEES, potentialGain pp, action (slovenski) },
+    returnVsBenchmark pp (= maximized − benchmark), optimalHoldTime dni (hold time that maximizes
+    annualized return), returnProjection 3 entries { months 3/6/12, projectedReturn % (= maximized ×
+    months/12), projectedProfit € (= totalCapital × projectedReturn/100) }, returnGrade (A+ to F —
+    A+ if maximized ≥ 5× benchmark (≥50%) or uplift ≥ 100pp, A ≥ 3×/60, B ≥ 2×/30, C ≥ 1.5×/15,
+    D ≥ 1×/5, else F), riskAdjustedReturn % (= maximized − (avgAiRisk/100) × 0.30 × maximized)
+  - AI cache (6h TTL) keyed by heldItemIdsHash (invalidates when held inventory changes)
+  - 'Current: 52% annualized (8 items, 10000€ deployed, 30d hold). Benchmark 10% → excess +42pp.
+    Maximized: 95% (uplift +43pp, vs benchmark +85pp, grade A). Risk-adjusted: 78%. Optimal hold: 14d.'
+  - Anti-hallucination: returns [-100, 1000], hold time [1, 365]
+  - Empty-state fallback če 0 HELD (with estValue) and 0 SOLD trades → grade F
+
+### Changed — Documentation sync
+- **AI_ENDPOINTS.md** regenerated: 377 → 380 AI endpoints (+3)
+- **README.md**: version v8.05.0 → v8.06.0, AI Endpoints badge 377 → 380, API Routes badge 554 → 557,
+  tagline "377 AI endpointov + 72 analytics" → "380 AI endpointov + 72 analytics", Overview "v8.05.0" → "v8.06.0",
+  funkcij count ~240 → ~243, "Kaj je novega" v7.56-v8.05 → v7.56-v8.06 (51 verzij, 153 novih funkcij),
+  Roadmap v8.05 → v8.06 (added 3 new maximizers to profit pipeline list), Changelog zadnje verzije
+  v8.05.0 → v8.06.0 (added at top)
+- Total API routes: 554 → 557 (+3)
+- Analytics endpoints: 72 (nespremenjeno — vsi 3 novi so AI)
 
 ## [8.05.0] - 2026-08-18
 
