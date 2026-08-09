@@ -6,11 +6,264 @@ Format sledi [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), verzije s
 
 ## [Unreleased]
 
-Načrtovano za v8.01+:
+Načrtovano za v8.02+:
 - WebSocket real-time negotiation (SSE namesto polling)
 - Playwright E2E testi za glavne flow-e
 - TLS fingerprinting (curl-impersonate)
 - ML model za buyer matchmaker (fine-tuned na realnem data)
+
+## [8.01.0] - 2026-08-15
+
+### Added — AI Revenue Growth Maximizer & AI Deal Profit Margin Enhancer Pro & AI Inventory Capital Efficiency Maximizer (3 funkcije — REVENUE GROWTH & MARGIN ENHANCEMENT & CAPITAL EFFICIENCY focus)
+
+- **AI Revenue Growth Maximizer** — `GET+POST /api/ai/revenue-growth-maximizer`
+  - AI maksimizira REVENUE GROWTH (top-line revenue, NE samo profit).
+    "Your revenue is 5000€/mo but could be 12,000€/mo with 3 expansion
+    actions." Fokus na total revenue growth, expansion v nove kategorije
+    in scaling trade volume. Razlika od profit-multiplier-engine (v8.00
+    ki MULTIPLICIRA profit z 8 levers) — ta MAXIMIZIRA REVENUE
+    (top-line sales), ne profit. Razlika od deal-source-roi-maximizer
+    (v8.00 ki maksimizira ROI per source) — ta fokusira na REVENUE
+    GROWTH rate in category expansion (ne ROI %). Razlika od
+    inventory-turnover-profit-maximizer (v8.00 ki maksimizira
+    turnover-profit balance) — ta maksimizira TOTAL REVENUE preko
+    volume scaling in category expansion. Razlika od capital-growth-
+    maximizer (v7.99 ki maksimizira capital growth) — ta maksimizira
+    REVENUE (top-line), ne capital. Razlika od revenue-stream-
+    optimizer (v7.94 ki optimira revenue streams) — ta MAXIMIZIRA
+    revenue z growth actions in category expansion + 3m/6m/12m
+    projection + timeToDoubleRevenue. Razlika od profit-maximizer-pro
+    (v7.94 ki maksimizira profit z 7 levers) — ta maksimizira REVENUE
+    (ne profit) — different focus (top-line vs bottom-line). Razlika od
+    deal-source-profit-maximizer (v7.97 ki maksimizira profit per
+    source) — ta daje UNIFIED revenue growth engine (ne per-source
+    profit). "Current: 5000€/mo revenue, growth 8%/mo, 12 trades/mo,
+    avgRevenuePerTrade 417€. Maximization: 12,000€/mo (2.4x multiplier),
+    3 growth actions (expand to mobile.de +3500€, increase trade
+    volume to 24/mo +2500€, raise prices +1000€). Projection 3m:
+    16500€, 6m: 24000€, 12m: 58000€. Category expansion: electronics
+    (+2800€/mo), automotive (+1500€/mo). Volume scaling: 12→24
+    trades/mo (2x). Diversification: Bolha 70% → Bolha 40% + Vinted
+    30% + mobile.de 30%. Grade A. Time to double revenue: 87 days."
+  - current: { currentMonthlyRevenue € [0, 100000] (= avg monthly
+    revenue last 6m, fallback 12m), revenueGrowthRate % [0, 200]
+    (= (last3m avg − prev3m avg) / prev3m avg × 100), avgRevenuePerTrade
+    € [0, 100000] (= revenue12m / count12m), tradeVolumePerMonth [0,
+    1000] (= count12m / 12), revenueStreams Array<{ source, percentage
+    % [0, 100], revenue € }> (top 6 sources by revenue share) }
+  - maximization: { maximizedMonthlyRevenue € [0, 100000] (= current
+    + totalGain), revenueGrowthMultiplier [1.0, 5.0] (anti-hallucination
+    — CLAMPED, = maximized / current), growthActions 4-6 [{ action
+    max 200 (slovenski), expectedRevenueGain € [0, 50000], priority
+    HIGH/MEDIUM/LOW, difficulty EASY/MEDIUM/HARD }], revenueProjection3m
+    € [0, 300000], revenueProjection6m € [0, 600000], revenueProjection12m
+    € [0, 1200000] (z growth rate compounding), categoryExpansionOpportunities
+    3-5 [{ category max 50, potentialRevenue € [0, 50000], reasoning
+    max 200 (slovenski) }], volumeScalingPlan max 400 (slovenski),
+    revenueDiversificationStrategy max 400 (slovenski), revenueGrowthGrade
+    A+/A/B/C/D/F (≥3.5 A+, ≥2.5 A, ≥1.8 B, ≥1.4 C, ≥1.15 D, else F),
+    timeToDoubleRevenue dni [1, 3650] (= ln(2) / ln(1+dailyGrowth)) }
+  - Compute: query SOLD 12m z linked Listing.monitor.source, per trade
+    compute revenue (sellPrice − sellFees), aggregate per month + per
+    source; currentMonthlyRevenue = avg last 6m (fallback 12m),
+    revenueGrowthRate = (last3m avg − prev3m avg) / prev3m avg × 100,
+    avgRevenuePerTrade, tradeVolumePerMonth, revenueStreams (top 6
+    sources by revenue share); build 4 deterministic growth actions
+    (category expansion +70% of monthly, volume scaling +50%, premium
+    pricing +15% of revenuePerTrade×volume, new source +25/40% based
+    on top source concentration), maximized = current + totalGain,
+    multiplier = maximized/current [1.0, 5.0] CLAMPED, projections
+    (3m/6m/12m z growth rate compounding), 3 category expansions
+    (electronics +55%, automotive +35%, luxury fashion +30% of monthly),
+    volumeScalingPlan z working capital calc, revenueDiversificationStrategy
+    (top source ≤40% target + cross-post 3 platforms), grade iz multiplier,
+    timeToDoubleRevenue = ln(2)/ln(1+dailyGrowth).
+  - AI-enhanced z grounding prompt (soldCount12m + 6m + 3m + revenue12m
+    + 6m + 3m + uniqueSources + current + deterministicMaximization +
+    caps) + anti-hallucination (revenueGrowthMultiplier CLAMPED [1.0,
+    5.0], gain [0, 50000], days [1, 3650], percentage [0, 100], enums
+    validirana HIGH/MEDIUM/LOW in EASY/MEDIUM/HARD in A+/A/B/C/D/F,
+    string length limits — action max 200, reasoning max 200, plan
+    max 400, strategy max 400, summary max 400) + 6h cache (key
+    `revenue-growth-maximizer:${currentMonth}` — YYYY-MM, invalidira
+    monthly) + deterministic fallback (4 growth actions hevristika,
+    multiplier iz gain ratio, grade iz multiplier, projections z
+    compounding, 3 fixed category expansions).
+  - GET+POST (handleRevenueGrowthMaximizer shared function — AI Hub
+    runner kompatibilnost). Empty-state fallback če 0 SOLD trades →
+    "Ni SOLD trgovin v zadnjih 12 mesecih" z aiUsed=false + empty
+    current z 0 + empty maximization z grade F + timeToDoubleRevenue 0.
+
+- **AI Deal Profit Margin Enhancer Pro** — `GET+POST /api/ai/deal-profit-margin-enhancer-pro`
+  - AI ENHANCE-A profit margin na vsakem HELD item-u preko specifičnih
+    FIZIČNIH/LISTING enhancement akcij (refurbishment, repositioning,
+    premium packaging, better photos, improved descriptions,
+    certification). Gre BEYOND pricing optimization — fokus na
+    physical/listing improvements ki dejansko povečajo PERCEIVED
+    VALUE in consequently margin. Razlika od profit-multiplier-engine
+    (v8.00 ki multiplicira profit z 8 levers) — ta ENHANCE-A MARGIN
+    per item z specifičnimi fizikalnimi akcijami (ne global profit
+    multiplication). Razlika od inventory-roi-maximizer-pro (v7.99
+    ki maksimizira ROI per item z abstract strategies) — ta fokusira
+    na MARGIN ENHANCEMENT z enhancment ROI (marginGain / cost). Razlika
+    od deal-profit-accelerator-pro (v7.99 ki accelera profit per item)
+    — ta ENHANCE-A margin preko physical/listing improvements (ne
+    time/profit acceleration). Razlika od deal-source-roi-maximizer
+    (v8.00 ki maksimizira ROI per source) — ta daje PER-ITEM margin
+    enhancement z enhancementROI. Razlika od refurb-roi-calculator
+    (ki calc-a refurb ROI) — ta daje FULL margin enhancement portfolio
+    z 8 actions. "iPhone 13: buyPrice 450€, estValue 580€, currentMargin
+    28%. Enhancement: REFURBISH (cost 25€, marginAfter 35%, +7pp, ROI
+    2.8, 3d, 85% success). REPHOTOGRAPH (cost 5€, marginAfter 32%, +4pp,
+    ROI 8.0, 1d, 90% success). CERTIFY_AUTHENTICITY (cost 15€, marginAfter
+    33%, +5pp, ROI 3.3, 7d, 80% success). Portfolio: totalEnhancementCost
+    145€, totalMarginEnhancement +180€, ROI 1.24x. Quick wins:
+    REPHOTOGRAPH (EASY, ROI 8.0), BUNDLE (EASY, ROI 5.2). Priority
+    ranking: 1. PS5 REFURBISH (ROI 4.5), 2. iPhone 13 REPHOTOGRAPH
+    (ROI 8.0)..."
+  - items: Array<{ tradeId (MORA match-at heldItems — anti-hallucination),
+    title, category, buyPrice € [0, 100000], aiEstimatedValue € | null,
+    currentMargin % [-50, 200] (= (estValue − cost − 5% fees) / cost ×
+    100), marginEnhancementPotential 0-100, enhancementDifficulty
+    EASY/MEDIUM/HARD (EASY: margin≥1.4x in daysHeld<21, MEDIUM: ≥1.2x
+    in <60, HARD: <1.1x ali ≥90d), enhancementAction
+    REFURBISH/REPOSITION/REPHOTOGRAPH/REWRITE_DESCRIPTION/REPRICE_PREMIUM/BUNDLE_WITH_ACCESSORY/CERTIFY_AUTHENTICITY/NONE_NEEDED
+    (8 akcij), estimatedCost € [0, 500] (koliko € stane enhancement —
+    material, čas), estimatedMarginAfter % [-50, 200] (MORA biti ≥
+    currentMargin — anti-hallucination), marginEnhancement % [0, 50]
+    (= marginAfter − current), enhancementROI [0, 50] (= marginGainEur /
+    estimatedCost), timeToImplement dni [0, 365], enhancementSteps 3-6
+    stringov (max 200 vsak, slovenski — specifični koraki),
+    successProbability % [0, 100] }>
+  - portfolio: { totalEnhancementCost € (sum), totalMarginEnhancement €
+    (sum (marginEnhancement/100 × buyPrice)), portfolioEnhancementROI [0,
+    50] (= totalMarginEnhancement / totalEnhancementCost), enhancementPriority
+    top 10 ranked by enhancementROI Array<{ tradeId, title, enhancementROI,
+    rank }>, quickEnhancements top 5 EASY + high ROI Array<{ tradeId, title,
+    action, roi }> }
+  - Compute: query HELD z linked Listing (aiEstimatedValue, price,
+    aiScore, dealScore), per item compute estValue (aiEst > price >
+    buyPrice×1.1 fallback), cost (buyPrice + buyFees), currentProfit
+    (estValue − cost − 5% fees), currentMargin (profit/cost × 100),
+    marginMultiple (estValue/cost); decideDifficulty (EASY: margin≥1.4x
+    in daysHeld<21, MEDIUM: ≥1.2x in <60, HARD: <1.1x ali ≥90d);
+    decideEnhancementAction (luxury→CERTIFY_AUTHENTICITY, high dealScore+stale
+    →REFURBISH, low value+low margin→BUNDLE_WITH_ACCESSORY, low dealScore
+    →REPOSITION, default→REPHOTOGRAPH); ACTION_PROFILES (cost/days/success
+    per action); marginEnhancementPotential = marginRoom × dealScoreFactor
+    × difficultyFactor; estimatedMarginAfter = currentMargin + actionLift
+    × potentialFactor (CLAMPED ≤ currentMargin+50pp anti-hallucination);
+    marginEnhancement = marginAfter − current; enhancementROI =
+    marginGainEur / estimatedCost; enhancementSteps (per-action 3-6
+    korakov slovenski).
+  - AI-enhanced z grounding prompt (top 40 items by enhancementPotential +
+    caps + deterministic baseline) + anti-hallucination (tradeId MORA
+    match-at heldItems — skip unknown, estimatedMarginAfter MORA ≥
+    currentMargin, estimatedCost [0, 500], enhancementROI [0, 50],
+    marginEnhancement [0, 50], successProbability [0, 100], enums
+    validirana 8 actions in EASY/MEDIUM/HARD, string length limits —
+    step max 200, summary max 400) + 6h cache (key
+    `deal-profit-margin-enhancer-pro:${JSON.stringify(heldItemIds)}` —
+    invalidira ko held inventory se spremeni) + deterministic fallback
+    (action iz hevristika, cost/days/success iz ACTION_PROFILES, ROI iz
+    marginGain/cost, steps iz per-action templates).
+  - GET+POST (handleDealProfitMarginEnhancerPro shared function — AI Hub
+    runner kompatibilnost). Empty-state fallback če 0 HELD trades →
+    "Ni HELD trgovin v inventarju" z aiUsed=false + empty items + empty
+    portfolio z 0 + empty enhancementPriority + empty quickEnhancements.
+
+- **AI Inventory Capital Efficiency Maximizer** — `GET+POST /api/ai/inventory-capital-efficiency-maximizer`
+  - AI MAXIMIZIRA CAPITAL EFFICIENCY — kako eficientno vsak evro kapitala
+    deluje. Identificira kapital ujet v low-efficiency item-ih in
+    priporoča reallokacijo v high-efficiency priložnosti. "Your capital
+    efficiency is 1.8x, but could be 3.2x if you shift 1500€ from slow
+    items to fast-moving categories." Razlika od capital-growth-maximizer
+    (v7.99 ki maksimizira compounding capital growth) — ta MAXIMIZIRA
+    capital efficiency (kapital deployment efficiency per item, ne
+    compounding growth rate). Razlika od capital-allocation-optimizer
+    (ki alokira kapital po kategorijah) — ta daje PER-ITEM capital
+    efficiency analizo + reallocation plan iz low → high efficiency
+    items. Razlika od inventory-roi-maximizer-pro (v7.99 ki maksimizira
+    ROI per item) — ta maksimizira CAPITAL EFFICIENCY (value multiplier
+    + profitPerEuroDeployed + efficiencyLossPerDay), ne samo ROI %.
+    Razlika od inventory-cash-conversion-maximizer (v7.98 ki maksimizira
+    cash conversion) — ta maksimizira CAPITAL VELOCITY preko reallocation,
+    ne cash conversion speed. Razlika od deal-profit-accelerator-pro
+    (v7.99 ki accelera profit per item) — ta daje CAPITAL REALLOCATION
+    plan iz low → high efficiency items z efficiencyUplift forecast.
+    Razlika od profit-multiplier-engine (v8.00 ki multiplicira profit z 8
+    levers) — ta fokusira na CAPITAL EFFICIENCY per item + reallocation
+    strategy. Razlika od inventory-turnover-profit-maximizer (v8.00 ki
+    maksimizira turnover-profit balance) — ta maksimizira CAPITAL
+    DEPLOYMENT efficiency. "Current: 8,500€ deployed, portfolio efficiency
+    1.8x (1€ → 1.8€ value), avg profit/euro 0.45€, avg trapped 32 days,
+    score 62/100 (grade C). Item analysis: iPhone 13 2.4x (high), PS5 1.5x
+    (medium), old TV 0.8x (LOW — trapped 65d). Maximization: liquidate
+    TV + 2 other low items (1500€ freed), reinvest in electronics (high
+    velocity, 2.8x projected). Projected efficiency 3.2x (+1.4 uplift),
+    expected profit uplift 680€. Grade B → A. Capital velocity: cycle
+    cash every 18d instead of 32d."
+  - current: { totalCapitalDeployed € [0, 100000], portfolioCapitalEfficiency
+    [0, 10] (weighted avg estValue/capitalDeployed), avgProfitPerEuroDeployed
+    [-2, 5], avgCapitalTrappedDuration dni [0, 730], portfolioEfficiencyScore
+    0-100 }
+  - perItem: Array<{ tradeId, title, capitalDeployed € [0, 100000],
+    capitalEfficiency [0, 10] (estValue/capitalDeployed), profitPerEuroDeployed
+    [-2, 5] (profit/capitalDeployed), efficiencyScore 0-100 (50% capitalEff
+    + 30% profitPerEuro + 20% speed − trappedDuration penalty + historical
+    bonus), capitalTrappedDuration dni [0, 730], efficiencyLossPerDay [0, 5]
+    (1.5%/mo opportunity cost / capitalDeployed) }>
+  - maximization: { lowEfficiencyItems Array<{ tradeId (MORA match-at
+    topItems), title, efficiencyScore 0-100, recommendedAction max 200
+    (slovenski) }> (filter efficiencyScore < 40), highEfficiencyOpportunities
+    3-5 Array<{ category max 50, expectedEfficiency [1.0, 10.0], expectedROI
+    % [-50, 300] }>, capitalReallocationPlan Array<{ fromTradeId (MORA
+    match-at topItems), toCategory max 50, amount € [0, 100000], reasoning
+    max 400 (slovenski) }>, projectedEfficiency [0, 10], efficiencyUplift
+    [0, 10] (= projected − current), capitalVelocityOptimization max 400
+    (slovenski), efficiencyGrade A+/A/B/C/D/F (A+ če score≥85 in eff≥2.5,
+    A ≥75/2.0, B ≥60/1.5, C ≥45/1.2, D ≥30/1.0, else F), totalCapitalToReallocate
+    € [0, 100000], expectedProfitUplift € [0, 50000] (= reallocAmount ×
+    (reallocatedEff − currentEff) × profitPerEuro) }
+  - Compute: parallel query HELD z linked Listing (aiEstimatedValue,
+    price, aiScore, dealScore) + SOLD 12m (avgROI, avgHoldDays za
+    historical baseline); per held item compute capitalDeployed (buyPrice
+    + buyFees), estValue, capitalEfficiency (estValue/capitalDeployed),
+    profitPerEuroDeployed (profit/capitalDeployed), daysHeld,
+    efficiencyLossPerDay (1.5%/mo opportunity cost); efficiencyScore =
+    50% capitalEff + 30% profitPerEuro + 20% speed − trappedDuration
+    penalty + 5pt historical bonus; portfolio weighted avg by capitalDeployed;
+    lowEfficiencyItems (filter <40, top 8 by lowest score, recommend
+    discount/bundle/cross-post); highEfficiencyOpportunities (electronics
+    2.8x, phones 2.4x, gaming 2.2x); capitalReallocationPlan (low-eff
+    items → high-eff categories); projectedEfficiency = (remaining × current
+    + realloc × reallocatedEff) / totalCapital; efficiencyUplift = projected
+    − current; expectedProfitUplift = reallocAmount × (reallocatedEff −
+    currentEff) × profitPerEuro; capitalVelocityOptimization (auto-discount,
+    cross-posting, bundling).
+  - AI-enhanced z grounding prompt (top 40 items by lowest efficiencyScore
+    + soldCount12m + avgROIHistorical + avgHoldDaysHistorical + caps +
+    deterministic baseline) + anti-hallucination (tradeId MORA match-at
+    topItems — skip unknown, projectedEfficiency CLAMPED [0, 10],
+    efficiencyUplift [0, 10], amount [0, capitalDeployed of that item],
+    expectedProfitUplift [0, 50000], enums validirana A+/A/B/C/D/F,
+    string length limits — action max 200, reasoning max 400, plan max
+    400, summary max 400) + 6h cache (key
+    `inventory-capital-efficiency-maximizer:${JSON.stringify(heldItemIds)}`
+    — invalidira ko held inventory se spremeni) + deterministic fallback
+    (lowEffItems iz hevristika filter, opportunities iz fixed 3 kategorije,
+    reallocation plan iz low-eff items, projected iz formula, grade iz
+    score+efficiency).
+  - GET+POST (handleInventoryCapitalEfficiencyMaximizer shared function —
+    AI Hub runner kompatibilnost). Empty-state fallback če 0 HELD trades
+    → "Ni HELD trgovin v inventarju" z aiUsed=false + empty current z 0 +
+    empty perItem + empty maximization z grade F.
+
+### Changed
+- AI_ENDPOINTS.md: 362 → 365 endpoints (+3 AI: deal-profit-margin-enhancer-pro pos 93, inventory-capital-efficiency-maximizer pos 133, revenue-growth-maximizer pos 325)
+- README.md: v8.00.0 → v8.01.0 badge, 362 → 365 AI endpoints, 539 → 542 API routes, ~225 → ~228 funkcij, 163+ → 166+ profit pipeline funkcij, dodan v8.01 "Kaj je novega" block (3 features z full descriptions), posodobljen Roadmap (v8.01 trenutno, 45 → 46 verzij, 135 → 138 novih funkcij), dodana 3 nova imena v Profit pipeline list, dodana Zadnje verzije v8.01.0 entry, tagline 362 → 365 AI endpointov, v7.56–v8.00 → v7.56–v8.01, v7.32-v8.00 → v7.32-v8.01, v7.50-v8.00 → v7.50-v8.01, do v8.00 → do v8.01, 362 AI → 365 AI (6 refs), 539 routes → 542 routes (3 refs)
+- CHANGELOG.md: [Unreleased] Načrtovano za v8.01+ → ...za v8.02+, dodana nova [8.01.0] sekcija z vsemi 3 endpoint-i in podrobnimi opisi (response shape, anti-hallucination rules, AI cache key, deterministic fallback, example comment, razlika od podobnih obstoječih endpoint-ov). Skupno 362 AI → 365 AI (+3), 72 analytics nespremenjeno (0 new), 539 routes → 542 routes (+3), ~225 funkcij → ~228 funkcij (+3), 163+ funkcij → 166+ funkcij v profit pipeline (+3).
+- Verzija aplikacije: v8.01.0
 
 ## [8.00.0] - 2026-08-15
 
