@@ -6,11 +6,294 @@ Format sledi [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), verzije s
 
 ## [Unreleased]
 
-Načrtovano za v7.96+:
+Načrtovano za v7.97+:
 - WebSocket real-time negotiation (SSE namesto polling)
 - Playwright E2E testi za glavne flow-e
 - TLS fingerprinting (curl-impersonate)
 - ML model za buyer matchmaker (fine-tuned na realnem data)
+
+## [7.96.0] - 2026-08-15
+
+### Added — AI Cash Recovery Accelerator & AI Market Opportunity Maximizer & AI Inventory Profit Margin Optimizer Pro (3 funkcije — CASH VELOCITY & OPPORTUNITY & MARGIN focus)
+
+- **AI Cash Recovery Accelerator** — `GET+POST /api/ai/cash-recovery-accelerator`
+  - AI identificira kako NAJHITREJŠE sprostiti kapital iz HELD
+    inventorija za reinvestment. Maximizes cash velocity. Razlika od
+    cash-flow-velocity-tracker (ki track-a cash velocity) — ta
+    ACCELERIRA cash recovery z actionable per-item plan. Razlika od
+    liquidation-strategist (ki likvidira stale inventory) — ta
+    identificira kateri itemi za prodati FIRST za max cash recovery
+    (ne le stale). Razlika od turnover-optimizer (ki optimizira
+    turnover rate) — ta optimizira CASH VELOCITY (kateri itemi
+    sprostijo največ kapitala najhitreje). Razlika od
+    capital-allocation-optimizer (ki alocira capital) — ta SPROŠČA
+    capital iz held inventory. Razlika od inventory-profit-margin-
+    optimizer-pro (v7.96 ki optimira margin) — ta optimira CASH
+    RECOVERY VELOCITY (hitrost sproščanja kapitala). Razlika od
+    loss-recovery-playbook (ki recover-a losses) — ta recover-a
+    CAPITAL (ne losses) iz held inventory.
+    "Capital tied: 4,500€, accrued carrying cost: 180€ (40 days ×
+    0.50€). Recovery priority: iPhone 13 (urgency 85, SELL_NOW →
+    380€ in 3 days). Bundle: 2x USB-C kabel (urgency 70, BUNDLE →
+    25€ in 7 days). Total recoverable: 3,200€ in 14 days. Reinvest
+    in elektronika (ROI 180%)."
+  - portfolio: { totalCapitalTied € (= sum buyPrice+buyFees vseh
+    HELD), totalCarryingCostAccrued € (= sum daysHeld × 0.50€),
+    totalNetRecoverableValue € (= sum(estValue - carrying - 5%
+    fees)), capitalEfficiencyLoss % (weighted avg by capitalTied),
+    avgDaysHeld }.
+  - recoveryItems: Array<{ tradeId (string), title (max 200, iz
+    trade.title), buyPrice €, capitalTied € (= buyPrice + buyFees),
+    carryingCostAccrued € (= daysHeld × 0.50€), netRecoverableValue
+    € (= estValue - carrying - 5% fees), cashRecoveryUrgency 0-100
+    (= 40% daysHeldNorm + 30% effLossNorm + 30% valueErosion, kjer
+    daysHeldNorm = min(100, daysHeld/60 × 100), effLossNorm =
+    min(100, capitalEfficiencyLoss × 3), valueErosion = (capitalTied
+    - netRecoverable)/capitalTied × 100), capitalEfficiencyLoss %
+    (= carryingCostAccrued / buyPrice × 100, clamped [0, 100]),
+    quickRecoveryAction SELL_NOW | PRICE_DROP_10% | BUNDLE |
+    CROSS_POST | LIQUIDATE (urgency >=70 LIQUIDATE, urgency >=50
+    SELL_NOW, capitalEfficiencyLoss >=15 PRICE_DROP_10%, capitalTied
+    <50 BUNDLE, else CROSS_POST), expectedRecoveryAmount € [0,
+    100000] (CLAMPED to [0.5x, 1.2x] buyPrice anti-hallucination;
+    = netRecoverableValue × recoveryRateByAction kjer rate =
+    SELL_NOW 0.92 / PRICE_DROP 0.85 / BUNDLE 0.80 / CROSS_POST
+    0.95 / LIQUIDATE 0.65), expectedRecoveryDays [1, 180] (base
+    per action -1 if daysHeld > 30: SELL_NOW 5, PRICE_DROP 10,
+    BUNDLE 14, CROSS_POST 12, LIQUIDATE 3) }>.
+  - plan: { expectedCashRecovery € [0, 100000] (= sum
+    recoveryItems.expectedRecoveryAmount), recoveryTimeline [1, 180]
+    (weighted avg by recoveryAmount), capitalVelocityImprovement
+    [0, 300] % (= (baselineCycle - recoveryTimeline) / baselineCycle
+    × 100, kjer baselineCycle = max(30, avgDaysHeld + 30)),
+    reinvestmentOpportunities 2-5 [{ category (max 50), expectedROI
+    [0, 500] %, reasoning (max 250, slovenski) }] (top categories by
+    ROI iz held items, derived iz title keywords: elektronika /
+    avto-deli / moda / drugo), prioritizedActions 3-8 [{ action
+    (max 300, slovenski), priority HIGH | MEDIUM | LOW, cashImpact €
+    [0, 100000] }] (grouped by action type, sorted by priority
+    desc) }.
+  - Compute: query HELD trades z linked Listing (aiEstimatedValue,
+    price, aiScore, dealScore, monitor.tags), per item compute
+    capitalTied, carryingCostAccrued, netRecoverableValue, urgency,
+    quickRecoveryAction, expectedRecoveryAmount (× recoveryRate per
+    action), expectedRecoveryDays (base per action). Portfolio iz
+    sums + weighted avg. buildDeterministicPlan z expectedCashRecovery
+    (sum), recoveryTimeline (weighted avg), capitalVelocity
+    Improvement (vs baseline cycle), reinvestmentOpportunities (top
+    categories by ROI), prioritizedActions (grouped by action type).
+  - AI-enhanced z grounding prompt (held items + portfolio + caps +
+    deterministic baseline) + anti-hallucination (tradeId MORA
+    match-at heldItems — skip unknown — anti-hallucination,
+    expectedRecoveryAmount CLAMPED [0.5x, 1.2x] buyPrice
+    anti-hallucination, cashRecoveryUrgency [0, 100],
+    capitalEfficiencyLoss [0, 100], expectedCashRecovery [0, 100000],
+    recoveryTimeline [1, 180], capitalVelocityImprovement [0, 300],
+    expectedROI [0, 500], cashImpact [0, 100000], enums validirana
+    SELL_NOW | PRICE_DROP_10% | BUNDLE | CROSS_POST | LIQUIDATE in
+    HIGH | MEDIUM | LOW, string length limits — action max 300,
+    category max 50, reasoning max 250, whyNow max 400, summary max
+    400) + 6h cache (key `cash-recovery-accelerator:${JSON.stringify
+    (heldItemIds)}` — cache se invalidira ko held inventory se
+    spremeni) + deterministic fallback (urgency iz days + effLoss +
+    valueErosion). GET+POST (handleCashRecoveryAccelerator shared
+    function — AI Hub runner kompatibilnost). Empty-state fallback
+    če 0 HELD trades → returns "Ni HELD trgovin v inventarju" z
+    aiUsed=false + empty portfolio (vsi 0) + empty recoveryItems +
+    empty plan.
+  - Razlika od cash-generator (ki generira cash) — ta recover-a
+    capital iz HELD. Razlika od cash-reserve (ki drži cash reserve)
+    — ta sprošča tied capital. Razlika od capital-deployment-planner
+    (ki načrtuje deployment) — ta sprošča capital pred deployment.
+
+- **AI Market Opportunity Maximizer** — `GET+POST /api/ai/market-opportunity-maximizer`
+  - AI identificira SINGLE BEST profit opportunity v market RIGHT NOW
+    z kombinacijo VSEH market signals (gaps, demand, depth, trends,
+    cycle, volatility) da pinpoint-a kje je MAXIMUM profit
+    achievable. The "ultimate profit opportunity finder." Razlika
+    od market-opportunity-scanner (basic listing-level scanner) —
+    ta je CATEGORY-LEVEL analysis z COMPOSITE SCORE iz 6 dimensions.
+    Razlika od market-gap-finder (ki najde supply-demand gaps) — ta
+    KOMBINIRA 6 signals (gap + demand + depth + trend + cycle +
+    volatility) za ULTIMATE opportunity score. Razlika od market-
+    trend-forecaster-pro (ki napove trend) — ta identificira KATERA
+    kategorija je najbolj profitabilna ZDAJ. Razlika od market-
+    cycle-detector (ki detektira cycle phase) — ta kombinira cycle
+    z 5 drugimi signals. Razlika od market-depth-analyzer (ki gleda
+    liquidity) — ta gleda DEPTH + 5 drugih. Razlika od price-
+    volatility-analyzer (ki gleda volatilnost) — ta gleda
+    volatilnost kot ENO od 6 dimenzij. Razlika od inventory-
+    opportunity-scanner (ki scan-a inventory) — ta scan-a MARKET
+    (ne inventory).
+    "Top opportunity: elektronika (score 87/100, expected profit
+    450€, confidence 85%). Why now: demand/supply gap +12%, sell-
+    through 78%, bullish trend, mid-cycle. Execute: list 3-5 PS5
+    units at 380-400€. Time window: 14 dni. Risk: Volatility 22%
+    — A/B test prices."
+  - topOpportunity: { category (string, MORA biti iz known categories
+    — anti-hallucination), opportunityScore 0-100 (±10 od AI od
+    compositeScore), expectedProfit € [0, 50000] (= avgMargin ×
+    projectedSales, ±20% od AI), confidenceLevel 0-100 (= data
+    Quality 50% (listingCount × 5 + soldCount × 10) + stability 30%
+    (100 - volatilityScore) + demandScore 20%; ±10 od AI), whyNow
+    (max 400, slovenski — zakaj je to najboljši timing), howToExecute
+    3-5 (max 200 each, slovenski — kako izkoristiti opportunity),
+    timeWindow (max 50, slovenski — koliko časa bo trajala), risk
+    Factors 2-3 [{ risk (max 200, slovenski), mitigation (max 200,
+    slovenski) }] (volatility > 50, depth < 40, trend < 40, cycle <
+    40 → tveganja z mitigations) }.
+  - top5Opportunities: Array<{ rank 1-5 (MORA biti sequential in
+    match-at vrstni red po compositeScore desc), category (iz
+    known — anti-hallucination), opportunityScore [0, 100],
+    expectedProfit € [0, 50000], keyDriver (max 80, slovenski —
+    najmočnejši signal za to kategorijo) }> (ranked list top 5).
+  - opportunityComparison: Array<{ category, gapScore [0, 100],
+    demandScore [0, 100], depthScore [0, 100], trendScore [0, 100],
+    cycleScore [0, 100], volatilityScore [0, 100], compositeScore
+    [0, 100] }> za VSE kategorije (6-dimensions comparison matrix).
+  - profitStrategy: { profitMaximizationStrategy (max 500, slovenski
+    — kako izvleči max profit iz top opportunity z multi-platform
+    listing, A/B testing, cross-post), capitalAllocation { amount €
+    [0, 100000] (= top.expectedProfit × 0.4 default), category (=
+    topOpportunity.category), expectedROI [0, 500] % (iz
+    avgSellPrice vs avgPrice) }, expectedTimeline (max 100,
+    slovenski) }.
+  - Compute: query listings last 30 days (z monitor.tags za category,
+    isBookmarked, priceDroppedAt, aiEstimatedValue) + SOLD 12m (z
+    category), group by category (iz monitor.tags[0] ali 'drugo'),
+    per category compute 6 scores:
+    * gapScore = demandSupplyRatio × 60 + bookmarkCount × 5
+      (demandSupplyRatio = soldCount / max(1, listingCount))
+    * demandScore = sellThroughRate × 100 + bookmarkCount × 4
+      (sellThroughRate = soldCount / (soldCount + listingCount))
+    * depthScore = count thresholds (50/30/15/8/3/1 → 90/75/60/45/30/15)
+      + uniquePricePoints × 3 (capped [0, 100])
+    * trendScore = 50% volumeSlope (iz weekly buckets trendSlope) +
+      50% priceTrend (iz sellPrice vs avgPrice, normalized 50+ratio×100)
+    * cycleScore = 50 + (sellThrough - priceDropRate) × 100 (positive
+      = expansion > 50, negative = contraction < 50)
+    * volatilityScore = priceCV × 100 (CV = stdDev/|mean| iz prices)
+    * compositeScore = gap 25% + demand 25% + depth 10% + trend 15%
+      + cycle 15% + (100 - volatility) 10% (lower volatility = higher
+      composite).
+  - buildDeterministicTopOpportunity (top metric by compositeScore):
+    expectedProfit iz avgMargin × projectedSales (projectedSales =
+    round((demandScore/100) × 10)), confidenceLevel iz dataQuality +
+    stability + demandScore, whyNow (joined parts iz gap/demand/trend/
+    cycle), howToExecute (source pod avg + list pod sell + cross-post +
+    A/B test), timeWindow (7/14/21 dni glede na demandScore),
+    riskFactors (volatility/depth/trend/cycle preverjeni).
+    buildDeterministicTop5 (5 metrics by compositeScore z keyDriver).
+    buildDeterministicProfitStrategy (capitalAmount = expectedProfit ×
+    0.4, expectedROI iz avgSellPrice vs avgPrice).
+  - AI-enhanced z grounding prompt (top categories + caps +
+    deterministic baseline) + anti-hallucination (category MORA
+    biti iz knownCategories — skip unknown — anti-hallucination,
+    opportunityScore ±10 od deterministic clamped [0, 100],
+    expectedProfit ±20% od deterministic clamped [0, 50000],
+    confidenceLevel ±10 od deterministic clamped [0, 100], all 6
+    scores clamped [0, 100], expectedProfit [0, 50000], expectedROI
+    [0, 500], amount [0, 100000], enums validirana, ranks sequential
+    1-5, string length limits — whyNow max 400, howToExecute max 200
+    each, timeWindow max 50, risk/mitigation max 200,
+    profitMaximizationStrategy max 500, expectedTimeline max 100,
+    keyDriver max 80, summary max 400) + 6h cache (key
+    `market-opportunity-maximizer:${currentWeek}` — invalidira
+    weekly) + deterministic fallback (top category by compositeScore).
+    GET+POST (handleMarketOpportunityMaximizer shared function — AI
+    Hub runner kompatibilnost). Empty-state fallback če 0 listings +
+    0 SOLD → returns "Ni listingov v zadnjih 30 dneh in SOLD trgovin
+    v 12 mesecih" z aiUsed=false + empty topOpportunity (drugo, 0, 0)
+    + empty top5Opportunities + empty opportunityComparison + empty
+    profitStrategy.
+
+- **AI Inventory Profit Margin Optimizer Pro** — `GET+POST /api/ai/inventory-profit-margin-optimizer-pro`
+  - AI provides PER-ITEM margin optimization z SPECIFIC price targets,
+    expected margin lift in risk assessment. Greje dlje od
+    profit-margin-maximizer (v7.95 ki identificira optimization
+    areas z actions) — ta da EXACT price recommendations z confidence
+    intervals za vsak HELD item posebej. Razlika od profit-margin-
+    optimizer-v2 (ki optimizira margin aggregate) — ta optimira PER
+    ITEM z optimalPrice + sellProbability. Razlika od price-
+    optimization-engine-pro (v7.95 ki optimira CENE z A/B testing)
+    — ta optimira MARGIN per item z risk-adjusted expected margin.
+    Razlika od profit-margin-forecaster-pro (v7.85 ki forecast-a
+    margin) — ta OPTIMIRA margin z actionable per-item plan. Razlika
+    od inventory-profit-maximizer (ki optimizira inventory profit) —
+    ta optimira MARGIN per item z optimalPrice + riskAdjustedMargin.
+    Razlika od profit-maximizer-pro (v7.94 ki maksimizira profit
+    preko 7 levers) — ta fokusira izključno na PER-ITEM margin z
+    confidence intervals. Razlika od profit-margin-heatmap (ki
+    prikazuje margin distribution) — ta daje EXACT optimal price.
+    "iPhone 13: buyPrice 280€, estValue 380€, current margin 35%
+    (GOOD). Optimal price: 365€ (margin 30%, sell prob 75%). Margin
+    lift -5pp but +18pp risk-adjusted. Action: SELL_AT_OPTIMAL.
+    Confidence interval [340€, 390€]. Portfolio margin: 22% → 28%
+    (+6pp, €420 lift, grade B)."
+  - items: Array<{ tradeId (string), title (max 200), category
+    (max 50, lowercased iz trade.category), buyPrice €, aiEstimated
+    Value € | null (= listing.aiEstimatedValue), currentMargin %
+    (clamped [-50, 200], = (estValue - totalCost) / totalCost × 100),
+    marginCategory EXCELLENT (>40%) | GOOD (20-40%) | AVERAGE (0-20%)
+    | NEGATIVE (<0%), optimalPrice € (CLAMPED to [0.5x, 1.3x]
+    estValue anti-hallucination; default estValue × 0.92), expected
+    MarginAtOptimal % (clamped [-50, 200], = (optimalPrice - 5%
+    estFees - totalCost) / totalCost × 100), marginLift pp (clamped
+    [-50, 100], = expectedMarginAtOptimal - currentMargin),
+    sellProbability 0-100 % (= 100 - (priceVsEst - 0.7) × 100, kjer
+    priceVsEst = optimalPrice / estValue; lower price → higher prob),
+    riskAdjustedMargin % (clamped [-50, 200], = expectedMargin ×
+    sellProb / 100), optimizationAction HOLD_FOR_BETTER_MARGIN |
+    SELL_AT_OPTIMAL | DISCOUNT_FOR_QUICK_SALE | REPRICE (currentMargin
+    <0 DISCOUNT, marginLift >5 + sellProb >60 SELL_AT_OPTIMAL,
+    currentMargin >50 + sellProb <40 REPRICE, currentMargin >30 +
+    marginLift <0 HOLD, else SELL_AT_OPTIMAL), priceConfidence
+    Interval { low, high } (±10% okoli optimalPrice, clamped [0.5x,
+    1.3x] estValue), reasoning (max 400, slovenski — zakaj ta cena
+    maksimizira margin), competitorPricingImpact (max 300, slovenski
+    — kako competitors vplivajo) }>.
+  - portfolio: { currentPortfolioMargin % (weighted avg by buyPrice,
+    clamped [-50, 200]), optimizedPortfolioMargin % (weighted avg
+    z expectedMarginAtOptimal, clamped [-50, 200]), totalMarginLift €
+    (= sum (marginLift/100) × buyPrice, clamped [-50000, 100000]),
+    marginOptimizationGrade A+ | A | B | C | D | F (iz optimization
+    Score = 100 - avgAbsLift + currentMargin/2: >=90 A+, >=80 A, >=70
+    B, >=55 C, >=40 D, else F; ±1 grade od AI), itemsToOptimize count
+    (= items z marginLift >0 ali optimizationAction ≠ SELL_AT_OPTIMAL),
+    quickWins count (= DISCOUNT_FOR_QUICK_SALE ali marginLift >5) }.
+  - Compute: query HELD trades z linked Listing (aiEstimatedValue,
+    price, aiScore, aiRisk, dealScore, monitor.tags), per item
+    compute estValue (listing.aiEstimatedValue ali listing.price ali
+    buyPrice × 1.2), totalCost (buyPrice + buyFees), currentMargin,
+    marginCategory, optimalPrice (estValue × 0.92 clamped [0.5x,
+    1.3x] estValue), expectedMarginAtOptimal (z 5% estFees),
+    marginLift, sellProbability, riskAdjustedMargin, optimization
+    Action, priceConfidenceInterval (±10% clamped), reasoning,
+    competitorPricingImpact. computePortfolio (weighted avg margins,
+    totalMarginLift, grade iz optimizationScore). AI-enhanced z
+    grounding prompt (held items + portfolio + caps + deterministic
+    baseline) + anti-hallucination (tradeId MORA match-at heldItems —
+    skip unknown — anti-hallucination, optimalPrice CLAMPED [0.5x,
+    1.3x] estValue anti-hallucination, expectedMarginAtOptimal /
+    marginLift / currentMargin clamped [-50, 200], sellProbability
+    [0, 100], riskAdjustedMargin [-50, 200], marginOptimizationGrade
+    ±1 od deterministic clamped A+/A/B/C/D/F, enums validirana
+    HOLD_FOR_BETTER_MARGIN | SELL_AT_OPTIMAL | DISCOUNT_FOR_QUICK_SALE
+    | REPRICE, string length limits — reasoning max 400,
+    competitorPricingImpact max 300, summary max 400) + 6h cache (key
+    `inventory-profit-margin-optimizer-pro:${JSON.stringify
+    (heldItemIds)}` — invalidira ko held inventory se spremeni) +
+    deterministic fallback (optimalPrice = estValue × 0.92). GET+POST
+    (handleInventoryProfitMarginOptimizerPro shared function — AI
+    Hub runner kompatibilnost). Empty-state fallback če 0 HELD
+    trades → returns "Ni HELD trgovin v inventarju" z aiUsed=false +
+    empty items + empty portfolio z grade F.
+
+### Changed
+- AI_ENDPOINTS.md: 347 → 350 endpoints (+3 AI: cash-recovery-accelerator pos 69, market-opportunity-maximizer pos 236, inventory-profit-margin-optimizer-pro pos 150)
+- README.md: v7.95.0 → v7.96.0 badge, 347 → 350 AI endpoints, 524 → 527 API routes, ~210 → ~213 funkcij, 151+ → 154+ profit pipeline funkcij, dodan v7.96 "Kaj je novega" block, posodobljen Roadmap (v7.96 trenutno), dodana 3 endpoint line v Profit pipeline section, dodana Zadnje verzije entry, tagline 347 → 350 AI endpointov
+- CHANGELOG.md: [Unreleased] Načrtovano za v7.96+ → ...za v7.97+, dodana nova [7.96.0] sekcija z vsemi 3 endpoint-i in podrobnimi opisi (response shape, anti-hallucination rules, AI cache key, deterministic fallback, example comment, razlika od podobnih obstoječih endpoint-ov). Skupno 347 AI → 350 AI (+3), 72 analytics nespremenjeno (0 new), 524 routes → 527 routes (+3), ~210 funkcij → ~213 funkcij (+3), 151+ funkcij → 154+ funkcij v profit pipeline (+3).
+- Verzija aplikacije: v7.96.0
 
 ## [7.95.0] - 2026-08-15
 
