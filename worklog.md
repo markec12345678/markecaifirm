@@ -13549,3 +13549,34 @@ Stage Summary:
 - Total API routes: 548 → 551 (+3)
 - Dokumentacija sinhrono posodobljena (AI_ENDPOINTS.md, README, CHANGELOG)
 - Verzija aplikacije: v8.04.0
+
+---
+Task ID: v8.04.1
+Agent: main
+Task: v8.04 commit + push + GitHub About + Agent Browser verification
+
+Work Log:
+- Prejel poročilo od full-stack-developer podagenta (Task v8.04)
+- Preveril 3 nove endpoint-e: profit-compounding-maximizer (200 GET+POST), deal-source-profit-per-trade-maximizer (200 GET+POST), inventory-cash-yield-maximizer (200 GET+POST)
+- Preveril doc sync: AI_ENDPOINTS.md (374 ✅), README v8.04 (11 refs ✅), README 374 AI (6 refs ✅), CHANGELOG v8.04 ✅
+- Preveril lint: 0 napak ✨
+- Preveril typecheck: 0 napak ✨
+- Posodobil GitHub About opis: 371 AI → 374 AI, 548 routes → 551 routes (via API PATCH)
+- Commit: "v8.04: Profit Compounding Maximizer + Deal Source Profit Per Trade Maximizer + Inventory Cash Yield Maximizer" (5c2e44a)
+- Push na GitHub: uspešen ✅, PAT očiščen ✅
+- Agent Browser self-verification:
+  - Stran se pravilno naloži (HTTP 200)
+  - AI Hub prikazuje profit-compounding-maximizer (v8.04) v iskalniku ✅
+  - Runner test: klik na profit-compounding-maximizer → POST request → valid JSON ✅
+  - Response: {"ok":true, "current":{...}, "maximization":{optimalReinvestRate:80%, linearVsCompounding, compoundingGrade:F}, "aiUsed":false}
+  - Brez runtime napak v dev.log
+
+Stage Summary:
+- v8.04 uspešno dokončana in potisnjena na GitHub
+- 3 PROFIT-MAXIMIZING funkcije: AI Profit Compounding Maximizer, AI Deal Source Profit Per Trade Maximizer, AI Inventory Cash Yield Maximizer
+- AI endpointi: 371 → 374 (+3)
+- Analytics endpointi: 72 (nespremenjeno — vsi 3 so AI)
+- Total API routes: 548 → 551 (+3)
+- Dokumentacija sinhrono posodobljena (AI_ENDPOINTS.md, README, CHANGELOG, GitHub About)
+- GitHub sinhroniziran (0 commit-ov ahead)
+- Verzija aplikacije: v8.04.0
