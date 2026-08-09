@@ -13087,3 +13087,34 @@ Stage Summary:
 - Profit pipeline funkcije: 157+ → 160+ (+3)
 - Dokumentacija sinhrono posodobljena (AI_ENDPOINTS.md, README.md, CHANGELOG.md)
 - Verzija aplikacije: v7.99.0
+
+---
+Task ID: v7.99.1
+Agent: main
+Task: v7.99 commit + push + GitHub About + Agent Browser verification
+
+Work Log:
+- Prejel poročilo od full-stack-developer podagenta (Task v7.99)
+- Preveril 3 nove endpoint-e: capital-growth-maximizer (200 GET+POST), deal-profit-accelerator-pro (200 GET+POST), inventory-roi-maximizer-pro (200 GET+POST)
+- Preveril doc sync: AI_ENDPOINTS.md (359 ✅), README v7.99 (12 refs ✅), README 359 AI (6 refs ✅), CHANGELOG v7.99 ✅
+- Preveril lint: 0 napak ✨
+- Preveril typecheck: 0 napak ✨
+- Posodobil GitHub About opis: 356 AI → 359 AI, 533 routes → 536 routes (via API PATCH)
+- Commit: "v7.99: Capital Growth Maximizer + Deal Profit Accelerator Pro + Inventory ROI Maximizer Pro" (931845a)
+- Push na GitHub: uspešen ✅, PAT očiščen ✅
+- Agent Browser self-verification:
+  - Stran se pravilno naloži (HTTP 200)
+  - AI Hub prikazuje capital-growth-maximizer (v7.99) v iskalniku ✅
+  - Runner test: klik na capital-growth-maximizer → POST request → valid JSON ✅
+  - Response: {"ok":true, "current":{...}, "maximization":{timeToDoubleCapital, timeTo10xCapital, compoundingProjection}, "aiUsed":false}
+  - Brez runtime napak v dev.log
+
+Stage Summary:
+- v7.99 uspešno dokončana in potisnjena na GitHub
+- 3 PROFIT-MAXIMIZING funkcije: AI Capital Growth Maximizer, AI Deal Profit Accelerator Pro, AI Inventory ROI Maximizer Pro
+- AI endpointi: 356 → 359 (+3)
+- Analytics endpointi: 72 (nespremenjeno — vsi 3 so AI)
+- Total API routes: 533 → 536 (+3)
+- Dokumentacija sinhrono posodobljena (AI_ENDPOINTS.md, README, CHANGELOG, GitHub About)
+- GitHub sinhroniziran (0 commit-ov ahead)
+- Verzija aplikacije: v7.99.0
