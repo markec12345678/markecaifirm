@@ -13495,3 +13495,57 @@ Stage Summary:
 - Dokumentacija sinhrono posodobljena (AI_ENDPOINTS.md, README, CHANGELOG, GitHub About)
 - GitHub sinhroniziran (0 commit-ov ahead)
 - Verzija aplikacije: v8.03.0
+
+---
+Task ID: v8.04
+Agent: full-stack-developer
+Task: Add 3 new profit-maximizing features for v8.04 — AI Profit Compounding Maximizer, AI Deal Source Profit Per Trade Maximizer, AI Inventory Cash Yield Maximizer
+
+Work Log:
+- Prebral worklog.md (v8.03.1, 371 AI endpoints, 548 routes) in pattern datoteki (profit-horizon-maximizer v8.03, profit-scale-engine v8.02, deal-source-margin-maximizer v8.03, inventory-yield-maximizer v8.03)
+- Ustvaril 3 nove AI endpoint-e v src/app/api/ai/:
+  1. profit-compounding-maximizer/route.ts (~700 vrstic) — AI MAXIMIZIRA COMPOUNDING EFFECT reinvestiranega profita za EXPONENTIAL growth. "Če reinvestiraš 80% profita pri 25% ROI per cycle, tvojih 1000€ postane 9536€ v 12 ciklih — vs 4000€ z linear growth." compoundingScenarios: 6 scenarios za reinvestRate 50%/60%/70%/80%/90%/100% (vsak z monthlyGrowthRate, projectedCapital12m, projectedProfit12m, compoundingMultiplier). optimalReinvestRate (best za max capital growth while maintaining cash flow). maximizedCompoundingProjection: 24-mesečni month-by-month at optimal rate (capitalStart, profit, reinvested, cashFlow, capitalEnd). linearVsCompounding z linear12mProfit, compounding12mProfit, advantageMultiple, breakEvenMonth. compoundingAccelerationActions (8 akcij: dvigni reinvest rate, skrajšaj cycle time, dvigni ROI, kapital injection, automation, cross-platform, VA team, reinvest discipline). compoundingGrade A+ to F (A+ če multiplier ≥ 8x ali advantage ≥ 5x). breakEvenTime (crossover point). Anti-hallucination: rates [0, 100], multipliers [1.0, 100.0], capital [0, 1000000], projectedCapital12m ∈ [startingCapital, startingCapital × 100], advantageMultiple ∈ [1.0, 100.0]. 6h cache (key `profit-compounding-maximizer:${currentMonth}`).
+  2. deal-source-profit-per-trade-maximizer/route.ts (~760 vrstic) — AI MAKSIMIZIRA PROFIT PER TRADE € (absolutni profit, NE %) za vsak source. Razlika od deal-source-margin-maximizer (v8.03 ki maksimizira margin %) — ta maksimizira absolutni profit per trade z profitPerTradeAction (TARGET_HIGHER_VALUE/NEGOTIATE_BETTER/REDUCE_FEES/IMPROVE_QUALITY/SHIFT_TO_PREMIUM). Per source metrics: avgProfitPerTrade, avgRevenuePerTrade, avgCostPerTrade, profitPerTradeTrend (INCREASING/STABLE/DECREASING/FLAT), bestTradeEver, worstTradeEver. Per source maximization: profitPerTradeAction, projectedProfitPerTrade, profitPerTradeUplift, profitPerTradeLevers (4: Sourcing Negotiation, Premium Pricing, Platform Fees, Higher-Value Items), bestTradeProfile (categoryHint, priceRangeLow, priceRangeHigh, characteristics), sourceRanking. Portfolio: avgProfitPerTrade (weighted by tradeCount) → maximizedAvgProfitPerTrade, totalUpliftPerTrade, sourceRanking. Anti-hallucination: profits [0, 10000], projectedProfitPerTrade ∈ [avgProfitPerTrade, avgProfitPerTrade × 2 ali +500€]. 6h cache (key `deal-source-profit-per-trade-maximizer:${currentMonth}`).
+  3. inventory-cash-yield-maximizer/route.ts (~830 vrstic) — AI MAKSIMIZIRA CASH YIELD (annualizirani return rate na capital deployed) čez PORTFOLIO. Razlika od inventory-yield-maximizer (v8.03 ki maksimizira yield % per item) — ta maksimizira CASH YIELD čez portfolio z currentCashYield/maximizedCashYield in benchmarkYield (default 32% typical za Slovenian flipping). Per item: capitalDeployed, estValue, unrealizedProfit, holdDays, annualizedYield = (profit/capital) × (365/holdDays) × 100, currentYield. Maximization: maximizedCashYield, yieldOptimizationActions (6: likvidiraj negative-yield, prodaj long-held, HOLD short-hold, REPRICE mid-range, capital reallocation, sourcing optimization), yieldComparisonTable (per-item current vs maximized z action), optimalHoldTime (izračunano iz SOLD trades bucket analysis — sweet spot za max annualized yield), yieldGrade A+ to F (A+ če current ≥ 3x benchmark), benchmarkYield [0, 200], yieldVsBenchmark (current − benchmark). Anti-hallucination: yields [-100, 1000], hold time [1, 365], maximizedCashYield ∈ [currentCashYield, currentCashYield × 1.6 ali +100pp], per-item maximizedAnnualizedYield ∈ [currentAnnualizedYield, current × 1.5 ali +50pp]. 6h cache (key `inventory-cash-yield-maximizer:${JSON.stringify(heldItemIds)}` — invalidira ko held inventory se spremeni).
+- Vsi 3 endpoint-i: GET+POST shared handler (`handleX`), export const runtime='nodejs', dynamic='force-dynamic', 20/min rate limit, grounding prompt suffix, deterministic fallback če AI call faila, empty-state fallback (0 SOLD/HELD trades)
+- Regeneriral AI_ENDPOINTS.md z Python skripto: 371 → 374 endpoints (+3) — profit-compounding-maximizer, deal-source-profit-per-trade-maximizer, inventory-cash-yield-maximizer (sortirano)
+- Posodobil README.md:
+  * Version badge: v8.03.0 → v8.04.0
+  * AI Endpoints badge: 371 → 374
+  * API Routes badge: 548 → 551
+  * Tagline: "371 AI endpointov + 72 analytics" → "374 AI endpointov + 72 analytics"
+  * Tagline feature: Profit Horizon + Deal Source Margin + Inventory Yield → Profit Compounding + Deal Source Profit Per Trade + Inventory Cash Yield (COMPOUNDING MAXIMIZATION & PER-TRADE PROFIT MAXIMIZATION & CASH YIELD MAXIMIZATION focus)
+  * Overview: "Verzija v8.03.0" → "Verzija v8.04.0", "~234 funkcij" → "~237 funkcij"
+  * "Kaj je novega v v7.56–v8.03" → "v7.56–v8.04" z novim v8.04 blokom (3 funkcije z full response shape opisom)
+  * Roadmap: "v8.03 (trenutno — ~234 funkcij)" → "v8.04 (trenutno — ~237 funkcij)"
+  * Naslednji koraki: "v7.50-v8.03 funkcije" → "v7.50-v8.04 funkcije"
+  * Endpointi count: "371 AI + 72 analytics + 10 cron + sistemski = 548" → "374 AI + 72 analytics + 10 cron + sistemski = 551"
+  * Project structure: "371 AI endpointov" → "374 AI endpointov"
+  * Testing: "548 API routes" → "551 API routes"
+  * Changelog zadnje verzije list: dodal v8.04.0 entry na vrh
+  * Profit pipeline list: dodal "AI Profit Compounding Maximizer, AI Deal Source Profit Per Trade Maximizer, AI Inventory Cash Yield Maximizer"
+  * Popolna zgodovina: "do v8.03" → "do v8.04"
+  * AI Hub: "Vsi 371 AI endpointov" → "Vsi 374 AI endpointov"
+  * Glej AI_ENDPOINTS: "vseh 371 AI endpointov" → "vseh 374 AI endpointov"
+  * 11 referenc na "v8.04" v README (≥10 ✅)
+- Posodobil CHANGELOG.md:
+  * [Unreleased] "v8.04+" → "v8.05+"
+  * Dodal [8.04.0] sekcijo (2026-08-17) z vsemi 3 endpoint-i + Changed — Documentation sync sekcijo
+- Kvaliteta:
+  * `bun run lint` → 0 errors ✅
+  * `npx tsc --noEmit` → 0 errors ✅
+  * curl GET+POST na vseh 3 endpointih → HTTP 200 ✅ (empty-state fallback ker ni SOLD/HELD trgovin v DB)
+  * `grep "Total:" AI_ENDPOINTS.md` → "374 endpoints" ✅
+  * `grep -c "v8.04" README.md` → 11 (≥10 ✅)
+  * `grep "374 AI" README.md` → obstaja ✅ (6 mestih)
+  * `grep "## \[8.04.0\]" CHANGELOG.md` → obstaja ✅
+  * dev.log brez runtime napak (samo Prisma query log-i)
+
+Stage Summary:
+- v8.04 uspešno dokončana (pending commit + push od main agent-a)
+- 3 PROFIT-MAXIMIZING funkcije: AI Profit Compounding Maximizer (6 reinvest scenarios z optimal reinvest rate + 24m compounding projection + linear-vs-compounding z break-even), AI Deal Source Profit Per Trade Maximizer (per-source profit per trade € z 5 actions in 4 levers in bestTradeProfile), AI Inventory Cash Yield Maximizer (annualized cash yield % z benchmark comparison in optimal hold time)
+- AI endpointi: 371 → 374 (+3)
+- Analytics endpointi: 72 (nespremenjeno — vsi 3 so AI)
+- Total API routes: 548 → 551 (+3)
+- Dokumentacija sinhrono posodobljena (AI_ENDPOINTS.md, README, CHANGELOG)
+- Verzija aplikacije: v8.04.0

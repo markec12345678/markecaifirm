@@ -6,11 +6,65 @@ Format sledi [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), verzije s
 
 ## [Unreleased]
 
-Načrtovano za v8.04+:
+Načrtovano za v8.05+:
 - WebSocket real-time negotiation (SSE namesto polling)
 - Playwright E2E testi za glavne flow-e
 - TLS fingerprinting (curl-impersonate)
 - ML model za buyer matchmaker (fine-tuned na realnem data)
+
+## [8.04.0] - 2026-08-17
+
+### Added — Profit Compounding Maximizer + Deal Source Profit Per Trade Maximizer + Inventory Cash Yield Maximizer (3 funkcije)
+
+- **AI Profit Compounding Maximizer** — `GET+POST /api/ai/profit-compounding-maximizer`
+  - AI maximizes COMPOUNDING EFFECT of reinvested profit — shows how reinvesting X% of profit at Y% ROI
+    produces exponential growth vs linear
+  - compoundingScenarios: 6 entries for reinvestRate 50%/60%/70%/80%/90%/100% — each with monthlyGrowthRate,
+    projectedCapital12m, projectedProfit12m, compoundingMultiplier
+  - optimalReinvestRate (best reinvest rate for max capital growth while maintaining cash flow)
+  - maximizedCompoundingProjection (24-month month-by-month at optimal rate)
+  - linearVsCompounding { linear12mProfit, compounding12mProfit, advantageMultiple, breakEvenMonth }
+  - compoundingAccelerationActions (how to improve compounding: faster cycles, higher ROI, higher reinvest rate)
+  - compoundingGrade (A+ to F) based on multiplier and advantage
+  - breakEvenTime (crossover point — month where compounding overtakes linear)
+  - AI cache (6h TTL) keyed by currentMonth
+  - 'If you reinvest 80% of profit at 25% ROI per cycle, your 1000€ becomes 9536€ in 12 cycles — vs 4000€ with linear.'
+  - Anti-hallucination: rates [0, 100], multipliers [1.0, 100.0], capital [0, 1000000]
+  - Empty-state fallback če 0 SOLD trades → grade F
+
+- **AI Deal Source Profit Per Trade Maximizer** — `GET+POST /api/ai/deal-source-profit-per-trade-maximizer`
+  - AI maximizes PROFIT PER TRADE for each source — which sources give highest profit per individual deal
+    and how to increase it
+  - Per source: avgProfitPerTrade, avgRevenuePerTrade, avgCostPerTrade, profitPerTradeTrend, bestTradeEver, worstTradeEver
+  - Per source maximization: profitPerTradeAction (TARGET_HIGHER_VALUE/NEGOTIATE_BETTER/REDUCE_FEES/IMPROVE_QUALITY/SHIFT_TO_PREMIUM),
+    projectedProfitPerTrade, profitPerTradeUplift, profitPerTradeLevers, bestTradeProfile, sourceRanking
+  - Portfolio: avgProfitPerTrade → maximizedAvgProfitPerTrade, totalUpliftPerTrade, sourceRanking
+  - AI cache (6h TTL) keyed by currentMonth
+  - 'Bolha avgProfitPerTrade 167€ → 210€ (+43€, TARGET_HIGHER_VALUE). Vinted 35€ → 75€ (SHIFT_TO_PREMIUM).'
+  - Anti-hallucination: profits [0, 10000], projectedProfitPerTrade ∈ [avgProfitPerTrade, avgProfitPerTrade × 2 or +500€]
+  - Empty-state fallback če 0 SOLD trades
+
+- **AI Inventory Cash Yield Maximizer** — `GET+POST /api/ai/inventory-cash-yield-maximizer`
+  - AI maximizes CASH YIELD — the annualized return rate on capital deployed in inventory
+  - Like a financial investor optimizing portfolio yield
+  - Per item: capitalDeployed, estValue, unrealizedProfit, holdDays, annualizedYield (= (profit/capital) × (365/holdDays) × 100)
+  - Per item maximization: currentAnnualizedYield → maximizedAnnualizedYield, yieldUplift, action
+  - Portfolio: currentCashYield, maximizedCashYield, yieldOptimizationActions, yieldComparisonTable,
+    optimalHoldTime (ideal hold time for max annualized yield), yieldGrade (A+ to F),
+    benchmarkYield (typical 32% for this trading type), yieldVsBenchmark
+  - AI cache (6h TTL) keyed by JSON.stringify(heldItemIds) — invalidates when held inventory changes
+  - 'Your cash yield is 45% annualized, but could be 78% with optimal inventory mix and faster turnover.'
+  - Anti-hallucination: yields [-100, 1000], maximizedCashYield ∈ [currentCashYield, currentCashYield × 1.6 or +100pp]
+  - Empty-state fallback če 0 HELD and 0 SOLD trades → grade F
+
+### Changed — Documentation sync
+- **AI_ENDPOINTS.md** regenerated: 371 → 374 AI endpoints (+3)
+- **README.md**: version v8.03.0 → v8.04.0, AI Endpoints badge 371 → 374, API Routes badge 548 → 551,
+  tagline "371 AI endpointov + 72 analytics" → "374 AI endpointov + 72 analytics", Overview "v8.03.0" → "v8.04.0",
+  funkcij count ~234 → ~237, "Kaj je novega" v7.56-v8.03 → v7.56-v8.04, Roadmap v8.03 → v8.04,
+  Changelog zadnje verzije list v8.03.0 → v8.04.0
+- Total API routes: 548 → 551 (+3)
+- Analytics endpoints: 72 (nespremenjeno — vsi 3 novi so AI)
 
 ## [8.03.0] - 2026-08-17
 
