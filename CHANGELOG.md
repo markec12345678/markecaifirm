@@ -6,11 +6,232 @@ Format sledi [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), verzije s
 
 ## [Unreleased]
 
-Načrtovano za v7.99+:
+Načrtovano za v8.00+:
 - WebSocket real-time negotiation (SSE namesto polling)
 - Playwright E2E testi za glavne flow-e
 - TLS fingerprinting (curl-impersonate)
 - ML model za buyer matchmaker (fine-tuned na realnem data)
+
+## [7.99.0] - 2026-08-15
+
+### Added — AI Capital Growth Maximizer & AI Deal Profit Accelerator Pro & AI Inventory ROI Maximizer Pro (3 funkcije — CAPITAL GROWTH & PROFIT ACCELERATION & ROI MAXIMIZATION focus)
+
+- **AI Capital Growth Maximizer** — `GET+POST /api/ai/capital-growth-maximizer`
+  - AI maksimizira CAPITAL GROWTH — kako hitro kapital raste preko
+    compounding reinvestment? Project-a optimal reinvestment strategy
+    za maximum capital growth čez 6/12/24 mesecev. The "ultimate
+    capital growth maximizer." Razlika od capital-allocation-optimizer
+    (ki alokira kapital po kategorijah) — ta maksimizira COMPOUNDING
+    GROWTH rate (ne allocation). Razlika od reinvestment-advisor (ki
+    svetuje reinvestment) — ta KOMBINIRA growth rate maximization +
+    compounding projection + time-to-double/10x forecast. Razlika od
+    profit-velocity-maximizer (v7.98 ki maksimizira €/day velocity) —
+    ta maksimizira COMPOUNDING growth rate (% per month). Razlika od
+    inventory-cash-conversion-maximizer (v7.98 ki maksimizira cash
+    conversion) — ta maksimizira CAPITAL GROWTH čez 6/12/24 mesecev.
+    Razlika od deal-quality-profit-optimizer (v7.98 ki optimira
+    quality-profit) — ta maksimizira compounding capital growth z
+    reinvestment strategy. "Current capital: 4,250€ (cash 1,500€ +
+    inventory 2,750€). Monthly growth: 8% (compounding factor 1.8x).
+    MAXIMIZED: 14%/mo (1.8x → 2.6x). Projected: 6m: 9,300€, 12m:
+    20,400€, 24m: 98,500€ (grade A). Time to 2x: 5 months. Time to
+    10x: 17 months. Reinvest 75% / withdraw 25%. Risks: inventory
+    saturation (HIGH — diversify categories), cash drag (MEDIUM —
+    keep 30% liquid), market downturn (HIGH — hedging)."
+  - current: { currentCapital € (= available cash (max(0,
+    realizedProfit12m)) + heldInventoryValue, [0, 10M]),
+    avgMonthlyGrowthRate % [0, 50] (= monthlyProfit /
+    currentCapital × 100), compoundingFactor [1, 10] (= 1 +
+    min(2, growthRate × 0.5)) }
+  - maximization: { maximizedGrowthRate %/mo [0, 50] (CLAMPED
+    [avgRate, avgRate × 3 ali 5% če 0] anti-hallucination),
+    projectedCapital6m/12m/24m € [0, currentCapital × 100] (=
+    currentCapital × (1 + rate/100)^N), growthMaximizationLevers 4
+    [{ lever max 80, currentGap % [0, 100], potentialGain €/mo
+    [0, 1000], action max 200 (slovenski) }] (reinvestment rate,
+    ROI per cycle, cycle speed, risk management),
+    optimalReinvestmentStrategy { reinvestPercent % [0, 100],
+    withdrawPercent % [0, 100] (reinvest + withdraw = 100),
+    reasoning max 400 (slovenski) }, compoundingProjection 24
+    entries [{ month 1-24, capital € [0, currentCapital × 100],
+    profit € [0, capital] }], capitalGrowthGrade A+/A/B/C/D/F (≥20
+    A+, ≥12 A, ≥7 B, ≥3 C, ≥1 D, else F), timeToDoubleCapital dni
+    [1, 7300] (= ln(2)/ln(1+r) × 30), timeTo10xCapital dni [1,
+    7300] (= ln(10)/ln(1+r) × 30), growthRiskAssessment 3-5 [{ risk
+    max 150, severity LOW/MEDIUM/HIGH, mitigation max 200
+    (slovenski) }] }
+  - Compute: parallel query SOLD 12m (realizedProfit12m) + HELD
+    trades (heldInventoryValue = sum estValue), availableCash =
+    max(0, realizedProfit12m), currentCapital = availableCash +
+    heldInventoryValue, avgMonthlyGrowthRate = (realizedProfit12m/12)
+    / currentCapital × 100, compoundingFactor = 1 + min(2,
+    growthRate × 0.5), maximizedGrowthRate = avgRate × 1.5
+    (default 5% če 0), projectedCapital = currentCapital × (1+r)^N,
+    timeToDouble = ln(2)/ln(1+r) × 30, timeTo10x = ln(10)/ln(1+r) ×
+    30. AI-enhanced z grounding prompt (soldCount12m + heldCount +
+    realizedProfit12m + heldInventoryValue + current + caps +
+    deterministic baseline) + anti-hallucination (maximizedGrowthRate
+    CLAMPED [avgRate, avgRate × 3 ali 5% če 0], projectedCapital
+    CLAMPED [0, currentCapital × 100], gap [0, 100], gain [0, 1000],
+    percent [0, 100], days [1, 7300], enums validirana LOW/MEDIUM/HIGH
+    in A+/A/B/C/D/F, string length limits — lever max 80, action max
+    200, reasoning max 400, risk max 150, mitigation max 200, summary
+    max 400) + 6h cache (key `capital-growth-maximizer:${currentMonth}`
+    — YYYY-MM, invalidira monthly) + deterministic fallback
+    (maximizedGrowthRate = avgRate × 1.5 ali 5% če 0, projected iz
+    formula, grade iz rate). GET+POST (handleCapitalGrowthMaximizer
+    shared function — AI Hub runner kompatibilnost). Empty-state
+    fallback če 0 SOLD trades in 0 HELD trades → "Ni SOLD trgovin in
+    HELD inventorija" z aiUsed=false + empty maximization z grade F +
+    timeToDouble 365 + timeTo10x 3650.
+
+- **AI Deal Profit Accelerator Pro** — `GET+POST /api/ai/deal-profit-accelerator-pro`
+  - AI identificira kako ACCELERATE profit iz vsakega HELD item-a —
+    specifične akcije da pridobiš VEČ profit-a HITREJE iz trenutnog
+    inventorija. Kombinira pricing, timing in channel optimization
+    per item. The "ultimate deal profit accelerator." Razlika od
+    deal-accelerator (ki accelera closing) — ta accelera PROFIT (€)
+    per item z actionable strategy. Razlika od profit-accelerator
+    (v7.96 ki accelera profit generično) — ta daje PER-ITEM profit
+    acceleration z acceleration ROI (€/day). Razlika od profit-
+    velocity-maximizer (v7.98 ki maksimizira velocity) — ta fokusira
+    na PROFIT ACCELERATION per held item (ne velocity of flow).
+    Razlika od inventory-cash-conversion-maximizer (v7.98 ki
+    maksimizira cash conversion) — ta accelera PROFIT (ne samo cash
+    — tudi neto profit acceleration). Razlika od capital-growth-
+    maximizer (v7.99 ki maksimizira capital growth) — ta accelera
+    profit PER ITEM z specific actions. Razlika od inventory-roi-
+    maximizer-pro (v7.99 ki maksimizira ROI) — ta fokusira na PROFIT
+    ACCELERATION (€/day additional profit, ne ROI %). "iPhone 13:
+    currentProfit 95€, maximized 145€ (+50€, EASY → PRICE_OPTIMIZE,
+    expectedProfit 145€, timeReduction 8d, ROI 6.25€/day, 85%
+    probability). PS5: currentProfit 80€, maximized 130€ (+50€,
+    MEDIUM → CHANNEL_OPTIMIZE, cross-platform premium, timeReduction
+    5d, ROI 10€/day, 70% probability). Portfolio: current 580€ →
+    maximized 850€ (+270€ acceleration, grade B). Top items: PS5,
+    iPhone 13 (highest acceleration ROI)."
+  - items: [{ tradeId (MORA match-at heldItems — anti-hallucination),
+    title, currentProfitPotential € [0, 50000] (= estValue − cost −
+    5% fees), maximizedProfitPotential € [0, 50000] (CLAMPED
+    [current, current × 1.5 + 25] anti-hallucination),
+    profitAccelerationGap € [0, 50000] (= maximized − current),
+    accelerationDifficulty EASY/MEDIUM/HARD (EASY: margin ≥ 1.5× in
+    daysHeld < 30, MEDIUM: margin ≥ 1.2× in daysHeld < 60, HARD:
+    margin < 1.1× ali daysHeld ≥ 90), accelerationAction
+    PRICE_OPTIMIZE/TIMING_OPTIMIZE/CHANNEL_OPTIMIZE/BUNDLE_OPTIMIZE/
+    REFURBISH_UPGRADE/WAIT_FOR_APPRECIATION (6 akcij),
+    expectedProfitWithAction € [0, 50000] (= maximized),
+    profitAcceleration € [0, 50000] (= expected − current),
+    timeReduction dni [0, 365] (EASY 10d, MEDIUM 5d, HARD 3d default),
+    accelerationROI €/dan [0, 5000] (= profitAcceleration /
+    timeReduction), implementationSteps 3-6 stringov (max 200 vsak,
+    slovenski), successProbability % [0, 100] (EASY 85, MEDIUM 65,
+    HARD 45 default) }]
+  - portfolio: { totalCurrentProfitPotential € [0, 50000] (sum),
+    totalMaximizedProfitPotential € [0, 50000] (sum),
+    totalAccelerationPotential € [0, 50000] (= maximized − current),
+    portfolioAccelerationGrade A+/A/B/C/D/F (A+ če ratio ≥ 0.5, F če
+    < 0.05), topAccelerationItems 5 (top by accelerationROI) }
+  - Compute: query HELD z linked Listing (aiEstimatedValue, price,
+    aiScore, dealScore, monitor.source/tags), per item compute
+    estValue, daysHeld, cost (buyPrice + buyFees), currentProfitPotential
+    (estValue − cost − 5% fees), maximizedProfitPotential (min(current ×
+    1.5 + 25, estValue × 0.8)), profitAccelerationGap,
+    accelerationDifficulty (margin + daysHeld hevristika),
+    accelerationAction (6 strategy iz daysHeld + margin + dealScore +
+    source), timeReduction (difficulty-based), accelerationROI
+    (profit/time), implementationSteps (per-strategy 3-6 korakov
+    slovenski), successProbability (difficulty-based). AI-enhanced z
+    grounding prompt (top 40 items by accelerationROI + caps +
+    deterministic baseline) + anti-hallucination (tradeId MORA match-at
+    heldItems — skip unknown, expectedProfitWithAction CLAMPED [current,
+    current × 1.5 + 25], profitAcceleration [0, 50000] = expected −
+    current, timeReduction [0, 365], accelerationROI [0, 5000] =
+    profit/time, successProbability [0, 100], enums validirana
+    EASY/MEDIUM/HARD in 6 actions, string length limits — step max 200,
+    summary max 400) + 6h cache (key `deal-profit-accelerator-pro:
+    ${JSON.stringify(heldItemIds)}` — invalidira ko held inventory se
+    spremeni) + deterministic fallback (difficulty iz margin + daysHeld,
+    action iz hevristika, timeReduction iz difficulty, ROI =
+    profit/time, probability iz difficulty). GET+POST
+    (handleDealProfitAcceleratorPro shared function — AI Hub runner
+    kompatibilnost). Empty-state fallback če 0 HELD trades → "Ni HELD
+    trgovin v inventarju" z aiUsed=false + empty items + empty portfolio
+    z grade F.
+
+- **AI Inventory ROI Maximizer Pro** — `GET+POST /api/ai/inventory-roi-maximizer-pro`
+  - AI maksimizira ROI čez celoten held inventar z per-item specifičnimi
+    recommendations. Razlika od inventory-roi-optimizer (v7.79 ki
+    optimira ROI z rebalance) — ta MAXIMIZIRA ROI z absolutno best
+    strategy per item (HOLD_AND_WAIT, SELL_NOW_AT_PREMIUM,
+    DISCOUNT_FOR_VOLUME, CROSS_PLATFORM_PREMIUM, BUNDLE_FOR_UPSELL,
+    REFURB_FOR_PREMIUM). Razlika od inventory-profit-maximizer (ki
+    maksimizira profit) — ta maksimizira ROI % (ne € profit). Razlika
+    od capital-growth-maximizer (v7.99 ki maksimizira capital growth) —
+    ta maksimizira per-item ROI z specific strategy. Razlika od
+    deal-profit-accelerator-pro (v7.99 ki accelera profit per item) — ta
+    maksimizira ROI % (ne profit acceleration €). Razlika od profit-
+    margin-maximizer (ki maksimizira margin) — ta maksimizira ROI na
+    posameznem held item-u z AI strategy. Razlika od inventory-value-
+    maximizer (v7.97 ki maksimizira value) — ta maksimizira ROI % (ne
+    value). "iPhone 13: currentROI 28% (GOOD), maximized 42%
+    (EXCELLENT, +14% lift, CROSS_PLATFORM_PREMIUM, €185 profit, 14d to
+    max ROI, risk: medium demand fluctuation). PS5: currentROI 35%
+    (GOOD), maximized 58% (EXCELLENT, +23% lift, REFURB_FOR_PREMIUM,
+    €240 profit, 21d to max ROI, risk: refurb cost overrun). Portfolio:
+    current 24% → maximized 41% (+17% lift, grade A). Total additional
+    profit: €425."
+  - items: [{ tradeId (MORA match-at heldItems — anti-hallucination),
+    title, category, buyPrice €, aiEstimatedValue € | null, currentROI
+    % [−50, 300] (= (estValue − cost − 5% fees) / cost × 100),
+    maximizedROI % [−50, 300] (CLAMPED [current, max(current × 1.8,
+    current + 25)] anti-hallucination), roiGap % [0, 100] (= maximized
+    − current), roiCategory EXCELLENT (>40%)/GOOD (20-40%)/AVERAGE
+    (0-20%)/NEGATIVE (<0%), roiMaximizationStrategy HOLD_AND_WAIT/
+    SELL_NOW_AT_PREMIUM/DISCOUNT_FOR_VOLUME/CROSS_PLATFORM_PREMIUM/
+    BUNDLE_FOR_UPSELL/REFURB_FOR_PREMIUM (6 strategies), roiLift % [0,
+    100] (= maximized − current), expectedProfitAtMaxROI € [0,
+    min(50000, estValue × 0.85)] (= maximizedROI / 100 × cost),
+    implementationActions 3-5 stringov (max 200 vsak, slovenski),
+    timeToMaxROI dni [1, 365] (SELL_NOW 7d, DISCOUNT 10d,
+    CROSS_PLATFORM 14d, BUNDLE 21d, REFURB 28d, HOLD 60d), riskToMaxROI
+    max 200 (slovenski — glavni risk) }]
+  - portfolio: { currentPortfolioROI % [−50, 300] (weighted avg by
+    cost), maximizedPortfolioROI % [−50, 300] (weighted avg),
+    totalROILift % [0, 100] (= maximized − current),
+    roiMaximizationGrade A+/A/B/C/D/F (A+ če lift ≥ 25, F če < 3),
+    totalAdditionalProfit € [0, 50000] (sum (expectedProfitAtMaxROI −
+    currentProfit)) }
+  - Compute: query HELD z linked Listing, per item compute estValue,
+    cost (buyPrice + buyFees), currentProfit (estValue − cost − 5%
+    fees), currentROI (profit/cost × 100), roiCategory (4 buckets),
+    maximizedROI (max(current, min(300, max(current × 1.8, current +
+    25)))), roiGap (maximized − current), roiMaximizationStrategy (6
+    strategies iz roiCategory + dealScore), roiLift, expectedProfitAtMaxROI
+    (maximizedROI/100 × cost, cap 85% estValue), timeToMaxROI
+    (per-strategy), riskToMaxROI (per-strategy slovenski). AI-enhanced z
+    grounding prompt (top 40 items by roiGap + caps + deterministic
+    baseline) + anti-hallucination (tradeId MORA match-at heldItems —
+    skip unknown, maximizedROI CLAMPED [current, max(current × 1.8,
+    current + 25)], roiGap [0, 100], roiLift = roiGap,
+    expectedProfitAtMaxROI [0, min(50000, estValue × 0.85)], timeToMaxROI
+    [1, 365], enums validirana 4 categories in 6 strategies in
+    A+/A/B/C/D/F, string length limits — action max 200, risk max 200,
+    summary max 400) + 6h cache (key `inventory-roi-maximizer-pro:
+    ${JSON.stringify(heldItemIds)}` — invalidira ko held inventory se
+    spremeni) + deterministic fallback (category iz ROI, strategy iz
+    category + dealScore, expectedProfit iz maximizedROI × cost,
+    timeToMaxROI iz strategy, risk iz strategy). GET+POST
+    (handleInventoryRoiMaximizerPro shared function — AI Hub runner
+    kompatibilnost). Empty-state fallback če 0 HELD trades → "Ni HELD
+    trgovin v inventarju" z aiUsed=false + empty items + empty portfolio
+    z grade F.
+
+### Changed
+- AI_ENDPOINTS.md: 356 → 359 endpoints (+3 AI: capital-growth-maximizer pos 68, deal-profit-accelerator-pro pos 92, inventory-roi-maximizer-pro pos 163)
+- README.md: v7.98.0 → v7.99.0 badge, 356 → 359 AI endpoints, 533 → 536 API routes, ~219 → ~222 funkcij, 157+ → 160+ profit pipeline funkcij, dodan v7.99 "Kaj je novega" block (3 features z full descriptions), posodobljen Roadmap (v7.99 trenutno, 43 → 44 verzij, 129 → 132 novih funkcij), dodana 3 endpoint line v Profit pipeline section, dodana Zadnje verzije entry, tagline 356 → 359 AI endpointov
+- CHANGELOG.md: [Unreleased] Načrtovano za v7.99+ → ...za v8.00+, dodana nova [7.99.0] sekcija z vsemi 3 endpoint-i in podrobnimi opisi (response shape, anti-hallucination rules, AI cache key, deterministic fallback, example comment, razlika od podobnih obstoječih endpoint-ov). Skupno 356 AI → 359 AI (+3), 72 analytics nespremenjeno (0 new), 533 routes → 536 routes (+3), ~219 funkcij → ~222 funkcij (+3), 157+ funkcij → 160+ funkcij v profit pipeline (+3).
+- Verzija aplikacije: v7.99.0
 
 ## [7.98.0] - 2026-08-15
 
