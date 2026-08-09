@@ -13349,3 +13349,34 @@ Stage Summary:
 - Profit pipeline funkcije: 163+ → 166+ (+3)
 - Dokumentacija sinhrono posodobljena (AI_ENDPOINTS.md, README.md, CHANGELOG.md)
 - Verzija aplikacije: v8.01.0
+
+---
+Task ID: v8.01.1
+Agent: main
+Task: v8.01 commit + push + GitHub About + Agent Browser verification
+
+Work Log:
+- Prejel poročilo od full-stack-developer podagenta (Task v8.01)
+- Preveril 3 nove endpoint-e: revenue-growth-maximizer (200 GET+POST), deal-profit-margin-enhancer-pro (200 GET+POST), inventory-capital-efficiency-maximizer (200 GET+POST)
+- Preveril doc sync: AI_ENDPOINTS.md (365 ✅), README v8.01 (10 refs ✅), README 365 AI (6 refs ✅), CHANGELOG v8.01 ✅
+- Preveril lint: 0 napak ✨
+- Preveril typecheck: 0 napak ✨
+- Posodobil GitHub About opis: 362 AI → 365 AI, 539 routes → 542 routes (via API PATCH)
+- Commit: "v8.01: Revenue Growth Maximizer + Deal Profit Margin Enhancer Pro + Inventory Capital Efficiency Maximizer" (e8d3822)
+- Push na GitHub: uspešen ✅, PAT očiščen ✅
+- Agent Browser self-verification:
+  - Stran se pravilno naloži (HTTP 200)
+  - AI Hub prikazuje revenue-growth-maximizer (v8.01) v iskalniku ✅
+  - Runner test: klik na revenue-growth-maximizer → POST request → valid JSON ✅
+  - Response: {"ok":true, "current":{...}, "maximization":{revenueGrowthMultiplier, timeToDoubleRevenue, revenueProjection}, "aiUsed":false}
+  - Brez runtime napak v dev.log
+
+Stage Summary:
+- v8.01 uspešno dokončana in potisnjena na GitHub
+- 3 PROFIT-MAXIMIZING funkcije: AI Revenue Growth Maximizer, AI Deal Profit Margin Enhancer Pro, AI Inventory Capital Efficiency Maximizer
+- AI endpointi: 362 → 365 (+3)
+- Analytics endpointi: 72 (nespremenjeno — vsi 3 so AI)
+- Total API routes: 539 → 542 (+3)
+- Dokumentacija sinhrono posodobljena (AI_ENDPOINTS.md, README, CHANGELOG, GitHub About)
+- GitHub sinhroniziran (0 commit-ov ahead)
+- Verzija aplikacije: v8.01.0
