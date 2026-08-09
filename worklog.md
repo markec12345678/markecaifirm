@@ -12719,3 +12719,34 @@ Stage Summary:
 - Profit pipeline funkcije: 154+ → 157+ (+3)
 - Dokumentacija sinhrono posodobljena (AI_ENDPOINTS.md, README.md, CHANGELOG.md)
 - Verzija aplikacije: v7.97.0
+
+---
+Task ID: v7.97.1
+Agent: main
+Task: v7.97 commit + push + GitHub About + Agent Browser verification
+
+Work Log:
+- Prejel poročilo od full-stack-developer podagenta (Task v7.97)
+- Preveril 3 nove endpoint-e: deal-source-profit-maximizer (200 GET+POST), market-timing-profit-optimizer (200 GET+POST), inventory-value-maximizer (200 GET+POST)
+- Preveril doc sync: AI_ENDPOINTS.md (353 ✅), README v7.97 (11 refs ✅), README 353 AI (6 refs ✅), CHANGELOG v7.97 ✅
+- Preveril lint: 0 napak ✨
+- Preveril typecheck: 0 napak ✨
+- Posodobil GitHub About opis: 350 AI → 353 AI, 527 routes → 530 routes (via API PATCH)
+- Commit: "v7.97: Deal Source Profit Maximizer + Market Timing Profit Optimizer + Inventory Value Maximizer" (f6165ab)
+- Push na GitHub: uspešen ✅, PAT očiščen ✅
+- Agent Browser self-verification:
+  - Stran se pravilno naloži (HTTP 200)
+  - AI Hub prikazuje market-timing-profit-optimizer (v7.97) v iskalniku ✅
+  - Runner test: klik na market-timing-profit-optimizer → POST request → valid JSON ✅
+  - Response: {"ok":true, "patterns":{bestBuyDay: Ponedeljek, bestSellDay: Petek, bestBuyMonth: Jan, bestSellMonth: Nov}, "optimization":{...}, "aiUsed":false}
+  - Brez runtime napak v dev.log
+
+Stage Summary:
+- v7.97 uspešno dokončana in potisnjena na GitHub
+- 3 PROFIT-MAXIMIZING funkcije: AI Deal Source Profit Maximizer, AI Market Timing Profit Optimizer, AI Inventory Value Maximizer
+- AI endpointi: 350 → 353 (+3)
+- Analytics endpointi: 72 (nespremenjeno — vsi 3 so AI)
+- Total API routes: 527 → 530 (+3)
+- Dokumentacija sinhrono posodobljena (AI_ENDPOINTS.md, README, CHANGELOG, GitHub About)
+- GitHub sinhroniziran (0 commit-ov ahead)
+- Verzija aplikacije: v7.97.0
