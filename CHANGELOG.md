@@ -6,11 +6,306 @@ Format sledi [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), verzije s
 
 ## [Unreleased]
 
-Načrtovano za v7.95+:
+Načrtovano za v7.96+:
 - WebSocket real-time negotiation (SSE namesto polling)
 - Playwright E2E testi za glavne flow-e
 - TLS fingerprinting (curl-impersonate)
 - ML model za buyer matchmaker (fine-tuned na realnem data)
+
+## [7.95.0] - 2026-08-15
+
+### Added — AI Price Optimization Engine Pro & AI Deal Sourcing Intelligence & AI Profit Margin Maximizer (3 funkcije — PRICING & SOURCING & MARGIN focus)
+
+- **AI Price Optimization Engine Pro** — `GET+POST /api/ai/price-optimization-engine-pro`
+  - AI GENERIRA optimalne cene za VSE HELD inventorija hkrati z
+  A/B testing priporočili in dynamic pricing rules. Razlika od
+  price-intelligence-engine (v7.72 ki analizira pricing patterns) —
+  ta GENERIRA optimal price per item z A/B testing in dynamic
+  pricing. Razlika od smart-pricing-engine (basic) — ta je PRO z
+  A/B testing in dynamic pricing rules. Razlika od reserve-price-
+  optimizer (ki optimira reserve) — ta optimira AKTUALNE cene za
+  HELD inventorij. Razlika od profit-margin-optimizer-v2 (ki
+  optimira margin) — ta optimira CENE per item. Razlika od
+  profit-maximizer-pro (v7.94 ki maksimizira profit preko 7 levers)
+  — ta fokusira izključno na PRICING per item z A/B testing in
+  dynamic pricing rules. "PS5: current 380€, optimal 395€ (+4%,
+  PREMIUM). Expected: +15€ profit, -5% sell prob. A/B test: yes."
+  - items: [{ tradeId (string), title (max 200, iz listing.title
+  ali trade.title), category (lowercased, iz trade.category),
+  buyPrice €, currentPrice € (= listing.price ali estValue ali
+  buyPrice × 1.2 fallback), estValue € | null (= listing.
+  aiEstimatedValue), pricePosition BELOW | AT | ABOVE (iz 5%
+  threshold: ratio < 0.95 BELOW, > 1.05 ABOVE, sicer AT),
+  optimalPrice € (CLAMPED to [0.5x, 1.3x] estValue anti-
+  hallucination; če ni estValue, [0.8x, 1.5x] buyPrice; default
+  estValue × optRatio kjer optRatio iz historical sellPrice/
+  estValue ratio per category, fallback 0.92), priceAction
+  INCREASE | DECREASE | MAINTAIN (INCREASE če optimal > current
+  + 3%, DECREASE če < current - 3%, sicer MAINTAIN — re-validirana
+  z znakom priceAdjustmentPercent), priceAdjustmentPercent [-50, 50]
+  (= (optimal - current) / current × 100), expectedSellProbability
+  Lift [-25, 25] pp (positive = boljša prodaja, negativna = slabša
+  ampak večji profit; iz winRate per category ± adjustment ratio ×
+  100), expectedProfitChange € [-5000, 5000] (= optimal - current pri
+  buyPrice不变), pricingStrategy PREMIUM | COMPETITIVE | VALUE |
+  LIQUIDATION (PREMIUM > 1.1×estValue, COMPETITIVE 0.95-1.1, VALUE
+  0.75-0.95, LIQUIDATION < 0.75), dynamicPricingRule (max 300 chars —
+  npr. "drop 5% every 14 days until min €X" ali "Povišaj na X€; če
+  ni prodano v 14 dneh, znižaj 3% in ponovi vsakih 14 dni do
+  minimuma X€"), abTestRecommendation boolean (true če |adjustment|
+  >= 5%), reasoning (max 400 chars, slovenski povzetek) }].
+  - portfolio: { totalExpectedProfitLift € (sum max(0,
+  profitChange)), totalExpectedSellProbabilityLift pp (sum),
+  pricingPortfolioScore 0-100 (višji = bolje optimizirano; = 100 -
+  avg |pct|; ±10 od AI clamped [0, 100]), averagePriceAdjustment %
+  (avg |pct|), itemsNeedingIncrease count (= INCREASE akcije),
+  itemsNeedingDecrease count (= DECREASE akcije) }.
+  - Compute: query HELD trades z linked Listing (z price +
+  aiEstimatedValue + aiScore + aiRisk + dealScore + aiVerdict +
+  monitor.tags) + SOLD 12m za historical patterns (z listing.
+  aiEstimatedValue). computeHistoricalPatterns: avgSellPriceVsEstValue
+  (= avg sellPrice/estValue ratio, fallback 0.92), priceElasticity
+  ByCategory (iz profit CV × 10, [0, 10]), optimalPricePointByCategory
+  (iz sellPrice/estValue ratio per category, clamped [0.5, 1.3]),
+  categoryStats (count/avgProfit/avgSellPrice/avgBuyPrice/winRate).
+  buildDeterministicItem: currentPrice (listing.price ali estValue
+  ali buyPrice×1.2), optimalPrice (estValue × optRatio clamped [0.5,
+  1.3]×estValue; če ni estValue buyPrice×1.25), pricePosition (iz 5%
+  threshold), priceAction (iz pct sign ±3%), priceAdjustmentPercent
+  (clamped [-50, 50]), sellProbability (iz winRate ± adjustment ratio
+  × 100 clamped [5, 95]), expectedProfitChange (= optimal - current
+  clamped [-5000, 5000]), pricingStrategy (iz ratio optimal/estValue),
+  dynamicPricingRule (slovenski tekst z actionable plan), abTest
+  Recommendation (|pct| >= 5%), reasoning (slovenski). buildDeterministic
+  Portfolio: totalProfitLift (sum max(0, change)), totalProbLift
+  (sum), avgAdjustment, itemsNeedingIncrease/Decrease count, score
+  (= 100 - avg|pct|).
+  - AI-enhanced z grounding prompt (held items + historical patterns +
+  deterministic baseline + caps) + anti-hallucination (optimalPrice
+  clamped [0.5x, 1.3x] estValue anti-hallucination per item, če
+  manjka estValue [0.8x, 1.5x] buyPrice; priceAdjustmentPercent
+  [-50, 50]; expectedSellProbabilityLift [-25, 25];
+  expectedProfitChange [-5000, 5000]; pricingPortfolioScore ±10 od
+  deterministic clamped [0, 100]; enums validirana INCREASE |
+  DECREASE | MAINTAIN in PREMIUM | COMPETITIVE | VALUE | LIQUIDATION;
+  tradeId mora match-at held tradeId (skip unknown — anti-hallucination);
+  string length limits — dynamicPricingRule max 300, reasoning max
+  400, summary max 400) + 6h cache (key
+  `price-optimization-engine-pro:${JSON.stringify(heldItemIds)}` —
+  cache se invalidira ko held inventory se spremeni) + deterministic
+  fallback (ko AI failne ali ni podatkov — optimalPrice = estValue ×
+  0.92). GET+POST (handlePriceOptimizationEnginePro shared function
+  — AI Hub runner kompatibilnost). Empty-state fallback če 0 HELD
+  trades → returns "Ni HELD trgovin v inventarju" z aiUsed=false +
+  empty items + empty portfolio (vsi 0). Razlika od price-
+  intelligence-engine (v7.72 ki analizira pricing patterns) — ta
+  GENERIRA optimal price per item. Razlika od smart-pricing-engine
+  (basic) — ta je PRO z A/B testing in dynamic pricing rules. Razlika
+  od reserve-price-optimizer (ki optimira reserve) — ta optimira
+  AKTUALNE cene. Razlika od profit-margin-optimizer-v2 (ki optimira
+  margin) — ta optimira CENE per item. Razlika od profit-maximizer-
+  pro (v7.94 ki maksimizira profit preko 7 levers) — ta fokusira
+  izključno na PRICING per item.
+- **AI Deal Sourcing Intelligence** — `GET+POST /api/ai/deal-sourcing-intelligence`
+  - AI identificira NAJBOLJŠE vire za iskanje novih deal-ov — kje
+  iskati, katere ključne besede, kateri monitorji za dodati, katere
+  kategorije so zrele za sourcing. Fokus na SOURCING OPPORTUNITIES
+  (keywords, monitors, categories, gaps) — ne le trend tracking.
+  Razlika od sourcing (basic suggestions) — ta je INTELLIGENCE o
+  tem KODI deal-i prihajajo in kje najti več. Razlika od
+  deal-source-intelligence (v7.82 ki da composite scorecard per
+  source) — ta generira SEARCH KEYWORDS, NEW MONITORS in SOURCING
+  GAPS z timing advice. Razlika od deal-source-trend-analyzer (v7.87
+  ki track-a source trends) — ta forecast-a FUTURE sourcing strategy.
+  Razlika od deal-source-momentum-analyzer (v7.91 ki gleda momentum)
+  — ta identificira SOURCING OPPORTUNITIES (keywords, monitors,
+  categories). Razlika od deal-source-profitability-analyzer (v7.89
+  ki decomposes profit) — ta generira ACTIONABLE sourcing plan.
+  "Best source: Bolha (85/100, avg profit 45€). Keywords: 'PS5',
+  'iPhone 13', 'Samsung'. Gap: no Vinted monitor for moda. Add
+  monitor: 'Vinted nakit < 50€'."
+  - intelligence.bestSources: 3-5 najboljših virov [{ source (max 50,
+  lowercased, iz sellLocation), score 0-100 (= profitScore 0-40 +
+  roiScore 0-30 + volumeScore 0-30, ±10 od AI), avgProfit € [0,
+  100000], dealCount, reasoning (max 200, slovenski) }] (sorted by
+  score desc). ANTI-HALLUCINATION: source mora biti iz known sources
+  ali historical viri (drugace skip).
+  - intelligence.recommendedSearchKeywords: 5-8 ključnih besed
+  iz historical winner-jev [{ keyword (max 50, lowercased, iz
+  trade.title extracted — min 3 chars, no stopwords), expectedROI
+  0-1000 % (= avgProfit × 0.5), category (max 50, iz kategorije
+  keyword-a) }]. ANTI-HALLUCINATION: keyword mora biti iz known
+  historical keywords (drugace skip).
+  - intelligence.recommendedPriceRanges: 3-5 price ranges [{
+  range (max 30, npr. "100-200€" — iz buyPrice bucket thresholds
+  50/100/200/500), avgROI 0-1000 % (= avgProfit × 2), dealFrequency
+  0-100 (= count clamped) }].
+  - intelligence.recommendedCategories: 3-8 kategorij zrelih za
+  sourcing [{ category (max 50, lowercased, iz trade.category),
+  opportunity (max 100 — HIGH_VALUE če avgProfit > 30, STABLE če
+  > 10, LOW_MARGIN sicer), expectedProfit € [0, 100000] (=
+  avgProfit per cat) }]. ANTI-HALLUCINATION: category mora biti iz
+  known historical categories.
+  - intelligence.sourcingGaps: 2-5 vrzeli v trenutni sourcing
+  strategiji [{ gap (max 200), impact (max 200), recommendation
+  (max 200) }] — identificira: (1) high-profit vir brez aktivnega
+  monitorja, (2) high-profit kategorija brez monitorja z tag-om,
+  (3) ni aktivnih monitorjev, (4) manjkajoči glavni viri (bolha,
+  vinted, avtonet, mobile-de, kleinanzeigen, subito, willhaben).
+  - intelligence.newMonitorRecommendations: 2-4 specifični
+  monitorji za setup [{ name (max 100), source (max 30, lowercased
+  — iz known sources ali historical), searchUrl (max 200 — iz
+  known source URL templates), keywords string[] (max 5, iz
+  historical top keywords), expectedDeals [0, 5000] (= max(5,
+  s.count / 6) za known sources, 5 default za unknown) }].
+  ANTI-HALLUCINATION: source mora biti iz known sources.
+  - intelligence.sourcingTimingAdvice: 3-5 timing priporočil [{
+  dayOfWeek (max 10 — Pon/Tor/Sre/Čet/Pet/Sob/Ned, iz sellDate
+  getDay()), hourRange (max 20, default "18:00-22:00"),
+  dealQualityScore 0-100 (= (d.avgProfit / overallAvg) × 50 clamped
+  [0, 100]) }].
+  - intelligence.competitorSourcingInsight: slovenski tekst (max
+  400) — kje konkurenti iščejo deal-e in kako pridobiti prednost.
+  - intelligence.sourcingEfficiencyScore: 0-100 (= 0 + activeMonitors
+  0-30 (× 5) + sourceDiversity 0-25 (× 5 per source) + avgProfit
+  0-25 (/ 2) + keywordCoverage 0-20 (count); ±10 od AI clamped
+  [0, 100]).
+  - Compute: query SOLD 12m z sellLocation + category + title + all
+  monitors za coverage. computeSourcingHistory: bySource (count/
+  totalProfit/totalRevenue/totalCost/avgROI/avgProfit), byCategory
+  (count/totalProfit/avgProfit/avgROI/titles top 5), byPriceRange
+  (count/totalProfit), byDayOfWeek (count/avgProfit/totalProfit),
+  byHour (count/avgProfit), topKeywords (extracted iz title — min 3
+  chars, no stopwords, count/avgProfit/avgROI/category). buildBest
+  Sources (profitScore 40 + roiScore 30 + volumeScore 30). build
+  RecommendedKeywords (iz top keywords sort by avgProfit desc).
+  buildRecommendedPriceRanges (iz byPriceRange sort by avgROI
+  desc). buildRecommendedCategories (iz byCategory sort by avgProfit
+  desc). buildSourcingGaps (unmonitored high-profit viri/kategorije,
+  missing major sources). buildNewMonitorRecommendations (z known
+  source URL templates). buildSourcingTimingAdvice (iz byDayOfWeek
+  sort by dealQualityScore desc). buildSourcingEfficiencyScore
+  (composite).
+  - AI-enhanced z grounding prompt (sourcing history + monitor
+  coverage + deterministic intelligence + caps) + anti-hallucination
+  (bestSources samo iz known sources ali historical viri (drugace
+  skip), recommendedSearchKeywords samo iz known historical keywords
+  ali generic tech (drugace skip), recommendedCategories samo iz
+  known historical categories, newMonitorRecommendations source
+  samo iz known sources, score 0-100 ±10 clamped [0, 100], avgROI
+  [0, 1000], avgProfit [0, 100000], dealFrequency [0, 100],
+  expectedDeals [0, 5000], sourcingEfficiencyScore ±10 clamped [0,
+  100], enums validirana, string length limits — gap/impact/
+  recommendation max 200, name max 100, source max 30, searchUrl
+  max 200, dayOfWeek max 10, hourRange max 20, reasoning max 200,
+  competitorSourcingInsight max 400, summary max 400) + 6h cache (key
+  `deal-sourcing-intelligence:${currentMonth}`) + deterministic
+  fallback (ko AI failne ali ni podatkov — compute iz historical
+  source ROI). GET+POST (handleDealSourcingIntelligence shared
+  function — AI Hub runner kompatibilnost). Empty-state fallback če
+  0 SOLD trades → returns "Ni SOLD trgovin v zadnjih 12 mesecih" z
+  aiUsed=false + empty intelligence z sourcingGap "Ni SOLD trgovin"
+  + efficiency 0.
+- **AI Profit Margin Maximizer** — `GET+POST /api/ai/profit-margin-maximizer`
+  - AI identificira specifične akcije za MAKSIMIZACIJO profitnih
+  marž. Najde MAXIMUM dosegljito maržo in da plan za dosego.
+  Razlika od profit-margin-forecaster-pro (v7.85 ki forecast-a
+  margin z scenarios) — ta MAKSIMIZIRA margin z actionable plan.
+  Razlika od profit-margin-optimizer-v2 (ki optimira margin) — ta
+  najde MAXIMUM in da plan za dosego. Razlika od profit-margin-
+  acceleration-tracker (v7.93 ki track-a margin acceleration) —
+  ta maksimizira FUTURE margin z maximization actions. Razlika
+  od profit-maximizer-pro (v7.94 ki maksimizira profit preko 7
+  levers) — ta fokusira izključno na MARGIN maximization. Razlika
+  od profit-margin-heatmap (ki prikazuje margin distribution) —
+  ta daje MAXIMIZATION PLAN. Razlika od profit-margin-trend-
+  analyzer (v7.82 ki track-a margin trend) — ta maksimizira
+  future margin. "Current margin: 22%, max achievable: 35% (gap:
+  13%). Quick win: raise elektronika prices +5% → +3% margin.
+  Action: negotiate Bolha fees → +2% margin."
+  - baseline: { currentAvgMargin % clamped [-50, 100] (= totalProfit
+  / totalRevenue × 100 iz SOLD 12m), bestMarginEver % clamped [-50,
+  100] (max monthly margin iz 12 monthly buckets), worstMarginEver
+  % clamped [-50, 100] (min monthly margin), maxAchievableMargin %
+  clamped [-50, 100] (= current + sumOpps × 0.7 overlap factor —
+  apply 30% overlap discount ker akcije so medsebojno odvisne),
+  currentMarginGap pp [0, 50] (= max - current) }.
+  - opportunities: { priceOptimizationPotential pp [0, 50] (= 40%
+  of (bestMarginEver - currentAvg) — izkoristek pricing gap),
+  costReductionPotential pp [0, 50] (= 12% of totalCost /
+  totalRevenue × 100 — pogajanje z dobavitelji za 10-15% popust),
+  feeReductionPotential pp [0, 50] (= 30% of fees če feeRate >
+  5%, sicer 10% — premik na platforme z nižjimi fees), category
+  MixOptimization pp [0, 50] (= 50% of (bestCatMargin -
+  currentAvg) — premik 20% kapitala v top-margin kategorijo),
+  efficiencyOptimization pp [0, 50] (= 1-3 pp iz avgHoldDays —
+  pospešitev turnover) }.
+  - plan.maximizationActions: 4-6 akcij [{ action (max 250 chars,
+  slovenski), marginImpact pp [0, 50] (koliko pp margin doda),
+  profitImpact € [-50000, 50000] (= totalRevenue × marginImpact /
+  100), difficulty EASY | MEDIUM | HARD, timeframe (max 50 —
+  "1-2 tedna" / "2-4 tedne" / "1-3 mesece"), category (max 50 —
+  pricing | sourcing | fees | category_mix | efficiency) }]
+  (akcije: pricing — povišaj cene 5-10%; cost reduction — pogajaj
+  se z existing dobavitelji za 10-15% popust; fee reduction —
+  premakni listings na Vinted 0% buyer fee, Bolha free; category
+  mix — premakni 20% kapitala v top-margin kategorijo; efficiency
+  — pospeši turnover z 30%).
+  - plan.maximizationStrategy: slovenski tekst (max 500) — kako
+  doseči max margin z vsemi akcijami (hitri quick wins v 1 tednu,
+  MEDIUM v 30 dneh, HARD v 1-3 mesecih).
+  - plan.prioritizedActions: 4-6 akcij ranked [{ action (max 250),
+  marginImpact pp [0, 50], ease 0-100 (EASY = 90, MEDIUM = 50,
+  HARD = 20), priorityScore 0-100 (= marginImpact × 0.7 + ease ×
+  0.3) }] (sorted by priorityScore desc).
+  - plan.quickWins: 2-3 EASY akcije za implementacijo DANES [{
+  action (max 250), marginImpact pp [0, 50], profitImpact €
+  [-50000, 50000] }] (filter difficulty = EASY, top 3 by
+  marginImpact).
+  - plan.projectedMarginAfterActions: % clamped [-50, 100] —
+  pričakovana margin po implementaciji (= current + sumActions ×
+  0.6 capture rate — 60% realističen capture faktor).
+  - plan.marginMaximizationScore: 0-100 (višji = bližje max margin;
+  = 100 - currentMarginGap × 2; ±10 od AI clamped [0, 100]).
+  - plan.riskTradeoffs: 2-3 tveganja [{ risk (max 200, slovenski),
+  severity LOW | MEDIUM | HIGH, mitigation (max 200) }] (agresivno
+  povišanje cen zmanjša sell-through, premik v nove kategorije
+  learning curve, premik na platforme z nižjimi fees zmanjša volume).
+  - Compute: query SOLD 12m z buyDate + sellDate + sellLocation +
+  category. computeMarginContext: monthlyMargins (12 buckets, per
+  month = profit/revenue × 100), byCategory (count/profit/revenue/
+  cost/margin), byPriceRange (count/profit/revenue/cost/margin),
+  bySource (count/profit/revenue/cost/margin), totalProfit/Revenue/
+  Cost/Fees, avgProfitPerTrade, avgHoldDays (iz sellDate - buyDate).
+  computeOpportunities (5 opportunities izgorene zgoraj). compute
+  Baseline (max = current + sumOpps × 0.7). buildDeterministicPlan
+  z 5 akcijami (pricing EASY, cost reduction MEDIUM, fee reduction
+  EASY, category mix HARD, efficiency MEDIUM), sort prioritized
+  Actions by marginImpact × 0.7 + ease × 0.3, quickWins EASY only.
+  - AI-enhanced z grounding prompt (baseline + opportunities +
+  marginContext + deterministic plan + caps) + anti-hallucination
+  (margins clamped [-50, 100], marginImpact [0, 50], profitImpact
+  [-50000, 50000], ease [0, 100], priorityScore [0, 100],
+  projectedMarginAfterActions ±10 od deterministic clamped [-50,
+  100], marginMaximizationScore ±10 od deterministic clamped [0,
+  100], enums validirana EASY | MEDIUM | HARD in LOW | MEDIUM |
+  HIGH, string length limits — action max 250, timeframe max 50,
+  category max 50, strategy max 500, risk max 200, mitigation max
+  200, summary max 400) + 6h cache (key `profit-margin-maximizer:${
+  currentMonth}`) + deterministic fallback (ko AI failne ali ni
+  podatkov — compute iz opportunity gaps). GET+POST
+  (handleProfitMarginMaximizer shared function — AI Hub runner
+  kompatibilnost). Empty-state fallback če 0 SOLD trades →
+  returns "Ni SOLD trgovin v zadnjih 12 mesecih" z aiUsed=false +
+  empty baseline (vsi 0) + empty opportunities (vsi 0) + empty
+  plan (maximizationStrategy = "Ni SOLD trgovin za margin
+  maximization plan.").
+
+### Changed
+- AI_ENDPOINTS.md: 344 → 347 endpoints (+3 AI: deal-sourcing-intelligence pos 98, price-optimization-engine-pro pos 265, profit-margin-maximizer pos 284)
+- README.md: v7.94.0 → v7.95.0 badge, 344 → 347 AI endpoints, 521 → 524 API routes, ~207 → ~210 funkcij, 148+ → 151+ profit pipeline funkcij, dodan v7.95 "Kaj je novega" block, posodobljen Roadmap (v7.95 trenutno), dodana 3 endpoint line v Profit pipeline section, dodana Zadnje verzije entry, tagline 344 → 347 AI endpointov
+- CHANGELOG.md: [Unreleased] Načrtovano za v7.95+ → ...za v7.96+, dodana nova [7.95.0] sekcija z vsemi 3 endpoint-i in podrobnimi opisi (response shape, anti-hallucination rules, AI cache key, deterministic fallback, example comment, razlika od podobnih obstoječih endpoint-ov). Skupno 344 AI → 347 AI (+3), 72 analytics nespremenjeno (0 new), 521 routes → 524 routes (+3), ~207 funkcij → ~210 funkcij (+3), 148+ funkcij → 151+ funkcij v profit pipeline (+3).
+- Verzija aplikacije: v7.95.0
 
 ## [7.94.0] - 2026-08-15
 
