@@ -13412,3 +13412,55 @@ Stage Summary:
 - Dokumentacija sinhrono posodobljena (AI_ENDPOINTS.md, README, CHANGELOG, GitHub About)
 - GitHub sinhroniziran (0 commit-ov ahead)
 - Verzija aplikacije: v8.02.0
+
+---
+Task ID: v8.03
+Agent: full-stack-developer
+Task: Add 3 new profit-maximizing features for v8.03 — AI Profit Horizon Maximizer, AI Deal Source Margin Maximizer, AI Inventory Yield Maximizer
+
+Work Log:
+- Prebral worklog.md (v8.02.1, 368 AI endpoints, 545 routes) in pattern file-a (profit-scale-engine, deal-source-roi-maximizer, inventory-capital-efficiency-maximizer)
+- Ustvaril 3 nove AI endpoint-e v src/app/api/ai/:
+  1. profit-horizon-maximizer/route.ts (~640 vrstic) — AI identificira MAXIMUM profit achievable nad 4 horizonti (7d/30d/90d/365d) z requirements matrix (inventoryNeeded/capitalNeeded/tradesNeeded/avgROI), feasibility (EASY/MODERATE/HARD/AMBITIOUS), confidenceLevel, bestHorizon (profit/time ratio), profitAccelerationActions (8 akcij), horizonBottlenecks (4), cumulativeProjection (12 mesečni). Anti-hallucination: maxAchievableProfit ∈ [dailyRate × days × 1.0, × 3.0]. 6h cache (key `profit-horizon-maximizer:${currentMonth}`).
+  2. deal-source-margin-maximizer/route.ts (~620 vrstic) — AI MAXIMIZIRA MARGIN % PER SOURCE (ne ROI %, ne volume) z marginMaximizationAction (IMPROVE_PRICING/REDUCE_COSTS/OPTIMIZE_FEES/SHIFT_CATEGORY_MIX/EXIT), marginMaximizationLevers (4 per source), projectedMargin, marginUplift, sourceMarginRanking. Portfolio z currentPortfolioMargin/maximizedPortfolioMargin/totalMarginUplift/capitalReallocationAdvice. Anti-hallucination: projectedMargin ∈ [currentMargin, currentMargin × 1.5 ali +25pp]. 6h cache (key `deal-source-margin-maximizer:${currentMonth}`).
+  3. inventory-yield-maximizer/route.ts (~700 vrstic) — AI MAXIMIZIRA YIELD (profit as % of capital deployed) na HELD inventory z annualizedYield (currentYield × 365/daysHeld), yieldScore (60% annualizedYield + 25% currentYield + 15% speedBonus), yieldMaximizationAction (HOLD_FOR_YIELD/SELL_FOR_YIELD/REPRICE_FOR_YIELD/BUNDLE_FOR_YIELD/UPGRADE_FOR_YIELD), maximizedYield, yieldUplift, optimalHoldTime, yieldOptimizationActions. Portfolio z yieldGrade (A+ to F) in yieldRanking. Anti-hallucination: maximizedYield ∈ [currentYield, currentYield × 1.6 ali +35pp]. 6h cache (key `inventory-yield-maximizer:${JSON.stringify(heldItemIds)}` — invalidira ko held inventory se spremeni).
+- Vsi 3 endpoint-i: GET+POST shared handler (`handleX`), export const runtime='nodejs', dynamic='force-dynamic', 20/min rate limit, grounding prompt suffix, deterministic fallback če AI call faila, empty-state fallback (0 SOLD ali 0 HELD trades)
+- Počistil dead `total` spremenljivko v computeYieldScore (inventory-yield-maximizer) — lint 0 errors
+- Regeneriral AI_ENDPOINTS.md z Python skripto: 368 → 371 endpoints (+3) — profit-horizon-maximizer, deal-source-margin-maximizer, inventory-yield-maximizer (sortirano)
+- Posodobil README.md:
+  * Version badge: v8.02.0 → v8.03.0
+  * AI Endpoints badge: 368 → 371
+  * API Routes badge: 545 → 548
+  * Tagline: "368 AI endpointov + 72 analytics" → "371 AI endpointov + 72 analytics"
+  * Overview: "Verzija v8.02.0" → "Verzija v8.03.0", "~231 funkcij" → "~234 funkcij"
+  * "Kaj je novega v v7.56–v8.02" → "v7.56–v8.03" z novim v8.03 blokom (3 funkcije z full response shape opisom)
+  * Roadmap: "v8.02 (trenutno — ~231 funkcij)" → "v8.03 (trenutno — ~234 funkcij)"
+  * Naslednji koraki: "v7.50-v8.02 funkcije" → "v7.50-v8.03 funkcije"
+  * Endpointi count: "368 AI + 72 analytics + 10 cron + sistemski = 545" → "371 AI + 72 analytics + 10 cron + sistemski = 548"
+  * Project structure: "368 AI endpointov" → "371 AI endpointov"
+  * Testing: "545 API routes" → "548 API routes"
+  * Changelog zadnje verzije list: dodal v8.03.0 entry na vrh
+  * Profit pipeline list: dodal "AI Profit Horizon Maximizer, AI Deal Source Margin Maximizer, AI Inventory Yield Maximizer"
+  * Popolna zgodovina: "do v8.02" → "do v8.03"
+  * 11 referenc na "v8.03" v README (≥10 ✅)
+- Posodobil CHANGELOG.md:
+  * [Unreleased] "v8.03+" → "v8.04+"
+  * Dodal [8.03.0] sekcijo (2026-08-17) z vsemi 3 endpoint-i + Changed — Documentation sync sekcijo
+- Kvaliteta:
+  * `bun run lint` → 0 errors ✅
+  * `npx tsc --noEmit` → 0 errors ✅
+  * curl GET+POST na vseh 3 endpointih → HTTP 200 ✅ (empty-state fallback ker ni SOLD/HELD trgovin v DB)
+  * `grep "Total:" AI_ENDPOINTS.md` → "371 endpoints" ✅
+  * `grep -c "v8.03" README.md` → 11 (≥10 ✅)
+  * `grep "371 AI" README.md` → obstaja ✅
+  * `grep "## \[8.03.0\]" CHANGELOG.md` → obstaja ✅
+  * dev.log brez runtime napak (samo Prisma query log-i)
+
+Stage Summary:
+- v8.03 uspešno dokončana (pending commit + push od main agent-a)
+- 3 PROFIT-MAXIMIZING funkcije: AI Profit Horizon Maximizer (multi-horizon 7d/30d/90d/365d z bestHorizon + acceleration), AI Deal Source Margin Maximizer (margin % per source z 5 actions in levers), AI Inventory Yield Maximizer (yield % per item z annualizedYield in yieldGrade A+ to F)
+- AI endpointi: 368 → 371 (+3)
+- Analytics endpointi: 72 (nespremenjeno — vsi 3 so AI)
+- Total API routes: 545 → 548 (+3)
+- Dokumentacija sinhrono posodobljena (AI_ENDPOINTS.md, README, CHANGELOG)
+- Verzija aplikacije: v8.03.0

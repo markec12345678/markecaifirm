@@ -6,11 +6,61 @@ Format sledi [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), verzije s
 
 ## [Unreleased]
 
-Načrtovano za v8.03+:
+Načrtovano za v8.04+:
 - WebSocket real-time negotiation (SSE namesto polling)
 - Playwright E2E testi za glavne flow-e
 - TLS fingerprinting (curl-impersonate)
 - ML model za buyer matchmaker (fine-tuned na realnem data)
+
+## [8.03.0] - 2026-08-17
+
+### Added — Profit Horizon Maximizer + Deal Source Margin Maximizer + Inventory Yield Maximizer (3 funkcije)
+
+- **AI Profit Horizon Maximizer** — `GET+POST /api/ai/profit-horizon-maximizer`
+  - AI identifies MAXIMUM profit achievable across different time horizons (7/30/90/365 days)
+  - horizons: 4 entries { period, maxAchievableProfit, requirements (inventoryNeeded/capitalNeeded/tradesNeeded/avgROI), actions, feasibility (EASY/MODERATE/HARD/AMBITIOUS), confidenceLevel }
+  - bestHorizon (period z best profit/time ratio)
+  - profitAccelerationActions (how to reach longer horizons FASTER)
+  - horizonBottlenecks (what limits each horizon)
+  - cumulativeProjection (12-month month-by-month)
+  - AI cache (6h TTL) keyed by currentMonth
+  - 'In 7 days you can make 500€, in 30 days 2000€, in 90 days 8000€ — here is what each requires.'
+  - Anti-hallucination: maxAchievableProfit ∈ [dailyRate × days × 1.0, × 3.0]
+  - Empty-state fallback če 0 SOLD trades
+
+- **AI Deal Source Margin Maximizer** — `GET+POST /api/ai/deal-source-margin-maximizer`
+  - AI maximizes PROFIT MARGINS PER SOURCE — which sources have best margins and how to improve them
+  - Per source: avgMargin, avgMarkup, totalProfit, totalRevenue, marginTrend (INCREASING/STABLE/DECREASING)
+  - Per source maximization: marginMaximizationAction (IMPROVE_PRICING/REDUCE_COSTS/OPTIMIZE_FEES/SHIFT_CATEGORY_MIX/EXIT),
+    projectedMargin, marginUplift, marginMaximizationLevers, sourceMarginRanking
+  - Portfolio: currentPortfolioMargin, maximizedPortfolioMargin, totalMarginUplift, capitalReallocationAdvice,
+    sourceMarginRanking
+  - AI cache (6h TTL) keyed by currentMonth
+  - 'Bolha margin 45% → 58% (IMPROVE_PRICING, +13pp). Vinted margin 22% → 35% (REDUCE_COSTS, +13pp).'
+  - Anti-hallucination: margins [-50, 100], projectedMargin ∈ [currentMargin, currentMargin × 1.5 or +25pp]
+  - Empty-state fallback če 0 SOLD trades
+
+- **AI Inventory Yield Maximizer** — `GET+POST /api/ai/inventory-yield-maximizer`
+  - AI maximizes YIELD (profit as % of capital deployed) on held inventory — like a financial yield optimizer
+  - Per item: capitalDeployed, estValue, currentYield, annualizedYield (currentYield × 365/daysHeld),
+    yieldScore (60% annualizedYield + 25% currentYield + 15% speedBonus)
+  - Per item maximization: yieldMaximizationAction (HOLD_FOR_YIELD/SELL_FOR_YIELD/REPRICE_FOR_YIELD/BUNDLE_FOR_YIELD/UPGRADE_FOR_YIELD),
+    maximizedYield, yieldUplift, optimalHoldTime, yieldOptimizationActions
+  - Portfolio: currentPortfolioYield, maximizedPortfolioYield, totalYieldUplift, yieldGrade (A+ to F),
+    yieldRanking (items by maximizedYield)
+  - AI cache (6h TTL) keyed by JSON.stringify(heldItemIds) — invalidates when held inventory changes
+  - 'iPhone 13 yield 28.9% (annualized 421%) → HOLD_FOR_YIELD, 35% in 14d. PS5 yield 8% → SELL_FOR_YIELD.'
+  - Anti-hallucination: yields [-50, 500], maximizedYield ∈ [currentYield, currentYield × 1.6 or +35pp]
+  - Empty-state fallback če 0 HELD trades → grade F
+
+### Changed — Documentation sync
+- **AI_ENDPOINTS.md** regenerated: 368 → 371 AI endpoints (+3)
+- **README.md**: version v8.02.0 → v8.03.0, AI Endpoints badge 368 → 371, API Routes badge 545 → 548,
+  tagline "368 AI endpointov + 72 analytics" → "371 AI endpointov + 72 analytics", Overview "v8.02.0" → "v8.03.0",
+  funkcij count ~231 → ~234, "Kaj je novega" v7.56-v8.02 → v7.56-v8.03, Roadmap v8.02 → v8.03,
+  Changelog zadnje verzije list v8.02.0 → v8.03.0
+- Total API routes: 545 → 548 (+3)
+- Analytics endpoints: 72 (nespremenjeno — vsi 3 novi so AI)
 
 ## [8.02.0] - 2026-08-16
 
