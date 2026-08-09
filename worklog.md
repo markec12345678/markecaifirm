@@ -13746,3 +13746,34 @@ Stage Summary:
 - Total API routes: 554 → 557 (+3)
 - Dokumentacija sinhrono posodobljena (AI_ENDPOINTS.md, README, CHANGELOG)
 - Verzija aplikacije: v8.06.0
+
+---
+Task ID: v8.06.1
+Agent: main
+Task: v8.06 commit + push + GitHub About + Agent Browser verification
+
+Work Log:
+- Prejel poročilo od full-stack-developer podagenta (Task v8.06)
+- Preveril 3 nove endpoint-e: revenue-per-trade-maximizer (200 GET+POST), deal-source-cash-flow-maximizer (200 GET+POST), inventory-annualized-return-maximizer (200 GET+POST)
+- Preveril doc sync: AI_ENDPOINTS.md (380 ✅), README v8.06 (10 refs ✅), README 380 AI (6 refs ✅), CHANGELOG v8.06 ✅
+- Preveril lint: 0 napak ✨
+- Preveril typecheck: 0 napak ✨
+- Posodobil GitHub About opis: 377 AI → 380 AI, 554 routes → 557 routes (via API PATCH)
+- Commit: "v8.06: Revenue Per Trade Maximizer + Deal Source Cash Flow Maximizer + Inventory Annualized Return Maximizer" (673188b)
+- Push na GitHub: uspešen ✅, PAT očiščen ✅
+- Agent Browser self-verification:
+  - Stran se pravilno naloži (HTTP 200)
+  - AI Hub prikazuje revenue-per-trade-maximizer (v8.06) v iskalniku ✅
+  - Runner test: klik na revenue-per-trade-maximizer → POST request → valid JSON ✅
+  - Response: {"ok":true, "current":{...}, "maximization":{revenueMultiplier, revenueGrade}, "aiUsed":false}
+  - Brez runtime napak v dev.log
+
+Stage Summary:
+- v8.06 uspešno dokončana in potisnjena na GitHub
+- 3 PROFIT-MAXIMIZING funkcije: AI Revenue Per Trade Maximizer, AI Deal Source Cash Flow Maximizer, AI Inventory Annualized Return Maximizer
+- AI endpointi: 377 → 380 (+3)
+- Analytics endpointi: 72 (nespremenjeno — vsi 3 so AI)
+- Total API routes: 554 → 557 (+3)
+- Dokumentacija sinhrono posodobljena (AI_ENDPOINTS.md, README, CHANGELOG, GitHub About)
+- GitHub sinhroniziran (0 commit-ov ahead)
+- Verzija aplikacije: v8.06.0
