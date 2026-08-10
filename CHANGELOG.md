@@ -6,11 +6,181 @@ Format sledi [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), verzije s
 
 ## [Unreleased]
 
-Načrtovano za v8.09+:
+Načrtovano za v8.10+:
 - WebSocket real-time negotiation (SSE namesto polling)
 - Playwright E2E testi za glavne flow-e
 - TLS fingerprinting (curl-impersonate)
 - ML model za buyer matchmaker (fine-tuned na realnem data)
+
+## [8.09.0] - 2026-08-22
+
+### Added — Profit Multiplier Maximizer + Deal Source Capital Return Maximizer + Inventory Profit Per Day Growth Maximizer (3 funkcije)
+
+- **AI Profit Multiplier Maximizer** — `GET+POST /api/ai/profit-multiplier-maximizer`
+  - AI MAXIMIZES MAXIMUM PROFIT MULTIPLIER — how many times current profit can be multiplied
+    by combining ALL profit optimization dimensions into a single cumulative multiplier
+    (compounding product of 6 dimensions: pricing × volume × sourcing × turnover × channel × efficiency)
+  - "Your current profit is 2000€/mo. With all optimizations, it could be 7.2× = 14,400€/mo."
+  - Different from profit-per-day-scaling-maximizer (v8.08 which maximizes and scales DAILY PROFIT
+    with scalingPath phases) — this MAXIMIZES PROFIT MULTIPLIER (cumulative product of all 6
+    dimensions, not daily profit scaling)
+  - Different from profit-per-euro-maximizer (v8.07 which maximizes profit per euro deployed —
+    capital efficiency ratio) — this MAXIMIZES PROFIT MULTIPLIER (× how many times profit, not
+    €/€ ratio)
+  - Different from revenue-per-trade-maximizer (v8.06 which maximizes top-line sell price per
+    trade) — this MAXIMIZES PROFIT MULTIPLIER with 6 dimension multipliers and cumulativeMaxMultiplier
+  - Different from deal-source-cash-flow-maximizer (v8.06 which maximizes cash flow per source)
+    — this MAXIMIZES PROFIT MULTIPLIER across the entire portfolio with multiplierGrade and
+    multiplierProjection
+  - Different from inventory-annualized-return-maximizer (v8.06 which maximizes annualized %
+    return on held inventory) — this maximizes PROFIT MULTIPLIER (× how many times, not % return)
+  - Different from inventory-capital-return-maximizer (v8.07 which maximizes return OF capital)
+    — this maximizes PROFIT MULTIPLIER (return ON profit scaled, not capital returned)
+  - Different from profit-scale-engine (v7.96 which scales profit with growth engine) — this
+    MAXIMIZES PROFIT MULTIPLIER with 6 dimension multipliers (pricing/volume/sourcing/turnover/
+    channel/efficiency) and cumulativeMaxMultiplier
+  - Different from profit-velocity-maximizer (v7.98 which maximizes €/day velocity) — this
+    maximizes PROFIT MULTIPLIER (cumulative ×, not €/day velocity)
+  - Different from profit-acceleration-maximizer (v8.05 which maximizes growth rate
+    acceleration) — this MAXIMIZES PROFIT MULTIPLIER with multiplierGrade and topMultiplierActions
+  - Different from profit-multiplier-engine (v7.96 which has multiplier-like scoring) — this
+    MAXIMIZES PROFIT MULTIPLIER with cumulativeMaxMultiplier (compounding product of all 6
+    dimensions) and multiplierProjection (3/6/12 month profit at maximized multiplier)
+  - Queries SOLD trades (last 12m) + HELD trades in parallel
+  - current: monthlyProfit €/mo (= totalProfit12m / 12), avgROI % (= totalProfit12m / soldCapital ×
+    100), avgHoldDays, tradeVolume trades/12m, capitalDeployed € (SOLD 12m + HELD), totalProfit12m €,
+    soldCount12m, heldCount
+  - maximization: pricingMultiplier [1.0, 2.0] (max profit gain from optimal pricing — AI up to
+    1.6 default), volumeMultiplier [1.0, 3.0] (max profit gain from increased trade volume — AI up
+    to 3.0 if tradeVolume < 12), sourcingMultiplier [1.0, 2.0] (max profit gain from better buy
+    prices — AI up to 1.7 default), turnoverMultiplier [1.0, 2.5] (max profit gain from faster
+    turnover — AI up to 2.5 if avgHoldDays > 90), channelMultiplier [1.0, 1.5] (max profit gain
+    from optimal platforms — AI up to 1.4 default), efficiencyMultiplier [1.0, 1.5] (max profit
+    gain from reduced fees — AI up to 1.3 default), cumulativeMaxMultiplier [1.0, 50.0] (product
+    of all 6 multipliers — compounding), maximizedMonthlyProfit € [0, 200000] (= current.monthlyProfit
+    × cumulativeMaxMultiplier), maximizationBreakdown (6 entries: dimension PRICING/VOLUME/
+    SOURCING/TURNOVER/CHANNEL/EFFICIENCY, multiplier [1.0, 3.0], contribution % [0, 100] share of
+    cumulative lift, rationale slovenian max 200), multiplierGrade A+/A/B/C/D/F (A+ if cumulative
+    ≥ 15.0, A ≥ 8.0, B ≥ 4.0, C ≥ 2.0, D ≥ 1.2, else F), topMultiplierActions (6-8 entries:
+    dimension, action slovenian max 200, expectedMultiplierLift [1.0, 3.0], priority HIGH/MEDIUM/
+    LOW sorted by lift descending), multiplierProjection (3 entries: months 3/6/12, projectedProfit
+    € [0, 200000] linear ramp 3m=25%, 6m=50%, 12m=100% adoption of cumulative multiplier)
+  - Anti-hallucination: multipliers [1.0, 3.0] each, cumulative [1.0, 50.0], profits [0, 200000]
+  - 6h cache (key `profit-multiplier-maximizer:${currentMonth}`)
+  - Deterministic fallback (6 dimension multipliers × current state heuristics × cumulative product
+    × breakdown contribution × top actions sorted by lift × 3/6/12 month projection + grade)
+  - Empty-state fallback if 0 SOLD and HELD trades → grade F
+
+- **AI Deal Source Capital Return Maximizer** — `GET+POST /api/ai/deal-source-capital-return-maximizer`
+  - AI MAXIMIZES CAPITAL RETURN per source — how much of the invested capital comes back from each
+    source (% returned / invested, not € profit, not € cash flow)
+  - "Bolha returns 85% of invested capital, Vinted returns 72%. Optimal: 95% Bolha + 88% Vinted
+    with these actions."
+  - Different from deal-source-profit-velocity-maximizer (v8.08 which maximizes VELOCITY of profit
+    per source — €/week how fast profit accumulates) — this MAXIMIZES CAPITAL RETURN per source
+    (% invested capital that returns, not €/week profit velocity)
+  - Different from deal-source-cash-flow-maximizer (v8.06 which maximizes NET CASH FLOW per source
+    after fees + carrying costs) — this maximizes CAPITAL RETURN RATE per source (% capital
+    returned, not € cash flow)
+  - Different from deal-source-revenue-maximizer (v8.07 which maximizes total revenue per source)
+    — this maximizes CAPITAL RETURN (returned/invested, not top-line revenue)
+  - Different from deal-source-profit-maximizer (v7.97 which maximizes total profit per source) —
+    this maximizes CAPITAL RETURN RATE per source (% capital that returns, not € profit)
+  - Different from deal-source-profit-per-trade-maximizer (v8.04 which maximizes profit per trade
+    €) — this maximizes CAPITAL RETURN per source (% returned, not €/trade)
+  - Different from deal-source-margin-maximizer (v8.03 which maximizes margin %) — this maximizes
+    CAPITAL RETURN RATE per source with returnMaximizationAction and capitalRecyclingSpeed
+  - Different from deal-source-roi-maximizer (v8.00 which maximizes ROI per source) — this
+    maximizes CAPITAL RETURN (returned/invested, not profit/cost)
+  - Different from deal-source-capital-efficiency-maximizer (v8.05 which maximizes capital
+    efficiency per source = profit per euro per day) — this maximizes CAPITAL RETURN RATE per
+    source (% capital returned, not profit per euro per day)
+  - Different from deal-source-volume-maximizer (v8.02 which maximizes trade volume per source)
+    — this maximizes CAPITAL RETURN per source (% capital that returns, not trade volume)
+  - Different from inventory-capital-return-maximizer (v8.07 which maximizes capital return OF
+    inventory portfolio) — this maximizes CAPITAL RETURN per SOURCE with sourceReturnRanking
+    and returnAtRiskCapital
+  - Different from profit-per-euro-maximizer (v8.07 which maximizes profit per euro deployed
+    across portfolio) — this maximizes CAPITAL RETURN per source (% returned, not €/€ profit)
+  - Queries SOLD trades (last 12m) with linked Listing (for monitor.source)
+  - Per source metrics: capitalInvested € (= sum(buyPrice + buyFees)), capitalReturned € (=
+    sum(sellPrice − sellFees)), returnRate % [0, 200] (= capitalReturned / capitalInvested × 100),
+    avgReturnTime days [1, 730] (= avg(sellDate − buyDate)), returnEfficiency [0, 100] (returnRate ×
+    speed combined), tradeCount
+  - maximization per source: returnMaximizationAction IMPROVE_SELL_PRICE/REDUCE_FEES/FASTER_SALE/
+    BETTER_SOURCING (uplift 12/5/8/15pp), maximizedReturnRate % [0, 200] (≥ current, ≤ current + 30pp
+    absolute uplift — anti-hallucination), returnUplift pp [0, 200], returnMaximizationLevers (3-5
+    slovenian strings max 200 each — specific capital return levers per source),
+    capitalRecyclingSpeed [0, 100] (how fast capital returns for reinvestment — combination of
+    returnRate × speed × action boost), returnAtRiskCapital € [0, 1000000] (capital that may not
+    return — items selling below cost in this source)
+  - portfolio: totalCurrentReturnRate %, totalMaximizedReturnRate %, totalReturnUplift pp,
+    totalCapitalAtRisk €, sourceReturnRanking Array<{ source, displayName, currentReturnRate,
+    maximizedReturnRate, rank }>, bestReturnSource
+  - Anti-hallucination: return rates [0, 200], scores [0, 100], capital [0, 1000000]
+  - 6h cache (key `deal-source-capital-return-maximizer:${currentMonth}`)
+  - Deterministic fallback (per-source return rate + efficiency + action × uplift + 3-5 levers per
+    source + recycling speed + capital at risk + portfolio ranking + best source)
+  - Empty-state fallback if 0 SOLD trades
+
+- **AI Inventory Profit Per Day Growth Maximizer** — `GET+POST /api/ai/inventory-profit-per-day-growth-maximizer`
+  - AI MAXIMIZES GROWTH RATE of daily profit from inventory — not just current daily profit, but
+    how fast it's growing and how to accelerate that growth (%/week growth rate, not absolute €/day)
+  - "Your daily profit growth is +2%/week, but could be +5%/week with these 4 actions."
+  - Different from profit-per-day-scaling-maximizer (v8.08 which maximizes and scales DAILY PROFIT
+    with scalingPath phases) — this MAXIMIZES GROWTH RATE of daily profit (%/week how fast it
+    grows, not absolute €/day)
+  - Different from profit-acceleration-maximizer (v8.05 which maximizes growth rate acceleration)
+    — this MAXIMIZES GROWTH RATE of daily profit from INVENTORY with growthAccelerationActions
+    and doublingTime (not just acceleration)
+  - Different from profit-multiplier-maximizer (v8.09 which maximizes maximum profit multiplier
+    with 6 dimensions) — this MAXIMIZES GROWTH RATE (how much %/week, not × how many times)
+  - Different from inventory-cash-yield-maximizer (v8.04 which maximizes annualized cash yield)
+    — this maximizes GROWTH RATE of daily profit (not annualized yield)
+  - Different from inventory-turnover-yield-maximizer (v8.05 which maximizes yield with
+    yieldCurve) — this MAXIMIZES GROWTH RATE with growthTrajectory and doublingTime
+  - Different from inventory-yield-maximizer (v8.03 which maximizes yield % per item) — this
+    MAXIMIZES GROWTH RATE of daily profit with growthGrade and growthBottlenecks
+  - Different from inventory-roi-maximizer-pro (v7.99 which maximizes ROI per item) — this
+    MAXIMIZES GROWTH RATE of daily profit from inventory (not ROI per item)
+  - Different from inventory-capital-efficiency-maximizer (v8.01 which maximizes capital
+    efficiency per item) — this MAXIMIZES GROWTH RATE of daily profit with growthTrajectory (not
+    capital efficiency per item)
+  - Different from inventory-capital-return-maximizer (v8.07 which maximizes capital return OF
+    inventory) — this MAXIMIZES GROWTH RATE of daily profit (return ON profit growth, not
+    capital returned)
+  - Different from inventory-profit-per-day-maximizer (v8.02 which maximizes daily profit per
+    item) — this MAXIMIZES GROWTH RATE of daily profit (how much %/week grows, not absolute
+    €/day per item)
+  - Different from inventory-annualized-return-maximizer (v8.06 which maximizes annualized %
+    return on held inventory) — this MAXIMIZES GROWTH RATE of daily profit with doublingTime
+    (not annualized return)
+  - Queries SOLD trades (last 12m) grouped by week + HELD trades (inventory pipeline)
+  - current: weeklyProfitGrowthRate %/week [-50, 100] (linear regression slope of weekly profit
+    over 52 weeks), dailyProfitGrowthRate %/day [-50, 100] (= weekly / 7), profitGrowthAcceleration
+    pp [-50, 100] (slope of last half vs first half), profitGrowthVolatility [0, 100] (coefficient
+    of variation of weekly profit), currentDailyProfit €/day [0, 10000] (= totalProfit12m / 365),
+    totalProfit12m €, soldCount12m, heldCount, heldCapital €
+  - maximization: currentGrowthRate %/week [-50, 100] (echoes current), maximizedGrowthRate
+    %/week [-50, 100] (optimal achievable, ≥ current, ≤ current × 2.5 or +50pp absolute uplift —
+    anti-hallucination), growthUplift pp [0, 100] (improvement = maximized − current),
+    growthAccelerationActions (4-6 entries: action slovenian max 200 — specific action to
+    accelerate growth rate, expectedGrowthLift pp [0, 100] how much pp will be added to growth rate,
+    timeline slovenian max 100 when to implement, difficulty EASY/MEDIUM/HARD), growthTrajectory
+    (8 entries: week 1-8, currentProjectedProfit €/day [0, 10000] profit at current growth rate
+    compound: base × (1 + rate)^week, maximizedProjectedProfit €/day [0, 10000] profit at maximized
+    growth rate), growthBottlenecks (3-5 slovenian strings max 200 each — what limits growth rate
+    acceleration), growthSustainability [0, 100] (whether current growth is sustainable —
+    combination of volatility × inventory × trade frequency × acceleration), growthGrade A+/A/B/C/
+    D/F (A+ if maximized × sustainability/100 ≥ 15, A ≥ 8, B ≥ 4, C ≥ 2, D ≥ 0.5, else F),
+    doublingTime days [1, 3650] (days to double daily profit at maximized growth rate — =
+    ln(2) / ln(1 + g/100) / 7 × 7 = ln(2) / ln(1 + g/100) days where g = maximizedGrowthRate %)
+  - Anti-hallucination: growth rates [-50, 100], profits [0, 10000]
+  - 6h cache (key `inventory-profit-per-day-growth-maximizer:${currentMonth}`)
+  - Deterministic fallback (52-week profit buckets × linear regression slope × acceleration ×
+    volatility + 4-6 actions × growth lift + 8-week trajectory × compound growth + 3-5
+    bottlenecks + sustainability score + grade + doubling time)
+  - Empty-state fallback if 0 SOLD and HELD trades → grade F
 
 ## [8.08.0] - 2026-08-21
 

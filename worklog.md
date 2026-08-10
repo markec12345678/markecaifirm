@@ -13839,3 +13839,40 @@ Stage Summary:
 - Dokumentacija sinhrono posodobljena (AI_ENDPOINTS.md, README, CHANGELOG, GitHub About)
 - GitHub sinhroniziran (0 commit-ov ahead)
 - Verzija aplikacije: v8.08.0
+
+---
+Task ID: v8.09
+Agent: full-stack-developer
+Task: Add 3 new profit-maximizing features for v8.09 — AI Profit Multiplier Maximizer, AI Deal Source Capital Return Maximizer, AI Inventory Profit Per Day Growth Maximizer
+
+Work Log:
+- Prebral worklog.md (project at v8.08.1, 386 AI endpoints, 563 total routes)
+- Študiral referenčne endpoint-e: src/app/api/ai/profit-per-day-scaling-maximizer/route.ts (v8.08) in src/app/api/ai/deal-source-profit-velocity-maximizer/route.ts (v8.08) za pattern
+- Ustvaril 3 nove AI endpoint-e v src/app/api/ai/:
+  1. profit-multiplier-maximizer/route.ts — AI MAKSIMIZIRA MAXIMUM PROFIT MULTIPLIER (cumulative product vseh 6 dimensions: pricing ×1.6 + volume ×3.0 + sourcing ×1.7 + turnover ×2.5 + channel ×1.4 + efficiency ×1.3 = cumulative ×15.6 compounding) z maximizationBreakdown 6 entries × contribution %, multiplierGrade A+/A/B/C/D/F, topMultiplierActions 6-8 sort by lift, multiplierProjection 3/6/12 month linear ramp
+  2. deal-source-capital-return-maximizer/route.ts — AI MAKSIMIZIRA CAPITAL RETURN per source (Bolha 85% return, Vinted 72% → optimalno 95%/88%) z returnMaximizationAction IMPROVE_SELL_PRICE/REDUCE_FEES/FASTER_SALE/BETTER_SOURCING, maximizedReturnRate [0, 200] anti-hallucination [current, current+30pp], capitalRecyclingSpeed [0, 100], returnAtRiskCapital €, sourceReturnRanking + bestReturnSource portfolio
+  3. inventory-profit-per-day-growth-maximizer/route.ts — AI MAKSIMIZIRA GROWTH RATE daily profit-a iz inventory-ja (current +2%/teden → maximized +5%/teden z 4 akcijami) z weeklyProfitGrowthRate (linear regression slope over 52 weeks), profitGrowthAcceleration (slope of last half vs first half), profitGrowthVolatility (coefficient of variation), growthAccelerationActions 4-6 × expectedGrowthLift pp, growthTrajectory 8-week compound projection current vs maximized, growthSustainability [0, 100], growthGrade A+/A/B/C/D/F, doublingTime (ln(2)/ln(1+g/100) days)
+- Vsi 3 endpoint-i sledijo vzorcu: `runtime='nodejs'`, `dynamic='force-dynamic'`, GET+POST shared handler (`handleX` shared function), try/catch z logger.error, 6h AI cache (getCachedAI/setCachedAI keyed by `${endpointName}:${currentMonth}`), rate limit 20/min, anti-hallucination clamping (clampNum/clampString/clampEnum), deterministic fallback vedno na voljo
+- Popravil TypeScript error: `Array<[MultiplierDimension, number]>` literal se je razširil v `(string|number)[][]` — ločil sort od literal array-a z eksplicitnim `sortedPairs`-om
+- Popravil typo `bottleneleneck_push:` labeled block → simple `if` statement
+- Generiral AI_ENDPOINTS.md z Python skripto: 386 → 389 endpoints (+3) ✅
+- Posodobil README.md: version badge v8.08.0 → v8.09.0, AI endpoints badge 386 → 389, API routes badge 563 → 566, tagline "386 AI" → "389 AI", overview v8.08.0 → v8.09.0, funkcij count 249 → 252, dodan v8.09 blok z 3 feature descriptions (Profit Multiplier Maximizer + Deal Source Capital Return Maximizer + Inventory Profit Per Day Growth Maximizer), Roadmap v8.08 → v8.09, Zadnje verzije v8.08.0 → v8.09.0, "vsi 386" → "vsi 389", "563 API routes" → "566 API routes"
+- Posodobil CHANGELOG.md: dodan `[8.09.0]` section z 3 feature-ji (Profit Multiplier Maximizer + Deal Source Capital Return Maximizer + Inventory Profit Per Day Growth Maximizer), `[Unreleased]` posodobljen z "v8.10+" (prej "v8.09+")
+- Quality checks:
+  - `bun run lint` → 0 errors ✨
+  - `npx tsc --noEmit` → 0 errors ✨
+  - curl GET + POST vseh 3 endpoint-ov → 200 ✅ (profit-multiplier-maximizer, deal-source-capital-return-maximizer, inventory-profit-per-day-growth-maximizer)
+  - `grep "Total:" AI_ENDPOINTS.md` = "Total: 389 endpoints" ✅
+  - `grep -c "v8.09" README.md` = 10 ✅ (≥10 required)
+  - `grep "389 AI" README.md` exists ✅
+  - `grep "## \[8.09.0\]" CHANGELOG.md` exists ✅
+  - dev.log brez runtime napak ✅
+
+Stage Summary:
+- v8.09 uspešno dokončana (pending commit + push od main agent-a)
+- 3 PROFIT-MAXIMIZING funkcije: AI Profit Multiplier Maximizer (cumulative × 6 dimensions compounding z maximizationBreakdown × contribution %, topMultiplierActions sorted by lift, multiplierProjection 3/6/12 month), AI Deal Source Capital Return Maximizer (per-source % capital return z returnMaximizationAction 4 actions × uplift pp, capitalRecyclingSpeed, returnAtRiskCapital, sourceReturnRanking, bestReturnSource), AI Inventory Profit Per Day Growth Maximizer (weekly growth rate linear regression z acceleration/volatility, growthAccelerationActions × expectedGrowthLift, 8-week growthTrajectory compound projection current vs maximized, growthSustainability, growthGrade, doublingTime = ln(2)/ln(1+g/100))
+- AI endpointi: 386 → 389 (+3)
+- Analytics endpointi: 72 (nespremenjeno — vsi 3 so AI)
+- Total API routes: 563 → 566 (+3)
+- Dokumentacija sinhrono posodobljena (AI_ENDPOINTS.md, README, CHANGELOG)
+- Verzija aplikacije: v8.09.0
