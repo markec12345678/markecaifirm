@@ -6,11 +6,174 @@ Format sledi [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), verzije s
 
 ## [Unreleased]
 
-Načrtovano za v8.08+:
+Načrtovano za v8.09+:
 - WebSocket real-time negotiation (SSE namesto polling)
 - Playwright E2E testi za glavne flow-e
 - TLS fingerprinting (curl-impersonate)
 - ML model za buyer matchmaker (fine-tuned na realnem data)
+
+## [8.08.0] - 2026-08-21
+
+### Added — Profit Per Day Scaling Maximizer + Deal Source Profit Velocity Maximizer + Inventory Return On Capital Maximizer (3 funkcije)
+
+- **AI Profit Per Day Scaling Maximizer** — `GET+POST /api/ai/profit-per-day-scaling-maximizer`
+  - AI MAXIMIZES and SCALES DAILY PROFIT — not just optimizes current daily profit but scales it up
+    (increases trade frequency, capital deployment and profit per trade simultaneously)
+  - "Your daily profit is 45€. To reach 150€/day you need: 2× more trades, 1.3× higher profit per trade
+    and 1.5× more capital."
+  - Different from profit-per-euro-maximizer (v8.07 which maximizes profit per euro deployed — capital
+    efficiency ratio) — this MAXIMIZES and SCALES DAILY PROFIT (€/day absolute, not ratio)
+  - Different from revenue-per-trade-maximizer (v8.06 which maximizes top-line sell price per trade) — this
+    maximizes DAILY PROFIT SCALED (frequency × profit per trade × capital)
+  - Different from deal-source-cash-flow-maximizer (v8.06 which maximizes cash flow per source) — this
+    maximizes and scales DAILY PROFIT across the entire portfolio with scalingPath (IMMEDIATE/
+    SHORT_TERM/MEDIUM_TERM/LONG_TERM phases)
+  - Different from inventory-annualized-return-maximizer (v8.06 which maximizes annualized % return on
+    held inventory) — this maximizes DAILY PROFIT €/day absolute
+  - Different from inventory-capital-return-maximizer (v8.07 which maximizes return OF capital) — this
+    maximizes and scales DAILY PROFIT (return ON capital scaled)
+  - Different from profit-scale-engine (v7.96 which scales profit with growth engine) — this maximizes
+    DAILY PROFIT with scalingPath phases and scalingBottlenecks
+  - Different from profit-velocity-maximizer (v7.98 which maximizes €/day velocity) — this maximizes and
+    SCALES daily profit with requiredTradesPerDay, requiredProfitPerTrade, requiredCapital, timeline,
+    feasibility per phase
+  - Different from profit-acceleration-maximizer (v8.05 which maximizes growth rate acceleration) — this
+    maximizes DAILY PROFIT with scaling multiplier and capitalScalingRequirement
+  - Queries SOLD trades (last 12m) + HELD trades in parallel
+  - current: currentDailyProfit €/day (= realized profit 12m / 365), currentTradeFrequencyPerWeek
+    trades/week (= soldCount × 7 / 365), avgProfitPerTrade €, capitalDeployed € (SOLD 12m + HELD),
+    totalProfit12m €, soldCount12m, heldCount, avgHoldDays, annualizedProfit €
+  - maximization: scalingPath (4 entries: phase IMMEDIATE/SHORT_TERM/MEDIUM_TERM/LONG_TERM,
+    targetDailyProfit €/day [0, 10000] (IMMEDIATE = current × 1.5, SHORT_TERM = current × 3, MEDIUM_TERM
+    = current × 5, LONG_TERM = current × 8 — anti-hallucination), requiredTradesPerDay trades/day [0, 100]
+    (= targetDailyProfit / requiredProfitPerTrade), requiredProfitPerTrade € [-5000, 50000] (IMMEDIATE =
+    current, SHORT_TERM = current × 1.1, MEDIUM_TERM = current × 1.2, LONG_TERM = current × 1.3),
+    requiredCapital € [0, 1000000] (= targetDailyProfit × avgHoldDays × 1.2), timeline (slovenian, max 200),
+    feasibility [0, 100] (IMMEDIATE 85, SHORT_TERM 70, MEDIUM_TERM 55, LONG_TERM 40)),
+    scalingBottlenecks (4-6 entries: phase, bottleneck, impact [0, 100], mitigation), scalingActions (6-8
+    entries: phase, action, expectedDailyProfitUplift €/day [0, 10000], priority HIGH/MEDIUM/LOW),
+    maximizedDailyProfit €/day [0, 10000] (= LONG_TERM targetDailyProfit), scalingMultiplier ratio
+    [1.0, 10.0] (= maximized / current), scalingGrade A+/A/B/C/D/F (A+ if multiplier ≥ 5.0, A ≥ 3.5, B ≥
+    2.5, C ≥ 1.8, D ≥ 1.2, else F), capitalScalingRequirement € (= LONG_TERM requiredCapital − current
+    capitalDeployed), timeToTargetScale days [1, 1095] (default 730)
+  - Anti-hallucination: daily profit [0, 10000], multiplier [1.0, 10.0], scores [0, 100]
+  - 6h cache (key `profit-per-day-scaling-maximizer:${currentMonth}`)
+  - Deterministic fallback (4 phases × scaling multipliers × feasibility + 4 bottlenecks × impact + 6-8
+    actions × uplift + maximized × LONG_TERM multiplier × grade × capital requirement × time-to-scale)
+  - Empty-state fallback if 0 SOLD and HELD trades → grade F
+
+- **AI Deal Source Profit Velocity Maximizer** — `GET+POST /api/ai/deal-source-profit-velocity-maximizer`
+  - AI MAXIMIZES VELOCITY of profit per source — how fast profit accumulates from each source (€/week)
+  - "Bolha generates 100€/week in profit, but could generate 180€/week if you increase trade frequency
+    from 3/week to 5/week."
+  - Different from deal-source-cash-flow-maximizer (v8.06 which maximizes NET CASH FLOW per source after
+    fees + carrying costs) — this MAXIMIZES VELOCITY of profit per source (€/week how fast profit
+    accumulates — timing + frequency + value, not cash flow accounting)
+  - Different from deal-source-revenue-maximizer (v8.07 which maximizes total revenue per source) — this
+    maximizes VELOCITY of profit (€/week, not top-line revenue)
+  - Different from deal-source-profit-maximizer (v7.97 which maximizes total profit per source) — this
+    maximizes VELOCITY (€/week how fast profit accumulates, not total profit)
+  - Different from deal-source-profit-per-trade-maximizer (v8.04 which maximizes profit per trade €) — this
+    maximizes VELOCITY of profit per source (€/week frequency × profit per trade, not just per-trade
+    value)
+  - Different from deal-source-margin-maximizer (v8.03 which maximizes margin %) — this maximizes VELOCITY
+    with velocityMaximizationAction and frequencyScalingPlan
+  - Different from deal-source-roi-maximizer (v8.00 which maximizes ROI per source) — this maximizes
+    VELOCITY with velocityScore and velocityProjection
+  - Different from deal-source-capital-efficiency-maximizer (v8.05 which maximizes capital efficiency per
+    source = profit per euro per day) — this maximizes VELOCITY of profit (€/week how fast profit
+    accumulates, not profit per euro per day)
+  - Different from deal-source-volume-maximizer (v8.02 which maximizes trade volume per source) — this
+    maximizes VELOCITY (trade frequency × profit per trade optimized, not just trade volume)
+  - Different from profit-velocity-maximizer (v7.98 which maximizes €/day velocity across portfolio) — this
+    maximizes per-source VELOCITY with sourceVelocityRanking and bestVelocitySource
+  - Queries SOLD trades from last 12 months with linked Listing (for monitor.source)
+  - Per source: profitPerWeek €/week (= total 12m profit / 52), tradesPerWeek (= tradeCount / 52),
+    avgProfitPerTrade €, profitVelocityTrend % (slope of weekly profit over 4 quarters), velocityScore
+    [0, 100] (magnitude × trend × frequency combined)
+  - maximization per source: velocityMaximizationAction (INCREASE_FREQUENCY × 1.40 / INCREASE_PROFIT_
+    PER_TRADE × 1.25 / EXPAND_CATEGORIES × 1.30 / ADD_MONITORS × 1.35 / OPTIMIZE_TIMING × 1.18),
+    maximizedProfitPerWeek €/week [0, 10000] (≥ current, ≤ current × 1.5 or +2000€), velocityUplift €/week
+    [0, 10000], velocityLevers (3-5 strings, max 200 chars each, Slovenian — specific levers per source),
+    frequencyScalingPlan (max 500, Slovenian — how to safely increase trades per week in 8 weeks),
+    velocityProjection (3 entries: weeks 4/8/12, projectedProfitPerWeek €/week [0, 10000] — linear ramp
+    4w=33%, 8w=67%, 12w=100% adoption)
+  - portfolio: totalCurrentVelocity €/week, totalMaximizedVelocity €/week, totalVelocityUplift €/week,
+    sourceVelocityRanking (rank by currentVelocity), bestVelocitySource
+  - Anti-hallucination: velocities [0, 10000], scores [0, 100], maximizedProfitPerWeek ∈ [current,
+    current × 1.5 or +2000€]
+  - 6h cache (key `deal-source-profit-velocity-maximizer:${currentMonth}`)
+  - Deterministic fallback (per-source velocity × trend × score + action × multiplier + levers + frequency
+    plan + 3 projections + portfolio ranking)
+  - Empty-state fallback if 0 SOLD trades
+
+- **AI Inventory Return On Capital Maximizer** — `GET+POST /api/ai/inventory-return-on-capital-maximizer`
+  - AI MAXIMIZES RETURN ON CAPITAL (ROC) for HELD inventory — not just ROI per item but the overall ROC
+    of the entire inventory portfolio
+  - "Your ROC is 22%, but could be 38% with better inventory mix and faster turnover."
+  - Different from inventory-capital-return-maximizer (v8.07 which maximizes return OF capital — how much
+    deployed capital returns) — this MAXIMIZES RETURN ON CAPITAL (ROC = unrealized profit / total capital
+    deployed × 100, not return rate of capital)
+  - Different from inventory-annualized-return-maximizer (v8.06 which maximizes annualized % return on held
+    inventory) — this maximizes ROC with rocMaximizationLevers and capitalReallocationPlan (not just %
+    annualized return)
+  - Different from inventory-roi-maximizer-pro (v7.99 which maximizes ROI per item) — this maximizes
+    PORTFOLIO ROC with optimalPortfolioComposition and rocVsBenchmark
+  - Different from inventory-capital-efficiency-maximizer (v8.01 which maximizes capital efficiency per
+    item with reallocation) — this maximizes ROC with inventoryMixOptimization (not just per-item
+    efficiency)
+  - Different from inventory-cash-yield-maximizer (v8.04 which maximizes annualized cash yield) — this
+    maximizes ROC (return on capital, not cash yield)
+  - Different from inventory-turnover-yield-maximizer (v8.05 which maximizes yield with yieldCurve) — this
+    maximizes ROC with rocProjection (3/6/12 month)
+  - Different from inventory-yield-maximizer (v8.03 which maximizes yield % per item) — this maximizes
+    PORTFOLIO ROC with rocGrade and rocVsBenchmark
+  - Different from profit-per-euro-maximizer (v8.07 which maximizes profit per euro deployed across
+    SOLD+HELD) — this maximizes ROC only for HELD inventory (return ON capital %, not €/€ ratio)
+  - Different from inventory-capital-allocator (v7.97 which allocates capital per item) — this maximizes
+    ROC with capitalReallocationPlan between low-ROC and high-ROC items
+  - Queries HELD trades with linked Listing + SOLD trades (12m) for historical ROC reference (parallel)
+  - current: totalCapitalDeployed € (sum capital over HELD), totalUnrealizedProfit € (sum estValue −
+    capital over HELD), currentROC % [-50, 500] (= unrealizedProfit / totalCapitalDeployed × 100),
+    annualizedROC % [-100, 1000] (= currentROC × 365 / avgHoldDays), heldInventoryCount, avgHoldDays
+    [1, 730], avgEstValue €
+  - maximization: maximizedROC % [-50, 500] (≥ current, ≤ current × 1.8 or +200pp absolute uplift),
+    rocUplift pp [0, 300] (improvement = maximized − current), rocMaximizationLevers (4 levers:
+    OPTIMIZE_INVENTORY_MIX ~8pp, FASTER_TURNOVER ~6pp, BETTER_SOURCING ~5pp, REDUCE_IDLE_CAPITAL ~3pp),
+    inventoryMixOptimization (increaseCategories 3-5, decreaseCategories 3-5, rationale max 400
+    Slovenian), capitalReallocationPlan (3-5 entries: fromCategory, toCategory, amount € [0, 1000000],
+    expectedRocGain pp [0, 200]), rocProjection (3 entries: months 3/6/12, projectedROC % [-50, 500]
+    — linear ramp 3m=25%, 6m=50%, 12m=100% adoption, projectedProfit € [-1000000, 5000000] =
+    totalCapital × projectedROC / 100 × months/12), rocGrade (A+/A/B/C/D/F: A+ if maximized ≥ 100% or
+    uplift ≥ 50pp, A ≥ 50/30, B ≥ 25/15, C ≥ 10/5, D ≥ 0/1, else F), rocVsBenchmark (bankDeposit % = 2,
+    stocks % = 8, realEstate % = 5, yourCurrentROC %, yourMaximizedROC %, maximizedVsBank pp,
+    maximizedVsStocks pp, maximizedVsRealEstate pp), optimalPortfolioComposition (max 500, Slovenian —
+    40% high-ROC quick-flip, 35% premium slow-flip, 20% seasonal/bundle, 5% reserve)
+  - Anti-hallucination: ROC [-50, 500], scores [0, 100]
+  - 6h cache (key `inventory-return-on-capital-maximizer:${currentMonth}:${heldItemIdsHash}` —
+    invalidates when held inventory changes)
+  - Deterministic fallback (4 levers with potentialGain + mix optimization + reallocation plan between
+    top/bottom 3 categories × 30% capital + 3/6/12m projection + benchmark comparison + grade + optimal
+    composition)
+  - Empty-state fallback if 0 HELD trades → grade F
+
+### Changed — Documentation sync
+
+- AI_ENDPOINTS.md regenerated: 383 → 386 endpoints (+3)
+- README.md updated:
+  - Version badge: v8.07.0 → v8.08.0
+  - AI Endpoints badge: 383 → 386
+  - API Routes badge: 560 → 563 (+3)
+  - Tagline: "383 AI endpointov + 72 analytics" → "386 AI endpointov + 72 analytics"
+  - Overview: "v8.07.0" → "v8.08.0", funkcij count ~246 → ~249
+  - "Kaj je novega": v7.56–v8.07 (52 verzij, 156 novih) → v7.56–v8.08 (53 verzij, 159 novih)
+  - Added v8.08 block (3 features with detailed specs)
+  - Roadmap: v8.07 → v8.08 (3 new maximizers added to profit pipeline list of 169+ features)
+  - API routes count 560 → 563
+  - AI Hub section "Vsi 380 AI endpointov" → "Vsi 386 AI endpointov"
+  - Endpointi section "(383 AI + ... = 560)" → "(386 AI + ... = 563)"
+  - Changelog zadnje verzije: added v8.08.0 entry at top
+  - Popolna zgodovina "do v8.07" → "do v8.08"
 
 ## [8.07.0] - 2026-08-20
 
