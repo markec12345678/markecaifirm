@@ -6,11 +6,153 @@ Format sledi [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), verzije s
 
 ## [Unreleased]
 
-Načrtovano za v8.07+:
+Načrtovano za v8.08+:
 - WebSocket real-time negotiation (SSE namesto polling)
 - Playwright E2E testi za glavne flow-e
 - TLS fingerprinting (curl-impersonate)
 - ML model za buyer matchmaker (fine-tuned na realnem data)
+
+## [8.07.0] - 2026-08-20
+
+### Added — Profit Per Euro Maximizer + Deal Source Revenue Maximizer + Inventory Capital Return Maximizer (3 funkcije)
+
+- **AI Profit Per Euro Maximizer** — `GET+POST /api/ai/profit-per-euro-maximizer`
+  - AI MAXIMIZES PROFIT PER EURO DEPLOYED — ultimate capital efficiency metric (€ profit / € capital deployed)
+  - "Each euro deployed generates 0.35€ profit, but could generate 0.62€ with optimal strategy."
+  - Different from inventory-annualized-return-maximizer (v8.06 which maximizes annualized % return on held
+    inventory) — this maximizes PROFIT PER EURO DEPLOYED (€ profit / € capital deployed, not % annualized)
+  - Different from revenue-per-trade-maximizer (v8.06 which maximizes top-line sell price per trade) — this
+    maximizes PROFIT PER EURO (capital efficiency, not per-trade revenue)
+  - Different from deal-source-cash-flow-maximizer (v8.06 which maximizes cash flow per source) — this
+    maximizes PROFIT PER EURO DEPLOYED across the entire portfolio
+  - Different from inventory-capital-efficiency-maximizer (v8.01 which maximizes capital efficiency per item)
+    — this maximizes PORTFOLIO PROFIT PER EURO with maximizationLevers and capitalEfficiencyComparison
+  - Different from profit-per-trade-maximizer (v8.03 which maximizes profit per trade €) — this maximizes
+    PROFIT PER EURO (capital efficiency, not absolute profit per trade)
+  - Different from profit-compounding-maximizer (v8.04 which maximizes compounding reinvest rate) — this
+    maximizes PROFIT PER EURO with maximizationLevers and profitPerEuroGrade
+  - Different from profit-acceleration-maximizer (v8.05 which maximizes growth rate acceleration) — this
+    maximizes PROFIT PER EURO (€ profit / € capital deployed), not growth rate
+  - Different from profit-margin-maximizer (v7.85 which maximizes margin %) — this maximizes PROFIT PER
+    EURO DEPLOYED (€ profit / € capital, absolute capital efficiency metric, not margin %)
+  - Different from inventory-roi-maximizer-pro (v7.99 which maximizes ROI per item) — this maximizes
+    PORTFOLIO PROFIT PER EURO with capitalEfficiencyComparison (bank deposit ~2%, stocks ~8%, real estate ~5%)
+  - Queries SOLD trades (last 12m) + HELD trades in parallel
+  - current: totalCapitalDeployed (SOLD + HELD), totalProfit (realized from SOLD), profitPerEuro ratio,
+    realizedProfit, heldCapitalDeployed, soldCapitalDeployed, soldCount12m, heldCount, avgHoldDays
+  - maximization: currentProfitPerEuro, maximizedProfitPerEuro [0, 5] (≥ current, ≤ current × 1.8 or +2.0
+    absolute uplift), profitPerEuroUplift, maximizationLevers (5 levers: BETTER_SOURCING ~0.22,
+    FASTER_TURNOVER ~0.18, HIGHER_SELL_PRICE ~0.15, LOWER_FEES ~0.08, REDUCE_CARRYING_COSTS ~0.06),
+    capitalEfficiencyComparison (bankDeposit 2%, stocks 8%, realEstate 5%, yourProfitPerEuro %,
+    yourProfitPerEuroVsBank pp, yourProfitPerEuroVsStocks pp, yourProfitPerEuroVsRealEstate pp),
+    profitPerEuroProjection (3 entries: months 3/6/12, projectedProfitPerEuro ratio, projectedProfit €),
+    profitPerEuroGrade (A+/A/B/C/D/F: A+ if maximized ≥ 1.0 or uplift ≥ 0.50, A ≥ 0.7/0.30, B ≥ 0.4/0.20,
+    C ≥ 0.2/0.10, D ≥ 0.1/0.05, else F), optimalCapitalDeployment (60% high-velocity sourcing, 30% premium
+    slow-flip, 10% reserve)
+  - Anti-hallucination: profit per euro [0, 5], scores [0, 100]
+  - 6h cache (key `profit-per-euro-maximizer:${currentMonth}`)
+  - Deterministic fallback (profit per euro + 5 levers with potentialGain + benchmark comparison + 3/6/12
+    month projection + optimal capital deployment + grade)
+  - Empty-state fallback if 0 SOLD and HELD trades → grade F
+
+- **AI Deal Source Revenue Maximizer** — `GET+POST /api/ai/deal-source-revenue-maximizer`
+  - AI MAXIMIZES TOTAL REVENUE per source — top-line revenue (not profit, not margin)
+  - "Bolha generira 4200€/mesec revenue, ampak bi lahko bilo 5800€ z EXPAND_VOLUME — Vinted 1800€ →
+    2400€ z RAISE_PRICES."
+  - Different from deal-source-cash-flow-maximizer (v8.06 which maximizes NET CASH FLOW per source =
+    revenue − fees − carrying costs) — this maximizes TOTAL REVENUE per source (top-line, before fees)
+  - Different from deal-source-profit-maximizer (v7.97 which maximizes profit per source) — this maximizes
+    REVENUE per source (top-line, before costs)
+  - Different from deal-source-profit-per-trade-maximizer (v8.04 which maximizes profit per trade €) — this
+    maximizes TOTAL REVENUE per source per month
+  - Different from deal-source-margin-maximizer (v8.03 which maximizes margin %) — this maximizes REVENUE
+    with revenueMaximizationLevers and pricingLeakageAnalysis
+  - Different from deal-source-roi-maximizer (v8.00 which maximizes ROI per source) — this maximizes REVENUE
+    with revenuePotentialScore and sourceRevenueRanking
+  - Different from revenue-growth-maximizer (v8.01 which maximizes growth rate revenue) — this maximizes
+    REVENUE PER SOURCE with revenueMaximizationAction and projectedRevenue30d
+  - Different from revenue-per-trade-maximizer (v8.06 which maximizes avg sell price per trade) — this
+    maximizes TOTAL REVENUE per source per month
+  - Different from revenue-stream-optimizer (v7.96 which optimizes multiple revenue streams) — this gives
+    per-source REVENUE MAXIMIZATION with pricingLeakageAnalysis
+  - Different from profit-compounding-maximizer (v8.04 which maximizes compounding reinvest rate) — this
+    maximizes REVENUE per source with revenueUplift and projectedRevenue30d
+  - Queries SOLD trades from last 12 months with linked Listing (for monitor.source)
+  - Per source: totalRevenue (sellPrice − sellFees), grossRevenue (sellPrice), revenuePerMonth,
+    revenuePerTrade, revenueGrowthTrend (slope over time), revenueMarketShare (% of portfolio), tradeCount,
+    avgSellPrice
+  - maximization per source: revenueMaximizationAction (EXPAND_VOLUME / RAISE_PRICES /
+    DIVERSIFY_WITHIN_SOURCE / ADD_NEW_CATEGORIES / FIX_PRICING_LEAKAGE), projectedRevenue30d [0, 100000]
+    (≥ current revenuePerMonth, ≤ current × 1.5 or +5000€), revenueUplift €/mo, revenueMaximizationLevers
+    (3 strings, max 200 chars each, Slovenian), revenuePotentialScore [0, 100], pricingLeakageAnalysis
+    (max 500, Slovenian — where revenue is being lost: underpricing, fees, discounts)
+  - portfolio: totalCurrentRevenue, totalMaximizedRevenue, totalRevenueUplift, sourceRevenueRanking
+  - Anti-hallucination: revenue [0, 100000], scores [0, 100], projectedRevenue30d ∈ [current, current × 1.5
+    or +5000€]
+  - 6h cache (key `deal-source-revenue-maximizer:${currentMonth}`)
+  - Deterministic fallback (per-source revenue + trend + market share + 5 actions + 3 levers per source +
+    pricing leakage analysis + portfolio ranking)
+  - Empty-state fallback if 0 SOLD trades
+
+- **AI Inventory Capital Return Maximizer** — `GET+POST /api/ai/inventory-capital-return-maximizer`
+  - AI MAXIMIZES CAPITAL RETURN — how much of deployed capital comes back (return OF capital, not return ON
+    capital)
+  - "You've deployed 5000€ in inventory. 3200€ has already returned (64%), but with optimal sell order,
+    4800€ (96%) could return within 30 days."
+  - Different from inventory-annualized-return-maximizer (v8.06 which maximizes annualized % return on held
+    inventory) — this maximizes CAPITAL RETURN (% deployed capital that returns, not % profit)
+  - Different from inventory-cash-conversion-maximizer (v7.98 which maximizes cash conversion cycle) — this
+    maximizes CAPITAL RETURN with returnMaximizationActions and capitalReturnTimeline
+  - Different from inventory-cash-yield-maximizer (v8.04 which maximizes annualized cash yield) — this
+    maximizes CAPITAL RETURN RATE with capitalAtRisk and returnOptimizationGrade
+  - Different from inventory-turnover-yield-maximizer (v8.05 which maximizes yield with yieldCurve) — this
+    maximizes CAPITAL RETURN with capitalReturnProjection (week-by-week)
+  - Different from inventory-yield-maximizer (v8.03 which maximizes yield % per item) — this maximizes
+    PORTFOLIO CAPITAL RETURN with returnMaximizationActions
+  - Different from inventory-capital-efficiency-maximizer (v8.01 which maximizes capital efficiency per
+    item) — this maximizes CAPITAL RETURN with capitalReturnTimeline and capitalAtRisk
+  - Different from inventory-roi-maximizer-pro (v7.99 which maximizes ROI per item) — this maximizes
+    CAPITAL RETURN OF (not return ON)
+  - Different from inventory-profit-per-day-maximizer (v8.02 which maximizes daily profit per item) — this
+    maximizes CAPITAL RETURN (% capital returned) with returnMaximizationActions per item
+  - Different from profit-compounding-maximizer (v8.04 which maximizes compounding reinvest rate) — this
+    maximizes CAPITAL RETURN with maximizedCapitalReturnRate and capitalReturnProjection
+  - Queries HELD trades with linked Listing + SOLD trades (12m) for return history (parallel)
+  - current: totalCapitalDeployed (SOLD + HELD), totalExpectedReturn (SOLD realized revenue — capital
+    already returned), capitalReturnRate % [0, 200] (= totalExpectedReturn / totalCapitalDeployed × 100),
+    heldInventoryCount, avgHoldDays, avgReturnProbability (avg per-item over HELD)
+  - perItem: tradeId, title, category, capitalDeployed, estValue, expectedReturn (= min(estValue,
+    estValue × 0.9) — conservative), returnProbability (= (dealScore+aiScore)/200 − agePenalty −
+    riskDiscount), holdDays, aiRisk, recommendedAction (SELL_NOW / REPRICE / CROSS_POST / BUNDLE / LIQUIDATE)
+  - maximization: maximizedCapitalReturnRate [0, 200] (≥ current, ≤ current × 1.5 or +60pp absolute),
+    returnUplift pp [0, 200], returnMaximizationActions (4-8 items: tradeId MUST match perItem — anti-
+    hallucination, action, expectedReturnGain €, actionReason), capitalReturnTimeline days [1, 180],
+    capitalAtRisk € [0, 500000] (capital that may not return — declining value or low demand items),
+    returnOptimizationGrade (A+/A/B/C/D/F: A+ if maximized ≥ 120% or uplift ≥ 50pp, A ≥ 100%/30, B ≥
+    80%/20, C ≥ 60%/10, D ≥ 40%/5, else F), capitalReturnProjection (8 weeks: S-curve distribution week
+    1=10%, 2=22%, 3=38%, 4=55%, 5=70%, 6=82%, 7=92%, 8=100% of total returnable)
+  - Anti-hallucination: return rates [0, 200], capital [0, 100000], tradeId MUST match perItem
+  - 6h cache (key `inventory-capital-return-maximizer:${heldItemIdsHash}` — invalidates when held
+    inventory changes)
+  - Deterministic fallback (per-item expectedReturn + returnProbability + 5 actions + capital at risk +
+    8-week projection + timeline + grade)
+  - Empty-state fallback if 0 HELD (with estValue) and SOLD trades → grade F
+
+### Changed — Documentation sync
+
+- AI_ENDPOINTS.md regenerated: 380 → 383 endpoints (+3)
+- README.md updated:
+  - Version badge: v8.06.0 → v8.07.0
+  - AI Endpoints badge: 380 → 383
+  - API Routes badge: 557 → 560 (+3)
+  - Tagline: "380 AI endpointov + 72 analytics" → "383 AI endpointov + 72 analytics"
+  - Overview: "v8.06.0" → "v8.07.0", funkcij count ~243 → ~246
+  - "Kaj je novega": v7.56–v8.06 (51 verzij, 153 novih) → v7.56–v8.07 (52 verzij, 156 novih)
+  - Added v8.07 block (3 features with detailed specs)
+  - Roadmap: v8.06 → v8.07 (3 new maximizers added to profit pipeline list of 169+ features)
+  - API routes count 557 → 560
+  - Changelog zadnje verzije: added v8.07.0 entry at top
+  - Popolna zgodovina "do v8.06" → "do v8.07"
 
 ## [8.06.0] - 2026-08-19
 
