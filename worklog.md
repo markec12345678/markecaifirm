@@ -13777,3 +13777,34 @@ Stage Summary:
 - Dokumentacija sinhrono posodobljena (AI_ENDPOINTS.md, README, CHANGELOG, GitHub About)
 - GitHub sinhroniziran (0 commit-ov ahead)
 - Verzija aplikacije: v8.06.0
+
+---
+Task ID: v8.07.1
+Agent: main
+Task: v8.07 commit + push + GitHub About + Agent Browser verification
+
+Work Log:
+- Prejel poročilo od full-stack-developer podagenta (Task v8.07 — podagent timeout-al a je dokončal delo)
+- Preveril 3 nove endpoint-e: profit-per-euro-maximizer (200 GET+POST), deal-source-revenue-maximizer (200 GET+POST), inventory-capital-return-maximizer (200 GET+POST)
+- Preveril doc sync: AI_ENDPOINTS.md (383 ✅), README v8.07 (10 refs ✅), README 383 AI (3 refs ✅), CHANGELOG v8.07 ✅
+- Preveril lint: 0 napak ✨
+- Preveril typecheck: 0 napak ✨
+- Posodobil GitHub About opis: 380 AI → 383 AI, 557 routes → 560 routes (via API PATCH)
+- Commit: "v8.07: Profit Per Euro Maximizer + Deal Source Revenue Maximizer + Inventory Capital Return Maximizer" (22655ca)
+- Push na GitHub: uspešen ✅, PAT očiščen ✅
+- Agent Browser self-verification:
+  - Stran se pravilno naloži (HTTP 200)
+  - AI Hub prikazuje profit-per-euro-maximizer (v8.07) v iskalniku ✅
+  - Runner test: klik na profit-per-euro-maximizer → POST request → valid JSON ✅
+  - Response: {"ok":true, "current":{...}, "maximization":{capitalEfficiencyComparison, profitPerEuroGrade}, "aiUsed":false}
+  - Brez runtime napak v dev.log
+
+Stage Summary:
+- v8.07 uspešno dokončana in potisnjena na GitHub
+- 3 PROFIT-MAXIMIZING funkcije: AI Profit Per Euro Maximizer, AI Deal Source Revenue Maximizer, AI Inventory Capital Return Maximizer
+- AI endpointi: 380 → 383 (+3)
+- Analytics endpointi: 72 (nespremenjeno — vsi 3 so AI)
+- Total API routes: 557 → 560 (+3)
+- Dokumentacija sinhrono posodobljena (AI_ENDPOINTS.md, README, CHANGELOG, GitHub About)
+- GitHub sinhroniziran (0 commit-ov ahead)
+- Verzija aplikacije: v8.07.0
