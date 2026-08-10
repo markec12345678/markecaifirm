@@ -13876,3 +13876,34 @@ Stage Summary:
 - Total API routes: 563 → 566 (+3)
 - Dokumentacija sinhrono posodobljena (AI_ENDPOINTS.md, README, CHANGELOG)
 - Verzija aplikacije: v8.09.0
+
+---
+Task ID: v8.09.1
+Agent: main
+Task: v8.09 commit + push + GitHub About + Agent Browser verification
+
+Work Log:
+- Prejel poročilo od full-stack-developer podagenta (Task v8.09)
+- Preveril 3 nove endpoint-e: profit-multiplier-maximizer (200 GET+POST), deal-source-capital-return-maximizer (200 GET+POST), inventory-profit-per-day-growth-maximizer (200 GET+POST)
+- Preveril doc sync: AI_ENDPOINTS.md (389 ✅), README v8.09 (10 refs ✅), README 389 AI (6 refs ✅), CHANGELOG v8.09 ✅
+- Preveril lint: 0 napak ✨
+- Preveril typecheck: 0 napak ✨
+- Posodobil GitHub About opis: 386 AI → 389 AI, 563 routes → 566 routes (via API PATCH)
+- Commit: "v8.09: Profit Multiplier Maximizer + Deal Source Capital Return Maximizer + Inventory Profit Per Day Growth Maximizer" (201012b)
+- Push na GitHub: uspešen ✅, PAT očiščen ✅
+- Agent Browser self-verification:
+  - Stran se pravilno naloži (HTTP 200)
+  - AI Hub prikazuje profit-multiplier-maximizer (v8.09) v iskalniku ✅
+  - Runner test: klik na profit-multiplier-maximizer → POST request → valid JSON ✅
+  - Response: {"ok":true, "current":{...}, "maximization":{6 multipliers, cumulativeMaxMultiplier, multiplierGrade}, "aiUsed":false}
+  - Brez runtime napak v dev.log
+
+Stage Summary:
+- v8.09 uspešno dokončana in potisnjena na GitHub
+- 3 PROFIT-MAXIMIZING funkcije: AI Profit Multiplier Maximizer, AI Deal Source Capital Return Maximizer, AI Inventory Profit Per Day Growth Maximizer
+- AI endpointi: 386 → 389 (+3)
+- Analytics endpointi: 72 (nespremenjeno — vsi 3 so AI)
+- Total API routes: 563 → 566 (+3)
+- Dokumentacija sinhrono posodobljena (AI_ENDPOINTS.md, README, CHANGELOG, GitHub About)
+- GitHub sinhroniziran (0 commit-ov ahead)
+- Verzija aplikacije: v8.09.0
