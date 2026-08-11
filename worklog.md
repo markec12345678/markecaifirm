@@ -14601,3 +14601,48 @@ Stage Summary:
 - Documentation updated: AI_ENDPOINTS.md (row 11 brain/market + total 407), README.md (badges v8.17.0/407/584, ~270 funkcij, Overview paragraph z vsemi TREMI Brain-i, v8.17 blok v Kaj je novega, Zadnje verzije z v8.17.0), CHANGELOG.md ([8.17.0] section z full description + [Unreleased] v8.18+ z 4 preostalimi Brain layerji + Master Brain plan)
 - Verzija aplikacije: v8.17.0
 - Skupaj doslej (v7.50 → v8.17): 67 verzij, 189 novih funkcij; tretji Brain layer implementiran — naslednji Brain-i (Sourcing/Risk/Buyer/Pricing) v v8.18-v8.21, Master Brain v v8.22
+
+---
+Task ID: v8.17.1
+Agent: main
+Task: v8.17 commit + push + GitHub About + Agent Browser verification
+
+Work Log:
+- Prejel poročilo od full-stack-developer podagenta (Task v8.17 — Market Brain implementiran: src/lib/brain/market.ts + src/app/api/ai/brain/market/route.ts + BrainSynthesisCard extended z 3. stacked section za Market Brain z sky/blue tint)
+- Opazil, da je podagent sam commit-al z neopisnim message-om (c0e7b67d-6c92-49eb-977f-cca88a651c8d UUID). Popravil commit message z `git commit --amend -m "v8.17: Market Brain — third orchestration layer above ~27 market specialists...""`
+- Neodvisno preveril endpoint (curl 3 testi):
+  - GET /api/ai/brain/market (default) → 200 {"ok":true, "signals":[6: cyclePhase(C,40,300), sentiment(D,34.5,75), depth(A+,100,225), volatility(A,83,150), trend(A,84,375), timing(C,58.63,135)], "current":{activeListingCount:150, newLastWeek:35, avgPriceChangePctWeek:1.5, avgPriceChangePctMonth:3.5, buyerInquiriesLastWeek:60, sellThroughRatePct:45, avgDaysOnMarket:14, priceSpreadPct:25, inferredCyclePhase:"DISTRIBUTION", inferredSentiment:"BEARISH"}, "maximization":{topActions:[3 z #1 trend +375€/mo (HIGH), ...], projection30d:{predictedPhase:"DISTRIBUTION", predictedPriceChangePct:1.75, recommendedAction:"SELL"}, projection90d:{predictedPhase:"MARKUP", predictedPriceChangePct:1.05, recommendedAction:"HOLD"}, marketGrade:"B", bestOpportunity:"trend", oneLineSummary:"Trg v DISTRIBUTION fazi, sentiment BEARISH. Jahaj trend: ... Grade B."}, "aiUsed":false, "source":"v8.17-market-brain"}
+  - POST /api/ai/brain/market {"activeListingCount":200,"newLastWeek":50,"avgPriceChangePctMonth":6,"sellThroughRatePct":55,...} → 200 z višjimi številkami (cyclePhase A/80/uplift 1000€/mo, marketGrade A, inferredCyclePhase MARKUP, inferredSentiment NEUTRAL — ker 6%/mo rast + 55% sell-through = MARKUP faza)
+  - GET (cache hit) → 200 z "cachedAt": 1786474847879 (5-min cache deluje)
+  - GET /api/ai-list → 200 {"ok":true, "total":407, "categories":{brain:3, ...}} (brain kategorija 3 = profit + inventory + market)
+- Preveril doc sync: AI_ENDPOINTS.md "Total: 407 endpoints" ✅, README v8.17.0 (12 refs) + 407 AI (6 refs) + 584 (3 refs) + Overview paragraph z ALL 3 Brains ✅, CHANGELOG [8.17.0] section z 6 signal formulas + [Unreleased] v8.18+ z 4 preostalimi Brain layer-ji ✅
+- Preveril lint: 0 napak ✨
+- Preveril typecheck: 0 napak ✨
+- Posodobil GitHub About opis: "AI Trading Firm... 407 AI + 72 analytics = 584 routes. v8.17.0: Profit+Inventory+Market Brain (3 orchestration layers)." (via API PATCH, 248 chars)
+- Commit: "v8.17: Market Brain — third orchestration layer above ~27 market specialists (6 market signals: cyclePhase, sentiment, depth, volatility, trend, timing synthesized into 1 decision + stacked UI card with Profit+Inventory+Market)" (3eaee87 po amend)
+- Push na GitHub: uspešen ✅ (6e96ff4..3eaee87), PAT očiščen ✅
+- Agent Browser self-verification:
+  - Stran se pravilno naloži (HTTP 200, naslov "Markec AI Firm — Opportunity Monitor")
+  - AI Hub: kategorije na vrhu prikazujejo "🧠Možgani3" (#2 v seznamu) — 3 Brain endpointi ✅
+  - BrainSynthesisCard (stacked layout — 3 sekcije):
+    - Profit Brain section (emerald): "🧠 PROFIT BRAIN", "Profit 450€/mo → 651€/mo (+45%) z HORIZON", "30d: 651€/mo · 90d: 872€/mo" ✅
+    - Inventory Brain section (amber): "📦 INVENTORY BRAIN", "Inventar 18 itemov (1500€), 3 stari", "Likvidiraj 3 stare iteme...", "Grade D" ✅
+    - Market Brain section (sky/blue): "📈 MARKET BRAIN", "Trg v DISTRIBUTION fazi, sentiment BEARISH", "Jahaj trend: Trend +3.5%/mo", "Grade B" ✅
+  - Endpoint "🧠brain/market v8.17: v8.17: Market Brain — GET+POST /api/ai/brain/market" viden v AI Hub listi [ref=e27] z v8.17 badge ✅
+  - Runner test: klik na brain/market → POST request → valid JSON z source:"v8.17-market-brain", 6 signali, marketGrade:"B", inferredCyclePhase:"DISTRIBUTION", inferredSentiment:"BEARISH" ✅
+  - Brez runtime napak v dev.log
+
+Stage Summary:
+- v8.17 uspešno dokončana in potisnjena na GitHub
+- NOV ARCHITECTURAL LAYER: Market Brain — tretji orkestracijski Brain nad ~27 market specialist-i
+- 6 market signalov (cyclePhase, sentiment, depth, volatility, trend, timing) → sintetizira v 1 odločitev (3 top akcije, 30d/90d phase projekcija z recommendedAction BUY/SELL/HOLD/LIQUIDATE, marketGrade, oneLineSummary)
+- Wyckoff cycle classification: ACCUMULATION/MARKUP/DISTRIBUTION/MARKDOWN izklican iz price trend + sell-through rate
+- 5-min cache, DB state injection z graceful fallback (Listing model z firstSeenAt/priceDroppedAt), pure compute module brez AI/LLM
+- BrainSynthesisCard razširjen z 3. stacked section (sky/blue tint) — sedaj prikazuje 3 Brain-e simultano (Profit emerald + Inventory amber + Market sky/blue)
+- AI endpointi: 406 → 407 (+1)
+- Analytics endpointi: 72 (nespremenjeno)
+- Total API routes: 583 → 584 (+1)
+- Dokumentacija sinhrono posodobljena (AI_ENDPOINTS.md, README, CHANGELOG, GitHub About)
+- GitHub sinhroniziran (0 commit-ov ahead)
+- Verzija aplikacije: v8.17.0
+- Skupaj doslej (v7.50 → v8.17): 67 verzij, 189 novih funkcij; 3 Brain layer-ji implementirani (Profit + Inventory + Market) — naslednji Brain-i (Sourcing/Risk/Buyer/Pricing) v v8.18-v8.21, Master Brain v v8.22
