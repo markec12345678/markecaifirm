@@ -44,7 +44,15 @@
  *     (roi, volume, margin, momentum, diversification, concentration) →
  *     per-source decision (recommendedSourceToScale + recommendedSourceToReduce
  *     + projectedTotalMonthlyProfit + recommendedNewSource)
- * All four sections fetch in parallel on mount (`Promise.all`). Each has its
+ *
+ * v8.19: Extended Brain Synthesis Card with FIFTH stacked section —
+ * Risk Brain (red/rose-tinted). Card now renders ALL FIVE brain
+ * layers simultaneously:
+ *   - 🛡️ RISK BRAIN (red/rose) — synthesizes 6 risk signals
+ *     (concentration, aging, liquidity, market, fraud, portfolio) →
+ *     30d/90d risk projection (projectedRiskScore + projectedConcentrationPct
+ *     + projectedAgedPct + recommendedRiskBudget)
+ * All five sections fetch in parallel on mount (`Promise.all`). Each has its
  * own loading skeleton, error state, refresh button, and cache indicator.
  *
  * Lazy-loaded z next/dynamic (ssr: false) — ne bremeni prvotnega nalaganja.
@@ -63,7 +71,7 @@ import {
   DialogTitle,
   DialogDescription,
 } from '@/components/ui/dialog';
-import { Sparkles, Search, Copy, Check, RefreshCw, Zap, X, ChevronRight, Brain, AlertCircle, Package, TrendingUp, Target } from 'lucide-react';
+import { Sparkles, Search, Copy, Check, RefreshCw, Zap, X, ChevronRight, Brain, AlertCircle, Package, TrendingUp, Target, Shield } from 'lucide-react';
 import { toast } from 'sonner';
 import { cn } from '@/lib/utils';
 
@@ -95,15 +103,16 @@ function categorize(name: string): string {
   return 'misc';
 }
 
-// ===== Brain Synthesis Card (v8.15 + v8.16 + v8.17 + v8.18) =====
+// ===== Brain Synthesis Card (v8.15 + v8.16 + v8.17 + v8.18 + v8.19) =====
 //
-// Renders ALL FOUR Brain layers stacked inside one Card:
+// Renders ALL FIVE Brain layers stacked inside one Card:
 //   - 🧠 PROFIT BRAIN (v8.15, emerald) — synthesizes 6 profit signals
 //   - 📦 INVENTORY BRAIN (v8.16, amber) — synthesizes 6 inventory signals
 //   - 📈 MARKET BRAIN (v8.17, sky/blue) — synthesizes 6 market signals
 //   - 🎯 SOURCING BRAIN (v8.18, purple/violet) — synthesizes 6 sourcing signals
+//   - 🛡️ RISK BRAIN (v8.19, red/rose) — synthesizes 6 risk signals
 //
-// All four sections fetch in parallel on mount and have independent loading,
+// All five sections fetch in parallel on mount and have independent loading,
 // error, refresh, and cache states.
 
 interface BrainAction {
@@ -923,7 +932,223 @@ function SourcingBrainSection() {
   );
 }
 
-// --- Outer card wrapper (v8.15 + v8.16 + v8.17 + v8.18) ----------------------------
+// --- Risk Brain section (v8.19, red/rose) ----------------------------------
+//
+// v8.19: Risk Brain result — projection30d/projection90d are STRUCTURED
+// objects with projectedRiskScore + projectedConcentrationPct +
+// projectedAgedPct + recommendedRiskBudget. Each signal has a `riskLevel`
+// (LOW/MEDIUM/HIGH/CRITICAL) inverse to score, and `riskReductionEUR` (EUR
+// saved if mitigated). Distinct from all four prior Brains.
+interface RiskBrainResult {
+  ok: true;
+  signals: Array<{
+    name: string;
+    score: number; // 0-100 (HIGHER = LOWER risk)
+    grade: string;
+    riskLevel: 'LOW' | 'MEDIUM' | 'HIGH' | 'CRITICAL';
+    riskReductionEUR: number;
+    topLever: string;
+  }>;
+  current: {
+    totalCapitalDeployed: number;
+    inventoryValue: number;
+    agedInventoryValue: number;
+    agedPct: number;
+    capitalConcentrationPct: number;
+    monthlyRevenue: number;
+    monthlyProfit: number;
+    activeSources: number;
+    fraudSuspicionsPct: number;
+    avgDaysToSell: number;
+    marketVolatilityPct: number;
+    overallRiskScore: number; // 0-100 (lower = more risk)
+  };
+  maximization: {
+    topActions: BrainAction[];
+    projection30d: {
+      projectedRiskScore: number;
+      projectedConcentrationPct: number;
+      projectedAgedPct: number;
+      recommendedRiskBudget: number;
+    };
+    projection90d: {
+      projectedRiskScore: number;
+      projectedConcentrationPct: number;
+      projectedAgedPct: number;
+      recommendedRiskBudget: number;
+    };
+    riskGrade: 'A+' | 'A' | 'B' | 'C' | 'D' | 'F';
+    biggestRisk: string;
+    oneLineSummary: string;
+  };
+  aiUsed: false;
+  source: string;
+  cachedAt?: number;
+}
+
+function riskLevelColor(level: string): string {
+  switch (level) {
+    case 'CRITICAL':
+      return 'bg-rose-600/20 text-rose-700 border-rose-600/40 dark:text-rose-300';
+    case 'HIGH':
+      return 'bg-rose-500/15 text-rose-600 border-rose-500/30 dark:text-rose-400';
+    case 'MEDIUM':
+      return 'bg-amber-500/15 text-amber-600 border-amber-500/30 dark:text-amber-400';
+    case 'LOW':
+    default:
+      return 'bg-emerald-500/15 text-emerald-600 border-emerald-500/30 dark:text-emerald-400';
+  }
+}
+
+function RiskBrainSection() {
+  const [data, setData] = useState<RiskBrainResult | null>(null);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
+
+  const fetchBrain = useCallback(async () => {
+    setLoading(true);
+    setError(null);
+    try {
+      const res = await fetch('/api/ai/brain/risk', { method: 'GET' });
+      if (!res.ok) throw new Error(`HTTP ${res.status}`);
+      const json = (await res.json()) as RiskBrainResult;
+      if (!json?.ok) throw new Error(json?.source ? 'Brain ni vrnil rezultata' : 'Napaka');
+      setData(json);
+    } catch (e: any) {
+      setError(e?.message ?? 'Napaka');
+    } finally {
+      setLoading(false);
+    }
+  }, []);
+
+  useEffect(() => {
+    fetchBrain();
+  }, [fetchBrain]);
+
+  const biggestRiskSignal = data?.signals.find(
+    (s) => s.name === data.maximization.biggestRisk,
+  );
+
+  return (
+    <div className="rounded-lg border border-rose-500/30 bg-gradient-to-br from-rose-500/10 via-rose-500/5 to-transparent p-3 sm:p-4">
+      <div className="flex items-center gap-2 mb-2 min-w-0">
+        <Shield className="w-4 h-4 text-rose-500 shrink-0" />
+        <span className="text-sm sm:text-base font-bold tracking-tight">
+          🛡️ RISK BRAIN
+        </span>
+        <Badge variant="outline" className="text-[10px] border-rose-500/40 text-rose-600 dark:text-rose-400 shrink-0">
+          v8.19
+        </Badge>
+      </div>
+
+      {loading && (
+        <div className="space-y-2">
+          <Skeleton className="h-5 w-full bg-rose-500/10" />
+          <Skeleton className="h-3 w-3/4 bg-rose-500/10" />
+          <div className="grid grid-cols-3 gap-2 pt-1">
+            <Skeleton className="h-6 bg-rose-500/10" />
+            <Skeleton className="h-6 bg-rose-500/10" />
+            <Skeleton className="h-6 bg-rose-500/10" />
+          </div>
+        </div>
+      )}
+
+      {!loading && error && (
+        <div className="flex items-center gap-2 text-xs text-red-600 dark:text-red-400">
+          <AlertCircle className="w-3.5 h-3.5 shrink-0" />
+          <span className="truncate">{error}</span>
+          <Button size="sm" variant="outline" onClick={fetchBrain} className="ml-auto h-6 px-2 text-[10px]">
+            Ponovi
+          </Button>
+        </div>
+      )}
+
+      {!loading && !error && data && (
+        <div className="space-y-2.5">
+          <p className="text-xs sm:text-sm font-medium leading-snug">
+            {data.maximization.oneLineSummary}
+          </p>
+
+          <div className="flex flex-wrap gap-1.5">
+            <Badge variant="outline" className={cn('text-[10px]', gradeColor(data.maximization.riskGrade))}>
+              Risk: {data.maximization.riskGrade}
+            </Badge>
+            {biggestRiskSignal && (
+              <Badge variant="outline" className={cn('text-[10px]', riskLevelColor(biggestRiskSignal.riskLevel))}>
+                Top: {data.maximization.biggestRisk.toUpperCase()}
+              </Badge>
+            )}
+            {data.cachedAt && (
+              <Badge variant="outline" className="text-[9px] text-muted-foreground border-muted">
+                cache {Math.round((Date.now() - data.cachedAt) / 1000)}s
+              </Badge>
+            )}
+          </div>
+
+          <div className="space-y-1">
+            <div className="text-[9px] uppercase text-muted-foreground">Top 3 akcije za danes (mitigacija)</div>
+            {data.maximization.topActions.map((a) => (
+              <div key={a.rank} className="flex items-start gap-1.5 text-[11px]">
+                <span className="font-bold text-rose-600 dark:text-rose-400 shrink-0 w-3">
+                  {a.rank}.
+                </span>
+                <span className="flex-1 min-w-0">
+                  <span className="font-medium">{a.action}</span>
+                  <span className="text-muted-foreground"> · -{a.expectedUpliftEUR}€/mo tveganja</span>
+                </span>
+                <span className={cn('text-[9px] font-bold shrink-0', confidenceColor(a.confidence))}>
+                  {a.confidence}
+                </span>
+              </div>
+            ))}
+          </div>
+
+          {/* Current risk state */}
+          <div className="grid grid-cols-2 gap-1.5 text-[10px] pt-1 border-t border-rose-500/20">
+            <span className="text-muted-foreground">
+              Tveganje: <span className="font-bold text-rose-600 dark:text-rose-400">{Math.round(data.current.overallRiskScore)}/100</span>
+            </span>
+            <span className="text-muted-foreground">
+              Koncentracija: <span className="font-bold text-rose-600 dark:text-rose-400">{Math.round(data.current.capitalConcentrationPct)}%</span>
+            </span>
+            <span className="text-muted-foreground">
+              Stari inventar: <span className="font-bold text-rose-600 dark:text-rose-400">{Math.round(data.current.agedPct)}%</span>
+            </span>
+            <span className="text-muted-foreground">
+              Fraud: <span className="font-bold text-rose-600 dark:text-rose-400">{data.current.fraudSuspicionsPct.toFixed(1)}%</span>
+            </span>
+          </div>
+
+          {/* 30d / 90d risk projection */}
+          <div className="flex items-center justify-between gap-2 text-[10px] pt-1 border-t border-rose-500/10">
+            <span className="text-muted-foreground">
+              30d: <span className="font-bold text-rose-600 dark:text-rose-400">
+                {Math.round(data.maximization.projection30d.projectedRiskScore)}/100 · budget {Math.round(data.maximization.projection30d.recommendedRiskBudget)}€
+              </span>
+            </span>
+            <span className="text-muted-foreground">
+              90d: <span className="font-bold text-rose-600 dark:text-rose-400">
+                {Math.round(data.maximization.projection90d.projectedRiskScore)}/100 · budget {Math.round(data.maximization.projection90d.recommendedRiskBudget)}€
+              </span>
+            </span>
+          </div>
+
+          <div className="flex justify-end">
+            <button
+              onClick={fetchBrain}
+              className="text-[9px] text-muted-foreground hover:text-foreground flex items-center gap-1"
+            >
+              <RefreshCw className="w-2.5 h-2.5" />
+              Osveži
+            </button>
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
+// --- Outer card wrapper (v8.15 + v8.16 + v8.17 + v8.18 + v8.19) ----------------------------
 
 function BrainSynthesisCard({ onBrainCategoryClick }: { onBrainCategoryClick: () => void }) {
   return (
@@ -936,7 +1161,7 @@ function BrainSynthesisCard({ onBrainCategoryClick }: { onBrainCategoryClick: ()
               AI BRAIN SYNTHESIS
             </span>
             <Badge variant="outline" className="text-[10px] border-primary/40 text-primary shrink-0">
-              v8.15 + v8.16 + v8.17 + v8.18
+              v8.15 + v8.16 + v8.17 + v8.18 + v8.19
             </Badge>
           </div>
           <button
@@ -951,6 +1176,7 @@ function BrainSynthesisCard({ onBrainCategoryClick }: { onBrainCategoryClick: ()
         <InventoryBrainSection />
         <MarketBrainSection />
         <SourcingBrainSection />
+        <RiskBrainSection />
       </CardContent>
     </Card>
   );
@@ -1223,6 +1449,16 @@ export function AIHubView() {
                         {ep.category === 'brain' && ep.name === 'brain/market' && (
                           <Badge variant="outline" className="text-[9px] border-sky-500/40 text-sky-600 dark:text-sky-400 shrink-0">
                             v8.17
+                          </Badge>
+                        )}
+                        {ep.category === 'brain' && ep.name === 'brain/sourcing' && (
+                          <Badge variant="outline" className="text-[9px] border-purple-500/40 text-purple-600 dark:text-purple-400 shrink-0">
+                            v8.18
+                          </Badge>
+                        )}
+                        {ep.category === 'brain' && ep.name === 'brain/risk' && (
+                          <Badge variant="outline" className="text-[9px] border-rose-500/40 text-rose-600 dark:text-rose-400 shrink-0">
+                            v8.19
                           </Badge>
                         )}
                       </div>

@@ -6,13 +6,169 @@ Format sledi [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), verzije s
 
 ## [Unreleased]
 
-Načrtovano za v8.19+:
-- Risk / Buyer / Pricing Brain (3 novi Brain layerji)
+Načrtovano za v8.20+:
+- Buyer / Pricing Brain (2 nova Brain layerja)
 - Master Brain ki orkestrira vseh 7 Brain layerjev (Profit + Inventory + Market + Sourcing + Risk + Buyer + Pricing)
 - WebSocket real-time negotiation (SSE namesto polling)
 - Playwright E2E testi za glavne flow-e
 - TLS fingerprinting (curl-impersonate)
 - ML model za buyer matchmaker (fine-tuned na realnem data)
+
+## [8.19.0] - 2026-08-28
+
+### Added — 🛡️ Risk Brain (peti orkestracijski Brain layer nad ~7 risk specialist-i)
+
+- **Risk Brain** — `GET+POST /api/ai/brain/risk`
+  - NOV PETI ARCHITECTURAL LAYER: peti Brain layer (po Profit Brain v v8.15,
+    Inventory Brain v v8.16, Market Brain v v8.17 in Sourcing Brain v v8.18) ki
+    sedi NAD ~7 risk specialist endpointi (fraud-detection,
+    inventory-risk-assessor, portfolio-risk-forecaster, risk-hedging,
+    risk-parity, risk-reward-calculator, risk-spread-calculator). Vsak
+    specialist meri ENO risk dimenzijo — Risk Brain sintetizira 6 risk
+    signalov v ENO odločitev.
+  - 6 risk signalov (each 0-100 score where HIGHER = LOWER risk, plus riskLevel
+    inverse + riskReductionEUR + topLever):
+    1. **concentration** — single-position/source concentration risk.
+       Score = clamp(100 - capitalConcentrationPct, 0, 100) (65% concentration = 35).
+       riskLevel: HIGH if concentration > 60, MEDIUM if > 40, LOW otherwise.
+       riskReductionEUR = totalCapitalDeployed × (concentration > 60 ? 0.04 : 0.015).
+       topLever: "Koncentracija ${capitalConcentrationPct}% v enem viru — razprši 30% capital-a v 2 nova vira".
+    2. **aging** — stale inventory risk.
+       agedPct = agedInventoryValue / max(inventoryValue, 1) × 100.
+       Score = clamp(100 - agedPct × 2, 0, 100) (30% aged = 40).
+       riskLevel: HIGH if agedPct > 40, MEDIUM if > 20, LOW otherwise.
+       riskReductionEUR = agedInventoryValue × 0.2.
+       topLever: "Stari inventar ${agedPct}% (${agedInventoryValue}€) — likvidiraj v 14 dneh z 15-20% popustom".
+    3. **liquidity** — can-you-exit-fast risk.
+       liquidityScore = clamp((monthlyRevenue / max(inventoryValue, 1)) × 50, 0, 100)
+       (2×/mo turnover = 100).
+       riskLevel: HIGH if score < 30, MEDIUM if < 60, LOW otherwise.
+       riskReductionEUR = inventoryValue × 0.05.
+       topLever: "Likvidnost ${score}/100 — znižaj cene 10% za hitro prodajo, sprosti capital".
+    4. **market** — external market risk (volatility).
+       Score = clamp(100 - marketVolatilityPct × 2, 0, 100) (30% volatility = 40).
+       riskLevel: HIGH if marketVolatilityPct > 35, MEDIUM if > 20, LOW otherwise.
+       riskReductionEUR = totalCapitalDeployed × 0.025.
+       topLever: "Tržna volatilnost ${marketVolatilityPct}% — hedge-aj z limit orders ali cash position 30%".
+    5. **fraud** — fraud/scam exposure.
+       fraudSuspicionsPct = fraudSuspicionsCount / max(totalListingsCount, 1) × 100.
+       Score = clamp(100 - fraudSuspicionsPct × 5, 0, 100) (10% fraud = 50).
+       riskLevel: HIGH if fraudSuspicionsPct > 10, MEDIUM if > 5, LOW otherwise.
+       riskReductionEUR = totalCapitalDeployed × 0.01 × (fraudSuspicionsPct / 5).
+       topLever: "Fraud sumnje ${fraudSuspicionsPct}% (${fraudSuspicionsCount} oglasov) — prekini posle z sumljivimi, kreiraj blacklist".
+    6. **portfolio** — overall portfolio balance risk (composite).
+       portfolioScore = concentration × 0.25 + aging × 0.25 + liquidity × 0.20
+       + market × 0.15 + fraud × 0.15.
+       Score = clamp(portfolioScore, 0, 100).
+       riskLevel: HIGH if score < 40, MEDIUM if < 60, LOW otherwise.
+       riskReductionEUR = average of other 5 riskReductionEUR × 0.5.
+       topLever: "Portfolio tveganje ${score}/100 — rebalanciraj: zmanjšaj koncentracijo, likvidiraj stare, diverzificiraj vire".
+  - Synthesis → `maximization`:
+    - `topActions`: top 3 signals sorted by riskReductionEUR × confidenceWeight
+      (HIGH=1.0, MEDIUM=0.7, LOW=0.4). Each action has templated human-readable
+      text derived from that signal's `topLever` (mirror of Profit/Inventory/
+      Market/Sourcing Brain's actionForSignal). Confidence is INVERTED from
+      other brains — HIGH if riskLevel is HIGH/CRITICAL (urgent mitigation),
+      MEDIUM if MEDIUM, LOW otherwise (lower score = higher risk = higher
+      confidence in the mitigation action).
+    - `projection30d` (STRUCTURED object — projectedRiskScore +
+      projectedConcentrationPct + projectedAgedPct + recommendedRiskBudget):
+      - `projectedRiskScore` = clamp(overallRiskScore + 15, 0, 100) (15-point
+        improvement if top 3 actions are taken).
+      - `projectedConcentrationPct` = max(35, capitalConcentrationPct - 20)
+        (20-point de-concentration via rebalancing).
+      - `projectedAgedPct` = max(5, agedPct - 30) (30-point aged reduction via
+        aggressive liquidation).
+      - `recommendedRiskBudget` = totalCapitalDeployed × (projectedRiskScore / 100)
+        (capital scaleable proportional to risk score — higher score = more
+        capital safe to deploy).
+    - `projection90d` (longer-horizon optimization):
+      - `projectedRiskScore` = clamp(overallRiskScore + 30, 0, 100) (30-point
+        improvement — bigger structural rebalance).
+      - `projectedConcentrationPct` = max(30, capitalConcentrationPct - 30).
+      - `projectedAgedPct` = max(2, agedPct - 50).
+      - `recommendedRiskBudget` = totalCapitalDeployed × (projectedRiskScore / 100) × 1.2
+        (20% growth allowed at lower risk).
+    - `riskGrade` = weighted average of 6 signal scores (weights:
+      concentration 0.20, aging 0.20, liquidity 0.20, market 0.15,
+      fraud 0.10, portfolio 0.15), then graded via gradeFromScore (A+ ≥90,
+      A ≥75, B ≥60, C ≥40, D ≥20, F otherwise).
+    - `biggestRisk` = signal with LOWEST score (highest risk — the single
+      biggest risk lever to mitigate first).
+    - `oneLineSummary` = "Tveganje ${overallRiskScore}/100 (${overallRiskLevel}).
+      Največje: ${biggestRisk.toUpperCase()} ${biggestRiskValue}.
+      ${topActions[0].action}. Grade ${riskGrade}."
+  - **overallRiskScore** = weighted average of 6 signal scores (weights:
+    concentration 0.20, aging 0.20, liquidity 0.20, market 0.15,
+    fraud 0.10, portfolio 0.15).
+  - **overallRiskLevel** derived from overallRiskScore: LOW if ≥70, MEDIUM if
+    ≥50, HIGH if ≥30, CRITICAL otherwise.
+  - **Pure deterministic compute** (aiUsed: false, no AI/LLM SDK call).
+  - **DB-backed state injection** (graceful degradation):
+    - if Prisma is available, read from `Listing` model (fraudSuspicionsCount =
+      count where aiVerdict='SUMNJIVO' OR aiRisk >= 7, totalListingsCount =
+      count of all non-hidden listings) and `Trade` model (inventoryValue =
+      sum of buyPrice + buyFees for held trades, agedInventoryValue = same
+      filtered by buyDate < 30 days ago, monthlyRevenue = sum of sellPrice for
+      sold trades in last 30d, monthlyProfit = sum of sellPrice - buyPrice -
+      buyFees - sellFees for same set, capitalConcentrationPct = (top
+      buyLocation sum / total) × 100, activeSources = distinct count of
+      non-empty buyLocation, avgDaysToSell = avg(sellDate - buyDate) for all
+      sold trades). marketVolatilityPct is NOT derivable from existing tables —
+      falls back to default 25% if user did not provide it.
+    - User input (query string or POST body) takes precedence over DB state —
+      callers can override any field.
+    - If DB unavailable or no usable rows → falls back to sensible defaults
+      (totalCapitalDeployed 1500€, inventoryValue 1500€, agedInventoryValue
+      280€, capitalConcentrationPct 40%, monthlyRevenue 350€, monthlyProfit
+      100€, activeSources 4, fraudSuspicionsCount 2, totalListingsCount 150,
+      avgDaysToSell 14, marketVolatilityPct 25%).
+    - All DB access wrapped in try/catch + logger.warn — NEVER crashes the endpoint.
+  - **5-minute cache** (TTL 300000ms): cache key = `risk-brain:${hashOfInputs}`
+    (totalCapitalDeployed + inventoryValue + agedInventoryValue +
+    capitalConcentrationPct + monthlyRevenue + monthlyProfit + activeSources +
+    fraudSuspicionsCount + totalListingsCount + avgDaysToSell +
+    marketVolatilityPct). On cache hit, the result is returned with a fresh
+    `cachedAt` timestamp so the caller knows it was served from cache.
+  - source: "v8.19-risk-brain"
+  - GET+POST shared handler `handleRiskBrain` (AI Hub runner compatibility —
+    hits either method), runtime='nodejs', dynamic='force-dynamic', maxDuration=60,
+    try/catch with logger.error → 500 { error }, parse inputs from both query
+    string and JSON body (POST takes precedence over query).
+  - Pure compute module: `src/lib/brain/risk.ts` — NO `next/server` import,
+    NO Prisma calls (state injected by caller via RiskBrainInput). Fully
+    testable in isolation and deterministic given the same input. Mirrors
+    `src/lib/brain/sourcing.ts` strukturo (clamp, gradeFromScore,
+    confidenceFromRiskLevel, confidenceWeight, round2, normalizeInput,
+    computeXxxSignal, actionForSignal, buildOneLineSummary, SIGNAL_WEIGHTS,
+    riskBrain main entry). Reuses `ProfitGrade` in `Confidence` types via
+    `import type { ProfitGrade, Confidence } from './profit'`.
+  - Endpoint: `src/app/api/ai/brain/risk/route.ts` — peti endpoint v nested
+    subdirectory pod `src/app/api/ai/brain/`. Avtomatsko odkrit z `/api/ai-list`
+    (ki je bil nadgrajen v v8.15 za recursive depth-2 discovery).
+  - AI Hub: `BrainSynthesisCard` razširjen s PETIM stacked section-om (red/
+    rose-tinted, za razliko od Profit Brain emerald, Inventory Brain amber,
+    Market Brain sky/blue in Sourcing Brain purple/violet). Sedaj prikazuje
+    VSE PET Brain-e simultano — vsak ima svoj loading skeleton, error state,
+    refresh button, in cache indicator. Risk Brain prikazuje: oneLineSummary,
+    riskGrade pill, biggestRisk pill (z riskLevel color-coded), top 3
+    mitigation actions (z confidence), current state summary (overallRiskScore,
+    capitalConcentrationPct, agedPct, fraudSuspicionsPct), 30d/90d risk
+    projection (projectedRiskScore + recommendedRiskBudget). Vsak Brain fetch-a
+    independently na mount (Promise.all vseh petih).
+
+### Stats
+- AI endpoints: 408 → 409 (+1)
+- Total API routes: 585 → 586 (+1)
+- Peti Brain layer v arhitekturi (above the ~7 risk specialists, next to v8.15 Profit Brain, v8.16 Inventory Brain, v8.17 Market Brain in v8.18 Sourcing Brain)
+- 6 risk signals (concentration, aging, liquidity, market, fraud, portfolio)
+- 3 top mitigation actions ranked by riskReduction × confidence
+- Structured 30d projection (projectedRiskScore + projectedConcentrationPct + projectedAgedPct + recommendedRiskBudget)
+- Structured 90d projection (projectedRiskScore + projectedConcentrationPct + projectedAgedPct + recommendedRiskBudget)
+- riskGrade + biggestRisk + one-line summary
+- Pure deterministic compute (aiUsed: false, no AI/LLM SDK)
+- DB state injection (graceful — falls back to defaults if DB unavailable or empty)
+- 5-minute cache (300000ms TTL, cachedAt stamp on cache hit)
 
 ## [8.18.0] - 2026-08-27
 

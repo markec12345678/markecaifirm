@@ -14779,3 +14779,73 @@ Stage Summary:
 - GitHub sinhroniziran (0 commit-ov ahead)
 - Verzija aplikacije: v8.18.0
 - Skupaj doslej (v7.50 → v8.18): 68 verzij, 190 novih funkcij; 4 Brain layer-ji implementirani (Profit + Inventory + Market + Sourcing) — naslednji Brain-i (Risk/Buyer/Pricing) v v8.19-v8.21, Master Brain v v8.22
+
+---
+Task ID: v8.19
+Agent: full-stack-developer
+Task: Implement Risk Brain — fifth Brain layer above ~7 risk specialists
+
+Work Log:
+- Prebral worklog.md (zadnji v8.18 vnos), src/lib/brain/{profit,inventory,market,sourcing}.ts (template), src/app/api/ai/brain/sourcing/route.ts (endpoint template), src/components/dashboard/ai-hub-view.tsx (BrainSynthesisCard z 4 stacked sectioni)
+- Ustvaril /agent-ctx/v8.19-risk-brain.md (work record per instructions)
+- NEW: src/lib/brain/risk.ts (pure compute module, ~470 vrstic)
+  - Mirror sourcing.ts strukture: clamp, gradeFromScore, round2, confidenceFromRiskLevel, confidenceWeight, normalizeInput, computeXxxSignal, actionForSignal, buildOneLineSummary, SIGNAL_WEIGHTS, biggestRiskValueFor, riskBrain main entry
+  - 6 risk signalov: concentration, aging, liquidity, market, fraud, portfolio (vsak z 0-100 score HIGHER=LOWER risk + grade + riskLevel LOW/MEDIUM/HIGH/CRITICAL inverse + riskReductionEUR + topLever v slovenščini)
+  - Synthesis: topActions top 3 ranked by riskReduction × confidenceWeight (confidence INVERTED od drugih Brainov — HIGH če riskLevel HIGH/CRITICAL)
+  - projection30d: projectedRiskScore (overall+15, clamped) + projectedConcentrationPct (max 35, -20) + projectedAgedPct (max 5, -30) + recommendedRiskBudget (capital × projectedRiskScore/100)
+  - projection90d: projectedRiskScore (overall+30, clamped) + projectedConcentrationPct (max 30, -30) + projectedAgedPct (max 2, -50) + recommendedRiskBudget (capital × projectedRiskScore/100 × 1.2)
+  - overallRiskScore = weighted (concentration 0.20, aging 0.20, liquidity 0.20, market 0.15, fraud 0.10, portfolio 0.15)
+  - overallRiskLevel: LOW ≥70, MEDIUM ≥50, HIGH ≥30, CRITICAL otherwise
+  - riskGrade via gradeFromScore (A+ ≥90, A ≥75, B ≥60, C ≥40, D ≥20, F)
+  - biggestRisk = signal z LOWEST score
+  - oneLineSummary: "Tveganje X/100 (LEVEL). Največje: SIGNAL value. Action. Grade Y."
+  - NO next/server import, NO Prisma calls — pure deterministic
+  - Reuses ProfitGrade in Confidence types via `import type { ProfitGrade, Confidence } from './profit'`
+  - Sensible defaults: totalCapitalDeployed 1500, inventoryValue 1500, agedInventoryValue 280, capitalConcentrationPct 40, monthlyRevenue 350, monthlyProfit 100, activeSources 4, fraudSuspicionsCount 2, totalListingsCount 150, avgDaysToSell 14, marketVolatilityPct 25
+- NEW: src/app/api/ai/brain/risk/route.ts (GET+POST, ~370 vrstic)
+  - runtime='nodejs', dynamic='force-dynamic', maxDuration=60
+  - resolveInputs: parse from query string (GET) AND JSON body (POST) — body precedence
+  - fetchDbState: graceful DB state injection iz Listing + Trade modelov
+    * Listing: fraudSuspicionsCount = count where aiVerdict='SUMNJIVO' OR aiRisk >= 7, totalListingsCount = count where isHidden=false
+    * Trade: inventoryValue = sum(buyPrice+buyFees) where status='held', agedInventoryValue = same filtered buyDate < 30 days ago, monthlyRevenue = sum(sellPrice) where status='sold' AND sellDate >= 30d ago, monthlyProfit = sum(sellPrice - buyPrice - buyFees - sellFees) for same set, capitalConcentrationPct = (top buyLocation sum / total) × 100, activeSources = distinct count of non-empty buyLocation, avgDaysToSell = avg(sellDate - buyDate) for all sold trades with both dates
+    * marketVolatilityPct ni izpeljiv iz obstoječih tabel — fallback na default 25%
+    * User input precedence nad DB state; vsi DB dostopi v try/catch + logger.warn — NE crash-a
+  - 5-min cache (TTL 300000ms): cache key = risk-brain:${hashOfInputs} (11 inputov). Na cache hit, cachedAt re-stamp
+  - GET+POST shared handler handleRiskBrain, aiUsed: false, source: "v8.19-risk-brain"
+  - try/catch z logger.error → 500 { error: err?.message ?? 'Napaka' }
+  - JSDoc header z razlikami od Profit/Inventory/Market/Sourcing Brain in od ~7 risk specialistov
+- MODIFIED: src/components/dashboard/ai-hub-view.tsx
+  - Added Shield icon to lucide-react imports
+  - Added RiskBrainResult interface (signals z riskLevel + riskReductionEUR; current z 12 polj vključno overallRiskScore; maximization z topActions + projection30d/90d + riskGrade + biggestRisk + oneLineSummary)
+  - Added riskLevelColor helper (LOW=emerald, MEDIUM=amber, HIGH=rose, CRITICAL=rose-600 darker)
+  - Added RiskBrainSection component (red/rose-tinted, Shield icon, 🛡️ emoji, v8.19 badge) — fetches /api/ai/brain/risk on mount, loading skeleton, error state, refresh button, cache indicator
+    * oneLineSummary
+    * riskGrade pill (via gradeColor) + biggestRisk pill (z riskLevel color)
+    * Top 3 mitigation actions (z confidence)
+    * Current state summary (overallRiskScore, capitalConcentrationPct, agedPct, fraudSuspicionsPct)
+    * 30d/90d risk projection (projectedRiskScore + recommendedRiskBudget)
+  - Extended BrainSynthesisCard: badge v8.15 + v8.16 + v8.17 + v8.18 → v8.15 + v8.16 + v8.17 + v8.18 + v8.19
+  - BrainSynthesisCard sedaj rendera 5 stacked sectionov (ProfitBrainSection + InventoryBrainSection + MarketBrainSection + SourcingBrainSection + RiskBrainSection)
+  - Added brain/risk v8.19 badge v endpoint grid (rose-tinted) poleg obstoječih brain/profit v8.15, brain/inventory v8.16, brain/market v8.17, brain/sourcing v8.18
+- Lint (bun run lint): 0 errors, 0 warnings ✅
+- Typecheck (bunx tsc --noEmit): 0 errors ✅
+- Endpoint verification (curl):
+  - GET /api/ai/brain/risk (default inputs) → 200 {"ok":true, "signals":[6: concentration(B,60,LOW,22.5€ — 40% koncentracija, sprejemljiva), aging(B,62.67,LOW,56€ — 19% stari, sprejemljivo), liquidity(F,11.67,HIGH,75€ — NIZKA: znižaj cene 10%), market(C,50,MEDIUM,37.5€ — zmerna volatilnost 25%), fraud(A+,93.33,LOW,4€ — 1.3% fraud), portfolio(C,54.5,MEDIUM,19.5€ — optimiziraj top 2)], "current":{overallRiskScore:51.88, capitalConcentrationPct:40, agedPct:18.67, fraudSuspicionsPct:1.33, marketVolatilityPct:25}, "maximization":{topActions:[#1 liquidity -75€/mo tveganja (HIGH), #2 aging -56€/mo (LOW), #3 market -37.5€/mo (MEDIUM)], projection30d:{projectedRiskScore:66.88, projectedConcentrationPct:35, projectedAgedPct:0, recommendedRiskBudget:1003.13}, projection90d:{projectedRiskScore:81.88, projectedConcentrationPct:30, projectedAgedPct:0, recommendedRiskBudget:2210.63}, riskGrade:"C", biggestRisk:"liquidity", oneLineSummary:"Tveganje 52/100 (MEDIUM). Največje: LIQUIDITY 12/100. Povečaj likvidnost: Likvidnost 12/100 — NIZKA: znižaj cene 10% za hitro prodajo, sprosti capital. Grade C."}, "aiUsed":false, "source":"v8.19-risk-brain"}
+  - POST /api/ai/brain/risk z high-risk inputs (totalCapitalDeployed 3000, inventoryValue 3000, agedInventoryValue 900, capitalConcentrationPct 70, monthlyRevenue 600, monthlyProfit 180, activeSources 3, fraudSuspicionsCount 8, totalListingsCount 200, avgDaysToSell 21, marketVolatilityPct 40) → 200 {"ok":true, "signals":[6: concentration(D,30,HIGH,120€ — 70% KONCENTRACIJA — PREVEČ tveganja), aging(C,40,MEDIUM,180€ — likvidiraj postopoma), liquidity(F,10,HIGH,150€ — NIZKA), market(D,20,HIGH,75€ — VISOKA: hedge-aj), fraud(A,80,LOW,24€ — 4% fraud), portfolio(D,34.5,HIGH,54.9€ — rebalanciraj)], "current":{overallRiskScore:32.17 (CRITICAL/LOW RANGE), capitalConcentrationPct:70, agedPct:30, fraudSuspicionsPct:4, marketVolatilityPct:40}, "maximization":{topActions:[#1 liquidity -150€/mo (HIGH), #2 aging -180€/mo (MEDIUM), #3 concentration -120€/mo (HIGH)], projection30d:{projectedRiskScore:47.17, recommendedRiskBudget:1415.16}, projection90d:{projectedRiskScore:62.17, recommendedRiskBudget:2240.4}, riskGrade:"D", biggestRisk:"liquidity", oneLineSummary:"Tveganje 32/100 (HIGH). Največje: LIQUIDITY 10/100. ... Grade D."}} — višji risk (nižji scores, višji riskReductionEUR) kot default ✅
+  - Cache verification: 2x zapored GET /api/ai/brain/risk — drugi klic re-stampa cachedAt (1052ms kasneje od prvega) z istim overallRiskScore 51.88 → cache HIT ✅
+  - /api/ai-list → {"total":409, "categories":{"brain":5, ...}, "endpoints":[..., brain/risk, ...]} ✅
+- Updated documentation:
+  - README.md: version badge v8.18.0 → v8.19.0; AI endpoints badge 408 → 409; API routes badge 585 → 586; hero tagline v8.18.0 → v8.19.0 z Risk Brain sintezo 6 signalov; Brain overview paragraph posodobljen z vsemi 5 Brain-i (Profit + Inventory + Market + Sourcing + Risk); "Kaj je novega" razširjen z v8.19 — 🛡️ Risk Brain blokom na vrhu (nad v8.18); version section v8.18.0 → v8.19.0; ~271 funkcij → ~272 funkcij; AI Hub opis 408→409 z dodatkom Risk Brain; AI_ENDPOINTS.md link 408→409 z brain/risk; Endpointi (408 AI → 409 AI = 586 routes); project tree comment posodobljen (5 Brain layerjev, v8.15-v8.19); "v8.15-v8.18" → "v8.15-v8.19"; Testing badge 585 → 586 routes; "UI komponente za v7.50-v8.18" → "v7.50-v8.19"; Changelog section zadnje verzije: dodan v8.19.0 na vrh nad v8.18.0
+  - CHANGELOG.md: dodan nov "## [8.19.0] - 2026-08-28" section na vrhu (nad [8.18.0]) z ### Added — 🛡️ Risk Brain blokom (6 signalov podrobno + synthesis logic + DB state injection + cache + pure compute module + endpoint path + AI Hub BrainSynthesisCard extension). ### Stats: AI endpoints 408→409 (+1), Total API routes 585→586 (+1). [Unreleased] "v8.19+" → "v8.20+" (Removed "Risk" iz načrtovanih Brain layerjev — sedaj samo še Buyer/Pricing)
+  - AI_ENDPOINTS.md: total count 408 → 409. Vstavljen "| 13 | brain/risk | `/api/ai/brain/risk` |" v alphabetical position (po brain/sourcing). Renumbered vseh 409 endpoint vrstic sequentialno (Python script) da se izognem duplicate #13
+
+Stage Summary:
+- NEW: src/lib/brain/risk.ts (pure compute module — 6 risk signals + synthesis)
+- NEW: src/app/api/ai/brain/risk/route.ts (GET+POST endpoint, 5-min cache, DB state injection graceful)
+- MODIFIED: src/components/dashboard/ai-hub-view.tsx (BrainSynthesisCard extended to render FIVE stacked sections — Profit emerald + Inventory amber + Market sky/blue + Sourcing purple/violet + Risk red/rose)
+- AI endpointi: 408 → 409 (+1)
+- Total API routes: 585 → 586 (+1)
+- Lint: 0 errors, 0 warnings ✅
+- Typecheck: 0 errors ✅
+- Endpoint verification: GET default → 6 signals, biggestRisk=liquidity, overallRiskScore=51.88 (MEDIUM), riskGrade=C ✅; POST high-risk → concentration 30/HIGH, aging 40/MEDIUM, liquidity 10/HIGH, market 20/HIGH, overallRiskScore=32.17 (HIGH), riskGrade=D ✅; Cache → drugi GET re-stampa cachedAt z istim overallRiskScore ✅; /api/ai-list → total 409, categories.brain 5 ✅
+- Documentation updated: AI_ENDPOINTS.md (409 brain/risk row + renumber), README.md (version v8.19.0, badges 409 AI + 586 routes, hero tagline, overview paragraph z 5 Brain-i, "Kaj je novega" v8.19 blok, version section, function count ~272, all v8.18/v8.18.0 references posodobljene), CHANGELOG.md (nov [8.19.0] section z Added + Stats, [Unreleased] v8.19+ → v8.20+)
