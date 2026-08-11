@@ -6,11 +6,250 @@ Format sledi [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), verzije s
 
 ## [Unreleased]
 
-Načrtovano za v8.13+:
+Načrtovano za v8.14+:
 - WebSocket real-time negotiation (SSE namesto polling)
 - Playwright E2E testi za glavne flow-e
 - TLS fingerprinting (curl-impersonate)
 - ML model za buyer matchmaker (fine-tuned na realnem data)
+
+## [8.13.0] - 2026-08-25
+
+### Added — Profit Per Trade Scaling Maximizer + Deal Source Volume Growth Maximizer + Inventory Turnover Profit Growth Maximizer (3 funkcije)
+
+- **AI Profit Per Trade Scaling Maximizer** — `GET+POST /api/ai/profit-per-trade-scaling-maximizer`
+  - AI MAXIMIZES AND SCALES PROFIT PER TRADE — not just optimize the current profit per trade,
+    but systematically SCALE IT UP through 4 phases (CURRENT → OPTIMIZED → PREMIUM → ELITE).
+  - "Your profit per trade is 45€. To scale to 100€/trade you need: premium sourcing,
+    professional photos, and cross-platform premium pricing."
+  - Different from profit-per-cycle-maximizer (v8.12 which maximizes profit per cycle €/cycle
+    with maximizationLevers and cycleVsVolumeTradeoff) — this MAXIMIZES AND SCALES PROFIT
+    PER TRADE through scalingPath (4-phase progression CURRENT→OPTIMIZED→PREMIUM→ELITE, not
+    per-cycle snapshot)
+  - Different from profit-per-day-scaling-maximizer (v8.08 which scales daily profit with
+    requiredTradesPerDay and requiredCapital per phase) — this SCALES PROFIT PER TRADE
+    €/trade (per-trade scaling, not daily profit scaling)
+  - Different from deal-source-profit-margin-growth-maximizer (v8.12 which maximizes margin
+    growth rate per source in %/mo) — this MAXIMIZES AND SCALES PROFIT PER TRADE in absolute
+    €/trade (absolute per-trade scaling, not per-source %/mo margin growth)
+  - Different from inventory-capital-efficiency-growth-maximizer (v8.12 which maximizes
+    capital efficiency growth %/mo) — this MAXIMIZES PROFIT PER TRADE SCALING (€/trade
+    scaling path, not capital efficiency %/mo growth)
+  - Different from profit-per-trade-growth-maximizer (v8.10 which maximizes growth rate
+    of profit PER TRADE in €/mo) — this MAXIMIZES AND SCALES profit per trade with
+    scalingPath and scalingActions (phase-based scaling, not growth rate)
+  - Different from profit-growth-rate-maximizer (v8.11 which maximizes growth rate of total
+    profit in %/mo MoM) — this MAXIMIZES PROFIT PER TRADE SCALING (per-trade € scaling,
+    not total profit %/mo growth)
+  - Different from profit-multiplier-maximizer (v8.09 which maximizes maximum profit
+    multiplier with 6 dimensions) — this MAXIMIZES AND SCALES PROFIT PER TRADE with
+    4-phase progression and scalingBottlenecks
+  - Different from profit-per-euro-maximizer (v8.07 which maximizes profit per € deployed)
+    — this MAXIMIZES PROFIT PER TRADE SCALING (€/trade scaling, not € profit per € capital)
+  - Different from inventory-annual-yield-maximizer (v8.11 which maximizes annual yield
+    of inventory) — this MAXIMIZES PROFIT PER TRADE SCALING (per-trade scaling, not
+    annual yield %)
+  - Different from deal-source-profit-per-day-maximizer (v8.11 which maximizes profit per
+    day per source €/day) — this MAXIMIZES AND SCALES PROFIT PER TRADE (€/trade scaling
+    path, not €/day per source)
+  - Different from profit-per-cycle-maximizer (v8.12 which maximizes profit per cycle with
+    optimalCycleStrategy HIGH_MARGIN_LOW_VOLUME) — this MAXIMIZES PROFIT PER TRADE SCALING
+    with 4-phase scalingPath and 6 scalingActions (PREMIUM_SOURCING/PROFESSIONAL_PHOTOS/
+    CROSS_PLATFORM_PREMIUM/BUNDLE_UPSELL/CERTIFICATION/TIMING_OPTIMIZATION)
+  - Different from inventory-turnover-profit-maximizer (v8.00 which maximizes profit via
+    optimal inventory turnover) — this MAXIMIZES PROFIT PER TRADE SCALING (per-trade €
+    scaling, not turnover-profit curve)
+  - Different from revenue-per-trade-maximizer (v8.06 which maximizes top-line sell price
+    per trade) — this MAXIMIZES NET PROFIT PER TRADE SCALING (net €/trade scaling path,
+    not top-line revenue/trade)
+  - Logic: Query SOLD trades last 12 months → compute avgProfitPerTrade €/trade [0, 10000]
+    (= avg((sellPrice − sellFees) − (buyPrice + buyFees))), soldCount12m, totalProfit12m €,
+    bestTrade € (max single-trade profit), worstTrade € (min single-trade profit),
+    avgSellPrice €, avgBuyCost € (= avg(buyPrice + buyFees)), profitPerTradeTrend %/mo
+    (linear regression slope / mean × 100 over monthly avg profit/trade),
+    avgProfitPerTradeGrowthRate %/mo (echoes profitPerTradeTrend — kept for AI clarity),
+    bestTradeRatio [0, 100] (bestTrade / avgProfitPerTrade — how much upside exists)
+  - AI generates scalingPath (4 entries: phase CURRENT/OPTIMIZED/PREMIUM/ELITE,
+    targetProfitPerTrade € [0, 10000] (CURRENT = current × 1.0, OPTIMIZED = current × 1.5,
+    PREMIUM = current × 2.5, ELITE = current × 4.0 capped at min(current × 5, 10000) —
+    anti-hallucination), requirements (slovenian, max 300 — what this phase requires:
+    sourcing, photos, platform, certification), timeline (slovenian, max 200 — when
+    achievable), feasibility [0, 100] (CURRENT 100, OPTIMIZED 80, PREMIUM 60, ELITE 40))
+  - maximization: maximizedProfitPerTrade €/trade [0, 10000] (= ELITE phase target —
+    optimal achievable), scalingMultiplier [1.0, 5.0] (= maximized / current —
+    anti-hallucination cap at 5.0), scalingActions (6 entries: action PREMIUM_SOURCING/
+    PROFESSIONAL_PHOTOS/CROSS_PLATFORM_PREMIUM/BUNDLE_UPSELL/CERTIFICATION/
+    TIMING_OPTIMIZATION with relative uplift 30/25/20/15/10/45%, expectedLift % [0, 100],
+    difficulty LOW/MEDIUM/HIGH), scalingBottlenecks (3-5 slovenian strings max 200 each —
+    what limits scaling profit per trade), scalingProjection (3 entries: months 3/6/12,
+    projectedProfitPerTrade € [0, 10000] (linear ramp: 3m=25%, 6m=50%, 12m=100% adoption
+    of maximized)), scalingGrade A+/A/B/C/D/F (A+ if maximized ≥ 500, A ≥ 300, B ≥ 150,
+    C ≥ 75, D ≥ 25, else F)
+  - Anti-hallucination: profits [0, 10000], multiplier [1.0, 5.0], absolute uplift cap
+    +400% (5× current)
+  - 6h cache (key `profit-per-trade-scaling-maximizer:${currentMonth}`)
+  - Deterministic fallback (4-phase scaling path × 6 scalingActions × 3-5 bottlenecks +
+    3/6/12 month projection + grade + multiplier × 5.0 cap)
+  - Empty-state fallback if 0 SOLD trades → grade F
+
+- **AI Deal Source Volume Growth Maximizer** — `GET+POST /api/ai/deal-source-volume-growth-maximizer`
+  - AI MAXIMIZES GROWTH RATE of trade VOLUME PER SOURCE — not current volume, but how fast
+    volume is growing per source month-over-month.
+  - "Bolha volume growing +8%/month, Vinted +3%/month — but could be +15% and +8%
+    respectively."
+  - Different from deal-source-profit-margin-growth-maximizer (v8.12 which maximizes margin
+    growth rate per source in %/mo) — this MAXIMIZES VOLUME GROWTH RATE per source
+    (%/mo how fast volume grows, not how fast margin grows)
+  - Different from profit-per-trade-scaling-maximizer (v8.13 which scales profit per trade
+    with 4-phase progression) — this MAXIMIZES VOLUME GROWTH per source (%/mo volume
+    growth, not €/trade scaling)
+  - Different from profit-per-day-scaling-maximizer (v8.08 which scales daily profit with
+    requiredTradesPerDay) — this MAXIMIZES VOLUME GROWTH per source (%/mo source volume
+    growth, not absolute €/day scaling)
+  - Different from inventory-turnover-profit-growth-maximizer (v8.13 which maximizes growth
+    of turnover profit in €/mo) — this MAXIMIZES VOLUME GROWTH RATE per source
+    (%/mo per-source volume growth, not €/mo turnover profit growth)
+  - Different from profit-growth-rate-maximizer (v8.11 which maximizes growth rate of
+    total profit in %/mo) — this MAXIMIZES VOLUME GROWTH per source (%/mo how fast trade
+    COUNT grows per source, not how fast profit € grows)
+  - Different from deal-source-profit-per-day-maximizer (v8.11 which maximizes profit per
+    day per source €/day) — this MAXIMIZES VOLUME GROWTH per source (%/mo volume growth,
+    not €/day profit per source)
+  - Different from inventory-capital-efficiency-growth-maximizer (v8.12 which maximizes
+    capital efficiency growth %/mo) — this MAXIMIZES VOLUME GROWTH per source (%/mo source
+    volume growth, not capital efficiency %/mo growth)
+  - Different from profit-per-cycle-maximizer (v8.12 which maximizes profit per cycle
+    €/cycle) — this MAXIMIZES VOLUME GROWTH per source (%/mo source volume growth, not
+    €/cycle profit)
+  - Different from deal-source-annual-return-maximizer (v8.10 which maximizes annualized
+    return per source with benchmark) — this MAXIMIZES VOLUME GROWTH RATE per source
+    (%/mo, not % annual return)
+  - Different from deal-source-profit-velocity-maximizer (v8.08 which maximizes velocity
+    of profit per source €/week) — this MAXIMIZES VOLUME GROWTH per source (%/mo, not
+    €/week)
+  - Different from deal-source-profitability-analyzer (v8.06 which analyzes profitability
+    per source) — this MAXIMIZES VOLUME GROWTH per source (%/mo growth, not profitability
+    snapshot)
+  - Different from deal-source-profit-per-trade-maximizer (v8.04 which maximizes profit
+    per trade per source €) — this MAXIMIZES VOLUME GROWTH per source (%/mo volume
+    growth, not €/trade profit per source)
+  - Different from deal-source-cash-flow-maximizer (v8.06 which maximizes net cash flow
+    per source) — this MAXIMIZES VOLUME GROWTH per source (%/mo volume growth rate, not
+    € net cash flow)
+  - Different from deal-source-margin-maximizer (v8.03 which maximizes margin % per source)
+    — this MAXIMIZES VOLUME GROWTH RATE per source (%/mo how fast volume grows, not
+    absolute margin %)
+  - Logic: Query SOLD trades last 12 months with linked Listing (for monitor.source),
+    grouped by month. Per source: tradeCount12m, monthlyVolumes Array<tradeCount> (12
+    entries, oldest → newest, bucketed by sellDate), currentMonthlyVolume (last month
+    with data), avgMonthlyVolume (avg over 12 months), volumeGrowthRate %/mo [-50, 100]
+    (linear regression slope / mean × 100 over monthly volumes), volumeGrowthTrend
+    ACCELERATING/STABLE/DECLINING/VOLATILE/INSUFFICIENT_DATA, volumeGrowthAcceleration
+    %/mo² [-50, 100] (slope of last half vs first half), monthsWithData,
+    bestMonthlyVolume, worstMonthlyVolume
+  - AI generates per source: volumeGrowthMaximizationAction ADD_MONITORS/EXPAND_CATEGORIES/
+    INCREASE_SEARCH_FREQUENCY/CROSS_POST/OPTIMIZE_LISTING_QUALITY (gain 8/6/5/10/4 pp
+    absolute uplift), maximizedVolumeGrowthRate %/mo [-50, 100] (≥ current, ≤ current +
+    30pp absolute uplift — anti-hallucination), volumeGrowthUplift pp [0, 100]
+    (improvement = maximized − current), volumeGrowthLevers (3-5 slovenian strings max 200
+    each — specific volume growth levers per source), volumeGrowthProjection (3 entries:
+    months 3/6/12, projectedVolume trade count [0, 10000] (= current × (1 + months ×
+    maximizedVolumeGrowthRate/100))), volumeGrowthGrade A+/A/B/C/D/F (A+ if maximized
+    ≥ 25, A ≥ 15, B ≥ 8, C ≥ 4, D ≥ 1, else F)
+  - Portfolio: currentPortfolioVolumeGrowth %/mo (weighted avg of source growth rates
+    by trade count) → maximizedPortfolioVolumeGrowth, portfolioVolumeGrowthUplift pp,
+    sourceVolumeGrowthRanking Array<{ source, displayName, currentVolumeGrowthRate %/mo,
+    maximizedVolumeGrowthRate %/mo, rank }>, bestVolumeGrowthSource
+  - Anti-hallucination: growth rates [-50, 100], scores [0, 100], absolute uplift cap
+    30pp
+  - 6h cache (key `deal-source-volume-growth-maximizer:${currentMonth}`)
+  - Deterministic fallback (per-source volume growth rate via 12-month monthly volume
+    buckets × linear regression × trend × acceleration + action × uplift + 3-5 levers
+    per source + 3/6/12 month projection + grade + ranking + portfolio summary +
+    best source)
+  - Empty-state fallback if 0 SOLD trades
+
+- **AI Inventory Turnover Profit Growth Maximizer** — `GET+POST /api/ai/inventory-turnover-profit-growth-maximizer`
+  - AI MAXIMIZES GROWTH of profit from TURNOVER — not current turnover profit, but how
+    fast profit from turnover is growing month-over-month. Combines turnover rate growth
+    with profit per cycle growth.
+  - "Your turnover profit is growing +4%/month, but could grow +10%/month."
+  - Different from inventory-turnover-profit-maximizer (v8.00 which maximizes profit via
+    optimal inventory turnover — finds the perfect balance between turnover speed and
+    profit per cycle) — this MAXIMIZES GROWTH of turnover profit (%/mo how fast profit
+    from turnover grows, not optimal turnover-profit curve)
+  - Different from profit-growth-rate-maximizer (v8.11 which maximizes growth rate of
+    total profit in %/mo) — this MAXIMIZES GROWTH TURNOVER PROFIT (how fast profit
+    from monthlyTrades × avgProfitPerTrade grows, not total profit € growth)
+  - Different from inventory-capital-efficiency-growth-maximizer (v8.12 which maximizes
+    capital efficiency growth %/mo) — this MAXIMIZES TURNOVER PROFIT GROWTH (€/mo growth
+    from turnover × profit/cycle, not capital efficiency %/mo growth)
+  - Different from profit-per-cycle-maximizer (v8.12 which maximizes profit per cycle
+    €/cycle) — this MAXIMIZES GROWTH turnover profit (%/mo growth, not €/cycle profit)
+  - Different from deal-source-profit-margin-growth-maximizer (v8.12 which maximizes
+    margin growth per source in %/mo) — this MAXIMIZES TURNOVER PROFIT GROWTH across
+    inventory (€/mo turnover profit growth, not per-source margin growth)
+  - Different from profit-per-trade-scaling-maximizer (v8.13 which scales profit per trade
+    with 4-phase progression) — this MAXIMIZES GROWTH turnover profit (%/mo how fast
+    profit grows, not €/trade scaling)
+  - Different from deal-source-volume-growth-maximizer (v8.13 which maximizes volume
+    growth rate per source in %/mo) — this MAXIMIZES TURNOVER PROFIT GROWTH (€/mo growth
+    from turnover × profit/cycle, not %/mo source volume growth)
+  - Different from inventory-capital-velocity-maximizer (v8.10 which maximizes velocity
+    of capital — how many cycles/year) — this MAXIMIZES GROWTH turnover profit (%/mo
+    growth, not cycle count velocity)
+  - Different from inventory-annual-yield-maximizer (v8.11 which maximizes annual yield
+    %) — this MAXIMIZES GROWTH turnover profit (%/mo growth, not annual yield %)
+  - Different from profit-per-day-scaling-maximizer (v8.08 which scales daily profit
+    with requiredTradesPerDay and requiredCapital) — this MAXIMIZES GROWTH turnover
+    profit (%/mo growth, not €/day scaling)
+  - Different from profit-per-trade-growth-maximizer (v8.10 which maximizes growth rate
+    of profit PER TRADE in €/mo) — this MAXIMIZES GROWTH TURNOVER PROFIT (%/mo how fast
+    monthlyTrades × avgProfitPerTrade grows, not per-trade €/mo growth)
+  - Different from inventory-profit-per-day-growth-maximizer (v8.09 which maximizes
+    growth rate of daily profit from inventory in %/week) — this MAXIMIZES GROWTH
+    TURNOVER PROFIT (%/mo turnover profit growth, not %/week daily profit growth)
+  - Different from profit-multiplier-maximizer (v8.09 which maximizes maximum profit
+    multiplier with 6 dimensions) — this MAXIMIZES GROWTH TURNOVER PROFIT with
+    growthLevers (INCREASE_TRADE_FREQUENCY/INCREASE_PROFIT_PER_TRADE/REDUCE_HOLD_TIME/
+    OPTIMIZE_PRICING) and doublingTime (rule of 72)
+  - Different from profit-scale-engine (v7.96 which scales profit with growth engine) —
+    this MAXIMIZES GROWTH TURNOVER PROFIT with growthTrajectory and growthBottlenecks
+  - Different from inventory-turnover-accelerator (v7.96 which accelerates turnover speed)
+    — this MAXIMIZES GROWTH TURNOVER PROFIT (%/mo growth, not turnover speed acceleration)
+  - Different from inventory-turnover-yield-maximizer (v8.05 which maximizes yield with
+    yieldCurve) — this MAXIMIZES GROWTH TURNOVER PROFIT with doublingTime and growthLevers
+  - Different from inventory-turnover-optimizer (which optimizes turnover rate) — this
+    MAXIMIZES GROWTH TURNOVER PROFIT (%/mo how fast profit grows, not optimal turnover
+    rate)
+  - Logic: Query SOLD trades last 12 months grouped by month → compute monthlyTurnoverProfit
+    Array<€> (12 entries, oldest → newest, = monthlyTrades × avgProfitPerTrade, bucketed by
+    sellDate), currentTurnoverProfit € (last month), avgTurnoverProfit € (avg over 12
+    months), turnoverProfitGrowthRate %/mo [-50, 200] (linear regression slope / mean ×
+    100 over monthly turnover profit), turnoverProfitGrowthTrend ACCELERATING/STABLE/
+    DECLINING/VOLATILE/INSUFFICIENT_DATA, turnoverProfitGrowthAcceleration %/mo² [-50,
+    200] (slope of last half vs first half), monthsWithData, bestMonthlyTurnoverProfit €,
+    worstMonthlyTurnoverProfit €, avgTradeFrequency trades/mo, avgProfitPerTrade €
+  - AI generates currentTurnoverProfitGrowth %/mo [-50, 200] (echoes current),
+    maximizedTurnoverProfitGrowth %/mo [-50, 200] (optimal achievable, ≥ current, ≤ current
+    + 50pp absolute uplift — anti-hallucination), growthUplift pp [0, 100] (improvement =
+    maximized − current), growthLevers (4 entries: lever INCREASE_TRADE_FREQUENCY/
+    INCREASE_PROFIT_PER_TRADE/REDUCE_HOLD_TIME/OPTIMIZE_PRICING with potential 35/30/20/15%
+    contribution, currentContribution % [0, 100] (how much currently contributes to growth),
+    potentialContribution % [0, 100] (how much it could contribute when maximized), action
+    (slovenian, max 200 — specific action for this lever)), growthTrajectory (12 entries:
+    month 1-12, currentProjectedProfit € [0, 200000] (linear: base × (1 + m × currentGrowth/
+    100)), maximizedProjectedProfit € [0, 200000] (linear: base × (1 + m × maximizedGrowth/
+    100))), growthBottlenecks (3-5 slovenian strings max 200 each — what limits turnover
+    profit growth), growthGrade A+/A/B/C/D/F (A+ if maximized ≥ 40, A ≥ 25, B ≥ 15,
+    C ≥ 8, D ≥ 2, else F), doublingTime months [1, 120] (= 72 / maximizedTurnoverProfitGrowth
+    — rule of 72; if ≤ 0, set 120)
+  - Anti-hallucination: growth rates [-50, 200], profits [0, 200000], absolute uplift cap
+    50pp
+  - 6h cache (key `inventory-turnover-profit-growth-maximizer:${currentMonth}`)
+  - Deterministic fallback (12-month monthly turnover profit buckets × linear regression ×
+    trend × acceleration + 4 growthLevers × current/potential contribution + 12-month
+    trajectory × linear projection + 3-5 bottlenecks + grade + doublingTime + rule of 72)
+  - Empty-state fallback if 0 SOLD trades → grade F, doublingTime 120
 
 ## [8.12.0] - 2026-08-24
 
