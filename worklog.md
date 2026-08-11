@@ -14076,3 +14076,34 @@ Stage Summary:
 - Total API routes: 572 → 575 (+3)
 - Dokumentacija sinhrono posodobljena (AI_ENDPOINTS.md, README, CHANGELOG)
 - Verzija aplikacije: v8.12.0
+
+---
+Task ID: v8.12.1
+Agent: main
+Task: v8.12 commit + push + GitHub About + Agent Browser verification
+
+Work Log:
+- Prejel poročilo od full-stack-developer podagenta (Task v8.12 — podagent timeout-al a je dokončal delo)
+- Preveril 3 nove endpoint-e: profit-per-cycle-maximizer (200 GET+POST), deal-source-profit-margin-growth-maximizer (200 GET+POST), inventory-capital-efficiency-growth-maximizer (200 GET+POST)
+- Preveril doc sync: AI_ENDPOINTS.md (398 ✅), README v8.12 (11 refs ✅), README 398 AI (6 refs ✅), CHANGELOG v8.12 ✅
+- Preveril lint: 0 napak ✨
+- Preveril typecheck: 0 napak ✨
+- Posodobil GitHub About opis: 395 AI → 398 AI, 572 routes → 575 routes (via API PATCH)
+- Commit: "v8.12: Profit Per Cycle Maximizer + Deal Source Profit Margin Growth Maximizer + Inventory Capital Efficiency Growth Maximizer" (936516e)
+- Push na GitHub: uspešen ✅, PAT očiščen ✅
+- Agent Browser self-verification:
+  - Stran se pravilno naloži (HTTP 200)
+  - AI Hub prikazuje profit-per-cycle-maximizer (v8.12) v iskalniku ✅
+  - Runner test: klik na profit-per-cycle-maximizer → POST request → valid JSON ✅
+  - Response: {"ok":true, "current":{avgProfitPerCycle, cyclesPerYear}, "maximization":{maximizedProfitPerCycle, cycleVsVolumeTradeoff, cycleGrade, optimalCycleStrategy:BALANCED}, "aiUsed":false}
+  - Brez runtime napak v dev.log
+
+Stage Summary:
+- v8.12 uspešno dokončana in potisnjena na GitHub
+- 3 PROFIT-MAXIMIZING funkcije: AI Profit Per Cycle Maximizer, AI Deal Source Profit Margin Growth Maximizer, AI Inventory Capital Efficiency Growth Maximizer
+- AI endpointi: 395 → 398 (+3)
+- Analytics endpointi: 72 (nespremenjeno — vsi 3 so AI)
+- Total API routes: 572 → 575 (+3)
+- Dokumentacija sinhrono posodobljena (AI_ENDPOINTS.md, README, CHANGELOG, GitHub About)
+- GitHub sinhroniziran (0 commit-ov ahead)
+- Verzija aplikacije: v8.12.0
