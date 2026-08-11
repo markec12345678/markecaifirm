@@ -14849,3 +14849,49 @@ Stage Summary:
 - Typecheck: 0 errors ✅
 - Endpoint verification: GET default → 6 signals, biggestRisk=liquidity, overallRiskScore=51.88 (MEDIUM), riskGrade=C ✅; POST high-risk → concentration 30/HIGH, aging 40/MEDIUM, liquidity 10/HIGH, market 20/HIGH, overallRiskScore=32.17 (HIGH), riskGrade=D ✅; Cache → drugi GET re-stampa cachedAt z istim overallRiskScore ✅; /api/ai-list → total 409, categories.brain 5 ✅
 - Documentation updated: AI_ENDPOINTS.md (409 brain/risk row + renumber), README.md (version v8.19.0, badges 409 AI + 586 routes, hero tagline, overview paragraph z 5 Brain-i, "Kaj je novega" v8.19 blok, version section, function count ~272, all v8.18/v8.18.0 references posodobljene), CHANGELOG.md (nov [8.19.0] section z Added + Stats, [Unreleased] v8.19+ → v8.20+)
+
+---
+Task ID: v8.19.1
+Agent: main
+Task: v8.19 commit + push + GitHub About + Agent Browser verification
+
+Work Log:
+- Prejel poročilo od full-stack-developer podagenta (Task v8.19 — Risk Brain implementiran brez težav: src/lib/brain/risk.ts + src/app/api/ai/brain/risk/route.ts + BrainSynthesisCard extended z 5. stacked section za Risk Brain z red/rose tint, Shield icon)
+- Neodvisno preveril endpoint (curl 3 testi):
+  - GET /api/ai/brain/risk (default) → 200 {"ok":true, "signals":[6: concentration(B,60,LOW,22.5), aging(B,62.67,LOW,56), liquidity(F,11.67,HIGH,75), market(C,50,MEDIUM,37.5), fraud(A+,93.33,LOW,4), portfolio(C,54.5,MEDIUM,19.5)], "current":{totalCapitalDeployed:1500, inventoryValue:1500, agedInventoryValue:280, agedPct:18.67, capitalConcentrationPct:40, monthlyRevenue:350, monthlyProfit:100, activeSources:4, fraudSuspicionsPct:1.33, avgDaysToSell:14, marketVolatilityPct:25, overallRiskScore:51.88}, "maximization":{topActions:[3 z #1 liquidity +75€ tveganja (HIGH), #2 aging +56€ (MEDIUM), #3 market +37.5€ (MEDIUM)], projection30d:{projectedRiskScore:66.88, projectedConcentrationPct:35, projectedAgedPct:0, recommendedRiskBudget:1003.13}, projection90d:{projectedRiskScore:81.88, projectedConcentrationPct:30, projectedAgedPct:0, recommendedRiskBudget:1801.32}, riskGrade:"C", biggestRisk:"liquidity", oneLineSummary:"Tveganje 52/100 (MEDIUM). Največje: LIQUIDITY..."}, "aiUsed":false, "source":"v8.19-risk-brain"}
+  - POST /api/ai/brain/risk {"totalCapitalDeployed":3000,"agedInventoryValue":900,"capitalConcentrationPct":70,"marketVolatilityPct":40,...} → 200 z višjimi risk številkami (concentration D/30/HIGH/120€, market D/20/HIGH/75€, overallRiskScore 32.17 = HIGH, riskGrade D, recommendedRiskBudget 90d = 2240€)
+  - GET (cache hit) → 200 z "cachedAt": 1786477227186 (5-min cache deluje)
+  - GET /api/ai-list → 200 {"ok":true, "total":409, "categories":{brain:5, ...}} (brain kategorija 5 = profit + inventory + market + sourcing + risk)
+- Preveril doc sync: AI_ENDPOINTS.md "Total: 409 endpoints" ✅, README v8.19.0 + 409 AI (6 refs) + 586 (3 refs) + Overview paragraph z ALL 5 Brains ✅, CHANGELOG [8.19.0] section z 6 signal formulas + [Unreleased] v8.20+ z 2 preostalima Brain layer-jema (Buyer/Pricing) ✅
+- Preveril lint: 0 napak ✨
+- Preveril typecheck: 0 napak ✨
+- Posodobil GitHub About opis: "AI Trading Firm... 409 AI + 72 analytics = 586 routes. v8.19.0: Profit+Inventory+Market+Sourcing+Risk Brain (5 orchestration layers)." (via API PATCH, 262 chars)
+- Commit: "v8.19: Risk Brain — fifth orchestration layer above ~7 risk specialists (6 risk signals: concentration, aging, liquidity, market, fraud, portfolio synthesized into 1 decision + stacked UI card with Profit+Inventory+Market+Sourcing+Risk)" (486fe6a)
+- Push na GitHub: uspešen ✅ (309422a..486fe6a), PAT očiščen ✅
+- Agent Browser self-verification:
+  - Stran se pravilno naloži (HTTP 200, naslov "Markec AI Firm — Opportunity Monitor")
+  - AI Hub: kategorije na vrhu prikazujejo "🧠Možgani5" (#2 v seznamu) — 5 Brain endpointov ✅
+  - BrainSynthesisCard (stacked layout — 5 sekcij):
+    - Profit Brain section (emerald): "🧠 PROFIT BRAIN", "Profit 450€/mo → 651€/mo (+45%) z HORIZON" ✅
+    - Inventory Brain section (amber): "📦 INVENTORY BRAIN", "Likvidiraj 3 stare iteme...", "Grade D" ✅
+    - Market Brain section (sky/blue): "📈 MARKET BRAIN", "Trg v DISTRIBUTION fazi", "Grade B" ✅
+    - Sourcing Brain section (purple/violet): "🎯 SOURCING BRAIN", "Bolha najboljši vir (168€/mo)", "Grade B" ✅
+    - Risk Brain section (red/rose): "🛡️ RISK BRAIN", "Tveganje 52/100 (MEDIUM)", "Likvidnost 12/100", "biggestRisk: liquidity", "Grade C" ✅
+  - Endpoint "🧠brain/risk v8.19: v8.19: Risk Brain — GET+POST /api/ai/brain/risk" viden v AI Hub listi [ref=e31] z v8.19 badge ✅
+  - Runner test: klik na brain/risk → POST request → valid JSON z source:"v8.19-risk-brain", 6 signali, riskGrade:"C", overallRiskScore:51.88, biggestRisk:"liquidity" ✅
+  - Brez runtime napak v dev.log (le normalni Prisma SQL queries + GET /api/ai/brain/risk 200 v 41ms)
+
+Stage Summary:
+- v8.19 uspešno dokončana in potisnjena na GitHub
+- NOV ARCHITECTURAL LAYER: Risk Brain — peti orkestracijski Brain nad ~7 risk specialist-i
+- 6 risk signalov (concentration, aging, liquidity, market, fraud, portfolio) → sintetizira v 1 odločitev (3 top mitigation akcije ranked by riskReductionEUR × confidence, 30d/90d risk projekcija z projectedRiskScore + recommendedRiskBudget, riskGrade, biggestRisk, oneLineSummary)
+- Inverted scoring: HIGHER score = LOWER risk (A+ grade = safe). riskLevel per signal (LOW/MEDIUM/HIGH/CRITICAL). riskReductionEUR per signal (koliko €/mo tveganja se mitigira). Confidence je inverted — HIGH če riskLevel HIGH/CRITICAL (urgent)
+- 5-min cache, DB state injection z graceful fallback (Listing za fraudSuspicions, Trade za inventory/revenue/profit), pure compute module brez AI/LLM
+- BrainSynthesisCard razširjen z 5. stacked section (red/rose tint, Shield icon) — sedaj prikazuje 5 Brain-ov simultano (Profit emerald + Inventory amber + Market sky/blue + Sourcing purple/violet + Risk red/rose)
+- AI endpointi: 408 → 409 (+1)
+- Analytics endpointi: 72 (nespremenjeno)
+- Total API routes: 585 → 586 (+1)
+- Dokumentacija sinhrono posodobljena (AI_ENDPOINTS.md, README, CHANGELOG, GitHub About)
+- GitHub sinhroniziran (0 commit-ov ahead)
+- Verzija aplikacije: v8.19.0
+- Skupaj doslej (v7.50 → v8.19): 69 verzij, 191 novih funkcij; 5 Brain layer-jev implementiranih (Profit + Inventory + Market + Sourcing + Risk) — naslednji Brain-i (Buyer/Pricing) v v8.20-v8.21, Master Brain v v8.22
