@@ -14343,3 +14343,47 @@ Stage Summary:
 - Dokumentacija sinhrono posodobljena (AI_ENDPOINTS.md, README, CHANGELOG)
 - Verzija aplikacije: v8.15.0
 - Skupaj doslej (v7.50 → v8.15): 65 verzij, 187 novih funkcij; prvi Brain layer implementiran — naslednji Brain-i (Inventory/Market/Sourcing/Risk/Buyer/Pricing) v v8.16+
+
+---
+Task ID: v8.15.1
+Agent: main
+Task: v8.15 commit + push + GitHub About + Agent Browser verification
+
+Work Log:
+- Prejel poročilo od full-stack-developer podagenta (Task v8.15 — Profit Brain implementiran: src/lib/brain/profit.ts + src/app/api/ai/brain/profit/route.ts + src/components/dashboard/ai-hub-view.tsx modifikacije z BrainSynthesisCard + recursive ai-list depth 2 za brain/ paths)
+- Neodvisno preveril endpoint (curl 3 testi):
+  - GET /api/ai/brain/profit (default) → 200 {"ok":true, "signals":[6: growth(C,57), scale(F,3), efficiency(F,10), velocity(C,50), compounding(F,18), horizon(B,63)], "current":{monthlyProfit:450, profitGrowthRate:7.19, avgProfitPerTrade:30, tradesPerMonth:10, capitalDeployed:1500}, "maximization":{topActions:[3], projection30d:650.91, projection90d:871.9, profitGrade:"D", bestOpportunity:"horizon", oneLineSummary:"Profit 450€/mo → 651€/mo (+45%) z HORIZON; danes: Drži 90d horizont..., Pospeši velocity..., Skaliraj volume..."}, "aiUsed":false, "source":"v8.15-profit-brain"}
+  - POST /api/ai/brain/profit {"avgProfitPerTrade":40,"tradesPerMonth":15,"capitalDeployed":2500,"monthlyProfits":[300,350,400,420,480,520,560,600,650,700,750,800]} → 200 z višjimi številkami (monthlyProfit:800, profitGrowthRate:8.19, projection30d:1178.14, projection90d:1594.1, profitGrade:"C", bestOpportunity:"horizon")
+  - GET (cache hit) → 200 z "cachedAt": 1786471466627 (5-min cache deluje)
+- Preveril doc sync: AI_ENDPOINTS.md "Total: 405 endpoints" ✅, README v8.15.0 (11 refs) + 405 AI (6 refs) + 582 (3 refs) + Overview paragraph o Brain layer ✅, CHANGELOG [8.15.0] section z 6 signal formulas in [Unreleased] v8.16+ z 6 Brain layer-ji in Master Brain planom ✅
+- Preveril lint: 0 napak ✨
+- Preveril typecheck: 0 napak ✨ (podagent je popravil 4 initial TS errors zaradi Dirent tiping)
+- Posodobil GitHub About opis: "AI Trading Firm... 405 AI + 72 analytics = 582 routes. v8.15.0: Profit Brain (new orchestration layer)." (via API PATCH, 232 chars)
+- Commit: "v8.15: Profit Brain — first orchestration layer above 404 specialists (6 profit signals synthesized into 1 decision + UI Brain category + Synthesis Card)" (94ca80f → 545cb2c po pull --rebase zaradi remote divergence)
+- Push na GitHub: uspešen ✅ (46f1208..545cb2c), PAT očiščen ✅
+- Agent Browser self-verification:
+  - Stran se pravilno naloži (HTTP 200, naslov "Markec AI Firm — Opportunity Monitor")
+  - AI Hub: kategorije na vrhu prikazujejo "🧠Možgani1" kot #2 (za "📋Vsi405") z emerald barvo ✅
+  - Brain Synthesis Card renderan na vrhu AI Hub-a:
+    - Naslov "🧠 PROFIT BRAIN" ✅
+    - "🧠 Možgani kategorija →" link gumb [ref=e4] ✅
+    - oneLineSummary: "Profit 450€/mo → 651€/mo (+45%) z HORIZON; danes: Drži 90d horizont: Postavi 90d cilj..., Pospeši veloci..." ✅
+    - Top akcija #1: "Drži 90d horizont: ... · +248.18€/mo" ✅
+    - Projekcija: "30d: 651€/mo · 90d: 872€/mo" ✅
+  - Endpoint "🧠brain/profit v8.15: Profit Brain — GET+POST /api/ai/brain/profit" viden v AI Hub listi [ref=e24] ✅
+  - Runner test: klik na brain/profit → POST request → valid JSON z vsemi 6 signali (growth C, scale F, efficiency F, velocity C, compounding F, horizon B), topActions[3], projection30d:650.91, projection90d:871.9, profitGrade:"D", bestOpportunity:"horizon", oneLineSummary, "cachedAt":1786471599011 ✅
+  - Brez runtime napak v dev.log
+
+Stage Summary:
+- v8.15 uspešno dokončana in potisnjena na GitHub
+- NOV ARCHITECTURAL LAYER: Profit Brain — prvi orkestracijski Brain nad 404 specialist-i
+- 6 profit signalov (growth, scale, efficiency, velocity, compounding, horizon) → sintetizira v 1 odločitev (3 top akcije, 30d/90d projekcija, profitGrade, oneLineSummary)
+- 5-min cache, DB state injection z graceful fallback, pure compute module brez AI/LLM
+- AI Hub: nova 🧠 Možgani kategorija (#2 v seznamu) + BrainSynthesisCard z one-liner + grade pills + top 3 actions + 30d/90d projekcija
+- AI endpointi: 404 → 405 (+1)
+- Analytics endpointi: 72 (nespremenjeno)
+- Total API routes: 581 → 582 (+1)
+- Dokumentacija sinhrono posodobljena (AI_ENDPOINTS.md, README, CHANGELOG, GitHub About)
+- GitHub sinhroniziran (0 commit-ov ahead po pull --rebase)
+- Verzija aplikacije: v8.15.0
+- Skupaj doslej (v7.50 → v8.15): 65 verzij, 187 novih funkcij; prvi Brain layer implementiran — naslednji Brain-i (Inventory/Market/Sourcing/Risk/Buyer/Pricing) v v8.16-v8.21, Master Brain v v8.22
