@@ -14470,3 +14470,45 @@ Stage Summary:
 - Documentation updated: AI_ENDPOINTS.md (row 10 brain/inventory + total 406), README.md (badges v8.16.0/406/583, ~269 funkcij, Overview paragraph z obema Brain-oma, v8.16 blok v Kaj je novega, Zadnje verzije z v8.16.0), CHANGELOG.md ([8.16.0] section z full description + [Unreleased] v8.17+ z 5 preostalimi Brain layerji)
 - Verzija aplikacije: v8.16.0
 - Skupaj doslej (v7.50 → v8.16): 66 verzij, 188 novih funkcij; drugi Brain layer implementiran — naslednji Brain-i (Market/Sourcing/Risk/Buyer/Pricing) v v8.17-v8.21, Master Brain v v8.22
+
+---
+Task ID: v8.16.1
+Agent: main
+Task: v8.16 commit + push + GitHub About + Agent Browser verification
+
+Work Log:
+- Prejel poročilo od full-stack-developer podagenta (Task v8.16 — Inventory Brain implementiran: src/lib/brain/inventory.ts + src/app/api/ai/brain/inventory/route.ts + BrainSynthesisCard extended z stacked layout za Profit+Inventory)
+- Neodvisno preveril endpoint (curl 3 testi):
+  - GET /api/ai/brain/inventory (default) → 200 {"ok":true, "signals":[6: turnover(F,16.67,41.67), aging(B,66.67,42), yield(D,29.17,45), capitalEfficiency(F,4.67,60), liquidation(F,13.89,84), health(D,29.45,27.27)], "current":{itemCount:18, totalInventoryValue:1500, avgDaysToSell:14, agedItemsCount:3, agedItemsPct:16.67, avgProfitMarginPct:25, capitalDeployed:1500, monthlySalesCount:10, monthlyRevenue:350, inventoryTurnoverRate:0.56}, "maximization":{topActions:[3 z #1 liquidation +84€/mo, #2 capitalEfficiency +60€/mo, #3 yield +45€/mo], projection30d:{recommendedItemsToSell:3, recommendedItemsToBuy:3, projectedInventoryValue:1275, projectedAgedPct:0}, projection90d:{projectedInventoryValue:1650, projectedAgedPct:0, projectedTurnoverRate:0.78}, inventoryGrade:"D", bestOpportunity:"liquidation", oneLineSummary:"Inventar 18 itemov (1500€), 3 stari. Aktiviraj likvidacijo: ... Grade D."}, "aiUsed":false, "source":"v8.16-inventory-brain"}
+  - POST /api/ai/brain/inventory {"itemCount":25,"totalInventoryValue":2500,"agedItemsCount":6,"agedItemsValue":600,...} → 200 z višjimi številkami (turnover uplift 90 vs 41.67, aging uplift 90 vs 42, liquidation uplift 180 vs 84 — zaradi agedItemsValue 600 vs 280)
+  - GET (cache hit) → 200 z "cachedAt": 1786472921610 (5-min cache deluje)
+  - GET /api/ai-list → 200 {"ok":true, "total":406, "categories":{brain:2, buyer:50, inventory:77, ...}} (brain kategorija 2 = profit + inventory)
+- Preveril doc sync: AI_ENDPOINTS.md "Total: 406 endpoints" ✅, README v8.16.0 (11 refs) + 406 AI (6 refs) + 583 (3 refs) + Overview paragraph z BOTH Profit+Inventory Brain ✅, CHANGELOG [8.16.0] section z 6 signal formulas + [Unreleased] v8.17+ z 5 preostalimi Brain layer-ji ✅
+- Preveril lint: 0 napak ✨
+- Preveril typecheck: 0 napak ✨
+- Posodobil GitHub About opis: "AI Trading Firm... 406 AI + 72 analytics = 583 routes. v8.16.0: Profit Brain + Inventory Brain (2 orchestration layers)." (via API PATCH, 249 chars)
+- Commit: "v8.16: Inventory Brain — second orchestration layer above 72 inventory specialists (6 inventory signals: turnover, aging, yield, capitalEfficiency, liquidation, health synthesized into 1 decision + stacked UI card with Profit+Inventory)" (d762115)
+- Push na GitHub: uspešen ✅ (e514af1..d762115), PAT očiščen ✅
+- Agent Browser self-verification:
+  - Stran se pravilno naloži (HTTP 200, naslov "Markec AI Firm — Opportunity Monitor")
+  - AI Hub: kategorije na vrhu prikazujejo "🧠Možgani2" (#2 v seznamu) — 2 Brain endpointa ✅
+  - BrainSynthesisCard (stacked layout — Option A):
+    - Profit Brain section (emerald): "🧠 PROFIT BRAIN", "Profit 450€/mo → 651€/mo (+45%) z HORIZON", "30d: 651€/mo · 90d: 872€/mo" ✅
+    - Inventory Brain section (amber): "📦 INVENTORY BRAIN", "Inventar 18 itemov (1500€), 3 stari", "Likvidiraj 3 stare iteme...", "Grade D", "90d: 1650€" ✅
+  - Endpoint "🧠brain/inventory v8.15: v8.16: Inventory Brain — GET+POST /api/ai/brain/inventory" viden v AI Hub listi [ref=e25] z v8.16 badge ✅
+  - Runner test: klik na brain/inventory → POST request → valid JSON z source:"v8.16-inventory-brain", 6 signali, inventoryGrade:"D" ✅
+  - Brez runtime napak v dev.log (le normalni Prisma SQL queries + GET /api/ai/brain/profit 200, GET /api/ai/brain/inventory 200)
+
+Stage Summary:
+- v8.16 uspešno dokončana in potisnjena na GitHub
+- NOV ARCHITECTURAL LAYER: Inventory Brain — drugi orkestracijski Brain nad 72 inventory specialist-i
+- 6 inventory signalov (turnover, aging, yield, capitalEfficiency, liquidation, health) → sintetizira v 1 odločitev (3 top akcije: sell X / buy Y / hold Z, 30d/90d inventory projekcija z recommendedItemsToSell/Buy, inventoryGrade, oneLineSummary)
+- 5-min cache, DB state injection z graceful fallback, pure compute module brez AI/LLM
+- BrainSynthesisCard refactored v stacked layout: Profit Brain (emerald) + Inventory Brain (amber) sekciji renderani paralelno na vrhu AI Hub-a
+- AI endpointi: 405 → 406 (+1)
+- Analytics endpointi: 72 (nespremenjeno)
+- Total API routes: 582 → 583 (+1)
+- Dokumentacija sinhrono posodobljena (AI_ENDPOINTS.md, README, CHANGELOG, GitHub About)
+- GitHub sinhroniziran (0 commit-ov ahead)
+- Verzija aplikacije: v8.16.0
+- Skupaj doslej (v7.50 → v8.16): 66 verzij, 188 novih funkcij; 2 Brain layer-ja implementirana (Profit + Inventory) — naslednji Brain-i (Market/Sourcing/Risk/Buyer/Pricing) v v8.17-v8.21, Master Brain v v8.22
