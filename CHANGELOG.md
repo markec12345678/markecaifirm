@@ -6,13 +6,141 @@ Format sledi [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), verzije s
 
 ## [Unreleased]
 
-Načrtovano za v8.17+:
-- Market / Sourcing / Risk / Buyer / Pricing Brain (5 novih Brain layerjev)
+Načrtovano za v8.18+:
+- Sourcing / Risk / Buyer / Pricing Brain (4 novi Brain layerji)
 - Master Brain ki orkestrira vseh 7 Brain layerjev (Profit + Inventory + Market + Sourcing + Risk + Buyer + Pricing)
 - WebSocket real-time negotiation (SSE namesto polling)
 - Playwright E2E testi za glavne flow-e
 - TLS fingerprinting (curl-impersonate)
 - ML model za buyer matchmaker (fine-tuned na realnem data)
+
+## [8.17.0] - 2026-08-27
+
+### Added — 📈 Market Brain (tretji orkestracijski Brain layer nad 404 specialist-i)
+
+- **Market Brain** — `GET+POST /api/ai/brain/market`
+  - NOV TRETJI ARCHITECTURAL LAYER: tretji Brain layer (po Profit Brain v v8.15 in
+    Inventory Brain v v8.16) ki sedi NAD ~27 market specialist endpointi
+    (market-cycle-phase-predictor, market-depth-trend-analyzer,
+    market-volatility-forecaster, market-trend-forecaster-pro, market-saturation,
+    sentiment-analysis, market-timing-profit-optimizer, ...). Vsak specialist meri
+    ENO market dimenzijo — Market Brain sintetizira 6 market signalov v ENO
+    odločitev.
+  - 6 market signalov (each 0-100 score + grade + uplift EUR/mo + topLever):
+    1. **cyclePhase** — kje v market ciklu smo (Wyckoff-style klasifikacija).
+       Faza inferenced iz price trend (30d) + sell-through rate:
+         - MARKUP: prices up > 3% + sell-through > 50% (bull market)
+         - DISTRIBUTION: prices up > 3% + sell-through ≤ 50% (top of cycle — exit)
+         - MARKDOWN: prices down < -3% + sell-through > 50% (buyers in control — exit)
+         - ACCUMULATION: prices down < -3% + sell-through ≤ 50% (bottom — buy signal)
+         - Neutral: MARKUP if pct ≥ 0 else ACCUMULATION
+       Score: MARKUP = 80, ACCUMULATION = 70, DISTRIBUTION = 40, MARKDOWN = 30.
+       Uplift = activeListingCount × (MARKUP ×5 / ACCUMULATION ×8 / DISTRIBUTION ×2 / MARKDOWN ×1).
+    2. **sentiment** — buyer sentiment iz inquiries + sell-through.
+       inquiryRate = buyerInquiriesLastWeek / max(activeListingCount, 1).
+       Score = clamp(inquiryRate × 30 + sellThroughRatePct × 0.5, 0, 100).
+       inferredSentiment: BULLISH ≥70, NEUTRAL ≥40, BEARISH otherwise.
+       Uplift = activeListingCount × (BULLISH ×4 / NEUTRAL ×2 / BEARISH ×0.5).
+    3. **depth** — market depth/liquidity.
+       newListingRate = newLastWeek / max(activeListingCount, 1) × 100.
+       Score = clamp(newListingRate × 4 + min(activeListingCount, 100), 0, 100).
+       Uplift = activeListingCount × 1.5.
+    4. **volatility** — price volatility iz spread + weekly change.
+       volatilityIndex = (|avgPriceChangePctWeek| × 3 + priceSpreadPct × 0.5).
+       Score = clamp(100 - volatilityIndex, 0, 100) — low volatility = high score.
+       Uplift = activeListingCount × (volatilityIndex > 30 ? 3 : 1) (volatile = arbitrage).
+    5. **trend** — price trend direction.
+       trendStrength = avgPriceChangePctMonth × 8 + avgPriceChangePctWeek × 4.
+       Score = clamp(50 + trendStrength, 0, 100) — neutral = 50.
+       Uplift = activeListingCount × (trendStrength > 0 ? 2.5 : 1.0).
+    6. **timing** — composite timing score.
+       timingScore = cyclePhase × 0.35 + sentiment × 0.25 + trend × 0.25 + depth × 0.15.
+       Score = clamp(timingScore, 0, 100).
+       Uplift = avg(other 5 uplifts) × 0.6.
+  - Synthesis → `maximization`:
+    - `topActions`: top 3 signals sorted by uplift × confidenceWeight (HIGH=1.0,
+      MEDIUM=0.7, LOW=0.4). Each action has templated human-readable text derived
+      from that signal's `topLever` (mirror of Profit/Inventory Brain's actionForSignal).
+      Confidence is HIGH if score ≥70, MEDIUM if ≥40, LOW otherwise.
+    - `projection30d` (STRUCTURED object — predictedPhase + predictedPriceChangePct +
+      recommendedAction):
+      - `predictedPhase`: based on trend continuation — rising + high sentiment →
+        MARKUP, rising + dropping sentiment → DISTRIBUTION, falling + low sentiment →
+        ACCUMULATION, falling + high sentiment → MARKDOWN.
+      - `predictedPriceChangePct` = avgPriceChangePctMonth × 0.5 (50% of recent monthly
+        trend, conservatively continued).
+      - `recommendedAction` based on predictedPhase: ACCUMULATION → BUY, MARKUP → HOLD,
+        DISTRIBUTION → SELL, MARKDOWN → LIQUIDATE.
+    - `projection90d` (regression to mean):
+      - `predictedPhase`: ACCUMULATION → MARKUP (recovery), MARKDOWN → ACCUMULATION
+        (bottoming), DISTRIBUTION → MARKUP (correction done), MARKUP → MARKUP (sustained).
+      - `predictedPriceChangePct` = avgPriceChangePctMonth × 0.3 (30% of recent trend,
+        mean-reverting).
+      - `recommendedAction` based on 90d predictedPhase.
+    - `marketGrade` = weighted average of 6 signal scores (weights: cyclePhase 0.20,
+      sentiment 0.20, trend 0.20, timing 0.15, depth 0.15, volatility 0.10),
+      then graded via gradeFromScore (A+ ≥90, A ≥75, B ≥60, C ≥40, D ≥20, F otherwise).
+    - `bestOpportunity` = signal with highest upliftEURPerMonth.
+    - `oneLineSummary` = "Trg v {inferredCyclePhase} fazi, sentiment {inferredSentiment}.
+      {topActions[0].action}. Grade {marketGrade}."
+  - **Pure deterministic compute** (aiUsed: false, no AI/LLM SDK call).
+  - **DB-backed state injection** (graceful degradation):
+    - if Prisma is available, read from `Listing` model (active non-hidden listings)
+      to derive: activeListingCount, newLastWeek (first seen in 7d), avgPriceChangePctMonth
+      (avg % change of listings with previousPrice set + priceDroppedAt in last 30d),
+      buyerInquiriesLastWeek (contactStatus != 'none' + contactedAt in 7d),
+      sellThroughRatePct (dealScoreComputedAt within 30d of firstSeenAt),
+      avgDaysOnMarket (avg age now-firstSeenAt of active listings),
+      priceSpreadPct ((max-min)/median × 100 across priced active listings).
+    - User input (query string or POST body) takes precedence over DB state —
+      callers can override any field.
+    - If DB unavailable or no listings found → falls back to sensible defaults
+      (activeListingCount 150, newLastWeek 35, avgPriceChangePctWeek 1.5,
+      avgPriceChangePctMonth 3.5, buyerInquiriesLastWeek 60, sellThroughRatePct 45,
+      avgDaysOnMarket 14, priceSpreadPct 25, category 'general').
+    - All DB access wrapped in try/catch + logger.warn — NEVER crashes the endpoint.
+  - **5-minute cache** (TTL 300000ms): cache key = `market-brain:${hashOfInputs}`.
+    On cache hit, the result is returned with a fresh `cachedAt` timestamp so the
+    caller knows it was served from cache.
+  - source: "v8.17-market-brain"
+  - GET+POST shared handler `handleMarketBrain` (AI Hub runner compatibility —
+    hits either method), runtime='nodejs', dynamic='force-dynamic', maxDuration=60,
+    try/catch with logger.error → 500 { error }, parse inputs from both query
+    string and JSON body (POST takes precedence over query).
+  - Pure compute module: `src/lib/brain/market.ts` — NO `next/server` import,
+    NO Prisma calls (state injected by caller via MarketBrainInput). Fully
+    testable in isolation and deterministic given the same input. Mirrors
+    `src/lib/brain/inventory.ts` strukturo (clamp, gradeFromScore, confidenceFromScore,
+    confidenceWeight, round2, normalizeInput, computeXxxSignal, actionForSignal,
+    buildOneLineSummary, SIGNAL_WEIGHTS, inferCyclePhase, inferSentiment,
+    projectPhase30d, projectPhase90d, actionForPhase, marketBrain main entry).
+    Reuses `ProfitGrade` in `Confidence` types via `import type { ProfitGrade,
+    Confidence } from './profit'`.
+  - Endpoint: `src/app/api/ai/brain/market/route.ts` — tretji endpoint v nested
+    subdirectory pod `src/app/api/ai/brain/`. Avtomatsko odkrit z `/api/ai-list`
+    (ki je bil nadgrajen v v8.15 za recursive depth-2 discovery).
+  - AI Hub: `BrainSynthesisCard` razširjen s TRETJIM stacked section-om (sky/blue-
+    tinted, za razliko od Profit Brain emerald in Inventory Brain amber). Sedaj
+    prikazuje VSE TRI Brain-e simultano — vsak ima svoj loading skeleton, error
+    state, refresh button, in cache indicator. Profit Brain prikazuje 30d/90d €/mo
+    projection (skalar); Inventory Brain prikazuje structured 30d/90d inventory
+    projection (recommendedItemsToSell/Buy + projectedInventoryValue + ...);
+    Market Brain prikazuje structured 30d/90d phase projection (predictedPhase
+    ACCUMULATION/MARKUP/DISTRIBUTION/MARKDOWN + predictedPriceChangePct +
+    recommendedAction BUY/SELL/HOLD/LIQUIDATE).
+
+### Stats
+- AI endpoints: 406 → 407 (+1)
+- Total API routes: 583 → 584 (+1)
+- Tretji Brain layer v arhitekturi (above the 404 specialists, next to v8.15 Profit Brain in v8.16 Inventory Brain)
+- 6 market signals (cyclePhase, sentiment, depth, volatility, trend, timing)
+- 3 top actions ranked by uplift × confidence
+- Structured 30d projection (predictedPhase + predictedPriceChangePct + recommendedAction)
+- Structured 90d projection (predictedPhase + predictedPriceChangePct + recommendedAction)
+- marketGrade + one-line summary
+- Pure deterministic compute (aiUsed: false, no AI/LLM SDK)
+- DB state injection (graceful — falls back to defaults if DB unavailable)
+- 5-minute cache (300000ms TTL, cachedAt stamp on cache hit)
 
 ## [8.16.0] - 2026-08-27
 

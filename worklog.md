@@ -14512,3 +14512,92 @@ Stage Summary:
 - GitHub sinhroniziran (0 commit-ov ahead)
 - Verzija aplikacije: v8.16.0
 - Skupaj doslej (v7.50 → v8.16): 66 verzij, 188 novih funkcij; 2 Brain layer-ja implementirana (Profit + Inventory) — naslednji Brain-i (Market/Sourcing/Risk/Buyer/Pricing) v v8.17-v8.21, Master Brain v v8.22
+
+---
+Task ID: v8.17
+Agent: full-stack-developer
+Task: Implement Market Brain — third Brain layer above ~27 market specialists
+
+Work Log:
+- Prebral worklog.md (v8.15 Profit Brain + v8.16 Inventory Brain entries — pattern za sledenje: pure compute module + endpoint + UI Brain card stacked)
+- Prebral src/lib/brain/profit.ts COMPLETELY — prvi template (clamp, gradeFromScore, confidenceFromScore, confidenceWeight, round2, normalizeInput, computeXxxSignal, actionForSignal, buildOneLineSummary, SIGNAL_WEIGHTS, profitBrain main entry, export of ProfitGrade + Confidence types)
+- Prebral src/lib/brain/inventory.ts COMPLETELY — drugi template (mirrors profit.ts strukturo, import type { ProfitGrade, Confidence } from './profit', structured projection30d/projection90d objects z več fields)
+- Prebral src/app/api/ai/brain/profit/route.ts in src/app/api/ai/brain/inventory/route.ts COMPLETELY — endpoint templates (resolveInputs, fetchDbState, buildCacheKey, handleXxxBrain, runtime='nodejs', dynamic='force-dynamic', maxDuration=60, 5-min cache z cachedAt stamp, DB state injection graceful)
+- Prebral src/components/dashboard/ai-hub-view.tsx (BrainSynthesisCard — obstoječa stacked kartica z Profit Brain emerald + Inventory Brain amber sekcijama)
+- Prebral prisma/schema.prisma (Listing model: price, firstSeenAt, previousPrice, priceDroppedAt, contactStatus, contactedAt, dealScoreComputedAt — vir za DB state injection iz Listing tabele)
+- Prebral src/lib/logger.ts in src/lib/ai-cache.ts (getCachedAI/setCachedAI signatures)
+- Ustvaril src/lib/brain/market.ts (pure compute module, mirrors inventory.ts strukturo — NO next/server, NO Prisma)
+  - 9 input fields (activeListingCount, newLastWeek, avgPriceChangePctWeek, avgPriceChangePctMonth, buyerInquiriesLastWeek, sellThroughRatePct, avgDaysOnMarket, priceSpreadPct, category) z defaults (150, 35, 1.5, 3.5, 60, 45, 14, 25, 'general')
+  - 6 market signalov (cyclePhase, sentiment, depth, volatility, trend, timing) — vsak z 0-100 score + grade + uplift EUR/mo + topLever (Slovenian)
+  - Helper funkcije: inferCyclePhase (Wyckoff-style classification iz price trend + sell-through), inferSentiment (iz inquiry rate + sell-through), projectPhase30d (trend continuation), projectPhase90d (regression to mean), actionForPhase (BUY/SELL/HOLD/LIQUIDATE)
+  - Synthesis: topActions (3, ranked by uplift × confidenceWeight), projection30d (structured: predictedPhase + predictedPriceChangePct + recommendedAction), projection90d (structured: predictedPhase + predictedPriceChangePct + recommendedAction), marketGrade (weighted: cyclePhase 0.20, sentiment 0.20, trend 0.20, timing 0.15, depth 0.15, volatility 0.10), bestOpportunity, oneLineSummary ("Trg v {phase} fazi, sentiment {sentiment}. {action}. Grade {grade}.")
+  - import type { ProfitGrade, Confidence } from './profit' (PREFER import preko duplication)
+  - Export: MarketBrainInput, MarketSignalName, MarketSignal, MarketBrainAction, MarketPhase, MarketSentiment, MarketAction, MarketBrainResult, marketBrain
+- Ustvaril src/app/api/ai/brain/market/route.ts (GET+POST endpoint, mirrors inventory/route.ts)
+  - runtime='nodejs', dynamic='force-dynamic', maxDuration=60
+  - resolveInputs: parse 9 fields iz query string (GET) + JSON body (POST, takes precedence) + category as string
+  - fetchDbState: prebere Listing tabelo (active non-hidden listings) → activeListingCount, newLastWeek (firstSeenAt 7d), avgPriceChangePctMonth (previousPrice set + priceDroppedAt 30d), buyerInquiriesLastWeek (contactStatus != 'none' + contactedAt 7d), sellThroughRatePct (dealScoreComputedAt within 30d of firstSeenAt), avgDaysOnMarket (avg age now-firstSeenAt), priceSpreadPct ((max-min)/median × 100 across priced listings) — try/catch, nikoli ne vrže napake, fallback na defaults
+  - buildCacheKey: deterministic `market-brain:${alc|nlw|apw|apm|bil|str|adm|psp|cat}` — same input → same key → cache hit
+  - handleMarketBrain: 5-min cache (TTL 300000ms), cachedAt re-stamp na cache hit, aiUsed=false, source="v8.17-market-brain"
+- Spremenil src/components/dashboard/ai-hub-view.tsx (BrainSynthesisCard razširjen s TRETJIM stacked section-om)
+  - Nov MarketBrainResult type (z structured projection30d/projection90d objects — predictedPhase + predictedPriceChangePct + recommendedAction — razlika od Profit Brain kjer sta skalara in Inventory Brain kjer sta structured za inventory)
+  - Dodan TrendingUp icon v lucide-react imports (za Market Brain section header)
+  - ProfitBrainSection (emerald-tinted, v8.15 badge) — fetch /api/ai/brain/profit na mount (nespremenjeno)
+  - InventoryBrainSection (amber-tinted, v8.16 badge, Package icon) — fetch /api/ai/brain/inventory na mount (nespremenjeno)
+  - MarketBrainSection (sky/blue-tinted, v8.17 badge, TrendingUp icon) — fetch /api/ai/brain/market na mount
+    - Prikaže: oneLineSummary, marketGrade pill, bestOpportunity pill, cache badge, top 3 actions, current state (inferredCyclePhase + inferredSentiment + activeListingCount + sellThroughRatePct), 30d/90d phase projection (predictedPhase + predictedPriceChangePct + recommendedAction)
+    - phaseColor helper (MARKUP=emerald, ACCUMULATION=sky, DISTRIBUTION=amber, MARKDOWN=red)
+    - actionColor helper (BUY=emerald, SELL=amber, HOLD=sky, LIQUIDATE=red)
+  - BrainSynthesisCard: badge posodobljen na "v8.15 + v8.16 + v8.17", trije stacked sekciji renderani simultano
+  - Endpoint grid: badge za brain endpointe diferenciran po imenu (brain/profit v8.15 emerald, brain/inventory v8.16 amber, brain/market v8.17 sky)
+  - JSDoc header posodobljen z v8.17 Market Brain description
+- AI_ENDPOINTS.md: dodana nova vrstica | 11 | brain/market | `/api/ai/brain/market` | (right after brain/inventory at #10), renomberani vsi naslednji index-i (11→12, 12→13, ..., 406→407), posodobljen "Total: 406 endpoints" → "Total: 407 endpoints"
+- README.md: posodobljeni vsi badges in reference
+  - Version badge v8.16.0 → v8.17.0
+  - AI Endpoints badge 406 → 407
+  - API Routes badge 583 → 584
+  - Tagline: dodan Market Brain opis
+  - Overview paragraph: posodobljen z vsemi TREMI Brain-i (Profit v8.15 + Inventory v8.16 + Market v8.17)
+  - Verzija section: v8.16.0 → v8.17.0, 406 → 407, ~269 → ~270 funkcij
+  - "Kaj je novega": dodan v8.17 Market Brain blok nad v8.16 (z full description: 6 signals + synthesis + DB injection + cache + structured projections + file paths + AI Hub stacked card)
+  - AI Hub row: "Vsi 406 AI endpointov ... 🧠 Profit Brain + 📦 Inventory Brain Synthesis Card" → "Vsi 407 AI endpointov ... 🧠 Profit Brain + 📦 Inventory Brain + 📈 Market Brain Synthesis Card"
+  - AI_ENDPOINTS.md link: "vseh 406 AI endpointov (vključno z brain/profit in brain/inventory)" → "vseh 407 AI endpointov (vključno z brain/profit, brain/inventory in brain/market)"
+  - Endpointi section: "406 AI + 72 analytics + 10 cron + sistemski = 583" → "407 AI + 72 analytics + 10 cron + sistemski = 584"
+  - Project structure comment: "406 AI endpointov (vključno z brain/profit in brain/inventory — dva Brain layer-ja, v8.15 + v8.16)" → "407 AI endpointov (vključno z brain/profit, brain/inventory in brain/market — tri Brain layer-ji, v8.15 + v8.16 + v8.17)"
+  - Roadmap: "v8.15-v8.16 (trenutno — ~269 funkcij)" → "v8.15-v8.17 (trenutno — ~270 funkcij)"
+  - Naslednji koraki: "v7.50-v8.16 funkcije" → "v7.50-v8.17 funkcije"
+  - Changelog intro: "do v8.16 (avgust 2026)" → "do v8.17 (avgust 2026)"
+  - Zadnje verzije: dodan "- v8.17.0 (avgust 2026) — 📈 Market Brain (tretji orkestracijski Brain layer nad 404 specialist-i — synthesis 6 market signalov: cyclePhase, sentiment, depth, volatility, trend, timing → 30d/90d phase projekcija z recommendedAction BUY/SELL/HOLD/LIQUIDATE)" na vrh
+  - Testing: "try/catch na vseh 583 API routes" → "584 API routes"
+  - `grep -c "v8.17" README.md` = 12 ✅ (≥10 required)
+  - `grep -c "v8.16" README.md` = 6 (intentional refs to v8.16 Inventory Brain context)
+  - `grep -c "406 AI" README.md` = 0 ✅ (vsi posodobljeni na 407)
+  - `grep -c "583" README.md` = 0 ✅ (vsi posodobljeni na 584)
+- CHANGELOG.md: dodan nov [8.17.0] section na vrh (nad [8.16.0])
+  - ### Added — 📈 Market Brain (tretji orkestracijski Brain layer nad 404 specialist-i)
+  - Full description: 6 market signal formulas z exact score/uplift math (cyclePhase Wyckoff classification, sentiment iz inquiryRate + sellThrough, depth iz newListingRate + activeListings, volatility iz absPriceChange + spread, trend iz trendStrength month+week, timing composite 0.35/0.25/0.25/0.15), synthesis logic z topActions/projection30d (structured: predictedPhase + predictedPriceChangePct + recommendedAction)/projection90d (regression to mean)/marketGrade/bestOpportunity/oneLineSummary, pure deterministic compute, DB-backed state injection z graceful fallback (Listing tabela — active listings, price changes, sell-through, contact status), 5-min cache z cachedAt stamp, GET+POST shared handler, runtime config, file paths za pure compute module in endpoint, BrainSynthesisCard razširjen s tretjim stacked section-om (sky/blue-tinted)
+  - ### Stats: AI endpoints 406 → 407 (+1), Total API routes 583 → 584 (+1), tretji Brain layer v arhitekturi, 6 market signals, structured 30d/90d projections z recommendedAction
+  - [Unreleased] posodobljen "v8.17+" → "v8.18+" + posodobljen plan (4 preostali Brain layerji: Sourcing/Risk/Buyer/Pricing + Master Brain ki orkestrira vseh 7)
+- Lint: 0 errors, 0 warnings ✅
+- Typecheck (bunx tsc --noEmit): 0 errors ✅
+- Endpoint verification (curl):
+  - GET /api/ai/brain/market (default) → 200 {"ok":true, "signals":[6: cyclePhase(C,40,+300€ — DISTRIBUTION faza), sentiment(D,34.5,+75€ — BEARISH), depth(A+,100,+225€), volatility(A,83,+150€), trend(A,84,+375€), timing(C,58.63,+135€)], "current":{activeListingCount:150, newLastWeek:35, avgPriceChangePctWeek:1.5, avgPriceChangePctMonth:3.5, buyerInquiriesLastWeek:60, sellThroughRatePct:45, avgDaysOnMarket:14, priceSpreadPct:25, inferredCyclePhase:"DISTRIBUTION", inferredSentiment:"BEARISH"}, "maximization":{topActions:[3 z #1 trend +375€/mo (HIGH), #2 cyclePhase +300€/mo (MEDIUM), #3 depth +225€/mo (HIGH)], projection30d:{predictedPhase:"DISTRIBUTION", predictedPriceChangePct:1.75, recommendedAction:"SELL"}, projection90d:{predictedPhase:"MARKUP", predictedPriceChangePct:1.05, recommendedAction:"HOLD"}, marketGrade:"B", bestOpportunity:"trend", oneLineSummary:"Trg v DISTRIBUTION fazi, sentiment BEARISH. Jahaj trend: Trend +3.5%/mo — skupaj s trendom: povečaj inventar, drži za višjo ceno. Grade B."}, "aiUsed":false, "source":"v8.17-market-brain"}
+  - POST /api/ai/brain/market z custom input (activeListingCount:200, newLastWeek:50, avgPriceChangePctWeek:2.5, avgPriceChangePctMonth:6, buyerInquiriesLastWeek:90, sellThroughRatePct:55, avgDaysOnMarket:10, priceSpreadPct:30, category:"electronics") → 200 {"ok":true, ..., cyclePhase(A,80,+1000€ — MARKUP faza zaradi prices up >3% + sell-through >50%), sentiment(C,41,+400€ — NEUTRAL), depth(A+,100,+300€), volatility(A,77.5,+200€), trend(A+,100,+500€), timing(A,78.25,+288€), current.inferredCyclePhase:"MARKUP", current.inferredSentiment:"NEUTRAL", topActions[0]:cyclePhase uplift 1000€/mo (HIGH), #2 trend +500€/mo (HIGH), #3 depth +300€/mo (HIGH), projection30d:{predictedPhase:"DISTRIBUTION", predictedPriceChangePct:3, recommendedAction:"SELL"}, projection90d:{predictedPhase:"MARKUP", predictedPriceChangePct:1.8, recommendedAction:"HOLD"}, marketGrade:"A", bestOpportunity:"cyclePhase", oneLineSummary:"Trg v MARKUP fazi, sentiment NEUTRAL. Izkoristi fazo trga: Trg v MARKUP fazi — kupuj in relistuj s 10% višjo ceno — surfaj rastoči val. Grade A."}
+  - Cache hit verification: 1. GET (cache miss) → 184ms (cold start), NO cachedAt field. 2. GET z istim input → 10ms, cachedAt field present (1786474120792 ms) — drugi klic je bil cache hit ✅
+  - 3. GET → 18ms, cachedAt present (1786474142694) ✅
+  - POST /api/ai/brain/market → 18ms, no cachedAt (different inputs, cache miss — correct)
+  - GET /api/ai-list → 200 {"ok":true, "total":407, "categories":{brain:3, buyer:50, inventory:77, listing:59, pricing:90, risk:12, negotiation:16, reports:15, misc:85}, "endpoints":[{name:"brain/inventory", category:"brain", description:"v8.16: Inventory Brain — GET+POST /api/ai/brain/inventory"}, {name:"brain/market", category:"brain", description:"v8.17: Market Brain — GET+POST /api/ai/brain/market"}, {name:"brain/profit", category:"brain", description:"v8.15: Profit Brain — GET+POST /api/ai/brain/profit"}]}
+- Dev server (dev.log) zdrav — nobenih compile errorjev, le normalni Prisma SQL queries + GET /api/ai/brain/market 200 (184ms cold, 10-18ms cached), POST /api/ai/brain/market 200 (18ms), GET /api/ai-list 200 (110ms)
+
+Stage Summary:
+- NEW: src/lib/brain/market.ts (pure compute module — 6 market signals + synthesis, mirrors inventory.ts strukturo)
+- NEW: src/app/api/ai/brain/market/route.ts (GET+POST endpoint, 5-min cache, DB state injection z graceful fallback na Listing tabelo)
+- MODIFIED: src/components/dashboard/ai-hub-view.tsx (BrainSynthesisCard razširjen s TRETJIM stacked section-om — sedaj prikazuje VSE TRI Brain-e simultano: 🧠 Profit Brain emerald + 📦 Inventory Brain amber + 📈 Market Brain sky/blue)
+- AI endpointi: 406 → 407 (+1)
+- Total API routes: 583 → 584 (+1)
+- Lint: 0 errors, 0 warnings ✅
+- Typecheck: 0 errors ✅
+- Endpoint verification: GET 200 (6 signals + structured projections + Grade B + bestOpportunity=trend + DISTRIBUTION phase + BEARISH sentiment), POST 200 (Grade A + MARKUP phase + NEUTRAL sentiment + cyclePhase as bestOpp z +1000€/mo), cache hit (cachedAt field present), ai-list total=407 + brain=3 ✅
+- Documentation updated: AI_ENDPOINTS.md (row 11 brain/market + total 407), README.md (badges v8.17.0/407/584, ~270 funkcij, Overview paragraph z vsemi TREMI Brain-i, v8.17 blok v Kaj je novega, Zadnje verzije z v8.17.0), CHANGELOG.md ([8.17.0] section z full description + [Unreleased] v8.18+ z 4 preostalimi Brain layerji + Master Brain plan)
+- Verzija aplikacije: v8.17.0
+- Skupaj doslej (v7.50 → v8.17): 67 verzij, 189 novih funkcij; tretji Brain layer implementiran — naslednji Brain-i (Sourcing/Risk/Buyer/Pricing) v v8.18-v8.21, Master Brain v v8.22
