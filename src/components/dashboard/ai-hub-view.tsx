@@ -9,20 +9,28 @@
  *
  * Funkcionalnost:
  * - Iskalnik (filter po imenu/opisu)
- * - Kategorije (buyer, inventory, listing, pricing, risk, negotiation, reports, misc)
+ * - Kategorije (brain, buyer, inventory, listing, pricing, risk, negotiation, reports, misc)
  * - Klik na endpoint → odpre AI Runner modal
  * - AI Runner: POST na endpoint, prikaže JSON rezultat v pretty-print formatu
  * - "Kopiraj JSON" gumb
  * - Statistike: skupaj endpointov, po kategorijah
  *
+ * v8.15: Added 🧠 Brain category + Brain Synthesis Card.
+ * - Brain category contains orchestrator endpoints above specialists.
+ *   First entry: `brain/profit` (Profit Brain synthesizes 6 profit signals).
+ * - Brain Synthesis Card fetches `/api/ai/brain/profit` on mount and shows
+ *   the one-line summary, profit grade pills, top 3 actions, and 30d/90d
+ *   projections. Emerald-tinted background distinguishes from specialists.
+ *
  * Lazy-loaded z next/dynamic (ssr: false) — ne bremeni prvotnega nalaganja.
  */
 
-import { useEffect, useState, useMemo } from 'react';
+import { useEffect, useState, useMemo, useCallback } from 'react';
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
 import { Input } from '@/components/ui/input';
+import { Skeleton } from '@/components/ui/skeleton';
 import {
   Dialog,
   DialogContent,
@@ -30,13 +38,14 @@ import {
   DialogTitle,
   DialogDescription,
 } from '@/components/ui/dialog';
-import { Sparkles, Search, Copy, Check, RefreshCw, Zap, X, ChevronRight } from 'lucide-react';
+import { Sparkles, Search, Copy, Check, RefreshCw, Zap, X, ChevronRight, Brain, AlertCircle } from 'lucide-react';
 import { toast } from 'sonner';
 import { cn } from '@/lib/utils';
 
 // ===== Kategorije =====
 const CATEGORIES = [
   { id: 'all', label: 'Vsi', icon: '📋', color: 'text-primary' },
+  { id: 'brain', label: 'Možgani', icon: '🧠', color: 'text-emerald-500' },
   { id: 'buyer', label: 'Kupci', icon: '👥', color: 'text-blue-400' },
   { id: 'inventory', label: 'Skladišče', icon: '📦', color: 'text-amber-400' },
   { id: 'listing', label: 'Oglasi', icon: '📝', color: 'text-purple-400' },
@@ -47,9 +56,10 @@ const CATEGORIES = [
   { id: 'misc', label: 'Ostalo', icon: '🔧', color: 'text-muted-foreground' },
 ] as const;
 
-// ===== Kategorizacija endpointov =====
+// ===== Kategorizacija endpointov (mirror of /api/ai-list categorize) =====
 function categorize(name: string): string {
   const n = name.toLowerCase();
+  if (n.startsWith('brain/') || n.split('/')[0] === 'brain') return 'brain';
   if (n.startsWith('buyer') || n.includes('customer')) return 'buyer';
   if (n.startsWith('inventory') || n.includes('stockout') || n.includes('shrinkage') || n.includes('liquidation') || n.includes('rebalancer') || n.includes('turnover') || n.includes('aging')) return 'inventory';
   if (n.startsWith('listing') || n.includes('description') || n.includes('title') || n.includes('seo') || n.includes('thumbnail') || n.includes('image') || n.includes('tag') || n.includes('content') || n.includes('ctr') || n.includes('conversion') || n.includes('engagement') || n.includes('virality') || n.includes('performance')) return 'listing';
@@ -58,6 +68,212 @@ function categorize(name: string): string {
   if (n.includes('negotiation') || n.includes('negotiate') || n.includes('auction') || n.includes('sniper') || n.includes('bid') || n.includes('seller')) return 'negotiation';
   if (n.includes('report') || n.includes('summary') || n.includes('dashboard') || n.includes('forecast') || n.includes('benchmark') || n.includes('insights') || n.includes('trend') || n.includes('monthly') || n.includes('daily') || n.includes('playbook') || n.includes('automation') || n.includes('autonomous')) return 'reports';
   return 'misc';
+}
+
+// ===== Brain Synthesis Card (v8.15) =====
+
+interface BrainAction {
+  rank: number;
+  domain: string;
+  signal: string;
+  action: string;
+  expectedUpliftEUR: number;
+  confidence: 'HIGH' | 'MEDIUM' | 'LOW';
+}
+
+interface BrainResult {
+  ok: true;
+  signals: Array<{
+    name: string;
+    score: number;
+    grade: string;
+    upliftEURPerMonth: number;
+    topLever: string;
+  }>;
+  current: {
+    monthlyProfit: number;
+    profitGrowthRate: number;
+    avgProfitPerTrade: number;
+    tradesPerMonth: number;
+    capitalDeployed: number;
+  };
+  maximization: {
+    topActions: BrainAction[];
+    projection30d: number;
+    projection90d: number;
+    profitGrade: 'A+' | 'A' | 'B' | 'C' | 'D' | 'F';
+    bestOpportunity: string;
+    oneLineSummary: string;
+  };
+  aiUsed: false;
+  source: string;
+  cachedAt?: number;
+}
+
+function gradeColor(grade: string): string {
+  switch (grade) {
+    case 'A+':
+      return 'bg-emerald-500/15 text-emerald-600 border-emerald-500/30 dark:text-emerald-400';
+    case 'A':
+      return 'bg-green-500/15 text-green-600 border-green-500/30 dark:text-green-400';
+    case 'B':
+      return 'bg-amber-500/15 text-amber-600 border-amber-500/30 dark:text-amber-400';
+    case 'C':
+      return 'bg-orange-500/15 text-orange-600 border-orange-500/30 dark:text-orange-400';
+    case 'D':
+      return 'bg-red-500/15 text-red-600 border-red-500/30 dark:text-red-400';
+    default:
+      return 'bg-zinc-500/15 text-zinc-600 border-zinc-500/30 dark:text-zinc-400';
+  }
+}
+
+function confidenceColor(c: string): string {
+  switch (c) {
+    case 'HIGH':
+      return 'text-emerald-600 dark:text-emerald-400';
+    case 'MEDIUM':
+      return 'text-amber-600 dark:text-amber-400';
+    default:
+      return 'text-zinc-500 dark:text-zinc-400';
+  }
+}
+
+function BrainSynthesisCard({ onBrainCategoryClick }: { onBrainCategoryClick: () => void }) {
+  const [data, setData] = useState<BrainResult | null>(null);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
+
+  const fetchBrain = useCallback(async () => {
+    setLoading(true);
+    setError(null);
+    try {
+      const res = await fetch('/api/ai/brain/profit', { method: 'GET' });
+      if (!res.ok) throw new Error(`HTTP ${res.status}`);
+      const json = (await res.json()) as BrainResult;
+      if (!json?.ok) throw new Error(json?.source ? 'Brain ni vrnil rezultata' : 'Napaka');
+      setData(json);
+    } catch (e: any) {
+      setError(e?.message ?? 'Napaka');
+    } finally {
+      setLoading(false);
+    }
+  }, []);
+
+  useEffect(() => {
+    fetchBrain();
+  }, [fetchBrain]);
+
+  return (
+    <Card className="border-emerald-500/30 bg-gradient-to-br from-emerald-500/10 via-emerald-500/5 to-transparent">
+      <CardContent className="p-4 sm:p-5">
+        <div className="flex items-center justify-between mb-3 gap-3">
+          <div className="flex items-center gap-2 min-w-0">
+            <Brain className="w-5 h-5 text-emerald-500 shrink-0" />
+            <span className="text-base sm:text-lg font-bold tracking-tight">
+              🧠 PROFIT BRAIN
+            </span>
+            <Badge variant="outline" className="text-[10px] border-emerald-500/40 text-emerald-600 dark:text-emerald-400 shrink-0">
+              v8.15
+            </Badge>
+          </div>
+          <button
+            onClick={onBrainCategoryClick}
+            className="text-xs text-emerald-600 dark:text-emerald-400 hover:underline shrink-0 flex items-center gap-1"
+          >
+            🧠 Možgani kategorija →
+          </button>
+        </div>
+
+        {loading && (
+          <div className="space-y-2">
+            <Skeleton className="h-6 w-full bg-emerald-500/10" />
+            <Skeleton className="h-4 w-3/4 bg-emerald-500/10" />
+            <div className="grid grid-cols-3 gap-2 pt-1">
+              <Skeleton className="h-7 bg-emerald-500/10" />
+              <Skeleton className="h-7 bg-emerald-500/10" />
+              <Skeleton className="h-7 bg-emerald-500/10" />
+            </div>
+          </div>
+        )}
+
+        {!loading && error && (
+          <div className="flex items-center gap-2 text-sm text-red-600 dark:text-red-400">
+            <AlertCircle className="w-4 h-4 shrink-0" />
+            <span className="truncate">{error}</span>
+            <Button size="sm" variant="outline" onClick={fetchBrain} className="ml-auto h-7 px-2 text-xs">
+              Ponovi
+            </Button>
+          </div>
+        )}
+
+        {!loading && !error && data && (
+          <div className="space-y-3">
+            {/* One-line summary */}
+            <p className="text-sm sm:text-base font-medium leading-snug">
+              {data.maximization.oneLineSummary}
+            </p>
+
+            {/* Grade pills */}
+            <div className="flex flex-wrap gap-2">
+              <Badge variant="outline" className={cn('text-xs', gradeColor(data.maximization.profitGrade))}>
+                Profit: {data.maximization.profitGrade}
+              </Badge>
+              <Badge variant="outline" className="text-xs border-emerald-500/30 text-emerald-600 dark:text-emerald-400">
+                Najboljša priložnost: {data.maximization.bestOpportunity.toUpperCase()}
+              </Badge>
+              {data.cachedAt && (
+                <Badge variant="outline" className="text-[10px] text-muted-foreground border-muted">
+                  cache {(Math.round((Date.now() - data.cachedAt) / 1000))}s
+                </Badge>
+              )}
+            </div>
+
+            {/* Top 3 actions */}
+            <div className="space-y-1.5">
+              <div className="text-[10px] uppercase text-muted-foreground">Top 3 akcije za danes</div>
+              {data.maximization.topActions.map((a) => (
+                <div key={a.rank} className="flex items-start gap-2 text-xs">
+                  <span className="font-bold text-emerald-600 dark:text-emerald-400 shrink-0 w-4">
+                    {a.rank}.
+                  </span>
+                  <span className="flex-1 min-w-0">
+                    <span className="font-medium">{a.action}</span>
+                    <span className="text-muted-foreground"> · +{a.expectedUpliftEUR}€/mo</span>
+                  </span>
+                  <span className={cn('text-[10px] font-bold shrink-0', confidenceColor(a.confidence))}>
+                    {a.confidence}
+                  </span>
+                </div>
+              ))}
+            </div>
+
+            {/* Projection */}
+            <div className="flex items-center justify-between gap-2 text-xs pt-1 border-t border-emerald-500/20">
+              <span className="text-muted-foreground">
+                Trenutno: <span className="font-bold text-foreground">{Math.round(data.current.monthlyProfit)}€/mo</span>
+              </span>
+              <span className="text-muted-foreground">
+                30d: <span className="font-bold text-emerald-600 dark:text-emerald-400">{Math.round(data.maximization.projection30d)}€/mo</span>
+                {' · '}
+                90d: <span className="font-bold text-emerald-600 dark:text-emerald-400">{Math.round(data.maximization.projection90d)}€/mo</span>
+              </span>
+            </div>
+
+            {/* Refresh */}
+            <div className="flex justify-end">
+              <button
+                onClick={fetchBrain}
+                className="text-[10px] text-muted-foreground hover:text-foreground flex items-center gap-1"
+              >
+                <RefreshCw className="w-3 h-3" />
+                Osveži
+              </button>
+            </div>
+          </div>
+        )}
+      </CardContent>
+    </Card>
+  );
 }
 
 // ===== AI Runner Modal =====
@@ -184,7 +400,13 @@ export function AIHubView() {
       .then(r => r.ok ? r.json() : null)
       .then(data => {
         if (data?.endpoints) {
-          setEndpoints(data.endpoints);
+          // Mirror server-side categorize — guarantees consistency even if
+          // /api/ai-list returns a stale category field.
+          const normalized: AIEndpoint[] = data.endpoints.map((e: AIEndpoint) => ({
+            ...e,
+            category: categorize(e.name),
+          }));
+          setEndpoints(normalized);
         } else {
           // Fallback: prazen seznam (API ne obstaja — uporabnik lahko še vedno išče)
           setEndpoints([]);
@@ -241,6 +463,9 @@ export function AIHubView() {
         </div>
       </div>
 
+      {/* v8.15: Brain Synthesis Card — top of AI Hub, above stats */}
+      <BrainSynthesisCard onBrainCategoryClick={() => setActiveCategory('brain')} />
+
       {/* Stats grid */}
       <div className="grid grid-cols-2 md:grid-cols-5 gap-2">
         {CATEGORIES.map(cat => (
@@ -265,7 +490,7 @@ export function AIHubView() {
         <Search className="w-4 h-4 absolute left-3 top-1/2 -translate-y-1/2 text-muted-foreground" />
         <Input
           type="text"
-          placeholder="Išči AI funkcijo (npr. 'fraud', 'buyer', 'price'...)"
+          placeholder="Išči AI funkcijo (npr. 'fraud', 'buyer', 'profit', 'brain'...)"
           value={search}
           onChange={(e) => setSearch(e.target.value)}
           className="pl-9"
@@ -287,11 +512,14 @@ export function AIHubView() {
       ) : (
         <div className="grid sm:grid-cols-2 lg:grid-cols-3 gap-2">
           {filtered.slice(0, 60).map(ep => {
-            const cat = CATEGORIES.find(c => c.id === ep.category) ?? CATEGORIES[8];
+            const cat = CATEGORIES.find(c => c.id === ep.category) ?? CATEGORIES[CATEGORIES.length - 1];
             return (
               <Card
                 key={ep.name}
-                className="cursor-pointer hover:border-primary/40 hover:bg-card/50 transition-all group"
+                className={cn(
+                  'cursor-pointer hover:border-primary/40 hover:bg-card/50 transition-all group',
+                  ep.category === 'brain' && 'border-emerald-500/30 hover:border-emerald-500/50',
+                )}
                 onClick={() => setSelectedEndpoint(ep)}
               >
                 <CardContent className="p-3">
@@ -302,6 +530,11 @@ export function AIHubView() {
                         <span className="font-mono text-xs font-bold text-foreground truncate group-hover:text-primary">
                           {ep.name}
                         </span>
+                        {ep.category === 'brain' && (
+                          <Badge variant="outline" className="text-[9px] border-emerald-500/40 text-emerald-600 dark:text-emerald-400 shrink-0">
+                            v8.15
+                          </Badge>
+                        )}
                       </div>
                       <p className="text-[10px] text-muted-foreground line-clamp-2">
                         {ep.description || 'Brez opisa'}

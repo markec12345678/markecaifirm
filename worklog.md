@@ -14222,3 +14222,124 @@ Stage Summary:
 - GitHub sinhroniziran (0 commit-ov ahead)
 - Verzija aplikacije: v8.14.0
 - Skupaj doslej (v7.50 → v8.14): 64 verzij, 186 novih funkcij; zadnjih 20 verzij (v7.94-v8.14) = 60 neposrednih profit-maksimizacijskih funkcij
+
+---
+Task ID: v8.15
+Agent: full-stack-developer
+Task: Implement Profit Brain — first Brain layer (orchestrator above 404 specialists)
+
+Work Log:
+- Prebral worklog.md (project at v8.14.1, 404 AI endpoints, 581 total routes) — v8.14.1 je commit/push entry, v8.14 je zadnji feature entry od full-stack-developer podagenta
+- Študiral referenčni v8.14 endpoint src/app/api/ai/profit-density-maximizer/route.ts (298 vrstic — pure deterministic formula-based, no AI/LLM SDK, no DB query, handleX shared function GET+POST, runtime='nodejs', dynamic='force-dynamic', JSDoc header). Študiral tudi src/lib/ai-cache.ts (getCachedAI/setCachedAI z custom TTL arg, 6h default ampak supports override), src/lib/logger.ts (logger.error/warn/info z structured format), src/lib/db.ts (PrismaClient singleton), prisma/schema.prisma (Trade model: status held/sold/cancelled, sellPrice, sellDate, buyPrice, buyFees, sellFees, @@index([sellDate]) za hitre SOLD queries)
+- Ustvaril src/lib/brain/profit.ts (pure compute module, ~400 vrstic):
+  - NO `next/server` import, NO Prisma calls, NO side effects — fully testable, deterministic
+  - `profitBrain(input?: ProfitBrainInput)` function — exports ProfitBrainResult
+  - 6 signal formulas (each computes 0-100 score + grade A+/A/B/C/D/F + upliftEURPerMonth + topLever string):
+    1. growth: % MoM growth rate (linear regression slope / mean × 100 on monthlyProfits). Score = clamp(growthPct × 8, 0, 100). Uplift = monthlyProfit × growthPct/100 × 1.5.
+    2. scale: profit multiplier potential. Score = clamp(tradesPerMonth × avgProfitPerTrade / 100, 0, 100). Uplift = tradesPerMonth × avgProfitPerTrade × 0.3.
+    3. efficiency: profit per euro deployed. Score = clamp((avgProfitPerTrade / max(capitalDeployed, 1)) × 100 × 5, 0, 100). Uplift = capitalDeployed × 0.05.
+    4. velocity: profit per day = tradesPerMonth × avgProfitPerTrade / 30. Score = clamp(profitPerDay × 5, 0, 100). Uplift = profitPerDay × 30 × 0.2.
+    5. compounding: reinvest rate impact. Score = clamp((monthlyProfit × 0.6 / max(capitalDeployed, 1)) × 100, 0, 100). Uplift = monthlyProfit × 0.18.
+    6. horizon: 30/90d projection trajectory (computed AFTER drugih 5 saj odvisna od njihovih uplifts). Score = clamp(projection30d / max(monthlyProfit, 1) × 50, 0, 100). Uplift = projection90d - monthlyProfit.
+  - Synthesis → maximization:
+    - topActions: top 3 signals sorted by uplift × confidenceWeight (HIGH=1.0, MEDIUM=0.7, LOW=0.4). Confidence: HIGH ≥70, MEDIUM ≥40, LOW otherwise. Templated action string per signal (npr. "Drži 90d horizont: ...", "Pospeši velocity: ...").
+    - projection30d = monthlyProfit + (sumUplifts / monthlyProfit / 3) × monthlyProfit — conservative 1/3 achievable in 30 days.
+    - projection90d = monthlyProfit + (sumUplifts / monthlyProfit × 0.7) × monthlyProfit — 70% achievable in 90 days.
+    - profitGrade = weighted avg of 6 signal scores (weights: growth 0.20, scale 0.20, efficiency/velocity/compounding/horizon 0.15), graded via gradeFromScore (A+ ≥90, A ≥75, B ≥60, C ≥40, D ≥20, F otherwise).
+    - bestOpportunity = signal z highest upliftEURPerMonth.
+    - oneLineSummary = "Profit {monthlyProfit}€/mo → {projection30d}€/mo (+{pct}%) z {bestLever}; danes: {topActions[0]}, {topActions[1]}, {topActions[2]}."
+  - Sensible defaults če input manjka: monthlyProfits [200, 220, 250, 240, 280, 300, 320, 350, 380, 400, 420, 450] (placeholder growing business), avgProfitPerTrade 30€, tradesPerMonth 10, capitalDeployed 1500€.
+  - Local helpers: clamp(x, min, max), gradeFromScore(score), confidenceFromScore(score), confidenceWeight(c), round2(v), linearRegressionSlope(ys) (Δy per step via least squares).
+- Ustvaril src/app/api/ai/brain/profit/route.ts (~270 vrstic):
+  - runtime='nodejs', dynamic='force-dynamic', maxDuration=60
+  - GET + POST exports both delegirata na shared `handleProfitBrain(req)` async function z try/catch + logger.error → 500 { error: err?.message ?? 'Napaka' }
+  - Imports: NextRequest, NextResponse iz 'next/server'; logger iz '@/lib/logger'; getCachedAI, setCachedAI iz '@/lib/ai-cache'; profitBrain, ProfitBrainInput, ProfitBrainResult iz '@/lib/brain/profit'
+  - `resolveInputs(req)`: parse iz BOTH query string (GET) in POST body (JSON.parse iz cloned req.clone()) — body takes precedence over query. Supports avgProfitPerTrade, tradesPerMonth, capitalDeployed (numbers), monthlyProfits (number array — accepts JSON array, CSV string, ali JSON-stringified array).
+  - `fetchDbState()`: dynamic `await import('@/lib/db')` (lazy-load — no cost če DB unavailable), query SOLD trades last 12m (status='sold', sellDate gte 12m ago, sellPrice not null) z select { buyPrice, buyFees, sellPrice, sellFees, sellDate } + query HELD trades (status='held') za capitalDeployed = sum(buyPrice + buyFees). Bucket SOLD trades by YYYY-MM → 12-element monthlyProfits array (oldest→newest, 0 for empty months). avgProfitPerTrade = mean profit per SOLD trade. tradesPerMonth = count/12. Vse v try/catch z logger.warn — NEVER crashes. Returns null če DB unavailable ali 0 trades.
+  - Merging: USER INPUT WINS over DB state. mergedInput.monthlyProfits = userInput.monthlyProfits ?? (dbState.monthlyProfits.length > 0 ? dbState.monthlyProfits : undefined). Profit Brain fallback-a na DEFAULT_MONTHLY_PROFITS če je mergedInput.monthlyProfits undefined.
+  - `buildCacheKey(input)`: deterministični string `profit-brain:mp:{csv}|apt:{num}|tpm:{num}|cd:{num}` — same input → same key → cache hit.
+  - 5-MIN CACHE: TTL 300000ms (BRAIN_CACHE_TTL_MS = 5 * 60 * 1000). On cache hit: `{ ...cached, cachedAt: Date.now() }` — caller-vidni fresh cachedAt timestamp (cache aware).
+  - JSDoc header na vrhu opisuje: kaj Profit Brain dela, kako se razlikuje od 404 specialist-ov (synthesizes 6 signals v ONE decision, specialists measure ONE dimension), DETERMINISTIC (aiUsed: false, no AI/LLM SDK), DB-BACKED STATE INJECTION (graceful), 5-MIN CACHE.
+- Posodobil src/app/api/ai-list/route.ts (~145 vrstic):
+  - Prej: iteriral samo top-level direktorije — `brain/profit` (depth 2) ni bil odkrit.
+  - Novo: `discoverEndpoints(aiDir, currentDir, depth, acc)` rekurzivna funkcija, MAX_DEPTH=2 (top-level + 1 subdir). Skip node_modules in .* direktorije.
+  - Kategorize: dodan check za `brain/...` paths → category 'brain' (PRVI check pred vsemi drugimi, tako da 'profit' v 'brain/profit' ne zaide v 'pricing' zaradi n.includes('profit')).
+  - `BRAIN_SUBDIRS = new Set(['brain'])` — eksplicitna mapa znanih Brain-layer poddirektorijev.
+  - Dirent[] tip deklariran eksplicitno (import type Dirent from 'fs') — popravi TS2322/TS2367/TS2339 napake (NonSharedBuffer vs string).
+  - Categories object v response vključuje 'brain' key (initial 0).
+  - Cache (5-min, dirMtime-based) ohranjen.
+- Posodobil src/components/dashboard/ai-hub-view.tsx (~510 vrstic):
+  - CATEGORIES list: dodan `{ id: 'brain', label: 'Možgani', icon: '🧠', color: 'text-emerald-500' }` kot #2 (right after 'all', before 'buyer') — vrstni red: all, brain, buyer, inventory, listing, pricing, risk, negotiation, reports, misc.
+  - `categorize(name)` lokalna funkcija (mirror server-side): dodan check `if (n.startsWith('brain/') || n.split('/')[0] === 'brain') return 'brain';` kot prvi.
+  - useEffect pri fetch /api/ai-list: client-side re-categorize z lokalno categorize() (garancija konsistence tudi če server vrne stale category field).
+  - NOVA BrainSynthesisCard komponenta (v isti datoteki, ~150 vrstic):
+    - On mount: fetch('/api/ai/brain/profit') GET, no params.
+    - Loading: Skeleton (3 grade pills + 1-line summary skeleton).
+    - Success: emerald gradient card z:
+      * "🧠 PROFIT BRAIN" heading + Brain ikona (lucide-react) + v8.15 badge
+      * oneLineSummary (large prominent text)
+      * 3 grade pills: "Profit: {grade}" (color-coded: A+ emerald, A green, B amber, C orange, D red, F gray), "Najboljša priložnost: {bestOpportunity.upper()}", in cache badge če cachedAt
+      * Top 3 akcije numbered list z expectedUpliftEUR in confidence (color: HIGH emerald, MEDIUM amber, LOW zinc)
+      * Projection: "Trenutno: {monthlyProfit}€/mo" + "30d: {projection30d}€/mo · 90d: {projection90d}€/mo"
+      * Refresh button (ponovno fetch)
+    - Error: small AlertCircle + retry button.
+    - Card ima border-emerald-500/30 in bg-gradient-to-br from-emerald-500/10 via-emerald-500/5 to-transparent (subtle emerald tint).
+    - "Možgani kategorija →" link klikne brain category v stats grid (onBrainCategoryClick callback).
+  - Endpoints grid: brain endpointi dobijo border-emerald-500/30 + v8.15 badge v vrstici.
+  - Search placeholder posodobljen: "Išči AI funkcijo (npr. 'fraud', 'buyer', 'profit', 'brain'...)"
+- Generiral AI_ENDPOINTS.md z update_ai_endpoints.py script: `python3 scripts/update_ai_endpoints.py --endpoints "brain/profit"` → 404 → 405 rows. brain/profit vstavljen na #9 alphabeticalno (med batch-deal-evaluator #8 in budget-allocator #10, ker 'br' < 'bu' in > 'ba'). Total header posodobljen na "**Total: 405 endpoints**".
+- Posodobil README.md:
+  - Version badge v8.14.0 → v8.15.0
+  - AI Endpoints badge 404 → 405
+  - API Routes badge 581 → 582
+  - Tagline "404 AI endpointov" → "405 AI endpointov"
+  - Tagline v8.14.0 → v8.15.0 z novim opisom: "Profit Brain (nov 🧠 orkestracijski layer nad 404 specialist-i): sintetizira 6 profit signalov (growth, scale, efficiency, velocity, compounding, horizon) v eno odločitev z 3 akcijami za danes, 30d/90d projekcijo in one-liner povzetkom. Prvi Brain layer — nadgradnja bo sledila v v8.16+ z Inventory/Market/Sourcing/Risk/Buyer/Pricing Brain-i in Master Brain."
+  - Overview sekcija: dodan nov paragraph "🧠 AI Brain (v8.15+): nov orkestracijski layer nad 404 specialist-i. Profit Brain sintetizira 6 profit signalov (growth, scale, efficiency, velocity, compounding, horizon) v eno odločitev + 3 akcije za danes + 30d/90d projekcijo + one-liner povzetek. Future: v8.16+ bo dodal Inventory/Market/Sourcing/Risk/Buyer/Pricing Brain, nato Master Brain ki orkestrira vseh 7."
+  - Verzija sekcija: v8.14.0 → v8.15.0, "404 AI endpointov" → "405 AI endpointov", "~267 funkcij" → "~268 funkcij", "7 kategorij" → "8 kategorij"
+  - "Kaj je novega v v7.56–v8.14 (59 verzij, 177 novih funkcij)" → "Kaj je novega v v7.56–v8.15 (60 verzij, 178 novih funkcij)"
+  - Dodan v8.15 blok na vrh "Kaj je novega" sekcije z full Profit Brain description (6 signals + synthesis + DB injection + cache + pure compute module + endpoint file paths + AI Hub brain category + Brain Synthesis Card + future v8.16+ plan)
+  - AI Hub table row: "Vsi 404 AI endpointov z iskalnikom in runner-jem" → "Vsi 405 AI endpointov z iskalnikom, runner-jem in 🧠 Profit Brain Synthesis Card"
+  - Endpointi table row: "Endpointi (404 AI + 72 analytics + 10 cron + sistemski = 581)" → "Endpointi (405 AI + 72 analytics + 10 cron + sistemski = 582)"
+  - Project structure comment: "# 404 AI endpointov" → "# 405 AI endpointov (vključno z brain/profit — prvi Brain layer, v8.15)"
+  - Roadmap: "v8.14 (trenutno — ~267 funkcij)" → "v8.15 (trenutno — ~268 funkcij)"
+  - Testing line: "try/catch na vseh 581 API routes" → "try/catch na vseh 582 API routes"
+  - Naslednji koraki: "UI komponente za v7.50-v8.14 funkcije" → "UI komponente za v7.50-v8.15 funkcije"
+  - Changelog intro: "do v8.14 (avgust 2026)" → "do v8.15 (avgust 2026)"
+  - Zadnje verzije: dodan "- **v8.15.0** (avgust 2026) — 🧠 Profit Brain (prvi orkestracijski layer nad 404 specialist-i)" na vrh
+  - AI endpoint footer link: "popoln seznam vseh 404 AI endpointov" → "popoln seznam vseh 405 AI endpointov (vključno z brain/profit)"
+- Posodobil CHANGELOG.md: dodan `[8.15.0]` section na vrh (z Profit Brain — full description: 6 signal formulas z exact score/uplift math, synthesis logic z topActions/projection30d/projection90d/profitGrade/bestOpportunity/oneLineSummary, pure deterministic compute, DB-backed state injection z graceful fallback, 5-min cache z cachedAt stamp, GET+POST shared handler, runtime config, file paths za pure compute module in endpoint, recursive ai-list discovery). `[Unreleased]` posodobljen "v8.15+" → "v8.16+" + dodan Inventory/Market/Sourcing/Risk/Buyer/Pricing Brain + Master Brain v plan.
+- Quality checks (final, after all doc updates):
+  - `bun run lint` → 0 errors ✨
+  - `bunx tsc --noEmit` → 0 errors ✨ (initialno 4 TS errors zaradi Dirent tiping v ai-list route — popravljen z `import type Dirent from 'fs'` in `let entries: Dirent[]`)
+  - `grep "Total:" AI_ENDPOINTS.md` = "**Total: 405 endpoints**" ✅
+  - `grep -c "v8.15" README.md` = 11 ✅ (≥10 required)
+  - `grep -c "405 AI" README.md` = 6 ✅
+  - `grep -c "582" README.md` = 3 ✅
+  - `grep "## \[8.15.0\]" CHANGELOG.md` exists ✅ (1 occurrence)
+  - `grep "v8.16" CHANGELOG.md` exists ✅ (1 occurrence v [Unreleased])
+  - dev.log brez runtime napak ✅ (vsi brain/profit requesti 11-16ms, ai-list 92-218ms)
+- Curl verification vseh 6 testov (3 GET + 1 POST + 1 ai-list + 1 cache hit):
+  - GET /api/ai/brain/profit (default) → 200 {"ok":true, "signals": [6 entries: growth/scale/efficiency/velocity/compounding/horizon], "current":{monthlyProfit:450, profitGrowthRate:7.19, avgProfitPerTrade:30, tradesPerMonth:10, capitalDeployed:1500}, "maximization":{topActions:[3], projection30d:650.91, projection90d:871.9, profitGrade:"D", bestOpportunity:"horizon", oneLineSummary:"Profit 450€/mo → 651€/mo (+45%) z HORIZON; danes: Drži 90d horizont..., Pospeši velocity..., Skaliraj volume..."}}
+  - GET /api/ai/brain/profit (cache hit, 2nd call) → 200 z `cachedAt: 1786471235671` field present ✅
+  - POST /api/ai/brain/profit {"avgProfitPerTrade":40,"tradesPerMonth":15,"capitalDeployed":2500,"monthlyProfits":[300,350,400,420,480,520,560,600,650,700,750,800]} → 200 {"ok":true, "current":{monthlyProfit:800, profitGrowthRate:8.19, avgProfitPerTrade:40, tradesPerMonth:15, capitalDeployed:2500}, "maximization":{topActions:[3] z #1 horizon +467.12€/mo (MEDIUM confidence), #2 velocity +120€/mo (HIGH confidence), #3 scale +180€/mo (LOW confidence), projection30d:1178.14, projection90d:1594.1, profitGrade:"C", bestOpportunity:"horizon", oneLineSummary:"Profit 800€/mo → 1178€/mo (+47%) z HORIZON; danes: ..."}}
+  - GET /api/ai-list → 200 {"ok":true, "total":405, "categories":{buyer:50, inventory:77, listing:59, pricing:90, risk:12, negotiation:16, reports:15, misc:85, brain:1}, "endpoints":[{name:"brain/profit", category:"brain", description:"v8.15: Profit Brain — GET+POST /api/ai/brain/profit"}]}
+
+Stage Summary:
+- v8.15 uspešno dokončana (pending commit + push + Agent Browser verification od main agent-a)
+- NOV ARCHITECTURAL LAYER: 1 Profit Brain (prvi Brain layer nad 404 specialist-i). Synthesizes 6 profit signals (growth, scale, efficiency, velocity, compounding, horizon) v ONE decision: 3 top actions za danes ranked by expectedUpliftEUR × confidence (HIGH=1.0, MEDIUM=0.7, LOW=0.4), 30d/90d projections (conservative 1/3 in 30d, 70% in 90d), profit grade weighted (growth 0.20, scale 0.20, efficiency/velocity/compounding/horizon 0.15), bestOpportunity (signal z highest uplift), oneLineSummary ("Profit X€/mo → Y€/mo (+Z%) z BEST_LEVER; danes: action1, action2, action3.")
+- NEW: src/lib/brain/profit.ts (pure compute module — 6 profit signals + synthesis, NO next/server, NO Prisma, fully testable)
+- NEW: src/app/api/ai/brain/profit/route.ts (GET+POST endpoint, 5-min cache, DB state injection z graceful fallback)
+- MODIFIED: src/app/api/ai-list/route.ts (recursive endpoint discovery do depth 2, brain category za brain/... paths)
+- MODIFIED: src/components/dashboard/ai-hub-view.tsx (🧠 Brain category + BrainSynthesisCard z oneLineSummary + grade pills + top 3 actions + 30d/90d projection + emerald gradient bg)
+- MODIFIED: AI_ENDPOINTS.md (404 → 405, brain/profit na #9 alphabeticalno)
+- MODIFIED: README.md (badges v8.15.0/405/582, ~268 funkcij, 8 kategorij, Overview paragraph o Brain layer-ju, v8.15 blok v Kaj je novega)
+- MODIFIED: CHANGELOG.md ([8.15.0] section z full Profit Brain description + 6 signal formulas + synthesis logic + DB injection + cache + recursive ai-list; [Unreleased] posodobljen v8.16+ z 6 Brain layer-ji in Master Brain planom)
+- AI endpointi: 404 → 405 (+1)
+- Total API routes: 581 → 582 (+1)
+- Lint: 0 errors ✨
+- Typecheck: 0 errors ✨ (initialno 4 TS errors zaradi Dirent tiping — popravljen z explicit type import)
+- Endpoint verification: GET default → 200 z 6 signals in D profitGrade (450€/mo → 651€/mo +45%); POST custom → 200 z C profitGrade (800€/mo → 1178€/mo +47%); cache hit → cachedAt field present
+- AI Hub 🧠 Brain category: 1 endpoint (brain/profit), emerald-tinted Synthesis Card na vrhu AI Hub-a
+- Dokumentacija sinhrono posodobljena (AI_ENDPOINTS.md, README, CHANGELOG)
+- Verzija aplikacije: v8.15.0
+- Skupaj doslej (v7.50 → v8.15): 65 verzij, 187 novih funkcij; prvi Brain layer implementiran — naslednji Brain-i (Inventory/Market/Sourcing/Risk/Buyer/Pricing) v v8.16+

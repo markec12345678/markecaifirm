@@ -6,11 +6,100 @@ Format sledi [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), verzije s
 
 ## [Unreleased]
 
-Načrtovano za v8.15+:
+Načrtovano za v8.16+:
+- Inventory / Market / Sourcing / Risk / Buyer / Pricing Brain (6 novih Brain layerjev)
+- Master Brain ki orkestrira vseh 7 Brain layerjev (Profit + Inventory + Market + Sourcing + Risk + Buyer + Pricing)
 - WebSocket real-time negotiation (SSE namesto polling)
 - Playwright E2E testi za glavne flow-e
 - TLS fingerprinting (curl-impersonate)
 - ML model za buyer matchmaker (fine-tuned na realnem data)
+
+## [8.15.0] - 2026-08-27
+
+### Added — 🧠 Profit Brain (prvi orkestracijski Brain layer nad 404 specialist-i)
+
+- **Profit Brain** — `GET+POST /api/ai/brain/profit`
+  - NOV ARCHITECTURAL LAYER: Brain layer sits ABOVE the 404 specialist endpoints
+    (profit-growth-rate-maximizer, profit-multiplier-maximizer, profit-density-maximizer,
+    ...). Each specialist measures ONE dimension of profit. The Profit Brain synthesizes
+    6 profit signals into ONE decision.
+  - 6 profit signals (each 0-100 score + grade + uplift EUR/mo + topLever):
+    1. **growth** — % MoM growth rate (linear regression on monthlyProfits).
+       Score = clamp(growth% × 8, 0, 100). Uplift = monthlyProfit × growth% × 1.5.
+    2. **scale** — profit multiplier potential.
+       Score = clamp(tradesPerMonth × avgProfitPerTrade / 100, 0, 100).
+       Uplift = tradesPerMonth × avgProfitPerTrade × 0.3.
+    3. **efficiency** — profit per euro deployed.
+       Score = clamp((avgProfitPerTrade / max(capitalDeployed, 1)) × 100 × 5, 0, 100).
+       Uplift = capitalDeployed × 0.05.
+    4. **velocity** — profit per day = tradesPerMonth × avgProfitPerTrade / 30.
+       Score = clamp(profitPerDay × 5, 0, 100). Uplift = profitPerDay × 30 × 0.2.
+    5. **compounding** — reinvest rate impact.
+       Score = clamp((monthlyProfit × 0.6 / max(capitalDeployed, 1)) × 100, 0, 100).
+       Uplift = monthlyProfit × 0.18.
+    6. **horizon** — 30/90d projection trajectory.
+       Score = clamp(projection30d / max(monthlyProfit, 1) × 50, 0, 100).
+       Uplift = projection90d - monthlyProfit.
+  - Synthesis → `maximization`:
+    - `topActions`: top 3 signals sorted by uplift × confidenceWeight (HIGH=1.0,
+      MEDIUM=0.7, LOW=0.4). Each action has templated human-readable text derived
+      from that signal's `topLever`. Confidence is HIGH if score ≥70, MEDIUM if
+      ≥40, LOW otherwise.
+    - `projection30d` = currentMonthlyProfit × (1 + sumUplifts / monthlyProfit / 3) —
+      conservative 1/3 of total uplift achievable in 30 days.
+    - `projection90d` = currentMonthlyProfit × (1 + sumUplifts / monthlyProfit × 0.7) —
+      70% of total achievable in 90 days.
+    - `profitGrade` = weighted average of 6 signal scores (weights: growth 0.20,
+      scale 0.20, efficiency 0.15, velocity 0.15, compounding 0.15, horizon 0.15),
+      then graded via gradeFromScore (A+ ≥90, A ≥75, B ≥60, C ≥40, D ≥20, F otherwise).
+    - `bestOpportunity` = signal with highest upliftEURPerMonth.
+    - `oneLineSummary` = "Profit {monthlyProfit}€/mo → {projection30d}€/mo (+{pct}%) z
+      {bestLever}; danes: {topAction0}, {topAction1}, {topAction2}."
+  - **Pure deterministic compute** (aiUsed: false, no AI/LLM SDK call).
+  - **DB-backed state injection** (graceful degradation):
+    - if Prisma is available, fetch last 12 months of SOLD trades (status='sold',
+      sellDate != null) to derive monthlyProfits (bucketed by YYYY-MM),
+      avgProfitPerTrade (mean profit per SOLD trade), tradesPerMonth (count/12),
+      capitalDeployed (sum of buyPrice+buyFees of currently HELD items).
+    - User input (query string or POST body) takes precedence over DB state —
+      callers can override any field.
+    - If DB unavailable or no trades found → falls back to sensible defaults
+      (monthlyProfits [200, 220, 250, ..., 450] — placeholder growing business,
+      avgProfitPerTrade 30€, tradesPerMonth 10, capitalDeployed 1500€).
+    - All DB access wrapped in try/catch + logger.warn — NEVER crashes the endpoint.
+  - **5-minute cache** (TTL 300000ms): cache key = `profit-brain:${hashOfInputs}`.
+    On cache hit, the result is returned with a fresh `cachedAt` timestamp so the
+    caller knows it was served from cache.
+  - source: "v8.15-profit-brain"
+  - GET+POST shared handler `handleProfitBrain` (AI Hub runner compatibility —
+    hits either method), runtime='nodejs', dynamic='force-dynamic', maxDuration=60,
+    try/catch with logger.error → 500 { error }, parse inputs from both query
+    string and JSON body (POST takes precedence over query).
+  - Pure compute module: `src/lib/brain/profit.ts` — NO `next/server` import, NO
+    Prisma calls (state injected by caller via ProfitBrainInput). Fully testable
+    in isolation and deterministic given the same input.
+  - Endpoint: `src/app/api/ai/brain/profit/route.ts` — first endpoint in a nested
+    subdirectory under `src/app/api/ai/`. This required upgrading `/api/ai-list`
+    to discover endpoints recursively (max depth 2 = top-level + 1 subdir).
+  - AI Hub: nova 🧠 Brain kategorija (emerald-tinted) — added to the CATEGORIES
+    list right after 'all' (order: all, brain, buyer, inventory, ...). The
+    `/api/ai-list` route now categorizes any endpoint under `brain/...` as
+    category 'brain'. The Brain Synthesis Card sits at the top of the AI Hub
+    view, above the search box, with an emerald gradient background to visually
+    distinguish Brain from specialist cards.
+
+### Stats
+- AI endpoints: 404 → 405 (+1)
+- Total API routes: 581 → 582 (+1)
+- First Brain layer in the architecture (above the 404 specialists)
+- 6 profit signals (growth, scale, efficiency, velocity, compounding, horizon)
+- 3 top actions ranked by uplift × confidence
+- 30d / 90d projections + profit grade + one-line summary
+- Pure deterministic compute (aiUsed: false, no AI/LLM SDK)
+- DB state injection (graceful — falls back to defaults if DB unavailable)
+- 5-minute cache (300000ms TTL, cachedAt stamp on cache hit)
+- Recursive endpoint discovery in `/api/ai-list` (supports `brain/profit` and
+  future nested endpoint families up to depth 2)
 
 ## [8.14.0] - 2026-08-26
 
