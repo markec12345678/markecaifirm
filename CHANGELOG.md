@@ -6,11 +6,191 @@ Format sledi [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), verzije s
 
 ## [Unreleased]
 
-Načrtovano za v8.11+:
+Načrtovano za v8.12+:
 - WebSocket real-time negotiation (SSE namesto polling)
 - Playwright E2E testi za glavne flow-e
 - TLS fingerprinting (curl-impersonate)
 - ML model za buyer matchmaker (fine-tuned na realnem data)
+
+## [8.11.0] - 2026-08-23
+
+### Added — Profit Growth Rate Maximizer + Deal Source Profit Per Day Maximizer + Inventory Annual Yield Maximizer (3 funkcije)
+
+- **AI Profit Growth Rate Maximizer** — `GET+POST /api/ai/profit-growth-rate-maximizer`
+  - AI MAXIMIZES PROFIT GROWTH RATE — the rate at which total profit is increasing
+    month-over-month (holistic business growth rate, not per-trade or per-day growth)
+  - "Your profit is growing +5%/month, but could grow +12%/month with these 4 levers."
+  - Different from profit-per-trade-growth-maximizer (v8.10 which maximizes growth rate of profit
+    PER TRADE in €/mo) — this MAXIMIZES GROWTH RATE of TOTAL profit in %/mo (holistic business
+    growth, not per-trade €/mo growth)
+  - Different from profit-acceleration-maximizer (v8.05 which maximizes growth rate acceleration)
+    — this MAXIMIZES PROFIT GROWTH RATE (%/mo MoM, not acceleration €/mo²)
+  - Different from inventory-profit-per-day-growth-maximizer (v8.09 which maximizes growth rate
+    of daily profit from inventory in %/week) — this MAXIMIZES GROWTH RATE of total profit in
+    %/month (holistic business growth, not %/week inventory)
+  - Different from profit-per-day-scaling-maximizer (v8.08 which maximizes and scales daily profit
+    with scalingPath) — this MAXIMIZES GROWTH RATE of profit (%/mo MoM compounding, not €/day
+    scaling)
+  - Different from profit-multiplier-maximizer (v8.09 which maximizes maximum profit multiplier
+    with 6 dimensions) — this MAXIMIZES GROWTH RATE of profit (%/mo how fast profit grows, not ×
+    how many times)
+  - Different from profit-scale-engine (v7.96 which scales profit with growth engine) — this
+    MAXIMIZES GROWTH RATE of profit with growthLever (VOLUME_GROWTH/MARGIN_GROWTH/VELOCITY_GROWTH/
+    CAPITAL_GROWTH/EFFICIENCY_GROWTH) and doublingTime (rule of 72)
+  - Different from profit-velocity-maximizer (v7.98 which maximizes €/day velocity) — this
+    MAXIMIZES GROWTH RATE of profit (%/mo MoM, not €/day velocity)
+  - Different from profit-growth-predictor (v7.81 which predicts profit growth) — this
+    MAXIMIZES GROWTH RATE with exponentialVsLinear compounding advantage comparison
+  - Queries SOLD trades (last 12m) grouped by month into 12 buckets
+  - current: monthlyProfit €/mo [0, 200000] (= totalProfit12m / 12), currentMonthProfit € (last
+    month with data), monthlyProfits Array<€> (12 entries, oldest → newest, bucketed by sellDate),
+    profitGrowthRate % [-50, 200] (linear regression slope / mean × 100), profitGrowthTrend
+    GROWING/STABLE/DECLINING/VOLATILE, profitGrowthAcceleration %/mo² [-50, 200] (slope of last
+    half vs first half — acceleration/deceleration of growth rate), profitGrowthVolatility %
+    [0, 500] (std dev / mean × 100), totalProfit12m €, soldCount12m, monthsWithData,
+    bestMonthProfit €, worstMonthProfit €
+  - maximization: currentGrowthRate % [-50, 200] (echoes current), maximizedGrowthRate %
+    [-50, 200] (optimal achievable, ≥ current, ≤ current + 100pp absolute uplift — anti-
+    hallucination), growthUplift pp [0, 200] (improvement = maximized − current), growthLever
+    (5 entries: lever VOLUME_GROWTH/MARGIN_GROWTH/VELOCITY_GROWTH/CAPITAL_GROWTH/EFFICIENCY_GROWTH
+    with potential 30/25/20/15/10 pp uplift, currentContribution % [0, 100] (share of current
+    growth), potentialContribution % [0, 100] (pp uplift possible), action slovenian max 200),
+    growthTrajectory (12 entries: month 1-12, currentProjectedProfit € [0, 200000] profit at
+    current growth rate linear: base × (1 + m × currentGrowthRate/100), maximizedProjectedProfit
+    € [0, 200000] profit at maximized growth rate), growthBottlenecks (3-5 slovenian strings max
+    200 each — what limits profit growth rate), growthGrade A+/A/B/C/D/F (A+ if maximized ≥ 30,
+    A ≥ 20, B ≥ 12, C ≥ 7, D ≥ 3, else F), doublingTime months [1, 120] (= 72 / maximizedGrowthRate
+    — rule of 72; if ≤ 0, set 120), exponentialVsLinear { linearProjected12m € [0, 200000]
+    (= base × (1 + 12 × maximizedGrowthRate/100)), exponentialProjected12m € [0, 200000]
+    (= base × (1 + maximizedGrowthRate/100)^12), compoundingAdvantage € (= exponential − linear),
+    compoundingAdvantagePct % (= advantage / |linear| × 100) }
+  - Anti-hallucination: growth rates [-50, 200], profits [0, 200000]
+  - 6h cache (key `profit-growth-rate-maximizer:${currentMonth}`)
+  - Deterministic fallback (12-month buckets × linear regression slope × trend × acceleration +
+    5 levers × potential contribution + 12-month trajectory × linear projection + 3-5 bottlenecks
+    + grade + doubling time + exponential vs linear compounding)
+  - Empty-state fallback if 0 SOLD trades → grade F, doublingTime 120
+
+- **AI Deal Source Profit Per Day Maximizer** — `GET+POST /api/ai/deal-source-profit-per-day-maximizer`
+  - AI MAXIMIZES PROFIT PER DAY per source — how much daily profit each source generates.
+    "Bolha generates 15€/day in profit, Vinted generates 8€/day — but could be 25€/day and
+    14€/day respectively."
+  - Different from deal-source-profit-velocity-maximizer (v8.08 which maximizes velocity of profit
+    per source — €/week how fast profit accumulates) — this MAXIMIZES PROFIT PER DAY per source
+    (€/day = totalProfit/365, not €/week velocity)
+  - Different from deal-source-annual-return-maximizer (v8.10 which maximizes annualized return per
+    source with benchmark comparison) — this MAXIMIZES PROFIT PER DAY per source (€/day absolute,
+    not % annual return)
+  - Different from deal-source-profit-maximizer (v7.97 which maximizes total profit per source) —
+    this MAXIMIZES PROFIT PER DAY per source (€/day normalized for time, not € total)
+  - Different from deal-source-cash-flow-maximizer (v8.06 which maximizes NET CASH FLOW per
+    source) — this MAXIMIZES PROFIT PER DAY (€/day profit rate, not € net cash flow)
+  - Different from deal-source-profit-per-trade-maximizer (v8.04 which maximizes profit per trade
+    per source €) — this MAXIMIZES PROFIT PER DAY per source (€/day normalized, not €/trade)
+  - Different from deal-source-margin-maximizer (v8.03 which maximizes margin %) — this MAXIMIZES
+    PROFIT PER DAY per source with dailyProfitMaximizationAction (INCREASE_TRADE_FREQUENCY/
+    INCREASE_PROFIT_PER_TRADE/REDUCE_HOLD_TIME/OPTIMIZE_PRICING) and dailyProfitProjection
+    (7/14/30 day forecast)
+  - Different from deal-source-volume-maximizer (v8.02 which maximizes trade volume per source)
+    — this MAXIMIZES PROFIT PER DAY per source (€/day normalized, not trade volume)
+  - Different from deal-source-revenue-maximizer (v8.07 which maximizes total revenue per source)
+    — this MAXIMIZES PROFIT PER DAY (profit/365, not top-line revenue)
+  - Different from deal-source-capital-return-maximizer (v8.09 which maximizes capital return
+    rate per source) — this MAXIMIZES PROFIT PER DAY per source (€/day absolute, not % capital
+    returned)
+  - Different from profit-per-day-scaling-maximizer (v8.08 which maximizes and scales daily profit
+    with scalingPath) — this MAXIMIZES PROFIT PER DAY PER SOURCE with profitPerDayRanking and
+    dailyProfitProjection (7/14/30 day)
+  - Different from inventory-profit-per-day-maximizer (v8.02 which maximizes daily profit per
+    item) — this MAXIMIZES PROFIT PER DAY per SOLD SOURCE (per source daily profit, not per
+    item daily profit)
+  - Queries SOLD trades (last 12m) with linked Listing (for monitor.source)
+  - Per source metrics: totalProfit € [-100000, 1000000] (= sum(sellPrice − sellFees − buyPrice −
+    buyFees)), profitPerDay €/day [0, 5000] (= totalProfit / 365), tradesPerDay [0, 100]
+    (= tradeCount / 365), avgProfitPerTrade € [0, 5000] (= totalProfit / tradeCount), tradeCount,
+    avgHoldDays [1, 730], profitPerDayTrend ACCELERATING/STABLE/DECLINING/INSUFFICIENT_DATA
+  - maximization per source: dailyProfitMaximizationAction INCREASE_TRADE_FREQUENCY/
+    INCREASE_PROFIT_PER_TRADE/REDUCE_HOLD_TIME/OPTIMIZE_PRICING (gain 50/40/30/25% relative
+    improvement), maximizedProfitPerDay €/day [0, 5000] (≥ current, ≤ min(current × 3, 5000) —
+    anti-hallucination), dailyProfitUplift €/day [0, 5000] (= maximized − current),
+    maximizationLevers 3-5 (max 200 slovenian — specific daily profit levers per source),
+    dailyProfitProjection (3 entries: days 7/14/30, projectedProfit € [0, 200000] =
+    maximizedProfitPerDay × days), profitPerDayRank (rank among sources), profitPerDayScore
+    [0, 100] (normalized score vs best source)
+  - portfolio: totalCurrentDailyProfit €/day (sum of profitPerDay), totalMaximizedDailyProfit
+    €/day (sum of maximizedProfitPerDay), totalDailyProfitUplift €/day (= maximized − current),
+    profitPerDayRanking Array<{ source, displayName, currentProfitPerDay €/day,
+    maximizedProfitPerDay €/day, rank }>, bestDailyProfitSource
+  - Anti-hallucination: daily profits [0, 5000], scores [0, 100]
+  - 6h cache (key `deal-source-profit-per-day-maximizer:${currentMonth}`)
+  - Deterministic fallback (per-source daily profit + action × uplift + 3-5 levers per source +
+    7/14/30-day projection + ranking + portfolio summary + best source)
+  - Empty-state fallback if 0 SOLD trades
+
+- **AI Inventory Annual Yield Maximizer** — `GET+POST /api/ai/inventory-annual-yield-maximizer`
+  - AI MAXIMIZES ANNUAL YIELD of held inventory — the total annual profit as a percentage of
+    average inventory value. Like a dividend yield but for inventory.
+  - "Your annual yield is 32%, but could be 58% with optimal inventory composition and turnover."
+  - Different from inventory-annualized-return-maximizer (v8.06 which maximizes annualized return
+    per item — unrealized profit × 365/holdDays) — this MAXIMIZES ANNUAL YIELD across the entire
+    inventory (realized annual profit / held inventory value × 100, not per-item unrealized
+    return)
+  - Different from inventory-capital-velocity-maximizer (v8.10 which maximizes velocity of
+    capital through inventory — how many cycles/year) — this MAXIMIZES ANNUAL YIELD (annual
+    profit / inventory value × 100, not cycle count)
+  - Different from inventory-yield-maximizer (v8.03 which maximizes yield % per item with
+    yieldGrade) — this MAXIMIZES PORTFOLIO ANNUAL YIELD with yieldVsBenchmark (dividend stocks 3%,
+    bonds 2%, REITs 4%) and optimalInventorySize
+  - Different from inventory-cash-yield-maximizer (v8.04 which maximizes annualized cash yield
+    across portfolio with yieldComparisonTable) — this MAXIMIZES ANNUAL YIELD with
+    yieldMaximizationLevers (REDUCE_INVENTORY_VALUE/INCREASE_PROFIT/FASTER_TURNOVER/OPTIMIZE_MIX)
+    and inventoryYieldOptimization
+  - Different from inventory-turnover-yield-maximizer (v8.05 which maximizes yield with yieldCurve
+    and optimalTurnoverRate) — this MAXIMIZES ANNUAL YIELD with yieldProjection (3/6/12 month)
+    and yieldGrade
+  - Different from inventory-capital-efficiency-maximizer (v8.01 which maximizes capital
+    efficiency per item with reallocation) — this MAXIMIZES ANNUAL YIELD across the entire
+    inventory with yieldVsBenchmark
+  - Different from inventory-roi-maximizer-pro (v7.99 which maximizes ROI per item) — this
+    MAXIMIZES ANNUAL YIELD (annual profit / inventory value, not per-item ROI)
+  - Different from inventory-profit-per-day-maximizer (v8.02 which maximizes daily profit per
+    item) — this MAXIMIZES ANNUAL YIELD (annual % yield, not €/day per item)
+  - Different from inventory-capital-return-maximizer (v8.07 which maximizes capital return OF
+    inventory) — this MAXIMIZES ANNUAL YIELD (annual profit / inventory value × 100, not %
+    returned)
+  - Different from inventory-return-on-capital-maximizer (v8.08 which maximizes return ON capital
+    for HELD inventory) — this MAXIMIZES ANNUAL YIELD with optimalInventorySize and
+    yieldVsBenchmark
+  - Different from profit-multiplier-maximizer (v8.09 which maximizes maximum profit multiplier
+    with 6 dimensions) — this MAXIMIZES ANNUAL YIELD (annual yield %, not profit multiplier ×)
+  - Different from profit-growth-rate-maximizer (v8.11 which maximizes growth rate of profit in
+    %/mo) — this MAXIMIZES ANNUAL YIELD (annual yield %, not growth rate %/mo)
+  - Different from deal-source-profit-per-day-maximizer (v8.11 which maximizes daily profit per
+    source) — this MAXIMIZES ANNUAL YIELD across inventory (annual yield %, not €/day per source)
+  - Queries HELD trades with linked Listing (for aiEstimatedValue) + SOLD trades (last 12m)
+  - current: avgInventoryValue € [0, 1000000] (= sum of estValues of HELD items, where estValue =
+    listing.aiEstimatedValue ?? listing.price ?? buyPrice+buyFees), heldInventoryCount,
+    annualProfit € (total profit from SOLD trades in last 12m), currentAnnualYield % [-50, 500]
+    (= annualProfit / avgInventoryValue × 100), avgHoldDays [1, 730] (from SOLD trades),
+    soldCount12m, totalCapitalDeployed € (SOLD 12m capital + HELD capital)
+  - maximization: maximizedAnnualYield % [-50, 500] (≥ current, ≤ current + 200pp absolute
+    uplift — anti-hallucination), yieldUplift pp [0, 500] (= maximized − current),
+    yieldMaximizationLevers (4 entries: lever REDUCE_INVENTORY_VALUE/INCREASE_PROFIT/
+    FASTER_TURNOVER/OPTIMIZE_MIX with potential gain 40/50/60/30 pp, potentialGain pp [0, 200],
+    action slovenian max 200), inventoryYieldOptimization (slovenian max 300 — how to reduce
+    tied-up capital while maintaining profit), yieldVsBenchmark { dividendStocks % = 3, bonds %
+    = 2, reits % = 4, yourCurrentYield %, yourMaximizedYield %, maximizedVsDividendStocks pp,
+    maximizedVsBonds pp, maximizedVsReits pp }, optimalInventorySize € [0, 1000000]
+    (= maximizedProfit / maximizedYield × 100), yieldProjection (3 entries: months 3/6/12,
+    projectedYield % [-50, 500] (linear ramp: 3m=25%, 6m=50%, 12m=100% adoption),
+    projectedProfit € [0, 1000000] (annualized profit × months/12)), yieldGrade A+/A/B/C/D/F
+    (A+ if maximized ≥ 100, A ≥ 75, B ≥ 50, C ≥ 30, D ≥ 15, else F)
+  - Anti-hallucination: yields [-50, 500], inventory [0, 1000000]
+  - 6h cache (key `inventory-annual-yield-maximizer:${currentMonth}`)
+  - Deterministic fallback (4 levers × potential gain + inventory yield optimization advice +
+    yieldVsBenchmark dividend stocks 3%/bonds 2%/REITs 4% + optimal inventory size + 3/6/12 month
+    projection + grade)
+  - Empty-state fallback if 0 HELD and 0 SOLD trades → grade F
 
 ## [8.10.0] - 2026-08-23
 
