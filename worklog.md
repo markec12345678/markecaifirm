@@ -14107,3 +14107,34 @@ Stage Summary:
 - Dokumentacija sinhrono posodobljena (AI_ENDPOINTS.md, README, CHANGELOG, GitHub About)
 - GitHub sinhroniziran (0 commit-ov ahead)
 - Verzija aplikacije: v8.12.0
+
+---
+Task ID: v8.13.1
+Agent: main
+Task: v8.13 commit + push + GitHub About + Agent Browser verification
+
+Work Log:
+- Prejel poročilo od full-stack-developer podagenta (Task v8.13 — podagent timeout-al a je dokončal delo)
+- Preveril 3 nove endpoint-e: profit-per-trade-scaling-maximizer (200 GET+POST), deal-source-volume-growth-maximizer (200 GET+POST), inventory-turnover-profit-growth-maximizer (200 GET+POST)
+- Preveril doc sync: AI_ENDPOINTS.md (401 ✅), README v8.13 (11 refs ✅), README 401 AI (6 refs ✅), CHANGELOG v8.13 ✅
+- Preveril lint: 0 napak ✨
+- Preveril typecheck: 0 napak ✨
+- Posodobil GitHub About opis: 398 AI → 401 AI, 575 routes → 578 routes (via API PATCH)
+- Commit: "v8.13: Profit Per Trade Scaling Maximizer + Deal Source Volume Growth Maximizer + Inventory Turnover Profit Growth Maximizer" (f719197)
+- Push na GitHub: uspešen ✅, PAT očiščen ✅
+- Agent Browser self-verification:
+  - Stran se pravilno naloži (HTTP 200)
+  - AI Hub prikazuje profit-per-trade-scaling-maximizer (v8.13) v iskalniku ✅
+  - Runner test: klik na profit-per-trade-scaling-maximizer → POST request → valid JSON ✅
+  - Response: {"ok":true, "current":{avgProfitPerTrade, bestTrade, worstTrade}, "maximization":{scalingPath, scalingMultiplier, scalingGrade}, "aiUsed":false}
+  - Brez runtime napak v dev.log
+
+Stage Summary:
+- v8.13 uspešno dokončana in potisnjena na GitHub
+- 3 PROFIT-MAXIMIZING funkcije: AI Profit Per Trade Scaling Maximizer, AI Deal Source Volume Growth Maximizer, AI Inventory Turnover Profit Growth Maximizer
+- AI endpointi: 398 → 401 (+3)
+- Analytics endpointi: 72 (nespremenjeno — vsi 3 so AI)
+- Total API routes: 575 → 578 (+3)
+- Dokumentacija sinhrono posodobljena (AI_ENDPOINTS.md, README, CHANGELOG, GitHub About)
+- GitHub sinhroniziran (0 commit-ov ahead)
+- Verzija aplikacije: v8.13.0
