@@ -14387,3 +14387,86 @@ Stage Summary:
 - GitHub sinhroniziran (0 commit-ov ahead po pull --rebase)
 - Verzija aplikacije: v8.15.0
 - Skupaj doslej (v7.50 → v8.15): 65 verzij, 187 novih funkcij; prvi Brain layer implementiran — naslednji Brain-i (Inventory/Market/Sourcing/Risk/Buyer/Pricing) v v8.16-v8.21, Master Brain v v8.22
+
+---
+Task ID: v8.16
+Agent: full-stack-developer
+Task: Implement Inventory Brain — second Brain layer above 72 inventory specialists
+
+Work Log:
+- Prebral worklog.md (v8.15 Profit Brain entry — pattern za sledenje: pure compute module + endpoint + UI Brain card)
+- Prebral src/lib/brain/profit.ts COMPLETELY — template za Inventory Brain (clamp, gradeFromScore, confidenceFromScore, confidenceWeight, round2, normalizeInput, computeXxxSignal, actionForSignal, buildOneLineSummary, SIGNAL_WEIGHTS, profitBrain main entry)
+- Prebral src/app/api/ai/brain/profit/route.ts COMPLETELY — template za endpoint (resolveInputs, fetchDbState, buildCacheKey, handleXxxBrain, runtime='nodejs', dynamic='force-dynamic', maxDuration=60, 5-min cache z cachedAt stamp, DB state injection graceful)
+- Prebral src/components/dashboard/ai-hub-view.tsx (BrainSynthesisCard — obstoječa emerald Profit Brain kartica)
+- Prebral prisma/schema.prisma (Trade model: status='held'|'sold'|'cancelled', buyPrice, buyFees, buyDate, sellPrice, sellFees, sellDate — vir za DB state injection)
+- Prebral src/app/api/ai-list/route.ts (recursive depth-2 discovery že podprt od v8.15 — brain/inventory bo avtomatsko odkrit)
+- Ustvaril src/lib/brain/inventory.ts (pure compute module, mirrors profit.ts strukturo — NO next/server, NO Prisma)
+  - 9 input fields (itemCount, totalInventoryValue, avgDaysToSell, agedItemsCount, agedItemsValue, avgProfitMarginPct, capitalDeployed, monthlySalesCount, monthlyRevenue) z defaults (18, 1500, 14, 3, 280, 25, 1500, 10, 350)
+  - 6 inventory signalov (turnover, aging, yield, capitalEfficiency, liquidation, health) — vsak z 0-100 score + grade + uplift EUR/mo + topLever (Slovenian)
+  - Synthesis: topActions (3, ranked by uplift × confidenceWeight), projection30d (structured: recommendedItemsToSell/Buy, projectedInventoryValue, projectedAgedPct), projection90d (structured: projectedInventoryValue, projectedAgedPct, projectedTurnoverRate), inventoryGrade (weighted: turnover 0.20, aging 0.20, yield 0.20, capitalEfficiency 0.15, liquidation 0.15, health 0.10), bestOpportunity, oneLineSummary ("Inventar N itemov (€), N stari. <action>. Grade X.")
+  - import type { ProfitGrade, Confidence } from './profit' (PREFER import preko duplication)
+- Ustvaril src/app/api/ai/brain/inventory/route.ts (GET+POST endpoint, mirrors profit/route.ts)
+  - runtime='nodejs', dynamic='force-dynamic', maxDuration=60
+  - resolveInputs: parse 9 fields iz query string (GET) + JSON body (POST, takes precedence)
+  - fetchDbState: prebere HELD trades (current inventory) + SOLD v zadnjih 30 dneh (monthlySalesCount/monthlyRevenue) + SOLD all-time (avgProfitMarginPct, avgDaysToSell) — try/catch, nikoli ne vrže napake, fallback na defaults
+  - buildCacheKey: deterministic `inventory-brain:${ic|tiv|ats|aic|aiv|apm|cd|msc|mr}` — same input → same key → cache hit
+  - handleInventoryBrain: 5-min cache (TTL 300000ms), cachedAt re-stamp na cache hit, aiUsed=false, source="v8.16-inventory-brain"
+- Spremenil src/components/dashboard/ai-hub-view.tsx (BrainSynthesisCard razširjen z DRUGIM stacked section-om)
+  - Nov InventoryBrainResult type (z structured projection30d/projection90d objects — razlika od Profit Brain kjer sta skalara)
+  - Refactor: BrainSynthesisCard → outer Card wrapper z AI BRAIN SYNTHESIS header + dva stacked inner sections
+  - ProfitBrainSection (emerald-tinted, v8.15 badge) — fetch /api/ai/brain/profit na mount
+  - InventoryBrainSection (amber-tinted, v8.16 badge, Package icon) — fetch /api/ai/brain/inventory na mount
+  - Vsak section ima svoj loading skeleton, error state z Ponovi gumb, refresh button, in cache indicator badge
+  - Inventory section prikazuje: oneLineSummary, inventoryGrade pill, bestOpportunity pill, cache badge, top 3 actions, current state (itemCount, totalInventoryValue, agedItemsPct, inventoryTurnoverRate), 30d projection (recommendedItemsToSell/Buy), 90d projection (projectedInventoryValue + projectedTurnoverRate)
+  - Profit section prikazuje (nespremenjeno): oneLineSummary, profitGrade pill, bestOpportunity pill, cache badge, top 3 actions, 30d/90d €/mo projection
+  - Oba Brain-a prikazana simultano — ni tabov, ni dodatnih klikov
+- Dodal Package icon v lucide-react imports (za Inventory Brain section)
+- Za verzijo v8.16 posodobil JSDoc header v ai-hub-view.tsx z opisom obeh Brain layerjev
+- AI_ENDPOINTS.md: dodana nova vrstica | 10 | brain/inventory | /api/ai/brain/inventory | (right after brain/profit), renomberani vsi naslednji index-i (10→11, ..., 405→406), posodobljen "Total: 405 endpoints" → "Total: 406 endpoints"
+- README.md: posodobljeni vsi badges in reference
+  - Version badge v8.15.0 → v8.16.0
+  - AI Endpoints badge 405 → 406
+  - API Routes badge 582 → 583
+  - Tagline: dodan Inventory Brain opis
+  - Overview paragraph: posodobljen z obema Brain-oma (Profit v8.15 + Inventory v8.16)
+  - Verzija section: v8.15.0 → v8.16.0, 405 → 406, ~268 → ~269 funkcij
+  - "Kaj je novega": dodan v8.16 Inventory Brain blok nad v8.15 (z full description: 6 signals + synthesis + DB injection + cache + structured projections + file paths + AI Hub stacked card)
+  - AI Hub row: "Vsi 405 AI endpointov ... 🧠 Profit Brain Synthesis Card" → "Vsi 406 AI endpointov ... 🧠 Profit Brain + 📦 Inventory Brain Synthesis Card"
+  - AI_ENDPOINTS.md link: "vseh 405 AI endpointov (vključno z brain/profit)" → "vseh 406 AI endpointov (vključno z brain/profit in brain/inventory)"
+  - Endpointi section: "405 AI + 72 analytics + 10 cron + sistemski = 582" → "406 AI + 72 analytics + 10 cron + sistemski = 583"
+  - Project structure comment: "405 AI endpointov (vključno z brain/profit — prvi Brain layer, v8.15)" → "406 AI endpointov (vključno z brain/profit in brain/inventory — dva Brain layer-ja, v8.15 + v8.16)"
+  - Roadmap: "v8.15 (trenutno — ~268 funkcij)" → "v8.15-v8.16 (trenutno — ~269 funkcij)"
+  - Naslednji koraki: "v7.50-v8.15 funkcije" → "v7.50-v8.16 funkcije"
+  - Changelog intro: "do v8.15 (avgust 2026)" → "do v8.16 (avgust 2026)"
+  - Zadnje verzije: dodan "- v8.16.0 (avgust 2026) — 📦 Inventory Brain (drugi orkestracijski Brain layer nad 404 specialist-i — synthesis 6 inventory signalov)" na vrh
+  - Testing: "try/catch na vseh 582 API routes" → "583 API routes"
+  - `grep -c "v8.15" README.md` = 6 (intentional refs: "(v8.15)" v context)
+  - `grep -c "v8.16" README.md` = 12
+  - `grep -c "405 AI" README.md` = 0 ✅ (vsi posodobljeni na 406)
+  - `grep -c "582" README.md` = 0 ✅ (vsi posodobljeni na 583)
+- CHANGELOG.md: dodan nov [8.16.0] section na vrh (nad [8.15.0])
+  - ### Added — 📦 Inventory Brain (drugi orkestracijski Brain layer nad 404 specialist-i)
+  - Full description: 6 inventory signal formulas z exact score/uplift math, synthesis logic z topActions/projection30d (structured)/projection90d (structured)/inventoryGrade/bestOpportunity/oneLineSummary, pure deterministic compute, DB-backed state injection z graceful fallback (HELD trades + SOLD last 30d + SOLD all-time), 5-min cache z cachedAt stamp, GET+POST shared handler, runtime config, file paths za pure compute module in endpoint, BrainSynthesisCard razširjen z drugim stacked section-om (amber-tinted)
+  - ### Stats: AI endpoints 405 → 406 (+1), Total API routes 582 → 583 (+1), drugi Brain layer v arhitekturi, 6 inventory signals, structured 30d/90d projections
+  - [Unreleased] posodobljen "v8.16+" → "v8.17+" + posodobljen plan (5 preostalih Brain layerjev: Market/Sourcing/Risk/Buyer/Pricing + Master Brain)
+- Lint: 0 errors, 0 warnings ✅
+- Typecheck (bunx tsc --noEmit): 0 errors ✅
+- Endpoint verification (curl):
+  - GET /api/ai/brain/inventory → 200 {"ok":true, "signals":[6: turnover(F,16.67,+42€), aging(B,66.67,+42€), yield(D,29.17,+45€), capitalEfficiency(F,4.67,+60€), liquidation(F,13.89,+84€), health(D,29.45,+27€)], "current":{itemCount:18, totalInventoryValue:1500, avgDaysToSell:14, agedItemsCount:3, agedItemsPct:16.67, avgProfitMarginPct:25, capitalDeployed:1500, monthlySalesCount:10, monthlyRevenue:350, inventoryTurnoverRate:0.56}, "maximization":{topActions:[3], projection30d:{recommendedItemsToSell:3, recommendedItemsToBuy:3, projectedInventoryValue:1275, projectedAgedPct:0}, projection90d:{projectedInventoryValue:1650, projectedAgedPct:0, projectedTurnoverRate:0.78}, inventoryGrade:"D", bestOpportunity:"liquidation", oneLineSummary:"Inventar 18 itemov (1500€), 3 stari. Aktiviraj likvidacijo: ... Grade D."}, "aiUsed":false, "source":"v8.16-inventory-brain"}
+  - POST /api/ai/brain/inventory z custom input (itemCount:25, totalInventoryValue:2500, avgDaysToSell:21, agedItemsCount:6, agedItemsValue:600, avgProfitMarginPct:30, capitalDeployed:2500, monthlySalesCount:15, monthlyRevenue:500) → 200 {"ok":true, ..., topActions[0]:liquidation uplift 180€ (visje kot default 84€ zaradi agedItemsValue 600 vs 280), projection30d:{recommendedItemsToSell:6, recommendedItemsToBuy:4, projectedInventoryValue:2125, projectedAgedPct:0}, projection90d:{projectedInventoryValue:2750, projectedTurnoverRate:0.84}, inventoryGrade:"D", bestOpportunity:"liquidation"}
+  - Cache hit verification: 1. GET (cache miss) → 13ms, NO cachedAt field. 2. GET z istim input → 13ms, cachedAt field present (1786472594980 ms) — drugi klic je bil cache hit
+  - GET /api/ai-list → 200 {"ok":true, "total":406, "categories":{buyer:50, inventory:77, listing:59, pricing:90, risk:12, negotiation:16, reports:15, misc:85, brain:2}, "endpoints":[{name:"brain/inventory", category:"brain", description:"v8.16: Inventory Brain — GET+POST /api/ai/brain/inventory"}, {name:"brain/profit", category:"brain", ...}]}
+- Dev server (dev.log) zdrav — nobenih compile errorjev, le prisma SQL queries (normalno delovanje)
+
+Stage Summary:
+- NEW: src/lib/brain/inventory.ts (pure compute module — 6 inventory signals + synthesis, mirrors profit.ts strukturo)
+- NEW: src/app/api/ai/brain/inventory/route.ts (GET+POST endpoint, 5-min cache, DB state injection z graceful fallback na Trade tabelo)
+- MODIFIED: src/components/dashboard/ai-hub-view.tsx (BrainSynthesisCard razširjen z DRUGIM stacked section-om — sedaj prikazuje OBE Brain-a simultano: 🧠 Profit Brain emerald + 📦 Inventory Brain amber)
+- AI endpointi: 405 → 406 (+1)
+- Total API routes: 582 → 583 (+1)
+- Lint: 0 errors, 0 warnings ✅
+- Typecheck: 0 errors ✅
+- Endpoint verification: GET 200 (6 signals + structured projections + Grade D + bestOpportunity=liquidation), POST 200 (higher uplift numbers), cache hit (cachedAt field present), ai-list total=406 + brain=2 ✅
+- Documentation updated: AI_ENDPOINTS.md (row 10 brain/inventory + total 406), README.md (badges v8.16.0/406/583, ~269 funkcij, Overview paragraph z obema Brain-oma, v8.16 blok v Kaj je novega, Zadnje verzije z v8.16.0), CHANGELOG.md ([8.16.0] section z full description + [Unreleased] v8.17+ z 5 preostalimi Brain layerji)
+- Verzija aplikacije: v8.16.0
+- Skupaj doslej (v7.50 → v8.16): 66 verzij, 188 novih funkcij; drugi Brain layer implementiran — naslednji Brain-i (Market/Sourcing/Risk/Buyer/Pricing) v v8.17-v8.21, Master Brain v v8.22

@@ -6,13 +6,123 @@ Format sledi [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), verzije s
 
 ## [Unreleased]
 
-Načrtovano za v8.16+:
-- Inventory / Market / Sourcing / Risk / Buyer / Pricing Brain (6 novih Brain layerjev)
+Načrtovano za v8.17+:
+- Market / Sourcing / Risk / Buyer / Pricing Brain (5 novih Brain layerjev)
 - Master Brain ki orkestrira vseh 7 Brain layerjev (Profit + Inventory + Market + Sourcing + Risk + Buyer + Pricing)
 - WebSocket real-time negotiation (SSE namesto polling)
 - Playwright E2E testi za glavne flow-e
 - TLS fingerprinting (curl-impersonate)
 - ML model za buyer matchmaker (fine-tuned na realnem data)
+
+## [8.16.0] - 2026-08-27
+
+### Added — 📦 Inventory Brain (drugi orkestracijski Brain layer nad 404 specialist-i)
+
+- **Inventory Brain** — `GET+POST /api/ai/brain/inventory`
+  - NOV DRUGI ARCHITECTURAL LAYER: drugi Brain layer (po Profit Brain v v8.15) ki
+    sedi NAD 72 inventory specialist endpointi (inventory-aging,
+    inventory-turnover-*, inventory-yield-*, inventory-capital-efficiency-*,
+    inventory-liquidation-*, inventory-health-*). Vsak specialist meri ENO
+    inventory dimenzijo — Inventory Brain sintetizira 6 inventory signalov
+    v ENO odločitev.
+  - 6 inventory signalov (each 0-100 score + grade + uplift EUR/mo + topLever):
+    1. **turnover** — kako hitro se inventar prodaja.
+       turnoverRate = monthlySalesCount / max(itemCount, 1).
+       Score = clamp(turnoverRate × 30, 0, 100) — turnoverRate 3.33/mo = 100.
+       Uplift = (turnoverRate × totalInventoryValue × avgProfitMarginPct/100) × 0.2.
+    2. **aging** — zdravje stale inventory (aged items %).
+       agedPct = agedItemsCount / max(itemCount, 1) × 100.
+       Score = clamp(100 - agedPct × 2, 0, 100) — 0% aged = 100, 50% aged = 0.
+       Uplift = agedItemsValue × 0.15 (recover 15% of stale value via liquidation).
+    3. **yield** — profit per inventory € deployed.
+       yieldPct = (monthlyRevenue × avgProfitMarginPct/100) / max(totalInventoryValue, 1) × 100.
+       Score = clamp(yieldPct × 5, 0, 100) — 20%/mo yield = 100.
+       Uplift = totalInventoryValue × 0.03 (3% yield improvement).
+    4. **capitalEfficiency** — capital deployed vs return.
+       capitalEfficiency = monthlyRevenue / max(capitalDeployed, 1) (× per month).
+       Score = clamp(capitalEfficiency × 20, 0, 100) — 5×/mo = 100.
+       Uplift = capitalDeployed × 0.04 (4% capital efficiency gain).
+    5. **liquidation** — kako dobro izstopaš iz slow movers.
+       liquidationRate = monthlySalesCount / max(itemCount, 1) (exit velocity).
+       Score = clamp(liquidationRate × 25, 0, 100) — 4×/mo = 100.
+       Uplift = agedItemsValue × 0.3 (recover 30% of stale value via aggressive liquidation).
+    6. **health** — overall inventory composition (weighted blend drugih 5).
+       healthScore = turnover × 0.25 + (100 - agedPct × 2) × 0.25 + yield × 0.20
+                     + capitalEfficiency × 0.15 + liquidation × 0.15.
+       Score = clamp(healthScore, 0, 100).
+       Uplift = avg(other 5 uplifts) × 0.5 (rebalancing compounds all signals).
+  - Synthesis → `maximization`:
+    - `topActions`: top 3 signals sorted by uplift × confidenceWeight (HIGH=1.0,
+      MEDIUM=0.7, LOW=0.4). Each action has templated human-readable text derived
+      from that signal's `topLever` (mirror of Profit Brain's actionForSignal).
+      Confidence is HIGH if score ≥70, MEDIUM if ≥40, LOW otherwise.
+    - `projection30d` (STRUCTURED object — razlika od Profit Brain kjer je skalar):
+      - `recommendedItemsToSell` = agedItemsCount (prodaj vse stale iteme v 30 dneh)
+      - `recommendedItemsToBuy` = max(2, floor(monthlySalesCount × 0.3)) (replenish 30% prodanega)
+      - `projectedInventoryValue` = totalInventoryValue × 0.85 (15% zmanjšanje via liquidation)
+      - `projectedAgedPct` = max(0, agedPct - 50) (prepolovi aged %)
+    - `projection90d` (smart-replenishment growth):
+      - `projectedInventoryValue` = totalInventoryValue × 1.1 (10% rast via smart replenishment)
+      - `projectedAgedPct` = max(0, agedPct - 70) (70% zmanjšanje aged items)
+      - `projectedTurnoverRate` = turnoverRate × 1.4 (40% hitrejši turnover)
+    - `inventoryGrade` = weighted average of 6 signal scores (weights: turnover 0.20,
+      aging 0.20, yield 0.20, capitalEfficiency 0.15, liquidation 0.15, health 0.10),
+      then graded via gradeFromScore (A+ ≥90, A ≥75, B ≥60, C ≥40, D ≥20, F otherwise).
+    - `bestOpportunity` = signal with highest upliftEURPerMonth.
+    - `oneLineSummary` = "Inventar {itemCount} itemov ({totalInventoryValue}€), {agedItemsCount}
+      stari. {topActions[0].action}. Grade {inventoryGrade}."
+  - **Pure deterministic compute** (aiUsed: false, no AI/LLM SDK call).
+  - **DB-backed state injection** (graceful degradation):
+    - if Prisma is available, fetch HELD trades (current inventory) + SOLD trades
+      (last 30 days for monthlySalesCount/monthlyRevenue, all-time for
+      avgProfitMarginPct and avgDaysToSell calibration).
+    - Derived fields: itemCount, totalInventoryValue, agedItemsCount (items held
+      > 30 days), agedItemsValue, capitalDeployed (= totalInventoryValue),
+      monthlySalesCount, monthlyRevenue, avgProfitMarginPct, avgDaysToSell.
+    - User input (query string or POST body) takes precedence over DB state —
+      callers can override any field.
+    - If DB unavailable or no trades found → falls back to sensible defaults
+      (itemCount 18, totalInventoryValue 1500€, avgDaysToSell 14, agedItemsCount
+      3, agedItemsValue 280€, avgProfitMarginPct 25%, capitalDeployed 1500€,
+      monthlySalesCount 10, monthlyRevenue 350€).
+    - All DB access wrapped in try/catch + logger.warn — NEVER crashes the endpoint.
+  - **5-minute cache** (TTL 300000ms): cache key = `inventory-brain:${hashOfInputs}`.
+    On cache hit, the result is returned with a fresh `cachedAt` timestamp so the
+    caller knows it was served from cache.
+  - source: "v8.16-inventory-brain"
+  - GET+POST shared handler `handleInventoryBrain` (AI Hub runner compatibility —
+    hits either method), runtime='nodejs', dynamic='force-dynamic', maxDuration=60,
+    try/catch with logger.error → 500 { error }, parse inputs from both query
+    string and JSON body (POST takes precedence over query).
+  - Pure compute module: `src/lib/brain/inventory.ts` — NO `next/server` import,
+    NO Prisma calls (state injected by caller via InventoryBrainInput). Fully
+    testable in isolation and deterministic given the same input. Mirrors
+    `src/lib/brain/profit.ts` strukturo (clamp, gradeFromScore, confidenceFromScore,
+    confidenceWeight, round2, normalizeInput, computeXxxSignal, actionForSignal,
+    buildOneLineSummary, SIGNAL_WEIGHTS, inventoryBrain main entry).
+  - Endpoint: `src/app/api/ai/brain/inventory/route.ts` — drugi endpoint v nested
+    subdirectory pod `src/app/api/ai/brain/`. Avtomatsko odkrit z `/api/ai-list`
+    (ki je bil nadgrajen v v8.15 za recursive depth-2 discovery).
+  - AI Hub: `BrainSynthesisCard` razširjen z DRUGIM stacked section-om (amber-
+    tinted, za razliko od Profit Brain emerald). Sedaj prikazuje OBE Brain-a
+    simultano — vsak ima svoj loading skeleton, error state, refresh button,
+    in cache indicator. Profit Brain prikazuje 30d/90d €/mo projection (skalar);
+    Inventory Brain prikazuje structured 30d projection (recommendedItemsToSell/
+    Buy + projectedInventoryValue + projectedAgedPct) in 90d projection
+    (projectedInventoryValue + projectedAgedPct + projectedTurnoverRate).
+
+### Stats
+- AI endpoints: 405 → 406 (+1)
+- Total API routes: 582 → 583 (+1)
+- Drugi Brain layer v arhitekturi (above the 404 specialists, next to v8.15 Profit Brain)
+- 6 inventory signals (turnover, aging, yield, capitalEfficiency, liquidation, health)
+- 3 top actions ranked by uplift × confidence
+- Structured 30d projection (recommendedItemsToSell/Buy + projectedInventoryValue + projectedAgedPct)
+- Structured 90d projection (projectedInventoryValue + projectedAgedPct + projectedTurnoverRate)
+- inventoryGrade + one-line summary
+- Pure deterministic compute (aiUsed: false, no AI/LLM SDK)
+- DB state injection (graceful — falls back to defaults if DB unavailable)
+- 5-minute cache (300000ms TTL, cachedAt stamp on cache hit)
 
 ## [8.15.0] - 2026-08-27
 
