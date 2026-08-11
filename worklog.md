@@ -14734,3 +14734,48 @@ Stage Summary:
 - Documentation updated: AI_ENDPOINTS.md (row 12 brain/sourcing + total 408), README.md (badges v8.18.0/408/585, ~271 funkcij, Overview paragraph z vsemi ŠTIRIMI Brain-i, v8.18 blok v Kaj je novega, Zadnje verzije z v8.18.0), CHANGELOG.md ([8.18.0] section z full description + [Unreleased] v8.19+ z 3 preostalimi Brain layerji + Master Brain plan)
 - Verzija aplikacije: v8.18.0
 - Skupaj doslej (v7.50 → v8.18): 68 verzij, 190 novih funkcij; četrti Brain layer implementiran — naslednji Brain-i (Risk/Buyer/Pricing) v v8.19-v8.21, Master Brain v v8.22
+
+---
+Task ID: v8.18.1
+Agent: main
+Task: v8.18 commit + push + GitHub About + Agent Browser verification
+
+Work Log:
+- Prejel poročilo od full-stack-developer podagenta (Task v8.18 — Sourcing Brain implementiran brez težav: src/lib/brain/sourcing.ts + src/app/api/ai/brain/sourcing/route.ts + BrainSynthesisCard extended z 4. stacked section za Sourcing Brain z purple/violet tint, Target icon)
+- Neodvisno preveril endpoint (curl 3 testi):
+  - GET /api/ai/brain/sourcing (default) → 200 {"ok":true, "signals":[6: roi(A+,100,75), volume(D,24,24), margin(A,84.2,45), momentum(C,51.43,50.4), diversification(B,60,30), concentration(B,60,22.5)], "current":{sourceCount:4, sources:[Bolha/Vinted/Avtonet/mobile.de], bestSource:"Bolha", worstSource:"mobile.de", totalCapitalDeployed:1500, totalMonthlyProfit:421, avgMarginPct:28.05, concentrationPct:40}, "maximization":{topActions:[3 z #1 roi +75€/mo (HIGH), #2 margin +45€/mo (HIGH), #3 momentum +50.4€/mo (MEDIUM)], projection30d:{recommendedSourceToScale:"Bolha", recommendedSourceToReduce:"mobile.de", projectedTotalMonthlyProfit:484.15, projectedConcentrationPct:40}, projection90d:{projectedTotalMonthlyProfit:568.35, projectedSourceCount:4, projectedConcentrationPct:30}, sourcingGrade:"B", bestOpportunity:"roi", oneLineSummary:"Bolha najboljši vir (168€/mo, 28% margin). Prestavi capital po ROI: ... Grade B."}, "aiUsed":false, "source":"v8.18-sourcing-brain"}
+  - POST /api/ai/brain/sourcing {"sources":[Bolha(800,256), Vinted(500,150), Kleinanzeigen(400,160)]} → 200 z višjimi številkami (roi uplift 85 vs 75, margin uplift 51 vs 45, momentum uplift 76.8 vs 50.4, sourcingGrade B, bestSource Bolha 256€/mo)
+  - GET (cache hit) → 200 z "cachedAt": 1786476131628 (5-min cache deluje)
+  - GET /api/ai-list → 200 {"ok":true, "total":408, "categories":{brain:4, ...}} (brain kategorija 4 = profit + inventory + market + sourcing)
+- Preveril doc sync: AI_ENDPOINTS.md "Total: 408 endpoints" ✅, README v8.18.0 (12 refs) + 408 AI (6 refs) + 585 (3 refs) + Overview paragraph z ALL 4 Brains ✅, CHANGELOG [8.18.0] section z 6 signal formulas + [Unreleased] v8.19+ z 3 preostalimi Brain layer-ji (Risk/Buyer/Pricing) ✅
+- Preveril lint: 0 napak ✨
+- Preveril typecheck: 0 napak ✨
+- Posodobil GitHub About opis: "AI Trading Firm... 408 AI + 72 analytics = 585 routes. v8.18.0: Profit+Inventory+Market+Sourcing Brain (4 orchestration layers)." (via API PATCH, 257 chars)
+- Commit: "v8.18: Sourcing Brain — fourth orchestration layer above ~21 sourcing specialists (6 sourcing signals: roi, volume, margin, momentum, diversification, concentration synthesized into 1 decision + stacked UI card with Profit+Inventory+Market+Sourcing)" (dcf1e03)
+- Push na GitHub: uspešen ✅ (54f71fb..dcf1e03), PAT očiščen ✅
+- Agent Browser self-verification:
+  - Stran se pravilno naloži (HTTP 200, naslov "Markec AI Firm — Opportunity Monitor")
+  - AI Hub: kategorije na vrhu prikazujejo "🧠Možgani4" (#2 v seznamu) — 4 Brain endpointi ✅
+  - BrainSynthesisCard (stacked layout — 4 sekcije):
+    - Profit Brain section (emerald): "🧠 PROFIT BRAIN", "Profit 450€/mo → 651€/mo (+45%) z HORIZON" ✅
+    - Inventory Brain section (amber): "📦 INVENTORY BRAIN", "Likvidiraj 3 stare iteme...", "Grade D" ✅
+    - Market Brain section (sky/blue): "📈 MARKET BRAIN", "Trg v DISTRIBUTION fazi", "Grade B" ✅
+    - Sourcing Brain section (purple/violet): "🎯 SOURCING BRAIN", "Bolha najboljši vir (168€/mo, 28% margin)", "Prestavi capital po ROI: ROI 28.1%/mo", "Grade B" ✅
+  - Endpoint "🧠brain/sourcing v8.18: Sourcing Brain — GET+POST /api/ai/brain/sourcing" viden v AI Hub listi [ref=e30] z v8.18 badge ✅
+  - Runner test: klik na brain/sourcing → POST request → valid JSON z source:"v8.18-sourcing-brain", 6 signali, sourcingGrade:"B", bestSource:"Bolha", concentrationPct:40 ✅
+  - Brez runtime napak v dev.log
+
+Stage Summary:
+- v8.18 uspešno dokončana in potisnjena na GitHub
+- NOV ARCHITECTURAL LAYER: Sourcing Brain — četrti orkestracijski Brain nad ~21 sourcing specialist-i
+- 6 sourcing signalov (roi, volume, margin, momentum, diversification, concentration) → sintetizira v 1 odločitev (3 top akcije, 30d/90d sourcing projekcija z recommendedSourceToScale/Reduce + projectedTotalMonthlyProfit, sourcingGrade, oneLineSummary)
+- Per-source breakdown: Bolha/Vinted/Avtonet/mobile.de/Kleinanzeigen z individual ROI/margin/volume analizo
+- 5-min cache, DB state injection z graceful fallback (Trade model z buyLocation field), pure compute module brez AI/LLM
+- BrainSynthesisCard razširjen z 4. stacked section (purple/violet tint, Target icon) — sedaj prikazuje 4 Brain-e simultano (Profit emerald + Inventory amber + Market sky/blue + Sourcing purple/violet)
+- AI endpointi: 407 → 408 (+1)
+- Analytics endpointi: 72 (nespremenjeno)
+- Total API routes: 584 → 585 (+1)
+- Dokumentacija sinhrono posodobljena (AI_ENDPOINTS.md, README, CHANGELOG, GitHub About)
+- GitHub sinhroniziran (0 commit-ov ahead)
+- Verzija aplikacije: v8.18.0
+- Skupaj doslej (v7.50 → v8.18): 68 verzij, 190 novih funkcij; 4 Brain layer-ji implementirani (Profit + Inventory + Market + Sourcing) — naslednji Brain-i (Risk/Buyer/Pricing) v v8.19-v8.21, Master Brain v v8.22
