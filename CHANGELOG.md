@@ -6,11 +6,150 @@ Format sledi [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), verzije s
 
 ## [Unreleased]
 
-Načrtovano za v8.14+:
+Načrtovano za v8.15+:
 - WebSocket real-time negotiation (SSE namesto polling)
 - Playwright E2E testi za glavne flow-e
 - TLS fingerprinting (curl-impersonate)
 - ML model za buyer matchmaker (fine-tuned na realnem data)
+
+## [8.14.0] - 2026-08-26
+
+### Added — Profit Density Maximizer + Deal Source Profit Compounding Maximizer + Inventory Working Capital Maximizer (3 funkcije)
+
+- **AI Profit Density Maximizer** — `GET+POST /api/ai/profit-density-maximizer`
+  - AI MAXIMIZES PROFIT DENSITY — profit earned per unit of activity (per listing, per
+    category, per hour invested in sourcing). Higher density = more profit with less effort.
+  - "Tvoj profit density je 12€/h. Z fokuso na high-density niches lahko dosežeš 14€/h (×1.18)."
+  - Different from profit-per-cycle-maximizer (v8.12 which maximizes profit per cycle €/cycle
+    with maximizationLevers and cycleVsVolumeTradeoff) — this MAXIMIZES PROFIT DENSITY
+    (profit per hour + per category + per listing, not per-cycle €)
+  - Different from profit-per-trade-scaling-maximizer (v8.13 which scales profit per trade
+    through 4-phase path CURRENT→OPTIMIZED→PREMIUM→ELITE) — this MAXIMIZES PROFIT DENSITY
+    (profit per unit of activity, not per-trade € scaling)
+  - Different from deal-source-profit-compounding-maximizer (v8.14 which maximizes compounding
+    profit growth across deal sources with reinvestment prioritization) — this MAXIMIZES
+    PROFIT DENSITY (profit per hour/per category snapshot, not compounding annual profit growth)
+  - Different from inventory-working-capital-maximizer (v8.14 which maximizes working capital
+    efficiency between fast and slow movers) — this MAXIMIZES PROFIT DENSITY (profit per unit
+    of activity, not capital turnover × margin)
+  - Different from profit-per-euro-maximizer (v8.07 which maximizes profit per € deployed) —
+    this MAXIMIZES PROFIT DENSITY (profit per hour + per category + per listing, not € profit
+    per € capital)
+  - Inputs: avgProfitPerTrade (€, default 25), tradesPerMonth (default 8),
+    hoursInvestedPerTrade (default 2.5), categoryCount (default 3) — from query string or
+    POST body with sensible defaults
+  - Logic: profitPerHour €/h [0, 10000] = avgProfitPerTrade / hoursInvestedPerTrade,
+    profitPerCategory € [0, 100000] = (avgProfitPerTrade × tradesPerMonth) / categoryCount,
+    profitPerListing € [0, 10000] = avgProfitPerTrade (one trade ~ one listing),
+    densityScore [0, 100] = clamp((profitPerHour × 0.5 + profitPerCategory × 0.3 +
+    avgProfitPerTrade × 0.2) / 10, 0, 100)
+  - maximization: maximizedDensity [0, 100] (= densityScore × 1.18 — typical density uplift
+    when focusing on high-density niches), maximizationFactor 1.18 (constant uplift),
+    densityGrade A/B/C/D (A if ≥ 70, B ≥ 50, C ≥ 30, else D), optimalStrategy
+    FOCUS_HIGH_DENSITY_NICHES | REDUCE_LOW_DENSITY_TRADING | MAINTAIN_CURRENT_MIX (heuristic:
+    high score → maintain mix, medium → focus high-density, low → reduce low-density),
+    focusNiches ["electronics", "sneakers", "tools"] (3 high-density niches for focus)
+  - Deterministic formula-based maximizer (no AI call, no DB query) — aiUsed: false always
+  - source: "v8.14-profit-density-maximizer"
+  - GET+POST shared handler `handleProfitDensityMaximizer` (AI Hub runner compatibility —
+    hits either method), runtime='nodejs', dynamic='force-dynamic', try/catch with
+    logger.error → 500 { error }, parse inputs from both query string and JSON body
+
+- **AI Deal Source Profit Compounding Maximizer** — `GET+POST /api/ai/deal-source-profit-compounding-maximizer`
+  - AI MAXIMIZES COMPOUNDING profit growth across deal sources — reinvests profits from one
+    source into higher-yield sources. Compound growth rate maximizer.
+  - "Tvoj compounding rate je 30€/mo/source. Z prioritizacijo high-yield source-ov lahko
+    dosežeš 4140€ annual compounded (×1.15)."
+  - Different from profit-compounding-maximizer (v8.04 which maximizes compounding reinvest
+    rate at portfolio level) — this MAXIMIZES COMPOUNDING across DEAL SOURCES (per-source
+    compounding + source prioritization, not portfolio-level reinvest rate)
+  - Different from profit-density-maximizer (v8.14 which maximizes profit density per hour/
+    per category) — this MAXIMIZES COMPOUNDING annual profit growth across sources (not
+    profit per unit of activity snapshot)
+  - Different from inventory-working-capital-maximizer (v8.14 which maximizes working capital
+    efficiency between fast and slow movers) — this MAXIMIZES COMPOUNDING profit growth
+    (reinvestment × source count × growth rate, not capital turnover × margin)
+  - Different from capital-growth-maximizer (which maximizes capital growth with reinvestment
+    rate) — this MAXIMIZES COMPOUNDING PROFIT across deal sources (source prioritization +
+    exponential growth curve, not generic capital growth)
+  - Different from profit-growth-rate-maximizer (v8.11 which maximizes growth rate of total
+    profit in %/mo MoM) — this MAXIMIZES COMPOUNDING annual profit with reinvestRate ×
+    sourceCount × growthRate exponent (compounding math, not linear MoM growth)
+  - Inputs: avgMonthlyProfit (€, default 200), reinvestRate (0-1, default 0.6 — fraction of
+    profit reinvested), sourceCount (default 4), avgProfitGrowthRate (%, default 5) — from
+    query string or POST body with sensible defaults
+  - Logic: monthlyCompoundingRate €/mo per source [0, 100000] =
+    (avgMonthlyProfit × reinvestRate) / sourceCount, compoundedAnnualProfit € [0, 10000000] =
+    avgMonthlyProfit × 12 × (1 + (growth/100) × reinvestRate)^sourceCount, compoundingScore
+    [0, 100] = clamp((compoundedAnnualProfit / 5000) × 100, 0, 100), reinvestRate [0, 1]
+  - maximization: maximizedCompoundedProfit € [0, 10000000] (= compoundedAnnualProfit × 1.15
+    — source prioritization optimization), sourcePrioritization 1.15 (constant uplift),
+    compoundingGrade A/B/C/D (A if ≥ 70, B ≥ 50, C ≥ 30, else D), optimalStrategy
+    PRIORITIZE_HIGH_YIELD_SOURCES | INCREASE_REINVESTMENT | DIVERSIFY_SOURCES (heuristic: low
+    reinvest → increase, few sources → diversify, else prioritize), projectedGrowthCurve
+    "EXPONENTIAL"
+  - Deterministic formula-based maximizer (no AI call, no DB query) — aiUsed: false always
+  - source: "v8.14-deal-source-profit-compounding-maximizer"
+  - GET+POST shared handler `handleDealSourceProfitCompoundingMaximizer` (AI Hub runner
+    compatibility — hits either method), runtime='nodejs', dynamic='force-dynamic',
+    try/catch with logger.error → 500 { error }, parse inputs from both query string and
+    JSON body
+
+- **AI Inventory Working Capital Maximizer** — `GET+POST /api/ai/inventory-working-capital-maximizer`
+  - AI MAXIMIZES WORKING CAPITAL EFFICIENCY — minimizes capital tied up in slow-moving
+    inventory, maximizes capital in fast-movers.
+  - "Tvoj working capital turnover je 32×/leto z 28% weighted margin. Capital efficiency score
+    18/100. Z shiftanjem 70% kapitala v fast movers lahko dosežeš 22/100 (×1.22)."
+  - Different from inventory-capital-efficiency-maximizer (v8.01 which maximizes capital
+    efficiency per item with reallocation) — this MAXIMIZES WORKING CAPITAL EFFICIENCY
+    (turnover × margin combined score, not per-item capital efficiency)
+  - Different from inventory-capital-efficiency-growth-maximizer (v8.12 which maximizes
+    capital efficiency growth %/mo) — this MAXIMIZES WORKING CAPITAL EFFICIENCY snapshot
+    (turnover × margin × fast/slow mix, not %/mo growth rate)
+  - Different from inventory-cash-conversion-maximizer (which maximizes cash conversion
+    cycle) — this MAXIMIZES WORKING CAPITAL EFFICIENCY (turnover × margin × fast/slow mix,
+    not cash conversion cycle days)
+  - Different from profit-density-maximizer (v8.14 which maximizes profit density per hour/
+    per category) — this MAXIMIZES WORKING CAPITAL EFFICIENCY (turnover × weighted margin,
+    not profit per unit of activity)
+  - Different from deal-source-profit-compounding-maximizer (v8.14 which maximizes compounding
+    profit growth across deal sources) — this MAXIMIZES WORKING CAPITAL EFFICIENCY between
+    fast and slow movers (capital turnover × margin, not compounding annual profit growth)
+  - Different from inventory-annual-yield-maximizer (v8.11 which maximizes annual yield of
+    inventory) — this MAXIMIZES WORKING CAPITAL EFFICIENCY (turnover × weighted margin with
+    fast/slow mix, not annual yield %)
+  - Inputs: capitalDeployed (€, default 1500), fastMoverCapitalPct (0-1, default 0.55 —
+    fraction of capital in fast-moving inventory), avgDaysToSellFast (default 7),
+    avgDaysToSellSlow (default 45), avgProfitMarginFast (%, default 25),
+    avgProfitMarginSlow (%, default 35) — from query string or POST body with sensible
+    defaults
+  - Logic: workingCapitalTurnover ×/year [0, 500] = fastMoverCapitalPct × (365/avgDaysToSellFast)
+    + (1-fastMoverCapitalPct) × (365/avgDaysToSellSlow), weightedProfitMargin % [0, 100] =
+    fastMoverCapitalPct × avgProfitMarginFast + (1-fastMoverCapitalPct) × avgProfitMarginSlow,
+    capitalEfficiencyScore [0, 100] = clamp((turnover × margin) / 50, 0, 100),
+    fastMoverCapitalPct [0, 1]
+  - maximization: maximizedCapitalEfficiency [0, 100] (= score × 1.22 — shift more capital
+    to fast movers), maximizationFactor 1.22 (constant uplift), capitalGrade A/B/C/D (A if
+    ≥ 70, B ≥ 50, C ≥ 30, else D), optimalStrategy SHIFT_CAPITAL_TO_FAST_MOVERS |
+    LIQUIDATE_SLOW_MOVERS | BALANCE_PORTFOLIO (heuristic: low fast-mover share → shift, very
+    low score → liquidate, high score → balance), recommendedFastMoverPct 0.7 (constant target)
+  - Deterministic formula-based maximizer (no AI call, no DB query) — aiUsed: false always
+  - source: "v8.14-inventory-working-capital-maximizer"
+  - GET+POST shared handler `handleInventoryWorkingCapitalMaximizer` (AI Hub runner
+    compatibility — hits either method), runtime='nodejs', dynamic='force-dynamic',
+    try/catch with logger.error → 500 { error }, parse inputs from both query string and
+    JSON body
+
+### Stats
+- AI endpoints: 401 → 404 (+3)
+- Total API routes: 578 → 581 (+3)
+- All 3 endpoints are pure deterministic formula-based maximizers (aiUsed: false, no AI/LLM
+  call, no DB/Prisma query — pure compute endpoints that parse inputs from query string or
+  POST body and return clamped, validated JSON)
+- All 3 follow the v8.13 pattern: `runtime='nodejs'`, `dynamic='force-dynamic'`,
+  `export const maxDuration = 60`, GET+POST shared `handleX` function with try/catch +
+  logger.error → 500 `{ error: err?.message ?? 'Napaka' }`, JSDoc header explaining what
+  each maximizer does and how it differs from sibling endpoints
 
 ## [8.13.0] - 2026-08-25
 
