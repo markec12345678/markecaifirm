@@ -6,13 +6,150 @@ Format sledi [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), verzije s
 
 ## [Unreleased]
 
-Načrtovano za v8.18+:
-- Sourcing / Risk / Buyer / Pricing Brain (4 novi Brain layerji)
+Načrtovano za v8.19+:
+- Risk / Buyer / Pricing Brain (3 novi Brain layerji)
 - Master Brain ki orkestrira vseh 7 Brain layerjev (Profit + Inventory + Market + Sourcing + Risk + Buyer + Pricing)
 - WebSocket real-time negotiation (SSE namesto polling)
 - Playwright E2E testi za glavne flow-e
 - TLS fingerprinting (curl-impersonate)
 - ML model za buyer matchmaker (fine-tuned na realnem data)
+
+## [8.18.0] - 2026-08-27
+
+### Added — 🎯 Sourcing Brain (četrti orkestracijski Brain layer nad ~21 sourcing specialist-i)
+
+- **Sourcing Brain** — `GET+POST /api/ai/brain/sourcing`
+  - NOV ČETRTI ARCHITECTURAL LAYER: četrti Brain layer (po Profit Brain v v8.15,
+    Inventory Brain v v8.16 in Market Brain v v8.17) ki sedi NAD ~21 sourcing /
+    deal-source specialist endpointi (deal-source-profit-maximizer,
+    deal-source-roi-maximizer, deal-source-volume-maximizer,
+    deal-source-momentum-analyzer, deal-source-trend-analyzer, sourcing,
+    inventory-supplier-evaluator, ...). Vsak specialist meri ENO sourcing
+    dimenzijo — Sourcing Brain sintetizira 6 sourcing signalov v ENO odločitev.
+  - 6 sourcing signalov (each 0-100 score + grade + uplift EUR/mo + topLever):
+    1. **roi** — aggregate return on investment across all sources.
+       totalROI = (totalMonthlyProfit / max(totalCapitalDeployed, 1)) × 100 (%/mo).
+       Score = clamp(totalROI × 8, 0, 100) — 12.5%/mo ROI = 100.
+       Uplift = totalCapitalDeployed × 0.05 (5% ROI improvement via rebalancing).
+       topLever: "ROI ${totalROI.toFixed(1)}%/mo — prestavi 20% capital iz low-ROI v high-ROI vire".
+    2. **volume** — total sourcing volume across all sources.
+       totalVolume = sum of monthlyVolume across sources.
+       Score = clamp(totalVolume × 2, 0, 100) — 50 items/mo = 100.
+       Uplift = totalVolume × 2 (€2/item uplift via volume optimization).
+       topLever: "Volume ${totalVolume} itemov/mo — ${totalVolume < 20 ? 'povečaj nabavo za 50%' : 'ohrani sedanjo frekvenco'}".
+    3. **margin** — weighted average profit margin across sources.
+       weightedMargin = sum(avgProfitMarginPct × capitalDeployed) / sum(capitalDeployed).
+       Score = clamp(weightedMargin × 3, 0, 100) — 33% margin = 100.
+       Uplift = totalCapitalDeployed × 0.03 (3% margin uplift via shifting to higher-margin sources).
+       topLever: "Povprečna margin ${weightedMargin.toFixed(1)}% — prestavi 30% capital v vire z margin >30%".
+    4. **momentum** — which sources are growing (best vs worst source profit as proxy).
+       momentumSpread = (bestSourceProfit - worstSourceProfit) / max(bestSourceProfit, 1) × 100.
+       Score = clamp(|momentumSpread| × 0.8, 0, 100) — large spread = clear winner to scale.
+       Uplift = bestSourceProfit × 0.3 (30% uplift by doubling down on best source).
+       topLever: "${bestSourceName} najboljši vir (${bestSourceProfit}€/mo) — povečaj capital za 50%".
+    5. **diversification** — how spread is capital across sources.
+       concentrationPct = (max source capitalDeployed) / totalCapitalDeployed × 100.
+       Score = clamp(100 - concentrationPct, 0, 100) — more concentrated = lower score.
+       Uplift = totalCapitalDeployed × 0.02 (2% uplift from better diversification).
+       topLever: "Diverzifikacija ${sourceCount} virov, koncentracija ${concentrationPct}% v top viru — ${concentrationPct > 60 ? 'povečaj diverzifikacijo: dodaj 1 nov vir' : 'ohrani trenutni spread'}".
+    6. **concentration** — risk: too much capital in one source (inverse of diversification,
+       scored as RISK).
+       Score = clamp(100 - concentrationPct, 0, 100) — low concentration = high score.
+       Uplift = totalCapitalDeployed × 0.015 (1.5% risk-adjusted uplift from reducing concentration).
+       topLever: "Koncentracija ${concentrationPct}% v ${topSourceName} — ${concentrationPct > 60 ? 'preveč tveganja: zmanjšaj za 20%' : 'sprejemljiva koncentracija'}".
+  - Synthesis → `maximization`:
+    - `topActions`: top 3 signals sorted by uplift × confidenceWeight (HIGH=1.0,
+      MEDIUM=0.7, LOW=0.4). Each action has templated human-readable text derived
+      from that signal's `topLever` (mirror of Profit/Inventory/Market Brain's
+      actionForSignal). Confidence is HIGH if score ≥70, MEDIUM if ≥40, LOW otherwise.
+    - `projection30d` (STRUCTURED object — recommendedSourceToScale +
+      recommendedSourceToReduce + projectedTotalMonthlyProfit + projectedConcentrationPct):
+      - `recommendedSourceToScale` = bestSource (highest monthlyProfitEUR) — vir ki
+        največ prispeva k profitu, skaliraj z več capitala.
+      - `recommendedSourceToReduce` = worstSource (lowest monthlyProfitEUR) — vir
+        ki najmanj prispeva, zmanjšaj capital.
+      - `projectedTotalMonthlyProfit` = totalMonthlyProfit × 1.15 (15% uplift
+        from rebalancing capital iz low-ROI v high-ROI vire).
+      - `projectedConcentrationPct` = max(40, concentrationPct - 15) (zmanjšaj
+        koncentracijo za 15% v 30 dneh).
+    - `projection90d` (longer-horizon optimization):
+      - `projectedTotalMonthlyProfit` = totalMonthlyProfit × 1.35 (35% uplift
+        from optimization — dodajanje virov, boljša diverzifikacija).
+      - `projectedSourceCount` = sourceCount + (concentrationPct > 60 ? 1 : 0)
+        (add new source if too concentrated — to reduce risk).
+      - `projectedConcentrationPct` = max(30, concentrationPct - 25) (25% reduction).
+      - `recommendedNewSource` = 'Kleinanzeigen' if concentrationPct > 60 (suggest
+        Kleinanzeigen as diversification source — common for Slovenian flippers)
+        else undefined.
+    - `sourcingGrade` = weighted average of 6 signal scores (weights: roi 0.20,
+      volume 0.15, margin 0.20, momentum 0.20, diversification 0.15,
+      concentration 0.10), then graded via gradeFromScore (A+ ≥90, A ≥75,
+      B ≥60, C ≥40, D ≥20, F otherwise).
+    - `bestOpportunity` = signal with highest upliftEURPerMonth.
+    - `oneLineSummary` = "${bestSourceName} najboljši vir (${bestSourceProfit.toFixed(0)}€/mo,
+      ${bestSourceMarginPct.toFixed(0)}% margin). {topActions[0].action}. Grade {sourcingGrade}."
+  - **Pure deterministic compute** (aiUsed: false, no AI/LLM SDK call).
+  - **DB-backed state injection** (graceful degradation):
+    - if Prisma is available, read from `Trade` model grouped by `buyLocation`
+      to derive per-source aggregates: name (normalized Bolha/Vinted/Avtonet/
+      mobile.de/Kleinanzeigen/Subito/Willhaben), monthlyVolume (count of trades
+      bought in last 30d per source), avgProfitMarginPct (avg ((sell-buy)/buy) × 100
+      for sold trades per source), avgDaysToSell (avg sellDate-buyDate for sold
+      trades per source), capitalDeployedEUR (sum of buyPrice of currently HELD
+      trades per source), monthlyProfitEUR (sum of (sellPrice - buyPrice - buyFees
+      - sellFees) of SOLD trades in last 30d per source). Top 6 sources by capital
+      deployed.
+    - User input (query string or POST body) takes precedence over DB state —
+      callers can override any field. Sources array is only accepted from POST body
+      (GET URLs would be too long for arrays).
+    - If DB unavailable or no trades found → falls back to 4 default sources
+      (Bolha, Vinted, Avtonet, mobile.de — totalCapitalDeployed 1500€,
+      totalMonthlyProfit 421€).
+    - All DB access wrapped in try/catch + logger.warn — NEVER crashes the endpoint.
+  - **5-minute cache** (TTL 300000ms): cache key = `sourcing-brain:${hashOfInputs}`
+    (sources array + totals). On cache hit, the result is returned with a fresh
+    `cachedAt` timestamp so the caller knows it was served from cache.
+  - source: "v8.18-sourcing-brain"
+  - GET+POST shared handler `handleSourcingBrain` (AI Hub runner compatibility —
+    hits either method), runtime='nodejs', dynamic='force-dynamic', maxDuration=60,
+    try/catch with logger.error → 500 { error }, parse inputs from both query
+    string and JSON body (POST takes precedence over query).
+  - Pure compute module: `src/lib/brain/sourcing.ts` — NO `next/server` import,
+    NO Prisma calls (state injected by caller via SourcingBrainInput). Fully
+    testable in isolation and deterministic given the same input. Mirrors
+    `src/lib/brain/market.ts` strukturo (clamp, gradeFromScore, confidenceFromScore,
+    confidenceWeight, round2, normalizeInput, computeXxxSignal, actionForSignal,
+    buildOneLineSummary, SIGNAL_WEIGHTS, sourcingBrain main entry).
+    Reuses `ProfitGrade` in `Confidence` types via `import type { ProfitGrade,
+    Confidence } from './profit'`.
+  - Endpoint: `src/app/api/ai/brain/sourcing/route.ts` — četrti endpoint v nested
+    subdirectory pod `src/app/api/ai/brain/`. Avtomatsko odkrit z `/api/ai-list`
+    (ki je bil nadgrajen v v8.15 za recursive depth-2 discovery).
+  - AI Hub: `BrainSynthesisCard` razširjen s ČETRTIM stacked section-om (purple/
+    violet-tinted, za razliko od Profit Brain emerald, Inventory Brain amber in
+    Market Brain sky/blue). Sedaj prikazuje VSE ŠTIRI Brain-e simultano — vsak
+    ima svoj loading skeleton, error state, refresh button, in cache indicator.
+    Profit Brain prikazuje 30d/90d €/mo projection (skalar); Inventory Brain
+    prikazuje structured 30d/90d inventory projection (recommendedItemsToSell/Buy
+    + projectedInventoryValue + ...); Market Brain prikazuje structured 30d/90d
+    phase projection (predictedPhase + predictedPriceChangePct + recommendedAction);
+    Sourcing Brain prikazuje structured 30d/90d sourcing projection
+    (recommendedSourceToScale + recommendedSourceToReduce + projectedTotalMonthlyProfit
+    + projectedConcentrationPct + recommendedNewSource). Vsak Brain fetch-a
+    independently na mount (Promise.all vseh štirih).
+
+### Stats
+- AI endpoints: 407 → 408 (+1)
+- Total API routes: 584 → 585 (+1)
+- Četrti Brain layer v arhitekturi (above the ~21 sourcing specialists, next to v8.15 Profit Brain, v8.16 Inventory Brain in v8.17 Market Brain)
+- 6 sourcing signals (roi, volume, margin, momentum, diversification, concentration)
+- 3 top actions ranked by uplift × confidence
+- Structured 30d projection (recommendedSourceToScale + recommendedSourceToReduce + projectedTotalMonthlyProfit + projectedConcentrationPct)
+- Structured 90d projection (projectedTotalMonthlyProfit + projectedSourceCount + projectedConcentrationPct + recommendedNewSource)
+- sourcingGrade + one-line summary
+- Pure deterministic compute (aiUsed: false, no AI/LLM SDK)
+- DB state injection (graceful — falls back to 4 default sources if DB unavailable or no trades)
+- 5-minute cache (300000ms TTL, cachedAt stamp on cache hit)
 
 ## [8.17.0] - 2026-08-27
 

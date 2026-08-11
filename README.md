@@ -1,10 +1,10 @@
 # Markec AI Firm — AI Trading Firm za slovenske oglase
 
-[![Version](https://img.shields.io/badge/version-v8.17.0-blue.svg)](./CHANGELOG.md)
+[![Version](https://img.shields.io/badge/version-v8.18.0-blue.svg)](./CHANGELOG.md)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](./LICENSE)
 [![GitHub Stars](https://img.shields.io/github/stars/markec12345678/markecaifirm?style=social)](https://github.com/markec12345678/markecaifirm/stargazers)
-[![AI Endpoints](https://img.shields.io/badge/AI%20endpoints-407-green.svg)](./AI_ENDPOINTS.md)
-[![API Routes](https://img.shields.io/badge/API%20routes-584-cyan.svg)](#)
+[![AI Endpoints](https://img.shields.io/badge/AI%20endpoints-408-green.svg)](./AI_ENDPOINTS.md)
+[![API Routes](https://img.shields.io/badge/API%20routes-585-cyan.svg)](#)
 [![Next.js](https://img.shields.io/badge/Next.js-16-black.svg)](https://nextjs.org/)
 [![TypeScript](https://img.shields.io/badge/TypeScript-5-blue.svg)](https://www.typescriptlang.org/)
 [![TypeScript Errors](https://img.shields.io/badge/TS%20errors-0-brightgreen.svg)](#)
@@ -20,8 +20,8 @@
 </div>
 
 > **AI-powered trading firm** za Bolha, Facebook Marketplace, Vinted, Avtonet, mobile.de, Kleinanzeigen, Subito in Willhaben.
-> **407 AI endpointov** + **72 analytics** + **10 cron automatizacij** + **11 Telegram ukazov** za iskanje, ocenjevanje, kupovanje in preprodajo.
-> **v8.17.0** — Profit Brain (v8.15) + Inventory Brain (v8.16) + Market Brain (v8.17): tri orkestracijska 🧠 Brain layer-ja nad 404 specialist-i. Profit Brain sintetizira 6 profit signalov (growth, scale, efficiency, velocity, compounding, horizon) v eno odločitev. Inventory Brain sintetizira 6 inventory signalov (turnover, aging, yield, capitalEfficiency, liquidation, health) v eno odločitev: prodaj X itemov, kupi Y, zvišaj turnover 1.4×, 30d/90d projekcija inventarja. Market Brain sintetizira 6 market signalov (cyclePhase, sentiment, depth, volatility, trend, timing) v eno odločitev: katero fazo trga smo (MARKUP/ACCUMULATION/DISTRIBUTION/MARKDOWN), 30d/90d projekcija faze z recommendedAction (BUY/SELL/HOLD/LIQUIDATE). Tretji Brain layer — nadaljevanje bo sledila v v8.18+ z Sourcing/Risk/Buyer/Pricing Brain-i in Master Brain.
+> **408 AI endpointov** + **72 analytics** + **10 cron automatizacij** + **11 Telegram ukazov** za iskanje, ocenjevanje, kupovanje in preprodajo.
+> **v8.18.0** — Profit Brain (v8.15) + Inventory Brain (v8.16) + Market Brain (v8.17) + Sourcing Brain (v8.18): štirje orkestracijski 🧠 Brain layer-ji nad 404 specialist-i. Profit Brain sintetizira 6 profit signalov (growth, scale, efficiency, velocity, compounding, horizon) v eno odločitev. Inventory Brain sintetizira 6 inventory signalov (turnover, aging, yield, capitalEfficiency, liquidation, health) v eno odločitev: prodaj X itemov, kupi Y, zvišaj turnover 1.4×, 30d/90d projekcija inventarja. Market Brain sintetizira 6 market signalov (cyclePhase, sentiment, depth, volatility, trend, timing) v eno odločitev: katero fazo trga smo (MARKUP/ACCUMULATION/DISTRIBUTION/MARKDOWN), 30d/90d projekcija faze z recommendedAction (BUY/SELL/HOLD/LIQUIDATE). Sourcing Brain (v8.18) sintetizira 6 sourcing signalov (roi, volume, margin, momentum, diversification, concentration) v eno odločitev: kateri vir (Bolha/Vinted/Avtonet/...) skalirat, kateri zmanjšat, 30d/90d projekcija profita per vir. Četrti Brain layer — nadaljevanje bo sledila v v8.19+ z Risk/Buyer/Pricing Brain-i in Master Brain.
 > **Local-first** — vsi podatki ostanejo na tvojem računalniku. **Zero-cloud**. **0 vulnerabilities**. **37 tests**.
 
 ---
@@ -52,21 +52,16 @@
 oglasev na slovenskih (in srednjeevropskih) oglasnih platformah. Aplikacija teče lokalno na tvojem
 računalniku — brez cloud storitev, brez mesečnih naročnin, brez deljenja podatkov z zunanjimi strežniki.
 
-🧠 **AI Brain (v8.15+):** nov orkestracijski layer nad 404 specialist-i. Profit Brain (v8.15) sintetizira 6 profit
-signalov (growth, scale, efficiency, velocity, compounding, horizon) v eno odločitev. Inventory Brain (v8.16)
-sintetizira 6 inventory signalov (turnover, aging, yield, capitalEfficiency, liquidation, health) v eno
-odločitev: prodaj X itemov, kupi Y, zvišaj turnover 1.4×. Market Brain (v8.17) sintetizira 6 market signalov
-(cyclePhase, sentiment, depth, volatility, trend, timing) v eno odločitev: katero fazo trga smo, kaj kupovat/prodajat,
-30d/90d projekcija faze. Vsi trije Brain-i podajo 3 akcije za danes + 30d/90d projekcijo + one-liner povzetek.
-Future: v8.18+ bo dodal Sourcing/Risk/Buyer/Pricing Brain, nato Master Brain ki orkestrira vseh 7.
+🧠 **AI Brain (v8.15+):** nov orkestracijski layer nad 404 specialist-i. Profit Brain (v8.15), Inventory Brain (v8.16), Market Brain (v8.17). Sourcing Brain (v8.18) sintetizira 6 sourcing signalov (roi, volume, margin, momentum, diversification, concentration) v eno odločitev: kateri vir (Bolha/Vinted/Avtonet/...) skalirat, kateri zmanjšat, 30d/90d projekcija profita per vir. Vsi štirje Brain-i podajo 3 akcije za danes + 30d/90d projekcijo + one-liner povzetek.
+Future: v8.19+ bo dodal Risk/Buyer/Pricing Brain, nato Master Brain ki orkestrira vseh 7.
 
 ### Čisto v eni povedi
 Lovi podcenjene oglase na Bolhi/Facebooku/Vintedu z AI, jih kupi poceni, preprodaj drago z
 AI-optimiziranimi oglasi, in avtomatiziraj celoten workflow od odkritja do prodaje.
 
-### Verzija v8.17.0 (avgust 2026)
+### Verzija v8.18.0 (avgust 2026)
 
-**407 AI endpointov** + **72 analytics** + **10 cron automatizacij** + **11 Telegram ukazov** + **~270 funkcij** organiziranih v 8 kategorij:
+**408 AI endpointov** + **72 analytics** + **10 cron automatizacij** + **11 Telegram ukazov** + **~271 funkcij** organiziranih v 8 kategorij:
 - **Statistike** (analytics, predictions, forecasting) — 35+ funkcij
 - **Skladišče** (inventory management, aging, depreciation) — 20+ funkcij
 - **Oglasi** (listing optimization, SEO, image analysis) — 25+ funkcij
@@ -75,7 +70,10 @@ AI-optimiziranimi oglasi, in avtomatiziraj celoten workflow od odkritja do proda
 - **Risk/Insurance** (hedging, fraud detection, claims) — 10+ funkcij
 - **Finance/Profit** (margin, ROI, compounding, tax) — 16+ funkcij
 
-### Kaj je novega v v7.56–v8.17 (62 verzij, 180 novih funkcij)
+### Kaj je novega v v7.56–v8.18 (63 verzij, 181 novih funkcij)
+
+**v8.18 — 🎯 Sourcing Brain (ČETRTI orkestracijski Brain layer nad ~21 sourcing specialist-i — synthesis 6 SOURCING signalov v eno odločitev):**
+- **Sourcing Brain** — sintetizira 6 SOURCING SIGNALOV (roi, volume, margin, momentum, diversification, concentration) v ENO odločitev. Vsak sourcing specialist (deal-source-profit-maximizer, deal-source-roi-maximizer, deal-source-volume-maximizer, deal-source-momentum-analyzer, deal-source-trend-analyzer, sourcing, inventory-supplier-evaluator, ...) meri ENO dimenzijo — Brain združi 6 dimenzij v: (1) 3 top akcije za danes, ranked po expectedUpliftEUR × confidence, (2) 30d/90d sourcing projekcijo (structured: recommendedSourceToScale + recommendedSourceToReduce + projectedTotalMonthlyProfit + projectedConcentrationPct + recommendedNewSource), (3) sourcing grade weighted (roi 0.20, volume 0.15, margin 0.20, momentum 0.20, diversification 0.15, concentration 0.10), (4) bestOpportunity (signal z najvišjim uplift EUR/mo), (5) one-line summary "Bolha najboljši vir (168€/mo, 28% margin). Prestavi capital po ROI: ... Grade B.". Pure deterministic compute (aiUsed: false, no AI/LLM SDK). DB-backed state injection (graceful — če DB nedosegljiv, fallback na 4 default vire: prebere Trade tabelo, groupira po buyLocation: Bolha/Vinted/Avtonet/mobile.de/Kleinanzeigen/...). 5-min cache (key = sourcing-brain:hashOfInputs, TTL 300000ms, cachedAt stamp na cache hit). `src/lib/brain/sourcing.ts` (pure compute, NO next/server, NO Prisma — fully testable, mirrors market.ts strukturo). `src/app/api/ai/brain/sourcing/route.ts` (GET+POST, maxDuration=60, force-dynamic, runtime=nodejs). AI Hub: BrainSynthesisCard razširjen s ČETRTIM stacked section-om (purple/violet-tinted) — sedaj prikazuje VSE ŠTIRI Brain-e (🧠 Profit Brain emerald + 📦 Inventory Brain amber + 📈 Market Brain sky/blue + 🎯 Sourcing Brain purple/violet) simultano. Future: v8.19+ bo dodal Risk/Buyer/Pricing Brain, nato Master Brain ki orkestrira vseh 7.
 
 **v8.17 — 📈 Market Brain (TRETJI orkestracijski Brain layer nad 404 specialist-i — synthesis 6 MARKET signalov v eno odločitev):**
 - **Market Brain** — sintetizira 6 MARKET SIGNALOV (cyclePhase, sentiment, depth, volatility, trend, timing) v ENO odločitev. Vsak market specialist (market-cycle-phase-predictor, market-depth-trend-analyzer, market-volatility-forecaster, market-trend-forecaster-pro, market-saturation, sentiment-analysis, market-timing-profit-optimizer, ...) meri ENO dimenzijo — Brain združi 6 dimenzij v: (1) 3 top akcije za danes, ranked po expectedUpliftEUR × confidence, (2) 30d/90d market phase projekcijo (structured: predictedPhase ACCUMULATION/MARKUP/DISTRIBUTION/MARKDOWN + predictedPriceChangePct + recommendedAction BUY/SELL/HOLD/LIQUIDATE), (3) market grade weighted (cyclePhase 0.20, sentiment 0.20, trend 0.20, timing 0.15, depth 0.15, volatility 0.10), (4) bestOpportunity (signal z najvišjim uplift EUR/mo), (5) one-line summary "Trg v MARKUP fazi, sentiment NEUTRAL. Izkoristi fazo trga: ... Grade A.". Pure deterministic compute (aiUsed: false, no AI/LLM SDK). DB-backed state injection (graceful — če DB nedosegljiv, fallback na defaults: prebere active listings, price changes, sell-through, contact status iz Listing tabele). 5-min cache (key = market-brain:hashOfInputs, TTL 300000ms, cachedAt stamp na cache hit). `src/lib/brain/market.ts` (pure compute, NO next/server, NO Prisma — fully testable, mirrors inventory.ts strukturo). `src/app/api/ai/brain/market/route.ts` (GET+POST, maxDuration=60, force-dynamic, runtime=nodejs). AI Hub: BrainSynthesisCard razširjen s TRETJIM stacked section-om (sky/blue-tinted) — sedaj prikazuje VSE TRI Brain-e (🧠 Profit Brain emerald + 📦 Inventory Brain amber + 📈 Market Brain sky/blue) simultano. Future: v8.18+ bo dodal Sourcing/Risk/Buyer/Pricing Brain, nato Master Brain ki orkestrira vseh 7.
@@ -438,7 +436,7 @@ AI-optimiziranimi oglasi, in avtomatiziraj celoten workflow od odkritja do proda
 | 14 | Obvestila | `9` | Zgodovina notifikacij |
 | 15 | Zdravje | `0` | Sistemski health, scraper stats |
 | 16 | Nastavitve | — | AI provider, Telegram, Discord, Email, Push... |
-| 17 | **AI Hub** | `a` | Vsi 407 AI endpointov z iskalnikom, runner-jem in 🧠 Profit Brain + 📦 Inventory Brain + 📈 Market Brain Synthesis Card |
+| 17 | **AI Hub** | `a` | Vsi 408 AI endpointov z iskalnikom, runner-jem in 🧠 Profit Brain + 📦 Inventory Brain + 📈 Market Brain + 🎯 Sourcing Brain Synthesis Card |
 
 ### 🔍 Iskanje & odkrivanje
 - Multi-platform monitoring (Bolha, Facebook, Vinted, Avtonet, Kleinanzeigen, eBay, poljuben RSS)
@@ -724,7 +722,7 @@ Dnevni reset ob polnoči.
 - **Budget allocator** — porazdelitev proračuna
 - ...in 4+ več
 
-▶️ **Glej [AI_ENDPOINTS.md](./AI_ENDPOINTS.md) za popoln seznam vseh 407 AI endpointov (vključno z brain/profit, brain/inventory in brain/market).**
+▶️ **Glej [AI_ENDPOINTS.md](./AI_ENDPOINTS.md) za popoln seznam vseh 408 AI endpointov (vključno z brain/profit, brain/inventory, brain/market in brain/sourcing).**
 
 ---
 
@@ -795,7 +793,7 @@ Za scraping Bolhe in drugih platform, aplikacija vključuje:
 ### Auth
 Ni avtentikacije (local-first). Aplikacija teče na localhost.
 
-### Endpointi (407 AI + 72 analytics + 10 cron + sistemski = 584)
+### Endpointi (408 AI + 72 analytics + 10 cron + sistemski = 585)
 
 ```bash
 # AI primeri
@@ -1047,7 +1045,7 @@ markec-ai-firm/
 ├── src/
 │   ├── app/
 │   │   ├── api/
-│   │   │   └── ai/              # 407 AI endpointov (vključno z brain/profit, brain/inventory in brain/market — tri Brain layer-ji, v8.15 + v8.16 + v8.17)
+│   │   │   └── ai/              # 408 AI endpointov (vključno z brain/profit, brain/inventory, brain/market in brain/sourcing — štirje Brain layer-ji, v8.15 + v8.16 + v8.17 + v8.18)
 │   │   ├── page.tsx             # Main dashboard
 │   │   ├── settings/            # Settings UI
 │   │   └── ...
@@ -1088,7 +1086,7 @@ markec-ai-firm/
 
 ## 🗺️ Roadmap
 
-### v8.15-v8.17 (trenutno — ~270 funkcij)
+### v8.15-v8.18 (trenutno — ~271 funkcij)
 - [x] **Profit pipeline (169+ funkcij):** Deal Flow, Funnel, Sold Comps, Price History, Seller Intel, Make Offer, Quick Buy, Flip Workflow, Profit Maximizer v2, Niche Score, Deal Velocity, Bundle Detector, Capital Advisor, Threshold Optimizer, Deal Score Calibrator, Cross-border Arbitrage, Negotiation Auto-Responder, Seasonal Calendar, Profit Goal Tracker, Margin Guardian, Seller Response Predictor, Turnover Optimizer, Auto-Listing Draft, Photo Quality Analyzer, Refurb ROI Calculator, Loss Recovery Playbook, Monitor Suggestions, Tax-Aware Selling, Quick Sell Ladder, Risk Spread Calculator, Liquidation Strategist, Market Gap Finder, Listing Refresh Scheduler, Tax Report Generator, Reinvestment Advisor, Competitor Tracker, Deal Source ROI, Listing Performance, Auto-Relisting Scheduler, Negotiation Outcome Predictor, Portfolio Stress Test, Supplier CRM, Bundle Profit Optimizer, Demand Forecast AI, Margin Guardian Pro, Multi-Platform Listing Generator, Negotiation Script Generator, Inventory Insurance Calculator, Photo Enhancement Advisor, Trade Replication Engine, Profit Margin Heatmap, Listing Exposure Score, Capital Allocation Optimizer, AI Trading Coach, Deal Fatigue Detector, Seasonal Timing Optimizer, AI Deal Quality Forecaster, Negotiation Success Rate Analyzer, Portfolio Concentration Risk Analyzer, AI Competitive Landscape Analyzer, Price History Forecaster, FOMO/Scarcity Trigger Generator, Profit Efficiency Analyzer, Portfolio Health Dashboard, AI Market Share Analyzer, AI Supply Demand Balance Analyzer, Market Depth Analyzer, AI Risk Reward Calculator, AI Profit Leakage Detector, AI Deal Scoring Model v2, Market Saturation Forecaster, AI Profit Stream Predictor, Inventory Lifecycle Stage Classifier, Deal Source Comparison Matrix, AI Deal Anatomy Analyzer, Market Gap Forecaster, AI Profit Accelerator, AI Price Intelligence Engine, Deal Profitability Matrix, AI Profit Trajectory Forecaster, AI Listing Conversion Forecaster, Inventory Value Predictor, Market Trend Momentum Analyzer, AI Smart Reorder Advisor, Cash Flow Velocity Tracker, Deal Quality Distribution Analyzer, AI Buyer Retention Forecaster, Market Sentiment Pulse, AI Profit Momentum Tracker, AI Capital Deployment Planner, Market Intelligence Engine, Deal Pipeline Forecaster, AI Deal Winning Streak Analyzer, Seller Performance Analytics, Market Cycle Detector, AI Inventory Turnover Forecast, Market Trend Forecaster Pro, Deal Conversion Funnel Analyzer, AI Inventory ROI Optimizer, Listing Engagement Analytics, Deal Quality Scorecard, AI Trade Performance Forecaster, Market Liquidity Analyzer, Seller Reliability Scorecard, AI Profit Growth Predictor, Market Demand Forecaster Pro, Inventory Value Tracker, AI Deal Source Intelligence, Market Opportunity Scanner, Profit Margin Trend Analyzer, AI Inventory Aging Predictor Pro, Market Cycle Forecaster, Deal Quality Trend Analyzer, AI Capital Efficiency Forecaster, Market Depth Forecaster, AI Seller Churn Predictor, AI Profit Margin Forecaster Pro, Inventory Turnover Accelerator Pro, Deal Source Performance Tracker, AI Price Volatility Analyzer, AI Inventory Performance Forecaster, Deal Source Quality Tracker, AI Deal Source Trend Analyzer, AI Market Cycle Phase Predictor, AI Inventory ROI Trend Tracker, AI Listing Performance Forecaster Pro, Deal Quality Distribution Forecaster, AI Inventory Aging Trend Analyzer, AI Seller Performance Forecaster, Market Trend Acceleration Tracker, Deal Source Profitability Analyzer, AI Portfolio Risk Forecaster, Market Sentiment Trend Analyzer, Inventory Value Appreciation Tracker, AI Deal Source Momentum Analyzer, AI Market Volatility Forecaster, AI Inventory Performance Trend Tracker, AI Capital Flow Analyzer, AI Market Cycle Transition Predictor, AI Inventory Turnover Momentum Tracker, AI Profit Margin Acceleration Tracker, AI Market Depth Trend Analyzer, AI Inventory Turnover Efficiency Forecaster, AI Profit Maximizer Pro, AI Deal Profitability Forecaster, AI Revenue Stream Optimizer, AI Price Optimization Engine Pro, AI Deal Sourcing Intelligence, AI Profit Margin Maximizer, AI Cash Recovery Accelerator, AI Market Opportunity Maximizer, AI Inventory Profit Margin Optimizer Pro, AI Deal Source Profit Maximizer, AI Market Timing Profit Optimizer, AI Inventory Value Maximizer, AI Profit Velocity Maximizer, AI Deal Quality Profit Optimizer, AI Inventory Cash Conversion Maximizer, AI Capital Growth Maximizer, AI Deal Profit Accelerator Pro, AI Inventory ROI Maximizer Pro, AI Profit Multiplier Engine, AI Deal Source ROI Maximizer, AI Inventory Turnover Profit Maximizer, AI Revenue Growth Maximizer, AI Deal Profit Margin Enhancer Pro, AI Inventory Capital Efficiency Maximizer, AI Profit Scale Engine, AI Deal Source Volume Maximizer, AI Inventory Profit Per Day Maximizer, AI Profit Horizon Maximizer, AI Deal Source Margin Maximizer, AI Inventory Yield Maximizer, AI Profit Compounding Maximizer, AI Deal Source Profit Per Trade Maximizer, AI Inventory Cash Yield Maximizer, AI Profit Acceleration Maximizer, AI Deal Source Capital Efficiency Maximizer, AI Inventory Turnover Yield Maximizer, AI Revenue Per Trade Maximizer, AI Deal Source Cash Flow Maximizer, AI Inventory Annualized Return Maximizer, AI Profit Per Euro Maximizer, AI Deal Source Revenue Maximizer, AI Inventory Capital Return Maximizer, AI Profit Per Day Scaling Maximizer, AI Deal Source Profit Velocity Maximizer, AI Inventory Return On Capital Maximizer, AI Profit Multiplier Maximizer, AI Deal Source Capital Return Maximizer, AI Inventory Profit Per Day Growth Maximizer, AI Profit Per Trade Growth Maximizer, AI Deal Source Annual Return Maximizer, AI Inventory Capital Velocity Maximizer, AI Profit Growth Rate Maximizer, AI Deal Source Profit Per Day Maximizer, AI Inventory Annual Yield Maximizer, AI Profit Per Cycle Maximizer, AI Deal Source Profit Margin Growth Maximizer, AI Inventory Capital Efficiency Growth Maximizer, AI Profit Per Trade Scaling Maximizer, AI Deal Source Volume Growth Maximizer, AI Inventory Turnover Profit Growth Maximizer, AI Profit Density Maximizer, AI Deal Source Profit Compounding Maximizer, AI Inventory Working Capital Maximizer
 - [x] **Cron automatizacija (10):** Smart Deal Alert, Inventory Aging, Weekly Report, Auto Price Drop, Competitor Monitor, Scraper Recovery, Relisting Reminder, Daily Pulse, Heartbeat, Smart Notification Router
 - [x] **Telegram 2-way (11 ukazi):** /deals /profit /inventory /status /run /alerts /listings /monitors /trades /stats /help
@@ -1097,11 +1095,11 @@ markec-ai-firm/
 - [x] **AI cost optimization:** AI Output Cache (6h TTL, ~60% prihranek) + Batch Deal Evaluator (50 oglasov/klic, ~98% prihranek)
 - [x] **Security:** AES-256-GCM secrets encryption, Rate limiting, SSRF protection
 - [x] **Analytics (72):** Deal Velocity, Sold Comps, Niche Score, Deal Funnel, Platform Performance, Source Quality, Net Profit (after tax), Reseller Blackbook, Time-to-Profit, Profit Heatmap, Market Trend, Cross-Platform Arbitrage, Deal Timing, Seasonal Calendar, Profit Goal Tracker, Weekly Trend Radar, Cash Flow Forecast, ROI Leaderboard, Missed Opportunities, Optimal Listing Time, Purchase Pattern, Tax Report, Competitor Tracker, Deal Source ROI, Listing Performance, Market Gap Finder, Portfolio Stress Test, Supplier CRM, Optimal Listing Time, Inventory Insurance Calculator, Market Momentum, Cash Conversion Cycle, Profit Margin Heatmap, Listing Exposure Score, Deal Fatigue Detector, Negotiation Success Rate, Portfolio Concentration Risk, Price History Forecaster, Profit Efficiency Analyzer, Portfolio Health Dashboard, Market Depth Analyzer, Market Saturation Forecaster, Inventory Lifecycle Stage Classifier, Deal Source Comparison Matrix, Market Gap Forecaster, Deal Profitability Matrix, Inventory Value Predictor, Market Trend Momentum, Cash Flow Velocity, Deal Quality Distribution, Market Sentiment Pulse, Deal Pipeline Forecaster, Seller Performance Analytics, Market Cycle Detector, Deal Conversion Funnel Analyzer, Listing Engagement Analytics, Deal Quality Scorecard, Market Liquidity Analyzer, Seller Reliability Scorecard, Market Demand Forecaster Pro, Inventory Value Tracker, Profit Margin Trend Analyzer, Market Cycle Forecaster, Deal Quality Trend Analyzer, Market Depth Forecaster, Deal Source Performance Tracker, Deal Source Quality Tracker, Deal Quality Distribution Forecaster, Market Trend Acceleration Tracker, Deal Source Profitability Analyzer, Market Sentiment Trend Analyzer, Inventory Value Appreciation Tracker
-- [x] **Testing:** Vitest (37 tests), structured logger, try/catch na vseh 584 API routes
+- [x] **Testing:** Vitest (37 tests), structured logger, try/catch na vseh 585 API routes
 - [x] **0 vulnerabilities**, 0 TS errors, 0 ESLint errors
 
 ### Naslednji koraki
-- [ ] UI komponente za v7.50-v8.17 funkcije v dashboard
+- [ ] UI komponente za v7.50-v8.18 funkcije v dashboard
 - [ ] WebSocket real-time negotiation (SSE namesto polling)
 - [ ] Playwright E2E testi za glavne flow-e
 - [ ] TLS fingerprinting (curl-impersonate)
@@ -1157,9 +1155,10 @@ Z obveznostjo:
 
 ## 📋 Changelog
 
-Popolna zgodovina verzij v [CHANGELOG.md](./CHANGELOG.md) — od v1.0 (25. junij 2026) do v8.17 (avgust 2026). Starejše verzije (v1.0–v6.x) so arhivirane v [ARCHIVE.md](./ARCHIVE.md).
+Popolna zgodovina verzij v [CHANGELOG.md](./CHANGELOG.md) — od v1.0 (25. junij 2026) do v8.18 (avgust 2026). Starejše verzije (v1.0–v6.x) so arhivirane v [ARCHIVE.md](./ARCHIVE.md).
 
 ### Zadnje verzije
+- **v8.18.0** (avgust 2026) — 🎯 Sourcing Brain (četrti orkestracijski Brain layer nad ~21 sourcing specialist-i — synthesis 6 sourcing signalov: roi, volume, margin, momentum, diversification, concentration → 30d/90d sourcing projekcija z recommendedSourceToScale + recommendedSourceToReduce + projectedTotalMonthlyProfit + recommendedNewSource)
 - **v8.17.0** (avgust 2026) — 📈 Market Brain (tretji orkestracijski Brain layer nad 404 specialist-i — synthesis 6 market signalov: cyclePhase, sentiment, depth, volatility, trend, timing → 30d/90d phase projekcija z recommendedAction BUY/SELL/HOLD/LIQUIDATE)
 - **v8.16.0** (avgust 2026) — 📦 Inventory Brain (drugi orkestracijski Brain layer nad 404 specialist-i — synthesis 6 inventory signalov)
 - **v8.15.0** (avgust 2026) — 🧠 Profit Brain (prvi orkestracijski layer nad 404 specialist-i)
