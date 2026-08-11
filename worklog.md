@@ -14184,3 +14184,41 @@ Stage Summary:
 - Total API routes: 578 → 581 (+3)
 - Dokumentacija sinhrono posodobljena (AI_ENDPOINTS.md, README, CHANGELOG)
 - Verzija aplikacije: v8.14.0
+
+---
+Task ID: v8.14.1
+Agent: main
+Task: v8.14 commit + push + GitHub About + Agent Browser verification
+
+Work Log:
+- Prejel poročilo od full-stack-developer podagenta (Task v8.14 — 3 endpointi uspešno ustvarjeni, lint 0 napak, typecheck 0 napak)
+- Neodvisno preveril 3 nove endpoint-e (curl GET+POST = 200 vsi):
+  - GET /api/ai/profit-density-maximizer?avgProfitPerTrade=30 → 200 {"ok":true,"current":{profitPerHour:12,profitPerCategory:80,profitPerListing:30,densityScore:3.6},"maximization":{maximizedDensity:4.25,maximizationFactor:1.18,densityGrade:"D",optimalStrategy:"FOCUS_HIGH_DENSITY_NICHES",focusNiches:["electronics","sneakers","tools"]},"aiUsed":false,"source":"v8.14-profit-density-maximizer"}
+  - POST /api/ai/profit-density-maximizer → 200 ✅
+  - GET /api/ai/deal-source-profit-compounding-maximizer?avgMonthlyProfit=300 → 200 {"ok":true,"current":{monthlyCompoundingRate:45,compoundedAnnualProfit:4051.83,compoundingScore:81.04,reinvestRate:0.6},"maximization":{maximizedCompoundedProfit:4659.6,sourcePrioritization:1.15,compoundingGrade:"A",optimalStrategy:"PRIORITIZE_HIGH_YIELD_SOURCES",projectedGrowthCurve:"EXPONENTIAL"},"aiUsed":false,"source":"v8.14-deal-source-profit-compounding-maximizer"}
+  - POST /api/ai/deal-source-profit-compounding-maximizer → 200 ✅
+  - GET /api/ai/inventory-working-capital-maximizer?capitalDeployed=2000 → 200 {"ok":true,"current":{workingCapitalTurnover:32.33,weightedProfitMargin:29.5,capitalEfficiencyScore:19.07,fastMoverCapitalPct:0.55},"maximization":{maximizedCapitalEfficiency:23.27,maximizationFactor:1.22,capitalGrade:"D",optimalStrategy:"LIQUIDATE_SLOW_MOVERS",recommendedFastMoverPct:0.7},"aiUsed":false,"source":"v8.14-inventory-working-capital-maximizer"}
+  - POST /api/ai/inventory-working-capital-maximizer → 200 ✅
+- Preveril doc sync: AI_ENDPOINTS.md "Total: 404 endpoints" ✅, README 404 AI (6 refs) + 581 (2 refs) ✅, CHANGELOG "Total API routes: 578 → 581 (+3)" ✅
+- Preveril lint: 0 napak ✨
+- Preveril typecheck: 0 napak ✨
+- Posodobil GitHub About opis: "AI Trading Firm... 404 AI + 72 analytics = 581 routes. v8.14.0." (via API PATCH, 192 chars)
+- Commit: "v8.14: Profit Density Maximizer + Deal Source Profit Compounding Maximizer + Inventory Working Capital Maximizer" (7e0ef0e)
+- Push na GitHub: uspešen ✅ (fcc85c0..7e0ef0e), PAT očiščen ✅
+- Agent Browser self-verification:
+  - Stran se pravilno naloži (HTTP 200, naslov "Markec AI Firm — Opportunity Monitor")
+  - AI Hub: iskanje "profit-density" → prikazuje "💰profit-density-maximizer v8.14: AI Profit Density Maximizer — MAKSIMIZIRA PROFIT DENSITY" ✅
+  - Runner test: klik na profit-density-maximizer → POST request → valid JSON ✅
+  - Response: {"ok":true,"current":{profitPerHour:10,profitPerCategory:66.67,profitPerListing:25,densityScore:3},"maximization":{maximizedDensity:3.54,maximizationFactor:1.18,densityGrade:"D",optimalStrategy:"FOCUS_HIGH_DENSITY_NICHES",focusNiches:["electronics","sneakers","tools"]},"aiUsed":false,"source":"v8.14-profit-density-maximizer"}
+  - Brez runtime napak v dev.log
+
+Stage Summary:
+- v8.14 uspešno dokončana in potisnjena na GitHub
+- 3 PROFIT-MAXIMIZING funkcije: AI Profit Density Maximizer, AI Deal Source Profit Compounding Maximizer, AI Inventory Working Capital Maximizer
+- AI endpointi: 401 → 404 (+3)
+- Analytics endpointi: 72 (nespremenjeno — vsi 3 so AI)
+- Total API routes: 578 → 581 (+3)
+- Dokumentacija sinhrono posodobljena (AI_ENDPOINTS.md, README, CHANGELOG, GitHub About)
+- GitHub sinhroniziran (0 commit-ov ahead)
+- Verzija aplikacije: v8.14.0
+- Skupaj doslej (v7.50 → v8.14): 64 verzij, 186 novih funkcij; zadnjih 20 verzij (v7.94-v8.14) = 60 neposrednih profit-maksimizacijskih funkcij
