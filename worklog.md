@@ -14966,3 +14966,51 @@ Stage Summary:
 - Typecheck: 0 errors ✅
 - Endpoint verification: GET default → 6 signals, buyerGrade=C, bestOpportunity=loyalty (270€/mo uplift), topActions #1 retention +252€/mo (HIGH), #2 loyalty +270€/mo (MEDIUM), #3 conversion +187.2€/mo (MEDIUM), projection30d {9 aktivnih, 294€ LTV, 4.38% churn, outreach 3}, projection90d {11 aktivnih, 322€ LTV, 1% churn, outreach 4} ✅; POST custom (80 buyers, 25 active, 4 churned, 450€ LTV) → buyerGrade=B, bestOpportunity=loyalty (1100€/mo uplift), topActions #1 loyalty +1100€/mo (HIGH), #2 intent +825€/mo (MEDIUM), #3 retention +540€/mo (HIGH), projection30d {29 aktivnih, 472.5€ LTV, outreach 8}, projection90d {34 aktivnih, 517.5€ LTV, outreach 13} ✅; Cache → drugi GET re-stampa cachedAt z istim buyerGrade C in bestOpportunity loyalty (208ms cold → 7ms cached) ✅; /api/ai-list → total 410, categories.brain 6 (profit + inventory + market + sourcing + risk + buyer) ✅
 - Documentation updated: AI_ENDPOINTS.md (410 brain/buyer row + restored budget-allocator + renumber), README.md (version v8.20.0, badges 410 AI + 587 routes, hero tagline, overview paragraph z 6 Brain-i, "Kaj je novega" v8.20 blok, version section, function count ~273, all v8.19/409/586 references posodobljene), CHANGELOG.md (nov [8.20.0] section z Added + Stats, [Unreleased] v8.20+ → v8.21+)
+
+---
+Task ID: v8.20.1
+Agent: main
+Task: v8.20 commit + push + GitHub About + Agent Browser verification
+
+Work Log:
+- Prejel poročilo od full-stack-developer podagenta (Task v8.20 — Buyer Brain implementiran: src/lib/brain/buyer.ts + src/app/api/ai/brain/buyer/route.ts + BrainSynthesisCard extended z 6. stacked section za Buyer Brain z cyan/teal tint, Users icon)
+- Podagent je med delom pustil tudi file-mode spremembe (100644 → 100755) na obstoječih brain datotekah — samo permission bit, brez vsebinskih sprememb. Rešitev: `git config core.fileMode false` da preprečim to v prihodnosti
+- Neodvisno preveril endpoint (curl 3 testi):
+  - GET /api/ai/brain/buyer (default) → 200 {"ok":true, "signals":[6: intent(D,37.5,216), conversion(C,52.5,187.2), retention(A+,90.63,252), lifetimeValue(D,28,160), loyalty(C,48.75,270), engagement(C,45,64)], "current":{totalBuyers:32, activeBuyersLast30d:8, newBuyersLast30d:4, churnedBuyersLast30d:3, avgBuyerLifetimeValue:280, avgPurchaseFrequency:1.8, avgOrderValue:180, repeatBuyerRatePct:25, inquiriesConvertedPct:35, avgEngagementScore:45, highValueBuyersCount:3, churnRatePct:9.38, netGrowthPct:3.13}, "maximization":{topActions:[3 z #1 retention +252€/mo (HIGH), #2 loyalty +270€/mo (MEDIUM), #3 conversion +187.2€/mo (MEDIUM)], projection30d:{projectedActiveBuyers:9, projectedLTV:294, projectedChurnRatePct:4.38, recommendedOutreachCount:3}, projection90d:{projectedActiveBuyers:11, projectedLTV:322, projectedChurnRatePct:1, recommendedOutreachCount:4}, buyerGrade:"C", bestOpportunity:"loyalty", oneLineSummary:"32 kupcev (LTV 280€), 8 aktivnih. Zmanjšaj churn: Churn 9%, rast +3% — zdrava retention. Grade C."}, "aiUsed":false, "source":"v8.20-buyer-brain"}
+  - POST /api/ai/brain/buyer {"totalBuyers":80,"activeBuyersLast30d":25,...} → 200 z višjimi številkami (loyalty uplift 1100 vs 270, buyerGrade B vs C, bestOpportunity loyalty)
+  - GET (cache hit) → 200 z "cachedAt": 1786509759352 (5-min cache deluje)
+  - GET /api/ai-list → 200 {"ok":true, "total":410, "categories":{brain:6, ...}} (brain kategorija 6 = profit + inventory + market + sourcing + risk + buyer)
+- Preveril doc sync: AI_ENDPOINTS.md "Total: 410 endpoints" (row 14 brain/buyer) ✅, README v8.20.0 (12 refs) + 410 AI (6 refs) + 587 (3 refs) + Overview paragraph z ALL 6 Brains ✅, CHANGELOG [8.20.0] section z 6 signal formulas + [Unreleased] v8.21+ z 1 preostalim Brain layer-jem (Pricing) ✅
+- Preveril lint: 0 napak ✨
+- Preveril typecheck: 0 napak ✨
+- Posodobil GitHub About opis: "AI Trading Firm... 410 AI + 72 analytics = 587 routes. v8.20.0: Profit+Inventory+Market+Sourcing+Risk+Buyer Brain (6 orchestration layers)." (via API PATCH, 268 chars)
+- Commit: "v8.20: Buyer Brain — sixth orchestration layer above ~51 buyer specialists (6 buyer signals: intent, conversion, retention, lifetimeValue, loyalty, engagement synthesized into 1 decision + stacked UI card with Profit+Inventory+Market+Sourcing+Risk+Buyer)" (78942c8)
+- Push na GitHub: uspešen ✅ (02734f0..78942c8), PAT očiščen ✅
+- Agent Browser self-verification:
+  - Stran se pravilno naloži (HTTP 200, naslov "Markec AI Firm — Opportunity Monitor")
+  - AI Hub: kategorije na vrhu prikazujejo "🧠Možgani6" (#2 v seznamu) — 6 Brain endpointov ✅
+  - BrainSynthesisCard (stacked layout — 6 sekcij):
+    - Profit Brain section (emerald): "🧠 PROFIT BRAIN", "Profit 450€/mo → 651€/mo (+45%) z HORIZON" ✅
+    - Inventory Brain section (amber): "📦 INVENTORY BRAIN", "Likvidiraj 3 stare iteme...", "Grade D" ✅
+    - Market Brain section (sky/blue): "📈 MARKET BRAIN", "Trg v DISTRIBUTION fazi", "Grade B" ✅
+    - Sourcing Brain section (purple/violet): "🎯 SOURCING BRAIN", "Bolha najboljši vir (168€/mo)", "Grade B" ✅
+    - Risk Brain section (red/rose): "🛡️ RISK BRAIN", "Tveganje 52/100 (MEDIUM)", "Likvidnost 12/100", "Grade C" ✅
+    - Buyer Brain section (cyan/teal): "👥 BUYER BRAIN", "32 kupcev (LTV 280€), 8 aktivnih", "Churn 9%, rast +3%", "30d: 9 aktivnih · LTV 294", "90d: 11 aktivnih · LTV 322", "Grade C" ✅
+  - Endpoint "🧠brain/buyer v8.20: v8.20: Buyer Brain — GET+POST /api/ai/brain/buyer" viden v AI Hub listi [ref=e29] z v8.20 badge ✅
+  - Runner test: klik na brain/buyer → POST request → valid JSON z source:"v8.20-buyer-brain", 6 signali, buyerGrade:"C", totalBuyers:32, activeBuyersLast30d:8, churnRatePct:9.38 ✅
+  - Brez runtime napak v dev.log
+
+Stage Summary:
+- v8.20 uspešno dokončana in potisnjena na GitHub
+- NOV ARCHITECTURAL LAYER: Buyer Brain — šesti orkestracijski Brain nad ~51 buyer specialist-i
+- 6 buyer signalov (intent, conversion, retention, lifetimeValue, loyalty, engagement) → sintetizira v 1 odločitev (3 top cultivation akcije ranked by upliftEUR × confidence, 30d/90d buyer projekcija z projectedActiveBuyers + projectedLTV + recommendedOutreachCount, buyerGrade, oneLineSummary)
+- Churn/netGrowth analiza, VIP/high-value buyer tracking, recommendedOutreachCount za akcijski outreach
+- 5-min cache, DB state injection z graceful fallback (Buyer model ne obstaja v Prisma schema — fallback na defaults), pure compute module brez AI/LLM
+- BrainSynthesisCard razširjen z 6. stacked section (cyan/teal tint, Users icon) — sedaj prikazuje 6 Brain-ov simultano (Profit emerald + Inventory amber + Market sky/blue + Sourcing purple/violet + Risk red/rose + Buyer cyan/teal)
+- AI endpointi: 409 → 410 (+1)
+- Analytics endpointi: 72 (nespremenjeno)
+- Total API routes: 586 → 587 (+1)
+- Dokumentacija sinhrono posodobljena (AI_ENDPOINTS.md, README, CHANGELOG, GitHub About)
+- GitHub sinhroniziran (0 commit-ov ahead)
+- Verzija aplikacije: v8.20.0
+- Skupaj doslej (v7.50 → v8.20): 70 verzij, 192 novih funkcij; 6 Brain layer-jev implementiranih (Profit + Inventory + Market + Sourcing + Risk + Buyer) — zadnji Brain (Pricing) v v8.21, Master Brain v v8.22
