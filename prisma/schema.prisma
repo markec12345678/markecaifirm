@@ -493,3 +493,42 @@ model WebhookEndpoint {
   createdAt   DateTime @default(now())
   updatedAt   DateTime @updatedAt
 }
+
+// v8.23: Daily Brain Snapshot — stores Master Brain output for historical accuracy tracking.
+// Cron job @ 00:00 calls masterBrain() and saves the full result here.
+// Used by v8.25 (Historical Accuracy) to compare predicted vs actual profit.
+model BrainSnapshot {
+  id              String   @id @default(cuid())
+  date            String   // YYYY-MM-DD (unique per day)
+  // Overall Master Brain summary (lightweight fields for quick queries)
+  overallHealth   Float    // 0-100
+  healthGrade     String   @default("C") // 'A+'|'A'|'B'|'C'|'D'|'F'
+  riskLevel       String   @default("MEDIUM") // 'LOW'|'MEDIUM'|'HIGH'|'CRITICAL'
+  topActionCount  Int      @default(5)
+  conflictCount   Int      @default(0)
+  bottleneckCount Int      @default(0)
+  strengthCount   Int      @default(0)
+  // Strategy projections (EUR)
+  projection30dEUR  Float  @default(0)
+  projection90dEUR  Float  @default(0)
+  projection12mEUR  Float  @default(0)
+  // 7 Domain grades (for trend analysis)
+  profitGrade     String   @default("C")
+  inventoryGrade  String   @default("C")
+  marketGrade     String   @default("C")
+  sourcingGrade   String   @default("C")
+  riskGrade       String   @default("C")
+  buyerGrade      String   @default("C")
+  pricingGrade    String   @default("C")
+  // Full Master Brain JSON (for deep drill-down)
+  masterResultJson String  // full JSON.stringify(masterResult)
+  // Actual profit at time of snapshot (filled by v8.25 backfill, null at creation)
+  actualProfit30d  Float?
+  actualProfit90d  Float?
+  accuracy30d      Float?  // actual / predicted × 100 (filled 30d later)
+  accuracy90d      Float?  // filled 90d later
+  createdAt       DateTime @default(now())
+
+  @@unique([date])
+  @@index([date])
+}

@@ -6,8 +6,10 @@ Format sledi [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), verzije s
 
 ## [Unreleased]
 
-Brain architecture je dokončan (v8.22 Master Brain = FINAL layer). Naslednje verzije bodo fokus na refinements, optimizacije in nove specialist-e pod obstoječo Brain hierarhijo:
+v8.23 je zaključil prvi del Validation phase (Daily Brain Snapshots + Actual Profit Tracker). Naslednje verzije nadaljujejo Validation phase:
 
+- **v8.24 — User Risk Profile** (prilagoditev Brain priporočil glede na uporabnikov risk tolerance: conservative / moderate / aggressive)
+- **v8.25 — Historical Accuracy + Trend** (cron backfill ki 30d/90d po snapshot-u izračuna actualProfit30d/90d in accuracy30d/90d = actual / predicted × 100; UI graf accuracy % čez čas)
 - WebSocket real-time negotiation (SSE namesto polling)
 - Playwright E2E testi za glavne flow-e
 - TLS fingerprinting (curl-impersonate)
@@ -15,6 +17,92 @@ Brain architecture je dokončan (v8.22 Master Brain = FINAL layer). Naslednje ve
 - Performance optimizations za Master Brain (cached partial results per domain)
 - Additional conflict detection tipi (npr. Inventory vs Buyer — supply/demand mismatch)
 - Per-domain DB injection v Master Brain route (zaenkrat se zanaša na individualne Domain Brain route-e za DB state)
+
+## [8.23.0] - 2026-08-28
+
+### Added — 📸 Daily Brain Snapshots + 📊 Actual Profit Tracker (NEW PHASE: Validation — "Ali lahko zaupaš Master Brain-u?")
+
+- **🎯 NEW PHASE: Validation.** After v8.22 completed Brain architecture (7 Domain + 1 Master = 8 brain layers, 42+ signals → 1 decision), v8.23 starts the "Can you trust the Master Brain?" phase. Master Brain predicts "30d: 3133€", ampak do v8.23 ni bilo načina za preverbo ali so te napovedi točne. v8.23 dodaja DVE temeljni komponenti za validation: (1) **Daily Brain Snapshots** — cron job @ 00:00 kliče `masterBrain()` in shrani FULL output v novo `BrainSnapshot` Prisma model (overallHealth, 7 domain grades, topActions, conflicts, strategy projections). Temelj za v8.25 (Historical Accuracy). (2) **Actual Profit Tracker** — čista funkcija `calculateActualProfit(days)` ki bere iz Trade tabele (status='sold', sellDate v zadnjih N dneh) in računa DEJANSKI profit: totalProfitEUR, avgMarginPct, dailyAvgEUR, bestTrade, worstTrade. GROUND TRUTH ki ga do sedaj ni bilo — vsi Brain-i so delali z inputi, ne z realnimi številkami.
+
+- **NEW Prisma model: `BrainSnapshot`** (date-unique, stores Master Brain output)
+  - Polja: `id` (cuid), `date` (YYYY-MM-DD, unique per day), `overallHealth` (Float 0-100), `healthGrade` ('A+'|'A'|'B'|'C'|'D'|'F'), `riskLevel` ('LOW'|'MEDIUM'|'HIGH'|'CRITICAL'), `topActionCount`, `conflictCount`, `bottleneckCount`, `strengthCount`, `projection30dEUR`, `projection90dEUR`, `projection12mEUR`, 7 domain grades (`profitGrade`, `inventoryGrade`, `marketGrade`, `sourcingGrade`, `riskGrade`, `buyerGrade`, `pricingGrade`), `masterResultJson` (full JSON.stringify(masterResult) za deep drill-down), `actualProfit30d` (Float?, null at creation, filled 30d later by v8.25 backfill), `actualProfit90d` (Float?, filled 90d later), `accuracy30d` (Float?, actual / predicted × 100), `accuracy90d` (Float?), `createdAt`.
+  - `@@unique([date])` — en snapshot na dan (idempotent — overwrit-a današnji snapshot ob re-run cron-a).
+  - `@@index([date])` — za hitre historične poizvedbe.
+
+- **NEW: `src/lib/brain/snapshots.ts`** (pure compute + DB module)
+  - `saveDailySnapshot()` — pokliče `masterBrain()`, izlušči 7 domain grades iz `domainSummary`, zgradi snapshot row z vsemi polji, in `db.brainSnapshot.upsert({ where: { date: today }, create: data, update: data })` — idempotent.
+  - `getSnapshots(days=30)` — vrne zadnjih N dni snapshotov (ascending date, cap 400).
+  - `getLatestSnapshot()` — vrne najnovejši snapshot (by date desc).
+  - `getSnapshotMasterResult(date)` — pars-a `masterResultJson` in vrne full `MasterBrainResult` (za UI drill-down).
+  - Tip `BrainSnapshotRow` (interface za vse DB polja).
+  - JSDoc z vsemi detajli: foundation za v8.25 Historical Accuracy, idempotent opomba, vse uporabljene lokacije (cron + API + future backfill).
+
+- **NEW: `src/lib/profit/actual.ts`** (pure Actual Profit Tracker)
+  - `calculateActualProfit(days=30)` — čista funkcija ki bere Trade tabelo kjer `status='sold'` AND `sellDate >= (now - days)`. Formula: `profit = sellPrice - sellFees - buyPrice - buyFees`. Aggregacije: `totalProfitEUR`, `totalRevenueEUR` (Σ sellPrice), `totalCostEUR` (Σ buyPrice + buyFees + sellFees), `tradeCount`, `avgProfitPerTradeEUR`, `avgMarginPct` (totalProfit / totalRevenue × 100), `dailyAvgEUR` (totalProfit / days), `bestTrade` (highest profit), `worstTrade` (lowest profit, may be negative). Vrne `ActualProfitResult` interface. tradeCount=0 vrne vse ničle + null best/worst.
+  - Pure read — no AI, no Brain calls, just real numbers from real sales. GROUND TRUTH ki ga do sedaj ni bilo.
+
+- **NEW: `src/app/api/cron/daily-brain-snapshot/route.ts`** (cron endpoint, GET+POST)
+  - Auth: `?key=<MONITOR_CRON_KEY>` query param (mirror of `daily-pulse`, `weekly-report`, etc.). Če env var unset (dev), no auth required.
+  - GET+POST oba kličeta `handleDailySnapshot()` ki pokliče `saveDailySnapshot()` in vrne `{ ok, saved, date, snapshot }`.
+  - runtime='nodejs', dynamic='force-dynamic', maxDuration=60.
+  - JSDoc z vsemi detajli: schedule @ 00:00 (configure externally), idempotent opomba, foundation za v8.25.
+  - Schedule example: `0 0 * * * curl -s "http://localhost:3000/api/cron/daily-brain-snapshot?key=$MONITOR_CRON_KEY"`.
+
+- **NEW: `src/app/api/ai/brain/snapshots/route.ts`** (GET + POST manual trigger)
+  - GET `?days=30` (default 30, clamp [1, 400]) — vrne `{ ok, days, snapshots, actualProfit, summary }`. Snapshots so v `SnapshotPublicView` obliki (stripped of `masterResultJson` za lightweight payload). `actualProfit` je `ActualProfitResult` (paralelni `calculateActualProfit(days)` klic). `summary` blok z avgOverallHealth, avgProjection30d, latestSnapshot, oldestSnapshot.
+  - POST s body `{ force?: boolean }` (default true) — pokliče `saveDailySnapshot()` in vrne `{ ok, date, forced, snapshot }`. Manual trigger za testiranje ali takojšen capture Master Brain stanja.
+  - runtime='nodejs', dynamic='force-dynamic', maxDuration=60.
+
+- **NEW: `src/app/api/ai/brain/actual-profit/route.ts`** (GET ?days=30)
+  - GET `?days=30` (default 30, clamp [1, 730] = 2 leti max) — pokliče `calculateActualProfit(days)` in vrne `ActualProfitResult`. Podpira tudi POST (isti handler).
+  - runtime='nodejs', dynamic='force-dynamic'.
+  - JSDoc z vsemi detajli: per-trade profit formula, vse aggregacije, vse uporabljene lokacije (UI card + snapshots GET + future v8.25 backfill).
+
+- **UI: `src/components/dashboard/ai-hub-view.tsx`** (dva nova card-a v BrainSynthesisCard)
+  - **Card A: "📊 Dejanski profit" (v8.23, indigo/violet gradient) — NA VRHU BrainSynthesisCard (nad Master Brain banner-jem).** Visual hierarchy: Actual Profit (top, indigo, ground truth) → Master Brain (gold/amber, predictions) → 7 Domain Brains (drill-down) → Brain Snapshots (bottom, history). Sestavni deli:
+    - Header: TrendingUp icon + "📊 Dejanski profit" + v8.23 badge + "GROUND TRUTH" badge.
+    - Days selector: 7d / 30d / 90d / 12m (12m = 365d) — 4 gumbi z active state v indigo tint.
+    - Big profit number: `+X€` (emerald če ≥0, red če <0), 3xl/4xl font-bold font-mono.
+    - Subtitle: `dailyAvgEUR/dan · tradeCount trade-ov · avgProfitPerTradeEUR/trade · avgMarginPct% margin`.
+    - Metrics grid (4 cols): Prihodek (totalRevenueEUR), Stroški (totalCostEUR), Margin (avgMarginPct), Na dan (dailyAvgEUR).
+    - Best/worst trade pills: emerald pill z ArrowUpRight + bestTrade.title + profitEUR; red/amber pill z ArrowDownRight + worstTrade.title + profitEUR.
+    - Empty state: "📭 Ni prodaj v zadnjih N dneh. Dodaj prodaje v Trade tabelo...".
+    - Loading skeleton (5-col grid), error state z retry button, refresh button.
+    - Fetches `/api/ai/brain/actual-profit?days=30` on mount, refetch when days selector changes.
+  - **Card B: "📸 Brain Snapshots" (v8.23, emerald-tinted, horizontal scroll) — NA DNU BrainSynthesisCard (po 7 Domain Brain sectionih).**
+    - Header: Camera icon + "📸 Brain Snapshots" + v8.23 badge + count badge (z History icon).
+    - "Shrani snapshot zdaj" button (POST trigger) — always available, emerald-tinted, z Save icon.
+    - Horizontal scroll list snapshot kartic (w-44 shrink-0): date + healthGrade (gradeColor), overallHealth + riskLevel (riskLevelColor), "Napoved 30d" z projection30dEUR, accuracy block (če actualProfit30d ni null — indigo-tinted z actual EUR + % s color-coding: ≥80% emerald, ≥50% amber, else red), top action/conflict/strength count footer.
+    - Empty state: Camera icon (large) + "Še ni shranjenih snapshot-ov." + "Shrani prvi snapshot" button (POST trigger, emerald-tinted).
+    - Summary footer: povprečno zdravje + povprečna napoved 30d + refresh button.
+    - Loading skeleton (4 horizontal cards), error state z retry.
+    - Fetches `/api/ai/brain/snapshots?days=30` on mount.
+  - Updated `BrainSynthesisCard` outer badge: "v8.22 Master + v8.15-v8.21 (7 Domains)" → "v8.23 Validation + v8.22 Master + v8.15-v8.21 (7 Domains)".
+  - Updated JSDoc header: v8.23 NEW PHASE: Validation, new visual hierarchy (Actual Profit top → Master Brain → 7 Domain → Brain Snapshots bottom), foundation za v8.25 Historical Accuracy.
+  - Added 2 new lucide-react imports: `Camera`, `Save`, `History`, `TrendingDown`, `ArrowUpRight`, `ArrowDownRight`.
+  - Added brain/actual-profit + brain/snapshots v8.23 badges v endpoint grid (indigo + emerald).
+  - Existing helper functions reused: `gradeColor()`, `riskLevelColor()`.
+
+- **Foundation for v8.25 (Historical Accuracy)** — snapshots store BOTH:
+  - Predicted (now, at creation): `projection30dEUR`, `projection90dEUR`, `projection12mEUR`.
+  - Actual (filled 30d/90d later by accuracy backfill cron): `actualProfit30d`, `actualProfit90d`, `accuracy30d` (= actual / predicted × 100), `accuracy90d`.
+  - Skupaj omogočajo `accuracy % = actual / predicted × 100` — prva meritev koliko so Master Brain napovedi zanesljive.
+
+### Stats
+- AI endpoints: 412 → 414 (+2)
+- Total API routes: 589 → 591 (+2)
+- Cron endpoints: 10 → 11 (+1 — daily-brain-snapshot)
+- NEW Prisma model: `BrainSnapshot` (date-unique, stores Master Brain output za historical accuracy tracking)
+- NEW lib module: `src/lib/brain/snapshots.ts` (saveDailySnapshot, getSnapshots, getLatestSnapshot, getSnapshotMasterResult)
+- NEW lib module: `src/lib/profit/actual.ts` (calculateActualProfit — reads Trade table, computes real EUR profit)
+- NEW cron endpoint: `src/app/api/cron/daily-brain-snapshot/route.ts` (cron @ 00:00)
+- NEW AI endpoint: `src/app/api/ai/brain/snapshots/route.ts` (GET history + POST manual trigger)
+- NEW AI endpoint: `src/app/api/ai/brain/actual-profit/route.ts` (GET ?days=30)
+- MODIFIED: `src/components/dashboard/ai-hub-view.tsx` (Actual Profit card on TOP + Brain Snapshots section at BOTTOM of BrainSynthesisCard)
+- MODIFIED: `src/lib/db.ts` (added dev-mode stale-client detection — discards cached PrismaClient if missing brainSnapshot accessor after schema update)
+- MODIFIED: `prisma/schema.prisma` (BrainSnapshot model)
+- Brain kategorija: 8 → 10 (8 brain + snapshots + actual-profit)
+- 🎯 NEW PHASE: Validation. Next: v8.24 (User Risk Profile) → v8.25 (Historical Accuracy + Trend).
 
 ## [8.22.0] - 2026-08-28
 

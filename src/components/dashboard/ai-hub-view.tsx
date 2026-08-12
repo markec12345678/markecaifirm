@@ -85,6 +85,24 @@
  * Domain Brain sections (below, detailed).
  * 🎯 FINAL MILESTONE: Brain architecture COMPLETE (7 Domain + 1 Master = 8 layers).
  *
+ * v8.23: NEW PHASE — Validation ("Ali lahko zaupaš Master Brain-u?").
+ * Added TWO new sections to BrainSynthesisCard:
+ *   1. 📊 Actual Profit Card (TOP, indigo/violet gradient) — GROUND TRUTH:
+ *      actual EUR profit from Trade table (status='sold', sellDate within
+ *      last N days). Placed ABOVE Master Brain banner because ground truth
+ *      should be the first thing the user sees, BEFORE predictions.
+ *      Days selector: 7d / 30d / 90d / 12m. Fetches /api/ai/brain/actual-profit.
+ *   2. 📸 Brain Snapshots section (BOTTOM, emerald-tinted, horizontal scroll)
+ *      — historical record of Master Brain predictions (cron @ 00:00 stores
+ *      FULL masterBrain() output in BrainSnapshot Prisma model). Each card
+ *      shows date + grade + projection30d + riskLevel + accuracy (when
+ *      backfilled 30d later). Empty state with "Shrani prvi snapshot" button
+ *      + always-available "Shrani snapshot zdaj" button (manual trigger).
+ *      Fetches /api/ai/brain/snapshots?days=30.
+ * New visual hierarchy (top → bottom): Actual Profit (ground truth) →
+ * Master Brain (predictions) → 7 Domain Brain sections (drill-down) →
+ * Brain Snapshots (historical record). Foundation for v8.25 Historical Accuracy.
+ *
  * Lazy-loaded z next/dynamic (ssr: false) — ne bremeni prvotnega nalaganja.
  */
 
@@ -101,7 +119,7 @@ import {
   DialogTitle,
   DialogDescription,
 } from '@/components/ui/dialog';
-import { Sparkles, Search, Copy, Check, RefreshCw, Zap, X, ChevronRight, Brain, AlertCircle, Package, TrendingUp, Target, Shield, Users, Coins, Crown } from 'lucide-react';
+import { Sparkles, Search, Copy, Check, RefreshCw, Zap, X, ChevronRight, Brain, AlertCircle, Package, TrendingUp, Target, Shield, Users, Coins, Crown, Camera, Save, History, TrendingDown, ArrowUpRight, ArrowDownRight } from 'lucide-react';
 import { toast } from 'sonner';
 import { cn } from '@/lib/utils';
 
@@ -1585,6 +1603,514 @@ function PricingBrainSection() {
   );
 }
 
+// --- Actual Profit Card (v8.23, indigo/violet tint) ----------------------
+//
+// v8.23 NEW PHASE: Validation — "Ali lahko zaupaš Master Brain-u?"
+//
+// This card shows GROUND TRUTH: actual EUR profit computed from the Trade
+// table (status='sold', sellDate within last N days). Placed ABOVE the Master
+// Brain banner because ground truth should be the first thing the user sees,
+// before predictions. The Master Brain banner shows PREDICTIONS (30d: 3133€);
+// this card shows ACTUAL (zadnjih 30 dni: X€ prodano).
+//
+// Visual hierarchy: Actual Profit (top, indigo, ground truth) → Master Brain
+// (gold/amber, predictions) → 7 Domain Brains (detailed drill-down).
+//
+// Days selector: 7d / 30d / 90d / 12m (12m = 365d).
+
+const ACTUAL_PROFIT_DAYS_PRESETS = [
+  { label: '7d', days: 7 },
+  { label: '30d', days: 30 },
+  { label: '90d', days: 90 },
+  { label: '12m', days: 365 },
+] as const;
+
+interface ActualProfitResponse {
+  ok: true;
+  period: string;
+  totalProfitEUR: number;
+  totalRevenueEUR: number;
+  totalCostEUR: number;
+  tradeCount: number;
+  avgProfitPerTradeEUR: number;
+  avgMarginPct: number;
+  dailyAvgEUR: number;
+  bestTrade: { title: string; profitEUR: number } | null;
+  worstTrade: { title: string; profitEUR: number } | null;
+}
+
+function ActualProfitCard() {
+  const [days, setDays] = useState<number>(30);
+  const [data, setData] = useState<ActualProfitResponse | null>(null);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
+
+  const fetchActual = useCallback(async (selectedDays: number) => {
+    setLoading(true);
+    setError(null);
+    try {
+      const res = await fetch(`/api/ai/brain/actual-profit?days=${selectedDays}`, { method: 'GET' });
+      if (!res.ok) throw new Error(`HTTP ${res.status}`);
+      const json = (await res.json()) as ActualProfitResponse;
+      if (!json?.ok) throw new Error('Actual profit API ni vrnil rezultata');
+      setData(json);
+    } catch (e: any) {
+      setError(e?.message ?? 'Napaka');
+    } finally {
+      setLoading(false);
+    }
+  }, []);
+
+  useEffect(() => {
+    fetchActual(days);
+  }, [days, fetchActual]);
+
+  const profitPositive = (data?.totalProfitEUR ?? 0) >= 0;
+
+  return (
+    <div className="rounded-xl border-2 border-indigo-500/40 bg-gradient-to-br from-indigo-500/15 via-violet-500/10 to-purple-500/5 p-3 sm:p-4 shadow-sm">
+      {/* Header row */}
+      <div className="flex items-center justify-between gap-2 mb-2.5 min-w-0 flex-wrap">
+        <div className="flex items-center gap-2 min-w-0">
+          <TrendingUp className="w-5 h-5 text-indigo-600 dark:text-indigo-400 shrink-0" />
+          <span className="text-base sm:text-lg font-bold tracking-tight">
+            📊 Dejanski profit
+          </span>
+          <Badge variant="outline" className="text-[10px] border-indigo-500/50 text-indigo-700 dark:text-indigo-400 shrink-0 font-bold">
+            v8.23
+          </Badge>
+          <Badge variant="outline" className="text-[9px] border-indigo-500/30 text-indigo-700/80 dark:text-indigo-400/80 shrink-0">
+            GROUND TRUTH
+          </Badge>
+        </div>
+
+        {/* Days selector: 7d / 30d / 90d / 12m */}
+        <div className="flex items-center gap-0.5 bg-background/50 rounded-md border border-indigo-500/20 p-0.5">
+          {ACTUAL_PROFIT_DAYS_PRESETS.map((p) => (
+            <button
+              key={p.label}
+              onClick={() => setDays(p.days)}
+              className={cn(
+                'px-2 py-0.5 text-[10px] font-mono font-semibold rounded transition-colors',
+                days === p.days
+                  ? 'bg-indigo-500/30 text-indigo-700 dark:text-indigo-300'
+                  : 'text-muted-foreground hover:text-foreground hover:bg-indigo-500/10',
+              )}
+            >
+              {p.label}
+            </button>
+          ))}
+        </div>
+      </div>
+
+      {/* Loading skeleton */}
+      {loading && (
+        <div className="space-y-2">
+          <Skeleton className="h-12 w-full bg-indigo-500/10" />
+          <Skeleton className="h-4 w-3/4 bg-indigo-500/10" />
+          <div className="grid grid-cols-4 gap-2 pt-1">
+            <Skeleton className="h-7 bg-indigo-500/10" />
+            <Skeleton className="h-7 bg-indigo-500/10" />
+            <Skeleton className="h-7 bg-indigo-500/10" />
+            <Skeleton className="h-7 bg-indigo-500/10" />
+          </div>
+        </div>
+      )}
+
+      {/* Error state */}
+      {!loading && error && (
+        <div className="flex items-center gap-2 text-xs text-red-600 dark:text-red-400">
+          <AlertCircle className="w-3.5 h-3.5 shrink-0" />
+          <span className="truncate">{error}</span>
+          <Button size="sm" variant="outline" onClick={() => fetchActual(days)} className="ml-auto h-6 px-2 text-[10px]">
+            Ponovi
+          </Button>
+        </div>
+      )}
+
+      {/* Main content */}
+      {!loading && !error && data && (
+        <div className="space-y-3">
+          {/* Big profit number */}
+          <div className="text-center px-1">
+            <div className={cn(
+              'text-3xl sm:text-4xl font-bold font-mono tracking-tight',
+              profitPositive ? 'text-emerald-600 dark:text-emerald-400' : 'text-red-600 dark:text-red-400',
+            )}>
+              {profitPositive ? '+' : ''}{data.totalProfitEUR}€
+            </div>
+            <div className="text-[11px] text-muted-foreground mt-0.5">
+              {data.dailyAvgEUR >= 0 ? '+' : ''}{data.dailyAvgEUR}€/dan · {data.tradeCount} {data.tradeCount === 1 ? 'trade' : 'trade-ov'} · {data.avgProfitPerTradeEUR}€/trade · {data.avgMarginPct}% margin
+            </div>
+          </div>
+
+          {/* Metrics grid: revenue / cost / margin / daily avg */}
+          <div className="grid grid-cols-4 gap-1.5">
+            <div className="rounded border border-indigo-500/30 bg-indigo-500/5 p-1.5 text-center">
+              <div className="text-[9px] uppercase text-muted-foreground">Prihodek</div>
+              <div className="text-xs font-bold text-indigo-700 dark:text-indigo-400">
+                {Math.round(data.totalRevenueEUR)}€
+              </div>
+            </div>
+            <div className="rounded border border-indigo-500/30 bg-indigo-500/5 p-1.5 text-center">
+              <div className="text-[9px] uppercase text-muted-foreground">Stroški</div>
+              <div className="text-xs font-bold text-indigo-700 dark:text-indigo-400">
+                {Math.round(data.totalCostEUR)}€
+              </div>
+            </div>
+            <div className="rounded border border-indigo-500/30 bg-indigo-500/5 p-1.5 text-center">
+              <div className="text-[9px] uppercase text-muted-foreground">Margin</div>
+              <div className="text-xs font-bold text-indigo-700 dark:text-indigo-400">
+                {data.avgMarginPct}%
+              </div>
+            </div>
+            <div className="rounded border border-indigo-500/30 bg-indigo-500/5 p-1.5 text-center">
+              <div className="text-[9px] uppercase text-muted-foreground">Na dan</div>
+              <div className="text-xs font-bold text-indigo-700 dark:text-indigo-400">
+                {data.dailyAvgEUR}€
+              </div>
+            </div>
+          </div>
+
+          {/* Best / worst trade pills */}
+          {(data.bestTrade || data.worstTrade) && (
+            <div className="flex flex-wrap gap-2 justify-center text-[10px]">
+              {data.bestTrade && (
+                <div className="flex items-center gap-1 rounded-full border border-emerald-500/30 bg-emerald-500/5 px-2 py-0.5">
+                  <ArrowUpRight className="w-3 h-3 text-emerald-600 dark:text-emerald-400 shrink-0" />
+                  <span className="text-muted-foreground">Naj:</span>
+                  <span className="font-semibold truncate max-w-[140px]" title={data.bestTrade.title}>
+                    {data.bestTrade.title}
+                  </span>
+                  <span className="font-bold text-emerald-600 dark:text-emerald-400">
+                    +{data.bestTrade.profitEUR}€
+                  </span>
+                </div>
+              )}
+              {data.worstTrade && (
+                <div className="flex items-center gap-1 rounded-full border border-red-500/30 bg-red-500/5 px-2 py-0.5">
+                  <ArrowDownRight className="w-3 h-3 text-red-600 dark:text-red-400 shrink-0" />
+                  <span className="text-muted-foreground">Slab:</span>
+                  <span className="font-semibold truncate max-w-[140px]" title={data.worstTrade.title}>
+                    {data.worstTrade.title}
+                  </span>
+                  <span className={cn(
+                    'font-bold',
+                    data.worstTrade.profitEUR >= 0 ? 'text-amber-600 dark:text-amber-400' : 'text-red-600 dark:text-red-400',
+                  )}>
+                    {data.worstTrade.profitEUR >= 0 ? '+' : ''}{data.worstTrade.profitEUR}€
+                  </span>
+                </div>
+              )}
+            </div>
+          )}
+
+          {/* Empty state */}
+          {data.tradeCount === 0 && (
+            <p className="text-[11px] text-muted-foreground italic text-center">
+              📭 Ni prodaj v zadnjih {days} dneh. Dodaj prodaje v Trade tabelo za prikaz dejanskega profita.
+            </p>
+          )}
+
+          {/* Refresh */}
+          <div className="flex justify-end">
+            <button
+              onClick={() => fetchActual(days)}
+              className="text-[9px] text-muted-foreground hover:text-foreground flex items-center gap-1"
+            >
+              <RefreshCw className="w-2.5 h-2.5" />
+              Osveži dejanski profit
+            </button>
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
+// --- Brain Snapshots Section (v8.23, emerald-tinted, horizontal scroll) ---
+//
+// v8.23 NEW PHASE: Validation — historical record of Master Brain predictions.
+//
+// This section appears BELOW the 7 Domain Brain sections in BrainSynthesisCard.
+// It shows a horizontal-scroll list of BrainSnapshot cards (date + grade +
+// projection30d + riskLevel). If no snapshots exist yet, an empty state with
+// a "Shrani prvi snapshot" button is shown (POSTs to /api/ai/brain/snapshots).
+// A small "Shrani snapshot zdaj" button at the top always allows manual save.
+//
+// Foundation for v8.25 (Historical Accuracy): once we have 30+ days of
+// snapshots, we can compare predicted (projection30dEUR) vs actual
+// (actualProfit30d, filled by backfill cron).
+
+interface SnapshotView {
+  id: string;
+  date: string;
+  overallHealth: number;
+  healthGrade: string;
+  riskLevel: string;
+  topActionCount: number;
+  conflictCount: number;
+  bottleneckCount: number;
+  strengthCount: number;
+  projection30dEUR: number;
+  projection90dEUR: number;
+  projection12mEUR: number;
+  profitGrade: string;
+  inventoryGrade: string;
+  marketGrade: string;
+  sourcingGrade: string;
+  riskGrade: string;
+  buyerGrade: string;
+  pricingGrade: string;
+  actualProfit30d: number | null;
+  actualProfit90d: number | null;
+  accuracy30d: number | null;
+  accuracy90d: number | null;
+  createdAt: string;
+}
+
+interface SnapshotsApiResponse {
+  ok: true;
+  days: number;
+  snapshots: SnapshotView[];
+  actualProfit: ActualProfitResponse;
+  summary: {
+    days: number;
+    snapshotCount: number;
+    latestSnapshot: SnapshotView | null;
+    oldestSnapshot: SnapshotView | null;
+    avgOverallHealth: number;
+    avgProjection30d: number;
+    actualProfit30d: number;
+    actualProfitTradeCount: number;
+  };
+}
+
+function BrainSnapshotsSection() {
+  const [data, setData] = useState<SnapshotsApiResponse | null>(null);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
+  const [saving, setSaving] = useState(false);
+
+  const fetchSnapshots = useCallback(async () => {
+    setLoading(true);
+    setError(null);
+    try {
+      const res = await fetch('/api/ai/brain/snapshots?days=30', { method: 'GET' });
+      if (!res.ok) throw new Error(`HTTP ${res.status}`);
+      const json = (await res.json()) as SnapshotsApiResponse;
+      if (!json?.ok) throw new Error('Snapshots API ni vrnil rezultata');
+      setData(json);
+    } catch (e: any) {
+      setError(e?.message ?? 'Napaka');
+    } finally {
+      setLoading(false);
+    }
+  }, []);
+
+  useEffect(() => {
+    fetchSnapshots();
+  }, [fetchSnapshots]);
+
+  const triggerSave = useCallback(async () => {
+    setSaving(true);
+    try {
+      const res = await fetch('/api/ai/brain/snapshots', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ force: true }),
+      });
+      if (!res.ok) throw new Error(`HTTP ${res.status}`);
+      const json = await res.json();
+      if (!json?.ok) throw new Error(json?.error ?? 'Napaka pri shranjevanju');
+      toast.success(`✓ Snapshot shranjen za ${json.date}`);
+      // Refetch to show the new snapshot in the list
+      await fetchSnapshots();
+    } catch (e: any) {
+      toast.error(e?.message ?? 'Napaka pri shranjevanju snapshot-a');
+    } finally {
+      setSaving(false);
+    }
+  }, [fetchSnapshots]);
+
+  const snapshots = data?.snapshots ?? [];
+  const hasSnapshots = snapshots.length > 0;
+
+  return (
+    <div className="rounded-xl border border-emerald-500/30 bg-emerald-500/5 p-3 sm:p-4">
+      {/* Header row */}
+      <div className="flex items-center justify-between gap-2 mb-2 min-w-0 flex-wrap">
+        <div className="flex items-center gap-2 min-w-0">
+          <Camera className="w-4 h-4 text-emerald-600 dark:text-emerald-400 shrink-0" />
+          <span className="text-sm font-bold tracking-tight">
+            📸 Brain Snapshots
+          </span>
+          <Badge variant="outline" className="text-[9px] border-emerald-500/40 text-emerald-700 dark:text-emerald-400 shrink-0">
+            v8.23
+          </Badge>
+          {hasSnapshots && (
+            <Badge variant="outline" className="text-[9px] border-emerald-500/30 text-emerald-700/80 dark:text-emerald-400/80 shrink-0">
+              <History className="w-2.5 h-2.5 mr-0.5" />
+              {snapshots.length} {snapshots.length === 1 ? 'snapshot' : 'snapshotov'}
+            </Badge>
+          )}
+        </div>
+
+        {/* Manual save trigger — always available */}
+        <button
+          onClick={triggerSave}
+          disabled={saving}
+          className={cn(
+            'text-[10px] flex items-center gap-1 px-2 py-0.5 rounded border transition-colors',
+            'border-emerald-500/30 bg-emerald-500/10 text-emerald-700 dark:text-emerald-400',
+            'hover:bg-emerald-500/20 disabled:opacity-50 disabled:cursor-not-allowed',
+          )}
+        >
+          {saving ? <RefreshCw className="w-2.5 h-2.5 animate-spin" /> : <Save className="w-2.5 h-2.5" />}
+          {saving ? 'Shranjujem...' : 'Shrani snapshot zdaj'}
+        </button>
+      </div>
+
+      {/* Loading skeleton */}
+      {loading && (
+        <div className="flex gap-2 overflow-x-auto pb-1">
+          {[0, 1, 2, 3].map((i) => (
+            <Skeleton key={i} className="h-24 w-44 shrink-0 bg-emerald-500/10 rounded-lg" />
+          ))}
+        </div>
+      )}
+
+      {/* Error state */}
+      {!loading && error && (
+        <div className="flex items-center gap-2 text-xs text-red-600 dark:text-red-400">
+          <AlertCircle className="w-3.5 h-3.5 shrink-0" />
+          <span className="truncate">{error}</span>
+          <Button size="sm" variant="outline" onClick={fetchSnapshots} className="ml-auto h-6 px-2 text-[10px]">
+            Ponovi
+          </Button>
+        </div>
+      )}
+
+      {/* Empty state */}
+      {!loading && !error && !hasSnapshots && (
+        <div className="text-center py-6 px-4 border border-dashed border-emerald-500/30 rounded-lg">
+          <Camera className="w-8 h-8 mx-auto mb-2 text-emerald-500/50" />
+          <p className="text-xs text-muted-foreground mb-3">
+            Še ni shranjenih snapshot-ov.<br />
+            Shrani prvi snapshot za začetek zgodovine Master Brain napovedi.
+          </p>
+          <Button
+            size="sm"
+            onClick={triggerSave}
+            disabled={saving}
+            className="gap-1.5 bg-emerald-500/20 border border-emerald-500/40 text-emerald-700 dark:text-emerald-400 hover:bg-emerald-500/30"
+          >
+            {saving ? <RefreshCw className="w-3 h-3 animate-spin" /> : <Save className="w-3 h-3" />}
+            {saving ? 'Shranjujem...' : 'Shrani prvi snapshot'}
+          </Button>
+        </div>
+      )}
+
+      {/* Snapshots horizontal scroll list */}
+      {!loading && !error && hasSnapshots && (
+        <div className="space-y-2">
+          <div className="flex gap-2 overflow-x-auto pb-2 -mx-1 px-1" style={{ scrollbarWidth: 'thin' }}>
+            {snapshots.map((s) => {
+              // Predicted vs actual comparison (only available for snapshots
+              // older than 30d, when v8.25 backfill runs)
+              const hasActual30d = s.actualProfit30d != null;
+              const predictedVsActual = hasActual30d && s.projection30dEUR > 0
+                ? Math.round(((s.actualProfit30d ?? 0) / s.projection30dEUR) * 10000) / 100
+                : null;
+
+              return (
+                <div
+                  key={s.id}
+                  className="shrink-0 w-44 rounded-lg border border-emerald-500/20 bg-background/60 p-2 hover:border-emerald-500/40 transition-colors"
+                >
+                  {/* Date + grade */}
+                  <div className="flex items-center justify-between gap-1 mb-1.5">
+                    <span className="text-[10px] font-mono font-semibold text-muted-foreground">
+                      {s.date}
+                    </span>
+                    <Badge variant="outline" className={cn('text-[9px] font-bold px-1.5 py-0', gradeColor(s.healthGrade))}>
+                      {s.healthGrade}
+                    </Badge>
+                  </div>
+
+                  {/* Overall health + risk level */}
+                  <div className="flex items-center gap-1 mb-1">
+                    <span className="text-[9px] text-muted-foreground">Zdravje:</span>
+                    <span className="text-[10px] font-bold">
+                      {Math.round(s.overallHealth)}/100
+                    </span>
+                    <Badge variant="outline" className={cn('text-[8px] px-1 py-0 ml-auto', riskLevelColor(s.riskLevel))}>
+                      {s.riskLevel}
+                    </Badge>
+                  </div>
+
+                  {/* Predicted 30d profit */}
+                  <div className="rounded bg-emerald-500/10 border border-emerald-500/20 p-1 text-center mb-1">
+                    <div className="text-[8px] uppercase text-muted-foreground">Napoved 30d</div>
+                    <div className="text-xs font-bold text-emerald-700 dark:text-emerald-400">
+                      {Math.round(s.projection30dEUR)}€
+                    </div>
+                  </div>
+
+                  {/* Accuracy (if backfilled) */}
+                  {hasActual30d && predictedVsActual != null ? (
+                    <div className="rounded bg-indigo-500/10 border border-indigo-500/20 p-1 text-center">
+                      <div className="text-[8px] uppercase text-muted-foreground">Dejansko / Napoved</div>
+                      <div className={cn(
+                        'text-[10px] font-bold',
+                        predictedVsActual >= 80 ? 'text-emerald-600 dark:text-emerald-400'
+                          : predictedVsActual >= 50 ? 'text-amber-600 dark:text-amber-400'
+                          : 'text-red-600 dark:text-red-400',
+                      )}>
+                        {Math.round(s.actualProfit30d ?? 0)}€ · {predictedVsActual}%
+                      </div>
+                    </div>
+                  ) : (
+                    <div className="text-[9px] text-muted-foreground italic text-center">
+                      ⏳ Čaka 30d za primerjavo
+                    </div>
+                  )}
+
+                  {/* Top action + conflict count */}
+                  <div className="flex items-center justify-between text-[8px] text-muted-foreground mt-1 pt-1 border-t border-emerald-500/10">
+                    <span>🎯 {s.topActionCount}</span>
+                    <span>⚠️ {s.conflictCount}</span>
+                    <span>💪 {s.strengthCount}</span>
+                  </div>
+                </div>
+              );
+            })}
+          </div>
+
+          {/* Summary footer */}
+          <div className="flex flex-wrap items-center justify-between gap-2 pt-1 border-t border-emerald-500/20 text-[10px]">
+            <div className="flex items-center gap-3 text-muted-foreground">
+              <span>
+                Povprečno zdravje: <span className="font-bold text-foreground">{Math.round(data?.summary.avgOverallHealth ?? 0)}/100</span>
+              </span>
+              <span>
+                Povprečna napoved 30d: <span className="font-bold text-foreground">{Math.round(data?.summary.avgProjection30d ?? 0)}€</span>
+              </span>
+            </div>
+            <button
+              onClick={fetchSnapshots}
+              className="text-[9px] text-muted-foreground hover:text-foreground flex items-center gap-1"
+            >
+              <RefreshCw className="w-2.5 h-2.5" />
+              Osveži
+            </button>
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
 // --- Master Brain BANNER (v8.22, gold/amber gradient) --------------------
 //
 // This is the APEX of the Brain hierarchy — sits ON TOP of all 7 Domain Brain
@@ -1884,7 +2410,19 @@ function MasterBrainBanner() {
   );
 }
 
-// --- Outer card wrapper (v8.22 Master + v8.15-v8.21 7 Domains) --------------------
+// --- Outer card wrapper (v8.23 Validation + v8.22 Master + v8.15-v8.21 7 Domains) --------------------
+//
+// v8.23 NEW PHASE: Validation — "Ali lahko zaupaš Master Brain-u?"
+//
+// New visual hierarchy (top → bottom):
+//   1. 📊 Actual Profit Card (v8.23, indigo) — GROUND TRUTH first, before
+//      any predictions. Shows real EUR profit from Trade table.
+//   2. 🧠✨ Master Brain Banner (v8.22, gold/amber) — PREDICTIONS.
+//      Synthesizes 7 Domain Brains into ONE decision.
+//   3. 🧠📦📈🎯🛡️👥💶 7 Domain Brain sections (v8.15-v8.21) — detailed
+//      drill-down into each domain.
+//   4. 📸 Brain Snapshots section (v8.23, emerald) — historical record of
+//      Master Brain predictions, foundation for v8.25 Historical Accuracy.
 
 function BrainSynthesisCard({ onBrainCategoryClick }: { onBrainCategoryClick: () => void }) {
   return (
@@ -1897,7 +2435,7 @@ function BrainSynthesisCard({ onBrainCategoryClick }: { onBrainCategoryClick: ()
               AI BRAIN SYNTHESIS
             </span>
             <Badge variant="outline" className="text-[10px] border-primary/40 text-primary shrink-0">
-              v8.22 Master + v8.15-v8.21 (7 Domains)
+              v8.23 Validation + v8.22 Master + v8.15-v8.21 (7 Domains)
             </Badge>
           </div>
           <button
@@ -1908,8 +2446,13 @@ function BrainSynthesisCard({ onBrainCategoryClick }: { onBrainCategoryClick: ()
           </button>
         </div>
 
+        {/* v8.23: GROUND TRUTH first — actual profit from Trade table */}
+        <ActualProfitCard />
+
+        {/* v8.22: PREDICTIONS — Master Brain synthesizes 7 Domain Brains */}
         <MasterBrainBanner />
 
+        {/* v8.15-v8.21: 7 Domain Brain sections — detailed drill-down */}
         <ProfitBrainSection />
         <InventoryBrainSection />
         <MarketBrainSection />
@@ -1917,6 +2460,9 @@ function BrainSynthesisCard({ onBrainCategoryClick }: { onBrainCategoryClick: ()
         <RiskBrainSection />
         <BuyerBrainSection />
         <PricingBrainSection />
+
+        {/* v8.23: Historical record of Master Brain predictions — foundation for v8.25 */}
+        <BrainSnapshotsSection />
       </CardContent>
     </Card>
   );
@@ -2214,6 +2760,16 @@ export function AIHubView() {
                         {ep.category === 'brain' && ep.name === 'brain/master' && (
                           <Badge variant="outline" className="text-[9px] border-amber-500/50 text-amber-700 dark:text-amber-400 shrink-0 font-bold">
                             v8.22 · FINAL
+                          </Badge>
+                        )}
+                        {ep.category === 'brain' && ep.name === 'brain/actual-profit' && (
+                          <Badge variant="outline" className="text-[9px] border-indigo-500/50 text-indigo-700 dark:text-indigo-400 shrink-0 font-bold">
+                            v8.23 · GROUND TRUTH
+                          </Badge>
+                        )}
+                        {ep.category === 'brain' && ep.name === 'brain/snapshots' && (
+                          <Badge variant="outline" className="text-[9px] border-emerald-500/50 text-emerald-700 dark:text-emerald-400 shrink-0 font-bold">
+                            v8.23 · VALIDATION
                           </Badge>
                         )}
                       </div>
