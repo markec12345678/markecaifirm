@@ -6,12 +6,152 @@ Format sledi [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), verzije s
 
 ## [Unreleased]
 
-Načrtovano za v8.22+:
-- **Master Brain** (final orchestration layer) — orkestrira vseh 7 Domain Brain-ov (Profit + Inventory + Market + Sourcing + Risk + Buyer + Pricing) v ENO končno odločitev: TOP 5 akcij za danes, 30d/90d/12m strategija, master grade
+Brain architecture je dokončan (v8.22 Master Brain = FINAL layer). Naslednje verzije bodo fokus na refinements, optimizacije in nove specialist-e pod obstoječo Brain hierarhijo:
+
 - WebSocket real-time negotiation (SSE namesto polling)
 - Playwright E2E testi za glavne flow-e
 - TLS fingerprinting (curl-impersonate)
 - ML model za buyer matchmaker (fine-tuned na realnem data)
+- Performance optimizations za Master Brain (cached partial results per domain)
+- Additional conflict detection tipi (npr. Inventory vs Buyer — supply/demand mismatch)
+- Per-domain DB injection v Master Brain route (zaenkrat se zanaša na individualne Domain Brain route-e za DB state)
+
+## [8.22.0] - 2026-08-28
+
+### Added — 🧠✨ Master Brain (FINAL Brain layer — APEX hierarchy, orkestrira vseh 7 Domain Brain-ov v ENO končno odločitev)
+
+- **Master Brain** — `GET+POST /api/ai/brain/master`
+  - NOV FINAL ARCHITECTURAL LAYER: vrhunec Brain arhitekture. Sedi NAD vsemi 7
+    Domain Brain-i (Profit v8.15, Inventory v8.16, Market v8.17, Sourcing v8.18,
+    Risk v8.19, Buyer Brain v8.20, Pricing v8.21) in sintetizira njihove izhode
+    v ENO končno odločitev ki odgovarja na vprašanje "Kaj naj naredim danes?".
+    To je "zavest" nad 7 "možganskimi regijami" — zadnji orkestracijski layer.
+  - PARALLEL TS IMPORTS (NE HTTP): pokliče vseh 7 Domain Brain funkcij vzporedno
+    preko `Promise.all([profitBrain(), inventoryBrain(), marketBrain(),
+    sourcingBrain(), riskBrain(), buyerBrain(), pricingBrain()])`. NE pošilja
+    HTTP zahtevkov — direktni TypeScript import-i. Tako ni fan-out overhead
+    in rezultat je na voljo takoj (v <50ms za vseh 7 domen).
+  - TOP 5 AKCIJ RANKED: zbere 21+ akcij (3 per domena × 7 domen) in jih
+    ranked-a po `expectedUpliftEUR × confidenceWeight × domainWeight`:
+    - confidenceWeight: HIGH=1.0, MEDIUM=0.7, LOW=0.4 (mirror of all 7 Domain Brains).
+    - domainWeight: risk=1.3 (highest — risk mitigation is most critical),
+      profit=1.2 (revenue-generating gets premium), pricing=1.1, sourcing=1.1
+      (direct € impact), inventory=1.0 (baseline), market=1.0 (baseline),
+      buyer=0.9 (slower-acting, lower short-term weight).
+    - Tiebreaker: domain priority (risk > profit > pricing > sourcing > inventory > market > buyer).
+    - Result: exactly 5 actions, ranked 1-5, with domain + signal + action +
+      expectedUpliftEUR + confidence + domainWeight + finalScore.
+  - CONFLICT DETECTION (5 tipov): zazna kontradikcije med domeni:
+    1. **Profit vs Risk** (HIGH severity): če Profit top action vsebuje
+       "skaliraj"/"povečaj"/"buy more"/"scaling"/"dodaj" IN Risk concentration
+       score < 40 (HIGH risk). Resolution: "Skaliraj postopno (25% naenkrat)
+       in diverzificiraj vire".
+    2. **Market vs Inventory** (HIGH severity): če Market inferredCyclePhase
+       === 'MARKDOWN' (falling prices) IN Inventory aging score < 50 (stale
+       inventory). Resolution: "Likvidiraj stale iteme s 15-20% popustom ne
+       glede na market fazo".
+    3. **Sourcing vs Pricing** (MEDIUM severity): če Sourcing bestSource
+       avgProfitMarginPct < 20% IN Pricing margin score < 50. Resolution:
+       "Prestavi sourcing v high-margin vire IN zvišaj cene na high-demand itemih".
+    4. **Buyer vs Risk** (MEDIUM severity): če Buyer churnRatePct > 15% IN
+       Risk fraud score < 50. Resolution: "Kreiraj blacklist sumljivih kupcev
+       + reactivation kampanja z 10% popustom za zveste".
+    5. **Pricing vs Market** (MEDIUM severity): če Pricing recommendedPriceChangePct
+       > 0 (raise prices) IN Market inferredSentiment === 'BEARISH'. Resolution:
+       "Zadrži dvig za 30d, fokus na bundle value namesto cene".
+    - Each conflict detected only if BOTH conditions met; otherwise no conflict.
+  - OVERALL HEALTH SCORE (0-100 weighted): weighted average of all 7 domain
+    gradeScores:
+    - HEALTH_WEIGHTS: profit 0.20, risk 0.20, inventory 0.15, market 0.15,
+      sourcing 0.10, buyer 0.10, pricing 0.10 (profit + risk weighted highest
+      ker profit sustainability requires both top-line growth AND risk containment).
+    - gradeToScore: A+=95, A=80, B=65, C=50, D=35, F=15.
+    - gradeFromScore (inverse): score >= 90 → A+, >= 75 → A, >= 60 → B, >= 40 → C,
+      >= 20 → D, else F.
+    - riskLevel: LOW (>= 70), MEDIUM (>= 50), HIGH (>= 30), CRITICAL (else).
+    - bottlenecks: domains with grade D or F (weakest links).
+    - strengths: domains with grade A+ or A (strongest links).
+  - STRATEGY PROJECTIONS (30d / 90d / 12m):
+    - projection30d.profitEUR: sum of EUR-profit projections from profit +
+      sourcing + pricing + buyer domains (inventory, market, risk skipped —
+      not directly EUR profit):
+      - profit domain: `maximization.projection30d` (scalar EUR/mo)
+      - sourcing domain: `maximization.projection30d.projectedTotalMonthlyProfit`
+      - pricing domain: `maximization.projection30d.projectedRevenue`
+      - buyer domain: `projection30d.projectedActiveBuyers × current.avgOrderValue`
+    - projection90d.profitEUR: same formula as 30d but with 90d projections.
+    - projection12m.profitEUR: `projection90d × 4 × 0.9` (compounded 4 quarters,
+      with 10% uncertainty discount for long-term forecast).
+    - riskScore: from Risk Brain's `current.overallRiskScore` (lower = more risk),
+      INVERTED for display (so higher number = higher risk severity). Defaults
+      to 50 if Risk Brain skipped.
+    - 30d/90d riskScore improves by 15%/30% respectively (assuming top risk
+      actions executed).
+    - keyMilestone: human-readable based on topAction (e.g. "30d: izvedi #1
+      market akcijo (+3133€)", "90d: skaliraj profit do 3833€/mo", "12m:
+      gradnja stabilnega sistema · 13800€ projekcija").
+  - ONE-LINE SUMMARY: `Danes: ${topActions[0].action}. 30d: ${projection30d.profitEUR}€.
+    Tveganje: ${riskScore}/100. Zdravje: ${grade}.` — direct answer to
+    "Kaj naj naredim danes?". Action text truncated to 80 chars for readability.
+  - NO DB INJECTION at Master Brain level — posamezne Domain Brain-i sami
+    injicirajo DB state preko svojih route-ov (Profit, Inventory, Market,
+    Sourcing, Risk, Buyer, Pricing). Master Brain samo pokliče brain funkcije
+    z input-i (ki lahko prihajajo iz POST body).
+  - **10-minute cache** (TTL 600000ms — longer than 5-min individual Domain
+    Brain cache ker agregira 7 Brain-ov in je rezultat stabilen): cache key =
+    `master-brain:${hashOfInputs}` (stable JSON serialization of profitInput +
+    inventoryInput + marketInput + sourcingInput + riskInput + buyerInput +
+    pricingInput + skipX flags, sorted recursively for deterministic key).
+    On cache hit, `cachedAt` re-stamped to Date.now() so caller sees fresh
+    "served at" timestamp.
+  - source: "v8.22-master-brain"
+  - GET+POST shared handler `handleMasterBrain` (AI Hub runner compatibility —
+    hits either method), runtime='nodejs', dynamic='force-dynamic', maxDuration=60,
+    try/catch with logger.error → 500 { error }, parse inputs from both query
+    string and JSON body (POST takes precedence over query).
+  - Pure compute module: `src/lib/brain/master.ts` — NO `next/server` import,
+    NO Prisma calls (state injected by caller via MasterBrainInput). Fully
+    testable in isolation and deterministic given the same input. ASYNC function
+    (returns Promise) ker individual Domain Brain-i se lahko v prihodnosti
+    spremenijo v async (e.g. DB-backed state injection inside brain itself).
+    Promise.all() ohranja parallel call contract.
+  - Endpoint: `src/app/api/ai/brain/master/route.ts` — osmi endpoint v nested
+    subdirectory pod `src/app/api/ai/brain/`. Avtomatsko odkrit z `/api/ai-list`
+    (ki je bil nadgrajen v v8.15 za recursive depth-2 discovery).
+  - AI Hub: `BrainSynthesisCard` dobi **Master Brain BANNER** na vrhu (gold/
+    amber gradient — `border-2 border-amber-500/40 bg-gradient-to-br
+    from-amber-500/15 via-yellow-500/10 to-orange-500/5`). Crown icon (lucide-react)
+    z 🧠✨ MASTER BRAIN heading in v8.22 badge + "FINAL · APEX" badge. Banner
+    fetch-a `/api/ai/brain/master` independentno (ločeno od 7 domain fetch-ov)
+    in prikazuje: (1) oneLineSummary (large, centered, prominent), (2) overallHealth
+    grade pill + score (e.g. "C · 50/100") + riskLevel pill (color-coded), (3)
+    TOP 5 AKCIJ ZA DANES numbered list (1-5) z domain icon + action + upliftEUR
+    + confidence pill, (4) Strategy pills 30d / 90d / 12m (3 pills side by side
+    z profitEUR + riskScore), (5) Conflicts section (if any) s severity color
+    (HIGH=red, MEDIUM=amber), (6) Bottlenecks/Strengths row (weakest + strongest
+    domains z domain icons). Refresh button. The 7 domain sections ostajajo
+    BELOW the banner za detailed drill-down. Visual hierarchy: Master Brain
+    banner (top, prominent, gold/amber) → 7 Domain Brain sections (below, detailed,
+    emerald + amber + sky + purple + rose + cyan + lime).
+  - **🎯 FINAL MILESTONE: v8.22 zaključuje celotno Brain arhitekturo. 7 Domain
+    Brains (42 signalov) + 1 Master Brain = hierarhija specialist → domain →
+    master. Maksimalna inteligenca 412 specialistov, organizirana v eno
+    zavestno odločitev.**
+
+### Stats
+- AI endpoints: 411 → 412 (+1)
+- Total API routes: 588 → 589 (+1)
+- Osmi in ZADNJI Brain layer v arhitekturi (above all 7 Domain Brains: Profit v8.15, Inventory v8.16, Market v8.17, Sourcing v8.18, Risk v8.19, Buyer v8.20, Pricing v8.21)
+- TOP 5 ranked actions across 21+ actions from 7 domains (finalScore = uplift × confidence × domainWeight)
+- 5 conflict detection types between domains (Profit-Risk, Market-Inventory, Sourcing-Pricing, Buyer-Risk, Pricing-Market)
+- overallHealth score 0-100 (weighted: profit 0.20 + risk 0.20 + inventory 0.15 + market 0.15 + sourcing 0.10 + buyer 0.10 + pricing 0.10)
+- 30d/90d/12m strategy projections (12m = 90d × 4 × 0.9 compounded)
+- bottlenecks (D/F domains) + strengths (A+/A domains) identification
+- ONE oneLineSummary answering "Kaj naj naredim danes?"
+- Pure deterministic compute (aiUsed: false, no AI/LLM SDK)
+- 10-minute cache (600000ms TTL — longer than 5-min individual Brain cache ker agregira 7 domen, cachedAt stamp on cache hit)
+- Parallel TS imports (Promise.all of 7 Domain Brain functions — NO HTTP fan-out)
+- 🎯 FINAL MILESTONE: Brain architecture COMPLETE (7 Domain + 1 Master = 8 brain layers, 42+ signals → 1 decision)
 
 ## [8.21.0] - 2026-08-28
 

@@ -71,7 +71,19 @@
  * own loading skeleton, error state, refresh button, and cache indicator.
  *
  * MILESTONE: All 7 Domain Brains complete (Profit + Inventory + Market +
- * Sourcing + Risk + Buyer + Pricing). Next: v8.22 Master Brain.
+ * Sourcing + Risk + Buyer + Pricing).
+ *
+ * v8.22: Added Master Brain BANNER on TOP of BrainSynthesisCard (above the 7
+ * domain sections). Master Brain is the FINAL orchestration layer — it
+ * calls all 7 Domain Brain functions in PARALLEL via direct TS imports
+ * (NOT HTTP), synthesizes 21+ actions into TOP 5 ranked actions, detects
+ * conflicts between domains, computes overallHealth score, generates
+ * 30d/90d/12m strategy, and returns ONE oneLineSummary answering:
+ * "Kaj naj naredim danes?" The 7 domain sections remain BELOW the banner
+ * for detailed drill-down.
+ * Visual hierarchy: Master Brain banner (top, gold/amber gradient) → 7
+ * Domain Brain sections (below, detailed).
+ * 🎯 FINAL MILESTONE: Brain architecture COMPLETE (7 Domain + 1 Master = 8 layers).
  *
  * Lazy-loaded z next/dynamic (ssr: false) — ne bremeni prvotnega nalaganja.
  */
@@ -89,7 +101,7 @@ import {
   DialogTitle,
   DialogDescription,
 } from '@/components/ui/dialog';
-import { Sparkles, Search, Copy, Check, RefreshCw, Zap, X, ChevronRight, Brain, AlertCircle, Package, TrendingUp, Target, Shield, Users, Coins } from 'lucide-react';
+import { Sparkles, Search, Copy, Check, RefreshCw, Zap, X, ChevronRight, Brain, AlertCircle, Package, TrendingUp, Target, Shield, Users, Coins, Crown } from 'lucide-react';
 import { toast } from 'sonner';
 import { cn } from '@/lib/utils';
 
@@ -121,9 +133,12 @@ function categorize(name: string): string {
   return 'misc';
 }
 
-// ===== Brain Synthesis Card (v8.15 + v8.16 + v8.17 + v8.18 + v8.19 + v8.20 + v8.21) =====
+// ===== Brain Synthesis Card (v8.22 Master + v8.15-v8.21 7 Domains) =====
 //
-// Renders ALL SEVEN Brain layers stacked inside one Card:
+// Renders ONE Master Brain BANNER on top + ALL SEVEN Domain Brain layers
+// stacked below inside one Card:
+//   - 🧠✨ MASTER BRAIN (v8.22, gold/amber gradient) — FINAL orchestration
+//     layer that synthesizes ALL 7 Domain Brain outputs into ONE decision.
 //   - 🧠 PROFIT BRAIN (v8.15, emerald) — synthesizes 6 profit signals
 //   - 📦 INVENTORY BRAIN (v8.16, amber) — synthesizes 6 inventory signals
 //   - 📈 MARKET BRAIN (v8.17, sky/blue) — synthesizes 6 market signals
@@ -132,8 +147,13 @@ function categorize(name: string): string {
 //   - 👥 BUYER BRAIN (v8.20, cyan/teal) — synthesizes 6 buyer signals
 //   - 💶 PRICING BRAIN (v8.21, green/lime) — synthesizes 6 pricing signals
 //
-// All seven sections fetch in parallel on mount and have independent loading,
-// error, refresh, and cache states.
+// The Master Brain banner fetches `/api/ai/brain/master` independently and
+// displays: oneLineSummary, overallHealth grade + riskLevel, TOP 5 ranked
+// actions across all 7 domains, 30d/90d/12m strategy pills, conflicts,
+// bottlenecks/strengths. The 7 domain sections fetch in parallel for
+// detailed drill-down.
+// Visual hierarchy: Master Brain banner (top, prominent) → 7 Domain Brain
+// sections (below, detailed).
 
 interface BrainAction {
   rank: number;
@@ -1565,7 +1585,306 @@ function PricingBrainSection() {
   );
 }
 
-// --- Outer card wrapper (v8.15 + v8.16 + v8.17 + v8.18 + v8.19 + v8.20 + v8.21) --------------------
+// --- Master Brain BANNER (v8.22, gold/amber gradient) --------------------
+//
+// This is the APEX of the Brain hierarchy — sits ON TOP of all 7 Domain Brain
+// sections inside BrainSynthesisCard. Master Brain synthesizes 21+ actions
+// from 7 domains into ONE final decision: TOP 5 ranked actions + 30d/90d/12m
+// strategy + conflict detection + overallHealth score + oneLineSummary.
+
+type DomainName = 'profit' | 'inventory' | 'market' | 'sourcing' | 'risk' | 'buyer' | 'pricing';
+
+interface MasterBrainResult {
+  ok: true;
+  domainSummary: Array<{
+    name: DomainName;
+    grade: 'A+' | 'A' | 'B' | 'C' | 'D' | 'F';
+    gradeScore: number;
+    bestOpportunity: string;
+    oneLineSummary: string;
+  }>;
+  topActions: Array<{
+    rank: number;
+    domain: DomainName;
+    signal: string;
+    action: string;
+    expectedUpliftEUR: number;
+    confidence: 'HIGH' | 'MEDIUM' | 'LOW';
+    domainWeight: number;
+    finalScore: number;
+  }>;
+  conflicts: Array<{
+    id: string;
+    domainA: DomainName;
+    domainB: DomainName;
+    description: string;
+    resolution: string;
+    severity: 'LOW' | 'MEDIUM' | 'HIGH';
+  }>;
+  overallHealth: {
+    score: number;
+    grade: 'A+' | 'A' | 'B' | 'C' | 'D' | 'F';
+    riskLevel: 'LOW' | 'MEDIUM' | 'HIGH' | 'CRITICAL';
+    bottlenecks: DomainName[];
+    strengths: DomainName[];
+  };
+  strategy: {
+    projection30d: { profitEUR: number; riskScore: number; keyMilestone: string };
+    projection90d: { profitEUR: number; riskScore: number; keyMilestone: string };
+    projection12m: { profitEUR: number; riskScore: number; keyMilestone: string };
+  };
+  oneLineSummary: string;
+  aiUsed: false;
+  source: string;
+  cachedAt?: number;
+}
+
+const DOMAIN_LABELS: Record<DomainName, { icon: string; label: string; color: string }> = {
+  profit: { icon: '🧠', label: 'Profit', color: 'text-emerald-600 dark:text-emerald-400' },
+  inventory: { icon: '📦', label: 'Inventar', color: 'text-amber-600 dark:text-amber-400' },
+  market: { icon: '📈', label: 'Trg', color: 'text-sky-600 dark:text-sky-400' },
+  sourcing: { icon: '🎯', label: 'Sourcing', color: 'text-purple-600 dark:text-purple-400' },
+  risk: { icon: '🛡️', label: 'Tveganje', color: 'text-rose-600 dark:text-rose-400' },
+  buyer: { icon: '👥', label: 'Kupci', color: 'text-cyan-600 dark:text-cyan-400' },
+  pricing: { icon: '💶', label: 'Cene', color: 'text-lime-700 dark:text-lime-400' },
+};
+
+function conflictSeverityColor(severity: string): string {
+  switch (severity) {
+    case 'HIGH':
+      return 'text-red-600 dark:text-red-400 border-red-500/30 bg-red-500/5';
+    case 'MEDIUM':
+      return 'text-amber-600 dark:text-amber-400 border-amber-500/30 bg-amber-500/5';
+    default:
+      return 'text-zinc-600 dark:text-zinc-400 border-zinc-500/30 bg-zinc-500/5';
+  }
+}
+
+function MasterBrainBanner() {
+  const [data, setData] = useState<MasterBrainResult | null>(null);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
+
+  const fetchMaster = useCallback(async () => {
+    setLoading(true);
+    setError(null);
+    try {
+      const res = await fetch('/api/ai/brain/master', { method: 'GET' });
+      if (!res.ok) throw new Error(`HTTP ${res.status}`);
+      const json = (await res.json()) as MasterBrainResult;
+      if (!json?.ok) throw new Error(json?.source ? 'Master Brain ni vrnil rezultata' : 'Napaka');
+      setData(json);
+    } catch (e: any) {
+      setError(e?.message ?? 'Napaka');
+    } finally {
+      setLoading(false);
+    }
+  }, []);
+
+  useEffect(() => {
+    fetchMaster();
+  }, [fetchMaster]);
+
+  return (
+    <div className="rounded-xl border-2 border-amber-500/40 bg-gradient-to-br from-amber-500/15 via-yellow-500/10 to-orange-500/5 p-3 sm:p-4 shadow-sm">
+      {/* Header row */}
+      <div className="flex items-center justify-between gap-2 mb-2.5 min-w-0">
+        <div className="flex items-center gap-2 min-w-0">
+          <Crown className="w-5 h-5 text-amber-600 dark:text-amber-400 shrink-0" />
+          <span className="text-base sm:text-lg font-bold tracking-tight">
+            🧠✨ MASTER BRAIN
+          </span>
+          <Badge variant="outline" className="text-[10px] border-amber-500/50 text-amber-700 dark:text-amber-400 shrink-0 font-bold">
+            v8.22
+          </Badge>
+          <Badge variant="outline" className="text-[9px] border-amber-500/30 text-amber-700/80 dark:text-amber-400/80 shrink-0">
+            FINAL · APEX
+          </Badge>
+        </div>
+        {data?.cachedAt && (
+          <Badge variant="outline" className="text-[9px] text-muted-foreground border-muted shrink-0">
+            cache {Math.round((Date.now() - data.cachedAt) / 1000)}s
+          </Badge>
+        )}
+      </div>
+
+      {/* Loading skeleton */}
+      {loading && (
+        <div className="space-y-2">
+          <Skeleton className="h-6 w-full bg-amber-500/10" />
+          <Skeleton className="h-4 w-3/4 bg-amber-500/10" />
+          <div className="grid grid-cols-5 gap-2 pt-1">
+            <Skeleton className="h-8 bg-amber-500/10" />
+            <Skeleton className="h-8 bg-amber-500/10" />
+            <Skeleton className="h-8 bg-amber-500/10" />
+            <Skeleton className="h-8 bg-amber-500/10" />
+            <Skeleton className="h-8 bg-amber-500/10" />
+          </div>
+        </div>
+      )}
+
+      {/* Error state */}
+      {!loading && error && (
+        <div className="flex items-center gap-2 text-xs text-red-600 dark:text-red-400">
+          <AlertCircle className="w-3.5 h-3.5 shrink-0" />
+          <span className="truncate">{error}</span>
+          <Button size="sm" variant="outline" onClick={fetchMaster} className="ml-auto h-6 px-2 text-[10px]">
+            Ponovi
+          </Button>
+        </div>
+      )}
+
+      {/* Main content */}
+      {!loading && !error && data && (
+        <div className="space-y-3">
+          {/* Big oneLineSummary (centered, prominent) */}
+          <p className="text-sm sm:text-base font-bold leading-snug text-center px-1">
+            {data.oneLineSummary}
+          </p>
+
+          {/* Overall health row: grade pill + score + riskLevel pill */}
+          <div className="flex items-center justify-center flex-wrap gap-2">
+            <Badge variant="outline" className={cn('text-xs font-bold px-3 py-1', gradeColor(data.overallHealth.grade))}>
+              Zdravje: {data.overallHealth.grade} · {Math.round(data.overallHealth.score)}/100
+            </Badge>
+            <Badge variant="outline" className={cn('text-[10px] px-2 py-0.5', riskLevelColor(data.overallHealth.riskLevel))}>
+              Risk: {data.overallHealth.riskLevel}
+            </Badge>
+          </div>
+
+          {/* TOP 5 AKCIJ ZA DANES */}
+          <div className="space-y-1">
+            <div className="text-[10px] uppercase tracking-wide text-amber-700/80 dark:text-amber-400/80 font-semibold">
+              🎯 TOP 5 AKCIJ ZA DANES
+            </div>
+            {data.topActions.length === 0 ? (
+              <p className="text-[11px] text-muted-foreground italic">Ni akcij</p>
+            ) : (
+              data.topActions.map((a) => {
+                const dm = DOMAIN_LABELS[a.domain] ?? { icon: '•', label: a.domain, color: 'text-foreground' };
+                return (
+                  <div key={a.rank} className="flex items-start gap-2 text-[11px] sm:text-xs leading-snug p-1.5 rounded bg-background/40">
+                    <span className="font-bold text-amber-700 dark:text-amber-400 shrink-0 w-4 text-center">
+                      {a.rank}.
+                    </span>
+                    <span className="shrink-0" title={dm.label}>
+                      {dm.icon}
+                    </span>
+                    <span className="flex-1 min-w-0">
+                      <span className="font-medium">{a.action}</span>
+                      <span className="text-muted-foreground"> · +{Math.round(a.expectedUpliftEUR)}€/mo</span>
+                    </span>
+                    <span className={cn('text-[9px] font-bold shrink-0', confidenceColor(a.confidence))}>
+                      {a.confidence}
+                    </span>
+                  </div>
+                );
+              })
+            )}
+          </div>
+
+          {/* Strategy pills: 30d / 90d / 12m */}
+          <div className="grid grid-cols-3 gap-1.5">
+            <div className="rounded border border-amber-500/30 bg-amber-500/5 p-1.5 text-center">
+              <div className="text-[9px] uppercase text-muted-foreground">30d</div>
+              <div className="text-xs font-bold text-amber-700 dark:text-amber-400">
+                {Math.round(data.strategy.projection30d.profitEUR)}€
+              </div>
+              <div className="text-[9px] text-muted-foreground">
+                risk {Math.round(data.strategy.projection30d.riskScore)}/100
+              </div>
+            </div>
+            <div className="rounded border border-amber-500/30 bg-amber-500/5 p-1.5 text-center">
+              <div className="text-[9px] uppercase text-muted-foreground">90d</div>
+              <div className="text-xs font-bold text-amber-700 dark:text-amber-400">
+                {Math.round(data.strategy.projection90d.profitEUR)}€
+              </div>
+              <div className="text-[9px] text-muted-foreground">
+                risk {Math.round(data.strategy.projection90d.riskScore)}/100
+              </div>
+            </div>
+            <div className="rounded border border-amber-500/40 bg-amber-500/10 p-1.5 text-center">
+              <div className="text-[9px] uppercase text-muted-foreground">12m</div>
+              <div className="text-xs font-bold text-amber-700 dark:text-amber-400">
+                {Math.round(data.strategy.projection12m.profitEUR)}€
+              </div>
+              <div className="text-[9px] text-muted-foreground">
+                risk {Math.round(data.strategy.projection12m.riskScore)}/100
+              </div>
+            </div>
+          </div>
+
+          {/* Conflicts (if any) */}
+          {data.conflicts.length > 0 && (
+            <div className="space-y-1 pt-1 border-t border-amber-500/20">
+              <div className="text-[10px] uppercase tracking-wide text-amber-700/80 dark:text-amber-400/80 font-semibold flex items-center gap-1">
+                <AlertCircle className="w-3 h-3" />
+                KONFLIKTI ({data.conflicts.length})
+              </div>
+              {data.conflicts.map((c) => (
+                <div
+                  key={c.id}
+                  className={cn('rounded border p-1.5 text-[10px] leading-snug', conflictSeverityColor(c.severity))}
+                >
+                  <div className="font-semibold flex items-center gap-1">
+                    <span className="font-bold uppercase">{c.severity}</span>
+                    <span className="text-muted-foreground">·</span>
+                    <span>
+                      {DOMAIN_LABELS[c.domainA]?.icon ?? '•'} {c.domainA}
+                    </span>
+                    <span className="text-muted-foreground">vs</span>
+                    <span>
+                      {DOMAIN_LABELS[c.domainB]?.icon ?? '•'} {c.domainB}
+                    </span>
+                  </div>
+                  <div className="mt-0.5">{c.description}</div>
+                  <div className="mt-0.5 italic text-muted-foreground">→ {c.resolution}</div>
+                </div>
+              ))}
+            </div>
+          )}
+
+          {/* Bottlenecks / Strengths row */}
+          <div className="flex flex-wrap items-center gap-2 text-[10px] pt-1 border-t border-amber-500/20">
+            {data.overallHealth.bottlenecks.length > 0 && (
+              <div className="flex items-center gap-1 flex-wrap">
+                <span className="text-muted-foreground">⚠️ Ozka grla:</span>
+                {data.overallHealth.bottlenecks.map((d) => (
+                  <span key={d} className={cn('font-bold', DOMAIN_LABELS[d]?.color ?? '')}>
+                    {DOMAIN_LABELS[d]?.icon} {d}
+                  </span>
+                ))}
+              </div>
+            )}
+            {data.overallHealth.strengths.length > 0 && (
+              <div className="flex items-center gap-1 flex-wrap">
+                <span className="text-muted-foreground">💪 Moč:</span>
+                {data.overallHealth.strengths.map((d) => (
+                  <span key={d} className={cn('font-bold', DOMAIN_LABELS[d]?.color ?? '')}>
+                    {DOMAIN_LABELS[d]?.icon} {d}
+                  </span>
+                ))}
+              </div>
+            )}
+          </div>
+
+          {/* Refresh */}
+          <div className="flex justify-end">
+            <button
+              onClick={fetchMaster}
+              className="text-[9px] text-muted-foreground hover:text-foreground flex items-center gap-1"
+            >
+              <RefreshCw className="w-2.5 h-2.5" />
+              Osveži Master Brain
+            </button>
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
+// --- Outer card wrapper (v8.22 Master + v8.15-v8.21 7 Domains) --------------------
 
 function BrainSynthesisCard({ onBrainCategoryClick }: { onBrainCategoryClick: () => void }) {
   return (
@@ -1578,7 +1897,7 @@ function BrainSynthesisCard({ onBrainCategoryClick }: { onBrainCategoryClick: ()
               AI BRAIN SYNTHESIS
             </span>
             <Badge variant="outline" className="text-[10px] border-primary/40 text-primary shrink-0">
-              v8.15 + v8.16 + v8.17 + v8.18 + v8.19 + v8.20 + v8.21
+              v8.22 Master + v8.15-v8.21 (7 Domains)
             </Badge>
           </div>
           <button
@@ -1588,6 +1907,8 @@ function BrainSynthesisCard({ onBrainCategoryClick }: { onBrainCategoryClick: ()
             🧠 Možgani kategorija →
           </button>
         </div>
+
+        <MasterBrainBanner />
 
         <ProfitBrainSection />
         <InventoryBrainSection />
@@ -1888,6 +2209,11 @@ export function AIHubView() {
                         {ep.category === 'brain' && ep.name === 'brain/pricing' && (
                           <Badge variant="outline" className="text-[9px] border-lime-500/40 text-lime-700 dark:text-lime-400 shrink-0">
                             v8.21
+                          </Badge>
+                        )}
+                        {ep.category === 'brain' && ep.name === 'brain/master' && (
+                          <Badge variant="outline" className="text-[9px] border-amber-500/50 text-amber-700 dark:text-amber-400 shrink-0 font-bold">
+                            v8.22 · FINAL
                           </Badge>
                         )}
                       </div>

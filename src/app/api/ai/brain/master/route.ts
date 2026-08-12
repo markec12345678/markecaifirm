@@ -1,0 +1,255 @@
+// v8.22: Master Brain — GET+POST /api/ai/brain/master
+//
+// Master Brain is the FINAL orchestration layer ABOVE all 7 Domain Brains
+// (Profit v8.15, Inventory v8.16, Market v8.17, Sourcing v8.18, Risk v8.19,
+// Buyer v8.20, Pricing v8.21). It is the APEX of the Brain hierarchy —
+// the "consciousness" above the 7 "brain regions".
+//
+// How it works (v8.22):
+//   1. Calls all 7 Domain Brain functions in PARALLEL via direct TS imports
+//      (`Promise.all([profitBrain(), inventoryBrain(), ...])`) — NOT HTTP,
+//      so there is zero HTTP fan-out overhead.
+//   2. Collects all 21+ actions from 7 domains (3 per domain × 7 = 21 min).
+//   3. Detects CONFLICTS between domains (5 conflict types):
+//       - Profit vs Risk (volume scaling vs concentration)
+//       - Market vs Inventory (markdown phase vs stale stock)
+//       - Sourcing vs Pricing (low-margin sources vs weak pricing margin)
+//       - Buyer vs Risk (high churn vs fraud risk)
+//       - Pricing vs Market (raising prices in bearish market)
+//   4. Ranks TOP 5 actions across all 7 domains by:
+//       finalScore = expectedUpliftEUR × confidenceWeight × domainWeight
+//       - confidenceWeight: HIGH=1.0, MEDIUM=0.7, LOW=0.4
+//       - domainWeight: risk=1.3, profit=1.2, pricing=1.1, sourcing=1.1,
+//                       inventory=1.0, market=1.0, buyer=0.9
+//   5. Generates 30d / 90d / 12m strategy (30d/90d synthesized from EUR-profit
+//      domains: profit + sourcing + pricing + buyer; 12m = 90d × 4 × 0.9).
+//   6. Computes overallHealth score (0-100, weighted across 7 domain grades).
+//       - weights: profit 0.20, risk 0.20, inventory 0.15, market 0.15,
+//                 sourcing 0.10, buyer 0.10, pricing 0.10
+//   7. Identifies bottlenecks (D/F domains) + strengths (A+/A domains).
+//   8. Returns ONE oneLineSummary answering: "Kaj naj naredim danas?"
+//
+// DETERMINISTIC (aiUsed: false): no external AI/LLM SDK is called.
+// NO DB INJECTION at the Master Brain level — each individual Domain Brain
+// handles its own DB injection when called via its own route. When Master
+// Brain calls them directly with inputs (from POST body), they use those
+// inputs or fall back to their baked-in defaults.
+// 10-MIN CACHE: cache key = `master-brain:${hashOfInputs}`, TTL = 600000 ms.
+// (Longer than the 5-min cache of individual Domain Brains because Master
+// Brain aggregates 7 brains and is expensive to re-compute.)
+
+import { NextRequest, NextResponse } from 'next/server';
+import { logger } from '@/lib/logger';
+import { getCachedAI, setCachedAI } from '@/lib/ai-cache';
+import {
+  masterBrain,
+  type MasterBrainResult,
+  type MasterBrainInput,
+} from '@/lib/brain/master';
+
+export const runtime = 'nodejs';
+export const dynamic = 'force-dynamic';
+export const maxDuration = 60;
+
+// --- Cache TTL -----------------------------------------------------------
+// 10 minutes — longer than the 5-min cache of individual Domain Brains
+// because Master Brain aggregates 7 brains and the result is stable enough
+// that re-computing every 5 min is wasteful.
+const MASTER_CACHE_TTL_MS = 10 * 60 * 1000;
+
+// --- Input resolution ----------------------------------------------------
+
+/**
+ * Parse MasterBrainInput from BOTH query string (GET) and POST body.
+ *
+ * The MasterBrainInput is a NESTED object — each Domain Brain has its own
+ * input namespace (e.g. `profitInput`, `inventoryInput`, ...). We accept
+ * the entire nested structure in POST body, OR individual `skipX` flags
+ * via query string for quick experiments.
+ *
+ * POST body precedence: parsed JSON body wins over query string.
+ */
+async function resolveInputs(req: NextRequest): Promise<MasterBrainInput> {
+  let queryParams: URLSearchParams | null = null;
+  try {
+    const url = new URL(req.url);
+    queryParams = url.searchParams;
+  } catch {
+    queryParams = null;
+  }
+
+  let bodyParams: Record<string, unknown> | null = null;
+  if (req.method === 'POST') {
+    try {
+      const ct = req.headers.get('content-type') ?? '';
+      if (ct.includes('application/json')) {
+        const cloned = req.clone();
+        const parsed = (await cloned.json()) as Record<string, unknown>;
+        if (parsed && typeof parsed === 'object' && !Array.isArray(parsed)) {
+          bodyParams = parsed;
+        }
+      }
+    } catch {
+      bodyParams = null;
+    }
+  }
+
+  const lookup = (key: string): unknown => {
+    if (bodyParams && key in bodyParams) return bodyParams[key];
+    if (queryParams) {
+      const qv = queryParams.get(key);
+      if (qv != null && qv !== '') return qv;
+    }
+    return undefined;
+  };
+
+  const asBoolean = (key: string): boolean | undefined => {
+    const v = lookup(key);
+    if (v == null) return undefined;
+    if (typeof v === 'boolean') return v;
+    if (typeof v === 'string') {
+      const s = v.toLowerCase().trim();
+      if (s === 'true' || s === '1' || s === 'yes' || s === 'on') return true;
+      if (s === 'false' || s === '0' || s === 'no' || s === 'off') return false;
+    }
+    if (typeof v === 'number') return v !== 0;
+    return undefined;
+  };
+
+  const asObject = (key: string): Record<string, unknown> | undefined => {
+    const v = lookup(key);
+    if (v == null) return undefined;
+    if (typeof v === 'object' && !Array.isArray(v)) {
+      return v as Record<string, unknown>;
+    }
+    return undefined;
+  };
+
+  const input: MasterBrainInput = {};
+
+  // Per-domain input overrides — accept any nested object the caller provides.
+  // We do NOT validate each field here; the individual Domain Brain will
+  // sanitize/normalize via its own normalizeInput() function.
+  const profitInput = asObject('profitInput');
+  if (profitInput) input.profitInput = profitInput as MasterBrainInput['profitInput'];
+  const inventoryInput = asObject('inventoryInput');
+  if (inventoryInput) input.inventoryInput = inventoryInput as MasterBrainInput['inventoryInput'];
+  const marketInput = asObject('marketInput');
+  if (marketInput) input.marketInput = marketInput as MasterBrainInput['marketInput'];
+  const sourcingInput = asObject('sourcingInput');
+  if (sourcingInput) input.sourcingInput = sourcingInput as MasterBrainInput['sourcingInput'];
+  const riskInput = asObject('riskInput');
+  if (riskInput) input.riskInput = riskInput as MasterBrainInput['riskInput'];
+  const buyerInput = asObject('buyerInput');
+  if (buyerInput) input.buyerInput = buyerInput as MasterBrainInput['buyerInput'];
+  const pricingInput = asObject('pricingInput');
+  if (pricingInput) input.pricingInput = pricingInput as MasterBrainInput['pricingInput'];
+
+  // Skip flags — useful for performance when caller only wants a subset of domains
+  const skipProfit = asBoolean('skipProfit');
+  if (skipProfit != null) input.skipProfit = skipProfit;
+  const skipInventory = asBoolean('skipInventory');
+  if (skipInventory != null) input.skipInventory = skipInventory;
+  const skipMarket = asBoolean('skipMarket');
+  if (skipMarket != null) input.skipMarket = skipMarket;
+  const skipSourcing = asBoolean('skipSourcing');
+  if (skipSourcing != null) input.skipSourcing = skipSourcing;
+  const skipRisk = asBoolean('skipRisk');
+  if (skipRisk != null) input.skipRisk = skipRisk;
+  const skipBuyer = asBoolean('skipBuyer');
+  if (skipBuyer != null) input.skipBuyer = skipBuyer;
+  const skipPricing = asBoolean('skipPricing');
+  if (skipPricing != null) input.skipPricing = skipPricing;
+
+  return input;
+}
+
+// --- Cache key -----------------------------------------------------------
+
+/**
+ * Build a deterministic cache key from the resolved MasterBrainInput. Same
+ * input → same key → cache hit.
+ *
+ * We serialize each domain's input object as a sorted JSON string so the
+ * key is stable regardless of field order. Skip flags are appended as
+ * simple booleans.
+ */
+function buildCacheKey(input: MasterBrainInput): string {
+  const stableStringify = (obj: unknown): string => {
+    if (obj == null) return '';
+    if (typeof obj !== 'object') return String(obj);
+    try {
+      // Sort keys recursively for deterministic output
+      const seen = new WeakSet();
+      const sortDeep = (v: unknown): unknown => {
+        if (v == null || typeof v !== 'object') return v;
+        if (seen.has(v as object)) return '[Circular]';
+        seen.add(v as object);
+        if (Array.isArray(v)) return v.map(sortDeep);
+        const sorted: Record<string, unknown> = {};
+        for (const k of Object.keys(v as Record<string, unknown>).sort()) {
+          sorted[k] = sortDeep((v as Record<string, unknown>)[k]);
+        }
+        return sorted;
+      };
+      return JSON.stringify(sortDeep(obj));
+    } catch {
+      return '[Unstringifiable]';
+    }
+  };
+
+  const parts: string[] = [];
+  parts.push(`pi:${stableStringify(input.profitInput)}`);
+  parts.push(`ii:${stableStringify(input.inventoryInput)}`);
+  parts.push(`mi:${stableStringify(input.marketInput)}`);
+  parts.push(`si:${stableStringify(input.sourcingInput)}`);
+  parts.push(`ri:${stableStringify(input.riskInput)}`);
+  parts.push(`bi:${stableStringify(input.buyerInput)}`);
+  parts.push(`pri:${stableStringify(input.pricingInput)}`);
+  parts.push(`sP:${input.skipProfit ?? false}`);
+  parts.push(`sI:${input.skipInventory ?? false}`);
+  parts.push(`sM:${input.skipMarket ?? false}`);
+  parts.push(`sS:${input.skipSourcing ?? false}`);
+  parts.push(`sR:${input.skipRisk ?? false}`);
+  parts.push(`sB:${input.skipBuyer ?? false}`);
+  parts.push(`sPr:${input.skipPricing ?? false}`);
+  return `master-brain:${parts.join('|')}`;
+}
+
+// --- Handler -------------------------------------------------------------
+
+export async function GET(req: NextRequest) {
+  return handleMasterBrain(req);
+}
+
+export async function POST(req: NextRequest) {
+  return handleMasterBrain(req);
+}
+
+async function handleMasterBrain(req: NextRequest) {
+  try {
+    const input = await resolveInputs(req);
+
+    const cacheKey = buildCacheKey(input);
+    const cached = getCachedAI<MasterBrainResult>(cacheKey);
+    if (cached) {
+      // Re-stamp cachedAt so the caller sees a fresh "served at" timestamp.
+      const served: MasterBrainResult = {
+        ...cached,
+        cachedAt: Date.now(),
+      };
+      return NextResponse.json(served);
+    }
+
+    const result = await masterBrain(input);
+    setCachedAI(cacheKey, result, MASTER_CACHE_TTL_MS);
+
+    return NextResponse.json(result);
+  } catch (err: any) {
+    logger.error('/api/ai/brain/master', 'handler failed', err);
+    return NextResponse.json(
+      { error: err?.message ?? 'Napaka' },
+      { status: 500 },
+    );
+  }
+}

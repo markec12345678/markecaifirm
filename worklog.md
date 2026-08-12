@@ -15141,3 +15141,75 @@ Stage Summary:
 - Verzija aplikacije: v8.21.0
 - 🎯 MILESTONE: VSI 7 DOMAIN BRAIN LAYER-JEV ZAKLJUČENI (Profit + Inventory + Market + Sourcing + Risk + Buyer + Pricing) = 42 signalov sintetiziranih v 7 odločitev
 - Skupaj doslej (v7.50 → v8.21): 71 verzij, 193 novih funkcij; 7 Domain Brain layer-jev implementiranih — naslednji in zadnji korak: v8.22 Master Brain ki orkestrira vseh 7 Brain-ov v ENO končno odločitev (TOP 5 akcij za danes + 30d/90d/12m strategija + conflict resolution med Brain-i)
+
+---
+Task ID: v8.22
+Agent: full-stack-developer
+Task: Implement Master Brain — FINAL Brain layer, apex of hierarchy, orchestrates all 7 Domain Brains
+
+Work Log:
+- Prebral worklog.md (zadnje v8.21 entr-ije) in vseh 7 Domain Brain module popolnoma (profit.ts 481 vrstic, inventory.ts 554, market.ts 688, sourcing.ts 598, risk.ts 670, buyer.ts 584, pricing.ts 618) — razumel arhitekturo (specialist → domain → master)
+- Prebral src/app/api/ai/brain/pricing/route.ts kot endpoint template (~430 vrstic — runtime, cache, DB injection graceful, GET+POST shared handler)
+- Prebral src/components/dashboard/ai-hub-view.tsx (1930+ vrstic) — razumel BrainSynthesisCard strukturo (7 stacked domain sectionov, badge logic, import-i iz lucide-react)
+- Ustvaril src/lib/brain/master.ts (pure compute module — ASYNC, imports vseh 7 Domain Brain funkcij, synthesizes into 1 decision)
+  - Type definitions: DomainName, MasterBrainInput (z optional per-domain overrides + skipX flags), DomainResult, Conflict, MasterAction, MasterBrainResult
+  - Helper functions: clamp, round2, gradeToScore (A+=95, A=80, B=65, C=50, D=35, F=15), gradeFromScore, confidenceWeight (HIGH=1.0, MEDIUM=0.7, LOW=0.4)
+  - DOMAIN_WEIGHTS (action ranking): risk=1.3, profit=1.2, pricing=1.1, sourcing=1.1, inventory=1.0, market=1.0, buyer=0.9
+  - HEALTH_WEIGHTS (overallHealth): profit=0.20, risk=0.20, inventory=0.15, market=0.15, sourcing=0.10, buyer=0.10, pricing=0.10
+  - DOMAIN_TIEBREAKER: risk > profit > pricing > sourcing > inventory > market > buyer
+  - 7 extractXxxSummary() funkcij (profit, inventory, market, sourcing, risk, buyer, pricing) — extract grade + topActions + bestOpportunity from each Domain Brain result
+  - detectConflicts() — 5 conflict detection rules (Profit-Risk HIGH, Market-Inventory HIGH, Sourcing-Pricing MEDIUM, Buyer-Risk MEDIUM, Pricing-Market MEDIUM) — each detected only if BOTH conditions met
+  - synthesizeProfitProjection30d/90d() — sum of profit + sourcing.projection30d.projectedTotalMonthlyProfit + pricing.projection30d.projectedRevenue + buyer (projectedActiveBuyers × avgOrderValue)
+  - masterBrain(input) — main async entry, Promise.all 7 brain functions, builds domainSummary, ranks top 5 actions by finalScore, computes overallHealth, generates strategy projections (30d/90d/12m = 90d × 4 × 0.9), generates oneLineSummary
+  - Pure TypeScript — NO next/server import, NO Prisma calls, NO AI/LLM SDK
+- Ustvaril src/app/api/ai/brain/master/route.ts (GET+POST endpoint, 10-min cache, no direct DB injection)
+  - runtime='nodejs', dynamic='force-dynamic', maxDuration=60
+  - resolveInputs(): parse MasterBrainInput iz query string (GET) AND JSON body (POST) — supports nested profitInput/inventoryInput/marketInput/sourcingInput/riskInput/buyerInput/pricingInput + skipX boolean flags
+  - buildCacheKey(): stable JSON serialization (sorted keys recursively, WeakSet for circular refs) of all input fields → deterministic cache key
+  - MASTER_CACHE_TTL_MS = 10 * 60 * 1000 (10 minutes — longer than 5-min individual Domain Brain cache ker agregira 7 domen)
+  - GET+POST shared handler handleMasterBrain, aiUsed: false, source: "v8.22-master-brain"
+  - try/catch z logger.error → 500 { error: err?.message ?? 'Napaka' }
+  - JSDoc header z vsemi detail-i: parallel TS imports, TOP 5 ranking formula, 5 conflict types, overallHealth weights, 30d/90d/12m strategy, 10-min cache, FINAL MILESTONE note
+  - NO DB injection at Master Brain level — individual Domain Brain routes handle their own DB injection; Master Brain just calls brain functions with inputs from POST body
+- Spreminil src/components/dashboard/ai-hub-view.tsx (Master Brain banner on TOP of BrainSynthesisCard, above 7 domain sections)
+  - Dodal Crown icon v lucide-react imports (poleg Brain, AlertCircle, Package, TrendingUp, Target, Shield, Users, Coins)
+  - Dodal type DomainName + interface MasterBrainResult (domainSummary, topActions z domainWeight + finalScore, conflicts, overallHealth z bottlenecks/strengths, strategy z projection30d/90d/12m)
+  - Dodal DOMAIN_LABELS Record (icon + label + color za vsako od 7 domen)
+  - Dodal conflictSeverityColor() helper (HIGH=red, MEDIUM=amber, default=zinc)
+  - Dodal MasterBrainBanner() component (gold/amber gradient border-2 border-amber-500/40 bg-gradient-to-br from-amber-500/15 via-yellow-500/10 to-orange-500/5):
+    * Header row: Crown icon + "🧠✨ MASTER BRAIN" heading + v8.22 badge + "FINAL · APEX" badge + cache indicator
+    * Big oneLineSummary (centered, prominent, text-base/lg font-bold)
+    * Overall health row: big grade pill (via gradeColor) + score (e.g. "Zdravje: C · 50/100") + riskLevel pill (via riskLevelColor — reuses existing v8.19 function)
+    * TOP 5 AKCIJ ZA DANES numbered list (1-5), each: rank + domain icon + action + upliftEUR + confidence pill
+    * Strategy pills: 30d / 90d / 12m (3 pills grid z profitEUR + riskScore/100)
+    * Conflicts section (if any) z severity color (HIGH=red, MEDIUM=amber), showing domainA vs domainB + description + resolution
+    * Bottlenecks/Strengths row z domain icons (⚠️ Ozka grla, 💪 Moč)
+    * Refresh button "Osveži Master Brain"
+    * Loading skeleton (5-column grid) + error state
+  - Posodobil BrainSynthesisCard outer badge: "v8.15 + v8.16 + v8.17 + v8.18 + v8.19 + v8.20 + v8.21" → "v8.22 Master + v8.15-v8.21 (7 Domains)"
+  - BrainSynthesisCard sedaj rendera Master Brain BANNER na vrhu (nad 7 domain section-i) — visual hierarchy: Master Brain banner (gold/amber, prominent) → 7 Domain Brain sections (emerald + amber + sky + purple + rose + cyan + lime)
+  - Dodal brain/master v8.22 · FINAL badge v endpoint grid (gold/amber, za razliko od 7 domain badges ki so specifičnih barv)
+  - Posodobil JSDoc header komentar (v8.22 Master Brain BANNER, v8.22 added banner ON TOP of BrainSynthesisCard, all 7 sections still fetch in parallel for drill-down, FINAL MILESTONE note)
+- Lint (bun run lint): 0 errors, 0 warnings ✅
+- Typecheck (bunx tsc --noEmit): 0 errors ✅
+- Endpoint verification (curl):
+  - GET /api/ai/brain/master (default inputs) → 200 {"ok":true, "domains":{profit, inventory, market, sourcing, risk, buyer, pricing — all 7 present non-null}, "domainSummary":[7 entries], "topActions":[5 actions ranked: #1 market/trend uplift=375€ conf=HIGH weight=1 finalScore=375, #2 pricing/elasticity uplift=450€ conf=MEDIUM weight=1.1 finalScore=346.5, #3 pricing/psychology uplift=360€ conf=MEDIUM weight=1.1 finalScore=277.2, #4 buyer/retention uplift=252€ conf=HIGH weight=0.9 finalScore=226.8, #5 market/depth uplift=225€ conf=HIGH weight=1 finalScore=225], "conflicts":[1 conflict: Pricing vs Market — Pricing predlaga višje cene, trg BEARISH (MEDIUM severity)], "overallHealth":{score:50/100, grade:C, riskLevel:MEDIUM, bottlenecks:[profit, inventory], strengths:[]}, "strategy":{projection30d:{profitEUR:3133.06, riskScore:48.12, keyMilestone:"30d: izvedi #1 market akcijo (+3133€)"}, projection90d:{profitEUR:3833.25, riskScore:40.9}, projection12m:{profitEUR:13799.7, riskScore:33.68}}, "oneLineSummary":"Danes: Jahaj trend: Trend +3.5%/mo — skupaj s trendom: povečaj inventar, drži za viš.... 30d: 3133€. Tveganje: 48/100. Zdravje: C.", "aiUsed":false, "source":"v8.22-master-brain"} ✅
+  - POST /api/ai/brain/master {"profitInput":{"avgProfitPerTrade":50,"tradesPerMonth":20,"capitalDeployed":3000}} → 200 z customized profit domain: profit.current.avgProfitPerTrade=50, tradesPerMonth=20, capitalDeployed=3000, profitGrade=C (D→C upgrade), projection30d=891.74 (vs 650.91 default), projection90d=1377.65 (vs 871.9 default), overallHealth.score=53 (vs 50 default), strategy.projection30d.profitEUR=3373.89 (vs 3133.06 default) — input se pravilno propagira skozi Master Brain v Profit Brain ✅
+  - Cache verification: 2x zapored GET /api/ai/brain/master — drugi klic ~instant (cold start ~16ms, cache hit ~16ms z cachedAt re-stamp) — drugi klic vrne cachedAt=1786517262928 (vs first call cachedAt=1786517262912, ~16ms kasneje — `cachedAt: Date.now()` re-stamp na cache hit per the implementation) ✅
+  - /api/ai-list → {"ok":true, "total":412, "categories":{"brain":8, ...}, "endpoints":[brain/profit, brain/inventory, brain/market, brain/sourcing, brain/risk, brain/buyer, brain/pricing, brain/master]} — brain kategorija 8 = ALL 7 Domain Brains + 1 Master Brain ✅
+- Updated documentation:
+  - README.md: version badge v8.21.0 → v8.22.0; AI endpoints badge 411 → 412; API routes badge 588 → 589; hero tagline v8.21.0 → v8.22.0 z FINAL MILESTONE opombom (7 Domain + 1 Master = 8 Brain layers, 42+ signals → 1 decision, Maksimalna inteligenca 412 specialistov); Overview paragraph posodobljen z vsemi 8 Brain-i (7 Domain + 1 Master ki orkestrira vseh 7); "Kaj je novega" razširjen z v8.22 — 🧠✨ Master Brain blokom na vrhu (nad v8.21) z vsemi detail-i (parallel TS imports, TOP 5 ranking formula z domainWeight-i, 5 conflict types z severity, overallHealth weights, 30d/90d/12m strategy z 12m = 90d × 4 × 0.9, oneLineSummary template, 10-min cache, file paths, AI Hub banner description, FINAL MILESTONE note); version section v8.21.0 → v8.22.0; ~274 funkcij → ~275 funkcij; AI Hub opis 411→412 z dodatkom Master Brain BANNER; AI_ENDPOINTS.md link 411→412 z brain/master; Endpointi (411 AI + 72 analytics + 10 cron + sistemski = 588) → (412 AI + ... = 589); project tree comment posodobljen (8 Brain layerjev, v8.15-v8.22); "v8.15-v8.21" → "v8.15-v8.22" v Roadmap section; Testing badge 588 → 589 routes; "UI komponente za v7.50-v8.21" → "v7.50-v8.22"; Roadmap "v8.22 — Master Brain (next)" → "v8.22 — Master Brain (✅ DOKONČANO — FINAL Brain layer)" z MILESTONE flag; Changelog section zadnje verzije: dodan v8.22.0 entry na vrhu nad v8.21.0 z FINAL MILESTONE flag (Brain architecture COMPLETE); grep -c "v8.22" README.md = 16 ✅; grep -c "412 AI\|412 endpoint" = 6 ✅; grep -c "589" = 3 ✅; grep -c "v8.21" = 7 (all historical refs in changelog entries — correct, ne rabimo zamenjati)
+  - CHANGELOG.md: dodan nov "## [8.22.0] - 2026-08-28" section na vrhu (nad [8.21.0]) z ### Added — 🧠✨ Master Brain blokom (FINAL Brain layer, vse detail-e: parallel TS imports z Promise.all, TOP 5 ranking z domainWeight values, 5 conflict detection rules z conditions + resolutions + severities, overallHealth 0-100 weighted z HEALTH_WEIGHTS, 30d/90d/12m strategy z extraction formula (profit + sourcing.projectedTotalMonthlyProfit + pricing.projectedRevenue + buyer.projectedActiveBuyers × avgOrderValue), 12m = 90d × 4 × 0.9, oneLineSummary template "Danes: <action>. 30d: <profitEUR>€. Tveganje: <riskScore>/100. Zdravje: <grade>.", NO DB injection at Master level, 10-min cache z stable JSON serialization, GET+POST handler, pure compute module, async function, file paths, AI Hub Master Brain banner description z gold/amber gradient + Crown icon + 6 display elements (oneLineSummary, overallHealth, TOP 5, strategy pills, conflicts, bottlenecks/strengths), FINAL MILESTONE note (Brain architecture COMPLETE = 7 Domain + 1 Master = 8 brain layers, 42+ signals → 1 decision)). ### Stats: AI endpoints 411→412 (+1), Total API routes 588→589 (+1). [Unreleased] posodobljen — Brain architecture je dokončan, naslednje verzije bodo fokus na refinements, optimizacije in nove specialist-e pod obstoječo Brain hierarhijo (WebSocket, Playwright E2E, TLS fingerprinting, ML model, Master Brain performance optimizations, additional conflict detection tipi, per-domain DB injection)
+  - AI_ENDPOINTS.md: total count 411 → 412. Vstavljen "| 16 | brain/master | `/api/ai/brain/master` |" v alphabetical position (po brain/pricing, pred budget-allocator). Renumbered vseh 396 vrstic od 16-411 → 17-412 sequentialno (Python script z bottom-up renumber) — skupno 413 vrstic (1 header + 1 separator + 412 data rows)
+
+Stage Summary:
+- NEW: src/lib/brain/master.ts (pure compute module — imports all 7 Domain Brain functions, synthesizes into 1 decision via parallel Promise.all)
+- NEW: src/app/api/ai/brain/master/route.ts (GET+POST endpoint, 10-min cache, no direct DB injection — individual Domain Brains handle their own DB injection)
+- MODIFIED: src/components/dashboard/ai-hub-view.tsx (Master Brain banner on TOP of BrainSynthesisCard — gold/amber gradient, Crown icon, above 7 domain sections; outer card badge "v8.22 Master + v8.15-v8.21 (7 Domains)"; brain/master v8.22 · FINAL badge v endpoint grid)
+- AI endpointi: 411 → 412 (+1)
+- Total API routes: 588 → 589 (+1)
+- Lint: 0 errors, 0 warnings ✅
+- Typecheck: 0 errors ✅
+- Endpoint verification: GET default → ok:true, 7 domains present, 7 domainSummary entries, TOP 5 ranked actions (market/trend #1 uplift 375€ finalScore 375, pricing/elasticity #2 uplift 450€ finalScore 346.5, pricing/psychology #3 277.2, buyer/retention #4 226.8, market/depth #5 225), 1 conflict (Pricing vs Market MEDIUM — višje cene v BEARISH trgu), overallHealth C 50/100 MEDIUM risk, bottlenecks [profit, inventory] (both D grade), strengths [], strategy 30d=3133.06€ 90d=3833.25€ 12m=13799.7€, oneLineSummary "Danes: Jahaj trend... 30d: 3133€. Tveganje: 48/100. Zdravje: C." ✅; POST custom profitInput (avgProfitPerTrade 50, tradesPerMonth 20, capitalDeployed 3000) → profitGrade C (D→C upgrade), projection30d 891.74 (vs 650.91 default), overallHealth.score 53 (vs 50), strategy.projection30d.profitEUR 3373.89 (vs 3133.06) ✅; Cache → drugi GET re-stampa cachedAt z istimi rezultati ✅; /api/ai-list → total 412, categories.brain 8 (profit + inventory + market + sourcing + risk + buyer + pricing + master) ✅
+- Documentation updated: AI_ENDPOINTS.md (412 brain/master row + renumber), README.md (version v8.22.0, badges 412 AI + 589 routes, hero tagline z FINAL MILESTONE, overview paragraph z 8 Brains, "Kaj je novega" v8.22 blok z Master Brain details, version section, function count ~275, all v8.21/411/588 references posodobljene, Roadmap z v8.22 ✅ DOKONČANO + FINAL MILESTONE flag, Changelog Zadnje verzije z v8.22.0 entry), CHANGELOG.md (nov [8.22.0] section z Added + Stats + FINAL MILESTONE note, [Unreleased] posodobljen — Brain architecture dokončan)
+- 🎯 FINAL MILESTONE: Brain architecture COMPLETE (7 Domain Brains + 1 Master Brain = 8 layers, 42+ signals → 1 decision). Hierarhija specialist → domain → master. Maksimalna inteligenca 412 specialistov, organizirana v eno zavestno odločitev.
