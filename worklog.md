@@ -14895,3 +14895,74 @@ Stage Summary:
 - GitHub sinhroniziran (0 commit-ov ahead)
 - Verzija aplikacije: v8.19.0
 - Skupaj doslej (v7.50 → v8.19): 69 verzij, 191 novih funkcij; 5 Brain layer-jev implementiranih (Profit + Inventory + Market + Sourcing + Risk) — naslednji Brain-i (Buyer/Pricing) v v8.20-v8.21, Master Brain v v8.22
+
+---
+Task ID: v8.20
+Agent: full-stack-developer
+Task: Implement Buyer Brain — sixth Brain layer above ~51 buyer specialists
+
+Work Log:
+- Prebral worklog.md (zadnji v8.19 vnos), src/lib/brain/{profit,risk}.ts (templates), src/app/api/ai/brain/risk/route.ts (endpoint template), src/components/dashboard/ai-hub-view.tsx (BrainSynthesisCard z 5 stacked sectioni)
+- Preveril prisma/schema.prisma — Buyer model NE obstaja (samo Profile/Settings/SavedSearch/PushSubscription/Trade/DigestLog/Monitor/Listing/Alert/RunLog/HeartbeatLog/PriceHistory/SmartRule/NegotiationMessage/WebhookEndpoint)
+- NEW: src/lib/brain/buyer.ts (pure compute module, ~470 vrstic)
+  - Mirror risk.ts strukture: clamp, gradeFromScore, round2, confidenceFromScore, confidenceWeight, normalizeInput, computeXxxSignal, actionForSignal, SIGNAL_WEIGHTS, buyerBrain main entry
+  - 6 buyer signalov: intent, conversion, retention, lifetimeValue, loyalty, engagement (vsak z 0-100 score HIGHER=better + grade + upliftEURPerMonth + topLever v slovenščini)
+  - Signal 1 — intent: score = clamp((activeBuyersLast30d/totalBuyers) × 100 × 1.5, 0, 100), uplift = activeBuyersLast30d × avgOrderValue × 0.15, topLever z "HIGH/MEDIUM/LOW intent" hint
+  - Signal 2 — conversion: score = clamp(inquiriesConvertedPct × 1.5, 0, 100), uplift = activeBuyersLast30d × avgOrderValue × (0.2 - conv/100 × 0.2), topLever z "NIZKA/zmerna/visoka" hint
+  - Signal 3 — retention: churnRatePct = churned/total × 100, netGrowthPct = (new-churned)/total × 100, score = clamp(100 - churn × 2 + growth × 3, 0, 100), uplift = churned × LTV × 0.3, topLever z "VISOK churn: reactivation / zdrava retention" hint
+  - Signal 4 — lifetimeValue: score = clamp(LTV/10, 0, 100) (1000€ LTV = 100), uplift = totalBuyers × 5, topLever z "NIZAK: upsell / zmerna: loyalty / visok: VIP" hint
+  - Signal 5 — loyalty: score = clamp(repeat × 1.2 + (highValue/total) × 100 × 2, 0, 100), uplift = highValue × avgOrderValue × 0.5, topLever z "NIZKA: loyalty program / močna: VIP retention" hint
+  - Signal 6 — engagement: score = clamp(avgEngagementScore, 0, 100), uplift = totalBuyers × 2, topLever z "NIZAK: povečaj komunikacijo / zmerna: personalize / visok: ohranjaj" hint
+  - Synthesis: topActions top 3 ranked by uplift × confidenceWeight (HIGH=1.0/MEDIUM=0.7/LOW=0.4; confidence = HIGH če score ≥70, MEDIUM če ≥40, LOW sicer — NOT inverted kot Risk)
+  - projection30d: projectedActiveBuyers = active × 1.15, projectedLTV = LTV × 1.05, projectedChurnRatePct = max(2, churn-5), recommendedOutreachCount = ceil(active × 0.3)
+  - projection90d: projectedActiveBuyers = active × 1.35, projectedLTV = LTV × 1.15, projectedChurnRatePct = max(1, churn-10), recommendedOutreachCount = ceil(active × 0.5)
+  - overallScore = weighted (intent 0.15, conversion 0.20, retention 0.20, lifetimeValue 0.20, loyalty 0.15, engagement 0.10)
+  - buyerGrade via gradeFromScore (A+ ≥90, A ≥75, B ≥60, C ≥40, D ≥20, F)
+  - bestOpportunity = signal z HIGHEST upliftEURPerMonth
+  - oneLineSummary: "${totalBuyers} kupcev (LTV ${LTV}€), ${active} aktivnih. ${topActions[0].action}. Grade ${grade}."
+  - NO next/server import, NO Prisma calls — pure deterministic
+  - Reuses ProfitGrade in Confidence types via `import type { ProfitGrade, Confidence } from './profit'`
+  - Sensible defaults: totalBuyers 32, activeBuyersLast30d 8, newBuyersLast30d 4, churnedBuyersLast30d 3, avgBuyerLifetimeValue 280, avgPurchaseFrequency 1.8, avgOrderValue 180, repeatBuyerRatePct 25, inquiriesConvertedPct 35, avgEngagementScore 45, highValueBuyersCount 3
+- NEW: src/app/api/ai/brain/buyer/route.ts (GET+POST, ~470 vrstic)
+  - runtime='nodejs', dynamic='force-dynamic', maxDuration=60
+  - resolveInputs: parse from query string (GET) AND JSON body (POST) — body precedence
+  - fetchDbState: graceful DB state injection — preveri če `db.buyer` obstaja (typeof findMany === 'function' guard). Ker Buyer model ne obstaja v trenutni prisma schema, vrne null in fallback-a na defaults. Ko bo Buyer model dodan v prihodnosti, bo samodejno začel brati state (totalBuyers, activeBuyersLast30d, newBuyersLast30d, churnedBuyersLast30d, highValueBuyersCount, avgBuyerLifetimeValue, avgPurchaseFrequency, avgOrderValue, repeatBuyerRatePct, inquiriesConvertedPct, avgEngagementScore). Vsi DB dostopi v try/catch + logger.warn — NE crash-a
+  - 5-min cache (TTL 300000ms): cache key = buyer-brain:${hashOfInputs} (11 inputov). Na cache hit, cachedAt re-stamp
+  - GET+POST shared handler handleBuyerBrain, aiUsed: false, source: "v8.20-buyer-brain"
+  - try/catch z logger.error → 500 { error: err?.message ?? 'Napaka' }
+  - JSDoc header z razlikami od Profit/Inventory/Market/Sourcing/Risk Brain in od ~51 buyer specialistov
+- MODIFIED: src/components/dashboard/ai-hub-view.tsx
+  - Added Users icon to lucide-react imports
+  - Added BuyerBrainResult interface (signals z score + grade + upliftEURPerMonth + topLever; current z 13 polj vključno churnRatePct in netGrowthPct; maximization z topActions + projection30d/90d + buyerGrade + bestOpportunity + oneLineSummary)
+  - Added BuyerBrainSection component (cyan/teal-tinted, Users icon, 👥 emoji, v8.20 badge) — fetches /api/ai/brain/buyer on mount, loading skeleton, error state, refresh button, cache indicator
+    * oneLineSummary
+    * buyerGrade pill (via gradeColor) + bestOpportunity pill (cyan/teal)
+    * Top 3 cultivation actions (z confidence)
+    * Current state summary (totalBuyers, activeBuyersLast30d, churnRatePct, netGrowthPct, avgBuyerLifetimeValue)
+    * 30d/90d buyer projection (projectedActiveBuyers + projectedLTV + recommendedOutreachCount)
+  - Updated outer card header: "v8.15 + v8.16 + v8.17 + v8.18 + v8.19" → "v8.15 + v8.16 + v8.17 + v8.18 + v8.19 + v8.20"
+  - BrainSynthesisCard sedaj rendera 6 stacked sectionov (ProfitBrainSection + InventoryBrainSection + MarketBrainSection + SourcingBrainSection + RiskBrainSection + BuyerBrainSection)
+  - Added brain/buyer v8.20 badge v endpoint grid (cyan-tinted) poleg obstoječih brain/profit v8.15, brain/inventory v8.16, brain/market v8.17, brain/sourcing v8.18, brain/risk v8.19
+  - Updated JSDoc header komentar (v8.20 SIXTH stacked section, v8.20 BUYER BRAIN, all six sections fetch in parallel)
+- Lint (bun run lint): 0 errors, 0 warnings ✅
+- Typecheck (bunx tsc --noEmit): 0 errors ✅
+- Endpoint verification (curl):
+  - GET /api/ai/brain/buyer (default inputs) → 200 {"ok":true, "signals":[6: intent(D,37.5,216€ — 8 aktivnih kupcev — LOW intent: fokus na nova pridobivanja), conversion(C,52.5,187.2€ — Konverzija 35% — NIZKA: izboljšaj follow-up), retention(A+,90.63,252€ — Churn 9%, rast +3% — zdrava retention), lifetimeValue(D,28,160€ — Povprečni LTV 280€ — zmerna: loyalty program), loyalty(C,48.75,270€ — Repeat 25%, VIP 3 kupcev — močna loyalty), engagement(C,45,64€ — Engagement 45/100 — zmerna: personalize)], "current":{totalBuyers:32, activeBuyersLast30d:8, newBuyersLast30d:4, churnedBuyersLast30d:3, avgBuyerLifetimeValue:280, avgPurchaseFrequency:1.8, avgOrderValue:180, repeatBuyerRatePct:25, inquiriesConvertedPct:35, avgEngagementScore:45, highValueBuyersCount:3, churnRatePct:9.38, netGrowthPct:3.13}, "maximization":{topActions:[#1 retention +252€/mo (HIGH), #2 loyalty +270€/mo (MEDIUM), #3 conversion +187.2€/mo (MEDIUM)], projection30d:{projectedActiveBuyers:9, projectedLTV:294, projectedChurnRatePct:4.38, recommendedOutreachCount:3}, projection90d:{projectedActiveBuyers:11, projectedLTV:322, projectedChurnRatePct:1, recommendedOutreachCount:4}, buyerGrade:"C", bestOpportunity:"loyalty", oneLineSummary:"32 kupcev (LTV 280€), 8 aktivnih. Zmanjšaj churn: Churn 9%, rast +3% — zdrava retention. Grade C."}, "aiUsed":false, "source":"v8.20-buyer-brain"}
+  - POST /api/ai/brain/buyer z custom inputs (totalBuyers 80, activeBuyersLast30d 25, newBuyersLast30d 12, churnedBuyersLast30d 4, avgBuyerLifetimeValue 450, avgPurchaseFrequency 2.5, avgOrderValue 220, repeatBuyerRatePct 40, inquiriesConvertedPct 55, avgEngagementScore 68, highValueBuyersCount 10) → 200 {"ok":true, "signals":[6: intent(C,46.88,825€ — 25 aktivnih — MEDIUM intent: ogrej z informacijskimi sporočili), conversion(A,82.5,495€ — Konverzija 55% — zmerna: optimiziraj pricing in messaging), retention(A+,100,540€ — Churn 5%, rast +10% — zdrava retention), lifetimeValue(C,45,400€ — LTV 450€ — zmerna: loyalty program), loyalty(B,73,1100€ — Repeat 40%, VIP 10 kupcev — močna loyalty: VIP retention), engagement(B,68,160€ — Engagement 68/100 — zmerna: personalize)], "current":{churnRatePct:5, netGrowthPct:10, avgBuyerLifetimeValue:450}, "maximization":{topActions:[#1 loyalty +1100€/mo (HIGH), #2 intent +825€/mo (MEDIUM), #3 retention +540€/mo (HIGH)], projection30d:{projectedActiveBuyers:29, projectedLTV:472.5, recommendedOutreachCount:8}, projection90d:{projectedActiveBuyers:34, projectedLTV:517.5, recommendedOutreachCount:13}, buyerGrade:"B", bestOpportunity:"loyalty", oneLineSummary:"80 kupcev (LTV 450€), 25 aktivnih. Krepi lojalnost: Repeat 40%, VIP 10 kupcev — močna loyalty: fokus na VIP retention. Grade B."}} — višji uplift kot default (loyalty 1100 vs 270€, buyerGrade B vs C) ✅
+  - Cache verification: 2x zapored GET /api/ai/brain/buyer — drugi klic re-stampa cachedAt z istim buyerGrade C in bestOpportunity loyalty → cache HIT ✅ (dev.log: 1. GET 208ms cold start, 2. GET 7ms cache hit)
+  - /api/ai-list → {"total":410, "categories":{"brain":6, ...}, "endpoints":[brain/profit, brain/inventory, brain/market, brain/sourcing, brain/risk, brain/buyer]} ✅
+- Updated documentation:
+  - README.md: version badge v8.19.0 → v8.20.0; AI endpoints badge 409 → 410; API routes badge 586 → 587; hero tagline v8.19.0 → v8.20.0 z Buyer Brain sintezo 6 signalov (intent, conversion, retention, lifetimeValue, loyalty, engagement) v eno odločitev — koliko kupcev kontaktirati, 30d/90d projekcija active buyers + LTV; Brain overview paragraph posodobljen z vsemi 6 Brain-i (Profit + Inventory + Market + Sourcing + Risk + Buyer); "Kaj je novega" razširjen z v8.20 — 👥 Buyer Brain blokom na vrhu (nad v8.19); version section v8.19.0 → v8.20.0; ~272 funkcij → ~273 funkcij; AI Hub opis 409→410 z dodatkom Buyer Brain; AI_ENDPOINTS.md link 409→410 z brain/buyer; Endpointi (409 AI → 410 AI = 587 routes); project tree comment posodobljen (6 Brain layerjev, v8.15-v8.20); "v8.15-v8.19" → "v8.15-v8.20"; Testing badge 586 → 587 routes; "UI komponente za v7.50-v8.19" → "v7.50-v8.20"; Changelog section zadnje verzije: dodan v8.20.0 na vrh nad v8.19.0; grep -c "v8.20" README.md = 12 ✅ (≥10 required); grep -c "v8.19" = 6 (intentional refs to v8.19 Risk Brain context); grep -c "409 AI" = 0 ✅; grep -c "586" = 0 ✅
+  - CHANGELOG.md: dodan nov "## [8.20.0] - 2026-08-28" section na vrhu (nad [8.19.0]) z ### Added — 👥 Buyer Brain blokom (6 signalov podrobno + synthesis logic z topActions/projection30d/90d (structured: projectedActiveBuyers + projectedLTV + projectedChurnRatePct + recommendedOutreachCount)/buyerGrade/bestOpportunity/oneLineSummary, pure deterministic compute, DB-backed state injection z graceful fallback (Buyer model ne obstaja — fallback na defaults), 5-min cache z cachedAt stamp, GET+POST shared handler, runtime config, file paths za pure compute module in endpoint, BrainSynthesisCard razširjen s šestim stacked section-om (cyan/teal-tinted)). ### Stats: AI endpoints 409→410 (+1), Total API routes 586→587 (+1). [Unreleased] "v8.20+" → "v8.21+" (Removed "Buyer" iz načrtovanih Brain layerjev — sedaj samo še Pricing)
+  - AI_ENDPOINTS.md: total count 409 → 410. Vstavljen "| 14 | brain/buyer | `/api/ai/brain/buyer` |" v alphabetical position (po brain/risk). Restored budget-allocator row (row 15) ki je bil pomotoma odstranjen v prejšnjem v8.19 commit-u. Renumbered vseh 410 endpoint vrstic sequentialno (Python script)
+
+Stage Summary:
+- NEW: src/lib/brain/buyer.ts (pure compute module — 6 buyer signals + synthesis)
+- NEW: src/app/api/ai/brain/buyer/route.ts (GET+POST endpoint, 5-min cache, DB state injection graceful — Buyer model ne obstaja, fallback na defaults)
+- MODIFIED: src/components/dashboard/ai-hub-view.tsx (BrainSynthesisCard extended to render SIX stacked sections — Profit emerald + Inventory amber + Market sky/blue + Sourcing purple/violet + Risk red/rose + Buyer cyan/teal)
+- AI endpointi: 409 → 410 (+1)
+- Total API routes: 586 → 587 (+1)
+- Lint: 0 errors, 0 warnings ✅
+- Typecheck: 0 errors ✅
+- Endpoint verification: GET default → 6 signals, buyerGrade=C, bestOpportunity=loyalty (270€/mo uplift), topActions #1 retention +252€/mo (HIGH), #2 loyalty +270€/mo (MEDIUM), #3 conversion +187.2€/mo (MEDIUM), projection30d {9 aktivnih, 294€ LTV, 4.38% churn, outreach 3}, projection90d {11 aktivnih, 322€ LTV, 1% churn, outreach 4} ✅; POST custom (80 buyers, 25 active, 4 churned, 450€ LTV) → buyerGrade=B, bestOpportunity=loyalty (1100€/mo uplift), topActions #1 loyalty +1100€/mo (HIGH), #2 intent +825€/mo (MEDIUM), #3 retention +540€/mo (HIGH), projection30d {29 aktivnih, 472.5€ LTV, outreach 8}, projection90d {34 aktivnih, 517.5€ LTV, outreach 13} ✅; Cache → drugi GET re-stampa cachedAt z istim buyerGrade C in bestOpportunity loyalty (208ms cold → 7ms cached) ✅; /api/ai-list → total 410, categories.brain 6 (profit + inventory + market + sourcing + risk + buyer) ✅
+- Documentation updated: AI_ENDPOINTS.md (410 brain/buyer row + restored budget-allocator + renumber), README.md (version v8.20.0, badges 410 AI + 587 routes, hero tagline, overview paragraph z 6 Brain-i, "Kaj je novega" v8.20 blok, version section, function count ~273, all v8.19/409/586 references posodobljene), CHANGELOG.md (nov [8.20.0] section z Added + Stats, [Unreleased] v8.20+ → v8.21+)

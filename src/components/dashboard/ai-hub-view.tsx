@@ -52,7 +52,14 @@
  *     (concentration, aging, liquidity, market, fraud, portfolio) →
  *     30d/90d risk projection (projectedRiskScore + projectedConcentrationPct
  *     + projectedAgedPct + recommendedRiskBudget)
- * All five sections fetch in parallel on mount (`Promise.all`). Each has its
+ * v8.20: Extended Brain Synthesis Card with SIXTH stacked section —
+ * Buyer Brain (cyan/teal-tinted). Card now renders ALL SIX brain
+ * layers simultaneously:
+ *   - 👥 BUYER BRAIN (cyan/teal) — synthesizes 6 buyer signals
+ *     (intent, conversion, retention, lifetimeValue, loyalty, engagement) →
+ *     30d/90d buyer projection (projectedActiveBuyers + projectedLTV +
+ *     projectedChurnRatePct + recommendedOutreachCount)
+ * All six sections fetch in parallel on mount (`Promise.all`). Each has its
  * own loading skeleton, error state, refresh button, and cache indicator.
  *
  * Lazy-loaded z next/dynamic (ssr: false) — ne bremeni prvotnega nalaganja.
@@ -71,7 +78,7 @@ import {
   DialogTitle,
   DialogDescription,
 } from '@/components/ui/dialog';
-import { Sparkles, Search, Copy, Check, RefreshCw, Zap, X, ChevronRight, Brain, AlertCircle, Package, TrendingUp, Target, Shield } from 'lucide-react';
+import { Sparkles, Search, Copy, Check, RefreshCw, Zap, X, ChevronRight, Brain, AlertCircle, Package, TrendingUp, Target, Shield, Users } from 'lucide-react';
 import { toast } from 'sonner';
 import { cn } from '@/lib/utils';
 
@@ -103,16 +110,17 @@ function categorize(name: string): string {
   return 'misc';
 }
 
-// ===== Brain Synthesis Card (v8.15 + v8.16 + v8.17 + v8.18 + v8.19) =====
+// ===== Brain Synthesis Card (v8.15 + v8.16 + v8.17 + v8.18 + v8.19 + v8.20) =====
 //
-// Renders ALL FIVE Brain layers stacked inside one Card:
+// Renders ALL SIX Brain layers stacked inside one Card:
 //   - 🧠 PROFIT BRAIN (v8.15, emerald) — synthesizes 6 profit signals
 //   - 📦 INVENTORY BRAIN (v8.16, amber) — synthesizes 6 inventory signals
 //   - 📈 MARKET BRAIN (v8.17, sky/blue) — synthesizes 6 market signals
 //   - 🎯 SOURCING BRAIN (v8.18, purple/violet) — synthesizes 6 sourcing signals
 //   - 🛡️ RISK BRAIN (v8.19, red/rose) — synthesizes 6 risk signals
+//   - 👥 BUYER BRAIN (v8.20, cyan/teal) — synthesizes 6 buyer signals
 //
-// All five sections fetch in parallel on mount and have independent loading,
+// All six sections fetch in parallel on mount and have independent loading,
 // error, refresh, and cache states.
 
 interface BrainAction {
@@ -1148,7 +1156,206 @@ function RiskBrainSection() {
   );
 }
 
-// --- Outer card wrapper (v8.15 + v8.16 + v8.17 + v8.18 + v8.19) ----------------------------
+// --- Buyer Brain section (v8.20, cyan/teal) ---------------------------------
+//
+// v8.20: Buyer Brain result — projection30d/projection90d are STRUCTURED
+// objects with projectedActiveBuyers + projectedLTV + projectedChurnRatePct +
+// recommendedOutreachCount. Each signal has score + grade + upliftEURPerMonth +
+// topLever (same shape as Profit/Inventory/Market/Sourcing — NOT inverted like
+// Risk). Distinct from all five prior Brains.
+interface BuyerBrainResult {
+  ok: true;
+  signals: Array<{
+    name: string;
+    score: number; // 0-100 (HIGHER = better buyer health)
+    grade: string;
+    upliftEURPerMonth: number;
+    topLever: string;
+  }>;
+  current: {
+    totalBuyers: number;
+    activeBuyersLast30d: number;
+    newBuyersLast30d: number;
+    churnedBuyersLast30d: number;
+    avgBuyerLifetimeValue: number;
+    avgPurchaseFrequency: number;
+    avgOrderValue: number;
+    repeatBuyerRatePct: number;
+    inquiriesConvertedPct: number;
+    avgEngagementScore: number;
+    highValueBuyersCount: number;
+    churnRatePct: number;
+    netGrowthPct: number;
+  };
+  maximization: {
+    topActions: BrainAction[];
+    projection30d: {
+      projectedActiveBuyers: number;
+      projectedLTV: number;
+      projectedChurnRatePct: number;
+      recommendedOutreachCount: number;
+    };
+    projection90d: {
+      projectedActiveBuyers: number;
+      projectedLTV: number;
+      projectedChurnRatePct: number;
+      recommendedOutreachCount: number;
+    };
+    buyerGrade: 'A+' | 'A' | 'B' | 'C' | 'D' | 'F';
+    bestOpportunity: string;
+    oneLineSummary: string;
+  };
+  aiUsed: false;
+  source: string;
+  cachedAt?: number;
+}
+
+function BuyerBrainSection() {
+  const [data, setData] = useState<BuyerBrainResult | null>(null);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
+
+  const fetchBrain = useCallback(async () => {
+    setLoading(true);
+    setError(null);
+    try {
+      const res = await fetch('/api/ai/brain/buyer', { method: 'GET' });
+      if (!res.ok) throw new Error(`HTTP ${res.status}`);
+      const json = (await res.json()) as BuyerBrainResult;
+      if (!json?.ok) throw new Error(json?.source ? 'Brain ni vrnil rezultata' : 'Napaka');
+      setData(json);
+    } catch (e: any) {
+      setError(e?.message ?? 'Napaka');
+    } finally {
+      setLoading(false);
+    }
+  }, []);
+
+  useEffect(() => {
+    fetchBrain();
+  }, [fetchBrain]);
+
+  return (
+    <div className="rounded-lg border border-cyan-500/30 bg-gradient-to-br from-cyan-500/10 via-teal-500/5 to-transparent p-3 sm:p-4">
+      <div className="flex items-center gap-2 mb-2 min-w-0">
+        <Users className="w-4 h-4 text-cyan-500 shrink-0" />
+        <span className="text-sm sm:text-base font-bold tracking-tight">
+          👥 BUYER BRAIN
+        </span>
+        <Badge variant="outline" className="text-[10px] border-cyan-500/40 text-cyan-600 dark:text-cyan-400 shrink-0">
+          v8.20
+        </Badge>
+      </div>
+
+      {loading && (
+        <div className="space-y-2">
+          <Skeleton className="h-5 w-full bg-cyan-500/10" />
+          <Skeleton className="h-3 w-3/4 bg-cyan-500/10" />
+          <div className="grid grid-cols-3 gap-2 pt-1">
+            <Skeleton className="h-6 bg-cyan-500/10" />
+            <Skeleton className="h-6 bg-cyan-500/10" />
+            <Skeleton className="h-6 bg-cyan-500/10" />
+          </div>
+        </div>
+      )}
+
+      {!loading && error && (
+        <div className="flex items-center gap-2 text-xs text-red-600 dark:text-red-400">
+          <AlertCircle className="w-3.5 h-3.5 shrink-0" />
+          <span className="truncate">{error}</span>
+          <Button size="sm" variant="outline" onClick={fetchBrain} className="ml-auto h-6 px-2 text-[10px]">
+            Ponovi
+          </Button>
+        </div>
+      )}
+
+      {!loading && !error && data && (
+        <div className="space-y-2.5">
+          <p className="text-xs sm:text-sm font-medium leading-snug">
+            {data.maximization.oneLineSummary}
+          </p>
+
+          <div className="flex flex-wrap gap-1.5">
+            <Badge variant="outline" className={cn('text-[10px]', gradeColor(data.maximization.buyerGrade))}>
+              Buyer: {data.maximization.buyerGrade}
+            </Badge>
+            <Badge variant="outline" className="text-[10px] border-cyan-500/30 text-cyan-600 dark:text-cyan-400">
+              Top: {data.maximization.bestOpportunity.toUpperCase()}
+            </Badge>
+            {data.cachedAt && (
+              <Badge variant="outline" className="text-[9px] text-muted-foreground border-muted">
+                cache {Math.round((Date.now() - data.cachedAt) / 1000)}s
+              </Badge>
+            )}
+          </div>
+
+          <div className="space-y-1">
+            <div className="text-[9px] uppercase text-muted-foreground">Top 3 akcije za danes (kultivacija)</div>
+            {data.maximization.topActions.map((a) => (
+              <div key={a.rank} className="flex items-start gap-1.5 text-[11px]">
+                <span className="font-bold text-cyan-600 dark:text-cyan-400 shrink-0 w-3">
+                  {a.rank}.
+                </span>
+                <span className="flex-1 min-w-0">
+                  <span className="font-medium">{a.action}</span>
+                  <span className="text-muted-foreground"> · +{a.expectedUpliftEUR}€/mo</span>
+                </span>
+                <span className={cn('text-[9px] font-bold shrink-0', confidenceColor(a.confidence))}>
+                  {a.confidence}
+                </span>
+              </div>
+            ))}
+          </div>
+
+          {/* Current buyer state */}
+          <div className="grid grid-cols-2 gap-1.5 text-[10px] pt-1 border-t border-cyan-500/20">
+            <span className="text-muted-foreground">
+              Kupcev: <span className="font-bold text-cyan-600 dark:text-cyan-400">{data.current.totalBuyers}</span>
+            </span>
+            <span className="text-muted-foreground">
+              Aktivnih: <span className="font-bold text-cyan-600 dark:text-cyan-400">{data.current.activeBuyersLast30d}</span>
+            </span>
+            <span className="text-muted-foreground">
+              Churn: <span className="font-bold text-cyan-600 dark:text-cyan-400">{Math.round(data.current.churnRatePct)}%</span>
+            </span>
+            <span className="text-muted-foreground">
+              Rast: <span className="font-bold text-cyan-600 dark:text-cyan-400">{data.current.netGrowthPct >= 0 ? '+' : ''}{Math.round(data.current.netGrowthPct)}%</span>
+            </span>
+            <span className="text-muted-foreground">
+              LTV: <span className="font-bold text-cyan-600 dark:text-cyan-400">{Math.round(data.current.avgBuyerLifetimeValue)}€</span>
+            </span>
+          </div>
+
+          {/* 30d / 90d buyer projection */}
+          <div className="flex items-center justify-between gap-2 text-[10px] pt-1 border-t border-cyan-500/10">
+            <span className="text-muted-foreground">
+              30d: <span className="font-bold text-cyan-600 dark:text-cyan-400">
+                {Math.round(data.maximization.projection30d.projectedActiveBuyers)} aktivnih · LTV {Math.round(data.maximization.projection30d.projectedLTV)}€ · kontaktiraj {data.maximization.projection30d.recommendedOutreachCount}
+              </span>
+            </span>
+            <span className="text-muted-foreground">
+              90d: <span className="font-bold text-cyan-600 dark:text-cyan-400">
+                {Math.round(data.maximization.projection90d.projectedActiveBuyers)} aktivnih · LTV {Math.round(data.maximization.projection90d.projectedLTV)}€ · kontaktiraj {data.maximization.projection90d.recommendedOutreachCount}
+              </span>
+            </span>
+          </div>
+
+          <div className="flex justify-end">
+            <button
+              onClick={fetchBrain}
+              className="text-[9px] text-muted-foreground hover:text-foreground flex items-center gap-1"
+            >
+              <RefreshCw className="w-2.5 h-2.5" />
+              Osveži
+            </button>
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
+// --- Outer card wrapper (v8.15 + v8.16 + v8.17 + v8.18 + v8.19 + v8.20) --------------------
 
 function BrainSynthesisCard({ onBrainCategoryClick }: { onBrainCategoryClick: () => void }) {
   return (
@@ -1161,7 +1368,7 @@ function BrainSynthesisCard({ onBrainCategoryClick }: { onBrainCategoryClick: ()
               AI BRAIN SYNTHESIS
             </span>
             <Badge variant="outline" className="text-[10px] border-primary/40 text-primary shrink-0">
-              v8.15 + v8.16 + v8.17 + v8.18 + v8.19
+              v8.15 + v8.16 + v8.17 + v8.18 + v8.19 + v8.20
             </Badge>
           </div>
           <button
@@ -1177,6 +1384,7 @@ function BrainSynthesisCard({ onBrainCategoryClick }: { onBrainCategoryClick: ()
         <MarketBrainSection />
         <SourcingBrainSection />
         <RiskBrainSection />
+        <BuyerBrainSection />
       </CardContent>
     </Card>
   );
@@ -1459,6 +1667,11 @@ export function AIHubView() {
                         {ep.category === 'brain' && ep.name === 'brain/risk' && (
                           <Badge variant="outline" className="text-[9px] border-rose-500/40 text-rose-600 dark:text-rose-400 shrink-0">
                             v8.19
+                          </Badge>
+                        )}
+                        {ep.category === 'brain' && ep.name === 'brain/buyer' && (
+                          <Badge variant="outline" className="text-[9px] border-cyan-500/40 text-cyan-600 dark:text-cyan-400 shrink-0">
+                            v8.20
                           </Badge>
                         )}
                       </div>

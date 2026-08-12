@@ -6,13 +6,164 @@ Format sledi [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), verzije s
 
 ## [Unreleased]
 
-Načrtovano za v8.20+:
-- Buyer / Pricing Brain (2 nova Brain layerja)
+Načrtovano za v8.21+:
+- Pricing Brain (zadnji Brain layer)
 - Master Brain ki orkestrira vseh 7 Brain layerjev (Profit + Inventory + Market + Sourcing + Risk + Buyer + Pricing)
 - WebSocket real-time negotiation (SSE namesto polling)
 - Playwright E2E testi za glavne flow-e
 - TLS fingerprinting (curl-impersonate)
 - ML model za buyer matchmaker (fine-tuned na realnem data)
+
+## [8.20.0] - 2026-08-28
+
+### Added — 👥 Buyer Brain (šesti orkestracijski Brain layer nad ~51 buyer specialist-i)
+
+- **Buyer Brain** — `GET+POST /api/ai/brain/buyer`
+  - NOV ŠESTI ARCHITECTURAL LAYER: šesti Brain layer (po Profit Brain v v8.15,
+    Inventory Brain v v8.16, Market Brain v v8.17, Sourcing Brain v v8.18 in
+    Risk Brain v v8.19) ki sedi NAD ~51 buyer specialist endpointi
+    (buyer-intent, buyer-clv-predictor, buyer-churn-predictor-v2,
+    buyer-loyalty-predictor-v2, buyer-conversion-predictor,
+    buyer-engagement-optimizer, buyer-journey-mapper,
+    buyer-acquisition-cost-optimizer, buyer-behavior-pattern-detector,
+    buyer-behavior-predictor, ...). Vsak specialist meri ENO buyer dimenzijo —
+    Buyer Brain sintetizira 6 buyer signalov v ENO odločitev.
+  - 6 buyer signalov (each 0-100 score + grade + uplift EUR/mo + topLever):
+    1. **intent** — current purchase intent (how many buyers are ready to buy NOW).
+       intentScore = clamp((activeBuyersLast30d / max(totalBuyers, 1)) × 100 × 1.5, 0, 100)
+       (67% active ratio × 1.5 = 100 — high active ratio signals high intent).
+       Score = intentScore.
+       Uplift = activeBuyersLast30d × avgOrderValue × 0.15 (15% of active buyers
+       will convert if nudged with personalized offers).
+       topLever: "8 aktivnih kupcev — LOW intent: fokus na nova pridobivanja".
+    2. **conversion** — inquiry → sale conversion rate.
+       Score = clamp(inquiriesConvertedPct × 1.5, 0, 100) (67% conversion = 100).
+       Uplift = activeBuyersLast30d × avgOrderValue × (0.2 - inquiriesConvertedPct/100 × 0.2)
+       (gap to 100% conversion × 20% margin — wider gap = more recoverable
+       revenue via better follow-up).
+       topLever: "Konverzija 35% — NIZKA: izboljšaj follow-up (24h response, multi-channel)".
+    3. **retention** — repeat purchase / churn prevention.
+       churnRatePct = churnedBuyersLast30d / max(totalBuyers, 1) × 100.
+       netGrowthPct = (newBuyersLast30d - churnedBuyersLast30d) / max(totalBuyers, 1) × 100.
+       Score = clamp(100 - churnRatePct × 2 + netGrowthPct × 3, 0, 100)
+       (low churn + positive growth = high score).
+       Uplift = churnedBuyersLast30d × avgBuyerLifetimeValue × 0.3 (30% of churned
+       buyers recoverable via reactivation campaign).
+       topLever: "Churn 9%, rast +3% — zdrava retention".
+    4. **lifetimeValue** — avg LTV trend.
+       Score = clamp(avgBuyerLifetimeValue / 10, 0, 100) (1000€ LTV = 100).
+       Uplift = totalBuyers × 5 (5€/buyer uplift via LTV optimization).
+       topLever: "Povprečni LTV 280€ — zmerna: loyalty program za repeat purchase".
+    5. **loyalty** — loyalty/advocacy.
+       Score = clamp(repeatBuyerRatePct × 1.2 + (highValueBuyersCount / max(totalBuyers, 1)) × 100 × 2, 0, 100)
+       (repeat rate + high-value buyer share — both contribute to loyalty).
+       Uplift = highValueBuyersCount × avgOrderValue × 0.5 (50% uplift from VIP
+       cultivation).
+       topLever: "Repeat 25%, VIP 3 kupcev — močna loyalty: fokus na VIP retention".
+    6. **engagement** — ongoing engagement.
+       Score = clamp(avgEngagementScore, 0, 100) (direct).
+       Uplift = totalBuyers × 2 (2€/buyer uplift via engagement optimization).
+       topLever: "Engagement 45/100 — zmerna: personalize content".
+  - Synthesis → `maximization`:
+    - `topActions`: top 3 signals sorted by upliftEURPerMonth × confidenceWeight
+      (HIGH=1.0, MEDIUM=0.7, LOW=0.4). Each action has templated human-readable
+      text derived from that signal's `topLever` (mirror of Profit/Inventory/
+      Market/Sourcing/Risk Brain's actionForSignal). Confidence = HIGH if
+      score ≥ 70, MEDIUM if ≥ 40, LOW otherwise (same as Profit/Inventory/
+      Market/Sourcing — NOT inverted like Risk).
+    - `projection30d` (STRUCTURED object — projectedActiveBuyers +
+      projectedLTV + projectedChurnRatePct + recommendedOutreachCount):
+      - `projectedActiveBuyers` = activeBuyersLast30d × 1.15 (15% uplift from
+        outreach).
+      - `projectedLTV` = avgBuyerLifetimeValue × 1.05 (5% LTV growth).
+      - `projectedChurnRatePct` = max(2, churnRatePct - 5) (5-point churn
+        reduction).
+      - `recommendedOutreachCount` = ceil(activeBuyersLast30d × 0.3) (contact
+        top 30%).
+    - `projection90d` (longer-horizon optimization):
+      - `projectedActiveBuyers` = activeBuyersLast30d × 1.35 (35% uplift).
+      - `projectedLTV` = avgBuyerLifetimeValue × 1.15 (15% LTV growth).
+      - `projectedChurnRatePct` = max(1, churnRatePct - 10) (10-point reduction).
+      - `recommendedOutreachCount` = ceil(activeBuyersLast30d × 0.5) (contact
+        50%).
+    - `buyerGrade` = weighted average of 6 signal scores (weights:
+      intent 0.15, conversion 0.20, retention 0.20, lifetimeValue 0.20,
+      loyalty 0.15, engagement 0.10), then graded via gradeFromScore (A+ ≥90,
+      A ≥75, B ≥60, C ≥40, D ≥20, F otherwise).
+    - `bestOpportunity` = signal with HIGHEST upliftEURPerMonth (the single
+      biggest buyer lever to cultivate first).
+    - `oneLineSummary` = "32 kupcev (LTV 280€), 8 aktivnih. ${topActions[0].action}.
+      Grade ${buyerGrade}."
+  - **Pure deterministic compute** (aiUsed: false, no AI/LLM SDK call).
+  - **DB-backed state injection** (graceful degradation):
+    - if Prisma is available AND a `Buyer` model exists in the schema, read
+      from it (totalBuyers = count, activeBuyersLast30d = count where
+      lastPurchaseAt >= 30d ago, newBuyersLast30d = count where createdAt >=
+      30d ago, churnedBuyersLast30d = count where lastPurchaseAt in [60d, 30d)
+      ago, highValueBuyersCount = count where LTV > 500, avgBuyerLifetimeValue
+      = avg of lifetimeValue, avgPurchaseFrequency = avg of purchaseCount,
+      repeatBuyerRatePct = count where purchaseCount >= 2 / total × 100,
+      inquiriesConvertedPct = avg of inquiryToSaleRate if field exists,
+      avgEngagementScore = avg of engagementScore if field exists).
+    - **IMPORTANT:** The `Buyer` model does NOT currently exist in
+      prisma/schema.prisma. This function gracefully falls back to null on
+      any error (missing model, missing field, DB unavailable). Once a Buyer
+      model is added in a future version, this function will start deriving
+      state from it automatically — no code changes needed here.
+    - User input (query string or POST body) takes precedence over DB state —
+      callers can override any field.
+    - If DB unavailable or no usable rows → falls back to sensible defaults
+      (totalBuyers 32, activeBuyersLast30d 8, newBuyersLast30d 4,
+      churnedBuyersLast30d 3, avgBuyerLifetimeValue 280€, avgPurchaseFrequency
+      1.8/year, avgOrderValue 180€, repeatBuyerRatePct 25%,
+      inquiriesConvertedPct 35%, avgEngagementScore 45, highValueBuyersCount 3).
+    - All DB access wrapped in try/catch + logger.warn — NEVER crashes the endpoint.
+  - **5-minute cache** (TTL 300000ms): cache key = `buyer-brain:${hashOfInputs}`
+    (totalBuyers + activeBuyersLast30d + newBuyersLast30d + churnedBuyersLast30d
+    + avgBuyerLifetimeValue + avgPurchaseFrequency + avgOrderValue +
+    repeatBuyerRatePct + inquiriesConvertedPct + avgEngagementScore +
+    highValueBuyersCount). On cache hit, the result is returned with a fresh
+    `cachedAt` timestamp so the caller knows it was served from cache.
+  - source: "v8.20-buyer-brain"
+  - GET+POST shared handler `handleBuyerBrain` (AI Hub runner compatibility —
+    hits either method), runtime='nodejs', dynamic='force-dynamic', maxDuration=60,
+    try/catch with logger.error → 500 { error }, parse inputs from both query
+    string and JSON body (POST takes precedence over query).
+  - Pure compute module: `src/lib/brain/buyer.ts` — NO `next/server` import,
+    NO Prisma calls (state injected by caller via BuyerBrainInput). Fully
+    testable in isolation and deterministic given the same input. Mirrors
+    `src/lib/brain/risk.ts` strukturo (clamp, gradeFromScore,
+    confidenceFromScore, confidenceWeight, round2, normalizeInput,
+    computeXxxSignal, actionForSignal, SIGNAL_WEIGHTS, buyerBrain main entry).
+    Reuses `ProfitGrade` in `Confidence` types via `import type { ProfitGrade,
+    Confidence } from './profit'`.
+  - Endpoint: `src/app/api/ai/brain/buyer/route.ts` — šesti endpoint v nested
+    subdirectory pod `src/app/api/ai/brain/`. Avtomatsko odkrit z `/api/ai-list`
+    (ki je bil nadgrajen v v8.15 za recursive depth-2 discovery).
+  - AI Hub: `BrainSynthesisCard` razširjen s ŠESTIM stacked section-om (cyan/
+    teal-tinted, za razliko od Profit Brain emerald, Inventory Brain amber,
+    Market Brain sky/blue, Sourcing Brain purple/violet in Risk Brain red/rose).
+    Sedaj prikazuje VSE ŠEST Brain-e simultano — vsak ima svoj loading skeleton,
+    error state, refresh button, in cache indicator. Buyer Brain prikazuje:
+    oneLineSummary, buyerGrade pill, bestOpportunity pill, top 3 cultivation
+    actions (z confidence), current state summary (totalBuyers,
+    activeBuyersLast30d, churnRatePct, netGrowthPct, avgBuyerLifetimeValue),
+    30d/90d buyer projection (projectedActiveBuyers + projectedLTV +
+    recommendedOutreachCount). Vsak Brain fetch-a independently na mount
+    (Promise.all vseh šestih).
+
+### Stats
+- AI endpoints: 409 → 410 (+1)
+- Total API routes: 586 → 587 (+1)
+- Šesti Brain layer v arhitekturi (above the ~51 buyer specialists, next to v8.15 Profit Brain, v8.16 Inventory Brain, v8.17 Market Brain, v8.18 Sourcing Brain in v8.19 Risk Brain)
+- 6 buyer signals (intent, conversion, retention, lifetimeValue, loyalty, engagement)
+- 3 top cultivation actions ranked by uplift × confidence
+- Structured 30d projection (projectedActiveBuyers + projectedLTV + projectedChurnRatePct + recommendedOutreachCount)
+- Structured 90d projection (projectedActiveBuyers + projectedLTV + projectedChurnRatePct + recommendedOutreachCount)
+- buyerGrade + bestOpportunity + one-line summary
+- Pure deterministic compute (aiUsed: false, no AI/LLM SDK)
+- DB state injection (graceful — falls back to defaults if Buyer model does not exist or DB unavailable)
+- 5-minute cache (300000ms TTL, cachedAt stamp on cache hit)
 
 ## [8.19.0] - 2026-08-28
 
