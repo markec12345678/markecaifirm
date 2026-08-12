@@ -15014,3 +15014,81 @@ Stage Summary:
 - GitHub sinhroniziran (0 commit-ov ahead)
 - Verzija aplikacije: v8.20.0
 - Skupaj doslej (v7.50 → v8.20): 70 verzij, 192 novih funkcij; 6 Brain layer-jev implementiranih (Profit + Inventory + Market + Sourcing + Risk + Buyer) — zadnji Brain (Pricing) v v8.21, Master Brain v v8.22
+
+---
+Task ID: v8.21
+Agent: full-stack-developer
+Task: Implement Pricing Brain — seventh and FINAL Domain Brain layer above ~39 pricing specialists
+
+Work Log:
+- Prebral worklog.md (zadnji v8.20 + v8.20.1 vnosa), src/lib/brain/{profit,buyer}.ts (templates — profit za tipe ProfitGrade/Confidence, buyer za pattern synthesis z 6 signali + structured projection30d/projection90d + graceful DB fallback), src/app/api/ai/brain/{buyer,sourcing}/route.ts (endpoint templates), src/components/dashboard/ai-hub-view.tsx (BrainSynthesisCard z 6 stacked sectioni)
+- Ustvaril /agent-ctx/v8.21-pricing-brain.md (work record per instructions)
+- NEW: src/lib/brain/pricing.ts (~475 vrstic, pure compute module, NO next/server, NO Prisma)
+  - PricingBrainInput: 12 optionalnih polj (activeListingsCount, avgProfitMarginPct, avgDaysOnMarket, competitorPriceAvgPct, priceElasticityScore, sellThroughRatePct, monthlyRevenue, avgOrderValue, priceWarDetected, seasonalMultiplier, psychologyOptimizedPct, lastPriceChangePct)
+  - PricingSignalName: 6 signalov (margin, elasticity, competitiveness, dynamic, war, psychology)
+  - PricingSignal: name + score (0-100) + grade + upliftEURPerMonth + topLever
+  - PricingBrainAction: rank + domain ('pricing') + signal + action + expectedUpliftEUR + confidence
+  - PricingBrainResult: signals (6) + current (13 polj vključno pricingPower composite) + maximization (topActions + projection30d + projection90d + pricingGrade + bestOpportunity + oneLineSummary) + aiUsed:false + source:'v8.21-pricing-brain' + cachedAt?
+  - Sensible defaults: activeListingsCount 150, avgProfitMarginPct 25, avgDaysOnMarket 14, competitorPriceAvgPct 95 (5% below competitor avg), priceElasticityScore 55, sellThroughRatePct 45, monthlyRevenue 350, avgOrderValue 180, priceWarDetected false, seasonalMultiplier 1.0, psychologyOptimizedPct 40, lastPriceChangePct 0
+  - 6 signal formulas (mirror buyer.ts pattern z clamp/gradeFromScore/confidenceFromScore/confidenceWeight/round2 helpers):
+    1. margin — Score = clamp(avgProfitMarginPct × 3, 0, 100) (33% margin = 100); Uplift = monthlyRevenue × 0.05; topLever "Margin ${avgProfitMarginPct}% — ${<20 ? NIZKA : <30 ? zmerna : zdrava}"
+    2. elasticity — Score = clamp(priceElasticityScore, 0, 100); Uplift = activeListingsCount × 3; topLever "Elastičnost ${score}/100 — ${>70 ? VISOKA : >40 ? zmerna : NIZKA}"
+    3. competitiveness — Score = clamp(100 - Math.abs(competitorPriceAvgPct - 100) × 2, 0, 100); Uplift = monthlyRevenue × 0.04; topLever "Cene ${delta}% vs kompetitorji — ${>105 ? PREDRAGO : <95 ? poceni : pravilno pozicionirano}"
+    4. dynamic — Score = clamp((repricingPart 0|20|60) + (seasonalPart 0|20) + (slowMoverPart 0|20), 0, 100); Uplift = activeListingsCount × 2; topLever "Dynamic pricing ${score}/100 — ${<40 ? NIZKA : <70 ? delna : visoka}"
+    5. war — If priceWarDetected: Score = clamp(40 - (100 - competitorPriceAvgPct) × 2, 0, 100); Else: Score = 90; Uplift = priceWarDetected ? monthlyRevenue × 0.06 : 0; topLever "Price war ${priceWarDetected ? DETEKTIRAN : ni aktiven}"
+    6. psychology — Score = clamp(psychologyOptimizedPct × 1.2, 0, 100); Uplift = nonOptimizedListings × 4; topLever "Psychology pricing ${psychologyOptimizedPct}% — ${<50 ? NIZKA : <80 ? delna : visoka}"
+  - Synthesis logic (v pricingBrain()):
+    * pricingPower = weighted blend: margin × 0.25 + elasticity × 0.15 + competitiveness × 0.25 + dynamic × 0.10 + war × 0.10 + psychology × 0.15; clamp 0-100 (composite "ability to raise prices without losing volume")
+    * topActions = top 3 signals sorted by upliftEURPerMonth × confidenceWeight (HIGH=1.0, MEDIUM=0.7, LOW=0.4; confidence = HIGH if score ≥70, MEDIUM if ≥40, LOW sicer)
+    * projection30d: projectedMarginPct = avgProfitMarginPct + 3, projectedRevenue = monthlyRevenue × 1.08, recommendedPriceChangePct = pricingPower > 60 ? 5 : pricingPower > 40 ? 2 : -3, listingsToReprice = ceil(activeListingsCount × 0.3)
+    * projection90d: projectedMarginPct = avgProfitMarginPct + 7, projectedRevenue = monthlyRevenue × 1.18, recommendedPriceChangePct = pricingPower > 60 ? 8 : pricingPower > 40 ? 4 : -2, listingsToReprice = ceil(activeListingsCount × 0.6)
+    * pricingGrade = weighted avg z SIGNAL_WEIGHTS (margin 0.25, competitiveness 0.20, elasticity 0.15, dynamic 0.15, war 0.10, psychology 0.15 — slightly different from PRICING_POWER_WEIGHTS ki emphasizira ability-to-raise-prices factors), graded via gradeFromScore
+    * bestOpportunity = signal z HIGHEST upliftEURPerMonth
+    * oneLineSummary = "Margin ${avgProfitMarginPct}%, kompetitorji ${competitorPriceAvgPct > 100 ? '+' : ''}${(competitorPriceAvgPct - 100)}%. ${topActions[0].action}. Grade ${grade}."
+  - NO next/server import, NO Prisma calls — pure deterministic
+  - Reuses ProfitGrade in Confidence types via `import type { ProfitGrade, Confidence } from './profit'`
+- NEW: src/app/api/ai/brain/pricing/route.ts (~430 vrstic)
+  - runtime='nodejs', dynamic='force-dynamic', maxDuration=60
+  - resolveInputs: parse from query string (GET) AND JSON body (POST) — body precedence; supports 12 inputov; asNumber/asInt/asBoolean helpers
+  - fetchDbState: graceful DB state injection — bere Listing (activeListingsCount, sellThroughRatePct, psychologyOptimizedPct heuristic z .99/.95/49/79 price endings) in Trade (monthlyRevenue, avgOrderValue, avgProfitMarginPct, avgDaysOnMarket) v 30d oknu; vse v try/catch + logger.warn — NE crash-a
+  - 5-min cache (TTL 300000ms): cache key = pricing-brain:${alc|mgn|dom|cmp|el|st|rev|aov|pw|sm|po|lpc} (12 inputov). Na cache hit, cachedAt re-stamp
+  - GET+POST shared handler handlePricingBrain, aiUsed: false, source: "v8.21-pricing-brain"
+  - try/catch z logger.error → 500 { error: err?.message ?? 'Napaka' }
+  - JSDoc header z razlikami od Profit/Inventory/Market/Sourcing/Risk/Buyer Brain in od ~39 pricing specialistov; MILESTONE note (v8.21 zaključuje vseh 7 Domain Brain layer-jev)
+- MODIFIED: src/components/dashboard/ai-hub-view.tsx
+  - Added Coins icon to lucide-react imports (zene hetja poleg Brain, AlertCircle, Package, TrendingUp, Target, Shield, Users)
+  - Added PricingBrainResult interface (signals z score + grade + upliftEURPerMonth + topLever; current z 13 polj vključno pricingPower composite; maximization z topActions + projection30d/90d (projectedMarginPct + projectedRevenue + recommendedPriceChangePct + listingsToReprice) + pricingGrade + bestOpportunity + oneLineSummary)
+  - Added PricingBrainSection component (green/lime-tinted via lime-500/30 border + from-lime-500/10 via-green-500/5 to-transparent gradient, Coins icon, 💶 emoji, v8.21 badge)
+    * fetches /api/ai/brain/pricing on mount, loading skeleton, error state, refresh button, cache indicator
+    * oneLineSummary
+    * pricingGrade pill (via gradeColor) + bestOpportunity pill (lime/green)
+    * Top 3 pricing actions (z confidence)
+    * Current state summary (avgProfitMarginPct, competitorPriceAvgPct, sellThroughRatePct, pricingPower)
+    * 30d/90d pricing projection (projectedMarginPct + projectedRevenue + recommendedPriceChangePct + listingsToReprice)
+  - Updated outer card header: "v8.15 + v8.16 + v8.17 + v8.18 + v8.19 + v8.20" → "v8.15 + v8.16 + v8.17 + v8.18 + v8.19 + v8.20 + v8.21"
+  - BrainSynthesisCard sedaj rendera 7 stacked sectionov (ProfitBrainSection + InventoryBrainSection + MarketBrainSection + SourcingBrainSection + RiskBrainSection + BuyerBrainSection + PricingBrainSection)
+  - Added brain/pricing v8.21 badge v endpoint grid (lime-tinted) poleg obstoječih brain/profit v8.15, brain/inventory v8.16, brain/market v8.17, brain/sourcing v8.18, brain/risk v8.19, brain/buyer v8.20
+  - Updated JSDoc header komentar (v8.21 SEVENTH stacked section, v8.21 PRICING BRAIN, all seven sections fetch in parallel, MILESTONE: All 7 Domain Brains complete)
+- Lint (bun run lint): 0 errors, 0 warnings ✅
+- Typecheck (bunx tsc --noEmit): 0 errors ✅
+- Endpoint verification (curl):
+  - GET /api/ai/brain/pricing (default inputs) → 200 {"ok":true, "signals":[6: margin(A,75,17.5€ — Margin 25% — zmerna: optimiziraj bundle za margin boost), elasticity(C,55,450€ — Elastičnost 55/100 — zmerna: eksperimentiraj s 5% spremembami), competitiveness(A+,90,14€ — Cene -5% vs kompetitorji — pravilno pozicionirano), dynamic(D,20,300€ — Dynamic pricing 20/100 — NIZKA: implementiraj tedensko repricing avtomatizacijo), war(A+,90,0€ — Price war ni aktiven — spremljaj kompetitorje), psychology(C,48,360€ — Psychology pricing 40% — NIZKA: pretvori cene v .99/.95 (199€ namesto 200€))], "current":{activeListingsCount:150, avgProfitMarginPct:25, avgDaysOnMarket:14, competitorPriceAvgPct:95, priceElasticityScore:55, sellThroughRatePct:45, monthlyRevenue:350, avgOrderValue:180, priceWarDetected:false, seasonalMultiplier:1, psychologyOptimizedPct:40, lastPriceChangePct:0, pricingPower:67.7}, "maximization":{topActions:[#1 elasticity +450€/mo (MEDIUM), #2 psychology +360€/mo (MEDIUM), #3 dynamic +300€/mo (LOW)], projection30d:{projectedMarginPct:28, projectedRevenue:378, recommendedPriceChangePct:5, listingsToReprice:45}, projection90d:{projectedMarginPct:32, projectedRevenue:413, recommendedPriceChangePct:8, listingsToReprice:90}, pricingGrade:"B", bestOpportunity:"elasticity", oneLineSummary:"Margin 25%, kompetitorji -5%. Izkoristi elastičnost: Elastičnost 55/100 — zmerna: eksperimentiraj s 5% spremembami. Grade B."}, "aiUsed":false, "source":"v8.21-pricing-brain"}
+  - POST /api/ai/brain/pricing z custom inputs (activeListingsCount 200, avgProfitMarginPct 32, avgDaysOnMarket 10, competitorPriceAvgPct 102, priceElasticityScore 65, sellThroughRatePct 58, monthlyRevenue 600, avgOrderValue 220, priceWarDetected false, seasonalMultiplier 1.15, psychologyOptimizedPct 75, lastPriceChangePct 5) → 200 {"ok":true, "signals":[6: margin(A+,96,30€), elasticity(B,65,600€), competitiveness(A+,96,24€), dynamic(A,80,400€), war(A+,90,0€), psychology(A+,90,200€)], "current":{pricingPower:88.25}, "maximization":{topActions:[#1 elasticity +600€/mo (MEDIUM), #2 dynamic +400€/mo (HIGH), #3 psychology +200€/mo (HIGH)], projection30d:{projectedMarginPct:35, projectedRevenue:648, recommendedPriceChangePct:5, listingsToReprice:60}, projection90d:{projectedMarginPct:39, projectedRevenue:708, recommendedPriceChangePct:8, listingsToReprice:120}, pricingGrade:"A", bestOpportunity:"elasticity"}} — višji uplift (elasticity 600 vs 450, dynamic 400 vs 300), višji pricingGrade (A vs B), višji pricingPower (88.25 vs 67.7) ✅
+  - Cache verification: 2x zapored GET /api/ai/brain/pricing — drugi klic re-stampa cachedAt z istim pricingGrade B in bestOpportunity elasticity (cold start cache miss → 5-min cache hit) ✅
+  - /api/ai-list → {"total":411, "categories":{"brain":7, ...}, "endpoints":[brain/profit, brain/inventory, brain/market, brain/sourcing, brain/risk, brain/buyer, brain/pricing]} ✅
+- Updated documentation:
+  - README.md: version badge v8.20.0 → v8.21.0; AI endpoints badge 410 → 411; API routes badge 587 → 588; hero tagline v8.20.0 → v8.21.0 z Pricing Brain sintezo 6 signalov (margin, elasticity, competitiveness, dynamic, war, psychology) v eno odločitev — zvišaj X itemov za Y%, 30d/90d projekcija margin + revenue + listingsToReprice + pricingPower composite + MILESTONE note (v8.21 zaključuje vseh 7 Domain Brain layer-jev, next: v8.22 Master Brain); Brain overview paragraph posodobljen z vsemi 7 Brain-i (Profit + Inventory + Market + Sourcing + Risk + Buyer + Pricing); "Kaj je novega" razširjen z v8.21 — 💶 Pricing Brain blokom na vrhu (nad v8.20) z MILESTONE flag; version section v8.20.0 → v8.21.0; ~273 funkcij → ~274 funkcij; AI Hub opis 410→411 z dodatkom Pricing Brain; AI_ENDPOINTS.md link 410→411 z brain/pricing; Endpointi (410 AI → 411 AI = 588 routes); project tree comment posodobljen (7 Brain layerjev, v8.15-v8.21); "v8.15-v8.20" → "v8.15-v8.21"; Testing badge 587 → 588 routes; "UI komponente za v7.50-v8.20" → "v7.50-v8.21"; Roadmap dodan "v8.22 — Master Brain (next)" section; Changelog section zadnje verzije: dodan v8.21.0 na vrh nad v8.20.0 z MILESTONE flag (All 7 Domain Brains complete); grep -c "v8.21" README.md = 13 ✅; grep -c "410 AI" = 0 ✅; grep -c "587" = 0 ✅
+  - CHANGELOG.md: dodan nov "## [8.21.0] - 2026-08-28" section na vrhu (nad [8.20.0]) z ### Added — 💶 Pricing Brain blokom (6 signalov podrobno z score formula + uplift formula + topLever template, synthesis logic z topActions/projection30d/projection90d (structured: projectedMarginPct + projectedRevenue + recommendedPriceChangePct + listingsToReprice)/pricingGrade/bestOpportunity/oneLineSummary, pricingPower composite (separate weights from pricingGrade), pure deterministic compute, DB-backed state injection z graceful fallback (Listing + Trade tables v 30d oknu), 5-min cache z cachedAt stamp, GET+POST shared handler, runtime config, file paths za pure compute module in endpoint, BrainSynthesisCard razširjen s sedmim stacked section-om (green/lime-tinted), MILESTONE: All 7 Domain Brains complete note). ### Stats: AI endpoints 410→411 (+1), Total API routes 587→588 (+1). [Unreleased] "v8.21+" → "v8.22+ — Master Brain (final orchestration layer)" (Removed "Pricing Brain" iz načrtovanih — sedaj dokončan)
+  - AI_ENDPOINTS.md: total count 410 → 411. Vstavljen "| 15 | brain/pricing | `/api/ai/brain/pricing` |" v alphabetical position (po brain/buyer, pred budget-allocator). Renumbered vseh 396 vrstic od 15-410 → 16-411 sequentialno (Python script z bottom-up renumber)
+
+Stage Summary:
+- NEW: src/lib/brain/pricing.ts (pure compute module — 6 pricing signals + synthesis + pricingPower composite)
+- NEW: src/app/api/ai/brain/pricing/route.ts (GET+POST endpoint, 5-min cache, DB state injection graceful — Listing + Trade tables, fallback na defaults)
+- MODIFIED: src/components/dashboard/ai-hub-view.tsx (BrainSynthesisCard extended to render SEVEN stacked sections — Profit emerald + Inventory amber + Market sky/blue + Sourcing purple/violet + Risk red/rose + Buyer cyan/teal + Pricing green/lime)
+- AI endpointi: 410 → 411 (+1)
+- Total API routes: 587 → 588 (+1)
+- Lint: 0 errors, 0 warnings ✅
+- Typecheck: 0 errors ✅
+- Endpoint verification: GET default → 6 signals, pricingGrade=B, bestOpportunity=elasticity (450€/mo uplift), topActions #1 elasticity +450€/mo (MEDIUM), #2 psychology +360€/mo (MEDIUM), #3 dynamic +300€/mo (LOW), pricingPower=67.7/100, projection30d {28% margin, 378€ revenue, +5% price change, 45 listings to reprice}, projection90d {32% margin, 413€ revenue, +8% price change, 90 listings to reprice} ✅; POST custom (200 listings, 32% margin, 600€ revenue, 75% psychology) → pricingGrade=A, bestOpportunity=elasticity (600€/mo uplift), topActions #1 elasticity +600€/mo (MEDIUM), #2 dynamic +400€/mo (HIGH), #3 psychology +200€/mo (HIGH), pricingPower=88.25/100, projection30d {35% margin, 648€ revenue, +5%, 60 listings}, projection90d {39% margin, 708€ revenue, +8%, 120 listings} ✅; Cache → drugi GET re-stampa cachedAt z istim pricingGrade B in bestOpportunity elasticity ✅; /api/ai-list → total 411, categories.brain 7 (profit + inventory + market + sourcing + risk + buyer + pricing) ✅
+- Documentation updated: AI_ENDPOINTS.md (411 brain/pricing row + renumber), README.md (version v8.21.0, badges 411 AI + 588 routes, hero tagline, overview paragraph z 7 Brain-i, "Kaj je novega" v8.21 blok z MILESTONE flag, version section, function count ~274, all v8.20/410/587 references posodobljene, Roadmap z v8.22 Master Brain next section, Changelog Zadnje verzije z v8.21.0 entry), CHANGELOG.md (nov [8.21.0] section z Added + Stats + MILESTONE note, [Unreleased] v8.21+ → v8.22+ Master Brain)
+- MILESTONE: All 7 Domain Brains complete (Profit + Inventory + Market + Sourcing + Risk + Buyer + Pricing). Next: v8.22 Master Brain ki orkestrira vseh 7 Brain-ov v ENO končno odločitev (TOP 5 akcij za danes + 30d/90d/12m strategija).

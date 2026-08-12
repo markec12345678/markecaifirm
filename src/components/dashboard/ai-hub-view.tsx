@@ -59,8 +59,19 @@
  *     (intent, conversion, retention, lifetimeValue, loyalty, engagement) →
  *     30d/90d buyer projection (projectedActiveBuyers + projectedLTV +
  *     projectedChurnRatePct + recommendedOutreachCount)
- * All six sections fetch in parallel on mount (`Promise.all`). Each has its
+ *
+ * v8.21: Extended Brain Synthesis Card with SEVENTH stacked section —
+ * Pricing Brain (green/lime-tinted). Card now renders ALL SEVEN brain
+ * layers simultaneously:
+ *   - 💶 PRICING BRAIN (green/lime) — synthesizes 6 pricing signals
+ *     (margin, elasticity, competitiveness, dynamic, war, psychology) →
+ *     30d/90d pricing projection (projectedMarginPct + projectedRevenue +
+ *     recommendedPriceChangePct + listingsToReprice) + pricingPower composite.
+ * All seven sections fetch in parallel on mount (`Promise.all`). Each has its
  * own loading skeleton, error state, refresh button, and cache indicator.
+ *
+ * MILESTONE: All 7 Domain Brains complete (Profit + Inventory + Market +
+ * Sourcing + Risk + Buyer + Pricing). Next: v8.22 Master Brain.
  *
  * Lazy-loaded z next/dynamic (ssr: false) — ne bremeni prvotnega nalaganja.
  */
@@ -78,7 +89,7 @@ import {
   DialogTitle,
   DialogDescription,
 } from '@/components/ui/dialog';
-import { Sparkles, Search, Copy, Check, RefreshCw, Zap, X, ChevronRight, Brain, AlertCircle, Package, TrendingUp, Target, Shield, Users } from 'lucide-react';
+import { Sparkles, Search, Copy, Check, RefreshCw, Zap, X, ChevronRight, Brain, AlertCircle, Package, TrendingUp, Target, Shield, Users, Coins } from 'lucide-react';
 import { toast } from 'sonner';
 import { cn } from '@/lib/utils';
 
@@ -110,17 +121,18 @@ function categorize(name: string): string {
   return 'misc';
 }
 
-// ===== Brain Synthesis Card (v8.15 + v8.16 + v8.17 + v8.18 + v8.19 + v8.20) =====
+// ===== Brain Synthesis Card (v8.15 + v8.16 + v8.17 + v8.18 + v8.19 + v8.20 + v8.21) =====
 //
-// Renders ALL SIX Brain layers stacked inside one Card:
+// Renders ALL SEVEN Brain layers stacked inside one Card:
 //   - 🧠 PROFIT BRAIN (v8.15, emerald) — synthesizes 6 profit signals
 //   - 📦 INVENTORY BRAIN (v8.16, amber) — synthesizes 6 inventory signals
 //   - 📈 MARKET BRAIN (v8.17, sky/blue) — synthesizes 6 market signals
 //   - 🎯 SOURCING BRAIN (v8.18, purple/violet) — synthesizes 6 sourcing signals
 //   - 🛡️ RISK BRAIN (v8.19, red/rose) — synthesizes 6 risk signals
 //   - 👥 BUYER BRAIN (v8.20, cyan/teal) — synthesizes 6 buyer signals
+//   - 💶 PRICING BRAIN (v8.21, green/lime) — synthesizes 6 pricing signals
 //
-// All six sections fetch in parallel on mount and have independent loading,
+// All seven sections fetch in parallel on mount and have independent loading,
 // error, refresh, and cache states.
 
 interface BrainAction {
@@ -1355,7 +1367,205 @@ function BuyerBrainSection() {
   );
 }
 
-// --- Outer card wrapper (v8.15 + v8.16 + v8.17 + v8.18 + v8.19 + v8.20) --------------------
+// --- Pricing Brain section (v8.21, green/lime) --------------------------------
+//
+// v8.21: Pricing Brain result — projection30d/projection90d are STRUCTURED
+// objects with projectedMarginPct + projectedRevenue +
+// recommendedPriceChangePct + listingsToReprice. Each signal has score +
+// grade + upliftEURPerMonth + topLever (same shape as Profit/Inventory/
+// Market/Sourcing/Buyer — NOT inverted like Risk). Distinct from all six
+// prior Brains. Also exposes a `pricingPower` composite (0-100) on `current`
+// that represents the ability to raise prices without losing volume.
+interface PricingBrainResult {
+  ok: true;
+  signals: Array<{
+    name: string;
+    score: number; // 0-100 (HIGHER = better pricing health)
+    grade: string;
+    upliftEURPerMonth: number;
+    topLever: string;
+  }>;
+  current: {
+    activeListingsCount: number;
+    avgProfitMarginPct: number;
+    avgDaysOnMarket: number;
+    competitorPriceAvgPct: number;
+    priceElasticityScore: number;
+    sellThroughRatePct: number;
+    monthlyRevenue: number;
+    avgOrderValue: number;
+    priceWarDetected: boolean;
+    seasonalMultiplier: number;
+    psychologyOptimizedPct: number;
+    lastPriceChangePct: number;
+    pricingPower: number; // 0-100 composite — ability to raise prices
+  };
+  maximization: {
+    topActions: BrainAction[];
+    projection30d: {
+      projectedMarginPct: number;
+      projectedRevenue: number;
+      recommendedPriceChangePct: number;
+      listingsToReprice: number;
+    };
+    projection90d: {
+      projectedMarginPct: number;
+      projectedRevenue: number;
+      recommendedPriceChangePct: number;
+      listingsToReprice: number;
+    };
+    pricingGrade: 'A+' | 'A' | 'B' | 'C' | 'D' | 'F';
+    bestOpportunity: string;
+    oneLineSummary: string;
+  };
+  aiUsed: false;
+  source: string;
+  cachedAt?: number;
+}
+
+function PricingBrainSection() {
+  const [data, setData] = useState<PricingBrainResult | null>(null);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
+
+  const fetchBrain = useCallback(async () => {
+    setLoading(true);
+    setError(null);
+    try {
+      const res = await fetch('/api/ai/brain/pricing', { method: 'GET' });
+      if (!res.ok) throw new Error(`HTTP ${res.status}`);
+      const json = (await res.json()) as PricingBrainResult;
+      if (!json?.ok) throw new Error(json?.source ? 'Brain ni vrnil rezultata' : 'Napaka');
+      setData(json);
+    } catch (e: any) {
+      setError(e?.message ?? 'Napaka');
+    } finally {
+      setLoading(false);
+    }
+  }, []);
+
+  useEffect(() => {
+    fetchBrain();
+  }, [fetchBrain]);
+
+  return (
+    <div className="rounded-lg border border-lime-500/30 bg-gradient-to-br from-lime-500/10 via-green-500/5 to-transparent p-3 sm:p-4">
+      <div className="flex items-center gap-2 mb-2 min-w-0">
+        <Coins className="w-4 h-4 text-lime-600 dark:text-lime-400 shrink-0" />
+        <span className="text-sm sm:text-base font-bold tracking-tight">
+          💶 PRICING BRAIN
+        </span>
+        <Badge variant="outline" className="text-[10px] border-lime-500/40 text-lime-700 dark:text-lime-400 shrink-0">
+          v8.21
+        </Badge>
+      </div>
+
+      {loading && (
+        <div className="space-y-2">
+          <Skeleton className="h-5 w-full bg-lime-500/10" />
+          <Skeleton className="h-3 w-3/4 bg-lime-500/10" />
+          <div className="grid grid-cols-3 gap-2 pt-1">
+            <Skeleton className="h-6 bg-lime-500/10" />
+            <Skeleton className="h-6 bg-lime-500/10" />
+            <Skeleton className="h-6 bg-lime-500/10" />
+          </div>
+        </div>
+      )}
+
+      {!loading && error && (
+        <div className="flex items-center gap-2 text-xs text-red-600 dark:text-red-400">
+          <AlertCircle className="w-3.5 h-3.5 shrink-0" />
+          <span className="truncate">{error}</span>
+          <Button size="sm" variant="outline" onClick={fetchBrain} className="ml-auto h-6 px-2 text-[10px]">
+            Ponovi
+          </Button>
+        </div>
+      )}
+
+      {!loading && !error && data && (
+        <div className="space-y-2.5">
+          <p className="text-xs sm:text-sm font-medium leading-snug">
+            {data.maximization.oneLineSummary}
+          </p>
+
+          <div className="flex flex-wrap gap-1.5">
+            <Badge variant="outline" className={cn('text-[10px]', gradeColor(data.maximization.pricingGrade))}>
+              Pricing: {data.maximization.pricingGrade}
+            </Badge>
+            <Badge variant="outline" className="text-[10px] border-lime-500/30 text-lime-700 dark:text-lime-400">
+              Top: {data.maximization.bestOpportunity.toUpperCase()}
+            </Badge>
+            {data.cachedAt && (
+              <Badge variant="outline" className="text-[9px] text-muted-foreground border-muted">
+                cache {Math.round((Date.now() - data.cachedAt) / 1000)}s
+              </Badge>
+            )}
+          </div>
+
+          <div className="space-y-1">
+            <div className="text-[9px] uppercase text-muted-foreground">Top 3 akcije za danes (pricing)</div>
+            {data.maximization.topActions.map((a) => (
+              <div key={a.rank} className="flex items-start gap-1.5 text-[11px]">
+                <span className="font-bold text-lime-700 dark:text-lime-400 shrink-0 w-3">
+                  {a.rank}.
+                </span>
+                <span className="flex-1 min-w-0">
+                  <span className="font-medium">{a.action}</span>
+                  <span className="text-muted-foreground"> · +{a.expectedUpliftEUR}€/mo</span>
+                </span>
+                <span className={cn('text-[9px] font-bold shrink-0', confidenceColor(a.confidence))}>
+                  {a.confidence}
+                </span>
+              </div>
+            ))}
+          </div>
+
+          {/* Current pricing state */}
+          <div className="grid grid-cols-2 gap-1.5 text-[10px] pt-1 border-t border-lime-500/20">
+            <span className="text-muted-foreground">
+              Margin: <span className="font-bold text-lime-700 dark:text-lime-400">{Math.round(data.current.avgProfitMarginPct)}%</span>
+            </span>
+            <span className="text-muted-foreground">
+              Vs komp.: <span className="font-bold text-lime-700 dark:text-lime-400">{data.current.competitorPriceAvgPct > 100 ? '+' : ''}{Math.round(data.current.competitorPriceAvgPct - 100)}%</span>
+            </span>
+            <span className="text-muted-foreground">
+              Sell-through: <span className="font-bold text-lime-700 dark:text-lime-400">{Math.round(data.current.sellThroughRatePct)}%</span>
+            </span>
+            <span className="text-muted-foreground">
+              Pricing power: <span className="font-bold text-lime-700 dark:text-lime-400">{Math.round(data.current.pricingPower)}/100</span>
+            </span>
+          </div>
+
+          {/* 30d / 90d pricing projection */}
+          <div className="flex items-center justify-between gap-2 text-[10px] pt-1 border-t border-lime-500/10">
+            <span className="text-muted-foreground">
+              30d: <span className="font-bold text-lime-700 dark:text-lime-400">
+                {Math.round(data.maximization.projection30d.projectedMarginPct)}% margin · {Math.round(data.maximization.projection30d.projectedRevenue)}€ · {data.maximization.projection30d.recommendedPriceChangePct >= 0 ? '+' : ''}{data.maximization.projection30d.recommendedPriceChangePct}% · {data.maximization.projection30d.listingsToReprice} repr.
+              </span>
+            </span>
+            <span className="text-muted-foreground">
+              90d: <span className="font-bold text-lime-700 dark:text-lime-400">
+                {Math.round(data.maximization.projection90d.projectedMarginPct)}% margin · {Math.round(data.maximization.projection90d.projectedRevenue)}€ · {data.maximization.projection90d.recommendedPriceChangePct >= 0 ? '+' : ''}{data.maximization.projection90d.recommendedPriceChangePct}% · {data.maximization.projection90d.listingsToReprice} repr.
+              </span>
+            </span>
+          </div>
+
+          <div className="flex justify-end">
+            <button
+              onClick={fetchBrain}
+              className="text-[9px] text-muted-foreground hover:text-foreground flex items-center gap-1"
+            >
+              <RefreshCw className="w-2.5 h-2.5" />
+              Osveži
+            </button>
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
+// --- Outer card wrapper (v8.15 + v8.16 + v8.17 + v8.18 + v8.19 + v8.20 + v8.21) --------------------
 
 function BrainSynthesisCard({ onBrainCategoryClick }: { onBrainCategoryClick: () => void }) {
   return (
@@ -1368,7 +1578,7 @@ function BrainSynthesisCard({ onBrainCategoryClick }: { onBrainCategoryClick: ()
               AI BRAIN SYNTHESIS
             </span>
             <Badge variant="outline" className="text-[10px] border-primary/40 text-primary shrink-0">
-              v8.15 + v8.16 + v8.17 + v8.18 + v8.19 + v8.20
+              v8.15 + v8.16 + v8.17 + v8.18 + v8.19 + v8.20 + v8.21
             </Badge>
           </div>
           <button
@@ -1385,6 +1595,7 @@ function BrainSynthesisCard({ onBrainCategoryClick }: { onBrainCategoryClick: ()
         <SourcingBrainSection />
         <RiskBrainSection />
         <BuyerBrainSection />
+        <PricingBrainSection />
       </CardContent>
     </Card>
   );
@@ -1672,6 +1883,11 @@ export function AIHubView() {
                         {ep.category === 'brain' && ep.name === 'brain/buyer' && (
                           <Badge variant="outline" className="text-[9px] border-cyan-500/40 text-cyan-600 dark:text-cyan-400 shrink-0">
                             v8.20
+                          </Badge>
+                        )}
+                        {ep.category === 'brain' && ep.name === 'brain/pricing' && (
+                          <Badge variant="outline" className="text-[9px] border-lime-500/40 text-lime-700 dark:text-lime-400 shrink-0">
+                            v8.21
                           </Badge>
                         )}
                       </div>

@@ -6,13 +6,175 @@ Format sledi [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), verzije s
 
 ## [Unreleased]
 
-Načrtovano za v8.21+:
-- Pricing Brain (zadnji Brain layer)
-- Master Brain ki orkestrira vseh 7 Brain layerjev (Profit + Inventory + Market + Sourcing + Risk + Buyer + Pricing)
+Načrtovano za v8.22+:
+- **Master Brain** (final orchestration layer) — orkestrira vseh 7 Domain Brain-ov (Profit + Inventory + Market + Sourcing + Risk + Buyer + Pricing) v ENO končno odločitev: TOP 5 akcij za danes, 30d/90d/12m strategija, master grade
 - WebSocket real-time negotiation (SSE namesto polling)
 - Playwright E2E testi za glavne flow-e
 - TLS fingerprinting (curl-impersonate)
 - ML model za buyer matchmaker (fine-tuned na realnem data)
+
+## [8.21.0] - 2026-08-28
+
+### Added — 💶 Pricing Brain (sedmi in zadnji orkestracijski Brain layer nad ~39 pricing specialist-i)
+
+- **Pricing Brain** — `GET+POST /api/ai/brain/pricing`
+  - NOV SEDMI IN ZADNJI ARCHITECTURAL LAYER: sedmi in zadnji Brain layer (po
+    Profit Brain v v8.15, Inventory Brain v v8.16, Market Brain v v8.17,
+    Sourcing Brain v v8.18, Risk Brain v v8.19 in Buyer Brain v v8.20) ki
+    sedi NAD ~39 pricing specialist endpointi (price-elasticity,
+    price-optimization-engine-pro, smart-pricing-engine, pricing-psychology-
+    optimizer, margin-guardian, margin-guardian-pro, price-war-strategist,
+    price-war, seasonal-pricing, competitor-price-tracker, competitor-tracker,
+    margin-optimizer, price-volatility-analyzer, pricing-abtest,
+    smart-bundle-pricing, price-intelligence-engine, profit-margin-maximizer,
+    profit-margin-predictor, profit-margin-predictor-v3, profit-margin-
+    forecaster, profit-margin-forecaster-pro, profit-margin-acceleration-
+    tracker, profit-margin-optimizer-v2, inventory-profit-margin-tracker,
+    inventory-profit-margin-optimizer-pro, deal-source-margin-maximizer,
+    deal-source-profit-margin-growth-maximizer, deal-profit-margin-enhancer-pro,
+    bundle-profit-optimizer, ...). Vsak specialist meri ENO pricing dimenzijo —
+    Pricing Brain sintetizira 6 pricing signalov v ENO odločitev.
+  - 6 pricing signalov (each 0-100 score + grade + uplift EUR/mo + topLever):
+    1. **margin** — profit margin health.
+       Score = clamp(avgProfitMarginPct × 3, 0, 100) (33% margin = 100).
+       Uplift = monthlyRevenue × 0.05 (5% revenue uplift from margin optimization).
+       topLever: "Margin 25% — zmerna: optimiziraj bundle za margin boost".
+    2. **elasticity** — price elasticity awareness.
+       Score = clamp(priceElasticityScore, 0, 100) (direct — higher elasticity =
+       more price-sensitive = need careful pricing).
+       Uplift = activeListingsCount × 3 (€3/listing uplift from elasticity-aware repricing).
+       topLever: "Elastičnost 55/100 — zmerna: eksperimentiraj s 5% spremembami".
+    3. **competitiveness** — vs competitors.
+       competitivenessScore = clamp(100 - Math.abs(competitorPriceAvgPct - 100) × 2, 0, 100)
+       (90% or 110% of competitor = 80 score; 80% or 120% = 60).
+       Uplift = monthlyRevenue × 0.04 (4% revenue uplift from better competitive positioning).
+       topLever: "Cene -5% vs kompetitorji — pravilno pozicionirano".
+    4. **dynamic** — dynamic/real-time pricing adoption.
+       dynamicScore = clamp(
+         (activeListingsCount > 0 ? (lastPriceChangePct !== 0 ? 60 : 20) : 0)
+           + (seasonalMultiplier !== 1 ? 20 : 0)
+           + (sellThroughRatePct < 30 ? 20 : 0),
+         0, 100,
+       ) — score based on whether repricing happens, seasonality is tracked,
+       slow movers are repriced.
+       Uplift = activeListingsCount × 2 (€2/listing uplift from dynamic repricing).
+       topLever: "Dynamic pricing 20/100 — NIZKA: implementiraj tedensko repricing avtomatizacijo".
+    5. **war** — price war defense.
+       If priceWarDetected: Score = clamp(40 - (100 - competitorPriceAvgPct) × 2, 0, 100)
+         (war + undercut = bad).
+       Else: Score = 90 (no war = healthy).
+       Uplift = priceWarDetected ? monthlyRevenue × 0.06 : 0
+         (6% revenue at risk if war continues, 0 if no war).
+       topLever: "Price war ni aktiven — spremljaj kompetitorje".
+    6. **psychology** — psychological pricing optimization.
+       Score = clamp(psychologyOptimizedPct × 1.2, 0, 100) (83% optimized = 100).
+       Uplift = (activeListingsCount - (activeListingsCount × psychologyOptimizedPct/100)) × 4
+         (€4 per non-optimized listing that gets optimized).
+       topLever: "Psychology pricing 40% — NIZKA: pretvori cene v .99/.95 (199€ namesto 200€)".
+  - Synthesis → `maximization`:
+    - `topActions`: top 3 signals sorted by upliftEURPerMonth × confidenceWeight
+      (HIGH=1.0, MEDIUM=0.7, LOW=0.4). Each action has templated human-readable
+      text derived from that signal's `topLever` (mirror of Profit/Inventory/
+      Market/Sourcing/Risk/Buyer Brain's actionForSignal). Confidence = HIGH if
+      score ≥ 70, MEDIUM if ≥ 40, LOW otherwise (same as Profit/Inventory/
+      Market/Sourcing/Buyer — NOT inverted like Risk).
+    - `projection30d` (STRUCTURED object — projectedMarginPct +
+      projectedRevenue + recommendedPriceChangePct + listingsToReprice):
+      - `projectedMarginPct` = avgProfitMarginPct + 3 (3-point margin uplift from repricing).
+      - `projectedRevenue` = monthlyRevenue × 1.08 (8% revenue uplift).
+      - `recommendedPriceChangePct` = pricingPower > 60 ? 5 : pricingPower > 40 ? 2 : -3
+        (raise if power, lower if weak).
+      - `listingsToReprice` = ceil(activeListingsCount × 0.3) (reprice 30% in 30d).
+    - `projection90d` (longer-horizon optimization):
+      - `projectedMarginPct` = avgProfitMarginPct + 7 (7-point margin uplift).
+      - `projectedRevenue` = monthlyRevenue × 1.18 (18% revenue uplift).
+      - `recommendedPriceChangePct` = pricingPower > 60 ? 8 : pricingPower > 40 ? 4 : -2.
+      - `listingsToReprice` = ceil(activeListingsCount × 0.6) (reprice 60% in 90d).
+    - `pricingGrade` = weighted average of 6 signal scores (weights:
+      margin 0.25, competitiveness 0.20, elasticity 0.15, dynamic 0.15,
+      war 0.10, psychology 0.15), then graded via gradeFromScore (A+ ≥90,
+      A ≥75, B ≥60, C ≥40, D ≥20, F otherwise).
+    - `bestOpportunity` = signal with HIGHEST upliftEURPerMonth (the single
+      biggest pricing lever to pull first).
+    - `oneLineSummary` = "Margin ${avgProfitMarginPct}%, kompetitorji ${competitorPriceAvgPct - 100}%. ${topActions[0].action}. Grade ${pricingGrade}."
+  - **pricingPower composite** (exposed on `current.pricingPower`, 0-100):
+    weighted blend of 6 signal scores (weights slightly different from
+    pricing-grade — emphasizes factors that enable price INCREASES:
+    margin 0.25, elasticity 0.15, competitiveness 0.25, dynamic 0.10,
+    war 0.10, psychology 0.15). Represents the ability to raise prices
+    without losing volume. Used to determine recommendedPriceChangePct
+    (raise if pricingPower > 60, modestly raise if > 40, lower if weak).
+  - **Pure deterministic compute** (aiUsed: false, no AI/LLM SDK call).
+  - **DB-backed state injection** (graceful degradation):
+    - reads from the `Listing` model (for activeListingsCount = count of Listing
+      rows, sellThroughRatePct = sold trades in 30d / listings seen in 30d,
+      psychologyOptimizedPct = % of listings whose price ends in 99/95/49/79
+      — a heuristic for psychology pricing adoption).
+    - reads from the `Trade` model (for monthlyRevenue = sum(sellPrice - sellFees)
+      in 30d, avgOrderValue = avg(sellPrice), avgProfitMarginPct = avg((sellPrice -
+      buyPrice - buyFees - sellFees) / buyPrice × 100), avgDaysOnMarket = avg
+      (sellDate - buyDate in days)).
+    - User input (query string or POST body) takes precedence over DB state —
+      callers can override any field.
+    - If DB unavailable or no usable rows → falls back to sensible defaults
+      (activeListingsCount 150, avgProfitMarginPct 25%, avgDaysOnMarket 14,
+      competitorPriceAvgPct 95 (5% below competitor avg), priceElasticityScore
+      55, sellThroughRatePct 45%, monthlyRevenue 350€, avgOrderValue 180€,
+      priceWarDetected false, seasonalMultiplier 1.0, psychologyOptimizedPct
+      40%, lastPriceChangePct 0).
+    - All DB access wrapped in try/catch + logger.warn — NEVER crashes the endpoint.
+  - **5-minute cache** (TTL 300000ms): cache key = `pricing-brain:${hashOfInputs}`
+    (activeListingsCount + avgProfitMarginPct + avgDaysOnMarket +
+    competitorPriceAvgPct + priceElasticityScore + sellThroughRatePct +
+    monthlyRevenue + avgOrderValue + priceWarDetected + seasonalMultiplier +
+    psychologyOptimizedPct + lastPriceChangePct). On cache hit, the result is
+    returned with a fresh `cachedAt` timestamp so the caller knows it was served
+    from cache.
+  - source: "v8.21-pricing-brain"
+  - GET+POST shared handler `handlePricingBrain` (AI Hub runner compatibility —
+    hits either method), runtime='nodejs', dynamic='force-dynamic', maxDuration=60,
+    try/catch with logger.error → 500 { error }, parse inputs from both query
+    string and JSON body (POST takes precedence over query).
+  - Pure compute module: `src/lib/brain/pricing.ts` — NO `next/server` import,
+    NO Prisma calls (state injected by caller via PricingBrainInput). Fully
+    testable in isolation and deterministic given the same input. Mirrors
+    `src/lib/brain/buyer.ts` strukturo (clamp, gradeFromScore,
+    confidenceFromScore, confidenceWeight, round2, normalizeInput,
+    computeXxxSignal, actionForSignal, SIGNAL_WEIGHTS, PRICING_POWER_WEIGHTS,
+    pricingBrain main entry). Reuses `ProfitGrade` in `Confidence` types via
+    `import type { ProfitGrade, Confidence } from './profit'`.
+  - Endpoint: `src/app/api/ai/brain/pricing/route.ts` — sedmi endpoint v nested
+    subdirectory pod `src/app/api/ai/brain/`. Avtomatsko odkrit z `/api/ai-list`
+    (ki je bil nadgrajen v v8.15 za recursive depth-2 discovery).
+  - AI Hub: `BrainSynthesisCard` razširjen s SEDMIM stacked section-om (green/
+    lime-tinted, za razliko od Profit Brain emerald, Inventory Brain amber,
+    Market Brain sky/blue, Sourcing Brain purple/violet, Risk Brain red/rose
+    in Buyer Brain cyan/teal). Sedaj prikazuje VSE SEDEM Brain-e simultano —
+    vsak ima svoj loading skeleton, error state, refresh button, in cache
+    indicator. Pricing Brain prikazuje: oneLineSummary, pricingGrade pill,
+    bestOpportunity pill, top 3 pricing actions (z confidence), current state
+    summary (avgProfitMarginPct, competitorPriceAvgPct, sellThroughRatePct,
+    pricingPower), 30d/90d pricing projection (projectedMarginPct +
+    projectedRevenue + recommendedPriceChangePct + listingsToReprice). Vsak
+    Brain fetch-a independently na mount (Promise.all vseh sedmih).
+  - **MILESTONE: All 7 Domain Brains complete (Profit + Inventory + Market +
+    Sourcing + Risk + Buyer + Pricing). Next: v8.22 Master Brain ki orkestrira
+    vseh 7 Brain-ov v ENO končno odločitev (TOP 5 akcij za danes + 30d/90d/12m
+    strategija).**
+
+### Stats
+- AI endpoints: 410 → 411 (+1)
+- Total API routes: 587 → 588 (+1)
+- Sedmi in zadnji Brain layer v arhitekturi (above the ~39 pricing specialists, next to v8.15 Profit Brain, v8.16 Inventory Brain, v8.17 Market Brain, v8.18 Sourcing Brain, v8.19 Risk Brain in v8.20 Buyer Brain)
+- 6 pricing signals (margin, elasticity, competitiveness, dynamic, war, psychology)
+- 3 top pricing actions ranked by uplift × confidence
+- pricingPower composite (0-100 — ability to raise prices without losing volume)
+- Structured 30d projection (projectedMarginPct + projectedRevenue + recommendedPriceChangePct + listingsToReprice)
+- Structured 90d projection (projectedMarginPct + projectedRevenue + recommendedPriceChangePct + listingsToReprice)
+- pricingGrade + bestOpportunity + one-line summary
+- Pure deterministic compute (aiUsed: false, no AI/LLM SDK)
+- DB state injection (graceful — reads from Listing + Trade tables, falls back to defaults if DB unavailable or empty)
+- 5-minute cache (300000ms TTL, cachedAt stamp on cache hit)
 
 ## [8.20.0] - 2026-08-28
 
