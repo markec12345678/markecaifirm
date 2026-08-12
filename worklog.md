@@ -15092,3 +15092,52 @@ Stage Summary:
 - Endpoint verification: GET default → 6 signals, pricingGrade=B, bestOpportunity=elasticity (450€/mo uplift), topActions #1 elasticity +450€/mo (MEDIUM), #2 psychology +360€/mo (MEDIUM), #3 dynamic +300€/mo (LOW), pricingPower=67.7/100, projection30d {28% margin, 378€ revenue, +5% price change, 45 listings to reprice}, projection90d {32% margin, 413€ revenue, +8% price change, 90 listings to reprice} ✅; POST custom (200 listings, 32% margin, 600€ revenue, 75% psychology) → pricingGrade=A, bestOpportunity=elasticity (600€/mo uplift), topActions #1 elasticity +600€/mo (MEDIUM), #2 dynamic +400€/mo (HIGH), #3 psychology +200€/mo (HIGH), pricingPower=88.25/100, projection30d {35% margin, 648€ revenue, +5%, 60 listings}, projection90d {39% margin, 708€ revenue, +8%, 120 listings} ✅; Cache → drugi GET re-stampa cachedAt z istim pricingGrade B in bestOpportunity elasticity ✅; /api/ai-list → total 411, categories.brain 7 (profit + inventory + market + sourcing + risk + buyer + pricing) ✅
 - Documentation updated: AI_ENDPOINTS.md (411 brain/pricing row + renumber), README.md (version v8.21.0, badges 411 AI + 588 routes, hero tagline, overview paragraph z 7 Brain-i, "Kaj je novega" v8.21 blok z MILESTONE flag, version section, function count ~274, all v8.20/410/587 references posodobljene, Roadmap z v8.22 Master Brain next section, Changelog Zadnje verzije z v8.21.0 entry), CHANGELOG.md (nov [8.21.0] section z Added + Stats + MILESTONE note, [Unreleased] v8.21+ → v8.22+ Master Brain)
 - MILESTONE: All 7 Domain Brains complete (Profit + Inventory + Market + Sourcing + Risk + Buyer + Pricing). Next: v8.22 Master Brain ki orkestrira vseh 7 Brain-ov v ENO končno odločitev (TOP 5 akcij za danes + 30d/90d/12m strategija).
+
+---
+Task ID: v8.21.1
+Agent: main
+Task: v8.21 commit + push + GitHub About + Agent Browser verification (MILESTONE: All 7 Domain Brains complete)
+
+Work Log:
+- Prejel poročilo od full-stack-developer podagenta (Task v8.21 — Pricing Brain implementiran: src/lib/brain/pricing.ts + src/app/api/ai/brain/pricing/route.ts + BrainSynthesisCard extended z 7. stacked section za Pricing Brain z green/lime tint, Coins icon)
+- Neodvisno preveril endpoint (curl 3 testi):
+  - GET /api/ai/brain/pricing (default) → 200 {"ok":true, "signals":[6: margin(A,75,17.5), elasticity(C,55,450), competitiveness(A+,90,14), dynamic(D,20,300), war(A+,90,0), psychology(C,48,360)], "current":{activeListingsCount:150, avgProfitMarginPct:25, avgDaysOnMarket:14, competitorPriceAvgPct:95, priceElasticityScore:55, sellThroughRatePct:45, monthlyRevenue:350, avgOrderValue:180, priceWarDetected:false, seasonalMultiplier:1.0, psychologyOptimizedPct:40, lastPriceChangePct:0, pricingPower:67.7}, "maximization":{topActions:[3 z #1 elasticity +450€/mo (MEDIUM), #2 psychology +360€/mo (MEDIUM), #3 dynamic +300€/mo (LOW)], projection30d:{projectedMarginPct:28, projectedRevenue:378, recommendedPriceChangePct:5, listingsToReprice:45}, projection90d:{projectedMarginPct:32, projectedRevenue:413, recommendedPriceChangePct:8, listingsToReprice:90}, pricingGrade:"B", bestOpportunity:"elasticity", oneLineSummary:"Margin 25%, kompetitorji -5%. Izkoristi elastičnost: Elastičnost 55/100 — zmerna: eksperimentiraj s 5% spremembami. Grade B."}, "aiUsed":false, "source":"v8.21-pricing-brain"}
+  - POST /api/ai/brain/pricing {"activeListingsCount":200,"avgProfitMarginPct":32,"monthlyRevenue":600,...} → 200 z višjimi številkami (margin A+/96/uplift 30, elasticity B/65/uplift 600, pricingGrade A, pricingPower 88.25, recommendedPriceChangePct 30d +5%, 90d +8%)
+  - GET (cache hit) → 200 z "cachedAt": 1786511353193 (5-min cache deluje)
+  - GET /api/ai-list → 200 {"ok":true, "total":411, "categories":{brain:7, ...}} (brain kategorija 7 = ALL 7 Domain Brains: profit + inventory + market + sourcing + risk + buyer + pricing)
+- Preveril doc sync: AI_ENDPOINTS.md "Total: 411 endpoints" (row 15 brain/pricing) ✅, README v8.21.0 + 411 AI (6 refs) + 588 (3 refs) + Overview paragraph z ALL 7 Brains + MILESTONE note ✅, CHANGELOG [8.21.0] section z 6 signal formulas + MILESTONE flag + [Unreleased] v8.22+ Master Brain ✅
+- Preveril lint: 0 napak ✨
+- Preveril typecheck: 0 napak ✨
+- Posodobil GitHub About opis: "AI Trading Firm... 411 AI + 72 analytics = 588 routes. v8.21.0: 7 Domain Brains complete (Profit+Inventory+Market+Sourcing+Risk+Buyer+Pricing). Next: Master Brain." (via API PATCH, 292 chars)
+- Commit: "v8.21: Pricing Brain — seventh and FINAL Domain Brain layer above ~39 pricing specialists (6 pricing signals: margin, elasticity, competitiveness, dynamic, war, psychology synthesized into 1 decision + stacked UI card with all 7 Domain Brains). MILESTONE: All 7 Domain Brains complete. Next: v8.22 Master Brain." (a06eb6e)
+- Push na GitHub: uspešen ✅ (1713ba4..a06eb6e), PAT očiščen ✅
+- Agent Browser self-verification:
+  - Stran se pravilno naloži (HTTP 200, naslov "Markec AI Firm — Opportunity Monitor")
+  - AI Hub: kategorije na vrhu prikazujejo "🧠Možgani7" (#2 v seznamu) — 7 Brain endpointov = ALL 7 Domain Brains ✅
+  - BrainSynthesisCard (stacked layout — 7 sekcij, ALL Domain Brains):
+    - Profit Brain section (emerald): "🧠 PROFIT BRAIN", "Profit 450€/mo → 651€/mo (+45%) z HORIZON" ✅
+    - Inventory Brain section (amber): "📦 INVENTORY BRAIN", "Likvidiraj 3 stare iteme...", "Grade D" ✅
+    - Market Brain section (sky/blue): "📈 MARKET BRAIN", "Trg v DISTRIBUTION fazi", "Grade B" ✅
+    - Sourcing Brain section (purple/violet): "🎯 SOURCING BRAIN", "Bolha najboljši vir (168€/mo)", "Grade B" ✅
+    - Risk Brain section (red/rose): "🛡️ RISK BRAIN", "Tveganje 52/100 (MEDIUM)", "Grade C" ✅
+    - Buyer Brain section (cyan/teal): "👥 BUYER BRAIN", "32 kupcev (LTV 280€), 8 aktivnih", "Grade C" ✅
+    - Pricing Brain section (green/lime): "💶 PRICING BRAIN", "Margin 25%, kompetitorji -5%", "Elastičnost 55/100", "Grade B" ✅
+  - Endpoint "🧠brain/pricing v8.21: v8.21: Pricing Brain — GET+POST /api/ai/brain/pricing" viden v AI Hub listi [ref=e33] z v8.21 badge ✅
+  - Runner test: klik na brain/pricing → POST request → valid JSON z source:"v8.21-pricing-brain", 6 signali, pricingGrade:"B", pricingPower:67.7, bestOpportunity:"elasticity" ✅
+  - Brez runtime napak v dev.log (le normalni Prisma SQL queries + GET /api/ai/brain/pricing 200 v 84ms)
+
+Stage Summary:
+- v8.21 uspešno dokončana in potisnjena na GitHub
+- NOV ARCHITECTURAL LAYER: Pricing Brain — sedmi in ZADNJI orkestracijski Domain Brain nad ~39 pricing specialist-i
+- 6 pricing signalov (margin, elasticity, competitiveness, dynamic, war, psychology) → sintetizira v 1 odločitev (3 top pricing akcije ranked by upliftEUR × confidence, 30d/90d pricing projekcija z projectedMarginPct + projectedRevenue + recommendedPriceChangePct + listingsToReprice, pricingGrade, pricingPower composite, oneLineSummary)
+- pricingPower composite (0-100) — ability to raise prices without losing volume (margin 0.25, elasticity 0.15, competitiveness 0.25, dynamic 0.10, war 0.10, psychology 0.15)
+- 5-min cache, DB state injection z graceful fallback (Listing za activeListings/sellThrough, Trade za revenue/margin), pure compute module brez AI/LLM
+- BrainSynthesisCard razširjen z 7. stacked section (green/lime tint, Coins icon) — sedaj prikazuje ALL 7 Domain Brain-ov simultano (Profit emerald + Inventory amber + Market sky/blue + Sourcing purple/violet + Risk red/rose + Buyer cyan/teal + Pricing green/lime)
+- AI endpointi: 410 → 411 (+1)
+- Analytics endpointi: 72 (nespremenjeno)
+- Total API routes: 587 → 588 (+1)
+- Dokumentacija sinhrono posodobljena (AI_ENDPOINTS.md, README, CHANGELOG, GitHub About) z MILESTONE note
+- GitHub sinhroniziran (0 commit-ov ahead)
+- Verzija aplikacije: v8.21.0
+- 🎯 MILESTONE: VSI 7 DOMAIN BRAIN LAYER-JEV ZAKLJUČENI (Profit + Inventory + Market + Sourcing + Risk + Buyer + Pricing) = 42 signalov sintetiziranih v 7 odločitev
+- Skupaj doslej (v7.50 → v8.21): 71 verzij, 193 novih funkcij; 7 Domain Brain layer-jev implementiranih — naslednji in zadnji korak: v8.22 Master Brain ki orkestrira vseh 7 Brain-ov v ENO končno odločitev (TOP 5 akcij za danes + 30d/90d/12m strategija + conflict resolution med Brain-i)
