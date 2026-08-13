@@ -6,9 +6,8 @@ Format sledi [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), verzije s
 
 ## [Unreleased]
 
-v8.23 je zaključil prvi del Validation phase (Daily Brain Snapshots + Actual Profit Tracker). Naslednje verzije nadaljujejo Validation phase:
+v8.24 je dodal User Risk Profile (personalization). Naslednje verzije nadaljujejo Validation phase:
 
-- **v8.24 — User Risk Profile** (prilagoditev Brain priporočil glede na uporabnikov risk tolerance: conservative / moderate / aggressive)
 - **v8.25 — Historical Accuracy + Trend** (cron backfill ki 30d/90d po snapshot-u izračuna actualProfit30d/90d in accuracy30d/90d = actual / predicted × 100; UI graf accuracy % čez čas)
 - WebSocket real-time negotiation (SSE namesto polling)
 - Playwright E2E testi za glavne flow-e
@@ -17,6 +16,34 @@ v8.23 je zaključil prvi del Validation phase (Daily Brain Snapshots + Actual Pr
 - Performance optimizations za Master Brain (cached partial results per domain)
 - Additional conflict detection tipi (npr. Inventory vs Buyer — supply/demand mismatch)
 - Per-domain DB injection v Master Brain route (zaenkrat se zanaša na individualne Domain Brain route-e za DB state)
+
+## [8.24.0] - 2026-08-28
+
+### Added — ⚙️ User Risk Profile (personalization layer)
+
+Master Brain do v8.23 priporoča ENAKO strategijo za konzervativnega in agresivnega traderja — to je impersonalno in narobe. v8.24 dodaja UserRiskProfile shranjen v Settings tabeli. Master Brain sedaj prilagodi priporočila glede na profil.
+
+- **4 new Settings fields** (Prisma schema): `userRiskTolerance` (conservative/balanced/aggressive), `userMaxAcceptableRisk` (0-100), `userLiquidityReserve` (EUR), `userInvestmentHorizon` (short/medium/long)
+- **`src/lib/brain/risk-profile.ts`** (NEW): `adjustMasterBrainForRiskProfile()` pure function — takes Master Brain result + user profile, returns:
+  - `recommendationOverride`: conservative + health<70 → REDUCE_RISK (HIGH urgency); aggressive + health>40 → ACCEPT_RISK (LOW urgency); balanced → null
+  - `filteredTopActions`: conservative filtrira HIGH/CRITICAL risk akcije (kept: false, filterReason); aggressive/balanced obdrži vse
+  - `adjustedRiskBudget`: conservative 0.5× budget, balanced 1.0×, aggressive 1.5×
+  - `profileSummary`: human-readable, e.g. "Konzervativni profil: zmanjšaj tveganje na <60/100, rezerva 800€"
+- **`src/app/api/ai/brain/risk-profile/route.ts`** (NEW): GET (returns current profile + sample adjustment), POST (validates + updates Settings singleton row)
+- **`src/app/api/ai/brain/master/route.ts`** (MODIFIED): after calling masterBrain(), loads user profile from Settings, calls adjustMasterBrainForRiskProfile(), returns `riskProfileAdjustment` block in response
+- **`src/components/dashboard/ai-hub-view.tsx`** (MODIFIED): new "⚙️ Tvoj Risk Profile" card (indigo/violet) z 3 toggle buttons (Conservative/Balanced/Aggressive) + slider za maxAcceptableRisk + input za liquidityReserve + 3 toggle buttons za investmentHorizon + Save button + live preview of profileSummary
+
+### Stats
+
+- AI endpoints: 414 → 415 (+1)
+- Total API routes: 591 → 592 (+1)
+- NEW Prisma Settings fields: 4 (userRiskTolerance, userMaxAcceptableRisk, userLiquidityReserve, userInvestmentHorizon)
+
+### Validation phase continues
+
+- v8.23 = Daily Snapshots + Actual Profit (data collection — ground truth)
+- v8.24 = User Risk Profile (personalization — subjective recommendations)
+- Next: v8.25 = Historical Accuracy + Trend (accuracy % = actual / predicted × 100)
 
 ## [8.23.0] - 2026-08-28
 

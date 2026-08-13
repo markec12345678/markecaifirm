@@ -1,10 +1,10 @@
 # Markec AI Firm — AI Trading Firm za slovenske oglase
 
-[![Version](https://img.shields.io/badge/version-v8.23.0-blue.svg)](./CHANGELOG.md)
+[![Version](https://img.shields.io/badge/version-v8.24.0-blue.svg)](./CHANGELOG.md)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](./LICENSE)
 [![GitHub Stars](https://img.shields.io/github/stars/markec12345678/markecaifirm?style=social)](https://github.com/markec12345678/markecaifirm/stargazers)
-[![AI Endpoints](https://img.shields.io/badge/AI%20endpoints-414-green.svg)](./AI_ENDPOINTS.md)
-[![API Routes](https://img.shields.io/badge/API%20routes-591-cyan.svg)](#)
+[![AI Endpoints](https://img.shields.io/badge/AI%20endpoints-415-green.svg)](./AI_ENDPOINTS.md)
+[![API Routes](https://img.shields.io/badge/API%20routes-592-cyan.svg)](#)
 [![Next.js](https://img.shields.io/badge/Next.js-16-black.svg)](https://nextjs.org/)
 [![TypeScript](https://img.shields.io/badge/TypeScript-5-blue.svg)](https://www.typescriptlang.org/)
 [![TypeScript Errors](https://img.shields.io/badge/TS%20errors-0-brightgreen.svg)](#)
@@ -20,8 +20,8 @@
 </div>
 
 > **AI-powered trading firm** za Bolha, Facebook Marketplace, Vinted, Avtonet, mobile.de, Kleinanzeigen, Subito in Willhaben.
-> **414 AI endpointov** + **72 analytics** + **11 cron automatizacij** + **11 Telegram ukazov** za iskanje, ocenjevanje, kupovanje in preprodajo.
-> **v8.23.0 — NEW PHASE: Validation ("Ali lahko zaupaš Master Brain-u?"):** Master Brain daje napovedi ("30d: 3133€"), ampak do v8.23 ni bilo načina za preverbo ali so te napovedi točne. v8.23 dodaja DVE temeljni komponenti za validation: (1) **📊 Actual Profit Tracker** — čista funkcija `calculateActualProfit(days)` ki bere iz Trade tabele (status='sold', sellDate v zadnjih N dneh) in računa DEJANSKI profit: totalProfitEUR, avgMarginPct, dailyAvgEUR, bestTrade, worstTrade. GROUND TRUTH ki ga do sedaj ni bilo. (2) **📸 Daily Brain Snapshots** — cron job @ 00:00 kliče `masterBrain()` in shrani FULL output v novo `BrainSnapshot` Prisma model (overallHealth, 7 domain grades, topActions, conflicts, strategy projections). Temelj za v8.25 (Historical Accuracy). UI: dva nova card-a v Brain view: '📊 Dejanski profit' na vrhu (nad Master Brain banner-jem — ground truth first) + '📸 Brain Snapshots' na dnu (zgodovina z option za manual save). *Prej (v8.22.0):* Brain architecture COMPLETE (7 Domain + 1 Master = 8 layers, 42+ signals → 1 decision). *Sedaj (v8.23.0):* Validation phase — shranjujemo napovedi + merimo dejanski profit, da lahko v v8.25 izračunamo accuracy % (actual / predicted × 100).
+> **415 AI endpointov** + **72 analytics** + **11 cron automatizacij** + **11 Telegram ukazov** za iskanje, ocenjevanje, kupovanje in preprodajo.
+> **v8.24.0 — User Risk Profile (personalization):** Master Brain do v8.23 priporoča ENAKO strategijo za konzervativnega in agresivnega traderja — to je impersonalno in narobe. v8.24 dodaja UserRiskProfile (riskTolerance, maxAcceptableRisk, liquidityReserve, investmentHorizon) shranjen v Settings tabeli. Master Brain sedaj prilagodi priporočila: conservative profil filtrira HIGH-risk akcije + priporoča REDUCE_RISK če overallHealth < 70; aggressive profil dovoli HIGH-risk akcije + priporoča ACCEPT_RISK če overallHealth > 40. UI: nov 'Tvoj Risk Profile' card z 3 toggle buttons (Conservative/Balanced/Aggressive) + slider za maxAcceptableRisk + input za liquidityReserve. *Prej (v8.23.0):* NEW PHASE: Validation ("Ali lahko zaupaš Master Brain-u?"):** Master Brain daje napovedi ("30d: 3133€"), ampak do v8.23 ni bilo načina za preverbo ali so te napovedi točne. v8.23 dodaja DVE temeljni komponenti za validation: (1) **📊 Actual Profit Tracker** — čista funkcija `calculateActualProfit(days)` ki bere iz Trade tabele (status='sold', sellDate v zadnjih N dneh) in računa DEJANSKI profit: totalProfitEUR, avgMarginPct, dailyAvgEUR, bestTrade, worstTrade. GROUND TRUTH ki ga do sedaj ni bilo. (2) **📸 Daily Brain Snapshots** — cron job @ 00:00 kliče `masterBrain()` in shrani FULL output v novo `BrainSnapshot` Prisma model (overallHealth, 7 domain grades, topActions, conflicts, strategy projections). Temelj za v8.25 (Historical Accuracy). UI: dva nova card-a v Brain view: '📊 Dejanski profit' na vrhu (nad Master Brain banner-jem — ground truth first) + '📸 Brain Snapshots' na dnu (zgodovina z option za manual save). *Prej (v8.22.0):* Brain architecture COMPLETE (7 Domain + 1 Master = 8 layers, 42+ signals → 1 decision). *Sedaj (v8.23.0):* Validation phase — shranjujemo napovedi + merimo dejanski profit, da lahko v v8.25 izračunamo accuracy % (actual / predicted × 100).
 > **Local-first** — vsi podatki ostanejo na tvojem računalniku. **Zero-cloud**. **0 vulnerabilities**. **37 tests**.
 
 ---

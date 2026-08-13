@@ -46,6 +46,13 @@ import {
   type MasterBrainResult,
   type MasterBrainInput,
 } from '@/lib/brain/master';
+// v8.24: User Risk Profile — makes Master Brain personal
+import {
+  adjustMasterBrainForRiskProfile,
+  DEFAULT_PROFILE,
+  type UserRiskProfile,
+} from '@/lib/brain/risk-profile';
+import { db } from '@/lib/db';
 
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
@@ -226,25 +233,73 @@ export async function POST(req: NextRequest) {
   return handleMasterBrain(req);
 }
 
+// --- v8.24: User Risk Profile loader ------------------------------------
+//
+// Reads the 4 risk-profile fields from the Settings singleton row.
+// On any DB error / missing row / missing fields, returns DEFAULT_PROFILE
+// (balanced) — Master Brain must never crash because the user's profile
+// couldn't be loaded.
+async function loadUserRiskProfile(): Promise<UserRiskProfile> {
+  try {
+    const s = await db.settings.findUnique({ where: { id: 'singleton' } });
+    if (!s) return DEFAULT_PROFILE;
+    // Validate riskTolerance — older Settings rows may have invalid value
+    // (treat any non-{conservative,balanced,aggressive} as balanced).
+    const rawTolerance = String(s.userRiskTolerance ?? 'balanced').toLowerCase();
+    const riskTolerance: UserRiskProfile['riskTolerance'] =
+      rawTolerance === 'conservative' || rawTolerance === 'aggressive'
+        ? rawTolerance
+        : 'balanced';
+    const rawHorizon = String(s.userInvestmentHorizon ?? 'medium').toLowerCase();
+    const investmentHorizon: UserRiskProfile['investmentHorizon'] =
+      rawHorizon === 'short' || rawHorizon === 'long' ? rawHorizon : 'medium';
+    return {
+      riskTolerance,
+      maxAcceptableRisk:
+        typeof s.userMaxAcceptableRisk === 'number'
+          ? Math.max(0, Math.min(100, s.userMaxAcceptableRisk))
+          : 50,
+      liquidityReserve:
+        typeof s.userLiquidityReserve === 'number' && s.userLiquidityReserve >= 0
+          ? s.userLiquidityReserve
+          : 500,
+      investmentHorizon,
+    };
+  } catch (err: any) {
+    logger.warn('/api/ai/brain/master', 'failed to load User Risk Profile, using DEFAULT_PROFILE', err);
+    return DEFAULT_PROFILE;
+  }
+}
+
 async function handleMasterBrain(req: NextRequest) {
   try {
     const input = await resolveInputs(req);
 
     const cacheKey = buildCacheKey(input);
     const cached = getCachedAI<MasterBrainResult>(cacheKey);
+    // v8.24: Always load the user's risk profile — even when serving from cache,
+    // because the profile may have changed since the cached entry was created.
+    const profile = await loadUserRiskProfile();
+
     if (cached) {
       // Re-stamp cachedAt so the caller sees a fresh "served at" timestamp.
       const served: MasterBrainResult = {
         ...cached,
         cachedAt: Date.now(),
       };
-      return NextResponse.json(served);
+      // v8.24: Apply profile adjustment on top of the cached Master Brain result.
+      // The cached result is profile-agnostic (objective); the adjustment is
+      // user-specific (subjective) and must reflect the CURRENT profile.
+      const adjustment = adjustMasterBrainForRiskProfile(served, profile);
+      return NextResponse.json({ ...served, riskProfileAdjustment: adjustment });
     }
 
     const result = await masterBrain(input);
     setCachedAI(cacheKey, result, MASTER_CACHE_TTL_MS);
 
-    return NextResponse.json(result);
+    // v8.24: Apply profile adjustment on the freshly computed result.
+    const adjustment = adjustMasterBrainForRiskProfile(result, profile);
+    return NextResponse.json({ ...result, riskProfileAdjustment: adjustment });
   } catch (err: any) {
     logger.error('/api/ai/brain/master', 'handler failed', err);
     return NextResponse.json(

@@ -63,6 +63,11 @@ model Settings {
   // Thresholds
   minOpportunityScore Int  @default(7)   // 1-10 — alert only when AI score >= this
   maxRiskScore        Int  @default(3)   // 1-10 — alert only when AI risk <= this
+  // v8.24: User Risk Profile — makes Master Brain personal
+  userRiskTolerance     String   @default("balanced") // 'conservative' | 'balanced' | 'aggressive'
+  userMaxAcceptableRisk Int      @default(50) // 0-100 — max risk score user will accept
+  userLiquidityReserve  Float    @default(500) // EUR — minimum cash reserve to keep
+  userInvestmentHorizon String   @default("medium") // 'short' | 'medium' | 'long'
   // Image analysis (v1.1)
   imageAnalysisEnabled Boolean @default(false)
   // Bolha Playwright fallback (v1.1)
