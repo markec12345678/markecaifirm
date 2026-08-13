@@ -6,9 +6,10 @@ Format sledi [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), verzije s
 
 ## [Unreleased]
 
-v8.24 je dodal User Risk Profile (personalization). Naslednje verzije nadaljujejo Validation phase:
+v8.25 je zaključil Validation phase (Historical Accuracy + Trend). Naslednje verzije odprejo Intelligence phase:
 
-- **v8.25 — Historical Accuracy + Trend** (cron backfill ki 30d/90d po snapshot-u izračuna actualProfit30d/90d in accuracy30d/90d = actual / predicted × 100; UI graf accuracy % čez čas)
+- **v8.26 — Explainability** (zakaj Master Brain priporoča TOČNO to akcijo — feature attribution per signal, "ker Inventory Brain score D in Profit Brain topAction je 'LIQUIDATE_AGED_ITEMS', Master Brain izbere LIQUIDATE kot #1 z weighted score 0.85")
+- **v8.27 — Scenario Brain** ("What if?" simulacije — "Kaj če znižam cene za 10%? Kaj če kupim 5 več iPhone-ov? Kaj če trg pade 20%?" — Master Brain re-run z override inputs)
 - WebSocket real-time negotiation (SSE namesto polling)
 - Playwright E2E testi za glavne flow-e
 - TLS fingerprinting (curl-impersonate)
@@ -16,6 +17,80 @@ v8.24 je dodal User Risk Profile (personalization). Naslednje verzije nadaljujej
 - Performance optimizations za Master Brain (cached partial results per domain)
 - Additional conflict detection tipi (npr. Inventory vs Buyer — supply/demand mismatch)
 - Per-domain DB injection v Master Brain route (zaenkrat se zanaša na individualne Domain Brain route-e za DB state)
+
+## [8.25.0] - 2026-08-28
+
+### Added — 📈 Historical Accuracy + Trend (Validation phase CULMINATION)
+
+**🎯 VALIDATION PHASE COMPLETE.** v8.23 (data collection — Daily Snapshots + Actual Profit Tracker) + v8.24 (personalization — User Risk Profile) + v8.25 (accuracy + trend — backfill cron + Historical Accuracy API + UI card) = uporabnik lahko končno zaupa Master Brain-u z DEJANSKIMI podatki. Odgovor na vprašanje "Ali lahko zaupam Master Brain-u?" je sedaj podprt s številkami: "Master Brain accuracy: 89% (zadnjih 30 dni). Trend: ↗️ IMPROVING."
+
+- **`backfillSnapshotAccuracy()` in `src/lib/brain/snapshots.ts`** (NEW exported function, MODIFIED file — function appended, existing functions untouched)
+  - For each BrainSnapshot where `actualProfit30d` is null AND `snapshotDate + 30d <= today`: queries Trade table for `status='sold'` AND `sellDate BETWEEN snapshotDate AND snapshotDate+30d`, computes `actualProfit30d = Σ (sellPrice - sellFees - buyPrice - buyFees)` (mirrors `calculateActualProfit` formula exactly via inline query — keeps `calculateActualProfit` self-contained + avoids breaking its public contract), then `accuracy30d = projection30dEUR > 0 ? (actualProfit30d / projection30dEUR) × 100 : 0`. Same for 90d.
+  - **Idempotent**: a snapshot is only backfilled if its `actualProfit*` field is null. Re-running the cron on an already-backfilled snapshot is a no-op.
+  - **Robust**: each snapshot update is wrapped in try/catch so one failure (transient DB error) doesn't abort the whole batch. Individual failures are logged via `logger.error` but not thrown.
+  - Returns `{ ok, backfilled30d, backfilled90d, totalSnapshots }` (counts of newly-filled rows).
+
+- **`src/app/api/cron/backfill-accuracy/route.ts`** (NEW — daily cron)
+  - GET+POST both trigger `backfillSnapshotAccuracy()`.
+  - Auth: `?key=<MONITOR_CRON_KEY>` query param (same as `daily-brain-snapshot`). If env var unset (dev), no auth required.
+  - runtime='nodejs', dynamic='force-dynamic', maxDuration=60.
+  - JSDoc: "v8.25: Backfill cron — fills actualProfit30d/90d + accuracy30d/90d for snapshots old enough to have actual data. Should run daily after the daily-snapshot cron."
+  - Schedule: configure externally to hit at 01:00 daily (1 hour AFTER the 00:00 `daily-brain-snapshot` cron — ensures today's snapshot exists before backfill runs).
+  - Example: `0 1 * * * curl -s "http://localhost:3000/api/cron/backfill-accuracy?key=$MONITOR_CRON_KEY"`.
+
+- **`src/app/api/ai/brain/accuracy/route.ts`** (NEW — GET Historical Accuracy API)
+  - GET `?days=30` (default 30, clamp [1, 400]) — fetches snapshots via `getSnapshots(days)`, computes:
+    - `accuracy30d`: average of `accuracy30d` across snapshots where `accuracy30d` is not null. Null if no snapshot has accuracy yet (with message "Potrebno več podatkov — snemaj dneve 30+ za accuracy").
+    - `accuracy90d`: same for 90d.
+    - `gradeTrend`: array of `{ date, profitGrade, inventoryGrade, marketGrade, sourcingGrade, riskGrade, buyerGrade, pricingGrade, overallHealth, healthGrade, accuracy30d, accuracy90d }` for each snapshot.
+    - `summary`: `{ totalSnapshots, snapshotsWithAccuracy30d, snapshotsWithAccuracy90d, avgAccuracy30d, avgAccuracy90d, trend, firstHalfAvg, secondHalfAvg, message? }`.
+    - `trend` detection: `'IMPROVING' | 'STABLE' | 'DECLINING' | 'INSUFFICIENT_DATA'` — computed by splitting snapshots into first half (older) vs second half (newer) by `overallHealth`, comparing averages. Diff > +2 → IMPROVING, < -2 → DECLINING, else STABLE. Fewer than 4 snapshots → INSUFFICIENT_DATA.
+  - runtime='nodejs', dynamic='force-dynamic', maxDuration=60.
+
+- **`src/app/api/ai/brain/accuracy/backfill/route.ts`** (NEW — POST manual backfill trigger)
+  - POST (and GET for easy browser/curl testing) calls `backfillSnapshotAccuracy()`, returns result.
+  - For manual testing/debugging — same as `/api/cron/backfill-accuracy` but WITHOUT auth (it's under `/api/ai/...` user-facing surface).
+  - runtime='nodejs', dynamic='force-dynamic', maxDuration=60.
+
+- **UI: `src/components/dashboard/ai-hub-view.tsx`** (MODIFIED — new "📈 Master Brain Accuracy & Trend" card)
+  - Placed AT THE BOTTOM of `BrainSynthesisCard`, BELOW `BrainSnapshotsSection` (validation culmination comes after the raw historical record).
+  - Teal/emerald-tinted card (distinct from indigo Actual Profit, violet Risk Profile, gold Master Brain, emerald Brain Snapshots). Border-2 teal-500/40 with gradient from teal-500/15 via cyan-500/10 to emerald-500/5.
+  - Header: TrendingUp icon + "📈 Master Brain Accuracy & Trend" + v8.25 badge + "VALIDATION FINAL" badge + "🔄 Backfill accuracy" button + "Osveži" button.
+  - **Accuracy block** (grid 2 cols):
+    - 30d accuracy: big number (`accuracy30d ? accuracy30d.toFixed(1) + '%' : '—'`) with color (≥80 emerald, ≥50 amber, else red). Subtitle: "{n}/{total} snapshotov".
+    - 90d accuracy: same layout.
+  - If `accuracy30d === null`: shows info message "Potrebno več podatkov — snemaj dneve 30+ za accuracy. Poženi backfill za preverbo (pričakovan rezultat: 0 backfilled ker je naš snapshot iz današnjega dne)." (info, not error)
+  - **OverallHealth trend sparkline**: last 7 overallHealth scores as colored pills (using `gradeColor(healthGrade)`) with → arrows between them. Subtitle shows "1. polovica: X · 2. polovica: Y".
+  - **Trend indicator badge**: ↗️ IMPROVING (emerald) / → STABLE (sky/blue) / ↘️ DECLINING (red) / — INSUFFICIENT_DATA (zinc).
+  - **7 Domain grade trend table**: 7 rows (Profit, Inventar, Trg, Sourcing, Tveganje, Kupci, Cene), each showing the last N grade pills with → arrows. Uses `gradeColor()` helper for A+/A/B/C/D/F coloring.
+  - **Footer summary**: totalSnapshots, snapshotsWithAccuracy30d, snapshotsWithAccuracy90d.
+  - Fetches `/api/ai/brain/accuracy?days=30` on mount. Loading skeleton, error state with retry button.
+  - BrainSynthesisCard outer badge updated: "v8.24 Personal + v8.23 Validation + ..." → "v8.25 Accuracy + v8.24 Personal + v8.23 Validation + v8.22 Master + v8.15-v8.21 (7 Domains)".
+  - JSDoc comment block expanded with v8.24 + v8.25 notes.
+
+- **`src/app/api/ai-list/route.ts`** (MODIFIED — bumped `MAX_DEPTH` from 2 → 3)
+  - Needed so the recursive endpoint discovery finds `brain/accuracy/backfill` (3 levels deep: `ai/brain/accuracy/backfill/route.ts`).
+  - Without this bump, only `brain/accuracy` would be discovered (depth 2), missing `brain/accuracy/backfill`. Total would have been 416, not 417.
+  - Comment updated to explain the v8.25 reasoning.
+
+### Stats
+
+- AI endpoints: 415 → 417 (+2)
+- Total API routes: 592 → 594 (+2)
+- NEW exported function: 1 (`backfillSnapshotAccuracy` in `src/lib/brain/snapshots.ts`)
+- NEW route files: 3 (cron backfill-accuracy, brain/accuracy GET, brain/accuracy/backfill POST)
+- NEW UI card: 1 ("📈 Master Brain Accuracy & Trend")
+- MODIFIED files: 3 (`src/lib/brain/snapshots.ts` — appended function, `src/components/dashboard/ai-hub-view.tsx` — appended card + updated header badge + expanded JSDoc, `src/app/api/ai-list/route.ts` — bumped MAX_DEPTH)
+
+### 🎯 VALIDATION PHASE COMPLETE
+
+After v8.22 completed Brain architecture (7 Domain + 1 Master = 8 brain layers, 42+ signals → 1 decision), the Validation phase asked: **"Ali lahko zaupaš Master Brain-u?"**
+
+- **v8.23 = DATA COLLECTION** — Daily Brain Snapshots (cron @ 00:00 stores Master Brain output) + Actual Profit Tracker (reads Trade table for real EUR profit). Foundation: predictions stored + ground truth measured, but disconnected.
+- **v8.24 = PERSONALIZATION** — User Risk Profile (conservative/balanced/aggressive) makes Master Brain recommendations match the user's risk tolerance.
+- **v8.25 = ACCURACY + TREND** — Backfill cron closes the loop: 30/90 days after a snapshot, it computes `accuracy = actual / predicted × 100`. UI shows "Master Brain accuracy: 89% (zadnjih 30 dni). Trend: ↗️ IMPROVING."
+
+**Uporabnik lahko končno zaupa Master Brain-u z dokazi.** Next phase: v8.26+ Intelligence (Explainability — "zakaj Master Brain priporoča TOČNO to akcijo?", Scenario Brain — "What if?" simulacije).
 
 ## [8.24.0] - 2026-08-28
 

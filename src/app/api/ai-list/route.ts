@@ -40,11 +40,12 @@ function categorize(name: string): string {
 /**
  * v8.15: Recursively discover route.ts files under src/app/api/ai/.
  * Returns relative endpoint names like `buyer-matchmaker`, `brain/profit`.
- * Recursion depth is capped at 2 (top-level + 1 subdirectory) — Brain layer
- * is the only known nested family today.
+ * v8.25: Recursion depth bumped from 2 → 3 to allow discovery of
+ * `brain/accuracy/backfill` (3 levels deep). Top-level + 2 subdirectories
+ * (e.g. `brain/accuracy/backfill`) is the deepest nesting known today.
  */
 function discoverEndpoints(aiDir: string, currentDir: string, depth: number, acc: string[]): string[] {
-  const MAX_DEPTH = 2;
+  const MAX_DEPTH = 3;
   let entries: Dirent[];
   try {
     entries = readdirSync(currentDir, { withFileTypes: true });

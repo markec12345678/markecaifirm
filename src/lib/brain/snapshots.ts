@@ -187,3 +187,205 @@ export async function getSnapshotMasterResult(
   }
 }
 
+// v8.25: Historical Accuracy backfill — fills actualProfit30d/90d + accuracy30d/90d
+// for snapshots that are old enough to have actual data (>= 30d old for 30d, >= 90d
+// for 90d).
+//
+// This function is the CULMINATION of the Validation phase:
+//   v8.23 = DAILY SNAPSHOTS (predictions stored) + ACTUAL PROFIT TRACKER (ground truth)
+//   v8.24 = USER RISK PROFILE (personalization)
+//   v8.25 = HISTORICAL ACCURACY (closes the loop — predicted vs actual = accuracy %)
+//
+// For each snapshot where:
+//   - actualProfit30d is null AND snapshot date + 30d <= today
+//   → compute actualProfit30d = sum of (sellPrice - sellFees - buyPrice - buyFees)
+//     for trades where status='sold' AND sellDate between snapshotDate AND snapshotDate+30d
+//   → compute accuracy30d = projection30dEUR > 0 ? (actualProfit30d / projection30dEUR) × 100 : 0
+//   → update BrainSnapshot row
+//
+// Same for 90d.
+//
+// Returns: { ok, backfilled30d, backfilled90d, totalSnapshots }
+//
+// Robustness: each snapshot update is wrapped in try/catch so one failure
+// (e.g. transient DB error) doesn't abort the whole batch. Individual failures
+// are logged but not thrown.
+//
+// Called by:
+//   - Cron job @ 01:00 daily (src/app/api/cron/backfill-accuracy/route.ts)
+//     — should run AFTER daily-brain-snapshot cron so today's snapshot exists.
+//   - Manual trigger via POST /api/ai/brain/accuracy/backfill (for testing).
+
+export async function backfillSnapshotAccuracy(): Promise<{
+  ok: true;
+  backfilled30d: number;
+  backfilled90d: number;
+  totalSnapshots: number;
+}> {
+  // Fetch all snapshots — we filter in JS for two reasons:
+  //   (1) We need to check both "actualProfit30d is null" AND "date + 30d <= today".
+  //       Prisma WHERE could express this, but JS keeps the logic transparent + debuggable.
+  //   (2) Cap is high (400) since we want to backfill EVERY existing snapshot that's
+  //       old enough — once backfilled, the WHERE filter on `actualProfit30d: null`
+  //       would naturally shrink the set on subsequent runs (idempotent).
+  const allSnapshots = await db.brainSnapshot.findMany({
+    orderBy: { date: 'asc' },
+    take: 400,
+  });
+
+  const totalSnapshots = allSnapshots.length;
+  let backfilled30d = 0;
+  let backfilled90d = 0;
+
+  const now = new Date();
+
+  for (const snap of allSnapshots) {
+    // Parse snapshot date — stored as YYYY-MM-DD (UTC). Construct a Date at UTC midnight.
+    // `new Date('YYYY-MM-DD')` parses as UTC midnight, which is what we want.
+    const snapshotDate = new Date(`${snap.date}T00:00:00Z`);
+
+    // --- 30d backfill ---
+    // Only backfill if actualProfit30d is null AND enough time has passed
+    // (snapshot date + 30 days <= now).
+    if (snap.actualProfit30d === null) {
+      const endDate30d = new Date(snapshotDate);
+      endDate30d.setUTCDate(endDate30d.getUTCDate() + 30);
+
+      if (endDate30d <= now) {
+        try {
+          // Inline query — see lib/profit/actual.ts for the canonical version.
+          // We intentionally duplicate the query here (vs adding optional params
+          // to calculateActualProfit) to keep that function self-contained + avoid
+          // breaking its public contract.
+          const trades30d = await db.trade.findMany({
+            where: {
+              status: 'sold',
+              sellDate: { gte: snapshotDate, lte: endDate30d },
+            },
+            select: {
+              buyPrice: true,
+              buyFees: true,
+              sellPrice: true,
+              sellFees: true,
+            },
+          });
+
+          // Sum per-trade profit = sellPrice - sellFees - buyPrice - buyFees
+          // (matches calculateActualProfit formula exactly)
+          const actualProfit30d = trades30d.reduce(
+            (sum, t) =>
+              sum +
+              (t.sellPrice ?? 0) -
+              (t.sellFees ?? 0) -
+              t.buyPrice -
+              (t.buyFees ?? 0),
+            0,
+          );
+
+          const roundedActual30d = Math.round(actualProfit30d * 100) / 100;
+
+          // accuracy30d = (actual / predicted) × 100
+          // If prediction was 0 (rare edge case — Master Brain just started and
+          // had no data), accuracy is 0 to avoid divide-by-zero. If actual is
+          // negative (loss) and predicted was positive, accuracy will be
+          // negative (correctly signals over-prediction).
+          const accuracy30d =
+            snap.projection30dEUR > 0
+              ? Math.round(
+                  ((actualProfit30d / snap.projection30dEUR) * 100) * 100,
+                ) / 100
+              : 0;
+
+          await db.brainSnapshot.update({
+            where: { id: snap.id },
+            data: {
+              actualProfit30d: roundedActual30d,
+              accuracy30d,
+            },
+          });
+
+          backfilled30d++;
+        } catch (err) {
+          // Log + continue — one snapshot failure shouldn't abort the batch.
+          logger.error(
+            'backfillSnapshotAccuracy',
+            `failed to backfill 30d for snapshot ${snap.date}`,
+            err,
+          );
+        }
+      }
+    }
+
+    // --- 90d backfill ---
+    if (snap.actualProfit90d === null) {
+      const endDate90d = new Date(snapshotDate);
+      endDate90d.setUTCDate(endDate90d.getUTCDate() + 90);
+
+      if (endDate90d <= now) {
+        try {
+          const trades90d = await db.trade.findMany({
+            where: {
+              status: 'sold',
+              sellDate: { gte: snapshotDate, lte: endDate90d },
+            },
+            select: {
+              buyPrice: true,
+              buyFees: true,
+              sellPrice: true,
+              sellFees: true,
+            },
+          });
+
+          const actualProfit90d = trades90d.reduce(
+            (sum, t) =>
+              sum +
+              (t.sellPrice ?? 0) -
+              (t.sellFees ?? 0) -
+              t.buyPrice -
+              (t.buyFees ?? 0),
+            0,
+          );
+
+          const roundedActual90d = Math.round(actualProfit90d * 100) / 100;
+
+          const accuracy90d =
+            snap.projection90dEUR > 0
+              ? Math.round(
+                  ((actualProfit90d / snap.projection90dEUR) * 100) * 100,
+                ) / 100
+              : 0;
+
+          await db.brainSnapshot.update({
+            where: { id: snap.id },
+            data: {
+              actualProfit90d: roundedActual90d,
+              accuracy90d,
+            },
+          });
+
+          backfilled90d++;
+        } catch (err) {
+          logger.error(
+            'backfillSnapshotAccuracy',
+            `failed to backfill 90d for snapshot ${snap.date}`,
+            err,
+          );
+        }
+      }
+    }
+  }
+
+  logger.info('backfillSnapshotAccuracy', 'backfill complete', {
+    totalSnapshots,
+    backfilled30d,
+    backfilled90d,
+  });
+
+  return {
+    ok: true,
+    backfilled30d,
+    backfilled90d,
+    totalSnapshots,
+  };
+}
+
