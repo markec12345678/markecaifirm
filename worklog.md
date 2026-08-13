@@ -15319,3 +15319,54 @@ Stage Summary:
   - UI: 📊 Dejanski profit card na VRHU Brain view-a (ground truth first, nad Master Brain banner-jem) + 📸 Brain Snapshots section na dnu (zgodovina z manual save)
 - Verzija aplikacije: v8.23.0
 - Skupaj doslej (v7.50 → v8.23): 73 verzij, 196 novih funkcij; Brain architecture COMPLETE (v8.22) + Validation phase STARTED (v8.23) — naslednji korak: v8.24 (User Risk Profile) → v8.25 (Historical Accuracy + Trend)
+
+---
+Task ID: v8.24
+Agent: full-stack-developer + main
+Task: Implement User Risk Profile — makes Master Brain personal (conservative/balanced/aggressive)
+
+Work Log:
+- Podagent (full-stack-developer) je implementiral v8.24 pred prekinitvijo: vse datoteke ustvarjene
+- Main agent je po prekinitvi dokončal:
+  - bun run db:push (4 new Settings fields aplicirana na DB)
+  - Popravljen POST handler: upsert → update (dev server ima cached star Prisma client, upsert create blok z novimi field-i ni deloval)
+  - Dev server restart (ubij proces 1116+1129+1165, ponovni zagon) da prevzame nov @prisma/client
+  - Neodvisno preveril endpoint-e (curl 4 testi):
+    - GET /api/ai/brain/risk-profile → 200 {"ok":true,"profile":{riskTolerance:"balanced",maxAcceptableRisk:50,liquidityReserve:500,investmentHorizon:"medium"},"adjustment":{adjusted:false,...}}
+    - POST /api/ai/brain/risk-profile {"riskTolerance":"conservative",...} → 200 {"ok":true,"profile":{riskTolerance:"conservative",maxAcceptableRisk:40,liquidityReserve:800,investmentHorizon:"long"}}
+    - GET (verify persisted) → riskTolerance:"conservative" ✅ (persistenca preverjena)
+    - GET /api/ai/brain/master (z conservative profilom) → riskProfileAdjustment.adjusted:true, recommendationOverride:{action:"REDUCE_RISK",urgency:"HIGH"} ✅
+    - POST reset to balanced → 200 ✅
+  - Dopolnil doc posodobitve: AI_ENDPOINTS.md (Total: 415, row 17 brain/risk-profile + renumbering), README.md (v8.24.0 badge, 415 AI, 592 routes, tagline z v8.24 description), CHANGELOG.md ([8.24.0] section z full description)
+- Preveril lint: 0 napak (2 warnings — unused eslint-disable, ne kritično) ✨
+- Preveril typecheck: 0 napak ✨
+- Posodobil GitHub About: "415 AI + 72 analytics = 592 routes. v8.24.0: Brain architecture (8 layers) + Validation phase (Snapshots + Actual Profit + User Risk Profile)." (290 chars)
+- Commit: "v8.24: User Risk Profile — Master Brain becomes personal (conservative/balanced/aggressive)..." (890b5e8)
+- Push na GitHub: uspešen ✅ (584d5e1..890b5e8), PAT očiščen ✅
+- Agent Browser self-verification:
+  - Stran se pravilno naloži (HTTP 200)
+  - AI Hub: 🧠 Možgani 11 (8 brain + snapshots + actual-profit + risk-profile)
+  - "⚙️ Tvoj Risk Profile" card prikazan (indigo/violet) z v8.24 badge
+  - brain/risk-profile endpoint viden z "v8.24 · PERSONAL" badge
+  - Brez runtime napak v dev.log
+
+Stage Summary:
+- NOV Prisma Settings fields: 4 (userRiskTolerance, userMaxAcceptableRisk, userLiquidityReserve, userInvestmentHorizon)
+- NEW: src/lib/brain/risk-profile.ts (adjustMasterBrainForRiskProfile — pure function: recommendationOverride, filteredTopActions, adjustedRiskBudget, profileSummary; validateProfile; DEFAULT_PROFILE)
+- NEW: src/app/api/ai/brain/risk-profile/route.ts (GET current profile + sample adjustment, POST validate + update Settings singleton)
+- MODIFIED: src/app/api/ai/brain/master/route.ts (applies profile adjustment, returns riskProfileAdjustment block in response)
+- MODIFIED: src/components/dashboard/ai-hub-view.tsx (⚙️ Tvoj Risk Profile card — indigo/violet, 3 toggle buttons Conservative/Balanced/Aggressive + slider za maxAcceptableRisk + input za liquidityReserve + 3 toggle buttons za investmentHorizon + Save button)
+- MODIFIED: prisma/schema.prisma (4 new Settings fields)
+- MODIFIED: src/lib/db.ts (schema version tracking)
+- AI endpointi: 414 → 415 (+1)
+- Total API routes: 591 → 592 (+1)
+- Lint: 0 errors (2 unused eslint-disable warnings)
+- Typecheck: 0 errors ✨
+- Endpoint verification: GET 200 (balanced default), POST conservative 200 (persisted), GET verify 200 (conservative persisted), GET master 200 (riskProfileAdjustment.adjusted:true, REDUCE_RISK), POST reset 200
+- Documentation updated: AI_ENDPOINTS.md (Total: 415), README.md (v8.24.0), CHANGELOG.md ([8.24.0])
+- 🎯 PERSONALIZATION: Master Brain sedaj prilagodi priporočila glede na uporabnikov risk profil:
+  - conservative → REDUCE_RISK (HIGH urgency) + filter HIGH/CRITICAL actions + 0.5× risk budget
+  - balanced → no adjustment (default)
+  - aggressive → ACCEPT_RISK (LOW urgency) + keep all actions + 1.5× risk budget
+- Verzija aplikacije: v8.24.0
+- Skupaj doslej (v7.50 → v8.24): 74 verzij, 197 novih funkcij; Brain architecture COMPLETE (v8.22) + Validation phase: v8.23 (data collection) + v8.24 (personalization) — naslednji korak: v8.25 (Historical Accuracy + Trend)
