@@ -122,6 +122,20 @@
  * Fetches /api/ai/brain/accuracy?days=30. Backfill button POSTs to
  * /api/ai/brain/accuracy/backfill. 🎯 VALIDATION PHASE COMPLETE.
  *
+ * v8.26: NEW PHASE — Intelligence ("Zakaj Master Brain priporoča TOČNO to
+ * akcijo?"). Master Brain banner response now ALSO includes `explanations`
+ * (array of 5 ActionExplanation — one per TOP action). Each explanation has:
+ *   - reasoning (1-3 Slovenian sentences — the primary "why" string)
+ *   - reasoningParts { trigger, signalScore, signalGrade, whyRankedHere,
+ *     profileImpact, conflictImpact, expectedOutcome }
+ *   - trustScore (0-100 per action)
+ * Master Brain banner adds an "ℹ️ Zakaj?" toggle button per action — when
+ * clicked, expands to show the reasoning + reasoningParts grid + trustScore
+ * pill (emerald ≥70, amber ≥50, red <50). Banner also gains an OVERALL
+ * trustScore pill in the header ("Trust: 67/100"). Fetches the same
+ * /api/ai/brain/master endpoint (now includes explanations in the response —
+ * no separate fetch needed). 🎯 INTELLIGENCE PHASE STARTED.
+ *
  * Lazy-loaded z next/dynamic (ssr: false) — ne bremeni prvotnega nalaganja.
  */
 
@@ -139,7 +153,7 @@ import {
   DialogTitle,
   DialogDescription,
 } from '@/components/ui/dialog';
-import { Sparkles, Search, Copy, Check, RefreshCw, Zap, X, ChevronRight, Brain, AlertCircle, Package, TrendingUp, Target, Shield, Users, Coins, Crown, Camera, Save, History, TrendingDown, ArrowUpRight, ArrowDownRight, Settings2 } from 'lucide-react';
+import { Sparkles, Search, Copy, Check, RefreshCw, Zap, X, ChevronRight, ChevronDown, ChevronUp, Brain, AlertCircle, Package, TrendingUp, Target, Shield, Users, Coins, Crown, Camera, Save, History, TrendingDown, ArrowUpRight, ArrowDownRight, Settings2, Info } from 'lucide-react';
 import { toast } from 'sonner';
 import { cn } from '@/lib/utils';
 
@@ -2874,8 +2888,48 @@ function AccuracyTrendCard() {
 // sections inside BrainSynthesisCard. Master Brain synthesizes 21+ actions
 // from 7 domains into ONE final decision: TOP 5 ranked actions + 30d/90d/12m
 // strategy + conflict detection + overallHealth score + oneLineSummary.
+//
+// v8.26 (NEW): response now ALSO includes `explanations` — an array of
+// ActionExplanation (one per TOP action). Each contains:
+//   - reasoning (1-3 Slovenian sentences — the WHY behind the recommendation)
+//   - reasoningParts { trigger, signalScore, signalGrade, whyRankedHere,
+//     profileImpact, conflictImpact, expectedOutcome }
+//   - trustScore (0-100 per action)
+// The Master Brain banner renders an "ℹ️ Zakaj?" toggle per action to expand
+// the reasoning + reasoningParts grid + per-action trustScore pill. An overall
+// trustScore pill is also added to the banner header.
 
 type DomainName = 'profit' | 'inventory' | 'market' | 'sourcing' | 'risk' | 'buyer' | 'pricing';
+
+interface ActionExplanation {
+  rank: number;
+  domain: DomainName;
+  signal: string;
+  action: string;
+  expectedUpliftEUR: number;
+  confidence: 'HIGH' | 'MEDIUM' | 'LOW';
+  finalScore: number;
+  reasoning: string;
+  reasoningParts: {
+    trigger: string;
+    signalScore: number;
+    signalGrade: 'A+' | 'A' | 'B' | 'C' | 'D' | 'F';
+    whyRankedHere: string;
+    profileImpact: string | null;
+    conflictImpact: string | null;
+    expectedOutcome: string;
+  };
+  trustScore: number; // 0-100
+}
+
+interface MasterBrainExplanation {
+  ok: true;
+  explanations: ActionExplanation[];
+  summaryBlurb: string;
+  trustScore: number; // 0-100 overall (weighted by finalScore)
+  source: string;
+  cachedAt?: number;
+}
 
 interface MasterBrainResult {
   ok: true;
@@ -2920,6 +2974,15 @@ interface MasterBrainResult {
   aiUsed: false;
   source: string;
   cachedAt?: number;
+  // v8.26: per-action explanations array (one per TOP action — up to 5)
+  explanations?: ActionExplanation[];
+  // v8.26: overall explanation summary (mirror from /api/ai/brain/explain response
+  // when computed by master endpoint). Optional — only present if the master
+  // endpoint included explanations in the response.
+  explanationSummary?: {
+    summaryBlurb: string;
+    trustScore: number;
+  };
 }
 
 const DOMAIN_LABELS: Record<DomainName, { icon: string; label: string; color: string }> = {
@@ -2943,10 +3006,35 @@ function conflictSeverityColor(severity: string): string {
   }
 }
 
+/**
+ * v8.26: Color a 0-100 trustScore value for a pill.
+ * ≥70 = emerald (high trust), ≥50 = amber (medium), <50 = red (low trust).
+ */
+function trustScoreColor(score: number): string {
+  if (score >= 70) {
+    return 'bg-emerald-500/15 text-emerald-600 border-emerald-500/30 dark:text-emerald-400';
+  }
+  if (score >= 50) {
+    return 'bg-amber-500/15 text-amber-600 border-amber-500/30 dark:text-amber-400';
+  }
+  return 'bg-red-500/15 text-red-600 border-red-500/30 dark:text-red-400';
+}
+
+/**
+ * v8.26: Color a signal grade pill (mirrors the master brain's gradeColor but
+ * with slightly tighter styling for the reasoning grid).
+ */
+function signalGradeColor(grade: string): string {
+  return gradeColor(grade);
+}
+
 function MasterBrainBanner() {
   const [data, setData] = useState<MasterBrainResult | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+  // v8.26: track which TOP action's "ℹ️ Zakaj?" panel is expanded.
+  // null = none expanded; otherwise the action's rank (1-5).
+  const [expandedRank, setExpandedRank] = useState<number | null>(null);
 
   const fetchMaster = useCallback(async () => {
     setLoading(true);
@@ -2968,10 +3056,27 @@ function MasterBrainBanner() {
     fetchMaster();
   }, [fetchMaster]);
 
+  // v8.26: compute overall trustScore from the explanations array
+  // (weighted by finalScore — same as the backend's overall trustScore).
+  // Falls back to 0 if no explanations are present.
+  const explanations = data?.explanations;
+  const overallTrustScore = useMemo(() => {
+    if (!explanations || explanations.length === 0) return null;
+    let weightSum = 0;
+    let weightedSum = 0;
+    for (const e of explanations) {
+      const w = e.finalScore > 0 ? e.finalScore : 1;
+      weightedSum += e.trustScore * w;
+      weightSum += w;
+    }
+    if (weightSum === 0) return null;
+    return Math.round((weightedSum / weightSum) * 10) / 10;
+  }, [explanations]);
+
   return (
     <div className="rounded-xl border-2 border-amber-500/40 bg-gradient-to-br from-amber-500/15 via-yellow-500/10 to-orange-500/5 p-3 sm:p-4 shadow-sm">
       {/* Header row */}
-      <div className="flex items-center justify-between gap-2 mb-2.5 min-w-0">
+      <div className="flex items-center justify-between gap-2 mb-2.5 min-w-0 flex-wrap">
         <div className="flex items-center gap-2 min-w-0">
           <Crown className="w-5 h-5 text-amber-600 dark:text-amber-400 shrink-0" />
           <span className="text-base sm:text-lg font-bold tracking-tight">
@@ -2983,6 +3088,17 @@ function MasterBrainBanner() {
           <Badge variant="outline" className="text-[9px] border-amber-500/30 text-amber-700/80 dark:text-amber-400/80 shrink-0">
             FINAL · APEX
           </Badge>
+          {/* v8.26: overall trustScore pill (emerald ≥70, amber ≥50, red <50) */}
+          {overallTrustScore != null && (
+            <Badge
+              variant="outline"
+              className={cn('text-[10px] font-bold px-2 py-0.5 shrink-0', trustScoreColor(overallTrustScore))}
+              title="v8.26: Zaupanje v Master Brain priporočila (0-100)"
+            >
+              <Info className="w-2.5 h-2.5 inline mr-0.5" />
+              Trust: {Math.round(overallTrustScore)}/100
+            </Badge>
+          )}
         </div>
         {data?.cachedAt && (
           <Badge variant="outline" className="text-[9px] text-muted-foreground border-muted shrink-0">
@@ -3035,31 +3151,153 @@ function MasterBrainBanner() {
             </Badge>
           </div>
 
-          {/* TOP 5 AKCIJ ZA DANES */}
+          {/* TOP 5 AKCIJ ZA DANES (v8.26: each with an ℹ️ Zakaj? toggle) */}
           <div className="space-y-1">
-            <div className="text-[10px] uppercase tracking-wide text-amber-700/80 dark:text-amber-400/80 font-semibold">
-              🎯 TOP 5 AKCIJ ZA DANES
+            <div className="text-[10px] uppercase tracking-wide text-amber-700/80 dark:text-amber-400/80 font-semibold flex items-center justify-between">
+              <span>🎯 TOP 5 AKCIJ ZA DANES</span>
+              {data.explanations && data.explanations.length > 0 && (
+                <span className="text-[9px] normal-case font-normal text-muted-foreground italic">
+                  ℹ️ klikni &quot;Zakaj?&quot; za razlago
+                </span>
+              )}
             </div>
             {data.topActions.length === 0 ? (
               <p className="text-[11px] text-muted-foreground italic">Ni akcij</p>
             ) : (
               data.topActions.map((a) => {
                 const dm = DOMAIN_LABELS[a.domain] ?? { icon: '•', label: a.domain, color: 'text-foreground' };
+                // v8.26: find the matching explanation (if any)
+                const explanation = data.explanations?.find(
+                  (e) => e.rank === a.rank && e.domain === a.domain && e.signal === a.signal,
+                );
+                const isExpanded = expandedRank === a.rank;
                 return (
-                  <div key={a.rank} className="flex items-start gap-2 text-[11px] sm:text-xs leading-snug p-1.5 rounded bg-background/40">
-                    <span className="font-bold text-amber-700 dark:text-amber-400 shrink-0 w-4 text-center">
-                      {a.rank}.
-                    </span>
-                    <span className="shrink-0" title={dm.label}>
-                      {dm.icon}
-                    </span>
-                    <span className="flex-1 min-w-0">
-                      <span className="font-medium">{a.action}</span>
-                      <span className="text-muted-foreground"> · +{Math.round(a.expectedUpliftEUR)}€/mo</span>
-                    </span>
-                    <span className={cn('text-[9px] font-bold shrink-0', confidenceColor(a.confidence))}>
-                      {a.confidence}
-                    </span>
+                  <div
+                    key={a.rank}
+                    className={cn(
+                      'rounded bg-background/40 transition-colors',
+                      isExpanded ? 'ring-1 ring-amber-500/30 bg-amber-500/5' : '',
+                    )}
+                  >
+                    <div className="flex items-start gap-2 text-[11px] sm:text-xs leading-snug p-1.5">
+                      <span className="font-bold text-amber-700 dark:text-amber-400 shrink-0 w-4 text-center">
+                        {a.rank}.
+                      </span>
+                      <span className="shrink-0" title={dm.label}>
+                        {dm.icon}
+                      </span>
+                      <span className="flex-1 min-w-0">
+                        <span className="font-medium">{a.action}</span>
+                        <span className="text-muted-foreground"> · +{Math.round(a.expectedUpliftEUR)}€/mo</span>
+                      </span>
+                      <span className={cn('text-[9px] font-bold shrink-0', confidenceColor(a.confidence))}>
+                        {a.confidence}
+                      </span>
+                      {/* v8.26: ℹ️ Zakaj? toggle button — only render if an explanation exists */}
+                      {explanation && (
+                        <button
+                          onClick={() => setExpandedRank(isExpanded ? null : a.rank)}
+                          className="text-[9px] flex items-center gap-0.5 px-1.5 py-0.5 rounded border border-amber-500/30 hover:bg-amber-500/15 text-amber-700 dark:text-amber-400 shrink-0 transition-colors"
+                          aria-expanded={isExpanded}
+                          aria-label={`Razširi razlago za akcijo ${a.rank}`}
+                          title="v8.26: Razširi za razlago (Zakaj Master Brain priporoča to akcijo?)"
+                        >
+                          <Info className="w-2.5 h-2.5" />
+                          Zakaj?
+                          {isExpanded ? <ChevronUp className="w-2.5 h-2.5" /> : <ChevronDown className="w-2.5 h-2.5" />}
+                        </button>
+                      )}
+                    </div>
+                    {/* v8.26: Expanded explanation panel — reasoning + reasoningParts grid + trustScore pill */}
+                    {explanation && isExpanded && (
+                      <div className="mx-1.5 mb-1.5 p-2 rounded border border-amber-500/20 bg-amber-500/5 space-y-2">
+                        {/* Reasoning — the primary WHY string (prominent) */}
+                        <p className="text-[11px] leading-relaxed text-amber-900 dark:text-amber-200 font-medium">
+                          <span className="text-[9px] uppercase tracking-wide text-amber-700/80 dark:text-amber-400/80 font-semibold mr-1">
+                            💡 Razlaga:
+                          </span>
+                          {explanation.reasoning}
+                        </p>
+
+                        {/* reasoningParts grid: Signal + Rank + Profile + Conflict + Expected */}
+                        <div className="grid grid-cols-1 sm:grid-cols-2 gap-1.5 text-[10px]">
+                          {/* Signal */}
+                          <div className="rounded border border-amber-500/20 bg-background/50 p-1.5">
+                            <div className="text-[8px] uppercase text-muted-foreground font-semibold">
+                              Signal
+                            </div>
+                            <div className="flex items-center gap-1 mt-0.5 flex-wrap">
+                              <span className="font-mono text-amber-700 dark:text-amber-400 font-medium">
+                                {explanation.signal}
+                              </span>
+                              <Badge
+                                variant="outline"
+                                className={cn('text-[8px] px-1 py-0 h-3.5', signalGradeColor(explanation.reasoningParts.signalGrade))}
+                              >
+                                {explanation.reasoningParts.signalGrade}
+                              </Badge>
+                              <span className="text-muted-foreground text-[9px]">
+                                {Math.round(explanation.reasoningParts.signalScore)}/100
+                              </span>
+                            </div>
+                          </div>
+
+                          {/* Rank reason */}
+                          <div className="rounded border border-amber-500/20 bg-background/50 p-1.5">
+                            <div className="text-[8px] uppercase text-muted-foreground font-semibold">
+                              Zakaj na tem mestu
+                            </div>
+                            <div className="mt-0.5 text-[9px] leading-snug text-foreground/90">
+                              {explanation.reasoningParts.whyRankedHere}
+                            </div>
+                          </div>
+
+                          {/* Profile impact */}
+                          <div className="rounded border border-amber-500/20 bg-background/50 p-1.5">
+                            <div className="text-[8px] uppercase text-muted-foreground font-semibold">
+                              Vpliv profila
+                            </div>
+                            <div className="mt-0.5 text-[9px] leading-snug text-foreground/90">
+                              {explanation.reasoningParts.profileImpact ?? '—'}
+                            </div>
+                          </div>
+
+                          {/* Conflict impact */}
+                          <div className="rounded border border-amber-500/20 bg-background/50 p-1.5">
+                            <div className="text-[8px] uppercase text-muted-foreground font-semibold">
+                              Vpliv konfliktov
+                            </div>
+                            <div className="mt-0.5 text-[9px] leading-snug text-foreground/90">
+                              {explanation.reasoningParts.conflictImpact ?? '—'}
+                            </div>
+                          </div>
+
+                          {/* Expected outcome */}
+                          <div className="rounded border border-amber-500/20 bg-background/50 p-1.5 sm:col-span-2">
+                            <div className="text-[8px] uppercase text-muted-foreground font-semibold">
+                              Pričakovan izid
+                            </div>
+                            <div className="mt-0.5 text-[9px] leading-snug text-emerald-700 dark:text-emerald-400 font-medium">
+                              {explanation.reasoningParts.expectedOutcome}
+                            </div>
+                          </div>
+                        </div>
+
+                        {/* Per-action trustScore pill */}
+                        <div className="flex items-center justify-between gap-2 pt-1 border-t border-amber-500/20">
+                          <span className="text-[9px] uppercase text-muted-foreground font-semibold">
+                            Trust score
+                          </span>
+                          <Badge
+                            variant="outline"
+                            className={cn('text-[10px] font-bold px-2 py-0.5', trustScoreColor(explanation.trustScore))}
+                            title="v8.26: Zaupanje v to priporočilo (0-100). ≥70=zeleno, ≥50=rumeno, <50=rdeče."
+                          >
+                            {Math.round(explanation.trustScore)}/100
+                          </Badge>
+                        </div>
+                      </div>
+                    )}
                   </div>
                 );
               })
@@ -3167,7 +3405,12 @@ function MasterBrainBanner() {
   );
 }
 
-// --- Outer card wrapper (v8.24 Personal + v8.23 Validation + v8.22 Master + v8.15-v8.21 7 Domains) --------------------
+// --- Outer card wrapper (v8.26 Intelligence + v8.25 Accuracy + v8.24 Personal + v8.23 Validation + v8.22 Master + v8.15-v8.21 7 Domains) --------------------
+//
+// v8.26 NEW PHASE: Intelligence — "Zakaj Master Brain priporoča TOČNO to akcijo?"
+// Master Brain banner response now includes `explanations` (5 ActionExplanation).
+// Each TOP action gets an "ℹ️ Zakaj?" toggle that expands reasoning + reasoningParts
+// grid + per-action trustScore pill. Banner header shows overall trustScore pill.
 //
 // v8.24 NEW: User Risk Profile — Master Brain becomes PERSONAL.
 // Added "Tvoj Risk Profile" card BETWEEN Actual Profit and Master Brain banner.
@@ -3185,6 +3428,7 @@ function MasterBrainBanner() {
 //      Brain predictions should be interpreted for THIS user.
 //   3. 🧠✨ Master Brain Banner (v8.22, gold/amber) — PREDICTIONS.
 //      Synthesizes 7 Domain Brains into ONE decision (adjusted by profile).
+//      v8.26: each TOP action has an "ℹ️ Zakaj?" toggle for explainability.
 //   4. 🧠📦📈🎯🛡️👥💶 7 Domain Brain sections (v8.15-v8.21) — detailed
 //      drill-down into each domain.
 //   5. 📸 Brain Snapshots section (v8.23, emerald) — historical record of
@@ -3201,7 +3445,7 @@ function BrainSynthesisCard({ onBrainCategoryClick }: { onBrainCategoryClick: ()
               AI BRAIN SYNTHESIS
             </span>
             <Badge variant="outline" className="text-[10px] border-primary/40 text-primary shrink-0">
-              v8.25 Accuracy + v8.24 Personal + v8.23 Validation + v8.22 Master + v8.15-v8.21 (7 Domains)
+              v8.26 Explain + v8.25 Accuracy + v8.24 Personal + v8.23 Validation + v8.22 Master + v8.15-v8.21 (7 Domains)
             </Badge>
           </div>
           <button

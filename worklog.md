@@ -15515,3 +15515,117 @@ Stage Summary:
   - v8.25 = Historical Accuracy + Trend (accuracy % = actual / predicted × 100, trend detection)
   - Uporabnik lahko končno zaupa Master Brain-u z dokazi: "Master Brain accuracy: X% (zadnjih 30 dni). Trend: ↗️ IMPROVING / → STABLE / ↘️ DECLINING."
 - Skupaj doslej (v7.50 → v8.25): 75 verzij, 199 novih funkcij; Brain architecture COMPLETE (v8.22) + Validation phase ZAKLJUČENA (v8.23+v8.24+v8.25) — naslednja faza: v8.26+ Intelligence (Explainability, Scenario Brain)
+
+---
+Task ID: v8.26
+Agent: full-stack-developer
+Task: Implement Action Explainability — Intelligence phase start ("Zakaj Master Brain priporoča TOČNO to akcijo?")
+
+Work Log:
+- Prebral worklog.md (v8.22 Master Brain, v8.24 Risk Profile, v8.25 Validation entries za kontekst — v8.26 začne novo fazo: Intelligence)
+- Prebral src/lib/brain/master.ts celotno (~817 vrstic — razumel MasterAction interface z {rank, domain, signal, action, expectedUpliftEUR, confidence, domainWeight, finalScore}; razumel da masterResult.domains vsebuje vseh 7 Domain Brain raw result-ov, vsak z `signals: Array<{name, score, grade, ...}>`)
+- Prebral src/app/api/ai/brain/master/route.ts celotno (~310 vrstic — razumel GET+POST shared handler, 10-min cache, v8.24 riskProfileAdjustment block ki se aplikira nad masterResult)
+- Prebral src/components/dashboard/ai-hub-view.tsx (~3590 vrstic — razumel MasterBrainBanner component strukturo z {header, oneLineSummary, overallHealth, TOP 5, strategy, conflicts, bottlenecks/strengths, refresh})
+- Prebral src/lib/brain/risk-profile.ts celotno (~352 vrstic — razumel RiskProfileAdjustment interface z {adjusted, recommendationOverride, filteredTopActions, adjustedRiskBudget, profileSummary}; filteredTopActions ima {rank, kept, riskFlag, filterReason})
+- Prebral src/lib/brain/profit.ts (ProfitSignal interface: {name, score, grade, upliftEURPerMonth, topLever} — vse 7 Domain Brain-ov imajo enako shape)
+- Prebral src/app/api/ai/brain/accuracy/route.ts kot GET endpoint template (~208 vrstic — razumel runtime, dynamic, maxDuration pattern)
+
+- Step 1: Created src/lib/brain/explainability.ts (~330 vrstic, NEW pure compute module)
+  - Type definitions: ActionExplanation (z reasoning + reasoningParts {trigger, signalScore, signalGrade, whyRankedHere, profileImpact, conflictImpact, expectedOutcome} + trustScore), MasterBrainExplanation (z explanations[], summaryBlurb, trustScore, source: 'v8.26-explainability')
+  - Helper functions: clamp, round2, confidenceToTrustScore (HIGH=100, MEDIUM=65, LOW=30), normalizeDomainWeight (1.3→100, 0.9→0 linear), domainLabelSlo, confidenceLabelSlo
+  - extractDomainSignals(masterResult, domain) — pulls the `signals` array from a domain's raw brain result (all 7 domains share same shape)
+  - lookupSignalScoreGrade(masterResult, domain, signalName) — finds matching signal by name, returns {score, grade} (fallback {50, 'C'})
+  - conflictTouchesDomain(conflict, domain) — checks if domainA or domainB matches
+  - findProfileEntry(profileAdjustment, action) — finds matching filteredTopActions entry by rank+domain+signal
+  - explainMasterBrainActions(masterResult, profileAdjustment?) — MAIN entry point:
+    * For each TOP 5 action: lookup signal score+grade → build reasoningParts (trigger, whyRankedHere, profileImpact, conflictImpact, expectedOutcome) → build reasoning (1-3 Slovenian sentences) → compute trustScore per formula
+    * trustScore formula: clamp(signalScore × 0.4 + confidenceScore × 0.3 + domainWeightScore × 0.15 − conflictPenalty × 0.15, 0, 100)
+    * Overall trustScore: weighted avg by finalScore (higher-ranked actions count more)
+    * summaryBlurb: "Master Brain priporoča N akcij za danes. Najvišji trust: #X (Y/100). Skupni pričakovan uplift: Z€/mo. {profileNote}{conflictNote}"
+  - Pure TypeScript — NO next/server import, NO Prisma calls, NO AI/LLM SDK. Fully testable in isolation.
+
+- Step 2: Created src/app/api/ai/brain/explain/route.ts (~225 vrstic, NEW GET+POST endpoint)
+  - runtime='nodejs', dynamic='force-dynamic', maxDuration=60
+  - EXPLAIN_CACHE_TTL_MS = 10 min (same as Master Brain — explanations are PURELY derived)
+  - loadUserRiskProfile() — reads 4 fields from Settings singleton (same as master route)
+  - parseInputFromQuery(req) — parses skipX flags from query string (GET)
+  - parseBody(req) — parses optional POST body: {masterResult?, profileAdjustment?, input?}
+  - buildCacheKey(input) — stable JSON serialization (same pattern as master route)
+  - GET: parse query input → cache lookup → masterBrain(input) (if cache miss) → loadUserRiskProfile → adjustMasterBrainForRiskProfile → explainMasterBrainActions → cache + return
+  - POST: parse body → if masterResult provided, use it directly (skip cache); else call masterBrain(input). If profileAdjustment provided, use it; else load from DB. Then explainMasterBrainActions → return.
+  - Standard try/catch → 500 {error} with logger.error
+  - cachedAt re-stamp on cache hit
+
+- Step 3: Modified src/app/api/ai/brain/master/route.ts — added `explanations` to response
+  - Added import: explainMasterBrainActions from '@/lib/brain/explainability'
+  - In BOTH branches (cached + fresh): after computing riskProfileAdjustment, call explainMasterBrainActions(result, adjustment) and include as `explanations` in response
+  - Response shape now: { ...masterResult, riskProfileAdjustment: {...}, explanations: [...] }
+  - Updated JSDoc header z v8.26 note: response includes explanations array (5 ActionExplanation z reasoning + reasoningParts + trustScore)
+
+- Step 4: Modified src/components/dashboard/ai-hub-view.tsx — added explainability to Master Brain banner
+  - Added ChevronDown, ChevronUp, Info icons to lucide-react imports
+  - Added ActionExplanation + MasterBrainExplanation types
+  - Extended MasterBrainResult interface with optional `explanations?: ActionExplanation[]` + `explanationSummary?` fields
+  - Added trustScoreColor(score) helper (≥70 emerald, ≥50 amber, <50 red) + signalGradeColor(grade) helper (delegates to existing gradeColor)
+  - Added JSDoc v8.26 entry (Intelligence phase explanation)
+  - MasterBrainBanner component:
+    * Added expandedRank state (number | null) — tracks which TOP action's "ℹ️ Zakaj?" panel is expanded
+    * Added explanations = data?.explanations + overallTrustScore useMemo (weighted avg by finalScore, same formula as backend)
+    * Header: added overall trustScore pill (`<Badge>ℹ️ Trust: {N}/100</Badge>` z trustScoreColor) — only rendered if overallTrustScore != null
+    * TOP 5 AKCIJ ZA DANES: each action now wrapped in a div with conditional ring when expanded
+    * Each action row: added "ℹ️ Zakaj?" toggle button (Info icon + ChevronDown/ChevronUp) — only rendered if matching explanation exists
+    * Expanded panel (when toggled): contains (1) prominent reasoning text "💡 Razlaga: ..." in amber box, (2) reasoningParts grid 2x2 with expectedOutcome full-width (Signal+grade pill+score, Zakaj na tem mestu, Vpliv profila, Vpliv konfliktov, Pričakovan izid), (3) per-action trustScore pill at bottom
+    * aria-expanded + aria-label for accessibility
+  - Updated BrainSynthesisCard outer badge: "v8.26 Explain + v8.25 Accuracy + v8.24 Personal + v8.23 Validation + v8.22 Master + v8.15-v8.21 (7 Domains)"
+  - Updated outer card wrapper JSDoc z v8.26 Intelligence phase note
+
+- Step 5: Verification
+  - bun run lint: 0 errors (2 pre-existing warnings v src/lib/db.ts — unused eslint-disable, ne moje) ✨
+  - bunx tsc --noEmit: 0 errors ✨ (initial run had 1 React Compiler error zaradi useMemo dependency z `data?.explanations` — popravil z destrukturiranjem `const explanations = data?.explanations;` pred useMemo)
+  - curl GET /api/ai/brain/explain → 200 {"ok":true, "explanations":[5 akcij], "summaryBlurb":"Master Brain priporoča 5 akcij za danes. Najvišji trust: #5 (70.75/100). Skupni pričakovan uplift: 1662€/mo. 1 konflikt zaznanih — preveri resolucije.", "trustScore":57.21, "source":"v8.26-explainability"} ✅
+    - explanations[0]: rank=1, domain=market, signal=trend, signalGrade=A, signalScore=84, trustScore=64.35, conflictImpact="Konflikt Cene vs Trg (MEDIUM) vpliva na to domeno — preveri resolucijo: Zadrži dvig za 30d, fokus na bundle value namesto cene" (1 konflikt detected) ✅
+    - reasoningParts keys: [trigger, signalScore, signalGrade, whyRankedHere, profileImpact, conflictImpact, expectedOutcome] ✅
+    - per-action trustScores: [64.3, 46.0, 43.2, 66.2, 70.8] — vsi v [0, 100] range ✅
+  - curl GET /api/ai/brain/master → 200 z "explanations" poljem (5 ActionExplanation z reasoning + reasoningParts + trustScore) — ISTA struktura kot /explain endpoint, embedded v master response ✅
+  - curl POST /api/ai/brain/explain -d '{}' → 200 (uses fresh masterBrain() call, same as GET) ✅
+  - curl POST /api/ai/brain/explain -d '{"masterResult": <master_result>, "profileAdjustment": <adjustment>}' → 200 (uses pre-computed masterResult, skips cache) ✅
+  - curl GET /api/ai/brain/explain?skipPricing=true → 200 z explanations (5 akcij z domain-i [market, buyer, market, market, profit] — pricing skip-an) ✅
+  - curl GET /api/ai-list → 200 {"total":418, "categories":{"brain":14, ...}} ✅ (brain 14 = prej 13 + 1 nov brain/explain)
+  - Brain endpoints: [brain/accuracy, brain/accuracy/backfill, brain/actual-profit, brain/buyer, brain/explain, brain/inventory, brain/market, brain/master, brain/pricing, brain/profit, brain/risk, brain/risk-profile, brain/snapshots, brain/sourcing] — 14 vseh ✅
+  - Cache verification: 2x GET /api/ai/brain/explain?skipProfit=true — drugi klic ~instant (~19ms vs ~21ms), cachedAt=1786627499181 ✅
+  - Dev log: brez errorjev, le GET/POST /api/ai/brain/explain 200 + prisma:query Settings SELECT ✅
+
+- Step 6: Documentation
+  - AI_ENDPOINTS.md: total 417 → 418, vstavljena nova vrstica `| 11 | brain/explain | /api/ai/brain/explain |` (po brain/accuracy/backfill, pred brain/profit — alphabetical position v brain category), renumbered vseh 418 vrstic z Python skripto (1-418) ✅
+  - README.md: version badge v8.25.0 → v8.26.0; AI endpoints badge 417 → 418; API routes badge 594 → 595; hero tagline posodobljen z v8.26 description + Intelligence phase STARTED note; Overview paragraph posodobljen z v8.15-v8.26; "Kaj je novega" section doda v8.26 entry na VRH (pred v8.25) z vsemi detail-i (problem black box, explainability layer, reasoning + reasoningParts + trustScore, UI ℹ️ Zakaj? toggle + overall trustScore pill, INTELLIGENCE PHASE STARTED note, next v8.27 Scenario Brain + v8.28 Adaptive Domain Weights); version section v8.25.0 → v8.26.0; ~280 funkcij → ~281 funkcij; 417 AI → 418 AI v directory listing + AI Hub table + endpoint count + try/catch na vseh 595 API routes; Roadmap section doda v8.26 ✅ dokončana entry z vsemi detail-i (pure compute module, GET+POST endpoint, 10-min cache, master route extension, UI toggle + pill); Changelog Zadnje verzije doda v8.26.0 entry na VRH (nad v8.25.0) z INTELLIGENCE PHASE STARTED flag; "od v1.0 do v8.23" → "od v1.0 do v8.26" v Changelog section link; "v7.56-v8.25 (69 verzij, 190 novih funkcij)" → "v7.56-v8.26 (70 verzij, 191 novih funkcij)" ✅
+  - CHANGELOG.md: dodan nov "## [8.26.0] - 2026-08-28" section na VRH (nad [8.25.0]) z ### Added — ℹ️ Action Explainability blokom (NEW PHASE: Intelligence — problem black box, explainability layer, INTELLIGENCE PHASE STARTED note; 4 bulleti z vsemi detajli: (1) src/lib/brain/explainability.ts pure compute — explainMasterBrainActions formula + reasoningParts breakdown + trustScore formula, (2) src/app/api/ai/brain/explain/route.ts GET+POST 10-min cache, (3) master/route.ts modified to include explanations, (4) UI ai-hub-view.tsx toggle + pill); ### Stats: AI endpoints 417→418 (+1), Total API routes 594→595 (+1), brain layers 13→14, new files 2, modified files 2, new functions 1; ### Notes: "🎯 INTELLIGENCE PHASE STARTED. v8.26 = explainability (WHY). Next: v8.27 (Scenario Brain), v8.28 (Adaptive Domain Weights)"; [Unreleased] posodobljen — v8.26 odprl Intelligence phase, naslednje v8.27 Scenario Brain + v8.28 Adaptive Domain Weights ✅
+
+Stage Summary:
+- NEW: src/lib/brain/explainability.ts (explainMasterBrainActions — pure compute, ~330 vrstic, generates 5 ActionExplanation z reasoning + reasoningParts (5 fields: trigger, whyRankedHere, profileImpact, conflictImpact, expectedOutcome) + signalScore/signalGrade lookup + trustScore formula + overall trustScore weighted avg + summaryBlurb)
+- NEW: src/app/api/ai/brain/explain/route.ts (GET+POST endpoint, 10-min cache, ~225 vrstic, runtime=nodejs, maxDuration=60, POST podpira pre-computed masterResult za on-demand re-explanation)
+- MODIFIED: src/app/api/ai/brain/master/route.ts (now includes `explanations` array v response — 5 ActionExplanation z reasoning + reasoningParts + trustScore — UI lahko uporabi direktno iz master klica, brez separate fetch)
+- MODIFIED: src/components/dashboard/ai-hub-view.tsx (Master Brain banner: ℹ️ Zakaj? toggle per action + overall trustScore pill v header-ju + expanded panel z reasoning + reasoningParts grid + per-action trustScore pill; BrainSynthesisCard outer badge posodobljen z v8.26 Explain)
+- AI endpointi: 417 → 418 (+1)
+- Total API routes: 594 → 595 (+1)
+- Brain category: 13 → 14 (+1)
+- Lint: 0 errors (2 pre-existing warnings v src/lib/db.ts — unused eslint-disable, ne moje) ✨
+- Typecheck: 0 errors ✨ (popravil initial 1 React Compiler error — `data?.explanations` v useMemo dependency → destrukturiral pred useMemo)
+- Endpoint verification:
+  - GET /api/ai/brain/explain → 200 z ok:true, 5 explanations, summaryBlurb, trustScore=57.21, source:"v8.26-explainability" ✅
+  - GET /api/ai/brain/master → 200 z explanations array v response-ju (5 ActionExplanation z reasoning + reasoningParts + trustScore) ✅
+  - POST /api/ai/brain/explain -d '{}' → 200 (uses fresh masterBrain() call) ✅
+  - POST /api/ai/brain/explain z masterResult v body-ju → 200 (uses pre-computed, skips cache) ✅
+  - GET /api/ai-list → 200 {"total":418, "categories":{"brain":14}} (brain 14 = prej 13 + 1 nov brain/explain) ✅
+  - Brain endpoints: [brain/accuracy, brain/accuracy/backfill, brain/actual-profit, brain/buyer, brain/explain, brain/inventory, brain/market, brain/master, brain/pricing, brain/profit, brain/risk, brain/risk-profile, brain/snapshots, brain/sourcing] — 14 vseh ✅
+  - Cache verification: 2x zapored GET → drugi klic ~instant (~19ms), cachedAt prisoten ✅
+- Documentation updated: AI_ENDPOINTS.md (Total: 418, brain/explain row 11 + renumber 1-418), README.md (version v8.26.0, badges 418 AI + 595 routes, hero tagline z Intelligence phase STARTED, Overview paragraph z v8.15-v8.26, Kaj je novega v8.26 entry na vrh, version section, function count ~281, all v8.25/417/594 references posodobljene, Roadmap z v8.26 ✅ dokončana, Changelog Zadnje verzije z v8.26.0 entry na vrh), CHANGELOG.md (nov [8.26.0] section z Added + Stats + Notes z INTELLIGENCE PHASE STARTED flag, [Unreleased] posodobljen z v8.27 Scenario Brain + v8.28 Adaptive Domain Weights)
+- 🎯 INTELLIGENCE PHASE STARTED:
+  - Master Brain (v8.22) daje KAJ (TOP 5 ranked actions)
+  - Risk Profile (v8.24) naredi PERSONAL (conservative/balanced/aggressive adjustment)
+  - Explainability (v8.26) daje ZAKAJ (per-action reasoning + reasoningParts + trustScore)
+  - Skupaj odgovarjajo "Kaj naj naredim danes in zakaj?"
+  - Formula trustScore: signalScore × 0.4 + confidenceScore × 0.3 + domainWeightScore × 0.15 − conflictPenalty × 0.15
+  - reasoningParts (5 fields): trigger (domain+signal+grade+score), whyRankedHere (finalScore decomposition), profileImpact (conservative/aggressive influence ali null za balanced), conflictImpact (konflikt na tej domeni ali null), expectedOutcome (uplift + confidence)
+  - UI: ℹ️ Zakaj? toggle per action — razširi reasoning + 2x2 grid reasoningParts + per-action trustScore pill (emerald ≥70, amber ≥50, red <50) + overall trustScore pill v banner header-ju
+- Verzija aplikacije: v8.26.0
+- Skupaj doslej (v7.50 → v8.26): 76 verzij, 200 novih funkcij; Brain architecture COMPLETE (v8.22) + Validation phase ZAKLJUČENA (v8.23+v8.24+v8.25) + Intelligence phase STARTED (v8.26) — naslednje: v8.27 (Scenario Brain — WHAT IF?), v8.28 (Adaptive Domain Weights)

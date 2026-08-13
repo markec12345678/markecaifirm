@@ -6,10 +6,10 @@ Format sledi [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), verzije s
 
 ## [Unreleased]
 
-v8.25 je zaključil Validation phase (Historical Accuracy + Trend). Naslednje verzije odprejo Intelligence phase:
+v8.26 je odprl Intelligence phase (Action Explainability). Naslednje verzije nadaljujejo:
 
-- **v8.26 — Explainability** (zakaj Master Brain priporoča TOČNO to akcijo — feature attribution per signal, "ker Inventory Brain score D in Profit Brain topAction je 'LIQUIDATE_AGED_ITEMS', Master Brain izbere LIQUIDATE kot #1 z weighted score 0.85")
 - **v8.27 — Scenario Brain** ("What if?" simulacije — "Kaj če znižam cene za 10%? Kaj če kupim 5 več iPhone-ov? Kaj če trg pade 20%?" — Master Brain re-run z override inputs)
+- **v8.28 — Adaptive Domain Weights** (DOMAIN_WEIGHTS se prilagodijo glede na zgodovinsko accuracy per domena — če Inventory Brain accuracy < 60%, zmanjšaj inventory weight)
 - WebSocket real-time negotiation (SSE namesto polling)
 - Playwright E2E testi za glavne flow-e
 - TLS fingerprinting (curl-impersonate)
@@ -17,6 +17,92 @@ v8.25 je zaključil Validation phase (Historical Accuracy + Trend). Naslednje ve
 - Performance optimizations za Master Brain (cached partial results per domain)
 - Additional conflict detection tipi (npr. Inventory vs Buyer — supply/demand mismatch)
 - Per-domain DB injection v Master Brain route (zaenkrat se zanaša na individualne Domain Brain route-e za DB state)
+
+## [8.26.0] - 2026-08-28
+
+### Added — ℹ️ Action Explainability (NEW PHASE: Intelligence — "Zakaj Master Brain priporoča TOČNO to akcijo?")
+
+**🎯 INTELLIGENCE PHASE STARTED.** v8.26 = explainability (WHY). Problem: Master Brain pove KAJ storiti (npr. "Prodaj iPhone 13 zdaj"), ampak ne pove ZAKAJ. Uporabnik ne more zaupati black box-u. v8.26 dodaja explainability layer: za vsako TOP 5 akcijo generira human-readable reasoning (signal/domain trigger, signal score+grade, whyRankedHere, profileImpact, conflictImpact, expectedOutcome) + trustScore (0-100 per akcijo + overall). S v8.26 je Intelligence phase STARTED — uporabnik ne samo dobi priporočila, ampak tudi razume ZAKAJ. Skupaj Master Brain (v8.22 — KAJ) + Risk Profile (v8.24 — PERSONAL) + Explainability (v8.26 — ZAKAJ) odgovarjajo "Kaj naj naredim danes in zakaj?"
+
+- **`src/lib/brain/explainability.ts`** (NEW — pure compute module, no AI/LLM SDK, no Prisma)
+  - Exports `explainMasterBrainActions(masterResult, profileAdjustment?)` — pure deterministic function.
+  - Takes a `MasterBrainResult` (already computed by `masterBrain()`) + optional `RiskProfileAdjustment` (from v8.24) and generates `ActionExplanation[]` (5 — one per TOP action).
+  - For each action:
+    - Looks up the signal's score + grade in the corresponding domain's `signals` array (e.g. for `action.domain='profit'` & `action.signal='growth'`, finds `profit.signals.find(s => s.name === 'growth')`). Falls back to `{ score: 50, grade: 'C' }` if not found (defensive).
+    - Builds `reasoningParts`:
+      - `trigger`: `"${domainLabel} Brain signal '${signal}' (${grade}, ${score}/100) sproži to priporočilo"`
+      - `whyRankedHere`: `"Uvrščena na #${rank} ker finalScore=${finalScore} (uplift ${expectedUpliftEUR}€ × confidence ${confidence} × domainWeight ${domainWeight})"`
+      - `profileImpact`: if `profileAdjustment.adjusted` AND the action exists in `filteredTopActions`:
+        - conservative + kept=true: `"Tvoj conservative profil obdrži to akcijo ker je ${riskFlag} risk (znotraj maxAcceptableRisk ${max}/100)"`
+        - aggressive + kept=true: `"Tvoj aggressive profil dovoljuje to akcijo (riskFlag=${riskFlag}) — risk budget povečan za X%"`
+        - kept=false: `"Tvoj ${tolerance} profil je FILTRIRAL to akcijo (${filterReason}) — prikazana je še vedno, vendar je za tvoj profil ni priporočljivo izvesti"`
+        - balanced: `null` (no impact)
+      - `conflictImpact`: if any conflict in `masterResult.conflicts` mentions this action's domain (either as `domainA` or `domainB`): `"Konflikt ${otherDomainLabel} vs ${domainLabel} (${severity}) vpliva na to domeno — preveri resolucijo: ${resolution}"`. Else `null`.
+      - `expectedOutcome`: `"Če izvedeš: +${expectedUpliftEUR}€/mo pričakovanega profita (confidence: ${confidenceLabelSlo})"`
+    - Builds `reasoning` (1-3 Slovenian sentences): `"${trigger}. ${whyRankedHere}. ${profileImpact || conflictImpact || expectedOutcome}"`
+    - Computes `trustScore` (0-100) per the formula:
+      ```
+      trustScore = clamp(
+        signalScore × 0.4
+        + confidenceScore × 0.3
+        + domainWeightScore × 0.15
+        - conflictPenalty × 0.15,
+        0, 100
+      )
+      ```
+      where:
+      - `signalScore` = looked-up signal score (0-100)
+      - `confidenceScore`: HIGH=100, MEDIUM=65, LOW=30
+      - `domainWeightScore`: linear normalization (1.3→100, 0.9→0)
+      - `conflictPenalty`: 20 if any conflict mentions this domain, else 0
+  - Computes overall `trustScore`: weighted avg of action `trustScore`s, weighted by `finalScore` (so higher-ranked actions count more). Falls back to 0 if no explanations.
+  - Builds `summaryBlurb`: `"Master Brain priporoča ${n} akcij za danes. Najvišji trust: #${best.rank} (${best.trustScore}/100). Skupni pričakovan uplift: ${sum}€/mo. ${profileNote}${conflictNote}"` where `profileNote` is added if `profileAdjustment.adjusted` (conservative/aggressive) and `conflictNote` if there are conflicts.
+  - Returns `MasterBrainExplanation`: `{ ok: true, explanations: ActionExplanation[], summaryBlurb, trustScore, source: 'v8.26-explainability', cachedAt?: number }`.
+  - Pure TypeScript — no `next/server` import, no Prisma calls. Fully testable in isolation.
+
+- **`src/app/api/ai/brain/explain/route.ts`** (NEW — GET+POST endpoint, 10-min cache)
+  - GET: calls `masterBrain(input)` (input from query string — supports `skipProfit=true` etc.), loads user risk profile from `Settings` (singleton), applies `adjustMasterBrainForRiskProfile(masterResult, profile)`, then calls `explainMasterBrainActions(masterResult, adjustment)`. Returns `MasterBrainExplanation`.
+  - POST: accepts `{ masterResult?, profileAdjustment?, input? }` in JSON body. If `masterResult` is not provided, calls `masterBrain(input)`. If `profileAdjustment` is not provided, loads it from DB (same as GET). If `masterResult` IS provided, skips cache (caller is doing on-demand re-explanation). Returns `MasterBrainExplanation`.
+  - 10-min cache (same TTL as Master Brain — explanations are PURELY derived from the master result, so caching is safe). Cache key = `brain-explain:${hashOfInputs}` (deterministic, stable JSON serialization).
+  - runtime='nodejs', dynamic='force-dynamic', maxDuration=60.
+  - Standard error pattern: try/catch → 500 `{ error: err?.message ?? 'Napaka' }`. Logs via `logger.error('/api/ai/brain/explain', ...)`.
+
+- **`src/app/api/ai/brain/master/route.ts`** (MODIFIED — now includes `explanations` in response)
+  - After computing the `riskProfileAdjustment` (v8.24), also calls `explainMasterBrainActions(masterResult, adjustment)` and includes the result as `explanations` in the response.
+  - Response shape: `{ ...masterResult, riskProfileAdjustment: {...}, explanations: [...] }` — so a single GET /api/ai/brain/master returns the master result + profile adjustment + explanations.
+  - The dedicated `/api/ai/brain/explain` endpoint is for on-demand re-explanation when the user's profile changes (UI can POST the cached `masterResult` + new profile to get fresh explanations WITHOUT re-running master brain — saves the 7-domain parallel call cost).
+
+- **UI: `src/components/dashboard/ai-hub-view.tsx`** (MODIFIED — added explainability to Master Brain banner)
+  - Added `ActionExplanation` and `MasterBrainExplanation` types + extended `MasterBrainResult` interface with optional `explanations?: ActionExplanation[]` field.
+  - Added `trustScoreColor(score)` helper (≥70 emerald, ≥50 amber, <50 red) and `signalGradeColor(grade)` helper.
+  - Added `expandedRank` state (number | null) to track which TOP action's "ℹ️ Zakaj?" panel is expanded.
+  - Added `overallTrustScore` `useMemo` (weighted avg of action `trustScore`s by `finalScore`).
+  - **Banner header**: added overall trustScore pill (`<Badge>ℹ️ Trust: {N}/100</Badge>`) with color coding.
+  - **TOP 5 AKCIJ ZA DANES**: each action now has an "ℹ️ Zakaj?" toggle button (with `Info` icon + `ChevronDown`/`ChevronUp`). The toggle is only rendered if a matching `explanation` exists in `data.explanations`.
+  - **Expanded panel** (when toggled): contains:
+    1. **Reasoning** (prominent): `<p>💡 Razlaga: ${explanation.reasoning}</p>` in amber-tinted box.
+    2. **reasoningParts grid** (2×2 with `expectedOutcome` full-width):
+       - Signal: `${signal}` + grade pill + `${score}/100`
+       - Zakaj na tem mestu: `whyRankedHere`
+       - Vpliv profila: `profileImpact` (or `—`)
+       - Vpliv konfliktov: `conflictImpact` (or `—`)
+       - Pričakovan izid: `expectedOutcome` (emerald-tinted, full-width)
+    3. **Per-action trustScore pill** at the bottom: `<Badge>{trustScore}/100</Badge>` with `trustScoreColor`.
+  - Imports extended with `ChevronDown`, `ChevronUp`, `Info` from lucide-react.
+  - JSDoc updated with v8.26 entry. `BrainSynthesisCard` outer badge updated to "v8.26 Explain + v8.25 Accuracy + v8.24 Personal + v8.23 Validation + v8.22 Master + v8.15-v8.21 (7 Domains)".
+
+### Stats
+
+- AI endpoints: 417 → 418 (+1 — new `brain/explain` endpoint)
+- Total API routes: 594 → 595 (+1)
+- Brain layers: 13 → 14 (8 brain domains + snapshots + actual-profit + risk-profile + accuracy + accuracy/backfill + explain)
+- New files: 2 (`src/lib/brain/explainability.ts`, `src/app/api/ai/brain/explain/route.ts`)
+- Modified files: 2 (`src/app/api/ai/brain/master/route.ts`, `src/components/dashboard/ai-hub-view.tsx`)
+- New functions: 1 (`explainMasterBrainActions`)
+
+### Notes
+
+🎯 INTELLIGENCE PHASE STARTED. v8.26 = explainability (WHY). Master Brain (v8.22) gives WHAT to do. Risk Profile (v8.24) makes it PERSONAL. Explainability (v8.26) gives WHY. Together they answer "Kaj naj naredim danes in zakaj?" Next: v8.27 (Scenario Brain — WHAT IF?), v8.28 (Adaptive Domain Weights).
 
 ## [8.25.0] - 2026-08-28
 
