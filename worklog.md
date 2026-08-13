@@ -15629,3 +15629,51 @@ Stage Summary:
   - UI: ℹ️ Zakaj? toggle per action — razširi reasoning + 2x2 grid reasoningParts + per-action trustScore pill (emerald ≥70, amber ≥50, red <50) + overall trustScore pill v banner header-ju
 - Verzija aplikacije: v8.26.0
 - Skupaj doslej (v7.50 → v8.26): 76 verzij, 200 novih funkcij; Brain architecture COMPLETE (v8.22) + Validation phase ZAKLJUČENA (v8.23+v8.24+v8.25) + Intelligence phase STARTED (v8.26) — naslednje: v8.27 (Scenario Brain — WHAT IF?), v8.28 (Adaptive Domain Weights)
+
+---
+Task ID: v8.26.1
+Agent: main
+Task: v8.26 commit + push + GitHub About + Agent Browser verification (🎯 INTELLIGENCE PHASE STARTED)
+
+Work Log:
+- Prejel poročilo od full-stack-developer podagenta (Task v8.26 — Action Explainability implementiran: src/lib/brain/explainability.ts + src/app/api/ai/brain/explain/route.ts + master/route.ts modified (now includes explanations array) + UI z ℹ️ Zakaj? toggle + overall trustScore pill)
+- Neodvisno preveril endpoint-e (curl 4 testi):
+  - GET /api/ai/brain/explain → 200 {"ok":true, "explanations":[5 akcij z reasoning + reasoningParts + trustScore], "summaryBlurb":"Master Brain priporoča 5 akcij za danes. Najvišji trust: #5 (70.75/100)...", "trustScore":57.21, "source":"v8.26-explainability"}
+  - GET /api/ai/brain/master → 200 z explanations array + explanationSummary{summaryBlurb, trustScore:57.21} v response ✅
+  - POST /api/ai/brain/explain {} → 200 (uses fresh masterBrain()) ✅
+  - GET /api/ai-list → 200 {"ok":true, "total":418, "categories":{brain:14,...}} (brain kategorija 14 = 8 brain + snapshots + actual-profit + risk-profile + accuracy + accuracy/backfill + explain)
+- Preveril doc sync: AI_ENDPOINTS.md "Total: 418 endpoints" (row 11 brain/explain) ✅, README v8.26.0 + 418 AI + 595 routes + Overview paragraph z Intelligence phase STARTED ✅, CHANGELOG [8.26.0] section z full description + INTELLIGENCE PHASE STARTED + [Unreleased] v8.27+ (Scenario Brain) ✅
+- Preveril lint: 0 napak (2 unused eslint-disable warnings — ne kritično) ✨
+- Preveril typecheck: 0 napak ✨
+- Posodobil GitHub About opis: "418 AI + 72 analytics = 595 routes. v8.26.0: Brain (8 layers) + Validation COMPLETE + Intelligence phase STARTED (Explainability)." (278 chars)
+- Commit: "v8.26: Action Explainability — Intelligence phase STARTED..." (11003df)
+- Push na GitHub: uspešen ✅ (b4eb354..11003df), PAT očiščen ✅
+- Agent Browser self-verification:
+  - Stran se pravilno naloži (HTTP 200, naslov "Markec AI Firm — Opportunity Monitor")
+  - AI Hub: 🧠 Možgani 14 (8 brain + snapshots + actual-profit + risk-profile + accuracy + accuracy/backfill + explain)
+  - Master Brain banner: "Trust: 57/100" pill prikazan (amber — med 50 in 70) ✅
+  - brain/explain endpoint viden z v8.26 badge
+  - Runner test: POST → valid JSON z source:"v8.26-explainability", 5 explanations, trustScore:57.21, summaryBlurb:"Master Brain priporoča 5 akcij za danes. Najvišji trust: #5 (70.75/100)..."
+  - Brez runtime napak v dev.log (le normalni Prisma SQL queries + GET /api/ai/brain/explain 200)
+
+Stage Summary:
+- v8.26 uspešno dokončana in potisnjena na GitHub
+- NOV ARCHITECTURAL LAYER: Action Explainability — Intelligence phase STARTED
+- src/lib/brain/explainability.ts — explainMasterBrainActions() pure function: za vsako TOP 5 akcijo generira reasoning (1-3 sentences v slovenščini) + reasoningParts (trigger, signalScore, signalGrade, whyRankedHere, profileImpact, conflictImpact, expectedOutcome) + trustScore (0-100)
+- src/app/api/ai/brain/explain/route.ts — GET (calls masterBrain + loads risk profile) + POST (accepts pre-computed masterResult), 10-min cache
+- master/route.ts MODIFIED — now includes `explanations` array (5 ActionExplanation) + `explanationSummary` {summaryBlurb, trustScore} in response
+- UI: ℹ️ Zakaj? toggle button za vsako TOP 5 akcijo + overall trustScore pill v Master Brain banner header-ju ("Trust: 57/100", color: emerald ≥70, amber ≥50, red <50)
+- trustScore formula: signalScore×0.4 + confidenceScore×0.3 (HIGH=100, MEDIUM=65, LOW=30) + domainWeightScore×0.15 (1.3→100, 0.9→0) − conflictPenalty×0.15 (20 if conflict touches domain)
+- overall trustScore: weighted by finalScore (Σ action.trustScore × action.finalScore / Σ finalScore)
+- AI endpointi: 417 → 418 (+1)
+- Analytics endpointi: 72 (nespremenjeno)
+- Total API routes: 594 → 595 (+1)
+- Dokumentacija sinhrono posodobljena (AI_ENDPOINTS.md, README, CHANGELOG, GitHub About)
+- GitHub sinhroniziran (0 commit-ov ahead)
+- Verzija aplikacije: v8.26.0
+- 🎯 INTELLIGENCE PHASE STARTED:
+  - Master Brain (v8.22) = WHAT to do
+  - Risk Profile (v8.24) = PERSONAL (conservative/balanced/aggressive)
+  - Explainability (v8.26) = WHY (per-action reasoning + trustScore)
+  - Skupaj odgovarjajo: "Kaj naj naredim danes in zakaj?"
+- Skupaj doslej (v7.50 → v8.26): 76 verzij, 200 novih funkcij; Brain architecture COMPLETE (v8.22) + Validation phase ZAKLJUČENA (v8.23-v8.25) + Intelligence phase STARTED (v8.26) — naslednji koraki: v8.27 (Scenario Brain — WHAT IF?), v8.28 (Adaptive Domain Weights), v8.29 (Draft Queue + Action Feedback Loop)
