@@ -15461,3 +15461,57 @@ Stage Summary:
   - GET/POST /api/cron/backfill-accuracy → 200 (dev mode, no auth) ✓
 - Documentation updated: AI_ENDPOINTS.md (Total: 417, 2 new rows + renumbered), README.md (v8.25.0 badge, 417 AI, 594 routes, tagline, Overview, Kaj je novega section, directory listing, AI Hub table, try/catch count), CHANGELOG.md ([8.25.0] section z full description, [Unreleased] posodobljen z v8.26/v8.27)
 - 🎯 VALIDATION PHASE COMPLETE: v8.23 (snapshots+actual — data collection) + v8.24 (personalization — risk profile) + v8.25 (accuracy+trend — backfill cron + Historical Accuracy API + UI card) = uporabnik lahko končno zaupa Master Brain-u z DEJANSKIMI podatki. Odgovor na "Ali lahko zaupam Master Brain-u?" je sedaj: "Master Brain accuracy: 89% (zadnjih 30 dni). Trend: ↗️ IMPROVING." Next phase: v8.26+ Intelligence (Explainability, Scenario Brain).
+
+---
+Task ID: v8.25.1
+Agent: main
+Task: v8.25 commit + push + GitHub About + Agent Browser verification (🎯 VALIDATION PHASE COMPLETE)
+
+Work Log:
+- Prejel poročilo od full-stack-developer podagenta (Task v8.25 — Historical Accuracy + Trend implementiran brez težav: backfillSnapshotAccuracy() v snapshots.ts, accuracy GET API, backfill POST API, cron endpoint, UI AccuracyTrendCard z teal/emerald tint)
+- Podagent je tudi bump-al ai-list MAX_DEPTH iz 2 → 3 da brain/accuracy/backfill (3 levels deep) postane odkrit
+- Neodvisno preveril endpoint-e (curl 3 testi):
+  - GET /api/ai/brain/accuracy?days=30 → 200 {"ok":true,"days":30,"accuracy30d":null,"accuracy90d":null,"gradeTrend":[{date:"2026-08-13",profitGrade:"D",inventoryGrade:"D",marketGrade:"B",sourcingGrade:"B",riskGrade:"C",buyerGrade:"C",pricingGrade:"B",overallHealth:50,healthGrade:"C",accuracy30d:null,accuracy90d:null}],"summary":{totalSnapshots:1,snapshotsWithAccuracy30d:0,snapshotsWithAccuracy90d:0,avgAccuracy30d:null,avgAccuracy90d:null,trend:"INSUFFICIENT_DATA",firstHalfAvg:null,secondHalfAvg:null,message:"Potrebno več podatkov — snemaj dneve 30+ za accuracy"}} (null accuracy — PRAVILNO ker imamo samo 1 snapshot od danes, ni dovolj starega za 30d backfill)
+  - POST /api/ai/brain/accuracy/backfill → 200 {"ok":true,"backfilled30d":0,"backfilled90d":0,"totalSnapshots":1} (0 backfilled — PRAVILNO ker naš 1 snapshot je od danes 2026-08-13, ni >= 30 dni star)
+  - GET /api/ai-list → 200 {"ok":true,"total":417,"categories":{brain:13,...}} (brain kategorija 13 = 8 brain domains + snapshots + actual-profit + risk-profile + accuracy + accuracy/backfill)
+- Preveril doc sync: AI_ENDPOINTS.md "Total: 417 endpoints" (2 novi vrstici za accuracy + accuracy/backfill) ✅, README v8.25.0 + 417 AI + 594 routes + tagline z Validation phase ZAKLJUČENA + Overview paragraph z v8.15-v8.25 ✅, CHANGELOG [8.25.0] section z full description + VALIDATION PHASE COMPLETE note + [Unreleased] v8.26+ (Intelligence phase: Explainability) ✅
+- Preveril lint: 0 napak (2 unused eslint-disable warnings — ne kritično) ✨
+- Preveril typecheck: 0 napak ✨
+- Posodobil GitHub About opis: "417 AI + 72 analytics = 594 routes. v8.25.0: Brain (8 layers) + Validation phase COMPLETE (Snapshots+ActualProfit+RiskProfile+Accuracy)." (284 chars)
+- Commit: "v8.25: Historical Accuracy + Trend — Validation phase CULMINATION..." (2698ed8)
+- Push na GitHub: uspešen ✅ (5728b25..2698ed8), PAT očiščen ✅
+- Agent Browser self-verification:
+  - Stran se pravilno naloži (HTTP 200, naslov "Markec AI Firm — Opportunity Monitor")
+  - AI Hub: 🧠 Možgani 13 (8 brain + snapshots + actual-profit + risk-profile + accuracy + accuracy/backfill)
+  - "📈 Master Brain Accuracy & Trend" card prikazan (teal/emerald tint) z:
+    - Accuracy 30d: "—" (pravilno — null ker ni dovolj podatkov)
+    - Accuracy 90d: "—" (pravilno)
+    - "Potrebno več podatkov" info message ✅
+    - "🔄 Backfill" button za manual test ✅
+    - overallHealth trend sparkline ✅
+    - 7 domain grade trend table ✅
+    - Trend indicator: "INSUFFICIENT_DATA" (gray — pravilno z 1 snapshotom)
+  - brain/accuracy endpoint viden z v8.25 badge
+  - Brez runtime napak v dev.log (le normalni Prisma SQL queries + GET /api/ai/brain/accuracy 200 v 41ms)
+
+Stage Summary:
+- v8.25 uspešno dokončana in potisnjena na GitHub
+- NOV ARCHITECTURAL LAYER: Historical Accuracy + Trend — Validation phase CULMINATION
+- backfillSnapshotAccuracy() v src/lib/brain/snapshots.ts — za vsak BrainSnapshot >= 30 dni star: izračuna actualProfit30d iz Trade tabele (sellDate med snapshotDate in snapshotDate+30d), nato accuracy30d = actual / predicted × 100. Idem za 90d. Idempotent — samo null actualProfit* field-i se backfill-ajo.
+- src/app/api/cron/backfill-accuracy/route.ts — daily cron (should run at 01:00, 1h after daily-brain-snapshot)
+- src/app/api/ai/brain/accuracy/route.ts — GET ?days=30 vrača accuracy30d/90d (null če ni dovolj podatkov) + gradeTrend array (7 domain grades per snapshot) + summary z trend detection (IMPROVING/STABLE/DECLINING/INSUFFICIENT_DATA)
+- src/app/api/ai/brain/accuracy/backfill/route.ts — POST manual trigger za testing
+- UI: 📈 Master Brain Accuracy & Trend card (teal/emerald) z accuracy % + overallHealth trend sparkline + 7 domain grade trend table + backfill button
+- ai-list MAX_DEPTH bumped 2 → 3 da brain/accuracy/backfill (3 levels deep) postane odkrit
+- AI endpointi: 415 → 417 (+2)
+- Analytics endpointi: 72 (nespremenjeno)
+- Total API routes: 592 → 594 (+2)
+- Dokumentacija sinhrono posodobljena (AI_ENDPOINTS.md, README, CHANGELOG, GitHub About)
+- GitHub sinhroniziran (0 commit-ov ahead)
+- Verzija aplikacije: v8.25.0
+- 🎯 VALIDATION PHASE COMPLETE:
+  - v8.23 = Daily Snapshots + Actual Profit Tracker (data collection — ground truth)
+  - v8.24 = User Risk Profile (personalization — subjective recommendations)
+  - v8.25 = Historical Accuracy + Trend (accuracy % = actual / predicted × 100, trend detection)
+  - Uporabnik lahko končno zaupa Master Brain-u z dokazi: "Master Brain accuracy: X% (zadnjih 30 dni). Trend: ↗️ IMPROVING / → STABLE / ↘️ DECLINING."
+- Skupaj doslej (v7.50 → v8.25): 75 verzij, 199 novih funkcij; Brain architecture COMPLETE (v8.22) + Validation phase ZAKLJUČENA (v8.23+v8.24+v8.25) — naslednja faza: v8.26+ Intelligence (Explainability, Scenario Brain)
