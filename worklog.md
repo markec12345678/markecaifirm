@@ -15823,3 +15823,96 @@ Stage Summary:
   - v8.27 = WHAT IF? (Scenario Brain — "Kaj če?")
   - Naslednji: v8.28 (Adaptive Domain Weights — feedback loop), v8.29 (Draft Queue + Action Feedback Loop)
 - Skupaj doslej (v7.50 → v8.27): 77 verzij, 201 novih funkcij; Brain architecture COMPLETE (v8.22) + Validation phase ZAKLJUČENA (v8.23-v8.25) + Intelligence phase (v8.26+v8.27)
+
+---
+Task ID: v8.28
+Agent: full-stack-developer
+Task: Implement Adaptive Domain Weights — feedback loop (Master Brain learns from user behavior)
+
+Work Log:
+- Prebral worklog.md (v8.22 Master Brain entry + v8.24 Risk Profile + v8.26 Explainability + v8.27 Scenario Brain — v8.28 nadaljuje Intelligence phase z FEEDBACK LOOP)
+- Prebral src/lib/brain/master.ts (817 vrstic) — našel hardcoded DOMAIN_WEIGHTS konstanto na vrstici 233 (`{ profit: 1.2, inventory: 1.0, market: 1.0, sourcing: 1.1, risk: 1.3, buyer: 0.9, pricing: 1.1 }`); ranking logika na vrsticah 660-680 uporablja `DOMAIN_WEIGHTS[a.domain]` v finalScore formula
+- Prebral prisma/schema.prisma (Settings model vrstice 29-134) — našel v8.24 polja (userRiskTolerance, userMaxAcceptableRisk, userLiquidityReserve, userInvestmentHorizon) kot referenco za dodajanje novega adaptiveDomainWeights polja
+- Prebral src/components/dashboard/ai-hub-view.tsx (4261 vrstic) — našel ScenarioBrainCard (v8.27, rose/pink gradient), MasterBrainBanner, RiskProfileCard (v8.24, violet), AccuracyTrendCard (v8.25, teal), BrainSnapshotsSection (v8.23, emerald), BrainSynthesisCard outer wrapper; obstoječi DomainName type na vrstici 2914
+- Step 1: Prisma schema — dodal `adaptiveDomainWeights String?` field v Settings model (z v8.28 komentarjem, JSON format doc); `bun run db:push` (Prisma Client regeneriran v 259ms, baza sinhrona)
+- Step 1b: src/lib/db.ts — bumpal SCHEMA_VERSION z `v8.24-risk-profile` → `v8.28-adaptive-weights` (tako da se stale PrismaClient v globalThis cache discard-a ob naslednjem klicu)
+- Step 2: NEW src/lib/brain/adaptive-weights.ts (~510 vrstic) — pure compute + DB module
+  - DEFAULT_DOMAIN_WEIGHTS export (mirror hardcoded DOMAIN_WEIGHTS iz master.ts)
+  - AdaptiveWeights, DomainWeightStats, ActionFeedbackInput, WeightAdjustmentResult interfaces
+  - ADAPTIVE_WEIGHTS_CONSTANTS: MIN_WEIGHT=0.5, MAX_WEIGHT=2.0, ADJUSTMENT_INTERVAL=10, BOOST_FACTOR=1.1, REDUCE_FACTOR=0.9, BOOST_THRESHOLD=0.8, REDUCE_THRESHOLD=0.4, HISTORY_CAP=20
+  - getFreshDb() helper (fresh PrismaClient per call, bypass globalThis cache — podobno kot v8.24 risk-profile route)
+  - loadAdaptiveWeights() — raw SQL `$queryRaw` za bypass Turbopack stale @prisma/client cache, sanitizeAdaptiveWeights() za validacijo + fill missing domains z defaults, db.$disconnect() v finally
+  - loadDomainWeights() — wrapper ki vrne samo Record<DomainName, number> (za Master Brain input)
+  - recordActionFeedback(input) — inkrementira executed/rejected counter, ko total % 10 === 0 kliče computeWeightAdjustment(), če adjusted doda entry v adjustmentHistory (capped 20) + nastavi lastAdjustedAt, saveAdaptiveWeights() shrani nazaj v Settings
+  - resetAdaptiveWeights() — reset vseh 7 domen na DEFAULT_DOMAIN_WEIGHTS_OBJECT (zero stats, empty history)
+  - setDomainWeight(domain, weight) — manual override (clamp [0.5, 2.0], round2), ne dotika counts/history
+  - computeWeightAdjustment(currentWeight, executed, rejected) — PURE function za unit testing, vrača {newWeight, reason, adjusted}
+  - saveAdaptiveWeights(weights) — raw SQL `$executeRaw` UPDATE (WHERE id='singleton'), če 0 rows affected INSERT z id + adaptiveDomainWeights
+- Step 3: MODIFIED src/lib/brain/master.ts — dodal `domainWeights?: Partial<Record<DomainName, number>>` v MasterBrainInput interface; v masterBrain() ranking logiki (vrstice 665-678) zamenjal `const dw = DOMAIN_WEIGHTS[a.domain]` z `const effectiveWeights = input.domainWeights ?? DOMAIN_WEIGHTS; const dw = effectiveWeights[a.domain] ?? DOMAIN_WEIGHTS[a.domain]` (backward compatible — če input.domainWeights ni podan ali manjka domena, uporabi hardcoded DOMAIN_WEIGHTS)
+- Step 4: MODIFIED src/app/api/ai/brain/master/route.ts — dodal import loadAdaptiveWeights, loadDomainWeights iz @/lib/brain/adaptive-weights; v handleMasterBrain() pred buildCacheKey klical loadAdaptiveWeights() + loadDomainWeights() in nastavil input.domainWeights; buildCacheKey() extended z `parts.push('dw:' + stableStringify(input.domainWeights))` (cache invalidation ko se uteži spremenijo); response vključuje nov `adaptiveWeights: AdaptiveWeights` block (full stats + history za UI), vključen tudi na cache hit
+- Step 5: NEW src/app/api/ai/brain/weights/route.ts (~165 vrstic) — GET + POST endpoint
+  - GET: kliče loadAdaptiveWeights(), vrne { ok, adaptiveWeights, source: 'v8.28-adaptive-weights' }
+  - POST s 3 akcijami: 'record' (domain + feedback validacija, kliče recordActionFeedback, vrača WeightAdjustmentResult); 'reset' (kliče resetAdaptiveWeights); 'set' (domain + weight validacija, kliče setDomainWeight)
+  - runtime='nodejs', dynamic='force-dynamic', maxDuration=60; standard error pattern (400 za invalid input, 500 za server errors)
+- Step 6: MODIFIED src/components/dashboard/ai-hub-view.tsx — dodana NOVA AdaptiveWeightsCard komponenta (~440 vrstic)
+  - Bright orange gradient (border-orange-500/40, bg-gradient-to-br from-orange-500/15 via-amber-500/10 to-yellow-500/5) — distinkten od Risk (red/rose) in Inventory (amber)
+  - Header: 🎛️ Adaptive Domain Weights + v8.28 badge + FEEDBACK LOOP badge + refresh button
+  - Subtitle (slovenski): "Master Brain se uči iz tvojega vedenja..."
+  - 7 domain rows (profit/inventory/market/sourcing/risk/buyer/pricing), vsak z:
+    - Top row: domain icon (💰📦📈🎯🛡️👥💶) + label + current weight badge + stats ✅N | ❌N
+    - shadcn/ui Slider (range 0.5-2.0, step 0.1) z labels 0.5 (reduce) / 1.0 (default) / 2.0 (boost)
+    - Execution rate bar (green ≥80%, amber 40-80%, red <40%) + rate label
+    - Mini adjustment history (zadnje 3 entries, format "2026-08-13: 1.5 → 1.65 (boost)")
+  - Action buttons: "🔄 Reset na default" + "💾 Shrani uteži" (disabled ko ni dirty)
+  - Feedback demo form: domain dropdown + ✅ Executed / ❌ Rejected gumbi (POST {action:'record', domain, feedback})
+  - Loading skeleton, error state z retry, dirty state tracking z "Neshranjene spremembe" indicator
+  - Card pozicionirana MED ScenarioBrainCard in 7 Domain Brain sections
+  - BrainSynthesisCard outer badge posodobljen: "v8.28 Adaptive + v8.27 Scenario + v8.26 Explain + v8.25 Accuracy + v8.24 Personal + v8.23 Validation + v8.22 Master + v8.15-v8.21 (7 Domains)"
+- Verification (vsi curl testi uspeli):
+  - GET /api/ai/brain/weights → 200 z ok:true, adaptiveWeights z 7 domenami (profit weight 1.2, inventory 1.0, market 1.0, sourcing 1.1, risk 1.3, buyer 0.9, pricing 1.1) + zero stats + empty history ✅
+  - POST /api/ai/brain/weights {action:'record', domain:'profit', feedback:'executed'} → 200 z ok:true, domain:profit, executed:1, rejected:0, executionRate:1, adjusted:false, reason:"Zabeležena akcija..." ✅
+  - POST /api/ai/brain/weights {action:'set', domain:'profit', weight:1.5} → 200 z ok:true, domain:profit, weight:1.5 ✅
+  - GET /api/ai/brain/master → 200 z ok:true, adaptiveWeights block prisoten (profit.weight:1.5, executed:1, rejected:0) ✅
+  - GET /api/ai-list → 200 z total:420, brain:16, brain/weights endpoint viden ✅
+  - Trigger test: 10x POST record (profit/-executed) → 10. akcija sprožila boost: oldWeight 1.5 → newWeight 1.65 (× 1.1 ker executionRate 1.0 > 0.8), adjustmentHistory[0] z datumom + reason ✅
+  - POST /api/ai/brain/weights {action:'reset'} → 200 z ok:true, weights reset na defaults ✅
+- Lint: 0 errors (2 unused eslint-disable warnings v db.ts — pred-existing, ne kritično) ✅
+- Typecheck (bunx tsc --noEmit): 0 errors ✅
+- db:push uspešen (Prisma Client regeneriran v 259ms, baza sinhrona) ✅
+- Documentation updated: AI_ENDPOINTS.md (Total: 420, brain/weights row 24 + renumber 1-420), README.md (version v8.28.0, badges 420 AI + 597 routes, hero tagline z v8.28 Adaptive Weights description + Intelligence phase continues note, Overview paragraph z v8.15-v8.28, Kaj je novega v8.28 entry na vrh z vsemi detail-i, version section, function count ~283, all v8.27/419/596 references posodobljene, Roadmap z v8.28 ✅ dokončana entry z vsemi detail-i, Changelog Zadnje verzije z v8.28.0 entry na vrh), CHANGELOG.md (nov [8.28.0] section z Added + Stats + Notes z INTELLIGENCE PHASE NADALJUJE flag + Note "v8.26=WHY, v8.27=WHAT IF?, v8.28=LEARNING — feedback loop, Next v8.29 Draft Queue + Action Feedback Loop integration", [Unreleased] posodobljen z v8.29)
+- 🎯 INTELLIGENCE PHASE NADALJUJE (sada z LEARNING — feedback loop):
+  - Master Brain (v8.22) daje KAJ (TOP 5 ranked actions)
+  - Risk Profile (v8.24) naredi PERSONAL (conservative/balanced/aggressive adjustment)
+  - Explainability (v8.26) daje ZAKAJ (per-action reasoning + reasoningParts + trustScore)
+  - Scenario Brain (v8.27) odgovarja WHAT IF? (3 preset scenarios + custom overrides, parallel execution, comparison table, recommendation)
+  - Adaptive Weights (v8.28) vzpostavi FEEDBACK LOOP — sistem se uči iz REVEALED preferences uporabnika (katere akcije dejansko izvaja, katere ignorira). Razlika med STATED preference (kar uporabnik reče) in REVEALED preference (kar uporabnik dejansko stori) je temelj behavioral economics.
+  - Skupaj odgovarjajo "Kaj naj naredim danes, zakaj, kaj če in kako naj se prilagodim?"
+  - Adjustment formula: vsakih 10 akcij per domeno, executionRate > 0.8 → × 1.1 (boost), < 0.4 → × 0.9 (reduce), clamp [0.5, 2.0]
+  - UI: 🎛️ Adaptive Weights card (bright orange) z 7 sliders (0.5-2.0) + execution stats + rate bars + history + reset/manual override buttons + feedback demo form
+
+Stage Summary:
+- MODIFIED: prisma/schema.prisma (adaptiveDomainWeights String? field v Settings model + v8.28 komentar z JSON format doc)
+- MODIFIED: src/lib/db.ts (SCHEMA_VERSION bump v8.24-risk-profile → v8.28-adaptive-weights, tako da se stale PrismaClient discard-a)
+- NEW: src/lib/brain/adaptive-weights.ts (~510 vrstic — DEFAULT_DOMAIN_WEIGHTS, AdaptiveWeights/DomainWeightStats/WeightAdjustmentResult/ActionFeedbackInput interfaces, ADAPTIVE_WEIGHTS_CONSTANTS, loadAdaptiveWeights, loadDomainWeights, recordActionFeedback, resetAdaptiveWeights, setDomainWeight, computeWeightAdjustment; getFreshDb() pattern + raw SQL $queryRaw/$executeRaw za bypass Turbopack stale @prisma/client cache)
+- MODIFIED: src/lib/brain/master.ts (MasterBrainInput.domainWeights?: Partial<Record<DomainName, number>> optional field + ranking logika z effectiveWeights + fallback per-domain)
+- MODIFIED: src/app/api/ai/brain/master/route.ts (loadAdaptiveWeights + loadDomainWeights klic pred buildCacheKey, input.domainWeights nastavljen, buildCacheKey extended z dw: hash, adaptiveWeights block v response na cache hit + na fresh compute)
+- NEW: src/app/api/ai/brain/weights/route.ts (~165 vrstic — GET + POST z 3 akcijami record/reset/set, runtime='nodejs', dynamic='force-dynamic', maxDuration=60)
+- MODIFIED: src/components/dashboard/ai-hub-view.tsx (NOVA AdaptiveWeightsCard komponenta z bright orange gradient, 7 domain rows z Slider 0.5-2.0 + stats + rate bar + history + reset/save buttons + feedback demo form; card pozicionirana MED ScenarioBrainCard in 7 Domain Brain sections; BrainSynthesisCard outer badge posodobljen z v8.28 Adaptive)
+- AI endpointi: 419 → 420 (+1 — brain/weights)
+- Analytics endpointi: 72 (nespremenjeno)
+- Total API routes: 596 → 597 (+1)
+- Brain category: 15 → 16 (now includes brain/weights)
+- Lint: 0 errors, 2 warnings (pred-existing unused eslint-disable v db.ts — ne kritično)
+- Typecheck: 0 errors
+- db:push: uspešen (Prisma Client regeneriran v 259ms, baza sinhrona)
+- Endpoint verification:
+  - GET /api/ai/brain/weights → 200 {ok:true, adaptiveWeights:{7 domen z weight+executed+rejected+lastAdjustedAt+adjustmentHistory}} ✅
+  - POST record {domain:profit, feedback:executed} → 200 {ok:true, domain:profit, executed:1, rejected:0, executionRate:1, adjusted:false, reason:"Zabeležena akcija..."} ✅
+  - POST set {domain:profit, weight:1.5} → 200 {ok:true, domain:profit, weight:1.5} ✅
+  - GET /api/ai/brain/master → 200 z adaptiveWeights block (profit.weight:1.5, executed:1, rejected:0) ✅
+  - GET /api/ai-list → 200 {total:420, categories:{brain:16}} ✅
+  - 10x record test: 10. akcija sprožila boost 1.5 → 1.65 (× 1.1, executionRate 1.0 > 0.8) z adjustmentHistory entry ✅
+  - POST reset → 200 {ok:true, weights:{...defaults}} ✅
+- Documentation updated: AI_ENDPOINTS.md (Total: 420, brain/weights row 24 + renumber 1-420), README.md (v8.28.0, 420 AI, 597 routes, hero tagline, Overview z v8.15-v8.28, Kaj je novega v8.28 entry, version section, ~283 funkcij, Roadmap z v8.28 ✅ dokončana, Changelog Zadnje verzije z v8.28.0), CHANGELOG.md ([8.28.0] section z Added + Stats + Notes z INTELLIGENCE PHASE NADALJUJE + Note "v8.26=WHY, v8.27=WHAT IF?, v8.28=LEARNING — feedback loop, Next v8.29", [Unreleased] posodobljen z v8.29)
+- Verzija aplikacije: v8.28.0
+- Skupaj doslej (v7.50 → v8.28): 78 verzij, 202 novih funkcij; Brain architecture COMPLETE (v8.22) + Validation phase ZAKLJUČENA (v8.23-v8.25) + Intelligence phase (v8.26+v8.27+v8.28) — naslednji: v8.29 (Draft Queue + Action Feedback Loop integration — poveži vsako TOP 5 akcijo z gumboma ✅ Izvedel / ❌ Zavrnil, ki neposredno klicata recordActionFeedback)

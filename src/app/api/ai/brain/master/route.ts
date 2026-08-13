@@ -48,6 +48,16 @@
 // This lets the UI render a "ℹ️ Zakaj?" toggle per action without a separate
 // fetch. The dedicated /api/ai/brain/explain endpoint is for on-demand
 // re-explanation when the profile changes (without re-running master brain).
+//
+// v8.28 (NEW): Master Brain now loads ADAPTIVE DOMAIN WEIGHTS from Settings
+// (JSON `adaptiveDomainWeights` field) and passes them as `domainWeights` in
+// MasterBrainInput. This makes the per-domain ranking weights user-adaptive
+// (rather than hardcoded DOMAIN_WEIGHTS in master.ts). The response now also
+// includes an `adaptiveWeights` block with the 7 current weights + execution
+// stats + adjustment history (for UI display in the 🎛️ Adaptive Weights card).
+// When adaptive weights are null in Settings, hardcoded defaults are used
+// (backward compatible — no behavior change for users who haven't recorded
+// any feedback yet).
 
 import { NextRequest, NextResponse } from 'next/server';
 import { logger } from '@/lib/logger';
@@ -65,6 +75,11 @@ import {
 } from '@/lib/brain/risk-profile';
 // v8.26: Action Explainability — answers "Zakaj Master Brain priporoča to akcijo?"
 import { explainMasterBrainActions } from '@/lib/brain/explainability';
+// v8.28: Adaptive Domain Weights — feedback loop that learns from user behavior
+import {
+  loadAdaptiveWeights,
+  loadDomainWeights,
+} from '@/lib/brain/adaptive-weights';
 import { db } from '@/lib/db';
 
 export const runtime = 'nodejs';
@@ -233,6 +248,10 @@ function buildCacheKey(input: MasterBrainInput): string {
   parts.push(`sR:${input.skipRisk ?? false}`);
   parts.push(`sB:${input.skipBuyer ?? false}`);
   parts.push(`sPr:${input.skipPricing ?? false}`);
+  // v8.28: include adaptive domain weights in the cache key — different weights
+  // produce a different cache entry (so weight changes via UI/feedback trigger
+  // fresh recompute instead of serving a stale cached result with old weights).
+  parts.push(`dw:${stableStringify(input.domainWeights)}`);
   return `master-brain:${parts.join('|')}`;
 }
 
@@ -288,6 +307,13 @@ async function handleMasterBrain(req: NextRequest) {
   try {
     const input = await resolveInputs(req);
 
+    // v8.28: Load adaptive domain weights from Settings BEFORE cache key build,
+    // so the cache key incorporates them (different weights → different cache
+    // entry → fresh recompute). Falls back to hardcoded defaults if not stored.
+    const adaptiveWeightsFull = await loadAdaptiveWeights();
+    const adaptiveWeights = await loadDomainWeights();
+    input.domainWeights = adaptiveWeights;
+
     const cacheKey = buildCacheKey(input);
     const cached = getCachedAI<MasterBrainResult>(cacheKey);
     // v8.24: Always load the user's risk profile — even when serving from cache,
@@ -319,6 +345,11 @@ async function handleMasterBrain(req: NextRequest) {
           summaryBlurb: explanation.summaryBlurb,
           trustScore: explanation.trustScore,
         },
+        // v8.28: include adaptive weights block (full stats + history) so UI
+        // 🎛️ Adaptive Weights card can render current state alongside master
+        // brain banner. Always included (even on cache hit) — reflects the
+        // CURRENT adaptive weights, which the cached topActions were ranked with.
+        adaptiveWeights: adaptiveWeightsFull,
       });
     }
 
@@ -338,6 +369,8 @@ async function handleMasterBrain(req: NextRequest) {
         summaryBlurb: explanation.summaryBlurb,
         trustScore: explanation.trustScore,
       },
+      // v8.28: include adaptive weights block (full stats + history) — see above.
+      adaptiveWeights: adaptiveWeightsFull,
     });
   } catch (err: any) {
     logger.error('/api/ai/brain/master', 'handler failed', err);

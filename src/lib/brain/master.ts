@@ -61,6 +61,12 @@ export interface MasterBrainInput {
   skipRisk?: boolean;
   skipBuyer?: boolean;
   skipPricing?: boolean;
+  // v8.28: Adaptive Domain Weights — optional per-domain weights that override
+  // the hardcoded DOMAIN_WEIGHTS used during TOP 5 action ranking. Loaded
+  // from Settings.adaptiveDomainWeights (JSON) by the master endpoint and
+  // passed here. Falls back to DOMAIN_WEIGHTS for any domain not in the partial
+  // record. See src/lib/brain/adaptive-weights.ts.
+  domainWeights?: Partial<Record<DomainName, number>>;
 }
 
 export interface DomainResult {
@@ -657,10 +663,12 @@ export async function masterBrain(
   const conflicts = detectConflicts(profit, inventory, market, sourcing, risk, buyer, pricing);
 
   // 5. Rank all actions by finalScore = expectedUpliftEUR × confidenceWeight × domainWeight
+  // v8.28: use adaptive domain weights if provided, falling back to hardcoded DOMAIN_WEIGHTS.
+  const effectiveWeights = input.domainWeights ?? DOMAIN_WEIGHTS;
   const ranked = allActions
     .map((a) => {
       const cw = confidenceWeight(a.confidence);
-      const dw = DOMAIN_WEIGHTS[a.domain];
+      const dw = effectiveWeights[a.domain] ?? DOMAIN_WEIGHTS[a.domain];
       const finalScore = a.expectedUpliftEUR * cw * dw;
       return {
         ...a,

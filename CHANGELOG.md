@@ -6,9 +6,9 @@ Format sledi [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), verzije s
 
 ## [Unreleased]
 
-v8.26 je odprl Intelligence phase (Action Explainability), v8.27 jo nadaljuje (Scenario Brain). Naslednje verzije nadaljujejo:
+v8.26 je odprl Intelligence phase (Action Explainability), v8.27 jo nadaljuje (Scenario Brain), v8.28 jo še nadalje vzpostavi FEEDBACK LOOP (Adaptive Domain Weights). Naslednje verzije nadaljujejo:
 
-- **v8.28 — Adaptive Domain Weights** (DOMAIN_WEIGHTS se prilagodijo glede na zgodovinsko accuracy per domena — če Inventory Brain accuracy < 60%, zmanjšaj inventory weight)
+- **v8.29 — Draft Queue + Action Feedback Loop integration** (vsaka TOP 5 Master Brain akcija dobi gumba ✅ Izvedel / ❌ Zavrnil, ki neposredno kličeta recordActionFeedback iz v8.28 — poveže UI z adaptive weights feedback loop brez potrebe po demo formi)
 - WebSocket real-time negotiation (SSE namesto polling)
 - Playwright E2E testi za glavne flow-e
 - TLS fingerprinting (curl-impersonate)
@@ -16,6 +16,91 @@ v8.26 je odprl Intelligence phase (Action Explainability), v8.27 jo nadaljuje (S
 - Performance optimizations za Master Brain (cached partial results per domain)
 - Additional conflict detection tipi (npr. Inventory vs Buyer — supply/demand mismatch)
 - Per-domain DB injection v Master Brain route (zaenkrat se zanaša na individualne Domain Brain route-e za DB state)
+
+## [8.28.0] - 2026-08-28
+
+### Added — 🎛️ Adaptive Domain Weights (Intelligence phase continues — FEEDBACK LOOP, "Master Brain se uči iz tvojega vedenja")
+
+**🎯 INTELLIGENCE PHASE NADALJUJE.** v8.28 = LEARNING (feedback loop). Problem: Master Brain (v8.22) uporablja HARDCODED `DOMAIN_WEIGHTS` konstanto v `src/lib/brain/master.ts` (risk=1.3, profit=1.2, sourcing=1.1, pricing=1.1, inventory=1.0, market=1.0, buyer=0.9). Ampak vsak uporabnik je drugačen — nekateri prioritizirajo profit, drugi risk. Stated preference (kar uporabnik reče) se pogosto razlikuje od revealed preference (kar uporabnik dejansko stori). v8.28 naredi uteži ADAPTIVE — shranjene per-user v Settings tabeli (JSON `adaptiveDomainWeights` polje), Master Brain jih naloži namesto hardcoded. Ko uporabnik označi akcijo kot 'executed' ali 'rejected' (via API), sistem beleži per-domain execution stats in po vsakih 10 akcijah re-evaluira utež: `executionRate > 0.8` → `weight × 1.1` (boost — uporabnik ceni to domeno), `< 0.4` → `× 0.9` (reduce — uporabnik ignorira to domeno), clamp `[0.5, 2.0]`. Skupaj Master Brain (v8.22 — KAJ) + Risk Profile (v8.24 — PERSONAL) + Explainability (v8.26 — ZAKAJ) + Scenario Brain (v8.27 — WHAT IF?) + Adaptive Weights (v8.28 — LEARNING) odgovarjajo "Kaj naj naredim danes, zakaj, kaj če in kako naj se prilagodim?".
+
+- **NEW Prisma field** — `Settings.adaptiveDomainWeights String?` v `prisma/schema.prisma`. JSON string s strukturo `{"profit":{"weight":1.2,"executed":0,"rejected":0,"lastAdjustedAt":null,"adjustmentHistory":[]}, ...}`. Sedem domen (profit, inventory, market, sourcing, risk, buyer, pricing), vsaka z `weight` (number, clamped [0.5, 2.0]), `executed` (count), `rejected` (count), `lastAdjustedAt` (ISO date | null), `adjustmentHistory` (array of `{date, oldWeight, newWeight, reason}` — max 20). Ko null, Master Brain uporablja DEFAULT_DOMAIN_WEIGHTS (hardcoded). SCHEMA_VERSION v `src/lib/db.ts` bump-an na `v8.28-adaptive-weights` tako da se stale PrismaClient v globalThis cache discard-a.
+
+- **NEW `src/lib/brain/adaptive-weights.ts`** (pure compute + DB module, no AI/LLM SDK)
+  - **Exports:**
+    - `DEFAULT_DOMAIN_WEIGHTS: Record<DomainName, number>` — mirror hardcoded DOMAIN_WEIGHTS iz master.ts (profit=1.2, inventory=1.0, market=1.0, sourcing=1.1, risk=1.3, buyer=0.9, pricing=1.1).
+    - `AdaptiveWeights`, `DomainWeightStats`, `ActionFeedbackInput`, `WeightAdjustmentResult` — TypeScript interfaces za type-safe JSON storage.
+    - `ADAPTIVE_WEIGHTS_CONSTANTS` — MIN_WEIGHT=0.5, MAX_WEIGHT=2.0, ADJUSTMENT_INTERVAL=10, BOOST_FACTOR=1.1, REDUCE_FACTOR=0.9, BOOST_THRESHOLD=0.8, REDUCE_THRESHOLD=0.4, HISTORY_CAP=20.
+  - **Functions:**
+    - `loadAdaptiveWeights(): Promise<AdaptiveWeights>` — bere iz Settings (raw SQL `$queryRaw` za bypass Turbopack stale @prisma/client cache), vrne DEFAULT_DOMAIN_WEIGHTS_OBJECT ko null/error. Uporablja `getFreshDb()` pattern (fresh PrismaClient per call) + `db.$disconnect()` v finally.
+    - `loadDomainWeights(): Promise<Record<DomainName, number>>` —wraps loadAdaptiveWeights in vrne samo weight številke (za Master Brain input).
+    - `recordActionFeedback(input: ActionFeedbackInput): Promise<WeightAdjustmentResult>` — inkrementira per-domain counter, po vsakih 10 akcijah re-evaluira utež preko `computeWeightAdjustment()`. Če adjusted, doda entry v `adjustmentHistory` (capped na 20) in nastavi `lastAdjustedAt`. Vrne `WeightAdjustmentResult` z `oldWeight`, `newWeight`, `executed`, `rejected`, `executionRate`, `adjusted` (true/false), `reason` (slovenski opis).
+    - `resetAdaptiveWeights(): Promise<{ ok: true; weights: AdaptiveWeights }>` — reset vseh 7 domen na default, čisti vse stats + history.
+    - `setDomainWeight(domain: DomainName, weight: number): Promise<{ ok: true; domain; weight }>` — manual override (clamp [0.5, 2.0], round2). Ne dotika executed/rejected counts ali adjustmentHistory (ti reflektirajo uporabnikovo VEDENJE, manual override je ločen signal).
+    - `computeWeightAdjustment(currentWeight, executed, rejected): { newWeight, reason, adjusted }` — PURE function za unit testing. Pravila: `executionRate > 0.8` → `× 1.1` (boost, če na max že nespremenjena), `< 0.4` → `× 0.9` (reduce, če na min že nespremenjena), sicer no change. Razlog (slovenski) vedno non-empty.
+  - **DB approach:** `getFreshDb()` pattern (kreira `new PrismaClient()` per call, bypass globalThis cache) + raw SQL `$queryRaw` / `$executeRaw` za read/write (bypass typed Prisma API, ki ima lahko stale @prisma/client referenco v Turbopack module cache). UPDATE stavek uporablja `WHERE id = 'singleton'`; če 0 rows affected (singleton ne obstaja), sledi INSERT z explicit defaults za NOT NULL columns.
+
+- **MODIFIED `src/lib/brain/master.ts`** (accepts optional domainWeights)
+  - `MasterBrainInput` dobi nov optional field `domainWeights?: Partial<Record<DomainName, number>>` (v8.28).
+  - Ranking logika (v `masterBrain()` function, ~line 665) spremenjena: `const effectiveWeights = input.domainWeights ?? DOMAIN_WEIGHTS; const dw = effectiveWeights[a.domain] ?? DOMAIN_WEIGHTS[a.domain];`.
+  - **Backward compatible** — če `domainWeights` ni podan (npr. unit test, scenario.ts internal calls), uporablja hardcoded DOMAIN_WEIGHTS kot prej. Partial record je dovoljen — manjkajoče domene fallbackajo na DOMAIN_WEIGHTS[d].
+  - Konstanta `DOMAIN_WEIGHTS` ostaja v datoteki (za fallback + za developer reference).
+
+- **MODIFIED `src/app/api/ai/brain/master/route.ts`** (loads adaptive weights, passes to masterBrain, includes adaptiveWeights block in response)
+  - Nov import: `loadAdaptiveWeights`, `loadDomainWeights` iz `@/lib/brain/adaptive-weights`.
+  - V `handleMasterBrain()`: kliče `loadAdaptiveWeights()` in `loadDomainWeights()` BEFORE `buildCacheKey(input)`, nato `input.domainWeights = adaptiveWeights`. Tako cache key vključuje uteži (cache invalidation ko se uteži spremenijo).
+  - `buildCacheKey()` extended z `parts.push('dw:' + stableStringify(input.domainWeights))` — different weights → different cache entry → fresh recompute (namesto serviranja stale cached rezultata z starimi utežmi).
+  - Response vključuje nov `adaptiveWeights: AdaptiveWeights` block (full stats + history za UI display). Vključen tudi na cache hit — vedno reflektira CURRENT adaptive weights (ki so uporabljene v cached topActions ranking-u).
+  - Docstring posodobljen z v8.28 architectural note.
+
+- **NEW `src/app/api/ai/brain/weights/route.ts`** (GET + POST endpoint, 3 actions)
+  - `runtime = 'nodejs'`, `dynamic = 'force-dynamic'`, `maxDuration = 60`.
+  - **GET**: kliče `loadAdaptiveWeights()`, vrne `{ ok, adaptiveWeights, source: 'v8.28-adaptive-weights' }`. Ni cache-a (vedno sveže branje iz DB).
+  - **POST** s 3 akcijami (parsed iz `body.action`):
+    - `'record'` — validira `domain` (en od 7) in `feedback` ('executed' | 'rejected'), kliče `recordActionFeedback({domain, action:'', feedback})`, vrne `WeightAdjustmentResult`. 400 če invalid domain/feedback.
+    - `'reset'` — kliče `resetAdaptiveWeights()`, vrne `{ ok, weights }`.
+    - `'set'` — validira `domain` + `weight` (finite number), kliče `setDomainWeight(domain, weight)`, vrne `{ ok, domain, weight }` (clamped). 400 če invalid.
+    - Unknown action → 400 z error message.
+  - Standard error pattern: `try/catch` → 500 z `{ error: err?.message ?? 'Napaka' }`. `logger.error('/api/ai/brain/weights', 'POST handler failed', err)`.
+
+- **MODIFIED `src/components/dashboard/ai-hub-view.tsx`** (NOVA AdaptiveWeightsCard komponenta, bright orange-tinted)
+  - NOVA komponenta `AdaptiveWeightsCard()` z bright orange gradient (`border-orange-500/40 + bg-gradient-to-br from-orange-500/15 via-amber-500/10 to-yellow-500/5`). Pozicionirana MED ScenarioBrainCard in 7 Domain Brain sections.
+  - **Header**: 🎛️ Adaptive Domain Weights + v8.28 badge + FEEDBACK LOOP badge + refresh button.
+  - **Subtitle** (slovenski): "Master Brain se uči iz tvojega vedenja. Ko označuješ akcije kot 'executed' ali 'rejected', sistem beleži execution rate per domeno. Po vsakih 10 akcijah: rate > 80% → utež × 1.1 (boost), < 40% → × 0.9 (reduce), clamp [0.5, 2.0]."
+  - **7 domain rows** (profit/inventory/market/sourcing/risk/buyer/pricing), vsak z:
+    - Top row: domain icon (💰📦📈🎯🛡️👥💶) + label + current weight badge (font-mono, bold) + stats `✅N | ❌N`.
+    - Slider (`shadcn/ui Slider`, range 0.5-2.0, step 0.1) z labels `0.5 (reduce)` / `1.0 (default)` / `2.0 (boost)`. Dirty state highlighta row z `border-orange-500/60`.
+    - Execution rate bar: horizontal `<div>` z `width: ${rate*100}%` in barvo (`bg-emerald-500` za ≥80%, `bg-amber-500` za 40-80%, `bg-red-500` za <40%). Rate label `100% (VISOKA (boost ×1.1))` / `50% (SREDNJA)` / `0% (NIZKA (reduce ×0.9))`.
+    - Mini adjustment history (zadnje 3 entries) ko `adjustmentHistory.length > 0`: format `2026-08-13: 1.5 → 1.65 (boost)`.
+  - **Action buttons row**: "🔄 Reset na default" (POST `{action:'reset'}`) + "💾 Shrani uteži" (disabled ko ni dirty; POST `{action:'set', domain, weight}` za vsako spremenjeno domeno). Toast na uspeh/neuspeh.
+  - **Feedback demo form** (za testiranje): domain dropdown + 2 gumba (✅ Executed / ❌ Rejected) ki POST-ajo `{action:'record', domain, feedback}`. Toast z rezultatom: `✅ profit: executed → utež posodobljena: 1.5 → 1.65` (če adjusted) ali `✅ profit: executed (executed: 11, rejected: 0, rate: 100%)` (če ne).
+  - Loading skeleton (2x skeleton rows), error state z retry button, dirty state tracking z "Neshranjene spremembe" indicator.
+  - Fetches from `/api/ai/brain/weights` on mount, refetches after each mutation.
+  - `BrainSynthesisCard` outer badge posodobljen: `v8.28 Adaptive + v8.27 Scenario + v8.26 Explain + v8.25 Accuracy + v8.24 Personal + v8.23 Validation + v8.22 Master + v8.15-v8.21 (7 Domains)`.
+
+- **Adjustment logic (when/how weights change)** — `computeWeightAdjustment(currentWeight, executed, rejected)`:
+  1. `total = executed + rejected`. Če 0 → nespremenjena ("Ni še akcij").
+  2. `executionRate = executed / total`.
+  3. If `executionRate > 0.8` (uporabnik izvaja ≥80% akcij v tej domeni):
+     - `newWeight = clamp(round2(currentWeight × 1.1), 0.5, 2.0)`.
+     - Če `newWeight === currentWeight` (že na max 2.0): `adjusted=false`, reason "executionRate X > 0.8 (boost ×1.1), a utež je že na max (2.0) — nespremenjena."
+     - Sicer: `adjusted=true`, reason "executionRate X > 0.8 — boost ×1.1 (Y → Z). Uporabnik izvaja akcije v tej domeni."
+  4. If `executionRate < 0.4` (uporabnik zavrne ≥60% akcij):
+     - `newWeight = clamp(round2(currentWeight × 0.9), 0.5, 2.0)`.
+     - Če `newWeight === currentWeight` (že na min 0.5): `adjusted=false`, reason "executionRate X < 0.4 (reduce ×0.9), a utež je že na min (0.5) — nespremenjena."
+     - Sicer: `adjusted=true`, reason "executionRate X < 0.4 — reduce ×0.9 (Y → Z). Uporabnik ignorira akcije v tej domeni."
+  5. Else (srednje območje 0.4-0.8): `adjusted=false`, reason "executionRate X v srednjem območju [0.4, 0.8] — utež nespremenjena."
+  6. **Triggered** v `recordActionFeedback()` ko `total % 10 === 0` (vsakih 10 akcij per domeno). Prej samo inkrementirajo counts brez re-evaluacije.
+
+### Stats
+
+- **AI endpointi:** 419 → **420** (+1 — `brain/weights`)
+- **Total API routes:** 596 → **597** (+1)
+- **Brain category:** 15 → **16** (now includes `brain/weights`)
+- **Intelligence phase** (v8.26+v8.27+v8.28): Explainability (WHY) + Scenario (WHAT IF?) + Adaptive Weights (LEARNING) — uporabnik sedaj dobi priporočilo + razumevanje + možnost raziskovanja alternativ + sistem se prilagaja njegovem vedenju.
+- **Performance:** GET weights cold = ~50ms (DB query + JSON parse + sanitize). POST record = ~30ms. POST set = ~25ms. GET master (z adaptiveWeights block) = ~ +5ms dodatno (DB read pred cache check). Vse znotraj maxDuration=60.
+- **Cache:** NO cache na /api/ai/brain/weights (vedno sveže branje iz DB). Master Brain cache (10-min) invalidiran ko se adaptive weights spremenijo (cache key vključuje `dw:` hash).
+- **Determinism:** `aiUsed: false` — no AI/LLM SDK. Sistem se uči iz REVEALED preferences (user clicks on ✅/❌ buttons), ne iz stated preferences (kaj uporabnik reče).
+- Note: "Intelligence phase continues. v8.26 = Explainability (WHY). v8.27 = Scenario (WHAT IF?). v8.28 = Adaptive Weights (LEARNING — feedback loop). Next: v8.29 (Draft Queue + Action Feedback Loop integration)."
 
 ## [8.27.0] - 2026-08-28
 

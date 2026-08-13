@@ -128,6 +128,13 @@ model Settings {
   activeProfile        Profile? @relation(fields: [activeProfileId], references: [id], onDelete: SetNull)
   // v6.1: Email digest template (HTML template with {{title}}, {{listings}}, etc.)
   emailDigestTemplate  String @default("")
+  // v8.28: Adaptive Domain Weights — JSON storing per-domain weight + execution stats.
+  // Format: {"profit":{"weight":1.2,"executed":0,"rejected":0,"lastAdjustedAt":null,"adjustmentHistory":[]},...}
+  // When null, Master Brain uses DEFAULT_DOMAIN_WEIGHTS (hardcoded in master.ts).
+  // Updated by recordActionFeedback() after every user "executed"/"rejected" mark.
+  // Re-evaluated every 10 actions per domain: executionRate > 0.8 → ×1.1 (boost),
+  // < 0.4 → ×0.9 (reduce), clamp [0.5, 2.0]. Stored per-user (singleton row).
+  adaptiveDomainWeights String?
   // Metadata
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
