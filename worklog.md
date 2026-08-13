@@ -15771,3 +15771,55 @@ Stage Summary:
   - UI: 🎯 Scenario Brain card (rose/pink) z 3-4 column comparison table + recommendation banner z 🏆 BEST badge + custom "What If?" form (Capital € + Trades/month + Risk tolerance toggle)
 - Verzija aplikacije: v8.27.0
 - Skupaj doslej (v7.50 → v8.27): 77 verzij, 201 novih funkcij; Brain architecture COMPLETE (v8.22) + Validation phase ZAKLJUČENA (v8.23+v8.24+v8.25) + Intelligence phase (v8.26+v8.27) — naslednji: v8.28 (Adaptive Domain Weights — DOMAIN_WEIGHTS se prilagodijo glede na historical accuracy per domena)
+
+---
+Task ID: v8.27.1
+Agent: main
+Task: v8.27 commit + push + GitHub About + Agent Browser verification (Intelligence phase continues)
+
+Work Log:
+- Prejel poročilo od full-stack-developer podagenta (Task v8.27 — Scenario Brain implementiran: src/lib/brain/scenario.ts (3 preset configs + compareScenarios + runScenario) + src/app/api/ai/brain/scenario/route.ts (GET+POST, 15-min cache) + UI 🎯 Scenario Brain card z rose/pink tint, comparison table, recommendation banner, custom form)
+- Neodvisno preveril endpoint-e (curl 3 testi):
+  - GET /api/ai/brain/scenario → 200 {"ok":true, "scenarios":[3: conservative (0.7× capital, 1050€), balanced (1.0×, 1500€), aggressive (1.5×, 2250€)], "comparisonTable":[8 rows: profit 30d/90d/12m, health, risk, top action, capital, conflicts], "recommendation":{bestScenario:"aggressive", reasoning:"Scenario 'Agresivni' pričakuje 14282€ v 12 mesecih z 50/100 zdravjem..."}, "source":"v8.27-scenario-brain"}
+  - POST /api/ai/brain/scenario {"profitInput":{"capitalDeployed":5000,"tradesPerMonth":25}} → 200 z custom scenario (4. stolpec v comparison table, bestScenario:"custom" ker 15513€ > 14282€ aggressive)
+  - GET /api/ai-list → 200 {"ok":true, "total":419, "categories":{brain:15,...}} (brain kategorija 15 = 8 brain + snapshots + actual-profit + risk-profile + accuracy + accuracy/backfill + explain + scenario)
+- Preveril doc sync: AI_ENDPOINTS.md "Total: 419 endpoints" (row 23 brain/scenario) ✅, README v8.27.0 + 419 AI + 596 routes + Overview paragraph z Intelligence phase continues ✅, CHANGELOG [8.27.0] section z full description + Intelligence phase continues + [Unreleased] v8.28+ (Adaptive Domain Weights) ✅
+- Preveril lint: 0 napak (2 unused eslint-disable warnings — ne kritično) ✨
+- Preveril typecheck: 0 napak ✨
+- Posodobil GitHub About opis: "419 AI + 72 analytics = 596 routes. v8.27.0: Brain (8 layers) + Validation COMPLETE + Intelligence (Explainability + Scenario Brain)." (281 chars)
+- Commit: "v8.27: Scenario Brain — What If? simulator..." (e9f006a)
+- Push na GitHub: uspešen ✅ (cfb5e4a..e9f006a), PAT očiščen ✅
+- Agent Browser self-verification:
+  - Stran se pravilno naloži (HTTP 200, naslov "Markec AI Firm — Opportunity Monitor")
+  - AI Hub: 🧠 Možgani 15 (8 brain + snapshots + actual-profit + risk-profile + accuracy + accuracy/backfill + explain + scenario)
+  - 🎯 Scenario Brain card (rose/pink gradient) prikazan z:
+    - 3 stolpci comparison table: 🛡️ Konzervativni / ⚖️ Uravnovešeni / 🚀 Agresivni ✅
+    - "Scenario Agresivni" priporočilo (najvišji 12m profit) ✅
+    - "Osveži Scenario Brain" button ✅
+    - Custom "What If?" form ✅
+  - brain/scenario endpoint viden z v8.27 badge
+  - Runner test: POST → valid JSON z source:"v8.27-scenario-brain", 3 scenarios, bestScenario:"aggressive", comparisonTable:8 rows ✅
+  - Brez runtime napak v dev.log
+
+Stage Summary:
+- v8.27 uspešno dokončana in potisnjena na GitHub
+- NOV ARCHITECTURAL LAYER: Scenario Brain — What If? simulator
+- src/lib/brain/scenario.ts — 3 preset configs (CONSERVATIVE 0.7× capital, BALANCED 1.0× default, AGGRESSIVE 1.5× capital) + compareScenarios() (3× masterBrain v paralleli preko Promise.all) + runScenario() + custom scenario support
+- src/app/api/ai/brain/scenario/route.ts — GET (3 preset scenarios) + POST (custom overrides), 15-min cache
+- UI: 🎯 Scenario Brain card (rose/pink) z comparison table (3-4 stolpci × 8 rows: profit 30d/90d/12m, health, risk, top action, capital, conflicts) + recommendation banner ("🏆 Priporočeni scenarij: X — Y€ v 12m z Z/100 zdravjem") + custom "What If?" form (capital, trades/month, risk tolerance)
+- 3 SCENARIJI v paraleli (Promise.all) — vsak požene masterBrain() z modificiranimi input-i:
+  - Conservative: capitalDeployed 1050€ (0.7×), liquidityReserve 1000€, concentration 30%
+  - Balanced: default (1500€, 500€ reserve, current state)
+  - Aggressive: capitalDeployed 2250€ (1.5×), tradesPerMonth 15, concentration 50%
+- recommendation: scenario z najvišjim projectedProfit12m
+- AI endpointi: 418 → 419 (+1)
+- Analytics endpointi: 72 (nespremenjeno)
+- Total API routes: 595 → 596 (+1)
+- Dokumentacija sinhrono posodobljena (AI_ENDPOINTS.md, README, CHANGELOG, GitHub About)
+- GitHub sinhroniziran (0 commit-ov ahead)
+- Verzija aplikacije: v8.27.0
+- Intelligence phase continues:
+  - v8.26 = WHY (Explainability — "Zakaj?")
+  - v8.27 = WHAT IF? (Scenario Brain — "Kaj če?")
+  - Naslednji: v8.28 (Adaptive Domain Weights — feedback loop), v8.29 (Draft Queue + Action Feedback Loop)
+- Skupaj doslej (v7.50 → v8.27): 77 verzij, 201 novih funkcij; Brain architecture COMPLETE (v8.22) + Validation phase ZAKLJUČENA (v8.23-v8.25) + Intelligence phase (v8.26+v8.27)
