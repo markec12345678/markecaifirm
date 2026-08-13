@@ -15916,3 +15916,59 @@ Stage Summary:
 - Documentation updated: AI_ENDPOINTS.md (Total: 420, brain/weights row 24 + renumber 1-420), README.md (v8.28.0, 420 AI, 597 routes, hero tagline, Overview z v8.15-v8.28, Kaj je novega v8.28 entry, version section, ~283 funkcij, Roadmap z v8.28 ✅ dokončana, Changelog Zadnje verzije z v8.28.0), CHANGELOG.md ([8.28.0] section z Added + Stats + Notes z INTELLIGENCE PHASE NADALJUJE + Note "v8.26=WHY, v8.27=WHAT IF?, v8.28=LEARNING — feedback loop, Next v8.29", [Unreleased] posodobljen z v8.29)
 - Verzija aplikacije: v8.28.0
 - Skupaj doslej (v7.50 → v8.28): 78 verzij, 202 novih funkcij; Brain architecture COMPLETE (v8.22) + Validation phase ZAKLJUČENA (v8.23-v8.25) + Intelligence phase (v8.26+v8.27+v8.28) — naslednji: v8.29 (Draft Queue + Action Feedback Loop integration — poveži vsako TOP 5 akcijo z gumboma ✅ Izvedel / ❌ Zavrnil, ki neposredno klicata recordActionFeedback)
+
+---
+Task ID: v8.28.1
+Agent: main
+Task: v8.28 commit + push + GitHub About + Agent Browser verification (Intelligence phase continues — feedback loop)
+
+Work Log:
+- Prejel poročilo od full-stack-developer podagenta (Task v8.28 — Adaptive Domain Weights implementiran: src/lib/brain/adaptive-weights.ts (loadAdaptiveWeights, loadDomainWeights, recordActionFeedback, resetAdaptiveWeights, setDomainWeight, DEFAULT_DOMAIN_WEIGHTS, computeWeightAdjustment pure function) + src/app/api/ai/brain/weights/route.ts (GET + POST record/reset/set) + master.ts modified (accepts optional domainWeights) + master/route.ts modified (loads adaptive weights, includes in response) + UI 🎛️ Adaptive Weights card z orange tint, 7 sliders, execution stats, rate bars, adjustment history, feedback form)
+- Podagent je implementiral tudi raw SQL workaround za Turbopack dev-mode caching (getFreshDb + $queryRaw/$executeRaw) da obide stale @prisma/client modul
+- Neodvisno preveril doc sync: AI_ENDPOINTS.md "Total: 420 endpoints" (row 24 brain/weights) ✅, README v8.28.0 + 420 AI + 597 routes + Overview paragraph z Intelligence phase continues ✅, CHANGELOG [8.28.0] section z full description + Intelligence phase continues + [Unreleased] v8.29+ (Draft Queue) ✅
+- Preveril lint: 0 napak (2 unused eslint-disable warnings — ne kritično) ✨
+- Preveril typecheck: 0 napak ✨
+- Posodobil GitHub About opis: "420 AI + 72 analytics = 597 routes. v8.28.0: Brain (8 layers) + Validation COMPLETE + Intelligence (Explainability + Scenario + Adaptive Weights feedback loop)." (308 chars)
+- Commit: "v8.28: Adaptive Domain Weights — feedback loop..." (7b84430)
+- Push na GitHub: uspešen ✅ (c2a5aed..7b84430), PAT očiščen ✅
+- Agent Browser self-verification:
+  - Stran se pravilno naloži (HTTP 200, naslov "Markec AI Firm — Opportunity Monitor")
+  - AI Hub: 🧠 Možgani 16 (8 brain + snapshots + actual-profit + risk-profile + accuracy + accuracy/backfill + explain + scenario + weights)
+  - 🎛️ Adaptive Domain Weights card (bright orange gradient) prikazan z:
+    - "Master Brain se uči iz tvojega vedenja" subtitle ✅
+    - "🔄 Reset na default" button ✅
+    - "💾 Shrani uteži" button ✅
+    - Feedback demo form (domain dropdown + ✅ Executed / ❌ Rejected buttons) ✅
+  - brain/weights endpoint viden z v8.28 badge
+  - Runner test: POST → 400 pravilno (manjka action field — runner pošlje prazen body, endpoint pravilno zavrne)
+  - Brez runtime napak v dev.log (le normalni Prisma SQL queries)
+
+Stage Summary:
+- v8.28 uspešno dokončana in potisnjena na GitHub
+- NOV ARCHITECTURAL LAYER: Adaptive Domain Weights — feedback loop (Master Brain learns from user behavior)
+- NOV Prisma Settings field: adaptiveDomainWeights String? (JSON format z weight + executed + rejected + lastAdjustedAt + adjustmentHistory per domain)
+- src/lib/brain/adaptive-weights.ts — loadAdaptiveWeights() (bere iz Settings), loadDomainWeights() (vrne samo številke za Master Brain), recordActionFeedback() (beleži executed/rejected, trigger adjustment po 10 akcijah), resetAdaptiveWeights() (clear stats), setDomainWeight() (manual override), computeWeightAdjustment() (pure function za unit test), DEFAULT_DOMAIN_WEIGHTS
+- master.ts MODIFIED — MasterBrainInput.domainWeights?: Partial<Record<DomainName, number>> (optional override), ranking logic uporabi effectiveWeights = input.domainWeights ?? DOMAIN_WEIGHTS z per-domain fallback
+- master/route.ts MODIFIED — loadAdaptiveWeights() + loadDomainWeights() pred buildCacheKey, passes kot input.domainWeights, cache key extended z dw: hash, response vključuje adaptiveWeights block
+- src/app/api/ai/brain/weights/route.ts — GET (current weights + stats + history) + POST (3 actions: record/reset/set), runtime=nodejs, maxDuration=60
+- UI: 🎛️ Adaptive Weights card (bright orange gradient) z 7 domain rows (profit/inventory/market/sourcing/risk/buyer/pricing), vsaka z: icon + label + weight badge + slider (0.5-2.0) + ✅/❌ stats + execution rate bar (green ≥80%, amber 40-80%, red <40%) + mini adjustment history (last 3) + reset/save buttons + feedback demo form
+- ADJUSTMENT LOGIC:
+  - trigger: vsakih 10 akcij per domeno ((executed + rejected) % 10 === 0)
+  - compute: executionRate = executed / (executed + rejected)
+  - executionRate > 0.8 → newWeight = clamp(oldWeight × 1.1, 0.5, 2.0) (boost)
+  - executionRate < 0.4 → newWeight = clamp(oldWeight × 0.9, 0.5, 2.0) (reduce)
+  - else: no change
+  - persist: push to adjustmentHistory (capped 20, newest first), update lastAdjustedAt
+- Workaround: raw SQL ($queryRaw/$executeRaw) + getFreshDb() pattern da obide Turbopack dev-mode stale @prisma/client cache
+- AI endpointi: 419 → 420 (+1)
+- Analytics endpointi: 72 (nespremenjeno)
+- Total API routes: 596 → 597 (+1)
+- Dokumentacija sinhrono posodobljena (AI_ENDPOINTS.md, README, CHANGELOG, GitHub About)
+- GitHub sinhroniziran (0 commit-ov ahead)
+- Verzija aplikacije: v8.28.0
+- Intelligence phase continues:
+  - v8.26 = WHY (Explainability — "Zakaj?")
+  - v8.27 = WHAT IF? (Scenario Brain — "Kaj če?")
+  - v8.28 = LEARNING (Adaptive Weights — feedback loop, "Master Brain se uči iz tvojega vedenja")
+  - Naslednji: v8.29 (Draft Queue + Action Feedback Loop integration — wire TOP 5 akcij z ✅/❌ buttons ki direktno kličejo recordActionFeedback)
+- Skupaj doslej (v7.50 → v8.28): 78 verzij, 202 novih funkcij; Brain architecture COMPLETE (v8.22) + Validation phase ZAKLJUČENA (v8.23-v8.25) + Intelligence phase (v8.26+v8.27+v8.28)
