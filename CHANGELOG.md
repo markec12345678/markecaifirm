@@ -6,9 +6,8 @@ Format sledi [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), verzije s
 
 ## [Unreleased]
 
-v8.26 je odprl Intelligence phase (Action Explainability). Naslednje verzije nadaljujejo:
+v8.26 je odprl Intelligence phase (Action Explainability), v8.27 jo nadaljuje (Scenario Brain). Naslednje verzije nadaljujejo:
 
-- **v8.27 — Scenario Brain** ("What if?" simulacije — "Kaj če znižam cene za 10%? Kaj če kupim 5 več iPhone-ov? Kaj če trg pade 20%?" — Master Brain re-run z override inputs)
 - **v8.28 — Adaptive Domain Weights** (DOMAIN_WEIGHTS se prilagodijo glede na zgodovinsko accuracy per domena — če Inventory Brain accuracy < 60%, zmanjšaj inventory weight)
 - WebSocket real-time negotiation (SSE namesto polling)
 - Playwright E2E testi za glavne flow-e
@@ -17,6 +16,83 @@ v8.26 je odprl Intelligence phase (Action Explainability). Naslednje verzije nad
 - Performance optimizations za Master Brain (cached partial results per domain)
 - Additional conflict detection tipi (npr. Inventory vs Buyer — supply/demand mismatch)
 - Per-domain DB injection v Master Brain route (zaenkrat se zanaša na individualne Domain Brain route-e za DB state)
+
+## [8.27.0] - 2026-08-28
+
+### Added — 🎯 Scenario Brain (Intelligence phase continues — "What If?" simulator)
+
+**🎯 INTELLIGENCE PHASE NADALJUJE.** v8.27 = scenario (WHAT IF?). Problem: Master Brain daje ENO strategijo ("30d: 3133€, top akcija: Prodaj iPhone 13 zdaj"), uporabnik pa ne more raziskovati alternativ brez ročnega spreminjanja inputov in ponovnega zagona. "Kaj če investiram 5000€ več? Kaj če zmanjšam trades na 5/mesec? Kaj če povečam risk tolerance?" so vsa vprašanja, ki ostajajo brez odgovora. v8.27 dodaja Scenario Brain: generira 3 preset scenarije (konzervativni/uravnovešeni/agresivni) + sprejema custom "what-if" inpute. Za vsak scenarij požene Master Brain vzporedno (3× Promise.all) in vrne primerjalno tabelo. Skupaj Master Brain (v8.22 — KAJ) + Risk Profile (v8.24 — PERSONAL) + Explainability (v8.26 — ZAKAJ) + Scenario Brain (v8.27 — WHAT IF?) odgovarjajo "Kaj naj naredim danes, zakaj in kaj če...?"
+
+- **3 preset scenariji** (definirani kot `ScenarioConfig` objekti):
+  - **CONSERVATIVE**: `capitalMultiplier` 0.7 (1500€ → 1050€), `liquidityReserveEUR` 1000€ (default 500€), `riskTolerance` LOW. Overrides: `profitInput.capitalDeployed = 1050`, `inventoryInput.capitalDeployed = 1050, agedItemsValue = 150`, `riskInput.capitalConcentrationPct = 30, totalCapitalDeployed = 1050` (lower concentration tolerance).
+  - **BALANCED**: `capitalMultiplier` 1.0, `liquidityReserveEUR` 500€, `riskTolerance` MEDIUM. No overrides — mirrors current Master Brain output (control scenario).
+  - **AGGRESSIVE**: `capitalMultiplier` 1.5 (1500€ → 2250€), `liquidityReserveEUR` 200€, `riskTolerance` HIGH. Overrides: `profitInput.capitalDeployed = 2250, tradesPerMonth = 15`, `inventoryInput.capitalDeployed = 2250, itemCount = 27` (more items), `riskInput.totalCapitalDeployed = 2250, capitalConcentrationPct = 50` (higher concentration tolerated).
+
+- **Parallel execution** (3× `masterBrain()` via `Promise.all`):
+  - Each scenario applies its overrides on top of `baseInput` (scenario overrides win).
+  - `runScenario(config, baseInput?)` constructs `MasterBrainInput = { ...baseInput, ...config.overrides }`, calls `masterBrain(input)`, returns `ScenarioResult` (config + full masterResult + derived `comparison` metrics).
+  - `compareScenarios(customOverrides?, baseInput?)` runs all 3 presets in parallel via `Promise.all([runScenario(CONSERVATIVE), runScenario(BALANCED), runScenario(AGGRESSIVE)])`. Custom scenario runs sequentially after (preserves 3-preset baseline even if custom throws).
+  - Wall-clock time: ~14ms for 3 parallel (same as 1 masterBrain call — Promise.all) + ~14ms for custom = ~28ms total. Cached for 15 min.
+
+- **Comparison table** (8 metrics × 3-4 columns, pre-formatted strings for easy UI rendering):
+  - Profit 30d, Profit 90d, Profit 12m (€ — extracted from `masterResult.strategy.projection{30d,90d,12m}.profitEUR`)
+  - Overall Health (`{score}/100 ({grade})` — from `masterResult.overallHealth`)
+  - Risk Level (LOW/MEDIUM/HIGH/CRITICAL — from `masterResult.overallHealth.riskLevel`)
+  - Top akcija (`masterResult.topActions[0].action` truncated to 80 chars)
+  - Capital potreben (`1500 × capitalMultiplier` € — derived)
+  - Konflikti (count — from `masterResult.conflicts.length`)
+
+- **Recommendation** (best scenario by `projectedProfit12m`):
+  - Reducer `reduce()` picks scenario with highest `comparison.projectedProfit12m`.
+  - Tie-breaker: higher `comparison.overallHealth` (safer wins on ties).
+  - Custom scenario is included in the comparison if present.
+  - Reasoning string (Slovenian): `Scenario "${label}" pričakuje ${12m profit}€ v 12 mesecih z ${health}/100 zdravjem. ${description}.`
+
+- **`src/lib/brain/scenario.ts`** (NEW — pure compute module, no AI/LLM SDK, no Prisma)
+  - Exports `ScenarioType` ('conservative' | 'balanced' | 'aggressive' | 'custom'), `ScenarioConfig`, `ScenarioResult`, `ScenarioComparison` interfaces.
+  - Exports `CONSERVATIVE_CONFIG`, `BALANCED_CONFIG`, `AGGRESSIVE_CONFIG` preset objects (frozen at module load).
+  - Exports `runScenario(config, baseInput?)` → `Promise<ScenarioResult>` (single scenario runner).
+  - Exports `compareScenarios(customOverrides?, baseInput?)` → `Promise<ScenarioComparison>` (3 presets + optional custom).
+  - `BASE_CAPITAL_EUR = 1500` constant (assumed current capital; used to derive `capitalRequired`).
+
+- **`src/app/api/ai/brain/scenario/route.ts`** (NEW — GET + POST endpoint)
+  - `runtime = 'nodejs'`, `dynamic = 'force-dynamic'`, `maxDuration = 60`.
+  - **GET**: runs 3 preset scenarios in parallel (no custom). 15-min cache (`SCENARIO_CACHE_TTL_MS = 15 * 60 * 1000`).
+  - **POST**: parses body for custom overrides (any subset of `MasterBrainInput` — `profitInput`/`inventoryInput`/`marketInput`/`sourcingInput`/`riskInput`/`buyerInput`/`pricingInput` + `skipX` flagi). Runs 3 presets + 4th 'custom' scenario with overrides.
+  - Cache key: deterministic hash of custom overrides (sorted JSON stringify, deep-recursive). GET requests always produce the same key (empty overrides string). POST requests produce a key that incorporates the overrides hash so different custom inputs get different cache entries.
+  - Same `getCachedAI`/`setCachedAI` infrastructure as Master Brain (in-memory, pruned every 5 min).
+  - Standard error pattern: `try/catch` → 500 with `{ error }` body. `logger.error('/api/ai/brain/scenario', 'handler failed', err)`.
+
+- **UI — 🎯 Scenario Brain card** (`src/components/dashboard/ai-hub-view.tsx`)
+  - NEW `ScenarioBrainCard` component, positioned BETWEEN MasterBrainBanner and the 7 Domain Brain sections in BrainSynthesisCard.
+  - Rose/pink gradient (`border-rose-500/40`, `bg-gradient-to-br from-rose-500/15 via-pink-500/10 to-fuchsia-500/5`) — distinct from Master Brain (amber), Risk Profile (violet), Accuracy (teal), Snapshots (emerald).
+  - **Header**: 🎯 SCENARIO BRAIN + v8.27 badge + WHAT IF? badge + cache age pill.
+  - **Subtitle** (Slovenian): "Primerjaj 3 scenarije (konzervativni/uravnovešeni/agresivni) side-by-side. Vsak scenarij požene Master Brain vzporedno (3× Promise.all) in vrne primerjavo..."
+  - **Recommendation banner**: 🏆 + Slovenian reasoning string (e.g. "Scenario 'Agresivni' pričakuje 14282€ v 12 mesecih z 50/100 zdravjem. Več kapitala, manj rezerv, dovoljena visoko-tveganja akcije.").
+  - **Comparison table** (HTML `<table>`, responsive, horizontally scrollable on mobile):
+    - Header row: Metrika | 🛡️ Konzervativni | ⚖️ Uravnovešeni | 🚀 Agresivni | (🎯 Custom if present).
+    - Each column header: rose tinted background; recommended column gets `bg-rose-500/20` + `border-2 border-rose-500/50` + 🏆 BEST badge.
+    - 8 body rows: profit 30d/90d/12m, Overall Health (score + grade), Risk Level, Top akcija, Capital potreben, Konflikti.
+    - Recommended column cells: `bg-rose-500/15` + `border-x-2 border-rose-500/40` + bold rose text.
+  - **Custom "What If?" form** (rose-tinted subcard):
+    - 3 inputs in `grid-cols-1 sm:grid-cols-3`: Capital (€) number input, Trades/month number input, Risk tolerance (LOW/MEDIUM/HIGH) toggle button group.
+    - "Poženi custom scenarij" button → POSTs to `/api/ai/brain/scenario` with body `{ profitInput: { capitalDeployed, tradesPerMonth }, riskInput: { totalCapitalDeployed, capitalConcentrationPct (30/40/50 based on risk) } }`. Updates 4th column (🎯 Custom) in the table.
+    - Loading state on button (`RefreshCw` spin icon), toast on success/failure.
+  - **Loading skeleton**: 4 skeleton columns + message "⏳ 3 Master Brain-i tečejo vzporedno...".
+  - **Error state**: AlertCircle + retry button ("Ponovi").
+  - **Reset button**: "Osveži Scenario Brain (reset na 3 presete)" — re-fetches GET (drops custom).
+  - **BrainSynthesisCard outer badge** updated: `v8.27 Scenario + v8.26 Explain + v8.25 Accuracy + v8.24 Personal + v8.23 Validation + v8.22 Master + v8.15-v8.21 (7 Domains)`.
+
+### Stats
+
+- **AI endpointi:** 418 → **419** (+1 — `brain/scenario`)
+- **Total API routes:** 595 → **596** (+1)
+- **Brain category:** 14 → **15** (now includes `brain/scenario`)
+- **Intelligence phase** (v8.26+v8.27): Explainability (WHY) + Scenario (WHAT IF?) — uporabnik sedaj dobi priporočilo + razumevanje + možnost raziskovanja alternativ.
+- **Performance:** GET cold = ~1252ms (first call, includes Next.js dev overhead; pure compute ~15ms application-code). GET cached = 9ms (cache hit). POST with custom = 15ms (3 presets cached + 1 fresh custom compute). All within maxDuration=60.
+- **Cache:** 15-min TTL — longer than Master Brain's 10-min cache because Scenario Brain runs 3× masterBrain() (3× CPU) and the presets are stable across calls.
+- **Determinism:** `aiUsed: false` — no AI/LLM SDK, no DB, no side effects. Pure orchestration above Master Brain.
+- Note: "Intelligence phase continues. v8.26 = Explainability (WHY). v8.27 = Scenario (WHAT IF?). Next: v8.28 (Adaptive Domain Weights — feedback loop)."
 
 ## [8.26.0] - 2026-08-28
 

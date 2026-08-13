@@ -15677,3 +15677,97 @@ Stage Summary:
   - Explainability (v8.26) = WHY (per-action reasoning + trustScore)
   - Skupaj odgovarjajo: "Kaj naj naredim danes in zakaj?"
 - Skupaj doslej (v7.50 → v8.26): 76 verzij, 200 novih funkcij; Brain architecture COMPLETE (v8.22) + Validation phase ZAKLJUČENA (v8.23-v8.25) + Intelligence phase STARTED (v8.26) — naslednji koraki: v8.27 (Scenario Brain — WHAT IF?), v8.28 (Adaptive Domain Weights), v8.29 (Draft Queue + Action Feedback Loop)
+
+---
+Task ID: v8.27
+Agent: full-stack-developer
+Task: Implement Scenario Brain — What If? simulator (3 preset scenarios + custom)
+
+Work Log:
+- Prebral worklog.md (v8.22 Master Brain + v8.24 Risk Profile + v8.25 Validation + v8.26 Explainability entries za kontekst — v8.27 nadaljuje Intelligence phase)
+- Prebral src/lib/brain/master.ts celotno (818 vrstic) — MasterBrainInput interface (profitInput/inventoryInput/marketInput/sourcingInput/riskInput/buyerInput/pricingInput + skipX flagi), MasterBrainResult shape (domains, domainSummary, topActions, conflicts, overallHealth{score,grade,riskLevel,bottlenecks,strengths}, strategy{projection30d/90d/12m{profitEUR,riskScore,keyMilestone}}, oneLineSummary, aiUsed:false, source:'v8.22-master-brain'), masterBrain(input={}) async function ki kliče vseh 7 Domain Brain-ov vzporedno preko Promise.all z optional overrides
+- Prebral src/app/api/ai/brain/master/route.ts celotno (350 vrstic) — endpoint template (GET+POST, runtime=nodejs, force-dynamic, maxDuration=60, 10-min cache, resolveInputs helper, buildCacheKey helper z stable JSON stringify, loadUserRiskProfile helper za v8.24 Settings singleton read)
+- Prebral src/app/api/ai/brain/explain/route.ts celotno (323 vrstic) — v8.26 explainability endpoint template (podobna struktura, 10-min cache, POST podpira pre-computed masterResult v body)
+- Prebral src/components/dashboard/ai-hub-view.tsx (3835+ vrstic) — našel MasterBrainBanner na vrhu BrainSynthesisCard, 7 Domain Brain sections spodaj, BrainSnapshotsSection + AccuracyTrendCard na dnu. Pozicioniral novo ScenarioBrainCard MED MasterBrainBanner in 7 Domain Brain sections
+- Prebral src/lib/ai-cache.ts — getCachedAI<T>(key) / setCachedAI<T>(key, value, ttlMs) helperji z 6h default TTL, in-memory Map, pruned vsakih 5 min
+- Prebral src/app/api/ai-list/route.ts — discoverEndpoints rekurzivno s MAX_DEPTH=3, brain/scenario (depth 2) bo pravilno odkrit. categorize() pravilno klasificira kot 'brain' ker se začne z 'brain/'
+
+- Step 1: Created src/lib/brain/scenario.ts (NEW — pure compute module, 270 vrstic)
+  - Definiral ScenarioType ('conservative' | 'balanced' | 'aggressive' | 'custom'), ScenarioConfig (type, label, description, capitalMultiplier, riskTolerance, liquidityReserveEUR, overrides: Partial<MasterBrainInput>), ScenarioResult (config + masterResult + comparison derived metrics), ScenarioComparison (scenarios[], baseCapital, custom?, comparisonTable[], recommendation{bestScenario, reasoning}, source:'v8.27-scenario-brain')
+  - BASE_CAPITAL_EUR = 1500 (constant — uporabljen za capitalRequired calc)
+  - CONSERVATIVE_CONFIG: capitalMultiplier 0.7 (1050€), liquidityReserveEUR 1000, riskTolerance LOW, overrides: profitInput.capitalDeployed=1050, inventoryInput.capitalDeployed=1050 + agedItemsValue=150, riskInput.capitalConcentrationPct=30 + totalCapitalDeployed=1050
+  - BALANCED_CONFIG: capitalMultiplier 1.0, liquidityReserveEUR 500, riskTolerance MEDIUM, overrides {} (no overrides = current Master Brain output)
+  - AGGRESSIVE_CONFIG: capitalMultiplier 1.5 (2250€), liquidityReserveEUR 200, riskTolerance HIGH, overrides: profitInput.capitalDeployed=2250 + tradesPerMonth=15, inventoryInput.capitalDeployed=2250 + itemCount=27, riskInput.totalCapitalDeployed=2250 + capitalConcentrationPct=50
+  - runScenario(config, baseInput?) — konstruira MasterBrainInput = {...baseInput, ...config.overrides}, pokliče masterBrain(input), vrne ScenarioResult z derived comparison metrics (projectedProfit30d/90d/12m, overallHealth, healthGrade, riskLevel, topAction (truncated 80 chars), topActionUpliftEUR, capitalRequired (1500 × capitalMultiplier), conflictsCount, bottlenecksCount)
+  - compareScenarios(customOverrides?, baseInput?) — Promise.all([runScenario(CONSERVATIVE), runScenario(BALANCED), runScenario(AGGRESSIVE)]) vzporedno (3× masterBrain, ~14ms wall-clock), nato custom če prisoten (sequentially po 3 presetih za robustnost — če custom vrže error, 3 preseti ostanejo intaktni). Zgradi comparisonTable (8 metrik × 3-4 stolpci, pre-formatirane stringe za easy UI rendering: "3120€", "50/100 (B)", "LOW", "TOP akcija...", 1050€, 2). Recommendation: reduce() picks scenario z najvišjim projectedProfit12m, tie-break: višji overallHealth. Reasoning string v slovenščini: "Scenario X pričakuje Y€ v 12 mesecih z Z/100 zdravjem. ${description}."
+  - NO AI, NO DB, NO side effects — pure orchestration above Master Brain
+
+- Step 2: Created src/app/api/ai/brain/scenario/route.ts (NEW endpoint, 230 vrstic)
+  - runtime='nodejs', dynamic='force-dynamic', maxDuration=60
+  - SCENARIO_CACHE_TTL_MS = 15 * 60 * 1000 (15-min — daljši od Master Brain 10-min ker 3× compute)
+  - parseBodyOverrides(req) — POST only, parses JSON body za subset MasterBrainInput (profitInput/inventoryInput/marketInput/sourcingInput/riskInput/buyerInput/pricingInput + skipX flagi z asBoolean helper)
+  - buildCacheKey(customOverrides) — deterministic hash z stable JSON stringify (sorted keys, deep recursive, circular reference guard z WeakSet). GET requests vedno produce isti key (empty overrides string). POST requests produce key ki incorporates overrides hash
+  - GET in POST oba kličeta handleScenarioBrain(req) — parse body → build cache key → check cache → call compareScenarios() → cache 15 min → return JSON z cachedAt timestamp
+  - Standard error pattern: try/catch → 500 z {error: message}, logger.error('/api/ai/brain/scenario', 'handler failed', err)
+
+- Step 3: Modified src/components/dashboard/ai-hub-view.tsx (added ScenarioBrainCard)
+  - Dodal v8.27 header documentation (Komentar na vrhu datoteke, opis nove ScenarioBrainCard komponente)
+  - Definiral ScenarioComparisonResponse TypeScript interface (mirror ScenarioComparison iz scenario.ts, vendar za client-side uporabo — brez MasterBrainResult polnega shape-a, samo derived comparison metrics)
+  - Definiral ScenarioBrainCard() React component (rose/pink gradient: border-rose-500/40, bg-gradient-to-br from-rose-500/15 via-pink-500/10 to-fuchsia-500/5) z:
+    - Header: 🎯 SCENARIO BRAIN + v8.27 badge + WHAT IF? badge + cache age pill
+    - Subtitle (slovenski): "Primerjaj 3 scenarije (konzervativni/uravnovešeni/agresivni) side-by-side..."
+    - Recommendation banner z 🏆 emoji + reasoning string (rose-tinted)
+    - Comparison table (HTML <table>, responsive, overflow-x-auto): header row z Metrika | 🛡️ Konzervativni | ⚖️ Uravnovešeni | 🚀 Agresivni | (🎯 Custom če prisoten), priporočeni scenario označen z bg-rose-500/20 + border-2 border-rose-500/50 + 🏆 BEST badge; 8 body rows (profit 30d/90d/12m, Overall Health, Risk Level, Top akcija, Capital potreben, Konflikti); priporočeni column cells z bg-rose-500/15 + border-x-2 border-rose-500/40
+    - Custom "What If?" form (rose-tinted subcard): 3 inputs v grid-cols-1 sm:grid-cols-3 — Capital (€) number, Trades/month number, Risk tolerance LOW/MEDIUM/HIGH toggle button group (custom toggle button styling z active state). "Poženi custom scenarij" button POST-a na /api/ai/brain/scenario z body { profitInput: { capitalDeployed, tradesPerMonth }, riskInput: { totalCapitalDeployed, capitalConcentrationPct (30/40/50 based on risk LOW/MEDIUM/HIGH) } } in osveži 4. stolpec (🎯 Custom)
+    - Loading skeleton: 4 skeleton columns + message "⏳ 3 Master Brain-i tečejo vzporedno..."
+    - Error state: AlertCircle + retry button ("Ponovi")
+    - Reset button: "Osveži Scenario Brain (reset na 3 presete)" — re-fetches GET (drops custom)
+    - useState/useCallback/useEffect/useMemo hooks za fetch + custom form state + columns derivation
+  - Dodal <ScenarioBrainCard /> v BrainSynthesisCard MED <MasterBrainBanner /> in 7 Domain Brain sections (ProfitBrainSection, ...)
+  - Posodobil BrainSynthesisCard outer badge: "v8.27 Scenario + v8.26 Explain + v8.25 Accuracy + v8.24 Personal + v8.23 Validation + v8.22 Master + v8.15-v8.21 (7 Domains)"
+  - Dodal komentarje v outer wrapper section za v8.27
+
+- Step 4: Run `bun run lint` — 0 errors (2 pre-existing warnings v src/lib/db.ts — unused eslint-disable, ne moje) ✨
+- Step 5: Run `bunx tsc --noEmit` — 0 errors ✨ (initial run čist, brez React Compiler warnings)
+
+- Step 6: Endpoint verification z curl:
+  - GET /api/ai/brain/scenario → 200 z ok:true, scenarios[3] (types: conservative/balanced/aggressive), comparisonTable[8 rows] (metrics: Projiciran profit 30d/90d/12m, Overall Health, Risk Level, Top akcija, Capital potreben, Konflikti), recommendation { bestScenario: "aggressive", reasoning: "Scenario 'Agresivni' pričakuje 14282€ v 12 mesecih z 50/100 zdravjem. Več kapitala, manj rezerv, dovoljena visoko-tveganja akcije." }, source: "v8.27-scenario-brain", baseCapital: 1500, custom: null (GET ne vključuje custom) ✅
+  - POST /api/ai/brain/scenario -d '{"profitInput":{"capitalDeployed":5000,"tradesPerMonth":25}}' → 200 z ok:true, scenarios[3] (presets), custom prisoten (type: "custom", label: "Custom"), comparisonTable[0] (30d profit): conservative 3120€, balanced 3133€, aggressive 3197€, custom 3360€; comparisonTable[2] (12m profit): conservative 13703€, balanced 13800€, aggressive 14282€, custom 15513€; recommendation { bestScenario: "custom", reasoning: "Scenario 'Custom' pričakuje 15513€ v 12 mesecih z 53/100 zdravjem. Uporabnikovo what-if scenarij." } ✅
+  - GET /api/ai-list → 200 {"ok":true, "total":419, "categories":{"brain":15,...}} (brain kategorija 15 = prej 14 + 1 nov brain/scenario) ✅
+  - Brain endpoints (15): [brain/accuracy, brain/accuracy/backfill, brain/actual-profit, brain/buyer, brain/explain, brain/inventory, brain/market, brain/master, brain/pricing, brain/profit, brain/risk, brain/risk-profile, brain/scenario, brain/snapshots, brain/sourcing] — brain/scenario pravilno pozicioniran alphabetically med brain/risk-profile in brain/snapshots ✅
+  - Cache verification: 1st GET cold = 1252ms (Next.js dev overhead + 3× masterBrain compute ~15ms application-code), 2nd GET cached = 9ms (cache hit, 4ms application-code), POST with custom = 15ms (3 presets cached + 1 fresh custom compute ~9ms application-code). Vsi znotraj maxDuration=60. dev.log: "GET /api/ai/brain/scenario 200 in 1252ms", "GET /api/ai/brain/scenario 200 in 9ms", "POST /api/ai/brain/scenario 200 in 15ms" ✅
+  - Brez runtime error-jev v dev.log (le normalni Prisma SQL queries + scenario HTTP 200 logi)
+
+- Step 7: Documentation updates
+  - AI_ENDPOINTS.md: Total 418 → 419; dodan row 23 "brain/scenario | `/api/ai/brain/scenario`" (alphabetically med brain/risk-profile in brain/snapshots); renumbered rows 23-418 → 24-419 (Python script z regex za `^\| (\d+) \|` pattern, increment after brain/scenario insertion). Last row: "419 | vendor-reliability" ✅
+  - README.md: version badge v8.26.0 → v8.27.0; AI endpoints badge 418 → 419; API routes badge 595 → 596; hero tagline posodobljen z v8.27 description (Scenario Brain — "What If?" simulator) IN Intelligence phase continues note; Overview paragraph posodobljen z v8.15-v8.27; "Kaj je novega" section doda v8.27 entry na VRH (pred v8.26) z vsemi detail-i (problem one strategy, 3 preset scenarios + custom what-if, parallel execution, comparison table 8 metrics × 3-4 columns, recommendation, ScenarioBrainCard UI, INTELLIGENCE PHASE NADALJUJE note, next v8.28 Adaptive Domain Weights); version section v8.26.0 → v8.27.0; ~281 funkcij → ~282 funkcij; 418 AI → 419 AI v directory listing + AI Hub table + endpoint count + try/catch na vseh 596 API routes; Roadmap references posodobljene; Changelog Zadnje verzije doda v8.27.0 entry na VRH (nad v8.26.0) z INTELLIGENCE PHASE NADALJUJE flag; "od v1.0 do v8.26" → "od v1.0 do v8.27" v Changelog section link; "v7.56-v8.26 (70 verzij, 191 novih funkcij)" → "v7.56-v8.27 (71 verzij, 192 novih funkcij)" ✅
+  - CHANGELOG.md: dodan nov "## [8.27.0] - 2026-08-28" section na VRH (nad [8.26.0]) z ### Added — 🎯 Scenario Brain blokom (Intelligence phase continues — problem one strategy, 3 preset scenarios + custom, parallel execution 3× Promise.all, comparison table 8 metrics × 3-4 columns, recommendation best by projectedProfit12m + tie-break higher overallHealth, INTELLIGENCE PHASE NADALJUJE note; 4 bulleti z vsemi detajli: (1) 3 preset scenariji z CONSERVATIVE_CONFIG/BALANCED_CONFIG/AGGRESSIVE_CONFIG definicije, (2) parallel execution z runScenario + compareScenarios, (3) src/lib/brain/scenario.ts pure compute exports, (4) src/app/api/ai/brain/scenario/route.ts GET+POST 15-min cache, (5) UI ai-hub-view.tsx ScenarioBrainCard z comparison table + recommendation banner + custom form); ### Stats: AI endpoints 418→419 (+1), Total API routes 595→596 (+1), brain layers 14→15, new files 2, modified files 1, performance notes (cold 1252ms, cached 9ms, custom POST 15ms); Note: "Intelligence phase continues. v8.26 = Explainability (WHY). v8.27 = Scenario (WHAT IF?). Next: v8.28 (Adaptive Domain Weights — feedback loop)."; [Unreleased] posodobljen — v8.26 odprl Intelligence phase, v8.27 jo nadaljuje, naslednje v8.28 Adaptive Domain Weights ✅
+
+Stage Summary:
+- NEW: src/lib/brain/scenario.ts (compareScenarios + runScenario + 3 preset configs CONSERVATIVE/BALANCED/AGGRESSIVE, ~270 vrstic, pure compute, no AI/DB/side effects)
+- NEW: src/app/api/ai/brain/scenario/route.ts (GET + POST endpoint, 15-min cache, ~230 vrstic, runtime=nodejs, maxDuration=60, POST podpira custom overrides z subset MasterBrainInput)
+- MODIFIED: src/components/dashboard/ai-hub-view.tsx (NOVA ScenarioBrainCard komponenta z rose/pink gradient, comparison table 3-4 columns + recommendation banner z 🏆 BEST badge + custom "What If?" form z 3 inputi (Capital €, Trades/month, Risk tolerance); card pozicionirana MED MasterBrainBanner in 7 Domain Brain sections; BrainSynthesisCard outer badge posodobljen z v8.27 Scenario)
+- AI endpointi: 418 → 419 (+1)
+- Total API routes: 595 → 596 (+1)
+- Brain category: 14 → 15 (+1)
+- Lint: 0 errors (2 pre-existing warnings v src/lib/db.ts — unused eslint-disable, ne moje) ✨
+- Typecheck: 0 errors ✨ (čist run brez React Compiler warnings)
+- Endpoint verification:
+  - GET /api/ai/brain/scenario → 200 z ok:true, scenarios[3] (conservative/balanced/aggressive), comparisonTable[8 rows], recommendation {bestScenario: "aggressive", reasoning: "...14282€ v 12m z 50/100 zdravjem..."}, source: "v8.27-scenario-brain", baseCapital: 1500 ✅
+  - POST /api/ai/brain/scenario -d '{"profitInput":{"capitalDeployed":5000,"tradesPerMonth":25}}' → 200 z ok:true, scenarios[3] (presets) + custom prisoten (type: "custom"), comparisonTable z 4. stolpcem (🎯 Custom: 30d 3360€, 12m 15513€), recommendation {bestScenario: "custom"} ✅
+  - GET /api/ai-list → 200 {"total":419, "categories":{"brain":15}} (brain 15 = prej 14 + 1 nov brain/scenario) ✅
+  - Brain endpoints (15): brain/accuracy, brain/accuracy/backfill, brain/actual-profit, brain/buyer, brain/explain, brain/inventory, brain/market, brain/master, brain/pricing, brain/profit, brain/risk, brain/risk-profile, brain/scenario, brain/snapshots, brain/sourcing ✅
+  - Cache: 1st GET cold = 1252ms (Next.js dev overhead + 3× compute ~15ms application-code), 2nd GET cached = 9ms, POST custom = 15ms. Vsi znotraj maxDuration=60 ✅
+  - Brez runtime error-jev v dev.log ✅
+- Documentation updated: AI_ENDPOINTS.md (Total: 419, brain/scenario row 23 + renumber 1-419), README.md (version v8.27.0, badges 419 AI + 596 routes, hero tagline z Intelligence phase continues, Overview paragraph z v8.15-v8.27, Kaj je novega v8.27 entry na vrh, version section, function count ~282, all v8.26/418/595 references posodobljene, Roadmap z v8.27 ✅ dokončana, Changelog Zadnje verzije z v8.27.0 entry na vrh), CHANGELOG.md (nov [8.27.0] section z Added + Stats + Notes z INTELLIGENCE PHASE NADALJUJE + Note "v8.26=WHY, v8.27=WHAT IF?, Next v8.28 Adaptive Domain Weights", [Unreleased] posodobljen z v8.28 Adaptive Domain Weights)
+- 🎯 INTELLIGENCE PHASE NADALJUJE:
+  - Master Brain (v8.22) daje KAJ (TOP 5 ranked actions)
+  - Risk Profile (v8.24) naredi PERSONAL (conservative/balanced/aggressive adjustment)
+  - Explainability (v8.26) daje ZAKAJ (per-action reasoning + reasoningParts + trustScore)
+  - Scenario Brain (v8.27) odgovarja WHAT IF? (3 preset scenarios + custom overrides, parallel execution, comparison table, recommendation)
+  - Skupaj odgovarjajo "Kaj naj naredim danes, zakaj in kaj če...?"
+  - Formula recommendation: scenario z max(projectedProfit12m), tie-break max(overallHealth)
+  - 3 preset configs: CONSERVATIVE (× 0.7 capital, 1000€ reserve, 30% concentration), BALANCED (default), AGGRESSIVE (× 1.5 capital, 200€ reserve, 50% concentration, 15 trades/month, 27 items)
+  - UI: 🎯 Scenario Brain card (rose/pink) z 3-4 column comparison table + recommendation banner z 🏆 BEST badge + custom "What If?" form (Capital € + Trades/month + Risk tolerance toggle)
+- Verzija aplikacije: v8.27.0
+- Skupaj doslej (v7.50 → v8.27): 77 verzij, 201 novih funkcij; Brain architecture COMPLETE (v8.22) + Validation phase ZAKLJUČENA (v8.23+v8.24+v8.25) + Intelligence phase (v8.26+v8.27) — naslednji: v8.28 (Adaptive Domain Weights — DOMAIN_WEIGHTS se prilagodijo glede na historical accuracy per domena)
