@@ -15269,3 +15269,53 @@ Stage Summary:
   - HIERARHIJA: 411 specialistov → 7 Domain Brains → 1 Master Brain = "nevroni → regije → zavest"
   - 8 brain layers skupaj, 42+ signals → 1 decision ("Kaj naj naredim danes?")
 - Skupaj doslej (v7.50 → v8.22): 72 verzij, 194 novih funkcij; Brain architecture COMPLETE
+
+---
+Task ID: v8.23
+Agent: full-stack-developer + main
+Task: Implement Daily Brain Snapshots + Actual Profit Tracker (NEW PHASE: Validation — "Ali lahko zaupaš Master Brain-u?")
+
+Work Log:
+- Podagent (full-stack-developer) je implementiral v8.23: Daily Brain Snapshots + Actual Profit Tracker
+- Context je bil canceled med podagentovim delom, ampak podagent je uspešno dokončal vse datoteke pred prekinitvijo
+- Vse v8.23 spremembe so bile commit-ane v d625f52 (z napačnim message-om "v8.22.1" ampak vsebina je v8.23)
+- Main agent je neodvisno preveril:
+  - BrainSnapshot Prisma model v schema.prisma ✅ (db:push uspešen, tabela obstaja v DB)
+  - src/lib/brain/snapshots.ts (saveDailySnapshot, getSnapshots, getLatestSnapshot, getSnapshotMasterResult) ✅
+  - src/lib/profit/actual.ts (calculateActualProfit — bere Trade tabelo) ✅
+  - src/app/api/ai/brain/actual-profit/route.ts (GET ?days=30) ✅
+  - src/app/api/ai/brain/snapshots/route.ts (GET + POST) ✅
+  - src/app/api/cron/daily-brain-snapshot/route.ts (cron @ 00:00) ✅
+  - src/components/dashboard/ai-hub-view.tsx (Actual Profit card ON TOP + Brain Snapshots section at bottom) ✅
+  - AI_ENDPOINTS.md (Total: 414, rows 17-18 za actual-profit + snapshots) ✅
+  - README.md (v8.23.0 badge, NEW PHASE Validation note, Overview paragraph) ✅
+  - CHANGELOG.md ([8.23.0] section z full description) ✅
+- Neodvisno preveril endpoint-e (curl 3 testi):
+  - GET /api/ai/brain/actual-profit?days=30 → 200 {"ok":true,"period":"30d","totalProfitEUR":0,"totalRevenueEUR":0,"totalCostEUR":0,"tradeCount":0,"avgProfitPerTradeEUR":0,"avgMarginPct":0,"dailyAvgEUR":0,"bestTrade":null,"worstTrade":null} (tradeCount: 0 ker ni sold trades v DB — pravilno vrača strukturo)
+  - POST /api/ai/brain/snapshots {"force":true} → 200 {"ok":true,"date":"2026-08-13","forced":true,"snapshot":{id, date, overallHealth:50, healthGrade:"C", riskLevel:"MEDIUM", topActionCount:5, conflictCount:1, bottleneckCount:2, projection30dEUR:3133.06, projection90dEUR:3833.25, projection12mEUR:13799.7, profitGrade:"D", inventoryGrade:"D", marketGrade:"B", sourcingGrade:"B", riskGrade:"C", buyerGrade:"C", pricingGrade:"B", actualProfit30d:null, actualProfit90d:null, accuracy30d:null, accuracy90d:null}} (Master Brain klican, snapshot shranjen v DB)
+  - GET /api/ai/brain/snapshots?days=30 → 200 {"ok":true,"days":30,"snapshots":[{...snapshot ki smo ga ravnokar shranili...}], ...} (snapshot najden v DB)
+  - GET /api/ai-list → 200 {"ok":true,"total":414,"categories":{brain:10,...}} (brain kategorija 10 = 8 brain + snapshots + actual-profit)
+- Preveril lint: 0 napak ✨
+- Preveril typecheck: 0 napak ✨
+
+Stage Summary:
+- NOV Prisma model: BrainSnapshot (date-unique, stores Master Brain output: overallHealth, 7 domain grades, topActions, conflicts, strategy projections kot JSON, actualProfit30d/90d + accuracy30d/90d za v8.25 backfill)
+- NEW: src/lib/brain/snapshots.ts (saveDailySnapshot — cron kliče masterBrain() in upsert-a v DB; getSnapshots(days); getLatestSnapshot; getSnapshotMasterResult(date))
+- NEW: src/lib/profit/actual.ts (calculateActualProfit(days) — bere Trade tabelo status='sold' + sellDate filter, računa totalProfitEUR, avgMarginPct, dailyAvgEUR, bestTrade, worstTrade — GROUND TRUTH)
+- NEW: src/app/api/cron/daily-brain-snapshot/route.ts (cron @ 00:00 GET+POST)
+- NEW: src/app/api/ai/brain/snapshots/route.ts (GET ?days=30 + POST {force:true})
+- NEW: src/app/api/ai/brain/actual-profit/route.ts (GET ?days=30)
+- MODIFIED: src/components/dashboard/ai-hub-view.tsx (📊 Dejanski profit card ON TOP nad Master Brain banner-jem — ground truth first; 📸 Brain Snapshots section na dnu z manual save button)
+- MODIFIED: prisma/schema.prisma (BrainSnapshot model)
+- AI endpointi: 412 → 414 (+2)
+- Total API routes: 589 → 591 (+2)
+- Lint: 0 napak ✨
+- Typecheck: 0 napak ✨
+- Endpoint verification: GET actual-profit (200, tradeCount:0 pravilno), POST snapshots (200, snapshot saved z overallHealth:50 + projection30d:3133€), GET snapshots (200, snapshot najden)
+- Documentation updated: AI_ENDPOINTS.md (Total: 414), README.md (v8.23.0 + NEW PHASE Validation), CHANGELOG.md ([8.23.0] section)
+- 🎯 NEW PHASE: Validation — "Ali lahko zaupaš Master Brain-u?"
+  - v8.23 doda DVE temeljni komponenti: (1) Daily Brain Snapshots (shrani Master Brain napovedi), (2) Actual Profit Tracker (meri dejanski profit iz Trade tabele)
+  - Skupaj omogočata v8.25 (Historical Accuracy): accuracy % = actual / predicted × 100
+  - UI: 📊 Dejanski profit card na VRHU Brain view-a (ground truth first, nad Master Brain banner-jem) + 📸 Brain Snapshots section na dnu (zgodovina z manual save)
+- Verzija aplikacije: v8.23.0
+- Skupaj doslej (v7.50 → v8.23): 73 verzij, 196 novih funkcij; Brain architecture COMPLETE (v8.22) + Validation phase STARTED (v8.23) — naslednji korak: v8.24 (User Risk Profile) → v8.25 (Historical Accuracy + Trend)
