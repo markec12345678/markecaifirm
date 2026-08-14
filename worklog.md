@@ -16798,3 +16798,45 @@ Stage Summary:
   - v8.34 = Brain Integration Test Suite (testing — "Ali Brain sistem dejansko dela?")
   - Naslednji: v8.35 (E2E tests s Playwright, predictive accuracy improvements)
 - Skupaj doslej (v7.50 → v8.34): 84 verzij, 208 novih funkcij; Brain architecture COMPLETE (v8.22) + Validation phase ZAKLJUČENA (v8.23-v8.25) + Intelligence phase ZAKLJUČENA (v8.26-v8.29) + Automation phase ZAKLJUČENA (v8.30-v8.31) + Polish phase (v8.32-v8.34)
+
+---
+Task ID: v8.34.1
+Agent: main
+Task: v8.34 commit + push + GitHub About + quick verification
+
+Work Log:
+- Prejel poročilo od full-stack-developer podagenta (Task v8.34 — 92 novih testov v tests/brain/ — 8 testnih datotek)
+- Podagent je potrdil: 37→129 testov, vsi passing v 3.06s
+- Neodvisno preveril: bun run test → 129 tests passing (15 files, 3.21s) ✅
+- Preveril lint: 0 napak ✨
+- Preveril typecheck: 0 napak ✨
+- Preveril doc sync: README v8.34.0 + "129 tests" ✅, CHANGELOG [8.34.0] ✅
+- Posodobil GitHub About: "426 AI + 72 analytics = 603 routes. v8.34.0: Brain (8 layers) + Validation + Intelligence + Automation COMPLETE + Polish (Health + Performance + 129 tests)."
+- Commit: "v8.34: Brain Integration Test Suite — 92 new tests (37→129)..." (2590a8b)
+- Push na GitHub: uspešen ✅ (7ae1395..2590a8b), PAT očiščen ✅
+- Agent Browser quick check: stran HTTP 200, AI Hub button prisoten, brez napak v dev.log (v8.34 je tests-only — nobene UI spremembe)
+
+Stage Summary:
+- 92 NEW tests v tests/brain/ (8 datotek):
+  - domain-brains.test.ts (21 tests — 7 domains × 3: default inputs, custom inputs, 6 signals valid grades)
+  - master-brain.test.ts (9 tests — orchestration, conflicts, health, strategy, skip flags, ranking)
+  - explainability.test.ts (6 tests — reasoning per action + trustScore + profileImpact)
+  - scenario.test.ts (8 tests — 3 presets, comparison table, aggressive>conservative, custom)
+  - risk-profile.test.ts (10 tests — balanced/conservative/aggressive + validation)
+  - adaptive-weights.test.ts (11 tests — boost/reduce/clamp + DEFAULT_DOMAIN_WEIGHTS + constants)
+  - auto-pilot.test.ts (16 tests — V1 8 safety rules + V2 aggressive + config defaults)
+  - cache-stats.test.ts (11 tests — hits/misses/sets/hitRate + reset + round-trip + expiry)
+- Test count: 37 → 129 (+92)
+- AI endpointi: 426 (nespremenjeno — tests only)
+- Total API routes: 603 (nespremenjeno)
+- Lint: 0 napak ✨
+- Typecheck: 0 napak ✨
+- All 129 tests passing v 3.21s ✅
+- Dokumentacija sinhrono posodobljena (README, CHANGELOG, GitHub About)
+- GitHub sinhroniziran (0 commit-ov ahead)
+- Verzija aplikacije: v8.34.0
+- Polish phase continues:
+  - v8.32 = System Health Dashboard (monitoring)
+  - v8.33 = Performance Caching (cache stats)
+  - v8.34 = Brain Integration Test Suite (92 tests)
+- Skupaj doslej (v7.50 → v8.34): 84 verzij, 208 novih funkcij; Brain architecture COMPLETE (v8.22) + Validation phase ZAKLJUČENA (v8.23-v8.25) + Intelligence phase ZAKLJUČENA (v8.26-v8.29) + Automation phase ZAKLJUČENA (v8.30-v8.31) + Polish phase (v8.32-v8.34)
