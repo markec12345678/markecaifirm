@@ -1,7 +1,7 @@
 import { PrismaClient } from '@prisma/client'
 
 // eslint-disable-next-line no-console
-console.log('[db.ts] module loaded at', new Date().toISOString(), 'schemaVersion=v8.31-aggressive-anomaly');
+console.log('[db.ts] module loaded at', new Date().toISOString(), 'schemaVersion=v8.38-notification-center');
 
 // v7.32: Prisma logging only in dev — 'query' level dumps SQL with parameter
 // values, which is a security/privacy concern in production.
@@ -25,7 +25,7 @@ const logLevel = process.env.NODE_ENV === 'production'
 // IMPORTANT: bump SCHEMA_VERSION whenever you add/remove Prisma model fields or
 // models. The string is arbitrary — just needs to change so the equality check
 // fails and the stale client is discarded.
-const SCHEMA_VERSION = 'v8.31-aggressive-anomaly' // bumped for v8.31 aggressive + anomaly fields on Settings
+const SCHEMA_VERSION = 'v8.38-notification-center' // bumped for v8.38 Notification model
 
 const globalForPrisma = globalThis as unknown as {
   prisma: PrismaClient | undefined

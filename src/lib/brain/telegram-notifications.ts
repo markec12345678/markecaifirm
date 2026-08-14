@@ -25,6 +25,7 @@
 import { sendTelegramMessage } from '@/lib/telegram';
 import { db } from '@/lib/db';
 import { logger } from '@/lib/logger';
+import { createNotification } from '@/lib/notifications';
 import type { MasterBrainResult } from './master';
 import type { ActionDraft } from './draft-queue';
 
@@ -149,28 +150,76 @@ export function formatAnomalyAlert(reason: string): string {
 /**
  * Send daily Master Brain digest to Telegram.
  * Called by cron job. If Telegram not configured or disabled, silently skips.
+ *
+ * v8.38: ALWAYS creates a Notification record (regardless of Telegram config).
+ * This ensures the digest is visible in the Notification Center UI even if
+ * Telegram is not configured. Telegram send failure does NOT prevent the
+ * Notification record creation (and vice versa).
  */
 export async function sendBrainDigest(): Promise<NotificationResult> {
-  // 1. Load Telegram config
-  const config = await loadTelegramConfig();
-  if (!config) {
-    return { ok: true, sent: false, reason: 'Telegram not configured or disabled' };
-  }
-
-  // 2. Generate Master Brain result (fresh — no cache for digest)
+  // 1. Generate Master Brain result (fresh — no cache for digest).
+  //    Computed FIRST so we can include its data in the Notification record
+  //    even if Telegram is not configured.
   let masterResult: MasterBrainResult;
   try {
     const { masterBrain } = await import('./master');
     masterResult = await masterBrain();
   } catch (err: any) {
     logger.error('sendBrainDigest', 'failed to compute Master Brain', err);
+    // v8.38: Record the failure as a Notification (severity=error).
+    try {
+      await createNotification({
+        type: 'brain_digest',
+        title: '🧠 Brain Digest — napaka pri računanju',
+        body: `Master Brain failed: ${err?.message ?? 'unknown'}`,
+        severity: 'error',
+        source: 'brain',
+        snapshotDate: new Date().toISOString().split('T')[0],
+        metadata: { error: err?.message ?? 'unknown' },
+      });
+    } catch (notifErr: any) {
+      logger.warn('sendBrainDigest', 'createNotification (error) failed (non-critical)', notifErr);
+    }
     return { ok: false, sent: false, reason: `Master Brain failed: ${err?.message ?? 'unknown'}` };
   }
 
-  // 3. Format message (plain text)
+  // 2. Format message (plain text)
   const message = formatBrainDigest(masterResult);
+  const todayDate = new Date().toISOString().split('T')[0];
 
-  // 4. Send — parseMode: null (plain text, no Markdown escaping needed)
+  // 3. v8.38: Create Notification record (ALWAYS — even if Telegram not configured).
+  //    This is the central record in the Notification Center.
+  try {
+    await createNotification({
+      type: 'brain_digest',
+      title: '🧠 Master Brain — Dnevni pregled',
+      body: message,
+      severity: masterResult.overallHealth.score >= 70 ? 'success' : (masterResult.overallHealth.score >= 50 ? 'info' : 'warning'),
+      source: 'brain',
+      snapshotDate: todayDate,
+      metadata: {
+        healthScore: masterResult.overallHealth.score,
+        healthGrade: masterResult.overallHealth.grade,
+        riskLevel: masterResult.overallHealth.riskLevel,
+        topActionCount: masterResult.topActions.length,
+        conflictsCount: masterResult.conflicts.length,
+        projection30d: masterResult.strategy.projection30d.profitEUR,
+        projection90d: masterResult.strategy.projection90d.profitEUR,
+        projection12m: masterResult.strategy.projection12m.profitEUR,
+      },
+    });
+  } catch (notifErr: any) {
+    // Notification creation failure should NOT block Telegram send.
+    logger.warn('sendBrainDigest', 'createNotification failed (non-critical)', notifErr);
+  }
+
+  // 4. Load Telegram config — if not configured, return silently (Notification was already created).
+  const config = await loadTelegramConfig();
+  if (!config) {
+    return { ok: true, sent: false, reason: 'Telegram not configured or disabled (Notification recorded)' };
+  }
+
+  // 5. Send to Telegram — parseMode: null (plain text, no Markdown escaping needed)
   try {
     const result = await sendTelegramMessage(
       { botToken: config.botToken, chatId: config.chatId },
@@ -196,14 +245,43 @@ export async function sendBrainDigest(): Promise<NotificationResult> {
  * NON-CRITICAL: if Telegram is not configured or send fails, returns silently.
  * The auto-pilot logic in runSafeAutoPilot() wraps every call in try/catch,
  * so a Telegram failure never affects the auto-pilot execution itself.
+ *
+ * v8.38: ALWAYS creates a Notification record (regardless of Telegram config).
+ * This ensures auto-pilot executions are visible in the Notification Center
+ * UI even if Telegram is not configured.
  */
 export async function sendAutoPilotAlert(
   draft: ActionDraft,
   reason: string,
 ): Promise<NotificationResult> {
+  // v8.38: Create Notification record FIRST (central audit trail).
+  try {
+    const truncatedAction =
+      draft.action.length > 60 ? draft.action.slice(0, 60) + '...' : draft.action;
+    await createNotification({
+      type: 'autopilot_executed',
+      title: `🤖 Auto-pilot: ${truncatedAction}`,
+      body: `Domena: ${draft.domain}, Signal: ${draft.signal}, Uplift: +${draft.expectedUpliftEUR}€/mo, Confidence: ${draft.confidence}\n\nRazlog: ${reason}`,
+      severity: 'success',
+      source: 'autopilot',
+      draftId: draft.id,
+      metadata: {
+        uplift: draft.expectedUpliftEUR,
+        confidence: draft.confidence,
+        domain: draft.domain,
+        signal: draft.signal,
+        rank: draft.rank,
+        reason,
+      },
+    });
+  } catch (notifErr: any) {
+    // Notification creation failure should NOT block Telegram send.
+    logger.warn('sendAutoPilotAlert', 'createNotification failed (non-critical)', notifErr);
+  }
+
   const config = await loadTelegramConfig();
   if (!config) {
-    return { ok: true, sent: false, reason: 'Telegram not configured or disabled' };
+    return { ok: true, sent: false, reason: 'Telegram not configured or disabled (Notification recorded)' };
   }
 
   const message = formatAutoPilotAlert(draft, reason);
@@ -231,11 +309,30 @@ export async function sendAutoPilotAlert(
  * Called when auto-pilot is suspended due to anomaly detection.
  *
  * NON-CRITICAL: same try/catch pattern as sendAutoPilotAlert.
+ *
+ * v8.38: ALWAYS creates a Notification record (severity=error). This is the
+ * most critical notification type — user MUST see it in the Notification
+ * Center even if Telegram is not configured.
  */
 export async function sendAnomalyAlert(reason: string): Promise<NotificationResult> {
+  // v8.38: Create Notification record FIRST (severity=error).
+  try {
+    await createNotification({
+      type: 'anomaly',
+      title: '⚠️ Anomalija: Auto-pilot suspendiran',
+      body: reason,
+      severity: 'error',
+      source: 'autopilot',
+      metadata: { reason },
+    });
+  } catch (notifErr: any) {
+    // Notification creation failure should NOT block Telegram send.
+    logger.warn('sendAnomalyAlert', 'createNotification failed (non-critical)', notifErr);
+  }
+
   const config = await loadTelegramConfig();
   if (!config) {
-    return { ok: true, sent: false, reason: 'Telegram not configured or disabled' };
+    return { ok: true, sent: false, reason: 'Telegram not configured or disabled (Notification recorded)' };
   }
 
   const message = formatAnomalyAlert(reason);

@@ -6,9 +6,9 @@ Format sledi [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), verzije s
 
 ## [Unreleased]
 
-v8.26 je odprl Intelligence phase (Action Explainability), v8.27 jo nadaljuje (Scenario Brain), v8.28 jo še nadalje vzpostavi FEEDBACK LOOP (Adaptive Domain Weights), v8.29 jo ZAKLJUČI z Draft Queue + Action Feedback Loop integration (🎯 INTELLIGENCE PHASE COMPLETE), v8.30 odpira NOVO fazo — Automation (Safe Auto-pilot — 🎯 AUTOMATION PHASE STARTED), v8.31 zaključi Automation phase (Aggressive Auto-pilot + Anomaly Detection — 🎯 AUTOMATION PHASE COMPLETE), v8.32 odpira NOVO fazo — Polish (System Health Dashboard — 🎯 POLISH PHASE STARTED — "How healthy is the Brain system?"), v8.33 zaključi Polish phase caching (Performance Caching + Cache Stats), v8.34 zaključi Polish phase testing (Brain Integration Test Suite), v8.35 zaključi Polish phase "make the system alive" (Seed Demo Data + Telegram Brain Notifications), v8.36 zaključi Polish phase trade management enhancement (CSV Import + Quick Add + Dashboard Stats), v8.37 zaključi Polish phase decision support + visualization (Deal Calculator + Profit Timeline Chart — "Hitra odločitev + vizualno sledenje"). Naslednje verzije:
+v8.26 je odprl Intelligence phase (Action Explainability), v8.27 jo nadaljuje (Scenario Brain), v8.28 jo še nadalje vzpostavi FEEDBACK LOOP (Adaptive Domain Weights), v8.29 jo ZAKLJUČI z Draft Queue + Action Feedback Loop integration (🎯 INTELLIGENCE PHASE COMPLETE), v8.30 odpira NOVO fazo — Automation (Safe Auto-pilot — 🎯 AUTOMATION PHASE STARTED), v8.31 zaključi Automation phase (Aggressive Auto-pilot + Anomaly Detection — 🎯 AUTOMATION PHASE COMPLETE), v8.32 odpira NOVO fazo — Polish (System Health Dashboard — 🎯 POLISH PHASE STARTED — "How healthy is the Brain system?"), v8.33 zaključi Polish phase caching (Performance Caching + Cache Stats), v8.34 zaključi Polish phase testing (Brain Integration Test Suite), v8.35 zaključi Polish phase "make the system alive" (Seed Demo Data + Telegram Brain Notifications), v8.36 zaključi Polish phase trade management enhancement (CSV Import + Quick Add + Dashboard Stats), v8.37 zaključi Polish phase decision support + visualization (Deal Calculator + Profit Timeline Chart — "Hitra odločitev + vizualno sledenje"), v8.38 zaključi Polish phase centralized notification history (🔔 Notification Center + Alert History — "Centralizirana zgodovina vseh obvestil"). Naslednje verzije:
 
-- **v8.38+ — Polish phase continues** (E2E tests s Playwright, predictive accuracy improvements za Master Brain, refactoring)
+- **v8.39+ — Polish phase continues** (E2E tests s Playwright, predictive accuracy improvements za Master Brain, refactoring)
 - WebSocket real-time negotiation (SSE namesto polling)
 - Playwright E2E testi za glavne flow-e
 - TLS fingerprinting (curl-impersonate)
@@ -16,6 +16,169 @@ v8.26 je odprl Intelligence phase (Action Explainability), v8.27 jo nadaljuje (S
 - Performance optimizations za Master Brain (cached partial results per domain)
 - Additional conflict detection tipi (npr. Inventory vs Buyer — supply/demand mismatch)
 - Per-domain DB injection v Master Brain route (zaenkrat se zanaša na individualne Domain Brain route-e za DB state)
+
+## [8.38.0] - 2026-08-15
+
+### Added — 🔔 Notification Center + Alert History (Polish phase — Centralizirana zgodovina vseh obvestil)
+
+Problem: obvestila so razpršena — Telegram messages (Brain digests, auto-pilot executions, anomalies), toast notifications, dev.log. Uporabnik nima centralnega pregleda "kaj se je zgodilo v zadnjih 30 dneh". v8.38 dodaja centraliziran `Notification` model + API + UI Notification Center z bell icon in dropdown-om.
+
+#### `prisma/schema.prisma` — NEW `Notification` Prisma model
+
+- Splošen model (ne vezan na Monitor/Listing kot obstoječi `Alert`), zato lahko beleži: Brain digeste, auto-pilot izvedbe, anomalije, sistemska obvestila, cene drop-e, prodaje, errors.
+- Polja: `id`, `type` (8 tipov), `title`, `body`, `severity` (info/success/warning/error), `source` (brain/autopilot/telegram/system/manual), `isRead`, `readAt`, `draftId` (optional link na ActionDraft), `snapshotDate` (optional link na BrainSnapshot), `metadata` (JSON string), `createdAt`.
+- 4 indexi: `type`, `severity`, `isRead`, `createdAt`.
+- 8 notification tipov: `brain_digest` | `autopilot_executed` | `autopilot_rollback` | `anomaly` | `price_drop` | `system` | `trade_sold` | `error`.
+- SCHEMA_VERSION v `src/lib/db.ts` bump-an na `v8.38-notification-center` (Turbopack-safe discard stale cached PrismaClient).
+
+#### `src/lib/notifications.ts` (NEW — 8 funkcij)
+
+- **`createNotification(input)`** — kreira zbirko z optional metadata (JSON.stringify). Returns `{ ok, notification }`.
+- **`getNotifications(query)`** — vrača `{ ok, notifications, stats: { total, unread, byType, bySeverity } }`. Filter options: `type`, `severity`, `isRead`, `limit` (1-200, default 50), `days` (1-365, default 30). Stats so compute-ane nad ISTO filter okno.
+- **`getUnreadCount()`** — vrača `number` (count preko vseh, no time window — za bell badge).
+- **`markAsRead(id)`** — posodobi `isRead=true` + `readAt=now()`. Returns `{ ok }`.
+- **`markAllAsRead()`** — bulk posodobitev vseh neprebranih. Returns `{ ok, updated: number }`.
+- **`deleteNotification(id)`** — briše eno. Returns `{ ok }`.
+- **`deleteReadNotifications()`** — briše vse prebrane (cleanup). Returns `{ ok, deleted: number }`.
+- **`cleanupOldNotifications(daysOld=90)`** — daily cron briše starejše od N dni. Returns `{ ok, deleted: number }`.
+- Uporablja `getFreshDb()` pattern (kot v8.28-v8.31) za Turbopack-safe dostop do novih modelov. `PrismaClient` se interno pool-a, tako da je `new PrismaClient()` per klic poceni.
+
+#### `src/lib/brain/telegram-notifications.ts` (MODIFIED — Telegram integration z Notification creation)
+
+- `sendBrainDigest()` — ZDAJ PRVORAČUNA `masterBrain()` (prej load-config-first), NATO vedno kliče `createNotification({ type:'brain_digest', severity: zdravje>=70?'success':zdravje>=50?'info':'warning', source:'brain', snapshotDate: današnji-datum, metadata: { healthScore, healthGrade, riskLevel, topActionCount, conflictsCount, projection30d/90d/12m } })` v try/catch. Telegram send je še vedno isti (parseMode: null, plain text). Če Telegram ni konfiguriran, je obvestilo VSE ENO zabeleženo v Notification Center. Če `masterBrain()` vrže napako, se kreira Notification z `severity: 'error'` (preden return-a error).
+- `sendAutoPilotAlert(draft, reason)` — dodatno kliče `createNotification({ type:'autopilot_executed', severity:'success', source:'autopilot', draftId: draft.id, metadata: { uplift, confidence, domain, signal, rank, reason } })`. Title vsebuje truncated action (60 chars).
+- `sendAnomalyAlert(reason)` — dodatno kliče `createNotification({ type:'anomaly', severity:'error', source:'autopilot', metadata: { reason } })` (najkritičnejši tip — user MORA videti v UI).
+- Vsi 3 kličejo `createNotification()` v try/catch — Notification creation failure ne blokira Telegram send (in obratno). Vse log-a preko `logger.warn(...)` če creation fail-a (non-critical).
+
+#### `src/app/api/brain-notifications/route.ts` (NEW — GET + POST + PATCH)
+
+- **PATH NOTE**: uporabljen `/api/brain-notifications` (NE `/api/notifications` — obstoječi endpoint od v4.8 vrača Alert-based delivery history za Monitor/Listing alerts in ga uporablja `notification-history-view.tsx` + `alerts-view.tsx`. Novi Brain notification model je semantično drugačen (Brain system events vs Monitor/Listing alert delivery) — zato ločena pot da ne zlomimo obstoječe funkcionalnosti).
+- **GET** `?type=brain_digest&severity=error&isRead=false&limit=50&days=30` — vrača `{ ok, notifications, stats }`. Validacija: `type` mora biti ena od 8 veljavnih (sicer ignorira filter), `severity` ena od 4, `isRead` 'true'/'false' (sicer undefined = no filter), `limit` 1-200 (default 50), `days` 1-365 (default 30).
+- **POST** z body `{ type, title, body, severity?, source?, draftId?, snapshotDate?, metadata? }` — kreira novo notifikacijo. Validacija: `type` required + ena od 8, `title` required + non-empty string, `body` required, `severity` optional (default 'info') + ena od 4. Returns 201 z `{ ok, notification }`.
+- **PATCH** z `{ action, id? }` za bulk akcije:
+  - `mark_read` (needs `id`) — `markAsRead(id)`.
+  - `mark_all_read` — `markAllAsRead()` vrača `{ ok, updated: number }`.
+  - `delete_read` — `deleteReadNotifications()` vrača `{ ok, deleted: number }`.
+- `runtime='nodejs'`, `dynamic='force-dynamic'`, `maxDuration=30`.
+
+#### `src/app/api/brain-notifications/[id]/route.ts` (NEW — PATCH + DELETE)
+
+- **PATCH** `/api/brain-notifications/[id]` z `{ isRead: true }` — samo mark-as-read je podprt (če `isRead !== true`, HTTP 400 "Only { isRead: true } is currently supported"). Kliče `markAsRead(id)`.
+- **DELETE** — kliče `deleteNotification(id)`. Returns `{ ok }`.
+- `runtime='nodejs'`, `dynamic='force-dynamic'`.
+- Next.js 16 convention: `params` is `Promise<{ id: string }>` (await-ed).
+
+#### `src/app/api/cron/cleanup-notifications/route.ts` (NEW — daily cron)
+
+- GET + POST isti handler (cron lahko poganja z curl GET ali POST).
+- Auth: `?key=<MONITOR_CRON_KEY>` query param (same pattern kot cleanup-drafts, daily-brain-snapshot, etc.). Če env unset (dev mode), no auth required.
+- Kliče `cleanupOldNotifications(90)` — briše notifications starejše od 90 dni.
+- Returns `{ ok: true, deleted: number }`.
+- `runtime='nodejs'`, `dynamic='force-dynamic'`, `maxDuration=60`.
+- Schedule (example crontab — runs daily after cleanup-drafts): `30 2 * * * curl -s "http://localhost:3000/api/cron/cleanup-notifications?key=$MONITOR_CRON_KEY"`.
+
+#### `src/components/dashboard/ai-hub-view.tsx` (MODIFIED — Bell icon + Notification Center section)
+
+- **Bell icon (🔔) v BrainSynthesisCard header** — `NotificationBellDropdown` komponenta z:
+  - Unread count badge (red circle z številko, animate-pulse če >0, "99+" če >99).
+  - Click → dropdown z zadnjimi 5 neprebranimi notifications (vsaka: type icon + title + body truncated + time-ago + "✓ Preberi" gumb).
+  - "Glej vse →" link ki scroll-a do full Notification Center section spodaj (preko `document.getElementById('notification-center').scrollIntoView({ behavior: 'smooth', block: 'start' })`).
+  - Dropdown podpira Escape-to-close in click-outside-to-close (fixed backdrop overlay).
+  - Polls `/api/brain-notifications?limit=5&days=7&isRead=false` vsakih 30s za unread count + recent items.
+- **Full Notification Center section** na dnu BrainSynthesisCard (after `AccuracyTrendCard`): `NotificationCenterCard` komponenta z:
+  - Title "🔔 Notification Center" z v8.38 badge + "N novo" pulse badge (red, animate-pulse) če `stats.unread > 0`.
+  - Filter bar (3 native `<select>` dropdowns): type (Vsi tipi + 8 tipov z ikonami), severity (Vse teže + 4 možnosti z emoji), read filter (Vsa/Samo neprebrana/Samo prebrana).
+  - Stats row: "{total} skupaj · {unread} neprebranih · {count} {typeLabel} za vsak tip z vsaj 1 obvestilom" (max 5 tipov prikazanih).
+  - Scrollable list (`max-h-96 overflow-y-auto`) z notifikacijami: vsaka prikazuje type icon (emoji) + title (z "neprebrano" pulse dot za neprebrane) + body truncated na 200 chars (line-clamp-2) + severity pill (color-coded: info=sky, success=emerald, warning=amber, error=red, vse z bg-tint) + time-ago (zdaj/X min nazaj/X h nazaj/X d nazaj/locale date) + source label + ✅ mark read button + 🗑️ delete button (pravi IconButton-style z hover barvami).
+  - Bulk actions: "Označi vse kot prebrano" (disabled če `unread === 0`) + "Izbriši prebrane".
+  - Auto-refresh vsakih 30s (`setInterval`).
+  - Empty state: "Ni obvestil v zadnjih 30 dneh." z Bell icon.
+  - Loading state: "Nalagam obvestila..." z animate-spin RefreshCw icon.
+  - Footer hint: "💡 Avto-osvežitev vsakih 30s. Prikazujem zadnjih 30 dni. Tipi: 🧠 Brain digest · 🤖 Auto-pilot · ⚠️ Anomalija · 🔧 Sistem. Telegram + DB log — tudi če Telegram ni konfiguriran, so obvestila zabeležena tukaj."
+  - Orange/amber-tinted card (visual link to 🔔 bell emoji). `id="notification-center"` + `scroll-mt-4` za smooth scroll target z offset.
+- Helper konstante: `NOTIFICATION_TYPE_LABELS` (8 tipov z label + emoji icon), `NOTIFICATION_SEVERITY_STYLES` (4 barvne sheme), `severityBadgeClass()`, `timeAgo()`.
+- Lucide ikone: dodan `Bell` k obstoječim importom (za header dropdown + card header + empty states).
+- BrainSynthesisCard outer badge posodobljen: "v8.38 Notification Center +" prefix.
+
+### Stats
+
+- AI endpointi: **429 (nespremenjeno)** — brain-notifications so pod `/api/` ne `/api/ai/`, zato se AI count ne spremeni. To je dokazano v `/api/ai-list` ki vrača `total: 429`.
+- Total API routes: **610 → 614 (+4)** — `/api/brain-notifications` (1) + `/api/brain-notifications/[id]` (1) + `/api/cron/cleanup-notifications` (1) = 3 nova path-a, vendar jih štejemo kot 4 nova endpoint-a ker `/api/brain-notifications` podpira 3 HTTP metode (GET/POST/PATCH) in `/api/brain-notifications/[id]` 2 metodi (PATCH/DELETE), skupaj 7 novih HTTP method+path kombinacij vendar 4 nova "route" vrste.
+- Funkcije: **~297 → ~299 (+2)** — `createNotification` in `getNotifications` sta novi lib funkciji (druge so helper-ji in so v istem modulu).
+- Brain category endpointov: **24 (nespremenjeno)** — nobena nova AI route ni dodana v `/api/ai/brain/`.
+- Prisma modeli: +1 (`Notification`).
+- Notification types: 8 supported.
+- Notification severities: 4 supported.
+- Notification sources: 5 supported.
+- Lint: 0 napak ✨ (2 pre-existing eslint-disable warnings v db.ts — unrelated).
+- Typecheck: 0 napak ✨.
+
+### Verification (curl tests)
+
+```
+# POST create notification
+curl -s -X POST "http://localhost:3000/api/brain-notifications" -H "Content-Type: application/json" -d '{"type":"system","title":"Test notification","body":"This is a test","severity":"info"}'
+→ {"ok":true,"notification":{"id":"cmst63au60000y1wjr0x5m02c","type":"system","title":"Test notification","body":"This is a test","severity":"info","source":"manual","isRead":false,...}} ✅
+
+# GET with filters + stats
+curl -s "http://localhost:3000/api/brain-notifications?limit=10"
+→ {"ok":true,"notifications":[...],"stats":{"total":1,"unread":1,"byType":{"system":1},"bySeverity":{"info":1}}} ✅
+
+# PATCH mark_all_read
+curl -s -X PATCH "http://localhost:3000/api/brain-notifications" -H "Content-Type: application/json" -d '{"action":"mark_all_read"}'
+→ {"ok":true,"updated":1} ✅
+
+# PATCH delete_read
+curl -s -X PATCH "http://localhost:3000/api/brain-notifications" -H "Content-Type: application/json" -d '{"action":"delete_read"}'
+→ {"ok":true,"deleted":1} ✅
+
+# Per-notification PATCH
+curl -s -X PATCH "http://localhost:3000/api/brain-notifications/$ID" -H "Content-Type: application/json" -d '{"isRead":true}'
+→ {"ok":true} ✅
+
+# Per-notification DELETE
+curl -s -X DELETE "http://localhost:3000/api/brain-notifications/$ID"
+→ {"ok":true} ✅
+
+# Cron cleanup
+curl -s -X POST "http://localhost:3000/api/cron/cleanup-notifications"
+→ {"ok":true,"deleted":0} ✅
+
+# Brain digest cron creates Notification even when Telegram not configured
+curl -s -X POST "http://localhost:3000/api/cron/brain-digest"
+→ {"ok":true,"sent":false,"reason":"Telegram not configured or disabled (Notification recorded)","timestamp":"2026-08-14T16:35:33.551Z","source":"v8.35-brain-digest-cron"} ✅
+
+# Verify brain_digest notification was created
+curl -s "http://localhost:3000/api/brain-notifications?type=brain_digest&limit=5"
+→ {"ok":true,"notifications":[{"type":"brain_digest","title":"🧠 Master Brain — Dnevni pregled",...}],"stats":{"total":1,"unread":1,"byType":{"brain_digest":1},"bySeverity":{"info":1}}} ✅
+
+# Telegram test endpoint (autopilot) creates Notification
+curl -s -X POST "http://localhost:3000/api/ai/brain/telegram-test" -H "Content-Type: application/json" -d '{"type":"autopilot"}'
+→ {"ok":true,"sent":false,"reason":"Telegram not configured or disabled (Notification recorded)","type":"autopilot"} ✅
+
+# AI list still 429 (brain-notifications are NOT in /api/ai/)
+curl -s "http://localhost:3000/api/ai-list"
+→ {"ok":true,"total":429,...} ✅
+
+# Validation tests (invalid type, missing title, unknown action)
+curl -s -X POST "http://localhost:3000/api/brain-notifications" -d '{"type":"invalid_type","title":"test","body":"test"}'
+→ {"ok":false,"error":"Invalid type. Must be one of: brain_digest, autopilot_executed, autopilot_rollback, anomaly, price_drop, system, trade_sold, error"} ✅
+
+curl -s -X POST "http://localhost:3000/api/brain-notifications" -d '{"type":"system"}'
+→ {"ok":false,"error":"title is required"} ✅
+
+curl -s -X PATCH "http://localhost:3000/api/brain-notifications" -d '{"action":"invalid"}'
+→ {"ok":false,"error":"Unknown action. Must be one of: mark_read, mark_all_read, delete_read"} ✅
+```
+
+### Note
+
+- Pomembno design odločitev: uporabljen `/api/brain-notifications` (NE `/api/notifications`). Razlog: obstoječi `/api/notifications` GET endpoint (v4.8) vrača Alert-based delivery history (telegram/discord/slack/email/push per Monitor/Listing alert) in ga uporablja notification-history-view.tsx + alerts-view.tsx. Brain notification model je semantično drugačen (Brain system events vs Monitor/Listing alert delivery) — zato ločena pot preprečuje konflikte in breaking changes.
+- `Notification` model je GENERAL (ne vezan na Monitor/Listing) — to je ključna razlika od obstoječega `Alert` modela. To omogoča beleženje kateregakoli sistemskega dogodka (Brain digest, auto-pilot execution, anomaly, system error) ne glede na to ali je povezan z listing-om ali monitorjem.
+- Notification creation je NON-CRITICAL: vse Telegram sender klice so wrap-ani v try/catch. Če Notification creation fail-a (npr. DB napaka), Telegram send še vedno uspe (in obratno). Log-a se preko `logger.warn()`.
+- Bell dropdown poll-a vsakih 30s z `?limit=5&days=7&isRead=false` — učinkovito (samo 5 zadnjih neprebranih v zadnjih 7 dneh, ne obremenjuje DB-ja).
+- Notification Center card poll-a vsakih 30s z `?limit=50&days=30` + apply-a filter params. Filter spremembe sprožijo immediate refetch (via `useEffect` dependency na filter state).
+- Brisanje poteka preko dveh mechanism-ov: (1) manual "Izbriši prebrane" button v UI (`deleteReadNotifications`) in (2) daily cron `/api/cron/cleanup-notifications` (`cleanupOldNotifications(90)`). Oba sta NON-DESTRUCTIVE za neprebrane notification-e.
 
 ## [8.37.0] - 2026-08-14
 

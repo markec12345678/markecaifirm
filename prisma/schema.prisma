@@ -624,3 +624,40 @@ model BrainSnapshot {
   @@unique([date])
   @@index([date])
 }
+
+// v8.38: Notification Center — centralizirana zgodovina vseh obvestil (Brain, auto-pilot, anomalies, system).
+// SPLOŠEN model (ne vezan na Monitor/Listing kot obstoječi Alert) — zato lahko beleži:
+//   - Brain digeste (sendBrainDigest)
+//   - Auto-pilot izvedbe (sendAutoPilotAlert)
+//   - Anomalije (sendAnomalyAlert)
+//   - Sistemska obvestila (manual/cron)
+//   - Cene drop-e, prodaje, errors
+//
+// Vsa polja so Denormalized — Title + Body + Severity + Source zadostuje za prikaz v UI.
+// `metadata` je JSON string z dodatnimi podatki (npr. healthScore, uplift, confidence).
+// `draftId` / `snapshotDate` so optional povezave do ActionDraft / BrainSnapshot.
+//
+// v8.38 telegram-notifications.ts kliče createNotification() poleg sendTelegramMessage() —
+// če Telegram ni konfiguriran, je obvestilo VSE ENO zabeleženo tukaj (centralni pregled).
+model Notification {
+  id          String   @id @default(cuid())
+  type        String   // 'brain_digest' | 'autopilot_executed' | 'autopilot_rollback' | 'anomaly' | 'price_drop' | 'system' | 'trade_sold' | 'error'
+  title       String   // kratek naslov (npr. "🤖 Auto-pilot izvedel akcijo")
+  body        String   // dalši opis (JSON ali plain text)
+  severity    String   @default("info") // 'info' | 'success' | 'warning' | 'error'
+  source      String   @default("system") // 'brain' | 'autopilot' | 'telegram' | 'system' | 'manual'
+  // Read tracking
+  isRead      Boolean  @default(false)
+  readAt      DateTime?
+  // Optional links
+  draftId     String?  // link to ActionDraft if autopilot
+  snapshotDate String? // link to BrainSnapshot if brain_digest
+  // Metadata
+  metadata    String?  // JSON string z dodatnimi podatki
+  createdAt   DateTime @default(now())
+
+  @@index([type])
+  @@index([severity])
+  @@index([isRead])
+  @@index([createdAt])
+}
