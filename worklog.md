@@ -17489,3 +17489,54 @@ Stage Summary:
 - Documentation updated: README (v8.40.0, routes 616, funkcije ~301, nova "Kaj je novega" v8.40 sekcija) + CHANGELOG ([8.40.0] section z vsemi moduli + Verification + Note z 12 design odločitvami) + AI_ENDPOINTS.md (total 429 — nespremenjeno) + worklog.md (ta entry)
 - Polish phase continues: v8.32 (Health) + v8.33 (Performance) + v8.34 (129 tests) + v8.35 (25 trades + Telegram) + v8.36 (CSV Import + Quick Add) + v8.37 (Deal Calculator + Profit Timeline) + v8.38 (Notification Center) + v8.39 (Goal Tracker Dashboard Widget) + v8.40 (Trade Insights Deep Dive — "KDaj in KJE prodati za maksimalen profit?")
 - Skupaj doslej (v7.50 → v8.40): 90 verzij, 212 novih funkcij
+
+---
+Task ID: v8.40.1
+Agent: main
+Task: v8.40 commit + push + GitHub About + Agent Browser verification
+
+Work Log:
+- Prejel poročilo od full-stack-developer podagenta (Task v8.40 — Trade Insights Deep Dive implementiran: 6 analytics tipov + 4 recharts charts + 9 actionable insights iz 25 realnih trade-ov)
+- Neodvisno preveril doc sync: README v8.40.0 + 616 routes ✅, CHANGELOG [8.40.0] ✅
+- Preveril lint: 0 napak ✨
+- Preveril typecheck: 0 napak ✨
+- Posodobil GitHub About: "429 AI + 73 analytics = 616 routes. v8.40.0: Brain (8 layers) + 5 phases COMPLETE + Polish (Health+Perf+tests+trades+Telegram+CSV+DealCalc+Timeline+NotifCenter+GoalTracker+Trade Insights)."
+- Commit: "v8.40: Trade Insights Deep Dive..." (f84fafd)
+- Push na GitHub: uspešen ✅ (8d82ee7..f84fafd), PAT očiščen ✅
+- Agent Browser self-verification:
+  - Stran se pravilno naloži (HTTP 200, "PREGLED SISTEMA")
+  - Trade Insights card prikazuje realne actionable podatke:
+    - "📊 Najboljši dan za prodajo: Sobota" ✅
+    - "🏪 Najboljši vir: Vinted" ✅
+    - "📦 Najboljša kategorija: oblačila" ✅
+    - "⏱️ Optimalni hold: 15-30d (avg 52€/trade, 94% win rate)" ✅
+    - "🏆 Sobota" + "🏆 Best: Sobota" + "🏪 Vinted" ✅
+  - Brez runtime napak v dev.log
+
+Stage Summary:
+- v8.40 uspešno dokončana in potisnjena na GitHub
+- NEW: src/lib/trades/trade-insights.ts (~596 lines — getTradeInsights z 6 analizami: Day-of-Week, Source Platform, Category, Hold Period, Profit Distribution, Actionable Insights)
+- NEW: src/app/api/analytics/trade-insights/route.ts (GET ?days=365, 5-min cache)
+- NEW: src/components/dashboard/trade-insights-card.tsx (~640 lines — 6 collapsible accordion sections + 4 recharts charts)
+- MODIFIED: src/components/dashboard/dashboard-view.tsx (TradeInsightsCard added after ProfitTimelineChart)
+- LIVE INSIGHTS iz 25 real trades:
+  - Best day: Sobota (85€/trade avg)
+  - Worst day: Četrtek (27€/trade avg)
+  - Best source: Vinted (86% ROI, 100% win rate)
+  - Best category: oblačila (86% ROI, STABLE trend)
+  - Optimal hold: 15-30d (52€/trade avg, 94% win rate)
+  - Win rate: 95% (18/19 donosnih)
+  - Avg ROI: 35% (investirano 2808€, profit 973€)
+  - Profit distribution: 53% v 0-50€ bucket (majhni wini prevladujejo)
+  - 9 auto-generated actionable insights (Slovenian)
+- AI endpointi: 429 (nespremenjeno — trade-insights pod /api/analytics/)
+- Analytics: 73 → 74 (+1: trade-insights)
+- Total API routes: 615 → 616 (+1)
+- Lint: 0 napak ✨
+- Typecheck: 0 napak ✨
+- UI: TradeInsightsCard z Actionable Insights panel + Day-of-Week BarChart + Source Platform BarChart + Category horizontal BarChart + Hold Period BarChart + Profit Distribution PieChart ✅
+- Dokumentacija sinhrono posodobljena (README, CHANGELOG, GitHub About)
+- GitHub sinhroniziran (0 commit-ov ahead)
+- Verzija aplikacije: v8.40.0
+- Polish phase continues: v8.32-v8.40 (9 verzij, 9 novih features)
+- Skupaj doslej (v7.50 → v8.40): 90 verzij, 212 novih funkcij
