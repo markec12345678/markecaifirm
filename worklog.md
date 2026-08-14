@@ -16743,3 +16743,58 @@ Stage Summary:
   - v8.33 = Performance Caching + Cache Stats (performance — "Kako hitra je cache?")
   - Naslednji: v8.34 (E2E tests — Playwright)
 - Skupaj doslej (v7.50 → v8.33): 83 verzij, 207 novih funkcij; Brain architecture COMPLETE (v8.22) + Validation phase ZAKLJUČENA (v8.23-v8.25) + Intelligence phase ZAKLJUČENA (v8.26-v8.29) + Automation phase ZAKLJUČENA (v8.30-v8.31) + Polish phase (v8.32-v8.33)
+
+---
+Task ID: v8.34
+Agent: full-stack-developer
+Task: Implement Brain Integration Test Suite — Polish phase continues
+
+Work Log:
+- Prebral worklog.md (v8.22 Master Brain, v8.26 Explainability, v8.27 Scenario, v8.28 Adaptive Weights, v8.30/v8.31 Auto-pilot, v8.33 Performance Caching entries) za kontekst Brain arhitekture
+- Prebral 7 Domain Brain virov (profit/inventory/market/sourcing/risk/buyer/pricing) za verificiranje input/output shape-ov (ProfitBrainInput, InventoryBrainInput, ... — vsi optional, klic brez argumentov uporabi DEFAULT_*)
+- Prebral master.ts (783 vrstice) — masterBrain() async, vrača domainSummary (7 entries), topActions (5), conflicts, overallHealth (score 0-100, riskLevel LOW/MEDIUM/HIGH/CRITICAL), strategy (projection30d/90d/12m z profitEUR), oneLineSummary, domains.{profit,inventory,...,pricing} raw results. Skip flags podprti (skipProfit → domains.profit=null, domainSummary.length=6).
+- Prebral explainability.ts — explainMasterBrainActions(masterResult, profileAdjustment?) vrača explanations[] (1 per topAction) z reasoning + reasoningParts (trigger/signalScore/signalGrade/whyRankedHere/profileImpact/conflictImpact/expectedOutcome) + trustScore 0-100 per action + overall trustScore + summaryBlurb. source='v8.26-explainability'.
+- Prebral scenario.ts — compareScenarios(customOverrides?, baseInput?) vrača scenarios[] (3: conservative/balanced/aggressive) + custom (optional) + comparisonTable (8 rows) + recommendation { bestScenario, reasoning }. CONSERVATIVE_CONFIG.capitalMultiplier=0.7, BALANCED_CONFIG=1.0, AGGRESSIVE_CONFIG=1.5. aggressive > conservative projectedProfit12m (capital multiplier effect).
+- Prebral risk-profile.ts — adjustMasterBrainForRiskProfile(masterResult, profile) vrača { adjusted, recommendationOverride (null za balanced, REDUCE_RISK za conservative+health<70, ACCEPT_RISK za aggressive+health>40), filteredTopActions, adjustedRiskBudget (adjustmentFactor 0.5/1.0/1.5), profileSummary }. validateProfile(profile) vrača { valid, errors }. DEFAULT_PROFILE.balanced.
+- Prebral adaptive-weights.ts — computeWeightAdjustment(currentWeight, executed, rejected) vrača { newWeight, reason, adjusted }. executionRate > 0.8 → boost ×1.1, < 0.4 → reduce ×0.9, clamp [0.5, 2.0]. DEFAULT_DOMAIN_WEIGHTS: risk=1.3 (highest), buyer=0.9 (lowest). ADAPTIVE_WEIGHTS_CONSTANTS izpostavljen.
+- Prebral auto-pilot.ts — checkAutoPilotEligibility (V1, safe mode only) vrača { canAutoExecute, reasons (8 entries) }. V1 zahteva mode='safe', confidence=LOW, uplift<100€. checkAutoPilotEligibilityV2 (V2, mode-aware) dovoli aggressive mode: MEDIUM confidence, uplift<300€, dailyLimit=10. HIGH je VEDNO izključen (oba modal). Domain='risk' VEDNO izključen (oba modal). DEFAULT_AUTOPILOT_CONFIG.enabled=false (fail-safe). AGGRESSIVE_CONFIG: maxDailyLimit=10, maxDailyBudgetEUR=2000, maxUpliftEUR=300, allowedConfidence=[LOW,MEDIUM], anomalyHourlyThreshold=8.
+- Prebral ai-cache.ts — getCachedAIWithStats/setCachedAIWithStats/getCacheStats/getAllCacheStats/resetCacheStats/getCacheStoreSize. Stats: hits/misses/sets/evictions + hitRate (0-100) + total.
+- Prebral draft-queue.ts — ActionDraft interface (id, rank, domain, signal, action, expectedUpliftEUR, confidence, status, feedbackNote, executedAt, rejectedAt, snapshotDate, createdAt, updatedAt). Brez V830 fields (autoExecuted itd.) — te so v ActionDraftV830 v auto-pilot.ts.
+- Prebral obstoječi test pattern tests/lib/rate-limit.test.ts (vitest, beforeEach reset, expect sintaksa)
+- Ustvaril tests/brain/domain-brains.test.ts (21 testov — 7 domain brains × 3 testi: default inputs valid, custom inputs accepted, 6 signals z valid grades)
+- Ustvaril tests/brain/master-brain.test.ts (9 testov — orchestrates 7, conflicts array, overallHealth, strategy projections, oneLineSummary, skip flags, all 7 raw domains, bottlenecks+strengths, topActions ranked 1..5)
+- Ustvaril tests/brain/explainability.test.ts (6 testov — 5 explanations, reasoning+reasoningParts, overall trustScore, balanced null profileImpact, conservative non-null profileImpact, explanations count matches topActions)
+- Ustvaril tests/brain/scenario.test.ts (8 testov — 3 presets, comparisonTable ≥6 rows, aggressive > conservative, custom overrides, capital multipliers, 3 scenarios per metric, full MasterBrainResult, recommendation reasoning)
+- Ustvaril tests/brain/risk-profile.test.ts (10 testov — balanced no adjustment, conservative REDUCE_RISK, aggressive ACCEPT_RISK, conservative 0.5×, aggressive 1.5×, validateProfile accepts/rejects/negative liquidity/bad horizon, DEFAULT_PROFILE balanced)
+- Ustvaril tests/brain/adaptive-weights.test.ts (11 testov — boost >0.8, reduce <0.4, no change 0.4-0.8, no change 0 actions, clamp upper, clamp lower, reason non-empty, 7 domains, ADAPTIVE_WEIGHTS_CONSTANTS, risk highest, buyer lowest)
+- Ustvaril tests/brain/auto-pilot.test.ts (16 testov — V1 8 safety rules + V2 6 aggressive tests + Config defaults 2)
+- Ustvaril tests/brain/cache-stats.test.ts (11 testov — hits+misses+hitRate=50, sets, getAllCacheStats, resetCacheStats specific+all, 0 hitRate unknown, hitRate 100/0, getCacheStoreSize, round-trip, expired)
+- Popravil tests/brain/auto-pilot.test.ts: `mode: 'aggressive' as const` in V2 testih (TypeScript je inferred 'string' namesto 'safe'|'aggressive' literal — `as const` fix)
+- Pognal `bun run test` — vsi 129 testi (15 datotek) passing v 3.51s ✅
+- Pognal `bun run lint` — 0 napak (2 unused eslint-disable warnings v db.ts, pre-existing — ne kritično)
+- Pognal `npx tsc --noEmit` — 0 napak ✨
+- Posodobil README.md: version v8.33.0 → v8.34.0, tests badge 37 → 129, "37 tests" → "129 tests", dodal v8.34 "Kaj je novega" sekcijo z 92 new tests breakdown, posodobil Verzija section + Testing line
+- Posodobil CHANGELOG.md: dodal [8.34.0] sekcijo z 8 test file breakdown-om, stats (37→129 tests, 426 endpoints unchanged, 603 routes unchanged), note o Polish phase (v8.32 monitoring, v8.33 performance, v8.34 testing). Posodobil [Unreleased] section (v8.35+ roadmap).
+
+Stage Summary:
+- NEW: tests/brain/domain-brains.test.ts (21 testov — 7 domain brains × 3: default, custom, signals)
+- NEW: tests/brain/master-brain.test.ts (9 testov — Master Brain orchestration)
+- NEW: tests/brain/explainability.test.ts (6 testov — explainability reasoning)
+- NEW: tests/brain/scenario.test.ts (8 testov — Scenario Brain 3 presets)
+- NEW: tests/brain/risk-profile.test.ts (10 testov — risk profile adjustment + validation)
+- NEW: tests/brain/adaptive-weights.test.ts (11 testov — weight adjustment logic)
+- NEW: tests/brain/auto-pilot.test.ts (16 testov — V1 8 rules + V2 6 aggressive + Config 2)
+- NEW: tests/brain/cache-stats.test.ts (11 testov — cache hit/miss tracking)
+- AI endpointi: 426 (unchanged — tests only)
+- Total API routes: 603 (unchanged)
+- Test count: 37 → 129 (+92 new)
+- Lint: 0 napak ✨ (2 unused eslint-disable warnings v db.ts — pre-existing, ne kritično)
+- Typecheck: 0 napak ✨
+- All tests passing: 129/129 (15 test files, 3.51s total) ✅
+- Documentation updated: README.md (v8.34.0, tests 129, v8.34 "Kaj je novega" sekcija, Testing line), CHANGELOG.md ([8.34.0] section z 8 file breakdown + [Unreleased] update)
+- Polish phase continues:
+  - v8.32 = System Health Dashboard (monitoring — "Ali je sistem zdrav?")
+  - v8.33 = Performance Caching + Cache Stats (performance — "Kako hitra je cache?")
+  - v8.34 = Brain Integration Test Suite (testing — "Ali Brain sistem dejansko dela?")
+  - Naslednji: v8.35 (E2E tests s Playwright, predictive accuracy improvements)
+- Skupaj doslej (v7.50 → v8.34): 84 verzij, 208 novih funkcij; Brain architecture COMPLETE (v8.22) + Validation phase ZAKLJUČENA (v8.23-v8.25) + Intelligence phase ZAKLJUČENA (v8.26-v8.29) + Automation phase ZAKLJUČENA (v8.30-v8.31) + Polish phase (v8.32-v8.34)

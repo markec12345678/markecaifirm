@@ -6,9 +6,9 @@ Format sledi [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), verzije s
 
 ## [Unreleased]
 
-v8.26 je odprl Intelligence phase (Action Explainability), v8.27 jo nadaljuje (Scenario Brain), v8.28 jo še nadalje vzpostavi FEEDBACK LOOP (Adaptive Domain Weights), v8.29 jo ZAKLJUČI z Draft Queue + Action Feedback Loop integration (🎯 INTELLIGENCE PHASE COMPLETE), v8.30 odpira NOVO fazo — Automation (Safe Auto-pilot — 🎯 AUTOMATION PHASE STARTED), v8.31 zaključi Automation phase (Aggressive Auto-pilot + Anomaly Detection — 🎯 AUTOMATION PHASE COMPLETE), v8.32 odpira NOVO fazo — Polish (System Health Dashboard — 🎯 POLISH PHASE STARTED — "How healthy is the Brain system?"). Naslednje verzije:
+v8.26 je odprl Intelligence phase (Action Explainability), v8.27 jo nadaljuje (Scenario Brain), v8.28 jo še nadalje vzpostavi FEEDBACK LOOP (Adaptive Domain Weights), v8.29 jo ZAKLJUČI z Draft Queue + Action Feedback Loop integration (🎯 INTELLIGENCE PHASE COMPLETE), v8.30 odpira NOVO fazo — Automation (Safe Auto-pilot — 🎯 AUTOMATION PHASE STARTED), v8.31 zaključi Automation phase (Aggressive Auto-pilot + Anomaly Detection — 🎯 AUTOMATION PHASE COMPLETE), v8.32 odpira NOVO fazo — Polish (System Health Dashboard — 🎯 POLISH PHASE STARTED — "How healthy is the Brain system?"), v8.33 zaključi Polish phase caching (Performance Caching + Cache Stats), v8.34 zaključi Polish phase testing (Brain Integration Test Suite). Naslednje verzije:
 
-- **v8.33+ — Polish phase continues** (performance caching, E2E tests, predictive accuracy improvements za Master Brain)
+- **v8.35+ — Polish phase continues** (E2E tests s Playwright, predictive accuracy improvements za Master Brain, refactoring)
 - WebSocket real-time negotiation (SSE namesto polling)
 - Playwright E2E testi za glavne flow-e
 - TLS fingerprinting (curl-impersonate)
@@ -16,6 +16,128 @@ v8.26 je odprl Intelligence phase (Action Explainability), v8.27 jo nadaljuje (S
 - Performance optimizations za Master Brain (cached partial results per domain)
 - Additional conflict detection tipi (npr. Inventory vs Buyer — supply/demand mismatch)
 - Per-domain DB injection v Master Brain route (zaenkrat se zanaša na individualne Domain Brain route-e za DB state)
+
+## [8.34.0] - 2026-08-28
+
+### Added — 🧪 Brain Integration Test Suite (Polish phase continues — "Does the Brain system actually work?")
+
+Problem: 8 brain layers + auto-pilot + draft queue + adaptive weights — ampak samo 7 obstoječih testov (none for Brain system). We're shipping untested code. v8.34 dodaja 92 novih integration testov v `tests/brain/` (8 novih testnih datotek) ki validirajo celotno Brain arhitekturo — od 7 Domain Brains preko Master Brain orchestration do explainability, scenario, risk profile, adaptive weights, auto-pilot in cache stats. Testi testirajo PURE functions (no DB/AI calls) — fast, deterministic, <4s total.
+
+#### `tests/brain/domain-brains.test.ts` (NEW — 21 tests)
+
+7 Domain Brain tests — profit/inventory/market/sourcing/risk/buyer/pricing vsak: default inputs valid (signals.length=6, topActions.length=3, source, aiUsed=false), custom inputs accepted (input field reflected in current), 6 signals z valid grades (A+/A/B/C/D/F, score 0-100).
+
+#### `tests/brain/master-brain.test.ts` (NEW — 9 tests)
+
+Master Brain orchestration test:
+- orchestrates all 7 domain brains (domainSummary.length=7, topActions.length=5, source='v8.22-master-brain')
+- returns conflicts array (can be empty)
+- computes overallHealth score 0-100 z LOW/MEDIUM/HIGH/CRITICAL riskLevel
+- generates strategy projections (30d/90d/12m profitEUR > 0)
+- returns oneLineSummary (>20 chars)
+- supports skip flags (skipProfit → domains.profit=null, domainSummary.length=6)
+- domains object exposes all 7 raw brain results (profit/inventory/market/sourcing/risk/buyer/pricing)
+- overallHealth has bottlenecks + strengths arrays
+- topActions ranked 1..5 z monotonically decreasing finalScore
+
+#### `tests/brain/explainability.test.ts` (NEW — 6 tests)
+
+Explainability test:
+- generates 5 explanations (one per TOP 5 action) z source='v8.26-explainability'
+- each explanation has reasoning (>20 chars) + reasoningParts (trigger/whyRankedHere/expectedOutcome non-empty) + trustScore 0-100
+- computes overall trustScore (0-100) + summaryBlurb (non-empty)
+- balanced profile → null profileImpact on each action (no override)
+- conservative profile → non-null profileImpact on at least one action (filtered or kept)
+- explanations count matches topActions count (skipProfit case)
+
+#### `tests/brain/scenario.test.ts` (NEW — 8 tests)
+
+Scenario Brain test:
+- generates 3 preset scenarios (conservative/balanced/aggressive) z source='v8.27-scenario-brain'
+- returns comparisonTable (≥6 metric rows)
+- aggressive > conservative 12m projection (capital multiplier effect)
+- supports custom overrides (custom.type='custom', custom.comparison.projectedProfit12m > 0)
+- preset configs have correct capital multipliers (0.7/1.0/1.5)
+- comparisonTable has all 3 scenarios per metric row (conservative/balanced/aggressive columns defined)
+- each scenario has full MasterBrainResult attached (s.masterResult.ok=true, source='v8.22-master-brain', topActions.length > 0)
+- recommendation reasoning references bestScenario (one of conservative/balanced/aggressive/custom)
+
+#### `tests/brain/risk-profile.test.ts` (NEW — 10 tests)
+
+Risk Profile test:
+- balanced profile makes no adjustment (adjusted=false, recommendationOverride=null)
+- conservative profile triggers REDUCE_RISK when overallHealth < 70 (adjusted=true, override.action='REDUCE_RISK')
+- aggressive profile triggers ACCEPT_RISK when overallHealth > 40 (adjusted=true, override.action='ACCEPT_RISK')
+- conservative profile adjusts risk budget by 0.5× (adjustedRiskBudget.adjustmentFactor=0.5, adjusted30d ≤ original30d)
+- aggressive profile adjusts risk budget by 1.5× (adjustmentFactor=1.5, adjusted30d ≥ original30d)
+- validateProfile accepts valid profiles (valid=true, errors=[])
+- validateProfile rejects invalid profiles (riskTolerance='invalid', maxAcceptableRisk=150 → valid=false, errors.length > 0)
+- validateProfile rejects negative liquidityReserve (valid=false, errors.length > 0)
+- validateProfile rejects invalid investmentHorizon (valid=false, errors.length > 0)
+- DEFAULT_PROFILE is balanced (riskTolerance='balanced', maxAcceptableRisk 0-100)
+
+#### `tests/brain/adaptive-weights.test.ts` (NEW — 11 tests)
+
+Adaptive Weights test (pure `computeWeightAdjustment(currentWeight, executed, rejected)`):
+- boosts weight when executionRate > 0.8 (9/1 → adjusted=true, newWeight > oldWeight)
+- reduces weight when executionRate < 0.4 (1/9 → adjusted=true, newWeight < oldWeight)
+- no change when executionRate is 0.4-0.8 (5/5 → adjusted=false, newWeight=oldWeight)
+- no change when no actions yet (0/0 → adjusted=false, newWeight=oldWeight, reason non-empty)
+- clamps weight to [0.5, 2.0] upper bound (1.9 × 1.1 = 2.09 → clamped to 2.0)
+- clamps weight to [0.5, 2.0] lower bound (0.55 × 0.9 → clamped to ≥ 0.5)
+- reason is always non-empty (4 different scenarios)
+- DEFAULT_DOMAIN_WEIGHTS has all 7 domains (profit/inventory/market/sourcing/risk/buyer/pricing)
+- ADAPTIVE_WEIGHTS_CONSTANTS exposes thresholds (MIN=0.5, MAX=2.0, BOOST=1.1, REDUCE=0.9, BOOST_THRESHOLD=0.8, REDUCE_THRESHOLD=0.4, INTERVAL=10)
+- risk domain has highest default weight (1.3, all others ≤ 1.3)
+- buyer domain has lowest default weight (0.9, all others ≥ 0.9)
+
+#### `tests/brain/auto-pilot.test.ts` (NEW — 16 tests)
+
+Auto-pilot eligibility test — V1 (`checkAutoPilotEligibility` — safe mode only) + V2 (`checkAutoPilotEligibilityV2` — mode-aware):
+- V1 (8 tests):
+  - fails when auto-pilot disabled (config.enabled=false)
+  - fails for conservative user (userRiskTolerance='conservative')
+  - fails for HIGH confidence (draft.confidence='HIGH')
+  - fails for uplift ≥ 100€ in safe mode (draft.expectedUpliftEUR=150)
+  - fails for domain=risk (draft.domain='risk')
+  - fails when daily limit reached (todayAutoExecutedCount=5, dailyLimit=5)
+  - fails when daily budget would be exceeded (50€ used + 60€ draft > 100€ budget)
+  - passes all rules for eligible draft (LOW confidence, uplift=50€, domain='profit', mode='safe' → canAutoExecute=true, all reasons PASS:)
+- V2 (6 tests):
+  - aggressive mode allows MEDIUM confidence (config.mode='aggressive', draft.confidence='MEDIUM', uplift=200€ → canAutoExecute=true)
+  - aggressive mode still rejects HIGH confidence (HIGH always excluded in both modes)
+  - aggressive mode rejects uplift ≥ 300€ (uplift=350€ → canAutoExecute=false)
+  - aggressive mode allows daily limit up to 10 (todayAutoExecutedCount=9 < 10 → canAutoExecute=true)
+  - aggressive mode still rejects domain=risk (both modes enforce rule 6)
+  - V2 returns exactly 8 audit reasons (one per rule)
+- Config defaults (2 tests):
+  - DEFAULT_AUTOPILOT_CONFIG has safe defaults (enabled=false — fail-safe, mode='safe', dailyLimit=5, dailyBudgetEUR=500)
+  - AGGRESSIVE_CONFIG has higher thresholds (maxDailyLimit=10, maxDailyBudgetEUR=2000, maxUpliftEUR=300, allowedConfidence=[LOW,MEDIUM] — HIGH excluded, anomalyHourlyThreshold=8)
+
+#### `tests/brain/cache-stats.test.ts` (NEW — 11 tests)
+
+Cache Stats test (`getCachedAIWithStats`/`setCachedAIWithStats`/`getCacheStats`/`getAllCacheStats`/`resetCacheStats`/`getCacheStoreSize` from v8.33 ai-cache.ts):
+- tracks hits and misses (set → hit → miss; stats: hits=1, misses=1, hitRate=50)
+- tracks sets (2 set calls → stats.sets=2)
+- getAllCacheStats returns all namespaces (≥2 namespaces after 2 different ns writes)
+- resetCacheStats clears specific namespace (ns1 deleted, ns2 preserved)
+- resetCacheStats() with no args clears all (all.length=0)
+- getCacheStats returns 0 hitRate for unknown namespace (hits/misses/sets/hitRate/total all 0)
+- hitRate is 100 when only hits (1 hit, 0 misses → hitRate=100)
+- hitRate is 0 when only misses (0 hits, 2 misses → hitRate=0)
+- getCacheStoreSize returns number of cached entries (≥2 after 2 sets)
+- cached value round-trips through get/set (payload with nested objects preserved)
+- expired entries return null and count as miss (1ms TTL + busy-wait → null + stats.misses=1)
+
+### Stats
+
+- AI endpoints: 426 (unchanged — tests only)
+- Total API routes: 603 (unchanged)
+- Test count: 37 → 129 (+92)
+
+### Note
+
+Polish phase continues. v8.32 = monitoring (System Health Dashboard), v8.33 = performance (Performance Caching + Cache Stats), v8.34 = testing (Brain Integration Test Suite). Tests cover PURE functions (no DB/AI calls) — fast, deterministic, <4s total. Next: v8.35 (E2E tests s Playwright, predictive accuracy improvements).
 
 ## [8.33.0] - 2026-08-28
 
