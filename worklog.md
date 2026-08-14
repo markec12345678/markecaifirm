@@ -17258,3 +17258,50 @@ Stage Summary:
 - Documentation updated: README (v8.38.0, routes 614, funkcije ~299, nova "Kaj je novega" v8.38 sekcija) + CHANGELOG ([8.38.0] section z vsemi moduli + Verification + Note) + AI_ENDPOINTS.md (total 429 — nespremenjeno) + worklog.md (ta entry) + agent-ctx/v8.38-full-stack-developer.md
 - Polish phase continues: v8.32 (Health) + v8.33 (Performance) + v8.34 (129 tests) + v8.35 (25 trades + Telegram) + v8.36 (CSV Import + Quick Add) + v8.37 (Deal Calculator + Profit Timeline) + v8.38 (Notification Center + Alert History — centralizirana zgodovina vseh obvestil)
 - Skupaj doslej (v7.50 → v8.38): 88 verzij, 211 novih funkcij
+
+---
+Task ID: v8.38.1
+Agent: main
+Task: v8.38 commit + push + GitHub About + Agent Browser verification
+
+Work Log:
+- Podagent (full-stack-developer) je implementiral v8.38 pred timeout-om — vse datoteke ustvarjene
+- Podagent je pametno rešil konflikt poti: ker /api/notifications že obstaja (v4.8 Alert-based), je v8.38 Brain notifications postavil na /api/brain-notifications
+- Neodvisno preveril endpoint-e (curl 3 testi):
+  - POST /api/brain-notifications → 201 {"ok":true,"notification":{id,type:"system",title:"Test v8.38",body:"Notification Center test",severity:"info",source:"manual",isRead:false,...}} ✅
+  - GET /api/brain-notifications?limit=10 → 200 {"ok":true,"notifications":[1 notification],"stats":{total:1,unread:1,byType:{system:1},bySeverity:{info:1}}} ✅
+  - PATCH /api/brain-notifications {action:"mark_all_read"} → 200 {"ok":true,"updated":1} ✅
+- Preveril lint: 0 napak ✨
+- Preveril typecheck: 0 napak ✨
+- Posodobil GitHub About: "429 AI + 73 analytics = 614 routes. v8.38.0: Brain (8 layers) + 5 phases COMPLETE + Polish (Health+Perf+129 tests+25 trades+Telegram+CSV+QuickAdd+Deal Calc+Timeline+Notification Center)."
+- Commit: "v8.38: Notification Center + Alert History..." (b4bfc41)
+- Push na GitHub: uspešen ✅ (24166ba..b4bfc41), PAT očiščen ✅
+- Agent Browser self-verification:
+  - Stran se pravilno naloži (HTTP 200)
+  - AI Hub: "v8.38 Notification Center" badge prikazan ✅
+  - "🔔 Notification Center" section prikazan ✅
+  - "Označi vse kot prebrano" button ✅
+  - Brez runtime napak v dev.log
+
+Stage Summary:
+- v8.38 uspešno dokončana in potisnjena na GitHub
+- NEW Prisma model: Notification (8 types: brain_digest/autopilot_executed/autopilot_rollback/anomaly/price_drop/system/trade_sold/error, severity, source, isRead, readAt, draftId, snapshotDate, metadata, createdAt + 4 indexes)
+- NEW: src/lib/notifications.ts (createNotification, getNotifications z filters+stats, getUnreadCount, markAsRead, markAllAsRead, deleteNotification, deleteReadNotifications, cleanupOldNotifications)
+- NEW: src/app/api/brain-notifications/route.ts (GET z filters + POST create + PATCH bulk: mark_read/mark_all_read/delete_read)
+- NEW: src/app/api/brain-notifications/[id]/route.ts (PATCH mark read + DELETE)
+- NEW: src/app/api/cron/cleanup-notifications/route.ts (daily cleanup >90 days)
+- MODIFIED: src/lib/brain/telegram-notifications.ts (sendBrainDigest/sendAutoPilotAlert/sendAnomalyAlert zdaj tudi kličejo createNotification — tudi če Telegram ni konfiguriran)
+- MODIFIED: src/components/dashboard/ai-hub-view.tsx (🔔 bell icon z unread badge + full Notification Center section z filters + bulk actions + 30s auto-refresh)
+- MODIFIED: prisma/schema.prisma (Notification model)
+- AI endpointi: 429 (nespremenjeno — brain-notifications pod /api/ ne /api/ai/)
+- Total API routes: 610 → 614 (+4)
+- Cron automations: 14 → 15 (+1 cleanup-notifications)
+- Lint: 0 napak ✨
+- Typecheck: 0 napak ✨
+- Endpoint verification: POST 201, GET 200 (1 notification + stats), PATCH mark_all_read 200 (updated:1) ✅
+- UI: 🔔 Notification Center section z "Označi vse kot prebrano" button ✅
+- Dokumentacija sinhrono posodobljena (README, CHANGELOG, GitHub About)
+- GitHub sinhroniziran (0 commit-ov ahead)
+- Verzija aplikacije: v8.38.0
+- Polish phase continues: v8.32 (Health) + v8.33 (Performance) + v8.34 (129 tests) + v8.35 (25 trades + Telegram) + v8.36 (CSV Import + Quick Add) + v8.37 (Deal Calculator + Profit Timeline) + v8.38 (Notification Center)
+- Skupaj doslej (v7.50 → v8.38): 88 verzij, 210 novih funkcij
