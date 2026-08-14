@@ -17370,3 +17370,42 @@ Stage Summary:
 - Documentation updated: README (v8.39.0, routes 615, funkcije ~300, nova "Kaj je novega" v8.39 sekcija) + CHANGELOG ([8.39.0] section z vsemi moduli + Verification + Note) + AI_ENDPOINTS.md (total 429 — nespremenjeno) + worklog.md (ta entry) + agent-ctx/v8.39-full-stack-developer.md
 - Polish phase continues: v8.32 (Health) + v8.33 (Performance) + v8.34 (129 tests) + v8.35 (25 trades + Telegram) + v8.36 (CSV Import + Quick Add) + v8.37 (Deal Calculator + Profit Timeline) + v8.38 (Notification Center) + v8.39 (Goal Tracker Dashboard Widget + Settings Integration — vizualno sledenje mesečnemu cilju z avtomatsko obvestitvijo ob dosegu)
 - Skupaj doslej (v7.50 → v8.39): 89 verzij, 211 novih funkcij
+
+---
+Task ID: v8.39.1
+Agent: main
+Task: v8.39 commit + push + GitHub About + Agent Browser verification
+
+Work Log:
+- Prejel poročilo od full-stack-developer podagenta (Task v8.39 — Goal Tracker Dashboard Widget + Settings Integration implementiran)
+- Neodvisno preveril doc sync: README v8.39.0 + 615 routes ✅, CHANGELOG [8.39.0] ✅
+- Preveril lint: 0 napak ✨
+- Preveril typecheck: 0 napak ✨
+- Posodobil GitHub About: "429 AI + 73 analytics = 615 routes. v8.39.0: Brain (8 layers) + 5 phases COMPLETE + Polish (Health+Perf+tests+trades+Telegram+CSV+DealCalc+Timeline+NotifCenter+Goal Tracker)."
+- Commit: "v8.39: Goal Tracker Dashboard Widget + Settings Integration..." (3ae5eb2)
+- Push na GitHub: uspešen ✅ (d56724f..3ae5eb2), PAT očiščen ✅
+- Agent Browser self-verification:
+  - Stran se pravilno naloži (HTTP 200, "PREGLED SISTEMA")
+  - "MESEČNI CILJ DOBIČKA V8.39" heading prikazan na vrhu Dashboard ✅
+  - "Uredi cilj" button ✅
+  - Realni podatki prikazani: "306€/500€", "Na poti" status, "Projiciran: 678€", "17 dni" do konca meseca, "11€/dan" potrebnih ✅
+  - "✅ Na poti za doseganje cilja! Pričakovani dobiček: 678€" recommendation ✅
+  - Brez runtime napak v dev.log
+
+Stage Summary:
+- v8.39 uspešno dokončana in potisnjena na GitHub
+- NEW: src/components/dashboard/goal-tracker-card.tsx (~470 lines — progress bar, 4 milestones, projected, daily needed, MoM trend, goal status, inline edit, 6-month history mini chart, recommendation)
+- NEW: src/app/api/trades/goal-tracker/set/route.ts (POST set goal z validation + notification creation on achievement)
+- MODIFIED: src/components/dashboard/dashboard-view.tsx (GoalTrackerCard at top — replaces inline v6.7 goal card)
+- MODIFIED: src/components/dashboard/settings-view.tsx (ProfitGoalSection z input + live preview + v8.39 badge)
+- AI endpointi: 429 (nespremenjeno — goal-tracker/set pod /api/trades/)
+- Total API routes: 614 → 615 (+1)
+- Lint: 0 napak ✨
+- Typecheck: 0 napak ✨
+- Endpoint verification: POST set goal 500 → 200, GET goal-tracker z goal=500 → 200 (306€/500€, projected 678€, 61% complete, milestones 25%✓ 50%✓ 75%• 100%•), POST goal=100 (below realized) → 200 + goalAchieved:true + Notification created ✅
+- UI: GoalTrackerCard prikazuje "306€/500€", "Na poti", "Projiciran: 678€", "17 dni", "11€/dan" ✅
+- Dokumentacija sinhrono posodobljena (README, CHANGELOG, GitHub About)
+- GitHub sinhroniziran (0 commit-ov ahead)
+- Verzija aplikacije: v8.39.0
+- Polish phase continues: v8.32 (Health) + v8.33 (Performance) + v8.34 (129 tests) + v8.35 (25 trades + Telegram) + v8.36 (CSV Import + Quick Add) + v8.37 (Deal Calculator + Profit Timeline) + v8.38 (Notification Center) + v8.39 (Goal Tracker Dashboard Widget)
+- Skupaj doslej (v7.50 → v8.39): 89 verzij, 211 novih funkcij
