@@ -16970,3 +16970,41 @@ Stage Summary:
 - Verzija aplikacije: v8.35.0
 - 🎯 SYSTEM IS NOW ALIVE: 25 real trades, Actual Profit shows 973€, all Brain signals have real data, Telegram notifications wired and ready
 - Skupaj doslej (v7.50 → v8.35): 85 verzij, 210 novih funkcij; Brain architecture COMPLETE (v8.22) + Validation phase ZAKLJUČENA (v8.23-v8.25) + Intelligence phase ZAKLJUČENA (v8.26-v8.29) + Automation phase ZAKLJUČENA (v8.30-v8.31) + Polish phase (v8.32-v8.35)
+
+---
+Task ID: v8.35.2
+Agent: main
+Task: Fix Dashboard crash — NicheScoreWidget interface mismatch
+
+Work Log:
+- Uporabnik je poročal o napaki v Dashboard pogledu: "Objects are not valid as a React child (found: object with keys {category, score, roi, profit, count, avgHoldDays, avgProfit, totalInvested, recommendation})"
+- Identificiral vir: src/components/dashboard/niche-score-widget.tsx — NicheScoreWidget komponenta
+- Vzrok: interface v widgetu je pričakoval napačne field names:
+  - Widget: {totalProfit, dealsCount, listingsCount, competition, summary}
+  - API:    {profit, count, avgHoldDays, avgProfit, totalInvested, recommendation}
+- Poleg tega: data.bestNiche je bil tipiziran kot `string | null` ampak API vrača objekt {category, roi, recommendation, ...}
+- Console error: "TypeError: Cannot read properties of undefined (reading 'toFixed')" — data.bestNiche.avgRoi je bil undefined ker API vrača .roi ne .avgRoi
+- Popravki:
+  1. Interface posodobljen z pravimi field names (profit, count, avgHoldDays, avgProfit, totalInvested, recommendation)
+  2. bestNiche tipiziran kot objekt {category, roi, recommendation, ...}
+  3. Render uporablja n.profit namesto n.totalProfit
+  4. Render uporablja n.count namesto n.dealsCount
+  5. Competition indicator zamenjan z avgHoldDays (API ne vrača competition fielda)
+  6. data.summary zamenjan z izpeljanim summary-jem iz bestNiche.recommendation
+  7. bestNiche.avgRoi → bestNiche.roi (API vrača roi ne avgRoi)
+- Preveril lint: 0 napak ✨
+- Preveril typecheck: 0 napak ✨
+- Agent Browser verification:
+  - Pred popravkom: "Napaka v pogledu Dashboard" z ErrorBoundary
+  - Po popravku + reload: "PREGLED SISTEMA" heading prikazan ✅
+  - NicheScoreWidget pravilno rendera: "Top niša: avto (ROI +61%). 🎯 TOP NIŠA — visok ROI..." ✅
+  - Console: brez napak ✅
+- Commit: "fix(v8.35): NicheScoreWidget Dashboard crash..." (e1b1732)
+- Push na GitHub: uspešen ✅ (b9d8703..e1b1732), PAT očiščen ✅
+
+Stage Summary:
+- FIX: src/components/dashboard/niche-score-widget.tsx — interface mismatch z /api/analytics/niche-score
+- Dashboard sedaj pravilno deluje z 25 seeded trades
+- NicheScoreWidget prikazuje realne podatke (avto ROI +61%, 5 kategorij)
+- Napaka je bila verjetno latentna od prej — ko ni bilo trades v DB je widget padel v empty state, ampak po v8.35 seed-anju (25 trades) je API vrnil podatke in expose-al interface mismatch
+- Verzija aplikacije: v8.35.2 (bugfix)
