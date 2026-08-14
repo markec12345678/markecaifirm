@@ -16652,3 +16652,58 @@ Stage Summary:
   - Auto-generated recommendations (8 rules, Slovenian strings)
   - UI gradient (emerald HEALTHY / amber DEGRADED / red UNHEALTHY) z 60s auto-refresh
 - Skupaj doslej (v7.50 → v8.32): 82 verzij, 206 novih funkcij; Brain architecture COMPLETE (v8.22) + Validation phase ZAKLJUČENA (v8.23-v8.25) + Intelligence phase ZAKLJUČENA (v8.26-v8.29) + Automation phase ZAKLJUČENA (v8.30-v8.31) + Polish phase STARTED (v8.32 System Health Dashboard) — naslednje verzije: v8.33 (performance caching), v8.34 (E2E tests)
+
+---
+Task ID: v8.32.1
+Agent: main
+Task: v8.32 commit + push + GitHub About + Agent Browser verification (🎯 POLISH PHASE STARTED)
+
+Work Log:
+- Prejel poročilo od full-stack-developer podagenta (Task v8.32 — System Health Dashboard implementiran: src/lib/brain/system-health.ts (~640 lines, getSystemHealth, quickHealthCheck, checkBrainEndpoint, extractGradeFromResponse, computeOverallScore, generateRecommendations) + src/app/api/ai/brain/health/route.ts (GET, 30s cache) + UI 🏥 System Health card z gradient background na VRHU Brain view)
+- Podagent je potrdil da health score = 85/100 (Grade A, HEALTHY) — vsi 8 brain endpoints responsive (74-118ms)
+- Neodvisno preveril doc sync: AI_ENDPOINTS.md "Total: 425 endpoints" (row 12 brain/health) ✅, README v8.32.0 + 425 AI + 602 routes + Overview paragraph z Polish phase STARTED ✅, CHANGELOG [8.32.0] section z full description + POLISH PHASE STARTED + [Unreleased] v8.33+ (performance caching) ✅
+- Preveril lint: 0 napak (2 unused eslint-disable warnings — ne kritično) ✨
+- Preveril typecheck: 0 napak ✨
+- Posodobil GitHub About opis: "425 AI + 72 analytics = 602 routes. v8.32.0: Brain (8 layers) + Validation + Intelligence + Automation COMPLETE + Polish STARTED (System Health Dashboard)." (303 chars)
+- Commit: "v8.32: System Health Dashboard — Polish phase STARTED..." (938eec9)
+- Push na GitHub: uspešen ✅ (53b1621..938eec9), PAT očiščen ✅
+- Agent Browser self-verification:
+  - Stran se pravilno naloži (HTTP 200)
+  - AI Hub: 🧠 Možgani 21 (8 brain + snapshots + actual-profit + risk-profile + accuracy + accuracy/backfill + explain + scenario + weights + drafts + drafts/[id] + auto-pilot + auto-pilot/rollback + health)
+  - 🏥 System Health card (gradient emerald — HEALTHY) prikazan na VRHU Brain view z:
+    - "85/100" big health score ✅
+    - "HEALTHY" status pill ✅
+    - "Osveži" button ✅
+    - 8 brain endpoints grid z status dots + response times + grades ✅
+    - Recommendations list z actionable pills ✅
+    - 60s auto-refresh ✅
+  - brain/health endpoint viden z v8.32 badge
+  - Runner test: POST → pravilno fail (health je GET-only, runner pošlje POST — to je expected behavior, GET deluje pravilno v UI z 85/100)
+  - Brez runtime napak v dev.log
+
+Stage Summary:
+- v8.32 uspešno dokončana in potisnjena na GitHub
+- NOV ARCHITECTURAL LAYER: System Health Dashboard — 🎯 POLISH PHASE STARTED
+- src/lib/brain/system-health.ts — getSystemHealth() (aggregates 8 brain endpoints + DB counts + auto-pilot + draft queue + risk profile + adaptive weights + recommendations), quickHealthCheck(), checkBrainEndpoint() (3s timeout fetch), extractGradeFromResponse(), computeOverallScore(), generateRecommendations() (8 rules)
+- HEALTH SCORE FORMULA (0-100):
+  - 40% brain endpoints responsive (8 endpoints × 5 points each = 40)
+  - 20% data freshness (snapshot exists + <7 days old = 20; no snapshot = 0)
+  - 15% draft queue health (executionRate > 0.5 = 15; > 0.2 = 10; else = 5)
+  - 15% auto-pilot health (not suspended = 15; suspended = 0)
+  - 10% risk profile set (non-default = 10; default balanced+50 = 0)
+- GRADE: A+ ≥90, A ≥80, B ≥65, C ≥50, D ≥30, F <30
+- STATUS: HEALTHY ≥80, DEGRADED ≥50, UNHEALTHY <50
+- 8 RECOMMENDATION RULES (Slovenian): brain not responding, anomaly suspended, auto-pilot disabled, no snapshots, no trades recorded, default risk profile, no adaptive weight adjustments, low execution rate
+- src/app/api/ai/brain/health/route.ts — GET, 30s cache, maxDuration=30 (shorter — health should be fresh)
+- UI: 🏥 System Health card (gradient background — emerald HEALTHY / amber DEGRADED / red UNHEALTHY) na VRHU BrainSynthesisCard (health overview first) z: big health score + grade pill + status pill, 8 brain endpoints grid (2×4 z status dot + response time + grade), data freshness card, auto-pilot status card, draft queue summary, risk profile, adaptive weights summary, recommendations list (amber actionable pills), 🔄 Osveži button z 60s auto-refresh
+- LIVE HEALTH SCORE: 85/100 (Grade A, HEALTHY) — 40 (8/8 brains responsive) + 20 (snapshot 1 day ago) + 10 (executionRate 0.5) + 15 (not suspended) + 0 (default risk profile) = 85
+- AI endpointi: 424 → 425 (+1)
+- Analytics endpointi: 72 (nespremenjeno)
+- Total API routes: 601 → 602 (+1)
+- Dokumentacija sinhrono posodobljena (AI_ENDPOINTS.md, README, CHANGELOG, GitHub About)
+- GitHub sinhroniziran (0 commit-ov ahead)
+- Verzija aplikacije: v8.32.0
+- 🎯 POLISH PHASE STARTED:
+  - v8.32 = System Health Dashboard (monitoring — "Ali je sistem zdrav?")
+  - Naslednji: v8.33 (performance caching — per-domain cache za hitrejši Master Brain), v8.34 (E2E tests)
+- Skupaj doslej (v7.50 → v8.32): 82 verzij, 206 novih funkcij; Brain architecture COMPLETE (v8.22) + Validation phase ZAKLJUČENA (v8.23-v8.25) + Intelligence phase ZAKLJUČENA (v8.26-v8.29) + Automation phase ZAKLJUČENA (v8.30-v8.31) + Polish phase STARTED (v8.32 System Health Dashboard)
