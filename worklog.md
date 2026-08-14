@@ -16092,3 +16092,61 @@ Stage Summary:
   - Skupaj: uporabnik dobi priporočilo + razumevanje (ZAKAJ) + možnost raziskovanja alternativ (WHAT IF?) + sistem se prilagaja njegovem vedenju (LEARNING) IN akcije so sledene z avtomatskim feedback loop (ACTION)
 - Verzija aplikacije: v8.29.0
 - Skupaj doslej (v7.50 → v8.29): 79 verzij, 203 nove funkcije; Brain architecture COMPLETE (v8.22) + Validation phase ZAKLJUČENA (v8.23-v8.25) + Intelligence phase ZAKLJUČENA (v8.26+v8.27+v8.28+v8.29)
+
+---
+Task ID: v8.29.1
+Agent: main
+Task: v8.29 commit + push + GitHub About + Agent Browser verification (🎯 INTELLIGENCE PHASE COMPLETE)
+
+Work Log:
+- Prejel poročilo od full-stack-developer podagenta (Task v8.29 — Draft Queue + Action Feedback Loop integration implementiran: NOV ActionDraft Prisma model, src/lib/brain/draft-queue.ts (createDraftsFromMasterBrain, updateDraftStatus, getDraftQueue, cleanupOldDrafts), drafts GET+POST route, drafts/[id] PATCH route, cleanup-drafts cron, UI z ✅/❌ gumbi per TOP 5 akcija + 📋 Draft Queue card)
+- Podagent je testiral closed feedback loop: POST drafts (5 created) → PATCH draft {status:executed} → GET weights (market.executed:1 — feedbackRecorded:true) ✅
+- Neodvisno preveril doc sync: AI_ENDPOINTS.md "Total: 422 endpoints" (rows 25-26 brain/drafts + brain/drafts/[id]) ✅, README v8.29.0 + 422 AI + 599 routes + INTELLIGENCE PHASE COMPLETE ✅, CHANGELOG [8.29.0] section z closed feedback loop ASCII diagram + INTELLIGENCE PHASE COMPLETE + [Unreleased] v8.30+ (Automation) ✅
+- Preveril lint: 0 napak (2 unused eslint-disable warnings — ne kritično) ✨
+- Preveril typecheck: 0 napak ✨
+- Posodobil GitHub About opis: "422 AI + 72 analytics = 599 routes. v8.29.0: Brain (8 layers) + Validation COMPLETE + Intelligence COMPLETE (Explainability + Scenario + Adaptive Weights + Draft Queue closed loop)." (329 chars)
+- Commit: "v8.29: Draft Queue + Action Feedback Loop integration — 🎯 INTELLIGENCE PHASE COMPLETE..." (cd3ae74)
+- Push na GitHub: uspešen ✅ (819df8f..cd3ae74), PAT očiščen ✅
+- Agent Browser self-verification:
+  - Stran se pravilno naloži (HTTP 200)
+  - AI Hub: 🧠 Možgani 18 (8 brain + snapshots + actual-profit + risk-profile + accuracy + accuracy/backfill + explain + scenario + weights + drafts + drafts/[id])
+  - "📋 Vsi 422" kategorija prikazana ✅
+  - Master Brain banner: ✅ Izvedel + ❌ Zavrnil gumbi za vsako TOP 5 akcijo (5 parov gumbov) ✅
+  - brain/drafts endpoint viden z "v8.29 · ACTION" badge
+  - brain/drafts/[id] endpoint viden z "v8.29 · PATCH" badge
+  - Runner test: POST → 200 {"ok":true,"created":0,"drafts":[5 drafts z status:expired (ker so bili prej created in nato expired kot novi so nadomestili)]} ✅ (idempotent delovanje)
+  - Brez runtime napak v dev.log
+
+Stage Summary:
+- v8.29 uspešno dokončana in potisnjena na GitHub
+- NOV ARCHITECTURAL LAYER: Draft Queue + Action Feedback Loop integration — 🎯 INTELLIGENCE PHASE COMPLETE
+- NOV Prisma model: ActionDraft (id, rank, domain, signal, action, expectedUpliftEUR, confidence, status: pending|approved|executed|rejected|expired, feedbackNote, executedAt, rejectedAt, snapshotDate, timestamps)
+- src/lib/brain/draft-queue.ts — createDraftsFromMasterBrain() (auto-creates drafts za TOP 5, expires old pending, idempotent per snapshotDate), updateDraftStatus() (CLOSES FEEDBACK LOOP — kliče recordActionFeedback iz v8.28), getDraftQueue() (z filtri + stats + per-domain execution rates), cleanupOldDrafts()
+- src/app/api/ai/brain/drafts/route.ts — GET (queue + stats + domainStats) + POST (create from Master Brain TOP 5)
+- src/app/api/ai/brain/drafts/[id]/route.ts — PATCH (status update → calls recordActionFeedback) + GET (single draft)
+- src/app/api/cron/cleanup-drafts/route.ts — daily cleanup >90 dni
+- UI: ✅ Izvedel / ❌ Zavrnil gumbi per TOP 5 akcija v Master Brain banner + 📋 Draft Queue card (slate/blue-gray) z history (zadnjih 30) + filter (status/domain) + per-domain execution rates + cleanup button
+- CLOSED FEEDBACK LOOP (Master Brain → draft → user click → recordActionFeedback → adaptive weights update → better recommendations next time):
+  1. Master Brain (v8.22) priporoča TOP 5 akcij
+  2. UI auto-create-a 5 draft-ov (POST /api/ai/brain/drafts)
+  3. Uporabnik klikne ✅ Izvedel ali ❌ Zavrnil
+  4. PATCH /api/ai/brain/drafts/{id} → updateDraftStatus()
+  5. updateDraftStatus kliče recordActionFeedback() (v8.28)
+  6. Adaptive weights stats posodobljeni (executed/rejected count per domain)
+  7. Po 10 akcijah: computeWeightAdjustment() re-evaluira weight
+  8. Naslednji /api/ai/brain/master call naloži nove adaptive weights
+  9. Boljši ranking za uporabnikove REVEALED preference
+  10. GOTO 1 — closed feedback loop
+- AI endpointi: 420 → 422 (+2)
+- Analytics endpointi: 72 (nespremenjeno)
+- Total API routes: 597 → 599 (+2)
+- Dokumentacija sinhrono posodobljena (AI_ENDPOINTS.md, README, CHANGELOG, GitHub About)
+- GitHub sinhroniziran (0 commit-ov ahead)
+- Verzija aplikacije: v8.29.0
+- 🎯 INTELLIGENCE PHASE COMPLETE:
+  - v8.26 = WHY (Explainability — "Zakaj?")
+  - v8.27 = WHAT IF? (Scenario Brain — "Kaj če?")
+  - v8.28 = LEARNING (Adaptive Weights — feedback loop)
+  - v8.29 = ACTION (Draft Queue — closed feedback loop integration)
+  - Skupaj: Master Brain recommends → user decides → system learns → better recommendations
+- Skupaj doslej (v7.50 → v8.29): 79 verzij, 203 novih funkcij; Brain architecture COMPLETE (v8.22) + Validation phase ZAKLJUČENA (v8.23-v8.25) + Intelligence phase ZAKLJUČENA (v8.26-v8.29) — naslednja faza: v8.30+ Automation (safe auto-pilot z rollback capability)
