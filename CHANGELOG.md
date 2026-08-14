@@ -6,9 +6,9 @@ Format sledi [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), verzije s
 
 ## [Unreleased]
 
-v8.26 je odprl Intelligence phase (Action Explainability), v8.27 jo nadaljuje (Scenario Brain), v8.28 jo še nadalje vzpostavi FEEDBACK LOOP (Adaptive Domain Weights), v8.29 jo ZAKLJUČI z Draft Queue + Action Feedback Loop integration (🎯 INTELLIGENCE PHASE COMPLETE), v8.30 odpira NOVO fazo — Automation (Safe Auto-pilot — 🎯 AUTOMATION PHASE STARTED), v8.31 zaključi Automation phase (Aggressive Auto-pilot + Anomaly Detection — 🎯 AUTOMATION PHASE COMPLETE), v8.32 odpira NOVO fazo — Polish (System Health Dashboard — 🎯 POLISH PHASE STARTED — "How healthy is the Brain system?"), v8.33 zaključi Polish phase caching (Performance Caching + Cache Stats), v8.34 zaključi Polish phase testing (Brain Integration Test Suite). Naslednje verzije:
+v8.26 je odprl Intelligence phase (Action Explainability), v8.27 jo nadaljuje (Scenario Brain), v8.28 jo še nadalje vzpostavi FEEDBACK LOOP (Adaptive Domain Weights), v8.29 jo ZAKLJUČI z Draft Queue + Action Feedback Loop integration (🎯 INTELLIGENCE PHASE COMPLETE), v8.30 odpira NOVO fazo — Automation (Safe Auto-pilot — 🎯 AUTOMATION PHASE STARTED), v8.31 zaključi Automation phase (Aggressive Auto-pilot + Anomaly Detection — 🎯 AUTOMATION PHASE COMPLETE), v8.32 odpira NOVO fazo — Polish (System Health Dashboard — 🎯 POLISH PHASE STARTED — "How healthy is the Brain system?"), v8.33 zaključi Polish phase caching (Performance Caching + Cache Stats), v8.34 zaključi Polish phase testing (Brain Integration Test Suite), v8.35 zaključi Polish phase "make the system alive" (Seed Demo Data + Telegram Brain Notifications). Naslednje verzije:
 
-- **v8.35+ — Polish phase continues** (E2E tests s Playwright, predictive accuracy improvements za Master Brain, refactoring)
+- **v8.36+ — Polish phase continues** (E2E tests s Playwright, predictive accuracy improvements za Master Brain, refactoring)
 - WebSocket real-time negotiation (SSE namesto polling)
 - Playwright E2E testi za glavne flow-e
 - TLS fingerprinting (curl-impersonate)
@@ -16,6 +16,77 @@ v8.26 je odprl Intelligence phase (Action Explainability), v8.27 jo nadaljuje (S
 - Performance optimizations za Master Brain (cached partial results per domain)
 - Additional conflict detection tipi (npr. Inventory vs Buyer — supply/demand mismatch)
 - Per-domain DB injection v Master Brain route (zaenkrat se zanaša na individualne Domain Brain route-e za DB state)
+
+## [8.35.0] - 2026-08-28
+
+### Added — 🌱 Seed Demo Data + 📱 Telegram Brain Notifications (Polish phase — "Make the system alive")
+
+Problem: sistem je tehnično popoln ampak PRAZEN — Trade tablica je prazna (0 trade-ov), Actual Profit Tracker prikazuje 0€, accuracy nemogoče izračunati, vsi Brain signali uporabljajo default inputs. Poleg tega Brain priporočila niso povezana z Telegram botom — uporabnik mora ročno preverjati dashboard. v8.35 rešuje oba problema in naredi sistem "alive".
+
+#### `src/lib/seed/demo-data.ts` (NEW — 25 realistic Slovenian trades)
+
+- **`DEMO_TRADES`** — 25 trade-ov: 4 izvori (Bolha/Vinted/Avtonet/mobile.de) × 5 kategorij (elektronika/obutev/oblačila/avto/orodje) × zadnjih 90 dni × mixed margins (vključno z 1 namernim loss case: Adidas Yeezy 350, 120€ kupljeno, 90€ prodano = -39€ neto).
+- **`seedDemoData()`** — idempotentna: preveri `db.trade.count()`, če > 0 skip-a in vrne `{ skipped: N }`. Ne briše obstoječih trade-ov. Po seeding: 19 sold + 5 held (inventory aging signal) + 1 cancelled. Actual Profit 90d = 973€, best trade Alu platišča +145€, worst trade Yeezy -39€.
+- **`clearAllTrades()`** — briše vse trade-e (za re-seed). Vrne `{ deleted: N }`.
+
+#### `src/app/api/ai/brain/seed/route.ts` (NEW — GET + POST seed/clear/reseed)
+
+- **GET** vrača `{ count, byStatus: { sold, held, cancelled }, demoTemplateCount: 25 }`.
+- **POST** z `action: 'seed' | 'clear' | 'reseed'` — `seed` kliče `seedDemoData()` (idempotent), `clear` kliče `clearAllTrades()`, `reseed` najprej clear-ja potem seed-a (clean reset).
+- `runtime='nodejs'`, `dynamic='force-dynamic'`, `maxDuration=60` (seeding 25 trade-ov lahko traja nekaj sekund v dev mode).
+
+#### `src/lib/brain/telegram-notifications.ts` (NEW — 3 notification types)
+
+- **`loadTelegramConfig()`** — naloži Telegram config iz Settings (singleton row). Vrne `null` če Telegram ni konfiguriran ali onemogočen — caller tichno skip-a notification v tem primeru.
+- **`formatBrainDigest(masterResult)`** — formatira dnevni digest kot PLAIN TEXT (ne Markdown): 🧠 header + health score/grade/riskLevel + strategy projections (30d/90d/12m profitEUR) + TOP 5 akcij (rank/domain/action truncated/uplift/confidence) + oneLineSummary + conflicts count.
+- **`sendBrainDigest()`** — naloži config, izračuna fresh Master Brain (no cache — digest mora odražati latest state), formatira in pošlje na Telegram.
+- **`sendAutoPilotAlert(draft, reason)`** — pošlje auto-pilot execution alert: action/domain/signal/uplift/confidence/reason. NON-CRITICAL — `runSafeAutoPilot()` jo wrap-a v try/catch.
+- **`sendAnomalyAlert(reason)`** — pošlje anomaly suspension alert. NON-CRITICAL — isto try/catch pattern.
+- Vsa 3 obvestila so `parseMode: null` (plain text) — nobenega MarkdownV2 escape-a potrebnega (EUR amounts, dates, parens delajo literalno).
+
+#### `src/lib/brain/auto-pilot.ts` (MODIFIED — Telegram alerts integrirani)
+
+- **`runSafeAutoPilot()`** — po vsakem successful auto-execution kliče `sendAutoPilotAlert(draft, reasonStr)` (try/catch — non-critical).
+- Ko je anomaly zaznana pre-existing (pre-run) ali mid-run (preko `incrementHourlyCounter()`), kliče `sendAnomalyAlert(reason)`.
+- Vsi Telegram klici so wrap-ani v `try { ... } catch (err) { logger.warn(...); }` — če Telegram ni konfiguriran ali send faila, auto-pilot logika ni prizadeta (auto-execution je že uspešno potekla).
+
+#### `src/lib/telegram.ts` (MODIFIED — `SendMessageOptions.parseMode`)
+
+- Dodan optional `parseMode` parameter v `SendMessageOptions` (default `MarkdownV2` za backward compat). Pass `null` za plain text (uporabljajo Brain notifications — nobenega escape-a potrebnega).
+
+#### `src/app/api/cron/brain-digest/route.ts` (NEW — daily cron @ 08:00)
+
+- **GET + POST** kliče `sendBrainDigest()`, vrne `{ ok, sent, reason?, timestamp, source }`.
+- Auth: `?key=<MONITOR_CRON_KEY>` query param (same as other cron endpoints). Če env var unset (dev mode), no auth required.
+- `runtime='nodejs'`, `dynamic='force-dynamic'`, `maxDuration=60`.
+- Schedule (example crontab): `0 8 * * * curl -s "http://localhost:3000/api/cron/brain-digest?key=$MONITOR_CRON_KEY"`.
+
+#### `src/app/api/ai/brain/telegram-test/route.ts` (NEW — POST test digest/autopilot/anomaly)
+
+- **POST** z `type: 'digest' | 'autopilot' | 'anomaly'`:
+  - `digest` → `sendBrainDigest()` (pošlje real Master Brain digest).
+  - `autopilot` → `sendAutoPilotAlert(mockDraft, 'Test notification')` (mock draft z action='Test akcija — to je testno sporočilo').
+  - `anomaly` → `sendAnomalyAlert('Test anomaly — preverjamo Telegram povezavo')`.
+- Vrne `{ ok, sent, reason?, type }`. Če Telegram ni konfiguriran: `{ ok: true, sent: false, reason: 'Telegram not configured or disabled' }` (not an error).
+- `runtime='nodejs'`, `dynamic='force-dynamic'`, `maxDuration=30`.
+
+#### UI: `SeedAndTelegramCard` (NEW v `src/components/dashboard/ai-hub-view.tsx`)
+
+- **Lime + cyan gradient card** pozicionirana TIK POD 🏥 System Health (health first, then onboarding).
+- **A. Seed Data section** (prikazan samo če `tradeCount === 0`): "🌱 Nisi še dodal nobene prodaje. Naloži demo podatke (25 trade-ov) za testiranje Brain sistema." + prominent 🌱 "Naloži demo podatke (25 trade-ov)" button (lime-600 background). Po seed-anju: toast "✓ Naloženih 25 demo trade-ov" + samodejen page reload (da vsi brain cards poberejo nove podatke).
+- **B. Telegram Brain Notifications section** (vedno prikazan): "📱 Telegram Brain Notifications" header z opisom 3 tipov (daily digest / auto-pilot alert / anomaly alert). 3 test gumbi v grid (1 col mobile, 3 cols desktop): "Pošlji digest" / "Pošlji auto-pilot test" / "Pošlji anomalija test". Vsak gumb pošlje POST `/api/ai/brain/telegram-test` z ustreznim `type`. Rezultat prikazan inline: "✅ Poslano na Telegram" (zeleno) ali "❌ Telegram ni konfiguriran" (amber).
+- **BrainSynthesisCard outer badge** posodobljen: "v8.35 Seed+Telegram + v8.33 Performance + v8.32 Health + ...".
+- **Auto-refresh** trade count vsakih 60 sekund (matcha SystemHealthCard cadence).
+
+### Stats
+
+- AI endpoints: 426 → 428 (+2: brain/seed + brain/telegram-test — brain-digest cron je pod /api/cron/, ne /api/ai/)
+- Total API routes: 603 → 606 (+3: brain/seed + brain/telegram-test + cron/brain-digest)
+- Brain category in AI Hub: 22 → 24 (+2)
+
+### Note
+
+Polish phase continues — "make the system alive." v8.32 = monitoring (System Health Dashboard), v8.33 = performance (Performance Caching + Cache Stats), v8.34 = testing (Brain Integration Test Suite — 92 tests), v8.35 = data + notifications (Seed Demo Data + Telegram Brain Notifications). Po v8.35: Trade tablica je polna z 25 realističnimi trade-i, Actual Profit Tracker prikazuje 973€ (90d), System Health score je 85/100 (HEALTHY, grade A), Brain priporočila so povezana z Telegram botom. Next: v8.36 (E2E tests s Playwright, predictive accuracy improvements za Master Brain).
 
 ## [8.34.0] - 2026-08-28
 

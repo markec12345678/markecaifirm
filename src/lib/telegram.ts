@@ -28,6 +28,12 @@ export interface InlineButton {
 export interface SendMessageOptions {
   inlineButtons?: InlineButton[][]; // rows of buttons
   disablePreview?: boolean;
+  // v8.35: Optional parse_mode override. Default is 'MarkdownV2' (preserves
+  // existing v6.92 behavior). Pass undefined or 'MarkdownV2' for the default.
+  // Pass 'Markdown' for V1 syntax (less strict — no need to escape . - ( ) etc).
+  // Pass null to disable parse_mode entirely (plain text — useful when the
+  // message contains literal asterisks/dots that would otherwise be misparsed).
+  parseMode?: 'MarkdownV2' | 'Markdown' | 'HTML' | null;
 }
 
 export async function sendTelegramMessage(
@@ -42,7 +48,8 @@ export async function sendTelegramMessage(
     const body: any = {
       chat_id: cfg.chatId,
       text,
-      parse_mode: 'MarkdownV2',
+      // v8.35: respect options.parseMode if provided; default MarkdownV2.
+      parse_mode: options?.parseMode === undefined ? 'MarkdownV2' : options.parseMode,
       disable_web_page_preview: options?.disablePreview ?? false,
     };
     if (options?.inlineButtons && options.inlineButtons.length > 0) {

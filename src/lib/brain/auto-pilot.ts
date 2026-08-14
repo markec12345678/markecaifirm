@@ -76,6 +76,7 @@ import { PrismaClient } from '@prisma/client';
 import { logger } from '@/lib/logger';
 import { updateDraftStatus } from './draft-queue';
 import { recordActionFeedback } from './adaptive-weights';
+import { sendAutoPilotAlert, sendAnomalyAlert } from './telegram-notifications';
 import type { ActionDraft } from './draft-queue';
 import type { DomainName } from './master';
 
@@ -1049,6 +1050,15 @@ export async function runSafeAutoPilot(): Promise<AutoPilotRunResult> {
     logger.warn('runSafeAutoPilot', 'auto-pilot is SUSPENDED due to anomaly — returning early', {
       reason: anomalyCheck.reason,
     });
+    // v8.35: Send Telegram anomaly alert (NON-CRITICAL — wrapped in try/catch).
+    // If Telegram is not configured or send fails, auto-pilot logic is unaffected.
+    if (anomalyCheck.reason) {
+      try {
+        await sendAnomalyAlert(anomalyCheck.reason);
+      } catch (err: any) {
+        logger.warn('runSafeAutoPilot', 'sendAnomalyAlert failed (non-critical)', err);
+      }
+    }
     // Reload config to get the latest anomaly fields for the response.
     const suspendedConfig = await loadAutoPilotConfig();
     return {
@@ -1176,6 +1186,15 @@ export async function runSafeAutoPilot(): Promise<AutoPilotRunResult> {
             todayBudget,
           });
 
+          // v8.35: Send Telegram auto-pilot alert (NON-CRITICAL — wrapped in
+          // try/catch). If Telegram is not configured or send fails, the
+          // auto-execution itself is unaffected (it already succeeded above).
+          try {
+            await sendAutoPilotAlert(draft, reasonStr);
+          } catch (err: any) {
+            logger.warn('runSafeAutoPilot', `sendAutoPilotAlert failed for draft ${draft.id} (non-critical)`, err);
+          }
+
           // v8.31: Increment hourly counter. If this triggered suspension, mark
           // flag so remaining drafts in this loop are skipped.
           const counterResult = await incrementHourlyCounter();
@@ -1186,6 +1205,12 @@ export async function runSafeAutoPilot(): Promise<AutoPilotRunResult> {
               count: counterResult.count,
               reason: counterResult.reason,
             });
+            // v8.35: Send Telegram anomaly alert for mid-run suspension.
+            try {
+              await sendAnomalyAlert(counterResult.reason ?? 'Anomaly detected mid-run');
+            } catch (err: any) {
+              logger.warn('runSafeAutoPilot', 'sendAnomalyAlert (mid-run) failed (non-critical)', err);
+            }
           }
         } catch (err: any) {
           // Auto-execution failed for this draft — log + skip to next.

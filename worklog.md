@@ -16840,3 +16840,78 @@ Stage Summary:
   - v8.33 = Performance Caching (cache stats)
   - v8.34 = Brain Integration Test Suite (92 tests)
 - Skupaj doslej (v7.50 → v8.34): 84 verzij, 208 novih funkcij; Brain architecture COMPLETE (v8.22) + Validation phase ZAKLJUČENA (v8.23-v8.25) + Intelligence phase ZAKLJUČENA (v8.26-v8.29) + Automation phase ZAKLJUČENA (v8.30-v8.31) + Polish phase (v8.32-v8.34)
+
+---
+Task ID: v8.35
+Agent: full-stack-developer
+Task: Implement Seed Demo Data + Telegram Brain Notifications
+
+Work Log:
+- Prebral worklog.md (v8.22 Master Brain, v8.29 Draft Queue, v8.32 System Health, v8.33 Performance, v8.34 Brain Integration Tests entries) za kontekst Brain arhitekture
+- Prebral src/lib/telegram.ts — `sendTelegramMessage(cfg, text, options)` signature z hardcoded `parse_mode: 'MarkdownV2'`. Vseboval: `TelegramConfig`, `InlineButton`, `SendMessageOptions` (inlineButtons + disablePreview), `escapeMd`, `formatAlertMessage`, `formatHeartbeatMessage`, `testTelegram`, `answerCallbackQuery`, `editMessageText`. Za Brain notifications (EUR amounts, dates, parens) bi MarkdownV2 zahteval obsežno escape-anje.
+- Prebral prisma/schema.prisma — `model Trade` z buyPrice, sellPrice, buyDate, sellDate, status, buyLocation, sellLocation, buyFees, sellFees, title, category, profileId, listingId, imageUrl, url, notes, flipChecklist, createdAt, updatedAt. Status string z default 'held' (held | sold | cancelled). Settings model z telegramBotToken/telegramChatId/telegramEnabled (stable od v1.0).
+- Prebral src/lib/brain/master.ts — `MasterBrainResult` z domains (7 raw), domainSummary, topActions (5), conflicts, overallHealth (score/grade/riskLevel/bottlenecks/strengths), strategy (projection30d/90d/12m z profitEUR/riskScore/keyMilestone), oneLineSummary, aiUsed:false, source. `masterBrain()` async vrača topActions z rank/domain/signal/action/expectedUpliftEUR/confidence/domainWeight/finalScore.
+- Prebral src/lib/brain/draft-queue.ts — `ActionDraft` interface (id, rank, domain, signal, action, expectedUpliftEUR, confidence, status, feedbackNote, executedAt, rejectedAt, snapshotDate, createdAt, updatedAt). `updateDraftStatus(input)` ki kliče recordActionFeedback ko status='executed'/'rejected' (closed feedback loop). getFreshDb() pattern za Turbopack-safe dostop do novih modelov.
+- Prebral src/lib/brain/auto-pilot.ts (1577 vrstic) — `runSafeAutoPilot()` (line 1021): pre-run anomaly check + early-return; for-each pending draft → checkAutoPilotEligibilityV2 → updateDraftStatus + patch autoExecuted + autoPilotReason + incrementHourlyCounter (suspend mid-run če threshold >8). MODIFIKACTION NAMENJENE: dodal sendAutoPilotAlert po vsakem successful auto-execution + sendAnomalyAlert pri pre-existing in mid-run anomaly.
+- Prebral src/app/api/cron/auto-pilot/route.ts in cleanup-drafts/route.ts — cron auth pattern: `?key=<MONITOR_CRON_KEY>` query param (dev mode no auth). GET + POST ista handler. runtime='nodejs', dynamic='force-dynamic', maxDuration=60.
+- Prebral src/components/dashboard/ai-hub-view.tsx (7283 vrstic) — `SystemHealthCard` komponenta (line 1652-2034), `PerformanceCard` (line 2036+), `BrainSynthesisCard` (line 6795+) ki render-a SystemHealthCard nato PerformanceCard nato ActualProfitCard. Uvozil lucide-react ikone: Sprout, Send, MessageCircle (za Seed+Telegram card).
+- MODIFIED src/lib/telegram.ts: dodan optional `parseMode?: 'MarkdownV2' | 'Markdown' | 'HTML' | null` v SendMessageOptions. Default 'MarkdownV2' (backward compat). Pass `null` za plain text (uporabljajo Brain notifications).
+- NEW src/lib/seed/demo-data.ts: `DEMO_TRADES` 25 trade-ov (4 izvori × 5 kategorij × zadnjih 90 dni, 19 sold + 5 held + 1 cancelled, 1 namerni loss case Adidas Yeezy 350 -39€). `seedDemoData()` idempotentna (db.trade.count() check). `clearAllTrades()` za re-seed. `daysAgo(n)` helper.
+- NEW src/app/api/ai/brain/seed/route.ts: GET vrača count + byStatus + demoTemplateCount. POST z action='seed'|'clear'|'reseed'. runtime='nodejs', dynamic='force-dynamic', maxDuration=60. Standard error pattern.
+- NEW src/lib/brain/telegram-notifications.ts: `loadTelegramConfig()` (db.settings.findUnique singleton — null če Telegram disabled ali nekonfiguriran). `formatBrainDigest(masterResult)` — plain text message (🧠 header + health + strategy + TOP 5 akcij + povzetek + konflikti). `sendBrainDigest()` — load config, compute fresh masterBrain(), format, send. `sendAutoPilotAlert(draft, reason)` — format+send. `sendAnomalyAlert(reason)` — format+send. Vsi 3 sender-ji vračajo `NotificationResult { ok, sent, reason? }` in so parseMode:null (plain text, no MarkdownV2 escape potrebnega).
+- MODIFIED src/lib/brain/auto-pilot.ts: dodan import `sendAutoPilotAlert, sendAnomalyAlert from './telegram-notifications'`. V `runSafeAutoPilot()`: (1) pre-existing anomaly → try/catch `sendAnomalyAlert(anomalyCheck.reason)`; (2) po vsakem successful auto-execution → try/catch `sendAutoPilotAlert(draft, reasonStr)`; (3) mid-run anomaly (preko incrementHourlyCounter suspendedNow=true) → try/catch `sendAnomalyAlert(counterResult.reason ?? 'Anomaly detected mid-run')`. Vsi Telegram klici so wrap-ani v try/catch z logger.warn — non-critical, ne vplivajo na auto-pilot logiko.
+- NEW src/app/api/cron/brain-digest/route.ts: GET + POST isti handler. Auth: `?key=<MONITOR_CRON_KEY>` (dev mode no auth). Kliče `sendBrainDigest()` in vrne `{ ok, sent, reason?, timestamp, source }`. runtime='nodejs', dynamic='force-dynamic', maxDuration=60.
+- NEW src/app/api/ai/brain/telegram-test/route.ts: POST z `type: 'digest' | 'autopilot' | 'anomaly'`. `autopilot` uporablja mock ActionDraft (id `test-${Date.now()}`, action 'Test akcija — to je testno sporočilo'). `anomaly` uporablja 'Test anomaly — preverjamo Telegram povezavo'. `digest` pošlje real Master Brain output. runtime='nodejs', dynamic='force-dynamic', maxDuration=30.
+- MODIFIED src/components/dashboard/ai-hub-view.tsx: dodane 3 lucide-react ikone (Sprout, Send, MessageCircle). NOVA `SeedAndTelegramCard` komponenta (line 2036-2283) z lime+cyan gradient. SEED SECTION (prikazan samo če tradeCount=0): callout + prominent 🌱 "Naloži demo podatke (25 trade-ov)" button → POST /api/ai/brain/seed {action:'seed'} → toast "✓ Naloženih N demo trade-ov" + fetchSeedInfo + window.location.reload() po 1.5s. TELEGRAM SECTION (vedno prikazan): header + opis 3 tipov + 3 test gumbi (Pošlji digest / Pošlji auto-pilot test / Pošlji anomalija test) → POST /api/ai/brain/telegram-test z ustreznim type → rezultat inline (✅ Poslano / ❌ Telegram ni konfiguriran) + toast. Auto-refresh trade count vsakih 60s. Render v BrainSynthesisCard med SystemHealthCard in PerformanceCard.
+- MODIFIED BrainSynthesisCard outer badge: dodan "v8.35 Seed+Telegram +" prefix.
+- Pognal `bun run lint` — 0 napak ✨ (2 pre-existing eslint-disable warnings v db.ts — ne kritično)
+- Pognal `bunx tsc --noEmit` — 0 napak po fix-u (initial error: 'ok' specified more than once v seed/route.ts za clear action — popravil z `{ ...result, source }` namesto `{ ok: true, ...result, source }`)
+- Curl tests:
+  - GET /api/ai/brain/seed → `{"ok":true,"count":0,"byStatus":{"sold":0,"held":0,"cancelled":0},"demoTemplateCount":25,"source":"v8.35-seed-demo-data"}` ✓ (initially empty)
+  - POST /api/ai/brain/seed {action:'seed'} → `{"ok":true,"created":25,"skipped":0,"total":25,"source":"v8.35-seed-demo-data"}` ✓ (25 trades created)
+  - GET /api/ai/brain/seed (after) → `{"count":25,"byStatus":{"sold":19,"held":5,"cancelled":1}}` ✓ (19 sold, 5 held, 1 cancelled — matcha DEMO_TRADES array)
+  - POST /api/ai/brain/seed {action:'seed'} (second call) → `{"ok":true,"created":0,"skipped":25,"total":25,...}` ✓ (idempotent — skipped)
+  - GET /api/ai/brain/actual-profit?days=90 → `{"totalProfitEUR":973,"tradeCount":19,"avgProfitPerTradeEUR":51.21,"bestTrade":"Alu platišča 17\" (+145€)","worstTrade":"Adidas Yeezy 350 (-39€)"}` ✓ (non-zero! ground truth works)
+  - GET /api/ai/brain/health → `{"overallHealthScore":85,"overallGrade":"A","status":"HEALTHY","dataFreshness.tradesRecorded":19}` ✓ (system alive with real data)
+  - POST /api/ai/brain/telegram-test {type:'digest'} → `{"ok":true,"sent":false,"reason":"Telegram not configured or disabled","type":"digest"}` ✓ (expected — Telegram not set up)
+  - POST /api/ai/brain/telegram-test {type:'autopilot'} → `{"ok":true,"sent":false,"reason":"...","type":"autopilot"}` ✓
+  - POST /api/ai/brain/telegram-test {type:'anomaly'} → `{"ok":true,"sent":false,"reason":"...","type":"anomaly"}` ✓
+  - GET /api/cron/brain-digest → `{"ok":true,"sent":false,"reason":"Telegram not configured or disabled","timestamp":"...","source":"v8.35-brain-digest-cron"}` ✓ (cron works, returns skipped)
+  - GET /api/ai-list → `{"total":428,"categories":{"brain":24,...}}` ✓ (426→428, brain 22→24)
+  - POST /api/ai/brain/auto-pilot {action:'run'} → `{"config":{"enabled":false,...},"checked":0,"autoExecuted":0,"source":"v8.30-safe-auto-pilot"}` ✓ (auto-pilot disabled, no Telegram calls made — runSafeAutoPilot returns early before Telegram integration)
+- Preveril dev.log: brez error-jev od Telegram integracije (logger.info messages so se pravilno zapisali za seedDemoData, sendBrainDigest, telegram-test, cron/brain-digest)
+- Posodobil AI_ENDPOINTS.md: dodal brain/seed (#31) in brain/telegram-test (#32) vrstice, renumberal vse nadaljnje (33-428). Total: 426 → 428.
+- Posodobil README.md: version badge v8.34.0 → v8.35.0; AI endpoints 426 → 428; API routes 603 → 606; hero tagline z v8.35.0 vsebino (Seed Demo Data + Telegram Brain Notifications); "Verzija v8.35.0" section z 428 AI + 14 cron + ~293 funkcij; "Kaj je novega v7.56–v8.35" (78→79 verzij, 202→203 funkcij); nov v8.35 blok z vsemi detail-i; AI Hub vrstica (17) posodobljena z "🌱 Seed Data & 📱 Telegram Brain Notifications (v8.35)"; AI_ENDPOINTS.md link posodobljen z brain/seed + brain/telegram-test (štiriindvajset Brain layer-jev, v8.15-v8.33 + v8.35); project tree comment posodobljen; Testing line 603 → 606 API routes
+- Posodobil CHANGELOG.md: dodan [8.35.0] section na vrh nad [8.34.0] z 8 podsekcijami (demo-data.ts, seed/route.ts, telegram-notifications.ts, auto-pilot.ts modifications, telegram.ts parseMode addition, brain-digest cron, telegram-test endpoint, SeedAndTelegramCard UI). Stats: AI 426→428 (+2), routes 603→606 (+3), brain category 22→24 (+2). Note o Polish phase "make the system alive". [Unreleased] posodobljen z v8.35 milestone + v8.36+ roadmap (Playwright E2E, predictive accuracy).
+
+Stage Summary:
+- NEW: src/lib/seed/demo-data.ts (25 realistic Slovenian trades, seedDemoData, clearAllTrades, DEMO_TRADES array)
+- NEW: src/app/api/ai/brain/seed/route.ts (GET count + POST seed/clear/reseed)
+- NEW: src/lib/brain/telegram-notifications.ts (sendBrainDigest, sendAutoPilotAlert, sendAnomalyAlert, formatBrainDigest, formatAutoPilotAlert, formatAnomalyAlert, loadTelegramConfig, NotificationResult)
+- NEW: src/app/api/cron/brain-digest/route.ts (daily @ 08:00, GET+POST, sendBrainDigest)
+- NEW: src/app/api/ai/brain/telegram-test/route.ts (POST test digest/autopilot/anomaly z mock draft)
+- MODIFIED: src/lib/telegram.ts (SendMessageOptions.parseMode optional — default MarkdownV2, null=plain text)
+- MODIFIED: src/lib/brain/auto-pilot.ts (Telegram alerts after auto-execution + pre-existing anomaly + mid-run anomaly — vsi try/catch wrapped, non-critical)
+- MODIFIED: src/components/dashboard/ai-hub-view.tsx (nova SeedAndTelegramCard komponenta z 🌱 Seed button + 3 Telegram test gumbi, render med SystemHealthCard in PerformanceCard, BrainSynthesisCard outer badge posodobljen)
+- AI endpointi: 426 → 429 (+3? NO — actual: 428 +2: brain/seed + brain/telegram-test. brain-digest cron je pod /api/cron/, ne /api/ai/. Brain category 22 → 24)
+- Total API routes: 603 → 606 (+3: brain/seed + brain/telegram-test + cron/brain-digest)
+- Lint: 0 napak ✨ (2 pre-existing eslint-disable warnings v db.ts — ne kritično)
+- Typecheck: 0 napak ✨ (popravil 1 initial error v seed/route.ts: 'ok' specified more than once)
+- Endpoint verification:
+  - GET /api/ai/brain/seed (initial) → count=0, demoTemplateCount=25 ✓
+  - POST /api/ai/brain/seed {action:'seed'} → created=25, skipped=0, total=25 ✓
+  - POST /api/ai/brain/seed {action:'seed'} (second) → created=0, skipped=25 (idempotent ✓)
+  - GET /api/ai/brain/actual-profit?days=90 → totalProfitEUR=973, tradeCount=19, bestTrade Alu platišča +145€, worstTrade Yeezy -39€ ✓ (non-zero, system alive)
+  - GET /api/ai/brain/health → overallHealthScore=85, overallGrade=A, status=HEALTHY, tradesRecorded=19 ✓
+  - POST /api/ai/brain/telegram-test {type:'digest'} → sent=false, reason="Telegram not configured or disabled" ✓ (expected — no Telegram set up)
+  - POST /api/ai/brain/telegram-test {type:'autopilot'} → sent=false, type='autopilot' ✓
+  - POST /api/ai/brain/telegram-test {type:'anomaly'} → sent=false, type='anomaly' ✓
+  - GET /api/cron/brain-digest → sent=false, reason="Telegram not configured", source="v8.35-brain-digest-cron" ✓
+  - GET /api/ai-list → total=428, brain category=24 ✓
+  - POST /api/ai/brain/auto-pilot {action:'run'} → config.enabled=false, checked=0, autoExecuted=0 (auto-pilot disabled, no Telegram calls) ✓
+- Documentation updated:
+  - AI_ENDPOINTS.md: brain/seed (#31) + brain/telegram-test (#32) dodana, vse nadaljnje renumberane 33-428, Total: 426 → 428
+  - README.md: version v8.34.0 → v8.35.0, AI endpoints 426 → 428, API routes 603 → 606, 13 → 14 cron automatizacij, ~292 → ~293 funkcij, hero tagline z v8.35 vsebino, nov v8.35 blok v "Kaj je novega", AI Hub vrstica posodobljena z v8.35, AI_ENDPOINTS.md link posodobljen (24 Brain layer-jev), project tree comment posodobljen, Testing line 603 → 606
+  - CHANGELOG.md: nov [8.35.0] section z 8 podsekcijami (demo-data, seed/route, telegram-notifications, auto-pilot modifications, telegram.ts parseMode, brain-digest cron, telegram-test endpoint, SeedAndTelegramCard UI), Stats (AI 426→428, routes 603→606, brain 22→24), Note o Polish phase "make system alive". [Unreleased] posodobljen z v8.35 milestone + v8.36+ roadmap.
+- Issues: none. Spec je rekel "AI 426 → 429 (+3)" ampak matematika je actually 426 + 2 = 428 (brain-digest cron je pod /api/cron/, ne /api/ai/ — spec sam pravi to v parenthetical). Uporabljen dejanski count 428, kar matcha `curl /api/ai-list` output. Prav tako spec je rekel "brain category now 24" kar je pravilno (22 + 2 = 24).
+- Skupaj doslej (v7.50 → v8.35): 85 verzij, 209 novih funkcij; Brain architecture COMPLETE (v8.22) + Validation phase ZAKLJUČENA (v8.23-v8.25) + Intelligence phase ZAKLJUČENA (v8.26-v8.29) + Automation phase ZAKLJUČENA (v8.30-v8.31) + Polish phase (v8.32-v8.35 — monitoring + performance + testing + data+notifications)
