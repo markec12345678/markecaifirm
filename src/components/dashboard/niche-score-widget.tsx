@@ -20,18 +20,20 @@ import { cn } from '@/lib/utils';
 
 interface NicheData {
   ok: boolean;
+  totalCategories: number;
   niches: Array<{
     category: string;
     score: number;
     roi: number;
-    totalProfit: number;
-    dealsCount: number;
-    listingsCount: number;
-    competition: 'low' | 'medium' | 'high';
+    profit: number;        // v8.35: API vrača 'profit' ne 'totalProfit'
+    count: number;          // v8.35: API vrača 'count' ne 'dealsCount'
+    avgHoldDays: number;
+    avgProfit: number;
+    totalInvested: number;
     recommendation: string;
   }>;
-  bestNiche: string | null;
-  summary: string;
+  bestNiche: { category: string; roi: number; recommendation: string; score?: number; profit?: number; count?: number } | null;
+  worstNiche: { category: string; roi: number; recommendation: string; score?: number; profit?: number; count?: number } | null;
 }
 
 export function NicheScoreWidget({ onNavigate }: { onNavigate?: (v: 'dashboard' | 'monitors' | 'alerts' | 'listings' | 'trades' | 'analytics' | 'health' | 'notifications' | 'settings') => void }) {
@@ -86,7 +88,8 @@ export function NicheScoreWidget({ onNavigate }: { onNavigate?: (v: 'dashboard' 
         {data.bestNiche && (
           <div className="bg-amber-500/10 border border-amber-500/30 rounded p-2 mb-2">
             <div className="text-[10px] uppercase text-amber-400 font-bold">🏆 Najboljša niša</div>
-            <div className="text-sm font-bold">{data.bestNiche}</div>
+            <div className="text-sm font-bold">{data.bestNiche.category}</div>
+            <div className="text-[10px] text-muted-foreground mt-0.5">ROI: {data.bestNiche.roi >= 0 ? '+' : ''}{data.bestNiche.roi.toFixed(0)}%</div>
           </div>
         )}
 
@@ -119,28 +122,25 @@ export function NicheScoreWidget({ onNavigate }: { onNavigate?: (v: 'dashboard' 
                     {n.roi >= 0 ? '+' : ''}{n.roi}% ROI
                   </span>
                   <span>•</span>
-                  <span>{n.dealsCount} prodaj</span>
+                  <span>{n.count} prodaj</span>
                   <span>•</span>
-                  <span>{n.totalProfit >= 0 ? '+' : ''}{n.totalProfit}€</span>
+                  <span>{n.profit >= 0 ? '+' : ''}{n.profit}€</span>
                 </div>
               </div>
-              {/* Competition indicator */}
+              {/* Avg hold days indicator (v8.35: replaces competition — API doesn't return it) */}
               <div className="shrink-0 text-right">
-                <div className="text-[9px] text-muted-foreground uppercase">Konkurenca</div>
-                <div className={cn('text-[10px] font-bold',
-                  n.competition === 'low' ? 'text-green-500' :
-                  n.competition === 'medium' ? 'text-amber-400' : 'text-red-500'
-                )}>
-                  {n.competition === 'low' ? 'NIZKA' : n.competition === 'medium' ? 'SREDNJA' : 'VISOKA'}
-                </div>
+                <div className="text-[9px] text-muted-foreground uppercase">⏱ Hold</div>
+                <div className="text-[10px] font-bold font-mono">{n.avgHoldDays}d</div>
               </div>
             </div>
           ))}
         </div>
 
-        {/* Summary */}
+        {/* Summary (v8.35: API doesn't return 'summary' — derive from bestNiche) */}
         <p className="text-[11px] text-muted-foreground italic border-t border-border/30 pt-2 mt-2">
-          {data.summary}
+          {data.bestNiche
+            ? `Top niša: ${data.bestNiche.category} (ROI ${data.bestNiche.roi >= 0 ? '+' : ''}${data.bestNiche.roi.toFixed(0)}%). ${data.bestNiche.recommendation}`
+            : `${data.totalCategories} kategorij analiziranih. Dodaj več prodaj za boljšo analizo.`}
         </p>
       </CardContent>
     </Card>
