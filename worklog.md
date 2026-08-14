@@ -16150,3 +16150,77 @@ Stage Summary:
   - v8.29 = ACTION (Draft Queue — closed feedback loop integration)
   - Skupaj: Master Brain recommends → user decides → system learns → better recommendations
 - Skupaj doslej (v7.50 → v8.29): 79 verzij, 203 novih funkcij; Brain architecture COMPLETE (v8.22) + Validation phase ZAKLJUČENA (v8.23-v8.25) + Intelligence phase ZAKLJUČENA (v8.26-v8.29) — naslednja faza: v8.30+ Automation (safe auto-pilot z rollback capability)
+
+---
+Task ID: v8.30
+Agent: full-stack-developer
+Task: Implement Safe Auto-pilot — Automation phase start
+
+Work Log:
+- Branje worklog.md (zadnji v8.29.1 entry — Intelligence phase ZAKLJUČANA, v8.30+ sledi Automation)
+- Branje src/lib/brain/draft-queue.ts (ActionDraft type, updateDraftStatus() z recordActionFeedback integracijo, getDraftQueue() z Prisma.sql safe parameterized queries, getFreshDb() pattern)
+- Branje prisma/schema.prisma (ActionDraft model — 14 polj + 3 indexes; Settings model — autoPilot polja + adaptiveDomainWeights iz v8.28)
+- Branje src/components/dashboard/ai-hub-view.tsx (BrainSynthesisCard strukturiran kot MasterBrainBanner → ScenarioBrainCard → AdaptiveWeightsCard → DraftQueueCard → 7 Domain Brain sekcij → BrainSnapshots → AccuracyTrendCard)
+- Branje dev.log (dev server teče na :3000, brez napak)
+- Preveril obstoječe stanje: vse v8.30 datoteke so že obstoječe (predhodna agentova dela):
+  - prisma/schema.prisma (ActionDraft +5 polj + 2 indexes, Settings +5 polj — že aplikirana v DB)
+  - src/lib/db.ts (SCHEMA_VERSION='v8.30-auto-pilot' — že bumpan)
+  - src/lib/brain/auto-pilot.ts (865 vrstic — loadAutoPilotConfig, saveAutoPilotConfig, checkAutoPilotEligibility (PURE 8 safety rules), runSafeAutoPilot, rollbackAutoExecution, getAutoPilotStats, updateAutoPilotConfig, getAutoExecutedHistory)
+  - src/app/api/ai/brain/auto-pilot/route.ts (GET stats + POST run/config)
+  - src/app/api/ai/brain/auto-pilot/rollback/route.ts (POST rollback z 404/400 error mapping)
+  - src/app/api/cron/auto-pilot/route.ts (GET+POST hourly cron z MONITOR_CRON_KEY auth)
+  - src/components/dashboard/ai-hub-view.tsx (NOVA AutoPilotCard komponenta ~670 vrstic, BrainSynthesisCard z <AutoPilotCard /> med <DraftQueueCard /> in 7 Domain Brain sekcijami)
+- Step 1: prisma/schema.prisma — ActionDraft + Settings vsa v8.30 polja prisotna (autoExecuted, autoPilotReason, rolledBack, rolledBackAt, rollbackReason + autoPilotEnabled, autoPilotMode, autoPilotDailyLimit, autoPilotDailyBudgetEUR, autoPilotLastRunAt). Nova indeksa @@index([autoExecuted]) + @@index([rolledBack]).
+- Step 2: db:push — "The database is already in sync with the Prisma schema." Prisma Client regeneriran v 231ms. Verificirano preko PRAGMA table_info: vseh 18 ActionDraft columns + 5 Settings autoPilot columns prisotnih v SQLite.
+- Step 3: Lint (bun run lint) — 0 errors, 2 warnings (pred-existing unused eslint-disable v db.ts — ne kritično, ista kot v8.28/v8.29) ✅
+- Step 4: Typecheck (bunx tsc --noEmit) — 0 errors ✅
+- Step 5: Endpoint verification (curl):
+  - GET /api/ai/brain/auto-pilot → 200 {"ok":true,"config":{"enabled":false,"mode":"safe","dailyLimit":5,"dailyBudgetEUR":500,"lastRunAt":"..."},"today":{"autoExecuted":0,"budgetUsed":0,"budgetRemaining":500,"limitRemaining":5},"allTime":{"totalAutoExecuted":0,"totalRolledBack":0,"rollbackRate":0},"source":"v8.30-safe-auto-pilot"} ✅
+  - POST /api/ai/brain/auto-pilot {action:'config', config:{enabled:true, dailyLimit:3}} → 200 {"ok":true,"config":{"enabled":true,"mode":"safe","dailyLimit":3,"dailyBudgetEUR":500,"lastRunAt":"..."}} ✅ (config merged + persisted)
+  - POST /api/ai/brain/auto-pilot {action:'run'} → 200 {"ok":true,"config":{"enabled":true,...,"lastRunAt":"..."},"checked":5,"autoExecuted":0,"skipped":5,"executedDrafts":[],"skippedDrafts":[{"id":"...","action":"Jahaj trend: Trend +3.5%/mo...","reasons":["PASS: auto-pilot enabled","PASS: mode is safe","PASS: user risk tolerance is balanced","FAIL: confidence is HIGH (only LOW can be auto-executed)","FAIL: expectedUpliftEUR 375€ >= 100€ threshold","PASS: domain is market (not risk)",...]}]} ✅ (8 safety rules pravilno aplicirane, vsa 5 draftov failed zaradi HIGH/MEDIUM confidence in uplift >100€ — kar je PRAVILNO safe obnašanje, sistem ZAVIJE varčno)
+  - POST /api/ai/brain/auto-pilot/rollback (z nonexistent-id) → 404 ✅ (predhodno testirano v dev.log: 404 za not-found, 400 za already-rolled-back)
+  - POST /api/cron/auto-pilot → 200 {"ok":true,"enabled":true,"checked":5,"autoExecuted":0,"skipped":5,...} ✅ (cron auth deluje brez MONITOR_CRON_KEY v dev)
+  - GET /api/ai-list → 200 {"ok":true,"total":424,"categories":{...,"brain":20,...}} ✅ (424 AI endpointov, brain kategorija 20 = 8 brain + snapshots + actual-profit + risk-profile + accuracy + accuracy/backfill + explain + scenario + weights + drafts + drafts/[id] + auto-pilot + auto-pilot/rollback)
+- Step 6: Reset auto-pilot config na default (enabled:false, dailyLimit:5) za clean state naslednjič
+- Step 7: Documentation updated:
+  - README.md: hero block v8.30.0 že vseboval (predhodni agent). AI Hub nav row 422 → 424 + dodan "🤖 Safe Auto-pilot (v8.30)" badge. AI_ENDPOINTS.md link 422 → 424 + dodan "brain/auto-pilot in brain/auto-pilot/rollback — dvajset Brain layer-jev, v8.15 + ... + v8.30". Project tree comment 422 → 424 + dodan brain/auto-pilot. Changelog link "v8.29" → "v8.30". Zadnje verzije — dodan v8.30.0 entry na vrh (nad v8.29.0).
+  - CHANGELOG.md: [8.30.0] section že vseboval (predhodni agent). [Unreleased] posodobljen z "v8.30 odpira NOVO fazo — Automation (Safe Auto-pilot — 🎯 AUTOMATION PHASE STARTED)".
+  - AI_ENDPOINTS.md: Total: 424 endpoints (že vsebovalo). Rows 27-28: brain/auto-pilot + brain/auto-pilot/rollback (že vsebovalo v pravilnem 3-column formatu).
+
+Stage Summary:
+- MODIFIED: prisma/schema.prisma (ActionDraft +5 polj: autoExecuted, autoPilotReason, rolledBack, rolledBackAt, rollbackReason + 2 nova indeksa @@index([autoExecuted]) + @@index([rolledBack]); Settings +5 polj: autoPilotEnabled, autoPilotMode, autoPilotDailyLimit, autoPilotDailyBudgetEUR, autoPilotLastRunAt)
+- MODIFIED: src/lib/db.ts (SCHEMA_VERSION bump v8.29-draft-queue → v8.30-auto-pilot)
+- NEW: src/lib/brain/auto-pilot.ts (~865 vrstic — pure compute + DB module, no AI/LLM SDK)
+  - Exports: AutoPilotConfig, DEFAULT_AUTOPILOT_CONFIG, ActionDraftV830 (extends ActionDraft z 5 novimi polji), AutoPilotCandidateCheck, AutoPilotRunResult, RollbackResult, AutoPilotStats
+  - Functions: loadAutoPilotConfig (raw SQL iz Settings), saveAutoPilotConfig (UPDATE z INSERT fallback), checkAutoPilotEligibility (PURE function — 8 safety rules, vrača 8 PASS/FAIL razlogov), runSafeAutoPilot (main entry — load config + load user risk tolerance + fetch pending drafts + check each + auto-execute eligible via updateDraftStatus iz v8.29 + patch autoExecuted/autoPilotReason + update lastRunAt), rollbackAutoExecution (set rolledBack=true + recordActionFeedback 'rejected' da undo-a learning), getAutoPilotStats (today + all-time), updateAutoPilotConfig (merge + clamp + persist), getAutoExecutedHistory (UI history view)
+  - DB approach: getFreshDb() pattern (fresh PrismaClient per call, bypass globalThis cache) + raw SQL $queryRaw/$executeRaw za bypass Turbopack stale @prisma/client cache (same pattern kot v8.28 adaptive-weights.ts + v8.29 draft-queue.ts). db.$disconnect() v finally block.
+  - Determinism: aiUsed:false — no AI/LLM SDK. Real-world side effects (sending Telegram, relisting items) so OUT OF SCOPE za v8.30 — purely bookkeeping + audit trail. v8.31+ bo dodala execution-side integration.
+- NEW: src/app/api/ai/brain/auto-pilot/route.ts (GET vrača AutoPilotStats z config + today + allTime; POST 2 akciji: 'run' triggers runSafeAutoPilot z full audit (executedDrafts + skippedDrafts z 8 PASS/FAIL razlogi vsak), 'config' updates subset of AutoPilotConfig; runtime='nodejs', dynamic='force-dynamic', maxDuration=60)
+- NEW: src/app/api/ai/brain/auto-pilot/rollback/route.ts (POST { draftId, reason? } → rollbackAutoExecution() — vrača RollbackResult z ActionDraftV830; 404 za not-found, 400 za was-not-auto-executed ali already-rolled-back, 500 za server errors; runtime='nodejs', dynamic='force-dynamic', maxDuration=60)
+- NEW: src/app/api/cron/auto-pilot/route.ts (GET+POST hourly cron — kliče runSafeAutoPilot(), vrača AutoPilotRunResult; ista auth preko MONITOR_CRON_KEY kot drugi cron-i — daily-brain-snapshot, cleanup-drafts, etc.; runtime='nodejs', dynamic='force-dynamic', maxDuration=60)
+- MODIFIED: src/components/dashboard/ai-hub-view.tsx (NOVA 🤖 AutoPilotCard komponenta ~670 vrstic z purple/indigo gradient (border-purple-500/40, from-purple-500/15 via-indigo-500/10 to-violet-500/5) — distinkten od slate Draft Queue, orange Adaptive Weights, rose Scenario Brain; pozicionirana MED <DraftQueueCard /> in 7 Domain Brain sections; master switch toggle (big purple toggle — ON/OFF, POST config { enabled }), config sliders (daily limit 1-10, daily budget 100-2000€, mode selector z Safe active + Aggressive v8.31 disabled), today's stats z 2 progress bars (limit + budget, color-coded purple/amber/red), all-time stats z 3 karticami (skupno auto + razveljavljeno + rollback rate %), action buttons (▶️ Zaženi zdaj + ℹ️ Zgodovina), safety info box z 8 pravili listed (vedno viden), history modal z zadnjimi 10 auto-executed drafti + per-draft audit (8 PASS/FAIL razlogov, color-coded) + ↩️ Razveljavi button; BrainSynthesisCard outer badge posodobljen z v8.30; brain/auto-pilot in brain/auto-pilot/rollback endpoint-a v AI Hub listi dobita v8.30 · AUTO / v8.30 · UNDO badge (purple). Kompletirana brain badge kolekcija (v8.15-v8.30, 20 endpointov). Added imports: Bot, Power, Play, Undo2, Lock, Activity iz lucide-react.)
+- AI endpointi: 422 → 424 (+2 — brain/auto-pilot + brain/auto-pilot/rollback)
+- Analytics endpointi: 72 (nespremenjeno)
+- Cron endpoints: 12 → 13 (+1 — /api/cron/auto-pilot hourly)
+- Total API routes: 599 → 601 (+2 — brain endpoints only; cron endpoint je pod /api/cron/ ne /api/ai/ zato se ne šteje v ai-list, ampak šteje v total API routes)
+- Brain category: 18 → 20 (now includes brain/auto-pilot + brain/auto-pilot/rollback)
+- Lint: 0 errors, 2 warnings (pred-existing unused eslint-disable v db.ts — ne kritično) ✅
+- Typecheck: 0 errors ✅
+- db:push: uspešen ("The database is already in sync with the Prisma schema." Prisma Client regeneriran v 231ms. Verificirano preko PRAGMA table_info: vseh 18 ActionDraft columns + 5 Settings autoPilot columns prisotnih v SQLite)
+- Endpoint verification:
+  - GET /api/ai/brain/auto-pilot → 200 {ok:true, config:{enabled:false, mode:"safe", dailyLimit:5, dailyBudgetEUR:500, lastRunAt:...}, today:{autoExecuted:0, budgetUsed:0, budgetRemaining:500, limitRemaining:5}, allTime:{totalAutoExecuted:0, totalRolledBack:0, rollbackRate:0}, source:"v8.30-safe-auto-pilot"} ✅
+  - POST /api/ai/brain/auto-pilot {action:'config', config:{enabled:true, dailyLimit:3}} → 200 {ok:true, config:{enabled:true, mode:"safe", dailyLimit:3, dailyBudgetEUR:500, lastRunAt:...}} (config merged + persisted) ✅
+  - POST /api/ai/brain/auto-pilot {action:'run'} → 200 {ok:true, config:{enabled:true,...,lastRunAt:"..."}, checked:5, autoExecuted:0, skipped:5, executedDrafts:[], skippedDrafts:[{id,action,reasons:[PASS auto-pilot enabled, PASS mode is safe, PASS user risk tolerance is balanced, FAIL confidence is HIGH (only LOW can be auto-executed), FAIL expectedUpliftEUR 375€ >= 100€ threshold, PASS domain is market (not risk), ...]}]} ✅ (8 safety rules pravilno aplicirane, vsa 5 draftov failed zaradi HIGH/MEDIUM confidence in uplift >100€ — PRAVILNO safe obnašanje, sistem ZAVIJE varčno)
+  - GET /api/ai-list → 200 {ok:true, total:424, categories:{brain:20, buyer:50, inventory:77, listing:59, pricing:90, risk:12, negotiation:16, reports:15, misc:85}} (brain kategorija 20 = 8 brain + snapshots + actual-profit + risk-profile + accuracy + accuracy/backfill + explain + scenario + weights + drafts + drafts/[id] + auto-pilot + auto-pilot/rollback) ✅
+- Documentation updated: AI_ENDPOINTS.md (Total: 424, rows 27-28 brain/auto-pilot + brain/auto-pilot/rollback), README.md (v8.30.0, 424 AI, 601 routes, hero tagline z AUTOMATION PHASE STARTED, AI Hub nav row 424 z 🤖 Safe Auto-pilot (v8.30) badge, AI_ENDPOINTS.md link 424 z brain/auto-pilot + brain/auto-pilot/rollback + dvajset Brain layer-jev + v8.30, project tree 424 z v8.30, Changelog link v8.30, Zadnje verzije z v8.30.0 entry na vrh), CHANGELOG.md ([8.30.0] section z Added — 8 safety rules + rollback + cron + UI card + execution flow ASCII diagram, [Unreleased] posodobljen z v8.30 = AUTOMATION PHASE STARTED)
+- 🎯 AUTOMATION PHASE STARTED:
+  - v8.22 Master Brain daje TOP 5 priporočil (KAJ)
+  - v8.24 Risk Profile naredi priporočila PERSONAL (conservative/balanced/aggressive)
+  - v8.26 Explainability daje ZAKAJ (per-action reasoning + trustScore)
+  - v8.27 Scenario Brain odgovarja WHAT IF? (3 preset scenariji + custom)
+  - v8.28 Adaptive Weights vzpostavi FEEDBACK LOOP (sistem se uči iz revealed preferences)
+  - v8.29 Draft Queue zaključi z ACTION (vsako priporočilo ima sledljivo ✅/❌ odločitev ki neposredno kliče recordActionFeedback)
+  - v8.30 Safe Auto-pilot odpira AUTOMATION — sistem SAMODEJNO izvaja LOW-risk akcije (confidence=LOW, uplift<100€, domain!=risk) ki izpolnjujejo VSA 8 varnostna pravila. MEDIUM/HIGH risk akcije še vedno zahtevajo ročni ✅ Izvedel klik iz v8.29. Rollback capability: vsako auto-executed akcijo lahko uporabnik razveljavi (↩️ Razveljavi) — to tudi undo-a learning preko recordActionFeedback 'rejected'.
+  - Skupaj: Master Brain recommends → user decides (✅/❌ iz v8.29) → adaptive weights learn (v8.28) → better recommendations next time. v8.30 dodaja: sistem lahko SAM izvaja LOW-risk akcije (auto-pilot) — ampak samo ko so VSA 8 varnostna pravila izpolnjena + vedno z možnostjo rollback-a.
+- Verzija aplikacije: v8.30.0
+- Skupaj doslej (v7.50 → v8.30): 80 verzij, 204 nove funkcije; Brain architecture COMPLETE (v8.22) + Validation phase ZAKLJUČENA (v8.23-v8.25) + Intelligence phase ZAKLJUČENA (v8.26-v8.29) + Automation phase STARTED (v8.30 Safe Auto-pilot) — naslednja faza: v8.31 Aggressive Auto-pilot (opt-in, executes MEDIUM risk too)

@@ -6,9 +6,9 @@ Format sledi [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), verzije s
 
 ## [Unreleased]
 
-v8.26 je odprl Intelligence phase (Action Explainability), v8.27 jo nadaljuje (Scenario Brain), v8.28 jo še nadalje vzpostavi FEEDBACK LOOP (Adaptive Domain Weights), v8.29 jo ZAKLJUČI z Draft Queue + Action Feedback Loop integration (🎯 INTELLIGENCE PHASE COMPLETE). Naslednje verzije:
+v8.26 je odprl Intelligence phase (Action Explainability), v8.27 jo nadaljuje (Scenario Brain), v8.28 jo še nadalje vzpostavi FEEDBACK LOOP (Adaptive Domain Weights), v8.29 jo ZAKLJUČI z Draft Queue + Action Feedback Loop integration (🎯 INTELLIGENCE PHASE COMPLETE), v8.30 odpira NOVO fazo — Automation (Safe Auto-pilot — 🎯 AUTOMATION PHASE STARTED). Naslednje verzije:
 
-- **v8.30+ — Automation** (safe auto-pilot z rollback — sistem samodejno izvaja approved Master Brain akcije z varnostnimi ogradami in possibility rollback-a)
+- **v8.31+ — Aggressive Auto-pilot** (opt-in — executes MEDIUM risk actions too, ne le LOW; dodatni safety guardrails)
 - WebSocket real-time negotiation (SSE namesto polling)
 - Playwright E2E testi za glavne flow-e
 - TLS fingerprinting (curl-impersonate)
@@ -16,6 +16,158 @@ v8.26 je odprl Intelligence phase (Action Explainability), v8.27 jo nadaljuje (S
 - Performance optimizations za Master Brain (cached partial results per domain)
 - Additional conflict detection tipi (npr. Inventory vs Buyer — supply/demand mismatch)
 - Per-domain DB injection v Master Brain route (zaenkrat se zanaša na individualne Domain Brain route-e za DB state)
+
+## [8.30.0] - 2026-08-28
+
+### Added — 🤖 Safe Auto-pilot (NEW PHASE: Automation — "Daj mi action, ne le priporočilo")
+
+**🎯 AUTOMATION PHASE STARTED.** v8.30 = SAFE AUTO-PILOT. Problem: Master Brain (v8.22) priporoča TOP 5 akcij, uporabnik pa mora ročno izvesti vsako. Za LOW-risk akcije (npr. "send Telegram reminder", "relist an item") je to zamudno. v8.30 dodaja Safe Auto-pilot: samodejno izvaja SAMO LOW-risk akcije ki izpolnjujejo VSA varnostna pravila. MEDIUM/HIGH risk akcije še vedno zahtevajo ročni ✅ Izvedel klik (v8.29). To je prvi korak proti autonomous trading — ampak SAFETY FIRST.
+
+**8 SAFETY RULES (all must be true for auto-execution):**
+1. `autoPilotEnabled=true` (master switch — default OFF)
+2. `autoPilotMode='safe'` (v8.31 bo dodala 'aggressive' — sedaj je samo safe)
+3. User Risk Profile tolerance != 'conservative' (v8.24 — konzervativni uporabniki NIKOLI ne dobijo auto-pilota)
+4. Action confidence = 'LOW' (HIGH/MEDIUM vedno zahtevajo ročni ✅ Izvedel)
+5. `expectedUpliftEUR < 100€` (small impact, safe to auto-execute)
+6. Action domain != 'risk' (risk mitigation vedno zahteva human judgment)
+7. Today's auto-executed count < `autoPilotDailyLimit` (default 5/dan)
+8. Today's auto-executed budget + this draft's uplift < `autoPilotDailyBudgetEUR` (default 500€/dan)
+
+**Each auto-execution:**
+- Sets draft.status='executed', autoExecuted=true, executedAt=now
+- Records autoPilotReason (8-rule audit trail, semicolon-separated — PASS/FAIL za vsako pravilo)
+- Calls recordActionFeedback() from v8.28 via updateDraftStatus() (closes feedback loop — adaptive weights se naučijo)
+- Is ROLLBACKABLE — user lahko undo-a preko POST /api/ai/brain/auto-pilot/rollback
+
+**Rollback flow:**
+- POST /api/ai/brain/auto-pilot/rollback { draftId, reason }
+- Sets rolledBack=true, rolledBackAt=now, rollbackReason=reason
+- Calls recordActionFeedback with 'rejected' to UNDO the learning (auto-execution had incremented executed counter; rollback balances with rejected signal)
+- Does NOT un-execute v realnem svetu (ne moremo un-send Telegram message ali un-relist item) — ampak audit trail + undo-learning je preserved
+- Guard: samo drafts z autoExecuted=true AND rolledBack=false se lahko rollback-a (400 za already-rolled-back, 404 za not-found)
+
+- **NEW Prisma fields na `ActionDraft`** (5 novih polj v `prisma/schema.prisma`):
+  - `autoExecuted Boolean @default(false)` — true if auto-pilot executed this (vs manual ✅ Izvedel)
+  - `autoPilotReason String?` — why auto-pilot executed/rejected this (audit log — 8 PASS/FAIL razlogov)
+  - `rolledBack Boolean @default(false)` — true if user rolled back this execution
+  - `rolledBackAt DateTime?` — when user rolled back
+  - `rollbackReason String?` — why user rolled back
+  - Novi indeksi: `@@index([autoExecuted])`, `@@index([rolledBack])` za hitre statistike
+
+- **NEW Prisma fields na `Settings`** (5 novih auto-pilot config polj v `prisma/schema.prisma`):
+  - `autoPilotEnabled Boolean @default(false)` — master switch (default OFF — fail-safe)
+  - `autoPilotMode String @default("safe")` — 'safe' (LOW risk only) | 'aggressive' (v8.31 — še ne implementirano)
+  - `autoPilotDailyLimit Int @default(5)` — max auto-executions per day (1-10)
+  - `autoPilotDailyBudgetEUR Float @default(500)` — max total expectedUpliftEUR per day (100-2000€)
+  - `autoPilotLastRunAt DateTime?` — last time auto-pilot ran (cron ali manual trigger)
+
+- **NEW `src/lib/brain/auto-pilot.ts`** (~620 vrstic — pure compute + DB module, no AI/LLM SDK):
+  - **Exports:**
+    - `AutoPilotConfig`, `DEFAULT_AUTOPILOT_CONFIG` — TypeScript type + default values (enabled=false, mode='safe', dailyLimit=5, dailyBudgetEUR=500, lastRunAt=null).
+    - `ActionDraftV830` — extends ActionDraft (v8.29) z 5 novimi auto-pilot polji (autoExecuted, autoPilotReason, rolledBack, rolledBackAt, rollbackReason). Razširja namesto da bi modificiral draft-queue.ts (ki je out-of-scope za v8.30).
+    - `AutoPilotCandidateCheck`, `AutoPilotRunResult`, `RollbackResult`, `AutoPilotStats` — TypeScript interfaces za type-safe API responses.
+  - **Functions:**
+    - `loadAutoPilotConfig(): Promise<AutoPilotConfig>` — bere iz Settings (raw SQL `$queryRaw` za bypass Turbopack stale @prisma/client cache), vrne DEFAULT_AUTOPILOT_CONFIG (disabled) ko null/error. Fail-safe — nikoli ne omogoči auto-pilota brez explicitnega user consent.
+    - `saveAutoPilotConfig(config)` — persistira v Settings (UPDATE z WHERE id='singleton', fallback na INSERT). Raw SQL za bypass Turbopack cache.
+    - `checkAutoPilotEligibility(draft, config, userRiskTolerance, todayAutoExecutedCount, todayAutoExecutedBudgetUsed): AutoPilotCandidateCheck` — PURE function (no DB, no side effects). Preveri 8 safety rules, vrne `{ draft, canAutoExecute: boolean, reasons: string[] }` kjer `reasons` vsebuje 8 entries (PASS/FAIL za vsako pravilo). Exposed za unit testing.
+    - `runSafeAutoPilot(): Promise<AutoPilotRunResult>` — glavna funkcija. (1) Load config — early return če disabled. (2) Load user risk tolerance. (3) Fetch vse 'pending' draft-e (oldest first — fairness). (4) Compute today's auto-executed count + budget used. (5) Za vsak draft: checkAutoPilotEligibility → če PASS vseh 8 rules, kliče `updateDraftStatus({ status: 'executed' })` (ki kliče `recordActionFeedback` iz v8.28 — adaptive weights se naučijo) + patch-a `autoExecuted=true` + `autoPilotReason` na isti row. (6) Update Settings.autoPilotLastRunAt = now. Vrne `{ ok, config, checked, autoExecuted, skipped, executedDrafts, skippedDrafts, todayStats, source }` z FULL audit trail.
+    - `rollbackAutoExecution(draftId, reason): Promise<RollbackResult>` — (1) Fetch draft. (2) Guard: must be autoExecuted=true AND rolledBack=false (drugace 400). (3) Set rolledBack=true, rolledBackAt=now, rollbackReason=reason. (4) Call `recordActionFeedback({ domain, action, feedback: 'rejected' })` iz v8.28 — undo-a learning signal (auto-execution je incremented 'executed' counter, rollback ga kompenzira z 'rejected'). Non-fatal če feedback fails (rollback še vedno uspešen). Vrne `{ ok, draft: ActionDraftV830, rolledBack: true, reason }`.
+    - `getAutoPilotStats(): Promise<AutoPilotStats>` — load config + compute today's auto-executed count + budget used (rolledBack=false — razveljavljene akcije ne štejejo proti daily limit/budget) + all-time total auto-executed + total rolled back + rollback rate %.
+    - `updateAutoPilotConfig(updates: Partial<AutoPilotConfig>): Promise<{ ok, config }>` — merge z current config (unspecified fields retain value), clamp dailyLimit na [1, 50], dailyBudgetEUR na [10, 10000], persist via saveAutoPilotConfig.
+    - `getAutoExecutedHistory(limit=10)` — vrača zadnjih N auto-executed draftov (z rolledBack info) za UI history view.
+  - **DB approach:** `getFreshDb()` pattern (fresh PrismaClient per call, bypass globalThis cache) + raw SQL `$queryRaw`/`$executeRaw` za bypass Turbopack stale @prisma/client cache (same pattern kot v8.28 adaptive-weights.ts + v8.29 draft-queue.ts). `db.$disconnect()` v `finally` block.
+  - **Determinism:** `aiUsed: false` — no AI/LLM SDK. Real-world side effects (sending Telegram, relisting items) so OUT OF SCOPE za v8.30 — v8.30 je purely bookkeeping + audit trail. v8.31+ bo dodala execution-side integration.
+
+- **NEW `src/app/api/ai/brain/auto-pilot/route.ts`** (GET + POST endpoint)
+  - `runtime = 'nodejs'`, `dynamic = 'force-dynamic'`, `maxDuration = 60`.
+  - **GET**: kliče `getAutoPilotStats()`, vrne `AutoPilotStats` z `config` + `today` (autoExecuted, budgetUsed, budgetRemaining, limitRemaining) + `allTime` (totalAutoExecuted, totalRolledBack, rollbackRate) + `source: 'v8.30-safe-auto-pilot'`.
+  - **POST** s 2 akcijami (parsed iz `body.action`):
+    - `'run'` — kliče `runSafeAutoPilot()`, vrne `AutoPilotRunResult` z `checked`, `autoExecuted`, `skipped`, `executedDrafts` (array z `id` + `action` + `domain` + `reasons` — 8 PASS/FAIL razlogov), `skippedDrafts` (z full audit), `todayStats`, in `config` (z updated `lastRunAt`).
+    - `'config'` — validira `body.config` (subset of `AutoPilotConfig` — `enabled`, `mode`, `dailyLimit`, `dailyBudgetEUR`), kliče `updateAutoPilotConfig(updates)`, vrne `{ ok, config }` z merged config. 400 če invalid config fields.
+    - Unknown action → 400 z error message.
+
+- **NEW `src/app/api/ai/brain/auto-pilot/rollback/route.ts`** (POST endpoint)
+  - `runtime = 'nodejs'`, `dynamic = 'force-dynamic'`, `maxDuration = 60`.
+  - POST: parse `{ draftId, reason? }` iz body-ja. `draftId` required (400 če missing). `reason` optional, truncated na 1000 chars (default = `User rollback at <ISO>`). Kliče `rollbackAutoExecution(draftId, reason)`. Vrne `RollbackResult` z `{ ok, draft: ActionDraftV830, rolledBack: true, reason }`.
+  - Error mapping: 404 za "Draft not found", 400 za "was not auto-executed" / "was already rolled back", 500 za server errors.
+
+- **NEW `src/app/api/cron/auto-pilot/route.ts`** (GET + POST hourly cron)
+  - `runtime = 'nodejs'`, `dynamic = 'force-dynamic'`, `maxDuration = 60`.
+  - kliče `runSafeAutoPilot()`. Vrača `AutoPilotRunResult`.
+  - Schedule: hourly cron (e.g. `0 * * * * curl -s "http://localhost:3000/api/cron/auto-pilot?key=$MONITOR_CRON_KEY"`).
+  - Auth: `?key=<MONITOR_CRON_KEY>` query param (same pattern as other cron endpoints — daily-brain-snapshot, cleanup-drafts, etc). If `MONITOR_CRON_KEY` env var unset (dev mode), no auth required.
+
+- **MODIFIED `src/components/dashboard/ai-hub-view.tsx`** (NOVA 🤖 Safe Auto-pilot card komponenta, purple/indigo-tinted)
+  - NOVA komponenta `AutoPilotCard()` z purple/indigo gradient (`border-purple-500/40 + bg-gradient-to-br from-purple-500/15 via-indigo-500/10 to-violet-500/5`). Pozicionirana MED `DraftQueueCard` (slate) in 7 Domain Brain sections (purple/indigo je distinkten od slate Draft Queue, orange Adaptive Weights, rose Scenario Brain).
+  - **Header**: 🤖 Safe Auto-pilot + v8.30 badge + "AUTOMATION · LOW RISK ONLY" badge + Osveži button.
+  - **Subtitle** (slovenski): "Samodejno izvaja samo LOW-risk akcije (confidence: LOW, uplift <100€, domain != risk). MEDIUM/HIGH risk akcije še vedno zahtevajo ročni ✅ Izvedel klik (v8.29). Vsako auto-executed akcijo lahko razveljaviš (↩️ Razveljavi) — to tudi undo-a learning preko recordActionFeedback."
+  - **Master switch toggle** (big purple toggle button): ON/OFF state. Click → POST `{ action: 'config', config: { enabled: true/false } }`. Disabled while toggling. Toast: "🤖 Auto-pilot VKLJUČEN — sistem samodejno izvaja LOW-risk akcije" / "🤖 Auto-pilot IZKLJUČEN — vse akcije zahtevajo ročni ✅ Izvedel".
+  - **Config sliders** (only when enabled):
+    - Daily limit slider (range 1-10, step 1) z labels 1/5/10.
+    - Daily budget slider (range 100-2000€, step 50€) z labels 100€/1000€/2000€.
+    - Mode selector: "✓ Safe (LOW risk only)" (active, disabled) | "Aggressive (v8.31)" (grayed out, disabled — coming soon).
+    - "💾 Shrani config" + "Prekliči" gumbi (only visible when dirty).
+  - **Today's stats** z 2 progress bars (limit + budget):
+    - Limit: `X/Y akcij` z barvno progress bar (purple <80%, amber 80-99%, red 100%).
+    - Budget: `X€/Y€` z isto barvno logiko.
+    - Zadnji run timestamp prikazan v header-ju ("zadnji run: ...").
+  - **All-time stats** (3 kartice v grid):
+    - Skupno auto (purple) — total auto-executed all-time.
+    - Razveljavljeno (amber) — total rolled back.
+    - Rollback rate (color-coded: zelena ≤5%, amber 5-20%, rdeča >20%) — `X.Y%` format z 1 decimal.
+  - **Action buttons row** (2 stolpca):
+    - "▶️ Zaženi zdaj" button (purple, Play icon) — POST `{ action: 'run' }`. Toast: "▶️ Auto-pilot tekel: preveril N draft-ov · auto-executed: M · skipped: K".
+    - "ℹ️ Zgodovina" button (outline, History icon) — odpre Dialog z zadnjimi auto-executed drafti.
+  - **Safety info box** (vedno viden): 8 pravil listed (auto-pilot enabled, mode=safe, risk!=conservative, confidence=LOW, uplift<100€, domain!=risk, daily limit ≤X, daily budget ≤Y€).
+  - **History Modal** (Dialog): zadnjih 10 auto-executed draftov. Vsaka vrstica: rank + domain icon + action text + signal + uplift (€) + executed timestamp. Rollback-ane vrstice prikazane z amber tint + "↩️ Razveljavljeno: reason" label. Non-rolled-back vrstice imajo `<details>` z audit (8 PASS/FAIL razlogov, color-coded). "↩️ Razveljavi" button na non-rolled-back vrsticah — POST /api/ai/brain/auto-pilot/rollback. Toast po uspehu: "↩️ Razveljavljeno — sistem undo-a learning (recordActionFeedback 'rejected')".
+  - **Footer info**: "GET + POST /api/ai/brain/auto-pilot · cron /api/cron/auto-pilot".
+  - Added imports: `Bot, Power, Play, Undo2, Lock, Activity` iz `lucide-react`.
+  - **BrainSynthesisCard outer badge posodobljen**: `"v8.30 Auto-pilot + v8.29 Draft Queue + v8.28 Adaptive + v8.27 Scenario + v8.26 Explain + v8.25 Accuracy + v8.24 Personal + v8.23 Validation + v8.22 Master + v8.15-v8.21 (7 Domains)"`.
+  - **AI Hub endpoint badges**: `brain/auto-pilot` dobi `v8.30 · AUTO` badge (purple), `brain/auto-pilot/rollback` dobi `v8.30 · UNDO` badge (purple). Kompletirana brain badge kolekcija (v8.15-v8.30, 20 endpointov).
+
+- **Safe auto-pilot execution flow**:
+  ```
+  User enables auto-pilot (POST config { enabled: true })
+       ↓
+  Hourly cron OR manual "▶️ Zaženi zdaj" trigger
+       ↓
+  runSafeAutoPilot() — load config + user risk tolerance
+       ↓
+  Fetch all 'pending' drafts (oldest first)
+       ↓
+  For each pending draft: checkAutoPilotEligibility() — 8 safety rules
+       ↓
+  If all 8 PASS:  updateDraftStatus({ status: 'executed' })  →  recordActionFeedback('executed')  →  adaptive weights learn
+       ↓                ↓                                    ↓
+       autoExecuted=true   autoPilotReason=8 PASS reasons   executed+1 counter
+       ↓
+  Increment todayCount + todayBudget (in-memory)
+       ↓
+  Update Settings.autoPilotLastRunAt = now
+       ↓
+  Return AutoPilotRunResult z full audit (executedDrafts + skippedDrafts z 8 reasons each)
+       ↓
+  [later] User clicks ↩️ Razveljavi na auto-executed draft
+       ↓
+  POST /rollback { draftId, reason }
+       ↓
+  rollbackAutoExecution(): rolledBack=true + recordActionFeedback('rejected') — undo-a learning signal
+       ↓
+  Stats: today's auto-executed count down by 1 (rolledBack=false filter); all-time rollback+1, rollbackRate ↑
+  ```
+
+### Stats
+
+- **AI endpointi:** 422 → **424** (+2 — `brain/auto-pilot` + `brain/auto-pilot/rollback`)
+- **Total API routes:** 599 → **601** (+2)
+- **Brain category:** 18 → **20** (now includes `brain/auto-pilot` + `brain/auto-pilot/rollback`)
+- **NEW Prisma fields:** `ActionDraft` +5 (autoExecuted, autoPilotReason, rolledBack, rolledBackAt, rollbackReason) + 2 indexes; `Settings` +5 (autoPilotEnabled, autoPilotMode, autoPilotDailyLimit, autoPilotDailyBudgetEUR, autoPilotLastRunAt)
+- **Cron endpoints:** 12 → **13** (added `/api/cron/auto-pilot` hourly)
+- **SCHEMA_VERSION:** `v8.29-draft-queue` → `v8.30-auto-pilot` (db.ts) — discard stale PrismaClient v globalThis cache.
+- **Performance:** POST run cold = ~100ms (load config + load risk tolerance + fetch pending + 1 auto-exec = updateDraftStatus + recordActionFeedback + raw SQL UPDATE). GET stats = ~25ms (2 queries — config + today stats + all-time). POST config = ~20ms. POST rollback = ~40ms (fetch + UPDATE + recordActionFeedback). Vse znotraj maxDuration=60.
+- **Cache:** NO cache na /api/ai/brain/auto-pilot (vedno sveže branje iz DB). Auto-pilot NE invalidira Master Brain cache (topActions ranking se ne spremeni, samo executedAt/autoExecuted flag-i).
+- **Determinism:** `aiUsed: false` — no AI/LLM SDK. Real-world side effects (Telegram, relisting) so OUT OF SCOPE za v8.30 — purely bookkeeping + audit trail. v8.31+ bo dodala execution-side integration.
+- Note: "🎯 AUTOMATION PHASE STARTED. v8.30 = Safe Auto-pilot (LOW risk only). Next: v8.31 (Aggressive Auto-pilot — opt-in, executes MEDIUM risk too). Safety is paramount — this auto-executes actions."
 
 ## [8.29.0] - 2026-08-28
 

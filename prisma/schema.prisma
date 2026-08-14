@@ -135,6 +135,19 @@ model Settings {
   // Re-evaluated every 10 actions per domain: executionRate > 0.8 → ×1.1 (boost),
   // < 0.4 → ×0.9 (reduce), clamp [0.5, 2.0]. Stored per-user (singleton row).
   adaptiveDomainWeights String?
+  // v8.30: Safe Auto-pilot configuration — Automation phase.
+  // Master switch (autoPilotEnabled) gates the whole subsystem. When true, an
+  // hourly cron (and manual trigger) checks pending ActionDraft rows and
+  // auto-executes those that meet ALL 8 safety rules (see auto-pilot.ts).
+  // Mode 'safe' = LOW-risk only (confidence=LOW, uplift<100€, domain!=risk).
+  // Mode 'aggressive' is reserved for v8.31 (not yet implemented — kept for
+  // forward-compat so config can be persisted now).
+  // Daily limit + budget cap prevent runaway auto-execution.
+  autoPilotEnabled       Boolean  @default(false) // master switch — default OFF
+  autoPilotMode          String   @default("safe") // 'safe' | 'aggressive' (v8.31)
+  autoPilotDailyLimit    Int      @default(5)    // max auto-executions per day
+  autoPilotDailyBudgetEUR Float   @default(500)   // max total expectedUpliftEUR per day
+  autoPilotLastRunAt     DateTime?              // last time auto-pilot ran (cron or manual)
   // Metadata
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
@@ -535,6 +548,19 @@ model ActionDraft {
   rejectedAt     DateTime?             // when user marked as rejected
   // Link to Master Brain snapshot (if created from one)
   snapshotDate   String?               // YYYY-MM-DD of the BrainSnapshot that generated this
+  // v8.30: Safe Auto-pilot tracking — Automation phase.
+  // autoExecuted=true marks that the action was auto-executed by the auto-pilot
+  // (vs a manual ✅ Izvedel click). autoPilotReason stores the audit trail of
+  // which 8 safety rules passed (semicolon-separated). rolledBack=true marks
+  // that the user subsequently undid the auto-execution (calls
+  // recordActionFeedback with 'rejected' to undo the learning). The action
+  // itself is NOT un-executed in the real world (we can't un-send a Telegram
+  // message), but the audit + undo-learning is preserved for review.
+  autoExecuted     Boolean  @default(false)  // true if auto-pilot executed this (vs manual)
+  autoPilotReason  String?                  // why auto-pilot executed/rejected this (audit log)
+  rolledBack       Boolean  @default(false)  // true if user rolled back this execution
+  rolledBackAt     DateTime?                // when user rolled back
+  rollbackReason   String?                  // why user rolled back
   // Metadata
   createdAt      DateTime @default(now())
   updatedAt      DateTime @updatedAt
@@ -542,6 +568,10 @@ model ActionDraft {
   @@index([status])
   @@index([domain])
   @@index([createdAt])
+  // v8.30: indexes for auto-pilot queries — find auto-executed drafts for
+  // today's stats, find rollback candidates, find eligible pending drafts.
+  @@index([autoExecuted])
+  @@index([rolledBack])
 }
 
 // v8.23: Daily Brain Snapshot — stores Master Brain output for historical accuracy tracking.
