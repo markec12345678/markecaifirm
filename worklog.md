@@ -17409,3 +17409,83 @@ Stage Summary:
 - Verzija aplikacije: v8.39.0
 - Polish phase continues: v8.32 (Health) + v8.33 (Performance) + v8.34 (129 tests) + v8.35 (25 trades + Telegram) + v8.36 (CSV Import + Quick Add) + v8.37 (Deal Calculator + Profit Timeline) + v8.38 (Notification Center) + v8.39 (Goal Tracker Dashboard Widget)
 - Skupaj doslej (v7.50 → v8.39): 89 verzij, 211 novih funkcij
+
+---
+Task ID: v8.40
+Agent: full-stack-developer
+Task: Implement Trade Insights Deep Dive — 6 analytics + actionable insights
+
+Work Log:
+- Prebral worklog.md (v8.36-v8.39 entries) za kontekst Polish phase-a (v8.32 monitoring → v8.33 performance → v8.34 testing → v8.35 seed+telegram → v8.36 CSV Import + Quick Add → v8.37 Deal Calculator + Profit Timeline → v8.38 Notification Center → v8.39 Goal Tracker Dashboard Widget). Zadnji task v8.39.1 je potrdil verzijo v8.39.0 (89 verzij, 211 funkcij).
+- Prebral prisma/schema.prisma (Trade model, lines 192-233) — model ima buyPrice, buyFees, buyDate, buyLocation, sellPrice, sellDate, sellLocation, sellFees, status, category. Vsa polja ki jih potrebuje v8.40 analiza.
+- Prebral src/lib/profit/actual.ts (v8.23 pattern za bere Trade tabele + profit formula `sellPrice - sellFees - buyPrice - buyFees`).
+- Prebral src/lib/trades/profit-timeline.ts (v8.37 pattern za trend detection — first half vs second half by sellDate, ×1.1/×0.9 threshold, INSUFFICIENT_DATA za <4 točk).
+- Prebral src/components/dashboard/dashboard-view.tsx (1101 vrstic) — obstoječi widget layout: GoalTrackerCard (line 532) → Activity Feed → AI Insights widgets → TradeStatsCard (line 550) → DealCalculatorWidget (553) → ProfitTimelineChart (554) → Skladišče widget (557). Imported TradeInsightsCard komponento se doda po ProfitTimelineChart in pred Skladišče.
+- Prebral src/components/dashboard/profit-timeline-chart.tsx (350 vrstic) — pattern za 'use client' + useCallback load + recharts ComposedChart + color-coding + empty state + tooltip formatting.
+- Prebral src/components/dashboard/trade-stats-card.tsx (341 vrstic) — pattern za 'use client' + auto-refresh interval + empty state + color coding + shadcn Card/Badge/Button + multiple fetches v Promise.all.
+- Prebral src/app/api/analytics/profit-timeline/route.ts — pattern za API route z in-memory cache (5-min TTL, keyed by query params), runtime='nodejs', dynamic='force-dynamic'.
+- Prebral src/components/ui/accordion.tsx — shadcn Accordion z Accordion/AccordionItem/AccordionTrigger/AccordionContent. Uporablja @radix-ui/react-accordion. Podpira type="single" ali type="multiple". Has built-in ChevronDownIcon.
+- Inspect-al DB direktno z `bun -e` z PrismaClient: 25 trades, 19 sold, 5 held, 1 cancelled. Categories: elektronika(9), obutev(4), oblačila(3), avto(5), orodje(4). Sources (buyLocation): Bolha(17), Vinted(3), Avtonet(3), mobile.de(2). Realni podatki ki jih v8.40 analiza lahko uporabi.
+- Design odločitve:
+  - 6 analiz v enem endpointu (namesto 6 ločenih) — zmanjša network round-trips + single 5-min cache za vse podatke. Trade-off: večji response payload (~3KB).
+  - Pure compute module pattern (consistent z v8.23 actual.ts + v8.37 profit-timeline.ts) — lib funkcija bere iz db.trade.findMany, no AI/LLM klici.
+  - bestSource = highest avgROI (ne totalProfit) — ker primerjamo platforme z različnimi investiranji (Bolha 2136€ vs Vinted 92€), je ROI bolj poštena.
+  - bestCategory = highest avgROI (z istim razlogom).
+  - optimalHoldDays = bucket z najvišjim avgProfit (ne totalProfit) — per-trade profit bolj relevanten kot absolute EUR.
+  - Actionable Insights so non-collapsible (vedno visible na vrhu) — najpomembnejši del karte.
+  - Accordion z type="multiple" — uporabnik lahko odpre več sekcij hkrati.
+  - Empty state threshold = 5 sold trades — pod 5 analiza ni statistično relevantna.
+  - Auto-refresh 60s (consistent z v8.36 TradeStatsCard + v8.39 GoalTrackerCard).
+  - ROI color-coding: zelena >20%, amber 10-20%, rdeča <10% (Bolha 25% zelena, obutev 20% zelena/amber).
+  - Profit distribution loss detection: eksplicitno preverja set {'<-50€', '-50-0€'} (NE bucket.includes('-') ker '0-50€' vsebuje '-' ampak je pozitivno).
+- NEW src/lib/trades/trade-insights.ts (~596 vrstic): getTradeInsights(days=365) vrača TradeInsights objekt z summary + 6 analizami (dayOfWeekAnalysis[7], sourcePlatformAnalysis[], categoryAnalysis[], holdPeriodAnalysis[5], profitDistribution[6], actionableInsights[]). Helper funkcije: profitOf, investedOf, holdDaysOf, winRateOf, avgOf, roiOf, trendOf (first half vs second half by sellDate, ×1.1/×0.9 threshold). Bucket helpers: bucketFor (hold days), profitBucketFor (profit amount). Exported TRADE_INSIGHTS_META constant z DAY_NAMES_SL + DAY_SHORT_SL + bucket keys.
+- NEW src/app/api/analytics/trade-insights/route.ts (~90 vrstic): GET handler z runtime='nodejs', dynamic='force-dynamic', maxDuration=30s. 5-min in-memory cache keyed by days. parseDays() validira input (1-1095, default 365). Logger.info na uspehu + Logger.error na napaki.
+- NEW src/components/dashboard/trade-insights-card.tsx (~640 vrstic): 'use client' component. Fetches /api/analytics/trade-insights?days=365 on mount + setInterval 60s. 6 collapsible accordion sections (shadcn Accordion z type="multiple", default open ['day-of-week']):
+  1. Actionable Insights (non-collapsible, prominent z Lightbulb icon + primary-tinted bg) — list z ikonami.
+  2. Day-of-Week BarChart (recharts BarChart z Cell fill — best=zelena, worst=rdeča, ostali=siva) + best/worst summary box pod chart-om.
+  3. Source Platform — BarChart (ROI per source z color-coded cells: zelena >20%, amber 10-20%, rdeča <10%) + sortable tabela (vir, #, investirano, profit, ROI, win, hold, best cat) z max-h-72 overflow-y-auto + sticky header.
+  4. Category — horizontal BarChart (avg ROI per category z istim color coding) + trend badges za vsako kategorijo (TrendingUp/Minus/TrendingDown ikone).
+  5. Hold Period — BarChart (avg profit per bucket, optimalni=zelena, drugi pozitivni=siva, negativni=rdeča).
+  6. Profit Distribution — PieChart (innerRadius=20, outerRadius=60) z 6 segments (rdeče za izgube, amber za small wins, zelena za big wins) + legend z bucket + count + %.
+  Summary row (4 mini-stats), loading pulse state, empty state (ko soldTrades<5), manual refresh button.
+- MODIFIED src/components/dashboard/dashboard-view.tsx: dodan import `import { TradeInsightsCard } from '@/components/dashboard/trade-insights-card';`. Dodan `<TradeInsightsCard />` po `<ProfitTimelineChart />` (v8.37) in pred Skladišče widget (line 562). Dashboard flow: GoalTracker → Trade Stats → Deal Calculator → Profit Timeline → **Trade Insights** → Skladišče. NO existing code odstranjeno — samo ADD (non-invasive extension).
+- Pognal `bun run lint` — 0 napak ✨ (2 pre-existing eslint-disable warnings v db.ts — unrelated, od v8.34). Prvotno sem imel 1 warning (unused eslint-disable v trade-insights-card.tsx) — popravil z odstranitvijo directive + comment.
+- Pognal `bunx tsc --noEmit` — 0 napak ✨ (exit code 0).
+- Curl test-i (vsi uspešni):
+  - GET /api/analytics/trade-insights?days=365 → 200 z {ok:true, summary:{totalTrades:25, soldTrades:19, heldTrades:5, cancelledTrades:1, totalProfit:973, totalInvested:2808, avgProfitPerTrade:51.21, avgROI:34.65, avgHoldDays:21.84, overallWinRate:94.74, profitableCount:18}, bestDayOfWeek:{dayName:"Sobota", avgProfit:85, tradeCount:1, sellThroughRate:100}, worstDayOfWeek:{dayName:"Četrtek", avgProfit:27.25, tradeCount:4, sellThroughRate:40}, bestSource:{source:"Vinted", tradeCount:3, totalInvested:92, totalRevenue:180, totalProfit:79, avgROI:85.87, avgHoldDays:21, winRate:100, bestCategory:"oblačila"}, bestCategory:{category:"oblačila", tradeCount:3, avgROI:85.87, trend:"STABLE"}, optimalHoldDays:"15-30d", dayOfWeekAnalysis:[7 entries], sourcePlatformAnalysis:[4 sources: Bolha/Avtonet/mobile.de/Vinted], categoryAnalysis:[5 categories: elektronika/avto/orodje/oblačila/obutev z trendi DECLINING/DECLINING/STABLE/STABLE/STABLE], holdPeriodAnalysis:[5 buckets: 0-7d(0), 8-14d(1, 87.88% ROI), 15-30d(18, 34.02% ROI, 94.44% win — OPTIMAL), 31-60d(0), 60+d(0)], profitDistribution:[6 buckets: <-50€(0), -50-0€(1, 5.26%), 0-50€(10, 52.63%), 50-100€(6, 31.58%), 100-200€(2, 10.53%), 200+€(0)], actionableInsights:[9 Slovenian recommendations]} ✅
+  - GET /api/ai-list → 200 z {ok:true, total:429} ✅ (potrjeno: trade-insights je pod /api/analytics/ ne /api/ai/, AI count nespremenjen)
+  - 9 actionableInsights generirani:
+    • 📊 Najboljši dan za prodajo: Sobota (avg 85€/trade, 1 prodaj).
+    • ⚠️ Najslabši dan za prodajo: Četrtek (avg 27€/trade). Razmisli o prestavitvi objave.
+    • 🏪 Najboljši vir: Vinted (86% ROI, 3 trade-ov, 100% win rate).
+    • 📦 Najboljša kategorija: oblačila (86% ROI, 3 trade-ov, → STABLE).
+    • ⏱️ Optimalni hold: 15-30d (avg 52€/trade, 94% win rate, 18 trade-ov).
+    • ✅ Win rate: 95% — 18 od 19 trade-ov donosnih.
+    • 📈 Povprečni ROI: 35% (investirano 2808€, profit 973€).
+    • 💰 Večina trade-ov donosi 0-50€ (53% vseh prodaj) (majhni wini prevladujejo).
+    • 📅 Povprečni hold: 22 dni (med kupljeno in prodano).
+- Bug fix v implementation fazi: prvotna koda je uporabljala `topBucket.bucket.includes('-')` za detekcijo loss bucket-a, ampak '0-50€' (ki je pozitiven small win) vsebuje '-' kot delimiter — bi napačno prikazalo "POZOR: prevlado izgube" za pozitivne trade-e. Popravil z eksplicitno Set `{'<-50€', '-50-0€'}` ki preverja samo loss buckets.
+- Issue z Turbopack HMR med development: po prvotnem edit-u lib datoteke (bug fix) je dev server še vedno serviral OLD version. Rešil z `rm -rf .next/dev` (Turbopack cache clear). Po clear-u je naslednji curl vrnil NEW version s pravilnim output-om. Rešitev dokumentirana v CHANGELOG design odločitvah pod "Loss buckets detection".
+- Preveril dev.log — brez runtime napak, samo prisma:query log-i (SELECT za Trade z OR clause za sold/held/cancelled) + standardni HTTP 200 GET log-i za nov endpoint. Logger.info output: `[INFO] [/api/analytics/trade-insights] computed insights for 365d {"totalTrades":25,"soldTrades":19,"totalProfit":973,"sources":4,"categories":5,"insights":9}`. Home page GET / → HTTP 200. Brez TypeScript ali runtime errors.
+- Dokumentacija sinhrono posodobljena:
+  - README.md: version v8.39.0 → v8.40.0, API routes badge 615 → 616, funkcije ~300 → ~301. Nova "Kaj je novega" v8.40 sekcija z vsemi podrobnostmi (4 moduli: trade-insights.ts lib + trade-insights route + trade-insights-card.tsx widget + dashboard-view integration). Posodobljen "Kaj je novega v v7.56–v8.40" header (83→84 verzij, 209→210 funkcij). Posodobljen verzija header-ja "v8.40.0 (avgust 2026)" + funkcije count ~301. Dodan v8.40 callout zgoraj v8.39 z full description. Endpointi section posodobljen: "429 AI + 73 analytics + 14 cron + sistemski = 616".
+  - CHANGELOG.md: dodan `## [8.40.0] - 2026-08-15` section z vsemi 4 moduli + Stats (AI 429, routes 615→616, funkcije ~300→~301) + Endpoint verification (curl results) + Note (12 design odločitev). Updated [Unreleased] section: v8.40 dodan k fazi opisu, "v8.41+" postane naslednja verzija.
+  - AI_ENDPOINTS.md: NO changes (no new AI endpoints — trade-insights je pod /api/analytics/ ne /api/ai/). Total stays 429. Potrjeno z /api/ai-list.
+  - worklog.md: ta v8.40 entry se dodaja (current append).
+
+Stage Summary:
+- v8.40 uspešno implementirana
+- NEW: src/lib/trades/trade-insights.ts (~596 vrstic — getTradeInsights pure compute z 6 analizami: day-of-week, source platform, category, hold period, profit distribution, actionable insights; exported TRADE_INSIGHTS_META)
+- NEW: src/app/api/analytics/trade-insights/route.ts (~90 vrstic — GET ?days=365, 5-min cache keyed by days, runtime='nodejs', dynamic='force-dynamic', maxDuration=30s)
+- NEW: src/components/dashboard/trade-insights-card.tsx (~640 vrstic — 6 collapsible accordion sections, 4 recharts charts (BarChart day-of-week + BarChart source ROI + horizontal BarChart category + BarChart hold + PieChart distribution), Actionable Insights prominent on top, auto-refresh 60s, empty state za <5 sold trades)
+- MODIFIED: src/components/dashboard/dashboard-view.tsx (TradeInsightsCard dodan po ProfitTimelineChart, pred Skladišče widget — samo ADD, non-invasive)
+- AI endpointi: 429 (nespremenjeno — trade-insights je pod /api/analytics/ ne /api/ai/, potrjeno z /api/ai-list → total:429)
+- Total API routes: 615 → 616 (+1: analytics/trade-insights GET)
+- Funkcije: ~300 → ~301 (+1: TradeInsightsCard)
+- Lint: 0 napak ✨ (2 pre-existing eslint-disable warnings v db.ts — unrelated, od v8.34)
+- Typecheck: 0 napak ✨ (exit code 0)
+- Endpoint verification: GET /api/analytics/trade-insights?days=365 → 200 z {summary:{totalTrades:25, soldTrades:19, totalProfit:973, avgROI:34.65, overallWinRate:94.74, ...}, bestDayOfWeek:Sobota(85€/trade), worstDayOfWeek:Četrtek(27€/trade), bestSource:Vinted(86% ROI, 100% win), bestCategory:oblačila(86% ROI, STABLE), optimalHoldDays:"15-30d", 9 actionableInsights v slovenščini} ✅. /api/ai-list → 200 {ok:true, total:429} ✅.
+- UI: TradeInsightsCard na Dashboard-u (po Profit Timeline, pred Skladišče) z 6 sections + 4 charts + Actionable Insights prominent + auto-refresh 60s + empty state za <5 sold trades.
+- Documentation updated: README (v8.40.0, routes 616, funkcije ~301, nova "Kaj je novega" v8.40 sekcija) + CHANGELOG ([8.40.0] section z vsemi moduli + Verification + Note z 12 design odločitvami) + AI_ENDPOINTS.md (total 429 — nespremenjeno) + worklog.md (ta entry)
+- Polish phase continues: v8.32 (Health) + v8.33 (Performance) + v8.34 (129 tests) + v8.35 (25 trades + Telegram) + v8.36 (CSV Import + Quick Add) + v8.37 (Deal Calculator + Profit Timeline) + v8.38 (Notification Center) + v8.39 (Goal Tracker Dashboard Widget) + v8.40 (Trade Insights Deep Dive — "KDaj in KJE prodati za maksimalen profit?")
+- Skupaj doslej (v7.50 → v8.40): 90 verzij, 212 novih funkcij

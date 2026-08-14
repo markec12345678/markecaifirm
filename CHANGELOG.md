@@ -6,9 +6,9 @@ Format sledi [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), verzije s
 
 ## [Unreleased]
 
-v8.26 je odprl Intelligence phase (Action Explainability), v8.27 jo nadaljuje (Scenario Brain), v8.28 jo še nadalje vzpostavi FEEDBACK LOOP (Adaptive Domain Weights), v8.29 jo ZAKLJUČI z Draft Queue + Action Feedback Loop integration (🎯 INTELLIGENCE PHASE COMPLETE), v8.30 odpira NOVO fazo — Automation (Safe Auto-pilot — 🎯 AUTOMATION PHASE STARTED), v8.31 zaključi Automation phase (Aggressive Auto-pilot + Anomaly Detection — 🎯 AUTOMATION PHASE COMPLETE), v8.32 odpira NOVO fazo — Polish (System Health Dashboard — 🎯 POLISH PHASE STARTED — "How healthy is the Brain system?"), v8.33 zaključi Polish phase caching (Performance Caching + Cache Stats), v8.34 zaključi Polish phase testing (Brain Integration Test Suite), v8.35 zaključi Polish phase "make the system alive" (Seed Demo Data + Telegram Brain Notifications), v8.36 zaključi Polish phase trade management enhancement (CSV Import + Quick Add + Dashboard Stats), v8.37 zaključi Polish phase decision support + visualization (Deal Calculator + Profit Timeline Chart — "Hitra odločitev + vizualno sledenje"), v8.38 zaključi Polish phase centralized notification history (🔔 Notification Center + Alert History — "Centralizirana zgodovina vseh obvestil"), v8.39 zaključi Polish phase goal tracking visualization (🎯 Goal Tracker Dashboard Widget + Settings Integration — "Vizualno sledenje mesečnemu cilju z avtomatsko obvestitvijo ob dosegu"). Naslednje verzije:
+v8.26 je odprl Intelligence phase (Action Explainability), v8.27 jo nadaljuje (Scenario Brain), v8.28 jo še nadalje vzpostavi FEEDBACK LOOP (Adaptive Domain Weights), v8.29 jo ZAKLJUČI z Draft Queue + Action Feedback Loop integration (🎯 INTELLIGENCE PHASE COMPLETE), v8.30 odpira NOVO fazo — Automation (Safe Auto-pilot — 🎯 AUTOMATION PHASE STARTED), v8.31 zaključi Automation phase (Aggressive Auto-pilot + Anomaly Detection — 🎯 AUTOMATION PHASE COMPLETE), v8.32 odpira NOVO fazo — Polish (System Health Dashboard — 🎯 POLISH PHASE STARTED — "How healthy is the Brain system?"), v8.33 zaključi Polish phase caching (Performance Caching + Cache Stats), v8.34 zaključi Polish phase testing (Brain Integration Test Suite), v8.35 zaključi Polish phase "make the system alive" (Seed Demo Data + Telegram Brain Notifications), v8.36 zaključi Polish phase trade management enhancement (CSV Import + Quick Add + Dashboard Stats), v8.37 zaključi Polish phase decision support + visualization (Deal Calculator + Profit Timeline Chart — "Hitra odločitev + vizualno sledenje"), v8.38 zaključi Polish phase centralized notification history (🔔 Notification Center + Alert History — "Centralizirana zgodovina vseh obvestil"), v8.39 zaključi Polish phase goal tracking visualization (🎯 Goal Tracker Dashboard Widget + Settings Integration — "Vizualno sledenje mesečnemu cilju z avtomatsko obvestitvijo ob dosegu"), v8.40 zaključi Polish phase trade analytics deep dive (📊 Trade Insights Deep Dive — "KDaj in KJE prodati za maksimalen profit?" — 6 analiz iz 25 realnih trade-ov: day-of-week, source platform, category, hold period, profit distribution, actionable insights). Naslednje verzije:
 
-- **v8.40+ — Polish phase continues** (E2E tests s Playwright, predictive accuracy improvements za Master Brain, refactoring)
+- **v8.41+ — Polish phase continues** (E2E tests s Playwright, predictive accuracy improvements za Master Brain, refactoring)
 - WebSocket real-time negotiation (SSE namesto polling)
 - Playwright E2E testi za glavne flow-e
 - TLS fingerprinting (curl-impersonate)
@@ -16,6 +16,91 @@ v8.26 je odprl Intelligence phase (Action Explainability), v8.27 jo nadaljuje (S
 - Performance optimizations za Master Brain (cached partial results per domain)
 - Additional conflict detection tipi (npr. Inventory vs Buyer — supply/demand mismatch)
 - Per-domain DB injection v Master Brain route (zaenkrat se zanaša na individualne Domain Brain route-e za DB state)
+
+## [8.40.0] - 2026-08-15
+
+### Added — 📊 Trade Insights Deep Dive (Polish phase — "KDaj in KJE prodati za maksimalen profit?")
+
+Problem: 25 realnih trade-ov (973€ profit v 90d) je v DB, ampak uporabnik nima deep analytics. Ne ve: kateri dan v tednu proda najbolje? Kateri vir (Bolha/Vinted/Avtonet/mobile.de) ima najvišji ROI? Koliko dni naj holdam item? Katera kategorija performa najbolje? Kako so porazdeljeni profiti? v8.40 dodaja pure compute module ki agregira Trade data v 6 actionable insights + Dashboard card z 4 recharts charts.
+
+#### `src/lib/trades/trade-insights.ts` (NEW — pure compute module, ~596 vrstic)
+
+- `getTradeInsights(days=365)` vrača `TradeInsights` objekt z 6 analizami:
+  - **Day-of-Week** (7 vnosov, Ned-Sob) — za vsak dan: tradeCount (sold), totalProfit, avgProfit, sellThroughRate (sold/total za trades BOUGHT tisti dan); bestDayOfWeek + worstDayOfWeek z najvišjim/najnižjim avgProfit.
+  - **Source Platform** (group by buyLocation) — za vsak vir: tradeCount, totalInvested (buyPrice+buyFees), totalRevenue (sellPrice), totalProfit, avgROI (profit/invested×100), avgHoldDays, winRate (profitable/total×100), bestCategory (category z najvišjim total profit v tem viru).
+  - **Category** (group by category) — tradeCount, totalProfit, avgProfit, avgROI, avgHoldDays, winRate, **trend** (GROWING/STABLE/DECLINING — first half vs second half by sellDate, ×1.1/×0.9 threshold, isti pattern kot v8.37 profit-timeline).
+  - **Hold Period** (5 buckets: 0-7d, 8-14d, 15-30d, 31-60d, 60+d) — za vsak bucket: tradeCount, totalProfit, avgProfit, avgROI, winRate; **optimalHoldDays** = bucket z najvišjim avgProfit.
+  - **Profit Distribution** (6 buckets: <-50€, -50-0€, 0-50€, 50-100€, 100-200€, 200+€) — tradeCount + percentage; pove ali večina prihodka prihaja iz majhnih winov ali velikih winov.
+  - **Actionable Insights** (avtomatska slovenska priporočila) — npr. "📊 Najboljši dan za prodajo: Sobota (85€/trade)", "🏪 Najboljši vir: Vinted (86% ROI, 100% win rate)", "📦 Najboljša kategorija: oblačila (86% ROI, → STABLE)", "⏱️ Optimalni hold: 15-30d (avg 52€/trade, 94% win)", "✅ Win rate: 95% — 18 od 19 donosnih", "💰 Večina trade-ov donosi 0-50€ (53%) (majhni wini prevladujejo)", "⚠️ Win rate pod 50% — preglej pricing strategijo" (samo ko winRate<50).
+- Pure compute — bere iz `db.trade.findMany` (status='sold' OR 'held' OR 'cancelled' z datumskim filtrom), no AI/LLM klici.
+- Per-trade profit formula consistent z v8.23 actual.ts + v8.37 profit-timeline: `profit = sellPrice - sellFees - buyPrice - buyFees`.
+- Edge cases: 0 sold trades → actionableInsights prazno + warning; <4 trades → trend='STABLE'; totalInvested=0 → avgROI=0.
+- Exported `TRADE_INSIGHTS_META` constant z DAY_NAMES_SL + DAY_SHORT_SL + bucket keys za downstream use.
+
+#### `src/app/api/analytics/trade-insights/route.ts` (NEW — GET endpoint)
+
+- GET `?days=365` → `TradeInsights` (summary + 6 analiz + actionableInsights).
+- runtime='nodejs', dynamic='force-dynamic', maxDuration=30s.
+- 5-min cache (keyed by `days`, per v7.32 in-memory cache pattern) — ista implementacija kot profit-timeline endpoint.
+- `parseDays()` validira input (1-1095, default 365).
+- Logger info: `computed insights for Xd { totalTrades, soldTrades, totalProfit, sources, categories, insights }`.
+
+#### `src/components/dashboard/trade-insights-card.tsx` (NEW — Dashboard widget, ~600 vrstic)
+
+- 'use client' component. Self-fetches `/api/analytics/trade-insights?days=365` vsakih 60s.
+- 6 collapsible accordion sections (shadcn Accordion z `type="multiple"`, default open: `['day-of-week']`):
+  1. **Actionable Insights** (vedno visible na vrhu, prominent — non-collapsible) — list z ikonami + Lightbulb icon header. Primary-tinted background.
+  2. **Day-of-Week BarChart** (recharts BarChart) — X-axis: Ned/Pon/Tor/Sre/Čet/Pet/Sob (ponedeljek-prvi), Y-axis: avg profit; best dan = zelena (#10b981), worst dan = rdeča (#ef4444), ostali = siva (#3f3f46); tooltip prikaže tradeCount; best/worst summary box pod chart-om z emoji-ji.
+  3. **Source Platform** — BarChart (ROI per source z color-coding: zelena >20%, amber 10-20%, rdeča <10%) + sortable tabela (vir, # trade-ov, investirano, profit, ROI, win rate, hold, best category) z max-h-72 overflow-y-auto + sticky header.
+  4. **Category** — horizontal BarChart (avg ROI per category z istim color coding) + trend badges (↗ Raste / → Stabilno / ↘ Pada z ikonami TrendingUp/Minus/TrendingDown) za vsako kategorijo.
+  5. **Hold Period** — BarChart (avg profit per bucket, optimalni bucket = zelena, drugi pozitivni = siva, negativni = rdeča). Tooltip prikazuje avg profit + trade count + win rate.
+  6. **Profit Distribution** — PieChart (innerRadius=20, outerRadius=60) z 6 segments (rdeče za izgube <-50€/-50-0€, amber za small wins 0-50€, zelena za big wins 50-100€/100-200€/200+€) + legend z bucket + count + percentage.
+- Summary row (4 mini-stats: skupaj profit, avg ROI, win rate, avg hold) — color-coded (zelena >0, rdeča <0, amber =0).
+- Empty state: "Ni dovolj prodaj za analizo. Dodaj vsaj 5 sold trades" (vidno ko `summary.soldTrades < 5`).
+- Loading state: pulse placeholder.
+- "Osveži" button za manual refresh.
+- Color system: uporablja `text-primary` (zelena) za pozitivne, `text-red-500` za negativne, `text-amber-400` za amber/warning. Nobenih indigo/blue barv.
+- Responsive: chart-i se prilagajajo (ResponsiveContainer width="100%"), tabela ima overflow-x-auto, badges wrapajo na mobilnem.
+
+#### `src/components/dashboard/dashboard-view.tsx` (MODIFIED — Dashboard integration)
+
+- Dodan `import { TradeInsightsCard } from '@/components/dashboard/trade-insights-card';`.
+- `<TradeInsightsCard />` dodan po `<ProfitTimelineChart />` (v8.37) in pred Skladišče widget.
+- Dashboard flow postane: GoalTrackerCard → Trade Stats → Deal Calculator → Profit Timeline → **Trade Insights** → Skladišče.
+- No existing code odstranjeno — samo ADD (v8.40 je non-invasive extension).
+
+### Stats
+
+- **AI endpointi**: 429 (nespremenjeno — trade-insights je pod /api/analytics/ ne /api/ai/, potrjeno z `/api/ai-list` → `total: 429`).
+- **Total API routes**: 615 → 616 (+1: `analytics/trade-insights`).
+- **Funkcije**: ~300 → ~301 (+1: TradeInsightsCard).
+- **Lint**: 0 napak ✨ (2 pre-existing eslint-disable warnings v db.ts — unrelated, od v8.34).
+- **Typecheck**: 0 napak ✨ (`bunx tsc --noEmit` exit 0).
+
+### Endpoint verification
+
+- `curl /api/analytics/trade-insights?days=365` → `200` z `{ok:true, summary:{totalTrades:25, soldTrades:19, heldTrades:5, cancelledTrades:1, totalProfit:973, totalInvested:2808, avgProfitPerTrade:51.21, avgROI:34.65, avgHoldDays:21.84, overallWinRate:94.74, profitableCount:18}, bestDayOfWeek:{dayName:"Sobota", avgProfit:85}, worstDayOfWeek:{dayName:"Četrtek", avgProfit:27.25}, bestSource:{source:"Vinted", avgROI:85.87, winRate:100, bestCategory:"oblačila"}, bestCategory:{category:"oblačila", avgROI:85.87, trend:"STABLE"}, optimalHoldDays:"15-30d", dayOfWeekAnalysis:[7 entries], sourcePlatformAnalysis:[4 sources: Bolha/Avtonet/mobile.de/Vinted], categoryAnalysis:[5 categories: elektronika/avto/orodje/oblačila/obutev], holdPeriodAnalysis:[5 buckets], profitDistribution:[6 buckets], actionableInsights:[9 Slovenian recommendations]}` ✅.
+- `curl /api/ai-list` → `200` z `{ok:true, total:429}` (potrjeno: trade-insights je pod /api/analytics/ ne /api/ai/) ✅.
+
+### Note
+
+Design odločitve:
+
+- **Pure compute module pattern** (consistent z v8.23 actual.ts + v8.37 profit-timeline.ts): lib funkcija bere iz `db.trade.findMany`, no AI/LLM klici, no side effects. To omogoča enostavno testiranje in visoko performance.
+- **6 analiz v enem endpointu** (namesto 6 ločenih): zmanjša network round-trips + omogoča single 5-min cache za vse podatke. Trade-off: večji response payload (~3KB), ampak dashboard je samodejno vse pridobil z enim fetch-om.
+- **Per-trade profit formula consistent z v8.23 actual.ts + v8.37 profit-timeline**: `profit = sellPrice - sellFees - buyPrice - buyFees`. S tem so vsi analytics moduli sinhronizirani — če uporabnik vidi "973€ profit" v Trade Stats, vidi isto številko v Trade Insights summary-ju.
+- **Trend detection isti pattern kot v8.37 profit-timeline**: first half vs second half by sellDate, ×1.1/×0.9 threshold, <4 trades → STABLE. S tem je trend skladno prikazan po vseh analytics modulih.
+- **Accordion z `type="multiple"`** (namesto `type="single"`): uporabnik lahko odpre več sekcij hkrati za primerjavo.
+- **Actionable Insights so non-collapsible** (vedno visible na vrhu) — to je najpomembnejši del karte, naj bo vedno prikazan.
+- **bestSource** = highest avgROI (ne totalProfit) — ker primerjamo platforme z različnimi investiranji (Bolha 2136€ vs Vinted 92€), je ROI bolj poštena metrika. Vinted (86% ROI, 92€ invested) > Bolha (25% ROI, 2136€ invested) ker Vinted je bolj učinkovit per EUR.
+- **bestCategory** = highest avgROI (z istim razlogom kot bestSource).
+- **optimalHoldDays** = bucket z najvišjim avgProfit (ne totalProfit) — ker primerjamo hold periode, je per-trade profit bolj relevanten kot absolute EUR.
+- **Loss buckets detection** (Profit Distribution insight): eksplicitno preverja set `{'<-50€', '-50-0€'}` namesto `bucket.includes('-')` — ker '0-50€' vsebuje '-' (kot delimiter) ampak je pozitivno (small win), ne izguba.
+- **Empty state threshold = 5 sold trades**: pod 5 trades analiza ni statistično relevantna (1-4 trades = lahko noise). Pod threshold prikažemo prompt za dodajanje trades.
+- **Auto-refresh 60s** (consistent z v8.36 TradeStatsCard + v8.39 GoalTrackerCard): ne vsakih 30s (kot v8.38 Notification Center) ker so trade insights manj časovno občutljivi kot notifications.
+- **ROI color-coding** (>20% zelena, 10-20% amber, <10% rdeča): pragovi so izbrani da Bolha (25% ROI) pokaže zelena, obutev (20% ROI) pokaže zelena/amber mejo, kar je realno za reselling.
+
+**Polish phase continues — v8.32 (monitoring) + v8.33 (performance) + v8.34 (testing) + v8.35 (data+telegram) + v8.36 (CSV Import + Quick Add) + v8.37 (Deal Calculator + Profit Timeline) + v8.38 (Notification Center) + v8.39 (Goal Tracker Dashboard Widget) + v8.40 (Trade Insights Deep Dive). "KDaj in KJE prodati za maksimalen profit?" — odgovorjen iz 25 realnih trade-ov z 6 analizami in 9 avtomatskimi slovenskimi priporočili.**
 
 ## [8.39.0] - 2026-08-15
 

@@ -21,6 +21,8 @@ import { DealCalculatorWidget } from '@/components/dashboard/deal-calculator-wid
 import { ProfitTimelineChart } from '@/components/dashboard/profit-timeline-chart';
 // v8.39: Goal Tracker Dashboard Widget — visual progress bar + milestones + edit mode
 import { GoalTrackerCard } from '@/components/dashboard/goal-tracker-card';
+// v8.40: Trade Insights Deep Dive — day-of-week + source + category + hold + distribution
+import { TradeInsightsCard } from '@/components/dashboard/trade-insights-card';
 
 // v5.6: Dashboard widget IDs
 const WIDGET_IDS = ['todaySummary', 'quickStats', 'activityFeed', 'aiInsights', 'skladisceWidget'] as const;
@@ -552,6 +554,12 @@ export function DashboardView({ onNavigate }: ViewProps) {
       {/* v8.37: Deal Calculator + Profit Timeline — hitra ROI kalkulacija + profit trend */}
       <DealCalculatorWidget />
       <ProfitTimelineChart />
+
+      {/* v8.40: Trade Insights Deep Dive — "KDaj in KJE prodati za maksimalen profit?"
+          6 analytics: day-of-week, source platform, category, hold period, profit
+          distribution, actionable insights. Self-fetches from
+          /api/analytics/trade-insights every 60s. */}
+      <TradeInsightsCard />
 
       {/* v4.5: Skladišče dashboard widget */}
       <WidgetWrapper id="skladisceWidget" order={widgetOrder} customizeMode={customizeMode} onMove={moveWidget}>
