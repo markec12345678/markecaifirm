@@ -16224,3 +16224,62 @@ Stage Summary:
   - Skupaj: Master Brain recommends → user decides (✅/❌ iz v8.29) → adaptive weights learn (v8.28) → better recommendations next time. v8.30 dodaja: sistem lahko SAM izvaja LOW-risk akcije (auto-pilot) — ampak samo ko so VSA 8 varnostna pravila izpolnjena + vedno z možnostjo rollback-a.
 - Verzija aplikacije: v8.30.0
 - Skupaj doslej (v7.50 → v8.30): 80 verzij, 204 nove funkcije; Brain architecture COMPLETE (v8.22) + Validation phase ZAKLJUČENA (v8.23-v8.25) + Intelligence phase ZAKLJUČENA (v8.26-v8.29) + Automation phase STARTED (v8.30 Safe Auto-pilot) — naslednja faza: v8.31 Aggressive Auto-pilot (opt-in, executes MEDIUM risk too)
+
+---
+Task ID: v8.30.1
+Agent: main
+Task: v8.30 commit + push + GitHub About + Agent Browser verification (🎯 AUTOMATION PHASE STARTED)
+
+Work Log:
+- Prejel poročilo od full-stack-developer podagenta (Task v8.30 — Safe Auto-pilot implementiran: src/lib/brain/auto-pilot.ts (~865 lines, 8 safety rules, checkAutoPilotEligibility, runSafeAutoPilot, rollbackAutoExecution, getAutoPilotStats, updateAutoPilotConfig) + 3 nova API routes (auto-pilot GET/POST, auto-pilot/rollback POST, cron auto-pilot) + UI 🤖 Safe Auto-pilot card (purple/indigo) z master switch + sliders + stats + history + rollback + safety info box)
+- Podagent je potrdil da 8 safety rules pravilno zavrnejo auto-execution (vsi 5 testni drafts so bili preskočeni ker so imeli HIGH/MEDIUM confidence — safety framework deluje)
+- Neodvisno preveril doc sync: AI_ENDPOINTS.md "Total: 424 endpoints" (rows 27-28 brain/auto-pilot + brain/auto-pilot/rollback) ✅, README v8.30.0 + 424 AI + 601 routes + Overview paragraph z Automation phase STARTED ✅, CHANGELOG [8.30.0] section z 8 safety rules + execution flow ASCII diagram + AUTOMATION PHASE STARTED + [Unreleased] v8.31+ (Aggressive Auto-pilot) ✅
+- Preveril lint: 0 napak (2 unused eslint-disable warnings — ne kritično) ✨
+- Preveril typecheck: 0 napak ✨
+- Posodobil GitHub About opis: "424 AI + 72 analytics = 601 routes. v8.30.0: Brain (8 layers) + Validation COMPLETE + Intelligence COMPLETE + Automation STARTED (Safe Auto-pilot — 8 safety rules, rollback)." (322 chars)
+- Commit: "v8.30: Safe Auto-pilot — Automation phase STARTED..." (40b2738)
+- Push na GitHub: uspešen ✅ (624044f..40b2738), PAT očiščen ✅
+- Agent Browser self-verification:
+  - Stran se pravilno naloži (HTTP 200, naslov "Markec AI Firm — Opportunity Monitor")
+  - AI Hub: 🧠 Možgani 20 (8 brain + snapshots + actual-profit + risk-profile + accuracy + accuracy/backfill + explain + scenario + weights + drafts + drafts/[id] + auto-pilot + auto-pilot/rollback)
+  - 🤖 Safe Auto-pilot card (purple/indigo gradient) prikazan z:
+    - "Auto-pilot: OFF" master switch (default OFF — fail-safe) ✅
+    - "▶️ Zaženi zdaj" button ✅
+    - "↩️ Razveljavi" (rollback) capability ✅
+    - Safety info box z 8 pravili ✅
+  - brain/auto-pilot endpoint viden z "v8.30 · AUTO" badge
+  - brain/auto-pilot/rollback endpoint viden z "v8.30 · UNDO" badge
+  - Runner test: POST → 400 pravilno (manjka action field — runner pošlje prazen body, endpoint pravilno zavrne z "Unknown action: ''" ker mora biti 'run' ali 'config')
+  - Brez runtime napak v dev.log
+
+Stage Summary:
+- v8.30 uspešno dokončana in potisnjena na GitHub
+- NOV ARCHITECTURAL LAYER: Safe Auto-pilot — 🎯 AUTOMATION PHASE STARTED
+- NOV Prisma fields: ActionDraft +5 (autoExecuted, autoPilotReason, rolledBack, rolledBackAt, rollbackReason) + 2 indexes; Settings +5 (autoPilotEnabled, autoPilotMode, autoPilotDailyLimit, autoPilotDailyBudgetEUR, autoPilotLastRunAt)
+- src/lib/brain/auto-pilot.ts — checkAutoPilotEligibility() (8 safety rules pure function), runSafeAutoPilot() (fetches pending drafts, checks each, auto-executes eligible via updateDraftStatus), rollbackAutoExecution() (sets rolledBack + calls recordActionFeedback 'rejected' to undo learning), getAutoPilotStats() (today + all-time), updateAutoPilotConfig()
+- 8 SAFETY RULES (ALL must pass for auto-execution):
+  1. autoPilotEnabled = true (master switch, default OFF)
+  2. autoPilotMode = 'safe' (v8.31 bo dodal 'aggressive')
+  3. userRiskTolerance != 'conservative' (conservative users nikoli ne dobijo auto-pilot)
+  4. action.confidence = 'LOW' (HIGH/MEDIUM vedno zahtevajo ročni ✅ Izvedel)
+  5. action.expectedUpliftEUR < 100€ threshold
+  6. action.domain != 'risk' (risk mitigation needs human judgment)
+  7. todayAutoExecutedCount < autoPilotDailyLimit (default 5/day)
+  8. todayAutoExecutedBudget + draft.expectedUpliftEUR <= autoPilotDailyBudgetEUR (default 500€/day)
+- ROLLBACK: vsako auto-executed akcijo lahko uporabnik razveljavi (↩️ Razveljavi) — set-a rolledBack=true + kliče recordActionFeedback({feedback:'rejected'}) da undo-a learning (v8.28 adaptive weights se prilagodijo)
+- MEDIUM/HIGH risk akcije NE spreminjajo vedenja — še vedno zahtevajo ročni ✅ Izvedel klik (v8.29 Draft Queue)
+- src/app/api/ai/brain/auto-pilot/route.ts — GET (config + stats) + POST (action:'run' | action:'config')
+- src/app/api/ai/brain/auto-pilot/rollback/route.ts — POST { draftId, reason }
+- src/app/api/cron/auto-pilot/route.ts — hourly cron
+- UI: 🤖 Safe Auto-pilot card (purple/indigo gradient) z master switch toggle + config sliders (daily limit 1-10, daily budget 100-2000€) + today stats z progress bars + all-time stats (total auto / rolled back / rollback rate %) + "▶️ Zaženi zdaj" button + "ℹ️ Zgodovina" button z rollback + always-visible safety info box (8 rules)
+- AI endpointi: 422 → 424 (+2)
+- Analytics endpointi: 72 (nespremenjeno)
+- Total API routes: 599 → 601 (+2)
+- Cron endpoints: 13 (dodal auto-pilot hourly)
+- Dokumentacija sinhrono posodobljena (AI_ENDPOINTS.md, README, CHANGELOG, GitHub About)
+- GitHub sinhroniziran (0 commit-ov ahead)
+- Verzija aplikacije: v8.30.0
+- 🎯 AUTOMATION PHASE STARTED:
+  - v8.30 = Safe Auto-pilot (LOW risk only, 8 safety rules, rollback)
+  - Naslednji: v8.31 (Aggressive Auto-pilot — opt-in, executes MEDIUM risk too)
+- Skupaj doslej (v7.50 → v8.30): 80 verzij, 204 nove funkcije; Brain architecture COMPLETE (v8.22) + Validation phase ZAKLJUČENA (v8.23-v8.25) + Intelligence phase ZAKLJUČENA (v8.26-v8.29) + Automation phase STARTED (v8.30)
