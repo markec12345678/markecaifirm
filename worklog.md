@@ -17131,3 +17131,49 @@ Stage Summary:
 - Verzija aplikacije: v8.36.0
 - Polish phase continues: v8.32 (Health) + v8.33 (Performance) + v8.34 (129 tests) + v8.35 (25 trades + Telegram) + v8.36 (CSV Import + Quick Add + Stats)
 - Skupaj doslej (v7.50 → v8.36): 86 verzij, 210 novih funkcij
+
+---
+Task ID: v8.37.1
+Agent: main
+Task: v8.37 commit + push + GitHub About + Agent Browser verification
+
+Work Log:
+- Podagent (full-stack-developer) je implementiral v8.37 pred timeout-om — vse datoteke ustvarjene
+- Neodvisno preveril endpoint-e (curl 2 testi):
+  - GET /api/ai/deal-calculator?buyPrice=280&expectedSellPrice=380&buyFees=0&sellFees=15 → 200 {"ok":true,"netProfit":85,"roiPct":30.36,"marginPct":23.29,"breakEvenPrice":295,"dailyProfit":6.07,"weeklyProfit":42.5,"monthlyProfit":182.14,"recommendation":"BUY","recommendationReason":"Odlična priložnost: 30% ROI, 85€ profit. Priporočamo nakup.","riskLevel":"LOW","riskFactors":[]} ✅
+  - GET /api/analytics/profit-timeline?granularity=weekly&days=90 → 200 {"ok":true,"points":[{date:"2026-06-29",label:"T27 2026",profit:115,revenue:750,cost:635,tradeCount:1,cumulativeProfit:115},...],"totalProfit":973,"totalTrades":19} ✅
+  - GET /api/ai-list → 200 {"ok":true,"total":429} (brain category 24 + deal-calculator) ✅
+- Preveril lint: 0 napak ✨
+- Preveril typecheck: 0 napak ✨
+- Posodobil GitHub About: "429 AI + 73 analytics = 610 routes. v8.37.0: Brain (8 layers) + 5 phases COMPLETE + Polish (Health+Perf+129 tests+25 trades+Telegram+CSV+QuickAdd+Deal Calc+Profit Timeline)."
+- Commit: "v8.37: Deal Calculator + Profit Timeline Chart..." (3a2b339)
+- Push na GitHub: uspešen ✅ (95fb244..3a2b339), PAT očiščen ✅
+- Agent Browser self-verification:
+  - Stran se pravilno naloži (HTTP 200, "PREGLED SISTEMA")
+  - "DEAL CALCULATOR V8.37" heading prikazan na Dashboard ✅
+  - "PROFIT TIMELINE V8.37" heading prikazan ✅
+  - ROI podatki prikazani: +60.86%, +23.34%, +43.43%, +85.87%, +20.37% ✅
+  - 90d selector viden ✅
+  - Brez runtime napak v dev.log
+
+Stage Summary:
+- v8.37 uspešno dokončana in potisnjena na GitHub
+- NEW: src/lib/trades/deal-calculator.ts (calculateDeal — pure math: netProfit, ROI%, margin%, break-even, recommendation BUY/MARGINAL/PASS, risk factors)
+- NEW: src/lib/trades/profit-timeline.ts (getProfitTimeline — DB aggregation weekly/monthly, cumulative, trend GROWING/STABLE/DECLINING)
+- NEW: src/app/api/ai/deal-calculator/route.ts (GET + POST)
+- NEW: src/app/api/analytics/profit-timeline/route.ts (GET ?granularity=weekly&days=90, 5-min cache)
+- NEW: src/components/dashboard/deal-calculator-widget.tsx (live calc card z 6 inputs + recommendation pill + risk factors + 💾 Shrani kot trade)
+- NEW: src/components/dashboard/profit-timeline-chart.tsx (recharts ComposedChart z Bar+Line, granularity toggle, days selector, trend badge)
+- MODIFIED: src/components/dashboard/dashboard-view.tsx (oba widget-a dodana)
+- AI endpointi: 428 → 429 (+1)
+- Analytics endpointi: 72 → 73 (+1)
+- Total API routes: 608 → 610 (+2)
+- Lint: 0 napak ✨
+- Typecheck: 0 napak ✨
+- DEAL CALCULATOR primer: buyPrice 280€ → expectedSellPrice 380€ = netProfit 85€, ROI 30.36%, recommendation BUY ✅
+- PROFIT TIMELINE primer: 19 sold trades aggregated v 8+ tednih, totalProfit 973€, cumulativeProfit running total ✅
+- Dokumentacija sinhrono posodobljena (AI_ENDPOINTS.md, README, CHANGELOG, GitHub About)
+- GitHub sinhroniziran (0 commit-ov ahead)
+- Verzija aplikacije: v8.37.0
+- Polish phase continues: v8.32 (Health) + v8.33 (Performance) + v8.34 (129 tests) + v8.35 (25 trades + Telegram) + v8.36 (CSV Import + Quick Add) + v8.37 (Deal Calculator + Profit Timeline)
+- Skupaj doslej (v7.50 → v8.37): 87 verzij, 210 novih funkcij
