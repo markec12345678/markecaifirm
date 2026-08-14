@@ -506,6 +506,44 @@ model WebhookEndpoint {
   updatedAt   DateTime @updatedAt
 }
 
+// v8.29: Action Draft Queue — stores Master Brain TOP 5 actions with execution status.
+// Closed feedback loop: Master Brain recommends → user approves/rejects → adaptive weights learn.
+// Each row represents ONE recommended action from the Master Brain banner. When the user
+// clicks ✅ Izvedel or ❌ Zavrnil in the UI, the draft's status is updated AND
+// recordActionFeedback() (from v8.28 adaptive-weights.ts) is called — closing the loop.
+//
+// Lifecycle:
+//   1. Master Brain banner fetches /api/ai/brain/drafts (POST) → creates 5 drafts (status='pending')
+//   2. Existing 'pending' drafts are marked 'expired' (replaced by new recommendations)
+//   3. User clicks ✅ → status='executed' + executedAt set + recordActionFeedback('executed')
+//   4. User clicks ❌ → status='rejected' + rejectedAt set + recordActionFeedback('rejected')
+//   5. Cron cleanup deletes drafts older than 90 days that are 'executed'/'rejected'/'expired'
+model ActionDraft {
+  id              String   @id @default(cuid())
+  // Master Brain action data (denormalized for history)
+  rank            Int                   // 1-5 (rank in TOP 5 when created)
+  domain          String                 // 'profit'|'inventory'|'market'|'sourcing'|'risk'|'buyer'|'pricing'
+  signal          String                 // signal name within domain
+  action          String                 // human-readable action text
+  expectedUpliftEUR Float               // EUR/month expected uplift
+  confidence     String                 // 'HIGH'|'MEDIUM'|'LOW'
+  // Status tracking
+  status         String   @default("pending") // 'pending'|'approved'|'executed'|'rejected'|'expired'
+  // User feedback (filled when status changes to executed/rejected)
+  feedbackNote   String?               // optional user note
+  executedAt     DateTime?             // when user marked as executed
+  rejectedAt     DateTime?             // when user marked as rejected
+  // Link to Master Brain snapshot (if created from one)
+  snapshotDate   String?               // YYYY-MM-DD of the BrainSnapshot that generated this
+  // Metadata
+  createdAt      DateTime @default(now())
+  updatedAt      DateTime @updatedAt
+
+  @@index([status])
+  @@index([domain])
+  @@index([createdAt])
+}
+
 // v8.23: Daily Brain Snapshot — stores Master Brain output for historical accuracy tracking.
 // Cron job @ 00:00 calls masterBrain() and saves the full result here.
 // Used by v8.25 (Historical Accuracy) to compare predicted vs actual profit.

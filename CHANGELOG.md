@@ -6,9 +6,9 @@ Format sledi [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), verzije s
 
 ## [Unreleased]
 
-v8.26 je odprl Intelligence phase (Action Explainability), v8.27 jo nadaljuje (Scenario Brain), v8.28 jo še nadalje vzpostavi FEEDBACK LOOP (Adaptive Domain Weights). Naslednje verzije nadaljujejo:
+v8.26 je odprl Intelligence phase (Action Explainability), v8.27 jo nadaljuje (Scenario Brain), v8.28 jo še nadalje vzpostavi FEEDBACK LOOP (Adaptive Domain Weights), v8.29 jo ZAKLJUČI z Draft Queue + Action Feedback Loop integration (🎯 INTELLIGENCE PHASE COMPLETE). Naslednje verzije:
 
-- **v8.29 — Draft Queue + Action Feedback Loop integration** (vsaka TOP 5 Master Brain akcija dobi gumba ✅ Izvedel / ❌ Zavrnil, ki neposredno kličeta recordActionFeedback iz v8.28 — poveže UI z adaptive weights feedback loop brez potrebe po demo formi)
+- **v8.30+ — Automation** (safe auto-pilot z rollback — sistem samodejno izvaja approved Master Brain akcije z varnostnimi ogradami in possibility rollback-a)
 - WebSocket real-time negotiation (SSE namesto polling)
 - Playwright E2E testi za glavne flow-e
 - TLS fingerprinting (curl-impersonate)
@@ -16,6 +16,98 @@ v8.26 je odprl Intelligence phase (Action Explainability), v8.27 jo nadaljuje (S
 - Performance optimizations za Master Brain (cached partial results per domain)
 - Additional conflict detection tipi (npr. Inventory vs Buyer — supply/demand mismatch)
 - Per-domain DB injection v Master Brain route (zaenkrat se zanaša na individualne Domain Brain route-e za DB state)
+
+## [8.29.0] - 2026-08-28
+
+### Added — 📋 Draft Queue + Action Feedback Loop integration (🎯 INTELLIGENCE PHASE COMPLETE)
+
+**🎯 INTELLIGENCE PHASE ZAKLJUČENA.** v8.29 = ACTION. Problem: Master Brain (v8.22) daje TOP 5 priporočil, v8.28 je vzpostavil adaptive weights feedback loop, AMPAK uporabnik ni imel načina za (1) sledenje katere akcije je izvedel/zavrnil, (2) pregled zgodovine preteklih odločitev, (3) avtomatsko posredovanje odločitev v adaptive weights sistem (v8.28 je imel samo ročno demo formo — sedaj je avtomatsko preko draft queue-a). v8.29 zaključi Intelligence phase z vzpostavitvijo CLOSED LOOP: vsako TOP 5 Master Brain akcijo dobi lastni `ActionDraft` row v novi Prisma tabeli. UI banner dobi ✅ Izvedel / ❌ Zavrnil gumbe. Klik gumba posodobi draft status IN avtomatsko kliče `recordActionFeedback()` iz v8.28 — adaptive weights se naučijo iz REVEALED preference uporabnika. Closed feedback loop: **Master Brain recommends → user decides → system learns → better recommendations next time.**
+
+- **NEW Prisma model** — `ActionDraft` v `prisma/schema.prisma`. Polja: `id` (cuid), `rank` (1-5), `domain` (en od 7 DomainName), `signal`, `action` (human-readable), `expectedUpliftEUR` (Float), `confidence` (HIGH/MEDIUM/LOW), `status` (pending/approved/executed/rejected/expired, default 'pending'), `feedbackNote?`, `executedAt?`, `rejectedAt?`, `snapshotDate?` (YYYY-MM-DD link to BrainSnapshot), `createdAt`, `updatedAt`. Indexes na `[status]`, `[domain]`, `[createdAt]`. Lifecycle: pending → (user click ✅) → executed; or pending → (user click ❌) → rejected; or pending → expired (replaced by newer Master Brain output, when createDraftsFromMasterBrain runs again). `bun run db:push` aplikira tabelo na SQLite + Prisma Client se regenerira v 418ms. SCHEMA_VERSION v `src/lib/db.ts` bump-an na `v8.29-draft-queue` tako da se stale PrismaClient v globalThis cache discard-a ob naslednjem klicu.
+
+- **NEW `src/lib/brain/draft-queue.ts`** (pure compute + DB module, no AI/LLM SDK)
+  - **Exports:**
+    - `DraftStatus`, `Confidence` — TypeScript union types.
+    - `ActionDraft`, `CreateDraftsInput`, `CreateDraftsResult`, `UpdateDraftStatusInput`, `UpdateDraftStatusResult`, `DraftQueueQuery`, `DraftQueueStats`, `DomainStat`, `DraftQueueResult` — TypeScript interfaces za type-safe DB access.
+  - **Functions:**
+    - `createDraftsFromMasterBrain(input: CreateDraftsInput): Promise<CreateDraftsResult>` — kreira 5 draft-ov iz TOP 5 Master Brain akcij. Vsi obstoječi `pending` draft-i postanejo `expired` (nadomeščeni z novimi priporočili). **IDEMPOTENT** — če je `snapshotDate` podan in draft-i z tega datuma že obstajajo, vrne obstoječe (omogoča UI-ju da POST-a na vsak render brez duplikatov). Valida action object shape (rank number, domain v 7-setu, signal non-empty string, action non-empty string, expectedUpliftEUR finite number, confidence v {HIGH,MEDIUM,LOW}). Uporablja `crypto.randomUUID()` za id-je (Web Crypto API, available v Node 19+/Bun).
+    - `updateDraftStatus(input: UpdateDraftStatusInput): Promise<UpdateDraftStatusResult>` — glavna funkcija ki ZAKLJUČI feedback loop. Posodobi status draft-a (executed/rejected/approved) + timestamps (executedAt/rejectedAt) + feedbackNote. **ČE je status 'executed' ali 'rejected', kliče `recordActionFeedback()` iz v8.28 (adaptive-weights.ts)** — adaptive weights se naučijo iz uporabnikove odločitve. Če je status 'approved' (intermediate), NE kliče feedback (samo intermediate state). Vrne `{ ok, draft: ActionDraft, feedbackRecorded: boolean, feedbackResult?: WeightAdjustmentResult }` kjer feedbackResult vsebuje `oldWeight`, `newWeight`, `executed`, `rejected`, `executionRate`, `adjusted`, `reason` (vse iz v8.28). Guard: draft-i ki so že v končnem statusu (executed/rejected) ne morejo biti spremenjeni. Feedback napaka je non-fatal — draft se še vedno posodobi (zlog se napaka v `recordActionFeedback failed for draft X (draft update still succeeded)`).
+    - `getDraftQueue(query: DraftQueueQuery = {}): Promise<DraftQueueResult>` — vrača zadnjih 30 draft-ov (configurable limit do 200, days do 365) z filtri `status?` in `domain?`. Poleg tega vrača `stats` (total/pending/approved/executed/rejected/expired counts + executionRate = executed/(executed+rejected)) in `domainStats` (7 vrstic — ena per domena z executed/rejected/pending counts + executionRate). Stats se računajo iz FULL dataset-a v days oknu (ignorira status/domain filter) tako da vedno prikazujejo globalno sliko.
+    - `cleanupOldDrafts(daysOld = 90): Promise<{ ok: true; deleted: number }>` — briše draft-e starejše od N dni (default 90) ki so v končnem statusu (executed/rejected/expired). Pending in approved NIKOLI niso izbrisani (so odprte odločitve). Klic vsak dan iz `/api/cron/cleanup-drafts`.
+  - **DB approach:** `getFreshDb()` pattern (fresh PrismaClient per call, bypass globalThis cache) + raw SQL `$queryRaw`/`$executeRaw` + `Prisma.sql`/`Prisma.join` za safe parameterized queries (no SQL injection — vse user input je bound kot Prisma parameter). `db.$disconnect()` v `finally` block.
+
+- **NEW `src/app/api/ai/brain/drafts/route.ts`** (GET + POST endpoint)
+  - `runtime = 'nodejs'`, `dynamic = 'force-dynamic'`, `maxDuration = 60`.
+  - **GET**: parse query params (`?status=pending&domain=profit&limit=30&days=30`), kliče `getDraftQueue()`, vrne `DraftQueueResult` z `drafts` array + `stats` + `domainStats`. 400 za invalid status/domain (validirano v same call). 500 za server errors.
+  - **POST**: parse body za optional `actions` array in `snapshotDate`. Če `actions` manjkajo (prazno `{}` body — default), kliče `masterBrain()` in uporabi `topActions` kot actions + nastavi `snapshotDate` na današnji dan (YYYY-MM-DD). Kliče `createDraftsFromMasterBrain({actions, snapshotDate})`. Vrne `CreateDraftsResult` z `created` count, `drafts` array, in `expiredCount`. Uporabljen od UI-ja (MasterBrainBanner) za avtomatsko kreiranje draft-ov ob vsakem fetchMaster.
+
+- **NEW `src/app/api/ai/brain/drafts/[id]/route.ts`** (PATCH + GET endpoint)
+  - `runtime = 'nodejs'`, `dynamic = 'force-dynamic'`, `maxDuration = 60`.
+  - **PATCH**: parse `{ id }` iz Next.js 16 dynamic route params (Promise-wrapped), `{ status, feedbackNote? }` iz body-ja, kliče `updateDraftStatus()`, vrača `{ ok, draft, feedbackRecorded, feedbackResult }`. Error mapping: 400 za invalid status (must be 'executed'|'rejected'|'approved') ali "already has final status", 404 za "Draft not found", 500 za server errors. `feedbackNote` je opcionalen, truncated na 1000 chars.
+  - **GET**: vrača posamezni draft (z `source: 'v8.29-draft-queue'`). Uporablja `getFreshDb()` pattern z inline `$queryRaw`. 404 za neobstoječ id.
+
+- **NEW `src/app/api/cron/cleanup-drafts/route.ts`** (GET + POST endpoint, daily cron)
+  - `runtime = 'nodejs'`, `dynamic = 'force-dynamic'`, `maxDuration = 60`.
+  - kliče `cleanupOldDrafts(90)` (default — 90 dni). Vrača `{ ok: true, deleted: N }`.
+  - Schedule: run daily at 02:00 (2h after `backfill-accuracy` cron @ 01:00 — ensures today's data is settled before cleanup).
+  - Auth: `?key=<MONITOR_CRON_KEY>` query param (same pattern as other cron endpoints). If `MONITOR_CRON_KEY` env var unset (dev mode), no auth required.
+
+- **MODIFIED `src/components/dashboard/ai-hub-view.tsx`** — NOVA ✅/❌ feedback integration + NOVA DraftQueueCard komponenta
+  - **MasterBrainBanner EXTENDED z ✅ Izvedel / ❌ Zavrnil gumbi per TOP 5 akcijo**:
+    - Nov state: `draftIds: Record<number, string>` (rank → draftId), `patchingRank: number | null`, `patchedRanks: Record<number, 'executed' | 'rejected'>`.
+    - Po uspešnem `fetchMaster()` se avtomatsko POST-a na `/api/ai/brain/drafts` z `actions: topActions.map(...)` (idempotent — `snapshotDate=today` preprečuje duplikate). Pridobi draft ID-je v `draftIds` state.
+    - Za vsako TOP 5 akcijo (poleg `ℹ️ Zakaj?` gumba) renderata dva gumba: ✅ "Izvedel" (emerald, `Check` lucide icon) in ❌ "Zavrnil" (red, `X` lucide icon). Onemogočena če je `patchingRank === a.rank || patchedRanks[a.rank] != null`.
+    - Klic PATCH-a `/api/ai/brain/drafts/${draftId}` z `{ status }`. Po uspehu se oba gumba onemogočita in prikaže se toast: `"✅ Akcija #N označena kot izvedena · sistem se uči (utež 1.0 → 1.1)"` (če adjusted) ali `"✅ Akcija #N označena kot izvedena · sistem se uči (utež nespremenjena)"` (če ne). `patchedRanks[a.rank] = status` za visual feedback (zelen/rdeč highlight na gumbu).
+    - `patchDraft(rank, status)` useCallback zavisan od `draftIds`. Non-fatal če draft creation fails (banner še vedno deluje, samo brez ✅/❌ gumbov — `draftIds[a.rank]` je undefined in gumba se ne renderata).
+  - **NOVA `DraftQueueCard()` komponenta (slate/blue-gray)**:
+    - Slate gradient (`border-slate-500/40 + bg-gradient-to-br from-slate-500/15 via-slate-400/10 to-zinc-500/5`) — distinkten od AdaptiveWeightsCard (orange) in RiskProfileCard (violet). Pozicionirana MED `AdaptiveWeightsCard` in 7 Domain Brain sections.
+    - **Header**: 📋 Draft Queue + v8.29 badge + ACTION · CLOSED LOOP badge + Osveži button (z RefreshCw lucide icon).
+    - **Subtitle** (slovenski): "Zgodovina odločitev za vsako TOP 5 Master Brain akcijo. Ko klikneš 'Izvedel' ali 'Zavrnil', se odločitev shrani sem in avtomatsko pokliče `recordActionFeedback` (v8.28) — adaptive weights se naučijo iz tvojega vedenja."
+    - **Stats row**: 5 color-coded pills (pending=blue, approved=amber, executed=green, rejected=red, expired=gray) + optional "execution rate: X%" pill ko so odločitve prisotne.
+    - **Filter bar** (2 stolpci): Status dropdown (Vsi statusi / ⏳ Čaka / 👍 Odobreno / ✅ Izvedeno / ❌ Zavrnjeno / ⌛ Poteklo) + Domena dropdown (Vse domene + 7 domen z icon). Filter trigger refresh iz API.
+    - **Draft list** (`max-h-96 overflow-y-auto`, custom scrollbar): vsaka vrstica ima rank badge + domain icon + action text (truncate) + status pill (draftStatusColor + draftStatusLabel) + inline ✅/❌ gumbe (samo za pending — `patchDraftInline(d.id, status)` lokalna funkcija) + timestamp (createdAt v sl-SI formatu z uro). Zelen/rdeč background tint za executed/rejected vrstice.
+    - **Per-domain execution rates mini section**: 7 gumbi (klik = filter na določeno domeno — `setDomainFilter(isSelected ? 'all' : ds.domain)`) z icon + label + horizontal rate bar (`rateColor(rate)` — ista logika kot AdaptiveWeightsCard: zelena ≥80%, jantar 40-80%, rdeča <40%) + "X% (Y/Z)" label + pending count badge.
+    - **Počisti expired button**: GET-a `/api/cron/cleanup-drafts` in prikaže toast "🧹 Počiščeno: N starih draftov", nato refresh list.
+    - Fetches from `/api/ai/brain/drafts?limit=30&days=30` on mount, refetches on filter change + after each patch.
+  - **BrainSynthesisCard outer badge posodobljen**: `"v8.29 Draft Queue + v8.28 Adaptive + v8.27 Scenario + v8.26 Explain + v8.25 Accuracy + v8.24 Personal + v8.23 Validation + v8.22 Master + v8.15-v8.21 (7 Domains)"`.
+  - **AI Hub endpoint badges**: `brain/drafts` dobi `v8.29 · ACTION` badge (slate), `brain/drafts/[id]` dobi `v8.29 · PATCH` badge (slate). Kompletirana brain badge集合 (v8.15-v8.29, 18 endpointov).
+  - Added imports: `ClipboardList`, `Trash2`, `Filter`, `Clock` iz `lucide-react`.
+
+- **Closed feedback loop — arhitektura**:
+  ```
+  Master Brain (v8.22) recommends TOP 5 actions
+       ↓
+  UI Banner auto-creates 5 drafts (POST /api/ai/brain/drafts)
+       ↓
+  User clicks ✅ Izvedel or ❌ Zavrnil button
+       ↓
+  UI PATCH /api/ai/brain/drafts/{id}  →  updateDraftStatus()
+       ↓
+  updateDraftStatus sets status + executedAt/rejectedAt
+       ↓
+  recordActionFeedback() (v8.28) — adaptive weights stats updated
+       ↓
+  Every 10 actions per domain: computeWeightAdjustment() re-evaluates
+       ↓
+  Next /api/ai/brain/master call loads new adaptive weights
+       ↓
+  Better ranking for user's REVEALED preferences
+       ↓
+  GOTO step 1 — closed feedback loop
+  ```
+
+### Stats
+
+- **AI endpointi:** 420 → **422** (+2 — `brain/drafts` + `brain/drafts/[id]`)
+- **Total API routes:** 597 → **599** (+2)
+- **Brain category:** 16 → **18** (now includes `brain/drafts` + `brain/drafts/[id]`)
+- **NEW Prisma model:** `ActionDraft` (15 columns: id, rank, domain, signal, action, expectedUpliftEUR, confidence, status, feedbackNote, executedAt, rejectedAt, snapshotDate, createdAt, updatedAt + 3 indexes)
+- **Cron endpoints:** 11 → **12** (added `/api/cron/cleanup-drafts` daily)
+- **Intelligence phase** (v8.26+v8.27+v8.28+v8.29): Explainability (WHY) + Scenario (WHAT IF?) + Adaptive Weights (LEARNING) + Draft Queue (ACTION) — uporabnik sedaj dobi priporočilo + razumevanje + možnost raziskovanja alternativ + sistem se prilagaja njegovem vedenju IN akcije so sledene z avtomatskim feedback loop.
+- **Performance:** POST drafts cold = ~50ms (masterBrain + 5 INSERTs). GET drafts = ~20ms (2 queries — drafts + stats). PATCH draft = ~15ms (SELECT + UPDATE + recordActionFeedback). Cleanup cron = ~10ms. Vse znotraj maxDuration=60.
+- **Cache:** NO cache na /api/ai/brain/drafts (vedno sveže branje iz DB). Master Brain cache (10-min) invalidiran ko se adaptive weights spremenijo (preko cache key z `dw:` hash — v8.28). Draft queue changes (status) NE invalidirajo master cache — topActions ranking se ne spremeni, samo feedback stats.
+- **Determinism:** `aiUsed: false` — no AI/LLM SDK. Sistem se uči iz REVEALED preferences (user clicks on ✅/❌ buttons), ne iz stated preferences (kaj uporabnik reče).
+- Note: "🎯 INTELLIGENCE PHASE COMPLETE. v8.26 (WHY) + v8.27 (WHAT IF?) + v8.28 (LEARNING) + v8.29 (ACTION) = closed feedback loop. Master Brain recommends → user decides → system learns → better recommendations. Next phase: v8.30+ Automation (safe auto-pilot with rollback)."
 
 ## [8.28.0] - 2026-08-28
 

@@ -15972,3 +15972,123 @@ Stage Summary:
   - v8.28 = LEARNING (Adaptive Weights — feedback loop, "Master Brain se uči iz tvojega vedenja")
   - Naslednji: v8.29 (Draft Queue + Action Feedback Loop integration — wire TOP 5 akcij z ✅/❌ buttons ki direktno kličejo recordActionFeedback)
 - Skupaj doslej (v7.50 → v8.28): 78 verzij, 202 novih funkcij; Brain architecture COMPLETE (v8.22) + Validation phase ZAKLJUČENA (v8.23-v8.25) + Intelligence phase (v8.26+v8.27+v8.28)
+
+---
+Task ID: v8.29
+Agent: full-stack-developer
+Task: Implement Draft Queue + Action Feedback Loop integration — 🎯 INTELLIGENCE PHASE COMPLETE
+
+Work Log:
+- Prebral worklog.md (zadnje v8.22 Master Brain, v8.26 Explainability, v8.28 Adaptive Weights entries — v8.29 zaključi Intelligence phase z ACTION layerjem + closed feedback loop)
+- Prebral src/lib/brain/master.ts — razumel `MasterAction` interface ({rank, domain, signal, action, expectedUpliftEUR, confidence, domainWeight, finalScore}), `MasterBrainResult.topActions` array (5 elementov), `DomainName` union type ('profit'|'inventory'|'market'|'sourcing'|'risk'|'buyer'|'pricing')
+- Prebral src/lib/brain/adaptive-weights.ts CELTNO (~536 vrstic) — razumel `recordActionFeedback({domain, action, feedback})` ki vrača `WeightAdjustmentResult` ({ok, domain, oldWeight, newWeight, executed, rejected, executionRate, adjusted, reason}); `getFreshDb()` pattern (fresh PrismaClient per call, bypass globalThis cache) + raw SQL `$queryRaw`/`$executeRaw` za bypass Turbopack stale @prisma/client cache (potreben v dev mode ko se schema spremeni mid-run)
+- Prebral src/app/api/ai/brain/weights/route.ts kot endpoint template (~178 vrstic — runtime, dynamic, maxDuration, body parsing pattern, error response shape)
+- Prebral src/app/api/cron/backfill-accuracy/route.ts kot cron endpoint template (~92 vrstic — checkCronAuth pattern z MONITOR_CRON_KEY env var, GET+POST shared handler)
+- Prebral prisma/schema.prisma — našel v8.23 BrainSnapshot model kot referenco za dodajanje novega ActionDraft modela
+- Prebral src/components/dashboard/ai-hub-view.tsx — razumel MasterBrainBanner komponento (TOP 5 akcij z v8.26 ℹ️ Zakaj? toggle), AdaptiveWeightsCard komponento (orange gradient z 7 sliders), DOMAIN_LABELS map (7 domen z icon/label/color), DOMAIN_DISPLAY array (7 domen z icon/label za dropdown-e), BrainSynthesisCard outer badge z v8.15-v8.28 version string
+- Prebral src/lib/db.ts — razumel SCHEMA_VERSION pattern ki discard-a stale PrismaClient v globalThis cache ko se schema spremeni (bump-an z v8.24-risk-profile → v8.28-adaptive-weights v prejšnji verziji, v8.29 ga bump-a na v8.29-draft-queue)
+
+- Step 1: MODIFIED prisma/schema.prisma — dodan NOV `ActionDraft` model (15 polj: id, rank Int, domain String, signal String, action String, expectedUpliftEUR Float, confidence String, status String default 'pending', feedbackNote String?, executedAt DateTime?, rejectedAt DateTime?, snapshotDate String?, createdAt DateTime @default(now()), updatedAt DateTime @updatedAt; 3 indexa: @@index([status]), @@index([domain]), @@index([createdAt])). Lifecycle komentarji: pending → executed (user ✅), pending → rejected (user ❌), pending → expired (replaced by newer Master Brain output). cron briše >90 dni stare v končnem statusu.
+- Step 1b: MODIFIED src/lib/db.ts — bump SCHEMA_VERSION z `v8.28-adaptive-weights` → `v8.29-draft-queue` (tako da se stale PrismaClient v globalThis cache discard-a ob naslednjem klicu; potrebno ker ActionDraft je NOV model, typed `db.actionDraft.*` klici v dev mode bi sicer failali z "Unknown argument")
+- Step 1c: `bun run db:push` (uspešen — "Your database is now in sync with your Prisma schema. Done in 21ms"; Prisma Client regeneriran v 418ms). Ker SQLite ne kreirat tabele avtomatsko preko db:push za nove modele včasih, dodatno kreiral tabelo preko `bunx prisma db execute --schema prisma/schema.prisma --stdin` z eksplicitnim CREATE TABLE + 3 CREATE INDEX stavki. Verificiral preko node script ki bere PRAGMA table_info — 14 columns + 3 indexes potrjene.
+- Step 2: NEW src/lib/brain/draft-queue.ts (~535 vrstic) — pure compute + DB module, no AI/LLM SDK
+  - Type exports: `DraftStatus` ('pending'|'approved'|'executed'|'rejected'|'expired'), `Confidence` (HIGH|MEDIUM|LOW), `ActionDraft`, `CreateDraftsInput`, `CreateDraftsResult`, `UpdateDraftStatusInput`, `UpdateDraftStatusResult`, `DraftQueueQuery`, `DraftQueueStats`, `DomainStat`, `DraftQueueResult` — TypeScript interfaces za type-safe DB access
+  - Constants: ALL_DOMAINS array (7 domain), DOMAIN_SET za validacijo, VALID_CONFIDENCE, VALID_STATUS
+  - Helper `getFreshDb()` (fresh PrismaClient per call, bypass globalThis cache — ista pattern kot v8.28)
+  - Helper `mapRow(row)` — mapira raw DB row (Prisma typed ali $queryRaw result) v ActionDraft interface (handles Date fields kot Date ali ISO string)
+  - `createDraftsFromMasterBrain(input)` — kreira 5 draft-ov iz TOP 5 Master Brain akcij. 1. IDEMPOTENT: če snapshotDate podan in draft-i z tega datuma že obstajajo, vrne obstoječe (omogoča UI-ju da POST-a na vsak render brez duplikatov). 2._expire-a obstoječe pending draft-e (`UPDATE ActionDraft SET status='expired' WHERE status='pending'`). 3. Kreira nove draft-e (crypto.randomUUID() za id, raw SQL INSERT per draft). Validira action object shape pred INSERT-om (rank number, domain v 7-setu, signal non-empty, action non-empty, expectedUpliftEUR finite, confidence v {HIGH,MEDIUM,LOW}). Vrne `{ ok, created, drafts, expiredCount }`.
+  - `updateDraftStatus(input)` — ZAKLJUČI FEEDBACK LOOP. 1. Fetch existing draft (raw SQL SELECT). 2. Guard: draft-i v končnem statusu (executed/rejected) ne morejo biti spremenjeni (throw "already has final status"). 3. Update status + executedAt/rejectedAt + feedbackNote (raw SQL UPDATE). 4. ČE status === 'executed' ali 'rejected', kliče `recordActionFeedback({domain: draft.domain, action: draft.action, feedback})` iz v8.28 — adaptive weights se naučijo. `feedbackResult` (WeightAdjustmentResult z oldWeight, newWeight, executed, rejected, executionRate, adjusted, reason) je vrnjen v rezultatu. Feedback napaka je non-fatal (draft update je še vedno uspešen, zlog se error). Vrne `{ ok, draft, feedbackRecorded, feedbackResult? }`.
+  - `getDraftQueue(query)` — vrača zadnjih 30 draft-ov z filtri status/domain. Uporablja `Prisma.sql`/`Prisma.join` za safe parameterized WHERE clause (no SQL injection). Poleg drafts vrača `stats` (total/pending/approved/executed/rejected/expired counts + executionRate = executed/(executed+rejected)) in `domainStats` (7 vrstic — ena per domena z executed/rejected/pending + executionRate). Stats se računajo iz FULL dataset-a v days oknu (ignorira status/domain filter) tako da vedno prikazujejo globalno sliko.
+  - `cleanupOldDrafts(daysOld=90)` — briše draft-e starejše od 90 dni v končnem statusu (executed/rejected/expired). Pending in approved NIKOLI izbrisani (odprte odločitve).
+- Step 3: NEW src/app/api/ai/brain/drafts/route.ts (~165 vrstic) — GET + POST endpoint, runtime='nodejs', dynamic='force-dynamic', maxDuration=60
+  - GET: parse query params (?status=pending&domain=profit&limit=30&days=30), validira proti VALID_STATUS_SET in DOMAIN_SET, kliče getDraftQueue(), vrača DraftQueueResult
+  - POST: parse body za optional `actions` array + `snapshotDate`. Če actions manjkajo (default `{}` body), dynamicno import-a `masterBrain` iz `@/lib/brain/master` in uporabi `topActions` (5 akcij). Nastavi `snapshotDate` na današnji dan (YYYY-MM-DD) če ni podan. Kliče createDraftsFromMasterBrain({actions, snapshotDate}). Vrne CreateDraftsResult z `created` count + `drafts` array + `expiredCount`.
+- Step 4: NEW src/app/api/ai/brain/drafts/[id]/route.ts (~135 vrstic) — PATCH + GET endpoint, runtime='nodejs', dynamic='force-dynamic', maxDuration=60
+  - PATCH: Next.js 16 dynamic route signature `params: Promise<{ id: string }>` (await params). Parse body za `{ status, feedbackNote? }`. Validira status v VALID_PATCH_STATUS = {executed, rejected, approved}. kliče updateDraftStatus() — vrača `{ ok, draft, feedbackRecorded, feedbackResult }`. Error mapping: 404 za "not found", 400 za "already has final status" ali invalid status, 500 za server errors. feedbackNote truncated na 1000 chars.
+  - GET (bonus za AI Hub discoverability): inline raw SQL SELECT iz ActionDraft WHERE id — vrača `{ ok, draft, source: 'v8.29-draft-queue' }`. 404 za neobstoječ id.
+- Step 5: NEW src/app/api/cron/cleanup-drafts/route.ts (~92 vrstic) — GET + POST cron endpoint, runtime='nodejs', dynamic='force-dynamic', maxDuration=60
+  - Isti checkCronAuth pattern kot backfill-accuracy (MONITOR_CRON_KEY env var, no auth v dev mode)
+  - kliče cleanupOldDrafts(90) (default — 90 dni). Vrača `{ ok: true, deleted: N }`. Daily cron @ 02:00 (2h po backfill-accuracy @ 01:00).
+- Step 6: MODIFIED src/components/dashboard/ai-hub-view.tsx (~580 novih vrstic)
+  - Added imports: `ClipboardList`, `Trash2`, `Filter`, `Clock` iz lucide-react
+  - MasterBrainBanner EXTENDED z ✅ Izvedel / ❌ Zavrnil gumbi per TOP 5 akcijo:
+    * Nov state: `draftIds: Record<number, string>` (rank → draftId), `patchingRank: number | null`, `patchedRanks: Record<number, 'executed' | 'rejected'>`
+    * Po uspešnem fetchMaster() se avtomatsko POST-a na /api/ai/brain/drafts z actions array (idempotent — snapshotDate=today preprečuje duplikate). Pridobi draft ID-je v draftIds state.
+    * Za vsako TOP 5 akcijo (poleg ℹ️ Zakaj? gumba) renderata dva gumba: ✅ "Izvedel" (emerald, Check lucide icon) in ❌ "Zavrnil" (red, X lucide icon). Disabled ko patchingRank === a.rank || patchedRanks[a.rank] != null.
+    * Klic PATCH /api/ai/brain/drafts/{id} z { status }. Po uspehu se oba gumba onemogočita in prikaže toast: "✅ Akcija #N označena kot izvedena · sistem se uči (utež X → Y)" (če adjusted) ali "(utež nespremenjena)" (če ne). patchedRanks[a.rank] = status za visual feedback (zelen/rdeč highlight).
+    * patchDraft(rank, status) useCallback zavisan od draftIds. Non-fatal če draft creation fails (banner še vedno deluje, samo brez ✅/❌ gumbov).
+  - NOVA DraftQueueCard() komponenta (slate/blue-gray gradient — border-slate-500/40 + from-slate-500/15 via-slate-400/10 to-zinc-500/5):
+    * Header: 📋 Draft Queue + v8.29 badge + ACTION · CLOSED LOOP badge + Osveži button
+    * Subtitle (slovenski): "Zgodovina odločitev za vsako TOP 5 Master Brain akcijo. Ko klikneš 'Izvedel' ali 'Zavrnil', se odločitev shrani sem in avtomatsko pokliče recordActionFeedback (v8.28) — adaptive weights se naučijo iz tvojega vedenja."
+    * Stats row: 5 color-coded pills (pending=blue, approved=amber, executed=green, rejected=red, expired=gray) + optional "execution rate: X%" pill
+    * Filter bar (2 stolpci): Status dropdown (Vsi statusi / ⏳ Čaka / 👍 Odobreno / ✅ Izvedeno / ❌ Zavrnjeno / ⌛ Poteklo) + Domena dropdown (Vse domene + 7 domen z icon)
+    * Draft list (max-h-96 overflow-y-auto, custom scrollbar, divide-y divide-slate-500/10): vsaka vrstica ima rank badge + domain icon + action text (truncate) + status pill (draftStatusColor helper + draftStatusLabel) + inline ✅/❌ gumbe (samo za pending — patchDraftInline lokalna funkcija) + timestamp (createdAt v sl-SI formatu z uro). Zelen/rdeč background tint za executed/rejected vrstice.
+    * Per-domain execution rates mini section: 7 gumbi (klik = filter na določeno domeno) z icon + label + horizontal rate bar (rateColor(rate) — ista logika kot AdaptiveWeightsCard: zelena ≥80%, jantar 40-80%, rdeča <40%) + "X% (Y/Z)" label + pending count badge.
+    * Počisti expired button: GET-a /api/cron/cleanup-drafts in prikaže toast "🧹 Počiščeno: N starih draftov", nato refresh list.
+    * Fetches from /api/ai/brain/drafts?limit=30&days=30 on mount, refetches on filter change + after each patch.
+  - BrainSynthesisCard outer badge posodobljen: "v8.29 Draft Queue + v8.28 Adaptive + v8.27 Scenario + v8.26 Explain + v8.25 Accuracy + v8.24 Personal + v8.23 Validation + v8.22 Master + v8.15-v8.21 (7 Domains)"
+  - BrainSynthesisCard JSX: dodan <DraftQueueCard /> between <AdaptiveWeightsCard /> in 7 Domain Brain sections
+  - AI Hub endpoint grid: brain/drafts dobi v8.29 · ACTION badge (slate), brain/drafts/[id] dobi v8.29 · PATCH badge (slate). Kompletirana brain badge kolekcija (v8.15-v8.29, 18 endpointov)
+
+- Lint (bun run lint): 0 errors, 2 warnings (pred-existing unused eslint-disable v db.ts — ne kritično, ista kot v8.28) ✅
+- Typecheck (bunx tsc --noEmit): 0 errors ✅
+- db:push: uspešen (Prisma Client regeneriran v 418ms, baza sinhrona — ActionDraft tabela kreirana z 14 columns + 3 indexes verificirano preko PRAGMA table_info) ✅
+- Endpoint verification (curl — vsi testi uspeli):
+  - POST /api/ai/brain/drafts (default `{}` body) → 200 {"ok":true, "created":5, "drafts":[5 drafts: #1 market/trend uplift=375€ conf=HIGH, #2 pricing/elasticity uplift=450€ conf=MEDIUM, #3 pricing/psychology uplift=360€ conf=MEDIUM, #4 buyer/retention uplift=252€ conf=HIGH, #5 market/depth uplift=225€ conf=HIGH], "expiredCount":0} — Master Brain klican avtomatsko (POST handler kliče masterBrain() ko actions manjkajo), 5 draftov kreiranih z snapshotDate=today (idempotentno) ✅
+  - GET /api/ai/brain/drafts?limit=30&days=30 → 200 {"ok":true, "drafts":[5 drafts sorted by createdAt DESC], "stats":{"total":5, "pending":5, "approved":0, "executed":0, "rejected":0, "expired":0, "executionRate":0}, "domainStats":[7 entries: market {executed:0, rejected:0, pending:2}, buyer {pending:1}, pricing {pending:2}, ostale prazne]} ✅
+  - PATCH /api/ai/brain/drafts/{id} {status: 'executed'} → 200 {"ok":true, "draft":{"status":"executed", "executedAt":"2026-08-14T07:11:27.646Z"}, "feedbackRecorded":true, "feedbackResult":{"domain":"market", "oldWeight":1, "newWeight":1, "executed":1, "rejected":0, "executionRate":1, "adjusted":false, "reason":"Zabeležena akcija 'executed' za domeno market. Skupaj 1 akcij — naslednja evaluacija pri 10 (vsakih 10). executionRate trenutno 1."}} — feedback loop ZAKLJUČEN: draft posodobljen + recordActionFeedback klican (v8.28) ✅
+  - GET /api/ai/brain/weights (verify executed count incremented) → 200 z market.executed:1, market.rejected:0 (potrjuje da je bil feedback shranjen v adaptive weights) ✅
+  - PATCH /api/ai/brain/drafts/{id} {status: 'rejected'} (drugi draft, druga domena) → 200 {"ok":true, "draft":{"status":"rejected", "rejectedAt":"..."}, "feedbackRecorded":true, "feedbackResult":{"domain":"pricing", "oldWeight":1.1, "newWeight":1.1, "executed":0, "rejected":1, "executionRate":0, "adjusted":false}} — pricing domain stats incremented ✅
+  - GET /api/ai/brain/drafts (stats now show pending:3, executed:1, rejected:1, executionRate:0.5; domainStats: market executed=1, pricing rejected=1) ✅
+  - GET /api/cron/cleanup-drafts → 200 {"ok":true, "deleted":0} (no old drafts to delete yet) ✅
+  - GET /api/ai/brain/drafts/{id} (dynamic route GET) → 200 {"ok":true, "draft":{...single draft...}, "source":"v8.29-draft-queue"} ✅
+  - GET /api/ai-list → 200 {"ok":true, "total":422, "categories":{"brain":18, "buyer":50, "inventory":77, "listing":59, "pricing":90, "risk":12, "negotiation":16, "reports":15, "misc":85}} (brain kategorija 18 = 8 brain + snapshots + actual-profit + risk-profile + accuracy + accuracy/backfill + explain + scenario + weights + drafts + drafts/[id]) ✅
+- Documentation updated:
+  - AI_ENDPOINTS.md: Total: 420 → 422. Vstavljeni 2 novi vrstici na alphabetical poziciji (po brain/weights, pred budget-allocator): `| 25 | brain/drafts | /api/ai/brain/drafts |` in `| 26 | brain/drafts/[id] | /api/ai/brain/drafts/[id] |`. Renumbered vseh 422 vrstic z Python script (sequential 1-422) ✅
+  - README.md: version badge v8.28.0 → v8.29.0; AI endpoints badge 420 → 422; API routes badge 597 → 599; hero tagline posodobljena z v8.29 vsebino ("🎯 INTELLIGENCE PHASE COMPLETE — closed feedback loop, vsako priporočilo ima sedaj sledljivo ✅/❌ odločitev ki neposredno kliče recordActionFeedback"); Overview paragraph "v8.15-v8.28" → "v8.15-v8.29" z v8.29 blokom (ActionDraft Prisma model + draft-queue.ts pure compute + drafts/route.ts + drafts/[id]/route.ts + cleanup-drafts cron + UI ✅/❌ buttons + 📋 Draft Queue card); "Kaj je novega" razširjen z v8.29 blokom na vrhu (nad v8.28) z vsemi detail-i; version section v8.28.0 → v8.29.0; ~283 funkcij → ~285 funkcij; "11 cron" → "12 cron"; all v8.28/420/597 references posodobljene; Roadmap z v8.29 ✅ ZAKLJUČANO + 🎯 INTELLIGENCE PHASE ZAKLJUČANA flag; Zadnje verzije z v8.29.0 entry na vrh; project tree comment posodobljen z v8.29; "v8.15-v8.28" → "v8.15-v8.29" v Roadmap section; Testing badge 597 routes → 599 routes
+  - CHANGELOG.md: dodan nov "## [8.29.0]" section na vrhu (nad [8.28.0]) z ### Added — 📋 Draft Queue + Action Feedback Loop integration (🎯 INTELLIGENCE PHASE COMPLETE) blokom (vse detail-e: NEW Prisma model ActionDraft, NEW draft-queue.ts z 4 funkcijami createDraftsFromMasterBrain/updateDraftStatus/getDraftQueue/cleanupOldDrafts, NEW drafts/route.ts GET+POST, NEW drafts/[id]/route.ts PATCH+GET, NEW cleanup-drafts cron, MODIFIED ai-hub-view.tsx z ✅/❌ buttons + 📋 DraftQueueCard komponenta, closed feedback loop arhitektura diagram v ASCII art). ### Stats: AI endpoints 420→422 (+2), Total API routes 597→599 (+2), Brain category 16→18, NEW Prisma model ActionDraft, Cron endpoints 11→12. [Unreleased] posodobljen z v8.30+ (Auto-pilot) namesto v8.29
+- 🎯 INTELLIGENCE PHASE ZAKLJUČANA:
+  - v8.26 = WHY (Explainability — "Zakaj?")
+  - v8.27 = WHAT IF? (Scenario Brain — "Kaj če?")
+  - v8.28 = LEARNING (Adaptive Weights — feedback loop)
+  - v8.29 = ACTION (Draft Queue — closed feedback loop)
+  - Closed feedback loop: Master Brain recommends → user decides → system learns → better recommendations next time. Sistem se uči iz REVEALED preferences (kaj uporabnik dejansko stori — ✅/❌ click), ne iz STATED preferences (kaj uporabnik reče — slider na AdaptiveWeightsCard).
+  - Naslednja faza: v8.30+ Automation (safe auto-pilot z rollback — sistem samodejno izvaja approved Master Brain akcije z varnostnimi ogradami in possibility rollback-a)
+
+Stage Summary:
+- MODIFIED: prisma/schema.prisma (NEW ActionDraft model — 15 polj + 3 indexes)
+- MODIFIED: src/lib/db.ts (SCHEMA_VERSION bump v8.28-adaptive-weights → v8.29-draft-queue)
+- NEW: src/lib/brain/draft-queue.ts (~535 vrstic — createDraftsFromMasterBrain, updateDraftStatus z recordActionFeedback integracijo, getDraftQueue z Prisma.sql/Prisma.join safe parameterized queries, cleanupOldDrafts, getFreshDb pattern)
+- NEW: src/app/api/ai/brain/drafts/route.ts (GET queue + POST create from Master Brain, runtime='nodejs', dynamic='force-dynamic', maxDuration=60)
+- NEW: src/app/api/ai/brain/drafts/[id]/route.ts (PATCH status z feedback loop integracijo + GET single draft)
+- NEW: src/app/api/cron/cleanup-drafts/route.ts (GET+POST daily cron za brisanje >90 dni starih)
+- MODIFIED: src/components/dashboard/ai-hub-view.tsx (MasterBrainBanner z ✅ Izvedel / ❌ Zavrnil gumbi per TOP 5 akcijo + NOVA 📋 DraftQueueCard komponenta z slate gradient, stats + filters + draft list + per-domain rates + cleanup button; BrainSynthesisCard outer badge posodobljen z v8.29; brain/drafts in brain/drafts/[id] endpoint-a v AI Hub listi dobita v8.29 · ACTION / v8.29 · PATCH badge)
+- AI endpointi: 420 → 422 (+2 — brain/drafts + brain/drafts/[id])
+- Analytics endpointi: 72 (nespremenjeno)
+- Cron endpoints: 11 → 12 (+1 — /api/cron/cleanup-drafts)
+- Total API routes: 597 → 599 (+2 — brain endpoints only; cron endpoint je pod /api/cron/ ne /api/ai/ zato se ne šteje v ai-list)
+- Brain category: 16 → 18 (now includes brain/drafts + brain/drafts/[id])
+- Lint: 0 errors, 2 warnings (pred-existing unused eslint-disable v db.ts — ne kritično) ✅
+- Typecheck: 0 errors ✅
+- db:push: uspešen (Prisma Client regeneriran v 418ms, ActionDraft tabela kreirana z 14 columns + 3 indexes verificirano preko PRAGMA table_info)
+- Endpoint verification:
+  - POST /api/ai/brain/drafts (default `{}` body) → 200 {ok:true, created:5, drafts:[5 drafts iz Master Brain TOP 5], expiredCount:0} ✅
+  - GET /api/ai/brain/drafts?limit=30&days=30 → 200 {ok:true, drafts:[5], stats:{total:5, pending:5, ...}, domainStats:[7 entries]} ✅
+  - PATCH /api/ai/brain/drafts/{id} {status:executed} → 200 {ok:true, draft:{status:"executed", executedAt:...}, feedbackRecorded:true, feedbackResult:{domain:"market", oldWeight:1, newWeight:1, executed:1, rejected:0, executionRate:1, adjusted:false, reason:"..."}} ✅
+  - GET /api/ai/brain/weights → 200 z market.executed:1 (potrjuje da je bil feedback shranjen v adaptive weights — closed feedback loop) ✅
+  - PATCH /api/ai/brain/drafts/{id} {status:rejected} (drugi draft, pricing domena) → 200 z feedbackResult.domain:"pricing", rejected:1 ✅
+  - GET /api/ai/brain/drafts (stats: pending:3, executed:1, rejected:1, executionRate:0.5) ✅
+  - GET /api/cron/cleanup-drafts → 200 {ok:true, deleted:0} ✅
+  - GET /api/ai/brain/drafts/{id} (dynamic route GET) → 200 {ok:true, draft:{...}, source:"v8.29-draft-queue"} ✅
+  - GET /api/ai-list → 200 {ok:true, total:422, categories:{brain:18, ...}} (brain kategorija 18 = 8 brain + snapshots + actual-profit + risk-profile + accuracy + accuracy/backfill + explain + scenario + weights + drafts + drafts/[id]) ✅
+- Documentation updated: AI_ENDPOINTS.md (Total: 422, brain/drafts row 25 + brain/drafts/[id] row 26 + renumber 1-422), README.md (v8.29.0, 422 AI, 599 routes, hero tagline z INTELLIGENCE PHASE COMPLETE, Overview z v8.15-v8.29, Kaj je novega v8.29 entry, version section, ~285 funkcij, 12 cron, all v8.28/420/597 references posodobljene, Roadmap z v8.29 ✅ ZAKLJUČANO, Zadnje verzije z v8.29.0 entry), CHANGELOG.md ([8.29.0] section z Added + Stats + Notes z INTELLIGENCE PHASE ZAKLJUČANA + closed feedback loop ASCII diagram, [Unreleased] posodobljen z v8.30+ Auto-pilot)
+- 🎯 INTELLIGENCE PHASE ZAKLJUČANA (v8.26+v8.27+v8.28+v8.29 = WHY+WHAT IF?+LEARNING+ACTION):
+  - Master Brain (v8.22) daje KAJ (TOP 5 ranked akcij)
+  - Risk Profile (v8.24) naredi PERSONAL (conservative/balanced/aggressive)
+  - Explainability (v8.26) daje ZAKAJ (per-action reasoning + trustScore)
+  - Scenario Brain (v8.27) odgovarja WHAT IF? (3 preset scenariji + custom)
+  - Adaptive Weights (v8.28) vzpostavi FEEDBACK LOOP (sistem se uči iz revealed preferences)
+  - Draft Queue (v8.29) zaključi z ACTION — vsako priporočilo ima sedaj sledljivo ✅/❌ odločitev ki neposredno kliče recordActionFeedback → adaptive weights se naučijo → boljši ranking za naslednji Master Brain klic
+  - Skupaj: uporabnik dobi priporočilo + razumevanje (ZAKAJ) + možnost raziskovanja alternativ (WHAT IF?) + sistem se prilagaja njegovem vedenju (LEARNING) IN akcije so sledene z avtomatskim feedback loop (ACTION)
+- Verzija aplikacije: v8.29.0
+- Skupaj doslej (v7.50 → v8.29): 79 verzij, 203 nove funkcije; Brain architecture COMPLETE (v8.22) + Validation phase ZAKLJUČENA (v8.23-v8.25) + Intelligence phase ZAKLJUČENA (v8.26+v8.27+v8.28+v8.29)
