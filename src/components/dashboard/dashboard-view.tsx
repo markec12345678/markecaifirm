@@ -23,6 +23,8 @@ import { ProfitTimelineChart } from '@/components/dashboard/profit-timeline-char
 import { GoalTrackerCard } from '@/components/dashboard/goal-tracker-card';
 // v8.40: Trade Insights Deep Dive — day-of-week + source + category + hold + distribution
 import { TradeInsightsCard } from '@/components/dashboard/trade-insights-card';
+// v8.41: Weekly Summary Report — comprehensive weekly digest (profit, goal, top trades, Brain health, insights, recommendations) sent to Telegram + Email
+import { WeeklySummaryCard } from '@/components/dashboard/weekly-summary-card';
 
 // v5.6: Dashboard widget IDs
 const WIDGET_IDS = ['todaySummary', 'quickStats', 'activityFeed', 'aiInsights', 'skladisceWidget'] as const;
@@ -560,6 +562,13 @@ export function DashboardView({ onNavigate }: ViewProps) {
           distribution, actionable insights. Self-fetches from
           /api/analytics/trade-insights every 60s. */}
       <TradeInsightsCard />
+
+      {/* v8.41: Weekly Summary Report — comprehensive weekly digest (profit, MoM,
+          goal progress, top 3 trades, worst trade, Brain health, top 3 insights
+          from v8.40, recommendations for next week). Sent to Telegram + Email +
+          Notification Center. Self-fetches from /api/ai/brain/weekly-summary
+          every 60s. "Pošlji zdaj" button sends manually. */}
+      <WeeklySummaryCard />
 
       {/* v4.5: Skladišče dashboard widget */}
       <WidgetWrapper id="skladisceWidget" order={widgetOrder} customizeMode={customizeMode} onMove={moveWidget}>

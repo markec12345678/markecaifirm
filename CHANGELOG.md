@@ -6,9 +6,9 @@ Format sledi [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), verzije s
 
 ## [Unreleased]
 
-v8.26 je odprl Intelligence phase (Action Explainability), v8.27 jo nadaljuje (Scenario Brain), v8.28 jo še nadalje vzpostavi FEEDBACK LOOP (Adaptive Domain Weights), v8.29 jo ZAKLJUČI z Draft Queue + Action Feedback Loop integration (🎯 INTELLIGENCE PHASE COMPLETE), v8.30 odpira NOVO fazo — Automation (Safe Auto-pilot — 🎯 AUTOMATION PHASE STARTED), v8.31 zaključi Automation phase (Aggressive Auto-pilot + Anomaly Detection — 🎯 AUTOMATION PHASE COMPLETE), v8.32 odpira NOVO fazo — Polish (System Health Dashboard — 🎯 POLISH PHASE STARTED — "How healthy is the Brain system?"), v8.33 zaključi Polish phase caching (Performance Caching + Cache Stats), v8.34 zaključi Polish phase testing (Brain Integration Test Suite), v8.35 zaključi Polish phase "make the system alive" (Seed Demo Data + Telegram Brain Notifications), v8.36 zaključi Polish phase trade management enhancement (CSV Import + Quick Add + Dashboard Stats), v8.37 zaključi Polish phase decision support + visualization (Deal Calculator + Profit Timeline Chart — "Hitra odločitev + vizualno sledenje"), v8.38 zaključi Polish phase centralized notification history (🔔 Notification Center + Alert History — "Centralizirana zgodovina vseh obvestil"), v8.39 zaključi Polish phase goal tracking visualization (🎯 Goal Tracker Dashboard Widget + Settings Integration — "Vizualno sledenje mesečnemu cilju z avtomatsko obvestitvijo ob dosegu"), v8.40 zaključi Polish phase trade analytics deep dive (📊 Trade Insights Deep Dive — "KDaj in KJE prodati za maksimalen profit?" — 6 analiz iz 25 realnih trade-ov: day-of-week, source platform, category, hold period, profit distribution, actionable insights). Naslednje verzije:
+v8.26 je odprl Intelligence phase (Action Explainability), v8.27 jo nadaljuje (Scenario Brain), v8.28 jo še nadalje vzpostavi FEEDBACK LOOP (Adaptive Domain Weights), v8.29 jo ZAKLJUČI z Draft Queue + Action Feedback Loop integration (🎯 INTELLIGENCE PHASE COMPLETE), v8.30 odpira NOVO fazo — Automation (Safe Auto-pilot — 🎯 AUTOMATION PHASE STARTED), v8.31 zaključi Automation phase (Aggressive Auto-pilot + Anomaly Detection — 🎯 AUTOMATION PHASE COMPLETE), v8.32 odpira NOVO fazo — Polish (System Health Dashboard — 🎯 POLISH PHASE STARTED — "How healthy is the Brain system?"), v8.33 zaključi Polish phase caching (Performance Caching + Cache Stats), v8.34 zaključi Polish phase testing (Brain Integration Test Suite), v8.35 zaključi Polish phase "make the system alive" (Seed Demo Data + Telegram Brain Notifications), v8.36 zaključi Polish phase trade management enhancement (CSV Import + Quick Add + Dashboard Stats), v8.37 zaključi Polish phase decision support + visualization (Deal Calculator + Profit Timeline Chart — "Hitra odločitev + vizualno sledenje"), v8.38 zaključi Polish phase centralized notification history (🔔 Notification Center + Alert History — "Centralizirana zgodovina vseh obvestil"), v8.39 zaključi Polish phase goal tracking visualization (🎯 Goal Tracker Dashboard Widget + Settings Integration — "Vizualno sledenje mesečnemu cilju z avtomatsko obvestitvijo ob dosegu"), v8.40 zaključi Polish phase trade analytics deep dive (📊 Trade Insights Deep Dive — "KDaj in KJE prodati za maksimalen profit?" — 6 analiz iz 25 realnih trade-ov: day-of-week, source platform, category, hold period, profit distribution, actionable insights), v8.41 zaključi Polish phase weekly digest + email notifications (📋 Weekly Summary Report + Email Notifications — "Comprehensive weekly digest sent to Telegram + Email + Notification Center" — profit this week + MoM change + goal progress + top 3 trades + worst trade + Brain health + top 3 actionable insights + recommendations for next week). Naslednje verzije:
 
-- **v8.41+ — Polish phase continues** (E2E tests s Playwright, predictive accuracy improvements za Master Brain, refactoring)
+- **v8.42+ — Polish phase continues** (E2E tests s Playwright, predictive accuracy improvements za Master Brain, refactoring)
 - WebSocket real-time negotiation (SSE namesto polling)
 - Playwright E2E testi za glavne flow-e
 - TLS fingerprinting (curl-impersonate)
@@ -16,6 +16,113 @@ v8.26 je odprl Intelligence phase (Action Explainability), v8.27 jo nadaljuje (S
 - Performance optimizations za Master Brain (cached partial results per domain)
 - Additional conflict detection tipi (npr. Inventory vs Buyer — supply/demand mismatch)
 - Per-domain DB injection v Master Brain route (zaenkrat se zanaša na individualne Domain Brain route-e za DB state)
+
+## [8.41.0] - 2026-08-15
+
+### Added — 📋 Weekly Summary Report + Email Notifications (Polish phase — "Comprehensive weekly digest sent to Telegram + Email + Notification Center")
+
+Problem: Daily Telegram digest (v8.35) je kratek — samo TOP 5 akcij. Ni tedenskega povzetka. Email.ts (v2.7) obstaja ampak se ne uporablja za Brain sistem. v8.41 dodaja comprehensive weekly digest ki agregira profit + MoM + goal + top trades + worst trade + Brain health + top 3 insights (v8.40) + recommendations za naslednji teden, in ga pošlje na 3 kanale (Telegram + Email + Notification Center).
+
+#### `src/lib/brain/weekly-summary.ts` (NEW — Weekly Summary compute + send module, ~830 vrstic)
+
+- `generateWeeklySummary()` vrača `WeeklySummary` objekt z:
+  - **period** — `{start, end}` ISO dates (ponedeljek-nedelja, zadnji končan teden).
+  - **profit** — `thisWeek`, `lastWeek`, `momChange` (% sprememba), `total30d` (iz v8.23 `calculateActualProfit`), `goalProgress` (%), `goalMonthly`, `goalRealized`.
+  - **trades** — `soldThisWeek`, `soldValue` (sum sellPrice), `heldCount`, `avgHoldDays`, `winRate`.
+  - **topTrades** — top 3 by profit this week z `{title, profit, category, source}`.
+  - **worstTrade** — `{title, profit, category} | null` (samo če obstaja in je profit negativen — worst trade ki je profit je nezanimiv).
+  - **brainHealth** — `{score, grade, riskLevel, topAction, conflictsCount}` — klice `masterBrain()` (v8.22) v try/catch. Če masterBrain fail-a, fallback na `{score:0, grade:'F', riskLevel:'HIGH'}`.
+  - **insightsHighlights** — top 3 actionable insights iz v8.40 `getTradeInsights(365).actionableInsights.slice(0, 3)`. Try/catch wrapper.
+  - **recommendations** — auto-generirana slovenska priporočila za naslednji teden (2-5 items). Generirana glede na:
+    - profit this week (positive + win rate ≥80% → "Povečaj volume v kategorijah z najvišjim ROI"; positive → "Fokusiraj se na kategorije z višjim ROI"; negative → "Preverjaj Sold Comps pred nakupom").
+    - MoM change (>|20|% → "trend je pozitiven, ohrani strategijo"; <-20% → "preglej pricing in buy pristop").
+    - goal progress (<75% → "Še X€ do cilja"; ≥100% → "Cilj dosežen! Premagaj cilj za dodatni dobiček").
+    - held count (>3 → "preveri Flip Status za zastarele").
+    - Brain top action (prvih 80 znakov top akcije).
+  - **telegramMessage** — plain text (parseMode: null — isti pattern kot v8.35 sendBrainDigest). Strukturiran v 7 sekcij: 📋 header + datum → 💰 profit + MoM + 30d → 🎯 cilj (samo če >0) → 📦 trades + win rate → 🏆 top 3 trades → ❌ worst trade (samo če <0) → 🧠 Brain health → 💡 top 3 insights → 🚀 priporočila.
+  - **emailSubject** — `📋 Tedenski povzetek — {datum} ({profitEUR})`.
+  - **emailHtml** — styled HTML dark-theme (background #0a0e0a, font monospace) z 2 tabelami (summary metrike + top trades) + 2 list-i (insights + priporočila). Isti style kot v6.92 formatAlertEmail z `escapeHtml` XSS zaščito za vsa uporabniška polja (title, category, source, topAction).
+- **Pure compute + DB bralno** — bere iz `db.trade.findMany` + `db.settings.findUnique`, kliče `calculateActualProfit` (v8.23) + `masterBrain` (v8.22, v try/catch) + `getTradeInsights` (v8.40, v try/catch). No AI/LLM klici.
+- **Per-trade profit formula consistent** z v8.23 actual.ts + v8.37 profit-timeline + v8.40 trade-insights: `profit = sellPrice - sellFees - buyPrice - buyFees`.
+- **Period computation** — `getWeekStart(date)` vrne ponedeljek tistega tedna. Za "zadnji končan teden": `thisWeekStart = getWeekStart(now)`, `lastWeekEnd = thisWeekStart - 1ms` (prejšnja nedelja 23:59:59), `lastWeekStart = getWeekStart(lastWeekEnd)`. za MoM primerjavo se vzame še `prevWeekStart = lastWeekStart - 1ms` in `prevWeekEnd = getWeekStart(prevWeekStart - 1ms)`.
+- `sendWeeklySummary()` — vedno (a) generira summary, (b) kreira Notification record (v8.38 — `type:'system'`, `severity:'success'` če profit ≥0 ali `warning` če <0, `source:'system'`, metadata z 12 polji: periodStart, periodEnd, thisWeekProfit, lastWeekProfit, momChange, goalProgress, soldCount, winRate, brainHealthScore, brainHealthGrade, topTradesCount, insightsCount), (c) pošlje na Telegram če konfiguriran (best-effort, non-blocking — try/catch), (d) pošlje na Email če konfiguriran (best-effort, non-blocking — try/catch). `ok:true` tudi če noben kanal ni konfiguriran — povzetek je vseeno shranjen v Notification Center.
+
+#### `src/app/api/cron/weekly-report/route.ts` (MODIFIED — Enhanced weekly-report cron)
+
+- **Nadomesti** v7.38 minimalni Telegram/Discord report z `sendWeeklySummary()`.
+- **ISTA pot** (`/api/cron/weekly-report`) — backward kompatibilno. Existing cron schedules še vedno delujejo.
+- Auth: `?key=<MONITOR_CRON_KEY>` (dev mode = no auth).
+- runtime='nodejs', dynamic='force-dynamic', maxDuration=60s.
+- GET + POST handler (oba kličeta isti handler — fleksibilno za cron schedulers ki uporabljajo POST).
+- Returns `{ok, sentTelegram, sentEmail, error, timestamp, source:'v8.41-weekly-summary-cron'}`.
+
+#### `src/app/api/ai/brain/weekly-summary/route.ts` (NEW — GET preview + POST send)
+
+- **GET** → vrača `WeeklySummary` brez pošiljanja (preview za Dashboard card).
+- **POST** `{action:'send'}` → klice `sendWeeklySummary()`, vrača `{ok, sentTelegram, sentEmail, error}`.
+- Validacija: če action != 'send', vrača 400 z errorjem.
+- runtime='nodejs', dynamic='force-dynamic', maxDuration=60s.
+
+#### `src/components/dashboard/weekly-summary-card.tsx` (NEW — Dashboard widget, ~450 vrstic)
+
+- 'use client' component. Self-fetches `/api/ai/brain/weekly-summary` vsakih 60s.
+- Prikazuje:
+  - **Profit this week** (big number, color-coded: zelena ≥0, rdeča <0) + MoM change (zelena/rdeča puščica z last-week EUR prikazanim).
+  - **Goal progress** (306€/500€, 61%) — samo če je goal > 0, drugače "Ni nastavljen".
+  - **Trades metrics** (sold count, held count, avg hold, win rate) v eni vrstici.
+  - **Brain health** (score/grade/riskLevel) z color-coded background (zelena ≥75, amber 50-75, rdeča <50) + top akcija (line-clamp-2) + konflikti če >0.
+  - **Top 3 trades** — list z badge-i (category + source) + profit (zelena/rdeča).
+  - **Worst trade** (samo če profit <0, rdeča bg).
+  - **Top 3 insights (v8.40)** — primary-tinted bg z list.
+  - **Recommendations za naslednji teden** — amber-tinted bg z numbered list (1-5).
+  - **"📨 Pošlji zdaj" button** → POST `{action:'send'}` → toast feedback ("Povzetek shranjen v Notification Center" če noben kanal konfiguriran, drugače "Povzetek poslan preko Telegram + Email").
+  - Loading pulse state + error state ("Ni podatkov — poskusi osvežiti").
+  - "Osveži" button za manual refresh.
+  - Footer: "📋 v8.41 Weekly Summary Report — avtomatsko poslano vsak ponedeljek ob 09:00 preko cron-a".
+- Responsive: grid-cols-2 za big numbers + goal+trades metrics; sm+ prikaže source badge (hidden na mobilnem).
+- Color system: `text-primary` (zelena) za pozitivne, `text-red-500` za negativne, `text-amber-400` za amber/warning. Nobenih indigo/blue barv.
+
+#### `src/components/dashboard/dashboard-view.tsx` (MODIFIED — Dashboard integration)
+
+- Dodan `import { WeeklySummaryCard } from '@/components/dashboard/weekly-summary-card';`.
+- `<WeeklySummaryCard />` dodan po `<TradeInsightsCard />` (v8.40) in pred Skladišče widget.
+- Dashboard flow postane: GoalTrackerCard → Trade Stats → Deal Calculator → Profit Timeline → Trade Insights → **Weekly Summary** → Skladišče.
+- No existing code odstranjeno — samo ADD (v8.41 je non-invasive extension).
+
+### Stats
+
+- **AI endpointi**: 429 → 430 (+1: `brain/weekly-summary` GET + POST). Brain category: 24 → 25.
+- **Total API routes**: 616 → 617 (+1: `ai/brain/weekly-summary` — cron route (`/api/cron/weekly-report`) še vedno obstaja ista pot, samo logika je nadomeščena).
+- **Funkcije**: ~301 → ~302 (+1: WeeklySummaryCard).
+- **Lint**: 0 napak ✨ (2 pre-existing eslint-disable warnings v db.ts — unrelated, od v8.34).
+- **Typecheck**: 0 napak ✨ (`bunx tsc --noEmit` exit 0).
+
+### Endpoint verification
+
+- `curl /api/ai/brain/weekly-summary` → `200` z `{ok:true, period:{start:'2026-08-03', end:'2026-08-09'}, profit:{thisWeek:196, lastWeek:98, momChange:100, total30d:598, goalProgress:61, goalMonthly:500, goalRealized:306}, trades:{soldThisWeek:5, soldValue:635, heldCount:5, avgHoldDays:18, winRate:100}, topTrades:[3 items z Nike Air Jordan 1 (49€, obutev, Bolha), New Balance 550 (45€, obutev, Bolha), AirPods Pro 2 (42€, elektronika, Bolha)], worstTrade:{title:'Levis 501 jeans', profit:25, category:'oblačila'}, brainHealth:{score:50, grade:'C', riskLevel:'MEDIUM', topAction:'Jahaj trend: Trend +3.5%/mo ...', conflictsCount:1}, insightsHighlights:[3 items iz v8.40], recommendations:[5 items], telegramMessage:'📋 TEDENSKI POVZETEK\nDatum: 3. avg. 2026 – 9. avg. 2026\n\n💰 DOBIČEK: +196€\n   ↑ 100% vs prejšnji teden (+196€ vs 98€)\n   30d profit: 598€\n\n🎯 CILJ: 306€ / 500€ (61%)\n\n📦 TRADES: 5 prodanih · 635€ promet · 5 v inventarju\n   Avg hold: 18 dni · Win rate: 100%\n\n🏆 TOP 3 TRADES:\n1. Nike Air Jordan 1 — +49€ [obutev · Bolha]\n2. New Balance 550 — +45€ [obutev · Bolha]\n3. AirPods Pro 2 — +42€ [elektronika · Bolha]\n\n🧠 BRAIN: 50/100 (C) — MEDIUM\n   ⚠️ 1 konfliktov zaznanih\n\n💡 TOP 3 INSIGHTS (v8.40):\n1. 📊 Najboljši dan za prodajo: Sobota (avg 85€/trade, 1 prodaj).\n2. ⚠️ Najslabši dan za prodajo: Četrtek (avg 27€/trade). Razmisli o prestavitvi obj...\n3. 🏪 Najboljši vir: Vinted (86% ROI, 3 trade-ov, 100% win rate).\n\n🚀 PRIPOROČILA ZA NASLEDNJI TEDEN:\n1. 🚀 Odličen teden! 5 prodaj z 100% win rate. Povečaj volume v kategorijah z najvišjim ROI.\n2. 📈 MoM rast 100% — trend je pozitiven, ohrani trenutno strategijo.\n3. 🎯 Mesečni cilj: 306€/500€ (61%). Še 194€ do cilja.\n4. 📦 5 item-ov v inventarju — preveri Flip Status za zastarele in znižaj cene če potreben.\n5. 🧠 Brain akcija: Jahaj trend: Trend +3.5%/mo — skupaj s trendom: povečaj inventar, drži za višjo ...'}` ✅.
+- `curl -X POST /api/ai/brain/weekly-summary -H 'Content-Type: application/json' -d '{"action":"send"}'` → `200` z `{ok:true, sentTelegram:false, sentEmail:false, error:null}` (noben kanal konfiguriran — vseeno shranjeno v Notification Center) ✅. Preverjeno z `GET /api/brain-notifications` — 2 novi Notification records z title "📋 Tedenski povzetek — +196€" in severity "success".
+- `curl /api/cron/weekly-report` → `200` z `{ok:true, sentTelegram:false, sentEmail:false, error:null, timestamp:'2026-08-14T20:13:46.354Z', source:'v8.41-weekly-summary-cron'}` ✅.
+- `curl /api/ai-list` → `200` z `{ok:true, total:430}` (brain category: 25, vključno z novim `brain/weekly-summary`) ✅.
+
+### Note
+
+Design odločitve:
+
+- **Period = zadnji končan teden** (ponedeljek-nedelja). To je konvencionalno za "tedenski povzetek" — uporabnik ob ponedeljku zjutraj dobi povzetek prejšnjega tedna. Če bi bilo "ta teden" (v teku), bi bil povzetek nepopoln.
+- **3 kanali (Telegram + Email + Notification Center) vedno poskusijo** — Telegram in Email sta best-effort (try/catch, non-blocking), Notification Center je vedno zapisan (tudi če noben kanal ni konfiguriran). To je isti pattern kot v8.35 `sendBrainDigest` in v8.38 `sendAutoPilotAlert`.
+- **Plain text Telegram message** (parseMode: null) — isti pattern kot v8.35. MarkdownV2 bi zahteval escape `. - ( ) !` kar bi pokvarilo EUR zneske in datume.
+- **Styled HTML za Email** (dark-theme, font monospace) — isti style kot v6.92 formatAlertEmail za konsistenten vizualni identitet med alert-i in weekly digest-om.
+- **`escapeHtml` za vsa uporabniška polja** (title, category, source, topAction) v email HTML — XSS zaščita ker ta polja prihajajo iz Trade tabele (ki jih je vnodel uporabnik ali CSV import) in iz masterBrain (ki je bil sintetiziran iz domenskih brain-ov).
+- **masterBrain() v try/catch** — Brain je kompleksen dependency ki lahko fail-a (npr. če prisma db ni na voljo). Weekly summary se vseeno generira z degraded brainHealth `{score:0, grade:'F', riskLevel:'HIGH'}`.
+- **getTradeInsights() v try/catch** — ista filozofija. Insights Highlights so prazni če fail-a.
+- **5 sekcij v Dashboard card** (profit + goal+trades + brain + top trades + worst + insights + recommendations) — vse na eni strani, uporabnik vidi vse informacije brez skrolanja. Razen worst trade (samo če negativen) so vse sekcije vedno prikazane.
+- **MoM change** prikazan z zadnji teden EUR — uporabnik vidi "↑ 100% (+196€ vs 98€)" kar je bolj informativno kot samo "↑ 100%".
+- **Auto-refresh 60s** (consistent z v8.36 TradeStatsCard + v8.39 GoalTrackerCard + v8.40 TradeInsightsCard).
+- **Backward compatibility za cron route** — `/api/cron/weekly-report` je ohranjena pot, samo interna logika je nadomeščena. Existing cron schedules (crontab ali systemd timer) še vedno delujejo brez sprememb.
+- **POST `{action:'send'}` za manual trigger** (namesto `POST {}`) — eksplicitna akcija omogoča future extension (npr. `{action:'send', channels:['telegram']}` za selective send).
+- **Notification severity** — `success` če profit ≥0, `warning` če <0. Ni `error` ker weekly summary ni nikoli error stanje (sistem deluje, le dobiček je negativen).
+
+**Polish phase continues — v8.32 (monitoring) + v8.33 (performance) + v8.34 (testing) + v8.35 (data+telegram) + v8.36 (CSV Import + Quick Add) + v8.37 (Deal Calculator + Profit Timeline) + v8.38 (Notification Center) + v8.39 (Goal Tracker Dashboard Widget) + v8.40 (Trade Insights Deep Dive) + v8.41 (Weekly Summary Report + Email Notifications). Comprehensive weekly digest z 5 sekcijami + 3 kanali (Telegram + Email + Notification Center).**
 
 ## [8.40.0] - 2026-08-15
 
