@@ -165,7 +165,7 @@ import {
   DialogTitle,
   DialogDescription,
 } from '@/components/ui/dialog';
-import { Sparkles, Search, Copy, Check, RefreshCw, Zap, X, ChevronRight, ChevronDown, ChevronUp, Brain, AlertCircle, Package, TrendingUp, Target, Shield, Users, Coins, Crown, Camera, Save, History, TrendingDown, ArrowUpRight, ArrowDownRight, Settings2, Info, ClipboardList, Trash2, Filter, Clock, Bot, Power, Play, Undo2, Lock, Activity } from 'lucide-react';
+import { Sparkles, Search, Copy, Check, RefreshCw, Zap, X, ChevronRight, ChevronDown, ChevronUp, Brain, AlertCircle, Package, TrendingUp, Target, Shield, Users, Coins, Crown, Camera, Save, History, TrendingDown, ArrowUpRight, ArrowDownRight, Settings2, Info, ClipboardList, Trash2, Filter, Clock, Bot, Power, Play, Undo2, Lock, Activity, AlertOctagon, ShieldAlert, Rocket } from 'lucide-react';
 import { toast } from 'sonner';
 import { cn } from '@/lib/utils';
 
@@ -4878,6 +4878,13 @@ interface AutoPilotStatsResponse {
     dailyLimit: number;
     dailyBudgetEUR: number;
     lastRunAt: string | null;
+    // v8.31: aggressive double-confirm + anomaly detection fields.
+    aggressiveConfirmedAt: string | null;
+    anomalySuspended: boolean;
+    anomalySuspendedAt: string | null;
+    anomalyReason: string | null;
+    hourlyExecCount: number;
+    hourlyWindowStart: string | null;
   };
   today: {
     autoExecuted: number;
@@ -4940,7 +4947,30 @@ interface AutoPilotRunResponse {
     budgetRemaining: number;
     limitRemaining: number;
   };
+  // v8.31: anomaly detection result — if suspended mid-run or pre-run.
+  anomalySuspended?: boolean;
+  anomalyReason?: string | null;
   source: string;
+}
+
+// v8.31: Response shape for POST {action:'enable_aggressive'}.
+interface EnableAggressiveResponse {
+  ok: true;
+  confirmed: boolean; // false = pending first confirmation, true = aggressive enabled
+  message: string;
+  confirmedAt?: string;
+}
+
+// v8.31: Response shape for POST {action:'disable_aggressive'}.
+interface DisableAggressiveResponse {
+  ok: true;
+  mode: string;
+}
+
+// v8.31: Response shape for POST {action:'clear_anomaly'}.
+interface ClearAnomalyResponse {
+  ok: true;
+  message: string;
 }
 
 function AutoPilotCard() {
@@ -4958,6 +4988,11 @@ function AutoPilotCard() {
   const [toggling, setToggling] = useState(false);
   const [running, setRunning] = useState(false);
   const [rollingBackId, setRollingBackId] = useState<string | null>(null);
+  // v8.31: Aggressive mode + anomaly state
+  const [aggressivePending, setAggressivePending] = useState(false); // local UI: pending confirmation shown
+  const [aggressiveMsg, setAggressiveMsg] = useState<string | null>(null); // last enable message
+  const [togglingMode, setTogglingMode] = useState(false); // disabling aggressive / enabling
+  const [clearingAnomaly, setClearingAnomaly] = useState(false);
 
   const fetchStats = useCallback(async () => {
     setLoading(true);
@@ -4970,6 +5005,9 @@ function AutoPilotCard() {
       setStats(json);
       setDailyLimitInput(json.config.dailyLimit);
       setDailyBudgetInput(json.config.dailyBudgetEUR);
+      // v8.31: Sync aggressive pending state from server (aggressiveConfirmedAt
+      // is set by first enable call, cleared on second call or expiry).
+      setAggressivePending(Boolean(json.config.aggressiveConfirmedAt));
     } catch (e: any) {
       setError(e?.message ?? 'Napaka');
     } finally {
@@ -5132,6 +5170,86 @@ function AutoPilotCard() {
     [fetchHistory, fetchStats],
   );
 
+  // v8.31: Enable aggressive mode — double confirmation flow.
+  // First click → server sets aggressiveConfirmedAt, returns confirmed=false.
+  // Second click within 5 min → server confirms, returns confirmed=true + mode='aggressive'.
+  const handleEnableAggressive = useCallback(async () => {
+    setTogglingMode(true);
+    setAggressiveMsg(null);
+    try {
+      const res = await fetch('/api/ai/brain/auto-pilot', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ action: 'enable_aggressive' }),
+      });
+      const json = (await res.json()) as EnableAggressiveResponse;
+      if (!res.ok || !json?.ok) {
+        throw new Error((json as any)?.error ?? `HTTP ${res.status}`);
+      }
+      setAggressiveMsg(json.message);
+      if (json.confirmed) {
+        // Second confirmation succeeded — aggressive mode now active.
+        toast.success(json.message);
+        setAggressivePending(false);
+      } else {
+        // First confirmation — pending second click within 5 min.
+        toast.info(json.message);
+        setAggressivePending(true);
+      }
+      await fetchStats();
+    } catch (e: any) {
+      toast.error(e?.message ?? 'Napaka pri vklopu aggressive mode');
+    } finally {
+      setTogglingMode(false);
+    }
+  }, [fetchStats]);
+
+  // v8.31: Disable aggressive mode — immediate revert to safe (single click).
+  const handleDisableAggressive = useCallback(async () => {
+    setTogglingMode(true);
+    setAggressiveMsg(null);
+    try {
+      const res = await fetch('/api/ai/brain/auto-pilot', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ action: 'disable_aggressive' }),
+      });
+      const json = (await res.json()) as DisableAggressiveResponse;
+      if (!res.ok || !json?.ok) {
+        throw new Error((json as any)?.error ?? `HTTP ${res.status}`);
+      }
+      toast.success('🛡️ Aggressive mode izklopljen — vrnjen v safe mode (LOW risk only)');
+      setAggressivePending(false);
+      await fetchStats();
+    } catch (e: any) {
+      toast.error(e?.message ?? 'Napaka pri izklopu aggressive mode');
+    } finally {
+      setTogglingMode(false);
+    }
+  }, [fetchStats]);
+
+  // v8.31: Clear anomaly suspension — user manually re-enables after review.
+  const handleClearAnomaly = useCallback(async () => {
+    setClearingAnomaly(true);
+    try {
+      const res = await fetch('/api/ai/brain/auto-pilot', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ action: 'clear_anomaly' }),
+      });
+      const json = (await res.json()) as ClearAnomalyResponse;
+      if (!res.ok || !json?.ok) {
+        throw new Error((json as any)?.error ?? `HTTP ${res.status}`);
+      }
+      toast.success(json.message);
+      await fetchStats();
+    } catch (e: any) {
+      toast.error(e?.message ?? 'Napaka pri razveljavitvi suspenzije');
+    } finally {
+      setClearingAnomaly(false);
+    }
+  }, [fetchStats]);
+
   const enabled = stats?.config.enabled ?? false;
   const mode = stats?.config.mode ?? 'safe';
   const todayAutoExecuted = stats?.today.autoExecuted ?? 0;
@@ -5145,21 +5263,53 @@ function AutoPilotCard() {
   const rollbackRate = stats?.allTime.rollbackRate ?? 0;
   const dirty =
     dailyLimitInput !== todayLimit || dailyBudgetInput !== todayBudget;
+  // v8.31: Anomaly detection state — surfaced for the anomaly banner.
+  const anomalySuspended = stats?.config.anomalySuspended ?? false;
+  const anomalyReason = stats?.config.anomalyReason ?? null;
+  const anomalySuspendedAt = stats?.config.anomalySuspendedAt ?? null;
+  // v8.31: Hourly counter for "Zadnja ura: N akcij" display.
+  const hourlyExecCount = stats?.config.hourlyExecCount ?? 0;
+  const hourlyWindowStart = stats?.config.hourlyWindowStart ?? null;
+  const isAggressive = mode === 'aggressive';
+  // Mode-aware thresholds for display:
+  const displayLimit = isAggressive ? 10 : 5;
+  const displayBudget = isAggressive ? 2000 : 500;
 
   return (
-    <div className="rounded-xl border-2 border-purple-500/40 bg-gradient-to-br from-purple-500/15 via-indigo-500/10 to-violet-500/5 p-3 sm:p-4 shadow-sm">
+    <div
+      className={cn(
+        'rounded-xl border-2 p-3 sm:p-4 shadow-sm transition-colors',
+        anomalySuspended
+          ? 'border-red-500/60 bg-gradient-to-br from-red-500/10 via-purple-500/10 to-violet-500/5'
+          : isAggressive
+            ? 'border-rose-500/50 bg-gradient-to-br from-rose-500/10 via-purple-500/10 to-violet-500/5'
+            : 'border-purple-500/40 bg-gradient-to-br from-purple-500/15 via-indigo-500/10 to-violet-500/5',
+      )}
+    >
       {/* Header row */}
       <div className="flex items-center justify-between gap-2 mb-2.5 min-w-0 flex-wrap">
         <div className="flex items-center gap-2 min-w-0">
           <Bot className="w-5 h-5 text-purple-600 dark:text-purple-300 shrink-0" />
           <span className="text-base sm:text-lg font-bold tracking-tight">
-            🤖 Safe Auto-pilot
+            🤖 Auto-pilot
           </span>
           <Badge variant="outline" className="text-[10px] border-purple-500/50 text-purple-700 dark:text-purple-300 shrink-0 font-bold">
-            v8.30
+            v8.31
           </Badge>
-          <Badge variant="outline" className="text-[9px] border-purple-500/30 text-purple-700/80 dark:text-purple-300/80 shrink-0">
-            AUTOMATION · LOW RISK ONLY
+          <Badge
+            variant="outline"
+            className={cn(
+              'text-[9px] shrink-0',
+              isAggressive
+                ? 'border-rose-500/40 text-rose-700 dark:text-rose-300'
+                : 'border-purple-500/30 text-purple-700/80 dark:text-purple-300/80',
+            )}
+          >
+            {anomalySuspended
+              ? '⚠️ SUSPENDED · ANOMALY'
+              : isAggressive
+                ? '🚀 AGGRESSIVE · MEDIUM OK'
+                : '🛡️ SAFE · LOW RISK ONLY'}
           </Badge>
         </div>
         <button
@@ -5174,11 +5324,14 @@ function AutoPilotCard() {
 
       {/* Subtitle */}
       <p className="text-[11px] sm:text-xs text-purple-700/80 dark:text-purple-300/80 mb-2.5 leading-snug">
-        Samodejno izvaja samo <b>LOW-risk akcije</b> (confidence: LOW, uplift
-        &lt;100€, domain != risk). MEDIUM/HIGH risk akcije še vedno zahtevajo
-        ročni <code className="px-1 bg-purple-500/10 rounded">✅ Izvedel</code> klik
-        (v8.29). Vsako auto-executed akcijo lahko razveljaviš (↩️ Razveljavi) —
-        to tudi undo-a learning preko <code className="px-1 bg-purple-500/10 rounded">recordActionFeedback</code>.
+        Samodejno izvaja akcije ki izpolnjujejo VSA 8 varnostna pravila.
+        {' '}
+        <b className="text-purple-700 dark:text-purple-300">Safe mode</b>: confidence=LOW, uplift
+        &lt;100€, limit 5/dan, budget 500€/dan.{' '}
+        <b className="text-rose-700 dark:text-rose-300">Aggressive mode</b> (opt-in, double confirm):
+        confidence=LOW/MEDIUM, uplift &lt;300€, limit 10/dan, budget 2000€/dan.
+        {' '}HIGH confidence in domain=&apos;risk&apos; sta vedno ročno (v8.29).
+        {' '}Vsako auto-executed akcijo lahko razveljaviš (↩️ Razveljavi).
       </p>
 
       {/* Loading skeleton */}
@@ -5204,12 +5357,100 @@ function AutoPilotCard() {
       {/* Main content */}
       {!loading && !error && stats && (
         <div className="space-y-3">
+          {/* v8.31: Anomaly banner — shown at TOP of card when suspended.
+              Red, eye-catching, with "Razveljavi suspenzijo" button. */}
+          {anomalySuspended && (
+            <div className="rounded-lg border-2 border-red-500/50 bg-red-500/10 p-2.5 space-y-1.5">
+              <div className="flex items-start gap-2">
+                <AlertOctagon className="w-4 h-4 text-red-600 dark:text-red-400 shrink-0 mt-0.5" />
+                <div className="min-w-0 flex-1">
+                  <div className="text-xs font-bold text-red-700 dark:text-red-300">
+                    ⚠️ AUTO-PILOT SUSPENDED
+                  </div>
+                  <div className="text-[10px] text-red-700/90 dark:text-red-300/90 mt-0.5 leading-snug">
+                    {anomalyReason ?? 'Anomaly detected — possible loop'}
+                    {anomalySuspendedAt && (
+                      <span className="block text-[9px] italic mt-0.5">
+                        Suspended at: {new Date(anomalySuspendedAt).toLocaleString('sl-SI')}
+                      </span>
+                    )}
+                    <span className="block mt-0.5">
+                      Preglej zgodovino in klikni &quot;Razveljavi suspenzijo&quot; za ponovni vklop.
+                    </span>
+                  </div>
+                </div>
+                <button
+                  onClick={handleClearAnomaly}
+                  disabled={clearingAnomaly}
+                  className="text-[10px] px-2 py-1 rounded border bg-red-500/20 border-red-500/50 hover:bg-red-500/30 text-red-700 dark:text-red-300 shrink-0 flex items-center gap-1 disabled:opacity-50 font-semibold"
+                >
+                  {clearingAnomaly ? (
+                    <RefreshCw className="w-2.5 h-2.5 animate-spin" />
+                  ) : (
+                    <Undo2 className="w-2.5 h-2.5" />
+                  )}
+                  Razveljavi suspenzijo
+                </button>
+              </div>
+            </div>
+          )}
+
+          {/* v8.31: Aggressive mode active banner — shown when mode='aggressive'.
+              Red/rose, with toggle-back button. */}
+          {!anomalySuspended && isAggressive && (
+            <div className="rounded-lg border-2 border-rose-500/40 bg-rose-500/10 p-2 flex items-center gap-2">
+              <Rocket className="w-3.5 h-3.5 text-rose-600 dark:text-rose-400 shrink-0" />
+              <div className="min-w-0 flex-1">
+                <div className="text-[11px] font-bold text-rose-700 dark:text-rose-300">
+                  AGGRESSIVE MODE — višje tveganje
+                </div>
+                <div className="text-[9px] text-rose-700/80 dark:text-rose-300/80">
+                  Dovoljena MEDIUM confidence (do 300€ uplift). HIGH še vedno manual. Limit 10/dan, budget 2000€/dan.
+                </div>
+              </div>
+              <button
+                onClick={handleDisableAggressive}
+                disabled={togglingMode}
+                className="text-[10px] px-2 py-1 rounded border bg-rose-500/15 border-rose-500/40 hover:bg-rose-500/25 text-rose-700 dark:text-rose-300 shrink-0 disabled:opacity-50 font-semibold"
+              >
+                🛡️ Nazaj v Safe
+              </button>
+            </div>
+          )}
+
+          {/* v8.31: Aggressive pending confirmation banner — shown after first click.
+              Yellow/amber, prompts user to confirm within 5 minutes. */}
+          {!anomalySuspended && !isAggressive && aggressivePending && (
+            <div className="rounded-lg border-2 border-amber-500/40 bg-amber-500/10 p-2 flex items-center gap-2">
+              <ShieldAlert className="w-3.5 h-3.5 text-amber-600 dark:text-amber-400 shrink-0" />
+              <div className="min-w-0 flex-1">
+                <div className="text-[11px] font-bold text-amber-700 dark:text-amber-400">
+                  ⚠️ Aggressive mode dovoli MEDIUM confidence
+                </div>
+                <div className="text-[9px] text-amber-700/80 dark:text-amber-300/80">
+                  Potrdi ponovno v 5 minutah za aktivacijo aggressive mode.
+                </div>
+              </div>
+              <button
+                onClick={handleEnableAggressive}
+                disabled={togglingMode}
+                className="text-[10px] px-2 py-1 rounded border bg-amber-500/20 border-amber-500/40 hover:bg-amber-500/30 text-amber-700 dark:text-amber-400 shrink-0 disabled:opacity-50 font-bold"
+              >
+                ✅ Potrdi
+              </button>
+            </div>
+          )}
+
           {/* Master switch — big toggle */}
           <div
             className={cn(
               'flex items-center justify-between gap-2 p-2 rounded-lg border',
               enabled
-                ? 'bg-purple-500/15 border-purple-500/40'
+                ? anomalySuspended
+                  ? 'bg-red-500/15 border-red-500/40'
+                  : isAggressive
+                    ? 'bg-rose-500/15 border-rose-500/40'
+                    : 'bg-purple-500/15 border-purple-500/40'
                 : 'bg-muted/30 border-border',
             )}
           >
@@ -5218,18 +5459,24 @@ function AutoPilotCard() {
                 className={cn(
                   'w-4 h-4 shrink-0',
                   enabled
-                    ? 'text-purple-600 dark:text-purple-300'
+                    ? anomalySuspended
+                      ? 'text-red-600 dark:text-red-400'
+                      : isAggressive
+                        ? 'text-rose-600 dark:text-rose-400'
+                        : 'text-purple-600 dark:text-purple-300'
                     : 'text-muted-foreground',
                 )}
               />
               <div className="min-w-0">
                 <div className="text-xs font-bold">
-                  Auto-pilot: {enabled ? 'ON' : 'OFF'}
+                  Auto-pilot: {enabled ? (anomalySuspended ? 'SUSPENDED' : 'ON') : 'OFF'}
                 </div>
                 <div className="text-[9px] text-muted-foreground">
                   {enabled
-                    ? `Mode: ${mode} · limit ${todayLimit}/dan · budget ${todayBudget}€/dan`
-                    : 'Klikni za vklop — samodejno izvaja LOW-risk akcije'}
+                    ? anomalySuspended
+                      ? `Mode: ${mode} · SUSPENDED · ${anomalyReason ?? 'anomaly'}`
+                      : `Mode: ${mode} · limit ${displayLimit}/dan · budget ${displayBudget}€/dan`
+                    : 'Klikni za vklop — samodejno izvaja LOW/MEDIUM-risk akcije'}
                 </div>
               </div>
             </div>
@@ -5242,7 +5489,11 @@ function AutoPilotCard() {
               className={cn(
                 'relative inline-flex h-6 w-11 shrink-0 cursor-pointer rounded-full border-2 border-transparent transition-colors duration-200 ease-in-out focus:outline-none focus-visible:ring-2 focus-visible:ring-purple-500/50',
                 enabled
-                  ? 'bg-purple-600'
+                  ? anomalySuspended
+                    ? 'bg-red-600'
+                    : isAggressive
+                      ? 'bg-rose-600'
+                      : 'bg-purple-600'
                   : 'bg-muted-foreground/30',
                 toggling && 'opacity-50 cursor-wait',
               )}
@@ -5312,27 +5563,55 @@ function AutoPilotCard() {
                 </div>
               </div>
 
-              {/* Mode selector */}
+              {/* v8.31: Mode selector — now active (not disabled).
+                  Safe is default; Aggressive requires double confirmation. */}
               <div>
-                <div className="text-[10px] uppercase tracking-wide text-muted-foreground font-semibold mb-1">
-                  Mode
+                <div className="text-[10px] uppercase tracking-wide text-muted-foreground font-semibold mb-1 flex items-center justify-between">
+                  <span>Mode</span>
+                  <span className="text-[8px] normal-case font-normal italic">
+                    {isAggressive
+                      ? 'Aggressive aktiven — klikni Safe za izklop'
+                      : aggressivePending
+                        ? 'Čaka potrditev aggressive...'
+                        : 'Klikni Aggressive za double opt-in'}
+                  </span>
                 </div>
                 <div className="grid grid-cols-2 gap-1">
                   <button
                     type="button"
-                    disabled
-                    className="h-7 text-[10px] font-bold rounded border bg-purple-500/15 border-purple-500/40 text-purple-700 dark:text-purple-300 cursor-default"
+                    onClick={handleDisableAggressive}
+                    disabled={togglingMode || (!isAggressive && !aggressivePending)}
+                    className={cn(
+                      'h-7 text-[10px] font-bold rounded border transition-colors',
+                      !isAggressive
+                        ? 'bg-purple-500/15 border-purple-500/40 text-purple-700 dark:text-purple-300'
+                        : 'bg-muted/30 border-border text-muted-foreground hover:bg-muted/50',
+                    )}
                     title="Safe mode — only LOW-confidence, low-uplift, non-risk actions"
                   >
-                    ✓ Safe (LOW risk only)
+                    🛡️ Safe (LOW risk only)
                   </button>
                   <button
                     type="button"
-                    disabled
-                    className="h-7 text-[10px] font-bold rounded border bg-muted/30 border-border text-muted-foreground/50 cursor-not-allowed"
-                    title="Coming v8.31 — Aggressive mode executes MEDIUM risk too"
+                    onClick={handleEnableAggressive}
+                    disabled={togglingMode || isAggressive || anomalySuspended}
+                    className={cn(
+                      'h-7 text-[10px] font-bold rounded border transition-colors disabled:opacity-50 disabled:cursor-not-allowed',
+                      isAggressive
+                        ? 'bg-rose-500/20 border-rose-500/50 text-rose-700 dark:text-rose-300'
+                        : aggressivePending
+                          ? 'bg-amber-500/20 border-amber-500/50 text-amber-700 dark:text-amber-400 animate-pulse'
+                          : 'bg-muted/30 border-border text-muted-foreground hover:bg-muted/50',
+                    )}
+                    title={
+                      anomalySuspended
+                        ? 'Cannot switch to aggressive while anomaly is suspended'
+                        : isAggressive
+                          ? 'Aggressive mode already active'
+                          : 'Aggressive mode — requires double confirmation (5-min window)'
+                    }
                   >
-                    Aggressive (v8.31)
+                    {aggressivePending ? '✅ Potrdi Aggressive' : '🚀 Aggressive (MEDIUM OK)'}
                   </button>
                 </div>
               </div>
@@ -5361,7 +5640,7 @@ function AutoPilotCard() {
             </div>
           )}
 
-          {/* Today's stats — with progress bars */}
+          {/* Today's stats — with progress bars + v8.31 hourly counter */}
           <div className="rounded-lg border border-purple-500/20 bg-purple-500/[0.03] p-2 space-y-2">
             <div className="text-[10px] uppercase tracking-wide text-purple-700/80 dark:text-purple-300/80 font-semibold flex items-center gap-1">
               <Activity className="w-2.5 h-2.5" />
@@ -5369,6 +5648,25 @@ function AutoPilotCard() {
               <span className="text-[8px] normal-case font-normal text-muted-foreground italic ml-auto">
                 zadnji run: {stats.config.lastRunAt ? new Date(stats.config.lastRunAt).toLocaleString('sl-SI') : '—'}
               </span>
+            </div>
+            {/* v8.31: Mode-aware stats line */}
+            <div className="text-[10px] text-muted-foreground leading-snug">
+              Danes: <span className="font-mono font-bold text-purple-700 dark:text-purple-300">{todayAutoExecuted}/{displayLimit}</span> akcij ({mode}) ·{' '}
+              <span className="font-mono font-bold text-purple-700 dark:text-purple-300">{todayBudgetUsed.toFixed(0)}€/{displayBudget}€</span> budget
+            </div>
+            {/* v8.31: Hourly counter line */}
+            <div className="text-[9px] text-muted-foreground/80 italic">
+              Zadnja ura: <span className="font-mono font-bold">{hourlyExecCount}</span> akcij
+              {hourlyExecCount >= 6 && (
+                <span className="ml-1 text-amber-600 dark:text-amber-400 font-semibold">
+                  · ⚠️ blizu anomaly threshold (8)
+                </span>
+              )}
+              {hourlyWindowStart && (
+                <span className="ml-1 text-[8px]">
+                  (od {new Date(hourlyWindowStart).toLocaleTimeString('sl-SI')})
+                </span>
+              )}
             </div>
             {/* Limit progress */}
             <div>
@@ -5444,8 +5742,8 @@ function AutoPilotCard() {
             <Button
               size="sm"
               onClick={runNow}
-              disabled={running}
-              className="h-8 text-[11px] font-bold bg-purple-600 hover:bg-purple-700 text-white border-purple-600 gap-1.5"
+              disabled={running || anomalySuspended}
+              className="h-8 text-[11px] font-bold bg-purple-600 hover:bg-purple-700 text-white border-purple-600 gap-1.5 disabled:opacity-50"
             >
               {running ? <RefreshCw className="w-3 h-3 animate-spin" /> : <Play className="w-3 h-3" />}
               {running ? 'Teče...' : '▶️ Zaženi zdaj'}
@@ -5464,21 +5762,60 @@ function AutoPilotCard() {
             </Button>
           </div>
 
+          {/* v8.31: Threshold comparison box — always visible info card
+              showing the difference between Safe and Aggressive modes. */}
+          <div className="rounded-lg border border-purple-500/30 bg-purple-500/[0.05] p-2 space-y-1.5">
+            <div className="text-[10px] uppercase tracking-wide text-purple-700/80 dark:text-purple-300/80 font-semibold flex items-center gap-1">
+              <Info className="w-2.5 h-2.5" />
+              Primerjava modal (Safe vs Aggressive)
+            </div>
+            <div className="grid grid-cols-2 gap-2 text-[9px]">
+              {/* Safe column */}
+              <div className={cn('rounded border p-1.5 space-y-0.5', isAggressive ? 'border-border bg-muted/30 opacity-70' : 'border-purple-500/40 bg-purple-500/10')}>
+                <div className="font-bold text-purple-700 dark:text-purple-300 flex items-center gap-1">
+                  🛡️ Safe {!isAggressive && '✓'}
+                </div>
+                <div className="text-muted-foreground">confidence: LOW</div>
+                <div className="text-muted-foreground">uplift &lt; 100€</div>
+                <div className="text-muted-foreground">limit 5/dan</div>
+                <div className="text-muted-foreground">budget 500€/dan</div>
+                <div className="text-muted-foreground">domain != risk</div>
+                <div className="text-muted-foreground">HIGH = manual</div>
+              </div>
+              {/* Aggressive column */}
+              <div className={cn('rounded border p-1.5 space-y-0.5', isAggressive ? 'border-rose-500/40 bg-rose-500/10' : 'border-border bg-muted/30 opacity-70')}>
+                <div className="font-bold text-rose-700 dark:text-rose-300 flex items-center gap-1">
+                  🚀 Aggressive {isAggressive && '✓'}
+                </div>
+                <div className="text-muted-foreground">confidence: LOW, MEDIUM</div>
+                <div className="text-muted-foreground">uplift &lt; 300€</div>
+                <div className="text-muted-foreground">limit 10/dan</div>
+                <div className="text-muted-foreground">budget 2000€/dan</div>
+                <div className="text-muted-foreground">domain != risk (oba)</div>
+                <div className="text-muted-foreground">HIGH = manual (oba)</div>
+              </div>
+            </div>
+            <div className="text-[8px] text-muted-foreground italic pt-1 border-t border-purple-500/20">
+              Anomaly: če &gt;8 akcij v 1 uri → suspendiran (oba modal).
+              Rollback: ✅ razveljavi vsako auto-akcijo (+ undo learning).
+            </div>
+          </div>
+
           {/* Safety info box — always visible */}
           <div className="rounded-lg border border-purple-500/30 bg-purple-500/[0.05] p-2 space-y-1">
             <div className="text-[10px] uppercase tracking-wide text-purple-700/80 dark:text-purple-300/80 font-semibold flex items-center gap-1">
               <Lock className="w-2.5 h-2.5" />
-              Varnostna pravila (8)
+              Varnostna pravila (8 — mode-aware)
             </div>
             <ol className="text-[9px] text-muted-foreground space-y-0.5 list-decimal list-inside">
               <li>Auto-pilot enabled (master switch)</li>
-              <li>Mode = &apos;safe&apos; (aggressive šele v8.31)</li>
-              <li>User risk tolerance != conservative</li>
-              <li>Confidence = LOW (HIGH/MEDIUM vedno ročno)</li>
-              <li>expectedUpliftEUR &lt; 100€ threshold</li>
-              <li>Domain != &apos;risk&apos; (risk mitigation = human judgment)</li>
-              <li>Daily limit ≤ {todayLimit} akcij/dan</li>
-              <li>Daily budget ≤ {todayBudget}€/dan</li>
+              <li>Mode = &apos;safe&apos; ali &apos;aggressive&apos; (V2 — oba veljavna)</li>
+              <li>User risk tolerance != conservative (oba modal)</li>
+              <li>Confidence dovoljen za mode (safe: LOW; aggressive: LOW+MEDIUM; HIGH vedno ročno)</li>
+              <li>expectedUpliftEUR &lt; mode threshold (safe: 100€, aggressive: 300€)</li>
+              <li>Domain != &apos;risk&apos; (risk mitigation = human judgment — oba)</li>
+              <li>Daily limit ≤ {displayLimit} akcij/dan ({mode})</li>
+              <li>Daily budget ≤ {displayBudget}€/dan ({mode})</li>
             </ol>
           </div>
 
@@ -5486,6 +5823,9 @@ function AutoPilotCard() {
           <div className="flex items-center justify-between pt-1 border-t border-purple-500/20">
             <span className="text-[9px] text-muted-foreground italic">
               GET + POST /api/ai/brain/auto-pilot · cron /api/cron/auto-pilot
+            </span>
+            <span className="text-[9px] text-muted-foreground/60">
+              POST actions: run, config, enable_aggressive, disable_aggressive, clear_anomaly
             </span>
           </div>
         </div>
@@ -5675,7 +6015,7 @@ function BrainSynthesisCard({ onBrainCategoryClick }: { onBrainCategoryClick: ()
               AI BRAIN SYNTHESIS
             </span>
             <Badge variant="outline" className="text-[10px] border-primary/40 text-primary shrink-0">
-              v8.30 Auto-pilot + v8.29 Draft Queue + v8.28 Adaptive + v8.27 Scenario + v8.26 Explain + v8.25 Accuracy + v8.24 Personal + v8.23 Validation + v8.22 Master + v8.15-v8.21 (7 Domains)
+              v8.31 Auto-pilot + v8.29 Draft Queue + v8.28 Adaptive + v8.27 Scenario + v8.26 Explain + v8.25 Accuracy + v8.24 Personal + v8.23 Validation + v8.22 Master + v8.15-v8.21 (7 Domains)
             </Badge>
           </div>
           <button
@@ -6089,7 +6429,7 @@ export function AIHubView() {
                         )}
                         {ep.category === 'brain' && ep.name === 'brain/auto-pilot' && (
                           <Badge variant="outline" className="text-[9px] border-purple-500/50 text-purple-700 dark:text-purple-300 shrink-0 font-bold">
-                            v8.30 · AUTO
+                            v8.31 · AUTO+
                           </Badge>
                         )}
                         {ep.category === 'brain' && ep.name === 'brain/auto-pilot/rollback' && (

@@ -1,19 +1,57 @@
-// v8.30: Safe Auto-pilot — automatically executes LOW-risk Master Brain actions
-// that meet ALL safety criteria. First step toward autonomous trading.
+// v8.30/v8.31: Auto-pilot — automatically executes LOW/MEDIUM-risk Master
+// Brain actions that meet ALL safety criteria. AUTOMATION PHASE.
 //
-// 🎯 AUTOMATION PHASE STARTED.
+// v8.30 = Safe Auto-pilot (LOW risk only, 8 safety rules).
+// v8.31 = Aggressive mode + Anomaly Detection — AUTOMATION PHASE COMPLETE:
+//   - Aggressive mode (opt-in, double confirmation): allows MEDIUM confidence
+//     too (HIGH always manual in BOTH modes), higher limits (10/day, 2000€/day),
+//     uplift < 300€. Domain != 'risk' still enforced in BOTH modes.
+//   - Anomaly detection: if >8 auto-executions in 1 hour → suspend auto-pilot
+//     (possible loop), requires manual re-enable via clearAnomalySuspension().
+//   - Double opt-in for aggressive mode: first click sets pending confirmation,
+//     second click within 5 minutes confirms. After 5 min, confirmation expires.
 //
-// SAFETY RULES (all must be true for auto-execution):
+// 🎯 AUTOMATION PHASE COMPLETE (v8.30 Safe + v8.31 Aggressive + Anomaly).
+//
+// SAFETY RULES (all must be true for auto-execution) — mode-aware (v8.31):
 // 1. autoPilotEnabled is true (master switch — default OFF)
-// 2. autoPilotMode is 'safe' (v8.31 will add 'aggressive')
+// 2. autoPilotMode is 'safe' OR 'aggressive' (V2 — both modes valid)
 // 3. User Risk Profile tolerance is NOT 'conservative' (conservative users
 //    never get auto-pilot — they explicitly asked for caution)
-// 4. Action confidence is 'LOW' (HIGH/MEDIUM always need manual)
-// 5. Action's expectedUpliftEUR < 100€ (small impact, safe to auto-execute)
-// 6. Action domain is NOT 'risk' (risk mitigation needs human judgment)
-// 7. Daily limit not exceeded (autoExecuted count today < autoPilotDailyLimit)
+// 4. Action confidence is allowed for current mode:
+//      - safe mode: confidence = 'LOW' only
+//      - aggressive mode: confidence = 'LOW' or 'MEDIUM'
+//      - HIGH is ALWAYS excluded (manual execution only — both modes)
+// 5. Action's expectedUpliftEUR < mode threshold:
+//      - safe mode: < 100€
+//      - aggressive mode: < 300€
+// 6. Action domain is NOT 'risk' (risk mitigation needs human judgment — both)
+// 7. Daily limit not exceeded:
+//      - safe mode: todayAutoExecutedCount < 5 (configurable, default 5)
+//      - aggressive mode: todayAutoExecutedCount < 10 (configurable)
 // 8. Daily budget not exceeded (sum of today's autoExecuted uplift <
-//    autoPilotDailyBudgetEUR)
+//    autoPilotDailyBudgetEUR):
+//      - safe mode: default 500€/day
+//      - aggressive mode: default 2000€/day
+//
+// ANOMALY DETECTION (v8.31):
+// - Hourly counter (autoPilotHourlyExecCount + autoPilotHourlyWindowStart in
+//   Settings) tracks auto-executions in a rolling 1-hour window.
+// - If counter exceeds AGGRESSIVE_CONFIG.anomalyHourlyThreshold (default 8) →
+//   set autoPilotAnomalySuspended=true, autoPilotAnomalySuspendedAt=now,
+//   autoPilotAnomalyReason="N akcij v 1 uri — possible loop".
+// - When suspended, runSafeAutoPilot() returns early with anomaly warning.
+// - User must explicitly call clearAnomalySuspension() (POST {action:'clear_anomaly'})
+//   to re-enable auto-pilot.
+//
+// AGGRESSIVE MODE DOUBLE OPT-IN (v8.31):
+// - First call to enableAggressiveMode() sets autoPilotAggressiveConfirmedAt=now
+//   and returns { confirmed: false, message: 'Potrdi ponovno v 5 minutah' }.
+// - Second call within 5 minutes sets autoPilotMode='aggressive', clears
+//   confirmedAt, returns { confirmed: true, message: 'Aggressive mode omogočen' }.
+// - After 5 minutes, confirmation expires — must re-confirm.
+// - disableAggressiveMode() immediately reverts to 'safe' (one call, no
+//   confirmation needed — fail-safe: easier to disable than enable).
 //
 // Each auto-execution:
 // - Sets draft.status = 'executed', autoExecuted = true, executedAt = now
@@ -21,15 +59,18 @@
 // - Calls recordActionFeedback() from v8.28 (closes feedback loop) via the
 //   updateDraftStatus() path in draft-queue.ts — then patches autoExecuted +
 //   autoPilotReason on the same row (audit trail).
+// - Increments hourly counter (v8.31) — may trigger anomaly suspension.
 // - Is rollbackable (user can undo via rollbackAutoExecution)
 //
-// MEDIUM/HIGH risk actions are left as 'pending' for manual execution.
+// MEDIUM/HIGH risk actions in safe mode (or HIGH in aggressive mode) are left
+// as 'pending' for manual execution.
 //
 // Deterministic (aiUsed: false): no AI/LLM SDK is called. No external side
 // effects beyond DB writes — the "execution" here is purely bookkeeping. The
 // real-world action (e.g. send Telegram, relist an item) is OUT OF SCOPE for
-// v8.30 — that's the integration layer v8.31+ will add. v8.30 establishes the
-// safety framework + audit trail + rollback capability.
+// v8.30/v8.31 — that's the integration layer v8.32+ will add. v8.30+v8.31
+// establishes the safety framework + audit trail + rollback capability +
+// aggressive mode + anomaly detection.
 
 import { PrismaClient } from '@prisma/client';
 import { logger } from '@/lib/logger';
@@ -61,6 +102,15 @@ export interface AutoPilotConfig {
   dailyLimit: number;
   dailyBudgetEUR: number;
   lastRunAt: Date | null;
+  // v8.31: Aggressive mode double confirmation + anomaly detection fields.
+  // These are loaded alongside the v8.30 fields and exposed in AutoPilotStats
+  // so the UI can render the mode selector state + anomaly banner.
+  aggressiveConfirmedAt: Date | null;  // pending double-confirm timestamp (null if none)
+  anomalySuspended: boolean;            // true if anomaly detection suspended auto-pilot
+  anomalySuspendedAt: Date | null;      // when anomaly was triggered
+  anomalyReason: string | null;          // why suspended (human-readable)
+  hourlyExecCount: number;               // count of auto-executions in current 1-hour window
+  hourlyWindowStart: Date | null;       // start of current 1-hour window
 }
 
 export const DEFAULT_AUTOPILOT_CONFIG: AutoPilotConfig = {
@@ -69,7 +119,40 @@ export const DEFAULT_AUTOPILOT_CONFIG: AutoPilotConfig = {
   dailyLimit: 5,
   dailyBudgetEUR: 500,
   lastRunAt: null,
+  // v8.31: safe defaults — no pending confirmation, not suspended, no executions.
+  aggressiveConfirmedAt: null,
+  anomalySuspended: false,
+  anomalySuspendedAt: null,
+  anomalyReason: null,
+  hourlyExecCount: 0,
+  hourlyWindowStart: null,
 };
+
+// v8.31: Aggressive mode thresholds — HIGHER than safe.
+// - maxDailyLimit: 10 (vs 5 in safe)
+// - maxDailyBudgetEUR: 2000€ (vs 500€ in safe)
+// - maxUpliftEUR: 300€ (vs 100€ in safe) — MEDIUM confidence allowed
+// - allowedConfidence: ['LOW', 'MEDIUM'] — HIGH still ALWAYS excluded (both modes)
+// - anomalyHourlyThreshold: 8 — if >8 auto-executions in 1 hour, suspend
+export const AGGRESSIVE_CONFIG = {
+  maxDailyLimit: 10,
+  maxDailyBudgetEUR: 2000,
+  maxUpliftEUR: 300,
+  allowedConfidence: ['LOW', 'MEDIUM'] as const,
+  anomalyHourlyThreshold: 8,
+};
+
+// v8.31: Safe mode thresholds — kept in sync with checkAutoPilotEligibility V1.
+export const SAFE_CONFIG = {
+  maxDailyLimit: 5,
+  maxDailyBudgetEUR: 500,
+  maxUpliftEUR: 100,
+  allowedConfidence: ['LOW'] as const,
+  anomalyHourlyThreshold: 8,  // same threshold in both modes
+};
+
+// v8.31: 5-minute window for aggressive mode double confirmation.
+export const AGGRESSIVE_CONFIRM_WINDOW_MS = 5 * 60 * 1000;
 
 export interface AutoPilotCandidateCheck {
   draft: ActionDraft;
@@ -100,6 +183,10 @@ export interface AutoPilotRunResult {
     budgetRemaining: number;
     limitRemaining: number;
   };
+  // v8.31: anomaly detection result — if suspended mid-run or pre-run, this
+  // is populated so the UI/cron can surface a warning.
+  anomalySuspended?: boolean;
+  anomalyReason?: string | null;
   source: 'v8.30-safe-auto-pilot';
 }
 
@@ -177,6 +264,10 @@ function mapRow(row: any): ActionDraft {
  * Load auto-pilot config from Settings singleton row.
  * On any DB error / missing row / missing fields, returns DEFAULT_AUTOPILOT_CONFIG
  * (enabled=false — fail-safe, never auto-execute on missing config).
+ *
+ * v8.31: Also loads the 6 new fields (aggressiveConfirmedAt, anomalySuspended,
+ * anomalySuspendedAt, anomalyReason, hourlyExecCount, hourlyWindowStart) so the
+ * AutoPilotStats response surfaces them for the UI mode selector + anomaly banner.
  */
 export async function loadAutoPilotConfig(): Promise<AutoPilotConfig> {
   const db = getFreshDb();
@@ -187,7 +278,16 @@ export async function loadAutoPilotConfig(): Promise<AutoPilotConfig> {
       autoPilotDailyLimit: number;
       autoPilotDailyBudgetEUR: number;
       autoPilotLastRunAt: string | Date | null;
-    }>>`SELECT autoPilotEnabled, autoPilotMode, autoPilotDailyLimit, autoPilotDailyBudgetEUR, autoPilotLastRunAt FROM Settings WHERE id = 'singleton' LIMIT 1`;
+      autoPilotAggressiveConfirmedAt: string | Date | null;
+      autoPilotAnomalySuspended: number | boolean;
+      autoPilotAnomalySuspendedAt: string | Date | null;
+      autoPilotAnomalyReason: string | null;
+      autoPilotHourlyExecCount: number;
+      autoPilotHourlyWindowStart: string | Date | null;
+    }>>`SELECT autoPilotEnabled, autoPilotMode, autoPilotDailyLimit, autoPilotDailyBudgetEUR, autoPilotLastRunAt,
+               autoPilotAggressiveConfirmedAt, autoPilotAnomalySuspended, autoPilotAnomalySuspendedAt, autoPilotAnomalyReason,
+               autoPilotHourlyExecCount, autoPilotHourlyWindowStart
+        FROM Settings WHERE id = 'singleton' LIMIT 1`;
     if (rows.length === 0) return { ...DEFAULT_AUTOPILOT_CONFIG };
     const r = rows[0];
     const mode: 'safe' | 'aggressive' =
@@ -195,6 +295,23 @@ export async function loadAutoPilotConfig(): Promise<AutoPilotConfig> {
         ? 'aggressive'
         : 'safe';
     const lastRunAtRaw = r.autoPilotLastRunAt;
+    const aggressiveConfirmedAtRaw = r.autoPilotAggressiveConfirmedAt;
+    const anomalySuspendedAtRaw = r.autoPilotAnomalySuspendedAt;
+    const hourlyWindowStartRaw = r.autoPilotHourlyWindowStart;
+
+    // v8.31: If hourly window is older than 1 hour, treat counter as stale (0).
+    // This is a soft check at READ time — the authoritative reset happens in
+    // incrementHourlyCounter() / checkAnomaly() which writes back to DB. Here
+    // we just expose a "fresh" view for the UI without mutating state.
+    let hourlyExecCount = Number(r.autoPilotHourlyExecCount) || 0;
+    let hourlyWindowStart =
+      hourlyWindowStartRaw == null ? null : new Date(hourlyWindowStartRaw as string);
+    if (hourlyWindowStart && Date.now() - hourlyWindowStart.getTime() > 60 * 60 * 1000) {
+      // Stale window — expose as 0 (DB will be reset on next increment/check).
+      hourlyExecCount = 0;
+      hourlyWindowStart = null;
+    }
+
     return {
       enabled: Boolean(r.autoPilotEnabled),
       mode,
@@ -207,6 +324,16 @@ export async function loadAutoPilotConfig(): Promise<AutoPilotConfig> {
           ? Number(r.autoPilotDailyBudgetEUR)
           : DEFAULT_AUTOPILOT_CONFIG.dailyBudgetEUR,
       lastRunAt: lastRunAtRaw == null ? null : new Date(lastRunAtRaw as string),
+      // v8.31 new fields:
+      aggressiveConfirmedAt:
+        aggressiveConfirmedAtRaw == null ? null : new Date(aggressiveConfirmedAtRaw as string),
+      anomalySuspended: Boolean(r.autoPilotAnomalySuspended),
+      anomalySuspendedAt:
+        anomalySuspendedAtRaw == null ? null : new Date(anomalySuspendedAtRaw as string),
+      anomalyReason:
+        r.autoPilotAnomalyReason == null ? null : String(r.autoPilotAnomalyReason),
+      hourlyExecCount,
+      hourlyWindowStart,
     };
   } catch (err: any) {
     logger.warn('loadAutoPilotConfig', 'failed to load, using DEFAULT (disabled)', err);
@@ -337,6 +464,513 @@ export function checkAutoPilotEligibility(
   return { draft, canAutoExecute, reasons };
 }
 
+// --- v8.31: Mode-aware eligibility check (V2) --------------------------------
+
+/**
+ * v8.31: Check if a single draft can be auto-executed with mode-aware rules.
+ *
+ * Differences from V1 (checkAutoPilotEligibility):
+ *   - safe mode: confidence=LOW only, uplift <100€, limit 5, budget 500€
+ *   - aggressive mode: confidence=LOW or MEDIUM, uplift <300€, limit 10, budget 2000€
+ *   - BOTH modes: domain != 'risk', HIGH confidence ALWAYS excluded (manual only)
+ *
+ * The `reasons` array always has exactly 8 entries (one per rule), each prefixed
+ * with either "PASS:" or "FAIL:" for easy audit. The mode + threshold used is
+ * included in each reason so the audit trail is self-explanatory.
+ *
+ * `canAutoExecute` is true iff ALL 8 reasons start with "PASS:".
+ *
+ * NOTE: V1 (checkAutoPilotEligibility) is kept for backward-compat / external
+ * callers. Internally, runSafeAutoPilot (v8.31) uses V2.
+ */
+export function checkAutoPilotEligibilityV2(
+  draft: ActionDraft,
+  config: AutoPilotConfig,
+  userRiskTolerance: 'conservative' | 'balanced' | 'aggressive',
+  todayAutoExecutedCount: number,
+  todayAutoExecutedBudgetUsed: number,
+): AutoPilotCandidateCheck {
+  const reasons: string[] = [];
+  const isAggressive = config.mode === 'aggressive';
+  // Pick thresholds based on mode. For safe mode, use SAFE_CONFIG. For aggressive,
+  // use AGGRESSIVE_CONFIG. The hourly anomaly threshold is the same in both
+  // (8) — kept in the threshold object for consistency but not enforced here.
+  const thresholds = isAggressive
+    ? {
+        maxDailyLimit: AGGRESSIVE_CONFIG.maxDailyLimit,
+        maxDailyBudgetEUR: AGGRESSIVE_CONFIG.maxDailyBudgetEUR,
+        maxUpliftEUR: AGGRESSIVE_CONFIG.maxUpliftEUR,
+        allowedConfidence: AGGRESSIVE_CONFIG.allowedConfidence,
+      }
+    : {
+        maxDailyLimit: SAFE_CONFIG.maxDailyLimit,
+        maxDailyBudgetEUR: SAFE_CONFIG.maxDailyBudgetEUR,
+        maxUpliftEUR: SAFE_CONFIG.maxUpliftEUR,
+        allowedConfidence: SAFE_CONFIG.allowedConfidence,
+      };
+
+  // Rule 1: enabled
+  if (!config.enabled) {
+    reasons.push('FAIL: auto-pilot is disabled');
+  } else {
+    reasons.push('PASS: auto-pilot enabled');
+  }
+
+  // Rule 2: mode (V2 accepts both 'safe' and 'aggressive')
+  if (config.mode !== 'safe' && config.mode !== 'aggressive') {
+    reasons.push(`FAIL: mode is '${config.mode}' (must be 'safe' or 'aggressive')`);
+  } else {
+    reasons.push(`PASS: mode is ${config.mode}`);
+  }
+
+  // Rule 3: risk tolerance != conservative (still enforced in BOTH modes)
+  if (userRiskTolerance === 'conservative') {
+    reasons.push('FAIL: user risk tolerance is conservative (auto-pilot disabled for conservative users)');
+  } else {
+    reasons.push(`PASS: risk tolerance ${userRiskTolerance}`);
+  }
+
+  // Rule 4: confidence (mode-aware — HIGH always excluded)
+  if (!thresholds.allowedConfidence.includes(draft.confidence as any)) {
+    reasons.push(
+      `FAIL: confidence ${draft.confidence} not in [${thresholds.allowedConfidence.join(',')}] (${config.mode} mode)`,
+    );
+  } else {
+    reasons.push(`PASS: confidence ${draft.confidence} allowed in ${config.mode} mode`);
+  }
+
+  // Rule 5: uplift (mode-aware threshold)
+  if (draft.expectedUpliftEUR >= thresholds.maxUpliftEUR) {
+    reasons.push(
+      `FAIL: uplift ${draft.expectedUpliftEUR}€ >= ${thresholds.maxUpliftEUR}€ (${config.mode} threshold)`,
+    );
+  } else {
+    reasons.push(
+      `PASS: uplift ${draft.expectedUpliftEUR}€ < ${thresholds.maxUpliftEUR}€ (${config.mode} threshold)`,
+    );
+  }
+
+  // Rule 6: domain != risk (still enforced in BOTH modes)
+  if (draft.domain === 'risk') {
+    reasons.push('FAIL: domain is risk (risk mitigation needs human judgment)');
+  } else {
+    reasons.push(`PASS: domain ${draft.domain} (not risk)`);
+  }
+
+  // Rule 7: daily limit (mode-aware)
+  const limit = thresholds.maxDailyLimit;
+  if (todayAutoExecutedCount >= limit) {
+    reasons.push(`FAIL: daily limit ${todayAutoExecutedCount}/${limit} reached (${config.mode})`);
+  } else {
+    reasons.push(`PASS: daily limit ${todayAutoExecutedCount}/${limit} OK (${config.mode})`);
+  }
+
+  // Rule 8: daily budget (mode-aware)
+  const budget = thresholds.maxDailyBudgetEUR;
+  if (todayAutoExecutedBudgetUsed + draft.expectedUpliftEUR > budget) {
+    reasons.push(
+      `FAIL: budget ${todayAutoExecutedBudgetUsed}€ + ${draft.expectedUpliftEUR}€ > ${budget}€ (${config.mode})`,
+    );
+  } else {
+    reasons.push(
+      `PASS: budget ${todayAutoExecutedBudgetUsed}€ + ${draft.expectedUpliftEUR}€ <= ${budget}€ (${config.mode})`,
+    );
+  }
+
+  const canAutoExecute = reasons.every((r) => r.startsWith('PASS'));
+  return { draft, canAutoExecute, reasons };
+}
+
+// --- v8.31: Anomaly detection -----------------------------------------------
+
+/**
+ * v8.31: Check if auto-pilot should be suspended due to anomaly.
+ *
+ * Triggers if the hourly execution counter exceeds the anomaly threshold
+ * (default 8 from AGGRESSIVE_CONFIG.anomalyHourlyThreshold — same in both modes).
+ *
+ * If the hourly window is older than 1 hour, the counter is RESET (no anomaly).
+ * This makes the counter a ROLLING 1-hour window: stale windows are not anomalies.
+ *
+ * Side effects:
+ *   - If anomaly detected: writes autoPilotAnomalySuspended=true,
+ *     autoPilotAnomalySuspendedAt=now, autoPilotAnomalyReason="N akcij v 1 uri —
+ *     possible loop" to Settings (PERSISTS suspension — requires manual clear).
+ *   - If window expired (older than 1h): resets counter to 0 + windowStart=now
+ *     (so future increments start fresh — but only resets the WINDOW, not the
+ *     suspension if already suspended).
+ *
+ * Returns:
+ *   { anomaly: true, reason } if suspended (either newly or already)
+ *   { anomaly: false, reason: null } if OK to proceed
+ */
+export async function checkAnomaly(): Promise<{ anomaly: boolean; reason: string | null }> {
+  const db = getFreshDb();
+  try {
+    const rows = await db.$queryRaw<Array<{
+      autoPilotAnomalySuspended: number | boolean;
+      autoPilotHourlyExecCount: number;
+      autoPilotHourlyWindowStart: string | Date | null;
+    }>>`SELECT autoPilotAnomalySuspended, autoPilotHourlyExecCount, autoPilotHourlyWindowStart FROM Settings WHERE id = 'singleton' LIMIT 1`;
+    if (rows.length === 0) {
+      // No Settings row yet — no anomaly possible.
+      return { anomaly: false, reason: null };
+    }
+    const r = rows[0];
+
+    // If already suspended, return anomaly=true (with existing reason fetched below).
+    if (Boolean(r.autoPilotAnomalySuspended)) {
+      const reasonRows = await db.$queryRaw<Array<{ autoPilotAnomalyReason: string | null }>>`
+        SELECT autoPilotAnomalyReason FROM Settings WHERE id = 'singleton' LIMIT 1
+      `;
+      const reason = reasonRows[0]?.autoPilotAnomalyReason ?? 'Auto-pilot suspended (anomaly)';
+      return { anomaly: true, reason };
+    }
+
+    const count = Number(r.autoPilotHourlyExecCount) || 0;
+    const windowStartRaw = r.autoPilotHourlyWindowStart;
+    const now = Date.now();
+
+    // No window yet → counter is 0 → no anomaly.
+    if (windowStartRaw == null) {
+      return { anomaly: false, reason: null };
+    }
+
+    const windowStart = new Date(windowStartRaw as string).getTime();
+    const windowAgeMs = now - windowStart;
+    const oneHourMs = 60 * 60 * 1000;
+
+    // Stale window (older than 1 hour) — reset counter, no anomaly.
+    if (windowAgeMs > oneHourMs) {
+      await db.$executeRaw`
+        UPDATE Settings
+        SET autoPilotHourlyExecCount = 0,
+            autoPilotHourlyWindowStart = NULL,
+            updatedAt = ${new Date().toISOString()}
+        WHERE id = 'singleton'
+      `;
+      return { anomaly: false, reason: null };
+    }
+
+    // Active window — check if count exceeds threshold.
+    if (count >= AGGRESSIVE_CONFIG.anomalyHourlyThreshold) {
+      const reason = `${count} akcij v 1 uri — possible loop`;
+      await db.$executeRaw`
+        UPDATE Settings
+        SET autoPilotAnomalySuspended = 1,
+            autoPilotAnomalySuspendedAt = ${new Date().toISOString()},
+            autoPilotAnomalyReason = ${reason},
+            updatedAt = ${new Date().toISOString()}
+        WHERE id = 'singleton'
+      `;
+      logger.warn('checkAnomaly', `anomaly detected — suspending auto-pilot (${reason})`, {
+        count,
+        windowStart: new Date(windowStart).toISOString(),
+      });
+      return { anomaly: true, reason };
+    }
+
+    return { anomaly: false, reason: null };
+  } catch (err: any) {
+    logger.error('checkAnomaly', 'failed — treating as no anomaly (fail-open)', err);
+    return { anomaly: false, reason: null };
+  } finally {
+    await db.$disconnect().catch(() => {});
+  }
+}
+
+/**
+ * v8.31: Increment the hourly execution counter after each auto-execution.
+ *
+ * Logic:
+ *   1. Load current window (autoPilotHourlyWindowStart) + count.
+ *   2. If window is null OR expired (>1h old): reset count=1, windowStart=now.
+ *   3. Else: count++.
+ *   4. If count >= AGGRESSIVE_CONFIG.anomalyHourlyThreshold (8) → suspend
+ *      auto-pilot (set autoPilotAnomalySuspended=true + suspendedAt + reason).
+ *
+ * Returns the new count + whether suspension was triggered (or was already active).
+ */
+export async function incrementHourlyCounter(): Promise<{
+  count: number;
+  suspended: boolean;
+  suspendedNow: boolean;
+  reason: string | null;
+}> {
+  const db = getFreshDb();
+  const nowIso = new Date().toISOString();
+  try {
+    const rows = await db.$queryRaw<Array<{
+      autoPilotHourlyExecCount: number;
+      autoPilotHourlyWindowStart: string | Date | null;
+      autoPilotAnomalySuspended: number | boolean;
+    }>>`SELECT autoPilotHourlyExecCount, autoPilotHourlyWindowStart, autoPilotAnomalySuspended FROM Settings WHERE id = 'singleton' LIMIT 1`;
+    if (rows.length === 0) {
+      // No Settings row — INSERT one with count=1.
+      await db.$executeRaw`
+        INSERT INTO Settings (id, autoPilotHourlyExecCount, autoPilotHourlyWindowStart)
+        VALUES ('singleton', 1, ${nowIso})
+      `;
+      return { count: 1, suspended: false, suspendedNow: false, reason: null };
+    }
+    const r = rows[0];
+    const currentCount = Number(r.autoPilotHourlyExecCount) || 0;
+    const windowStartRaw = r.autoPilotHourlyWindowStart;
+    const now = Date.now();
+    const oneHourMs = 60 * 60 * 1000;
+
+    let newCount: number;
+    let newWindowStart: string;
+
+    if (windowStartRaw == null) {
+      // No window — start fresh.
+      newCount = 1;
+      newWindowStart = nowIso;
+    } else {
+      const windowStart = new Date(windowStartRaw as string).getTime();
+      if (now - windowStart > oneHourMs) {
+        // Stale window — reset.
+        newCount = 1;
+        newWindowStart = nowIso;
+      } else {
+        // Active window — increment.
+        newCount = currentCount + 1;
+        newWindowStart = new Date(windowStart).toISOString();
+      }
+    }
+
+    // Persist counter + window.
+    await db.$executeRaw`
+      UPDATE Settings
+      SET autoPilotHourlyExecCount = ${newCount},
+          autoPilotHourlyWindowStart = ${newWindowStart},
+          updatedAt = ${nowIso}
+      WHERE id = 'singleton'
+    `;
+
+    // Check if threshold reached → suspend.
+    if (newCount >= AGGRESSIVE_CONFIG.anomalyHourlyThreshold) {
+      const reason = `${newCount} akcij v 1 uri — possible loop`;
+      await db.$executeRaw`
+        UPDATE Settings
+        SET autoPilotAnomalySuspended = 1,
+            autoPilotAnomalySuspendedAt = ${nowIso},
+            autoPilotAnomalyReason = ${reason},
+            updatedAt = ${nowIso}
+        WHERE id = 'singleton'
+      `;
+      logger.warn('incrementHourlyCounter', `anomaly threshold reached — suspending auto-pilot (${reason})`, {
+        newCount,
+        threshold: AGGRESSIVE_CONFIG.anomalyHourlyThreshold,
+      });
+      return { count: newCount, suspended: true, suspendedNow: true, reason };
+    }
+
+    return {
+      count: newCount,
+      suspended: Boolean(r.autoPilotAnomalySuspended),
+      suspendedNow: false,
+      reason: null,
+    };
+  } catch (err: any) {
+    logger.error('incrementHourlyCounter', 'failed — counter not incremented', err);
+    return { count: 0, suspended: false, suspendedNow: false, reason: null };
+  } finally {
+    await db.$disconnect().catch(() => {});
+  }
+}
+
+/**
+ * v8.31: Enable aggressive mode — requires DOUBLE CONFIRMATION.
+ *
+ * Flow:
+ *   - First call: sets autoPilotAggressiveConfirmedAt=now (pending confirmation).
+ *     Returns { confirmed: false, message: 'Potrdi ponovno v 5 minutah za aggressive mode' }.
+ *   - Second call within 5 minutes: sets autoPilotMode='aggressive', clears
+ *     confirmedAt. Returns { confirmed: true, message: 'Aggressive mode omogočen' }.
+ *   - After 5 minutes: confirmation expires — must re-confirm (treated as first call).
+ *
+ * Also requires: enabled=true (auto-pilot must be ON to enable aggressive mode —
+ * fail-safe). If disabled, returns error.
+ */
+export async function enableAggressiveMode(): Promise<{
+  ok: true;
+  confirmed: boolean;
+  message: string;
+  confirmedAt?: string;
+}> {
+  const db = getFreshDb();
+  const nowIso = new Date().toISOString();
+  const now = Date.now();
+  try {
+    const rows = await db.$queryRaw<Array<{
+      autoPilotEnabled: number | boolean;
+      autoPilotAggressiveConfirmedAt: string | Date | null;
+    }>>`SELECT autoPilotEnabled, autoPilotAggressiveConfirmedAt FROM Settings WHERE id = 'singleton' LIMIT 1`;
+
+    if (rows.length === 0) {
+      // No Settings row — INSERT singleton with confirmedAt=now (first call).
+      await db.$executeRaw`
+        INSERT INTO Settings (id, autoPilotEnabled, autoPilotAggressiveConfirmedAt)
+        VALUES ('singleton', 0, ${nowIso})
+      `;
+      return {
+        ok: true,
+        confirmed: false,
+        message: 'Potrdi ponovno v 5 minutah za aggressive mode (auto-pilot je trenutno IZKLJUČEN — ga najprej vklopi).',
+        confirmedAt: nowIso,
+      };
+    }
+    const r = rows[0];
+
+    if (!Boolean(r.autoPilotEnabled)) {
+      // Auto-pilot must be enabled first.
+      return {
+        ok: true,
+        confirmed: false,
+        message: 'Najprej vklopi auto-pilot (master switch OFF). Aggressive mode zahteva aktiven auto-pilot.',
+      };
+    }
+
+    const confirmedAtRaw = r.autoPilotAggressiveConfirmedAt;
+    if (confirmedAtRaw == null) {
+      // First call — set pending confirmation.
+      await db.$executeRaw`
+        UPDATE Settings
+        SET autoPilotAggressiveConfirmedAt = ${nowIso},
+            updatedAt = ${nowIso}
+        WHERE id = 'singleton'
+      `;
+      logger.info('enableAggressiveMode', 'first confirmation set — awaiting second click within 5 min');
+      return {
+        ok: true,
+        confirmed: false,
+        message: '⚠️ Aggressive mode dovoli MEDIUM confidence. Potrdi ponovno v 5 minutah.',
+        confirmedAt: nowIso,
+      };
+    }
+
+    const confirmedAt = new Date(confirmedAtRaw as string).getTime();
+    const ageMs = now - confirmedAt;
+    if (ageMs > AGGRESSIVE_CONFIRM_WINDOW_MS) {
+      // Confirmation expired — set new pending confirmation.
+      await db.$executeRaw`
+        UPDATE Settings
+        SET autoPilotAggressiveConfirmedAt = ${nowIso},
+            updatedAt = ${nowIso}
+        WHERE id = 'singleton'
+      `;
+      logger.info('enableAggressiveMode', 'previous confirmation expired — new one set');
+      return {
+        ok: true,
+        confirmed: false,
+        message: 'Prejšnja potrditev je potekla. Potrdi ponovno v 5 minutah za aggressive mode.',
+        confirmedAt: nowIso,
+      };
+    }
+
+    // Second call within 5 minutes — CONFIRM aggressive mode.
+    await db.$executeRaw`
+      UPDATE Settings
+      SET autoPilotMode = 'aggressive',
+          autoPilotAggressiveConfirmedAt = NULL,
+          autoPilotAnomalySuspended = 0,
+          autoPilotAnomalySuspendedAt = NULL,
+          autoPilotAnomalyReason = NULL,
+          updatedAt = ${nowIso}
+      WHERE id = 'singleton'
+    `;
+    logger.info('enableAggressiveMode', 'aggressive mode CONFIRMED + anomaly suspension cleared');
+    return {
+      ok: true,
+      confirmed: true,
+      message: '✅ Aggressive mode omogočen — dovoljena MEDIUM confidence (do 300€ uplift, 10/dan, 2000€/dan budget). HIGH je še vedno vedno manual.',
+    };
+  } catch (err: any) {
+    logger.error('enableAggressiveMode', 'failed', err);
+    throw err;
+  } finally {
+    await db.$disconnect().catch(() => {});
+  }
+}
+
+/**
+ * v8.31: Disable aggressive mode — immediately reverts to 'safe'.
+ * Single call (no confirmation needed — fail-safe: easier to disable than enable).
+ * Also clears any pending aggressive confirmation.
+ */
+export async function disableAggressiveMode(): Promise<{ ok: true; mode: string }> {
+  const db = getFreshDb();
+  const nowIso = new Date().toISOString();
+  try {
+    const result = await db.$executeRaw`
+      UPDATE Settings
+      SET autoPilotMode = 'safe',
+          autoPilotAggressiveConfirmedAt = NULL,
+          updatedAt = ${nowIso}
+      WHERE id = 'singleton'
+    `;
+    if (result === 0) {
+      // Singleton doesn't exist — INSERT with safe mode.
+      await db.$executeRaw`
+        INSERT INTO Settings (id, autoPilotMode)
+        VALUES ('singleton', 'safe')
+      `;
+    }
+    logger.info('disableAggressiveMode', 'aggressive mode disabled — reverted to safe');
+    return { ok: true, mode: 'safe' };
+  } catch (err: any) {
+    logger.error('disableAggressiveMode', 'failed', err);
+    throw err;
+  } finally {
+    await db.$disconnect().catch(() => {});
+  }
+}
+
+/**
+ * v8.31: Clear anomaly suspension — user manually re-enables after reviewing.
+ *
+ * Resets: autoPilotAnomalySuspended=false, anomalySuspendedAt=null,
+ * anomalyReason=null, AND resets the hourly counter (count=0, windowStart=null)
+ * so a fresh window starts.
+ *
+ * Does NOT change autoPilotEnabled or autoPilotMode — user can independently
+ * re-toggle those via the existing config actions.
+ */
+export async function clearAnomalySuspension(): Promise<{ ok: true; message: string }> {
+  const db = getFreshDb();
+  const nowIso = new Date().toISOString();
+  try {
+    const result = await db.$executeRaw`
+      UPDATE Settings
+      SET autoPilotAnomalySuspended = 0,
+          autoPilotAnomalySuspendedAt = NULL,
+          autoPilotAnomalyReason = NULL,
+          autoPilotHourlyExecCount = 0,
+          autoPilotHourlyWindowStart = NULL,
+          updatedAt = ${nowIso}
+      WHERE id = 'singleton'
+    `;
+    if (result === 0) {
+      // Singleton doesn't exist — INSERT fresh.
+      await db.$executeRaw`
+        INSERT INTO Settings (id, autoPilotAnomalySuspended, autoPilotHourlyExecCount)
+        VALUES ('singleton', 0, 0)
+      `;
+    }
+    logger.info('clearAnomalySuspension', 'anomaly suspension cleared + hourly counter reset');
+    return {
+      ok: true,
+      message: '✅ Suspenzija razveljavljena. Auto-pilot lahko ponovno deluje (hourly counter resetiran).',
+    };
+  } catch (err: any) {
+    logger.error('clearAnomalySuspension', 'failed', err);
+    throw err;
+  } finally {
+    await db.$disconnect().catch(() => {});
+  }
+}
+
 // --- Today stats helper ----------------------------------------------------
 
 /**
@@ -407,6 +1041,36 @@ export async function runSafeAutoPilot(): Promise<AutoPilotRunResult> {
     };
   }
 
+  // v8.31: Anomaly detection — if auto-pilot is suspended (either pre-existing
+  // or just triggered), return early with anomaly warning. User must explicitly
+  // call clearAnomalySuspension() to re-enable.
+  const anomalyCheck = await checkAnomaly();
+  if (anomalyCheck.anomaly) {
+    logger.warn('runSafeAutoPilot', 'auto-pilot is SUSPENDED due to anomaly — returning early', {
+      reason: anomalyCheck.reason,
+    });
+    // Reload config to get the latest anomaly fields for the response.
+    const suspendedConfig = await loadAutoPilotConfig();
+    return {
+      ok: true,
+      config: suspendedConfig,
+      checked: 0,
+      autoExecuted: 0,
+      skipped: 0,
+      executedDrafts: [],
+      skippedDrafts: [],
+      todayStats: {
+        autoExecuted: 0,
+        budgetUsed: 0,
+        budgetRemaining: suspendedConfig.dailyBudgetEUR,
+        limitRemaining: suspendedConfig.dailyLimit,
+      },
+      anomalySuspended: true,
+      anomalyReason: anomalyCheck.reason,
+      source: 'v8.30-safe-auto-pilot',
+    };
+  }
+
   // 2. Load user risk tolerance (v8.24) — conservative users never get auto-pilot
   const userRiskTolerance = await loadUserRiskTolerance();
 
@@ -449,9 +1113,25 @@ export async function runSafeAutoPilot(): Promise<AutoPilotRunResult> {
     const executedDrafts: AutoPilotRunResult['executedDrafts'] = [];
     const skippedDrafts: AutoPilotRunResult['skippedDrafts'] = [];
 
-    // 5. For each pending draft, check eligibility + auto-execute if eligible
+    // v8.31: Tracks if anomaly was triggered MID-RUN (counter exceeded threshold).
+    // If so, remaining pending drafts are marked as skipped with anomaly reason.
+    let anomalyTriggeredMidRun = false;
+    let anomalyReasonMidRun: string | null = null;
+
+    // 5. For each pending draft, check eligibility (V2 — mode-aware) + auto-execute if eligible
     for (const draft of pendingDrafts) {
-      const check = checkAutoPilotEligibility(
+      // If anomaly was triggered mid-run, skip remaining drafts with anomaly reason.
+      if (anomalyTriggeredMidRun) {
+        skippedDrafts.push({
+          id: draft.id,
+          action: draft.action,
+          reasons: [`FAIL: auto-pilot suspended mid-run (anomaly: ${anomalyReasonMidRun ?? 'unknown'})`],
+        });
+        continue;
+      }
+
+      // v8.31: V2 — mode-aware eligibility check.
+      const check = checkAutoPilotEligibilityV2(
         draft,
         config,
         userRiskTolerance,
@@ -495,6 +1175,18 @@ export async function runSafeAutoPilot(): Promise<AutoPilotRunResult> {
             todayCount,
             todayBudget,
           });
+
+          // v8.31: Increment hourly counter. If this triggered suspension, mark
+          // flag so remaining drafts in this loop are skipped.
+          const counterResult = await incrementHourlyCounter();
+          if (counterResult.suspendedNow) {
+            anomalyTriggeredMidRun = true;
+            anomalyReasonMidRun = counterResult.reason;
+            logger.warn('runSafeAutoPilot', 'anomaly triggered mid-run — skipping remaining drafts', {
+              count: counterResult.count,
+              reason: counterResult.reason,
+            });
+          }
         } catch (err: any) {
           // Auto-execution failed for this draft — log + skip to next.
           // Don't throw (one bad draft shouldn't kill the whole run).
@@ -525,11 +1217,16 @@ export async function runSafeAutoPilot(): Promise<AutoPilotRunResult> {
       skipped: skippedDrafts.length,
       todayCount,
       todayBudget,
+      anomalyTriggeredMidRun,
     });
+
+    // Reload config to get the latest hourlyExecCount + anomalySuspended state
+    // (incrementHourlyCounter may have set suspended=true mid-run).
+    const finalConfig = anomalyTriggeredMidRun ? await loadAutoPilotConfig() : updatedConfig;
 
     return {
       ok: true,
-      config: updatedConfig,
+      config: finalConfig,
       checked: pendingDrafts.length,
       autoExecuted: executedDrafts.length,
       skipped: skippedDrafts.length,
@@ -541,6 +1238,8 @@ export async function runSafeAutoPilot(): Promise<AutoPilotRunResult> {
         budgetRemaining: Math.max(0, config.dailyBudgetEUR - todayBudget),
         limitRemaining: Math.max(0, config.dailyLimit - todayCount),
       },
+      anomalySuspended: anomalyTriggeredMidRun,
+      anomalyReason: anomalyReasonMidRun,
       source: 'v8.30-safe-auto-pilot',
     };
   } catch (err: any) {
@@ -725,10 +1424,13 @@ export async function getAutoPilotStats(): Promise<AutoPilotStats> {
  * Accepts a Partial<AutoPilotConfig> — unspecified fields retain their
  * current value (loaded from DB first). Returns the merged config.
  *
- * NOTE: 'aggressive' mode is accepted by this function (forward-compat) but
- * runSafeAutoPilot() will refuse to auto-execute when mode !== 'safe' (rule 2
- * fails). So setting mode='aggressive' is a no-op for now — kept so the UI
- * can show it as "coming v8.31" and persist user intent.
+ * v8.31: The 'mode' field is NOT accepted here anymore — the API route
+ * strips it out. Mode changes go through enableAggressiveMode() /
+ * disableAggressiveMode() which implement the double-confirmation safety flow.
+ * If 'mode' is somehow passed here, it's silently ignored (current value
+ * retained). The v8.31 new fields (aggressiveConfirmedAt, anomalySuspended,
+ * etc.) are ALSO never overwritten here — they're managed exclusively by
+ * enable/disable/clearAnomaly/incrementHourlyCounter functions.
  */
 export async function updateAutoPilotConfig(
   updates: Partial<AutoPilotConfig>,
@@ -755,6 +1457,16 @@ export async function updateAutoPilotConfig(
         ? Math.min(10000, Math.max(10, Math.round(updates.dailyBudgetEUR)))
         : current.dailyBudgetEUR,
     lastRunAt: current.lastRunAt, // never overwritten by update (only by runSafeAutoPilot)
+    // v8.31 fields are NEVER overwritten by updateAutoPilotConfig — they're
+    // managed exclusively by enableAggressiveMode / disableAggressiveMode /
+    // clearAnomalySuspension / incrementHourlyCounter. Here we just preserve
+    // the current values (loaded above).
+    aggressiveConfirmedAt: current.aggressiveConfirmedAt,
+    anomalySuspended: current.anomalySuspended,
+    anomalySuspendedAt: current.anomalySuspendedAt,
+    anomalyReason: current.anomalyReason,
+    hourlyExecCount: current.hourlyExecCount,
+    hourlyWindowStart: current.hourlyWindowStart,
   };
 
   await saveAutoPilotConfig(merged);

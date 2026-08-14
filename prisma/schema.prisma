@@ -148,6 +148,18 @@ model Settings {
   autoPilotDailyLimit    Int      @default(5)    // max auto-executions per day
   autoPilotDailyBudgetEUR Float   @default(500)   // max total expectedUpliftEUR per day
   autoPilotLastRunAt     DateTime?              // last time auto-pilot ran (cron or manual)
+  // v8.31: Aggressive Auto-pilot + Anomaly detection — AUTOMATION PHASE COMPLETE.
+  // Aggressive mode (opt-in, double confirmation): allows MEDIUM confidence too
+  // (HIGH always manual in BOTH modes), higher limits (10/day, 2000€/day),
+  // uplift < 300€. Domain != 'risk' still enforced in both modes.
+  // Anomaly detection: if >8 auto-executions in 1 hour → suspend auto-pilot
+  // (possible loop), requires manual re-enable via clearAnomalySuspension().
+  autoPilotAggressiveConfirmedAt DateTime?  // when user double-confirmed aggressive mode
+  autoPilotAnomalySuspended      Boolean   @default(false)  // true if anomaly detection suspended auto-pilot
+  autoPilotAnomalySuspendedAt     DateTime?  // when anomaly was triggered
+  autoPilotAnomalyReason         String?    // why suspended (e.g. "8 akcij v 1 uri — possible loop")
+  autoPilotHourlyExecCount       Int       @default(0)  // count of executions in current hour window
+  autoPilotHourlyWindowStart     DateTime?  // start of current 1-hour window
   // Metadata
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt

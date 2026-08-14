@@ -16283,3 +16283,170 @@ Stage Summary:
   - v8.30 = Safe Auto-pilot (LOW risk only, 8 safety rules, rollback)
   - Naslednji: v8.31 (Aggressive Auto-pilot — opt-in, executes MEDIUM risk too)
 - Skupaj doslej (v7.50 → v8.30): 80 verzij, 204 nove funkcije; Brain architecture COMPLETE (v8.22) + Validation phase ZAKLJUČENA (v8.23-v8.25) + Intelligence phase ZAKLJUČENA (v8.26-v8.29) + Automation phase STARTED (v8.30)
+
+---
+Task ID: v8.31
+Agent: full-stack-developer
+Task: Implement Aggressive Auto-pilot + Anomaly Detection — Automation phase COMPLETE
+
+Work Log:
+- Branje worklog.md (zadnji v8.30.1 entry — Automation phase STARTED z v8.30 Safe Auto-pilot)
+- Branje src/lib/brain/auto-pilot.ts COMPLETELY (v8.30: loadAutoPilotConfig, saveAutoPilotConfig, checkAutoPilotEligibility (8 safety rules pure function), runSafeAutoPilot (fetches pending drafts, checks each, auto-executes eligible via updateDraftStatus), rollbackAutoExecution, getAutoPilotStats, updateAutoPilotConfig, getAutoExecutedHistory; getFreshDb() pattern + raw SQL)
+- Branje src/app/api/ai/brain/auto-pilot/route.ts (v8.30: GET stats + POST 2 akciji run/config)
+- Branje src/components/dashboard/ai-hub-view.tsx AutoPilotCard (v8.30: master switch + config sliders + mode selector z Safe active + Aggressive v8.31 disabled + today/all-time stats + run button + history modal + safety info box)
+- Branje prisma/schema.prisma Settings model (v8.30: autoPilotEnabled, autoPilotMode, autoPilotDailyLimit, autoPilotDailyBudgetEUR, autoPilotLastRunAt)
+- Branje src/lib/db.ts (SCHEMA_VERSION='v8.30-auto-pilot' — bumped za discard stale PrismaClient)
+- Preveril dev.log (dev server teče na :3000, brez v8.31 napak — prejšnje rollback 404/400 testi so pričakovani)
+- Step 1: prisma/schema.prisma — Settings +6 novih polj: autoPilotAggressiveConfirmedAt (DateTime?), autoPilotAnomalySuspended (Boolean @default(false)), autoPilotAnomalySuspendedAt (DateTime?), autoPilotAnomalyReason (String?), autoPilotHourlyExecCount (Int @default(0)), autoPilotHourlyWindowStart (DateTime?). Komentar zgoraj dodan z v8.31 opisom.
+- Step 2: bun run db:push — "The database is now in sync with the Prisma schema." Done in 22ms. Prisma Client regeneriran v 266ms. Verificirano preko PRAGMA table_info: 6 novih Settings columns (autoPilotAggressiveConfirmedAt, autoPilotAnomalySuspended, autoPilotAnomalySuspendedAt, autoPilotAnomalyReason, autoPilotHourlyExecCount, autoPilotHourlyWindowStart) prisotnih v SQLite + obstoječih 5 v8.30 columns nedotaknjenih.
+- Step 3: src/lib/db.ts — SCHEMA_VERSION bump v8.30-auto-pilot → v8.31-aggressive-anomaly (discard-a stale PrismaClient v globalThis cache za nova Settings polja). Console.log banner prav tako posodobljen.
+- Step 4: src/lib/brain/auto-pilot.ts — EXTENDED (NE replace-a file, added ~700 novih vrstic):
+  - EXTENDED AutoPilotConfig interface: dodana 6 nova polja (aggressiveConfirmedAt, anomalySuspended, anomalySuspendedAt, anomalyReason, hourlyExecCount, hourlyWindowStart)
+  - EXTENDED DEFAULT_AUTOPILOT_CONFIG: dodani safe defaults za nova polja (null/0/false)
+  - NEW constant AGGRESSIVE_CONFIG: {maxDailyLimit: 10, maxDailyBudgetEUR: 2000, maxUpliftEUR: 300, allowedConfidence: ['LOW', 'MEDIUM'] as const, anomalyHourlyThreshold: 8}
+  - NEW constant SAFE_CONFIG: {maxDailyLimit: 5, maxDailyBudgetEUR: 500, maxUpliftEUR: 100, allowedConfidence: ['LOW'] as const, anomalyHourlyThreshold: 8}
+  - NEW constant AGGRESSIVE_CONFIRM_WINDOW_MS = 5 * 60 * 1000 (5 minut)
+  - EXTENDED AutoPilotRunResult: dodan `anomalySuspended?: boolean` in `anomalyReason?: string | null` (populirano če anomaly triggered pre-run ali mid-run)
+  - MODIFIED loadAutoPilotConfig(): SELECT razširjen z 6 novimi columns; vrača nova polja v config objektu; SOFT READ-TIME check — če hourly window >1h star, expose-a kot 0 (DB reset se zgodi v incrementHourlyCounter/checkAnomaly)
+  - NEW checkAutoPilotEligibilityV2(): mode-aware 8 pravil — thresholds (limit, budget, uplift, allowedConfidence) se izbirajo glede na config.mode ('safe' ali 'aggressive'); vsak PASS/FAIL reason vključuje mode-specific threshold v besedilu (npr. "PASS: confidence MEDIUM allowed in aggressive mode" ali "FAIL: confidence MEDIUM not in [LOW] (safe mode)"); vrača 8 razlogov + canAutoExecute boolean
+  - NEW checkAnomaly(): load-a autoPilotAnomalySuspended + hourlyExecCount + hourlyWindowStart iz Settings; če že suspended vrača anomaly=true z obstoječim reason; če window >1h reset-a counter (rolling window); če count ≥ anomalyHourlyThreshold (8) suspendira (set-a anomalySuspended=true + suspendedAt + reason="N akcij v 1 uri — possible loop") in vrača anomaly=true; else vrača anomaly=false
+  - NEW incrementHourlyCounter(): load-a window + count; če null ali expired reset-a count=1 + windowStart=now; else count++; persist-a v Settings; če count ≥ threshold suspendira (anomalySuspended=true + reason); vrača {count, suspended, suspendedNow, reason} — suspendedNow=true pomeni da je bila suspension pravkar sprožena (mid-run detection)
+  - NEW enableAggressiveMode(): double confirmation flow — prvi call (no pending) set-a aggressiveConfirmedAt=now in vrača {confirmed:false, message:"⚠️ Aggressive mode dovoli MEDIUM confidence. Potrdi ponovno v 5 minutah.", confirmedAt}; drugi call znotraj 5 minut set-a autoPilotMode='aggressive' + clear-a aggressiveConfirmedAt + clear-a anomaly suspension (fresh start) in vrača {confirmed:true, message:"✅ Aggressive mode omogočen..."}; po 5 minutah confirmation poteče in seponovi kot first call; guard: requires autoPilotEnabled=true (master switch)
+  - NEW disableAggressiveMode(): immediately set-a autoPilotMode='safe' + clear-a aggressiveConfirmedAt; single call, no confirmation needed (fail-safe)
+  - NEW clearAnomalySuspension(): set-a anomalySuspended=false + clear-a suspendedAt + reason + reset-a hourlyExecCount=0 + windowStart=null; NE spremeni autoPilotEnabled ali autoPilotMode
+  - MODIFIED runSafeAutoPilot(): (1) po config load-a (če enabled) kliče checkAnomaly() — če suspended, return-a early z {ok:true, anomalySuspended:true, anomalyReason, ...} (NE proži auto-executions); (2) uporablja checkAutoPilotEligibilityV2() namesto V1 (mode-aware pravila); (3) po vsaki auto-execuciji kliče incrementHourlyCounter() — če suspendedNow=true, anomalyTriggeredMidRun flag se set-a in preostali pending drafts so označeni kot skipped z "FAIL: auto-pilot suspended mid-run (anomaly: ...)"; (4) če anomalyTriggeredMidRun, reload-a config pred return-om da se latest hourlyExecCount + anomalySuspended prikažejo v result
+  - MODIFIED updateAutoPilotConfig(): preserved nova polja iz current (NE overwrite-a jih — managed exclusively by enable/disable/clearAnomaly/incrementHourlyCounter); comment posodobljen da 'mode' field NI več accepted (mora iti preko enable/disable akcij)
+- Step 5: src/app/api/ai/brain/auto-pilot/route.ts — EXTENDED (NE replace, dodane 3 nove POST akcije):
+  - Added imports: enableAggressiveMode, disableAggressiveMode, clearAnomalySuspension
+  - NEW action 'enable_aggressive' → enableAggressiveMode() — vrača {ok, confirmed, message, confirmedAt?}
+  - NEW action 'disable_aggressive' → disableAggressiveMode() — vrača {ok, mode:'safe'}
+  - NEW action 'clear_anomaly' → clearAnomalySuspension() — vrača {ok, message}
+  - MODIFIED 'config' akcija: 'mode' field je sedaj INTENTIONALLY IGNORED — mode changes morajo iti preko enable/disable_aggressive akcij (double-confirmation safety). Update error message da omenja enable_aggressive/disable_aggressive.
+  - Header comment razširjen z v8.31 docs (anomaly detection, double opt-in, 5 POST akcij)
+  - Unknown action error message posodobljen: "Must be 'run' (trigger auto-pilot), 'config' (update config), 'enable_aggressive' (start/confirm aggressive double-opt-in), 'disable_aggressive' (revert to safe), or 'clear_anomaly' (clear anomaly suspension)."
+- Step 6: src/components/dashboard/ai-hub-view.tsx — EXTENDED AutoPilotCard:
+  - Added lucide-react imports: AlertOctagon, ShieldAlert, Rocket
+  - EXTENDED AutoPilotStatsResponse interface: config +6 novih fields (aggressiveConfirmedAt, anomalySuspended, anomalySuspendedAt, anomalyReason, hourlyExecCount, hourlyWindowStart)
+  - EXTENDED AutoPilotRunResponse interface: +anomalySuspended?, +anomalyReason?
+  - NEW interfaces: EnableAggressiveResponse, DisableAggressiveResponse, ClearAnomalyResponse
+  - NEW state v AutoPilotCard: aggressivePending (synced iz stats.config.aggressiveConfirmedAt), aggressiveMsg, togglingMode, clearingAnomaly
+  - fetchStats() posodobljen: sync-a aggressivePending iz json.config.aggressiveConfirmedAt
+  - NEW handlers: handleEnableAggressive (POST {action:'enable_aggressive'} — first call set-a pending banner + toast.info; second call switch-a v aggressive + toast.success), handleDisableAggressive (POST {action:'disable_aggressive'} — toast.success), handleClearAnomaly (POST {action:'clear_anomaly'} — toast.success)
+  - NEW computed values: anomalySuspended, anomalyReason, anomalySuspendedAt, hourlyExecCount, hourlyWindowStart, isAggressive, displayLimit (10 za aggressive, 5 za safe), displayBudget (2000€ za aggressive, 500€ za safe)
+  - MODIFIED return JSX:
+    - Dynamic outer div border-color: purple ko safe, rose ko aggressive, red ko suspended (prej vedno purple)
+    - Header badge: v8.30 → v8.31 + mode-aware subtitle ("🛡️ SAFE · LOW RISK ONLY" / "🚀 AGGRESSIVE · MEDIUM OK" / "⚠️ SUSPENDED · ANOMALY")
+    - Subtitle posodobljen: opisuje oba moda (Safe + Aggressive) + anomaly detection
+    - NEW Anomaly banner (top of card): prikazan ko anomalySuspended=true — red border, AlertOctagon icon, reason, suspendedAt, "Razveljavi suspenzijo" button (POST clear_anomaly)
+    - NEW Aggressive active banner: prikazan ko mode='aggressive' in NOT suspended — rose border, Rocket icon, "AGGRESSIVE MODE — višje tveganje" + thresholds, "🛡️ Nazaj v Safe" button (POST disable_aggressive)
+    - NEW Aggressive pending confirmation banner: prikazan ko aggressiveConfirmedAt != null in NOT yet aggressive — amber border (pulse-animated), ShieldAlert icon, "⚠️ Aggressive mode dovoli MEDIUM confidence. Potrdi ponovno v 5 minutah." + "✅ Potrdi" button (POST enable_aggressive — second confirmation)
+    - Master switch: dynamic colors (purple safe / rose aggressive / red suspended) + state-aware label ("Auto-pilot: ON/SUSPENDED/OFF")
+    - Mode selector (prej disabled): 2 button-a aktivna — "🛡️ Safe (LOW risk only)" highlighted ko mode='safe' (klikne handleDisableAggressive), "🚀 Aggressive (MEDIUM OK)" highlighted ko aggressive (klikne handleEnableAggressive), pulse-animated ko pending confirmation, disabled ko anomaly suspended. Label "✅ Potrdi Aggressive" ko pending.
+    - Enhanced today's stats: mode-aware stats line "Danes: 3/10 akcij (aggressive) · 145€/2000€ budget" + hourly counter line "Zadnja ura: 2 akciji (od HH:MM:SS)" z warning "⚠️ blizu anomaly threshold (8)" ko count ≥ 6. Progress bars ostanejo.
+    - NEW Threshold comparison box (always visible): 2-column grid (Safe vs Aggressive) z 6 pravili vsak (confidence, uplift, limit, budget, domain, HIGH=manual). Aktivni mode highlighted (purple za Safe, rose za Aggressive), neaktivni dimmed z opacity-70. Footer: "Anomaly: če >8 akcij v 1 uri → suspendiran (oba modal). Rollback: ✅ razveljavi vsako auto-akcijo (+ undo learning)."
+    - Safety info box posodobljen: 8 pravil z mode-aware opisi (npr. "Confidence dovoljen za mode (safe: LOW; aggressive: LOW+MEDIUM; HIGH vedno ročno)")
+    - "▶️ Zaženi zdaj" button disabled ko anomalySuspended=true (ne moreš zagnati run-a ko je suspended)
+    - Footer posodobljen: prikazuje vseh 5 POST akcij (run, config, enable_aggressive, disable_aggressive, clear_anomaly)
+  - BrainSynthesisCard outer badge: v8.30 → v8.31 ("v8.31 Auto-pilot + v8.29 Draft Queue + ...")
+  - brain/auto-pilot endpoint badge v AI Hub listi: "v8.30 · AUTO" → "v8.31 · AUTO+" (purple). brain/auto-pilot/rollback ostane "v8.30 · UNDO" (rollback route ni bil modified v v8.31).
+- Step 7: Lint (bun run lint) — 0 errors, 2 warnings (pred-existing unused eslint-disable v db.ts — ne kritično, ista kot v8.28/v8.29/v8.30) ✅
+- Step 8: Typecheck (bunx tsc --noEmit) — 0 errors ✅ (po initial fix: updateAutoPilotConfig merged objekt je potreboval 6 novih polj iz current ker AutoPilotConfig interface sedaj zahteva vseh 11 polj — dodal sem jih kot "preserve current values")
+- Step 9: db:push — "The database is now in sync with the Prisma schema." Done in 22ms. Prisma Client regeneriran v 266ms. Verificirano preko PRAGMA table_info da vseh 11 Settings autoPilot columns (5 v8.30 + 6 v8.31) prisotnih v SQLite.
+- Step 10: Endpoint verification (curl):
+  - GET /api/ai/brain/auto-pilot → 200 {"ok":true,"config":{"enabled":false,"mode":"safe","dailyLimit":5,"dailyBudgetEUR":500,"lastRunAt":"...","aggressiveConfirmedAt":null,"anomalySuspended":false,"anomalySuspendedAt":null,"anomalyReason":null,"hourlyExecCount":0,"hourlyWindowStart":null},"today":{...},"allTime":{...},"source":"v8.30-safe-auto-pilot"} ✅ (config sedaj vključuje vseh 6 novih v8.31 fields)
+  - POST /api/ai/brain/auto-pilot {action:'config', config:{enabled:true}} → 200 {"ok":true,"config":{"enabled":true,...}} ✅ (master switch ON za aggressive test)
+  - POST /api/ai/brain/auto-pilot {action:'enable_aggressive'} (FIRST call) → 200 {"ok":true,"confirmed":false,"message":"⚠️ Aggressive mode dovoli MEDIUM confidence. Potrdi ponovno v 5 minutah.","confirmedAt":"2026-08-14T10:34:49.226Z"} ✅
+  - POST /api/ai/brain/auto-pilot {action:'enable_aggressive'} (SECOND call within 5 min) → 200 {"ok":true,"confirmed":true,"message":"✅ Aggressive mode omogočen — dovoljena MEDIUM confidence (do 300€ uplift, 10/dan, 2000€/dan budget). HIGH je še vedno vedno manual."} ✅
+  - GET /api/ai/brain/auto-pilot (after second call) → 200 {"ok":true,"config":{"enabled":true,"mode":"aggressive",...,"aggressiveConfirmedAt":null,...}} ✅ (mode='aggressive' set, aggressiveConfirmedAt cleared)
+  - POST /api/ai/brain/auto-pilot {action:'disable_aggressive'} → 200 {"ok":true,"mode":"safe"} ✅ (immediate revert)
+  - GET /api/ai/brain/auto-pilot (after disable) → 200 {"ok":true,"config":{"enabled":true,"mode":"safe",...}} ✅ (mode='safe' reverted, aggressiveConfirmedAt=null)
+  - POST /api/ai/brain/auto-pilot {action:'clear_anomaly'} → 200 {"ok":true,"message":"✅ Suspenzija razveljavljena. Auto-pilot lahko ponovno deluje (hourly counter resetiran)."} ✅
+  - POST /api/ai/brain/auto-pilot {action:'config', config:{enabled:false}} → 200 ✅ (cleanup — disable master switch)
+  - GET /api/ai-list → 200 {"ok":true,"total":424,"endpoints":[...],"categories":{...,"brain":20,...}} ✅ (424 AI endpointov nespremenjeno — no new endpoints, only extended existing brain/auto-pilot)
+- Step 11: Dev.log verification:
+  - "[db.ts] module loaded at 2026-08-14T10:26:01.350Z schemaVersion=v8.31-aggressive-anomaly" ✅
+  - "[db.ts] Discarding stale PrismaClient (schema version mismatch) old: v8.30-auto-pilot new: v8.31-aggressive-anomaly" ✅
+  - "[INFO] [enableAggressiveMode] first confirmation set — awaiting second click within 5 min" ✅
+  - "[INFO] [enableAggressiveMode] aggressive mode CONFIRMED + anomaly suspension cleared" ✅
+  - "[INFO] [disableAggressiveMode] aggressive mode disabled — reverted to safe" ✅
+  - "[INFO] [clearAnomalySuspension] anomaly suspension cleared + hourly counter reset" ✅
+  - Brez runtime napak v v8.31 ✅
+- Step 12: Documentation updated:
+  - README.md: hero block v8.30.0 → v8.31.0 (version badge); AI Hub nav row 424 (nespremenjeno) z "🤖 Auto-pilot (v8.30 Safe + v8.31 Aggressive+Anomaly)" badge (prej "🤖 Safe Auto-pilot (v8.30)"); AI_ENDPOINTS.md link 424 + "dvajset Brain layer-jev, v8.15 + ... + v8.30 + v8.31" (dodal v8.31); project tree comment 424 z v8.31; Overview paragraph — "AI Brain (v8.15–v8.31)" z v8.31 entry (Aggressive Auto-pilot + Anomaly Detection) + "Automation phase ZAKLJUČANA (v8.30 Safe + v8.31 Aggressive+Anomaly)"; Verzija v8.30.0 → v8.31.0; funkcije ~287 → ~289; "Kaj je novega v v7.56–v8.30" → "v7.56–v8.31 (74 verzij → 75 verzij, 198 → 199 novih funkcij)"; NEW v8.31 entry na vrh "Kaj je novega" z popolnim opisom (Aggressive mode + Anomaly detection + Double opt-in + UI izboljšave + NOVO Prisma polja + NOVO src/lib/brain/auto-pilot.ts functions + MODIFIED runSafeAutoPilot + NOVO API actions + MODIFIED AutoPilotCard); AUTOMATION PHASE STARTED → COMPLETE v Roadmap checklistu; Changelog link "do v8.30" → "do v8.31"; Zadnje verzije — dodan v8.31.0 entry na vrh (nad v8.30.0)
+  - CHANGELOG.md: [Unreleased] posodobljen z "v8.31 zaključi Automation phase (Aggressive Auto-pilot + Anomaly Detection — 🎯 AUTOMATION PHASE COMPLETE). Naslednje verzije: v8.32+ — Polish phase (anomaly detection ML, predictive accuracy improvements, performance optimizations)"; NEW [8.31.0] section z 6 podsekcijami (Aggressive Auto-pilot mode-aware 8 pravila + Anomaly Detection hourly counter + suspension + Double Confirmation 5-min window + 6 new Settings fields + 3 new API actions + UI izboljšave AutoPilotCard) + Stats (AI 424 nespremenjeno, routes 601 nespremenjeno, brain 20 nespremenjeno, cron 13 nespremenjeno, lint 0 errors, typecheck 0 errors, db:push uspešen, curl tests all pass) + "🎯 AUTOMATION PHASE COMPLETE. v8.30 (Safe Auto-pilot, LOW risk only) + v8.31 (Aggressive Auto-pilot + Anomaly Detection) = full auto-pilot spectrum. Next: v8.32+ (Polish — anomaly detection ML, predictive accuracy, performance optimizations)."
+  - AI_ENDPOINTS.md: nespremenjeno (424 endpoints, rows 27-28 brain/auto-pilot + brain/auto-pilot/rollback) — per task: "No new rows (existing brain/auto-pilot + brain/auto-pilot/rollback unchanged — just extended functionality)"
+- Step 13: Reset auto-pilot config na default (enabled:false, mode:safe) za clean state
+
+Stage Summary:
+- MODIFIED: prisma/schema.prisma (Settings +6 anomaly/aggressive fields: autoPilotAggressiveConfirmedAt, autoPilotAnomalySuspended, autoPilotAnomalySuspendedAt, autoPilotAnomalyReason, autoPilotHourlyExecCount, autoPilotHourlyWindowStart)
+- MODIFIED: src/lib/db.ts (SCHEMA_VERSION bump v8.30-auto-pilot → v8.31-aggressive-anomaly — discard-a stale PrismaClient v globalThis cache za nova Settings polja)
+- MODIFIED: src/lib/brain/auto-pilot.ts (EXTENDED — ~700 novih vrstic; NE replace-a v8.30, samo doda v8.31):
+  - NEW constants: AGGRESSIVE_CONFIG (limit 10, budget 2000€, uplift <300€, confidence LOW+MEDIUM, anomaly threshold 8/uro), SAFE_CONFIG (mirror v8.30 thresholds), AGGRESSIVE_CONFIRM_WINDOW_MS=5*60*1000
+  - EXTENDED interfaces: AutoPilotConfig (+6 new fields: aggressiveConfirmedAt, anomalySuspended, anomalySuspendedAt, anomalyReason, hourlyExecCount, hourlyWindowStart), DEFAULT_AUTOPILOT_CONFIG (+6 safe defaults), AutoPilotRunResult (+anomalySuspended?, +anomalyReason?)
+  - MODIFIED loadAutoPilotConfig(): SELECT razširjen z 6 novimi columns; vrača nova polja v config; soft read-time check za stale hourly window
+  - NEW checkAutoPilotEligibilityV2(): mode-aware 8 pravil — thresholds (limit, budget, uplift, allowedConfidence) se izbirajo glede na config.mode; vrača 8 PASS/FAIL razlogov z mode-specific thresholds v besedilu
+  - NEW checkAnomaly(): load-a hourly counter + window; če window >1h reset-a (rolling window); če count ≥ 8 suspendira (set-a anomalySuspended=true + suspendedAt + reason="N akcij v 1 uri — possible loop"); vrača {anomaly: boolean, reason: string | null}
+  - NEW incrementHourlyCounter(): load-a window + count; reset-a če expired/stale; increment-a count; suspendira če threshold presežen; vrača {count, suspended, suspendedNow, reason} — suspendedNow=true pomeni da je bila suspension pravkar sprožena (mid-run detection)
+  - NEW enableAggressiveMode(): double confirmation flow — first call set-a aggressiveConfirmedAt=now in vrača {confirmed:false, message:"Potrdi ponovno v 5 minutah"}; second call within 5 min set-a mode='aggressive' + clear-a aggressiveConfirmedAt + clear-a anomaly suspension in vrača {confirmed:true, message:"Aggressive mode omogočen"}; after 5 min expires — ponovno kot first call; guard: requires autoPilotEnabled=true
+  - NEW disableAggressiveMode(): immediately set-a mode='safe' + clear-a aggressiveConfirmedAt; single call, no confirmation needed (fail-safe)
+  - NEW clearAnomalySuspension(): set-a anomalySuspended=false + clear-a suspendedAt + reason + reset-a hourlyExecCount=0 + windowStart=null; NE spremeni enabled ali mode
+  - MODIFIED runSafeAutoPilot(): (1) po config load-a (če enabled) kliče checkAnomaly() — če suspended, return-a early z anomaly warning (NE proži auto-executions); (2) uporablja V2 namesto V1 (mode-aware pravila); (3) po vsaki auto-execuciji kliče incrementHourlyCounter() — če suspendedNow=true, anomalyTriggeredMidRun flag se set-a in preostali pending drafts so označeni kot skipped z "FAIL: auto-pilot suspended mid-run (anomaly: ...)"; (4) če anomaly triggered mid-run, reload-a config pred return-om
+  - MODIFIED updateAutoPilotConfig(): preserved nova polja iz current (NE overwrite-a jih — managed exclusively by enable/disable/clearAnomaly/incrementHourlyCounter)
+- MODIFIED: src/app/api/ai/brain/auto-pilot/route.ts (3 nove POST akcije + 'config' akcija ignorira 'mode' field):
+  - NEW action 'enable_aggressive' → enableAggressiveMode() — vrača {ok, confirmed, message, confirmedAt?}
+  - NEW action 'disable_aggressive' → disableAggressiveMode() — vrača {ok, mode:'safe'}
+  - NEW action 'clear_anomaly' → clearAnomalySuspension() — vrača {ok, message}
+  - MODIFIED 'config' akcija: 'mode' field INTENTIONALLY IGNORED — mode changes morajo iti preko enable/disable_aggressive akcij (double-confirmation safety)
+  - Unknown action error message posodobljen z vsemi 5 akcijami
+- MODIFIED: src/components/dashboard/ai-hub-view.tsx (AutoPilotCard extended):
+  - NEW imports: AlertOctagon, ShieldAlert, Rocket iz lucide-react
+  - EXTENDED interfaces: AutoPilotStatsResponse.config (+6 fields), AutoPilotRunResponse (+anomalySuspended?, +anomalyReason?), NEW EnableAggressiveResponse, NEW DisableAggressiveResponse, NEW ClearAnomalyResponse
+  - NEW state: aggressivePending (synced iz stats.config.aggressiveConfirmedAt), aggressiveMsg, togglingMode, clearingAnomaly
+  - MODIFIED fetchStats(): sync-a aggressivePending iz json.config.aggressiveConfirmedAt
+  - NEW handlers: handleEnableAggressive (POST enable_aggressive — first call pending banner + toast.info; second call switch + toast.success), handleDisableAggressive (POST disable_aggressive — toast.success), handleClearAnomaly (POST clear_anomaly — toast.success)
+  - NEW computed: anomalySuspended, anomalyReason, anomalySuspendedAt, hourlyExecCount, hourlyWindowStart, isAggressive, displayLimit (10 aggressive / 5 safe), displayBudget (2000€ aggressive / 500€ safe)
+  - MODIFIED return JSX:
+    - Dynamic outer border-color: purple safe / rose aggressive / red suspended
+    - Header badge v8.31 + mode-aware subtitle (🛡️ SAFE / 🚀 AGGRESSIVE / ⚠️ SUSPENDED · ANOMALY)
+    - NEW Anomaly banner (red, top of card, AlertOctagon icon, reason, suspendedAt, "Razveljavi suspenzijo" button)
+    - NEW Aggressive active banner (rose, Rocket icon, "AGGRESSIVE MODE — višje tveganje", "🛡️ Nazaj v Safe" button)
+    - NEW Aggressive pending confirmation banner (amber pulse-animated, ShieldAlert icon, "⚠️ Aggressive mode dovoli MEDIUM confidence. Potrdi ponovno v 5 minutah.", "✅ Potrdi" button)
+    - Master switch: dynamic colors + state-aware label (ON/SUSPENDED/OFF)
+    - Mode selector (prej disabled): 2 aktivni button-i — "🛡️ Safe (LOW risk only)" + "🚀 Aggressive (MEDIUM OK)" z double-click confirmation (pulse-animated ko pending)
+    - Enhanced today's stats: mode-aware stats line + hourly counter line z warning če ≥6 (blizu threshold 8)
+    - NEW Threshold comparison box (always visible): 2-column grid Safe vs Aggressive z 6 pravili vsak; aktivni mode highlighted
+    - Safety info box posodobljen z mode-aware 8 pravili
+    - "▶️ Zaženi zdaj" button disabled ko anomalySuspended
+    - Footer prikazuje vseh 5 POST akcij
+  - BrainSynthesisCard outer badge: v8.30 → v8.31
+  - brain/auto-pilot endpoint badge v AI Hub listi: "v8.30 · AUTO" → "v8.31 · AUTO+" (purple); rollback ostane "v8.30 · UNDO"
+- AI endpointi: 424 (unchanged — extended existing brain/auto-pilot, no new endpoints)
+- Total API routes: 601 (unchanged)
+- Brain category: 20 (unchanged)
+- Cron endpoints: 13 (unchanged — cron/auto-pilot iz v8.30 je interni klical runSafeAutoPilot ki je sedaj razširjen)
+- Lint: 0 errors, 2 warnings (pred-existing unused eslint-disable v db.ts — ne kritično) ✅
+- Typecheck: 0 errors (bunx tsc --noEmit) ✅
+- db:push: uspešen ("The database is now in sync with the Prisma schema." Done in 22ms. Prisma Client regeneriran v 266ms. Verificirano preko PRAGMA table_info: 6 novih Settings columns prisotnih v SQLite + obstoječih 5 v8.30 columns nedotaknjenih)
+- Endpoint verification:
+  - GET /api/ai/brain/auto-pilot → 200 {ok:true, config:{enabled, mode, dailyLimit, dailyBudgetEUR, lastRunAt, +6 nova v8.31 fields (aggressiveConfirmedAt, anomalySuspended, anomalySuspendedAt, anomalyReason, hourlyExecCount, hourlyWindowStart)}, today, allTime, source} ✅
+  - POST {action:'enable_aggressive'} (first call) → 200 {ok:true, confirmed:false, message:"⚠️ Aggressive mode dovoli MEDIUM confidence. Potrdi ponovno v 5 minutah.", confirmedAt} ✅
+  - POST {action:'enable_aggressive'} (second call within 5 min) → 200 {ok:true, confirmed:true, message:"✅ Aggressive mode omogočen — dovoljena MEDIUM confidence (do 300€ uplift, 10/dan, 2000€/dan budget). HIGH je še vedno vedno manual."} ✅
+  - GET (after second call) → 200 {ok:true, config:{mode:'aggressive', aggressiveConfirmedAt:null}} ✅ (mode set, confirmedAt cleared)
+  - POST {action:'disable_aggressive'} → 200 {ok:true, mode:'safe'} ✅ (immediate revert)
+  - GET (after disable) → 200 {ok:true, config:{mode:'safe', aggressiveConfirmedAt:null}} ✅
+  - POST {action:'clear_anomaly'} → 200 {ok:true, message:"✅ Suspenzija razveljavljena. Auto-pilot lahko ponovno deluje (hourly counter resetiran)."} ✅
+  - GET /api/ai-list → 200 {ok:true, total:424, categories:{brain:20, ...}} ✅ (424 AI endpointov nespremenjeno)
+- Dev.log verification: SCHEMA_VERSION discard+reload, vse 4 v8.31 INFO logs (enableAggressiveMode first/second, disableAggressiveMode, clearAnomalySuspension) — brez napak ✅
+- Documentation updated: README.md (v8.30.0 → v8.31.0 badge + Overview z v8.31 entry + "Automation phase ZAKLJUČANA" + "Kaj je novega" z v8.31 na vrh + Verzija v8.31.0 + ~289 funkcij + 75 verzij + 199 novih funkcij + AI Hub nav row z v8.31 Auto-pilot + AI_ENDPOINTS link z v8.31 + project tree comment z v8.31 + Roadmap AUTOMATION PHASE COMPLETE + Zadnje verzije z v8.31.0 entry na vrh), CHANGELOG.md ([Unreleased] posodobljen z v8.31 zaključi Automation phase + v8.32+ Polish phase next; NEW [8.31.0] section z 6 podsekcijami — Aggressive Auto-pilot mode-aware 8 pravila + Anomaly Detection hourly counter + suspension + Double Confirmation 5-min window + 6 new Settings fields + 3 new API actions + UI izboljšave AutoPilotCard + Stats + curl test results + 🎯 AUTOMATION PHASE COMPLETE), AI_ENDPOINTS.md (nespremenjeno — 424 endpoints, rows 27-28 brain/auto-pilot + brain/auto-pilot/rollback unchanged)
+- 🎯 AUTOMATION PHASE COMPLETE:
+  - v8.22 Master Brain daje TOP 5 priporočil (KAJ)
+  - v8.24 Risk Profile naredi priporočila PERSONAL (conservative/balanced/aggressive)
+  - v8.26 Explainability daje ZAKAJ (per-action reasoning + trustScore)
+  - v8.27 Scenario Brain odgovarja WHAT IF? (3 preset scenariji + custom)
+  - v8.28 Adaptive Weights vzpostavi FEEDBACK LOOP (sistem se uči iz revealed preferences)
+  - v8.29 Draft Queue zaključi z ACTION (vsako priporočilo ima sledljivo ✅/❌ odločitev ki neposredno kliče recordActionFeedback)
+  - v8.30 Safe Auto-pilot odpira AUTOMATION — sistem SAMODEJNO izvaja LOW-risk akcije (confidence=LOW, uplift<100€, domain!=risk, limit 5/dan, budget 500€/dan) ki izpolnjujejo VSA 8 varnostna pravila. MEDIUM/HIGH risk akcije še vedno zahtevajo ročni ✅ Izvedel klik iz v8.29. Rollback capability: vsako auto-executed akcijo lahko uporabnik razveljavi (↩️ Razveljavi) — to tudi undo-a learning preko recordActionFeedback 'rejected'.
+  - v8.31 Aggressive Auto-pilot + Anomaly Detection ZAKLJUČI AUTOMATION — sistem lahko sedaj izvaja tudi MEDIUM-risk akcije (aggressive mode, opt-in, double confirmation, limit 10/dan, budget 2000€/dan, uplift<300€). HIGH confidence in domain='risk' sta še vedno vedno manual (oba modal). Anomaly detection: če >8 akcij v 1 uri → suspendiran (possible loop), zahteva manual re-enable preko POST {action:'clear_anomaly'}. Double opt-in za aggressive: 5-min confirmation window.
+  - Skupaj: Master Brain recommends → user decides (✅/❌ iz v8.29) → adaptive weights learn (v8.28) → better recommendations next time. v8.30 dodaja: sistem lahko SAM izvaja LOW-risk akcije (safe auto-pilot). v8.31 zaključi: sistem lahko SAM izvaja tudi MEDIUM-risk akcije (aggressive auto-pilot, opt-in, double confirm) — ampak samo ko so VSA 8 mode-aware varnostna pravila izpolnjena + vedno z možnostjo rollback-a + z anomaly detection da preprečimo runaway loops.
+- Verzija aplikacije: v8.31.0
+- Skupaj doslej (v7.50 → v8.31): 81 verzij, 205 novih funkcij; Brain architecture COMPLETE (v8.22) + Validation phase ZAKLJUČENA (v8.23-v8.25) + Intelligence phase ZAKLJUČENA (v8.26-v8.29) + Automation phase ZAKLJUČENA (v8.30-v8.31) — naslednja faza: v8.32+ Polish (anomaly detection ML, predictive accuracy, performance optimizations)
