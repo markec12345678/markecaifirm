@@ -4,7 +4,7 @@ import { useEffect, useState, useCallback } from 'react';
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
-import { Activity, Bell, AlertTriangle, Target, TrendingUp, Play, RefreshCw, Clock, Zap, LayoutGrid, BarChart3, Bookmark, ShoppingCart, TrendingDown, ExternalLink, Check, Sparkles, ArrowUp, ArrowDown, Settings2 } from 'lucide-react';
+import { Activity, Bell, AlertTriangle, Target, TrendingUp, Play, RefreshCw, Clock, Zap, LayoutGrid, BarChart3, Bookmark, ShoppingCart, TrendingDown, ExternalLink, Check, Sparkles, ArrowUp, ArrowDown, Settings2, Plus } from 'lucide-react';
 import { toast } from 'sonner';
 import { cn } from '@/lib/utils';
 import { AiInsightsWidget } from '@/components/dashboard/ai-insights-widget';
@@ -13,6 +13,9 @@ import { DealFunnelWidget } from '@/components/dashboard/deal-funnel-widget';
 import { NicheScoreWidget } from '@/components/dashboard/niche-score-widget';
 import { FlipStatusWidget } from '@/components/dashboard/flip-status-widget';
 import { DealVelocityWidget } from '@/components/dashboard/deal-velocity-widget';
+// v8.36: Trade Management Enhancement — Quick Add modal + Trade Stats card
+import { TradeStatsCard } from '@/components/dashboard/trade-stats-card';
+import { QuickAddTradeModal } from '@/components/dashboard/quick-add-trade-modal';
 
 // v5.6: Dashboard widget IDs
 const WIDGET_IDS = ['todaySummary', 'quickStats', 'activityFeed', 'aiInsights', 'skladisceWidget'] as const;
@@ -69,6 +72,8 @@ export function DashboardView({ onNavigate }: ViewProps) {
   const [customizeMode, setCustomizeMode] = useState(false);
   // v6.7: Goal tracker
   const [goalData, setGoalData] = useState<any>(null);
+  // v8.36: Quick Add Trade modal (floating button)
+  const [showQuickAddTrade, setShowQuickAddTrade] = useState(false);
 
   useEffect(() => {
     fetch('/api/trades/goal-tracker').then(r => r.ok ? r.json() : null).then(d => d && setGoalData(d)).catch(() => {});
@@ -260,6 +265,16 @@ export function DashboardView({ onNavigate }: ViewProps) {
           >
             <Settings2 className="w-3.5 h-3.5" />
             {customizeMode ? 'Končaj' : 'Uredi'}
+          </Button>
+          {/* v8.36: Floating Quick Add Trade button */}
+          <Button
+            size="sm"
+            onClick={() => setShowQuickAddTrade(true)}
+            className="gap-2 bg-primary text-primary-foreground hover:bg-primary/90"
+            title="Hitri dodaj trade"
+          >
+            <Plus className="w-3.5 h-3.5" />
+            Dodaj trade
           </Button>
         </div>
       </div>
@@ -648,6 +663,9 @@ export function DashboardView({ onNavigate }: ViewProps) {
         <DealVelocityWidget />
       </WidgetWrapper>
 
+      {/* v8.36: Trade Stats card — profit + win rate + best niche + Quick Add */}
+      <TradeStatsCard />
+
       {/* v4.5: Skladišče dashboard widget */}
       <WidgetWrapper id="skladisceWidget" order={widgetOrder} customizeMode={customizeMode} onMove={moveWidget}>
         <SkladisceWidget onNavigate={onNavigate} />
@@ -829,6 +847,17 @@ export function DashboardView({ onNavigate }: ViewProps) {
           </div>
         </div>
       )}
+
+      {/* v8.36: Quick Add Trade modal — floating button trigger */}
+      <QuickAddTradeModal
+        open={showQuickAddTrade}
+        onOpenChange={setShowQuickAddTrade}
+        onSaved={() => {
+          toast.success('Trade dodan');
+          // Reload stats after add (cheap refetch)
+          load();
+        }}
+      />
     </div>
   );
 }

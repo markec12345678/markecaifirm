@@ -6,9 +6,9 @@ Format sledi [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), verzije s
 
 ## [Unreleased]
 
-v8.26 je odprl Intelligence phase (Action Explainability), v8.27 jo nadaljuje (Scenario Brain), v8.28 jo še nadalje vzpostavi FEEDBACK LOOP (Adaptive Domain Weights), v8.29 jo ZAKLJUČI z Draft Queue + Action Feedback Loop integration (🎯 INTELLIGENCE PHASE COMPLETE), v8.30 odpira NOVO fazo — Automation (Safe Auto-pilot — 🎯 AUTOMATION PHASE STARTED), v8.31 zaključi Automation phase (Aggressive Auto-pilot + Anomaly Detection — 🎯 AUTOMATION PHASE COMPLETE), v8.32 odpira NOVO fazo — Polish (System Health Dashboard — 🎯 POLISH PHASE STARTED — "How healthy is the Brain system?"), v8.33 zaključi Polish phase caching (Performance Caching + Cache Stats), v8.34 zaključi Polish phase testing (Brain Integration Test Suite), v8.35 zaključi Polish phase "make the system alive" (Seed Demo Data + Telegram Brain Notifications). Naslednje verzije:
+v8.26 je odprl Intelligence phase (Action Explainability), v8.27 jo nadaljuje (Scenario Brain), v8.28 jo še nadalje vzpostavi FEEDBACK LOOP (Adaptive Domain Weights), v8.29 jo ZAKLJUČI z Draft Queue + Action Feedback Loop integration (🎯 INTELLIGENCE PHASE COMPLETE), v8.30 odpira NOVO fazo — Automation (Safe Auto-pilot — 🎯 AUTOMATION PHASE STARTED), v8.31 zaključi Automation phase (Aggressive Auto-pilot + Anomaly Detection — 🎯 AUTOMATION PHASE COMPLETE), v8.32 odpira NOVO fazo — Polish (System Health Dashboard — 🎯 POLISH PHASE STARTED — "How healthy is the Brain system?"), v8.33 zaključi Polish phase caching (Performance Caching + Cache Stats), v8.34 zaključi Polish phase testing (Brain Integration Test Suite), v8.35 zaključi Polish phase "make the system alive" (Seed Demo Data + Telegram Brain Notifications), v8.36 zaključi Polish phase trade management enhancement (CSV Import + Quick Add + Dashboard Stats). Naslednje verzije:
 
-- **v8.36+ — Polish phase continues** (E2E tests s Playwright, predictive accuracy improvements za Master Brain, refactoring)
+- **v8.37+ — Polish phase continues** (E2E tests s Playwright, predictive accuracy improvements za Master Brain, refactoring)
 - WebSocket real-time negotiation (SSE namesto polling)
 - Playwright E2E testi za glavne flow-e
 - TLS fingerprinting (curl-impersonate)
@@ -16,6 +16,82 @@ v8.26 je odprl Intelligence phase (Action Explainability), v8.27 jo nadaljuje (S
 - Performance optimizations za Master Brain (cached partial results per domain)
 - Additional conflict detection tipi (npr. Inventory vs Buyer — supply/demand mismatch)
 - Per-domain DB injection v Master Brain route (zaenkrat se zanaša na individualne Domain Brain route-e za DB state)
+
+## [8.36.0] - 2026-08-14
+
+### Added — 📊 Trade Management Enhancement (Polish phase — CSV Import + Quick Add + Dashboard Stats)
+
+Problem: uporabnik je mogel dodajati trade-e samo ročno enega po enega (TradeFormDialog z 14 polji). Ni bilo CSV uvoza (ni mogel bulk-importati iz Bolha/Vinted/Excel export-ov). Na Dashboard-u ni bilo hitrega "Dodaj trade" gumba. Dashboard ni imel kompaktnega trade statistike card-a z win rate + best niche. v8.36 rešuje vse to in naredi sistem bolj uporaben za real-world usage.
+
+#### `src/lib/trades/csv-import.ts` (NEW — CSV parser + validator)
+
+- **`parseCsv(csvText)`** — ročno napisan CSV parser (brez odvisnosti od papaparse/csv-parse). Podpira: quoted fields z vejicami (`"hello, world"`), escaped quotes (`"he said ""hi"""`), auto-detekcijo `,` ali `;` ločila (glede na prvo vrstico), BOM (byte order mark) strip, `\r\n` in `\n` line endings. Vrne `string[][]` (array vrstic, vsaka vrstica je array polj).
+- **`validateCsvRows(rows)`** — validira parsed rows in jih pretvori v `CsvImportRow[]`. Prva vrstica = headers, mapirani preko `HEADER_MAP` (slovenski: naslov/kategorija/nakupcena/nakupdatum/... + angleški: title/category/buyPrice/buyDate/...). Obvezne kolone: `title` + `buyPrice`. Validacija: title ne sme biti prazen, buyPrice mora biti pozitivno število (`,` ali `.` decimalna vejica), buyDate mora biti veljaven datum, status mora biti `held`/`sold`/`cancelled` (default: `held`). Vrne `CsvImportResult` z `valid` + `errors` array (invalid rows ne blokirajo valid rows). Default-i za manjkajoče colonne: category='', buyDate=now, buyFees=0, sellPrice=null, sellDate=null, sellLocation='', sellFees=0, notes=''.
+- **`generateCsvTemplate()`** — vrne CSV predlogo (header + example vrstica) za uporabnike: `title,category,buyPrice,buyDate,buyLocation,buyFees,sellPrice,sellDate,sellLocation,sellFees,status,notes` + `iPhone 13 128GB,elektronika,280,2026-07-01,Bolha,0,380,2026-07-25,Bolha,15,sold,`.
+- **Tipi**: `CsvImportRow` (rowNumber + data), `CsvImportError` (rowNumber + field + message + rawValue), `CsvImportResult` (ok + valid + errors + totalRows + validCount + errorCount).
+- **Pure functions** — brez DB klicev, brez AI. Route handler je odgovoren za persistenco.
+
+#### `src/app/api/trades/import-csv/route.ts` (NEW — POST bulk import)
+
+- **POST** sprejme JSON `{csv: string}` ali multipart/form-data z `file` field (auto-detect po Content-Type header-ju). Preko `extractCsvText()` helperja.
+- Kliče `parseCsv()` + `validateCsvRows()` iz csv-import lib-a.
+- Za veljavne rows: `db.trade.createMany({data: [...]})` — bulk insert z enim Prisma klicem (performantno).
+- Vrne `{ok, created, errors, totalRows, validCount, errorCount}`. Če nobena vrstica ni veljavna: HTTP 400 z opisom napake. Invalid rows se poročajo v `errors` array (ne blokirajo valid rows — partial success).
+- `runtime='nodejs'`, `dynamic='force-dynamic'`, `maxDuration=60` (CSV parsing + bulk insert lahko traja nekaj sekund za velike file-e).
+- Standard error pattern: try/catch z logger.error + NextResponse.json status 500.
+
+#### `src/app/api/trades/csv-template/route.ts` (NEW — GET template download)
+
+- **GET** vrne `generateCsvTemplate()` kot `text/csv` z `Content-Disposition: attachment; filename="trade-template.csv"`.
+- `Cache-Control: no-store, no-cache, must-revalidate` (template se lahko spremeni v prihodnjih verzijah).
+- `runtime='nodejs'`, `dynamic='force-dynamic'`.
+
+#### `src/components/dashboard/quick-add-trade-modal.tsx` (NEW — reusable compact modal)
+
+- **Props**: `{open, onOpenChange, onSaved?}` — controlled modal, lahko odprt iz kjerkoli (Dashboard, AI Hub, Trades view).
+- **Compact form** (samo 6 polj): title, category (Select), status (Select), buyPrice, buyLocation, sellPrice (optional). Auto-set status='sold' če je sellPrice podan in status='held' (privzeto).
+- POST na `/api/trades` ob save. Toast: "✓ Trade dodan". Profit + ROI preview (zelena/rdeča) prikazan kadar oba ceni obstajata.
+- Enter key submita form (hitri vnos). Reset form po close (200ms delay za smooth animation).
+- Uporablja shadcn/ui Dialog, Input, Label, Select, Button — dosledno z design sistemom.
+
+#### `src/components/dashboard/trade-stats-card.tsx` (NEW — Dashboard stats card)
+
+- Fetcha 3 API-je vzporedno (Promise.all): `/api/ai/brain/actual-profit?days=90` (totalProfitEUR, avgMarginPct, tradeCount, bestTrade, worstTrade), `/api/analytics/niche-score` (bestNiche, worstNiche), `/api/trades?status=sold` + `/api/trades?status=held` (za win rate computation + heldCount).
+- **Prikaz**: veliki profit number (90d) z barvno kodiranim ozadjem (zelena/amber/rdeča glede na profit znak), povprečna marža (%), 4 mini-stats: win rate (% profitable sold trades), trade count (sold · held), top niša (z ROI%), slaba niša (z ROI%). Best/worst trade prikazana na dnu če obstajata v 90d obdobju.
+- **"＋ Dodaj trade" button** odpre `QuickAddTradeModal` (po save: toast + load() refresh).
+- Empty state če ni trade-ov: CTA "Dodaj trade" + namig za demo podatke v AI Hub.
+- Color coding: win rate ≥60% zelena, ≥40% amber, <40% rdeča. Best/worst niche z ROI% badge.
+
+#### `src/components/dashboard/dashboard-view.tsx` (MODIFIED — Trade Stats card + Quick Add button)
+
+- Import `TradeStatsCard` + `QuickAddTradeModal` + `Plus` icon.
+- Nov state `showQuickAddTrade` za modal control.
+- **Floating "Dodaj trade" button** v quick action bar (zraven "Uredi" gumba) — odpre `QuickAddTradeModal`. Vidno vedno (tudi če ni trade-ov — uporabnik lahko doda prvi trade direktno iz Dashboard-a).
+- **`<TradeStatsCard />`** pozicionirana med `aiInsights` widget in `skladisceWidget` — visoko na strani, takoj po AI Insights. Komplementira obstoječi `SkladisceWidget` (ki prikazuje monthly chart + top trades): TradeStatsCard je kompakten povzetek (profit + win rate + best niche), SkladisceWidget je podroben (monthly trend + top 3 best trades).
+- `<QuickAddTradeModal>` renderan na dnu JSX (zraven summaryOpen modal-a) — controlled z `showQuickAddTrade` state. Po save: toast + load() refresh.
+
+#### `src/components/dashboard/trades-view.tsx` (MODIFIED — CSV Import button + dialog + template download)
+
+- Nov state `showImport` za modal control.
+- **"📥 Uvozi CSV" button** dodan v action bar (zraven obstoječega "CSV" export button-a). Primary color outline, `Upload` ikona.
+- **`<CsvImportDialog>`** komponenta (definirana na dnu datoteke, po `TradeFormDialog`):
+  - **Step 1**: File upload input (`.csv`, `text/csv`, `text/plain`) — prebere text preko `file.text()`.
+  - **Template download link**: "📄 Prenesi predlogo CSV" — `<a href="/api/trades/csv-template" download="trade-template.csv">` (direkten download, brez JavaScript).
+  - **Step 2**: Alternative — paste CSV text v Textarea (za uporabnike ki imajo CSV v clipboard-u).
+  - **Predogled**: max 8 vrstic prikazanih v monospace tabeli (header bold, številka vrstice v prvem stolpcu). Če je več kot 8 vrstic: "(+N več vrstic...)".
+  - **Import result**: po uspešnem uvozu prikaže 3 stat box-e (Skupaj / Uvoženi / Napake) + list napak (če so). Auto-close + refresh po 1.5s če ni napak (da uporabnik vidi toast). Če so napake: ostane odprt da uporabnik prebere error list.
+  - **"Uvozi N trades" button** — dynamic label z count-om (count = vrstice - 1 za header). Disabled dokler ni CSV text. RefreshCw spinner med uvozom.
+  - POST na `/api/trades/import-csv` z JSON `{csv: csvText}`. Response parsing: prikaz rezultata + toast notifications.
+
+### Stats
+
+- AI endpoints: 428 (unchanged — new routes are under `/api/trades/`, not `/api/ai/`)
+- Total API routes: 606 → 608 (+2: import-csv + csv-template)
+- Brain category: 24 (unchanged)
+
+### Note
+
+Polish phase continues — "trade management enhancement for real-world usage." v8.32 = monitoring (System Health Dashboard), v8.33 = performance (Performance Caching + Cache Stats), v8.34 = testing (Brain Integration Test Suite — 92 tests), v8.35 = data + notifications (Seed Demo Data + Telegram Brain Notifications), v8.36 = trade management (CSV Import + Quick Add Modal + Dashboard Stats). Po v8.36: uporabnik lahko bulk-uvozi trade-e iz Bolha/Vinted/Excel CSV-jev, hitro doda trade iz Dashboard-a z enim klikom, in vidi kompakten statistični povzetek z win rate + best niche na vrhu Dashboard-a. Next: v8.37 (E2E tests s Playwright, predictive accuracy improvements za Master Brain).
 
 ## [8.35.0] - 2026-08-28
 

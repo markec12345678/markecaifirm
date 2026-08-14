@@ -17008,3 +17008,86 @@ Stage Summary:
 - NicheScoreWidget prikazuje realne podatke (avto ROI +61%, 5 kategorij)
 - Napaka je bila verjetno latentna od prej — ko ni bilo trades v DB je widget padel v empty state, ampak po v8.35 seed-anju (25 trades) je API vrnil podatke in expose-al interface mismatch
 - Verzija aplikacije: v8.35.2 (bugfix)
+
+---
+Task ID: v8.36
+Agent: full-stack-developer
+Task: Implement Trade Management Enhancement — CSV Import + Quick Add + Dashboard Stats
+
+Work Log:
+- Prebral context: worklog.md (zadnji v8.35.2 bugfix entry), trades-view.tsx (2931 vrstic — TradeFormDialog @ line 2755, CSV export button @ line 636, bulk ops), trades route.ts (GET + POST), trades/[id]/route.ts (PUT + DELETE), trades/bulk/route.ts (4 akcije), dashboard-view.tsx (1185 vrstic — widgets: AiInsightsWidget, DealFlowWidget, NicheScoreWidget, FlipStatusWidget, DealVelocityWidget, SkladisceWidget), prisma/schema.prisma (Trade model z 12 polji: title, category, buyPrice, buyDate, buyLocation, buyFees, sellPrice?, sellDate?, sellLocation, sellFees, status, notes, flipChecklist), actual-profit endpoint, niche-score endpoint.
+- Verifikacija: GET /api/trades/dashboard → 24 trades (heldCount=5, soldCount=19, totalRealizedProfit=973€). GET /api/ai/brain/actual-profit?days=90 → totalProfitEUR=973, tradeCount=19, avgMarginPct=24.7, bestTrade Alu platišča +145€, worstTrade Yeezy -39€. GET /api/analytics/niche-score → bestNiche avto (ROI 60.86%, 5 prodaj), worstNiche obutev. GET /api/ai-list → total=428 (brain category=24).
+- Ustvaril src/lib/trades/csv-import.ts (NEW, ~340 vrstic):
+  - parseCsv(csvText) — ročno CSV parser: BOM strip, auto-detect ,/; delimiter (first line count), quoted fields z vejicami, escaped quotes ("" → "), \r\n in \n line endings.
+  - validateCsvRows(rows) — HEADER_MAP z 32 entries (slovenski: naslov/kategorija/nakupcena/nakupdatum/nakupkraj/... + angleški: title/category/buyPrice/buyDate/buyLocation/...). Required: title + buyPrice. Validacija: title non-empty, buyPrice ≥ 0 (float z , ali .), buyDate veljaven, status held/sold/cancelled (default held). Defaults za manjkajoče colonne. Vrne CsvImportResult z valid[] + errors[] (invalid ne blokirajo valid — partial success).
+  - generateCsvTemplate() — header (12 colonn) + example vrstica (iPhone 13).
+  - Tipi: CsvImportRow, CsvImportError, CsvImportResult. Pure functions (brez DB/AI).
+- Ustvaril src/app/api/trades/import-csv/route.ts (NEW):
+  - extractCsvText(req) helper — auto-detect JSON {csv: string} ali multipart/form-data file field.
+  - POST: parseCsv → validateCsvRows → db.trade.createMany({data: [...]}). Vrne {ok, created, errors, totalRows, validCount, errorCount}. HTTP 400 če nobena valid. HTTP 500 na error z logger.error.
+  - runtime='nodejs', dynamic='force-dynamic', maxDuration=60.
+  - Prvi curl test je vrnil 500: "Unknown argument `skipDuplicates`" (SQLite Prisma createMany ne podpira skipDuplicates) + "status: 'undefined'" (rowData.status je bil undefined ker CSV ni imel status colonne — String(undefined) = 'undefined'). Popravki: odstranil skipDuplicates, dodal explicitne defaults v validateCsvRows (rowData.status, sellDate, sellPrice, sellFees, etc — preverjeni z typeof/instanceof pred push v valid[]).
+- Ustvaril src/app/api/trades/csv-template/route.ts (NEW):
+  - GET vrne generateCsvTemplate() kot text/csv z Content-Disposition: attachment; filename="trade-template.csv".
+  - Cache-Control: no-store, no-cache, must-revalidate. runtime='nodejs', dynamic='force-dynamic'.
+- Ustvaril src/components/dashboard/quick-add-trade-modal.tsx (NEW, ~250 vrstic):
+  - Props: {open, onOpenChange, onSaved?}. Reusable modal — odprt iz Dashboard/AI Hub/Trades.
+  - Compact form (6 polj): title, category (Select z 8 kategorijami), status (held/sold/cancelled Select), buyPrice, buyLocation, sellPrice (optional). Auto-set status='sold' če je sellPrice podan in status='held'.
+  - POST na /api/trades ob save. Toast "✓ Trade dodan". Profit + ROI preview (zelena/rdeča) kadar oba ceni obstajata. Enter key submita form. Reset state po close (200ms delay za smooth animation).
+  - shadcn/ui Dialog, Input, Label, Select, Button — dosledno z design sistemom.
+- Ustvaril src/components/dashboard/trade-stats-card.tsx (NEW, ~270 vrstic):
+  - Fetcha 4 API-je vzporedno (Promise.all): /api/ai/brain/actual-profit?days=90 (totalProfitEUR, avgMarginPct, tradeCount, bestTrade, worstTrade), /api/analytics/niche-score (bestNiche, worstNiche z ROI%), /api/trades?status=sold (za win rate computation), /api/trades?status=held (za heldCount).
+  - Prikaz: veliki profit number (90d) z barvno kodiranim ozadjem (zelena/amber/rdeče glede na profit znak) + povprečna marža (%), 4 mini-stats (win rate %, trade count sold·held, top niša z ROI%, slaba niša z ROI%), best/worst trade na dnu če obstajata v 90d obdobju.
+  - "＋ Dodaj trade" button odpre QuickAddTradeModal. Po save: toast + load() refresh.
+  - Empty state če ni trade-ov: CTA "Dodaj trade" + namig za demo podatke v AI Hub.
+  - Color coding: win rate ≥60% zelena, ≥40% amber, <40% rdeča. Best/worst niche z ROI% badge.
+- Modificiral src/components/dashboard/dashboard-view.tsx:
+  - Import TradeStatsCard + QuickAddTradeModal + Plus icon (dodal v lucide-react imports).
+  - Nov state showQuickAddTrade za modal control.
+  - Floating "Dodaj trade" button v quick action bar (zraven "Uredi" gumba) — vedno viden.
+  - <TradeStatsCard /> pozicioniran med aiInsights widget in skladisceWidget — komplementira obstoječi SkladisceWidget (TradeStatsCard je kompakten povzetek z win rate + niche, SkladisceWidget je podroben z monthly chart + top 3 best trades).
+  - <QuickAddTradeModal> renderan na dnu JSX (zraven summaryOpen modal-a).
+- Modificiral src/components/dashboard/trades-view.tsx:
+  - Nov state showImport za modal control. Dodan Upload icon v imports.
+  - "📥 Uvozi CSV" button v action bar (zraven obstoječega "CSV" export button-a). Primary color outline.
+  - CsvImportDialog komponenta (definirana na dnu datoteke, po TradeFormDialog, ~280 vrstic):
+    - Step 1: File upload input (.csv, text/csv, text/plain) — prebere text preko file.text().
+    - "📄 Prenesi predlogo CSV" link — <a href="/api/trades/csv-template" download="trade-template.csv"> (direkten download).
+    - Step 2: Alternative — paste CSV text v Textarea.
+    - Predogled: max 8 vrstic v monospace tabeli (header bold, številka vrstice). "(+N več vrstic...)" če več kot 8.
+    - Import result: 3 stat box-e (Skupaj / Uvoženi / Napake) + list napak. Auto-close + refresh po 1.5s če 0 napak. Toast "✓ Uvoženih N trade-ov" + warning če so napake.
+    - "Uvozi N trades" button — dynamic label z count-om. RefreshCw spinner med uvozom. POST na /api/trades/import-csv z JSON {csv}.
+- Lint: 0 napak ✨ (2 pre-existing warnings v db.ts — ne moja koda). Najprej sem imel 1 warning "Unused eslint-disable directive" v csv-import.ts — popravil z odstranitvijo eslint-disable commenta in uporabo typed `Record<string, unknown>` namesto `any` + expliciten cast v typed shape pred push v valid[].
+- Typecheck: tsc --noEmit OOM killed večkrat (4041MB memory limit, projekt prevelik z 428 AI endpoints). Vendar: dev server compiled successfully (✓ Compiled), vsi endpoints odgovarajo pravilno preko curl, root page vrača HTTP 200. Preveril tudi z bun smoke test script (parseCsv/validateCsvRows/generateCsvTemplate import + 6 testov) — vsi pass.
+- Endpoint verification (curl):
+  - GET /api/trades/csv-template → 200 text/csv z headerjem + example vrstico ✅
+  - POST /api/trades/import-csv {"csv":"title,category,buyPrice,buyDate,buyLocation\nTest Item v8.36,elektronika,100,2026-08-01,Bolha"} → {ok:true, created:1, errors:[], totalRows:1, validCount:1, errorCount:0} ✅
+  - POST /api/trades/import-csv z Slovenian headers (naslov,kategorija,nakupcena,nakupdatum,nakupkraj) → {ok:true, created:1} ✅
+  - POST /api/trades/import-csv z ; delimiter → {ok:true, created:1} (auto-detect deluje) ✅
+  - POST /api/trades/import-csv z mixed valid/invalid rows (3 vrstice: 2 valid + 1 z praznim title + neveljavnim buyPrice) → {ok:true, created:2, errors:[title empty, buyPrice invalid], totalRows:3, validCount:2, errorCount:2} ✅ (partial success deluje — invalid rows ne blokirajo valid)
+  - POST /api/trades/import-csv z manjkajočo obvezno kolono (samo title, category — brez buyPrice) → HTTP 400 {ok:false, error:"Nobena vrstica ni veljavna", errors:[headers: "Manjkajo obvezne kolone: title in buyPrice"]} ✅
+  - GET /api/ai-list → total=428 (nespremenjeno — nove rute so pod /api/trades/, ne /api/ai/) ✅
+  - GET / (root dashboard) → HTTP 200 (dashboard pravilno rendera z novo TradeStatsCard) ✅
+  - Po cleanup-u 5 test trade-ov (DELETE /api/trades/[id]) → trade count nazaj na 25 (original demo seed nespremenjen) ✅
+- Documentation updated:
+  - README.md: version v8.35.0 → v8.36.0, API routes 606 → 608, ~293 → ~295 funkcij, "Kaj je novega" v7.56-v8.35 → v7.56-v8.36 (79 → 80 verzij, 203 → 205 novih funkcij), nov v8.36 blok z 5 točkami (CSV Import + Quick Add Modal + Dashboard Stats + Dashboard mods + Trades-view mods), "Verzija v8.35.0" → "v8.36.0", Testing line 606 → 608 routes.
+  - CHANGELOG.md: [Unreleased] posodobljen z v8.36 milestone + v8.37+ roadmap. Nov [8.36.0] section z 6 podsekcijami (csv-import.ts, import-csv/route.ts, csv-template/route.ts, quick-add-trade-modal.tsx, trade-stats-card.tsx, dashboard-view.tsx MODIFIED, trades-view.tsx MODIFIED), Stats (AI 428 unchanged, routes 606→608 +2, brain 24 unchanged), Note o Polish phase trade management enhancement.
+  - AI_ENDPOINTS.md: NO changes (new routes are under /api/trades/, not /api/ai/). Total stays 428.
+
+Stage Summary:
+- NEW: src/lib/trades/csv-import.ts (parseCsv + validateCsvRows + generateCsvTemplate — pure functions, Slovenian+English header mapping, auto-detect ,/; delimiter, quoted fields, BOM strip)
+- NEW: src/app/api/trades/import-csv/route.ts (POST bulk import — JSON {csv} ali multipart file, db.trade.createMany, partial success z errors array)
+- NEW: src/app/api/trades/csv-template/route.ts (GET template download — text/csv z Content-Disposition attachment)
+- NEW: src/components/dashboard/quick-add-trade-modal.tsx (reusable compact modal — 6 polj namesto 14, Enter submit, profit+ROI preview)
+- NEW: src/components/dashboard/trade-stats-card.tsx (Dashboard stats card — profit + win rate + 4 mini-stats + best/worst niche + Quick Add button)
+- MODIFIED: src/components/dashboard/dashboard-view.tsx (TradeStatsCard med aiInsights in skladisceWidget + floating "Dodaj trade" button v action bar + QuickAddTradeModal controlled z showQuickAddTrade state)
+- MODIFIED: src/components/dashboard/trades-view.tsx ("📥 Uvozi CSV" button v action bar + CsvImportDialog komponenta na dnu datoteke z file upload + paste + predogled + import result + auto-close + template download link)
+- AI endpointi: 428 (unchanged — new routes are under /api/trades/, not /api/ai/)
+- Total API routes: 606 → 608 (+2: import-csv + csv-template)
+- Lint: 0 napak ✨ (2 pre-existing warnings v db.ts — ne kritično)
+- Typecheck: tsc OOM v sandboxu (projekt prevelik), ampak dev server compiled successfully + curl tests potrdijo pravilno delovanje + bun smoke test za csv-import module pass
+- Endpoint verification: 6/6 curl tests pass (template download, JSON import, Slovenian headers, ; delimiter, mixed valid/invalid, missing required columns)
+- UI confirmation: GET / vrača HTTP 200 (dashboard rendera z novo TradeStatsCard), dev.log prikazuje "✓ Compiled" brez TypeScript errorjev
+- Documentation updated: README.md (version + routes + funkcije + "Kaj je novega" v8.36 blok), CHANGELOG.md ([8.36.0] section + [Unreleased] posodobljen), AI_ENDPOINTS.md (no changes — confirmed total stays 428)
+- Issues: none. Spec je rekel "AI stays 428, routes 606 → 608 (+2)" — matcha dejanski count. Spec je rekel "~293 → ~295 funkcij" — matcha. Prvi import-csv curl test je vrnil 500 zaradi (a) `skipDuplicates` arg ne podprt v SQLite Prisma createMany + (b) `String(undefined)` za manjkajoče rowData fields — oba popravljena (odstranjen skipDuplicates, dodan explicit type-check + default assignment v validateCsvRows).
+- Skupaj doslej (v7.50 → v8.36): 86 verzij, 211 novih funkcij; Brain architecture COMPLETE (v8.22) + Validation phase ZAKLJUČENA (v8.23-v8.25) + Intelligence phase ZAKLJUČENA (v8.26-v8.29) + Automation phase ZAKLJUČENA (v8.30-v8.31) + Polish phase (v8.32-v8.36 — monitoring + performance + testing + data+notifications + trade management)
