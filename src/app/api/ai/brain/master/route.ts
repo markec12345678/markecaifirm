@@ -61,7 +61,9 @@
 
 import { NextRequest, NextResponse } from 'next/server';
 import { logger } from '@/lib/logger';
-import { getCachedAI, setCachedAI } from '@/lib/ai-cache';
+import { getCachedAIWithStats, setCachedAIWithStats } from '@/lib/ai-cache';
+// v8.33: Performance metrics — wraps masterBrain() with response-time tracking
+import { withPerf, recordPerf } from '@/lib/brain/performance';
 import {
   masterBrain,
   type MasterBrainResult,
@@ -252,7 +254,11 @@ function buildCacheKey(input: MasterBrainInput): string {
   // produce a different cache entry (so weight changes via UI/feedback trigger
   // fresh recompute instead of serving a stale cached result with old weights).
   parts.push(`dw:${stableStringify(input.domainWeights)}`);
-  return `master-brain:${parts.join('|')}`;
+  // v8.33: Return ONLY the suffix — the namespace prefix ('master-brain:') is
+  // now prepended by getCachedAIWithStats/setCachedAIWithStats so they can
+  // track per-namespace stats. Backward compat preserved: the actual stored
+  // key is still `master-brain:pi:...|ii:...|...` (same as before).
+  return parts.join('|');
 }
 
 // --- Handler -------------------------------------------------------------
@@ -315,12 +321,17 @@ async function handleMasterBrain(req: NextRequest) {
     input.domainWeights = adaptiveWeights;
 
     const cacheKey = buildCacheKey(input);
-    const cached = getCachedAI<MasterBrainResult>(cacheKey);
+    // v8.33: Use cache stats-tracked variants. Namespace = 'master-brain'.
+    const cacheHitStart = Date.now();
+    const cached = getCachedAIWithStats<MasterBrainResult>('master-brain', cacheKey);
     // v8.24: Always load the user's risk profile — even when serving from cache,
     // because the profile may have changed since the cached entry was created.
     const profile = await loadUserRiskProfile();
 
     if (cached) {
+      // v8.33: Record a perf entry for the cache-hit path (fast — just lookup).
+      // cached=true so the cacheHitRate metric in PerfStats reflects this hit.
+      recordPerf('master', Date.now() - cacheHitStart, true);
       // Re-stamp cachedAt so the caller sees a fresh "served at" timestamp.
       const served: MasterBrainResult = {
         ...cached,
@@ -353,8 +364,10 @@ async function handleMasterBrain(req: NextRequest) {
       });
     }
 
-    const result = await masterBrain(input);
-    setCachedAI(cacheKey, result, MASTER_CACHE_TTL_MS);
+    // v8.33: Wrap the masterBrain() call with perf tracking. cached=false
+    // because this is the slow path (cache miss → full recompute).
+    const result = await withPerf('master', () => masterBrain(input), false);
+    setCachedAIWithStats('master-brain', cacheKey, result, MASTER_CACHE_TTL_MS);
 
     // v8.24: Apply profile adjustment on the freshly computed result.
     const adjustment = adjustMasterBrainForRiskProfile(result, profile);

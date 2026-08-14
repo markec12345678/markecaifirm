@@ -57,7 +57,9 @@
 
 import { NextRequest, NextResponse } from 'next/server';
 import { logger } from '@/lib/logger';
-import { getCachedAI, setCachedAI } from '@/lib/ai-cache';
+import { getCachedAIWithStats, setCachedAIWithStats } from '@/lib/ai-cache';
+// v8.33: Performance metrics — wraps riskBrain() with response-time tracking
+import { withPerf, recordPerf } from '@/lib/brain/performance';
 import {
   riskBrain,
   type RiskBrainInput,
@@ -372,7 +374,9 @@ function buildCacheKey(input: RiskBrainInput): string {
   parts.push(`tlc:${input.totalListingsCount ?? ''}`);
   parts.push(`ats:${input.avgDaysToSell ?? ''}`);
   parts.push(`mvp:${input.marketVolatilityPct ?? ''}`);
-  return `risk-brain:${parts.join('|')}`;
+  // v8.33: Return ONLY the suffix — namespace prefix is now prepended by the
+  // stats-tracked cache wrappers. Actual stored key unchanged.
+  return parts.join('|');
 }
 
 // --- Handler -------------------------------------------------------------
@@ -412,8 +416,12 @@ async function handleRiskBrain(req: NextRequest) {
     };
 
     const cacheKey = buildCacheKey(mergedInput);
-    const cached = getCachedAI<RiskBrainResult>(cacheKey);
+    // v8.33: Use cache stats-tracked variants. Namespace = 'risk-brain'.
+    const cacheHitStart = Date.now();
+    const cached = getCachedAIWithStats<RiskBrainResult>('risk-brain', cacheKey);
     if (cached) {
+      // v8.33: Record a perf entry for the cache-hit path (fast — just lookup).
+      recordPerf('risk', Date.now() - cacheHitStart, true);
       // Re-stamp cachedAt so the caller sees a fresh "served at" timestamp.
       const served: RiskBrainResult = {
         ...cached,
@@ -422,8 +430,9 @@ async function handleRiskBrain(req: NextRequest) {
       return NextResponse.json(served);
     }
 
-    const result = riskBrain(mergedInput);
-    setCachedAI(cacheKey, result, BRAIN_CACHE_TTL_MS);
+    // v8.33: Wrap riskBrain() call with perf tracking. cached=false (slow path).
+    const result = await withPerf('risk', async () => riskBrain(mergedInput), false);
+    setCachedAIWithStats('risk-brain', cacheKey, result, BRAIN_CACHE_TTL_MS);
 
     return NextResponse.json(result);
   } catch (err: any) {

@@ -43,7 +43,9 @@
 
 import { NextRequest, NextResponse } from 'next/server';
 import { logger } from '@/lib/logger';
-import { getCachedAI, setCachedAI } from '@/lib/ai-cache';
+import { getCachedAIWithStats, setCachedAIWithStats } from '@/lib/ai-cache';
+// v8.33: Performance metrics — wraps marketBrain() with response-time tracking
+import { withPerf, recordPerf } from '@/lib/brain/performance';
 import {
   marketBrain,
   type MarketBrainInput,
@@ -309,7 +311,9 @@ function buildCacheKey(input: MarketBrainInput): string {
   parts.push(`adm:${input.avgDaysOnMarket ?? ''}`);
   parts.push(`psp:${input.priceSpreadPct ?? ''}`);
   parts.push(`cat:${input.category ?? ''}`);
-  return `market-brain:${parts.join('|')}`;
+  // v8.33: Return ONLY the suffix — namespace prefix is now prepended by the
+  // stats-tracked cache wrappers. Actual stored key unchanged.
+  return parts.join('|');
 }
 
 // --- Handler -------------------------------------------------------------
@@ -347,8 +351,12 @@ async function handleMarketBrain(req: NextRequest) {
     };
 
     const cacheKey = buildCacheKey(mergedInput);
-    const cached = getCachedAI<MarketBrainResult>(cacheKey);
+    // v8.33: Use cache stats-tracked variants. Namespace = 'market-brain'.
+    const cacheHitStart = Date.now();
+    const cached = getCachedAIWithStats<MarketBrainResult>('market-brain', cacheKey);
     if (cached) {
+      // v8.33: Record a perf entry for the cache-hit path (fast — just lookup).
+      recordPerf('market', Date.now() - cacheHitStart, true);
       // Re-stamp cachedAt so the caller sees a fresh "served at" timestamp.
       const served: MarketBrainResult = {
         ...cached,
@@ -357,8 +365,9 @@ async function handleMarketBrain(req: NextRequest) {
       return NextResponse.json(served);
     }
 
-    const result = marketBrain(mergedInput);
-    setCachedAI(cacheKey, result, BRAIN_CACHE_TTL_MS);
+    // v8.33: Wrap marketBrain() call with perf tracking. cached=false (slow path).
+    const result = await withPerf('market', async () => marketBrain(mergedInput), false);
+    setCachedAIWithStats('market-brain', cacheKey, result, BRAIN_CACHE_TTL_MS);
 
     return NextResponse.json(result);
   } catch (err: any) {

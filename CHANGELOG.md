@@ -17,6 +17,29 @@ v8.26 je odprl Intelligence phase (Action Explainability), v8.27 jo nadaljuje (S
 - Additional conflict detection tipi (npr. Inventory vs Buyer — supply/demand mismatch)
 - Per-domain DB injection v Master Brain route (zaenkrat se zanaša na individualne Domain Brain route-e za DB state)
 
+## [8.33.0] - 2026-08-28
+
+### Added — ⚡ Performance Caching + Cache Stats (Polish phase continues)
+
+Problem: Master Brain kliče 7 domain brain-ov preko `Promise.all`, ampak ni bilo vidnosti v cache hit rates in response times. v8.33 dodaja performance metrics + cache stats tracking.
+
+- **`src/lib/ai-cache.ts`** (MODIFIED): dodane stats tracking funkcije — `getCachedAIWithStats(namespace, key)`, `setCachedAIWithStats(namespace, key, value, ttl)`, `getCacheStats(namespace)`, `getAllCacheStats()`, `resetCacheStats(namespace?)`, `getCacheStoreSize()`. Hit/miss/sets counters per namespace (master-brain, profit-brain, ...).
+- **`src/lib/brain/performance.ts`** (NEW): Performance metrics module — `recordPerf(brain, durationMs, cached)`, `getPerfStats(brain)` (avg/p50/p95/p99/min/max + cacheHitRate), `getAllPerfStats()`, `resetPerfStats(brain?)`, `withPerf(brain, fn, cached)` wrapper. Rolling window 100 entries per brain.
+- **8 brain routes modified** (master + 7 domain): uporabljajo `getCachedAIWithStats`/`setCachedAIWithStats` namesto `getCachedAI`/`setCachedAI`, + `withPerf()` wrapper za response time tracking. Cache hit → `cached=true`, miss → `cached=false`.
+- **`src/app/api/ai/brain/performance/route.ts`** (NEW): GET (cache stats + perf stats + summary), POST `{ action: 'reset' }`. 30s cache, maxDuration=30.
+- **UI**: ⚡ Performance card (yellow/amber) z overall hit rate + per-namespace cache stats table + per-brain performance stats table z color-coded response times (green <50ms, amber 50-200ms, red >200ms) + reset button + 30s auto-refresh.
+
+### Stats
+
+- AI endpoints: 425 → 426 (+1)
+- Total API routes: 602 → 603 (+1)
+
+### Polish phase continues
+
+- v8.32 = System Health Dashboard (monitoring — "Ali je sistem zdrav?")
+- v8.33 = Performance Caching + Cache Stats (performance — "Kako hitra je cache?")
+- Next: v8.34 (E2E tests — Playwright)
+
 ## [8.32.0] - 2026-08-28
 
 ### Added — 🏥 System Health Dashboard (NEW PHASE: Polish STARTED — "How healthy is the Brain system?")

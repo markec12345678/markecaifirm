@@ -66,7 +66,9 @@
 
 import { NextRequest, NextResponse } from 'next/server';
 import { logger } from '@/lib/logger';
-import { getCachedAI, setCachedAI } from '@/lib/ai-cache';
+import { getCachedAIWithStats, setCachedAIWithStats } from '@/lib/ai-cache';
+// v8.33: Performance metrics — wraps buyerBrain() with response-time tracking
+import { withPerf, recordPerf } from '@/lib/brain/performance';
 import {
   buyerBrain,
   type BuyerBrainInput,
@@ -375,7 +377,9 @@ function buildCacheKey(input: BuyerBrainInput): string {
   parts.push(`ic:${input.inquiriesConvertedPct ?? ''}`);
   parts.push(`es:${input.avgEngagementScore ?? ''}`);
   parts.push(`hv:${input.highValueBuyersCount ?? ''}`);
-  return `buyer-brain:${parts.join('|')}`;
+  // v8.33: Return ONLY the suffix — namespace prefix is now prepended by the
+  // stats-tracked cache wrappers. Actual stored key unchanged.
+  return parts.join('|');
 }
 
 // --- Handler -------------------------------------------------------------
@@ -418,8 +422,12 @@ async function handleBuyerBrain(req: NextRequest) {
     };
 
     const cacheKey = buildCacheKey(mergedInput);
-    const cached = getCachedAI<BuyerBrainResult>(cacheKey);
+    // v8.33: Use cache stats-tracked variants. Namespace = 'buyer-brain'.
+    const cacheHitStart = Date.now();
+    const cached = getCachedAIWithStats<BuyerBrainResult>('buyer-brain', cacheKey);
     if (cached) {
+      // v8.33: Record a perf entry for the cache-hit path (fast — just lookup).
+      recordPerf('buyer', Date.now() - cacheHitStart, true);
       // Re-stamp cachedAt so the caller sees a fresh "served at" timestamp.
       const served: BuyerBrainResult = {
         ...cached,
@@ -428,8 +436,9 @@ async function handleBuyerBrain(req: NextRequest) {
       return NextResponse.json(served);
     }
 
-    const result = buyerBrain(mergedInput);
-    setCachedAI(cacheKey, result, BRAIN_CACHE_TTL_MS);
+    // v8.33: Wrap buyerBrain() call with perf tracking. cached=false (slow path).
+    const result = await withPerf('buyer', async () => buyerBrain(mergedInput), false);
+    setCachedAIWithStats('buyer-brain', cacheKey, result, BRAIN_CACHE_TTL_MS);
 
     return NextResponse.json(result);
   } catch (err: any) {

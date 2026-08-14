@@ -16707,3 +16707,39 @@ Stage Summary:
   - v8.32 = System Health Dashboard (monitoring — "Ali je sistem zdrav?")
   - Naslednji: v8.33 (performance caching — per-domain cache za hitrejši Master Brain), v8.34 (E2E tests)
 - Skupaj doslej (v7.50 → v8.32): 82 verzij, 206 novih funkcij; Brain architecture COMPLETE (v8.22) + Validation phase ZAKLJUČENA (v8.23-v8.25) + Intelligence phase ZAKLJUČENA (v8.26-v8.29) + Automation phase ZAKLJUČENA (v8.30-v8.31) + Polish phase STARTED (v8.32 System Health Dashboard)
+
+---
+Task ID: v8.33
+Agent: full-stack-developer + main
+Task: Implement Performance Caching + Cache Stats — Polish phase continues
+
+Work Log:
+- Podagent (full-stack-developer) je implementiral v8.33 pred prekinitvijo: ai-cache.ts extended z 7 stats funkcijami, src/lib/brain/performance.ts (perf metrics z rolling window), src/app/api/ai/brain/performance/route.ts (GET+POST), 8 brain routes modificirane (master + 7 domain) z cache stats + perf tracking, UI ⚡ Performance card
+- Main agent je po prekinitvi dokončal:
+  - Preveril endpoint: GET /api/ai/brain/performance → 200 z cacheStats (master-brain hits:4, hitRate:100%), perfStats (master avgMs:3, p50:3, p95:3), cacheStoreSize:1, summary (overallHitRate:100, totalRequests:4, totalCached:4) ✅
+  - Preveril cache hit verification: 2× master call → hits incremented (2→4) ✅
+  - Preveril ai-list: total 426, brain 22 ✅
+  - Preveril lint: 0 napak (2 unused eslint-disable warnings — ne kritično) ✨
+  - Preveril typecheck: 0 napak ✨
+  - Dopolnil CHANGELOG.md z [8.33.0] sekcijo
+  - README.md in AI_ENDPOINTS.md sta bila že posodobljena s strani podagenta
+  - Posodobil GitHub About
+
+Stage Summary:
+- MODIFIED: src/lib/ai-cache.ts (cache stats tracking — getCachedAIWithStats, setCachedAIWithStats, getCacheStats, getAllCacheStats, resetCacheStats, getCacheStoreSize)
+- NEW: src/lib/brain/performance.ts (recordPerf, getPerfStats, getAllPerfStats, resetPerfStats, withPerf — rolling window 100 entries, avg/p50/p95/p99/min/max + cacheHitRate)
+- MODIFIED: src/app/api/ai/brain/{master,profit,inventory,market,sourcing,risk,buyer,pricing}/route.ts (8 routes — use getCachedAIWithStats/setCachedAIWithStats + withPerf wrapper)
+- NEW: src/app/api/ai/brain/performance/route.ts (GET cache stats + perf stats + summary, POST reset)
+- MODIFIED: src/components/dashboard/ai-hub-view.tsx (⚡ Performance card — yellow/amber, overall hit rate + per-namespace cache stats table + per-brain perf stats table z color-coded response times + reset button + 30s auto-refresh)
+- AI endpointi: 425 → 426 (+1)
+- Analytics endpointi: 72 (nespremenjeno)
+- Total API routes: 602 → 603 (+1)
+- Lint: 0 napak ✨
+- Typecheck: 0 napak ✨
+- Endpoint verification: GET performance 200 (master-brain hits:4, hitRate:100%, avgMs:3, p50:3, p95:3), cache hit verification (2× master → hits 2→4) ✅
+- Documentation updated: AI_ENDPOINTS.md (Total: 426), README.md (v8.33.0), CHANGELOG.md ([8.33.0])
+- Polish phase continues:
+  - v8.32 = System Health Dashboard (monitoring — "Ali je sistem zdrav?")
+  - v8.33 = Performance Caching + Cache Stats (performance — "Kako hitra je cache?")
+  - Naslednji: v8.34 (E2E tests — Playwright)
+- Skupaj doslej (v7.50 → v8.33): 83 verzij, 207 novih funkcij; Brain architecture COMPLETE (v8.22) + Validation phase ZAKLJUČENA (v8.23-v8.25) + Intelligence phase ZAKLJUČENA (v8.26-v8.29) + Automation phase ZAKLJUČENA (v8.30-v8.31) + Polish phase (v8.32-v8.33)

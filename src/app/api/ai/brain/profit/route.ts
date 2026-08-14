@@ -29,7 +29,9 @@
 
 import { NextRequest, NextResponse } from 'next/server';
 import { logger } from '@/lib/logger';
-import { getCachedAI, setCachedAI } from '@/lib/ai-cache';
+import { getCachedAIWithStats, setCachedAIWithStats } from '@/lib/ai-cache';
+// v8.33: Performance metrics — wraps profitBrain() with response-time tracking
+import { withPerf, recordPerf } from '@/lib/brain/performance';
 import { profitBrain, type ProfitBrainInput, type ProfitBrainResult } from '@/lib/brain/profit';
 
 export const runtime = 'nodejs';
@@ -250,7 +252,10 @@ function buildCacheKey(input: ProfitBrainInput): string {
   parts.push(`apt:${input.avgProfitPerTrade ?? ''}`);
   parts.push(`tpm:${input.tradesPerMonth ?? ''}`);
   parts.push(`cd:${input.capitalDeployed ?? ''}`);
-  return `profit-brain:${parts.join('|')}`;
+  // v8.33: Return ONLY the suffix — namespace prefix ('profit-brain:') is now
+  // prepended by getCachedAIWithStats/setCachedAIWithStats so they can track
+  // per-namespace stats. Actual stored key unchanged: `profit-brain:mp:...`.
+  return parts.join('|');
 }
 
 // --- Handler -------------------------------------------------------------
@@ -281,8 +286,12 @@ async function handleProfitBrain(req: NextRequest) {
     };
 
     const cacheKey = buildCacheKey(mergedInput);
-    const cached = getCachedAI<ProfitBrainResult>(cacheKey);
+    // v8.33: Use cache stats-tracked variants. Namespace = 'profit-brain'.
+    const cacheHitStart = Date.now();
+    const cached = getCachedAIWithStats<ProfitBrainResult>('profit-brain', cacheKey);
     if (cached) {
+      // v8.33: Record a perf entry for the cache-hit path (fast — just lookup).
+      recordPerf('profit', Date.now() - cacheHitStart, true);
       // Re-stamp cachedAt so the caller sees a fresh "served at" timestamp.
       const served: ProfitBrainResult = {
         ...cached,
@@ -291,8 +300,9 @@ async function handleProfitBrain(req: NextRequest) {
       return NextResponse.json(served);
     }
 
-    const result = profitBrain(mergedInput);
-    setCachedAI(cacheKey, result, BRAIN_CACHE_TTL_MS);
+    // v8.33: Wrap profitBrain() call with perf tracking. cached=false (slow path).
+    const result = await withPerf('profit', async () => profitBrain(mergedInput), false);
+    setCachedAIWithStats('profit-brain', cacheKey, result, BRAIN_CACHE_TTL_MS);
 
     return NextResponse.json(result);
   } catch (err: any) {

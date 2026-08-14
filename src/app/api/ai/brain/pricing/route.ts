@@ -83,7 +83,9 @@
 
 import { NextRequest, NextResponse } from 'next/server';
 import { logger } from '@/lib/logger';
-import { getCachedAI, setCachedAI } from '@/lib/ai-cache';
+import { getCachedAIWithStats, setCachedAIWithStats } from '@/lib/ai-cache';
+// v8.33: Performance metrics — wraps pricingBrain() with response-time tracking
+import { withPerf, recordPerf } from '@/lib/brain/performance';
 import {
   pricingBrain,
   type PricingBrainInput,
@@ -418,7 +420,9 @@ function buildCacheKey(input: PricingBrainInput): string {
   parts.push(`sm:${input.seasonalMultiplier ?? ''}`);
   parts.push(`po:${input.psychologyOptimizedPct ?? ''}`);
   parts.push(`lpc:${input.lastPriceChangePct ?? ''}`);
-  return `pricing-brain:${parts.join('|')}`;
+  // v8.33: Return ONLY the suffix — namespace prefix is now prepended by the
+  // stats-tracked cache wrappers. Actual stored key unchanged.
+  return parts.join('|');
 }
 
 // --- Handler -------------------------------------------------------------
@@ -459,8 +463,12 @@ async function handlePricingBrain(req: NextRequest) {
     };
 
     const cacheKey = buildCacheKey(mergedInput);
-    const cached = getCachedAI<PricingBrainResult>(cacheKey);
+    // v8.33: Use cache stats-tracked variants. Namespace = 'pricing-brain'.
+    const cacheHitStart = Date.now();
+    const cached = getCachedAIWithStats<PricingBrainResult>('pricing-brain', cacheKey);
     if (cached) {
+      // v8.33: Record a perf entry for the cache-hit path (fast — just lookup).
+      recordPerf('pricing', Date.now() - cacheHitStart, true);
       // Re-stamp cachedAt so the caller sees a fresh "served at" timestamp.
       const served: PricingBrainResult = {
         ...cached,
@@ -469,8 +477,9 @@ async function handlePricingBrain(req: NextRequest) {
       return NextResponse.json(served);
     }
 
-    const result = pricingBrain(mergedInput);
-    setCachedAI(cacheKey, result, BRAIN_CACHE_TTL_MS);
+    // v8.33: Wrap pricingBrain() call with perf tracking. cached=false (slow path).
+    const result = await withPerf('pricing', async () => pricingBrain(mergedInput), false);
+    setCachedAIWithStats('pricing-brain', cacheKey, result, BRAIN_CACHE_TTL_MS);
 
     return NextResponse.json(result);
   } catch (err: any) {

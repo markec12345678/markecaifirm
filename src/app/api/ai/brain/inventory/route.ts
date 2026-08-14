@@ -40,7 +40,9 @@
 
 import { NextRequest, NextResponse } from 'next/server';
 import { logger } from '@/lib/logger';
-import { getCachedAI, setCachedAI } from '@/lib/ai-cache';
+import { getCachedAIWithStats, setCachedAIWithStats } from '@/lib/ai-cache';
+// v8.33: Performance metrics — wraps inventoryBrain() with response-time tracking
+import { withPerf, recordPerf } from '@/lib/brain/performance';
 import {
   inventoryBrain,
   type InventoryBrainInput,
@@ -296,7 +298,9 @@ function buildCacheKey(input: InventoryBrainInput): string {
   parts.push(`cd:${input.capitalDeployed ?? ''}`);
   parts.push(`msc:${input.monthlySalesCount ?? ''}`);
   parts.push(`mr:${input.monthlyRevenue ?? ''}`);
-  return `inventory-brain:${parts.join('|')}`;
+  // v8.33: Return ONLY the suffix — namespace prefix is now prepended by the
+  // stats-tracked cache wrappers. Actual stored key unchanged.
+  return parts.join('|');
 }
 
 // --- Handler -------------------------------------------------------------
@@ -332,8 +336,12 @@ async function handleInventoryBrain(req: NextRequest) {
     };
 
     const cacheKey = buildCacheKey(mergedInput);
-    const cached = getCachedAI<InventoryBrainResult>(cacheKey);
+    // v8.33: Use cache stats-tracked variants. Namespace = 'inventory-brain'.
+    const cacheHitStart = Date.now();
+    const cached = getCachedAIWithStats<InventoryBrainResult>('inventory-brain', cacheKey);
     if (cached) {
+      // v8.33: Record a perf entry for the cache-hit path (fast — just lookup).
+      recordPerf('inventory', Date.now() - cacheHitStart, true);
       // Re-stamp cachedAt so the caller sees a fresh "served at" timestamp.
       const served: InventoryBrainResult = {
         ...cached,
@@ -342,8 +350,9 @@ async function handleInventoryBrain(req: NextRequest) {
       return NextResponse.json(served);
     }
 
-    const result = inventoryBrain(mergedInput);
-    setCachedAI(cacheKey, result, BRAIN_CACHE_TTL_MS);
+    // v8.33: Wrap inventoryBrain() call with perf tracking. cached=false (slow path).
+    const result = await withPerf('inventory', async () => inventoryBrain(mergedInput), false);
+    setCachedAIWithStats('inventory-brain', cacheKey, result, BRAIN_CACHE_TTL_MS);
 
     return NextResponse.json(result);
   } catch (err: any) {

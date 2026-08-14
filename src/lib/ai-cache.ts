@@ -184,8 +184,14 @@ export async function filterForEvaluation(
 
 /**
  * Get cache statistics for monitoring.
+ *
+ * v8.33 RENAMED from `getCacheStats` → `getListingCacheStats` to free up the
+ * `getCacheStats` name for the new (synchronous, in-memory) per-namespace
+ * Brain cache stats tracker. This DB-backed function is unchanged in
+ * behavior — only the export name changed. Not called anywhere else in the
+ * codebase at time of rename (verified via project-wide grep).
  */
-export async function getCacheStats(): Promise<{
+export async function getListingCacheStats(): Promise<{
   totalListings: number;
   evaluated: number;
   pending: number;
@@ -207,4 +213,101 @@ export async function getCacheStats(): Promise<{
     pending: total - evaluated,
     cacheHitRate: evaluated > 0 ? Math.round((fresh / evaluated) * 100) : 0,
   };
+}
+
+// =========================================================================
+// v8.33: Per-namespace Brain cache stats — hit/miss/sets counters.
+// =========================================================================
+//
+// Tracks cache hit rates for each Brain layer (master-brain, profit-brain,
+// inventory-brain, market-brain, sourcing-brain, risk-brain, buyer-brain,
+// pricing-brain). Used by the Performance API + UI ⚡ Performance card.
+//
+// Memory-only — process restart clears stats (acceptable for monitoring).
+// Stats are tracked via the `getCachedAIWithStats`/`setCachedAIWithStats`
+// wrappers — direct `getCachedAI`/`setCachedAI` calls bypass stats (we
+// intentionally don't pollute the original generic functions).
+//
+// Eviction tracking is intentionally skipped (we don't store the namespace
+// on the cached entry; would require a wider refactor). Stats cover hits,
+// misses, and sets only — sufficient for "is the cache effective?" insight.
+
+interface CacheStats {
+  hits: number;
+  misses: number;
+  sets: number;
+  evictions: number;
+}
+
+const cacheStats = new Map<string, CacheStats>();
+
+function getOrCreateStats(namespace: string): CacheStats {
+  if (!cacheStats.has(namespace)) {
+    cacheStats.set(namespace, { hits: 0, misses: 0, sets: 0, evictions: 0 });
+  }
+  return cacheStats.get(namespace)!;
+}
+
+/** v8.33: Get cached value with stats tracking. Namespace = cache key prefix
+ *  (e.g. 'master-brain', 'profit-brain'). The actual stored key is
+ *  `${namespace}:${key}` — same shape as the existing buildCacheKey helpers,
+ *  so cache backward compatibility is preserved. */
+export function getCachedAIWithStats<T>(namespace: string, key: string): T | null {
+  const stats = getOrCreateStats(namespace);
+  const value = getCachedAI<T>(`${namespace}:${key}`);
+  if (value !== null) {
+    stats.hits++;
+  } else {
+    stats.misses++;
+  }
+  return value;
+}
+
+/** v8.33: Set cached value with stats tracking. */
+export function setCachedAIWithStats<T>(namespace: string, key: string, value: T, ttlMs: number): void {
+  const stats = getOrCreateStats(namespace);
+  stats.sets++;
+  setCachedAI(`${namespace}:${key}`, value, ttlMs);
+}
+
+/** v8.33: Get cache stats for a namespace. Returns hit/miss/sets/evictions +
+ *  computed hitRate + total requests (hits + misses). */
+export function getCacheStats(namespace: string): CacheStats & { hitRate: number; total: number } {
+  const stats = getOrCreateStats(namespace);
+  const total = stats.hits + stats.misses;
+  return {
+    ...stats,
+    hitRate: total > 0 ? (stats.hits / total) * 100 : 0,
+    total,
+  };
+}
+
+/** v8.33: Get all cache stats (all namespaces ever observed). */
+export function getAllCacheStats(): Array<{ namespace: string } & CacheStats & { hitRate: number; total: number }> {
+  const result: Array<{ namespace: string } & CacheStats & { hitRate: number; total: number }> = [];
+  for (const [namespace, stats] of cacheStats.entries()) {
+    const total = stats.hits + stats.misses;
+    result.push({
+      namespace,
+      ...stats,
+      hitRate: total > 0 ? (stats.hits / total) * 100 : 0,
+      total,
+    });
+  }
+  return result;
+}
+
+/** v8.33: Reset cache stats for a namespace (or all if no namespace provided). */
+export function resetCacheStats(namespace?: string): void {
+  if (namespace) {
+    cacheStats.delete(namespace);
+  } else {
+    cacheStats.clear();
+  }
+}
+
+/** v8.33: Get cache store size (number of cached entries currently in memory).
+ *  Useful for the UI to show "Cache entries: 12". */
+export function getCacheStoreSize(): number {
+  return aiCacheStore.size;
 }

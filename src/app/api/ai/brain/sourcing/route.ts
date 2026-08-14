@@ -57,7 +57,9 @@
 
 import { NextRequest, NextResponse } from 'next/server';
 import { logger } from '@/lib/logger';
-import { getCachedAI, setCachedAI } from '@/lib/ai-cache';
+import { getCachedAIWithStats, setCachedAIWithStats } from '@/lib/ai-cache';
+// v8.33: Performance metrics — wraps sourcingBrain() with response-time tracking
+import { withPerf, recordPerf } from '@/lib/brain/performance';
 import {
   sourcingBrain,
   type SourcingBrainInput,
@@ -372,7 +374,9 @@ function buildCacheKey(input: SourcingBrainInput): string {
   } else {
     parts.push('src:default');
   }
-  return `sourcing-brain:${parts.join('|')}`;
+  // v8.33: Return ONLY the suffix — namespace prefix is now prepended by the
+  // stats-tracked cache wrappers. Actual stored key unchanged.
+  return parts.join('|');
 }
 
 // --- Handler -------------------------------------------------------------
@@ -401,8 +405,12 @@ async function handleSourcingBrain(req: NextRequest) {
     };
 
     const cacheKey = buildCacheKey(mergedInput);
-    const cached = getCachedAI<SourcingBrainResult>(cacheKey);
+    // v8.33: Use cache stats-tracked variants. Namespace = 'sourcing-brain'.
+    const cacheHitStart = Date.now();
+    const cached = getCachedAIWithStats<SourcingBrainResult>('sourcing-brain', cacheKey);
     if (cached) {
+      // v8.33: Record a perf entry for the cache-hit path (fast — just lookup).
+      recordPerf('sourcing', Date.now() - cacheHitStart, true);
       // Re-stamp cachedAt so the caller sees a fresh "served at" timestamp.
       const served: SourcingBrainResult = {
         ...cached,
@@ -411,8 +419,9 @@ async function handleSourcingBrain(req: NextRequest) {
       return NextResponse.json(served);
     }
 
-    const result = sourcingBrain(mergedInput);
-    setCachedAI(cacheKey, result, BRAIN_CACHE_TTL_MS);
+    // v8.33: Wrap sourcingBrain() call with perf tracking. cached=false (slow path).
+    const result = await withPerf('sourcing', async () => sourcingBrain(mergedInput), false);
+    setCachedAIWithStats('sourcing-brain', cacheKey, result, BRAIN_CACHE_TTL_MS);
 
     return NextResponse.json(result);
   } catch (err: any) {
