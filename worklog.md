@@ -16521,3 +16521,134 @@ Stage Summary:
   - v8.31 = Aggressive Auto-pilot (MEDIUM OK, višji limiti) + Anomaly Detection (>8/uro suspend) + Double Confirmation (5-min window)
   - Skupaj: full auto-pilot spectrum — LOW in MEDIUM confidence akcije se lahko avtomatsko izvajajo, HIGH vedno manual, domain=risk vedno izključen
 - Skupaj doslej (v7.50 → v8.31): 81 verzij, 205 novih funkcij; Brain architecture COMPLETE (v8.22) + Validation phase ZAKLJUČENA (v8.23-v8.25) + Intelligence phase ZAKLJUČENA (v8.26-v8.29) + Automation phase ZAKLJUČENA (v8.30-v8.31) — naslednja faza: v8.32+ Polish (anomaly detection ML, predictive accuracy, performance optimizations, real-world testing)
+
+---
+Task ID: v8.32
+Agent: full-stack-developer
+Task: Implement System Health Dashboard + Performance Metrics — Polish phase start
+
+Work Log:
+- Prebral worklog.md (especially v8.22 Master Brain + v8.23-v8.31 entries — v8.32 začenja NEW phase: Polish).
+- Prebral src/lib/brain/master.ts (7 domain brain calls vzporedno + 7 domain grades + overallHealth).
+- Prebral src/lib/ai-cache.ts (getCachedAI(), setCachedAI() + 6h default TTL — uporabljen v /api/ai/brain/health z 30s custom TTL).
+- Prebral src/components/dashboard/ai-hub-view.tsx BrainSynthesisCard hierarhija (ActualProfitCard + RiskProfileCard + MasterBrainBanner + ... + 7 Domain Brain sections + BrainSnapshotsSection + AccuracyTrendCard).
+- Prebral prisma/schema.prisma (Settings polja v8.24-v8.31: userRiskTolerance, userMaxAcceptableRisk, autoPilotEnabled, autoPilotMode, autoPilotAnomalySuspended, autoPilotHourlyExecCount; ActionDraft status field; BrainSnapshot accuracy30d; Trade status='sold').
+- Prebral src/lib/brain/auto-pilot.ts (getAutoPilotStats() + AutoPilotConfig shape — reused v loadAutoPilotSummary()).
+- Prebral src/lib/brain/adaptive-weights.ts (loadAdaptiveWeights() + DEFAULT_DOMAIN_WEIGHTS + AdaptiveWeights type — reused v summarizeAdaptiveWeights()).
+
+- Step 1: src/lib/brain/system-health.ts (NEW, ~640 vrstic):
+  - getSystemHealth() vrača SystemHealthReport z 8 brain endpoints + data freshness + auto-pilot + draft queue + risk profile + adaptive weights + recommendations + overall score + grade + status.
+  - quickHealthCheck() vrača {healthy, score, status} za cron/monitoring.
+  - checkBrainEndpoint() — fetch-a en brain endpoint z 3-sekundo timeout (AbortController + setTimeout). NEVER throws — failures so responsive:false z lastError.
+  - extractGradeFromResponse() — Master brain overallHealth.score (number) ali overallHealth.grade (string); Domain brain maximization.<domain>Grade (string).
+  - 8 brain endpoint health checks (profit, inventory, market, sourcing, risk, buyer, pricing, master) — parallel preko Promise.all (total worst-case 3s, ne 24s).
+  - DB helperji z getFreshDb() pattern (v8.28+ pattern) + raw SQL za Turbopack-safe dostop do v8.31 Settings polj:
+    - loadSnapshotData() — SELECT COUNT + latest date + accuracy30d iz BrainSnapshot.
+    - countSoldTrades() — SELECT COUNT(*) FROM Trade WHERE status='sold'.
+    - loadDraftQueueStats() — SELECT COUNT(CASE WHEN status='pending' OR status='approved' THEN 1 END) AS pending, ... FROM ActionDraft (BigInt fallbacki z BigInt(0) ker TypeScript target < ES2020 ne podpira 0n literalov).
+    - loadRiskProfile() — SELECT userRiskTolerance, userMaxAcceptableRisk FROM Settings.
+    - summarizeAdaptiveWeights() — count domains z non-default weight + sum executed/rejected.
+    - loadAutoPilotSummary() — reuses getAutoPilotStats() iz v8.30 auto-pilot.ts.
+  - computeOverallScore() — weighted formula: 40% brains responsive (8 endpoints × 5 points = 40) + 20% data freshness (snapshot <7 days = 20) + 15% draft queue health (executionRate > 0.5 = 15; > 0.2 = 10; else = 5; no drafts resolved = 7.5 partial) + 15% auto-pilot health (not suspended = 15; suspended = 0) + 10% risk profile set (non-default = 10).
+  - gradeFromScore() — A+ >=90, A >=80, B >=65, C >=50, D >=30, F <30.
+  - status: HEALTHY >=80, DEGRADED >=50, UNHEALTHY <50.
+  - generateRecommendations() — 8 pravil (Slovenian strings):
+    1. Brain not responding → "💡 Brain \\"X\\" ne odgovarja — preveri log (...)
+    2. Anomaly suspended → "💡 Anomaly suspension aktiven — pošlji POST {action:\\"clear_anomaly\\"}..."
+    3. Auto-pilot disabled → "💡 Vklopi auto-pilot za LOW-risk avtomatizacijo (8 varnostnih pravil)..."
+    4. No snapshots → "💡 Zaženi Master Brain za kreiranje prvega snapshot-a..."
+    5. No trades → "💡 Zabeleži prodane trade-a za accuracy tracking (potrebno za backfill)..."
+    6. Default risk profile → "💡 Nastavi svoj risk profil (conservative/aggressive)..."
+    7. No adaptive adjustments → "💡 Izvedi/zavrni draft-a za trening adaptive weights..."
+    8. Low execution rate (< 0.4) → "💡 Nizka execution rate — pregledaj pending draft-a..."
+  - INTERNAL_BASE_URL = process.env.NEXT_PUBLIC_BASE_URL ?? process.env.API_BASE_URL ?? 'http://localhost:3000' (internal HTTP loopback za health-check drugih brain endpointov).
+  - source: 'v8.32-system-health'.
+
+- Step 2: src/app/api/ai/brain/health/route.ts (NEW endpoint, ~75 vrstic):
+  - GET /api/ai/brain/health → vrača SystemHealthReport z 8 brain endpoints + data freshness + auto-pilot + draft queue + risk profile + adaptive weights + recommendations + overall score + grade + status.
+  - 30-second cache (shorter od drugih brainov ker health mora biti fresh — auto-pilot suspension, anomaly detection, etc. morajo biti surfaced hitro).
+  - runtime='nodejs', dynamic='force-dynamic', maxDuration=30 (shorter da health check ne obesi — drugi brainovi imajo maxDuration=60).
+  - Standard error pattern (try/catch + logger.error + 500 fallback).
+
+- Step 3: MODIFIED src/components/dashboard/ai-hub-view.tsx (NOVA SystemHealthCard komponenta, ~380 vrstic):
+  - HeartPulse icon dodan v lucide-react imports.
+  - NOVA SystemHealthCard komponenta (z onBrainCategoryClick prop — click na brain chip navigira na brain category).
+  - Placed at VERY TOP of BrainSynthesisCard (above ActualProfitCard + RiskProfileCard + MasterBrainBanner — health overview FIRST).
+  - Gradient background ki se spremeni glede na status:
+    - HEALTHY (≥80): emerald gradient (from-emerald-500/15 via-emerald-500/10 to-teal-500/5).
+    - DEGRADED (≥50): amber gradient (from-amber-500/15 via-amber-500/10 to-yellow-500/5).
+    - UNHEALTHY (<50): red gradient (from-red-500/15 via-rose-500/10 to-red-500/5).
+  - Big health score "87/100" z grade pill (A+/A/B/C/D/F) + status pill (HEALTHY/DEGRADED/UNHEALTHY).
+  - 8 Brain endpoints grid (2 rows × 4 cols na desktop, 2 cols na mobile):
+    - Vsak brain: icon + name + status dot (green=responsive, red=error) + response time (npr. "14ms") + grade pill.
+    - Click na brain chip → navigira na brain category v AI Hub listi (preko onBrainCategoryClick).
+    - Hover tooltip z lastError če ne responsive.
+    - BRAIN_HEALTH_ICONS map: profit→Coins/emerald, inventory→Package/amber, market→TrendingUp/sky, sourcing→Target/violet, risk→Shield/red, buyer→Users/cyan, pricing→Coins/lime, master→Crown/amber.
+  - 4 info cards v 2-col grid:
+    - Data Freshness (📸 latest snapshot + days ago + 📊 trades count + 📈 accuracy 30d).
+    - Auto-pilot (🤖 OFF/ON/SUSPENDED + today stats).
+    - Draft Queue (📋 pending/executed/rejected/expired + execution rate).
+    - Risk & Adaptive (⚙️ risk profile + 🎛️ adjusted domains + executed/rejected).
+  - Recommendations list (💡 amber pills, max-h-32 overflow-y-auto z custom scrollbar).
+  - All-healthy state: "✅ Sistem je zdrav — vsi brain-i odgovarjajo, podatki so sveži."
+  - 🔄 Osveži button z 60s auto-refresh (setInterval).
+  - Loading skeleton z 8 brain endpoint cards layout (preview).
+  - Error state z "Ponovi" button.
+  - Last updated timestamp v footer ("Osveženo: 14:32:45 · auto-refresh 60s" če ne HEALTHY).
+  - BrainSynthesisCard outer badge posodobljen: "v8.32 Health + v8.31 Auto-pilot + v8.29 Draft Queue + v8.28 Adaptive + v8.27 Scenario + v8.26 Explain + v8.25 Accuracy + v8.24 Personal + v8.23 Validation + v8.22 Master + v8.15-v8.21 (7 Domains)".
+  - NEW TypeScript interfaces: BrainEndpointHealth, SystemHealthReport (component-local).
+  - NEW helper functions: BRAIN_HEALTH_ICONS map, gradeTextColor() (renamed iz gradeColor() da se izogne collision z existing gradeColor() na liniji 351 ki vrača Tailwind classes z bg- prefix).
+
+- Step 4: Verification:
+  - bun run lint → 0 errors, 2 warnings (pre-existing unused eslint-disable v db.ts — ne kritično, ista kot v8.28/v8.29/v8.30/v8.31) ✅
+  - bunx tsc --noEmit → 0 errors ✅ (po fixu dveh issues: duplicate gradeColor function → renamed v gradeTextColor; BigInt literals `0n` → BigInt(0) ker TypeScript target < ES2020)
+  - Dev.log verification: "GET /api/ai/brain/health 200 in 1158ms (next.js: 257ms, proxy.ts: 60ms, application-code: 842ms)" — first call (no cache); "GET /api/ai/brain/health 200 in 177ms" — cached call. Brez runtime napak ✅
+  - curl GET /api/ai/brain/health → 200 {ok:true, timestamp:"2026-08-14T11:24:50.287Z", overallHealthScore:85, overallGrade:"A", status:"HEALTHY", brainEndpoints:[8 items — profit(inventory/market/sourcing/risk/buyer/pricing/master, vsi responsive z responseTimeMs 73-115ms in grade-i D/D/B/B/C/C/B/C], dataFreshness:{latestSnapshotDate:"2026-08-13", snapshotsCount:1, daysSinceLastSnapshot:1, accuracy30d:null, tradesRecorded:0}, autoPilot:{enabled:false, mode:"safe", anomalySuspended:false, todayAutoExecuted:0, todayBudgetUsed:0}, draftQueue:{pending:5, executed:1, rejected:1, expired:28, total:35, executionRate:0.5}, riskProfile:{riskTolerance:"balanced", maxAcceptableRisk:50}, adaptiveWeights:{adjustedDomains:0, totalExecuted:2, totalRejected:2}, recommendations:[4 items — auto-pilot / trades / risk profile / adaptive weights], source:"v8.32-system-health"} ✅
+    - Score breakdown: 40 (8/8 brains responsive) + 20 (snapshot 1d ago <7d) + 10 (executionRate=0.5, >0.2 not >0.5) + 15 (not suspended) + 0 (default risk profile) = 85 → Grade A → HEALTHY ✅
+  - curl GET /api/ai-list → 200 {ok:true, total:425, categories:{buyer:50, inventory:77, listing:59, pricing:90, risk:12, negotiation:16, reports:15, misc:85, brain:21}} ✅ (425 AI endpointov, brain 21 — +1 od v8.31; brain/health v AI Hub listi z description "v8.32: System Health Dashboard API — aggregates entire Brain")
+
+- Step 5: Documentation updates:
+  - README.md: hero block v8.31.0 → v8.32.0 (version badge); AI endpoints 424 → 425; API routes 601 → 602; "424 AI endpointov" → "425 AI endpointov" (4 lokacije: hero, AI Hub table, AI_ENDPOINTS link, project tree comment, Endpointi heading, Vitest line); ~289 → ~290 funkcij; "v7.56–v8.31 (75 verzij, 199 novih funkcij)" → "v7.56–v8.32 (76 verzij, 200 novih funkcij)"; AI Brain (v8.15–v8.31) → AI Brain (v8.15–v8.32); NEW v8.32 entry na vrh "Kaj je novega" z popolnim opisom (System Health Dashboard — 7 metrics + score formula + status mapping + recommendations rules + NOVO system-health.ts + NOVO health/route.ts + MODIFIED ai-hub-view.tsx + Brain endpointi +1 + routes +1 + brain +1); Verzija v8.31.0 → v8.32.0; Changelog link "do v8.31" → "do v8.32"; Zadnje verzije — dodan v8.32.0 entry na vrh (nad v8.31.0); Overview paragraph — dodan v8.32 entry (Polish phase STARTED + unified system health dashboard MONITORING); "🎯 Brain architecture COMPLETE..." paragraph — dodan Polish phase STARTED + IN unified system health dashboard (MONITORING).
+  - CHANGELOG.md: [Unreleased] posodobljen z "v8.32 odpira NOVO fazo — Polish (System Health Dashboard — 🎯 POLISH PHASE STARTED)"; NEW [8.32.0] section z 4 podsekcijami (system-health.ts module z getSystemHealth + quickHealthCheck + checkBrainEndpoint + extractGradeFromResponse + DB helperji + computeOverallScore + generateRecommendations; health/route.ts endpoint z 30s cache + maxDuration=30; UI SystemHealthCard z gradient + 8 brain endpoints grid + 4 info cards + recommendations list; Stats AI 424→425 +1, routes 601→602 +1, brain 20→21 +1, lint 0 errors, typecheck 0 errors, db:push NOT required, curl test results) + "🎯 POLISH PHASE STARTED. v8.32 = System Health Dashboard (monitoring). Next: v8.33 (performance caching), v8.34 (E2E tests)."
+  - AI_ENDPOINTS.md: "Total: 424 endpoints" → "Total: 425 endpoints"; NEW row 12 inserted after brain/explain: "| 12 | brain/health | `/api/ai/brain/health` |"; vsi subsequent rows renumbered +1 (12→13, 13→14, ..., 424→425). Total 425 numbered rows verified.
+
+Stage Summary:
+- NEW: src/lib/brain/system-health.ts (getSystemHealth, quickHealthCheck, checkBrainEndpoint, extractGradeFromResponse, loadSnapshotData, countSoldTrades, loadDraftQueueStats, loadRiskProfile, summarizeAdaptiveWeights, loadAutoPilotSummary, computeOverallScore, generateRecommendations, gradeFromScore)
+- NEW: src/app/api/ai/brain/health/route.ts (GET, 30s cache, maxDuration=30)
+- MODIFIED: src/components/dashboard/ai-hub-view.tsx (🏥 SystemHealthCard komponenta na VRHU Brain view — gradient emerald/amber/red, 8 brain endpoints grid, 4 info cards, recommendations list, 60s auto-refresh; HeartPulse icon dodan v imports; gradeTextColor() helper renamed)
+- AI endpointi: 424 → 425 (+1 — brain/health)
+- Total API routes: 601 → 602 (+1)
+- Brain category v AI Hub: 20 → 21 (+1)
+- Lint: 0 errors, 2 warnings (pre-existing unused eslint-disable v db.ts) ✅
+- Typecheck: 0 errors ✅ (po fixu dveh issues: duplicate gradeColor → renamed v gradeTextColor; BigInt literals 0n → BigInt(0) ker TypeScript target < ES2020)
+- Endpoint verification:
+  - GET /api/ai/brain/health → 200 {ok:true, overallHealthScore:85, overallGrade:"A", status:"HEALTHY", brainEndpoints:[8 items vsi responsive z grade-ji], dataFreshness, autoPilot, draftQueue:{pending:5, executed:1, rejected:1, expired:28, executionRate:0.5}, riskProfile, adaptiveWeights, recommendations:[4 items], source:"v8.32-system-health"} ✅
+  - GET /api/ai-list → 200 {ok:true, total:425, categories:{brain:21}} ✅ (brain/health v AI Hub listi z v8.32 description)
+- Dev.log: 2 successful GET /api/ai/brain/health requests (1158ms first, 177ms cached), brez runtime napak ✅
+- Documentation updated: README.md (v8.32.0 badge + hero + AI Brain paragraph + Kaj je novega z v8.32 na vrh + Verzija v8.32.0 + ~290 funkcij + 76 verzij + 200 novih funkcij + 425 AI endpoints + 602 API routes + Changelog link do v8.32 + Zadnje verzije z v8.32.0 entry na vrh + Overview paragraph z v8.32 entry + 🎯 Brain architecture COMPLETE paragraph z Polish phase STARTED), CHANGELOG.md ([Unreleased] posodobljen z v8.32 Polish phase start; NEW [8.32.0] section z 4 podsekcijami — system-health.ts module + health/route.ts endpoint + UI SystemHealthCard + Stats + curl test results + 🎯 POLISH PHASE STARTED), AI_ENDPOINTS.md (Total 424 → 425 + NEW row 12 brain/health + renumbered all subsequent rows)
+- Health Score Formula (0-100):
+  - 40% brain endpoints responsive (8 endpoints × 5 points each = 40)
+  - 20% data freshness (snapshot exists + <7 days old = 20; no snapshot = 0)
+  - 15% draft queue health (executionRate > 0.5 = 15; > 0.2 = 10; else = 5; no drafts resolved = 7.5 partial)
+  - 15% auto-pilot health (not suspended = 15; suspended = 0)
+  - 10% risk profile set (non-default = 10; default balanced+50 = 0)
+  - Grade: A+ >=90, A >=80, B >=65, C >=50, D >=30, F <30
+  - Status: HEALTHY >=80, DEGRADED >=50, UNHEALTHY <50
+- Recommendation Rules (8 pravil, Slovenian strings):
+  1. Brain not responding → "💡 Brain \\"X\\" ne odgovarja — preveri log (...)
+  2. Anomaly suspended → "💡 Anomaly suspension aktiven — pošlji POST {action:\\"clear_anomaly\\"}..."
+  3. Auto-pilot disabled → "💡 Vklopi auto-pilot za LOW-risk avtomatizacijo (8 varnostnih pravil)..."
+  4. No snapshots → "💡 Zaženi Master Brain za kreiranje prvega snapshot-a..."
+  5. No trades → "💡 Zabeleži prodane trade-a za accuracy tracking (potrebno za backfill)..."
+  6. Default risk profile → "💡 Nastavi svoj risk profil (conservative/aggressive)..."
+  7. No adaptive adjustments → "💡 Izvedi/zavrni draft-a za trening adaptive weights..."
+  8. Low execution rate (< 0.4) → "💡 Nizka execution rate — pregledaj pending draft-a..."
+- Verzija aplikacije: v8.32.0
+- 🎯 POLISH PHASE STARTED:
+  - v8.32 = System Health Dashboard (monitoring — "How healthy is the Brain system?")
+  - One endpoint, one UI card, ki agregira celotno Brain sistem health v enega prikaza
+  - Overall health score 0-100 (weighted: 40% brains + 20% freshness + 15% draft queue + 15% auto-pilot + 10% risk profile)
+  - 8 brain endpoints health-check-a vzporedno (3s timeout each, total worst-case 3s)
+  - Auto-generated recommendations (8 rules, Slovenian strings)
+  - UI gradient (emerald HEALTHY / amber DEGRADED / red UNHEALTHY) z 60s auto-refresh
+- Skupaj doslej (v7.50 → v8.32): 82 verzij, 206 novih funkcij; Brain architecture COMPLETE (v8.22) + Validation phase ZAKLJUČENA (v8.23-v8.25) + Intelligence phase ZAKLJUČENA (v8.26-v8.29) + Automation phase ZAKLJUČENA (v8.30-v8.31) + Polish phase STARTED (v8.32 System Health Dashboard) — naslednje verzije: v8.33 (performance caching), v8.34 (E2E tests)
