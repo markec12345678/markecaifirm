@@ -17619,3 +17619,49 @@ Stage Summary:
 - Documentation updated: README (v8.41.0, AI 430, routes 617, funkcije ~302, nova "Kaj je novega" v8.41 sekcija) + CHANGELOG ([8.41.0] section z vsemi moduli + Verification + Note z 13 design odločitvami) + AI_ENDPOINTS.md (nova vrstica 33 brain/weekly-summary, total 429→430, renumbered 33-429→34-430) + worklog.md (ta entry)
 - Polish phase continues: v8.32 (Health) + v8.33 (Performance) + v8.34 (129 tests) + v8.35 (25 trades + Telegram) + v8.36 (CSV Import + Quick Add) + v8.37 (Deal Calculator + Profit Timeline) + v8.38 (Notification Center) + v8.39 (Goal Tracker Dashboard Widget) + v8.40 (Trade Insights Deep Dive) + v8.41 (Weekly Summary Report + Email Notifications — comprehensive weekly digest z 5 sekcijami + 3 kanali Telegram + Email + Notification Center)
 - Skupaj doslej (v7.50 → v8.41): 91 verzij, 213 novih funkcij
+
+---
+Task ID: v8.41.1
+Agent: main
+Task: v8.41 commit + push + GitHub About + Agent Browser verification
+
+Work Log:
+- Prejel poročilo od full-stack-developer podagenta (Task v8.41 — Weekly Summary Report + Email Notifications implementiran)
+- Neodvisno preveril doc sync: README v8.41.0 + 430 AI + 617 routes ✅, CHANGELOG [8.41.0] ✅, AI_ENDPOINTS.md "Total: 430" (row 33 brain/weekly-summary) ✅
+- Preveril lint: 0 napak ✨
+- Preveril typecheck: 0 napak ✨
+- Posodobil GitHub About: "430 AI + 73 analytics = 617 routes. v8.41.0: Brain (8 layers) + 5 phases COMPLETE + Polish (Health+Perf+tests+trades+Telegram+CSV+DealCalc+Timeline+Notif+Goal+Insights+WeeklySummary)."
+- Commit: "v8.41: Weekly Summary Report + Email Notifications..." (ed1ed8d)
+- Push na GitHub: uspešen ✅ (b9a64d9..ed1ed8d), PAT očiščen ✅
+- Agent Browser self-verification:
+  - Stran se pravilno naloži (HTTP 200)
+  - "Pošlji zdaj" button prikazan ✅
+  - "📈 MoM" prikazan ✅
+  - Brez runtime napak v dev.log
+
+Stage Summary:
+- v8.41 uspešno dokončana in potisnjena na GitHub
+- NEW: src/lib/brain/weekly-summary.ts (~834 lines — generateWeeklySummary, sendWeeklySummary z 3 kanali: Telegram + Email + Notification Center)
+- MODIFIED: src/app/api/cron/weekly-report/route.ts (enhanced z sendWeeklySummary, backward compatible)
+- NEW: src/app/api/ai/brain/weekly-summary/route.ts (GET preview + POST send)
+- NEW: src/components/dashboard/weekly-summary-card.tsx (~452 lines — 5 sections + Pošlji zdaj button)
+- MODIFIED: src/components/dashboard/dashboard-view.tsx (WeeklySummaryCard after TradeInsightsCard)
+- LIVE SUMMARY iz 25 real trades:
+  - Period: 2026-08-03 → 2026-08-09
+  - This week: 196€, Last week: 98€, MoM: +100%
+  - Total 30d: 598€, Goal: 306€/500€ (61%)
+  - Sold this week: 5, Held: 5, Win rate: 100%
+  - Top 3 trades: Nike Air Jordan 1, New Balance 550, AirPods Pro 2
+  - Brain health: 50/100 (C, MEDIUM)
+  - 3 insights highlights + 5 recommendations
+- 3 KANALI: Telegram (plain text), Email (styled HTML dark-theme), Notification Center (v8.38)
+- AI endpointi: 429 → 430 (+1)
+- Total API routes: 616 → 617 (+1)
+- Lint: 0 napak ✨
+- Typecheck: 0 napak ✨
+- UI: WeeklySummaryCard z "Pošlji zdaj" button + MoM arrow ✅
+- Dokumentacija sinhrono posodobljena (README, CHANGELOG, AI_ENDPOINTS.md, GitHub About)
+- GitHub sinhroniziran (0 commit-ov ahead)
+- Verzija aplikacije: v8.41.0
+- Polish phase continues: v8.32-v8.41 (10 verzij, 10 novih features)
+- Skupaj doslej (v7.50 → v8.41): 91 verzij, 213 novih funkcij
