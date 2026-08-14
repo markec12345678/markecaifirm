@@ -6,9 +6,9 @@ Format sledi [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), verzije s
 
 ## [Unreleased]
 
-v8.26 je odprl Intelligence phase (Action Explainability), v8.27 jo nadaljuje (Scenario Brain), v8.28 jo še nadalje vzpostavi FEEDBACK LOOP (Adaptive Domain Weights), v8.29 jo ZAKLJUČI z Draft Queue + Action Feedback Loop integration (🎯 INTELLIGENCE PHASE COMPLETE), v8.30 odpira NOVO fazo — Automation (Safe Auto-pilot — 🎯 AUTOMATION PHASE STARTED), v8.31 zaključi Automation phase (Aggressive Auto-pilot + Anomaly Detection — 🎯 AUTOMATION PHASE COMPLETE), v8.32 odpira NOVO fazo — Polish (System Health Dashboard — 🎯 POLISH PHASE STARTED — "How healthy is the Brain system?"), v8.33 zaključi Polish phase caching (Performance Caching + Cache Stats), v8.34 zaključi Polish phase testing (Brain Integration Test Suite), v8.35 zaključi Polish phase "make the system alive" (Seed Demo Data + Telegram Brain Notifications), v8.36 zaključi Polish phase trade management enhancement (CSV Import + Quick Add + Dashboard Stats), v8.37 zaključi Polish phase decision support + visualization (Deal Calculator + Profit Timeline Chart — "Hitra odločitev + vizualno sledenje"), v8.38 zaključi Polish phase centralized notification history (🔔 Notification Center + Alert History — "Centralizirana zgodovina vseh obvestil"). Naslednje verzije:
+v8.26 je odprl Intelligence phase (Action Explainability), v8.27 jo nadaljuje (Scenario Brain), v8.28 jo še nadalje vzpostavi FEEDBACK LOOP (Adaptive Domain Weights), v8.29 jo ZAKLJUČI z Draft Queue + Action Feedback Loop integration (🎯 INTELLIGENCE PHASE COMPLETE), v8.30 odpira NOVO fazo — Automation (Safe Auto-pilot — 🎯 AUTOMATION PHASE STARTED), v8.31 zaključi Automation phase (Aggressive Auto-pilot + Anomaly Detection — 🎯 AUTOMATION PHASE COMPLETE), v8.32 odpira NOVO fazo — Polish (System Health Dashboard — 🎯 POLISH PHASE STARTED — "How healthy is the Brain system?"), v8.33 zaključi Polish phase caching (Performance Caching + Cache Stats), v8.34 zaključi Polish phase testing (Brain Integration Test Suite), v8.35 zaključi Polish phase "make the system alive" (Seed Demo Data + Telegram Brain Notifications), v8.36 zaključi Polish phase trade management enhancement (CSV Import + Quick Add + Dashboard Stats), v8.37 zaključi Polish phase decision support + visualization (Deal Calculator + Profit Timeline Chart — "Hitra odločitev + vizualno sledenje"), v8.38 zaključi Polish phase centralized notification history (🔔 Notification Center + Alert History — "Centralizirana zgodovina vseh obvestil"), v8.39 zaključi Polish phase goal tracking visualization (🎯 Goal Tracker Dashboard Widget + Settings Integration — "Vizualno sledenje mesečnemu cilju z avtomatsko obvestitvijo ob dosegu"). Naslednje verzije:
 
-- **v8.39+ — Polish phase continues** (E2E tests s Playwright, predictive accuracy improvements za Master Brain, refactoring)
+- **v8.40+ — Polish phase continues** (E2E tests s Playwright, predictive accuracy improvements za Master Brain, refactoring)
 - WebSocket real-time negotiation (SSE namesto polling)
 - Playwright E2E testi za glavne flow-e
 - TLS fingerprinting (curl-impersonate)
@@ -16,6 +16,117 @@ v8.26 je odprl Intelligence phase (Action Explainability), v8.27 jo nadaljuje (S
 - Performance optimizations za Master Brain (cached partial results per domain)
 - Additional conflict detection tipi (npr. Inventory vs Buyer — supply/demand mismatch)
 - Per-domain DB injection v Master Brain route (zaenkrat se zanaša na individualne Domain Brain route-e za DB state)
+
+## [8.39.0] - 2026-08-15
+
+### Added — 🎯 Goal Tracker Dashboard Widget + Settings Integration (Polish phase — Vizualno sledenje mesečnemu cilju)
+
+Problem: goal-tracker API obstaja od v6.7 ampak NIMA UI na Dashboard. `monthlyProfitGoal` je 0 (disabled). Uporabnik ne more vizualno videti napredka proti mesečnemu cilju. v8.39 dodaja visual dashboard widget z obema stanjema (disabled + enabled) + dedicated set-goal endpoint ki triggerja notification creation ob dosegu cilja.
+
+#### `src/components/dashboard/goal-tracker-card.tsx` (NEW — Dashboard widget, ~470 vrstic)
+
+- Handles BOTH states:
+  - **disabled (monthlyGoal=0)**: prikaže "Nastavi mesečni cilj" prompt z input field + Save button.
+  - **enabled (monthlyGoal>0)**: prikaže full UI z vsemi elementi spodaj.
+- Visual elements (enabled state):
+  - **Big progress bar** 0-100% z color coding: red <25%, amber 25-75%, green ≥75%. Projected del svetlejši (opacity-30 overlay).
+  - **Big numbers**: "306€ / 500€" (current / goal) z primary color za realized EUR.
+  - **Projected profit**: "Projiciran: 678€ (136%)" z trend arrow (TrendingUp če projectedPct ≥100, TrendingDown sicer).
+  - **4 milestones** (25%/50%/75%/100%) kot filled circles: zeleni ✓ ko achieved, siva številka ko pending. Prikaz profit EUR pod vsakim milestone.
+  - **Days remaining + Daily needed**: "17 dni do konca meseca · 11€/dan potrebnih" z CalendarDays in CalendarClock ikonami. Daily needed je rdeč če >50€/dan (high pressure).
+  - **MoM trend**: "↗️ +15% vs prejšnji mesec" ali "↘️ -54% vs prejšnji mesec" z last-month EUR prikazanim pod trend.
+  - **Goal status badge**: 🟡 Na poti / 🟢 Dosežen! / 🔴 Za ciljem. Logic: achieved če goalPct ≥100; "Na poti" če projectedPct ≥100; "Za ciljem" sicer.
+  - **"✏️ Uredi cilj" button** → inline edit mode z input field + Save button + Prekliči button.
+  - **"Osveži" button** za manual refresh.
+  - **Recommendation box** z color-coded background (zelena good / amber warning / rdeča critical) prikazano iz v6.7 GET handler-ja.
+  - **6-mesečni history mini chart** z bar chart (zelena za profit ≥0, rdeča za <0) z tooltip.
+- Auto-refresh vsakih 60s (po task spec).
+- Color coding: red / amber / green via Tailwind utility classes (border-2 + bg + text).
+- Uses shadcn Card, Badge, Button, Input, Label components + lucide-react icons (Target, RefreshCw, TrendingUp, TrendingDown, Check, Pencil, Save, X, CalendarClock, CalendarDays).
+
+#### `src/app/api/trades/goal-tracker/set/route.ts` (NEW — POST set goal endpoint)
+
+- **POST** z body `{ monthlyGoal: number }`.
+- Validacija:
+  - `monthlyGoal` mora biti ne-negativno število (NaN/negative → HTTP 400 z Slovenian error message).
+  - Reasonable upper bound: 1.000.000€ (refuse absurd values → HTTP 400).
+  - Sprejema tudi Slovenian decimal separator (npr. `"500,5"` → 500.5).
+- Update flow:
+  - `db.settings.update({ where: { id: 'singleton' }, data: { monthlyProfitGoal: num }, select: { monthlyProfitGoal: true } })` — singleton row already exists from v1.x init.
+  - Defensive fallback: če update vrže P2025 (record not found), `upsert` z `create: { id: 'singleton', monthlyProfitGoal: num }` za fresh DB.
+- Goal achievement check (samo ko `num > 0`):
+  - Bere mesec's sold trades (`status: 'sold'`, `sellPrice: { not: null }`, `sellDate: { gte: monthStart }`).
+  - `realized = sum((sellPrice ?? 0) - (sellFees ?? 0) - buyPrice - (buyFees ?? 0))`.
+  - Če `realized >= num`, kreira Notification (v8.38) preko `createNotification()`:
+    - `type: 'system'`
+    - `severity: 'success'`
+    - `source: 'system'`
+    - `title: '🎉 Dosežen mesečni cilj!'`
+    - `body: 'Mesečni cilj ${num}€ je dosežen (realizirani dobiček ${realized}€). Čestitke! Nadaljuj z nagibanjem trga za dodatni dobiček.'`
+    - `metadata: { monthlyGoal, realizedProfit, achievedAt, sourceEndpoint: '/api/trades/goal-tracker/set' }` (JSON.stringify shranjen v DB).
+  - Notification creation je v try/catch — ne blokira goal update-a če notification fail-a (logger.warn non-critical).
+- Returns: `{ ok: true, monthlyGoal: number, goalAchieved: boolean }`.
+- `runtime='nodejs'`, `dynamic='force-dynamic'`.
+
+#### `src/components/dashboard/settings-view.tsx` (MODIFIED — ProfitGoalSection komponenta)
+
+- Enhanced v4.2 "Mesečni cilj zaslužka" card z v8.39 badge.
+- NOVA `ProfitGoalSection` komponenta (~290 vrstic) definirana inline pred `BackupSection`:
+  - Input field za monthlyProfitGoal z `type="number"`, `min={0}`, `step={50}`, `placeholder="0 = onemogočeno"`.
+  - **"Shrani cilj takoj" button** ki POST-a na `/api/trades/goal-tracker/set` (NE /api/settings — dedicated endpoint triggerja notification creation ko dosežeš cilj). On success: sync local state (setMonthlyProfitGoal) + parent state, toast notification, refresh live preview. On goalAchieved: toast "🎉 Dosežen mesečni cilj! Čestitke!".
+  - Enter-key submit v input field.
+  - **Live preview box** ki fetch-a `/api/trades/goal-tracker` vsakih 60s in prikaže:
+    - **Status badge**: ⚪ Onemogočeno / 🟡 Na poti / 🟢 Dosežen! / 🔴 Za ciljem.
+    - **Big numbers**: "306€ / 500€" (realizirano / cilj) z primary color + % desno.
+    - **Progress bar** z projected overlay (realiziranek + projected del svetlejši opacity-30). Color coding: green ≥100%, amber ≥50%, red <50%.
+    - **4 mini-stats grid**: projiciran dobiček z %, dnevno potrebnih EUR (red če >50€/dan), dni do konca meseca, MoM trend z last-month EUR.
+    - **Recommendation box** z color-coded background (zelena good / amber warning / rdeča critical) prikazano iz v6.7 GET handler-ja.
+    - **Footer hint**: "💡 Goal Tracker card na Dashboard se avto-osvežuje vsakih 60s. Live preview tukaj se osvežuje vsakih 60s."
+  - **"Ne-shranjena sprememba" amber warning** ko je draft dirty (draft !== monthlyProfitGoal).
+  - **Empty state**: "⚠️ Mesečni cilj ni nastavljen. Vnesi znesek zgoraj in klikni 'Shrani cilj takoj' za aktivacijo Goal Tracker card-a na Dashboard."
+  - State sync: useEffect sync-a draft ko external monthlyProfitGoal state se spremeni (e.g. po settings load).
+- Global "Shrani" button (line 596 v settings-view.tsx) še vedno shrani monthlyProfitGoal preko /api/settings (backward compat — ne zlomimo obstoječe funkcionalnosti). Body vsebuje `monthlyProfitGoal` field (line 321).
+- Props: `{ monthlyProfitGoal, setMonthlyProfitGoal, saving }`. setMonthlyProfitGoal kliče parent setter (iz obstoječega useState v SettingsView).
+
+#### `src/components/dashboard/dashboard-view.tsx` (MODIFIED — GoalTrackerCard integration)
+
+- Import: `import { GoalTrackerCard } from '@/components/dashboard/goal-tracker-card';` dodan za `ProfitTimelineChart` import.
+- REMOVED: `const [goalData, setGoalData] = useState<any>(null);` state.
+- REMOVED: `useEffect(() => { fetch('/api/trades/goal-tracker').then(r => r.ok ? r.json() : null).then(d => d && setGoalData(d)).catch(() => {}); }, []);` (premiščeno v GoalTrackerCard komponento ki self-fetch-a vsakih 60s).
+- REMOVED: inline v6.7 goal card (~120 vrstic, lines 532-652) — conditional render ko `goalData && goalData.goal?.monthlyGoal > 0` (ki je pustil disabled state brez UI).
+- ADDED: `<GoalTrackerCard />` placement na vrhu dashboard-a (po Customize mode info, pred Activity feed) — goal tracking je najpomembnejša metrika.
+- `Target` icon še vedno importan (uporabljen v StatsCard na line 394).
+
+### Stats
+
+- **AI endpointi**: 429 (nespremenjeno — `goal-tracker/set` je pod `/api/trades/` ne `/api/ai/`, potrjeno z `GET /api/ai-list` ki vrača `total: 429`).
+- **Total API routes**: 614 → 615 (+1: `POST /api/trades/goal-tracker/set`).
+- **Funkcije**: ~299 → ~300 (+1: `GoalTrackerCard`).
+
+### Verification
+
+- **Lint**: `bun run lint` → 0 napak ✨ (2 pre-existing eslint-disable warnings v db.ts — unrelated, od v8.34).
+- **Typecheck**: `bunx tsc --noEmit` → 0 napak ✨ (exit code 0).
+- **Curl tests**:
+  - `POST /api/trades/goal-tracker/set {monthlyGoal: 500}` → `{"ok":true,"monthlyGoal":500,"goalAchieved":false}` ✅
+  - `GET /api/trades/goal-tracker` → `monthlyGoal:500, goalPct:61, projectedPct:136, projectedProfit:678, realizedProfit:306, daysRemaining:17, dailyNeeded:11, momTrend:-54, milestones:[(25,True),(50,True),(75,False),(100,False)], recommendationLevel:"good", recommendation:"✅ Na poti za doseganje cilja! Pričakovani dobiček: 678€ (136%)."` ✅
+  - `POST {monthlyGoal: 100}` (below realized 306€) → `{"ok":true,"monthlyGoal":100,"goalAchieved:true}` + Notification kreiran `{"type":"system","title":"🎉 Dosežen mesečni cilj!","severity":"success","body":"Mesečni cilj 100€ je dosežen (realizirani dobiček 306€)...","metadata":"{\"monthlyGoal\":100,\"realizedProfit\":306,\"achievedAt\":\"2026-08-14T18:33:44.566Z\",\"sourceEndpoint\":\"/api/trades/goal-tracker/set\"}"}` ✅
+  - `POST {monthlyGoal: -50}` → 400 `{"error":"monthlyGoal mora biti ne-negativno število (EUR)."}` ✅
+  - `POST {monthlyGoal: "abc"}` → 400 `{"error":"monthlyGoal mora biti ne-negativno število (EUR)."}` ✅
+  - `POST {}` → 400 `{"error":"monthlyGoal mora biti ne-negativno število (EUR)."}` ✅
+  - `POST {monthlyGoal: "500,5"}` (Slovenian decimal) → `{"ok":true,"monthlyGoal":500.5}` ✅
+  - `GET /api/ai-list` → `total: 429` (potrjeno: brain-notifications so pod /api/ ne /api/ai/) ✅
+
+### Note
+
+- **Design odločitev**: `GoalTrackerCard` je SELF-CONTAINED komponenta — fetch-a sama `/api/trades/goal-tracker` vsakih 60s, brez parent state ali props. To odstrani duplikat fetch-a iz `DashboardView` in omogoča da GoalTrackerCard samostojno upravlja svoje loading/edit/error state. V6.7 inline card je bil odstranjen ker je pogojno render-an samo ko monthlyGoal>0 (disabled state ni imel UI); nov v8.39 card handles both states.
+- **Settings integration**: `ProfitGoalSection` uporablja dedicated `/api/trades/goal-tracker/set` endpoint (NE `/api/settings`) ker:
+  - Triggerja notification creation ob dosegu cilja (globani /api/settings endpoint tega ne počne).
+  - Validira input (negativne/string/missing) z HTTP 400.
+  - Sprejema Slovenian decimal separator (`.replace(',', '.')`).
+  - Vrača `{ goalAchieved: boolean }` flag za immediate toast feedback.
+  - Global "Shrani" button še vedno shrani monthlyProfitGoal preko /api/settings za backward compat (če uporabnik ne uporabi dedicated button).
+- **Goal achievement trigger**: Notification se kreira SAMO ob prvem set-u goal-a če current realized >= goal. Če uporabnik naknadno doseže cilj (po novih sold trades), se notification NE kreira avtomatsko — to je design odločitev da preprečimo duplikate. Če želi user dosežek proslaviti, lahko ponovno klikne "Shrani cilj takoj" z istim zneskom in notification se bo ponovno kreiral (goalAchieved=true vsakič ko realized >= goal).
 
 ## [8.38.0] - 2026-08-15
 
