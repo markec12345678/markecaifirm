@@ -16,6 +16,9 @@ import { DealVelocityWidget } from '@/components/dashboard/deal-velocity-widget'
 // v8.36: Trade Management Enhancement — Quick Add modal + Trade Stats card
 import { TradeStatsCard } from '@/components/dashboard/trade-stats-card';
 import { QuickAddTradeModal } from '@/components/dashboard/quick-add-trade-modal';
+// v8.37: Deal Calculator + Profit Timeline Chart — Polish phase continues
+import { DealCalculatorWidget } from '@/components/dashboard/deal-calculator-widget';
+import { ProfitTimelineChart } from '@/components/dashboard/profit-timeline-chart';
 
 // v5.6: Dashboard widget IDs
 const WIDGET_IDS = ['todaySummary', 'quickStats', 'activityFeed', 'aiInsights', 'skladisceWidget'] as const;
@@ -665,6 +668,10 @@ export function DashboardView({ onNavigate }: ViewProps) {
 
       {/* v8.36: Trade Stats card — profit + win rate + best niche + Quick Add */}
       <TradeStatsCard />
+
+      {/* v8.37: Deal Calculator + Profit Timeline — hitra ROI kalkulacija + profit trend */}
+      <DealCalculatorWidget />
+      <ProfitTimelineChart />
 
       {/* v4.5: Skladišče dashboard widget */}
       <WidgetWrapper id="skladisceWidget" order={widgetOrder} customizeMode={customizeMode} onMove={moveWidget}>

@@ -6,9 +6,9 @@ Format sledi [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), verzije s
 
 ## [Unreleased]
 
-v8.26 je odprl Intelligence phase (Action Explainability), v8.27 jo nadaljuje (Scenario Brain), v8.28 jo še nadalje vzpostavi FEEDBACK LOOP (Adaptive Domain Weights), v8.29 jo ZAKLJUČI z Draft Queue + Action Feedback Loop integration (🎯 INTELLIGENCE PHASE COMPLETE), v8.30 odpira NOVO fazo — Automation (Safe Auto-pilot — 🎯 AUTOMATION PHASE STARTED), v8.31 zaključi Automation phase (Aggressive Auto-pilot + Anomaly Detection — 🎯 AUTOMATION PHASE COMPLETE), v8.32 odpira NOVO fazo — Polish (System Health Dashboard — 🎯 POLISH PHASE STARTED — "How healthy is the Brain system?"), v8.33 zaključi Polish phase caching (Performance Caching + Cache Stats), v8.34 zaključi Polish phase testing (Brain Integration Test Suite), v8.35 zaključi Polish phase "make the system alive" (Seed Demo Data + Telegram Brain Notifications), v8.36 zaključi Polish phase trade management enhancement (CSV Import + Quick Add + Dashboard Stats). Naslednje verzije:
+v8.26 je odprl Intelligence phase (Action Explainability), v8.27 jo nadaljuje (Scenario Brain), v8.28 jo še nadalje vzpostavi FEEDBACK LOOP (Adaptive Domain Weights), v8.29 jo ZAKLJUČI z Draft Queue + Action Feedback Loop integration (🎯 INTELLIGENCE PHASE COMPLETE), v8.30 odpira NOVO fazo — Automation (Safe Auto-pilot — 🎯 AUTOMATION PHASE STARTED), v8.31 zaključi Automation phase (Aggressive Auto-pilot + Anomaly Detection — 🎯 AUTOMATION PHASE COMPLETE), v8.32 odpira NOVO fazo — Polish (System Health Dashboard — 🎯 POLISH PHASE STARTED — "How healthy is the Brain system?"), v8.33 zaključi Polish phase caching (Performance Caching + Cache Stats), v8.34 zaključi Polish phase testing (Brain Integration Test Suite), v8.35 zaključi Polish phase "make the system alive" (Seed Demo Data + Telegram Brain Notifications), v8.36 zaključi Polish phase trade management enhancement (CSV Import + Quick Add + Dashboard Stats), v8.37 zaključi Polish phase decision support + visualization (Deal Calculator + Profit Timeline Chart — "Hitra odločitev + vizualno sledenje"). Naslednje verzije:
 
-- **v8.37+ — Polish phase continues** (E2E tests s Playwright, predictive accuracy improvements za Master Brain, refactoring)
+- **v8.38+ — Polish phase continues** (E2E tests s Playwright, predictive accuracy improvements za Master Brain, refactoring)
 - WebSocket real-time negotiation (SSE namesto polling)
 - Playwright E2E testi za glavne flow-e
 - TLS fingerprinting (curl-impersonate)
@@ -16,6 +16,138 @@ v8.26 je odprl Intelligence phase (Action Explainability), v8.27 jo nadaljuje (S
 - Performance optimizations za Master Brain (cached partial results per domain)
 - Additional conflict detection tipi (npr. Inventory vs Buyer — supply/demand mismatch)
 - Per-domain DB injection v Master Brain route (zaenkrat se zanaša na individualne Domain Brain route-e za DB state)
+
+## [8.37.0] - 2026-08-14
+
+### Added — 🧮 Deal Calculator + 📈 Profit Timeline Chart (Polish phase — Hitra odločitev + vizualno sledenje)
+
+Problem: (1) Uporabnik vidi oglas na Bolha (npr. iPhone 13 za 280€) ampak nima hitrega kalkulatorja ki bi povedal "če prodaš za 380€, profit je 85€ (30% ROI) po 15€ fee". Moral je ročno računati ali uporabljati Excel. (2) Dashboard nima časovnega grafa dobička — uporabnik ne vidi trenda (raste/pada/stabilen?) zadnjih N tednov/mesecev. v8.37 rešuje oba problema z dvema novima komponentama: Deal Calculator (pure math, instant ROI/profit/break-even/recommendation) + Profit Timeline (DB aggregation, weekly/monthly chart z recharts).
+
+#### `src/lib/trades/deal-calculator.ts` (NEW — pure compute module)
+
+- **`calculateDeal(input)`** — pure function (no DB, no AI). Input: `buyPrice`, `expectedSellPrice`, `buyFees`, `sellFees`, optional `shippingCost`, `refurbCost`, `category`, `avgHoldDays` (default 14). Output `DealCalculatorResult`:
+  - **Profit metrics**: `totalCost = buyPrice + buyFees + shippingCost + refurbCost`, `totalRevenue = expectedSellPrice - sellFees`, `netProfit = totalRevenue - totalCost`, `roiPct = (netProfit / totalCost) × 100`, `marginPct = (netProfit / totalRevenue) × 100`.
+  - **Break-even**: `breakEvenPrice = totalCost + sellFees` (minimalna prodajna cena za 0 profit), `breakEvenMargin = expectedSellPrice - breakEvenPrice` (koliko pod expectedSellPrice je break-even, EUR).
+  - **Time metrics**: `dailyProfit = netProfit / avgHoldDays`, `weeklyProfit = dailyProfit × 7`, `monthlyProfit = dailyProfit × 30`.
+  - **Recommendation** (BUY/MARGINAL/PASS) z Slovenian human-readable reason:
+    - BUY če `roiPct >= 30 AND netProfit >= 30` (zelena, "Odlična priložnost: X% ROI, Y€ profit. Priporočamo nakup.")
+    - MARGINAL če `roiPct >= 15 AND netProfit >= 15` (amber, "Marginalna priložnost: X% ROI, Y€ profit. Preglej tržno ceno pred nakupom.")
+    - PASS sicer (rdeča, "Slaba priložnost: X% ROI, Y€ profit. Premajhen profit glede na tveganje.")
+  - **Risk assessment** (LOW/MEDIUM/HIGH) z `riskFactors[]` array — 5 možnih dejavnikov: hold > 30 dni (MEDIUM), capital > 500€ (MEDIUM), margin < 15% (HIGH), expectedSellPrice < breakEvenPrice (HIGH izguba), refurb > 20% nabavne (MEDIUM). Risk level je max dejavnikov (HIGH > MEDIUM > LOW).
+  - Vrednosti so zaokrožene na 2 decimalke (EUR precision) preko `r2()` helperja.
+- **Pure** — ni stranskih učinkov, varno za client-side uporabo (DealCalculatorWidget kliče neposredno, brez API klica).
+
+#### `src/app/api/ai/deal-calculator/route.ts` (NEW — GET + POST)
+
+- **GET** `?buyPrice=280&expectedSellPrice=380&buyFees=0&sellFees=15` (optional: `&shippingCost=10&refurbCost=20&avgHoldDays=14&category=elektronika`). Preko `coerceInput()` helperja: parseNum z `.` ali `,` decimal separatorjem (Slovenian-friendly). Required: `buyPrice`, `expectedSellPrice`, `buyFees`, `sellFees` (vsaj 0). Če manjka → HTTP 400 "Manjka obvezni parameter: X". Če neveljaven (negativno, ne-število) → HTTP 400 z field-specifično slovensko napako ("buyPrice mora biti ne-negativno število (EUR)").
+- **POST** z JSON bodyjem `{buyPrice, expectedSellPrice, buyFees, sellFees, shippingCost?, refurbCost?, avgHoldDays?, category?}`. Validacija: body mora biti JSON objekt (ne array/primitive) — sicer HTTP 400.
+- Oba handler-ja kličeta `calculateDeal()` in vračata `DealCalculatorResult` JSON z `ok: true, source: 'v8.37-deal-calculator'`.
+- `runtime='nodejs'`, `dynamic='force-dynamic'`.
+- Standard error pattern: try/catch z `logger.error('/api/ai/deal-calculator', 'GET/POST handler failed', err)` + NextResponse status 500 (za nepričakovane) ali 400 (za validacijske).
+- Test: `curl "http://localhost:3000/api/ai/deal-calculator?buyPrice=280&expectedSellPrice=380&buyFees=0&sellFees=15"` → `{ok:true, netProfit:85, roiPct:30.36, marginPct:23.29, breakEvenPrice:295, recommendation:"BUY", recommendationColor:"green", riskLevel:"LOW", ...}` ✅
+
+#### `src/lib/trades/profit-timeline.ts` (NEW — DB aggregation)
+
+- **`getProfitTimeline(granularity='weekly', days=90)`** — bere iz Trade tabele (status='sold', sellDate >= now - days, sellPrice not null) in agregira profit po periodah.
+- **Grouping**:
+  - `weekly` — ISO week start (Monday). Label: "T32 2026" (ISO week number + year). Helper `getWeekStart()` najde Monday za dan datum.
+  - `monthly` — calendar month. Label: "Avg 2026" (Slovenian month abbreviation + year). Helper `getMonthStart()` vrne prvi dan meseca.
+- **Continuous timeline** — vključuje empty periode z 0 profit da graf pokaže realne gap-e med prodajami. Range = `[earliest sellDate in window, latest sellDate in window]`. Za vsako periodo v range-u (walk z `addPeriod()` 7 dni za weekly, 1 mesec za monthly): če ni prodaj, push-an empty point z 0 profit + 0 tradeCount.
+- **Per-point** `TimelinePoint`: `date` (ISO yyyy-mm-dd), `label` (T32 2026 / Avg 2026), `profit` (Σ sellPrice - sellFees - buyPrice - buyFees za trade-e v periodi), `revenue` (Σ sellPrice), `cost` (Σ buyPrice + buyFees + sellFees), `tradeCount`, `cumulativeProfit` (running total čez vse periode).
+- **Aggregates** na koncu: `totalProfit`, `totalRevenue`, `totalCost`, `totalTrades`, `bestWeek`/`worstWeek` (po profit, samo non-empty periode), `avgWeeklyProfit` (povprečje čez non-empty periode — prazne ne pridejo v povprečje).
+- **Trend detection** — razdeli `points` na first half + second half, izračuna `firstAvg` in `secondAvg` (povprečje profit-a):
+  - `GROWING` če `secondAvg > firstAvg × 1.1`
+  - `DECLINING` če `secondAvg < firstAvg × 0.9`
+  - `STABLE` če znotraj ±10%
+  - `INSUFFICIENT_DATA` če `<4 točke` ali `totalProfit == 0`
+  - Edge case: `firstAvg == 0` → GROWING če `secondAvg > 0`, DECLINING če `< 0`, STABLE če oba 0.
+- **Days clamping** — `Math.max(1, Math.min(days, 730))` (max 2 leti).
+- Per-trade profit formula consistent z `src/lib/profit/actual.ts` (v8.23): `profit = sellPrice - sellFees - buyPrice - buyFees`.
+- Vrednosti zaokrožene na 2 decimalke preko `r2()`.
+
+#### `src/app/api/analytics/profit-timeline/route.ts` (NEW — GET)
+
+- **GET** `?granularity=weekly&days=90`. `parseGranularity()` (default 'weekly', accept 'monthly'), `parseDays()` (default 90, clamp [1, 730]).
+- 5-min in-memory cache per `(granularity, days)` tuple — `Map<string, {result, ts}>`. Da nehamo hammer-ati DB na dashboard refresh (dashboard se refresha vsakih 30s).
+- Kliče `getProfitTimeline()`, log-a preko `logger.info('/api/analytics/profit-timeline', 'computed ${granularity} for ${days}d', {points, totalProfit, trend})`.
+- `runtime='nodejs'`, `dynamic='force-dynamic'`.
+- Test: `curl "http://localhost:3000/api/analytics/profit-timeline?granularity=weekly&days=90"` → vrne 7 weekly points (T27-T33 2026), totalProfit=973€ (19 sold trades iz v8.35 seed-a), bestWeek T30 (+232€, 3 prodaje), worstWeek T33 (+72€, 3 prodaje), avgWeeklyProfit=139€, trend=GROWING ✅
+- Test: `?granularity=monthly&days=365` → vrne 2 monthly points (Jul 2026, Avg 2026), trend=INSUFFICIENT_DATA (samo 2 točki, <4).
+
+#### `src/components/dashboard/deal-calculator-widget.tsx` (NEW — live calc card)
+
+- **Compact card** z `Card` + `CardContent` (border-2, border-border/60, bg-card/50). Header z 🧮 Calculator icon + "Deal Calculator" naslov + v8.37 badge + "Reset" button.
+- **Inputs** (2-column grid na desktop, single column na mobile): buyPrice, expectedSellPrice, buyFees, sellFees, shippingCost (opt), refurbCost (opt). Vsak z `Label` + `Input` (type=number, step=0.01, font-mono).
+- **Hold days slider** (1-60, default 14) preko shadcn/ui `Slider`. Live prikaz vrednosti ob label-i.
+- **Live calculation** — `calculateDeal()` se kliče na vsakem render-ju (s `parseNumInput()` helperjem ki support-a `.` in `,` decimal separator). Brez submit button-a — rezultat se takoj posodobi ko uporabnik tipka.
+- **Result panel** (prikaže se ko sta oba obvezna vnosa > 0):
+  - Big profit number z `rec.bg` (zelena/amber/rdeča) glede na recommendation. ROI% + margin% pod profitom.
+  - Recommendation pill (BUY/MARGINAL/PASS) z emoji (✅/⚠️/❌) in barvno kodiranim background-om.
+  - 3 mini-stats: break-even cena + marža, profit/dan (z "~N dni"), profit/teden + profit/mesec.
+  - Risk level (🟢/🟡/🔴 LOW/MEDIUM/HIGH).
+  - Recommendation reason (Slovenian text, italic).
+  - Risk factors list (če obstajajo) — bullet list z AlertTriangle icon in opisi (npr. "Dolg hold: 35 dni — večja izpostavljenost tržnim nihanjem").
+  - "💾 Shrani kot trade (held)" button — POST-a v `/api/trades` z `status='held'` (uporabnik še ni kupil, samo analiza), `buyLocation='Deal calc'`, `notes` vsebuje vse deal calc projekcije (pričakovana cena, sellFees, shipping, refurb, ROI, marža, break-even, recommendation, hold dni). Toast "✓ Trade shranjen (v skladišču)". Disabled med shranjevanjem (RefreshCw spinner).
+- **Empty state** ko manjkajo oba obvezna vnosa: "Vnesi kupno in pričakovano prodajno ceno za izračun." z Calculator icon (opacity-30).
+- Pri default vrednostih (280€ → 380€, 0€/15€ fees, 14 dni hold) prikaže: +85€, 30.4% ROI, BUY, LOW risk — ujema se z API odgovorom.
+
+#### `src/components/dashboard/profit-timeline-chart.tsx` (NEW — recharts chart)
+
+- **Compact card** z enakim styling-om kot DealCalculatorWidget. Header z LineChart icon + "Profit Timeline" naslov + v8.37 badge + refresh button.
+- **Controls** (flex row, wrap na mobile):
+  - **Granularity toggle** (Tedensko / Mesečno) — segmented control z 2 button-i. Sprememba trigger-a nov fetch.
+  - **Days selector** (30d / 90d / 12m=365d) — segmented control z 3 button-i.
+  - **Trend badge** (renderan če so podatki): ↗️ RASTE (zelena) / → STABILEN (amber) / ↘️ PADA (rdeča) / ❓ PREMAJHNO (muted) z icon.
+- **Chart** (recharts `ComposedChart` z `ResponsiveContainer`, height 220):
+  - **Bar** za weekly/monthly profit (dataKey "profit") z gradient fill — `url(#profitBarPos)` (zelena) za pozitivne, `url(#profitBarNeg)` (rdeča) za negativne. Per-bar color preko `Cell` komponente (iterira čez `data.points` in določa fill glede na znak profit-a). `maxBarSize={36}`, `radius=[2,2,0,0]` (zaobljeni zgornji vogali).
+  - **Line** za cumulative profit (dataKey "cumulativeProfit") v amber (#f59e0b), strokeWidth 2, dot r3, activeDot r5, connectNulls.
+  - **XAxis** — labels (T32 2026 / Avg 2026), fontSize 9, interval preserveStartEnd, angle -15, textAnchor end.
+  - **YAxis** — EUR format (`tickFormatter={(v) => \`${v}€\`}`), fontSize 9, width 45.
+  - **CartesianGrid** strokeDasharray "3 3", dark stroke #262626.
+  - **ReferenceLine** pri y=0 (stroke #525252, strokeWidth 1) — loči pozitivne od negativnih.
+  - **Custom Tooltip** — contentStyle dark (bg #1a1a1a, border #404040, fontSize 11). Formatter: "profit" → "Profit" z €, "cumulativeProfit" → "Kumulativ". LabelFormatter: "{label} · {tradeCount} prodaj" (1 prodaja / 2 prodaji / 3 prodaje).
+- **Summary stats** (4-cell grid): skupaj profit (zelena/rdeča glede na znak), število prodaj (zelena), avg/teden ali /mesec (glede na granularity, zelena/rdeča), prihodki (Σ sellPrice).
+- **Best/worst period** badges (2-cell grid): 🏆 Best z label + zelen profit, 📉 Worst z label + rdeč/amber profit.
+- **Footer** text: "Prikazanih N tednov/mesecev · D dni nazaj" (kontekst za user-a).
+- **Empty state** ko ni podatkov (0 sold trades v window-u): "Ni dovolj prodaj za graf. Dodaj sold trades (z datumom prodaje) v Skladišču ali preko CSV uvoza." z LineChart icon (opacity-30).
+- **Loading state** z RefreshCw spinner + "Nalagam profit timeline...".
+- Fetcha iz `/api/analytics/profit-timeline?granularity=${granularity}&days=${days}` preko `useEffect` z `load` callback dependency na `[granularity, days]` (refetcha ob spremembi).
+
+#### `src/components/dashboard/dashboard-view.tsx` (MODIFIED — both widgets added)
+
+- Novi importi: `DealCalculatorWidget` in `ProfitTimelineChart` iz `@/components/dashboard/...` (obstoječ v8.36 import blok razširjen).
+- Nov JSX blok po `TradeStatsCard`-u (v8.36) in pred `skladisceWidget` (v4.5):
+  ```tsx
+  {/* v8.37: Deal Calculator + Profit Timeline — hitra ROI kalkulacija + profit trend */}
+  <DealCalculatorWidget />
+  <ProfitTimelineChart />
+  ```
+- Flow: Trade Stats (v8.36) → Deal Calculator (v8.37) → Profit Timeline (v8.37) → Skladišče widget (v4.5). Logično: stats → calc → vizualizacija trenda → podrobnosti.
+
+### Stats
+
+- **AI endpointi**: 428 → **429** (+1: `ai/deal-calculator`; `analytics/profit-timeline` je pod `/api/analytics/`, ne `/api/ai/`)
+- **Total API routes**: 608 → **610** (+2: `ai/deal-calculator` + `analytics/profit-timeline`)
+- **Brain category**: 24 (nespremenjeno — noben brain file dodan ali modificiran)
+- **Analytics**: 72 → **73** (+1: `profit-timeline`)
+- **Funkcije**: ~295 → **~297** (+2: `calculateDeal` + `getProfitTimeline`)
+- **Lint**: 0 napak ✨
+- **Typecheck**: 0 napak ✨ (preverjeno preko dev server compilation — Turbopack compiled successfully, vsi endpoints odgovarajo pravilno preko curl)
+- **Endpoint verification**: 5/5 curl tests pass (GET deal-calc, POST deal-calc, GET profit-timeline weekly, GET profit-timeline monthly, GET ai-list total=429)
+
+### Note
+
+**Polish phase continues — hitra odločitev (Deal Calculator) + vizualno sledenje (Profit Timeline).**
+
+Polish phase progression:
+- v8.32 — monitoring (System Health Dashboard)
+- v8.33 — performance (Caching + Stats)
+- v8.34 — testing (129 Brain Integration Tests)
+- v8.35 — data + notifications (25 demo trades + Telegram Brain Notifications)
+- v8.36 — trade management (CSV Import + Quick Add + Dashboard Stats)
+- v8.37 — decision support + visualization (Deal Calculator + Profit Timeline Chart)
+
+Skupaj doslej (v7.50 → v8.37): **87 verzij, 213 novih funkcij**.
 
 ## [8.36.0] - 2026-08-14
 
