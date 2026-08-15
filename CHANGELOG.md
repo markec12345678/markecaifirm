@@ -45,6 +45,25 @@ Problem: Sistem deluje na desktop, ampak mobile UX je suboptimalen — 17 nav gu
 
 UI-only release — no new API endpoints, no Prisma schema changes, no new npm dependencies. All mobile components are `md:hidden` (desktop unaffected). Agent Browser verified: mobile (375×812) bottom nav visible z 5 buttons + Trades badge "5" (held count) + FAB 56×56px; desktop (1920×1080) both `display:none`.
 
+## [8.50.0] - 2026-08-15
+
+### Added — 🚀 First-Run Onboarding Wizard
+
+Problem: Nov uporabnik ki prvič odpre aplikacijo ne dobi nobenega vodenja. Sistem je močan ampak brez onboarding-a je cold start confusing.
+
+- **`src/components/dashboard/onboarding-wizard.tsx`** (NEW) — 4-step wizard dialog (non-dismissable): (1) Dobrodošli (prikaz funkcij + ⌘K tip), (2) AI konfig (info o Ollama + fallback, skip-able), (3) Profit cilj (input + quick buttons 200/500/1000/2000€, POST /api/trades/goal-tracker/set), (4) Demo podatki (button → POST /api/ai/brain/seed, 25 trgovin). Step indicators z checkmarks.
+- **`src/app/page.tsx`** (MODIFIED) — useEffect fetch-a /api/settings na mount, če `onboardingCompleted === false` odpre OnboardingWizard dialog. onComplete POST-a `onboardingCompleted: true` na /api/settings.
+- **`src/app/api/settings/route.ts`** (MODIFIED) — GET vrača `onboardingCompleted`, POST sprejema `onboardingCompleted: boolean`.
+- **`prisma/schema.prisma`** (MODIFIED) — `onboardingCompleted Boolean @default(false)` v Settings model.
+
+### Stats
+
+- AI endpoints: 431 (unchanged)
+- Total API routes: 623 (unchanged)
+- NEW Prisma field: onboardingCompleted (Boolean, default false)
+- Lint: 0 errors ✨
+- Typecheck: 0 errors ✨
+
 ## [8.49.0] - 2026-08-15
 
 ### Changed — 🦶 Enhanced Footer z Live Health Indicator + Version + Stats

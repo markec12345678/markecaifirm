@@ -69,6 +69,8 @@ export async function GET() {
       autoCleanupListingsDays: s.autoCleanupListingsDays,
       // v4.2: Profit goal
       monthlyProfitGoal: s.monthlyProfitGoal,
+      // v8.50: First-Run Onboarding
+      onboardingCompleted: s.onboardingCompleted,
       // v5.5: Category notifications
       categoryNotifications: s.categoryNotifications || '{}',
       // v5.6: Dashboard layout
@@ -239,6 +241,8 @@ export async function POST(req: NextRequest) {
     if (typeof body.autoCleanupListingsDays === 'number') data.autoCleanupListingsDays = body.autoCleanupListingsDays;
     // v4.2: Profit goal
     if (typeof body.monthlyProfitGoal === 'number') data.monthlyProfitGoal = body.monthlyProfitGoal;
+    // v8.50: First-Run Onboarding
+    if (typeof body.onboardingCompleted === 'boolean') data.onboardingCompleted = body.onboardingCompleted;
     // v5.5: Category notifications
     if (typeof body.categoryNotifications === 'string') data.categoryNotifications = body.categoryNotifications;
     // v5.6: Dashboard layout

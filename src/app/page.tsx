@@ -48,6 +48,7 @@ import { QuickAddTradeModal } from '@/components/dashboard/quick-add-trade-modal
 import { useHaptic } from '@/hooks/use-haptic';
 import { CommandPalette } from '@/components/dashboard/command-palette';
 import { ThemeToggle } from '@/components/theme-toggle';
+import { OnboardingWizard } from '@/components/dashboard/onboarding-wizard';
 
 /** v6.94: Loading fallback za lazy-loaded poglede. */
 function LoadingFallback() {
@@ -89,6 +90,7 @@ export default function Home() {
   const [now, setNow] = useState<Date | null>(null);
   const [searchOpen, setSearchOpen] = useState(false);
   const [cmdkOpen, setCmdkOpen] = useState(false); // v8.46: Command Palette (Cmd+K)
+  const [onboardingOpen, setOnboardingOpen] = useState(false); // v8.50: First-Run Onboarding
   const [helpOpen, setHelpOpen] = useState(false);
   // v4.7: Mobile nav drawer
   const [mobileNavOpen, setMobileNavOpen] = useState(false);
@@ -121,6 +123,18 @@ export default function Home() {
     fetch('/api/stats').then(r => r.ok ? r.json() : null).then(s => {
       if (s) setUnreadAlerts(s.unreadAlerts ?? 0);
     }).catch(() => {});
+  }, []);
+
+  // v8.50: First-Run Onboarding — check if onboarding is completed
+  useEffect(() => {
+    fetch('/api/settings')
+      .then(r => r.json())
+      .then(data => {
+        if (data.onboardingCompleted === false) {
+          setOnboardingOpen(true);
+        }
+      })
+      .catch(() => {});
   }, []);
 
   // v8.45: PWA shortcut handler — reads ?view= and ?action= from URL on mount.
@@ -511,6 +525,9 @@ export default function Home() {
       <SearchModal open={searchOpen} onOpenChange={setSearchOpen} onNavigate={setView} />
       {/* v8.46: Command Palette (Cmd+K) — Raycast/Spotlight-style search */}
       <CommandPalette open={cmdkOpen} onOpenChange={setCmdkOpen} onNavigate={(v) => setView(v as View)} />
+
+      {/* v8.50: First-Run Onboarding Wizard */}
+      <OnboardingWizard open={onboardingOpen} onComplete={() => setOnboardingOpen(false)} />
 
       {/* v4.8: PWA install prompt */}
       <PwaInstallPrompt />
