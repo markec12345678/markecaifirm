@@ -18237,3 +18237,30 @@ Stage Summary:
 - Cron automations: 16 → 18 (+2)
 - Verzija aplikacije: v8.52.0
 - Skupaj doslej (v7.50 → v8.52): 102 verzij, 224 novih funkcij
+
+---
+Task ID: v8.53
+Agent: main
+Task: Profit Forecast + Distribution Pie Chart
+
+Work Log:
+- Razmišljal kot uporabnik: nimam profit forecast ("pri trenutni hitrosti boš imel X€ do konca meseca") in distribution pie chart
+- Ustvaril src/lib/trades/profit-forecast.ts (getProfitForecast — daily run rate, projected month-end, trend, goal likelihood, category distribution, held potential)
+- Ustvaril src/app/api/analytics/profit-forecast/route.ts (GET)
+- Ustvaril src/components/dashboard/profit-forecast-card.tsx (Dashboard card z current vs projected + goal progress bar + trend + recharts PieChart + held potential)
+- Integriral v dashboard-view.tsx (after RestockRecommendations)
+- Preveril lint: 0 napak ✨
+- Preveril typecheck: 0 napak ✨
+- Commit + push uspešen ✅
+- Curl: current 351€, daily avg 23.4€, projected 725€, ON_TRACK, distribution orodje 31% obutev 27% oblačila 23% ✅
+- Agent Browser: "📈 NAPoved", "725€", "Pri trenutni hitrosti boš končal mesec z 725€" ✅
+
+Stage Summary:
+- NEW: src/lib/trades/profit-forecast.ts
+- NEW: src/app/api/analytics/profit-forecast/route.ts
+- NEW: src/components/dashboard/profit-forecast-card.tsx
+- MODIFIED: src/components/dashboard/dashboard-view.tsx
+- AI endpointi: 432 (nespremenjeno)
+- Total API routes: 629 → 630 (+1)
+- Verzija: v8.53.0
+- Skupaj (v7.50 → v8.53): 103 verzij, 225 novih funkcij
