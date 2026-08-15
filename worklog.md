@@ -17768,3 +17768,49 @@ Stage Summary:
 - Documentation updated: README (v8.42.0, AI 430, routes 620, cron 15, funkcije ~303, nova "Kaj je novega" v8.42 sekcija) + CHANGELOG ([8.42.0] section z vsemi moduli + Stats + 7 curl test-i + Note z 13 design odločitvami) + worklog.md (ta entry)
 - Polish phase continues: v8.32 (Health) + v8.33 (Performance) + v8.34 (129 tests) + v8.35 (25 trades + Telegram) + v8.36 (CSV Import + Quick Add) + v8.37 (Deal Calculator + Profit Timeline) + v8.38 (Notification Center) + v8.39 (Goal Tracker Dashboard Widget) + v8.40 (Trade Insights Deep Dive) + v8.41 (Weekly Summary Report + Email Notifications) + v8.42 (Full System Backup & Restore — portable, human-readable JSON backup of ALL 18 tables + 3 restore modes + auto-backup cron)
 - Skupaj doslej (v7.50 → v8.42): 92 verzij, 214 novih funkcij
+
+---
+Task ID: v8.42.1
+Agent: main
+Task: v8.42 commit + push + GitHub About + Agent Browser verification
+
+Work Log:
+- Prejel poročilo od full-stack-developer podagenta (Task v8.42 — Full System Backup & Restore implementiran: JSON export 18 tabel, 3 restore modi, auto-backup cron, Settings UI)
+- Neodvisno preveril doc sync: README v8.42.0 + 620 routes ✅, CHANGELOG [8.42.0] ✅
+- Preveril lint: 0 napak ✨
+- Preveril typecheck: 0 napak ✨
+- Dodal backups/ v .gitignore (backup JSON datoteke ne grejo v git)
+- Posodobil GitHub About: "430 AI + 73 analytics = 620 routes. v8.42.0: Brain (8 layers) + 5 phases COMPLETE + Polish (11 features)."
+- Commit: "v8.42: Full System Backup & Restore (JSON)..." (f02e29a)
+- Push na GitHub: uspešen ✅ (38d8fbf..f02e29a), PAT očiščen ✅
+- Agent Browser self-verification:
+  - Stran se pravilno naloži (HTTP 200)
+  - Settings view: "Prenosi JSON backup" button ✅
+  - "Restore" section ✅
+  - "Auto-backup" info ✅
+  - "Full System Backup" heading ✅
+  - Brez runtime napak v dev.log
+
+Stage Summary:
+- v8.42 uspešno dokončana in potisnjena na GitHub
+- NEW: src/lib/backup/backup.ts (~520 lines — exportBackup z 18 tabelami + settings redaction, restoreBackup z 3 modi, saveBackupToFile, listBackups, cleanupOldBackups, getDbStats)
+- MODIFIED: src/app/api/backup/route.ts (added ?format=json + ?format=stats)
+- NEW: src/app/api/backup/restore/route.ts (POST restore z mode + tables filter)
+- NEW: src/app/api/backup/list/route.ts (GET list backups)
+- NEW: src/app/api/cron/auto-backup/route.ts (daily @ 02:00, keep 30)
+- MODIFIED: src/components/dashboard/settings-view.tsx (FullBackupSection z 5 sekcijami)
+- BACKUP STRUCTURE: 18 tables (Profile, Settings, SavedSearch, PushSubscription, Trade, DigestLog, Monitor, Listing, Alert, RunLog, HeartbeatLog, PriceHistory, SmartRule, NegotiationMessage, WebhookEndpoint, ActionDraft, BrainSnapshot, Notification), version:'v8.42', createdAt, dbVersion, stats z totalRecords + per-table counts. Settings občutljiva polja REDACTED.
+- 3 RESTORE MODES: replace (destructive, deleteMany+create), merge (upsert by id, default), skip (create only if not exists)
+- LIVE BACKUP: 105KB JSON z 101 total records (25 trades + 1 snapshot + 70 drafts + 4 notifications + settings + ...)
+- AI endpointi: 430 (nespremenjeno — backup routes pod /api/backup/ in /api/cron/)
+- Total API routes: 617 → 620 (+3)
+- Cron automations: 15 → 16 (+1 auto-backup)
+- Lint: 0 napak ✨
+- Typecheck: 0 napak ✨
+- Endpoint verification: GET ?format=json 200 (105KB, 18 tables), GET ?format=stats 200, GET /backup/list 200, POST /cron/auto-backup 200 (saved 82KB), POST /backup/restore merge 200 (4 notifications restored), POST /backup/restore skip 200 (25 trades skipped) ✅
+- UI: FullBackupSection z export + restore + auto-backup z 5 sekcijami ✅
+- Dokumentacija sinhrono posodobljena (README, CHANGELOG, GitHub About)
+- GitHub sinhroniziran (0 commit-ov ahead)
+- Verzija aplikacije: v8.42.0
+- Polish phase continues: v8.32-v8.42 (11 verzij, 11 novih features)
+- Skupaj doslej (v7.50 → v8.42): 92 verzij, 214 novih funkcij
