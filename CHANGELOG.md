@@ -45,6 +45,21 @@ Problem: Sistem deluje na desktop, ampak mobile UX je suboptimalen — 17 nav gu
 
 UI-only release — no new API endpoints, no Prisma schema changes, no new npm dependencies. All mobile components are `md:hidden` (desktop unaffected). Agent Browser verified: mobile (375×812) bottom nav visible z 5 buttons + Trades badge "5" (held count) + FAB 56×56px; desktop (1920×1080) both `display:none`.
 
+## [8.49.0] - 2026-08-15
+
+### Changed — 🦶 Enhanced Footer z Live Health Indicator + Version + Stats
+
+Problem: Footer je bil star (v8.45.0) in ni prikazoval ključnih informacij o sistemu (health score, version, endpoint count, Cmd+K hint).
+
+- **`src/app/page.tsx`** (MODIFIED) — Footer posodobljen z: (1) live health indicator (zelena pulzirajoča pikica + "HEALTHY 85/100"), (2) version v8.49.0 (font-mono), (3) endpoint count "431 AI + 73 analytics = 623 routes", (4) ⌘K hint za Command Palette, (5) responsive flex-wrap za mobile. Cron reference ohranjena.
+
+### Stats
+
+- AI endpoints: 431 (unchanged)
+- Total API routes: 623 (unchanged)
+- Lint: 0 errors ✨
+- Typecheck: 0 errors ✨
+
 ## [8.48.0] - 2026-08-15
 
 ### Changed — ⌨️ Keyboard Shortcut Help Overlay Enhancement

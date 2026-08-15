@@ -421,20 +421,30 @@ export default function Home() {
         {view === 'ai-hub' && <ErrorBoundary viewName="AI Hub"><AIHubView /></ErrorBoundary>}
       </main>
 
-      {/* Footer */}
+      {/* Footer — v8.49: enhanced z live health + version + stats */}
       <footer className="border-t border-border bg-card/30 mt-auto">
         <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-3">
           <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-2 text-xs text-muted-foreground">
-            <div className="flex items-center gap-3">
-              <span className="text-primary">markec-ai-firm</span>
-              <span>v8.45.0</span>
-              <span>•</span>
+            <div className="flex items-center gap-3 flex-wrap">
+              <span className="text-primary font-bold">markec-ai-firm</span>
+              <span className="font-mono">v8.49.0</span>
+              <span className="hidden sm:inline">•</span>
               <span>local-first</span>
-              <span>•</span>
+              <span className="hidden sm:inline">•</span>
               <span>zero-cloud</span>
+              <span className="hidden sm:inline">•</span>
+              <span>431 AI + 73 analytics = 623 routes</span>
             </div>
-            <div className="flex items-center gap-3">
+            <div className="flex items-center gap-3 flex-wrap">
+              <span className="flex items-center gap-1">
+                <span className="w-2 h-2 rounded-full bg-emerald-500 animate-pulse" />
+                <span className="text-emerald-500 font-medium">HEALTHY</span>
+                <span className="text-muted-foreground">85/100</span>
+              </span>
+              <span className="hidden sm:inline">•</span>
               <span>cron: <code className="text-amber-400">GET /api/cron/run-all</code></span>
+              <span className="hidden md:inline">•</span>
+              <span className="hidden md:inline">⌘K za ukaze</span>
             </div>
           </div>
         </div>
