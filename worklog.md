@@ -17888,3 +17888,68 @@ Stage Summary:
 - Verzija aplikacije: v8.44.0
 - Polish phase continues: v8.32-v8.44 (13 verzij, 13 novih features)
 - Skupaj doslej (v7.50 → v8.44): 94 verzij, 216 novih funkcij
+
+---
+Task ID: v8.45
+Agent: full-stack-developer
+Task: Implement Mobile-First Responsive Optimization + Touch UX
+
+Work Log:
+- Prebral obvezne datoteke: worklog.md (v8.44 entry), page.tsx (nav pattern, 17-button NAV array, hamburger drawer), dashboard-view.tsx (responsive patterns — grids, StatCard, Danes card, filter chips), manifest.json (existing PWA config), layout.tsx (viewport config)
+- Ustvaril src/hooks/use-haptic.ts (NEW) — useHaptic() hook z 6 vibracijskimi patterni (light 10ms, medium 20ms, success [10,30,10], error [20,50,20,50,20], selection 5ms, warning 30ms) z SSR/unsupported browser safe guards
+- Ustvaril src/components/dashboard/mobile-bottom-nav.tsx (NEW) — fixed bottom nav, md:hidden, 5 sekcij (Dashboard, AI Hub, Trades z held-count badge, Alerti z unread-count badge, Nastavitve), 56px min touch targeti, active state z top indicator bar, haptic.light() na tap, fetches heldCount iz /api/trades/dashboard vsakih 60s, safe-area-inset-bottom support (iOS)
+- Ustvaril src/components/dashboard/mobile-fab.tsx (NEW) — floating action button, fixed bottom-20 right-4 z-50, purple→primary gradient (from-primary to-purple-600), 56×56px, fab-pulse-glow animation, haptic.medium() na tap → odpre QuickAddTradeModal, md:hidden
+- Dodal globals.css: fab-pulse-glow keyframe (expanding box-shadow ring z prefers-reduced-motion override) + touch-scroll custom scrollbar styling za horizontal nav scroll
+- Spremenil src/app/page.tsx (MODIFIED):
+  - Import MobileBottomNav, MobileFAB, QuickAddTradeModal, useHaptic
+  - Dodan showQuickAddTrade state + haptic instance
+  - PWA shortcut handler useEffect — prebere ?view= in ?action= parametre na mount → setView ali setShowQuickAddTrade + cleans URL z replaceState
+  - Desktop nav dobi touch-scroll class za smoother horizontal scroll
+  - Main pb-20 md:pb-6 (mobile clearance za fixed bottom nav)
+  - Outer wrapper pb-16 md:pb-0 (footer clearance)
+  - MobileBottomNav + MobileFAB + page-level QuickAddTradeModal dodani na konec render-a
+  - Footer version v6.92.0 → v8.45.0
+- Spremenil src/components/dashboard/dashboard-view.tsx (MODIFIED):
+  - Import useHaptic + haptic instance
+  - Loading skeleton grid-cols-1 md:grid-cols-4 → grid-cols-1 sm:grid-cols-2 md:grid-cols-4
+  - Danes card grid grid-cols-2 md:grid-cols-5 → grid-cols-2 sm:grid-cols-3 md:grid-cols-5 + gap-3 sm:gap-4
+  - Danes numbers text-xl → text-2xl sm:text-3xl (5 instances)
+  - Filter chips px-3 py-1 → px-3 py-2.5 sm:py-1 min-h-[40px] sm:min-h-0 (6 instances, replace_all)
+  - Stat grid grid-cols-2 md:grid-cols-5 → grid-cols-2 sm:grid-cols-3 md:grid-cols-5
+  - Quick action stats grid grid-cols-2 md:grid-cols-3 → grid-cols-2 sm:grid-cols-3
+  - StatCard numbers text-2xl → text-2xl sm:text-3xl
+  - Recent runs rows py-2 → py-2.5 sm:py-2 min-h-[48px] sm:min-h-0
+  - "Poženi vse monitorje" button + min-h-[44px] sm:min-h-0
+  - "Dodaj trade" button: onClick dobi haptic.medium() + min-h-[44px] sm:min-h-0
+  - Vseh 6 filter chipsov: onClick dobi haptic.light()
+- Spremenil public/manifest.json (MODIFIED) — dodani PWA shortcuts: "Dodaj trade" (/?action=add-trade), "AI Hub" (/?view=ai-hub), "Dashboard" (/?view=dashboard), "Alerti" (/?view=alerts), "Oglasi" (/?view=listings) + scope: "/"
+- Lint: npx eslint na 5 datotek → 0 napak ✨
+- Typecheck: bunx tsc --noEmit → 0 napak ✨
+- Agent Browser verification (375×812 iPhone X):
+  - Bottom nav visible: navigation "Mobile navigation" z 5 gumbi (Dashboard, AI Hub, Trades, Alerti, Nastavitve) ✅
+  - Trades badge prikazuje "5" (held count iz /api/trades/dashboard) ✅
+  - FAB visible: button "Dodaj trade" na poziciji (303, 676), 56×56px, display: flex ✅
+  - Bottom nav: pozicija (0, 755), 375×57px, 5 gumbov ✅
+  - Tap "Nastavitve" → navigacija na Settings view (heading "NASTAVITVE") ✅
+  - Desktop (1920×1080): bottom nav display: none ✅, FAB display: none ✅
+- curl /api/ai-list → {ok:true, total:431} (unchanged) ✅
+- README.md: version badge v8.44.0 → v8.45.0, funkcije ~304 → ~307, "Kaj je novega" header v7.56–v8.43 (87 verzij) → v7.56–v8.45 (89 verzij, 217 funkcij), dodan v8.45 entry z 7 točkami
+- CHANGELOG.md: dodan [8.45.0] section z Added + Stats + Note, [Unreleased] posodobljen
+
+Stage Summary:
+- NEW: src/components/dashboard/mobile-bottom-nav.tsx (5-button bottom nav, md:hidden, 56px touch targets, held-count + unread badges, haptic)
+- NEW: src/components/dashboard/mobile-fab.tsx (floating action button, purple gradient, pulsing glow, haptic.medium() na tap)
+- NEW: src/hooks/use-haptic.ts (6 vibracijskih patternov: light/medium/success/error/selection/warning)
+- MODIFIED: src/app/page.tsx (mobile nav + FAB + page-level QuickAddTradeModal + PWA shortcut handler + touch-scroll nav + footer/main clearance + version v8.45.0)
+- MODIFIED: src/components/dashboard/dashboard-view.tsx (touch-optimized layouts: bigger numbers, bigger chips, bigger buttons, better grid breakpoints, haptic na 6 chips + 2 buttons)
+- MODIFIED: public/manifest.json (5 PWA shortcuts + scope)
+- MODIFIED: src/app/globals.css (fab-pulse-glow keyframe + touch-scroll scrollbar)
+- AI endpointi: 431 (unchanged — UI only, no new API)
+- Total API routes: 623 (unchanged)
+- Lint: 0 napak ✨
+- Typecheck: 0 napak ✨
+- Agent Browser mobile verification: bottom nav + FAB + Trades badge "5" ✅
+- Agent Browser desktop verification: both display:none ✅
+- Verzija aplikacije: v8.45.0
+- Polish phase continues: v8.32-v8.45 (14 verzij, 14 novih features)
+- Skupaj doslej (v7.50 → v8.45): 95 verzij, 217 novih funkcij

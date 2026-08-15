@@ -3,6 +3,7 @@
   "short_name": "Markec AI",
   "description": "Lokalni AI lovec priložnosti za slovenske spletne portale (Bolha, Nepremičnine, Avtonet).",
   "start_url": "/",
+  "scope": "/",
   "display": "standalone",
   "background_color": "#0a0e0a",
   "theme_color": "#0a0e0a",
@@ -22,6 +23,18 @@
     }
   ],
   "shortcuts": [
+    {
+      "name": "Dodaj trade",
+      "short_name": "Dodaj trade",
+      "url": "/?action=add-trade",
+      "description": "Hitri dodaj nov trade v skladišče"
+    },
+    {
+      "name": "AI Hub",
+      "short_name": "AI Hub",
+      "url": "/?view=ai-hub",
+      "description": "Pregled vseh 431 AI endpointov"
+    },
     {
       "name": "Dashboard",
       "short_name": "Dashboard",

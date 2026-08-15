@@ -41,6 +41,11 @@ import { ProfileSwitcher } from '@/components/dashboard/profile-switcher';
 import { SearchModal } from '@/components/dashboard/search-modal';
 import { useAlertsStream } from '@/lib/use-alerts-stream';
 import { useAuth, LoginModal } from '@/components/dashboard/login-modal';
+// v8.45: Mobile-First Responsive Optimization — bottom nav + FAB + haptic
+import { MobileBottomNav } from '@/components/dashboard/mobile-bottom-nav';
+import { MobileFAB } from '@/components/dashboard/mobile-fab';
+import { QuickAddTradeModal } from '@/components/dashboard/quick-add-trade-modal';
+import { useHaptic } from '@/hooks/use-haptic';
 
 /** v6.94: Loading fallback za lazy-loaded poglede. */
 function LoadingFallback() {
@@ -84,6 +89,12 @@ export default function Home() {
   const [helpOpen, setHelpOpen] = useState(false);
   // v4.7: Mobile nav drawer
   const [mobileNavOpen, setMobileNavOpen] = useState(false);
+  // v8.45: Quick Add Trade modal state (triggered by MobileFAB on mobile).
+  // DashboardView has its own internal instance for its "Dodaj trade" button;
+  // this page-level instance serves the FAB so the action is available on
+  // every view, not just the dashboard.
+  const [showQuickAddTrade, setShowQuickAddTrade] = useState(false);
+  const haptic = useHaptic();
   // v4.9: Real-time alerts via SSE
   const { connected: sseConnected, lastAlert, stats: sseStats } = useAlertsStream(true);
   const lastSeenAlertId = useRef<string | null>(null);
@@ -107,6 +118,30 @@ export default function Home() {
     fetch('/api/stats').then(r => r.ok ? r.json() : null).then(s => {
       if (s) setUnreadAlerts(s.unreadAlerts ?? 0);
     }).catch(() => {});
+  }, []);
+
+  // v8.45: PWA shortcut handler — reads ?view= and ?action= from URL on mount.
+  // Enables PWA shortcuts (manifest.json) to deep-link into specific views
+  // or trigger actions (e.g. /?action=add-trade opens QuickAddTradeModal).
+  useEffect(() => {
+    if (typeof window === 'undefined') return;
+    const params = new URLSearchParams(window.location.search);
+    const viewParam = params.get('view');
+    const actionParam = params.get('action');
+    if (viewParam) {
+      const validViews: View[] = ['dashboard', 'monitors', 'alerts', 'listings', 'watchlist', 'analytics', 'statistics', 'trades', 'health', 'notifications', 'settings', 'buyers', 'ai-hub', 'inventory', 'pricing', 'listing-opt', 'risk'];
+      if (validViews.includes(viewParam as View)) {
+        setView(viewParam as View);
+      }
+    }
+    if (actionParam === 'add-trade') {
+      setShowQuickAddTrade(true);
+    }
+    // Clean the URL so a refresh doesn't re-trigger the action.
+    if (viewParam || actionParam) {
+      const cleanUrl = window.location.pathname;
+      window.history.replaceState({}, '', cleanUrl);
+    }
   }, []);
 
   // v4.9: SSE — update unreadAlerts from stats + show toast on new alert
@@ -187,8 +222,9 @@ export default function Home() {
   }, [searchOpen]);
 
   return (
-    <div className="min-h-screen flex flex-col bg-background text-foreground">
-      {/* Header — terminal style */}
+    <div className="min-h-screen flex flex-col bg-background text-foreground pb-16 md:pb-0">
+      {/* v8.45: pb-16 on mobile reserves space below the footer for the fixed
+          MobileBottomNav (56px) so footer content isn't covered. */}
       <header className="border-b border-border bg-card/50 backdrop-blur-sm">
         <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
           <div className="flex items-center justify-between h-14">
@@ -261,7 +297,10 @@ export default function Home() {
       {/* Nav tabs — desktop only */}
       <nav className="hidden md:block border-b border-border bg-card/30">
         <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
-          <div className="flex items-center gap-1 overflow-x-auto">
+          {/* v8.45: touch-scroll class — smoother horizontal scroll on touch devices.
+              The 17-button nav overflows on narrow tablet widths; overflow-x-auto
+              (already present) lets it scroll instead of wrapping/breaking. */}
+          <div className="flex items-center gap-1 overflow-x-auto touch-scroll">
             {NAV.map((item) => {
               const Icon = item.icon;
               const active = view === item.id;
@@ -356,7 +395,8 @@ export default function Home() {
       )}
 
       {/* Main content */}
-      <main className="flex-1 max-w-7xl mx-auto w-full px-4 sm:px-6 lg:px-8 py-4 md:py-6">
+      {/* v8.45: pb-20 on mobile clears the fixed bottom nav (56px) + FAB. */}
+      <main className="flex-1 max-w-7xl mx-auto w-full px-4 sm:px-6 lg:px-8 py-4 md:py-6 pb-20 md:pb-6">
         {view === 'dashboard' && <ErrorBoundary viewName="Dashboard"><DashboardView onNavigate={setView} /></ErrorBoundary>}
         {view === 'monitors' && <ErrorBoundary viewName="Monitorji"><MonitorsView /></ErrorBoundary>}
         {view === 'alerts' && <ErrorBoundary viewName="Alerti"><AlertsView /></ErrorBoundary>}
@@ -382,7 +422,7 @@ export default function Home() {
           <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-2 text-xs text-muted-foreground">
             <div className="flex items-center gap-3">
               <span className="text-primary">markec-ai-firm</span>
-              <span>v6.92.0</span>
+              <span>v8.45.0</span>
               <span>•</span>
               <span>local-first</span>
               <span>•</span>
@@ -445,6 +485,30 @@ export default function Home() {
 
       {/* v6.92: Auth login modal — prikaže se, če APP_API_KEY zahteva avtentikacijo */}
       {needsAuth && <LoginModal onSuccess={() => window.location.reload()} />}
+
+      {/* v8.45: Mobile bottom navigation — 5 most important sections.
+          Fixed at bottom, md:hidden. Uses existing setView callback. */}
+      <MobileBottomNav
+        currentView={view}
+        onNavigate={(v) => setView(v)}
+        unreadAlerts={unreadAlerts}
+      />
+
+      {/* v8.45: Mobile floating action button — opens QuickAddTradeModal.
+          Purple→primary gradient, pulsing glow, haptic on tap. md:hidden. */}
+      <MobileFAB onAddTrade={() => setShowQuickAddTrade(true)} />
+
+      {/* v8.45: Page-level QuickAddTradeModal — triggered by the MobileFAB.
+          Separate from DashboardView's internal instance so the FAB works
+          on every view (alerts, trades, settings, etc.), not just dashboard. */}
+      <QuickAddTradeModal
+        open={showQuickAddTrade}
+        onOpenChange={setShowQuickAddTrade}
+        onSaved={() => {
+          haptic.success();
+          toast.success('Trade dodan');
+        }}
+      />
     </div>
   );
 }

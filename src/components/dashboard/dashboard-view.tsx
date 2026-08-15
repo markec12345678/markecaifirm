@@ -7,6 +7,8 @@ import { Badge } from '@/components/ui/badge';
 import { Activity, Bell, AlertTriangle, Target, TrendingUp, Play, RefreshCw, Clock, Zap, LayoutGrid, BarChart3, Bookmark, ShoppingCart, TrendingDown, ExternalLink, Check, Sparkles, ArrowUp, ArrowDown, Settings2, Plus } from 'lucide-react';
 import { toast } from 'sonner';
 import { cn } from '@/lib/utils';
+// v8.45: Haptic feedback for mobile touch interactions
+import { useHaptic } from '@/hooks/use-haptic';
 import { AiInsightsWidget } from '@/components/dashboard/ai-insights-widget';
 import { DealFlowWidget } from '@/components/dashboard/deal-flow-widget';
 import { DealFunnelWidget } from '@/components/dashboard/deal-funnel-widget';
@@ -87,6 +89,8 @@ export function DashboardView({ onNavigate }: ViewProps) {
   // v8.39: Goal tracker state moved into <GoalTrackerCard /> component (self-fetches).
   // v8.36: Quick Add Trade modal (floating button)
   const [showQuickAddTrade, setShowQuickAddTrade] = useState(false);
+  // v8.45: Haptic feedback instance for mobile touch interactions
+  const haptic = useHaptic();
 
   // Load dashboard layout from settings
   useEffect(() => {
@@ -193,7 +197,7 @@ export function DashboardView({ onNavigate }: ViewProps) {
 
   if (loading || !stats) {
     return (
-      <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
+      <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-4 gap-4">
         {[...Array(4)].map((_, i) => (
           <Card key={i} className="bg-card/50">
             <CardContent className="p-6">
@@ -248,7 +252,7 @@ export function DashboardView({ onNavigate }: ViewProps) {
             <RefreshCw className="w-3.5 h-3.5" />
             Osveži
           </Button>
-          <Button size="sm" onClick={runAll} disabled={running} className="gap-2 bg-primary text-primary-foreground hover:bg-primary/90">
+          <Button size="sm" onClick={runAll} disabled={running} className="gap-2 bg-primary text-primary-foreground hover:bg-primary/90 min-h-[44px] sm:min-h-0">
             {running ? <RefreshCw className="w-3.5 h-3.5 animate-spin" /> : <Play className="w-3.5 h-3.5" />}
             Poženi vse monitorje
           </Button>
@@ -278,8 +282,8 @@ export function DashboardView({ onNavigate }: ViewProps) {
           {/* v8.36: Floating Quick Add Trade button */}
           <Button
             size="sm"
-            onClick={() => setShowQuickAddTrade(true)}
-            className="gap-2 bg-primary text-primary-foreground hover:bg-primary/90"
+            onClick={() => { haptic.medium(); setShowQuickAddTrade(true); }}
+            className="gap-2 bg-primary text-primary-foreground hover:bg-primary/90 min-h-[44px] sm:min-h-0"
             title="Hitri dodaj trade"
           >
             <Plus className="w-3.5 h-3.5" />
@@ -301,27 +305,27 @@ export function DashboardView({ onNavigate }: ViewProps) {
                 {new Date().toLocaleDateString('sl-SI', { weekday: 'long', day: 'numeric', month: 'long' })}
               </span>
             </div>
-            <div className="grid grid-cols-2 md:grid-cols-5 gap-3">
+            <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-5 gap-3 sm:gap-4">
               <div className="text-center">
                 <div className="text-[10px] text-muted-foreground uppercase">Novi oglasi</div>
-                <div className="text-xl font-bold font-mono text-primary">{stats.today.newListings}</div>
+                <div className="text-2xl sm:text-3xl font-bold font-mono text-primary">{stats.today.newListings}</div>
               </div>
               <div className="text-center">
                 <div className="text-[10px] text-muted-foreground uppercase">Novi alerti</div>
-                <div className="text-xl font-bold font-mono text-amber-400">{stats.today.newAlerts}</div>
+                <div className="text-2xl sm:text-3xl font-bold font-mono text-amber-400">{stats.today.newAlerts}</div>
               </div>
               <div className="text-center">
                 <div className="text-[10px] text-muted-foreground uppercase">Padci cen</div>
-                <div className="text-xl font-bold font-mono text-primary">{stats.today.priceDrops}</div>
+                <div className="text-2xl sm:text-3xl font-bold font-mono text-primary">{stats.today.priceDrops}</div>
               </div>
               <div className="text-center">
                 <div className="text-[10px] text-muted-foreground uppercase">Izvedbe</div>
-                <div className="text-xl font-bold font-mono">{stats.today.runs}</div>
+                <div className="text-2xl sm:text-3xl font-bold font-mono">{stats.today.runs}</div>
               </div>
               <div className="text-center">
                 <div className="text-[10px] text-muted-foreground uppercase">Uspeh</div>
                 <div className={cn(
-                  'text-xl font-bold font-mono',
+                  'text-2xl sm:text-3xl font-bold font-mono',
                   stats.today.runs > 0 && (stats.today.successfulRuns / stats.today.runs) >= 0.9 ? 'text-primary' :
                   stats.today.runs > 0 && (stats.today.successfulRuns / stats.today.runs) >= 0.7 ? 'text-amber-400' : 'text-destructive'
                 )}>
@@ -336,45 +340,45 @@ export function DashboardView({ onNavigate }: ViewProps) {
       {/* v3.7: Quick filter chips */}
       <div className="flex items-center gap-2 flex-wrap">
         <button
-          onClick={() => onNavigate('alerts')}
-          className="px-3 py-1 rounded-full border border-primary/30 bg-primary/5 text-primary text-xs hover:bg-primary/10 transition-colors"
+          onClick={() => { haptic.light(); onNavigate('alerts'); }}
+          className="px-3 py-2.5 sm:py-1 rounded-full min-h-[40px] sm:min-h-0 border border-primary/30 bg-primary/5 text-primary text-xs hover:bg-primary/10 transition-colors"
         >
           🎯 Priložnosti ({stats.prilikaAlerts})
         </button>
         <button
-          onClick={() => onNavigate('listings')}
-          className="px-3 py-1 rounded-full border border-amber-400/30 bg-amber-400/5 text-amber-400 text-xs hover:bg-amber-400/10 transition-colors"
+          onClick={() => { haptic.light(); onNavigate('listings'); }}
+          className="px-3 py-2.5 sm:py-1 rounded-full min-h-[40px] sm:min-h-0 border border-amber-400/30 bg-amber-400/5 text-amber-400 text-xs hover:bg-amber-400/10 transition-colors"
         >
           ⚠️ Sumljivi ({stats.sumnjivoAlerts})
         </button>
         <button
-          onClick={() => onNavigate('listings')}
-          className="px-3 py-1 rounded-full border border-border bg-card/50 text-muted-foreground text-xs hover:border-primary/30 hover:text-primary transition-colors"
+          onClick={() => { haptic.light(); onNavigate('listings'); }}
+          className="px-3 py-2.5 sm:py-1 rounded-full min-h-[40px] sm:min-h-0 border border-border bg-card/50 text-muted-foreground text-xs hover:border-primary/30 hover:text-primary transition-colors"
         >
           📉 Padci cen ({stats.priceDropCount || 0})
         </button>
         <button
-          onClick={() => onNavigate('listings')}
-          className="px-3 py-1 rounded-full border border-border bg-card/50 text-muted-foreground text-xs hover:border-primary/30 hover:text-primary transition-colors"
+          onClick={() => { haptic.light(); onNavigate('listings'); }}
+          className="px-3 py-2.5 sm:py-1 rounded-full min-h-[40px] sm:min-h-0 border border-border bg-card/50 text-muted-foreground text-xs hover:border-primary/30 hover:text-primary transition-colors"
         >
           📞 Kontaktirani ({stats.contactedListings || 0})
         </button>
         <button
-          onClick={() => onNavigate('listings')}
-          className="px-3 py-1 rounded-full border border-border bg-card/50 text-muted-foreground text-xs hover:border-primary/30 hover:text-primary transition-colors"
+          onClick={() => { haptic.light(); onNavigate('listings'); }}
+          className="px-3 py-2.5 sm:py-1 rounded-full min-h-[40px] sm:min-h-0 border border-border bg-card/50 text-muted-foreground text-xs hover:border-primary/30 hover:text-primary transition-colors"
         >
           ⭐ Priljubljeni ({stats.bookmarkedListings})
         </button>
         <button
-          onClick={() => onNavigate('trades')}
-          className="px-3 py-1 rounded-full border border-primary/30 bg-primary/5 text-primary text-xs hover:bg-primary/10 transition-colors"
+          onClick={() => { haptic.light(); onNavigate('trades'); }}
+          className="px-3 py-2.5 sm:py-1 rounded-full min-h-[40px] sm:min-h-0 border border-primary/30 bg-primary/5 text-primary text-xs hover:bg-primary/10 transition-colors"
         >
           🛒 Skladišče
         </button>
       </div>
 
       {/* Stat grid */}
-      <div className="grid grid-cols-2 md:grid-cols-5 gap-4">
+      <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-5 gap-4">
         <StatCard
           icon={<Activity className="w-4 h-4" />}
           label="Aktivni monitorji"
@@ -418,7 +422,7 @@ export function DashboardView({ onNavigate }: ViewProps) {
       </div>
 
       {/* v3.1: Quick action stats row */}
-      <div className="grid grid-cols-2 md:grid-cols-3 gap-3">
+      <div className="grid grid-cols-2 sm:grid-cols-3 gap-3">
         <Card
           className="bg-card/50 hover:bg-card hover:border-primary/30 cursor-pointer transition-colors"
           onClick={() => onNavigate('listings')}
@@ -505,7 +509,7 @@ export function DashboardView({ onNavigate }: ViewProps) {
               {stats.recentRuns.map((run) => (
                 <div
                   key={run.id}
-                  className="flex items-center justify-between gap-3 px-3 py-2 rounded bg-background/50 border border-border hover:border-primary/30 transition-colors text-sm"
+                  className="flex items-center justify-between gap-3 px-3 py-2.5 sm:py-2 min-h-[48px] sm:min-h-0 rounded bg-background/50 border border-border hover:border-primary/30 transition-colors text-sm"
                 >
                   <div className="flex items-center gap-3 min-w-0 flex-1">
                     <StatusDot status={run.status} />
@@ -823,7 +827,7 @@ function StatCard({
         </div>
         <div className="flex items-baseline gap-2">
           <span className={cn(
-            'text-2xl font-bold',
+            'text-2xl sm:text-3xl font-bold',
             color === 'primary' ? 'text-primary terminal-glow' : 'text-amber-400 amber-glow'
           )}>
             {value}

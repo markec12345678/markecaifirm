@@ -6,6 +6,8 @@ Format sledi [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), verzije s
 
 ## [Unreleased]
 
+v8.45 zaključi Polish phase mobile UX (Mobile-First Responsive Optimization + Touch UX — "Mobile bottom nav + FAB + haptic feedback + touch-optimized layouts"). Naslednje verzije:
+
 v8.26 je odprl Intelligence phase (Action Explainability), v8.27 jo nadaljuje (Scenario Brain), v8.28 jo še nadalje vzpostavi FEEDBACK LOOP (Adaptive Domain Weights), v8.29 jo ZAKLJUČI z Draft Queue + Action Feedback Loop integration (🎯 INTELLIGENCE PHASE COMPLETE), v8.30 odpira NOVO fazo — Automation (Safe Auto-pilot — 🎯 AUTOMATION PHASE STARTED), v8.31 zaključi Automation phase (Aggressive Auto-pilot + Anomaly Detection — 🎯 AUTOMATION PHASE COMPLETE), v8.32 odpira NOVO fazo — Polish (System Health Dashboard — 🎯 POLISH PHASE STARTED — "How healthy is the Brain system?"), v8.33 zaključi Polish phase caching (Performance Caching + Cache Stats), v8.34 zaključi Polish phase testing (Brain Integration Test Suite), v8.35 zaključi Polish phase "make the system alive" (Seed Demo Data + Telegram Brain Notifications), v8.36 zaključi Polish phase trade management enhancement (CSV Import + Quick Add + Dashboard Stats), v8.37 zaključi Polish phase decision support + visualization (Deal Calculator + Profit Timeline Chart — "Hitra odločitev + vizualno sledenje"), v8.38 zaključi Polish phase centralized notification history (🔔 Notification Center + Alert History — "Centralizirana zgodovina vseh obvestil"), v8.39 zaključi Polish phase goal tracking visualization (🎯 Goal Tracker Dashboard Widget + Settings Integration — "Vizualno sledenje mesečnemu cilju z avtomatsko obvestitvijo ob dosegu"), v8.40 zaključi Polish phase trade analytics deep dive (📊 Trade Insights Deep Dive — "KDaj in KJE prodati za maksimalen profit?" — 6 analiz iz 25 realnih trade-ov: day-of-week, source platform, category, hold period, profit distribution, actionable insights), v8.41 zaključi Polish phase weekly digest + email notifications (📋 Weekly Summary Report + Email Notifications — "Comprehensive weekly digest sent to Telegram + Email + Notification Center"), v8.42 zaključi Polish phase full system backup (💾 Full System Backup & Restore — "Portable, human-readable JSON backup of ALL 18 tables + 3 restore modes + auto-backup cron"). Naslednje verzije:
 
 - **v8.43+ — Polish phase continues** (E2E tests s Playwright, predictive accuracy improvements za Master Brain, refactoring)
@@ -16,6 +18,32 @@ v8.26 je odprl Intelligence phase (Action Explainability), v8.27 jo nadaljuje (S
 - Performance optimizations za Master Brain (cached partial results per domain)
 - Additional conflict detection tipi (npr. Inventory vs Buyer — supply/demand mismatch)
 - Per-domain DB injection v Master Brain route (zaenkrat se zanaša na individualne Domain Brain route-e za DB state)
+
+## [8.45.0] - 2026-08-15
+
+### Added — 📱 Mobile-First Responsive Optimization + Touch UX
+
+Problem: Sistem deluje na desktop, ampak mobile UX je suboptimalen — 17 nav gumbov na vrhu je neuporabnih na telefonu, tap targeti so premajhni za palec, ni hitrega dostopa do "Dodaj trade" na mobilu, PWA shortcuts so minimalni.
+
+- **`src/components/dashboard/mobile-bottom-nav.tsx`** (NEW) — Fixed bottom navigation bar z 5 najpomembnejšimi sekcijami (Dashboard, AI Hub, Trades z held-count badge, Alerti z unread-count badge, Nastavitve). `md:hidden`. 44×44px min touch targeti. Active state z highlighted icon + label + top indicator. Haptic feedback na tap. Fetches held count iz `/api/trades/dashboard` vsakih 60s. Safe-area-inset-bottom support (iOS).
+- **`src/components/dashboard/mobile-fab.tsx`** (NEW) — Floating Action Button (`fixed bottom-20 right-4 z-50`), purple→primary gradient, 56×56px, pulsing glow animation (`fab-pulse-glow` keyframe v globals.css). On tap: `haptic.medium()` + odpre QuickAddTradeModal (v8.36). `md:hidden`.
+- **`src/hooks/use-haptic.ts`** (NEW) — Haptic feedback hook z 6 vibracijskimi patterni: `light` (10ms), `medium` (20ms), `success` ([10,30,10]), `error` ([20,50,20,50,20]), `selection` (5ms), `warning` (30ms). Safe guards za SSR + unsupported browsers.
+- **`src/app/page.tsx`** (MODIFIED) — MobileBottomNav + MobileFAB integracija. Page-level QuickAddTradeModal (triggered by FAB). PWA shortcut handler (`?view=` + `?action=add-trade`). Desktop nav dobi `touch-scroll` class. Footer `pb-16 md:pb-0` + main `pb-20 md:pb-6` za clearance. Version badge v8.45.0.
+- **`src/components/dashboard/dashboard-view.tsx`** (MODIFIED) — Touch-optimized layouts: Danes numbers `text-2xl sm:text-3xl`, StatCard numbers `text-2xl sm:text-3xl`, filter chips `min-h-[40px]`, quick action buttons `min-h-[44px]`, recent runs rows `min-h-[48px]`, grid breakpoints `sm:grid-cols-3`. Haptic feedback na vseh 6 filter chipsov + Dodaj trade + Poženi vse monitorje.
+- **`public/manifest.json`** (MODIFIED) — PWA shortcuts: "Dodaj trade" (`/?action=add-trade`), "AI Hub" (`/?view=ai-hub`), "Dashboard" (`/?view=dashboard`), "Alerti" (`/?view=alerts`), "Oglasi" (`/?view=listings`). Added `scope: "/"`.
+- **`src/app/globals.css`** (MODIFIED) — `fab-pulse-glow` keyframe (expanding box-shadow ring, `prefers-reduced-motion` respected) + `touch-scroll` custom scrollbar styling.
+
+### Stats
+
+- AI endpoints: 431 (unchanged — UI only, no new API endpoints)
+- Total API routes: 623 (unchanged)
+- Functions: ~305 → ~307 (+2: MobileBottomNav, MobileFAB; useHaptic is a utility hook)
+- Lint: 0 errors ✨
+- Typecheck: 0 errors ✨
+
+### Note
+
+UI-only release — no new API endpoints, no Prisma schema changes, no new npm dependencies. All mobile components are `md:hidden` (desktop unaffected). Agent Browser verified: mobile (375×812) bottom nav visible z 5 buttons + Trades badge "5" (held count) + FAB 56×56px; desktop (1920×1080) both `display:none`.
 
 ## [8.44.0] - 2026-08-15
 

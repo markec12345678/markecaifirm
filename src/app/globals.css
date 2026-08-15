@@ -149,3 +149,44 @@
 .pulse-dot {
   animation: pulse-dot 2s ease-in-out infinite;
 }
+
+/* v8.45: Mobile FAB pulsing glow — draws attention to the "Dodaj trade" button.
+   Uses a soft expanding ring (box-shadow) rather than scaling the button itself
+   so the tap target stays stable. */
+@keyframes fab-pulse-glow {
+  0% {
+    box-shadow:
+      0 10px 25px rgba(74, 222, 128, 0.35),
+      0 0 0 0 rgba(147, 51, 234, 0.4);
+  }
+  70% {
+    box-shadow:
+      0 10px 25px rgba(74, 222, 128, 0.35),
+      0 0 0 14px rgba(147, 51, 234, 0);
+  }
+  100% {
+    box-shadow:
+      0 10px 25px rgba(74, 222, 128, 0.35),
+      0 0 0 0 rgba(147, 51, 234, 0);
+  }
+}
+.fab-pulse-glow {
+  animation: fab-pulse-glow 2.2s ease-out infinite;
+}
+@media (prefers-reduced-motion: reduce) {
+  .fab-pulse-glow {
+    animation: none;
+  }
+}
+
+/* v8.45: Touch-friendly scrollbar styling for mobile horizontal nav scroll. */
+.touch-scroll::-webkit-scrollbar {
+  height: 3px;
+}
+.touch-scroll::-webkit-scrollbar-track {
+  background: transparent;
+}
+.touch-scroll::-webkit-scrollbar-thumb {
+  background: rgba(74, 222, 128, 0.2);
+  border-radius: 2px;
+}
