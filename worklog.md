@@ -18034,3 +18034,38 @@ Stage Summary:
 - Verzija aplikacije: v8.46.0
 - Polish phase continues: v8.32-v8.46 (15 verzij, 15 novih features)
 - Skupaj doslej (v7.50 → v8.46): 96 verzij, 218 novih funkcij
+
+---
+Task ID: v8.47.1
+Agent: main
+Task: v8.47 commit + push + Agent Browser verification (Dark/Light Theme Toggle)
+
+Work Log:
+- Razmišljal o logičnem naslednjem koraku: next-themes je bil instaliran ampak nikjer uporabljen — hardcoded className="dark" v html, brez ThemeProviderja in brez Toggle gumba.
+- Ustvaril src/components/theme-provider.tsx (next-themes ThemeProvider wrapper)
+- Ustvaril src/components/theme-toggle.tsx (dark→light→system cikel, Sun/Moon/Monitor, haptic, hydration-safe)
+- Integriral v layout.tsx (ThemeProvider wrapper, odstranjen hardcoded className="dark")
+- Integriral v page.tsx (ThemeToggle gumb v headerju)
+- Preveril lint: 0 napak ✨
+- Preveril typecheck: 0 napak ✨
+- Commit: "v8.47: Dark/Light Theme Toggle + ThemeProvider..." (9331fe6)
+- Push na GitHub: uspešen ✅ (47a98e1..9331fe6), PAT očiščen ✅
+- Agent Browser self-verification:
+  - ThemeToggle button prikazan: "Tema: Dark (klikni za switch)" ✅
+  - Po kliku: document.documentElement.className = "light" (preklop deluje!) ✅
+  - Brez runtime napak v dev.log
+
+Stage Summary:
+- v8.47 uspešno dokončana in potisnjena na GitHub
+- NEW: src/components/theme-provider.tsx (next-themes ThemeProvider wrapper)
+- NEW: src/components/theme-toggle.tsx (dark→light→system cikel z Sun/Moon/Monitor + haptic)
+- MODIFIED: src/app/layout.tsx (ThemeProvider wrapper, odstranjen hardcoded className="dark")
+- MODIFIED: src/app/page.tsx (ThemeToggle gumb v headerju)
+- AI endpointi: 431 (nespremenjeto — UI only)
+- Total API routes: 623 (nespremenjeto)
+- Lint: 0 napak ✨
+- Typecheck: 0 napak ✨
+- VERIFIED: "Tema: Dark (klikni za switch)" → click → class="light" ✅
+- Verzija aplikacije: v8.47.0
+- Polish phase continues: v8.32-v8.47 (16 verzij, 16 novih features)
+- Skupaj doslej (v7.50 → v8.47): 97 verzij, 219 novih funkcij
