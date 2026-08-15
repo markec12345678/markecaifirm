@@ -46,6 +46,7 @@ import { MobileBottomNav } from '@/components/dashboard/mobile-bottom-nav';
 import { MobileFAB } from '@/components/dashboard/mobile-fab';
 import { QuickAddTradeModal } from '@/components/dashboard/quick-add-trade-modal';
 import { useHaptic } from '@/hooks/use-haptic';
+import { CommandPalette } from '@/components/dashboard/command-palette';
 
 /** v6.94: Loading fallback za lazy-loaded poglede. */
 function LoadingFallback() {
@@ -86,6 +87,7 @@ export default function Home() {
   const [unreadAlerts, setUnreadAlerts] = useState(0);
   const [now, setNow] = useState<Date | null>(null);
   const [searchOpen, setSearchOpen] = useState(false);
+  const [cmdkOpen, setCmdkOpen] = useState(false); // v8.46: Command Palette (Cmd+K)
   const [helpOpen, setHelpOpen] = useState(false);
   // v4.7: Mobile nav drawer
   const [mobileNavOpen, setMobileNavOpen] = useState(false);
@@ -175,17 +177,17 @@ export default function Home() {
   // Ctrl+K shortcut for global search
   useEffect(() => {
     const handler = (e: KeyboardEvent) => {
-      // Ctrl+K or Cmd+K → search
+      // Ctrl+K or Cmd+K → Command Palette (v8.46: replaces old search)
       if ((e.ctrlKey || e.metaKey) && e.key === 'k') {
         e.preventDefault();
-        setSearchOpen(true);
+        setCmdkOpen(true);
         return;
       }
       // Don't trigger shortcuts when typing in inputs
       const target = e.target as HTMLElement;
       if (target.tagName === 'INPUT' || target.tagName === 'TEXTAREA' || target.isContentEditable) return;
       // Don't trigger when dialog is open
-      if (searchOpen) return;
+      if (searchOpen || cmdkOpen) return;
 
       // v2.5: Tab navigation shortcuts
       const navMap: Record<string, View> = {
@@ -219,7 +221,7 @@ export default function Home() {
     };
     window.addEventListener('keydown', handler);
     return () => window.removeEventListener('keydown', handler);
-  }, [searchOpen]);
+  }, [searchOpen, cmdkOpen]);
 
   return (
     <div className="min-h-screen flex flex-col bg-background text-foreground pb-16 md:pb-0">
@@ -479,6 +481,8 @@ export default function Home() {
 
       {/* v1.3: Global search modal */}
       <SearchModal open={searchOpen} onOpenChange={setSearchOpen} onNavigate={setView} />
+      {/* v8.46: Command Palette (Cmd+K) — Raycast/Spotlight-style search */}
+      <CommandPalette open={cmdkOpen} onOpenChange={setCmdkOpen} onNavigate={(v) => setView(v as View)} />
 
       {/* v4.8: PWA install prompt */}
       <PwaInstallPrompt />

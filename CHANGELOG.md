@@ -45,6 +45,22 @@ Problem: Sistem deluje na desktop, ampak mobile UX je suboptimalen — 17 nav gu
 
 UI-only release — no new API endpoints, no Prisma schema changes, no new npm dependencies. All mobile components are `md:hidden` (desktop unaffected). Agent Browser verified: mobile (375×812) bottom nav visible z 5 buttons + Trades badge "5" (held count) + FAB 56×56px; desktop (1920×1080) both `display:none`.
 
+## [8.46.0] - 2026-08-15
+
+### Added — ⌘ Command Palette (Cmd+K) — Raycast/Spotlight-style search
+
+Problem: 431 AI končnih točk + 17 navigacijskih gumbov + 10+ dashboard kartic = brez Command Palette je navigacija počasna. Power user želi tipkovnico, ne miško.
+
+- **`src/components/dashboard/command-palette.tsx`** (NEW) — cmdk + shadcn Command dialog z 4 sekcijami: (1) Navigacija (6 views z keyboard shortcut hints), (2) Hitre akcije (Dodaj trade, Poženi vse monitorje, Shrani Snapshot, Auto-pilot, Backup, Tedenski povzetek), (3) Brain Sistem (Master Brain, Digest, Scenario, Explainability, Adaptive Weights), (4) AI Funkcije (top 30 od 431 z fuzzy search). Cmd+K odpre dialog. Existing single-key shortcuts (1-9, 0, b, a, i, p, l, r) ohranjene.
+- **`src/app/page.tsx`** (MODIFIED) — `cmdkOpen` state, Ctrl/Cmd+K odpre Command Palette (nadomešča star SearchModal za Cmd+K), SearchModal ohranjena za gumb iskanja.
+
+### Stats
+
+- AI endpoints: 431 (unchanged — UI only)
+- Total API routes: 623 (unchanged)
+- Lint: 0 errors ✨
+- Typecheck: 0 errors ✨
+
 ## [8.44.0] - 2026-08-15
 
 ### Added — 🛒 Smart Restock Recommendations — "KAJ naj kupim naslednje?"
