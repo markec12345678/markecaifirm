@@ -13,7 +13,8 @@ import {
 import {
   Select, SelectContent, SelectItem, SelectTrigger, SelectValue,
 } from '@/components/ui/select';
-import { RefreshCw, Plus, Pencil, Trash2, TrendingUp, TrendingDown, Wallet, Target, ExternalLink, ShoppingCart, Tag, Download, Sparkles, Check, Copy, AlertTriangle, Boxes, Flame, FileText, Receipt, Network, Clock, Type, Users, Globe, LineChart as LineChartIcon, Activity, Upload } from 'lucide-react';
+import { RefreshCw, Plus, Pencil, Trash2, TrendingUp, TrendingDown, Wallet, Target, ExternalLink, ShoppingCart, Tag, Download, Sparkles, Check, Copy, AlertTriangle, Boxes, Flame, FileText, Receipt, Network, Clock, Type, Users, Globe, LineChart as LineChartIcon, Activity, Upload, ChevronDown, ChevronUp } from 'lucide-react';
+import { FlipChecklist } from '@/components/dashboard/flip-checklist';
 import { toast } from 'sonner';
 import { cn } from '@/lib/utils';
 import {
@@ -37,6 +38,7 @@ interface Trade {
   sellFees: number;
   status: string;
   notes: string;
+  flipChecklist?: string;
   createdAt: string;
   listing?: { id: string; title: string; url: string; imageUrl: string | null; monitor?: { name: string } } | null;
 }
@@ -2663,6 +2665,7 @@ function StatBox({ icon, label, value, color }: { icon: React.ReactNode; label: 
 }
 
 function TradeRow({ trade, onEdit, onDelete, onSync, onExit }: { trade: Trade; onEdit: () => void; onDelete: () => void; onSync?: (tradeId: string) => void; onExit?: (tradeId: string) => void }) {
+  const [showFlipChecklist, setShowFlipChecklist] = useState(false);
   const totalCost = trade.buyPrice + (trade.buyFees || 0);
   const revenue = trade.sellPrice != null ? trade.sellPrice - (trade.sellFees || 0) : null;
   const profit = revenue != null ? revenue - totalCost : null;
@@ -2765,6 +2768,32 @@ function TradeRow({ trade, onEdit, onDelete, onSync, onExit }: { trade: Trade; o
             <Button size="sm" variant="ghost" onClick={onDelete} className="h-7 w-7 p-0 text-destructive"><Trash2 className="w-3.5 h-3.5" /></Button>
           </div>
         </div>
+
+        {/* v8.54: Flip Checklist for held trades */}
+        {trade.status === 'held' && (
+          <div className="mt-2">
+            <Button
+              variant="ghost"
+              size="sm"
+              className="text-[11px] text-muted-foreground hover:text-primary w-full justify-between"
+              onClick={() => setShowFlipChecklist(!showFlipChecklist)}
+            >
+              <span className="flex items-center gap-1.5">
+                <span>🔄 Flip Checklist</span>
+              </span>
+              {showFlipChecklist ? <ChevronUp className="w-3 h-3" /> : <ChevronDown className="w-3 h-3" />}
+            </Button>
+            {showFlipChecklist && (
+              <div className="mt-1.5">
+                <FlipChecklist
+                  tradeId={trade.id}
+                  tradeTitle={trade.title}
+                  initialChecklist={(() => { try { return JSON.parse(trade.flipChecklist || '[]'); } catch { return []; } })()}
+                />
+              </div>
+            )}
+          </div>
+        )}
       </CardContent>
     </Card>
   );

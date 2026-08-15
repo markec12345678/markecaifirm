@@ -45,6 +45,20 @@ Problem: Sistem deluje na desktop, ampak mobile UX je suboptimalen — 17 nav gu
 
 UI-only release — no new API endpoints, no Prisma schema changes, no new npm dependencies. All mobile components are `md:hidden` (desktop unaffected). Agent Browser verified: mobile (375×812) bottom nav visible z 5 buttons + Trades badge "5" (held count) + FAB 56×56px; desktop (1920×1080) both `display:none`.
 
+## [8.54.0] - 2026-08-15
+
+### Added — 🔄 Flip Workflow Checklist UI
+
+Problem: Trade model že ima `flipChecklist` polje + API (v7.35), ampak NI bilo UI. Kupim iPhone → moram čistiti → fotografirati → objaviti na Bolha → Vinted → pregledati ceno po 7 dneh → znižati po 14 dneh. Brez checklista pozabim korake.
+
+- **`src/components/dashboard/flip-checklist.tsx`** (NEW) — 11-step visual checklist z progress bar, step icons, haptic feedback, collapsible. Steps: Dobljeno → Pregledano → Očiščeno → Fotografirano → Opisano → Bolha → Vinted → Druga → 7d pregled → 14d znižanje → 30d znižanje. Click toggle, auto-detect current step (ring highlight), completed date display.
+- **`src/components/dashboard/trades-view.tsx`** (MODIFIED) — TradeRow za held trades dobi "🔄 Flip Checklist" toggle button ki razširi FlipChecklist komponento. Trade interface doda `flipChecklist?` field.
+
+### Stats
+- AI endpoints: 432 (unchanged — UI only)
+- Total API routes: 630 (unchanged)
+- Lint: 0 ✨ | Typecheck: 0 ✨
+
 ## [8.53.0] - 2026-08-15
 
 ### Added — 📈 Profit Forecast + Distribution Pie Chart
