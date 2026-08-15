@@ -18204,3 +18204,36 @@ Stage Summary:
 - Verzija aplikacije: v8.51.0
 - Polish phase continues: v8.32-v8.51 (20 verzij, 20 novih features)
 - Skupaj doslej (v7.50 → v8.51): 101 verzij, 223 novih funkcij
+
+---
+Task ID: v8.52
+Agent: main
+Task: Daily AI Tip + Inventory Aging Alerts
+
+Work Log:
+- Razmišljal kot uporabnik: imam 5 held trgovin ampak sistem me NE opozori ko starajo. In nimam dnevnega nasveta.
+- Ustvaril src/lib/brain/daily-tip.ts (generateDailyTip — kombinira goal + aging + trade history v EN tip)
+- Ustvaril src/lib/trades/aging-alerts.ts (checkInventoryAging — 30/60/90d thresholds)
+- Ustvaril 3 nova API-ja: daily-ai-tip cron, inventory-aging-check cron, brain/daily-tip endpoint
+- Preveril lint: 0 napak ✨
+- Preveril typecheck: 0 napak ✨
+- Commit + push uspešen ✅
+- Curl verification:
+  - GET /api/ai/brain/daily-tip → 200 "🔴 Likvidiraj Sony A7III camera — 50 dni v skladišču!" ✅
+  - GET /api/cron/inventory-aging-check → 200 {checked:5, alerted:4} ✅
+  - POST /api/ai/brain/daily-tip → 200 {ok:true, sent:true} ✅
+  - Notifications: 5 novih (1 daily tip + 4 aging alerts) ✅
+
+Stage Summary:
+- v8.52 uspešno dokončana in potisnjena na GitHub
+- NEW: src/lib/brain/daily-tip.ts (generateDailyTip, sendDailyTip)
+- NEW: src/lib/trades/aging-alerts.ts (checkInventoryAging — 30/60/90d)
+- NEW: src/app/api/cron/daily-ai-tip/route.ts (cron @ 09:00)
+- NEW: src/app/api/cron/inventory-aging-check/route.ts (cron @ 06:00)
+- NEW: src/app/api/ai/brain/daily-tip/route.ts (GET + POST)
+- LIVE DATA: 5 held trades, 4 aged >30d (PS5 35d, Xbox 40d, Sony camera 50d, Nike Air Max 32d), 1640€ tied up
+- AI endpointi: 431 → 432 (+1)
+- Total API routes: 626 → 629 (+3)
+- Cron automations: 16 → 18 (+2)
+- Verzija aplikacije: v8.52.0
+- Skupaj doslej (v7.50 → v8.52): 102 verzij, 224 novih funkcij
