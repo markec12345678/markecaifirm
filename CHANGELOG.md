@@ -17,6 +17,30 @@ v8.26 je odprl Intelligence phase (Action Explainability), v8.27 jo nadaljuje (S
 - Additional conflict detection tipi (npr. Inventory vs Buyer — supply/demand mismatch)
 - Per-domain DB injection v Master Brain route (zaenkrat se zanaša na individualne Domain Brain route-e za DB state)
 
+## [8.44.0] - 2026-08-15
+
+### Added — 🛒 Smart Restock Recommendations — "KAJ naj kupim naslednje?"
+
+Problem: Trade Insights (v8.40) povedo KAJ je bilo dobro, ampak ne povedo KAJ KUPITI NASLEDNJE. Uporabnik mora ročno interpretirati insights + preveriti inventory + odločiti.
+
+- **`src/lib/trades/restock-recommendations.ts`** (NEW) — `getRestockRecommendations()` kombinira v8.40 Trade Insights + current held inventory za actionable "buy next" priporočila. Za vsako kategorijo: historical ROI/win rate/hold, current held count/value, action (RESTOCK/MAINTAIN/REDUCE/AVOID/NEW), projected profit/ROI/hold, suggested buy price range, best source, confidence (HIGH/MEDIUM/LOW). Inventory gaps + overstock warnings.
+- **`src/app/api/ai/restock-smart/route.ts`** (NEW) — GET → top 5 "buy next" recommendations + category status + inventory gaps + overstock warnings. 5-min cache.
+- **`src/components/dashboard/restock-recommendations-card.tsx`** (NEW) — Dashboard card z top 5 recommendations + category status table + inventory gaps + overstock warnings.
+- **`src/components/dashboard/dashboard-view.tsx`** (MODIFIED) — RestockRecommendationsCard after AnnualSummaryCard.
+
+### Stats
+
+- AI endpoints: 430 → 431 (+1: restock-smart)
+- Total API routes: 622 → 623 (+1)
+- Lint: 0 errors ✨
+- Typecheck: 0 errors ✨
+
+### Live recommendations (from 25 trades)
+
+1. 🟢 RESTOCK: avto (0 held, 61% ROI, 100% win, buy 45-220€, source: mobile.de)
+2. 🟢 RESTOCK: oblačila (0 held, 86% ROI, 100% win, buy 15-45€, source: Vinted)
+3. 🟢 RESTOCK: orodje (0 held, 43% ROI, 100% win, buy 25-85€, source: Bolha)
+
 ## [8.43.0] - 2026-08-15
 
 ### Added — 📄 Tax Report PDF Export + Annual Summary

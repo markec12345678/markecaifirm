@@ -27,6 +27,9 @@ import { TradeInsightsCard } from '@/components/dashboard/trade-insights-card';
 import { WeeklySummaryCard } from '@/components/dashboard/weekly-summary-card';
 // v8.43: Annual Summary + Tax Report PDF — yearly profit/loss breakdown + davčno poročilo PDF
 import { AnnualSummaryCard } from '@/components/dashboard/annual-summary-card';
+// v8.44: Smart Restock Recommendations — "KAJ naj kupim naslednje?" kombinira
+// v8.40 Trade Insights z current inventory za actionable "buy next" priporočila.
+import { RestockRecommendationsCard } from '@/components/dashboard/restock-recommendations-card';
 
 // v5.6: Dashboard widget IDs
 const WIDGET_IDS = ['todaySummary', 'quickStats', 'activityFeed', 'aiInsights', 'skladisceWidget'] as const;
@@ -580,6 +583,15 @@ export function DashboardView({ onNavigate }: ViewProps) {
           button (opens /api/trades/tax-report-pdf?year=YYYY) + "Celoten pregled"
           (navigate to Statistics view). */}
       <AnnualSummaryCard onNavigate={onNavigate} />
+
+      {/* v8.44: Smart Restock Recommendations — "KAJ naj kupim naslednje za
+          maksimalen profit?" Kombinira v8.40 Trade Insights (historical
+          performance per category) z current held inventory za actionable
+          "buy next" priporočila. Top 5 RESTOCK cards z projected profit/ROI/
+          hold time/suggested buy price range/best source/confidence. Category
+          status table (RESTOCK/MAINTAIN/REDUCE/AVOID). Inventory gaps +
+          overstock warnings. Self-fetches from /api/ai/restock-smart every 60s. */}
+      <RestockRecommendationsCard />
 
       {/* v4.5: Skladišče dashboard widget */}
       <WidgetWrapper id="skladisceWidget" order={widgetOrder} customizeMode={customizeMode} onMove={moveWidget}>

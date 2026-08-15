@@ -1,6 +1,6 @@
 # AI Endpoints
 
-**Total: 430 endpoints**
+**Total: 431 endpoints**
 
 Avtomatsko generirano iz `src/app/api/ai/`.
 
