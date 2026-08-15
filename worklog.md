@@ -18167,3 +18167,40 @@ Stage Summary:
 - Verzija aplikacije: v8.50.0
 - Polish phase continues: v8.32-v8.50 (19 verzij, 19 novih features)
 - Skupaj doslej (v7.50 → v8.50): 100 verzij, 222 novih funkcij 🎯 100 VERZIJ MILESTONE!
+
+---
+Task ID: v8.51
+Agent: main
+Task: Quick Trade iz Listing + Price Target Alerts — "razmišljam kot uporabnik"
+
+Work Log:
+- Razmišljal kot uporabnik trading firme: kaj bi si želel?
+  1. Vidim oglas na Bolha → hočem ga kupiti → MORAM ROČNO TIPKATI title/cena/vir = ZAMUDNO
+  2. Nimam price target alertov — "obvesti me ko iPhone pade pod 250€" = TEMELJNA funkcionalnost
+- Ustvaril 3 nova endpoint-a:
+  - POST /api/trades/from-listing — create Trade iz Listing podatkov (title, price, url, source, imageUrl) z enim klikom
+  - POST /api/listings/[id]/price-target — set/clear price target na listing (uses existing schema polja)
+  - GET/POST /api/cron/price-target-check — preverja listings z targetPrice, če cena pade → Notification + Telegram
+- Preveril lint: 0 napak ✨
+- Preveril typecheck: 0 napak ✨ (popravil 1 TS error: sendTelegramMessage signature)
+- Commit: "v8.51: Quick Trade iz Listing + Price Target Alerts..." (df262ee)
+- Push na GitHub: uspešen ✅ (4cd621c..df262ee), PAT očiščen ✅
+- Curl verification:
+  - from-listing z nonexistent ID → 404 "Listing ni najden" ✅ (pravilno)
+  - price-target z nonexistent ID → 404 "Listing ni najden" ✅ (pravilno)
+  - price-target-check → 200 {checked:0, alerted:0} ✅ (pravilno — noben listing nima target price)
+  - ai-list → total:431 (nespremenjeno) ✅
+
+Stage Summary:
+- v8.51 uspešno dokončana in potisnjena na GitHub
+- NEW: src/app/api/trades/from-listing/route.ts (POST — Trade iz Listing z 1 klikom)
+- NEW: src/app/api/listings/[id]/price-target/route.ts (POST — set/clear price target)
+- NEW: src/app/api/cron/price-target-check/route.ts (cron — preverja price targets every 30 min)
+- AI endpointi: 431 (nespremenjeno — routes pod /api/trades/ in /api/listings/)
+- Total API routes: 623 → 626 (+3)
+- Cron automations: 15 → 16 (+1 price-target-check)
+- Lint: 0 napak ✨
+- Typecheck: 0 napak ✨
+- Verzija aplikacije: v8.51.0
+- Polish phase continues: v8.32-v8.51 (20 verzij, 20 novih features)
+- Skupaj doslej (v7.50 → v8.51): 101 verzij, 223 novih funkcij
