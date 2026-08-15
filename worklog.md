@@ -18287,3 +18287,24 @@ Stage Summary:
 - Total API routes: 630 (nespremenjeto)
 - Verzija: v8.54.0
 - Skupaj (v7.50 → v8.54): 104 verzij, 226 novih funkcij
+
+---
+Task ID: v8.55
+Agent: main
+Task: Trade Table Search + Sort + Filter Enhancement
+
+Work Log:
+- Razmišljal kot uporabnik: 25 trgovin in raste, brez iskanja/sortiranja je nepregledno pri 100+
+- Dodal v trades-view.tsx: search (title/category/source/notes), sort (8 možnosti), category filter, source filter, result count
+- useMemo za performance (ne re-render-a na vsak keystroke)
+- Preveril lint: 0 napak ✨
+- Preveril typecheck: 0 napak ✨
+- Commit + push uspešen ✅
+- Agent Browser: "📅 Najnovejši" + "📦 Vse kategorije" + "🏪 Vsi viri" + "25 trade-ov" prikazani ✅
+
+Stage Summary:
+- MODIFIED: src/components/dashboard/trades-view.tsx (+search, +sort, +category filter, +source filter, +result count, +useMemo)
+- AI endpointi: 432 (nespremenjeto — UI only)
+- Total API routes: 630 (nespremenjeto)
+- Verzija: v8.55.0
+- Skupaj (v7.50 → v8.55): 105 verzij, 227 novih funkcij
