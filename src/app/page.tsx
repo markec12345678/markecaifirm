@@ -455,6 +455,7 @@ export default function Home() {
               <button onClick={() => setHelpOpen(false)} className="text-muted-foreground hover:text-foreground text-xl">×</button>
             </div>
             <div className="space-y-2 text-sm">
+              <div className="text-xs font-bold text-muted-foreground uppercase mb-1">Navigacija</div>
               {[
                 { key: '1', desc: 'Dashboard' },
                 { key: '2', desc: 'Monitorji' },
@@ -466,7 +467,21 @@ export default function Home() {
                 { key: '8', desc: 'Obvestila' },
                 { key: '9', desc: 'Zdravje' },
                 { key: '0', desc: 'Nastavitve' },
-                { key: 'Ctrl+K', desc: 'Globalno iskanje' },
+                { key: 'B', desc: 'Kupci' },
+                { key: 'A', desc: 'AI Hub' },
+                { key: 'I', desc: 'Skladišče AI' },
+                { key: 'P', desc: 'Cene AI' },
+                { key: 'L', desc: 'Oglasi AI' },
+                { key: 'R', desc: 'Tveganja AI' },
+              ].map((s, i) => (
+                <div key={i} className="flex items-center justify-between py-1 border-b border-border/50">
+                  <span className="text-muted-foreground">{s.desc}</span>
+                  <kbd className="px-2 py-0.5 bg-background border border-border rounded text-xs font-mono text-primary">{s.key}</kbd>
+                </div>
+              ))}
+              <div className="text-xs font-bold text-muted-foreground uppercase mb-1 mt-3">Akcije</div>
+              {[
+                { key: 'Ctrl+K', desc: '⌘ Command Palette (v8.46)' },
                 { key: '?', desc: 'Ta pomoč' },
               ].map((s, i) => (
                 <div key={i} className="flex items-center justify-between py-1 border-b border-border/50">

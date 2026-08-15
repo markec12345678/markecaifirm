@@ -45,6 +45,21 @@ Problem: Sistem deluje na desktop, ampak mobile UX je suboptimalen — 17 nav gu
 
 UI-only release — no new API endpoints, no Prisma schema changes, no new npm dependencies. All mobile components are `md:hidden` (desktop unaffected). Agent Browser verified: mobile (375×812) bottom nav visible z 5 buttons + Trades badge "5" (held count) + FAB 56×56px; desktop (1920×1080) both `display:none`.
 
+## [8.48.0] - 2026-08-15
+
+### Changed — ⌨️ Keyboard Shortcut Help Overlay Enhancement
+
+Problem: Help overlay (?) je bil star (v4.3) — manjkali so v8.46 (Cmd+K = Command Palette), v8.45 (mobile FAB), in B/A/I/P/L/R shortcuts (v7.00-v7.06). Uporabnik ni vedel za vse bližnjice.
+
+- **`src/app/page.tsx`** (MODIFIED) — Help overlay posodobljen z 2 sekcijama: (1) Navigacija (16 shortcuts: 1-9, 0, B, A, I, P, L, R), (2) Akcije (Ctrl+K = Command Palette v8.46, ? = pomoč). Ločene z heading-i.
+
+### Stats
+
+- AI endpoints: 431 (unchanged)
+- Total API routes: 623 (unchanged)
+- Lint: 0 errors ✨
+- Typecheck: 0 errors ✨
+
 ## [8.47.0] - 2026-08-15
 
 ### Added — 🌓 Dark/Light Theme Toggle + ThemeProvider
