@@ -45,6 +45,24 @@ Problem: Sistem deluje na desktop, ampak mobile UX je suboptimalen — 17 nav gu
 
 UI-only release — no new API endpoints, no Prisma schema changes, no new npm dependencies. All mobile components are `md:hidden` (desktop unaffected). Agent Browser verified: mobile (375×812) bottom nav visible z 5 buttons + Trades badge "5" (held count) + FAB 56×56px; desktop (1920×1080) both `display:none`.
 
+## [8.47.0] - 2026-08-15
+
+### Added — 🌓 Dark/Light Theme Toggle + ThemeProvider
+
+Problem: `next-themes` je bil instaliran (v0.4.6) ampak nikjer ni bil uporabljen — `className="dark"` je bil hardcoded v `<html>`, brez ThemeProviderja in brez ThemeToggle gumba. Komponente so imele `dark:` classe ampak nič ni lahko preklopilo temo.
+
+- **`src/components/theme-provider.tsx`** (NEW) — wraps `next-themes` ThemeProvider z `attribute="class"`, `defaultTheme="dark"`, `enableSystem`, `disableTransitionOnChange`.
+- **`src/components/theme-toggle.tsx`** (NEW) — gumb ki cikla dark → light → system → dark. Sun/Moon/Monitor ikone. Haptic feedback na klik. Hydration-safe (placeholder pred mount).
+- **`src/app/layout.tsx`** (MODIFIED) — ThemeProvider wrapper okoli children. Odstranjen hardcoded `className="dark"` iz `<html>` (next-themes sedaj upravlja class).
+- **`src/app/page.tsx`** (MODIFIED) — ThemeToggle gumb v headerju (desno od Iskanje gumba, levo od datuma).
+
+### Stats
+
+- AI endpoints: 431 (unchanged — UI only)
+- Total API routes: 623 (unchanged)
+- Lint: 0 errors ✨
+- Typecheck: 0 errors ✨
+
 ## [8.46.0] - 2026-08-15
 
 ### Added — ⌘ Command Palette (Cmd+K) — Raycast/Spotlight-style search

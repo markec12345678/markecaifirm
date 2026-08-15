@@ -2,6 +2,7 @@ import type { Metadata, Viewport } from "next";
 import { Geist_Mono } from "next/font/google";
 import "./globals.css";
 import { Toaster } from "@/components/ui/toaster";
+import { ThemeProvider } from "@/components/theme-provider";
 
 const geistMono = Geist_Mono({
   variable: "--font-geist-mono",
@@ -47,7 +48,7 @@ export default function RootLayout({
   children: React.ReactNode;
 }>) {
   return (
-    <html lang="sl" suppressHydrationWarning className="dark">
+    <html lang="sl" suppressHydrationWarning>
       <head>
         {/* Service worker registration */}
         <script
@@ -69,8 +70,10 @@ export default function RootLayout({
       <body
         className={`${geistMono.variable} antialiased bg-background text-foreground scanline-bg min-h-screen`}
       >
-        {children}
-        <Toaster />
+        <ThemeProvider>
+          {children}
+          <Toaster />
+        </ThemeProvider>
       </body>
     </html>
   );

@@ -47,6 +47,7 @@ import { MobileFAB } from '@/components/dashboard/mobile-fab';
 import { QuickAddTradeModal } from '@/components/dashboard/quick-add-trade-modal';
 import { useHaptic } from '@/hooks/use-haptic';
 import { CommandPalette } from '@/components/dashboard/command-palette';
+import { ThemeToggle } from '@/components/theme-toggle';
 
 /** v6.94: Loading fallback za lazy-loaded poglede. */
 function LoadingFallback() {
@@ -254,6 +255,8 @@ export default function Home() {
                 <span>Iskanje</span>
                 <kbd className="text-[10px] bg-background/60 px-1.5 py-0.5 rounded border border-border">Ctrl+K</kbd>
               </button>
+              {/* v8.47: Theme toggle */}
+              <ThemeToggle />
               {now && (
                 <span className="font-mono">
                   {now.toLocaleDateString('sl-SI')} {now.toLocaleTimeString('sl-SI')}
