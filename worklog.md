@@ -18126,3 +18126,44 @@ Stage Summary:
 - Verzija aplikacije: v8.49.0
 - Polish phase continues: v8.32-v8.49 (18 verzij, 18 novih features)
 - Skupaj doslej (v7.50 → v8.49): 99 verzij, 221 novih funkcij
+
+---
+Task ID: v8.50.1
+Agent: main
+Task: v8.50 commit + push + Agent Browser verification (First-Run Onboarding Wizard)
+
+Work Log:
+- Razmišljal o logičnem naslednjem koraku: 99 verzij in nov uporabnik ne dobi nobenega vodenja pri prvem odpiranju
+- Ustvaril src/components/dashboard/onboarding-wizard.tsx (4-step wizard: Dobrodošeli → AI konfig → Profit cilj → Demo podatki)
+- Dodal onboardingCompleted Boolean @default(false) v Prisma Settings + db:push
+- Integriral v page.tsx (useEffect fetch-a /api/settings, če onboardingCompleted=false odpre wizard)
+- Posodobil /api/settings GET (vrača onboardingCompleted) + POST (sprejema onboardingCompleted)
+- Preveril lint: 0 napak ✨
+- Preveril typecheck: 0 napak ✨
+- Commit: "v8.50: First-Run Onboarding Wizard..." (ab9bc2a)
+- Push na GitHub: uspešen ✅ (ad26a85..ab9bc2a), PAT očiščen ✅
+- Agent Browser self-verification:
+  - Stran HTTP 200
+  - Onboarding Wizard odprt na prvem load-u (onboardingCompleted=false) ✅
+  - "Dobrodošel v Markec AI Firm!" heading ✅
+  - "Tvoj osebni AI trading" ✅
+  - "431 AI" funkcij prikazano ✅
+  - "Profit cilj" z quick buttons ✅
+  - "Demo podatki" z "Naloži 25 demo trgovin" button ✅
+  - "⌘K" tip prikazan ✅
+  - Brez runtime napak v dev.log
+
+Stage Summary:
+- v8.50 uspešno dokončana in potisnjena na GitHub
+- NEW: src/components/dashboard/onboarding-wizard.tsx (~230 lines — 4-step wizard z step indicators, profit goal input, demo seed button)
+- MODIFIED: src/app/page.tsx (useEffect check + OnboardingWizard render)
+- MODIFIED: src/app/api/settings/route.ts (GET vrača + POST sprejema onboardingCompleted)
+- MODIFIED: prisma/schema.prisma (onboardingCompleted Boolean @default(false))
+- 4 WIZARD STEPS: (1) Dobrodošeli (funkcije + ⌘K tip), (2) AI konfig (Ollama info, skip-able), (3) Profit cilj (input + quick buttons 200-2000€, POST goal-tracker/set), (4) Demo podatki (POST brain/seed, 25 trgovin)
+- AI endpointi: 431 (nespremenjeto — UI only)
+- Total API routes: 623 (nespremenjeto)
+- Lint: 0 napak ✨
+- Typecheck: 0 napak ✨
+- Verzija aplikacije: v8.50.0
+- Polish phase continues: v8.32-v8.50 (19 verzij, 19 novih features)
+- Skupaj doslej (v7.50 → v8.50): 100 verzij, 222 novih funkcij 🎯 100 VERZIJ MILESTONE!
