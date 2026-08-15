@@ -4,6 +4,7 @@ import path from 'path';
 import { exec } from 'child_process';
 import { promisify } from 'util';
 import { logger } from '@/lib/logger';
+import { exportBackup, getDbStats, BACKUP_VERSION } from '@/lib/backup/backup';
 
 const execAsync = promisify(exec);
 
@@ -17,11 +18,53 @@ const BACKUP_DIR = path.join(process.cwd(), 'backups');
 /**
  * GET /api/backup
  * Returns current database size + info, or downloads the .db file with ?download=1
+ *
+ * v8.42: NEW ?format=json mode — exports ALL 18 tables as a structured JSON
+ * BackupData object (with version, createdAt, table counts, stats). This is
+ * the portable human-readable backup. Existing ?download=1 raw .db mode
+ * is preserved for binary backups. ?format=stats returns just table counts.
  */
 export async function GET(req: NextRequest) {
   try {
     const url = new URL(req.url);
     const download = url.searchParams.get('download') === '1';
+    const format = url.searchParams.get('format');
+
+    // v8.42: JSON backup mode — portable, human-readable, all 18 tables
+    if (format === 'json') {
+      try {
+        const result = await exportBackup();
+        const json = JSON.stringify(result.data, null, 2);
+        const filename = `markec-ai-firm-backup-${new Date().toISOString().slice(0, 10)}.json`;
+        logger.info('/api/backup', `format=json exported (v8.42)`, {
+          sizeKB: result.sizeKB,
+          totalRecords: result.data.stats.totalRecords,
+        });
+        return new NextResponse(json, {
+          status: 200,
+          headers: {
+            'Content-Type': 'application/json; charset=utf-8',
+            'Content-Disposition': `attachment; filename="${filename}"`,
+            'Cache-Control': 'no-cache',
+            'X-Backup-Version': BACKUP_VERSION,
+          },
+        });
+      } catch (e: any) {
+        logger.error('/api/backup', 'format=json export failed', e);
+        return NextResponse.json({ error: e?.message ?? 'Backup failed' }, { status: 500 });
+      }
+    }
+
+    // v8.42: Stats mode — quick counts for UI preview (no full export)
+    if (format === 'stats') {
+      try {
+        const stats = await getDbStats();
+        return NextResponse.json({ ok: true, ...stats, version: BACKUP_VERSION });
+      } catch (e: any) {
+        logger.error('/api/backup', 'format=stats failed', e);
+        return NextResponse.json({ error: e?.message ?? 'Stats failed' }, { status: 500 });
+      }
+    }
 
     if (!DB_PATH) {
       return NextResponse.json({ error: 'DATABASE_URL ni nastavljen' }, { status: 500 });

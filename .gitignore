@@ -89,3 +89,4 @@ package-lock.json
 # Tool results cache (should not be committed)
 tool-results/
 agent-ctx/
+backups/

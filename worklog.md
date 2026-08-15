@@ -17665,3 +17665,106 @@ Stage Summary:
 - Verzija aplikacije: v8.41.0
 - Polish phase continues: v8.32-v8.41 (10 verzij, 10 novih features)
 - Skupaj doslej (v7.50 → v8.41): 91 verzij, 213 novih funkcij
+
+
+---
+Task ID: v8.42
+Agent: full-stack-developer
+Task: Implement Full System Backup & Restore (JSON)
+
+Work Log:
+- Prebral obstoječe module: src/app/api/backup/route.ts (v1.3 raw .db + v4.7 JSON), src/app/api/backup/json/route.ts (v4.7 10-tabel JSON), prisma/schema.prisma (18 models), src/lib/db.ts, src/lib/logger.ts, src/components/dashboard/settings-view.tsx (BackupSection component, v4.7 JsonBackupControls).
+- Ugotovil: v4.7 JSON backup pokriva samo 10 tabel — manjkajo BrainSnapshot, ActionDraft, Notification, Profile, SavedSearch, SmartRule, NegotiationMessage, WebhookEndpoint (vse v5.3+/v8.x dodatki). Ni restore UI z mode selectorjem. Ni auto-backup cron.
+- NEW src/lib/backup/backup.ts (~520 vrstic):
+  - `BACKUP_VERSION = 'v8.42'`, PLURAL_TO_MODEL / MODEL_TO_PLURAL maps za 18 tabel
+  - `ALL_TABLE_PLURAL` export za UI checkbox list
+  - `MODEL_ACCESSORS` lazy accessor map (function form — Prisma client ni dotaknjen ob modulu load)
+  - `RESTORE_ORDER_PLURAL` — independents first (Profile, Settings, SavedSearch, PushSubscription, BrainSnapshot, ActionDraft, Notification, Monitor, Trade, DigestLog, Listing, Alert, RunLog, HeartbeatLog, PriceHistory, SmartRule, NegotiationMessage, WebhookEndpoint)
+  - `SENSITIVE_SETTINGS_FIELDS` — 8 fields (aiApiKey, fallbackApiKey, telegramBotToken, telegramWebhookSecret, discordWebhookUrl, slackWebhookUrl, emailSmtpPassword, vapidPrivateKey)
+  - `convertDates(row)` — ISO 8601 string → Date
+  - `redactSettings(row)` — replace sensitive fields z '***REDACTED***' na export
+  - `stripRedactedSettingsFields(row)` — drop redacted sentinels na restore (preserve real API keys)
+  - `exportBackup()` — fetches Settings (singleton + redaction) + 17 other tables v parallel (Promise.all). Returns BackupResult z sizeBytes + sizeKB + BackupData (version, createdAt, dbVersion, tables, stats)
+  - `restoreBackup(data, options)` — 3 modi: replace (deleteMany + create), merge (upsert by id), skip (findUnique + create if not exists). Per-row + per-table try/catch. Settings special handling. Returns RestoreResult z restored + skipped + errors per-table
+  - `saveBackupToFile(backup)` — writes to /backups/backup-YYYY-MM-DDTHH-MM-SS-mmmZ.json
+  - `listBackups()` — list /backups/*.json newest-first
+  - `cleanupOldBackups(keepN=30)` — delete backups older than newest 30
+  - `getDbStats()` — quick counts za UI preview (no full export)
+- MODIFIED src/app/api/backup/route.ts (~140 vrstic changes):
+  - GET `?format=json` → calls exportBackup(), returns JSON z Content-Disposition attachment + X-Backup-Version header
+  - GET `?format=stats` → calls getDbStats(), returns `{ok, totalRecords, tableCounts, version:'v8.42'}`
+  - GET `?download=1` (raw .db binary) — UNCHANGED (v1.3 backward compat)
+  - GET (no params) — UNCHANGED (DB file info)
+  - POST (multipart .db restore) — UNCHANGED (v1.3 backward compat)
+  - DELETE (clears listings/alerts/runLogs/heartbeats) — UNCHANGED
+- NEW src/app/api/backup/restore/route.ts (~80 vrstic):
+  - POST `{data: BackupData, mode: 'replace'|'merge'|'skip', tables?: string[]}` → calls restoreBackup()
+  - Validation: body must have `data` (or `backup`); mode default 'merge'; tables optional
+  - Returns RestoreResult (200 even if some tables failed — per-table breakdown in body)
+  - 400 only if structurally invalid (handled inside restoreBackup)
+  - runtime='nodejs', dynamic='force-dynamic', maxDuration=60s
+- NEW src/app/api/backup/list/route.ts (~30 vrstic):
+  - GET → calls listBackups(), returns `{ok, backups: [...], count}`
+  - runtime='nodejs', dynamic='force-dynamic'
+- NEW src/app/api/cron/auto-backup/route.ts (~80 vrstic):
+  - GET + POST handlers (same logic)
+  - checkCronAuth helper (prekopiran iz daily-brain-snapshot)
+  - Auth: `?key=<MONITOR_CRON_KEY>` (dev mode = no auth)
+  - Calls exportBackup() → saveBackupToFile() → cleanupOldBackups(30)
+  - Returns `{ok, saved: {path, filename, sizeKB}, stats, cleanup: {deleted, kept, total}, source:'v8.42-auto-backup', timestamp}`
+  - Schedule: daily @ 02:00 (po daily-brain-snapshot @ 00:00 — capture latest BrainSnapshot row)
+  - runtime='nodejs', dynamic='force-dynamic', maxDuration=60s
+- MODIFIED src/components/dashboard/settings-view.tsx (~600 vrstic sprememb):
+  - Added imports: Checkbox (UI component), Separator (UI component), HardDriveDownload + Clock + History (lucide icons)
+  - New card after existing v1.3 Database card: "💾 Full System Backup & Restore (JSON) [v8.42]" z border-primary/30 accent
+  - New FullBackupSection component (~580 vrstic) z 5 sekcijami (separated by Separator):
+    (a) Trenutno stanje baze — grid 12 table counts + total + estimated KB
+    (b) 💾 Export JSON backup — button → browser blob download
+    (c) 📥 Restore iz JSON backup — file picker + preview (version, createdAt, table counts) + 3-button mode selector (replace/merge/skip) + collapsible table selector z checkboxes per table + restore button (destructive za replace) + double confirmation za replace + result display z per-table restored/skipped counts + collapsible errors
+    (d) 📅 Auto-backup (cron) — "Poženi auto-backup zdaj" button → POST /api/cron/auto-backup + recent backups list (newest 10) z download links
+    (e) ⚠️ Warning box — "Backup je priporočljiv pred večjimi spremembami. Local-first = tvoji podatki so samo na tem računalniku."
+- Pognal `bun run lint` — 0 napak ✨ (2 pre-existing eslint-disable warnings v db.ts — unrelated, od v8.34).
+- Pognal `bunx tsc --noEmit` — 0 napak ✨ (exit code 0).
+- Curl test-i (vsi uspešni):
+  - `curl '/api/backup?format=json'` → HTTP 200, 105396 bytes. JSON z `{version:'v8.42', createdAt:'2026-08-15T05:13:51.539Z', dbVersion:'v8.38-notification-center', tables:{settings:[1], profiles:[], savedSearches:[], pushSubscriptions:[], trades:[25], digestLogs:[], monitors:[], listings:[], alerts:[], runLogs:[], heartbeatLogs:[], priceHistory:[], smartRules:[], negotiationMessages:[], webhookEndpoints:[], actionDrafts:[70], brainSnapshots:[1], notifications:[4]}, stats:{totalRecords:101, tableCounts:{...}}}` ✅
+  - `curl '/api/backup?format=stats'` → 200 z `{ok:true, totalRecords:101, tableCounts:{settings:1, profiles:0, ..., trades:25, actionDrafts:70, brainSnapshots:1, notifications:4}, version:'v8.42'}` ✅
+  - `curl '/api/backup/list'` → 200 z `{ok:true, backups:[], count:0}` (prazno pred auto-backup) ✅
+  - `POST /api/cron/auto-backup` → 200 z `{ok:true, saved:{path:'/home/z/my-project/backups/backup-2026-08-15T05-14-08-725Z.json', filename:'backup-2026-08-15T05-14-08-725Z.json', sizeKB:82}, stats:{totalRecords:101, ...}, cleanup:{deleted:0, kept:1, total:1}, source:'v8.42-auto-backup', timestamp:'...'}` (saved to /backups/) ✅
+  - `POST /api/backup/restore {data, mode:'merge', tables:['notifications']}` → 200 z `{ok:true, mode:'merge', restored:{notifications:4}, skipped:{notifications:0}, errors:[], source:'v8.42-restore'}` ✅
+  - `POST /api/backup/restore {data, mode:'skip', tables:['trades','brainSnapshots','notifications']}` → 200 z `{ok:true, mode:'skip', restored:{trades:0, brainSnapshots:0, notifications:0}, skipped:{trades:25, brainSnapshots:1, notifications:4}, errors:[]}` (all skipped — already exist by id) ✅
+  - `curl '/api/backup/list'` (po auto-backup) → 200 z `{ok:true, backups:[{filename:'backup-2026-08-15T05-14-08-725Z.json', sizeKB:103, createdAt:'2026-08-15T05:14:08.727Z'}], count:1}` ✅
+  - `curl '/api/ai-list'` → 200 z `{ok:true, total:430, categories:{brain:25, ...}}` (unchanged — backup routes so pod /api/backup/ in /api/cron/, ne /api/ai/) ✅
+- Preveril dev.log — brez runtime napak. Logger.info output: `[INFO] [exportBackup] exported 101 records across 18 tables {"sizeKB":82,"tableCounts":{...}}` + `[INFO] [/api/backup] format=json exported (v8.42) {"sizeKB":82,"totalRecords":101}` + `[INFO] [/api/cron/auto-backup] starting daily JSON auto-backup` + `[INFO] [/api/cron/auto-backup] export complete {"totalRecords":101,"sizeKB":82}` + `[INFO] [/api/cron/auto-backup] saved to backup-2026-08-15T05-14-08-725Z.json {"sizeKB":82}` + `[INFO] [restoreBackup] restore complete {"mode":"merge","restored":{"notifications":4},...}` + `[INFO] [/api/backup/restore] restore complete {"ok":true,"mode":"merge","errorsCount":0}` + `[INFO] [restoreBackup] restore complete {"mode":"skip","restored":{"brainSnapshots":0,"notifications":0,"trades":0},"skipped":{"brainSnapshots":1,"notifications":4,"trades":25},...}`. Home page GET / → HTTP 200. Brez TypeScript ali runtime errors.
+- Dokumentacija sinhrono posodobljena:
+  - README.md: version v8.41.0 → v8.42.0, API routes badge 617→620. Nova "Kaj je novega" v8.42 sekcija z vsemi podrobnostmi (5 modulov: backup.ts lib + backup route ?format=json + restore route + list route + cron/auto-backup route + settings-view FullBackupSection component). Posodobljen "Kaj je novega v v7.56–v8.42" header (85→86 verzij, 211→214 novih funkcij). Posodobljen verzija header-ja "v8.42.0 (avgust 2026)" + funkcije count ~302→~303. Top callout posodobljen z v8.42 opisom. "430 AI + 73 analytics + 14 cron + sistemski = 617" → "430 AI + 73 analytics + 15 cron + sistemski = 620".
+  - CHANGELOG.md: dodan `## [8.42.0] - 2026-08-15` section z vsemi 5 moduli + Stats (AI 430 unchanged, routes 617→620, cron 14→15, funkcije ~302→~303) + Endpoint verification (7 curl test-i) + Note (13 design odločitev). Updated [Unreleased] section: v8.42 dodan k fazi opisu, "v8.43+" postane naslednja verzija.
+  - AI_ENDPOINTS.md: NO changes (backup routes so pod /api/backup/ in /api/cron/, ne /api/ai/ — total ostaja 430).
+  - worklog.md: ta v8.42 entry se dodaja (current append).
+
+Stage Summary:
+- v8.42 uspešno implementirana
+- NEW: src/lib/backup/backup.ts (~520 vrstic — exportBackup, restoreBackup z 3 modi, saveBackupToFile, listBackups, cleanupOldBackups, getDbStats; PLURAL_TO_MODEL map za 18 tabel; redact+strip za sensitive Settings fields)
+- MODIFIED: src/app/api/backup/route.ts (added ?format=json + ?format=stats modes; existing ?download=1 + POST .db + DELETE unchanged — backward compat)
+- NEW: src/app/api/backup/restore/route.ts (~80 vrstic — POST restore handler)
+- NEW: src/app/api/backup/list/route.ts (~30 vrstic — GET list backups)
+- NEW: src/app/api/cron/auto-backup/route.ts (~80 vrstic — daily @ 02:00 cron, GET + POST, saveBackupToFile + cleanupOldBackups(30))
+- MODIFIED: src/components/dashboard/settings-view.tsx (~600 vrstic added — new FullBackupSection component z 5 sekcijami: stats preview + export button + restore z 3 modes + table selector + auto-backup trigger + recent backups list + warning box)
+- AI endpointi: 430 (unchanged — backup routes so pod /api/backup/ in /api/cron/, ne /api/ai/)
+- Total API routes: 617 → 620 (+3: backup/restore, backup/list, cron/auto-backup)
+- Cron routes: 14 → 15 (+1: cron/auto-backup)
+- Funkcije: ~302 → ~303 (+1: FullBackupSection)
+- Lint: 0 napak ✨ (2 pre-existing eslint-disable warnings v db.ts — unrelated, od v8.34)
+- Typecheck: 0 napak ✨ (exit code 0)
+- Endpoint verification:
+  - GET /api/backup?format=json → 200 z BackupData (version:'v8.42', 18 tables, totalRecords:101, sizeKB:82) ✅
+  - GET /api/backup?format=stats → 200 z {ok:true, totalRecords:101, tableCounts:{...}, version:'v8.42'} ✅
+  - GET /api/backup/list → 200 z {ok:true, backups:[], count:0} (before auto-backup) ✅
+  - POST /api/cron/auto-backup → 200 z {ok:true, saved:{filename, sizeKB:82, path}, stats:{totalRecords:101}, cleanup:{deleted:0, kept:1, total:1}, source:'v8.42-auto-backup'} ✅
+  - POST /api/backup/restore {data, mode:'merge', tables:['notifications']} → 200 z {ok:true, mode:'merge', restored:{notifications:4}, skipped:{notifications:0}, errors:[]} ✅
+  - POST /api/backup/restore {data, mode:'skip', tables:['trades','brainSnapshots','notifications']} → 200 z {ok:true, mode:'skip', restored:{trades:0, brainSnapshots:0, notifications:0}, skipped:{trades:25, brainSnapshots:1, notifications:4}, errors:[]} ✅
+  - GET /api/backup/list (after auto-backup) → 200 z {ok:true, backups:[{filename, sizeKB:103, createdAt}], count:1} ✅
+  - GET /api/ai-list → 200 z {ok:true, total:430} (unchanged) ✅
+- UI: FullBackupSection na Settings strani (po v1.3 Database card) z v8.42 badge, 5 sekcijami (stats + export + restore z 3 modes + table selector + auto-backup trigger + recent backups list + warning box), confirmation dialog, double confirmation za replace mode, toast feedback ✅
+- Documentation updated: README (v8.42.0, AI 430, routes 620, cron 15, funkcije ~303, nova "Kaj je novega" v8.42 sekcija) + CHANGELOG ([8.42.0] section z vsemi moduli + Stats + 7 curl test-i + Note z 13 design odločitvami) + worklog.md (ta entry)
+- Polish phase continues: v8.32 (Health) + v8.33 (Performance) + v8.34 (129 tests) + v8.35 (25 trades + Telegram) + v8.36 (CSV Import + Quick Add) + v8.37 (Deal Calculator + Profit Timeline) + v8.38 (Notification Center) + v8.39 (Goal Tracker Dashboard Widget) + v8.40 (Trade Insights Deep Dive) + v8.41 (Weekly Summary Report + Email Notifications) + v8.42 (Full System Backup & Restore — portable, human-readable JSON backup of ALL 18 tables + 3 restore modes + auto-backup cron)
+- Skupaj doslej (v7.50 → v8.42): 92 verzij, 214 novih funkcij

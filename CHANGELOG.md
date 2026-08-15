@@ -6,9 +6,9 @@ Format sledi [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), verzije s
 
 ## [Unreleased]
 
-v8.26 je odprl Intelligence phase (Action Explainability), v8.27 jo nadaljuje (Scenario Brain), v8.28 jo še nadalje vzpostavi FEEDBACK LOOP (Adaptive Domain Weights), v8.29 jo ZAKLJUČI z Draft Queue + Action Feedback Loop integration (🎯 INTELLIGENCE PHASE COMPLETE), v8.30 odpira NOVO fazo — Automation (Safe Auto-pilot — 🎯 AUTOMATION PHASE STARTED), v8.31 zaključi Automation phase (Aggressive Auto-pilot + Anomaly Detection — 🎯 AUTOMATION PHASE COMPLETE), v8.32 odpira NOVO fazo — Polish (System Health Dashboard — 🎯 POLISH PHASE STARTED — "How healthy is the Brain system?"), v8.33 zaključi Polish phase caching (Performance Caching + Cache Stats), v8.34 zaključi Polish phase testing (Brain Integration Test Suite), v8.35 zaključi Polish phase "make the system alive" (Seed Demo Data + Telegram Brain Notifications), v8.36 zaključi Polish phase trade management enhancement (CSV Import + Quick Add + Dashboard Stats), v8.37 zaključi Polish phase decision support + visualization (Deal Calculator + Profit Timeline Chart — "Hitra odločitev + vizualno sledenje"), v8.38 zaključi Polish phase centralized notification history (🔔 Notification Center + Alert History — "Centralizirana zgodovina vseh obvestil"), v8.39 zaključi Polish phase goal tracking visualization (🎯 Goal Tracker Dashboard Widget + Settings Integration — "Vizualno sledenje mesečnemu cilju z avtomatsko obvestitvijo ob dosegu"), v8.40 zaključi Polish phase trade analytics deep dive (📊 Trade Insights Deep Dive — "KDaj in KJE prodati za maksimalen profit?" — 6 analiz iz 25 realnih trade-ov: day-of-week, source platform, category, hold period, profit distribution, actionable insights), v8.41 zaključi Polish phase weekly digest + email notifications (📋 Weekly Summary Report + Email Notifications — "Comprehensive weekly digest sent to Telegram + Email + Notification Center" — profit this week + MoM change + goal progress + top 3 trades + worst trade + Brain health + top 3 actionable insights + recommendations for next week). Naslednje verzije:
+v8.26 je odprl Intelligence phase (Action Explainability), v8.27 jo nadaljuje (Scenario Brain), v8.28 jo še nadalje vzpostavi FEEDBACK LOOP (Adaptive Domain Weights), v8.29 jo ZAKLJUČI z Draft Queue + Action Feedback Loop integration (🎯 INTELLIGENCE PHASE COMPLETE), v8.30 odpira NOVO fazo — Automation (Safe Auto-pilot — 🎯 AUTOMATION PHASE STARTED), v8.31 zaključi Automation phase (Aggressive Auto-pilot + Anomaly Detection — 🎯 AUTOMATION PHASE COMPLETE), v8.32 odpira NOVO fazo — Polish (System Health Dashboard — 🎯 POLISH PHASE STARTED — "How healthy is the Brain system?"), v8.33 zaključi Polish phase caching (Performance Caching + Cache Stats), v8.34 zaključi Polish phase testing (Brain Integration Test Suite), v8.35 zaključi Polish phase "make the system alive" (Seed Demo Data + Telegram Brain Notifications), v8.36 zaključi Polish phase trade management enhancement (CSV Import + Quick Add + Dashboard Stats), v8.37 zaključi Polish phase decision support + visualization (Deal Calculator + Profit Timeline Chart — "Hitra odločitev + vizualno sledenje"), v8.38 zaključi Polish phase centralized notification history (🔔 Notification Center + Alert History — "Centralizirana zgodovina vseh obvestil"), v8.39 zaključi Polish phase goal tracking visualization (🎯 Goal Tracker Dashboard Widget + Settings Integration — "Vizualno sledenje mesečnemu cilju z avtomatsko obvestitvijo ob dosegu"), v8.40 zaključi Polish phase trade analytics deep dive (📊 Trade Insights Deep Dive — "KDaj in KJE prodati za maksimalen profit?" — 6 analiz iz 25 realnih trade-ov: day-of-week, source platform, category, hold period, profit distribution, actionable insights), v8.41 zaključi Polish phase weekly digest + email notifications (📋 Weekly Summary Report + Email Notifications — "Comprehensive weekly digest sent to Telegram + Email + Notification Center"), v8.42 zaključi Polish phase full system backup (💾 Full System Backup & Restore — "Portable, human-readable JSON backup of ALL 18 tables + 3 restore modes + auto-backup cron"). Naslednje verzije:
 
-- **v8.42+ — Polish phase continues** (E2E tests s Playwright, predictive accuracy improvements za Master Brain, refactoring)
+- **v8.43+ — Polish phase continues** (E2E tests s Playwright, predictive accuracy improvements za Master Brain, refactoring)
 - WebSocket real-time negotiation (SSE namesto polling)
 - Playwright E2E testi za glavne flow-e
 - TLS fingerprinting (curl-impersonate)
@@ -16,6 +16,123 @@ v8.26 je odprl Intelligence phase (Action Explainability), v8.27 jo nadaljuje (S
 - Performance optimizations za Master Brain (cached partial results per domain)
 - Additional conflict detection tipi (npr. Inventory vs Buyer — supply/demand mismatch)
 - Per-domain DB injection v Master Brain route (zaenkrat se zanaša na individualne Domain Brain route-e za DB state)
+
+## [8.42.0] - 2026-08-15
+
+### Added — 💾 Full System Backup & Restore (JSON) (Polish phase — "Portable, human-readable backup of ALL 18 tables + 3 restore modes + auto-backup cron")
+
+Problem: Raw .db backup (v1.3) je binaren (SQLite-specific, ni prenosljiv, ne more pregledati brez SQLite orodja). v4.7 JSON backup je pokrival samo 10 tabel — manjkajo BrainSnapshot, ActionDraft, Notification, Profile, SavedSearch, SmartRule, NegotiationMessage, WebhookEndpoint (vse v5.3+/v8.x dodatki). Ni restore UI. Ni auto-backup cron. Local-first sistem z 25 trades + 1 snapshot + 70 drafts + 4 notifications RABI robusten backup. v8.42 dodaja portable JSON export of ALL 18 Prisma tables + 3 restore modes (replace/merge/skip) + table selector + auto-backup cron @ 02:00.
+
+#### `src/lib/backup/backup.ts` (NEW — Backup/Restore core module, ~520 vrstic)
+
+- **`BACKUP_VERSION = 'v8.42'`** — version string baked into every BackupData object (forward-compat: future versions can detect + migrate).
+- **`PLURAL_TO_MODEL` / `MODEL_TO_PLURAL` maps** — translates between human-friendly plural JSON keys (`monitors`, `listings`, `trades`, `brainSnapshots`, `actionDrafts`, `notifications`, etc.) and Prisma model names (singular — `monitor`, `listing`, `trade`, ...). Used by export/restore for generic dispatch.
+- **`ALL_TABLE_PLURAL`** — exported list of all 18 plural table keys (used by UI for checkbox list + restore order).
+- **`MODEL_ACCESSORS`** — lazy accessor map (`profile: () => db.profile`, etc.) — function form so Prisma client isn't touched at module load (avoids init-time crashes on first dev boot).
+- **`RESTORE_ORDER_PLURAL`** — restore order: independent tables first (Profile, Settings, SavedSearch, PushSubscription, BrainSnapshot, ActionDraft, Notification) → dependent last (Monitor, Trade, Listing, Alert, RunLog, HeartbeatLog, PriceHistory, SmartRule, NegotiationMessage, WebhookEndpoint). Minimizes FK violations in replace mode.
+- **`SENSITIVE_SETTINGS_FIELDS`** — list of 8 sensitive Settings fields (aiApiKey, fallbackApiKey, telegramBotToken, telegramWebhookSecret, discordWebhookUrl, slackWebhookUrl, emailSmtpPassword, vapidPrivateKey) that are REDACTED on export and SKIPPED on restore.
+- **`convertDates(row)`** — walks object values, converts ISO 8601 strings (length ≥20, matches `^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}`) to Date objects. Prisma create/upsert expects Date objects for DateTime fields.
+- **`redactSettings(row)`** — replaces sensitive Settings fields with `'***REDACTED***'` sentinel on export.
+- **`stripRedactedSettingsFields(row)`** — drops fields whose value is the redacted sentinel on restore (so we don't clobber the user's live API keys with the sentinel string).
+- **`exportBackup()`** — fetches Settings (singleton, with redaction) + all 17 other tables in parallel via `Promise.all`. Returns `BackupResult` with `{ok, data: BackupData, sizeBytes, sizeKB, source:'v8.42-backup'}`. Logs per-table counts.
+- **`restoreBackup(data, options)`** — restores from BackupData JSON. 3 modes:
+  - **`replace`** — `deleteMany({})` + `create()` each row (total wipe + restore). DESTRUCTIVE — extra UI confirmation required.
+  - **`merge`** — `upsert by id` for each row (create if missing, update if exists). RECOMMENDED — safe default.
+  - **`skip`** — `findUnique` + `create only if not exists` (preserve current rows, no overwrites). SAFEST.
+  - **`tables` filter** — optional array of plural table keys to restore only specific tables (empty = all tables in backup).
+  - Per-row try/catch — single row failure doesn't abort the table. Per-table try/catch — single table failure doesn't abort the restore.
+  - Settings special: never overwrites sensitive fields with the redacted sentinel (preserves real API keys/tokens across restore).
+  - Returns `RestoreResult` with `{ok, mode, restored: {table: count}, skipped: {table: count}, errors: [{table, error}], source:'v8.42-restore'}`.
+- **`saveBackupToFile(backup)`** — writes BackupData to `/backups/backup-YYYY-MM-DDTHH-MM-SS-mmmZ.json` (ISO timestamp, fs-safe). Creates `/backups/` dir if missing. Returns `{ok, path, sizeKB, filename}`.
+- **`listBackups()`** — reads `/backups/` directory, returns `[{filename, sizeKB, createdAt}]` sorted newest-first by mtime. Returns `[]` if dir doesn't exist.
+- **`cleanupOldBackups(keepN=30)`** — deletes oldest backups beyond the newest `keepN`. Only deletes `backup-*.json` files (preserves `pre-restore-*.db` from v1.3). Returns `{deleted, kept, total}`.
+- **`getDbStats()`** — quick counts per table (no full export) for UI preview. Settings = 1 if exists, else 0. All other tables use `count()`. Returns `{totalRecords, tableCounts}`.
+
+#### `src/app/api/backup/route.ts` (MODIFIED — added `?format=json` + `?format=stats` modes)
+
+- GET `?format=json` → calls `exportBackup()`, returns JSON with `Content-Disposition: attachment; filename="markec-ai-firm-backup-YYYY-MM-DD.json"`. Portable, human-readable, all 18 tables. `X-Backup-Version: v8.42` header for client-side version detection.
+- GET `?format=stats` → calls `getDbStats()`, returns `{ok, totalRecords, tableCounts, version:'v8.42'}`. Used by Settings UI to show "25 trades · 1 snapshot · 5 drafts · ..." preview before download.
+- GET `?download=1` (raw .db binary) — UNCHANGED (v1.3 backward compat).
+- GET (no params) — UNCHANGED (returns `{ok, path, sizeBytes, sizeMb, lastModified}` for DB file info).
+- POST (multipart .db restore) — UNCHANGED (v1.3 backward compat).
+- DELETE (clears listings/alerts/runLogs/heartbeats) — UNCHANGED (v1.3 backward compat).
+
+#### `src/app/api/backup/restore/route.ts` (NEW — POST restore endpoint)
+
+- POST `{data: BackupData, mode: 'replace'|'merge'|'skip', tables?: string[]}` → calls `restoreBackup(data, options)`. Returns `RestoreResult` with per-table restored/skipped/errors counts.
+- Validation: body must have `data` (or `backup`) field. Mode must be one of `replace`/`merge`/`skip` (default: `merge` — safe default). Tables must be array of strings.
+- Returns 200 even if some tables failed — the result body has the per-table breakdown so the UI can show what worked and what didn't.
+- Returns 400 only if the whole restore was structurally invalid (handled inside `restoreBackup`).
+- runtime='nodejs', dynamic='force-dynamic', maxDuration=60s.
+
+#### `src/app/api/backup/list/route.ts` (NEW — GET list backups endpoint)
+
+- GET → calls `listBackups()`, returns `{ok, backups: [{filename, sizeKB, createdAt}], count}`.
+- Newest first (sorted by mtime desc).
+- runtime='nodejs', dynamic='force-dynamic'.
+
+#### `src/app/api/cron/auto-backup/route.ts` (NEW — daily auto-backup cron)
+
+- GET + POST handlers (same logic).
+- Auth: `?key=<MONITOR_CRON_KEY>` query param. If env var unset (dev mode), no auth required.
+- Calls `exportBackup()` → `saveBackupToFile()` (writes to `/backups/backup-<timestamp>.json`) → `cleanupOldBackups(30)` (deletes backups older than the newest 30).
+- Returns `{ok, saved: {path, filename, sizeKB}, stats: {totalRecords, tableCounts}, cleanup: {deleted, kept, total}, source:'v8.42-auto-backup', timestamp}`.
+- Schedule: configure externally to hit this endpoint daily @ 02:00 (after daily-brain-snapshot @ 00:00 — captures the latest BrainSnapshot row in the backup).
+- Example crontab: `0 2 * * * curl -s "http://localhost:3000/api/cron/auto-backup?key=$MONITOR_CRON_KEY"`.
+- runtime='nodejs', dynamic='force-dynamic', maxDuration=60s.
+
+#### `src/components/dashboard/settings-view.tsx` (MODIFIED — added FullBackupSection component)
+
+- New imports: `Checkbox` (from `@/components/ui/checkbox`), `Separator` (from `@/components/ui/separator`), `HardDriveDownload`, `Clock`, `History` (from `lucide-react`).
+- New card added after existing v1.3 Database card: "💾 Full System Backup & Restore (JSON) [v8.42]" with `border-primary/30` accent.
+- New `FullBackupSection` component (~580 vrstic) with 5 sections separated by `<Separator />`:
+  - **(a) Trenutno stanje baze** — fetches `/api/backup?format=stats` on mount. Grid of 12 table counts (profiles, settings, savedSearches, pushSubs, trades, digestLogs, monitors, listings, alerts, runLogs, heartbeatLogs, priceHistory) + total record count + estimated backup size KB (rough: each record ~500 bytes).
+  - **(b) 💾 Export JSON backup** — button → `fetch('/api/backup?format=json')` + browser blob download (`markec-ai-firm-backup-YYYY-MM-DD.json`). Loading spinner during export. Toast feedback on success.
+  - **(c) 📥 Restore iz JSON backup** — file picker (`.json` input). On file select: parse JSON + validate structure (must have `version` and `tables`). Shows preview box with: version, createdAt, table count, total record count. Mode selector — 3 buttons:
+    - ⚠️ **Zamenjaj vse (replace)** — destructive red border/bg. "Izbriše obstoječe + vnese nove. NEVARNO."
+    - 📝 **Združi (merge)** — primary blue border/bg. "Ustvari/posodobi po ID. Priporočeno." (default)
+    - ⏭️ **Preskoči obstoječe (skip)** — primary blue border/bg. "Samo novi zapisi (po ID). Najbolj varno."
+    - Collapsible `<details>` table selector with checkboxes per table (with record count). Empty selection = all tables.
+    - Restore button (destructive variant for replace mode). Confirmation dialog (`window.confirm`) per mode with mode-specific message. Double confirmation for replace mode ("🚨 ZADNJI POTRDITEV").
+    - Result display: per-table restored/skipped counts in grid + collapsible errors section. Refreshes stats after restore.
+  - **(d) 📅 Auto-backup (cron)** — "Poženi auto-backup zdaj" button → `POST /api/cron/auto-backup`. Toast feedback with filename + sizeKB + recordCount + cleanup info. Recent backups list (newest 10) with download link per file + file size + creation timestamp.
+  - **(e) ⚠️ Warning box** — amber bg: "Backup je priporočljiv pred večjimi spremembami. Local-first = tvoji podatki so samo na tem računalniku. Avtomatski dnevni backup (cron) shrani JSON v `/backups/` direktorij — ohrani zadnjih 30. Za kritične spremembe vedno najprej ročno prenesi JSON backup."
+
+### Stats
+
+- **AI endpointi**: 430 (unchanged — backup routes are under `/api/backup/` and `/api/cron/`, not `/api/ai/`)
+- **Total API routes**: 617 → 620 (+3: `backup/restore`, `backup/list`, `cron/auto-backup`)
+- **Cron routes**: 14 → 15 (+1: `cron/auto-backup`)
+- **Funkcije**: ~302 → ~303 (+1: `FullBackupSection`)
+- **Lint**: 0 errors ✨ (2 pre-existing eslint-disable warnings in `db.ts` — unrelated, from v8.34)
+- **Typecheck**: 0 errors ✨ (exit code 0)
+
+### Endpoint verification (curl tests)
+
+- `curl '/api/backup?format=json'` → 200 z `{version:'v8.42', createdAt:'2026-08-15T...', dbVersion:'v8.38-notification-center', tables:{settings:[1], profiles:[], ..., trades:[25], brainSnapshots:[1], actionDrafts:[70], notifications:[4], ...18 tables}, stats:{totalRecords:101, tableCounts:{settings:1, profiles:0, ..., trades:25, brainSnapshots:1, actionDrafts:70, notifications:4}}}` (105 KB JSON) ✅
+- `curl '/api/backup?format=stats'` → 200 z `{ok:true, totalRecords:101, tableCounts:{...}, version:'v8.42'}` ✅
+- `curl '/api/backup/list'` → 200 z `{ok:true, backups:[], count:0}` (empty before auto-backup runs) ✅
+- `POST '/api/cron/auto-backup'` → 200 z `{ok:true, saved:{path:'/home/z/my-project/backups/backup-2026-08-15T05-14-08-725Z.json', filename:'backup-2026-08-15T05-14-08-725Z.json', sizeKB:82}, stats:{totalRecords:101, tableCounts:{...}}, cleanup:{deleted:0, kept:1, total:1}, source:'v8.42-auto-backup', timestamp:'2026-08-15T05:14:08.729Z'}` ✅
+- `POST '/api/backup/restore' {data, mode:'merge', tables:['notifications']}` → 200 z `{ok:true, mode:'merge', restored:{notifications:4}, skipped:{notifications:0}, errors:[], source:'v8.42-restore'}` ✅
+- `POST '/api/backup/restore' {data, mode:'skip', tables:['trades','brainSnapshots','notifications']}` → 200 z `{ok:true, mode:'skip', restored:{trades:0, brainSnapshots:0, notifications:0}, skipped:{trades:25, brainSnapshots:1, notifications:4}, errors:[]}` (all skipped — already exist by id) ✅
+- `curl '/api/backup/list'` (after auto-backup) → 200 z `{ok:true, backups:[{filename:'backup-2026-08-15T05-14-08-725Z.json', sizeKB:103, createdAt:'2026-08-15T05:14:08.727Z'}], count:1}` ✅
+- `curl '/api/ai-list'` → 200 z `{ok:true, total:430, categories:{...}}` (unchanged — backup routes are not under /api/ai/) ✅
+
+### Note — Design decisions
+
+1. **Plural JSON keys** (`monitors`, `listings`, `trades`, `brainSnapshots`, `actionDrafts`, `notifications`, ...) — human-friendly, matches v4.7 convention. Singular model names (`monitor`, `listing`, `trade`, ...) are used internally to look up the Prisma accessor.
+2. **Lazy accessor map** (`() => db.profile` instead of `db.profile`) — function form so Prisma client isn't touched at module load (avoids init-time crashes on first dev boot when Prisma client isn't yet ready).
+3. **Redact on export, skip on restore** — sensitive Settings fields (API keys, tokens) are NEVER exported as real values (security: backup may be shared). On restore, redacted sentinels are dropped — preserves the user's live API keys/tokens across restore.
+4. **3 restore modes** — `replace` (destructive, total wipe), `merge` (upsert by id, recommended), `skip` (only create if not exists, safest). User chooses based on confidence level.
+5. **Table selector** — empty selection = all tables. Useful for partial restore (e.g. just Trades + BrainSnapshots without overwriting Settings).
+6. **Per-row + per-table try/catch** — single row/table failure doesn't abort the whole restore. The result body reports per-table restored/skipped/errors counts so the user knows what worked.
+7. **Restore order (independents first)** — Profile, Settings, SavedSearch, PushSubscription, BrainSnapshot, ActionDraft, Notification, Monitor, Trade, DigestLog, Listing, Alert, RunLog, HeartbeatLog, PriceHistory, SmartRule, NegotiationMessage, WebhookEndpoint. Minimizes FK violations in replace mode.
+8. **Double confirmation for replace mode** — first confirm explains the mode + tables, second confirm ("🚨 ZADNJI POTRDITEV") warns about data loss + recommends downloading backup first.
+9. **Auto-backup cron @ 02:00** — runs after daily-brain-snapshot @ 00:00 so the latest BrainSnapshot row is captured in the backup. Cleanup keeps last 30 (prevents disk fill over time).
+10. **Existing v4.7 JSON backup preserved** — the existing `/api/backup/json` route (10 tables, basic upsert) stays as backward compat. v8.42 is a SUPERSET (18 tables, 3 modes, table selector, auto-backup). Both can coexist.
+11. **Existing v1.3 raw .db backup preserved** — `/api/backup?download=1` and `POST /api/backup` (multipart .db restore) stay as backward compat. v8.42 adds portable JSON layer on top.
+12. **Filename `backup-YYYY-MM-DDTHH-MM-SS-mmmZ.json`** — ISO timestamp with `:` and `.` replaced by `-` (fs-safe). Sortable alphabetically = sortable chronologically.
+13. **`getDbStats()` for UI preview** — quick counts without full export. Avoids 100KB+ payload just to show "25 trades · 1 snapshot · ..." in the UI.
 
 ## [8.41.0] - 2026-08-15
 
