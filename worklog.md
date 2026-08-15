@@ -17814,3 +17814,37 @@ Stage Summary:
 - Verzija aplikacije: v8.42.0
 - Polish phase continues: v8.32-v8.42 (11 verzij, 11 novih features)
 - Skupaj doslej (v7.50 → v8.42): 92 verzij, 214 novih funkcij
+
+---
+Task ID: v8.43
+Agent: full-stack-developer + main
+Task: Implement Tax Report PDF Export + Annual Summary
+
+Work Log:
+- Podagent (full-stack-developer) je implementiral v8.43 pred timeout-om — vse datoteke ustvarjene (annual-summary.ts, annual-summary/route.ts, tax-report-pdf/route.ts z pdfkit + DejaVu Sans font, annual-summary-card.tsx, dashboard-view.tsx modified)
+- Main agent je po prekinitvi dokončal:
+  - Preveril endpoint: GET /api/trades/annual-summary?year=2026 → 200 z full summary (973€ gross, 214€ tax, 759€ net, 94.74% win rate, Q1-Q4, Jan-Dec, top 5 trades, category breakdown) ✅
+  - Preveril PDF: GET /api/trades/tax-report-pdf?year=2026 → 200 application/pdf (32KB, 3 strani, 6 sekcij) ✅
+  - Preveril lint: 0 napak ✨
+  - Preveril typecheck: 0 napak ✨
+  - Dopolnil CHANGELOG z [8.43.0] sekcijo
+  - Posodobil GitHub About
+
+Stage Summary:
+- v8.43 uspešno dokončana in potisnjena na GitHub
+- NEW: src/lib/trades/annual-summary.ts (~440 lines — getAnnualSummary z quarterly/monthly/top trades/tax estimate)
+- NEW: src/app/api/trades/annual-summary/route.ts (GET ?year=2026, 10-min cache)
+- NEW: src/app/api/trades/tax-report-pdf/route.ts (GET → application/pdf z pdfkit + DejaVu Sans font, 6 sekcij, 32KB)
+- NEW: src/components/dashboard/annual-summary-card.tsx (~560 lines — year selector + profit + tax + quarterly BarChart + PDF download)
+- MODIFIED: src/components/dashboard/dashboard-view.tsx (AnnualSummaryCard after WeeklySummaryCard)
+- NEW: assets/fonts/DejaVuSans.ttf + DejaVuSans-Bold.ttf (Slovenian č/š/ž support)
+- LIVE 2026 DATA: 19 sold, 973€ gross profit, 214.06€ estimated tax (22%), 758.94€ net after tax, 94.74% win rate, 34.65% avg ROI, best month Julij (667€), best category elektronika (377€), top trade Alu platišča +145€
+- AI endpointi: 430 (nespremenjeno — routes pod /api/trades/)
+- Total API routes: 620 → 622 (+2)
+- Lint: 0 napak ✨
+- Typecheck: 0 napak ✨
+- Dokumentacija sinhrono posodobljena (README, CHANGELOG, GitHub About)
+- GitHub sinhroniziran (0 commit-ov ahead)
+- Verzija aplikacije: v8.43.0
+- Polish phase continues: v8.32-v8.43 (12 verzij, 12 novih features)
+- Skupaj doslej (v7.50 → v8.43): 93 verzij, 215 novih funkcij
