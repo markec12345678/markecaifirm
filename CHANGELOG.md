@@ -45,6 +45,24 @@ Problem: Sistem deluje na desktop, ampak mobile UX je suboptimalen — 17 nav gu
 
 UI-only release — no new API endpoints, no Prisma schema changes, no new npm dependencies. All mobile components are `md:hidden` (desktop unaffected). Agent Browser verified: mobile (375×812) bottom nav visible z 5 buttons + Trades badge "5" (held count) + FAB 56×56px; desktop (1920×1080) both `display:none`.
 
+## [8.51.0] - 2026-08-15
+
+### Added — 🛒 Quick Trade iz Listing + 🔔 Price Target Alerts
+
+Razmišljam kot uporabnik: vidim oglas na Bolha → hočem ga kupiti → moram ročno tipkati title/cena/vir. In nimam price target alertov.
+
+- **`src/app/api/trades/from-listing/route.ts`** (NEW) — POST `{listingId, buyPrice?}` → create Trade from Listing data (title, price, url, source, imageUrl). Auto-derives buyLocation iz monitor source. Creates Notification "🛒 Trade ustvarjen iz oglasa".
+- **`src/app/api/listings/[id]/price-target/route.ts`** (NEW) — POST `{targetPrice: number | null}` → set/clear price target na listing. Uses existing Listing.targetPrice + targetPriceSetAt + targetPriceAlertSent polja.
+- **`src/app/api/cron/price-target-check/route.ts`** (NEW) — cron ki preverja vse listings z targetPrice set in ne še alerted. Če currentPrice <= targetPrice → Notification + Telegram + mark alerted. Runs every 30 min.
+
+### Stats
+
+- AI endpoints: 431 (unchanged — new routes under /api/trades/ and /api/listings/)
+- Total API routes: 623 → 626 (+3: from-listing, price-target, price-target-check cron)
+- Cron automations: 15 → 16 (+1 price-target-check)
+- Lint: 0 errors ✨
+- Typecheck: 0 errors ✨
+
 ## [8.50.0] - 2026-08-15
 
 ### Added — 🚀 First-Run Onboarding Wizard

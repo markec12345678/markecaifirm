@@ -1,6 +1,6 @@
 # Markec AI Firm — AI Trading Firm za slovenske oglase
 
-[![Version](https://img.shields.io/badge/version-v8.50.0-blue.svg)](./CHANGELOG.md)
+[![Version](https://img.shields.io/badge/version-v8.51.0-blue.svg)](./CHANGELOG.md)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](./LICENSE)
 [![GitHub Stars](https://img.shields.io/github/stars/markec12345678/markecaifirm?style=social)](https://github.com/markec12345678/markecaifirm/stargazers)
 [![AI Endpoints](https://img.shields.io/badge/AI%20endpoints-431-green.svg)](./AI_ENDPOINTS.md)
@@ -870,7 +870,7 @@ Za scraping Bolhe in drugih platform, aplikacija vključuje:
 ### Auth
 Ni avtentikacije (local-first). Aplikacija teče na localhost.
 
-### Endpointi (431 AI + 73 analytics + 15 cron + sistemski = 623) — v8.45: UI only, no new API endpoints
+### Endpointi (431 AI + 74 analytics + 16 cron + sistemski = 626) — v8.45: UI only, no new API endpoints
 
 ```bash
 # AI primeri
