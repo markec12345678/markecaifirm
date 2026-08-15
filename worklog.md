@@ -17996,3 +17996,41 @@ Stage Summary:
 - Verzija aplikacije: v8.45.0
 - Polish phase continues: v8.32-v8.45 (14 verzij, 14 novih features)
 - Skupaj doslej (v7.50 → v8.45): 95 verzij, 217 novih funkcij
+
+---
+Task ID: v8.46.1
+Agent: main
+Task: v8.46 commit + push + GitHub About + Agent Browser verification (Cmd+K Command Palette)
+
+Work Log:
+- Razmišljal o logičnem naslednjem koraku: 431 AI končnih točk + 17 nav gumbov = brez Command Palette je navigacija počasna. Power user želi tipkovnico.
+- Ustvaril src/components/dashboard/command-palette.tsx direktno (cmdk + shadcn Command že obstajata)
+- Integriral v src/app/page.tsx: cmdkOpen state, Ctrl/Cmd+K odpre Command Palette (nadomešča star SearchModal za Cmd+K), SearchModal ohranjena za gumb iskanja
+- Preveril lint: 0 napak ✨
+- Preveril typecheck: 0 napak ✨ (popravil 1 TS error: setView tip kompatibilnost z `as View` cast)
+- Posodobil GitHub About
+- Commit: "v8.46: Command Palette (Cmd+K)..." (9c1bdcf)
+- Push na GitHub: uspešen ✅ (9324ced..9c1bdcf), PAT očiščen ✅
+- Agent Browser self-verification:
+  - Stran HTTP 200 (po dev server restart)
+  - Ctrl+K odpre Command Palette ✅
+  - Vsebina: "Navigacija" + "Hitre akcije" + "🧠 Brain Sistem" + "Dodaj trade" + "Poženi Auto-pilot" + "Ustvari Backup" ✅
+  - Brez runtime napak v dev.log
+
+Stage Summary:
+- v8.46 uspešno dokončana in potisnjena na GitHub
+- NEW: src/components/dashboard/command-palette.tsx (~180 lines — cmdk + shadcn Command dialog z 4 sekcijami)
+- MODIFIED: src/app/page.tsx (cmdkOpen state, Ctrl/Cmd+K → Command Palette, SearchModal ohranjena)
+- COMMAND PALETTE 4 SEKCIJE:
+  1. Navigacija (6 views: Dashboard, AI Hub, Trgovine, Alerti, Skladišče, Nastavitve — z keyboard shortcut hints)
+  2. Hitre akcije (Dodaj trade, Poženi vse monitorje, Shrani Snapshot, Poženi Auto-pilot, Ustvari Backup, Pošlji Tedenski povzetek)
+  3. Brain Sistem (Master Brain TOP 5, Brain Digest, Scenario What If?, Explainability, Adaptive Weights)
+  4. AI Funkcije (top 30 od 431 z fuzzy search — fetch-a /api/ai-list na open)
+- KEYBOARD SHORTCUTS: Ctrl/Cmd+K odpre palette, single-key (1-9, 0, b, a, i, p, l, r) ohranjene
+- AI endpointi: 431 (nespremenjeno — UI only)
+- Total API routes: 623 (nespremenjeno)
+- Lint: 0 napak ✨
+- Typecheck: 0 napak ✨
+- Verzija aplikacije: v8.46.0
+- Polish phase continues: v8.32-v8.46 (15 verzij, 15 novih features)
+- Skupaj doslej (v7.50 → v8.46): 96 verzij, 218 novih funkcij
