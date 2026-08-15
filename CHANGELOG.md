@@ -17,6 +17,37 @@ v8.26 je odprl Intelligence phase (Action Explainability), v8.27 jo nadaljuje (S
 - Additional conflict detection tipi (npr. Inventory vs Buyer — supply/demand mismatch)
 - Per-domain DB injection v Master Brain route (zaenkrat se zanaša na individualne Domain Brain route-e za DB state)
 
+## [8.43.0] - 2026-08-15
+
+### Added — 📄 Tax Report PDF Export + Annual Summary
+
+Problem: Tax report API (v6.9) vrača JSON + CSV, ampak za FURS/računovodstvo RABI PDF. Ni letnega povzetka na Dashboardu.
+
+- **`src/lib/trades/annual-summary.ts`** (NEW) — `getAnnualSummary(year)` vrača: summary (totalTrades, soldTrades, grossProfit, estimatedTax=22% Slovenian flat tax, netProfitAfterTax, avgROI, winRate, avgHoldDays, bestMonth, worstMonth, bestCategory), quarterly [4], monthly [12], topTrades [5], worstTrades [3], categoryBreakdown, sourceBreakdown. Pure compute + DB.
+- **`src/app/api/trades/annual-summary/route.ts`** (NEW) — GET ?year=2026 → AnnualSummary. 10-min cache.
+- **`src/app/api/trades/tax-report-pdf/route.ts`** (NEW) — GET ?year=2026 → application/pdf z 6 sekcijami (povzetek, četrtletni pregled, mesečni pregled, top transakcije, kategorije, viri). Generirano z pdfkit + DejaVu Sans font (full č/š/ž support). 32KB, 3 strani.
+- **`src/components/dashboard/annual-summary-card.tsx`** (NEW) — Dashboard card z year selector + big profit + tax estimate + net after tax + quarterly BarChart + best/worst month + win rate + top trade + "📄 Prenesi PDF" button.
+- **`src/components/dashboard/dashboard-view.tsx`** (MODIFIED) — AnnualSummaryCard added after WeeklySummaryCard.
+
+### Stats
+
+- AI endpoints: 430 (unchanged — new routes under /api/trades/)
+- Total API routes: 620 → 622 (+2)
+- Lint: 0 errors ✨
+- Typecheck: 0 errors ✨
+
+### Live data (2026)
+
+- 19 sold + 5 held + 1 cancelled
+- Gross profit: 973€
+- Estimated tax: 214.06€ (22%)
+- Net after tax: 758.94€
+- Win rate: 94.74%
+- Avg ROI: 34.65%
+- Best month: Julij (667€)
+- Best category: elektronika (377€)
+- Top trade: Alu platišča 17" (+145€)
+
 ## [8.42.0] - 2026-08-15
 
 ### Added — 💾 Full System Backup & Restore (JSON) (Polish phase — "Portable, human-readable backup of ALL 18 tables + 3 restore modes + auto-backup cron")

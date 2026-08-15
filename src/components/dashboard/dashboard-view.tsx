@@ -25,6 +25,8 @@ import { GoalTrackerCard } from '@/components/dashboard/goal-tracker-card';
 import { TradeInsightsCard } from '@/components/dashboard/trade-insights-card';
 // v8.41: Weekly Summary Report — comprehensive weekly digest (profit, goal, top trades, Brain health, insights, recommendations) sent to Telegram + Email
 import { WeeklySummaryCard } from '@/components/dashboard/weekly-summary-card';
+// v8.43: Annual Summary + Tax Report PDF — yearly profit/loss breakdown + davčno poročilo PDF
+import { AnnualSummaryCard } from '@/components/dashboard/annual-summary-card';
 
 // v5.6: Dashboard widget IDs
 const WIDGET_IDS = ['todaySummary', 'quickStats', 'activityFeed', 'aiInsights', 'skladisceWidget'] as const;
@@ -569,6 +571,15 @@ export function DashboardView({ onNavigate }: ViewProps) {
           Notification Center. Self-fetches from /api/ai/brain/weekly-summary
           every 60s. "Pošlji zdaj" button sends manually. */}
       <WeeklySummaryCard />
+
+      {/* v8.43: Annual Summary + Tax Report PDF — yearly profit/loss breakdown for
+          tax/FURS/accountant. Self-fetches from /api/trades/annual-summary?year=YYYY
+          every 60s. Year selector (currentYear-1 to currentYear+1). Big profit
+          number + tax estimate (22% Slovenian flat tax) + net after tax + quarterly
+          BarChart + best/worst month + win rate + avg ROI + top trade + "Prenesi PDF"
+          button (opens /api/trades/tax-report-pdf?year=YYYY) + "Celoten pregled"
+          (navigate to Statistics view). */}
+      <AnnualSummaryCard onNavigate={onNavigate} />
 
       {/* v4.5: Skladišče dashboard widget */}
       <WidgetWrapper id="skladisceWidget" order={widgetOrder} customizeMode={customizeMode} onMove={moveWidget}>
