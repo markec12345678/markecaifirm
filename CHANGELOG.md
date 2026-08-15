@@ -45,6 +45,27 @@ Problem: Sistem deluje na desktop, ampak mobile UX je suboptimalen — 17 nav gu
 
 UI-only release — no new API endpoints, no Prisma schema changes, no new npm dependencies. All mobile components are `md:hidden` (desktop unaffected). Agent Browser verified: mobile (375×812) bottom nav visible z 5 buttons + Trades badge "5" (held count) + FAB 56×56px; desktop (1920×1080) both `display:none`.
 
+## [8.53.0] - 2026-08-15
+
+### Added — 📈 Profit Forecast + Distribution Pie Chart
+
+- **`src/lib/trades/profit-forecast.ts`** (NEW) — `getProfitForecast()` — daily run rate × days remaining → projected end-of-month. Trend (AHEAD/ON_TRACK/BEHIND). Goal likelihood. Category distribution (% per category). Held potential (20% margin assumption).
+- **`src/app/api/analytics/profit-forecast/route.ts`** (NEW) — GET.
+- **`src/components/dashboard/profit-forecast-card.tsx`** (NEW) — Dashboard card: current vs projected profit, goal progress bar, trend indicator, recharts PieChart (category distribution), held potential summary.
+- **`src/components/dashboard/dashboard-view.tsx`** (MODIFIED) — ProfitForecastCard after RestockRecommendations.
+
+### Live data (2026-Aug)
+- Current month: 351€ (10 trades)
+- Daily avg: 23.4€/day
+- Projected: 725€ (ON_TRACK)
+- Distribution: orodje 31%, obutev 27%, oblačila 23%
+- Held: 5 items, 333€ potential
+
+### Stats
+- AI endpoints: 432 (unchanged)
+- Total API routes: 629 → 630 (+1)
+- Lint: 0 ✨ | Typecheck: 0 ✨
+
 ## [8.52.0] - 2026-08-15
 
 ### Added — 💡 Daily AI Tip + ⚠️ Inventory Aging Alerts
