@@ -45,6 +45,19 @@ Problem: Sistem deluje na desktop, ampak mobile UX je suboptimalen — 17 nav gu
 
 UI-only release — no new API endpoints, no Prisma schema changes, no new npm dependencies. All mobile components are `md:hidden` (desktop unaffected). Agent Browser verified: mobile (375×812) bottom nav visible z 5 buttons + Trades badge "5" (held count) + FAB 56×56px; desktop (1920×1080) both `display:none`.
 
+## [8.55.0] - 2026-08-15
+
+### Added — 🔍 Trade Table Search + Sort + Filter Enhancement
+
+Problem: 25 trgovin in raste. Brez iskanja/sortiranja po naslovu/kategoriji/profitu/ROI je nepregledno pri 100+.
+
+- **`src/components/dashboard/trades-view.tsx`** (MODIFIED) — dodatno: (1) **Search** — iskanje po title/category/source/notes z live filtering. (2) **Sort** — 8 možnosti: najnovejši/najstarejši/profit↓/profit↑/ROI↓/ROI↑/cena↓/naslov A-Z. (3) **Category filter** — dropdown z vsemi kategorijami (avto/elektronika/oblačila/obutev/orodje). (4) **Source filter** — dropdown z vsemi viri (Bolha/Vinted/Avtonet/mobile.de). (5) **Result count** — "25 trade-ov" z active filter indicators. useMemo za performance.
+
+### Stats
+- AI endpoints: 432 (unchanged — UI only)
+- Total API routes: 630 (unchanged)
+- Lint: 0 ✨ | Typecheck: 0 ✨
+
 ## [8.54.0] - 2026-08-15
 
 ### Added — 🔄 Flip Workflow Checklist UI

@@ -1,6 +1,6 @@
 'use client';
 
-import { useEffect, useState, useCallback } from 'react';
+import { useEffect, useState, useCallback, useMemo } from 'react';
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
@@ -69,6 +69,11 @@ export function TradesView() {
   const [editing, setEditing] = useState<Trade | null>(null);
   const [showForm, setShowForm] = useState(false);
   const [filter, setFilter] = useState<string>('all');
+  // v8.55: Search + Sort + Category/Source filters
+  const [searchQuery, setSearchQuery] = useState('');
+  const [sortBy, setSortBy] = useState<'date_desc' | 'date_asc' | 'profit_desc' | 'profit_asc' | 'roi_desc' | 'roi_asc' | 'title_asc' | 'price_desc'>('date_desc');
+  const [filterCategory, setFilterCategory] = useState<string>('all');
+  const [filterSource, setFilterSource] = useState<string>('all');
   // v5.4: Portfolio AI
   const [portfolioAI, setPortfolioAI] = useState<any>(null);
   const [portfolioAILoading, setPortfolioAILoading] = useState(false);
@@ -246,7 +251,81 @@ export function TradesView() {
     }
   };
 
-  const filtered = filter === 'all' ? trades : trades.filter(t => t.status === filter);
+  // v8.55: Comprehensive filter + search + sort
+  const filtered = useMemo(() => {
+    let result = filter === 'all' ? trades : trades.filter(t => t.status === filter);
+
+    // Search
+    if (searchQuery.trim()) {
+      const q = searchQuery.toLowerCase().trim();
+      result = result.filter(t =>
+        t.title.toLowerCase().includes(q) ||
+        t.category.toLowerCase().includes(q) ||
+        t.buyLocation.toLowerCase().includes(q) ||
+        (t.notes || '').toLowerCase().includes(q)
+      );
+    }
+
+    // Category filter
+    if (filterCategory !== 'all') {
+      result = result.filter(t => t.category === filterCategory);
+    }
+
+    // Source filter
+    if (filterSource !== 'all') {
+      result = result.filter(t => t.buyLocation === filterSource);
+    }
+
+    // Sort
+    result = [...result].sort((a, b) => {
+      switch (sortBy) {
+        case 'date_desc': return new Date(b.buyDate).getTime() - new Date(a.buyDate).getTime();
+        case 'date_asc': return new Date(a.buyDate).getTime() - new Date(b.buyDate).getTime();
+        case 'profit_desc': {
+          const pa = a.sellPrice ? (a.sellPrice - a.sellFees - a.buyPrice - a.buyFees) : -Infinity;
+          const pb = b.sellPrice ? (b.sellPrice - b.sellFees - b.buyPrice - b.buyFees) : -Infinity;
+          return pb - pa;
+        }
+        case 'profit_asc': {
+          const pa = a.sellPrice ? (a.sellPrice - a.sellFees - a.buyPrice - a.buyFees) : Infinity;
+          const pb = b.sellPrice ? (b.sellPrice - b.sellFees - b.buyPrice - b.buyFees) : Infinity;
+          return pa - pb;
+        }
+        case 'roi_desc': {
+          const ca = a.buyPrice + a.buyFees;
+          const cb = b.buyPrice + b.buyFees;
+          const ra = a.sellPrice ? ((a.sellPrice - a.sellFees - ca) / ca) * 100 : -Infinity;
+          const rb = b.sellPrice ? ((b.sellPrice - b.sellFees - cb) / cb) * 100 : -Infinity;
+          return rb - ra;
+        }
+        case 'roi_asc': {
+          const ca = a.buyPrice + a.buyFees;
+          const cb = b.buyPrice + b.buyFees;
+          const ra = a.sellPrice ? ((a.sellPrice - a.sellFees - ca) / ca) * 100 : Infinity;
+          const rb = b.sellPrice ? ((b.sellPrice - b.sellFees - cb) / cb) * 100 : Infinity;
+          return ra - rb;
+        }
+        case 'title_asc': return a.title.localeCompare(b.title);
+        case 'price_desc': return b.buyPrice - a.buyPrice;
+        default: return 0;
+      }
+    });
+
+    return result;
+  }, [trades, filter, searchQuery, filterCategory, filterSource, sortBy]);
+
+  // v8.55: Derive categories + sources from trades
+  const categories = useMemo(() => {
+    const set = new Set<string>();
+    trades.forEach(t => { if (t.category) set.add(t.category); });
+    return Array.from(set).sort();
+  }, [trades]);
+
+  const sources = useMemo(() => {
+    const set = new Set<string>();
+    trades.forEach(t => { if (t.buyLocation) set.add(t.buyLocation); });
+    return Array.from(set).sort();
+  }, [trades]);
 
   return (
     <div className="space-y-4">
@@ -2550,6 +2629,53 @@ export function TradesView() {
             {f === 'all' ? 'Vsi' : f === 'held' ? 'V skladišču' : f === 'sold' ? 'Prodani' : 'Preklicani'}
           </Button>
         ))}
+      </div>
+
+      {/* v8.55: Search + Sort + Category + Source filters */}
+      <div className="flex flex-col sm:flex-row gap-2 items-stretch sm:items-center">
+        <Input
+          placeholder="🔍 Išči po naslovu, kategoriji, viru, opombah..."
+          value={searchQuery}
+          onChange={(e) => setSearchQuery(e.target.value)}
+          className="h-8 text-xs flex-1"
+        />
+        <select
+          value={sortBy}
+          onChange={(e) => setSortBy(e.target.value as any)}
+          className="h-8 text-xs bg-card border border-border rounded px-2 cursor-pointer"
+        >
+          <option value="date_desc">📅 Najnovejši</option>
+          <option value="date_asc">📅 Najstarejši</option>
+          <option value="profit_desc">💰 Profit ↓</option>
+          <option value="profit_asc">💰 Profit ↑</option>
+          <option value="roi_desc">📊 ROI ↓</option>
+          <option value="roi_asc">📊 ROI ↑</option>
+          <option value="price_desc">💵 Cena ↓</option>
+          <option value="title_asc">🔤 Naslov A-Z</option>
+        </select>
+        <select
+          value={filterCategory}
+          onChange={(e) => setFilterCategory(e.target.value)}
+          className="h-8 text-xs bg-card border border-border rounded px-2 cursor-pointer"
+        >
+          <option value="all">📦 Vse kategorije</option>
+          {categories.map(c => <option key={c} value={c}>{c}</option>)}
+        </select>
+        <select
+          value={filterSource}
+          onChange={(e) => setFilterSource(e.target.value)}
+          className="h-8 text-xs bg-card border border-border rounded px-2 cursor-pointer"
+        >
+          <option value="all">🏪 Vsi viri</option>
+          {sources.map(s => <option key={s} value={s}>{s}</option>)}
+        </select>
+      </div>
+
+      {/* v8.55: Result count */}
+      <div className="text-xs text-muted-foreground">
+        {filtered.length} {filtered.length === 1 ? 'trade' : 'trade-ov'}
+        {searchQuery && ` za "${searchQuery}"`}
+        {(filterCategory !== 'all' || filterSource !== 'all') && ' (filtrirano)'}
       </div>
 
       {/* Trades list */}
