@@ -45,6 +45,27 @@ Problem: Sistem deluje na desktop, ampak mobile UX je suboptimalen — 17 nav gu
 
 UI-only release — no new API endpoints, no Prisma schema changes, no new npm dependencies. All mobile components are `md:hidden` (desktop unaffected). Agent Browser verified: mobile (375×812) bottom nav visible z 5 buttons + Trades badge "5" (held count) + FAB 56×56px; desktop (1920×1080) both `display:none`.
 
+## [8.52.0] - 2026-08-15
+
+### Added — 💡 Daily AI Tip + ⚠️ Inventory Aging Alerts
+
+Razmišljam kot uporabnik: imam 5 held trgovin ampak sistem me NE opozori ko itemi starajo. In nimam dnevnega nasveta — "kaj naj danes naredim za maksimalen profit?".
+
+- **`src/lib/brain/daily-tip.ts`** (NEW) — `generateDailyTip()` kombinira goal progress + held inventory aging + trade history v EN actionable tip. `sendDailyTip()` pošlje na Notification Center + Telegram. Prioriteta logic: aging items (HIGH) > behind on goal (HIGH) > no trades (MEDIUM) > goal achieved (LOW). Live primer: "🔴 Likvidiraj Sony A7III camera — 50 dni v skladišču! 4 itemov čaka >30 dni. Sprostitev 1640€ kapitala."
+- **`src/lib/trades/aging-alerts.ts`** (NEW) — `checkInventoryAging()` preverja held trgovine za 30/60/90 day thresholds. Vsak trade dobi alert enkrat per threshold (tracked v Trade.notes JSON). 30d = warning (prenastavi ceno), 60d = error (likvidiraj z 15-20% popustom), 90d = critical (prodaj pod ceno). Creates Notification + Telegram.
+- **`src/app/api/cron/daily-ai-tip/route.ts`** (NEW) — daily cron @ 09:00.
+- **`src/app/api/cron/inventory-aging-check/route.ts`** (NEW) — daily cron @ 06:00.
+- **`src/app/api/ai/brain/daily-tip/route.ts`** (NEW) — GET (preview) + POST (send).
+
+### Stats
+
+- AI endpoints: 431 → 432 (+1: brain/daily-tip)
+- Total API routes: 626 → 629 (+3: daily-tip + 2 crons)
+- Cron automations: 16 → 18 (+2: daily-ai-tip + inventory-aging-check)
+- Lint: 0 errors ✨
+- Typecheck: 0 errors ✨
+- Live data: 5 held trades, 4 aged >30d (PS5 35d, Xbox 40d, Sony camera 50d, Nike Air Max 32d), 1640€ tied up
+
 ## [8.51.0] - 2026-08-15
 
 ### Added — 🛒 Quick Trade iz Listing + 🔔 Price Target Alerts
