@@ -18264,3 +18264,26 @@ Stage Summary:
 - Total API routes: 629 → 630 (+1)
 - Verzija: v8.53.0
 - Skupaj (v7.50 → v8.53): 103 verzij, 225 novih funkcij
+
+---
+Task ID: v8.54
+Agent: main
+Task: Flip Workflow Checklist UI
+
+Work Log:
+- Trade model že ima flipChecklist polje (v7.35) + API, ampak NI bilo UI
+- Ustvaril src/components/dashboard/flip-checklist.tsx (11-step visual checklist z progress bar, step icons, haptic, collapsible)
+- Integriral v trades-view.tsx (TradeRow za held trades dobi "🔄 Flip Checklist" toggle)
+- Preveril lint: 0 napak ✨
+- Preveril typecheck: 0 napak ✨ (popravil 3 TS errors: checklistMap tip + Trade interface +flipChecklist)
+- Commit + push uspešen ✅
+- Agent Browser: "🔄 Flip Checklist" prikazan na 5 held trades (PS5, Xbox, Sony...) ✅
+
+Stage Summary:
+- NEW: src/components/dashboard/flip-checklist.tsx (~195 lines — 11 steps, progress bar, haptic, collapsible)
+- MODIFIED: src/components/dashboard/trades-view.tsx (+flipChecklist import + TradeRow toggle button)
+- 11 KORAKI: Dobljeno→Pregledano→Očiščeno→Fotografirano→Opisano→Bolha→Vinted→Druga→7d→14d→30d
+- AI endpointi: 432 (nespremenjeto — UI only)
+- Total API routes: 630 (nespremenjeto)
+- Verzija: v8.54.0
+- Skupaj (v7.50 → v8.54): 104 verzij, 226 novih funkcij
