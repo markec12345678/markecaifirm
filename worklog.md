@@ -17848,3 +17848,43 @@ Stage Summary:
 - Verzija aplikacije: v8.43.0
 - Polish phase continues: v8.32-v8.43 (12 verzij, 12 novih features)
 - Skupaj doslej (v7.50 → v8.43): 93 verzij, 215 novih funkcij
+
+---
+Task ID: v8.44
+Agent: full-stack-developer + main
+Task: Implement Smart Restock Recommendations — "KAJ naj kupim naslednje?"
+
+Work Log:
+- Podagent (full-stack-developer) je ustvaril vse 3 datoteke pred prekinitvijo (max turns exceeded)
+- Main agent je po prekinitvi dokončal:
+  - Preveril endpoint: GET /api/ai/restock-smart → 200 z top 5 recommendations (RESTOCK avto 61% ROI, RESTOCK oblačila 86% ROI, RESTOCK orodje 43% ROI) + category status + inventory gaps + overstock warnings ✅
+  - Preveril lint (samo nove datoteke): 0 napak ✨
+  - Preveril typecheck: 0 napak ✨
+  - Dopolnil README (v8.44.0, 431 AI, 623 routes), CHANGELOG ([8.44.0]), AI_ENDPOINTS.md (Total: 431)
+  - Posodobil GitHub About
+- Commit: "v8.44: Smart Restock Recommendations..." (0dc4580)
+- Push na GitHub: uspešen ✅ (42e8ddc..0dc4580), PAT očiščen ✅
+- Agent Browser self-verification:
+  - Stran HTTP 200
+  - "🟢 RESTOCK" + "🔵 MAINTAIN" + "🟡 REDUCE" prikazani ✅
+  - Realni podatki: avto (61% ROI), oblačila (86% ROI), orodje (43% ROI) ✅
+  - Brez runtime napak v dev.log
+
+Stage Summary:
+- v8.44 uspešno dokončana in potisnjena na GitHub
+- NEW: src/lib/trades/restock-recommendations.ts (getRestockRecommendations — kombinira v8.40 Trade Insights + current inventory za actionable "buy next" priporočila)
+- NEW: src/app/api/ai/restock-smart/route.ts (GET, 5-min cache)
+- NEW: src/components/dashboard/restock-recommendations-card.tsx (Dashboard card z top 5 + category status + gaps + overstock)
+- MODIFIED: src/components/dashboard/dashboard-view.tsx (RestockRecommendationsCard after AnnualSummaryCard)
+- LIVE RECOMMENDATIONS iz 25 trades:
+  1. 🟢 RESTOCK: avto (0 held, 61% ROI, 100% win, buy 45-220€, source: mobile.de, confidence HIGH)
+  2. 🟢 RESTOCK: oblačila (0 held, 86% ROI, 100% win, buy 15-45€, source: Vinted, confidence HIGH)
+  3. 🟢 RESTOCK: orodje (0 held, 43% ROI, 100% win, buy 25-85€, source: Bolha, confidence HIGH)
+- AI endpointi: 430 → 431 (+1)
+- Total API routes: 622 → 623 (+1)
+- Lint: 0 napak ✨
+- Typecheck: 0 napak ✨
+- UI: 🟢 RESTOCK + 🔵 MAINTAIN + 🟡 REDUCE prikazani ✅
+- Verzija aplikacije: v8.44.0
+- Polish phase continues: v8.32-v8.44 (13 verzij, 13 novih features)
+- Skupaj doslej (v7.50 → v8.44): 94 verzij, 216 novih funkcij
