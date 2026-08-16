@@ -18574,3 +18574,50 @@ Stage Summary:
 - Verzija: v8.64.0
 - Skupaj (v7.50 → v8.64): 114 verzij, 236 novih funkcij
 - UX izboljšava: 3 kliki → 1 klik za filtriranje po tagu. Saved Views omogočajo 1-klik quick switch med pogostimi kombinacijami filtrov. Bookmarkable URLs (?view=trades&tag=hitri-flip).
+
+---
+Task ID: v8.65
+Agent: main
+Task: Sell Priority Score za Held Trades
+
+Work Log:
+- Razmišljal kot uporabnik: vsak dan odprem Skladišče → 5 held trade-ov → ne vem kateri naj hitro prodam. Trade Insights (v8.40) imajo optimal hold days ampak ne per-trade prioritizacijo.
+- src/lib/trades/sell-priority.ts (NEW): computeSellPriority(trade, context) → SellPriorityResult {score 0-100, level HIGH/MEDIUM/LOW, reasons[], recommendedAction}. Heuristic formula:
+  - base 30
+  - + 1.5/day held (max +35) — older = more urgent
+  - - recently listed <3d (-10) — just bought, don't push
+  - high ROI potential ≥30% → -max 25 (can hold longer)
+  - low margin <15% → +10 (sell now)
+  - UNDERPERFORMER tag → +20
+  - STAR tag → -15 (keep, performing well)
+  - above avg hold for category (1.5x) → +15
+  - stale category (no sales 30d) → +10
+  - Clamp 0-100. Level: HIGH ≥70, MEDIUM 40-69, LOW <40.
+- recommendedAction (slovensko): HIGH + izguba → "Znižaj ceno za 10-15% in prodaj hitro"; HIGH + 60+dni → "Pošlji na drugo platformo ali znižaj ceno"; MEDIUM → "Nadaljuj z oglaševanjem"; LOW → "Lahko zadržiš — dober ROI potencial."
+- getSellPriorityForHeldTrades(): fetch-a vse held trades + sold trades za per-category context (expectedROI, avgHoldDays, lastSoldDate). Returns SellPriorityList {highPriority, mediumPriority, lowPriority, top3}.
+- API /api/analytics/sell-priority GET (NEW): vrača SellPriorityList. runtime=nodejs, dynamic=force-dynamic, maxDuration=15.
+- TradeRow: priority badge za held trades (🔥/🟡/🟢 + score + daysHeld). Hover tooltip z razlogi + recommendedAction. Color-coded: red=HIGH, amber=MEDIUM, green=LOW.
+- trades-view: priorityMap state + loadPriority fetch (auto na mount + re-fetch ko trades spremenijo). Sort opcija '🔥 Prioriteta ↓' (sorts by score desc).
+- Held Inventory Action Panel na vrhu Skladišča ko filter=held: 'Top 3 za prodajo' card z 3 priority trades. Vsaka kartica: naslov, score badge, daysHeld + buyPrice + tags, recommendedAction (italic), 'Uredi' + 'AI Izhod' quick action gumbi. Color-coded by level. 'Sortiraj po prioriteti' button na vrhu.
+- Preveril lint: 0 napak ✨
+- Preveril typecheck: 0 napak ✨
+- API test: 5 held trades — Sony A7III camera (80 HIGH, 50d, expectedROI 25%, avgHold 25d → above avg hold +15), Xbox Series X (80 HIGH, 40d), Nike Air Max 97 (78 HIGH, 32d, high ROI potential -2). Reasons array z vsemi faktorji. recommendedAction pravilno slovensko. ✓
+- Agent Browser:
+  - Held filter klikne pravilno ✓
+  - Top 3 Action Panel prikazan ("Top 3 za prodajo" v HTML) ✓
+  - Priority badges na TradeRow: "🔥 80 50d" ✓
+  - Sort option "🔥 Prioriteta ↓" available ✓
+  - Apply priority sort: top 3 = Xbox Series X, Sony A7III camera, Nike Air Max 97 (pravilno sort po score desc) ✓
+  - 0 console errors ✓
+- Commit + push uspešen ✅
+
+Stage Summary:
+- NEW: src/lib/trades/sell-priority.ts (computeSellPriority, getSellPriorityForHeldTrades, SellPriorityResult/SellPriorityList interfaces)
+- NEW: src/app/api/analytics/sell-priority/route.ts (GET → SellPriorityList)
+- MODIFIED: src/components/dashboard/trades-view.tsx (+priorityMap state, +loadPriority fetch, +priority badge v TradeRow, +sort priority_desc, +Held Inventory Action Panel z Top 3 cards + quick actions)
+- MODIFIED: README.md (v8.64→v8.65, API routes 633→634, +v8.65 changelog entry)
+- AI endpointi: 432 (nespremenjeto — sell-priority je pod /api/analytics/)
+- Total API routes: 633 → 634 (+1: analytics/sell-priority)
+- Verzija: v8.65.0
+- Skupaj (v7.50 → v8.65): 115 verzij, 237 novih funkcij
+- LIVE: 5 held trades z scores — Sony A7III camera (80 HIGH), Xbox Series X (80 HIGH), Nike Air Max 97 (78 HIGH), PlayStation 5, Stanley ketan set. Top 3 Action Panel prikaže top 3 z Uredi + AI Izhod quick actions.
