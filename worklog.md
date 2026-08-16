@@ -18909,3 +18909,33 @@ Stage Summary:
 - Skupaj (v7.50 → v8.72): 122 verzij, 244 novih funkcij
 - LIVE: VW Golf 5 primerjava 3 listingov → Winner: VW Golf 5 2.0 TDI 2020 Novo Mesto (55/100 BUY, 13900€, AI 8/10, Risk 2/10, -6% pod oceno). Najcenejši: VW Golf 5 1.4 TSI 2018 Celje (9500€, 4400€ razlike).
 - NARAVNI NASLEDNJI KORAK po Iskalniku: "najdi 5 rezultatov" → "primerjaj" → "AI pove kupi ta".
+
+---
+Task ID: v8.72.2
+Agent: main
+Task: Winner card z Absolute Recommendation + Confidence + best-of-bad warning (polish po user feedback)
+
+Work Log:
+- Razmišljal kot uporabnikov feedback: 55/100 Buy Score je zmern — Winner ne sme pomeniti "objektivno dober nakup". Razlikovati moramo RELATIVE winner (best among selected) od ABSOLUTE recommendation (should you actually buy?).
+- CompareDialog Winner card redesigned:
+  - Absolute Recommendation badge: 🟢 STRONG BUY (≥75) / ✓ BUY (≥55) / 🟡 BUY WITH CAUTION (≥35) / ✗ AVOID — best of bad options (<35)
+  - Confidence indicator (HIGH/MEDIUM/LOW z color)
+  - Color-coded card border (emerald/amber/red glede na absolute score)
+  - Title: "🏆 Najboljša vrednost" če score ≥35, "⚠️ Najmanj slaba možnost" če <35
+  - Clarification text: "Winner = najboljši med izbranimi kandidati. Absolutno priporočilo glede na buy score." + "To ni objektivno dober nakup — premisli ali sploh kupovati." če score <55
+- Best-of-bad warning banners:
+  - Red: "⚠️ Vsi kandidati so šibki (<35) — AI ne priporoča nakupa nobenega. Razširi kriterije iskanja ali počakaj na boljše oglase."
+  - Amber: "🟡 Noben kandidat ni BUY (≥55). Winner je najboljši med zmernimi možnostmi — premisli ali nakup splača."
+- Preveril lint: 0 napak ✨
+- Preveril typecheck: 0 napak ✨
+- Agent Browser: VW Golf 5 primerjava → Winner VW Golf 2.0 TDI 2020 Novo Mesto (55/100) prikazuje "✓ BUY" badge + "Confidence: HIGH" + clarification text "Winner = najboljši med izbranimi kandidati". 0 console errors. ✓
+- Commit + push uspešen ✅
+
+Stage Summary:
+- MODIFIED: src/components/dashboard/iskalnik-view.tsx (+Absolute Recommendation badge v Winner card, +Confidence indicator, +best-of-bad warning banners, +clarification text, +color-coded card border glede na absolute score)
+- AI endpointi: 432 (nespremenjeto)
+- Total API routes: 642 (nespremenjeto — UI polish only)
+- Verzija: v8.72.2
+- Skupaj (v7.50 → v8.72.2): 122 verzij, 244 novih funkcij
+- UX izboljšava: Winner card sedaj eksplicitno razlikuje "relative winner" od "absolute recommendation". Uporabnik ve da 55/100 BUY pomeni "najboljši med izbranimi, vendar zmern" ne "objektivno dober nakup".
+- RESPEKTA user feedback: "In zdaj bi se jaz ustavil z novimi velikimi funkcijami" — v8.72.2 je polish, ne nova funkcija. Čas za zbiranje podatkov in validacijo (v8.70 Decision Accuracy čaka na buy-score prodaje).
