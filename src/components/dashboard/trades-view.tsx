@@ -101,7 +101,7 @@ export function TradesView() {
   // v8.55: Search + Sort + Category/Source filters
   const [searchQuery, setSearchQuery] = useState('');
   const debouncedSearch = useDebounce(searchQuery, 300); // v8.58: debounce search
-  const [sortBy, setSortBy] = useState<'date_desc' | 'date_asc' | 'profit_desc' | 'profit_asc' | 'roi_desc' | 'roi_asc' | 'title_asc' | 'price_desc' | 'priority_desc'>('date_desc');
+  const [sortBy, setSortBy] = useState<'date_desc' | 'date_asc' | 'profit_desc' | 'profit_asc' | 'roi_desc' | 'roi_asc' | 'title_asc' | 'price_desc' | 'priority_desc' | 'outcome_desc'>('date_desc');
   const [filterCategory, setFilterCategory] = useState<string>('all');
   const [filterSource, setFilterSource] = useState<string>('all');
   const [filterTag, setFilterTag] = useState<string>('all'); // v8.63
@@ -141,6 +141,9 @@ export function TradesView() {
   // v8.66: Smart Pricing — per-held-trade suggested sell price
   const [priceMap, setPriceMap] = useState<Record<string, { suggestedMin: number; suggestedMax: number; suggestedOptimal: number; expectedProfit: number; expectedROI: number; confidence: number; confidenceLabel: 'HIGH' | 'MEDIUM' | 'LOW'; reasoning: string[]; comparablesCount: number }>>({});
   const [priceLoading, setPriceLoading] = useState(false);
+  // v8.67: Outcome Score — per-sold-trade post-sale quality analysis
+  const [outcomeMap, setOutcomeMap] = useState<Record<string, { overallScore: number; verdict: 'PERFECT' | 'GOOD' | 'ACCEPTABLE' | 'SUBOPTIMAL' | 'LOSS'; leftOnTable: number; pricingScore: number; timingScore: number; outcomeScore: number; lessons: string[]; reasoning: string[] }>>({});
+  const [outcomeLoading, setOutcomeLoading] = useState(false);
   // v6.15: Tax Loss Harvesting
   const [taxHarvestData, setTaxHarvestData] = useState<any>(null);
   const [taxHarvestLoading, setTaxHarvestLoading] = useState(false);
@@ -266,6 +269,53 @@ export function TradesView() {
   }, []);
 
   useEffect(() => { loadPrices(); }, [loadPrices]);
+
+  // v8.67: Fetch outcome scores for sold trades (auto-refresh)
+  const loadOutcomes = useCallback(async () => {
+    setOutcomeLoading(true);
+    try {
+      const res = await fetch('/api/analytics/outcome-score');
+      if (res.ok) {
+        const data = await res.json();
+        if (data?.ok) {
+          // Fetch per-trade outcomes (batch the requests)
+          const soldIds = trades.filter(t => t.status === 'sold').map(t => t.id);
+          const map: Record<string, any> = {};
+          // The summary endpoint gives aggregates; we need per-trade.
+          // Make individual requests in parallel (max 5 at a time).
+          const chunks: string[][] = [];
+          for (let i = 0; i < soldIds.length; i += 5) {
+            chunks.push(soldIds.slice(i, i + 5));
+          }
+          for (const chunk of chunks) {
+            const results = await Promise.all(
+              chunk.map(id => fetch(`/api/analytics/outcome-score?tradeId=${id}`).then(r => r.json()).catch(() => null))
+            );
+            for (const r of results) {
+              // Single endpoint returns OutcomeResult directly (with tradeId), not wrapped in {ok: true}
+              if (r && r.tradeId && r.verdict) {
+                map[r.tradeId] = {
+                  overallScore: r.overallScore,
+                  verdict: r.verdict,
+                  leftOnTable: r.leftOnTable,
+                  pricingScore: r.pricingScore,
+                  timingScore: r.timingScore,
+                  outcomeScore: r.outcomeScore,
+                  lessons: r.lessons ?? [],
+                  reasoning: r.reasoning?.map((rr: any) => rr.label) ?? [],
+                };
+              }
+            }
+          }
+          setOutcomeMap(map);
+        }
+      }
+    } catch { /* non-critical */ }
+    finally { setOutcomeLoading(false); }
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [trades]);
+
+  useEffect(() => { loadOutcomes(); }, [loadOutcomes]);
 
   // v5.7: Bulk trade operations
   const bulkSell = async () => {
@@ -427,12 +477,18 @@ export function TradesView() {
           const pb = priorityMap[b.id]?.score ?? -1;
           return pb - pa;
         }
+        case 'outcome_desc': {
+          // v8.67: Sort sold trades by outcome score (desc)
+          const oa = outcomeMap[a.id]?.overallScore ?? -1;
+          const ob = outcomeMap[b.id]?.overallScore ?? -1;
+          return ob - oa;
+        }
         default: return 0;
       }
     });
 
     return result;
-  }, [trades, filter, debouncedSearch, filterCategory, filterSource, filterTag, sortBy, priorityMap]);
+  }, [trades, filter, debouncedSearch, filterCategory, filterSource, filterTag, sortBy, priorityMap, outcomeMap]);
 
   // v8.55: Derive categories + sources from trades
   const categories = useMemo(() => {
@@ -489,7 +545,7 @@ export function TradesView() {
     setFilterSource(f.source || 'all');
     setFilterTag(f.tag || 'all');
     setSearchQuery(f.search || '');
-    setSortBy((f.sortBy || 'date_desc') as 'date_desc' | 'date_asc' | 'profit_desc' | 'profit_asc' | 'roi_desc' | 'roi_asc' | 'title_asc' | 'price_desc' | 'priority_desc');
+    setSortBy((f.sortBy || 'date_desc') as 'date_desc' | 'date_asc' | 'profit_desc' | 'profit_asc' | 'roi_desc' | 'roi_asc' | 'title_asc' | 'price_desc' | 'priority_desc' | 'outcome_desc');
     setActiveViewName(view.name);
   }, []);
 
@@ -2970,6 +3026,7 @@ export function TradesView() {
           <option value="price_desc">💵 Cena ↓</option>
           <option value="title_asc">🔤 Naslov A-Z</option>
           <option value="priority_desc">🔥 Prioriteta ↓</option>
+          <option value="outcome_desc">🏆 Outcome ↓</option>
         </select>
         <select
           value={filterCategory}
@@ -3194,6 +3251,7 @@ export function TradesView() {
                 onTagClick={(tag) => setFilterTag(tag)} // v8.64: clickable tag chips
                 priority={priorityMap[t.id] ?? null} // v8.65: sell priority badge
                 priceHint={priceMap[t.id] ?? null} // v8.66: smart price hint
+                outcome={outcomeMap[t.id] ?? null} // v8.67: outcome scorecard badge
                 />
               </div>
             </div>
@@ -3226,7 +3284,7 @@ function StatBox({ icon, label, value, color }: { icon: React.ReactNode; label: 
   );
 }
 
-function TradeRow({ trade, onEdit, onDelete, onSync, onExit, onTagClick, priority, priceHint }: {
+function TradeRow({ trade, onEdit, onDelete, onSync, onExit, onTagClick, priority, priceHint, outcome }: {
   trade: Trade;
   onEdit: () => void;
   onDelete: () => void;
@@ -3235,6 +3293,7 @@ function TradeRow({ trade, onEdit, onDelete, onSync, onExit, onTagClick, priorit
   onTagClick?: (tag: string) => void;
   priority?: { score: number; level: 'HIGH' | 'MEDIUM' | 'LOW'; daysHeld: number; reasons: string[]; recommendedAction: string } | null;
   priceHint?: { suggestedMin: number; suggestedMax: number; suggestedOptimal: number; expectedProfit: number; expectedROI: number; confidence: number; confidenceLabel: 'HIGH' | 'MEDIUM' | 'LOW'; reasoning: string[]; comparablesCount: number } | null;
+  outcome?: { overallScore: number; verdict: 'PERFECT' | 'GOOD' | 'ACCEPTABLE' | 'SUBOPTIMAL' | 'LOSS'; leftOnTable: number; pricingScore: number; timingScore: number; outcomeScore: number; lessons: string[]; reasoning: string[] } | null;
 }) {
   const [showFlipChecklist, setShowFlipChecklist] = useLocalStorage<boolean>('trade-flip-expanded', false);
   // v8.62: Quick Sell inline form
@@ -3295,6 +3354,27 @@ function TradeRow({ trade, onEdit, onDelete, onSync, onExit, onTagClick, priorit
                 >
                   💡 {priceHint.suggestedOptimal}€
                   <span className="text-[9px] opacity-70 ml-0.5">{priceHint.confidenceLabel === 'HIGH' ? '★' : priceHint.confidenceLabel === 'MEDIUM' ? '●' : '○'}</span>
+                </span>
+              )}
+              {/* v8.67: Outcome badge — only for sold trades with outcome data */}
+              {trade.status === 'sold' && outcome && (
+                <span
+                  className={cn(
+                    'inline-flex items-center gap-0.5 rounded-md border px-1.5 py-0.5 text-[10px] font-medium',
+                    outcome.verdict === 'PERFECT'
+                      ? 'bg-emerald-500/15 text-emerald-500 border-emerald-500/40'
+                      : outcome.verdict === 'GOOD'
+                        ? 'bg-primary/10 text-primary border-primary/30'
+                        : outcome.verdict === 'ACCEPTABLE'
+                          ? 'bg-amber-500/10 text-amber-600 border-amber-500/30'
+                          : outcome.verdict === 'LOSS'
+                            ? 'bg-red-500/15 text-red-500 border-red-500/40'
+                            : 'bg-muted text-muted-foreground border-border'
+                  )}
+                  title={`🏆 Outcome: ${outcome.verdict} (${outcome.overallScore}/100)\nCena: ${outcome.pricingScore}/100 · Timing: ${outcome.timingScore}/100 · Rezultat: ${outcome.outcomeScore}/100\n${outcome.leftOnTable > 0 ? `⚠️ Pustil ${outcome.leftOnTable.toFixed(0)}€ na mizi` : outcome.leftOnTable < 0 ? `✓ +${Math.abs(outcome.leftOnTable).toFixed(0)}€ nad optimalno` : '✓ Optimalna cena'}\n\nLekcije:\n${outcome.lessons.map(l => `• ${l}`).join('\n')}`}
+                >
+                  {outcome.verdict === 'PERFECT' ? '🏆' : outcome.verdict === 'GOOD' ? '✓' : outcome.verdict === 'ACCEPTABLE' ? '○' : outcome.verdict === 'LOSS' ? '✗' : '△'} {outcome.overallScore}
+                  {outcome.leftOnTable > 0 && <span className="text-[9px] opacity-70 ml-0.5">-{outcome.leftOnTable.toFixed(0)}€</span>}
                 </span>
               )}
               {/* v8.63: Tag chips — v8.64: clickable, sets filterTag */}
