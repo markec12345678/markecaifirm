@@ -75,6 +75,22 @@ function parseTagsLocal(raw: string | null | undefined): string[] {
   return raw.split(',').map(t => t.trim().toLowerCase()).filter(t => t.length > 0);
 }
 
+/** v8.64: Saved View — a named filter combination, persisted in localStorage. */
+interface SavedViewFilters {
+  status: string;
+  category: string;
+  source: string;
+  tag: string;
+  search: string;
+  sortBy: string;
+}
+interface SavedView {
+  name: string;
+  filters: SavedViewFilters;
+  createdAt: string;
+  custom: boolean; // false = auto-generated default, true = user-saved
+}
+
 export function TradesView() {
   const [trades, setTrades] = useState<Trade[]>([]);
   const [stats, setStats] = useState<TradeStats | null>(null);
@@ -362,6 +378,117 @@ export function TradesView() {
     });
     return Array.from(set).sort();
   }, [trades]);
+
+  // v8.64: Saved Views — persisted filter combinations in localStorage
+  const [savedViews, setSavedViews] = useLocalStorage<SavedView[]>('trade-saved-views', []);
+  const [activeViewName, setActiveViewName] = useState<string | null>(null);
+  const [showSaveViewInput, setShowSaveViewInput] = useState(false);
+  const [newViewName, setNewViewName] = useState('');
+
+  // v8.64: Capture current filter state as a snapshot
+  const currentFilterSnapshot = useCallback((): SavedViewFilters => ({
+    status: filter,
+    category: filterCategory,
+    source: filterSource,
+    tag: filterTag,
+    search: searchQuery,
+    sortBy,
+  }), [filter, filterCategory, filterSource, filterTag, searchQuery, sortBy]);
+
+  // v8.64: Check if current filters differ from the active view (to mark "unsaved")
+  const isDirty = useMemo(() => {
+    if (!activeViewName) return false;
+    const v = savedViews.find(s => s.name === activeViewName);
+    if (!v) return false;
+    const c = currentFilterSnapshot();
+    return JSON.stringify(v.filters) !== JSON.stringify(c);
+  }, [activeViewName, savedViews, currentFilterSnapshot]);
+
+  const applyView = useCallback((view: SavedView) => {
+    const f = view.filters;
+    setFilter(f.status || 'all');
+    setFilterCategory(f.category || 'all');
+    setFilterSource(f.source || 'all');
+    setFilterTag(f.tag || 'all');
+    setSearchQuery(f.search || '');
+    setSortBy((f.sortBy || 'date_desc') as 'date_desc' | 'date_asc' | 'profit_desc' | 'profit_asc' | 'roi_desc' | 'roi_asc' | 'title_asc' | 'price_desc');
+    setActiveViewName(view.name);
+  }, []);
+
+  const saveCurrentAsView = useCallback(() => {
+    const name = newViewName.trim();
+    if (!name) {
+      toast.error('Ime pogleda je obvezno');
+      return;
+    }
+    const view: SavedView = {
+      name,
+      filters: currentFilterSnapshot(),
+      createdAt: new Date().toISOString(),
+      custom: true,
+    };
+    // If name exists, replace
+    const others = savedViews.filter(v => v.name !== name);
+    setSavedViews([...others, view]);
+    setActiveViewName(name);
+    setShowSaveViewInput(false);
+    setNewViewName('');
+    toast.success(`✓ Pogled "${name}" shranjen`);
+  }, [newViewName, currentFilterSnapshot, savedViews, setSavedViews]);
+
+  const deleteSavedView = useCallback((name: string) => {
+    setSavedViews(savedViews.filter(v => v.name !== name));
+    if (activeViewName === name) setActiveViewName(null);
+    toast.success(`Pogled "${name}" izbrisan`);
+  }, [savedViews, setSavedViews, activeViewName]);
+
+  // v8.64: Auto-generate default views from top tags (always available)
+  const defaultViews = useMemo<SavedView[]>(() => {
+    const views: SavedView[] = [
+      { name: 'Vsi', filters: { status: 'all', category: 'all', source: 'all', tag: 'all', search: '', sortBy: 'date_desc' }, createdAt: '', custom: false },
+      { name: 'V skladišču', filters: { status: 'held', category: 'all', source: 'all', tag: 'all', search: '', sortBy: 'date_desc' }, createdAt: '', custom: false },
+      { name: 'Prodani', filters: { status: 'sold', category: 'all', source: 'all', tag: 'all', search: '', sortBy: 'date_desc' }, createdAt: '', custom: false },
+    ];
+    // Add top 3 tags as quick views
+    const tagCount: Record<string, number> = {};
+    trades.forEach(t => {
+      const tags = t.tagsArray ?? parseTagsLocal(t.tags);
+      tags.forEach(tag => { tagCount[tag] = (tagCount[tag] || 0) + 1; });
+    });
+    Object.entries(tagCount)
+      .sort((a, b) => b[1] - a[1])
+      .slice(0, 3)
+      .forEach(([tag]) => {
+        views.push({
+          name: `#${tag}`,
+          filters: { status: 'all', category: 'all', source: 'all', tag, search: '', sortBy: 'date_desc' },
+          createdAt: '',
+          custom: false,
+        });
+      });
+    return views;
+  }, [trades]);
+
+  // v8.64: URL sync — read ?view= AND ?tag= on mount, apply filter
+  useEffect(() => {
+    if (typeof window === 'undefined') return;
+    const url = new URL(window.location.href);
+    // ?tag=hitri-flip → set tag filter (deep link from TagPerformanceCard)
+    const tagParam = url.searchParams.get('tag');
+    if (tagParam) {
+      setFilterTag(tagParam.toLowerCase());
+      setActiveViewName(`#${tagParam.toLowerCase()}`);
+    }
+    // ?view=V skladišču → apply saved view by name
+    const viewName = url.searchParams.get('view');
+    if (viewName) {
+      const view = savedViews.find(v => v.name === viewName) || defaultViews.find(v => v.name === viewName);
+      if (view) applyView(view);
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  const allViews = useMemo(() => [...defaultViews, ...savedViews], [defaultViews, savedViews]);
 
   return (
     <div className="space-y-4">
@@ -2676,6 +2803,73 @@ export function TradesView() {
         ))}
       </div>
 
+      {/* v8.64: Saved Views bar */}
+      <div className="flex items-center gap-2 flex-wrap">
+        <span className="text-[10px] uppercase text-muted-foreground shrink-0">📊 Pogledi:</span>
+        <div className="flex items-center gap-1 flex-wrap">
+          {allViews.map(v => (
+            <button
+              key={v.name}
+              onClick={() => applyView(v)}
+              className={cn(
+                'h-7 px-2.5 text-xs rounded border transition-colors flex items-center gap-1',
+                activeViewName === v.name && !isDirty
+                  ? 'bg-primary text-primary-foreground border-primary'
+                  : activeViewName === v.name && isDirty
+                    ? 'bg-amber-500/15 text-amber-600 border-amber-500/40'
+                    : 'bg-card border-border hover:bg-accent hover:border-primary/40'
+              )}
+              title={v.custom ? `Shranjeno: ${new Date(v.createdAt).toLocaleString('sl-SI')}` : 'Privzet pogled'}
+            >
+              {v.name}
+              {activeViewName === v.name && isDirty && <span className="text-[9px]">•</span>}
+              {v.custom && (
+                <span
+                  role="button"
+                  tabIndex={0}
+                  onClick={(e) => { e.stopPropagation(); deleteSavedView(v.name); }}
+                  onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') { e.stopPropagation(); deleteSavedView(v.name); } }}
+                  className="ml-0.5 text-[10px] opacity-50 hover:opacity-100 hover:text-destructive"
+                  title="Izbriši pogled"
+                >
+                  ×
+                </span>
+              )}
+            </button>
+          ))}
+          {/* Save current as new view */}
+          {!showSaveViewInput ? (
+            <button
+              onClick={() => setShowSaveViewInput(true)}
+              className="h-7 px-2.5 text-xs rounded border border-dashed border-border text-muted-foreground hover:border-primary/40 hover:text-primary transition-colors"
+              title="Shrani trenutne filtre kot pogled"
+            >
+              + Shrani pogled
+            </button>
+          ) : (
+            <div className="flex items-center gap-1">
+              <Input
+                autoFocus
+                placeholder="Ime pogleda..."
+                value={newViewName}
+                onChange={(e) => setNewViewName(e.target.value)}
+                onKeyDown={(e) => {
+                  if (e.key === 'Enter') saveCurrentAsView();
+                  if (e.key === 'Escape') { setShowSaveViewInput(false); setNewViewName(''); }
+                }}
+                className="h-7 w-32 text-xs"
+              />
+              <Button size="sm" onClick={saveCurrentAsView} className="h-7 px-2 text-xs bg-primary text-primary-foreground hover:bg-primary/90">
+                ✓
+              </Button>
+              <Button size="sm" variant="ghost" onClick={() => { setShowSaveViewInput(false); setNewViewName(''); }} className="h-7 px-2 text-xs">
+                ✕
+              </Button>
+            </div>
+          )}
+        </div>
+      </div>
+
       {/* v8.55: Search + Sort + Category + Source filters */}
       <div className="flex flex-col sm:flex-row gap-2 items-stretch sm:items-center">
         <Input
@@ -2814,7 +3008,9 @@ export function TradesView() {
                     else toast.error(data.error ?? 'Napaka');
                   } catch { toast.error('Napaka'); }
                   finally { setExitLoading(null); }
-                }} />
+                }}
+                onTagClick={(tag) => setFilterTag(tag)} // v8.64: clickable tag chips
+                />
               </div>
             </div>
           ))}
@@ -2846,7 +3042,7 @@ function StatBox({ icon, label, value, color }: { icon: React.ReactNode; label: 
   );
 }
 
-function TradeRow({ trade, onEdit, onDelete, onSync, onExit }: { trade: Trade; onEdit: () => void; onDelete: () => void; onSync?: (tradeId: string) => void; onExit?: (tradeId: string) => void }) {
+function TradeRow({ trade, onEdit, onDelete, onSync, onExit, onTagClick }: { trade: Trade; onEdit: () => void; onDelete: () => void; onSync?: (tradeId: string) => void; onExit?: (tradeId: string) => void; onTagClick?: (tag: string) => void }) {
   const [showFlipChecklist, setShowFlipChecklist] = useLocalStorage<boolean>('trade-flip-expanded', false);
   // v8.62: Quick Sell inline form
   const [showQuickSell, setShowQuickSell] = useState(false);
@@ -2881,9 +3077,20 @@ function TradeRow({ trade, onEdit, onDelete, onSync, onExit }: { trade: Trade; o
             <div className="flex items-center gap-2 mb-1 flex-wrap">
               <Badge variant="outline" className={cn('text-[10px] uppercase', statusBadge.cls)}>{statusBadge.text}</Badge>
               {trade.category && <Badge variant="outline" className="text-[10px]">{trade.category}</Badge>}
-              {/* v8.63: Tag chips */}
+              {/* v8.63: Tag chips — v8.64: clickable, sets filterTag */}
               {(trade.tagsArray ?? parseTagsLocal(trade.tags)).map(tag => (
-                <Badge key={tag} variant="secondary" className="text-[10px] font-normal text-muted-foreground">#{tag}</Badge>
+                <button
+                  key={tag}
+                  type="button"
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    onTagClick?.(tag);
+                  }}
+                  className="inline-flex items-center rounded-md border border-transparent bg-secondary text-secondary-foreground hover:bg-secondary/80 hover:border-primary/40 px-1.5 py-0.5 text-[10px] font-normal text-muted-foreground hover:text-foreground transition-colors cursor-pointer"
+                  title={`Filtriraj po #${tag}`}
+                >
+                  #{tag}
+                </button>
               ))}
               {trade.listing && (
                 <a href={trade.listing.url} target="_blank" rel="noopener noreferrer" className="text-[10px] text-primary/70 hover:text-primary flex items-center gap-0.5">

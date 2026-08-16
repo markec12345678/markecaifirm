@@ -108,14 +108,14 @@ export function TagPerformanceCard() {
           {data.bestProfitTag && (
             <div className="bg-emerald-500/10 border border-emerald-500/20 rounded-lg p-2">
               <div className="text-[10px] uppercase text-muted-foreground flex items-center gap-1"><Trophy className="w-3 h-3" /> Najprofitabilnejši</div>
-              <div className="font-bold text-sm">#{data.bestProfitTag.tag}</div>
+              <a href={`/?view=trades&tag=${encodeURIComponent(data.bestProfitTag.tag)}`} className="font-bold text-sm hover:text-emerald-600 transition-colors" title="Prikaži v Skladišču">#{data.bestProfitTag.tag}</a>
               <div className="text-[11px] text-emerald-600 font-mono">+{data.bestProfitTag.profit.toFixed(0)}€</div>
             </div>
           )}
           {data.bestROITag && (
             <div className="bg-amber-500/10 border border-amber-500/20 rounded-lg p-2">
               <div className="text-[10px] uppercase text-muted-foreground flex items-center gap-1"><Percent className="w-3 h-3" /> Najvišji ROI</div>
-              <div className="font-bold text-sm">#{data.bestROITag.tag}</div>
+              <a href={`/?view=trades&tag=${encodeURIComponent(data.bestROITag.tag)}`} className="font-bold text-sm hover:text-amber-600 transition-colors" title="Prikaži v Skladišču">#{data.bestROITag.tag}</a>
               <div className="text-[11px] text-amber-600 font-mono">+{data.bestROITag.roi.toFixed(0)}%</div>
             </div>
           )}
@@ -131,7 +131,7 @@ export function TagPerformanceCard() {
                   <span className="text-muted-foreground">Nadaljuj z nakupom: </span>
                   <div className="flex flex-wrap gap-1 mt-1">
                     {data.suggestedFocus.map(t => (
-                      <Badge key={t} className="bg-emerald-500/15 text-emerald-600 border-emerald-500/30">#{t}</Badge>
+                      <a key={t} href={`/?view=trades&tag=${encodeURIComponent(t)}`} className="hover:scale-105 transition-transform"><Badge className="bg-emerald-500/15 text-emerald-600 border-emerald-500/30">#{t}</Badge></a>
                     ))}
                   </div>
                 </div>
@@ -144,7 +144,7 @@ export function TagPerformanceCard() {
                   <span className="text-muted-foreground">Izogibaj se: </span>
                   <div className="flex flex-wrap gap-1 mt-1">
                     {data.suggestedAvoid.map(t => (
-                      <Badge key={t} className="bg-red-500/15 text-red-500 border-red-500/30">#{t}</Badge>
+                      <a key={t} href={`/?view=trades&tag=${encodeURIComponent(t)}`} className="hover:scale-105 transition-transform"><Badge className="bg-red-500/15 text-red-500 border-red-500/30">#{t}</Badge></a>
                     ))}
                   </div>
                 </div>
@@ -153,15 +153,20 @@ export function TagPerformanceCard() {
           </div>
         )}
 
-        {/* Tag table */}
+        {/* Tag table — v8.64: rows are clickable links to Skladišče with tag filter */}
         <div className="space-y-1">
           {topTags.map(t => {
             const meta = verdictMeta[t.verdict];
             return (
-              <div key={t.tag} className="flex items-center justify-between gap-2 py-1.5 border-b border-border/30 text-xs">
+              <a
+                key={t.tag}
+                href={`/?view=trades&tag=${encodeURIComponent(t.tag)}`}
+                className="flex items-center justify-between gap-2 py-1.5 border-b border-border/30 text-xs rounded px-1 -mx-1 hover:bg-accent/50 transition-colors group"
+                title={`Prikaži ${t.totalCount} trade-ov s tagom #${t.tag} v Skladišču`}
+              >
                 <div className="flex items-center gap-2 min-w-0 flex-1">
-                  <span className="font-mono text-muted-foreground">#</span>
-                  <span className="font-medium truncate">{t.tag}</span>
+                  <span className="font-mono text-muted-foreground group-hover:text-primary">#</span>
+                  <span className="font-medium truncate group-hover:text-primary">{t.tag}</span>
                   <span className="text-[10px] text-muted-foreground">({t.totalCount})</span>
                 </div>
                 <div className="flex items-center gap-2.5 text-muted-foreground shrink-0">
@@ -174,7 +179,7 @@ export function TagPerformanceCard() {
                     {meta.icon} {meta.label}
                   </Badge>
                 </div>
-              </div>
+              </a>
             );
           })}
         </div>

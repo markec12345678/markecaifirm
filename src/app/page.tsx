@@ -154,9 +154,13 @@ export default function Home() {
     if (actionParam === 'add-trade') {
       setShowQuickAddTrade(true);
     }
-    // Clean the URL so a refresh doesn't re-trigger the action.
+    // v8.64: Clean only ?view= and ?action= from URL — keep ?tag= for TradesView deep linking.
+    // ?tag= is consumed by TradesView on mount and bookmarks can use it for direct filter access.
     if (viewParam || actionParam) {
-      const cleanUrl = window.location.pathname;
+      const tagParam = params.get('tag');
+      const cleanUrl = tagParam
+        ? `${window.location.pathname}?tag=${encodeURIComponent(tagParam)}`
+        : window.location.pathname;
       window.history.replaceState({}, '', cleanUrl);
     }
   }, []);
