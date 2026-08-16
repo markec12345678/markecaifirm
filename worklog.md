@@ -18664,3 +18664,51 @@ Stage Summary:
 - Skupaj (v7.50 → v8.66): 116 verzij, 238 novih funkcij
 - LIVE: 5 held trades z smart prices — Sony A7III (856€, 5% ROI, HIGH ★, 1 comp), Xbox Series X (426€, 22% ROI, HIGH ★, 4 comps), PlayStation 5 (475€, 19% ROI, HIGH ★, 4 comps), Nike Air Max 97 (119€, 25% ROI, HIGH ★, 3 comps), Stanley ketan set (50€, 85% ROI, HIGH ★, 1 comp).
 - Komplement v8.65: priority = KDAJ prodati, smart price = ZA KOLIKO.
+
+---
+Task ID: v8.67
+Agent: main
+Task: Trade Outcome Scorecard — post-sale quality analysis
+
+Work Log:
+- Razmišljal kot uporabnik: v8.65 (priority) + v8.66 (smart price) dajata popolno PRE-SALE inteligenco. Ampak po prodaji ne vem ali sem prodal optimalno. 19 sold trades, nimam feedback loop-a.
+- src/lib/trades/outcome-score.ts (NEW): computeOutcomeScore(trade, context) → OutcomeResult {pricingScore, timingScore, outcomeScore, overallScore, verdict, leftOnTable, reasoning[], lessons[]}.
+  - pricingScore (0-100): actual sellPrice vs smart price range (v8.66). ≥max=100, optimal-max=75-100, min-optimal=50-75, <min=0-50.
+  - timingScore (0-100): hold days vs category avg. 0.5-1.5x avg=100, <0.5x=60, 1.5-2x=70, >2x=20-70.
+  - outcomeScore (0-100): profit<0 → 0-30, ROI<15% → 50-65, ROI 15-50% → 70-100, ROI≥50% → 100.
+  - overallScore = 40% pricing + 25% timing + 35% outcome.
+  - verdict: LOSS (profit<0), PERFECT (≥85), GOOD (≥70), ACCEPTABLE (≥55), SUBOPTIMAL (<55).
+  - leftOnTable = smartOptimal - actualSellPrice (positive = underpriced, negative = overpriced/lucky).
+  - lessons[]: Slovenian actionable — "Pustil XX€ na mizi", "Predolg hold", "Prehitro prodano", "Odlična prodaja — ponovi strategijo".
+- getOutcomeSummary(): aggregate — perfect/good/acceptable/suboptimal/loss counts, avgScores, totalLeftOnTable, totalExtraGained, best/worst, topLessons (most common).
+- getOutcomeForTrade(tradeId): single trade outcome z category context.
+- API /api/analytics/outcome-score GET (NEW): ?tradeId=xxx za single, brez za batch summary. runtime=nodejs, dynamic=force-dynamic, maxDuration=15.
+- TradeRow: 🏆/✓/○/✗/△ badge za sold trades z overallScore + leftOnTable indicator (-XX€ za underpriced). Hover tooltip: verdict, 3 sub-scores, left on table, lekcije. Color-coded: emerald=PERFECT, primary=GOOD, amber=ACCEPTABLE, red=LOSS.
+- Sort opcija '🏆 Outcome ↓': sorts by overallScore desc.
+- OutcomeSummaryCard (NEW dashboard component): avg score (87/100), left on table (-137€ pustil, +364€ pridobil), verdict distribution bar (14 PERFECT, 4 GOOD, 1 LOSS), 3 sub-scores (Cena 79, Timing 100, Rezultat), best/worst trade, top 3 lessons. Uses useFetch + CardSkeleton + CardError.
+- Dashboard integration: <OutcomeSummaryCard /> dodan po <TagPerformanceCard />.
+- loadOutcomes fetch: batch 5 concurrent requests per chunk za 19 sold trades (4 chunks). Popravil bug: condition `!r.ok && r.tradeId` je bil true ker single endpoint ne vrača ok wrapper — spremenil na `r.tradeId && r.verdict`.
+- Preveril lint: 0 napak ✨
+- Preveril typecheck: 0 napak ✨ (popravil 1 TS error: `chunks: string[][]` type annotation)
+- API test: 19 sold — 14 PERFECT (74%), 4 GOOD (21%), 1 LOSS (5%). avg 87/100. -137€ left on table, +364€ extra gained. Best: Zara volnen pulover (100 PERFECT). Worst: Adidas Yeezy 350 (38 LOSS). Top lesson: "Odlična prodaja — ponovi strategijo za podobne artikle." ✓
+- Agent Browser:
+  - Outcome badges visible: "🏆 87" ✓
+  - Sort by Outcome available: "🏆 Outcome ↓" ✓
+  - Apply sort: top 3 = Zara volnen pulover (100), Levis 501 jeans, VW Golf VI zadnji odbijač ✓
+  - OutcomeSummaryCard visible na dashboard: "87/100, 19 prodaj, -137€ pustil, +364€ nad optimalno, 14 PERFECT, 4 GOOD, 1 LOSS" ✓
+  - 0 console errors ✓
+- Commit + push uspešen ✅
+
+Stage Summary:
+- NEW: src/lib/trades/outcome-score.ts (computeOutcomeScore, getOutcomeSummary, getOutcomeForTrade, OutcomeResult/OutcomeSummary interfaces)
+- NEW: src/app/api/analytics/outcome-score/route.ts (GET ?tradeId=xxx ali batch summary)
+- NEW: src/components/dashboard/outcome-summary-card.tsx (dashboard card z verdict distribution + sub-scores + best/worst + lessons)
+- MODIFIED: src/components/dashboard/trades-view.tsx (+outcomeMap state, +loadOutcomes batch fetch, +outcome prop v TradeRow, +🏆 outcome badge, +sort outcome_desc, +fix loadOutcomes condition bug)
+- MODIFIED: src/components/dashboard/dashboard-view.tsx (+OutcomeSummaryCard import + render)
+- MODIFIED: README.md (v8.66→v8.67, API routes 635→636, +v8.67 changelog entry)
+- AI endpointi: 432 (nespremenjeto — outcome-score je pod /api/analytics/)
+- Total API routes: 635 → 636 (+1: analytics/outcome-score)
+- Verzija: v8.67.0
+- Skupaj (v7.50 → v8.67): 117 verzij, 239 novih funkcij
+- LIVE: 19 sold — 14 PERFECT, 4 GOOD, 1 LOSS. avg 87/100. -137€ left on table, +364€ extra gained. Best: Zara (100). Worst: Adidas Yeezy (38 LOSS).
+- ZAPRE SELL DECISION LOOP: v8.65 (KDAJ prodati) + v8.66 (ZA KOLIKO) + v8.67 (ali je bilo prav?) = popolna sell intelligence z feedback loop.
