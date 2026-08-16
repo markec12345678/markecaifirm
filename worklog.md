@@ -18334,3 +18334,29 @@ Stage Summary:
 - Total API routes: 630 (nespremenjeto)
 - Verzija: v8.56.0
 - Skupaj (v7.50 → v8.56): 106 verzij, 228 novih funkcij
+
+---
+Task ID: v8.57
+Agent: main
+Task: Global Refresh Broadcast — cache invalidation via custom events
+
+Work Log:
+- Razmišljal po najboljših praksah: ko uporabnik doda trade, mora čakati 60s da se kartice osvežijo. Best practice: cache invalidation via event bus.
+- Ustvaril src/hooks/use-global-refresh.ts (triggerGlobalRefresh + useGlobalRefreshListener)
+- Integriral v use-fetch.ts (useFetch avtomatsko posluša global refresh event)
+- Dodal triggerGlobalRefresh v quick-add-trade-modal.tsx (po save)
+- Dodal triggerGlobalRefresh v trades-view.tsx (po bulk sell, bulk categorize, bulk delete, TradeFormDialog save)
+- Preveril lint: 0 napak ✨
+- Preveril typecheck: 0 napak ✨
+- Commit + push uspešen ✅
+- Agent Browser: ProfitForecastCard še vedno deluje (725€) po integraciji ✅
+
+Stage Summary:
+- NEW: src/hooks/use-global-refresh.ts (triggerGlobalRefresh, useGlobalRefreshListener)
+- MODIFIED: src/hooks/use-fetch.ts (+global refresh listener — auto-refetch)
+- MODIFIED: src/components/dashboard/quick-add-trade-modal.tsx (+triggerGlobalRefresh after save)
+- MODIFIED: src/components/dashboard/trades-view.tsx (+triggerGlobalRefresh after 4 mutation points)
+- AI endpointi: 432 (nespremenjeto — UI only)
+- Total API routes: 630 (nespremenjeto)
+- Verzija: v8.57.0
+- Skupaj (v7.50 → v8.57): 107 verzij, 229 novih funkcij
