@@ -18830,3 +18830,47 @@ Stage Summary:
 - Skupaj (v7.50 → v8.70): 120 verzij, 242 novih funkcij
 - LIVE: 19 sold — Smart Price 84% accuracy (DOBRO), Buy Score 0 persisted (čaka na nove kupčije), Overall Grade C (55/100).
 - CAPSTONE: zapre learning loop z validacijo — "ali moji algoritmi dejansko delujejo?". Ko zbereš več buy-score podatkov, boš videl ali buy score korelira z outcome-om (STRONG = algoritem deluje, INVERTED = popravi uteži).
+
+---
+Task ID: v8.71
+Agent: main
+Task: Iskalnik — Targeted Item Search + Proxy Buying
+
+Work Log:
+- Razmišljal kot uporabnik: želim iskati "VW Golf 5, 2020, Ljubljana" in dobiti najcenejše rezultate z celim opisom + kraj. Prav tako želim "iščem za nekoga" (proxy buying — za mamo, kolega). Trenutno listings-view ima samo filter po monitorju, ne morem iskati po kriterijih.
+- Schema: BuyRequest model (NEW) — searchFor, title, keywords, category, priceMin/Max, location, yearMin/Max, condition, sortBy, notes, isActive. Indexi na [isActive], [category], [searchFor]. db:push uspešen.
+- API /api/search/items (NEW): GET z q/category/priceMin/priceMax/location/yearMin/yearMax/verdict/sortBy. Year filter parsan iz title/description (regex \b(19|20)\d{2}\b). Sort: cheapest, best_score (computeBuyScore per listing), newest, closest (location match), price_drop. Vrne results z fullDescription, buyScore, AI context, seller, monitor info.
+- API /api/buy-requests (NEW): GET list + POST create.
+- API /api/buy-requests/[id] (NEW): PUT update + DELETE.
+- IskalnikView (NEW — src/components/dashboard/iskalnik-view.tsx): forma z iskalnim nizom + "Iščem za" field (proxy buying) + 8 filtrov. Rezultati z rank badge, naslov, cena (emerald bold), AI ocena (line-through), padec cene badge, lokacija z MapPin, datum, AI score/risk, buy score badge, AI verdict badge. Expandable cel opis oglasa + AI reason + seller. Saved searches panel z load + delete. Save dialog z searchFor + notes.
+- Navigation: "Iskalnik" dodan med Oglasi in Watchlist z Search ikono v page.tsx (type View, NAV array, validViews, dynamic import, render case).
+- Seed scripts: scripts/seed-listings.ts (8 elektronika) + scripts/seed-cars.ts (7 avto: VW Golf 5 razni, BMW 320d, Audi A4 z raznolikimi lokacijami/letniki).
+- Preveril lint: 0 napak ✨
+- Preveril typecheck: 0 napak ✨
+- API test: iskanje "VW Golf 5" → 5 rezultatov sortiranih najcenejši: 9500€ Celje, 12800€ Maribor, 13900€ Novo Mesto, 14500€ Ljubljana, 19500€ Kranj. ✓
+- Agent Browser:
+  - Iskalnik view se naloži (nav item "ISKALNIK" visible) ✓
+  - Search input fill "VW Golf 5" ✓
+  - Click "Išči" button ✓
+  - "Najdenih 5 oglasov" ✓
+  - "najcenejši: 9500€" ✓
+  - Top 3: VW Golf 5 1.4 TSI 2018 Celje 9500€, VW Golf 5 1.6 TDI 2019 Maribor 12800€, VW Golf 5 2.0 TDI 2020 Novo Mesto 13900€ ✓
+  - 0 console errors ✓
+- Commit + push uspešen ✅
+
+Stage Summary:
+- NEW: prisma/schema.prisma (+BuyRequest model)
+- NEW: src/app/api/search/items/route.ts (GET — search listings z criteria + sort)
+- NEW: src/app/api/buy-requests/route.ts (GET list + POST create)
+- NEW: src/app/api/buy-requests/[id]/route.ts (PUT update + DELETE)
+- NEW: src/components/dashboard/iskalnik-view.tsx (search form + results + saved searches + save dialog)
+- NEW: scripts/seed-listings.ts (8 demo elektronika listings)
+- NEW: scripts/seed-cars.ts (7 demo car listings z letniki/lokacijami)
+- MODIFIED: src/app/page.tsx (+iskalnik v View type, NAV, validViews, dynamic import, render case)
+- MODIFIED: README.md (v8.70→v8.71, API routes 638→641, +v8.71 changelog entry)
+- AI endpointi: 432 (nespremenjeto)
+- Total API routes: 638 → 641 (+3: search/items, buy-requests, buy-requests/[id])
+- Verzija: v8.71.0
+- Skupaj (v7.50 → v8.71): 121 verzij, 243 novih funkcij
+- LIVE: 15 listings v DB (8 elektronika + 7 avto). Iskanje "VW Golf 5" → 5 rezultatov, najcenejši 9500€ Celje.
+- NOVA FUNKCIJA: "Iščem VW Golf 5, 2020, max 15000€, Ljubljana" → najdi najcenejši + cel opis + kraj + buy score. Plus "iščem za nekoga" za proxy buying.
