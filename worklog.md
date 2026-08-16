@@ -18487,3 +18487,49 @@ Stage Summary:
 - Total API routes: 631 (nespremenjeto)
 - Verzija: v8.62.0
 - Skupaj (v7.50 → v8.62): 112 verzij, 234 novih funkcij
+
+---
+Task ID: v8.63
+Agent: main
+Task: Trade Tags System + Tag Performance Analytics
+
+Work Log:
+- Razmišljal kot uporabnik: 25 trgovin, omejen na category + source, ne morem označiti "eksperiment", "premium", "restock kandidat", "hitri flip". Manjkajoč foundations za semantično kategorizacijo.
+- Schema: dodal `tags String @default("")` na Trade model (comma-separated — Prisma primitive ne podpira list). db:push uspešen.
+- API /api/trades GET: parse tags v `tagsArray: string[]` za client, `?tag=` filter (Prisma contains), CSV export z tags stolpcem, search razširjen z tags field.
+- API /api/trades POST/PUT: accept tags kot array ALI comma-string, `serializeTags()` normalizacija (lowercase + trim).
+- API /api/trades/[id] PUT: tags field update z normalizacijo.
+- API /api/analytics/tag-performance (NEW): `getTagPerformance()` — per-tag stats (totalCount, heldCount, soldCount, totalInvested, totalRevenue, totalProfit, avgProfitPerTrade, avgROI weighted, winRate, avgHoldDays, bestTrade, worstTrade, verdict STAR/SOLID/MIXED/UNDERPERFORMER/INSUFFICIENT_DATA). Plus aggregates: bestProfitTag, bestROITag, mostUsedTag, suggestedFocus (STAR+SOLID), suggestedAvoid (UNDERPERFORMER).
+- API /api/trades/tags (NEW): `getAllTags()` — distinct tag list za autocomplete.
+- src/lib/trades/tag-performance.ts (NEW): compute module z TagStats/TagPerformanceResult interfaces.
+- src/components/ui/tags-input.tsx (NEW): reusable TagsInput — badge chips z X remove, Enter/comma add, Backspace remove last, autocomplete suggestions kot clickable chips, max limit, disabled state.
+- TradeFormDialog: TagsInput integriran med Opombe in profit preview. Fetch-a /api/trades/tags za suggestions (cached). Existing tags iz editing.tagsArray pri edit mode.
+- TradeRow: #tag badge chips prikazani poleg category badge.
+- trades-view: nov `#️⃣ Vsi tagi` filter dropdown poleg category/source. filterTag state + allTags derived list (useMemo). filtered useMemo posodobljen z tag filter. CSV export vključuje tag param.
+- TagPerformanceCard (NEW): dashboard card z highlights (best profit + best ROI tag), suggestions (green "nadaljuj z nakupom" + red "izogibaj se"), tag tabela (tag/count/profit/ROI/winRate/verdict badge z icon), footer stats. Uses useFetch + CardSkeleton + CardError.
+- Dashboard integration: <TagPerformanceCard /> dodan po <MonthOverMonthCard />.
+- Seed script scripts/seed-tags.ts: assign-a sensible tags na 25 trades glede na category/title/price/status/profit/source. 25/25 tagged, 16 distinct tags.
+- Preveril lint: 0 napak ✨
+- Preveril typecheck: 0 napak ✨
+- Endpoint testi: /api/trades/tags (16 tags), /api/analytics/tag-performance (hitri-flip STAR, avto-deli STAR, bolha SOLID), /api/trades?tag=hitri-flip (8 trades), PUT tags update ✅
+- Agent Browser: Dashboard "🏷️ Performance tagov | 16 tagov" prikazan ✅. Skladišče view: tag chips (#bolha, #hitri-flip, #premium...) na trade rows ✅. Tag filter dropdown "#️⃣ Vsi tagi" ✅. Filter hitri-flip → 8 trades (Bosch, Avto radio, New Balance, Zara, Nike Jordan...) ✅. TradeFormDialog TagsInput z suggestions ✅. 0 console errors ✅.
+- Commit + push uspešen ✅
+
+Stage Summary:
+- NEW: prisma/schema.prisma (+tags field)
+- NEW: src/lib/trades/tag-performance.ts (getTagPerformance, getAllTags)
+- NEW: src/app/api/analytics/tag-performance/route.ts
+- NEW: src/app/api/trades/tags/route.ts
+- NEW: src/components/ui/tags-input.tsx (reusable TagsInput)
+- NEW: src/components/dashboard/tag-performance-card.tsx
+- NEW: scripts/seed-tags.ts (one-off tag seeder)
+- MODIFIED: src/app/api/trades/route.ts (+tag filter, +tagsArray parse, +tags in POST/PUT/CSV, +parseTags/serializeTags exports)
+- MODIFIED: src/app/api/trades/[id]/route.ts (+tags in PUT z serializeTags)
+- MODIFIED: src/components/dashboard/trades-view.tsx (+parseTagsLocal helper, +filterTag state, +allTags useMemo, +tag filter logic, +tag chips on TradeRow, +tag in CSV export, +TagsInput in TradeFormDialog, +tags in save body)
+- MODIFIED: src/components/dashboard/dashboard-view.tsx (+TagPerformanceCard import + render)
+- MODIFIED: README.md (version v8.62→v8.63, API routes 630→633, +v8.63 changelog entry)
+- AI endpointi: 432 (nespremenjeto — tag endpoints pod /api/trades/ in /api/analytics/)
+- Total API routes: 631 → 633 (+2: analytics/tag-performance, trades/tags)
+- Verzija: v8.63.0
+- Skupaj (v7.50 → v8.63): 113 verzij, 235 novih funkcij
+- LIVE tag stats: hitri-flip (10 trades, 485€, 70% ROI, 100% win → STAR), avto-deli (5, 353€, 61% ROI → STAR), avtonet (3, 242€, 57% ROI → STAR), bolha (17, 541€, 25% ROI, 91% win → SOLID), premium (9, 480€, 28% ROI → SOLID)
