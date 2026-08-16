@@ -115,6 +115,9 @@ export function ListingsView() {
   const [bulkLoading, setBulkLoading] = useState(false);
   // v5.5: AI categorize loading
   const [categorizing, setCategorizing] = useState(false);
+  // v8.69: Buy Opportunity scores map (listingId → {score, verdict})
+  const [buyScoreMap, setBuyScoreMap] = useState<Record<string, { score: number; verdict: 'STRONG_BUY' | 'BUY' | 'CONSIDER' | 'AVOID'; expectedROI: number | null; expectedProfit: number | null; discountPercent: number | null; recommendation: string }>>({});
+  const [buyScoreLoading, setBuyScoreLoading] = useState(false);
   // v5.6: AI anomaly scan
   const [scanningAnomalies, setScanningAnomalies] = useState(false);
   const [anomalies, setAnomalies] = useState<any[]>([]);
@@ -174,6 +177,39 @@ export function ListingsView() {
   useEffect(() => {
     load();
   }, [load]);
+
+  // v8.69: Fetch buy opportunity scores for visible listings (batch, auto-refresh)
+  useEffect(() => {
+    if (!data?.listings?.length) return;
+    let cancelled = false;
+    (async () => {
+      setBuyScoreLoading(true);
+      try {
+        const res = await fetch('/api/analytics/buy-opportunity?limit=50');
+        if (res.ok) {
+          const d = await res.json();
+          if (d?.ok && Array.isArray(d.top5) && !cancelled) {
+            // top5 has only 5 — need full results for all listings
+            const all = [...(d.strongBuys || []), ...(d.buys || []), ...(d.considers || []), ...(d.avoids || [])];
+            const map: Record<string, any> = {};
+            for (const r of all) {
+              map[r.listingId] = {
+                score: r.score,
+                verdict: r.verdict,
+                expectedROI: r.expectedROI,
+                expectedProfit: r.expectedProfit,
+                discountPercent: r.discountPercent,
+                recommendation: r.recommendation,
+              };
+            }
+            if (!cancelled) setBuyScoreMap(map);
+          }
+        }
+      } catch { /* non-critical */ }
+      finally { if (!cancelled) setBuyScoreLoading(false); }
+    })();
+    return () => { cancelled = true; };
+  }, [data?.listings]);
 
   // Reset offset when filters change
   useEffect(() => { setOffset(0); }, [monitorId, verdict, minScore, maxRisk, hasImage, bookmarkedOnly, contactFilter, sort]);
@@ -867,6 +903,7 @@ export function ListingsView() {
               <ListingRow
                 key={l.id}
                 listing={l}
+                buyScore={buyScoreMap[l.id] ?? null}
                 onOpenDetail={() => setDetailListingId(l.id)}
                 onToggleBookmark={() => toggleBookmark(l.id, l.isBookmarked)}
                 onToggleCompare={() => toggleCompare(l.id)}
@@ -962,7 +999,7 @@ export function ListingsView() {
   );
 }
 
-function ListingRow({ listing, onOpenDetail, onToggleBookmark, onToggleCompare, isCompareSelected, onToggleBulk, isBulkSelected, onQuickContact }: { listing: Listing; onOpenDetail: () => void; onToggleBookmark: () => void; onToggleCompare: () => void; isCompareSelected: boolean; onToggleBulk: () => void; isBulkSelected: boolean; onQuickContact: () => void; }) {
+function ListingRow({ listing, onOpenDetail, onToggleBookmark, onToggleCompare, isCompareSelected, onToggleBulk, isBulkSelected, onQuickContact, buyScore }: { listing: Listing; onOpenDetail: () => void; onToggleBookmark: () => void; onToggleCompare: () => void; isCompareSelected: boolean; onToggleBulk: () => void; isBulkSelected: boolean; onQuickContact: () => void; buyScore?: { score: number; verdict: 'STRONG_BUY' | 'BUY' | 'CONSIDER' | 'AVOID'; expectedROI: number | null; expectedProfit: number | null; discountPercent: number | null; recommendation: string } | null; }) {
   const verdictColor =
     listing.aiVerdict === 'PRILIKA' ? 'border-primary/40 text-primary' :
     listing.aiVerdict === 'SUMNJIVO' ? 'border-amber-400/40 text-amber-400' :
@@ -1040,6 +1077,24 @@ function ListingRow({ listing, onOpenDetail, onToggleBookmark, onToggleCompare, 
               )}
               {listing.aiScore != null && <span className="text-[11px] text-primary">⭐ {listing.aiScore}</span>}
               {listing.aiRisk != null && <span className="text-[11px] text-amber-400">🛡 {listing.aiRisk}</span>}
+              {/* v8.69: Buy Opportunity Score badge — data-driven "should I buy?" */}
+              {buyScore && (
+                <span
+                  className={cn(
+                    'text-[11px] font-mono font-bold px-1.5 py-0.5 rounded border',
+                    buyScore.verdict === 'STRONG_BUY'
+                      ? 'bg-emerald-500/15 text-emerald-500 border-emerald-500/40'
+                      : buyScore.verdict === 'BUY'
+                        ? 'bg-primary/10 text-primary border-primary/30'
+                        : buyScore.verdict === 'CONSIDER'
+                          ? 'bg-amber-500/10 text-amber-600 border-amber-500/30'
+                          : 'bg-red-500/10 text-red-500 border-red-500/30'
+                  )}
+                  title={`🛒 Buy Score: ${buyScore.score}/100 (${buyScore.verdict})${buyScore.expectedROI != null ? `\nPričakovan ROI: +${buyScore.expectedROI.toFixed(0)}%` : ''}${buyScore.expectedProfit != null ? `\nPričakovan dobiček: +${buyScore.expectedProfit.toFixed(0)}€` : ''}${buyScore.discountPercent != null && buyScore.discountPercent > 0 ? `\n${buyScore.discountPercent.toFixed(0)}% pod AI oceno vrednosti` : ''}\n\n${buyScore.recommendation}`}
+                >
+                  🛒 {buyScore.score}
+                </span>
+              )}
               {listing.dealScore != null && (
                 <span className={cn(
                   'text-[11px] font-mono font-bold px-1.5 py-0.5 rounded',

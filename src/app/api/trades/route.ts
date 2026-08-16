@@ -160,13 +160,24 @@ export async function POST(req: NextRequest) {
     if (body?.fromListingId) {
       const listing = await db.listing.findUnique({
         where: { id: body.fromListingId },
-        select: { id: true, title: true, url: true, imageUrl: true, price: true, priceText: true, monitor: { select: { name: true } } },
+        select: { id: true, title: true, url: true, imageUrl: true, price: true, priceText: true, monitor: { select: { name: true, tags: true } } },
       });
       if (!listing) {
         return NextResponse.json({ error: 'Listing ne obstaja' }, { status: 404 });
       }
       // Parse price from listing (use AI estimated value if available, otherwise listing price)
       const buyPrice = body.buyPrice ?? listing.price ?? 0;
+      // v8.69: Compute buy score at purchase time (persisted for post-sale outcome analysis)
+      let buyScore: number | null = null;
+      let buyVerdict: string | null = null;
+      try {
+        const { getBuyOpportunityForListing } = await import('@/lib/trades/buy-opportunity');
+        const opp = await getBuyOpportunityForListing(listing.id);
+        if (opp) {
+          buyScore = opp.score;
+          buyVerdict = opp.verdict;
+        }
+      } catch { /* non-critical — buy proceeds without score */ }
       const trade = await db.trade.create({
         data: {
           listingId: listing.id,
@@ -180,6 +191,10 @@ export async function POST(req: NextRequest) {
           buyFees: Number(body.buyFees ?? 0),
           notes: body.notes ?? '',
           tags: serializeTags(body.tags),
+          // v8.69: persist buy intelligence context
+          buyScore,
+          buyVerdict,
+          buyScoreAt: buyScore != null ? new Date() : null,
         },
       });
       return NextResponse.json(trade, { status: 201 });

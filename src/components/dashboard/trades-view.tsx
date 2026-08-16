@@ -46,6 +46,10 @@ interface Trade {
   flipChecklist?: string;
   tags?: string;
   tagsArray?: string[];
+  // v8.69: persisted buy intelligence context (from v8.68 buy score)
+  buyScore?: number | null;
+  buyVerdict?: string | null;
+  buyScoreAt?: string | null;
   createdAt: string;
   listing?: { id: string; title: string; url: string; imageUrl: string | null; monitor?: { name: string } } | null;
 }
@@ -3375,6 +3379,24 @@ function TradeRow({ trade, onEdit, onDelete, onSync, onExit, onTagClick, priorit
                 >
                   {outcome.verdict === 'PERFECT' ? '🏆' : outcome.verdict === 'GOOD' ? '✓' : outcome.verdict === 'ACCEPTABLE' ? '○' : outcome.verdict === 'LOSS' ? '✗' : '△'} {outcome.overallScore}
                   {outcome.leftOnTable > 0 && <span className="text-[9px] opacity-70 ml-0.5">-{outcome.leftOnTable.toFixed(0)}€</span>}
+                </span>
+              )}
+              {/* v8.69: Original Buy Score badge — persisted at purchase time (shows how good the buy decision was) */}
+              {trade.buyScore != null && (
+                <span
+                  className={cn(
+                    'inline-flex items-center gap-0.5 rounded-md border px-1.5 py-0.5 text-[10px] font-medium',
+                    trade.buyVerdict === 'STRONG_BUY'
+                      ? 'bg-emerald-500/10 text-emerald-600 border-emerald-500/30'
+                      : trade.buyVerdict === 'BUY'
+                        ? 'bg-primary/5 text-primary border-primary/20'
+                        : trade.buyVerdict === 'CONSIDER'
+                          ? 'bg-amber-500/5 text-amber-600 border-amber-500/20'
+                          : 'bg-muted text-muted-foreground border-border'
+                  )}
+                  title={`🛒 Buy Score ob nakupu: ${trade.buyScore}/100${trade.buyVerdict ? ` (${trade.buyVerdict})` : ''}${trade.buyScoreAt ? `\nIzračunano: ${new Date(trade.buyScoreAt).toLocaleDateString('sl-SI')}` : ''}\n\nKontekst za outcome (v8.67): ${outcome ? `outcome ${outcome.overallScore}/100 — ${outcome.verdict}` : 'še ni prodano'}`}
+                >
+                  🛒 {trade.buyScore}
                 </span>
               )}
               {/* v8.63: Tag chips — v8.64: clickable, sets filterTag */}

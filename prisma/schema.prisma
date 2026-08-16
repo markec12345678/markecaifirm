@@ -225,6 +225,11 @@ model Trade {
   // v8.63: User-defined tags (comma-separated, e.g. "flip,premium,restock")
   // Enables flexible semantic categorization beyond fixed category/source
   tags        String   @default("")
+  // v8.69: Buy Opportunity Score context (persisted from listing at buy time)
+  // Enables post-sale outcome analysis (v8.67) with original buy intelligence
+  buyScore       Int?      // 0-100 — buy opportunity score at time of purchase
+  buyVerdict     String?   // STRONG_BUY | BUY | CONSIDER | AVOID
+  buyScoreAt     DateTime? // when the buy score was computed (for staleness check)
   // Metadata
   createdAt   DateTime @default(now())
   updatedAt   DateTime @updatedAt
