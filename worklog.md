@@ -18410,3 +18410,26 @@ Stage Summary:
 - Total API routes: 630 (nespremenjeto)
 - Verzija: v8.59.0
 - Skupaj (v7.50 → v8.59): 109 verzij, 231 novih funkcij
+
+---
+Task ID: v8.60
+Agent: main
+Task: Filtered CSV Export (search + filter aware)
+
+Work Log:
+- Razmišljal kot uporabnik: ko filtriram "sold + elektronika + Bolha" in kliknem CSV, dobim VSE 25 namesto filtriranih 5.
+- Posodobil /api/trades GET: dodani ?category=, ?source=, ?search= parametri z Prisma contains/OR.
+- Posodobil trades-view CSV button: gradi URL z current filter state, label prikazuje count: "CSV (5)".
+- Preveril lint: 0 napak ✨
+- Preveril typecheck: 0 napak ✨
+- Curl testi: CSV all (25), CSV filtered sold+elektronika (5), CSV search iPhone (1), CSV source Bolha (17) ✅
+- Agent Browser: "CSV (25)" prikazan na Skladišče view ✅
+- Commit + push uspešen ✅
+
+Stage Summary:
+- MODIFIED: src/app/api/trades/route.ts (+category, +source, +search query params)
+- MODIFIED: src/components/dashboard/trades-view.tsx (CSV button filter-aware + count label)
+- AI endpointi: 432 (nespremenjeto)
+- Total API routes: 630 (nespremenjeto)
+- Verzija: v8.60.0
+- Skupaj (v7.50 → v8.60): 110 verzij, 232 novih funkcij
