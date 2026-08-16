@@ -18788,3 +18788,45 @@ Stage Summary:
 - Skupaj (v7.50 → v8.69): 119 verzij, 241 novih funkcij
 - LIVE: 8 listings z buy score badge-i v Oglasi view. TradeRow prikazuje original buy score za trades kupljene preko fromListingId mode.
 - KOMPLETIRA BUY/SELL CYCLE z UČENJEM: v8.68 (KUPITI score) + v8.69 (persist + prikaz v ListingCard + TradeRow) + v8.67 (outcome comparison) = feedback loop "sem dobro ocenil nakup?".
+
+---
+Task ID: v8.70
+Agent: main
+Task: Decision Accuracy Analytics — meta-analysis that validates the intelligence suite
+
+Work Log:
+- Razmišljal kot uporabnik: v8.65-69 sem zgradil celotno intelligence suite. Ampak ne vem ali MOJI ALGORITMI DELAJOJO! Ali visok buy score dejansko korelira z visokim outcome-om? Ali smart price predlogi so blizu dejanskih prodaj? Brez te meta-analize ne vem ali mi algoritmi pomagajo ali me zavajajo.
+- src/lib/trades/decision-accuracy.ts (NEW): getDecisionAccuracy() → DecisionAccuracyResult.
+  - Buy Score Accuracy: Pearson correlation med buyScore in outcomeScore. Accuracy % = delež tradov kjer buy score ≥50 napoveduje outcome ≥50. 4 bucket-i (0-25/26-50/51-75/76-100) z avgOutcome/profit/winRate + verdict (EXCELLENT/GOOD/POOR/INVERTED). highScoreAvgOutcome vs lowScoreAvgOutcome.
+  - Smart Price Accuracy: % within [suggestedMin, suggestedMax], % nad max (overpriced/lucky), % pod min (underpriced), avg deviation %.
+  - Overall Intelligence Health: score 0-100 z grade A-F + insights. Formula: base 50 + buy score accuracy bonus + correlation bonus + smart price accuracy bonus.
+- pearsonCorrelation(x, y) helper: pure math, returns -1 to 1.
+- API /api/analytics/decision-accuracy GET (NEW): vrača DecisionAccuracyResult. runtime=nodejs, dynamic=force-dynamic, maxDuration=15.
+- DecisionAccuracyCard (NEW dashboard component): Intelligence Health grade badge (A-F z color-coding emerald/primary/amber/orange/red), Buy Score Accuracy (correlation, accuracy %, buckets mini-bar vizualizacija z color-coded verdict-i), Smart Price Accuracy (3-column: v obsegu/nad max/pod min), insights list z warning/good icons. Uses useFetch + CardSkeleton + CardError.
+- Dashboard integration: <DecisionAccuracyCard /> dodan po <BuyOpportunitySummaryCard />.
+- Preveril lint: 0 napak ✨
+- Preveril typecheck: 0 napak ✨
+- API test: 19 sold trades — Smart Price 84% within range, 11% avg deviation (DOBRO kalibriran ✓). Buy Score 0 prodaj z persisted score (v8.69 shranjuje samo za nove). Overall Grade C (55/100) — zmerna kalibracija. Top insight: "Smart price predlogi so v 84% primerov znotraj obsega — dobro kalibriran." ✓
+- Agent Browser:
+  - DecisionAccuracyCard visible na dashboard ✓
+  - "Grade C 55/100 — Zmerna kalibracija" ✓
+  - "0 prodaj z buy score · 19 za smart price" ✓
+  - "BUY SCORE ACCURACY 0% Korelacija: 0 (NONE)" — pravilno, premalo podatkov ✓
+  - "SMART PRICE ACCURACY 84% V obsegu 84% Nad max 11% Pod min 5%" ✓
+  - "✓ Smart price je natančen (84% v obsegu, povprečno odstopanje 11%)" ✓
+  - "VPOGLEDI: → Zbiraj več podatkov..." ✓
+  - 0 console errors ✓
+- Commit + push uspešen ✅
+
+Stage Summary:
+- NEW: src/lib/trades/decision-accuracy.ts (getDecisionAccuracy, pearsonCorrelation, DecisionAccuracyResult/BuyScoreBucket interfaces)
+- NEW: src/app/api/analytics/decision-accuracy/route.ts (GET → DecisionAccuracyResult)
+- NEW: src/components/dashboard/decision-accuracy-card.tsx (grade badge + buy score accuracy + smart price accuracy + insights)
+- MODIFIED: src/components/dashboard/dashboard-view.tsx (+DecisionAccuracyCard import + render)
+- MODIFIED: README.md (v8.69→v8.70, API routes 637→638, +v8.70 changelog entry)
+- AI endpointi: 432 (nespremenjeto — decision-accuracy je pod /api/analytics/)
+- Total API routes: 637 → 638 (+1: analytics/decision-accuracy)
+- Verzija: v8.70.0
+- Skupaj (v7.50 → v8.70): 120 verzij, 242 novih funkcij
+- LIVE: 19 sold — Smart Price 84% accuracy (DOBRO), Buy Score 0 persisted (čaka na nove kupčije), Overall Grade C (55/100).
+- CAPSTONE: zapre learning loop z validacijo — "ali moji algoritmi dejansko delujejo?". Ko zbereš več buy-score podatkov, boš videl ali buy score korelira z outcome-om (STRONG = algoritem deluje, INVERTED = popravi uteži).
