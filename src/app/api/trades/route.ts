@@ -6,9 +6,10 @@ export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
 
 /**
- * GET /api/trades?status=held|sold|cancelled&format=csv&category=elektronika&source=Bolha&search=iPhone
- * Returns trades, optionally filtered by status/category/source/search, optionally as CSV.
+ * GET /api/trades?status=held|sold|cancelled&format=csv&category=elektronika&source=Bolha&search=iPhone&tag=flip
+ * Returns trades, optionally filtered by status/category/source/search/tag, optionally as CSV.
  * v8.60: Added category, source, search query params for filtered CSV export.
+ * v8.63: Added tag filter + tags parsed to array in response.
  */
 export async function GET(req: NextRequest) {
   try {
@@ -18,6 +19,7 @@ export async function GET(req: NextRequest) {
     const category = url.searchParams.get('category') ?? undefined;
     const source = url.searchParams.get('source') ?? undefined;
     const search = url.searchParams.get('search') ?? undefined;
+    const tag = url.searchParams.get('tag') ?? undefined;
     const where: any = {};
     if (status && ['held', 'sold', 'cancelled'].includes(status)) {
       where.status = status;
@@ -30,13 +32,18 @@ export async function GET(req: NextRequest) {
     if (source) {
       where.buyLocation = { contains: source };
     }
-    // v8.60: Search filter (title OR notes)
+    // v8.63: Tag filter (contains match on comma-separated tags string)
+    if (tag) {
+      where.tags = { contains: tag };
+    }
+    // v8.60: Search filter (title OR notes OR tags)
     if (search) {
       where.OR = [
         { title: { contains: search } },
         { notes: { contains: search } },
         { category: { contains: search } },
         { buyLocation: { contains: search } },
+        { tags: { contains: search } },
       ];
     }
     const trades = await db.trade.findMany({
@@ -55,7 +62,12 @@ export async function GET(req: NextRequest) {
       });
     }
 
-    return NextResponse.json(trades);
+    // v8.63: Parse tags string to array for convenience on the client
+    const withTagsArray = trades.map(t => ({
+      ...t,
+      tagsArray: parseTags(t.tags),
+    }));
+    return NextResponse.json(withTagsArray);
 
   } catch (err) {
     logger.error("/api/trades", "GET handler failed", err);
@@ -68,7 +80,7 @@ function tradesToCsv(trades: any[]): string {
     'buyDate', 'sellDate', 'status', 'category', 'title',
     'buyPrice', 'buyFees', 'buyLocation',
     'sellPrice', 'sellFees', 'sellLocation',
-    'profit', 'roiPercent', 'notes', 'url',
+    'profit', 'roiPercent', 'notes', 'url', 'tags',
     // v3.9: Davčne kategorije
     'davcnaKategorija', 'davcnaOznaka', 'brutoPrihodek', 'stroski', 'davcnaOsnova',
   ];
@@ -99,6 +111,7 @@ function tradesToCsv(trades: any[]): string {
       roi != null ? roi.toFixed(2) : '',
       csvEscape(t.notes ?? ''),
       csvEscape(t.url ?? ''),
+      csvEscape(t.tags ?? ''),
       // v3.9
       davcnaKategorija,
       davcnaOznaka,
@@ -116,6 +129,22 @@ function csvEscape(s: string): string {
     return `"${s.replace(/"/g, '""')}"`;
   }
   return s;
+}
+
+/** v8.63: Parse comma-separated tags string into a clean array. */
+export function parseTags(raw: string | null | undefined): string[] {
+  if (!raw) return [];
+  return raw
+    .split(',')
+    .map(t => t.trim().toLowerCase())
+    .filter(t => t.length > 0);
+}
+
+/** v8.63: Normalize an array of tags into a storage-ready comma-separated string. */
+export function serializeTags(tags: string[] | string | null | undefined): string {
+  if (!tags) return '';
+  if (typeof tags === 'string') return tags;
+  return tags.map(t => t.trim().toLowerCase()).filter(t => t.length > 0).join(',');
 }
 
 /**
@@ -150,6 +179,7 @@ export async function POST(req: NextRequest) {
           buyLocation: body.buyLocation ?? listing.monitor?.name ?? 'Bolha',
           buyFees: Number(body.buyFees ?? 0),
           notes: body.notes ?? '',
+          tags: serializeTags(body.tags),
         },
       });
       return NextResponse.json(trade, { status: 201 });
@@ -170,6 +200,7 @@ export async function POST(req: NextRequest) {
         buyLocation: String(body.buyLocation ?? ''),
         buyFees: Number(body.buyFees ?? 0),
         notes: String(body.notes ?? ''),
+        tags: serializeTags(body.tags),
       },
     });
     return NextResponse.json(trade, { status: 201 });

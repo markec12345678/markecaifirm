@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { db } from '@/lib/db';
 import { logger } from '@/lib/logger';
+import { serializeTags } from '../route';
 
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
@@ -40,6 +41,10 @@ export async function PUT(req: NextRequest, { params }: { params: Promise<{ id: 
     if (typeof body.sellFees === 'number') data.sellFees = body.sellFees;
     if (typeof body.status === 'string') data.status = body.status;
     if (typeof body.notes === 'string') data.notes = body.notes;
+    // v8.63: tags — accept array or comma-string, normalize
+    if (Array.isArray(body.tags) || typeof body.tags === 'string') {
+      data.tags = serializeTags(body.tags);
+    }
 
     // Auto-set status to "sold" when sellPrice is set
     if (typeof body.sellPrice === 'number' && body.sellPrice > 0 && !body.sellDate) {

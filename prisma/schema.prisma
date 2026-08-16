@@ -222,6 +222,9 @@ model Trade {
   // v7.35: Flip Workflow checklist — JSON array of {step, completedAt}
   // Steps: received, cleaned, photographed, described, listed_bolha, listed_vinted, listed_other, price_review_7d, price_drop_14d, price_drop_30d
   flipChecklist String @default("[]")
+  // v8.63: User-defined tags (comma-separated, e.g. "flip,premium,restock")
+  // Enables flexible semantic categorization beyond fixed category/source
+  tags        String   @default("")
   // Metadata
   createdAt   DateTime @default(now())
   updatedAt   DateTime @updatedAt

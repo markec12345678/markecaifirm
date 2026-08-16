@@ -34,6 +34,7 @@ import { AnnualSummaryCard } from '@/components/dashboard/annual-summary-card';
 import { RestockRecommendationsCard } from '@/components/dashboard/restock-recommendations-card';
 import { ProfitForecastCard } from '@/components/dashboard/profit-forecast-card';
 import { MonthOverMonthCard } from '@/components/dashboard/month-over-month-card';
+import { TagPerformanceCard } from '@/components/dashboard/tag-performance-card';
 
 // v5.6: Dashboard widget IDs
 const WIDGET_IDS = ['todaySummary', 'quickStats', 'activityFeed', 'aiInsights', 'skladisceWidget'] as const;
@@ -600,6 +601,7 @@ export function DashboardView({ onNavigate }: ViewProps) {
       <RestockRecommendationsCard />
       <ProfitForecastCard />
       <MonthOverMonthCard />
+      <TagPerformanceCard />
 
       {/* v4.5: Skladišče dashboard widget */}
       <WidgetWrapper id="skladisceWidget" order={widgetOrder} customizeMode={customizeMode} onMove={moveWidget}>

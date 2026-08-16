@@ -15,6 +15,7 @@ import {
 } from '@/components/ui/select';
 import { RefreshCw, Plus, Pencil, Trash2, TrendingUp, TrendingDown, Wallet, Target, ExternalLink, ShoppingCart, Tag, Download, Sparkles, Check, Copy, AlertTriangle, Boxes, Flame, FileText, Receipt, Network, Clock, Type, Users, Globe, LineChart as LineChartIcon, Activity, Upload, ChevronDown, ChevronUp, DollarSign } from 'lucide-react';
 import { FlipChecklist } from '@/components/dashboard/flip-checklist';
+import { TagsInput } from '@/components/ui/tags-input';
 import { toast } from 'sonner';
 import { triggerGlobalRefresh } from '@/hooks/use-global-refresh';
 import { useDebounce } from '@/hooks/use-debounce';
@@ -43,6 +44,8 @@ interface Trade {
   status: string;
   notes: string;
   flipChecklist?: string;
+  tags?: string;
+  tagsArray?: string[];
   createdAt: string;
   listing?: { id: string; title: string; url: string; imageUrl: string | null; monitor?: { name: string } } | null;
 }
@@ -66,6 +69,12 @@ interface TradeStats {
 
 const CATEGORIES = ['elektronika', 'avto', 'nepremičnina', 'pohištvo', 'oblačila', 'orodje', 'kolektorstvo', 'drugo'];
 
+/** v8.63: Parse comma-separated tags string into a clean array (client-side mirror of server parseTags). */
+function parseTagsLocal(raw: string | null | undefined): string[] {
+  if (!raw) return [];
+  return raw.split(',').map(t => t.trim().toLowerCase()).filter(t => t.length > 0);
+}
+
 export function TradesView() {
   const [trades, setTrades] = useState<Trade[]>([]);
   const [stats, setStats] = useState<TradeStats | null>(null);
@@ -79,6 +88,7 @@ export function TradesView() {
   const [sortBy, setSortBy] = useState<'date_desc' | 'date_asc' | 'profit_desc' | 'profit_asc' | 'roi_desc' | 'roi_asc' | 'title_asc' | 'price_desc'>('date_desc');
   const [filterCategory, setFilterCategory] = useState<string>('all');
   const [filterSource, setFilterSource] = useState<string>('all');
+  const [filterTag, setFilterTag] = useState<string>('all'); // v8.63
   // v5.4: Portfolio AI
   const [portfolioAI, setPortfolioAI] = useState<any>(null);
   const [portfolioAILoading, setPortfolioAILoading] = useState(false);
@@ -284,6 +294,14 @@ export function TradesView() {
       result = result.filter(t => t.buyLocation === filterSource);
     }
 
+    // v8.63: Tag filter
+    if (filterTag !== 'all') {
+      result = result.filter(t => {
+        const tags = t.tagsArray ?? parseTagsLocal(t.tags);
+        return tags.includes(filterTag);
+      });
+    }
+
     // Sort
     result = [...result].sort((a, b) => {
       switch (sortBy) {
@@ -320,7 +338,7 @@ export function TradesView() {
     });
 
     return result;
-  }, [trades, filter, debouncedSearch, filterCategory, filterSource, sortBy]);
+  }, [trades, filter, debouncedSearch, filterCategory, filterSource, filterTag, sortBy]);
 
   // v8.55: Derive categories + sources from trades
   const categories = useMemo(() => {
@@ -332,6 +350,16 @@ export function TradesView() {
   const sources = useMemo(() => {
     const set = new Set<string>();
     trades.forEach(t => { if (t.buyLocation) set.add(t.buyLocation); });
+    return Array.from(set).sort();
+  }, [trades]);
+
+  // v8.63: Derive all tags from trades (for filter dropdown)
+  const allTags = useMemo(() => {
+    const set = new Set<string>();
+    trades.forEach(t => {
+      const tags = t.tagsArray ?? parseTagsLocal(t.tags);
+      tags.forEach(tag => set.add(tag));
+    });
     return Array.from(set).sort();
   }, [trades]);
 
@@ -733,6 +761,7 @@ export function TradesView() {
               if (filter !== 'all') params.set('status', filter);
               if (filterCategory !== 'all') params.set('category', filterCategory);
               if (filterSource !== 'all') params.set('source', filterSource);
+              if (filterTag !== 'all') params.set('tag', filterTag); // v8.63
               if (debouncedSearch.trim()) params.set('search', debouncedSearch.trim());
               window.open(`/api/trades?${params.toString()}`, '_blank');
             }}
@@ -2685,13 +2714,24 @@ export function TradesView() {
           <option value="all">🏪 Vsi viri</option>
           {sources.map(s => <option key={s} value={s}>{s}</option>)}
         </select>
+        {/* v8.63: Tag filter */}
+        {allTags.length > 0 && (
+          <select
+            value={filterTag}
+            onChange={(e) => setFilterTag(e.target.value)}
+            className="h-8 text-xs bg-card border border-border rounded px-2 cursor-pointer"
+          >
+            <option value="all">#️⃣ Vsi tagi</option>
+            {allTags.map(t => <option key={t} value={t}>#{t}</option>)}
+          </select>
+        )}
       </div>
 
       {/* v8.55: Result count */}
       <div className="text-xs text-muted-foreground">
         {filtered.length} {filtered.length === 1 ? 'trade' : 'trade-ov'}
         {searchQuery && ` za "${searchQuery}"`}
-        {(filterCategory !== 'all' || filterSource !== 'all') && ' (filtrirano)'}
+        {(filterCategory !== 'all' || filterSource !== 'all' || filterTag !== 'all') && ' (filtrirano)'}
       </div>
 
       {/* Trades list */}
@@ -2841,6 +2881,10 @@ function TradeRow({ trade, onEdit, onDelete, onSync, onExit }: { trade: Trade; o
             <div className="flex items-center gap-2 mb-1 flex-wrap">
               <Badge variant="outline" className={cn('text-[10px] uppercase', statusBadge.cls)}>{statusBadge.text}</Badge>
               {trade.category && <Badge variant="outline" className="text-[10px]">{trade.category}</Badge>}
+              {/* v8.63: Tag chips */}
+              {(trade.tagsArray ?? parseTagsLocal(trade.tags)).map(tag => (
+                <Badge key={tag} variant="secondary" className="text-[10px] font-normal text-muted-foreground">#{tag}</Badge>
+              ))}
               {trade.listing && (
                 <a href={trade.listing.url} target="_blank" rel="noopener noreferrer" className="text-[10px] text-primary/70 hover:text-primary flex items-center gap-0.5">
                   <ExternalLink className="w-3 h-3" /> izvirni oglas
@@ -3083,7 +3127,17 @@ function TradeFormDialog({ open, onOpenChange, editing, onSaved }: { open: boole
   const [sellFees, setSellFees] = useState('');
   const [status, setStatus] = useState('held');
   const [notes, setNotes] = useState('');
+  const [tags, setTags] = useState<string[]>([]); // v8.63
+  const [tagSuggestions, setTagSuggestions] = useState<string[]>([]); // v8.63
   const [saving, setSaving] = useState(false);
+
+  // v8.63: Fetch existing tags for autocomplete suggestions (cached for the session)
+  useEffect(() => {
+    if (tagSuggestions.length > 0) return;
+    fetch('/api/trades/tags').then(r => r.json()).then(d => {
+      if (d?.ok && Array.isArray(d.tags)) setTagSuggestions(d.tags);
+    }).catch(() => {});
+  }, [tagSuggestions.length]);
 
   useEffect(() => {
     if (editing) {
@@ -3099,12 +3153,15 @@ function TradeFormDialog({ open, onOpenChange, editing, onSaved }: { open: boole
       setSellFees(String(editing.sellFees || ''));
       setStatus(editing.status);
       setNotes(editing.notes);
+      // v8.63: parse existing tags
+      setTags(editing.tagsArray ?? parseTagsLocal(editing.tags));
     } else {
       setTitle(''); setCategory('elektronika'); setBuyPrice('');
       setBuyDate(new Date().toISOString().slice(0, 10));
       setBuyLocation('Bolha'); setBuyFees('');
       setSellPrice(''); setSellDate(''); setSellLocation(''); setSellFees('');
       setStatus('held'); setNotes('');
+      setTags([]);
     }
   }, [editing, open]);
 
@@ -3128,6 +3185,7 @@ function TradeFormDialog({ open, onOpenChange, editing, onSaved }: { open: boole
         sellFees: sellFees ? parseFloat(sellFees) : 0,
         status,
         notes: notes.trim(),
+        tags, // v8.63
       };
       const res = await fetch(
         editing ? `/api/trades/${editing.id}` : '/api/trades',
@@ -3223,6 +3281,18 @@ function TradeFormDialog({ open, onOpenChange, editing, onSaved }: { open: boole
           <div>
             <Label className="text-xs uppercase">Opombe</Label>
             <Textarea value={notes} onChange={e => setNotes(e.target.value)} placeholder="Stanje, dodatna oprema, kontakt prodajalca..." className="mt-1 text-xs min-h-[60px]" />
+          </div>
+          {/* v8.63: Tags */}
+          <div>
+            <Label className="text-xs uppercase flex items-center gap-1.5"><Tag className="h-3 w-3" /> Tagi</Label>
+            <TagsInput
+              value={tags}
+              onChange={setTags}
+              suggestions={tagSuggestions}
+              placeholder="flip, premium, restock, eksperiment…"
+              className="mt-1"
+            />
+            <p className="text-xs text-muted-foreground mt-1">Oznake za fleksibilno kategorizacijo (uporabljajo se za filtriranje in analitiko).</p>
           </div>
           {buyPrice && sellPrice && (
             <div className="bg-primary/5 border border-primary/30 rounded p-3 text-sm">
