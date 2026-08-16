@@ -726,11 +726,19 @@ export function TradesView() {
           <Button
             size="sm"
             variant="outline"
-            onClick={() => window.open(`/api/trades?format=csv`, '_blank')}
+            onClick={() => {
+              // v8.60: Export FILTERED trades as CSV — includes current search/sort/filter
+              const params = new URLSearchParams({ format: 'csv' });
+              if (filter !== 'all') params.set('status', filter);
+              if (filterCategory !== 'all') params.set('category', filterCategory);
+              if (filterSource !== 'all') params.set('source', filterSource);
+              if (debouncedSearch.trim()) params.set('search', debouncedSearch.trim());
+              window.open(`/api/trades?${params.toString()}`, '_blank');
+            }}
             className="gap-2"
-            title="Izvozi v CSV za Excel/računovodstvo"
+            title="Izvozi filtrirane trade-e v CSV (uposteva search/filter/sort)"
           >
-            <Download className="w-3.5 h-3.5" /> CSV
+            <Download className="w-3.5 h-3.5" /> CSV ({filtered.length})
           </Button>
           {/* v8.36: CSV Import button — opens import dialog */}
           <Button

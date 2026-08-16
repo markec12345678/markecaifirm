@@ -45,6 +45,28 @@ Problem: Sistem deluje na desktop, ampak mobile UX je suboptimalen — 17 nav gu
 
 UI-only release — no new API endpoints, no Prisma schema changes, no new npm dependencies. All mobile components are `md:hidden` (desktop unaffected). Agent Browser verified: mobile (375×812) bottom nav visible z 5 buttons + Trades badge "5" (held count) + FAB 56×56px; desktop (1920×1080) both `display:none`.
 
+## [8.60.0] - 2026-08-16
+
+### Added — 📥 Filtered CSV Export (search + filter aware)
+
+Problem: CSV export button je izvozi VSE trade-e. Ko uporabnik filtrira ("sold + elektronika + Bolha") in klikne CSV, dobi vse 25 namesto filtriranih 5.
+
+- **`src/app/api/trades/route.ts`** (MODIFIED) — GET sedaj sprejema `?category=`, `?source=`, `?search=` parametre. Prisma where clause z contains/OR za search. CSV export upošteva vse filtre.
+- **`src/components/dashboard/trades-view.tsx`** (MODIFIED) — CSV button sedaj gradi URL z current filter state: `format=csv&status=sold&category=elektronika&source=Bolha&search=iPhone`. Button label prikazuje count: "CSV (5)".
+
+### Live primer
+```
+Filter: sold + elektronika + Bolha
+Search: iPhone
+→ CSV button: "CSV (1)"
+→ Export: 1 trade (iPhone 13 128GB, 280→380€, +85€, 30.36% ROI)
+```
+
+### Stats
+- AI endpoints: 432 (unchanged)
+- Total API routes: 630 (unchanged)
+- Lint: 0 ✨ | Typecheck: 0 ✨
+
 ## [8.59.0] - 2026-08-16
 
 ### Changed — 💾 UI State Persistence (useLocalStorage showcase)

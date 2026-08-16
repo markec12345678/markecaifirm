@@ -6,17 +6,38 @@ export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
 
 /**
- * GET /api/trades?status=held|sold|cancelled&format=csv
- * Returns all trades, optionally filtered by status, optionally as CSV.
+ * GET /api/trades?status=held|sold|cancelled&format=csv&category=elektronika&source=Bolha&search=iPhone
+ * Returns trades, optionally filtered by status/category/source/search, optionally as CSV.
+ * v8.60: Added category, source, search query params for filtered CSV export.
  */
 export async function GET(req: NextRequest) {
   try {
     const url = new URL(req.url);
     const status = url.searchParams.get('status') ?? undefined;
     const format = url.searchParams.get('format') ?? 'json';
+    const category = url.searchParams.get('category') ?? undefined;
+    const source = url.searchParams.get('source') ?? undefined;
+    const search = url.searchParams.get('search') ?? undefined;
     const where: any = {};
     if (status && ['held', 'sold', 'cancelled'].includes(status)) {
       where.status = status;
+    }
+    // v8.60: Category filter
+    if (category) {
+      where.category = { contains: category };
+    }
+    // v8.60: Source filter (buyLocation)
+    if (source) {
+      where.buyLocation = { contains: source };
+    }
+    // v8.60: Search filter (title OR notes)
+    if (search) {
+      where.OR = [
+        { title: { contains: search } },
+        { notes: { contains: search } },
+        { category: { contains: search } },
+        { buyLocation: { contains: search } },
+      ];
     }
     const trades = await db.trade.findMany({
       where,
