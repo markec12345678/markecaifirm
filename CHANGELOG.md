@@ -45,6 +45,20 @@ Problem: Sistem deluje na desktop, ampak mobile UX je suboptimalen — 17 nav gu
 
 UI-only release — no new API endpoints, no Prisma schema changes, no new npm dependencies. All mobile components are `md:hidden` (desktop unaffected). Agent Browser verified: mobile (375×812) bottom nav visible z 5 buttons + Trades badge "5" (held count) + FAB 56×56px; desktop (1920×1080) both `display:none`.
 
+## [8.59.0] - 2026-08-16
+
+### Changed — 💾 UI State Persistence (useLocalStorage showcase)
+
+Problem: Flip Checklist collapsed/expanded state se resetira na vsak page reload. Uporabnik mora znova razširiti. Best practice: persist UI preferences.
+
+- **`src/components/dashboard/flip-checklist.tsx`** (MODIFIED) — `useState(false)` → `useLocalStorage('flip-checklist-collapsed', false)`. Collapsed state persistira across reloads + cross-tab sync.
+- **`src/components/dashboard/trades-view.tsx`** (MODIFIED) — TradeRow `showFlipChecklist` state: `useState(false)` → `useLocalStorage('trade-flip-expanded', false)`. Razširjen state persistira.
+
+### Stats
+- AI endpoints: 432 (unchanged)
+- Total API routes: 630 (unchanged)
+- Lint: 0 ✨ | Typecheck: 0 ✨
+
 ## [8.58.0] - 2026-08-16
 
 ### Added — 🪝 Custom Hooks Pack (useDebounce + useLocalStorage + useMediaQuery)

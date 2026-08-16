@@ -11,6 +11,7 @@ import { Check, Circle, Loader2, ChevronDown, ChevronUp } from 'lucide-react';
 import { toast } from 'sonner';
 import { cn } from '@/lib/utils';
 import { useHaptic } from '@/hooks/use-haptic';
+import { useLocalStorage } from '@/hooks/use-local-storage';
 
 const FLIP_STEPS = [
   { id: 'received', label: 'Dobljeno', icon: '📦', description: 'Item fizično prejet' },
@@ -41,7 +42,7 @@ interface FlipChecklistProps {
 export function FlipChecklist({ tradeId, tradeTitle, initialChecklist, onAllComplete }: FlipChecklistProps) {
   const [checklist, setChecklist] = useState<ChecklistEntry[]>(initialChecklist || []);
   const [loading, setLoading] = useState<string | null>(null);
-  const [collapsed, setCollapsed] = useState(false);
+  const [collapsed, setCollapsed] = useLocalStorage<boolean>('flip-checklist-collapsed', false);
   const haptic = useHaptic();
 
   // Build a map for quick lookup

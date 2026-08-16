@@ -18,6 +18,7 @@ import { FlipChecklist } from '@/components/dashboard/flip-checklist';
 import { toast } from 'sonner';
 import { triggerGlobalRefresh } from '@/hooks/use-global-refresh';
 import { useDebounce } from '@/hooks/use-debounce';
+import { useLocalStorage } from '@/hooks/use-local-storage';
 import { cn } from '@/lib/utils';
 import {
   ResponsiveContainer, AreaChart, Area, XAxis, YAxis, CartesianGrid, Tooltip as RTooltip, LineChart, Line,
@@ -2797,7 +2798,7 @@ function StatBox({ icon, label, value, color }: { icon: React.ReactNode; label: 
 }
 
 function TradeRow({ trade, onEdit, onDelete, onSync, onExit }: { trade: Trade; onEdit: () => void; onDelete: () => void; onSync?: (tradeId: string) => void; onExit?: (tradeId: string) => void }) {
-  const [showFlipChecklist, setShowFlipChecklist] = useState(false);
+  const [showFlipChecklist, setShowFlipChecklist] = useLocalStorage<boolean>('trade-flip-expanded', false);
   const totalCost = trade.buyPrice + (trade.buyFees || 0);
   const revenue = trade.sellPrice != null ? trade.sellPrice - (trade.sellFees || 0) : null;
   const profit = revenue != null ? revenue - totalCost : null;
