@@ -18533,3 +18533,44 @@ Stage Summary:
 - Verzija: v8.63.0
 - Skupaj (v7.50 → v8.63): 113 verzij, 235 novih funkcij
 - LIVE tag stats: hitri-flip (10 trades, 485€, 70% ROI, 100% win → STAR), avto-deli (5, 353€, 61% ROI → STAR), avtonet (3, 242€, 57% ROI → STAR), bolha (17, 541€, 25% ROI, 91% win → SOLID), premium (9, 480€, 28% ROI → SOLID)
+
+---
+Task ID: v8.64
+Agent: main
+Task: Clickable Tag Chips + Saved Views
+
+Work Log:
+- Razmišljal kot uporabnik: v8.63 dodal tag sistem ampak tag chips so bili inertni. Vsak dan uporabljam isto kombinacijo filtrov (held + bolha + hitri-flip) ampak jo vsakič ponovno sestavljam.
+- TradeRow tag chips: badge → button z onClick handler, e.stopPropagation(), hover effect (border-primary/40, text-foreground), title tooltip "Filtriraj po #tag". onTagClick prop pass-a setFilterTag.
+- TagPerformanceCard: vsi tag-i (best profit, best ROI, suggested focus/avoid, table rows) so <a href="/?view=trades&tag=xxx"> linki. Hover effect: text-primary, group-hover, badge scale-105 transition. Hard reload + URL sync approach (robustno, deluje iz bookmarkov).
+- Home URL cleaner: prej je pobrisal ves URL. Sedaj ohrani ?tag= za bookmarking (pobriše samo ?view= in ?action=).
+- SavedView interface: name + {status, category, source, tag, search, sortBy} + createdAt + custom boolean.
+- useLocalStorage<SavedView[]>('trade-saved-views', []) za persistenco across reloads + cross-tab sync.
+- Default views (auto-generated): Vsi, V skladišču (held), Prodani (sold) + top 3 tag-i po pogostosti (#bolha, #hitri-flip, #elektronika). useMemo derived iz trades.
+- 'Pogledi' bar UI: horizontalni gumbi. Active = bg-primary. Dirty (filtri spremenjeni ampak view aktiven) = amber z • indikatorjem (spodbuja re-save). Default = card z hover:bg-accent. × delete za custom views (z role=button + tabIndex=0 za keyboard accessibility).
+- '+ Shrani pogled' dashed button → inline input z Enter (save) / Esc (cancel) / ✓ (save) / ✕ (cancel). autoFocus.
+- isDirty detection: JSON.stringify(activeView.filters) !== JSON.stringify(currentFilterSnapshot()). Prikaže amber overlay če so filtri spremenjeni.
+- URL sync: ?view= ime ali ?tag= tag na mount. useEffect z [] deps (samo na mount).
+- Preveril lint: 0 napak ✨
+- Preveril typecheck: 0 napak ✨ (popravil 1 TS error: setSortBy cast za string → union type)
+- Agent Browser: 
+  - TagPerformanceCard clickable links: /?view=trades&tag=premium ✓
+  - Default views: Vsi, V skladišču, Prodani ✓
+  - Top 3 tag views: #bolha, #hitri-flip, #elektronika ✓
+  - Clickable tag chips na TradeRow: 8 chips vidnih ✓
+  - Click #hitri-flip chip → 8 trades, active highlighted (bg-primary) ✓
+  - Deep-link /?view=trades&tag=hitri-flip → Skladišče active, 8 hitri-flip trade-i (Bosch, Avto radio, New Balance, Zara, Nike Jordan), #hitri-flip button active ✓
+  - Save view flow: + Shrani pogled → input "MojiFlip2" → ✓ → button v list → apply → × delete. localStorage persistence potrjena (trade-saved-views key). ✓
+  - 0 console errors ✓
+- Commit + push uspešen ✅
+
+Stage Summary:
+- MODIFIED: src/components/dashboard/trades-view.tsx (+SavedView interface, +onTagClick prop, +clickable tag chips button, +savedViews useLocalStorage, +defaultViews/allViews useMemo, +applyView/saveCurrentAsView/deleteSavedView callbacks, +isDirty detection, +URL sync ?view=&?tag=, +Pogledi bar UI z + Shrani pogled input)
+- MODIFIED: src/components/dashboard/tag-performance-card.tsx (tag-i → <a href> linki na /?view=trades&tag=xxx: best profit, best ROI, suggested focus/avoid chips, table rows)
+- MODIFIED: src/app/page.tsx (URL cleaner ohrani ?tag= za bookmarking)
+- MODIFIED: README.md (v8.63→v8.64, +v8.64 changelog entry)
+- AI endpointi: 432 (nespremenjeto — UI-only feature)
+- Total API routes: 633 (nespremenjeto — UI-only feature)
+- Verzija: v8.64.0
+- Skupaj (v7.50 → v8.64): 114 verzij, 236 novih funkcij
+- UX izboljšava: 3 kliki → 1 klik za filtriranje po tagu. Saved Views omogočajo 1-klik quick switch med pogostimi kombinacijami filtrov. Bookmarkable URLs (?view=trades&tag=hitri-flip).
