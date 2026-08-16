@@ -18460,3 +18460,30 @@ Stage Summary:
 - Total API routes: 630 → 631 (+1)
 - Verzija: v8.61.0
 - Skupaj (v7.50 → v8.61): 111 verzij, 233 novih funkcij
+
+---
+Task ID: v8.62
+Agent: main
+Task: Quick Sell Button on Trade Row
+
+Work Log:
+- Razmišljal kot uporabnik: najpogostejša dnevna akcija = "Sem prodal iPhone za 380€" — moram odpreti TradeFormDialog, izpolniti 5 polj, klikniti Shrani. 5 klikov namesto 2.
+- Dodal 💰 Quick Sell button na TradeRow (held trades, emerald)
+- Inline form: sell price (pre-fill buyPrice × 1.3), pristojbine, kraj prodaje
+- Live profit/ROI preview med tipkanjem
+- "Prodaj" button → PUT /api/trades/[id] z status=sold + sellDate=now
+- Toast: "✓ Prodano! +85€ (30% ROI)"
+- Haptic feedback (medium na odprt, success na prodano, error na napako)
+- triggerGlobalRefresh('quick-sell') → vse kartice se osvežijo instant
+- Preveril lint: 0 napak ✨
+- Preveril typecheck: 0 napak ✨
+- Agent Browser: "💰" gumbi prikazani na vseh held trades v Skladišče view ✅
+- Commit + push uspešen ✅
+
+Stage Summary:
+- MODIFIED: src/components/dashboard/trades-view.tsx (+Quick Sell button, +inline form, +live preview, +haptic, +triggerGlobalRefresh)
+- Workflow: 5 korakov → 3 koraki (klik 💰 → vnesi ceno → klik Prodaj)
+- AI endpointi: 432 (nespremenjeto — UI only)
+- Total API routes: 631 (nespremenjeto)
+- Verzija: v8.62.0
+- Skupaj (v7.50 → v8.62): 112 verzij, 234 novih funkcij
