@@ -45,6 +45,30 @@ Problem: Sistem deluje na desktop, ampak mobile UX je suboptimalen — 17 nav gu
 
 UI-only release — no new API endpoints, no Prisma schema changes, no new npm dependencies. All mobile components are `md:hidden` (desktop unaffected). Agent Browser verified: mobile (375×812) bottom nav visible z 5 buttons + Trades badge "5" (held count) + FAB 56×56px; desktop (1920×1080) both `display:none`.
 
+## [8.61.0] - 2026-08-16
+
+### Added — 📅 Month-over-Month Comparison + Category Performance Timeline
+
+Problem: nimam month-over-month comparison ("This month: 312€ vs Last month: 661€, -53%"). Nimam category performance timeline-a (katera kategorija raste/pada čez mesece).
+
+- **`src/lib/trades/month-over-month.ts`** (NEW) — `getMonthOverMonth()` vrača: current/last month (profit, trades, winRate, avgROI), MoM change (EUR + %), 6-month history, category breakdown z trend (GROWING/STABLE/DECLINING/NEW/DEAD), best/worst month, avg monthly profit.
+- **`src/app/api/analytics/month-over-month/route.ts`** (NEW) — GET.
+- **`src/components/dashboard/month-over-month-card.tsx`** (NEW) — Dashboard card: MoM comparison (2 big numbers + change badge), 6-month BarChart (green/red), Category LineChart (top 5 kategorij z trend badges), category summary table, best/worst month stats. Uses useFetch + CardSkeleton + CardError.
+- **`src/components/dashboard/dashboard-view.tsx`** (MODIFIED) — MonthOverMonthCard after ProfitForecastCard.
+
+### Live data
+- Current: 312€ (Avg 2026, 10 prodaj, 100% win)
+- Last: 661€ (Jul 2026, 9 prodaj, 100% win)
+- MoM: -349€ (-52.8%) DOWN
+- 6-month history: 6 entries
+- Best category: elektronika
+- Avg monthly: 486.5€
+
+### Stats
+- AI endpoints: 432 (unchanged)
+- Total API routes: 630 → 631 (+1)
+- Lint: 0 ✨ | Typecheck: 0 ✨
+
 ## [8.60.0] - 2026-08-16
 
 ### Added — 📥 Filtered CSV Export (search + filter aware)

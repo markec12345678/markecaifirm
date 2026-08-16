@@ -33,6 +33,7 @@ import { AnnualSummaryCard } from '@/components/dashboard/annual-summary-card';
 // v8.40 Trade Insights z current inventory za actionable "buy next" priporočila.
 import { RestockRecommendationsCard } from '@/components/dashboard/restock-recommendations-card';
 import { ProfitForecastCard } from '@/components/dashboard/profit-forecast-card';
+import { MonthOverMonthCard } from '@/components/dashboard/month-over-month-card';
 
 // v5.6: Dashboard widget IDs
 const WIDGET_IDS = ['todaySummary', 'quickStats', 'activityFeed', 'aiInsights', 'skladisceWidget'] as const;
@@ -598,6 +599,7 @@ export function DashboardView({ onNavigate }: ViewProps) {
           overstock warnings. Self-fetches from /api/ai/restock-smart every 60s. */}
       <RestockRecommendationsCard />
       <ProfitForecastCard />
+      <MonthOverMonthCard />
 
       {/* v4.5: Skladišče dashboard widget */}
       <WidgetWrapper id="skladisceWidget" order={widgetOrder} customizeMode={customizeMode} onMove={moveWidget}>
