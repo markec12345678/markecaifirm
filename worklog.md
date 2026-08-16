@@ -18753,3 +18753,38 @@ Stage Summary:
 - Skupaj (v7.50 → v8.68): 118 verzij, 240 novih funkcij
 - LIVE: 8 listings — 5 STRONG_BUY, 2 CONSIDER, 1 AVOID. Top 3: Pioneer radio (100, 90€, +360% ROI), Bosch vijačni (94, 28€, +1379% ROI), Nike Jordan (93, 75€, +452% ROI).
 - KOMPLETIRA BUY/SELL CYCLE: v8.68 (KUPITI?) + v8.65 (KDAJ prodati) + v8.66 (ZA KOLIKO) + v8.67 (ali je bilo prav?) = popolna trade intelligence z buy + sell + feedback loop.
+
+---
+Task ID: v8.69
+Agent: main
+Task: Buy Score Badge v ListingCard + Buy→Trade Linkage
+
+Work Log:
+- Razmišljal kot uporabnik: v8.68 mi pove KATERI listings so STRONG_BUY ampak te podatke vidim samo na dashboard card-u. V sami Listings view teh badge-ov NI. Ko kliknem "Kupi" se pretvori v Trade ampak izgubim buy score kontekst.
+- Schema: dodal buyScore Int?, buyVerdict String?, buyScoreAt DateTime? na Trade model. db:push uspešen.
+- /api/trades POST (fromListingId mode): avtomatsko compute-a buy score ob nakupu preko getBuyOpportunityForListing() in shrani v Trade. Non-critical (try/catch) — če compute fail-a, buy proceed-a brez score-a.
+- ListingRow: 🛒 badge z buy score (0-100) z verdict-based color-coding: emerald=STRONG_BUY (≥75), primary=BUY (≥55), amber=CONSIDER (≥35), red=AVOID (<35). Hover tooltip: pričakovan ROI, pričakovan dobiček, discount% pod AI oceno, recommendation.
+- ListingsView: buyScoreMap state + batch fetch /api/analytics/buy-opportunity?limit=50 ko se listings spremenijo. Auto-refresh. Cancelled flag za cleanup.
+- Trade interface: dodal buyScore, buyVerdict, buyScoreAt fields.
+- TradeRow: 🛒 original buy score badge za trades z persisted buy context. Tooltip poveže buy score z outcome score (v8.67): "outcome 92/100 — PERFECT" ali "še ni prodano". Omogoča feedback loop: "buy score 85 → outcome 92 = odlična odločitev".
+- Preveril lint: 0 napak ✨
+- Preveril typecheck: 0 napak ✨
+- Agent Browser:
+  - Open Oglasi view (/?view=listings) ✓
+  - Buy score badges visible: "🛒 77" (iPhone 13 Pro) ✓
+  - "Prikazano 8 od 8 oglasov" ✓
+  - 0 console errors ✓
+- Commit + push uspešen ✅
+
+Stage Summary:
+- MODIFIED: prisma/schema.prisma (+buyScore Int?, +buyVerdict String?, +buyScoreAt DateTime? na Trade)
+- MODIFIED: src/app/api/trades/route.ts (+auto compute buy score v fromListingId mode, +persist buyScore/buyVerdict/buyScoreAt)
+- MODIFIED: src/components/dashboard/listings-view.tsx (+buyScoreMap state, +batch fetch effect, +buyScore prop v ListingRow, +🛒 badge z tooltip)
+- MODIFIED: src/components/dashboard/trades-view.tsx (+buyScore/buyVerdict/buyScoreAt v Trade interface, +🛒 original buy score badge v TradeRow z outcome linkage tooltip)
+- MODIFIED: README.md (v8.68→v8.69, +v8.69 changelog entry)
+- AI endpointi: 432 (nespremenjeto)
+- Total API routes: 637 (nespremenjeto — schema/UI only)
+- Verzija: v8.69.0
+- Skupaj (v7.50 → v8.69): 119 verzij, 241 novih funkcij
+- LIVE: 8 listings z buy score badge-i v Oglasi view. TradeRow prikazuje original buy score za trades kupljene preko fromListingId mode.
+- KOMPLETIRA BUY/SELL CYCLE z UČENJEM: v8.68 (KUPITI score) + v8.69 (persist + prikaz v ListingCard + TradeRow) + v8.67 (outcome comparison) = feedback loop "sem dobro ocenil nakup?".
