@@ -591,6 +591,35 @@ function CompareContent({ data }: { data: any }) {
 
   return (
     <div className="space-y-4">
+      {/* v8.72.2: Best of bad warning — if all candidates are weak (<35) */}
+      {(() => {
+        const allWeak = compared.every((c: any) => c.buyScore < 35);
+        const allBelow55 = compared.every((c: any) => c.buyScore < 55);
+        if (allWeak) {
+          return (
+            <div className="bg-red-500/10 border border-red-500/30 rounded-lg p-2.5 flex items-start gap-2">
+              <AlertTriangle className="w-4 h-4 text-red-500 mt-0.5 shrink-0" />
+              <div className="text-xs">
+                <span className="font-bold text-red-500">⚠️ Vsi kandidati so šibki (buy score &lt; 35).</span>{' '}
+                <span className="text-foreground/80">AI ne priporoča nakupa nobenega. Razširi kriterije iskanja ali počakaj na boljše oglase.</span>
+              </div>
+            </div>
+          );
+        }
+        if (allBelow55) {
+          return (
+            <div className="bg-amber-500/10 border border-amber-500/30 rounded-lg p-2.5 flex items-start gap-2">
+              <AlertTriangle className="w-4 h-4 text-amber-500 mt-0.5 shrink-0" />
+              <div className="text-xs">
+                <span className="font-bold text-amber-600">🟡 Noben kandidat ni "BUY" (≥55).</span>{' '}
+                <span className="text-foreground/80">Winner je najboljši med zmernimi možnostmi — premisli ali nakup splača.</span>
+              </div>
+            </div>
+          );
+        }
+        return null;
+      })()}
+
       {/* AI Advisor insights */}
       <div className="bg-primary/5 border border-primary/30 rounded-lg p-3 space-y-1.5">
         <div className="text-xs uppercase text-primary font-bold flex items-center gap-1.5">
@@ -607,20 +636,58 @@ function CompareContent({ data }: { data: any }) {
         })}
       </div>
 
-      {/* Winner highlight */}
-      {winner && (
-        <div className="bg-emerald-500/10 border border-emerald-500/30 rounded-lg p-3">
-          <div className="flex items-center gap-2 mb-1">
-            <Trophy className="w-4 h-4 text-emerald-500" />
-            <span className="text-sm font-bold text-emerald-500">🏆 Najboljša vrednost</span>
+      {/* Winner highlight — v8.72.2: distinguishes relative winner from absolute recommendation */}
+      {winner && (() => {
+        // v8.72.2: Absolute recommendation based on buy score threshold
+        // Winner = "best among selected" (relative). Absolute = "should you actually buy?"
+        const score = winner.buyScore;
+        let absRec: { label: string; cls: string; icon: string };
+        if (score >= 75) {
+          absRec = { label: 'STRONG BUY', cls: 'bg-emerald-500/15 text-emerald-500 border-emerald-500/40', icon: '🟢' };
+        } else if (score >= 55) {
+          absRec = { label: 'BUY', cls: 'bg-primary/10 text-primary border-primary/30', icon: '✓' };
+        } else if (score >= 35) {
+          absRec = { label: 'BUY WITH CAUTION', cls: 'bg-amber-500/10 text-amber-600 border-amber-500/30', icon: '🟡' };
+        } else {
+          absRec = { label: 'AVOID — best of bad options', cls: 'bg-red-500/10 text-red-500 border-red-500/30', icon: '✗' };
+        }
+        // Confidence label
+        const conf = winner.confidenceLabel || 'LOW';
+        const confCls = conf === 'HIGH' ? 'text-emerald-500' : conf === 'MEDIUM' ? 'text-amber-500' : 'text-muted-foreground';
+        // Winner card color depends on absolute recommendation
+        const cardCls = score >= 55
+          ? 'bg-emerald-500/10 border-emerald-500/30'
+          : score >= 35
+            ? 'bg-amber-500/10 border-amber-500/30'
+            : 'bg-red-500/10 border-red-500/30';
+        return (
+          <div className={cn('border rounded-lg p-3', cardCls)}>
+            <div className="flex items-center justify-between gap-2 mb-1.5 flex-wrap">
+              <div className="flex items-center gap-2">
+                <Trophy className={score >= 55 ? 'w-4 h-4 text-emerald-500' : score >= 35 ? 'w-4 h-4 text-amber-500' : 'w-4 h-4 text-red-500'} />
+                <span className="text-sm font-bold">
+                  {score >= 35 ? '🏆 Najboljša vrednost' : '⚠️ Najmanj slaba možnost'}
+                </span>
+              </div>
+              {/* v8.72.2: Absolute Recommendation badge */}
+              <span className={cn('text-[10px] font-bold px-2 py-0.5 rounded border', absRec.cls)}>
+                {absRec.icon} {absRec.label}
+              </span>
+            </div>
+            <div className="text-sm font-medium">{winner.title}</div>
+            <div className="text-xs text-muted-foreground mt-0.5 flex items-center gap-2 flex-wrap">
+              <span>{winner.price}€ · buy score {winner.buyScore}/100 · {winner.location}</span>
+              <span className={cn('text-[10px]', confCls)}>· Confidence: {conf}</span>
+            </div>
+            <p className="text-xs text-foreground/80 mt-1.5 italic">{winner.recommendation}</p>
+            {/* v8.72.2: Clarification — relative vs absolute */}
+            <div className="text-[10px] text-muted-foreground mt-2 pt-2 border-t border-border/30">
+              ℹ️ "Winner" = najboljši med izbranimi kandidati. Absolutno priporočilo glede na buy score.
+              {score < 55 && ' To ni objektivno dober nakup — premisli ali sploh kupovati.'}
+            </div>
           </div>
-          <div className="text-sm font-medium">{winner.title}</div>
-          <div className="text-xs text-muted-foreground mt-0.5">
-            {winner.price}€ · buy score {winner.buyScore}/100 · {winner.location}
-          </div>
-          <p className="text-xs text-foreground/80 mt-1.5 italic">{winner.recommendation}</p>
-        </div>
-      )}
+        );
+      })()}
 
       {/* Comparison table */}
       <div className="overflow-x-auto">
