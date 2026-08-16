@@ -18874,3 +18874,38 @@ Stage Summary:
 - Skupaj (v7.50 → v8.71): 121 verzij, 243 novih funkcij
 - LIVE: 15 listings v DB (8 elektronika + 7 avto). Iskanje "VW Golf 5" → 5 rezultatov, najcenejši 9500€ Celje.
 - NOVA FUNKCIJA: "Iščem VW Golf 5, 2020, max 15000€, Ljubljana" → najdi najcenejši + cel opis + kraj + buy score. Plus "iščem za nekoga" za proxy buying.
+
+---
+Task ID: v8.72
+Agent: main
+Task: Result Comparison View + AI Buy Advisor
+
+Work Log:
+- Razmišljal kot uporabnik: Iskalnik (v8.71) mi da 5 VW Golf 5 rezultatov ampak ne vem KATEREGA kupiti. Najcenejši (9500€) ima 125000 km in tretji lastnik. Potrebujem side-by-side primerjavo z AI priporočilom.
+- src/app/api/search/compare/route.ts (NEW): POST {listingIds: string[]} — multi-listing comparison. Compute buy scores per listing, determine winner (highest buyScore, tiebreaker price), cheapest, bestAI. Advisor insights: winner highlight, cheapest delta from winner, best AI score, discount%, expected ROI, risk warnings (≥6/10), price drop notes. extractYear helper (parsa letnik iz title/description z regex \b(19|20)\d{2}\b).
+- IskalnikView multi-select: checkbox na vsakem rezultatu (max 6, z warning če več), selection bar z count + Počisti + Primerjaj button. selectedIds Set state, toggleSelect callback.
+- CompareDialog: AI Buy Advisor insights section (winner, cheapest delta, best AI, discount, ROI, risk warnings, price drops), winner highlight card z recommendation, side-by-side comparison table z 13 vrsticami (Cena, Buy Score, AI Score/Risk/Verdict, AI Estimated Value, Discount%, Expected ROI, Letnik, Lokacija, Prodajalec, Vir, Padec cene) z winner column highlighted emerald, summary stats (count, min/max price, avg buy score).
+- Preveril lint: 0 napak ✨
+- Preveril typecheck: 0 napak ✨
+- Agent Browser:
+  - Iskalnik search "VW Golf 5" → 5 rezultatov ✓
+  - Select 3 checkboxes ✓
+  - Selection bar "3 listingov izbran" ✓
+  - Click Primerjaj → dialog open ✓
+  - "3 listings · cena 9500€ - 13900€ · avg buy score 46" ✓
+  - AI BUY ADVISOR z 3 insights: 🏆 Winner (VW Golf 2.0 TDI 2020 Novo Mesto 55/100 BUY), 💰 Najcenejši (9500€, 4400€ razlike), 📉 6% pod AI oceno ✓
+  - Winner highlight card z recommendation ✓
+  - Comparison table z 13 rows ✓
+  - 0 console errors ✓
+- Commit + push uspešen ✅
+
+Stage Summary:
+- NEW: src/app/api/search/compare/route.ts (POST — multi-listing comparison + AI advisor)
+- MODIFIED: src/components/dashboard/iskalnik-view.tsx (+selectedIds state, +toggleSelect, +runCompare, +selection bar, +CompareDialog z CompareContent component, +checkbox v ResultCard)
+- MODIFIED: README.md (v8.71→v8.72, API routes 641→642, +v8.72 changelog entry)
+- AI endpointi: 432 (nespremenjeto)
+- Total API routes: 641 → 642 (+1: search/compare)
+- Verzija: v8.72.0
+- Skupaj (v7.50 → v8.72): 122 verzij, 244 novih funkcij
+- LIVE: VW Golf 5 primerjava 3 listingov → Winner: VW Golf 5 2.0 TDI 2020 Novo Mesto (55/100 BUY, 13900€, AI 8/10, Risk 2/10, -6% pod oceno). Najcenejši: VW Golf 5 1.4 TSI 2018 Celje (9500€, 4400€ razlike).
+- NARAVNI NASLEDNJI KORAK po Iskalniku: "najdi 5 rezultatov" → "primerjaj" → "AI pove kupi ta".
