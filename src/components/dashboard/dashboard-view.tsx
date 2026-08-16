@@ -37,6 +37,7 @@ import { MonthOverMonthCard } from '@/components/dashboard/month-over-month-card
 import { TagPerformanceCard } from '@/components/dashboard/tag-performance-card';
 import { OutcomeSummaryCard } from '@/components/dashboard/outcome-summary-card';
 import { BuyOpportunitySummaryCard } from '@/components/dashboard/buy-opportunity-summary-card';
+import { DecisionAccuracyCard } from '@/components/dashboard/decision-accuracy-card';
 
 // v5.6: Dashboard widget IDs
 const WIDGET_IDS = ['todaySummary', 'quickStats', 'activityFeed', 'aiInsights', 'skladisceWidget'] as const;
@@ -606,6 +607,7 @@ export function DashboardView({ onNavigate }: ViewProps) {
       <TagPerformanceCard />
       <OutcomeSummaryCard />
       <BuyOpportunitySummaryCard />
+      <DecisionAccuracyCard />
 
       {/* v4.5: Skladišče dashboard widget */}
       <WidgetWrapper id="skladisceWidget" order={widgetOrder} customizeMode={customizeMode} onMove={moveWidget}>
