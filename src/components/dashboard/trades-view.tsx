@@ -17,6 +17,7 @@ import { RefreshCw, Plus, Pencil, Trash2, TrendingUp, TrendingDown, Wallet, Targ
 import { FlipChecklist } from '@/components/dashboard/flip-checklist';
 import { toast } from 'sonner';
 import { triggerGlobalRefresh } from '@/hooks/use-global-refresh';
+import { useDebounce } from '@/hooks/use-debounce';
 import { cn } from '@/lib/utils';
 import {
   ResponsiveContainer, AreaChart, Area, XAxis, YAxis, CartesianGrid, Tooltip as RTooltip, LineChart, Line,
@@ -72,6 +73,7 @@ export function TradesView() {
   const [filter, setFilter] = useState<string>('all');
   // v8.55: Search + Sort + Category/Source filters
   const [searchQuery, setSearchQuery] = useState('');
+  const debouncedSearch = useDebounce(searchQuery, 300); // v8.58: debounce search
   const [sortBy, setSortBy] = useState<'date_desc' | 'date_asc' | 'profit_desc' | 'profit_asc' | 'roi_desc' | 'roi_asc' | 'title_asc' | 'price_desc'>('date_desc');
   const [filterCategory, setFilterCategory] = useState<string>('all');
   const [filterSource, setFilterSource] = useState<string>('all');
@@ -260,8 +262,8 @@ export function TradesView() {
     let result = filter === 'all' ? trades : trades.filter(t => t.status === filter);
 
     // Search
-    if (searchQuery.trim()) {
-      const q = searchQuery.toLowerCase().trim();
+    if (debouncedSearch.trim()) {
+      const q = debouncedSearch.toLowerCase().trim();
       result = result.filter(t =>
         t.title.toLowerCase().includes(q) ||
         t.category.toLowerCase().includes(q) ||
@@ -316,7 +318,7 @@ export function TradesView() {
     });
 
     return result;
-  }, [trades, filter, searchQuery, filterCategory, filterSource, sortBy]);
+  }, [trades, filter, debouncedSearch, filterCategory, filterSource, sortBy]);
 
   // v8.55: Derive categories + sources from trades
   const categories = useMemo(() => {

@@ -45,7 +45,23 @@ Problem: Sistem deluje na desktop, ampak mobile UX je suboptimalen — 17 nav gu
 
 UI-only release — no new API endpoints, no Prisma schema changes, no new npm dependencies. All mobile components are `md:hidden` (desktop unaffected). Agent Browser verified: mobile (375×812) bottom nav visible z 5 buttons + Trades badge "5" (held count) + FAB 56×56px; desktop (1920×1080) both `display:none`.
 
-## [8.57.0] - 2026-08-15
+## [8.58.0] - 2026-08-16
+
+### Added — 🪝 Custom Hooks Pack (useDebounce + useLocalStorage + useMediaQuery)
+
+Problem: search input v trades-view re-filter-a na vsak keystroke (performance). UI preferences ne persistajo across reloads. Responsive rendering je CSS-only (hidden elements still in DOM).
+
+- **`src/hooks/use-debounce.ts`** (NEW) — `useDebounce<T>(value, delayMs=300)`. Prevents excessive re-renders on search/filter inputs. Showcase: trades-view search sedaj debounced (300ms).
+- **`src/hooks/use-local-storage.ts`** (NEW) — `useLocalStorage<T>(key, initialValue)` — persistent state. Auto JSON parse/stringify. Cross-tab sync via storage event.
+- **`src/hooks/use-media-query.ts`** (NEW) — `useMediaQuery(query)` + `useIsMobile()`, `useIsTablet()`, `useIsDesktop()` convenience hooks. Conditional rendering instead of CSS-only hiding.
+- **`src/components/dashboard/trades-view.tsx`** (MODIFIED) — search input debounced z `useDebounce(searchQuery, 300)`.
+
+### Stats
+- AI endpoints: 432 (unchanged)
+- Total API routes: 630 (unchanged)
+- Lint: 0 ✨ | Typecheck: 0 ✨
+
+## [8.57.0] - 2026-08-16
 
 ### Added — 🔄 Global Refresh Broadcast — cache invalidation via custom events
 
