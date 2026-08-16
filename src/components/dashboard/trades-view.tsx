@@ -138,6 +138,9 @@ export function TradesView() {
   // v8.65: Sell Priority — per-held-trade urgency score 0-100
   const [priorityMap, setPriorityMap] = useState<Record<string, { score: number; level: 'HIGH' | 'MEDIUM' | 'LOW'; daysHeld: number; reasons: string[]; recommendedAction: string }>>({});
   const [priorityLoading, setPriorityLoading] = useState(false);
+  // v8.66: Smart Pricing — per-held-trade suggested sell price
+  const [priceMap, setPriceMap] = useState<Record<string, { suggestedMin: number; suggestedMax: number; suggestedOptimal: number; expectedProfit: number; expectedROI: number; confidence: number; confidenceLabel: 'HIGH' | 'MEDIUM' | 'LOW'; reasoning: string[]; comparablesCount: number }>>({});
+  const [priceLoading, setPriceLoading] = useState(false);
   // v6.15: Tax Loss Harvesting
   const [taxHarvestData, setTaxHarvestData] = useState<any>(null);
   const [taxHarvestLoading, setTaxHarvestLoading] = useState(false);
@@ -232,6 +235,37 @@ export function TradesView() {
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [trades]);
+
+  // v8.66: Fetch smart prices for held trades (auto-refresh)
+  const loadPrices = useCallback(async () => {
+    setPriceLoading(true);
+    try {
+      const res = await fetch('/api/analytics/smart-pricing');
+      if (res.ok) {
+        const data = await res.json();
+        if (data?.ok && Array.isArray(data.results)) {
+          const map: Record<string, any> = {};
+          for (const r of data.results) {
+            map[r.tradeId] = {
+              suggestedMin: r.suggestedMin,
+              suggestedMax: r.suggestedMax,
+              suggestedOptimal: r.suggestedOptimal,
+              expectedProfit: r.expectedProfit,
+              expectedROI: r.expectedROI,
+              confidence: r.confidence,
+              confidenceLabel: r.confidenceLabel,
+              reasoning: r.reasoning?.map((rr: any) => rr.label) ?? [],
+              comparablesCount: r.comparables?.length ?? 0,
+            };
+          }
+          setPriceMap(map);
+        }
+      }
+    } catch { /* non-critical */ }
+    finally { setPriceLoading(false); }
+  }, []);
+
+  useEffect(() => { loadPrices(); }, [loadPrices]);
 
   // v5.7: Bulk trade operations
   const bulkSell = async () => {
@@ -3024,6 +3058,15 @@ export function TradesView() {
                     <div className="text-[10px] text-muted-foreground">
                       {p.daysHeld} dni · {t.buyPrice}€ kupljeno · {(t.tagsArray ?? parseTagsLocal(t.tags)).slice(0, 2).map(tg => `#${tg}`).join(' ') || 'brez tagov'}
                     </div>
+                    {/* v8.66: Smart price suggestion */}
+                    {priceMap[t.id] && (
+                      <div className="text-[10px] bg-primary/5 border border-primary/20 rounded px-1.5 py-1 flex items-center justify-between gap-1">
+                        <span className="text-muted-foreground">💡 Predlagana cena:</span>
+                        <span className="font-mono font-bold text-primary" title={`Obseg: ${priceMap[t.id].suggestedMin}€ - ${priceMap[t.id].suggestedMax}€\nPričakovan ROI: +${priceMap[t.id].expectedROI.toFixed(0)}% (+${priceMap[t.id].expectedProfit.toFixed(0)}€)\nZaupanje: ${priceMap[t.id].confidenceLabel} (${priceMap[t.id].confidence}%)\n${priceMap[t.id].comparablesCount > 0 ? `${priceMap[t.id].comparablesCount} podobnih prodaj` : 'Brez comparables'}`}>
+                          {priceMap[t.id].suggestedOptimal}€
+                        </span>
+                      </div>
+                    )}
                     <div className="text-[10px] text-foreground/80 italic line-clamp-2" title={p.recommendedAction}>
                       💡 {p.recommendedAction}
                     </div>
@@ -3150,6 +3193,7 @@ export function TradesView() {
                 }}
                 onTagClick={(tag) => setFilterTag(tag)} // v8.64: clickable tag chips
                 priority={priorityMap[t.id] ?? null} // v8.65: sell priority badge
+                priceHint={priceMap[t.id] ?? null} // v8.66: smart price hint
                 />
               </div>
             </div>
@@ -3182,7 +3226,7 @@ function StatBox({ icon, label, value, color }: { icon: React.ReactNode; label: 
   );
 }
 
-function TradeRow({ trade, onEdit, onDelete, onSync, onExit, onTagClick, priority }: {
+function TradeRow({ trade, onEdit, onDelete, onSync, onExit, onTagClick, priority, priceHint }: {
   trade: Trade;
   onEdit: () => void;
   onDelete: () => void;
@@ -3190,6 +3234,7 @@ function TradeRow({ trade, onEdit, onDelete, onSync, onExit, onTagClick, priorit
   onExit?: (tradeId: string) => void;
   onTagClick?: (tag: string) => void;
   priority?: { score: number; level: 'HIGH' | 'MEDIUM' | 'LOW'; daysHeld: number; reasons: string[]; recommendedAction: string } | null;
+  priceHint?: { suggestedMin: number; suggestedMax: number; suggestedOptimal: number; expectedProfit: number; expectedROI: number; confidence: number; confidenceLabel: 'HIGH' | 'MEDIUM' | 'LOW'; reasoning: string[]; comparablesCount: number } | null;
 }) {
   const [showFlipChecklist, setShowFlipChecklist] = useLocalStorage<boolean>('trade-flip-expanded', false);
   // v8.62: Quick Sell inline form
@@ -3240,6 +3285,16 @@ function TradeRow({ trade, onEdit, onDelete, onSync, onExit, onTagClick, priorit
                 >
                   {priority.level === 'HIGH' ? '🔥' : priority.level === 'MEDIUM' ? '🟡' : '🟢'} {priority.score}
                   <span className="text-[9px] opacity-70 ml-0.5">{priority.daysHeld}d</span>
+                </span>
+              )}
+              {/* v8.66: Smart Price badge — only for held trades with price hint */}
+              {trade.status === 'held' && priceHint && (
+                <span
+                  className="inline-flex items-center gap-0.5 rounded-md border border-primary/30 bg-primary/10 px-1.5 py-0.5 text-[10px] font-medium text-primary"
+                  title={`💡 Pametna cena: ${priceHint.suggestedOptimal}€\nObseg: ${priceHint.suggestedMin}€ - ${priceHint.suggestedMax}€\nPričakovan ROI: ${priceHint.expectedROI.toFixed(0)}% (+${priceHint.expectedProfit.toFixed(0)}€)\nZaupanje: ${priceHint.confidenceLabel} (${priceHint.confidence}%)\n${priceHint.comparablesCount > 0 ? `Na podlagi ${priceHint.comparablesCount} podobnih prodaj` : 'Brez comparable podatkov'}\n\nRazlogi:\n${priceHint.reasoning.map(r => `• ${r}`).join('\n')}`}
+                >
+                  💡 {priceHint.suggestedOptimal}€
+                  <span className="text-[9px] opacity-70 ml-0.5">{priceHint.confidenceLabel === 'HIGH' ? '★' : priceHint.confidenceLabel === 'MEDIUM' ? '●' : '○'}</span>
                 </span>
               )}
               {/* v8.63: Tag chips — v8.64: clickable, sets filterTag */}
@@ -3340,7 +3395,12 @@ function TradeRow({ trade, onEdit, onDelete, onSync, onExit, onTagClick, priorit
                 title="💰 Hitra prodaja"
                 onClick={() => {
                   setShowQuickSell(!showQuickSell);
-                  if (!showQuickSell) { setQsPrice(String(Math.round(trade.buyPrice * 1.3))); haptic.light(); }
+                  // v8.66: Use smart price if available, fallback to buyPrice×1.3
+                  if (!showQuickSell) {
+                    const suggested = priceHint?.suggestedOptimal ?? Math.round(trade.buyPrice * 1.3);
+                    setQsPrice(String(suggested));
+                    haptic.light();
+                  }
                 }}
               >
                 <DollarSign className="w-3.5 h-3.5" />
