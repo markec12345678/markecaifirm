@@ -18939,3 +18939,40 @@ Stage Summary:
 - Skupaj (v7.50 → v8.72.2): 122 verzij, 244 novih funkcij
 - UX izboljšava: Winner card sedaj eksplicitno razlikuje "relative winner" od "absolute recommendation". Uporabnik ve da 55/100 BUY pomeni "najboljši med izbranimi, vendar zmern" ne "objektivno dober nakup".
 - RESPEKTA user feedback: "In zdaj bi se jaz ustavil z novimi velikimi funkcijami" — v8.72.2 je polish, ne nova funkcija. Čas za zbiranje podatkov in validacijo (v8.70 Decision Accuracy čaka na buy-score prodaje).
+
+---
+Task ID: v8.73
+Agent: main
+Task: Quoka.de — nova nemška platforma (razširi trg poleg Kleinanzeigen)
+
+Work Log:
+- Razmišljal kot uporabnik: trenutno 10 platform. Slovenske: bolha, nepremicnine, avtonet, salomon, vinted. Nemške: mobile-de, kleinanzeigen. Dodati Quoka.de ker je pravi oglasnik (ne shop), preprost HTML, razširi nemški trg.
+- Source type 'quoka' dodan v Source union v monitor-templates.ts, scraper.ts (SourceType), monitors-view.tsx.
+- scrapeQuoka() implementiran v scraper.ts z cheerio HTML parsing:
+  - Glavni selector: .ql-resultlist .ql-thumbnail-item
+  - Fallback: .result-list .result-item, .classifieds .item, article, [data-id]
+  - Parsa: title (h2/h3 a), cena (nemški format 1.234,56 → 1234.56), lokacija, opis, slika, datum
+  - External ID iz URL (regex /(\d+)\.html/ ali hashString fallback)
+- hashString() helper funkcija (namesto String.prototype.hashCode ki je problematičen).
+- anti-detection.ts: dodan www.quoka.de in quoka.de v PLATFORM_REFERERS.
+- 3 monitor templates dodani:
+  - quoka-elektronika (iPhone/MacBook, 50-1000€, 60min)
+  - quoka-avto-deli (gume/platišča, 20-800€, 90min)
+  - quoka-pohištvo (IKEA, 30-500€, 120min)
+- SOURCE_LABELS: 'Quoka.de (Nemčija)' dodan v monitors-view.tsx. Dropdown samodejno prikaze (iterira čez SOURCE_LABELS).
+- Preveril lint: 0 napak ✨
+- Preveril typecheck: 0 napak ✨
+- Agent Browser: Click "Predloge" → "💻 Quoka.de: Elektronika" template visible ✓, 0 console errors ✓
+- Commit + push uspešen ✅
+
+Stage Summary:
+- MODIFIED: src/lib/monitor-templates.ts (+Source 'quoka', +3 templates)
+- MODIFIED: src/lib/scraper.ts (+SourceType 'quoka', +scrapeQuoka() funkcija, +hashString() helper, +'quoka' case v scrape() switch)
+- MODIFIED: src/lib/anti-detection.ts (+www.quoka.de, +quoka.de v PLATFORM_REFERERS)
+- MODIFIED: src/components/dashboard/monitors-view.tsx (+Source 'quoka', +'Quoka.de (Nemčija)' v SOURCE_LABELS)
+- AI endpointi: 432 (nespremenjeto)
+- Total API routes: 642 (nespremenjeto)
+- Verzija: v8.73.0
+- Skupaj (v7.50 → v8.73): 123 verzij, 245 novih funkcij
+- 11 platform sedaj: bolha, nepremicnine, avtonet, salomon, vinted, custom-rss, mobile-de, kleinanzeigen, subito, willhaben, quoka
+- LIVE: Quoka.de template prikazan v Predloge. Uporabnik lahko ustvari monitor z Quoka source in bo scrapal Quoka.de (na userjevem Windows računalniku).
