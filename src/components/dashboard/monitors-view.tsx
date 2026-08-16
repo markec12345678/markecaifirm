@@ -48,7 +48,7 @@ function Sparkline({ data, width = 60, height = 20 }: { data: number[]; width?: 
   );
 }
 
-type Source = 'bolha' | 'nepremicnine' | 'avtonet' | 'salomon' | 'custom-rss' | 'vinted' | 'mobile-de' | 'kleinanzeigen' | 'subito' | 'willhaben';
+type Source = 'bolha' | 'nepremicnine' | 'avtonet' | 'salomon' | 'custom-rss' | 'vinted' | 'mobile-de' | 'kleinanzeigen' | 'subito' | 'willhaben' | 'quoka';
 
 interface Monitor {
   id: string;
@@ -90,6 +90,7 @@ const SOURCE_LABELS: Record<Source, string> = {
   kleinanzeigen: 'Kleinanzeigen.de (Nemčija)',
   subito: 'Subito.it (Italija)',
   willhaben: 'Willhaben.at (Avstrija)',
+  quoka: 'Quoka.de (Nemčija)',
 };
 
 const SOURCE_PRESETS: Array<{ source: Source; label: string; url: string; hint: string }> = [

@@ -118,6 +118,8 @@ const PLATFORM_REFERERS: Record<string, string> = {
   'www.willhaben.at': 'https://www.willhaben.at/',
   'www.vinted.si': 'https://www.vinted.si/',
   'www.vinted.com': 'https://www.vinted.com/',
+  'www.quoka.de': 'https://www.quoka.de/',
+  'quoka.de': 'https://www.quoka.de/',
 };
 
 function buildHeaders(realistic: boolean, url: string, session: { ua: string; cookies: Map<string, string> }, extra?: Record<string, string>): Record<string, string> {

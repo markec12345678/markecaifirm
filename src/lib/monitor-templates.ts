@@ -2,7 +2,7 @@
 // Prednastavljeni monitorji za običajne scenarije.
 // Vsak template je povsem konfiguriran (source, URL, filters, prompt, tags).
 
-export type Source = 'bolha' | 'nepremicnine' | 'avtonet' | 'salomon' | 'vinted' | 'custom-rss' | 'mobile-de' | 'kleinanzeigen' | 'subito' | 'willhaben';
+export type Source = 'bolha' | 'nepremicnine' | 'avtonet' | 'salomon' | 'vinted' | 'custom-rss' | 'mobile-de' | 'kleinanzeigen' | 'subito' | 'willhaben' | 'quoka';
 
 export interface MonitorTemplate {
   id: string;
@@ -543,6 +543,55 @@ export const MONITOR_TEMPLATES: MonitorTemplate[] = [
     intervalMinutes: 120,
     customPrompt: 'CROSS-BORDER POHIŠTVO: Avstrija ima več IKEA trgovin, sekundarni trg bolj aktiven. Preveri: "Zustand" (stanje — "Sehr gut" najboljše), "Originalverpackung" (embalaža), "Farbe" (barva). IKEA artikli: preveri šifro (npr. KALLAX, BILLY) na IKEA spletni strani za primerjavo cene. Samoprevzem pogosto opcija (Avstrija blizu SI).',
     tags: 'pohistvo,ikea,willhaben,cross-border,at',
+    icon: '🪑',
+  },
+  // ===== QUOKA.DE (NEMČIJA) — v8.73 =====
+  {
+    id: 'quoka-elektronika',
+    name: 'Quoka.de: Elektronika',
+    description: 'iPhone, MacBook, kamere na Quoka.de (nemški oglasnik). Preprost HTML, lahek za scrapat.',
+    category: 'elektronika',
+    source: 'quoka',
+    sourceUrl: 'https://www.quoka.de/kleinanzeigen/elektronik/cat_12_c_12.html',
+    keywords: 'iphone,macbook,kamera,playstation,xbox',
+    excludeKeywords: 'defekt, kaputt, defekt',
+    minPrice: 50,
+    maxPrice: 1000,
+    intervalMinutes: 60,
+    customPrompt: 'QUOKA.DE ELEKTRONIKA: Nemški oglasnik, preprost HTML. Preveri: "Zustand" (stanje), "Originalverpackung" (originalna embalaža), "Rechnung" (račun). Cene v EUR z nemškim formatom (1.234,56). Lokacija pogosto "PLZ" (poštna številka). Preveri prodajalca — Quoka ima manj zaščite kot eBay.',
+    tags: 'elektronika,quoka,nemcija,cross-border,de',
+    icon: '💻',
+  },
+  {
+    id: 'quoka-avto-deli',
+    name: 'Quoka.de: Avto-deli',
+    description: 'Avto-deli (gume, platišča, navigacije) na Quoka.de.',
+    category: 'avto',
+    source: 'quoka',
+    sourceUrl: 'https://www.quoka.de/kleinanzeigen/auto-rad-boot/cat_40_c_40.html',
+    keywords: 'reifen,felgen,navi,winterreifen,sommerreifen',
+    excludeKeywords: 'defekt, schrottreifen',
+    minPrice: 20,
+    maxPrice: 800,
+    intervalMinutes: 90,
+    customPrompt: 'QUOKA.DE AVTO-DELI: Nemški oglasnik za avto-deli. Preveri: "Reifengröße" (dimenzija pnevmatik), "Felgenmaterial" (alkat), "Profiltiefe" (globina profila v mm). Zimske gume (Winterreifen) cenejše poleti. Samoprevzem iz Nemčije pogosto opcija.',
+    tags: 'avto,quoka,nemcija,cross-border,de,gume',
+    icon: '🚗',
+  },
+  {
+    id: 'quoka-pohištvo',
+    name: 'Quoka.de: Pohištvo',
+    description: 'IKEA in drugo pohištvo na Quoka.de. Razširi Nemški trg poleg Kleinanzeigen.',
+    category: 'drugo',
+    source: 'quoka',
+    sourceUrl: 'https://www.quoka.de/kleinanzeigen/haus-garten/cat_60_c_60.html',
+    keywords: 'ikea,stuhl,tisch,schrank,couch',
+    excludeKeywords: 'defekt, beschädigt',
+    minPrice: 30,
+    maxPrice: 500,
+    intervalMinutes: 120,
+    customPrompt: 'QUOKA.DE POHIŠTVO: Nemški oglasnik. Preveri: "Zustand" (stanje), "Originalverpackung" (embalaža), "Farbe" (barva). IKEA artikli: preveri šifro (KALLAX, BILLY) na IKEA spletni strani. Samoprevzem iz Nemčije pogosto opcija.',
+    tags: 'pohistvo,ikea,quoka,nemcija,cross-border,de',
     icon: '🪑',
   },
 ];

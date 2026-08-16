@@ -25,7 +25,7 @@ export interface ScraperFilters {
   maxPrice?: number | null;
 }
 
-export type SourceType = 'bolha' | 'nepremicnine' | 'avtonet' | 'salomon' | 'custom-rss' | 'vinted' | 'mobile-de' | 'kleinanzeigen' | 'subito' | 'willhaben';
+export type SourceType = 'bolha' | 'nepremicnine' | 'avtonet' | 'salomon' | 'custom-rss' | 'vinted' | 'mobile-de' | 'kleinanzeigen' | 'subito' | 'willhaben' | 'quoka';
 
 const USER_AGENTS = [
   'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36',
@@ -531,6 +531,120 @@ async function scrapeVinted(url: string, filters: ScraperFilters): Promise<Scrap
   return applyFilters(out, filters);
 }
 
+/**
+ * v8.73: Quoka.de scraper — German classifieds platform.
+ * Strukturiran HTML z .ql-resultlist .ql-thumbnail-item elementi.
+ * Quoka ima preprost HTML brez Cloudflare zaščite (lahek za scrapat).
+ */
+function hashString(s: string): number {
+  let hash = 0;
+  for (let i = 0; i < s.length; i++) {
+    const char = s.charCodeAt(i);
+    hash = ((hash << 5) - hash) + char;
+    hash |= 0;
+  }
+  return Math.abs(hash);
+}
+
+async function scrapeQuoka(url: string, filters: ScraperFilters): Promise<ScrapedListing[]> {
+  const html = await fetchHtml(url);
+  const cheerio = await import('cheerio');
+  const $ = cheerio.load(html);
+
+  const out: ScrapedListing[] = [];
+  // Quoka uporablja .ql-resultlist .ql-thumbnail-item za rezultate
+  $('.ql-resultlist .ql-thumbnail-item, .result-list .result-item, .classifieds .item').each((_, el) => {
+    const $el = $(el);
+    const titleEl = $el.find('h2 a, h3 a, .title a, .headline a').first();
+    const title = titleEl.text().trim();
+    if (!title) return;
+
+    let href = titleEl.attr('href') || '';
+    if (href && !href.startsWith('http')) {
+      href = href.startsWith('/') ? `https://www.quoka.de${href}` : `https://www.quoka.de/${href}`;
+    }
+    if (!href) return;
+
+    // External ID iz URL
+    const idMatch = href.match(/\/(\d+)\.html/) || href.match(/id[=/](\d+)/) || href.match(/\/(\d{6,})/);
+    const externalId = idMatch ? `quoka-${idMatch[1]}` : `quoka-${hashString(href)}`;
+
+    // Cena — Quoka format: "preis" ali "€XX,XX"
+    const priceTextEl = $el.find('.price, .sem-price, .ads-price, [class*="price"]').first();
+    const priceTextRaw = priceTextEl.text().trim() || $el.find('span:contains("€")').first().text().trim();
+    const priceText = priceTextRaw || '';
+    let price: number | null = null;
+    if (priceText) {
+      const m = priceText.match(/(\d{1,3}(?:\.\d{3})*,\d{2}|\d+(?:,\d{2})?)/);
+      if (m) {
+        // German format: 1.234,56 → 1234.56
+        price = parseFloat(m[1].replace(/\./g, '').replace(',', '.'));
+      }
+    }
+
+    // Lokacija
+    const locationEl = $el.find('.location, .sem-location, [class*="location"]').first();
+    const location = locationEl.text().trim();
+
+    // Opis
+    const descEl = $el.find('.description, .text, .desc, [class*="desc"]').first();
+    const description = descEl.text().trim();
+
+    // Slika
+    const imgEl = $el.find('img').first();
+    const imageUrl = imgEl.attr('src') || imgEl.attr('data-src') || null;
+    const absoluteImg = imageUrl && !imageUrl.startsWith('http') && imageUrl.startsWith('/')
+      ? `https://www.quoka.de${imageUrl}`
+      : imageUrl;
+
+    // Datum
+    const dateEl = $el.find('.date, .sem-date, time').first();
+    const dateText = dateEl.text().trim() || dateEl.attr('datetime') || '';
+    let postedAt: Date | null = null;
+    if (dateText) {
+      const parsed = new Date(dateText);
+      if (!isNaN(parsed.getTime())) postedAt = parsed;
+    }
+
+    out.push({
+      externalId,
+      title,
+      priceText: priceText || 'Preis auf Anfrage',
+      price: price ?? null,
+      url: href,
+      location: location || '',
+      description,
+      imageUrl: absoluteImg,
+      postedAt,
+    });
+  });
+
+  // Fallback: če ni najdeno z selectorji, poskusi alternativne strukture
+  if (out.length === 0) {
+    $('article, .item, [data-id]').each((_, el) => {
+      const $el = $(el);
+      const title = $el.find('h2, h3, .title').first().text().trim();
+      const href = $el.find('a').first().attr('href') || '';
+      if (!title || !href) return;
+      const absoluteUrl = href.startsWith('http') ? href : `https://www.quoka.de${href.startsWith('/') ? '' : '/'}${href}`;
+      const externalId = `quoka-${$el.attr('data-id') || hashString(absoluteUrl)}`;
+      out.push({
+        externalId,
+        title,
+        priceText: $el.find('.price, [class*="price"]').first().text().trim() || '',
+        price: null,
+        url: absoluteUrl,
+        location: $el.find('.location, [class*="location"]').first().text().trim() || '',
+        description: $el.find('.description, .text').first().text().trim() || '',
+        imageUrl: $el.find('img').attr('src') || null,
+        postedAt: null,
+      });
+    });
+  }
+
+  return applyFilters(out, filters);
+}
+
 export async function scrape(
   source: SourceType,
   url: string,
@@ -572,6 +686,10 @@ export async function scrape(
       // v6.18: Willhaben.at (Avstrija) — največji avstrijski oglasnik
       const { scrapeWillhabenFull } = await import('./scraper-foreign');
       return scrapeWillhabenFull(url, filters, opts);
+    }
+    case 'quoka': {
+      // v8.73: Quoka.de (Nemčija) — nemški oglasnik, preprost HTML brez Cloudflare
+      return scrapeQuoka(url, filters);
     }
     default: throw new Error(`Unknown source: ${source}`);
   }
