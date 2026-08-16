@@ -133,6 +133,7 @@ export function QuickAddTradeModal({
       toast.success('✓ Trade dodan');
       onOpenChange(false);
       onSaved?.();
+      triggerGlobalRefresh('trade-added'); // v8.57: all cards refetch instantly
     } catch (e: any) {
       toast.error(e?.message ?? 'Napaka pri shranjevanju');
     } finally {

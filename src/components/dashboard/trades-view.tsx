@@ -16,6 +16,7 @@ import {
 import { RefreshCw, Plus, Pencil, Trash2, TrendingUp, TrendingDown, Wallet, Target, ExternalLink, ShoppingCart, Tag, Download, Sparkles, Check, Copy, AlertTriangle, Boxes, Flame, FileText, Receipt, Network, Clock, Type, Users, Globe, LineChart as LineChartIcon, Activity, Upload, ChevronDown, ChevronUp } from 'lucide-react';
 import { FlipChecklist } from '@/components/dashboard/flip-checklist';
 import { toast } from 'sonner';
+import { triggerGlobalRefresh } from '@/hooks/use-global-refresh';
 import { cn } from '@/lib/utils';
 import {
   ResponsiveContainer, AreaChart, Area, XAxis, YAxis, CartesianGrid, Tooltip as RTooltip, LineChart, Line,
@@ -184,6 +185,7 @@ export function TradesView() {
       const data = await res.json();
       if (data.ok) {
         toast.success(`✓ Prodanih ${data.updated} tradeov`);
+        triggerGlobalRefresh('bulk-sell'); // v8.57
         setBulkTradeIds(new Set());
         setBulkSellPrice('');
         await load();
@@ -204,6 +206,7 @@ export function TradesView() {
       const data = await res.json();
       if (data.ok) {
         toast.success(`✓ Kategoriziranih ${data.updated} tradeov`);
+        triggerGlobalRefresh('bulk-categorize'); // v8.57
         setBulkTradeIds(new Set());
         await load();
       } else { toast.error(data.error ?? 'Napaka'); }
@@ -224,6 +227,7 @@ export function TradesView() {
       const data = await res.json();
       if (data.ok) {
         toast.success(`✓ Izbrisanih ${data.updated} tradeov`);
+        triggerGlobalRefresh('bulk-delete'); // v8.57
         setBulkTradeIds(new Set());
         await load();
       } else { toast.error(data.error ?? 'Napaka'); }
@@ -2990,6 +2994,7 @@ function TradeFormDialog({ open, onOpenChange, editing, onSaved }: { open: boole
       );
       if (!res.ok) throw new Error();
       toast.success(editing ? 'Trade posodobljen' : 'Trade dodan');
+      triggerGlobalRefresh(editing ? 'trade-updated' : 'trade-created'); // v8.57
       onSaved();
     } catch {
       toast.error('Napaka pri shranjevanju');

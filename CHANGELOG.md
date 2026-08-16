@@ -45,6 +45,37 @@ Problem: Sistem deluje na desktop, ampak mobile UX je suboptimalen — 17 nav gu
 
 UI-only release — no new API endpoints, no Prisma schema changes, no new npm dependencies. All mobile components are `md:hidden` (desktop unaffected). Agent Browser verified: mobile (375×812) bottom nav visible z 5 buttons + Trades badge "5" (held count) + FAB 56×56px; desktop (1920×1080) both `display:none`.
 
+## [8.57.0] - 2026-08-15
+
+### Added — 🔄 Global Refresh Broadcast — cache invalidation via custom events
+
+Problem: ko uporabnik doda/editira/briše trade ali shrani settings, mora čakati 60s da se dashboard kartice osvežijo. Best practice: cache invalidation via event bus.
+
+- **`src/hooks/use-global-refresh.ts`** (NEW) — `triggerGlobalRefresh(reason)` dispatcha CustomEvent. `useGlobalRefreshListener(callback)` subscribes. Pattern: mutation → triggerGlobalRefresh → ALL useFetch instances refetch instantly.
+- **`src/hooks/use-fetch.ts`** (MODIFIED) — useFetch sedaj avtomatsko posluša 'markec-global-refresh' event in refetch-a. Ni potrebe po ročni subscripciji v vsaki kartici.
+- **`src/components/dashboard/quick-add-trade-modal.tsx`** (MODIFIED) — `triggerGlobalRefresh('trade-added')` po uspešnem save.
+- **`src/components/dashboard/trades-view.tsx`** (MODIFIED) — `triggerGlobalRefresh()` po: bulk sell, bulk categorize, bulk delete, TradeFormDialog save (create/update).
+
+### Pattern
+
+```typescript
+// 1. After ANY mutation:
+await fetch('/api/trades', { method: 'POST', body: ... });
+triggerGlobalRefresh('trade-added');
+
+// 2. ALL dashboard cards using useFetch refetch instantly:
+//    - ProfitForecastCard refetches /api/analytics/profit-forecast
+//    - TradeStatsCard refetches /api/ai/brain/actual-profit
+//    - GoalTrackerCard refetches /api/trades/goal-tracker
+//    - etc.
+// No more waiting 60s for stats to update!
+```
+
+### Stats
+- AI endpoints: 432 (unchanged — UI only)
+- Total API routes: 630 (unchanged)
+- Lint: 0 ✨ | Typecheck: 0 ✨
+
 ## [8.56.0] - 2026-08-15
 
 ### Added — 🛡️ useFetch + CardError + CardSkeleton (best practices error/loading)
