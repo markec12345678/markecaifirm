@@ -18433,3 +18433,30 @@ Stage Summary:
 - Total API routes: 630 (nespremenjeto)
 - Verzija: v8.60.0
 - Skupaj (v7.50 → v8.60): 110 verzij, 232 novih funkcij
+
+---
+Task ID: v8.61
+Agent: main
+Task: Month-over-Month Comparison + Category Performance Timeline
+
+Work Log:
+- Razmišljal kot uporabnik: nimam MoM comparison in category performance timeline-a
+- Ustvaril src/lib/trades/month-over-month.ts (getMonthOverMonth — 6-month history, MoM change, category breakdown z trend)
+- Ustvaril src/app/api/analytics/month-over-month/route.ts (GET)
+- Ustvaril src/components/dashboard/month-over-month-card.tsx (MoM comparison + 6-month BarChart + Category LineChart + summary table, uses useFetch)
+- Integriral v dashboard-view.tsx (after ProfitForecastCard)
+- Preveril lint: 0 napak ✨
+- Preveril typecheck: 0 napak ✨ (popravil 1 TS error: avgMonthlyProfit v CategoryMonthData interface)
+- Curl: current 312€, last 661€, MoM -349€ (-52.8%), 6 months history, 5 categories, best=elektronika ✅
+- Agent Browser: "312", "661", "elektronika" prikazani ✅
+- Commit + push uspešen ✅
+
+Stage Summary:
+- NEW: src/lib/trades/month-over-month.ts
+- NEW: src/app/api/analytics/month-over-month/route.ts
+- NEW: src/components/dashboard/month-over-month-card.tsx
+- MODIFIED: src/components/dashboard/dashboard-view.tsx
+- AI endpointi: 432 (nespremenjeto)
+- Total API routes: 630 → 631 (+1)
+- Verzija: v8.61.0
+- Skupaj (v7.50 → v8.61): 111 verzij, 233 novih funkcij
