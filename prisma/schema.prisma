@@ -242,6 +242,37 @@ model Trade {
   @@index([profileId])
 }
 
+// v8.71: Buy Request — saved item search criteria.
+// "I'm looking for VW Golf 5, 2020, max 15000€, Ljubljana" → saved + reusable.
+// Optional searchFor = person name for proxy buying (gift shopping, searching for someone).
+model BuyRequest {
+  id          String   @id @default(cuid())
+  // Who is this search for? (empty = for self)
+  searchFor   String   @default("") // e.g., "Marko", "Mama", "Kolega" — proxy buying
+  // Search criteria
+  title       String   // item name (e.g., "VW Golf 5")
+  keywords    String   @default("") // additional keywords (comma-separated)
+  category    String   @default("") // elektronika/avto/oblačila/...
+  priceMin    Int?
+  priceMax    Int?
+  location    String   @default("") // city/region filter
+  yearMin     Int?     // for cars/electronics with model year
+  yearMax     Int?
+  condition   String   @default("") // novo | rabljeno | ''
+  // Sort preference
+  sortBy      String   @default("cheapest") // cheapest | best_score | newest | closest
+  // Metadata
+  notes       String   @default("")
+  isActive    Boolean  @default(true)
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+  profileId   String?
+
+  @@index([isActive])
+  @@index([category])
+  @@index([searchFor])
+}
+
 // v1.6: Digest log — when digests were sent (for scheduling)
 model DigestLog {
   id          String   @id @default(cuid())

@@ -34,6 +34,8 @@ const PricingView = memo(dynamic(() => import('@/components/dashboard/pricing-vi
 const ListingOptimizationView = memo(dynamic(() => import('@/components/dashboard/listing-optimization-view').then(m => ({ default: m.ListingOptimizationView })), { ssr: false, loading: () => <LoadingFallback /> }));
 // v7.06: RiskView — AI analiza tveganj (hedging, insurance, saturation, parity, guardian)
 const RiskView = memo(dynamic(() => import('@/components/dashboard/risk-view').then(m => ({ default: m.RiskView })), { ssr: false, loading: () => <LoadingFallback /> }));
+// v8.71: IskalnikView — targeted item search with criteria + results
+const IskalnikView = memo(dynamic(() => import('@/components/dashboard/iskalnik-view').then(m => ({ default: m.IskalnikView })), { ssr: false, loading: () => <LoadingFallback /> }));
 // v7.19: ErrorBoundary — prepreči bel zaslon ob crashu komponente
 import { ErrorBoundary } from '@/components/error-boundary';
 import { PwaInstallPrompt } from '@/components/dashboard/pwa-install-prompt';
@@ -62,13 +64,14 @@ function LoadingFallback() {
   );
 }
 
-type View = 'dashboard' | 'monitors' | 'alerts' | 'listings' | 'watchlist' | 'analytics' | 'statistics' | 'trades' | 'health' | 'notifications' | 'settings' | 'buyers' | 'ai-hub' | 'inventory' | 'pricing' | 'listing-opt' | 'risk';
+type View = 'dashboard' | 'monitors' | 'alerts' | 'listings' | 'watchlist' | 'analytics' | 'statistics' | 'trades' | 'health' | 'notifications' | 'settings' | 'buyers' | 'ai-hub' | 'inventory' | 'pricing' | 'listing-opt' | 'risk' | 'iskalnik';
 
 const NAV: { id: View; label: string; icon: typeof Activity }[] = [
   { id: 'dashboard', label: 'Dashboard', icon: Activity },
   { id: 'monitors', label: 'Monitorji', icon: ListPlus },
   { id: 'alerts', label: 'Alerti', icon: Bell },
   { id: 'listings', label: 'Oglasi', icon: LayoutGrid },
+  { id: 'iskalnik', label: 'Iskalnik', icon: Search },
   { id: 'watchlist', label: 'Watchlist', icon: Eye },
   { id: 'trades', label: 'Skladišče', icon: TrendingUp },
   { id: 'inventory', label: 'Skladišče AI', icon: Package },
@@ -146,7 +149,7 @@ export default function Home() {
     const viewParam = params.get('view');
     const actionParam = params.get('action');
     if (viewParam) {
-      const validViews: View[] = ['dashboard', 'monitors', 'alerts', 'listings', 'watchlist', 'analytics', 'statistics', 'trades', 'health', 'notifications', 'settings', 'buyers', 'ai-hub', 'inventory', 'pricing', 'listing-opt', 'risk'];
+      const validViews: View[] = ['dashboard', 'monitors', 'alerts', 'listings', 'iskalnik', 'watchlist', 'analytics', 'statistics', 'trades', 'health', 'notifications', 'settings', 'buyers', 'ai-hub', 'inventory', 'pricing', 'listing-opt', 'risk'];
       if (validViews.includes(viewParam as View)) {
         setView(viewParam as View);
       }
@@ -424,6 +427,7 @@ export default function Home() {
         {view === 'monitors' && <ErrorBoundary viewName="Monitorji"><MonitorsView /></ErrorBoundary>}
         {view === 'alerts' && <ErrorBoundary viewName="Alerti"><AlertsView /></ErrorBoundary>}
         {view === 'listings' && <ErrorBoundary viewName="Oglasi"><ListingsView /></ErrorBoundary>}
+        {view === 'iskalnik' && <ErrorBoundary viewName="Iskalnik"><IskalnikView /></ErrorBoundary>}
         {view === 'watchlist' && <ErrorBoundary viewName="Watchlist"><WatchlistView onNavigate={setView} /></ErrorBoundary>}
         {view === 'trades' && <ErrorBoundary viewName="Skladišče"><TradesView /></ErrorBoundary>}
         {view === 'inventory' && <ErrorBoundary viewName="Skladišče AI"><InventoryView /></ErrorBoundary>}
