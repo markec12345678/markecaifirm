@@ -18308,3 +18308,29 @@ Stage Summary:
 - Total API routes: 630 (nespremenjeto)
 - Verzija: v8.55.0
 - Skupaj (v7.50 → v8.55): 105 verzij, 227 novih funkcij
+
+---
+Task ID: v8.56
+Agent: main
+Task: useFetch + CardError + CardSkeleton (best practices error/loading)
+
+Work Log:
+- Razmišljal po najboljših praksah: 432 AI endpointov + 10+ dashboard kartic, vsaka ima svoj fetch/error/loading (DRY violation). API failure = prazen card brez retry.
+- Ustvaril src/hooks/use-fetch.ts (reusable useFetch<T> hook z loading/error/data/refetch + auto-refresh + cleanup)
+- Ustvaril src/components/dashboard/card-error.tsx (consistent error state z AlertCircle + retry button)
+- Ustvaril src/components/dashboard/card-skeleton.tsx (consistent loading skeleton z 3 variantami)
+- ProfitForecastCard refactored kot showcase (useFetch + CardSkeleton + CardError, 30 vrstic manj)
+- Preveril lint: 0 napak ✨
+- Preveril typecheck: 0 napak ✨
+- Commit + push uspešen ✅
+- Agent Browser: ProfitForecastCard še vedno deluje (725€, 351€, ON_TRACK) ✅
+
+Stage Summary:
+- NEW: src/hooks/use-fetch.ts (useFetch<T>(url, {interval, skip}) — loading/error/data/refetch + auto-refresh + cleanup)
+- NEW: src/components/dashboard/card-error.tsx (AlertCircle + message + retry button)
+- NEW: src/components/dashboard/card-skeleton.tsx (3 variante: default/chart/stats + animate-pulse)
+- MODIFIED: src/components/dashboard/profit-forecast-card.tsx (refactored to useFetch — showcase pattern)
+- AI endpointi: 432 (nespremenjeto — UI only)
+- Total API routes: 630 (nespremenjeto)
+- Verzija: v8.56.0
+- Skupaj (v7.50 → v8.56): 106 verzij, 228 novih funkcij
