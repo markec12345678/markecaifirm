@@ -18621,3 +18621,46 @@ Stage Summary:
 - Verzija: v8.65.0
 - Skupaj (v7.50 → v8.65): 115 verzij, 237 novih funkcij
 - LIVE: 5 held trades z scores — Sony A7III camera (80 HIGH), Xbox Series X (80 HIGH), Nike Air Max 97 (78 HIGH), PlayStation 5, Stanley ketan set. Top 3 Action Panel prikaže top 3 z Uredi + AI Izhod quick actions.
+
+---
+Task ID: v8.66
+Agent: main
+Task: Smart Pricing Recommender
+
+Work Log:
+- Razmišljal kot uporabnik: v8.65 mi pove KDAJ prodati (priority score). Ampak ko kliknem "Prodaj" na Sony A7III (800€), ne vem za koliko naj jo prodam. Quick Sell predlaga buyPrice×1.3 (formula) ampak ne upošteva zgodovinskih prodaj, dni v skladišču, tag verdict.
+- src/lib/trades/smart-pricing.ts (NEW): computeSmartPrice(trade, context) → SmartPriceResult {suggestedMin, suggestedMax, suggestedOptimal, expectedProfit, expectedROI, confidence 0-100, confidenceLabel HIGH/MEDIUM/LOW, reasoning[], comparables[]}.
+  - Heuristic formula: base = cost × (1 + targetROI/100) kjer targetROI = max(15%, categoryAvgROI - 5%) (slightly below avg za hitro prodajo)
+  - Blend 60% base + 40% comparable avg sell price (če so comparables)
+  - Days held >30d → -3%/10d (max -15%) (discount za hitro prodajo)
+  - STAR tag → +5% premium (visoka donosnost kategorije)
+  - UNDERPERFORMER tag → -10% (prodaj hitro)
+  - Goal progress <50% → -5% (price to sell, sprosti cash)
+  - Clamp [cost×1.05, cost×2.0] (min 5% profit, max 100% ROI)
+  - Confidence: 30 base + comparables (5+=40, 3+=30, 1+=15) + categoryAvgROI (+20) + tags (+10)
+- getSmartPriceForTrade(tradeId): fetch-a comparables (same category, buyPrice ±50%) + category avg ROI + monthly goal progress. getSmartPricesForAllHeld() batch.
+- API /api/analytics/smart-pricing GET (NEW): ?tradeId=xxx za single, brez za batch. runtime=nodejs, dynamic=force-dynamic, maxDuration=15.
+- TradeRow: 💡 price badge z suggestedOptimal + confidence indicator (★ HIGH / ● MEDIUM / ○ LOW). Hover tooltip: obseg (min-max), pričakovan ROI, zaupanje, comparables count, razlogi. Color: primary tint.
+- Held Action Panel: 'Predlagana cena' row na Top 3 karticah z suggestedOptimal + tooltip z obseg/ROI/zaupanje.
+- Quick Sell form: pre-fill z priceHint.suggestedOptimal namesto buyPrice×1.3 (fallback če ni hint-a).
+- Auto-fetch smart prices na mount.
+- Preveril lint: 0 napak ✨
+- Preveril typecheck: 0 napak ✨
+- API test: 5 held trades z realnimi smart prices — Sony A7III (856€ optimal, 5% ROI, 1 comp, HIGH), Xbox Series X (426€, 22% ROI, 4 comps, HIGH), PlayStation 5 (475€, 19% ROI, 4 comps, HIGH), Nike Air Max 97 (119€, 25% ROI, 3 comps, HIGH), Stanley ketan set (50€, 85% ROI, 1 comp, HIGH). ✓
+- Agent Browser:
+  - Smart Price badges visible: "💡 855.75€★" ✓
+  - Action Panel "Predlagana cena" visible: YES ✓
+  - 0 console errors ✓
+- Commit + push uspešen ✅
+
+Stage Summary:
+- NEW: src/lib/trades/smart-pricing.ts (computeSmartPrice, getSmartPriceForTrade, getSmartPricesForAllHeld, SmartPriceResult/SmartPriceList/ComparableSale interfaces)
+- NEW: src/app/api/analytics/smart-pricing/route.ts (GET ?tradeId=xxx ali batch)
+- MODIFIED: src/components/dashboard/trades-view.tsx (+priceMap state, +loadPrices fetch, +priceHint prop v TradeRow, +💡 price badge, +Held Action Panel 'Predlagana cena' row, +Quick Sell pre-fill z suggestedOptimal)
+- MODIFIED: README.md (v8.65→v8.66, API routes 634→635, +v8.66 changelog entry)
+- AI endpointi: 432 (nespremenjeto — smart-pricing je pod /api/analytics/)
+- Total API routes: 634 → 635 (+1: analytics/smart-pricing)
+- Verzija: v8.66.0
+- Skupaj (v7.50 → v8.66): 116 verzij, 238 novih funkcij
+- LIVE: 5 held trades z smart prices — Sony A7III (856€, 5% ROI, HIGH ★, 1 comp), Xbox Series X (426€, 22% ROI, HIGH ★, 4 comps), PlayStation 5 (475€, 19% ROI, HIGH ★, 4 comps), Nike Air Max 97 (119€, 25% ROI, HIGH ★, 3 comps), Stanley ketan set (50€, 85% ROI, HIGH ★, 1 comp).
+- Komplement v8.65: priority = KDAJ prodati, smart price = ZA KOLIKO.
