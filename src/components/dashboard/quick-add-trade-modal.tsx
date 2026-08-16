@@ -35,6 +35,7 @@ import {
 } from '@/components/ui/select';
 import { Plus, RefreshCw } from 'lucide-react';
 import { toast } from 'sonner';
+import { triggerGlobalRefresh } from '@/hooks/use-global-refresh';
 
 const CATEGORIES = [
   'elektronika',

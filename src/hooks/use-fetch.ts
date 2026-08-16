@@ -10,6 +10,7 @@
 //   return <ActualContent data={data} />;
 
 import { useState, useEffect, useCallback, useRef } from 'react';
+import { useGlobalRefreshListener } from '@/hooks/use-global-refresh';
 
 interface UseFetchResult<T> {
   data: T | null;
@@ -65,6 +66,13 @@ export function useFetch<T>(
     }, options.interval);
     return () => clearInterval(id);
   }, [options?.interval, url]);
+
+  // v8.57: Global refresh — when triggerGlobalRefresh() is called (after any mutation),
+  // ALL useFetch instances refetch immediately. No more waiting for interval.
+  const unsubscribe = useGlobalRefreshListener(() => {
+    setRetryCount(c => c + 1);
+  });
+  useEffect(() => unsubscribe, [unsubscribe]);
 
   const refetch = useCallback(() => {
     setRetryCount(c => c + 1);
