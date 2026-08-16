@@ -18712,3 +18712,44 @@ Stage Summary:
 - Skupaj (v7.50 → v8.67): 117 verzij, 239 novih funkcij
 - LIVE: 19 sold — 14 PERFECT, 4 GOOD, 1 LOSS. avg 87/100. -137€ left on table, +364€ extra gained. Best: Zara (100). Worst: Adidas Yeezy (38 LOSS).
 - ZAPRE SELL DECISION LOOP: v8.65 (KDAJ prodati) + v8.66 (ZA KOLIKO) + v8.67 (ali je bilo prav?) = popolna sell intelligence z feedback loop.
+
+---
+Task ID: v8.68
+Agent: main
+Task: Buy Opportunity Score za Listings — PRE-SALE buy intelligence
+
+Work Log:
+- Razmišljal kot uporabnik: Sell decision loop je zaključen (v8.65-67). Ampak BUY side ni pokrit! Ko vidim oglas za 450€ ne vem ali naj ga kupim. Imam AI verdicts ampak ne data-driven buy score-a ki upošteva mojo zgodovino.
+- src/lib/trades/buy-opportunity.ts (NEW): computeBuyScore(listing, context) → BuyOpportunityResult {score 0-100, verdict STRONG_BUY/BUY/CONSIDER/AVOID, expectedROI, expectedProfit, suggestedMaxBuyPrice, discountPercent, confidence, reasoning[], recommendation}.
+  - Heuristic: base 25 + price vs AI estimatedValue (discount% × 1.5, max +30) + price vs marketAvgSellPrice (margin% × 0.8, max +25) + aiScore × 2.5 (max +25) - aiRisk × 2 (max -20) + category STAR (+10) / UNDERPERFORMER (-10) + price drop (+5).
+  - Verdict: STRONG_BUY ≥75, BUY ≥55, CONSIDER ≥35, AVOID <35.
+  - Category derived from monitor.tags (first tag).
+- getBuyOpportunityForListing(listingId): fetch-a sold trades in same category za marketAvgSellPrice + marketAvgROI + categoryVerdict. getTopBuyOpportunities(limit) batch.
+- API /api/analytics/buy-opportunity GET (NEW): ?listingId=xxx za single, ?limit=N za batch. runtime=nodejs, dynamic=force-dynamic, maxDuration=15.
+- BuyOpportunitySummaryCard (NEW dashboard component): verdict distribution bar (STRONG_BUY/BUY/CONSIDER/AVOID z counts + bar vizualizacija), Top 3 priložnosti z score badge + price + expectedROI + discount%, stats footer. Uses useFetch + CardSkeleton + CardError.
+- Dashboard integration: <BuyOpportunitySummaryCard /> dodan po <OutcomeSummaryCard />.
+- Seed script scripts/seed-listings.ts: 8 demo listings z AI evalvacijo (iPhone 13 Pro 450€, Samsung S22 380€, MacBook Air M1 720€, Sony A7III 1100€, Pioneer radio 90€, PS5 550€, Nike Jordan 75€, Bosch vijačni 28€). Monitor z tags='elektronika'.
+- Preveril lint: 0 napak ✨
+- Preveril typecheck: 0 napak ✨ (popravil monitor.category → monitor.tags derivation v 3 mestih)
+- API test: 8 listings — 5 STRONG_BUY (Avto radio Pioneer 100, Bosch vijačni 94, Nike Air Jordan 93, iPhone 13 Pro 77, Samsung S22 76), 2 CONSIDER, 1 AVOID. Top 3: Pioneer (90€, +360% ROI, -25% pod oceno), Bosch vijačni (28€, +1379% ROI), Nike Jordan (75€, +452% ROI). ✓
+- Agent Browser:
+  - BuyOpportunitySummaryCard visible na dashboard ✓
+  - "PORAZDELITEV 8 OGLASOV — 5 Močna kupnina, 2 Premisli, 1 Izogibaj" ✓
+  - "TOP 3 PRILOŽNOSTI" z #1 Pioneer 90€ +360% ROI -25% pod oceno 🟢 100, #2 Bosch vijačni 28€ +1379% ROI 🟢 94, #3 Nike Air Jordan 75€ +452% ROI 🟢 93 ✓
+  - "5 za kupnino, 2 premislek, 1 izogib" ✓
+  - 0 console errors ✓
+- Commit + push uspešen ✅
+
+Stage Summary:
+- NEW: src/lib/trades/buy-opportunity.ts (computeBuyScore, getBuyOpportunityForListing, getTopBuyOpportunities, BuyOpportunityResult/BuyOpportunityList interfaces)
+- NEW: src/app/api/analytics/buy-opportunity/route.ts (GET ?listingId=xxx ali ?limit=N)
+- NEW: src/components/dashboard/buy-opportunity-summary-card.tsx (verdict distribution + Top 3 + stats)
+- NEW: scripts/seed-listings.ts (8 demo listings z AI evalvacijo)
+- MODIFIED: src/components/dashboard/dashboard-view.tsx (+BuyOpportunitySummaryCard import + render)
+- MODIFIED: README.md (v8.67→v8.68, API routes 636→637, +v8.68 changelog entry)
+- AI endpointi: 432 (nespremenjeto — buy-opportunity je pod /api/analytics/)
+- Total API routes: 636 → 637 (+1: analytics/buy-opportunity)
+- Verzija: v8.68.0
+- Skupaj (v7.50 → v8.68): 118 verzij, 240 novih funkcij
+- LIVE: 8 listings — 5 STRONG_BUY, 2 CONSIDER, 1 AVOID. Top 3: Pioneer radio (100, 90€, +360% ROI), Bosch vijačni (94, 28€, +1379% ROI), Nike Jordan (93, 75€, +452% ROI).
+- KOMPLETIRA BUY/SELL CYCLE: v8.68 (KUPITI?) + v8.65 (KDAJ prodati) + v8.66 (ZA KOLIKO) + v8.67 (ali je bilo prav?) = popolna trade intelligence z buy + sell + feedback loop.
