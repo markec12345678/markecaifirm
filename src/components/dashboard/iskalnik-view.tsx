@@ -17,7 +17,7 @@ import {
 import {
   Select, SelectContent, SelectItem, SelectTrigger, SelectValue,
 } from '@/components/ui/select';
-import { Search, MapPin, Euro, Calendar, ExternalLink, Star, Shield, Save, Trash2, User, X, RefreshCw, TrendingDown, Filter } from 'lucide-react';
+import { Search, MapPin, Euro, Calendar, ExternalLink, Star, Shield, Save, Trash2, User, X, RefreshCw, TrendingDown, Filter, GitCompare, Check, Trophy, AlertTriangle } from 'lucide-react';
 import { toast } from 'sonner';
 import { cn } from '@/lib/utils';
 
@@ -103,6 +103,11 @@ export function IskalnikView() {
 
   // Expanded listing detail
   const [expandedId, setExpandedId] = useState<string | null>(null);
+  // v8.72: Multi-select for comparison
+  const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
+  const [compareData, setCompareData] = useState<any>(null);
+  const [compareLoading, setCompareLoading] = useState(false);
+  const [showCompare, setShowCompare] = useState(false);
 
   // Load saved requests on mount
   useEffect(() => {
@@ -220,6 +225,45 @@ export function IskalnikView() {
     ? Math.min(...results.map(r => r.price ?? Infinity))
     : null;
 
+  // v8.72: Toggle selection for comparison
+  const toggleSelect = useCallback((id: string) => {
+    setSelectedIds(prev => {
+      const next = new Set(prev);
+      if (next.has(id)) next.delete(id);
+      else if (next.size < 6) next.add(id);
+      else toast.warning('Največ 6 listings za primerjavo');
+      return next;
+    });
+  }, []);
+
+  const runCompare = useCallback(async () => {
+    if (selectedIds.size < 2) {
+      toast.error('Izberi vsaj 2 listings za primerjavo');
+      return;
+    }
+    setCompareLoading(true);
+    setShowCompare(true);
+    try {
+      const res = await fetch('/api/search/compare', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ listingIds: Array.from(selectedIds) }),
+      });
+      const data = await res.json();
+      if (data.ok) {
+        setCompareData(data);
+      } else {
+        toast.error(data.error || 'Napaka pri primerjavi');
+        setShowCompare(false);
+      }
+    } catch {
+      toast.error('Napaka');
+      setShowCompare(false);
+    } finally {
+      setCompareLoading(false);
+    }
+  }, [selectedIds]);
+
   return (
     <div className="space-y-4">
       {/* Header */}
@@ -233,16 +277,48 @@ export function IskalnikView() {
             Išči po vseh oglasih z kriteriji — najdi najcenejši, najboljši buy score, najbližji kraj.
           </p>
         </div>
-        <Button
-          variant="outline"
-          size="sm"
-          onClick={() => { setSaveSearchFor(searchFor); setShowSaveDialog(true); }}
-          disabled={!query.trim()}
-          className="gap-2"
-        >
-          <Save className="w-3.5 h-3.5" /> Shrani iskanje
-        </Button>
+        <div className="flex items-center gap-2">
+          <Button
+            variant="outline"
+            size="sm"
+            onClick={() => { setSaveSearchFor(searchFor); setShowSaveDialog(true); }}
+            disabled={!query.trim()}
+            className="gap-2"
+          >
+            <Save className="w-3.5 h-3.5" /> Shrani iskanje
+          </Button>
+          {/* v8.72: Compare button */}
+          {selectedIds.size >= 2 && (
+            <Button
+              size="sm"
+              onClick={runCompare}
+              className="gap-2 bg-primary text-primary-foreground hover:bg-primary/90"
+            >
+              <GitCompare className="w-3.5 h-3.5" /> Primerjaj ({selectedIds.size})
+            </Button>
+          )}
+        </div>
       </div>
+
+      {/* v8.72: Selection bar */}
+      {selectedIds.size > 0 && (
+        <div className="flex items-center justify-between gap-2 px-3 py-2 bg-primary/5 border border-primary/30 rounded-md text-xs">
+          <span className="text-primary font-medium">
+            {selectedIds.size} {selectedIds.size === 1 ? 'listing izbran' : 'listingov izbranih'}
+            {selectedIds.size < 2 && ' — izberi še vsaj 1 za primerjavo'}
+          </span>
+          <div className="flex items-center gap-2">
+            <Button variant="ghost" size="sm" className="h-6 text-xs" onClick={() => setSelectedIds(new Set())}>
+              <X className="w-3 h-3" /> Počisti
+            </Button>
+            {selectedIds.size >= 2 && (
+              <Button size="sm" onClick={runCompare} className="h-6 text-xs gap-1 bg-primary text-primary-foreground hover:bg-primary/90">
+                <GitCompare className="w-3 h-3" /> Primerjaj
+              </Button>
+            )}
+          </div>
+        </div>
+      )}
 
       {/* Search Form */}
       <Card className="bg-card/50">
@@ -414,6 +490,8 @@ export function IskalnikView() {
                   rank={i + 1}
                   expanded={expandedId === r.id}
                   onToggle={() => setExpandedId(expandedId === r.id ? null : r.id)}
+                  selected={selectedIds.has(r.id)}
+                  onToggleSelect={() => toggleSelect(r.id)}
                 />
               ))}
             </>
@@ -460,11 +538,156 @@ export function IskalnikView() {
           </DialogFooter>
         </DialogContent>
       </Dialog>
+
+      {/* v8.72: Compare Dialog */}
+      <Dialog open={showCompare} onOpenChange={setShowCompare}>
+        <DialogContent className="max-w-5xl max-h-[90vh] overflow-y-auto">
+          <DialogHeader>
+            <DialogTitle className="flex items-center gap-2">
+              <GitCompare className="w-4 h-4 text-primary" /> Primerjava listingov
+            </DialogTitle>
+            <DialogDescription>
+              {compareData?.summary ? `${compareData.summary.count} listings · cena ${compareData.summary.priceRange.min}€ - ${compareData.summary.priceRange.max}€ · avg buy score ${compareData.summary.avgBuyScore.toFixed(0)}` : 'Nalagam...'}
+            </DialogDescription>
+          </DialogHeader>
+          {compareLoading ? (
+            <div className="flex items-center justify-center py-12">
+              <RefreshCw className="w-6 h-6 animate-spin text-primary" />
+            </div>
+          ) : compareData ? (
+            <CompareContent data={compareData} />
+          ) : (
+            <p className="text-sm text-muted-foreground text-center py-8">Napaka pri nalaganju primerjave.</p>
+          )}
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setShowCompare(false)}>Zapri</Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
     </div>
   );
 }
 
-function ResultCard({ result, rank, expanded, onToggle }: { result: SearchResult; rank: number; expanded: boolean; onToggle: () => void }) {
+// v8.72: Compare Content — side-by-side table + AI advisor
+function CompareContent({ data }: { data: any }) {
+  const { compared, winner, cheapest, bestAI, advisorInsights, summary } = data;
+
+  // Rows for the comparison table
+  const rows: { label: string; getValue: (c: any) => React.ReactNode; highlight?: (c: any) => boolean }[] = [
+    { label: 'Cena', getValue: c => <span className="font-mono font-bold">{c.price ?? '?'}€</span>, highlight: c => c.id === cheapest?.id },
+    { label: 'Buy Score', getValue: c => <span className={c.buyScore >= 75 ? 'text-emerald-500 font-bold' : c.buyScore >= 55 ? 'text-primary' : 'text-amber-500'}>{c.buyScore} ({c.buyVerdict})</span>, highlight: c => c.id === winner?.id },
+    { label: 'AI Score', getValue: c => c.aiScore != null ? `⭐ ${c.aiScore}/10` : '—', highlight: c => c.id === bestAI?.id },
+    { label: 'AI Risk', getValue: c => c.aiRisk != null ? <span className={c.aiRisk >= 6 ? 'text-red-500' : c.aiRisk >= 4 ? 'text-amber-500' : 'text-emerald-500'}>🛡 {c.aiRisk}/10</span> : '—' },
+    { label: 'AI Verdict', getValue: c => c.aiVerdict || '—' },
+    { label: 'AI Ocena vrednosti', getValue: c => c.aiEstimatedValue != null ? `${c.aiEstimatedValue}€` : '—' },
+    { label: 'Discount pod oceno', getValue: c => c.discountPercent != null && c.discountPercent > 0 ? <span className="text-emerald-500">-{c.discountPercent.toFixed(0)}%</span> : '—' },
+    { label: 'Pričakovan ROI', getValue: c => c.expectedROI != null ? <span className="text-emerald-500">+{c.expectedROI.toFixed(0)}%</span> : '—' },
+    { label: 'Letnik', getValue: c => c.year ?? '—' },
+    { label: 'Lokacija', getValue: c => <span className="flex items-center gap-0.5"><MapPin className="w-2.5 h-2.5" />{c.location || '—'}</span> },
+    { label: 'Prodajalec', getValue: c => c.sellerName || '—' },
+    { label: 'Vir', getValue: c => c.monitor?.source || '—' },
+    { label: 'Padec cene', getValue: c => c.priceDroppedAt != null ? <Badge variant="outline" className="text-emerald-500 border-emerald-500/30">Da</Badge> : 'Ne' },
+  ];
+
+  return (
+    <div className="space-y-4">
+      {/* AI Advisor insights */}
+      <div className="bg-primary/5 border border-primary/30 rounded-lg p-3 space-y-1.5">
+        <div className="text-xs uppercase text-primary font-bold flex items-center gap-1.5">
+          <Trophy className="w-3.5 h-3.5" /> AI Buy Advisor
+        </div>
+        {advisorInsights.map((insight: string, i: number) => {
+          const isWarning = insight.includes('⚠️');
+          return (
+            <div key={i} className="text-xs flex items-start gap-1.5">
+              {isWarning ? <AlertTriangle className="w-3 h-3 text-amber-500 mt-0.5 shrink-0" /> : <span className="text-primary mt-0.5">→</span>}
+              <span className="text-foreground/80">{insight}</span>
+            </div>
+          );
+        })}
+      </div>
+
+      {/* Winner highlight */}
+      {winner && (
+        <div className="bg-emerald-500/10 border border-emerald-500/30 rounded-lg p-3">
+          <div className="flex items-center gap-2 mb-1">
+            <Trophy className="w-4 h-4 text-emerald-500" />
+            <span className="text-sm font-bold text-emerald-500">🏆 Najboljša vrednost</span>
+          </div>
+          <div className="text-sm font-medium">{winner.title}</div>
+          <div className="text-xs text-muted-foreground mt-0.5">
+            {winner.price}€ · buy score {winner.buyScore}/100 · {winner.location}
+          </div>
+          <p className="text-xs text-foreground/80 mt-1.5 italic">{winner.recommendation}</p>
+        </div>
+      )}
+
+      {/* Comparison table */}
+      <div className="overflow-x-auto">
+        <table className="w-full text-xs border-collapse">
+          <thead>
+            <tr className="border-b border-border">
+              <th className="text-left p-2 text-muted-foreground uppercase text-[10px]">Kriterij</th>
+              {compared.map((c: any) => (
+                <th key={c.id} className={cn(
+                  'text-left p-2 min-w-[140px] align-top',
+                  c.id === winner?.id && 'bg-emerald-500/10'
+                )}>
+                  <div className="flex items-start gap-1.5">
+                    {c.imageUrl && <img src={c.imageUrl} alt="" className="w-10 h-10 rounded object-cover shrink-0" />}
+                    <div className="min-w-0">
+                      <div className="font-medium text-xs truncate" title={c.title}>{c.title}</div>
+                      <a href={c.url} target="_blank" rel="noopener noreferrer" className="text-[10px] text-primary hover:underline flex items-center gap-0.5">
+                        <ExternalLink className="w-2 h-2" /> Odpri
+                      </a>
+                    </div>
+                  </div>
+                </th>
+              ))}
+            </tr>
+          </thead>
+          <tbody>
+            {rows.map((row, i) => (
+              <tr key={i} className="border-b border-border/50">
+                <td className="p-2 text-muted-foreground text-[10px] uppercase">{row.label}</td>
+                {compared.map((c: any) => (
+                  <td key={c.id} className={cn(
+                    'p-2',
+                    row.highlight?.(c) && 'bg-emerald-500/10 font-medium'
+                  )}>
+                    {row.getValue(c)}
+                  </td>
+                ))}
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
+
+      {/* Summary stats */}
+      <div className="grid grid-cols-4 gap-2 text-center text-xs">
+        <div className="bg-muted/20 rounded p-2">
+          <div className="text-[9px] uppercase text-muted-foreground">Število</div>
+          <div className="font-bold">{summary.count}</div>
+        </div>
+        <div className="bg-muted/20 rounded p-2">
+          <div className="text-[9px] uppercase text-muted-foreground">Cena min</div>
+          <div className="font-bold text-emerald-500">{summary.priceRange.min}€</div>
+        </div>
+        <div className="bg-muted/20 rounded p-2">
+          <div className="text-[9px] uppercase text-muted-foreground">Cena max</div>
+          <div className="font-bold text-amber-500">{summary.priceRange.max}€</div>
+        </div>
+        <div className="bg-muted/20 rounded p-2">
+          <div className="text-[9px] uppercase text-muted-foreground">Avg buy score</div>
+          <div className="font-bold text-primary">{summary.avgBuyScore.toFixed(0)}</div>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function ResultCard({ result, rank, expanded, onToggle, selected, onToggleSelect }: { result: SearchResult; rank: number; expanded: boolean; onToggle: () => void; selected?: boolean; onToggleSelect?: () => void }) {
   const verdictColor =
     result.aiVerdict === 'PRILIKA' ? 'border-primary/40 text-primary' :
     result.aiVerdict === 'SUMNJIVO' ? 'border-amber-400/40 text-amber-400' :
@@ -474,6 +697,22 @@ function ResultCard({ result, rank, expanded, onToggle }: { result: SearchResult
     <Card className="bg-card/50 hover:bg-card transition-colors">
       <CardContent className="p-3">
         <div className="flex items-start gap-3">
+          {/* v8.72: Selection checkbox */}
+          {onToggleSelect && (
+            <button
+              onClick={(e) => { e.stopPropagation(); onToggleSelect(); }}
+              className={cn(
+                'shrink-0 w-6 h-6 rounded-md border-2 flex items-center justify-center transition-colors',
+                selected
+                  ? 'bg-primary border-primary text-primary-foreground'
+                  : 'bg-card border-border hover:border-primary/50'
+              )}
+              title={selected ? 'Odstrani iz primerjave' : 'Dodaj v primerjavo'}
+            >
+              {selected && <Check className="w-3.5 h-3.5" />}
+            </button>
+          )}
+
           {/* Rank badge */}
           <div className={cn(
             'shrink-0 w-8 h-8 rounded-full flex items-center justify-center text-xs font-bold',
