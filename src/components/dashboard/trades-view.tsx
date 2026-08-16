@@ -101,7 +101,7 @@ export function TradesView() {
   // v8.55: Search + Sort + Category/Source filters
   const [searchQuery, setSearchQuery] = useState('');
   const debouncedSearch = useDebounce(searchQuery, 300); // v8.58: debounce search
-  const [sortBy, setSortBy] = useState<'date_desc' | 'date_asc' | 'profit_desc' | 'profit_asc' | 'roi_desc' | 'roi_asc' | 'title_asc' | 'price_desc'>('date_desc');
+  const [sortBy, setSortBy] = useState<'date_desc' | 'date_asc' | 'profit_desc' | 'profit_asc' | 'roi_desc' | 'roi_asc' | 'title_asc' | 'price_desc' | 'priority_desc'>('date_desc');
   const [filterCategory, setFilterCategory] = useState<string>('all');
   const [filterSource, setFilterSource] = useState<string>('all');
   const [filterTag, setFilterTag] = useState<string>('all'); // v8.63
@@ -135,6 +135,9 @@ export function TradesView() {
   const [listingGenLoading, setListingGenLoading] = useState<string | null>(null);
   const [listingGenPlatform, setListingGenPlatform] = useState<'bolha' | 'vinted' | 'facebook' | 'avtonet'>('bolha');
   const [listingGenCopied, setListingGenCopied] = useState<string | null>(null);
+  // v8.65: Sell Priority — per-held-trade urgency score 0-100
+  const [priorityMap, setPriorityMap] = useState<Record<string, { score: number; level: 'HIGH' | 'MEDIUM' | 'LOW'; daysHeld: number; reasons: string[]; recommendedAction: string }>>({});
+  const [priorityLoading, setPriorityLoading] = useState(false);
   // v6.15: Tax Loss Harvesting
   const [taxHarvestData, setTaxHarvestData] = useState<any>(null);
   const [taxHarvestLoading, setTaxHarvestLoading] = useState(false);
@@ -194,6 +197,41 @@ export function TradesView() {
   }, []);
 
   useEffect(() => { load(); }, [load]);
+
+  // v8.65: Fetch sell priority for held trades (auto-refresh)
+  const loadPriority = useCallback(async () => {
+    setPriorityLoading(true);
+    try {
+      const res = await fetch('/api/analytics/sell-priority');
+      if (res.ok) {
+        const data = await res.json();
+        if (data?.ok) {
+          const map: Record<string, { score: number; level: 'HIGH' | 'MEDIUM' | 'LOW'; daysHeld: number; reasons: string[]; recommendedAction: string }> = {};
+          for (const r of [...data.highPriority, ...data.mediumPriority, ...data.lowPriority]) {
+            map[r.tradeId] = {
+              score: r.score,
+              level: r.level,
+              daysHeld: r.daysHeld,
+              reasons: r.reasons?.map((rr: any) => rr.label) ?? [],
+              recommendedAction: r.recommendedAction,
+            };
+          }
+          setPriorityMap(map);
+        }
+      }
+    } catch { /* non-critical */ }
+    finally { setPriorityLoading(false); }
+  }, []);
+
+  useEffect(() => { loadPriority(); }, [loadPriority]);
+  // Re-fetch priority when trades change (after add/sell/delete)
+  useEffect(() => {
+    if (trades.length > 0) {
+      const heldIds = trades.filter(t => t.status === 'held').map(t => t.id);
+      if (heldIds.some(id => !priorityMap[id])) loadPriority();
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [trades]);
 
   // v5.7: Bulk trade operations
   const bulkSell = async () => {
@@ -349,12 +387,18 @@ export function TradesView() {
         }
         case 'title_asc': return a.title.localeCompare(b.title);
         case 'price_desc': return b.buyPrice - a.buyPrice;
+        case 'priority_desc': {
+          // v8.65: Sort held trades by sell urgency score (desc)
+          const pa = priorityMap[a.id]?.score ?? -1;
+          const pb = priorityMap[b.id]?.score ?? -1;
+          return pb - pa;
+        }
         default: return 0;
       }
     });
 
     return result;
-  }, [trades, filter, debouncedSearch, filterCategory, filterSource, filterTag, sortBy]);
+  }, [trades, filter, debouncedSearch, filterCategory, filterSource, filterTag, sortBy, priorityMap]);
 
   // v8.55: Derive categories + sources from trades
   const categories = useMemo(() => {
@@ -411,7 +455,7 @@ export function TradesView() {
     setFilterSource(f.source || 'all');
     setFilterTag(f.tag || 'all');
     setSearchQuery(f.search || '');
-    setSortBy((f.sortBy || 'date_desc') as 'date_desc' | 'date_asc' | 'profit_desc' | 'profit_asc' | 'roi_desc' | 'roi_asc' | 'title_asc' | 'price_desc');
+    setSortBy((f.sortBy || 'date_desc') as 'date_desc' | 'date_asc' | 'profit_desc' | 'profit_asc' | 'roi_desc' | 'roi_asc' | 'title_asc' | 'price_desc' | 'priority_desc');
     setActiveViewName(view.name);
   }, []);
 
@@ -2891,6 +2935,7 @@ export function TradesView() {
           <option value="roi_asc">📊 ROI ↑</option>
           <option value="price_desc">💵 Cena ↓</option>
           <option value="title_asc">🔤 Naslov A-Z</option>
+          <option value="priority_desc">🔥 Prioriteta ↓</option>
         </select>
         <select
           value={filterCategory}
@@ -2927,6 +2972,100 @@ export function TradesView() {
         {searchQuery && ` za "${searchQuery}"`}
         {(filterCategory !== 'all' || filterSource !== 'all' || filterTag !== 'all') && ' (filtrirano)'}
       </div>
+
+      {/* v8.65: Held Inventory Action Panel — top 3 priority trades z quick actions */}
+      {filter === 'held' && Object.keys(priorityMap).length > 0 && (() => {
+        const heldWithPriority = trades
+          .filter(t => t.status === 'held' && priorityMap[t.id])
+          .map(t => ({ trade: t, p: priorityMap[t.id] }))
+          .sort((a, b) => b.p.score - a.p.score)
+          .slice(0, 3);
+        if (heldWithPriority.length === 0) return null;
+        return (
+          <Card className="bg-card/80 border-primary/30">
+            <CardContent className="p-3 space-y-2">
+              <div className="flex items-center justify-between">
+                <div className="flex items-center gap-2">
+                  <Flame className="w-4 h-4 text-red-500" />
+                  <h3 className="text-sm font-bold uppercase tracking-tight">Top 3 za prodajo</h3>
+                </div>
+                <Button
+                  size="sm"
+                  variant="ghost"
+                  className="h-6 text-xs"
+                  onClick={() => setSortBy('priority_desc')}
+                  title="Sortiraj vse held trade-e po prioriteti"
+                >
+                  Sortiraj po prioriteti →
+                </Button>
+              </div>
+              <div className="grid grid-cols-1 md:grid-cols-3 gap-2">
+                {heldWithPriority.map(({ trade: t, p }, idx) => (
+                  <div
+                    key={t.id}
+                    className={cn(
+                      'rounded-md border p-2 space-y-1.5',
+                      p.level === 'HIGH'
+                        ? 'bg-red-500/5 border-red-500/30'
+                        : p.level === 'MEDIUM'
+                          ? 'bg-amber-500/5 border-amber-500/30'
+                          : 'bg-emerald-500/5 border-emerald-500/30'
+                    )}
+                  >
+                    <div className="flex items-start justify-between gap-1.5">
+                      <span className="text-xs font-medium truncate flex-1">{t.title}</span>
+                      <span className={cn(
+                        'text-xs font-bold font-mono shrink-0',
+                        p.level === 'HIGH' ? 'text-red-500' : p.level === 'MEDIUM' ? 'text-amber-600' : 'text-emerald-600'
+                      )}>
+                        {p.level === 'HIGH' ? '🔥' : p.level === 'MEDIUM' ? '🟡' : '🟢'} {p.score}
+                      </span>
+                    </div>
+                    <div className="text-[10px] text-muted-foreground">
+                      {p.daysHeld} dni · {t.buyPrice}€ kupljeno · {(t.tagsArray ?? parseTagsLocal(t.tags)).slice(0, 2).map(tg => `#${tg}`).join(' ') || 'brez tagov'}
+                    </div>
+                    <div className="text-[10px] text-foreground/80 italic line-clamp-2" title={p.recommendedAction}>
+                      💡 {p.recommendedAction}
+                    </div>
+                    <div className="flex items-center gap-1">
+                      <Button
+                        size="sm"
+                        variant="outline"
+                        className="h-6 text-[10px] gap-1 flex-1"
+                        onClick={() => { setEditing(t); setShowForm(true); }}
+                        title="Odpri v editorju"
+                      >
+                        <Pencil className="w-2.5 h-2.5" /> Uredi
+                      </Button>
+                      <Button
+                        size="sm"
+                        variant="outline"
+                        className="h-6 text-[10px] gap-1 flex-1 border-amber-500/40 text-amber-600 hover:bg-amber-500/10"
+                        onClick={async () => {
+                          setExitLoading(t.id);
+                          try {
+                            const res = await fetch('/api/ai/exit-strategy', {
+                              method: 'POST', headers: { 'Content-Type': 'application/json' },
+                              body: JSON.stringify({ tradeId: t.id }),
+                            });
+                            const data = await res.json();
+                            if (data.ok) { setExitData(data); toast.success(`✓ Izhodna strategija: ${data.strategy.recommendation}`); }
+                            else toast.error(data.error ?? 'Napaka');
+                          } catch { toast.error('Napaka'); }
+                          finally { setExitLoading(null); }
+                        }}
+                        title="AI izhodna strategija"
+                      >
+                        {exitLoading === t.id ? <RefreshCw className="w-2.5 h-2.5 animate-spin" /> : <Sparkles className="w-2.5 h-2.5" />} AI Izhod
+                      </Button>
+                    </div>
+                  </div>
+                ))}
+              </div>
+            </CardContent>
+          </Card>
+        );
+      })()}
 
       {/* Trades list */}
       {loading ? (
@@ -3010,6 +3149,7 @@ export function TradesView() {
                   finally { setExitLoading(null); }
                 }}
                 onTagClick={(tag) => setFilterTag(tag)} // v8.64: clickable tag chips
+                priority={priorityMap[t.id] ?? null} // v8.65: sell priority badge
                 />
               </div>
             </div>
@@ -3042,7 +3182,15 @@ function StatBox({ icon, label, value, color }: { icon: React.ReactNode; label: 
   );
 }
 
-function TradeRow({ trade, onEdit, onDelete, onSync, onExit, onTagClick }: { trade: Trade; onEdit: () => void; onDelete: () => void; onSync?: (tradeId: string) => void; onExit?: (tradeId: string) => void; onTagClick?: (tag: string) => void }) {
+function TradeRow({ trade, onEdit, onDelete, onSync, onExit, onTagClick, priority }: {
+  trade: Trade;
+  onEdit: () => void;
+  onDelete: () => void;
+  onSync?: (tradeId: string) => void;
+  onExit?: (tradeId: string) => void;
+  onTagClick?: (tag: string) => void;
+  priority?: { score: number; level: 'HIGH' | 'MEDIUM' | 'LOW'; daysHeld: number; reasons: string[]; recommendedAction: string } | null;
+}) {
   const [showFlipChecklist, setShowFlipChecklist] = useLocalStorage<boolean>('trade-flip-expanded', false);
   // v8.62: Quick Sell inline form
   const [showQuickSell, setShowQuickSell] = useState(false);
@@ -3077,6 +3225,23 @@ function TradeRow({ trade, onEdit, onDelete, onSync, onExit, onTagClick }: { tra
             <div className="flex items-center gap-2 mb-1 flex-wrap">
               <Badge variant="outline" className={cn('text-[10px] uppercase', statusBadge.cls)}>{statusBadge.text}</Badge>
               {trade.category && <Badge variant="outline" className="text-[10px]">{trade.category}</Badge>}
+              {/* v8.65: Sell Priority badge — only for held trades with priority data */}
+              {trade.status === 'held' && priority && (
+                <span
+                  className={cn(
+                    'inline-flex items-center gap-0.5 rounded-md border px-1.5 py-0.5 text-[10px] font-medium',
+                    priority.level === 'HIGH'
+                      ? 'bg-red-500/10 text-red-500 border-red-500/30'
+                      : priority.level === 'MEDIUM'
+                        ? 'bg-amber-500/10 text-amber-600 border-amber-500/30'
+                        : 'bg-emerald-500/10 text-emerald-600 border-emerald-500/30'
+                  )}
+                  title={`🔥 Sell Priority: ${priority.score}/100\n${priority.reasons.map(r => `• ${r}`).join('\n')}\n\nPriporočilo: ${priority.recommendedAction}`}
+                >
+                  {priority.level === 'HIGH' ? '🔥' : priority.level === 'MEDIUM' ? '🟡' : '🟢'} {priority.score}
+                  <span className="text-[9px] opacity-70 ml-0.5">{priority.daysHeld}d</span>
+                </span>
+              )}
               {/* v8.63: Tag chips — v8.64: clickable, sets filterTag */}
               {(trade.tagsArray ?? parseTagsLocal(trade.tags)).map(tag => (
                 <button
