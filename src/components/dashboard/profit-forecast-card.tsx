@@ -4,6 +4,9 @@
 // + Profit Distribution Pie Chart (kategorija → % profita)
 
 import { useState, useEffect } from 'react';
+import { useFetch } from '@/hooks/use-fetch';
+import { CardError } from '@/components/dashboard/card-error';
+import { CardSkeleton } from '@/components/dashboard/card-skeleton';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
@@ -32,36 +35,36 @@ interface ForecastData {
 const COLORS = ['#10b981', '#3b82f6', '#f59e0b', '#ef4444', '#8b5cf6', '#ec4899', '#06b6d4', '#84cc16'];
 
 export function ProfitForecastCard() {
-  const [data, setData] = useState<ForecastData | null>(null);
-  const [loading, setLoading] = useState(true);
-
-  const load = () => {
-    setLoading(true);
-    fetch('/api/analytics/profit-forecast')
-      .then(r => r.json())
-      .then(d => setData(d))
-      .catch(() => {})
-      .finally(() => setLoading(false));
-  };
-
-  useEffect(() => {
-    load();
-    const interval = setInterval(load, 60000);
-    return () => clearInterval(interval);
-  }, []);
+  const { data, loading, error, refetch } = useFetch<ForecastData>('/api/analytics/profit-forecast', { interval: 60000 });
 
   if (loading) {
     return (
       <Card className="border-primary/20">
-        <CardContent className="p-4 text-xs text-muted-foreground">Nalagam napoved...</CardContent>
+        <CardHeader className="pb-2">
+          <CardTitle className="text-sm flex items-center gap-2">
+            <TrendingUp className="w-4 h-4 text-primary" />
+            📈 NAPoved DOBIČKA
+          </CardTitle>
+        </CardHeader>
+        <CardContent>
+          <CardSkeleton variant="stats" />
+        </CardContent>
       </Card>
     );
   }
 
-  if (!data || !data.ok) {
+  if (error || !data || !data.ok) {
     return (
       <Card className="border-primary/20">
-        <CardContent className="p-4 text-xs text-muted-foreground">Ni podatkov za napoved.</CardContent>
+        <CardHeader className="pb-2">
+          <CardTitle className="text-sm flex items-center gap-2">
+            <TrendingUp className="w-4 h-4 text-primary" />
+            📈 NAPoved DOBIČKA
+          </CardTitle>
+        </CardHeader>
+        <CardContent>
+          <CardError error={error} onRetry={refetch} />
+        </CardContent>
       </Card>
     );
   }
@@ -77,7 +80,7 @@ export function ProfitForecastCard() {
             <TrendingUp className="w-4 h-4 text-primary" />
             📈 NAPoved DOBIČKA
           </span>
-          <Button variant="ghost" size="icon" className="h-6 w-6" onClick={load}>
+          <Button variant="ghost" size="icon" className="h-6 w-6" onClick={refetch}>
             <RefreshCw className="w-3 h-3" />
           </Button>
         </CardTitle>

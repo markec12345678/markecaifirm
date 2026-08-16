@@ -45,6 +45,22 @@ Problem: Sistem deluje na desktop, ampak mobile UX je suboptimalen — 17 nav gu
 
 UI-only release — no new API endpoints, no Prisma schema changes, no new npm dependencies. All mobile components are `md:hidden` (desktop unaffected). Agent Browser verified: mobile (375×812) bottom nav visible z 5 buttons + Trades badge "5" (held count) + FAB 56×56px; desktop (1920×1080) both `display:none`.
 
+## [8.56.0] - 2026-08-15
+
+### Added — 🛡️ useFetch + CardError + CardSkeleton (best practices error/loading)
+
+Problem: 432 AI endpointov + 10+ dashboard kartic. Vsaka kartica ima svoj fetch/error/loading state (DRY violation). API failure = prazen card brez retry. Loading = "Nalagam..." text namesto skeleton.
+
+- **`src/hooks/use-fetch.ts`** (NEW) — Reusable `useFetch<T>(url, { interval?, skip? })` hook z: loading, error, data, refetch. Auto-refresh support. Cleanup na unmount (mountedRef). Retry via refetch().
+- **`src/components/dashboard/card-error.tsx`** (NEW) — Consistent error state: AlertCircle icon + message + error detail + "Poskusi znova" retry button.
+- **`src/components/dashboard/card-skeleton.tsx`** (NEW) — Consistent loading skeleton z 3 variantami: default (text lines), chart (placeholder block), stats (4 mini card placeholders). Animate-pulse.
+- **`src/components/dashboard/profit-forecast-card.tsx`** (MODIFIED) — Showcase: refactored from manual fetch/loading/error to useFetch + CardSkeleton + CardError. 30 vrstic manj, consistent UX.
+
+### Stats
+- AI endpoints: 432 (unchanged)
+- Total API routes: 630 (unchanged)
+- Lint: 0 ✨ | Typecheck: 0 ✨
+
 ## [8.55.0] - 2026-08-15
 
 ### Added — 🔍 Trade Table Search + Sort + Filter Enhancement
