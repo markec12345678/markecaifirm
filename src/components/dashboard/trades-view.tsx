@@ -13,12 +13,13 @@ import {
 import {
   Select, SelectContent, SelectItem, SelectTrigger, SelectValue,
 } from '@/components/ui/select';
-import { RefreshCw, Plus, Pencil, Trash2, TrendingUp, TrendingDown, Wallet, Target, ExternalLink, ShoppingCart, Tag, Download, Sparkles, Check, Copy, AlertTriangle, Boxes, Flame, FileText, Receipt, Network, Clock, Type, Users, Globe, LineChart as LineChartIcon, Activity, Upload, ChevronDown, ChevronUp } from 'lucide-react';
+import { RefreshCw, Plus, Pencil, Trash2, TrendingUp, TrendingDown, Wallet, Target, ExternalLink, ShoppingCart, Tag, Download, Sparkles, Check, Copy, AlertTriangle, Boxes, Flame, FileText, Receipt, Network, Clock, Type, Users, Globe, LineChart as LineChartIcon, Activity, Upload, ChevronDown, ChevronUp, DollarSign } from 'lucide-react';
 import { FlipChecklist } from '@/components/dashboard/flip-checklist';
 import { toast } from 'sonner';
 import { triggerGlobalRefresh } from '@/hooks/use-global-refresh';
 import { useDebounce } from '@/hooks/use-debounce';
 import { useLocalStorage } from '@/hooks/use-local-storage';
+import { useHaptic } from '@/hooks/use-haptic';
 import { cn } from '@/lib/utils';
 import {
   ResponsiveContainer, AreaChart, Area, XAxis, YAxis, CartesianGrid, Tooltip as RTooltip, LineChart, Line,
@@ -2807,6 +2808,14 @@ function StatBox({ icon, label, value, color }: { icon: React.ReactNode; label: 
 
 function TradeRow({ trade, onEdit, onDelete, onSync, onExit }: { trade: Trade; onEdit: () => void; onDelete: () => void; onSync?: (tradeId: string) => void; onExit?: (tradeId: string) => void }) {
   const [showFlipChecklist, setShowFlipChecklist] = useLocalStorage<boolean>('trade-flip-expanded', false);
+  // v8.62: Quick Sell inline form
+  const [showQuickSell, setShowQuickSell] = useState(false);
+  const [qsPrice, setQsPrice] = useState('');
+  const [qsFees, setQsFees] = useState('');
+  const [qsLocation, setQsLocation] = useState(trade.buyLocation || '');
+  const [qsSaving, setQsSaving] = useState(false);
+  const haptic = useHaptic();
+
   const totalCost = trade.buyPrice + (trade.buyFees || 0);
   const revenue = trade.sellPrice != null ? trade.sellPrice - (trade.sellFees || 0) : null;
   const profit = revenue != null ? revenue - totalCost : null;
@@ -2906,9 +2915,130 @@ function TradeRow({ trade, onEdit, onDelete, onSync, onExit }: { trade: Trade; o
                 <Target className="w-3.5 h-3.5" />
               </Button>
             )}
+            {/* v8.62: Quick Sell button */}
+            {trade.status === 'held' && (
+              <Button
+                size="sm"
+                variant="ghost"
+                className="h-7 w-7 p-0 text-emerald-500"
+                title="💰 Hitra prodaja"
+                onClick={() => {
+                  setShowQuickSell(!showQuickSell);
+                  if (!showQuickSell) { setQsPrice(String(Math.round(trade.buyPrice * 1.3))); haptic.light(); }
+                }}
+              >
+                <DollarSign className="w-3.5 h-3.5" />
+              </Button>
+            )}
             <Button size="sm" variant="ghost" onClick={onDelete} className="h-7 w-7 p-0 text-destructive"><Trash2 className="w-3.5 h-3.5" /></Button>
           </div>
         </div>
+
+        {/* v8.62: Quick Sell inline form */}
+        {trade.status === 'held' && showQuickSell && (
+          <div className="mt-2 p-2.5 bg-emerald-500/5 border border-emerald-500/20 rounded-lg">
+            <div className="flex items-center gap-2 mb-2">
+              <span className="text-xs font-bold text-emerald-500">💰 Hitra prodaja</span>
+              <button onClick={() => setShowQuickSell(false)} className="ml-auto text-muted-foreground hover:text-foreground text-xs">✕</button>
+            </div>
+            <div className="grid grid-cols-2 sm:grid-cols-4 gap-2">
+              <div>
+                <label className="text-[10px] text-muted-foreground uppercase">Prodajna cena (€)</label>
+                <Input
+                  type="number"
+                  value={qsPrice}
+                  onChange={(e) => setQsPrice(e.target.value)}
+                  placeholder="380"
+                  className="h-7 text-xs"
+                  autoFocus
+                />
+              </div>
+              <div>
+                <label className="text-[10px] text-muted-foreground uppercase">Pristojbine (€)</label>
+                <Input
+                  type="number"
+                  value={qsFees}
+                  onChange={(e) => setQsFees(e.target.value)}
+                  placeholder="0"
+                  className="h-7 text-xs"
+                />
+              </div>
+              <div>
+                <label className="text-[10px] text-muted-foreground uppercase">Kraj prodaje</label>
+                <Input
+                  value={qsLocation}
+                  onChange={(e) => setQsLocation(e.target.value)}
+                  placeholder="Bolha"
+                  className="h-7 text-xs"
+                />
+              </div>
+              <div className="flex flex-col justify-end">
+                <Button
+                  size="sm"
+                  className="h-7 bg-emerald-500 hover:bg-emerald-600 text-white"
+                  disabled={qsSaving || !qsPrice || parseFloat(qsPrice) <= 0}
+                  onClick={async () => {
+                    setQsSaving(true);
+                    haptic.medium();
+                    try {
+                      const res = await fetch(`/api/trades/${trade.id}`, {
+                        method: 'PUT',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify({
+                          status: 'sold',
+                          sellPrice: parseFloat(qsPrice),
+                          sellFees: parseFloat(qsFees || '0'),
+                          sellLocation: qsLocation || trade.buyLocation,
+                          sellDate: new Date().toISOString(),
+                        }),
+                      });
+                      if (res.ok) {
+                        const sellPrice = parseFloat(qsPrice);
+                        const sellFees = parseFloat(qsFees || '0');
+                        const profit = sellPrice - sellFees - totalCost;
+                        const roiPct = totalCost > 0 ? (profit / totalCost) * 100 : 0;
+                        toast.success(`✓ Prodano! ${profit >= 0 ? '+' : ''}${profit.toFixed(0)}€ (${roiPct.toFixed(0)}% ROI)`);
+                        haptic.success();
+                        triggerGlobalRefresh('quick-sell');
+                        setShowQuickSell(false);
+                      } else {
+                        toast.error('Napaka pri prodaji');
+                        haptic.error();
+                      }
+                    } catch {
+                      toast.error('Napaka');
+                      haptic.error();
+                    } finally {
+                      setQsSaving(false);
+                    }
+                  }}
+                >
+                  {qsSaving ? <RefreshCw className="w-3 h-3 animate-spin" /> : <Check className="w-3 h-3" />}
+                  <span className="ml-1">Prodaj</span>
+                </Button>
+              </div>
+            </div>
+            {/* Live profit preview */}
+            {qsPrice && parseFloat(qsPrice) > 0 && (
+              <div className="mt-2 flex items-center gap-3 text-xs">
+                {(() => {
+                  const sp = parseFloat(qsPrice);
+                  const sf = parseFloat(qsFees || '0');
+                  const p = sp - sf - totalCost;
+                  const r = totalCost > 0 ? (p / totalCost) * 100 : 0;
+                  return (
+                    <>
+                      <span className="text-muted-foreground">Prihodki: <span className="text-foreground font-mono">{(sp - sf).toFixed(0)}€</span></span>
+                      <span className={p >= 0 ? 'text-emerald-500 font-bold' : 'text-red-500 font-bold'}>
+                        Profit: {p >= 0 ? '+' : ''}{p.toFixed(0)}€ ({r.toFixed(0)}% ROI)
+                      </span>
+                    </>
+                  );
+                })()}
+              </div>
+            )}
+          </div>
+        )}
 
         {/* v8.54: Flip Checklist for held trades */}
         {trade.status === 'held' && (

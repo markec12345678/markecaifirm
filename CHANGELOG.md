@@ -45,6 +45,36 @@ Problem: Sistem deluje na desktop, ampak mobile UX je suboptimalen — 17 nav gu
 
 UI-only release — no new API endpoints, no Prisma schema changes, no new npm dependencies. All mobile components are `md:hidden` (desktop unaffected). Agent Browser verified: mobile (375×812) bottom nav visible z 5 buttons + Trades badge "5" (held count) + FAB 56×56px; desktop (1920×1080) both `display:none`.
 
+## [8.62.0] - 2026-08-16
+
+### Added — 💰 Quick Sell Button on Trade Row
+
+Problem: Najpogostejša dnevna akcija = "Sem prodal iPhone za 380€" — moram odpreti TradeFormDialog, izpolniti 5 polj, klikniti Shrani. 5 klikov namesto 2.
+
+- **`src/components/dashboard/trades-view.tsx`** (MODIFIED) — TradeRow za held trades dobi 💰 Quick Sell button (emerald). Klik odpre inline form: prodajna cena (pre-fill buyPrice × 1.3), pristojbine, kraj prodaje. Live profit/ROI preview med tipkanjem. "Prodaj" button → PUT /api/trades/[id] z status='sold' + sellPrice + sellDate=now. Toast: "✓ Prodano! +85€ (30% ROI)". Haptic feedback (medium na odprt, success na prodano). triggerGlobalRefresh → vse kartice se osvežijo instant.
+
+### Workflow improvement
+```
+BEFORE (5 korakov):
+  1. Klik ✏️ Edit
+  2. Scroll do sellPrice
+  3. Vnesi 380
+  4. Scroll do status → sold
+  5. Klik Shrani
+
+AFTER (3 koraki):
+  1. Klik 💰 na trade row
+  2. Vnesi 380 (pre-filled z buyPrice × 1.3)
+  3. Klik "Prodaj"
+  → Toast: "✓ Prodano! +85€ (30% ROI)"
+  → Vse kartice se osvežijo instant (triggerGlobalRefresh)
+```
+
+### Stats
+- AI endpoints: 432 (unchanged)
+- Total API routes: 631 (unchanged)
+- Lint: 0 ✨ | Typecheck: 0 ✨
+
 ## [8.61.0] - 2026-08-16
 
 ### Added — 📅 Month-over-Month Comparison + Category Performance Timeline
