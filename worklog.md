@@ -18388,3 +18388,25 @@ Stage Summary:
 - Total API routes: 630 (nespremenjeto)
 - Verzija: v8.58.0
 - Skupaj (v7.50 → v8.58): 108 verzij, 230 novih funkcij
+
+---
+Task ID: v8.59
+Agent: main
+Task: UI State Persistence (useLocalStorage showcase)
+
+Work Log:
+- Razmišljal po najboljših praksah: Flip Checklist state se resetira na vsak reload — uporabnik mora znova razširiti.
+- Integriral useLocalStorage v flip-checklist.tsx (collapsed state persistira)
+- Integriral useLocalStorage v trades-view.tsx TradeRow (showFlipChecklist persistira)
+- Preveril lint: 0 napak ✨
+- Preveril typecheck: 0 napak ✨
+- Commit + push uspešen ✅
+- Agent Browser: Trades view z Flip Checklist še vedno deluje ✅
+
+Stage Summary:
+- MODIFIED: src/components/dashboard/flip-checklist.tsx (useState → useLocalStorage)
+- MODIFIED: src/components/dashboard/trades-view.tsx (TradeRow useState → useLocalStorage)
+- AI endpointi: 432 (nespremenjeto)
+- Total API routes: 630 (nespremenjeto)
+- Verzija: v8.59.0
+- Skupaj (v7.50 → v8.59): 109 verzij, 231 novih funkcij
