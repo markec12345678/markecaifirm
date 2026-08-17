@@ -19220,3 +19220,40 @@ Stage Summary:
 - Skupaj (v7.50 → v8.80): 130 verzij, 252 novih funkcij
 - LIVE: 6 ujemanj danes, 5 held trades, +312€ mesec (62% cilja), Sony A7III 51 dni prioritetna.
 - CAPSTONE: združi vso inteligenco v8.63-79 v en koncizen jutranji povzetek. Uporabnik ne rabi scroll-at 10 card-ov — en pogled na Daily Briefing in ve kaj se dogaja.
+
+---
+Task ID: v8.81
+Agent: main
+Task: Enhanced Onboarding Wizard 4→6 steps — fixes CRITICAL UX gaps
+
+Work Log:
+- Postavil se v vlogo novega uporabnika. Testiral onboarding wizard. Odkril 3 KRITIČNE manjkajoče točke:
+  1. AI Config step je bil SAMO BESEDILO — nobenega input polja za API key! Uporabnik mora najti Settings → AI sekcija → vnesti ključ.
+  2. NI ustvarjanja Monitorja v wizard-u — core funkcija (scraping oglasov) manjka! Uporabnik zaključi wizard z 0 monitorji.
+  3. NI cron setup navodil — brez zunanjega cron-a je CEL SISTEM mrtiv (ni monitoringa, ni notificationov, ni saved search auto-monitorja). Uporabnik čaka in nič se ne zgodi.
+- Rewritten onboarding-wizard.tsx: 4 → 6 steps.
+  - Step 0: Welcome (posodobljen z 11 platform + Iskalnik + Push)
+  - Step 1: AI Config — dejanski input polja: provider select (Ollama/OpenAI/Anthropic/OpenRouter/Gemini/custom), base URL, API key (password), model + save button (POST /api/settings). AiSaved state z ✓ potrditev.
+  - Step 2: Prvi Monitor (NEW) — BREZ MONITORJA SE NIČ NE SCRAPA warning + input za ime, platforma select (11 platform), iskalni URL, ključne besede + create button (POST /api/monitors). MonitorCreated state z ✓ potrditev + nasvet "Poženi v Monitorji".
+  - Step 3: Profit Goal (nespremenjen)
+  - Step 4: Auto-Cron (NEW) — BREZ CRON-A SE NE BO NIČ POGANJALO warning (monitorji ne scrapajo, saved searches ne iščejo, push ne deluje) + copy-paste cron command (Linux/Mac crontab + Windows Task Scheduler) + Kopiraj ukaz button (clipboard). CronCopied state.
+  - Step 5: Demo + Next Steps — Kaj naprej? checklist z 6 itemi (AI ✓, Monitor ✓, Cron ✓, Poženi monitor, Push, Iskalnik) z done/undone state (aiSaved, monitorCreated, cronCopied).
+- Preveril lint: 0 napak ✨
+- Preveril typecheck: 0 napak ✨
+- Agent Browser (full 6-step test):
+  - Step 0: "Dobrodošel v Markec AI Firm" ✓
+  - Step 1: API key input (type=password) ✓, provider select ✓
+  - Step 2: "Ustvari Prvi Monitor" + "BREZ MONITORJA" warning ✓
+  - Step 4: "BREZ CRON" warning + "Kopiraj ukaz" button ✓
+  - Step 5: "Kaj naprej?" checklist ✓
+  - 0 console errors ✓
+- Commit + push uspešen ✅
+
+Stage Summary:
+- MODIFIED: src/components/dashboard/onboarding-wizard.tsx (4→6 steps, +AI input fields, +Monitor creation, +Cron setup, +Next Steps checklist)
+- MODIFIED: README.md (v8.80→v8.81)
+- AI endpointi: 432 (nespremenjeto)
+- Total API routes: 647 (nespremenjeto — UI only)
+- Verzija: v8.81.0
+- Skupaj (v7.50 → v8.81): 131 verzij, 253 novih funkcij
+- CRITICAL FIX: nov uporabnik zdaj VE da rabi cron, VE kako ustvariti monitor, in LAHKO vnese AI key direktno v wizard-u. Prej: 3 kritične manjkajoče točke. Zdaj: 0.
