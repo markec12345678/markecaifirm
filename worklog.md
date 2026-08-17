@@ -19141,3 +19141,33 @@ Stage Summary:
 - Skupaj (v7.50 → v8.78): 128 verzij, 250 novih funkcij
 - LIVE: 2 aktivni iskanji, 5 skupnih ujemanj, zadnje iPhone 13 Pro 256GB (450€).
 - DASHBOARD JE SEDAJ POPOLN — 9 card-ov pokriva celoten pipeline: Restock + ProfitForecast + MonthOverMonth + TagPerformance + Outcome + BuyOpportunity + DecisionAccuracy + PlatformPrice + SavedSearch.
+
+---
+Task ID: v8.79
+Agent: main
+Task: Push Notification za BuyRequest Matches — Web Push ko cron najde novo ujemanje
+
+Work Log:
+- Razmišljal kot uporabnik: ko cron najde novo ujemanje, kreira in-app Notification (v8.75). Ampak na mobilu ne vidim notification-a dokler ne odprem app! Potrebujem Web Push notification da me obvesti tudi ko app NI odprta.
+- PWA push sistem že obstaja (v1.5 VAPID, sendPushNotification v src/lib/push.ts). Samo manjka integracija v cron/run-buy-requests.
+- cron/run-buy-requests: ob novem ujemanju (newMatches > 0) zdaj pošlje tudi Web Push:
+  - title: "🔍 N novih oglasov za TITLE"
+  - body: "Klikni za pregled N ujemanj v Iskalniku" (ali "Iščeš za: X" če je searchFor nastavljen)
+  - url: deep link /?view=iskalnik&matchRequestId=xxx (v8.77 — klik odpre Iskalnik z match panel auto-opened)
+  - sendPushNotification() iz src/lib/push.ts — pošlje vsem registriranim PushSubscription napravam
+- totalPushSent counter dodan v response.
+- Non-critical: če push ni konfiguriran (pushEnabled=false ali manjkajo VAPID ključi), se še vedno ustvari in-app Notification.
+- Preveril lint: 0 napak ✨
+- Preveril typecheck: 0 napak ✨
+- API test: PlayStation BuyRequest → cron processed 4 requests, found 1 new match → notifications=1, pushSent=1. ✓
+- Commit + push uspešen ✅
+
+Stage Summary:
+- MODIFIED: src/app/api/cron/run-buy-requests/route.ts (+sendPushNotification ob novem ujemanju z deep link URL, +totalPushSent counter in response)
+- MODIFIED: README.md (v8.78→v8.79)
+- AI endpointi: 432 (nespremenjeto)
+- Total API routes: 646 (nespremenjeto — integration only)
+- Verzija: v8.79.0
+- Skupaj (v7.50 → v8.79): 129 verzij, 251 novih funkcij
+- LIVE: PlayStation BuyRequest → cron → 1 match → in-app Notification + Web Push (pushSent=1). Klik na push → Iskalnik z match panel auto-opened.
+- SISTEM JE SEDAJ MOBILNO PROAKTIVEN: cron → in-app Notification (vidna v app) + Web Push (vidna tudi ko app zaprta) → klik → Iskalnik match panel. Uporabnik ne zgreši nobene priložnosti.
