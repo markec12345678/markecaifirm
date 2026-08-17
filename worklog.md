@@ -19291,3 +19291,50 @@ Stage Summary:
 - Verzija: v8.82.0
 - Skupaj (v7.50 → v8.82): 132 verzij, 254 novih funkcij
 - POPOLN ONBOARDING: Wizard (v8.81, 6 steps) → Dashboard → Pomoč (v8.82, vedno dostopen z Quick Start Guide). Nov uporabnik nikoli izgubljen.
+
+---
+Task ID: v8.83
+Agent: main
+Task: Setup Health Banner — persistent setup checklist na vrhu dashboarda
+
+Work Log:
+- Razmišljal kot nov uporabnik: Wizard (v8.81) je one-time, Pomoč (v8.82) je manual. Ampak ko uporabnik konča wizard in vidi Dashboard, ne VE kaj manjka! Če je preskočil AI config ali cron, sistem ne dela in uporabnik ne ve zakaj.
+- API /api/setup-status GET (NEW): preveri 7 setup korakov:
+  1. AI provider konfiguriran (settings.aiProvider + aiBaseUrl)
+  2. Monitor ustvarjen (monitorCount > 0)
+  3. Cron pognan vsaj enkrat (any monitor.lastRunAt != null)
+  4. Oglasi najdeni (listingCount > 0)
+  5. Trgovine v skladišču (tradeCount > 0)
+  6. Web Push omogočen (pushEnabled + vapidPublicKey)
+  7. Mesečni cilj nastavljen (monthlyProfitGoal > 0)
+  Vrne checklist z done/pending + doneCount/totalCount + allDone flag.
+- SetupHealthBanner (NEW component): dismissible banner na VRH dashboarda (pred Daily Briefing).
+  - Progress bar z color-coding (red <50%, amber <100%, emerald=100%)
+  - Pending items z clickable links (ExternalLink ikona)
+  - Done items summary (CheckCircle2)
+  - Auto-hides when allDone=true
+  - localStorage persistence za dismissed state (ne prikazuje znova)
+- Dashboard integration: <SetupHealthBanner /> dodan pred <DailyBriefingCard />.
+- Preveril lint: 0 napak ✨
+- Preveril typecheck: 0 napak ✨
+- API test: 5/7 done (AI ✓, Monitor ✓, Oglasi ✓, Trgovine ✓, Cilj ✓), 2 pending (Cron ✗, Push ✗). ✓
+- Agent Browser:
+  - Banner visible na vrhu dashboarda ✓
+  - "Setup 71% (5/7)" ✓
+  - Progress bar ✓
+  - Pending items: "Cron je pognan vsaj enkrat" + "Web Push omogočen" z links ✓
+  - Done items summary ✓
+  - 0 console errors ✓
+- Commit + push uspešen ✅
+
+Stage Summary:
+- NEW: src/app/api/setup-status/route.ts (GET — 7-point setup checklist)
+- NEW: src/components/dashboard/setup-health-banner.tsx (dismissible banner z progress + checklist)
+- MODIFIED: src/components/dashboard/dashboard-view.tsx (+SetupHealthBanner na vrh dashboarda)
+- MODIFIED: README.md (v8.82→v8.83, API routes 647→648)
+- AI endpointi: 432 (nespremenjeto)
+- Total API routes: 647 → 648 (+1: setup-status)
+- Verzija: v8.83.0
+- Skupaj (v7.50 → v8.83): 133 verzij, 255 novih funkcij
+- LIVE: 5/7 setup done, 2 pending (Cron, Push). Banner prikazuje 71% z pending items.
+- POPOLN ONBOARDING SYSTEM: Wizard (v8.81, one-time) → Setup Banner (v8.83, persistent, auto-hides when done) → Pomoč (v8.82, manual). Uporabnik VEDNO vidi kaj manjka dokler setup ni popoln.
