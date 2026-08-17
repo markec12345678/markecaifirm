@@ -19502,3 +19502,33 @@ Stage Summary:
 - Verzija: v8.88.0
 - Skupaj (v7.50 → v8.88): 138 verzij, 260 novih funkcij
 - FIX: 37 verzij zamuda v footerju popravljena. Profesionalni produkt mora prikazovati pravilno verzijo.
+
+---
+Task ID: v8.89
+Agent: main
+Task: Version.ts — single source of truth za verzijo + stats
+
+Work Log:
+- Odkril ponavljajoč problem: vsaka nova verzija zahteva ročno posodobitev footer string-a v page.tsx. v8.88 je popravil 37-verzij zamudo, ampak problem se ponovi vsako verzijo.
+- NEW src/lib/version.ts — single source of truth:
+  - APP_VERSION = 'v8.89.0'
+  - AI_ENDPOINTS = 432
+  - ANALYTICS_ENDPOINTS = 73
+  - TOTAL_API_ROUTES = 648
+  - PLATFORMS = 11
+  - BRAIN_LAYERS = 8
+  - VERSION_LABEL + STATS_LABEL za footer
+- Footer v page.tsx sedaj bere iz version.ts: {APP_VERSION} in {STATS_LABEL} namesto hardcoded string-a.
+- Prej: vsaka verzija = ročno posodobi footer (pogosto pozabljeno). Zdaj: eno mesto (version.ts).
+- Preveril lint: 0 napak ✨
+- Preveril typecheck: 0 napak ✨
+- Agent Browser: footer prikazuje "v8.89.0" + "432 AI + 73 analytics = 648 routes" (dinamično iz version.ts) ✓
+- Commit + push uspešen ✅
+
+Stage Summary:
+- NEW: src/lib/version.ts (APP_VERSION, AI_ENDPOINTS, ANALYTICS_ENDPOINTS, TOTAL_API_ROUTES, PLATFORMS, BRAIN_LAYERS, STATS_LABEL)
+- MODIFIED: src/app/page.tsx (+import version.ts, footer uporablja {APP_VERSION} in {STATS_LABEL})
+- MODIFIED: README.md (v8.88→v8.89)
+- Verzija: v8.89.0
+- Skupaj (v7.50 → v8.89): 139 verzij, 261 novih funkcij
+- PROFESSIONAL PATTERN: single source of truth za verzijo. Prej: hardcoded string (37 verzij zamuda). Zdaj: eno mesto za posodobitev.
