@@ -20,6 +20,7 @@ export async function GET(req: NextRequest) {
 
     let totalNewMatches = 0;
     let totalNotifications = 0;
+    let totalPushSent = 0; // v8.79: Web Push notifications sent
     const results: Array<{ requestId: string; title: string; newMatches: number; notified: boolean }> = [];
 
     for (const request of activeRequests) {
@@ -124,6 +125,19 @@ export async function GET(req: NextRequest) {
             });
             totalNotifications++;
           } catch { /* non-critical */ }
+
+          // v8.79: Send Web Push notification — reaches user even when app is closed
+          try {
+            const { sendPushNotification } = await import('@/lib/push');
+            await sendPushNotification({
+              title: `🔍 ${newMatches} ${newMatches === 1 ? 'nov oglas' : 'novih oglasov'} za "${request.title}"`,
+              body: request.searchFor
+                ? `Iščeš za: ${request.searchFor} · Klikni za pregled ujemanj`
+                : `Klikni za pregled ${newMatches} ujemanj v Iskalniku`,
+              url: `/?view=iskalnik&matchRequestId=${encodeURIComponent(request.id)}`,
+            });
+            totalPushSent++;
+          } catch { /* non-critical — push may not be configured */ }
         }
 
         results.push({
@@ -146,6 +160,7 @@ export async function GET(req: NextRequest) {
       processedRequests: activeRequests.length,
       totalNewMatches,
       totalNotifications,
+      totalPushSent, // v8.79: Web Push notifications
       durationMs: duration,
       results,
     });
