@@ -19009,3 +19009,39 @@ Stage Summary:
 - Skupaj (v7.50 → v8.74): 124 verzij, 246 novih funkcij
 - LIVE: 15 listings na Bolha (demo). PlatformPriceComparisonCard na dashboard. Iskalnik prikazuje 🇸🇮 bolha badge na rezultatih.
 - NARAVNI NASLEDNJI KORAK po Quoka.de platformi: "katera platforma je najcenejša za artikel X?" + source badge v Iskalniku da uporabnik ve iz katere platforme je oglas.
+
+---
+Task ID: v8.75
+Agent: main
+Task: Saved Search Auto-Monitor — cron za BuyRequests z notifications
+
+Work Log:
+- Razmišljal kot uporabnik: v8.71 sem dodal "Shrani iskanje" ampak ko shranim se NIČ ne zgodi. Morem ročno odpreti Iskalnik in klikniti "Išči" vsak dan. V realnem tradingu moraš biti OBVEŠČEN ko se pojavi nova priložnost.
+- Schema: BuyRequestMatch model (NEW) — dedup z unique constraint [buyRequestId, listingId]. Fields: matchPrice, matchBuyScore, isNotified, isRead, matchedAt. BuyRequest: +lastRunAt, +newMatchesCount. Listing: +buyRequestMatches relation.
+- Cron API /api/cron/run-buy-requests GET (NEW): za vsak aktiven BuyRequest požene search (isto logiko kot /api/search/items), najde listings ki ustrezajo kriterijem, dedup-a proti BuyRequestMatch, shrani nova ujemanja, update-a newMatchesCount + lastRunAt, kreira Notification z createNotification(). runtime=nodejs, maxDuration=30s.
+- API /api/buy-requests/[id]/matches GET (NEW): vrne ujemanja z listing details + mark as read (reset newMatchesCount, set isRead=true).
+- NotificationType: dodan 'buy_request_match' v union type.
+- IskalnikView: saved searches prikazujejo 'N novo' badge (animate-pulse, primary barva) ko so nova ujemanja + 'zadnjič: Xmin nazaj' timestamp. SavedRequest interface: +lastRunAt, +newMatchesCount. timeAgo() helper funkcija.
+- Preveril lint: 0 napak ✨
+- Preveril typecheck: 0 napak ✨ (popravil 1 TS error: dodal 'buy_request_match' v NotificationType)
+- API test: BuyRequest "VW Golf 5" → cron processed 1 request, found 4 new matches, created 1 notification. newMatchesCount=4, lastRunAt set. ✓
+- Agent Browser:
+  - Iskalnik view: "Shranjena iskanja (1)" z "VW Golf 5" ✓
+  - "4 novo" badge prikazan (animate-pulse) ✓
+  - "zadnjič: zdaj" timestamp ✓
+  - 0 console errors ✓
+- Commit + push uspešen ✅
+
+Stage Summary:
+- NEW: prisma/schema.prisma (+BuyRequestMatch model, +BuyRequest fields lastRunAt/newMatchesCount, +Listing.buyRequestMatches relation)
+- NEW: src/app/api/cron/run-buy-requests/route.ts (GET — auto-monitor za active BuyRequests z notification)
+- NEW: src/app/api/buy-requests/[id]/matches/route.ts (GET — list matches + mark as read)
+- MODIFIED: src/lib/notifications.ts (+NotificationType 'buy_request_match')
+- MODIFIED: src/components/dashboard/iskalnik-view.tsx (+SavedRequest lastRunAt/newMatchesCount, +timeAgo helper, +new matches badge z animate-pulse, +lastRunAt timestamp na saved searches)
+- MODIFIED: README.md (v8.74→v8.75, API routes 643→645)
+- AI endpointi: 432 (nespremenjeto)
+- Total API routes: 643 → 645 (+2: cron/run-buy-requests, buy-requests/[id]/matches)
+- Verzija: v8.75.0
+- Skupaj (v7.50 → v8.75): 125 verzij, 247 novih funkcij
+- LIVE: BuyRequest "VW Golf 5" → cron found 4 matches → notification → Iskalnik prikazuje "4 novo" badge + "zadnjič: zdaj".
+- SISTEM JE SEDAJ PROAKTIVEN: save search → auto-monitor (cron) → notification → Iskalnik → Compare → Buy. Prej je bil reaktiven (uporabnik je moral ročno iskati).
