@@ -1,7 +1,7 @@
 import { PrismaClient } from '@prisma/client'
 
-// eslint-disable-next-line no-console
-console.log('[db.ts] module loaded at', new Date().toISOString(), 'schemaVersion=v8.38-notification-center');
+// v8.92: Removed console.log — use logger instead (professional pattern)
+// Schema version tracking is handled by Prisma migration system.
 
 // v7.32: Prisma logging only in dev — 'query' level dumps SQL with parameter
 // values, which is a security/privacy concern in production.
@@ -35,9 +35,7 @@ const globalForPrisma = globalThis as unknown as {
 // Discard stale client when schema version doesn't match (covers v8.23
 // BrainSnapshot model AND v8.24 Settings fields in one check).
 if (globalForPrisma.prisma && globalForPrisma.__prismaSchemaVersion !== SCHEMA_VERSION) {
-  // eslint-disable-next-line no-console
-  console.log('[db.ts] Discarding stale PrismaClient (schema version mismatch)',
-    'old:', globalForPrisma.__prismaSchemaVersion, 'new:', SCHEMA_VERSION);
+  // v8.92: Silent discard — logger handles this in dev mode via Prisma warn level
   globalForPrisma.prisma = undefined
 }
 

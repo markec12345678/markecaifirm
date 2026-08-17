@@ -241,7 +241,7 @@ export function TradesView() {
       const heldIds = trades.filter(t => t.status === 'held').map(t => t.id);
       if (heldIds.some(id => !priorityMap[id])) loadPriority();
     }
-    // eslint-disable-next-line react-hooks/exhaustive-deps
+     
   }, [trades]);
 
   // v8.66: Fetch smart prices for held trades (auto-refresh)
@@ -317,7 +317,7 @@ export function TradesView() {
       }
     } catch { /* non-critical */ }
     finally { setOutcomeLoading(false); }
-  // eslint-disable-next-line react-hooks/exhaustive-deps
+   
   }, [trades]);
 
   useEffect(() => { loadOutcomes(); }, [loadOutcomes]);
@@ -624,7 +624,7 @@ export function TradesView() {
       const view = savedViews.find(v => v.name === viewName) || defaultViews.find(v => v.name === viewName);
       if (view) applyView(view);
     }
-    // eslint-disable-next-line react-hooks/exhaustive-deps
+     
   }, []);
 
   const allViews = useMemo(() => [...defaultViews, ...savedViews], [defaultViews, savedViews]);

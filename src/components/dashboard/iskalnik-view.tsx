@@ -200,7 +200,7 @@ export function IskalnikView() {
     // Clean URL
     url.searchParams.delete('matchRequestId');
     window.history.replaceState({}, '', url.toString());
-  // eslint-disable-next-line react-hooks/exhaustive-deps
+   
   }, [savedRequests]);
 
   const buildSearchParams = useCallback(() => {
