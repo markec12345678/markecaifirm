@@ -19532,3 +19532,32 @@ Stage Summary:
 - Verzija: v8.89.0
 - Skupaj (v7.50 → v8.89): 139 verzij, 261 novih funkcij
 - PROFESSIONAL PATTERN: single source of truth za verzijo. Prej: hardcoded string (37 verzij zamuda). Zdaj: eno mesto za posodobitev.
+
+---
+Task ID: v8.90
+Agent: main
+Task: Accurate stats + README Feature Overview
+
+Work Log:
+- Odkril: version.ts je imel napačne številke! 648 routes (actual: 651), 73 analytics (actual: 84). Preveril z `find src/app/api -name "route.ts" | wc -l` = 651, analytics = 84.
+- version.ts popravljeno: APP_VERSION=v8.90.0, ANALYTICS_ENDPOINTS=84, TOTAL_API_ROUTES=651. Dodan comment z navodilom za preverjanje.
+- README: dodana Feature Overview sekcija (v8.63-90) z 6 kategorijami:
+  1. Intelligence Suite (v8.63-70): Tags, Sell Priority, Smart Pricing, Outcome, Buy Opportunity, Decision Accuracy
+  2. Search & Discovery (v8.71-74): Iskalnik, Compare + AI Advisor, Cross-Platform Prices
+  3. Auto-Monitoring (v8.75-79): Saved Search Auto-Monitor, Notification Deep Link, Web Push
+  4. Dashboard & Briefing (v8.78-80): Saved Search Status, Daily Briefing
+  5. Onboarding & UX (v8.81-85): Enhanced Wizard, Quick Start Guide, Setup Health Banner, Setup v Health, EmptyState
+  6. Performance & Quality (v8.86-90): AI Retry, DB Maintenance, Analytics Cache, Version.ts
+  + Platforms (11): 🇸🇮 Bolha, Nepremičnine, Avtonet, Salomon, Vinted · 🇩🇪 Mobile.de, Kleinanzeigen, Quoka · 🇮🇹 Subito · 🇦🇹 Willhaben · 📡 Custom RSS
+- README badge posodobljen: v8.90.0 + 651 routes
+- Preveril lint: 0 napak ✨
+- Preveril typecheck: 0 napak ✨
+- Agent Browser: footer "v8.90.0" + "432 AI + 84 analytics = 651 routes" ✓
+- Commit + push uspešen ✅
+
+Stage Summary:
+- MODIFIED: src/lib/version.ts (popravljene številke: 84 analytics, 651 routes + comment za preverjanje)
+- MODIFIED: README.md (badge v8.90.0 + 651 routes, +Feature Overview sekcija z 6 kategorijami + Platforms)
+- Verzija: v8.90.0
+- Skupaj (v7.50 → v8.90): 140 verzij, 262 novih funkcij
+- ACCURATE STATS: 432 AI + 84 analytics = 651 routes, 11 platform, 8 brain plasti. Vse preverjeno z `find` commands.
