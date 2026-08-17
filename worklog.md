@@ -19076,3 +19076,34 @@ Stage Summary:
 - Skupaj (v7.50 → v8.76): 126 verzij, 248 novih funkcij
 - LIVE: iPhone BuyRequest → cron → 1 match → Eye button → "Ujemanja (1)" panel z iPhone 13 Pro 256GB (450€, Ljubljana, ⭐ 9/10, PRILIKA, 🇸🇮 bolha). Run-all avtomatsko poganja saved search monitoring.
 - CEL POPOLN PIPELINE: Save search → run-all cron (auto) → notification → Eye button → match panel → Compare → Buy → Outcome → Decision Accuracy.
+
+---
+Task ID: v8.77
+Agent: main
+Task: Notification → Iskalnik Deep Link — actionable notifications
+
+Work Log:
+- Razmišljal kot uporabnik: v8.75-76 ko cron najde match, kreira notification. Ampak ko vidim notification v Notification Center, morem: zapreti notification → odpreti Iskalnik → najti saved search → klikniti Eye. 4 korakov! Notification bi moral biti actionable — 1 klik do ujemanj.
+- IskalnikView: ?matchRequestId= deep link handling. useEffect prebere URL param, najde saved request, fetch-a /api/buy-requests/[id]/matches, nastavi kriterije v formo, prikaže Match Results Panel. URL se očisti po load-u (window.history.replaceState).
+- Notification Center (ai-hub-view): 'Prikaži ujemanja' action button za buy_request_match type. Link na /?view=iskalnik&matchRequestId=xxx. Parsa n.metadata (JSON) za buyRequestId. NOTIFICATION_TYPE_LABELS: dodan 'buy_request_match' z 🔍 ikono + 'Iskalnik ujemanje' label. Eye import dodan.
+- Home page.tsx: URL cleaner ohrani ?matchRequestId= poleg ?tag= za deep linking. keepParams URLSearchParams z obema.
+- Preveril lint: 0 napak ✨
+- Preveril typecheck: 0 napak ✨
+- Agent Browser:
+  - Deep link test: /?view=iskalnik&matchRequestId=cmsx2xqb00000sv7kspda8v5r → Iskalnik se naloži → "Ujemanja (1)" panel se samodejno odpre z iPhone 13 Pro 256GB (450€, Ljubljana, ⭐ 9/10, PRILIKA, 🇸🇮 bolha, najdeno 20min nazaj). URL očiščen. ✓
+  - Notification Center: "Prikaži ujemanja" button viden, link href="/?view=iskalnik&matchRequestId=cmsx2kts10000sv9c0c1vww0a". ✓
+  - buy_request_match notification prisotna ("novih oglasov"). ✓
+  - 0 console errors ✓
+- Commit + push uspešen ✅
+
+Stage Summary:
+- MODIFIED: src/components/dashboard/iskalnik-view.tsx (+?matchRequestId= deep link useEffect — auto-opens match panel)
+- MODIFIED: src/components/dashboard/ai-hub-view.tsx (+Eye import, +buy_request_match v NOTIFICATION_TYPE_LABELS, +Prikaži ujemanja action button z link)
+- MODIFIED: src/app/page.tsx (+URL cleaner ohrani ?matchRequestId= poleg ?tag=)
+- MODIFIED: README.md (v8.76→v8.77)
+- AI endpointi: 432 (nespremenjeto)
+- Total API routes: 645 (nespremenjeto — UI integration only)
+- Verzija: v8.77.0
+- Skupaj (v7.50 → v8.77): 127 verzij, 249 novih funkcij
+- LIVE: notification '🔍 1 novih oglasov za iPhone' → klik 'Prikaži ujemanja' → Iskalnik z 'Ujemanja (1)' panel (iPhone 13 Pro 256GB, 450€).
+- ZAPRE NOTIFICATION → ACTION LOOP: notification ni več samo informativen — je actionable (1 klik do ujemanj). Prej: 4 koraki (zapri → Iskalnik → najdi → Eye). Zdaj: 1 klik (Prikaži ujemanja).
