@@ -463,13 +463,13 @@ export default function Home() {
           <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-2 text-xs text-muted-foreground">
             <div className="flex items-center gap-3 flex-wrap">
               <span className="text-primary font-bold">markec-ai-firm</span>
-              <span className="font-mono">v8.50.0</span>
+              <span className="font-mono">v8.87.0</span>
               <span className="hidden sm:inline">•</span>
               <span>local-first</span>
               <span className="hidden sm:inline">•</span>
               <span>zero-cloud</span>
               <span className="hidden sm:inline">•</span>
-              <span>431 AI + 73 analytics = 623 routes</span>
+              <span>432 AI + 73 analytics = 648 routes</span>
             </div>
             <div className="flex items-center gap-3 flex-wrap">
               <span className="flex items-center gap-1">
