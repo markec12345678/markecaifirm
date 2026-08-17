@@ -19257,3 +19257,37 @@ Stage Summary:
 - Verzija: v8.81.0
 - Skupaj (v7.50 → v8.81): 131 verzij, 253 novih funkcij
 - CRITICAL FIX: nov uporabnik zdaj VE da rabi cron, VE kako ustvariti monitor, in LAHKO vnese AI key direktno v wizard-u. Prej: 3 kritične manjkajoče točke. Zdaj: 0.
+
+---
+Task ID: v8.82
+Agent: main
+Task: Quick Start Guide — Help dialog z tabbed Quick Start + visible Pomoč button
+
+Work Log:
+- Razmišljal kot nov uporabnik: onboarding wizard (v8.81) pokrije first-run, ampak kaj ko uporabnik pozneje pozabi kaj naprej? Help dialog je bil samo tipkovne bližnjice, in do njega se pride samo z '?' tipko ki nov uporabnik ne pozna!
+- Help dialog nadgrajen z 2 tabs: Quick Start (default) + Bližnjice.
+- Quick Start tab vsebuje:
+  1. Setup Checklist — 6 korakov z clickable links (AI provider → Settings, Monitor → Monitorji, Cron → copy command, Poženi → Monitorji, Push → Settings, Iskalnik)
+  2. Kako sistem deluje — workflow diagram (Monitorji → AI → Buy Score → Iskalnik → Auto-cron → Skladišče → Outcome → Dashboard → Decision Accuracy)
+  3. Ključni zavihki — 6 clickable cards (Dashboard, Monitorji, Oglasi, Iskalnik, Skladišče, AI Hub) ki navigirajo direktno
+  4. Cron Setup — BREZ CRON warning + copy-paste command (Linux/Mac + Windows)
+- Visible 'Pomoč' button v header (HelpCircle icon) — nov uporabnik ne rabi vedeti za '?' tipko.
+- helpTab state default='quickstart' (za nove uporabnike — vidijo setup checklist first, ne bližnjice).
+- ExternalLink + HelpCircle import dodan v page.tsx.
+- Preveril lint: 0 napak ✨ (popravil 1 error: ExternalLink import)
+- Preveril typecheck: 0 napak ✨
+- Agent Browser:
+  - Pomoč button visible ✓
+  - Click → dialog open ✓
+  - Quick Start tab: Setup Checklist (6 korakov) ✓, Kako sistem deluje (workflow) ✓, Ključni zavihki ✓, Cron Setup ✓
+  - 0 console errors ✓
+- Commit + push uspešen ✅
+
+Stage Summary:
+- MODIFIED: src/app/page.tsx (+HelpCircle/ExternalLink import, +helpTab state, +Pomoč button v header, +Quick Start tab z checklist + workflow + features + cron, +tab switcher)
+- MODIFIED: README.md (v8.81→v8.82)
+- AI endpointi: 432 (nespremenjeto)
+- Total API routes: 647 (nespremenjeto — UI only)
+- Verzija: v8.82.0
+- Skupaj (v7.50 → v8.82): 132 verzij, 254 novih funkcij
+- POPOLN ONBOARDING: Wizard (v8.81, 6 steps) → Dashboard → Pomoč (v8.82, vedno dostopen z Quick Start Guide). Nov uporabnik nikoli izgubljen.
