@@ -18976,3 +18976,36 @@ Stage Summary:
 - Skupaj (v7.50 → v8.73): 123 verzij, 245 novih funkcij
 - 11 platform sedaj: bolha, nepremicnine, avtonet, salomon, vinted, custom-rss, mobile-de, kleinanzeigen, subito, willhaben, quoka
 - LIVE: Quoka.de template prikazan v Predloge. Uporabnik lahko ustvari monitor z Quoka source in bo scrapal Quoka.de (na userjevem Windows računalniku).
+
+---
+Task ID: v8.74
+Agent: main
+Task: Cross-Platform Price Comparison + Source Badges
+
+Work Log:
+- Razmišljal kot uporabnik: z 11 platformami ne vem katera je najboljša za kakšen artikel. Sony A7III sem kupil na Bolha, ampak bi bil cenejši na Quoka? Tudi v Iskalniku ne vidim iz katere platforme je oglas.
+- Iskalnik ResultCard: dodan source badge z ikono (🇸🇮 Bolha, 🇩🇪 Quoka/Kleinanzeigen/Mobile.de, 🇮🇹 Subito, 🇦🇹 Willhaben, 🏠 Nepremičnine, 🚗 Avtonet, 👕 Vinted) + color-coded border. SOURCE_META helper z icon/label/color za 11 platform. sourceIcon() in sourceColor() funkciji.
+- API /api/analytics/cross-platform-prices GET (NEW): ?q=iphone&category=elektronika&days=30. Groupa listings per platform (monitor.source), compute avg/min/max/median/stdDev per platform. Vrne cheapestPlatform, expensivePlatform, priceGap (€ + %), overallAvgPrice. runtime=nodejs, dynamic=force-dynamic.
+- PlatformPriceComparisonCard (NEW dashboard component): search input za artikel, najcenejša/najdražja platforma z avg price + count, price gap badge (prihranek če kupiš najceneje), comparison tabela z vsemi platformami sort po avg price (cheapest=emerald, expensive=red), najcenejši oglas per platform z naslov + cena.
+- Dashboard integration: <PlatformPriceComparisonCard /> dodan po <DecisionAccuracyCard />.
+- Preveril lint: 0 napak ✨
+- Preveril typecheck: 0 napak ✨
+- API test: 15 listings na Bolha (demo seed), 1 platforma, avg 8273€. ✓
+- Agent Browser:
+  - Dashboard: PlatformPriceComparisonCard visible ✓
+  - Iskalnik search "VW Golf 5": "🇸🇮 bolha" badge prikazan na rezultatih ✓
+  - 0 console errors ✓
+- Commit + push uspešen ✅
+
+Stage Summary:
+- NEW: src/app/api/analytics/cross-platform-prices/route.ts (GET — cross-platform price comparison)
+- NEW: src/components/dashboard/platform-price-comparison-card.tsx (search + comparison table + price gap)
+- MODIFIED: src/components/dashboard/iskalnik-view.tsx (+SOURCE_META, +sourceIcon/sourceColor helpers, +source badge v ResultCard)
+- MODIFIED: src/components/dashboard/dashboard-view.tsx (+PlatformPriceComparisonCard import + render)
+- MODIFIED: README.md (v8.73→v8.74, API routes 642→643)
+- AI endpointi: 432 (nespremenjeto)
+- Total API routes: 642 → 643 (+1: analytics/cross-platform-prices)
+- Verzija: v8.74.0
+- Skupaj (v7.50 → v8.74): 124 verzij, 246 novih funkcij
+- LIVE: 15 listings na Bolha (demo). PlatformPriceComparisonCard na dashboard. Iskalnik prikazuje 🇸🇮 bolha badge na rezultatih.
+- NARAVNI NASLEDNJI KORAK po Quoka.de platformi: "katera platforma je najcenejša za artikel X?" + source badge v Iskalniku da uporabnik ve iz katere platforme je oglas.
