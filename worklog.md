@@ -19045,3 +19045,34 @@ Stage Summary:
 - Skupaj (v7.50 → v8.75): 125 verzij, 247 novih funkcij
 - LIVE: BuyRequest "VW Golf 5" → cron found 4 matches → notification → Iskalnik prikazuje "4 novo" badge + "zadnjič: zdaj".
 - SISTEM JE SEDAJ PROAKTIVEN: save search → auto-monitor (cron) → notification → Iskalnik → Compare → Buy. Prej je bil reaktiven (uporabnik je moral ročno iskati).
+
+---
+Task ID: v8.76
+Agent: main
+Task: run-all integration + Match Viewer
+
+Work Log:
+- Razmišljal kot uporabnik: v8.75 cron za BuyRequests deluje ampak NI integriran v run-all cron (uporabnik mora ročno klicati). Tudi ko kliknem na "4 novo" — Iskalnik samo naloži kriterije, NE prikaže ujemanj.
+- run-all cron: dodan buyRequestResult — fetch-a /api/cron/run-buy-requests kot del run-all. Sedaj se saved search monitoring samodejno poganja vsakih 5-10min skupaj z monitors, heartbeat, digest, cleanup, deal-alert, aging-alert.
+- IskalnikView: viewMatches() funkcija — fetch-a /api/buy-requests/[id]/matches, prikaže ujemanja z listing details (naslov, cena, lokacija, AI score, verdict, source badge, timestamp). Naloži kriterije v formo BREZ brisanja match state-a (bug fix: applySavedRequest je resetiral matchViewing).
+- Match Results Panel: z rank badge (#1 emerald), Eye ikona za zapri, ExternalLink na oglas. Card z bg-primary/5 border-primary/30.
+- Eye button na saved searches: animate-pulse primary ko so nova ujemanja (N novo), ghost muted ko so stara (vedno prisoten za ponovni pregled).
+- Preveril lint: 0 napak ✨
+- Preveril typecheck: 0 napak ✨
+- API test: iPhone BuyRequest → cron found 1 match (iPhone 13 Pro 256GB, 450€). Run-all: processed 2 requests, 0 new (dedup). ✓
+- Agent Browser:
+  - Eye button klik → "Ujemanja (1)" panel prikazan ✓
+  - Match content: "iPhone 13 Pro 256GB - odlično stanje, 450€, Ljubljana, ⭐ 9/10, PRILIKA, 🇸🇮 bolha, najdeno: 3min nazaj" ✓
+  - 0 console errors ✓
+- Commit + push uspešen ✅
+
+Stage Summary:
+- MODIFIED: src/app/api/cron/run-all/route.ts (+buyRequestResult — fetch-a /api/cron/run-buy-requests, +buyRequests v response)
+- MODIFIED: src/components/dashboard/iskalnik-view.tsx (+Eye import, +matchResults/matchViewing/matchLoading state, +viewMatches() funkcija, +Match Results Panel z rank badges + listing details, +Eye button za vse saved searches z nova/stara variant)
+- MODIFIED: README.md (v8.75→v8.76)
+- AI endpointi: 432 (nespremenjeto)
+- Total API routes: 645 (nespremenjeto — integration only)
+- Verzija: v8.76.0
+- Skupaj (v7.50 → v8.76): 126 verzij, 248 novih funkcij
+- LIVE: iPhone BuyRequest → cron → 1 match → Eye button → "Ujemanja (1)" panel z iPhone 13 Pro 256GB (450€, Ljubljana, ⭐ 9/10, PRILIKA, 🇸🇮 bolha). Run-all avtomatsko poganja saved search monitoring.
+- CEL POPOLN PIPELINE: Save search → run-all cron (auto) → notification → Eye button → match panel → Compare → Buy → Outcome → Decision Accuracy.
