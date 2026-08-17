@@ -8,6 +8,7 @@ import { Badge } from '@/components/ui/badge';
 import { Input } from '@/components/ui/input';
 import { toast } from 'sonner';
 import { cn } from '@/lib/utils';
+import { APP_VERSION, STATS_LABEL } from '@/lib/version';
 // v6.94: Lazy-load dashboard pogledov z next/dynamic.
 // Prej so se vsi 11 pogledi (skupaj ~17K vrstic komponent) statično naložili ob prvem loadu.
 // Sedaj se naloži samo aktivni pogled — prvi load je ~3-5K namesto ~17K vrstic.
@@ -463,13 +464,13 @@ export default function Home() {
           <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-2 text-xs text-muted-foreground">
             <div className="flex items-center gap-3 flex-wrap">
               <span className="text-primary font-bold">markec-ai-firm</span>
-              <span className="font-mono">v8.87.0</span>
+              <span className="font-mono">{APP_VERSION}</span>
               <span className="hidden sm:inline">•</span>
               <span>local-first</span>
               <span className="hidden sm:inline">•</span>
               <span>zero-cloud</span>
               <span className="hidden sm:inline">•</span>
-              <span>432 AI + 73 analytics = 648 routes</span>
+              <span>{STATS_LABEL}</span>
             </div>
             <div className="flex items-center gap-3 flex-wrap">
               <span className="flex items-center gap-1">
