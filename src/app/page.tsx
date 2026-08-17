@@ -2,7 +2,7 @@
 
 import { useEffect, useState, useRef, memo } from 'react';
 import dynamic from 'next/dynamic';
-import { Activity, Bell, Settings, ListPlus, Zap, RefreshCw, AlertCircle, LayoutGrid, BarChart3, Search, Heart, TrendingUp, History, Eye, PieChart, Menu, X, Users, Sparkles, Package, DollarSign, FileText, Shield } from 'lucide-react';
+import { Activity, Bell, Settings, ListPlus, Zap, RefreshCw, AlertCircle, LayoutGrid, BarChart3, Search, Heart, TrendingUp, History, Eye, PieChart, Menu, X, Users, Sparkles, Package, DollarSign, FileText, Shield, HelpCircle, ExternalLink } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
 import { Input } from '@/components/ui/input';
@@ -95,6 +95,7 @@ export default function Home() {
   const [cmdkOpen, setCmdkOpen] = useState(false); // v8.46: Command Palette (Cmd+K)
   const [onboardingOpen, setOnboardingOpen] = useState(false); // v8.50: First-Run Onboarding
   const [helpOpen, setHelpOpen] = useState(false);
+  const [helpTab, setHelpTab] = useState<'shortcuts' | 'quickstart'>('quickstart'); // v8.82: default to quickstart for new users
   // v4.7: Mobile nav drawer
   const [mobileNavOpen, setMobileNavOpen] = useState(false);
   // v8.45: Quick Add Trade modal state (triggered by MobileFAB on mobile).
@@ -279,6 +280,15 @@ export default function Home() {
                 <Search className="w-3.5 h-3.5" />
                 <span>Iskanje</span>
                 <kbd className="text-[10px] bg-background/60 px-1.5 py-0.5 rounded border border-border">Ctrl+K</kbd>
+              </button>
+              {/* v8.82: Pomoč button — visible help access */}
+              <button
+                onClick={() => { setHelpTab('quickstart'); setHelpOpen(true); }}
+                className="flex items-center gap-1 px-2 py-1.5 rounded border border-border bg-card/50 hover:border-primary/30 hover:text-primary transition-colors"
+                title="Pomoč & Quick Start"
+              >
+                <HelpCircle className="w-3.5 h-3.5" />
+                <span className="hidden lg:inline">Pomoč</span>
               </button>
               {/* v8.47: Theme toggle */}
               <ThemeToggle />
@@ -483,49 +493,160 @@ export default function Home() {
           onClick={() => setHelpOpen(false)}
         >
           <div
-            className="bg-card border border-border rounded-lg max-w-md w-full p-6 shadow-xl"
+            className="bg-card border border-border rounded-lg max-w-2xl w-full max-h-[85vh] overflow-y-auto p-6 shadow-xl"
             onClick={(e) => e.stopPropagation()}
           >
             <div className="flex items-center justify-between mb-4">
-              <h2 className="text-lg font-bold text-primary terminal-glow uppercase">Tipkovne bližnjice</h2>
+              <h2 className="text-lg font-bold text-primary terminal-glow uppercase flex items-center gap-2">
+                <HelpCircle className="w-5 h-5" /> Pomoč
+              </h2>
               <button onClick={() => setHelpOpen(false)} className="text-muted-foreground hover:text-foreground text-xl">×</button>
             </div>
-            <div className="space-y-2 text-sm">
-              <div className="text-xs font-bold text-muted-foreground uppercase mb-1">Navigacija</div>
-              {[
-                { key: '1', desc: 'Dashboard' },
-                { key: '2', desc: 'Monitorji' },
-                { key: '3', desc: 'Alerti' },
-                { key: '4', desc: 'Oglasi' },
-                { key: '5', desc: 'Watchlist' },
-                { key: '6', desc: 'Skladišče' },
-                { key: '7', desc: 'Analitika' },
-                { key: '8', desc: 'Obvestila' },
-                { key: '9', desc: 'Zdravje' },
-                { key: '0', desc: 'Nastavitve' },
-                { key: 'B', desc: 'Kupci' },
-                { key: 'A', desc: 'AI Hub' },
-                { key: 'I', desc: 'Skladišče AI' },
-                { key: 'P', desc: 'Cene AI' },
-                { key: 'L', desc: 'Oglasi AI' },
-                { key: 'R', desc: 'Tveganja AI' },
-              ].map((s, i) => (
-                <div key={i} className="flex items-center justify-between py-1 border-b border-border/50">
-                  <span className="text-muted-foreground">{s.desc}</span>
-                  <kbd className="px-2 py-0.5 bg-background border border-border rounded text-xs font-mono text-primary">{s.key}</kbd>
-                </div>
-              ))}
-              <div className="text-xs font-bold text-muted-foreground uppercase mb-1 mt-3">Akcije</div>
-              {[
-                { key: 'Ctrl+K', desc: '⌘ Command Palette (v8.46)' },
-                { key: '?', desc: 'Ta pomoč' },
-              ].map((s, i) => (
-                <div key={i} className="flex items-center justify-between py-1 border-b border-border/50">
-                  <span className="text-muted-foreground">{s.desc}</span>
-                  <kbd className="px-2 py-0.5 bg-background border border-border rounded text-xs font-mono text-primary">{s.key}</kbd>
-                </div>
-              ))}
+
+            {/* v8.82: Tab switcher */}
+            <div className="flex gap-1 mb-4 border-b border-border">
+              <button
+                onClick={() => setHelpTab('quickstart')}
+                className={`px-3 py-1.5 text-xs font-medium border-b-2 transition-colors ${helpTab === 'quickstart' ? 'border-primary text-primary' : 'border-transparent text-muted-foreground hover:text-foreground'}`}
+              >
+                🚀 Quick Start
+              </button>
+              <button
+                onClick={() => setHelpTab('shortcuts')}
+                className={`px-3 py-1.5 text-xs font-medium border-b-2 transition-colors ${helpTab === 'shortcuts' ? 'border-primary text-primary' : 'border-transparent text-muted-foreground hover:text-foreground'}`}
+              >
+                ⌨️ Bližnjice
+              </button>
             </div>
+
+            {/* Quick Start Tab */}
+            {helpTab === 'quickstart' && (
+              <div className="space-y-4 text-sm">
+                {/* Setup checklist */}
+                <div>
+                  <h3 className="text-xs font-bold text-muted-foreground uppercase mb-2">📋 Setup Checklist</h3>
+                  <div className="space-y-1.5">
+                    {[
+                      { step: '1', text: 'Nastavi AI provider', link: '/?view=settings', detail: 'Nastavitve → AI → Ollama (brezplačno) ali OpenAI' },
+                      { step: '2', text: 'Ustvari prvi monitor', link: '/?view=monitors', detail: 'Monitorji → Nov monitor → Bolha/Vinted/etc URL' },
+                      { step: '3', text: 'Nastavi zunanji cron', link: '', detail: 'Brez cron-a sistem ne deluje avtomatsko!' },
+                      { step: '4', text: 'Poženi monitor', link: '/?view=monitors', detail: 'Monitorji → Poženi (ali počakaj na cron)' },
+                      { step: '5', text: 'Omogoči Web Push', link: '/?view=settings', detail: 'Nastavitve → Web Push → Generiraj VAPID ključe' },
+                      { step: '6', text: 'Shrani iskanje v Iskalniku', link: '/?view=iskalnik', detail: 'Iskalnik → išči → Shrani iskanje (auto-monitor)' },
+                    ].map((s) => (
+                      <a
+                        key={s.step}
+                        href={s.link || '#'}
+                        onClick={s.link ? undefined : (e) => e.preventDefault()}
+                        className="flex items-start gap-2 p-2 rounded-md border border-border/50 hover:bg-accent/30 transition-colors"
+                      >
+                        <span className="shrink-0 w-5 h-5 rounded-full bg-primary/15 text-primary flex items-center justify-center text-[10px] font-bold">{s.step}</span>
+                        <div className="flex-1 min-w-0">
+                          <div className="text-xs font-medium">{s.text}</div>
+                          <div className="text-[10px] text-muted-foreground">{s.detail}</div>
+                        </div>
+                        {s.link && <ExternalLink className="w-3 h-3 text-muted-foreground shrink-0 mt-0.5" />}
+                      </a>
+                    ))}
+                  </div>
+                </div>
+
+                {/* Workflow */}
+                <div>
+                  <h3 className="text-xs font-bold text-muted-foreground uppercase mb-2">🔄 Kako sistem deluje</h3>
+                  <div className="bg-muted/20 rounded-lg p-3 text-[11px] space-y-1 font-mono">
+                    <div>🔍 <b>Monitorji</b> → scrapajo oglase z Bolha/Vinted/Quoka (11 platform)</div>
+                    <div>🧠 <b>AI</b> → oceni vsak oglas (score 1-10, risk, verdict PRILIKA/SUMNJIVO)</div>
+                    <div>🛒 <b>Buy Score</b> → izračuna 0-100 ali naj kupiš (v8.68)</div>
+                    <div>🔍 <b>Iskalnik</b> → išči po kriterijih, primerjaj, shrani za auto-monitor (v8.71-72)</div>
+                    <div>📱 <b>Auto-cron</b> → vsakih 10min preveri saved searches → Push notification (v8.75-79)</div>
+                    <div>💰 <b>Skladišče</b> → sledi buy/sell, Sell Priority (v8.65), Smart Price (v8.66)</div>
+                    <div>🏆 <b>Outcome</b> → po prodaji: ali si prodal optimalno? (v8.67)</div>
+                    <div>📊 <b>Dashboard</b> → Daily Briefing + 10 card-ov z vso inteligenco (v8.80)</div>
+                    <div>🧠 <b>Decision Accuracy</b> → ali tvoji algoritmi delujejo? (v8.70)</div>
+                  </div>
+                </div>
+
+                {/* Feature overview */}
+                <div>
+                  <h3 className="text-xs font-bold text-muted-foreground uppercase mb-2">🗺️ Ključni zavihki</h3>
+                  <div className="grid grid-cols-2 gap-2 text-[11px]">
+                    {[
+                      { v: 'dashboard', t: '📊 Dashboard', d: 'Daily Briefing + 10 intelligence card-ov' },
+                      { v: 'monitors', t: '🔍 Monitorji', d: 'Ustvari iskalne monitorje za scraping' },
+                      { v: 'listings', t: '📋 Oglasi', d: 'Vsi scraped oglasi z AI ocenami' },
+                      { v: 'iskalnik', t: '🔎 Iskalnik', d: 'Išči po kriterijih + Compare + Save' },
+                      { v: 'trades', t: '💰 Skladišče', d: 'Buy/Sell tracking + Priority + Smart Price' },
+                      { v: 'ai-hub', t: '🤖 AI Hub', d: '432 AI funkcij + Notification Center' },
+                    ].map(f => (
+                      <button
+                        key={f.v}
+                        onClick={() => { setView(f.v as View); setHelpOpen(false); }}
+                        className="text-left p-2 rounded-md border border-border/50 hover:border-primary/30 hover:bg-accent/30 transition-colors"
+                      >
+                        <div className="font-medium text-xs">{f.t}</div>
+                        <div className="text-[10px] text-muted-foreground">{f.d}</div>
+                      </button>
+                    ))}
+                  </div>
+                </div>
+
+                {/* Cron command */}
+                <div>
+                  <h3 className="text-xs font-bold text-muted-foreground uppercase mb-2">⏰ Cron Setup (nujno!)</h3>
+                  <div className="bg-red-500/10 border border-red-500/30 rounded-lg p-2 mb-2">
+                    <p className="text-[10px] text-red-400 font-medium">⚠️ Brez cron-a se NE BO NIČ samodejno poganjalo!</p>
+                  </div>
+                  <pre className="text-[10px] bg-background border border-border rounded p-2 overflow-x-auto whitespace-pre-wrap font-mono text-muted-foreground">
+{`# Linux/Mac (crontab -e):
+*/10 * * * * curl -s http://localhost:3000/api/cron/run-all > /dev/null
+
+# Windows (Task Scheduler):
+Invoke-WebRequest -Uri "http://localhost:3000/api/cron/run-all" -Method POST`}
+                  </pre>
+                </div>
+              </div>
+            )}
+
+            {/* Shortcuts Tab */}
+            {helpTab === 'shortcuts' && (
+              <div className="space-y-2 text-sm">
+                <div className="text-xs font-bold text-muted-foreground uppercase mb-1">Navigacija</div>
+                {[
+                  { key: '1', desc: 'Dashboard' },
+                  { key: '2', desc: 'Monitorji' },
+                  { key: '3', desc: 'Alerti' },
+                  { key: '4', desc: 'Oglasi' },
+                  { key: '5', desc: 'Watchlist' },
+                  { key: '6', desc: 'Skladišče' },
+                  { key: '7', desc: 'Analitika' },
+                  { key: '8', desc: 'Obvestila' },
+                  { key: '9', desc: 'Zdravje' },
+                  { key: '0', desc: 'Nastavitve' },
+                  { key: 'B', desc: 'Kupci' },
+                  { key: 'A', desc: 'AI Hub' },
+                  { key: 'I', desc: 'Skladišče AI' },
+                  { key: 'P', desc: 'Cene AI' },
+                  { key: 'L', desc: 'Oglasi AI' },
+                  { key: 'R', desc: 'Tveganja AI' },
+                ].map((s, i) => (
+                  <div key={i} className="flex items-center justify-between py-1 border-b border-border/50">
+                    <span className="text-muted-foreground">{s.desc}</span>
+                    <kbd className="px-2 py-0.5 bg-background border border-border rounded text-xs font-mono text-primary">{s.key}</kbd>
+                  </div>
+                ))}
+                <div className="text-xs font-bold text-muted-foreground uppercase mb-1 mt-3">Akcije</div>
+                {[
+                  { key: 'Ctrl+K', desc: '⌘ Command Palette (v8.46)' },
+                  { key: '?', desc: 'Ta pomoč' },
+                ].map((s, i) => (
+                  <div key={i} className="flex items-center justify-between py-1 border-b border-border/50">
+                    <span className="text-muted-foreground">{s.desc}</span>
+                    <kbd className="px-2 py-0.5 bg-background border border-border rounded text-xs font-mono text-primary">{s.key}</kbd>
+                  </div>
+                ))}
+              </div>
+            )}
             <p className="text-[11px] text-muted-foreground mt-4 text-center">
               Pritisni <kbd className="px-1 py-0.5 bg-background border border-border rounded text-xs">?</kbd> za prikaz tega okna.
             </p>
