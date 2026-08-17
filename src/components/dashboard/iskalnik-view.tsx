@@ -159,6 +159,50 @@ export function IskalnikView() {
     }).catch(() => {});
   }, []);
 
+  // v8.77: Deep link — ?matchRequestId=xxx auto-opens match panel
+  useEffect(() => {
+    if (typeof window === 'undefined') return;
+    const url = new URL(window.location.href);
+    const matchRequestId = url.searchParams.get('matchRequestId');
+    if (!matchRequestId) return;
+    // Find the saved request
+    const req = savedRequests.find(r => r.id === matchRequestId);
+    if (!req) return;
+    // Directly fetch matches and show them
+    (async () => {
+      setMatchLoading(true);
+      setMatchViewing(req.id);
+      try {
+        const res = await fetch(`/api/buy-requests/${req.id}/matches`);
+        const data = await res.json();
+        if (data?.ok) {
+          setMatchResults(data.matches || []);
+          setQuery(req.title);
+          setCategory(req.category);
+          setPriceMin(req.priceMin?.toString() ?? '');
+          setPriceMax(req.priceMax?.toString() ?? '');
+          setLocation(req.location);
+          setYearMin(req.yearMin?.toString() ?? '');
+          setYearMax(req.yearMax?.toString() ?? '');
+          setSortBy(req.sortBy as any || 'cheapest');
+          setSearchFor(req.searchFor);
+          if (data.matches.length > 0) {
+            toast.success(`✓ ${data.matches.length} ujemanj najdenih`);
+          }
+          setSavedRequests(prev => prev.map(r => r.id === req.id ? { ...r, newMatchesCount: 0 } : r));
+        }
+      } catch {
+        toast.error('Napaka pri nalaganju ujemanj');
+      } finally {
+        setMatchLoading(false);
+      }
+    })();
+    // Clean URL
+    url.searchParams.delete('matchRequestId');
+    window.history.replaceState({}, '', url.toString());
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [savedRequests]);
+
   const buildSearchParams = useCallback(() => {
     const params = new URLSearchParams();
     if (query.trim()) params.set('q', query.trim());

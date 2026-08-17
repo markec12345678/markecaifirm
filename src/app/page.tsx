@@ -157,12 +157,16 @@ export default function Home() {
     if (actionParam === 'add-trade') {
       setShowQuickAddTrade(true);
     }
-    // v8.64: Clean only ?view= and ?action= from URL — keep ?tag= for TradesView deep linking.
-    // ?tag= is consumed by TradesView on mount and bookmarks can use it for direct filter access.
+    // v8.64: Clean only ?view= and ?action= from URL — keep ?tag= and ?matchRequestId= for deep linking.
+    // ?tag= is consumed by TradesView, ?matchRequestId= by IskalnikView (v8.77).
     if (viewParam || actionParam) {
       const tagParam = params.get('tag');
-      const cleanUrl = tagParam
-        ? `${window.location.pathname}?tag=${encodeURIComponent(tagParam)}`
+      const matchParam = params.get('matchRequestId');
+      const keepParams = new URLSearchParams();
+      if (tagParam) keepParams.set('tag', tagParam);
+      if (matchParam) keepParams.set('matchRequestId', matchParam);
+      const cleanUrl = keepParams.toString()
+        ? `${window.location.pathname}?${keepParams.toString()}`
         : window.location.pathname;
       window.history.replaceState({}, '', cleanUrl);
     }

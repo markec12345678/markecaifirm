@@ -165,7 +165,7 @@ import {
   DialogTitle,
   DialogDescription,
 } from '@/components/ui/dialog';
-import { Sparkles, Search, Copy, Check, RefreshCw, Zap, X, ChevronRight, ChevronDown, ChevronUp, Brain, AlertCircle, Package, TrendingUp, Target, Shield, Users, Coins, Crown, Camera, Save, History, TrendingDown, ArrowUpRight, ArrowDownRight, Settings2, Info, ClipboardList, Trash2, Filter, Clock, Bot, Power, Play, Undo2, Lock, Activity, AlertOctagon, ShieldAlert, Rocket, HeartPulse, Sprout, Send, MessageCircle, Bell } from 'lucide-react';
+import { Sparkles, Search, Copy, Check, RefreshCw, Zap, X, ChevronRight, ChevronDown, ChevronUp, Brain, AlertCircle, Package, TrendingUp, Target, Shield, Users, Coins, Crown, Camera, Save, History, TrendingDown, ArrowUpRight, ArrowDownRight, Settings2, Info, ClipboardList, Trash2, Filter, Clock, Bot, Power, Play, Undo2, Lock, Activity, AlertOctagon, ShieldAlert, Rocket, HeartPulse, Sprout, Send, MessageCircle, Bell, Eye } from 'lucide-react';
 import { toast } from 'sonner';
 import { cn } from '@/lib/utils';
 
@@ -7115,6 +7115,7 @@ const NOTIFICATION_TYPE_LABELS: Record<string, { label: string; icon: string }> 
   system: { label: 'Sistem', icon: '🔧' },
   trade_sold: { label: 'Trade prodan', icon: '💰' },
   error: { label: 'Napaka', icon: '❌' },
+  buy_request_match: { label: 'Iskalnik ujemanje', icon: '🔍' },
 };
 
 const NOTIFICATION_SEVERITY_STYLES: Record<string, string> = {
@@ -7394,6 +7395,24 @@ function NotificationCenterCard() {
                               · {n.source}
                             </span>
                           </div>
+                          {/* v8.77: Action button za buy_request_match — deep link v Iskalnik */}
+                          {n.type === 'buy_request_match' && (() => {
+                            let buyRequestId: string | null = null;
+                            try {
+                              const meta = typeof n.metadata === 'string' ? JSON.parse(n.metadata) : n.metadata;
+                              buyRequestId = meta?.buyRequestId || null;
+                            } catch { /* ignore */ }
+                            if (!buyRequestId) return null;
+                            return (
+                              <a
+                                href={`/?view=iskalnik&matchRequestId=${encodeURIComponent(buyRequestId)}`}
+                                className="inline-flex items-center gap-0.5 mt-1.5 px-2 py-0.5 rounded border border-primary/40 bg-primary/10 text-primary text-[10px] font-medium hover:bg-primary/20 transition-colors"
+                                title="Prikaži ujemanja v Iskalniku"
+                              >
+                                <Eye className="w-2.5 h-2.5" /> Prikaži ujemanja
+                              </a>
+                            );
+                          })()}
                         </div>
                         <div className="flex flex-col gap-1 shrink-0">
                           {!n.isRead && (
