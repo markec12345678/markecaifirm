@@ -19403,3 +19403,41 @@ Stage Summary:
 - Verzija: v8.85.0
 - Skupaj (v7.50 → v8.85): 135 verzij, 257 novih funkcij
 - PROFESSIONAL UX: empty states so zdaj konsistentni z ikono + naslov + opis + CTA. Prej: preprosto besedilo. Zdaj: profesionalni pattern ki uporabnika vodi k akciji.
+
+---
+Task ID: v8.86
+Agent: main
+Task: AI Retry z Backoff + DB Maintenance script
+
+Work Log:
+- Uporabnik vprašal: "ali je smiselno kje dodat skripte da je manj napak da ai dela manj napak ali da hitrejse dela boljse"
+- Analiziral sistem. Odkril 3 težave:
+  1. AI callProvider NIMA retry logike — faila na prvi napaki (timeout, rate limit). Listing ostane neocenjen.
+  2. DB raste brez cleanup-a — RunLogs, PriceHistory, Notifications, BuyRequestMatches se kopičijo. Prisma query-ji postanejo počasni.
+  3. Brez VACUUM-a SQLite fragmentira.
+- AI Retry (src/lib/ai.ts):
+  - callProvider sedaj wrappa callProviderDirect z retry loop (max 2 retries, 1s→2s exponential backoff)
+  - Retry SAMO za network/timeout/5xx/429 errors (isRetryable check)
+  - NE retry za 4xx (401 auth, 403 forbidden, 400 bad request) — te napake se bodo ponovile
+  - callProviderDirect izvlečen kot direct dispatch (loči retry logic od provider dispatch)
+  - RESULT: AI je bolj robusten — prej bi timeout na Ollama pomenil neocenjen listing. Zdaj: 2 retry-ja z backoff.
+- DB Maintenance (scripts/db-maintenance.ts):
+  - Briše: old RunLogs (>90d), PriceHistory (>180d), Notifications (>90d), read BuyRequestMatches (>60d), hidden listings (>30d)
+  - SQLite VACUUM za defragmentacijo in performance
+  - DB stats output (listings, alerts, trades, monitors, notifications, runLogs, buyRequests, buyRequestMatches, priceHistory)
+  - Run: bun run scripts/db-maintenance.ts
+  - RESULT: DB ostane hiter tudi po mesecih uporabe
+- Preveril lint: 0 napak ✨
+- Preveril typecheck: 0 napak ✨
+- DB maintenance test: 0 deleted (vsi podatki mladi), VACUUM completed, stats: 15 listings, 25 trades, 4 buyRequests, 6 matches ✓
+- Commit + push uspešen ✅
+
+Stage Summary:
+- MODIFIED: src/lib/ai.ts (+callProvider retry z backoff, +callProviderDirect za direct dispatch)
+- NEW: scripts/db-maintenance.ts (cleanup old data + VACUUM + stats)
+- MODIFIED: README.md (v8.85→v8.86)
+- AI endpointi: 432 (nespremenjeto)
+- Total API routes: 648 (nespremenjeto — internal improvement)
+- Verzija: v8.86.0
+- Skupaj (v7.50 → v8.86): 136 verzij, 258 novih funkcij
+- REŠUJE: 1) AI manj napak (retry na timeout/rate-limit), 2) DB ostane hiter (cleanup + VACUUM), 3) Bolj zanesljiv sistem.
