@@ -19171,3 +19171,52 @@ Stage Summary:
 - Skupaj (v7.50 → v8.79): 129 verzij, 251 novih funkcij
 - LIVE: PlayStation BuyRequest → cron → 1 match → in-app Notification + Web Push (pushSent=1). Klik na push → Iskalnik z match panel auto-opened.
 - SISTEM JE SEDAJ MOBILNO PROAKTIVEN: cron → in-app Notification (vidna v app) + Web Push (vidna tudi ko app zaprta) → klik → Iskalnik match panel. Uporabnik ne zgreši nobene priložnosti.
+
+---
+Task ID: v8.80
+Agent: main
+Task: Daily Opportunity Briefing — capstone card that unifies all intelligence
+
+Work Log:
+- Razmišljal kot uporabnik: z 10 dashboard card-i, ko zjutraj odprem app moram scroll-at vse da razumem kaj je novo, kaj potrebuje pozornost, kaj naj naredim. Potrebujem EN končen jutranji briefing.
+- API /api/analytics/daily-briefing GET (NEW): kombinira vse intelligence v en response:
+  - newMatchesToday (BuyRequestMatch.count danes)
+  - activeBuyRequestsWithMatches (top 3 z novimi ujemanji)
+  - heldCount + topSellPriority (top 2 najstarejši held trades z daysHeld + buyScore)
+  - soldTodayCount + todayProfit
+  - soldYesterdayCount + yesterdayProfit
+  - monthProfit + monthlyGoal + goalProgress + daysRemaining
+  - actionItems (high/medium/low priority z deep links — generirani glede na ujemanja, sell priority, profit, goal progress)
+- DailyBriefingCard (NEW dashboard component na VRH dashboarda):
+  - Action items z priority color-coding (red=high, amber=medium, emerald=low) + clickable deep links
+  - 4-column quick stats grid: UJEMANJA (danes), V SKLADIŠČU, DANES (profit), MESEC (profit + goal %)
+  - Goal progress bar z color-coding (emerald ≥100%, primary ≥50%, amber <50%)
+  - Top 2 sell priority preview z rank badges + daysHeld + buyScore
+  - Yesterday summary footer
+  - Date display (Ponedeljek, 17. Avgust — slovenski format)
+  - Auto-refresh vsakih 120s
+- Dashboard integration: <DailyBriefingCard /> dodan na VRH dashboarda (pred RestockRecommendationsCard).
+- Preveril lint: 0 napak ✨
+- Preveril typecheck: 0 napak ✨
+- API test: 6 ujemanj danes, 5 held, +312€ mesec (62.4% cilja), action items: "1 novo ujemanje" + "Sony A7III 51 dni". ✓
+- Agent Browser:
+  - Daily Briefing card na vrhu dashboarda ✓
+  - "Ponedeljek, 17. Avgust" ✓
+  - Action items z deep links ✓
+  - 4-column stats: UJEMANJA 6, V SKLADIŠČU 5, DANES +0€, MESEC +312€ (62% cilja) ✓
+  - Goal progress bar 62% ✓
+  - Prioriteta za prodajo: #1 Sony A7III 51d, #2 Xbox Series X 41d ✓
+  - 0 console errors ✓
+- Commit + push uspešen ✅
+
+Stage Summary:
+- NEW: src/app/api/analytics/daily-briefing/route.ts (GET — kombinira buy matches + sell priority + profit + goal + actions)
+- NEW: src/components/dashboard/daily-briefing-card.tsx (action items + 4-column stats + goal bar + sell priority + date)
+- MODIFIED: src/components/dashboard/dashboard-view.tsx (+DailyBriefingCard na VRH dashboarda)
+- MODIFIED: README.md (v8.79→v8.80, API routes 646→647)
+- AI endpointi: 432 (nespremenjeto)
+- Total API routes: 646 → 647 (+1: analytics/daily-briefing)
+- Verzija: v8.80.0
+- Skupaj (v7.50 → v8.80): 130 verzij, 252 novih funkcij
+- LIVE: 6 ujemanj danes, 5 held trades, +312€ mesec (62% cilja), Sony A7III 51 dni prioritetna.
+- CAPSTONE: združi vso inteligenco v8.63-79 v en koncizen jutranji povzetek. Uporabnik ne rabi scroll-at 10 card-ov — en pogled na Daily Briefing in ve kaj se dogaja.
