@@ -574,6 +574,50 @@ async function callProvider(
   userPrompt: string,
   imageBase64?: string | null
 ): Promise<string> {
+  // v8.86: Retry z exponential backoff — prepreči fail zarut timeout/rate-limit
+  const maxRetries = 2;
+  const baseDelay = 1000; // 1s, 2s
+
+  for (let attempt = 0; attempt <= maxRetries; attempt++) {
+    try {
+      const result = await callProviderDirect(settings, userPrompt, imageBase64);
+      return result;
+    } catch (err: any) {
+      const isLastAttempt = attempt === maxRetries;
+      const errMsg = err?.message || String(err);
+
+      // Ne retry-aj na 4xx (bad request, auth) — samo na network/timeout/5xx
+      const isRetryable = !errMsg.includes('401') &&
+                         !errMsg.includes('403') &&
+                         !errMsg.includes('400') &&
+                         (errMsg.includes('timeout') ||
+                          errMsg.includes('ECONNREFUSED') ||
+                          errMsg.includes('fetch failed') ||
+                          errMsg.includes('500') ||
+                          errMsg.includes('502') ||
+                          errMsg.includes('503') ||
+                          errMsg.includes('429') ||
+                          errMsg.includes('rate limit'));
+
+      if (isLastAttempt || !isRetryable) {
+        throw err;
+      }
+
+      // Exponential backoff: 1s, 2s
+      const delay = baseDelay * Math.pow(2, attempt);
+      await new Promise(resolve => setTimeout(resolve, delay));
+    }
+  }
+  // Unreachable — loop always returns or throws
+  throw new Error('callProvider: unexpected exit');
+}
+
+/** v8.86: Direct call without retry — the actual provider dispatch */
+async function callProviderDirect(
+  settings: AiSettings,
+  userPrompt: string,
+  imageBase64?: string | null
+): Promise<string> {
   switch (settings.provider) {
     case 'ollama':
       return callOllama(settings, userPrompt, imageBase64);
@@ -583,10 +627,8 @@ async function callProvider(
     case 'anthropic':
       return callAnthropic(settings, userPrompt, imageBase64);
     case 'openrouter':
-      // v6.19: OpenRouter — gateway do 100+ modelov
       return callOpenRouter(settings, userPrompt, imageBase64);
     case 'gemini':
-      // v6.19: Google Gemini — Generative Language API
       return callGemini(settings, userPrompt, imageBase64);
     default:
       throw new Error(`Unknown AI provider: ${settings.provider}`);
