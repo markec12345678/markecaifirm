@@ -150,6 +150,9 @@ export function HealthView() {
         </CardContent>
       </Card>
 
+      {/* v8.84: Setup Completion Card — shows setup checklist progress */}
+      <SetupCompletionCard />
+
       {/* Individual checks grid */}
       <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
         {data.checks.map((check, i) => {
@@ -320,5 +323,103 @@ export function HealthView() {
         </CardContent>
       </Card>
     </div>
+  );
+}
+
+// v8.84: Setup Completion Card — shows setup checklist progress in Health view
+function SetupCompletionCard() {
+  const [setupData, setSetupData] = useState<any>(null);
+
+  useEffect(() => {
+    fetch('/api/setup-status').then(r => r.json()).then(d => {
+      if (d?.ok) setSetupData(d);
+    }).catch(() => {});
+  }, []);
+
+  if (!setupData) return null;
+
+  const pct = Math.round((setupData.doneCount / setupData.totalCount) * 100);
+  const pendingItems = setupData.checklist?.filter((c: any) => !c.done) || [];
+
+  if (setupData.allDone) {
+    return (
+      <Card className="border-2 border-emerald-500/30 bg-emerald-500/5">
+        <CardContent className="p-4">
+          <div className="flex items-center gap-3">
+            <CheckCircle2 className="w-6 h-6 text-emerald-500" />
+            <div>
+              <div className="text-sm font-bold text-emerald-500">SETUP POPOLN ✓</div>
+              <p className="text-xs text-muted-foreground mt-0.5">
+                Vseh {setupData.totalCount} nastavitev končanih. Sistem deluje polno.
+              </p>
+            </div>
+          </div>
+        </CardContent>
+      </Card>
+    );
+  }
+
+  return (
+    <Card className={cn(
+      'border-2',
+      pct < 50 ? 'border-red-500/30 bg-red-500/5' : 'border-amber-500/30 bg-amber-500/5'
+    )}>
+      <CardContent className="p-4 space-y-3">
+        <div className="flex items-center justify-between">
+          <div className="flex items-center gap-2">
+            <AlertCircle className={cn('w-5 h-5', pct < 50 ? 'text-red-500' : 'text-amber-500')} />
+            <span className="text-sm font-bold">
+              Setup {pct}% ({setupData.doneCount}/{setupData.totalCount})
+            </span>
+          </div>
+          <span className="text-[10px] text-muted-foreground">
+            {pendingItems.length} {pendingItems.length === 1 ? 'nastavitev' : 'nastavitev'} manjka
+          </span>
+        </div>
+
+        {/* Progress bar */}
+        <div className="h-2.5 bg-muted rounded-full overflow-hidden">
+          <div
+            className={cn(
+              'h-full rounded-full transition-all',
+              pct < 50 ? 'bg-red-500' : pct < 100 ? 'bg-amber-500' : 'bg-emerald-500'
+            )}
+            style={{ width: `${pct}%` }}
+          />
+        </div>
+
+        {/* Checklist grid */}
+        <div className="grid grid-cols-1 md:grid-cols-2 gap-1.5">
+          {setupData.checklist?.map((item: any) => (
+            <div
+              key={item.id}
+              className={cn(
+                'flex items-center gap-2 p-1.5 rounded-md border text-xs',
+                item.done
+                  ? 'border-emerald-500/20 bg-emerald-500/5'
+                  : 'border-amber-500/20 bg-amber-500/5'
+              )}
+            >
+              {item.done ? (
+                <CheckCircle2 className="w-3 h-3 text-emerald-500 shrink-0" />
+              ) : (
+                <AlertCircle className="w-3 h-3 text-amber-500 shrink-0" />
+              )}
+              <div className="flex-1 min-w-0">
+                <div className={cn('font-medium truncate', item.done && 'text-muted-foreground line-through')}>
+                  {item.label}
+                </div>
+                <div className="text-[10px] text-muted-foreground truncate">{item.detail}</div>
+              </div>
+              {!item.done && item.link && (
+                <a href={item.link} className="shrink-0 text-primary hover:text-primary/80 text-[10px] underline">
+                  Pojdi
+                </a>
+              )}
+            </div>
+          ))}
+        </div>
+      </CardContent>
+    </Card>
   );
 }
