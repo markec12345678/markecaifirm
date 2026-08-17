@@ -40,6 +40,7 @@ import { BuyOpportunitySummaryCard } from '@/components/dashboard/buy-opportunit
 import { DecisionAccuracyCard } from '@/components/dashboard/decision-accuracy-card';
 import { PlatformPriceComparisonCard } from '@/components/dashboard/platform-price-comparison-card';
 import { SavedSearchStatusCard } from '@/components/dashboard/saved-search-status-card';
+import { DailyBriefingCard } from '@/components/dashboard/daily-briefing-card';
 
 // v5.6: Dashboard widget IDs
 const WIDGET_IDS = ['todaySummary', 'quickStats', 'activityFeed', 'aiInsights', 'skladisceWidget'] as const;
@@ -603,6 +604,9 @@ export function DashboardView({ onNavigate }: ViewProps) {
           hold time/suggested buy price range/best source/confidence. Category
           status table (RESTOCK/MAINTAIN/REDUCE/AVOID). Inventory gaps +
           overstock warnings. Self-fetches from /api/ai/restock-smart every 60s. */}
+      {/* v8.80: Daily Briefing — TOP of dashboard, unifies all intelligence */}
+      <DailyBriefingCard />
+
       <RestockRecommendationsCard />
       <ProfitForecastCard />
       <MonthOverMonthCard />
