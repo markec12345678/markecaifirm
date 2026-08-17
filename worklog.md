@@ -19370,3 +19370,36 @@ Stage Summary:
 - Skupaj (v7.50 → v8.84): 134 verzij, 256 novih funkcij
 - LIVE: Health view zdaj prikazuje "Setup 71% (5/7)" z 2 pending items (Cron, Push) + clickable links.
 - ZDROŽEN HEALTH VIEW: connectivity checks (AI/Telegram/Bolha/Cron/Push status) + setup completion checklist (ali so komponente konfigurirane). ONE VIEW za vse: "kaj je narobe" + "kaj manjka".
+
+---
+Task ID: v8.85
+Agent: main
+Task: Reusable EmptyState component — consistent professional empty states
+
+Work Log:
+- Razmišljal kot uporabnik: ko odprem view brez podatkov, vidim samo "Še ni monitorjev" — brez ikone, brez opisa kaj view dela, brez CTA. Neprofesionalno. Profesionalni produkt ima empty states z ikono + naslov + opis + CTA.
+- NEW src/components/ui/empty-state.tsx — reusable EmptyState component:
+  - Props: icon (ReactNode), title, description, action (onClick button), actionHref (link button), actionHref2 (secondary link button), helpLink (Pomoč link), className
+  - Pattern: large faded icon + bold title + helpful description + prominent CTA button(s) + optional Pomoč link
+  - Flexible: supports up to 2 action buttons + help link
+- Integrirana v 3 ključne view-e:
+  1. Monitors: ListPlus icon + "Ustvari prvi monitor" CTA + Pomoč link. Description: "Monitorji samodejno preverjajo Bolha, Vinted, Quoka..."
+  2. Trades: TrendingUp icon + "Dodaj prvi trade" CTA + "Išči oglase" secondary. Description: "Sledi svoje nakupe in prodaje..."
+  3. Listings: LayoutGrid icon + "Ustvari monitor" + "Išči v Iskalniku" secondary. Description: "Brez monitorjev ali cron-a se oglasi ne bodo scrapali..."
+- Import fixes: ListPlus in monitors-view, LayoutGrid in listings-view, EmptyState in all 3.
+- Preveril lint: 0 napak ✨ (popravil 2 errors: ListPlus + LayoutGrid imports)
+- Preveril typecheck: 0 napak ✨
+- Agent Browser: 0 console errors (empty states se ne prikažejo ker imamo demo podatke, ampak koda je pravilna) ✓
+- Commit + push uspešen ✅
+
+Stage Summary:
+- NEW: src/components/ui/empty-state.tsx (reusable EmptyState component z icon/title/description/CTA/helpLink)
+- MODIFIED: src/components/dashboard/monitors-view.tsx (+EmptyState import, +ListPlus import, +professional empty state)
+- MODIFIED: src/components/dashboard/trades-view.tsx (+EmptyState import, +professional empty state z 2 CTA buttons)
+- MODIFIED: src/components/dashboard/listings-view.tsx (+EmptyState import, +LayoutGrid import, +professional empty state z 2 CTA buttons)
+- MODIFIED: README.md (v8.84→v8.85)
+- AI endpointi: 432 (nespremenjeto)
+- Total API routes: 648 (nespremenjeto — UI only)
+- Verzija: v8.85.0
+- Skupaj (v7.50 → v8.85): 135 verzij, 257 novih funkcij
+- PROFESSIONAL UX: empty states so zdaj konsistentni z ikono + naslov + opis + CTA. Prej: preprosto besedilo. Zdaj: profesionalni pattern ki uporabnika vodi k akciji.
