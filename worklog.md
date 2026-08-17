@@ -19561,3 +19561,41 @@ Stage Summary:
 - Verzija: v8.90.0
 - Skupaj (v7.50 → v8.90): 140 verzij, 262 novih funkcij
 - ACCURATE STATS: 432 AI + 84 analytics = 651 routes, 11 platform, 8 brain plasti. Vse preverjeno z `find` commands.
+
+---
+Task ID: v8.91
+Agent: main
+Task: Error Handling Audit + apiResponse helper
+
+Work Log:
+- Analiziral error handling kvaliteto: 14/651 API routes brez loggerja (errors silent — uporabnik ne ve zakaj endpoint faila). 323 empty catch blocks.
+- NEW src/lib/api-response.ts — reusable helpers:
+  - apiError(endpoint, message, err, status) — consistent {ok:false, error} + logger.error
+  - apiOk(data, status) — consistent success response
+  - apiNotFound(message) — 404 z consistent format
+  - apiBadRequest(message) — 400 z consistent format
+- 10 endpointov popravljeno z logger.error v catch blocks:
+  1. setup-status
+  2. trades/tags
+  3. analytics/decision-accuracy
+  4. analytics/month-over-month
+  5. analytics/sell-priority
+  6. analytics/profit-forecast
+  7. analytics/outcome-score
+  8. analytics/buy-opportunity
+  9. analytics/smart-pricing
+  10. analytics/tag-performance
+- Prej: 14/651 routes brez logging. Zdaj: 4/651 (csv-template + 3 cron endpoints — nizko tveganje).
+- Preveril lint: 0 napak ✨
+- Preveril typecheck: 0 napak ✨
+- API tests: sell-priority OK, decision-accuracy OK, setup-status OK, trades/tags OK ✓
+- Commit + push uspešen ✅
+
+Stage Summary:
+- NEW: src/lib/api-response.ts (apiError, apiOk, apiNotFound, apiBadRequest)
+- MODIFIED: 10 API route files (+logger import, +logger.error v catch blocks)
+- MODIFIED: src/lib/version.ts (v8.90.0→v8.91.0)
+- MODIFIED: README.md (badge v8.91.0)
+- Verzija: v8.91.0
+- Skupaj (v7.50 → v8.91): 141 verzij, 263 novih funkcij
+- PROFESSIONAL: 10 endpointov sedaj log-a errors. Prej: silent failures. Zdaj: logger.error z endpoint name + error message. apiResponse helper za consistent format.
