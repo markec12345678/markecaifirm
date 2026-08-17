@@ -3,6 +3,7 @@
 import { useEffect, useState, useCallback, useMemo } from 'react';
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
+import { EmptyState } from '@/components/ui/empty-state';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Textarea } from '@/components/ui/textarea';
@@ -23,7 +24,7 @@ import {
   DialogDescription,
   DialogFooter,
 } from '@/components/ui/dialog';
-import { Plus, Play, Pencil, Trash2, RefreshCw, ExternalLink, CheckCircle2, XCircle, Clock, Zap, AlertCircle, PauseCircle, Bell, Copy, Square, Tag, Sparkles, Check } from 'lucide-react';
+import { Plus, Play, Pencil, Trash2, RefreshCw, ExternalLink, CheckCircle2, XCircle, Clock, Zap, AlertCircle, PauseCircle, Bell, Copy, Square, Tag, Sparkles, Check, ListPlus } from 'lucide-react';
 import { toast } from 'sonner';
 import { cn } from '@/lib/utils';
 import { PROMPT_CATEGORIES, getPromptsByCategory } from '@/lib/ai-prompts';
@@ -449,11 +450,18 @@ export function MonitorsView() {
         </div>
       ) : monitors.length === 0 ? (
         <Card className="bg-card/50">
-          <CardContent className="p-8 text-center">
-            <p className="text-muted-foreground text-sm mb-4">Še ni monitorjev.</p>
-            <Button size="sm" onClick={() => { setEditing(null); setShowForm(true); }} className="gap-2">
-              <Plus className="w-3.5 h-3.5" /> Dodaj prvi monitor
-            </Button>
+          <CardContent className="p-8">
+            <EmptyState
+              icon={<ListPlus className="w-12 h-12" />}
+              title="Še ni monitorjev"
+              description="Monitorji samodejno preverjajo Bolha, Vinted, Quoka in druge platforme za nove oglase. Ustvari svoj prvi monitor z iskalnim URL-jem."
+              action={{
+                label: 'Ustvari prvi monitor',
+                onClick: () => { setEditing(null); setShowForm(true); },
+                icon: <Plus className="w-3.5 h-3.5" />,
+              }}
+              helpLink="/?view=monitors"
+            />
           </CardContent>
         </Card>
       ) : (

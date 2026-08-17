@@ -16,6 +16,7 @@ import {
 import { RefreshCw, Plus, Pencil, Trash2, TrendingUp, TrendingDown, Wallet, Target, ExternalLink, ShoppingCart, Tag, Download, Sparkles, Check, Copy, AlertTriangle, Boxes, Flame, FileText, Receipt, Network, Clock, Type, Users, Globe, LineChart as LineChartIcon, Activity, Upload, ChevronDown, ChevronUp, DollarSign } from 'lucide-react';
 import { FlipChecklist } from '@/components/dashboard/flip-checklist';
 import { TagsInput } from '@/components/ui/tags-input';
+import { EmptyState } from '@/components/ui/empty-state';
 import { toast } from 'sonner';
 import { triggerGlobalRefresh } from '@/hooks/use-global-refresh';
 import { useDebounce } from '@/hooks/use-debounce';
@@ -3179,9 +3180,20 @@ export function TradesView() {
       ) : filtered.length === 0 ? (
         <Card className="bg-card/50">
           <CardContent className="p-8 text-center">
-            <TrendingUp className="w-8 h-8 mx-auto mb-2 text-muted-foreground opacity-50" />
-            <p className="text-sm text-muted-foreground">Še ni tradov. Dodaj prvi trade z gumbom "Nov trade".</p>
-            <p className="text-xs text-muted-foreground mt-1">Ko v Listings klikneš "Kupi", se bo samodejno dodal sem.</p>
+            <EmptyState
+              icon={<TrendingUp className="w-12 h-12" />}
+              title="Še ni trgovin"
+              description="Sledi svoje nakupe in prodaje — dodaj prvi trade ali kupi oglas iz Oglasi. Sistem bo samodejno izračunal profit, ROI in sell priority."
+              action={{
+                label: 'Dodaj prvi trade',
+                onClick: () => { setEditing(null); setShowForm(true); },
+                icon: <Plus className="w-3.5 h-3.5" />,
+              }}
+              actionHref={{
+                label: 'Išči oglase',
+                href: '/?view=iskalnik',
+              }}
+            />
           </CardContent>
         </Card>
       ) : (

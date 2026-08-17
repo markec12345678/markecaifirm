@@ -3,6 +3,7 @@
 import { useEffect, useState, useCallback } from 'react';
 import { Card, CardContent } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
+import { EmptyState } from '@/components/ui/empty-state';
 import { useSwipe } from '@/lib/use-swipe';
 import { NegotiationHistory } from '@/components/dashboard/negotiation-history';
 import { PriceForecastChart } from '@/components/dashboard/price-forecast-chart';
@@ -24,7 +25,7 @@ import {
   DialogDescription,
 } from '@/components/ui/dialog';
 import { Textarea } from '@/components/ui/textarea';
-import { RefreshCw, Download, ExternalLink, ChevronLeft, ChevronRight, Filter, ImageIcon, AlertTriangle, Target, MapPin, Clock, Bookmark, Sparkles, ShoppingCart, BarChart3, TrendingDown, TrendingUp, Copy, Check, GitCompare, Trash2, EyeOff, Zap, User, Wallet } from 'lucide-react';
+import { RefreshCw, Download, ExternalLink, ChevronLeft, ChevronRight, Filter, ImageIcon, AlertTriangle, Target, MapPin, Clock, Bookmark, Sparkles, ShoppingCart, BarChart3, TrendingDown, TrendingUp, Copy, Check, GitCompare, Trash2, EyeOff, Zap, User, Wallet, LayoutGrid } from 'lucide-react';
 import { toast } from 'sonner';
 import { cn } from '@/lib/utils';
 // v6.95: AI panel-i izvlečeni v samostojne komponente (ListingDetailModal razbit).
@@ -889,8 +890,20 @@ export function ListingsView() {
         </div>
       ) : !data || data.listings.length === 0 ? (
         <Card className="bg-card/50">
-          <CardContent className="p-8 text-center">
-            <p className="text-sm text-muted-foreground">Ni oglasov s temi filtri.</p>
+          <CardContent className="p-8">
+            <EmptyState
+              icon={<LayoutGrid className="w-12 h-12" />}
+              title="Ni oglasov"
+              description="Brez monitorjev ali cron-a se oglasi ne bodo scrapali. Ustvari monitor in ga poženi, ali nastavi cron za avtomatsko scraping."
+              actionHref={{
+                label: 'Ustvari monitor',
+                href: '/?view=monitors',
+              }}
+              actionHref2={{
+                label: 'Išči v Iskalniku',
+                href: '/?view=iskalnik',
+              }}
+            />
           </CardContent>
         </Card>
       ) : (
