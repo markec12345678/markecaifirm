@@ -75,6 +75,29 @@ interface SavedRequest {
 
 const CATEGORIES = ['elektronika', 'avto', 'oblačila', 'obutev', 'orodje', 'pohištvo', 'nepremičnina', 'kolektorstvo', 'drugo'];
 
+// v8.74: Platform source badge helpers
+const SOURCE_META: Record<string, { icon: string; label: string; color: string }> = {
+  bolha: { icon: '🇸🇮', label: 'Bolha', color: 'border-emerald-500/40 text-emerald-500' },
+  nepremicnine: { icon: '🏠', label: 'Nepremičnine', color: 'border-blue-500/40 text-blue-500' },
+  avtonet: { icon: '🚗', label: 'Avtonet', color: 'border-amber-500/40 text-amber-500' },
+  salomon: { icon: '🛍️', label: 'Salomon', color: 'border-purple-500/40 text-purple-500' },
+  vinted: { icon: '👕', label: 'Vinted', color: 'border-teal-500/40 text-teal-500' },
+  'mobile-de': { icon: '🇩🇪', label: 'Mobile.de', color: 'border-yellow-500/40 text-yellow-500' },
+  kleinanzeigen: { icon: '🇩🇪', label: 'Kleinanzeigen', color: 'border-yellow-500/40 text-yellow-500' },
+  subito: { icon: '🇮🇹', label: 'Subito', color: 'border-green-500/40 text-green-500' },
+  willhaben: { icon: '🇦🇹', label: 'Willhaben', color: 'border-red-500/40 text-red-500' },
+  quoka: { icon: '🇩🇪', label: 'Quoka', color: 'border-yellow-500/40 text-yellow-500' },
+  'custom-rss': { icon: '📡', label: 'RSS', color: 'border-muted text-muted-foreground' },
+};
+
+function sourceIcon(source: string): string {
+  return SOURCE_META[source]?.icon ?? '📋';
+}
+
+function sourceColor(source: string): string {
+  return SOURCE_META[source]?.color ?? 'border-muted text-muted-foreground';
+}
+
 export function IskalnikView() {
   // Search form state
   const [query, setQuery] = useState('');
@@ -857,7 +880,9 @@ function ResultCard({ result, rank, expanded, onToggle, selected, onToggleSelect
                 <Badge variant="outline" className={cn('text-[9px]', verdictColor)}>{result.aiVerdict}</Badge>
               )}
               {result.monitor?.source && (
-                <span className="text-muted-foreground">{result.monitor.source}</span>
+                <Badge variant="outline" className={cn('text-[9px] gap-0.5', sourceColor(result.monitor.source))}>
+                  {sourceIcon(result.monitor.source)} {result.monitor.source}
+                </Badge>
               )}
             </div>
 
