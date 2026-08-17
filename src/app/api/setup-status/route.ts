@@ -2,6 +2,7 @@
 // Returns checklist with done/pending state for: AI, Monitor, Cron, Push, Demo data.
 
 import { NextResponse } from 'next/server';
+import { logger } from '@/lib/logger';
 import { db } from '@/lib/db';
 
 export const runtime = 'nodejs';
@@ -117,6 +118,7 @@ export async function GET() {
       onboardingCompleted: settings?.onboardingCompleted ?? false,
     });
   } catch (err) {
+    logger.error('/setup-status', 'GET failed', err);
     return NextResponse.json({ ok: false, error: err instanceof Error ? err.message : 'Napaka' }, { status: 500 });
   }
 }

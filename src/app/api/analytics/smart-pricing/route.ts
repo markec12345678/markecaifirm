@@ -1,5 +1,6 @@
 // v8.66: Smart Pricing API — batch (all held) or single (?tradeId=xxx)
 import { NextRequest, NextResponse } from 'next/server';
+import { logger } from '@/lib/logger';
 import { getSmartPriceForTrade, getSmartPricesForAllHeld } from '@/lib/trades/smart-pricing';
 import { withCache } from '@/lib/analytics-cache';
 
@@ -21,6 +22,7 @@ export async function GET(req: NextRequest) {
     const list = await withCache('smart-prices-all', 60_000, () => getSmartPricesForAllHeld());
     return NextResponse.json(list);
   } catch (err: any) {
+    logger.error('/analytics/smart-pricing', 'GET failed', err);
     return NextResponse.json({ ok: false, error: err?.message ?? 'Napaka' }, { status: 500 });
   }
 }

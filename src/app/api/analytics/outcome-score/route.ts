@@ -1,5 +1,6 @@
 // v8.67: Trade Outcome Scorecard API — batch summary or single ?tradeId=xxx
 import { NextRequest, NextResponse } from 'next/server';
+import { logger } from '@/lib/logger';
 import { getOutcomeSummary, getOutcomeForTrade } from '@/lib/trades/outcome-score';
 import { withCache } from '@/lib/analytics-cache';
 
@@ -21,6 +22,7 @@ export async function GET(req: NextRequest) {
     const summary = await withCache('outcome-summary', 120_000, () => getOutcomeSummary());
     return NextResponse.json(summary);
   } catch (err: any) {
+    logger.error('/analytics/outcome-score', 'GET failed', err);
     return NextResponse.json({ ok: false, error: err?.message ?? 'Napaka' }, { status: 500 });
   }
 }

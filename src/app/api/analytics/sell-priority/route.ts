@@ -1,5 +1,6 @@
 // v8.65: Sell Priority API — returns held trades ranked by sell urgency
 import { NextResponse } from 'next/server';
+import { logger } from '@/lib/logger';
 import { getSellPriorityForHeldTrades } from '@/lib/trades/sell-priority';
 import { withCache } from '@/lib/analytics-cache';
 
@@ -12,6 +13,7 @@ export async function GET() {
     const result = await withCache('sell-priority', 60_000, () => getSellPriorityForHeldTrades());
     return NextResponse.json(result);
   } catch (err: any) {
+    logger.error('/analytics/sell-priority', 'GET failed', err);
     return NextResponse.json({ ok: false, error: err?.message ?? 'Napaka' }, { status: 500 });
   }
 }

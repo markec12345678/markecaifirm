@@ -1,5 +1,6 @@
 // v8.68: Buy Opportunity Score API — single ?listingId=xxx or batch (top N)
 import { NextRequest, NextResponse } from 'next/server';
+import { logger } from '@/lib/logger';
 import { getBuyOpportunityForListing, getTopBuyOpportunities } from '@/lib/trades/buy-opportunity';
 import { withCache } from '@/lib/analytics-cache';
 
@@ -24,6 +25,7 @@ export async function GET(req: NextRequest) {
     const list = await withCache(`buy-opps:${limit}`, 60_000, () => getTopBuyOpportunities(Math.min(limit, 50)));
     return NextResponse.json(list);
   } catch (err: any) {
+    logger.error('/analytics/buy-opportunity', 'GET failed', err);
     return NextResponse.json({ ok: false, error: err?.message ?? 'Napaka' }, { status: 500 });
   }
 }

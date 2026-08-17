@@ -1,5 +1,6 @@
 // v8.63: Tag Performance Analytics
 import { NextResponse } from 'next/server';
+import { logger } from '@/lib/logger';
 import { getTagPerformance } from '@/lib/trades/tag-performance';
 
 export const runtime = 'nodejs';
@@ -11,6 +12,7 @@ export async function GET() {
     const result = await getTagPerformance();
     return NextResponse.json(result);
   } catch (err: any) {
+    logger.error('/analytics/tag-performance', 'GET failed', err);
     return NextResponse.json({ ok: false, error: err?.message ?? 'Napaka' }, { status: 500 });
   }
 }

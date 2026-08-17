@@ -1,5 +1,6 @@
 // v8.63: List all distinct tags (for autocomplete)
 import { NextResponse } from 'next/server';
+import { logger } from '@/lib/logger';
 import { getAllTags } from '@/lib/trades/tag-performance';
 
 export const runtime = 'nodejs';
@@ -10,6 +11,7 @@ export async function GET() {
     const tags = await getAllTags();
     return NextResponse.json({ ok: true, tags });
   } catch (err: any) {
+    logger.error('/trades/tags', 'GET failed', err);
     return NextResponse.json({ ok: false, error: err?.message ?? 'Napaka' }, { status: 500 });
   }
 }

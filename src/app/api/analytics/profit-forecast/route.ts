@@ -1,5 +1,6 @@
 // v8.53: Profit Forecast API
 import { NextResponse } from 'next/server';
+import { logger } from '@/lib/logger';
 import { getProfitForecast } from '@/lib/trades/profit-forecast';
 
 export const runtime = 'nodejs';
@@ -11,6 +12,7 @@ export async function GET() {
     const forecast = await getProfitForecast();
     return NextResponse.json(forecast);
   } catch (err: any) {
+    logger.error('/analytics/profit-forecast', 'GET failed', err);
     return NextResponse.json({ ok: false, error: err?.message ?? 'Napaka' }, { status: 500 });
   }
 }
