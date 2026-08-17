@@ -67,6 +67,15 @@ export async function GET(req: NextRequest) {
       }
     } catch { /* ignore aging alert errors */ }
 
+    // v8.76: Run BuyRequest auto-monitor — check saved searches for new matches
+    let buyRequestResult = { skipped: true, reason: 'not checked' };
+    try {
+      const buyReqRes = await fetch(`${req.nextUrl.origin}/api/cron/run-buy-requests?key=${cronKey}`);
+      if (buyReqRes.ok) {
+        buyRequestResult = await buyReqRes.json();
+      }
+    } catch { /* ignore buy request errors */ }
+
     return NextResponse.json({
       ran: monitorsResult.ran,
       skipped: monitorsResult.skipped,
@@ -77,6 +86,7 @@ export async function GET(req: NextRequest) {
       cleanup: cleanupResult,
       dealAlert: dealAlertResult,
       agingAlert: agingAlertResult,
+      buyRequests: buyRequestResult,
       timestamp: new Date().toISOString(),
     });
 

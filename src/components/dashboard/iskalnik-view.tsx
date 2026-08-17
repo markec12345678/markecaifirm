@@ -17,7 +17,7 @@ import {
 import {
   Select, SelectContent, SelectItem, SelectTrigger, SelectValue,
 } from '@/components/ui/select';
-import { Search, MapPin, Euro, Calendar, ExternalLink, Star, Shield, Save, Trash2, User, X, RefreshCw, TrendingDown, Filter, GitCompare, Check, Trophy, AlertTriangle } from 'lucide-react';
+import { Search, MapPin, Euro, Calendar, ExternalLink, Star, Shield, Save, Trash2, User, X, RefreshCw, TrendingDown, Filter, GitCompare, Check, Trophy, AlertTriangle, Eye } from 'lucide-react';
 import { toast } from 'sonner';
 import { cn } from '@/lib/utils';
 
@@ -132,6 +132,11 @@ export function IskalnikView() {
   const [loading, setLoading] = useState(false);
   const [hasSearched, setHasSearched] = useState(false);
 
+  // v8.76: Match viewer state — when user clicks a saved search with new matches
+  const [matchResults, setMatchResults] = useState<any[]>([]);
+  const [matchViewing, setMatchViewing] = useState<string | null>(null); // buyRequestId being viewed
+  const [matchLoading, setMatchLoading] = useState(false);
+
   // Saved requests state
   const [savedRequests, setSavedRequests] = useState<SavedRequest[]>([]);
   const [showSaveDialog, setShowSaveDialog] = useState(false);
@@ -200,6 +205,7 @@ export function IskalnikView() {
     setResults([]); setHasSearched(false);
   };
 
+  // v8.76: Load saved search criteria into form
   const applySavedRequest = (req: SavedRequest) => {
     setQuery(req.title);
     setCategory(req.category);
@@ -210,7 +216,44 @@ export function IskalnikView() {
     setYearMax(req.yearMax?.toString() ?? '');
     setSortBy(req.sortBy as any || 'cheapest');
     setSearchFor(req.searchFor);
+    // Clear match viewer
+    setMatchViewing(null);
+    setMatchResults([]);
     toast.info(`Naloženo: "${req.title}"${req.searchFor ? ` za ${req.searchFor}` : ''}`);
+  };
+
+  // v8.76: View matches for a saved search (shows listings that matched, not just criteria)
+  const viewMatches = async (req: SavedRequest) => {
+    setMatchLoading(true);
+    setMatchViewing(req.id);
+    try {
+      const res = await fetch(`/api/buy-requests/${req.id}/matches`);
+      const data = await res.json();
+      if (data?.ok) {
+        setMatchResults(data.matches || []);
+        // Load criteria into form WITHOUT clearing match viewer (don't call applySavedRequest which resets matchViewing)
+        setQuery(req.title);
+        setCategory(req.category);
+        setPriceMin(req.priceMin?.toString() ?? '');
+        setPriceMax(req.priceMax?.toString() ?? '');
+        setLocation(req.location);
+        setYearMin(req.yearMin?.toString() ?? '');
+        setYearMax(req.yearMax?.toString() ?? '');
+        setSortBy(req.sortBy as any || 'cheapest');
+        setSearchFor(req.searchFor);
+        if (data.matches.length === 0) {
+          toast.info('Ni najdenih ujemanj za to iskanje.');
+        } else {
+          toast.success(`✓ ${data.matches.length} ujemanj najdenih`);
+        }
+        // Refresh saved requests to reset newMatchesCount
+        setSavedRequests(prev => prev.map(r => r.id === req.id ? { ...r, newMatchesCount: 0 } : r));
+      }
+    } catch {
+      toast.error('Napaka pri nalaganju ujemanj');
+    } finally {
+      setMatchLoading(false);
+    }
   };
 
   const saveCurrentAsRequest = async () => {
@@ -490,12 +533,6 @@ export function IskalnikView() {
                   <div className="flex items-center gap-1.5">
                     {r.searchFor && <Badge variant="secondary" className="text-[9px]"><User className="w-2 h-2" /> {r.searchFor}</Badge>}
                     <span className="text-xs font-medium truncate">{r.title}</span>
-                    {/* v8.75: New matches badge */}
-                    {r.newMatchesCount > 0 && (
-                      <Badge className="text-[9px] bg-primary text-primary-foreground animate-pulse">
-                        {r.newMatchesCount} novo
-                      </Badge>
-                    )}
                   </div>
                   <div className="text-[10px] text-muted-foreground mt-0.5">
                     {[r.category, r.priceMin && `≥${r.priceMin}€`, r.priceMax && `≤${r.priceMax}€`, r.location, r.yearMin && `≥${r.yearMin}`].filter(Boolean).join(' · ') || 'Brez dodatnih filtrov'}
@@ -506,6 +543,30 @@ export function IskalnikView() {
                     )}
                   </div>
                 </button>
+                {/* v8.76: "Prikaži ujemanja" button — shows matched listings */}
+                {r.newMatchesCount > 0 ? (
+                  <Button
+                    variant="default"
+                    size="sm"
+                    className="h-6 text-[10px] gap-1 bg-primary text-primary-foreground hover:bg-primary/90 animate-pulse"
+                    onClick={() => viewMatches(r)}
+                    disabled={matchLoading && matchViewing === r.id}
+                  >
+                    {matchLoading && matchViewing === r.id ? <RefreshCw className="w-2.5 h-2.5 animate-spin" /> : <Eye className="w-2.5 h-2.5" />}
+                    {r.newMatchesCount} novo
+                  </Button>
+                ) : (
+                  <Button
+                    variant="ghost"
+                    size="sm"
+                    className="h-6 text-[10px] gap-1 text-muted-foreground hover:text-primary"
+                    onClick={() => viewMatches(r)}
+                    disabled={matchLoading && matchViewing === r.id}
+                    title="Prikaži ujemanja"
+                  >
+                    {matchLoading && matchViewing === r.id ? <RefreshCw className="w-2.5 h-2.5 animate-spin" /> : <Eye className="w-2.5 h-2.5" />}
+                  </Button>
+                )}
                 <Button
                   variant="ghost"
                   size="sm"
@@ -516,6 +577,64 @@ export function IskalnikView() {
                 </Button>
               </div>
             ))}
+          </CardContent>
+        </Card>
+      )}
+
+      {/* v8.76: Match Results Panel — shows listings that matched a saved search */}
+      {matchViewing && matchResults.length > 0 && (
+        <Card className="bg-primary/5 border-primary/30">
+          <CardHeader className="pb-2">
+            <CardTitle className="text-sm flex items-center justify-between">
+              <span className="flex items-center gap-2">
+                <Eye className="w-4 h-4 text-primary" /> Ujemanja ({matchResults.length})
+              </span>
+              <Button
+                variant="ghost"
+                size="sm"
+                className="h-6 text-xs"
+                onClick={() => { setMatchViewing(null); setMatchResults([]); }}
+              >
+                <X className="w-3 h-3" /> Zapri
+              </Button>
+            </CardTitle>
+          </CardHeader>
+          <CardContent className="space-y-2">
+            {matchResults.map((m, i) => {
+              const l = m.listing;
+              if (!l) return null;
+              return (
+                <div key={m.id} className="flex items-start gap-2 p-2 rounded-md border border-border/50 bg-card/50">
+                  <div className={cn(
+                    'shrink-0 w-6 h-6 rounded-full flex items-center justify-center text-[10px] font-bold',
+                    i === 0 ? 'bg-emerald-500/20 text-emerald-500' : 'bg-muted text-muted-foreground'
+                  )}>
+                    {i + 1}
+                  </div>
+                  {l.imageUrl && <img src={l.imageUrl} alt="" className="w-12 h-12 rounded object-cover shrink-0" />}
+                  <div className="flex-1 min-w-0">
+                    <div className="flex items-center justify-between gap-2">
+                      <span className="text-xs font-medium truncate">{l.title}</span>
+                      {l.price != null && <span className="text-sm font-bold text-emerald-500 font-mono shrink-0">{l.price}€</span>}
+                    </div>
+                    <div className="flex items-center gap-2 text-[10px] text-muted-foreground mt-0.5 flex-wrap">
+                      {l.location && <span className="flex items-center gap-0.5"><MapPin className="w-2.5 h-2.5" /> {l.location}</span>}
+                      {l.aiScore != null && <span className="text-primary">⭐ {l.aiScore}/10</span>}
+                      {l.aiVerdict && <Badge variant="outline" className="text-[8px]">{l.aiVerdict}</Badge>}
+                      {l.monitor?.source && (
+                        <Badge variant="outline" className={cn('text-[8px] gap-0.5', sourceColor(l.monitor.source))}>
+                          {sourceIcon(l.monitor.source)} {l.monitor.source}
+                        </Badge>
+                      )}
+                      <span className="text-muted-foreground/60">· najdeno: {timeAgo(m.matchedAt)}</span>
+                    </div>
+                  </div>
+                  <a href={l.url} target="_blank" rel="noopener noreferrer" className="shrink-0 text-primary hover:text-primary/80">
+                    <ExternalLink className="w-3.5 h-3.5" />
+                  </a>
+                </div>
+              );
+            })}
           </CardContent>
         </Card>
       )}
