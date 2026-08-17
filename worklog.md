@@ -19107,3 +19107,37 @@ Stage Summary:
 - Skupaj (v7.50 → v8.77): 127 verzij, 249 novih funkcij
 - LIVE: notification '🔍 1 novih oglasov za iPhone' → klik 'Prikaži ujemanja' → Iskalnik z 'Ujemanja (1)' panel (iPhone 13 Pro 256GB, 450€).
 - ZAPRE NOTIFICATION → ACTION LOOP: notification ni več samo informativen — je actionable (1 klik do ujemanj). Prej: 4 koraki (zapri → Iskalnik → najdi → Eye). Zdaj: 1 klik (Prikaži ujemanja).
+
+---
+Task ID: v8.78
+Agent: main
+Task: Saved Search Status Card — dashboard widget za BuyRequest monitoring
+
+Work Log:
+- Razmišljal kot uporabnik: v8.71-77 sem zgradil celoten Iskalnik sistem ampak na Dashboardu ne vidim NIČ od tega! Manjka BuyRequest status card — ne vidim koliko aktivnih saved searches imam, koliko novih ujemanj čaka, zadnje priložnosti.
+- API /api/buy-requests/status GET (NEW): aggregate stats — activeCount, totalNewMatches, totalMatchesAllTime, lastRunAt, topRequests (top 3 z novimi ujemanji z id/title/searchFor/newMatchesCount/lastRunAt/category/priceMax), recentMatch (zadnje ujemanje z listing details + buyRequest info).
+- SavedSearchStatusCard (NEW dashboard component): 3-column stats (aktivna/novih ujemanj/skupno ujemanj), zadnji pregled timestamp, top requests z novimi ujemanji (clickable → deep link /?view=iskalnik&matchRequestId=xxx), zadnje ujemanje z naslov/cena/lokacija/AI score/source badge/timestamp + ExternalLink na oglas, 'Odpri Iskalnik' footer link. Empty state z call-to-action. Animate-pulse 'N novo' badge ko so nova ujemanja. Auto-refresh vsakih 60s. Uses useFetch + CardSkeleton + CardError.
+- Dashboard integration: <SavedSearchStatusCard /> dodan po <PlatformPriceComparisonCard />.
+- Preveril lint: 0 napak ✨
+- Preveril typecheck: 0 napak ✨
+- API test: activeCount=2, totalNewMatches=0, totalMatchesAllTime=5, lastRunAt=set, recentMatch=iPhone 13 Pro 256GB 450€. ✓
+- Agent Browser:
+  - SavedSearchStatusCard visible na dashboard ✓
+  - "AKTIVNA: 2, NOVIH UJEMANJ: 0, SKUPNO UJEMANJ: 5" ✓
+  - "Zadnji pregled: 21min nazaj" ✓
+  - "ZADNJE UJEMANJE: iPhone 13 Pro 256GB, 450€, Ljubljana, 9/10, 🇸🇮 bolha, 42min nazaj" ✓
+  - "Odpri Iskalnik" link ✓
+  - 0 console errors ✓
+- Commit + push uspešen ✅
+
+Stage Summary:
+- NEW: src/app/api/buy-requests/status/route.ts (GET — aggregate stats za dashboard)
+- NEW: src/components/dashboard/saved-search-status-card.tsx (3-column stats + top requests + recent match + empty state)
+- MODIFIED: src/components/dashboard/dashboard-view.tsx (+SavedSearchStatusCard import + render)
+- MODIFIED: README.md (v8.77→v8.78, API routes 645→646)
+- AI endpointi: 432 (nespremenjeto)
+- Total API routes: 645 → 646 (+1: buy-requests/status)
+- Verzija: v8.78.0
+- Skupaj (v7.50 → v8.78): 128 verzij, 250 novih funkcij
+- LIVE: 2 aktivni iskanji, 5 skupnih ujemanj, zadnje iPhone 13 Pro 256GB (450€).
+- DASHBOARD JE SEDAJ POPOLN — 9 card-ov pokriva celoten pipeline: Restock + ProfitForecast + MonthOverMonth + TagPerformance + Outcome + BuyOpportunity + DecisionAccuracy + PlatformPrice + SavedSearch.
