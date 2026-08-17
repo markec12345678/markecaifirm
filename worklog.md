@@ -19338,3 +19338,35 @@ Stage Summary:
 - Skupaj (v7.50 → v8.83): 133 verzij, 255 novih funkcij
 - LIVE: 5/7 setup done, 2 pending (Cron, Push). Banner prikazuje 71% z pending items.
 - POPOLN ONBOARDING SYSTEM: Wizard (v8.81, one-time) → Setup Banner (v8.83, persistent, auto-hides when done) → Pomoč (v8.82, manual). Uporabnik VEDNO vidi kaj manjka dokler setup ni popoln.
+
+---
+Task ID: v8.84
+Agent: main
+Task: Setup Completion v Health view — unified system health + setup checklist
+
+Work Log:
+- Razmišljal kot uporabnik: Health view (Zdravje) preverja connectivity (AI/Telegram/Bolha/Cron/Push) ampak ne preverja SETUP COMPLETION. Uporabnik odpre Health in vidi "AI (Ollama): NAPAKA" ampak ne ve ali je AI sploh konfiguriran! Setup Banner (v8.83) je na Dashboardu, ampak Health je poseben zavihek za "kaj je narobe".
+- SetupCompletionCard komponenta dodana v Health view (po overall status banner, pred individual checks grid).
+- Fetch-a /api/setup-status (v8.83) — 7-point checklist: AI, Monitor, Cron, Oglasi, Trgovine, Push, Cilj.
+- Ko je setup 100% → "SETUP POPOLN ✓" z emerald border + "Vseh 7 nastavitev končanih. Sistem deluje polno."
+- Drugače: progress bar (red <50%, amber <100%, emerald=100%) + checklist grid z 7 itemi.
+- vsak item: status icon (CheckCircle2=done, AlertCircle=pending) + label (line-through če done) + detail + clickable "Pojdi" link za pending items.
+- Preveril lint: 0 napak ✨
+- Preveril typecheck: 0 napak ✨
+- Agent Browser:
+  - Health view: Setup card visible ✓
+  - "Setup 71% (5/7)" + "2 nastavitev manjka" ✓
+  - Progress bar ✓
+  - Checklist grid: AI ✓, Monitor ✓, Cron ✗ (Pojdi link), Oglasi ✓, Trgovine ✓, Push ✗ (Pojdi link), Cilj ✓ ✓
+  - 0 console errors ✓
+- Commit + push uspešen ✅
+
+Stage Summary:
+- MODIFIED: src/components/dashboard/health-view.tsx (+SetupCompletionCard komponenta z 7-point checklist + progress bar + done/pending items + auto-hide when 100%)
+- MODIFIED: README.md (v8.83→v8.84)
+- AI endpointi: 432 (nespremenjeto)
+- Total API routes: 648 (nespremenjeto — UI integration)
+- Verzija: v8.84.0
+- Skupaj (v7.50 → v8.84): 134 verzij, 256 novih funkcij
+- LIVE: Health view zdaj prikazuje "Setup 71% (5/7)" z 2 pending items (Cron, Push) + clickable links.
+- ZDROŽEN HEALTH VIEW: connectivity checks (AI/Telegram/Bolha/Cron/Push status) + setup completion checklist (ali so komponente konfigurirane). ONE VIEW za vse: "kaj je narobe" + "kaj manjka".
