@@ -5,6 +5,7 @@
 import { NextResponse } from 'next/server';
 import { db } from '@/lib/db';
 import { logger } from '@/lib/logger';
+import { withCache } from '@/lib/analytics-cache';
 
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
@@ -12,6 +13,7 @@ export const maxDuration = 15;
 
 export async function GET() {
   try {
+    const result = await withCache('daily-briefing', 60_000, async () => {
     const now = new Date();
     const todayStart = new Date(now.getFullYear(), now.getMonth(), now.getDate());
     const yesterdayStart = new Date(todayStart.getTime() - 24 * 60 * 60 * 1000);
@@ -152,31 +154,28 @@ export async function GET() {
       actionItems.push({ priority: 'low', text: 'Ni novih dogajanj — sistem monitoring aktiven.' });
     }
 
-    return NextResponse.json({
+    return {
       ok: true,
       date: now.toISOString().slice(0, 10),
-      // BuyRequest matches
       newMatchesToday,
       activeBuyRequestsWithMatches: activeBuyRequests.length,
       topBuyRequests: activeBuyRequests,
-      // Sell priority
       heldCount: heldTrades.length,
       topSellPriority,
-      // Today's sales
       soldTodayCount: soldToday.length,
       todayProfit: Math.round(todayProfit * 100) / 100,
-      // Yesterday
       soldYesterdayCount: soldYesterday.length,
       yesterdayProfit: Math.round(yesterdayProfit * 100) / 100,
-      // Monthly
       monthProfit: Math.round(monthProfit * 100) / 100,
       monthlyGoal: monthlyGoal?.monthlyProfitGoal ?? null,
       goalProgress: goalProgress != null ? Math.round(goalProgress * 100) / 100 : null,
       daysRemaining,
-      // Actions
       actionItems,
       source: 'v8.80-daily-briefing',
-    });
+    };
+    }); // end withCache
+
+    return NextResponse.json(result);
 
   } catch (err) {
     logger.error('/api/analytics/daily-briefing', 'GET failed', err);

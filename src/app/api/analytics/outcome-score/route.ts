@@ -1,6 +1,7 @@
 // v8.67: Trade Outcome Scorecard API — batch summary or single ?tradeId=xxx
 import { NextRequest, NextResponse } from 'next/server';
 import { getOutcomeSummary, getOutcomeForTrade } from '@/lib/trades/outcome-score';
+import { withCache } from '@/lib/analytics-cache';
 
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
@@ -11,13 +12,13 @@ export async function GET(req: NextRequest) {
     const url = new URL(req.url);
     const tradeId = url.searchParams.get('tradeId');
     if (tradeId) {
-      const result = await getOutcomeForTrade(tradeId);
+      const result = await withCache(`outcome:${tradeId}`, 60_000, () => getOutcomeForTrade(tradeId));
       if (!result) {
         return NextResponse.json({ ok: false, error: 'Trade ne obstaja ali ni prodan' }, { status: 404 });
       }
       return NextResponse.json(result);
     }
-    const summary = await getOutcomeSummary();
+    const summary = await withCache('outcome-summary', 120_000, () => getOutcomeSummary());
     return NextResponse.json(summary);
   } catch (err: any) {
     return NextResponse.json({ ok: false, error: err?.message ?? 'Napaka' }, { status: 500 });
