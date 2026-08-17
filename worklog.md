@@ -19625,3 +19625,30 @@ Stage Summary:
 - Verzija: v8.92.0
 - Skupaj (v7.50 → v8.92): 142 verzij, 264 novih funkcij
 - CODE QUALITY: 0 ESLint warnings, 0 TypeScript errors, 0 console.log (production). Professional code quality achieved.
+
+---
+Task ID: v8.93
+Agent: main
+Task: Accessibility audit — ARIA labels na Iskalnik interaktivnih elementih
+
+Work Log:
+- Accessibility audit: IskalnikView je najnovejši in najbolj interaktiven view, ampak manjkajo ARIA labels na interaktivnih elementih. Screen reader uporabniki ne vedo kaj gumbi delajo.
+- Dodani ARIA atributi na 7 ključnih elementov:
+  1. Search input — aria-label="Iskalni niz — vnesi artikel za iskanje"
+  2. Search button — aria-label="Išči oglase"
+  3. Clear button — aria-label="Počisti iskalne filtre"
+  4. Saved search load button — aria-label="Naloži iskanje: {title}" (dinamičen)
+  5. Selection checkbox — aria-label="Dodaj/Odstrani {title} v primerjavo" + aria-pressed={selected}
+  6. External link — aria-label="Odpri oglas: {title} v novem oknu"
+  7. Expand toggle — aria-label="Prikaži cel oglas/Skrči: {title}" + aria-expanded={expanded}
+- Preveril lint: 0 napak ✨
+- Preveril typecheck: 0 napak ✨
+- Commit + push uspešen ✅
+
+Stage Summary:
+- MODIFIED: src/components/dashboard/iskalnik-view.tsx (+9 aria-label/aria-pressed/aria-expanded atributi na 7 interaktivnih elementov)
+- MODIFIED: src/lib/version.ts (v8.92.0→v8.93.0)
+- MODIFIED: README.md (badge v8.93.0)
+- Verzija: v8.93.0
+- Skupaj (v7.50 → v8.93): 143 verzij, 265 novih funkcij
+- ACCESSIBILITY: 9 ARIA atributov dodanih. Screen reader uporabniki razumejo kaj vsak element dela.
