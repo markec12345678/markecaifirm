@@ -1,10 +1,10 @@
 # Markec AI Firm — AI Trading Firm za slovenske oglase
 
-[![Version](https://img.shields.io/badge/version-v8.72.0-blue.svg)](./CHANGELOG.md)
+[![Version](https://img.shields.io/badge/version-v8.90.0-blue.svg)](./CHANGELOG.md)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](./LICENSE)
 [![GitHub Stars](https://img.shields.io/github/stars/markec12345678/markecaifirm?style=social)](https://github.com/markec12345678/markecaifirm/stargazers)
 [![AI Endpoints](https://img.shields.io/badge/AI%20endpoints-432-green.svg)](./AI_ENDPOINTS.md)
-[![API Routes](https://img.shields.io/badge/API%20routes-648-cyan.svg)](#)
+[![API Routes](https://img.shields.io/badge/API%20routes-651-cyan.svg)](#)
 [![Next.js](https://img.shields.io/badge/Next.js-16-black.svg)](https://nextjs.org/)
 [![TypeScript](https://img.shields.io/badge/TypeScript-5-blue.svg)](https://www.typescriptlang.org/)
 [![TypeScript Errors](https://img.shields.io/badge/TS%20errors-0-brightgreen.svg)](#)
@@ -19,8 +19,49 @@
   <p><em>Glavni dashboard z 17 zavihki, AI insights, real-time alerti in profit pipeline</em></p>
 </div>
 
-> **AI-powered trading firm** za Bolha, Facebook Marketplace, Vinted, Avtonet, mobile.de, Kleinanzeigen, Subito in Willhaben.
-> **431 AI endpointov** + **73 analytics** + **15 cron automatizacij** + **11 Telegram ukazov** za iskanje, ocenjevanje, kupovanje in preprodajo.
+> **AI-powered trading firm** za Bolha, Facebook Marketplace, Vinted, Avtonet, mobile.de, Kleinanzeigen, Subito, Willhaben in Quoka.
+> **432 AI endpointov** + **84 analytics** + **18 cron automatizacij** + **11 Telegram ukazov** + **11 platform** za iskanje, ocenjevanje, kupovanje in preprodajo.
+>
+> ## 🎯 Feature Overview (v8.63-90)
+>
+> ### Intelligence Suite (v8.63-70)
+> - **🏷️ Trade Tags** (v8.63) — fleksibilna semantična kategorizacija z per-tag performance analitiko
+> - **🔥 Sell Priority** (v8.65) — 0-100 urgency score za held trades + Top 3 Action Panel
+> - **💡 Smart Pricing** (v8.66) — data-driven suggested sell price z confidence + comparables
+> - **🏆 Outcome Scorecard** (v8.67) — post-sale quality analysis (pricing/timing/outcome score)
+> - **🛒 Buy Opportunity** (v8.68-69) — buy score za listings + persist v Trade ob nakupu
+> - **🧠 Decision Accuracy** (v8.70) — meta-analiza: ali algoritmi delujejo? (correlation + grade A-F)
+>
+> ### Search & Discovery (v8.71-74)
+> - **🔍 Iskalnik** (v8.71) — targeted item search z kriteriji + proxy buying ("iščem za nekoga")
+> - **🏆 Compare + AI Advisor** (v8.72) — side-by-side comparison + Winner z Absolute Recommendation
+> - **🌍 Cross-Platform Prices** (v8.74) — "iPhone na Bolha avg 450€, na Quoka avg 380€"
+>
+> ### Auto-Monitoring (v8.75-79)
+> - **📋 Saved Search Auto-Monitor** (v8.75-76) — cron auto-check + BuyRequestMatch dedup
+> - **🔗 Notification Deep Link** (v8.77) — 1 klik od notification do match panel
+> - **📱 Web Push** (v8.79) — push notification ko cron najde novo ujemanje (tudi ko app zaprta)
+>
+> ### Dashboard & Briefing (v8.78-80)
+> - **📊 Saved Search Status** (v8.78) — dashboard card z aktivna/ujemanja/zadnje
+> - **☀️ Daily Briefing** (v8.80) — capstone card z action items + stats + goal progress
+>
+> ### Onboarding & UX (v8.81-85)
+> - **🚀 Enhanced Wizard** (v8.81) — 6-step setup z AI input + Monitor + Cron + checklist
+> - **❓ Quick Start Guide** (v8.82) — Pomoč button + tabbed help z workflow diagram
+> - **📊 Setup Health Banner** (v8.83) — persistent progress bar z 7-point checklist
+> - **🏥 Setup v Health** (v8.84) — unified health: connectivity + setup completion
+> - **📭 EmptyState** (v8.85) — reusable professional empty states z CTA
+>
+> ### Performance & Quality (v8.86-90)
+> - **🔄 AI Retry** (v8.86) — exponential backoff (2 retries, 1s→2s) za timeout/rate-limit
+> - **🔧 DB Maintenance** (v8.86) — cleanup script (RunLogs/PriceHistory/Notifications + VACUUM)
+> - **⚡ Analytics Cache** (v8.87) — 8 endpoints cached (2.8-4.3x hitrejši Dashboard)
+> - **📌 Version.ts** (v8.89-90) — single source of truth + accurate route counts
+>
+> ### Platforms (11)
+> 🇸🇮 Bolha, Nepremičnine, Avtonet, Salomon, Vinted · 🇩🇪 Mobile.de, Kleinanzeigen, Quoka · 🇮🇹 Subito · 🇦🇹 Willhaben · 📡 Custom RSS
+>
 > **v8.72.0 — 🏆 Result Comparison View + AI Buy Advisor (Polish phase continues — "Kateri od 5 VW Golf 5 naj kupim? Side-by-side primerjava z AI pick"):** Problem: Iskalnik (v8.71) mi da 5 VW Golf 5 rezultatov (9500€ - 19500€) ampak ne vem KATEREGA kupiti. Najcenejši (9500€) ima 125000 km in tretji lastnik. Najdražji (19500€ GTI) je premium ampak morda preveč. Potrebujem side-by-side primerjavo z AI priporočilom. v8.72 dodaja: (1) **Compare API** `/api/search/compare` (NEW, POST `{listingIds}`) — multi-listing comparison. Compute buy scores per listing, determine winner (highest buyScore, tiebreaker price), cheapest, bestAI. Advisor insights: winner highlight, cheapest delta from winner, best AI score, discount%, expected ROI, risk warnings (≥6/10), price drop notes. (2) **IskalnikView multi-select** — checkbox na vsakem rezultatu (max 6), selection bar z count + Počisti + Primerjaj button. (3) **CompareDialog** — side-by-side comparison table z 13 vrsticami (Cena, Buy Score, AI Score/Risk/Verdict, AI Estimated Value, Discount%, Expected ROI, Letnik, Lokacija, Prodajalec, Vir, Padec cene) z winner column highlighted emerald. AI Buy Advisor insights section z 6+ actionable priporočili. Winner highlight card z recommendation. Summary stats (count, min/max price, avg buy score). LIVE: VW Golf 5 primerjava 3 listingov → Winner: VW Golf 5 2.0 TDI 2020 Novo Mesto (55/100 BUY, 13900€, AI 8/10, Risk 2/10, -6% pod oceno, +6% ROI). Najcenejši: VW Golf 5 1.4 TSI 2018 Celje (9500€, 4400€ razlike od winnerja). Stats: AI endpointi 432 (nespremenjeto), Total API routes 641→642 (+1: search/compare), funkcije 243→244 (+1: CompareDialog). Lint: 0 napak ✨. Typecheck: 0 napak ✨. Browser verification: dialog open, AI advisor insights (3 priporočila), winner highlight, 13-row comparison table, 0 console errors. **Naravni naslednji korak po Iskalniku: 'najdi 5 rezultatov' → 'primerjaj' → 'AI pove kupi ta'.**
 >
 > **v8.71.0 — 🔍 Iskalnik: Targeted Item Search + Proxy Buying (Polish phase continues — "Iščem VW Golf 5, 2020, Ljubljana → najdi najcenejši + cel opis + kraj"):** Problem: Uporabnik želi iskati po vseh oglasih z specifičnimi kriteriji (artikel, cena, kraj, letnik) in dobiti rezultate sortirane po najcenejši/best score/najbližji — ne more ker listings-view ima samo filter po monitorju. Prav tako želi možnost 'iščem za nekoga' (proxy buying — iščem za mamo, kolega, itd.). v8.71 dodaja: (1) **BuyRequest model** (NEW) — saved search z searchFor (oseba za kero iščemo), title, keywords, category, priceMin/Max, location, yearMin/Max, condition, sortBy, notes. Indexi na [isActive], [category], [searchFor]. (2) **Search API** `/api/search/items` (NEW) — GET z q/category/priceMin/priceMax/location/yearMin/yearMax/verdict/sortBy parametri. Year filter parsan iz title/description (regex \b(19|20)\d{2}\b). Sort: cheapest (price asc), best_score (computeBuyScore per listing), newest (firstSeenAt desc), closest (location text match), price_drop (priceDroppedAt desc). Vrne results z fullDescription (detailDescription ali description), buyScore, aiScore/risk/verdict/estimatedValue, sellerName, monitor info. (3) **Buy Requests CRUD API** `/api/buy-requests` (GET list + POST create) + `/api/buy-requests/[id]` (PUT update + DELETE). (4) **Iskalnik View** (NEW — `src/components/dashboard/iskalnik-view.tsx`) — forma z iskalnim nizom + 'Iščem za' field (proxy buying) + 8 filtrov (kategorija, cena min/max, lokacija, letnik min/max, AI verdict, sort). Rezultati: rank badge (#1 emerald, #2 primary, #3 amber), naslov, cena (emerald bold), AI ocena vrednosti (line-through če drugačna), padec cene badge, lokacija z MapPin, datum, AI score/risk, buy score badge (🛒), AI verdict badge. Expandable cel opis oglasa (detailDescription) + AI reason + seller info. 'Prikaži cel oglas' toggle. Saved searches panel — klik za load kriterijev, × za delete. Save dialog z searchFor + notes. (5) **Navigation** — 'Iskalnik' dodan med Oglasi in Watchlist z Search ikono. (6) **Seed scripts** — `scripts/seed-listings.ts` (8 elektronika) + `scripts/seed-cars.ts` (7 avto: VW Golf 5 razni letniki/lokacije, BMW 320d, Audi A4). LIVE: iskanje 'VW Golf 5' → 5 rezultatov sortiranih najcenejši: 1) 9500€ Celje (2018), 2) 12800€ Maribor (2019), 3) 13900€ Novo Mesto (2020), 4) 14500€ Ljubljana (2020), 5) 19500€ Kranj (2021 GTI). 'Najdenih 5 oglasov · najcenejši: 9500€'. Stats: AI endpointi 432 (nespremenjeto), Total API routes 638→641 (+3: search/items, buy-requests, buy-requests/[id]), funkcije 242→243 (+1: IskalnikView). Lint: 0 napak ✨. Typecheck: 0 napak ✨. Browser verification: Iskalnik view se naloži, iskanje 'VW Golf 5' → 5 rezultatov, najcenejši 9500€, 0 console errors. **Nova funkcija: 'Iščem VW Golf 5, 2020, max 15000€, Ljubljana' → najdi najcenejši + cel opis + kraj + buy score. Plus 'iščem za nekoga' za proxy buying.**
