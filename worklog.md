@@ -19482,3 +19482,23 @@ Stage Summary:
 - Verzija: v8.87.0
 - Skupaj (v7.50 → v8.87): 137 verzij, 259 novih funkcij
 - PERFORMANCE: Dashboard load 2.8-4.3x faster on cached calls. Prej: 11 DB query batches per load. Zdaj: 1st load compute + cache, subsequent loads iz memory-ja (60-120s TTL).
+
+---
+Task ID: v8.88
+Agent: main
+Task: Footer version + stats sync — popravi 37 verzij zamuda
+
+Work Log:
+- Odkril bug: footer je prikazoval "v8.50.0" in "431 AI + 73 analytics = 623 routes" — 37 verzij in 25 route-ov zastarelih! Uporabnik je vsakič videl napačno verzijo.
+- Popravljeno: v8.50.0 → v8.87.0, 431 AI + 623 routes → 432 AI + 648 routes.
+- Preveril lint: 0 napak ✨
+- Preveril typecheck: 0 napak ✨
+- Agent Browser: footer prikazuje "v8.87.0" + "432 AI + 73 analytics = 648 routes" ✓
+- Commit + push uspešen ✅
+
+Stage Summary:
+- MODIFIED: src/app/page.tsx (footer version v8.50.0→v8.87.0, routes 623→648)
+- MODIFIED: README.md (v8.87→v8.88)
+- Verzija: v8.88.0
+- Skupaj (v7.50 → v8.88): 138 verzij, 260 novih funkcij
+- FIX: 37 verzij zamuda v footerju popravljena. Profesionalni produkt mora prikazovati pravilno verzijo.
