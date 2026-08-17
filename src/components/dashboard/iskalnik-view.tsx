@@ -458,8 +458,9 @@ export function IskalnikView() {
                 onChange={(e) => setQuery(e.target.value)}
                 onKeyDown={(e) => e.key === 'Enter' && search()}
                 className="flex-1"
+                aria-label="Iskalni niz — vnesi artikel za iskanje"
               />
-              <Button onClick={search} disabled={loading} className="gap-2 bg-primary text-primary-foreground hover:bg-primary/90">
+              <Button onClick={search} disabled={loading} aria-label="Išči oglase" className="gap-2 bg-primary text-primary-foreground hover:bg-primary/90">
                 {loading ? <RefreshCw className="w-3.5 h-3.5 animate-spin" /> : <Search className="w-3.5 h-3.5" />}
                 Išči
               </Button>
@@ -539,7 +540,7 @@ export function IskalnikView() {
           </div>
 
           <div className="flex items-center justify-between">
-            <Button variant="ghost" size="sm" onClick={reset} className="text-xs gap-1">
+            <Button variant="ghost" size="sm" onClick={reset} aria-label="Počisti iskalne filtre" className="text-xs gap-1">
               <X className="w-3 h-3" /> Počisti
             </Button>
             {totalFound > 0 && (
@@ -573,6 +574,7 @@ export function IskalnikView() {
                 <button
                   onClick={() => applySavedRequest(r)}
                   className="flex-1 text-left min-w-0"
+                  aria-label={`Naloži iskanje: ${r.title}`}
                 >
                   <div className="flex items-center gap-1.5">
                     {r.searchFor && <Badge variant="secondary" className="text-[9px]"><User className="w-2 h-2" /> {r.searchFor}</Badge>}
@@ -992,6 +994,8 @@ function ResultCard({ result, rank, expanded, onToggle, selected, onToggleSelect
                   : 'bg-card border-border hover:border-primary/50'
               )}
               title={selected ? 'Odstrani iz primerjave' : 'Dodaj v primerjavo'}
+              aria-label={selected ? `Odstrani ${result.title} iz primerjave` : `Dodaj ${result.title} v primerjavo`}
+              aria-pressed={selected}
             >
               {selected && <Check className="w-3.5 h-3.5" />}
             </button>
@@ -1042,6 +1046,7 @@ function ResultCard({ result, rank, expanded, onToggle, selected, onToggleSelect
                 rel="noopener noreferrer"
                 className="shrink-0 text-primary hover:text-primary/80"
                 title="Odpri oglas"
+                aria-label={`Odpri oglas: ${result.title} v novem oknu`}
               >
                 <ExternalLink className="w-4 h-4" />
               </a>
@@ -1113,6 +1118,8 @@ function ResultCard({ result, rank, expanded, onToggle, selected, onToggleSelect
             <button
               onClick={onToggle}
               className="text-[10px] text-primary hover:text-primary/80 mt-1.5"
+              aria-label={expanded ? `Skrči oglas: ${result.title}` : `Prikaži cel oglas: ${result.title}`}
+              aria-expanded={expanded}
             >
               {expanded ? '↑ Skrči' : '↓ Prikaži cel oglas'}
             </button>
