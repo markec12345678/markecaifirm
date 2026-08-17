@@ -70,6 +70,8 @@ interface SavedRequest {
   sortBy: string;
   notes: string;
   isActive: boolean;
+  lastRunAt: string | null; // v8.75
+  newMatchesCount: number;  // v8.75
   createdAt: string;
 }
 
@@ -96,6 +98,19 @@ function sourceIcon(source: string): string {
 
 function sourceColor(source: string): string {
   return SOURCE_META[source]?.color ?? 'border-muted text-muted-foreground';
+}
+
+// v8.75: Time ago helper
+function timeAgo(date: string | Date): string {
+  const d = typeof date === 'string' ? new Date(date) : date;
+  const seconds = Math.floor((Date.now() - d.getTime()) / 1000);
+  if (seconds < 60) return 'zdaj';
+  const minutes = Math.floor(seconds / 60);
+  if (minutes < 60) return `${minutes}min nazaj`;
+  const hours = Math.floor(minutes / 60);
+  if (hours < 24) return `${hours}h nazaj`;
+  const days = Math.floor(hours / 24);
+  return `${days}d nazaj`;
 }
 
 export function IskalnikView() {
@@ -462,7 +477,12 @@ export function IskalnikView() {
           </CardHeader>
           <CardContent className="space-y-1.5">
             {savedRequests.map(r => (
-              <div key={r.id} className="flex items-center gap-2 p-2 rounded-md border border-border/50 hover:bg-accent/30 transition-colors">
+              <div key={r.id} className={cn(
+                'flex items-center gap-2 p-2 rounded-md border transition-colors',
+                r.newMatchesCount > 0
+                  ? 'border-primary/40 bg-primary/5'
+                  : 'border-border/50 hover:bg-accent/30'
+              )}>
                 <button
                   onClick={() => applySavedRequest(r)}
                   className="flex-1 text-left min-w-0"
@@ -470,9 +490,20 @@ export function IskalnikView() {
                   <div className="flex items-center gap-1.5">
                     {r.searchFor && <Badge variant="secondary" className="text-[9px]"><User className="w-2 h-2" /> {r.searchFor}</Badge>}
                     <span className="text-xs font-medium truncate">{r.title}</span>
+                    {/* v8.75: New matches badge */}
+                    {r.newMatchesCount > 0 && (
+                      <Badge className="text-[9px] bg-primary text-primary-foreground animate-pulse">
+                        {r.newMatchesCount} novo
+                      </Badge>
+                    )}
                   </div>
                   <div className="text-[10px] text-muted-foreground mt-0.5">
                     {[r.category, r.priceMin && `≥${r.priceMin}€`, r.priceMax && `≤${r.priceMax}€`, r.location, r.yearMin && `≥${r.yearMin}`].filter(Boolean).join(' · ') || 'Brez dodatnih filtrov'}
+                    {r.lastRunAt && (
+                      <span className="ml-1.5 text-muted-foreground/60">
+                        · zadnjič: {timeAgo(r.lastRunAt)}
+                      </span>
+                    )}
                   </div>
                 </button>
                 <Button

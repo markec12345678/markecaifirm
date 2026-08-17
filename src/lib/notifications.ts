@@ -30,7 +30,8 @@ export type NotificationType =
   | 'price_drop'
   | 'system'
   | 'trade_sold'
-  | 'error';
+  | 'error'
+  | 'buy_request_match';
 
 export type NotificationSeverity = 'info' | 'success' | 'warning' | 'error';
 

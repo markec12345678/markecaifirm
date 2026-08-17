@@ -264,13 +264,36 @@ model BuyRequest {
   // Metadata
   notes       String   @default("")
   isActive    Boolean  @default(true)
+  lastRunAt   DateTime? // v8.75: when the auto-monitor last ran this search
+  newMatchesCount Int @default(0) // v8.75: unread new matches since last view
   createdAt   DateTime @default(now())
   updatedAt   DateTime @updatedAt
   profileId   String?
+  // v8.75: Matches found by auto-monitor
+  matches     BuyRequestMatch[]
 
   @@index([isActive])
   @@index([category])
   @@index([searchFor])
+}
+
+// v8.75: BuyRequestMatch — tracks which listings matched a BuyRequest (for dedup)
+model BuyRequestMatch {
+  id            String   @id @default(cuid())
+  buyRequestId  String
+  buyRequest    BuyRequest @relation(fields: [buyRequestId], references: [id], onDelete: Cascade)
+  listingId     String
+  listing       Listing  @relation(fields: [listingId], references: [id], onDelete: Cascade)
+  // Snapshot of match data at time of discovery
+  matchPrice    Int?     // listing price when matched
+  matchBuyScore Int?     // buy score when matched
+  isNotified    Boolean  @default(false) // was user notified about this match?
+  isRead        Boolean  @default(false) // has user seen this match?
+  matchedAt     DateTime @default(now())
+
+  @@unique([buyRequestId, listingId]) // dedup — one match per listing per request
+  @@index([buyRequestId, isRead])
+  @@index([matchedAt])
 }
 
 // v1.6: Digest log — when digests were sent (for scheduling)
@@ -394,6 +417,8 @@ model Listing {
   trades      Trade[]
   // v5.4: Negotiation messages with seller
   negotiationMessages NegotiationMessage[]
+  // v8.75: BuyRequest matches (when this listing matched a saved search)
+  buyRequestMatches BuyRequestMatch[]
 
   @@unique([monitorId, externalId])
   @@index([monitorId, firstSeenAt])
