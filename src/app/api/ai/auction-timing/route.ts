@@ -1,53 +1,94 @@
-// v6.28: AI Auction Timing Optimizer — optimalni čas za bid na dražbah
+// v6.28 / v8.94-refactor: AI Auction Timing Optimizer — optimalni čas za bid na dražbah
+// Refaktoriran z withAiRoute helperjem (v8.94) + enforceBudget guard.
+//
 // POST /api/ai/auction-timing
 // Body: { listingId?: string, auctionEnd?: string, currentBid?: number }
-// Returns: { ok, timing: { optimalBidTime, maxBid, strategy, bidSequence, competitors, signals } }
+// Returns: { ok, timing: { optimalBidTime, secondsBeforeEnd, maxBidEur, suggestedBidEur,
+//   strategy, bidSequence, competitorAnalysis, signals, riskFactors, recommendation, reasoning },
+//   hoursToEnd }
 
-import { NextRequest, NextResponse } from 'next/server';
-import { db } from '@/lib/db';
-import { getSettingsRow } from '@/lib/pipeline';
-import { callProviderForRaw, parseJsonLooseExported, type AiProviderType, type AiSettings } from '@/lib/ai';
-import { logger } from '@/lib/logger';
+import { withAiRoute, AI_ROUTE_DEFAULTS, ApiRouteError, type AiRouteContext } from '@/lib/with-ai-route';
+import { apiOk } from '@/lib/api-response';
 
-export const runtime = 'nodejs';
-export const dynamic = 'force-dynamic';
+export const { runtime, dynamic } = AI_ROUTE_DEFAULTS;
 export const maxDuration = 60;
 
-export async function POST(req: NextRequest) {
-  try {
-    const body = await req.json().catch(() => ({}));
-    const { listingId } = body;
-    const auctionEnd = body?.auctionEnd ? new Date(body.auctionEnd) : null;
-    const currentBid = Number(body?.currentBid) || 0;
+interface AuctionTimingInput {
+  listingId?: string;
+  auctionEnd: Date | null;
+  currentBid: number;
+}
 
+interface PromptContext {
+  title: string;
+  price: number;
+  description: string;
+  location: string;
+  currentBid: number;
+  auctionEnd: Date | null;
+  hoursToEnd: number;
+}
+
+export const POST = withAiRoute<AuctionTimingInput>({
+  endpoint: '/api/ai/auction-timing',
+  maxDuration: 60,
+  enforceBudget: true, // AI klic — preveri budget
+
+  parseBody: async (req) => {
+    const body = await req.json().catch(() => ({}));
+    return {
+      listingId: body?.listingId ? String(body.listingId) : undefined,
+      auctionEnd: body?.auctionEnd ? new Date(body.auctionEnd) : null,
+      currentBid: Number(body?.currentBid) || 0,
+    };
+  },
+
+  // No validateInput — vsi input-i imajo defaults (listingId opcijski, auctionEnd nullable, currentBid fallback 0)
+  handler: async (input, ctx: AiRouteContext) => {
+    const { db, callAi, parseAi } = ctx;
+    const { listingId, auctionEnd, currentBid } = input;
+
+    // 1. Pridobi listing podatke (če je listingId podan)
     let title = '', price = 0, description = '', location = '';
     if (listingId) {
       const listing = await db.listing.findUnique({
         where: { id: String(listingId) },
-        select: { title: true, price: true, description: true, detailDescription: true,
+        select: {
+          title: true, price: true, description: true, detailDescription: true,
           location: true, postedAt: true, aiEstimatedValue: true, dealScore: true,
-          monitor: { select: { source: true } } },
+          monitor: { select: { source: true } },
+        },
       });
-      if (!listing) return NextResponse.json({ error: 'Listing ne obstaja' }, { status: 404 });
+      if (!listing) throw new ApiRouteError('Listing ne obstaja', 404);
       title = listing.title;
       price = listing.price ?? currentBid;
       description = listing.detailDescription || listing.description;
       location = listing.location;
     }
 
-    const settings = await getSettingsRow();
-    const aiSettings: AiSettings = {
-      provider: settings.aiProvider as AiProviderType,
-      baseUrl: settings.aiBaseUrl, apiKey: settings.aiApiKey, model: settings.aiModel,
-      fallbackProvider: (settings.fallbackProvider || '') as AiProviderType | '',
-      fallbackBaseUrl: settings.fallbackBaseUrl || '', fallbackApiKey: settings.fallbackApiKey || '',
-      fallbackModel: settings.fallbackModel || '',
-    };
-
+    // 2. Izračunaj čas do konca dražbe
     const now = new Date();
-    const hoursToEnd = auctionEnd ? Math.round((auctionEnd.getTime() - now.getTime()) / (60 * 60 * 1000)) : 0;
+    const hoursToEnd = auctionEnd
+      ? Math.round((auctionEnd.getTime() - now.getTime()) / (60 * 60 * 1000))
+      : 0;
 
-    const prompt = `Si ekspert za strategije bidding na spletnih dražbah (eBay, Bolha, Avtonet).
+    // 3. AI klic
+    const prompt = buildPrompt({ title, price, description, location, currentBid, auctionEnd, hoursToEnd });
+    const raw = await callAi(prompt);
+    const parsed: unknown = parseAi(raw);
+
+    // 4. Transformacija rezultatov
+    const timing = transformTiming(parsed);
+
+    return apiOk({ ok: true, timing, hoursToEnd });
+  },
+});
+
+// --- Pomožne funkcije (čiste, testabilne) --------------------------------
+
+function buildPrompt(ctx: PromptContext): string {
+  const { title, price, description, location, currentBid, auctionEnd, hoursToEnd } = ctx;
+  return `Si ekspert za strategije bidding na spletnih dražbah (eBay, Bolha, Avtonet).
 Optimiziraj timing in višino ponudbe za to dražbo.
 
 NASLOV: ${title}
@@ -89,56 +130,52 @@ Odgovori LE z JSON:
   "recommendation": "<bid_now|wait|set_proxy|skip>",
   "reasoning": "<max 200 znakov>"
 }`;
+}
 
-    let raw = '';
-    try {
-      raw = await callProviderForRaw(aiSettings, prompt);
-    } catch (primaryError: any) {
-      if (aiSettings.fallbackProvider && aiSettings.fallbackModel) {
-        const fb: AiSettings = { provider: aiSettings.fallbackProvider, baseUrl: aiSettings.fallbackBaseUrl || '',
-          apiKey: aiSettings.fallbackApiKey || '', model: aiSettings.fallbackModel };
-        raw = await callProviderForRaw(fb, prompt);
-      } else { return NextResponse.json({ error: primaryError?.message ?? 'AI failed' }, { status: 500 }); }
-    }
+interface TimingResult {
+  optimalBidTime: string;
+  secondsBeforeEnd: number;
+  maxBidEur: number;
+  suggestedBidEur: number;
+  strategy: string;
+  bidSequence: Array<{ step: number; timing: string; amountEur: number; condition: string }>;
+  competitorAnalysis: {
+    estimatedBidders: number;
+    competitionLevel: string;
+    likelyMaxCompetitorBidEur: number;
+  };
+  signals: string[];
+  riskFactors: string[];
+  recommendation: string;
+  reasoning: string;
+}
 
-    const parsed: any = parseJsonLooseExported(raw);
-
-    const timing = {
-      optimalBidTime: String(parsed?.optimal_bid_time ?? '').slice(0, 200),
-      secondsBeforeEnd: Math.max(0, Math.min(300, Number(parsed?.seconds_before_end ?? 5))),
-      maxBidEur: Math.max(0, Number(parsed?.max_bid_eur ?? 0)),
-      suggestedBidEur: Math.max(0, Number(parsed?.suggested_bid_eur ?? 0)),
-      strategy: ['snipe_last_second', 'early_high', 'incremental', 'wait_and_snipe', 'proxy_bid'].includes(String(parsed?.strategy))
-        ? String(parsed.strategy) : 'snipe_last_second',
-      bidSequence: (parsed?.bid_sequence || []).slice(0, 4).map((b: any) => ({
-        step: Math.max(1, Number(b?.step ?? 1)),
-        timing: String(b?.timing ?? '').slice(0, 100),
-        amountEur: Math.max(0, Number(b?.amount_eur ?? 0)),
-        condition: String(b?.condition ?? '').slice(0, 150),
-      })),
-      competitorAnalysis: {
-        estimatedBidders: Math.max(0, Number(parsed?.competitor_analysis?.estimated_bidders ?? 0)),
-        competitionLevel: ['low', 'medium', 'high'].includes(String(parsed?.competitor_analysis?.competition_level))
-          ? String(parsed.competitor_analysis.competition_level) : 'medium',
-        likelyMaxCompetitorBidEur: Math.max(0, Number(parsed?.competitor_analysis?.likely_max_competitor_bid_eur ?? 0)),
-      },
-      signals: (parsed?.signals || []).slice(0, 5).map((s: any) => String(s).slice(0, 150)),
-      riskFactors: (parsed?.risk_factors || []).slice(0, 5).map((r: any) => String(r).slice(0, 150)),
-      recommendation: ['bid_now', 'wait', 'set_proxy', 'skip'].includes(String(parsed?.recommendation))
-        ? String(parsed.recommendation) : 'wait',
-      reasoning: String(parsed?.reasoning ?? '').slice(0, 400),
-    };
-
-    const today = new Date().toISOString().slice(0, 10);
-    if (settings.aiCallsDate !== today) {
-      await db.settings.update({ where: { id: 'singleton' }, data: { aiCallsDate: today, aiCallsToday: 1 } });
-    } else {
-      await db.settings.update({ where: { id: 'singleton' }, data: { aiCallsToday: { increment: 1 } } });
-    }
-
-    return NextResponse.json({ ok: true, timing, hoursToEnd });
-  } catch (e: any) {
-    logger.error("/api/ai/auction-timing", "POST handler failed", e);
-    return NextResponse.json({ error: e?.message ?? 'Napaka' }, { status: 500 });
-  }
+function transformTiming(parsed: unknown): TimingResult {
+  const p = (parsed ?? {}) as Record<string, any>;
+  const ca = (p?.competitor_analysis ?? {}) as Record<string, any>;
+  return {
+    optimalBidTime: String(p?.optimal_bid_time ?? '').slice(0, 200),
+    secondsBeforeEnd: Math.max(0, Math.min(300, Number(p?.seconds_before_end ?? 5))),
+    maxBidEur: Math.max(0, Number(p?.max_bid_eur ?? 0)),
+    suggestedBidEur: Math.max(0, Number(p?.suggested_bid_eur ?? 0)),
+    strategy: ['snipe_last_second', 'early_high', 'incremental', 'wait_and_snipe', 'proxy_bid'].includes(String(p?.strategy))
+      ? String(p.strategy) : 'snipe_last_second',
+    bidSequence: (p?.bid_sequence || []).slice(0, 4).map((b: any) => ({
+      step: Math.max(1, Number(b?.step ?? 1)),
+      timing: String(b?.timing ?? '').slice(0, 100),
+      amountEur: Math.max(0, Number(b?.amount_eur ?? 0)),
+      condition: String(b?.condition ?? '').slice(0, 150),
+    })),
+    competitorAnalysis: {
+      estimatedBidders: Math.max(0, Number(ca?.estimated_bidders ?? 0)),
+      competitionLevel: ['low', 'medium', 'high'].includes(String(ca?.competition_level))
+        ? String(ca.competition_level) : 'medium',
+      likelyMaxCompetitorBidEur: Math.max(0, Number(ca?.likely_max_competitor_bid_eur ?? 0)),
+    },
+    signals: (p?.signals || []).slice(0, 5).map((s: any) => String(s).slice(0, 150)),
+    riskFactors: (p?.risk_factors || []).slice(0, 5).map((r: any) => String(r).slice(0, 150)),
+    recommendation: ['bid_now', 'wait', 'set_proxy', 'skip'].includes(String(p?.recommendation))
+      ? String(p.recommendation) : 'wait',
+    reasoning: String(p?.reasoning ?? '').slice(0, 400),
+  };
 }

@@ -25,9 +25,18 @@
  *
  * Module-local types (AutoPilotHistoryDraft, AutoPilotRunResponse,
  * AutoPilotStatsResponse, ClearAnomalyResponse, DisableAggressiveResponse,
- * DOMAIN_LABELS, EnableAggressiveResponse) come from ./types. DomainName is
- * reached indirectly via these types — not imported directly. No shared utils
+ * EnableAggressiveResponse) come from ./auto-pilot/types (moved out of
+ * ../types.ts as part of v8.94.8-split-autopilot — these are only used by
+ * AutoPilotCard and its sub-components). DOMAIN_LABELS stays in ../types
+ * (shared with MasterBrainBanner + DraftQueueCard). DomainName is reached
+ * indirectly via these types — not imported directly. No shared utils
  * are used.
+ *
+ * v8.94.8-split-autopilot: presentational sub-sections extracted to
+ * ./auto-pilot/ (AnomalyBanner, AggressiveActiveBanner,
+ * AggressivePendingBanner, ModeSelector, ConfigPanel, StatsDisplay,
+ * HistoryPanel). This file remains the orchestrator owning all state +
+ * fetch callbacks; sub-components are pure render (props in, JSX out).
  */
 
 'use client';
@@ -37,34 +46,29 @@ import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Skeleton } from '@/components/ui/skeleton';
 import {
-  Dialog,
-  DialogContent,
-  DialogHeader,
-  DialogTitle,
-  DialogDescription,
-} from '@/components/ui/dialog';
-import {
-  Activity,
   AlertCircle,
-  AlertOctagon,
   Bot,
-  Clock,
-  Filter,
   History,
   Info,
   Lock,
   Play,
   Power,
   RefreshCw,
-  Rocket,
-  Save,
-  Settings2,
-  ShieldAlert,
-  Undo2,
 } from 'lucide-react';
 import { toast } from 'sonner';
 import { cn } from '@/lib/utils';
-import { DOMAIN_LABELS } from './types';
+// v8.94.8-split-autopilot: sub-components + types extracted to ./auto-pilot/.
+// DOMAIN_LABELS now lives only in HistoryPanel (only consumer of the
+// domain-icon mapping). All AutoPilot* types moved to ./auto-pilot/types.ts
+// (only used by AutoPilotCard + its sub-components).
+import {
+  AnomalyBanner,
+  AggressiveActiveBanner,
+  AggressivePendingBanner,
+  ConfigPanel,
+  StatsDisplay,
+  HistoryPanel,
+} from './auto-pilot';
 import type {
   AutoPilotHistoryDraft,
   AutoPilotRunResponse,
@@ -72,7 +76,7 @@ import type {
   ClearAnomalyResponse,
   DisableAggressiveResponse,
   EnableAggressiveResponse,
-} from './types';
+} from './auto-pilot';
 
 // --- v8.30: Safe Auto-pilot card (purple/indigo-tinted, Automation phase) ---
 //
@@ -491,87 +495,35 @@ export function AutoPilotCard() {
       {!loading && !error && stats && (
         <div className="space-y-3">
           {/* v8.31: Anomaly banner — shown at TOP of card when suspended.
-              Red, eye-catching, with "Razveljavi suspenzijo" button. */}
+              Red, eye-catching, with "Razveljavi suspenzijo" button.
+              v8.94.8-split-autopilot: extracted to <AnomalyBanner /> */}
           {anomalySuspended && (
-            <div className="rounded-lg border-2 border-red-500/50 bg-red-500/10 p-2.5 space-y-1.5">
-              <div className="flex items-start gap-2">
-                <AlertOctagon className="w-4 h-4 text-red-600 dark:text-red-400 shrink-0 mt-0.5" />
-                <div className="min-w-0 flex-1">
-                  <div className="text-xs font-bold text-red-700 dark:text-red-300">
-                    ⚠️ AUTO-PILOT SUSPENDED
-                  </div>
-                  <div className="text-[10px] text-red-700/90 dark:text-red-300/90 mt-0.5 leading-snug">
-                    {anomalyReason ?? 'Anomaly detected — possible loop'}
-                    {anomalySuspendedAt && (
-                      <span className="block text-[9px] italic mt-0.5">
-                        Suspended at: {new Date(anomalySuspendedAt).toLocaleString('sl-SI')}
-                      </span>
-                    )}
-                    <span className="block mt-0.5">
-                      Preglej zgodovino in klikni &quot;Razveljavi suspenzijo&quot; za ponovni vklop.
-                    </span>
-                  </div>
-                </div>
-                <button
-                  onClick={handleClearAnomaly}
-                  disabled={clearingAnomaly}
-                  className="text-[10px] px-2 py-1 rounded border bg-red-500/20 border-red-500/50 hover:bg-red-500/30 text-red-700 dark:text-red-300 shrink-0 flex items-center gap-1 disabled:opacity-50 font-semibold"
-                >
-                  {clearingAnomaly ? (
-                    <RefreshCw className="w-2.5 h-2.5 animate-spin" />
-                  ) : (
-                    <Undo2 className="w-2.5 h-2.5" />
-                  )}
-                  Razveljavi suspenzijo
-                </button>
-              </div>
-            </div>
+            <AnomalyBanner
+              anomalyReason={anomalyReason}
+              anomalySuspendedAt={anomalySuspendedAt}
+              clearingAnomaly={clearingAnomaly}
+              onClearAnomaly={handleClearAnomaly}
+            />
           )}
 
           {/* v8.31: Aggressive mode active banner — shown when mode='aggressive'.
-              Red/rose, with toggle-back button. */}
+              Red/rose, with toggle-back button.
+              v8.94.8-split-autopilot: extracted to <AggressiveActiveBanner /> */}
           {!anomalySuspended && isAggressive && (
-            <div className="rounded-lg border-2 border-rose-500/40 bg-rose-500/10 p-2 flex items-center gap-2">
-              <Rocket className="w-3.5 h-3.5 text-rose-600 dark:text-rose-400 shrink-0" />
-              <div className="min-w-0 flex-1">
-                <div className="text-[11px] font-bold text-rose-700 dark:text-rose-300">
-                  AGGRESSIVE MODE — višje tveganje
-                </div>
-                <div className="text-[9px] text-rose-700/80 dark:text-rose-300/80">
-                  Dovoljena MEDIUM confidence (do 300€ uplift). HIGH še vedno manual. Limit 10/dan, budget 2000€/dan.
-                </div>
-              </div>
-              <button
-                onClick={handleDisableAggressive}
-                disabled={togglingMode}
-                className="text-[10px] px-2 py-1 rounded border bg-rose-500/15 border-rose-500/40 hover:bg-rose-500/25 text-rose-700 dark:text-rose-300 shrink-0 disabled:opacity-50 font-semibold"
-              >
-                🛡️ Nazaj v Safe
-              </button>
-            </div>
+            <AggressiveActiveBanner
+              togglingMode={togglingMode}
+              onDisableAggressive={handleDisableAggressive}
+            />
           )}
 
           {/* v8.31: Aggressive pending confirmation banner — shown after first click.
-              Yellow/amber, prompts user to confirm within 5 minutes. */}
+              Yellow/amber, prompts user to confirm within 5 minutes.
+              v8.94.8-split-autopilot: extracted to <AggressivePendingBanner /> */}
           {!anomalySuspended && !isAggressive && aggressivePending && (
-            <div className="rounded-lg border-2 border-amber-500/40 bg-amber-500/10 p-2 flex items-center gap-2">
-              <ShieldAlert className="w-3.5 h-3.5 text-amber-600 dark:text-amber-400 shrink-0" />
-              <div className="min-w-0 flex-1">
-                <div className="text-[11px] font-bold text-amber-700 dark:text-amber-400">
-                  ⚠️ Aggressive mode dovoli MEDIUM confidence
-                </div>
-                <div className="text-[9px] text-amber-700/80 dark:text-amber-300/80">
-                  Potrdi ponovno v 5 minutah za aktivacijo aggressive mode.
-                </div>
-              </div>
-              <button
-                onClick={handleEnableAggressive}
-                disabled={togglingMode}
-                className="text-[10px] px-2 py-1 rounded border bg-amber-500/20 border-amber-500/40 hover:bg-amber-500/30 text-amber-700 dark:text-amber-400 shrink-0 disabled:opacity-50 font-bold"
-              >
-                ✅ Potrdi
-              </button>
-            </div>
+            <AggressivePendingBanner
+              togglingMode={togglingMode}
+              onConfirmAggressive={handleEnableAggressive}
+            />
           )}
 
           {/* Master switch — big toggle */}
@@ -640,235 +592,52 @@ export function AutoPilotCard() {
             </button>
           </div>
 
-          {/* Config sliders — only when enabled */}
+          {/* Config sliders — only when enabled.
+              v8.94.8-split-autopilot: extracted to <ConfigPanel /> (which
+              internally renders <ModeSelector /> + sliders + save/cancel). */}
           {enabled && (
-            <div className="rounded-lg border border-purple-500/20 bg-purple-500/[0.03] p-2 space-y-3">
-              <div className="text-[10px] uppercase tracking-wide text-purple-700/80 dark:text-purple-300/80 font-semibold flex items-center gap-1">
-                <Settings2 className="w-2.5 h-2.5" />
-                Konfiguracija
-              </div>
-
-              {/* Daily limit slider (1-10) */}
-              <div>
-                <div className="flex items-center justify-between text-[11px] mb-1">
-                  <span className="text-muted-foreground">Dnevni limit (akcije)</span>
-                  <span className="font-mono font-bold text-purple-700 dark:text-purple-300">
-                    {dailyLimitInput}/dan
-                  </span>
-                </div>
-                <input
-                  type="range"
-                  min={1}
-                  max={10}
-                  step={1}
-                  value={dailyLimitInput}
-                  onChange={(e) => setDailyLimitInput(Number(e.target.value))}
-                  className="w-full accent-purple-600 cursor-pointer"
-                />
-                <div className="flex justify-between text-[8px] text-muted-foreground mt-0.5">
-                  <span>1</span>
-                  <span>5</span>
-                  <span>10</span>
-                </div>
-              </div>
-
-              {/* Daily budget slider (100-2000€) */}
-              <div>
-                <div className="flex items-center justify-between text-[11px] mb-1">
-                  <span className="text-muted-foreground">Dnevni budget (€)</span>
-                  <span className="font-mono font-bold text-purple-700 dark:text-purple-300">
-                    {dailyBudgetInput}€/dan
-                  </span>
-                </div>
-                <input
-                  type="range"
-                  min={100}
-                  max={2000}
-                  step={50}
-                  value={dailyBudgetInput}
-                  onChange={(e) => setDailyBudgetInput(Number(e.target.value))}
-                  className="w-full accent-purple-600 cursor-pointer"
-                />
-                <div className="flex justify-between text-[8px] text-muted-foreground mt-0.5">
-                  <span>100€</span>
-                  <span>1000€</span>
-                  <span>2000€</span>
-                </div>
-              </div>
-
-              {/* v8.31: Mode selector — now active (not disabled).
-                  Safe is default; Aggressive requires double confirmation. */}
-              <div>
-                <div className="text-[10px] uppercase tracking-wide text-muted-foreground font-semibold mb-1 flex items-center justify-between">
-                  <span>Mode</span>
-                  <span className="text-[8px] normal-case font-normal italic">
-                    {isAggressive
-                      ? 'Aggressive aktiven — klikni Safe za izklop'
-                      : aggressivePending
-                        ? 'Čaka potrditev aggressive...'
-                        : 'Klikni Aggressive za double opt-in'}
-                  </span>
-                </div>
-                <div className="grid grid-cols-2 gap-1">
-                  <button
-                    type="button"
-                    onClick={handleDisableAggressive}
-                    disabled={togglingMode || (!isAggressive && !aggressivePending)}
-                    className={cn(
-                      'h-7 text-[10px] font-bold rounded border transition-colors',
-                      !isAggressive
-                        ? 'bg-purple-500/15 border-purple-500/40 text-purple-700 dark:text-purple-300'
-                        : 'bg-muted/30 border-border text-muted-foreground hover:bg-muted/50',
-                    )}
-                    title="Safe mode — only LOW-confidence, low-uplift, non-risk actions"
-                  >
-                    🛡️ Safe (LOW risk only)
-                  </button>
-                  <button
-                    type="button"
-                    onClick={handleEnableAggressive}
-                    disabled={togglingMode || isAggressive || anomalySuspended}
-                    className={cn(
-                      'h-7 text-[10px] font-bold rounded border transition-colors disabled:opacity-50 disabled:cursor-not-allowed',
-                      isAggressive
-                        ? 'bg-rose-500/20 border-rose-500/50 text-rose-700 dark:text-rose-300'
-                        : aggressivePending
-                          ? 'bg-amber-500/20 border-amber-500/50 text-amber-700 dark:text-amber-400 animate-pulse'
-                          : 'bg-muted/30 border-border text-muted-foreground hover:bg-muted/50',
-                    )}
-                    title={
-                      anomalySuspended
-                        ? 'Cannot switch to aggressive while anomaly is suspended'
-                        : isAggressive
-                          ? 'Aggressive mode already active'
-                          : 'Aggressive mode — requires double confirmation (5-min window)'
-                    }
-                  >
-                    {aggressivePending ? '✅ Potrdi Aggressive' : '🚀 Aggressive (MEDIUM OK)'}
-                  </button>
-                </div>
-              </div>
-
-              {/* Save config button (only when dirty) */}
-              {dirty && (
-                <div className="flex items-center justify-end gap-1 pt-1 border-t border-purple-500/20">
-                  <button
-                    onClick={() => {
-                      setDailyLimitInput(todayLimit);
-                      setDailyBudgetInput(todayBudget);
-                    }}
-                    className="text-[10px] px-2 py-1 rounded border border-border text-muted-foreground hover:bg-muted/50"
-                  >
-                    Prekliči
-                  </button>
-                  <button
-                    onClick={saveConfig}
-                    disabled={toggling}
-                    className="text-[10px] px-2 py-1 rounded border bg-purple-500/20 border-purple-500/40 text-purple-700 dark:text-purple-300 hover:bg-purple-500/30 font-semibold disabled:opacity-50"
-                  >
-                    💾 Shrani config
-                  </button>
-                </div>
-              )}
-            </div>
+            <ConfigPanel
+              dailyLimitInput={dailyLimitInput}
+              dailyBudgetInput={dailyBudgetInput}
+              onDailyLimitChange={setDailyLimitInput}
+              onDailyBudgetChange={setDailyBudgetInput}
+              isAggressive={isAggressive}
+              aggressivePending={aggressivePending}
+              anomalySuspended={anomalySuspended}
+              togglingMode={togglingMode}
+              toggling={toggling}
+              dirty={dirty}
+              todayLimit={todayLimit}
+              todayBudget={todayBudget}
+              onResetConfig={() => {
+                setDailyLimitInput(todayLimit);
+                setDailyBudgetInput(todayBudget);
+              }}
+              onSaveConfig={saveConfig}
+              onEnableAggressive={handleEnableAggressive}
+              onDisableAggressive={handleDisableAggressive}
+            />
           )}
 
-          {/* Today's stats — with progress bars + v8.31 hourly counter */}
-          <div className="rounded-lg border border-purple-500/20 bg-purple-500/[0.03] p-2 space-y-2">
-            <div className="text-[10px] uppercase tracking-wide text-purple-700/80 dark:text-purple-300/80 font-semibold flex items-center gap-1">
-              <Activity className="w-2.5 h-2.5" />
-              Danes
-              <span className="text-[8px] normal-case font-normal text-muted-foreground italic ml-auto">
-                zadnji run: {stats.config.lastRunAt ? new Date(stats.config.lastRunAt).toLocaleString('sl-SI') : '—'}
-              </span>
-            </div>
-            {/* v8.31: Mode-aware stats line */}
-            <div className="text-[10px] text-muted-foreground leading-snug">
-              Danes: <span className="font-mono font-bold text-purple-700 dark:text-purple-300">{todayAutoExecuted}/{displayLimit}</span> akcij ({mode}) ·{' '}
-              <span className="font-mono font-bold text-purple-700 dark:text-purple-300">{todayBudgetUsed.toFixed(0)}€/{displayBudget}€</span> budget
-            </div>
-            {/* v8.31: Hourly counter line */}
-            <div className="text-[9px] text-muted-foreground/80 italic">
-              Zadnja ura: <span className="font-mono font-bold">{hourlyExecCount}</span> akcij
-              {hourlyExecCount >= 6 && (
-                <span className="ml-1 text-amber-600 dark:text-amber-400 font-semibold">
-                  · ⚠️ blizu anomaly threshold (8)
-                </span>
-              )}
-              {hourlyWindowStart && (
-                <span className="ml-1 text-[8px]">
-                  (od {new Date(hourlyWindowStart).toLocaleTimeString('sl-SI')})
-                </span>
-              )}
-            </div>
-            {/* Limit progress */}
-            <div>
-              <div className="flex items-center justify-between text-[10px] mb-0.5">
-                <span className="text-muted-foreground">Limit</span>
-                <span className="font-mono font-bold">
-                  {todayAutoExecuted}/{todayLimit} akcij
-                </span>
-              </div>
-              <div className="h-1.5 bg-background/60 rounded overflow-hidden">
-                <div
-                  className={cn(
-                    'h-full transition-all',
-                    limitPct >= 100 ? 'bg-red-500' : limitPct >= 80 ? 'bg-amber-500' : 'bg-purple-500',
-                  )}
-                  style={{ width: `${limitPct}%` }}
-                />
-              </div>
-            </div>
-            {/* Budget progress */}
-            <div>
-              <div className="flex items-center justify-between text-[10px] mb-0.5">
-                <span className="text-muted-foreground">Budget</span>
-                <span className="font-mono font-bold">
-                  {todayBudgetUsed.toFixed(0)}€/{todayBudget}€
-                </span>
-              </div>
-              <div className="h-1.5 bg-background/60 rounded overflow-hidden">
-                <div
-                  className={cn(
-                    'h-full transition-all',
-                    budgetPct >= 100 ? 'bg-red-500' : budgetPct >= 80 ? 'bg-amber-500' : 'bg-purple-500',
-                  )}
-                  style={{ width: `${budgetPct}%` }}
-                />
-              </div>
-            </div>
-          </div>
-
-          {/* All-time stats */}
-          <div className="grid grid-cols-3 gap-1.5">
-            <div className="rounded border border-purple-500/20 bg-purple-500/[0.03] p-1.5 text-center">
-              <div className="text-[9px] uppercase text-muted-foreground">Skupno auto</div>
-              <div className="text-base font-bold text-purple-700 dark:text-purple-300 font-mono">
-                {allTimeTotal}
-              </div>
-            </div>
-            <div className="rounded border border-purple-500/20 bg-purple-500/[0.03] p-1.5 text-center">
-              <div className="text-[9px] uppercase text-muted-foreground">Razveljavljeno</div>
-              <div className="text-base font-bold text-amber-600 dark:text-amber-400 font-mono">
-                {allTimeRollback}
-              </div>
-            </div>
-            <div className="rounded border border-purple-500/20 bg-purple-500/[0.03] p-1.5 text-center">
-              <div className="text-[9px] uppercase text-muted-foreground">Rollback rate</div>
-              <div
-                className={cn(
-                  'text-base font-bold font-mono',
-                  rollbackRate > 20
-                    ? 'text-red-600 dark:text-red-400'
-                    : rollbackRate > 5
-                      ? 'text-amber-600 dark:text-amber-400'
-                      : 'text-emerald-600 dark:text-emerald-400',
-                )}
-              >
-                {rollbackRate.toFixed(1)}%
-              </div>
-            </div>
-          </div>
+          {/* Today's stats + all-time stats — v8.94.8-split-autopilot: extracted
+              to <StatsDisplay /> (renders progress bars + 3-col all-time grid). */}
+          <StatsDisplay
+            stats={stats}
+            mode={mode}
+            todayAutoExecuted={todayAutoExecuted}
+            todayBudgetUsed={todayBudgetUsed}
+            todayLimit={todayLimit}
+            todayBudget={todayBudget}
+            displayLimit={displayLimit}
+            displayBudget={displayBudget}
+            limitPct={limitPct}
+            budgetPct={budgetPct}
+            hourlyExecCount={hourlyExecCount}
+            hourlyWindowStart={hourlyWindowStart}
+            allTimeTotal={allTimeTotal}
+            allTimeRollback={allTimeRollback}
+            rollbackRate={rollbackRate}
+          />
 
           {/* Action buttons row */}
           <div className="grid grid-cols-2 gap-1.5">
@@ -964,127 +733,16 @@ export function AutoPilotCard() {
         </div>
       )}
 
-      {/* History Modal */}
-      <Dialog open={showHistory} onOpenChange={setShowHistory}>
-        <DialogContent className="max-w-3xl max-h-[85vh] overflow-y-auto">
-          <DialogHeader>
-            <DialogTitle className="flex items-center gap-2 text-base">
-              <Bot className="w-4 h-4 text-purple-600 dark:text-purple-300" />
-              🤖 Auto-pilot Zgodovina
-            </DialogTitle>
-            <DialogDescription>
-              Zadnjih 10 auto-executed akcij. Vsako lahko razveljaviš (↩️ Razveljavi) —
-              to tudi undo-a learning preko recordActionFeedback z &apos;rejected&apos;.
-            </DialogDescription>
-          </DialogHeader>
-
-          {historyLoading && (
-            <div className="space-y-2 py-4">
-              <Skeleton className="h-12 w-full bg-purple-500/10" />
-              <Skeleton className="h-12 w-full bg-purple-500/10" />
-              <Skeleton className="h-12 w-full bg-purple-500/10" />
-            </div>
-          )}
-
-          {!historyLoading && history && history.length === 0 && (
-            <div className="p-6 text-center text-sm text-muted-foreground">
-              <Bot className="w-8 h-8 mx-auto mb-2 text-purple-500/50" />
-              Še ni auto-executed akcij. Vklopi auto-pilot in zaženi run, ali
-              počakaj na hourly cron.
-            </div>
-          )}
-
-          {!historyLoading && history && history.length > 0 && (
-            <div className="space-y-2">
-              {history.map((d) => {
-                const dm = DOMAIN_LABELS[d.domain] ?? { icon: '•', label: d.domain, color: 'text-foreground' };
-                const executedAtStr = d.executedAt
-                  ? (() => {
-                      try {
-                        return new Date(d.executedAt).toLocaleString('sl-SI');
-                      } catch {
-                        return '—';
-                      }
-                    })()
-                  : '—';
-                return (
-                  <div
-                    key={d.id}
-                    className={cn(
-                      'rounded-lg border p-2 text-xs',
-                      d.rolledBack
-                        ? 'border-amber-500/30 bg-amber-500/[0.04]'
-                        : 'border-purple-500/20 bg-purple-500/[0.03]',
-                    )}
-                  >
-                    <div className="flex items-start gap-2">
-                      <span className="shrink-0 w-3 text-center font-bold text-muted-foreground">
-                        {d.rank}.
-                      </span>
-                      <span className="shrink-0" title={dm.label}>
-                        {dm.icon}
-                      </span>
-                      <div className="flex-1 min-w-0">
-                        <div className="font-medium truncate">{d.action}</div>
-                        <div className="text-[9px] text-muted-foreground flex items-center gap-1 mt-0.5 flex-wrap">
-                          <Clock className="w-2 h-2" />
-                          {executedAtStr}
-                          <span className="text-muted-foreground/60">·</span>
-                          <span className="font-mono">{d.signal}</span>
-                          <span className="text-muted-foreground/60">·</span>
-                          <span className="font-mono text-purple-600 dark:text-purple-400">
-                            +{d.expectedUpliftEUR}€
-                          </span>
-                        </div>
-                        {d.rolledBack && (
-                          <div className="mt-1 text-[9px] text-amber-700 dark:text-amber-400 italic">
-                            ↩️ Razveljavljeno{d.rollbackReason ? `: ${d.rollbackReason.slice(0, 80)}` : ''}
-                          </div>
-                        )}
-                        {d.autoPilotReason && !d.rolledBack && (
-                          <details className="mt-1">
-                            <summary className="text-[9px] text-purple-700/70 dark:text-purple-300/70 cursor-pointer">
-                              ℹ️ Audit (8 pravil)
-                            </summary>
-                            <div className="text-[8px] text-muted-foreground mt-0.5 font-mono whitespace-pre-wrap">
-                              {d.autoPilotReason.split('; ').map((r, i) => (
-                                <div
-                                  key={i}
-                                  className={cn(
-                                    r.startsWith('PASS')
-                                      ? 'text-emerald-600 dark:text-emerald-400'
-                                      : 'text-red-600 dark:text-red-400',
-                                  )}
-                                >
-                                  {r}
-                                </div>
-                              ))}
-                            </div>
-                          </details>
-                        )}
-                      </div>
-                      {!d.rolledBack && (
-                        <button
-                          onClick={() => rollbackDraft(d.id)}
-                          disabled={rollingBackId === d.id}
-                          className="text-[9px] px-2 py-1 rounded border bg-amber-500/10 border-amber-500/30 hover:bg-amber-500/25 text-amber-700 dark:text-amber-400 shrink-0 flex items-center gap-1 disabled:opacity-50"
-                        >
-                          {rollingBackId === d.id ? (
-                            <RefreshCw className="w-2.5 h-2.5 animate-spin" />
-                          ) : (
-                            <Undo2 className="w-2.5 h-2.5" />
-                          )}
-                          Razveljavi
-                        </button>
-                      )}
-                    </div>
-                  </div>
-                );
-              })}
-            </div>
-          )}
-        </DialogContent>
-      </Dialog>
+      {/* History Modal — v8.94.8-split-autopilot: extracted to <HistoryPanel />.
+          Renders the Dialog with last-10 auto-executed drafts + rollback buttons. */}
+      <HistoryPanel
+        open={showHistory}
+        onOpenChange={setShowHistory}
+        historyLoading={historyLoading}
+        history={history}
+        rollingBackId={rollingBackId}
+        onRollback={rollbackDraft}
+      />
     </div>
   );
 }

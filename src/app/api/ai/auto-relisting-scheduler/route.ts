@@ -1,4 +1,4 @@
-// v7.58: Auto-Relisting Scheduler — AI-poganjan načrt za PONOVNO OBJAVO
+// v7.58 / v8.94.8-f-refactor: Auto-Relisting Scheduler — AI-poganjan načrt za PONOVNO OBJAVO
 // held inventarja na različnih platformah. Razlika od listing-refresh-scheduler:
 // ta generira FULL načrt (nov naslov, optimalna ura, cross-platform strategija),
 // medtem ko listing-refresh-scheduler samo predlaga KDAJ osvežiti.
@@ -12,19 +12,20 @@
 // Anti-hallucination: newPrice clamped [0.5×, 1.2×] buyPrice,
 //                      expectedSellTimeDays clamped [1, 60].
 // Deterministic fallback when AI unavailable.
+//
+// Refaktoriran z withAiRoute helperjem (v8.94.8-f) + enforceBudget guard.
+// (AI-enhanced + grounding + anti-hallucination + 6h cache + deterministic fallback)
 
-import { NextRequest, NextResponse } from 'next/server';
-import { db } from '@/lib/db';
-import { getSettingsRow } from '@/lib/pipeline';
-import { callProviderForRaw, parseJsonLooseExported, type AiProviderType, type AiSettings } from '@/lib/ai';
+import { withAiRoute, AI_ROUTE_DEFAULTS, type AiRouteContext } from '@/lib/with-ai-route';
+import { apiOk } from '@/lib/api-response';
 import { GROUNDING_PROMPT_SUFFIX } from '@/lib/anti-hallucination';
 import { getCachedAI, setCachedAI } from '@/lib/ai-cache';
-import { checkRateLimit, rateLimitResponse } from '@/lib/rate-limit';
-import { logger } from '@/lib/logger';
 
-export const runtime = 'nodejs';
-export const dynamic = 'force-dynamic';
+export const { runtime, dynamic } = AI_ROUTE_DEFAULTS;
 export const maxDuration = 60;
+
+// eslint-disable-next-line @typescript-eslint/no-empty-object-type
+interface AutoRelistingSchedulerInput {}
 
 const DAY_MS = 86_400_000;
 
@@ -53,32 +54,12 @@ const VALID_STRATEGIES = new Set([
 const VALID_URGENCIES = new Set(['CRITICAL', 'HIGH', 'MEDIUM']);
 const DAYS_OF_WEEK = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'];
 
+// --- Types ----------------------------------------------------------------
+
 interface FlipChecklistStep {
   step?: string;
   completedAt?: string;
   completed?: boolean;
-}
-
-/** Parse flipChecklist to count how many platforms the item is already listed on. */
-function parsePlatformsListed(flipChecklist: string | null | undefined): string[] {
-  if (!flipChecklist) return [];
-  try {
-    const arr = JSON.parse(flipChecklist) as FlipChecklistStep[];
-    if (!Array.isArray(arr)) return [];
-    const platforms: string[] = [];
-    for (const s of arr) {
-      const step = (s?.step ?? '').toLowerCase();
-      if (!step.startsWith('listed_')) continue;
-      const ok = s?.completed === true || !!s?.completedAt;
-      if (!ok) continue;
-      if (step.includes('bolha')) platforms.push('Bolha');
-      else if (step.includes('vinted')) platforms.push('Vinted');
-      else if (step.includes('other')) platforms.push('Facebook');
-    }
-    return Array.from(new Set(platforms));
-  } catch {
-    return [];
-  }
 }
 
 interface HeldItemComputed {
@@ -132,6 +113,49 @@ interface CachedPayload {
     estimatedDaysToClear: number;
   };
   aiUsed: boolean;
+}
+
+interface HeldTradeRow {
+  id: string;
+  title: string;
+  category: string;
+  buyPrice: number;
+  buyDate: Date;
+  buyLocation: string;
+  flipChecklist: string;
+  listing: {
+    id: string;
+    contactStatus: string;
+    isBookmarked: boolean;
+    priceDroppedAt: Date | null;
+    dealScore: number | null;
+    firstSeenAt: Date;
+    monitor: { source: string };
+  } | null;
+}
+
+// --- Pure helper functions (testable) -------------------------------------
+
+/** Parse flipChecklist to count how many platforms the item is already listed on. */
+function parsePlatformsListed(flipChecklist: string | null | undefined): string[] {
+  if (!flipChecklist) return [];
+  try {
+    const arr = JSON.parse(flipChecklist) as FlipChecklistStep[];
+    if (!Array.isArray(arr)) return [];
+    const platforms: string[] = [];
+    for (const s of arr) {
+      const step = (s?.step ?? '').toLowerCase();
+      if (!step.startsWith('listed_')) continue;
+      const ok = s?.completed === true || !!s?.completedAt;
+      if (!ok) continue;
+      if (step.includes('bolha')) platforms.push('Bolha');
+      else if (step.includes('vinted')) platforms.push('Vinted');
+      else if (step.includes('other')) platforms.push('Facebook');
+    }
+    return Array.from(new Set(platforms));
+  } catch {
+    return [];
+  }
 }
 
 /** Clamp AI-suggested price to [0.5×, 1.2×] buyPrice (per spec). */
@@ -224,159 +248,67 @@ function deterministicPlan(item: HeldItemComputed): {
   };
 }
 
-export async function GET(req: NextRequest) {
-  return handleAutoRelistingScheduler(req);
-}
+/**
+ * Filter HELD trades to those that need relisting:
+ *   daysHeld > 14 OR priceDroppedAt set OR (daysHeld >= 7 && no interest).
+ * Computes derived fields (daysHeld, currentPlatform, urgency, listingPerformance).
+ */
+function filterItemsNeedingRelist(heldTrades: HeldTradeRow[], now: number): HeldItemComputed[] {
+  const items: HeldItemComputed[] = [];
 
-// AI Hub runner compatibility — body is ignored, identical logic.
-export async function POST(req: NextRequest) {
-  return handleAutoRelistingScheduler(req);
-}
+  for (const t of heldTrades) {
+    const buyDateMs = new Date(t.buyDate).getTime();
+    const daysHeld = Math.max(0, Math.floor((now - buyDateMs) / DAY_MS));
 
-async function handleAutoRelistingScheduler(req: NextRequest) {
-  try {
-    // v7.32: AI rate limit (20/min/IP)
-    const rl = checkRateLimit(req, 'ai-auto-relisting-scheduler', 20);
-    if (!rl.allowed) return rateLimitResponse(rl);
+    const priceDroppedAt = t.listing?.priceDroppedAt ?? null;
+    const hasPriceDrop = priceDroppedAt !== null;
+    const hasNoInterest = !t.listing || t.listing.contactStatus === 'none' || t.listing.contactStatus == null;
 
-    const now = Date.now();
+    const needsRelist = daysHeld > 14 || hasPriceDrop || (daysHeld >= 7 && hasNoInterest);
+    if (!needsRelist) continue;
 
-    // 1) Query HELD trades with linked Listing (for title, category, imageUrl, dealScore)
-    const heldTrades = await db.trade.findMany({
-      where: { status: 'held' },
-      select: {
-        id: true,
-        title: true,
-        category: true,
-        buyPrice: true,
-        buyDate: true,
-        buyLocation: true,
-        flipChecklist: true,
-        listing: {
-          select: {
-            id: true,
-            contactStatus: true,
-            isBookmarked: true,
-            priceDroppedAt: true,
-            dealScore: true,
-            firstSeenAt: true,
-            monitor: {
-              select: { source: true },
-            },
-          },
-        },
-      },
-      orderBy: { buyDate: 'asc' },
-      take: 200,
+    // Compute current platform
+    const monitorSource = t.listing?.monitor?.source;
+    let currentPlatform = 'Bolha';
+    if (monitorSource && monitorSource.trim() !== '') {
+      const mapped = SOURCE_TO_PLATFORM[monitorSource.trim().toLowerCase()];
+      if (mapped) currentPlatform = mapped;
+    } else {
+      const buyLocNorm = normalizePlatform(t.buyLocation);
+      if (buyLocNorm) currentPlatform = buyLocNorm;
+    }
+
+    // Urgency
+    let urgency: 'CRITICAL' | 'HIGH' | 'MEDIUM';
+    if (daysHeld > 30) urgency = 'CRITICAL';
+    else if (daysHeld >= 14) urgency = 'HIGH';
+    else urgency = 'MEDIUM';
+
+    // Listing performance
+    const contacts = (t.listing && t.listing.contactStatus && t.listing.contactStatus !== 'none') ? 1 : 0;
+    const bookmarks = (t.listing?.isBookmarked ?? false) ? 1 : 0;
+    const priceDrops = hasPriceDrop ? 1 : 0;
+
+    items.push({
+      tradeId: t.id,
+      title: t.title,
+      category: (t.category && t.category.trim() !== '') ? t.category.trim() : 'drugo',
+      buyPrice: Math.round(t.buyPrice),
+      daysHeld,
+      currentPlatform,
+      urgency,
+      listingPerformance: { contacts, bookmarks, priceDrops },
     });
+  }
 
-    if (heldTrades.length === 0) {
-      return NextResponse.json({
-        ok: true,
-        schedule: [],
-        summary: {
-          total: 0,
-          critical: 0,
-          high: 0,
-          medium: 0,
-          estimatedRevenueIfRelisted: 0,
-          estimatedDaysToClear: 0,
-        },
-        aiUsed: false,
-        message: 'Ni held inventarja — nič za ponovno objaviti.',
-      });
-    }
+  return items;
+}
 
-    // 2) Filter to items needing relisting:
-    //    daysHeld > 14 OR priceDroppedAt set OR contactStatus indicates no interest
-    const itemsNeedingRelist: HeldItemComputed[] = [];
-
-    for (const t of heldTrades) {
-      const buyDateMs = new Date(t.buyDate).getTime();
-      const daysHeld = Math.max(0, Math.floor((now - buyDateMs) / DAY_MS));
-
-      const priceDroppedAt = t.listing?.priceDroppedAt ?? null;
-      const hasPriceDrop = priceDroppedAt !== null;
-      const hasNoInterest = !t.listing || t.listing.contactStatus === 'none' || t.listing.contactStatus == null;
-
-      const needsRelist = daysHeld > 14 || hasPriceDrop || (daysHeld >= 7 && hasNoInterest);
-      if (!needsRelist) continue;
-
-      // Compute current platform
-      const monitorSource = t.listing?.monitor?.source;
-      let currentPlatform = 'Bolha';
-      if (monitorSource && monitorSource.trim() !== '') {
-        const mapped = SOURCE_TO_PLATFORM[monitorSource.trim().toLowerCase()];
-        if (mapped) currentPlatform = mapped;
-      } else {
-        const buyLocNorm = normalizePlatform(t.buyLocation);
-        if (buyLocNorm) currentPlatform = buyLocNorm;
-      }
-
-      // Urgency
-      let urgency: 'CRITICAL' | 'HIGH' | 'MEDIUM';
-      if (daysHeld > 30) urgency = 'CRITICAL';
-      else if (daysHeld >= 14) urgency = 'HIGH';
-      else urgency = 'MEDIUM';
-
-      // Listing performance
-      const contacts = (t.listing && t.listing.contactStatus && t.listing.contactStatus !== 'none') ? 1 : 0;
-      const bookmarks = (t.listing?.isBookmarked ?? false) ? 1 : 0;
-      const priceDrops = hasPriceDrop ? 1 : 0;
-
-      itemsNeedingRelist.push({
-        tradeId: t.id,
-        title: t.title,
-        category: (t.category && t.category.trim() !== '') ? t.category.trim() : 'drugo',
-        buyPrice: Math.round(t.buyPrice),
-        daysHeld,
-        currentPlatform,
-        urgency,
-        listingPerformance: { contacts, bookmarks, priceDrops },
-      });
-    }
-
-    if (itemsNeedingRelist.length === 0) {
-      return NextResponse.json({
-        ok: true,
-        schedule: [],
-        summary: {
-          total: 0,
-          critical: 0,
-          high: 0,
-          medium: 0,
-          estimatedRevenueIfRelisted: 0,
-          estimatedDaysToClear: 0,
-        },
-        aiUsed: false,
-        message: 'Noben held item ne potrebuje ponovne objave (vsi <14d brez padca cene).',
-      });
-    }
-
-    // 3) Check AI cache
-    const heldItemIds = itemsNeedingRelist.map(i => i.tradeId);
-    const cacheKey = `auto-relisting-scheduler:${JSON.stringify(heldItemIds)}`;
-    const cached = getCachedAI<CachedPayload>(cacheKey);
-    if (cached) {
-      return NextResponse.json({ ok: true, ...cached, cached: true });
-    }
-
-    // 4) Build AI prompt with grounding
-    const settings = await getSettingsRow();
-    const aiSettings: AiSettings = {
-      provider: settings.aiProvider as AiProviderType,
-      baseUrl: settings.aiBaseUrl,
-      apiKey: settings.aiApiKey,
-      model: settings.aiModel,
-      fallbackProvider: (settings.fallbackProvider || '') as AiProviderType | '',
-      fallbackBaseUrl: settings.fallbackBaseUrl || '',
-      fallbackApiKey: settings.fallbackApiKey || '',
-      fallbackModel: settings.fallbackModel || '',
-    };
-
-    const itemsBlock = itemsNeedingRelist
-      .map((i, idx) => {
-        return `#${idx + 1}
+/** Build the AI prompt with the items block + grounding suffix. */
+function buildRelistingPrompt(items: HeldItemComputed[]): string {
+  const itemsBlock = items
+    .map((i, idx) => {
+      return `#${idx + 1}
 - tradeId: ${i.tradeId}
 - naslov: ${i.title}
 - kategorija: ${i.category}
@@ -387,10 +319,10 @@ async function handleAutoRelistingScheduler(req: NextRequest) {
 - kontakti: ${i.listingPerformance.contacts}
 - zaznamki: ${i.listingPerformance.bookmarks}
 - padci cene: ${i.listingPerformance.priceDrops}`;
-      })
-      .join('\n\n');
+    })
+    .join('\n\n');
 
-    const prompt = `Si ekspert za optimizacijo prodaje na slovenskih in evropskih oglasnih platformah (Bolha, Vinted, Facebook Marketplace).
+  return `Si ekspert za optimizacijo prodaje na slovenskih in evropskih oglasnih platformah (Bolha, Vinted, Facebook Marketplace).
 
 Za vsak HELD item spodaj (ki potrebuje ponovno objavo) določi:
 1. recommendedPlatform (Bolha | Vinted | Facebook) — kam ponovno objaviti (lahko druga platforma kot trenutna za cross-post)
@@ -436,19 +368,232 @@ Odgovori LE z JSON:
     }
   ]
 }${GROUNDING_PROMPT_SUFFIX}`;
+}
+
+/** Parse AI response into a Map keyed by tradeId. Empty map on parse failure. */
+function parseAiPlans(parsed: unknown): Map<string, AiRelistPlan> {
+  const plansByTradeId = new Map<string, AiRelistPlan>();
+  const p = parsed as { plans?: AiRelistPlan[] } | null;
+  if (p?.plans && Array.isArray(p.plans)) {
+    for (const plan of p.plans) {
+      if (plan?.tradeId) plansByTradeId.set(String(plan.tradeId), plan);
+    }
+  }
+  return plansByTradeId;
+}
+
+/** Merge AI-suggested plans with deterministic fallback per item, applying anti-hallucination. */
+function mergePlans(items: HeldItemComputed[], plansByTradeId: Map<string, AiRelistPlan>): ScheduleItem[] {
+  return items.map(item => {
+    const ai = plansByTradeId.get(item.tradeId);
+    const fallback = deterministicPlan(item);
+
+    // Platform
+    let recommendedPlatform = fallback.recommendedPlatform;
+    const aiPlatformNorm = normalizePlatform(ai?.recommendedPlatform);
+    if (aiPlatformNorm) recommendedPlatform = aiPlatformNorm;
+
+    // Title — cap at 70 chars
+    let newTitle = fallback.newTitle;
+    if (ai?.newTitle && typeof ai.newTitle === 'string') {
+      const trimmed = ai.newTitle.trim();
+      if (trimmed.length > 0) {
+        newTitle = trimmed.slice(0, 70);
+      }
+    }
+
+    // Price — clamp to [0.5×, 1.2×] buyPrice
+    const aiPriceClamped = ai?.newPrice != null ? clampPrice(ai.newPrice, item.buyPrice) : null;
+    const newPrice = aiPriceClamped ?? fallback.newPrice;
+
+    // Day of week
+    let bestDayOfWeek = fallback.bestDayOfWeek;
+    if (ai?.bestDayOfWeek && typeof ai.bestDayOfWeek === 'string') {
+      const day = ai.bestDayOfWeek.trim();
+      // Normalize: capitalize first letter
+      const cap = day.charAt(0).toUpperCase() + day.slice(1).toLowerCase();
+      if (DAYS_OF_WEEK.includes(cap)) bestDayOfWeek = cap;
+    }
+
+    // Hour
+    let bestHour = fallback.bestHour;
+    if (ai?.bestHour != null) {
+      const h = Number(ai.bestHour);
+      if (Number.isFinite(h) && h >= 0 && h <= 23) {
+        bestHour = Math.round(h);
+      }
+    }
+
+    // Strategy
+    let listingStrategy = fallback.listingStrategy;
+    if (ai?.listingStrategy && typeof ai.listingStrategy === 'string') {
+      const s = ai.listingStrategy.toUpperCase();
+      if (VALID_STRATEGIES.has(s)) listingStrategy = s as typeof listingStrategy;
+    }
+
+    // Expected sell time
+    const aiExpClamped = ai?.expectedSellTimeDays != null ? clampExpectedDays(ai.expectedSellTimeDays) : null;
+    const expectedSellTimeDays = aiExpClamped ?? fallback.expectedSellTimeDays;
+
+    // Reasoning
+    const reasoning = (ai?.reasoning && typeof ai.reasoning === 'string' && ai.reasoning.trim().length > 0)
+      ? ai.reasoning.trim().slice(0, 240)
+      : fallback.reasoning;
+
+    return {
+      tradeId: item.tradeId,
+      title: item.title,
+      currentTitle: item.title,
+      daysHeld: item.daysHeld,
+      currentPlatform: item.currentPlatform,
+      urgency: item.urgency,
+      listingPerformance: item.listingPerformance,
+      recommendedPlatform,
+      newTitle,
+      newPrice,
+      bestTimeToList: { dayOfWeek: bestDayOfWeek, hour: bestHour },
+      listingStrategy,
+      expectedSellTimeDays,
+      reasoning,
+    };
+  });
+}
+
+const URGENCY_RANK = { CRITICAL: 0, HIGH: 1, MEDIUM: 2 } as const;
+
+/** Sort schedule by urgency (CRITICAL → HIGH → MEDIUM), then by daysHeld desc. Mutates input. */
+function sortSchedule(schedule: ScheduleItem[]): ScheduleItem[] {
+  schedule.sort(
+    (a, b) =>
+      URGENCY_RANK[a.urgency] - URGENCY_RANK[b.urgency] || b.daysHeld - a.daysHeld,
+  );
+  return schedule;
+}
+
+/** Compute aggregate summary from the final schedule. */
+function computeScheduleSummary(schedule: ScheduleItem[]): CachedPayload['summary'] {
+  const critical = schedule.filter(s => s.urgency === 'CRITICAL').length;
+  const high = schedule.filter(s => s.urgency === 'HIGH').length;
+  const medium = schedule.filter(s => s.urgency === 'MEDIUM').length;
+  const estimatedRevenueIfRelisted = Math.round(
+    schedule.reduce((s, i) => s + i.newPrice, 0),
+  );
+  // Estimated days to clear all items: max of expectedSellTimeDays (longest pole in tent)
+  const estimatedDaysToClear = schedule.length > 0
+    ? Math.max(...schedule.map(s => s.expectedSellTimeDays))
+    : 0;
+
+  return {
+    total: schedule.length,
+    critical,
+    high,
+    medium,
+    estimatedRevenueIfRelisted,
+    estimatedDaysToClear,
+  };
+}
+
+const EMPTY_SUMMARY: CachedPayload['summary'] = {
+  total: 0,
+  critical: 0,
+  high: 0,
+  medium: 0,
+  estimatedRevenueIfRelisted: 0,
+  estimatedDaysToClear: 0,
+};
+
+// --- Handler --------------------------------------------------------------
+
+const autoRelistingSchedulerHandler = withAiRoute<AutoRelistingSchedulerInput>({
+  endpoint: '/api/ai/auto-relisting-scheduler',
+  maxDuration: 60,
+  enforceBudget: true, // AI klic — preveri budget + zabeleži klic
+  method: 'GET', // Endpoint sprejema GET + POST — bypass POST-only check
+
+  parseBody: async (req) => {
+    await req.json().catch(() => ({}));
+    return {};
+  },
+
+  // No validateInput — telo zahtevka je prazno (body ignored, identična logika za GET in POST)
+
+  handler: async (_input, ctx: AiRouteContext) => {
+    const { db, callAi, parseAi, logger } = ctx;
+
+    const now = Date.now();
+
+    // 1) Query HELD trades with linked Listing (for title, category, imageUrl, dealScore)
+    const heldTrades = await db.trade.findMany({
+      where: { status: 'held' },
+      select: {
+        id: true,
+        title: true,
+        category: true,
+        buyPrice: true,
+        buyDate: true,
+        buyLocation: true,
+        flipChecklist: true,
+        listing: {
+          select: {
+            id: true,
+            contactStatus: true,
+            isBookmarked: true,
+            priceDroppedAt: true,
+            dealScore: true,
+            firstSeenAt: true,
+            monitor: {
+              select: { source: true },
+            },
+          },
+        },
+      },
+      orderBy: { buyDate: 'asc' },
+      take: 200,
+    });
+
+    if (heldTrades.length === 0) {
+      return apiOk({
+        ok: true,
+        schedule: [],
+        summary: EMPTY_SUMMARY,
+        aiUsed: false,
+        message: 'Ni held inventarja — nič za ponovno objaviti.',
+      });
+    }
+
+    // 2) Filter to items needing relisting:
+    //    daysHeld > 14 OR priceDroppedAt set OR contactStatus indicates no interest
+    const itemsNeedingRelist = filterItemsNeedingRelist(heldTrades, now);
+
+    if (itemsNeedingRelist.length === 0) {
+      return apiOk({
+        ok: true,
+        schedule: [],
+        summary: EMPTY_SUMMARY,
+        aiUsed: false,
+        message: 'Noben held item ne potrebuje ponovne objave (vsi <14d brez padca cene).',
+      });
+    }
+
+    // 3) Check AI cache (6h TTL) — key by exact snapshot of held item ids
+    const heldItemIds = itemsNeedingRelist.map(i => i.tradeId);
+    const cacheKey = `auto-relisting-scheduler:${JSON.stringify(heldItemIds)}`;
+    const cached = getCachedAI<CachedPayload>(cacheKey);
+    if (cached) {
+      return apiOk({ ok: true, ...cached, cached: true });
+    }
+
+    // 4) Build AI prompt with grounding
+    const prompt = buildRelistingPrompt(itemsNeedingRelist);
 
     // 5) Call AI (with try/catch — fallback to deterministic plans)
-    const plansByTradeId = new Map<string, AiRelistPlan>();
+    let plansByTradeId = new Map<string, AiRelistPlan>();
     let aiUsed = false;
     try {
-      const raw = await callProviderForRaw(aiSettings, prompt);
-      const parsed = parseJsonLooseExported(raw) as { plans?: AiRelistPlan[] } | null;
-      if (parsed?.plans && Array.isArray(parsed.plans)) {
-        for (const p of parsed.plans) {
-          if (p?.tradeId) plansByTradeId.set(String(p.tradeId), p);
-        }
-        aiUsed = plansByTradeId.size > 0;
-      }
+      const raw = await callAi(prompt);
+      const parsed = parseAi(raw);
+      plansByTradeId = parseAiPlans(parsed);
+      aiUsed = plansByTradeId.size > 0;
     } catch (err) {
       logger.warn(
         '/api/ai/auto-relisting-scheduler',
@@ -458,116 +603,23 @@ Odgovori LE z JSON:
     }
 
     // 6) Merge AI + deterministic plans with anti-hallucination validation
-    const schedule: ScheduleItem[] = itemsNeedingRelist.map(item => {
-      const ai = plansByTradeId.get(item.tradeId);
-      const fallback = deterministicPlan(item);
-
-      // Platform
-      let recommendedPlatform = fallback.recommendedPlatform;
-      const aiPlatformNorm = normalizePlatform(ai?.recommendedPlatform);
-      if (aiPlatformNorm) recommendedPlatform = aiPlatformNorm;
-
-      // Title — cap at 70 chars
-      let newTitle = fallback.newTitle;
-      if (ai?.newTitle && typeof ai.newTitle === 'string') {
-        const trimmed = ai.newTitle.trim();
-        if (trimmed.length > 0) {
-          newTitle = trimmed.slice(0, 70);
-        }
-      }
-
-      // Price — clamp to [0.5×, 1.2×] buyPrice
-      const aiPriceClamped = ai?.newPrice != null ? clampPrice(ai.newPrice, item.buyPrice) : null;
-      const newPrice = aiPriceClamped ?? fallback.newPrice;
-
-      // Day of week
-      let bestDayOfWeek = fallback.bestDayOfWeek;
-      if (ai?.bestDayOfWeek && typeof ai.bestDayOfWeek === 'string') {
-        const day = ai.bestDayOfWeek.trim();
-        // Normalize: capitalize first letter
-        const cap = day.charAt(0).toUpperCase() + day.slice(1).toLowerCase();
-        if (DAYS_OF_WEEK.includes(cap)) bestDayOfWeek = cap;
-      }
-
-      // Hour
-      let bestHour = fallback.bestHour;
-      if (ai?.bestHour != null) {
-        const h = Number(ai.bestHour);
-        if (Number.isFinite(h) && h >= 0 && h <= 23) {
-          bestHour = Math.round(h);
-        }
-      }
-
-      // Strategy
-      let listingStrategy = fallback.listingStrategy;
-      if (ai?.listingStrategy && typeof ai.listingStrategy === 'string') {
-        const s = ai.listingStrategy.toUpperCase();
-        if (VALID_STRATEGIES.has(s)) listingStrategy = s as typeof listingStrategy;
-      }
-
-      // Expected sell time
-      const aiExpClamped = ai?.expectedSellTimeDays != null ? clampExpectedDays(ai.expectedSellTimeDays) : null;
-      const expectedSellTimeDays = aiExpClamped ?? fallback.expectedSellTimeDays;
-
-      // Reasoning
-      const reasoning = (ai?.reasoning && typeof ai.reasoning === 'string' && ai.reasoning.trim().length > 0)
-        ? ai.reasoning.trim().slice(0, 240)
-        : fallback.reasoning;
-
-      return {
-        tradeId: item.tradeId,
-        title: item.title,
-        currentTitle: item.title,
-        daysHeld: item.daysHeld,
-        currentPlatform: item.currentPlatform,
-        urgency: item.urgency,
-        listingPerformance: item.listingPerformance,
-        recommendedPlatform,
-        newTitle,
-        newPrice,
-        bestTimeToList: { dayOfWeek: bestDayOfWeek, hour: bestHour },
-        listingStrategy,
-        expectedSellTimeDays,
-        reasoning,
-      };
-    });
+    const schedule = mergePlans(itemsNeedingRelist, plansByTradeId);
 
     // 7) Sort by urgency (CRITICAL → HIGH → MEDIUM)
-    const urgencyRank = { CRITICAL: 0, HIGH: 1, MEDIUM: 2 } as const;
-    schedule.sort(
-      (a, b) =>
-        urgencyRank[a.urgency] - urgencyRank[b.urgency] || b.daysHeld - a.daysHeld,
-    );
+    sortSchedule(schedule);
 
     // 8) Summary
-    const critical = schedule.filter(s => s.urgency === 'CRITICAL').length;
-    const high = schedule.filter(s => s.urgency === 'HIGH').length;
-    const medium = schedule.filter(s => s.urgency === 'MEDIUM').length;
-    const estimatedRevenueIfRelisted = Math.round(
-      schedule.reduce((s, i) => s + i.newPrice, 0),
-    );
-    // Estimated days to clear all items: max of expectedSellTimeDays (longest pole in tent)
-    const estimatedDaysToClear = schedule.length > 0
-      ? Math.max(...schedule.map(s => s.expectedSellTimeDays))
-      : 0;
-
-    const summary = {
-      total: schedule.length,
-      critical,
-      high,
-      medium,
-      estimatedRevenueIfRelisted,
-      estimatedDaysToClear,
-    };
+    const summary = computeScheduleSummary(schedule);
 
     const payload: CachedPayload = { schedule, summary, aiUsed };
 
     // 9) Cache the response (6h TTL)
     setCachedAI(cacheKey, payload);
 
-    return NextResponse.json({ ok: true, ...payload });
-  } catch (err: any) {
-    logger.error('/api/ai/auto-relisting-scheduler', 'handler failed', err);
-    return NextResponse.json({ error: err?.message ?? 'Napaka' }, { status: 500 });
-  }
-}
+    return apiOk({ ok: true, ...payload });
+  },
+});
+
+// AI Hub runner compatibility — body is ignored, identical logic.
+export const GET = autoRelistingSchedulerHandler;
+export const POST = autoRelistingSchedulerHandler;

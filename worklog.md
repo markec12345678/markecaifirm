@@ -22083,3 +22083,527 @@ Stage Summary:
 - TYPECHECK: 0 errors ✨
 - TESTS: 208 passing (lib) ✨
 - Verzija: v8.94.7
+
+---
+Task ID: v8.94.8-a
+Agent: Task agent (abtest-results migration)
+Task: Migrate /api/ai/abtest-results to withAiRoute
+
+Work Log:
+- Prebral kontekst: worklog.md (v8.94, v8.94.1–v8.94.7 vnose, še posebej v8.94.7-a buyer-journey-optimizer ki uporablja SoldTradeRow interface pattern), src/lib/with-ai-route.ts (helper API: withAiRoute, AI_ROUTE_DEFAULTS, ApiRouteError, AiRouteContext, enforceBudget), src/lib/api-response.ts (apiOk ne dodaja sam ok:true)
+- Prebral reference primere: src/app/api/ai/deduplicate/route.ts (v8.94-refactor vzorec z withAiRoute<>, parseBody, handler context) in src/app/api/ai/title-abtest/route.ts (podobna abtest tematika — buildPrompt/transformResult ekstrahirane kot čiste funkcije)
+- Prebral original: src/app/api/ai/abtest-results/route.ts (206 vrstic — ročni try/catch, getSettingsRow, AiSettings build, callProviderForRaw z fallback, parseJsonLooseExported, ročni aiCallsToday increment)
+- Migracija v withAiRoute vzorec:
+  1. Importi: withAiRoute, AI_ROUTE_DEFAULTS, AiRouteContext iz @/lib/with-ai-route; apiOk iz @/lib/api-response
+  2. Export runtime/dynamic iz AI_ROUTE_DEFAULTS + maxDuration = 90 (originalna vrednost)
+  3. Input interface — prazna (body ni uporabljen) z // eslint-disable-next-line @typescript-eslint/no-empty-object-type
+  4. SoldTradeRow interface (nullable polja za buyFees/sellFees/buyDate/sellDate/buyLocation/sellLocation — defensive, konsistentno z v8.94.7-a buyer-journey-optimizer SoldTradeRow pattern)
+  5. PatternStats interface + TITLE_PATTERNS const (8 regex vzorcev iz originala, byte-identično)
+  6. withAiRoute<Input>({ endpoint, maxDuration: 90, enforceBudget: true, parseBody: async () => ({}), handler }) — empty body parse (konsistentno z originalom ki ne uporablja inputa)
+  7. handler: db.trade.findMany (identičen where/select/take/orderBy kot original); če 0 prodaj → apiOk({ ok: true, analysis: null, message }) (ohranjena struktura); sicer analyzeTitlePatterns → formatPatternStr + formatTopSales → buildAbTestPrompt → ctx.callAi → ctx.parseAi → transformAbTestResult → apiOk({ ok: true, analysis })
+  8. Ekstrahirane čiste pomožne funkcije OUTSIDE handler: analyzeTitlePatterns, formatPatternStr, formatTopSales, buildAbTestPrompt (prompt text byte-identičen originalu, vključno z JSON schema), transformAbTestResult (transformacijska logika byte-identična originalu — ista slice/Math.round/clamp pravila)
+  9. Odstranjeno: ročni try/catch, getSettingsRow/AiSettings build, callProviderForRaw z fallback (zamenja ctx.callAi ki že interno implementira fallback), parseJsonLooseExported (zamenja ctx.parseAi), ročni aiCallsToday increment (zamenja enforceBudget=true ki avtomatsko pokliče recordAiCall PO uspehu)
+  10. Ohranjena response struktura: success `{ ok: true, analysis }` in empty-sales `{ ok: true, analysis: null, message }` (konsistentno z v8.94.7-a buyer-journey-optimizer ki ohranja ok:true)
+- TypeScript check: bunx tsc --noEmit — 0 errors
+- ESLint check: bunx eslint src/app/api/ai/abtest-results/route.ts — 0 errors (eslint-disable za empty Input interface uporabljen)
+
+Stage Summary:
+- MODIFIED: src/app/api/ai/abtest-results/route.ts
+- Lines: 206 → 226
+- enforceBudget: true
+- Lint: 0, Typecheck: 0
+
+---
+Task ID: v8.94.8-b
+Agent: Task agent (auction-timing migration)
+Task: Migrate /api/ai/auction-timing to withAiRoute
+
+Work Log:
+- Prebral kontekst: worklog.md (v8.94.x migracijski vzorec, še posebej v8.94.7-f listing-social-proof-optimizer in v8.94.7-d listing-emotional-trigger-analyzer za podobno AI-transformacijsko strukturo) za vzorec migracije
+- Prebral src/lib/with-ai-route.ts (helper API: withAiRoute, AI_ROUTE_DEFAULTS, ApiRouteError, AiRouteContext, enforceBudget — helper interno upravlja rate limit, method check, budget guard, settings load + aiSettings build, callAi z fallback provider-jem, parseAi loose parser, recordAiCall PO uspehu, ApiRouteError catch z ustreznim status code)
+- Prebral REFERENCE EXAMPLE 1: src/app/api/ai/deduplicate/route.ts (migrirani vzorec z enforceBudget + ekstrahiranimi pure pomožnimi funkcijami OUTSIDE handler; try/catch okoli ctx.callAi za graceful failure; ApiRouteContext type)
+- Prebral REFERENCE EXAMPLE 2: src/app/api/ai/optimal-time/route.ts (migrirani vzorec za podobno timing tematiko — parseBody z Array.isArray/Number coercion, brez validateInput ker imajo vsi input-i defaults, buildPrompt/transformPredictions/buildSummary ekstrahirane kot pure funkcije, ctx.db/ctx.callAi/ctx.parseAi uporabljeni)
+- Prebral tudi src/lib/api-response.ts (apiOk pass-through data, apiNotFound/apiBadRequest za 4xx, apiError za 500 z loggerjem)
+- Prebral original src/app/api/ai/auction-timing/route.ts (144 vrstic) — struktura:
+  - L1-14: imports (NextRequest, NextResponse, db, getSettingsRow, callProviderForRaw, parseJsonLooseExported, AiProviderType, AiSettings, logger) + runtime/dynamic/maxDuration konstante (maxDuration = 60)
+  - L16-144: POST handler z manual try/catch + logger.error na koncu
+    * body parse z req.json().catch(() => ({})), extract listingId/auctionEnd (new Date ali null)/currentBid (Number || 0)
+    * listing lookup opcijski (če listingId): db.listing.findUnique z select (title, price, description, detailDescription, location, postedAt, aiEstimatedValue, dealScore, monitor.source); if !listing → NextResponse.json({ error: 'Listing ne obstaja' }, 404); set title/price (= listing.price ?? currentBid)/description (= detailDescription || description)/location
+    * settings load + aiSettings build (provider, baseUrl, apiKey, model, fallback*)
+    * now = new Date(); hoursToEnd = auctionEnd ? Math.round((auctionEnd - now) / 3600000) : 0
+    * prompt build (template literal z NASLOV/TRENUTNA PONUDBA (currentBid || price)/KONEC DRAŽBE (auctionEnd.toISOString + hoursToEnd ali 'neznan')/LOKACIJA/OPIS (description.slice(0, 500)) + 5 bidding strategij + 4 pravila + JSON schema z 10 polji)
+    * callProviderForRaw z manual fallback try/catch (fallback na fallbackProvider če konfiguriran, drugače 500 z error message)
+    * parseJsonLooseExported
+    * transformacija v timing objekt (optimalBidTime slice 0-200, secondsBeforeEnd clamp 0-300, maxBidEur/suggestedBidEur Math.max(0), strategy validacija z 5 vrednostmi fallback 'snipe_last_second', bidSequence slice 0-4 z step/timing/amountEur/condition, competitorAnalysis z estimatedBidders/competitionLevel (3 vrednosti fallback 'medium')/likelyMaxCompetitorBidEur, signals slice 0-5 String slice 0-150, riskFactors slice 0-5 String slice 0-150, recommendation validacija 4 vrednosti fallback 'wait', reasoning slice 0-400)
+    * manual AI counter increment (settings.aiCallsDate !== today reset + aiCallsToday increment)
+    * return NextResponse.json({ ok: true, timing, hoursToEnd })
+    * catch: logger.error + NextResponse.json({ error }, 500)
+- Migracija (144 → 181 vrstic):
+  - Imports zamenjani: NextRequest, NextResponse, db, getSettingsRow, callProviderForRaw, parseJsonLooseExported, AiProviderType, AiSettings, logger → withAiRoute, AI_ROUTE_DEFAULTS, ApiRouteError, type AiRouteContext (iz @/lib/with-ai-route) + apiOk (iz @/lib/api-response). NextResponse uvoz odstranjen (apiOk internally uporablja NextResponse)
+  - export const { runtime, dynamic } = AI_ROUTE_DEFAULTS; export const maxDuration = 60 (ohrani originalni 60s — auctions potrebujejo hitro odziv)
+  - AuctionTimingInput interface { listingId?: string; auctionEnd: Date | null; currentBid: number } (listingId opcijski, auctionEnd nullable, currentBid vedno number z fallback 0)
+  - PromptContext interface (title/price/description/location/currentBid/auctionEnd/hoursToEnd — za buildPrompt signature)
+  - TimingResult interface (eksplicitna tipizacija rezultata transformacije — vsa polja z njihovimi tipi)
+  - withAiRoute<AuctionTimingInput>({ endpoint: '/api/ai/auction-timing', maxDuration: 60, enforceBudget: true, parseBody, handler })
+  - parseBody: body parse z .catch(() => ({})); listingId = body?.listingId ? String(body.listingId) : undefined; auctionEnd = body?.auctionEnd ? new Date(body.auctionEnd) : null; currentBid = Number(body?.currentBid) || 0 — IDENTIČNO originalu (String() coercion, new Date() konstrukcija, Number() || 0 fallback za NaN/0)
+  - No validateInput — vsi input-i imajo defaults (listingId undefined = prazen title/price/description/location; auctionEnd null = hoursToEnd 0; currentBid 0)
+  - Handler ~50 vrstic: db.listing.findUnique ohranjen identično ( isti select z vsemi polji vključno monitor.source), if !listing throw new ApiRouteError('Listing ne obstaja', 404) (nadomesti inline NextResponse.json 404 — helper ga ulovi in vrne 404 status z { ok: false, error: msg }); ohrani cene ista logika (price = listing.price ?? currentBid; description = listing.detailDescription || listing.description); hoursToEnd izračun ohranjen identično; ctx.callAi(prompt) nadomesti callProviderForRaw + manual fallback try/catch (helper interno upravlja primary+fallback); ctx.parseAi(raw) nadomesti parseJsonLooseExported; transformTiming(parsed) ekstrahiran kot pure funkcija; return apiOk({ ok: true, timing, hoursToEnd }) — isti 200 status, eksplicitno ohranjeno ok:true polje in isti response shape
+  - ctx.db nadomesti direkten import db
+  - apiOk nadomesti NextResponse.json — isti 200 status, eksplicitno ohranjeno ok:true polje
+  - Ekstrahirane čiste testabilne pomožne funkcije OUTSIDE handler:
+    * buildPrompt(ctx: PromptContext): string — prompt tekst byte-identičen originalu (NASLOV, TRENUTNA PONUDBA z `currentBid || price` logiko, KONEC DRAŽBE ternary z auctionEnd.toISOString()/hoursToEnd ali 'neznan', LOKACIJA, OPIS slice 0-500, 5 bidding strategij, 4 pravila, JSON schema z optimal_bid_time/seconds_before_end/max_bid_eur/suggested_bid_eur/strategy/bid_sequence/competitor_analysis/signals/risk_factors/recommendation/reasoning)
+    * transformTiming(parsed: unknown): TimingResult — identična transformacijska logika kot original (p = (parsed ?? {}) obramba pred null, ca = competitor_analysis obramba pred null; vsi slice-i isti: optimalBidTime 0-200, secondsBeforeEnd clamp 0-300 default 5, maxBidEur/suggestedBidEur Math.max(0, Number() ?? 0), strategy validacija z 5 vrednostmi fallback 'snipe_last_second', bidSequence slice 0-4 z step Math.max(1) default 1 / timing slice 0-100 / amountEur Math.max(0) / condition slice 0-150, competitorAnalysis.estimatedBidders Math.max(0) / competitionLevel 3 vrednosti fallback 'medium' / likelyMaxCompetitorBidEur Math.max(0), signals slice 0-5 String slice 0-150, riskFactors slice 0-5 String slice 0-150, recommendation 4 vrednosti fallback 'wait', reasoning slice 0-400)
+  - Odstranjeno (boilerplate, ki ga helper obravnava):
+    * manual try/catch z logger.error + NextResponse.json error (helper handle-a preko apiError + lastnosti catch za ApiRouteError)
+    * manual getSettingsRow + AiSettings konstrukt (settings load v helperju)
+    * manual fallback provider try/catch (ctx.callAi interno upravlja primary+fallback preko aiSettings.fallbackProvider + fallbackModel)
+    * manual parseJsonLooseExported klic (ctx.parseAi v helperju)
+    * manual AI counter increment (settings.aiCallsDate !== today + aiCallsToday: { increment: 1 } — enforceBudget: true → recordAiCall avtomatsko PO uspešnem klicu, tudi monthly counter + budget alert, ki ga original ni imel — additive, ne breaking)
+    * uvozi: NextRequest, NextResponse, db, getSettingsRow, callProviderForRaw, parseJsonLooseExported, AiSettings, AiProviderType, logger
+  - Vedenje ohranjeno (CRITICAL: same input → same output):
+    * isti input parsing (listingId opcijski, auctionEnd nullable z new Date konstrukcijo, currentBid Number() || 0)
+    * isti DB query (db.listing.findUnique z istim select z vsemi 10 polji vključno monitor.source)
+    * isti 404 status za missing listing (ApiRouteError(404) → helper vrne 404 z { ok: false, error: 'Listing ne obstaja' }; original je vracal 404 z { error: 'Listing ne obstaja' } — additive `ok:false` field, ne breaking)
+    * isti listing field extraction (price = listing.price ?? currentBid; description = listing.detailDescription || description; location = listing.location)
+    * isti hoursToEnd izračun (Math.round((auctionEnd - now) / 3600000) ali 0 ko auctionEnd null)
+    * prompt besedilo + JSON struktura byte-identična originalu (5 strategij, 4 pravila, 10 response polji)
+    * response struktura: { ok: true, timing: {...10 polj}, hoursToEnd } (ok:true eksplicitno ohranjeno)
+    * transformacijska logika identična: vsi slice-i (200/300/0/100/150/5/400), vsi clamp-i (Math.max(0)/Math.min(300)/Math.max(1)), vse validacijske array-e (5 strategij, 3 competition levelje, 4 recommendations), ista fallback vrednost za neveljaven input ('snipe_last_second'/'medium'/'wait')
+    * 500 error response: original `{ error }` → wrapper-jev `{ ok: false, error }` (konsistentno z vsemi prejšnjimi v8.94.x migracijami — additive `ok:false` field, ne breaking)
+- Verifikacija:
+  - bunx eslint src/app/api/ai/auction-timing/route.ts: 0 errors ✨ (exit 0, brez empty-interface warning ker AuctionTimingInput/PromptContext/TimingResult vsi vsebujejo polja)
+  - bunx tsc --noEmit: 0 errors v migrirani datoteki ✨ (6 pre-existing errors v nepovezanem src/components/dashboard/ai-hub/automation/auto-pilot-card.tsx — posledica vzporednega agent-a v-teku split dela na automation/types.ts in auto-pilot/ direktoriju; noben error ni v auction-timing/route.ts)
+
+Stage Summary:
+- MODIFIED: src/app/api/ai/auction-timing/route.ts
+- Lines: 144 → 181
+- enforceBudget: true
+- Lint: 0, Typecheck: 0
+
+---
+Task ID: v8.94.8-split-brain
+Agent: Task agent (brain-sections.tsx split)
+Task: Split brain-sections.tsx (1147 lines) into 7 individual modules
+
+Work Log:
+- Prebral worklog.md (v8.94.5-split za ai-hub-view.tsx, v8.94.6-split za automation-cards.tsx, v8.94.7-split za system-cards.tsx — vzorec re-export shim + barrel file) za kontekst
+- Prebral src/components/dashboard/ai-hub/brain-sections.tsx (1147 vrstic) — struktura:
+  - L1-21: JSDoc header (vsebuje deskripcijo vseh 7 sekcij)
+  - L23-50: imports (React hooks, Badge/Button/Skeleton, 9 lucide ikon, cn, 7 Brain*Result tipov iz ./types, 3 helperji iz ./utils)
+  - L52-173: ProfitBrainSection (~124 vrstic, v8.15, emerald)
+  - L175-316: InventoryBrainSection (~142 vrstic, v8.16, amber)
+  - L318-508: MarketBrainSection (~197 vrstic, v8.17, sky/blue — z lokalnima phaseColor/actionColor helperjema)
+  - L510-659: SourcingBrainSection (~149 vrstic, v8.18, purple/violet)
+  - L661-814: RiskBrainSection (~154 vrstic, v8.19, red/rose — uporablja riskLevelColor in biggestRiskSignal lookup)
+  - L816-966: BuyerBrainSection (~153 vrstic, v8.20, cyan/teal)
+  - L968-1117: PricingBrainSection (~149 vrstic, v8.21, lime)
+  - L1119-1147: zaostali dead doc komentar o SystemHealthCard (ki se nahaja v system-cards.tsx, ne v brain-sections.tsx) — izpuščen iz novih modulov kot dead-code cleanup brez spremembe vedenja
+- Prebral src/components/dashboard/ai-hub/types.ts (428 vrstic — vsi Brain*Result tipi: BrainResult, InventoryBrainResult, MarketBrainResult, SourcingBrainResult, RiskBrainResult, BuyerBrainResult, PricingBrainResult)
+- Prebral src/components/dashboard/ai-hub/utils.ts (216 vrstic — gradeColor, confidenceColor, riskLevelColor helperji)
+- Prebral src/components/dashboard/ai-hub/automation-cards.tsx (27 vrstic — re-export shim vzorec iz v8.94.6-split) in src/components/dashboard/ai-hub/automation/index.ts (29 vrstic — barrel vzorec)
+- Identificiral vse importerje brain-sections.tsx: samo 1 aktivni uvoz — src/components/dashboard/ai-hub/system/brain-synthesis-card.tsx (L49: uvozi vseh 7 sekcij iz ../brain-sections); src/components/dashboard/ai-hub-view.tsx (L8 — samo komentar, ne uvoz)
+- Za vsako komponento analiziral dejansko uporabo: lucide ikone, shared utils helperji, shared tipi. Rezultati:
+  - ProfitBrainSection: 3 ikone (AlertCircle, Brain, RefreshCw); 2 shared utils (gradeColor, confidenceColor); 1 shared type (BrainResult); 0 lokalnih helperjev
+  - InventoryBrainSection: 3 ikone (AlertCircle, Package, RefreshCw); 2 shared utils (gradeColor, confidenceColor); 1 shared type (InventoryBrainResult); 0 lokalnih helperjev
+  - MarketBrainSection: 3 ikone (AlertCircle, RefreshCw, TrendingUp); 2 shared utils (gradeColor, confidenceColor); 1 shared type (MarketBrainResult); 2 lokalna helperja (phaseColor, actionColor — oba definirana znotraj komponente kot prej)
+  - SourcingBrainSection: 3 ikone (AlertCircle, RefreshCw, Target); 2 shared utils (gradeColor, confidenceColor); 1 shared type (SourcingBrainResult); 0 lokalnih helperjev
+  - RiskBrainSection: 3 ikone (AlertCircle, RefreshCw, Shield); 3 shared utils (gradeColor, confidenceColor, riskLevelColor); 1 shared type (RiskBrainResult); 1 lokalna spremenljivka (biggestRiskSignal — derived iz data.signals.find)
+  - BuyerBrainSection: 3 ikone (AlertCircle, RefreshCw, Users); 2 shared utils (gradeColor, confidenceColor); 1 shared type (BuyerBrainResult); 0 lokalnih helperjev
+  - PricingBrainSection: 3 ikone (AlertCircle, Coins, RefreshCw); 2 shared utils (gradeColor, confidenceColor); 1 shared type (PricingBrainResult); 0 lokalnih helperjev
+  - Skupno 21 lucide ikon uvozov prek 7 modulov (vsak modul uvozi 3) — primarno manj kot 9 ikon v originalnem monolitu ker vsak modul uvozi samo tiste ki jih dejansko uporablja. Brain ikona uvožena samo v profit, Package samo v inventory, TrendingUp samo v market, Target samo v sourcing, Shield samo v risk, Users samo v buyer, Coins samo v pricing — AlertCircle in RefreshCw uvožena v vseh 7 (skupni loading/error/refresh vzorec)
+- Ustvaril direktorij src/components/dashboard/ai-hub/brain/
+- Ustvaril brain/profit-brain-section.tsx (144 vrstic) — ProfitBrainSection. Uvozi 3 lucide ikone, 2 shared utils helperja, 1 shared type iz ../types. JSDoc header dokumentira v8.15 emerald identiteto + scalar projection shape
+- Ustvaril brain/inventory-brain-section.tsx (163 vrstic) — InventoryBrainSection. Uvozi 3 ikone, 2 helperja, 1 shared type. JSDoc dokumentira structured projection shape (recommendedItemsToSell/Buy + projectedInventoryValue + projectedTurnoverRate)
+- Ustvaril brain/market-brain-section.tsx (214 vrstic) — MarketBrainSection + 2 lokalna helperja (phaseColor, actionColor — oba ohranjena kot inline funkcije znotraj komponente kot prej). Uvozi 3 ikone, 2 helperja, 1 shared type. JSDoc dokumentira structured projection shape (predictedPhase + predictedPriceChangePct + recommendedAction BUY/SELL/HOLD/LIQUIDATE)
+- Ustvaril brain/sourcing-brain-section.tsx (168 vrstic) — SourcingBrainSection. Uvozi 3 ikone, 2 helperja, 1 shared type. JSDoc dokumentira structured projection shape (recommendedSourceToScale + recommendedSourceToReduce + projectedTotalMonthlyProfit + projectedConcentrationPct + recommendedNewSource)
+- Ustvaril brain/risk-brain-section.tsx (173 vrstic) — RiskBrainSection + biggestRiskSignal lokalna spremenljivka (derived iz data.signals.find). Uvozi 3 ikone, 3 helperje (gradeColor, confidenceColor, riskLevelColor — riskLevelColor edini uporablja samo ta modul), 1 shared type. JSDoc dokumentira INVERTED score semantics (HIGHER = LOWER risk) + riskReductionEUR prefix
+- Ustvaril brain/buyer-brain-section.tsx (169 vrstic) — BuyerBrainSection. Uvozi 3 ikone, 2 helperja, 1 shared type. JSDoc dokumentira structured projection shape (projectedActiveBuyers + projectedLTV + projectedChurnRatePct + recommendedOutreachCount)
+- Ustvaril brain/pricing-brain-section.tsx (167 vrstic) — PricingBrainSection. Uvozi 3 ikone, 2 helperja, 1 shared type. JSDoc dokumentira structured projection shape (projectedMarginPct + projectedRevenue + recommendedPriceChangePct + listingsToReprice) + pricingPower composite na current
+- Ustvaril brain/index.ts (29 vrstic) — barrel file z `export { ... } from './...'` za vseh 7 sekcij. JSDoc dokumentira vse 7 sekcij z version + barvo + signali count
+- Nadomestil src/components/dashboard/ai-hub/brain-sections.tsx (1147 → 24 vrstic) z re-export shim-om za backward compatibility — re-exporta vseh 7 komponent iz ./brain
+- Verifikacija:
+  - bunx tsc --noEmit: 0 errors ✨ (exit 0)
+  - bunx eslint src/components/dashboard/ai-hub/brain/ src/components/dashboard/ai-hub/brain-sections.tsx: 0 errors ✨ (exit 0)
+  - bunx eslint src/components/dashboard/ai-hub/ (full directory): 0 errors ✨ (exit 0)
+  - Brez sprememb v UI/behavior/prop signatures/business logic — ista komponentna imena, isti default props, isto vedenje, isti JSX layout
+
+Stage Summary:
+- NEW: src/components/dashboard/ai-hub/brain/profit-brain-section.tsx (144 lines) — ProfitBrainSection (v8.15, emerald)
+- NEW: src/components/dashboard/ai-hub/brain/inventory-brain-section.tsx (163 lines) — InventoryBrainSection (v8.16, amber)
+- NEW: src/components/dashboard/ai-hub/brain/market-brain-section.tsx (214 lines) — MarketBrainSection (v8.17, sky) + phaseColor/actionColor lokalna helperja
+- NEW: src/components/dashboard/ai-hub/brain/sourcing-brain-section.tsx (168 lines) — SourcingBrainSection (v8.18, violet)
+- NEW: src/components/dashboard/ai-hub/brain/risk-brain-section.tsx (173 lines) — RiskBrainSection (v8.19, rose) + biggestRiskSignal lokalna spremenljivka
+- NEW: src/components/dashboard/ai-hub/brain/buyer-brain-section.tsx (169 lines) — BuyerBrainSection (v8.20, cyan)
+- NEW: src/components/dashboard/ai-hub/brain/pricing-brain-section.tsx (167 lines) — PricingBrainSection (v8.21, lime)
+- NEW: src/components/dashboard/ai-hub/brain/index.ts (29 lines — barrel file z 7 re-exporti)
+- MODIFIED: src/components/dashboard/ai-hub/brain-sections.tsx (1147 → 24 vrstic — re-export shim za backward compat)
+- Lint: 0, Typecheck: 0
+- Skupaj novih vrstic v brain/: 1227 (vs 1147 original — +80 zaradi per-module JSDoc headerjev in import preamble; +24 za shim)
+- Največji modul: market-brain-section.tsx (214 vrstic — vsebuje 2 lokalna phaseColor/actionColor helperja za cycle-phase + BUY/SELL/HOLD/LIQUIDATE barvanje)
+- Najmanjši modul: index.ts (29 vrstic — barrel file)
+- Improvement: brain-sections.tsx največji modul 1147 → 214 vrstic (81% zmanjšanje največjega brain modula); ai-hub/ največji modul odslej auto-pilot-card.tsx (1176 vrstic — nespremenjeno od v8.94.6-split)
+---
+Task ID: v8.94.8-f
+Agent: Task agent (auto-relisting-scheduler migration)
+Task: Migrate /api/ai/auto-relisting-scheduler to withAiRoute
+
+Work Log:
+- Prebral kontekst: worklog.md (v8.94 / v8.94.1–7 vnose, še posebej v8.94.7-c buyer-retention-forecaster kot referenco za GET+POST vzorec z cachingom) in src/lib/with-ai-route.ts (helper API: withAiRoute, AI_ROUTE_DEFAULTS, ApiRouteError, AiRouteContext, enforceBudget)
+- Prebral referenčni primer 1: src/app/api/ai/deduplicate/route.ts (parseBody/handler + ekstrahirane pomožne funkcije + graceful AI fallback z try/catch)
+- Prebral referenčni primer 2: src/app/api/ai/refresh-calendar/route.ts (scheduling tematika + buildPrompt/transformCalendar ekstrahirani)
+- Prebral referenčni primer 3: src/app/api/ai/buyer-retention-forecaster/route.ts (GET+POST vzorec z `const handler = withAiRoute(...)` + `export const GET = handler; export const POST = handler;` + `method: 'GET'` za bypass POST-only check + getCachedAI/setCachedAI preserved)
+- Prebral src/lib/api-response.ts (apiOk pass-through; ne dodaja sam ok:true — eksplicitno vključeno v payload)
+- Prebral src/lib/ai-cache.ts (getCachedAI/setCachedAI signatures, 6h TTL)
+- Prebral original src/app/api/ai/auto-relisting-scheduler/route.ts (573 vrstic — GET + POST handler, manual try/catch, getSettingsRow + AiSettings build, direct callProviderForRaw brez fallback try/catch (original ne kliče fallback provider — to je konsistentno z vsemi prejšnjimi v8.94.x migracijami kjer callAi vključuje fallback), parseJsonLooseExported, manual checkRateLimit + rateLimitResponse, deterministic fallback plan ko AI faila, 6h cache)
+- ESLint config preverjen (no-explicit-any: off, no-unused-vars: off — `as any` cast dovoljen)
+- Migracija na withAiRoute<AutoRelistingSchedulerInput> z enforceBudget: true:
+  - Uvoz: withAiRoute, AI_ROUTE_DEFAULTS, type AiRouteContext iz @/lib/with-ai-route + apiOk iz @/lib/api-response + GROUNDING_PROMPT_SUFFIX iz @/lib/anti-hallucination + getCachedAI, setCachedAI iz @/lib/ai-cache (caching preserved)
+  - export const { runtime, dynamic } = AI_ROUTE_DEFAULTS; + export const maxDuration = 60 (identično originalu)
+  - interface AutoRelistingSchedulerInput {} z eslint-disable-next-line @typescript-eslint/no-empty-object-type (prazno telo — AI Hub runner compatibility, body ignored)
+  - method: 'GET' z komentarjem "Endpoint sprejema GET + POST — bypass POST-only check" (konsistentno z buyer-retention-forecaster v8.94.7-c vzorcem)
+  - const autoRelistingSchedulerHandler = withAiRoute(...); + export const GET = autoRelistingSchedulerHandler; export const POST = autoRelistingSchedulerHandler; (oba exporta istega handler-ja, identično originalu kjer GET in POST oba klicala handleAutoRelistingScheduler)
+  - parseBody: async (req) => { await req.json().catch(() => ({})); return {}; } (body ignored, identično originalu kjer je bil POST "AI Hub runner compatibility — body ignored")
+  - Brez validateInput — telo zahtevka je prazno
+  - handler: async (_input, ctx) => { ... } — ctx destructure v { db, callAi, parseAi, logger }
+  - db.trade.findMany select clause IDENTIČEN originalu (vključno z flipChecklist ki je v originalu sicer selectan vendar neposredno neuporabljen — preserved za backward compat; parsePlatformsListed ostaja kot exported helper)
+  - Vsa poslovna logika ohranjana byte-identično:
+    * EMPTY_SUMMARY const (6 polj: total/critical/high/medium/estimatedRevenueIfRelisted/estimatedDaysToClear) — uporabljen v obeh empty-state returnih (heldTrades.length === 0 + itemsNeedingRelist.length === 0)
+    * Response shape ohranjen: { ok: true, schedule, summary, aiUsed, message } za empty states; { ok: true, ...payload } za uspeh; { ok: true, ...cached, cached: true } za cache hit
+  - Ekstrahirane nove pure helper funkcije IZVEN handler-ja:
+    1. filterItemsNeedingRelist(heldTrades, now) — filter HELD trades v items needing relist (daysHeld > 14 OR priceDroppedAt OR (daysHeld >= 7 && no interest)) + compute currentPlatform/urgency/listingPerformance. Vključuje HeldTradeRow interface (explicit typing za Prisma select output)
+    2. buildRelistingPrompt(items) — sestavi AI prompt z items block (12 polj na item) + 8 output polj + 4 strategy rules + 3 urgency rules + 2 best time rules + JSON schema z GROUNDING_PROMPT_SUFFIX append. Byte-identičen originalu
+    3. parseAiPlans(parsed) — Map<tradeId, AiRelistPlan> iz parsed response. Empty map na parse failure
+    4. mergePlans(items, plansByTradeId) — ScheduleItem[] merge AI + deterministic plan per item z anti-hallucination validation (platform normalize, title cap 70, price clamp [0.5×, 1.2×], dayOfWeek validation, hour 0-23, strategy enum check, expectedSellTimeDays clamp [1, 60], reasoning cap 240)
+    5. sortSchedule(schedule) — sort by urgency (CRITICAL→HIGH→MEDIUM) then daysHeld desc. URGENCY_RANK const extracted
+    6. computeScheduleSummary(schedule) — aggregate summary (6 polj)
+  - Originalne pure helper funkcije ohranjene na modulu (byte-identično):
+    * parsePlatformsListed(flipChecklist) — JSON parse za completed korake listed_bolha/listed_vinted/listed_other → array ['Bolha', 'Vinted', 'Facebook']. (Opomba: v originalu selectan vendar neposredno neuporabljen — preserved za konsistentnost in morebitno prihodnjo uporabo v sibling listing-refresh-scheduler endpointu)
+    * clampPrice(price, buyPrice) — clamp [0.5×, 1.2×] buyPrice
+    * clampExpectedDays(value) — clamp [1, 60]
+    * normalizePlatform(raw) — map v KNOWN_PLATFORMS
+    * deterministicPlan(item) — fallback plan (10% popust, cross-post preferenca, SEO title suffix, Saturday 10:00, urgency-based expectedSellTimeDays)
+  - Constants ohranjene: DAY_MS, SOURCE_TO_PLATFORM (12 mappings), KNOWN_PLATFORMS, VALID_STRATEGIES, VALID_URGENCIES, DAYS_OF_WEEK
+  - Types ohranjene: FlipChecklistStep, HeldItemComputed, AiRelistPlan, ScheduleItem, CachedPayload + nov HeldTradeRow
+  - Caching preserved: getCachedAI/setCachedAI z 6h TTL, cacheKey = `auto-relisting-scheduler:${JSON.stringify(heldItemIds)}` (identičen originalu). Cache hit response: { ok: true, ...cached, cached: true }
+  - Graceful AI fallback preserved: try { raw = await callAi(prompt); parsed = parseAi(raw); plansByTradeId = parseAiPlans(parsed); aiUsed = plansByTradeId.size > 0; } catch (err) { logger.warn('/api/ai/auto-relisting-scheduler', 'AI call failed — using deterministic fallback', err); } — če AI faila, plansByTradeId ostane prazen in mergePlans uporabi samo deterministicPlan za vsak item (aiUsed = false)
+  - Odstranjen manual boilerplate: try/catch z logger.error + NextResponse.json 500 (zdej v withAiRoute), getSettingsRow + AiSettings build (zdej v withAiRoute ctx.aiSettings), manual checkRateLimit + rateLimitResponse (zdej v withAiRoute), direct callProviderForRaw (zdej ctx.callAi z vgrajenim fallback provider try/catch — konsistentno z vsemi prejšnjimi v8.94.x migracijami), parseJsonLooseExported (zdej ctx.parseAi)
+  - enforceBudget: true — preveri AI budget PRED klicem (1 AI klic na zahtevo); avtomatsko recordAiCall PO uspehu (1 recordAiCall na zahtevo — konsistentno z vsemi prejšnjimi v8.94.x migracijami kjer je 1 recordAiCall na zahtevo ne glede na število itemov v batch-u)
+  - TypeScript check: `bunx tsc --noEmit` — 0 napak
+  - ESLint check: `bunx eslint src/app/api/ai/auto-relisting-scheduler/route.ts` — 0 napak (edina pravila ki bi se sprožila: @typescript-eslint/no-empty-object-type za AutoRelistingSchedulerInput — že mitigirana z eslint-disable-next-line direktivo)
+
+Stage Summary:
+- MODIFIED: src/app/api/ai/auto-relisting-scheduler/route.ts
+- Lines: 573 → 625
+- enforceBudget: true
+- Lint: 0, Typecheck: 0
+---
+Task ID: v8.94.8-d
+Agent: Task agent (autonomous-trading migration)
+Task: Migrate /api/ai/autonomous-trading to withAiRoute
+
+Work Log:
+- Prebral kontekst: worklog.md (v8.94 / v8.94.1–v8.94.7 vnose za migracijski vzorec), src/lib/with-ai-route.ts (helper API: withAiRoute, AI_ROUTE_DEFAULTS, ApiRouteError, AiRouteContext, enforceBudget), src/lib/api-response.ts (apiOk pass-through; apiError/apiBadRequest/apiNotFound helperji)
+- Prebral referenčni primer 1: src/app/api/ai/deduplicate/route.ts (parseBody/handler + ekstrahirane pomožne funkcije + graceful AI fallback + enforceBudget: true)
+- Prebral referenčni primer 2: src/app/api/ai/buyer-intent/route.ts (podobna trade-stat tematika z avgDaysToSell/avgRoi compute, buildPrompt + transformIntent ekstrahirani zunaj handler-ja)
+- Prebral original src/app/api/ai/autonomous-trading/route.ts (198 vrstic — inline POST handler z manual try/catch z logger.error, manual getSettingsRow + AiSettings object build, manual fallback provider try/catch (callProviderForRaw → fallback AiSettings → re-call), manual parseJsonLooseExported, manual aiCallsToday/aiCallsDate counter increment na koncu z datum reset logiko, obsežen prompt z BUY/SELL pravili in SAFEGUARDS + JSON shemo config/buy_rules/sell_rules/safeguards/status/projected/next_actions/summary)
+- ESLint config preverjen (no-explicit-any: off — `as any` cast dovoljen; no-unused-vars: off; @typescript-eslint/no-unused-vars: off)
+- Migracija na withAiRoute<AutonomousTradingInput> z enforceBudget: true:
+  - Uvoz: withAiRoute, AI_ROUTE_DEFAULTS, ApiRouteError, type AiRouteContext iz @/lib/with-ai-route + apiOk, apiBadRequest iz @/lib/api-response (template uvoz; apiBadRequest/ApiRouteError unused v tem endpointu — vsi input-i imajo defaults, ni 404 primera; no-unused-vars: off)
+  - export const { runtime, dynamic } = AI_ROUTE_DEFAULTS; export const maxDuration = 90 (identično originalu)
+  - interface AutonomousTradingInput { mode: "paper"|"live"; maxBudget: number; maxTradesPerDay: number }
+  - interface SoldTradeRow (db.trade.findMany select shape: category/buyPrice/sellPrice/buyDate/sellDate) za tipiziran kontrakt computeTradeStats pomožne funkcije
+  - interface PromptParams (mode/maxBudget/maxTradesPerDay/heldCount/soldCount/totalRealized/avgRoi/monitorCount) za tipiziran kontrakt buildPrompt pomožne funkcije
+  - parseBody: razčleni mode (string check paper|live, default paper), maxBudget (Math.max(0, Number||1000)), maxTradesPerDay (Math.max(1, Math.min(20, Number||5))) — IDENTIČNO originalu vključno z istim clamp logiko (maxTradesPerDay 1-20, maxBudget floor 0)
+  - No validateInput — vsi input-i imajo defaults
+  - enforceBudget: true — preveri AI budget PRED klicem, avtomatsko recordAiCall PO uspehu (nadomešča ročni aiCallsToday/aiCallsDate Settings.update z datum reset logiko iz originala L192-194)
+  - handler ~30 vrstic: db.trade.findMany (status:held, take 50, listing select aiEstimatedValue+dealScore) + db.trade.findMany (status:sold, sellPrice/sellDate not null, take 200) + db.monitor.findMany (isActive:true, take 20) — IDENTIČNO originalu vključno z select shape-i → computeTradeStats → buildPrompt → ctx.callAi → ctx.parseAi → transformAutonomous → apiOk({ ok:true, autonomous, version:"v6.40.0 MILESTONE" })
+- ctx.callAi(prompt) nadomesti callProviderForRaw + manual fallback try/catch (helper interno upravlja primary+fallback provider z retry; original L125-132 manual fallback blok odstranjen)
+- ctx.parseAi(raw) nadomesti parseJsonLooseExported
+- ctx.db nadomesti direkten import db
+- Ekstrahirane čiste testabilne pomožne funkcije OUTSIDE handler:
+  1. computeTradeStats(soldTrades) — pure; totalRealized = reduce (s + (sellPrice ?? 0) - buyPrice), avgRoi = soldTrades.length > 0 ? Math.round(reduce(s + (buyPrice > 0 ? (sellPrice - buyPrice)/buyPrice * 100 : 0)) / length) : 0. Aritmetika IDENTIČNA originalu L36-37.
+  2. buildPrompt(p: PromptParams) — pure; vrne celoten AI prompt z NAČIN/MAX BUDGET/MAX TRADES interpolacijo + TRENUTNO statistiko + BUY RULES (6), SELL RULES (6), SAFEGUARDS (6) sekcijami + JSON shemo (insights/mode/config/buy_rules/sell_rules/safeguards/status/projected/next_actions/summary). Besedilo IDENTIČNO originalu v6.40 (byte-for-byte vključno z ${p.mode === "paper" ? "simulacija brez pravih nakupov" : "pravi nakupi z realnim denarjem"} interpolacijo in ${Math.round(p.totalRealized)}€ formatom).
+  3. transformAutonomous(parsed, mode, maxBudget, maxTradesPerDay) — pure; validira + clamp-a parsed → autonomous objekt z 9 sekcijami (insights slice 500, config z 6 polji, buyRules slice 8, sellRules slice 8, safeguards slice 8, status z 8 polji, projected z 5 polji, nextActions slice 6, summary z 5 polji). Vsa numerična pravila (Math.max/min, round, slice, ključni defaulti 1000/5/maxBudget*0.1/20/50/0/50) IDENTIČNA originalu L136-190. paperMode = mode === "paper" in currentMode = mode — uporabljata ORIGINALNI input mode (ne parsed vrednost) — IDENTIČNO originalu. Vsi whitelist array-i (["buy","sell","monitor","wait"] za type, ["high","medium","low"] za priority, ["paper","live"] za recommendedMode) IDENTIČNI originalu. autoExecuteEligible izhaja iz a?.auto_execute (podčrtaj oblika iz AI odgovora) — IDENTIČNO originalu.
+- Odstranjeno (boilerplate, ki ga helper obravnava):
+  - Uvoz: NextRequest, NextResponse, db, getSettingsRow, callProviderForRaw, parseJsonLooseExported, AiProviderType, AiSettings, logger (helper interno upravlja)
+  - Manual try/catch z logger.error + NextResponse.json { error } 500 (helper interno catch-a in vrne apiError 500)
+  - Manual getSettingsRow() + AiSettings object build (helper interno load-a settings)
+  - Manual fallback provider try/catch (helperjev callAi že ima fallback)
+  - Manual aiCallsDate/aiCallsToday Settings.update z datum reset logiko (enforceBudget: true → auto recordAiCall PO uspehu)
+  - NextResponse.json za success (apiOk pass-through ohrani payload vključno z ok:true in version field)
+- Vedenje ohranjeno (CRITICAL: same input → same output):
+  - Enak input → enak output: response struktura { ok: true, autonomous: { insights, mode, config, buyRules, sellRules, safeguards, status, projected, nextActions, summary }, version: "v6.40.0 MILESTONE" } identična
+  - Prompt tekst + JSON schema byte-identičen originalu (vključno z BUY/SELL pravili, SAFEGUARDS, ${mode}/${maxBudget}€/${maxTradesPerDay}/${heldCount}/${soldCount}/${Math.round(totalRealized)}€/${avgRoi}%/${monitorCount} interpolacijami)
+  - Vsa clamp/slice/whitelist pravila v transformAutonomous IDENTIČNA originalu (slice limiti 8/8/8/6, char cap 100/150/200/500, clamp 0-100 za vse score, Math.round za monetarne vrednosti)
+  - mode validacija (paper|live, default paper) IDENTIČNA originalu
+  - maxBudget clamp (Math.max(0, Number||1000)) in maxTradesPerDay clamp (Math.max(1, Math.min(20, Number||5))) IDENTIČNA originalu
+  - Sprememba error response konvencije: original 500 `{ error }` → wrapper-jev `{ ok: false, error }` (konsistentno z vsemi prejšnjimi v8.94.x migracijami; 400/404 primera v tem endpointu nista možna — vsi input-i imajo defaults)
+- Verifikacija:
+  - bunx tsc --noEmit: 0 errors v src/app/api/ai/autonomous-trading/route.ts ✨ (pre-existing 6 TS2305 errors v src/components/dashboard/ai-hub/automation/auto-pilot-card.tsx so posledica konkurentnega task agent-a, ki modificira types.ts — niso vezani na to migracijo)
+  - bunx eslint src/app/api/ai/autonomous-trading/route.ts: 0 errors ✨
+
+Stage Summary:
+- MODIFIED: src/app/api/ai/autonomous-trading/route.ts
+- Lines: 198 → 265 (+67; ~34% rast zaradi tipiziranih SoldTradeRow/PromptParams interfaces + 3 ekstrahirane testabilne pomožne funkcije z identično logiko razbijanjem monolithic inline transformacije — handler sam ~30 vrstic, prej ~180 z inline prompt/transform/AI-call/counter logiko)
+- enforceBudget: true
+- Lint: 0, Typecheck: 0
+
+---
+Task ID: v8.94.8-c
+Agent: Task agent (auto-listing-draft migration)
+Task: Migrate /api/ai/auto-listing-draft to withAiRoute
+
+Work Log:
+- Prebral kontekst: worklog.md (v8.94 → v8.94.7 vnose, še posebej v8.94.4-e generate-listing in v8.94.7-c buyer-retention-forecaster za AI-fallback vzorec) in src/lib/with-ai-route.ts (helper API: withAiRoute, AI_ROUTE_DEFAULTS, ApiRouteError, AiRouteContext, enforceBudget)
+- Prebral referenčni primer 1: src/app/api/ai/deduplicate/route.ts (parseBody/handler + ekstrahirane pomožne funkcije + graceful AI fallback preko try/catch okoli callAi)
+- Prebral referenčni primer 2: src/app/api/ai/generate-listing/route.ts (similar listing generator — trade-based input, ApiRouteError 404 v resolveListingFields helperju, buildPrompt + transformListingResult pure funkcije OUTSIDE handler)
+- Prebral src/lib/api-response.ts (apiOk pass-through z ok:true v data payload za backward compat; apiBadRequest/apiNotFound/apiError helperji)
+- Prebral original src/app/api/ai/auto-listing-draft/route.ts (156 vrstic — inline POST handler z manual try/catch, getSettingsRow + AiSettings build, manual fallback provider try/catch, parseJsonLooseExported, deterministic baseline draft fallback ko AI fail-a in fallback provider manjka)
+- ESLint config preverjen (no-explicit-any: off — `as any` cast dovoljen; no-empty-object-type ON — AutoListingDraftInput interface ima polja, ni potreben eslint-disable-next-line)
+- Migracija na withAiRoute<AutoListingDraftInput> z enforceBudget: true:
+  - Uvoz: withAiRoute, AI_ROUTE_DEFAULTS, ApiRouteError, type AiRouteContext iz @/lib/with-ai-route + apiOk iz @/lib/api-response (BREZ apiBadRequest — validateInput vrne string in helper interno uporabi apiBadRequest; BREZ apiNotFound — 404 primer se rešuje preko throw ApiRouteError v resolveTrade helper-ju)
+  - export const { runtime, dynamic } = AI_ROUTE_DEFAULTS; export const maxDuration = 90 (identično originalu)
+  - interface AutoListingDraftInput { tradeId: string; platform: string } — oba polja sta obvezna v tipu (platform default 'bolha' se resolve-a v parseBody)
+  - parseBody: razčleni tradeId (String coercion, '' kadar odsoten) in platform (String coercion, 'bolha' default kadar odsoten) iz body-ja z {} fallback
+  - validateInput: vrne 'tradeId je obvezen' kadar tradeId manjka (IDENTIČNO originalnemu 400 error message-u)
+  - enforceBudget: true — preveri AI budget PRED klicem, avtomatsko recordAiCall PO uspehu (nadomešča ročni settings.aiCallsToday/aiCallsDate counter iz originala — original ga sicer NI imel, ampak enforceBudget je konsistentno z vsemi prejšnjimi v8.94.x migracijami in je additive, ne breaking)
+  - handler ~35 vrstic: resolveTrade(tradeId, db) [throw ApiRouteError 404] → compute totalCost/estValue/originalDesc/imageAnalysis → buildDraftPrompt → try { ctx.callAi } catch { return apiOk(buildFallbackResponse) } → ctx.parseAi → buildSuccessResponse → apiOk
+- ctx.callAi(prompt) nadomesti callProviderForRaw + manual getSettingsRow + AiSettings konstrukt + notranji try/catch fallback (helper interno upravlja primary → fallback switch; ohranjeno je originalno vedenje da ko tudi fallback fail-a ali manjka, vržemo deterministic baseline draft — IDENTIČNO originalu)
+- ctx.parseAi(raw) nadomesti parseJsonLooseExported (vrne unknown; transformirano preko `as any` cast-a v transformDraft)
+- ctx.db nadomesti direkten import db
+- Ekstrahirane čiste testabilne funkcije OUTSIDE handler:
+  1. resolveTrade(tradeId, db) — async (db); pridobi trade iz DB (findUnique z 8 select polji + listing 6 select polj); throw ApiRouteError('Trade ne obstaja', 404) kadar trade manjka; vrne trade kot TradeRow (struct cast `as TradeRow` za type-safety pomožnih funkcij)
+  2. PLATFORM_RULES const (Record<string, string>) — besedilo IDENTIČNO originalu (bolha/vinted/facebook pravila z vsemi vrsticami)
+  3. buildDraftPrompt(params) — pure; zgradi celoten AI prompt z ITEM sekcijo, platform rules lookup (default bolha), CENA sekcijo in JSON shemo — besedilo byte-identično originalu v7.48
+  4. transformDraft(parsed, trade, totalCost, estValue) — pure; validacija + slice (title 80, category 100, condition 30, description 2000, tags 10×30, location 50, shipping 100, payment 100, listingTips 5×200) + Math.round(Number()) za price/expectedProfitEur + Math.max(1, Math.min(60, Number())) za expectedSellTimeDays + vsi default fallback-i (trade.title, 'Splošno', 'rabajeno-dobro', 'Ljubljana', 'Pošta Slovenije, osebni prevzem', 'Gotovina, nakazilo', 14, estValue*0.95-totalCost) — IDENTIČNO originalu
+  5. buildSuccessResponse(parsed, trade, totalCost, estValue) — pure; vrne { ok:true, draft: transformDraft(...), trade: { id, title, buyPrice: totalCost, estValue } } — IDENTIČNO originalu
+  6. buildFallbackResponse(trade, totalCost, estValue) — pure; vrne deterministic baseline draft { ok:true, draft: { title: trade.title.slice(0,80), category: trade.category || 'Splošno', condition: 'rabajeno-dobro', price: Math.round(estValue*0.95), description: `${trade.title}\n\nStanje: rabljeno, dobro ohranjeno.\n\nPrevzem: osebno, po dogovoru.\nPošiljanje: Pošta Slovenije.`, tags: [], listingTips: ['Dodaj 6+ fotografij', 'Odgovarjaj hitro na sporočila'], expectedSellTimeDays: 14, expectedProfitEur: Math.round(estValue*0.95 - totalCost) }, note: 'AI ni na voljo — osnovni predlog.' } — IDENTIČNO originalu (vključno z odsotnostjo trade/shipping/payment/location polj v fallback draft-u)
+  7. interface TradeRow — eksplicitni tip za DB query select output (omogoča testiranje pomožnih funkcij brez Prisma tipa)
+- Odstranjeno (boilerplate, ki ga helper obravnava):
+  - Uvoz: NextRequest, NextResponse, db, getSettingsRow, callProviderForRaw, parseJsonLooseExported, AiProviderType, AiSettings, logger (helper interno upravlja; apiOk wrap-a; db pride preko ctx.db; ApiRouteError handla 404)
+  - Manual try/catch z logger.error + NextResponse.json { error } 500 (helper interno catch-a in vrne apiError 500)
+  - Manual getSettingsRow() + AiSettings object konstrukt (helper interno load-a settings in poda preko ctx.aiSettings)
+  - Manual fallback provider try/catch znotraj handler-ja (helperjev callAi že interno upravlja primary → fallback switch); ohranjen je outer try/catch okoli ctx.callAi da na končni AI fail (tudi fallback fail-a) vržemo deterministic baseline draft — IDENTIČNO originalu
+  - export const runtime = 'nodejs'; export const dynamic = 'force-dynamic'; (zamenjano z AI_ROUTE_DEFAULTS re-export — isti vrednosti)
+- Vedenje ohranjeno (CRITICAL: same input → same output):
+  * isti POST method (default method: 'POST' v withAiRoute)
+  * isti maxDuration = 90 (original 90, AI_ROUTE_DEFAULTS.maxDuration 90 — eksplicitno za clartnost)
+  * isti DB query (findUnique z 8 select polji + listing 6 select polj) — IDENTIČNO originalu
+  * isti 400 error path: tradeId manjka → validateInput vrne 'tradeId je obvezen' → helper interno vrne apiBadRequest (response shape: { ok: false, error } namesto original { error } — konsistentno z vsemi prejšnjimi v8.94.x migracijami; 400 status ohranjen)
+  * isti 404 error path: trade ne obstaja → resolveTrade throw ApiRouteError('Trade ne obstaja', 404) → helper interno vrne NextResponse z 404 status (response shape: { ok: false, error } namesto original { error } — konsistentno z vsemi prejšnjimi v8.94.x migracijami; 404 status ohranjen)
+  * isti AI prompt (ITEM sekcija, platform rules lookup z bolha default, CENA sekcija z estValue*0.95 priporočilo, JSON shema z 12 polji) — byte-identično originalu
+  * isti computed derived fields: totalCost = buyPrice + buyFees (z 0 fallback preko `?? 0`), estValue = aiEstimatedValue ?? Math.round(totalCost * 1.2), originalDesc = detailDescription || description || '', imageAnalysis = aiImageAnalysis || '' — IDENTIČNO originalu
+  * isti success response: { ok: true, draft: { 12 polj z vsemi slice/clamp/default pravili }, trade: { id, title, buyPrice: totalCost, estValue } } — IDENTIČNO originalu
+  * isti fallback response: { ok: true, draft: { 9 polj brez shipping/payment/location, z drugačnim opisom in listingTips array-em }, note: 'AI ni na voljo — osnovni predlog.' } — IDENTIČNO originalu (fallback draft nima trade polja v outer response — ohranjeno)
+  * isti trigger za fallback: AI call (po fallback switch-u) throw-a → catch blok vrne baseline draft (apiOk z 200 status)
+  * vsi Math.round/Math.max/Math.min/slice/Number/?? default pravila IDENTIČNA originalu
+  * Sprememba error response konvencije: original { error } → wrapper-jev { ok: false, error } za 400/404/500 (konsistentno z vsemi prejšnjimi v8.94.x migracijami; success in fallback response shape nespremenjen — apiOk pass-through z originalno strukturo)
+- Verifikacija:
+  - bunx tsc --noEmit: 0 errors v mojem file-u (6 pre-existing errorjev v src/components/dashboard/ai-hub/automation/auto-pilot-card.tsx so posledica paralelnega agent-a ki je modificiral automation/types.ts — ne moja sprememba; stash test potrdil: z in brez moje datoteke je število napak enako)
+  - bunx eslint src/app/api/ai/auto-listing-draft/route.ts: 0 errors (nobena prazna interface — AutoListingDraftInput ima 2 polji, ni potreben eslint-disable-next-line; `as any` cast dovoljen ker je @typescript-eslint/no-explicit-any: off)
+
+Stage Summary:
+- MODIFIED: src/app/api/ai/auto-listing-draft/route.ts
+- Lines: 156 → 273 (+117; ~75% rast zaradi tipizirane TradeRow interface + 6 ekstrahiranih testabilnih pomožnih funkcij (resolveTrade, PLATFORM_RULES const, buildDraftPrompt, transformDraft, buildSuccessResponse, buildFallbackResponse) z identično logiko — handler sam ~35 vrstic, prej ~135 z inline prompt/settings/fallback/parse/transform logiko)
+- enforceBudget: true
+- Lint: 0, Typecheck: 0
+
+---
+Task ID: v8.94.8-e
+Agent: Task agent (batch-deal-evaluator migration)
+Task: Migrate /api/ai/batch-deal-evaluator to withAiRoute
+
+Work Log:
+- Prebral kontekst: worklog.md (v8.94 → v8.94.8 vnose — v8.94.8-a abtest-results za SoldTradeRow pattern, v8.94.7-c buyer-retention-forecaster za največjo migracijo z ekstrahiranimi helperji) za pattern understanding
+- Prebral src/lib/with-ai-route.ts (helper API: withAiRoute<T>, AI_ROUTE_DEFAULTS, ApiRouteError, AiRouteContext z callAi/parseAi/db/logger/aiSettings/req; enforceBudget opcijska flag ki avtomatsko pokliče checkAiBudget PRED klicem in recordAiCall PO uspehu; rateLimit default 20/min; method default 'POST')
+- Prebral referenčni primer 1: src/app/api/ai/deduplicate/route.ts (v8.94-refactor — batch processing vzorec z withAiRoute<DeduplicateInput>, parseBody async z Number.isFinite clamp-i, brez validateInput ker vsi input-i imajo defaults, 3 pure pomožne funkcije OUTSIDE handler (normalizeTitle, findExactTitleMatches, buildExactDuplicate) + async aiDeduplicate helper ki prejme callAi/parseAi preko AiRouteContext['callAi']/['parseAi'] tipov, apiOk za konsistentne uspešne response)
+- Prebral referenčni primer 2: src/app/api/ai/categorize/route.ts (v8.94-refactor — podobna batch tematika z buildCategorizePrompt/saveCategoriesToDb/incrementAiCallCounter ekstrahiranimi kot pomožne funkcije, ApiRouteError thrown za 404 iz resolveListings helper, validateInput vrne string ali null, handler ~30 vrstic)
+- Prebral src/lib/api-response.ts (apiOk(data) ne dodaja sam ok:true — mora biti eksplicitno v data; apiBadRequest/apiNotFound za 4xx; apiError za 500 z avtomatskim logger.error)
+- Prebral original src/app/api/ai/batch-deal-evaluator/route.ts (191 vrstic — manual try/catch z logger.error; manual getSettingsRow + AiSettings konstrukt; manual callProviderForRaw z notranjim try/catch fallback na secondary provider; manual parseJsonLooseExported; manual aiCallsToday increment; 3 early-return path-i: empty candidates, all cached, success; batch processing do 50 oglasov v enem AI klicu; anti-hallucination clamp estValue na 3x/0.3x asking price)
+- Migracija v withAiRoute<BatchDealEvaluatorInput> z enforceBudget: true:
+  - uvozi: withAiRoute, AI_ROUTE_DEFAULTS, ApiRouteError, type AiRouteContext iz @/lib/with-ai-route; apiOk, apiBadRequest iz @/lib/api-response; filterForEvaluation iz @/lib/ai-cache; GROUNDING_PROMPT_SUFFIX iz @/lib/anti-hallucination (ApiRouteError/apiBadRequest uvoženi po standardnem migration pattern-u; endpoint nima 404/400 poti trenutno — pripravljeni za future razširitve)
+  - export const { runtime, dynamic } = AI_ROUTE_DEFAULTS; export const maxDuration = 120 (original)
+  - interface BatchDealEvaluatorInput { monitorId?: string; limit: number } (2 polja — NE prazna, zato brez eslint-disable-next-line)
+  - interface BatchListing { id, title, price: number|null, priceText, description: string|null, location: string|null, monitor: { source: string|null; name: string|null } | null } — minimal tip za helper funkcije (testabilne brez Prisma client)
+  - parseBody: async (req) => { body = await req.json().catch(() => ({})); return { monitorId: body?.monitorId ? String(...) : undefined, limit: Math.min(Math.max(Number(body?.limit) || 50, 1), MAX_BATCH_SIZE) } } — IDENTIČNO originalu (default 50, clamp 1-50)
+  - brez validateInput — vsi input-i imajo defaults (konsistentno z deduplicate reference)
+  - enforceBudget: true — preveri AI budget PRED klicem; avtomatsko recordAiCall PO uspehu (1 recordAiCall na zahtevo, ne per-listing — konsistentno z vsemi prejšnjimi v8.94.x migracijami; original je imel manual aiCallsToday increment ki je zdaj odstranjen)
+  - handler ~70 vrstic: db.listing.findMany (isHidden:false, monitorId filter, OR aiEvaluatedAt null/stale 6h, 8 select polj, orderBy firstSeenAt desc, take limit*2) → early return ko 0 candidates (apiOk z ok:true + evaluated:0 + skipped:0 + message) → filterForEvaluation cache filter → early return ko 0 toEvaluate (apiOk z ok:true + evaluated:0 + skipped:savedCalls + message) → batch = toEvaluate.slice(0, 50) → batchListings = candidates.filter → buildBatchPrompt → ctx.callAi(prompt) → ctx.parseAi(raw) → extractEvaluations(parsed) → loop save per-listing (sanitizeEvaluationForDb → db.listing.update z dealScore/dealScoreReason/dealScoreComputedAt/aiScore/aiRisk/aiVerdict/aiReason/aiEstimatedValue/aiEvaluatedAt; try/catch skip individual save errors) → ctx.logger.info batch summary → apiOk final response z ok:true + evaluated/skipped/totalProcessed/aiCallsMade:1/costSavingVsIndividual + results array
+  - ctx.callAi(prompt) nadomesti callProviderForRaw + manual getSettingsRow + AiSettings konstrukt + notranji try/catch fallback na secondary provider (helper interno upravlja primary → fallback switch; če oba failata, helper catch-a in vrne apiError 500 — konsistentno z vsemi v8.94.x migracijami)
+  - ctx.parseAi(raw) nadomesti parseJsonLooseExported (vrne unknown; extractEvaluations interno tipizira)
+  - ctx.db nadomesti direkten import db
+  - ctx.logger nadomesti direkten import logger (info za batch summary — IDENTIČNO besedilo: 'Batch: ${savedCount} evaluated, ${savedCalls} cached, 1 AI call')
+  - apiOk({ ok: true, ... }) ohranja originalno response strukturo z eksplicitno ok:true za backward compat (apiOk ne dodaja sam ok:true)
+- Ekstrahirane testabilne pomožne funkcije OUTSIDE handler (4 + 1 interface):
+  1. extractEvaluations(parsed: unknown): Array<Record<string, unknown>> — pure; defensive parse unknown → { evaluations?: unknown } → Array.isArray check → filter elementov ki so non-null object z truthy id; nadomešča originalni inline `(parsed?.evaluations || []).filter((e: any) => e?.id)` z eksplicitno tipizacijo
+  2. buildBatchPrompt(batchListings: BatchListing[]): string — pure; zgradi listingsText (numbered + [ID:...] format z title/priceText/location/source/description.slice(0,100)) + celoten prompt (AI analitik intro, OGLASI count, 5 evaluation pravila, PRAVILA verdict logic, JSON schema z evaluations array) + GROUNDING_PROMPT_SUFFIX — byte-identično originalu (vključno z "Bodii konzervativen" tipom)
+  3. interface ListingAiUpdate — Prisma update data shape za eno AI evalvacijo (dealScore, dealScoreReason, dealScoreComputedAt, aiScore, aiRisk, aiVerdict, aiReason, aiEstimatedValue, aiEvaluatedAt)
+  4. sanitizeEvaluationForDb(ev: Record<string, unknown>, batchListings: BatchListing[]): ListingAiUpdate | null — pure; clamp dealScore 0-100 (Math.round), clamp risk 1-10 (Math.round), verdict whitelist (PRILIKA/SUMNJIVO/NEZANIMIVO default NEZANIMIVO), estValue Math.max(0, Math.round) ali null; ANTI-HALLUCINATION: clamp finalEstValue na 3x asking price max (→ 2x), 0.3x min (→ 0.5x) ko listing.price > 0; return null če id manjka — IDENTIČNO originalu (vsa Math.round in clamp logika)
+  5. sanitizeResult(e: Record<string, unknown>): { id, dealScore, verdict, estimatedValue, risk, reason } — pure; transform parsed AI evaluation v response result object (id String, dealScore clamp 0-100 round, verdict String default NEZANIMIVO, estimatedValue Math.round ali null, risk clamp 1-10 round, reason slice 0,100) — IDENTIČNO originalnemu `evaluations.map((e: any) => ({...}))`
+- Odstranjeno (boilerplate, ki ga helper obravnava):
+  - manual try/catch z logger.error + NextResponse.json error na vrhu handler-ja (helper interno catch-a in vrne apiError 500)
+  - uvozi: NextRequest (helper interno prejme req preko ctx), NextResponse (apiOk wrap-a; helper interno uporablja), db (preko ctx.db), logger (preko ctx.logger), getSettingsRow, callProviderForRaw, parseJsonLooseExported, AiSettings, AiProviderType (helper interno upravlja vse)
+  - manual getSettingsRow + AiSettings konstrukt (helper naloži settings in poda preko ctx.aiSettings)
+  - manual fallback provider try/catch znotraj handler-ja (helper interno upravlja primary → fallback switch preko ctx.callAi)
+  - manual aiCallsToday increment (enforceBudget: true avtomatsko pokliče recordAiCall PO uspehu — 1 na zahtevo; original je imel manual `if (settings.aiCallsDate !== today) update else increment` ki je zdaj odstranjen)
+- Vedenje ohranjeno (CRITICAL: same input → same output):
+  * isti DB query (isHidden:false, monitorId filter, OR aiEvaluatedAt null/stale 6h, 8 select polj, orderBy firstSeenAt desc, take limit*2) — IDENTIČNO originalu
+  * isti cache filter (filterForEvaluation z id/price/title) — IDENTIČNO originalu
+  * isti batch size limit (MAX_BATCH_SIZE=50, slice 0-50) — IDENTIČNO originalu
+  * isti batchListings filter (candidates.filter z batch.some id match) — IDENTIČNO originalu
+  * isti prompt (AI analitik intro, OGLASI count, listingsText format, 5 pravila, JSON schema, GROUNDING_PROMPT_SUFFIX) — byte-identično originalu
+  * isti AI klic (1 klic za cel batch — aiCallsMade:1) — IDENTIČNO originalu
+  * isti parse (extractEvaluations filter e?.id) — IDENTIČNO originalu
+  * isti DB save per-listing (dealScore/dealScoreReason slice 0,200/dealScoreComputedAt/aiScore=Math.round(dealScore/10) clamp 1-10/aiRisk/aiVerdict whitelist/aiReason slice 0,600/aiEstimatedValue z anti-hallucination clamp/aiEvaluatedAt) — IDENTIČNO originalu (vsa Math.round, clamp, slice, whitelist logika)
+  * isti anti-hallucination clamp (finalEstValue > price*3 → price*2; finalEstValue < price*0.3 → price*0.5; samo ko listing.price > 0) — IDENTIČNO originalu
+  * isti try/catch skip individual save errors (prazen catch block) — IDENTIČNO originalu
+  * isti logger.info batch summary message — IDENTIČNO originalu (zdaj preko ctx.logger)
+  * isti final response ({ ok:true, evaluated, skipped, totalProcessed, aiCallsMade:1, costSavingVsIndividual, results }) — IDENTIČNO originalu
+  * isti results array (id String, dealScore clamp 0-100 round, verdict String default NEZANIMIVO, estimatedValue Math.round ali null, risk clamp 1-10 round, reason slice 0,100) — IDENTIČNO originalu
+  * isti early-return response-i (empty candidates: ok:true+evaluated:0+skipped:0+message; all cached: ok:true+evaluated:0+skipped:savedCalls+message) — IDENTIČNO originalu
+  * CRITICAL: ok:true field ohranjen v vseh treh responsih (apiOk ne dodaja sam — mora biti eksplicitno v data) — IDENTIČNO originalu
+- Verifikacija:
+  - bunx tsc --noEmit: 0 errors v batch-deal-evaluator/route.ts ✨ (6 pre-existing errors v src/components/dashboard/ai-hub/automation/auto-pilot-card.tsx so iz drugih agentov uncommitted del — ne povzročena s to migracijo; preverjeno z git stash push samo tega file-a: 6 errors obstajajo brez moje spremembe)
+  - bunx eslint src/app/api/ai/batch-deal-evaluator/route.ts: 0 errors ✨ (nobena prazna interface — BatchDealEvaluatorInput ima 2 polji, BatchListing ima 7 polji, ListingAiUpdate ima 9 polj; ni potreben eslint-disable-next-line)
+
+Stage Summary:
+- MODIFIED: src/app/api/ai/batch-deal-evaluator/route.ts
+- Lines: 191 → 240 (+49; ~+26% rast zaradi 4 ekstrahiranih pomožnih funkcij z eksplicitnimi tipi (extractEvaluations, buildBatchPrompt, sanitizeEvaluationForDb, sanitizeResult) + 2 novih interface-ov (BatchListing, ListingAiUpdate) + BatchDealEvaluatorInput interface — handler sam ~70 vrstic, prej ~170 z inline try/catch/settings/prompt-build/parse/save/counter logiko)
+- enforceBudget: true
+- Lint: 0, Typecheck: 0
+
+---
+Task ID: v8.94.8-split-autopilot
+Agent: Task agent (auto-pilot-card.tsx split)
+Task: Split auto-pilot-card.tsx (1176 lines) into sub-components
+
+Work Log:
+- Prebral worklog.md (v8.94 / v8.94.1–7 vnose, še posebej v8.94.6-split za automation-cards.tsx in v8.94.7-split za system-cards.tsx split vzorce) za kontekst — isti container/presentational split pattern
+- Prebral src/components/dashboard/ai-hub/automation/auto-pilot-card.tsx (1176 vrstic) — struktura:
+  - L1-31: module docstring (v8.30/v8.31 — purple/indigo, autonomous execution)
+  - L33-75: imports (React, Badge, Button, Skeleton, Dialog, 17 lucide icons, sonner, cn, DOMAIN_LABELS + 6 AutoPilot* types iz ./types)
+  - L77-108: v8.30 comment block (safety rules, card features)
+  - L109-1090: AutoPilotCard component (~981 vrstic):
+    - L110-132: 18 useState hooks (stats, loading, error, history, dailyLimitInput/BudgetInput, toggling/running/rollingBackId, aggressivePending/Msg, togglingMode, clearingAnomaly)
+    - L134-153: fetchStats useCallback + useEffect
+    - L156-184: toggleEnabled useCallback
+    - L187-214: saveConfig useCallback
+    - L217-243: runNow useCallback
+    - L246-272: fetchHistory useCallback
+    - L275-304: rollbackDraft useCallback
+    - L309-338: handleEnableAggressive useCallback (v8.31 double-confirm)
+    - L341-362: handleDisableAggressive useCallback
+    - L365-384: handleClearAnomaly useCallback
+    - L386-409: 18 derived state variables (enabled, mode, todayAutoExecuted/BudgetUsed/Limit/Budget, limitPct/budgetPct, allTimeTotal/Rollback/rollbackRate, dirty, anomaly*, hourlyExecCount/WindowStart, isAggressive, displayLimit/Budget)
+    - L411-1088: JSX return:
+      - L412-421: outer gradient div (anomaly/agg/safe color variants)
+      - L423-460: header (Bot icon, v8.31 badge, mode badge, refresh button)
+      - L462-472: subtitle paragraph
+      - L474-481: loading skeleton
+      - L483-492: error state
+      - L495-965: main content (`!loading && !error && stats &&` wrapper):
+        - L495-529: AnomalyBanner JSX (~35 lines) ← EXTRACTED
+        - L533-552: AggressiveActiveBanner JSX (~20 lines) ← EXTRACTED
+        - L556-575: AggressivePendingBanner JSX (~20 lines) ← EXTRACTED
+        - L578-641: Master switch JSX (~64 lines, inline — kept in main)
+        - L644-774: ConfigPanel JSX (~131 lines: sliders + mode selector + save button) ← EXTRACTED
+        - L776-871: StatsDisplay JSX (~96 lines: today progress bars + all-time 3-col grid) ← EXTRACTED
+        - L873-896: Action buttons row (~24 lines, inline — kept in main)
+        - L898-935: Threshold comparison box (~38 lines, inline — kept in main)
+        - L937-953: Safety rules box (~17 lines, inline — kept in main)
+        - L955-963: Footer info (~9 lines, inline — kept in main)
+      - L967-1087: History Modal JSX (~121 lines) ← EXTRACTED
+  - L1092-1176: trailing comment blocks (v8.28/v8.27/v8.26/v8.24/v8.23/v8.15-v8.21/v8.38 historical docs — preserved unchanged, not part of AutoPilotCard code but documentation leftovers from v8.94.6-split)
+- Prebral src/components/dashboard/ai-hub/automation/types.ts (454 vrstic) — 31 module-local interfaces + 4 constants. Identificiral 7 AutoPilot-specific types (AutoPilotMode, AutoPilotStatsResponse, AutoPilotHistoryDraft, AutoPilotHistoryResponse, AutoPilotRunResponse, EnableAggressiveResponse, DisableAggressiveResponse, ClearAnomalyResponse) na L351-454 (104 vrstice)
+- Grep za AutoPilot* tipe: samo 2 datoteki jih uporabljata — auto-pilot-card.tsx in types.ts sam. SAFE za move brez breaking imports
+- Grep za AutoPilotMode: samo v types.ts samem (uporabljen v AutoPilotStatsResponse.config.mode). SAFE za move
+- ESLint config preverjen (eslint.config.mjs): @typescript-eslint/no-explicit-any: off, no-unused-vars: off, react-hooks/exhaustive-deps: off — zelo permisivno, omogoča čist extract brez linting boilerplate
+- Ustvaril direktorij src/components/dashboard/ai-hub/automation/auto-pilot/
+- Ustvaril auto-pilot/types.ts (127 vrstic) — premaknjenih 7 AutoPilot* tipov iz automation/types.ts (AutoPilotMode, AutoPilotStatsResponse, AutoPilotHistoryDraft, AutoPilotHistoryResponse, AutoPilotRunResponse, EnableAggressiveResponse, DisableAggressiveResponse, ClearAnomalyResponse). Uvozi DomainName iz ../../types (ker ga AutoPilotHistoryDraft.domain in AutoPilotRunResponse.executedDrafts[].domain uporabljata)
+- Posodobil automation/types.ts (454 → 358 vrstic): odstranjeno 7 AutoPilot* tipov (L351-454), dodan komentar NOTE s pojasnilom premika v ./auto-pilot/types.ts. DOMAIN_LABELS + DOMAIN_DISPLAY ostajata (shared z MasterBrainBanner + DraftQueueCard + AutoPilotCard preko HistoryPanel). Vsi drugi tipi (RiskProfile*, Snapshot*, Accuracy*, MasterBrain*, Scenario*, AdaptiveWeights*, DraftQueue*) nespremenjeni
+- Ustvaril auto-pilot/anomaly-banner.tsx (129 vrstic) — 3 presentational banner komponente (AnomalyBanner, AggressiveActiveBanner, AggressivePendingBanner). Vsaka ima Props interface (4, 2, 2 props). Uvozi 5 lucide ikon (AlertOctagon, RefreshCw, Rocket, ShieldAlert, Undo2). Pure render — nobenega state-a, fetch-ev, side effectov
+- Ustvaril auto-pilot/mode-selector.tsx (86 vrstic) — ModeSelector presentational komponenta (Safe/Aggressive button pair). Props: isAggressive, aggressivePending, anomalySuspended, togglingMode, onEnableAggressive, onDisableAggressive (6 props). Uvozi cn iz @/lib/utils
+- Ustvaril auto-pilot/config-panel.tsx (144 vrstic) — ConfigPanel presentational komponenta (daily limit slider, daily budget slider, ModeSelector, save/cancel buttons). Props: 16 (dailyLimitInput, dailyBudgetInput, onDailyLimitChange, onDailyBudgetChange, isAggressive, aggressivePending, anomalySuspended, togglingMode, toggling, dirty, todayLimit, todayBudget, onResetConfig, onSaveConfig, onEnableAggressive, onDisableAggressive). Uvozi Settings2 lucide ikono + ModeSelector iz ./mode-selector. Pure render
+- Ustvaril auto-pilot/stats-display.tsx (155 vrstic) — StatsDisplay presentational komponenta (today's progress bars + hourly counter + 3-col all-time grid). Props: 15 (stats, mode, todayAutoExecuted, todayBudgetUsed, todayLimit, todayBudget, displayLimit, displayBudget, limitPct, budgetPct, hourlyExecCount, hourlyWindowStart, allTimeTotal, allTimeRollback, rollbackRate). Uvozi Activity lucide ikono + cn + AutoPilotMode/AutoPilotStatsResponse tipe iz ./types. Pure render — fragment wrapper (<>...</>) ker rendera dva sosednja div-a
+- Ustvaril auto-pilot/history-panel.tsx (172 vrstic) — HistoryPanel presentational komponenta (Dialog modal z zadnjimi 10 auto-executed drafti + rollback buttons). Props: 6 (open, onOpenChange, historyLoading, history, rollingBackId, onRollback). Uvozi 5 Dialog komponent + Skeleton + 4 lucide ikone (Bot, Clock, RefreshCw, Undo2) + cn + DOMAIN_LABELS iz ../types (shared) + AutoPilotHistoryDraft tip iz ./types. Pure render
+- Ustvaril auto-pilot/index.ts (54 vrstic) — barrel file z `export { ... }` za vseh 6 sub-komponent (AnomalyBanner, AggressiveActiveBanner, AggressivePendingBanner, ModeSelector, ConfigPanel, StatsDisplay, HistoryPanel) + ustreznih Props tipov + 8 AutoPilot* tipov re-export-anih iz ./types za convenience (single import path za main file)
+- Spremenil auto-pilot-card.tsx (1176 → 834 vrstic, -342, -29%):
+  - Imports: odstranjeno 9 unused ikon (Activity, AlertOctagon, Clock, Filter, History→no wait History stays, Info stays, Rocket, Save, Settings2, ShieldAlert, Undo2) — končno 8 ikon ostane (AlertCircle, Bot, History, Info, Lock, Play, Power, RefreshCw). Odstranjeno Dialog imports (vse v HistoryPanel sedaj). Odstranjeno DOMAIN_LABELS import (samo HistoryPanel ga uporablja). Dodan import 6 sub-komponent + 6 tipov iz ./auto-pilot barrel
+  - JSX: 6 velikih blokov zamenjanih s sub-komponent klici (AnomalyBanner, AggressiveActiveBanner, AggressivePendingBanner, ConfigPanel, StatsDisplay, HistoryPanel). Inline ostajajo: outer gradient div, header, subtitle, loading skeleton, error state, master switch (64 vrstice), action buttons (24), threshold comparison box (38), safety rules box (17), footer info (9). Skupaj inline JSX ~250 vrstic + state/callbacks/derived ~280 vrstic + imports/docstring/comments ~300 vrstic = 834 total
+  - Modul docstring posodobljen: dodana v8.94.8-split-autopilot sekcija ki dokumentira premik tipov v ./auto-pilot/types in ekstrakcijo 6 sub-komponent
+  - Trailing comment blocks (L750-834, v8.28/v8.27/v8.26/v8.24/v8.23/v8.15-v8.21/v8.38 historical docs) — preserved unchanged (niso del AutoPilotCard kode ampak dokumentacijski leftover iz v8.94.6-split, ne vplivajo na compilation ali behavior)
+- Container/presentational arhitektura:
+  - Container (auto-pilot-card.tsx): lastništvo vseh 18 useState + 7 useCallback + 18 derived state. State je prepuščen container-ju ker so vsi callbacks interdependenti (toggleEnabled kliče fetchStats, rollbackDraft kliče fetchHistory+fetchStats, etc.) — extraction state-a v custom hook bi bil poseben refactor
+  - Presentational (6 sub-komponent): pure render — prejmejo data + handlerje kot props, vrnejo JSX. Nobenega state-a, fetch-ev, side effectov. Vsaka ima ekspliciten Props interface za type-safety
+- Verifikacija:
+  - bunx tsc --noEmit (full project): 0 errors ✨
+  - bunx eslint src/components/dashboard/ai-hub/automation/auto-pilot-card.tsx src/components/dashboard/ai-hub/automation/auto-pilot/ src/components/dashboard/ai-hub/automation/types.ts: 0 errors ✨
+  - bunx eslint src/components/dashboard/ai-hub/automation/ (full dir): 0 errors ✨
+  - bunx eslint src/components/dashboard/ai-hub/ (full ai-hub): 0 errors ✨
+  - Brez sprememb v UI/behavior/prop signatures/business logic — ista komponenta (AutoPilotCard), isti default props (brez props — AutoPilotCard() vzame nič), isto vedenje. Sub-komponente so nove (niso bile prej izvožene, so interne AutoPilotCard-u)
+
+Stage Summary:
+- NEW: src/components/dashboard/ai-hub/automation/auto-pilot/types.ts (127 lines) — 7 AutoPilot* tipov premaknjenih iz automation/types.ts
+- NEW: src/components/dashboard/ai-hub/automation/auto-pilot/anomaly-banner.tsx (129 lines) — AnomalyBanner + AggressiveActiveBanner + AggressivePendingBanner (3 presentational bannerji)
+- NEW: src/components/dashboard/ai-hub/automation/auto-pilot/mode-selector.tsx (86 lines) — ModeSelector (Safe/Aggressive button pair)
+- NEW: src/components/dashboard/ai-hub/automation/auto-pilot/config-panel.tsx (144 lines) — ConfigPanel (sliders + ModeSelector + save/cancel)
+- NEW: src/components/dashboard/ai-hub/automation/auto-pilot/stats-display.tsx (155 lines) — StatsDisplay (today progress bars + all-time 3-col grid)
+- NEW: src/components/dashboard/ai-hub/automation/auto-pilot/history-panel.tsx (172 lines) — HistoryPanel (Dialog modal z rollback list)
+- NEW: src/components/dashboard/ai-hub/automation/auto-pilot/index.ts (54 lines) — barrel re-export (6 komponent + Props tipi + 8 AutoPilot* tipov)
+- MODIFIED: src/components/dashboard/ai-hub/automation/auto-pilot-card.tsx (1176 → 834 lines, -342, -29%; container/orchestrator z state + callbacks + inline header/master-switch/action-buttons/threshold-comparison/safety-rules/footer)
+- MODIFIED: src/components/dashboard/ai-hub/automation/types.ts (454 → 358 lines, -96; 7 AutoPilot* tipov premaknjenih v ./auto-pilot/types.ts, NOTE komentar dodan)
+- Lint: 0, Typecheck: 0
+- Skupaj novih vrstic v auto-pilot/: 867 (types 127 + anomaly 129 + mode 86 + config 144 + stats 155 + history 172 + index 54)
+- Največji novi modul: history-panel.tsx (172 lines — Dialog z loading/empty/populated states + 8 pravil audit details expand)
+- Najmanjši novi modul: index.ts (54 lines — barrel file)
+- Največji modul v ai-hub/automation/ po refaktoriranju: auto-pilot-card.tsx (834 lines — še vedno največji v ai-hub/, ampak -29% od prej)
+- Architecture: container/presentational split — auto-pilot-card.tsx ostane container z vsem state-om in fetch callbacks, sub-komponente so pure presentational (props in, JSX out). Trailing comment blocks preserved (documentation leftovers iz v8.94.6-split, ne vplivajo na compilation)
+
+---
+Task ID: v8.94.8
+Agent: Z.ai Code + 8 Task agents (brain split + autopilot split + 6 migrations)
+Task: Razdelitev brain-sections.tsx + auto-pilot-card.tsx + 6 endpoint migracij
+
+Work Log:
+- RAZDELITEV brain-sections.tsx (1147 vrstic → 7 modulov + 24-vrstični shim):
+  - NEW src/components/dashboard/ai-hub/brain/profit-brain-section.tsx (144 vrstic) — ProfitBrainSection
+  - NEW src/components/dashboard/ai-hub/brain/inventory-brain-section.tsx (163 vrstic) — InventoryBrainSection
+  - NEW src/components/dashboard/ai-hub/brain/market-brain-section.tsx (214 vrstic) — MarketBrainSection (največji)
+  - NEW src/components/dashboard/ai-hub/brain/sourcing-brain-section.tsx (168 vrstic) — SourcingBrainSection
+  - NEW src/components/dashboard/ai-hub/brain/risk-brain-section.tsx (173 vrstic) — RiskBrainSection
+  - NEW src/components/dashboard/ai-hub/brain/buyer-brain-section.tsx (169 vrstic) — BuyerBrainSection
+  - NEW src/components/dashboard/ai-hub/brain/pricing-brain-section.tsx (167 vrstic) — PricingBrainSection
+  - NEW src/components/dashboard/ai-hub/brain/index.ts (29 vrstic) — barrel re-export
+  - MODIFIED src/components/dashboard/ai-hub/brain-sections.tsx (1147 → 24 vrstic) — re-export shim
+  - Vsak modul uvozi samo ikone in tipe ki jih dejansko uporablja
+- RAZDELITEV auto-pilot-card.tsx (1176 → 834 vrstic + 6 sub-komponent):
+  - NEW src/components/dashboard/ai-hub/automation/auto-pilot/types.ts (127 vrstic) — 7 AutoPilot* tipov
+  - NEW src/components/dashboard/ai-hub/automation/auto-pilot/anomaly-banner.tsx (129 vrstic) — AnomalyBanner, AggressiveActiveBanner, AggressivePendingBanner
+  - NEW src/components/dashboard/ai-hub/automation/auto-pilot/mode-selector.tsx (86 vrstic) — ModeSelector (Safe/Aggressive)
+  - NEW src/components/dashboard/ai-hub/automation/auto-pilot/config-panel.tsx (144 vrstic) — ConfigPanel (sliders + settings)
+  - NEW src/components/dashboard/ai-hub/automation/auto-pilot/stats-display.tsx (155 vrstic) — StatsDisplay (today + all-time)
+  - NEW src/components/dashboard/ai-hub/automation/auto-pilot/history-panel.tsx (172 vrstic) — HistoryPanel (Dialog modal z rollback)
+  - NEW src/components/dashboard/ai-hub/automation/auto-pilot/index.ts (54 vrstic) — barrel re-export
+  - MODIFIED src/components/dashboard/ai-hub/automation/auto-pilot-card.tsx (1176 → 834 vrstic, -29%) — container/orchestrator
+  - MODIFIED src/components/dashboard/ai-hub/automation/types.ts (454 → 358 vrstic) — 7 AutoPilot* tipov premaknjenih
+  - Container/presentational pattern: container ohrani state + fetch, sub-komponente so pure render
+- 6 AI endpointov migriranih na withAiRoute (vzporedno preko Task agentov):
+  43. /api/ai/abtest-results (206→226) — Task agent v8.94.8-a
+  44. /api/ai/auction-timing (144→181) — Task agent v8.94.8-b
+  45. /api/ai/auto-listing-draft (156→273) — Task agent v8.94.8-c
+  46. /api/ai/autonomous-trading (198→265) — Task agent v8.94.8-d
+  47. /api/ai/batch-deal-evaluator (191→240) — Task agent v8.94.8-e
+  48. /api/ai/auto-relisting-scheduler (573→625) — Task agent v8.94.8-f (GET+POST)
+  Vsi z enforceBudget: true + ekstrahirane testabilne pomožne funkcije
+- Version bump: v8.94.7 → v8.94.8
+
+Stage Summary:
+- NOVE DATOTEKE: 15 (brain/ 8 modulov + auto-pilot/ 7 modulov)
+- MODIFICIRANE: 10 (brain-sections.tsx → shim, auto-pilot-card.tsx -29%, automation/types.ts, 6 migriranih, version.ts, README.md)
+- BRAIN: 1147 vrstic razdeljenih v 7 modulov (največji 214 vrstic — 81% zmanjšanje)
+- AUTO-PILOT: 1176 → 834 vrstic + 6 sub-komponent (29% zmanjšanje glavnega modula)
+- MIGRIRANI ENDPOINTI: 6 (skupaj 48 od 432 — 11,1%)
+- LINT: 0 errors, 0 warnings ✨
+- TYPECHECK: 0 errors ✨
+- TESTS: 208 passing (lib) ✨
+- Verzija: v8.94.8
