@@ -13,12 +13,14 @@ import { db } from '@/lib/db';
 import { getSettingsRow } from '@/lib/pipeline';
 import { callProviderForRaw, parseJsonLooseExported, type AiProviderType, type AiSettings } from '@/lib/ai';
 import { logger } from '@/lib/logger';
+import { logDeprecatedCall } from '@/lib/deprecated-redirect';
 
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
 export const maxDuration = 90;
 
 export async function POST(req: NextRequest) {
+  logDeprecatedCall('/api/ai/inventory-lifecycle', req, '/api/ai/inventory-lifecycle-optimizer-v2');
   try {
     await req.json().catch(() => ({}));
 

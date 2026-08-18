@@ -28,7 +28,7 @@ import { ChevronRight, RefreshCw, Search, Sparkles } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import type { AIEndpoint } from './types';
 import { CATEGORIES, categorize } from './utils';
-import { BrainSynthesisCard } from './system-cards';
+import { BrainSynthesisCard } from './system';
 import { AIRunnerModal } from './runner-modal';
 
 export function AIHubView() {

@@ -13,6 +13,7 @@ import { db } from '@/lib/db';
 import { getSettingsRow } from '@/lib/pipeline';
 import { callProviderForRaw, parseJsonLooseExported, type AiProviderType, type AiSettings } from '@/lib/ai';
 import { logger } from '@/lib/logger';
+import { logDeprecatedCall } from '@/lib/deprecated-redirect';
 
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
@@ -23,6 +24,7 @@ const TOUCHPOINT_TYPES = ['social_media_ad', 'search_result', 'marketplace_listi
 const CHANNEL_TYPES = ['bolha', 'facebook', 'vinted', 'avtonet', 'kleinanzeigen', 'email', 'website', 'phone', 'whatsapp', 'in_person'] as const;
 
 export async function POST(req: NextRequest) {
+  logDeprecatedCall('/api/ai/buyer-journey-mapper-v2', req, '/api/ai/buyer-journey-mapper');
   try {
     const body = await req.json().catch(() => ({}));
     const customerName = body?.customerName ? String(body.customerName).trim() : null;

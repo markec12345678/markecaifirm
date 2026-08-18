@@ -13,6 +13,7 @@ import { db } from '@/lib/db';
 import { getSettingsRow } from '@/lib/pipeline';
 import { callProviderForRaw, parseJsonLooseExported, type AiProviderType, type AiSettings } from '@/lib/ai';
 import { logger } from '@/lib/logger';
+import { logDeprecatedCall } from '@/lib/deprecated-redirect';
 
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
@@ -30,6 +31,7 @@ const ENSEMBLE_MODELS = [
 ] as const;
 
 export async function POST(req: NextRequest) {
+  logDeprecatedCall('/api/ai/listing-performance-forecaster-v3', req, '/api/ai/listing-performance-forecaster-v4');
   try {
     const body = await req.json().catch(() => ({}));
     const tradeId = body?.tradeId ? String(body.tradeId) : null;

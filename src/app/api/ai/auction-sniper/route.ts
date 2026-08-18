@@ -13,6 +13,7 @@ import { db } from '@/lib/db';
 import { getSettingsRow } from '@/lib/pipeline';
 import { callProviderForRaw, parseJsonLooseExported, type AiProviderType, type AiSettings } from '@/lib/ai';
 import { logger } from '@/lib/logger';
+import { logDeprecatedCall } from '@/lib/deprecated-redirect';
 
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
@@ -29,6 +30,7 @@ interface ListingInput {
 }
 
 export async function POST(req: NextRequest) {
+  logDeprecatedCall('/api/ai/auction-sniper', req, '/api/ai/auction-sniper-v2');
   try {
     const body = await req.json().catch(() => ({}));
     const { listingId } = body;

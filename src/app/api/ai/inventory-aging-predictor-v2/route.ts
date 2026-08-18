@@ -13,6 +13,7 @@ import { db } from '@/lib/db';
 import { getSettingsRow } from '@/lib/pipeline';
 import { callProviderForRaw, parseJsonLooseExported, type AiProviderType, type AiSettings } from '@/lib/ai';
 import { logger } from '@/lib/logger';
+import { logDeprecatedCall } from '@/lib/deprecated-redirect';
 
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
@@ -22,6 +23,7 @@ const AGING_BUCKETS = ['fresh_0_30d', 'aging_30_60d', 'stale_60_90d', 'old_90_18
 const DEVALUATION_TIERS = ['minimal', 'moderate', 'significant', 'severe', 'critical'] as const;
 
 export async function POST(req: NextRequest) {
+  logDeprecatedCall('/api/ai/inventory-aging-predictor-v2', req, '/api/ai/inventory-aging-predictor-pro');
   try {
     const body = await req.json().catch(() => ({}));
     const days = Math.max(7, Math.min(365, Number(body?.days ?? 90)));

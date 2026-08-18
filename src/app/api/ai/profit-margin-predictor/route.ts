@@ -13,6 +13,7 @@ import { db } from '@/lib/db';
 import { getSettingsRow } from '@/lib/pipeline';
 import { callProviderForRaw, parseJsonLooseExported, type AiProviderType, type AiSettings } from '@/lib/ai';
 import { logger } from '@/lib/logger';
+import { logDeprecatedCall } from '@/lib/deprecated-redirect';
 
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
@@ -37,6 +38,7 @@ const CATEGORY_PROFILES: Record<string, {
 };
 
 export async function POST(req: NextRequest) {
+  logDeprecatedCall('/api/ai/profit-margin-predictor', req, '/api/ai/profit-margin-predictor-v3');
   try {
     const body = await req.json().catch(() => ({}));
     const { listingId } = body;
