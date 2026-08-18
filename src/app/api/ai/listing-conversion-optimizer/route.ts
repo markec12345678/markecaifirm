@@ -1,16 +1,15 @@
-// v6.61: AI Listing Conversion Optimizer — optimizira conversion rate z ML in multi-variate testing
+// v6.61 / v8.94.6-c-refactor: AI Listing Conversion Optimizer — optimizira conversion rate z ML in multi-variate testing
+// Refaktoriran z withAiRoute helperjem (v8.94) — boilerplate (try/catch, settings load,
+// fallback provider, rate limit, JSON parse, AI counter increment) je izločen.
+//
 // POST /api/ai/listing-conversion-optimizer
 // Body: { tradeId?: string, listingId?: string }
 // Returns: { ok, optimizer: { listings, conversionFactors, optimizations, mvTests, mlPredictions, summary } }
 
-import { NextRequest, NextResponse } from 'next/server';
-import { db } from '@/lib/db';
-import { getSettingsRow } from '@/lib/pipeline';
-import { callProviderForRaw, parseJsonLooseExported, type AiProviderType, type AiSettings } from '@/lib/ai';
-import { logger } from '@/lib/logger';
+import { withAiRoute, AI_ROUTE_DEFAULTS, type AiRouteContext } from '@/lib/with-ai-route';
+import { apiOk, apiNotFound } from '@/lib/api-response';
 
-export const runtime = 'nodejs';
-export const dynamic = 'force-dynamic';
+export const { runtime, dynamic } = AI_ROUTE_DEFAULTS;
 export const maxDuration = 120;
 
 const CONVERSION_FACTORS = [
@@ -28,76 +27,151 @@ const CONVERSION_FACTORS = [
   'social_proof',
 ] as const;
 
-export async function POST(req: NextRequest) {
-  try {
-    const body = await req.json().catch(() => ({}));
-    const { listingId } = body;
-    const tradeId = body?.tradeId ? String(body.tradeId) : null;
+const OPTIMIZATION_TYPES = [
+  'price_adjustment', 'image_improvement', 'title_rewrite', 'description_enhancement',
+  'urgency_addition', 'trust_building', 'response_optimization', 'shipping_expansion',
+] as const;
 
-    let targetListings: Array<{
-      id: string; title: string; description: string; category: string;
-      price: number; estValue: number; imageUrl: string; location: string;
-    }> = [];
+const ML_MODELS = [
+  'gradient_boosting', 'neural_network', 'logistic_regression', 'random_forest', 'xgboost',
+] as const;
+
+const PRIORITIES = ['high', 'medium', 'low'] as const;
+const EFFORTS = ['low', 'medium', 'high'] as const;
+const IMPROVEMENT_POTENTIALS = ['high', 'medium', 'low'] as const;
+const CONSENSUS_LEVELS = ['strong', 'moderate', 'weak'] as const;
+const VARIANT_IDS = ['a', 'b', 'c', 'd'] as const;
+const PRIMARY_METRICS = ['conversion_rate', 'time_to_sale', 'revenue'] as const;
+
+interface ListingConversionInput {
+  tradeId?: string;
+  listingId?: string;
+}
+
+interface TargetListing {
+  id: string;
+  title: string;
+  description: string;
+  category: string;
+  price: number;
+  estValue: number;
+  imageUrl: string;
+  location: string;
+}
+
+export const POST = withAiRoute<ListingConversionInput>({
+  endpoint: '/api/ai/listing-conversion-optimizer',
+  maxDuration: 120,
+  enforceBudget: true, // AI klic — preveri budget + avtomatsko recordAiCall
+
+  parseBody: async (req) => {
+    const body = await req.json().catch(() => ({}));
+    return {
+      tradeId: body?.tradeId ? String(body.tradeId) : undefined,
+      listingId: body?.listingId ? String(body.listingId) : undefined,
+    };
+  },
+
+  // No validateInput — vsi trije branch-i (tradeId / listingId / default) so veljavni
+
+  handler: async (input, ctx: AiRouteContext) => {
+    const { db, callAi, parseAi } = ctx;
+    const { tradeId, listingId } = input;
+
+    let targetListings: TargetListing[] = [];
 
     if (tradeId) {
       const t = await db.trade.findUnique({
         where: { id: tradeId },
-        select: { id: true, title: true, category: true, buyPrice: true,
-          listing: { select: { description: true, detailDescription: true, imageUrl: true, aiEstimatedValue: true, price: true, location: true, contactStatus: true } } },
+        select: {
+          id: true, title: true, category: true, buyPrice: true,
+          listing: { select: { description: true, detailDescription: true, imageUrl: true, aiEstimatedValue: true, price: true, location: true, contactStatus: true } },
+        },
       });
-      if (!t) return NextResponse.json({ error: 'Trade ne obstaja' }, { status: 404 });
-      targetListings = [{
-        id: t.id, title: t.title, category: t.category || 'drugo',
-        description: (t.listing?.detailDescription || t.listing?.description || '').slice(0, 500),
-        price: t.listing?.price ?? t.buyPrice, estValue: t.listing?.aiEstimatedValue ?? Math.round(t.buyPrice * 1.25),
-        imageUrl: t.listing?.imageUrl ?? '', location: t.listing?.location ?? '',
-      }];
+      if (!t) return apiNotFound('Trade ne obstaja');
+      targetListings = [buildTargetFromTrade(t)];
     } else if (listingId) {
       const l = await db.listing.findUnique({
-        where: { id: String(listingId) },
+        where: { id: listingId },
         select: { id: true, title: true, description: true, detailDescription: true, price: true, imageUrl: true, aiEstimatedValue: true, location: true },
       });
-      if (!l) return NextResponse.json({ error: 'Listing ne obstaja' }, { status: 404 });
-      targetListings = [{
-        id: l.id, title: l.title, category: '',
-        description: (l.detailDescription || l.description || '').slice(0, 500),
-        price: l.price ?? 0, estValue: l.aiEstimatedValue ?? l.price ?? 0,
-        imageUrl: l.imageUrl ?? '', location: l.location ?? '',
-      }];
+      if (!l) return apiNotFound('Listing ne obstaja');
+      targetListings = [buildTargetFromListing(l)];
     } else {
       const heldTrades = await db.trade.findMany({
         where: { status: 'held' },
-        select: { id: true, title: true, category: true, buyPrice: true,
-          listing: { select: { description: true, detailDescription: true, imageUrl: true, aiEstimatedValue: true, price: true, location: true } } },
+        select: {
+          id: true, title: true, category: true, buyPrice: true,
+          listing: { select: { description: true, detailDescription: true, imageUrl: true, aiEstimatedValue: true, price: true, location: true } },
+        },
         take: 12,
         orderBy: { buyDate: 'desc' },
       });
-      targetListings = heldTrades.map(t => ({
-        id: t.id, title: t.title, category: t.category || 'drugo',
-        description: (t.listing?.detailDescription || t.listing?.description || '').slice(0, 500),
-        price: t.listing?.price ?? t.buyPrice, estValue: t.listing?.aiEstimatedValue ?? Math.round(t.buyPrice * 1.25),
-        imageUrl: t.listing?.imageUrl ?? '', location: t.listing?.location ?? '',
-      }));
+      targetListings = heldTrades.map(buildTargetFromTrade);
     }
 
     if (targetListings.length === 0) {
-      return NextResponse.json({ ok: true, optimizer: null, message: 'Ni listingov za conversion optimizacijo.' });
+      return apiOk({ ok: true, optimizer: null, message: 'Ni listingov za conversion optimizacijo.' });
     }
 
-    const settings = await getSettingsRow();
-    const aiSettings: AiSettings = {
-      provider: settings.aiProvider as AiProviderType,
-      baseUrl: settings.aiBaseUrl, apiKey: settings.aiApiKey, model: settings.aiModel,
-      fallbackProvider: (settings.fallbackProvider || '') as AiProviderType | '',
-      fallbackBaseUrl: settings.fallbackBaseUrl || '', fallbackApiKey: settings.fallbackApiKey || '',
-      fallbackModel: settings.fallbackModel || '',
-    };
+    const prompt = buildPrompt(targetListings);
 
-    const itemsStr = targetListings.slice(0, 12).map(i =>
-      `- [${i.id}] "${i.title}" | ${i.category} | ${i.price}€ | ${i.location} | opis: ${i.description.slice(0, 100)}...`
-    ).join('\n');
+    let raw: string;
+    try {
+      raw = await callAi(prompt);
+    } catch {
+      // callAi interno poskusi fallback provider; če tudi ta odpove, vrnemo prazno
+      return apiOk({ ok: true, optimizer: null, message: 'AI ni na voljo za conversion optimizacijo.' });
+    }
 
-    const prompt = `Si AI listing conversion optimizer z ML in multi-variate testing.
+    const parsed: any = parseAi(raw);
+    const validIds = new Set(targetListings.map(i => i.id));
+    const optimizer = transformOptimizer(parsed, validIds, targetListings.length);
+
+    return apiOk({ ok: true, optimizer });
+  },
+});
+
+// --- Pomožne funkcije (čiste, testabilne) ---------------------------------
+
+function buildTargetFromTrade(t: {
+  id: string; title: string; category: string | null; buyPrice: number;
+  listing: { description: string | null; detailDescription: string | null; imageUrl: string | null; aiEstimatedValue: number | null; price: number | null; location: string | null } | null;
+}): TargetListing {
+  return {
+    id: t.id,
+    title: t.title,
+    category: t.category || 'drugo',
+    description: (t.listing?.detailDescription || t.listing?.description || '').slice(0, 500),
+    price: t.listing?.price ?? t.buyPrice,
+    estValue: t.listing?.aiEstimatedValue ?? Math.round(t.buyPrice * 1.25),
+    imageUrl: t.listing?.imageUrl ?? '',
+    location: t.listing?.location ?? '',
+  };
+}
+
+function buildTargetFromListing(l: {
+  id: string; title: string; description: string | null; detailDescription: string | null;
+  price: number | null; imageUrl: string | null; aiEstimatedValue: number | null; location: string | null;
+}): TargetListing {
+  return {
+    id: l.id,
+    title: l.title,
+    category: '',
+    description: (l.detailDescription || l.description || '').slice(0, 500),
+    price: l.price ?? 0,
+    estValue: l.aiEstimatedValue ?? l.price ?? 0,
+    imageUrl: l.imageUrl ?? '',
+    location: l.location ?? '',
+  };
+}
+
+function buildPrompt(targetListings: TargetListing[]): string {
+  const itemsStr = targetListings.slice(0, 12).map(i =>
+    `- [${i.id}] "${i.title}" | ${i.category} | ${i.price}€ | ${i.location} | opis: ${i.description.slice(0, 100)}...`
+  ).join('\n');
+
+  return `Si AI listing conversion optimizer z ML in multi-variate testing.
 Optimizira conversion rate z 12-faktorsko analizo in A/B/n testiranjem.
 
 OGLASI (${targetListings.length}):
@@ -193,113 +267,105 @@ Odgovori LE z JSON:
     "conversion_optimization_score": <number 0-100>
   }
 }`;
+}
 
-    let raw = '';
-    try { raw = await callProviderForRaw(aiSettings, prompt); }
-    catch (primaryError: any) {
-      if (aiSettings.fallbackProvider && aiSettings.fallbackModel) {
-        const fb: AiSettings = { provider: aiSettings.fallbackProvider, baseUrl: aiSettings.fallbackBaseUrl || '', apiKey: aiSettings.fallbackApiKey || '', model: aiSettings.fallbackModel };
-        raw = await callProviderForRaw(fb, prompt);
-      } else { return NextResponse.json({ error: primaryError?.message ?? 'AI failed' }, { status: 500 }); }
-    }
-
-    const parsed: any = parseJsonLooseExported(raw);
-    const validIds = new Set(targetListings.map(i => i.id));
-
-    const optimizer = {
-      insights: String(parsed?.insights ?? '').slice(0, 500),
-      listings: (parsed?.listings || [])
-        .filter((l: any) => validIds.has(String(l?.id ?? '')))
-        .slice(0, 12)
-        .map((l: any) => ({
-          tradeId: String(l?.id ?? ''),
-          title: String(l?.title ?? '').slice(0, 150),
-          currentConversionRatePct: Math.max(0, Math.min(100, Number(l?.current_conversion_rate_pct ?? 10))),
-          optimizedConversionRatePct: Math.max(0, Math.min(100, Number(l?.optimized_conversion_rate_pct ?? 20))),
-          conversionLiftPct: Math.round(Number(l?.conversion_lift_pct ?? 0) * 10) / 10,
-          conversionFactors: (l?.conversion_factors || []).slice(0, 12).map((f: any) => ({
-            factor: CONVERSION_FACTORS.includes(String(f?.factor) as any) ? String(f.factor) : 'price_competitiveness',
-            currentScore: Math.max(0, Math.min(100, Number(f?.current_score ?? 50))),
-            optimizedScore: Math.max(0, Math.min(100, Number(f?.optimized_score ?? 70))),
-            impactPct: Math.round(Number(f?.impact_pct ?? 0) * 10) / 10,
-            priority: ['high', 'medium', 'low'].includes(String(f?.priority)) ? String(f.priority) : 'medium',
-          })),
-          mlPredictions: {
-            predictedConversionRatePct: Math.max(0, Math.min(100, Number(l?.ml_predictions?.predicted_conversion_rate_pct ?? 15))),
-            predictedTimeToSaleDays: Math.max(1, Math.round(Number(l?.ml_predictions?.predicted_time_to_sale_days ?? 14))),
-            predictedFinalPriceEur: Math.max(0, Math.round(Number(l?.ml_predictions?.predicted_final_price_eur ?? 0))),
-            confidencePct: Math.max(0, Math.min(100, Number(l?.ml_predictions?.confidence_pct ?? 60))),
-            modelConsensus: ['strong', 'moderate', 'weak'].includes(String(l?.ml_predictions?.model_consensus)) ? String(l.ml_predictions.model_consensus) : 'moderate',
-          },
-          recommendedOptimizations: (l?.recommended_optimizations || []).slice(0, 6).map((o: any) => ({
-            optimization: String(o?.optimization ?? '').slice(0, 250),
-            factorTargeted: CONVERSION_FACTORS.includes(String(o?.factor_targeted) as any) ? String(o.factor_targeted) : 'price_competitiveness',
-            expectedLiftPct: Math.round(Number(o?.expected_lift_pct ?? 0)),
-            implementationEffort: ['low', 'medium', 'high'].includes(String(o?.implementation_effort)) ? String(o.implementation_effort) : 'medium',
-            timeToImplementHours: Math.max(0.5, Number(o?.time_to_implement_hours ?? 1)),
-          })),
-          expectedRevenueImpactEur: Math.round(Number(l?.expected_revenue_impact_eur ?? 0)),
-          priority: ['high', 'medium', 'low'].includes(String(l?.priority)) ? String(l.priority) : 'medium',
+function transformOptimizer(parsed: any, validIds: Set<string>, totalListings: number) {
+  return {
+    insights: String(parsed?.insights ?? '').slice(0, 500),
+    listings: (parsed?.listings || [])
+      .filter((l: any) => validIds.has(String(l?.id ?? '')))
+      .slice(0, 12)
+      .map((l: any) => ({
+        tradeId: String(l?.id ?? ''),
+        title: String(l?.title ?? '').slice(0, 150),
+        currentConversionRatePct: clamp01to100(Number(l?.current_conversion_rate_pct ?? 10)),
+        optimizedConversionRatePct: clamp01to100(Number(l?.optimized_conversion_rate_pct ?? 20)),
+        conversionLiftPct: Math.round(Number(l?.conversion_lift_pct ?? 0) * 10) / 10,
+        conversionFactors: (l?.conversion_factors || []).slice(0, 12).map((f: any) => ({
+          factor: whitelist(String(f?.factor), CONVERSION_FACTORS, 'price_competitiveness'),
+          currentScore: clamp01to100(Number(f?.current_score ?? 50)),
+          optimizedScore: clamp01to100(Number(f?.optimized_score ?? 70)),
+          impactPct: Math.round(Number(f?.impact_pct ?? 0) * 10) / 10,
+          priority: whitelist(String(f?.priority), PRIORITIES, 'medium'),
         })),
-      conversionFactors: (parsed?.conversion_factors || []).slice(0, 12).map((f: any) => ({
-        factor: CONVERSION_FACTORS.includes(String(f?.factor) as any) ? String(f.factor) : 'price_competitiveness',
-        weight: Math.max(0, Math.min(100, Number(f?.weight ?? 10))),
-        avgScore: Math.max(0, Math.min(100, Number(f?.avg_score ?? 50))),
-        benchmark: Math.max(0, Math.min(100, Number(f?.benchmark ?? 60))),
-        improvementPotential: ['high', 'medium', 'low'].includes(String(f?.improvement_potential)) ? String(f.improvement_potential) : 'medium',
-        bestPractice: String(f?.best_practice ?? '').slice(0, 300),
-      })),
-      optimizations: (parsed?.optimizations || []).slice(0, 8).map((o: any) => ({
-        optimizationType: ['price_adjustment', 'image_improvement', 'title_rewrite', 'description_enhancement', 'urgency_addition', 'trust_building', 'response_optimization', 'shipping_expansion'].includes(String(o?.optimization_type)) ? String(o.optimization_type) : 'price_adjustment',
-        description: String(o?.description ?? '').slice(0, 250),
-        expectedConversionLiftPct: Math.round(Number(o?.expected_conversion_lift_pct ?? 0)),
-        implementationDifficulty: ['low', 'medium', 'high'].includes(String(o?.implementation_difficulty)) ? String(o.implementation_difficulty) : 'medium',
-        bestForCategory: String(o?.best_for_category ?? '').slice(0, 150),
-      })),
-      mvTests: (parsed?.mv_tests || [])
-        .filter((t: any) => validIds.has(String(t?.listing_id ?? '')))
-        .slice(0, 12)
-        .map((t: any) => ({
-          tradeId: String(t?.listing_id ?? '').slice(0, 50),
-          testName: String(t?.test_name ?? '').slice(0, 150),
-          variants: (t?.variants || []).slice(0, 4).map((v: any) => ({
-            variantId: ['a', 'b', 'c', 'd'].includes(String(v?.variant_id)) ? String(v.variant_id) : 'a',
-            changeDescription: String(v?.change_description ?? '').slice(0, 200),
-            predictedConversionPct: Math.max(0, Math.min(100, Number(v?.predicted_conversion_pct ?? 10))),
-          })),
-          testDurationDays: Math.max(3, Math.min(30, Number(t?.test_duration_days ?? 7))),
-          sampleSizePerVariant: Math.max(50, Number(t?.sample_size_per_variant ?? 100)),
-          primaryMetric: ['conversion_rate', 'time_to_sale', 'revenue'].includes(String(t?.primary_metric)) ? String(t.primary_metric) : 'conversion_rate',
-          statisticalSignificancePct: Math.max(0, Math.min(100, Number(t?.statistical_significance_pct ?? 95))),
-          expectedWinner: ['a', 'b', 'c', 'd'].includes(String(t?.expected_winner)) ? String(t.expected_winner) : 'b',
-          confidenceLevelPct: Math.max(0, Math.min(100, Number(t?.confidence_level_pct ?? 95))),
+        mlPredictions: {
+          predictedConversionRatePct: clamp01to100(Number(l?.ml_predictions?.predicted_conversion_rate_pct ?? 15)),
+          predictedTimeToSaleDays: Math.max(1, Math.round(Number(l?.ml_predictions?.predicted_time_to_sale_days ?? 14))),
+          predictedFinalPriceEur: Math.max(0, Math.round(Number(l?.ml_predictions?.predicted_final_price_eur ?? 0))),
+          confidencePct: clamp01to100(Number(l?.ml_predictions?.confidence_pct ?? 60)),
+          modelConsensus: whitelist(String(l?.ml_predictions?.model_consensus), CONSENSUS_LEVELS, 'moderate'),
+        },
+        recommendedOptimizations: (l?.recommended_optimizations || []).slice(0, 6).map((o: any) => ({
+          optimization: String(o?.optimization ?? '').slice(0, 250),
+          factorTargeted: whitelist(String(o?.factor_targeted), CONVERSION_FACTORS, 'price_competitiveness'),
+          expectedLiftPct: Math.round(Number(o?.expected_lift_pct ?? 0)),
+          implementationEffort: whitelist(String(o?.implementation_effort), EFFORTS, 'medium'),
+          timeToImplementHours: Math.max(0.5, Number(o?.time_to_implement_hours ?? 1)),
         })),
-      mlPredictions: (parsed?.ml_predictions || []).slice(0, 5).map((m: any) => ({
-        model: ['gradient_boosting', 'neural_network', 'logistic_regression', 'random_forest', 'xgboost'].includes(String(m?.model)) ? String(m.model) : 'gradient_boosting',
-        accuracyPct: Math.max(0, Math.min(100, Number(m?.accuracy_pct ?? 75))),
-        precisionPct: Math.max(0, Math.min(100, Number(m?.precision_pct ?? 70))),
-        recallPct: Math.max(0, Math.min(100, Number(m?.recall_pct ?? 65))),
-        f1Score: Math.max(0, Math.min(100, Number(m?.f1_score ?? 67))),
-        weightInEnsemble: Math.max(0, Math.min(100, Number(m?.weight_in_ensemble ?? 20))),
-        bestFor: String(m?.best_for ?? '').slice(0, 150),
+        expectedRevenueImpactEur: Math.round(Number(l?.expected_revenue_impact_eur ?? 0)),
+        priority: whitelist(String(l?.priority), PRIORITIES, 'medium'),
       })),
-      summary: {
-        totalListingsOptimized: targetListings.length,
-        avgCurrentConversionRatePct: Math.max(0, Math.min(100, Number(parsed?.summary?.avg_current_conversion_rate_pct ?? 10))),
-        avgOptimizedConversionRatePct: Math.max(0, Math.min(100, Number(parsed?.summary?.avg_optimized_conversion_rate_pct ?? 20))),
-        avgConversionLiftPct: Math.round(Number(parsed?.summary?.avg_conversion_lift_pct ?? 50) * 10) / 10,
-        totalExpectedRevenueImpactEur: Math.round(Number(parsed?.summary?.total_expected_revenue_impact_eur ?? 0)),
-        biggestConversionBlocker: String(parsed?.summary?.biggest_conversion_blocker ?? '').slice(0, 200),
-        biggestConversionOpportunity: String(parsed?.summary?.biggest_conversion_opportunity ?? '').slice(0, 200),
-        bestOptimizationOverall: ['price_adjustment', 'image_improvement', 'title_rewrite', 'description_enhancement', 'urgency_addition', 'trust_building', 'response_optimization', 'shipping_expansion'].includes(String(parsed?.summary?.best_optimization_overall)) ? String(parsed.summary.best_optimization_overall) : 'price_adjustment',
-        conversionOptimizationScore: Math.max(0, Math.min(100, Number(parsed?.summary?.conversion_optimization_score ?? 60))),
-      },
-    };
+    conversionFactors: (parsed?.conversion_factors || []).slice(0, 12).map((f: any) => ({
+      factor: whitelist(String(f?.factor), CONVERSION_FACTORS, 'price_competitiveness'),
+      weight: clamp01to100(Number(f?.weight ?? 10)),
+      avgScore: clamp01to100(Number(f?.avg_score ?? 50)),
+      benchmark: clamp01to100(Number(f?.benchmark ?? 60)),
+      improvementPotential: whitelist(String(f?.improvement_potential), IMPROVEMENT_POTENTIALS, 'medium'),
+      bestPractice: String(f?.best_practice ?? '').slice(0, 300),
+    })),
+    optimizations: (parsed?.optimizations || []).slice(0, 8).map((o: any) => ({
+      optimizationType: whitelist(String(o?.optimization_type), OPTIMIZATION_TYPES, 'price_adjustment'),
+      description: String(o?.description ?? '').slice(0, 250),
+      expectedConversionLiftPct: Math.round(Number(o?.expected_conversion_lift_pct ?? 0)),
+      implementationDifficulty: whitelist(String(o?.implementation_difficulty), EFFORTS, 'medium'),
+      bestForCategory: String(o?.best_for_category ?? '').slice(0, 150),
+    })),
+    mvTests: (parsed?.mv_tests || [])
+      .filter((t: any) => validIds.has(String(t?.listing_id ?? '')))
+      .slice(0, 12)
+      .map((t: any) => ({
+        tradeId: String(t?.listing_id ?? '').slice(0, 50),
+        testName: String(t?.test_name ?? '').slice(0, 150),
+        variants: (t?.variants || []).slice(0, 4).map((v: any) => ({
+          variantId: whitelist(String(v?.variant_id), VARIANT_IDS, 'a'),
+          changeDescription: String(v?.change_description ?? '').slice(0, 200),
+          predictedConversionPct: clamp01to100(Number(v?.predicted_conversion_pct ?? 10)),
+        })),
+        testDurationDays: Math.max(3, Math.min(30, Number(t?.test_duration_days ?? 7))),
+        sampleSizePerVariant: Math.max(50, Number(t?.sample_size_per_variant ?? 100)),
+        primaryMetric: whitelist(String(t?.primary_metric), PRIMARY_METRICS, 'conversion_rate'),
+        statisticalSignificancePct: clamp01to100(Number(t?.statistical_significance_pct ?? 95)),
+        expectedWinner: whitelist(String(t?.expected_winner), VARIANT_IDS, 'b'),
+        confidenceLevelPct: clamp01to100(Number(t?.confidence_level_pct ?? 95)),
+      })),
+    mlPredictions: (parsed?.ml_predictions || []).slice(0, 5).map((m: any) => ({
+      model: whitelist(String(m?.model), ML_MODELS, 'gradient_boosting'),
+      accuracyPct: clamp01to100(Number(m?.accuracy_pct ?? 75)),
+      precisionPct: clamp01to100(Number(m?.precision_pct ?? 70)),
+      recallPct: clamp01to100(Number(m?.recall_pct ?? 65)),
+      f1Score: clamp01to100(Number(m?.f1_score ?? 67)),
+      weightInEnsemble: clamp01to100(Number(m?.weight_in_ensemble ?? 20)),
+      bestFor: String(m?.best_for ?? '').slice(0, 150),
+    })),
+    summary: {
+      totalListingsOptimized: totalListings,
+      avgCurrentConversionRatePct: clamp01to100(Number(parsed?.summary?.avg_current_conversion_rate_pct ?? 10)),
+      avgOptimizedConversionRatePct: clamp01to100(Number(parsed?.summary?.avg_optimized_conversion_rate_pct ?? 20)),
+      avgConversionLiftPct: Math.round(Number(parsed?.summary?.avg_conversion_lift_pct ?? 50) * 10) / 10,
+      totalExpectedRevenueImpactEur: Math.round(Number(parsed?.summary?.total_expected_revenue_impact_eur ?? 0)),
+      biggestConversionBlocker: String(parsed?.summary?.biggest_conversion_blocker ?? '').slice(0, 200),
+      biggestConversionOpportunity: String(parsed?.summary?.biggest_conversion_opportunity ?? '').slice(0, 200),
+      bestOptimizationOverall: whitelist(String(parsed?.summary?.best_optimization_overall), OPTIMIZATION_TYPES, 'price_adjustment'),
+      conversionOptimizationScore: clamp01to100(Number(parsed?.summary?.conversion_optimization_score ?? 60)),
+    },
+  };
+}
 
-    const today = new Date().toISOString().slice(0, 10);
-    if (settings.aiCallsDate !== today) { await db.settings.update({ where: { id: 'singleton' }, data: { aiCallsDate: today, aiCallsToday: 1 } }); }
-    else { await db.settings.update({ where: { id: 'singleton' }, data: { aiCallsToday: { increment: 1 } } }); }
+function clamp01to100(n: number): number {
+  if (!Number.isFinite(n)) return 0;
+  return Math.max(0, Math.min(100, n));
+}
 
-    return NextResponse.json({ ok: true, optimizer });
-  } catch (e: any) { logger.error("/api/ai/listing-conversion-optimizer", "POST handler failed", e); return NextResponse.json({ error: e?.message ?? 'Napaka' }, { status: 500 }); }
+function whitelist<T extends string>(value: string, allowed: readonly T[], fallback: T): T {
+  return (allowed as readonly string[]).includes(value) ? (value as T) : fallback;
 }

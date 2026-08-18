@@ -83,7 +83,7 @@ import {
   AutoPilotCard,
   BrainSnapshotsSection,
   AccuracyTrendCard,
-} from './automation-cards';
+} from './automation';
 
 // ============================================================================
 // Local types & constants (used only inside this module)

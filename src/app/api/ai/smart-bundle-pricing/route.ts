@@ -1,50 +1,145 @@
-// v6.43: AI Smart Bundle Pricing — optimalno določi cene bundlov za max dobiček in hitro prodajo
+// v6.43 / v8.94-refactor: AI Smart Bundle Pricing — optimalno določi cene bundlov za max dobiček in hitro prodajo
+// Refaktoriran z withAiRoute helperjem (v8.94) + enforceBudget guard.
+//
 // POST /api/ai/smart-bundle-pricing
 // Body: { tradeIds?: string[] }
-// Returns: { ok, bundles: [], pricingModels, recommendations, summary }
+// Returns: { ok, bundles, pricingRecommendations, summary, insights }
 
-import { NextRequest, NextResponse } from 'next/server';
-import { db } from '@/lib/db';
-import { getSettingsRow } from '@/lib/pipeline';
-import { callProviderForRaw, parseJsonLooseExported, type AiProviderType, type AiSettings } from '@/lib/ai';
-import { logger } from '@/lib/logger';
+import { withAiRoute, AI_ROUTE_DEFAULTS, type AiRouteContext } from '@/lib/with-ai-route';
+import { apiOk } from '@/lib/api-response';
 
-export const runtime = 'nodejs';
-export const dynamic = 'force-dynamic';
+export const { runtime, dynamic } = AI_ROUTE_DEFAULTS;
 export const maxDuration = 90;
 
-export async function POST(req: NextRequest) {
-  try {
+interface SmartBundlePricingInput {
+  tradeIds: string[];
+}
+
+export const POST = withAiRoute<SmartBundlePricingInput>({
+  endpoint: '/api/ai/smart-bundle-pricing',
+  maxDuration: 90,
+  enforceBudget: true, // AI klic — preveri budget
+
+  parseBody: async (req) => {
     const body = await req.json().catch(() => ({}));
-    const requestedIds: string[] = Array.isArray(body?.tradeIds) ? body.tradeIds.filter(Boolean) : [];
+    const tradeIds: string[] = Array.isArray(body?.tradeIds)
+      ? body.tradeIds.filter(Boolean)
+      : [];
+    return { tradeIds };
+  },
+
+  // No validateInput — tradeIds je opcijski (prazno = vsi held itemi)
+  handler: async (input, ctx: AiRouteContext) => {
+    const { db, callAi, parseAi } = ctx;
+    const { tradeIds } = input;
 
     const heldTrades = await db.trade.findMany({
-      where: { status: 'held', ...(requestedIds.length > 0 ? { id: { in: requestedIds } } : {}) },
-      select: { id: true, title: true, category: true, buyPrice: true, buyFees: true, buyDate: true,
-        listing: { select: { aiEstimatedValue: true, dealScore: true } } },
+      where: { status: 'held', ...(tradeIds.length > 0 ? { id: { in: tradeIds } } : {}) },
+      select: {
+        id: true, title: true, category: true, buyPrice: true, buyFees: true, buyDate: true,
+        listing: { select: { aiEstimatedValue: true, dealScore: true } },
+      },
       take: 30,
     });
 
-    if (heldTrades.length < 2) { return NextResponse.json({ ok: true, bundles: [], message: 'Potrebna vsaj 2 itema.' }); }
+    if (heldTrades.length < 2) {
+      return apiOk({ ok: true, bundles: [], message: 'Potrebna vsaj 2 itema.' });
+    }
 
-    const settings = await getSettingsRow();
-    const aiSettings: AiSettings = {
-      provider: settings.aiProvider as AiProviderType,
-      baseUrl: settings.aiBaseUrl, apiKey: settings.aiApiKey, model: settings.aiModel,
-      fallbackProvider: (settings.fallbackProvider || '') as AiProviderType | '',
-      fallbackBaseUrl: settings.fallbackBaseUrl || '', fallbackApiKey: settings.fallbackApiKey || '',
-      fallbackModel: settings.fallbackModel || '',
-    };
-
-    const items = heldTrades.map(t => ({
-      id: t.id, title: t.title, category: t.category || 'drugo',
-      cost: t.buyPrice + (t.buyFees ?? 0), estValue: t.listing?.aiEstimatedValue ?? Math.round(t.buyPrice * 1.25),
-      daysHeld: Math.round((Date.now() - t.buyDate.getTime()) / (24*60*60*1000)),
+    const items: HeldItem[] = heldTrades.map(t => ({
+      id: t.id,
+      title: t.title,
+      category: t.category || 'drugo',
+      cost: t.buyPrice + (t.buyFees ?? 0),
+      estValue: t.listing?.aiEstimatedValue ?? Math.round(t.buyPrice * 1.25),
+      daysHeld: Math.round((Date.now() - t.buyDate.getTime()) / (24 * 60 * 60 * 1000)),
     }));
 
-    const itemsStr = items.slice(0, 20).map(i => `- [${i.id}] ${i.title} | ${i.category} | cost ${i.cost}€ | est ${i.estValue}€ | ${i.daysHeld}d`).join('\n');
+    const prompt = buildPrompt(items);
+    const raw = await callAi(prompt);
+    const parsed: any = parseAi(raw);
 
-    const prompt = `Si AI smart bundle pricing strategist. Optimalno določi cene bundlov za max dobiček in hitro prodajo.
+    const bundles = transformBundles(parsed, items);
+    const pricingRecommendations = transformPricingRecommendations(parsed);
+    const summary = computeSummary(bundles, parsed);
+
+    return apiOk({
+      ok: true,
+      insights: String(parsed?.insights ?? '').slice(0, 500),
+      bundles,
+      pricingRecommendations,
+      summary,
+    });
+  },
+});
+
+// --- Pomožne funkcije (čiste, testabilne) --------------------------------
+
+interface HeldItem {
+  id: string;
+  title: string;
+  category: string;
+  cost: number;
+  estValue: number;
+  daysHeld: number;
+}
+
+interface BundleItem {
+  id: string;
+  title: string;
+  costEur: number;
+  estValueEur: number;
+}
+
+interface PricingModel {
+  model: string;
+  bundlePriceEur: number;
+  savingsPct: number;
+  profitEur: number;
+  marginPct: number;
+  expectedSellDays: number;
+  buyerPerception: string;
+  recommended: boolean;
+}
+
+interface BundleResult {
+  name: string;
+  items: BundleItem[];
+  totalCostEur: number;
+  totalEstValueEur: number;
+  pricingModels: PricingModel[];
+  bestPriceEur: number;
+  bestModel: string;
+  expectedProfitEur: number;
+  expectedSellDays: number;
+  targetBuyer: string;
+  reasoning: string;
+}
+
+interface PricingRecommendation {
+  tip: string;
+  impact: string;
+  expectedRevenueIncreasePct: number;
+}
+
+const PRICING_MODELS = [
+  'volume_discount', 'anchor_pricing', 'loss_leader', 'tiered_pricing',
+  'psychological', 'dynamic', 'auction', 'flash_sale',
+] as const;
+
+const BUYER_PERCEPTIONS = ['great_deal', 'fair', 'premium'] as const;
+
+const IMPACTS = ['high', 'medium', 'low'] as const;
+
+/**
+ * Build AI prompt za smart bundle pricing (besedilo IDENTIČNO originalu v6.43).
+ */
+function buildPrompt(items: HeldItem[]): string {
+  const itemsStr = items.slice(0, 20)
+    .map(i => `- [${i.id}] ${i.title} | ${i.category} | cost ${i.cost}€ | est ${i.estValue}€ | ${i.daysHeld}d`)
+    .join('\n');
+
+  return `Si AI smart bundle pricing strategist. Optimalno določi cene bundlov za max dobiček in hitro prodajo.
 
 INVENTAR (${items.length}):
 ${itemsStr}
@@ -110,40 +205,47 @@ Odgovori LE z JSON:
     "expected_sell_time_reduction_pct": <number>
   }
 }`;
+}
 
-    let raw = '';
-    try { raw = await callProviderForRaw(aiSettings, prompt); }
-    catch (primaryError: any) {
-      if (aiSettings.fallbackProvider && aiSettings.fallbackModel) {
-        const fb: AiSettings = { provider: aiSettings.fallbackProvider, baseUrl: aiSettings.fallbackBaseUrl || '', apiKey: aiSettings.fallbackApiKey || '', model: aiSettings.fallbackModel };
-        raw = await callProviderForRaw(fb, prompt);
-      } else { return NextResponse.json({ error: primaryError?.message ?? 'AI failed' }, { status: 500 }); }
-    }
+/**
+ * Transform AI JSON v bundle rezultate. Clamp/slice logika IDENTIČNA originalu v6.43.
+ * Vsak item id je lahko uporabljen samo v enem bundle-u (dedup preko usedIds).
+ */
+function transformBundles(parsed: any, items: HeldItem[]): BundleResult[] {
+  const validIds = new Set(items.map(i => i.id));
+  const usedIds = new Set<string>();
 
-    const parsed: any = parseJsonLooseExported(raw);
-    const validIds = new Set(items.map(i => i.id));
-    const usedIds = new Set<string>();
-
-    const bundles = (parsed?.bundles || []).map((b: any) => {
-      const itemIds: string[] = (Array.isArray(b?.item_ids) ? b.item_ids : []).filter((id: any) => validIds.has(String(id)) && !usedIds.has(String(id)));
+  return (parsed?.bundles || [])
+    .map((b: any): BundleResult | null => {
+      const itemIds: string[] = (Array.isArray(b?.item_ids) ? b.item_ids : [])
+        .filter((id: any) => validIds.has(String(id)) && !usedIds.has(String(id)));
       if (itemIds.length < 2) return null;
       itemIds.forEach(id => usedIds.add(id));
-      const bundleItems = itemIds.map(id => { const o = items.find(i => i.id === id)!; return { id: o.id, title: o.title, costEur: o.cost, estValueEur: o.estValue }; });
+
+      const bundleItems: BundleItem[] = itemIds.map(id => {
+        const o = items.find(i => i.id === id)!;
+        return { id: o.id, title: o.title, costEur: o.cost, estValueEur: o.estValue };
+      });
       const totalCost = bundleItems.reduce((s, i) => s + i.costEur, 0);
       const totalEstValue = bundleItems.reduce((s, i) => s + i.estValueEur, 0);
+
       return {
         name: String(b?.name ?? 'Bundle').slice(0, 120),
         items: bundleItems,
         totalCostEur: totalCost,
         totalEstValueEur: totalEstValue,
-        pricingModels: (b?.pricing_models || []).slice(0, 4).map((pm: any) => ({
-          model: ['volume_discount', 'anchor_pricing', 'loss_leader', 'tiered_pricing', 'psychological', 'dynamic', 'auction', 'flash_sale'].includes(String(pm?.model)) ? String(pm.model) : 'volume_discount',
+        pricingModels: (b?.pricing_models || []).slice(0, 4).map((pm: any): PricingModel => ({
+          model: (PRICING_MODELS as readonly string[]).includes(String(pm?.model))
+            ? String(pm.model)
+            : 'volume_discount',
           bundlePriceEur: Math.max(0, Number(pm?.bundle_price_eur ?? 0)),
           savingsPct: Math.round(Number(pm?.savings_pct ?? 0)),
           profitEur: Math.round(Number(pm?.profit_eur ?? 0)),
           marginPct: Math.round(Number(pm?.margin_pct ?? 0)),
           expectedSellDays: Math.max(1, Number(pm?.expected_sell_days ?? 14)),
-          buyerPerception: ['great_deal', 'fair', 'premium'].includes(String(pm?.buyer_perception)) ? String(pm.buyer_perception) : 'fair',
+          buyerPerception: (BUYER_PERCEPTIONS as readonly string[]).includes(String(pm?.buyer_perception))
+            ? String(pm.buyer_perception)
+            : 'fair',
           recommended: Boolean(pm?.recommended ?? false),
         })),
         bestPriceEur: Math.max(0, Number(b?.best_price_eur ?? 0)),
@@ -153,32 +255,48 @@ Odgovori LE z JSON:
         targetBuyer: String(b?.target_buyer ?? '').slice(0, 100),
         reasoning: String(b?.reasoning ?? '').slice(0, 200),
       };
-    }).filter(Boolean);
+    })
+    .filter((b: BundleResult | null): b is BundleResult => b !== null);
+}
 
-    const totalBundleProfit = bundles.reduce((s: number, b: any) => s + (b?.expectedProfitEur ?? 0), 0);
-    const avgMargin = bundles.length > 0 ? Math.round(bundles.reduce((s: number, b: any) => s + (b?.pricingModels?.find((pm: any) => pm.recommended)?.marginPct ?? 20), 0) / bundles.length) : 0;
-    const avgSavings = bundles.length > 0 ? Math.round(bundles.reduce((s: number, b: any) => s + (b?.pricingModels?.find((pm: any) => pm.recommended)?.savingsPct ?? 10), 0) / bundles.length) : 0;
+/**
+ * Transform pricing_recommendations. Clamp/slice IDENTIČEN originalu v6.43.
+ */
+function transformPricingRecommendations(parsed: any): PricingRecommendation[] {
+  return (parsed?.pricing_recommendations || []).slice(0, 5).map((r: any): PricingRecommendation => ({
+    tip: String(r?.tip ?? '').slice(0, 200),
+    impact: (IMPACTS as readonly string[]).includes(String(r?.impact))
+      ? String(r.impact)
+      : 'medium',
+    expectedRevenueIncreasePct: Math.round(Number(r?.expected_revenue_increase_pct ?? 0)),
+  }));
+}
 
-    const today = new Date().toISOString().slice(0, 10);
-    if (settings.aiCallsDate !== today) { await db.settings.update({ where: { id: 'singleton' }, data: { aiCallsDate: today, aiCallsToday: 1 } }); }
-    else { await db.settings.update({ where: { id: 'singleton' }, data: { aiCallsToday: { increment: 1 } } }); }
+/**
+ * Izračunaj povzetek (totalBundleProfit, avgMargin, avgSavings).
+ * Logika IDENTIČNA originalu v6.43 — upošteva priporočeni pricing model (če obstaja).
+ */
+function computeSummary(bundles: BundleResult[], parsed: any) {
+  const totalBundleProfit = bundles.reduce((s, b) => s + (b?.expectedProfitEur ?? 0), 0);
+  const avgMargin = bundles.length > 0
+    ? Math.round(
+      bundles.reduce((s, b) => s + (b?.pricingModels?.find(pm => pm.recommended)?.marginPct ?? 20), 0)
+      / bundles.length
+    )
+    : 0;
+  const avgSavings = bundles.length > 0
+    ? Math.round(
+      bundles.reduce((s, b) => s + (b?.pricingModels?.find(pm => pm.recommended)?.savingsPct ?? 10), 0)
+      / bundles.length
+    )
+    : 0;
 
-    return NextResponse.json({
-      ok: true,
-      insights: String(parsed?.insights ?? '').slice(0, 500),
-      bundles,
-      pricingRecommendations: (parsed?.pricing_recommendations || []).slice(0, 5).map((r: any) => ({
-        tip: String(r?.tip ?? '').slice(0, 200), impact: ['high', 'medium', 'low'].includes(String(r?.impact)) ? String(r.impact) : 'medium',
-        expectedRevenueIncreasePct: Math.round(Number(r?.expected_revenue_increase_pct ?? 0)),
-      })),
-      summary: {
-        totalBundles: bundles.length,
-        totalBundleProfitEur: totalBundleProfit,
-        avgMarginPct: avgMargin,
-        avgSavingsPct: avgSavings,
-        bestPricingModel: String(parsed?.summary?.best_pricing_model ?? '').slice(0, 30),
-        expectedSellTimeReductionPct: Math.round(Number(parsed?.summary?.expected_sell_time_reduction_pct ?? 0)),
-      },
-    });
-  } catch (e: any) { logger.error("/api/ai/smart-bundle-pricing", "POST handler failed", e); return NextResponse.json({ error: e?.message ?? 'Napaka' }, { status: 500 }); }
+  return {
+    totalBundles: bundles.length,
+    totalBundleProfitEur: totalBundleProfit,
+    avgMarginPct: avgMargin,
+    avgSavingsPct: avgSavings,
+    bestPricingModel: String(parsed?.summary?.best_pricing_model ?? '').slice(0, 30),
+    expectedSellTimeReductionPct: Math.round(Number(parsed?.summary?.expected_sell_time_reduction_pct ?? 0)),
+  };
 }

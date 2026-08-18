@@ -1,16 +1,14 @@
-// v6.55: AI Inventory Liquidation Strategist — strategic liquidation z timing in channel optimization
+// v6.55 / v8.94-refactor: AI Inventory Liquidation Strategist — strategic liquidation z timing in channel optimization
+// Refaktoriran z withAiRoute helperjem (v8.94) + enforceBudget guard.
+//
 // POST /api/ai/inventory-liquidation-strategist
 // Body: { tradeIds?: string[], minDaysHeld?: number }
-// Returns: { ok, strategist: { items, strategies, channels, timeline, bundles, summary } }
+// Returns: { ok, strategist: { items, strategies, channels, timeline, bundles, recommendations, summary } | null, message? }
 
-import { NextRequest, NextResponse } from 'next/server';
-import { db } from '@/lib/db';
-import { getSettingsRow } from '@/lib/pipeline';
-import { callProviderForRaw, parseJsonLooseExported, type AiProviderType, type AiSettings } from '@/lib/ai';
-import { logger } from '@/lib/logger';
+import { withAiRoute, AI_ROUTE_DEFAULTS, type AiRouteContext } from '@/lib/with-ai-route';
+import { apiOk } from '@/lib/api-response';
 
-export const runtime = 'nodejs';
-export const dynamic = 'force-dynamic';
+export const { runtime, dynamic } = AI_ROUTE_DEFAULTS;
 export const maxDuration = 90;
 
 const LIQUIDATION_STRATEGIES = [
@@ -26,11 +24,32 @@ const LIQUIDATION_STRATEGIES = [
   'recycle_scrap',        // recikliraj/sell as scrap
 ] as const;
 
-export async function POST(req: NextRequest) {
-  try {
+const CHANNELS = ['bolha', 'facebook', 'vinted', 'ebay', 'local_pickup'] as const;
+const PRIORITIES = ['high', 'medium', 'low'] as const;
+const EFFORTS = ['low', 'medium', 'high'] as const;
+
+interface LiquidationStrategistInput {
+  tradeIds: string[];
+  minDaysHeld: number;
+}
+
+export const POST = withAiRoute<LiquidationStrategistInput>({
+  endpoint: '/api/ai/inventory-liquidation-strategist',
+  maxDuration: 90,
+  enforceBudget: true, // AI klic — preveri budget + avtomatsko recordAiCall po uspehu
+
+  parseBody: async (req) => {
     const body = await req.json().catch(() => ({}));
     const tradeIds: string[] = Array.isArray(body?.tradeIds) ? body.tradeIds : [];
     const minDaysHeld = Math.max(0, Number(body?.minDaysHeld ?? 30));
+    return { tradeIds, minDaysHeld };
+  },
+
+  // No validateInput — vsi input-i imajo defaults (minDaysHeld=30 clamped 0+)
+
+  handler: async (input, ctx: AiRouteContext) => {
+    const { db, callAi, parseAi } = ctx;
+    const { tradeIds, minDaysHeld } = input;
 
     const where: any = { status: 'held' };
     if (tradeIds.length > 0) where.id = { in: tradeIds };
@@ -52,39 +71,77 @@ export async function POST(req: NextRequest) {
     });
 
     if (filtered.length === 0) {
-      return NextResponse.json({ ok: true, strategist: null, message: `Ni held tradeov z vsaj ${minDaysHeld} dnevi v skladišču.` });
+      return apiOk({ ok: true, strategist: null, message: `Ni held tradeov z vsaj ${minDaysHeld} dnevi v skladišču.` });
     }
 
-    const settings = await getSettingsRow();
-    const aiSettings: AiSettings = {
-      provider: settings.aiProvider as AiProviderType,
-      baseUrl: settings.aiBaseUrl, apiKey: settings.aiApiKey, model: settings.aiModel,
-      fallbackProvider: (settings.fallbackProvider || '') as AiProviderType | '',
-      fallbackBaseUrl: settings.fallbackBaseUrl || '', fallbackApiKey: settings.fallbackApiKey || '',
-      fallbackModel: settings.fallbackModel || '',
+    const items = computeLiquidationItems(filtered, now);
+
+    const prompt = buildLiquidationPrompt(items, minDaysHeld);
+    const raw = await callAi(prompt);
+    const parsed: any = parseAi(raw);
+
+    const strategist = transformLiquidationStrategist(parsed, items);
+
+    return apiOk({ ok: true, strategist });
+  },
+});
+
+// --- Pomožne funkcije (čiste, testabilne) --------------------------------
+
+interface HeldTradeRow {
+  id: string;
+  title: string;
+  category: string | null;
+  buyPrice: number;
+  buyFees: number | null;
+  buyDate: Date;
+  listing: {
+    aiEstimatedValue: number | null;
+    dealScore: number | null;
+    aiRisk: number | null;
+    location: string | null;
+    imageUrl: string | null;
+  } | null;
+}
+
+interface LiquidationItem {
+  id: string;
+  title: string;
+  category: string;
+  cost: number;
+  estValue: number;
+  daysHeld: number;
+  holdingCost: number;
+  currentValue: number;
+  potentialLoss: number;
+  dealScore: number;
+  location: string;
+}
+
+function computeLiquidationItems(trades: HeldTradeRow[], now: number): LiquidationItem[] {
+  return trades.map(t => {
+    const cost = t.buyPrice + (t.buyFees ?? 0);
+    const estValue = t.listing?.aiEstimatedValue ?? Math.round(cost * 1.25);
+    const daysHeld = Math.round((now - t.buyDate.getTime()) / (24*60*60*1000));
+    const holdingCost = Math.round(cost * 0.0003 * daysHeld * 100) / 100;
+    const currentValueAfterDepreciation = Math.max(cost * 0.5, estValue * Math.pow(0.99, daysHeld / 7));
+    return {
+      id: t.id, title: t.title, category: t.category || 'drugo',
+      cost, estValue, daysHeld, holdingCost,
+      currentValue: Math.round(currentValueAfterDepreciation),
+      potentialLoss: Math.round(currentValueAfterDepreciation - cost),
+      dealScore: t.listing?.dealScore ?? 50,
+      location: t.listing?.location || '',
     };
+  });
+}
 
-    const items = filtered.map(t => {
-      const cost = t.buyPrice + (t.buyFees ?? 0);
-      const estValue = t.listing?.aiEstimatedValue ?? Math.round(cost * 1.25);
-      const daysHeld = Math.round((now - t.buyDate.getTime()) / (24*60*60*1000));
-      const holdingCost = Math.round(cost * 0.0003 * daysHeld * 100) / 100;
-      const currentValueAfterDepreciation = Math.max(cost * 0.5, estValue * Math.pow(0.99, daysHeld / 7));
-      return {
-        id: t.id, title: t.title, category: t.category || 'drugo',
-        cost, estValue, daysHeld, holdingCost,
-        currentValue: Math.round(currentValueAfterDepreciation),
-        potentialLoss: Math.round(currentValueAfterDepreciation - cost),
-        dealScore: t.listing?.dealScore ?? 50,
-        location: t.listing?.location || '',
-      };
-    });
+function buildLiquidationPrompt(items: LiquidationItem[], minDaysHeld: number): string {
+  const itemsStr = items.slice(0, 25).map(i =>
+    `- [${i.id}] "${i.title}" | ${i.category} | ${i.cost}€→${i.currentValue}€ (loss ${i.potentialLoss}€) | ${i.daysHeld}d | holding ${i.holdingCost}€ | ${i.location}`
+  ).join('\n');
 
-    const itemsStr = items.slice(0, 25).map(i =>
-      `- [${i.id}] "${i.title}" | ${i.category} | ${i.cost}€→${i.currentValue}€ (loss ${i.potentialLoss}€) | ${i.daysHeld}d | holding ${i.holdingCost}€ | ${i.location}`
-    ).join('\n');
-
-    const prompt = `Si AI inventory liquidation strategist za slovenske oglasne platforme.
+  return `Si AI inventory liquidation strategist za slovenske oglasne platforme.
 Strategic liquidation za stalled/dead inventar z timing in channel optimization.
 
 INVENTAR ZA LIKVIDACIJO (${items.length}, min ${minDaysHeld}d):
@@ -171,106 +228,91 @@ Odgovori LE z JSON:
     "liquidation_efficiency_score": <number 0-100>
   }
 }`;
+}
 
-    let raw = '';
-    try { raw = await callProviderForRaw(aiSettings, prompt); }
-    catch (primaryError: any) {
-      if (aiSettings.fallbackProvider && aiSettings.fallbackModel) {
-        const fb: AiSettings = { provider: aiSettings.fallbackProvider, baseUrl: aiSettings.fallbackBaseUrl || '', apiKey: aiSettings.fallbackApiKey || '', model: aiSettings.fallbackModel };
-        raw = await callProviderForRaw(fb, prompt);
-      } else { return NextResponse.json({ error: primaryError?.message ?? 'AI failed' }, { status: 500 }); }
-    }
+function transformLiquidationStrategist(parsed: any, items: LiquidationItem[]) {
+  const validIds = new Set(items.map(i => i.id));
 
-    const parsed: any = parseJsonLooseExported(raw);
-    const validIds = new Set(items.map(i => i.id));
-
-    const strategist = {
-      insights: String(parsed?.insights ?? '').slice(0, 500),
-      items: (parsed?.items || [])
-        .filter((it: any) => validIds.has(String(it?.id ?? '')))
-        .slice(0, 25)
-        .map((it: any) => {
-          const orig = items.find(x => x.id === String(it?.id));
-          return {
-            tradeId: String(it?.id ?? ''),
-            title: String(it?.title ?? orig?.title ?? '').slice(0, 150),
-            recommendedStrategy: LIQUIDATION_STRATEGIES.includes(String(it?.recommended_strategy) as any) ? String(it.recommended_strategy) : 'flash_sale',
-            currentValueEur: Math.max(0, Math.round(Number(it?.current_value_eur ?? orig?.currentValue ?? 0))),
-            recommendedPriceEur: Math.max(0, Math.round(Number(it?.recommended_price_eur ?? 0))),
-            discountPct: Math.round(Number(it?.discount_pct ?? 0) * 10) / 10,
-            expectedRecoveryEur: Math.round(Number(it?.expected_recovery_eur ?? 0)),
-            recoveryRatePct: Math.max(0, Math.min(100, Number(it?.recovery_rate_pct ?? 50))),
-            expectedLossEur: Math.round(Number(it?.expected_loss_eur ?? 0)),
-            bestChannel: ['bolha', 'facebook', 'vinted', 'ebay', 'local_pickup'].includes(String(it?.best_channel)) ? String(it.best_channel) : 'bolha',
-            bestTiming: String(it?.best_timing ?? '').slice(0, 150),
-            expectedDaysToSell: Math.max(1, Number(it?.expected_days_to_sell ?? 7)),
-            reasoning: String(it?.reasoning ?? '').slice(0, 250),
-            priority: ['high', 'medium', 'low'].includes(String(it?.priority)) ? String(it.priority) : 'medium',
-          };
-        }),
-      strategies: (parsed?.strategies || []).slice(0, 10).map((s: any) => ({
-        strategy: LIQUIDATION_STRATEGIES.includes(String(s?.strategy) as any) ? String(s.strategy) : 'flash_sale',
-        description: String(s?.description ?? '').slice(0, 250),
-        bestForCategory: String(s?.best_for_category ?? '').slice(0, 150),
-        bestForDaysHeldRange: String(s?.best_for_days_held_range ?? '').slice(0, 100),
-        expectedRecoveryRatePct: Math.max(0, Math.min(100, Number(s?.expected_recovery_rate_pct ?? 50))),
-        timeToLiquidateDays: Math.max(1, Number(s?.time_to_liquidate_days ?? 7)),
-        implementationEffort: ['low', 'medium', 'high'].includes(String(s?.implementation_effort)) ? String(s.implementation_effort) : 'medium',
+  return {
+    insights: String(parsed?.insights ?? '').slice(0, 500),
+    items: (parsed?.items || [])
+      .filter((it: any) => validIds.has(String(it?.id ?? '')))
+      .slice(0, 25)
+      .map((it: any) => {
+        const orig = items.find(x => x.id === String(it?.id));
+        return {
+          tradeId: String(it?.id ?? ''),
+          title: String(it?.title ?? orig?.title ?? '').slice(0, 150),
+          recommendedStrategy: LIQUIDATION_STRATEGIES.includes(String(it?.recommended_strategy) as any) ? String(it.recommended_strategy) : 'flash_sale',
+          currentValueEur: Math.max(0, Math.round(Number(it?.current_value_eur ?? orig?.currentValue ?? 0))),
+          recommendedPriceEur: Math.max(0, Math.round(Number(it?.recommended_price_eur ?? 0))),
+          discountPct: Math.round(Number(it?.discount_pct ?? 0) * 10) / 10,
+          expectedRecoveryEur: Math.round(Number(it?.expected_recovery_eur ?? 0)),
+          recoveryRatePct: Math.max(0, Math.min(100, Number(it?.recovery_rate_pct ?? 50))),
+          expectedLossEur: Math.round(Number(it?.expected_loss_eur ?? 0)),
+          bestChannel: (CHANNELS as readonly string[]).includes(String(it?.best_channel)) ? String(it.best_channel) : 'bolha',
+          bestTiming: String(it?.best_timing ?? '').slice(0, 150),
+          expectedDaysToSell: Math.max(1, Number(it?.expected_days_to_sell ?? 7)),
+          reasoning: String(it?.reasoning ?? '').slice(0, 250),
+          priority: (PRIORITIES as readonly string[]).includes(String(it?.priority)) ? String(it.priority) : 'medium',
+        };
+      }),
+    strategies: (parsed?.strategies || []).slice(0, 10).map((s: any) => ({
+      strategy: LIQUIDATION_STRATEGIES.includes(String(s?.strategy) as any) ? String(s.strategy) : 'flash_sale',
+      description: String(s?.description ?? '').slice(0, 250),
+      bestForCategory: String(s?.best_for_category ?? '').slice(0, 150),
+      bestForDaysHeldRange: String(s?.best_for_days_held_range ?? '').slice(0, 100),
+      expectedRecoveryRatePct: Math.max(0, Math.min(100, Number(s?.expected_recovery_rate_pct ?? 50))),
+      timeToLiquidateDays: Math.max(1, Number(s?.time_to_liquidate_days ?? 7)),
+      implementationEffort: (EFFORTS as readonly string[]).includes(String(s?.implementation_effort)) ? String(s.implementation_effort) : 'medium',
+    })),
+    channels: (parsed?.channels || []).slice(0, 5).map((c: any) => ({
+      channel: (CHANNELS as readonly string[]).includes(String(c?.channel)) ? String(c.channel) : 'bolha',
+      itemsRecommended: Math.max(0, Number(c?.items_recommended ?? 0)),
+      avgRecoveryRatePct: Math.max(0, Math.min(100, Number(c?.avg_recovery_rate_pct ?? 50))),
+      feePct: Math.round(Number(c?.fee_pct ?? 0)),
+      netRecoveryEur: Math.round(Number(c?.net_recovery_eur ?? 0)),
+      bestForStrategy: String(c?.best_for_strategy ?? '').slice(0, 150),
+    })),
+    timeline: (parsed?.timeline || []).slice(0, 4).map((t: any) => ({
+      week: Math.max(1, Math.min(4, Number(t?.week ?? 1))),
+      itemsToLiquidate: Math.max(0, Number(t?.items_to_liquidate ?? 0)),
+      strategyFocus: String(t?.strategy_focus ?? '').slice(0, 150),
+      expectedRecoveryEur: Math.round(Number(t?.expected_recovery_eur ?? 0)),
+      expectedLossEur: Math.round(Number(t?.expected_loss_eur ?? 0)),
+      actions: (t?.actions || []).slice(0, 5).map((a: any) => String(a).slice(0, 150)),
+    })),
+    bundles: (parsed?.bundles || [])
+      .filter((b: any) => (b?.item_ids || []).some((id: any) => validIds.has(String(id))))
+      .slice(0, 8)
+      .map((b: any) => ({
+        bundleName: String(b?.bundle_name ?? '').slice(0, 100),
+        itemIds: (b?.item_ids || []).filter((id: any) => validIds.has(String(id))).slice(0, 8).map((id: any) => String(id).slice(0, 50)),
+        individualValueEur: Math.max(0, Math.round(Number(b?.individual_value_eur ?? 0))),
+        bundlePriceEur: Math.max(0, Math.round(Number(b?.bundle_price_eur ?? 0))),
+        discountPct: Math.round(Number(b?.discount_pct ?? 0) * 10) / 10,
+        expectedRecoveryEur: Math.round(Number(b?.expected_recovery_eur ?? 0)),
+        targetBuyer: String(b?.target_buyer ?? '').slice(0, 150),
       })),
-      channels: (parsed?.channels || []).slice(0, 5).map((c: any) => ({
-        channel: ['bolha', 'facebook', 'vinted', 'ebay', 'local_pickup'].includes(String(c?.channel)) ? String(c.channel) : 'bolha',
-        itemsRecommended: Math.max(0, Number(c?.items_recommended ?? 0)),
-        avgRecoveryRatePct: Math.max(0, Math.min(100, Number(c?.avg_recovery_rate_pct ?? 50))),
-        feePct: Math.round(Number(c?.fee_pct ?? 0)),
-        netRecoveryEur: Math.round(Number(c?.net_recovery_eur ?? 0)),
-        bestForStrategy: String(c?.best_for_strategy ?? '').slice(0, 150),
-      })),
-      timeline: (parsed?.timeline || []).slice(0, 4).map((t: any) => ({
-        week: Math.max(1, Math.min(4, Number(t?.week ?? 1))),
-        itemsToLiquidate: Math.max(0, Number(t?.items_to_liquidate ?? 0)),
-        strategyFocus: String(t?.strategy_focus ?? '').slice(0, 150),
-        expectedRecoveryEur: Math.round(Number(t?.expected_recovery_eur ?? 0)),
-        expectedLossEur: Math.round(Number(t?.expected_loss_eur ?? 0)),
-        actions: (t?.actions || []).slice(0, 5).map((a: any) => String(a).slice(0, 150)),
-      })),
-      bundles: (parsed?.bundles || [])
-        .filter((b: any) => (b?.item_ids || []).some((id: any) => validIds.has(String(id))))
-        .slice(0, 8)
-        .map((b: any) => ({
-          bundleName: String(b?.bundle_name ?? '').slice(0, 100),
-          itemIds: (b?.item_ids || []).filter((id: any) => validIds.has(String(id))).slice(0, 8).map((id: any) => String(id).slice(0, 50)),
-          individualValueEur: Math.max(0, Math.round(Number(b?.individual_value_eur ?? 0))),
-          bundlePriceEur: Math.max(0, Math.round(Number(b?.bundle_price_eur ?? 0))),
-          discountPct: Math.round(Number(b?.discount_pct ?? 0) * 10) / 10,
-          expectedRecoveryEur: Math.round(Number(b?.expected_recovery_eur ?? 0)),
-          targetBuyer: String(b?.target_buyer ?? '').slice(0, 150),
-        })),
-      recommendations: (parsed?.recommendations || []).slice(0, 6).map((r: any) => ({
-        action: String(r?.action ?? '').slice(0, 300),
-        priority: ['high', 'medium', 'low'].includes(String(r?.priority)) ? String(r.priority) : 'medium',
-        expectedRecoveryEur: Math.round(Number(r?.expected_recovery_eur ?? 0)),
-        itemsAffected: Math.max(0, Number(r?.items_affected ?? 0)),
-        implementationDays: Math.max(1, Number(r?.implementation_days ?? 1)),
-      })),
-      summary: {
-        totalItemsToLiquidate: items.length,
-        totalCostEur: Math.round(Number(parsed?.summary?.total_cost_eur ?? items.reduce((s, i) => s + i.cost, 0))),
-        totalCurrentValueEur: Math.round(Number(parsed?.summary?.total_current_value_eur ?? items.reduce((s, i) => s + i.currentValue, 0))),
-        totalExpectedRecoveryEur: Math.round(Number(parsed?.summary?.total_expected_recovery_eur ?? 0)),
-        totalExpectedLossEur: Math.round(Number(parsed?.summary?.total_expected_loss_eur ?? 0)),
-        avgRecoveryRatePct: Math.max(0, Math.min(100, Number(parsed?.summary?.avg_recovery_rate_pct ?? 50))),
-        bestStrategyOverall: LIQUIDATION_STRATEGIES.includes(String(parsed?.summary?.best_strategy_overall) as any) ? String(parsed.summary.best_strategy_overall) : 'flash_sale',
-        bestChannelOverall: ['bolha', 'facebook', 'vinted', 'ebay', 'local_pickup'].includes(String(parsed?.summary?.best_channel_overall)) ? String(parsed.summary.best_channel_overall) : 'bolha',
-        biggestLossItem: String(parsed?.summary?.biggest_loss_item ?? '').slice(0, 200),
-        quickestWin: String(parsed?.summary?.quickest_win ?? '').slice(0, 200),
-        liquidationEfficiencyScore: Math.max(0, Math.min(100, Number(parsed?.summary?.liquidation_efficiency_score ?? 50))),
-      },
-    };
-
-    const today = new Date().toISOString().slice(0, 10);
-    if (settings.aiCallsDate !== today) { await db.settings.update({ where: { id: 'singleton' }, data: { aiCallsDate: today, aiCallsToday: 1 } }); }
-    else { await db.settings.update({ where: { id: 'singleton' }, data: { aiCallsToday: { increment: 1 } } }); }
-
-    return NextResponse.json({ ok: true, strategist });
-  } catch (e: any) { logger.error("/api/ai/inventory-liquidation-strategist", "POST handler failed", e); return NextResponse.json({ error: e?.message ?? 'Napaka' }, { status: 500 }); }
+    recommendations: (parsed?.recommendations || []).slice(0, 6).map((r: any) => ({
+      action: String(r?.action ?? '').slice(0, 300),
+      priority: (PRIORITIES as readonly string[]).includes(String(r?.priority)) ? String(r.priority) : 'medium',
+      expectedRecoveryEur: Math.round(Number(r?.expected_recovery_eur ?? 0)),
+      itemsAffected: Math.max(0, Number(r?.items_affected ?? 0)),
+      implementationDays: Math.max(1, Number(r?.implementation_days ?? 1)),
+    })),
+    summary: {
+      totalItemsToLiquidate: items.length,
+      totalCostEur: Math.round(Number(parsed?.summary?.total_cost_eur ?? items.reduce((s, i) => s + i.cost, 0))),
+      totalCurrentValueEur: Math.round(Number(parsed?.summary?.total_current_value_eur ?? items.reduce((s, i) => s + i.currentValue, 0))),
+      totalExpectedRecoveryEur: Math.round(Number(parsed?.summary?.total_expected_recovery_eur ?? 0)),
+      totalExpectedLossEur: Math.round(Number(parsed?.summary?.total_expected_loss_eur ?? 0)),
+      avgRecoveryRatePct: Math.max(0, Math.min(100, Number(parsed?.summary?.avg_recovery_rate_pct ?? 50))),
+      bestStrategyOverall: LIQUIDATION_STRATEGIES.includes(String(parsed?.summary?.best_strategy_overall) as any) ? String(parsed.summary.best_strategy_overall) : 'flash_sale',
+      bestChannelOverall: (CHANNELS as readonly string[]).includes(String(parsed?.summary?.best_channel_overall)) ? String(parsed.summary.best_channel_overall) : 'bolha',
+      biggestLossItem: String(parsed?.summary?.biggest_loss_item ?? '').slice(0, 200),
+      quickestWin: String(parsed?.summary?.quickest_win ?? '').slice(0, 200),
+      liquidationEfficiencyScore: Math.max(0, Math.min(100, Number(parsed?.summary?.liquidation_efficiency_score ?? 50))),
+    },
+  };
 }

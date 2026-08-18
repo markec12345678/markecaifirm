@@ -1,24 +1,32 @@
-// v6.33: AI Seasonal Price Optimizer — optimizira cene glede na sezono za max dobiček
+// v6.33 / v8.94-refactor: AI Seasonal Price Optimizer — optimizira cene glede na sezono za max dobiček
+// Refaktoriran z withAiRoute helperjem (v8.94) + enforceBudget guard.
+//
 // POST /api/ai/seasonal-pricing
 // Body: {}
 // Returns: { ok, pricing: { items: [], seasonalFactors, recommendations }, insights, summary }
 
-import { NextRequest, NextResponse } from 'next/server';
-import { db } from '@/lib/db';
-import { getSettingsRow } from '@/lib/pipeline';
-import { callProviderForRaw, parseJsonLooseExported, type AiProviderType, type AiSettings } from '@/lib/ai';
-import { logger } from '@/lib/logger';
+import { withAiRoute, AI_ROUTE_DEFAULTS, type AiRouteContext } from '@/lib/with-ai-route';
+import { apiOk } from '@/lib/api-response';
 
-export const runtime = 'nodejs';
-export const dynamic = 'force-dynamic';
+export const { runtime, dynamic } = AI_ROUTE_DEFAULTS;
 export const maxDuration = 90;
 
 const MONTHS = ['Jan', 'Feb', 'Mar', 'Apr', 'Maj', 'Jun', 'Jul', 'Avg', 'Sep', 'Okt', 'Nov', 'Dec'];
 const SEASONS = ['Zima', 'Zima', 'Pomlad', 'Pomlad', 'Pomlad', 'Poletje', 'Poletje', 'Poletje', 'Jesen', 'Jesen', 'Zima', 'Zima'];
 
-export async function POST(req: NextRequest) {
-  try {
-    await req.json().catch(() => ({}));
+// eslint-disable-next-line @typescript-eslint/no-empty-object-type
+interface SeasonalPricingInput {}
+
+export const POST = withAiRoute<SeasonalPricingInput>({
+  endpoint: '/api/ai/seasonal-pricing',
+  maxDuration: 90,
+  enforceBudget: true, // AI klic — preveri budget
+
+  parseBody: async () => ({}),
+
+  // No validateInput — endpoint nima input polj
+  handler: async (_input, ctx: AiRouteContext) => {
+    const { db, callAi, parseAi } = ctx;
 
     const heldTrades = await db.trade.findMany({
       where: { status: 'held' },
@@ -28,7 +36,7 @@ export async function POST(req: NextRequest) {
     });
 
     if (heldTrades.length === 0) {
-      return NextResponse.json({ ok: true, pricing: null, message: 'Ni held tradeov za sezonsko ceno.' });
+      return apiOk({ ok: true, pricing: null, message: 'Ni held tradeov za sezonsko ceno.' });
     }
 
     const soldTrades = await db.trade.findMany({
@@ -38,32 +46,7 @@ export async function POST(req: NextRequest) {
     });
 
     // Analiza mesečnih cen per kategorija
-    const monthlyPrices: Record<string, Record<number, { avg: number; count: number }>> = {};
-    for (const t of soldTrades) {
-      const cat = t.category || 'drugo';
-      if (t.sellDate) {
-        const m = t.sellDate.getMonth();
-        if (!monthlyPrices[cat]) monthlyPrices[cat] = {};
-        if (!monthlyPrices[cat][m]) monthlyPrices[cat][m] = { avg: 0, count: 0 };
-        monthlyPrices[cat][m].avg += t.sellPrice ?? 0;
-        monthlyPrices[cat][m].count++;
-      }
-    }
-    for (const cat of Object.keys(monthlyPrices)) {
-      for (const m of Object.keys(monthlyPrices[cat])) {
-        const d = monthlyPrices[cat][Number(m)];
-        d.avg = d.count > 0 ? Math.round(d.avg / d.count) : 0;
-      }
-    }
-
-    const settings = await getSettingsRow();
-    const aiSettings: AiSettings = {
-      provider: settings.aiProvider as AiProviderType,
-      baseUrl: settings.aiBaseUrl, apiKey: settings.aiApiKey, model: settings.aiModel,
-      fallbackProvider: (settings.fallbackProvider || '') as AiProviderType | '',
-      fallbackBaseUrl: settings.fallbackBaseUrl || '', fallbackApiKey: settings.fallbackApiKey || '',
-      fallbackModel: settings.fallbackModel || '',
-    };
+    const monthlyPrices = computeMonthlyPrices(soldTrades);
 
     const currentMonth = new Date().getMonth();
     const items = heldTrades.map(t => ({
@@ -72,15 +55,67 @@ export async function POST(req: NextRequest) {
       daysHeld: Math.round((Date.now() - t.buyDate.getTime()) / (24*60*60*1000)),
     }));
 
-    const itemsStr = items.slice(0, 25).map(i => `- [${i.id}] ${i.title} | ${i.category} | est: ${i.estValue}€ | ${i.daysHeld}d`).join('\n');
-    const monthlyStr = Object.entries(monthlyPrices).slice(0, 8).map(([cat, months]) => {
-      const monthData = Array.from({length: 12}, (_, m) => months[m]?.avg ?? 0);
-      const peak = Math.max(...monthData);
-      const low = Math.min(...monthData.filter(p => p > 0));
-      return `- ${cat}: vrh ${MONTHS[monthData.indexOf(peak)]} (${peak}€), nizko ${MONTHS[monthData.indexOf(low)]} (${low}€)`;
-    }).join('\n');
+    const itemsStr = buildItemsStr(items);
+    const monthlyStr = buildMonthlyStr(monthlyPrices);
+    const prompt = buildPrompt(itemsStr, monthlyStr, currentMonth);
 
-    const prompt = `Si ekspert za sezonsko optimizacijo cen.
+    const raw = await callAi(prompt);
+    const parsed: any = parseAi(raw);
+    const validIds = new Set(items.map(i => i.id));
+
+    const pricing = transformPricing(parsed, currentMonth, validIds);
+
+    return apiOk({ ok: true, pricing });
+  },
+});
+
+// --- Pomožne funkcije (čiste, testabilne) --------------------------------
+
+interface MonthlyStats {
+  avg: number;
+  count: number;
+}
+
+function computeMonthlyPrices(
+  soldTrades: Array<{ category: string | null; sellPrice: number | null; sellDate: Date | null }>
+): Record<string, Record<number, MonthlyStats>> {
+  const monthlyPrices: Record<string, Record<number, MonthlyStats>> = {};
+  for (const t of soldTrades) {
+    const cat = t.category || 'drugo';
+    if (t.sellDate) {
+      const m = t.sellDate.getMonth();
+      if (!monthlyPrices[cat]) monthlyPrices[cat] = {};
+      if (!monthlyPrices[cat][m]) monthlyPrices[cat][m] = { avg: 0, count: 0 };
+      monthlyPrices[cat][m].avg += t.sellPrice ?? 0;
+      monthlyPrices[cat][m].count++;
+    }
+  }
+  for (const cat of Object.keys(monthlyPrices)) {
+    for (const m of Object.keys(monthlyPrices[cat])) {
+      const d = monthlyPrices[cat][Number(m)];
+      d.avg = d.count > 0 ? Math.round(d.avg / d.count) : 0;
+    }
+  }
+  return monthlyPrices;
+}
+
+function buildItemsStr(
+  items: Array<{ id: string; title: string; category: string; estValue: number; daysHeld: number }>
+): string {
+  return items.slice(0, 25).map(i => `- [${i.id}] ${i.title} | ${i.category} | est: ${i.estValue}€ | ${i.daysHeld}d`).join('\n');
+}
+
+function buildMonthlyStr(monthlyPrices: Record<string, Record<number, MonthlyStats>>): string {
+  return Object.entries(monthlyPrices).slice(0, 8).map(([cat, months]) => {
+    const monthData = Array.from({length: 12}, (_, m) => months[m]?.avg ?? 0);
+    const peak = Math.max(...monthData);
+    const low = Math.min(...monthData.filter(p => p > 0));
+    return `- ${cat}: vrh ${MONTHS[monthData.indexOf(peak)]} (${peak}€), nizko ${MONTHS[monthData.indexOf(low)]} (${low}€)`;
+  }).join('\n');
+}
+
+function buildPrompt(itemsStr: string, monthlyStr: string, currentMonth: number): string {
+  return `Si ekspert za sezonsko optimizacijo cen.
 Za vsak held item določi optimalno ceno glede na trenutno sezono in prihajajoče sezone.
 
 TRENUTNI MESEC: ${MONTHS[currentMonth]} (${SEASONS[currentMonth]})
@@ -137,66 +172,41 @@ Odgovori LE z JSON:
     "seasonal_optimization_gain_eur": <number>
   }
 }`;
+}
 
-    let raw = '';
-    try {
-      raw = await callProviderForRaw(aiSettings, prompt);
-    } catch (primaryError: any) {
-      if (aiSettings.fallbackProvider && aiSettings.fallbackModel) {
-        const fb: AiSettings = { provider: aiSettings.fallbackProvider, baseUrl: aiSettings.fallbackBaseUrl || '',
-          apiKey: aiSettings.fallbackApiKey || '', model: aiSettings.fallbackModel };
-        raw = await callProviderForRaw(fb, prompt);
-      } else { return NextResponse.json({ error: primaryError?.message ?? 'AI failed' }, { status: 500 }); }
-    }
-
-    const parsed: any = parseJsonLooseExported(raw);
-    const validIds = new Set(items.map(i => i.id));
-
-    const pricing = {
-      insights: String(parsed?.insights ?? '').slice(0, 500),
-      items: (parsed?.items || []).filter((it: any) => validIds.has(String(it?.id ?? ''))).map((it: any) => ({
-        tradeId: String(it?.id ?? ''),
-        title: String(it?.title ?? '').slice(0, 150),
-        category: String(it?.category ?? '').slice(0, 50),
-        currentEstValueEur: Math.max(0, Number(it?.current_est_value_eur ?? 0)),
-        seasonalAdjustmentPct: Math.round(Number(it?.seasonal_adjustment_pct ?? 0)),
-        seasonalPriceEur: Math.max(0, Number(it?.seasonal_price_eur ?? 0)),
-        currentSeason: ['Zima', 'Pomlad', 'Poletje', 'Jesen'].includes(String(it?.current_season)) ? String(it.current_season) : SEASONS[currentMonth],
-        seasonalDemand: ['peak', 'high', 'medium', 'low', 'offseason'].includes(String(it?.seasonal_demand)) ? String(it.seasonal_demand) : 'medium',
-        strategy: ['sell_peak', 'hold_for_peak', 'discount_offseason', 'preseason_buy'].includes(String(it?.strategy)) ? String(it.strategy) : 'sell_peak',
-        peakMonth: String(it?.peak_month ?? '').slice(0, 30),
-        peakPriceEur: Math.max(0, Number(it?.peak_price_eur ?? 0)),
-        waitForPeakDays: Math.max(0, Number(it?.wait_for_peak_days ?? 0)),
-        expectedProfitNowEur: Math.round(Number(it?.expected_profit_now_eur ?? 0)),
-        expectedProfitAtPeakEur: Math.round(Number(it?.expected_profit_at_peak_eur ?? 0)),
-        reasoning: String(it?.reasoning ?? '').slice(0, 200),
-      })),
-      seasonalFactors: (parsed?.seasonal_factors || []).slice(0, 4).map((f: any) => ({
-        season: ['Zima', 'Pomlad', 'Poletje', 'Jesen'].includes(String(f?.season)) ? String(f.season) : 'Zima',
-        hotCategories: (f?.hot_categories || []).slice(0, 5).map((c: any) => String(c).slice(0, 50)),
-        coldCategories: (f?.cold_categories || []).slice(0, 5).map((c: any) => String(c).slice(0, 50)),
-        avgPriceAdjustmentPct: Math.round(Number(f?.avg_price_adjustment_pct ?? 0)),
-      })),
-      summary: {
-        itemsToSellNow: Math.max(0, Number(parsed?.summary?.items_to_sell_now ?? 0)),
-        itemsToHoldForPeak: Math.max(0, Number(parsed?.summary?.items_to_hold_for_peak ?? 0)),
-        itemsToDiscount: Math.max(0, Number(parsed?.summary?.items_to_discount ?? 0)),
-        totalExpectedProfitNowEur: Math.round(Number(parsed?.summary?.total_expected_profit_now_eur ?? 0)),
-        totalExpectedProfitOptimizedEur: Math.round(Number(parsed?.summary?.total_expected_profit_optimized_eur ?? 0)),
-        seasonalOptimizationGainEur: Math.round(Number(parsed?.summary?.seasonal_optimization_gain_eur ?? 0)),
-      },
-    };
-
-    const today = new Date().toISOString().slice(0, 10);
-    if (settings.aiCallsDate !== today) {
-      await db.settings.update({ where: { id: 'singleton' }, data: { aiCallsDate: today, aiCallsToday: 1 } });
-    } else {
-      await db.settings.update({ where: { id: 'singleton' }, data: { aiCallsToday: { increment: 1 } } });
-    }
-
-    return NextResponse.json({ ok: true, pricing });
-  } catch (e: any) {
-    logger.error("/api/ai/seasonal-pricing", "POST handler failed", e);
-    return NextResponse.json({ error: e?.message ?? 'Napaka' }, { status: 500 });
-  }
+function transformPricing(parsed: any, currentMonth: number, validIds: Set<string>): any {
+  return {
+    insights: String(parsed?.insights ?? '').slice(0, 500),
+    items: (parsed?.items || []).filter((it: any) => validIds.has(String(it?.id ?? ''))).map((it: any) => ({
+      tradeId: String(it?.id ?? ''),
+      title: String(it?.title ?? '').slice(0, 150),
+      category: String(it?.category ?? '').slice(0, 50),
+      currentEstValueEur: Math.max(0, Number(it?.current_est_value_eur ?? 0)),
+      seasonalAdjustmentPct: Math.round(Number(it?.seasonal_adjustment_pct ?? 0)),
+      seasonalPriceEur: Math.max(0, Number(it?.seasonal_price_eur ?? 0)),
+      currentSeason: ['Zima', 'Pomlad', 'Poletje', 'Jesen'].includes(String(it?.current_season)) ? String(it.current_season) : SEASONS[currentMonth],
+      seasonalDemand: ['peak', 'high', 'medium', 'low', 'offseason'].includes(String(it?.seasonal_demand)) ? String(it.seasonal_demand) : 'medium',
+      strategy: ['sell_peak', 'hold_for_peak', 'discount_offseason', 'preseason_buy'].includes(String(it?.strategy)) ? String(it.strategy) : 'sell_peak',
+      peakMonth: String(it?.peak_month ?? '').slice(0, 30),
+      peakPriceEur: Math.max(0, Number(it?.peak_price_eur ?? 0)),
+      waitForPeakDays: Math.max(0, Number(it?.wait_for_peak_days ?? 0)),
+      expectedProfitNowEur: Math.round(Number(it?.expected_profit_now_eur ?? 0)),
+      expectedProfitAtPeakEur: Math.round(Number(it?.expected_profit_at_peak_eur ?? 0)),
+      reasoning: String(it?.reasoning ?? '').slice(0, 200),
+    })),
+    seasonalFactors: (parsed?.seasonal_factors || []).slice(0, 4).map((f: any) => ({
+      season: ['Zima', 'Pomlad', 'Poletje', 'Jesen'].includes(String(f?.season)) ? String(f.season) : 'Zima',
+      hotCategories: (f?.hot_categories || []).slice(0, 5).map((c: any) => String(c).slice(0, 50)),
+      coldCategories: (f?.cold_categories || []).slice(0, 5).map((c: any) => String(c).slice(0, 50)),
+      avgPriceAdjustmentPct: Math.round(Number(f?.avg_price_adjustment_pct ?? 0)),
+    })),
+    summary: {
+      itemsToSellNow: Math.max(0, Number(parsed?.summary?.items_to_sell_now ?? 0)),
+      itemsToHoldForPeak: Math.max(0, Number(parsed?.summary?.items_to_hold_for_peak ?? 0)),
+      itemsToDiscount: Math.max(0, Number(parsed?.summary?.items_to_discount ?? 0)),
+      totalExpectedProfitNowEur: Math.round(Number(parsed?.summary?.total_expected_profit_now_eur ?? 0)),
+      totalExpectedProfitOptimizedEur: Math.round(Number(parsed?.summary?.total_expected_profit_optimized_eur ?? 0)),
+      seasonalOptimizationGainEur: Math.round(Number(parsed?.summary?.seasonal_optimization_gain_eur ?? 0)),
+    },
+  };
 }
