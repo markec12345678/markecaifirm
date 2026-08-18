@@ -1,4 +1,5 @@
-// v7.42: Negotiation Auto-Responder — AI predlaga counter-offer ko prodajalec odgovori.
+// v7.42 / v8.94.5-j-refactor: Negotiation Auto-Responder — AI predlaga counter-offer ko prodajalec odgovori.
+// Refaktoriran z withAiRoute helperjem (v8.94) + enforceBudget guard.
 //
 // Ko prodajalec odgovori na tvojo ponudbo (contactStatus = 'responded'),
 // AI analizira odgovor in predlaga:
@@ -10,27 +11,45 @@
 // Body: { listingId: string, sellerResponse: string, yourOffer: number }
 // Returns: { ok, recommendation, counterMessage, maxAcceptablePrice, strategy }
 
-import { NextRequest, NextResponse } from 'next/server';
-import { db } from '@/lib/db';
-import { getSettingsRow } from '@/lib/pipeline';
-import { callProviderForRaw, parseJsonLooseExported, type AiProviderType, type AiSettings } from '@/lib/ai';
-import { logger } from '@/lib/logger';
+import { withAiRoute, AI_ROUTE_DEFAULTS, ApiRouteError, type AiRouteContext } from '@/lib/with-ai-route';
+import { apiOk, apiBadRequest } from '@/lib/api-response';
 
-export const runtime = 'nodejs';
-export const dynamic = 'force-dynamic';
+export const { runtime, dynamic } = AI_ROUTE_DEFAULTS;
 export const maxDuration = 60;
 
-export async function POST(req: NextRequest) {
-  try {
-    const body = await req.json().catch(() => ({}));
-    const { listingId, sellerResponse, yourOffer } = body;
+interface NegotiationAutoResponderInput {
+  listingId: string;
+  sellerResponse: string;
+  yourOffer: number | null;
+}
 
-    if (!listingId || !sellerResponse) {
-      return NextResponse.json({ error: 'listingId in sellerResponse sta obvezna' }, { status: 400 });
+export const POST = withAiRoute<NegotiationAutoResponderInput>({
+  endpoint: '/api/ai/negotiation-auto-responder',
+  maxDuration: 60,
+  enforceBudget: true, // AI klic — preveri budget
+
+  parseBody: async (req) => {
+    const body = await req.json().catch(() => ({}));
+    return {
+      listingId: body?.listingId ? String(body.listingId) : '',
+      sellerResponse: body?.sellerResponse ? String(body.sellerResponse) : '',
+      yourOffer: body?.yourOffer != null ? Number(body.yourOffer) : null,
+    };
+  },
+
+  validateInput: (input) => {
+    if (!input.listingId || !input.sellerResponse) {
+      return 'listingId in sellerResponse sta obvezna';
     }
+    return null;
+  },
+
+  handler: async (input, ctx: AiRouteContext) => {
+    const { db, callAi, parseAi } = ctx;
+    const { listingId, sellerResponse, yourOffer } = input;
 
     const listing = await db.listing.findUnique({
-      where: { id: String(listingId) },
+      where: { id: listingId },
       select: {
         id: true, title: true, price: true, priceText: true,
         aiEstimatedValue: true, aiVerdict: true, aiRisk: true,
@@ -40,30 +59,70 @@ export async function POST(req: NextRequest) {
     });
 
     if (!listing) {
-      return NextResponse.json({ error: 'Listing ne obstaja' }, { status: 404 });
+      throw new ApiRouteError('Listing ne obstaja', 404);
     }
 
     const askingPrice = listing.price ?? 0;
     const estValue = listing.aiEstimatedValue ?? askingPrice;
     const offer = yourOffer ? Number(yourOffer) : Math.round(askingPrice * 0.85);
 
-    const settings = await getSettingsRow();
-    const aiSettings: AiSettings = {
-      provider: settings.aiProvider as AiProviderType,
-      baseUrl: settings.aiBaseUrl, apiKey: settings.aiApiKey, model: settings.aiModel,
-      fallbackProvider: (settings.fallbackProvider || '') as AiProviderType | '',
-      fallbackBaseUrl: settings.fallbackBaseUrl || '', fallbackApiKey: settings.fallbackApiKey || '',
-      fallbackModel: settings.fallbackModel || '',
-    };
+    // Build prompt (besedilo IDENTIČNO originalu v7.42)
+    const prompt = buildPrompt(listing, askingPrice, estValue, offer, sellerResponse);
 
-    // Build conversation history
-    const conversation = listing.negotiationMessages.map(m => {
-      const prefix = m.direction === 'sent' ? 'TI' : 'PRODAJALEC';
-      const price = m.suggestedPrice ? ` (ponudba: ${m.suggestedPrice}€)` : '';
-      return `${prefix}: ${m.text}${price}`;
-    }).join('\n');
+    // AI klic (helper interno upravlja fallback + retry)
+    const raw = await callAi(prompt);
+    const parsed: any = parseAi(raw);
 
-    const prompt = `Si ekspert za pogajanje pri nakupu rabljenih dobrin na slovenskih oglasnih platformah.
+    // Save the seller's response as negotiation message (ne fail-a responsa)
+    await db.negotiationMessage.create({
+      data: {
+        listingId: listing.id,
+        direction: 'received',
+        text: String(sellerResponse).slice(0, 1000),
+        status: 'counter_received',
+      },
+    }).catch(() => {});
+
+    const recommendation = transformRecommendation(parsed, estValue);
+
+    return apiOk({
+      ok: true,
+      recommendation,
+      counterMessage: String(parsed?.counter_message ?? '').slice(0, 500),
+      copyToClipboard: String(parsed?.counter_message ?? '').slice(0, 500),
+      listingUrl: listing.id,
+    });
+  },
+});
+
+// --- Pomožne funkcije (čiste, testabilne) --------------------------------
+
+/**
+ * Zgradi AI prompt za negotiation auto-responder.
+ * Besedilo IDENTIČNO originalu (v7.42).
+ */
+function buildPrompt(
+  listing: {
+    title: string;
+    aiRisk: number | null;
+    negotiationMessages: Array<{
+      direction: string;
+      text: string;
+      suggestedPrice: number | null;
+    }>;
+  },
+  askingPrice: number,
+  estValue: number,
+  offer: number,
+  sellerResponse: string
+): string {
+  const conversation = listing.negotiationMessages.map(m => {
+    const prefix = m.direction === 'sent' ? 'TI' : 'PRODAJALEC';
+    const price = m.suggestedPrice ? ` (ponudba: ${m.suggestedPrice}€)` : '';
+    return `${prefix}: ${m.text}${price}`;
+  }).join('\n');
+
+  return `Si ekspert za pogajanje pri nakupu rabljenih dobrin na slovenskih oglasnih platformah.
 
 SITUACIJA:
 - Item: ${listing.title}
@@ -99,51 +158,22 @@ Odgovori LE z JSON:
   "counter_message": "<slovensko sporočilo za copy-paste>",
   "reasoning": "<1 stavek zakaj ta odgovor>"
 }`;
+}
 
-    let raw = '';
-    try {
-      raw = await callProviderForRaw(aiSettings, prompt);
-    } catch (primaryError: any) {
-      if (aiSettings.fallbackProvider && aiSettings.fallbackModel) {
-        const fb: AiSettings = { provider: aiSettings.fallbackProvider, baseUrl: aiSettings.fallbackBaseUrl || '', apiKey: aiSettings.fallbackApiKey || '', model: aiSettings.fallbackModel };
-        raw = await callProviderForRaw(fb, prompt);
-      } else {
-        return NextResponse.json({ error: primaryError?.message ?? 'AI failed' }, { status: 500 });
-      }
-    }
-
-    const parsed: any = parseJsonLooseExported(raw);
-
-    // Save the seller's response + AI suggestion as negotiation messages
-    await db.negotiationMessage.create({
-      data: {
-        listingId: listing.id,
-        direction: 'received',
-        text: String(sellerResponse).slice(0, 1000),
-        status: 'counter_received',
-      },
-    }).catch(() => {});
-
-    const action = ['accept', 'counter', 'walk_away'].includes(String(parsed?.action)) ? String(parsed.action) : 'counter';
-    const maxAcceptable = Math.max(1, Math.min(Number(parsed?.max_acceptable_price ?? estValue * 0.9), estValue));
-
-    return NextResponse.json({
-      ok: true,
-      recommendation: {
-        action,
-        analysis: String(parsed?.analysis ?? '').slice(0, 300),
-        tone: String(parsed?.tone ?? 'nevtralen'),
-        mentionedPrice: parsed?.mentioned_price ? Number(parsed.mentioned_price) : null,
-        counterPrice: parsed?.counter_price ? Number(parsed.counter_price) : null,
-        maxAcceptablePrice: Math.round(maxAcceptable),
-        reasoning: String(parsed?.reasoning ?? '').slice(0, 200),
-      },
-      counterMessage: String(parsed?.counter_message ?? '').slice(0, 500),
-      copyToClipboard: String(parsed?.counter_message ?? '').slice(0, 500),
-      listingUrl: listing.id,
-    });
-  } catch (err: any) {
-    logger.error('/api/ai/negotiation-auto-responder', 'POST handler failed', err);
-    return NextResponse.json({ error: err?.message ?? 'Napaka' }, { status: 500 });
-  }
+/**
+ * Transformiraj AI JSON odgovor v tipiziran recommendation objekt.
+ * Validira + clamp-a vse numerične vrednosti; uporablja privzete ko AI manjka.
+ */
+function transformRecommendation(parsed: any, estValue: number) {
+  const action = ['accept', 'counter', 'walk_away'].includes(String(parsed?.action)) ? String(parsed.action) : 'counter';
+  const maxAcceptable = Math.max(1, Math.min(Number(parsed?.max_acceptable_price ?? estValue * 0.9), estValue));
+  return {
+    action,
+    analysis: String(parsed?.analysis ?? '').slice(0, 300),
+    tone: String(parsed?.tone ?? 'nevtralen'),
+    mentionedPrice: parsed?.mentioned_price ? Number(parsed.mentioned_price) : null,
+    counterPrice: parsed?.counter_price ? Number(parsed.counter_price) : null,
+    maxAcceptablePrice: Math.round(maxAcceptable),
+    reasoning: String(parsed?.reasoning ?? '').slice(0, 200),
+  };
 }
