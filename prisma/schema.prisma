@@ -96,6 +96,13 @@ model Settings {
   // v3.2: AI usage tracking
   aiCallsToday         Int    @default(0)
   aiCallsDate          String @default("") // YYYY-MM-DD for daily reset
+  // v8.94: AI cost tracking — monthly counter + budget guard
+  aiCallsMonth         Int    @default(0)  // klici v trenutnem mesecu
+  aiCallsMonthDate     String @default("") // YYYY-MM za monthly reset
+  // v8.94: AI budget limits (v Settings UI nastavljivo)
+  aiMaxDailyCalls      Int    @default(500) // max klicev/dan (default 500)
+  aiMaxMonthlyCalls    Int    @default(10000) // max klicev/mesec (default 10K)
+  aiBudgetAlertedAt   String @default("") // YYYY-MM-DDTHH:mm ko je bil zadnji budget alert poslan
   // v4.2: Profit goal tracking
   monthlyProfitGoal    Float  @default(0)  // EUR per month, 0 = disabled
   // v8.50: First-Run Onboarding

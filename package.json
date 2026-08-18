@@ -1,8 +1,8 @@
 {
   "name": "markec-ai-firm",
-  "version": "7.24.0",
+  "version": "8.93.0",
   "private": false,
-  "description": "AI-powered opportunity monitor and trading firm for Slovenian classifieds (Bolha, Facebook, Vinted, Avtonet, Kleinanzeigen, Subito, Willhaben, mobile.de). 254 AI endpoints, multi-provider LLM, anti-detection, real-time alerts.",
+  "description": "AI-powered trading firm za slovenske in evropske portale (Bolha, FB Marketplace, Vinted, Avtonet, mobile.de, Kleinanzeigen, Subito, Willhaben, Quoka). 432 AI endpointov, 84 analytics, 21 cron automatizacij, multi-provider LLM z fallback, anti-detection, real-time alerti, local-first (SQLite).",
   "license": "MIT",
   "author": "markec12345678",
   "homepage": "https://github.com/markec12345678/markecaifirm",

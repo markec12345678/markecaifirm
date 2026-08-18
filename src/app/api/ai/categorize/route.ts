@@ -1,170 +1,175 @@
-// v5.5: Smart Categories — AI sam kategorizira oglase v kategorije
+// v5.5 / v8.94-refactor: Smart Categories — AI sam kategorizira oglase
+// Refaktoriran z withAiRoute helperjem (v8.94).
+//
 // POST /api/ai/categorize
 // Body: { listingId: string } — categorize single listing
 // Body: { monitorId: string, limit?: number } — bulk categorize uncategorized listings
 // Body: { title: string, description?: string, price?: number } — categorize without listing
 // Returns: { ok, categories: Array<{ listingId, title, category, confidence }> }
 
-import { NextRequest, NextResponse } from 'next/server';
-import { db } from '@/lib/db';
-import { getSettingsRow } from '@/lib/pipeline';
-import { callProviderForRaw, parseJsonLooseExported, type AiProviderType, type AiSettings } from '@/lib/ai';
-import { logger } from '@/lib/logger';
+import { NextResponse } from 'next/server';
+import { withAiRoute, AI_ROUTE_DEFAULTS, ApiRouteError, type AiRouteContext } from '@/lib/with-ai-route';
+import { apiOk, apiBadRequest, apiNotFound } from '@/lib/api-response';
 
-export const runtime = 'nodejs';
-export const dynamic = 'force-dynamic';
+export const { runtime, dynamic } = AI_ROUTE_DEFAULTS;
 export const maxDuration = 120;
 
 const VALID_CATEGORIES = [
   'avto', 'elektronika', 'nepremicnine', 'orodje', 'moda',
   'sport', 'pohistvo', 'knjige', 'glasba', 'zbirateljstvo',
-  'dom', 'vrtnarjenje', 'zivali', 'kolesa', 'drugo'
-];
+  'dom', 'vrtnarjenje', 'zivali', 'kolesa', 'drugo',
+] as const;
+type ValidCategory = typeof VALID_CATEGORIES[number];
 
-export async function POST(req: NextRequest) {
-  try {
-    const body = await req.json();
-    const listingId = body?.listingId;
-    const monitorId = body?.monitorId;
-    const limit = Math.min(50, Math.max(1, body?.limit ?? 20));
-    const directTitle = body?.title;
+interface CategorizeInput {
+  listingId?: string;
+  monitorId?: string;
+  limit: number;
+  title?: string;
+  description?: string;
+  price?: number;
+}
 
-    // Determine what to categorize
-    let listings: any[] = [];
-    if (listingId) {
-      // Single listing
-      const l = await db.listing.findUnique({
-        where: { id: listingId },
-        select: { id: true, title: true, description: true, price: true, priceText: true, userNotes: true, monitor: { select: { source: true } } },
-      });
-      if (!l) return NextResponse.json({ error: 'Listing ne obstaja' }, { status: 404 });
-      listings = [l];
-    } else if (monitorId) {
-      // Bulk: get uncategorized listings from monitor
-      // Note: Listing model doesn't have a category field directly; Trade has category.
-      // We'll categorize listings and store result in aiReason or a new field.
-      // For now, we'll use userNotes to store the AI category.
-      listings = await db.listing.findMany({
-        where: {
-          monitorId,
-          isHidden: false,
-          userNotes: null, // uncategorized (no notes)
-        },
-        select: {
-          id: true, title: true, description: true, price: true, priceText: true,
-          monitor: { select: { source: true } },
-        },
-        take: limit,
-        orderBy: { firstSeenAt: 'desc' },
-      });
-    } else if (directTitle) {
-      // Direct categorization without listing
-      listings = [{
-        id: null,
-        title: directTitle,
-        description: body?.description ?? '',
-        price: body?.price ?? null,
-        priceText: body?.price ? `${body.price} EUR` : '',
-        monitor: { source: 'direct' },
-      }];
-    } else {
-      return NextResponse.json({ error: 'Potreben je listingId, monitorId, ali title' }, { status: 400 });
-    }
+export const POST = withAiRoute<CategorizeInput>({
+  endpoint: '/api/ai/categorize',
+  maxDuration: 120,
 
-    if (listings.length === 0) {
-      return NextResponse.json({ ok: true, categories: [], message: 'Ni oglasov za kategorizacijo.' });
-    }
-
-    const settings = await getSettingsRow();
-    const aiSettings: AiSettings = {
-      provider: settings.aiProvider as AiProviderType,
-      baseUrl: settings.aiBaseUrl,
-      apiKey: settings.aiApiKey,
-      model: settings.aiModel,
-      fallbackProvider: (settings.fallbackProvider || '') as AiProviderType | '',
-      fallbackBaseUrl: settings.fallbackBaseUrl || '',
-      fallbackApiKey: settings.fallbackApiKey || '',
-      fallbackModel: settings.fallbackModel || '',
+  parseBody: async (req) => {
+    const body = await req.json().catch(() => ({}));
+    return {
+      listingId: body?.listingId ? String(body.listingId) : undefined,
+      monitorId: body?.monitorId ? String(body.monitorId) : undefined,
+      limit: Math.min(50, Math.max(1, Number(body?.limit ?? 20))),
+      title: body?.title ? String(body.title) : undefined,
+      description: body?.description ? String(body.description) : undefined,
+      price: typeof body?.price === 'number' ? body.price : Number(body?.price) || undefined,
     };
+  },
 
-    // Build prompt for batch categorization
-    const prompt = buildCategorizePrompt(listings);
+  validateInput: (input) => {
+    if (!input.listingId && !input.monitorId && !input.title) {
+      return 'Potreben je listingId, monitorId, ali title';
+    }
+    return null;
+  },
 
-    let raw = '';
-    try {
-      raw = await callProviderForRaw(aiSettings, prompt);
-    } catch (primaryError: any) {
-      if (aiSettings.fallbackProvider && aiSettings.fallbackModel) {
-        const fallbackSettings: AiSettings = {
-          provider: aiSettings.fallbackProvider,
-          baseUrl: aiSettings.fallbackBaseUrl || '',
-          apiKey: aiSettings.fallbackApiKey || '',
-          model: aiSettings.fallbackModel,
-        };
-        raw = await callProviderForRaw(fallbackSettings, prompt);
-      } else {
-        throw primaryError;
-      }
+  handler: async (input, ctx: AiRouteContext) => {
+    const { db, callAi, parseAi } = ctx;
+
+    // 1. Določi kaj kategorizirati (3 načini)
+    const listings = await resolveListings(input, db);
+    if (listings.length === 0) {
+      return apiOk({ categories: [], message: 'Ni oglasov za kategorizacijo.' });
     }
 
-    const parsed: any = parseJsonLooseExported(raw);
+    // 2. AI klic
+    const prompt = buildCategorizePrompt(listings);
+    const raw = await callAi(prompt);
+    const parsed: any = parseAi(raw);
+
+    // 3. Transformacija rezultatov
     const results = (parsed?.categories || parsed?.kategorije || []).map((c: any, i: number) => ({
       listingId: listings[i]?.id ?? null,
       title: listings[i]?.title ?? '',
-      category: VALID_CATEGORIES.includes(c?.category) ? c.category : 'drugo',
+      category: (VALID_CATEGORIES as readonly string[]).includes(String(c?.category))
+        ? String(c.category) as ValidCategory : 'drugo',
       confidence: clampInt(c?.confidence, 0, 100) ?? 50,
       reasoning: String(c?.reasoning ?? '').slice(0, 200),
     }));
 
-    // Save categories to listings (store in userNotes with prefix)
-    for (const r of results) {
-      if (r.listingId) {
-        try {
-          const existing = await db.listing.findUnique({
-            where: { id: r.listingId },
-            select: { userNotes: true },
-          });
-          // Only update if no existing notes (don't overwrite user's notes)
-          if (!existing?.userNotes) {
-            await db.listing.update({
-              where: { id: r.listingId },
-              data: {
-                userNotes: `[AI kategorija: ${r.category}]`,
-                userNotesUpdatedAt: new Date(),
-              },
-            });
-          }
-        } catch { /* skip on error */ }
-      }
-    }
+    // 4. Side effect: shrani kategorije v listings (samo če ni user notes)
+    await saveCategoriesToDb(results, db);
 
-    // Increment AI usage counter
-    const today = new Date().toISOString().slice(0, 10);
-    if (settings.aiCallsDate !== today) {
-      await db.settings.update({
-        where: { id: 'singleton' },
-        data: { aiCallsDate: today, aiCallsToday: 1 },
-      });
-    } else {
-      await db.settings.update({
-        where: { id: 'singleton' },
-        data: { aiCallsToday: { increment: 1 } },
-      });
-    }
+    // 5. Side effect: inkrementiraj AI counter
+    await incrementAiCallCounter(db);
 
-    return NextResponse.json({
-      ok: true,
+    return apiOk({
       categories: results,
       categorizedAt: new Date().toISOString(),
       count: results.length,
     });
-  } catch (e: any) {
-    logger.error("/api/ai/categorize", "POST handler failed", e);
-    return NextResponse.json({ error: e?.message ?? 'Napaka pri AI kategorizaciji' }, { status: 500 });
+  },
+});
+
+// --- Pomožne funkcije -----------------------------------------------------
+
+/** Določi seznam listing-ov glede na input (3 načini). */
+async function resolveListings(
+  input: CategorizeInput,
+  db: AiRouteContext['db']
+): Promise<Array<{ id: string | null; title: string; description?: string; price: number | null; priceText: string; monitor?: { source: string } }>> {
+  if (input.listingId) {
+    const l = await db.listing.findUnique({
+      where: { id: input.listingId },
+      select: {
+        id: true, title: true, description: true, price: true, priceText: true,
+        userNotes: true, monitor: { select: { source: true } },
+      },
+    });
+    if (!l) {
+      throw new ApiRouteError('Listing ne obstaja', 404);
+    }
+    return [l];
+  }
+
+  if (input.monitorId) {
+    return await db.listing.findMany({
+      where: {
+        monitorId: input.monitorId,
+        isHidden: false,
+        userNotes: null, // uncategorized
+      },
+      select: {
+        id: true, title: true, description: true, price: true, priceText: true,
+        monitor: { select: { source: true } },
+      },
+      take: input.limit,
+      orderBy: { firstSeenAt: 'desc' },
+    });
+  }
+
+  // Direct (brez listinga)
+  return [{
+    id: null,
+    title: input.title ?? '',
+    description: input.description ?? '',
+    price: input.price ?? null,
+    priceText: input.price ? `${input.price} EUR` : '',
+    monitor: { source: 'direct' },
+  }];
+}
+
+/** Shrani AI kategorije v listings.userNotes (samo če notes še ni nastavljen). */
+async function saveCategoriesToDb(
+  results: Array<{ listingId: string | null; category: string }>,
+  db: AiRouteContext['db']
+): Promise<void> {
+  for (const r of results) {
+    if (!r.listingId) continue;
+    try {
+      const existing = await db.listing.findUnique({
+        where: { id: r.listingId },
+        select: { userNotes: true },
+      });
+      if (!existing?.userNotes) {
+        await db.listing.update({
+          where: { id: r.listingId },
+          data: {
+            userNotes: `[AI kategorija: ${r.category}]`,
+            userNotesUpdatedAt: new Date(),
+          },
+        });
+      }
+    } catch {
+      // skip on error (non-fatal)
+    }
   }
 }
 
-function buildCategorizePrompt(listings: any[]): string {
+/** Build prompt za batch kategorizacijo. */
+function buildCategorizePrompt(
+  listings: Array<{ title: string; description?: string; priceText?: string; monitor?: { source: string } }>
+): string {
   const parts: string[] = [
     'Si ekspert za kategorizacijo oglasov na slovenskih spletnih oglasih.',
     'Za vsak oglas določi pravo kategorijo iz naslednjega seznama:',
@@ -215,9 +220,32 @@ function buildCategorizePrompt(listings: any[]): string {
   return parts.join('\n');
 }
 
-function clampInt(v: any, min: number, max: number): number | null {
+function clampInt(v: unknown, min: number, max: number): number | null {
   if (v === null || v === undefined || v === '') return null;
   const n = typeof v === 'number' ? v : parseInt(String(v), 10);
   if (Number.isNaN(n)) return null;
   return Math.max(min, Math.min(max, n));
+}
+
+/**
+ * Side effect: inkrementiraj dnevni AI counter.
+ * TODO (v8.95): razširi z token count + EUR tracking.
+ */
+async function incrementAiCallCounter(db: AiRouteContext['db']): Promise<void> {
+  const today = new Date().toISOString().slice(0, 10);
+  const settings = await db.settings.findUnique({
+    where: { id: 'singleton' },
+    select: { aiCallsDate: true },
+  });
+  if (settings?.aiCallsDate !== today) {
+    await db.settings.update({
+      where: { id: 'singleton' },
+      data: { aiCallsDate: today, aiCallsToday: 1 },
+    });
+  } else {
+    await db.settings.update({
+      where: { id: 'singleton' },
+      data: { aiCallsToday: { increment: 1 } },
+    });
+  }
 }

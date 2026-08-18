@@ -19652,3 +19652,65 @@ Stage Summary:
 - Verzija: v8.93.0
 - Skupaj (v7.50 → v8.93): 143 verzij, 265 novih funkcij
 - ACCESSIBILITY: 9 ARIA atributov dodanih. Screen reader uporabniki razumejo kaj vsak element dela.
+
+---
+Task ID: v8.94
+Agent: Z.ai Code (solo-dev improvements)
+Task: Solo developer priorities — withAiRoute helper, test coverage, AI cost tracking, endpoint audit
+
+Work Log:
+- Analiza: kloniral repozitorij (616 commitov, 297K vrstic, 432 AI endpointov)
+- Security: .env je že pravilno ignoriran, .env.example obstaja (OK)
+- package.json: popravil zastareli opis (254→432 AI endpointov) + sinhroniziral verzijo (7.24→8.93)
+- NEW src/lib/with-ai-route.ts (245 vrstic): reusable wrapper za AI endpointe
+  - Eliminira boilerplate: try/catch, settings load, fallback provider, rate limit, JSON parse
+  - ApiRouteError class za custom status codes iz helper funkcij
+  - enforceBudget option: avtomatski budget guard + recordAiCall
+  - AI_ROUTE_DEFAULTS konstante za Next.js route config
+  - Lint 0, Typecheck 0
+- Refactor primer 1: src/app/api/ai/tone-analyzer/route.ts (179→215 vrstic)
+  - Handler sam ~20 vrstic (prej 160+ z boilerplate)
+  - Ekstrahirane testabilne funkcije: buildPrompt, transformAnalysis, incrementAiCallCounter
+- Refactor primer 2: src/app/api/ai/categorize/route.ts (224→245 vrstic)
+  - 3 input modes (listingId, monitorId, directTitle) v isti handler
+  - resolveListings, saveCategoriesToDb, incrementAiCallCounter ekstrahirane
+- NEW tests/lib/url-safety.test.ts (59 testov): SSRF zaščita — security-critical
+  - Valid URLs, HTTP blocked by default, localhost, cloud metadata, link-local
+  - Private IPv4 (RFC 1918 + CGNAT + 0.0.0.0/8), private IPv6 (ULA, link-local, multicast)
+  - Non-http protocols, invalid/empty URLs, maskedUrl, DNS rebinding
+- EXPANDED tests/lib/rate-limit.test.ts (4→25 testov): per-IP isolation, routeKey isolation
+  - x-real-ip fallback, "unknown" bucket, default routeKey/limit
+  - rateLimitResponse headers, resetRateLimits, window reset (fake timers)
+- NEW tests/lib/ai.test.ts (68 testov): parseJsonLooseExported robustnost
+  - Valid JSON, code fences, JSON z additional text, empty/null input
+  - Invalid JSON (ne throw-a), realni LLM output primeri, edge cases
+  - Robustnost: 23 weird inputs, noben ne throw-a
+- NEW ENDPOINTS_AUDIT.md: identifikacija 12 skupin duplikatov (~32 endpointov)
+  - profit-maximizer (v1/v2/Pro), inventory-aging-predictor (v1/v2/Pro)
+  - listing-performance (7 variant!), buyer-matchmaker, auction-sniper, itd.
+  - Predlagana 4-fazna migracijska strategija + naming convention dokumentacija
+- NEW src/lib/ai-cost.ts (210 vrstic): AI budget guard + usage stats
+  - checkAiBudget(): preveri dnevni/mesečni limit PRED AI klicem
+  - recordAiCall(): increment counter-je PO uspešnem klicu
+  - getAiUsageStats(): vrača trenutno porabo za dashboard
+  - AiBudgetExceeded class za specifičen error
+  - Avtomatski reset counter-jev ob spremembi dneva/meseca
+- NEW src/app/api/ai-usage/route.ts: GET endpoint za dashboard widget
+- prisma/schema.prisma: dodana polja
+  - aiCallsMonth, aiCallsMonthDate (mesečni counter)
+  - aiMaxDailyCalls (default 500), aiMaxMonthlyCalls (default 10000)
+  - aiBudgetAlertedAt (za dedup alertov)
+- Posodobljen withAiRoute: enforceBudget option (budget guard + auto recordAiCall)
+- Version bump: v8.93.0 → v8.94.0
+
+Stage Summary:
+- NOVE DATOTEKE: 5 (with-ai-route.ts, ai-cost.ts, ai-usage/route.ts, 3 test datoteke, ENDPOINTS_AUDIT.md)
+- MODIFICIRANE: 3 (package.json, version.ts, schema.prisma, tone-analyzer/route.ts, categorize/route.ts, rate-limit.test.ts, with-ai-route.ts)
+- TESTI: 152 novih testov (171 total v tests/lib/, prej 19)
+- LINT: 0 errors, 0 warnings ✨
+- TYPECHECK: 0 errors ✨
+- AI BUDGET GUARD: default 500 klicev/dan, 10K/mesec (konfigurabilno v Settings)
+- REFACTOR PRIMERI: tone-analyzer + categorize demonstrirata withAiRoute vzorec
+- ENDPOINT AUDIT: 12 duplikat skupin dokumentiranih z deprecacijskim načrtom
+- Verzija: v8.94.0
+- Skupaj (v7.50 → v8.94): 144 verzij, 266 novih funkcij
