@@ -19761,3 +19761,31 @@ Stage Summary:
 - TYPECHECK: 0 errors ✨
 - TESTS: 171 passing (nobena sprememba — vse stare teste še vedno passing) ✨
 - Verzija: v8.94.1
+
+---
+Task ID: v8.94.2
+Agent: Z.ai Code (README + CHANGELOG sync + push)
+Task: Sinhroniziraj README badge + CHANGELOG z v8.94.1 spremembami
+
+Work Log:
+- README badge posodobljen:
+  - Version: v8.93.0 → v8.94.1
+  - API Routes: 651 → 652 (+1: /api/ai-usage)
+  - Tests: 129 → 277 (+148: 152 novih v8.94 - 4 ki so bili prej duplicated count)
+- README "Local-first" vrstica: "129 tests" → "277 tests (incl. 152 security & robustness tests v8.94)"
+- README "Testing" v Features checklist: posodobljeno s 277 testi + 652 routes
+- README NOVA Feature Overview sekcija: "Developer Experience & Cost Control (v8.94)" z 7 točkami:
+  - withAiRoute Helper
+  - AI Cost Tracking
+  - AI Usage Widget
+  - Budget Guard
+  - Security Test Suite (152 testov)
+  - Endpoint Audit
+  - 7 Endpointov Migriranih
+- CHANGELOG.md: nov [8.94.1] vnos z 6 podsekcijami (withAiRoute, AI Cost Tracking, Dashboard Widget, Settings UI, Security Tests, 7 Migriranih endpointov, Endpoint Audit, Prisma Schema) + Changed + Kvaliteta
+- Lint: 0, Typecheck: 0
+
+Stage Summary:
+- MODIFIED: README.md (badge + Local-first + Testing + nova Feature Overview sekcija)
+- MODIFIED: CHANGELOG.md (nov [8.94.1] vnos ~80 vrstic)
+- Verzija: v8.94.1 (nespremenjena — samo docs sync)

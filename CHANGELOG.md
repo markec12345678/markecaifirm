@@ -6,6 +6,82 @@ Format sledi [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), verzije s
 
 ## [Unreleased]
 
+## [8.94.1] - 2026-08-18
+
+### Added — 🧩 withAiRoute Helper + 💰 AI Cost Tracking + 🧪 Security Tests + 📊 Dashboard Widget
+
+**Solo-dev improvements branch** — največji vzdrževalni dolg rešen + budget guard za AI stroške.
+
+#### 🧩 withAiRoute Helper (`src/lib/with-ai-route.ts`)
+Reusable wrapper za 432 AI endpointov — eliminira ~60% boilerplate kode:
+- try/catch z `logger.error` + `NextResponse.json` error
+- Load settings + build `AiSettings` (fallback provider)
+- `callProviderForRaw` z fallback handling
+- `parseJsonLooseExported`
+- Rate limiting (preko `lib/rate-limit.ts`)
+- `ApiRouteError` class za custom status codes iz helper funkcij
+- `enforceBudget` option: avtomatski budget guard + `recordAiCall`
+- `AI_ROUTE_DEFAULTS` konstante za Next.js route config
+
+#### 💰 AI Cost Tracking (`src/lib/ai-cost.ts`)
+Budget guard preprečuje, da AI poraba izstopi izpod kontrole:
+- `checkAiBudget()`: preveri dnevni/mesečni limit PRED AI klicem
+- `recordAiCall()`: increment counter-je PO uspešnem klicu
+- `getAiUsageStats()`: vrača trenutno porabo za dashboard
+- `AiBudgetExceeded` class za 429 response
+- Avtomatski reset ob spremembi dneva/meseca
+- Default: 500 klicev/dan, 10K/mesec (konfigurabilno v Settings UI)
+- Nov API endpoint: `/api/ai-usage`
+
+#### 📊 AI Usage Dashboard Widget (`src/components/dashboard/ai-usage-widget.tsx`)
+- Fetch `/api/ai-usage` s 60s avto-refresh
+- Prikaz dnevni/mesečni progress bar z barvami (zelena <70%, rumena 70-90%, rdeča >90%)
+- Countdown do reset ("Reset če 8h 23min")
+- BUDGET badge + warning alert ko kritično
+
+#### ⚙️ Settings UI za AI Budget
+- Nov "AI Budget" Card v settings-view.tsx z dvema Input poljema (daily/monthly limit)
+- "Kako deluje?" info box z 5 točkami razlage
+- Settings API GET vrača: `aiMaxDailyCalls`, `aiMaxMonthlyCalls`, `aiCallsToday`, `aiCallsMonth`
+- Settings API POST sprejema + validira limit-a (1-100k / 1-1M)
+
+#### 🧪 Security Test Suite (152 novih testov)
+- `tests/lib/url-safety.test.ts` (59 testov) — SSRF zaščita: localhost, cloud metadata (AWS/GCP/Azure), link-local, private IPv4 (RFC 1918 + CGNAT + 0.0.0.0/8), private IPv6 (ULA, link-local, multicast), non-http protocols, invalid URLs, maskedUrl, DNS rebinding
+- `tests/lib/rate-limit.test.ts` (25 testov, razširjeno iz 4) — per-IP isolation, routeKey isolation, x-real-ip fallback, "unknown" bucket, default routeKey/limit, rateLimitResponse headers, resetRateLimits, window reset (fake timers)
+- `tests/lib/ai.test.ts` (68 testov) — `parseJsonLooseExported` robustnost: code fences, JSON z additional text, realni LLM output primeri, 23 weird inputs (noben ne throw-a)
+
+#### ♻️ 7 Endpointov Migriranih na withAiRoute
+1. `tone-analyzer` — refaktoriran z ekstrahiranimi testabilnimi funkcijami
+2. `categorize` — 3 input modes (listingId, monitorId, directTitle)
+3. `deduplicate` — fast path + AI dedup z `enforceBudget: true`
+4. `prioritize-alerts` — heuristic ranking + AI enhancement
+5. `suggest-filters` — monitor ali direct mode
+6. `detect-anomalies` — single/bulk scan z `ApiRouteError` za 404
+7. `optimal-time` — sales history analysis + AI prediction
+
+#### 📋 Endpoint Audit (`ENDPOINTS_AUDIT.md`)
+12 skupin duplikatov identificiranih (~32 endpointov):
+- `profit-maximizer` (v1/v2/Pro), `inventory-aging-predictor` (v1/v2/Pro)
+- `listing-performance` (7 variant!), `buyer-matchmaker`, `auction-sniper`, itd.
+- Predlagana 4-fazna migracijska strategija + naming convention dokumentacija
+
+#### Prisma Schema
+- `aiCallsMonth`, `aiCallsMonthDate` (mesečni counter)
+- `aiMaxDailyCalls` (default 500), `aiMaxMonthlyCalls` (default 10000)
+- `aiBudgetAlertedAt` (za dedup alertov)
+
+### Changed
+- `package.json`: description posodobljen (254→432 AI endpointov), verzija sinhronizirana (7.24→8.93)
+- `src/lib/version.ts`: v8.93.0 → v8.94.1
+- `README.md`: badge posodobljen (v8.94.1, 277 tests, 652 routes) + nova "Developer Experience & Cost Control (v8.94)" Feature Overview sekcija
+
+### Kvaliteta
+- **Lint**: 0 errors, 0 warnings ✨
+- **Typecheck**: 0 errors ✨
+- **Tests**: 277 passing (152 new) ✨
+
+---
+
 v8.45 zaključi Polish phase mobile UX (Mobile-First Responsive Optimization + Touch UX — "Mobile bottom nav + FAB + haptic feedback + touch-optimized layouts"). Naslednje verzije:
 
 v8.26 je odprl Intelligence phase (Action Explainability), v8.27 jo nadaljuje (Scenario Brain), v8.28 jo še nadalje vzpostavi FEEDBACK LOOP (Adaptive Domain Weights), v8.29 jo ZAKLJUČI z Draft Queue + Action Feedback Loop integration (🎯 INTELLIGENCE PHASE COMPLETE), v8.30 odpira NOVO fazo — Automation (Safe Auto-pilot — 🎯 AUTOMATION PHASE STARTED), v8.31 zaključi Automation phase (Aggressive Auto-pilot + Anomaly Detection — 🎯 AUTOMATION PHASE COMPLETE), v8.32 odpira NOVO fazo — Polish (System Health Dashboard — 🎯 POLISH PHASE STARTED — "How healthy is the Brain system?"), v8.33 zaključi Polish phase caching (Performance Caching + Cache Stats), v8.34 zaključi Polish phase testing (Brain Integration Test Suite), v8.35 zaključi Polish phase "make the system alive" (Seed Demo Data + Telegram Brain Notifications), v8.36 zaključi Polish phase trade management enhancement (CSV Import + Quick Add + Dashboard Stats), v8.37 zaključi Polish phase decision support + visualization (Deal Calculator + Profit Timeline Chart — "Hitra odločitev + vizualno sledenje"), v8.38 zaključi Polish phase centralized notification history (🔔 Notification Center + Alert History — "Centralizirana zgodovina vseh obvestil"), v8.39 zaključi Polish phase goal tracking visualization (🎯 Goal Tracker Dashboard Widget + Settings Integration — "Vizualno sledenje mesečnemu cilju z avtomatsko obvestitvijo ob dosegu"), v8.40 zaključi Polish phase trade analytics deep dive (📊 Trade Insights Deep Dive — "KDaj in KJE prodati za maksimalen profit?" — 6 analiz iz 25 realnih trade-ov: day-of-week, source platform, category, hold period, profit distribution, actionable insights), v8.41 zaključi Polish phase weekly digest + email notifications (📋 Weekly Summary Report + Email Notifications — "Comprehensive weekly digest sent to Telegram + Email + Notification Center"), v8.42 zaključi Polish phase full system backup (💾 Full System Backup & Restore — "Portable, human-readable JSON backup of ALL 18 tables + 3 restore modes + auto-backup cron"). Naslednje verzije:
