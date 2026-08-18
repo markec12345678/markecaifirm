@@ -77,6 +77,11 @@ interface Settings {
   autoCleanupListingsDays: number;
   // v4.2: Profit goal
   monthlyProfitGoal: number;
+  // v8.94: AI budget limits + monthly counter
+  aiMaxDailyCalls: number;
+  aiMaxMonthlyCalls: number;
+  aiCallsToday: number;
+  aiCallsMonth: number;
   updatedAt: string;
 }
 
@@ -189,6 +194,9 @@ export function SettingsView() {
   const [autoCleanupListingsDays, setAutoCleanupListingsDays] = useState(90);
   // v4.2: Profit goal
   const [monthlyProfitGoal, setMonthlyProfitGoal] = useState(0);
+  // v8.94: AI budget limits — solo dev cost control
+  const [aiMaxDailyCalls, setAiMaxDailyCalls] = useState(500);
+  const [aiMaxMonthlyCalls, setAiMaxMonthlyCalls] = useState(10000);
   const [heartbeatSending, setHeartbeatSending] = useState(false);
 
   // Test states
@@ -240,6 +248,9 @@ export function SettingsView() {
         setAutoCleanupAlertsDays(data.autoCleanupAlertsDays ?? 30);
         setAutoCleanupListingsDays(data.autoCleanupListingsDays ?? 90);
         setMonthlyProfitGoal(data.monthlyProfitGoal ?? 0);
+        // v8.94: AI budget limits
+        setAiMaxDailyCalls(data.aiMaxDailyCalls ?? 500);
+        setAiMaxMonthlyCalls(data.aiMaxMonthlyCalls ?? 10000);
       } catch {
         toast.error('Ne morem naložiti nastavitev');
       } finally {
@@ -321,6 +332,9 @@ export function SettingsView() {
         autoCleanupListingsDays,
         // v4.2: Profit goal
         monthlyProfitGoal,
+        // v8.94: AI budget limits
+        aiMaxDailyCalls,
+        aiMaxMonthlyCalls,
       };
       if (apiKey) body.aiApiKey = apiKey;
       if (fallbackApiKey) body.fallbackApiKey = fallbackApiKey;
@@ -1464,6 +1478,74 @@ curl "https://api.telegram.org/bot<TOKEN>/setWebhook\\
             setMonthlyProfitGoal={setMonthlyProfitGoal}
             saving={saving}
           />
+        </CardContent>
+      </Card>
+
+      {/* v8.94: AI Budget — dnevni/mesečni limit AI klicev */}
+      <Card className="bg-card/50">
+        <CardHeader>
+          <CardTitle className="text-sm font-bold uppercase tracking-wider flex items-center gap-2">
+            <Zap className="w-4 h-4 text-primary" />
+            AI Budget <Badge variant="outline" className="text-[10px] text-primary border-primary/40">v8.94</Badge>
+          </CardTitle>
+          <CardDescription>
+            Omeji število AI klicev na dan in na mesec. Ko limit dosežejo, novi AI endpoint-i vračajo 429 (prepreči nepričakovane stroške).
+          </CardDescription>
+        </CardHeader>
+        <CardContent className="space-y-4">
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+            <div className="space-y-2">
+              <Label htmlFor="aiMaxDailyCalls" className="text-xs flex items-center justify-between">
+                <span>Dnevni limit</span>
+                <span className="text-[10px] text-muted-foreground">klicev/dan</span>
+              </Label>
+              <Input
+                id="aiMaxDailyCalls"
+                type="number"
+                min={1}
+                max={100000}
+                value={aiMaxDailyCalls}
+                onChange={(e) => setAiMaxDailyCalls(Math.max(1, Math.min(100000, Number(e.target.value) || 1)))}
+                disabled={saving}
+                className="font-mono"
+              />
+              <p className="text-[11px] text-muted-foreground">
+                Default 500. Priporočeno za solo dev (cena ≈ 0,01-0,05€/klic pri GPT-4o-mini).
+              </p>
+            </div>
+            <div className="space-y-2">
+              <Label htmlFor="aiMaxMonthlyCalls" className="text-xs flex items-center justify-between">
+                <span>Mesečni limit</span>
+                <span className="text-[10px] text-muted-foreground">klicev/mesec</span>
+              </Label>
+              <Input
+                id="aiMaxMonthlyCalls"
+                type="number"
+                min={1}
+                max={1000000}
+                value={aiMaxMonthlyCalls}
+                onChange={(e) => setAiMaxMonthlyCalls(Math.max(1, Math.min(1000000, Number(e.target.value) || 1)))}
+                disabled={saving}
+                className="font-mono"
+              />
+              <p className="text-[11px] text-muted-foreground">
+                Default 10.000. Limit samodejno reset vsak mesec.
+              </p>
+            </div>
+          </div>
+          <div className="bg-primary/5 border border-primary/20 rounded-lg p-3 text-xs space-y-1.5">
+            <div className="font-semibold text-primary flex items-center gap-1.5">
+              <Zap className="w-3 h-3" />
+              Kako deluje?
+            </div>
+            <ul className="text-muted-foreground space-y-1 ml-4 list-disc">
+              <li>Limit preverja <code className="text-primary">withAiRoute</code> helper PRED AI klicem</li>
+              <li>Ko presežen, AI endpoint vrne HTTP 429 z <code className="text-primary">{'{ code: "BUDGET_EXCEEDED" }'}</code></li>
+              <li>Dashboard widget prikaže trenutno porabo z barvno škodo (zelena/rumena/rdeča)</li>
+              <li>Counter-ji se samodejno resetirajo vsak dan (00:00) in vsak mesec (1. dan)</li>
+              <li>Endpoint-i brez <code className="text-primary">enforceBudget: true</code> option ne štejejo</li>
+            </ul>
+          </div>
         </CardContent>
       </Card>
 

@@ -42,6 +42,8 @@ import { PlatformPriceComparisonCard } from '@/components/dashboard/platform-pri
 import { SavedSearchStatusCard } from '@/components/dashboard/saved-search-status-card';
 import { DailyBriefingCard } from '@/components/dashboard/daily-briefing-card';
 import { SetupHealthBanner } from '@/components/dashboard/setup-health-banner';
+// v8.94: AI Usage Widget — dnevni/mesečni AI call budget tracking
+import { AiUsageWidget } from '@/components/dashboard/ai-usage-widget';
 
 // v5.6: Dashboard widget IDs
 const WIDGET_IDS = ['todaySummary', 'quickStats', 'activityFeed', 'aiInsights', 'skladisceWidget'] as const;
@@ -386,6 +388,10 @@ export function DashboardView({ onNavigate }: ViewProps) {
           🛒 Skladišče
         </button>
       </div>
+
+      {/* v8.94: AI Usage Widget — dnevni/mesečni budget tracking.
+          Postavljen blizu vrha da je vedno viden (kritično za solo dev budget). */}
+      <AiUsageWidget />
 
       {/* Stat grid */}
       <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-5 gap-4">

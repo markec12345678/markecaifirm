@@ -19714,3 +19714,50 @@ Stage Summary:
 - ENDPOINT AUDIT: 12 duplikat skupin dokumentiranih z deprecacijskim načrtom
 - Verzija: v8.94.0
 - Skupaj (v7.50 → v8.94): 144 verzij, 266 novih funkcij
+
+---
+Task ID: v8.94.1
+Agent: Z.ai Code (solo-dev improvements — nadaljevanje)
+Task: AI Usage dashboard widget + Settings UI + 5 endpoint migracije na withAiRoute
+
+Work Log:
+- NEW src/components/dashboard/ai-usage-widget.tsx (~200 vrstic): dashboard widget
+  - Fetch /api/ai-usage s 60s avto-refresh
+  - Prikaz dnevni/mesečni progress bar z barvami (zelena <70%, rumena 70-90%, rdeča >90%)
+  - Countdown do reset ("Reset če 8h 23min")
+  - BUDGET badge ko kritično + warning alert
+  - useFetch hook z loading/error state (CardSkeleton, CardError)
+- MODIFIED src/components/dashboard/dashboard-view.tsx: dodan AiUsageWidget v dashboard
+  - Postavljen takoj za "Danes" kartico (vidno mesto za budget monitoring)
+  - Import AiUsageWidget
+- MODIFIED src/app/api/settings/route.ts (GET + POST):
+  - GET vrača: aiMaxDailyCalls, aiMaxMonthlyCalls, aiCallsToday, aiCallsMonth
+  - POST sprejema: aiMaxDailyCalls (1-100000), aiMaxMonthlyCalls (1-1000000) z validacijo
+- MODIFIED src/components/dashboard/settings-view.tsx (Settings UI za AI Budget):
+  - Nov state: aiMaxDailyCalls (default 500), aiMaxMonthlyCalls (default 10000)
+  - Load logika z fallback defaults
+  - Save v body z novima poljema
+  - Nov "AI Budget" Card z dvema Input poljema (daily/monthly limit) + "Kako deluje?" info box
+  - Postavljen za Profit Goal Card
+- 5 endpointov migriranih na withAiRoute:
+  1. /api/ai/deduplicate (167→180 vrstic) — fast path + AI dedup, enforceBudget: true
+  2. /api/ai/prioritize-alerts (175→195 vrstic) — heuristic ranking + AI enhancement
+  3. /api/ai/suggest-filters (205→190 vrstic) — monitor ali direct mode
+  4. /api/ai/detect-anomalies (197→190 vrstic) — single/bulk scan z ApiRouteError za 404
+  5. /api/ai/optimal-time (269→240 vrstic) — sales history analysis + AI prediction
+- Vsi 5 endpointi imajo:
+  - enforceBudget: true (preverjajo AI budget PRED klicem)
+  - Ekstrahirane testabilne pomožne funkcije (buildPrompt, transformResults, analyzeX)
+  - apiOk za konsistenten response format
+  - ApiRouteError za custom status codes (404, 400)
+- Version bump: v8.94.0 → v8.94.1
+
+Stage Summary:
+- NOVE DATOTEKE: 1 (ai-usage-widget.tsx)
+- MODIFICIRANE: 8 (dashboard-view.tsx, settings/route.ts, settings-view.tsx, deduplicate/route.ts, prioritize-alerts/route.ts, suggest-filters/route.ts, detect-anomalies/route.ts, optimal-time/route.ts, version.ts)
+- MIGRIRANI ENDPOINTI: 5 (vsi z enforceBudget guard)
+- AI BUDGET TRACKING: celovit feature (lib + API + widget + settings UI)
+- LINT: 0 errors, 0 warnings ✨
+- TYPECHECK: 0 errors ✨
+- TESTS: 171 passing (nobena sprememba — vse stare teste še vedno passing) ✨
+- Verzija: v8.94.1
