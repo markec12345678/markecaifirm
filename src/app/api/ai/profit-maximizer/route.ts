@@ -18,6 +18,7 @@ import { db } from '@/lib/db';
 import { getSettingsRow } from '@/lib/pipeline';
 import { callProviderForRaw, parseJsonLooseExported, type AiProviderType, type AiSettings } from '@/lib/ai';
 import { logger } from '@/lib/logger';
+import { logDeprecatedCall } from '@/lib/deprecated-redirect';
 
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
@@ -35,6 +36,7 @@ interface PricingScenario {
 }
 
 export async function POST(req: NextRequest) {
+  logDeprecatedCall('/api/ai/profit-maximizer', req, '/api/ai/profit-maximizer-pro');
   try {
     const body = await req.json().catch(() => ({}));
     const { tradeId } = body;

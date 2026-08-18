@@ -13,6 +13,7 @@ import { db } from '@/lib/db';
 import { getSettingsRow } from '@/lib/pipeline';
 import { callProviderForRaw, parseJsonLooseExported, type AiProviderType, type AiSettings } from '@/lib/ai';
 import { logger } from '@/lib/logger';
+import { logDeprecatedCall } from '@/lib/deprecated-redirect';
 
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
@@ -72,6 +73,7 @@ function calcDepreciationCurve(profile: typeof DEPRECIATION_PROFILES[string], in
 }
 
 export async function POST(req: NextRequest) {
+  logDeprecatedCall('/api/ai/inventory-aging-predictor', req, '/api/ai/inventory-aging-predictor-pro');
   try {
     const body = await req.json().catch(() => ({}));
     const tradeId = body?.tradeId ? String(body.tradeId) : null;

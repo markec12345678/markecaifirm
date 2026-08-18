@@ -7883,6 +7883,9 @@ interface AIEndpoint {
   description: string;
   bodyHint: string;
   category: string;
+  // v8.94: deprecated flag iz /api/ai-list (JSDoc @deprecated zaznan v route.ts)
+  deprecated?: boolean;
+  deprecatedReplacement?: string;
 }
 
 // ===== Glavna komponenta =====
@@ -7892,6 +7895,8 @@ export function AIHubView() {
   const [search, setSearch] = useState('');
   const [activeCategory, setActiveCategory] = useState<string>('all');
   const [selectedEndpoint, setSelectedEndpoint] = useState<AIEndpoint | null>(null);
+  // v8.94: filter toggle za deprecated endpoint-e (default: prikaži)
+  const [hideDeprecated, setHideDeprecated] = useState(false);
 
   // Generiraj seznam iz AI_ENDPOINTS.md ali direktno iz route.ts datotek
   useEffect(() => {
@@ -7924,15 +7929,20 @@ export function AIHubView() {
     if (activeCategory !== 'all') {
       result = result.filter(e => e.category === activeCategory);
     }
+    if (hideDeprecated) {
+      result = result.filter(e => !e.deprecated);
+    }
     if (search.trim()) {
       const q = search.toLowerCase();
       result = result.filter(e =>
         e.name.toLowerCase().includes(q) ||
-        e.description.toLowerCase().includes(q)
+        e.description.toLowerCase().includes(q) ||
+        // v8.94: išči tudi po replacement endpoint-u (da uporabnik najde replacement)
+        (e.deprecatedReplacement ?? '').toLowerCase().includes(q)
       );
     }
     return result;
-  }, [endpoints, activeCategory, search]);
+  }, [endpoints, activeCategory, search, hideDeprecated]);
 
   // Statistike po kategorijah
   const categoryStats = useMemo(() => {
@@ -7940,6 +7950,9 @@ export function AIHubView() {
     endpoints.forEach(e => { stats[e.category] = (stats[e.category] ?? 0) + 1; });
     return stats;
   }, [endpoints]);
+
+  // v8.94: Count deprecated za prikaz v UI
+  const deprecatedCount = useMemo(() => endpoints.filter(e => e.deprecated).length, [endpoints]);
 
   if (loading) {
     return (
@@ -7987,16 +8000,39 @@ export function AIHubView() {
         ))}
       </div>
 
-      {/* Search */}
-      <div className="relative">
-        <Search className="w-4 h-4 absolute left-3 top-1/2 -translate-y-1/2 text-muted-foreground" />
-        <Input
-          type="text"
-          placeholder="Išči AI funkcijo (npr. 'fraud', 'buyer', 'profit', 'brain'...)"
-          value={search}
-          onChange={(e) => setSearch(e.target.value)}
-          className="pl-9"
-        />
+      {/* Search + deprecated filter */}
+      <div className="flex flex-col sm:flex-row gap-2">
+        <div className="relative flex-1">
+          <Search className="w-4 h-4 absolute left-3 top-1/2 -translate-y-1/2 text-muted-foreground" />
+          <Input
+            type="text"
+            placeholder="Išči AI funkcijo (npr. 'fraud', 'buyer', 'profit', 'brain'...)"
+            value={search}
+            onChange={(e) => setSearch(e.target.value)}
+            className="pl-9"
+            aria-label="Išči AI endpointe"
+          />
+        </div>
+        {deprecatedCount > 0 && (
+          <button
+            type="button"
+            onClick={() => setHideDeprecated(!hideDeprecated)}
+            aria-pressed={hideDeprecated}
+            aria-label={hideDeprecated ? 'Prikaži zastarele endpointe' : 'Skrij zastarele endpointe'}
+            className={cn(
+              'flex items-center gap-1.5 px-3 py-2 rounded-md border text-xs transition-colors min-h-[44px] sm:min-h-0 whitespace-nowrap',
+              hideDeprecated
+                ? 'border-primary/40 bg-primary/10 text-primary'
+                : 'border-border bg-card/50 text-muted-foreground hover:border-primary/30 hover:text-primary'
+            )}
+          >
+            <span>{hideDeprecated ? '👁️' : '🚫'}</span>
+            <span>{hideDeprecated ? 'Prikaži' : 'Skrij'}</span>
+            <Badge variant="outline" className="text-[9px] border-destructive/40 text-destructive shrink-0">
+              {deprecatedCount}
+            </Badge>
+          </button>
+        )}
       </div>
 
       {/* Endpoints grid */}
@@ -8127,10 +8163,24 @@ export function AIHubView() {
                             v8.30 · UNDO
                           </Badge>
                         )}
+                        {ep.deprecated && (
+                          <Badge
+                            variant="destructive"
+                            className="text-[9px] shrink-0 font-bold"
+                            title={ep.deprecatedReplacement ? `Uporabi /api/ai/${ep.deprecatedReplacement} namesto tega` : 'Zastareli — bo odstranjen v v9.0'}
+                          >
+                            DEPRECATED
+                          </Badge>
+                        )}
                       </div>
                       <p className="text-[10px] text-muted-foreground line-clamp-2">
                         {ep.description || 'Brez opisa'}
                       </p>
+                      {ep.deprecated && ep.deprecatedReplacement && (
+                        <p className="text-[10px] text-amber-600 dark:text-amber-400 mt-1">
+                          → Uporabi <code className="font-mono">/api/ai/{ep.deprecatedReplacement}</code>
+                        </p>
+                      )}
                     </div>
                     <ChevronRight className="w-4 h-4 text-muted-foreground group-hover:text-primary shrink-0 mt-0.5" />
                   </div>

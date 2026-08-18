@@ -20363,3 +20363,366 @@ Stage Summary:
 - TYPECHECK: 0 errors ✨
 - TESTS: 208 passing (lib) ✨
 - Verzija: v8.94.3
+
+---
+Task ID: v8.94.5-d
+Agent: Task agent (exit-strategy migration)
+Task: Migrate /api/ai/exit-strategy to withAiRoute
+
+Work Log:
+- Prebral worklog.md (v8.94 entries) za vzorec migracij ter with-ai-route.ts API
+- Prebral referenčna primera: src/app/api/ai/deduplicate/route.ts in src/app/api/ai/optimal-time/route.ts
+- Prebral originalni src/app/api/ai/exit-strategy/route.ts (142 vrstic) — analiziral poslovno logiko (trade lookup, market data, category historical sell speed, AI prompt, response transform, manual AI counter increment)
+- Migriral endpoint na withAiRoute vzorec:
+  - Uvoz withAiRoute, AI_ROUTE_DEFAULTS, ApiRouteError, type AiRouteContext iz @/lib/with-ai-route
+  - Uvoz apiOk iz @/lib/api-response
+  - Re-export runtime/dynamic iz AI_ROUTE_DEFAULTS + maxDuration = 60 (originalna vrednost)
+  - Definiral ExitStrategyInput interface s poljem tradeId: string
+  - parseBody: varno JSON parse z {} fallback, ekstrakt tradeId
+  - validateInput: vrne 'tradeId je obvezen' če manjka (originalni error message)
+  - handler: uporablja ctx.db / ctx.callAi / ctx.parseAi namesto direktnih uvozov
+  - 404 za manjkajoč trade: throw new ApiRouteError('Trade ne obstaja', 404)
+  - enforceBudget: true — AI call counter sedaj avtomatsko zabeležen preko recordAiCall v helperju
+  - Odstranjeno ročno try/catch, getSettingsRow() loadanje, fallback provider logika, manual AI counter increment (settings.aiCallsToday update)
+  - Identen prompt besedilo in JSON struktura odgovora (ok: true, strategy, trade)
+  - Identen market data query (similar listings 0.7x-1.4x buyPrice) in category sold trades query
+  - Identna transformacija (recommendation, timing, suggestedPrice, pricingStrategy, alternatives, reasoning, confidence)
+- Izločil čiste pomožne funkcije OUTSIDE handler: buildPrompt (PromptData interface), transformStrategy
+- Typecheck: bunx tsc --noEmit — 0 errors
+- Lint: bunx eslint src/app/api/ai/exit-strategy/route.ts — 0 errors
+
+Stage Summary:
+- MODIFIED: src/app/api/ai/exit-strategy/route.ts
+- Lines: 142 → 174
+- enforceBudget: true
+- Lint: 0, Typecheck: 0
+
+---
+Task ID: v8.94.5-f
+Agent: Task agent (buyer-trust-score migration)
+Task: Migrate /api/ai/buyer-trust-score to withAiRoute
+
+Work Log:
+- Prebral kontekst: worklog.md (v8.94 / v8.94.1 / v8.94.3 / v8.94.4 vnose) za pattern understanding
+- Prebral src/lib/with-ai-route.ts (helper API: withAiRoute, AI_ROUTE_DEFAULTS, ApiRouteError, AiRouteContext, enforceBudget)
+- Prebral referenčni primer 1: src/app/api/ai/deduplicate/route.ts (migrirani vzorec z enforceBudget + ekstrahiranimi funkcijami)
+- Prebral referenčni primer 2: src/app/api/ai/buyer-intent/route.ts (migrirani vzorec za podobno buyer temo, prazna Input interface)
+- Prebral original src/app/api/ai/buyer-trust-score/route.ts (298 vrstic — inline POST handler z manual try/catch, manual settings load, manual fallback provider try/catch, manual parseJsonLooseExported, manual AI counter increment preko settings update)
+- Migracija na withAiRoute<BuyerTrustScoreInput> z enforceBudget: true:
+  - uvozi: withAiRoute, AI_ROUTE_DEFAULTS, type AiRouteContext iz @/lib/with-ai-route; apiOk iz @/lib/api-response
+  - export const { runtime, dynamic } = AI_ROUTE_DEFAULTS; export const maxDuration = 90 (original)
+  - Input interface BuyerTrustScoreInput { customerName: string | null }
+  - parseBody: razčleni customerName iz body-ja (z {} fallback), null ko ni podan
+  - handler ~45 vrstic: db.trade.findMany → early return ko ni prodaj → aggregateBuyers → customerName check → computeBuyerMetrics → targetBuyers (filter ali slice 25) → callAi → parseAi → transformScoring → apiOk
+  - ctx.callAi(prompt) nadomesti callProviderForRaw + manual fallback try/catch
+  - ctx.parseAi(raw) nadomesti parseJsonLooseExported
+  - ctx.db nadomesti direkten import db
+  - apiOk({ ok: true, scoring: null, message }) ohranja originalno "no sales" + "customer not found" success response strukturo
+  - apiOk({ ok: true, scoring }) ohranja originalno success response strukturo
+- Ekstrahirane testabilne pomožne funkcije OUTSIDE handler:
+  1. aggregateBuyers(soldTrades) — zgradi buyerMap iz soldTrades, filtrira purchases >= 1; identična agregacijska logika kot original (firstPurchase/lastPurchase min/max, totalSpent += sellPrice - sellFees, categories Set, items array)
+  2. computeBuyerMetrics(buyers, now) — izračun avgOrderValue, daysAsCustomer, daysSinceLastPurchase, avgDaysBetweenPurchases, repeatPurchaseRate + hevristični trust score (purchaseScore/spentScore/longevityScore/recencyScore/diversityScore → paymentReliabilityScore/communicationScore); identične formule kot original
+  3. buildPrompt(targetBuyers) — zgradi AI prompt (besedilo IDENTIČNO originalu — slovenski kontekst, trust komponente, red/green flags, JSON schema z buyers/risk_factors_summary/trust_levels/recommendations/summary)
+  4. transformScoring(parsed, targetBuyers) — validacija + slice + clamp za vse sekcije (buyers z validNames filter, riskFactorsSummary, trustLevels, recommendations, summary z totalBuyers=targetBuyers.length); identična transformacijska logika kot original
+  - SoldTrade interface definiran za tipiziran argument aggregateBuyers
+  - BuyerData interface ohranjen identično originalu (vključno z Set<string> categories in locationConsistency)
+- Odstranjeno (boilerplate, ki ga helper obravnava):
+  - manual try/catch z logger.error + NextResponse.json error (helper apiError handle-a)
+  - manual getSettingsRow + AiSettings konstrukt (settings load v helperju preko ctx.aiSettings)
+  - manual fallback provider try/catch (ctx.callAi interno upravlja primary + fallback)
+  - manual parseJsonLooseExported klic (ctx.parseAi v helperju)
+  - manual AI counter increment (settings.aiCallsToday update + aiCallsDate reset) — enforceBudget: true avtomatsko kliče recordAiCall po uspehu
+  - uvozi: db, getSettingsRow, callProviderForRaw, parseJsonLooseExported, AiSettings, AiProviderType, logger, NextRequest, NextResponse
+- Vedenje nespremenjeno:
+  - isti input parsing (customerName optional, trim, null ko manjka)
+  - isti DB query (sold trades s sellPrice/sellLocation, take 500, order by sellDate desc)
+  - ista early return logika ("Ni prodaj za trust score analizo." in "Kupec X ni najden v zgodovini prodaj.")
+  - isti targetBuyers izbor (filter za customerName ALI slice 0-25)
+  - identičen prompt besedilo (vsi trust komponente, red/green flags, JSON schema)
+  - identična transformacijska logika (vsi clamp/slice/validacija pravili)
+  - identična success response struktura ({ ok: true, scoring } in { ok: true, scoring: null, message })
+- Typecheck: bunx tsc --noEmit — 0 errors
+- Lint: bunx eslint src/app/api/ai/buyer-trust-score/route.ts — 0 errors
+
+Stage Summary:
+- MODIFIED: src/app/api/ai/buyer-trust-score/route.ts
+- Lines: 298 → 316
+- enforceBudget: true
+- Lint: 0, Typecheck: 0
+
+---
+Task ID: v8.94.5-a
+Agent: Task agent (seller-response-predictor migration)
+Task: Migrate /api/ai/seller-response-predictor to withAiRoute
+
+Work Log:
+- Prebral kontekst: worklog.md (v8.94, v8.94.1–v8.94.4 vnose) za vzorec migracije
+- Prebral src/lib/with-ai-route.ts (helper API: withAiRoute, AI_ROUTE_DEFAULTS, ApiRouteError, AiRouteContext, enforceBudget)
+- Prebral referenčni primer 1: src/app/api/ai/deduplicate/route.ts (migrirani vzorec z parseBody/validateInput/handler + ekstrahiranimi pomožnimi funkcijami)
+- Prebral referenčni primer 2: src/app/api/ai/negotiation-outcome-predictor/route.ts (podobna negotiation tematika, ApiRouteError za 404, GROUNDING_PROMPT_SUFFIX)
+- Prebral referenčni primer 3: src/app/api/ai/restock/route.ts (GET endpoint BREZ AI klica — enak značaj kot seller-response-predictor, ki je pure DB computation brez callAi/parseAi)
+- Prebral src/lib/api-response.ts (apiOk, apiBadRequest, apiNotFound, apiError helperji)
+- Prebral original src/app/api/ai/seller-response-predictor/route.ts (139 vrstic — inline POST handler z manual try/catch + logger.error; BREZ AI klica, samo db.listing.findMany + čista computational logika za response rate/response time/willRespond prediction)
+- Preveril Prisma schema: Listing.contactStatus = String (default "none"), NegotiationMessage.direction = String — string komparacije v logiki so tipizirno pravilne
+- Migracija na withAiRoute<SellerResponseInput> z enforceBudget: true:
+  - Uvoz: withAiRoute, AI_ROUTE_DEFAULTS, type AiRouteContext iz @/lib/with-ai-route + apiOk iz @/lib/api-response (BREZ ApiRouteError — endpoint nima 404 primera; BREZ apiBadRequest — validateInput interno uporabi apiBadRequest)
+  - export const { runtime, dynamic } = AI_ROUTE_DEFAULTS; export const maxDuration = 60
+  - interface SellerResponseInput { sellerName: string }
+  - parseBody: razčleni sellerName iz body-ja z { } fallback, String() coercion
+  - validateInput: vrne 'sellerName je obvezen' ko !sellerName — identično originalu (helper interno vrne apiBadRequest 400)
+  - enforceBudget: true — preveri AI budget PRED klicem, avtomatsko recordAiCall PO uspehu (konzistentno z restock migracijo, ki prav tako nima AI klica a je AI endpoint po konvenciji)
+  - handler ~45 vrstic: db.listing.findMany → empty-list early return → analyzeContactHistory → computeResponseTimes → computePrediction → buildRecommendation → apiOk
+  - ctx.db nadomesti direkten import db iz @/lib/db
+- Ekstrahirane testabilne pomožne funkcije (izven handler-ja):
+  1. analyzeContactHistory(listings) — pure; kontaktirani = contactStatus !== 'none'; odgovorili = 'responded' || 'closed'; neodgovorjeni = 'contacted' (contacted but no response); responseRate = round(responded/contacted * 100) z 0 fallback — IDENTIČNO originalu
+  2. computeResponseTimes(listings) — pure; za vsak listing gre čez negotiationMessages in najde prvi 'sent' nato prvi 'received' (sentTime state machine, reset na null po 'received'); hours = (received - sent) / 3600000; valid če 0 <= hours < 168 (7 dni); avg = round(sum/count), min/max iz array-a — IDENTIČNO originalu (vključno z originalno logiko da drugi 'sent' medtem ko sentTime != null ne resetira timerja — ohranjeno da ne spremenimo vedenja)
+  3. computePrediction(responseRate, avgResponseHours, contactedCount) — pure; 5-veja if/else kaskada: FAST (rate>=70 in avg<=12, conf=min(95, 50+rate/2)) → LIKELY (rate>=50, avg??24, conf=min(70, 30+rate/2)) → UNLIKELY (rate>=20, avg??48, conf=40) → UNKNOWN (contactedCount===0, null, conf=0) → UNLIKELY fallback (null, conf=30) — IDENTIČNO originalu
+  4. buildRecommendation(sellerName, willRespond, responseRate, avgResponseHours, noResponseCount, expectedResponseHours) — pure; 4 emoji priporočila (✅FAST/🟡LIKELY/🔴UNLIKELY/❓UNKNOWN) z ${sellerName}/${responseRate}%/${avgResponseHours ?? '?'}h/${noResponseCount}/${expectedResponseHours}h interpolacijo — besedilo IDENTIČNO originalu (v6.49 v7.49)
+- Odstranjeno (boilerplate, ki ga helper obravnava):
+  - Manual try/catch z logger.error + NextResponse.json { error } 500 (helper interno catch-a in vrne apiError 500)
+  - Uvoz NextRequest, NextResponse, db, logger (helper interno upravlja)
+  - Manual `if (!sellerName) return NextResponse.json({ error }, { status: 400 })` (validateInput → apiBadRequest interno)
+  - NextResponse.json za success (apiOk)
+- Vedenje ohranjeno:
+  - Enak input → enak output: response struktura { ok: true, prediction: { willRespond, expectedResponseHours, responseRate, confidence, avgResponseHours, minResponseHours, maxResponseHours, totalContacted, totalResponded, totalNoResponse, recommendation } } identična (apiOk ohrani ok:true v data payload-u)
+  - Empty-list response (listings.length === 0) vrača minimalno strukturo { ok: true, prediction: { willRespond: 'UNKNOWN', expectedResponseHours: null, responseRate: 0, confidence: 0, recommendation: '...' } } — identično originalu (brez avgResponseHours/min/max/total polj v tem primeru)
+  - Vsa numerical pravila (round, Math.min/max, Math.min(95,...), Math.min(70,...), 168-urno okno) IDENTIČNA
+  - String format priporočil (✅🟡🔴❓ emoji, "Pošlji ponudbo ZDAJ", "Vredno poskusiti", "Preskoči — porabi čas na drugih prodajalcih", "Pošlji ponudbo in preveri v 24h") IDENTIČNA
+  - Sprememba error response konvencije: original 400 `{ error }` → wrapper-jev `{ ok: false, error }` (konsistentno z vsemi prejšnjimi v8.94.x migracijami; 404 ni možen — endpoint vedno vrača 200 z napovedjo, tudi za neznanega prodajalca)
+- Verifikacija:
+  - bunx tsc --noEmit: 0 errors
+  - bunx eslint src/app/api/ai/seller-response-predictor/route.ts: 0 errors (nobena prazna interface, ni potreben eslint-disable-next-line)
+
+Stage Summary:
+- MODIFIED: src/app/api/ai/seller-response-predictor/route.ts
+- Lines: 139 → 218 (+79; ~57% rast zaradi tipiziranih pomožnih funkcij + WillRespond type alias + JSDoc — handler sam ~45 vrstic, prej ~120 z inline logiko)
+- enforceBudget: true
+- Lint: 0, Typecheck: 0
+
+---
+Task ID: v8.94.5-e
+Agent: Task agent (buyer-feedback-analyzer migration)
+Task: Migrate /api/ai/buyer-feedback-analyzer to withAiRoute
+
+Work Log:
+- Prebral kontekst: worklog.md (v8.94, v8.94.1, v8.94.2, v8.94.3, v8.94.3-a/b, v8.94.4-a/b/c/d/e/f vnose) za vzorec migracije
+- Prebral src/lib/with-ai-route.ts (helper API: withAiRoute, AI_ROUTE_DEFAULTS, ApiRouteError, AiRouteContext, enforceBudget)
+- Prebral referenčni primer 1: src/app/api/ai/deduplicate/route.ts (migrirani vzorec z parseBody/handler + ekstrahiranimi normalizeTitle/findExactTitleMatches/buildExactDuplicate/aiDeduplicate)
+- Prebral referenčni primer 2: src/app/api/ai/buyer-intent/route.ts (podobna buyer tematika — analyzeSalesPatterns/buildPrompt/transformIntent ekstrahirane kot pure funkcije, empty interface z eslint-disable)
+- Prebral src/lib/api-response.ts (apiOk/apiBadRequest/apiNotFound/apiError helperji — apiOk pass-through data)
+- Prebral original src/app/api/ai/buyer-feedback-analyzer/route.ts (121 vrstic — inline POST handler z manual try/catch, manual getSettingsRow + AiSettings build, manual fallback provider try/catch, manual parseJsonLooseExported, manual AI counter increment aiCallsToday/aiCallsDate)
+- Migracija na withAiRoute<BuyerFeedbackAnalyzerInput> z enforceBudget: true:
+  - Uvoz: withAiRoute, AI_ROUTE_DEFAULTS, type AiRouteContext iz @/lib/with-ai-route + apiOk iz @/lib/api-response
+  - export const { runtime, dynamic } = AI_ROUTE_DEFAULTS; export const maxDuration = 90 (original)
+  - Input interface BuyerFeedbackAnalyzerInput { customerName: string | null; days: number } (ni prazna — ni eslint-disable potrebe)
+  - FEEDBACK_TYPES/SENTIMENT_TYPES/THEME_CATEGORIES as const array-i ohranjeni na vrhu (isti kot original)
+  - parseBody: razčleni customerName (trim ali null) in days (Math.max(7, Math.min(365, Number(body?.days ?? 90)))) — IDENTIČNO originalu
+  - Brez validateInput — vsi input-i imajo smiselne defaulte (days clamped, customerName nullable)
+  - enforceBudget: true — preveri AI budget PRED klicem, avtomatsko recordAiCall PO uspehu (nadomešča manual aiCallsToday/aiCallsDate increment)
+  - handler ~40 vrstic: db.trade.findMany (isti where/select/take/orderBy) → soldTrades.length === 0 early return → buildBuyerAggregates → customerName check early return → targetBuyers selection → buildPrompt → ctx.callAi → ctx.parseAi → transformAnalyzer → apiOk
+  - ctx.callAi(prompt) nadomesti callProviderForRaw + manual fallback try/catch (helper interno upravlja primary → fallback switch)
+  - ctx.parseAi(raw) nadomesti parseJsonLooseExported
+  - ctx.db nadomesti direkten import db
+- Ekstrahirane testabilne pomožne funkcije (izven handler-ja):
+  1. buildBuyerAggregates(soldTrades) — pure (glede na soldTrades input); agregira po buyer imenu (sellLocation trim, min 2 chars); računa rev = sellPrice - sellFees z ?? 0 fallback; items slice(0,5), notes slice(0,3) × 200 chars; avgOrder = round(totalSpent / purchases) — IDENTIČNO originalu (v6.85)
+  2. buildPrompt(targetBuyers) — pure; zgradi buyersStr (top 10, format `- name | purchases× | totalSpent€ | avgOrder€ povp | naslov: items[0..1]`) + AI prompt z vsemi 8 tipi feedbacka, 5 sentimenti, 10 tematskimi kategorijami in JSON schema — besedilo IDENTIČNO originalu (v6.85)
+  3. transformAnalyzer(parsed, targetBuyers) — pure; validira + clamp-a vse AI output polja (overview/feedbacks/sentimentAnalysis/themes/actionItems/mlModels/summary); whitelist validacije za feedbackType/inferredSentiment/theme/sentiment/trend/sentimentCorrelation/priority/responsibleArea/model/predictionType/feedbackGrade; Math.max(0, Math.min(100, ...)) za vse 0-100 številske vrednosti; slice omejitve (25/5/10/8/5) — IDENTIČNO originalu
+  4. BuyerAggregate interface (name/purchases/totalSpent/avgOrder/items/notes) — tipiziran kontrakt za buildBuyerAggregates return in buildPrompt/transformAnalyzer input
+- Odstranjeno (boilerplate, ki ga helper obravnava):
+  - Manual try/catch z logger.error + NextResponse.json error (helper interno catch-a in vrne apiError 500; ApiRouteError za custom status)
+  - Uvoz: NextRequest, NextResponse, db, getSettingsRow, callProviderForRaw, parseJsonLooseExported, AiProviderType, AiSettings, logger (helper interno upravlja)
+  - Manual getSettingsRow + AiSettings konstrukt (helper naloži settings in poda preko ctx.aiSettings)
+  - Manual fallback provider try/catch (ctx.callAi interno upravlja primary → fallback switch)
+  - Manual parseJsonLooseExported klic (ctx.parseAi v helperju)
+  - Manual AI counter increment (settings.aiCallsToday/aiCallsDate + singleton update) — enforceBudget: true avtomatsko kliče recordAiCall
+  - NextResponse.json za success (apiOk) — eksplicitno ohranjeno `ok: true` v data payload za backward compat
+  - NextResponse.json za 500 fallback error (helper interno vrača apiError 500)
+- Vedenje ohranjeno:
+  - Enak input parsing (customerName trim ali null, days clamp [7,365] z default 90)
+  - Enaka DB poizvedba (status='sold', sellPrice not null, sellLocation not '', sellDate gte since not null, select 9 polj, take 500, orderBy sellDate desc)
+  - Enaka since datumna aritmetika (Date.now() - days × 24×60×60×1000)
+  - Enaka buyer aggregation logika (sellLocation trim, min 2 chars, rev = sellPrice - sellFees, items slice 5, notes slice 3 × 200 chars, avgOrder)
+  - Enaka pogojna logika za customerName (filter za not-found check + filter za targetBuyers — obe klici ohranjeni)
+  - Enak targetBuyers selection (customerName ? filter : slice(0, 25))
+  - Enak prompt besedilo (vsi 8 tipi, 5 sentimenti, 10 teme, JSON schema, FEEDBACK_TYPES/SENTIMENT_TYPES/THEME_CATEGORIES interpolacije v JSON primerih)
+  - Identična transformacija (vsi clamp-i, whitelist validacije, slice omejitve, default vrednosti)
+  - Identičen response format: { ok: true, analyzer } za success; { ok: true, analyzer: null, message: '...' } za empty/not-found (pogoji ohranjeni — empty soldTrades in customerName-not-found)
+- Spremembe v error response strukturi (konsistentno z v8.94.x migracijami):
+  - 500 error response: { error: '...' } → { ok: false, error: '...' } (preko apiError v helper catch-u) — v primeru da AI ne uspe tudi po fallback-u
+- Verifikacija:
+  - bunx tsc --noEmit: 0 errors
+  - bunx eslint src/app/api/ai/buyer-feedback-analyzer/route.ts: 0 errors (nobena prazna interface, ni potreben eslint-disable-next-line)
+
+Stage Summary:
+- MODIFIED: src/app/api/ai/buyer-feedback-analyzer/route.ts
+- Lines: 121 → 234 (+113; ~93% rast zaradi tipiziranih pomožnih funkcij + BuyerAggregate interface + JSDoc/preserved prompt formatting — handler sam ~40 vrstic, prej ~100 z inline logiko)
+- enforceBudget: true
+- Lint: 0, Typecheck: 0
+
+---
+Task ID: v8.94.5-b
+Agent: Task agent (price-elasticity migration)
+Task: Migrate /api/ai/price-elasticity to withAiRoute
+
+Work Log:
+- Prebral kontekst: worklog.md (v8.94 / v8.94.1 / v8.94.2 / v8.94.3 / v8.94.4 vnose) za pattern understanding
+- Prebral src/lib/with-ai-route.ts (helper API: withAiRoute<TInput>, AI_ROUTE_DEFAULTS, ApiRouteError, type AiRouteContext, enforceBudget option)
+- Prebral referenčni primer 1: src/app/api/ai/deduplicate/route.ts (migrirani vzorec z enforceBudget: true + ekstrahiranimi normalizeTitle/findExactTitleMatches/buildExactDuplicate/aiDeduplicate funkcijami)
+- Prebral referenčni primer 2: src/app/api/ai/optimal-time/route.ts (migrirani vzorec z ekstrahiranimi analyzeSalesHistory/buildPrompt/transformPredictions/buildSummary + DAYS_SL konstanto)
+- Prebral original src/app/api/ai/price-elasticity/route.ts (190 vrstic — inline POST handler z manual try/catch, manual getSettingsRow + AiSettings konstrukt, manual fallback provider try/catch (callProviderForRaw → fallback settings → re-call), manual parseJsonLooseExported, manual AI counter increment na koncu (settings.aiCallsDate reset logika))
+- Migracija na withAiRoute<PriceElasticityInput> z enforceBudget: true:
+  - uvozi: withAiRoute, AI_ROUTE_DEFAULTS, type AiRouteContext iz @/lib/with-ai-route; apiOk iz @/lib/api-response
+  - export const { runtime, dynamic } = AI_ROUTE_DEFAULTS; export const maxDuration = 90 (original)
+  - Input interface PriceElasticityInput { category: string }
+  - parseBody: razčleni category iz body-ja (z {} fallback), String(body?.category || '').trim() — identično originalu
+  - brez validateInput — category je optional (default prazen string = vse kategorije)
+  - handler ~45 vrstic: db queries (soldTrades + heldTrades z identičnima select/where/take) → empty check (apiOk z elasticity:null + message) → groupByCategory → formatCategoryStr + formatHeldStr + buildPrompt → callAi → parseAi → transformElasticity → apiOk
+  - ctx.callAi(prompt) nadomesti callProviderForRaw + manual fallback try/catch (fallback v helperju)
+  - ctx.parseAi(raw) nadomesti parseJsonLooseExported
+  - ctx.db nadomesti direkten import db
+  - apiOk({ ok: true, elasticity }) ohranja originalno success response strukturo (ok: true + elasticity objekt)
+  - apiOk({ ok: true, elasticity: null, message: 'Ni prodaj za analizo elasticnosti.' }) ohranja originalno empty response strukturo
+- Ekstrahirane testabilne pomožne funkcije OUTSIDE handler (čiste, testabilne):
+  1. groupByCategory(soldTrades) — grupira prodane tradeove po kategoriji (null → 'drugo'), izračuna neto sellPrice (sellPrice - sellFees), daysToSell ( Datum diff ali default 30), avgPrice (Math.round)
+  2. formatCategoryStr(byCat) — sortira po count desc, slice 12, formatira "- ${cat}: ${count} prodaj, cena ${low}-${high}€ (povp. ${avg}€), povp. ${avgDays}d prodaja"
+  3. formatHeldStr(heldTrades) — slice 10, formatira "- ${title} | ${category} | nabavna ${buyPrice}€ | est. ${aiEstimatedValue ?? buyPrice*1.25}€"
+  4. buildPrompt(catStr, heldStr) — zgradi AI prompt (besedilo IDENTIČNO originalu — vključno z vsemi Elasticnost pravili, JSON shemo z vsemi 12+ polji, placeholder-jema ${catStr} in ${heldStr || '- Prazno'})
+  5. transformElasticity(parsed, validIds) — validacija + clamp za insights (slice 600), categories (slice 12, elasticityCoefficient × 100/100, elasticityType whitelist, Math.max(0) za cene, priceCurve slice 7, reasoning slice 200), heldItemsPricing (filter validIds, slice 100 za title, slice 200 za reasoning), summary (most_elastic/inelastic slice 50, avgElasticity × 100/100, totalProfitOptimizationEur Math.round)
+- Odstranjeno (boilerplate, ki ga helper obravnava):
+  - Manual try/catch z logger.error + NextResponse.json error (helper handle-a preko apiError)
+  - Manual getSettingsRow + AiSettings konstrukt (settings load v helperju preko getSettingsRow)
+  - Manual fallback provider logiko (callAi v helperju obravnava primary+fallback preko try/catch)
+  - Manual parseJsonLooseExported (ctx.parseAi v helperju)
+  - Manual AI counter increment na koncu (enforceBudget: true v helperju avtomatsko pokliče recordAiCall PO uspehu)
+  - Direkten import db (ctx.db v helperju)
+  - Direkten import callProviderForRaw, parseJsonLooseExported, AiSettings, AiProviderType (helper obravnava)
+  - Direkten import getSettingsRow (helper obravnava)
+  - Direkten import logger (helper obravnava error logging)
+- Ohranjena identična business logika:
+  - Enak input parsing (category String().trim())
+  - Enaki DB poizvedbi (status='sold' sellPrice not null + optional category filter; status='held' + optional category filter)
+  - Enaka select polja (8 polj za soldTrades, 6 polj za heldTrades vključno z listing.aiEstimatedValue)
+  - Enaki take limiti (300 za soldTrades, 30 za heldTrades)
+  - Enaka groupByCategory logika (sellPrice - sellFees, days calculation z fallback 30, avgPrice Math.round)
+  - Enaka formatCategoryStr (sort count desc, slice 12, low/high/avg/avgDays format)
+  - Enaka formatHeldStr (slice 10, format z aiEstimatedValue fallback buyPrice*1.25)
+  - Enako prompt besedilo (vse Elasticnost pravila, JSON schema, ${heldStr || '- Prazno'} fallback)
+  - Identična transformElasticity transformacija (vsi clamp-i, whiteliste, slice omejitve, default vrednosti, filter validIds za heldItemsPricing)
+  - Identičen response format: { ok: true, elasticity } za success; { ok: true, elasticity: null, message: '...' } za empty soldTrades
+- Spremembe v error response strukturi (konsistentno z v8.94.x migracijami):
+  - 500 error response: { error: '...' } → { ok: false, error: '...' } (preko apiError v helper catch-u) — v primeru da AI ne uspe tudi po fallback-u
+- Verifikacija:
+  - bunx tsc --noEmit: 0 errors (baseline clean + migrirana datoteka 0 napak)
+  - bunx eslint src/app/api/ai/price-elasticity/route.ts: 0 errors (nobena prazna interface, ni potreben eslint-disable-next-line)
+
+Stage Summary:
+- MODIFIED: src/app/api/ai/price-elasticity/route.ts
+- Lines: 190 → 226 (+36; ~19% rast zaradi 5 tipiziranih pomožnih funkcij z inline tipi — handler sam ~45 vrstic, prej ~165 z inline logiko)
+- enforceBudget: true
+- Lint: 0, Typecheck: 0
+
+---
+Task ID: v8.94.5-c
+Agent: Task agent (inventory-shrinkage-detector migration)
+Task: Migrate /api/ai/inventory-shrinkage-detector to withAiRoute
+
+Work Log:
+- Prebral kontekst: worklog.md (v8.94, v8.94.1–v8.94.4 vnose), src/lib/with-ai-route.ts (helper API: withAiRoute, AI_ROUTE_DEFAULTS, ApiRouteError, AiRouteContext)
+- Prebral referenčna primera: src/app/api/ai/deduplicate/route.ts (parseBody/handler + pure helpers OUTSIDE handler) in src/app/api/ai/detect-anomalies/route.ts (inventory analysis s podobno strukturo, ApiRouteError za 404)
+- Prebral original src/app/api/ai/inventory-shrinkage-detector/route.ts (122 vrstic — inline POST handler z manual try/catch, manual getSettingsRow + AiSettings build, manual fallback provider try/catch, manual AI counter increment aiCallsToday/aiCallsDate)
+- Migracija na withAiRoute vzorec:
+  - Uvoz: withAiRoute, AI_ROUTE_DEFAULTS, type AiRouteContext iz @/lib/with-ai-route; apiOk iz @/lib/api-response (ApiRouteError ni potreben — endpoint nima 404/400 primerov)
+  - export const { runtime, dynamic } = AI_ROUTE_DEFAULTS; export const maxDuration = 90 (original)
+  - interface ShrinkageDetectorInput { days: number } (original int)
+  - parseBody: days = Math.max(7, Math.min(365, Number(body?.days ?? 90))) — IDENTIČNO originalu (clamp 7-365, default 90)
+  - brez validateInput (days ima vedno veljavo s clamp-om)
+  - enforceBudget: true — preveri AI budget PRED klicem, avtomatsko recordAiCall PO uspehu (nadomešča manual aiCallsToday/aiCallsDate increment v originalu)
+  - handler ~30 vrstic: db.trade.findMany → če prazno return apiOk null detector message → computeShrinkageStats → topCancelled/topHeld → buildShrinkagePrompt → ctx.callAi → ctx.parseAi → transformShrinkageDetector → apiOk
+  - ctx.callAi(prompt) nadomesti callProviderForRaw + manual fallback try/catch (helper interno upravlja fallback na secondary provider)
+  - ctx.parseAi(raw) nadomesti parseJsonLooseExported
+  - ctx.db nadomesti direkten import db
+- Ekstrahirane testabilne pomožne funkcije (izven handler-ja):
+  1. computeShrinkageStats(heldTrades, soldTrades, cancelledTrades) — pure; izračuna totalInventoryValue, cancelledValue, expectedRevenue, actualRevenue, revenueGap, shrinkagePct iz treh arrayev; aritmetika IDENTIČNA originalu (1.2x multiplier za expected, Math.round(...*1000)/10 za shrinkagePct)
+  2. buildShrinkagePrompt(input) — pure; zgradi AI prompt z istim besedilom kot original (STATS, TOP CANCELLED, TOP HELD, 8 tipov shrinkage, JSON schema s SHRINKAGE_TYPES/SEVERITY_LEVELS); besedilo IDENTIČNO originalu (v6.79)
+  3. transformShrinkageDetector(parsed, stats) — pure; transformira AI JSON v detector objekt z vsemi clamp-i + whitelist-i (insights 500 chars, overview Math.round + 0-100 clamps, shrinkageEvents slice 10 + 200/300 char caps, categoryAnalysis slice 10, riskItems slice 12, recommendations slice 8, mlModels slice 5, summary clamps) — IDENTIČNO originalu; fallback vrednosti (totalInventoryValue, cancelledValue, expectedRevenue, actualRevenue, revenueGap, shrinkagePct) prejete preko stats parametra namesto closure
+  4. interface ShrinkageTradeRow (minimal tip za stats: buyPrice, buyFees, sellPrice, sellFees) — omogoča testiranje computeShrinkageStats brez Prisma tipa
+  5. interface ShrinkageStats (return tip za computeShrinkageStats)
+  6. interface ShrinkagePromptInput (options object za buildShrinkagePrompt — stats, days, counts, topCancelled, topHeld)
+- Odstranjeno (boilerplate, ki ga helper obravnava):
+  - manual try/catch z logger.error + NextResponse.json error (helper interno catch-a in vrne apiError 500)
+  - uvoz: NextRequest, NextResponse, db, getSettingsRow, callProviderForRaw, parseJsonLooseExported, AiProviderType, AiSettings, logger (helper interno upravlja)
+  - manual getSettingsRow + AiSettings build (helper naloži in poda preko ctx.aiSettings)
+  - manual fallback provider try/catch (ctx.callAi interno upravlja primary → fallback switch)
+  - manual AI counter increment (aiCallsToday/aiCallsDate update z db.settings.update) — enforceBudget: true avtomatsko kliče recordAiCall
+  - NextResponse.json za success (apiOk) in za prazne podatke (apiOk)
+- Vedenje ohranjeno:
+  - Enak input → enak output: response struktura { ok: true, detector: {...} } identična (apiOk ohrani ok:true v data payload-u)
+  - Prazni podatki: { ok: true, detector: null, message: 'Ni podatkov za shrinkage analizo.' } (200 status, IDENTIČNO originalu)
+  - Prompt besedilo nespremenjeno (vsa STATS polja, 8 tipov shrinkage opisi, JSON schema s SHRINKAGE_TYPES/SEVERITY_LEVELS union-i)
+  - days clamp 7-365 z default 90 nespremenjen
+  - trade findMany query (where OR s held/sold+sellDate/cancelled, 14 select polj, take 1000, orderBy buyDate desc) IDENTIČEN originalu
+  - Statistična aritmetika (1.2x expected revenue, Math.round(...*1000)/10 shrinkagePct) IDENTIČNA originalu
+  - transformShrinkageDetector validacijske/clamp logike IDENTIČNE originalu (whitelist arrays za eventType/severity/recommendedAction/priority/category/model/predictionType; clamp 0-100 za shrinkagePct/shrinkageRiskPct/accuracyPct/weightInEnsemble/shrinkageRiskScore/shrinkageDetectionScore; slice limiti 10/10/12/8/5; char cap 50/100/150/200/300/500)
+  - Fallback vrednosti v overview/summary (totalInventoryValue, cancelledValue, expectedRevenue, actualRevenue, revenueGap, shrinkagePct) pridejo iz stats parametra — semantično identično originalu ki jih je bral iz closure spremenljivk
+  - Error response sprememba konvencije: original { error } → wrapper-jev { ok: false, error } (konsistentno z vsemi prejšnjimi v8.94.x migracijami)
+- Verifikacija:
+  - bunx tsc --noEmit: 0 errors
+  - bunx eslint src/app/api/ai/inventory-shrinkage-detector/route.ts: 0 errors (brez eslint-disable potrebe — brez praznih interfaceov)
+
+Stage Summary:
+- MODIFIED: src/app/api/ai/inventory-shrinkage-detector/route.ts
+- Lines: 122 → 243 (+121; ~99% rast zaradi tipiziranih pomožnih funkcij OUTSIDE handler + ShrinkageTradeRow/ShrinkageStats/ShrinkagePromptInput interfaces — handler sam ~30 vrstic, prej ~100 z inline statistiko/prompt/transform logiko)
+- enforceBudget: true
+- Lint: 0, Typecheck: 0
+
+---
+Task ID: v8.94.4
+Agent: Z.ai Code + 6 Task agents (AI Hub badge + Phase 2 logging + 6 migrations)
+Task: AI Hub DEPRECATED badge + Phase 2 usage logging + 6 endpoint migracije
+
+Work Log:
+- AI Hub DEPRECATED badge (src/components/dashboard/ai-hub-view.tsx):
+  - AIEndpoint interface razširjen z `deprecated?: boolean` in `deprecatedReplacement?: string`
+  - DEPRECATED Badge (variant="destructive") prikazan na endpoint karticah ki so zastareli
+  - "→ Uporabi /api/ai/xxx" tekst pod opisom za replacement
+  - title atribut na badge z navodili
+  - Nov "hideDeprecated" state (toggle button)
+  - Filter button z emoji (👁️/🚫) + deprecated count badge
+  - aria-label + aria-pressed na toggle (accessibility)
+  - iskalnik išče tudi po replacement endpoint-u (da uporabnik najde nadomestek)
+  - min-h-[44px] na toggle (touch target)
+- NEW src/lib/deprecated-redirect.ts (~115 vrstic):
+  - logDeprecatedCall(endpointPath, req, replacementPath) — zabeleži klic zastarelega endpoint-a
+    - logger.warn() z structured info (endpoint, method, ip, userAgent, replacement)
+    - console.warn() z JSON za grepping v log datotekah
+  - deprecatedRedirect(newEndpoint, oldMethod, oldEndpoint) — vrne 308 Permanent Redirect
+    - JSON body z navodili (code: ENDPOINT_DEPRECATED, migrationGuide, autoFollow)
+    - Location header + X-Deprecated-* headers
+  - Strategija: Phase 1 (✅ @deprecated) → Phase 2 (✅ usage logging) → Phase 3 (v9.0: izbriši neuporabljene)
+- PHASE 2 DEPRECATION: logDeprecatedCall() dodan v 5 najbolj kritičnih zastarelih endpointih:
+  1. /api/ai/profit-maximizer → /api/ai/profit-maximizer-pro
+  2. /api/ai/profit-maximizer-v2 → /api/ai/profit-maximizer-pro
+  3. /api/ai/profit-margin-forecaster → /api/ai/profit-margin-forecaster-pro
+  4. /api/ai/inventory-aging-predictor → /api/ai/inventory-aging-predictor-pro
+  5. /api/ai/listing-performance → /api/ai/listing-performance-forecaster-v4
+  Vsak klic se zabeleži z IP, User-Agent, method, timestamp — za Phase 3 cleanup analizo
+- 6 AI endpointov migriranih na withAiRoute (vzporedno preko Task agentov):
+  19. /api/ai/seller-response-predictor (139→218) — Task agent v8.94.5-a (no AI, pure DB)
+  20. /api/ai/price-elasticity (190→226) — Task agent v8.94.5-b
+  21. /api/ai/inventory-shrinkage-detector (122→243) — Task agent v8.94.5-c
+  22. /api/ai/exit-strategy (142→174) — Task agent v8.94.5-d
+  23. /api/ai/buyer-feedback-analyzer (120→234) — Task agent v8.94.5-e
+  24. /api/ai/buyer-trust-score (298→316) — Task agent v8.94.5-f
+  Vsi z enforceBudget: true + ekstrahirane testabilne pomožne funkcije
+- Version bump: v8.94.3 → v8.94.4
+
+Stage Summary:
+- NOVE DATOTEKE: 1 (src/lib/deprecated-redirect.ts)
+- MODIFICIRANE: 13 (ai-hub-view.tsx, deprecated-redirect.ts, 5 @deprecated z logging, 6 migriranih, version.ts, README.md)
+- MIGRIRANI ENDPOINTI: 6 (skupaj 24 od 432 — 5,6%)
+- DEPRECATED ENDPOINTI Z LOGGING: 5 (Phase 2 complete za top 5)
+- AI HUB: DEPRECATED badge + toggle filter + iskanje po replacement
+- LINT: 0 errors, 0 warnings ✨
+- TYPECHECK: 0 errors ✨
+- TESTS: 208 passing (lib) ✨
+- Verzija: v8.94.4

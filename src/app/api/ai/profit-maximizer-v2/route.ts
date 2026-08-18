@@ -19,6 +19,7 @@ import { GROUNDING_PROMPT_SUFFIX } from '@/lib/anti-hallucination';
 import { getCachedAI, setCachedAI } from '@/lib/ai-cache';
 import { checkRateLimit, rateLimitResponse } from '@/lib/rate-limit';
 import { logger } from '@/lib/logger';
+import { logDeprecatedCall } from '@/lib/deprecated-redirect';
 
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
@@ -142,6 +143,7 @@ interface AiRecommendation {
 }
 
 export async function GET(req: NextRequest) {
+  logDeprecatedCall('/api/ai/profit-maximizer-v2', req, '/api/ai/profit-maximizer-pro');
   return handleProfitMaximizer(req);
 }
 
