@@ -19789,3 +19789,140 @@ Stage Summary:
 - MODIFIED: README.md (badge + Local-first + Testing + nova Feature Overview sekcija)
 - MODIFIED: CHANGELOG.md (nov [8.94.1] vnos ~80 vrstic)
 - Verzija: v8.94.1 (nespremenjena — samo docs sync)
+
+---
+Task ID: v8.94.3-a
+Agent: Task agent (market-trends migration)
+Task: Migrate /api/ai/market-trends to withAiRoute
+
+Work Log:
+- Prebral worklog.md (v8.94 / v8.94.1 / v8.94.2 vnose) za kontekst migracije
+- Prebral src/lib/with-ai-route.ts (helper API: withAiRoute, AI_ROUTE_DEFAULTS, ApiRouteError, AiRouteContext)
+- Prebral referenčni primer 1: src/app/api/ai/deduplicate/route.ts (migrirani vzorec z enforceBudget)
+- Prebral referenčni primer 2: src/app/api/ai/prioritize-alerts/route.ts (migrirani vzorec z aiSettings + ekstrahiranimi rankAlert/enhanceWithAi)
+- Prebral original src/app/api/ai/market-trends/route.ts (226 vrstic)
+- Migracija na withAiRoute<MarketTrendsInput> z enforceBudget: true:
+  - parseBody: monthsAhead clamp 1-12, default 3 (identično originalu)
+  - handler ~30 vrstic: db queries + callAi + parseAi + transformacije + apiOk
+  - ekstrahirane čiste testabilne funkcije OUTSIDE handler:
+    * computeCategoryTrends(soldTrades) — mesečni avg/count/profit po kategorijah
+    * computeDemandSignals(recentListings) — demand po sourcu + opportunityCount
+    * buildPrompt(catTrends, demandBySource, oppCount, count, monthsAhead) — identična prompt beseda kot original
+    * transformTrends(parsed) — validacija + slice(0,15)
+    * transformMacroFactors(parsed) — validacija + slice(0,6)
+    * transformSummary(parsed) — validacija sentiment/shift
+  - export const { runtime, dynamic } = AI_ROUTE_DEFAULTS; export const maxDuration = 90;
+  - uvozi: withAiRoute, AI_ROUTE_DEFAULTS, AiRouteContext iz @/lib/with-ai-route; apiOk iz @/lib/api-response
+- Odstranjeno (boilerplate, ki ga helper obravnava):
+  - manual try/catch z logger.error + NextResponse.json error
+  - manual getSettingsRow + AiSettings konstrukt (settings load v helperju)
+  - manual fallback provider logiko (callAi v helperju obravnava primary+fallback)
+  - manual parseJsonLooseExported klic (parseAi v helperju)
+  - manual AI usage counter increment (enforceBudget: true → recordAiCall avtomatsko)
+  - uvozi: db, getSettingsRow, callProviderForRaw, parseJsonLooseExported, AiSettings, AiProviderType, logger, NextRequest, NextResponse
+- Vedenje nespremenjeno:
+  - isti input parsing (monthsAhead default 3, clamp 1-12)
+  - isti DB queries (soldTrades 18m, recentListings 30d, take 500)
+  - early return ko ni podatkov (apiOk z { ok, trends: [], message })
+  - prompt beseda identična originalu (besedilo + JSON struktura)
+  - response struktura: { ok, insights, trends, macroFactors, summary, monthsAhead }
+- Verifikacija:
+  - bunx tsc --noEmit: 0 errors
+  - bun run lint: 0 errors
+
+Stage Summary:
+- MODIFIED: src/app/api/ai/market-trends/route.ts
+- Lines: 226 → 257 (+31; +14% — rast iz type definitions za testabilne helper funkcije + prompt je identičen; handler sam ~30 vrstic)
+- enforceBudget: true (budget guard + avtomatski recordAiCall)
+- Handler: ~30 vrstic (prej ~160 z boilerplate)
+- Lint: 0, Typecheck: 0
+
+---
+Task ID: v8.94.3-b
+Agent: Task agent (fraud-detection migration)
+Task: Migrate /api/ai/fraud-detection to withAiRoute
+
+Work Log:
+- Prebral kontekst: worklog.md (v8.94.1, v8.94.2), src/lib/with-ai-route.ts (helper API + AiRouteContext)
+- Prebral referenčna primera: src/app/api/ai/detect-anomalies/route.ts (ApiRouteError za 404) in src/app/api/ai/deduplicate/route.ts (fast path + AI fallback)
+- Prebral original src/app/api/ai/fraud-detection/route.ts (316 vrstic — inline POST handler z try/catch, manual settings load, manual fallback provider, manual AI counter increment)
+- Migracija na withAiRoute vzorec:
+  - Uvoz: withAiRoute, AI_ROUTE_DEFAULTS, ApiRouteError, type AiRouteContext + apiOk, apiBadRequest
+  - export const { runtime, dynamic } = AI_ROUTE_DEFAULTS; maxDuration = 60 (original)
+  - Input interface FraudDetectionInput (listingId + listing objekt)
+  - parseBody: razčleni listingId + listing iz body-ja (z { } fallback)
+  - enforceBudget: true — preveri AI budget PRED klicem, avtomatsko recordAiCall PO uspehu
+  - handler ~30 vrstic: resolve → hevristika → AI klic → transformacija → similar patterns → apiOk
+  - ctx.callAi(prompt) nadomesti callProviderForRaw + manual fallback try/catch
+  - ctx.parseAi(raw) nadomesti parseJsonLooseExported
+  - ctx.db nadomesti direkten import db
+- Ekstrahirane testabilne pomožne funkcije (izven handler-ja):
+  1. resolveListingInput(input, db) — pridobi ListingInput iz DB ali body-ja; throw ApiRouteError('Listing ne obstaja', 404) ko manjka; kombinira obe originalni DB poizvedbi (listing podrobnosti + ml signali) v eno
+  2. runHeuristicAnalysis(listingInput, dbInfo) — pure funkcija: FRAUD_PATTERNS regex matching + ML signali (price vs estValue, seller count, image verdict, description length, postedAt+low price combo, stock photo URL); vrne { redFlags, mlSignals, hevristicScore, sellerCount, imgVerdict }
+  3. buildFraudPrompt(params) — zgradi AI prompt (besedilo IDENTIČNO originalu)
+  4. transformFraudResult(parsed, hevristicScore, redFlags, mlSignals) — kombinira hevristiko (60%) + AI (40%), določi riskLevel, validira scamType + recommendation
+  5. findSimilarFraudPatterns(redFlags, db, excludeId) — poišče podobne sumljive oglase v bazi glede na top red flag
+- Odstranjeno:
+  - Manual try/catch (helper handle-a)
+  - Manual getSettingsRow + AiSettings build (helper naloži in poda preko ctx.aiSettings)
+  - Manual fallback provider try/catch (ctx.callAi interno upravlja)
+  - Manual AI counter increment (aiCallsToday/aiCallsDate) — enforceBudget: true avtomatsko kliče recordAiCall
+  - NextResponse.json za success (apiOk)
+  - NextResponse.json za 404/400 (apiNotFound/apiBadRequest iz ApiRouteError)
+- Vedenje ohranjeno:
+  - Enak input → enak output (response struktura { ok, analysis: {...} } identična)
+  - Prompt besedilo nespremenjeno
+  - FRAUD_PATTERNS + STOCK_PHOTO_KEYWORDS nespremenjeni
+  - Vrstni red: redFlags zgrajeni → AI prompt (pre-sort order) → redFlags.sort (mutira v-place) → findSimilarFraudPatterns uporabi redFlags[0] (post-sort = highest weight) — isto kot original
+  - Druga DB poizvedba (listingId="") vrne null ko listing podan direktno — dbInfo=null, estValue=0, sellerCount=0, imgVerdict=null (enako kot original)
+- Typecheck: bunx tsc --noEmit — 0 errors
+- Lint: bun run lint — 0 errors
+
+Stage Summary:
+- MODIFIED: src/app/api/ai/fraud-detection/route.ts
+- Lines: 316 → 365 (+49; ~15% rast zaradi tipiziranih pomožnih funkcij, handler pa se je skrčil iz ~250 na ~30 vrstic)
+- enforceBudget: true
+- Lint: 0, Typecheck: 0
+
+---
+Task ID: v8.94.3
+Agent: Z.ai Code + 2 Task agents (ai-cost tests + 4 migrations + budget alert)
+Task: ai-cost testi + 4 endpoint migracije + Telegram/Discord/Email budget alert
+
+Work Log:
+- NEW tests/lib/ai-cost.test.ts (37 testov): budget guard logika z mock Prisma
+  - Date helperji (getTodayDate, getMonthDate, getTomorrowMidnight, getFirstOfNextMonth)
+  - AiBudgetExceeded class (ime, message, period/limit/current, instanceof Error)
+  - checkAiBudget: settings ne obstajajo → dovoli; pod limitom → dovoli; daily/monthly presežen → throw; reset ob spremembi dneva/meseca; daily prednost pred monthly; boundary cases (limit-1)
+  - recordAiCall: increment daily+monthly; reset+increment ob spremembi; ne fail-a brez settings
+  - getAiUsageStats: default brez settings; pravilni counts/remaining/procent; clamp na 0/100; reset ob spremembi; budgetAlerted flag
+  - resetAiCounters: reset vse na 0 + datum
+  - Edge cases: limit=0, very large numbers
+- Exportani date helperji iz ai-cost.ts (getTodayDate, getMonthDate, getTomorrowMidnight, getFirstOfNextMonth) za testiranje
+- Popravljen AiBudgetExceeded message: "monthlyni" → "mesečni" (pravilna slovenščina)
+- NEW checkAndAlertBudget() v ai-cost.ts (~115 vrstic):
+  - Preveri ali je budget presegel 80% threshold (daily ALI monthly)
+  - 24h dedup preko aiBudgetAlertedAt timestamp (prepreči spam)
+  - Pošlje alert preko vseh konfiguriranih kanalov: Telegram, Discord, Email
+  - Pravilno naloži config objekte (TelegramConfig, DiscordConfig, EmailConfig)
+  - Non-blocking — ne throw-a če alert pošiljanje fail-a
+  - Integrirana v recordAiCall() kot fire-and-forget (ne zamudi response-a)
+  - Human-readable message z emoji + statistikami + priporočilom
+- 4 endpointi migrirani na withAiRoute (skupaj 11 sedaj):
+  9. /api/ai/negotiation-outcome-predictor (171→210 vrstic) — heuristični faktorji + AI napoved
+  10. /api/ai/buyer-intent (197→195 vrstic) — buyer intent napoved za held inventar
+  11. /api/ai/market-trends (226→257 vrstic) — Task agent (v8.94.3-a)
+  12. /api/ai/fraud-detection (316→365 vrstic) — Task agent (v8.94.3-b)
+- Vsi 4 z enforceBudget: true + ekstrahirane testabilne pomožne funkcije
+- Version bump: v8.94.1 → v8.94.2
+- README badge posodobljen: v8.94.1 → v8.94.2
+
+Stage Summary:
+- NOVE DATOTEKE: 1 (tests/lib/ai-cost.test.ts — 37 testov)
+- MODIFICIRANE: 7 (ai-cost.ts, negotiation-outcome-predictor/route.ts, buyer-intent/route.ts, market-trends/route.ts, fraud-detection/route.ts, version.ts, README.md)
+- MIGRIRANI ENDPOINTI: 4 (skupaj 11 od 432)
+- NOVA FUNKCIONALNOST: checkAndAlertBudget (80% threshold + Telegram/Discord/Email alert)
+- LINT: 0 errors, 0 warnings ✨
+- TYPECHECK: 0 errors ✨
+- TESTS: 208 passing (lib) ✨
+- Verzija: v8.94.2

@@ -1,82 +1,177 @@
-// v7.55: Negotiation Outcome Predictor — pred pošiljanjem ponudbe, AI napove izid.
-//
-// "Asking 300€, est value 280€, tvoja ponudba 250€:
-//  ACCEPT probability: 15%, COUNTER probability: 60%, REJECT probability: 25%
-//  Priporočilo: povečaj na 270€ za 40% accept probability."
+// v7.55 / v8.94-refactor: Negotiation Outcome Predictor — AI napove izid pred ponudbo
+// Refaktoriran z withAiRoute helperjem (v8.94) + enforceBudget guard.
 //
 // POST /api/ai/negotiation-outcome-predictor
 // Body: { listingId: string, offerPrice: number }
 
-import { NextRequest, NextResponse } from 'next/server';
-import { db } from '@/lib/db';
-import { getSettingsRow } from '@/lib/pipeline';
-import { callProviderForRaw, parseJsonLooseExported, type AiProviderType, type AiSettings } from '@/lib/ai';
+import { NextResponse } from 'next/server';
+import { withAiRoute, AI_ROUTE_DEFAULTS, ApiRouteError, type AiRouteContext } from '@/lib/with-ai-route';
+import { apiOk, apiBadRequest } from '@/lib/api-response';
 import { GROUNDING_PROMPT_SUFFIX } from '@/lib/anti-hallucination';
-import { logger } from '@/lib/logger';
 
-export const runtime = 'nodejs';
-export const dynamic = 'force-dynamic';
+export const { runtime, dynamic } = AI_ROUTE_DEFAULTS;
 export const maxDuration = 60;
 
-export async function POST(req: NextRequest) {
-  try {
-    const body = await req.json().catch(() => ({}));
-    const { listingId, offerPrice } = body;
-    if (!listingId || !offerPrice) return NextResponse.json({ error: 'listingId in offerPrice sta obvezna' }, { status: 400 });
+interface NegotiationPredictInput {
+  listingId: string;
+  offerPrice: number;
+}
 
+export const POST = withAiRoute<NegotiationPredictInput>({
+  endpoint: '/api/ai/negotiation-outcome-predictor',
+  maxDuration: 60,
+  enforceBudget: true,
+
+  parseBody: async (req) => {
+    const body = await req.json().catch(() => ({}));
+    return {
+      listingId: body?.listingId ? String(body.listingId) : '',
+      offerPrice: Number(body?.offerPrice) || 0,
+    };
+  },
+
+  validateInput: (input) => {
+    if (!input.listingId || !input.offerPrice) {
+      return 'listingId in offerPrice sta obvezna';
+    }
+    return null;
+  },
+
+  handler: async (input, ctx: AiRouteContext) => {
+    const { db, callAi, parseAi } = ctx;
+    const { listingId, offerPrice } = input;
+
+    // 1. Pridobi listing z negotiation history
     const listing = await db.listing.findUnique({
-      where: { id: String(listingId) },
+      where: { id: listingId },
       select: {
         id: true, title: true, price: true, priceText: true, firstSeenAt: true,
         aiEstimatedValue: true, aiVerdict: true, aiRisk: true,
         sellerName: true, location: true,
         monitor: { select: { source: true } },
-        negotiationMessages: { select: { direction: true, suggestedPrice: true, text: true, createdAt: true }, orderBy: { createdAt: 'desc' }, take: 5 },
+        negotiationMessages: {
+          select: { direction: true, suggestedPrice: true, text: true, createdAt: true },
+          orderBy: { createdAt: 'desc' },
+          take: 5,
+        },
       },
     });
-    if (!listing) return NextResponse.json({ error: 'Listing ne obstaja' }, { status: 404 });
+    if (!listing) throw new ApiRouteError('Listing ne obstaja', 404);
 
-    const askingPrice = listing.price ?? 0;
-    const estValue = listing.aiEstimatedValue ?? Math.round(askingPrice * 1.15);
-    const offer = Number(offerPrice);
-    const discountPct = askingPrice > 0 ? Math.round(((askingPrice - offer) / askingPrice) * 100) : 0;
+    // 2. Izračunaj heuristične faktorje
+    const { askingPrice, estValue, offer, discountPct } = computeBasics(listing, offerPrice);
+    const factors = computeFactors(listing, askingPrice, estValue, offer);
+    const computed = computeProbabilities(factors);
 
-    // Compute outcome probabilities based on data (not just AI)
-    // Factors:
-    // 1. Discount depth: >30% off = likely reject, <10% = likely accept
-    // 2. Offer vs est value: if offer > est value, seller should accept
-    // 3. Seller risk: high risk seller = more likely to reject (scam)
-    // 4. Days listed: longer = more likely to accept lower offer
-    // 5. Previous negotiation history with this seller
+    // 3. AI enhancement (non-critical — fallback na computed)
+    const prompt = buildPrompt(listing, askingPrice, estValue, offer, discountPct, factors);
+    let aiPrediction: any = null;
+    try {
+      const raw = await callAi(prompt);
+      aiPrediction = parseAi(raw);
+    } catch {
+      // Use computed probabilities only
+    }
 
-    const riskFactor = (listing.aiRisk ?? 5) / 10; // 0 = safe, 1 = scam
-    const discountFactor = Math.min(1, discountPct / 40); // 0 = no discount, 1 = 40%+ discount
-    const estValueFactor = offer >= estValue ? 1 : offer / estValue; // 1 = at/above value, <1 = below
-    const daysListed = Math.floor((Date.now() - new Date(listing.firstSeenAt).getTime()) / 86400000);
-    const ageFactor = Math.min(1, daysListed / 30); // 0 = fresh, 1 = 30+ days (more likely to accept)
+    // 4. Merge computed + AI (AI takes priority)
+    const finalPredictions = mergePredictions(aiPrediction, computed);
+    const optimalOffer = computeOptimalOffer(aiPrediction, estValue);
+    const strategy = buildStrategy(finalPredictions, offer, optimalOffer, askingPrice, aiPrediction);
 
-    // Probability model (weighted)
-    const acceptProb = Math.round(
-      (estValueFactor * 40 + (1 - discountFactor) * 30 + ageFactor * 20 + (1 - riskFactor) * 10)
-    );
-    const rejectProb = Math.round(
-      (discountFactor * 35 + riskFactor * 30 + (1 - estValueFactor) * 25 + (1 - ageFactor) * 10)
-    );
-    const counterProb = Math.max(0, 100 - acceptProb - rejectProb);
+    return apiOk({
+      prediction: {
+        accept: finalPredictions.accept,
+        counter: finalPredictions.counter,
+        reject: finalPredictions.reject,
+        predictedCounterPrice: aiPrediction?.predicted_counter_price_eur
+          ? Math.round(Number(aiPrediction.predicted_counter_price_eur)) : null,
+        optimalOffer,
+        strategy,
+        confidence: aiPrediction?.confidence
+          ? Math.round(Number(aiPrediction.confidence))
+          : Math.round((100 - Math.abs(finalPredictions.accept - finalPredictions.counter)) / 2),
+      },
+      analysis: {
+        askingPrice, estValue, offer, discountPct,
+        daysListed: factors.daysListed,
+        risk: listing.aiRisk ?? 5,
+        estValueFactor: Math.round(factors.estValueFactor * 100) / 100,
+        discountFactor: Math.round(factors.discountFactor * 100) / 100,
+        ageFactor: Math.round(factors.ageFactor * 100) / 100,
+      },
+      recommendation: strategy,
+    });
+  },
+});
 
-    // AI enhancement (if available)
-    const settings = await getSettingsRow();
-    const aiSettings: AiSettings = {
-      provider: settings.aiProvider as AiProviderType,
-      baseUrl: settings.aiBaseUrl, apiKey: settings.aiApiKey, model: settings.aiModel,
-      fallbackProvider: (settings.fallbackProvider || '') as AiProviderType | '',
-      fallbackBaseUrl: settings.fallbackBaseUrl || '', fallbackApiKey: settings.fallbackApiKey || '',
-      fallbackModel: settings.fallbackModel || '',
-    };
+// --- Pomožne funkcije (čiste, testabilne) --------------------------------
 
-    const recentMessages = listing.negotiationMessages.map(m => `${m.direction}: ${m.text?.slice(0, 50)}`).join('; ') || 'none';
+interface ListingData {
+  price: number | null;
+  aiEstimatedValue: number | null;
+  aiRisk: number | null;
+  firstSeenAt: Date;
+  title: string;
+  monitor: { source: string } | null;
+  negotiationMessages: Array<{ direction: string; text: string | null }>;
+}
 
-    const prompt = `Si ekspert za napovedovanje izida pogajanj pri nakupu rabljenih dobrin.
+function computeBasics(listing: ListingData, offerPrice: number) {
+  const askingPrice = listing.price ?? 0;
+  const estValue = listing.aiEstimatedValue ?? Math.round(askingPrice * 1.15);
+  const offer = Number(offerPrice);
+  const discountPct = askingPrice > 0 ? Math.round(((askingPrice - offer) / askingPrice) * 100) : 0;
+  return { askingPrice, estValue, offer, discountPct };
+}
+
+interface Factors {
+  riskFactor: number;
+  discountFactor: number;
+  estValueFactor: number;
+  daysListed: number;
+  ageFactor: number;
+}
+
+function computeFactors(listing: ListingData, askingPrice: number, estValue: number, offer: number): Factors {
+  const riskFactor = (listing.aiRisk ?? 5) / 10;
+  const discountPct = askingPrice > 0 ? ((askingPrice - offer) / askingPrice) * 100 : 0;
+  const discountFactor = Math.min(1, discountPct / 40);
+  const estValueFactor = offer >= estValue ? 1 : offer / estValue;
+  const daysListed = Math.floor((Date.now() - new Date(listing.firstSeenAt).getTime()) / 86400000);
+  const ageFactor = Math.min(1, daysListed / 30);
+  return { riskFactor, discountFactor, estValueFactor, daysListed, ageFactor };
+}
+
+interface Probabilities {
+  accept: number;
+  reject: number;
+  counter: number;
+}
+
+function computeProbabilities(f: Factors): Probabilities {
+  const accept = Math.round(
+    f.estValueFactor * 40 + (1 - f.discountFactor) * 30 + f.ageFactor * 20 + (1 - f.riskFactor) * 10
+  );
+  const reject = Math.round(
+    f.discountFactor * 35 + f.riskFactor * 30 + (1 - f.estValueFactor) * 25 + (1 - f.ageFactor) * 10
+  );
+  const counter = Math.max(0, 100 - accept - reject);
+  return { accept, reject, counter };
+}
+
+function buildPrompt(
+  listing: ListingData,
+  askingPrice: number,
+  estValue: number,
+  offer: number,
+  discountPct: number,
+  f: Factors
+): string {
+  const recentMessages = listing.negotiationMessages
+    .map(m => `${m.direction}: ${m.text?.slice(0, 50)}`)
+    .join('; ') || 'none';
+
+  return `Si ekspert za napovedovanje izida pogajanj pri nakupu rabljenih dobrin.
 
 SITUACIJA:
 - Item: ${listing.title}
@@ -84,7 +179,7 @@ SITUACIJA:
 - AI ocenjena vrednost: ${estValue}€
 - Tvoja ponudba: ${offer}€ (${discountPct}% pod asking)
 - AI risk: ${listing.aiRisk ?? 5}/10
-- Dni na trgu: ${daysListed}
+- Dni na trgu: ${f.daysListed}
 - Platforma: ${listing.monitor?.source || 'bolha'}
 - Prejšnja pogajanja: ${recentMessages}
 
@@ -109,63 +204,44 @@ Odgovori LE z JSON:
   "strategy": "<1 stavek>",
   "confidence": <number 0-100>
 }${GROUNDING_PROMPT_SUFFIX}`;
+}
 
-    let aiPrediction: any = null;
-    try {
-      const raw = await callProviderForRaw(aiSettings, prompt);
-      aiPrediction = parseJsonLooseExported(raw);
-    } catch {
-      // Use computed probabilities only
-    }
+function mergePredictions(ai: any, computed: Probabilities): Probabilities {
+  return {
+    accept: ai?.accept_probability != null
+      ? Math.max(0, Math.min(100, Math.round(Number(ai.accept_probability))))
+      : computed.accept,
+    counter: ai?.counter_probability != null
+      ? Math.max(0, Math.min(100, Math.round(Number(ai.counter_probability))))
+      : computed.counter,
+    reject: ai?.reject_probability != null
+      ? Math.max(0, Math.min(100, Math.round(Number(ai.reject_probability))))
+      : computed.reject,
+  };
+}
 
-    // Merge computed + AI predictions (AI takes priority if available)
-    const finalAccept = aiPrediction?.accept_probability != null
-      ? Math.max(0, Math.min(100, Math.round(Number(aiPrediction.accept_probability))))
-      : acceptProb;
-    const finalCounter = aiPrediction?.counter_probability != null
-      ? Math.max(0, Math.min(100, Math.round(Number(aiPrediction.counter_probability))))
-      : counterProb;
-    const finalReject = aiPrediction?.reject_probability != null
-      ? Math.max(0, Math.min(100, Math.round(Number(aiPrediction.reject_probability))))
-      : rejectProb;
+function computeOptimalOffer(ai: any, estValue: number): number {
+  return ai?.optimal_offer_eur != null
+    ? Math.max(1, Math.round(Number(ai.optimal_offer_eur)))
+    : Math.round(estValue * 0.9);
+}
 
-    const optimalOffer = aiPrediction?.optimal_offer_eur != null
-      ? Math.max(1, Math.round(Number(aiPrediction.optimal_offer_eur)))
-      : Math.round(estValue * 0.9); // 10% under est value = reasonable
-
-    // Strategy
-    let strategy = '';
-    if (finalAccept >= 50) {
-      strategy = `✅ Ponudba ${offer}€ ima ${finalAccept}% accept probability. Pošlji!`;
-    } else if (finalCounter >= 50) {
-      const counterPrice = aiPrediction?.predicted_counter_price_eur ? Math.round(Number(aiPrediction.predicted_counter_price_eur)) : Math.round(askingPrice * 0.9);
-      strategy = `🟡 Verjetno bo counter-offer (~${counterPrice}€). Pošlji ${offer}€ in bodi pripravljen na ${counterPrice}€.`;
-    } else {
-      strategy = `🔴 ${finalReject}% reject probability. Povečaj na ${optimalOffer}€ za boljše možnosti (${Math.round((1 - (optimalOffer / askingPrice)) * 100)}% popust).`;
-    }
-
-    return NextResponse.json({
-      ok: true,
-      prediction: {
-        accept: finalAccept,
-        counter: finalCounter,
-        reject: finalReject,
-        predictedCounterPrice: aiPrediction?.predicted_counter_price_eur ? Math.round(Number(aiPrediction.predicted_counter_price_eur)) : null,
-        optimalOffer,
-        strategy,
-        confidence: aiPrediction?.confidence ? Math.round(Number(aiPrediction.confidence)) : Math.round((100 - Math.abs(finalAccept - finalCounter)) / 2),
-      },
-      analysis: {
-        askingPrice, estValue, offer, discountPct,
-        daysListed, risk: listing.aiRisk ?? 5,
-        estValueFactor: Math.round(estValueFactor * 100) / 100,
-        discountFactor: Math.round(discountFactor * 100) / 100,
-        ageFactor: Math.round(ageFactor * 100) / 100,
-      },
-      recommendation: strategy,
-    });
-  } catch (err: any) {
-    logger.error('/api/ai/negotiation-outcome-predictor', 'POST handler failed', err);
-    return NextResponse.json({ error: err?.message ?? 'Napaka' }, { status: 500 });
+function buildStrategy(
+  predictions: Probabilities,
+  offer: number,
+  optimalOffer: number,
+  askingPrice: number,
+  ai: any
+): string {
+  if (predictions.accept >= 50) {
+    return `✅ Ponudba ${offer}€ ima ${predictions.accept}% accept probability. Pošlji!`;
   }
+  if (predictions.counter >= 50) {
+    const counterPrice = ai?.predicted_counter_price_eur
+      ? Math.round(Number(ai.predicted_counter_price_eur))
+      : Math.round(askingPrice * 0.9);
+    return `🟡 Verjetno bo counter-offer (~${counterPrice}€). Pošlji ${offer}€ in bodi pripravljen na ${counterPrice}€.`;
+  }
+  const discountPct = Math.round((1 - (optimalOffer / askingPrice)) * 100);
+  return `🔴 ${predictions.reject}% reject probability. Povečaj na ${optimalOffer}€ za boljše možnosti (${discountPct}% popust).`;
 }

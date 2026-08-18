@@ -49,7 +49,8 @@ export class AiBudgetExceeded extends Error {
   limit: number;
   current: number;
   constructor(period: 'daily' | 'monthly', limit: number, current: number) {
-    super(`AI ${period}ni budget presežen: ${current}/${limit} klicev`);
+    const periodLabel = period === 'daily' ? 'dnevni' : 'mesečni';
+    super(`AI ${periodLabel} budget presežen: ${current}/${limit} klicev`);
     this.name = 'AiBudgetExceeded';
     this.period = period;
     this.limit = limit;
@@ -57,17 +58,17 @@ export class AiBudgetExceeded extends Error {
   }
 }
 
-// --- Helperji ---
+// --- Helperji (exportani za testiranje) ---
 
-function getTodayDate(): string {
+export function getTodayDate(): string {
   return new Date().toISOString().slice(0, 10); // YYYY-MM-DD
 }
 
-function getMonthDate(): string {
+export function getMonthDate(): string {
   return new Date().toISOString().slice(0, 7); // YYYY-MM
 }
 
-function getTomorrowMidnight(): string {
+export function getTomorrowMidnight(): string {
   const now = new Date();
   const tomorrow = new Date(now);
   tomorrow.setDate(now.getDate() + 1);
@@ -75,7 +76,7 @@ function getTomorrowMidnight(): string {
   return tomorrow.toISOString();
 }
 
-function getFirstOfNextMonth(): string {
+export function getFirstOfNextMonth(): string {
   const now = new Date();
   const next = new Date(now.getFullYear(), now.getMonth() + 1, 1, 0, 0, 0, 0);
   return next.toISOString();
@@ -188,6 +189,13 @@ export async function recordAiCall(db: PrismaClient, endpointName?: string): Pro
   if (endpointName) {
     logger.info('ai-cost', `AI call recorded: ${endpointName}`);
   }
+
+  // v8.94: Samodejno preveri budget threshold (80%) in pošlji alert.
+  // Non-blocking — ne throw-a če alert pošiljanje fail-a.
+  // Fire-and-forget (ne await-a) da ne zamudi response-a.
+  checkAndAlertBudget(db).catch(() => {
+    // Silent fail — alert je non-critical
+  });
 }
 
 /**
@@ -249,3 +257,144 @@ export async function resetAiCounters(db: PrismaClient): Promise<void> {
   });
   logger.info('ai-cost', 'AI counters reset');
 }
+
+/**
+ * v8.94: Preveri ali je AI budget presegel 80% threshold in pošlje alert
+ * (Telegram/Email/Discord) če še ni bil poslan v zadnjih 24h.
+ *
+ * Stran efekta:
+ * - Če threshold presežen IN ni bil alert-an v zadnjih 24h:
+ *   - Pošlje Telegram/Email/Discord obvestilo
+ *   - Posodobi `aiBudgetAlertedAt` timestamp (prepreči spam)
+ * - Drugače: ne naredi nič
+ *
+ * Kliče se iz `recordAiCall()` (po vsakem AI klicu).
+ * Non-blocking — ne throw-a če alert pošiljanje fail-a.
+ *
+ * @param db Prisma client
+ * @param stats Trenutne AI usage statistike (za izogib duplicate fetch-u)
+ */
+export async function checkAndAlertBudget(
+  db: PrismaClient,
+  stats?: AiUsageStats
+): Promise<void> {
+  try {
+    const usage = stats ?? await getAiUsageStats(db);
+
+    // Threshold: 80% daily ALI 80% monthly
+    const dailyAlert = usage.dailyPercent >= 80;
+    const monthlyAlert = usage.monthlyPercent >= 80;
+
+    if (!dailyAlert && !monthlyAlert) return;
+
+    // Preveri ali je bil alert že poslan v zadnjih 24h (prepreči spam)
+    const settings = await db.settings.findUnique({
+      where: { id: 'singleton' },
+      select: {
+        aiBudgetAlertedAt: true,
+        telegramEnabled: true, telegramBotToken: true, telegramChatId: true,
+        discordEnabled: true, discordWebhookUrl: true,
+        emailEnabled: true, emailSmtpHost: true, emailSmtpPort: true,
+        emailSmtpUser: true, emailSmtpPassword: true, emailFrom: true, emailTo: true,
+      },
+    });
+
+    if (settings?.aiBudgetAlertedAt) {
+      const lastAlert = new Date(settings.aiBudgetAlertedAt).getTime();
+      const hoursSince = (Date.now() - lastAlert) / (60 * 60 * 1000);
+      if (hoursSince < 24) return; // Že alert-ano v zadnjih 24h
+    }
+
+    // Pošlji alert preko vseh konfiguriranih kanalov
+    const alertMsg = buildBudgetAlertMessage(usage);
+
+    // Telegram (če konfiguriran)
+    if (settings?.telegramEnabled && settings.telegramBotToken && settings.telegramChatId) {
+      try {
+        const { sendTelegramMessage } = await import('@/lib/telegram');
+        await sendTelegramMessage(
+          { botToken: settings.telegramBotToken, chatId: settings.telegramChatId },
+          alertMsg,
+          { parseMode: null }
+        );
+        logger.info('ai-cost', 'Budget alert sent via Telegram');
+      } catch (err) {
+        logger.warn('ai-cost', 'Telegram alert failed (non-critical)', err);
+      }
+    }
+
+    // Discord (če konfiguriran)
+    if (settings?.discordEnabled && settings.discordWebhookUrl) {
+      try {
+        const { sendDiscordMessage } = await import('@/lib/discord');
+        await sendDiscordMessage(
+          { webhookUrl: settings.discordWebhookUrl },
+          {
+            title: '⚠️ AI Budget Alert — 80% dosežen',
+            description: alertMsg,
+            color: 0xF59E0B, // amber
+            timestamp: new Date().toISOString(),
+          }
+        );
+        logger.info('ai-cost', 'Budget alert sent via Discord');
+      } catch (err) {
+        logger.warn('ai-cost', 'Discord alert failed (non-critical)', err);
+      }
+    }
+
+    // Email (če konfiguriran)
+    if (settings?.emailEnabled && settings.emailSmtpHost && settings.emailTo) {
+      try {
+        const { sendEmail } = await import('@/lib/email');
+        await sendEmail(
+          {
+            smtpHost: settings.emailSmtpHost,
+            smtpPort: settings.emailSmtpPort,
+            smtpUser: settings.emailSmtpUser,
+            smtpPassword: settings.emailSmtpPassword,
+            from: settings.emailFrom,
+            to: settings.emailTo,
+          },
+          '⚠️ AI Budget Alert — 80% dosežen',
+          `<pre>${alertMsg}</pre>`
+        );
+        logger.info('ai-cost', 'Budget alert sent via Email');
+      } catch (err) {
+        logger.warn('ai-cost', 'Email alert failed (non-critical)', err);
+      }
+    }
+
+    // Posodobi aiBudgetAlertedAt (prepreči spam za 24h)
+    await db.settings.update({
+      where: { id: 'singleton' },
+      data: { aiBudgetAlertedAt: new Date().toISOString() },
+    });
+  } catch (err) {
+    // Alert failure je non-critical — ne break-a AI funkcionalnosti
+    logger.warn('ai-cost', 'Budget alert check failed (non-critical)', err);
+  }
+}
+
+/**
+ * Zgradi human-readable budget alert message.
+ */
+function buildBudgetAlertMessage(usage: AiUsageStats): string {
+  const lines: string[] = [
+    '⚠️ AI BUDGET ALERT — 80% dosežen',
+    '',
+    `📊 Danes: ${usage.today} / ${usage.dailyLimit} (${usage.dailyPercent}%)`,
+    `📅 Mesec: ${usage.month} / ${usage.monthlyLimit} (${usage.monthlyPercent}%)`,
+    '',
+  ];
+
+  if (usage.dailyPercent >= 80) {
+    lines.push(`🔴 Dnevni limit skoraj dosežen — še ${usage.dailyRemaining} klicev do limita`);
+  }
+  if (usage.monthlyPercent >= 80) {
+    lines.push(`🔴 Mesečni limit skoraj dosežen — še ${usage.monthlyRemaining} klicev do limita`);
+  }
+
+  lines.push('', '💡 Povečaj limit v Nastavitvah ali zmanjšaj AI klice.');
+  return lines.join('\n');
+}
+

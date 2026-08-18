@@ -1,16 +1,14 @@
-// v6.13: Predictive Fraud Detection — hevristična + AI analiza sumljivih oglasov
+// v6.13 / v8.94-refactor: Predictive Fraud Detection — hevristična + AI analiza sumljivih oglasov
+// Refaktoriran z withAiRoute helperjem (v8.94) + enforceBudget guard.
+//
 // POST /api/ai/fraud-detection
 // Body: { listingId?: string, listing?: { title, price, priceText, location, description, source, imageUrl, sellerName, postedAt } }
 // Returns: { ok, analysis: { fraudScore, riskLevel, redFlags, mlSignals, aiAssessment, recommendations, similarFraudPatterns } }
 
-import { NextRequest, NextResponse } from 'next/server';
-import { db } from '@/lib/db';
-import { getSettingsRow } from '@/lib/pipeline';
-import { callProviderForRaw, parseJsonLooseExported, type AiProviderType, type AiSettings } from '@/lib/ai';
-import { logger } from '@/lib/logger';
+import { withAiRoute, AI_ROUTE_DEFAULTS, ApiRouteError, type AiRouteContext } from '@/lib/with-ai-route';
+import { apiOk, apiBadRequest } from '@/lib/api-response';
 
-export const runtime = 'nodejs';
-export const dynamic = 'force-dynamic';
+export const { runtime, dynamic } = AI_ROUTE_DEFAULTS;
 export const maxDuration = 60;
 
 interface ListingInput {
@@ -24,6 +22,16 @@ interface ListingInput {
   sellerName?: string | null;
   postedAt?: string | null;
 }
+
+interface FraudDetectionInput {
+  listingId?: string;
+  listing: ListingInput | null;
+}
+
+interface DbListingFraudInfo { aiEstimatedValue: number | null; sellerListingCount: number | null; aiImageVerdict: string | null }
+interface RedFlag { category: string; pattern: string; weight: number; matched: string }
+interface MlSignal { signal: string; value: any; riskContribution: number }
+interface SimilarFraudPattern { id: string; title: string; price: number | null; sellerName: string | null; matchReason: string }
 
 // Hevristični sumljivi vzorci (pravi ML pattern matching)
 const FRAUD_PATTERNS = {
@@ -60,141 +68,204 @@ const FRAUD_PATTERNS = {
 
 const STOCK_PHOTO_KEYWORDS = ['stock', 'photo', 'shutterstock', 'getty', 'unsplash', 'pexels', 'pixabay'];
 
-export async function POST(req: NextRequest) {
-  try {
+export const POST = withAiRoute<FraudDetectionInput>({
+  endpoint: '/api/ai/fraud-detection',
+  maxDuration: 60,
+  enforceBudget: true, // AI klic — preveri budget
+
+  parseBody: async (req) => {
     const body = await req.json().catch(() => ({}));
-    const { listingId } = body;
-    let listingInput: ListingInput | null = body?.listing ?? null;
-
-    // 1. Če je podan listingId, pridobi iz baze
-    if (listingId && !listingInput) {
-      const listing = await db.listing.findUnique({
-        where: { id: String(listingId) },
-        select: {
-          title: true, price: true, priceText: true, location: true, description: true,
-          detailDescription: true, url: true, imageUrl: true, aiEstimatedValue: true,
-          aiRisk: true, aiVerdict: true, aiReason: true, dealScore: true,
-          sellerName: true, sellerListingCount: true, postedAt: true, firstSeenAt: true,
-          aiImageAnalysis: true, aiImageVerdict: true,
-          monitor: { select: { source: true, name: true } },
-        },
-      });
-      if (!listing) return NextResponse.json({ error: 'Listing ne obstaja' }, { status: 404 });
-      listingInput = {
-        title: listing.title,
-        price: listing.price,
-        priceText: listing.priceText,
-        location: listing.location,
-        description: listing.detailDescription || listing.description,
-        source: listing.monitor?.source,
-        imageUrl: listing.imageUrl,
-        sellerName: listing.sellerName,
-        postedAt: listing.postedAt?.toISOString() ?? null,
-      };
-    }
-
-    if (!listingInput) {
-      return NextResponse.json({ error: 'listingId ali listing objekt je obvezen' }, { status: 400 });
-    }
-
-    // 2. ML hevristična analiza — pattern matching
-    const fullText = `${listingInput.title} ${listingInput.description || ''} ${listingInput.priceText || ''} ${listingInput.location || ''}`;
-    const redFlags: Array<{ category: string; pattern: string; weight: number; matched: string }> = [];
-
-    let totalWeight = 0;
-    for (const [category, patterns] of Object.entries(FRAUD_PATTERNS)) {
-      for (const p of patterns) {
-        const match = fullText.match(p.pattern);
-        if (match) {
-          redFlags.push({
-            category,
-            pattern: p.label,
-            weight: p.weight,
-            matched: match[0].slice(0, 50),
-          });
-          totalWeight += p.weight;
-        }
-      }
-    }
-
-    // 3. ML signali — analiza značilnosti
-    const mlSignals: Array<{ signal: string; value: any; riskContribution: number }> = [];
-
-    // Price vs estimated value
-    const price = Number(listingInput.price) || 0;
-    const listing = await db.listing.findUnique({
-      where: { id: String(body?.listingId ?? '') },
-      select: { aiEstimatedValue: true, sellerListingCount: true, aiImageVerdict: true },
-    }).catch(() => null);
-    const estValue = listing?.aiEstimatedValue ?? 0;
-
-    if (price > 0 && estValue > 0) {
-      const discount = Math.round(((estValue - price) / estValue) * 100);
-      if (discount > 50) {
-        mlSignals.push({ signal: 'Cena preveč pod tržno (>{50}%)', value: `${discount}% pod est.`, riskContribution: 25 });
-        totalWeight += 25;
-      } else if (discount > 30) {
-        mlSignals.push({ signal: 'Cena močno pod tržno', value: `${discount}% pod est.`, riskContribution: 12 });
-        totalWeight += 12;
-      }
-    }
-
-    // Seller listing count
-    const sellerCount = listing?.sellerListingCount ?? 0;
-    if (sellerCount === 0) {
-      mlSignals.push({ signal: 'Nov prodajalec (0 oglasov)', value: 0, riskContribution: 8 });
-      totalWeight += 8;
-    } else if (sellerCount > 50) {
-      mlSignals.push({ signal: 'Množični prodajalec (>50 oglasov)', value: sellerCount, riskContribution: 5 });
-      totalWeight += 5;
-    }
-
-    // Image verdict
-    const imgVerdict = listing?.aiImageVerdict ?? null;
-    if (imgVerdict === 'STOCK_PHOTO') {
-      mlSignals.push({ signal: 'Stock fotografija namesto realne', value: 'STOCK_PHOTO', riskContribution: 20 });
-      totalWeight += 20;
-    } else if (imgVerdict === 'SUSPICIOUS') {
-      mlSignals.push({ signal: 'AI označil sliko kot sumljivo', value: 'SUSPICIOUS', riskContribution: 15 });
-      totalWeight += 15;
-    }
-
-    // Description length
-    const descLen = (listingInput.description || '').length;
-    if (descLen < 50) {
-      mlSignals.push({ signal: 'Zelo kratek opis (<50 znakov)', value: descLen, riskContribution: 10 });
-      totalWeight += 10;
-    }
-
-    // Posted recently + low price (suspicious combo)
-    if (listingInput.postedAt) {
-      const hoursAgo = (Date.now() - new Date(listingInput.postedAt).getTime()) / (60 * 60 * 1000);
-      if (hoursAgo < 6 && price > 0 && estValue > 0 && price < estValue * 0.6) {
-        mlSignals.push({ signal: 'Nov oglas (<6h) + izjemno nizka cena', value: `${Math.round(hoursAgo)}h`, riskContribution: 18 });
-        totalWeight += 18;
-      }
-    }
-
-    // Image URL stock check
-    if (listingInput.imageUrl && STOCK_PHOTO_KEYWORDS.some(k => listingInput.imageUrl!.toLowerCase().includes(k))) {
-      mlSignals.push({ signal: 'URL slike vsebuje stock photo keyword', value: listingInput.imageUrl.slice(0, 50), riskContribution: 22 });
-      totalWeight += 22;
-    }
-
-    // Cap at 100
-    const hevristicScore = Math.min(100, totalWeight);
-
-    // 4. AI analiza konteksta
-    const settings = await getSettingsRow();
-    const aiSettings: AiSettings = {
-      provider: settings.aiProvider as AiProviderType,
-      baseUrl: settings.aiBaseUrl, apiKey: settings.aiApiKey, model: settings.aiModel,
-      fallbackProvider: (settings.fallbackProvider || '') as AiProviderType | '',
-      fallbackBaseUrl: settings.fallbackBaseUrl || '', fallbackApiKey: settings.fallbackApiKey || '',
-      fallbackModel: settings.fallbackModel || '',
+    return {
+      listingId: body?.listingId ? String(body.listingId) : undefined,
+      listing: body?.listing ?? null,
     };
+  },
 
-    const prompt = `Si forenzik za odkrivanje prevar pri spletnih oglasih rabljenih dobrin.
+  handler: async (input, ctx: AiRouteContext) => {
+    const { db, callAi, parseAi } = ctx;
+
+    // 1. Resolve listing input — iz DB (listingId) ali direktno iz body-ja
+    const { listingInput, dbInfo } = await resolveListingInput(input, db);
+    if (!listingInput) {
+      return apiBadRequest('listingId ali listing objekt je obvezen');
+    }
+
+    // 2. Hevristična ML analiza (pattern matching + signali)
+    const { redFlags, mlSignals, hevristicScore, sellerCount, imgVerdict } =
+      runHeuristicAnalysis(listingInput, dbInfo);
+
+    // 3. AI forenzik analiza konteksta
+    const prompt = buildFraudPrompt({
+      listingInput,
+      price: Number(listingInput.price) || 0,
+      sellerCount,
+      imgVerdict,
+      hevristicScore,
+      redFlags,
+      mlSignals,
+    });
+    const raw = await callAi(prompt);
+    const parsed: any = parseAi(raw);
+
+    // 4. Kombiniraj hevristiko + AI
+    const analysis = transformFraudResult(parsed, hevristicScore, redFlags, mlSignals);
+
+    // 5. Poišči podobne sumljive oglase v bazi (similar fraud patterns)
+    analysis.similarFraudPatterns = await findSimilarFraudPatterns(
+      redFlags, db, input.listingId ?? ''
+    );
+
+    return apiOk({ ok: true, analysis });
+  },
+});
+
+// --- Pomožne funkcije (čiste, testabilne) --------------------------------
+
+// Pridobi ListingInput iz direktnega body-ja ali iz baze (listingId).
+async function resolveListingInput(
+  input: FraudDetectionInput,
+  db: AiRouteContext['db']
+): Promise<{ listingInput: ListingInput | null; dbInfo: DbListingFraudInfo | null }> {
+  if (!input.listingId || input.listing) {
+    return { listingInput: input.listing, dbInfo: null };
+  }
+
+  const listing = await db.listing.findUnique({
+    where: { id: input.listingId },
+    select: {
+      title: true, price: true, priceText: true, location: true, description: true,
+      detailDescription: true, url: true, imageUrl: true, aiEstimatedValue: true,
+      aiRisk: true, aiVerdict: true, aiReason: true, dealScore: true,
+      sellerName: true, sellerListingCount: true, postedAt: true, firstSeenAt: true,
+      aiImageAnalysis: true, aiImageVerdict: true,
+      monitor: { select: { source: true, name: true } },
+    },
+  });
+
+  if (!listing) {
+    throw new ApiRouteError('Listing ne obstaja', 404);
+  }
+
+  return {
+    listingInput: {
+      title: listing.title,
+      price: listing.price,
+      priceText: listing.priceText,
+      location: listing.location,
+      description: listing.detailDescription || listing.description,
+      source: listing.monitor?.source,
+      imageUrl: listing.imageUrl,
+      sellerName: listing.sellerName,
+      postedAt: listing.postedAt?.toISOString() ?? null,
+    },
+    dbInfo: {
+      aiEstimatedValue: listing.aiEstimatedValue,
+      sellerListingCount: listing.sellerListingCount,
+      aiImageVerdict: listing.aiImageVerdict,
+    },
+  };
+}
+
+// ML hevristična analiza — pattern matching (red flags) + analiza značilnosti (ml signals).
+function runHeuristicAnalysis(
+  listingInput: ListingInput,
+  dbInfo: DbListingFraudInfo | null
+): {
+  redFlags: RedFlag[];
+  mlSignals: MlSignal[];
+  hevristicScore: number;
+  sellerCount: number;
+  imgVerdict: string | null;
+} {
+  const redFlags: RedFlag[] = [];
+  let totalWeight = 0;
+
+  // 1. Pattern matching po vseh kategorijah
+  const fullText = `${listingInput.title} ${listingInput.description || ''} ${listingInput.priceText || ''} ${listingInput.location || ''}`;
+  for (const [category, patterns] of Object.entries(FRAUD_PATTERNS)) {
+    for (const p of patterns) {
+      const match = fullText.match(p.pattern);
+      if (match) {
+        redFlags.push({ category, pattern: p.label, weight: p.weight, matched: match[0].slice(0, 50) });
+        totalWeight += p.weight;
+      }
+    }
+  }
+
+  // 2. ML signali — analiza značilnosti
+  const mlSignals: MlSignal[] = [];
+  const price = Number(listingInput.price) || 0;
+  const estValue = dbInfo?.aiEstimatedValue ?? 0;
+  const sellerCount = dbInfo?.sellerListingCount ?? 0;
+  const imgVerdict = dbInfo?.aiImageVerdict ?? null;
+
+  // Price vs estimated value
+  if (price > 0 && estValue > 0) {
+    const discount = Math.round(((estValue - price) / estValue) * 100);
+    if (discount > 50) {
+      mlSignals.push({ signal: 'Cena preveč pod tržno (>{50}%)', value: `${discount}% pod est.`, riskContribution: 25 });
+      totalWeight += 25;
+    } else if (discount > 30) {
+      mlSignals.push({ signal: 'Cena močno pod tržno', value: `${discount}% pod est.`, riskContribution: 12 });
+      totalWeight += 12;
+    }
+  }
+
+  // Seller listing count
+  if (sellerCount === 0) {
+    mlSignals.push({ signal: 'Nov prodajalec (0 oglasov)', value: 0, riskContribution: 8 });
+    totalWeight += 8;
+  } else if (sellerCount > 50) {
+    mlSignals.push({ signal: 'Množični prodajalec (>50 oglasov)', value: sellerCount, riskContribution: 5 });
+    totalWeight += 5;
+  }
+
+  // Image verdict
+  if (imgVerdict === 'STOCK_PHOTO') {
+    mlSignals.push({ signal: 'Stock fotografija namesto realne', value: 'STOCK_PHOTO', riskContribution: 20 });
+    totalWeight += 20;
+  } else if (imgVerdict === 'SUSPICIOUS') {
+    mlSignals.push({ signal: 'AI označil sliko kot sumljivo', value: 'SUSPICIOUS', riskContribution: 15 });
+    totalWeight += 15;
+  }
+
+  // Description length
+  const descLen = (listingInput.description || '').length;
+  if (descLen < 50) {
+    mlSignals.push({ signal: 'Zelo kratek opis (<50 znakov)', value: descLen, riskContribution: 10 });
+    totalWeight += 10;
+  }
+
+  // Posted recently + low price (suspicious combo)
+  if (listingInput.postedAt) {
+    const hoursAgo = (Date.now() - new Date(listingInput.postedAt).getTime()) / (60 * 60 * 1000);
+    if (hoursAgo < 6 && price > 0 && estValue > 0 && price < estValue * 0.6) {
+      mlSignals.push({ signal: 'Nov oglas (<6h) + izjemno nizka cena', value: `${Math.round(hoursAgo)}h`, riskContribution: 18 });
+      totalWeight += 18;
+    }
+  }
+
+  // Image URL stock check
+  const imageUrl = listingInput.imageUrl;
+  if (imageUrl && STOCK_PHOTO_KEYWORDS.some(k => imageUrl.toLowerCase().includes(k))) {
+    mlSignals.push({ signal: 'URL slike vsebuje stock photo keyword', value: imageUrl.slice(0, 50), riskContribution: 22 });
+    totalWeight += 22;
+  }
+
+  return { redFlags, mlSignals, hevristicScore: Math.min(100, totalWeight), sellerCount, imgVerdict };
+}
+
+function buildFraudPrompt(params: {
+  listingInput: ListingInput;
+  price: number;
+  sellerCount: number;
+  imgVerdict: string | null;
+  hevristicScore: number;
+  redFlags: RedFlag[];
+  mlSignals: MlSignal[];
+}): string {
+  const { listingInput, price, sellerCount, imgVerdict, hevristicScore, redFlags, mlSignals } = params;
+  return `Si forenzik za odkrivanje prevar pri spletnih oglasih rabljenih dobrin.
 Analiziraj oglas in potrdi/odpovej hevristično oceno tveganja.
 
 OGLAS:
@@ -214,7 +285,7 @@ Pravila:
 1. Predpostavi, da je hevristična analiza natančna v 70% primerov
 2. Preveri kombinacije znakov (npr. nujna prodaja + pošiljanje samo + nov prodajalec = skoraj gotovo prevara)
 3. Opozori tudi na subtilne znake ki jih hevristika ne najde
-4. Razlikuj med "resnično prevara" in "sumnjivo a morda legitimno"
+4. Razlikuj med "resnično prevara" in "sumljivo a morda legitimno"
 5. Priporoči konkretno dejanje (pogajaj prek platforme / zahtevaj osebni prevzem / ne nakupuj / itd.)
 
 Odgovori LE z JSON:
@@ -227,90 +298,68 @@ Odgovori LE z JSON:
   "recommendation": "<buy_with_caution|verify_first|avoid|report>",
   "reasoning": "<zakaj ta ocena, max 200 znakov>"
 }`;
+}
 
-    let raw = '';
-    try {
-      raw = await callProviderForRaw(aiSettings, prompt);
-    } catch (primaryError: any) {
-      if (aiSettings.fallbackProvider && aiSettings.fallbackModel) {
-        const fb: AiSettings = {
-          provider: aiSettings.fallbackProvider,
-          baseUrl: aiSettings.fallbackBaseUrl || '',
-          apiKey: aiSettings.fallbackApiKey || '',
-          model: aiSettings.fallbackModel,
-        };
-        raw = await callProviderForRaw(fb, prompt);
-      } else {
-        return NextResponse.json({ error: primaryError?.message ?? 'AI failed' }, { status: 500 });
-      }
-    }
+// Kombiniraj hevristiko + AI odgovor v končno analizo (redFlags.sort mutira v-place).
+function transformFraudResult(
+  parsed: any,
+  hevristicScore: number,
+  redFlags: RedFlag[],
+  mlSignals: MlSignal[]
+): any {
+  const aiFraudProb = Math.max(0, Math.min(100, Number(parsed?.fraud_probability_pct ?? hevristicScore)));
+  const combinedScore = Math.round(hevristicScore * 0.6 + aiFraudProb * 0.4);
+  const riskLevel = combinedScore >= 70 ? 'critical' :
+                    combinedScore >= 40 ? 'high' :
+                    combinedScore >= 20 ? 'medium' : 'low';
 
-    const parsed: any = parseJsonLooseExported(raw);
+  return {
+    fraudScore: combinedScore,
+    riskLevel,
+    hevristicScore,
+    aiScore: aiFraudProb,
+    scamType: ['classic_scam', 'phishing', 'advance_fee', 'fake_item', 'non_delivery', 'legitimate', 'suspicious'].includes(String(parsed?.scam_type))
+      ? String(parsed.scam_type) : 'suspicious',
+    aiAssessment: String(parsed?.ai_assessment ?? '').slice(0, 400),
+    reasoning: String(parsed?.reasoning ?? '').slice(0, 400),
+    redFlags: redFlags.sort((a, b) => b.weight - a.weight),
+    mlSignals,
+    additionalRedFlags: Array.isArray(parsed?.additional_red_flags)
+      ? parsed.additional_red_flags.slice(0, 6).map((r: any) => String(r).slice(0, 200))
+      : [],
+    verificationSteps: Array.isArray(parsed?.verification_steps)
+      ? parsed.verification_steps.slice(0, 6).map((s: any) => String(s).slice(0, 250))
+      : [],
+    recommendation: ['buy_with_caution', 'verify_first', 'avoid', 'report'].includes(String(parsed?.recommendation))
+      ? String(parsed.recommendation) : 'verify_first',
+    similarFraudPatterns: [] as SimilarFraudPattern[],
+  };
+}
 
-    // Kombiniraj hevristiko + AI
-    const aiFraudProb = Math.max(0, Math.min(100, Number(parsed?.fraud_probability_pct ?? hevristicScore)));
-    const combinedScore = Math.round(hevristicScore * 0.6 + aiFraudProb * 0.4);
-    const riskLevel = combinedScore >= 70 ? 'critical' :
-                      combinedScore >= 40 ? 'high' :
-                      combinedScore >= 20 ? 'medium' : 'low';
+// Poišči podobne sumljive oglase v bazi glede na top red flag (highest weight).
+async function findSimilarFraudPatterns(redFlags: RedFlag[], db: AiRouteContext['db'], excludeId: string): Promise<SimilarFraudPattern[]> {
+  if (redFlags.length === 0) return [];
 
-    // 5. Poišči podobne sumljive oglase v bazi (similar fraud patterns)
-    let similarFraudPatterns: Array<{ id: string; title: string; price: number | null; sellerName: string | null; matchReason: string }> = [];
-    if (redFlags.length > 0) {
-      const topPattern = redFlags[0].pattern;
-      const similar = await db.listing.findMany({
-        where: {
-          id: { not: String(body?.listingId ?? '') },
-          isHidden: false,
-          OR: [
-            { description: { contains: topPattern.slice(0, 20) } },
-            { detailDescription: { contains: topPattern.slice(0, 20) } },
-            { title: { contains: topPattern.slice(0, 20) } },
-          ],
-        },
-        select: { id: true, title: true, price: true, sellerName: true, firstSeenAt: true },
-        take: 5,
-      });
-      similarFraudPatterns = similar.map(s => ({
-        id: s.id, title: s.title, price: s.price, sellerName: s.sellerName,
-        matchReason: `Podoben vzorec: ${topPattern.slice(0, 50)}`,
-      }));
-    }
+  const topPattern = redFlags[0].pattern;
+  const similar = await db.listing.findMany({
+    where: {
+      id: { not: excludeId },
+      isHidden: false,
+      OR: [
+        { description: { contains: topPattern.slice(0, 20) } },
+        { detailDescription: { contains: topPattern.slice(0, 20) } },
+        { title: { contains: topPattern.slice(0, 20) } },
+      ],
+    },
+    select: { id: true, title: true, price: true, sellerName: true, firstSeenAt: true },
+    take: 5,
+  });
 
-    // Increment AI usage
-    const today = new Date().toISOString().slice(0, 10);
-    if (settings.aiCallsDate !== today) {
-      await db.settings.update({ where: { id: 'singleton' }, data: { aiCallsDate: today, aiCallsToday: 1 } });
-    } else {
-      await db.settings.update({ where: { id: 'singleton' }, data: { aiCallsToday: { increment: 1 } } });
-    }
-
-    return NextResponse.json({
-      ok: true,
-      analysis: {
-        fraudScore: combinedScore,
-        riskLevel,
-        hevristicScore,
-        aiScore: aiFraudProb,
-        scamType: ['classic_scam', 'phishing', 'advance_fee', 'fake_item', 'non_delivery', 'legitimate', 'suspicious'].includes(String(parsed?.scam_type))
-          ? String(parsed.scam_type) : 'suspicious',
-        aiAssessment: String(parsed?.ai_assessment ?? '').slice(0, 400),
-        reasoning: String(parsed?.reasoning ?? '').slice(0, 400),
-        redFlags: redFlags.sort((a, b) => b.weight - a.weight),
-        mlSignals,
-        additionalRedFlags: Array.isArray(parsed?.additional_red_flags)
-          ? parsed.additional_red_flags.slice(0, 6).map((r: any) => String(r).slice(0, 200))
-          : [],
-        verificationSteps: Array.isArray(parsed?.verification_steps)
-          ? parsed.verification_steps.slice(0, 6).map((s: any) => String(s).slice(0, 250))
-          : [],
-        recommendation: ['buy_with_caution', 'verify_first', 'avoid', 'report'].includes(String(parsed?.recommendation))
-          ? String(parsed.recommendation) : 'verify_first',
-        similarFraudPatterns,
-      },
-    });
-  } catch (e: any) {
-    logger.error("/api/ai/fraud-detection", "POST handler failed", e);
-    return NextResponse.json({ error: e?.message ?? 'Napaka' }, { status: 500 });
-  }
+  return similar.map(s => ({
+    id: s.id,
+    title: s.title,
+    price: s.price,
+    sellerName: s.sellerName,
+    matchReason: `Podoben vzorec: ${topPattern.slice(0, 50)}`,
+  }));
 }
