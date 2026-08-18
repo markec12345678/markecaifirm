@@ -1,3 +1,8 @@
+/**
+ * @deprecated v8.94 — uporabi `/api/ai/profit-margin-predictor-v3` namesto tega.
+ * Zastareli v1 — v3 je najnovejši.
+ * Ta endpoint bo odstranjen v v9.0. Glej ENDPOINTS_AUDIT.md za migracijski načrt.
+ */
 // v6.47: AI Profit Margin Predictor — pred-nakupna ocena dobička za potencialne investicije
 // POST /api/ai/profit-margin-predictor
 // Body: { listingId?: string, listing?: { title, price, location, description, source, category? }, budget?: number }

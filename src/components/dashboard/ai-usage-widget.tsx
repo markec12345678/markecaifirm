@@ -106,30 +106,41 @@ export function AiUsageWidget() {
   const anyCritical = dailyCritical || monthlyCritical;
 
   return (
-    <Card className={cn(
-      "border-primary/30 bg-gradient-to-br from-primary/5 to-transparent transition-colors",
-      anyCritical && "border-red-500/50 from-red-500/5"
-    )}>
+    <Card
+      className={cn(
+        "border-primary/30 bg-gradient-to-br from-primary/5 to-transparent transition-colors",
+        anyCritical && "border-red-500/50 from-red-500/5"
+      )}
+      role="region"
+      aria-label={`AI poraba — dnevno ${u.dailyPercent}%, mesečno ${u.monthlyPercent}%`}
+    >
       <CardHeader className="pb-2">
         <CardTitle className="text-sm flex items-center justify-between">
           <span className="flex items-center gap-2">
-            <Zap className={cn("w-4 h-4", anyCritical ? "text-red-500 animate-pulse" : "text-primary")} />
+            <Zap className={cn("w-4 h-4", anyCritical ? "text-red-500 animate-pulse" : "text-primary")} aria-hidden="true" />
             AI Poraba
             {anyCritical && (
-              <Badge variant="destructive" className="text-[10px] px-1.5 py-0">
-                <AlertTriangle className="w-2.5 h-2.5 mr-1" />
+              <Badge variant="destructive" className="text-[10px] px-1.5 py-0" aria-label="Budget skoraj presežen">
+                <AlertTriangle className="w-2.5 h-2.5 mr-1" aria-hidden="true" />
                 BUDGET
               </Badge>
             )}
           </span>
           <Button variant="ghost" size="icon" className="h-6 w-6" onClick={refetch} aria-label="Osveži AI porabo">
-            <RefreshCw className="w-3 h-3" />
+            <RefreshCw className="w-3 h-3" aria-hidden="true" />
           </Button>
         </CardTitle>
       </CardHeader>
       <CardContent className="space-y-3">
         {/* Daily usage */}
-        <div className="space-y-1.5">
+        <div
+          className="space-y-1.5"
+          role="progressbar"
+          aria-valuenow={u.dailyPercent}
+          aria-valuemin={0}
+          aria-valuemax={100}
+          aria-label={`Dnevna AI poraba: ${u.today} od ${u.dailyLimit} klicev, ${u.dailyPercent} odstotkov`}
+        >
           <div className="flex items-baseline justify-between text-xs">
             <span className="text-muted-foreground">Danes</span>
             <span className={cn(
@@ -157,7 +168,14 @@ export function AiUsageWidget() {
         </div>
 
         {/* Monthly usage */}
-        <div className="space-y-1.5">
+        <div
+          className="space-y-1.5"
+          role="progressbar"
+          aria-valuenow={u.monthlyPercent}
+          aria-valuemin={0}
+          aria-valuemax={100}
+          aria-label={`Mesečna AI poraba: ${u.month} od ${u.monthlyLimit} klicev, ${u.monthlyPercent} odstotkov`}
+        >
           <div className="flex items-baseline justify-between text-xs">
             <span className="text-muted-foreground">Mesec</span>
             <span className={cn(
@@ -189,8 +207,12 @@ export function AiUsageWidget() {
 
         {/* Warning alert če critical */}
         {anyCritical && (
-          <div className="flex items-start gap-2 text-[10px] text-red-500 bg-red-500/10 border border-red-500/20 rounded p-1.5">
-            <AlertTriangle className="w-3 h-3 flex-shrink-0 mt-0.5" />
+          <div
+            className="flex items-start gap-2 text-[10px] text-red-500 bg-red-500/10 border border-red-500/20 rounded p-1.5"
+            role="alert"
+            aria-live="assertive"
+          >
+            <AlertTriangle className="w-3 h-3 flex-shrink-0 mt-0.5" aria-hidden="true" />
             <span>
               {dailyCritical && 'Dnevni AI limit skoraj dosežen. '}
               {monthlyCritical && 'Mesečni limit skoraj dosežen — upočasni ali povečaj v Nastavitvah.'}

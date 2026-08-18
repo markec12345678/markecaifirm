@@ -1,3 +1,8 @@
+/**
+ * @deprecated v8.94 — uporabi `/api/ai/listing-performance-forecaster-v4` namesto tega.
+ * Zastareli osnovni — v4 je najnovejši forecaster.
+ * Ta endpoint bo odstranjen v v9.0. Glej ENDPOINTS_AUDIT.md za migracijski načrt.
+ */
 // v6.24: AI Listing Performance Tracker — analizira uspešnost objavljenih oglasov
 // POST /api/ai/listing-performance
 // Body: {}

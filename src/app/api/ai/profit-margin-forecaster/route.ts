@@ -1,3 +1,8 @@
+/**
+ * @deprecated v8.94 — uporabi `/api/ai/profit-margin-forecaster-pro` namesto tega.
+ * Zastareli v1 — Pro verzija je najnovejša.
+ * Ta endpoint bo odstranjen v v9.0. Glej ENDPOINTS_AUDIT.md za migracijski načrt.
+ */
 // v6.54: AI Profit Margin Forecaster — napove maržo za naslednje N nakupov in kategorije
 // POST /api/ai/profit-margin-forecaster
 // Body: { monthsAhead?: number, plannedPurchases?: number }

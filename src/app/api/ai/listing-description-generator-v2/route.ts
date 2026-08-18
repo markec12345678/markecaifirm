@@ -1,3 +1,8 @@
+/**
+ * @deprecated v8.94 — uporabi `/api/ai/listing-description-generator-v3` namesto tega.
+ * Zastareli v2 — v3 je najnovejši.
+ * Ta endpoint bo odstranjen v v9.0. Glej ENDPOINTS_AUDIT.md za migracijski načrt.
+ */
 // v6.51: AI Listing Description Generator v2 — multi-platform, multi-tone opisi z A/B variantami
 // POST /api/ai/listing-description-generator-v2
 // Body: { tradeId?: string, platforms?: string[], tones?: string[], generateVariants?: number }

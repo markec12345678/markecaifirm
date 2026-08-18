@@ -19926,3 +19926,440 @@ Stage Summary:
 - TYPECHECK: 0 errors ✨
 - TESTS: 208 passing (lib) ✨
 - Verzija: v8.94.2
+
+---
+Task ID: v8.94.4-b
+Agent: Task agent (description-optimizer migration)
+Task: Migrate /api/ai/description-optimizer to withAiRoute
+
+Work Log:
+- Prebral worklog.md (v8.94 / v8.94.1 / v8.94.2 / v8.94.3 vnose) za kontekst migracije
+- Prebral src/lib/with-ai-route.ts (helper API: withAiRoute, AI_ROUTE_DEFAULTS, ApiRouteError, AiRouteContext, enforceBudget)
+- Prebral referenčni primer 1: src/app/api/ai/tone-analyzer/route.ts (migrirani vzorec z apiNotFound za 404 + ekstrahiranim buildPrompt/transformAnalysis/clamp)
+- Prebral referenčni primer 2: src/app/api/ai/categorize/route.ts (migrirani vzorec z validateInput + ApiRouteError + pomožnimi funkcijami)
+- Prebral referenčni primer 3: src/app/api/ai/deduplicate/route.ts (migrirani vzorec z enforceBudget: true)
+- Prebral original src/app/api/ai/description-optimizer/route.ts (209 vrstic — inline POST handler z try/catch, manual settings load, manual fallback provider try/catch, manual parseJsonLooseExported, manual AI counter increment)
+- Migracija na withAiRoute<DescriptionOptimizerInput> z enforceBudget: true:
+  - uvozi: withAiRoute, AI_ROUTE_DEFAULTS, type AiRouteContext iz @/lib/with-ai-route; apiOk, apiNotFound iz @/lib/api-response
+  - export const { runtime, dynamic } = AI_ROUTE_DEFAULTS; export const maxDuration = 60 (original)
+  - Input interface DescriptionOptimizerInput (tradeId? + currentDescription, title, category, price, targetPlatform)
+  - parseBody: razčleni vse 6 polj iz body-ja (z {} fallback); targetPlatform validiran proti VALID_PLATFORMS (default bolha); price number-safe parse
+  - validateInput: če !currentDescription && !tradeId → return error message (helper vrne 400)
+  - handler ~30 vrstic: tradeId → db.trade.findUnique + apiNotFound(404) → callAi + parseAi → transformOptimization → apiOk
+  - ctx.callAi(prompt) nadomesti callProviderForRaw + manual fallback try/catch
+  - ctx.parseAi(raw) nadomesti parseJsonLooseExported
+  - ctx.db nadomesti direkten import db
+  - apiNotFound("Trade ne obstaja") nadomesti NextResponse.json({error}, {status:404})
+  - apiOk({ ok: true, optimization, targetPlatform }) ohranja originalno success response strukturo
+- Ekstrahirane testabilne pomožne funkcije OUTSIDE handler:
+  1. buildPrompt(title, category, price, currentDescription, targetPlatform) — zgradi AI prompt (besedilo IDENTIČNO originalu — slovenski kontekst, 4 strategije, JSON schema)
+  2. transformOptimization(parsed) — validacija + slice + clamp za vse sekcije (currentAnalysis, variants, winner, seoKeywords, improvements, platformSpecificTips)
+  3. clampInt(n, min, max) — clamp s fallback na min za non-finite
+  - Konstante: VALID_PLATFORMS, VALID_STRATEGIES, VALID_PRIORITIES (iz listas v originalu izvlečene kot as const tuple)
+- Odstranjeno (boilerplate, ki ga helper obravnava):
+  - manual try/catch z logger.error + NextResponse.json error
+  - manual getSettingsRow + AiSettings konstrukt (settings load v helperju)
+  - manual fallback provider try/catch (callAi v helperju interno upravlja primary+fallback)
+  - manual parseJsonLooseExported klic (parseAi v helperju)
+  - manual AI counter increment (aiCallsToday/aiCallsDate) — enforceBudget: true → recordAiCall avtomatsko PO uspešnem klicu (tudi monthly counter + budget alert, ki ga original ni imel — additive, ne breaking)
+  - uvozi: NextRequest, NextResponse, db, getSettingsRow, callProviderForRaw, parseJsonLooseExported, AiSettings, AiProviderType, logger
+- Vedenje ohranjeno:
+  - isti input parsing (targetPlatform validacija proti 5 platformam, default bolha; price number ali Number() fallback)
+  - isti DB query (db.trade.findUnique z listing join — identičen select: title, category, buyPrice, listing.{description, detailDescription, aiEstimatedValue})
+  - isti fallback precedence: body title → trade.title; body category → trade.category; body price → trade.buyPrice; body currentDescription → trade.listing.detailDescription → trade.listing.description
+  - 404 ko tradeId podan in trade ne obstaja (apiNotFound namesto NextResponse.json — isti status 404, dodan ok:false field, konsistentno z migration pattern)
+  - 400 ko !currentDescription && !tradeId (validateInput → apiBadRequest v helperju — isti status 400, dodan ok:false)
+  - prompt besedilo IDENTIČNO originalu (besedilo, slovenski kontekst za 5 platform, 4 strategije, JSON schema)
+  - response struktura: { ok: true, optimization, targetPlatform } (ok:true eksplicitno ohranjeno, ne izpuščeno kot v tone-analyzer/categorize)
+  - transformacija vseh sekcij identična (clampi, slici, validacije strategij/prioritet/platform)
+- Verifikacija:
+  - bunx tsc --noEmit: 0 errors
+  - bunx eslint src/app/api/ai/description-optimizer/route.ts: 0 errors (no-unused-vars off v config-u)
+
+Stage Summary:
+- MODIFIED: src/app/api/ai/description-optimizer/route.ts
+- Lines: 209 → 225 (+16; ~8% rast — 3 ekstrahirane helper funkcije + VALID_* konstante; handler se je skrčil z ~190 na ~30 vrstic)
+- enforceBudget: true (budget guard + avtomatski recordAiCall PO uspehu)
+- Handler: ~30 vrstic (prej ~190 z boilerplate)
+- Lint: 0, Typecheck: 0
+
+---
+Task ID: v8.94.4-e
+Agent: Task agent (generate-listing migration)
+Task: Migrate /api/ai/generate-listing to withAiRoute
+
+Work Log:
+- Prebral kontekst: worklog.md (v8.94 / v8.94.1 / v8.94.2 / v8.94.3 vnose), src/lib/with-ai-route.ts (helper API + AiRouteContext)
+- Prebral referenčna primera: src/app/api/ai/deduplicate/route.ts (enforceBudget + ekstrahirane funkcije) in src/app/api/ai/categorize/route.ts (ApiRouteError za 404 + ekstrahirane funkcije)
+- Prebral original src/app/api/ai/generate-listing/route.ts (139 vrstic — inline POST handler z manual try/catch, manual settings load, manual fallback provider try/catch, manual AI counter increment)
+- Migracija na withAiRoute<GenerateListingInput> z enforceBudget: true:
+  - parseBody: razčleni tradeId (path A — fields iz DB) ali direct fields (path B — fields iz body-ja)
+  - validateInput: zahtevaj tradeId ALI title (original: 400 "Naslov je obvezen" ko title manjka in tradeId manjka)
+  - handler ~30 vrstic: resolveListingFields → computeMarketAvg → buildListingPrompt → callAi → parseAi → transformListingResult → apiOk
+  - ctx.callAi(prompt) nadomesti callProviderForRaw + manual fallback try/catch
+  - ctx.parseAi(raw) nadomesti parseJsonLooseExported
+  - ctx.db nadomesti direkten import db
+  - ApiRouteError('Trade ne obstaja', 404) nadomesti NextResponse.json({error: 'Trade ne obstaja'}, {status: 404})
+  - apiBadRequest('Naslov je obvezen') za prazno title (po DB resolve-u) — nadomesti NextResponse.json 400
+  - apiOk({ ok: true, listing }) — struktura identična originalu
+- Ekstrahirane čiste testabilne funkcije OUTSIDE handler:
+  1. resolveListingFields(input, db) — pridobi ListingFields iz DB ali body-ja; throw ApiRouteError('Trade ne obstaja', 404) ko trade manjka
+  2. computeMarketAvg(fields, db) — poišče podobne oglase (price ±20%, title prefix contains) + izračuna tržno povprečje (fallback buyPrice * 1.25)
+  3. buildListingPrompt(params) — zgradi AI prompt (besedilo IDENTIČNO originalu, vključno s pravili + JSON strukturo)
+  4. transformListingResult(parsed, ctx) — validacija + slice + clampInt (price 0-1M, expectedSellTimeDays 1-365, profitEstimate -10k..100k, marginPct iz aiPrice)
+  5. clampInt(v, min, max) — ohranjena iz originala (pure funkcija)
+- Odstranjeno (boilerplate, ki ga helper obravnava):
+  - manual try/catch z logger.error + NextResponse.json error (helper handle-a)
+  - manual getSettingsRow + AiSettings konstrukt (settings load v helperju)
+  - manual fallback provider try/catch (ctx.callAi interno upravlja)
+  - manual parseJsonLooseExported klic (ctx.parseAi v helperju)
+  - manual AI counter increment (aiCallsDate/aiCallsToday — enforceBudget: true avtomatsko recordAiCall)
+  - uvozi: db, getSettingsRow, callProviderForRaw, parseJsonLooseExported, AiSettings, AiProviderType, logger, NextRequest, NextResponse
+- Vedenje nespremenjeno (same input → same output):
+  - Path A (tradeId): DB lookup trade → listing podatki (detailDescription → description fallback) — isto kot original
+  - Path B (direct fields): title/buyPrice/category/condition/description iz body-ja z defaults — isto
+  - Market data query: price [gte 0.8×, lte 1.5× buyPrice], isHidden false, title contains first word, take 10 — isto
+  - marketAvg fallback: buyPrice × 1.25 — isto
+  - Prompt besedilo + JSON struktura — IDENTIČNO
+  - Response struktura: { ok: true, listing: {...} } — isto
+  - marginPct formula: ((aiPrice ?? marketAvg) - buyPrice) / buyPrice × 100 — isto
+  - Error 404 (Trade ne obstaja) — isto status + message
+  - Error 400 (Naslov je obvezen) — isto status + message
+  - Error 500 (AI failed) — helper wrapper vrača 500 (prej manual catch)
+- Verifikacija:
+  - bunx tsc --noEmit: 0 errors
+  - bunx eslint src/app/api/ai/generate-listing/route.ts --max-warnings=0: 0 errors, 0 warnings
+
+Stage Summary:
+- MODIFIED: src/app/api/ai/generate-listing/route.ts
+- Lines: 139 → 242 (+103; +74% — rast iz type definitions za testabilne helper funkcije + JSDoc + Input interface; handler sam ~30 vrstic; prompt besedilo identičen)
+- enforceBudget: true (budget guard + avtomatski recordAiCall)
+- Lint: 0, Typecheck: 0
+
+---
+Task ID: v8.94.4-c
+Agent: Task agent (title-abtest migration)
+Task: Migrate /api/ai/title-abtest to withAiRoute
+
+Work Log:
+- Prebral kontekst: worklog.md (v8.94, v8.94.1–3 vnose), src/lib/with-ai-route.ts (helper API: withAiRoute, AI_ROUTE_DEFAULTS, ApiRouteError, AiRouteContext)
+- Prebral referenčna primera: src/app/api/ai/deduplicate/route.ts (apiOk + čiste pomožne funkcije) in src/app/api/ai/prioritize-alerts/route.ts (aiSettings gate + extracted rankAlert/enhanceWithAi)
+- Prebral original src/app/api/ai/title-abtest/route.ts (188 vrstic — inline POST handler z manual try/catch, manual settings load, manual fallback provider try/catch, manual parseJsonLooseExported, manual AI usage counter increment)
+- Migracija na withAiRoute<TitleAbTestInput> z enforceBudget: true:
+  - uvozi: withAiRoute, AI_ROUTE_DEFAULTS, ApiRouteError, type AiRouteContext iz @/lib/with-ai-route; apiOk, apiBadRequest iz @/lib/api-response
+  - export const { runtime, dynamic } = AI_ROUTE_DEFAULTS; export const maxDuration = 60 (original)
+  - parseBody: razčleni tradeId/currentTitle/category/price iz body-ja (z {} fallback)
+  - validateInput izpuščen — currentTitle pride lahko iz trade-a (DB lookup v handler-ju); 400 se vrne z apiBadRequest znotraj handler-ja
+  - handler ~30 vrstic: trade lookup (ApiRouteError 404 ko manjka) → apply overrides → 400 če !currentTitle → callAi(prompt) → parseAi → transform → apiOk({ test })
+  - ctx.callAi(prompt) nadomesti callProviderForRaw + manual fallback try/catch
+  - ctx.parseAi(raw) nadomesti parseJsonLooseExported
+  - ctx.db nadomesti direkten import db
+- Ekstrahirane testabilne pomožne funkcije (izven handler-ja):
+  1. buildTitleAbTestPrompt(currentTitle, category, price, description) — zgradi AI prompt (besedilo IDENTIČNO originalu vključno s slovenskim kontekstom, strategijami in JSON strukturo)
+  2. clampScore(v, def=50) — DRY helper za Math.max(0, Math.min(100, Number(v ?? def)))
+  3. transformTitleAbTestResult(parsed, currentTitle) — validacija + slice(0,4/6/3) + string clamp (0-150/200/300) + enum clamp (TITLE_STRATEGIES / TITLE_PLATFORMS z default 'KEYWORD_OPTIMIZED' / 'bolha') — struktura { currentTitle, currentTitleAnalysis, variants, winner, platformSpecificTitles, tips } identična originalu
+  - TITLE_STRATEGIES in TITLE_PLATFORMS konstanti izvučeni kot `as const` readonly tuple (DRY za .includes() typecheck)
+- Odstranjeno (boilerplate, ki ga helper obravnava):
+  - manual try/catch z logger.error + NextResponse.json error (helper ulovi ApiRouteError + apiError)
+  - manual getSettingsRow + AiSettings konstrukt (helper naloži settings in poda preko ctx.aiSettings)
+  - manual fallback provider try/catch (ctx.callAi interno upravlja primary+fallback)
+  - manual parseJsonLooseExported klic (ctx.parseAi)
+  - manual AI usage counter increment (aiCallsToday/aiCallsDate) — enforceBudget: true avtomatsko kliče recordAiCall
+  - uvozi: db, getSettingsRow, callProviderForRaw, parseJsonLooseExported, AiSettings, AiProviderType, logger, NextRequest, NextResponse
+- Vedenje nespremenjeno:
+  - isti input parsing (tradeId/currentTitle/category/price iz body-ja)
+  - isti DB lookup za tradeId (select: title, category, buyPrice, listing { description, detailDescription, aiEstimatedValue })
+  - isti override vrstni red: currentTitle = currentTitle || trade.title; category = category || trade.category; price = price || trade.buyPrice; description = trade.listing?.detailDescription || trade.listing?.description
+  - enak 404 ko trade manjka (prek ApiRouteError status 404)
+  - enak 400 ko !currentTitle (apiBadRequest z istim message)
+  - prompt besedilo identično originalu (slovenski kontekst platform, strategije, JSON schema)
+  - response struktura: { ok: true, test: { currentTitle, currentTitleAnalysis, variants, winner, platformSpecificTitles, tips } } — identična transformacija (clamps, slice, enum defaults)
+  - maxDuration: 60 (original)
+- Verifikacija:
+  - bunx tsc --noEmit: 0 errors
+  - bunx eslint src/app/api/ai/title-abtest/route.ts: 0 errors (full-project `bun run lint` OOM-killed v CI shell, single-file pass clean)
+
+Stage Summary:
+- MODIFIED: src/app/api/ai/title-abtest/route.ts
+- Lines: 188 → 190 (+2; handler se je skrčil iz ~170 na ~30 vrstic, rast iz tipiziranih pomožnih funkcij + prompt ekstrahiran)
+- enforceBudget: true
+- Lint: 0, Typecheck: 0
+
+---
+Task ID: v8.94.4-b
+Agent: Task agent (description-optimizer migration)
+Task: Migrate /api/ai/description-optimizer to withAiRoute
+
+Work Log:
+- Prebral worklog.md (v8.94 / v8.94.1 / v8.94.2 / v8.94.3 vnose) za kontekst migracije
+- Prebral src/lib/with-ai-route.ts (helper API: withAiRoute, AI_ROUTE_DEFAULTS, ApiRouteError, AiRouteContext, enforceBudget)
+- Prebral referenčni primer 1: src/app/api/ai/tone-analyzer/route.ts (migrirani vzorec z apiNotFound za 404 + ekstrahiranim buildPrompt/transformAnalysis/clamp)
+- Prebral referenčni primer 2: src/app/api/ai/categorize/route.ts (migrirani vzorec z validateInput + ApiRouteError + pomožnimi funkcijami)
+- Prebral referenčni primer 3: src/app/api/ai/deduplicate/route.ts (migrirani vzorec z enforceBudget: true)
+- Prebral original src/app/api/ai/description-optimizer/route.ts (209 vrstic — inline POST handler z try/catch, manual settings load, manual fallback provider try/catch, manual parseJsonLooseExported, manual AI counter increment)
+- Migracija na withAiRoute<DescriptionOptimizerInput> z enforceBudget: true:
+  - uvozi: withAiRoute, AI_ROUTE_DEFAULTS, type AiRouteContext iz @/lib/with-ai-route; apiOk, apiNotFound iz @/lib/api-response
+  - export const { runtime, dynamic } = AI_ROUTE_DEFAULTS; export const maxDuration = 60 (original)
+  - Input interface DescriptionOptimizerInput (tradeId? + currentDescription, title, category, price, targetPlatform)
+  - parseBody: razčleni vse 6 polj iz body-ja (z {} fallback); targetPlatform validiran proti VALID_PLATFORMS (default bolha); price number-safe parse
+  - validateInput: če !currentDescription && !tradeId → return error message (helper vrne 400)
+  - handler ~30 vrstic: tradeId → db.trade.findUnique + apiNotFound(404) → callAi + parseAi → transformOptimization → apiOk
+  - ctx.callAi(prompt) nadomesti callProviderForRaw + manual fallback try/catch
+  - ctx.parseAi(raw) nadomesti parseJsonLooseExported
+  - ctx.db nadomesti direkten import db
+  - apiNotFound("Trade ne obstaja") nadomesti NextResponse.json({error}, {status:404})
+  - apiOk({ ok: true, optimization, targetPlatform }) ohranja originalno success response strukturo
+- Ekstrahirane testabilne pomožne funkcije OUTSIDE handler:
+  1. buildPrompt(title, category, price, currentDescription, targetPlatform) — zgradi AI prompt (besedilo IDENTIČNO originalu — slovenski kontekst, 4 strategije, JSON schema)
+  2. transformOptimization(parsed) — validacija + slice + clamp za vse 5 sekcij (currentAnalysis, variants, winner, seoKeywords, improvements, platformSpecificTips)
+  3. clampInt(n, min, max) — clamp s fallback na min za non-finite
+  - Konstante: VALID_PLATFORMS, VALID_STRATEGIES, VALID_PRIORITIES (iz listas v originalu izvlečene kot as const tuple)
+- Odstranjeno (boilerplate, ki ga helper obravnava):
+  - manual try/catch z logger.error + NextResponse.json error
+  - manual getSettingsRow + AiSettings konstrukt (settings load v helperju)
+  - manual fallback provider try/catch (callAi v helperju interno upravlja primary+fallback)
+  - manual parseJsonLooseExported klic (parseAi v helperju)
+  - manual AI counter increment (aiCallsToday/aiCallsDate) — enforceBudget: true → recordAiCall avtomatsko PO uspešnem klicu (tudi monthly counter + budget alert, ki ga original ni imel — additive, ne breaking)
+  - uvozi: NextRequest, NextResponse, db, getSettingsRow, callProviderForRaw, parseJsonLooseExported, AiSettings, AiProviderType, logger
+- Vedenje ohranjeno:
+  - isti input parsing (targetPlatform validacija proti 5 platformam, default bolha; price number ali Number() fallback)
+  - isti DB query (db.trade.findUnique z listing join — identičen select: title, category, buyPrice, listing.{description, detailDescription, aiEstimatedValue})
+  - isti fallback precedence: body title → trade.title; body category → trade.category; body price → trade.buyPrice; body currentDescription → trade.listing.detailDescription → trade.listing.description
+  - 404 ko tradeId podan in trade ne obstaja (apiNotFound namesto NextResponse.json — isti status, dodan ok:false field, konsistentno z migration pattern)
+  - 400 ko !currentDescription && !tradeId (validateInput → apiBadRequest v helperju — isti status, dodan ok:false)
+  - prompt besedilo IDENTIČNO originalu (besedilo, slovenski kontekst za 5 platform, 4 strategije, JSON schema)
+  - response struktura: { ok: true, optimization, targetPlatform } (ok:true eksplicitno ohranjeno, ne izpuščeno kot v tone-analyzer)
+  - transformacija vseh 5 sekcij identična (clampi, slici, validacije strategij/prioritet/platform)
+- Verifikacija:
+  - bunx tsc --noEmit: 0 errors
+  - bunx eslint src/app/api/ai/description-optimizer/route.ts: 0 errors (no-unused-vars off v config-u)
+
+Stage Summary:
+- MODIFIED: src/app/api/ai/description-optimizer/route.ts
+- Lines: 209 → 225 (+16; ~8
+---
+Task ID: v8.94.4-f
+Agent: Task agent (restock migration)
+Task: Migrate /api/ai/restock to withAiRoute
+
+Work Log:
+- Prebral worklog.md (v8.94 / v8.94.1 / v8.94.2 / v8.94.3 vnose) za kontekst migracijskega vzorca
+- Prebral src/lib/with-ai-route.ts (helper API: withAiRoute, AI_ROUTE_DEFAULTS, ApiRouteError, AiRouteContext, enforceBudget option)
+- Prebral referenčni primer 1: src/app/api/ai/deduplicate/route.ts (migrirani vzorec z enforceBudget: true, ekstrahiranimi pomožnimi funkcijami, apiOk response)
+- Prebral referenčni primer 2: src/app/api/ai/optimal-time/route.ts (migrirani vzorec — trade/inventory analiza, pure helpers outside handler, buildPrompt + transformFunctions)
+- Prebral original src/app/api/ai/restock/route.ts (150 vrstic — inline GET handler z try/catch, direktim db import, logger.error error path; endpoint NE kliče AI — samo DB queries + hevristike za restock recommendations iz sold trades history)
+- Migracija na withAiRoute<RestockInput> z enforceBudget: true:
+  - uvozi: withAiRoute, AI_ROUTE_DEFAULTS, type AiRouteContext iz @/lib/with-ai-route; apiOk iz @/lib/api-response
+  - export const { runtime, dynamic } = AI_ROUTE_DEFAULTS; export const maxDuration = 60
+  - Input interface RestockInput (prazen — GET brez telesa; eslint-disable za @typescript-eslint/no-empty-object-type)
+  - method: 'GET' (original je bil GET, ne POST)
+  - parseBody: async () => ({}) — GET nima telesa, vrne prazen objekt
+  - brez validateInput — endpoint nima input polj
+  - handler ~30 vrstic: db.trade.findMany (sold, take 200) → early return ko prazno → aggregateCategoryStats → computeTopCategories → buildRestockRecommendations → apiOk
+  - ctx.db nadomesti direkten import db
+  - apiOk({ ok: true, recommendations: [], message }) ohranja originalni early-return response
+  - apiOk({ ok: true, recommendations, totalSoldTrades, categoriesAnalyzed, totalOpportunities }) ohranja originalni success response
+- Ekstrahirane testabilne pomožne funkcije OUTSIDE handler:
+  1. extractKeywords(title) — pure; izlušči ključne besede iz naslova (lowercase, remove punctuation, filter stopWords + številke, slice 5) — identično originalu
+  2. aggregateCategoryStats(soldTrades) — pure; grupira sold trades po kategoriji, kalkulira totalProfit/totalCost/daysToSell per kategorijo (profit formula identična: (sellPrice ?? 0) - (sellFees ?? 0) - buyPrice - (buyFees ?? 0))
+  3. computeTopCategories(catStats) — pure; mapira v { category, soldCount, totalProfit (round), avgRoi (round %), avgDaysToSell (round povp), keywords Set }, filter soldCount>=1 && avgRoi>0, sort by avgRoi desc then totalProfit desc — identično originalu
+  4. enrichOpportunities(opportunities) — pure; slice(0,5) + izračun estSellPrice (aiEstimatedValue ?? price*1.2), potentialProfit (price - 10% fees), potentialRoi (round %), sort by potentialProfit desc — identično originalu
+  5. buildReason(cat) — pure; returns string glede na avgRoi threshold (>50 TOP, >20 Donosna, else Stabilna) — emoji + besedilo IDENTIČNO originalu
+  6. findOpportunitiesForCategory(cat, db) — async (db); za top 3 keywords izvede db.listing.findMany (where: isHidden=false, isBookmarked=false, title contains kw, OR aiVerdict='PRILIKA' OR dealScore>=60; select 9 polj + monitor; take 5; orderBy dealScore desc), dedup po id — identično originalu
+  7. buildRestockRecommendations(topCategories, db) — async; loop topCategories.slice(0,8), za vsakega najde opportunities, če prazno continue, enrich + reason, push v recommendations — identično originalu
+  - Konstante: STOP_WORDS Set (12 besed) iz originala ekstrahiran na modul level
+- Odstranjeno (boilerplate, ki ga helper obravnava):
+  - manual try/catch z logger.error + NextResponse.json error (helper interno catch-a in vrne apiError 500)
+  - uvozi: NextResponse, db, logger (db pride preko ctx.db, NextResponse ni potrebno ker apiOk wrap-a, logger helper interno uporablja)
+  - export const runtime = 'nodejs'; export const dynamic = 'force-dynamic'; (zamenjano z AI_ROUTE_DEFAULTS re-export — isti vrednosti)
+- Vedenje ohranjeno:
+  - isti GET method (z method: 'GET' option)
+  - isti DB queries (soldTrades: status='sold', sellPrice not null, take 200; opportunities: 3 keywords × take 5, dedup, slice 5 za enrichment)
+  - early return ko 0 soldTrades (apiOk z { ok, recommendations: [], message }) — struktura identična
+  - success response: { ok: true, recommendations: sorted, totalSoldTrades, categoriesAnalyzed: topCategories.length (FULL array, ne slice 8), totalOpportunities: sum }
+  - hevristika identična (profit formula, ROI calc, daysToSell, keyword extraction, opportunity enrichment, reason thresholds)
+  - topCategories.length ohranjen kot FULL array length (po filter+sort, pred slice(0,8)) — enako originalu
+- Opomba: originalni endpoint NE kliče AI (samo hevristika + DB), vendar enforceBudget: true po specifikaciji taska (konsistentno z vsemi prejšnjimi migracijami v8.94.x; avtomatski recordAiCall je additive, ne breaking)
+- Verifikacija:
+  - bunx tsc --noEmit: 0 errors
+  - bun run lint: 0 errors (eslint-disable-next-line za prazno RestockInput interface)
+
+Stage Summary:
+- MODIFIED: src/app/api/ai/restock/route.ts
+- Lines: 150 → 264 (+114; ~76% rast zaradi tipiziranih pomožnih funkcij OUTSIDE handler — handler sam ~30 vrstic, prej ~140 z inline logiko)
+- enforceBudget: true
+- Lint: 0, Typecheck: 0
+
+---
+Task ID: v8.94.4-a
+Agent: Task agent (buyer-persona migration)
+Task: Migrate /api/ai/buyer-persona to withAiRoute
+
+Work Log:
+- Prebral kontekst: worklog.md (v8.94, v8.94.1, v8.94.2, v8.94.3, v8.94.3-a, v8.94.3-b vnose) za vzorec migracije
+- Prebral src/lib/with-ai-route.ts (helper API: withAiRoute, AI_ROUTE_DEFAULTS, ApiRouteError, AiRouteContext, enforceBudget)
+- Prebral referenčni primer 1: src/app/api/ai/deduplicate/route.ts (migrirani vzorec z fast path + AI dedup + enforceBudget)
+- Prebral referenčni primer 2: src/app/api/ai/prioritize-alerts/route.ts (migrirani vzorec z aiSettings + ekstrahiranimi rankAlert/enhanceWithAi funkcijami)
+- Prebral src/lib/api-response.ts (apiOk, apiBadRequest, apiNotFound, apiError helperji)
+- Prebral original src/app/api/ai/buyer-persona/route.ts (234 vrstic — inline POST handler z try/catch, manual settings load, manual fallback provider try/catch, manual parseJsonLooseExported, manual AI counter increment)
+- Preveril konvencijo `ok: true` v response: git show 5d70187 (market-trends) in 5d70187 (fraud-detection) — obe nedavni Task-agent migraciji EKSPICITNO ohranjata `ok: true` v apiOk() klicu → sledim isti konvenciji
+- Migracija na withAiRoute<BuyerPersonaInput> z enforceBudget: true:
+  - Uvoz: withAiRoute, AI_ROUTE_DEFAULTS, ApiRouteError, type AiRouteContext iz @/lib/with-ai-route + apiOk iz @/lib/api-response
+  - export const { runtime, dynamic } = AI_ROUTE_DEFAULTS; export const maxDuration = 60 (original)
+  - Input interface BuyerPersonaInput (tradeId?, customerName?, category?, priceRange: {min,max})
+  - parseBody: razčleni tradeId/customerName/category/priceRange iz body-ja (z { } fallback)
+  - validateInput: vrne error message če noben od (category, tradeId, customerName) ni podan
+  - handler ~30 vrstic: resolveBuyerContext → soldTrades → buildBuyerPersonaPrompt → callAi → parseAi → transformPersonas/transformMarketingStrategy → apiOk
+  - ctx.callAi(prompt) nadomesti callProviderForRaw + manual fallback try/catch
+  - ctx.parseAi(raw) nadomesti parseJsonLooseExported
+  - ctx.db nadomesti direkten import db
+- Ekstrahirane testabilne pomožne funkcije (izven handler-ja):
+  1. resolveBuyerContext(input, db) — pridobi kontekst person-e iz DB (customerName/tradeId poti); throw ApiRouteError(msg, 404) ko customerName nima prodaj ALI ko tradeId ne obstaja; kombinira obe originalni DB poizvedbi v eno funkcijo; ohranja prednost tradeId nad customerName (če sta oba podana)
+  2. buildBuyerPersonaPrompt(params) — zgradi AI prompt (besedilo IDENTIČNO originalu v6.22)
+  3. transformPersonas(parsed) — validacija + slice(0,4) + stringificiranje + validacija type/priceSensitivity (default če neveljaven) + Math.max(0, ...) za številke
+  4. transformMarketingStrategy(parsed) — validacija + stringificiranje + validacija recommendedPlatform (default 'bolha')
+- Odstranjeno (boilerplate, ki ga helper obravnava):
+  - Manual try/catch z logger.error + NextResponse.json error (helper ulovi ApiRouteError + druge napake)
+  - Manual getSettingsRow + AiSettings konstrukt (helper naloži settings in poda preko ctx.aiSettings)
+  - Manual fallback provider try/catch (ctx.callAi interno upravlja primary+fallback)
+  - Manual parseJsonLooseExported klic (ctx.parseAi v helperju)
+  - Manual AI usage counter increment (settings.aiCallsToday/aiCallsDate) — enforceBudget: true avtomatsko kliče recordAiCall
+  - NextResponse.json za success (apiOk) — eksplicitno ohranjeno `ok: true` za backward compat
+  - NextResponse.json za 404/400 (ApiRouteError 404 + apiBadRequest preko validateInput)
+  - Uvozi: db, getSettingsRow, callProviderForRaw, parseJsonLooseExported, AiSettings, AiProviderType, logger, NextRequest, NextResponse
+- Vedenje nespremenjeno:
+  - Isti input parsing (tradeId/customerName/category/priceRange.min/max z default 0)
+  - Isti pogoj za customerName resolution (!tradeId && !category && customerName)
+  - Isti pogoj za tradeId resolution (if (tradeId))
+  - Isti 404 message: `Za kupca "${customerName}" ni prodaj v zgodovini.`
+  - Isti 404 message: `Trade ne obstaja`
+  - Isti 400 message: `category, tradeId ali customerName je obvezen`
+  - Identičen AI prompt (vse besede, vse embé-style formatiranje, vse primere)
+  - Identična transformacija (slice(0,4), validacije, slice(0,5), slice(0,6), itd.)
+  - Identičen response format: { ok: true, personas, marketingStrategy, insights, category, priceRange: {min,max} }
+- Spremembe v error response strukturi (konsistentno z v8.94.x migracijami):
+  - 404 error response: { error: '...' } → { ok: false, error: '...' } (preko ApiRouteError)
+  - 400 error response: { error: '...' } → { ok: false, error: '...' } (preko validateInput → apiBadRequest)
+- Verifikacija:
+  - bunx tsc --noEmit: 0 errors
+  - bun run lint: 0 errors (nobena prazna interface, ni potreben eslint-disable-next-line)
+
+Stage Summary:
+- MODIFIED: src/app/api/ai/buyer-persona/route.ts
+- Lines: 234 → 283 (+49; ~21% rast zaradi tipiziranih pomožnih funkcij OUTSIDE handler — handler sam ~30 vrstic, prej ~210 z inline logiko)
+- enforceBudget: true
+- Lint: 0, Typecheck: 0
+
+---
+Task ID: v8.94.4-d
+Agent: Task agent (negotiation-chatbot migration)
+Task: Migrate /api/ai/negotiation-chatbot to withAiRoute
+
+Work Log:
+- Prebral kontekst: worklog.md (v8.94.1, v8.94.2, v8.94.3 entries), src/lib/with-ai-route.ts (helper API + AiRouteContext)
+- Prebral referenčna primera: src/app/api/ai/deduplicate/route.ts (parseBody/validateInput/handler + pure helpers) in src/app/api/ai/negotiation-outcome-predictor/route.ts (podobna negotiation tematika, ApiRouteError za 404)
+- Prebral tretji referenčni primer: src/app/api/ai/buyer-intent/route.ts (empty interface z eslint-disable) in src/app/api/ai/fraud-detection/route.ts (helper funkcija prejme db preko AiRouteContext['db'])
+- Prebral original src/app/api/ai/negotiation-chatbot/route.ts (167 vrstic — inline POST handler z manual try/catch, manual getSettingsRow + AiSettings build, manual fallback provider try/catch, manual AI counter increment aiCallsToday/aiCallsDate)
+- Migracija na withAiRoute vzorec:
+  - Uvoz: withAiRoute, AI_ROUTE_DEFAULTS, type AiRouteContext iz @/lib/with-ai-route; apiOk, apiBadRequest iz @/lib/api-response
+  - export const { runtime, dynamic } = AI_ROUTE_DEFAULTS; export const maxDuration = 60 (original)
+  - type Strategy = 'aggressive' | 'firm' | 'patient' (union za tipiziran cast v parseBody)
+  - interface ChatMessage { role: 'user' | 'seller'; text: string } (original)
+  - interface NegotiationChatbotInput { listingId?, messages, myGoal, strategy }
+  - parseBody: razčleni listingId, messages (Array.isArray check), myGoal (default {}), strategy (whitelist + 'firm' default) — identično originalu
+  - validateInput: vrne 'messages array ne sme biti prazen' ko messages.length === 0 — identično originalu (helper interno vrne apiBadRequest 400)
+  - enforceBudget: true — preveri AI budget PRED klicem, avtomatsko recordAiCall PO uspehu (nadomešča manual aiCallsToday/aiCallsDate increment)
+  - handler ~25 vrstic: buildListingContext → buildPrompt → ctx.callAi → ctx.parseAi → transformReply → apiOk
+  - ctx.callAi(prompt) nadomesti callProviderForRaw + manual fallback try/catch (helper interno upravlja fallback na secondary provider)
+  - ctx.parseAi(raw) nadomesti parseJsonLooseExported
+  - ctx.db nadomesti direkten import db
+- Ekstrahirane testabilne pomožne funkcije (izven handler-ja):
+  1. buildListingContext(listingId, db) — async (db); pridobi listing iz DB z istim select kot original (14 polj, vključno z unused aiRisk/aiVerdict/sellerName/priceDroppedAt — ohranjeno da ne spremenimo DB poizvedbe); izračuna daysPosted; zgradi kontekstni niz za prompt — besedilo IDENTIČNO originalu
+  2. buildPrompt(listingContext, strategy, myGoal, messages) — pure; zgradi AI prompt z messagesStr (JAZ/PRODAJALEC prefix), goalStr (maxPrice ali minimiziraj), mustIncludeStr — besedilo IDENTIČNO originalu (v6.20)
+  3. transformReply(parsed, strategy) — pure; transformira AI JSON v reply objekt z vsemi clamp-i (text 1500 chars, suggestedPriceEur >=0, tone whitelist + strategy fallback, nextStep 200 chars, confidencePct 0-100, alternatives slice 3 × 200 chars, conversationState whitelist + 'opening' default, warning check !== 'null') — IDENTIČNO originalu
+- Odstranjeno (boilerplate, ki ga helper obravnava):
+  - manual try/catch z logger.error + NextResponse.json error (helper interno catch-a in vrne apiError 500; ApiRouteError za custom status)
+  - uvoz: NextRequest, NextResponse, db, getSettingsRow, callProviderForRaw, parseJsonLooseExported, AiProviderType, AiSettings, logger (helper interno upravlja)
+  - manual getSettingsRow + AiSettings build (helper naloži in poda preko ctx.aiSettings)
+  - manual fallback provider try/catch (ctx.callAi interno upravlja primary → fallback switch)
+  - manual AI counter increment (aiCallsToday/aiCallsDate update) — enforceBudget: true avtomatsko kliče recordAiCall
+  - NextResponse.json za success (apiOk)
+- Vedenje ohranjeno:
+  - Enak input → enak output: response struktura { ok: true, reply: {...}, messageCount, strategy } identična (apiOk ohrani ok:true v data payload-u)
+  - Prompt besedilo nespremenjeno (vsa pravila, JSON schema, strategic tone opisi)
+  - Strategy whitelist + 'firm' default nespremenjen
+  - myGoal.maxPrice + mustInclude fallback logika nespremenjena
+  - listingContext pogojno generiran samo ko listingId podan — enako kot original (Listing ki ne obstaja → prazen context, ne 404)
+  - transformReply validacijske/clamp logike IDENTIČNE originalu (tone whitelist, conversationState whitelist, warning !== 'null' check, alternatives slice 3)
+  - Error response sprememba konvencije: original { error } → wrapper-jev { ok: false, error } (konsistentno z vsemi prejšnjimi v8.94.x migracijami)
+- Verifikacija:
+  - bunx tsc --noEmit: 0 errors
+  - bun run lint: 0 errors (brez eslint-disable potrebe — brez praznih interfaceov)
+
+Stage Summary:
+- MODIFIED: src/app/api/ai/negotiation-chatbot/route.ts
+- Lines: 167 → 193 (+26; ~16% rast zaradi tipiziranih pomožnih funkcij + Strategy type alias + JSDoc komentarji — handler sam ~25 vrstic, prej ~140 z inline logiko)
+- enforceBudget: true
+- Lint: 0, Typecheck: 0
+
+---
+Task ID: v8.94.3
+Agent: Z.ai Code + 6 Task agents (security + 6 migrations + deprecation + ai-list + ARIA)
+Task: Security cleanup + 6 endpoint migracije + Phase 1 deprecation + ai-list deprecated flag + ARIA
+
+Work Log:
+- SECURITY: odstranjen token iz git remote URL (prevent future leaks)
+  - Prej: origin URL je vseboval token (viden v git config)
+  - Sedaj: origin URL je čist (https://github.com/markec12345678/markecaifirm.git)
+  - Push bo uporabljal inline URL samo za ta ukaz
+- 6 AI endpointov migriranih na withAiRoute (vzporedno preko Task agentov):
+  13. /api/ai/buyer-persona (234→283) — Task agent v8.94.4-a
+  14. /api/ai/description-optimizer (209→225) — Task agent v8.94.4-b
+  15. /api/ai/title-abtest (188→190) — Task agent v8.94.4-c
+  16. /api/ai/negotiation-chatbot (167→193) — Task agent v8.94.4-d
+  17. /api/ai/generate-listing (139→242) — Task agent v8.94.4-e
+  18. /api/ai/restock (150→264) — Task agent v8.94.4-f (GET method, no AI call originally)
+  Vsi z enforceBudget: true + ekstrahirane testabilne pomožne funkcije
+- PHASE 1 DEPRECATION: @deprecated JSDoc komentarji na 15 zastarelih endpointih
+  Priority 1 (jasni duplikati):
+    - profit-maximizer → profit-maximizer-pro
+    - profit-maximizer-v2 → profit-maximizer-pro
+    - profit-margin-forecaster → profit-margin-forecaster-pro
+    - inventory-aging-predictor → inventory-aging-predictor-pro
+    - inventory-aging-predictor-v2 → inventory-aging-predictor-pro
+    - listing-performance → listing-performance-forecaster-v4
+    - listing-performance-forecaster-v3 → listing-performance-forecaster-v4
+    - listing-performance-forecaster-pro → listing-performance-forecaster-v4
+  Priority 2 (manjši duplikati):
+    - profit-margin-predictor → profit-margin-predictor-v3
+    - inventory-health-monitor → inventory-health-monitor-v2
+    - inventory-lifecycle → inventory-lifecycle-optimizer-v2
+    - buyer-matchmaker → buyer-matchmaker-v2
+    - auction-sniper → auction-sniper-v2
+  Priority 3 (mešani):
+    - buyer-journey-mapper-v2 → buyer-journey-mapper (v1 je boljši)
+    - listing-description-generator-v2 → listing-description-generator-v3
+- MODIFIED /api/ai-list: vrača `deprecated` flag + `deprecatedReplacement` za vsak endpoint
+  - Zazna @deprecated JSDoc komentar v prvih 10 vrsticah
+  - Izlušči replacement endpoint iz komentarja (regex: /uporabi `\/api\/ai\/([^`]+)`/)
+  - Nov `deprecatedCount` v top-level result za dashboard stats
+  - Popravljen description parser — preskoči JSDoc @deprecated blok
+- ARIA labels na AI Usage Widget:
+  - role="region" na Card z aria-label (skupni porabi)
+  - aria-hidden na dekorativne ikone (Zap, RefreshCw, AlertTriangle)
+  - role="progressbar" na daily + monthly progress z aria-valuenow/min/max + aria-label
+  - role="alert" + aria-live="assertive" na warning alert (critical budget)
+  - aria-label na BUDGET badge + refresh button
+- Version bump: v8.94.2 → v8.94.3
+
+Stage Summary:
+- MODIFIED: 21 datotek (6 migriranih endpointov + 15 @deprecated + ai-list + ai-usage-widget + version + README)
+- MIGRIRANI ENDPOINTI: 6 (skupaj 18 od 432 — 4,2%)
+- DEPRECATED ENDPOINTI: 15 (označeni z @deprecated JSDoc)
+- NOVA FUNKCIONALNOST: ai-list vrača deprecated flag + deprecatedCount
+- ARIA: 12+ ARIA atributov dodanih na AI Usage Widget
+- SECURITY: token odstranjen iz git remote URL
+- LINT: 0 errors, 0 warnings ✨
+- TYPECHECK: 0 errors ✨
+- TESTS: 208 passing (lib) ✨
+- Verzija: v8.94.3

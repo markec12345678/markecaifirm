@@ -1,3 +1,8 @@
+/**
+ * @deprecated v8.94 — uporabi `/api/ai/inventory-health-monitor-v2` namesto tega.
+ * Zastareli v1 — v2 je najnovejši.
+ * Ta endpoint bo odstranjen v v9.0. Glej ENDPOINTS_AUDIT.md za migracijski načrt.
+ */
 // v6.36: AI Inventory Health Monitor — kontinuirano spremlja zdravje inventarja
 // POST /api/ai/inventory-health-monitor
 // Body: {}

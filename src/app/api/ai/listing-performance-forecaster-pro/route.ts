@@ -1,3 +1,8 @@
+/**
+ * @deprecated v8.94 — uporabi `/api/ai/listing-performance-forecaster-v4` namesto tega.
+ * Pro je prekompleksen — v4 je priporočena.
+ * Ta endpoint bo odstranjen v v9.0. Glej ENDPOINTS_AUDIT.md za migracijski načrt.
+ */
 // v7.88: AI Listing Performance Forecaster Pro — AI forecast-a FULL performance
 // spectrum vsakega HELD listing-a — predicted views, contacts, bookmarks in 30
 // dni + sell timeline + price optimization + performance grade. Razlika od

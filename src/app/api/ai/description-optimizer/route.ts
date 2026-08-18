@@ -1,59 +1,103 @@
-// v6.23: AI Listing Description Optimizer — optimizira opise oglasov z A/B test variantami
+// v6.23 / v8.94.4-b-refactor: AI Listing Description Optimizer — optimizira opise oglasov z A/B test variantami
+// Refaktoriran z withAiRoute helperjem (v8.94) — boilerplate (try/catch, settings
+// load, fallback provider, rate limit, JSON parse, AI counter increment) je
+// izločen v helper. enforceBudget: true — helper avtomatsko recordAiCall.
+//
 // POST /api/ai/description-optimizer
 // Body: { tradeId?: string, currentDescription?: string, title?: string, category?: string, price?: number, targetPlatform?: string }
-// Returns: { ok, optimization: { currentAnalysis, variants: [], winner, platformOptimized: [], seoKeywords, improvements } }
+// Returns: { ok, optimization: { currentAnalysis, variants, winner, seoKeywords, improvements, platformSpecificTips }, targetPlatform }
 
-import { NextRequest, NextResponse } from 'next/server';
-import { db } from '@/lib/db';
-import { getSettingsRow } from '@/lib/pipeline';
-import { callProviderForRaw, parseJsonLooseExported, type AiProviderType, type AiSettings } from '@/lib/ai';
-import { logger } from '@/lib/logger';
+import { withAiRoute, AI_ROUTE_DEFAULTS, type AiRouteContext } from '@/lib/with-ai-route';
+import { apiOk, apiNotFound } from '@/lib/api-response';
 
-export const runtime = 'nodejs';
-export const dynamic = 'force-dynamic';
+export const { runtime, dynamic } = AI_ROUTE_DEFAULTS;
 export const maxDuration = 60;
 
-export async function POST(req: NextRequest) {
-  try {
-    const body = await req.json().catch(() => ({}));
-    const { tradeId } = body;
-    let currentDescription: string = body?.currentDescription ?? '';
-    let title: string = body?.title ?? '';
-    let category: string = body?.category ?? '';
-    let price: number = body?.price ?? 0;
-    const targetPlatform = ['bolha', 'vinted', 'facebook', 'avtonet', 'kleinanzeigen'].includes(String(body?.targetPlatform))
-      ? String(body.targetPlatform) : 'bolha';
+const VALID_PLATFORMS = ['bolha', 'vinted', 'facebook', 'avtonet', 'kleinanzeigen'] as const;
+const VALID_STRATEGIES = ['BENEFIT_FOCUSED', 'STORYTELLING', 'TECHNICAL', 'SCANNABLE'] as const;
+const VALID_PRIORITIES = ['high', 'medium', 'low'] as const;
 
-    if (tradeId) {
+interface DescriptionOptimizerInput {
+  tradeId?: string;
+  currentDescription: string;
+  title: string;
+  category: string;
+  price: number;
+  targetPlatform: string;
+}
+
+export const POST = withAiRoute<DescriptionOptimizerInput>({
+  endpoint: '/api/ai/description-optimizer',
+  maxDuration: 60,
+  enforceBudget: true,
+
+  parseBody: async (req) => {
+    const body = await req.json().catch(() => ({}));
+    return {
+      tradeId: body?.tradeId ? String(body.tradeId) : undefined,
+      currentDescription: body?.currentDescription ? String(body.currentDescription) : '',
+      title: body?.title ? String(body.title) : '',
+      category: body?.category ? String(body.category) : '',
+      price: typeof body?.price === 'number' ? body.price : Number(body?.price) || 0,
+      targetPlatform: (VALID_PLATFORMS as readonly string[]).includes(String(body?.targetPlatform))
+        ? String(body.targetPlatform) : 'bolha',
+    };
+  },
+
+  validateInput: (input) => {
+    if (!input.currentDescription && !input.tradeId) {
+      return 'currentDescription ali tradeId je obvezen';
+    }
+    return null;
+  },
+
+  handler: async (input, ctx: AiRouteContext) => {
+    const { db, callAi, parseAi } = ctx;
+    let { currentDescription, title, category, price, targetPlatform } = input;
+
+    // Če je podan tradeId, naloži title/category/price/description iz baze
+    if (input.tradeId) {
       const trade = await db.trade.findUnique({
-        where: { id: String(tradeId) },
+        where: { id: input.tradeId },
         select: {
           title: true, category: true, buyPrice: true,
           listing: { select: { description: true, detailDescription: true, aiEstimatedValue: true } },
         },
       });
-      if (!trade) return NextResponse.json({ error: 'Trade ne obstaja' }, { status: 404 });
+      if (!trade) return apiNotFound('Trade ne obstaja');
       title = title || trade.title;
       category = category || trade.category || '';
       price = price || trade.buyPrice;
       currentDescription = currentDescription || trade.listing?.detailDescription || trade.listing?.description || '';
     }
 
-    if (!currentDescription && !tradeId) {
-      return NextResponse.json({ error: 'currentDescription ali tradeId je obvezen' }, { status: 400 });
-    }
-
     // 1. AI optimizacija
-    const settings = await getSettingsRow();
-    const aiSettings: AiSettings = {
-      provider: settings.aiProvider as AiProviderType,
-      baseUrl: settings.aiBaseUrl, apiKey: settings.aiApiKey, model: settings.aiModel,
-      fallbackProvider: (settings.fallbackProvider || '') as AiProviderType | '',
-      fallbackBaseUrl: settings.fallbackBaseUrl || '', fallbackApiKey: settings.fallbackApiKey || '',
-      fallbackModel: settings.fallbackModel || '',
-    };
+    const prompt = buildPrompt(title, category, price, currentDescription, targetPlatform);
+    const raw = await callAi(prompt);
+    const parsed: any = parseAi(raw);
 
-    const prompt = `Si ekspert za copywriting in optimizacijo opisov oglasov za e-commerce.
+    const optimization = transformOptimization(parsed);
+
+    // (AI counter increment obravnava helper preko enforceBudget: true → recordAiCall)
+    return apiOk({
+      ok: true,
+      optimization,
+      targetPlatform,
+    });
+  },
+});
+
+// --- Pomožne funkcije (čiste, testabilne) ---------------------------------
+
+/** Zgradi AI prompt za optimizacijo opisa (besedilo IDENTIČNO originalu). */
+function buildPrompt(
+  title: string,
+  category: string,
+  price: number,
+  currentDescription: string,
+  targetPlatform: string
+): string {
+  return `Si ekspert za copywriting in optimizacijo opisov oglasov za e-commerce.
 Analiziraj trenutni opis in generiraj 4 optimizirane variante z različnimi strategijami.
 
 NASLOV: ${title}
@@ -128,82 +172,54 @@ Odgovori LE z JSON:
     "facebook": "<max 100 znakov>"
   }
 }`;
+}
 
-    let raw = '';
-    try {
-      raw = await callProviderForRaw(aiSettings, prompt);
-    } catch (primaryError: any) {
-      if (aiSettings.fallbackProvider && aiSettings.fallbackModel) {
-        const fb: AiSettings = {
-          provider: aiSettings.fallbackProvider,
-          baseUrl: aiSettings.fallbackBaseUrl || '',
-          apiKey: aiSettings.fallbackApiKey || '',
-          model: aiSettings.fallbackModel,
-        };
-        raw = await callProviderForRaw(fb, prompt);
-      } else {
-        return NextResponse.json({ error: primaryError?.message ?? 'AI failed' }, { status: 500 });
-      }
-    }
+/** Transformiraj AI JSON v optimizacijski objekt (validacija + slice + clamp). */
+function transformOptimization(parsed: any) {
+  return {
+    currentAnalysis: {
+      score: clampInt(Number(parsed?.current_analysis?.score ?? 50), 0, 100),
+      wordCount: Math.max(0, Number(parsed?.current_analysis?.word_count ?? 0)),
+      strengths: (parsed?.current_analysis?.strengths || []).slice(0, 4).map((s: any) => String(s).slice(0, 150)),
+      weaknesses: (parsed?.current_analysis?.weaknesses || []).slice(0, 4).map((w: any) => String(w).slice(0, 150)),
+      missingElements: (parsed?.current_analysis?.missing_elements || []).slice(0, 5).map((m: any) => String(m).slice(0, 200)),
+    },
+    variants: (parsed?.variants || []).slice(0, 5).map((v: any) => ({
+      strategy: (VALID_STRATEGIES as readonly string[]).includes(String(v?.strategy))
+        ? String(v.strategy) : 'BENEFIT_FOCUSED',
+      description: String(v?.description ?? '').slice(0, 3000),
+      characterCount: Math.max(0, Number(v?.character_count ?? 0)),
+      readabilityScore: clampInt(Number(v?.readability_score ?? 50), 0, 100),
+      persuasivenessScore: clampInt(Number(v?.persuasiveness_score ?? 50), 0, 100),
+      seoScore: clampInt(Number(v?.seo_score ?? 50), 0, 100),
+      trustScore: clampInt(Number(v?.trust_score ?? 50), 0, 100),
+      overallScore: clampInt(Number(v?.overall_score ?? 50), 0, 100),
+      expectedInquiries: Math.max(0, Number(v?.expected_inquiries ?? 0)),
+      keyFeatures: (v?.key_features || []).slice(0, 5).map((f: any) => String(f).slice(0, 150)),
+      bestForPlatform: (VALID_PLATFORMS as readonly string[]).includes(String(v?.best_for_platform))
+        ? String(v.best_for_platform) : 'bolha',
+    })),
+    winner: {
+      description: String(parsed?.winner?.description ?? '').slice(0, 3000),
+      why: String(parsed?.winner?.why ?? '').slice(0, 300),
+      expectedImprovementPct: Math.max(0, Number(parsed?.winner?.expected_improvement_pct ?? 0)),
+    },
+    seoKeywords: (parsed?.seo_keywords || []).slice(0, 10).map((k: any) => String(k).slice(0, 80)),
+    improvements: (parsed?.improvements || []).slice(0, 8).map((i: any) => ({
+      element: String(i?.element ?? '').slice(0, 200),
+      priority: (VALID_PRIORITIES as readonly string[]).includes(String(i?.priority)) ? String(i.priority) : 'medium',
+      impact: String(i?.impact ?? '').slice(0, 200),
+    })),
+    platformSpecificTips: {
+      bolha: String(parsed?.platform_specific_tips?.bolha ?? '').slice(0, 300),
+      vinted: String(parsed?.platform_specific_tips?.vinted ?? '').slice(0, 300),
+      facebook: String(parsed?.platform_specific_tips?.facebook ?? '').slice(0, 300),
+    },
+  };
+}
 
-    const parsed: any = parseJsonLooseExported(raw);
-
-    const optimization = {
-      currentAnalysis: {
-        score: Math.max(0, Math.min(100, Number(parsed?.current_analysis?.score ?? 50))),
-        wordCount: Math.max(0, Number(parsed?.current_analysis?.word_count ?? 0)),
-        strengths: (parsed?.current_analysis?.strengths || []).slice(0, 4).map((s: any) => String(s).slice(0, 150)),
-        weaknesses: (parsed?.current_analysis?.weaknesses || []).slice(0, 4).map((w: any) => String(w).slice(0, 150)),
-        missingElements: (parsed?.current_analysis?.missing_elements || []).slice(0, 5).map((m: any) => String(m).slice(0, 200)),
-      },
-      variants: (parsed?.variants || []).slice(0, 5).map((v: any) => ({
-        strategy: ['BENEFIT_FOCUSED', 'STORYTELLING', 'TECHNICAL', 'SCANNABLE'].includes(String(v?.strategy))
-          ? String(v.strategy) : 'BENEFIT_FOCUSED',
-        description: String(v?.description ?? '').slice(0, 3000),
-        characterCount: Math.max(0, Number(v?.character_count ?? 0)),
-        readabilityScore: Math.max(0, Math.min(100, Number(v?.readability_score ?? 50))),
-        persuasivenessScore: Math.max(0, Math.min(100, Number(v?.persuasiveness_score ?? 50))),
-        seoScore: Math.max(0, Math.min(100, Number(v?.seo_score ?? 50))),
-        trustScore: Math.max(0, Math.min(100, Number(v?.trust_score ?? 50))),
-        overallScore: Math.max(0, Math.min(100, Number(v?.overall_score ?? 50))),
-        expectedInquiries: Math.max(0, Number(v?.expected_inquiries ?? 0)),
-        keyFeatures: (v?.key_features || []).slice(0, 5).map((f: any) => String(f).slice(0, 150)),
-        bestForPlatform: ['bolha', 'vinted', 'facebook', 'avtonet', 'kleinanzeigen'].includes(String(v?.best_for_platform))
-          ? String(v.best_for_platform) : 'bolha',
-      })),
-      winner: {
-        description: String(parsed?.winner?.description ?? '').slice(0, 3000),
-        why: String(parsed?.winner?.why ?? '').slice(0, 300),
-        expectedImprovementPct: Math.max(0, Number(parsed?.winner?.expected_improvement_pct ?? 0)),
-      },
-      seoKeywords: (parsed?.seo_keywords || []).slice(0, 10).map((k: any) => String(k).slice(0, 80)),
-      improvements: (parsed?.improvements || []).slice(0, 8).map((i: any) => ({
-        element: String(i?.element ?? '').slice(0, 200),
-        priority: ['high', 'medium', 'low'].includes(String(i?.priority)) ? String(i.priority) : 'medium',
-        impact: String(i?.impact ?? '').slice(0, 200),
-      })),
-      platformSpecificTips: {
-        bolha: String(parsed?.platform_specific_tips?.bolha ?? '').slice(0, 300),
-        vinted: String(parsed?.platform_specific_tips?.vinted ?? '').slice(0, 300),
-        facebook: String(parsed?.platform_specific_tips?.facebook ?? '').slice(0, 300),
-      },
-    };
-
-    // Increment AI usage
-    const today = new Date().toISOString().slice(0, 10);
-    if (settings.aiCallsDate !== today) {
-      await db.settings.update({ where: { id: 'singleton' }, data: { aiCallsDate: today, aiCallsToday: 1 } });
-    } else {
-      await db.settings.update({ where: { id: 'singleton' }, data: { aiCallsToday: { increment: 1 } } });
-    }
-
-    return NextResponse.json({
-      ok: true,
-      optimization,
-      targetPlatform,
-    });
-  } catch (e: any) {
-    logger.error("/api/ai/description-optimizer", "POST handler failed", e);
-    return NextResponse.json({ error: e?.message ?? 'Napaka' }, { status: 500 });
-  }
+/** Clamp števila v [min, max]; non-finite → min. */
+function clampInt(n: number, min: number, max: number): number {
+  if (!Number.isFinite(n)) return min;
+  return Math.max(min, Math.min(max, n));
 }

@@ -1,3 +1,8 @@
+/**
+ * @deprecated v8.94 — uporabi `/api/ai/inventory-aging-predictor-pro` namesto tega.
+ * Zastareli v1 — Pro verzija je najboljša.
+ * Ta endpoint bo odstranjen v v9.0. Glej ENDPOINTS_AUDIT.md za migracijski načrt.
+ */
 // v6.48: AI Inventory Aging Predictor — depreciation curve in sell-by deadline za vsak item
 // POST /api/ai/inventory-aging-predictor
 // Body: { tradeId?: string }

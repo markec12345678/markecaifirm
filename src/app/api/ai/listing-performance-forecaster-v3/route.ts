@@ -1,3 +1,8 @@
+/**
+ * @deprecated v8.94 — uporabi `/api/ai/listing-performance-forecaster-v4` namesto tega.
+ * Zastareli v3 — v4 je najnovejši.
+ * Ta endpoint bo odstranjen v v9.0. Glej ENDPOINTS_AUDIT.md za migracijski načrt.
+ */
 // v6.55: AI Listing Performance Forecaster v3 — advanced ML z ensemble modeli in scenario planning
 // POST /api/ai/listing-performance-forecaster-v3
 // Body: { tradeId?: string, horizonDays?: number }

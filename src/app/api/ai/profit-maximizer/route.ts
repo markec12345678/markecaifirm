@@ -1,3 +1,7 @@
+/**
+ * @deprecated v8.94 — uporabi `/api/ai/profit-maximizer-pro` namesto tega.
+ * Ta endpoint bo odstranjen v v9.0. Glej ENDPOINTS_AUDIT.md za migracijski načrt.
+ */
 // v7.35: Profit Maximizer — optimal sell price for held inventory.
 //
 // For each held trade, AI calculates:

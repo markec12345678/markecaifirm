@@ -1,3 +1,8 @@
+/**
+ * @deprecated v8.94 — uporabi `/api/ai/inventory-lifecycle-optimizer-v2` namesto tega.
+ * Zastareli v1 — v2 je najnovejši.
+ * Ta endpoint bo odstranjen v v9.0. Glej ENDPOINTS_AUDIT.md za migracijski načrt.
+ */
 // v6.34: AI Inventory Lifecycle Manager — upravlja celoten življenjski cikel inventarja
 // POST /api/ai/inventory-lifecycle
 // Body: {}

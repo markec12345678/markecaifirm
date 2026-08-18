@@ -1,3 +1,8 @@
+/**
+ * @deprecated v8.94 — uporabi `/api/ai/auction-sniper-v2` namesto tega.
+ * Zastareli v1 — v2 je najnovejši.
+ * Ta endpoint bo odstranjen v v9.0. Glej ENDPOINTS_AUDIT.md za migracijski načrt.
+ */
 // v6.12: AI Auction Sniper — strategija za last-minute bidding / čakanje na cenovni padec
 // POST /api/ai/auction-sniper
 // Body: { listingId?: string, listing?: { title, price, location, description, source, postedAt } }

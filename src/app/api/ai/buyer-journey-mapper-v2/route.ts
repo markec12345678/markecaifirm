@@ -1,3 +1,8 @@
+/**
+ * @deprecated v8.94 — uporabi `/api/ai/buyer-journey-mapper` namesto tega.
+ * v2 je poenostavljena verzija — v1 (brez suffix-a) je bolj feature-rich.
+ * Ta endpoint bo odstranjen v v9.0. Glej ENDPOINTS_AUDIT.md za migracijski načrt.
+ */
 // v6.84: AI Buyer Journey Mapper v2 — ML mapiranje buyer journey z omnichannel touchpoints
 // POST /api/ai/buyer-journey-mapper-v2
 // Body: { customerName?: string }

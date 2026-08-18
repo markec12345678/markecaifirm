@@ -1,3 +1,8 @@
+/**
+ * @deprecated v8.94 — uporabi `/api/ai/profit-maximizer-pro` namesto tega.
+ * Zastareli v2 — Pro verzija je najbolj feature-rich.
+ * Ta endpoint bo odstranjen v v9.0. Glej ENDPOINTS_AUDIT.md za migracijski načrt.
+ */
 // v7.56: Profit Maximizer v2 (ML Compounding) — simulacija reinvestiranja dobička
 // z različnimi strategijami (conservative / balanced / aggressive) preko 24 mesecev.
 //
