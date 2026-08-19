@@ -1,12 +1,14 @@
-// v8.23: Actual Profit API — computes REAL EUR profit from Trade table.
+// v8.23 / v8.94.9-d-refactor: Actual Profit API — computes REAL EUR profit from Trade table.
+// Refaktoriran z withAiRoute helperjem (v8.94) + enforceBudget guard.
 //
-// GET /api/ai/brain/actual-profit?days=30 (default 30)
+// GET  /api/ai/brain/actual-profit?days=30 (default 30)
+// POST /api/ai/brain/actual-profit         (same handler — some UIs prefer POST)
 //
 // Returns ActualProfitResult — the GROUND TRUTH for validating Master Brain
 // predictions. Until v8.23, the Brain architecture (v8.15-v8.22) made
 // predictions ("30d: 3133€") but had no way to measure actual realized profit.
 //
-// Pure read endpoint — calls calculateActualProfit() in src/lib/profit/actual.ts
+// Pure read endpoint — calls calculateActualProfit() in src/lib/profit/actual
 // which reads from the Trade table (status='sold', sellDate within last N days).
 //
 // Used by:
@@ -19,25 +21,18 @@
 //
 // Per-trade profit formula:
 //   profit = sellPrice - sellFees - buyPrice - buyFees
-//
-// Returns:
-//   - totalProfitEUR — sum of all trade profits
-//   - totalRevenueEUR — sum of sellPrice
-//   - totalCostEUR — sum of (buyPrice + buyFees + sellFees)
-//   - tradeCount — number of sold trades in period
-//   - avgProfitPerTradeEUR — totalProfit / tradeCount
-//   - avgMarginPct — totalProfit / totalRevenue × 100
-//   - dailyAvgEUR — totalProfit / days
-//   - bestTrade — trade with highest profit
-//   - worstTrade — trade with lowest profit (may be negative)
 
-import { NextRequest, NextResponse } from 'next/server';
-import { logger } from '@/lib/logger';
+import type { NextRequest } from 'next/server';
+import { withAiRoute, AI_ROUTE_DEFAULTS, type AiRouteContext } from '@/lib/with-ai-route';
+import { apiOk } from '@/lib/api-response';
 import { calculateActualProfit } from '@/lib/profit/actual';
 
-export const runtime = 'nodejs';
-export const dynamic = 'force-dynamic';
+export const { runtime, dynamic } = AI_ROUTE_DEFAULTS;
 export const maxDuration = 60;
+
+interface ActualProfitInput {
+  days: number;
+}
 
 /**
  * Parse `days` query param — clamp to [1, 730] (2 years max).
@@ -56,9 +51,21 @@ function parseDays(req: NextRequest): number {
   }
 }
 
-export async function GET(req: NextRequest) {
-  try {
-    const days = parseDays(req);
+const actualProfitHandler = withAiRoute<ActualProfitInput>({
+  endpoint: '/api/ai/brain/actual-profit',
+  maxDuration: 60,
+  enforceBudget: true, // v8.94: budget guard (non-breaking za pure-read endpoint)
+  method: 'GET', // Endpoint sprejema GET + POST — bypass POST-only check
+
+  parseBody: async (req) => ({
+    days: parseDays(req),
+  }),
+
+  // Brez validateInput — parseDays ima privzeto vrednost 30
+
+  handler: async (input, ctx: AiRouteContext) => {
+    const { logger } = ctx;
+    const { days } = input;
     const result = await calculateActualProfit(days);
 
     logger.info('/api/ai/brain/actual-profit', `computed for ${days}d`, {
@@ -66,17 +73,10 @@ export async function GET(req: NextRequest) {
       totalProfit: result.totalProfitEUR,
     });
 
-    return NextResponse.json(result);
-  } catch (err: any) {
-    logger.error('/api/ai/brain/actual-profit', 'GET handler failed', err);
-    return NextResponse.json(
-      { error: err?.message ?? 'Napaka' },
-      { status: 500 },
-    );
-  }
-}
+    return apiOk(result);
+  },
+});
 
+export const GET = actualProfitHandler;
 // POST also supported — same handler (some UIs prefer POST for data fetches)
-export async function POST(req: NextRequest) {
-  return GET(req);
-}
+export const POST = actualProfitHandler;

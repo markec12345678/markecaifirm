@@ -3,26 +3,28 @@
  *
  * Extracted from the original `automation-cards.tsx` (4095 lines) as part of
  * v8.94.6-split. Holds all module-local interfaces and constants used by the
- * 8 automation cards:
+ * 6 automation cards that remain in this directory:
  *
  *   - RiskProfileCard         (risk-tolerance form)
- *   - BrainSnapshotsSection   (historical predictions)
- *   - AccuracyTrendCard       (historical accuracy)
  *   - MasterBrainBanner       (synthesizes 7 domains)
  *   - ScenarioBrainCard       ("What if?" simulator)
  *   - AdaptiveWeightsCard     (domain weight sliders)
  *   - DraftQueueCard          (feedback-loop drafts)
  *   - AutoPilotCard           (auto-execute low-risk drafts)
  *
- * Cross-module shared types (DomainName, DraftStatus, AccuracyTrendSummary,
- * ActualProfitResponse) are imported from ../types.
+ * BrainSnapshotsSection + AccuracyTrendCard types were moved to
+ * ./snapshots-accuracy/snapshot-types.ts as part of v8.94.9-split — they are
+ * only used by the two Validation-phase cards under that directory.
+ * AutoPilotCard types live in ./auto-pilot/types.ts (moved in
+ * v8.94.8-split-autopilot).
+ *
+ * Cross-module shared types (DomainName, DraftStatus) are imported from
+ * ../types.
  */
 
 import type {
   DomainName,
   DraftStatus,
-  AccuracyTrendSummary,
-  ActualProfitResponse,
 } from '../types';
 
 export type RiskTolerance = 'conservative' | 'balanced' | 'aggressive';
@@ -62,86 +64,6 @@ export const INVESTMENT_HORIZON_OPTIONS: Array<{ value: InvestmentHorizon; label
   { value: 'short', label: 'Kratka' },
   { value: 'medium', label: 'Srednja' },
   { value: 'long', label: 'Dolga' },
-];
-
-export interface SnapshotView {
-  id: string;
-  date: string;
-  overallHealth: number;
-  healthGrade: string;
-  riskLevel: string;
-  topActionCount: number;
-  conflictCount: number;
-  bottleneckCount: number;
-  strengthCount: number;
-  projection30dEUR: number;
-  projection90dEUR: number;
-  projection12mEUR: number;
-  profitGrade: string;
-  inventoryGrade: string;
-  marketGrade: string;
-  sourcingGrade: string;
-  riskGrade: string;
-  buyerGrade: string;
-  pricingGrade: string;
-  actualProfit30d: number | null;
-  actualProfit90d: number | null;
-  accuracy30d: number | null;
-  accuracy90d: number | null;
-  createdAt: string;
-}
-
-export interface SnapshotsApiResponse {
-  ok: true;
-  days: number;
-  snapshots: SnapshotView[];
-  actualProfit: ActualProfitResponse;
-  summary: {
-    days: number;
-    snapshotCount: number;
-    latestSnapshot: SnapshotView | null;
-    oldestSnapshot: SnapshotView | null;
-    avgOverallHealth: number;
-    avgProjection30d: number;
-    actualProfit30d: number;
-    actualProfitTradeCount: number;
-  };
-}
-
-export interface AccuracyTrendPoint {
-  date: string;
-  profitGrade: string;
-  inventoryGrade: string;
-  marketGrade: string;
-  sourcingGrade: string;
-  riskGrade: string;
-  buyerGrade: string;
-  pricingGrade: string;
-  overallHealth: number;
-  healthGrade: string;
-  accuracy30d: number | null;
-  accuracy90d: number | null;
-}
-
-export interface AccuracyApiResponse {
-  ok: true;
-  days: number;
-  accuracy30d: number | null;
-  accuracy90d: number | null;
-  gradeTrend: AccuracyTrendPoint[];
-  summary: AccuracyTrendSummary;
-}
-
-// 7 Domain grade pill style — reuses the existing gradeColor() helper but with
-// smaller padding for compact trend display.
-export const DOMAIN_TREND_LABELS: Array<{ key: keyof AccuracyTrendPoint; label: string }> = [
-  { key: 'profitGrade', label: 'Profit' },
-  { key: 'inventoryGrade', label: 'Inventar' },
-  { key: 'marketGrade', label: 'Trg' },
-  { key: 'sourcingGrade', label: 'Sourcing' },
-  { key: 'riskGrade', label: 'Tveganje' },
-  { key: 'buyerGrade', label: 'Kupci' },
-  { key: 'pricingGrade', label: 'Cene' },
 ];
 
 export interface ActionExplanation {
@@ -356,3 +278,9 @@ export interface DraftQueueResponse {
 // them with the consumer is more correct than keeping them in this shared
 // module. DOMAIN_LABELS stays here (shared with MasterBrainBanner +
 // DraftQueueCard + AutoPilotCard).
+//
+// NOTE: Snapshot + Accuracy types (SnapshotView, SnapshotsApiResponse,
+// AccuracyTrendPoint, AccuracyApiResponse, DOMAIN_TREND_LABELS) were moved to
+// ./snapshots-accuracy/snapshot-types.ts as part of v8.94.9-split. They are
+// only used by BrainSnapshotsSection + AccuracyTrendCard, so colocating them
+// with the consumers is more correct than keeping them in this shared module.

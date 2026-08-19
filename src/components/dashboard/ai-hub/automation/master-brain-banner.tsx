@@ -1,8 +1,8 @@
 /**
  * MasterBrainBanner — v8.22 (gold/amber) — synthesizes 7 domains.
  *
- * Extracted from the original `automation-cards.tsx` (4095 lines) as part of
- * v8.94.6-split. The APEX of the Brain hierarchy — sits ON TOP of all 7
+ * Extracted from the original `automation-cards.tsx` (4095 lines) as part
+ * of v8.94.6-split. The APEX of the Brain hierarchy — sits ON TOP of all 7
  * Domain Brain sections inside BrainSynthesisCard. Master Brain synthesizes
  * 21+ actions from 7 domains into ONE final decision: TOP 5 ranked actions +
  * 30d/90d/12m strategy + conflict detection + overallHealth score +
@@ -14,6 +14,20 @@
  * trustScore (0-100 per action). The banner renders an "ℹ️ Zakaj?" toggle per
  * action to expand the reasoning + reasoningParts grid + per-action
  * trustScore pill. An overall trustScore pill is also in the banner header.
+ *
+ * v8.94.9-split-master: split into container + presentational sub-components.
+ *   - Container (this file) owns all state (data, loading, error,
+ *     expandedRank, draftIds, patchingRank, patchedRanks), all callbacks
+ *     (fetchMaster, patchDraft), and the overallTrustScore useMemo. Renders
+ *     the outer wrapper + header + loading/error states + oneLineSummary +
+ *     overallHealth row + refresh button inline; delegates the larger
+ *     presentational blocks to ./master-brain/ sub-components.
+ *   - Presentational sub-components (./master-brain/): ActionExplanationPanel
+ *     (v8.26 expanded reasoning grid), TopActionRow (one TOP-5 card with
+ *     ✅/❌ + ℹ️ Zakaj? toggle), TopActionsList (header + map),
+ *     StrategyProjections (30d/90d/12m pills), ConflictsList (conflict cards),
+ *     BottlenecksStrengths (⚠️ Ozka grla + 💪 Moč row). Pure render — props
+ *     in, JSX out, no state, no fetches, no side effects.
  *
  * Module-local types (ActionExplanation, MasterBrainResult, DOMAIN_LABELS)
  * come from ./types. Color helpers come from ../utils. DomainName is reached
@@ -28,26 +42,24 @@ import { Button } from '@/components/ui/button';
 import { Skeleton } from '@/components/ui/skeleton';
 import {
   AlertCircle,
-  Check,
-  ChevronDown,
-  ChevronUp,
   Crown,
   Info,
   RefreshCw,
-  X,
 } from 'lucide-react';
 import { toast } from 'sonner';
 import { cn } from '@/lib/utils';
 import {
-  confidenceColor,
-  conflictSeverityColor,
   gradeColor,
   riskLevelColor,
-  signalGradeColor,
   trustScoreColor,
 } from '../utils';
-import { DOMAIN_LABELS } from './types';
-import type { ActionExplanation, MasterBrainResult } from './types';
+import type { MasterBrainResult } from './types';
+import {
+  TopActionsList,
+  StrategyProjections,
+  ConflictsList,
+  BottlenecksStrengths,
+} from './master-brain';
 
 // --- Master Brain BANNER (v8.22, gold/amber gradient) --------------------
 //
@@ -274,280 +286,25 @@ export function MasterBrainBanner() {
           </div>
 
           {/* TOP 5 AKCIJ ZA DANES (v8.26: each with an ℹ️ Zakaj? toggle) */}
-          <div className="space-y-1">
-            <div className="text-[10px] uppercase tracking-wide text-amber-700/80 dark:text-amber-400/80 font-semibold flex items-center justify-between">
-              <span>🎯 TOP 5 AKCIJ ZA DANES</span>
-              {data.explanations && data.explanations.length > 0 && (
-                <span className="text-[9px] normal-case font-normal text-muted-foreground italic">
-                  ℹ️ klikni &quot;Zakaj?&quot; za razlago
-                </span>
-              )}
-            </div>
-            {data.topActions.length === 0 ? (
-              <p className="text-[11px] text-muted-foreground italic">Ni akcij</p>
-            ) : (
-              data.topActions.map((a) => {
-                const dm = DOMAIN_LABELS[a.domain] ?? { icon: '•', label: a.domain, color: 'text-foreground' };
-                // v8.26: find the matching explanation (if any)
-                const explanation = data.explanations?.find(
-                  (e) => e.rank === a.rank && e.domain === a.domain && e.signal === a.signal,
-                );
-                const isExpanded = expandedRank === a.rank;
-                return (
-                  <div
-                    key={a.rank}
-                    className={cn(
-                      'rounded bg-background/40 transition-colors',
-                      isExpanded ? 'ring-1 ring-amber-500/30 bg-amber-500/5' : '',
-                    )}
-                  >
-                    <div className="flex items-start gap-2 text-[11px] sm:text-xs leading-snug p-1.5">
-                      <span className="font-bold text-amber-700 dark:text-amber-400 shrink-0 w-4 text-center">
-                        {a.rank}.
-                      </span>
-                      <span className="shrink-0" title={dm.label}>
-                        {dm.icon}
-                      </span>
-                      <span className="flex-1 min-w-0">
-                        <span className="font-medium">{a.action}</span>
-                        <span className="text-muted-foreground"> · +{Math.round(a.expectedUpliftEUR)}€/mo</span>
-                      </span>
-                      <span className={cn('text-[9px] font-bold shrink-0', confidenceColor(a.confidence))}>
-                        {a.confidence}
-                      </span>
-                      {/* v8.29: ✅ Izvedel / ❌ Zavrnil buttons — close the feedback loop.
-                          When clicked, PATCHes the draft for this action to status='executed'
-                          or 'rejected', AND calls recordActionFeedback (v8.28) → adaptive
-                          weights re-evaluate every 10 actions per domain → better ranking. */}
-                      {draftIds[a.rank] && (
-                        <div className="flex items-center gap-1 shrink-0">
-                          <button
-                            onClick={() => patchDraft(a.rank, 'executed')}
-                            disabled={patchingRank === a.rank || patchedRanks[a.rank] != null}
-                            className={cn(
-                              'text-[9px] flex items-center gap-0.5 px-1.5 py-0.5 rounded border transition-colors',
-                              patchedRanks[a.rank] === 'executed'
-                                ? 'bg-emerald-500/30 border-emerald-500/60 text-emerald-700 dark:text-emerald-300 cursor-default'
-                                : 'bg-emerald-500/10 border-emerald-500/30 hover:bg-emerald-500/25 text-emerald-700 dark:text-emerald-400 disabled:opacity-40',
-                            )}
-                            aria-label={`Označi akcijo ${a.rank} kot izvedel`}
-                            title="v8.29: Označi kot izvedel — sistem se bo naučil (recordActionFeedback)"
-                          >
-                            <Check className="w-2.5 h-2.5" />
-                            Izvedel
-                          </button>
-                          <button
-                            onClick={() => patchDraft(a.rank, 'rejected')}
-                            disabled={patchingRank === a.rank || patchedRanks[a.rank] != null}
-                            className={cn(
-                              'text-[9px] flex items-center gap-0.5 px-1.5 py-0.5 rounded border transition-colors',
-                              patchedRanks[a.rank] === 'rejected'
-                                ? 'bg-red-500/30 border-red-500/60 text-red-700 dark:text-red-300 cursor-default'
-                                : 'bg-red-500/10 border-red-500/30 hover:bg-red-500/25 text-red-700 dark:text-red-400 disabled:opacity-40',
-                            )}
-                            aria-label={`Označi akcijo ${a.rank} kot zavrnjeno`}
-                            title="v8.29: Označi kot zavrnjeno — sistem se bo naučil (recordActionFeedback)"
-                          >
-                            <X className="w-2.5 h-2.5" />
-                            Zavrnil
-                          </button>
-                        </div>
-                      )}
-                      {/* v8.26: ℹ️ Zakaj? toggle button — only render if an explanation exists */}
-                      {explanation && (
-                        <button
-                          onClick={() => setExpandedRank(isExpanded ? null : a.rank)}
-                          className="text-[9px] flex items-center gap-0.5 px-1.5 py-0.5 rounded border border-amber-500/30 hover:bg-amber-500/15 text-amber-700 dark:text-amber-400 shrink-0 transition-colors"
-                          aria-expanded={isExpanded}
-                          aria-label={`Razširi razlago za akcijo ${a.rank}`}
-                          title="v8.26: Razširi za razlago (Zakaj Master Brain priporoča to akcijo?)"
-                        >
-                          <Info className="w-2.5 h-2.5" />
-                          Zakaj?
-                          {isExpanded ? <ChevronUp className="w-2.5 h-2.5" /> : <ChevronDown className="w-2.5 h-2.5" />}
-                        </button>
-                      )}
-                    </div>
-                    {/* v8.26: Expanded explanation panel — reasoning + reasoningParts grid + trustScore pill */}
-                    {explanation && isExpanded && (
-                      <div className="mx-1.5 mb-1.5 p-2 rounded border border-amber-500/20 bg-amber-500/5 space-y-2">
-                        {/* Reasoning — the primary WHY string (prominent) */}
-                        <p className="text-[11px] leading-relaxed text-amber-900 dark:text-amber-200 font-medium">
-                          <span className="text-[9px] uppercase tracking-wide text-amber-700/80 dark:text-amber-400/80 font-semibold mr-1">
-                            💡 Razlaga:
-                          </span>
-                          {explanation.reasoning}
-                        </p>
-
-                        {/* reasoningParts grid: Signal + Rank + Profile + Conflict + Expected */}
-                        <div className="grid grid-cols-1 sm:grid-cols-2 gap-1.5 text-[10px]">
-                          {/* Signal */}
-                          <div className="rounded border border-amber-500/20 bg-background/50 p-1.5">
-                            <div className="text-[8px] uppercase text-muted-foreground font-semibold">
-                              Signal
-                            </div>
-                            <div className="flex items-center gap-1 mt-0.5 flex-wrap">
-                              <span className="font-mono text-amber-700 dark:text-amber-400 font-medium">
-                                {explanation.signal}
-                              </span>
-                              <Badge
-                                variant="outline"
-                                className={cn('text-[8px] px-1 py-0 h-3.5', signalGradeColor(explanation.reasoningParts.signalGrade))}
-                              >
-                                {explanation.reasoningParts.signalGrade}
-                              </Badge>
-                              <span className="text-muted-foreground text-[9px]">
-                                {Math.round(explanation.reasoningParts.signalScore)}/100
-                              </span>
-                            </div>
-                          </div>
-
-                          {/* Rank reason */}
-                          <div className="rounded border border-amber-500/20 bg-background/50 p-1.5">
-                            <div className="text-[8px] uppercase text-muted-foreground font-semibold">
-                              Zakaj na tem mestu
-                            </div>
-                            <div className="mt-0.5 text-[9px] leading-snug text-foreground/90">
-                              {explanation.reasoningParts.whyRankedHere}
-                            </div>
-                          </div>
-
-                          {/* Profile impact */}
-                          <div className="rounded border border-amber-500/20 bg-background/50 p-1.5">
-                            <div className="text-[8px] uppercase text-muted-foreground font-semibold">
-                              Vpliv profila
-                            </div>
-                            <div className="mt-0.5 text-[9px] leading-snug text-foreground/90">
-                              {explanation.reasoningParts.profileImpact ?? '—'}
-                            </div>
-                          </div>
-
-                          {/* Conflict impact */}
-                          <div className="rounded border border-amber-500/20 bg-background/50 p-1.5">
-                            <div className="text-[8px] uppercase text-muted-foreground font-semibold">
-                              Vpliv konfliktov
-                            </div>
-                            <div className="mt-0.5 text-[9px] leading-snug text-foreground/90">
-                              {explanation.reasoningParts.conflictImpact ?? '—'}
-                            </div>
-                          </div>
-
-                          {/* Expected outcome */}
-                          <div className="rounded border border-amber-500/20 bg-background/50 p-1.5 sm:col-span-2">
-                            <div className="text-[8px] uppercase text-muted-foreground font-semibold">
-                              Pričakovan izid
-                            </div>
-                            <div className="mt-0.5 text-[9px] leading-snug text-emerald-700 dark:text-emerald-400 font-medium">
-                              {explanation.reasoningParts.expectedOutcome}
-                            </div>
-                          </div>
-                        </div>
-
-                        {/* Per-action trustScore pill */}
-                        <div className="flex items-center justify-between gap-2 pt-1 border-t border-amber-500/20">
-                          <span className="text-[9px] uppercase text-muted-foreground font-semibold">
-                            Trust score
-                          </span>
-                          <Badge
-                            variant="outline"
-                            className={cn('text-[10px] font-bold px-2 py-0.5', trustScoreColor(explanation.trustScore))}
-                            title="v8.26: Zaupanje v to priporočilo (0-100). ≥70=zeleno, ≥50=rumeno, <50=rdeče."
-                          >
-                            {Math.round(explanation.trustScore)}/100
-                          </Badge>
-                        </div>
-                      </div>
-                    )}
-                  </div>
-                );
-              })
-            )}
-          </div>
+          <TopActionsList
+            topActions={data.topActions}
+            explanations={data.explanations}
+            expandedRank={expandedRank}
+            onExpandedRankChange={setExpandedRank}
+            draftIds={draftIds}
+            patchingRank={patchingRank}
+            patchedRanks={patchedRanks}
+            onPatch={patchDraft}
+          />
 
           {/* Strategy pills: 30d / 90d / 12m */}
-          <div className="grid grid-cols-3 gap-1.5">
-            <div className="rounded border border-amber-500/30 bg-amber-500/5 p-1.5 text-center">
-              <div className="text-[9px] uppercase text-muted-foreground">30d</div>
-              <div className="text-xs font-bold text-amber-700 dark:text-amber-400">
-                {Math.round(data.strategy.projection30d.profitEUR)}€
-              </div>
-              <div className="text-[9px] text-muted-foreground">
-                risk {Math.round(data.strategy.projection30d.riskScore)}/100
-              </div>
-            </div>
-            <div className="rounded border border-amber-500/30 bg-amber-500/5 p-1.5 text-center">
-              <div className="text-[9px] uppercase text-muted-foreground">90d</div>
-              <div className="text-xs font-bold text-amber-700 dark:text-amber-400">
-                {Math.round(data.strategy.projection90d.profitEUR)}€
-              </div>
-              <div className="text-[9px] text-muted-foreground">
-                risk {Math.round(data.strategy.projection90d.riskScore)}/100
-              </div>
-            </div>
-            <div className="rounded border border-amber-500/40 bg-amber-500/10 p-1.5 text-center">
-              <div className="text-[9px] uppercase text-muted-foreground">12m</div>
-              <div className="text-xs font-bold text-amber-700 dark:text-amber-400">
-                {Math.round(data.strategy.projection12m.profitEUR)}€
-              </div>
-              <div className="text-[9px] text-muted-foreground">
-                risk {Math.round(data.strategy.projection12m.riskScore)}/100
-              </div>
-            </div>
-          </div>
+          <StrategyProjections strategy={data.strategy} />
 
           {/* Conflicts (if any) */}
-          {data.conflicts.length > 0 && (
-            <div className="space-y-1 pt-1 border-t border-amber-500/20">
-              <div className="text-[10px] uppercase tracking-wide text-amber-700/80 dark:text-amber-400/80 font-semibold flex items-center gap-1">
-                <AlertCircle className="w-3 h-3" />
-                KONFLIKTI ({data.conflicts.length})
-              </div>
-              {data.conflicts.map((c) => (
-                <div
-                  key={c.id}
-                  className={cn('rounded border p-1.5 text-[10px] leading-snug', conflictSeverityColor(c.severity))}
-                >
-                  <div className="font-semibold flex items-center gap-1">
-                    <span className="font-bold uppercase">{c.severity}</span>
-                    <span className="text-muted-foreground">·</span>
-                    <span>
-                      {DOMAIN_LABELS[c.domainA]?.icon ?? '•'} {c.domainA}
-                    </span>
-                    <span className="text-muted-foreground">vs</span>
-                    <span>
-                      {DOMAIN_LABELS[c.domainB]?.icon ?? '•'} {c.domainB}
-                    </span>
-                  </div>
-                  <div className="mt-0.5">{c.description}</div>
-                  <div className="mt-0.5 italic text-muted-foreground">→ {c.resolution}</div>
-                </div>
-              ))}
-            </div>
-          )}
+          <ConflictsList conflicts={data.conflicts} />
 
           {/* Bottlenecks / Strengths row */}
-          <div className="flex flex-wrap items-center gap-2 text-[10px] pt-1 border-t border-amber-500/20">
-            {data.overallHealth.bottlenecks.length > 0 && (
-              <div className="flex items-center gap-1 flex-wrap">
-                <span className="text-muted-foreground">⚠️ Ozka grla:</span>
-                {data.overallHealth.bottlenecks.map((d) => (
-                  <span key={d} className={cn('font-bold', DOMAIN_LABELS[d]?.color ?? '')}>
-                    {DOMAIN_LABELS[d]?.icon} {d}
-                  </span>
-                ))}
-              </div>
-            )}
-            {data.overallHealth.strengths.length > 0 && (
-              <div className="flex items-center gap-1 flex-wrap">
-                <span className="text-muted-foreground">💪 Moč:</span>
-                {data.overallHealth.strengths.map((d) => (
-                  <span key={d} className={cn('font-bold', DOMAIN_LABELS[d]?.color ?? '')}>
-                    {DOMAIN_LABELS[d]?.icon} {d}
-                  </span>
-                ))}
-              </div>
-            )}
-          </div>
+          <BottlenecksStrengths overallHealth={data.overallHealth} />
 
           {/* Refresh */}
           <div className="flex justify-end">

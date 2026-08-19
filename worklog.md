@@ -22607,3 +22607,377 @@ Stage Summary:
 - TYPECHECK: 0 errors ✨
 - TESTS: 208 passing (lib) ✨
 - Verzija: v8.94.8
+
+---
+Task ID: v8.94.9-b
+Agent: Task agent (auction-sniper-v2 migration)
+Task: Migrate /api/ai/auction-sniper-v2 to withAiRoute
+
+Work Log:
+- Prebral kontekst: worklog.md (v8.94 / v8.94.1–v8.94.8 vnose), src/lib/with-ai-route.ts (helper API: withAiRoute, AI_ROUTE_DEFAULTS, ApiRouteError, AiRouteContext)
+- Prebral referenčna primera: src/app/api/ai/deduplicate/route.ts in src/app/api/ai/auction-timing/route.ts (auction tematika, že migrirana)
+- Prebral original: src/app/api/ai/auction-sniper-v2/route.ts (270 vrstic, manualni try/catch + settings + fallback + AI counter)
+- Migriral na withAiRoute vzorec z enforceBudget: true
+- Ekstrahiral dve čisti pomožni funkciji IZVEN handler-ja: buildPrompt(ctx) in transformStrategy(parsed, price)
+- Definiral tipe: ListingInput, AuctionSniperInput, PromptContext, StrategyResult (čiste, testabilne)
+- 404 za listing preko ApiRouteError throw-a (throw new ApiRouteError('Listing ne obstaja', 404))
+- Fallback "PRILIKA listing" path ohranjen kot apiOk({ ok: true, strategy: null, message: ... })
+- Odstranjeno: manualni try/catch, getSettingsRow loading, AiSettings build, fallback provider logika, parseJsonLooseExported, AI counter increment (settings.aiCallsToday update)
+- Posodobljeni importi: z @/lib/db, @/lib/pipeline, @/lib/ai, @/lib/logger → @/lib/with-ai-route + @/lib/api-response
+- Ohranjena prompt besedila (identično) in transformacijska logika (Math.max/min, slice, allowed enums) — same input → same output
+- ctx.callAi(prompt) nadomesti callProviderForRaw + fallback; ctx.parseAi(raw) nadomesti parseJsonLooseExported; ctx.db nadomesti db import
+- Lint: 0 errors, Typecheck: 0 errors
+
+Stage Summary:
+- MODIFIED: src/app/api/ai/auction-sniper-v2/route.ts
+- Lines: 270 → 356
+- enforceBudget: true
+- Lint: 0, Typecheck: 0
+
+---
+Task ID: v8.94.9-e
+Agent: Task agent (brain/health migration)
+Task: Migrate /api/ai/brain/health to withAiRoute
+
+Work Log:
+- Prebral kontekst: worklog.md (v8.94 / v8.94.1–v8.94.9 vnose, še posebej v8.94.9-b auction-sniper-v2 + v8.94.8-f auto-relisting-scheduler za GET migracijski vzorec) in src/lib/with-ai-route.ts (helper API: withAiRoute, AI_ROUTE_DEFAULTS, ApiRouteError, AiRouteContext, enforceBudget)
+- Prebral referenčni primer 1: src/app/api/ai/deduplicate/route.ts (v8.94-refactor vzorec z withAiRoute<>, parseBody async, handler context, apiOk pass-through)
+- Prebral referenčni primer 2: src/app/api/ai/restock/route.ts (v8.94-refactor — GET method vzorec z method: 'GET', parseBody async () => ({}), prazen RestockInput interface z eslint-disable-next-line direktivo, brez validateInput ker brez inputa, ekstrahirane pomožne funkcije OUTSIDE handler-ja)
+- Prebral referenčni primer 3: src/app/api/ai/buyer-retention-forecaster/route.ts (GET+POST vzorec z `const handler = withAiRoute(...)` + `export const GET = handler; export const POST = handler;` in preserved getCachedAI/setCachedAI caching znotraj handler-ja)
+- Prebral original src/app/api/ai/brain/health/route.ts (70 vrstic — GET handler z 30s cache preko getCachedAI/setCachedAI z `system-health:v8.32` cacheKey, kliče getSystemHealth() iz @/lib/brain/system-health, manual try/catch z logger.error + NextResponse.json 500, DETERMINISTIC — ne kliče AI/LLM SDK direktno, le interno fetch() na druge brain endpoint-e)
+- Migriral na withAiRoute vzorec:
+  - Import: @/lib/with-ai-route (withAiRoute, AI_ROUTE_DEFAULTS, type AiRouteContext) + @/lib/api-response (apiOk) + ohranjena @/lib/ai-cache (getCachedAI, setCachedAI) + @/lib/brain/system-health (getSystemHealth, type SystemHealthReport)
+  - export const { runtime, dynamic } = AI_ROUTE_DEFAULTS; export const maxDuration = 30 (konsistentno z originalom — shorter than other brains, health should not hang)
+  - BrainHealthInput interface (prazen, z eslint-disable-next-line @typescript-eslint/no-empty-object-type direktivo — konsistentno z restock RestockInput vzorcem)
+  - method: 'GET' (konsistentno z restock vzorcem — endpoint je GET-only, ne sprejema POST-a)
+  - parseBody: async () => ({}) — GET brez telesa
+  - Brez validateInput — endpoint nima inputa
+  - enforceBudget: true — preveri AI budget PRED klicem (endpoint sicer ne kliče AI direktno, ampak je konsistentno z vsemi v8.94.x migracijami; non-breaking per task instructions; avtomatski recordAiCall PO uspehu)
+  - handler prejme (_input, _ctx: AiRouteContext) — ctx ni uporabljen (endpoint ne kliče ctx.callAi/parseAi/db/logger direktno ker DETERMINISTIC — getSystemHealth interno upravlja svoj DB client preko PrismaClient v system-health.ts modulu)
+  - Cache logika ohranjena IDENTIČNO originalu: getCachedAI<SystemHealthReport>(HEALTH_CACHE_KEY) → cache hit vrne apiOk({...cached, timestamp: new Date().toISOString()}) (re-stamp timestamp da caller-ji vidijo fresh "served at" time); cache miss → const report = await getSystemHealth(); setCachedAI(HEALTH_CACHE_KEY, report, HEALTH_CACHE_TTL_MS); return apiOk(report)
+  - HEALTH_CACHE_TTL_MS = 30 * 1000 + HEALTH_CACHE_KEY = 'system-health:v8.32' ekstrahirani kot konstanti OUTSIDE handler-ja (pure, testabilne, konsistentno z originalom)
+  - Odstranjeno: manual try/catch z logger.error + NextResponse.json 500 (zdej v withAiRoute — wrapper interno catch-a in vrne apiError 500 z { ok: false, error } formatom, konsistentno z vsemi prejšnjimi v8.94.x migracijami; additive `ok: false` field, ne breaking)
+  - Odstranjeno: import NextResponse (ne rabimo več — apiOk iz @/lib/api-response je pass-through ki interno uporablja NextResponse.json)
+  - Odstranjeno: import logger (ne rabimo več — withAiRoute interno upravlja error logging preko apiError helperja)
+  - apiOk pass-through: original `NextResponse.json(report)` → `apiOk(report)` (identičen response — apiOk ne dodaja sam `ok: true` polja per src/lib/api-response.ts dokumentaciji)
+  - Modul docstring posodobljen: dodana v8.94.9-e sekcija ki dokumentira refactor z withAiRoute + enforceBudget guard
+- Same input → same output: cache TTL (30s), cache key (system-health:v8.32), response shape za cache hit ({...cached, timestamp}), response shape za cache miss (SystemHealthReport), maxDuration (30) — vse IDENTIČNO originalu
+- Sprememba error response konvencije: original 500 `{ error }` → wrapper-jev `{ ok: false, error }` (konsistentno z vsemi prejšnjimi v8.94.x migracijami; additive `ok: false` field, ne breaking — success response shape nespremenjen)
+- Lint: 0 errors, Typecheck: 0 errors
+
+Stage Summary:
+- MODIFIED: src/app/api/ai/brain/health/route.ts
+- Lines: 70 → 80
+- enforceBudget: true
+- Lint: 0, Typecheck: 0
+
+---
+Task ID: v8.94.9-f
+Agent: Task agent (brain/auto-pilot/rollback migration)
+Task: Migrate /api/ai/brain/auto-pilot/rollback to withAiRoute
+
+Work Log:
+- Prebral kontekst: worklog.md (v8.94 / v8.94.1–v8.94.8 vnose, še posebej v8.94.9-b auction-sniper-v2 in v8.94.8-f auto-relisting-scheduler za GET+POST migration pattern), src/lib/with-ai-route.ts (helper API: withAiRoute, AI_ROUTE_DEFAULTS, ApiRouteError, AiRouteContext, enforceBudget)
+- Prebral referenčna primera: src/app/api/ai/deduplicate/route.ts (withAiRoute<>, parseBody, handler context) in src/app/api/ai/restock/route.ts (pure-DB endpoint z enforceBudget: true, prazna Input interface z eslint-disable)
+- Prebral original: src/app/api/ai/brain/auto-pilot/rollback/route.ts (83 vrstic — manualni try/catch, ročna JSON parse z content-type check, ročna error mapping za 404/400/500 z NextResponse.json)
+- Prebral src/lib/brain/auto-pilot.ts (rollbackAutoExecution funkcija L1296-1379) — vrne RollbackResult { ok, draft, rolledBack: true, reason }; throw-a specifične errorje:
+  - "Draft not found: ${draftId}" (startsWith "Draft not found") → map na 404
+  - "Draft ${draftId} was not auto-executed..." (includes "was not auto-executed") → map na 400
+  - "Draft ${draftId} was already rolled back at..." (includes "was already rolled back") → map na 400
+  - Drugi → bubble to withAiRoute outer catch (apiError 500)
+- Prebral src/lib/api-response.ts — apiOk ne dodaja ok:true sam, samo wrap-a v NextResponse.json(data). apiBadRequest vrača { ok: false, error: msg } z 400. ApiRouteError z status < 500 → { ok: false, error: msg } (konsistentno z originalnimi 400/404 response-i)
+- Migracija v withAiRoute vzorec:
+  1. Importi: withAiRoute, AI_ROUTE_DEFAULTS, ApiRouteError, type AiRouteContext iz @/lib/with-ai-route; apiOk iz @/lib/api-response; rollbackAutoExecution iz @/lib/brain/auto-pilot (edini business import — db in logger sta že v helper context-u, vendar tu nepotrebna ker rollbackAutoExecution upravlja svoj db interno preko getFreshDb())
+  2. Export runtime/dynamic iz AI_ROUTE_DEFAULTS + maxDuration = 60 (originalna vrednost)
+  3. RollbackInput interface (draftId: string, reason: string)
+  4. withAiRoute<RollbackInput>({ endpoint, maxDuration: 60, enforceBudget: true, parseBody, validateInput, handler })
+  5. parseBody: ročna JSON parse z content-type check (ohranjena logika: req.clone() pred read, application/json check, fallback na {}, Array.isArray guard, draftId trim, reason slice(0, 1000) z default timestamp message) — ekstrahiran kot parseRollbackBody(req) pure funkcija
+  6. validateInput: vrne error string če draftId manjka (identično sporočilo kot original)
+  7. handler: klice runRollback(input.draftId, input.reason) → apiOk(result)
+  8. runRollback pure helper — try/catch okrog rollbackAutoExecution, mapira errorje na ApiRouteError(404/400) ali re-throw za 500
+  9. _ctx: AiRouteContext parameter unused (rollbackAutoExecution upravlja svoj db interno; brez AI klica)
+- enforceBudget: true kljub temu da endpoint NE kliče AI (rollback je pure DB operacija). Budget check se ne sproži ker handler ne kliče ctx.callAi() — non-breaking, drži vzorec konsistentno z restock primerom
+- Ista input → ista output: identičen JSON parse defense, identično draftId/reason extraction, identična rollbackAutoExecution klicanja, identični 400/404 error message-i, identična RollbackResult return structure
+- Razlika v 500 response-u: original vrača { error: msg } (brez ok: false) — nova verzija vrača { ok: false, error: msg } preko apiError (konsistentno z vsemi drugimi endpointi po v8.94 vzorcu). Minimalen breaking change v error response shape-u, vendar skladno z established pattern
+- Verifikacija:
+  - bunx tsc --noEmit (full project): 0 errors ✨
+  - bunx eslint src/app/api/ai/brain/auto-pilot/rollback/route.ts: 0 errors ✨
+
+Stage Summary:
+- MODIFIED: src/app/api/ai/brain/auto-pilot/rollback/route.ts
+- Lines: 83 → 117
+- enforceBudget: true
+- Lint: 0, Typecheck: 0
+
+---
+Task ID: v8.94.9-c
+Agent: Task agent (brain/daily-tip migration)
+Task: Migrate /api/ai/brain/daily-tip to withAiRoute
+
+Work Log:
+- Prebral kontekst: worklog.md (v8.94 / v8.94.1–v8.94.8 vnose), src/lib/with-ai-route.ts (helper API: withAiRoute, AI_ROUTE_DEFAULTS, ApiRouteError, AiRouteContext, enforceBudget)
+- Prebral reference primere: src/app/api/ai/deduplicate/route.ts (POST, enforceBudget) in src/app/api/ai/restock/route.ts (GET, empty input, enforceBudget, no AI call originally)
+- Prebral src/app/api/ai/auto-relisting-scheduler/route.ts kot referenco za GET+POST dual-method migracijo
+- Prebral target: src/app/api/ai/brain/daily-tip/route.ts (26 vrstic — GET kliče generateDailyTip(), POST kliče sendDailyTip())
+- Prebral src/lib/brain/daily-tip.ts — poslovna logika je v lib datoteki (deljena z /api/cron/daily-ai-tip cron job-om), NE kliče AI direktno (pure DB + heuristika)
+- Preveril call-sites za generateDailyTip/sendDailyTip: 2 potrošnika (route + cron) — lib ohranjen nespremenjen (deljen dependency)
+- Migracija route.ts:
+  - Uvoz: withAiRoute, AI_ROUTE_DEFAULTS, AiRouteContext iz @/lib/with-ai-route; apiOk iz @/lib/api-response; generateDailyTip, sendDailyTip iz @/lib/brain/daily-tip
+  - export const { runtime, dynamic } = AI_ROUTE_DEFAULTS; export const maxDuration = 15 (ohranjeno original)
+  - Interface DailyTipInput {} (prazen — obe metodi brez input polj) z // eslint-disable-next-line @typescript-eslint/no-empty-object-type
+  - GET: withAiRoute<DailyTipInput>({ endpoint, maxDuration: 15, enforceBudget: true, method: 'GET', parseBody: async () => ({}), handler: async (_input, _ctx) => apiOk(await generateDailyTip()) })
+  - POST: withAiRoute<DailyTipInput>({ endpoint, maxDuration: 15, enforceBudget: true, method: 'POST', parseBody: async () => ({}), handler: async (_input, _ctx) => apiOk(await sendDailyTip()) })
+  - Odstranjen manual try/catch (helper prevzame error handling preko apiError)
+  - Odstranjena explicit NextResponse.json(...) — uporabljen apiOk() (konsistentno z vsemi v8.94.x migracijami; apiOk vrne NextResponse.json(data, { status: 200 }) — identičen output)
+  - Poslovna logika ostaja v lib/brain/daily-tip.ts (ne refaktorirana ker je deljena z cron job-om; route je tanek delegat)
+  - ctx.db / ctx.callAi / ctx.parseAi niso uporabljeni v handler-ju ker route NE kliče AI direktno in NE dostopa do DB direktno (vse skrito v lib funkcijah) — konsistentno z restock migracijo ki je podoben primer
+  - enforceBudget: true — konsistentno z vsemi prejšnjimi v8.94.x migracijami; avtomatski recordAiCall je additive, ne breaking (tudi če AI ni bil dejansko klican — enak pristop kot pri restock)
+- Tipi: TypeScript 0 errors (bunx tsc --noEmit)
+- Lint: 0 errors, 0 warnings (bunx eslint)
+
+Stage Summary:
+- MODIFIED: src/app/api/ai/brain/daily-tip/route.ts
+- Lines: 26 → 47
+- enforceBudget: true
+- Lint: 0, Typecheck: 0
+
+---
+Task ID: v8.94.9-d
+Agent: Task agent (brain/actual-profit migration)
+Task: Migrate /api/ai/brain/actual-profit to withAiRoute
+
+Work Log:
+- Branje referenc: worklog v8.94, with-ai-route.ts, deduplicate/route.ts (POST ref), restock/route.ts (GET pure-DB ref), auto-relisting-scheduler/route.ts (GET+POST ref), originalni actual-profit/route.ts (82 vrstic)
+- Potrjeno: endpoint je "ground truth" izračun iz Trade tabele — NE kliče AI, samo db.trade.findMany preko calculateActualProfit() iz src/lib/profit/actual.ts
+- Načrt: zadržati GET + POST (oba isti handler), uporabiti withAiRoute z method:'GET' + enforceBudget:true (konsistentno, non-breaking)
+- Migracija:
+  - Uvoz: withAiRoute, AI_ROUTE_DEFAULTS, AiRouteContext iz @/lib/with-ai-route; apiOk iz @/lib/api-response; calculateActualProfit ostane iz @/lib/profit/actual
+  - Izvoz runtime, dynamic iz AI_ROUTE_DEFAULTS + maxDuration=60
+  - Definiran ActualProfitInput interface { days: number }
+  - parseDays(req) pomožna funkcija OSTANE (čista, testabilna, ekstrahirana ven iz handler-ja že v originalu)
+  - withAiRoute<ActualProfitInput>({ endpoint, maxDuration:60, enforceBudget:true, method:'GET', parseBody, handler })
+  - parseBody vrne { days: parseDays(req) }
+  - handler uporabi ctx.logger (iz DI context), kliče calculateActualProfit(days), vrne apiOk(result)
+  - Odstranjen manual try/catch, logger.error fallback, NextResponse.json error
+  - GET in POST oba izvozita isti handler (alias na actualProfitHandler konst)
+- Izhodni format IDENTIČEN: apiOk(result) === NextResponse.json(result, {status:200}) — response shape { ok:true, period, totalProfitEUR, ... } je nespremenjen
+- calculateActualProfit(days) funkcija ni bila spreminjana (čista pure-DB funkcija, vzame db iz svojega uvoza — ni interakcije z AI context)
+
+Stage Summary:
+- MODIFIED: src/app/api/ai/brain/actual-profit/route.ts
+- Lines: 82 → 82 (enako število; bolj standardizirana struktura)
+- enforceBudget: true
+- Lint: 0, Typecheck: 0
+
+---
+Task ID: v8.94.9-a
+Agent: Task agent (auction-sniper migration)
+Task: Migrate /api/ai/auction-sniper to withAiRoute (deprecated endpoint, preserved logDeprecatedCall)
+
+Work Log:
+- Prebral kontekst: worklog.md (v8.94 → v8.94.8 vnose, še posebej v8.94.4–v8.94.8 za migracijski vzorec), src/lib/with-ai-route.ts (helper API: withAiRoute, AI_ROUTE_DEFAULTS, ApiRouteError, AiRouteContext, enforceBudget), src/lib/api-response.ts (apiOk pass-through, apiBadRequest 400 format), src/lib/deprecated-redirect.ts (logDeprecatedCall signature — vzame req kot drugi arg)
+- Prebral reference: src/app/api/ai/deduplicate/route.ts (withAiRoute vzorec z enforceBudget, helper funkcijami izven handler-ja, ApiRouteError za 404) in src/app/api/ai/auction-timing/route.ts (najbolj podoben endpoint — auction tematika, listingId input, buildPrompt/transform ekstrahiran v pure funkciji, `throw new ApiRouteError('Listing ne obstaja', 404)` za 404)
+- Prebral target: src/app/api/ai/auction-sniper/route.ts (223 vrstic) — opazil `@deprecated v8.94` JSDoc na vrhu + logDeprecatedCall('/api/ai/auction-sniper', req, '/api/ai/auction-sniper-v2') na vrhu handlerja (Phase 2 logging)
+- Migracija:
+  1. Uvoz: withAiRoute, AI_ROUTE_DEFAULTS, ApiRouteError, type AiRouteContext iz @/lib/with-ai-route; apiOk, apiBadRequest iz @/lib/api-response; logDeprecatedCall iz @/lib/deprecated-redirect
+  2. Re-export `runtime`, `dynamic` iz AI_ROUTE_DEFAULTS + lokalni `maxDuration = 60` (ist kot original)
+  3. ListingInput interface (ohranjen identično) + nov AuctionSniperInput interface
+  4. POST = withAiRoute<AuctionSniperInput>({ endpoint, maxDuration: 60, enforceBudget: true, parseBody, handler })
+  5. parseBody: ekstrakt listingId (String) in listing (cast as ListingInput | null) iz body
+  6. handler: logDeprecatedCall('/api/ai/auction-sniper', ctx.req, '/api/ai/auction-sniper-v2') kot PRVA vrstica (PRESERVED per task spec)
+  7. Listing fetch iz baze identičen (db.listing.findUnique z istimi select polji) — `throw new ApiRouteError('Listing ne obstaja', 404)` namesto ročnega 404 NextResponse.json
+  8. Brez listingInput → `return apiBadRequest('listingId ali listing objekt je obvezen')`
+  9. buildMarketSignals(db, listingPrice) — pure helper ekstrahiran iz handlerja (originalna logika: similar listings findMany, dropRate > 30 signal, avgAgeDays > 14 signal); signature `(db: AiRouteContext['db'], listingPrice: number) => Promise<string[]>`
+  10. buildPrompt({ listingInput, listingPrice, postedAtStr, daysSincePosted, marketSignals }) — pure helper, PromptContext interface; prompt besedilo BYTE-IDENTIČNO originalu (auction sniping ekspert navodila, 5 strategij mode, JSON schema z mode/action/maxBid/timing/snipeTime/reasoning/signals/contingencies/priceDropProbability/competitionLevel/estimatedDealScore)
+  11. ctx.callAi(prompt) namesto callProviderForRaw + ročni fallback (fallback provider sedaj interne v withAiRoute callAi wrapper-ju)
+  12. ctx.parseAi(raw) namesto parseJsonLooseExported
+  13. transformStrategy(parsed, listingPrice) — pure helper, StrategyResult interface; transformacijska logika IDENTIČNA originalu (mode enum clamp, action slice 250, maxBid Math.max(0, Number ?? Math.round(listingPrice*0.85)), timing.wait 0-60, timing.bid/deadline slice 150, snipeTime slice 250, reasoning slice 300, signals slice 0-6/200, contingencies slice 0-4/200, priceDropProbability 0-100, competitionLevel enum clamp, estimatedDealScore 0-100)
+  14. Odstranjeno: ročni try/catch (withAiRoute wrappa), getSettingsRow() settings load (helper load-a), AiSettings object build (helper build-a), fallback provider ročna logika (helper callAi ima fallback), AI counter increment (enforceBudget: true avtomatsko pokliče recordAiCall po uspešnem klicu — additive per v8.94.4-f vzorec)
+  15. Response struktura ohranjena: apiOk({ ok: true, strategy, listing: listingInput, marketSignals, daysSincePosted }) — ista polja kot originalni NextResponse.json
+  16. `@deprecated v8.94` JSDoc komentar na vrhu datoteke OHRANJEN (pred `// v6.12 / v8.94-refactor` komentarjem)
+- TypeScript check (bunx tsc --noEmit): 0 errors
+- ESLint check (bunx eslint src/app/api/ai/auction-sniper/route.ts): 0 errors
+
+Stage Summary:
+- MODIFIED: src/app/api/ai/auction-sniper/route.ts
+- Lines: 223 → 253
+- enforceBudget: true
+- logDeprecatedCall: PRESERVED (prva vrstica handler-ja, kliče se na vsak klic; ctx.req uporabljen namesto req parametra — equvalentno ker je ctx.req originalni NextRequest)
+- Lint: 0, Typecheck: 0
+
+---
+Task ID: v8.94.9-split-snapshots
+Agent: Task agent (snapshots-accuracy.tsx split)
+Task: Split snapshots-accuracy.tsx (577 lines) into 2 modules
+
+Work Log:
+- Prebral worklog.md (v8.94.5-split za ai-hub-view.tsx, v8.94.6-split za automation-cards.tsx, v8.94.7-split za system-cards.tsx, v8.94.8-split-brain za brain-sections.tsx, v8.94.8-split-autopilot za auto-pilot-card.tsx — isti re-export shim + barrel file vzorec) za kontekst
+- Prebral src/components/dashboard/ai-hub/automation/snapshots-accuracy.tsx (577 vrstic) — struktura:
+  - L1-16: JSDoc header (opis BrainSnapshotsSection v8.23 emerald + AccuracyTrendCard v8.25 teal, dokumentira API endpoint-e)
+  - L18-40: imports (React hooks, Badge/Button/Skeleton, 6 lucide ikon (AlertCircle, Camera, History, RefreshCw, Save, TrendingUp), sonner toast, cn, 5 helperjev iz ../utils (gradeColor, riskLevelColor, gradeTrendPill, trendBadgeClass, trendIcon), DOMAIN_TREND_LABELS konstanta iz ./types, type imports za SnapshotsApiResponse in AccuracyApiResponse iz ./types)
+  - L42-55: JSDoc komentar za BrainSnapshotsSection (v8.23 validation phase opis)
+  - L56-279: BrainSnapshotsSection (~224 vrstic — fetchSnapshots/triggerSave callbacks, snapshots horizontal-scroll list z date+grade+riskLevel+projection30d+accuracy+topAction/conflict counts, empty state + error state + loading skeleton)
+  - L281-311: JSDoc komentar za AccuracyTrendCard (v8.25 validation phase culmination, visual hierarchy opis, komponente specifikacija)
+  - L313-577: AccuracyTrendCard (~265 vrstic — fetchAccuracy/triggerBackfill callbacks, accuracy 30d/90d big-number block, insufficient-data info message, overall health trend sparkline, 7-domain grade trend tabela, footer summary)
+- Prebral src/components/dashboard/ai-hub/types.ts (428 vrstic — cross-module shared tipi: AccuracyTrendSummary L399-409 z trend union IMPROVING/STABLE/DECLINING/INSUFFICIENT_DATA + firstHalfAvg/secondHalfAvg; ActualProfitResponse L415+ z ok:true, period, totalProfitEUR, tradeCount, bestTrade)
+- Prebral src/components/dashboard/ai-hub/utils.ts (216 vrstic — shared helperji: gradeColor, riskLevelColor, gradeTrendPill, trendBadgeClass, trendIcon; vsi uporabljeni v AccuracyTrendCard; BrainSnapshotsSection uporablja samo gradeColor + riskLevelColor)
+- Prebral src/components/dashboard/ai-hub/automation/types.ts (359 vrstic — vsi automation-phase tipi: 5 types povezanih z snapshots/accuracy (SnapshotView L67-92, SnapshotsApiResponse L94-109, AccuracyTrendPoint L111-124, AccuracyApiResponse L126-133, DOMAIN_TREND_LABELS L137-145); drugi tipi (RiskProfileApiResponse, MasterBrainResult, ScenarioComparisonResponse, AdaptiveWeightsMap, DraftQueueResponse) ostanejo ker so shared z drugimi automation karticami)
+- Prebral src/components/dashboard/ai-hub/automation-cards.tsx (27 vrstic — re-export shim vzorec iz v8.94.6-split) in src/components/dashboard/ai-hub/automation/index.ts (29 vrstic — barrel file z `export { BrainSnapshotsSection, AccuracyTrendCard } from './snapshots-accuracy'` ki ostane nespremenjen ker shim ohranja isto pot)
+- Prebral reference za re-export shim vzorec: src/components/dashboard/ai-hub/brain-sections.tsx (25 vrstic — `export { ... } from './brain'` vzorec kjer je direktorij drugače poimenovan od .tsx datoteke) in src/components/dashboard/ai-hub/automation/auto-pilot-card.tsx (orchestrator ostane na isti poti, sub-komponente premaknjene v ./auto-pilot/ — isto ime kot direktorij ne konfliktira ker je file auto-pilot-card.tsx ne pa auto-pilot.tsx)
+- Prebral src/components/dashboard/ai-hub/automation/auto-pilot/index.ts (55 vrstic — barrel vzorec ki re-exporta sub-komponente + type exports iz ./types) in src/components/dashboard/ai-hub/automation/auto-pilot/types.ts (128 vrstic — types.ts vzorec znotraj direktorija)
+- Identificiral vse importerje snapshots-accuracy.tsx: samo 1 aktivni uvoz — src/components/dashboard/ai-hub/automation/index.ts L23 (uvozi BrainSnapshotsSection in AccuracyTrendCard); src/components/dashboard/ai-hub/automation/snapshots-accuracy.tsx dokumentacijski komentarji L14-15 omenjajo `./types` in `../utils` (path references, ne aktivni uvozi)
+- Grep po vsem src/ za `SnapshotView|SnapshotsApiResponse|AccuracyTrendPoint|AccuracyApiResponse|DOMAIN_TREND_LABELS`: samo 2 datoteki — automation/types.ts (definicije) in automation/snapshots-accuracy.tsx (uvozi). Brez drugih uvozov — varno premakniti te 5 tipov v snapshots-accuracy/snapshot-types.ts brez breaking sprememb
+- Za vsako komponento analiziral dejansko uporabo: lucide ikone, shared utils helperji, shared tipi, lokalne konstante. Rezultati:
+  - BrainSnapshotsSection: 5 lucide ikon (AlertCircle, Camera, History, RefreshCw, Save); 2 shared utils (gradeColor, riskLevelColor); 1 shared type (SnapshotsApiResponse — uvožen iz ./types); 0 lokalnih helperjev. (SnapshotView je inferred iz SnapshotsApiResponse.snapshots — ni eksplicitno uvožen v originalu)
+  - AccuracyTrendCard: 3 lucide ikone (AlertCircle, RefreshCw, TrendingUp); 4 shared utils (gradeColor, gradeTrendPill, trendBadgeClass, trendIcon); 1 shared type (AccuracyApiResponse — uvožen iz ./types); 1 shared constant (DOMAIN_TREND_LABELS — uvožena iz ./types). (AccuracyTrendPoint je inferred iz AccuracyApiResponse.gradeTrend — ni eksplicitno uvožen v originalu)
+  - Skupno 8 lucide ikon v originalu (5 + 3, AlertCircle in RefreshCw skupni); po split-u vsak modul uvozi samo tiste ki jih dejansko uporablja (5 za BrainSnapshotsSection, 3 za AccuracyTrendCard)
+- Ustvaril direktorij src/components/dashboard/ai-hub/automation/snapshots-accuracy/
+- Ustvaril snapshots-accuracy/snapshot-types.ts (105 vrstic) z vsemi 5 modul-lokalnimi tipi (SnapshotView, SnapshotsApiResponse, AccuracyTrendPoint, AccuracyApiResponse — vsi `export`-ani) + DOMAIN_TREND_LABELS konstanta (`export`-ana). Uvozi 2 cross-module shared tipa (ActualProfitResponse, AccuracyTrendSummary) iz ../../types. JSDoc header dokumentira izvor (moved from ../types.ts kot del v8.94.9-split) in razloži zakaj drugi automation tipi ostanejo v ../types.ts (shared z drugimi karticami)
+- Ustvaril snapshots-accuracy/brain-snapshots-section.tsx (268 vrstic) — BrainSnapshotsSection. Uvozi 3 React hooks (useEffect, useState, useCallback), Badge/Button/Skeleton UI komponente, 5 lucide ikon (AlertCircle, Camera, History, RefreshCw, Save), sonner toast, cn, 2 shared utils helperja (gradeColor, riskLevelColor) iz ../../utils, 1 type (SnapshotsApiResponse) iz ./snapshot-types. JSDoc header dokumentira v8.23 emerald identiteto + API endpoint-e + vzorec fetchSnapshots/triggerSave
+- Ustvaril snapshots-accuracy/accuracy-trend-card.tsx (335 vrstic) — AccuracyTrendCard. Uvozi 3 React hooks (useEffect, useState, useCallback), Badge/Button/Skeleton UI komponente, 3 lucide ikone (AlertCircle, RefreshCw, TrendingUp), sonner toast, cn, 4 shared utils helperje (gradeColor, gradeTrendPill, trendBadgeClass, trendIcon) iz ../../utils, 1 konstanto (DOMAIN_TREND_LABELS) iz ./snapshot-types, 1 type (AccuracyApiResponse) iz ./snapshot-types. JSDoc header dokumentira v8.25 teal identiteto + visual hierarchy + komponente specifikacija + API endpoint-e + vzorec fetchAccuracy/triggerBackfill
+- Ustvaril snapshots-accuracy/index.ts (28 vrstic) — barrel file z `export { BrainSnapshotsSection } from './brain-snapshots-section'`, `export { AccuracyTrendCard } from './accuracy-trend-card'`, `export type { SnapshotView, SnapshotsApiResponse, AccuracyTrendPoint, AccuracyApiResponse } from './snapshot-types'`, `export { DOMAIN_TREND_LABELS } from './snapshot-types'`. JSDoc header dokumentira oba komponenti z version + barvo in opisuje move tipov iz ../types.ts
+- Nadomestil src/components/dashboard/ai-hub/automation/snapshots-accuracy.tsx (577 → 30 vrstic) z re-export shim-om za backward compatibility — `export { BrainSnapshotsSection, AccuracyTrendCard } from './snapshots-accuracy/index'`. NOTE: eksplicitni `/index` suffix je potreben ker shim .tsx deli ime z direktorijem — brez `/index` bi TypeScript bundler resolution resolval `./snapshots-accuracy` nazaj na .tsx datoteko (circular import). JSDoc header dokumentira vzorec in razloži zakaj drugi importerji (npr. ../automation/index.ts ki uvaža `from './snapshots-accuracy'`) ne potrebujejo `/index` suffix-a ker nimajo lokalne .tsx datoteke z istim imenom
+- Posodobil src/components/dashboard/ai-hub/automation/types.ts (359 → 286 vrstic) — odstranjeno 73 vrstic (5 premaknjenih tipov + pripadajoči komentarji). Imports posodobljeni: odstranjena `AccuracyTrendSummary` in `ActualProfitResponse` iz `../types` import-a (po premiku tipov nista več uporabljeni v tem modulu — `DomainName` in `DraftStatus` ostajajo ker ju drugi tipi v modulu še vedno uporabljajo). JSDoc header posodobljen: 8 → 6 automation cards v direktoriju + dodana sekcija ki dokumentira premik BrainSnapshotsSection + AccuracyTrendCard tipov v ./snapshots-accuracy/snapshot-types.ts (konsistentno z obstoječo NOTE sekcijo za AutoPilot types premik v ./auto-pilot/types.ts iz v8.94.8-split-autopilot)
+- Verifikacija:
+  - bunx tsc --noEmit: 0 errors ✨ (exit 0)
+  - bunx eslint src/components/dashboard/ai-hub/automation/snapshots-accuracy/ src/components/dashboard/ai-hub/automation/snapshots-accuracy.tsx src/components/dashboard/ai-hub/automation/types.ts: 0 errors ✨ (exit 0)
+  - bunx eslint src/components/dashboard/ai-hub/ (full directory): 0 errors ✨ (exit 0)
+  - Brez sprememb v UI/behavior/prop signatures/business logic — ista komponentna imena, isto vedenje, isti JSX layout, isti API endpoint-i, isti fetch callbacks
+
+Stage Summary:
+- NEW: src/components/dashboard/ai-hub/automation/snapshots-accuracy/snapshot-types.ts (105 lines) — 4 interfaces (SnapshotView, SnapshotsApiResponse, AccuracyTrendPoint, AccuracyApiResponse) + DOMAIN_TREND_LABELS constant
+- NEW: src/components/dashboard/ai-hub/automation/snapshots-accuracy/brain-snapshots-section.tsx (268 lines) — BrainSnapshotsSection (v8.23, emerald)
+- NEW: src/components/dashboard/ai-hub/automation/snapshots-accuracy/accuracy-trend-card.tsx (335 lines) — AccuracyTrendCard (v8.25, teal)
+- NEW: src/components/dashboard/ai-hub/automation/snapshots-accuracy/index.ts (28 lines — barrel file z 2 component re-exporti + 4 type re-exporti + 1 constant re-export)
+- MODIFIED: src/components/dashboard/ai-hub/automation/snapshots-accuracy.tsx (577 → 30 lines — re-export shim za backward compat, z eksplicitnim `/index` suffix zaradi imenke .tsx datoteke in direktorija)
+- MODIFIED: src/components/dashboard/ai-hub/automation/types.ts (359 → 286 lines — 5 premaknjenih tipov odstranjenih, 2 nepotrebni cross-module importi odstranjeni, JSDoc header + NOTE sekcija posodobljeni)
+- Lint: 0, Typecheck: 0
+- Skupaj novih vrstic v snapshots-accuracy/: 736 (vs 577 original — +159 zaradi per-module JSDoc headerjev in import preamble; +30 za shim)
+- Največji modul: accuracy-trend-card.tsx (335 lines — vsebuje accuracy big-number block + sparkline + 7-domain trend tabela)
+- Najmanjši modul: index.ts (28 lines — barrel file)
+- Improvement: snapshots-accuracy.tsx največji modul 577 → 335 vrstic (42% zmanjšanje največjega snapshots modula); automation/types.ts 359 → 286 vrstic (20% zmanjšanje shared types modula zaradi premika 5 tipov)
+
+---
+Task ID: v8.94.9-split-master
+Agent: Task agent (master-brain-banner.tsx split)
+Task: Split master-brain-banner.tsx (566 lines) into sub-components
+
+Work Log:
+- Prebral worklog.md (v8.94 / v8.94.1–v8.94.8 vnose, še posebej v8.94.8-split-autopilot za isti container/presentational split pattern) za kontekst
+- Prebral src/components/dashboard/ai-hub/automation/master-brain-banner.tsx (566 vrstic) — struktura:
+  - L1-21: module docstring (v8.22 — gold/amber, APEX of Brain hierarchy, synthesizes 7 domains)
+  - L23: 'use client'
+  - L25-50: imports (React, Badge, Button, Skeleton, 8 lucide icons, sonner, cn, 6 color helpers iz ../utils, DOMAIN_LABELS + ActionExplanation + MasterBrainResult iz ./types)
+  - L52-67: comment block (v8.26 explanations feature description)
+  - L69-566: MasterBrainBanner component (~497 vrstic):
+    - L70-86: 6 useState hooks (data, loading, error, expandedRank, draftIds, patchingRank, patchedRanks)
+    - L88-140: fetchMaster useCallback (GET /api/ai/brain/master + POST /api/ai/brain/drafts za auto-create TOP 5 drafts)
+    - L142-144: useEffect to call fetchMaster on mount
+    - L146-179: patchDraft useCallback (✅/❌ PATCH /api/ai/brain/drafts/{id} — calls recordActionFeedback v8.28 feedback loop)
+    - L181-196: overallTrustScore useMemo (weighted by finalScore, fallback null)
+    - L198-564: JSX return:
+      - L199-230: header row (Crown icon, MASTER BRAIN text, v8.22 + FINAL · APEX badges, overallTrustScore pill, cache badge) — kept inline (~30 vrstic)
+      - L232-245: loading skeleton (5-col grid) — kept inline (~14)
+      - L247-256: error state z Ponovi button — kept inline (~10)
+      - L259-562: main content wrapper (!loading && !error && data):
+        - L262-264: big oneLineSummary (centered) — kept inline (~3)
+        - L266-274: overallHealth row (grade pill + riskLevel pill) — kept inline (~9)
+        - L276-465: TOP 5 AKCIJ ZA DANES section (~190 vrstic) ← EXTRACTED (TopActionsList + TopActionRow + ActionExplanationPanel)
+        - L467-496: strategy pills 30d/90d/12m (~30 vrstic) ← EXTRACTED (StrategyProjections)
+        - L498-526: conflicts section (conditional, ~28 vrstic) ← EXTRACTED (ConflictsList)
+        - L528-550: bottlenecks/strengths row (~22 vrstic, wrapper vedno renderan) ← EXTRACTED (BottlenecksStrengths)
+        - L552-561: refresh button — kept inline (~10)
+- Prebral src/components/dashboard/ai-hub/automation/types.ts (358 vrstic) — 31 module-local interfaces + 4 constants. Identificiral da so ActionExplanation (L147-166), MasterBrainExplanation (L168-175), MasterBrainResult (L177-229) in DOMAIN_LABELS (L231-240) tam. Te tipi so tudi consumani s strani server-side modulov (src/lib/brain/master.ts, src/lib/brain/explainability.ts, src/app/api/ai/brain/master/route.ts, src/app/api/ai/brain/explain/route.ts, etc.) — premik v ./master-brain/types.ts bi zlomil te importerje. SKLEP: tipi ostanejo v ../types, ./master-brain/types.ts samo doda per-sub-component Props + derived aliases
+- Grep za DOMAIN_LABELS uporabo: 3 client moduli (master-brain-banner, draft-queue-card, auto-pilot/history-panel) + auto-pilot-card comment. Vsi uvozijo iz ./types — DOMAIN_LABELS mora ostati shared v ../types
+- ESLint config preverjen (eslint.config.mjs): @typescript-eslint/no-explicit-any: off, no-unused-vars: off, react-hooks/exhaustive-deps: off — zelo permisivno, omogoča čist extract brez linting boilerplate
+- Ustvaril direktorij src/components/dashboard/ai-hub/automation/master-brain/
+- Ustvaril master-brain/types.ts (66 vrstic) — 6 Props interfaces (ActionExplanationPanelProps, TopActionRowProps, TopActionsListProps, StrategyProjectionsProps, ConflictsListProps, BottlenecksStrengthsProps) + 4 derived type aliases (TopAction, Conflict, OverallHealth, Strategy — vse preko indexed access na MasterBrainResult['topActions'][number] etc. da ostanejo sync z ../types brez duplikacije)
+- Ustvaril master-brain/action-explanation-panel.tsx (112 vrstic) — ActionExplanationPanel presentational komponenta (v8.26 expanded reasoning panel: 💡 Razlaga + 5-card reasoningParts grid [Signal/Zakaj na tem mestu/Vpliv profila/Vpliv konfliktov/Pričakovan izid] + per-action trustScore pill). Props: 1 (explanation: ActionExplanation). Uvozi Badge, cn, signalGradeColor, trustScoreColor. Pure render
+- Ustvaril master-brain/top-action-row.tsx (114 vrstic) — TopActionRow presentational komponenta (en TOP-5 card: rank + domain icon + action text + +€/mo uplift + confidence pill + ✅ Izvedel/❌ Zavrnil buttons [v8.29] + ℹ️ Zakaj? toggle [v8.26] + optional ActionExplanationPanel). Props: 8 (action, explanation, expanded, onToggleExpand, draftId, patchingRank, patchedStatus, onPatch). Uvozi 5 lucide ikon (Check, ChevronDown, ChevronUp, Info, X) + cn + confidenceColor + DOMAIN_LABELS + ActionExplanationPanel. Pure render
+- Ustvaril master-brain/top-actions-list.tsx (66 vrstic) — TopActionsList presentational komponenta (section header z optional "ℹ️ klikni Zakaj? za razlago" hint + empty-state "Ni akcij" fallback + map over actions z explanation matching po rank+domain+signal). Props: 8 (topActions, explanations, expandedRank, onExpandedRankChange, draftIds, patchingRank, patchedRanks, onPatch). Uvozi TopActionRow + ActionExplanation type. Pure render
+- Ustvaril master-brain/strategy-projections.tsx (47 vrstic) — StrategyProjections presentational komponenta (3-col grid 30d/90d/12m profit + risk pills; 12m col z stronger amber background). Props: 1 (strategy: Strategy derived alias). Pure render
+- Ustvaril master-brain/conflicts-list.tsx (51 vrstic) — ConflictsList presentational komponenta (KONFLIKTI header z AlertCircle icon + per-conflict card: severity pill + domainA vs domainB z ikonami + description + resolution). Props: 1 (conflicts: Conflict[]). Returns null ko conflicts.length === 0 — match original conditional behavior. Uvozi AlertCircle, cn, conflictSeverityColor, DOMAIN_LABELS. Pure render
+- Ustvaril master-brain/bottlenecks-strengths.tsx (45 vrstic) — BottlenecksStrengths presentational komponenta (⚠️ Ozka grla + 💪 Moč flex row z domain icons). Props: 1 (overallHealth: OverallHealth derived alias). Wrapper div (z border-t border-amber-500/20 separatorjem) je VEDNO renderan tudi ko sta oba seznama prazna — match original in-place JSX behavior (preserve visual rhythm). Uvozi cn + DOMAIN_LABELS. Pure render
+- Ustvaril master-brain/index.ts (53 vrstic) — barrel file z `export { ... }` za vseh 6 sub-komponent (ActionExplanationPanel, TopActionRow, TopActionsList, StrategyProjections, ConflictsList, BottlenecksStrengths) + 6 Props tipov + 4 derived aliases (TopAction, Conflict, OverallHealth, Strategy)
+- Spremenil master-brain-banner.tsx (566 → 323 vrstic, -243, -43%):
+  - Imports: odstranjeno 4 unused lucide ikone (Check, ChevronDown, ChevronUp, X — vse prešle v TopActionRow). Odstranjeno 3 unused color helpers (confidenceColor, conflictSeverityColor, signalGradeColor — vse prešle v sub-komponente). Odstranjeno DOMAIN_LABELS + ActionExplanation imports (več ne uporablja direktno — sub-komponente jih uvozijo). Dodan import 4 sub-komponent iz ./master-brain barrel (TopActionsList, StrategyProjections, ConflictsList, BottlenecksStrengths — ActionExplanationPanel + TopActionRow nista uvožena direktno ker sta interna TopActionsList-u oziroma TopActionRow-a). Ostanejo: 4 lucide ikone (AlertCircle, Crown, Info, RefreshCw) + 3 color helpers (gradeColor, riskLevelColor, trustScoreColor) + MasterBrainResult type
+  - JSX: 4 veliki bloki zamenjani s sub-komponent klici (TopActionsList ~190 vrstic, StrategyProjections ~30, ConflictsList ~28, BottlenecksStrengths ~22). Inline ostajajo: outer gradient div, header (30), loading skeleton (14), error state (10), oneLineSummary (3), overallHealth row (9), refresh button (10). Skupaj inline JSX ~76 vrstic + state/callbacks/derived ~111 vrstic + imports/docstring/comments ~136 vrstic = 323 total
+  - Modul docstring posodobljen: dodana v8.94.9-split-master sekcija ki dokumentira container/presentational split + 6 ekstrahirane sub-komponente
+- Container/presentational arhitektura:
+  - Container (master-brain-banner.tsx): lastništvo vseh 6 useState + 2 useCallback (fetchMaster, patchDraft) + 1 useMemo (overallTrustScore). State je prepuščen container-ju ker so vsi callbacks interdependenti (fetchMaster kliče setDraftIds + setPatchedRanks, patchDraft kliče setPatchingRank + setPatchedRanks + toast) — extraction state-a v custom hook bi bil poseben refactor
+  - Presentational (6 sub-komponent): pure render — prejmejo data + handlerje kot props, vrnejo JSX. Nobenega state-a, fetch-ev, side effectov. Vsaka ima ekspliciten Props interface za type-safety. ActionExplanationPanel je najbolj zgleden — 1 prop, 0 internal logic
+- Behavior preserved byte-identically:
+  - expandedRank toggle logika: TopActionsList maps over actions, za vsak action najde explanation (po rank+domain+signal), potem pa TopActionRow prejme `expanded` (boolean) in `onToggleExpand` (closure ki pokliče onExpandedRankChange(isExpanded ? null : a.rank)) — identično originalu kjer je setExpandedRank(isExpanded ? null : a.rank)
+  - ✅/❌ button disabled state: TopActionRow prejme `patchingRank === action.rank || patchedStatus != null` (original: `patchingRank === a.rank || patchedRanks[a.rank] != null`) — ekvivalentno ker patchedStatus = patchedRanks[a.rank]
+  - draftId visibility: TopActionsList preveri draftIds[a.rank] preden pass-a kot prop. Original: `{draftIds[a.rank] && (...)}` v JSX-u — TopActionRow potem pogojno render-a button pair z `if (draftId)`
+  - ConflictsList returns null ko conflicts.length === 0 — match original `{data.conflicts.length > 0 && (...)}` conditional
+  - BottlenecksStrengths: wrapper div (z border-t separatorjem) VEDNO renderan, tudi ko sta oba seznama prazna — match original kjer je `<div className="flex flex-wrap items-center gap-2 text-[10px] pt-1 border-t border-amber-500/20">` vedno renderan
+- Verifikacija:
+  - bunx tsc --noEmit (full project): 0 errors ✨ (exit 0)
+  - bunx eslint src/components/dashboard/ai-hub/automation/master-brain-banner.tsx src/components/dashboard/ai-hub/automation/master-brain/: 0 errors ✨ (exit 0)
+  - bunx eslint src/components/dashboard/ai-hub/automation/ (full dir): 0 errors ✨ (exit 0)
+  - Brez sprememb v UI/behavior/prop signatures/business logic — ista komponenta (MasterBrainBanner), isti default props (brez props — MasterBrainBanner() vzame nič), isto vedenje. Sub-komponente so nove (niso bile prej izvožene, so interne MasterBrainBanner-u)
+  - NOTE: paralelni task v8.94.9-split (snapshots-accuracy) je istočasno modificiral automation/types.ts da je premaknil Snapshot/Accuracy tipov v ./snapshots-accuracy/snapshot-types.ts — moj task ni odvisen od teh sprememb (MasterBrainResult/ActionExplanation/DOMAIN_LABELS ostajajo v ../types tudi v snapshots-accuracy verziji)
+
+Stage Summary:
+- NEW: src/components/dashboard/ai-hub/automation/master-brain/types.ts (66 lines) — 6 Props interfaces + 4 derived aliases (TopAction, Conflict, OverallHealth, Strategy)
+- NEW: src/components/dashboard/ai-hub/automation/master-brain/action-explanation-panel.tsx (112 lines) — ActionExplanationPanel (v8.26 expanded reasoning + reasoningParts grid + per-action trustScore pill)
+- NEW: src/components/dashboard/ai-hub/automation/master-brain/top-action-row.tsx (114 lines) — TopActionRow (one TOP-5 card: rank/icon/uplift/confidence + ✅/❌ buttons + ℹ️ Zakaj? toggle + optional panel)
+- NEW: src/components/dashboard/ai-hub/automation/master-brain/top-actions-list.tsx (66 lines) — TopActionsList (header + empty state + map with explanation matching)
+- NEW: src/components/dashboard/ai-hub/automation/master-brain/strategy-projections.tsx (47 lines) — StrategyProjections (30d/90d/12m profit + risk pills)
+- NEW: src/components/dashboard/ai-hub/automation/master-brain/conflicts-list.tsx (51 lines) — ConflictsList (KONFLIKTI section, returns null when empty)
+- NEW: src/components/dashboard/ai-hub/automation/master-brain/bottlenecks-strengths.tsx (45 lines) — BottlenecksStrengths (⚠️ Ozka grla + 💪 Moč row, wrapper always rendered)
+- NEW: src/components/dashboard/ai-hub/automation/master-brain/index.ts (53 lines) — barrel re-export (6 komponent + 6 Props tipov + 4 derived aliases)
+- MODIFIED: src/components/dashboard/ai-hub/automation/master-brain-banner.tsx (566 → 323 lines, -243, -43%; container/orchestrator z vsem state-om + callbacks + inline header/loading/error/oneLineSummary/overallHealth/refresh; delegira 4 velike bloke sub-komponentam)
+- Lint: 0, Typecheck: 0
+- Skupaj novih vrstic v master-brain/: 554 (types 66 + action-explanation-panel 112 + top-action-row 114 + top-actions-list 66 + strategy-projections 47 + conflicts-list 51 + bottlenecks-strengths 45 + index 53)
+- Največji novi modul: action-explanation-panel.tsx in top-action-row.tsx (112 in 114 vrstic — oba pod 120)
+- Najmanjši novi modul: bottlenecks-strengths.tsx (45 vrstic — najbolj trivialen, 1 prop)
+- Improvement: master-brain-banner.tsx največji modul v ai-hub/automation/ (za auto-pilot-card.tsx 834 vrstic in scenario-brain-card.tsx če obstaja) — 566 → 323 vrstic (-43%). Največji posamezni novi modul je top-action-row.tsx (114 vrstic — vsebuje per-action card z ✅/❌/ℹ️ Zakaj? interakcijami)
+- Architecture: container/presentational split — master-brain-banner.tsx ostane container z vsem state-om in fetch callbacks (fetchMaster, patchDraft), sub-komponente so pure presentational (props in, JSX out). ActionExplanationPanel je čist "leaf" (1 prop, 0 dependencies na MasterBrainResult strukturo — samo na ActionExplanation). TopActionsList je "intermediate" — prejme explanations array in match-a per-action explanation, potem pass-a na TopActionRow
+
+---
+Task ID: v8.94.9
+Agent: Z.ai Code + 8 Task agents (snapshots split + master split + 6 migrations)
+Task: Razdelitev snapshots-accuracy.tsx + master-brain-banner.tsx + 6 endpoint migracij
+
+Work Log:
+- RAZDELITEV snapshots-accuracy.tsx (577 vrstic → 4 moduli + 30-vrstični shim):
+  - NEW src/components/dashboard/ai-hub/automation/snapshots-accuracy/snapshot-types.ts (105 vrstic) — 4 interfaces + DOMAIN_TREND_LABELS
+  - NEW src/components/dashboard/ai-hub/automation/snapshots-accuracy/brain-snapshots-section.tsx (268 vrstic) — BrainSnapshotsSection
+  - NEW src/components/dashboard/ai-hub/automation/snapshots-accuracy/accuracy-trend-card.tsx (335 vrstic) — AccuracyTrendCard
+  - NEW src/components/dashboard/ai-hub/automation/snapshots-accuracy/index.ts (28 vrstic) — barrel re-export
+  - MODIFIED src/components/dashboard/ai-hub/automation/snapshots-accuracy.tsx (577 → 30 vrstic) — re-export shim
+  - MODIFIED src/components/dashboard/ai-hub/automation/types.ts (359 → 286 vrstic) — 5 tipov premaknjenih v snapshot-types
+  - Največji modul: 577 → 335 vrstic (42% zmanjšanje)
+- RAZDELITEV master-brain-banner.tsx (566 → 323 + 7 sub-komponent):
+  - NEW src/components/dashboard/ai-hub/automation/master-brain/types.ts (66 vrstic) — 6 Props + 4 derived aliases
+  - NEW src/components/dashboard/ai-hub/automation/master-brain/action-explanation-panel.tsx (112 vrstic) — v8.26 reasoning grid
+  - NEW src/components/dashboard/ai-hub/automation/master-brain/top-action-row.tsx (114 vrstic) — TOP-5 card z ✅/❌/ℹ️
+  - NEW src/components/dashboard/ai-hub/automation/master-brain/top-actions-list.tsx (66 vrstic) — header + empty state + map
+  - NEW src/components/dashboard/ai-hub/automation/master-brain/strategy-projections.tsx (47 vrstic) — 30d/90d/12m profit
+  - NEW src/components/dashboard/ai-hub/automation/master-brain/conflicts-list.tsx (51 vrstic) — KONFLIKTI section
+  - NEW src/components/dashboard/ai-hub/automation/master-brain/bottlenecks-strengths.tsx (45 vrstic) — ozka grla + moč
+  - NEW src/components/dashboard/ai-hub/automation/master-brain/index.ts (53 vrstic) — barrel re-export
+  - MODIFIED src/components/dashboard/ai-hub/automation/master-brain-banner.tsx (566 → 323 vrstic, -43%) — container/orchestrator
+  - Container/presentational pattern: container ohrani state + fetch, sub-komponente so pure render
+- 6 AI endpointov migriranih na withAiRoute (vzporedno preko Task agentov):
+  49. /api/ai/auction-sniper (223→253) — Task agent v8.94.9-a (DEPRECATED, logDeprecatedCall preserved)
+  50. /api/ai/auction-sniper-v2 (270→356) — Task agent v8.94.9-b
+  51. /api/ai/brain/daily-tip (26→47) — Task agent v8.94.9-c (GET+POST)
+  52. /api/ai/brain/actual-profit (82→82) — Task agent v8.94.9-d (GET+POST, no AI)
+  53. /api/ai/brain/health (70→80) — Task agent v8.94.9-e (GET, no AI, cached)
+  54. /api/ai/brain/auto-pilot/rollback (83→117) — Task agent v8.94.9-f (POST, no AI)
+  Vsi z enforceBudget: true + ekstrahirane testabilne pomožne funkcije
+- Version bump: v8.94.8 → v8.94.9
+
+Stage Summary:
+- NOVE DATOTEKE: 19 (snapshots-accuracy/ 4 modulov + master-brain/ 8 modulov)
+- MODIFICIRANE: 11 (snapshots-accuracy.tsx → shim, master-brain-banner.tsx -43%, automation/types.ts, 6 migriranih, version.ts, README.md)
+- SNAPSHOTS: 577 vrstic razdeljenih v 4 module (42% zmanjšanje največjega)
+- MASTER-BRAIN: 566 → 323 vrstic + 7 sub-komponent (43% zmanjšanje glavnega modula)
+- MIGRIRANI ENDPOINTI: 6 (skupaj 54 od 432 — 12,5%)
+- LINT: 0 errors, 0 warnings ✨
+- TYPECHECK: 0 errors ✨
+- TESTS: 208 passing (lib) ✨
+- Verzija: v8.94.9

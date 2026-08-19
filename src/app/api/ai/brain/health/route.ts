@@ -1,4 +1,4 @@
-// v8.32: System Health Dashboard API — aggregates entire Brain system health.
+// v8.32 / v8.94-refactor: System Health Dashboard API — aggregates entire Brain system health.
 //
 // GET /api/ai/brain/health → returns full SystemHealthReport:
 //   - 8 brain endpoint statuses (responsive + responseTimeMs + grade)
@@ -20,17 +20,20 @@
 // DETERMINISTIC (aiUsed: false): no external AI/LLM SDK is called.
 // The 8 brain endpoint health checks use native `fetch()` — they hit OTHER
 // routes in this same Next.js server (internal HTTP loopback).
+//
+// Refaktoriran z withAiRoute helperjem (v8.94.9-e) + enforceBudget guard
+// (non-breaking — endpoint ne kliče AI direktno, ampak je konsistentno z
+// vsemi v8.94.x migracijami).
 
-import { NextResponse } from 'next/server';
-import { logger } from '@/lib/logger';
+import { withAiRoute, AI_ROUTE_DEFAULTS, type AiRouteContext } from '@/lib/with-ai-route';
+import { apiOk } from '@/lib/api-response';
 import { getCachedAI, setCachedAI } from '@/lib/ai-cache';
 import {
   getSystemHealth,
   type SystemHealthReport,
 } from '@/lib/brain/system-health';
 
-export const runtime = 'nodejs';
-export const dynamic = 'force-dynamic';
+export const { runtime, dynamic } = AI_ROUTE_DEFAULTS;
 export const maxDuration = 30; // shorter than other brains — health should not hang
 
 // --- Cache TTL -------------------------------------------------------------
@@ -38,33 +41,40 @@ export const maxDuration = 30; // shorter than other brains — health should no
 // suspension, anomaly detection, etc.) without re-running the full 8-brain
 // health-check + DB scan on every request.
 const HEALTH_CACHE_TTL_MS = 30 * 1000;
+const HEALTH_CACHE_KEY = 'system-health:v8.32';
+
+// eslint-disable-next-line @typescript-eslint/no-empty-object-type
+interface BrainHealthInput {}
 
 // --- Handler ---------------------------------------------------------------
 
-export async function GET() {
-  try {
+export const GET = withAiRoute<BrainHealthInput>({
+  endpoint: '/api/ai/brain/health',
+  maxDuration: 30,
+  enforceBudget: true, // v8.94.9-e: budget guard + avtomatski recordAiCall
+  method: 'GET',
+
+  // GET — brez telesa; parseBody vrne prazen objekt
+  parseBody: async () => ({}),
+
+  // Brez validateInput — endpoint nima inputa
+
+  handler: async (_input, _ctx: AiRouteContext) => {
     // Cache check — 30-second TTL. Same shape for all callers (no inputs).
-    const cacheKey = 'system-health:v8.32';
-    const cached = getCachedAI<SystemHealthReport>(cacheKey);
+    const cached = getCachedAI<SystemHealthReport>(HEALTH_CACHE_KEY);
     if (cached) {
       // Re-stamp timestamp so the caller sees a fresh "served at" time, even
       // though the underlying data is up to 30s old. This mirrors the pattern
       // used by other brain endpoints (profitBrain, masterBrain, ...).
-      return NextResponse.json({
+      return apiOk({
         ...cached,
         timestamp: new Date().toISOString(),
       });
     }
 
     const report = await getSystemHealth();
-    setCachedAI(cacheKey, report, HEALTH_CACHE_TTL_MS);
+    setCachedAI(HEALTH_CACHE_KEY, report, HEALTH_CACHE_TTL_MS);
 
-    return NextResponse.json(report);
-  } catch (err: any) {
-    logger.error('/api/ai/brain/health', 'handler failed', err);
-    return NextResponse.json(
-      { error: err?.message ?? 'Napaka' },
-      { status: 500 },
-    );
-  }
-}
+    return apiOk(report);
+  },
+});
