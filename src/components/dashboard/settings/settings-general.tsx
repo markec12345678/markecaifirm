@@ -28,7 +28,7 @@ export function SettingsGeneral({ settings, setSettings }: SettingsGeneralProps)
               <Badge variant="outline">{settings?.minOpportunityScore || 60}/100</Badge>
             </div>
             <Slider value={[settings?.minOpportunityScore || 60]} onValueChange={(v) => setSettings({ ...settings, minOpportunityScore: v[0] })} min={0} max={100} step={5} />
-            <p className="text-xs text-muted-foreground">Samo oglasi s score >= {settings?.minOpportunityScore || 60} bodo sprožili alert.</p>
+            <p className="text-xs text-muted-foreground">Samo oglasi s score ≥ {settings?.minOpportunityScore || 60} bodo sprožili alert.</p>
           </div>
           <div className="grid gap-2">
             <div className="flex justify-between items-center">
@@ -36,7 +36,7 @@ export function SettingsGeneral({ settings, setSettings }: SettingsGeneralProps)
               <Badge variant="outline">{settings?.maxRiskScore || 70}/100</Badge>
             </div>
             <Slider value={[settings?.maxRiskScore || 70]} onValueChange={(v) => setSettings({ ...settings, maxRiskScore: v[0] })} min={0} max={100} step={5} />
-            <p className="text-xs text-muted-foreground">Oglasi z risk score > {settings?.maxRiskScore || 70} bodo označeni kot nevarni.</p>
+            <p className="text-xs text-muted-foreground">Oglasi z risk score ≥ {settings?.maxRiskScore || 70} bodo označeni kot nevarni.</p>
           </div>
         </CardContent>
       </Card>
