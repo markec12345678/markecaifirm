@@ -75,3 +75,50 @@ jobs:
       - name: Run security audit
         run: bun audit
         # `bun audit` vrača exit 1, če najde vulnerabilities — sedaj bo CI ustavil
+
+  test:
+    name: Tests
+    runs-on: ubuntu-latest
+
+    env:
+      DATABASE_URL: "file:./dev.db"
+      APP_API_KEY: ""
+      ALLOW_HTTP_URLS: ""
+      NEXT_PUBLIC_APP_URL: "http://localhost:3000"
+      NEXT_TELEMETRY_DISABLED: "1"
+      TELEGRAM_WEBHOOK_SECRET: ""
+      MONITOR_CRON_KEY: ""
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Bun
+        uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: latest
+
+      - name: Cache dependencies
+        uses: actions/cache@v4
+        with:
+          path: node_modules
+          key: ${{ runner.os }}-bun-${{ hashFiles('**/bun.lock') }}
+          restore-keys: |
+            ${{ runner.os }}-bun-
+
+      - name: Install dependencies
+        run: bun install --frozen-lockfile
+
+      - name: Generate Prisma client
+        run: bun run db:generate
+
+      # v8.93: Create the SQLite schema so DB-backed tests have tables to
+      # write to. --accept-data-loss is harmless on the fresh CI dev.db.
+      - name: Create database schema
+        run: bun run db:push
+
+      # v8.93: Prej CI ni poganjal testov — buy-score regresija (matchBuyScore:
+      # null) bi šla skozi neopažena. Sedaj 140 testov (vključno z integracijskimi
+      # DB testi) teče na vsakem PR-ju in preprečuje regresije.
+      - name: Run tests
+        run: bun run test
