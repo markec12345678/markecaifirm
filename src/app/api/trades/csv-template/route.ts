@@ -9,6 +9,7 @@
 // Used by the "📄 Prenesi predlogo CSV" link in the trades-view import dialog.
 
 import { NextResponse } from 'next/server';
+import { apiError } from '@/lib/api-response';
 import { generateCsvTemplate } from '@/lib/trades/csv-import';
 
 export const runtime = 'nodejs';
@@ -29,10 +30,7 @@ export async function GET() {
         'Cache-Control': 'no-store, no-cache, must-revalidate',
       },
     });
-  } catch (err: any) {
-    return NextResponse.json(
-      { ok: false, error: err?.message ?? 'Napaka pri generiranju predloge' },
-      { status: 500 },
-    );
+  } catch (err: unknown) {
+    return apiError('/api/trades/csv-template', 'GET failed', err);
   }
 }
