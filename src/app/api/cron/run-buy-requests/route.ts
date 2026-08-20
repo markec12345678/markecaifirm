@@ -5,6 +5,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { db } from '@/lib/db';
 import { logger } from '@/lib/logger';
+import { computeBuyScore } from '@/lib/trades/buy-opportunity';
 
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
@@ -67,8 +68,9 @@ export async function GET(req: NextRequest) {
         // Fetch matching listings
         const listings = await db.listing.findMany({
           where,
-          select: { id: true, title: true, price: true, url: true, location: true, imageUrl: true,
-            aiScore: true, aiVerdict: true, monitor: { select: { source: true } } },
+          select: { id: true, title: true, price: true, priceText: true, url: true, location: true, imageUrl: true,
+            aiScore: true, aiRisk: true, aiVerdict: true, aiEstimatedValue: true,
+            previousPrice: true, priceDroppedAt: true, monitor: { select: { source: true, tags: true } } },
           take: 20,
           orderBy: { firstSeenAt: 'desc' },
         });
@@ -80,13 +82,32 @@ export async function GET(req: NextRequest) {
             where: { buyRequestId_listingId: { buyRequestId: request.id, listingId: listing.id } },
           });
           if (!existing) {
+            // New match! Compute buy score (pure math, deterministic) and store it.
+            let buyScore: number | null = null;
+            try {
+              const cat = request.category?.trim() || undefined;
+              const result = computeBuyScore(
+                {
+                  id: listing.id, title: listing.title, price: listing.price,
+                  priceText: listing.priceText, aiScore: listing.aiScore,
+                  aiRisk: listing.aiRisk, aiVerdict: listing.aiVerdict,
+                  aiEstimatedValue: listing.aiEstimatedValue,
+                  previousPrice: listing.previousPrice,
+                  priceDroppedAt: listing.priceDroppedAt,
+                },
+                { category: cat },
+              );
+              buyScore = result.score;
+            } catch (err: unknown) {
+              logger.warn('/api/cron/run-buy-requests', 'buy score computation failed, storing null', err);
+            }
             // New match! Store it.
             await db.buyRequestMatch.create({
               data: {
                 buyRequestId: request.id,
                 listingId: listing.id,
                 matchPrice: listing.price,
-                matchBuyScore: null, // TODO: compute buy score
+                matchBuyScore: buyScore,
                 isNotified: false,
                 isRead: false,
               },
