@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { promises as fs } from 'fs';
+import { promises as fs, existsSync } from 'fs';
 import path from 'path';
 import { exec } from 'child_process';
 import { promisify } from 'util';
@@ -12,7 +12,35 @@ export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
 export const maxDuration = 60;
 
-const DB_PATH = process.env.DATABASE_URL?.replace('file:', '') ?? '';
+/**
+ * Resolve the SQLite file path from DATABASE_URL.
+ *
+ * Prisma resolves relative `file:` paths against the schema directory
+ * (prisma/), but Node's fs resolves relative paths against process.cwd().
+ * This normalizes the path so fs.stat/readFile/writeFile hit the real file.
+ *
+ * v8.93 FIX: previously DB_PATH was `DATABASE_URL.replace('file:', '')`,
+ * which yielded e.g. `./dev.db` resolved against cwd -> ENOENT (the actual
+ * db lives at prisma/dev.db). This broke GET /api/backup (info + download)
+ * and POST /api/backup (restore) entirely — a data-safety feature was dead.
+ */
+function resolveDbPath(): string {
+  const raw = (process.env.DATABASE_URL ?? '').replace(/^file:/, '').trim();
+  if (!raw) return '';
+  if (path.isAbsolute(raw)) return raw;
+  // Try cwd-relative first (legacy setups), then prisma-relative (Prisma convention).
+  const candidates = [
+    path.join(process.cwd(), raw),
+    path.join(process.cwd(), 'prisma', raw),
+  ];
+  for (const c of candidates) {
+    if (existsSync(c)) return c;
+  }
+  // Not found yet (e.g. fresh install before db:push) — assume Prisma convention.
+  return path.join(process.cwd(), 'prisma', raw);
+}
+
+const DB_PATH = resolveDbPath();
 const BACKUP_DIR = path.join(process.cwd(), 'backups');
 
 /**
