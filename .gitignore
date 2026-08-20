@@ -36,10 +36,18 @@ pnpm-debug.log*
 .env.production.local
 
 # Database
+prisma/*.db
+prisma/*.db-journal
+prisma/*.db-shm
+prisma/*.db-wal
 db/*.db
 db/*.db-journal
 db/*.db-shm
 db/*.db-wal
+*.db
+*.db-journal
+*.db-shm
+*.db-wal
 
 # Logs
 dev.log

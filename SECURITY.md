@@ -6,9 +6,9 @@ Trenutno podpiramo samo najnovejjo verzijo. Varnostne popravke bomo izdajali sam
 
 | Version | Supported          |
 |---------|--------------------|
-| 6.92.x  | ✅ Active support   |
-| 6.49.x - 6.91.x | ⚠️ Security fixes only |
-| < 6.49  | ❌ No support       |
+| 8.93.x | ✅ Active support   |
+| 6.92.x - 8.92.x | ⚠️ Security fixes only |
+| < 6.92  | ❌ No support       |
 
 ## Reporting a Vulnerability
 
