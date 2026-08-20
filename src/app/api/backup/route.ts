@@ -144,7 +144,14 @@ export async function POST(req: NextRequest) {
     }
 
     try {
-      const formData = await req.formData();
+      // v8.93: a missing/non-multipart body makes req.formData() throw.
+      // That is a client error (400), not a server error (500).
+      let formData: FormData;
+      try {
+        formData = await req.formData();
+      } catch {
+        return NextResponse.json({ error: 'Manjka datoteka (field: db) — zahtevan multipart body' }, { status: 400 });
+      }
       const file = formData.get('db') as File | null;
       if (!file) {
         return NextResponse.json({ error: 'Manjka datoteka (field: db)' }, { status: 400 });
