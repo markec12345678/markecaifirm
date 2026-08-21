@@ -1,24 +1,28 @@
-// v8.35: Telegram Brain Test API — lets user test Brain notifications.
+// v8.35 / v8.95.2-small-batch: Telegram Brain Test API — lets user test Brain notifications.
 //
 // POST /api/ai/brain/telegram-test  { type: 'digest' | 'autopilot' | 'anomaly' }
 //   - 'digest'    → sendBrainDigest() — sends real Master Brain digest
 //   - 'autopilot' → sendAutoPilotAlert(mockDraft, ...) — sends a test alert
 //   - 'anomaly'   → sendAnomalyAlert('Test anomaly — preverjamo Telegram povezavo')
 //
-// Returns { ok, sent, reason? } — same shape as the NotificationResult.
+// Returns { ok, sent, reason, type } — same shape as the NotificationResult.
 // If Telegram is not configured, returns { ok: true, sent: false, reason: '...' }
 // (not an error — just a skipped notification).
 //
-// runtime='nodejs', dynamic='force-dynamic', maxDuration=30
+// Refaktoriran z withAiRoute helperjem (v8.95.2-small-batch) + enforceBudget
+// guard. POST-only (original GET method ni obstajal). DETERMINISTIC — endpoint
+// ne kliče AI direktno; enforceBudget: true je non-breaking. ctx.logger
+// dependency injection (replaces module-level logger import). buildMockDraft
+// pure helper ekstrahiran OUTSIDE handler-ja (IDENTIČEN originalu).
 
-import { NextRequest, NextResponse } from 'next/server';
-import { logger } from '@/lib/logger';
+import type { NextRequest } from 'next/server';
+import { withAiRoute, AI_ROUTE_DEFAULTS, type AiRouteContext } from '@/lib/with-ai-route';
+import { apiOk, apiBadRequest } from '@/lib/api-response';
 import { sendBrainDigest, sendAutoPilotAlert, sendAnomalyAlert } from '@/lib/brain/telegram-notifications';
 import type { ActionDraft } from '@/lib/brain/draft-queue';
 import type { DomainName } from '@/lib/brain/master';
 
-export const runtime = 'nodejs';
-export const dynamic = 'force-dynamic';
+export const { runtime, dynamic } = AI_ROUTE_DEFAULTS;
 export const maxDuration = 30;
 
 /**
@@ -45,39 +49,43 @@ function buildMockDraft(): ActionDraft {
   };
 }
 
-export async function POST(req: NextRequest) {
-  try {
+interface TelegramTestInput {
+  type: string;
+}
+
+export const POST = withAiRoute<TelegramTestInput>({
+  endpoint: '/api/ai/brain/telegram-test',
+  maxDuration: 30,
+  enforceBudget: true, // v8.95.2: budget guard + avtomatski recordAiCall
+  method: 'POST',
+  parseBody: async (req: NextRequest) => {
     const body = await req.json().catch(() => ({}));
-    const type = typeof body?.type === 'string' ? body.type : '';
+    return { type: typeof body?.type === 'string' ? body.type : '' };
+  },
+  // Brez validateInput — handler sam vrne 400 za neznane type
+  handler: async (input, ctx: AiRouteContext) => {
+    const { logger } = ctx;
+    const { type } = input;
 
     if (type === 'digest') {
       const result = await sendBrainDigest();
       logger.info('/api/ai/brain/telegram-test', 'digest test', result);
-      return NextResponse.json({ ok: result.ok, sent: result.sent, reason: result.reason ?? null, type: 'digest' });
+      return apiOk({ ok: result.ok, sent: result.sent, reason: result.reason ?? null, type: 'digest' });
     }
 
     if (type === 'autopilot') {
       const mockDraft = buildMockDraft();
       const result = await sendAutoPilotAlert(mockDraft, 'Test notification — preverjamo Telegram povezavo');
       logger.info('/api/ai/brain/telegram-test', 'autopilot test', result);
-      return NextResponse.json({ ok: result.ok, sent: result.sent, reason: result.reason ?? null, type: 'autopilot' });
+      return apiOk({ ok: result.ok, sent: result.sent, reason: result.reason ?? null, type: 'autopilot' });
     }
 
     if (type === 'anomaly') {
       const result = await sendAnomalyAlert('Test anomaly — preverjamo Telegram povezavo');
       logger.info('/api/ai/brain/telegram-test', 'anomaly test', result);
-      return NextResponse.json({ ok: result.ok, sent: result.sent, reason: result.reason ?? null, type: 'anomaly' });
+      return apiOk({ ok: result.ok, sent: result.sent, reason: result.reason ?? null, type: 'anomaly' });
     }
 
-    return NextResponse.json(
-      { error: `Unknown type: '${type}'. Use 'digest', 'autopilot', or 'anomaly'.` },
-      { status: 400 },
-    );
-  } catch (err: any) {
-    logger.error('/api/ai/brain/telegram-test', 'POST handler failed', err);
-    return NextResponse.json(
-      { error: err?.message ?? 'Napaka' },
-      { status: 500 },
-    );
-  }
-}
+    return apiBadRequest(`Unknown type: '${type}'. Use 'digest', 'autopilot', or 'anomaly'.`);
+  },
+});

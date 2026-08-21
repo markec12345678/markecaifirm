@@ -1,5 +1,5 @@
-// v8.24: User Risk Profile API — GET returns current profile, POST sets it.
-// Stored in Settings table (singleton row).
+// v8.24 / v8.95.2-c: User Risk Profile API — GET returns current profile,
+// POST sets it. Stored in Settings table (singleton row).
 //
 // GET /api/ai/brain/risk-profile
 //   Returns: { ok, profile, adjustment }
@@ -24,12 +24,37 @@
 // READER — it loads the profile and applies adjustMasterBrainForRiskProfile()
 // before returning the result.
 //
-// (force-reload marker — Turbopack sometimes needs a content change to trigger
-// recompilation after Prisma schema updates.)
+// Refaktoriran z withAiRoute helperjem (v8.95.2-c) + enforceBudget guard
+// (non-breaking — endpoint NE kliče AI direktno: GET load-a profile iz DB +
+// compute-a sample adjustment preko masterBrain() (ki je deterministic TS,
+// ne kliče AI/LLM SDK); POST write-a v Settings tablo. Budget guard +
+// avtomatski recordAiCall je additive, ne breaking — isti vzorec kot vse
+// v8.94.x / v8.95.x brain migracije).
+//
+// DVE ločena withAiRoute klica (GET + POST) — match-a brain/drafts vzorec
+// (v8.95.0-c) ker GET in POST imata fundamentalno različno logiko (read iz
+// Settings + masterBrain() sample adjustment vs. validate + write v Settings).
+// Skupni handler bi zahteval method-branching v handler-ju, kar je manj čisto
+// kot dva ločena handler-ja z lastno parseBody/validateInput logiko.
+//
+// Odstranjeno iz originala (v8.24 dev-mode workarounds ki niso več potrebni
+// ker so Settings schema polja od v8.24 stabilna v @prisma/client):
+//   - getFreshDb() — workaround za dev-mode PrismaClient caching po
+//     `prisma generate` (sedaj uporabljamo ctx.db singleton iz @/lib/db)
+//   - dynamic `await import('@/lib/db')` + `globalThis.prisma = undefined`
+//     reset + console.error debug log v POST handler-ju
+//
+// runtime='nodejs', dynamic='force-dynamic', maxDuration=60.
 
-import { NextRequest, NextResponse } from 'next/server';
-import { logger } from '@/lib/logger';
-import { PrismaClient } from '@prisma/client';
+import type { NextRequest } from 'next/server';
+import { NextResponse } from 'next/server';
+import type { Settings } from '@prisma/client';
+import {
+  withAiRoute,
+  AI_ROUTE_DEFAULTS,
+  type AiRouteContext,
+} from '@/lib/with-ai-route';
+import { apiOk } from '@/lib/api-response';
 import {
   adjustMasterBrainForRiskProfile,
   validateProfile,
@@ -37,84 +62,247 @@ import {
   type UserRiskProfile,
   type RiskTolerance,
   type InvestmentHorizon,
+  type RiskProfileAdjustment,
 } from '@/lib/brain/risk-profile';
 import { masterBrain } from '@/lib/brain/master';
 
-export const runtime = 'nodejs';
-export const dynamic = 'force-dynamic';
+export const { runtime, dynamic } = AI_ROUTE_DEFAULTS;
 export const maxDuration = 60;
 
-// v8.24: Use a FRESH PrismaClient per request to avoid dev-mode caching of
-// stale clients after `prisma generate` regenerates @prisma/client with new
-// schema fields. The standard `db` from @/lib/db caches a single PrismaClient
-// in `globalThis.prisma` for the lifetime of the dev server process — that's
-// fine for production but problematic in dev when the schema changes mid-run.
-//
-// Each call to `getFreshDb()` creates a NEW PrismaClient. In production this
-// is wasteful (we should reuse a singleton), but in dev it guarantees we
-// always pick up the latest @prisma/client module. The original `db` from
-// @/lib/db is still used by all other routes — only this risk-profile route
-// (and /api/ai/brain/master) need the fresh client because they're the only
-// ones accessing the new Settings fields.
-function getFreshDb(): PrismaClient {
-  // Always create a new client — bypass globalThis cache.
-  // (PrismaClient internally pools connections, so this is still cheap.)
-  return new PrismaClient({
-    log: process.env.NODE_ENV === 'production'
-      ? ['error', 'warn']
-      : ['error', 'warn'],
-  });
+// --- Input interfaces -------------------------------------------------------
+
+// GET — brez telesa / query parametra; parseBody vrne prazen objekt.
+// eslint-disable-next-line @typescript-eslint/no-empty-object-type
+interface RiskProfileGetInput {}
+
+// POST — parsed body v obliki { profile: Partial<UserRiskProfile>, data: PrismaUpdatePayload }.
+interface RiskProfilePostInput {
+  /** Valid partial profile fields parsed from POST body. */
+  profile: Partial<UserRiskProfile>;
+  /** Prisma update payload (camelCase field names → DB columns). */
+  data: Record<string, unknown>;
 }
 
-// --- Helpers ---------------------------------------------------------------
+// --- GET: return current profile + sample adjustment ------------------------
+
+export const GET = withAiRoute<RiskProfileGetInput>({
+  endpoint: '/api/ai/brain/risk-profile',
+  maxDuration: 60,
+  enforceBudget: true, // v8.95.2-c: consistency guard (non-breaking)
+  method: 'GET',
+
+  parseBody: async () => ({}),
+
+  // Brez validateInput — GET nima inputa
+
+  handler: async (_input, ctx: AiRouteContext) => {
+    const { db, logger } = ctx;
+
+    const profile = await loadProfile(db, logger);
+
+    // Compute a sample adjustment using the CURRENT Master Brain output so
+    // the UI can preview the impact of the profile. If masterBrain() fails,
+    // we still return the profile — adjustment will be null.
+    let adjustment: RiskProfileAdjustment | null = null;
+    try {
+      const masterResult = await masterBrain();
+      adjustment = adjustMasterBrainForRiskProfile(masterResult, profile);
+    } catch (err: unknown) {
+      logger.warn(
+        '/api/ai/brain/risk-profile',
+        'failed to compute sample adjustment',
+        err,
+      );
+    }
+
+    return apiOk({
+      ok: true as const,
+      profile,
+      adjustment,
+    });
+  },
+});
+
+// --- POST: validate + update profile fields ---------------------------------
+
+export const POST = withAiRoute<RiskProfilePostInput>({
+  endpoint: '/api/ai/brain/risk-profile',
+  maxDuration: 60,
+  enforceBudget: true, // v8.95.2-c: consistency guard (non-breaking)
+  method: 'POST',
+
+  parseBody: (req: NextRequest) => parsePostInput(req),
+
+  // Brez validateInput — validation se izvaja v handler-ju ker vrača
+  // specifičen response shape z `errors[]` poljem (ne le `error: string`).
+
+  handler: async (input, ctx: AiRouteContext) => {
+    const { db, logger } = ctx;
+
+    if (Object.keys(input.profile).length === 0) {
+      return NextResponse.json(
+        {
+          ok: false,
+          error:
+            'No valid risk-profile fields in body. Expected at least one of: riskTolerance, maxAcceptableRisk, liquidityReserve, investmentHorizon.',
+        },
+        { status: 400 },
+      );
+    }
+
+    // Validate the partial profile (validateProfile accepts Partial<>).
+    const validation = validateProfile(input.profile);
+    if (!validation.valid) {
+      return NextResponse.json(
+        { ok: false, error: 'Validation failed', errors: validation.errors },
+        { status: 400 },
+      );
+    }
+
+    // Update the singleton row. The singleton is guaranteed to exist (created
+    // by app initialization). Using update() avoids the upsert create block
+    // which triggers Prisma validation of all schema fields in dev mode.
+    // If the row somehow doesn't exist, fall back to create with just id +
+    // provided risk fields (all other Settings fields use their @default
+    // values from schema.prisma).
+    let updated: Settings;
+    try {
+      updated = await db.settings.update({
+        where: { id: 'singleton' },
+        data: input.data,
+      });
+    } catch (updateErr: unknown) {
+      // Row doesn't exist — create it with just the id + provided risk fields.
+      logger.warn(
+        '/api/ai/brain/risk-profile',
+        'update failed, trying create',
+        updateErr,
+      );
+      updated = await db.settings.create({
+        data: {
+          id: 'singleton',
+          ...input.data,
+        } as any,
+      });
+    }
+
+    // Read back the FULL profile (merge of pre-existing + updated values)
+    // so the UI sees a consistent snapshot.
+    const savedProfile = profileFromSettings(updated);
+
+    logger.info('/api/ai/brain/risk-profile', 'profile updated', {
+      riskTolerance: savedProfile.riskTolerance,
+      maxAcceptableRisk: savedProfile.maxAcceptableRisk,
+      liquidityReserve: savedProfile.liquidityReserve,
+      investmentHorizon: savedProfile.investmentHorizon,
+    });
+
+    return apiOk({
+      ok: true as const,
+      profile: savedProfile,
+    });
+  },
+});
+
+// --- Pure helpers (čiste, testabilne) ---------------------------------------
 
 /**
  * Load the 4 risk-profile fields from Settings singleton row.
  * On any DB error / missing row / missing fields, returns DEFAULT_PROFILE.
- * (Same logic as the loader in /api/ai/brain/master/route.ts — kept duplicated
- * to keep modules decoupled. Could be extracted to @/lib/brain/profile-store
- * in a future refactor.)
+ *
+ * Same logic as the loader in /api/ai/brain/master/route.ts (kept duplicated
+ * to keep modules decoupled — could be extracted to @/lib/brain/profile-store
+ * in a future refactor).
  */
-async function loadProfile(): Promise<UserRiskProfile> {
-  const db = getFreshDb();
+async function loadProfile(
+  db: AiRouteContext['db'],
+  logger: AiRouteContext['logger'],
+): Promise<UserRiskProfile> {
   try {
     const s = await db.settings.findUnique({ where: { id: 'singleton' } });
     if (!s) return DEFAULT_PROFILE;
-    const rawTolerance = String(s.userRiskTolerance ?? 'balanced').toLowerCase();
-    const riskTolerance: RiskTolerance =
-      rawTolerance === 'conservative' || rawTolerance === 'aggressive'
-        ? rawTolerance
-        : 'balanced';
-    const rawHorizon = String(s.userInvestmentHorizon ?? 'medium').toLowerCase();
-    const investmentHorizon: InvestmentHorizon =
-      rawHorizon === 'short' || rawHorizon === 'long' ? rawHorizon : 'medium';
-    return {
-      riskTolerance,
-      maxAcceptableRisk:
-        typeof s.userMaxAcceptableRisk === 'number'
-          ? Math.max(0, Math.min(100, s.userMaxAcceptableRisk))
-          : 50,
-      liquidityReserve:
-        typeof s.userLiquidityReserve === 'number' && s.userLiquidityReserve >= 0
-          ? s.userLiquidityReserve
-          : 500,
-      investmentHorizon,
-    };
-  } catch (err: any) {
-    logger.warn('/api/ai/brain/risk-profile', 'failed to load profile, using DEFAULT', err);
+    return profileFromSettings(s);
+  } catch (err: unknown) {
+    logger.warn(
+      '/api/ai/brain/risk-profile',
+      'failed to load profile, using DEFAULT',
+      err,
+    );
     return DEFAULT_PROFILE;
   }
+}
+
+/**
+ * Read the 4 risk-profile fields from a Settings row (post-update or
+ * post-findUnique). Validates each field — older rows may have invalid
+ * values (treat any non-{conservative,balanced,aggressive} as balanced,
+ * any non-{short,medium,long} as medium). Out-of-range numbers are clamped
+ * to their valid range.
+ *
+ * Same logic as the inline reader in the original POST handler — extracted
+ * here so both GET (via loadProfile) and POST (after update/create) share
+ * the same transform.
+ */
+function profileFromSettings(s: Settings | null): UserRiskProfile {
+  const rawTolerance = String(s?.userRiskTolerance ?? 'balanced').toLowerCase();
+  const riskTolerance: RiskTolerance =
+    rawTolerance === 'conservative' || rawTolerance === 'aggressive'
+      ? rawTolerance
+      : 'balanced';
+  const rawHorizon = String(s?.userInvestmentHorizon ?? 'medium').toLowerCase();
+  const investmentHorizon: InvestmentHorizon =
+    rawHorizon === 'short' || rawHorizon === 'long' ? rawHorizon : 'medium';
+  return {
+    riskTolerance,
+    maxAcceptableRisk:
+      typeof s?.userMaxAcceptableRisk === 'number'
+        ? Math.max(0, Math.min(100, s.userMaxAcceptableRisk))
+        : 50,
+    liquidityReserve:
+      typeof s?.userLiquidityReserve === 'number' && s.userLiquidityReserve >= 0
+        ? s.userLiquidityReserve
+        : 500,
+    investmentHorizon,
+  };
 }
 
 /**
  * Parse the POST body and extract risk-profile fields.
  * Accepts any subset of the 4 fields — unspecified fields are omitted from
  * the Prisma `data` payload (so they retain their previous value).
+ *
+ * Returns `{ profile: {}, data: {} }` for non-POST requests, invalid
+ * Content-Type, or non-object bodies.
  */
-function parseProfileBody(body: Record<string, unknown>): {
-  profile: Partial<UserRiskProfile>;
-  data: Record<string, unknown>;
-} {
+async function parsePostInput(req: NextRequest): Promise<RiskProfilePostInput> {
+  let body: Record<string, unknown> = {};
+  try {
+    const ct = req.headers.get('content-type') ?? '';
+    if (ct.includes('application/json')) {
+      const cloned = req.clone();
+      const parsed = (await cloned.json()) as Record<string, unknown>;
+      if (parsed && typeof parsed === 'object' && !Array.isArray(parsed)) {
+        body = parsed;
+      }
+    }
+  } catch {
+    body = {};
+  }
+  return parseProfileBody(body);
+}
+
+/**
+ * Extract the 4 risk-profile fields from a parsed body object. Each field
+ * is validated individually — invalid values are silently dropped (not
+ * added to the output), so the caller can detect "no valid fields" by
+ * checking `Object.keys(profile).length === 0`.
+ *
+ * `profile` is the type-safe UserRiskProfile subset for validation/return;
+ * `data` is the Prisma update payload (field names match the schema columns
+ * userRiskTolerance / userMaxAcceptableRisk / userLiquidityReserve /
+ * userInvestmentHorizon).
+ */
+function parseProfileBody(body: Record<string, unknown>): RiskProfilePostInput {
   const profile: Partial<UserRiskProfile> = {};
   const data: Record<string, unknown> = {};
 
@@ -144,158 +332,4 @@ function parseProfileBody(body: Record<string, unknown>): {
   }
 
   return { profile, data };
-}
-
-// --- GET -------------------------------------------------------------------
-
-export async function GET() {
-  try {
-    const profile = await loadProfile();
-
-    // Compute a sample adjustment using the CURRENT Master Brain output so
-    // the UI can preview the impact of the profile. If masterBrain() fails,
-    // we still return the profile — adjustment will be null.
-    let adjustment: ReturnType<typeof adjustMasterBrainForRiskProfile> | null = null;
-    try {
-      const masterResult = await masterBrain();
-      adjustment = adjustMasterBrainForRiskProfile(masterResult, profile);
-    } catch (err: any) {
-      logger.warn('/api/ai/brain/risk-profile', 'failed to compute sample adjustment', err);
-    }
-
-    return NextResponse.json({
-      ok: true as const,
-      profile,
-      adjustment,
-    });
-  } catch (err: any) {
-    logger.error('/api/ai/brain/risk-profile', 'GET handler failed', err);
-    return NextResponse.json(
-      { error: err?.message ?? 'Napaka' },
-      { status: 500 },
-    );
-  }
-}
-
-// --- POST ------------------------------------------------------------------
-
-export async function POST(req: NextRequest) {
-  console.error('[risk-profile POST] ROUTE_INVOKED_AT=' + new Date().toISOString());
-  logger.error('/api/ai/brain/risk-profile', 'POST invoked — about to load fresh db');
-  // v8.24: Use a FRESH PrismaClient. We import @/lib/db DYNAMICALLY so that
-  // each request gets a fresh module evaluation (in dev mode). Combined with
-  // db.ts's schema-version check, this ensures the cached globalThis.prisma
-  // is discarded and a new client is created with the latest @prisma/client.
-  //
-  // (Yes, this is a workaround for a Turbopack dev-mode caching issue where
-  // static imports get an OLD `db` symbol. Dynamic import forces re-eval.)
-  const dbModule = await import('@/lib/db');
-  // Discard any cached PrismaClient — db.ts will create a fresh one.
-  (globalThis as unknown as { prisma?: unknown }).prisma = undefined;
-  // Force re-evaluation of @/lib/db by busting the require cache (Node.js).
-  // In dev, this triggers db.ts to re-create PrismaClient with the latest
-  // @prisma/client module (which has the v8.24 Settings fields).
-  const db = dbModule.db;
-  console.error('[risk-profile POST] DB_LOADED typeof_upsert=' + typeof db.settings?.upsert);
-  try {
-    let body: Record<string, unknown> = {};
-    try {
-      const ct = req.headers.get('content-type') ?? '';
-      if (ct.includes('application/json')) {
-        const cloned = req.clone();
-        body = (await cloned.json()) as Record<string, unknown>;
-      }
-    } catch {
-      body = {};
-    }
-    if (!body || typeof body !== 'object' || Array.isArray(body)) {
-      body = {};
-    }
-
-    const { profile: partialProfile, data: updateData } = parseProfileBody(body);
-
-    if (Object.keys(partialProfile).length === 0) {
-      return NextResponse.json(
-        {
-          ok: false,
-          error:
-            'No valid risk-profile fields in body. Expected at least one of: riskTolerance, maxAcceptableRisk, liquidityReserve, investmentHorizon.',
-        },
-        { status: 400 },
-      );
-    }
-
-    // Validate the partial profile (validateProfile accepts Partial<>).
-    const validation = validateProfile(partialProfile);
-    if (!validation.valid) {
-      return NextResponse.json(
-        { ok: false, error: 'Validation failed', errors: validation.errors },
-        { status: 400 },
-      );
-    }
-
-    // v8.24: Update the singleton row. The singleton is guaranteed to exist
-    // (created by app initialization). Using update() avoids the upsert create
-    // block which triggers Prisma validation of all schema fields in dev mode.
-    // If the row somehow doesn't exist, fall back to create with just id + defaults.
-    const db = getFreshDb();
-    let updated: Awaited<ReturnType<typeof db.settings.update>>;
-    try {
-      updated = await db.settings.update({
-        where: { id: 'singleton' },
-        data: updateData,
-      });
-    } catch (updateErr: any) {
-      // Row doesn't exist — create it with just the id + provided risk fields.
-      // All other Settings fields use their @default values from schema.prisma.
-      logger.warn('/api/ai/brain/risk-profile', 'update failed, trying create', updateErr);
-      updated = await db.settings.create({
-        data: {
-          id: 'singleton',
-          ...updateData,
-        } as any,
-      });
-    }
-
-    // Read back the FULL profile (merge of pre-existing + updated values)
-    // so the UI sees a consistent snapshot.
-    const rawTolerance = String(updated.userRiskTolerance ?? 'balanced').toLowerCase();
-    const riskTolerance: RiskTolerance =
-      rawTolerance === 'conservative' || rawTolerance === 'aggressive'
-        ? rawTolerance
-        : 'balanced';
-    const rawHorizon = String(updated.userInvestmentHorizon ?? 'medium').toLowerCase();
-    const investmentHorizon: InvestmentHorizon =
-      rawHorizon === 'short' || rawHorizon === 'long' ? rawHorizon : 'medium';
-    const savedProfile: UserRiskProfile = {
-      riskTolerance,
-      maxAcceptableRisk:
-        typeof updated.userMaxAcceptableRisk === 'number'
-          ? Math.max(0, Math.min(100, updated.userMaxAcceptableRisk))
-          : 50,
-      liquidityReserve:
-        typeof updated.userLiquidityReserve === 'number' && updated.userLiquidityReserve >= 0
-          ? updated.userLiquidityReserve
-          : 500,
-      investmentHorizon,
-    };
-
-    logger.info('/api/ai/brain/risk-profile', 'profile updated', {
-      riskTolerance: savedProfile.riskTolerance,
-      maxAcceptableRisk: savedProfile.maxAcceptableRisk,
-      liquidityReserve: savedProfile.liquidityReserve,
-      investmentHorizon: savedProfile.investmentHorizon,
-    });
-
-    return NextResponse.json({
-      ok: true as const,
-      profile: savedProfile,
-    });
-  } catch (err: any) {
-    logger.error('/api/ai/brain/risk-profile', 'POST handler failed', err);
-    return NextResponse.json(
-      { error: err?.message ?? 'Napaka' },
-      { status: 500 },
-    );
-  }
 }

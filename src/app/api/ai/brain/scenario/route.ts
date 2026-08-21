@@ -1,4 +1,4 @@
-// v8.27: Scenario Brain API — "What if?" simulator.
+// v8.27 / v8.95.2-d-refactor: Scenario Brain API — "What if?" simulator.
 //
 // GET:  runs 3 preset scenarios (conservative/balanced/aggressive) in
 //       parallel via compareScenarios() (which itself calls masterBrain()
@@ -37,9 +37,16 @@
 //     source: 'v8.27-scenario-brain',
 //     cachedAt?: number
 //   }
+//
+// Refaktoriran z withAiRoute helperjem (v8.95.2-d) + enforceBudget guard
+// (non-breaking — endpoint ne kliče AI direktno, ampak je konsistentno z
+// vsemi v8.94.x / v8.95.x migracijami). compareScenarios() se še vedno kliče
+// direktno (NE preko ctx.callAi — ker endpoint je deterministic in ne kliče
+// AI providerja).
 
-import { NextRequest, NextResponse } from 'next/server';
-import { logger } from '@/lib/logger';
+import type { NextRequest } from 'next/server';
+import { withAiRoute, AI_ROUTE_DEFAULTS, type AiRouteContext } from '@/lib/with-ai-route';
+import { apiOk } from '@/lib/api-response';
 import { getCachedAI, setCachedAI } from '@/lib/ai-cache';
 import {
   compareScenarios,
@@ -47,8 +54,7 @@ import {
 } from '@/lib/brain/scenario';
 import type { MasterBrainInput } from '@/lib/brain/master';
 
-export const runtime = 'nodejs';
-export const dynamic = 'force-dynamic';
+export const { runtime, dynamic } = AI_ROUTE_DEFAULTS;
 export const maxDuration = 60;
 
 // --- Cache TTL -----------------------------------------------------------
@@ -68,8 +74,11 @@ const SCENARIO_CACHE_TTL_MS = 15 * 60 * 1000;
  * Returns Partial<MasterBrainInput> — empty object if no overrides were
  * supplied (in which case compareScenarios() will only run the 3 presets,
  * skipping the custom scenario).
+ *
+ * v8.95.2-d: preimenovano iz parseBodyOverrides → resolveInputs (konsistenca
+ * z brain/profit + brain/master migracijami). Logika nespremenjena.
  */
-async function parseBodyOverrides(req: NextRequest): Promise<Partial<MasterBrainInput>> {
+async function resolveInputs(req: NextRequest): Promise<Partial<MasterBrainInput>> {
   if (req.method !== 'POST') return {};
   try {
     const ct = req.headers.get('content-type') ?? '';
@@ -193,45 +202,42 @@ function buildCacheKey(customOverrides: Partial<MasterBrainInput>): string {
   return `scenario-brain:${parts.join('|')}`;
 }
 
-// --- Handlers ------------------------------------------------------------
+// --- Handler -------------------------------------------------------------
 
-export async function GET(req: NextRequest) {
-  return handleScenarioBrain(req);
-}
+const scenarioBrainHandler = withAiRoute<Partial<MasterBrainInput>>({
+  endpoint: '/api/ai/brain/scenario',
+  maxDuration: 60,
+  enforceBudget: true, // v8.95.2-d: budget guard + avtomatski recordAiCall
+  method: 'GET', // Endpoint sprejema GET + POST — bypass POST-only check
 
-export async function POST(req: NextRequest) {
-  return handleScenarioBrain(req);
-}
+  // GET+POST — parse iz POST body-ja (POST only — GET vrne {}). Vsa polja so
+  // optional — manjkajoča polja pomenijo da se custom scenario ne zažene.
+  parseBody: async (req: NextRequest) => resolveInputs(req),
 
-async function handleScenarioBrain(req: NextRequest) {
-  try {
-    // 1. Parse optional custom overrides (POST only — empty for GET)
-    const customOverrides = await parseBodyOverrides(req);
+  // Brez validateInput — vsi input-i so optional
 
-    // 2. Build cache key — same overrides → same key → cache hit
+  handler: async (customOverrides, _ctx: AiRouteContext) => {
+    // 1. Build cache key — same overrides → same key → cache hit
     const cacheKey = buildCacheKey(customOverrides);
 
-    // 3. Check cache — return immediately if fresh
+    // 2. Check cache — return immediately if fresh
     const cached = getCachedAI<ScenarioComparison>(cacheKey);
     if (cached) {
       // Re-stamp cachedAt so the caller sees a fresh "served at" timestamp
-      return NextResponse.json({ ...cached, cachedAt: Date.now() });
+      return apiOk({ ...cached, cachedAt: Date.now() });
     }
 
-    // 4. Run all 3 preset scenarios (+ custom if overrides provided) in parallel
+    // 3. Run all 3 preset scenarios (+ custom if overrides provided) in parallel
     const result = await compareScenarios(
       Object.keys(customOverrides).length > 0 ? customOverrides : undefined,
     );
 
-    // 5. Cache for 15 min (longer than master's 10 min because 3× compute)
+    // 4. Cache for 15 min (longer than master's 10 min because 3× compute)
     setCachedAI(cacheKey, result, SCENARIO_CACHE_TTL_MS);
 
-    return NextResponse.json({ ...result, cachedAt: Date.now() });
-  } catch (err: any) {
-    logger.error('/api/ai/brain/scenario', 'handler failed', err);
-    return NextResponse.json(
-      { error: err?.message ?? 'Napaka' },
-      { status: 500 },
-    );
-  }
-}
+    return apiOk({ ...result, cachedAt: Date.now() });
+  },
+});
+
+export const GET = scenarioBrainHandler;
+export const POST = scenarioBrainHandler;
