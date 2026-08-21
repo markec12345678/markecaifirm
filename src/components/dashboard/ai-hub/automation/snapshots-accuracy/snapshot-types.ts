@@ -15,8 +15,10 @@
  * imported from ../../types (ai-hub/types.ts).
  *
  * The other automation types (RiskProfileApiResponse, MasterBrainResult,
- * ScenarioComparisonResponse, AdaptiveWeightsMap, DraftQueueResponse, …) stay
- * in ../types.ts because they are shared across multiple automation cards.
+ * AdaptiveWeightsMap, DraftQueueResponse, …) stay in ../types.ts because they
+ * are shared across multiple automation cards. ScenarioComparisonResponse was
+ * subsequently moved to ./../scenario-brain/types.ts as part of
+ * v8.95.0-split-scenario (only consumed by the single client card).
  */
 
 import type {

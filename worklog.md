@@ -22981,3 +22981,541 @@ Stage Summary:
 - TYPECHECK: 0 errors ✨
 - TESTS: 208 passing (lib) ✨
 - Verzija: v8.94.9
+
+---
+Task ID: v8.95.0-a
+Agent: Task agent (brain/accuracy migration)
+Task: Migrate /api/ai/brain/accuracy to withAiRoute
+
+Work Log:
+- Prebral kontekst: worklog.md (v8.94 / v8.94.1–v8.94.9 vnose, še posebej v8.94.9-e brain/health ki je najbolj podoben GET brain endpoint — DETERMINISTIC, ne kliče AI direktno, le getSnapshots() DB helper)
+- Prebral src/lib/with-ai-route.ts (helper API: withAiRoute, AI_ROUTE_DEFAULTS, ApiRouteError, AiRouteContext, enforceBudget)
+- Prebral referenčni primer 1: src/app/api/ai/deduplicate/route.ts (v8.94-refactor vzorec z withAiRoute<>, parseBody async, handler context, apiOk pass-through, ekstrahirane pomožne funkcije OUTSIDE handler-ja)
+- Prebral referenčni primer 2: src/app/api/ai/brain/health/route.ts (v8.94.9-e — GET method vzorec z method: 'GET', parseBody async () => ({}), BrainHealthInput prazen interface, DETERMINISTIC endpoint z enforceBudget: true ker ne kliče AI direktno)
+- Prebral original src/app/api/ai/brain/accuracy/route.ts (207 vrstic — GET handler z manual try/catch z logger.error + NextResponse.json 500, kliče getSnapshots(days) iz @/lib/brain/snapshots, 3 pure pomožne funkcije že OUTSIDE handler-ja: parseDays(req), computeTrend(snapshots), avgAccuracy(snapshots, key); DETERMINISTIC — ne kliče AI/LLM SDK direktno, le BrainSnapshot DB rows preko getSnapshots helper-ja)
+- Migriral na withAiRoute vzorec:
+  - Import: type NextRequest iz 'next/server' (potreben za parseDays tip), withAiRoute + AI_ROUTE_DEFAULTS + type AiRouteContext iz @/lib/with-ai-route, apiOk iz @/lib/api-response, ohranjen getSnapshots + type BrainSnapshotRow iz @/lib/brain/snapshots
+  - export const { runtime, dynamic } = AI_ROUTE_DEFAULTS; export const maxDuration = 60 (konsistentno z originalom — original je imel runtime='nodejs', dynamic='force-dynamic', maxDuration=60)
+  - BrainAccuracyInput interface (days: number — edini input iz ?days= query param)
+  - method: 'GET' (konsistentno z brain/health vzorcem — endpoint je GET-only)
+  - parseBody: async (req) => ({ days: parseDays(req) }) — ekstrakt ?days= iz query string-a, clamp [1, 400], default 30 (parseDays ostaja pure funkcija OUTSIDE handler-ja, identična originalu)
+  - Brez validateInput — parseDays vedno vrne valid število (clamp + default 30)
+  - enforceBudget: true — preveri AI budget PRED klicem (endpoint sicer ne kliče AI direktno, ampak je konsistentno z vsemi v8.94.x migracijami; non-breaking per task instructions; avtomatski recordAiCall PO uspehu)
+  - handler prejme (input, _ctx: AiRouteContext) — ctx ni uporabljen (endpoint DETERMINISTIC — getSnapshots interno upravlja svoj DB client preko @/lib/brain/snapshots modula, ne preko ctx.db)
+  - Handler body IDENTIČEN originalu: getSnapshots(days) → avgAccuracy(accuracy30d/90d) → gradeTrend map → computeTrend → summary objekt z totalSnapshots/snapshotsWithAccuracy*/avgAccuracy*/trend/firstHalfAvg/secondHalfAvg/message
+  - apiOk pass-through z ohranjenim ok: true: original `NextResponse.json({ ok: true, days, accuracy30d, accuracy90d, gradeTrend, summary })` → `apiOk({ ok: true, days, accuracy30d, accuracy90d, gradeTrend, summary })` (apiOk je pass-through — ne dodaja sam ok: true polja, zato explicitno ohranjeno v payload-u za "same input → same output")
+  - 3 pure pomožne funkcije ohranjene IDENTIČNO originalu OUTSIDE handler-ja: parseDays(req), computeTrend(snapshots), avgAccuracy(snapshots, key) — vse byte-identično originalu
+  - Odstranjeno: manual try/catch z logger.error + NextResponse.json 500 (zdej v withAiRoute — wrapper interno catch-a in vrne apiError 500 z { ok: false, error } formatom, konsistentno z vsemi prejšnjimi v8.94.x migracijami; additive `ok: false` field, ne breaking)
+  - Odstranjeno: import NextResponse (ne rabimo več — apiOk iz @/lib/api-response je pass-through ki interno uporablja NextResponse.json)
+  - Odstranjeno: import logger (ne rabimo več — withAiRoute interno upravlja error logging preko apiError helperja)
+  - Modul docstring posodobljen: dodana v8.95.0-a sekcija ki dokumentira refactor z withAiRoute + enforceBudget guard
+- Same input → same output: ?days= query parsing (default 30, clamp [1, 400]), getSnapshots(days) klicanje, accuracy30d/90d avg computation, gradeTrend array shape (10 polj per snapshot vključno z accuracy30d/90d za tooltip), summary objekt shape (8 polj vključno z INSUFFICIENT_DATA message-om), trend detection logika (< 4 snapshots → INSUFFICIENT_DATA, ±2 threshold za IMPROVING/DECLINING/STABLE), maxDuration (60), success response shape ({ ok: true, days, accuracy30d, accuracy90d, gradeTrend, summary }) — vse IDENTIČNO originalu
+- Sprememba error response konvencije: original 500 `{ error }` → wrapper-jev `{ ok: false, error }` (konsistentno z vsemi prejšnjimi v8.94.x migracijami; additive `ok: false` field, ne breaking — success response shape nespremenjen z ohranjenim ok: true)
+- Verifikacija:
+  - bunx tsc --noEmit (full project): 0 errors ✨
+  - bunx eslint src/app/api/ai/brain/accuracy/route.ts: 0 errors ✨
+
+Stage Summary:
+- MODIFIED: src/app/api/ai/brain/accuracy/route.ts
+- Lines: 207 → 229
+- enforceBudget: true
+- Lint: 0, Typecheck: 0
+
+---
+Task ID: v8.95.0-f
+Agent: Task agent (brain/performance migration)
+Task: Migrate /api/ai/brain/performance to withAiRoute
+
+Work Log:
+- Prebral kontekst: worklog.md (v8.94 / v8.94.1–v8.94.9 vnose, še posebej v8.94.9-e brain/health za brain endpoint migracijo in v8.94.9-d brain/actual-profit za GET+POST dual-method vzorec) in src/lib/with-ai-route.ts (helper API: withAiRoute, AI_ROUTE_DEFAULTS, ApiRouteError, AiRouteContext, enforceBudget)
+- Prebral referenčni primer 1: src/app/api/ai/deduplicate/route.ts (v8.94-refactor vzorec z withAiRoute<>, parseBody async, handler context, apiOk pass-through, pomožne funkcije OUTSIDE handler-ja)
+- Prebral referenčni primer 2: src/app/api/ai/brain/health/route.ts (v8.94.9-e — podoben brain endpoint, že migriran; GET-only z enforceBudget: true, prazna Input interface z eslint-disable direktivo, method: 'GET', parseBody: async () => ({}), ctx unused ker DETERMINISTIC)
+- Prebral referenčni primer 3: src/app/api/ai/brain/actual-profit/route.ts (v8.94.9-d — GET+POST dual-method vzorec z `const handler = withAiRoute(...)` + `export const GET = handler; export const POST = handler;` ali ločena handlerja, parseDays(req) pure helper ekstrahiran ven)
+- Prebral referenčni primer 4: src/app/api/ai/auto-relisting-scheduler/route.ts (v8.94.8-f — GET+POST dual-method z method: 'GET' ki bypass-a POST-only check; čist list helpers ekstrahirani kot pure funkcije)
+- Prebral original src/app/api/ai/brain/performance/route.ts (147 vrstic — GET vrača cacheStats + perfStats + cacheStoreSize + summary (overallHitRate, totalRequests, totalCached, avgResponseTimeMs, p95ResponseTimeMs); POST { action: 'reset' } počisti cache stats + perf stats (NE počisti cache store-a, samo counterje); ročna JSON parse z content-type check + query string fallback za action; DETERMINISTIC — ne kliče AI/LLM SDK direktno, le in-memory reads)
+- Prebral src/lib/api-response.ts (apiOk pass-through — NextResponse.json(data, { status: 200 }), ne dodaja sam ok:true; apiBadRequest vrača { ok: false, error: msg } z 400) — original GET/POST response shape ({ ok: true, ... }) se ohrani ker apiOk ne dodaja sam polj
+- Prebral src/lib/ai-cache.ts (getAllCacheStats/getCacheStoreSize/resetCacheStats signatures) in src/lib/brain/performance.ts (getAllPerfStats/resetPerfStats + PerfStats interface z avgMs/p95Ms polji)
+- Migracija v withAiRoute vzorec (DVA ločena handler-ja ker GET in POST imata različno parseBody/validateInput logiko):
+  1. Importi: type NextRequest iz 'next/server' (za parseAction signature); withAiRoute, AI_ROUTE_DEFAULTS, type AiRouteContext iz @/lib/with-ai-route; apiOk iz @/lib/api-response; getAllCacheStats/getCacheStoreSize/resetCacheStats iz @/lib/ai-cache; getAllPerfStats/resetPerfStats iz @/lib/brain/performance
+  2. Re-export `runtime`, `dynamic` iz AI_ROUTE_DEFAULTS + lokalni `maxDuration = 30` (konsistentno z originalom — pure in-memory reads, no DB queries)
+  3. PerformanceGetInput interface (prazen, z // eslint-disable-next-line @typescript-eslint/no-empty-object-type direktivo — konsistentno z brain/health BrainHealthInput vzorcem)
+  4. PerformancePostInput interface { action: string | null }
+  5. parseAction(req) — pure async helper ekstrahiran OUTSIDE handler-ja; logika IDENTIČNA originalu: try JSON parse z req.clone() + content-type check, fallback na ?action= query string preko new URL(req.url).searchParams.get('action'); vrača string | null
+  6. computeSummary(cacheStats, perfStats) — pure helper ekstrahiran OUTSIDE handler-ja; logika IDENTIČNA originalu: totalHits = sum(hits), totalRequests = sum(total), overallHitRate = totalRequests > 0 ? (totalHits/totalRequests)*100 : 0 (rounded to 2 decimals), avgResponseTimeMs = perfStats.length > 0 ? round(avg of avgMs) : 0, p95ResponseTimeMs = perfStats.length > 0 ? Math.max(p95Ms) : 0; signature uporablja ReturnType<typeof getAllCacheStats> / ReturnType<typeof getAllPerfStats> za loose coupling z lib tipi
+  7. performanceGetHandler = withAiRoute<PerformanceGetInput>({ endpoint, maxDuration: 30, enforceBudget: true, method: 'GET', parseBody: async () => ({}), handler: async (_input, _ctx) => { getAllCacheStats + getAllPerfStats + getCacheStoreSize + computeSummary → apiOk({ ok: true, timestamp, cacheStats, perfStats, cacheStoreSize, summary, source: 'v8.33-performance' }) } })
+  8. performancePostHandler = withAiRoute<PerformancePostInput>({ endpoint, maxDuration: 30, enforceBudget: true, method: 'POST', parseBody: async (req) => ({ action: await parseAction(req) }), validateInput: (input) => input.action === 'reset' ? null : 'Unknown action — expected { "action": "reset" } (POST body) or ?action=reset (query)', handler: async (_input, _ctx) => { resetCacheStats + resetPerfStats → apiOk({ ok: true, message: 'Cache stats + perf stats reset.', timestamp, source: 'v8.33-performance' }) } })
+  9. export const GET = performanceGetHandler; export const POST = performancePostHandler; (ločena handler-ja ker GET in POST imata različno parseBody/validateInput)
+  10. _ctx: AiRouteContext parameter unused (endpoint DETERMINISTIC — ne kliče ctx.callAi/parseAi/db ker NE kliče AI direktno in NE dostopa do DB — getAllCacheStats/getAllPerfStats so pure in-memory reads); _input unused v obeh handler-jih ker GET nima inputa, POST reset ne rabi inputa po validaciji
+  11. Odstranjeno: manual try/catch z logger.error + NextResponse.json 500 (zdej v withAiRoute — wrapper interno catch-a in vrne apiError 500 z { ok: false, error } formatom, konsistentno z vsemi prejšnjimi v8.94.x migracijami; original je že imel { ok: false, error } format, tako je additive-only sprememba)
+  12. Odstranjeno: import NextResponse (ne rabimo več — apiOk pass-through)
+  13. Odstranjeno: import logger (ne rabimo več — withAiRoute interno upravlja error logging preko apiError helperja)
+  14. Modul docstring posodobljen: dodana v8.95.0-f sekcija ki dokumentira refactor z withAiRoute + enforceBudget guard
+- Same input → same output: response shape za GET ({ ok: true, timestamp, cacheStats, perfStats, cacheStoreSize, summary, source }) IDENTIČEN; response shape za POST reset ({ ok: true, message, timestamp, source }) IDENTIČEN; 400 error message za napačen action IDENTIČEN ("Unknown action — expected { \"action\": \"reset\" } (POST body) or ?action=reset (query)"); 500 error shape ({ ok: false, error }) IDENTIČEN (original isti format); maxDuration (30) IDENTIČEN; runtime/dynamic IDENTIČEN
+- enforceBudget: true kljub temu da endpoint NE kliče AI (pure in-memory reads). Budget check se ne sproži ker handler ne kliče ctx.callAi() — non-breaking, drži vzorec konsistentno z brain/health in brain/actual-profit primerom; avtomatski recordAiCall je additive
+- Verifikacija:
+  - bunx tsc --noEmit (full project): 0 errors ✨
+  - bunx eslint src/app/api/ai/brain/performance/route.ts: 0 errors ✨
+
+Stage Summary:
+- MODIFIED: src/app/api/ai/brain/performance/route.ts
+- Lines: 147 → 194
+- enforceBudget: true
+- Lint: 0, Typecheck: 0
+
+---
+Task ID: v8.95.0-c
+Agent: Task agent (brain/drafts migration)
+Task: Migrate /api/ai/brain/drafts to withAiRoute
+
+Work Log:
+- Prebral kontekst: worklog.md (v8.94 / v8.94.1–v8.94.9 vnose, še posebej v8.94.9-c daily-tip za GET+POST dual-method vzorec in v8.94.9-f brain/auto-pilot/rollback za brain endpoint migracijo z ApiRouteError) in src/lib/with-ai-route.ts (helper API: withAiRoute, AI_ROUTE_DEFAULTS, ApiRouteError, AiRouteContext, enforceBudget)
+- Prebral referenčni primer 1: src/app/api/ai/deduplicate/route.ts (v8.94-refactor vzorec z withAiRoute<>, parseBody async, handler context, apiOk pass-through, pomožne funkcije OUTSIDE handler-ja, enforceBudget: true)
+- Prebral referenčni primer 2: src/app/api/ai/brain/auto-pilot/rollback/route.ts (v8.94.9-f — podoben brain endpoint, že migriran; POST-only z enforceBudget: true, ApiRouteError za 404/400 mapping iz helper funkcij, ekstrahirana parseRollbackBody/runRollback)
+- Prebral referenčni primer 3: src/app/api/ai/brain/daily-tip/route.ts (v8.94.9-c — GET+POST dual-method z dvema ločenima withAiRoute klicema, prazna Input interface z eslint-disable direktivo, method: 'GET' bypass POST-only check)
+- Prebral referenčni primer 4: src/app/api/ai/brain/actual-profit/route.ts (v8.94.9-d — GET+POST dual-method kjer je isti handler uporabljen za oba preko `const handler = withAiRoute(...)` re-export vzorca; parseDays(req) pure helper ekstrahiran ven)
+- Prebral src/lib/api-response.ts (apiOk pass-through — NextResponse.json(data, { status: 200 }), ne dodaja sam ok:true; apiBadRequest vrača { ok: false, error: msg } z 400)
+- Prebral src/lib/brain/draft-queue.ts (DraftStatus, CreateDraftsInput, DraftQueueQuery, Confidence tipi + createDraftsFromMasterBrain/getDraftQueue signatures)
+- Prebral original src/app/api/ai/brain/drafts/route.ts (185 vrstic — DVA handlerja: GET (URL query parse za status/domain/limit/days + getDraftQueue call) in POST (body parse za { actions?, snapshotDate? } z defensive JSON + content-type check; če actions manjkajo, kliče masterBrain() preko dynamic import in uporabi topActions; snapshotDate default na današnji UTC datum); oba z manual try/catch + logger.error + NextResponse.json 500; DETERMINISTIC — route NE kliče AI/LLM SDK direktno, le interno masterBrain() ki je svoj modul)
+- Migracija v withAiRoute vzorec (DVA ločena handler-ja ker GET in POST imata popolnoma različno parseBody/handler logiko — sledi daily-tip vzorcu):
+  1. Importi: type NextRequest iz 'next/server' (za parseDraftsQuery/parseDraftsBody signature); withAiRoute, AI_ROUTE_DEFAULTS, type AiRouteContext iz @/lib/with-ai-route; apiOk iz @/lib/api-response; createDraftsFromMasterBrain, getDraftQueue, type DraftStatus, type CreateDraftsInput, type DraftQueueQuery iz @/lib/brain/draft-queue; type DomainName iz @/lib/brain/master; type Confidence iz @/lib/brain/profit
+  2. Re-export `runtime`, `dynamic` iz AI_ROUTE_DEFAULTS + lokalni `maxDuration = 60` (konsistentno z originalom)
+  3. DraftsPostInput interface { actions?: CreateDraftsInput['actions']; snapshotDate?: string } — GET uporablja DraftQueueQuery tip direktno (že ima status?/domain?/limit?/days? polja, identično originalni lokalni `query` spremenljivki)
+  4. GET handler = withAiRoute<DraftQueueQuery>({ endpoint, maxDuration: 60, enforceBudget: true, method: 'GET', parseBody: (req) => parseDraftsQuery(req), handler: async (input, _ctx) => apiOk(await getDraftQueue(input)) })
+  5. POST handler = withAiRoute<DraftsPostInput>({ endpoint, maxDuration: 60, enforceBudget: true, method: 'POST', parseBody: (req) => parseDraftsBody(req), handler: async (input, _ctx) => apiOk(await createDraftsFromActions(input)) })
+  6. parseDraftsQuery(req) — pure sync helper ekstrahiran OUTSIDE handler-ja; logika IDENTIČNA originalu: try/catch okrog new URL(req.url), fallback na null; query začne kot { limit: 30, days: 30 }; status set samo če v VALID_STATUS_SET; domain set samo če v DOMAIN_SET; limit/days parse preko Number() + Number.isFinite + Math.floor; vrača DraftQueueQuery
+  7. parseDraftsBody(req) — async helper ekstrahiran OUTSIDE handler-ja; logika IDENTIČNA originalu: try/catch z req.clone() + content-type check za application/json, fallback na {}; snapshotDate validacija preko /^\d{4}-\d{2}-\d{2}$/ regex; actions array filter (a && typeof a === 'object' && !Array.isArray(a)) + map z type-coercion (rank: number | Number(rank) || 0, domain: string | '' as DomainName, signal/action: string | '', expectedUpliftEUR: number | Number(...) || 0, confidence: string | '' as Confidence); vrača { actions, snapshotDate }
+  8. createDraftsFromActions(input) — async helper ekstrahiran OUTSIDE handler-ja; logika IDENTIČNA originalu: destructure { actions, snapshotDate } iz input; if (!actions) → dynamic import { masterBrain } iz @/lib/brain/master + masterBrain({} as any) + map topActions v isti shape; if (!snapshotDate) → konstruiraj današnji UTC datum preko getUTCFullYear/getUTCMonth/getUTCDate + padStart(2, '0'); končno await createDraftsFromMasterBrain({ actions, snapshotDate })
+  9. _ctx: AiRouteContext parameter unused (route DETERMINISTIC — ne kliče ctx.callAi/parseAi/db; masterBrain() kliče interno brez ctx context-a)
+  10. Ohranjene konstante: ALL_DOMAINS, DOMAIN_SET, VALID_STATUS_SET, VALID_CONFIDENCE_SET (zadnji unused v originalu — ohranjen + void reference za type-safety; ni business logic, ne vpliva na output)
+  11. Odstranjeno: manual try/catch z logger.error + NextResponse.json 500 (zdej v withAiRoute — wrapper interno catch-a in vrne apiError 500 z { ok: false, error } formatom, konsistentno z vsemi prejšnjimi v8.94.x migracijami)
+  12. Odstranjeno: import NextResponse (ne rabimo več — apiOk pass-through)
+  13. Odstranjeno: import logger (ne rabimo več — withAiRoute interno upravlja error logging preko apiError helperja)
+  14. Modul docstring posodobljen: dodana v8.95.0-c sekcija ki dokumentira refactor z withAiRoute + enforceBudget guard + razlaga da POST kliče masterBrain() interno (ne preko ctx.callAi)
+- Same input → same output: GET query parametri (status, domain, limit, days) parsing + defaults IDENTIČEN; GET response shape (DraftQueueResult { ok, drafts, stats, domainStats }) IDENTIČEN; POST body parsing (actions array, snapshotDate regex) IDENTIČEN; POST masterBrain() fallback ko actions manjkajo IDENTIČEN; POST snapshotDate default na današnji UTC datum IDENTIČEN; POST response shape (CreateDraftsResult { ok, created, drafts, expiredCount }) IDENTIČEN; maxDuration (60) IDENTIČEN; runtime/dynamic IDENTIČEN; 500 error shape sprememba: original { error } → wrapper-jev { ok: false, error } (konsistentno z vsemi prejšnjimi v8.94.x migracijami)
+- enforceBudget: true kljub temu da route NE kliče AI direktno. POST handler kliče masterBrain() interno ki lahko sproži AI klice preko svojih 7 domen brain-ov (vendar znotraj svoje closure, ne preko ctx.callAi). Budget check se sproži pred klicem; avtomatski recordAiCall je additive. GET handler je pure-read (getDraftQueue) — budget check je non-breaking, drži vzorec konsistentno z brain/health in brain/actual-profit primeri
+- Verifikacija:
+  - bunx tsc --noEmit (full project): 0 errors ✨ (exit 0)
+  - bunx eslint src/app/api/ai/brain/drafts/route.ts: 0 errors ✨ (exit 0)
+
+Stage Summary:
+- MODIFIED: src/app/api/ai/brain/drafts/route.ts
+- Lines: 185 → 253 (+68; ~37% rast zaradi tipiziranih pomožnih funkcij OUTSIDE handler-ja — parseDraftsQuery/parseDraftsBody/createDraftsFromActions; handlerja sama ~15 vrstic, prej ~80 z inline logiko)
+- enforceBudget: true
+- Lint: 0, Typecheck: 0
+
+---
+Task ID: v8.95.0-e
+Agent: Task agent (brain/explain migration)
+Task: Migrate /api/ai/brain/explain to withAiRoute
+
+Work Log:
+- Prebral worklog.md (v8.94 entries + v8.94.9 brain/daily-tip, brain/actual-profit, brain/health, brain/auto-pilot/rollback) za vzorec migracij + GET+POST shared handler pattern
+- Prebral src/lib/with-ai-route.ts (helper API: withAiRoute, AI_ROUTE_DEFAULTS, ApiRouteError, AiRouteContext, enforceBudget option, method='GET' bypass za POST-only check)
+- Prebral referenčni primer 1: src/app/api/ai/deduplicate/route.ts (migrirani vzorec z enforceBudget + ekstrahiranimi pure helperji + apiOk)
+- Prebral referenčni primer 2: src/app/api/ai/brain/health/route.ts (similar brain endpoint — cached, GET-only, enforceBudget true, eslint-disable za empty interface)
+- Prebral referenčni primer 3: src/app/api/ai/brain/actual-profit/route.ts (GET+POST shared handler pattern — `const handler = withAiRoute({ method: 'GET', ... }); export const GET = handler; export const POST = handler;`)
+- Prebral src/lib/api-response.ts (apiOk, apiBadRequest, apiNotFound, apiError helperji)
+- Prebral original src/app/api/ai/brain/explain/route.ts (323 vrstic — GET+POST delegirana na skupni `handleExplain`; manual try/catch z logger.error + NextResponse.json 500; inline loadUserRiskProfile; 10-min cache z EXPLAIN_CACHE_TTL_MS; deterministic aiUsed:false, kliče le masterBrain() + explainMasterBrainActions() iz lib/brain/*; brez callProviderForRaw/parseJsonLooseExported; db importiran direktno za settings.findUnique)
+- Migracija na withAiRoute<ExplainInput> z enforceBudget: true:
+  - Uvoz: withAiRoute, AI_ROUTE_DEFAULTS, type AiRouteContext iz @/lib/with-ai-route; apiOk iz @/lib/api-response; type NextRequest iz 'next/server'
+  - export const { runtime, dynamic } = AI_ROUTE_DEFAULTS; export const maxDuration = 60 (original)
+  - interface ExplainInput { masterResult?, profileAdjustment?, input: MasterBrainInput } — input je vedno prisoten (default {} ko ni query niti body input)
+  - method: 'GET' — bypass POST-only check; dovoljuje GET + POST prek skupnega handlerja (pattern iz brain/actual-profit)
+  - parseBody: parseExplainInput(req) — razčleni query string (skipX flagi) + POST body (masterResult/profileAdjustment/input) + merge (body.input override nad query, IDENTIČNO originalu)
+  - brez validateInput — vsi input-i imajo defaults (prazen query → {} MasterBrainInput)
+  - handler ~50 vrstic: cache key → cache check → masterResult (body ali masterBrain(input)) → profileAdjustment (body ali loadUserRiskProfile iz DB) → explainMasterBrainActions → cache set → apiOk z re-stampanim cachedAt
+  - ctx.db nadomesti direkten import db (loadUserRiskProfile prejme db preko parametra)
+  - ctx.logger nadomesti importiran logger (loadUserRiskProfile prejme logger preko parametra za warn fallback)
+  - apiOk({ ...explanation, cachedAt: Date.now() }) ohranja originalno success response strukturo (explanation + re-stampan cachedAt)
+- Ekstrahirane testabilne pomožne funkcije OUTSIDE handler:
+  1. loadUserRiskProfile(db, logger) — async; prebere 4 risk-profile polja iz Settings singleton; fallback DEFAULT_PROFILE ob DB napaki/missing row; signature (db: AiRouteContext['db'], logger: AiRouteContext['logger']) — IDENTIČNO originalu razen db/logger sta parameterja (prej modul-level uvoza)
+  2. parseInputFromQuery(req) — pure; razčleni skipX flag-je iz query string (skipProfit, skipInventory, skipMarket, skipSourcing, skipRisk, skipBuyer, skipPricing) kot boolean — IDENTIČNO originalu
+  3. parseExplainBody(req) — async; razčleni POST body za masterResult/profileAdjustment/input; content-type check (application/json); req.clone() pred .json(); validacija ok:true na masterResult; validacija !Array.isArray na input; returns {} za non-POST — IDENTIČNO originalu
+  4. parseExplainInput(req) — async; merge queryInput + body.input (body.input override nad query, isti spread order kot original); vrne { masterResult?, profileAdjustment?, input }
+  5. buildCacheKey(input) — pure; determinističen cache key iz stableStringify-ja vseh 7 *Input polj + 7 skipX flagov; WeakSet za circular detection; sortDeep za sorted keys — IDENTIČNO originalu
+- Odstranjeno (boilerplate, ki ga helper obravnava):
+  - manual try/catch z logger.error + NextResponse.json({error}, {status:500}) (helper interno catch-a ApiRouteError + ostale napake preko apiError)
+  - uvoz db (ctx.db v helperju)
+  - uvoz logger (ctx.logger v helperju)
+  - uvoz NextResponse (apiOk + helper interno wrap-a)
+  - export const runtime = 'nodejs'; export const dynamic = 'force-dynamic'; (zamenjano z AI_ROUTE_DEFAULTS re-export — isti vrednosti)
+  - ločen `export async function GET` in `export async function POST` ki oba delegirata na `handleExplain(req)` — združeno v shared `explainHandler` (pattern iz brain/actual-profit)
+- Vedenje ohranjeno:
+  - isti GET+POST support (oba delegirata na isti handler prek `export const GET = explainHandler; export const POST = explainHandler;`)
+  - isti input parsing: query string skipX flagi (true/false/1/0/yes/no/on/off); POST body z optional masterResult (mora imeti ok:true), profileAdjustment, input (ne-array objekt)
+  - isti merge precedence: input = { ...queryInput, ...(body.input ?? {}) } — body.input override nad query (IDENTIČNO originalu)
+  - isti cache key build (stableStringify vseh *Input polj + skipX flagov; `brain-explain:` prefix)
+  - isti cache behavior: 10-min TTL; cache skip ko body.masterResult podan; cache re-stamp cachedAt na serve
+  - isti masterResult resolution: body.masterResult ?? await masterBrain(input)
+  - isti profileAdjustment resolution: body.profileAdjustment (ko !== undefined) ?? loadUserRiskProfile(db) → adjustMasterBrainForRiskProfile(masterResult, profile)
+  - isti response: { ...explanation, cachedAt: Date.now() } — MasterBrainExplanation z re-stampanim cachedAt
+  - loadUserRiskProfile DB query + DEFAULT_PROFILE fallback IDENTIČEN (db.settings.findUnique where id='singleton'; clamps maxAcceptableRisk 0-100; liquidityReserve >= 0 fallback 500; riskTolerance whitelist conservative/aggressive/balanced; investmentHorizon whitelist short/medium/long)
+- Spremembe v error response strukturi (konsistentno z v8.94.x migracijami):
+  - 500 error: original { error: err.message } → wrapper-jev { ok: false, error: errMsg } (preko apiError v helperju)
+- Opomba: endpoint NE kliče AI direktno (DETERMINISTIC, aiUsed:false — kliče le masterBrain() in explainMasterBrainActions() iz lib/brain/*), vendar enforceBudget: true po specifikaciji taska (konsistentno z vsemi prejšnjimi v8.94.x migracijami vključno z brain/health, brain/daily-tip, brain/actual-profit; avtomatski recordAiCall je additive, ne breaking)
+- Verifikacija:
+  - bunx tsc --noEmit: 0 errors (exit 0)
+  - bunx eslint src/app/api/ai/brain/explain/route.ts: 0 errors (exit 0; brez potrebe po eslint-disable-next-line za empty interface — ExplainInput ima 3 polja)
+
+Stage Summary:
+- MODIFIED: src/app/api/ai/brain/explain/route.ts
+- Lines: 323 → 360 (+37; +11% rast — ekstrahirani tipizirani helperji (loadUserRiskProfile z db/logger parametra, parseExplainInput merge funkcija) + bolj podroben docstring; handler sam ~50 vrstic, prej ~55 z inline try/catch; +boilerplate ~30 vrstic odstranjeno in ~70 vrstic novih helper signatur/docstringov)
+- enforceBudget: true (budget guard + avtomatski recordAiCall; non-breaking za deterministic endpoint)
+- Handler: shared `explainHandler` uporabljen za GET + POST (pattern iz brain/actual-profit)
+- Lint: 0, Typecheck: 0
+
+---
+Task ID: v8.95.0-d
+Agent: Task agent (brain/drafts/[id] migration)
+Task: Migrate /api/ai/brain/drafts/[id] to withAiRoute
+
+Work Log:
+- Prebral kontekst: worklog.md (v8.94–v8.94.9 vnose), src/lib/with-ai-route.ts (helper API: withAiRoute, AI_ROUTE_DEFAULTS, ApiRouteError, AiRouteContext, enforceBudget)
+- Prebral referenčne primere:
+  * src/app/api/ai/deduplicate/route.ts — vzorec z enforceBudget + ekstrahiranimi pomožnimi funkcijami
+  * src/app/api/ai/brain/auto-pilot/rollback/route.ts — podoben brain endpoint z ApiRouteError mapiranjem (404/400)
+  * src/app/api/ai/brain/daily-tip/route.ts — vzorec za GET handler (method: 'GET')
+  * src/app/api/ai/brain/actual-profit/route.ts — vzorec za method: 'GET' workaround (bypass POST-only check)
+- Prebral original src/app/api/ai/brain/drafts/[id]/route.ts (152 vrstic — inline GET + PATCH handlerja z manual try/catch, NextResponse.json za vse errorje, new PrismaClient() za GET z raw SQL)
+- Prebral src/lib/brain/draft-queue.ts za updateDraftStatus signaturo (input: { id, status: 'executed'|'rejected'|'approved', feedbackNote? }; result: { ok: true, draft, feedbackRecorded, feedbackResult? }) — funkcija interno uporablja getFreshDb() + raw SQL, zato PATCH handler le delegira
+- Migracija na withAiRoute vzorec (BOTH GET in PATCH):
+  - uvozi: withAiRoute, AI_ROUTE_DEFAULTS, ApiRouteError, type AiRouteContext iz @/lib/with-ai-route; apiOk iz @/lib/api-response; type NextRequest iz next/server; updateDraftStatus iz @/lib/brain/draft-queue
+  - export const { runtime, dynamic } = AI_ROUTE_DEFAULTS; export const maxDuration = 60 (original)
+  - Input interfaces: PatchDraftInput { id, status (normalized lowercase/trimmed), rawStatus (za error msg), feedbackNote? }; GetDraftInput { id }
+  - PATCH: withAiRoute<PatchDraftInput> z method: 'GET' (workaround — helper podpira le POST|GET, 'GET' bypass-a POST-only check; PATCH request ne sproži POST-check-a)
+    * parseBody: extractIdFromUrl(req) + parseJsonBody(req) — normaliziran status + ohranjen rawStatus za error message + feedbackNote slice(0, 1000)
+    * validateInput: !id → 400 "Missing draft id (expected /api/ai/brain/drafts/{id})."; !VALID_PATCH_STATUS.has(status) → 400 `Invalid status: ${JSON.stringify(rawStatus)}. Must be 'executed', 'rejected', or 'approved'.` (IDENTIČNO originalu — rawStatus ohranja original body.status za error msg, tudi če je non-string)
+    * handler: try/catch okoli updateDraftStatus; mapira errore:
+      - msg.includes('not found') → throw ApiRouteError(msg, 404)
+      - msg.includes('already has final status') || msg.includes('Cannot set status') → throw ApiRouteError(msg, 400)
+      - drugi → re-throw (helper wrappa v apiError 500)
+    * apiOk(result) — vrne originalni { ok: true, draft, feedbackRecorded, feedbackResult? }
+  - GET: withAiRoute<GetDraftInput> z method: 'GET'
+    * parseBody: extractIdFromUrl(req) → { id }
+    * validateInput: !id → 400 "Missing draft id." (IDENTIČNO originalu)
+    * handler: ctx.db.$queryRaw`SELECT * FROM ActionDraft WHERE id = ${input.id} LIMIT 1` — raw SQL ohranjen (bypass typed accessor); rows.length===0 → throw ApiRouteError(`Draft not found: ${input.id}`, 404); mapDraftRow(row) → apiOk({ ok: true, draft, source: 'v8.29-draft-queue' })
+  - oboje z enforceBudget: true (consistency guard — endpoint ne kliče AI direktno, ampak drži vzorec; budget check je non-breaking ker handler ne kliče ctx.callAi)
+- Ekstrahirane testabilne pomožne funkcije (izven handlerjev):
+  1. extractIdFromUrl(req) — parse URL pathname → segments[4] (index za /api/ai/brain/drafts/{id}) → decodeURIComponent; try/catch fallback ''. Nujno ker withAiRoute interne parseBody prejme samo req (ne ctx.params, ki je drugi argument Next.js handlerja — ignoriran s strani helperja). Prva migracija dynamic-route endpointa na withAiRoute — postavlja vzorec za ostale [id] endpointe.
+  2. parseJsonBody(req) — defensive JSON parse (tolerira missing/invalid Content-Type, non-object body, JSON parse errorje → fallback {}); identično originalu
+  3. mapDraftRow(row) — mapira raw SQL row v response shape (id, rank, domain, signal, action, expectedUpliftEUR, confidence, status, feedbackNote, executedAt, rejectedAt, snapshotDate, createdAt, updatedAt); identično originalu
+- Odstranjeno (boilerplate, ki ga helper obravnava):
+  - manual try/catch z logger.error + NextResponse.json error (zunanjega try/catch okoli vseh handlerjev NI več — helper wrappa v apiError; notranji try/catch za updateDraftStatus error mapping je še vedno potreben ker vrne specifične status code)
+  - uvozi: logger, NextResponse, new PrismaClient (GET je sedaj na ctx.db singleton — boljše za production; raw SQL $queryRaw še vedno bypassa typed accessor; izognemo se ustvarjanju novega PrismaClient-a per request)
+  - manual NextResponse.json za success/error (apiOk + ApiRouteError + apiBadRequest preko validateInput)
+- Vedenje nespremenjeno (same input → same output):
+  - isti input parsing (id iz URL path, status lowercased+trimmed za validacijo, rawStatus za error message, feedbackNote slice(0, 1000))
+  - isti validacijski error messages (Missing draft id, Invalid status: ${rawStatus}, Missing draft id. — ohranjena razlika med PATCH in GET msg)
+  - isti status codes (400 za invalid/missing, 404 za not found, 400 za already-final-status, 500 za druge)
+  - isti DB query za GET (raw SQL SELECT * FROM ActionDraft WHERE id=${id} LIMIT 1)
+  - isti response shape za GET ({ ok: true, draft, source: 'v8.29-draft-queue' })
+  - isti response shape za PATCH (updateDraftStatus result: { ok: true, draft, feedbackRecorded, feedbackResult? })
+  - updateDraftStatus() v draft-queue.ts nespremenjen — handler le delegira (isto AI/feedback logiko)
+  - maxDuration: 60 (original)
+- Sprememba (additive, non-breaking):
+  - GET prej je uporabljal `new PrismaClient({ log: ['error', 'warn'] })` + `$disconnect()` per request — sedaj uporablja ctx.db (singleton). Raw SQL $queryRaw še vedno bypassa typed accessor (v8.29 workaround za Turbopack stale @prisma/client). Production-friendly, edina potencialna regresija: če bi bil v dev mode typed accessor resnično stale (Turbopack caching issue), raw SQL še vedno deluje ker ne potrebuje typed accessorja.
+  - enforceBudget: true je additive — budget check se ne sproži ker handler ne kliče ctx.callAi; recordAiCall se kliče PO uspehu (additive logging, ne vpliva na response)
+- Verifikacija:
+  - bunx tsc --noEmit: 0 errors ( EXIT: 0)
+  - bunx eslint src/app/api/ai/brain/drafts/[id]/route.ts: 0 errors, 0 warnings (EXIT: 0)
+
+Stage Summary:
+- MODIFIED: src/app/api/ai/brain/drafts/[id]/route.ts
+- Lines: 152 → 214 (+62; +41% — rast iz tipiziranih pomožnih funkcij (extractIdFromUrl, parseJsonBody, mapDraftRow) + JSDoc + Input interfaces; oba handlerja skupaj ~50 vrstic)
+- enforceBudget: true (consistency guard — endpoint ne kliče AI direktno; budget check non-breaking, recordAiCall additive)
+- Lint: 0, Typecheck: 0
+
+---
+Task ID: v8.95.0-b
+Agent: Task agent (brain/auto-pilot migration)
+Task: Migrate /api/ai/brain/auto-pilot to withAiRoute
+
+Work Log:
+- Prebral worklog.md (v8.94 / v8.94.1–v8.94.3 vnose) za kontekst migracije
+- Prebral src/lib/with-ai-route.ts (helper API: withAiRoute, AI_ROUTE_DEFAULTS, ApiRouteError, AiRouteContext, enforceBudget)
+- Prebral referenčni primer 1: src/app/api/ai/deduplicate/route.ts (migrirani vzorec z enforceBudget + ekstrahiranimi funkcijami)
+- Prebral referenčni primer 2: src/app/api/ai/brain/health/route.ts (migrirani brain endpoint, GET-only, deterministic, enforceBudget: true)
+- Prebral original src/app/api/ai/brain/auto-pilot/route.ts (200 vrstic — inline GET + POST handlerja z manual try/catch, manual logger.error + NextResponse.json error)
+- Migracija na withAiRoute (dvakrat: enkrat za GET, enkrat za POST — endpoint ima obe metodi):
+  - uvozi: withAiRoute, AI_ROUTE_DEFAULTS, type AiRouteContext iz @/lib/with-ai-route; apiOk, apiBadRequest iz @/lib/api-response; type NextRequest iz next/server
+  - export const { runtime, dynamic } = AI_ROUTE_DEFAULTS; export const maxDuration = 60 (original)
+  - Input interface AutoPilotGetInput (prazna, z eslint-disable-next-line @typescript-eslint/no-empty-object-type) + AutoPilotPostInput (action + config)
+  - GET handler: method: 'GET', parseBody: async () => ({}), enforceBudget: true, klice getAutoPilotStats() in vrne apiOk(stats)
+  - POST handler: method: 'POST', parseBody: parseAutoPilotBody (ekstrahiran helper), enforceBudget: true, 5-branch action dispatch (run/config/enable_aggressive/disable_aggressive/clear_anomaly) + unknown action → apiBadRequest
+  - apiOk(result) nadomesti NextResponse.json(result) za vse success odgovore (enak status 200, enaka struktura)
+  - apiBadRequest(msg) nadomesti NextResponse.json({ ok:false, error: msg }, { status:400 }) za 400 odgovore (enak status 400, enaka struktura z ok:false)
+- Ekstrahirane testabilne pomožne funkcije OUTSIDE handler:
+  1. parseAutoPilotBody(req) — čista funkcija: content-type check + req.clone().json() z {} fallback, validacija da body je plain object (ne array), ekstrakt action (toLowerCase+trim) + config (validiran da je plain object ali undefined)
+  2. extractConfigUpdates(config) — čista funkcija: vrne null za manjkajoč/ne-objekt config (→ 400 INVALID_CONFIG_MSG), vrne {} za objekt brez veljavnih polj (→ 400 NO_VALID_FIELDS_MSG), vrne Partial<AutoPilotConfig> z {enabled, dailyLimit, dailyBudgetEUR} ko veljavna. 'mode' INTENCIONALNO ignoriran (v8.31 double-confirmation safety). lastRunAt read-only.
+  - Konstante: INVALID_CONFIG_MSG, NO_VALID_FIELDS_MSG (besedilo IDENTIČNO originalu)
+- Odstranjeno (boilerplate, ki ga helper obravnava):
+  - manual try/catch z logger.error + NextResponse.json error v GET in POST
+  - uvozi: logger, NextResponse (samo NextRequest tipa ostane)
+  - inline body parsing v POST handler-ju (ekstrahiran v parseAutoPilotBody)
+  - inline config field extraction v POST handler-ju (ekstrahiran v extractConfigUpdates)
+- Vedenje ohranjeno:
+  - isti input parsing: action.toLowerCase().trim() samo če string, sicer ''; config validacija (typeof object && !Array.isArray)
+  - isti action dispatch vrstni red: run → config → enable_aggressive → disable_aggressive → clear_anomaly → unknown (400)
+  - isti 5 action-ov returnajo natanko rezultat funkcije (runSafeAutoPilot / updateAutoPilotConfig / enableAggressiveMode / disableAggressiveMode / clearAnomalySuspension)
+  - isti 400 error messages za 'Invalid config' in 'No valid config fields' in 'Unknown action' (besedilo IDENTIČNO originalu, le ok:false dodan preko apiBadRequest — konsistentno z migration pattern)
+  - isti config field extraction: enabled (boolean), dailyLimit (number+isFinite), dailyBudgetEUR (number+isFinite); mode ignoriran (v8.31 safety); lastRunAt read-only
+  - GET vrača natanko getAutoPilotStats() rezultat (enaka struktura, brez ok wrapperja — original NextResponse.json(stats) tudi ni imel ok field)
+- ADDITIVE (non-breaking, konsistentno z brain/health): enforceBudget: true doda budget guard pred klicem (429 ko preseženo) + avtomatski recordAiCall po uspehu. Original ni imel tega — endpoint je deterministic (no AI) ampak je sedaj konsistenten z vsemi v8.94.x brain migracijami.
+- Verifikacija:
+  - bunx tsc --noEmit: 0 errors
+  - bunx eslint src/app/api/ai/brain/auto-pilot/route.ts: 0 errors
+
+Stage Summary:
+- MODIFIED: src/app/api/ai/brain/auto-pilot/route.ts
+- Lines: 200 → 234 (+34; +17% rast — ekstrahirana tipizirana helperja (parseAutoPilotBody, extractConfigUpdates) + bolj podroben docstring; GET/POST handlerja skupaj ~50 vrstic, prej ~150 z inline try/catch + body parsing)
+- enforceBudget: true (budget guard + avtomatski recordAiCall; non-breaking za deterministic endpoint)
+- Handler: 2 (GET + POST) uporabljata withAiRoute
+- Lint: 0, Typecheck: 0
+
+---
+Task ID: v8.95.0-split-adaptive
+Agent: Task agent (adaptive-weights-card.tsx split)
+Task: Split adaptive-weights-card.tsx (441 lines) into sub-components
+
+Work Log:
+- Prebral worklog.md (v8.94 / v8.94.1–v8.94.9 vnose, še posebej v8.94.8-split-autopilot za auto-pilot-card.tsx in v8.94.9-split-master za master-brain-banner.tsx — isti container/presentational split vzorec) za kontekst
+- Prebral src/components/dashboard/ai-hub/automation/adaptive-weights-card.tsx (441 vrstic) — struktura:
+  - L1-23: module docstring (v8.28 — bright orange, "feedback loop", 7 sliders, adaptive weights)
+  - L25: 'use client'
+  - L27-38: imports (React useEffect/useState/useCallback, Badge, Button, Skeleton, Slider, 5 lucide icons [AlertCircle, RefreshCw, Save, Settings2, Sparkles], sonner toast, cn, rateColor/rateLabel helpers iz ../utils, DOMAIN_DISPLAY + AdaptiveWeightsResponse iz ./types, DomainName iz ../types)
+  - L40-54: v8.28 comment block (feedback loop mechanism — boost ×1.1 / reduce ×0.9 / clamp [0.5, 2.0])
+  - L56-441: AdaptiveWeightsCard component (~385 vrstic):
+    - L57-77: 8 useState hooks (data, loading, error, draftWeights, dirty, saving, resetting, feedbackDomain, recording)
+    - L79-100: fetchWeights useCallback (GET /api/ai/brain/weights — syncs draftWeights from server response using DOMAIN_DISPLAY loop)
+    - L102-104: useEffect to call fetchWeights on mount
+    - L107-144: saveAll useCallback (POST {action:'set'} per changed domain — uses DOMAIN_DISPLAY.filter to find changed domains, parallel-ish sequential POST calls, toasts success/warning)
+    - L147-165: resetAll useCallback (POST {action:'reset'} — toasts success, refetches)
+    - L168-190: recordFeedback useCallback (POST {action:'record'} — toasts with adjusted? oldWeight→newWeight : executed/rejected/rate summary)
+    - L192-440: JSX return:
+      - L193-216: outer gradient div + header (Settings2 icon, 🎛️ title, v8.28 badge, FEEDBACK LOOP badge, refresh button)
+      - L218-224: subtitle paragraph (Master Brain learns from behavior — rate > 80% → ×1.1, < 40% → ×0.9)
+      - L226-236: loading skeleton (5-row skeleton)
+      - L238-247: error state (AlertCircle + truncated message + Ponovi button)
+      - L249-437: main content wrapper (!loading && !error && data):
+        - L251-347: 7-domain map (DOMAIN_DISPLAY.map) — single block (~97 vrstic) ← EXTRACTED (DomainWeightsList + DomainWeightRow)
+          - per-row derived: stats, total, rate, draftVal, isDirty
+          - L259-292: top row (domain icon + label + weight number pill + ✅/❌ counters)
+          - L294-311: Slider (0.5–2.0, step 0.1) + min/default/max labels
+          - L313-326: execution rate bar (rateColor + rateLabel)
+          - L328-344: mini adjustment history (last 3 entries — boost/reduce/no change)
+        - L349-377: action buttons row (~29 vrstic) ← EXTRACTED (ActionButtons)
+          - Reset button (resetting || loading disabled, RefreshCw spinner)
+          - dirty hint + Save button (!dirty || saving disabled, Save/RefreshCw icon)
+        - L379-436: feedback demo form (~58 vrstic) ← EXTRACTED (FeedbackForm)
+          - Sparkles icon + "Demo: zabeleži akcijski feedback" header
+          - description paragraph
+          - 2-col grid: domain dropdown + ✅ Executed / ❌ Rejected buttons
+          - POST hint footer
+- Prebral src/components/dashboard/ai-hub/automation/types.ts (287 vrstic po v8.94.9-split) — 31 module-local interfaces + 4 constants. Identificiral da so AdaptiveWeightsResponse (L215-219), AdaptiveWeightsMap (L213), DomainWeightStats (L200-211) in DOMAIN_DISPLAY (L221-233) tam. Grep za te tipe: samo client moduli jih uporabljajo (adaptive-weights-card.tsx + server-side lib/brain/adaptive-weights.ts in /api/ai/brain/weights/route.ts) — premik v ./adaptive-weights/types.ts bi zlomil te server-side importerje. SKLEP: tipi ostanejo v ../types, ./adaptive-weights/types.ts samo doda per-sub-component Props + DomainDisplayEntry derived alias (konsistentno z v8.94.9-split-master pristopom za MasterBrainResult)
+- Grep za DOMAIN_DISPLAY uporabo: client adaptive-weights-card.tsx (fetchWeights + JSX loop) + novi FeedbackForm in DomainWeightsList uvozijo iz ../types — DOMAIN_DISPLAY mora ostati shared v ../types.fetchWeights v container-ju še vedno uporablja DOMAIN_DISPLAY (sinhronizacija draftWeights iz server responsa)
+- ESLint config preverjen (eslint.config.mjs): @typescript-eslint/no-explicit-any: off, no-unused-vars: off, react-hooks/exhaustive-deps: off — zelo permisivno, omogoča čist extract brez linting boilerplate
+- Ustvaril direktorij src/components/dashboard/ai-hub/automation/adaptive-weights/
+- Ustvaril adaptive-weights/types.ts (75 vrstic) — 4 Props interfaces (DomainWeightRowProps, DomainWeightsListProps, ActionButtonsProps, FeedbackFormProps) + 1 derived alias (DomainDisplayEntry = typeof DOMAIN_DISPLAY[number] — sync-a z ../types avtomatsko). Uvozi DomainName iz ../../types + AdaptiveWeightsResponse + DomainWeightStats + DOMAIN_DISPLAY iz ../types (samo za typeof derivacijo DomainDisplayEntry)
+- Ustvaril adaptive-weights/domain-weight-row.tsx (121 vrstic) — DomainWeightRow presentational komponenta (ena domain kartica: top row z icon + label + weight number pill + ✅/❌ counters + Slider 0.5–2.0 + min/default/max labels + execution rate bar z rateColor/rateLabel + mini adjustment history zadnje 3). Props: 4 (domain, stats, draftVal, onWeightChange). Uvozi Slider, cn, rateColor + rateLabel iz ../../utils. Pure render — internally izračuna total/rate/isDirty iz stats in draftVal (identično originalu kjer je bilo to v map callbacku)
+- Ustvaril adaptive-weights/domain-weights-list.tsx (42 vrstic) — DomainWeightsList presentational komponenta (wrapper ki map-a DOMAIN_DISPLAY → DomainWeightRow, pass-a per-domain stats iz data.adaptiveWeights[d.key] + draftVal iz draftWeights[d.key] + closure-bound onWeightChange callback ki forward-a d.key na parent's onWeightChange(domain, newWeight)). Props: 3 (data, draftWeights, onWeightChange). Fragment wrapper (<>...</>) ker rendera sibling rows brez outer div-a — parent's existing `<div className="space-y-2.5">` wrapper ostane v container-ju. Uvozi DOMAIN_DISPLAY iz ../types + DomainWeightRow iz ./domain-weight-row
+- Ustvaril adaptive-weights/action-buttons.tsx (59 vrstic) — ActionButtons presentational komponenta (Reset button z RefreshCw spinner + dirty hint + Save button z Save/RefreshCw ikono). Props: 6 (dirty, saving, resetting, loading, onReset, onSave). Uvozi Button + RefreshCw + Save lucide ikoni. Pure render — original disabled state logika preserved identično: Reset disabled={resetting || loading}, Save disabled={!dirty || saving}
+- Ustvaril adaptive-weights/feedback-form.tsx (89 vrstic) — FeedbackForm presentational komponenta (Sparkles header + opis + 2-col grid z domain dropdown + ✅ Executed / ❌ Rejected button parom + POST hint footer). Props: 4 (feedbackDomain, recording, onFeedbackDomainChange, onRecord). Uvozi Sparkles lucide ikono + DOMAIN_DISPLAY iz ../types + DomainName tip iz ../../types (samo za cast e.target.value as DomainName — identično originalu). Pure render
+- Ustvaril adaptive-weights/index.ts (40 vrstic) — barrel file z `export { ... }` za vseh 4 sub-komponent (DomainWeightsList, DomainWeightRow, ActionButtons, FeedbackForm) + ustreznih Props tipov + DomainDisplayEntry derived alias
+- Spremenil adaptive-weights-card.tsx (441 → 296 vrstic, -145, -33%):
+  - Imports: odstranjeno 4 unused stvari — Slider (prešel v DomainWeightRow), Save in Sparkles lucide ikoni (prešli v ActionButtons in FeedbackForm), rateColor in rateLabel helperji iz ../utils (prešla v DomainWeightRow). DOMAIN_DISPLAY ostaja ker ga fetchWeights callback še vedno uporablja za sinhronizacijo draftWeights iz server responsa (L89-93 originala — preserved identično). DomainName ostaja ker ga useState Record<DomainName, number> in feedbackDomain state uporabljata. Dodan import 3 sub-komponent (DomainWeightsList, ActionButtons, FeedbackForm) iz ./adaptive-weights barrel
+  - Dodan handleWeightChange useCallback (5 vrstic) — wrapper ki forward-a per-domain slider change na setDraftWeights + setDirty (identično originalni inline onValueChange closure: `setDraftWeights((prev) => ({ ...prev, [d.key]: newV })); setDirty(true);`)
+  - JSX: 3 veliki bloki zamenjani s sub-komponent klici (DomainWeightsList ~97 vrstic + ActionButtons ~29 + FeedbackForm ~58 — skupaj ~184 vrstic inline JSX zamenjanih s ~17 vrsticami sub-komponent klicev). Inline ostajajo: outer gradient div, header (24 vrstice), subtitle (7), loading skeleton (11), error state (10). Skupaj inline JSX ~52 vrstic + state/callbacks/handleWeightChange ~150 vrstic + imports/docstring/comments ~94 vrstic = 296 total
+  - Modul docstring posodobljen: dodana v8.95.0-split-adaptive sekcija ki dokumentira container/presentational split + 4 ekstrahirane sub-komponente
+- Container/presentational arhitektura:
+  - Container (adaptive-weights-card.tsx): lastništvo vseh 8 useState + 4 useCallback (fetchWeights, saveAll, resetAll, recordFeedback) + 1 nov useCallback (handleWeightChange). State je prepuščen container-ju ker so vsi callbacks interdependenti (saveAll kliče fetchWeights, resetAll kliče fetchWeights, recordFeedback kliče fetchWeights — fetchWeights pa setDirty(false) in setDraftWeights) — extraction state-a v custom hook bi bil poseben refactor
+  - Presentational (4 sub-komponente): pure render — prejmejo data + handlerje kot props, vrnejo JSX. Nobenega state-a, fetch-ev, side effectov. Vsaka ima ekspliciten Props interface za type-safety. DomainWeightsList je "intermediate" — prejme data + draftWeights in map-a na DomainWeightRow, ki je "leaf" (1 row, 4 props). ActionButtons in FeedbackForm sta tudi "leaf" komponenti
+- Behavior preserved byte-identically:
+  - Slider onValueChange: original `(v) => { const newV = v[0] ?? 1.0; setDraftWeights((prev) => ({ ...prev, [d.key]: newV })); setDirty(true); }` — sedaj DomainWeightRow pokliče `onWeightChange(newV)` kjer je `newV = v[0] ?? 1.0` (identičen fallback) in container's handleWeightChange naredi `setDraftWeights((prev) => ({ ...prev, [domain]: newWeight })); setDirty(true)` — ekvivalentno ker je domain = d.key
+  - isDirty computation: original `Math.abs(draftVal - stats.weight) > 0.001` per-row v map callbacku — sedaj enako v DomainWeightRow (isto Math.abs primerjavo, isti threshold 0.001)
+  - rate computation: original `total > 0 ? stats.executed / total : 0` per-row — sedaj enako v DomainWeightRow
+  - adjustment history: original `stats.adjustmentHistory.slice(0, 3).map((h, idx) => ...)` — sedaj identično v DomainWeightRow (iste 3 vrstice, isti `${h.newWeight > h.oldWeight ? 'boost' : h.newWeight < h.oldWeight ? 'reduce' : 'no change'}` izraz)
+  - Reset/Save button disabled state: original `Reset disabled={resetting || loading}`, `Save disabled={!dirty || saving}` — sedaj preko ActionButtons props z istimi pogoji
+  - Feedback form: original `onChange={(e) => setFeedbackDomain(e.target.value as DomainName)}` — sedaj `onFeedbackDomainChange(e.target.value as DomainName)` (container pass-a setFeedbackDomain direktno kot onFeedbackDomainChange). recordFeedback('executed'/'rejected') — sedaj preko onRecord callback
+  - DOMAIN_DISPLAY vrstni red v dropdown: original `{DOMAIN_DISPLAY.map((d) => <option>...)}` — sedaj identično v FeedbackForm (isti DOMAIN_DISPLAY import iz ../types, isti vrstni red)
+  - POST hint footer: original `POST /api/ai/brain/weights &#123; action: &apos;record&apos;, domain, feedback &#125;` — sedaj identično v FeedbackForm (HTML entitete ohranjene: &#123; = { in &apos; = ')
+- Verifikacija:
+  - bunx tsc --noEmit (full project): 0 errors ✨ (exit 0)
+  - bunx eslint src/components/dashboard/ai-hub/automation/adaptive-weights-card.tsx src/components/dashboard/ai-hub/automation/adaptive-weights/: 0 errors ✨ (exit 0)
+  - bunx eslint src/components/dashboard/ai-hub/automation/ (full dir): 0 errors ✨ (exit 0)
+  - bunx eslint src/components/dashboard/ai-hub/ (full ai-hub): 0 errors ✨ (exit 0)
+  - Brez sprememb v UI/behavior/prop signatures/business logic — ista komponenta (AdaptiveWeightsCard), isti default props (brez props — AdaptiveWeightsCard() vzame nič), isto vedenje. Sub-komponente so nove (niso bile prej izvožene, so interne AdaptiveWeightsCard-a). Export path ../adaptive-weights-card ohranjen v ../index.ts barrel (L26) — ni treba posodobiti drugih importerjev
+
+Stage Summary:
+- NEW: src/components/dashboard/ai-hub/automation/adaptive-weights/types.ts (75 lines) — 4 Props interfaces + DomainDisplayEntry derived alias
+- NEW: src/components/dashboard/ai-hub/automation/adaptive-weights/domain-weight-row.tsx (121 lines) — DomainWeightRow (slider + rate bar + adjustment history per domain)
+- NEW: src/components/dashboard/ai-hub/automation/adaptive-weights/domain-weights-list.tsx (42 lines) — DomainWeightsList (wrapper ki map-a DOMAIN_DISPLAY → DomainWeightRow)
+- NEW: src/components/dashboard/ai-hub/automation/adaptive-weights/action-buttons.tsx (59 lines) — ActionButtons (Reset + dirty hint + Save row)
+- NEW: src/components/dashboard/ai-hub/automation/adaptive-weights/feedback-form.tsx (89 lines) — FeedbackForm (domain dropdown + ✅/❌ button pair + POST hint)
+- NEW: src/components/dashboard/ai-hub/automation/adaptive-weights/index.ts (40 lines) — barrel re-export (4 komponente + Props tipi + DomainDisplayEntry alias)
+- MODIFIED: src/components/dashboard/ai-hub/automation/adaptive-weights-card.tsx (441 → 296 lines, -145, -33%; container/orchestrator z vsem state-om + callbacks + handleWeightChange wrapper + inline outer/header/subtitle/loading/error; delegira 3 velike bloke sub-komponentam)
+- Lint: 0, Typecheck: 0
+- Skupaj novih vrstic v adaptive-weights/: 426 (types 75 + domain-weight-row 121 + domain-weights-list 42 + action-buttons 59 + feedback-form 89 + index 40)
+- Največji novi modul: domain-weight-row.tsx (121 vrstic — single domain card z sliderjem + rate bar + 3-entry history)
+- Najmanjši novi modul: index.ts (40 vrstic — barrel file)
+- Architecture: container/presentational split — adaptive-weights-card.tsx ostane container z vsem state-om in fetch callbacks (fetchWeights, saveAll, resetAll, recordFeedback), sub-komponente so pure presentational (props in, JSX out). DomainWeightsList je "intermediate" (prejme data + map-a na DomainWeightRow leaf); ActionButtons in FeedbackForm sta tudi leaf komponenti (direktno prejmeta flags/callbacks iz container-ja)
+
+---
+Task ID: v8.95.0-split-scenario
+Agent: Task agent (scenario-brain-card.tsx split)
+Task: Split scenario-brain-card.tsx (397 lines) into sub-components
+
+Work Log:
+- Prebral worklog.md (v8.94 / v8.94.1–v8.94.9 vnose, še posebej v8.94.8-split-autopilot in v8.94.9-split-master za isti container/presentational split pattern) za kontekst
+- Prebral src/components/dashboard/ai-hub/automation/scenario-brain-card.tsx (397 vrstic) — struktura:
+  - L1-18: module docstring (v8.27 — rose/pink, "What if?" simulator)
+  - L20: 'use client'
+  - L22-30: imports (React useEffect/useState/useCallback/useMemo, Badge, Button, Input, Skeleton, 3 lucide ikone [AlertCircle, RefreshCw, Sparkles], sonner, cn, ScenarioComparisonResponse iz ./types)
+  - L32-49: v8.27 comment block (preset config description, recommendation logic)
+  - L51-397: ScenarioBrainCard component (~346 vrstic):
+    - L52-60: 7 useState hooks (data, loading, error, customCapital, customTrades, customRisk, submitting)
+    - L62-76: fetchScenarios useCallback (GET /api/ai/brain/scenario)
+    - L78-80: useEffect to call fetchScenarios on mount
+    - L82-123: submitCustom useCallback (POST /api/ai/brain/scenario — capitalDeployed + riskInput override; LOW=30%, MEDIUM=40% default, HIGH=50% concentration)
+    - L125-143: columns useMemo (3 base presets + optional 4th Custom column, marks bestScenario with isBest flag)
+    - L145-396: JSX return:
+      - L146-166: outer gradient div + header row (Sparkles icon, 🎯 SCENARIO BRAIN title, v8.27 badge, WHAT IF? badge, cache badge) — kept inline (~20 vrstic)
+      - L168-174: subtitle paragraph (rose-tinted, slovenski opis) — kept inline (~7)
+      - L176-192: loading skeleton (3 brains running in parallel) — kept inline (~17)
+      - L194-203: error state z Ponovi button — kept inline (~10)
+      - L206-393: main content wrapper (!loading && !error && data):
+        - L208-223: recommendation banner (~16 vrstic) ← EXTRACTED (RecommendationBanner)
+        - L225-294: comparison table (8 metrics × 3-4 cols, 🏆 BEST highlight) (~70 vrstic) ← EXTRACTED (ComparisonTable)
+        - L296-381: custom scenario input form (capital/trades/risk inputs + submit button) (~86 vrstic) ← EXTRACTED (CustomScenarioForm)
+        - L383-392: refresh button — kept inline (~10)
+- Prebral src/components/dashboard/ai-hub/automation/types.ts (287 vrstic) — 31 module-local interfaces + 4 constants. Identificiral da je ScenarioComparisonResponse (L163-198, 36 vrstic) definiran tu. Preveril Grep za ScenarioComparisonResponse uporabo: samo scenario-brain-card.tsx (client) + types.ts sam (definicija + self-reference v custom? polju). Server-side uporablja svoj ScenarioComparison tip iz src/lib/brain/scenario.ts (drugačen, vsebuje full MasterBrainResult). SKLEP: ScenarioComparisonResponse je client-only — lahko se premakne v ./scenario-brain/types.ts brez breaking imports (konsistentno z AutoPilot* tipi premikom v v8.94.8-split-autopilot)
+- ESLint config preverjen (eslint.config.mjs): @typescript-eslint/no-explicit-any: off, no-unused-vars: off, react-hooks/exhaustive-deps: off — zelo permisivno, omogoča čist extract brez linting boilerplate
+- Ustvaril direktorij src/components/dashboard/ai-hub/automation/scenario-brain/
+- Ustvaril scenario-brain/types.ts (113 vrstic) — premaknjen ScenarioComparisonResponse iz automation/types.ts (36 vrstic), dodane 2 literal union tipa (ScenarioType, RiskLevel), 3 derived aliasi (ComparisonRow, Recommendation, CustomScenario — preko indexed access na ScenarioComparisonResponse da ostanejo sync brez duplikacije), 1 internal interface (ScenarioColumn — column descriptor za ComparisonTable), 3 Props interfaces (RecommendationBannerProps, ComparisonTableProps, CustomScenarioFormProps)
+- Ustvaril scenario-brain/recommendation-banner.tsx (37 vrstic) — RecommendationBanner presentational komponenta (🏆 Priporočeni scenarij banner z reasoning text). Props: 1 (recommendation?: Recommendation). Returns null ko recommendation undefined — match original `{data.recommendation && (...)}` conditional. Pure render
+- Ustvaril scenario-brain/comparison-table.tsx (129 vrstic) — ComparisonTable presentational komponenta (8 metrics × 3-4 columns side-by-side, 🏆 BEST column highlight, alternating rose stripes). Props: 3 (comparisonTable, custom?, bestScenario?). columns useMemo (prej v container-ju) je premaknjen sem — izvede se iz `custom` (doda 4. Custom stolpec) in `bestScenario` (označi BEST). Uvozi useMemo iz React + cn iz @/lib/utils + ScenarioColumn/ComparisonTableProps tipi iz ./types. Pure render
+- Ustvaril scenario-brain/custom-scenario-form.tsx (133 vrstic) — CustomScenarioForm presentational komponenta (Capital € input + Trades/mesec input + Risk tolerance button trio [LOW/MED/HIGH] + Poženi custom scenarij button). Props: 9 (customCapital, customTrades, customRisk, submitting, loading, onCapitalChange, onTradesChange, onRiskChange, onSubmit). RISK_LEVELS konstanta + riskLabel helper (prej inline `(['LOW', 'MEDIUM', 'HIGH'] as const)` array + inline ternary label logic). Uvozi Button + Input + 2 lucide ikoni (RefreshCw, Sparkles) + cn + CustomScenarioFormProps/RiskLevel tipi iz ./types. Pure render
+- Ustvaril scenario-brain/index.ts (43 vrstic) — barrel file z `export { ... }` za 3 sub-komponente (RecommendationBanner, ComparisonTable, CustomScenarioForm) + 3 Props tipov + 7 tipov/aliasov re-export-anih iz ./types za convenience (ScenarioComparisonResponse, ScenarioType, RiskLevel, ComparisonRow, Recommendation, CustomScenario, ScenarioColumn — single import path za main file)
+- Spremenil scenario-brain-card.tsx (397 → 242 vrstic, -155, -39%):
+  - Imports: odstranjeno useMemo (prej v columns useMemo, sedaj v ComparisonTable). Odstranjeno Input (prej v custom scenario form, sedaj v CustomScenarioForm). Odstranjeno cn (prej v columns + comparison table + custom form, sedaj v sub-komponentah). Spremenjen import path za ScenarioComparisonResponse: `'./types'` → `'./scenario-brain'` (barrel). Dodan import 3 sub-komponent iz ./scenario-brain barrel. Ostanejo: 3 lucide ikone (AlertCircle, RefreshCw, Sparkles — Sparkles za header, AlertCircle za error, RefreshCw za error Ponovi + refresh button), Badge, Button, Skeleton, toast, useEffect/useState/useCallback
+  - JSX: 3 veliki bloki zamenjani s sub-komponent klici (RecommendationBanner ~16 vrstic, ComparisonTable ~70, CustomScenarioForm ~86 — skupaj ~172 vrstic JSX zamenjanih s 3 klici). Inline ostajajo: outer gradient div, header (20), subtitle (7), loading skeleton (17), error state (10), refresh button (10). Skupaj inline JSX ~64 vrstic + state/callbacks ~75 vrstic + imports/docstring/comments ~103 vrstic = 242 total
+  - Modul docstring posodobljen: dodana v8.95.0-split-scenario sekcija ki dokumentira container/presentational split + 3 ekstrahirane sub-komponente + premik ScenarioComparisonResponse v ./scenario-brain/types.ts. Posodobljeno tudi vrstico "Module-local type (ScenarioComparisonResponse) comes from ./types" → "...comes from ./scenario-brain/types.ts"
+  - v8.27 comment block (L32-49) preserved unchanged — dokumentira design, ne file strukturo
+- Posodobil automation/types.ts (287 → 257 vrstic, -30): odstranjeno 36 vrstic (ScenarioComparisonResponse interface L163-198), dodan NOTE komentar (4 vrstice) s pojasnilom premika v ./scenario-brain/types.ts. Header docstring posodobljen: dodana ScenarioBrainCard types sekcija (3 vrstice) — konsistentno z obstoječo NOTE sekcijo za AutoPilot in Snapshots-Accuracy premik. Vsi drugi tipi (RiskProfileApiResponse, MasterBrainResult, DomainWeightStats, AdaptiveWeightsMap, DraftQueueResponse, DOMAIN_LABELS, DOMAIN_DISPLAY, RISK_TOLERANCE_OPTIONS, INVESTMENT_HORIZON_OPTIONS) nespremenjeni
+- Posodobil snapshots-accuracy/snapshot-types.ts (106 vrstic, +2 net) — header docstring posodobljen: "ScenarioComparisonResponse" odstranjeno iz seznama tipov ki "stay in ../types.ts" + dodana pojasnilna vrstica da je bil premaknjen v ./../scenario-brain/types.ts v v8.95.0-split-scenario. Datoteka sama nespremenjena (samo komentar)
+- Container/presentational arhitektura:
+  - Container (scenario-brain-card.tsx): lastništvo vseh 7 useState + 2 useCallback (fetchScenarios, submitCustom). State je prepuščen container-ju ker submitCustom dependency na customCapital/customTrades/customRisk (callback je rebuild-an na vsako spremembo). Extraction state-a v custom hook bi bil poseben refactor (konsistentno z v8.94.8-split-autopilot in v8.94.9-split-master kjer je state ostal v container-ju)
+  - Presentational (3 sub-komponente): pure render — prejmejo data + handlerje kot props, vrnejo JSX. Nobenega state-a, fetch-ev, side effectov. Vsaka ima ekspliciten Props interface za type-safety
+- Behavior preserved byte-identically:
+  - RecommendationBanner returns null ko recommendation undefined — match original `{data.recommendation && (...)}` conditional
+  - ComparisonTable columns useMemo: enaka logika kot original — 3 base presets (🛡️ Konzervativni / ⚖️ Uravnovešeni / 🚀 Agresivni), 4th Custom (🎯 Custom) dodan samo ko `custom` obstaja, isBest flag = `bestScenario === col.key`. Dependency array: [custom, bestScenario] — ekvivalentno originalu [data] (data.custom + data.recommendation?.bestScenario sta edini uporabljeni polji)
+  - ComparisonTable cell rendering: `cellVal === undefined || cellVal === ''` → `—` (em-dash), sicer String(cellVal) v max-w-[160px] span — identično originalu
+  - CustomScenarioForm RISK_LEVELS array: `['LOW', 'MEDIUM', 'HIGH'] as const` → typed `readonly RiskLevel[]`. riskLabel helper izvlečen iz inline ternary `r === 'LOW' ? '🛡️ LOW' : r === 'MEDIUM' ? '⚖️ MED' : '🚀 HIGH'` — ista besedila, ista vrstni red
+  - Submit button disabled: `submitting || loading` — identično originalu
+  - Submit button icon: RefreshCw z animate-spin ko submitting, Sparkles sicer — identično originalu
+- Verifikacija:
+  - bunx tsc --noEmit (full project): 0 errors ✨ (exit 0)
+  - bunx eslint src/components/dashboard/ai-hub/automation/scenario-brain-card.tsx src/components/dashboard/ai-hub/automation/scenario-brain/ src/components/dashboard/ai-hub/automation/types.ts src/components/dashboard/ai-hub/automation/snapshots-accuracy/snapshot-types.ts: 0 errors ✨ (exit 0)
+  - bunx eslint src/components/dashboard/ai-hub/automation/scenario-brain* src/components/dashboard/ai-hub/automation/scenario-brain/ (exact command from task description): 0 errors ✨ (exit 0)
+  - bunx eslint src/components/dashboard/ai-hub/automation/ (full dir): 0 errors ✨ (exit 0)
+  - bunx eslint src/components/dashboard/ai-hub/ (full ai-hub): 0 errors ✨ (exit 0)
+  - Brez sprememb v UI/behavior/prop signatures/business logic — ista komponenta (ScenarioBrainCard), isti default props (brez props — ScenarioBrainCard() vzame nič), isto vedenje. Sub-komponente so nove (niso bile prej izvožene, so interne ScenarioBrainCard-u)
+
+Stage Summary:
+- NEW: src/components/dashboard/ai-hub/automation/scenario-brain/types.ts (113 lines) — ScenarioComparisonResponse (moved from ../types.ts) + 2 literal unions (ScenarioType, RiskLevel) + 3 derived aliases (ComparisonRow, Recommendation, CustomScenario) + 1 internal interface (ScenarioColumn) + 3 Props interfaces
+- NEW: src/components/dashboard/ai-hub/automation/scenario-brain/recommendation-banner.tsx (37 lines) — RecommendationBanner (🏆 Priporočeni scenarij banner; returns null when recommendation undefined)
+- NEW: src/components/dashboard/ai-hub/automation/scenario-brain/comparison-table.tsx (129 lines) — ComparisonTable (8 × 3-4 side-by-side metrics + 🏆 BEST column highlight; columns useMemo moved here from container)
+- NEW: src/components/dashboard/ai-hub/automation/scenario-brain/custom-scenario-form.tsx (133 lines) — CustomScenarioForm (Capital/Trades/Risk inputs + Poženi button; RISK_LEVELS const + riskLabel helper extracted)
+- NEW: src/components/dashboard/ai-hub/automation/scenario-brain/index.ts (43 lines) — barrel re-export (3 komponente + 3 Props tipi + 7 tipov/aliasov)
+- MODIFIED: src/components/dashboard/ai-hub/automation/scenario-brain-card.tsx (397 → 242 lines, -155, -39%; container/orchestrator z vsem state-om + callbacks + inline header/subtitle/loading/error/refresh; delegira 3 velike bloke sub-komponentam)
+- MODIFIED: src/components/dashboard/ai-hub/automation/types.ts (287 → 257 lines, -30; ScenarioComparisonResponse premaknjen v ./scenario-brain/types.ts, NOTE komentar dodan, header docstring posodobljen)
+- MODIFIED: src/components/dashboard/ai-hub/automation/snapshots-accuracy/snapshot-types.ts (106 → 108 lines, +2 net; header docstring posodobljen — ScenarioComparisonResponse odstranjen iz "stay in ../types" seznama, dodana pojasnilna vrstica o premiku)
+- Lint: 0, Typecheck: 0
+- Skupaj novih vrstic v scenario-brain/: 455 (types 113 + recommendation-banner 37 + comparison-table 129 + custom-scenario-form 133 + index 43)
+- Največji novi modul: custom-scenario-form.tsx (133 lines — 3-input form z risk button trio + submit button z loading state)
+- Najmanjši novi modul: recommendation-banner.tsx (37 lines — 1 prop, 0 internal logic, trivial banner)
+- Improvement: scenario-brain-card.tsx 397 → 242 vrstic (-39%). Največji posamezni novi modul je custom-scenario-form.tsx (133 vrstic — vsebuje form z 3 inputi + risk tolerance button trio + submit button z loading state)
+- Architecture: container/presentational split — scenario-brain-card.tsx ostane container z vsem state-om in fetch callbacks (fetchScenarios, submitCustom), sub-komponente so pure presentational (props in, JSX out). Pattern je konsistenten z v8.94.8-split-autopilot (auto-pilot/) in v8.94.9-split-master (master-brain/) — isti barrel file vzorec, isti derived-aliases pristop preko indexed access na parent type, isto "type moves to ./sub-dir/types.ts ko je client-only" pravilo
+
+---
+Task ID: v8.95.0-split-draft
+Agent: Task agent (draft-queue-card.tsx split)
+Task: Split draft-queue-card.tsx (416 lines) into sub-components
+
+Work Log:
+- Prebral worklog.md (v8.94.8-split-autopilot in v8.94.9-split-master vnose za isti container/presentational split pattern — isti barrel file vzorec, isto "type moves to ./sub-dir/types.ts ko je client-only" pravilo) ter v8.95.0-split-scenario (najnovejši paralelni split, isti pattern) za kontekst
+- Prebral src/components/dashboard/ai-hub/automation/draft-queue-card.tsx (416 vrstic) — struktura:
+  - L1-26: module docstring (v8.29 — slate/blue-gray, ACTION layer, closed feedback loop, dokumentira API endpoint-e in helper imports)
+  - L28: 'use client'
+  - L30-55: imports (React useEffect/useState/useCallback, Badge/Button/Skeleton, 10 lucide ikon (AlertCircle, Check, ClipboardList, Clock, Filter, RefreshCw, Target, Trash2, X), sonner toast, cn, 4 helperji iz ../utils (confidenceColor, draftStatusColor, draftStatusLabel, rateColor), DOMAIN_DISPLAY + DOMAIN_LABELS iz ./types, DraftQueueResponse type iz ./types, DomainName + DraftStatus iz ../types)
+  - L57-75: comment block (v8.29 description — duplicate of docstring, preserved unchanged)
+  - L77-416: DraftQueueCard component (~339 vrstic):
+    - L78-85: 6 useState hooks (data, loading, error, statusFilter, domainFilter, patchingId)
+    - L87-104: fetchDrafts useCallback (GET /api/ai/brain/drafts?limit=30&days=30 + optional status/domain query params)
+    - L106-108: useEffect to call fetchDrafts on mount + on filter change
+    - L111-135: patchDraftInline useCallback (✅/❌ PATCH /api/ai/brain/drafts/{id} — feedbackNote toast from json.feedbackRecorded/feedbackResult)
+    - L138-148: triggerCleanup useCallback (GET /api/cron/cleanup-drafts — toast z deleted count)
+    - L150-414: JSX return:
+      - L151-414: outer gradient div (slate/blue-gray)
+      - L153-174: header row (ClipboardList icon, "📋 Draft Queue", v8.29 badge, ACTION · CLOSED LOOP badge, Osveži button) — kept inline (~22 vrstic)
+      - L177-182: subtitle paragraph (sl-SI description of feedback loop) — kept inline (~6)
+      - L185-192: loading skeleton (4 Skeleton-ov) — kept inline (~8)
+      - L195-203: error state z AlertCircle + truncate + Ponovi button — kept inline (~9)
+      - L206-413: main content wrapper (!loading && !error && data):
+        - L209-230: Stats row — 5 color-coded status pills + execution rate pill (~22 vrstic) ← EXTRACTED (StatsSummary)
+        - L233-268: Filter bar — 2-col grid z Status/Domena dropdowns (~36 vrstic) ← EXTRACTED (FilterBar)
+        - L271-350: Draft list — max-h-96 scrollable, empty state ali map of drafts (~80 vrstic) ← EXTRACTED (DraftList + DraftRowItem)
+        - L353-395: Per-domain execution rates — mini section z horizontal bars (~43 vrstic) ← EXTRACTED (DomainRates)
+        - L398-411: Action buttons row — endpoint info text + Počisti expired button (~14 vrstic) — kept inline
+- Prebral src/components/dashboard/ai-hub/automation/types.ts (258 vrstic — 31 module-local interfaces + 4 constants). Identificiral da so DraftRow (L235-250) in DraftQueueResponse (L252-271) tam. Preveril Grep za DraftRow/DraftQueueResponse uporabo: samo draft-queue-card.tsx (client) + types.ts sam (definicije + DraftQueueResponse.drafts self-reference). auto-pilot-card.tsx L263 omenja "DraftRow[]" v komentarju (ne aktualni import). Server-side (/api/ai/brain/drafts/route.ts + [id]/route.ts) uporablja svoje interne tipe (Prisma Draft model + lokalni interface). SKLEP: DraftRow + DraftQueueResponse sta client-only — lahko se premakneta v ./draft-queue/types.ts brez breaking imports (konsistentno z AutoPilot* tipi premikom v v8.94.8-split-autopilot + ScenarioComparisonResponse premikom v v8.95.0-split-scenario)
+- Prebral src/components/dashboard/ai-hub/utils.ts (216 vrstic — shared helperji): 4 helperji uporabljeni v DraftQueueCard (confidenceColor, draftStatusColor, draftStatusLabel, rateColor) ostajajo shared v ../utils — sub-komponente jih uvozijo direktno. Grep za DOMAIN_DISPLAY: shared z adaptive-weights-card.tsx (L36 + L90, L111, L252, L401) — ostane v ../types. Grep za DOMAIN_LABELS: shared z master-brain/* sub-komponentami in auto-pilot/history-panel.tsx — ostane v ../types
+- ESLint config preverjen (eslint.config.mjs): @typescript-eslint/no-explicit-any: off, no-unused-vars: off, react-hooks/exhaustive-deps: off — zelo permisivno, omogoča čist extract brez linting boilerplate (konsistentno z v8.95.0-split-scenario opažanjem)
+- Ustvaril direktorij src/components/dashboard/ai-hub/automation/draft-queue/
+- Ustvaril draft-queue/types.ts (110 vrstic) — premaknjena 2 tipa iz automation/types.ts (DraftRow + DraftQueueResponse, skupno 36 vrstic), dodana 2 derived aliasa (DraftStats = DraftQueueResponse['stats'], DomainStat = DraftQueueResponse['domainStats'][number] — preko indexed access da ostanejo sync brez duplikacije), 5 Props interfaces (StatsSummaryProps, FilterBarProps, DraftRowItemProps, DraftListProps, DomainRatesProps). JSDoc header dokumentira izvor tipov (moved from ../types.ts) in razloži zakaj DOMAIN_DISPLAY + DOMAIN_LABELS ostajajo v ../types (shared z AdaptiveWeightsCard + AutoPilotCard's HistoryPanel + MasterBrainBanner sub-komponentami). Uvozi DomainName + DraftStatus iz ../../types (shared cross-module)
+- Ustvaril draft-queue/stats-summary.tsx (44 vrstic) — StatsSummary presentational komponenta (5 color-coded status pills: pending čaka / approved odobrenih / executed izvedenih / rejected zavrnjenih / expired poteklih + execution rate pill ko executed+rejected > 0). Props: 1 (stats: DraftStats). Pure render — nobenega state-a, fetch-ev, side effectov. Uvozi Badge + cn + draftStatusColor helper iz ../../utils
+- Ustvaril draft-queue/filter-bar.tsx (65 vrstic) — FilterBar presentational komponenta (2-col grid z Status in Domena dropdown-ov). Status dropdown: Vsi statusi / ⏳ Čaka / 👍 Odobreno / ✅ Izvedeno / ❌ Zavrnjeno / ⌛ Poteklo. Domena dropdown: Vse domene + 7 options iz DOMAIN_DISPLAY (icon + label). Props: 4 (statusFilter, domainFilter, onStatusFilterChange, onDomainFilterChange). `e.target.value as DraftStatus | 'all'` cast ohranjen identično originalu. Uvozi Filter ikono iz lucide-react + DOMAIN_DISPLAY iz ../types + DomainName/DraftStatus iz ../../types za cast
+- Ustvaril draft-queue/draft-row-item.tsx (95 vrstic) — DraftRowItem presentational komponenta (one draft row: rank + domain icon + action text + timestamp + signal + confidence pill + status pill + ✅/❌ inline buttons ko status === 'pending'). Component je poimenovan "DraftRowItem" (ne "DraftRow") da se izogne type/component naming collision z DraftRow type. dm (DOMAIN_LABELS fallback) in ts (sl-SI timestamp formatter) logika extracted inline v komponento (ista IIFE logika kot original). Props: 3 (draft: DraftRow, patchingId: string | null, onPatch: (draftId, status) => void). Uvozi Badge + 3 lucide ikone (Check, Clock, X) + cn + 3 helperje iz ../../utils (confidenceColor, draftStatusColor, draftStatusLabel) + DOMAIN_LABELS iz ../types. Pure render
+- Ustvaril draft-queue/draft-list.tsx (41 vrstic) — DraftList presentational komponenta (wrapper z max-h-96 overflow-y-auto + slate border). Empty state ("Ni draftov za izbrane filtre. Klikni 'Osveži Master Brain' zgoraj da se avtomatsko kreirajo novi.") ali map of DraftRowItem v divide-y container. Props: 3 (drafts: DraftRow[], patchingId, onPatch). Delegira row rendering DraftRowItem-u. Pure render
+- Ustvaril draft-queue/domain-rates.tsx (75 vrstic) — DomainRates presentational komponenta (mini section z header "Per-domain execution rate" + 7 clickable button rows z icon + label + horizontal progress bar + mono text "{rate}% ({executed}/{total}) · {pending}⏳"). Returns null ko domainStats.length === 0 — match original `{data.domainStats.length > 0 && (...)}` conditional v parent. Click on row toggles domainFilter med domain in 'all' (isSelected ? 'all' : ds.domain — identično originalu). Props: 3 (domainStats, domainFilter, onDomainFilterChange). Uvozi Target ikono + cn + rateColor helper iz ../../utils + DOMAIN_LABELS iz ../types. Pure render
+- Ustvaril draft-queue/index.ts (51 vrstic) — barrel file z `export { ... }` za 5 sub-komponent (StatsSummary, FilterBar, DraftRowItem, DraftList, DomainRates) + 5 Props tipov re-export-anih iz ./types + 4 tipov/aliasov re-export-anih iz ./types za convenience (DraftRow, DraftQueueResponse, DraftStats, DomainStat — single import path za container). JSDoc header dokumentira vse 5 komponent z brief opisom in razloži zakaj DomainName/DraftStatus/DOMAIN_DISPLAY/DOMAIN_LABELS ostajajo v ../types (shared cross-module)
+- Spremenil draft-queue-card.tsx (416 → 262 vrstic, -154, -37%):
+  - Imports: odstranjeno 5 unused lucide ikon (Check, Clock, Filter, Target, X — vse prešle v sub-komponente). Odstranjeno 3 unused color helpers (confidenceColor, draftStatusColor, draftStatusLabel — vse prešle v sub-komponente). Odstranjeno rateColor helper (prešel v DomainRates). Odstranjeno DOMAIN_DISPLAY + DOMAIN_LABELS import (več ne uporablja direktno — sub-komponente jih uvozijo). Spremenjen import path za DraftQueueResponse: `'./types'` → `'./draft-queue'` (barrel). Dodan import 4 sub-komponent iz ./draft-queue barrel (StatsSummary, FilterBar, DraftList, DomainRates — DraftRowItem ni uvožen direktno ker je interni DraftList-a). Ostanejo: 4 lucide ikone (AlertCircle, ClipboardList, RefreshCw, Trash2 — AlertCircle za error state, ClipboardList za header, RefreshCw za header Osveži, Trash2 za Počisti expired button), Badge, Button, Skeleton, toast, cn (za header Osveži button z loading spin), useEffect/useState/useCallback, DomainName + DraftStatus iz ../types (za useState typing of filters)
+  - JSX: 4 veliki bloki zamenjani s sub-komponent klici (StatsSummary ~22 vrstic, FilterBar ~36, DraftList ~80, DomainRates ~43 — skupaj ~181 vrstic JSX zamenjanih s 4 klici). Inline ostajajo: outer gradient div, header row (22), subtitle (6), loading skeleton (8), error state (9), action buttons row (14). Skupaj inline JSX ~59 vrstic + state/callbacks ~75 vrstic + imports/docstring/comments ~128 vrstic = 262 total
+  - Modul docstring posodobljen: dodana v8.95.0-split-draft sekcija ki dokumentira container/presentational split + 5 ekstrahiranih sub-komponent + premik DraftRow/DraftQueueResponse v ./draft-queue/types.ts. Posodobljeno tudi vrstico "Module-local types (DOMAIN_DISPLAY, DOMAIN_LABELS, DraftQueueResponse) come from ./types" → "Module-local types (DraftRow, DraftQueueResponse) were moved to ./draft-queue/types as part of v8.95.0-split-draft — they are only used by DraftQueueCard + its sub-components"
+  - v8.29 comment block (L52-65, original L57-75) preserved unchanged — dokumentira design, ne file strukturo
+- Posodobil automation/types.ts (258 → 232 vrstic, -26 net): odstranjeni DraftRow (16 vrstic) in DraftQueueResponse (20 vrstic) interfaces (skupaj 36 vrstic), odstranjen DraftStatus iz `import type { DomainName, DraftStatus } from '../types'` (samo DomainName ostane — DraftStatus je bil uporabljen samo v DraftRow.status ki je sedaj premaknjen). Dodan NOTE komentar (8 vrstic) s pojasnilom premika v ./draft-queue/types.ts + pojasnilo da DraftStatus ni več uvožen ker je bil samo v DraftRow. Posodobljen auto-pilot NOTE (zadnji stavek "DOMAIN_LABELS stays here (shared with MasterBrainBanner + DraftQueueCard + AutoPilotCard)" → "...shared with MasterBrainBanner + DraftQueueCard sub-components + AutoPilotCard's HistoryPanel + AdaptiveWeightsCard" — bolj natančno po split-u). Header docstring posodobljen: dodana DraftQueueCard types sekcija (3 vrstice) + DOMAIN_DISPLAY/DOMAIN_LABELS stay-here justification (5 vrstic) — konsistentno z obstoječimi NOTE sekcijami za AutoPilot, Snapshots-Accuracy, ScenarioBrain premike. Vsi drugi tipi (RiskProfileApiResponse, MasterBrainResult, ActionExplanation, DomainWeightStats, AdaptiveWeightsMap, DOMAIN_LABELS, DOMAIN_DISPLAY, RISK_TOLERANCE_OPTIONS, INVESTMENT_HORIZON_OPTIONS) nespremenjeni
+- Container/presentational arhitektura:
+  - Container (draft-queue-card.tsx): lastništvo vseh 6 useState + 3 useCallback (fetchDrafts, patchDraftInline, triggerCleanup). State je prepuščen container-ju ker so vsi callbacks interdependenti (patchDraftInline kliče fetchDrafts za refresh, triggerCleanup kliče fetchDrafts za refresh). Extraction state-a v custom hook bi bil poseben refactor (konsistentno z v8.94.8-split-autopilot, v8.94.9-split-master, v8.95.0-split-scenario kjer je state ostal v container-ju)
+  - Presentational (5 sub-komponent): pure render — prejmejo data + handlerje kot props, vrnejo JSX. Nobenega state-a, fetch-ev, side effectov. Vsaka ima ekspliciten Props interface za type-safety. StatsSummary je najbolj zgleden — 1 prop, 0 internal logic
+- Behavior preserved byte-identically:
+  - StatsSummary execution-rate pill conditional: `{stats.executed + stats.rejected > 0 && (...)}` — identično originalu `{data.stats.executed + data.stats.rejected > 0 && (...)}`. Math.round(stats.executionRate * 100) format identičen
+  - FilterBar onChange handlers: `setStatusFilter(e.target.value as DraftStatus | 'all')` v originalu → `onStatusFilterChange(e.target.value as DraftStatus | 'all')` v sub-komponenti (isti cast, isti flow preko parenta). DomainFilter enako z DomainName. Container-jev setStatusFilter/setDomainFilter sta direktno pass-ani kot onStatusFilterChange/onDomainFilterChange props (type-signature kompatibilna: setState<T> accepta (value: T) — type-safe ker FilterBarProps.onStatusFilterChange je (value: DraftStatus | 'all') => void in setStatusFilter je Dispatch<SetStateAction<DraftStatus | 'all'>>)
+  - DraftRowItem ts IIFE: ista logika kot original — `try { new Date(draft.createdAt).toLocaleDateString('sl-SI') + ' ' + toLocaleTimeString('sl-SI', { hour, minute }) } catch { return '—' }`
+  - DraftRowItem ✅/❌ button disabled: `patchingId === draft.id` — identično originalu `patchingId === d.id`. aria-label in title atributi preserved
+  - DraftList empty state: ista besedila "Ni draftov za izbrane filtre. Klikni &quot;Osveži Master Brain&quot; zgoraj da se avtomatsko kreirajo novi." — identično originalu
+  - DomainRates returns null ko domainStats.length === 0 — match original `{data.domainStats.length > 0 && (...)}` conditional v parent (parent kliče `<DomainRates ... />` vedno, sub-komponenta sama skrbi za null return). Click toggle: `isSelected ? 'all' : ds.domain` — identično originalu
+  - patchDraftInline + triggerCleanup + fetchDrafts callbacks: 100% preserved v container-ju (niso premaknjeni) — toast messages (emoji/slovenian/feedbackNote) identični, URLSearchParams construction identičen, fetch URLs + method identični
+- Verifikacija:
+  - bunx tsc --noEmit (full project): 0 errors ✨ (exit 0)
+  - bunx eslint src/components/dashboard/ai-hub/automation/draft-queue-card.tsx src/components/dashboard/ai-hub/automation/draft-queue/ src/components/dashboard/ai-hub/automation/types.ts: 0 errors ✨ (exit 0)
+  - bunx eslint src/components/dashboard/ai-hub/automation/draft-queue* src/components/dashboard/ai-hub/automation/draft-queue/ (exact glob from task description — matches draft-queue-card.tsx + draft-queue/ dir): 0 errors ✨ (exit 0)
+  - bunx eslint src/components/dashboard/ai-hub/automation/ (full dir): 0 errors ✨ (exit 0)
+  - bunx eslint src/components/dashboard/ai-hub/ (full ai-hub): 0 errors ✨ (exit 0)
+  - Brez sprememb v UI/behavior/prop signatures/business logic — ista komponenta (DraftQueueCard), isti default props (brez props — DraftQueueCard() vzame nič), isto vedenje. Sub-komponente so nove (niso bile prej izvožene, so interne DraftQueueCard-u)
+  - NOTE: paralelni task v8.95.0-split-scenario je pred tem taskom modificiral automation/types.ts da je premaknil ScenarioComparisonResponse v ./scenario-brain/types.ts — moj task ni odvisen od teh sprememb (DraftRow/DraftQueueResponse ostajajo neodvisni od ScenarioComparisonResponse). Snapshot/Accuracy tipi v ./snapshots-accuracy/snapshot-types.ts so prav tako nedotaknjeni. AdaptiveWeightsCard tipi (DomainWeightStats, AdaptiveWeightsMap, AdaptiveWeightsResponse) ostajajo v ../types ker so shared z AdaptiveWeightsCard kartico (paralelni task v8.95.0-split-adaptive-weights jih bo morda premaknil v ./adaptive-weights/types.ts)
+
+Stage Summary:
+- NEW: src/components/dashboard/ai-hub/automation/draft-queue/types.ts (110 lines) — DraftRow + DraftQueueResponse (moved from ../types.ts) + 2 derived aliases (DraftStats, DomainStat) + 5 Props interfaces (StatsSummaryProps, FilterBarProps, DraftRowItemProps, DraftListProps, DomainRatesProps)
+- NEW: src/components/dashboard/ai-hub/automation/draft-queue/stats-summary.tsx (44 lines) — StatsSummary (5 color-coded status pills + execution-rate pill; 1 prop, 0 internal logic)
+- NEW: src/components/dashboard/ai-hub/automation/draft-queue/filter-bar.tsx (65 lines) — FilterBar (Status + Domain dropdowns in 2-col grid; 4 props — 2 values + 2 onChange handlers)
+- NEW: src/components/dashboard/ai-hub/automation/draft-queue/draft-row-item.tsx (95 lines) — DraftRowItem (single draft row: rank + icon + action + timestamp + signal + confidence + status + ✅/❌ buttons; named "DraftRowItem" not "DraftRow" to avoid type/component collision)
+- NEW: src/components/dashboard/ai-hub/automation/draft-queue/draft-list.tsx (41 lines) — DraftList (empty state + map of DraftRowItem; 3 props — drafts[], patchingId, onPatch)
+- NEW: src/components/dashboard/ai-hub/automation/draft-queue/domain-rates.tsx (75 lines) — DomainRates (per-domain execution rate bars; returns null when empty; click toggles domainFilter; 3 props)
+- NEW: src/components/dashboard/ai-hub/automation/draft-queue/index.ts (51 lines) — barrel re-export (5 komponente + 5 Props tipi + 4 tipi/aliasi)
+- MODIFIED: src/components/dashboard/ai-hub/automation/draft-queue-card.tsx (416 → 262 lines, -154, -37%; container/orchestrator z vsem state-om + 3 callbacks + inline header/subtitle/loading/error/action-buttons; delegira 4 velike bloke sub-komponentam)
+- MODIFIED: src/components/dashboard/ai-hub/automation/types.ts (258 → 232 lines, -26 net; 2 tipa premaknjena v ./draft-queue/types.ts, DraftStatus import odstranjen, NOTE komentar dodan, header docstring posodobljen, auto-pilot NOTE zadnji stavek posodobljen z bolj natančnim seznamom DOMAIN_LABELS consumerjev)
+- Lint: 0, Typecheck: 0
+- Skupaj novih vrstic v draft-queue/: 481 (types 110 + stats-summary 44 + filter-bar 65 + draft-row-item 95 + draft-list 41 + domain-rates 75 + index 51)
+- Največji novi modul: draft-row-item.tsx (95 lines — single draft row z rank/icon/action/timestamp/signal/confidence/status + ✅/❌ inline buttons z patchingId disabled state)
+- Najmanjši novi modul: draft-list.tsx (41 lines — wrapper z empty state + map of DraftRowItem)
+- Improvement: draft-queue-card.tsx 416 → 262 vrstic (-37%). Največji posamezni novi modul je draft-row-item.tsx (95 vrstic)
+- Architecture: container/presentational split — draft-queue-card.tsx ostane container z vsem state-om in fetch callbacks (fetchDrafts, patchDraftInline, triggerCleanup), sub-komponente so pure presentational (props in, JSX out). Pattern je konsistenten z v8.94.8-split-autopilot (auto-pilot/), v8.94.9-split-master (master-brain/), in v8.95.0-split-scenario (scenario-brain/) — isti barrel file vzorec, isti derived-aliases pristop preko indexed access na parent type, isto "type moves to ./sub-dir/types.ts ko je client-only" pravilo

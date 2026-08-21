@@ -13,21 +13,38 @@
  * Recommendation: scenario with highest projectedProfit12m (tie-break:
  * higher overallHealth).
  *
- * Module-local type (ScenarioComparisonResponse) comes from ./types. No
- * shared utils or shared types are used directly here.
+ * v8.95.0-split-scenario: split into container + presentational sub-components.
+ *   - Container (this file) owns all state (data, loading, error, customCapital,
+ *     customTrades, customRisk, submitting), all callbacks (fetchScenarios,
+ *     submitCustom), and renders the outer wrapper + header + subtitle +
+ *     loading skeleton + error state + refresh button inline; delegates the
+ *     three larger presentational blocks to ./scenario-brain/ sub-components.
+ *   - Presentational sub-components (./scenario-brain/): RecommendationBanner
+ *     (🏆 Priporočeni scenarij), ComparisonTable (8 × 3-4 side-by-side metrics
+ *     + 🏆 BEST column highlight), CustomScenarioForm (capital/trades/risk
+ *     inputs + Poženi button). Pure render — props in, JSX out, no state,
+ *     no fetches, no side effects.
+ *   - Module-local type (ScenarioComparisonResponse) moved to
+ *     ./scenario-brain/types.ts — it is only consumed by this single client
+ *     card (server-side uses its own ScenarioComparison type from
+ *     src/lib/brain/scenario.ts). No shared utils or shared types are used
+ *     directly here.
  */
 
 'use client';
 
-import { useEffect, useState, useCallback, useMemo } from 'react';
+import { useEffect, useState, useCallback } from 'react';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
-import { Input } from '@/components/ui/input';
 import { Skeleton } from '@/components/ui/skeleton';
 import { AlertCircle, RefreshCw, Sparkles } from 'lucide-react';
 import { toast } from 'sonner';
-import { cn } from '@/lib/utils';
-import type { ScenarioComparisonResponse } from './types';
+import type { ScenarioComparisonResponse } from './scenario-brain';
+import {
+  RecommendationBanner,
+  ComparisonTable,
+  CustomScenarioForm,
+} from './scenario-brain';
 
 // --- v8.27: Scenario Brain card (rose/pink-tinted, "What If?" simulator) -------
 //
@@ -122,26 +139,6 @@ export function ScenarioBrainCard() {
     }
   }, [customCapital, customTrades, customRisk]);
 
-  // Build a list of { key, label, isBest } for the column headers
-  const columns = useMemo(() => {
-    if (!data) return [];
-    const best = data.recommendation?.bestScenario;
-    const cols: Array<{ key: 'conservative' | 'balanced' | 'aggressive' | 'custom'; label: string; isBest: boolean; isCustom?: boolean }> = [
-      { key: 'conservative', label: '🛡️ Konzervativni', isBest: best === 'conservative' },
-      { key: 'balanced', label: '⚖️ Uravnovešeni', isBest: best === 'balanced' },
-      { key: 'aggressive', label: '🚀 Agresivni', isBest: best === 'aggressive' },
-    ];
-    if (data.custom) {
-      cols.push({
-        key: 'custom',
-        label: '🎯 Custom',
-        isBest: best === 'custom',
-        isCustom: true,
-      });
-    }
-    return cols;
-  }, [data]);
-
   return (
     <div className="rounded-xl border-2 border-rose-500/40 bg-gradient-to-br from-rose-500/15 via-pink-500/10 to-fuchsia-500/5 p-3 sm:p-4 shadow-sm">
       {/* Header row */}
@@ -206,179 +203,27 @@ export function ScenarioBrainCard() {
       {!loading && !error && data && (
         <div className="space-y-3">
           {/* Recommendation banner */}
-          {data.recommendation && (
-            <div className="rounded-lg border border-rose-500/40 bg-rose-500/10 p-2 sm:p-2.5">
-              <div className="flex items-start gap-2 min-w-0">
-                <span className="text-base shrink-0">🏆</span>
-                <div className="flex-1 min-w-0">
-                  <div className="text-[10px] uppercase tracking-wide text-rose-700/80 dark:text-rose-300/80 font-semibold">
-                    Priporočeni scenarij
-                  </div>
-                  <p className="text-[11px] sm:text-xs leading-snug font-medium text-rose-900 dark:text-rose-100 mt-0.5">
-                    {data.recommendation.reasoning}
-                  </p>
-                </div>
-              </div>
-            </div>
-          )}
+          <RecommendationBanner recommendation={data.recommendation} />
 
           {/* Comparison table */}
-          <div className="overflow-x-auto -mx-1 px-1">
-            <table className="w-full text-[10px] sm:text-[11px] border-collapse">
-              <thead>
-                <tr>
-                  <th className="text-left font-semibold uppercase tracking-wide text-muted-foreground p-1.5 sm:p-2 align-bottom">
-                    Metrika
-                  </th>
-                  {columns.map((col) => (
-                    <th
-                      key={col.key}
-                      className={cn(
-                        'p-1.5 sm:p-2 text-center font-bold align-bottom rounded-t',
-                        col.isBest
-                          ? 'bg-rose-500/20 border-2 border-rose-500/50 text-rose-700 dark:text-rose-300'
-                          : 'bg-rose-500/5 border border-rose-500/20 text-rose-700/80 dark:text-rose-300/80',
-                        col.isCustom && !col.isBest && 'italic',
-                      )}
-                    >
-                      <div className="flex flex-col gap-0.5 items-center">
-                        <span>{col.label}</span>
-                        {col.isBest && (
-                          <span className="text-[8px] uppercase font-bold text-rose-600 dark:text-rose-400">
-                            🏆 BEST
-                          </span>
-                        )}
-                      </div>
-                    </th>
-                  ))}
-                </tr>
-              </thead>
-              <tbody>
-                {data.comparisonTable.map((row, idx) => (
-                  <tr
-                    key={row.metric}
-                    className={cn(
-                      'border-b border-rose-500/10',
-                      idx % 2 === 0 ? 'bg-rose-500/[0.03]' : '',
-                    )}
-                  >
-                    <td className="text-left font-medium text-muted-foreground p-1.5 sm:p-2">
-                      {row.metric}
-                    </td>
-                    {columns.map((col) => {
-                      const cellVal = row[col.key];
-                      return (
-                        <td
-                          key={col.key}
-                          className={cn(
-                            'p-1.5 sm:p-2 text-center font-medium',
-                            col.isBest
-                              ? 'bg-rose-500/15 border-x-2 border-rose-500/40 text-rose-900 dark:text-rose-100'
-                              : 'text-foreground/90',
-                          )}
-                        >
-                          {cellVal === undefined || cellVal === '' ? (
-                            <span className="text-muted-foreground">—</span>
-                          ) : (
-                            <span className="block max-w-[160px] mx-auto leading-snug">
-                              {String(cellVal)}
-                            </span>
-                          )}
-                        </td>
-                      );
-                    })}
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          </div>
+          <ComparisonTable
+            comparisonTable={data.comparisonTable}
+            custom={data.custom}
+            bestScenario={data.recommendation?.bestScenario}
+          />
 
           {/* Custom scenario input form */}
-          <div className="rounded-lg border border-rose-500/30 bg-rose-500/5 p-2 sm:p-2.5 space-y-2">
-            <div className="text-[10px] uppercase tracking-wide text-rose-700/80 dark:text-rose-300/80 font-semibold flex items-center gap-1">
-              <Sparkles className="w-3 h-3" />
-              Custom &quot;What If?&quot; scenarij
-            </div>
-            <p className="text-[10px] text-muted-foreground leading-snug">
-              Vnesi svoje parametre in poglej, kako bi se Master Brain odzval.
-              Rezultat se prikaže v 4. stolpcu (🎯 Custom) zgornje tabele.
-            </p>
-
-            <div className="grid grid-cols-1 sm:grid-cols-3 gap-2">
-              {/* Capital (€) */}
-              <div>
-                <label className="text-[9px] uppercase text-muted-foreground font-semibold block mb-1">
-                  Capital (€)
-                </label>
-                <Input
-                  type="number"
-                  value={customCapital}
-                  onChange={(e) => setCustomCapital(e.target.value)}
-                  placeholder="5000"
-                  min={0}
-                  className="h-8 text-xs bg-background/50"
-                />
-              </div>
-
-              {/* Trades/month */}
-              <div>
-                <label className="text-[9px] uppercase text-muted-foreground font-semibold block mb-1">
-                  Trades / mesec
-                </label>
-                <Input
-                  type="number"
-                  value={customTrades}
-                  onChange={(e) => setCustomTrades(e.target.value)}
-                  placeholder="25"
-                  min={0}
-                  className="h-8 text-xs bg-background/50"
-                />
-              </div>
-
-              {/* Risk tolerance */}
-              <div>
-                <label className="text-[9px] uppercase text-muted-foreground font-semibold block mb-1">
-                  Risk tolerance
-                </label>
-                <div className="grid grid-cols-3 gap-1">
-                  {(['LOW', 'MEDIUM', 'HIGH'] as const).map((r) => (
-                    <button
-                      key={r}
-                      type="button"
-                      onClick={() => setCustomRisk(r)}
-                      className={cn(
-                        'h-8 text-[10px] font-bold rounded border transition-colors',
-                        customRisk === r
-                          ? 'bg-rose-500/30 border-rose-500/60 text-rose-700 dark:text-rose-300'
-                          : 'bg-background/40 border-rose-500/20 text-muted-foreground hover:bg-rose-500/10',
-                      )}
-                    >
-                      {r === 'LOW' ? '🛡️ LOW' : r === 'MEDIUM' ? '⚖️ MED' : '🚀 HIGH'}
-                    </button>
-                  ))}
-                </div>
-              </div>
-            </div>
-
-            <div className="flex items-center justify-between gap-2 pt-1">
-              <span className="text-[9px] text-muted-foreground italic">
-                POST /api/ai/brain/scenario → profitInput + riskInput overrides
-              </span>
-              <Button
-                size="sm"
-                onClick={submitCustom}
-                disabled={submitting || loading}
-                className="h-7 px-3 text-[10px] gap-1.5 bg-rose-600 hover:bg-rose-700 text-white border-rose-700"
-              >
-                {submitting ? (
-                  <RefreshCw className="w-3 h-3 animate-spin" />
-                ) : (
-                  <Sparkles className="w-3 h-3" />
-                )}
-                {submitting ? 'Računam...' : 'Poženi custom scenarij'}
-              </Button>
-            </div>
-          </div>
+          <CustomScenarioForm
+            customCapital={customCapital}
+            customTrades={customTrades}
+            customRisk={customRisk}
+            submitting={submitting}
+            loading={loading}
+            onCapitalChange={setCustomCapital}
+            onTradesChange={setCustomTrades}
+            onRiskChange={setCustomRisk}
+            onSubmit={submitCustom}
+          />
 
           {/* Refresh */}
           <div className="flex justify-end">

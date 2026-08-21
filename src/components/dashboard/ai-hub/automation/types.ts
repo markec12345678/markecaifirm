@@ -17,15 +17,21 @@
  * only used by the two Validation-phase cards under that directory.
  * AutoPilotCard types live in ./auto-pilot/types.ts (moved in
  * v8.94.8-split-autopilot).
+ * ScenarioBrainCard types (ScenarioComparisonResponse) live in
+ * ./scenario-brain/types.ts (moved in v8.95.0-split-scenario — only consumed
+ * by the single client card; server-side uses its own ScenarioComparison).
+ * DraftQueueCard types (DraftRow, DraftQueueResponse) live in
+ * ./draft-queue/types.ts (moved in v8.95.0-split-draft) — they are only used
+ * by DraftQueueCard and its sub-components.
  *
- * Cross-module shared types (DomainName, DraftStatus) are imported from
- * ../types.
+ * Cross-module shared types (DomainName) are imported from ../types.
+ * DOMAIN_DISPLAY + DOMAIN_LABELS stay here because they are shared across
+ * multiple automation cards (AdaptiveWeightsCard, DraftQueueCard's FilterBar
+ * + DraftRowItem + DomainRates, AutoPilotCard's HistoryPanel,
+ * MasterBrainBanner sub-components).
  */
 
-import type {
-  DomainName,
-  DraftStatus,
-} from '../types';
+import type { DomainName } from '../types';
 
 export type RiskTolerance = 'conservative' | 'balanced' | 'aggressive';
 export type InvestmentHorizon = 'short' | 'medium' | 'long';
@@ -160,42 +166,10 @@ export const DOMAIN_LABELS: Record<DomainName, { icon: string; label: string; co
   pricing: { icon: '💶', label: 'Cene', color: 'text-lime-700 dark:text-lime-400' },
 };
 
-export interface ScenarioComparisonResponse {
-  ok: true;
-  scenarios: Array<{
-    type: 'conservative' | 'balanced' | 'aggressive' | 'custom';
-    label: string;
-    description: string;
-    comparison: {
-      projectedProfit30d: number;
-      projectedProfit90d: number;
-      projectedProfit12m: number;
-      overallHealth: number;
-      healthGrade: 'A+' | 'A' | 'B' | 'C' | 'D' | 'F';
-      riskLevel: string;
-      topAction: string;
-      topActionUpliftEUR: number;
-      capitalRequired: number;
-      conflictsCount: number;
-      bottlenecksCount: number;
-    };
-  }>;
-  baseCapital: number;
-  custom?: ScenarioComparisonResponse['scenarios'][number];
-  comparisonTable: Array<{
-    metric: string;
-    conservative: string | number;
-    balanced: string | number;
-    aggressive: string | number;
-    custom?: string | number;
-  }>;
-  recommendation: {
-    bestScenario: 'conservative' | 'balanced' | 'aggressive' | 'custom';
-    reasoning: string;
-  };
-  source: string;
-  cachedAt?: number;
-}
+// NOTE: ScenarioComparisonResponse (v8.27 client-side mirror of ScenarioComparison
+// from src/lib/brain/scenario.ts) was moved to ./scenario-brain/types.ts as part
+// of v8.95.0-split-scenario — it is only consumed by the single
+// scenario-brain-card.tsx client component (server-side uses its own type).
 
 export interface DomainWeightStats {
   weight: number;
@@ -232,44 +206,6 @@ export const DOMAIN_DISPLAY: Array<{
   { key: 'pricing', label: 'Cene', icon: '💶' },
 ];
 
-export interface DraftRow {
-  id: string;
-  rank: number;
-  domain: DomainName;
-  signal: string;
-  action: string;
-  expectedUpliftEUR: number;
-  confidence: 'HIGH' | 'MEDIUM' | 'LOW';
-  status: DraftStatus;
-  feedbackNote: string | null;
-  executedAt: string | Date | null;
-  rejectedAt: string | Date | null;
-  snapshotDate: string | null;
-  createdAt: string | Date;
-  updatedAt: string | Date;
-}
-
-export interface DraftQueueResponse {
-  ok: true;
-  drafts: DraftRow[];
-  stats: {
-    total: number;
-    pending: number;
-    approved: number;
-    executed: number;
-    rejected: number;
-    expired: number;
-    executionRate: number;
-  };
-  domainStats: Array<{
-    domain: DomainName;
-    executed: number;
-    rejected: number;
-    pending: number;
-    executionRate: number;
-  }>;
-}
-
 // NOTE: Auto-pilot types (AutoPilotMode, AutoPilotStatsResponse,
 // AutoPilotHistoryDraft, AutoPilotHistoryResponse, AutoPilotRunResponse,
 // EnableAggressiveResponse, DisableAggressiveResponse, ClearAnomalyResponse)
@@ -277,10 +213,20 @@ export interface DraftQueueResponse {
 // They are only used by AutoPilotCard and its sub-components, so colocating
 // them with the consumer is more correct than keeping them in this shared
 // module. DOMAIN_LABELS stays here (shared with MasterBrainBanner +
-// DraftQueueCard + AutoPilotCard).
+// DraftQueueCard sub-components + AutoPilotCard's HistoryPanel +
+// AdaptiveWeightsCard).
 //
 // NOTE: Snapshot + Accuracy types (SnapshotView, SnapshotsApiResponse,
 // AccuracyTrendPoint, AccuracyApiResponse, DOMAIN_TREND_LABELS) were moved to
 // ./snapshots-accuracy/snapshot-types.ts as part of v8.94.9-split. They are
 // only used by BrainSnapshotsSection + AccuracyTrendCard, so colocating them
 // with the consumers is more correct than keeping them in this shared module.
+//
+// NOTE: Draft Queue types (DraftRow, DraftQueueResponse) were moved to
+// ./draft-queue/types.ts as part of v8.95.0-split-draft. They are only used
+// by DraftQueueCard and its sub-components (StatsSummary, FilterBar,
+// DraftRowItem, DraftList, DomainRates), so colocating them with the consumer
+// is more correct than keeping them in this shared module. DOMAIN_DISPLAY
+// stays here (shared with AdaptiveWeightsCard + DraftQueueCard's FilterBar).
+// DraftStatus is no longer imported here (it was only used by DraftRow.status,
+// now consumed via the moved types in ./draft-queue/types.ts).

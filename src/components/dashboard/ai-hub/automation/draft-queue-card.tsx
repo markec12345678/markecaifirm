@@ -19,10 +19,26 @@
  *   - Risk Profile (violet) — user's stated preferences
  *   - This card (slate) — the DECISION LEDGER (history of past decisions)
  *
- * Module-local types (DOMAIN_DISPLAY, DOMAIN_LABELS, DraftQueueResponse)
- * come from ./types. confidenceColor / draftStatusColor / draftStatusLabel /
- * rateColor helpers come from ../utils. DomainName + DraftStatus are used
- * directly in state (filter dropdowns) — imported from ../types.
+ * v8.95.0-split-draft: split into container + presentational sub-components.
+ *   - Container (this file) owns all state (data, loading, error,
+ *     statusFilter, domainFilter, patchingId), all callbacks (fetchDrafts,
+ *     patchDraftInline, triggerCleanup). Renders the outer wrapper + header +
+ *     subtitle + loading/error states + action buttons row inline; delegates
+ *     the larger presentational blocks to ./draft-queue/ sub-components.
+ *   - Presentational sub-components (./draft-queue/): StatsSummary (5 status
+ *     pills + execution-rate pill), FilterBar (Status + Domain dropdowns),
+ *     DraftRowItem (single draft row with ✅/❌ buttons), DraftList (empty
+ *     state + map of DraftRowItem), DomainRates (per-domain execution rate
+ *     bars). Pure render — props in, JSX out, no state, no fetches, no side
+ *     effects.
+ *
+ * Module-local types (DraftRow, DraftQueueResponse) were moved to
+ * ./draft-queue/types as part of v8.95.0-split-draft — they are only used by
+ * DraftQueueCard + its sub-components. Cross-module shared types
+ * (DomainName, DraftStatus) are imported from ../types. Color helpers
+ * (confidenceColor, draftStatusColor, draftStatusLabel, rateColor) stay in
+ * ../utils — used by the sub-components. DOMAIN_DISPLAY + DOMAIN_LABELS stay
+ * in ./types — they are shared with AdaptiveWeightsCard + AutoPilotCard.
  */
 
 'use client';
@@ -33,26 +49,20 @@ import { Button } from '@/components/ui/button';
 import { Skeleton } from '@/components/ui/skeleton';
 import {
   AlertCircle,
-  Check,
   ClipboardList,
-  Clock,
-  Filter,
   RefreshCw,
-  Target,
   Trash2,
-  X,
 } from 'lucide-react';
 import { toast } from 'sonner';
 import { cn } from '@/lib/utils';
-import {
-  confidenceColor,
-  draftStatusColor,
-  draftStatusLabel,
-  rateColor,
-} from '../utils';
-import { DOMAIN_DISPLAY, DOMAIN_LABELS } from './types';
-import type { DraftQueueResponse } from './types';
 import type { DomainName, DraftStatus } from '../types';
+import {
+  StatsSummary,
+  FilterBar,
+  DraftList,
+  DomainRates,
+} from './draft-queue';
+import type { DraftQueueResponse } from './draft-queue';
 
 // --- v8.29: Draft Queue card (slate/blue-gray-tinted, closed feedback loop) ---
 //
@@ -206,193 +216,29 @@ export function DraftQueueCard() {
       {!loading && !error && data && (
         <div className="space-y-3">
           {/* Stats row — 5 color-coded pills */}
-          <div className="flex items-center gap-1.5 flex-wrap">
-            <Badge variant="outline" className={cn('text-[10px]', draftStatusColor('pending'))}>
-              {data.stats.pending} čaka
-            </Badge>
-            <Badge variant="outline" className={cn('text-[10px]', draftStatusColor('approved'))}>
-              {data.stats.approved} odobrenih
-            </Badge>
-            <Badge variant="outline" className={cn('text-[10px]', draftStatusColor('executed'))}>
-              {data.stats.executed} izvedenih
-            </Badge>
-            <Badge variant="outline" className={cn('text-[10px]', draftStatusColor('rejected'))}>
-              {data.stats.rejected} zavrnjenih
-            </Badge>
-            <Badge variant="outline" className={cn('text-[10px]', draftStatusColor('expired'))}>
-              {data.stats.expired} poteklih
-            </Badge>
-            {data.stats.executed + data.stats.rejected > 0 && (
-              <Badge variant="outline" className="text-[10px] border-slate-500/30 bg-slate-500/10 text-slate-700 dark:text-slate-300">
-                execution rate: {Math.round(data.stats.executionRate * 100)}%
-              </Badge>
-            )}
-          </div>
+          <StatsSummary stats={data.stats} />
 
           {/* Filter bar */}
-          <div className="grid grid-cols-2 gap-2">
-            <div className="rounded border border-slate-500/20 bg-slate-500/5 p-1.5">
-              <label className="text-[9px] uppercase text-muted-foreground font-semibold block mb-1 flex items-center gap-1">
-                <Filter className="w-2.5 h-2.5" /> Status
-              </label>
-              <select
-                value={statusFilter}
-                onChange={(e) => setStatusFilter(e.target.value as DraftStatus | 'all')}
-                className="h-7 w-full text-xs bg-background/50 border border-slate-500/20 rounded px-1.5"
-              >
-                <option value="all">Vsi statusi</option>
-                <option value="pending">⏳ Čaka</option>
-                <option value="approved">👍 Odobreno</option>
-                <option value="executed">✅ Izvedeno</option>
-                <option value="rejected">❌ Zavrnjeno</option>
-                <option value="expired">⌛ Poteklo</option>
-              </select>
-            </div>
-            <div className="rounded border border-slate-500/20 bg-slate-500/5 p-1.5">
-              <label className="text-[9px] uppercase text-muted-foreground font-semibold block mb-1 flex items-center gap-1">
-                <Filter className="w-2.5 h-2.5" /> Domena
-              </label>
-              <select
-                value={domainFilter}
-                onChange={(e) => setDomainFilter(e.target.value as DomainName | 'all')}
-                className="h-7 w-full text-xs bg-background/50 border border-slate-500/20 rounded px-1.5"
-              >
-                <option value="all">Vse domene</option>
-                {DOMAIN_DISPLAY.map((d) => (
-                  <option key={d.key} value={d.key}>
-                    {d.icon} {d.label}
-                  </option>
-                ))}
-              </select>
-            </div>
-          </div>
+          <FilterBar
+            statusFilter={statusFilter}
+            domainFilter={domainFilter}
+            onStatusFilterChange={setStatusFilter}
+            onDomainFilterChange={setDomainFilter}
+          />
 
           {/* Draft list — max-h-96 with custom scrollbar */}
-          <div className="max-h-96 overflow-y-auto rounded border border-slate-500/20 bg-slate-500/[0.03]">
-            {data.drafts.length === 0 ? (
-              <div className="p-4 text-center text-xs text-muted-foreground italic">
-                Ni draftov za izbrane filtre. Klikni &quot;Osveži Master Brain&quot; zgoraj
-                da se avtomatsko kreirajo novi.
-              </div>
-            ) : (
-              <div className="divide-y divide-slate-500/10">
-                {data.drafts.map((d) => {
-                  const dm = DOMAIN_LABELS[d.domain] ?? { icon: '•', label: d.domain, color: 'text-foreground' };
-                  const ts = (() => {
-                    try {
-                      const dt = new Date(d.createdAt);
-                      const date = dt.toLocaleDateString('sl-SI');
-                      const time = dt.toLocaleTimeString('sl-SI', { hour: '2-digit', minute: '2-digit' });
-                      return `${date} ${time}`;
-                    } catch {
-                      return '—';
-                    }
-                  })();
-                  return (
-                    <div
-                      key={d.id}
-                      className={cn(
-                        'p-2 flex items-start gap-2 text-[10px] sm:text-[11px] leading-snug transition-colors',
-                        d.status === 'executed' && 'bg-emerald-500/[0.04]',
-                        d.status === 'rejected' && 'bg-red-500/[0.04]',
-                      )}
-                    >
-                      <span className="font-bold text-slate-700 dark:text-slate-300 shrink-0 w-4 text-center">
-                        {d.rank}.
-                      </span>
-                      <span className="shrink-0" title={dm.label}>
-                        {dm.icon}
-                      </span>
-                      <div className="flex-1 min-w-0">
-                        <div className="flex items-center gap-1 flex-wrap">
-                          <span className="font-medium truncate">{d.action}</span>
-                        </div>
-                        <div className="text-[9px] text-muted-foreground flex items-center gap-1 mt-0.5">
-                          <Clock className="w-2 h-2" />
-                          {ts}
-                          <span className="text-muted-foreground/60">·</span>
-                          <span className="font-mono">{d.signal}</span>
-                          <span className="text-muted-foreground/60">·</span>
-                          <span className={cn('font-bold', confidenceColor(d.confidence))}>{d.confidence}</span>
-                        </div>
-                      </div>
-                      <Badge variant="outline" className={cn('text-[9px] h-4 px-1 shrink-0', draftStatusColor(d.status))}>
-                        {draftStatusLabel(d.status)}
-                      </Badge>
-                      {/* Inline ✅/❌ buttons — only for pending drafts */}
-                      {d.status === 'pending' && (
-                        <div className="flex items-center gap-0.5 shrink-0">
-                          <button
-                            onClick={() => patchDraftInline(d.id, 'executed')}
-                            disabled={patchingId === d.id}
-                            aria-label="Označi kot izvedeno"
-                            title="v8.29: Označi kot izvedeno — sistem se bo naučil"
-                            className="text-[9px] px-1 py-0.5 rounded border bg-emerald-500/10 border-emerald-500/30 hover:bg-emerald-500/25 text-emerald-700 dark:text-emerald-400 disabled:opacity-40"
-                          >
-                            <Check className="w-2.5 h-2.5" />
-                          </button>
-                          <button
-                            onClick={() => patchDraftInline(d.id, 'rejected')}
-                            disabled={patchingId === d.id}
-                            aria-label="Označi kot zavrnjeno"
-                            title="v8.29: Označi kot zavrnjeno — sistem se bo naučil"
-                            className="text-[9px] px-1 py-0.5 rounded border bg-red-500/10 border-red-500/30 hover:bg-red-500/25 text-red-700 dark:text-red-400 disabled:opacity-40"
-                          >
-                            <X className="w-2.5 h-2.5" />
-                          </button>
-                        </div>
-                      )}
-                    </div>
-                  );
-                })}
-              </div>
-            )}
-          </div>
+          <DraftList
+            drafts={data.drafts}
+            patchingId={patchingId}
+            onPatch={patchDraftInline}
+          />
 
           {/* Per-domain execution rates — mini section */}
-          {data.domainStats.length > 0 && (
-            <div className="rounded-lg border border-slate-500/20 bg-slate-500/[0.03] p-2 space-y-1">
-              <div className="text-[10px] uppercase tracking-wide text-slate-700/80 dark:text-slate-300/80 font-semibold flex items-center gap-1">
-                <Target className="w-2.5 h-2.5" />
-                Per-domain execution rate
-                <span className="text-[8px] normal-case font-normal text-muted-foreground italic ml-auto">
-                  klik na domeno za filter
-                </span>
-              </div>
-              {data.domainStats.map((ds) => {
-                const dm = DOMAIN_LABELS[ds.domain] ?? { icon: '•', label: ds.domain, color: 'text-foreground' };
-                const rate = ds.executionRate;
-                const total = ds.executed + ds.rejected;
-                const isSelected = domainFilter === ds.domain;
-                return (
-                  <button
-                    key={ds.domain}
-                    onClick={() => setDomainFilter(isSelected ? 'all' : ds.domain)}
-                    className={cn(
-                      'w-full flex items-center gap-2 text-[10px] p-1 rounded transition-colors text-left',
-                      isSelected ? 'bg-slate-500/15 ring-1 ring-slate-500/40' : 'hover:bg-slate-500/10',
-                    )}
-                    title={`Filter by ${dm.label} domain`}
-                  >
-                    <span className="shrink-0 w-3 text-center">{dm.icon}</span>
-                    <span className="shrink-0 w-16 font-medium">{dm.label}</span>
-                    <div className="flex-1 h-1.5 bg-background/60 rounded overflow-hidden">
-                      <div
-                        className={cn('h-full transition-all', rateColor(rate))}
-                        style={{ width: `${Math.round(rate * 100)}%` }}
-                      />
-                    </div>
-                    <span className="shrink-0 text-[9px] text-muted-foreground font-mono w-20 text-right">
-                      {total > 0 ? `${Math.round(rate * 100)}% (${ds.executed}/${total})` : '—'}
-                      {ds.pending > 0 && (
-                        <span className="text-blue-600 dark:text-blue-400"> · {ds.pending}⏳</span>
-                      )}
-                    </span>
-                  </button>
-                );
-              })}
-            </div>
-          )}
+          <DomainRates
+            domainStats={data.domainStats}
+            domainFilter={domainFilter}
+            onDomainFilterChange={setDomainFilter}
+          />
 
           {/* Action buttons row */}
           <div className="flex items-center justify-between gap-2 pt-1 border-t border-slate-500/20">

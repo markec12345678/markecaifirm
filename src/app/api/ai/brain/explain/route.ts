@@ -1,6 +1,6 @@
-// v8.26: Action Explainability API — returns human-readable reasoning for
-// TOP 5 Master Brain actions. Answers "Zakaj Master Brain priporoča TOČNO
-// to akcijo?"
+// v8.26 / v8.95.0-e-refactor: Action Explainability API — returns human-readable
+// reasoning for TOP 5 Master Brain actions. Answers "Zakaj Master Brain
+// priporoča TOČNO to akcijo?"
 //
 // GET: calls masterBrain() + loads the user's risk profile from Settings,
 //      then calls explainMasterBrainActions(masterResult, profileAdjustment).
@@ -17,6 +17,10 @@
 // DETERMINISTIC (aiUsed: false): no external AI/LLM SDK is called.
 // The risk profile is loaded from the Settings singleton (same as the master
 // brain endpoint v8.24).
+//
+// Refaktoriran z withAiRoute helperjem (v8.95.0-e) + enforceBudget guard
+// (non-breaking — endpoint ne kliče AI direktno, ampak je konsistentno z
+// vsemi v8.94.x migracijami).
 //
 // Response shape (MasterBrainExplanation):
 //   {
@@ -47,15 +51,23 @@
 //
 // runtime='nodejs', dynamic='force-dynamic', maxDuration=60.
 
-import { NextRequest, NextResponse } from 'next/server';
-import { logger } from '@/lib/logger';
+import type { NextRequest } from 'next/server';
+import {
+  withAiRoute,
+  AI_ROUTE_DEFAULTS,
+  type AiRouteContext,
+} from '@/lib/with-ai-route';
+import { apiOk } from '@/lib/api-response';
 import { getCachedAI, setCachedAI } from '@/lib/ai-cache';
 import {
   masterBrain,
   type MasterBrainResult,
   type MasterBrainInput,
 } from '@/lib/brain/master';
-import { explainMasterBrainActions, type MasterBrainExplanation } from '@/lib/brain/explainability';
+import {
+  explainMasterBrainActions,
+  type MasterBrainExplanation,
+} from '@/lib/brain/explainability';
 // v8.24: User Risk Profile — same loader as master endpoint
 import {
   adjustMasterBrainForRiskProfile,
@@ -63,10 +75,8 @@ import {
   type UserRiskProfile,
   type RiskProfileAdjustment,
 } from '@/lib/brain/risk-profile';
-import { db } from '@/lib/db';
 
-export const runtime = 'nodejs';
-export const dynamic = 'force-dynamic';
+export const { runtime, dynamic } = AI_ROUTE_DEFAULTS;
 export const maxDuration = 60;
 
 // --- Cache TTL -----------------------------------------------------------
@@ -74,13 +84,93 @@ export const maxDuration = 60;
 // master result; if the master result is still fresh, so are the explanations).
 const EXPLAIN_CACHE_TTL_MS = 10 * 60 * 1000;
 
-// --- v8.24: User Risk Profile loader ------------------------------------
-//
-// Reads the 4 risk-profile fields from the Settings singleton row.
-// On any DB error / missing row / missing fields, returns DEFAULT_PROFILE
-// (balanced) — explainability must never crash because the user's profile
-// couldn't be loaded.
-async function loadUserRiskProfile(): Promise<UserRiskProfile> {
+// --- Input shape ---------------------------------------------------------
+
+interface ExplainInput {
+  /** Pre-computed MasterBrainResult (POST only). Skips masterBrain() call. */
+  masterResult?: MasterBrainResult;
+  /** Override profile adjustment (POST only). Skips DB risk-profile load. */
+  profileAdjustment?: RiskProfileAdjustment;
+  /** Merged MasterBrainInput (query string + POST body `input`). */
+  input: MasterBrainInput;
+}
+
+// --- Shared handler (GET + POST) -----------------------------------------
+
+const explainHandler = withAiRoute<ExplainInput>({
+  endpoint: '/api/ai/brain/explain',
+  maxDuration: 60,
+  enforceBudget: true, // v8.95.0-e: budget guard + avtomatski recordAiCall
+  method: 'GET', // Endpoint sprejema GET + POST — bypass POST-only check
+
+  parseBody: async (req: NextRequest) => parseExplainInput(req),
+
+  // Brez validateInput — vsi input-i imajo defaults (query string prazna → {})
+
+  handler: async (input, ctx: AiRouteContext) => {
+    const { db, logger } = ctx;
+
+    // 1. Cache key (skip when caller supplied a pre-computed masterResult —
+    //    caller wants a fresh explanation of their own data, not a cached one)
+    const useCache = !input.masterResult;
+    const cacheKey = useCache ? buildCacheKey(input.input) : '';
+
+    if (cacheKey) {
+      const cached = getCachedAI<MasterBrainExplanation>(cacheKey);
+      if (cached) {
+        // Re-stamp cachedAt so the caller sees a fresh "served at" time, even
+        // though the underlying explanation is up to 10 min old. Mirrors the
+        // pattern used by other brain endpoints (master, profit, ...).
+        return apiOk({ ...cached, cachedAt: Date.now() });
+      }
+    }
+
+    // 2. Get the MasterBrainResult — either from POST body, or call masterBrain()
+    let masterResult: MasterBrainResult;
+    if (input.masterResult) {
+      masterResult = input.masterResult;
+    } else {
+      masterResult = await masterBrain(input.input);
+    }
+
+    // 3. Get the RiskProfileAdjustment — either from POST body, or compute
+    //    from the user's persisted profile in Settings.
+    let profileAdjustment: RiskProfileAdjustment | null | undefined =
+      input.profileAdjustment;
+    if (profileAdjustment === undefined) {
+      // undefined = not provided → load from DB
+      const profile = await loadUserRiskProfile(db, logger);
+      profileAdjustment = adjustMasterBrainForRiskProfile(masterResult, profile);
+    }
+
+    // 4. Generate explanations
+    const explanation = explainMasterBrainActions(masterResult, profileAdjustment);
+
+    // 5. Cache the explanation (only if we computed masterResult ourselves)
+    if (cacheKey) {
+      setCachedAI(cacheKey, explanation, EXPLAIN_CACHE_TTL_MS);
+    }
+
+    // 6. Response — always re-stamp cachedAt on serve
+    return apiOk({ ...explanation, cachedAt: Date.now() });
+  },
+});
+
+export const GET = explainHandler;
+export const POST = explainHandler;
+
+// --- Pomožne funkcije (čiste, testabilne) --------------------------------
+
+/**
+ * Reads the 4 risk-profile fields from the Settings singleton row.
+ * On any DB error / missing row / missing fields, returns DEFAULT_PROFILE
+ * (balanced) — explainability must never crash because the user's profile
+ * couldn't be loaded.
+ */
+async function loadUserRiskProfile(
+  db: AiRouteContext['db'],
+  logger: AiRouteContext['logger'],
+): Promise<UserRiskProfile> {
   try {
     const s = await db.settings.findUnique({ where: { id: 'singleton' } });
     if (!s) return DEFAULT_PROFILE;
@@ -114,12 +204,10 @@ async function loadUserRiskProfile(): Promise<UserRiskProfile> {
   }
 }
 
-// --- Input resolution ----------------------------------------------------
-
 /**
- * Parse MasterBrainInput from query string (GET). For GET we only support
- * skip flags + per-domain input overrides via query params (rare, but useful
- * for experiments). POST body parsing happens in handleExplain().
+ * Parse MasterBrainInput from query string (GET + POST both). Supports
+ * skip flags (skipProfit, skipInventory, skipMarket, skipSourcing, skipRisk,
+ * skipBuyer, skipPricing) as boolean query params.
  */
 function parseInputFromQuery(req: NextRequest): MasterBrainInput {
   const input: MasterBrainInput = {};
@@ -162,11 +250,11 @@ function parseInputFromQuery(req: NextRequest): MasterBrainInput {
  * Parse the optional POST body. Accepts:
  *   - masterResult?: MasterBrainResult   (pre-computed — skip masterBrain() call)
  *   - profileAdjustment?: RiskProfileAdjustment  (override — skip DB load)
- *   - input?: MasterBrainInput           (overrides passed to masterBrain() if no masterResult)
+ *   - input?: MasterBrainInput            (overrides passed to masterBrain())
+ *
+ * Returns {} for non-POST requests, invalid Content-Type, or non-object bodies.
  */
-async function parseBody(
-  req: NextRequest,
-): Promise<{
+async function parseExplainBody(req: NextRequest): Promise<{
   masterResult?: MasterBrainResult;
   profileAdjustment?: RiskProfileAdjustment;
   input?: MasterBrainInput;
@@ -207,6 +295,23 @@ async function parseBody(
   } catch {
     return {};
   }
+}
+
+/**
+ * Resolve ExplainInput from the incoming request:
+ *   1. Parse query string → queryInput (skip flags)
+ *   2. Parse POST body (masterResult / profileAdjustment / input overrides)
+ *   3. Merge: body.input overrides query string (preserves original precedence)
+ */
+async function parseExplainInput(req: NextRequest): Promise<ExplainInput> {
+  const queryInput = parseInputFromQuery(req);
+  const body = await parseExplainBody(req);
+  const input: MasterBrainInput = { ...queryInput, ...(body.input ?? {}) };
+  return {
+    masterResult: body.masterResult,
+    profileAdjustment: body.profileAdjustment,
+    input,
+  };
 }
 
 /**
@@ -252,72 +357,4 @@ function buildCacheKey(input: MasterBrainInput): string {
   parts.push(`sB:${input.skipBuyer ?? false}`);
   parts.push(`sPr:${input.skipPricing ?? false}`);
   return `brain-explain:${parts.join('|')}`;
-}
-
-// --- Handlers ------------------------------------------------------------
-
-export async function GET(req: NextRequest) {
-  return handleExplain(req);
-}
-
-export async function POST(req: NextRequest) {
-  return handleExplain(req);
-}
-
-async function handleExplain(req: NextRequest) {
-  try {
-    // 1. Parse optional body (POST only — empty for GET)
-    const body = await parseBody(req);
-
-    // 2. Resolve MasterBrainInput — POST body `input` wins over query string
-    const input: MasterBrainInput = { ...parseInputFromQuery(req), ...(body.input ?? {}) };
-
-    // 3. Build cache key (only when we'll compute masterResult from scratch —
-    //    if caller supplied a masterResult in body, skip cache)
-    const useCache = !body.masterResult;
-    const cacheKey = useCache ? buildCacheKey(input) : '';
-
-    if (useCache && cacheKey) {
-      const cached = getCachedAI<MasterBrainExplanation>(cacheKey);
-      if (cached) {
-        // Re-stamp cachedAt
-        const served: MasterBrainExplanation = { ...cached, cachedAt: Date.now() };
-        return NextResponse.json(served);
-      }
-    }
-
-    // 4. Get the MasterBrainResult — either from POST body, or call masterBrain()
-    let masterResult: MasterBrainResult;
-    if (body.masterResult) {
-      masterResult = body.masterResult;
-    } else {
-      masterResult = await masterBrain(input);
-    }
-
-    // 5. Get the RiskProfileAdjustment — either from POST body, or compute
-    //    from the user's persisted profile in Settings.
-    let profileAdjustment: RiskProfileAdjustment | null | undefined = body.profileAdjustment;
-    if (profileAdjustment === undefined) {
-      // undefined = not provided → load from DB
-      const profile = await loadUserRiskProfile();
-      profileAdjustment = adjustMasterBrainForRiskProfile(masterResult, profile);
-    }
-
-    // 6. Generate explanations
-    const explanation = explainMasterBrainActions(masterResult, profileAdjustment);
-
-    // 7. Cache the explanation (only if we computed masterResult ourselves)
-    if (useCache && cacheKey) {
-      setCachedAI(cacheKey, explanation, EXPLAIN_CACHE_TTL_MS);
-    }
-
-    // Re-stamp cachedAt on the response
-    return NextResponse.json({ ...explanation, cachedAt: Date.now() });
-  } catch (err: any) {
-    logger.error('/api/ai/brain/explain', 'handler failed', err);
-    return NextResponse.json(
-      { error: err?.message ?? 'Napaka' },
-      { status: 500 },
-    );
-  }
 }
