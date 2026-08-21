@@ -1,4 +1,4 @@
-// v8.20: Buyer Brain — GET+POST /api/ai/brain/buyer
+// v8.20 / v8.95.1-d-refactor: Buyer Brain — GET+POST /api/ai/brain/buyer
 //
 // Buyer Brain is the SIXTH "Brain" layer — a NEW architectural layer ABOVE the
 // ~51 buyer specialist endpoints (buyer-intent, buyer-clv-predictor,
@@ -63,9 +63,18 @@
 // model does not exist (currently does NOT exist in prisma/schema.prisma) —
 // falls back to sensible defaults. NEVER crashes the endpoint.
 // 5-MIN CACHE: cache key = `buyer-brain:${hashOfInputs}`, TTL = 300000 ms.
+//
+// Refaktoriran z withAiRoute helperjem (v8.95.1-d) + enforceBudget guard
+// (non-breaking — endpoint ne kliče AI direktno, ampak je konsistentno z
+// vsemi v8.94.x / v8.95.0.x brain migracijami).
 
-import { NextRequest, NextResponse } from 'next/server';
-import { logger } from '@/lib/logger';
+import type { NextRequest } from 'next/server';
+import {
+  withAiRoute,
+  AI_ROUTE_DEFAULTS,
+  type AiRouteContext,
+} from '@/lib/with-ai-route';
+import { apiOk } from '@/lib/api-response';
 import { getCachedAIWithStats, setCachedAIWithStats } from '@/lib/ai-cache';
 // v8.33: Performance metrics — wraps buyerBrain() with response-time tracking
 import { withPerf, recordPerf } from '@/lib/brain/performance';
@@ -75,12 +84,21 @@ import {
   type BuyerBrainResult,
 } from '@/lib/brain/buyer';
 
-export const runtime = 'nodejs';
-export const dynamic = 'force-dynamic';
+export const { runtime, dynamic } = AI_ROUTE_DEFAULTS;
 export const maxDuration = 60;
 
 // --- Cache TTL -----------------------------------------------------------
 const BRAIN_CACHE_TTL_MS = 5 * 60 * 1000; // 5 minutes
+
+// --- Input shape ---------------------------------------------------------
+
+/**
+ * Route-level input. The resolved BuyerBrainInput (query string + POST body)
+ * is captured in `input`. DB state is merged inside the handler.
+ */
+interface BuyerBrainRouteInput {
+  input: BuyerBrainInput;
+}
 
 // --- Input resolution ----------------------------------------------------
 
@@ -204,10 +222,11 @@ interface DbDerivedState {
  * (graceful degradation). All DB access wrapped in try/catch + logger.warn —
  * NEVER crashes the endpoint.
  */
-async function fetchDbState(): Promise<DbDerivedState | null> {
+async function fetchDbState(
+  db: AiRouteContext['db'],
+  logger: AiRouteContext['logger'],
+): Promise<DbDerivedState | null> {
   try {
-    const { db } = await import('@/lib/db');
-
     // Guard: Buyer model may not exist in current Prisma schema.
     // `db.buyer` will be `undefined` if the model is missing.
     const dbAny = db as unknown as Record<string, unknown>;
@@ -357,6 +376,39 @@ async function fetchDbState(): Promise<DbDerivedState | null> {
   }
 }
 
+/**
+ * Merge user-supplied input with DB-derived state. USER INPUT WINS on any
+ * field that is present in userInput (user can override DB-derived values).
+ * Falls back to dbState when undefined, then to undefined (which BuyerBrain
+ * internally replaces with sensible defaults).
+ */
+function mergeWithDbState(
+  userInput: BuyerBrainInput,
+  dbState: DbDerivedState | null,
+): BuyerBrainInput {
+  return {
+    totalBuyers: userInput.totalBuyers ?? dbState?.totalBuyers ?? undefined,
+    activeBuyersLast30d:
+      userInput.activeBuyersLast30d ?? dbState?.activeBuyersLast30d ?? undefined,
+    newBuyersLast30d: userInput.newBuyersLast30d ?? dbState?.newBuyersLast30d ?? undefined,
+    churnedBuyersLast30d:
+      userInput.churnedBuyersLast30d ?? dbState?.churnedBuyersLast30d ?? undefined,
+    avgBuyerLifetimeValue:
+      userInput.avgBuyerLifetimeValue ?? dbState?.avgBuyerLifetimeValue ?? undefined,
+    avgPurchaseFrequency:
+      userInput.avgPurchaseFrequency ?? dbState?.avgPurchaseFrequency ?? undefined,
+    avgOrderValue: userInput.avgOrderValue ?? dbState?.avgOrderValue ?? undefined,
+    repeatBuyerRatePct:
+      userInput.repeatBuyerRatePct ?? dbState?.repeatBuyerRatePct ?? undefined,
+    inquiriesConvertedPct:
+      userInput.inquiriesConvertedPct ?? dbState?.inquiriesConvertedPct ?? undefined,
+    avgEngagementScore:
+      userInput.avgEngagementScore ?? dbState?.avgEngagementScore ?? undefined,
+    highValueBuyersCount:
+      userInput.highValueBuyersCount ?? dbState?.highValueBuyersCount ?? undefined,
+  };
+}
+
 // --- Cache key -----------------------------------------------------------
 
 /**
@@ -384,42 +436,27 @@ function buildCacheKey(input: BuyerBrainInput): string {
 
 // --- Handler -------------------------------------------------------------
 
-export async function GET(req: NextRequest) {
-  return handleBuyerBrain(req);
-}
+const buyerHandler = withAiRoute<BuyerBrainRouteInput>({
+  endpoint: '/api/ai/brain/buyer',
+  maxDuration: 60,
+  enforceBudget: true, // v8.95.1-d: budget guard + avtomatski recordAiCall
+  method: 'GET', // Endpoint sprejema GET + POST — bypass POST-only check
 
-export async function POST(req: NextRequest) {
-  return handleBuyerBrain(req);
-}
+  parseBody: async (req: NextRequest) => ({
+    input: await resolveInputs(req),
+  }),
 
-async function handleBuyerBrain(req: NextRequest) {
-  try {
-    const userInput = await resolveInputs(req);
+  // Brez validateInput — vsa BuyerBrainInput polja so optional, prazna {} je
+  // valid (buyerBrain() interno nadomesti z DEFAULT_* konstantami).
+
+  handler: async (input, ctx: AiRouteContext) => {
+    const { db, logger } = ctx;
+    const userInput = input.input;
 
     // DB state injection — fills in any missing fields from real DB state.
     // If both DB and user input are present, USER INPUT WINS (user can override).
-    const dbState = await fetchDbState();
-    const mergedInput: BuyerBrainInput = {
-      totalBuyers: userInput.totalBuyers ?? dbState?.totalBuyers ?? undefined,
-      activeBuyersLast30d:
-        userInput.activeBuyersLast30d ?? dbState?.activeBuyersLast30d ?? undefined,
-      newBuyersLast30d: userInput.newBuyersLast30d ?? dbState?.newBuyersLast30d ?? undefined,
-      churnedBuyersLast30d:
-        userInput.churnedBuyersLast30d ?? dbState?.churnedBuyersLast30d ?? undefined,
-      avgBuyerLifetimeValue:
-        userInput.avgBuyerLifetimeValue ?? dbState?.avgBuyerLifetimeValue ?? undefined,
-      avgPurchaseFrequency:
-        userInput.avgPurchaseFrequency ?? dbState?.avgPurchaseFrequency ?? undefined,
-      avgOrderValue: userInput.avgOrderValue ?? dbState?.avgOrderValue ?? undefined,
-      repeatBuyerRatePct:
-        userInput.repeatBuyerRatePct ?? dbState?.repeatBuyerRatePct ?? undefined,
-      inquiriesConvertedPct:
-        userInput.inquiriesConvertedPct ?? dbState?.inquiriesConvertedPct ?? undefined,
-      avgEngagementScore:
-        userInput.avgEngagementScore ?? dbState?.avgEngagementScore ?? undefined,
-      highValueBuyersCount:
-        userInput.highValueBuyersCount ?? dbState?.highValueBuyersCount ?? undefined,
-    };
+    const dbState = await fetchDbState(db, logger);
+    const mergedInput = mergeWithDbState(userInput, dbState);
 
     const cacheKey = buildCacheKey(mergedInput);
     // v8.33: Use cache stats-tracked variants. Namespace = 'buyer-brain'.
@@ -433,19 +470,18 @@ async function handleBuyerBrain(req: NextRequest) {
         ...cached,
         cachedAt: Date.now(),
       };
-      return NextResponse.json(served);
+      return apiOk(served);
     }
 
     // v8.33: Wrap buyerBrain() call with perf tracking. cached=false (slow path).
     const result = await withPerf('buyer', async () => buyerBrain(mergedInput), false);
     setCachedAIWithStats('buyer-brain', cacheKey, result, BRAIN_CACHE_TTL_MS);
 
-    return NextResponse.json(result);
-  } catch (err: any) {
-    logger.error('/api/ai/brain/buyer', 'handler failed', err);
-    return NextResponse.json(
-      { error: err?.message ?? 'Napaka' },
-      { status: 500 },
-    );
-  }
-}
+    return apiOk(result);
+  },
+});
+
+// GET + POST both delegate to the same handler (POST is preferred by some UIs
+// for explicit-input intent; both share identical resolution + compute).
+export const GET = buyerHandler;
+export const POST = buyerHandler;

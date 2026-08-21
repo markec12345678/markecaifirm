@@ -1,4 +1,4 @@
-// v8.19: Risk Brain — GET+POST /api/ai/brain/risk
+// v8.19 / v8.95.1-b-refactor: Risk Brain — GET+POST /api/ai/brain/risk
 //
 // Risk Brain is the FIFTH "Brain" layer — a NEW architectural layer ABOVE the
 // ~7 risk specialist endpoints (fraud-detection, inventory-risk-assessor,
@@ -54,8 +54,15 @@
 // monthlyProfit, avgDaysToSell). If DB unavailable or empty, falls back to
 // sensible defaults — never crashes.
 // 5-MIN CACHE: cache key = `risk-brain:${hashOfInputs}`, TTL = 300000 ms.
+//
+// Refaktoriran z withAiRoute helperjem (v8.95.1-b) + enforceBudget guard
+// (non-breaking — endpoint ne kliče AI direktno, ampak je konsistentno z
+// vsemi v8.94.x / v8.95.x migracijami). DB client preko ctx.db (dependency
+// injection preko withAiRoute context-a).
 
-import { NextRequest, NextResponse } from 'next/server';
+import type { NextRequest } from 'next/server';
+import { withAiRoute, AI_ROUTE_DEFAULTS, type AiRouteContext } from '@/lib/with-ai-route';
+import { apiOk } from '@/lib/api-response';
 import { logger } from '@/lib/logger';
 import { getCachedAIWithStats, setCachedAIWithStats } from '@/lib/ai-cache';
 // v8.33: Performance metrics — wraps riskBrain() with response-time tracking
@@ -66,12 +73,15 @@ import {
   type RiskBrainResult,
 } from '@/lib/brain/risk';
 
-export const runtime = 'nodejs';
-export const dynamic = 'force-dynamic';
+export const { runtime, dynamic } = AI_ROUTE_DEFAULTS;
 export const maxDuration = 60;
 
 // --- Cache TTL -----------------------------------------------------------
 const BRAIN_CACHE_TTL_MS = 5 * 60 * 1000; // 5 minutes
+
+// Input type — alias za RiskBrainInput (vsa polja so optional, user lahko
+// override-a katerokoli vrednost preko query params ali POST body-ja).
+type BrainRiskInput = RiskBrainInput;
 
 // --- Input resolution ----------------------------------------------------
 
@@ -79,7 +89,7 @@ const BRAIN_CACHE_TTL_MS = 5 * 60 * 1000; // 5 minutes
  * Parse inputs from BOTH query string (GET) and POST body. Body takes
  * precedence over query (POST is more explicit intent).
  */
-async function resolveInputs(req: NextRequest): Promise<RiskBrainInput> {
+async function resolveInputs(req: NextRequest): Promise<BrainRiskInput> {
   let queryParams: URLSearchParams | null = null;
   try {
     const url = new URL(req.url);
@@ -126,7 +136,7 @@ async function resolveInputs(req: NextRequest): Promise<RiskBrainInput> {
     return Math.trunc(n);
   };
 
-  const input: RiskBrainInput = {};
+  const input: BrainRiskInput = {};
   const totalCapitalDeployed = asNumber('totalCapitalDeployed');
   if (totalCapitalDeployed != null) input.totalCapitalDeployed = totalCapitalDeployed;
   const inventoryValue = asNumber('inventoryValue');
@@ -172,6 +182,10 @@ interface DbDerivedState {
  * Read from Listing + Trade tables to derive risk context.
  * Falls back to null on any DB error.
  *
+ * v8.95.1-b: db parameter passed via dependency injection (ctx.db from
+ * withAiRoute) — replaces the dynamic `await import('@/lib/db')` of the
+ * original implementation. Same Prisma client, same behavior.
+ *
  * Mapping:
  *  - fraudSuspicionsCount: count of Listing where aiVerdict='SUMNJIVO' OR aiRisk >= 7
  *  - totalListingsCount: count of all non-hidden Listing
@@ -186,10 +200,8 @@ interface DbDerivedState {
  * Note: marketVolatilityPct cannot be derived from existing DB tables — falls
  * back to the default (25%) if user did not provide it.
  */
-async function fetchDbState(): Promise<DbDerivedState | null> {
+async function fetchDbState(db: AiRouteContext['db']): Promise<DbDerivedState | null> {
   try {
-    const { db } = await import('@/lib/db');
-
     const now = new Date();
     const thirtyDaysAgo = new Date(now);
     thirtyDaysAgo.setDate(thirtyDaysAgo.getDate() - 30);
@@ -361,7 +373,7 @@ async function fetchDbState(): Promise<DbDerivedState | null> {
  * key → cache hit. We do NOT include DB state in the key — DB state changes
  * slowly and the 5-min TTL is short enough that any state drift is acceptable.
  */
-function buildCacheKey(input: RiskBrainInput): string {
+function buildCacheKey(input: BrainRiskInput): string {
   const parts: string[] = [];
   parts.push(`tcd:${input.totalCapitalDeployed ?? ''}`);
   parts.push(`iv:${input.inventoryValue ?? ''}`);
@@ -381,22 +393,21 @@ function buildCacheKey(input: RiskBrainInput): string {
 
 // --- Handler -------------------------------------------------------------
 
-export async function GET(req: NextRequest) {
-  return handleRiskBrain(req);
-}
+const riskBrainHandler = withAiRoute<BrainRiskInput>({
+  endpoint: '/api/ai/brain/risk',
+  maxDuration: 60,
+  enforceBudget: true, // v8.95.1-b: budget guard + avtomatski recordAiCall
+  method: 'GET', // Endpoint sprejema GET + POST — bypass POST-only check
 
-export async function POST(req: NextRequest) {
-  return handleRiskBrain(req);
-}
+  parseBody: async (req) => resolveInputs(req),
 
-async function handleRiskBrain(req: NextRequest) {
-  try {
-    const userInput = await resolveInputs(req);
+  // Brez validateInput — vsa polja so optional, defaults se uporabijo v riskBrain()
 
+  handler: async (userInput, ctx: AiRouteContext) => {
     // DB state injection — fills in any missing fields from real DB state.
     // If both DB and user input are present, USER INPUT WINS (user can override).
-    const dbState = await fetchDbState();
-    const mergedInput: RiskBrainInput = {
+    const dbState = await fetchDbState(ctx.db);
+    const mergedInput: BrainRiskInput = {
       totalCapitalDeployed:
         userInput.totalCapitalDeployed ?? dbState?.totalCapitalDeployed ?? undefined,
       inventoryValue: userInput.inventoryValue ?? dbState?.inventoryValue ?? undefined,
@@ -427,19 +438,17 @@ async function handleRiskBrain(req: NextRequest) {
         ...cached,
         cachedAt: Date.now(),
       };
-      return NextResponse.json(served);
+      return apiOk(served);
     }
 
     // v8.33: Wrap riskBrain() call with perf tracking. cached=false (slow path).
     const result = await withPerf('risk', async () => riskBrain(mergedInput), false);
     setCachedAIWithStats('risk-brain', cacheKey, result, BRAIN_CACHE_TTL_MS);
 
-    return NextResponse.json(result);
-  } catch (err: any) {
-    logger.error('/api/ai/brain/risk', 'handler failed', err);
-    return NextResponse.json(
-      { error: err?.message ?? 'Napaka' },
-      { status: 500 },
-    );
-  }
-}
+    return apiOk(result);
+  },
+});
+
+export const GET = riskBrainHandler;
+// POST also supported — same handler (body takes precedence over query)
+export const POST = riskBrainHandler;

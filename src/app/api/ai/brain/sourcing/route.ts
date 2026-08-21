@@ -1,4 +1,4 @@
-// v8.18: Sourcing Brain — GET+POST /api/ai/brain/sourcing
+// v8.18 / v8.95.1-c-refactor: Sourcing Brain — GET+POST /api/ai/brain/sourcing
 //
 // Sourcing Brain is the FOURTH "Brain" layer — a NEW architectural layer ABOVE
 // the ~21 sourcing/deal-source specialist endpoints (deal-source-profit-
@@ -54,9 +54,14 @@
 // and the Monitor model (source field). If DB unavailable or no usable data,
 // falls back to sensible 4-source defaults — never crashes.
 // 5-MIN CACHE: cache key = `sourcing-brain:${hashOfInputs}`, TTL = 300000 ms.
+//
+// Refaktoriran z withAiRoute helperjem (v8.95.1-c) + enforceBudget guard
+// (non-breaking — endpoint ne kliče AI direktno, ampak je konsistentno z
+// vsemi v8.94.x / v8.95.x migracijami; avtomatski recordAiCall je additive).
 
-import { NextRequest, NextResponse } from 'next/server';
-import { logger } from '@/lib/logger';
+import type { NextRequest } from 'next/server';
+import { withAiRoute, AI_ROUTE_DEFAULTS, type AiRouteContext } from '@/lib/with-ai-route';
+import { apiOk } from '@/lib/api-response';
 import { getCachedAIWithStats, setCachedAIWithStats } from '@/lib/ai-cache';
 // v8.33: Performance metrics — wraps sourcingBrain() with response-time tracking
 import { withPerf, recordPerf } from '@/lib/brain/performance';
@@ -67,8 +72,7 @@ import {
   type SourceDatum,
 } from '@/lib/brain/sourcing';
 
-export const runtime = 'nodejs';
-export const dynamic = 'force-dynamic';
+export const { runtime, dynamic } = AI_ROUTE_DEFAULTS;
 export const maxDuration = 60;
 
 // --- Cache TTL -----------------------------------------------------------
@@ -183,10 +187,11 @@ interface DbDerivedState {
  *  - monthlyProfitEUR: sum(sellPrice - buyPrice - buyFees - sellFees) of SOLD trades
  *    from this source in the last 30 days
  */
-async function fetchDbState(): Promise<DbDerivedState | null> {
+async function fetchDbState(
+  db: AiRouteContext['db'],
+  logger: AiRouteContext['logger'],
+): Promise<DbDerivedState | null> {
   try {
-    const { db } = await import('@/lib/db');
-
     const now = new Date();
     const thirtyDaysAgo = new Date(now);
     thirtyDaysAgo.setDate(thirtyDaysAgo.getDate() - 30);
@@ -380,28 +385,32 @@ function buildCacheKey(input: SourcingBrainInput): string {
 }
 
 // --- Handler -------------------------------------------------------------
+//
+// GET + POST share the same handler (some UIs prefer POST for data fetches
+// with a body). method: 'GET' bypasses the POST-only check in withAiRoute so
+// both methods reach the handler.
 
-export async function GET(req: NextRequest) {
-  return handleSourcingBrain(req);
-}
+const sourcingBrainHandler = withAiRoute<SourcingBrainInput>({
+  endpoint: '/api/ai/brain/sourcing',
+  maxDuration: 60,
+  enforceBudget: true, // v8.95.1-c: budget guard (non-breaking za DETERMINISTIC endpoint)
+  method: 'GET', // GET + POST — bypass POST-only check
 
-export async function POST(req: NextRequest) {
-  return handleSourcingBrain(req);
-}
+  parseBody: (req) => resolveInputs(req),
 
-async function handleSourcingBrain(req: NextRequest) {
-  try {
-    const userInput = await resolveInputs(req);
+  // Brez validateInput — vsi input-i so optional z defaults (sources fallback
+  // na 4-source defaults znotraj sourcingBrain())
 
+  handler: async (input, ctx: AiRouteContext) => {
     // DB state injection — fills in `sources` if the caller did not provide them.
     // If both DB and user input are present, USER INPUT WINS (user can override).
-    const dbState = await fetchDbState();
+    const dbState = await fetchDbState(ctx.db, ctx.logger);
     const mergedInput: SourcingBrainInput = {
-      sources: userInput.sources ?? dbState?.sources ?? undefined,
+      sources: input.sources ?? dbState?.sources ?? undefined,
       totalCapitalDeployed:
-        userInput.totalCapitalDeployed ?? dbState?.totalCapitalDeployed ?? undefined,
+        input.totalCapitalDeployed ?? dbState?.totalCapitalDeployed ?? undefined,
       totalMonthlyProfit:
-        userInput.totalMonthlyProfit ?? dbState?.totalMonthlyProfit ?? undefined,
+        input.totalMonthlyProfit ?? dbState?.totalMonthlyProfit ?? undefined,
     };
 
     const cacheKey = buildCacheKey(mergedInput);
@@ -416,19 +425,16 @@ async function handleSourcingBrain(req: NextRequest) {
         ...cached,
         cachedAt: Date.now(),
       };
-      return NextResponse.json(served);
+      return apiOk(served);
     }
 
     // v8.33: Wrap sourcingBrain() call with perf tracking. cached=false (slow path).
     const result = await withPerf('sourcing', async () => sourcingBrain(mergedInput), false);
     setCachedAIWithStats('sourcing-brain', cacheKey, result, BRAIN_CACHE_TTL_MS);
 
-    return NextResponse.json(result);
-  } catch (err: any) {
-    logger.error('/api/ai/brain/sourcing', 'handler failed', err);
-    return NextResponse.json(
-      { error: err?.message ?? 'Napaka' },
-      { status: 500 },
-    );
-  }
-}
+    return apiOk(result);
+  },
+});
+
+export const GET = sourcingBrainHandler;
+export const POST = sourcingBrainHandler;

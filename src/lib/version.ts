@@ -2,7 +2,7 @@
 // Update this file when bumping version — footer and other UI reads from here.
 // Run `find src/app/api -name "route.ts" | wc -l` to verify counts.
 
-export const APP_VERSION = 'v8.95.0';
+export const APP_VERSION = 'v8.95.1';
 export const AI_ENDPOINTS = 432;
 export const ANALYTICS_ENDPOINTS = 84;
 export const TOTAL_API_ROUTES = 651;
