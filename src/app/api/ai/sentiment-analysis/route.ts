@@ -1,16 +1,14 @@
-// v6.20: AI Sentiment Analysis — analiza prodajalčevih sporočil in opisov
+// v6.20 / v8.96.0-batch4: AI Sentiment Analysis — analiza prodajalčevih sporočil in opisov
+// Refaktoriran z withAiRoute helperjem (v8.96) + enforceBudget guard.
+//
 // POST /api/ai/sentiment-analysis
 // Body: { listingId?: string, sellerMessage?: string, listing?: { title, description, sellerName } }
 // Returns: { ok, sentiment: { overall, urgency, deceptionRisk, motivation, leverage, toneProfile, redFlags, greenFlags, recommendedApproach } }
 
-import { NextRequest, NextResponse } from 'next/server';
-import { db } from '@/lib/db';
-import { getSettingsRow } from '@/lib/pipeline';
-import { callProviderForRaw, parseJsonLooseExported, type AiProviderType, type AiSettings } from '@/lib/ai';
-import { logger } from '@/lib/logger';
+import { withAiRoute, AI_ROUTE_DEFAULTS, ApiRouteError, type AiRouteContext } from '@/lib/with-ai-route';
+import { apiOk } from '@/lib/api-response';
 
-export const runtime = 'nodejs';
-export const dynamic = 'force-dynamic';
+export const { runtime, dynamic } = AI_ROUTE_DEFAULTS;
 export const maxDuration = 60;
 
 // Hevristični vzorci za zaznavanje prodajalčevega sentimenta
@@ -50,11 +48,39 @@ const GREEN_FLAGS = [
   { pattern: /slikam\s+še|več\s+slik|video\s+lahko/i, weight: 5, label: 'Ponuja več materiala' },
 ];
 
-export async function POST(req: NextRequest) {
-  try {
+interface ListingInput {
+  title: string;
+  description: string;
+  sellerName?: string | null;
+}
+
+interface SentimentAnalysisInput {
+  listingId: string | null;
+  sellerMessage: string | null;
+  listing: ListingInput | null;
+}
+
+export const POST = withAiRoute<SentimentAnalysisInput>({
+  endpoint: '/api/ai/sentiment-analysis',
+  maxDuration: 60,
+  enforceBudget: true, // AI klic — preveri budget
+
+  parseBody: async (req) => {
     const body = await req.json().catch(() => ({}));
     const { listingId, sellerMessage } = body;
-    let listingInput: { title: string; description: string; sellerName?: string | null } | null = body?.listing ?? null;
+    const listingInput: ListingInput | null = body?.listing ?? null;
+    return {
+      listingId: listingId ? String(listingId) : null,
+      sellerMessage: sellerMessage ? String(sellerMessage) : null,
+      listing: listingInput,
+    };
+  },
+
+  // No validateInput — listingId/listing validacija se zgodi v handler-ju (odvisno od listing fetch-a)
+  handler: async (input, ctx: AiRouteContext) => {
+    const { db, callAi, parseAi } = ctx;
+    const { listingId, sellerMessage } = input;
+    let listingInput: ListingInput | null = input.listing;
 
     if (listingId && !listingInput) {
       const listing = await db.listing.findUnique({
@@ -64,7 +90,7 @@ export async function POST(req: NextRequest) {
           aiRisk: true, aiVerdict: true, aiReason: true,
         },
       });
-      if (!listing) return NextResponse.json({ error: 'Listing ne obstaja' }, { status: 404 });
+      if (!listing) throw new ApiRouteError('Listing ne obstaja', 404);
       listingInput = {
         title: listing.title,
         description: listing.detailDescription || listing.description,
@@ -73,72 +99,110 @@ export async function POST(req: NextRequest) {
     }
 
     if (!listingInput) {
-      return NextResponse.json({ error: 'listingId ali listing objekt je obvezen' }, { status: 400 });
+      throw new ApiRouteError('listingId ali listing objekt je obvezen', 400);
     }
 
     // 1. Hevristična analiza — pattern matching na opisu in sporočilu
     const fullText = `${listingInput.title} ${listingInput.description} ${sellerMessage || ''}`;
-    const detectedUrgency: Array<{ label: string; weight: number; matched: string }> = [];
-    const detectedDeception: Array<{ label: string; weight: number; matched: string }> = [];
-    const detectedLeverage: Array<{ label: string; weight: number; matched: string }> = [];
-    const detectedGreen: Array<{ label: string; weight: number; matched: string }> = [];
-
-    let urgencyScore = 0;
-    let deceptionScore = 0;
-    let leverageScore = 0;
-    let greenScore = 0;
-
-    for (const p of URGENCY_PATTERNS) {
-      const m = fullText.match(p.pattern);
-      if (m) {
-        detectedUrgency.push({ label: p.label, weight: p.weight, matched: m[0].slice(0, 50) });
-        urgencyScore += p.weight;
-      }
-    }
-    for (const p of DECEPTION_PATTERNS) {
-      const m = fullText.match(p.pattern);
-      if (m) {
-        detectedDeception.push({ label: p.label, weight: p.weight, matched: m[0].slice(0, 50) });
-        deceptionScore += p.weight;
-      }
-    }
-    for (const p of LEVERAGE_PATTERNS) {
-      const m = fullText.match(p.pattern);
-      if (m) {
-        detectedLeverage.push({ label: p.label, weight: p.weight, matched: m[0].slice(0, 50) });
-        leverageScore += p.weight;
-      }
-    }
-    for (const p of GREEN_FLAGS) {
-      const m = fullText.match(p.pattern);
-      if (m) {
-        detectedGreen.push({ label: p.label, weight: p.weight, matched: m[0].slice(0, 50) });
-        greenScore += p.weight;
-      }
-    }
+    const urgency = detectPatterns(fullText, URGENCY_PATTERNS);
+    const deception = detectPatterns(fullText, DECEPTION_PATTERNS);
+    const leverage = detectPatterns(fullText, LEVERAGE_PATTERNS);
+    const green = detectPatterns(fullText, GREEN_FLAGS);
 
     // 2. AI kontekstualna analiza
-    const settings = await getSettingsRow();
-    const aiSettings: AiSettings = {
-      provider: settings.aiProvider as AiProviderType,
-      baseUrl: settings.aiBaseUrl, apiKey: settings.aiApiKey, model: settings.aiModel,
-      fallbackProvider: (settings.fallbackProvider || '') as AiProviderType | '',
-      fallbackBaseUrl: settings.fallbackBaseUrl || '', fallbackApiKey: settings.fallbackApiKey || '',
-      fallbackModel: settings.fallbackModel || '',
-    };
+    const prompt = buildPrompt({
+      title: listingInput.title,
+      description: listingInput.description,
+      sellerMessage,
+      urgencyScore: urgency.score,
+      deceptionScore: deception.score,
+      leverageScore: leverage.score,
+      greenScore: green.score,
+    });
 
-    const prompt = `Si forenzik psiholog specializiran za analizo komunikacije pri spletnih oglasih.
+    const raw = await callAi(prompt);
+    const parsed: any = parseAi(raw);
+
+    const sentiment = transformSentiment(parsed, {
+      urgencyScore: urgency.score,
+      deceptionScore: deception.score,
+      leverageScore: leverage.score,
+    });
+
+    return apiOk({
+      ok: true,
+      sentiment,
+      heuristics: {
+        urgencyScore: urgency.score,
+        deceptionScore: deception.score,
+        leverageScore: leverage.score,
+        greenScore: green.score,
+        detectedUrgency: urgency.detected,
+        detectedDeception: deception.detected,
+        detectedLeverage: leverage.detected,
+        detectedGreen: green.detected,
+      },
+      listing: listingInput,
+      hasSellerMessage: !!sellerMessage,
+    });
+  },
+});
+
+// --- Pomožne funkcije (čiste, testabilne) --------------------------------
+
+interface SentPattern {
+  pattern: RegExp;
+  weight: number;
+  label: string;
+}
+
+interface DetectedMatch {
+  label: string;
+  weight: number;
+  matched: string;
+}
+
+interface DetectionResult {
+  detected: DetectedMatch[];
+  score: number;
+}
+
+function detectPatterns(text: string, patterns: SentPattern[]): DetectionResult {
+  const detected: DetectedMatch[] = [];
+  let score = 0;
+  for (const p of patterns) {
+    const m = text.match(p.pattern);
+    if (m) {
+      detected.push({ label: p.label, weight: p.weight, matched: m[0].slice(0, 50) });
+      score += p.weight;
+    }
+  }
+  return { detected, score };
+}
+
+interface PromptData {
+  title: string;
+  description: string;
+  sellerMessage: string | null;
+  urgencyScore: number;
+  deceptionScore: number;
+  leverageScore: number;
+  greenScore: number;
+}
+
+function buildPrompt(d: PromptData): string {
+  return `Si forenzik psiholog specializiran za analizo komunikacije pri spletnih oglasih.
 Analiziraj sentiment, motivacijo in morebitne rdeče zastave prodajalca.
 
-NASLOV OGLASA: ${listingInput.title}
-OPIS OGLASA: ${(listingInput.description || '').slice(0, 800)}
-${sellerMessage ? `\nSPOROČILO PRODAJALCA:\n${sellerMessage.slice(0, 1500)}` : ''}
+NASLOV OGLASA: ${d.title}
+OPIS OGLASA: ${(d.description || '').slice(0, 800)}
+${d.sellerMessage ? `\nSPOROČILO PRODAJALCA:\n${d.sellerMessage.slice(0, 1500)}` : ''}
 
 HEVRISTIČNA ANALIZA (predhodna):
-- Urgentnost (visoka = motiviran prodajalec): ${urgencyScore}/100
-- Deception risk (sumljivo): ${deceptionScore}/100
-- Leverage (tvojih argumentov za pogajanje): ${leverageScore}/100
-- Green flags (pozitivni znaki): ${greenScore}/100
+- Urgentnost (visoka = motiviran prodajalec): ${d.urgencyScore}/100
+- Deception risk (sumljivo): ${d.deceptionScore}/100
+- Leverage (tvojih argumentov za pogajanje): ${d.leverageScore}/100
+- Green flags (pozitivni znaki): ${d.greenScore}/100
 
 Oceni:
 1. OVERALL sentiment: desperate|motivated|neutral|reluctant|suspicious
@@ -166,69 +230,29 @@ Odgovori LE z JSON:
   "opening_tactic": "<max 150 znakov>",
   "reasoning": "<max 200 znakov>"
 }`;
+}
 
-    let raw = '';
-    try {
-      raw = await callProviderForRaw(aiSettings, prompt);
-    } catch (primaryError: any) {
-      if (aiSettings.fallbackProvider && aiSettings.fallbackModel) {
-        const fb: AiSettings = {
-          provider: aiSettings.fallbackProvider,
-          baseUrl: aiSettings.fallbackBaseUrl || '',
-          apiKey: aiSettings.fallbackApiKey || '',
-          model: aiSettings.fallbackModel,
-        };
-        raw = await callProviderForRaw(fb, prompt);
-      } else {
-        return NextResponse.json({ error: primaryError?.message ?? 'AI failed' }, { status: 500 });
-      }
-    }
+interface SentimentFallbacks {
+  urgencyScore: number;
+  deceptionScore: number;
+  leverageScore: number;
+}
 
-    const parsed: any = parseJsonLooseExported(raw);
-
-    const sentiment = {
-      overall: ['desperate', 'motivated', 'neutral', 'reluctant', 'suspicious'].includes(String(parsed?.overall))
-        ? String(parsed.overall) : 'neutral',
-      urgencyPct: Math.max(0, Math.min(100, Number(parsed?.urgency_pct ?? urgencyScore))),
-      deceptionRiskPct: Math.max(0, Math.min(100, Number(parsed?.deception_risk_pct ?? deceptionScore))),
-      motivation: String(parsed?.motivation ?? '').slice(0, 200),
-      leveragePct: Math.max(0, Math.min(100, Number(parsed?.leverage_pct ?? leverageScore))),
-      toneProfile: ['prijateljski', 'poslovni', 'agresivni', 'previdni', 'odlašujoči'].includes(String(parsed?.tone_profile))
-        ? String(parsed.tone_profile) : 'poslovni',
-      redFlags: (parsed?.red_flags || []).slice(0, 6).map((r: any) => String(r).slice(0, 200)),
-      greenFlags: (parsed?.green_flags || []).slice(0, 6).map((g: any) => String(g).slice(0, 200)),
-      recommendedApproach: ['aggressive', 'firm', 'patient', 'walk_away'].includes(String(parsed?.recommended_approach))
-        ? String(parsed.recommended_approach) : 'firm',
-      openingTactic: String(parsed?.opening_tactic ?? '').slice(0, 300),
-      reasoning: String(parsed?.reasoning ?? '').slice(0, 400),
-    };
-
-    // Increment AI usage
-    const today = new Date().toISOString().slice(0, 10);
-    if (settings.aiCallsDate !== today) {
-      await db.settings.update({ where: { id: 'singleton' }, data: { aiCallsDate: today, aiCallsToday: 1 } });
-    } else {
-      await db.settings.update({ where: { id: 'singleton' }, data: { aiCallsToday: { increment: 1 } } });
-    }
-
-    return NextResponse.json({
-      ok: true,
-      sentiment,
-      heuristics: {
-        urgencyScore,
-        deceptionScore,
-        leverageScore,
-        greenScore,
-        detectedUrgency,
-        detectedDeception,
-        detectedLeverage,
-        detectedGreen,
-      },
-      listing: listingInput,
-      hasSellerMessage: !!sellerMessage,
-    });
-  } catch (e: any) {
-    logger.error("/api/ai/sentiment-analysis", "POST handler failed", e);
-    return NextResponse.json({ error: e?.message ?? 'Napaka' }, { status: 500 });
-  }
+function transformSentiment(parsed: any, f: SentimentFallbacks) {
+  return {
+    overall: ['desperate', 'motivated', 'neutral', 'reluctant', 'suspicious'].includes(String(parsed?.overall))
+      ? String(parsed.overall) : 'neutral',
+    urgencyPct: Math.max(0, Math.min(100, Number(parsed?.urgency_pct ?? f.urgencyScore))),
+    deceptionRiskPct: Math.max(0, Math.min(100, Number(parsed?.deception_risk_pct ?? f.deceptionScore))),
+    motivation: String(parsed?.motivation ?? '').slice(0, 200),
+    leveragePct: Math.max(0, Math.min(100, Number(parsed?.leverage_pct ?? f.leverageScore))),
+    toneProfile: ['prijateljski', 'poslovni', 'agresivni', 'previdni', 'odlašujoči'].includes(String(parsed?.tone_profile))
+      ? String(parsed.tone_profile) : 'poslovni',
+    redFlags: (parsed?.red_flags || []).slice(0, 6).map((r: any) => String(r).slice(0, 200)),
+    greenFlags: (parsed?.green_flags || []).slice(0, 6).map((g: any) => String(g).slice(0, 200)),
+    recommendedApproach: ['aggressive', 'firm', 'patient', 'walk_away'].includes(String(parsed?.recommended_approach))
+      ? String(parsed.recommended_approach) : 'firm',
+    openingTactic: String(parsed?.opening_tactic ?? '').slice(0, 300),
+    reasoning: String(parsed?.reasoning ?? '').slice(0, 400),
+  };
 }

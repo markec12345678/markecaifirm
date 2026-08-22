@@ -1,21 +1,32 @@
-// v6.30 MILESTONE: AI Profit Maximization Dashboard — agregira vse AI metrike v eno
+// v6.30 MILESTONE / v8.96.0-batch3: AI Profit Maximization Dashboard — agregira vse AI metrike v eno
+// Refaktoriran z withAiRoute helperjem (v8.96) + enforceBudget guard.
+//
 // POST /api/ai/profit-dashboard
 // Body: {}
 // Returns: { ok, dashboard: { kpis, portfolio, opportunities, risks, actions, projections } }
 
-import { NextRequest, NextResponse } from 'next/server';
-import { db } from '@/lib/db';
-import { getSettingsRow } from '@/lib/pipeline';
-import { callProviderForRaw, parseJsonLooseExported, type AiProviderType, type AiSettings } from '@/lib/ai';
-import { logger } from '@/lib/logger';
+import { withAiRoute, AI_ROUTE_DEFAULTS, type AiRouteContext } from '@/lib/with-ai-route';
+import { apiOk } from '@/lib/api-response';
 
-export const runtime = 'nodejs';
-export const dynamic = 'force-dynamic';
+export const { runtime, dynamic } = AI_ROUTE_DEFAULTS;
 export const maxDuration = 90;
 
-export async function POST(req: NextRequest) {
-  try {
+// eslint-disable-next-line @typescript-eslint/no-empty-object-type
+interface ProfitDashboardInput {}
+
+export const POST = withAiRoute<ProfitDashboardInput>({
+  endpoint: '/api/ai/profit-dashboard',
+  maxDuration: 90,
+  enforceBudget: true, // AI klic — preveri budget
+
+  parseBody: async (req) => {
     await req.json().catch(() => ({}));
+    return {} as ProfitDashboardInput;
+  },
+
+  // No validateInput — body je ignored
+  handler: async (_input, ctx: AiRouteContext) => {
+    const { db, callAi, parseAi } = ctx;
 
     // Pridobi VSE podatke za dashboard
     const [heldTrades, soldTrades, recentListings] = await Promise.all([
@@ -40,7 +51,7 @@ export async function POST(req: NextRequest) {
     ]);
 
     if (heldTrades.length === 0 && soldTrades.length === 0) {
-      return NextResponse.json({ ok: true, dashboard: null, message: 'Ni podatkov za dashboard.' });
+      return apiOk({ ok: true, dashboard: null, message: 'Ni podatkov za dashboard.' });
     }
 
     // KPI izračuni
@@ -69,42 +80,80 @@ export async function POST(req: NextRequest) {
     const opportunityRate = recentListings.length > 0 ? Math.round((opportunities.length / recentListings.length) * 100) : 0;
 
     // Category breakdown
-    const catProfit: Record<string, number> = {};
-    for (const t of soldTrades) {
-      const cat = t.category || 'drugo';
-      catProfit[cat] = (catProfit[cat] ?? 0) + (t.sellPrice ?? 0) - (t.sellFees ?? 0) - t.buyPrice - (t.buyFees ?? 0);
-    }
-
-    // AI dashboard
-    const settings = await getSettingsRow();
-    const aiSettings: AiSettings = {
-      provider: settings.aiProvider as AiProviderType,
-      baseUrl: settings.aiBaseUrl, apiKey: settings.aiApiKey, model: settings.aiModel,
-      fallbackProvider: (settings.fallbackProvider || '') as AiProviderType | '',
-      fallbackBaseUrl: settings.fallbackBaseUrl || '', fallbackApiKey: settings.fallbackApiKey || '',
-      fallbackModel: settings.fallbackModel || '',
-    };
+    const catProfit = computeCategoryProfit(soldTrades);
 
     const catStr = Object.entries(catProfit).sort(([,a],[,b]) => b - a).slice(0, 8).map(([cat, profit]) => `- ${cat}: ${Math.round(profit)}€`).join('\n');
     const heldStr = heldTrades.slice(0, 15).map(t => `- ${t.title} | ${t.category} | ${Math.round((Date.now()-t.buyDate.getTime())/(24*60*60*1000))}d | ${t.buyPrice}€`).join('\n');
 
-    const prompt = `Si vrhovni AI poslovni svetovalec za preprodajo rabljenih dobrin.
+    const prompt = buildPrompt({
+      totalRealized, totalInvestedHeld, heldCount: heldTrades.length,
+      avgRoi, avgDaysToSell, stalledCount: stalled.length,
+      opportunitiesCount: opportunities.length, recentListingsCount: recentListings.length,
+      opportunityRate, totalRevenue, catStr, heldStr,
+    });
+
+    const raw = await callAi(prompt);
+    const parsed: any = parseAi(raw);
+
+    const dashboard = transformDashboard(parsed, {
+      totalRealized, totalInvestedHeld, avgRoi, avgDaysToSell,
+      stalledCount: stalled.length, opportunitiesCount: opportunities.length,
+      opportunityRate, totalRevenue,
+    });
+
+    return apiOk({ ok: true, dashboard, version: 'v6.30.0 MILESTONE' });
+  },
+});
+
+// --- Pomožne funkcije (čiste, testabilne) --------------------------------
+
+interface SoldTradeRow {
+  category: string | null; buyPrice: number; buyFees: number | null;
+  sellPrice: number | null; sellFees: number | null;
+}
+
+function computeCategoryProfit(soldTrades: SoldTradeRow[]): Record<string, number> {
+  const catProfit: Record<string, number> = {};
+  for (const t of soldTrades) {
+    const cat = t.category || 'drugo';
+    catProfit[cat] = (catProfit[cat] ?? 0) + (t.sellPrice ?? 0) - (t.sellFees ?? 0) - t.buyPrice - (t.buyFees ?? 0);
+  }
+  return catProfit;
+}
+
+interface PromptData {
+  totalRealized: number;
+  totalInvestedHeld: number;
+  heldCount: number;
+  avgRoi: number;
+  avgDaysToSell: number;
+  stalledCount: number;
+  opportunitiesCount: number;
+  recentListingsCount: number;
+  opportunityRate: number;
+  totalRevenue: number;
+  catStr: string;
+  heldStr: string;
+}
+
+function buildPrompt(d: PromptData): string {
+  return `Si vrhovni AI poslovni svetovalec za preprodajo rabljenih dobrin.
 Ustvari celovit profit maximization dashboard z vsemi ključnimi metrikami in priporočili.
 
 KPI PODATKI:
-- Realizirani dobiček: ${Math.round(totalRealized)}€
-- Vezano v inventarju: ${Math.round(totalInvestedHeld)}€ (${heldTrades.length} itemov)
-- Povp. ROI: ${avgRoi}%
-- Povp. čas do prodaje: ${avgDaysToSell}d
-- Stalled itemi (>30d): ${stalled.length}
-- Nove priložnosti (7d): ${opportunities.length} od ${recentListings.length} (${opportunityRate}%)
-- Skupni prihodek: ${Math.round(totalRevenue)}€
+- Realizirani dobiček: ${Math.round(d.totalRealized)}€
+- Vezano v inventarju: ${Math.round(d.totalInvestedHeld)}€ (${d.heldCount} itemov)
+- Povp. ROI: ${d.avgRoi}%
+- Povp. čas do prodaje: ${d.avgDaysToSell}d
+- Stalled itemi (>30d): ${d.stalledCount}
+- Nove priložnosti (7d): ${d.opportunitiesCount} od ${d.recentListingsCount} (${d.opportunityRate}%)
+- Skupni prihodek: ${Math.round(d.totalRevenue)}€
 
 DOBIČEK PO KATEGORIJAH:
-${catStr}
+${d.catStr}
 
 TRENUTNI INVENTAR:
-${heldStr}
+${d.heldStr}
 
 Ustvari dashboard z:
 1. KPI summary (8 ključnih metrik)
@@ -145,80 +194,77 @@ Odgovori LE z JSON:
   ],
   "overall_assessment": "<max 300 znakov>"
 }`;
+}
 
-    let raw = '';
-    try {
-      raw = await callProviderForRaw(aiSettings, prompt);
-    } catch (primaryError: any) {
-      if (aiSettings.fallbackProvider && aiSettings.fallbackModel) {
-        const fb: AiSettings = { provider: aiSettings.fallbackProvider, baseUrl: aiSettings.fallbackBaseUrl || '',
-          apiKey: aiSettings.fallbackApiKey || '', model: aiSettings.fallbackModel };
-        raw = await callProviderForRaw(fb, prompt);
-      } else { return NextResponse.json({ error: primaryError?.message ?? 'AI failed' }, { status: 500 }); }
-    }
+interface FallbackData {
+  totalRealized: number;
+  totalInvestedHeld: number;
+  avgRoi: number;
+  avgDaysToSell: number;
+  stalledCount: number;
+  opportunitiesCount: number;
+  opportunityRate: number;
+  totalRevenue: number;
+}
 
-    const parsed: any = parseJsonLooseExported(raw);
-
-    const dashboard = {
-      kpis: {
-        realizedProfitEur: Math.round(Number(parsed?.kpis?.realized_profit_eur ?? totalRealized)),
-        investedHeldEur: Math.round(Number(parsed?.kpis?.invested_held_eur ?? totalInvestedHeld)),
-        avgRoiPct: Math.round(Number(parsed?.kpis?.avg_roi_pct ?? avgRoi)),
-        avgDaysToSell: Math.round(Number(parsed?.kpis?.avg_days_to_sell ?? avgDaysToSell)),
-        stalledCount: Math.max(0, Number(parsed?.kpis?.stalled_count ?? stalled.length)),
-        opportunityCount: Math.max(0, Number(parsed?.kpis?.opportunity_count ?? opportunities.length)),
-        opportunityRatePct: Math.round(Number(parsed?.kpis?.opportunity_rate_pct ?? opportunityRate)),
-        totalRevenueEur: Math.round(Number(parsed?.kpis?.total_revenue_eur ?? totalRevenue)),
-      },
-      portfolioHealthScore: Math.max(0, Math.min(100, Number(parsed?.portfolio_health_score ?? 50))),
-      portfolioHealthGrade: ['A+', 'A', 'B+', 'B', 'C', 'D', 'F'].includes(String(parsed?.portfolio_health_grade)) ? String(parsed.portfolio_health_grade) : 'C',
-      healthFactors: (parsed?.health_factors || []).slice(0, 8).map((f: any) => ({
-        factor: String(f?.factor ?? '').slice(0, 80),
-        score: Math.max(0, Math.min(100, Number(f?.score ?? 50))),
-        status: ['good', 'warning', 'critical'].includes(String(f?.status)) ? String(f.status) : 'good',
-        note: String(f?.note ?? '').slice(0, 150),
-      })),
-      topOpportunities: (parsed?.top_opportunities || []).slice(0, 5).map((o: any) => ({
-        category: String(o?.category ?? '').slice(0, 50),
-        action: String(o?.action ?? '').slice(0, 200),
-        expectedRoiPct: Math.round(Number(o?.expected_roi_pct ?? 0)),
-        urgency: ['high', 'medium', 'low'].includes(String(o?.urgency)) ? String(o.urgency) : 'medium',
-        source: String(o?.source ?? '').slice(0, 50),
-        reasoning: String(o?.reasoning ?? '').slice(0, 150),
-      })),
-      topRisks: (parsed?.top_risks || []).slice(0, 5).map((r: any) => ({
-        item: String(r?.item ?? '').slice(0, 100),
-        riskType: String(r?.risk_type ?? '').slice(0, 50),
-        severity: ['high', 'medium', 'low'].includes(String(r?.severity)) ? String(r.severity) : 'medium',
-        action: String(r?.action ?? '').slice(0, 200),
-        potentialLossEur: Math.round(Number(r?.potential_loss_eur ?? 0)),
-      })),
-      recommendedActions: (parsed?.recommended_actions || []).slice(0, 8).map((a: any) => ({
-        action: String(a?.action ?? '').slice(0, 250),
-        priority: ['critical', 'high', 'medium', 'low'].includes(String(a?.priority)) ? String(a.priority) : 'medium',
-        expectedImpactEur: Math.round(Number(a?.expected_impact_eur ?? 0)),
-        deadlineDays: Math.max(0, Number(a?.deadline_days ?? 7)),
-      })),
-      projections: (parsed?.projections || []).slice(0, 3).map((p: any) => ({
-        month: Math.max(1, Number(p?.month ?? 1)),
-        projectedRevenueEur: Math.round(Number(p?.projected_revenue_eur ?? 0)),
-        projectedProfitEur: Math.round(Number(p?.projected_profit_eur ?? 0)),
-        projectedInvestedEur: Math.round(Number(p?.projected_invested_eur ?? 0)),
-        cashFlowEur: Math.round(Number(p?.cash_flow_eur ?? 0)),
-      })),
-      overallAssessment: String(parsed?.overall_assessment ?? '').slice(0, 600),
-    };
-
-    const today = new Date().toISOString().slice(0, 10);
-    if (settings.aiCallsDate !== today) {
-      await db.settings.update({ where: { id: 'singleton' }, data: { aiCallsDate: today, aiCallsToday: 1 } });
-    } else {
-      await db.settings.update({ where: { id: 'singleton' }, data: { aiCallsToday: { increment: 1 } } });
-    }
-
-    return NextResponse.json({ ok: true, dashboard, version: 'v6.30.0 MILESTONE' });
-  } catch (e: any) {
-    logger.error("/api/ai/profit-dashboard", "POST handler failed", e);
-    return NextResponse.json({ error: e?.message ?? 'Napaka' }, { status: 500 });
-  }
+function transformDashboard(parsed: any, f: FallbackData): {
+  kpis: any;
+  portfolioHealthScore: number;
+  portfolioHealthGrade: string;
+  healthFactors: any[];
+  topOpportunities: any[];
+  topRisks: any[];
+  recommendedActions: any[];
+  projections: any[];
+  overallAssessment: string;
+} {
+  return {
+    kpis: {
+      realizedProfitEur: Math.round(Number(parsed?.kpis?.realized_profit_eur ?? f.totalRealized)),
+      investedHeldEur: Math.round(Number(parsed?.kpis?.invested_held_eur ?? f.totalInvestedHeld)),
+      avgRoiPct: Math.round(Number(parsed?.kpis?.avg_roi_pct ?? f.avgRoi)),
+      avgDaysToSell: Math.round(Number(parsed?.kpis?.avg_days_to_sell ?? f.avgDaysToSell)),
+      stalledCount: Math.max(0, Number(parsed?.kpis?.stalled_count ?? f.stalledCount)),
+      opportunityCount: Math.max(0, Number(parsed?.kpis?.opportunity_count ?? f.opportunitiesCount)),
+      opportunityRatePct: Math.round(Number(parsed?.kpis?.opportunity_rate_pct ?? f.opportunityRate)),
+      totalRevenueEur: Math.round(Number(parsed?.kpis?.total_revenue_eur ?? f.totalRevenue)),
+    },
+    portfolioHealthScore: Math.max(0, Math.min(100, Number(parsed?.portfolio_health_score ?? 50))),
+    portfolioHealthGrade: ['A+', 'A', 'B+', 'B', 'C', 'D', 'F'].includes(String(parsed?.portfolio_health_grade)) ? String(parsed.portfolio_health_grade) : 'C',
+    healthFactors: (parsed?.health_factors || []).slice(0, 8).map((fa: any) => ({
+      factor: String(fa?.factor ?? '').slice(0, 80),
+      score: Math.max(0, Math.min(100, Number(fa?.score ?? 50))),
+      status: ['good', 'warning', 'critical'].includes(String(fa?.status)) ? String(fa.status) : 'good',
+      note: String(fa?.note ?? '').slice(0, 150),
+    })),
+    topOpportunities: (parsed?.top_opportunities || []).slice(0, 5).map((o: any) => ({
+      category: String(o?.category ?? '').slice(0, 50),
+      action: String(o?.action ?? '').slice(0, 200),
+      expectedRoiPct: Math.round(Number(o?.expected_roi_pct ?? 0)),
+      urgency: ['high', 'medium', 'low'].includes(String(o?.urgency)) ? String(o.urgency) : 'medium',
+      source: String(o?.source ?? '').slice(0, 50),
+      reasoning: String(o?.reasoning ?? '').slice(0, 150),
+    })),
+    topRisks: (parsed?.top_risks || []).slice(0, 5).map((r: any) => ({
+      item: String(r?.item ?? '').slice(0, 100),
+      riskType: String(r?.risk_type ?? '').slice(0, 50),
+      severity: ['high', 'medium', 'low'].includes(String(r?.severity)) ? String(r.severity) : 'medium',
+      action: String(r?.action ?? '').slice(0, 200),
+      potentialLossEur: Math.round(Number(r?.potential_loss_eur ?? 0)),
+    })),
+    recommendedActions: (parsed?.recommended_actions || []).slice(0, 8).map((a: any) => ({
+      action: String(a?.action ?? '').slice(0, 250),
+      priority: ['critical', 'high', 'medium', 'low'].includes(String(a?.priority)) ? String(a.priority) : 'medium',
+      expectedImpactEur: Math.round(Number(a?.expected_impact_eur ?? 0)),
+      deadlineDays: Math.max(0, Number(a?.deadline_days ?? 7)),
+    })),
+    projections: (parsed?.projections || []).slice(0, 3).map((p: any) => ({
+      month: Math.max(1, Number(p?.month ?? 1)),
+      projectedRevenueEur: Math.round(Number(p?.projected_revenue_eur ?? 0)),
+      projectedProfitEur: Math.round(Number(p?.projected_profit_eur ?? 0)),
+      projectedInvestedEur: Math.round(Number(p?.projected_invested_eur ?? 0)),
+      cashFlowEur: Math.round(Number(p?.cash_flow_eur ?? 0)),
+    })),
+    overallAssessment: String(parsed?.overall_assessment ?? '').slice(0, 600),
+  };
 }

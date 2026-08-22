@@ -1,21 +1,32 @@
-// v6.36: AI Inventory Health Monitor — celovito spremlja zdravje inventarja
+// v6.36 / v8.96.0-batch3: AI Inventory Health Monitor — celovito spremlja zdravje inventarja
+// Refaktoriran z withAiRoute helperjem (v8.96) + enforceBudget guard.
+//
 // POST /api/ai/inventory-health
 // Body: {}
 // Returns: { ok, health: { overallScore, vitals, items: [], diagnosis, treatment } }
 
-import { NextRequest, NextResponse } from 'next/server';
-import { db } from '@/lib/db';
-import { getSettingsRow } from '@/lib/pipeline';
-import { callProviderForRaw, parseJsonLooseExported, type AiProviderType, type AiSettings } from '@/lib/ai';
-import { logger } from '@/lib/logger';
+import { withAiRoute, AI_ROUTE_DEFAULTS, type AiRouteContext } from '@/lib/with-ai-route';
+import { apiOk } from '@/lib/api-response';
 
-export const runtime = 'nodejs';
-export const dynamic = 'force-dynamic';
+export const { runtime, dynamic } = AI_ROUTE_DEFAULTS;
 export const maxDuration = 90;
 
-export async function POST(req: NextRequest) {
-  try {
+// eslint-disable-next-line @typescript-eslint/no-empty-object-type
+interface InventoryHealthInput {}
+
+export const POST = withAiRoute<InventoryHealthInput>({
+  endpoint: '/api/ai/inventory-health',
+  maxDuration: 90,
+  enforceBudget: true, // AI klic — preveri budget
+
+  parseBody: async (req) => {
     await req.json().catch(() => ({}));
+    return {} as InventoryHealthInput;
+  },
+
+  // No validateInput — body je ignored
+  handler: async (_input, ctx: AiRouteContext) => {
+    const { db, callAi, parseAi } = ctx;
 
     const heldTrades = await db.trade.findMany({
       where: { status: 'held' },
@@ -31,7 +42,7 @@ export async function POST(req: NextRequest) {
     });
 
     if (heldTrades.length === 0 && soldTrades.length === 0) {
-      return NextResponse.json({ ok: true, health: null, message: 'Ni podatkov za health monitor.' });
+      return apiOk({ ok: true, health: null, message: 'Ni podatkov za health monitor.' });
     }
 
     const totalInvested = heldTrades.reduce((s, t) => s + t.buyPrice + (t.buyFees ?? 0), 0);
@@ -49,36 +60,64 @@ export async function POST(req: NextRequest) {
     const categories = [...new Set(heldTrades.map(t => t.category || 'drugo'))].length;
     const concentrationRisk = heldTrades.length > 0 ? Math.max(...Object.values(heldTrades.reduce((acc, t) => { const c = t.category || 'drugo'; acc[c] = (acc[c] ?? 0) + 1; return acc; }, {} as Record<string, number>))) / heldTrades.length * 100 : 0;
 
-    const settings = await getSettingsRow();
-    const aiSettings: AiSettings = {
-      provider: settings.aiProvider as AiProviderType,
-      baseUrl: settings.aiBaseUrl, apiKey: settings.aiApiKey, model: settings.aiModel,
-      fallbackProvider: (settings.fallbackProvider || '') as AiProviderType | '',
-      fallbackBaseUrl: settings.fallbackBaseUrl || '', fallbackApiKey: settings.fallbackApiKey || '',
-      fallbackModel: settings.fallbackModel || '',
-    };
-
     const heldStr = heldTrades.slice(0, 20).map(t => {
       const d = Math.round((Date.now()-t.buyDate.getTime())/(24*60*60*1000));
       return `- [${t.id}] ${t.title} | ${t.category} | ${d}d | ${t.buyPrice}€ | AI: ${t.listing?.aiScore ?? '?'}/10 | risk: ${t.listing?.aiRisk ?? '?'}/10`;
     }).join('\n');
 
-    const prompt = `Si AI zdravstveni monitor za inventar (inventory health).
+    const prompt = buildPrompt({
+      heldCount: heldTrades.length, totalInvested, totalRealized,
+      stalled: stalled.length, stalledPct, dead: dead.length, deadPct,
+      fresh: fresh.length, freshPct, avgDaysHeld, categories,
+      concentrationRisk, turnoverRatio, heldStr,
+    });
+
+    const raw = await callAi(prompt);
+    const parsed: any = parseAi(raw);
+    const validIds = new Set(heldTrades.map(t => t.id));
+
+    const health = transformHealth(parsed, validIds);
+
+    return apiOk({ ok: true, health });
+  },
+});
+
+// --- Pomožne funkcije (čiste, testabilne) --------------------------------
+
+interface PromptData {
+  heldCount: number;
+  totalInvested: number;
+  totalRealized: number;
+  stalled: number;
+  stalledPct: number;
+  dead: number;
+  deadPct: number;
+  fresh: number;
+  freshPct: number;
+  avgDaysHeld: number;
+  categories: number;
+  concentrationRisk: number;
+  turnoverRatio: number;
+  heldStr: string;
+}
+
+function buildPrompt(d: PromptData): string {
+  return `Si AI zdravstveni monitor za inventar (inventory health).
 Oceni zdravje portfolia kot zdravnik oceni pacienta — z vital signs, diagnozo in zdravljenjem.
 
 VITAL SIGNS:
-- Skupni inventar: ${heldTrades.length} itemov (${Math.round(totalInvested)}€)
-- Realizirani dobiček: ${Math.round(totalRealized)}€
-- Stalled (>30d): ${stalled.length} (${stalledPct}%)
-- Dead (>90d): ${dead.length} (${deadPct}%)
-- Fresh (≤7d): ${fresh.length} (${freshPct}%)
-- Povp. dni v skladišču: ${avgDaysHeld}
-- Kategorij: ${categories}
-- Koncentracijsko tveganje: ${Math.round(concentrationRisk)}%
-- Turnover ratio: ${turnoverRatio.toFixed(2)}
+- Skupni inventar: ${d.heldCount} itemov (${Math.round(d.totalInvested)}€)
+- Realizirani dobiček: ${Math.round(d.totalRealized)}€
+- Stalled (>30d): ${d.stalled} (${d.stalledPct}%)
+- Dead (>90d): ${d.dead} (${d.deadPct}%)
+- Fresh (≤7d): ${d.fresh} (${d.freshPct}%)
+- Povp. dni v skladišču: ${d.avgDaysHeld}
+- Kategorij: ${d.categories}
+- Koncentracijsko tveganje: ${Math.round(d.concentrationRisk)}%
+- Turnover ratio: ${d.turnoverRatio.toFixed(2)}
 
 INVENTAR:
-${heldStr}
+${d.heldStr}
 
 Health vital signs (kot pri zdravniku):
 1. PULSE (turnover ratio): 4-8 = zdravo, <2 = šibek, >10 = prehitro
@@ -146,78 +185,62 @@ Odgovori LE z JSON:
     "recovery_plan_days": <number>
   }
 }`;
+}
 
-    let raw = '';
-    try {
-      raw = await callProviderForRaw(aiSettings, prompt);
-    } catch (primaryError: any) {
-      if (aiSettings.fallbackProvider && aiSettings.fallbackModel) {
-        const fb: AiSettings = { provider: aiSettings.fallbackProvider, baseUrl: aiSettings.fallbackBaseUrl || '',
-          apiKey: aiSettings.fallbackApiKey || '', model: aiSettings.fallbackModel };
-        raw = await callProviderForRaw(fb, prompt);
-      } else { return NextResponse.json({ error: primaryError?.message ?? 'AI failed' }, { status: 500 }); }
-    }
-
-    const parsed: any = parseJsonLooseExported(raw);
-    const validIds = new Set(heldTrades.map(t => t.id));
-
-    const health = {
-      insights: String(parsed?.insights ?? '').slice(0, 600),
-      overallHealthScore: Math.max(0, Math.min(100, Number(parsed?.overall_health_score ?? 50))),
-      healthGrade: ['excellent', 'good', 'fair', 'poor', 'critical'].includes(String(parsed?.health_grade)) ? String(parsed.health_grade) : 'fair',
-      vitals: (parsed?.vitals || []).slice(0, 6).map((v: any) => ({
-        name: String(v?.name ?? '').slice(0, 50),
-        value: Math.round(Number(v?.value ?? 0) * 100) / 100,
-        unit: String(v?.unit ?? '').slice(0, 20),
-        status: ['healthy', 'warning', 'critical'].includes(String(v?.status)) ? String(v.status) : 'healthy',
-        benchmark: String(v?.benchmark ?? '').slice(0, 50),
-        interpretation: String(v?.interpretation ?? '').slice(0, 150),
-      })),
-      diagnosis: (parsed?.diagnosis || []).slice(0, 5).map((d: any) => ({
-        condition: String(d?.condition ?? '').slice(0, 150),
-        severity: ['mild', 'moderate', 'severe'].includes(String(d?.severity)) ? String(d.severity) : 'mild',
-        affectedItems: Math.max(0, Number(d?.affected_items ?? 0)),
-        symptoms: (d?.symptoms || []).slice(0, 4).map((s: any) => String(s).slice(0, 100)),
-        cause: String(d?.cause ?? '').slice(0, 200),
-      })),
-      treatment: (parsed?.treatment || []).slice(0, 6).map((t: any) => ({
-        treatment: String(t?.treatment ?? '').slice(0, 150),
-        targetCondition: String(t?.target_condition ?? '').slice(0, 80),
-        action: String(t?.action ?? '').slice(0, 250),
-        medication: String(t?.medication ?? '').slice(0, 80),
-        dosage: String(t?.dosage ?? '').slice(0, 150),
-        expectedRecoveryDays: Math.max(0, Number(t?.expected_recovery_days ?? 7)),
-        priority: ['urgent', 'high', 'medium', 'low'].includes(String(t?.priority)) ? String(t.priority) : 'medium',
-      })),
-      itemsHealth: (parsed?.items_health || []).filter((it: any) => validIds.has(String(it?.id ?? ''))).slice(0, 20).map((it: any) => ({
-        tradeId: String(it?.id ?? ''),
-        title: String(it?.title ?? '').slice(0, 100),
-        healthScore: Math.max(0, Math.min(100, Number(it?.health_score ?? 50))),
-        status: ['healthy', 'at_risk', 'critical', 'terminal'].includes(String(it?.status)) ? String(it.status) : 'healthy',
-        primaryIssue: String(it?.primary_issue ?? '').slice(0, 150),
-        recommendedTreatment: String(it?.recommended_treatment ?? '').slice(0, 200),
-        urgency: ['high', 'medium', 'low'].includes(String(it?.urgency)) ? String(it.urgency) : 'medium',
-      })),
-      summary: {
-        healthyItems: Math.max(0, Number(parsed?.summary?.healthy_items ?? 0)),
-        atRiskItems: Math.max(0, Number(parsed?.summary?.at_risk_items ?? 0)),
-        criticalItems: Math.max(0, Number(parsed?.summary?.critical_items ?? 0)),
-        terminalItems: Math.max(0, Number(parsed?.summary?.terminal_items ?? 0)),
-        overallPrognosis: ['improving', 'stable', 'declining'].includes(String(parsed?.summary?.overall_prognosis)) ? String(parsed.summary.overall_prognosis) : 'stable',
-        recoveryPlanDays: Math.max(0, Number(parsed?.summary?.recovery_plan_days ?? 30)),
-      },
-    };
-
-    const today = new Date().toISOString().slice(0, 10);
-    if (settings.aiCallsDate !== today) {
-      await db.settings.update({ where: { id: 'singleton' }, data: { aiCallsDate: today, aiCallsToday: 1 } });
-    } else {
-      await db.settings.update({ where: { id: 'singleton' }, data: { aiCallsToday: { increment: 1 } } });
-    }
-
-    return NextResponse.json({ ok: true, health });
-  } catch (e: any) {
-    logger.error("/api/ai/inventory-health", "POST handler failed", e);
-    return NextResponse.json({ error: e?.message ?? 'Napaka' }, { status: 500 });
-  }
+function transformHealth(parsed: any, validIds: Set<string>): {
+  insights: string;
+  overallHealthScore: number;
+  healthGrade: string;
+  vitals: any[];
+  diagnosis: any[];
+  treatment: any[];
+  itemsHealth: any[];
+  summary: any;
+} {
+  return {
+    insights: String(parsed?.insights ?? '').slice(0, 600),
+    overallHealthScore: Math.max(0, Math.min(100, Number(parsed?.overall_health_score ?? 50))),
+    healthGrade: ['excellent', 'good', 'fair', 'poor', 'critical'].includes(String(parsed?.health_grade)) ? String(parsed.health_grade) : 'fair',
+    vitals: (parsed?.vitals || []).slice(0, 6).map((v: any) => ({
+      name: String(v?.name ?? '').slice(0, 50),
+      value: Math.round(Number(v?.value ?? 0) * 100) / 100,
+      unit: String(v?.unit ?? '').slice(0, 20),
+      status: ['healthy', 'warning', 'critical'].includes(String(v?.status)) ? String(v.status) : 'healthy',
+      benchmark: String(v?.benchmark ?? '').slice(0, 50),
+      interpretation: String(v?.interpretation ?? '').slice(0, 150),
+    })),
+    diagnosis: (parsed?.diagnosis || []).slice(0, 5).map((d: any) => ({
+      condition: String(d?.condition ?? '').slice(0, 150),
+      severity: ['mild', 'moderate', 'severe'].includes(String(d?.severity)) ? String(d.severity) : 'mild',
+      affectedItems: Math.max(0, Number(d?.affected_items ?? 0)),
+      symptoms: (d?.symptoms || []).slice(0, 4).map((s: any) => String(s).slice(0, 100)),
+      cause: String(d?.cause ?? '').slice(0, 200),
+    })),
+    treatment: (parsed?.treatment || []).slice(0, 6).map((t: any) => ({
+      treatment: String(t?.treatment ?? '').slice(0, 150),
+      targetCondition: String(t?.target_condition ?? '').slice(0, 80),
+      action: String(t?.action ?? '').slice(0, 250),
+      medication: String(t?.medication ?? '').slice(0, 80),
+      dosage: String(t?.dosage ?? '').slice(0, 150),
+      expectedRecoveryDays: Math.max(0, Number(t?.expected_recovery_days ?? 7)),
+      priority: ['urgent', 'high', 'medium', 'low'].includes(String(t?.priority)) ? String(t.priority) : 'medium',
+    })),
+    itemsHealth: (parsed?.items_health || []).filter((it: any) => validIds.has(String(it?.id ?? ''))).slice(0, 20).map((it: any) => ({
+      tradeId: String(it?.id ?? ''),
+      title: String(it?.title ?? '').slice(0, 100),
+      healthScore: Math.max(0, Math.min(100, Number(it?.health_score ?? 50))),
+      status: ['healthy', 'at_risk', 'critical', 'terminal'].includes(String(it?.status)) ? String(it.status) : 'healthy',
+      primaryIssue: String(it?.primary_issue ?? '').slice(0, 150),
+      recommendedTreatment: String(it?.recommended_treatment ?? '').slice(0, 200),
+      urgency: ['high', 'medium', 'low'].includes(String(it?.urgency)) ? String(it.urgency) : 'medium',
+    })),
+    summary: {
+      healthyItems: Math.max(0, Number(parsed?.summary?.healthy_items ?? 0)),
+      atRiskItems: Math.max(0, Number(parsed?.summary?.at_risk_items ?? 0)),
+      criticalItems: Math.max(0, Number(parsed?.summary?.critical_items ?? 0)),
+      terminalItems: Math.max(0, Number(parsed?.summary?.terminal_items ?? 0)),
+      overallPrognosis: ['improving', 'stable', 'declining'].includes(String(parsed?.summary?.overall_prognosis)) ? String(parsed.summary.overall_prognosis) : 'stable',
+      recoveryPlanDays: Math.max(0, Number(parsed?.summary?.recovery_plan_days ?? 30)),
+    },
+  };
 }
