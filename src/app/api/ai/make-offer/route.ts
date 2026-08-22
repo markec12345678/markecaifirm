@@ -1,4 +1,5 @@
-// v7.35: AI Make Offer Generator — 1-click optimizirano sporočilo prodajalcu.
+// v7.35 / v8.94-refactor: AI Make Offer Generator — 1-click optimizirano sporočilo prodajalcu.
+// Refaktoriran z withAiRoute helperjem (v8.94) + enforceBudget guard.
 //
 // Generates a negotiation message based on:
 // - Listing details (title, price, description)
@@ -10,28 +11,40 @@
 // Body: { listingId: string, offerPrice?: number, tone?: 'friendly' | 'direct' | 'expert' }
 // Returns: { ok, message, suggestedPrice, strategy, openSellerUrl, clipboardText }
 
-import { NextRequest, NextResponse } from 'next/server';
-import { db } from '@/lib/db';
-import { getSettingsRow } from '@/lib/pipeline';
-import { callProviderForRaw, parseJsonLooseExported, type AiProviderType, type AiSettings } from '@/lib/ai';
-import { logger } from '@/lib/logger';
+import { withAiRoute, AI_ROUTE_DEFAULTS, ApiRouteError, type AiRouteContext } from '@/lib/with-ai-route';
+import { apiOk } from '@/lib/api-response';
 
-export const runtime = 'nodejs';
-export const dynamic = 'force-dynamic';
+export const { runtime, dynamic } = AI_ROUTE_DEFAULTS;
 export const maxDuration = 60;
 
-export async function POST(req: NextRequest) {
-  try {
-    const body = await req.json().catch(() => ({}));
-    const { listingId, tone = 'friendly' } = body;
-    const offerPrice = body.offerPrice ? Number(body.offerPrice) : null;
+interface MakeOfferInput {
+  listingId: string;
+  tone: string;
+  offerPrice: number | null;
+}
 
-    if (!listingId) {
-      return NextResponse.json({ error: 'listingId je obvezen' }, { status: 400 });
-    }
+export const POST = withAiRoute<MakeOfferInput>({
+  endpoint: '/api/ai/make-offer',
+  maxDuration: 60,
+  enforceBudget: true, // AI klic — preveri budget
+
+  parseBody: async (req) => {
+    const body = await req.json().catch(() => ({}));
+    return {
+      listingId: String(body?.listingId ?? ''),
+      tone: String(body?.tone ?? 'friendly'),
+      offerPrice: body?.offerPrice ? Number(body.offerPrice) : null,
+    };
+  },
+
+  validateInput: (input) => (input.listingId ? null : 'listingId je obvezen'),
+
+  handler: async (input, ctx: AiRouteContext) => {
+    const { db, callAi, parseAi } = ctx;
+    const { listingId, tone, offerPrice } = input;
 
     const listing = await db.listing.findUnique({
-      where: { id: String(listingId) },
+      where: { id: listingId },
       select: {
         id: true, title: true, price: true, priceText: true, url: true,
         description: true, aiVerdict: true, aiScore: true, aiRisk: true,
@@ -40,12 +53,10 @@ export async function POST(req: NextRequest) {
       },
     });
 
-    if (!listing) {
-      return NextResponse.json({ error: 'Listing ne obstaja' }, { status: 404 });
-    }
+    if (!listing) throw new ApiRouteError('Listing ne obstaja', 404);
 
     if (!listing.price || listing.price <= 0) {
-      return NextResponse.json({ error: 'Oglas nima cene — ne morem generirati ponudbe.' }, { status: 400 });
+      throw new ApiRouteError('Oglas nima cene — ne morem generirati ponudbe.', 400);
     }
 
     // Compute suggested offer price (15% below asking, but not below AI est. value)
@@ -61,43 +72,85 @@ export async function POST(req: NextRequest) {
     // For mobile.de, there's a "Contact seller" button on the listing
     // For others, the listing URL is the entry point
 
-    const settings = await getSettingsRow();
-    const aiSettings: AiSettings = {
-      provider: settings.aiProvider as AiProviderType,
-      baseUrl: settings.aiBaseUrl, apiKey: settings.aiApiKey, model: settings.aiModel,
-      fallbackProvider: (settings.fallbackProvider || '') as AiProviderType | '',
-      fallbackBaseUrl: settings.fallbackBaseUrl || '', fallbackApiKey: settings.fallbackApiKey || '',
-      fallbackModel: settings.fallbackModel || '',
-    };
+    const prompt = buildPrompt({
+      title: listing.title,
+      askingPrice,
+      aiValue,
+      aiVerdict: listing.aiVerdict || 'neznan',
+      aiRisk: listing.aiRisk ?? '?',
+      location: listing.location || 'neznan',
+      source,
+      sellerName: listing.sellerName || 'neznan',
+      suggestedPrice,
+      tone,
+    });
 
-    const toneMap: Record<string, string> = {
-      friendly: 'prijateljski, vljuden, a odločen',
-      direct: 'direkten, kratek, posloven',
-      expert: 'ekspert — pokaži znanje o artiklu, vplivaj s strokovnostjo',
-    };
+    const raw = await callAi(prompt);
+    const parsed: any = parseAi(raw);
 
-    const prompt = `Si ekspert za pogajanje pri nakupu rabljenih dobrin na slovenskih oglasnih platformah.
+    const result = transformOffer(parsed, {
+      suggestedPrice,
+      askingPrice,
+      openSellerUrl,
+      source,
+      tone,
+    });
+
+    // Update listing contactStatus to 'contacted'
+    await db.listing.update({
+      where: { id: listing.id },
+      data: { contactStatus: 'contacted', contactedAt: new Date() },
+    }).catch(() => {});
+
+    return apiOk(result);
+  },
+});
+
+// --- Pomožne funkcije (čiste, testabilne) --------------------------------
+
+const TONE_MAP: Record<string, string> = {
+  friendly: 'prijateljski, vljuden, a odločen',
+  direct: 'direkten, kratek, posloven',
+  expert: 'ekspert — pokaži znanje o artiklu, vplivaj s strokovnostjo',
+};
+
+interface PromptData {
+  title: string;
+  askingPrice: number;
+  aiValue: number;
+  aiVerdict: string;
+  aiRisk: number | string;
+  location: string;
+  source: string;
+  sellerName: string;
+  suggestedPrice: number;
+  tone: string;
+}
+
+function buildPrompt(d: PromptData): string {
+  const discountPct = Math.round(((d.askingPrice - d.suggestedPrice) / d.askingPrice) * 100);
+  return `Si ekspert za pogajanje pri nakupu rabljenih dobrin na slovenskih oglasnih platformah.
 
 Generiraj sporočilo prodajalcu za ta oglas:
 
-NASLOV: ${listing.title}
-CENA (asking): ${askingPrice}€
-AI OCENA VREDNOSTI: ${aiValue}€
-AI VERDICT: ${listing.aiVerdict || 'neznan'}
-AI RISK: ${listing.aiRisk ?? '?'}/10
-LOKACIJA: ${listing.location || 'neznan'}
-VIR: ${source}
-PRODAJALEC: ${listing.sellerName || 'neznan'}
+NASLOV: ${d.title}
+CENA (asking): ${d.askingPrice}€
+AI OCENA VREDNOSTI: ${d.aiValue}€
+AI VERDICT: ${d.aiVerdict}
+AI RISK: ${d.aiRisk}/10
+LOKACIJA: ${d.location}
+VIR: ${d.source}
+PRODAJALEC: ${d.sellerName}
 
-PONUJENA CENA: ${suggestedPrice}€ (${Math.round(((askingPrice - suggestedPrice) / askingPrice) * 100)}% pod asking price)
+PONUJENA CENA: ${d.suggestedPrice}€ (${discountPct}% pod asking price)
 
-TON: ${toneMap[tone] || toneMap.friendly}
+TON: ${TONE_MAP[d.tone] || TONE_MAP.friendly}
 
 PRAVILA:
 1. Slovenski jezik, naravno in neposredno (ne "spoštovani" — preveč formalno za Bolha)
 2. Začni z osebnim vtisom o artiklu (pokaži da si resen kupec, ne time-waster)
 3. Omeni 1-2 pozitivni vidik artikla (iz opisa ali naslova)
-4. Predlagaj ceno ${suggestedPrice}€ z utemeljitvijo (razumen argument, ne agresivno)
+4. Predlagaj ceno ${d.suggestedPrice}€ z utemeljitvijo (razumen argument, ne agresivno)
 5. Dodaj "kupim takoj" ali "lahko prevzamem ta teden" za urgency
 6. Končaj z odprtim vprašanjem (ne da/nej, ampak "kdaj bi lahko" ali "kje točno")
 7. Dolžina: 50-100 besed (ne predolgo — Bolha sporočila so kratka)
@@ -110,58 +163,30 @@ Odgovori LE z JSON:
   "expected_response_time_hours": <number>,
   "fallback_message": "<krajše sporočilo če prodajalec ne odgovori v 24h>"
 }`;
+}
 
-    let raw = '';
-    try {
-      raw = await callProviderForRaw(aiSettings, prompt);
-    } catch (primaryError: any) {
-      if (aiSettings.fallbackProvider && aiSettings.fallbackModel) {
-        const fb: AiSettings = {
-          provider: aiSettings.fallbackProvider,
-          baseUrl: aiSettings.fallbackBaseUrl || '',
-          apiKey: aiSettings.fallbackApiKey || '',
-          model: aiSettings.fallbackModel,
-        };
-        raw = await callProviderForRaw(fb, prompt);
-      } else {
-        return NextResponse.json({ error: primaryError?.message ?? 'AI failed' }, { status: 500 });
-      }
-    }
+interface OfferContext {
+  suggestedPrice: number;
+  askingPrice: number;
+  openSellerUrl: string;
+  source: string;
+  tone: string;
+}
 
-    const parsed: any = parseJsonLooseExported(raw);
-
-    const result = {
-      ok: true,
-      message: String(parsed?.message ?? '').trim(),
-      strategy: String(parsed?.strategy ?? '').slice(0, 100),
-      psychology: String(parsed?.psychology ?? '').slice(0, 100),
-      expectedResponseTimeHours: Math.max(1, Math.min(168, Number(parsed?.expected_response_time_hours ?? 24))),
-      fallbackMessage: String(parsed?.fallback_message ?? '').trim(),
-      suggestedPrice,
-      askingPrice,
-      discountPct: Math.round(((askingPrice - suggestedPrice) / askingPrice) * 100),
-      openSellerUrl,
-      source,
-      tone,
-    };
-
-    // Track AI call
-    const today = new Date().toISOString().slice(0, 10);
-    if (settings.aiCallsDate !== today) {
-      await db.settings.update({ where: { id: 'singleton' }, data: { aiCallsDate: today, aiCallsToday: 1 } });
-    } else {
-      await db.settings.update({ where: { id: 'singleton' }, data: { aiCallsToday: { increment: 1 } } });
-    }
-
-    // Update listing contactStatus to 'contacted'
-    await db.listing.update({
-      where: { id: listing.id },
-      data: { contactStatus: 'contacted', contactedAt: new Date() },
-    }).catch(() => {});
-
-    return NextResponse.json(result);
-  } catch (e: any) {
-    logger.error('/api/ai/make-offer', 'POST handler failed', e);
-    return NextResponse.json({ error: e?.message ?? 'Napaka' }, { status: 500 });
-  }
+function transformOffer(parsed: any, ctx: OfferContext) {
+  const { suggestedPrice, askingPrice, openSellerUrl, source, tone } = ctx;
+  return {
+    ok: true,
+    message: String(parsed?.message ?? '').trim(),
+    strategy: String(parsed?.strategy ?? '').slice(0, 100),
+    psychology: String(parsed?.psychology ?? '').slice(0, 100),
+    expectedResponseTimeHours: Math.max(1, Math.min(168, Number(parsed?.expected_response_time_hours ?? 24))),
+    fallbackMessage: String(parsed?.fallback_message ?? '').trim(),
+    suggestedPrice,
+    askingPrice,
+    discountPct: Math.round(((askingPrice - suggestedPrice) / askingPrice) * 100),
+    openSellerUrl,
+    source,
+    tone,
+  };
 }
