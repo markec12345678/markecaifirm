@@ -3,26 +3,67 @@
  * Zastareli v1 — v2 je najnovejši.
  * Ta endpoint bo odstranjen v v9.0. Glej ENDPOINTS_AUDIT.md za migracijski načrt.
  */
-// v6.35: AI Predictive Buyer Matchmaker — najde potencialne kupce za held inventar
+// v6.35 / v8.95.4-batch4: AI Predictive Buyer Matchmaker — najde potencialne kupce za held inventar
+// Refaktoriran z withAiRoute helperjem (v8.94) + enforceBudget guard.
+// logDeprecatedCall() preserved na vrhu handler-ja (Phase 2 deprecation logging).
+//
 // POST /api/ai/buyer-matchmaker
 // Body: {}
 // Returns: { ok, matches: [{ tradeId, title, buyerPersonas, channels, outreach, matchScore }], insights, summary }
 
-import { NextRequest, NextResponse } from 'next/server';
-import { db } from '@/lib/db';
-import { getSettingsRow } from '@/lib/pipeline';
-import { callProviderForRaw, parseJsonLooseExported, type AiProviderType, type AiSettings } from '@/lib/ai';
-import { logger } from '@/lib/logger';
+import { withAiRoute, AI_ROUTE_DEFAULTS, type AiRouteContext } from '@/lib/with-ai-route';
+import { apiOk } from '@/lib/api-response';
 import { logDeprecatedCall } from '@/lib/deprecated-redirect';
 
-export const runtime = 'nodejs';
-export const dynamic = 'force-dynamic';
+export const { runtime, dynamic } = AI_ROUTE_DEFAULTS;
 export const maxDuration = 90;
 
-export async function POST(req: NextRequest) {
-  logDeprecatedCall('/api/ai/buyer-matchmaker', req, '/api/ai/buyer-matchmaker-v2');
-  try {
+// eslint-disable-next-line @typescript-eslint/no-empty-object-type
+interface BuyerMatchmakerInput {}
+
+interface HeldTradeRow {
+  id: string;
+  title: string;
+  category: string | null;
+  buyPrice: number;
+  buyDate: Date;
+  listing: { aiEstimatedValue: number | null; dealScore: number | null; description: string | null } | null;
+}
+
+interface SoldTradeRow {
+  title: string;
+  category: string | null;
+  sellPrice: number | null;
+  sellLocation: string;
+  sellDate: Date | null;
+  buyDate: Date;
+}
+
+interface ItemRow {
+  id: string;
+  title: string;
+  category: string;
+  cost: number;
+  estValue: number;
+  daysHeld: number;
+  dealScore: number;
+}
+
+export const POST = withAiRoute<BuyerMatchmakerInput>({
+  endpoint: '/api/ai/buyer-matchmaker',
+  maxDuration: 90,
+  enforceBudget: true,
+
+  parseBody: async (req) => {
     await req.json().catch(() => ({}));
+    return {};
+  },
+
+  handler: async (_input, ctx: AiRouteContext) => {
+    // PRESERVED: Phase 2 deprecation logging — kliče se na VRH handler-ja.
+    logDeprecatedCall('/api/ai/buyer-matchmaker', ctx.req, '/api/ai/buyer-matchmaker-v2');
+
+    const { db, callAi, parseAi } = ctx;
 
     const heldTrades = await db.trade.findMany({
       where: { status: 'held' },
@@ -38,41 +79,75 @@ export async function POST(req: NextRequest) {
     });
 
     if (heldTrades.length === 0) {
-      return NextResponse.json({ ok: true, matches: [], message: 'Ni held tradeov za buyer matching.' });
+      return apiOk({ ok: true, matches: [], message: 'Ni held tradeov za buyer matching.' });
     }
 
-    const settings = await getSettingsRow();
-    const aiSettings: AiSettings = {
-      provider: settings.aiProvider as AiProviderType,
-      baseUrl: settings.aiBaseUrl, apiKey: settings.aiApiKey, model: settings.aiModel,
-      fallbackProvider: (settings.fallbackProvider || '') as AiProviderType | '',
-      fallbackBaseUrl: settings.fallbackBaseUrl || '', fallbackApiKey: settings.fallbackApiKey || '',
-      fallbackModel: settings.fallbackModel || '',
-    };
-
-    const items = heldTrades.map(t => ({
-      id: t.id, title: t.title, category: t.category || 'drugo',
-      cost: t.buyPrice, estValue: t.listing?.aiEstimatedValue ?? Math.round(t.buyPrice * 1.25),
-      daysHeld: Math.round((Date.now() - t.buyDate.getTime()) / (24*60*60*1000)),
-      dealScore: t.listing?.dealScore ?? 0,
-    }));
+    const items = mapItems(heldTrades);
 
     // Analiza preteklih kupcev (sellLocation = kanal kupca)
-    const buyerChannels: Record<string, { count: number; avgPrice: number }> = {};
-    for (const t of soldTrades) {
-      const ch = t.sellLocation || 'neznan';
-      if (!buyerChannels[ch]) buyerChannels[ch] = { count: 0, avgPrice: 0 };
-      buyerChannels[ch].count++;
-      buyerChannels[ch].avgPrice += t.sellPrice ?? 0;
-    }
-    for (const ch of Object.keys(buyerChannels)) {
-      buyerChannels[ch].avgPrice = buyerChannels[ch].count > 0 ? Math.round(buyerChannels[ch].avgPrice / buyerChannels[ch].count) : 0;
-    }
+    const buyerChannels = analyzeBuyerChannels(soldTrades);
 
-    const itemsStr = items.slice(0, 15).map(i => `- [${i.id}] ${i.title} | ${i.category} | est: ${i.estValue}€ | ${i.daysHeld}d`).join('\n');
-    const buyerStr = Object.entries(buyerChannels).sort(([,a],[,b]) => b.count - a.count).slice(0, 8).map(([ch, d]) => `- ${ch}: ${d.count} nakupov, povp. ${d.avgPrice}€`).join('\n');
+    const prompt = buildPrompt({ items, buyerChannels });
+    const raw = await callAi(prompt);
+    const parsed: any = parseAi(raw);
 
-    const prompt = `Si AI matchmaker za povezovanje inventarja s potencialnimi kupci.
+    const validIds = new Set(items.map(i => i.id));
+    const matches = transformMatches(parsed, validIds);
+
+    const avgMatchScore = matches.length > 0 ? Math.round(matches.reduce((s, m) => s + m.matchScore, 0) / matches.length) : 0;
+
+    return apiOk({
+      ok: true,
+      insights: String(parsed?.insights ?? '').slice(0, 600),
+      matches,
+      summary: {
+        totalMatches: matches.length,
+        avgMatchScore,
+        bestMatchingItem: String(parsed?.summary?.best_matching_item ?? '').slice(0, 100),
+        hardestToSellItem: String(parsed?.summary?.hardest_to_sell_item ?? '').slice(0, 100),
+        recommendedOutreachChannels: (parsed?.summary?.recommended_outreach_channels || []).slice(0, 5).map((c: any) => String(c).slice(0, 30)),
+        expectedResponseRatePct: Math.max(0, Math.min(100, Number(parsed?.summary?.expected_response_rate_pct ?? 30))),
+      },
+    });
+  },
+});
+
+// --- Pomožne funkcione (čiste, testabilne) -------------------------------
+
+function mapItems(heldTrades: HeldTradeRow[]): ItemRow[] {
+  return heldTrades.map(t => ({
+    id: t.id, title: t.title, category: t.category || 'drugo',
+    cost: t.buyPrice, estValue: t.listing?.aiEstimatedValue ?? Math.round(t.buyPrice * 1.25),
+    daysHeld: Math.round((Date.now() - t.buyDate.getTime()) / (24*60*60*1000)),
+    dealScore: t.listing?.dealScore ?? 0,
+  }));
+}
+
+function analyzeBuyerChannels(soldTrades: SoldTradeRow[]): Record<string, { count: number; avgPrice: number }> {
+  const buyerChannels: Record<string, { count: number; avgPrice: number }> = {};
+  for (const t of soldTrades) {
+    const ch = t.sellLocation || 'neznan';
+    if (!buyerChannels[ch]) buyerChannels[ch] = { count: 0, avgPrice: 0 };
+    buyerChannels[ch].count++;
+    buyerChannels[ch].avgPrice += t.sellPrice ?? 0;
+  }
+  for (const ch of Object.keys(buyerChannels)) {
+    buyerChannels[ch].avgPrice = buyerChannels[ch].count > 0 ? Math.round(buyerChannels[ch].avgPrice / buyerChannels[ch].count) : 0;
+  }
+  return buyerChannels;
+}
+
+interface PromptContext {
+  items: ItemRow[];
+  buyerChannels: Record<string, { count: number; avgPrice: number }>;
+}
+
+function buildPrompt(ctx: PromptContext): string {
+  const { items, buyerChannels } = ctx;
+  const itemsStr = items.slice(0, 15).map(i => `- [${i.id}] ${i.title} | ${i.category} | est: ${i.estValue}€ | ${i.daysHeld}d`).join('\n');
+  const buyerStr = Object.entries(buyerChannels).sort(([,a],[,b]) => b.count - a.count).slice(0, 8).map(([ch, d]) => `- ${ch}: ${d.count} nakupov, povp. ${d.avgPrice}€`).join('\n');
+
+  return `Si AI matchmaker za povezovanje inventarja s potencialnimi kupci.
 Za vsak held item identificiraj kdo bi ga kupil, kje ga najti in kako pristopiti.
 
 INVENTAR (${items.length}):
@@ -135,72 +210,33 @@ Odgovori LE z JSON:
     "expected_response_rate_pct": <number>
   }
 }`;
+}
 
-    let raw = '';
-    try {
-      raw = await callProviderForRaw(aiSettings, prompt);
-    } catch (primaryError: any) {
-      if (aiSettings.fallbackProvider && aiSettings.fallbackModel) {
-        const fb: AiSettings = { provider: aiSettings.fallbackProvider, baseUrl: aiSettings.fallbackBaseUrl || '',
-          apiKey: aiSettings.fallbackApiKey || '', model: aiSettings.fallbackModel };
-        raw = await callProviderForRaw(fb, prompt);
-      } else { return NextResponse.json({ error: primaryError?.message ?? 'AI failed' }, { status: 500 }); }
-    }
-
-    const parsed: any = parseJsonLooseExported(raw);
-    const validIds = new Set(items.map(i => i.id));
-
-    const matches = (parsed?.matches || []).filter((m: any) => validIds.has(String(m?.id ?? ''))).map((m: any) => ({
-      tradeId: String(m?.id ?? ''),
-      title: String(m?.title ?? '').slice(0, 150),
-      category: String(m?.category ?? '').slice(0, 50),
-      estValueEur: Math.max(0, Number(m?.est_value_eur ?? 0)),
-      matchScore: Math.max(0, Math.min(100, Number(m?.match_score ?? 50))),
-      buyerPersonas: (m?.buyer_personas || []).slice(0, 4).map((p: any) => ({
-        type: ['deal_hunter', 'quality_seeker', 'collector', 'reseller', 'first_time', 'enthusiast'].includes(String(p?.type)) ? String(p.type) : 'deal_hunter',
-        likelihoodPct: Math.max(0, Math.min(100, Number(p?.likelihood_pct ?? 50))),
-        maxWillingPriceEur: Math.max(0, Number(p?.max_willing_price_eur ?? 0)),
-        whereToFind: String(p?.where_to_find ?? '').slice(0, 150),
-        searchTerms: String(p?.search_terms ?? '').slice(0, 150),
+function transformMatches(parsed: any, validIds: Set<string>): any[] {
+  return (parsed?.matches || []).filter((m: any) => validIds.has(String(m?.id ?? ''))).map((m: any) => ({
+    tradeId: String(m?.id ?? ''),
+    title: String(m?.title ?? '').slice(0, 150),
+    category: String(m?.category ?? '').slice(0, 50),
+    estValueEur: Math.max(0, Number(m?.est_value_eur ?? 0)),
+    matchScore: Math.max(0, Math.min(100, Number(m?.match_score ?? 50))),
+    buyerPersonas: (m?.buyer_personas || []).slice(0, 4).map((p: any) => ({
+      type: ['deal_hunter', 'quality_seeker', 'collector', 'reseller', 'first_time', 'enthusiast'].includes(String(p?.type)) ? String(p.type) : 'deal_hunter',
+      likelihoodPct: Math.max(0, Math.min(100, Number(p?.likelihood_pct ?? 50))),
+      maxWillingPriceEur: Math.max(0, Number(p?.max_willing_price_eur ?? 0)),
+      whereToFind: String(p?.where_to_find ?? '').slice(0, 150),
+      searchTerms: String(p?.search_terms ?? '').slice(0, 150),
+    })),
+    recommendedChannels: (m?.recommended_channels || []).slice(0, 5).map((c: any) => String(c).slice(0, 30)),
+    outreachStrategy: {
+      hook: String(m?.outreach_strategy?.hook ?? '').slice(0, 200),
+      keySellingPoints: (m?.outreach_strategy?.key_selling_points || []).slice(0, 4).map((s: any) => String(s).slice(0, 100)),
+      objectionHandling: (m?.outreach_strategy?.objection_handling || []).slice(0, 3).map((o: any) => ({
+        objection: String(o?.objection ?? '').slice(0, 100),
+        response: String(o?.response ?? '').slice(0, 150),
       })),
-      recommendedChannels: (m?.recommended_channels || []).slice(0, 5).map((c: any) => String(c).slice(0, 30)),
-      outreachStrategy: {
-        hook: String(m?.outreach_strategy?.hook ?? '').slice(0, 200),
-        keySellingPoints: (m?.outreach_strategy?.key_selling_points || []).slice(0, 4).map((s: any) => String(s).slice(0, 100)),
-        objectionHandling: (m?.outreach_strategy?.objection_handling || []).slice(0, 3).map((o: any) => ({
-          objection: String(o?.objection ?? '').slice(0, 100),
-          response: String(o?.response ?? '').slice(0, 150),
-        })),
-        bestContactTime: String(m?.outreach_strategy?.best_contact_time ?? '').slice(0, 100),
-      },
-      complementaryItems: (m?.complementary_items || []).slice(0, 4).map((c: any) => String(c).slice(0, 80)),
-      reasoning: String(m?.reasoning ?? '').slice(0, 200),
-    }));
-
-    const avgMatchScore = matches.length > 0 ? Math.round(matches.reduce((s, m) => s + m.matchScore, 0) / matches.length) : 0;
-
-    const today = new Date().toISOString().slice(0, 10);
-    if (settings.aiCallsDate !== today) {
-      await db.settings.update({ where: { id: 'singleton' }, data: { aiCallsDate: today, aiCallsToday: 1 } });
-    } else {
-      await db.settings.update({ where: { id: 'singleton' }, data: { aiCallsToday: { increment: 1 } } });
-    }
-
-    return NextResponse.json({
-      ok: true,
-      insights: String(parsed?.insights ?? '').slice(0, 600),
-      matches,
-      summary: {
-        totalMatches: matches.length,
-        avgMatchScore,
-        bestMatchingItem: String(parsed?.summary?.best_matching_item ?? '').slice(0, 100),
-        hardestToSellItem: String(parsed?.summary?.hardest_to_sell_item ?? '').slice(0, 100),
-        recommendedOutreachChannels: (parsed?.summary?.recommended_outreach_channels || []).slice(0, 5).map((c: any) => String(c).slice(0, 30)),
-        expectedResponseRatePct: Math.max(0, Math.min(100, Number(parsed?.summary?.expected_response_rate_pct ?? 30))),
-      },
-    });
-  } catch (e: any) {
-    logger.error("/api/ai/buyer-matchmaker", "POST handler failed", e);
-    return NextResponse.json({ error: e?.message ?? 'Napaka' }, { status: 500 });
-  }
+      bestContactTime: String(m?.outreach_strategy?.best_contact_time ?? '').slice(0, 100),
+    },
+    complementaryItems: (m?.complementary_items || []).slice(0, 4).map((c: any) => String(c).slice(0, 80)),
+    reasoning: String(m?.reasoning ?? '').slice(0, 200),
+  }));
 }

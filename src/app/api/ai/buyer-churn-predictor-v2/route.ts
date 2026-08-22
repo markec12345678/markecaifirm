@@ -1,54 +1,144 @@
-// v6.81: AI Buyer Churn Predictor v2 — ML napoved odhoda kupcev z intervention strategy
+// v6.81 / v8.95.4-batch1: AI Buyer Churn Predictor v2 — ML napoved odhoda kupcev z intervention strategy
+// Refaktoriran z withAiRoute helperjem (v8.94) + enforceBudget guard.
+//
 // POST /api/ai/buyer-churn-predictor-v2
 // Body: { customerName?: string, days?: number }
 // Returns: { ok, predictor: { buyers, churnDrivers, interventionStrategies, mlModels, summary } }
 
-import { NextRequest, NextResponse } from 'next/server';
-import { db } from '@/lib/db';
-import { getSettingsRow } from '@/lib/pipeline';
-import { callProviderForRaw, parseJsonLooseExported, type AiProviderType, type AiSettings } from '@/lib/ai';
-import { logger } from '@/lib/logger';
+import { withAiRoute, AI_ROUTE_DEFAULTS, type AiRouteContext } from '@/lib/with-ai-route';
+import { apiOk } from '@/lib/api-response';
 
-export const runtime = 'nodejs';
-export const dynamic = 'force-dynamic';
+export const { runtime, dynamic } = AI_ROUTE_DEFAULTS;
 export const maxDuration = 90;
+
+interface BuyerChurnPredictorV2Input {
+  customerName: string | null;
+}
+
+interface SoldTradeRow {
+  id: string;
+  title: string;
+  category: string | null;
+  sellPrice: number | null;
+  sellFees: number | null;
+  sellDate: Date | null;
+  sellLocation: string;
+  buyDate: Date | null;
+}
+
+interface BuyerInfo {
+  name: string;
+  purchases: number;
+  totalSpent: number;
+  avgOrder: number;
+  firstPurchase: Date | null;
+  lastPurchase: Date | null;
+  categories: Set<string>;
+  daysSinceLast: number;
+}
 
 const CHURN_TIERS = ['safe', 'low_risk', 'medium_risk', 'high_risk', 'critical', 'churned'] as const;
 const CHURN_DRIVERS = ['inactivity', 'price_sensitivity', 'competitor_switch', 'poor_experience', 'no_engagement', 'category_disinterest', 'seasonal_gap', 'communication_failure'] as const;
 const INTERVENTION_TYPES = ['win_back_offer', 'personalized_outreach', 'loyalty_upgrade', 'discount_campaign', 'product_recommendation', 'feedback_request', 'reactivation_bundle'] as const;
+const CHURN_ML_MODELS = ['random_forest', 'xgboost', 'neural_net', 'survival_analysis', 'ensemble'] as const;
+const CHURN_PREDICTION_TYPES = ['churn_probability', 'risk_score', 'lifetime_value', 'intervention_response'] as const;
+const SEVERITIES = ['critical', 'high', 'medium', 'low'] as const;
+const GRADES = ['A', 'B', 'C', 'D', 'F'] as const;
 
-export async function POST(req: NextRequest) {
-  try {
+export const POST = withAiRoute<BuyerChurnPredictorV2Input>({
+  endpoint: '/api/ai/buyer-churn-predictor-v2',
+  maxDuration: 90,
+  enforceBudget: true,
+
+  parseBody: async (req) => {
     const body = await req.json().catch(() => ({}));
-    const customerName = body?.customerName ? String(body.customerName).trim() : null;
+    return { customerName: body?.customerName ? String(body.customerName).trim() : null };
+  },
 
-    const soldTrades = await db.trade.findMany({ where: { status: 'sold', sellPrice: { not: null }, sellLocation: { not: '' }, sellDate: { not: null } }, select: { id: true, title: true, category: true, sellPrice: true, sellFees: true, sellDate: true, sellLocation: true, buyDate: true }, take: 500, orderBy: { sellDate: 'desc' } });
-    if (soldTrades.length === 0) return NextResponse.json({ ok: true, predictor: null, message: 'Ni prodaj za churn analizo.' });
+  handler: async (input, ctx: AiRouteContext) => {
+    const { db, callAi, parseAi } = ctx;
+    const { customerName } = input;
 
-    const buyerMap = new Map<string, { name: string; purchases: number; totalSpent: number; avgOrder: number; firstPurchase: Date | null; lastPurchase: Date | null; categories: Set<string>; daysSinceLast: number }>();
+    const soldTrades: SoldTradeRow[] = await db.trade.findMany({
+      where: { status: 'sold', sellPrice: { not: null }, sellLocation: { not: '' }, sellDate: { not: null } },
+      select: { id: true, title: true, category: true, sellPrice: true, sellFees: true, sellDate: true, sellLocation: true, buyDate: true },
+      take: 500,
+      orderBy: { sellDate: 'desc' },
+    });
+
+    if (soldTrades.length === 0) {
+      return apiOk({ ok: true, predictor: null, message: 'Ni prodaj za churn analizo.' });
+    }
+
     const now = Date.now();
     const DAY = 24 * 60 * 60 * 1000;
-    for (const t of soldTrades) {
-      const name = (t.sellLocation || '').trim();
-      if (!name || name.length < 2 || !t.sellDate) continue;
-      const rev = (t.sellPrice ?? 0) - (t.sellFees ?? 0);
-      if (!buyerMap.has(name)) buyerMap.set(name, { name, purchases: 0, totalSpent: 0, avgOrder: 0, firstPurchase: t.sellDate, lastPurchase: t.sellDate, categories: new Set(), daysSinceLast: 0 });
-      const b = buyerMap.get(name)!;
-      b.purchases += 1; b.totalSpent += rev;
-      if (!b.firstPurchase || t.sellDate < b.firstPurchase) b.firstPurchase = t.sellDate;
-      if (!b.lastPurchase || t.sellDate > b.lastPurchase) b.lastPurchase = t.sellDate;
-      if (t.category) b.categories.add(t.category);
-    }
-    const buyers = Array.from(buyerMap.values()).map(b => { b.avgOrder = b.purchases > 0 ? Math.round(b.totalSpent / b.purchases) : 0; b.daysSinceLast = b.lastPurchase ? Math.round((now - b.lastPurchase.getTime()) / DAY) : 999; return b; });
-    if (customerName) { const f = buyers.filter(b => b.name === customerName); if (f.length === 0) return NextResponse.json({ ok: true, predictor: null, message: `Kupec "${customerName}" ni najden.` }); }
+    const buyerMap = buildBuyerMap(soldTrades, now, DAY);
+    const buyers = Array.from(buyerMap.values());
 
-    const settings = await getSettingsRow();
-    const aiSettings: AiSettings = { provider: settings.aiProvider as AiProviderType, baseUrl: settings.aiBaseUrl, apiKey: settings.aiApiKey, model: settings.aiModel, fallbackProvider: (settings.fallbackProvider || '') as AiProviderType | '', fallbackBaseUrl: settings.fallbackBaseUrl || '', fallbackApiKey: settings.fallbackApiKey || '', fallbackModel: settings.fallbackModel || '' };
+    if (customerName) {
+      const f = buyers.filter(b => b.name === customerName);
+      if (f.length === 0) {
+        return apiOk({ ok: true, predictor: null, message: `Kupec "${customerName}" ni najden.` });
+      }
+    }
 
     const targetBuyers = customerName ? buyers.filter(b => b.name === customerName) : buyers.slice(0, 25);
-    const buyersStr = targetBuyers.slice(0, 10).map(b => `- ${b.name} | ${b.purchases}x | ${b.totalSpent}€ | ${b.avgOrder}€ povp | ${b.daysSinceLast}d nazadnje | ${b.categories.size} kat`).join('\n');
+    const prompt = buildPrompt(targetBuyers);
+    const raw = await callAi(prompt);
+    const parsed: any = parseAi(raw);
+    const predictor = transformPredictor(parsed);
 
-    const prompt = `Si AI buyer churn predictor v2 z ML in intervention strategy design.
+    return apiOk({ ok: true, predictor });
+  },
+});
+
+// --- Pomožne funkcije (čiste, testabilne) --------------------------------
+
+function buildBuyerMap(soldTrades: SoldTradeRow[], now: number, DAY: number): Map<string, BuyerInfo> {
+  const buyerMap = new Map<string, BuyerInfo>();
+  for (const t of soldTrades) {
+    const name = (t.sellLocation || '').trim();
+    if (!name || name.length < 2 || !t.sellDate) continue;
+    const rev = (t.sellPrice ?? 0) - (t.sellFees ?? 0);
+    if (!buyerMap.has(name)) {
+      buyerMap.set(name, {
+        name, purchases: 0, totalSpent: 0, avgOrder: 0,
+        firstPurchase: t.sellDate, lastPurchase: t.sellDate,
+        categories: new Set(), daysSinceLast: 0,
+      });
+    }
+    const b = buyerMap.get(name)!;
+    b.purchases += 1;
+    b.totalSpent += rev;
+    if (!b.firstPurchase || t.sellDate < b.firstPurchase) b.firstPurchase = t.sellDate;
+    if (!b.lastPurchase || t.sellDate > b.lastPurchase) b.lastPurchase = t.sellDate;
+    if (t.category) b.categories.add(t.category);
+  }
+  for (const b of buyerMap.values()) {
+    b.avgOrder = b.purchases > 0 ? Math.round(b.totalSpent / b.purchases) : 0;
+    b.daysSinceLast = b.lastPurchase ? Math.round((now - b.lastPurchase.getTime()) / DAY) : 999;
+  }
+  return buyerMap;
+}
+
+function includes<T extends string>(arr: readonly T[], v: string): v is T {
+  return (arr as readonly string[]).includes(v);
+}
+
+function round1(n: number): number {
+  return Math.round(Number(n) * 10) / 10;
+}
+
+function clamp(n: number, lo: number, hi: number): number {
+  return Math.max(lo, Math.min(hi, n));
+}
+
+function buildPrompt(targetBuyers: BuyerInfo[]): string {
+  const buyersStr = targetBuyers.slice(0, 10).map(b =>
+    `- ${b.name} | ${b.purchases}x | ${b.totalSpent}€ | ${b.avgOrder}€ povp | ${b.daysSinceLast}d nazadnje | ${b.categories.size} kat`
+  ).join('\n');
+
+  return `Si AI buyer churn predictor v2 z ML in intervention strategy design.
 Napoveduje odhod kupcev z 6 tierji in 8 dejavniki, predlaga 7 tipov intervencij.
 
 KUPCI (${targetBuyers.length}):
@@ -96,26 +186,55 @@ Odgovori LE z JSON:
     "quickest_retention_win": "<max 100 znakov>", "churn_prediction_score": <number 0-100>
   }
 }`;
+}
 
-    let raw = '';
-    try { raw = await callProviderForRaw(aiSettings, prompt); }
-    catch (e: any) { if (aiSettings.fallbackProvider && aiSettings.fallbackModel) { const fb: AiSettings = { provider: aiSettings.fallbackProvider, baseUrl: aiSettings.fallbackBaseUrl || '', apiKey: aiSettings.fallbackApiKey || '', model: aiSettings.fallbackModel }; raw = await callProviderForRaw(fb, prompt); } else { return NextResponse.json({ error: e?.message ?? 'AI failed' }, { status: 500 }); } }
-
-    const parsed: any = parseJsonLooseExported(raw);
-
-    const predictor = {
-      insights: String(parsed?.insights ?? '').slice(0, 500),
-      buyers: (parsed?.buyers || []).slice(0, 25).map((b: any) => ({ name: String(b?.name ?? '').slice(0, 100), churnProbabilityPct: Math.max(0, Math.min(100, Number(b?.churn_probability_pct ?? 30))), churnTier: (CHURN_TIERS as readonly string[]).includes(String(b?.churn_tier)) ? String(b.churn_tier) : 'low_risk', predictedChurnDate: String(b?.predicted_churn_date ?? '').slice(0, 7), primaryDriver: (CHURN_DRIVERS as readonly string[]).includes(String(b?.primary_driver)) ? String(b.primary_driver) : 'inactivity', daysSinceLastPurchase: Math.max(0, Number(b?.days_since_last_purchase ?? 0)), lifetimeValueEur: Math.round(Number(b?.lifetime_value_eur ?? 0)), atRiskRevenueEur: Math.round(Number(b?.at_risk_revenue_eur ?? 0)), recommendedIntervention: (INTERVENTION_TYPES as readonly string[]).includes(String(b?.recommended_intervention)) ? String(b.recommended_intervention) : 'personalized_outreach' })),
-      churnDrivers: (parsed?.churnDrivers || []).slice(0, 8).map((d: any) => ({ driver: (CHURN_DRIVERS as readonly string[]).includes(String(d?.driver)) ? String(d.driver) : 'inactivity', affectedBuyersCount: Math.max(0, Number(d?.affected_buyers_count ?? 0)), avgChurnProbabilityPct: Math.max(0, Math.min(100, Number(d?.avg_churn_probability_pct ?? 0))), revenueAtRiskEur: Math.round(Number(d?.revenue_at_risk_eur ?? 0)), severity: ['critical', 'high', 'medium', 'low'].includes(String(d?.severity)) ? String(d.severity) : 'medium', mitigationStrategy: String(d?.mitigation_strategy ?? '').slice(0, 300) })),
-      interventionStrategies: (parsed?.interventionStrategies || []).slice(0, 7).map((s: any) => ({ interventionType: (INTERVENTION_TYPES as readonly string[]).includes(String(s?.intervention_type)) ? String(s.intervention_type) : 'win_back_offer', targetBuyerCount: Math.max(0, Number(s?.target_buyer_count ?? 0)), estimatedCostEur: Math.round(Number(s?.estimated_cost_eur ?? 0)), expectedRecoveryRatePct: Math.max(0, Math.min(100, Number(s?.expected_recovery_rate_pct ?? 30))), expectedRevenueRecoveredEur: Math.round(Number(s?.expected_revenue_recovered_eur ?? 0)), implementationDays: Math.max(1, Number(s?.implementation_days ?? 7)), roiPct: Math.round(Number(s?.roi_pct ?? 0) * 10) / 10 })),
-      mlModels: (parsed?.mlModels || []).slice(0, 5).map((m: any) => ({ model: ['random_forest', 'xgboost', 'neural_net', 'survival_analysis', 'ensemble'].includes(String(m?.model)) ? String(m.model) : 'ensemble', accuracyPct: Math.max(0, Math.min(100, Number(m?.accuracy_pct ?? 75))), predictionType: ['churn_probability', 'risk_score', 'lifetime_value', 'intervention_response'].includes(String(m?.prediction_type)) ? String(m.prediction_type) : 'churn_probability', weightInEnsemble: Math.max(0, Math.min(100, Number(m?.weight_in_ensemble ?? 20))) })),
-      summary: { churnRiskScore: Math.max(0, Math.min(100, Number(parsed?.summary?.churn_risk_score ?? 50))), churnRiskGrade: ['A', 'B', 'C', 'D', 'F'].includes(String(parsed?.summary?.churn_risk_grade)) ? String(parsed.summary.churn_risk_grade) : 'C', totalAtRiskRevenueEur: Math.round(Number(parsed?.summary?.total_at_risk_revenue_eur ?? 0)), criticalBuyersCount: Math.max(0, Number(parsed?.summary?.critical_buyers_count ?? 0)), avgChurnProbabilityPct: Math.max(0, Math.min(100, Number(parsed?.summary?.avg_churn_probability_pct ?? 30))), biggestChurnRisk: String(parsed?.summary?.biggest_churn_risk ?? '').slice(0, 200), biggestRetentionOpportunity: String(parsed?.summary?.biggest_retention_opportunity ?? '').slice(0, 200), quickestRetentionWin: String(parsed?.summary?.quickest_retention_win ?? '').slice(0, 200), churnPredictionScore: Math.max(0, Math.min(100, Number(parsed?.summary?.churn_prediction_score ?? 50))) },
-    };
-
-    const today = new Date().toISOString().slice(0, 10);
-    if (settings.aiCallsDate !== today) { await db.settings.update({ where: { id: 'singleton' }, data: { aiCallsDate: today, aiCallsToday: 1 } }); }
-    else { await db.settings.update({ where: { id: 'singleton' }, data: { aiCallsToday: { increment: 1 } } }); }
-
-    return NextResponse.json({ ok: true, predictor });
-  } catch (e: any) { logger.error("/api/ai/buyer-churn-predictor-v2", "POST handler failed", e); return NextResponse.json({ error: e?.message ?? 'Napaka' }, { status: 500 }); }
+function transformPredictor(parsed: any): any {
+  return {
+    insights: String(parsed?.insights ?? '').slice(0, 500),
+    buyers: (parsed?.buyers || []).slice(0, 25).map((b: any) => ({
+      name: String(b?.name ?? '').slice(0, 100),
+      churnProbabilityPct: clamp(Number(b?.churn_probability_pct ?? 30), 0, 100),
+      churnTier: includes(CHURN_TIERS, String(b?.churn_tier)) ? String(b.churn_tier) : 'low_risk',
+      predictedChurnDate: String(b?.predicted_churn_date ?? '').slice(0, 7),
+      primaryDriver: includes(CHURN_DRIVERS, String(b?.primary_driver)) ? String(b.primary_driver) : 'inactivity',
+      daysSinceLastPurchase: Math.max(0, Number(b?.days_since_last_purchase ?? 0)),
+      lifetimeValueEur: Math.round(Number(b?.lifetime_value_eur ?? 0)),
+      atRiskRevenueEur: Math.round(Number(b?.at_risk_revenue_eur ?? 0)),
+      recommendedIntervention: includes(INTERVENTION_TYPES, String(b?.recommended_intervention)) ? String(b.recommended_intervention) : 'personalized_outreach',
+    })),
+    churnDrivers: (parsed?.churnDrivers || []).slice(0, 8).map((d: any) => ({
+      driver: includes(CHURN_DRIVERS, String(d?.driver)) ? String(d.driver) : 'inactivity',
+      affectedBuyersCount: Math.max(0, Number(d?.affected_buyers_count ?? 0)),
+      avgChurnProbabilityPct: clamp(Number(d?.avg_churn_probability_pct ?? 0), 0, 100),
+      revenueAtRiskEur: Math.round(Number(d?.revenue_at_risk_eur ?? 0)),
+      severity: includes(SEVERITIES, String(d?.severity)) ? String(d.severity) : 'medium',
+      mitigationStrategy: String(d?.mitigation_strategy ?? '').slice(0, 300),
+    })),
+    interventionStrategies: (parsed?.interventionStrategies || []).slice(0, 7).map((s: any) => ({
+      interventionType: includes(INTERVENTION_TYPES, String(s?.intervention_type)) ? String(s.intervention_type) : 'win_back_offer',
+      targetBuyerCount: Math.max(0, Number(s?.target_buyer_count ?? 0)),
+      estimatedCostEur: Math.round(Number(s?.estimated_cost_eur ?? 0)),
+      expectedRecoveryRatePct: clamp(Number(s?.expected_recovery_rate_pct ?? 30), 0, 100),
+      expectedRevenueRecoveredEur: Math.round(Number(s?.expected_revenue_recovered_eur ?? 0)),
+      implementationDays: Math.max(1, Number(s?.implementation_days ?? 7)),
+      roiPct: round1(s?.roi_pct ?? 0),
+    })),
+    mlModels: (parsed?.mlModels || []).slice(0, 5).map((m: any) => ({
+      model: includes(CHURN_ML_MODELS, String(m?.model)) ? String(m.model) : 'ensemble',
+      accuracyPct: clamp(Number(m?.accuracy_pct ?? 75), 0, 100),
+      predictionType: includes(CHURN_PREDICTION_TYPES, String(m?.prediction_type)) ? String(m.prediction_type) : 'churn_probability',
+      weightInEnsemble: clamp(Number(m?.weight_in_ensemble ?? 20), 0, 100),
+    })),
+    summary: {
+      churnRiskScore: clamp(Number(parsed?.summary?.churn_risk_score ?? 50), 0, 100),
+      churnRiskGrade: includes(GRADES, String(parsed?.summary?.churn_risk_grade)) ? String(parsed.summary.churn_risk_grade) : 'C',
+      totalAtRiskRevenueEur: Math.round(Number(parsed?.summary?.total_at_risk_revenue_eur ?? 0)),
+      criticalBuyersCount: Math.max(0, Number(parsed?.summary?.critical_buyers_count ?? 0)),
+      avgChurnProbabilityPct: clamp(Number(parsed?.summary?.avg_churn_probability_pct ?? 30), 0, 100),
+      biggestChurnRisk: String(parsed?.summary?.biggest_churn_risk ?? '').slice(0, 200),
+      biggestRetentionOpportunity: String(parsed?.summary?.biggest_retention_opportunity ?? '').slice(0, 200),
+      quickestRetentionWin: String(parsed?.summary?.quickest_retention_win ?? '').slice(0, 200),
+      churnPredictionScore: clamp(Number(parsed?.summary?.churn_prediction_score ?? 50), 0, 100),
+    },
+  };
 }
