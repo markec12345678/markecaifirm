@@ -1,23 +1,39 @@
-// v6.51: AI Inventory Performance Tracker — KPI tracking, trendi in benchmarks za inventar
+// v6.51 / v8.96.2-batch1: AI Inventory Performance Tracker — KPI tracking, trendi in benchmarks za inventar
+// Refaktoriran z withAiRoute helperjem (v8.96.2) + enforceBudget guard.
+//
 // POST /api/ai/inventory-performance-tracker
 // Body: { days?: number, category?: string }
 // Returns: { ok, tracker: { kpis, trends, benchmarks, categoryPerformance, alerts, recommendations, summary } }
 
-import { NextRequest, NextResponse } from 'next/server';
-import { db } from '@/lib/db';
-import { getSettingsRow } from '@/lib/pipeline';
-import { callProviderForRaw, parseJsonLooseExported, type AiProviderType, type AiSettings } from '@/lib/ai';
-import { logger } from '@/lib/logger';
+import { withAiRoute, AI_ROUTE_DEFAULTS, type AiRouteContext } from '@/lib/with-ai-route';
+import { apiOk } from '@/lib/api-response';
 
-export const runtime = 'nodejs';
-export const dynamic = 'force-dynamic';
+export const { runtime, dynamic } = AI_ROUTE_DEFAULTS;
 export const maxDuration = 90;
 
-export async function POST(req: NextRequest) {
-  try {
+interface InventoryPerformanceTrackerInput {
+  days: number;
+  category: string | null;
+}
+
+export const POST = withAiRoute<InventoryPerformanceTrackerInput>({
+  endpoint: '/api/ai/inventory-performance-tracker',
+  maxDuration: 90,
+  enforceBudget: true, // AI klic — preveri budget
+
+  parseBody: async (req) => {
     const body = await req.json().catch(() => ({}));
-    const days = Math.max(7, Math.min(365, Number(body?.days ?? 30)));
-    const categoryFilter = body?.category ? String(body.category).toLowerCase() : null;
+    return {
+      days: Math.max(7, Math.min(365, Number(body?.days ?? 30))),
+      category: body?.category ? String(body.category).toLowerCase() : null,
+    };
+  },
+
+  // No validateInput — vsi input-i imajo defaults
+
+  handler: async (input, ctx: AiRouteContext) => {
+    const { db, callAi, parseAi } = ctx;
+    const { days, category: categoryFilter } = input;
 
     const since = new Date(Date.now() - days * 24 * 60 * 60 * 1000);
     const sincePrev = new Date(Date.now() - days * 2 * 24 * 60 * 60 * 1000);
@@ -39,7 +55,7 @@ export async function POST(req: NextRequest) {
     });
 
     if (soldTrades.length === 0 && heldTrades.length === 0) {
-      return NextResponse.json({ ok: true, tracker: null, message: 'Ni podatkov za performance tracking.' });
+      return apiOk({ ok: true, tracker: null, message: 'Ni podatkov za performance tracking.' });
     }
 
     // 3. Razdeli sold trades v current in previous period
@@ -47,98 +63,172 @@ export async function POST(req: NextRequest) {
     const prevSold = soldTrades.filter(t => t.sellDate! < since);
 
     // 4. KPI izračuni
-    const calcKpis = (trades: typeof soldTrades) => {
-      if (trades.length === 0) {
-        return { count: 0, revenue: 0, cost: 0, profit: 0, avgMarginPct: 0, avgDaysToSell: 0, avgSellPrice: 0 };
-      }
-      const revenue = trades.reduce((s, t) => s + ((t.sellPrice ?? 0) - (t.sellFees ?? 0)), 0);
-      const cost = trades.reduce((s, t) => s + t.buyPrice + (t.buyFees ?? 0), 0);
-      const profit = revenue - cost;
-      const avgMarginPct = cost > 0 ? Math.round((profit / cost) * 1000) / 10 : 0;
-      const totalDaysToSell = trades.reduce((s, t) => s + Math.max(0, Math.round((t.sellDate!.getTime() - t.buyDate.getTime()) / (24*60*60*1000))), 0);
-      const avgDaysToSell = Math.round(totalDaysToSell / trades.length);
-      const avgSellPrice = Math.round(revenue / trades.length);
-      return { count: trades.length, revenue: Math.round(revenue), cost: Math.round(cost), profit: Math.round(profit), avgMarginPct, avgDaysToSell, avgSellPrice };
-    };
-
     const currentKpis = calcKpis(currentSold);
     const prevKpis = calcKpis(prevSold);
 
     // 5. Category breakdown
-    const catAgg = new Map<string, { count: number; revenue: number; profit: number; marginPct: number; daysToSell: number }>();
-    for (const t of currentSold) {
-      const cat = (t.category || 'drugo').toLowerCase();
-      if (categoryFilter && !cat.includes(categoryFilter)) continue;
-      const revenue = (t.sellPrice ?? 0) - (t.sellFees ?? 0);
-      const cost = t.buyPrice + (t.buyFees ?? 0);
-      const profit = revenue - cost;
-      const days = Math.max(0, Math.round((t.sellDate!.getTime() - t.buyDate.getTime()) / (24*60*60*1000)));
-      if (!catAgg.has(cat)) catAgg.set(cat, { count: 0, revenue: 0, profit: 0, marginPct: 0, daysToSell: 0 });
-      const c = catAgg.get(cat)!;
-      c.count += 1; c.revenue += revenue; c.profit += profit; c.daysToSell += days;
-    }
-
-    const categoryPerformance = Array.from(catAgg.entries()).map(([cat, c]) => {
-      const marginPct = c.revenue > 0 ? Math.round((c.profit / c.revenue) * 1000) / 10 : 0;
-      const avgDays = c.count > 0 ? Math.round(c.daysToSell / c.count) : 0;
-      return { category: cat, count: c.count, revenue: Math.round(c.revenue), profit: Math.round(c.profit), marginPct, avgDaysToSell: avgDays };
-    });
+    const categoryPerformance = computeCategoryPerformance(currentSold, categoryFilter);
 
     // 6. Held inventory stats
-    const heldStats = heldTrades.reduce((acc, t) => {
-      const cost = t.buyPrice + (t.buyFees ?? 0);
-      const estValue = t.listing?.aiEstimatedValue ?? Math.round(cost * 1.25);
-      const daysHeld = Math.round((Date.now() - t.buyDate.getTime()) / (24*60*60*1000));
-      acc.totalValue += estValue;
-      acc.totalCost += cost;
-      acc.totalItems += 1;
-      acc.avgDaysHeld += daysHeld;
-      if (daysHeld > 30) acc.staleCount += 1;
-      if (daysHeld > 90) acc.criticalCount += 1;
-      if (daysHeld > 180) acc.deadCount += 1;
-      return acc;
-    }, { totalValue: 0, totalCost: 0, totalItems: 0, avgDaysHeld: 0, staleCount: 0, criticalCount: 0, deadCount: 0 });
+    const heldStats = computeHeldStats(heldTrades);
 
-    heldStats.avgDaysHeld = heldStats.totalItems > 0 ? Math.round(heldStats.avgDaysHeld / heldStats.totalItems) : 0;
+    const prompt = buildPrompt({
+      days, currentKpis, prevKpis, heldStats, categoryPerformance,
+    });
+    const raw = await callAi(prompt);
+    const parsed: any = parseAi(raw);
 
-    const settings = await getSettingsRow();
-    const aiSettings: AiSettings = {
-      provider: settings.aiProvider as AiProviderType,
-      baseUrl: settings.aiBaseUrl, apiKey: settings.aiApiKey, model: settings.aiModel,
-      fallbackProvider: (settings.fallbackProvider || '') as AiProviderType | '',
-      fallbackBaseUrl: settings.fallbackBaseUrl || '', fallbackApiKey: settings.fallbackApiKey || '',
-      fallbackModel: settings.fallbackModel || '',
-    };
+    const tracker = transformTracker(parsed, categoryPerformance, currentKpis, prevKpis);
 
-    const catPerfStr = categoryPerformance.slice(0, 8).map(c =>
-      `- ${c.category} | ${c.count}x | revenue ${c.revenue}€ | profit ${c.profit}€ (margin ${c.marginPct}%) | povp ${c.avgDaysToSell}d`
-    ).join('\n');
+    return apiOk({ ok: true, tracker });
+  },
+});
 
-    const prompt = `Si AI inventory performance tracker za slovenske oglasne platforme.
-Analiziraj KPI-je, trende in benchmarks za inventar v zadnjih ${days} dneh.
+// --- Pomožne funkcije (čiste, testabilne) --------------------------------
 
-TRENUTNO OBDOBJE (${days} dni):
-- Prodano: ${currentKpis.count} itemov
-- Prihodek: ${currentKpis.revenue}€
-- Dobiček: ${currentKpis.profit}€
-- Povp marža: ${currentKpis.avgMarginPct}%
-- Povp dni do prodaje: ${currentKpis.avgDaysToSell}
-- Povp prodajna cena: ${currentKpis.avgSellPrice}€
+interface SoldTradeRow {
+  id: string;
+  title: string;
+  category: string | null;
+  buyPrice: number;
+  buyFees: number | null;
+  sellPrice: number | null;
+  sellFees: number | null;
+  sellDate: Date | null;
+  buyDate: Date;
+}
+
+interface HeldTradeRow {
+  id: string;
+  title: string;
+  category: string | null;
+  buyPrice: number;
+  buyFees: number | null;
+  buyDate: Date;
+  listing: { aiEstimatedValue: number | null; dealScore: number | null; aiRisk: number | null } | null;
+}
+
+interface KpiStats {
+  count: number;
+  revenue: number;
+  cost: number;
+  profit: number;
+  avgMarginPct: number;
+  avgDaysToSell: number;
+  avgSellPrice: number;
+}
+
+interface CategoryStat {
+  category: string;
+  count: number;
+  revenue: number;
+  profit: number;
+  marginPct: number;
+  avgDaysToSell: number;
+}
+
+interface HeldStats {
+  totalValue: number;
+  totalCost: number;
+  totalItems: number;
+  avgDaysHeld: number;
+  staleCount: number;
+  criticalCount: number;
+  deadCount: number;
+}
+
+interface PromptData {
+  days: number;
+  currentKpis: KpiStats;
+  prevKpis: KpiStats;
+  heldStats: HeldStats;
+  categoryPerformance: CategoryStat[];
+}
+
+function calcKpis(trades: SoldTradeRow[]): KpiStats {
+  if (trades.length === 0) {
+    return { count: 0, revenue: 0, cost: 0, profit: 0, avgMarginPct: 0, avgDaysToSell: 0, avgSellPrice: 0 };
+  }
+  const revenue = trades.reduce((s, t) => s + ((t.sellPrice ?? 0) - (t.sellFees ?? 0)), 0);
+  const cost = trades.reduce((s, t) => s + t.buyPrice + (t.buyFees ?? 0), 0);
+  const profit = revenue - cost;
+  const avgMarginPct = cost > 0 ? Math.round((profit / cost) * 1000) / 10 : 0;
+  const totalDaysToSell = trades.reduce((s, t) => s + Math.max(0, Math.round((t.sellDate!.getTime() - t.buyDate.getTime()) / (24*60*60*1000))), 0);
+  const avgDaysToSell = Math.round(totalDaysToSell / trades.length);
+  const avgSellPrice = Math.round(revenue / trades.length);
+  return { count: trades.length, revenue: Math.round(revenue), cost: Math.round(cost), profit: Math.round(profit), avgMarginPct, avgDaysToSell, avgSellPrice };
+}
+
+function computeCategoryPerformance(currentSold: SoldTradeRow[], categoryFilter: string | null): CategoryStat[] {
+  const catAgg = new Map<string, { count: number; revenue: number; profit: number; marginPct: number; daysToSell: number }>();
+  for (const t of currentSold) {
+    const cat = (t.category || 'drugo').toLowerCase();
+    if (categoryFilter && !cat.includes(categoryFilter)) continue;
+    const revenue = (t.sellPrice ?? 0) - (t.sellFees ?? 0);
+    const cost = t.buyPrice + (t.buyFees ?? 0);
+    const profit = revenue - cost;
+    const days = Math.max(0, Math.round((t.sellDate!.getTime() - t.buyDate.getTime()) / (24*60*60*1000)));
+    if (!catAgg.has(cat)) catAgg.set(cat, { count: 0, revenue: 0, profit: 0, marginPct: 0, daysToSell: 0 });
+    const c = catAgg.get(cat)!;
+    c.count += 1; c.revenue += revenue; c.profit += profit; c.daysToSell += days;
+  }
+
+  return Array.from(catAgg.entries()).map(([cat, c]) => {
+    const marginPct = c.revenue > 0 ? Math.round((c.profit / c.revenue) * 1000) / 10 : 0;
+    const avgDays = c.count > 0 ? Math.round(c.daysToSell / c.count) : 0;
+    return { category: cat, count: c.count, revenue: Math.round(c.revenue), profit: Math.round(c.profit), marginPct, avgDaysToSell: avgDays };
+  });
+}
+
+function computeHeldStats(heldTrades: HeldTradeRow[]): HeldStats {
+  const heldStats = heldTrades.reduce((acc, t) => {
+    const cost = t.buyPrice + (t.buyFees ?? 0);
+    const estValue = t.listing?.aiEstimatedValue ?? Math.round(cost * 1.25);
+    const daysHeld = Math.round((Date.now() - t.buyDate.getTime()) / (24*60*60*1000));
+    acc.totalValue += estValue;
+    acc.totalCost += cost;
+    acc.totalItems += 1;
+    acc.avgDaysHeld += daysHeld;
+    if (daysHeld > 30) acc.staleCount += 1;
+    if (daysHeld > 90) acc.criticalCount += 1;
+    if (daysHeld > 180) acc.deadCount += 1;
+    return acc;
+  }, { totalValue: 0, totalCost: 0, totalItems: 0, avgDaysHeld: 0, staleCount: 0, criticalCount: 0, deadCount: 0 });
+
+  heldStats.avgDaysHeld = heldStats.totalItems > 0 ? Math.round(heldStats.avgDaysHeld / heldStats.totalItems) : 0;
+  return heldStats;
+}
+
+function buildPrompt(d: PromptData): string {
+  const catPerfStr = d.categoryPerformance.slice(0, 8).map(c =>
+    `- ${c.category} | ${c.count}x | revenue ${c.revenue}€ | profit ${c.profit}€ (margin ${c.marginPct}%) | povp ${c.avgDaysToSell}d`
+  ).join('\n');
+
+  return `Si AI inventory performance tracker za slovenske oglasne platforme.
+Analiziraj KPI-je, trende in benchmarks za inventar v zadnjih ${d.days} dneh.
+
+TRENUTNO OBDOBJE (${d.days} dni):
+- Prodano: ${d.currentKpis.count} itemov
+- Prihodek: ${d.currentKpis.revenue}€
+- Dobiček: ${d.currentKpis.profit}€
+- Povp marža: ${d.currentKpis.avgMarginPct}%
+- Povp dni do prodaje: ${d.currentKpis.avgDaysToSell}
+- Povp prodajna cena: ${d.currentKpis.avgSellPrice}€
 
 PREJŠNJE OBDOBJE (za primerjavo):
-- Prodano: ${prevKpis.count} itemov
-- Prihodek: ${prevKpis.revenue}€
-- Dobiček: ${prevKpis.profit}€
-- Povp marža: ${prevKpis.avgMarginPct}%
+- Prodano: ${d.prevKpis.count} itemov
+- Prihodek: ${d.prevKpis.revenue}€
+- Dobiček: ${d.prevKpis.profit}€
+- Povp marža: ${d.prevKpis.avgMarginPct}%
 
 TRENUTNI INVENTAR (held):
-- Skupno itemov: ${heldStats.totalItems}
-- Skupna vrednost: ${heldStats.totalValue}€
-- Skupni cost: ${heldStats.totalCost}€
-- Povp dni v skladišču: ${heldStats.avgDaysHeld}
-- Stale (>30d): ${heldStats.staleCount}
-- Critical (>90d): ${heldStats.criticalCount}
-- Dead (>180d): ${heldStats.deadCount}
+- Skupno itemov: ${d.heldStats.totalItems}
+- Skupna vrednost: ${d.heldStats.totalValue}€
+- Skupni cost: ${d.heldStats.totalCost}€
+- Povp dni v skladišču: ${d.heldStats.avgDaysHeld}
+- Stale (>30d): ${d.heldStats.staleCount}
+- Critical (>90d): ${d.heldStats.criticalCount}
+- Dead (>180d): ${d.heldStats.deadCount}
 
 KATEGORIJE PERFORMANCE:
 ${catPerfStr}
@@ -197,96 +287,80 @@ Odgovori LE z JSON:
     "performance_efficiency_score": <number 0-100>
   }
 }`;
+}
 
-    let raw = '';
-    try { raw = await callProviderForRaw(aiSettings, prompt); }
-    catch (primaryError: any) {
-      if (aiSettings.fallbackProvider && aiSettings.fallbackModel) {
-        const fb: AiSettings = { provider: aiSettings.fallbackProvider, baseUrl: aiSettings.fallbackBaseUrl || '', apiKey: aiSettings.fallbackApiKey || '', model: aiSettings.fallbackModel };
-        raw = await callProviderForRaw(fb, prompt);
-      } else { return NextResponse.json({ error: primaryError?.message ?? 'AI failed' }, { status: 500 }); }
-    }
-
-    const parsed: any = parseJsonLooseExported(raw);
-
-    const tracker = {
-      insights: String(parsed?.insights ?? '').slice(0, 500),
-      kpis: (parsed?.kpis || []).slice(0, 10).map((k: any) => ({
-        name: ['revenue', 'profit', 'margin_pct', 'days_to_sell', 'inventory_turnover', 'sell_through_rate', 'avg_sell_price', 'holding_cost', 'stale_rate', 'dead_inventory_ratio'].includes(String(k?.name)) ? String(k.name) : 'revenue',
-        currentValue: Math.round(Number(k?.current_value ?? 0) * 100) / 100,
-        previousValue: Math.round(Number(k?.previous_value ?? 0) * 100) / 100,
-        changePct: Math.round(Number(k?.change_pct ?? 0) * 10) / 10,
-        trend: ['up', 'down', 'flat'].includes(String(k?.trend)) ? String(k.trend) : 'flat',
-        benchmark: Math.round(Number(k?.benchmark ?? 0) * 100) / 100,
-        benchmarkStatus: ['above', 'at', 'below'].includes(String(k?.benchmark_status)) ? String(k.benchmark_status) : 'at',
-        status: ['excellent', 'good', 'average', 'poor', 'critical'].includes(String(k?.status)) ? String(k.status) : 'average',
-        description: String(k?.description ?? '').slice(0, 250),
-      })),
-      trends: (parsed?.trends || []).slice(0, 6).map((t: any) => ({
-        metric: String(t?.metric ?? '').slice(0, 50),
-        trendDirection: ['rising', 'falling', 'stable', 'volatile'].includes(String(t?.trend_direction)) ? String(t.trend_direction) : 'stable',
-        trendStrength: Math.max(0, Math.min(100, Number(t?.trend_strength ?? 50))),
-        prediction30d: Math.round(Number(t?.prediction_30d ?? 0) * 100) / 100,
-        confidencePct: Math.max(0, Math.min(100, Number(t?.confidence_pct ?? 50))),
-        drivers: (t?.drivers || []).slice(0, 5).map((d: any) => String(d).slice(0, 150)),
-      })),
-      benchmarks: (parsed?.benchmarks || []).slice(0, 8).map((b: any) => ({
-        category: String(b?.category ?? '').slice(0, 50),
-        yourMarginPct: Math.round(Number(b?.your_margin_pct ?? 0) * 10) / 10,
-        industryAvgMarginPct: Math.round(Number(b?.industry_avg_margin_pct ?? 0) * 10) / 10,
-        yourDaysToSell: Math.round(Number(b?.your_days_to_sell ?? 0)),
-        industryAvgDaysToSell: Math.round(Number(b?.industry_avg_days_to_sell ?? 0)),
-        performanceTier: ['excellent', 'good', 'average', 'poor', 'critical'].includes(String(b?.performance_tier)) ? String(b.performance_tier) : 'average',
-        gapToBenchmarkPct: Math.round(Number(b?.gap_to_benchmark_pct ?? 0) * 10) / 10,
-      })),
-      categoryPerformance: (parsed?.category_performance || []).slice(0, 10).map((c: any) => {
-        const orig = categoryPerformance.find(x => x.category === String(c?.category));
-        return {
-          category: String(c?.category ?? '').slice(0, 50),
-          revenueEur: Math.round(Number(c?.revenue_eur ?? orig?.revenue ?? 0)),
-          profitEur: Math.round(Number(c?.profit_eur ?? orig?.profit ?? 0)),
-          marginPct: Math.round(Number(c?.margin_pct ?? orig?.marginPct ?? 0) * 10) / 10,
-          daysToSell: Math.round(Number(c?.days_to_sell ?? orig?.avgDaysToSell ?? 0)),
-          itemsSold: Math.max(0, Number(c?.items_sold ?? orig?.count ?? 0)),
-          performanceTier: ['excellent', 'good', 'average', 'poor', 'critical'].includes(String(c?.performance_tier)) ? String(c.performance_tier) : 'average',
-          trend: ['rising', 'falling', 'stable'].includes(String(c?.trend)) ? String(c.trend) : 'stable',
-          recommendedAction: String(c?.recommended_action ?? '').slice(0, 250),
-        };
-      }),
-      alerts: (parsed?.alerts || []).slice(0, 6).map((a: any) => ({
-        type: ['low_margin', 'slow_moving', 'high_stale', 'dead_inventory', 'underperforming_category'].includes(String(a?.type)) ? String(a.type) : 'slow_moving',
-        severity: ['info', 'warning', 'critical'].includes(String(a?.severity)) ? String(a.severity) : 'warning',
-        category: String(a?.category ?? 'all').slice(0, 50),
-        description: String(a?.description ?? '').slice(0, 300),
-        recommendedAction: String(a?.recommended_action ?? '').slice(0, 300),
-        expectedImpactEur: Math.round(Number(a?.expected_impact_eur ?? 0)),
-      })),
-      recommendations: (parsed?.recommendations || []).slice(0, 6).map((r: any) => ({
-        action: String(r?.action ?? '').slice(0, 300),
-        priority: ['high', 'medium', 'low'].includes(String(r?.priority)) ? String(r.priority) : 'medium',
-        kpiAffected: String(r?.kpi_affected ?? '').slice(0, 50),
-        expectedImpactEur: Math.round(Number(r?.expected_impact_eur ?? 0)),
-        implementationEffort: ['low', 'medium', 'high'].includes(String(r?.implementation_effort)) ? String(r.implementation_effort) : 'medium',
-      })),
-      summary: {
-        totalRevenueEur: Math.round(Number(parsed?.summary?.total_revenue_eur ?? currentKpis.revenue)),
-        totalProfitEur: Math.round(Number(parsed?.summary?.total_profit_eur ?? currentKpis.profit)),
-        avgMarginPct: Math.round(Number(parsed?.summary?.avg_margin_pct ?? currentKpis.avgMarginPct) * 10) / 10,
-        revenueChangeVsPrevPct: Math.round(Number(parsed?.summary?.revenue_change_vs_prev_pct ?? (prevKpis.revenue > 0 ? ((currentKpis.revenue - prevKpis.revenue) / prevKpis.revenue) * 100 : 0)) * 10) / 10,
-        profitChangeVsPrevPct: Math.round(Number(parsed?.summary?.profit_change_vs_prev_pct ?? (prevKpis.profit > 0 ? ((currentKpis.profit - prevKpis.profit) / prevKpis.profit) * 100 : 0)) * 10) / 10,
-        inventoryHealthScore: Math.max(0, Math.min(100, Number(parsed?.summary?.inventory_health_score ?? 60))),
-        bestPerformingCategory: String(parsed?.summary?.best_performing_category ?? '').slice(0, 150),
-        worstPerformingCategory: String(parsed?.summary?.worst_performing_category ?? '').slice(0, 150),
-        biggestThreat: String(parsed?.summary?.biggest_threat ?? '').slice(0, 200),
-        biggestOpportunity: String(parsed?.summary?.biggest_opportunity ?? '').slice(0, 200),
-        performanceEfficiencyScore: Math.max(0, Math.min(100, Number(parsed?.summary?.performance_efficiency_score ?? 60))),
-      },
-    };
-
-    const today = new Date().toISOString().slice(0, 10);
-    if (settings.aiCallsDate !== today) { await db.settings.update({ where: { id: 'singleton' }, data: { aiCallsDate: today, aiCallsToday: 1 } }); }
-    else { await db.settings.update({ where: { id: 'singleton' }, data: { aiCallsToday: { increment: 1 } } }); }
-
-    return NextResponse.json({ ok: true, tracker });
-  } catch (e: any) { logger.error("/api/ai/inventory-performance-tracker", "POST handler failed", e); return NextResponse.json({ error: e?.message ?? 'Napaka' }, { status: 500 }); }
+function transformTracker(parsed: any, categoryPerformance: CategoryStat[], currentKpis: KpiStats, prevKpis: KpiStats) {
+  return {
+    insights: String(parsed?.insights ?? '').slice(0, 500),
+    kpis: (parsed?.kpis || []).slice(0, 10).map((k: any) => ({
+      name: ['revenue', 'profit', 'margin_pct', 'days_to_sell', 'inventory_turnover', 'sell_through_rate', 'avg_sell_price', 'holding_cost', 'stale_rate', 'dead_inventory_ratio'].includes(String(k?.name)) ? String(k.name) : 'revenue',
+      currentValue: Math.round(Number(k?.current_value ?? 0) * 100) / 100,
+      previousValue: Math.round(Number(k?.previous_value ?? 0) * 100) / 100,
+      changePct: Math.round(Number(k?.change_pct ?? 0) * 10) / 10,
+      trend: ['up', 'down', 'flat'].includes(String(k?.trend)) ? String(k.trend) : 'flat',
+      benchmark: Math.round(Number(k?.benchmark ?? 0) * 100) / 100,
+      benchmarkStatus: ['above', 'at', 'below'].includes(String(k?.benchmark_status)) ? String(k.benchmark_status) : 'at',
+      status: ['excellent', 'good', 'average', 'poor', 'critical'].includes(String(k?.status)) ? String(k.status) : 'average',
+      description: String(k?.description ?? '').slice(0, 250),
+    })),
+    trends: (parsed?.trends || []).slice(0, 6).map((t: any) => ({
+      metric: String(t?.metric ?? '').slice(0, 50),
+      trendDirection: ['rising', 'falling', 'stable', 'volatile'].includes(String(t?.trend_direction)) ? String(t.trend_direction) : 'stable',
+      trendStrength: Math.max(0, Math.min(100, Number(t?.trend_strength ?? 50))),
+      prediction30d: Math.round(Number(t?.prediction_30d ?? 0) * 100) / 100,
+      confidencePct: Math.max(0, Math.min(100, Number(t?.confidence_pct ?? 50))),
+      drivers: (t?.drivers || []).slice(0, 5).map((d: any) => String(d).slice(0, 150)),
+    })),
+    benchmarks: (parsed?.benchmarks || []).slice(0, 8).map((b: any) => ({
+      category: String(b?.category ?? '').slice(0, 50),
+      yourMarginPct: Math.round(Number(b?.your_margin_pct ?? 0) * 10) / 10,
+      industryAvgMarginPct: Math.round(Number(b?.industry_avg_margin_pct ?? 0) * 10) / 10,
+      yourDaysToSell: Math.round(Number(b?.your_days_to_sell ?? 0)),
+      industryAvgDaysToSell: Math.round(Number(b?.industry_avg_days_to_sell ?? 0)),
+      performanceTier: ['excellent', 'good', 'average', 'poor', 'critical'].includes(String(b?.performance_tier)) ? String(b.performance_tier) : 'average',
+      gapToBenchmarkPct: Math.round(Number(b?.gap_to_benchmark_pct ?? 0) * 10) / 10,
+    })),
+    categoryPerformance: (parsed?.category_performance || []).slice(0, 10).map((c: any) => {
+      const orig = categoryPerformance.find(x => x.category === String(c?.category));
+      return {
+        category: String(c?.category ?? '').slice(0, 50),
+        revenueEur: Math.round(Number(c?.revenue_eur ?? orig?.revenue ?? 0)),
+        profitEur: Math.round(Number(c?.profit_eur ?? orig?.profit ?? 0)),
+        marginPct: Math.round(Number(c?.margin_pct ?? orig?.marginPct ?? 0) * 10) / 10,
+        daysToSell: Math.round(Number(c?.days_to_sell ?? orig?.avgDaysToSell ?? 0)),
+        itemsSold: Math.max(0, Number(c?.items_sold ?? orig?.count ?? 0)),
+        performanceTier: ['excellent', 'good', 'average', 'poor', 'critical'].includes(String(c?.performance_tier)) ? String(c.performance_tier) : 'average',
+        trend: ['rising', 'falling', 'stable'].includes(String(c?.trend)) ? String(c.trend) : 'stable',
+        recommendedAction: String(c?.recommended_action ?? '').slice(0, 250),
+      };
+    }),
+    alerts: (parsed?.alerts || []).slice(0, 6).map((a: any) => ({
+      type: ['low_margin', 'slow_moving', 'high_stale', 'dead_inventory', 'underperforming_category'].includes(String(a?.type)) ? String(a.type) : 'slow_moving',
+      severity: ['info', 'warning', 'critical'].includes(String(a?.severity)) ? String(a.severity) : 'warning',
+      category: String(a?.category ?? 'all').slice(0, 50),
+      description: String(a?.description ?? '').slice(0, 300),
+      recommendedAction: String(a?.recommended_action ?? '').slice(0, 300),
+      expectedImpactEur: Math.round(Number(a?.expected_impact_eur ?? 0)),
+    })),
+    recommendations: (parsed?.recommendations || []).slice(0, 6).map((r: any) => ({
+      action: String(r?.action ?? '').slice(0, 300),
+      priority: ['high', 'medium', 'low'].includes(String(r?.priority)) ? String(r.priority) : 'medium',
+      kpiAffected: String(r?.kpi_affected ?? '').slice(0, 50),
+      expectedImpactEur: Math.round(Number(r?.expected_impact_eur ?? 0)),
+      implementationEffort: ['low', 'medium', 'high'].includes(String(r?.implementation_effort)) ? String(r.implementation_effort) : 'medium',
+    })),
+    summary: {
+      totalRevenueEur: Math.round(Number(parsed?.summary?.total_revenue_eur ?? currentKpis.revenue)),
+      totalProfitEur: Math.round(Number(parsed?.summary?.total_profit_eur ?? currentKpis.profit)),
+      avgMarginPct: Math.round(Number(parsed?.summary?.avg_margin_pct ?? currentKpis.avgMarginPct) * 10) / 10,
+      revenueChangeVsPrevPct: Math.round(Number(parsed?.summary?.revenue_change_vs_prev_pct ?? (prevKpis.revenue > 0 ? ((currentKpis.revenue - prevKpis.revenue) / prevKpis.revenue) * 100 : 0)) * 10) / 10,
+      profitChangeVsPrevPct: Math.round(Number(parsed?.summary?.profit_change_vs_prev_pct ?? (prevKpis.profit > 0 ? ((currentKpis.profit - prevKpis.profit) / prevKpis.profit) * 100 : 0)) * 10) / 10,
+      inventoryHealthScore: Math.max(0, Math.min(100, Number(parsed?.summary?.inventory_health_score ?? 60))),
+      bestPerformingCategory: String(parsed?.summary?.best_performing_category ?? '').slice(0, 150),
+      worstPerformingCategory: String(parsed?.summary?.worst_performing_category ?? '').slice(0, 150),
+      biggestThreat: String(parsed?.summary?.biggest_threat ?? '').slice(0, 200),
+      biggestOpportunity: String(parsed?.summary?.biggest_opportunity ?? '').slice(0, 200),
+      performanceEfficiencyScore: Math.max(0, Math.min(100, Number(parsed?.summary?.performance_efficiency_score ?? 60))),
+    },
+  };
 }

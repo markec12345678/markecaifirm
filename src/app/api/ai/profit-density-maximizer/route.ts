@@ -1,11 +1,11 @@
-// v8.14: AI Profit Density Maximizer — MAKSIMIZIRA PROFIT DENSITY — profit
+// v8.14 / v8.96.2-batch1: AI Profit Density Maximizer — MAKSIMIZIRA PROFIT DENSITY — profit
 // pridobljen na enoto aktivnosti (per listing, per kategorijo, per uro
 // vlaganja v sourcing). Višja gostota = več profit-a z manj truda. "Tvoj
 // profit density je 12€/h. Z fokuso na high-density niches lahko dosežeš
 // 14€/h (×1.18)." Razlika od profit-per-cycle-maximizer (v8.12 ki
 // maksimizira profit per cycle €/cycle z maximizationLevers in
 // cycleVsVolumeTradeoff) — ta MAKSIMIZIRA PROFIT DENSITY (profit per ura +
-// per kategorija + per listing, ne per-cycle €). Razlika od
+// per kategorijo + per listing, ne per-cycle €). Razlika od
 // profit-per-trade-scaling-maximizer (v8.13 ki skalira profit per trade skozi
 // 4-fazno pot CURRENT→OPTIMIZED→PREMIUM→ELITE) — ta MAKSIMIZIRA PROFIT
 // DENSITY (profit per unit aktivnosti, ne per-trade € scaling). Razlika od
@@ -18,15 +18,19 @@
 // ne capital turnover × margin). Razlika od profit-per-euro-maximizer (v8.07
 // ki maksimizira profit per € deployed) — ta MAKSIMIZIRA PROFIT DENSITY
 // (profit per ura + per kategorijo + per listing, ne € profit / € capital).
-
+//
+// Refaktoriran z withAiRoute helperjem (v8.96.2) + enforceBudget guard
+// (konsistentno z vsemi v8.96.x migracijami — endpoint ne kliče AI providerja,
+// je deterministic; vendar ohranjamo guard za konsistentnost).
+//
 // GET+POST /api/ai/profit-density-maximizer
 // (Deterministic formula-based maximizer — no AI call, no DB query.)
 
-import { NextRequest, NextResponse } from 'next/server';
-import { logger } from '@/lib/logger';
+import type { NextRequest } from 'next/server';
+import { withAiRoute, AI_ROUTE_DEFAULTS, type AiRouteContext } from '@/lib/with-ai-route';
+import { apiOk } from '@/lib/api-response';
 
-export const runtime = 'nodejs';
-export const dynamic = 'force-dynamic';
+export const { runtime, dynamic } = AI_ROUTE_DEFAULTS;
 export const maxDuration = 60;
 
 // --- Types ---------------------------------------------------------------
@@ -263,35 +267,35 @@ function computeMaximization(inputs: ProfitDensityInputs): {
 }
 
 // --- Handler -------------------------------------------------------------
+// v8.96.2-batch1: dual-handler (GET + POST) — method: 'GET' bypasses POST-only
+// check v withAiRoute; isti handler exportan za obe HTTP metodi (konsistentno
+// z auto-relisting-scheduler v8.94.8-f-refactor vzorcem).
 
-export async function GET(req: NextRequest) {
-  return handleProfitDensityMaximizer(req);
-}
-export async function POST(req: NextRequest) {
-  return handleProfitDensityMaximizer(req);
-}
+const profitDensityMaximizerHandler = withAiRoute<ProfitDensityInputs>({
+  endpoint: '/api/ai/profit-density-maximizer',
+  maxDuration: 60,
+  enforceBudget: true, // v8.96.2-batch1: budget guard (konsistentno z vsemi AI route-i)
+  method: 'GET', // Endpoint sprejema GET + POST — bypass POST-only check
 
-async function handleProfitDensityMaximizer(req: NextRequest) {
-  try {
-    const inputs = await resolveInputs(req);
+  parseBody: async (req) => {
+    return await resolveInputs(req);
+  },
+
+  // No validateInput — vsi input-i imajo defaults
+
+  handler: async (_input, _ctx: AiRouteContext) => {
+    const inputs = _input;
     const { current, maximization } = computeMaximization(inputs);
 
-    return NextResponse.json({
+    return apiOk({
       ok: true,
       current,
       maximization,
       aiUsed: false,
       source: 'v8.14-profit-density-maximizer',
     } satisfies ProfitDensityResponse);
-  } catch (err: any) {
-    logger.error(
-      '/api/ai/profit-density-maximizer',
-      'handler failed',
-      err,
-    );
-    return NextResponse.json(
-      { error: err?.message ?? 'Napaka' },
-      { status: 500 },
-    );
-  }
-}
+  },
+});
+
+export const GET = profitDensityMaximizerHandler;
+export const POST = profitDensityMaximizerHandler;

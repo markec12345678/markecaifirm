@@ -1,16 +1,14 @@
-// v6.54: AI Listing Description A/B Test Optimizer — ML testiranje opisov z multi-variantami
+// v6.54 / v8.96.2-batch2: AI Listing Description A/B Test Optimizer — ML testiranje opisov z multi-variantami
+// Refaktoriran z withAiRoute helperjem (v8.96.2-batch2) + enforceBudget guard.
+//
 // POST /api/ai/listing-description-abtest-optimizer
 // Body: { tradeId?: string, variants?: number, platforms?: string[] }
 // Returns: { ok, optimizer: { listings, variants, mlPredictions, testMatrix, statisticalAnalysis, recommendations, summary } }
 
-import { NextRequest, NextResponse } from 'next/server';
-import { db } from '@/lib/db';
-import { getSettingsRow } from '@/lib/pipeline';
-import { callProviderForRaw, parseJsonLooseExported, type AiProviderType, type AiSettings } from '@/lib/ai';
-import { logger } from '@/lib/logger';
+import { withAiRoute, AI_ROUTE_DEFAULTS, type AiRouteContext } from '@/lib/with-ai-route';
+import { apiOk } from '@/lib/api-response';
 
-export const runtime = 'nodejs';
-export const dynamic = 'force-dynamic';
+export const { runtime, dynamic } = AI_ROUTE_DEFAULTS;
 export const maxDuration = 120;
 
 const VARIANT_TYPES = [
@@ -26,11 +24,28 @@ const VARIANT_TYPES = [
   'problem_solution',
 ] as const;
 
-export async function POST(req: NextRequest) {
-  try {
+interface ListingAbTestInput {
+  tradeId: string | null;
+  variants: number;
+}
+
+export const POST = withAiRoute<ListingAbTestInput>({
+  endpoint: '/api/ai/listing-description-abtest-optimizer',
+  maxDuration: 120,
+  enforceBudget: true, // AI klic — preveri budget
+
+  parseBody: async (req) => {
     const body = await req.json().catch(() => ({}));
-    const tradeId = body?.tradeId ? String(body.tradeId) : null;
-    const variants = Math.max(2, Math.min(5, Number(body?.variants ?? 3)));
+    return {
+      tradeId: body?.tradeId ? String(body.tradeId) : null,
+      variants: Math.max(2, Math.min(5, Number(body?.variants ?? 3))),
+    };
+  },
+
+  // No validateInput — vsi inputi imajo defaults
+  handler: async (input, ctx: AiRouteContext) => {
+    const { db, callAi, parseAi } = ctx;
+    const { tradeId, variants } = input;
 
     const where: any = { status: 'held' };
     if (tradeId) where.id = tradeId;
@@ -45,35 +60,72 @@ export async function POST(req: NextRequest) {
     });
 
     if (heldTrades.length === 0) {
-      return NextResponse.json({ ok: true, optimizer: null, message: 'Ni held tradeov za A/B test.' });
+      return apiOk({ ok: true, optimizer: null, message: 'Ni held tradeov za A/B test.' });
     }
 
-    const settings = await getSettingsRow();
-    const aiSettings: AiSettings = {
-      provider: settings.aiProvider as AiProviderType,
-      baseUrl: settings.aiBaseUrl, apiKey: settings.aiApiKey, model: settings.aiModel,
-      fallbackProvider: (settings.fallbackProvider || '') as AiProviderType | '',
-      fallbackBaseUrl: settings.fallbackBaseUrl || '', fallbackApiKey: settings.fallbackApiKey || '',
-      fallbackModel: settings.fallbackModel || '',
+    const items = buildItems(heldTrades);
+    const itemsStr = buildItemsStr(items);
+    const prompt = buildPrompt(items, itemsStr, variants);
+
+    const raw = await callAi(prompt);
+    const parsed: any = parseAi(raw);
+    const optimizer = transformOptimizer(parsed, items, variants);
+
+    return apiOk({ ok: true, optimizer });
+  },
+});
+
+// --- Pomožne funkcije (čiste, testabilne) --------------------------------
+
+interface HeldTradeRow {
+  id: string;
+  title: string;
+  category: string;
+  buyPrice: number;
+  buyFees: number | null;
+  buyDate: Date;
+  listing: {
+    description: string | null;
+    detailDescription: string | null;
+    imageUrl: string | null;
+    aiEstimatedValue: number | null;
+    location: string | null;
+  } | null;
+}
+
+interface ItemInfo {
+  id: string;
+  title: string;
+  category: string;
+  cost: number;
+  estValue: number;
+  daysHeld: number;
+  originalDescription: string;
+  location: string;
+}
+
+function buildItems(heldTrades: HeldTradeRow[]): ItemInfo[] {
+  return heldTrades.map(t => {
+    const cost = t.buyPrice + (t.buyFees ?? 0);
+    const estValue = t.listing?.aiEstimatedValue ?? Math.round(cost * 1.25);
+    const daysHeld = Math.round((Date.now() - t.buyDate.getTime()) / (24*60*60*1000));
+    return {
+      id: t.id, title: t.title, category: t.category || 'drugo',
+      cost, estValue, daysHeld,
+      originalDescription: (t.listing?.detailDescription || t.listing?.description || '').slice(0, 400),
+      location: t.listing?.location || '',
     };
+  });
+}
 
-    const items = heldTrades.map(t => {
-      const cost = t.buyPrice + (t.buyFees ?? 0);
-      const estValue = t.listing?.aiEstimatedValue ?? Math.round(cost * 1.25);
-      const daysHeld = Math.round((Date.now() - t.buyDate.getTime()) / (24*60*60*1000));
-      return {
-        id: t.id, title: t.title, category: t.category || 'drugo',
-        cost, estValue, daysHeld,
-        originalDescription: (t.listing?.detailDescription || t.listing?.description || '').slice(0, 400),
-        location: t.listing?.location || '',
-      };
-    });
+function buildItemsStr(items: ItemInfo[]): string {
+  return items.map(i =>
+    `- [${i.id}] "${i.title}" | ${i.category} | ${i.cost}€→${i.estValue}€ | ${i.daysHeld}d | ${i.location}`
+  ).join('\n');
+}
 
-    const itemsStr = items.map(i =>
-      `- [${i.id}] "${i.title}" | ${i.category} | ${i.cost}€→${i.estValue}€ | ${i.daysHeld}d | ${i.location}`
-    ).join('\n');
-
-    const prompt = `Si AI listing description A/B test optimizer za slovenske oglasne platforme.
+function buildPrompt(items: ItemInfo[], itemsStr: string, variants: number): string {
+  return `Si AI listing description A/B test optimizer za slovenske oglasne platforme.
 Generiraj ${variants} A/B test variante opisov z ML predikcijo in statistično analizo.
 
 INVENTAR (${items.length}):
@@ -189,113 +241,98 @@ Odgovori LE z JSON:
     "ab_test_optimization_score": <number 0-100>
   }
 }`;
+}
 
-    let raw = '';
-    try { raw = await callProviderForRaw(aiSettings, prompt); }
-    catch (primaryError: any) {
-      if (aiSettings.fallbackProvider && aiSettings.fallbackModel) {
-        const fb: AiSettings = { provider: aiSettings.fallbackProvider, baseUrl: aiSettings.fallbackBaseUrl || '', apiKey: aiSettings.fallbackApiKey || '', model: aiSettings.fallbackModel };
-        raw = await callProviderForRaw(fb, prompt);
-      } else { return NextResponse.json({ error: primaryError?.message ?? 'AI failed' }, { status: 500 }); }
-    }
+function transformOptimizer(parsed: any, items: ItemInfo[], variants: number): any {
+  const validIds = new Set(items.map(i => i.id));
 
-    const parsed: any = parseJsonLooseExported(raw);
-    const validIds = new Set(items.map(i => i.id));
-
-    const optimizer = {
-      insights: String(parsed?.insights ?? '').slice(0, 500),
-      listings: (parsed?.listings || [])
-        .filter((l: any) => validIds.has(String(l?.id ?? '')))
-        .slice(0, 8)
-        .map((l: any) => {
-          const orig = items.find(x => x.id === String(l?.id));
-          return {
-            tradeId: String(l?.id ?? ''),
-            title: String(l?.title ?? orig?.title ?? '').slice(0, 150),
-            controlDescription: String(l?.control_description ?? orig?.originalDescription ?? '').slice(0, 800),
-            variants: (l?.variants || [])
-              .slice(0, variants)
-              .map((v: any) => ({
-                variantId: ['a', 'b', 'c', 'd', 'e'].includes(String(v?.variant_id)) ? String(v.variant_id) : 'a',
-                variantType: VARIANT_TYPES.includes(String(v?.variant_type) as any) ? String(v.variant_type) : 'control',
-                description: String(v?.description ?? '').slice(0, 1200),
-                mlPredictions: {
-                  expectedViews7d: Math.max(0, Math.round(Number(v?.ml_predictions?.expected_views_7d ?? 0))),
-                  expectedInquiries7d: Math.max(0, Math.round(Number(v?.ml_predictions?.expected_inquiries_7d ?? 0))),
-                  expectedConversionRatePct: Math.max(0, Math.min(100, Number(v?.ml_predictions?.expected_conversion_rate_pct ?? 30))),
-                  expectedTimeToSaleDays: Math.max(1, Math.round(Number(v?.ml_predictions?.expected_time_to_sale_days ?? 14))),
-                  expectedFinalPriceEur: Math.max(0, Math.round(Number(v?.ml_predictions?.expected_final_price_eur ?? orig?.estValue ?? 0))),
-                  engagementScore: Math.max(0, Math.min(100, Number(v?.ml_predictions?.engagement_score ?? 50))),
-                  statisticalConfidencePct: Math.max(0, Math.min(100, Number(v?.ml_predictions?.statistical_confidence_pct ?? 50))),
-                },
-                keyChangesFromControl: (v?.key_changes_from_control || []).slice(0, 5).map((c: any) => String(c).slice(0, 150)),
-                psychologicalTechniqueUsed: String(v?.psychological_technique_used ?? '').slice(0, 150),
-                expectedWinnerProbabilityPct: Math.max(0, Math.min(100, Number(v?.expected_winner_probability_pct ?? 25))),
-              })),
-            predictedWinner: ['a', 'b', 'c', 'd', 'e'].includes(String(l?.predicted_winner)) ? String(l.predicted_winner) : 'a',
-            winnerReasoning: String(l?.winner_reasoning ?? '').slice(0, 300),
-          };
-        }),
-      mlPredictions: (parsed?.ml_predictions || []).slice(0, 6).map((m: any) => ({
-        metric: ['views', 'inquiries', 'conversion_rate', 'time_to_sale', 'final_price', 'engagement'].includes(String(m?.metric)) ? String(m.metric) : 'conversion_rate',
-        controlAvg: Math.round(Number(m?.control_avg ?? 0) * 100) / 100,
-        variantAAvg: Math.round(Number(m?.variant_a_avg ?? 0) * 100) / 100,
-        variantBAvg: Math.round(Number(m?.variant_b_avg ?? 0) * 100) / 100,
-        variantCAvg: Math.round(Number(m?.variant_c_avg ?? 0) * 100) / 100,
-        bestVariant: ['a', 'b', 'c'].includes(String(m?.best_variant)) ? String(m.best_variant) : 'a',
-        improvementPct: Math.round(Number(m?.improvement_pct ?? 0) * 10) / 10,
-        confidencePct: Math.max(0, Math.min(100, Number(m?.confidence_pct ?? 50))),
+  return {
+    insights: String(parsed?.insights ?? '').slice(0, 500),
+    listings: (parsed?.listings || [])
+      .filter((l: any) => validIds.has(String(l?.id ?? '')))
+      .slice(0, 8)
+      .map((l: any) => {
+        const orig = items.find(x => x.id === String(l?.id));
+        return {
+          tradeId: String(l?.id ?? ''),
+          title: String(l?.title ?? orig?.title ?? '').slice(0, 150),
+          controlDescription: String(l?.control_description ?? orig?.originalDescription ?? '').slice(0, 800),
+          variants: (l?.variants || [])
+            .slice(0, variants)
+            .map((v: any) => ({
+              variantId: ['a', 'b', 'c', 'd', 'e'].includes(String(v?.variant_id)) ? String(v.variant_id) : 'a',
+              variantType: VARIANT_TYPES.includes(String(v?.variant_type) as any) ? String(v.variant_type) : 'control',
+              description: String(v?.description ?? '').slice(0, 1200),
+              mlPredictions: {
+                expectedViews7d: Math.max(0, Math.round(Number(v?.ml_predictions?.expected_views_7d ?? 0))),
+                expectedInquiries7d: Math.max(0, Math.round(Number(v?.ml_predictions?.expected_inquiries_7d ?? 0))),
+                expectedConversionRatePct: Math.max(0, Math.min(100, Number(v?.ml_predictions?.expected_conversion_rate_pct ?? 30))),
+                expectedTimeToSaleDays: Math.max(1, Math.round(Number(v?.ml_predictions?.expected_time_to_sale_days ?? 14))),
+                expectedFinalPriceEur: Math.max(0, Math.round(Number(v?.ml_predictions?.expected_final_price_eur ?? orig?.estValue ?? 0))),
+                engagementScore: Math.max(0, Math.min(100, Number(v?.ml_predictions?.engagement_score ?? 50))),
+                statisticalConfidencePct: Math.max(0, Math.min(100, Number(v?.ml_predictions?.statistical_confidence_pct ?? 50))),
+              },
+              keyChangesFromControl: (v?.key_changes_from_control || []).slice(0, 5).map((c: any) => String(c).slice(0, 150)),
+              psychologicalTechniqueUsed: String(v?.psychological_technique_used ?? '').slice(0, 150),
+              expectedWinnerProbabilityPct: Math.max(0, Math.min(100, Number(v?.expected_winner_probability_pct ?? 25))),
+            })),
+          predictedWinner: ['a', 'b', 'c', 'd', 'e'].includes(String(l?.predicted_winner)) ? String(l.predicted_winner) : 'a',
+          winnerReasoning: String(l?.winner_reasoning ?? '').slice(0, 300),
+        };
+      }),
+    mlPredictions: (parsed?.ml_predictions || []).slice(0, 6).map((m: any) => ({
+      metric: ['views', 'inquiries', 'conversion_rate', 'time_to_sale', 'final_price', 'engagement'].includes(String(m?.metric)) ? String(m.metric) : 'conversion_rate',
+      controlAvg: Math.round(Number(m?.control_avg ?? 0) * 100) / 100,
+      variantAAvg: Math.round(Number(m?.variant_a_avg ?? 0) * 100) / 100,
+      variantBAvg: Math.round(Number(m?.variant_b_avg ?? 0) * 100) / 100,
+      variantCAvg: Math.round(Number(m?.variant_c_avg ?? 0) * 100) / 100,
+      bestVariant: ['a', 'b', 'c'].includes(String(m?.best_variant)) ? String(m.best_variant) : 'a',
+      improvementPct: Math.round(Number(m?.improvement_pct ?? 0) * 10) / 10,
+      confidencePct: Math.max(0, Math.min(100, Number(m?.confidence_pct ?? 50))),
+    })),
+    testMatrix: (parsed?.test_matrix || [])
+      .filter((t: any) => validIds.has(String(t?.listing_id ?? '')))
+      .slice(0, 8)
+      .map((t: any) => ({
+        tradeId: String(t?.listing_id ?? '').slice(0, 50),
+        variantAType: VARIANT_TYPES.includes(String(t?.variant_a_type) as any) ? String(t.variant_a_type) : 'emotional_appeal',
+        variantBType: VARIANT_TYPES.includes(String(t?.variant_b_type) as any) ? String(t.variant_b_type) : 'urgency_focused',
+        variantCType: VARIANT_TYPES.includes(String(t?.variant_c_type) as any) ? String(t.variant_c_type) : 'social_proof_heavy',
+        testDurationDays: Math.max(3, Math.min(30, Number(t?.test_duration_days ?? 7))),
+        sampleSizePerVariant: Math.max(50, Number(t?.sample_size_per_variant ?? 100)),
+        primaryMetric: ['conversion_rate', 'views', 'inquiries', 'time_to_sale'].includes(String(t?.primary_metric)) ? String(t.primary_metric) : 'conversion_rate',
+        secondaryMetrics: (t?.secondary_metrics || []).slice(0, 4).map((m: any) => String(m).slice(0, 50)),
+        stoppingRule: String(t?.stopping_rule ?? '').slice(0, 200),
       })),
-      testMatrix: (parsed?.test_matrix || [])
-        .filter((t: any) => validIds.has(String(t?.listing_id ?? '')))
-        .slice(0, 8)
-        .map((t: any) => ({
-          tradeId: String(t?.listing_id ?? '').slice(0, 50),
-          variantAType: VARIANT_TYPES.includes(String(t?.variant_a_type) as any) ? String(t.variant_a_type) : 'emotional_appeal',
-          variantBType: VARIANT_TYPES.includes(String(t?.variant_b_type) as any) ? String(t.variant_b_type) : 'urgency_focused',
-          variantCType: VARIANT_TYPES.includes(String(t?.variant_c_type) as any) ? String(t.variant_c_type) : 'social_proof_heavy',
-          testDurationDays: Math.max(3, Math.min(30, Number(t?.test_duration_days ?? 7))),
-          sampleSizePerVariant: Math.max(50, Number(t?.sample_size_per_variant ?? 100)),
-          primaryMetric: ['conversion_rate', 'views', 'inquiries', 'time_to_sale'].includes(String(t?.primary_metric)) ? String(t.primary_metric) : 'conversion_rate',
-          secondaryMetrics: (t?.secondary_metrics || []).slice(0, 4).map((m: any) => String(m).slice(0, 50)),
-          stoppingRule: String(t?.stopping_rule ?? '').slice(0, 200),
-        })),
-      statisticalAnalysis: (parsed?.statistical_analysis || []).slice(0, 6).map((s: any) => ({
-        comparison: ['a_vs_control', 'b_vs_control', 'c_vs_control', 'a_vs_b', 'a_vs_c', 'b_vs_c'].includes(String(s?.comparison)) ? String(s.comparison) : 'a_vs_control',
-        expectedLiftPct: Math.round(Number(s?.expected_lift_pct ?? 0) * 10) / 10,
-        confidenceInterval: {
-          lower: Math.round(Number(s?.confidence_interval?.lower ?? 0) * 10) / 10,
-          upper: Math.round(Number(s?.confidence_interval?.upper ?? 0) * 10) / 10,
-        },
-        pValueEstimate: Math.max(0, Math.min(1, Number(s?.p_value_estimate ?? 0.05))),
-        statisticalPower: Math.max(0, Math.min(100, Number(s?.statistical_power ?? 80))),
-        sampleSizeNeeded: Math.max(30, Number(s?.sample_size_needed ?? 100)),
-        significant: Boolean(s?.significant ?? false),
-      })),
-      recommendations: (parsed?.recommendations || []).slice(0, 6).map((r: any) => ({
-        action: String(r?.action ?? '').slice(0, 300),
-        priority: ['high', 'medium', 'low'].includes(String(r?.priority)) ? String(r.priority) : 'medium',
-        expectedConversionLiftPct: Math.round(Number(r?.expected_conversion_lift_pct ?? 0)),
-        listingsAffected: Math.max(0, Number(r?.listings_affected ?? 0)),
-        implementationEffort: ['low', 'medium', 'high'].includes(String(r?.implementation_effort)) ? String(r.implementation_effort) : 'medium',
-      })),
-      summary: {
-        totalListingsTested: items.length,
-        totalVariantsGenerated: Math.max(0, Number(parsed?.summary?.total_variants_generated ?? items.length * variants)),
-        avgExpectedConversionLiftPct: Math.round(Number(parsed?.summary?.avg_expected_conversion_lift_pct ?? 0) * 10) / 10,
-        bestVariantTypeOverall: VARIANT_TYPES.includes(String(parsed?.summary?.best_variant_type_overall) as any) ? String(parsed.summary.best_variant_type_overall) : 'emotional_appeal',
-        bestVariantAvgLiftPct: Math.round(Number(parsed?.summary?.best_variant_avg_lift_pct ?? 0) * 10) / 10,
-        totalTestDurationDays: Math.max(0, Number(parsed?.summary?.total_test_duration_days ?? 0)),
-        totalSampleSizeNeeded: Math.max(0, Number(parsed?.summary?.total_sample_size_needed ?? 0)),
-        avgStatisticalConfidencePct: Math.max(0, Math.min(100, Number(parsed?.summary?.avg_statistical_confidence_pct ?? 50))),
-        abTestOptimizationScore: Math.max(0, Math.min(100, Number(parsed?.summary?.ab_test_optimization_score ?? 50))),
+    statisticalAnalysis: (parsed?.statistical_analysis || []).slice(0, 6).map((s: any) => ({
+      comparison: ['a_vs_control', 'b_vs_control', 'c_vs_control', 'a_vs_b', 'a_vs_c', 'b_vs_c'].includes(String(s?.comparison)) ? String(s.comparison) : 'a_vs_control',
+      expectedLiftPct: Math.round(Number(s?.expected_lift_pct ?? 0) * 10) / 10,
+      confidenceInterval: {
+        lower: Math.round(Number(s?.confidence_interval?.lower ?? 0) * 10) / 10,
+        upper: Math.round(Number(s?.confidence_interval?.upper ?? 0) * 10) / 10,
       },
-    };
-
-    const today = new Date().toISOString().slice(0, 10);
-    if (settings.aiCallsDate !== today) { await db.settings.update({ where: { id: 'singleton' }, data: { aiCallsDate: today, aiCallsToday: 1 } }); }
-    else { await db.settings.update({ where: { id: 'singleton' }, data: { aiCallsToday: { increment: 1 } } }); }
-
-    return NextResponse.json({ ok: true, optimizer });
-  } catch (e: any) { logger.error("/api/ai/listing-description-abtest-optimizer", "POST handler failed", e); return NextResponse.json({ error: e?.message ?? 'Napaka' }, { status: 500 }); }
+      pValueEstimate: Math.max(0, Math.min(1, Number(s?.p_value_estimate ?? 0.05))),
+      statisticalPower: Math.max(0, Math.min(100, Number(s?.statistical_power ?? 80))),
+      sampleSizeNeeded: Math.max(30, Number(s?.sample_size_needed ?? 100)),
+      significant: Boolean(s?.significant ?? false),
+    })),
+    recommendations: (parsed?.recommendations || []).slice(0, 6).map((r: any) => ({
+      action: String(r?.action ?? '').slice(0, 300),
+      priority: ['high', 'medium', 'low'].includes(String(r?.priority)) ? String(r.priority) : 'medium',
+      expectedConversionLiftPct: Math.round(Number(r?.expected_conversion_lift_pct ?? 0)),
+      listingsAffected: Math.max(0, Number(r?.listings_affected ?? 0)),
+      implementationEffort: ['low', 'medium', 'high'].includes(String(r?.implementation_effort)) ? String(r.implementation_effort) : 'medium',
+    })),
+    summary: {
+      totalListingsTested: items.length,
+      totalVariantsGenerated: Math.max(0, Number(parsed?.summary?.total_variants_generated ?? items.length * variants)),
+      avgExpectedConversionLiftPct: Math.round(Number(parsed?.summary?.avg_expected_conversion_lift_pct ?? 0) * 10) / 10,
+      bestVariantTypeOverall: VARIANT_TYPES.includes(String(parsed?.summary?.best_variant_type_overall) as any) ? String(parsed.summary.best_variant_type_overall) : 'emotional_appeal',
+      bestVariantAvgLiftPct: Math.round(Number(parsed?.summary?.best_variant_avg_lift_pct ?? 0) * 10) / 10,
+      totalTestDurationDays: Math.max(0, Number(parsed?.summary?.total_test_duration_days ?? 0)),
+      totalSampleSizeNeeded: Math.max(0, Number(parsed?.summary?.total_sample_size_needed ?? 0)),
+      avgStatisticalConfidencePct: Math.max(0, Math.min(100, Number(parsed?.summary?.avg_statistical_confidence_pct ?? 50))),
+      abTestOptimizationScore: Math.max(0, Math.min(100, Number(parsed?.summary?.ab_test_optimization_score ?? 50))),
+    },
+  };
 }

@@ -1,4 +1,4 @@
-// v8.14: AI Deal Source Profit Compounding Maximizer — MAKSIMIZIRA
+// v8.14 / v8.96.2-batch2: AI Deal Source Profit Compounding Maximizer — MAKSIMIZIRA
 // COMPOUNDING profit growth čez deal sources — reinvestira profit iz enega
 // source-a v višji-yield source-ih. Compound growth rate maximizer. "Tvoj
 // compounding rate je 30€/mo/source. Z prioritizacijo high-yield source-ov
@@ -19,15 +19,20 @@
 // ki maksimizira growth rate skupnega profit-a v %/mo MoM) — ta MAKSIMIZIRA
 // COMPOUNDING annual profit z reinvestRate × sourceCount × growthRate
 // exponent (compounding math, ne linear MoM growth).
-
+//
+// Refaktoriran z withAiRoute helperjem (v8.96.2-batch2) + enforceBudget guard.
+// SHARED handler za GET in POST (obe metodi kličeta isto logiko — match-a
+// brain/accuracy/backfill vzorec z method: 'GET' bypass POST-only check).
+// DETERMINISTIC — endpoint ne kliče AI direktno; enforceBudget: true je
+// non-breaking (konsistentno z vsemi v8.96.x migracijami).
+//
 // GET+POST /api/ai/deal-source-profit-compounding-maximizer
 // (Deterministic formula-based maximizer — no AI call, no DB query.)
 
-import { NextRequest, NextResponse } from 'next/server';
-import { logger } from '@/lib/logger';
+import { withAiRoute, AI_ROUTE_DEFAULTS, type AiRouteContext } from '@/lib/with-ai-route';
+import { apiOk } from '@/lib/api-response';
 
-export const runtime = 'nodejs';
-export const dynamic = 'force-dynamic';
+export const { runtime, dynamic } = AI_ROUTE_DEFAULTS;
 export const maxDuration = 60;
 
 // --- Types ---------------------------------------------------------------
@@ -80,6 +85,15 @@ const AVG_MONTHLY_PROFIT_MAX = 1_000_000;
 const SCORE_MIN = 0;
 const SCORE_MAX = 100;
 
+// --- Inputs -------------------------------------------------------------
+
+interface CompoundingInputs {
+  avgMonthlyProfit: number; // €
+  reinvestRate: number; // [0, 1]
+  sourceCount: number;
+  avgProfitGrowthRate: number; // %
+}
+
 // --- Helpers ------------------------------------------------------------
 
 function clampNum(v: unknown, min: number, max: number, fallback: number): number {
@@ -98,17 +112,8 @@ function round2(v: number): number {
   return Math.round(v * 100) / 100;
 }
 
-// --- Inputs -------------------------------------------------------------
-
-interface CompoundingInputs {
-  avgMonthlyProfit: number; // €
-  reinvestRate: number; // [0, 1]
-  sourceCount: number;
-  avgProfitGrowthRate: number; // %
-}
-
 // Async helper — reads body once if POST + JSON, then merges with query.
-async function resolveInputs(req: NextRequest): Promise<CompoundingInputs> {
+async function resolveInputs(req: import('next/server').NextRequest): Promise<CompoundingInputs> {
   const defaults: CompoundingInputs = {
     avgMonthlyProfit: 200,
     reinvestRate: 0.6,
@@ -272,34 +277,28 @@ function computeMaximization(inputs: CompoundingInputs): {
 
 // --- Handler -------------------------------------------------------------
 
-export async function GET(req: NextRequest) {
-  return handleDealSourceProfitCompoundingMaximizer(req);
-}
-export async function POST(req: NextRequest) {
-  return handleDealSourceProfitCompoundingMaximizer(req);
-}
+const compoundingHandler = withAiRoute<CompoundingInputs>({
+  endpoint: '/api/ai/deal-source-profit-compounding-maximizer',
+  maxDuration: 60,
+  enforceBudget: true, // v8.96.2-batch2: budget guard (konsistentno z vsemi AI route-i)
+  method: 'GET', // Endpoint sprejema GET + POST — bypass POST-only check
 
-async function handleDealSourceProfitCompoundingMaximizer(req: NextRequest) {
-  try {
-    const inputs = await resolveInputs(req);
+  // GET + POST — parse iz query string-a (GET) ali POST body-ja
+  parseBody: async (req) => resolveInputs(req),
+
+  // Brez validateInput — vsa polja so optional, defaults se uporabijo
+  handler: async (inputs, _ctx: AiRouteContext) => {
     const { current, maximization } = computeMaximization(inputs);
 
-    return NextResponse.json({
+    return apiOk({
       ok: true,
       current,
       maximization,
       aiUsed: false,
       source: 'v8.14-deal-source-profit-compounding-maximizer',
     } satisfies CompoundingResponse);
-  } catch (err: any) {
-    logger.error(
-      '/api/ai/deal-source-profit-compounding-maximizer',
-      'handler failed',
-      err,
-    );
-    return NextResponse.json(
-      { error: err?.message ?? 'Napaka' },
-      { status: 500 },
-    );
-  }
-}
+  },
+});
+
+export const GET = compoundingHandler;
+export const POST = compoundingHandler;
