@@ -1,8 +1,9 @@
-// v7.64: Seasonal Timing Optimizer — AI analizira sezonske vzorce in
-// priporoči OPTIMALNI timing za nakup in prodajo specifičnih kategorij.
-// Razlika od seasonal-calendar (ki statično prikaže najboljši mesec) — ta
-// upošteva TRENUTNI datum, held inventar in predvidi najboljše 2-tedensko
-// okno za vsako akcijo (buy/sell).
+// v7.64 / v8.96.5-batch1: Seasonal Timing Optimizer — AI analizira sezonske
+// vzorce in priporoči OPTIMALNI timing za nakup in prodajo specifičnih
+// kategorij. Razlika od seasonal-calendar (ki statično prikaže najboljši mesec)
+// — ta upošteva TRENUTNI datum, held inventar in predvidi najboljše 2-tedensko
+// okno za vsako akcijo (buy/sell). Refaktoriran z withAiRoute helperjem
+// (v8.96) + enforceBudget guard.
 //
 // Razlika od seasonal-planner (ki načrtuje mesece za buy/sell kategorije) —
 // ta gleda posamezne HELD item-e in da per-item timing (kateri item prodati
@@ -15,23 +16,16 @@
 // GET+POST /api/ai/seasonal-timing-optimizer
 // (AI-enhanced + grounding + anti-hallucination + 6h cache + deterministic fallback)
 
-import { NextRequest, NextResponse } from 'next/server';
-import { db } from '@/lib/db';
-import { getSettingsRow } from '@/lib/pipeline';
-import {
-  callProviderForRaw,
-  parseJsonLooseExported,
-  type AiProviderType,
-  type AiSettings,
-} from '@/lib/ai';
+import { withAiRoute, AI_ROUTE_DEFAULTS, type AiRouteContext } from '@/lib/with-ai-route';
+import { apiOk } from '@/lib/api-response';
 import { GROUNDING_PROMPT_SUFFIX } from '@/lib/anti-hallucination';
 import { getCachedAI, setCachedAI } from '@/lib/ai-cache';
-import { checkRateLimit, rateLimitResponse } from '@/lib/rate-limit';
-import { logger } from '@/lib/logger';
 
-export const runtime = 'nodejs';
-export const dynamic = 'force-dynamic';
+export const { runtime, dynamic } = AI_ROUTE_DEFAULTS;
 export const maxDuration = 60;
+
+// eslint-disable-next-line @typescript-eslint/no-empty-object-type
+interface SeasonalTimingOptimizerInput {}
 
 // --- Types ---------------------------------------------------------------
 
@@ -342,27 +336,314 @@ function deterministicBuyTiming(
   };
 }
 
-// --- Handler -------------------------------------------------------------
+function buildSummary(
+  sellTiming: SellTiming[],
+  buyTiming: BuyTiming[],
+  seasonalPatterns: CategorySeasonal[],
+): SeasonalSummary {
+  const itemsToSellNow = sellTiming.filter(s => s.action === 'SELL_NOW').length;
+  const itemsToWait = sellTiming.filter(
+    s => s.action === 'WAIT_FOR_PEAK' || s.action === 'HOLD_THEN_SELL',
+  ).length;
 
-export async function GET(req: NextRequest) {
-  return handleSeasonalTimingOptimizer(req);
+  // Best category to BUY now (highest expected discount with BUY_NOW recommendation)
+  const buyNowOptions = buyTiming.filter(b => b.recommendation === 'BUY_NOW');
+  const bestBuy =
+    buyNowOptions.length > 0
+      ? [...buyNowOptions].sort((a, b) => b.expectedDiscount - a.expectedDiscount)[0]
+          ?.category ?? null
+      : null;
+
+  // Best category to SELL now (highest currentMonthScore with GOOD_TIME_TO_SELL)
+  const sellNowOptions = seasonalPatterns.filter(
+    s => s.recommendation === 'GOOD_TIME_TO_SELL',
+  );
+  const bestSell =
+    sellNowOptions.length > 0
+      ? [...sellNowOptions].sort(
+          (a, b) => b.currentMonthScore - a.currentMonthScore,
+        )[0]?.category ?? null
+      : null;
+
+  let advice: string;
+  if (itemsToSellNow > 0 && bestBuy) {
+    advice = `${itemsToSellNow} item-ov prodaj zdaj, ${itemsToWait} čaka na vrh. "${bestBuy}" kupuj zdaj (off-season popust).`;
+  } else if (itemsToSellNow > 0) {
+    advice = `${itemsToSellNow} item-ov prodaj zdaj, ${itemsToWait} čaka na vrh sezone. Trenutno ni kategorije za off-season nakup.`;
+  } else if (bestBuy) {
+    advice = `Ni nujnih prodaj. "${bestBuy}" kupuj zdaj (off-season popust). Ostali inventar čaka na vrh sezone.`;
+  } else {
+    advice = `Trenutno brez held inventarja. Premalo sezonskih podatkov za buy nasvet.`;
+  }
+
+  return {
+    itemsToSellNow,
+    itemsToWait,
+    bestCategoryToBuyNow: bestBuy,
+    bestCategoryToSellNow: bestSell,
+    advice,
+  };
 }
-export async function POST(req: NextRequest) {
-  return handleSeasonalTimingOptimizer(req);
+
+// --- AI prompt + merge helpers (pure, extracted OUTSIDE handler) ----------
+
+interface HeldTradeRow {
+  id: string;
+  title: string;
+  category: string;
+  buyPrice: number;
+  buyDate: Date | null;
 }
 
-async function handleSeasonalTimingOptimizer(req: NextRequest) {
-  try {
-    const rl = checkRateLimit(req, 'ai-seasonal-timing-optimizer', 20);
-    if (!rl.allowed) return rateLimitResponse(rl);
+function buildSeasonalBlock(seasonalPatterns: CategorySeasonal[], currentMonthIdx: number): string {
+  return seasonalPatterns
+    .slice(0, 8)
+    .map(s => {
+      const monthly = s.monthlyAvgPrices
+        .map(m => `${m.month}:${m.avgPrice}€ (${m.count})`)
+        .join(', ');
+      return `- ${s.category}: vrh [${s.bestSellingMonths.join(',')}], nizko [${s.worstSellingMonths.join(',')}], premium ${s.pricePremium}%, trenutni mesec ${MONTHS[currentMonthIdx]} score ${s.currentMonthScore}/100. Mesečno: ${monthly}`;
+    })
+    .join('\n');
+}
 
-    // Parse body (optional, ignored)
-    try {
-      await req.json().catch(() => ({}));
-    } catch {
-      // GET request — no body, ignore
+function buildHeldBlock(heldTrades: HeldTradeRow[]): string {
+  return heldTrades
+    .slice(0, 30)
+    .map(
+      (t, idx) =>
+        `${idx + 1}. tradeId=${t.id} | naslov="${t.title}" | kategorija=${(t.category || 'drugo').trim().toLowerCase()} | buyPrice=${t.buyPrice}€ | buyDate=${t.buyDate?.toISOString().split('T')[0] ?? '—'}`,
+    )
+    .join('\n');
+}
+
+function buildPrompt(
+  now: Date,
+  currentMonthIdx: number,
+  seasonalBlock: string,
+  heldBlock: string,
+): string {
+  return `Si AI strategist za sezonsko optimizacijo na slovenskih in srednjeevropskih oglasnih platformah.
+Analiziral si 24-mesečno zgodovino prodaj in določil OPTIMALNI timing za nakup in prodajo.
+
+TRENUTNI DATUM: ${now.toISOString().split('T')[0]} (mesec: ${MONTHS[currentMonthIdx]})
+
+SEZONSKI VZORCI PO KATEGORIJAH (zgodovina 24 mesecev):
+${seasonalBlock || '- Ni zgodovine prodaj'}
+
+TRENUTNO HELD INVENTAR (treba prodati):
+${heldBlock || '- Ni held inventarja'}
+
+PRAVILA ZA SELL TIMING (per held item):
+1. Za vsak held item določi action: SELL_NOW | WAIT_FOR_PEAK | HOLD_THEN_SELL.
+2. SELL_NOW: če smo v ali blizu vrhu sezone (daysToWait < 14).
+3. WAIT_FOR_PEAK: če pričakovan price uplift >= 5% in daysToWait < 90.
+4. HOLD_THEN_SELL: če je uplift manjši a vredno čakati (daysToWait 90-180).
+5. optimalSellWindow: { startMonth, endMonth } v formatu "Nov", "Dec" (slovenske kratke oznake).
+6. daysToWait: dni od danes do začetka okna (CLAMP [0, 180]).
+7. expectedPriceUplift: % višja cena v vrhu vs trenutni mesec (CLAMP [0, 30] %).
+8. reasoning: 1 stavek slovensko z utemeljitvijo.
+
+PRAVILA ZA BUY TIMING (per kategorija):
+1. Priporočilo: BUY_NOW (off-season popust >= 10%) | WAIT (popust 5-10%) | AVOID (cena blizu vrha).
+2. expectedDiscount: % popust od vrha sezone (CLAMP [0, 30] %).
+3. reasoning: 1 stavek slovensko.
+
+VRNI LE JSON:
+{
+  "sellTiming": [
+    {
+      "tradeId": "<id>",
+      "action": "SELL_NOW|WAIT_FOR_PEAK|HOLD_THEN_SELL",
+      "optimalSellWindow": { "startMonth": "...", "endMonth": "..." },
+      "daysToWait": <0-180>,
+      "expectedPriceUplift": <0-30>,
+      "reasoning": "<slovensko, 1 stavek>"
+    }
+  ],
+  "buyTiming": [
+    {
+      "category": "<kategorija>",
+      "recommendation": "BUY_NOW|WAIT|AVOID",
+      "reasoning": "<slovensko, 1 stavek>",
+      "expectedDiscount": <0-30>
+    }
+  ],
+  "advice": "<1-2 povedi slovensko, overall timing nasvet>"
+}${GROUNDING_PROMPT_SUFFIX}`;
+}
+
+interface MergeResult {
+  sellTiming: SellTiming[];
+  buyTiming: BuyTiming[];
+  advice: string;
+  aiUsed: boolean;
+}
+
+function mergeAiIntoSeasonalTiming(
+  parsed: AiSeasonalResponse | null,
+  heldTrades: HeldTradeRow[],
+  seasonalMap: Map<string, CategorySeasonal>,
+  seasonalPatterns: CategorySeasonal[],
+  now: Date,
+): MergeResult {
+  let sellTiming: SellTiming[] = [];
+  let buyTiming: BuyTiming[] = [];
+  let advice = '';
+  let aiUsed = false;
+
+  if (parsed) {
+    // Build held trades lookup by ID
+    const heldById = new Map(heldTrades.map(t => [t.id, t]));
+
+    // Validate sellTiming entries
+    if (Array.isArray(parsed.sellTiming)) {
+      const seenIds = new Set<string>();
+      for (const rawS of parsed.sellTiming) {
+        const tid = String(rawS.tradeId || '').trim();
+        const held = heldById.get(tid);
+        if (!held) continue;
+        if (seenIds.has(tid)) continue;
+        seenIds.add(tid);
+
+        const cat = (held.category || 'drugo').trim().toLowerCase();
+        const det = deterministicSellTiming(
+          held.id,
+          held.title,
+          cat,
+          held.buyPrice,
+          seasonalMap,
+          now,
+        );
+
+        const action = clampEnum(
+          rawS.action,
+          ['SELL_NOW', 'WAIT_FOR_PEAK', 'HOLD_THEN_SELL'] as const,
+          det.action,
+        );
+
+        // Validate optimalSellWindow — must contain valid month names
+        const windowRaw = rawS.optimalSellWindow;
+        let startMonth = det.optimalSellWindow.startMonth;
+        let endMonth = det.optimalSellWindow.endMonth;
+        if (
+          windowRaw &&
+          typeof windowRaw === 'object' &&
+          'startMonth' in windowRaw &&
+          'endMonth' in windowRaw
+        ) {
+          const sm = String((windowRaw as any).startMonth || '').trim();
+          const em = String((windowRaw as any).endMonth || '').trim();
+          if (MONTHS.includes(sm)) startMonth = sm;
+          if (MONTHS.includes(em)) endMonth = em;
+        }
+
+        // Anti-hallucination: daysToWait clamped [0, 180]
+        const daysToWait = clampNumber(rawS.daysToWait, 0, 180, det.daysToWait);
+        // Anti-hallucination: expectedPriceUplift clamped [0, 30]
+        const expectedPriceUplift = clampNumber(
+          rawS.expectedPriceUplift,
+          0,
+          30,
+          det.expectedPriceUplift,
+        );
+        const reasoning = clampString(
+          rawS.reasoning,
+          240,
+          det.reasoning,
+        );
+
+        sellTiming.push({
+          tradeId: held.id,
+          title: held.title,
+          category: cat,
+          action,
+          optimalSellWindow: { startMonth, endMonth },
+          daysToWait,
+          expectedPriceUplift,
+          reasoning,
+        });
+      }
+    }
+    // Fill in any held items AI didn't cover
+    const seenIds = new Set(sellTiming.map(s => s.tradeId));
+    for (const held of heldTrades) {
+      if (!seenIds.has(held.id)) {
+        const cat = (held.category || 'drugo').trim().toLowerCase();
+        sellTiming.push(
+          deterministicSellTiming(
+            held.id,
+            held.title,
+            cat,
+            held.buyPrice,
+            seasonalMap,
+            now,
+          ),
+        );
+      }
     }
 
+    // Validate buyTiming entries
+    if (Array.isArray(parsed.buyTiming)) {
+      const seenCats = new Set<string>();
+      for (const rawB of parsed.buyTiming) {
+        const cat = String(rawB.category || '').trim().toLowerCase();
+        if (!cat || seenCats.has(cat)) continue;
+        const seasonal = seasonalMap.get(cat);
+        if (!seasonal) continue; // skip categories with no history
+        seenCats.add(cat);
+
+        const det = deterministicBuyTiming(seasonal, now);
+        const recommendation = clampEnum(
+          rawB.recommendation,
+          ['BUY_NOW', 'WAIT', 'AVOID'] as const,
+          det.recommendation,
+        );
+        const expectedDiscount = clampNumber(
+          rawB.expectedDiscount,
+          0,
+          30,
+          det.expectedDiscount,
+        );
+        const reasoning = clampString(rawB.reasoning, 240, det.reasoning);
+        buyTiming.push({
+          category: cat,
+          recommendation,
+          reasoning,
+          expectedDiscount,
+        });
+      }
+    }
+    // Fill in any seasonal categories AI didn't cover
+    const seenCats = new Set(buyTiming.map(b => b.category));
+    for (const seasonal of seasonalPatterns) {
+      if (!seenCats.has(seasonal.category)) {
+        buyTiming.push(deterministicBuyTiming(seasonal, now));
+      }
+    }
+
+    advice = clampString(parsed.advice, 400, '');
+    aiUsed = sellTiming.length > 0 || buyTiming.length > 0;
+  }
+
+  return { sellTiming, buyTiming, advice, aiUsed };
+}
+
+// --- Handler -------------------------------------------------------------
+
+const seasonalTimingHandler = withAiRoute<SeasonalTimingOptimizerInput>({
+  endpoint: '/api/ai/seasonal-timing-optimizer',
+  maxDuration: 60,
+  enforceBudget: true,
+  method: 'GET',
+
+  parseBody: async (req) => {
+    await req.json().catch(() => ({}));
+    return {};
+  },
+
+  handler: async (_input, ctx: AiRouteContext) => {
+    const { db, callAi, parseAi, logger } = ctx;
     const now = new Date();
     const currentMonthIdx = now.getMonth();
 
@@ -397,7 +678,7 @@ async function handleSeasonalTimingOptimizer(req: NextRequest) {
         buyDate: true,
       },
       take: 200,
-    });
+    }) as unknown as HeldTradeRow[];
 
     // 3) Compute per-category seasonal patterns (group by category × month)
     const catMonthMap = new Map<string, Map<number, MonthlyAgg>>();
@@ -509,7 +790,7 @@ async function handleSeasonalTimingOptimizer(req: NextRequest) {
       advice: string;
     }>(cacheKey);
     if (cached) {
-      return NextResponse.json({
+      return apiOk({
         ok: true,
         seasonalPatterns,
         sellTiming: cached.sellTiming,
@@ -525,84 +806,9 @@ async function handleSeasonalTimingOptimizer(req: NextRequest) {
     }
 
     // 5) Build AI prompt with grounding (seasonal data + held inventory)
-    const settings = await getSettingsRow();
-    const aiSettings: AiSettings = {
-      provider: settings.aiProvider as AiProviderType,
-      baseUrl: settings.aiBaseUrl,
-      apiKey: settings.aiApiKey,
-      model: settings.aiModel,
-      fallbackProvider: (settings.fallbackProvider || '') as AiProviderType | '',
-      fallbackBaseUrl: settings.fallbackBaseUrl || '',
-      fallbackApiKey: settings.fallbackApiKey || '',
-      fallbackModel: settings.fallbackModel || '',
-    };
-
-    const seasonalBlock = seasonalPatterns
-      .slice(0, 8)
-      .map(s => {
-        const monthly = s.monthlyAvgPrices
-          .map(m => `${m.month}:${m.avgPrice}€ (${m.count})`)
-          .join(', ');
-        return `- ${s.category}: vrh [${s.bestSellingMonths.join(',')}], nizko [${s.worstSellingMonths.join(',')}], premium ${s.pricePremium}%, trenutni mesec ${MONTHS[currentMonthIdx]} score ${s.currentMonthScore}/100. Mesečno: ${monthly}`;
-      })
-      .join('\n');
-
-    const heldBlock = heldTrades
-      .slice(0, 30)
-      .map(
-        (t, idx) =>
-          `${idx + 1}. tradeId=${t.id} | naslov="${t.title}" | kategorija=${(t.category || 'drugo').trim().toLowerCase()} | buyPrice=${t.buyPrice}€ | buyDate=${t.buyDate?.toISOString().split('T')[0] ?? '—'}`,
-      )
-      .join('\n');
-
-    const prompt = `Si AI strategist za sezonsko optimizacijo na slovenskih in srednjeevropskih oglasnih platformah.
-Analiziral si 24-mesečno zgodovino prodaj in določil OPTIMALNI timing za nakup in prodajo.
-
-TRENUTNI DATUM: ${now.toISOString().split('T')[0]} (mesec: ${MONTHS[currentMonthIdx]})
-
-SEZONSKI VZORCI PO KATEGORIJAH (zgodovina 24 mesecev):
-${seasonalBlock || '- Ni zgodovine prodaj'}
-
-TRENUTNO HELD INVENTAR (treba prodati):
-${heldBlock || '- Ni held inventarja'}
-
-PRAVILA ZA SELL TIMING (per held item):
-1. Za vsak held item določi action: SELL_NOW | WAIT_FOR_PEAK | HOLD_THEN_SELL.
-2. SELL_NOW: če smo v ali blizu vrhu sezone (daysToWait < 14).
-3. WAIT_FOR_PEAK: če pričakovan price uplift >= 5% in daysToWait < 90.
-4. HOLD_THEN_SELL: če je uplift manjši a vredno čakati (daysToWait 90-180).
-5. optimalSellWindow: { startMonth, endMonth } v formatu "Nov", "Dec" (slovenske kratke oznake).
-6. daysToWait: dni od danes do začetka okna (CLAMP [0, 180]).
-7. expectedPriceUplift: % višja cena v vrhu vs trenutni mesec (CLAMP [0, 30] %).
-8. reasoning: 1 stavek slovensko z utemeljitvijo.
-
-PRAVILA ZA BUY TIMING (per kategorija):
-1. Priporočilo: BUY_NOW (off-season popust >= 10%) | WAIT (popust 5-10%) | AVOID (cena blizu vrha).
-2. expectedDiscount: % popust od vrha sezone (CLAMP [0, 30] %).
-3. reasoning: 1 stavek slovensko.
-
-VRNI LE JSON:
-{
-  "sellTiming": [
-    {
-      "tradeId": "<id>",
-      "action": "SELL_NOW|WAIT_FOR_PEAK|HOLD_THEN_SELL",
-      "optimalSellWindow": { "startMonth": "...", "endMonth": "..." },
-      "daysToWait": <0-180>,
-      "expectedPriceUplift": <0-30>,
-      "reasoning": "<slovensko, 1 stavek>"
-    }
-  ],
-  "buyTiming": [
-    {
-      "category": "<kategorija>",
-      "recommendation": "BUY_NOW|WAIT|AVOID",
-      "reasoning": "<slovensko, 1 stavek>",
-      "expectedDiscount": <0-30>
-    }
-  ],
-  "advice": "<1-2 povedi slovensko, overall timing nasvet>"
-}${GROUNDING_PROMPT_SUFFIX}`;
+    const seasonalBlock = buildSeasonalBlock(seasonalPatterns, currentMonthIdx);
+    const heldBlock = buildHeldBlock(heldTrades);
+    const prompt = buildPrompt(now, currentMonthIdx, seasonalBlock, heldBlock);
 
     let aiUsed = false;
     let sellTiming: SellTiming[] = [];
@@ -610,142 +816,20 @@ VRNI LE JSON:
     let advice = '';
 
     try {
-      const raw = await callProviderForRaw(aiSettings, prompt);
-      const parsed = parseJsonLooseExported(raw) as AiSeasonalResponse | null;
+      const raw = await callAi(prompt);
+      const parsed = parseAi(raw) as AiSeasonalResponse | null;
 
-      if (parsed) {
-        // Build held trades lookup by ID
-        const heldById = new Map(heldTrades.map(t => [t.id, t]));
-
-        // Validate sellTiming entries
-        if (Array.isArray(parsed.sellTiming)) {
-          const seenIds = new Set<string>();
-          for (const rawS of parsed.sellTiming) {
-            const tid = String(rawS.tradeId || '').trim();
-            const held = heldById.get(tid);
-            if (!held) continue;
-            if (seenIds.has(tid)) continue;
-            seenIds.add(tid);
-
-            const cat = (held.category || 'drugo').trim().toLowerCase();
-            const det = deterministicSellTiming(
-              held.id,
-              held.title,
-              cat,
-              held.buyPrice,
-              seasonalMap,
-              now,
-            );
-
-            const action = clampEnum(
-              rawS.action,
-              ['SELL_NOW', 'WAIT_FOR_PEAK', 'HOLD_THEN_SELL'] as const,
-              det.action,
-            );
-
-            // Validate optimalSellWindow — must contain valid month names
-            const windowRaw = rawS.optimalSellWindow;
-            let startMonth = det.optimalSellWindow.startMonth;
-            let endMonth = det.optimalSellWindow.endMonth;
-            if (
-              windowRaw &&
-              typeof windowRaw === 'object' &&
-              'startMonth' in windowRaw &&
-              'endMonth' in windowRaw
-            ) {
-              const sm = String((windowRaw as any).startMonth || '').trim();
-              const em = String((windowRaw as any).endMonth || '').trim();
-              if (MONTHS.includes(sm)) startMonth = sm;
-              if (MONTHS.includes(em)) endMonth = em;
-            }
-
-            // Anti-hallucination: daysToWait clamped [0, 180]
-            const daysToWait = clampNumber(rawS.daysToWait, 0, 180, det.daysToWait);
-            // Anti-hallucination: expectedPriceUplift clamped [0, 30]
-            const expectedPriceUplift = clampNumber(
-              rawS.expectedPriceUplift,
-              0,
-              30,
-              det.expectedPriceUplift,
-            );
-            const reasoning = clampString(
-              rawS.reasoning,
-              240,
-              det.reasoning,
-            );
-
-            sellTiming.push({
-              tradeId: held.id,
-              title: held.title,
-              category: cat,
-              action,
-              optimalSellWindow: { startMonth, endMonth },
-              daysToWait,
-              expectedPriceUplift,
-              reasoning,
-            });
-          }
-        }
-        // Fill in any held items AI didn't cover
-        const seenIds = new Set(sellTiming.map(s => s.tradeId));
-        for (const held of heldTrades) {
-          if (!seenIds.has(held.id)) {
-            const cat = (held.category || 'drugo').trim().toLowerCase();
-            sellTiming.push(
-              deterministicSellTiming(
-                held.id,
-                held.title,
-                cat,
-                held.buyPrice,
-                seasonalMap,
-                now,
-              ),
-            );
-          }
-        }
-
-        // Validate buyTiming entries
-        if (Array.isArray(parsed.buyTiming)) {
-          const seenCats = new Set<string>();
-          for (const rawB of parsed.buyTiming) {
-            const cat = String(rawB.category || '').trim().toLowerCase();
-            if (!cat || seenCats.has(cat)) continue;
-            const seasonal = seasonalMap.get(cat);
-            if (!seasonal) continue; // skip categories with no history
-            seenCats.add(cat);
-
-            const det = deterministicBuyTiming(seasonal, now);
-            const recommendation = clampEnum(
-              rawB.recommendation,
-              ['BUY_NOW', 'WAIT', 'AVOID'] as const,
-              det.recommendation,
-            );
-            const expectedDiscount = clampNumber(
-              rawB.expectedDiscount,
-              0,
-              30,
-              det.expectedDiscount,
-            );
-            const reasoning = clampString(rawB.reasoning, 240, det.reasoning);
-            buyTiming.push({
-              category: cat,
-              recommendation,
-              reasoning,
-              expectedDiscount,
-            });
-          }
-        }
-        // Fill in any seasonal categories AI didn't cover
-        const seenCats = new Set(buyTiming.map(b => b.category));
-        for (const seasonal of seasonalPatterns) {
-          if (!seenCats.has(seasonal.category)) {
-            buyTiming.push(deterministicBuyTiming(seasonal, now));
-          }
-        }
-
-        advice = clampString(parsed.advice, 400, '');
-        aiUsed = sellTiming.length > 0 || buyTiming.length > 0;
-      }
+      const merged = mergeAiIntoSeasonalTiming(
+        parsed,
+        heldTrades,
+        seasonalMap,
+        seasonalPatterns,
+        now,
+      );
+      sellTiming = merged.sellTiming;
+      buyTiming = merged.buyTiming;
+      advice = merged.advice;
+      aiUsed = merged.aiUsed;
     } catch (err) {
       logger.warn(
         '/api/ai/seasonal-timing-optimizer',
@@ -789,7 +873,7 @@ VRNI LE JSON:
       setCachedAI(cacheKey, { sellTiming, buyTiming, advice });
     }
 
-    return NextResponse.json({
+    return apiOk({
       ok: true,
       seasonalPatterns,
       sellTiming,
@@ -797,57 +881,8 @@ VRNI LE JSON:
       summary,
       aiUsed,
     });
-  } catch (err: any) {
-    logger.error('/api/ai/seasonal-timing-optimizer', 'handler failed', err);
-    return NextResponse.json({ error: err?.message ?? 'Napaka' }, { status: 500 });
-  }
-}
+  },
+});
 
-function buildSummary(
-  sellTiming: SellTiming[],
-  buyTiming: BuyTiming[],
-  seasonalPatterns: CategorySeasonal[],
-): SeasonalSummary {
-  const itemsToSellNow = sellTiming.filter(s => s.action === 'SELL_NOW').length;
-  const itemsToWait = sellTiming.filter(
-    s => s.action === 'WAIT_FOR_PEAK' || s.action === 'HOLD_THEN_SELL',
-  ).length;
-
-  // Best category to BUY now (highest expected discount with BUY_NOW recommendation)
-  const buyNowOptions = buyTiming.filter(b => b.recommendation === 'BUY_NOW');
-  const bestBuy =
-    buyNowOptions.length > 0
-      ? [...buyNowOptions].sort((a, b) => b.expectedDiscount - a.expectedDiscount)[0]
-          ?.category ?? null
-      : null;
-
-  // Best category to SELL now (highest currentMonthScore with GOOD_TIME_TO_SELL)
-  const sellNowOptions = seasonalPatterns.filter(
-    s => s.recommendation === 'GOOD_TIME_TO_SELL',
-  );
-  const bestSell =
-    sellNowOptions.length > 0
-      ? [...sellNowOptions].sort(
-          (a, b) => b.currentMonthScore - a.currentMonthScore,
-        )[0]?.category ?? null
-      : null;
-
-  let advice: string;
-  if (itemsToSellNow > 0 && bestBuy) {
-    advice = `${itemsToSellNow} item-ov prodaj zdaj, ${itemsToWait} čaka na vrh. "${bestBuy}" kupuj zdaj (off-season popust).`;
-  } else if (itemsToSellNow > 0) {
-    advice = `${itemsToSellNow} item-ov prodaj zdaj, ${itemsToWait} čaka na vrh sezone. Trenutno ni kategorije za off-season nakup.`;
-  } else if (bestBuy) {
-    advice = `Ni nujnih prodaj. "${bestBuy}" kupuj zdaj (off-season popust). Ostali inventar čaka na vrh sezone.`;
-  } else {
-    advice = `Trenutno brez held inventarja. Premalo sezonskih podatkov za buy nasvet.`;
-  }
-
-  return {
-    itemsToSellNow,
-    itemsToWait,
-    bestCategoryToBuyNow: bestBuy,
-    bestCategoryToSellNow: bestSell,
-    advice,
-  };
-}
+export const GET = seasonalTimingHandler;
+export const POST = seasonalTimingHandler;

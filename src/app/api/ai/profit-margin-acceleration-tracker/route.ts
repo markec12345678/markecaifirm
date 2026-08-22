@@ -20,24 +20,18 @@
 //
 // GET+POST /api/ai/profit-margin-acceleration-tracker
 // (AI-enhanced + grounding + anti-hallucination + 6h cache + deterministic fallback)
+// Refaktoriran z withAiRoute helperjem (v8.96.5) + enforceBudget guard.
 
-import { NextRequest, NextResponse } from 'next/server';
-import { db } from '@/lib/db';
-import { getSettingsRow } from '@/lib/pipeline';
-import {
-  callProviderForRaw,
-  parseJsonLooseExported,
-  type AiProviderType,
-  type AiSettings,
-} from '@/lib/ai';
+import { withAiRoute, AI_ROUTE_DEFAULTS, type AiRouteContext } from '@/lib/with-ai-route';
+import { apiOk } from '@/lib/api-response';
 import { GROUNDING_PROMPT_SUFFIX } from '@/lib/anti-hallucination';
 import { getCachedAI, setCachedAI } from '@/lib/ai-cache';
-import { checkRateLimit, rateLimitResponse } from '@/lib/rate-limit';
-import { logger } from '@/lib/logger';
 
-export const runtime = 'nodejs';
-export const dynamic = 'force-dynamic';
+export const { runtime, dynamic } = AI_ROUTE_DEFAULTS;
 export const maxDuration = 60;
+
+// eslint-disable-next-line @typescript-eslint/no-empty-object-type
+interface ProfitMarginAccelerationTrackerInput {}
 
 // --- Types ---------------------------------------------------------------
 
@@ -486,17 +480,20 @@ function buildSummary(
 
 // --- Handler -------------------------------------------------------------
 
-export async function GET(req: NextRequest) {
-  return handleProfitMarginAccelerationTracker(req);
-}
-export async function POST(req: NextRequest) {
-  return handleProfitMarginAccelerationTracker(req);
-}
+const profitMarginAccelerationTrackerHandler = withAiRoute<ProfitMarginAccelerationTrackerInput>({
+  endpoint: '/api/ai/profit-margin-acceleration-tracker',
+  maxDuration: 60,
+  enforceBudget: true, // AI klic — preveri budget
+  method: 'GET', // Endpoint sprejema GET + POST — bypass POST-only check
 
-async function handleProfitMarginAccelerationTracker(req: NextRequest) {
-  try {
-    const rl = checkRateLimit(req, 'ai-profit-margin-acceleration-tracker', 20);
-    if (!rl.allowed) return rateLimitResponse(rl);
+  parseBody: async (req) => {
+    await req.json().catch(() => ({}));
+    return {};
+  },
+
+  // No validateInput — body ignored, identična logika za GET in POST
+  handler: async (_input, ctx: AiRouteContext) => {
+    const { db, callAi, parseAi, logger } = ctx;
 
     const now = Date.now();
     const cutoff12m = new Date(now - HORIZON_12M);
@@ -519,7 +516,7 @@ async function handleProfitMarginAccelerationTracker(req: NextRequest) {
     }) as unknown as SoldTradeRow[];
 
     if (soldTrades.length === 0) {
-      return NextResponse.json({
+      return apiOk({
         ok: true,
         derivatives: {
           momentum: { marginMomentum: 0, markupMomentum: 0, profitPerTradeMomentum: 0 },
@@ -600,7 +597,7 @@ async function handleProfitMarginAccelerationTracker(req: NextRequest) {
       .map((m, i) => ({ i, count: m.count }))
       .filter((x) => x.count > 0);
     if (activeIdx.length < 2) {
-      return NextResponse.json({
+      return apiOk({
         ok: true,
         derivatives: {
           momentum: { marginMomentum: 0, markupMomentum: 0, profitPerTradeMomentum: 0 },
@@ -695,7 +692,7 @@ async function handleProfitMarginAccelerationTracker(req: NextRequest) {
     const cacheKey = `profit-margin-acceleration-tracker:${currentMonth}`;
     const cached = getCachedAI<{ analysis: MarginAnalysis; summary: string }>(cacheKey);
     if (cached) {
-      return NextResponse.json({
+      return apiOk({
         ok: true,
         derivatives,
         monthlyData,
@@ -706,74 +703,14 @@ async function handleProfitMarginAccelerationTracker(req: NextRequest) {
       });
     }
 
-    // 7) AI prompt with grounding
-    const settings = await getSettingsRow();
-    const aiSettings: AiSettings = {
-      provider: settings.aiProvider as AiProviderType,
-      baseUrl: settings.aiBaseUrl,
-      apiKey: settings.aiApiKey,
-      model: settings.aiModel,
-      fallbackProvider: (settings.fallbackProvider || '') as
-        | AiProviderType
-        | '',
-      fallbackBaseUrl: settings.fallbackBaseUrl || '',
-      fallbackApiKey: settings.fallbackApiKey || '',
-      fallbackModel: settings.fallbackModel || '',
-    };
-
-    const promptData = {
-      derivatives,
-      monthlyData,
-      deterministicBaseline: detAnalysis,
-      caps: {
-        marginMin: MARGIN_MIN, marginMax: MARGIN_MAX,
-        accelMin: ACCEL_MIN, accelMax: ACCEL_MAX,
-        scoreMin: SCORE_MIN, scoreMax: SCORE_MAX,
-        weightMin: WEIGHT_MIN, weightMax: WEIGHT_MAX,
-        liftMin: LIFT_MIN, liftMax: LIFT_MAX,
-        confMin: CONF_MIN, confMax: CONF_MAX,
-      },
-    };
-
-    const prompt = `Si AI "Profit Margin Acceleration Tracker" za slovenske in srednjeevropske oglasne platforme (Bolha, Vinted, Avtonet, mobile.de).
-Analiziraš POSPEŠEK (2nd derivative — acceleration) profitne marže — ali se HITROST izboljševanja marže pospešuje ali upočasnuje. Razlika od profit-margin-trend-analyzer (ki track-a 1st-derivative margin trend) — ti gledaš 2nd-derivative ACCELERATION z inflection point detection.
-
-DETERMINISTIČNI PODATKI (izračunano iz DB — zadnjih 12 mesecev SOLD trgovin, grouped by month):
-${JSON.stringify(promptData, null, 2)}
-
-PRAVILA ZA AI ODGOVOR:
-1. accelerationAssessment: slovensko, max 500 znakov — kaj acceleration pomeni za poslovanje.
-2. marginInflectionPoint: slovensko, max 300 znakov — KDAJ se bo margin trend verjetno obrnil (če je DECELERATING_*). Null če ni inflection signala.
-3. accelerationDrivers: 1-3 driverjev { driver (max 100 chars), impact POSITIVE | NEGATIVE, weight 0-100, detail (max 200 chars) }.
-4. projectedMargin30d: % (v dosegu [-50, 100]), ±5% od deterministične (ne pretiravaj).
-5. marginOptimizationActions: 1-3 akcij { action (max 200 chars), priority HIGH | MEDIUM | LOW, expectedMarginLift v procentnih točkah [-5, 20] }.
-6. accelerationRiskFactors: 1-3 tveganj { risk (max 200 chars), severity LOW | MEDIUM | HIGH, mitigation (max 200 chars) }.
-7. confidenceLevel: 0-100, ±10 od deterministične.
-8. summary: slovenski povzetek (max 400 znakov). NE izmišljuj številk — uporabi deterministične.
-
-VRNI LE JSON:
-{
-  "accelerationAssessment": "Marža se izboljšuje in POSPEŠUJE — composite 72/100. Trenutna marža 24%, mesečna sprememba +2%/mo, pospešek +0.5%/mo². 30-dnevna projekcija: 28%.",
-  "marginInflectionPoint": "Ne vidimo inflection signala — izboljševanje marže se nadaljuje.",
-  "accelerationDrivers": [
-    { "driver": "Margin acceleration", "impact": "POSITIVE", "weight": 85, "detail": "Sprememba marže se pospešuje navzgor." }
-  ],
-  "projectedMargin30d": 28,
-  "marginOptimizationActions": [
-    { "action": "Povečaj obseg nabave — izkoristi pospešujoč maržni trend.", "priority": "HIGH", "expectedMarginLift": 2 }
-  ],
-  "accelerationRiskFactors": [
-    { "risk": "Prehitro pospeševanje lahko signalizira nasičenje trga.", "severity": "LOW", "mitigation": "Spremeljaj volume signale." }
-  ],
-  "confidenceLevel": 72,
-  "summary": "Margin: ACCELERATING_UP (momentum +2%/mo, accel +0.5%/mo²). Inflection: no reversal expected. 30d projection: 28%."
-}${GROUNDING_PROMPT_SUFFIX}`;
+    // 7) AI prompt with grounding (settings loaded by withAiRoute wrapper)
+    const prompt = buildPrompt(derivatives, monthlyData, detAnalysis);
 
     let aiUsed = false;
 
     try {
-      const raw = await callProviderForRaw(aiSettings, prompt);
-      const parsed = parseJsonLooseExported(raw) as AiMarginResponse | null;
+      const raw = await callAi(prompt);
+      const parsed = parseAi(raw) as AiMarginResponse | null;
 
       if (parsed && typeof parsed === 'object') {
         const detProj = detAnalysis.projectedMargin30d;
@@ -869,7 +806,7 @@ VRNI LE JSON:
       setCachedAI(cacheKey, { analysis, summary });
     }
 
-    return NextResponse.json({
+    return apiOk({
       ok: true,
       derivatives,
       monthlyData,
@@ -877,15 +814,64 @@ VRNI LE JSON:
       summary,
       aiUsed,
     });
-  } catch (err: any) {
-    logger.error(
-      '/api/ai/profit-margin-acceleration-tracker',
-      'handler failed',
-      err,
-    );
-    return NextResponse.json(
-      { error: err?.message ?? 'Napaka' },
-      { status: 500 },
-    );
-  }
+  },
+});
+
+export const GET = profitMarginAccelerationTrackerHandler;
+export const POST = profitMarginAccelerationTrackerHandler;
+
+// --- Prompt builder (čist, testabilen) -----------------------------------
+
+function buildPrompt(
+  derivatives: Derivatives,
+  monthlyData: MonthlyDataPoint[],
+  detAnalysis: MarginAnalysis,
+): string {
+  const promptData = {
+    derivatives,
+    monthlyData,
+    deterministicBaseline: detAnalysis,
+    caps: {
+      marginMin: MARGIN_MIN, marginMax: MARGIN_MAX,
+      accelMin: ACCEL_MIN, accelMax: ACCEL_MAX,
+      scoreMin: SCORE_MIN, scoreMax: SCORE_MAX,
+      weightMin: WEIGHT_MIN, weightMax: WEIGHT_MAX,
+      liftMin: LIFT_MIN, liftMax: LIFT_MAX,
+      confMin: CONF_MIN, confMax: CONF_MAX,
+    },
+  };
+
+  return `Si AI "Profit Margin Acceleration Tracker" za slovenske in srednjeevropske oglasne platforme (Bolha, Vinted, Avtonet, mobile.de).
+Analiziraš POSPEŠEK (2nd derivative — acceleration) profitne marže — ali se HITROST izboljševanja marže pospešuje ali upočasnuje. Razlika od profit-margin-trend-analyzer (ki track-a 1st-derivative margin trend) — ti gledaš 2nd-derivative ACCELERATION z inflection point detection.
+
+DETERMINISTIČNI PODATKI (izračunano iz DB — zadnjih 12 mesecev SOLD trgovin, grouped by month):
+${JSON.stringify(promptData, null, 2)}
+
+PRAVILA ZA AI ODGOVOR:
+1. accelerationAssessment: slovensko, max 500 znakov — kaj acceleration pomeni za poslovanje.
+2. marginInflectionPoint: slovensko, max 300 znakov — KDAJ se bo margin trend verjetno obrnil (če je DECELERATING_*). Null če ni inflection signala.
+3. accelerationDrivers: 1-3 driverjev { driver (max 100 chars), impact POSITIVE | NEGATIVE, weight 0-100, detail (max 200 chars) }.
+4. projectedMargin30d: % (v dosegu [-50, 100]), ±5% od deterministične (ne pretiravaj).
+5. marginOptimizationActions: 1-3 akcij { action (max 200 chars), priority HIGH | MEDIUM | LOW, expectedMarginLift v procentnih točkah [-5, 20] }.
+6. accelerationRiskFactors: 1-3 tveganj { risk (max 200 chars), severity LOW | MEDIUM | HIGH, mitigation (max 200 chars) }.
+7. confidenceLevel: 0-100, ±10 od deterministične.
+8. summary: slovenski povzetek (max 400 znakov). NE izmišljuj številk — uporabi deterministične.
+
+VRNI LE JSON:
+{
+  "accelerationAssessment": "Marža se izboljšuje in POSPEŠUJE — composite 72/100. Trenutna marža 24%, mesečna sprememba +2%/mo, pospešek +0.5%/mo². 30-dnevna projekcija: 28%.",
+  "marginInflectionPoint": "Ne vidimo inflection signala — izboljševanje marže se nadaljuje.",
+  "accelerationDrivers": [
+    { "driver": "Margin acceleration", "impact": "POSITIVE", "weight": 85, "detail": "Sprememba marže se pospešuje navzgor." }
+  ],
+  "projectedMargin30d": 28,
+  "marginOptimizationActions": [
+    { "action": "Povečaj obseg nabave — izkoristi pospešujoč maržni trend.", "priority": "HIGH", "expectedMarginLift": 2 }
+  ],
+  "accelerationRiskFactors": [
+    { "risk": "Prehitro pospeševanje lahko signalizira nasičenje trga.", "severity": "LOW", "mitigation": "Spremeljaj volume signale." }
+  ],
+  "confidenceLevel": 72,
+  "summary": "Margin: ACCELERATING_UP (momentum +2%/mo, accel +0.5%/mo²). Inflection: no reversal expected. 30d projection: 28%."
+}${GROUNDING_PROMPT_SUFFIX}`;
 }

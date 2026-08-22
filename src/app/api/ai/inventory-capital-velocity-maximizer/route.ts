@@ -1,4 +1,4 @@
-// v8.10: AI Inventory Capital Velocity Maximizer — AI MAKSIMIZIRA VELOCITY
+// v8.10 / v8.96.5-batch4: AI Inventory Capital Velocity Maximizer — AI MAKSIMIZIRA VELOCITY
 // kapitala skozi inventory — kako hitro kapital kroži od investicije do
 // povratka. "Tvoj kapital kroži vsakih 28 dni (13×/leto), ampak bi lahko
 // krožil vsakih 18 dni (20×/leto) z temi akcijami." Razlika od
@@ -36,23 +36,14 @@
 
 // GET+POST /api/ai/inventory-capital-velocity-maximizer
 // (AI-enhanced + grounding + anti-hallucination + 6h cache + deterministic fallback)
+// Refaktoriran z withAiRoute helperjem (v8.96.5) + enforceBudget guard.
 
-import { NextRequest, NextResponse } from 'next/server';
-import { db } from '@/lib/db';
-import { getSettingsRow } from '@/lib/pipeline';
-import {
-  callProviderForRaw,
-  parseJsonLooseExported,
-  type AiProviderType,
-  type AiSettings,
-} from '@/lib/ai';
+import { withAiRoute, AI_ROUTE_DEFAULTS, type AiRouteContext } from '@/lib/with-ai-route';
+import { apiOk } from '@/lib/api-response';
 import { GROUNDING_PROMPT_SUFFIX } from '@/lib/anti-hallucination';
 import { getCachedAI, setCachedAI } from '@/lib/ai-cache';
-import { checkRateLimit, rateLimitResponse } from '@/lib/rate-limit';
-import { logger } from '@/lib/logger';
 
-export const runtime = 'nodejs';
-export const dynamic = 'force-dynamic';
+export const { runtime, dynamic } = AI_ROUTE_DEFAULTS;
 export const maxDuration = 60;
 
 // --- Types ---------------------------------------------------------------
@@ -516,20 +507,244 @@ function buildSummary(
   return parts.join(' ').slice(0, 500);
 }
 
+// --- Prompt builder (extracted, pure) -----------------------------------
+
+function buildPromptData(
+  soldComputed: SoldComputed[],
+  heldComputed: HeldComputed[],
+  current: CurrentState,
+  maximization: InventoryCapitalVelocityMaximization,
+): Record<string, unknown> {
+  const soldSampleForAI = soldComputed
+    .slice(-MAX_TRADES_FOR_AI)
+    .map((t) => ({
+      cap: t.capital,
+      profit: t.profit,
+      holdDays: t.holdDays,
+    }));
+
+  return {
+    soldCount12m: soldComputed.length,
+    heldCount: heldComputed.length,
+    current,
+    deterministicMaximization: {
+      maximizedCycleTime: maximization.maximizedCycleTime,
+      maximizedCyclesPerYear: maximization.maximizedCyclesPerYear,
+      velocityUplift: maximization.velocityUplift,
+      velocityMaximizationActions: maximization.velocityMaximizationActions,
+      velocityProjection: maximization.velocityProjection,
+      velocityBottlenecks: maximization.velocityBottlenecks,
+      velocityGrade: maximization.velocityGrade,
+      capitalMultiplierEffect: maximization.capitalMultiplierEffect,
+    },
+    soldSample: soldSampleForAI,
+    caps: {
+      cycleTimeMin: CYCLE_TIME_MIN, cycleTimeMax: CYCLE_TIME_MAX,
+      cyclesMin: CYCLES_MIN, cyclesMax: CYCLES_MAX,
+      scoreMin: SCORE_MIN, scoreMax: SCORE_MAX,
+      capitalMin: CAPITAL_MIN, capitalMax: CAPITAL_MAX,
+      marginMin: MARGIN_MIN, marginMax: MARGIN_MAX,
+      upliftMin: UPLIFT_MIN, upliftMax: UPLIFT_MAX,
+      multiplierMin: MULTIPLIER_MIN, multiplierMax: MULTIPLIER_MAX,
+    },
+  };
+}
+
+function buildPrompt(promptData: Record<string, unknown>): string {
+  return `Si AI "Inventory Capital Velocity Maximizer" za slovenske in srednjeevropske oglasne platforme (Bolha, Vinted, Avtonet, mobile.de).
+Si strokovnjak za CAPITAL VELOCITY MAXIMIZATION — kako maksimizirati VELOCITY kapitala skozi inventory (koliko cycle-ov/leto capital ciklira iz investicije do povratka). Tvoj cilj je "Tvoj kapital kroži vsakih 28 dni (13×/leto), ampak bi lahko krožil vsakih 18 dni (20×/leto) z temi akcijami." Razlika od inventory-profit-per-day-growth-maximizer (v8.09 ki maksimizira growth rate daily profit-a iz inventory-ja v %/teden) — ti MAKSIMIZIRAŠ VELOCITY KAPITALA (koliko cycle-ov/leto, ne %/teden growth). Razlika od profit-per-day-scaling-maximizer (v8.08 ki maksimizira in skalira daily profit z scalingPath) — ti MAKSIMIZIRAŠ VELOCITY KAPITALA (cycle time + cycles per year, ne €/dan scaling). Razlika od inventory-turnover-yield-maximizer (v8.05 ki maksimizira yield z yieldCurve) — ti MAKSIMIZIRAŠ VELOCITY KAPITALA z capitalMultiplierEffect (koliko-krat se kapital pomnoži v enem letu). Razlika od inventory-roi-maximizer-pro (v7.99 ki maksimizira ROI per item) — ti MAKSIMIZIRAŠ VELOCITY KAPITALA čez celoten inventory (avg cycle time, ne ROI per item). Razlika od inventory-capital-efficiency-maximizer (v8.01 ki maksimizira capital efficiency per item) — ti MAKSIMIZIRAŠ VELOCITY KAPITALA z velocityProjection in velocityGrade (ne capital efficiency per item). Razlika od inventory-cash-yield-maximizer (v8.04 ki maksimizira annualized cash yield) — ti MAKSIMIZIRAŠ VELOCITY KAPITALA (cycles per year, ne cash yield). Razlika od inventory-profit-per-day-maximizer (v8.02 ki maksimizira daily profit per item) — ti MAKSIMIZIRAŠ VELOCITY KAPITALA (koliko-krat se capital kroži, ne €/dan per item). Razlika od inventory-annualized-return-maximizer (v8.06 ki maksimizira annualized % return na held inventory) — ti MAKSIMIZIRAŠ VELOCITY KAPITALA z maximizedCycleTime in maximizedCyclesPerYear (ne % return). Razlika od inventory-capital-return-maximizer (v8.07 ki maksimizira capital return OF inventory) — ti MAKSIMIZIRAŠ VELOCITY KAPITALA (koliko-krat ciklira, ne % returned). Razlika od profit-velocity-maximizer (v7.98 ki maksimizira €/day velocity) — ti MAKSIMIZIRAŠ VELOCITY KAPITALA (cycle time + cycles/year, ne €/dan). Razlika od profit-multiplier-maximizer (v8.09 ki maksimizira maximum profit multiplier z 6 dimensions) — ti MAKSIMIZIRAŠ VELOCITY KAPITALA (capital cycling, ne profit multiplier).
+
+DETERMINISTIČNI PODATKI (izračunano iz DB — SOLD trgovin v zadnjih 12 mesecih + HELD trgovine):
+${JSON.stringify(promptData, null, 2)}
+
+PRAVILA ZA AI ODGOVOR:
+1. maximization.maximizedCycleTime days [1, 365] (optimal cycle time, shorter = faster — ≤ current.avgCapitalCycleTime, anti-hallucination),
+2. maximization.maximizedCyclesPerYear [0, 100] (= 365 / maximizedCycleTime, ≥ current.capitalCyclesPerYear),
+3. maximization.velocityUplift cycles/year [0, 50] (improvement = maximized − current cycles),
+4. maximization.velocityMaximizationActions: 5 elementov { action FASTER_PRICING/BETTER_LISTINGS/CROSS_POSTING/REDUCE_HOLD_TIME/OPTIMIZE_SOURCING, description (slovenski, max 200 — specifična akcija za velocity gain), expectedVelocityGain cycles/year [0, 50] (koliko cycles/yr bo dodano), priority HIGH/MEDIUM/LOW } (sortirano po expectedVelocityGain descending),
+5. maximization.velocityProjection: 6 elementov { month 1-6, currentCyclesPerYear [0, 100] (cycles/yr projected at current velocity, constant), maximizedCyclesPerYear [0, 100] (linear ramp: 1m=17%, 3m=50%, 6m=100% adoption of maximized cycles) },
+6. maximization.velocityBottlenecks: 3-5 stringov (slovenski, max 200 vsak — kaj limitira capital cycling velocity),
+7. maximization.velocityGrade: A+ | A | B | C | D | F (A+ če maximized cycles ≥ 25, A ≥ 18, B ≥ 12, C ≥ 8, D ≥ 5, else F),
+8. maximization.capitalMultiplierEffect × [0, 100] (koliko-krat se kapital pomnoži v enem letu pri maximized velocity — = maximizedCyclesPerYear × avgProfitMargin / 100),
+9. summary: slovenski povzetek (max 500 znakov — poudari current cycle time, current cycles/yr, maximized cycle time, maximized cycles/yr, uplift, grade, capital multiplier effect, 5 actions).
+
+VRNI LE JSON:
+{
+  "maximization": {
+    "maximizedCycleTime": 18,
+    "maximizedCyclesPerYear": 20.3,
+    "velocityUplift": 7.3,
+    "velocityMaximizationActions": [
+      { "action": "REDUCE_HOLD_TIME", "description": "Vklopi listing-refresh-scheduler za stale HELD items.", "expectedVelocityGain": 4.0, "priority": "HIGH" },
+      { "action": "CROSS_POSTING", "description": "Multi-platform listings (Bolha + Vinted + Avtonet).", "expectedVelocityGain": 3.2, "priority": "HIGH" },
+      { "action": "FASTER_PRICING", "description": "Dynamic pricing z AI pricing engine.", "expectedVelocityGain": 2.5, "priority": "HIGH" },
+      { "action": "BETTER_LISTINGS", "description": "Optimiziraj listing quality z AI photo enhancement.", "expectedVelocityGain": 1.8, "priority": "MEDIUM" },
+      { "action": "OPTIMIZE_SOURCING", "description": "Filter buy-side z in-demand item detectorjem.", "expectedVelocityGain": 1.5, "priority": "MEDIUM" }
+    ],
+    "velocityProjection": [
+      { "month": 1, "currentCyclesPerYear": 13.0, "maximizedCyclesPerYear": 14.2 },
+      { "month": 3, "currentCyclesPerYear": 13.0, "maximizedCyclesPerYear": 16.7 },
+      { "month": 6, "currentCyclesPerYear": 13.0, "maximizedCyclesPerYear": 20.3 }
+    ],
+    "velocityBottlenecks": [
+      "Capital cycle time 28 dni je prepočasen.",
+      "HELD inventory > SOLD 12m — capital ujeto v počasnem inventory-ju.",
+      "Cross-posting še ni aktiviran."
+    ],
+    "velocityGrade": "B",
+    "capitalMultiplierEffect": 4.06
+  },
+  "summary": "Current: 28d cycle (13.0/yr, score 65/100, 50 SOLD 12m, 8 HELD, 5000€ deployed, 20.0% margin). Maximized: 18d cycle (20.3/yr, +7.3 cycles uplift, grade B). Capital multiplier effect: ×4.06/yr. 5 actions: REDUCE_HOLD_TIME (+4.0), CROSS_POSTING (+3.2), FASTER_PRICING (+2.5), BETTER_LISTINGS (+1.8), OPTIMIZE_SOURCING (+1.5)."
+}${GROUNDING_PROMPT_SUFFIX}`;
+}
+
+// --- AI override merge (extracted, pure) --------------------------------
+
+interface AiMergeResult {
+  maximization: InventoryCapitalVelocityMaximization;
+  summary: string;
+  aiUsed: boolean;
+}
+
+function applyAiOverrides(
+  parsed: AiResponse | null,
+  current: CurrentState,
+  deterministicMaximization: InventoryCapitalVelocityMaximization,
+): AiMergeResult {
+  let maximization = deterministicMaximization;
+  let summary = buildSummary(current, maximization);
+  let aiUsed = false;
+
+  if (parsed && typeof parsed === 'object' && parsed.maximization) {
+    const aiMax = parsed.maximization;
+
+    // Anti-hallucination: maximizedCycleTime ∈ [1, current.avgCapitalCycleTime]
+    const cycleTimeMinBound = CYCLE_TIME_MIN;
+    const cycleTimeMaxBound = Math.max(CYCLE_TIME_MIN, current.avgCapitalCycleTime);
+    const maximizedCycleTime = round0(clampNum(
+      aiMax.maximizedCycleTime,
+      cycleTimeMinBound, cycleTimeMaxBound,
+      deterministicMaximization.maximizedCycleTime,
+    ));
+    const maximizedCyclesPerYear = round2(clampNum(
+      aiMax.maximizedCyclesPerYear,
+      current.capitalCyclesPerYear, CYCLES_MAX,
+      maximizedCycleTime > 0 ? 365 / maximizedCycleTime : 0,
+    ));
+    const velocityUplift = round2(clampNum(
+      Math.max(0, maximizedCyclesPerYear - current.capitalCyclesPerYear),
+      UPLIFT_MIN, UPLIFT_MAX, 0,
+    ));
+
+    // Override velocityMaximizationActions
+    let velocityMaximizationActions = deterministicMaximization.velocityMaximizationActions;
+    if (Array.isArray(aiMax.velocityMaximizationActions) &&
+        aiMax.velocityMaximizationActions.length >= 3) {
+      const aiAct: VelocityAction[] = [];
+      for (const a of aiMax.velocityMaximizationActions.slice(0, MAX_ACTIONS)) {
+        if (!a || typeof a !== 'object') continue;
+        aiAct.push({
+          action: clampEnum(a.action, VALID_ACTION_TYPE, 'REDUCE_HOLD_TIME'),
+          description: clampString(a.description, 200, 'Akcija za capital velocity gain.'),
+          expectedVelocityGain: round2(clampNum(
+            a.expectedVelocityGain, UPLIFT_MIN, UPLIFT_MAX, 1.0,
+          )),
+          priority: clampEnum(a.priority, VALID_PRIORITY, 'MEDIUM'),
+        });
+      }
+      if (aiAct.length >= 3) {
+        velocityMaximizationActions = aiAct;
+      }
+    }
+
+    // Override velocityProjection
+    let velocityProjection = deterministicMaximization.velocityProjection;
+    if (Array.isArray(aiMax.velocityProjection) &&
+        aiMax.velocityProjection.length >= 6) {
+      const aiProj: VelocityProjectionEntry[] = [];
+      for (const e of aiMax.velocityProjection.slice(0, MAX_PROJECTIONS)) {
+        if (!e || typeof e !== 'object') continue;
+        const month = round0(clampNum(e.month, 1, 6, 1));
+        aiProj.push({
+          month,
+          currentCyclesPerYear: round2(clampNum(
+            e.currentCyclesPerYear,
+            CYCLES_MIN, CYCLES_MAX, current.capitalCyclesPerYear,
+          )),
+          maximizedCyclesPerYear: round2(clampNum(
+            e.maximizedCyclesPerYear,
+            CYCLES_MIN, CYCLES_MAX, maximizedCyclesPerYear,
+          )),
+        });
+      }
+      if (aiProj.length === 6) {
+        velocityProjection = aiProj;
+      }
+    }
+
+    // Override velocityBottlenecks
+    let velocityBottlenecks = deterministicMaximization.velocityBottlenecks;
+    if (Array.isArray(aiMax.velocityBottlenecks) &&
+        aiMax.velocityBottlenecks.length >= 2) {
+      const aiBot: string[] = [];
+      for (const b of aiMax.velocityBottlenecks.slice(0, MAX_BOTTLENECKS)) {
+        aiBot.push(clampString(b, 200, 'Velocity bottleneck neopisan.'));
+      }
+      if (aiBot.length >= 2) {
+        velocityBottlenecks = aiBot;
+      }
+    }
+
+    // Override velocityGrade
+    const velocityGrade = aiMax.velocityGrade
+      ? clampEnum(aiMax.velocityGrade, VALID_GRADE, decideVelocityGrade(maximizedCyclesPerYear))
+      : decideVelocityGrade(maximizedCyclesPerYear);
+
+    // Override capitalMultiplierEffect
+    const capitalMultiplierEffect = round2(clampNum(
+      aiMax.capitalMultiplierEffect,
+      MULTIPLIER_MIN, MULTIPLIER_MAX,
+      maximizedCyclesPerYear * current.avgProfitMargin / 100,
+    ));
+
+    maximization = {
+      maximizedCycleTime,
+      maximizedCyclesPerYear,
+      velocityUplift,
+      velocityMaximizationActions,
+      velocityProjection,
+      velocityBottlenecks,
+      velocityGrade,
+      capitalMultiplierEffect,
+    };
+
+    summary = clampString(parsed.summary, 500, buildSummary(current, maximization));
+    aiUsed = true;
+  }
+
+  return { maximization, summary, aiUsed };
+}
+
+// --- Input ---------------------------------------------------------------
+
+// eslint-disable-next-line @typescript-eslint/no-empty-object-type
+interface InventoryCapitalVelocityMaximizerInput {}
+
 // --- Handler -------------------------------------------------------------
 
-export async function GET(req: NextRequest) {
-  return handleInventoryCapitalVelocityMaximizer(req);
-}
-export async function POST(req: NextRequest) {
-  return handleInventoryCapitalVelocityMaximizer(req);
-}
+const inventoryCapitalVelocityHandler = withAiRoute<InventoryCapitalVelocityMaximizerInput>({
+  endpoint: '/api/ai/inventory-capital-velocity-maximizer',
+  maxDuration: 60,
+  enforceBudget: true, // AI klic — preveri budget
+  method: 'GET', // GET+POST — body ignored
 
-async function handleInventoryCapitalVelocityMaximizer(req: NextRequest) {
-  try {
-    const rl = checkRateLimit(req, 'ai-inventory-capital-velocity-maximizer', 20);
-    if (!rl.allowed) return rateLimitResponse(rl);
+  parseBody: async (req) => {
+    await req.json().catch(() => ({}));
+    return {};
+  },
 
+  handler: async (_input, ctx: AiRouteContext) => {
+    const { db, callAi, parseAi, logger } = ctx;
     const now = Date.now();
     const twelveMonthsAgo = new Date(now - TWELVE_MONTHS_MS);
 
@@ -567,7 +782,7 @@ async function handleInventoryCapitalVelocityMaximizer(req: NextRequest) {
 
     // Empty-state: no SOLD and no HELD trades
     if (soldTrades.length === 0 && heldTrades.length === 0) {
-      return NextResponse.json({
+      return apiOk({
         ok: true,
         current: {
           avgCapitalCycleTime: 0,
@@ -613,7 +828,7 @@ async function handleInventoryCapitalVelocityMaximizer(req: NextRequest) {
     // If no SOLD trades, can't compute baseline cycle time
     if (soldComputed.length === 0) {
       const heldCap = heldComputed.reduce((s, h) => s + h.capital, 0);
-      return NextResponse.json({
+      return apiOk({
         ok: true,
         current: {
           avgCapitalCycleTime: 0,
@@ -643,8 +858,7 @@ async function handleInventoryCapitalVelocityMaximizer(req: NextRequest) {
     }
 
     const current = computeCurrent(soldComputed, heldComputed);
-    let maximization = buildDeterministicMaximization(current);
-    let summary = buildSummary(current, maximization);
+    const deterministicMaximization = buildDeterministicMaximization(current);
 
     // 4) AI cache check (6h TTL) — key by current month
     const currentMonth = new Date(now).toISOString().slice(0, 7); // YYYY-MM
@@ -654,7 +868,7 @@ async function handleInventoryCapitalVelocityMaximizer(req: NextRequest) {
       summary: string;
     }>(cacheKey);
     if (cached) {
-      return NextResponse.json({
+      return apiOk({
         ok: true,
         current,
         maximization: cached.maximization,
@@ -665,212 +879,20 @@ async function handleInventoryCapitalVelocityMaximizer(req: NextRequest) {
     }
 
     // 5) AI prompt with grounding
-    const settings = await getSettingsRow();
-    const aiSettings: AiSettings = {
-      provider: settings.aiProvider as AiProviderType,
-      baseUrl: settings.aiBaseUrl,
-      apiKey: settings.aiApiKey,
-      model: settings.aiModel,
-      fallbackProvider: (settings.fallbackProvider || '') as
-        | AiProviderType
-        | '',
-      fallbackBaseUrl: settings.fallbackBaseUrl || '',
-      fallbackApiKey: settings.fallbackApiKey || '',
-      fallbackModel: settings.fallbackModel || '',
-    };
+    const promptData = buildPromptData(soldComputed, heldComputed, current, deterministicMaximization);
+    const prompt = buildPrompt(promptData);
 
-    const soldSampleForAI = soldComputed
-      .slice(-MAX_TRADES_FOR_AI)
-      .map((t) => ({
-        cap: t.capital,
-        profit: t.profit,
-        holdDays: t.holdDays,
-      }));
-
-    const promptData = {
-      soldCount12m: soldComputed.length,
-      heldCount: heldComputed.length,
-      current,
-      deterministicMaximization: {
-        maximizedCycleTime: maximization.maximizedCycleTime,
-        maximizedCyclesPerYear: maximization.maximizedCyclesPerYear,
-        velocityUplift: maximization.velocityUplift,
-        velocityMaximizationActions: maximization.velocityMaximizationActions,
-        velocityProjection: maximization.velocityProjection,
-        velocityBottlenecks: maximization.velocityBottlenecks,
-        velocityGrade: maximization.velocityGrade,
-        capitalMultiplierEffect: maximization.capitalMultiplierEffect,
-      },
-      soldSample: soldSampleForAI,
-      caps: {
-        cycleTimeMin: CYCLE_TIME_MIN, cycleTimeMax: CYCLE_TIME_MAX,
-        cyclesMin: CYCLES_MIN, cyclesMax: CYCLES_MAX,
-        scoreMin: SCORE_MIN, scoreMax: SCORE_MAX,
-        capitalMin: CAPITAL_MIN, capitalMax: CAPITAL_MAX,
-        marginMin: MARGIN_MIN, marginMax: MARGIN_MAX,
-        upliftMin: UPLIFT_MIN, upliftMax: UPLIFT_MAX,
-        multiplierMin: MULTIPLIER_MIN, multiplierMax: MULTIPLIER_MAX,
-      },
-    };
-
-    const prompt = `Si AI "Inventory Capital Velocity Maximizer" za slovenske in srednjeevropske oglasne platforme (Bolha, Vinted, Avtonet, mobile.de).
-Si strokovnjak za CAPITAL VELOCITY MAXIMIZATION — kako maksimizirati VELOCITY kapitala skozi inventory (koliko cycle-ov/leto capital ciklira iz investicije do povratka). Tvoj cilj je "Tvoj kapital kroži vsakih 28 dni (13×/leto), ampak bi lahko krožil vsakih 18 dni (20×/leto) z temi akcijami." Razlika od inventory-profit-per-day-growth-maximizer (v8.09 ki maksimizira growth rate daily profit-a iz inventory-ja v %/teden) — ti MAKSIMIZIRAŠ VELOCITY KAPITALA (koliko cycle-ov/leto, ne %/teden growth). Razlika od profit-per-day-scaling-maximizer (v8.08 ki maksimizira in skalira daily profit z scalingPath) — ti MAKSIMIZIRAŠ VELOCITY KAPITALA (cycle time + cycles per year, ne €/dan scaling). Razlika od inventory-turnover-yield-maximizer (v8.05 ki maksimizira yield z yieldCurve) — ti MAKSIMIZIRAŠ VELOCITY KAPITALA z capitalMultiplierEffect (koliko-krat se kapital pomnoži v enem letu). Razlika od inventory-roi-maximizer-pro (v7.99 ki maksimizira ROI per item) — ti MAKSIMIZIRAŠ VELOCITY KAPITALA čez celoten inventory (avg cycle time, ne ROI per item). Razlika od inventory-capital-efficiency-maximizer (v8.01 ki maksimizira capital efficiency per item) — ti MAKSIMIZIRAŠ VELOCITY KAPITALA z velocityProjection in velocityGrade (ne capital efficiency per item). Razlika od inventory-cash-yield-maximizer (v8.04 ki maksimizira annualized cash yield) — ti MAKSIMIZIRAŠ VELOCITY KAPITALA (cycles per year, ne cash yield). Razlika od inventory-profit-per-day-maximizer (v8.02 ki maksimizira daily profit per item) — ti MAKSIMIZIRAŠ VELOCITY KAPITALA (koliko-krat se capital kroži, ne €/dan per item). Razlika od inventory-annualized-return-maximizer (v8.06 ki maksimizira annualized % return na held inventory) — ti MAKSIMIZIRAŠ VELOCITY KAPITALA z maximizedCycleTime in maximizedCyclesPerYear (ne % return). Razlika od inventory-capital-return-maximizer (v8.07 ki maksimizira capital return OF inventory) — ti MAKSIMIZIRAŠ VELOCITY KAPITALA (koliko-krat ciklira, ne % returned). Razlika od profit-velocity-maximizer (v7.98 ki maksimizira €/day velocity) — ti MAKSIMIZIRAŠ VELOCITY KAPITALA (cycle time + cycles/year, ne €/dan). Razlika od profit-multiplier-maximizer (v8.09 ki maksimizira maximum profit multiplier z 6 dimensions) — ti MAKSIMIZIRAŠ VELOCITY KAPITALA (capital cycling, ne profit multiplier).
-
-DETERMINISTIČNI PODATKI (izračunano iz DB — SOLD trgovin v zadnjih 12 mesecih + HELD trgovine):
-${JSON.stringify(promptData, null, 2)}
-
-PRAVILA ZA AI ODGOVOR:
-1. maximization.maximizedCycleTime days [1, 365] (optimal cycle time, shorter = faster — ≤ current.avgCapitalCycleTime, anti-hallucination),
-2. maximization.maximizedCyclesPerYear [0, 100] (= 365 / maximizedCycleTime, ≥ current.capitalCyclesPerYear),
-3. maximization.velocityUplift cycles/year [0, 50] (improvement = maximized − current cycles),
-4. maximization.velocityMaximizationActions: 5 elementov { action FASTER_PRICING/BETTER_LISTINGS/CROSS_POSTING/REDUCE_HOLD_TIME/OPTIMIZE_SOURCING, description (slovenski, max 200 — specifična akcija za velocity gain), expectedVelocityGain cycles/year [0, 50] (koliko cycles/yr bo dodano), priority HIGH/MEDIUM/LOW } (sortirano po expectedVelocityGain descending),
-5. maximization.velocityProjection: 6 elementov { month 1-6, currentCyclesPerYear [0, 100] (cycles/yr projected at current velocity, constant), maximizedCyclesPerYear [0, 100] (linear ramp: 1m=17%, 3m=50%, 6m=100% adoption of maximized cycles) },
-6. maximization.velocityBottlenecks: 3-5 stringov (slovenski, max 200 vsak — kaj limitira capital cycling velocity),
-7. maximization.velocityGrade: A+ | A | B | C | D | F (A+ če maximized cycles ≥ 25, A ≥ 18, B ≥ 12, C ≥ 8, D ≥ 5, else F),
-8. maximization.capitalMultiplierEffect × [0, 100] (koliko-krat se kapital pomnoži v enem letu pri maximized velocity — = maximizedCyclesPerYear × avgProfitMargin / 100),
-9. summary: slovenski povzetek (max 500 znakov — poudari current cycle time, current cycles/yr, maximized cycle time, maximized cycles/yr, uplift, grade, capital multiplier effect, 5 actions).
-
-VRNI LE JSON:
-{
-  "maximization": {
-    "maximizedCycleTime": 18,
-    "maximizedCyclesPerYear": 20.3,
-    "velocityUplift": 7.3,
-    "velocityMaximizationActions": [
-      { "action": "REDUCE_HOLD_TIME", "description": "Vklopi listing-refresh-scheduler za stale HELD items.", "expectedVelocityGain": 4.0, "priority": "HIGH" },
-      { "action": "CROSS_POSTING", "description": "Multi-platform listings (Bolha + Vinted + Avtonet).", "expectedVelocityGain": 3.2, "priority": "HIGH" },
-      { "action": "FASTER_PRICING", "description": "Dynamic pricing z AI pricing engine.", "expectedVelocityGain": 2.5, "priority": "HIGH" },
-      { "action": "BETTER_LISTINGS", "description": "Optimiziraj listing quality z AI photo enhancement.", "expectedVelocityGain": 1.8, "priority": "MEDIUM" },
-      { "action": "OPTIMIZE_SOURCING", "description": "Filter buy-side z in-demand item detectorjem.", "expectedVelocityGain": 1.5, "priority": "MEDIUM" }
-    ],
-    "velocityProjection": [
-      { "month": 1, "currentCyclesPerYear": 13.0, "maximizedCyclesPerYear": 14.2 },
-      { "month": 3, "currentCyclesPerYear": 13.0, "maximizedCyclesPerYear": 16.7 },
-      { "month": 6, "currentCyclesPerYear": 13.0, "maximizedCyclesPerYear": 20.3 }
-    ],
-    "velocityBottlenecks": [
-      "Capital cycle time 28 dni je prepočasen.",
-      "HELD inventory > SOLD 12m — capital ujeto v počasnem inventory-ju.",
-      "Cross-posting še ni aktiviran."
-    ],
-    "velocityGrade": "B",
-    "capitalMultiplierEffect": 4.06
-  },
-  "summary": "Current: 28d cycle (13.0/yr, score 65/100, 50 SOLD 12m, 8 HELD, 5000€ deployed, 20.0% margin). Maximized: 18d cycle (20.3/yr, +7.3 cycles uplift, grade B). Capital multiplier effect: ×4.06/yr. 5 actions: REDUCE_HOLD_TIME (+4.0), CROSS_POSTING (+3.2), FASTER_PRICING (+2.5), BETTER_LISTINGS (+1.8), OPTIMIZE_SOURCING (+1.5)."
-}${GROUNDING_PROMPT_SUFFIX}`;
-
+    let maximization = deterministicMaximization;
+    let summary = buildSummary(current, maximization);
     let aiUsed = false;
 
     try {
-      const raw = await callProviderForRaw(aiSettings, prompt);
-      const parsed = parseJsonLooseExported(raw) as AiResponse | null;
-
-      if (parsed && typeof parsed === 'object' && parsed.maximization) {
-        const aiMax = parsed.maximization;
-
-        // Anti-hallucination: maximizedCycleTime ∈ [1, current.avgCapitalCycleTime]
-        const cycleTimeMinBound = CYCLE_TIME_MIN;
-        const cycleTimeMaxBound = Math.max(CYCLE_TIME_MIN, current.avgCapitalCycleTime);
-        const maximizedCycleTime = round0(clampNum(
-          aiMax.maximizedCycleTime,
-          cycleTimeMinBound, cycleTimeMaxBound,
-          maximization.maximizedCycleTime,
-        ));
-        const maximizedCyclesPerYear = round2(clampNum(
-          aiMax.maximizedCyclesPerYear,
-          current.capitalCyclesPerYear, CYCLES_MAX,
-          maximizedCycleTime > 0 ? 365 / maximizedCycleTime : 0,
-        ));
-        const velocityUplift = round2(clampNum(
-          Math.max(0, maximizedCyclesPerYear - current.capitalCyclesPerYear),
-          UPLIFT_MIN, UPLIFT_MAX, 0,
-        ));
-
-        // Override velocityMaximizationActions
-        let velocityMaximizationActions = maximization.velocityMaximizationActions;
-        if (Array.isArray(aiMax.velocityMaximizationActions) &&
-            aiMax.velocityMaximizationActions.length >= 3) {
-          const aiAct: VelocityAction[] = [];
-          for (const a of aiMax.velocityMaximizationActions.slice(0, MAX_ACTIONS)) {
-            if (!a || typeof a !== 'object') continue;
-            aiAct.push({
-              action: clampEnum(a.action, VALID_ACTION_TYPE, 'REDUCE_HOLD_TIME'),
-              description: clampString(a.description, 200, 'Akcija za capital velocity gain.'),
-              expectedVelocityGain: round2(clampNum(
-                a.expectedVelocityGain, UPLIFT_MIN, UPLIFT_MAX, 1.0,
-              )),
-              priority: clampEnum(a.priority, VALID_PRIORITY, 'MEDIUM'),
-            });
-          }
-          if (aiAct.length >= 3) {
-            velocityMaximizationActions = aiAct;
-          }
-        }
-
-        // Override velocityProjection
-        let velocityProjection = maximization.velocityProjection;
-        if (Array.isArray(aiMax.velocityProjection) &&
-            aiMax.velocityProjection.length >= 6) {
-          const aiProj: VelocityProjectionEntry[] = [];
-          for (const e of aiMax.velocityProjection.slice(0, MAX_PROJECTIONS)) {
-            if (!e || typeof e !== 'object') continue;
-            const month = round0(clampNum(e.month, 1, 6, 1));
-            aiProj.push({
-              month,
-              currentCyclesPerYear: round2(clampNum(
-                e.currentCyclesPerYear,
-                CYCLES_MIN, CYCLES_MAX, current.capitalCyclesPerYear,
-              )),
-              maximizedCyclesPerYear: round2(clampNum(
-                e.maximizedCyclesPerYear,
-                CYCLES_MIN, CYCLES_MAX, maximizedCyclesPerYear,
-              )),
-            });
-          }
-          if (aiProj.length === 6) {
-            velocityProjection = aiProj;
-          }
-        }
-
-        // Override velocityBottlenecks
-        let velocityBottlenecks = maximization.velocityBottlenecks;
-        if (Array.isArray(aiMax.velocityBottlenecks) &&
-            aiMax.velocityBottlenecks.length >= 2) {
-          const aiBot: string[] = [];
-          for (const b of aiMax.velocityBottlenecks.slice(0, MAX_BOTTLENECKS)) {
-            aiBot.push(clampString(b, 200, 'Velocity bottleneck neopisan.'));
-          }
-          if (aiBot.length >= 2) {
-            velocityBottlenecks = aiBot;
-          }
-        }
-
-        // Override velocityGrade
-        const velocityGrade = aiMax.velocityGrade
-          ? clampEnum(aiMax.velocityGrade, VALID_GRADE, decideVelocityGrade(maximizedCyclesPerYear))
-          : decideVelocityGrade(maximizedCyclesPerYear);
-
-        // Override capitalMultiplierEffect
-        const capitalMultiplierEffect = round2(clampNum(
-          aiMax.capitalMultiplierEffect,
-          MULTIPLIER_MIN, MULTIPLIER_MAX,
-          maximizedCyclesPerYear * current.avgProfitMargin / 100,
-        ));
-
-        maximization = {
-          maximizedCycleTime,
-          maximizedCyclesPerYear,
-          velocityUplift,
-          velocityMaximizationActions,
-          velocityProjection,
-          velocityBottlenecks,
-          velocityGrade,
-          capitalMultiplierEffect,
-        };
-
-        summary = clampString(parsed.summary, 500, buildSummary(current, maximization));
-        aiUsed = true;
-      }
+      const raw = await callAi(prompt);
+      const parsed = parseAi(raw) as AiResponse | null;
+      const result = applyAiOverrides(parsed, current, deterministicMaximization);
+      maximization = result.maximization;
+      summary = result.summary;
+      aiUsed = result.aiUsed;
     } catch (err) {
       logger.warn(
         '/api/ai/inventory-capital-velocity-maximizer',
@@ -884,22 +906,15 @@ VRNI LE JSON:
       setCachedAI(cacheKey, { maximization, summary });
     }
 
-    return NextResponse.json({
+    return apiOk({
       ok: true,
       current,
       maximization,
       summary,
       aiUsed,
     } satisfies InventoryCapitalVelocityResponse);
-  } catch (err: any) {
-    logger.error(
-      '/api/ai/inventory-capital-velocity-maximizer',
-      'handler failed',
-      err,
-    );
-    return NextResponse.json(
-      { error: err?.message ?? 'Napaka' },
-      { status: 500 },
-    );
-  }
-}
+  },
+});
+
+export const GET = inventoryCapitalVelocityHandler;
+export const POST = inventoryCapitalVelocityHandler;

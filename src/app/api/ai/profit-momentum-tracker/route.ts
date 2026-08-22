@@ -15,24 +15,18 @@
 //
 // GET+POST /api/ai/profit-momentum-tracker
 // (AI-enhanced + grounding + anti-hallucination + 6h cache + deterministic fallback)
+// Refaktoriran z withAiRoute helperjem (v8.96.5) + enforceBudget guard.
 
-import { NextRequest, NextResponse } from 'next/server';
-import { db } from '@/lib/db';
-import { getSettingsRow } from '@/lib/pipeline';
-import {
-  callProviderForRaw,
-  parseJsonLooseExported,
-  type AiProviderType,
-  type AiSettings,
-} from '@/lib/ai';
+import { withAiRoute, AI_ROUTE_DEFAULTS, type AiRouteContext } from '@/lib/with-ai-route';
+import { apiOk } from '@/lib/api-response';
 import { GROUNDING_PROMPT_SUFFIX } from '@/lib/anti-hallucination';
 import { getCachedAI, setCachedAI } from '@/lib/ai-cache';
-import { checkRateLimit, rateLimitResponse } from '@/lib/rate-limit';
-import { logger } from '@/lib/logger';
 
-export const runtime = 'nodejs';
-export const dynamic = 'force-dynamic';
+export const { runtime, dynamic } = AI_ROUTE_DEFAULTS;
 export const maxDuration = 60;
+
+// eslint-disable-next-line @typescript-eslint/no-empty-object-type
+interface ProfitMomentumTrackerInput {}
 
 // --- Types ---------------------------------------------------------------
 
@@ -260,17 +254,20 @@ function buildMomentumAssessment(
 
 // --- Handler -------------------------------------------------------------
 
-export async function GET(req: NextRequest) {
-  return handleProfitMomentumTracker(req);
-}
-export async function POST(req: NextRequest) {
-  return handleProfitMomentumTracker(req);
-}
+const profitMomentumTrackerHandler = withAiRoute<ProfitMomentumTrackerInput>({
+  endpoint: '/api/ai/profit-momentum-tracker',
+  maxDuration: 60,
+  enforceBudget: true, // AI klic — preveri budget
+  method: 'GET', // Endpoint sprejema GET + POST — bypass POST-only check
 
-async function handleProfitMomentumTracker(req: NextRequest) {
-  try {
-    const rl = checkRateLimit(req, 'ai-profit-momentum-tracker', 20);
-    if (!rl.allowed) return rateLimitResponse(rl);
+  parseBody: async (req) => {
+    await req.json().catch(() => ({}));
+    return {};
+  },
+
+  // No validateInput — body ignored, identična logika za GET in POST
+  handler: async (_input, ctx: AiRouteContext) => {
+    const { db, callAi, parseAi, logger } = ctx;
 
     const now = Date.now();
 
@@ -298,7 +295,7 @@ async function handleProfitMomentumTracker(req: NextRequest) {
 
     // Empty state — no SOLD trades
     if (soldTrades.length === 0) {
-      return NextResponse.json({
+      return apiOk({
         ok: true,
         momentum: {
           currentMonthlyProfit: 0,
@@ -404,7 +401,7 @@ async function handleProfitMomentumTracker(req: NextRequest) {
     // Sort months chronologically
     const sortedMonths = Array.from(monthlyAgg.keys()).sort();
     if (sortedMonths.length === 0) {
-      return NextResponse.json({
+      return apiOk({
         ok: true,
         momentum: {
           currentMonthlyProfit: 0,
@@ -662,7 +659,7 @@ async function handleProfitMomentumTracker(req: NextRequest) {
       summary: string;
     }>(cacheKey);
     if (cached) {
-      return NextResponse.json({
+      return apiOk({
         ok: true,
         momentum,
         drivers,
@@ -673,112 +670,22 @@ async function handleProfitMomentumTracker(req: NextRequest) {
       });
     }
 
-    // 7) AI prompt with grounding
-    const settings = await getSettingsRow();
-    const aiSettings: AiSettings = {
-      provider: settings.aiProvider as AiProviderType,
-      baseUrl: settings.aiBaseUrl,
-      apiKey: settings.aiApiKey,
-      model: settings.aiModel,
-      fallbackProvider: (settings.fallbackProvider || '') as
-        | AiProviderType
-        | '',
-      fallbackBaseUrl: settings.fallbackBaseUrl || '',
-      fallbackApiKey: settings.fallbackApiKey || '',
-      fallbackModel: settings.fallbackModel || '',
-    };
-
-    const promptData = {
-      monthlyHistory: sortedMonths.map((m) => {
-        const a = monthlyAgg.get(m)!;
-        return {
-          month: m,
-          profit: Math.round(a.profit * 100) / 100,
-          tradeCount: a.tradeCount,
-          avgProfitPerTrade: a.tradeCount > 0 ? Math.round((a.profit / a.tradeCount) * 100) / 100 : 0,
-          avgCycleDays: a.cycleDaysCount > 0 ? Math.round((a.cycleDaysSum / a.cycleDaysCount) * 10) / 10 : 0,
-        };
-      }),
-      currentMonth,
-      previousMonth,
-      momentum: {
-        currentMonthlyProfit: momentum.currentMonthlyProfit,
-        previousMonthlyProfit: momentum.previousMonthlyProfit,
-        profitGrowthRate: momentum.profitGrowthRate,
-        profitAcceleration: momentum.profitAcceleration,
-        momentumStatus: momentum.momentumStatus,
-        momentumScore: momentum.momentumScore,
-        deterministicSustainabilityScore: sustainabilityScore,
-      },
-      drivers: {
-        volumeDriver: {
-          currentTradeCount,
-          previousTradeCount,
-          change: volumeChange,
-          impact: volumeImpact,
-        },
-        priceDriver: {
-          currentAvgProfitPerTrade: Math.round(currentAvgProfitPerTrade * 100) / 100,
-          previousAvgProfitPerTrade: Math.round(previousAvgProfitPerTrade * 100) / 100,
-          change: Math.round(priceChange * 100) / 100,
-          impact: priceImpact,
-        },
-        efficiencyDriver: {
-          currentAvgCycleDays: Math.round(currentAvgCycleDays * 10) / 10,
-          previousAvgCycleDays: Math.round(previousAvgCycleDays * 10) / 10,
-          change: Math.round(cycleChange * 100) / 100,
-          impact: efficiencyImpact,
-        },
-        categoryDriver: {
-          topContributor: topCat,
-          contribution: topContribution,
-          currentCategories: Array.from(currentMonthCatAgg.entries()).map(([cat, agg]) => ({
-            category: cat,
-            profit: Math.round(agg.profit * 100) / 100,
-            tradeCount: agg.tradeCount,
-          })),
-        },
-      },
-    };
-
-    const prompt = `Si AI "Profit Momentum Tracker" za slovenske in srednjeevropske oglasne platforme (Bolha, Vinted, Avtonet, mobile.de).
-Sledi MOMENTUM rasti profita — ali profit pospešuje, upočasnjuje ali stagnira? Identificiraj kaj pogan momentum in kako ga vzdrževati.
-
-MOMENTUM PODATKI (deterministično izračunano):
-${JSON.stringify(promptData, null, 2)}
-
-PRAVILA ZA AI ODGOVOR:
-1. analysis: object z naslednjimi polji:
-   - momentumAssessment: opis trenutnega profit momentum-a v slovenščini (max 400 znakov)
-   - keyDrivers: top 3 faktorji ki poganjajo momentum (driver, impact POSITIVE/NEGATIVE, weight 0-100, detail v slovenščini)
-   - sustainabilityScore: 0-100 (kako trajen je trenutni momentum — anti-hallucination clamp)
-   - momentumForecast: napoved ali bo momentum nadaljeval, pospešil ali upočasnil v slovenščini (max 400 znakov)
-   - momentumActions: 3-5 akcij za vzdrževanje/pospešitev momentum-a (action v slovenščini, priority HIGH/MEDIUM/LOW, expectedImpact v slovenščini)
-   - riskFactors: tveganja ki bi lahko prekinila momentum (array stringov v slovenščini, max 5)
-
-VRNI LE JSON:
-{
-  "analysis": {
-    "momentumAssessment": "...",
-    "keyDrivers": [
-      { "driver": "...", "impact": "POSITIVE", "weight": 0, "detail": "..." }
-    ],
-    "sustainabilityScore": 0,
-    "momentumForecast": "...",
-    "momentumActions": [
-      { "action": "...", "priority": "HIGH", "expectedImpact": "..." }
-    ],
-    "riskFactors": ["..."]
-  }
-}${GROUNDING_PROMPT_SUFFIX}`;
+    // 7) AI prompt with grounding (settings loaded by withAiRoute wrapper)
+    const prompt = buildPrompt(
+      sortedMonths, monthlyAgg, currentMonth, previousMonth, momentum, sustainabilityScore,
+      currentTradeCount, previousTradeCount, volumeChange, volumeImpact,
+      currentAvgProfitPerTrade, previousAvgProfitPerTrade, priceChange, priceImpact,
+      currentAvgCycleDays, previousAvgCycleDays, cycleChange, efficiencyImpact,
+      topCat, topContribution, currentMonthCatAgg,
+    );
 
     let analysis = baselineAnalysis;
     let summary = baselineSummary;
     let aiUsed = false;
 
     try {
-      const raw = await callProviderForRaw(aiSettings, prompt);
-      const parsed = parseJsonLooseExported(raw) as AiMomentumResponse | null;
+      const raw = await callAi(prompt);
+      const parsed = parseAi(raw) as AiMomentumResponse | null;
 
       if (parsed && typeof parsed === 'object' && parsed.analysis && typeof parsed.analysis === 'object') {
         const a = parsed.analysis as Record<string, unknown>;
@@ -876,7 +783,7 @@ VRNI LE JSON:
       });
     }
 
-    return NextResponse.json({
+    return apiOk({
       ok: true,
       momentum,
       drivers,
@@ -884,11 +791,132 @@ VRNI LE JSON:
       summary,
       aiUsed,
     });
-  } catch (err: any) {
-    logger.error('/api/ai/profit-momentum-tracker', 'handler failed', err);
-    return NextResponse.json(
-      { error: err?.message ?? 'Napaka' },
-      { status: 500 },
-    );
+  },
+});
+
+export const GET = profitMomentumTrackerHandler;
+export const POST = profitMomentumTrackerHandler;
+
+// --- Prompt builder (čist, testabilen) -----------------------------------
+
+interface MomentumMonthAgg {
+  profit: number;
+  tradeCount: number;
+  totalSellPrice: number;
+  totalBuyPrice: number;
+  cycleDaysSum: number;
+  cycleDaysCount: number;
+}
+
+interface MomentumCatAgg {
+  profit: number;
+  tradeCount: number;
+}
+
+function buildPrompt(
+  sortedMonths: string[],
+  monthlyAgg: Map<string, MomentumMonthAgg>,
+  currentMonth: string,
+  previousMonth: string,
+  momentum: Momentum,
+  sustainabilityScore: number,
+  currentTradeCount: number,
+  previousTradeCount: number,
+  volumeChange: number,
+  volumeImpact: DriverImpact,
+  currentAvgProfitPerTrade: number,
+  previousAvgProfitPerTrade: number,
+  priceChange: number,
+  priceImpact: DriverImpact,
+  currentAvgCycleDays: number,
+  previousAvgCycleDays: number,
+  cycleChange: number,
+  efficiencyImpact: DriverImpact,
+  topCat: string,
+  topContribution: number,
+  currentMonthCatAgg: Map<string, MomentumCatAgg>,
+): string {
+  const promptData = {
+    monthlyHistory: sortedMonths.map((m) => {
+      const a = monthlyAgg.get(m)!;
+      return {
+        month: m,
+        profit: Math.round(a.profit * 100) / 100,
+        tradeCount: a.tradeCount,
+        avgProfitPerTrade: a.tradeCount > 0 ? Math.round((a.profit / a.tradeCount) * 100) / 100 : 0,
+        avgCycleDays: a.cycleDaysCount > 0 ? Math.round((a.cycleDaysSum / a.cycleDaysCount) * 10) / 10 : 0,
+      };
+    }),
+    currentMonth,
+    previousMonth,
+    momentum: {
+      currentMonthlyProfit: momentum.currentMonthlyProfit,
+      previousMonthlyProfit: momentum.previousMonthlyProfit,
+      profitGrowthRate: momentum.profitGrowthRate,
+      profitAcceleration: momentum.profitAcceleration,
+      momentumStatus: momentum.momentumStatus,
+      momentumScore: momentum.momentumScore,
+      deterministicSustainabilityScore: sustainabilityScore,
+    },
+    drivers: {
+      volumeDriver: {
+        currentTradeCount,
+        previousTradeCount,
+        change: volumeChange,
+        impact: volumeImpact,
+      },
+      priceDriver: {
+        currentAvgProfitPerTrade: Math.round(currentAvgProfitPerTrade * 100) / 100,
+        previousAvgProfitPerTrade: Math.round(previousAvgProfitPerTrade * 100) / 100,
+        change: Math.round(priceChange * 100) / 100,
+        impact: priceImpact,
+      },
+      efficiencyDriver: {
+        currentAvgCycleDays: Math.round(currentAvgCycleDays * 10) / 10,
+        previousAvgCycleDays: Math.round(previousAvgCycleDays * 10) / 10,
+        change: Math.round(cycleChange * 100) / 100,
+        impact: efficiencyImpact,
+      },
+      categoryDriver: {
+        topContributor: topCat,
+        contribution: topContribution,
+        currentCategories: Array.from(currentMonthCatAgg.entries()).map(([cat, agg]) => ({
+          category: cat,
+          profit: Math.round(agg.profit * 100) / 100,
+          tradeCount: agg.tradeCount,
+        })),
+      },
+    },
+  };
+
+  return `Si AI "Profit Momentum Tracker" za slovenske in srednjeevropske oglasne platforme (Bolha, Vinted, Avtonet, mobile.de).
+Sledi MOMENTUM rasti profita — ali profit pospešuje, upočasnjuje ali stagnira? Identificiraj kaj pogan momentum in kako ga vzdrževati.
+
+MOMENTUM PODATKI (deterministično izračunano):
+${JSON.stringify(promptData, null, 2)}
+
+PRAVILA ZA AI ODGOVOR:
+1. analysis: object z naslednjimi polji:
+   - momentumAssessment: opis trenutnega profit momentum-a v slovenščini (max 400 znakov)
+   - keyDrivers: top 3 faktorji ki poganjajo momentum (driver, impact POSITIVE/NEGATIVE, weight 0-100, detail v slovenščini)
+   - sustainabilityScore: 0-100 (kako trajen je trenutni momentum — anti-hallucination clamp)
+   - momentumForecast: napoved ali bo momentum nadaljeval, pospešil ali upočasnil v slovenščini (max 400 znakov)
+   - momentumActions: 3-5 akcij za vzdrževanje/pospešitev momentum-a (action v slovenščini, priority HIGH/MEDIUM/LOW, expectedImpact v slovenščini)
+   - riskFactors: tveganja ki bi lahko prekinila momentum (array stringov v slovenščini, max 5)
+
+VRNI LE JSON:
+{
+  "analysis": {
+    "momentumAssessment": "...",
+    "keyDrivers": [
+      { "driver": "...", "impact": "POSITIVE", "weight": 0, "detail": "..." }
+    ],
+    "sustainabilityScore": 0,
+    "momentumForecast": "...",
+    "momentumActions": [
+      { "action": "...", "priority": "HIGH", "expectedImpact": "..." }
+    ],
+    "riskFactors": ["..."]
   }
+}${GROUNDING_PROMPT_SUFFIX}`;
 }

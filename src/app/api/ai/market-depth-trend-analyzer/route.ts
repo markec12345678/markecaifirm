@@ -1,4 +1,4 @@
-// v7.93: AI Market Depth Trend Analyzer — AI analizira kako se GLOBINA trga
+// v7.93 / v8.96.5-batch4: AI Market Depth Trend Analyzer — AI analizira kako se GLOBINA trga
 // (market depth) spreminja čez čas. Track-a depth trend, identificira depth
 // cycles in napove kdaj bo trg postal globlji (bolj likviden) ali plitvejši.
 // Razlika od market-depth-analyzer (v7.68 ki da snapshot depth-a) — ta track-a
@@ -20,23 +20,14 @@
 //
 // GET+POST /api/ai/market-depth-trend-analyzer
 // (AI-enhanced + grounding + anti-hallucination + 6h cache + deterministic fallback)
+// Refaktoriran z withAiRoute helperjem (v8.96.5) + enforceBudget guard.
 
-import { NextRequest, NextResponse } from 'next/server';
-import { db } from '@/lib/db';
-import { getSettingsRow } from '@/lib/pipeline';
-import {
-  callProviderForRaw,
-  parseJsonLooseExported,
-  type AiProviderType,
-  type AiSettings,
-} from '@/lib/ai';
+import { withAiRoute, AI_ROUTE_DEFAULTS, type AiRouteContext } from '@/lib/with-ai-route';
+import { apiOk } from '@/lib/api-response';
 import { GROUNDING_PROMPT_SUFFIX } from '@/lib/anti-hallucination';
 import { getCachedAI, setCachedAI } from '@/lib/ai-cache';
-import { checkRateLimit, rateLimitResponse } from '@/lib/rate-limit';
-import { logger } from '@/lib/logger';
 
-export const runtime = 'nodejs';
-export const dynamic = 'force-dynamic';
+export const { runtime, dynamic } = AI_ROUTE_DEFAULTS;
 export const maxDuration = 60;
 
 // --- Types ---------------------------------------------------------------
@@ -564,20 +555,140 @@ function buildSummary(
   return parts.join(' ').slice(0, 400);
 }
 
+// --- Prompt builder (extracted, pure) -----------------------------------
+
+function buildPromptData(
+  trends: DepthTrends,
+  weeklyData: WeeklyDataPoint[],
+  cycle: DepthCycle,
+  byCategory: CategoryDepthTrend[],
+  detAnalysis: DepthAnalysis,
+): Record<string, unknown> {
+  return {
+    trends,
+    weeklyData,
+    cycles: cycle,
+    byCategory: byCategory.slice(0, 10),
+    deterministicBaseline: detAnalysis,
+    caps: {
+      scoreMin: SCORE_MIN, scoreMax: SCORE_MAX,
+      cycleMin: CYCLE_MIN, cycleMax: CYCLE_MAX,
+      confMin: CONF_MIN, confMax: CONF_MAX,
+    },
+  };
+}
+
+function buildPrompt(promptData: Record<string, unknown>): string {
+  return `Si AI "Market Depth Trend Analyzer" za slovenske in srednjeevropske oglasne platforme (Bolha, Vinted, Avtonet, mobile.de).
+Analiziraš kako se GLOBINA trga (market depth) spreminja čez čas — track-a depth trend (26 tednov), identificira depth cycles (peaks/troughs) in napove kdaj bo trg globlji ali plitvejši. Razlika od market-depth-analyzer (ki da snapshot depth-a) — ti gledaš HISTORICAL trend z cycle detection.
+
+DETERMINISTIČNI PODATKI (izračunano iz DB — zadnjih 180 dni oglasov z veljavno ceno, grouped by week):
+${JSON.stringify(promptData, null, 2)}
+
+PRAVILA ZA AI ODGOVOR:
+1. depthTrendAssessment: slovensko, max 500 znakov — kaj depth trend pomeni za trgovanje.
+2. predictedDepthDirection30d: slovensko, max 300 znakov — ali bo depth v 30 dneh rasel ali padal.
+3. depthCycleInsight: slovensko, max 400 znakov — kaj pomeni trenutni cycle position.
+4. liquidityForecast: slovensko, max 300 znakov — ali bo trg bolj ali manj likviden.
+5. tradingImplications: slovensko, max 400 znakov — kako prilagoditi strategijo.
+6. depthOptimizationActions: 1-3 akcij { action (max 200 chars), priority HIGH | MEDIUM | LOW, detail (max 200 chars) }.
+7. confidenceLevel: 0-100, ±10 od deterministične.
+8. summary: slovenski povzetek (max 400 znakov). NE izmišljuj številk — uporabi deterministične.
+
+VRNI LE JSON:
+{
+  "depthTrendAssessment": "Trg postaja globlji — trend +2.5/teden, momentum +0.5. Trenutni depth 65/100. Cycle position: MID_EXPANSION.",
+  "predictedDepthDirection30d": "Nadaljnje poglabljanje trga — depth bo rasel tudi v naslednjih 30 dneh.",
+  "depthCycleInsight": "Trg je v EXPANSION fazi — depth raste. Idealno za povečanje obsega. Povprečna dolžina cikla: 8 tednov.",
+  "liquidityForecast": "Likvidnost se bo izboljševala — trenutno MEDIUM, napovedan prehod v HIGH v 30 dneh.",
+  "tradingImplications": "Povečaj obseg nabave — trg postaja bolj likviden in zanesljiv za cene.",
+  "depthOptimizationActions": [
+    { "action": "Povečaj obseg v kategorijah z najhitrejšo rastjo depth-a.", "priority": "HIGH", "detail": "Elektronika: +4/teden trend." }
+  ],
+  "confidenceLevel": 72,
+  "summary": "Depth: DEEPENING (+2.5/wk, momentum +0.5). Cycle position: MID_EXPANSION. Liquidity forecast: improving. Best: elektronika (+4/wk)."
+}${GROUNDING_PROMPT_SUFFIX}`;
+}
+
+// --- AI override merge (extracted, pure) --------------------------------
+
+interface AiMergeResult {
+  analysis: DepthAnalysis;
+  summary: string;
+  aiUsed: boolean;
+}
+
+function applyAiOverrides(
+  parsed: AiDepthResponse | null,
+  detAnalysis: DepthAnalysis,
+  trends: DepthTrends,
+  cycle: DepthCycle,
+  byCategory: CategoryDepthTrend[],
+): AiMergeResult {
+  let analysis = detAnalysis;
+  let summary = buildSummary(trends, cycle, byCategory);
+  let aiUsed = false;
+
+  if (parsed && typeof parsed === 'object') {
+    const detConf = detAnalysis.confidenceLevel;
+    const confidenceLevel = round0(
+      Math.max(CONF_MIN, Math.min(CONF_MAX,
+        detConf + Math.max(-10, Math.min(10,
+          (Number(parsed.confidenceLevel ?? detConf)) - detConf)))),
+    );
+
+    // Optimization actions
+    const actions: Array<{ action: string; priority: ActionPriority; detail: string }> = [];
+    if (Array.isArray(parsed.depthOptimizationActions)) {
+      for (const a of parsed.depthOptimizationActions.slice(0, 3)) {
+        if (!a || typeof a !== 'object') continue;
+        actions.push({
+          action: clampString(a.action, 200, detAnalysis.depthOptimizationActions[0]?.action ?? 'Maintain strategy.'),
+          priority: clampEnum(a.priority, VALID_PRIORITY, detAnalysis.depthOptimizationActions[0]?.priority ?? 'MEDIUM'),
+          detail: clampString(a.detail, 200, detAnalysis.depthOptimizationActions[0]?.detail ?? 'Stabilen trg.'),
+        });
+      }
+    }
+    if (actions.length === 0) {
+      for (const a of detAnalysis.depthOptimizationActions) actions.push(a);
+    }
+
+    analysis = {
+      depthTrendAssessment: clampString(parsed.depthTrendAssessment, 500, detAnalysis.depthTrendAssessment),
+      predictedDepthDirection30d: clampString(parsed.predictedDepthDirection30d, 300, detAnalysis.predictedDepthDirection30d),
+      depthCycleInsight: clampString(parsed.depthCycleInsight, 400, detAnalysis.depthCycleInsight),
+      liquidityForecast: clampString(parsed.liquidityForecast, 300, detAnalysis.liquidityForecast),
+      tradingImplications: clampString(parsed.tradingImplications, 400, detAnalysis.tradingImplications),
+      depthOptimizationActions: actions,
+      confidenceLevel,
+    };
+    summary = clampString(parsed.summary, 400, buildSummary(trends, cycle, byCategory));
+    aiUsed = true;
+  }
+
+  return { analysis, summary, aiUsed };
+}
+
+// --- Input ---------------------------------------------------------------
+
+// eslint-disable-next-line @typescript-eslint/no-empty-object-type
+interface MarketDepthTrendAnalyzerInput {}
+
 // --- Handler -----------------------------------------------------------
 
-export async function GET(req: NextRequest) {
-  return handleMarketDepthTrendAnalyzer(req);
-}
-export async function POST(req: NextRequest) {
-  return handleMarketDepthTrendAnalyzer(req);
-}
+const marketDepthTrendHandler = withAiRoute<MarketDepthTrendAnalyzerInput>({
+  endpoint: '/api/ai/market-depth-trend-analyzer',
+  maxDuration: 60,
+  enforceBudget: true, // AI klic — preveri budget
+  method: 'GET', // GET+POST — body ignored
 
-async function handleMarketDepthTrendAnalyzer(req: NextRequest) {
-  try {
-    const rl = checkRateLimit(req, 'ai-market-depth-trend-analyzer', 20);
-    if (!rl.allowed) return rateLimitResponse(rl);
+  parseBody: async (req) => {
+    await req.json().catch(() => ({}));
+    return {};
+  },
 
+  handler: async (_input, ctx: AiRouteContext) => {
+    const { db, callAi, parseAi, logger } = ctx;
     const now = Date.now();
     const cutoff180d = new Date(now - HORIZON_180D);
 
@@ -597,7 +708,7 @@ async function handleMarketDepthTrendAnalyzer(req: NextRequest) {
     }) as unknown as ListingRow[];
 
     if (listings.length === 0) {
-      return NextResponse.json({
+      return apiOk({
         ok: true,
         trends: {
           depthTrend26w: 0,
@@ -755,15 +866,14 @@ async function handleMarketDepthTrendAnalyzer(req: NextRequest) {
 
     // 7) Build deterministic baseline (fallback)
     const detAnalysis = buildDeterministicAnalysis(trends, cycle, byCategory);
-    let analysis = detAnalysis;
-    let summary = buildSummary(trends, cycle, byCategory);
+    const deterministicSummary = buildSummary(trends, cycle, byCategory);
 
     // 8) AI cache check (6h TTL) — key by current month
     const currentMonth = new Date(now).toISOString().slice(0, 7);
     const cacheKey = `market-depth-trend-analyzer:${currentMonth}`;
     const cached = getCachedAI<{ analysis: DepthAnalysis; summary: string }>(cacheKey);
     if (cached) {
-      return NextResponse.json({
+      return apiOk({
         ok: true,
         trends,
         weeklyData,
@@ -777,105 +887,20 @@ async function handleMarketDepthTrendAnalyzer(req: NextRequest) {
     }
 
     // 9) AI prompt with grounding
-    const settings = await getSettingsRow();
-    const aiSettings: AiSettings = {
-      provider: settings.aiProvider as AiProviderType,
-      baseUrl: settings.aiBaseUrl,
-      apiKey: settings.aiApiKey,
-      model: settings.aiModel,
-      fallbackProvider: (settings.fallbackProvider || '') as
-        | AiProviderType
-        | '',
-      fallbackBaseUrl: settings.fallbackBaseUrl || '',
-      fallbackApiKey: settings.fallbackApiKey || '',
-      fallbackModel: settings.fallbackModel || '',
-    };
+    const promptData = buildPromptData(trends, weeklyData, cycle, byCategory, detAnalysis);
+    const prompt = buildPrompt(promptData);
 
-    const promptData = {
-      trends,
-      weeklyData,
-      cycles: cycle,
-      byCategory: byCategory.slice(0, 10),
-      deterministicBaseline: detAnalysis,
-      caps: {
-        scoreMin: SCORE_MIN, scoreMax: SCORE_MAX,
-        cycleMin: CYCLE_MIN, cycleMax: CYCLE_MAX,
-        confMin: CONF_MIN, confMax: CONF_MAX,
-      },
-    };
-
-    const prompt = `Si AI "Market Depth Trend Analyzer" za slovenske in srednjeevropske oglasne platforme (Bolha, Vinted, Avtonet, mobile.de).
-Analiziraš kako se GLOBINA trga (market depth) spreminja čez čas — track-a depth trend (26 tednov), identificira depth cycles (peaks/troughs) in napove kdaj bo trg globlji ali plitvejši. Razlika od market-depth-analyzer (ki da snapshot depth-a) — ti gledaš HISTORICAL trend z cycle detection.
-
-DETERMINISTIČNI PODATKI (izračunano iz DB — zadnjih 180 dni oglasov z veljavno ceno, grouped by week):
-${JSON.stringify(promptData, null, 2)}
-
-PRAVILA ZA AI ODGOVOR:
-1. depthTrendAssessment: slovensko, max 500 znakov — kaj depth trend pomeni za trgovanje.
-2. predictedDepthDirection30d: slovensko, max 300 znakov — ali bo depth v 30 dneh rasel ali padal.
-3. depthCycleInsight: slovensko, max 400 znakov — kaj pomeni trenutni cycle position.
-4. liquidityForecast: slovensko, max 300 znakov — ali bo trg bolj ali manj likviden.
-5. tradingImplications: slovensko, max 400 znakov — kako prilagoditi strategijo.
-6. depthOptimizationActions: 1-3 akcij { action (max 200 chars), priority HIGH | MEDIUM | LOW, detail (max 200 chars) }.
-7. confidenceLevel: 0-100, ±10 od deterministične.
-8. summary: slovenski povzetek (max 400 znakov). NE izmišljuj številk — uporabi deterministične.
-
-VRNI LE JSON:
-{
-  "depthTrendAssessment": "Trg postaja globlji — trend +2.5/teden, momentum +0.5. Trenutni depth 65/100. Cycle position: MID_EXPANSION.",
-  "predictedDepthDirection30d": "Nadaljnje poglabljanje trga — depth bo rasel tudi v naslednjih 30 dneh.",
-  "depthCycleInsight": "Trg je v EXPANSION fazi — depth raste. Idealno za povečanje obsega. Povprečna dolžina cikla: 8 tednov.",
-  "liquidityForecast": "Likvidnost se bo izboljševala — trenutno MEDIUM, napovedan prehod v HIGH v 30 dneh.",
-  "tradingImplications": "Povečaj obseg nabave — trg postaja bolj likviden in zanesljiv za cene.",
-  "depthOptimizationActions": [
-    { "action": "Povečaj obseg v kategorijah z najhitrejšo rastjo depth-a.", "priority": "HIGH", "detail": "Elektronika: +4/teden trend." }
-  ],
-  "confidenceLevel": 72,
-  "summary": "Depth: DEEPENING (+2.5/wk, momentum +0.5). Cycle position: MID_EXPANSION. Liquidity forecast: improving. Best: elektronika (+4/wk)."
-}${GROUNDING_PROMPT_SUFFIX}`;
-
+    let analysis = detAnalysis;
+    let summary = deterministicSummary;
     let aiUsed = false;
 
     try {
-      const raw = await callProviderForRaw(aiSettings, prompt);
-      const parsed = parseJsonLooseExported(raw) as AiDepthResponse | null;
-
-      if (parsed && typeof parsed === 'object') {
-        const detConf = detAnalysis.confidenceLevel;
-        const confidenceLevel = round0(
-          Math.max(CONF_MIN, Math.min(CONF_MAX,
-            detConf + Math.max(-10, Math.min(10,
-              (Number(parsed.confidenceLevel ?? detConf)) - detConf)))),
-        );
-
-        // Optimization actions
-        const actions: Array<{ action: string; priority: ActionPriority; detail: string }> = [];
-        if (Array.isArray(parsed.depthOptimizationActions)) {
-          for (const a of parsed.depthOptimizationActions.slice(0, 3)) {
-            if (!a || typeof a !== 'object') continue;
-            actions.push({
-              action: clampString(a.action, 200, detAnalysis.depthOptimizationActions[0]?.action ?? 'Maintain strategy.'),
-              priority: clampEnum(a.priority, VALID_PRIORITY, detAnalysis.depthOptimizationActions[0]?.priority ?? 'MEDIUM'),
-              detail: clampString(a.detail, 200, detAnalysis.depthOptimizationActions[0]?.detail ?? 'Stabilen trg.'),
-            });
-          }
-        }
-        if (actions.length === 0) {
-          for (const a of detAnalysis.depthOptimizationActions) actions.push(a);
-        }
-
-        analysis = {
-          depthTrendAssessment: clampString(parsed.depthTrendAssessment, 500, detAnalysis.depthTrendAssessment),
-          predictedDepthDirection30d: clampString(parsed.predictedDepthDirection30d, 300, detAnalysis.predictedDepthDirection30d),
-          depthCycleInsight: clampString(parsed.depthCycleInsight, 400, detAnalysis.depthCycleInsight),
-          liquidityForecast: clampString(parsed.liquidityForecast, 300, detAnalysis.liquidityForecast),
-          tradingImplications: clampString(parsed.tradingImplications, 400, detAnalysis.tradingImplications),
-          depthOptimizationActions: actions,
-          confidenceLevel,
-        };
-        summary = clampString(parsed.summary, 400, buildSummary(trends, cycle, byCategory));
-        aiUsed = true;
-      }
+      const raw = await callAi(prompt);
+      const parsed = parseAi(raw) as AiDepthResponse | null;
+      const result = applyAiOverrides(parsed, detAnalysis, trends, cycle, byCategory);
+      analysis = result.analysis;
+      summary = result.summary;
+      aiUsed = result.aiUsed;
     } catch (err) {
       logger.warn(
         '/api/ai/market-depth-trend-analyzer',
@@ -889,7 +914,7 @@ VRNI LE JSON:
       setCachedAI(cacheKey, { analysis, summary });
     }
 
-    return NextResponse.json({
+    return apiOk({
       ok: true,
       trends,
       weeklyData,
@@ -899,15 +924,8 @@ VRNI LE JSON:
       summary,
       aiUsed,
     });
-  } catch (err: any) {
-    logger.error(
-      '/api/ai/market-depth-trend-analyzer',
-      'handler failed',
-      err,
-    );
-    return NextResponse.json(
-      { error: err?.message ?? 'Napaka' },
-      { status: 500 },
-    );
-  }
-}
+  },
+});
+
+export const GET = marketDepthTrendHandler;
+export const POST = marketDepthTrendHandler;

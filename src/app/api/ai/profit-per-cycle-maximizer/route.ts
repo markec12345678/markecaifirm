@@ -1,4 +1,4 @@
-// v8.12: AI Profit Per Cycle Maximizer — AI MAKSIMIZIRA PROFIT PER CYCLE
+// v8.12 / v8.96.5-batch4: AI Profit Per Cycle Maximizer — AI MAKSIMIZIRA PROFIT PER CYCLE
 // — vsak cikel je komplet buy-to-sell turnaround. "Tvoj profit per cycle je
 // 45€, ampak bi lahko bil 85€ z better sourcing in higher sell prices."
 // Razlika od inventory-capital-velocity-maximizer (v8.10 ki maksimizira
@@ -31,23 +31,14 @@
 
 // GET+POST /api/ai/profit-per-cycle-maximizer
 // (AI-enhanced + grounding + anti-hallucination + 6h cache + deterministic fallback)
+// Refaktoriran z withAiRoute helperjem (v8.96.5) + enforceBudget guard.
 
-import { NextRequest, NextResponse } from 'next/server';
-import { db } from '@/lib/db';
-import { getSettingsRow } from '@/lib/pipeline';
-import {
-  callProviderForRaw,
-  parseJsonLooseExported,
-  type AiProviderType,
-  type AiSettings,
-} from '@/lib/ai';
+import { withAiRoute, AI_ROUTE_DEFAULTS, type AiRouteContext } from '@/lib/with-ai-route';
+import { apiOk } from '@/lib/api-response';
 import { GROUNDING_PROMPT_SUFFIX } from '@/lib/anti-hallucination';
 import { getCachedAI, setCachedAI } from '@/lib/ai-cache';
-import { checkRateLimit, rateLimitResponse } from '@/lib/rate-limit';
-import { logger } from '@/lib/logger';
 
-export const runtime = 'nodejs';
-export const dynamic = 'force-dynamic';
+export const { runtime, dynamic } = AI_ROUTE_DEFAULTS;
 export const maxDuration = 60;
 
 // --- Types ---------------------------------------------------------------
@@ -553,20 +544,216 @@ function buildSummary(current: CurrentState, max: CycleMaximization): string {
   return parts.join(' ').slice(0, 500);
 }
 
+// --- Prompt builder (extracted, pure) -----------------------------------
+
+function buildPromptData(
+  soldComputed: SoldComputed[],
+  current: CurrentState,
+  maximization: CycleMaximization,
+): Record<string, unknown> {
+  const soldSampleForAI = soldComputed
+    .slice(-MAX_TRADES_FOR_AI)
+    .map((t) => ({
+      profit: t.profit,
+      sellPrice: t.sellPrice,
+      buyCost: t.buyCost,
+      fees: t.fees,
+      holdDays: t.holdDays,
+    }));
+
+  return {
+    soldCount12m: soldComputed.length,
+    current,
+    deterministicMaximization: {
+      maximizedProfitPerCycle: maximization.maximizedProfitPerCycle,
+      cycleUplift: maximization.cycleUplift,
+      maximizationLevers: maximization.maximizationLevers,
+      cycleEfficiencyScore: maximization.cycleEfficiencyScore,
+      projectedAnnualProfit: maximization.projectedAnnualProfit,
+      cycleVsVolumeTradeoff: maximization.cycleVsVolumeTradeoff,
+      cycleGrade: maximization.cycleGrade,
+      optimalCycleStrategy: maximization.optimalCycleStrategy,
+    },
+    soldSample: soldSampleForAI,
+    caps: {
+      profitMin: PROFIT_MIN, profitMax: PROFIT_MAX,
+      cycleTimeMin: CYCLE_TIME_MIN, cycleTimeMax: CYCLE_TIME_MAX,
+      cyclesMin: CYCLES_MIN, cyclesMax: CYCLES_MAX,
+      scoreMin: SCORE_MIN, scoreMax: SCORE_MAX,
+      upliftMin: UPLIFT_MIN, upliftMax: UPLIFT_MAX,
+      gainMin: GAIN_MIN, gainMax: GAIN_MAX,
+      gapMin: GAP_MIN, gapMax: GAP_MAX,
+      annualProfitMin: ANNUAL_PROFIT_MIN, annualProfitMax: ANNUAL_PROFIT_MAX,
+      absoluteUpliftCapPct: ABSOLUTE_UPLIFT_CAP_PCT,
+    },
+    leverGainPct: LEVER_GAIN_PCT,
+  };
+}
+
+function buildPrompt(promptData: Record<string, unknown>): string {
+  return `Si AI "Profit Per Cycle Maximizer" za slovenske in srednjeevropske oglasne platforme (Bolha, Vinted, Avtonet, mobile.de).
+Si strokovnjak za PROFIT PER CYCLE MAXIMIZATION — kako maksimizirati PROFIT PER CYCLE (koliko € se ekstrahira iz vsakega individualnega buy-to-sell cikla). Tvoj cilj je "Tvoj profit per cycle je 45€, ampak bi lahko bil 85€ z better sourcing in higher sell prices." Razlika od inventory-capital-velocity-maximizer (v8.10 ki maksimizira VELOCITY kapitala skozi inventory — koliko cycle-ov/leto capital ciklira) — ti MAKSIMIZIRAŠ PROFIT PER CYCLE (€/cycle extracted per individual cycle, ne število ciklov). Razlika od profit-growth-rate-maximizer (v8.11 ki maksimizira GROWTH RATE skupnega profit-a v %/mo MoM) — ti MAKSIMIZIRAŠ PROFIT PER CYCLE v absolutnem €/cycle (per-cycle extraction, ne %/mo growth). Razlika od inventory-annual-yield-maximizer (v8.11 ki maksimizira annual yield held inventory-ja) — ti MAKSIMIZIRAŠ PROFIT PER CYCLE (per-cycle €, ne letni yield %). Razlika od deal-source-profit-per-day-maximizer (v8.11 ki maksimizira profit per day per source €/dan) — ti MAKSIMIZIRAŠ PROFIT PER CYCLE čez celoten portfolio (€/cycle, ne €/dan per source). Razlika od profit-multiplier-maximizer (v8.09 ki maksimizira maximum profit multiplier z 6 dimensions) — ti MAKSIMIZIRAŠ PROFIT PER CYCLE z maximizationLevers (BETTER_SOURCING/HIGHER_SELL_PRICE/LOWER_FEES/BUNDLE_UPSELL/REFURBISHMENT) in cycleVsVolumeTradeoff. Razlika od profit-velocity-maximizer (v7.98 ki maksimizira €/day velocity) — ti MAKSIMIZIRAŠ PROFIT PER CYCLE (€/cycle, ne €/dan). Razlika od profit-per-day-scaling-maximizer (v8.08 ki maksimizira in skalira daily profit z scalingPath) — ti MAKSIMIZIRAŠ PROFIT PER CYCLE z cycleEfficiencyScore in optimalCycleStrategy (HIGH_MARGIN_LOW_VOLUME vs LOW_MARGIN_HIGH_VOLUME). Razlika od profit-per-trade-growth-maximizer (v8.10 ki maksimizira growth rate profit-a PER TRADE v €/mo) — ti MAKSIMIZIRAŠ PROFIT PER CYCLE (absolute €/cycle, ne growth rate €/mo). Razlika od inventory-profit-per-day-maximizer (v8.02 ki maksimizira daily profit per item) — ti MAKSIMIZIRAŠ PROFIT PER CYCLE (€/cycle absolute, ne €/dan per item). Razlika od profit-per-euro-maximizer (v8.07 ki maksimizira profit per € deployed) — ti MAKSIMIZIRAŠ PROFIT PER CYCLE (€ extracted per cycle, ne € profit per € capital).
+
+DETERMINISTIČNI PODATKI (izračunano iz DB — SOLD trgovin v zadnjih 12 mesecih):
+${JSON.stringify(promptData, null, 2)}
+
+PRAVILA ZA AI ODGOVOR:
+1. maximization.maximizedProfitPerCycle €/cycle [0, 5000] (optimal achievable, ≥ current.avgProfitPerCycle, ≤ min(current × 3, 5000) — anti-hallucination),
+2. maximization.cycleUplift €/cycle [0, 5000] (improvement = maximized − current),
+3. maximization.maximizationLevers: 5 elementov { lever BETTER_SOURCING/HIGHER_SELL_PRICE/LOWER_FEES/BUNDLE_UPSELL/REFURBISHMENT, currentGap € [0, 5000] (koliko potential-a je še unrealized na tem lever-ju — heuristic iz current gap), potentialGain € [0, 5000] (koliko €/cycle bo dodan z aktivacijo tega lever-a), action (slovenski, max 200 — specifična akcija za ta lever) },
+4. maximization.cycleEfficiencyScore [0, 100] (heuristic: margin per cycle / cycle time / fee ratio / cycle velocity — kombinirana ocena kako eficientno je vsak cikel),
+5. maximization.projectedAnnualProfit € [0, 1000000] (= maximizedProfitPerCycle × cyclesPerYear — bo izračunano v backend-u, AI ne vrača tega),
+6. maximization.cycleVsVolumeTradeoff: slovenski string (max 500 znakov — analiza ali je bolje povečati profit per cycle ali povečati število ciklov, s primerjavo margin-first vs volume-first approach),
+7. maximization.cycleGrade: A+ | A | B | C | D | F (A+ če maximized ≥ 200, A ≥ 100, B ≥ 50, C ≥ 25, D ≥ 10, else F),
+8. maximization.optimalCycleStrategy: HIGH_MARGIN_LOW_VOLUME | LOW_MARGIN_HIGH_VOLUME | BALANCED (katera strategija je optimalna za max annual profit),
+9. summary: slovenski povzetek (max 500 znakov — poudari current profit/cycle, maximized profit/cycle, uplift, grade, projected annual, optimal strategy).
+
+VRNI LE JSON:
+{
+  "maximization": {
+    "maximizedProfitPerCycle": 85.0,
+    "cycleUplift": 40.0,
+    "maximizationLevers": [
+      { "lever": "BETTER_SOURCING", "currentGap": 7.5, "potentialGain": 10.0, "action": "Aktiviraj AI sourcing z cross-border in deal score > 85." },
+      { "lever": "HIGHER_SELL_PRICE", "currentGap": 15.0, "potentialGain": 14.0, "action": "Vklopi AI pricing engine in dynamic pricing za +25% sell price." },
+      { "lever": "LOWER_FEES", "currentGap": 3.0, "potentialGain": 4.0, "action": "Optimiziraj fee structure z bundle deals in tax-aware selling." },
+      { "lever": "BUNDLE_UPSELL", "currentGap": 5.0, "potentialGain": 6.0, "action": "Bundle complementary items za +10-15% upsell per cycle." },
+      { "lever": "REFURBISHMENT", "currentGap": 8.0, "potentialGain": 6.0, "action": "Vzpostavi refurbishment pipeline za +15-20% perceived value." }
+    ],
+    "cycleEfficiencyScore": 72,
+    "cycleVsVolumeTradeoff": "Trenutno: 45€/cycle × 13 cycles/yr = 585€/yr. Maximizirano: 85€/cycle × 13 cycles/yr = 1105€/yr. Alternativa 2× volume / 0.5× margin: 1105€/yr. Strategija: BALANCED.",
+    "cycleGrade": "B",
+    "optimalCycleStrategy": "BALANCED"
+  },
+  "summary": "Current: 45.00€/cycle (28d hold, 13.0 cycles/yr, 585€/yr, 50 SOLD 12m, fees 5.0%). Maximized: 85.00€/cycle (+40.00€ uplift, grade B, efficiency 72/100). Projected annual: 1105€/yr. Strategy: BALANCED."
+}${GROUNDING_PROMPT_SUFFIX}`;
+}
+
+// --- AI override merge (extracted, pure) --------------------------------
+
+interface AiMergeResult {
+  maximization: CycleMaximization;
+  summary: string;
+  aiUsed: boolean;
+}
+
+function applyAiOverrides(
+  parsed: AiResponse | null,
+  current: CurrentState,
+  deterministicMaximization: CycleMaximization,
+): AiMergeResult {
+  let maximization = deterministicMaximization;
+  let summary = buildSummary(current, maximization);
+  let aiUsed = false;
+
+  if (parsed && typeof parsed === 'object' && parsed.maximization) {
+    const aiMax = parsed.maximization;
+
+    // Anti-hallucination: maximized ∈ [current, min(current × 3, 5000)]
+    const minBound = Math.max(PROFIT_MIN, current.avgProfitPerCycle);
+    const maxBoundRelative = current.avgProfitPerCycle * (1 + ABSOLUTE_UPLIFT_CAP_PCT / 100);
+    const maxBound = Math.min(PROFIT_MAX, maxBoundRelative);
+    const maximizedProfitPerCycle = round2(clampNum(
+      aiMax.maximizedProfitPerCycle,
+      minBound, maxBound,
+      deterministicMaximization.maximizedProfitPerCycle,
+    ));
+    const cycleUplift = round2(clampNum(
+      Math.max(0, maximizedProfitPerCycle - current.avgProfitPerCycle),
+      UPLIFT_MIN, UPLIFT_MAX, 0,
+    ));
+
+    // Override maximizationLevers — must have 5 entries
+    let maximizationLevers = deterministicMaximization.maximizationLevers;
+    if (Array.isArray(aiMax.maximizationLevers) && aiMax.maximizationLevers.length >= 4) {
+      const aiLevers: CycleLeverEntry[] = [];
+      for (const l of aiMax.maximizationLevers.slice(0, MAX_LEVERS)) {
+        if (!l || typeof l !== 'object') continue;
+        const lever = clampEnum(l.lever, VALID_LEVER, 'BETTER_SOURCING');
+        aiLevers.push({
+          lever,
+          currentGap: round2(clampNum(
+            l.currentGap, GAP_MIN, GAP_MAX, 0,
+          )),
+          potentialGain: round2(clampNum(
+            l.potentialGain, GAIN_MIN, GAIN_MAX, 0,
+          )),
+          action: clampString(l.action, 200, `Maximiziraj ${lever.toLowerCase().replace('_', ' ')} za višji profit per cycle.`),
+        });
+      }
+      if (aiLevers.length >= 4) {
+        maximizationLevers = aiLevers.slice(0, MAX_LEVERS);
+      }
+    }
+
+    // Override cycleEfficiencyScore
+    const cycleEfficiencyScore = round0(clampNum(
+      aiMax.cycleEfficiencyScore,
+      SCORE_MIN, SCORE_MAX,
+      deterministicMaximization.cycleEfficiencyScore,
+    ));
+
+    // Override cycleGrade
+    const cycleGrade = aiMax.cycleGrade
+      ? clampEnum(aiMax.cycleGrade, VALID_GRADE, decideCycleGrade(maximizedProfitPerCycle))
+      : decideCycleGrade(maximizedProfitPerCycle);
+
+    // Override optimalCycleStrategy
+    const optimalCycleStrategy = aiMax.optimalCycleStrategy
+      ? clampEnum(aiMax.optimalCycleStrategy, VALID_STRATEGY, decideOptimalCycleStrategy(current, maximizedProfitPerCycle))
+      : decideOptimalCycleStrategy(current, maximizedProfitPerCycle);
+
+    // Override cycleVsVolumeTradeoff
+    const cycleVsVolumeTradeoff = clampString(
+      aiMax.cycleVsVolumeTradeoff,
+      500,
+      buildCycleVsVolumeTradeoff(current, maximizedProfitPerCycle, optimalCycleStrategy),
+    );
+
+    // Recompute projectedAnnualProfit
+    const projectedAnnualProfit = round0(clampNum(
+      maximizedProfitPerCycle * current.cyclesPerYear,
+      ANNUAL_PROFIT_MIN, ANNUAL_PROFIT_MAX, 0,
+    ));
+
+    maximization = {
+      maximizedProfitPerCycle,
+      cycleUplift,
+      maximizationLevers,
+      cycleEfficiencyScore,
+      projectedAnnualProfit,
+      cycleVsVolumeTradeoff,
+      cycleGrade,
+      optimalCycleStrategy,
+    };
+
+    summary = clampString(parsed.summary, 500, buildSummary(current, maximization));
+    aiUsed = true;
+  }
+
+  return { maximization, summary, aiUsed };
+}
+
+// --- Input ---------------------------------------------------------------
+
+// eslint-disable-next-line @typescript-eslint/no-empty-object-type
+interface ProfitPerCycleMaximizerInput {}
+
 // --- Handler -------------------------------------------------------------
 
-export async function GET(req: NextRequest) {
-  return handleProfitPerCycleMaximizer(req);
-}
-export async function POST(req: NextRequest) {
-  return handleProfitPerCycleMaximizer(req);
-}
+const profitPerCycleHandler = withAiRoute<ProfitPerCycleMaximizerInput>({
+  endpoint: '/api/ai/profit-per-cycle-maximizer',
+  maxDuration: 60,
+  enforceBudget: true, // AI klic — preveri budget
+  method: 'GET', // GET+POST — body ignored
 
-async function handleProfitPerCycleMaximizer(req: NextRequest) {
-  try {
-    const rl = checkRateLimit(req, 'ai-profit-per-cycle-maximizer', 20);
-    if (!rl.allowed) return rateLimitResponse(rl);
+  parseBody: async (req) => {
+    await req.json().catch(() => ({}));
+    return {};
+  },
 
+  handler: async (_input, ctx: AiRouteContext) => {
+    const { db, callAi, parseAi, logger } = ctx;
     const now = Date.now();
     const twelveMonthsAgo = new Date(now - TWELVE_MONTHS_MS);
 
@@ -592,7 +779,7 @@ async function handleProfitPerCycleMaximizer(req: NextRequest) {
 
     // Empty-state: no SOLD trades
     if (soldTrades.length === 0) {
-      return NextResponse.json({
+      return apiOk({
         ok: true,
         current: {
           avgProfitPerCycle: 0,
@@ -631,7 +818,7 @@ async function handleProfitPerCycleMaximizer(req: NextRequest) {
     }
 
     if (soldComputed.length === 0) {
-      return NextResponse.json({
+      return apiOk({
         ok: true,
         current: {
           avgProfitPerCycle: 0,
@@ -664,8 +851,7 @@ async function handleProfitPerCycleMaximizer(req: NextRequest) {
 
     // 3) Compute current state
     const current = computeCurrent(soldComputed);
-    let maximization = buildDeterministicMaximization(current);
-    let summary = buildSummary(current, maximization);
+    const deterministicMaximization = buildDeterministicMaximization(current);
 
     // 4) AI cache check (6h TTL) — key by current month
     const currentMonth = new Date(now).toISOString().slice(0, 7); // YYYY-MM
@@ -675,7 +861,7 @@ async function handleProfitPerCycleMaximizer(req: NextRequest) {
       summary: string;
     }>(cacheKey);
     if (cached) {
-      return NextResponse.json({
+      return apiOk({
         ok: true,
         current,
         maximization: cached.maximization,
@@ -686,185 +872,20 @@ async function handleProfitPerCycleMaximizer(req: NextRequest) {
     }
 
     // 5) AI prompt with grounding
-    const settings = await getSettingsRow();
-    const aiSettings: AiSettings = {
-      provider: settings.aiProvider as AiProviderType,
-      baseUrl: settings.aiBaseUrl,
-      apiKey: settings.aiApiKey,
-      model: settings.aiModel,
-      fallbackProvider: (settings.fallbackProvider || '') as
-        | AiProviderType
-        | '',
-      fallbackBaseUrl: settings.fallbackBaseUrl || '',
-      fallbackApiKey: settings.fallbackApiKey || '',
-      fallbackModel: settings.fallbackModel || '',
-    };
+    const promptData = buildPromptData(soldComputed, current, deterministicMaximization);
+    const prompt = buildPrompt(promptData);
 
-    const soldSampleForAI = soldComputed
-      .slice(-MAX_TRADES_FOR_AI)
-      .map((t) => ({
-        profit: t.profit,
-        sellPrice: t.sellPrice,
-        buyCost: t.buyCost,
-        fees: t.fees,
-        holdDays: t.holdDays,
-      }));
-
-    const promptData = {
-      soldCount12m: soldComputed.length,
-      current,
-      deterministicMaximization: {
-        maximizedProfitPerCycle: maximization.maximizedProfitPerCycle,
-        cycleUplift: maximization.cycleUplift,
-        maximizationLevers: maximization.maximizationLevers,
-        cycleEfficiencyScore: maximization.cycleEfficiencyScore,
-        projectedAnnualProfit: maximization.projectedAnnualProfit,
-        cycleVsVolumeTradeoff: maximization.cycleVsVolumeTradeoff,
-        cycleGrade: maximization.cycleGrade,
-        optimalCycleStrategy: maximization.optimalCycleStrategy,
-      },
-      soldSample: soldSampleForAI,
-      caps: {
-        profitMin: PROFIT_MIN, profitMax: PROFIT_MAX,
-        cycleTimeMin: CYCLE_TIME_MIN, cycleTimeMax: CYCLE_TIME_MAX,
-        cyclesMin: CYCLES_MIN, cyclesMax: CYCLES_MAX,
-        scoreMin: SCORE_MIN, scoreMax: SCORE_MAX,
-        upliftMin: UPLIFT_MIN, upliftMax: UPLIFT_MAX,
-        gainMin: GAIN_MIN, gainMax: GAIN_MAX,
-        gapMin: GAP_MIN, gapMax: GAP_MAX,
-        annualProfitMin: ANNUAL_PROFIT_MIN, annualProfitMax: ANNUAL_PROFIT_MAX,
-        absoluteUpliftCapPct: ABSOLUTE_UPLIFT_CAP_PCT,
-      },
-      leverGainPct: LEVER_GAIN_PCT,
-    };
-
-    const prompt = `Si AI "Profit Per Cycle Maximizer" za slovenske in srednjeevropske oglasne platforme (Bolha, Vinted, Avtonet, mobile.de).
-Si strokovnjak za PROFIT PER CYCLE MAXIMIZATION — kako maksimizirati PROFIT PER CYCLE (koliko € se ekstrahira iz vsakega individualnega buy-to-sell cikla). Tvoj cilj je "Tvoj profit per cycle je 45€, ampak bi lahko bil 85€ z better sourcing in higher sell prices." Razlika od inventory-capital-velocity-maximizer (v8.10 ki maksimizira VELOCITY kapitala skozi inventory — koliko cycle-ov/leto capital ciklira) — ti MAKSIMIZIRAŠ PROFIT PER CYCLE (€/cycle extracted per individual cycle, ne število ciklov). Razlika od profit-growth-rate-maximizer (v8.11 ki maksimizira GROWTH RATE skupnega profit-a v %/mo MoM) — ti MAKSIMIZIRAŠ PROFIT PER CYCLE v absolutnem €/cycle (per-cycle extraction, ne %/mo growth). Razlika od inventory-annual-yield-maximizer (v8.11 ki maksimizira annual yield held inventory-ja) — ti MAKSIMIZIRAŠ PROFIT PER CYCLE (per-cycle €, ne letni yield %). Razlika od deal-source-profit-per-day-maximizer (v8.11 ki maksimizira profit per day per source €/dan) — ti MAKSIMIZIRAŠ PROFIT PER CYCLE čez celoten portfolio (€/cycle, ne €/dan per source). Razlika od profit-multiplier-maximizer (v8.09 ki maksimizira maximum profit multiplier z 6 dimensions) — ti MAKSIMIZIRAŠ PROFIT PER CYCLE z maximizationLevers (BETTER_SOURCING/HIGHER_SELL_PRICE/LOWER_FEES/BUNDLE_UPSELL/REFURBISHMENT) in cycleVsVolumeTradeoff. Razlika od profit-velocity-maximizer (v7.98 ki maksimizira €/day velocity) — ti MAKSIMIZIRAŠ PROFIT PER CYCLE (€/cycle, ne €/dan). Razlika od profit-per-day-scaling-maximizer (v8.08 ki maksimizira in skalira daily profit z scalingPath) — ti MAKSIMIZIRAŠ PROFIT PER CYCLE z cycleEfficiencyScore in optimalCycleStrategy (HIGH_MARGIN_LOW_VOLUME vs LOW_MARGIN_HIGH_VOLUME). Razlika od profit-per-trade-growth-maximizer (v8.10 ki maksimizira growth rate profit-a PER TRADE v €/mo) — ti MAKSIMIZIRAŠ PROFIT PER CYCLE (absolute €/cycle, ne growth rate €/mo). Razlika od inventory-profit-per-day-maximizer (v8.02 ki maksimizira daily profit per item) — ti MAKSIMIZIRAŠ PROFIT PER CYCLE (€/cycle absolute, ne €/dan per item). Razlika od profit-per-euro-maximizer (v8.07 ki maksimizira profit per € deployed) — ti MAKSIMIZIRAŠ PROFIT PER CYCLE (€ extracted per cycle, ne € profit per € capital).
-
-DETERMINISTIČNI PODATKI (izračunano iz DB — SOLD trgovin v zadnjih 12 mesecih):
-${JSON.stringify(promptData, null, 2)}
-
-PRAVILA ZA AI ODGOVOR:
-1. maximization.maximizedProfitPerCycle €/cycle [0, 5000] (optimal achievable, ≥ current.avgProfitPerCycle, ≤ min(current × 3, 5000) — anti-hallucination),
-2. maximization.cycleUplift €/cycle [0, 5000] (improvement = maximized − current),
-3. maximization.maximizationLevers: 5 elementov { lever BETTER_SOURCING/HIGHER_SELL_PRICE/LOWER_FEES/BUNDLE_UPSELL/REFURBISHMENT, currentGap € [0, 5000] (koliko potential-a je še unrealized na tem lever-ju — heuristic iz current gap), potentialGain € [0, 5000] (koliko €/cycle bo dodan z aktivacijo tega lever-a), action (slovenski, max 200 — specifična akcija za ta lever) },
-4. maximization.cycleEfficiencyScore [0, 100] (heuristic: margin per cycle / cycle time / fee ratio / cycle velocity — kombinirana ocena kako eficientno je vsak cikel),
-5. maximization.projectedAnnualProfit € [0, 1000000] (= maximizedProfitPerCycle × cyclesPerYear — bo izračunano v backend-u, AI ne vrača tega),
-6. maximization.cycleVsVolumeTradeoff: slovenski string (max 500 znakov — analiza ali je bolje povečati profit per cycle ali povečati število ciklov, s primerjavo margin-first vs volume-first approach),
-7. maximization.cycleGrade: A+ | A | B | C | D | F (A+ če maximized ≥ 200, A ≥ 100, B ≥ 50, C ≥ 25, D ≥ 10, else F),
-8. maximization.optimalCycleStrategy: HIGH_MARGIN_LOW_VOLUME | LOW_MARGIN_HIGH_VOLUME | BALANCED (katera strategija je optimalna za max annual profit),
-9. summary: slovenski povzetek (max 500 znakov — poudari current profit/cycle, maximized profit/cycle, uplift, grade, projected annual, optimal strategy).
-
-VRNI LE JSON:
-{
-  "maximization": {
-    "maximizedProfitPerCycle": 85.0,
-    "cycleUplift": 40.0,
-    "maximizationLevers": [
-      { "lever": "BETTER_SOURCING", "currentGap": 7.5, "potentialGain": 10.0, "action": "Aktiviraj AI sourcing z cross-border in deal score > 85." },
-      { "lever": "HIGHER_SELL_PRICE", "currentGap": 15.0, "potentialGain": 14.0, "action": "Vklopi AI pricing engine in dynamic pricing za +25% sell price." },
-      { "lever": "LOWER_FEES", "currentGap": 3.0, "potentialGain": 4.0, "action": "Optimiziraj fee structure z bundle deals in tax-aware selling." },
-      { "lever": "BUNDLE_UPSELL", "currentGap": 5.0, "potentialGain": 6.0, "action": "Bundle complementary items za +10-15% upsell per cycle." },
-      { "lever": "REFURBISHMENT", "currentGap": 8.0, "potentialGain": 6.0, "action": "Vzpostavi refurbishment pipeline za +15-20% perceived value." }
-    ],
-    "cycleEfficiencyScore": 72,
-    "cycleVsVolumeTradeoff": "Trenutno: 45€/cycle × 13 cycles/yr = 585€/yr. Maximizirano: 85€/cycle × 13 cycles/yr = 1105€/yr. Alternativa 2× volume / 0.5× margin: 1105€/yr. Strategija: BALANCED.",
-    "cycleGrade": "B",
-    "optimalCycleStrategy": "BALANCED"
-  },
-  "summary": "Current: 45.00€/cycle (28d hold, 13.0 cycles/yr, 585€/yr, 50 SOLD 12m, fees 5.0%). Maximized: 85.00€/cycle (+40.00€ uplift, grade B, efficiency 72/100). Projected annual: 1105€/yr. Strategy: BALANCED."
-}${GROUNDING_PROMPT_SUFFIX}`;
-
+    let maximization = deterministicMaximization;
+    let summary = buildSummary(current, maximization);
     let aiUsed = false;
 
     try {
-      const raw = await callProviderForRaw(aiSettings, prompt);
-      const parsed = parseJsonLooseExported(raw) as AiResponse | null;
-
-      if (parsed && typeof parsed === 'object' && parsed.maximization) {
-        const aiMax = parsed.maximization;
-
-        // Anti-hallucination: maximized ∈ [current, min(current × 3, 5000)]
-        const minBound = Math.max(PROFIT_MIN, current.avgProfitPerCycle);
-        const maxBoundRelative = current.avgProfitPerCycle * (1 + ABSOLUTE_UPLIFT_CAP_PCT / 100);
-        const maxBound = Math.min(PROFIT_MAX, maxBoundRelative);
-        const maximizedProfitPerCycle = round2(clampNum(
-          aiMax.maximizedProfitPerCycle,
-          minBound, maxBound,
-          maximization.maximizedProfitPerCycle,
-        ));
-        const cycleUplift = round2(clampNum(
-          Math.max(0, maximizedProfitPerCycle - current.avgProfitPerCycle),
-          UPLIFT_MIN, UPLIFT_MAX, 0,
-        ));
-
-        // Override maximizationLevers — must have 5 entries
-        let maximizationLevers = maximization.maximizationLevers;
-        if (Array.isArray(aiMax.maximizationLevers) && aiMax.maximizationLevers.length >= 4) {
-          const aiLevers: CycleLeverEntry[] = [];
-          for (const l of aiMax.maximizationLevers.slice(0, MAX_LEVERS)) {
-            if (!l || typeof l !== 'object') continue;
-            const lever = clampEnum(l.lever, VALID_LEVER, 'BETTER_SOURCING');
-            aiLevers.push({
-              lever,
-              currentGap: round2(clampNum(
-                l.currentGap, GAP_MIN, GAP_MAX, 0,
-              )),
-              potentialGain: round2(clampNum(
-                l.potentialGain, GAIN_MIN, GAIN_MAX, 0,
-              )),
-              action: clampString(l.action, 200, `Maximiziraj ${lever.toLowerCase().replace('_', ' ')} za višji profit per cycle.`),
-            });
-          }
-          if (aiLevers.length >= 4) {
-            maximizationLevers = aiLevers.slice(0, MAX_LEVERS);
-          }
-        }
-
-        // Override cycleEfficiencyScore
-        const cycleEfficiencyScore = round0(clampNum(
-          aiMax.cycleEfficiencyScore,
-          SCORE_MIN, SCORE_MAX,
-          maximization.cycleEfficiencyScore,
-        ));
-
-        // Override cycleGrade
-        const cycleGrade = aiMax.cycleGrade
-          ? clampEnum(aiMax.cycleGrade, VALID_GRADE, decideCycleGrade(maximizedProfitPerCycle))
-          : decideCycleGrade(maximizedProfitPerCycle);
-
-        // Override optimalCycleStrategy
-        const optimalCycleStrategy = aiMax.optimalCycleStrategy
-          ? clampEnum(aiMax.optimalCycleStrategy, VALID_STRATEGY, decideOptimalCycleStrategy(current, maximizedProfitPerCycle))
-          : decideOptimalCycleStrategy(current, maximizedProfitPerCycle);
-
-        // Override cycleVsVolumeTradeoff
-        const cycleVsVolumeTradeoff = clampString(
-          aiMax.cycleVsVolumeTradeoff,
-          500,
-          buildCycleVsVolumeTradeoff(current, maximizedProfitPerCycle, optimalCycleStrategy),
-        );
-
-        // Recompute projectedAnnualProfit
-        const projectedAnnualProfit = round0(clampNum(
-          maximizedProfitPerCycle * current.cyclesPerYear,
-          ANNUAL_PROFIT_MIN, ANNUAL_PROFIT_MAX, 0,
-        ));
-
-        maximization = {
-          maximizedProfitPerCycle,
-          cycleUplift,
-          maximizationLevers,
-          cycleEfficiencyScore,
-          projectedAnnualProfit,
-          cycleVsVolumeTradeoff,
-          cycleGrade,
-          optimalCycleStrategy,
-        };
-
-        summary = clampString(parsed.summary, 500, buildSummary(current, maximization));
-        aiUsed = true;
-      }
+      const raw = await callAi(prompt);
+      const parsed = parseAi(raw) as AiResponse | null;
+      const result = applyAiOverrides(parsed, current, deterministicMaximization);
+      maximization = result.maximization;
+      summary = result.summary;
+      aiUsed = result.aiUsed;
     } catch (err) {
       logger.warn(
         '/api/ai/profit-per-cycle-maximizer',
@@ -878,22 +899,15 @@ VRNI LE JSON:
       setCachedAI(cacheKey, { maximization, summary });
     }
 
-    return NextResponse.json({
+    return apiOk({
       ok: true,
       current,
       maximization,
       summary,
       aiUsed,
     } satisfies ProfitPerCycleMaximizerResponse);
-  } catch (err: any) {
-    logger.error(
-      '/api/ai/profit-per-cycle-maximizer',
-      'handler failed',
-      err,
-    );
-    return NextResponse.json(
-      { error: err?.message ?? 'Napaka' },
-      { status: 500 },
-    );
-  }
-}
+  },
+});
+
+export const GET = profitPerCycleHandler;
+export const POST = profitPerCycleHandler;

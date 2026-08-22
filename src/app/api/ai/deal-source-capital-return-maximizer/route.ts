@@ -1,29 +1,33 @@
-// v8.09: AI Deal Source Capital Return Maximizer — AI MAKSIMIZIRA CAPITAL
-// RETURN per source — koliko invested kapitala se VRNE iz vsakega source-a.
-// "Bolha vrne 85% invested capital-a, Vinted vrne 72%. Optimalno: 95% Bolha +
-// 88% Vinted z temi akcijami." Razlika od deal-source-profit-velocity-maximizer
-// (v8.08 ki maksimizira VELOCITY profit-a per source — €/teden kako hitro profit
-// kopiči) — ta MAKSIMIZIRA CAPITAL RETURN per source (% invested capital ki
-// se vrne, ne €/teden profit velocity). Razlika od deal-source-cash-flow-
-// maximizer (v8.06 ki maksimizira NET CASH FLOW per source po fees + carrying)
-// — ta maksimizira CAPITAL RETURN RATE per source (% capital returned, ne €
-// cash flow). Razlika od deal-source-revenue-maximizer (v8.07 ki maksimizira
-// total revenue per source) — ta maksimizira CAPITAL RETURN (returned/invested,
-// ne top-line revenue). Razlika od deal-source-profit-maximizer (v7.97 ki
-// maksimizira total profit per source) — ta maksimizira CAPITAL RETURN RATE
-// per source (% capital ki se vrne, ne € profit). Razlika od
+// v8.09 / v8.96.5-batch1: AI Deal Source Capital Return Maximizer — AI
+// MAKSIMIZIRA CAPITAL RETURN per source — koliko invested kapitala se VRNE
+// iz vsakega source-a. "Bolha vrne 85% invested capital-a, Vinted vrne 72%.
+// Optimalno: 95% Bolha + 88% Vinted z temi akcijami." Refaktoriran z
+// withAiRoute helperjem (v8.96) + enforceBudget guard.
+//
+// Razlika od deal-source-profit-velocity-maximizer (v8.08 ki maksimizira
+// VELOCITY profit-a per source — €/teden kako hitro profit kopiči) — ta
+// MAKSIMIZIRA CAPITAL RETURN per source (% invested capital ki se vrne, ne
+// €/teden profit velocity). Razlika od deal-source-cash-flow-maximizer (v8.06
+// ki maksimizira NET CASH FLOW per source po fees + carrying) — ta maksimizira
+// CAPITAL RETURN RATE per source (% capital returned, ne € cash flow). Razlika
+// od deal-source-revenue-maximizer (v8.07 ki maksimizira total revenue per
+// source) — ta maksimizira CAPITAL RETURN (returned/invested, ne top-line
+// revenue). Razlika od deal-source-profit-maximizer (v7.97 ki maksimizira
+// total profit per source) — ta maksimizira CAPITAL RETURN RATE per source
+// (% capital ki se vrne, ne € profit). Razlika od
 // deal-source-profit-per-trade-maximizer (v8.04 ki maksimizira profit per
-// trade €) — ta maksimizira CAPITAL RETURN per source (% returned, ne €/trade).
-// Razlika od deal-source-margin-maximizer (v8.03 ki maksimizira margin %) — ta
-// maksimizira CAPITAL RETURN RATE per source z returnMaximizationAction in
-// capitalRecyclingSpeed. Razlika od deal-source-roi-maximizer (v8.00 ki
-// maksimizira ROI per source) — ta maksimizira CAPITAL RETURN (returned/invested,
-// ne profit/cost). Razlika od deal-source-capital-efficiency-maximizer (v8.05
-// ki maksimizira capital efficiency per source = profit per euro per day) — ta
-// maksimizira CAPITAL RETURN RATE per source (% capital returned, ne profit
-// per euro per day). Razlika od deal-source-volume-maximizer (v8.02 ki
-// maksimizira trade volume per source) — ta maksimizira CAPITAL RETURN per
-// source (% capital ki se vrne, ne trade volume). Razlika od
+// trade €) — ta maksimizira CAPITAL RETURN per source (% returned, ne
+// €/trade). Razlika od deal-source-margin-maximizer (v8.03 ki maksimizira
+// margin %) — ta maksimizira CAPITAL RETURN RATE per source z
+// returnMaximizationAction in capitalRecyclingSpeed. Razlika od
+// deal-source-roi-maximizer (v8.00 ki maksimizira ROI per source) — ta
+// maksimizira CAPITAL RETURN (returned/invested, ne profit/cost). Razlika od
+// deal-source-capital-efficiency-maximizer (v8.05 ki maksimizira capital
+// efficiency per source = profit per euro per day) — ta maksimizira CAPITAL
+// RETURN RATE per source (% capital returned, ne profit per euro per day).
+// Razlika od deal-source-volume-maximizer (v8.02 ki maksimizira trade volume
+// per source) — ta maksimizira CAPITAL RETURN per source (% capital ki se
+// vrne, ne trade volume). Razlika od
 // inventory-capital-return-maximizer (v8.07 ki maksimizira capital return OF
 // inventory portfolio) — ta maksimizira CAPITAL RETURN per SOURCE z
 // sourceReturnRanking in returnAtRiskCapital. Razlika od
@@ -34,23 +38,16 @@
 // GET+POST /api/ai/deal-source-capital-return-maximizer
 // (AI-enhanced + grounding + anti-hallucination + 6h cache + deterministic fallback)
 
-import { NextRequest, NextResponse } from 'next/server';
-import { db } from '@/lib/db';
-import { getSettingsRow } from '@/lib/pipeline';
-import {
-  callProviderForRaw,
-  parseJsonLooseExported,
-  type AiProviderType,
-  type AiSettings,
-} from '@/lib/ai';
+import { withAiRoute, AI_ROUTE_DEFAULTS, type AiRouteContext } from '@/lib/with-ai-route';
+import { apiOk } from '@/lib/api-response';
 import { GROUNDING_PROMPT_SUFFIX } from '@/lib/anti-hallucination';
 import { getCachedAI, setCachedAI } from '@/lib/ai-cache';
-import { checkRateLimit, rateLimitResponse } from '@/lib/rate-limit';
-import { logger } from '@/lib/logger';
 
-export const runtime = 'nodejs';
-export const dynamic = 'force-dynamic';
+export const { runtime, dynamic } = AI_ROUTE_DEFAULTS;
 export const maxDuration = 60;
+
+// eslint-disable-next-line @typescript-eslint/no-empty-object-type
+interface DealSourceCapitalReturnMaximizerInput {}
 
 // --- Types ---------------------------------------------------------------
 
@@ -526,162 +523,45 @@ function buildSummary(entries: SourceEntry[], portfolio: PortfolioSummary): stri
   return parts.join(' ').slice(0, 400);
 }
 
-// --- Handler -------------------------------------------------------------
+// --- AI prompt + merge helpers (pure, extracted OUTSIDE handler) ----------
 
-export async function GET(req: NextRequest) {
-  return handleDealSourceCapitalReturnMaximizer(req);
+function buildPromptData(
+  computed: TradeComputed[],
+  entries: SourceEntry[],
+  portfolio: PortfolioSummary,
+) {
+  const sourcesForAI = entries.map((e) => ({
+    source: e.source,
+    displayName: e.displayName,
+    metrics: e.metrics,
+    deterministicMaximization: e.maximization,
+  }));
+
+  return {
+    totalTrades: computed.length,
+    totalSources: entries.length,
+    sources: sourcesForAI,
+    deterministicPortfolio: {
+      totalCurrentReturnRate: portfolio.totalCurrentReturnRate,
+      totalMaximizedReturnRate: portfolio.totalMaximizedReturnRate,
+      totalReturnUplift: portfolio.totalReturnUplift,
+      totalCapitalAtRisk: portfolio.totalCapitalAtRisk,
+      sourceReturnRanking: portfolio.sourceReturnRanking,
+      bestReturnSource: portfolio.bestReturnSource,
+    },
+    caps: {
+      capitalMin: CAPITAL_MIN, capitalMax: CAPITAL_MAX,
+      returnRateMin: RETURN_RATE_MIN, returnRateMax: RETURN_RATE_MAX,
+      returnTimeMin: RETURN_TIME_MIN, returnTimeMax: RETURN_TIME_MAX,
+      efficiencyMin: EFFICIENCY_MIN, efficiencyMax: EFFICIENCY_MAX,
+      upliftMin: UPLIFT_MIN, upliftMax: UPLIFT_MAX,
+      scoreMin: SCORE_MIN, scoreMax: SCORE_MAX,
+    },
+  };
 }
-export async function POST(req: NextRequest) {
-  return handleDealSourceCapitalReturnMaximizer(req);
-}
 
-async function handleDealSourceCapitalReturnMaximizer(req: NextRequest) {
-  try {
-    const rl = checkRateLimit(req, 'ai-deal-source-capital-return-maximizer', 20);
-    if (!rl.allowed) return rateLimitResponse(rl);
-
-    const now = Date.now();
-    const twelveMonthsAgo = new Date(now - TWELVE_MONTHS_MS);
-
-    // 1) Query SOLD trades from last 12 months with linked Listing (for source)
-    const soldTrades = await db.trade.findMany({
-      where: {
-        status: 'sold',
-        sellDate: { gte: twelveMonthsAgo },
-        sellPrice: { gt: 0 },
-      },
-      select: {
-        id: true,
-        buyPrice: true,
-        buyFees: true,
-        buyDate: true,
-        sellPrice: true,
-        sellFees: true,
-        sellDate: true,
-        buyLocation: true,
-        listing: {
-          select: {
-            monitor: { select: { source: true, tags: true } },
-          },
-        },
-      },
-      orderBy: { sellDate: 'asc' },
-      take: 100000,
-    }) as unknown as SoldTradeRow[];
-
-    // Empty-state: no SOLD trades
-    if (soldTrades.length === 0) {
-      return NextResponse.json({
-        ok: true,
-        sources: [],
-        portfolio: {
-          totalCurrentReturnRate: 0,
-          totalMaximizedReturnRate: 0,
-          totalReturnUplift: 0,
-          totalCapitalAtRisk: 0,
-          sourceReturnRanking: [],
-          bestReturnSource: '',
-        },
-        summary: 'Ni SOLD trgovin v zadnjih 12 mesecih — Deal Source Capital Return Maximizer ni mogoč.',
-        aiUsed: false,
-        message: 'Ni SOLD trgovin v zadnjih 12 mesecih — Deal Source Capital Return Maximizer ni mogoč.',
-      } satisfies DealSourceCapitalReturnResponse);
-    }
-
-    // 2) Compute per-trade metrics and aggregate by source
-    const computed: TradeComputed[] = [];
-    for (const t of soldTrades) {
-      const c = computeTrade(t, now);
-      if (c) computed.push(c);
-    }
-
-    if (computed.length === 0) {
-      return NextResponse.json({
-        ok: true,
-        sources: [],
-        portfolio: {
-          totalCurrentReturnRate: 0,
-          totalMaximizedReturnRate: 0,
-          totalReturnUplift: 0,
-          totalCapitalAtRisk: 0,
-          sourceReturnRanking: [],
-          bestReturnSource: '',
-        },
-        summary: 'Ni veljavnih SOLD trgovin — Deal Source Capital Return Maximizer ni mogoč.',
-        aiUsed: false,
-        message: 'Ni veljavnih SOLD trgovin — Deal Source Capital Return Maximizer ni mogoč.',
-      } satisfies DealSourceCapitalReturnResponse);
-    }
-
-    const aggMap = aggregateBySource(computed);
-    let entries = buildSourceEntries(aggMap);
-    let portfolio = buildPortfolio(entries);
-    let summary = buildSummary(entries, portfolio);
-
-    // 3) AI cache check (6h TTL) — key by current month
-    const currentMonth = new Date(now).toISOString().slice(0, 7); // YYYY-MM
-    const cacheKey = `deal-source-capital-return-maximizer:${currentMonth}`;
-    const cached = getCachedAI<{
-      sources: SourceEntry[];
-      portfolio: PortfolioSummary;
-      summary: string;
-    }>(cacheKey);
-    if (cached) {
-      return NextResponse.json({
-        ok: true,
-        sources: cached.sources,
-        portfolio: cached.portfolio,
-        summary: cached.summary,
-        cached: true,
-        aiUsed: true,
-      } satisfies DealSourceCapitalReturnResponse);
-    }
-
-    // 4) AI prompt with grounding
-    const settings = await getSettingsRow();
-    const aiSettings: AiSettings = {
-      provider: settings.aiProvider as AiProviderType,
-      baseUrl: settings.aiBaseUrl,
-      apiKey: settings.aiApiKey,
-      model: settings.aiModel,
-      fallbackProvider: (settings.fallbackProvider || '') as
-        | AiProviderType
-        | '',
-      fallbackBaseUrl: settings.fallbackBaseUrl || '',
-      fallbackApiKey: settings.fallbackApiKey || '',
-      fallbackModel: settings.fallbackModel || '',
-    };
-
-    const sourcesForAI = entries.map((e) => ({
-      source: e.source,
-      displayName: e.displayName,
-      metrics: e.metrics,
-      deterministicMaximization: e.maximization,
-    }));
-
-    const promptData = {
-      totalTrades: computed.length,
-      totalSources: entries.length,
-      sources: sourcesForAI,
-      deterministicPortfolio: {
-        totalCurrentReturnRate: portfolio.totalCurrentReturnRate,
-        totalMaximizedReturnRate: portfolio.totalMaximizedReturnRate,
-        totalReturnUplift: portfolio.totalReturnUplift,
-        totalCapitalAtRisk: portfolio.totalCapitalAtRisk,
-        sourceReturnRanking: portfolio.sourceReturnRanking,
-        bestReturnSource: portfolio.bestReturnSource,
-      },
-      caps: {
-        capitalMin: CAPITAL_MIN, capitalMax: CAPITAL_MAX,
-        returnRateMin: RETURN_RATE_MIN, returnRateMax: RETURN_RATE_MAX,
-        returnTimeMin: RETURN_TIME_MIN, returnTimeMax: RETURN_TIME_MAX,
-        efficiencyMin: EFFICIENCY_MIN, efficiencyMax: EFFICIENCY_MAX,
-        upliftMin: UPLIFT_MIN, upliftMax: UPLIFT_MAX,
-        scoreMin: SCORE_MIN, scoreMax: SCORE_MAX,
-      },
-    };
-
-    const prompt = `Si AI "Deal Source Capital Return Maximizer" za slovenske in srednjeevropske oglasne platforme (Bolha, Vinted, Avtonet, mobile.de).
+function buildPrompt(promptData: ReturnType<typeof buildPromptData>): string {
+  return `Si AI "Deal Source Capital Return Maximizer" za slovenske in srednjeevropske oglasne platforme (Bolha, Vinted, Avtonet, mobile.de).
 Si strokovnjak za CAPITAL RETURN MAXIMIZATION per source — kako maksimizirati CAPITAL RETURN per source (koliko invested kapitala se VRNE iz vsakega source-a). Tvoj cilj je "Bolha vrne 85% invested capital-a, Vinted vrne 72%. Optimalno: 95% Bolha + 88% Vinted z temi akcijami." Razlika od deal-source-profit-velocity-maximizer (v8.08 ki maksimizira VELOCITY profit-a per source — €/teden kako hitro profit kopiči) — ti MAKSIMIZIRAŠ CAPITAL RETURN per source (% invested capital ki se vrne, ne €/teden profit velocity). Razlika od deal-source-cash-flow-maximizer (v8.06 ki maksimizira NET CASH FLOW per source po fees + carrying) — ta maksimizira CAPITAL RETURN RATE per source (% capital returned, ne € cash flow). Razlika od deal-source-revenue-maximizer (v8.07 ki maksimizira total revenue per source) — ta maksimizira CAPITAL RETURN (returned/invested, ne top-line revenue). Razlika od deal-source-profit-maximizer (v7.97 ki maksimizira total profit per source) — ta maksimizira CAPITAL RETURN RATE per source (% capital ki se vrne, ne € profit). Razlika od deal-source-profit-per-trade-maximizer (v8.04 ki maksimizira profit per trade €) — ta maksimizira CAPITAL RETURN per source (% returned, ne €/trade). Razlika od deal-source-margin-maximizer (v8.03 ki maksimizira margin %) — ta maksimizira CAPITAL RETURN RATE per source z returnMaximizationAction in capitalRecyclingSpeed. Razlika od deal-source-roi-maximizer (v8.00 ki maksimizira ROI per source) — ta maksimizira CAPITAL RETURN (returned/invested, ne profit/cost). Razlika od deal-source-capital-efficiency-maximizer (v8.05 ki maksimizira capital efficiency per source = profit per euro per day) — ta maksimizira CAPITAL RETURN RATE per source (% capital returned, ne profit per euro per day). Razlika od deal-source-volume-maximizer (v8.02 ki maksimizira trade volume per source) — ta maksimizira CAPITAL RETURN per source (% capital ki se vrne, ne trade volume). Razlika od inventory-capital-return-maximizer (v8.07 ki maksimizira capital return OF inventory portfolio) — ta maksimizira CAPITAL RETURN per SOURCE z sourceReturnRanking in returnAtRiskCapital. Razlika od profit-per-euro-maximizer (v8.07 ki maksimizira profit per euro deployed čez portfolio) — ta maksimizira CAPITAL RETURN per source (% returned, ne €/€ profit).
 
 DETERMINISTIČNI PODATKI (izračunano iz DB — SOLD trgovin v zadnjih 12 mesecih z linked Listing za source):
@@ -734,99 +614,244 @@ VRNI LE JSON:
   ],
   "summary": "2 source-a. Portfolio return: 78.5% → 92.0% (+13.5pp). Capital at risk: 230€. Best: Bolha (85% return)."
 }${GROUNDING_PROMPT_SUFFIX}`;
+}
+
+interface MergeResult {
+  sources: SourceEntry[];
+  portfolio: PortfolioSummary;
+  summary: string;
+  aiUsed: boolean;
+}
+
+function mergeAiIntoSources(
+  parsed: AiResponse | null,
+  detEntries: SourceEntry[],
+): MergeResult {
+  let entries = detEntries;
+  let portfolio = buildPortfolio(detEntries);
+  let summary = buildSummary(detEntries, portfolio);
+  let aiUsed = false;
+
+  if (parsed && typeof parsed === 'object') {
+    const aiSourcesMap = new Map<string, NonNullable<AiResponse['sources']>[number]>();
+    if (Array.isArray(parsed.sources)) {
+      for (const ai of parsed.sources) {
+        if (ai && typeof ai === 'object' && typeof ai.source === 'string') {
+          aiSourcesMap.set(ai.source, ai);
+        }
+      }
+    }
+
+    const newEntries: SourceEntry[] = [];
+    for (const det of detEntries) {
+      const ai = aiSourcesMap.get(det.source);
+      if (!ai || !ai.maximization) {
+        newEntries.push(det);
+        continue;
+      }
+
+      const aiMax = ai.maximization;
+      const action = clampEnum(
+        aiMax.returnMaximizationAction,
+        VALID_ACTION,
+        det.maximization.returnMaximizationAction,
+      );
+
+      // Anti-hallucination: maximizedReturnRate ∈ [current, current + 30pp]
+      const minBound = Math.max(RETURN_RATE_MIN, det.metrics.returnRate);
+      const maxBound = Math.min(RETURN_RATE_MAX, det.metrics.returnRate + 30);
+      const maximizedReturnRate = round2(clampNum(
+        aiMax.maximizedReturnRate,
+        minBound, maxBound,
+        det.maximization.maximizedReturnRate,
+      ));
+      const returnUplift = round2(clampNum(
+        Math.max(0, maximizedReturnRate - det.metrics.returnRate),
+        UPLIFT_MIN, UPLIFT_MAX, 0,
+      ));
+
+      // returnMaximizationLevers — must be array of strings
+      let returnMaximizationLevers: string[] = det.maximization.returnMaximizationLevers;
+      if (Array.isArray(aiMax.returnMaximizationLevers) &&
+          aiMax.returnMaximizationLevers.length >= 2) {
+        const aiLevers: string[] = [];
+        for (const l of aiMax.returnMaximizationLevers.slice(0, MAX_LEVERS)) {
+          aiLevers.push(clampString(l, 200, 'Capital return lever neopisan.'));
+        }
+        if (aiLevers.length >= 2) {
+          returnMaximizationLevers = aiLevers;
+        }
+      }
+
+      const capitalRecyclingSpeed = round0(clampNum(
+        aiMax.capitalRecyclingSpeed,
+        SCORE_MIN, SCORE_MAX, det.maximization.capitalRecyclingSpeed,
+      ));
+
+      const returnAtRiskCapital = round0(clampNum(
+        aiMax.returnAtRiskCapital,
+        CAPITAL_MIN, CAPITAL_MAX, det.maximization.returnAtRiskCapital,
+      ));
+
+      newEntries.push({
+        source: det.source,
+        displayName: det.displayName,
+        metrics: det.metrics,
+        maximization: {
+          returnMaximizationAction: action,
+          maximizedReturnRate,
+          returnUplift,
+          returnMaximizationLevers,
+          capitalRecyclingSpeed,
+          returnAtRiskCapital,
+        },
+      });
+    }
+
+    let finalEntries = detEntries;
+    if (newEntries.length === detEntries.length) {
+      finalEntries = newEntries;
+    }
+
+    // Rebuild portfolio with new entries
+    portfolio = buildPortfolio(finalEntries);
+    entries = finalEntries;
+
+    summary = clampString(parsed.summary, 400, buildSummary(finalEntries, portfolio));
+    aiUsed = true;
+  }
+
+  return { sources: entries, portfolio, summary, aiUsed };
+}
+
+// --- Handler -------------------------------------------------------------
+
+const dealSourceCapitalReturnHandler = withAiRoute<DealSourceCapitalReturnMaximizerInput>({
+  endpoint: '/api/ai/deal-source-capital-return-maximizer',
+  maxDuration: 60,
+  enforceBudget: true,
+  method: 'GET',
+
+  parseBody: async (req) => {
+    await req.json().catch(() => ({}));
+    return {};
+  },
+
+  handler: async (_input, ctx: AiRouteContext) => {
+    const { db, callAi, parseAi, logger } = ctx;
+    const now = Date.now();
+    const twelveMonthsAgo = new Date(now - TWELVE_MONTHS_MS);
+
+    // 1) Query SOLD trades from last 12 months with linked Listing (for source)
+    const soldTrades = await db.trade.findMany({
+      where: {
+        status: 'sold',
+        sellDate: { gte: twelveMonthsAgo },
+        sellPrice: { gt: 0 },
+      },
+      select: {
+        id: true,
+        buyPrice: true,
+        buyFees: true,
+        buyDate: true,
+        sellPrice: true,
+        sellFees: true,
+        sellDate: true,
+        buyLocation: true,
+        listing: {
+          select: {
+            monitor: { select: { source: true, tags: true } },
+          },
+        },
+      },
+      orderBy: { sellDate: 'asc' },
+      take: 100000,
+    }) as unknown as SoldTradeRow[];
+
+    // Empty-state: no SOLD trades
+    if (soldTrades.length === 0) {
+      return apiOk({
+        ok: true,
+        sources: [],
+        portfolio: {
+          totalCurrentReturnRate: 0,
+          totalMaximizedReturnRate: 0,
+          totalReturnUplift: 0,
+          totalCapitalAtRisk: 0,
+          sourceReturnRanking: [],
+          bestReturnSource: '',
+        },
+        summary: 'Ni SOLD trgovin v zadnjih 12 mesecih — Deal Source Capital Return Maximizer ni mogoč.',
+        aiUsed: false,
+        message: 'Ni SOLD trgovin v zadnjih 12 mesecih — Deal Source Capital Return Maximizer ni mogoč.',
+      } satisfies DealSourceCapitalReturnResponse);
+    }
+
+    // 2) Compute per-trade metrics and aggregate by source
+    const computed: TradeComputed[] = [];
+    for (const t of soldTrades) {
+      const c = computeTrade(t, now);
+      if (c) computed.push(c);
+    }
+
+    if (computed.length === 0) {
+      return apiOk({
+        ok: true,
+        sources: [],
+        portfolio: {
+          totalCurrentReturnRate: 0,
+          totalMaximizedReturnRate: 0,
+          totalReturnUplift: 0,
+          totalCapitalAtRisk: 0,
+          sourceReturnRanking: [],
+          bestReturnSource: '',
+        },
+        summary: 'Ni veljavnih SOLD trgovin — Deal Source Capital Return Maximizer ni mogoč.',
+        aiUsed: false,
+        message: 'Ni veljavnih SOLD trgovin — Deal Source Capital Return Maximizer ni mogoč.',
+      } satisfies DealSourceCapitalReturnResponse);
+    }
+
+    const aggMap = aggregateBySource(computed);
+    const detEntries = buildSourceEntries(aggMap);
+    let portfolio = buildPortfolio(detEntries);
+    let sources = detEntries;
+    let summary = buildSummary(detEntries, portfolio);
+
+    // 3) AI cache check (6h TTL) — key by current month
+    const currentMonth = new Date(now).toISOString().slice(0, 7); // YYYY-MM
+    const cacheKey = `deal-source-capital-return-maximizer:${currentMonth}`;
+    const cached = getCachedAI<{
+      sources: SourceEntry[];
+      portfolio: PortfolioSummary;
+      summary: string;
+    }>(cacheKey);
+    if (cached) {
+      return apiOk({
+        ok: true,
+        sources: cached.sources,
+        portfolio: cached.portfolio,
+        summary: cached.summary,
+        cached: true,
+        aiUsed: true,
+      } satisfies DealSourceCapitalReturnResponse);
+    }
+
+    // 4) AI prompt with grounding
+    const promptData = buildPromptData(computed, detEntries, portfolio);
+    const prompt = buildPrompt(promptData);
 
     let aiUsed = false;
 
     try {
-      const raw = await callProviderForRaw(aiSettings, prompt);
-      const parsed = parseJsonLooseExported(raw) as AiResponse | null;
+      const raw = await callAi(prompt);
+      const parsed = parseAi(raw) as AiResponse | null;
 
-      if (parsed && typeof parsed === 'object') {
-        const aiSourcesMap = new Map<string, NonNullable<AiResponse['sources']>[number]>();
-        if (Array.isArray(parsed.sources)) {
-          for (const ai of parsed.sources) {
-            if (ai && typeof ai === 'object' && typeof ai.source === 'string') {
-              aiSourcesMap.set(ai.source, ai);
-            }
-          }
-        }
-
-        const newEntries: SourceEntry[] = [];
-        for (const det of entries) {
-          const ai = aiSourcesMap.get(det.source);
-          if (!ai || !ai.maximization) {
-            newEntries.push(det);
-            continue;
-          }
-
-          const aiMax = ai.maximization;
-          const action = clampEnum(
-            aiMax.returnMaximizationAction,
-            VALID_ACTION,
-            det.maximization.returnMaximizationAction,
-          );
-
-          // Anti-hallucination: maximizedReturnRate ∈ [current, current + 30pp]
-          const minBound = Math.max(RETURN_RATE_MIN, det.metrics.returnRate);
-          const maxBound = Math.min(RETURN_RATE_MAX, det.metrics.returnRate + 30);
-          const maximizedReturnRate = round2(clampNum(
-            aiMax.maximizedReturnRate,
-            minBound, maxBound,
-            det.maximization.maximizedReturnRate,
-          ));
-          const returnUplift = round2(clampNum(
-            Math.max(0, maximizedReturnRate - det.metrics.returnRate),
-            UPLIFT_MIN, UPLIFT_MAX, 0,
-          ));
-
-          // returnMaximizationLevers — must be array of strings
-          let returnMaximizationLevers: string[] = det.maximization.returnMaximizationLevers;
-          if (Array.isArray(aiMax.returnMaximizationLevers) &&
-              aiMax.returnMaximizationLevers.length >= 2) {
-            const aiLevers: string[] = [];
-            for (const l of aiMax.returnMaximizationLevers.slice(0, MAX_LEVERS)) {
-              aiLevers.push(clampString(l, 200, 'Capital return lever neopisan.'));
-            }
-            if (aiLevers.length >= 2) {
-              returnMaximizationLevers = aiLevers;
-            }
-          }
-
-          const capitalRecyclingSpeed = round0(clampNum(
-            aiMax.capitalRecyclingSpeed,
-            SCORE_MIN, SCORE_MAX, det.maximization.capitalRecyclingSpeed,
-          ));
-
-          const returnAtRiskCapital = round0(clampNum(
-            aiMax.returnAtRiskCapital,
-            CAPITAL_MIN, CAPITAL_MAX, det.maximization.returnAtRiskCapital,
-          ));
-
-          newEntries.push({
-            source: det.source,
-            displayName: det.displayName,
-            metrics: det.metrics,
-            maximization: {
-              returnMaximizationAction: action,
-              maximizedReturnRate,
-              returnUplift,
-              returnMaximizationLevers,
-              capitalRecyclingSpeed,
-              returnAtRiskCapital,
-            },
-          });
-        }
-
-        if (newEntries.length === entries.length) {
-          entries = newEntries;
-        }
-
-        // Rebuild portfolio with new entries
-        portfolio = buildPortfolio(entries);
-
-        summary = clampString(parsed.summary, 400, buildSummary(entries, portfolio));
-        aiUsed = true;
-      }
+      const merged = mergeAiIntoSources(parsed, detEntries);
+      sources = merged.sources;
+      portfolio = merged.portfolio;
+      summary = merged.summary;
+      aiUsed = merged.aiUsed;
     } catch (err) {
       logger.warn(
         '/api/ai/deal-source-capital-return-maximizer',
@@ -837,25 +862,18 @@ VRNI LE JSON:
 
     // 5) Cache (6h TTL) — only when AI was used
     if (aiUsed) {
-      setCachedAI(cacheKey, { sources: entries, portfolio, summary });
+      setCachedAI(cacheKey, { sources, portfolio, summary });
     }
 
-    return NextResponse.json({
+    return apiOk({
       ok: true,
-      sources: entries,
+      sources,
       portfolio,
       summary,
       aiUsed,
     } satisfies DealSourceCapitalReturnResponse);
-  } catch (err: any) {
-    logger.error(
-      '/api/ai/deal-source-capital-return-maximizer',
-      'handler failed',
-      err,
-    );
-    return NextResponse.json(
-      { error: err?.message ?? 'Napaka' },
-      { status: 500 },
-    );
-  }
-}
+  },
+});
+
+export const GET = dealSourceCapitalReturnHandler;
+export const POST = dealSourceCapitalReturnHandler;

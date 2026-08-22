@@ -1,4 +1,4 @@
-// v8.02: AI Deal Source Volume Maximizer — AI maksimizira trade VOLUME per
+// v8.02 / v8.96.5-batch4: AI Deal Source Volume Maximizer — AI maksimizira trade VOLUME per
 // source — kako dobit VEČ deal-ov iz vsakega source-a BREZ dilutiranja quality.
 // Fokus na scaling VOLUME (več trades) namesto ROI ali margin. "Bolha je
 // trenutno 8 trades/mo, lahko 18 trades/mo z broader categories + cross-posting."
@@ -19,23 +19,14 @@
 
 // GET+POST /api/ai/deal-source-volume-maximizer
 // (AI-enhanced + grounding + anti-hallucination + 6h cache + deterministic fallback)
+// Refaktoriran z withAiRoute helperjem (v8.96.5) + enforceBudget guard.
 
-import { NextRequest, NextResponse } from 'next/server';
-import { db } from '@/lib/db';
-import { getSettingsRow } from '@/lib/pipeline';
-import {
-  callProviderForRaw,
-  parseJsonLooseExported,
-  type AiProviderType,
-  type AiSettings,
-} from '@/lib/ai';
+import { withAiRoute, AI_ROUTE_DEFAULTS, type AiRouteContext } from '@/lib/with-ai-route';
+import { apiOk } from '@/lib/api-response';
 import { GROUNDING_PROMPT_SUFFIX } from '@/lib/anti-hallucination';
 import { getCachedAI, setCachedAI } from '@/lib/ai-cache';
-import { checkRateLimit, rateLimitResponse } from '@/lib/rate-limit';
-import { logger } from '@/lib/logger';
 
-export const runtime = 'nodejs';
-export const dynamic = 'force-dynamic';
+export const { runtime, dynamic } = AI_ROUTE_DEFAULTS;
 export const maxDuration = 60;
 
 // --- Types ---------------------------------------------------------------
@@ -564,155 +555,40 @@ function buildSummary(
   );
 }
 
-// --- Handler -------------------------------------------------------------
+// --- Prompt builder (extracted, pure) -----------------------------------
 
-export async function GET(req: NextRequest) {
-  return handleDealSourceVolumeMaximizer(req);
+function buildPromptData(
+  soldComputed: SoldComputed[],
+  sources: SourceResult[],
+  portfolio: Portfolio,
+): Record<string, unknown> {
+  return {
+    soldCount12m: soldComputed.length,
+    sourcesCount: sources.length,
+    sources: sources.map((s) => ({
+      source: s.source,
+      current: s.current,
+      deterministicMaximization: {
+        volumeMaximizationAction: s.maximization.volumeMaximizationAction,
+        projectedVolume30d: s.maximization.projectedVolume30d,
+        volumeUplift: s.maximization.volumeUplift,
+      },
+    })),
+    portfolio,
+    caps: {
+      volumeMin: VOLUME_MIN, volumeMax: VOLUME_MAX,
+      growthMin: GROWTH_MIN, growthMax: GROWTH_MAX,
+      capacityMin: CAPACITY_MIN, capacityMax: CAPACITY_MAX,
+      profitMin: PROFIT_MIN, profitMax: PROFIT_MAX,
+      capitalMin: CAPITAL_MIN, capitalMax: CAPITAL_MAX,
+      timeMin: TIME_MIN, timeMax: TIME_MAX,
+      gainMin: GAIN_MIN, gainMax: GAIN_MAX,
+    },
+  };
 }
-export async function POST(req: NextRequest) {
-  return handleDealSourceVolumeMaximizer(req);
-}
 
-async function handleDealSourceVolumeMaximizer(req: NextRequest) {
-  try {
-    const rl = checkRateLimit(req, 'ai-deal-source-volume-maximizer', 20);
-    if (!rl.allowed) return rateLimitResponse(rl);
-
-    const now = Date.now();
-    const twelveMonthsAgo = new Date(now - TWELVE_MONTHS_MS);
-
-    // 1) Query SOLD trades last 12 months with linked Listing (for monitor.source)
-    const soldTrades = await db.trade.findMany({
-      where: {
-        status: 'sold',
-        sellDate: { gte: twelveMonthsAgo },
-        sellPrice: { gt: 0 },
-      },
-      select: {
-        id: true,
-        buyPrice: true,
-        buyFees: true,
-        buyDate: true,
-        sellPrice: true,
-        sellFees: true,
-        sellDate: true,
-        category: true,
-        listing: {
-          select: {
-            monitor: {
-              select: { source: true, tags: true },
-            },
-          },
-        },
-      },
-      orderBy: { sellDate: 'asc' },
-      take: 100000,
-    }) as unknown as SoldTradeRow[];
-
-    // Empty-state: no SOLD trades
-    if (soldTrades.length === 0) {
-      return NextResponse.json({
-        ok: true,
-        sources: [],
-        portfolio: {
-          totalCurrentVolume: 0,
-          totalProjectedVolume: 0,
-          totalVolumeUplift: 0,
-          bestVolumeSource: null,
-          volumeDiversificationAdvice: 'Ni SOLD trgovin v zadnjih 12 mesecih — Deal Source Volume Maximizer ni mogoč.',
-        },
-        summary: 'Ni SOLD trgovin v zadnjih 12 mesecih — Deal Source Volume Maximizer ni mogoč.',
-        aiUsed: false,
-        message: 'Ni SOLD trgovin v zadnjih 12 mesecih — Deal Source Volume Maximizer ni mogoč.',
-      } satisfies DealSourceVolumeResponse);
-    }
-
-    // 2) Compute aggregates
-    const soldComputed: SoldComputed[] = [];
-    for (const t of soldTrades) {
-      const c = computeSoldTrade(t, now);
-      if (c) soldComputed.push(c);
-    }
-    const bySource = aggregatePerSource(soldComputed);
-
-    // Build per-source results, sorted by current volume (highest first)
-    const sourcesRaw = Array.from(bySource.entries())
-      .map(([src, agg]) => {
-        const current = computeCurrent(agg);
-        const maximization = buildDeterministicMaximization(src, current);
-        return {
-          source: src,
-          displayName: displayName(src),
-          current,
-          maximization,
-        } as SourceResult;
-      })
-      .sort((a, b) => b.current.tradesPerMonth - a.current.tradesPerMonth);
-
-    const sources = sourcesRaw.slice(0, MAX_SOURCES);
-
-    let portfolio = buildPortfolio(sources);
-    let summary = buildSummary(portfolio, sources.length);
-
-    // 3) AI cache check (6h TTL) — key by current month
-    const currentMonth = new Date(now).toISOString().slice(0, 7); // YYYY-MM
-    const cacheKey = `deal-source-volume-maximizer:${currentMonth}`;
-    const cached = getCachedAI<{
-      sources: SourceResult[];
-      portfolio: Portfolio;
-      summary: string;
-    }>(cacheKey);
-    if (cached) {
-      return NextResponse.json({
-        ok: true,
-        sources: cached.sources,
-        portfolio: cached.portfolio,
-        summary: cached.summary,
-        cached: true,
-        aiUsed: true,
-      } satisfies DealSourceVolumeResponse);
-    }
-
-    // 4) AI prompt with grounding
-    const settings = await getSettingsRow();
-    const aiSettings: AiSettings = {
-      provider: settings.aiProvider as AiProviderType,
-      baseUrl: settings.aiBaseUrl,
-      apiKey: settings.aiApiKey,
-      model: settings.aiModel,
-      fallbackProvider: (settings.fallbackProvider || '') as
-        | AiProviderType
-        | '',
-      fallbackBaseUrl: settings.fallbackBaseUrl || '',
-      fallbackApiKey: settings.fallbackApiKey || '',
-      fallbackModel: settings.fallbackModel || '',
-    };
-
-    const promptData = {
-      soldCount12m: soldComputed.length,
-      sourcesCount: sources.length,
-      sources: sources.map((s) => ({
-        source: s.source,
-        current: s.current,
-        deterministicMaximization: {
-          volumeMaximizationAction: s.maximization.volumeMaximizationAction,
-          projectedVolume30d: s.maximization.projectedVolume30d,
-          volumeUplift: s.maximization.volumeUplift,
-        },
-      })),
-      portfolio,
-      caps: {
-        volumeMin: VOLUME_MIN, volumeMax: VOLUME_MAX,
-        growthMin: GROWTH_MIN, growthMax: GROWTH_MAX,
-        capacityMin: CAPACITY_MIN, capacityMax: CAPACITY_MAX,
-        profitMin: PROFIT_MIN, profitMax: PROFIT_MAX,
-        capitalMin: CAPITAL_MIN, capitalMax: CAPITAL_MAX,
-        timeMin: TIME_MIN, timeMax: TIME_MAX,
-        gainMin: GAIN_MIN, gainMax: GAIN_MAX,
-      },
-    };
-
-    const prompt = `Si AI "Deal Source Volume Maximizer" za slovenske in srednjeevropske oglasne platforme (Bolha, Vinted, Avtonet, mobile.de).
+function buildPrompt(promptData: Record<string, unknown>): string {
+  return `Si AI "Deal Source Volume Maximizer" za slovenske in srednjeevropske oglasne platforme (Bolha, Vinted, Avtonet, mobile.de).
 Si strokovnjak za VOLUME MAXIMIZATION per source — kako dobiti VEČ deal-ov (trades) iz vsakega source-a BREZ dilutiranja quality. Fokus je na scaling VOLUME (število trades), NE ROI ali margin. Razlika od deal-source-roi-maximizer (v8.00 ki maksimizira ROI per source) — ti MAXIMIZIRAŠ VOLUME per source (več trades). Razlika od deal-source-profit-maximizer (v7.97 ki maksimizira profit per source) — ti maksimiziraš VOLUME z quality maintenance strategy. Razlika od revenue-growth-maximizer (v8.01 ki maksimizira revenue) — ti daje PER-SOURCE volume maximization z volume levers + projected 30d volume. Razlika od profit-scale-engine (v8.02 ki scale-a cel business) — ti maksimiziraš VOLUME per source z quality maintenance strategy.
 
 DETERMINISTIČNI PODATKI (izračunano iz DB — SOLD trgovin v zadnjih 12 mesecih, per source):
@@ -759,111 +635,257 @@ VRNI LE JSON:
   },
   "summary": "5 source-ov: 22 trades/mo → 42 trades/mo projected (+20 uplift). Best: Bolha."
 }${GROUNDING_PROMPT_SUFFIX}`;
+}
 
+// --- AI override merge (extracted, mutates sources array) ---------------
+
+interface AiMergeResult {
+  portfolio: Portfolio;
+  summary: string;
+  aiUsed: boolean;
+}
+
+function applyAiOverrides(
+  parsed: AiResponse | null,
+  sources: SourceResult[],
+  portfolio: Portfolio,
+): AiMergeResult {
+  let nextPortfolio = portfolio;
+  let summary = buildSummary(nextPortfolio, sources.length);
+  let aiUsed = false;
+
+  if (parsed && typeof parsed === 'object') {
+    // Override per-source maximization fields
+    if (Array.isArray(parsed.sources)) {
+      const overrideMap = new Map<string, AiSourceOverride>();
+      for (const s of parsed.sources) {
+        if (s && typeof s.source === 'string') {
+          overrideMap.set(s.source.toLowerCase(), s);
+        }
+      }
+      let overridden = 0;
+      for (let i = 0; i < sources.length; i++) {
+        const src = sources[i];
+        const ov = overrideMap.get(src.source.toLowerCase());
+        if (!ov || !ov.maximization || typeof ov.maximization !== 'object') continue;
+        const m = ov.maximization;
+        const action = clampEnum(
+          m.volumeMaximizationAction, VALID_ACTION, src.maximization.volumeMaximizationAction,
+        );
+        const projectedVolume30d = round2(clampNum(
+          m.projectedVolume30d, VOLUME_MIN, VOLUME_MAX, src.maximization.projectedVolume30d,
+        ));
+        const volumeUplift = round2(clampNum(
+          m.volumeUplift, UPLIFT_MIN, UPLIFT_MAX, src.maximization.volumeUplift,
+        ));
+        let levers = src.maximization.volumeMaximizationLevers;
+        if (Array.isArray(m.volumeMaximizationLevers) && m.volumeMaximizationLevers.length >= 2) {
+          levers = m.volumeMaximizationLevers.slice(0, MAX_LEVERS).map((l) => ({
+            lever: clampString(l?.lever, 100, 'Volume lever.'),
+            action: clampString(l?.action, 200, 'Akcija za volume scaling.'),
+            expectedVolumeGain: round2(clampNum(
+              l?.expectedVolumeGain, GAIN_MIN, GAIN_MAX, 0,
+            )),
+          }));
+        }
+        const qualityMaintenanceStrategy = clampString(
+          m.qualityMaintenanceStrategy, 400, src.maximization.qualityMaintenanceStrategy,
+        );
+        const capitalRequirement = round0(clampNum(
+          m.capitalRequirement, CAPITAL_MIN, CAPITAL_MAX, src.maximization.capitalRequirement,
+        ));
+        const timeRequirement = round0(clampNum(
+          m.timeRequirement, TIME_MIN, TIME_MAX, src.maximization.timeRequirement,
+        ));
+        let projection = src.maximization.volumeGrowthProjection;
+        if (Array.isArray(m.volumeGrowthProjection) && m.volumeGrowthProjection.length >= 2) {
+          projection = m.volumeGrowthProjection.slice(0, MAX_PROJECTION_POINTS).map((p) => ({
+            month: round0(clampNum(p?.month, 1, 12, 1)),
+            projectedTrades: round2(clampNum(
+              p?.projectedTrades, VOLUME_MIN, VOLUME_MAX, 0,
+            )),
+          }));
+        }
+        sources[i] = {
+          ...src,
+          maximization: {
+            volumeMaximizationAction: action,
+            projectedVolume30d,
+            volumeUplift,
+            volumeMaximizationLevers: levers,
+            qualityMaintenanceStrategy,
+            capitalRequirement,
+            timeRequirement,
+            volumeGrowthProjection: projection,
+          },
+        };
+        overridden += 1;
+      }
+      if (overridden > 0) {
+        nextPortfolio = buildPortfolio(sources);
+      }
+    }
+
+    // Override portfolio
+    if (parsed.portfolio && typeof parsed.portfolio === 'object') {
+      if (typeof parsed.portfolio.bestVolumeSource === 'string') {
+        nextPortfolio = {
+          ...nextPortfolio,
+          bestVolumeSource: clampString(
+            parsed.portfolio.bestVolumeSource, 100,
+            nextPortfolio.bestVolumeSource ?? '',
+          ) || nextPortfolio.bestVolumeSource,
+        };
+      }
+      if (typeof parsed.portfolio.volumeDiversificationAdvice === 'string'
+          && parsed.portfolio.volumeDiversificationAdvice.trim()) {
+        nextPortfolio = {
+          ...nextPortfolio,
+          volumeDiversificationAdvice: clampString(
+            parsed.portfolio.volumeDiversificationAdvice, 400,
+            nextPortfolio.volumeDiversificationAdvice,
+          ),
+        };
+      }
+    }
+
+    summary = clampString(parsed.summary, 400, buildSummary(nextPortfolio, sources.length));
+    aiUsed = true;
+  }
+
+  return { portfolio: nextPortfolio, summary, aiUsed };
+}
+
+// --- Input ---------------------------------------------------------------
+
+// eslint-disable-next-line @typescript-eslint/no-empty-object-type
+interface DealSourceVolumeMaximizerInput {}
+
+// --- Handler -------------------------------------------------------------
+
+const dealSourceVolumeHandler = withAiRoute<DealSourceVolumeMaximizerInput>({
+  endpoint: '/api/ai/deal-source-volume-maximizer',
+  maxDuration: 60,
+  enforceBudget: true, // AI klic — preveri budget
+  method: 'GET', // GET+POST — body ignored
+
+  parseBody: async (req) => {
+    await req.json().catch(() => ({}));
+    return {};
+  },
+
+  handler: async (_input, ctx: AiRouteContext) => {
+    const { db, callAi, parseAi, logger } = ctx;
+    const now = Date.now();
+    const twelveMonthsAgo = new Date(now - TWELVE_MONTHS_MS);
+
+    // 1) Query SOLD trades last 12 months with linked Listing (for monitor.source)
+    const soldTrades = await db.trade.findMany({
+      where: {
+        status: 'sold',
+        sellDate: { gte: twelveMonthsAgo },
+        sellPrice: { gt: 0 },
+      },
+      select: {
+        id: true,
+        buyPrice: true,
+        buyFees: true,
+        buyDate: true,
+        sellPrice: true,
+        sellFees: true,
+        sellDate: true,
+        category: true,
+        listing: {
+          select: {
+            monitor: {
+              select: { source: true, tags: true },
+            },
+          },
+        },
+      },
+      orderBy: { sellDate: 'asc' },
+      take: 100000,
+    }) as unknown as SoldTradeRow[];
+
+    // Empty-state: no SOLD trades
+    if (soldTrades.length === 0) {
+      return apiOk({
+        ok: true,
+        sources: [],
+        portfolio: {
+          totalCurrentVolume: 0,
+          totalProjectedVolume: 0,
+          totalVolumeUplift: 0,
+          bestVolumeSource: null,
+          volumeDiversificationAdvice: 'Ni SOLD trgovin v zadnjih 12 mesecih — Deal Source Volume Maximizer ni mogoč.',
+        },
+        summary: 'Ni SOLD trgovin v zadnjih 12 mesecih — Deal Source Volume Maximizer ni mogoč.',
+        aiUsed: false,
+        message: 'Ni SOLD trgovin v zadnjih 12 mesecih — Deal Source Volume Maximizer ni mogoč.',
+      } satisfies DealSourceVolumeResponse);
+    }
+
+    // 2) Compute aggregates
+    const soldComputed: SoldComputed[] = [];
+    for (const t of soldTrades) {
+      const c = computeSoldTrade(t, now);
+      if (c) soldComputed.push(c);
+    }
+    const bySource = aggregatePerSource(soldComputed);
+
+    // Build per-source results, sorted by current volume (highest first)
+    const sourcesRaw = Array.from(bySource.entries())
+      .map(([src, agg]) => {
+        const current = computeCurrent(agg);
+        const maximization = buildDeterministicMaximization(src, current);
+        return {
+          source: src,
+          displayName: displayName(src),
+          current,
+          maximization,
+        } as SourceResult;
+      })
+      .sort((a, b) => b.current.tradesPerMonth - a.current.tradesPerMonth);
+
+    const sources = sourcesRaw.slice(0, MAX_SOURCES);
+
+    let portfolio = buildPortfolio(sources);
+    const summary = buildSummary(portfolio, sources.length);
+
+    // 3) AI cache check (6h TTL) — key by current month
+    const currentMonth = new Date(now).toISOString().slice(0, 7); // YYYY-MM
+    const cacheKey = `deal-source-volume-maximizer:${currentMonth}`;
+    const cached = getCachedAI<{
+      sources: SourceResult[];
+      portfolio: Portfolio;
+      summary: string;
+    }>(cacheKey);
+    if (cached) {
+      return apiOk({
+        ok: true,
+        sources: cached.sources,
+        portfolio: cached.portfolio,
+        summary: cached.summary,
+        cached: true,
+        aiUsed: true,
+      } satisfies DealSourceVolumeResponse);
+    }
+
+    // 4) AI prompt with grounding
+    const promptData = buildPromptData(soldComputed, sources, portfolio);
+    const prompt = buildPrompt(promptData);
+
+    let finalPortfolio = portfolio;
+    let finalSummary = summary;
     let aiUsed = false;
 
     try {
-      const raw = await callProviderForRaw(aiSettings, prompt);
-      const parsed = parseJsonLooseExported(raw) as AiResponse | null;
-
-      if (parsed && typeof parsed === 'object') {
-        // Override per-source maximization fields
-        if (Array.isArray(parsed.sources)) {
-          const overrideMap = new Map<string, AiSourceOverride>();
-          for (const s of parsed.sources) {
-            if (s && typeof s.source === 'string') {
-              overrideMap.set(s.source.toLowerCase(), s);
-            }
-          }
-          let overridden = 0;
-          for (let i = 0; i < sources.length; i++) {
-            const src = sources[i];
-            const ov = overrideMap.get(src.source.toLowerCase());
-            if (!ov || !ov.maximization || typeof ov.maximization !== 'object') continue;
-            const m = ov.maximization;
-            const action = clampEnum(
-              m.volumeMaximizationAction, VALID_ACTION, src.maximization.volumeMaximizationAction,
-            );
-            const projectedVolume30d = round2(clampNum(
-              m.projectedVolume30d, VOLUME_MIN, VOLUME_MAX, src.maximization.projectedVolume30d,
-            ));
-            const volumeUplift = round2(clampNum(
-              m.volumeUplift, UPLIFT_MIN, UPLIFT_MAX, src.maximization.volumeUplift,
-            ));
-            let levers = src.maximization.volumeMaximizationLevers;
-            if (Array.isArray(m.volumeMaximizationLevers) && m.volumeMaximizationLevers.length >= 2) {
-              levers = m.volumeMaximizationLevers.slice(0, MAX_LEVERS).map((l) => ({
-                lever: clampString(l?.lever, 100, 'Volume lever.'),
-                action: clampString(l?.action, 200, 'Akcija za volume scaling.'),
-                expectedVolumeGain: round2(clampNum(
-                  l?.expectedVolumeGain, GAIN_MIN, GAIN_MAX, 0,
-                )),
-              }));
-            }
-            const qualityMaintenanceStrategy = clampString(
-              m.qualityMaintenanceStrategy, 400, src.maximization.qualityMaintenanceStrategy,
-            );
-            const capitalRequirement = round0(clampNum(
-              m.capitalRequirement, CAPITAL_MIN, CAPITAL_MAX, src.maximization.capitalRequirement,
-            ));
-            const timeRequirement = round0(clampNum(
-              m.timeRequirement, TIME_MIN, TIME_MAX, src.maximization.timeRequirement,
-            ));
-            let projection = src.maximization.volumeGrowthProjection;
-            if (Array.isArray(m.volumeGrowthProjection) && m.volumeGrowthProjection.length >= 2) {
-              projection = m.volumeGrowthProjection.slice(0, MAX_PROJECTION_POINTS).map((p) => ({
-                month: round0(clampNum(p?.month, 1, 12, 1)),
-                projectedTrades: round2(clampNum(
-                  p?.projectedTrades, VOLUME_MIN, VOLUME_MAX, 0,
-                )),
-              }));
-            }
-            sources[i] = {
-              ...src,
-              maximization: {
-                volumeMaximizationAction: action,
-                projectedVolume30d,
-                volumeUplift,
-                volumeMaximizationLevers: levers,
-                qualityMaintenanceStrategy,
-                capitalRequirement,
-                timeRequirement,
-                volumeGrowthProjection: projection,
-              },
-            };
-            overridden += 1;
-          }
-          if (overridden > 0) {
-            portfolio = buildPortfolio(sources);
-          }
-        }
-
-        // Override portfolio
-        if (parsed.portfolio && typeof parsed.portfolio === 'object') {
-          if (typeof parsed.portfolio.bestVolumeSource === 'string') {
-            portfolio = {
-              ...portfolio,
-              bestVolumeSource: clampString(
-                parsed.portfolio.bestVolumeSource, 100,
-                portfolio.bestVolumeSource ?? '',
-              ) || portfolio.bestVolumeSource,
-            };
-          }
-          if (typeof parsed.portfolio.volumeDiversificationAdvice === 'string'
-              && parsed.portfolio.volumeDiversificationAdvice.trim()) {
-            portfolio = {
-              ...portfolio,
-              volumeDiversificationAdvice: clampString(
-                parsed.portfolio.volumeDiversificationAdvice, 400,
-                portfolio.volumeDiversificationAdvice,
-              ),
-            };
-          }
-        }
-
-        summary = clampString(parsed.summary, 400, buildSummary(portfolio, sources.length));
-        aiUsed = true;
-      }
+      const raw = await callAi(prompt);
+      const parsed = parseAi(raw) as AiResponse | null;
+      const result = applyAiOverrides(parsed, sources, portfolio);
+      finalPortfolio = result.portfolio;
+      finalSummary = result.summary;
+      aiUsed = result.aiUsed;
     } catch (err) {
       logger.warn(
         '/api/ai/deal-source-volume-maximizer',
@@ -874,25 +896,18 @@ VRNI LE JSON:
 
     // 5) Cache (6h TTL) — only when AI was used
     if (aiUsed) {
-      setCachedAI(cacheKey, { sources, portfolio, summary });
+      setCachedAI(cacheKey, { sources, portfolio: finalPortfolio, summary: finalSummary });
     }
 
-    return NextResponse.json({
+    return apiOk({
       ok: true,
       sources,
-      portfolio,
-      summary,
+      portfolio: finalPortfolio,
+      summary: finalSummary,
       aiUsed,
     } satisfies DealSourceVolumeResponse);
-  } catch (err: any) {
-    logger.error(
-      '/api/ai/deal-source-volume-maximizer',
-      'handler failed',
-      err,
-    );
-    return NextResponse.json(
-      { error: err?.message ?? 'Napaka' },
-      { status: 500 },
-    );
-  }
-}
+  },
+});
+
+export const GET = dealSourceVolumeHandler;
+export const POST = dealSourceVolumeHandler;

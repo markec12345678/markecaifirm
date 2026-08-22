@@ -1,4 +1,4 @@
-// v7.72: AI Price Intelligence Engine — AI-powered "price intelligence" ki
+// v7.72 / v8.96.5-batch3: AI Price Intelligence Engine — AI-powered "price intelligence" ki
 // analizira pricing vzorce čez tvoje listinge + konkurenco + trg. Generira
 // actionable pricing insights: optimal price points, price elasticity per
 // kategorija, competitor pricing strategije, in dynamic pricing recommendations.
@@ -17,24 +17,18 @@
 //
 // GET+POST /api/ai/price-intelligence-engine
 // (AI-enhanced + grounding + anti-hallucination + 6h cache + deterministic fallback)
+// Refaktoriran z withAiRoute helperjem (v8.96.5) + enforceBudget guard.
 
-import { NextRequest, NextResponse } from 'next/server';
-import { db } from '@/lib/db';
-import { getSettingsRow } from '@/lib/pipeline';
-import {
-  callProviderForRaw,
-  parseJsonLooseExported,
-  type AiProviderType,
-  type AiSettings,
-} from '@/lib/ai';
+import { withAiRoute, AI_ROUTE_DEFAULTS, type AiRouteContext } from '@/lib/with-ai-route';
+import { apiOk } from '@/lib/api-response';
 import { GROUNDING_PROMPT_SUFFIX } from '@/lib/anti-hallucination';
 import { getCachedAI, setCachedAI } from '@/lib/ai-cache';
-import { checkRateLimit, rateLimitResponse } from '@/lib/rate-limit';
-import { logger } from '@/lib/logger';
 
-export const runtime = 'nodejs';
-export const dynamic = 'force-dynamic';
+export const { runtime, dynamic } = AI_ROUTE_DEFAULTS;
 export const maxDuration = 60;
+
+// eslint-disable-next-line @typescript-eslint/no-empty-object-type
+interface PriceIntelligenceInput {}
 
 // --- Types ---------------------------------------------------------------
 
@@ -352,17 +346,20 @@ function deriveCompetitorStrategy(
 
 // --- Handler -------------------------------------------------------------
 
-export async function GET(req: NextRequest) {
-  return handlePriceIntelligence(req);
-}
-export async function POST(req: NextRequest) {
-  return handlePriceIntelligence(req);
-}
+const priceIntelligenceHandler = withAiRoute<PriceIntelligenceInput>({
+  endpoint: '/api/ai/price-intelligence-engine',
+  maxDuration: 60,
+  enforceBudget: true, // AI klic — preveri budget
+  method: 'GET', // Endpoint sprejema GET + POST — bypass POST-only check
 
-async function handlePriceIntelligence(req: NextRequest) {
-  try {
-    const rl = checkRateLimit(req, 'ai-price-intelligence', 20);
-    if (!rl.allowed) return rateLimitResponse(rl);
+  parseBody: async (req) => {
+    await req.json().catch(() => ({}));
+    return {};
+  },
+
+  // No validateInput — body ignored, identična logika za GET in POST
+  handler: async (_input, ctx: AiRouteContext) => {
+    const { db, callAi, parseAi, logger } = ctx;
 
     // 1) Query HELD trades (your current asking prices via linked listings)
     const heldTrades = await db.trade.findMany({
@@ -439,7 +436,7 @@ async function handlePriceIntelligence(req: NextRequest) {
       soldTrades.length === 0 &&
       competitorListings.length === 0
     ) {
-      return NextResponse.json({
+      return apiOk({
         ok: true,
         marketPricing: [],
         dynamicPricing: [],
@@ -631,7 +628,7 @@ async function handlePriceIntelligence(req: NextRequest) {
       summary: string;
     }>(cacheKey);
     if (cached) {
-      return NextResponse.json({
+      return apiOk({
         ok: true,
         marketPricing: cached.marketPricing,
         dynamicPricing: cached.dynamicPricing,
@@ -668,65 +665,8 @@ async function handlePriceIntelligence(req: NextRequest) {
           `Konkurenčna strategija: ${competitorStrategy.commonStrategy}.`
         : 'Ni dovolj podatkov za pricing inteligenčno analizo.';
 
-    // 10) AI prompt with grounding
-    const settings = await getSettingsRow();
-    const aiSettings: AiSettings = {
-      provider: settings.aiProvider as AiProviderType,
-      baseUrl: settings.aiBaseUrl,
-      apiKey: settings.aiApiKey,
-      model: settings.aiModel,
-      fallbackProvider: (settings.fallbackProvider || '') as
-        | AiProviderType
-        | '',
-      fallbackBaseUrl: settings.fallbackBaseUrl || '',
-      fallbackApiKey: settings.fallbackApiKey || '',
-      fallbackModel: settings.fallbackModel || '',
-    };
-
-    const prompt = `Si AI "Price Intelligence" analitik za slovenske in srednjeevropske oglasne platforme (Bolha, Vinted, Avtonet, mobile.de).
-Generiraj pricing inteligenčno poročilo: optimal price points, price elasticity per kategorija, competitor pricing strategije in dynamic pricing recommendations.
-
-PODATKI O CENAH (TVOJI + TRG + KONKURENCA):
-${JSON.stringify(marketPricing.slice(0, 20), null, 2)}
-
-TVOJI HELD TRADE-i (za dynamic pricing recommendations):
-${JSON.stringify(
-  dynamicPricing.slice(0, 25).map(d => ({
-    tradeId: d.tradeId,
-    title: d.title,
-    category: d.category,
-    currentPrice: d.currentPrice,
-    marketAvgPrice: marketPricing.find(m => m.category === d.category)?.marketAvgPrice ?? 0,
-  })),
-  null,
-  2,
-)}
-
-KONKURENČNA STRATEGIJA (deterministično izračunana):
-${JSON.stringify(competitorStrategy, null, 2)}
-
-PRAVILA ZA AI ODGOVOR:
-1. marketPricing: array (sprejmi obstoječo strukturo, dodaj/posodobi "insight" polje za vsako kategorijo z specifičnim nasvetom v slovenščini)
-2. dynamicPricing: array (sprejmi obstoječo strukturo, posodobi "expectedImpact" z bolj specifično napovedjo vpliva, "confidence" 0-1)
-   - recommendedPrice MORA biti v [0.5 × currentPrice, 1.3 × currentPrice] (anti-hallucination)
-   - adjustAction: "UP" | "DOWN" | "KEEP" (enum)
-3. competitorStrategy: posodobi "strategyAdvice" z bolj specifičnim nasvetom v slovenščini
-   - commonStrategy: "UNDERCUT" | "PREMIUM" | "MATCH" (enum)
-4. optimalWindows: 2-3 optimalna časovna okna za prilagajanje cen (npr. "Nedelja zvečer — objavi s 5% popustom")
-5. summary: 1-2 stavka povzetka v slovenščini
-
-VRNI LE JSON:
-{
-  "marketPricing": [
-    { "category": "...", "yourAvgPrice": 0, "marketAvgPrice": 0, "competitorAvgPrice": 0, "pricePosition": "BELOW", "priceElasticityScore": 0, "optimalPricePoint": 0, "insight": "..." }
-  ],
-  "dynamicPricing": [
-    { "tradeId": "...", "title": "...", "category": "...", "currentPrice": 0, "recommendedPrice": 0, "adjustAction": "KEEP", "expectedImpact": "...", "confidence": 0.5 }
-  ],
-  "competitorStrategy": { "commonStrategy": "MATCH", "avgCompetitorDiscount": 0, "strategyAdvice": "..." },
-  "optimalWindows": [ { "timeFrame": "...", "action": "...", "reasoning": "..." } ],
-  "summary": "1-2 stavka povzetka v slovenščini"
-}${GROUNDING_PROMPT_SUFFIX}`;
+    // 10) AI prompt with grounding (settings loaded by withAiRoute wrapper)
+    const prompt = buildPrompt(marketPricing, dynamicPricing, competitorStrategy);
 
     let finalMarketPricing = marketPricing;
     let finalDynamicPricing = dynamicPricing;
@@ -736,10 +676,8 @@ VRNI LE JSON:
     let aiUsed = false;
 
     try {
-      const raw = await callProviderForRaw(aiSettings, prompt);
-      const parsed = parseJsonLooseExported(
-        raw,
-      ) as AiPriceIntelligenceResponse | null;
+      const raw = await callAi(prompt);
+      const parsed = parseAi(raw) as AiPriceIntelligenceResponse | null;
 
       if (parsed && typeof parsed === 'object') {
         // Parse marketPricing — only update "insight" string, keep numeric fields
@@ -867,7 +805,7 @@ VRNI LE JSON:
       });
     }
 
-    return NextResponse.json({
+    return apiOk({
       ok: true,
       marketPricing: finalMarketPricing,
       dynamicPricing: finalDynamicPricing,
@@ -876,11 +814,61 @@ VRNI LE JSON:
       summary,
       aiUsed,
     });
-  } catch (err: any) {
-    logger.error('/api/ai/price-intelligence-engine', 'handler failed', err);
-    return NextResponse.json(
-      { error: err?.message ?? 'Napaka' },
-      { status: 500 },
-    );
-  }
+  },
+});
+
+export const GET = priceIntelligenceHandler;
+export const POST = priceIntelligenceHandler;
+
+// --- Prompt builder (čist, testabilen) -----------------------------------
+
+function buildPrompt(
+  marketPricing: MarketPricing[],
+  dynamicPricing: DynamicPricing[],
+  competitorStrategy: CompetitorStrategyInfo,
+): string {
+  return `Si AI "Price Intelligence" analitik za slovenske in srednjeevropske oglasne platforme (Bolha, Vinted, Avtonet, mobile.de).
+Generiraj pricing inteligenčno poročilo: optimal price points, price elasticity per kategorija, competitor pricing strategije in dynamic pricing recommendations.
+
+PODATKI O CENAH (TVOJI + TRG + KONKURENCA):
+${JSON.stringify(marketPricing.slice(0, 20), null, 2)}
+
+TVOJI HELD TRADE-i (za dynamic pricing recommendations):
+${JSON.stringify(
+  dynamicPricing.slice(0, 25).map(d => ({
+    tradeId: d.tradeId,
+    title: d.title,
+    category: d.category,
+    currentPrice: d.currentPrice,
+    marketAvgPrice: marketPricing.find(m => m.category === d.category)?.marketAvgPrice ?? 0,
+  })),
+  null,
+  2,
+)}
+
+KONKURENČNA STRATEGIJA (deterministično izračunana):
+${JSON.stringify(competitorStrategy, null, 2)}
+
+PRAVILA ZA AI ODGOVOR:
+1. marketPricing: array (sprejmi obstoječo strukturo, dodaj/posodobi "insight" polje za vsako kategorijo z specifičnim nasvetom v slovenščini)
+2. dynamicPricing: array (sprejmi obstoječo strukturo, posodobi "expectedImpact" z bolj specifično napovedjo vpliva, "confidence" 0-1)
+   - recommendedPrice MORA biti v [0.5 × currentPrice, 1.3 × currentPrice] (anti-hallucination)
+   - adjustAction: "UP" | "DOWN" | "KEEP" (enum)
+3. competitorStrategy: posodobi "strategyAdvice" z bolj specifičnim nasvetom v slovenščini
+   - commonStrategy: "UNDERCUT" | "PREMIUM" | "MATCH" (enum)
+4. optimalWindows: 2-3 optimalna časovna okna za prilagajanje cen (npr. "Nedelja zvečer — objavi s 5% popustom")
+5. summary: 1-2 stavka povzetka v slovenščini
+
+VRNI LE JSON:
+{
+  "marketPricing": [
+    { "category": "...", "yourAvgPrice": 0, "marketAvgPrice": 0, "competitorAvgPrice": 0, "pricePosition": "BELOW", "priceElasticityScore": 0, "optimalPricePoint": 0, "insight": "..." }
+  ],
+  "dynamicPricing": [
+    { "tradeId": "...", "title": "...", "category": "...", "currentPrice": 0, "recommendedPrice": 0, "adjustAction": "KEEP", "expectedImpact": "...", "confidence": 0.5 }
+  ],
+  "competitorStrategy": { "commonStrategy": "MATCH", "avgCompetitorDiscount": 0, "strategyAdvice": "..." },
+  "optimalWindows": [ { "timeFrame": "...", "action": "...", "reasoning": "..." } ],
+  "summary": "1-2 stavka povzetka v slovenščini"
+}${GROUNDING_PROMPT_SUFFIX}`;
 }

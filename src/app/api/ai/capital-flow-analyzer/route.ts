@@ -1,4 +1,4 @@
-// v7.92: AI Capital Flow Analyzer — AI analizira kako kapital FLOW-a skozi
+// v7.92 / v8.96.5-batch2: AI Capital Flow Analyzer — AI analizira kako kapital FLOW-a skozi
 // business — tracks inflow (sales), outflow (purchases), in net flow patterns.
 // Identificira capital flow bottlenecks in optimizira cash flow timing.
 // "Capital flow: POSITIVE (+350€/mo, ratio 1.4). Bottleneck: 3 items >60d.
@@ -18,24 +18,20 @@
 //
 // GET+POST /api/ai/capital-flow-analyzer
 // (AI-enhanced + grounding + anti-hallucination + 6h cache + deterministic fallback)
+// Refaktoriran z withAiRoute helperjem (v8.96.5) + enforceBudget guard.
 
-import { NextRequest, NextResponse } from 'next/server';
-import { db } from '@/lib/db';
-import { getSettingsRow } from '@/lib/pipeline';
-import {
-  callProviderForRaw,
-  parseJsonLooseExported,
-  type AiProviderType,
-  type AiSettings,
-} from '@/lib/ai';
+import { withAiRoute, AI_ROUTE_DEFAULTS, type AiRouteContext } from '@/lib/with-ai-route';
+import { apiOk } from '@/lib/api-response';
 import { GROUNDING_PROMPT_SUFFIX } from '@/lib/anti-hallucination';
 import { getCachedAI, setCachedAI } from '@/lib/ai-cache';
-import { checkRateLimit, rateLimitResponse } from '@/lib/rate-limit';
-import { logger } from '@/lib/logger';
 
-export const runtime = 'nodejs';
-export const dynamic = 'force-dynamic';
+export const { runtime, dynamic } = AI_ROUTE_DEFAULTS;
 export const maxDuration = 60;
+
+// --- Input ----------------------------------------------------------------
+
+// eslint-disable-next-line @typescript-eslint/no-empty-object-type
+interface CapitalFlowAnalyzerInput {}
 
 // --- Types ---------------------------------------------------------------
 
@@ -459,19 +455,208 @@ function buildDeterministicFlowAnalysis(
   };
 }
 
+// --- AI prompt + merge helpers (pure, testable) ---------------------------
+
+interface PromptData {
+  flow: FlowMetrics;
+  monthlyData: MonthlyFlow[];
+  context: {
+    heldItemsCount: number;
+    heldItemsLongCount: number;
+    avgHeldDaysOfSold: number;
+  };
+  deterministicBaseline: {
+    projectedFlow30d: number;
+    capitalEfficiency: number;
+    recommendedCashReserve: number;
+    daysOfCashRunway: number;
+  };
+  caps: Record<string, number>;
+}
+
+function buildPromptData(
+  metrics: FlowMetrics,
+  months: MonthlyFlow[],
+  heldItemsCount: number,
+  heldItemsLongCount: number,
+  avgHeldDaysOfSold: number,
+  deterministicAnalysis: FlowAnalysis,
+  reserveMax: number,
+): PromptData {
+  return {
+    flow: metrics,
+    monthlyData: months,
+    context: {
+      heldItemsCount,
+      heldItemsLongCount,
+      avgHeldDaysOfSold: round0(avgHeldDaysOfSold),
+    },
+    deterministicBaseline: {
+      projectedFlow30d: deterministicAnalysis.projectedFlow30d,
+      capitalEfficiency: deterministicAnalysis.capitalEfficiency,
+      recommendedCashReserve: deterministicAnalysis.recommendedCashReserve,
+      daysOfCashRunway: deterministicAnalysis.flowRiskAssessment.daysOfCashRunway,
+    },
+    caps: {
+      projFlowMin: PROJ_FLOW_MIN, projFlowMax: PROJ_FLOW_MAX,
+      efficiencyMin: EFFICIENCY_MIN, efficiencyMax: EFFICIENCY_MAX,
+      runwayMin: RUNWAY_MIN, runwayMax: RUNWAY_MAX,
+      reserveMax, // = avgMonthlyInflow × 2
+    },
+  };
+}
+
+function buildPrompt(promptData: PromptData, reserveMax: number): string {
+  return `Si AI "Capital Flow Analyzer" za slovenske in srednjeevropske oglasne platforme (Bolha, Vinted, Facebook, Avtonet, mobile.de).
+Analiziraš kako kapital FLOW-a skozi business — inflow (sales), outflow (purchases), in net flow patterns. Identificiraš bottlenecks (kje se kapital zatakne) in optimiziraš cash flow timing. Razlika od cash-flow-velocity (ki meri hitrost) — ti gledaš FLOW PATTERN in direction (POSITIVE/NEGATIVE/BALANCED) z bottlenecks in reserve recommendation.
+
+DETERMINISTIČNI PODATKI (izračunano iz DB — zadnjih 12 mesecev SOLD trades + trades z buyDate):
+${JSON.stringify(promptData, null, 2)}
+
+PRAVILA ZA AI ODGOVOR:
+1. flowAssessment: slovensko, max 500 znakov — opis capital flow health (POSITIVE/NEGATIVE/BALANCED + bottleneck povzetek).
+2. bottlenecks: 1-4 { bottleneck (max 200 chars slovensko), impact (max 200 chars — kaj to stane), severity LOW | MEDIUM | HIGH, solution (max 200 chars) }.
+3. flowOptimizationActions: 1-4 { action (max 200 chars), priority HIGH | MEDIUM | LOW, expectedFlowImprovement (max 200 chars) }.
+4. projectedFlow30d: number, clamped [-10000, 10000], ±50% od deterministične (kakšna bo net flow v 30 dneh).
+5. capitalEfficiency: 0-100, ±15 od deterministične (kako učinkovito kapital ciklira).
+6. flowRiskAssessment: { riskLevel LOW | MEDIUM | HIGH, riskFactors 1-4 (max 200 chars vsak), daysOfCashRunway 0-365 (koliko dni lahko preživi če inflow ustavi) }.
+7. recommendedCashReserve: number, clamped [0, avgMonthlyInflow × 2 = ${reserveMax}] (koliko gotovine držati kot buffer).
+8. summary: slovenski povzetek (max 400 znakov). NE izmišljuj številk — uporabi deterministične.
+
+VRNI LE JSON:
+{
+  "flowAssessment": "Capital flow POSITIVE — povprečni neto tok +350€/mesc, ratio 1.4...",
+  "bottlenecks": [
+    { "bottleneck": "3 artikli držani >60 dni — kapital ujet.", "impact": "~300€ ujetega kapitala.", "severity": "MEDIUM", "solution": "Price drop 10-15% za >60d artikle." }
+  ],
+  "flowOptimizationActions": [
+    { "action": "Likvidiraj 3 >60d artikle.", "priority": "HIGH", "expectedFlowImprovement": "Sprosti ~300€ v 14 dneh." }
+  ],
+  "projectedFlow30d": 400,
+  "capitalEfficiency": 72,
+  "flowRiskAssessment": { "riskLevel": "LOW", "riskFactors": ["Brez specifičnih tveganj."], "daysOfCashRunway": 180 },
+  "recommendedCashReserve": 700,
+  "summary": "Capital flow POSITIVE (+350€/mo, ratio 1.4). Bottleneck: 3 items >60d. Reserve: 700€. Efficiency: 72%."
+}${GROUNDING_PROMPT_SUFFIX}`;
+}
+
+function mergeAiIntoFlowAnalysis(
+  parsed: AiFlowResponse | null,
+  metrics: FlowMetrics,
+  deterministicAnalysis: FlowAnalysis,
+  reserveMax: number,
+): { analysis: FlowAnalysis; summary: string; aiUsed: boolean } {
+  if (!parsed || typeof parsed !== 'object') {
+    return {
+      analysis: deterministicAnalysis,
+      summary: buildDeterministicSummary(metrics, deterministicAnalysis),
+      aiUsed: false,
+    };
+  }
+
+  const det = deterministicAnalysis;
+  const projFlow = round0(
+    Math.max(PROJ_FLOW_MIN, Math.min(PROJ_FLOW_MAX,
+      det.projectedFlow30d + Math.max(-Math.abs(det.projectedFlow30d) * 0.5, Math.min(Math.abs(det.projectedFlow30d) * 0.5,
+        (Number(parsed.projectedFlow30d ?? det.projectedFlow30d)) - det.projectedFlow30d)))),
+  );
+  const efficiency = round0(
+    Math.max(EFFICIENCY_MIN, Math.min(EFFICIENCY_MAX,
+      det.capitalEfficiency + Math.max(-15, Math.min(15,
+        (Number(parsed.capitalEfficiency ?? det.capitalEfficiency)) - det.capitalEfficiency)))),
+  );
+  const runway = round0(
+    Math.max(RUNWAY_MIN, Math.min(RUNWAY_MAX,
+      det.flowRiskAssessment.daysOfCashRunway + Math.max(-30, Math.min(30,
+        (Number(parsed.flowRiskAssessment?.daysOfCashRunway ?? det.flowRiskAssessment.daysOfCashRunway)) - det.flowRiskAssessment.daysOfCashRunway)))),
+  );
+  const reserve = round0(
+    Math.max(0, Math.min(reserveMax,
+      Number(parsed.recommendedCashReserve ?? det.recommendedCashReserve))),
+  );
+
+  // Bottlenecks validation
+  const bottlenecks: Bottleneck[] = [];
+  if (Array.isArray(parsed.bottlenecks)) {
+    for (const b of parsed.bottlenecks.slice(0, 4)) {
+      if (!b || typeof b !== 'object') continue;
+      bottlenecks.push({
+        bottleneck: clampString(b.bottleneck, 200, det.bottlenecks[0]?.bottleneck ?? 'Bottleneck.'),
+        impact: clampString(b.impact, 200, det.bottlenecks[0]?.impact ?? 'Vpliv na cash flow.'),
+        severity: clampEnum(b.severity, VALID_SEVERITY, det.bottlenecks[0]?.severity ?? 'LOW'),
+        solution: clampString(b.solution, 200, det.bottlenecks[0]?.solution ?? 'Rešitev.'),
+      });
+    }
+  }
+  if (bottlenecks.length === 0) {
+    for (const b of det.bottlenecks) bottlenecks.push(b);
+  }
+
+  // Actions validation
+  const actions: FlowOptimizationAction[] = [];
+  if (Array.isArray(parsed.flowOptimizationActions)) {
+    for (const a of parsed.flowOptimizationActions.slice(0, 4)) {
+      if (!a || typeof a !== 'object') continue;
+      actions.push({
+        action: clampString(a.action, 200, det.flowOptimizationActions[0]?.action ?? 'Akcija.'),
+        priority: clampEnum(a.priority, VALID_PRIORITY, det.flowOptimizationActions[0]?.priority ?? 'MEDIUM'),
+        expectedFlowImprovement: clampString(a.expectedFlowImprovement, 200, det.flowOptimizationActions[0]?.expectedFlowImprovement ?? 'Izboljšava flow-a.'),
+      });
+    }
+  }
+  if (actions.length === 0) {
+    for (const a of det.flowOptimizationActions) actions.push(a);
+  }
+
+  // Risk factors validation
+  let riskFactors = det.flowRiskAssessment.riskFactors;
+  if (Array.isArray(parsed.flowRiskAssessment?.riskFactors)) {
+    const cleaned = parsed.flowRiskAssessment!.riskFactors
+      .filter((r) => typeof r === 'string' && r.trim().length > 0)
+      .slice(0, 4)
+      .map((r) => (r as string).trim().slice(0, 200));
+    if (cleaned.length > 0) riskFactors = cleaned;
+  }
+
+  const riskLevel = clampEnum(
+    parsed.flowRiskAssessment?.riskLevel,
+    VALID_RISK_LEVEL,
+    det.flowRiskAssessment.riskLevel,
+  );
+
+  const mergedAnalysis: FlowAnalysis = {
+    flowAssessment: clampString(parsed.flowAssessment, 500, det.flowAssessment),
+    bottlenecks: bottlenecks.slice(0, 4),
+    flowOptimizationActions: actions.slice(0, 4),
+    projectedFlow30d: projFlow,
+    capitalEfficiency: efficiency,
+    flowRiskAssessment: {
+      riskLevel,
+      riskFactors,
+      daysOfCashRunway: runway,
+    },
+    recommendedCashReserve: reserve,
+  };
+  const summary = clampString(parsed.summary, 400, buildDeterministicSummary(metrics, mergedAnalysis));
+  return { analysis: mergedAnalysis, summary, aiUsed: true };
+}
+
 // --- Handler -------------------------------------------------------------
 
-export async function GET(req: NextRequest) {
-  return handleCapitalFlowAnalyzer(req);
-}
-export async function POST(req: NextRequest) {
-  return handleCapitalFlowAnalyzer(req);
-}
+const capitalFlowAnalyzerHandler = withAiRoute<CapitalFlowAnalyzerInput>({
+  endpoint: '/api/ai/capital-flow-analyzer',
+  maxDuration: 60,
+  enforceBudget: true, // AI klic — preveri budget
+  method: 'GET', // Endpoint sprejema GET + POST — bypass POST-only check
 
-async function handleCapitalFlowAnalyzer(req: NextRequest) {
-  try {
-    const rl = checkRateLimit(req, 'ai-capital-flow-analyzer', 20);
-    if (!rl.allowed) return rateLimitResponse(rl);
+  parseBody: async (req) => {
+    await req.json().catch(() => ({}));
+    return {};
+  },
+
+  // No validateInput — body ignored, identična logika za GET in POST
+  handler: async (_input, ctx: AiRouteContext) => {
+    const { db, callAi, parseAi, logger } = ctx;
 
     const now = Date.now();
     const cutoff12m = new Date(now - HORIZON_12M);
@@ -581,7 +766,7 @@ async function handleCapitalFlowAnalyzer(req: NextRequest) {
 
     // Empty state — no trades at all
     if (activeMonthCount === 0) {
-      return NextResponse.json({
+      return apiOk({
         ok: true,
         flow: {
           avgMonthlyInflow: 0,
@@ -640,7 +825,7 @@ async function handleCapitalFlowAnalyzer(req: NextRequest) {
     const cacheKey = `capital-flow-analyzer:${currentMonth}`;
     const cached = getCachedAI<{ analysis: FlowAnalysis; summary: string }>(cacheKey);
     if (cached) {
-      return NextResponse.json({
+      return apiOk({
         ok: true,
         flow: metrics,
         monthlyData: months,
@@ -652,167 +837,29 @@ async function handleCapitalFlowAnalyzer(req: NextRequest) {
     }
 
     // 7) AI prompt with grounding
-    const settings = await getSettingsRow();
-    const aiSettings: AiSettings = {
-      provider: settings.aiProvider as AiProviderType,
-      baseUrl: settings.aiBaseUrl,
-      apiKey: settings.aiApiKey,
-      model: settings.aiModel,
-      fallbackProvider: (settings.fallbackProvider || '') as
-        | AiProviderType
-        | '',
-      fallbackBaseUrl: settings.fallbackBaseUrl || '',
-      fallbackApiKey: settings.fallbackApiKey || '',
-      fallbackModel: settings.fallbackModel || '',
-    };
-
     const reserveMax = metrics.avgMonthlyInflow * 2;
 
-    const promptData = {
-      flow: metrics,
-      monthlyData: months,
-      context: {
-        heldItemsCount,
-        heldItemsLongCount,
-        avgHeldDaysOfSold: round0(avgHeldDaysOfSold),
-      },
-      deterministicBaseline: {
-        projectedFlow30d: deterministicAnalysis.projectedFlow30d,
-        capitalEfficiency: deterministicAnalysis.capitalEfficiency,
-        recommendedCashReserve: deterministicAnalysis.recommendedCashReserve,
-        daysOfCashRunway: deterministicAnalysis.flowRiskAssessment.daysOfCashRunway,
-      },
-      caps: {
-        projFlowMin: PROJ_FLOW_MIN, projFlowMax: PROJ_FLOW_MAX,
-        efficiencyMin: EFFICIENCY_MIN, efficiencyMax: EFFICIENCY_MAX,
-        runwayMin: RUNWAY_MIN, runwayMax: RUNWAY_MAX,
-        reserveMax, // = avgMonthlyInflow × 2
-      },
-    };
-
-    const prompt = `Si AI "Capital Flow Analyzer" za slovenske in srednjeevropske oglasne platforme (Bolha, Vinted, Facebook, Avtonet, mobile.de).
-Analiziraš kako kapital FLOW-a skozi business — inflow (sales), outflow (purchases), in net flow patterns. Identificiraš bottlenecks (kje se kapital zatakne) in optimiziraš cash flow timing. Razlika od cash-flow-velocity (ki meri hitrost) — ti gledaš FLOW PATTERN in direction (POSITIVE/NEGATIVE/BALANCED) z bottlenecks in reserve recommendation.
-
-DETERMINISTIČNI PODATKI (izračunano iz DB — zadnjih 12 mesecev SOLD trades + trades z buyDate):
-${JSON.stringify(promptData, null, 2)}
-
-PRAVILA ZA AI ODGOVOR:
-1. flowAssessment: slovensko, max 500 znakov — opis capital flow health (POSITIVE/NEGATIVE/BALANCED + bottleneck povzetek).
-2. bottlenecks: 1-4 { bottleneck (max 200 chars slovensko), impact (max 200 chars — kaj to stane), severity LOW | MEDIUM | HIGH, solution (max 200 chars) }.
-3. flowOptimizationActions: 1-4 { action (max 200 chars), priority HIGH | MEDIUM | LOW, expectedFlowImprovement (max 200 chars) }.
-4. projectedFlow30d: number, clamped [-10000, 10000], ±50% od deterministične (kakšna bo net flow v 30 dneh).
-5. capitalEfficiency: 0-100, ±15 od deterministične (kako učinkovito kapital ciklira).
-6. flowRiskAssessment: { riskLevel LOW | MEDIUM | HIGH, riskFactors 1-4 (max 200 chars vsak), daysOfCashRunway 0-365 (koliko dni lahko preživi če inflow ustavi) }.
-7. recommendedCashReserve: number, clamped [0, avgMonthlyInflow × 2 = ${reserveMax}] (koliko gotovine držati kot buffer).
-8. summary: slovenski povzetek (max 400 znakov). NE izmišljuj številk — uporabi deterministične.
-
-VRNI LE JSON:
-{
-  "flowAssessment": "Capital flow POSITIVE — povprečni neto tok +350€/mesc, ratio 1.4...",
-  "bottlenecks": [
-    { "bottleneck": "3 artikli držani >60 dni — kapital ujet.", "impact": "~300€ ujetega kapitala.", "severity": "MEDIUM", "solution": "Price drop 10-15% za >60d artikle." }
-  ],
-  "flowOptimizationActions": [
-    { "action": "Likvidiraj 3 >60d artikle.", "priority": "HIGH", "expectedFlowImprovement": "Sprosti ~300€ v 14 dneh." }
-  ],
-  "projectedFlow30d": 400,
-  "capitalEfficiency": 72,
-  "flowRiskAssessment": { "riskLevel": "LOW", "riskFactors": ["Brez specifičnih tveganj."], "daysOfCashRunway": 180 },
-  "recommendedCashReserve": 700,
-  "summary": "Capital flow POSITIVE (+350€/mo, ratio 1.4). Bottleneck: 3 items >60d. Reserve: 700€. Efficiency: 72%."
-}${GROUNDING_PROMPT_SUFFIX}`;
+    const promptData = buildPromptData(
+      metrics,
+      months,
+      heldItemsCount,
+      heldItemsLongCount,
+      avgHeldDaysOfSold,
+      deterministicAnalysis,
+      reserveMax,
+    );
+    const prompt = buildPrompt(promptData, reserveMax);
 
     let aiUsed = false;
 
     try {
-      const raw = await callProviderForRaw(aiSettings, prompt);
-      const parsed = parseJsonLooseExported(raw) as AiFlowResponse | null;
+      const raw = await callAi(prompt);
+      const parsed = parseAi(raw) as AiFlowResponse | null;
 
-      if (parsed && typeof parsed === 'object') {
-        const det = deterministicAnalysis;
-        const projFlow = round0(
-          Math.max(PROJ_FLOW_MIN, Math.min(PROJ_FLOW_MAX,
-            det.projectedFlow30d + Math.max(-Math.abs(det.projectedFlow30d) * 0.5, Math.min(Math.abs(det.projectedFlow30d) * 0.5,
-              (Number(parsed.projectedFlow30d ?? det.projectedFlow30d)) - det.projectedFlow30d)))),
-        );
-        const efficiency = round0(
-          Math.max(EFFICIENCY_MIN, Math.min(EFFICIENCY_MAX,
-            det.capitalEfficiency + Math.max(-15, Math.min(15,
-              (Number(parsed.capitalEfficiency ?? det.capitalEfficiency)) - det.capitalEfficiency)))),
-        );
-        const runway = round0(
-          Math.max(RUNWAY_MIN, Math.min(RUNWAY_MAX,
-            det.flowRiskAssessment.daysOfCashRunway + Math.max(-30, Math.min(30,
-              (Number(parsed.flowRiskAssessment?.daysOfCashRunway ?? det.flowRiskAssessment.daysOfCashRunway)) - det.flowRiskAssessment.daysOfCashRunway)))),
-        );
-        const reserve = round0(
-          Math.max(0, Math.min(reserveMax,
-            Number(parsed.recommendedCashReserve ?? det.recommendedCashReserve))),
-        );
-
-        // Bottlenecks validation
-        const bottlenecks: Bottleneck[] = [];
-        if (Array.isArray(parsed.bottlenecks)) {
-          for (const b of parsed.bottlenecks.slice(0, 4)) {
-            if (!b || typeof b !== 'object') continue;
-            bottlenecks.push({
-              bottleneck: clampString(b.bottleneck, 200, det.bottlenecks[0]?.bottleneck ?? 'Bottleneck.'),
-              impact: clampString(b.impact, 200, det.bottlenecks[0]?.impact ?? 'Vpliv na cash flow.'),
-              severity: clampEnum(b.severity, VALID_SEVERITY, det.bottlenecks[0]?.severity ?? 'LOW'),
-              solution: clampString(b.solution, 200, det.bottlenecks[0]?.solution ?? 'Rešitev.'),
-            });
-          }
-        }
-        if (bottlenecks.length === 0) {
-          for (const b of det.bottlenecks) bottlenecks.push(b);
-        }
-
-        // Actions validation
-        const actions: FlowOptimizationAction[] = [];
-        if (Array.isArray(parsed.flowOptimizationActions)) {
-          for (const a of parsed.flowOptimizationActions.slice(0, 4)) {
-            if (!a || typeof a !== 'object') continue;
-            actions.push({
-              action: clampString(a.action, 200, det.flowOptimizationActions[0]?.action ?? 'Akcija.'),
-              priority: clampEnum(a.priority, VALID_PRIORITY, det.flowOptimizationActions[0]?.priority ?? 'MEDIUM'),
-              expectedFlowImprovement: clampString(a.expectedFlowImprovement, 200, det.flowOptimizationActions[0]?.expectedFlowImprovement ?? 'Izboljšava flow-a.'),
-            });
-          }
-        }
-        if (actions.length === 0) {
-          for (const a of det.flowOptimizationActions) actions.push(a);
-        }
-
-        // Risk factors validation
-        let riskFactors = det.flowRiskAssessment.riskFactors;
-        if (Array.isArray(parsed.flowRiskAssessment?.riskFactors)) {
-          const cleaned = parsed.flowRiskAssessment!.riskFactors
-            .filter((r) => typeof r === 'string' && r.trim().length > 0)
-            .slice(0, 4)
-            .map((r) => (r as string).trim().slice(0, 200));
-          if (cleaned.length > 0) riskFactors = cleaned;
-        }
-
-        const riskLevel = clampEnum(
-          parsed.flowRiskAssessment?.riskLevel,
-          VALID_RISK_LEVEL,
-          det.flowRiskAssessment.riskLevel,
-        );
-
-        analysis = {
-          flowAssessment: clampString(parsed.flowAssessment, 500, det.flowAssessment),
-          bottlenecks: bottlenecks.slice(0, 4),
-          flowOptimizationActions: actions.slice(0, 4),
-          projectedFlow30d: projFlow,
-          capitalEfficiency: efficiency,
-          flowRiskAssessment: {
-            riskLevel,
-            riskFactors,
-            daysOfCashRunway: runway,
-          },
-          recommendedCashReserve: reserve,
-        };
-        summary = clampString(parsed.summary, 400, buildDeterministicSummary(metrics, analysis));
+      const result = mergeAiIntoFlowAnalysis(parsed, metrics, deterministicAnalysis, reserveMax);
+      if (result.aiUsed) {
+        analysis = result.analysis;
+        summary = result.summary;
         aiUsed = true;
       }
     } catch (err) {
@@ -828,7 +875,7 @@ VRNI LE JSON:
       setCachedAI(cacheKey, { analysis, summary });
     }
 
-    return NextResponse.json({
+    return apiOk({
       ok: true,
       flow: metrics,
       monthlyData: months,
@@ -836,18 +883,11 @@ VRNI LE JSON:
       summary,
       aiUsed,
     });
-  } catch (err: any) {
-    logger.error(
-      '/api/ai/capital-flow-analyzer',
-      'handler failed',
-      err,
-    );
-    return NextResponse.json(
-      { error: err?.message ?? 'Napaka' },
-      { status: 500 },
-    );
-  }
-}
+  },
+});
+
+export const GET = capitalFlowAnalyzerHandler;
+export const POST = capitalFlowAnalyzerHandler;
 
 function buildDeterministicSummary(
   metrics: FlowMetrics,

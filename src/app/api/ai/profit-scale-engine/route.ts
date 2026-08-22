@@ -1,8 +1,9 @@
-// v8.02: AI Profit Scale Engine — AI identificira kako SCALE-ATI profit za
-// EXPONENTIAL growth. NE samo optimizira trenutne operacije — ta načrtuje
-// scaling CELEGA business-a za exponential growth. "You're making 2000€/month.
-// To scale to 10,000€/month you need: 3x more inventory, 2x faster turnover,
-// and 1.5x better margins."
+// v8.02 / v8.96.5-batch1: AI Profit Scale Engine — AI identificira kako SCALE-ATI
+// profit za EXPONENTIAL growth. NE samo optimizira trenutne operacije — ta
+// načrtuje scaling CELEGA business-a za exponential growth. "You're making
+// 2000€/month. To scale to 10,000€/month you need: 3x more inventory, 2x
+// faster turnover, and 1.5x better margins." Refaktoriran z withAiRoute
+// helperjem (v8.96) + enforceBudget guard.
 //
 // Razlika od profit-multiplier-engine (v8.00 ki MULTIPLICIRA profit z 8 levers)
 // — ta SCALE-A cel business z exponential growth plan (phased: 2x → 3x → 5x),
@@ -32,23 +33,16 @@
 // GET+POST /api/ai/profit-scale-engine
 // (AI-enhanced + grounding + anti-hallucination + 6h cache + deterministic fallback)
 
-import { NextRequest, NextResponse } from 'next/server';
-import { db } from '@/lib/db';
-import { getSettingsRow } from '@/lib/pipeline';
-import {
-  callProviderForRaw,
-  parseJsonLooseExported,
-  type AiProviderType,
-  type AiSettings,
-} from '@/lib/ai';
+import { withAiRoute, AI_ROUTE_DEFAULTS, type AiRouteContext } from '@/lib/with-ai-route';
+import { apiOk } from '@/lib/api-response';
 import { GROUNDING_PROMPT_SUFFIX } from '@/lib/anti-hallucination';
 import { getCachedAI, setCachedAI } from '@/lib/ai-cache';
-import { checkRateLimit, rateLimitResponse } from '@/lib/rate-limit';
-import { logger } from '@/lib/logger';
 
-export const runtime = 'nodejs';
-export const dynamic = 'force-dynamic';
+export const { runtime, dynamic } = AI_ROUTE_DEFAULTS;
 export const maxDuration = 60;
+
+// eslint-disable-next-line @typescript-eslint/no-empty-object-type
+interface ProfitScaleEngineInput {}
 
 // --- Types ---------------------------------------------------------------
 
@@ -549,20 +543,179 @@ function buildSummary(current: CurrentState, scaling: Scaling): string {
   return parts.join(' ').slice(0, 400);
 }
 
+// --- AI prompt + merge helpers (pure, extracted OUTSIDE handler) ----------
+
+function buildPromptData(agg: SoldAgg, heldCount: number, current: CurrentState, scaling: Scaling) {
+  return {
+    soldCount12m: agg.count12m,
+    profit12m: round0(agg.profit12m),
+    heldInventorySize: heldCount,
+    current,
+    deterministicScaling: {
+      targetMonthlyProfit: scaling.targetMonthlyProfit,
+      scaleMultiplier: scaling.scaleMultiplier,
+      scaleRequirements: scaling.scaleRequirements,
+      scaleBottlenecks: scaling.scaleBottlenecks.map((b) => ({
+        bottleneck: b.bottleneck,
+        impact: b.impact,
+      })),
+      scaleGrade: scaling.scaleGrade,
+    },
+    caps: {
+      profitMin: PROFIT_MIN, profitMax: PROFIT_MAX,
+      factorMin: FACTOR_MIN, factorMax: FACTOR_MAX,
+      multMin: MULT_MIN, multMax: MULT_MAX,
+      capitalMin: CAPITAL_MIN, capitalMax: CAPITAL_MAX,
+      timeMin: TIME_MIN, timeMax: TIME_MAX,
+      logisticsMin: LOGISTICS_MIN, logisticsMax: LOGISTICS_MAX,
+      roiMin: ROI_MIN, roiMax: ROI_MAX,
+    },
+  };
+}
+
+function buildPrompt(promptData: ReturnType<typeof buildPromptData>): string {
+  return `Si AI "Profit Scale Engine" za slovenske in srednjeevropske oglasne platforme (Bolha, Vinted, Avtonet, mobile.de).
+Si strokovnjak za SCALING profit-a za EXPONENTIAL growth — NE optimiziraš trenutne operacije, ampak načrtuješ scaling CELEGA business-a. Tvoj cilj je identificirati kako scale-at iz npr. 2000€/mo na 10,000€/mo z inventory scaling, turnover scaling, margin scaling, bottleneck analizo in phased action plan. Razlika od profit-multiplier-engine (v8.00 ki MULTIPLICIRA profit z 8 levers) — ti SCALE-A cel business z exponential growth plan (phased: 2x → 3x → 5x). Razlika od revenue-growth-maximizer (v8.01 ki maksimizira REVENUE growth) — ti SCALE-A PROFIT (bottom-line) z bottlenecks in capacity analysis. Razlika od inventory-capital-efficiency-maximizer (v8.01 ki maksimizira capital efficiency per item) — ti daje GLOBAL scale plan z bottlenecks in phased timeline.
+
+DETERMINISTIČNI PODATKI (izračunano iz DB — SOLD trgovin v zadnjih 12 mesecih + HELD inventarja):
+${JSON.stringify(promptData, null, 2)}
+
+PRAVILA ZA AI ODGOVOR:
+1. scaleBottlenecks: 3-6 bottleneck-ov { bottleneck (string, max 200, slovenski), impact (string, max 200, slovenski), mitigation (string, max 200, slovenski) },
+2. scaleActionPlan: 3-4 phase { phase (string, max 100, slovenski), targetProfit € [0, 100000], timeline (string, max 100, slovenski), actions 3-6 stringov (max 200 vsak, slovenski) },
+3. scaleTimeline: slovenski povzetek celotne scaling timeline (max 400 znakov),
+4. scaleRiskAssessment: 3-6 risk-ov { risk (string, max 200, slovenski), severity LOW | MEDIUM | HIGH, mitigation (string, max 200, slovenski) },
+5. scaleGrade: A+ | A | B | C | D | F (A+ če multiplier ≥ 5.0 in ≤2 bottlenecka, A ≥ 3.5 in ≤3, B ≥ 2.5 in ≤4, C ≥ 1.8, D ≥ 1.3, else F),
+6. summary: slovenski povzetek (max 400 znakov).
+
+VRNI LE JSON:
+{
+  "scaleBottlenecks": [
+    { "bottleneck": "Capital gap.", "impact": "+5000€ potrebnih.", "mitigation": "Reinvestiraj profit." }
+  ],
+  "scaleActionPlan": [
+    { "phase": "Phase 1 — 2x", "targetProfit": 4000, "timeline": "1-3 meseci", "actions": ["Povečaj inventory.", "Avtomatiziraj sourcing."] }
+  ],
+  "scaleTimeline": "12-mesečni scale plan od 2000€ na 10000€.",
+  "scaleRiskAssessment": [
+    { "risk": "Capital gap.", "severity": "HIGH", "mitigation": "Reinvestiraj profit." }
+  ],
+  "scaleGrade": "B",
+  "summary": "Current: 2000€/mo. Scaling target: 10000€/mo (5x) z 3 phases."
+}${GROUNDING_PROMPT_SUFFIX}`;
+}
+
+interface MergeResult {
+  scaling: Scaling;
+  summary: string;
+  aiUsed: boolean;
+}
+
+function mergeAiIntoScaling(
+  parsed: AiResponse | null,
+  detScaling: Scaling,
+  current: CurrentState,
+): MergeResult {
+  let scaling = detScaling;
+  let summary = buildSummary(current, detScaling);
+  let aiUsed = false;
+
+  if (parsed && typeof parsed === 'object') {
+    // Override bottlenecks if AI provided ≥3
+    if (Array.isArray(parsed.scaleBottlenecks) && parsed.scaleBottlenecks.length >= 3) {
+      const aiBottlenecks: ScaleBottleneck[] = [];
+      for (const b of parsed.scaleBottlenecks.slice(0, MAX_BOTTLENECKS)) {
+        if (!b || typeof b !== 'object') continue;
+        aiBottlenecks.push({
+          bottleneck: clampString(b.bottleneck, 200, 'Bottleneck.'),
+          impact: clampString(b.impact, 200, 'Vpliv na scaling.'),
+          mitigation: clampString(b.mitigation, 200, 'Mitigacija.'),
+        });
+      }
+      if (aiBottlenecks.length >= 3) {
+        scaling = { ...scaling, scaleBottlenecks: aiBottlenecks };
+      }
+    }
+
+    // Override action plan if AI provided ≥2 phases
+    if (Array.isArray(parsed.scaleActionPlan) && parsed.scaleActionPlan.length >= 2) {
+      const aiPhases: ScaleActionPhase[] = [];
+      for (const p of parsed.scaleActionPlan.slice(0, MAX_ACTION_PHASES)) {
+        if (!p || typeof p !== 'object') continue;
+        const actions = Array.isArray(p.actions)
+          ? p.actions.slice(0, MAX_ACTIONS_PER_PHASE).map((a) =>
+              clampString(a, 200, 'Akcija scaling.'),
+            )
+          : [];
+        if (actions.length < 3) continue;
+        aiPhases.push({
+          phase: clampString(p.phase, 100, 'Phase.'),
+          targetProfit: round0(clampNum(
+            p.targetProfit, PROFIT_MIN, PROFIT_MAX, 0,
+          )),
+          timeline: clampString(p.timeline, 100, '1-3 meseci'),
+          actions,
+        });
+      }
+      if (aiPhases.length >= 2) {
+        scaling = { ...scaling, scaleActionPlan: aiPhases };
+      }
+    }
+
+    // Override timeline
+    if (typeof parsed.scaleTimeline === 'string' && parsed.scaleTimeline.trim()) {
+      scaling = {
+        ...scaling,
+        scaleTimeline: clampString(parsed.scaleTimeline, 400, scaling.scaleTimeline),
+      };
+    }
+
+    // Override risk assessment if AI provided ≥3
+    if (Array.isArray(parsed.scaleRiskAssessment) && parsed.scaleRiskAssessment.length >= 3) {
+      const aiRisks: ScaleRisk[] = [];
+      for (const r of parsed.scaleRiskAssessment.slice(0, MAX_RISKS)) {
+        if (!r || typeof r !== 'object') continue;
+        aiRisks.push({
+          risk: clampString(r.risk, 200, 'Risk.'),
+          severity: clampEnum(r.severity, VALID_SEVERITY, 'MEDIUM'),
+          mitigation: clampString(r.mitigation, 200, 'Mitigacija.'),
+        });
+      }
+      if (aiRisks.length >= 3) {
+        scaling = { ...scaling, scaleRiskAssessment: aiRisks };
+      }
+    }
+
+    // Override grade (re-decide based on AI bottlenecks count)
+    const finalGrade = parsed.scaleGrade
+      ? clampEnum(parsed.scaleGrade, VALID_GRADE, decideGrade(
+          scaling.scaleMultiplier, scaling.scaleBottlenecks.length,
+        ))
+      : decideGrade(scaling.scaleMultiplier, scaling.scaleBottlenecks.length);
+    scaling = { ...scaling, scaleGrade: finalGrade };
+
+    summary = clampString(parsed.summary, 400, buildSummary(current, scaling));
+    aiUsed = true;
+  }
+
+  return { scaling, summary, aiUsed };
+}
+
 // --- Handler -------------------------------------------------------------
 
-export async function GET(req: NextRequest) {
-  return handleProfitScaleEngine(req);
-}
-export async function POST(req: NextRequest) {
-  return handleProfitScaleEngine(req);
-}
+const profitScaleHandler = withAiRoute<ProfitScaleEngineInput>({
+  endpoint: '/api/ai/profit-scale-engine',
+  maxDuration: 60,
+  enforceBudget: true,
+  method: 'GET',
 
-async function handleProfitScaleEngine(req: NextRequest) {
-  try {
-    const rl = checkRateLimit(req, 'ai-profit-scale-engine', 20);
-    if (!rl.allowed) return rateLimitResponse(rl);
+  parseBody: async (req) => {
+    await req.json().catch(() => ({}));
+    return {};
+  },
 
+  handler: async (_input, ctx: AiRouteContext) => {
+    const { db, callAi, parseAi, logger } = ctx;
     const now = Date.now();
     const twelveMonthsAgo = new Date(now - TWELVE_MONTHS_MS);
 
@@ -601,7 +754,7 @@ async function handleProfitScaleEngine(req: NextRequest) {
 
     // Empty-state: no SOLD trades
     if (soldTrades.length === 0) {
-      return NextResponse.json({
+      return apiOk({
         ok: true,
         current: {
           currentMonthlyProfit: 0,
@@ -647,8 +800,9 @@ async function handleProfitScaleEngine(req: NextRequest) {
     const agg = aggregateSold(soldComputed);
     const current = computeCurrent(agg, heldTrades.length);
 
-    let scaling = buildDeterministicScaling(current);
-    let summary = buildSummary(current, scaling);
+    const detScaling = buildDeterministicScaling(current);
+    let scaling = detScaling;
+    let summary = buildSummary(current, detScaling);
 
     // 3) AI cache check (6h TTL) — key by current month
     const currentMonth = new Date(now).toISOString().slice(0, 7); // YYYY-MM
@@ -658,7 +812,7 @@ async function handleProfitScaleEngine(req: NextRequest) {
       summary: string;
     }>(cacheKey);
     if (cached) {
-      return NextResponse.json({
+      return apiOk({
         ok: true,
         current,
         scaling: cached.scaling,
@@ -669,159 +823,19 @@ async function handleProfitScaleEngine(req: NextRequest) {
     }
 
     // 4) AI prompt with grounding
-    const settings = await getSettingsRow();
-    const aiSettings: AiSettings = {
-      provider: settings.aiProvider as AiProviderType,
-      baseUrl: settings.aiBaseUrl,
-      apiKey: settings.aiApiKey,
-      model: settings.aiModel,
-      fallbackProvider: (settings.fallbackProvider || '') as
-        | AiProviderType
-        | '',
-      fallbackBaseUrl: settings.fallbackBaseUrl || '',
-      fallbackApiKey: settings.fallbackApiKey || '',
-      fallbackModel: settings.fallbackModel || '',
-    };
-
-    const promptData = {
-      soldCount12m: agg.count12m,
-      profit12m: round0(agg.profit12m),
-      heldInventorySize: heldTrades.length,
-      current,
-      deterministicScaling: {
-        targetMonthlyProfit: scaling.targetMonthlyProfit,
-        scaleMultiplier: scaling.scaleMultiplier,
-        scaleRequirements: scaling.scaleRequirements,
-        scaleBottlenecks: scaling.scaleBottlenecks.map((b) => ({
-          bottleneck: b.bottleneck,
-          impact: b.impact,
-        })),
-        scaleGrade: scaling.scaleGrade,
-      },
-      caps: {
-        profitMin: PROFIT_MIN, profitMax: PROFIT_MAX,
-        factorMin: FACTOR_MIN, factorMax: FACTOR_MAX,
-        multMin: MULT_MIN, multMax: MULT_MAX,
-        capitalMin: CAPITAL_MIN, capitalMax: CAPITAL_MAX,
-        timeMin: TIME_MIN, timeMax: TIME_MAX,
-        logisticsMin: LOGISTICS_MIN, logisticsMax: LOGISTICS_MAX,
-        roiMin: ROI_MIN, roiMax: ROI_MAX,
-      },
-    };
-
-    const prompt = `Si AI "Profit Scale Engine" za slovenske in srednjeevropske oglasne platforme (Bolha, Vinted, Avtonet, mobile.de).
-Si strokovnjak za SCALING profit-a za EXPONENTIAL growth — NE optimiziraš trenutne operacije, ampak načrtuješ scaling CELEGA business-a. Tvoj cilj je identificirati kako scale-at iz npr. 2000€/mo na 10,000€/mo z inventory scaling, turnover scaling, margin scaling, bottleneck analizo in phased action plan. Razlika od profit-multiplier-engine (v8.00 ki MULTIPLICIRA profit z 8 levers) — ti SCALE-A cel business z exponential growth plan (phased: 2x → 3x → 5x). Razlika od revenue-growth-maximizer (v8.01 ki maksimizira REVENUE growth) — ti SCALE-A PROFIT (bottom-line) z bottlenecks in capacity analysis. Razlika od inventory-capital-efficiency-maximizer (v8.01 ki maksimizira capital efficiency per item) — ti daje GLOBAL scale plan z bottlenecks in phased timeline.
-
-DETERMINISTIČNI PODATKI (izračunano iz DB — SOLD trgovin v zadnjih 12 mesecih + HELD inventarja):
-${JSON.stringify(promptData, null, 2)}
-
-PRAVILA ZA AI ODGOVOR:
-1. scaleBottlenecks: 3-6 bottleneck-ov { bottleneck (string, max 200, slovenski), impact (string, max 200, slovenski), mitigation (string, max 200, slovenski) },
-2. scaleActionPlan: 3-4 phase { phase (string, max 100, slovenski), targetProfit € [0, 100000], timeline (string, max 100, slovenski), actions 3-6 stringov (max 200 vsak, slovenski) },
-3. scaleTimeline: slovenski povzetek celotne scaling timeline (max 400 znakov),
-4. scaleRiskAssessment: 3-6 risk-ov { risk (string, max 200, slovenski), severity LOW | MEDIUM | HIGH, mitigation (string, max 200, slovenski) },
-5. scaleGrade: A+ | A | B | C | D | F (A+ če multiplier ≥ 5.0 in ≤2 bottlenecka, A ≥ 3.5 in ≤3, B ≥ 2.5 in ≤4, C ≥ 1.8, D ≥ 1.3, else F),
-6. summary: slovenski povzetek (max 400 znakov).
-
-VRNI LE JSON:
-{
-  "scaleBottlenecks": [
-    { "bottleneck": "Capital gap.", "impact": "+5000€ potrebnih.", "mitigation": "Reinvestiraj profit." }
-  ],
-  "scaleActionPlan": [
-    { "phase": "Phase 1 — 2x", "targetProfit": 4000, "timeline": "1-3 meseci", "actions": ["Povečaj inventory.", "Avtomatiziraj sourcing."] }
-  ],
-  "scaleTimeline": "12-mesečni scale plan od 2000€ na 10000€.",
-  "scaleRiskAssessment": [
-    { "risk": "Capital gap.", "severity": "HIGH", "mitigation": "Reinvestiraj profit." }
-  ],
-  "scaleGrade": "B",
-  "summary": "Current: 2000€/mo. Scaling target: 10000€/mo (5x) z 3 phases."
-}${GROUNDING_PROMPT_SUFFIX}`;
+    const promptData = buildPromptData(agg, heldTrades.length, current, detScaling);
+    const prompt = buildPrompt(promptData);
 
     let aiUsed = false;
 
     try {
-      const raw = await callProviderForRaw(aiSettings, prompt);
-      const parsed = parseJsonLooseExported(raw) as AiResponse | null;
+      const raw = await callAi(prompt);
+      const parsed = parseAi(raw) as AiResponse | null;
 
-      if (parsed && typeof parsed === 'object') {
-        // Override bottlenecks if AI provided ≥3
-        if (Array.isArray(parsed.scaleBottlenecks) && parsed.scaleBottlenecks.length >= 3) {
-          const aiBottlenecks: ScaleBottleneck[] = [];
-          for (const b of parsed.scaleBottlenecks.slice(0, MAX_BOTTLENECKS)) {
-            if (!b || typeof b !== 'object') continue;
-            aiBottlenecks.push({
-              bottleneck: clampString(b.bottleneck, 200, 'Bottleneck.'),
-              impact: clampString(b.impact, 200, 'Vpliv na scaling.'),
-              mitigation: clampString(b.mitigation, 200, 'Mitigacija.'),
-            });
-          }
-          if (aiBottlenecks.length >= 3) {
-            scaling = { ...scaling, scaleBottlenecks: aiBottlenecks };
-          }
-        }
-
-        // Override action plan if AI provided ≥2 phases
-        if (Array.isArray(parsed.scaleActionPlan) && parsed.scaleActionPlan.length >= 2) {
-          const aiPhases: ScaleActionPhase[] = [];
-          for (const p of parsed.scaleActionPlan.slice(0, MAX_ACTION_PHASES)) {
-            if (!p || typeof p !== 'object') continue;
-            const actions = Array.isArray(p.actions)
-              ? p.actions.slice(0, MAX_ACTIONS_PER_PHASE).map((a) =>
-                  clampString(a, 200, 'Akcija scaling.'),
-                )
-              : [];
-            if (actions.length < 3) continue;
-            aiPhases.push({
-              phase: clampString(p.phase, 100, 'Phase.'),
-              targetProfit: round0(clampNum(
-                p.targetProfit, PROFIT_MIN, PROFIT_MAX, 0,
-              )),
-              timeline: clampString(p.timeline, 100, '1-3 meseci'),
-              actions,
-            });
-          }
-          if (aiPhases.length >= 2) {
-            scaling = { ...scaling, scaleActionPlan: aiPhases };
-          }
-        }
-
-        // Override timeline
-        if (typeof parsed.scaleTimeline === 'string' && parsed.scaleTimeline.trim()) {
-          scaling = {
-            ...scaling,
-            scaleTimeline: clampString(parsed.scaleTimeline, 400, scaling.scaleTimeline),
-          };
-        }
-
-        // Override risk assessment if AI provided ≥3
-        if (Array.isArray(parsed.scaleRiskAssessment) && parsed.scaleRiskAssessment.length >= 3) {
-          const aiRisks: ScaleRisk[] = [];
-          for (const r of parsed.scaleRiskAssessment.slice(0, MAX_RISKS)) {
-            if (!r || typeof r !== 'object') continue;
-            aiRisks.push({
-              risk: clampString(r.risk, 200, 'Risk.'),
-              severity: clampEnum(r.severity, VALID_SEVERITY, 'MEDIUM'),
-              mitigation: clampString(r.mitigation, 200, 'Mitigacija.'),
-            });
-          }
-          if (aiRisks.length >= 3) {
-            scaling = { ...scaling, scaleRiskAssessment: aiRisks };
-          }
-        }
-
-        // Override grade (re-decide based on AI bottlenecks count)
-        const finalGrade = parsed.scaleGrade
-          ? clampEnum(parsed.scaleGrade, VALID_GRADE, decideGrade(
-              scaling.scaleMultiplier, scaling.scaleBottlenecks.length,
-            ))
-          : decideGrade(scaling.scaleMultiplier, scaling.scaleBottlenecks.length);
-        scaling = { ...scaling, scaleGrade: finalGrade };
-
-        summary = clampString(parsed.summary, 400, buildSummary(current, scaling));
-        aiUsed = true;
-      }
+      const merged = mergeAiIntoScaling(parsed, detScaling, current);
+      scaling = merged.scaling;
+      summary = merged.summary;
+      aiUsed = merged.aiUsed;
     } catch (err) {
       logger.warn(
         '/api/ai/profit-scale-engine',
@@ -835,22 +849,15 @@ VRNI LE JSON:
       setCachedAI(cacheKey, { scaling, summary });
     }
 
-    return NextResponse.json({
+    return apiOk({
       ok: true,
       current,
       scaling,
       summary,
       aiUsed,
     } satisfies ProfitScaleResponse);
-  } catch (err: any) {
-    logger.error(
-      '/api/ai/profit-scale-engine',
-      'handler failed',
-      err,
-    );
-    return NextResponse.json(
-      { error: err?.message ?? 'Napaka' },
-      { status: 500 },
-    );
-  }
-}
+  },
+});
+
+export const GET = profitScaleHandler;
+export const POST = profitScaleHandler;

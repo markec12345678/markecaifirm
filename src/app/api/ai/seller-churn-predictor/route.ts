@@ -1,4 +1,4 @@
-// v7.84: AI Seller Churn Predictor — AI napove kateri PRODAJALCI
+// v7.84 / v8.96.5-batch4: AI Seller Churn Predictor — AI napove kateri PRODAJALCI
 // (dobavitelji) bodo verjetno prenehali prodajati (churn) in kdaj. Pomaga
 // proaktivno vzdrževati odnose z dobavitelji. "Marjan: HIGH churn risk (45d
 // since last trade, avg 20d). Retention: 'Imam nove iPhone-e!' URGENT."
@@ -16,23 +16,14 @@
 //
 // GET+POST /api/ai/seller-churn-predictor
 // (AI-enhanced + grounding + anti-hallucination + 6h cache + deterministic fallback)
+// Refaktoriran z withAiRoute helperjem (v8.96.5) + enforceBudget guard.
 
-import { NextRequest, NextResponse } from 'next/server';
-import { db } from '@/lib/db';
-import { getSettingsRow } from '@/lib/pipeline';
-import {
-  callProviderForRaw,
-  parseJsonLooseExported,
-  type AiProviderType,
-  type AiSettings,
-} from '@/lib/ai';
+import { withAiRoute, AI_ROUTE_DEFAULTS, type AiRouteContext } from '@/lib/with-ai-route';
+import { apiOk } from '@/lib/api-response';
 import { GROUNDING_PROMPT_SUFFIX } from '@/lib/anti-hallucination';
 import { getCachedAI, setCachedAI } from '@/lib/ai-cache';
-import { checkRateLimit, rateLimitResponse } from '@/lib/rate-limit';
-import { logger } from '@/lib/logger';
 
-export const runtime = 'nodejs';
-export const dynamic = 'force-dynamic';
+export const { runtime, dynamic } = AI_ROUTE_DEFAULTS;
 export const maxDuration = 60;
 
 // --- Types ---------------------------------------------------------------
@@ -77,6 +68,23 @@ interface ChurnSummary {
 interface AiChurnResponse {
   sellers?: unknown;
   summary?: unknown;
+}
+
+interface SellerPromptInfo {
+  sellerName: string;
+  totalTrades: number;
+  lastTradeDate: string;
+  daysSinceLastTrade: number;
+  avgDaysBetweenTrades: number;
+  expectedNextTradeDate: string;
+  tradeFrequency: number;
+  tradeFrequencyTrend: FrequencyTrend;
+  totalSpent: number;
+  avgDealScore: number;
+  successRate: number;
+  deterministicChurnRiskScore: number;
+  deterministicChurnRiskLevel: ChurnRiskLevel;
+  deterministicRetentionPriority: RetentionPriority;
 }
 
 // --- Constants -----------------------------------------------------------
@@ -526,20 +534,215 @@ function computeSupplierHealthScore(
   return round0(Math.max(0, Math.min(100, 100 - avgRisk)));
 }
 
+// --- Prompt builder (extracted, pure) -----------------------------------
+
+function buildPrompt(sellersForPrompt: SellerPromptInfo[]): string {
+  return `Si AI "Seller Churn Predictor" za slovenske in srednjeevropske oglasne platforme (Bolha, Vinted, Facebook, Avtonet, mobile.de).
+Napoveš kateri PRODAJALCI (dobavitelji) bodo verjetno prenehali prodajati (churn) in kdaj. Predlagaš retention akcije in personalizirana outreach sporočila.
+
+PRODAJALCI (deterministično izračunano):
+${JSON.stringify(sellersForPrompt, null, 2)}
+
+PRAVILA ZA AI ODGOVOR:
+1. sellers: array per seller z:
+   - sellerName: enako kot v promptu (max 100 znakov)
+   - churnRiskScore: 0-100 (lahko prilagodiš znotraj [-10, +10] od deterministične vrednosti — anti-hallucination)
+   - churnRiskLevel: LOW (<35) | MEDIUM (35-59) | HIGH (60-79) | CRITICAL (80+). Vedno izračunaj iz score.
+   - churnAssessment: slovenski opis tveganja (max 350 znakov). NE izmišljuj podatkov.
+   - retentionActions: 2-4 slovenske konkretne akcije (max 200 znakov na akcijo)
+   - retentionMessage: slovensko personalizirano sporočilo za prodajalca (max 400 znakov)
+   - retentionPriority: URGENT (≥80) | HIGH (60-79) | MEDIUM (35-59) | LOW (<35). Vedno izračunaj iz score.
+   - predictedChurnDate: ISO date v prihodnosti (po expectedNextTradeDate + grace period)
+   - daysUntilChurn: število dni do predicted churn (max 365)
+2. summary: {
+   - supplierHealthScore: 0-100 (lahko prilagodiš znotraj [-5, +5] od deterministične vrednosti)
+   - advice: slovenski povzetek (max 400 znakov)
+}
+3. NE pozabi sellerName, totalTrades, lastTradeDate, daysSinceLastTrade, avgDaysBetweenTrades, expectedNextTradeDate, tradeFrequency, tradeFrequencyTrend, totalSpent, avgDealScore, successRate ostanejo nespremenjeni (iz determinističnih podatkov).
+
+VRNI LE JSON:
+{
+  "sellers": [
+    {
+      "sellerName": "Marjan",
+      "churnRiskScore": 75,
+      "churnRiskLevel": "HIGH",
+      "churnAssessment": "Marjan: VISOKO tveganje odhoda. 45d od zadnje trgovine (avg 20d, 2.3x overdue). Upadanje frekvence. Success rate 65%. Proaktivni kontakt nujen.",
+      "retentionActions": ["Takojšen osebni kontakt (klic/SMS)", "Pošlji povzetek zadnjih uspešnih trgovin"],
+      "retentionMessage": "Pozdravljen Marjan, opazil sem, da že dalj časa nismo poslovali. Zanimalo bi me, če imaš trenutno kakšne nove iPhone-e ali elektroniko na voljo. Z veseljem bi nadaljevali sodelovanje!",
+      "retentionPriority": "HIGH",
+      "predictedChurnDate": "2026-09-15T00:00:00.000Z",
+      "daysUntilChurn": 25
+    }
+  ],
+  "summary": {
+    "supplierHealthScore": 62,
+    "advice": "12 prodajalcev. Supplier health: 62/100. 3 URGENT (HIGH+CRITICAL). Takojšen kontakt za Marjan, Ana, Peter."
+  }
+}${GROUNDING_PROMPT_SUFFIX}`;
+}
+
+// --- AI override merge (extracted, pure except sellers mutation) --------
+
+interface AiMergeResult {
+  summary: ChurnSummary;
+  aiUsed: boolean;
+}
+
+function applyAiOverrides(
+  parsed: AiChurnResponse | null,
+  sellers: SellerRow[],
+  deterministicSummary: ChurnSummary,
+  deterministicAdvice: string,
+  now: number,
+): AiMergeResult {
+  let finalSummary = deterministicSummary;
+  let aiUsed = false;
+
+  if (parsed && typeof parsed === 'object') {
+    // AI may override per-seller fields
+    if (parsed.sellers && Array.isArray(parsed.sellers)) {
+      const aiSellers = parsed.sellers as Array<Record<string, unknown>>;
+      for (const ai of aiSellers) {
+        const sellerName = clampString(ai.sellerName, 100, '');
+        if (!sellerName) continue;
+        const match = sellers.find((s) => s.sellerName === sellerName);
+        if (!match) continue;
+
+        const detScore = match.churnRiskScore;
+        const aiScore = clampNumber(ai.churnRiskScore, 0, 100, detScore);
+        // Anti-hallucination: AI can adjust by max ±10
+        const clampedScore = Math.max(
+          0,
+          Math.min(
+            100,
+            Math.round(
+              detScore + Math.max(-10, Math.min(10, aiScore - detScore)),
+            ),
+          ),
+        );
+        match.churnRiskScore = clampedScore;
+        // Risk level ALWAYS recomputed from clamped score
+        match.churnRiskLevel = clampEnum(
+          ai.churnRiskLevel,
+          VALID_RISK_LEVEL,
+          riskLevelFromScore(clampedScore),
+        );
+        match.retentionPriority = clampEnum(
+          ai.retentionPriority,
+          VALID_RETENTION_PRIORITY,
+          priorityFromScore(clampedScore),
+        );
+
+        const churnAssessment = clampString(
+          ai.churnAssessment,
+          350,
+          '',
+        );
+        if (churnAssessment) match.churnAssessment = churnAssessment;
+
+        if (Array.isArray(ai.retentionActions)) {
+          const aiActions = (ai.retentionActions as unknown[])
+            .map((a) => clampString(a, 200, ''))
+            .filter((a) => a.length > 0)
+            .slice(0, 4);
+          if (aiActions.length > 0) match.retentionActions = aiActions;
+        }
+
+        const retentionMessage = clampString(
+          ai.retentionMessage,
+          400,
+          '',
+        );
+        if (retentionMessage) match.retentionMessage = retentionMessage;
+
+        // Predicted churn date validation
+        if (
+          typeof ai.predictedChurnDate === 'string' &&
+          ai.predictedChurnDate.trim()
+        ) {
+          const churnMs = toMs(new Date(ai.predictedChurnDate));
+          if (churnMs > now) {
+            match.predictedChurnDate = ai.predictedChurnDate.slice(0, 30);
+            match.daysUntilChurn = Math.min(
+              365,
+              Math.max(0, daysBetween(now, churnMs)),
+            );
+          }
+        }
+      }
+      // Re-sort sellers by clamped score desc
+      sellers.sort((a, b) => b.churnRiskScore - a.churnRiskScore);
+    }
+
+    // Summary override
+    if (parsed.summary && typeof parsed.summary === 'object') {
+      const s = parsed.summary as Record<string, unknown>;
+      // Recompute counts from clamped sellers
+      const low = sellers.filter((s) => s.churnRiskLevel === 'LOW').length;
+      const med = sellers.filter((s) => s.churnRiskLevel === 'MEDIUM').length;
+      const high = sellers.filter((s) => s.churnRiskLevel === 'HIGH').length;
+      const crit = sellers.filter((s) => s.churnRiskLevel === 'CRITICAL').length;
+      const urgent = sellers.filter(
+        (s) => s.retentionPriority === 'URGENT',
+      ).length;
+      // Supplier health score: AI can adjust ±5
+      const detHealth = computeSupplierHealthScore(sellers);
+      const aiHealth = clampNumber(s.supplierHealthScore, 0, 100, detHealth);
+      const clampedHealth = Math.max(
+        0,
+        Math.min(
+          100,
+          Math.round(
+            detHealth + Math.max(-5, Math.min(5, aiHealth - detHealth)),
+          ),
+        ),
+      );
+
+      const advice = clampString(
+        s.advice,
+        400,
+        deterministicAdvice,
+      );
+
+      finalSummary = {
+        totalSellers: sellers.length,
+        lowRiskCount: low,
+        mediumRiskCount: med,
+        highRiskCount: high,
+        criticalRiskCount: crit,
+        supplierHealthScore: clampedHealth,
+        urgentRetentionCount: urgent,
+        advice,
+      };
+    }
+
+    aiUsed = true;
+  }
+
+  return { summary: finalSummary, aiUsed };
+}
+
+// --- Input ---------------------------------------------------------------
+
+// eslint-disable-next-line @typescript-eslint/no-empty-object-type
+interface SellerChurnPredictorInput {}
+
 // --- Handler -------------------------------------------------------------
 
-export async function GET(req: NextRequest) {
-  return handleSellerChurnPredictor(req);
-}
-export async function POST(req: NextRequest) {
-  return handleSellerChurnPredictor(req);
-}
+const sellerChurnHandler = withAiRoute<SellerChurnPredictorInput>({
+  endpoint: '/api/ai/seller-churn-predictor',
+  maxDuration: 60,
+  enforceBudget: true, // AI klic — preveri budget
+  method: 'GET', // GET+POST — body ignored
 
-async function handleSellerChurnPredictor(req: NextRequest) {
-  try {
-    const rl = checkRateLimit(req, 'ai-seller-churn-predictor', 20);
-    if (!rl.allowed) return rateLimitResponse(rl);
+  parseBody: async (req) => {
+    await req.json().catch(() => ({}));
+    return {};
+  },
 
+  handler: async (_input, ctx: AiRouteContext) => {
+    const { db, callAi, parseAi, logger } = ctx;
     const now = Date.now();
 
     // 1) Query all trades with linked Listing (for sellerName, dealScore)
@@ -575,27 +778,25 @@ async function handleSellerChurnPredictor(req: NextRequest) {
       (a) => a.tradeDates.length >= 2,
     );
 
-    const emptyResponse = {
-      ok: true,
-      sellers: [] as SellerRow[],
-      summary: {
-        totalSellers: 0,
-        lowRiskCount: 0,
-        mediumRiskCount: 0,
-        highRiskCount: 0,
-        criticalRiskCount: 0,
-        supplierHealthScore: 0,
-        urgentRetentionCount: 0,
-        advice:
-          'Ni prodajalcev z 2+ trgovinami — Seller Churn Predictor ni mogoč.',
-      },
-      aiUsed: false,
-      message:
-        'Ni prodajalcev z 2+ trgovinami — Seller Churn Predictor ni mogoč.',
-    };
-
     if (eligibleSellers.length === 0) {
-      return NextResponse.json(emptyResponse);
+      return apiOk({
+        ok: true,
+        sellers: [] as SellerRow[],
+        summary: {
+          totalSellers: 0,
+          lowRiskCount: 0,
+          mediumRiskCount: 0,
+          highRiskCount: 0,
+          criticalRiskCount: 0,
+          supplierHealthScore: 0,
+          urgentRetentionCount: 0,
+          advice:
+            'Ni prodajalcev z 2+ trgovinami — Seller Churn Predictor ni mogoč.',
+        },
+        aiUsed: false,
+        message:
+          'Ni prodajalcev z 2+ trgovinami — Seller Churn Predictor ni mogoč.',
+      });
     }
 
     // 3) Build deterministic seller rows (sorted by churnRiskScore desc)
@@ -650,7 +851,7 @@ async function handleSellerChurnPredictor(req: NextRequest) {
       summary: ChurnSummary;
     }>(cacheKey);
     if (cached) {
-      return NextResponse.json({
+      return apiOk({
         ok: true,
         sellers: cached.sellers,
         summary: cached.summary,
@@ -660,21 +861,7 @@ async function handleSellerChurnPredictor(req: NextRequest) {
     }
 
     // 6) AI prompt with grounding
-    const settings = await getSettingsRow();
-    const aiSettings: AiSettings = {
-      provider: settings.aiProvider as AiProviderType,
-      baseUrl: settings.aiBaseUrl,
-      apiKey: settings.aiApiKey,
-      model: settings.aiModel,
-      fallbackProvider: (settings.fallbackProvider || '') as
-        | AiProviderType
-        | '',
-      fallbackBaseUrl: settings.fallbackBaseUrl || '',
-      fallbackApiKey: settings.fallbackApiKey || '',
-      fallbackModel: settings.fallbackModel || '',
-    };
-
-    const sellersForPrompt = topSellers.map((s) => ({
+    const sellersForPrompt: SellerPromptInfo[] = topSellers.map((s) => ({
       sellerName: s.sellerName,
       totalTrades: s.totalTrades,
       lastTradeDate: s.lastTradeDate,
@@ -691,177 +878,23 @@ async function handleSellerChurnPredictor(req: NextRequest) {
       deterministicRetentionPriority: s.retentionPriority,
     }));
 
-    const prompt = `Si AI "Seller Churn Predictor" za slovenske in srednjeevropske oglasne platforme (Bolha, Vinted, Facebook, Avtonet, mobile.de).
-Napoveš kateri PRODAJALCI (dobavitelji) bodo verjetno prenehali prodajati (churn) in kdaj. Predlagaš retention akcije in personalizirana outreach sporočila.
-
-PRODAJALCI (deterministično izračunano):
-${JSON.stringify(sellersForPrompt, null, 2)}
-
-PRAVILA ZA AI ODGOVOR:
-1. sellers: array per seller z:
-   - sellerName: enako kot v promptu (max 100 znakov)
-   - churnRiskScore: 0-100 (lahko prilagodiš znotraj [-10, +10] od deterministične vrednosti — anti-hallucination)
-   - churnRiskLevel: LOW (<35) | MEDIUM (35-59) | HIGH (60-79) | CRITICAL (80+). Vedno izračunaj iz score.
-   - churnAssessment: slovenski opis tveganja (max 350 znakov). NE izmišljuj podatkov.
-   - retentionActions: 2-4 slovenske konkretne akcije (max 200 znakov na akcijo)
-   - retentionMessage: slovensko personalizirano sporočilo za prodajalca (max 400 znakov)
-   - retentionPriority: URGENT (≥80) | HIGH (60-79) | MEDIUM (35-59) | LOW (<35). Vedno izračunaj iz score.
-   - predictedChurnDate: ISO date v prihodnosti (po expectedNextTradeDate + grace period)
-   - daysUntilChurn: število dni do predicted churn (max 365)
-2. summary: {
-   - supplierHealthScore: 0-100 (lahko prilagodiš znotraj [-5, +5] od deterministične vrednosti)
-   - advice: slovenski povzetek (max 400 znakov)
-}
-3. NE pozabi sellerName, totalTrades, lastTradeDate, daysSinceLastTrade, avgDaysBetweenTrades, expectedNextTradeDate, tradeFrequency, tradeFrequencyTrend, totalSpent, avgDealScore, successRate ostanejo nespremenjeni (iz determinističnih podatkov).
-
-VRNI LE JSON:
-{
-  "sellers": [
-    {
-      "sellerName": "Marjan",
-      "churnRiskScore": 75,
-      "churnRiskLevel": "HIGH",
-      "churnAssessment": "Marjan: VISOKO tveganje odhoda. 45d od zadnje trgovine (avg 20d, 2.3x overdue). Upadanje frekvence. Success rate 65%. Proaktivni kontakt nujen.",
-      "retentionActions": ["Takojšen osebni kontakt (klic/SMS)", "Pošlji povzetek zadnjih uspešnih trgovin"],
-      "retentionMessage": "Pozdravljen Marjan, opazil sem, da že dalj časa nismo poslovali. Zanimalo bi me, če imaš trenutno kakšne nove iPhone-e ali elektroniko na voljo. Z veseljem bi nadaljevali sodelovanje!",
-      "retentionPriority": "HIGH",
-      "predictedChurnDate": "2026-09-15T00:00:00.000Z",
-      "daysUntilChurn": 25
-    }
-  ],
-  "summary": {
-    "supplierHealthScore": 62,
-    "advice": "12 prodajalcev. Supplier health: 62/100. 3 URGENT (HIGH+CRITICAL). Takojšen kontakt za Marjan, Ana, Peter."
-  }
-}${GROUNDING_PROMPT_SUFFIX}`;
+    const prompt = buildPrompt(sellersForPrompt);
 
     let finalSummary = deterministicSummary;
     let aiUsed = false;
 
     try {
-      const raw = await callProviderForRaw(aiSettings, prompt);
-      const parsed = parseJsonLooseExported(raw) as AiChurnResponse | null;
-
-      if (parsed && typeof parsed === 'object') {
-        // AI may override per-seller fields
-        if (parsed.sellers && Array.isArray(parsed.sellers)) {
-          const aiSellers = parsed.sellers as Array<Record<string, unknown>>;
-          for (const ai of aiSellers) {
-            const sellerName = clampString(ai.sellerName, 100, '');
-            if (!sellerName) continue;
-            const match = sellers.find((s) => s.sellerName === sellerName);
-            if (!match) continue;
-
-            const detScore = match.churnRiskScore;
-            const aiScore = clampNumber(ai.churnRiskScore, 0, 100, detScore);
-            // Anti-hallucination: AI can adjust by max ±10
-            const clampedScore = Math.max(
-              0,
-              Math.min(
-                100,
-                Math.round(
-                  detScore + Math.max(-10, Math.min(10, aiScore - detScore)),
-                ),
-              ),
-            );
-            match.churnRiskScore = clampedScore;
-            // Risk level ALWAYS recomputed from clamped score
-            match.churnRiskLevel = clampEnum(
-              ai.churnRiskLevel,
-              VALID_RISK_LEVEL,
-              riskLevelFromScore(clampedScore),
-            );
-            match.retentionPriority = clampEnum(
-              ai.retentionPriority,
-              VALID_RETENTION_PRIORITY,
-              priorityFromScore(clampedScore),
-            );
-
-            const churnAssessment = clampString(
-              ai.churnAssessment,
-              350,
-              '',
-            );
-            if (churnAssessment) match.churnAssessment = churnAssessment;
-
-            if (Array.isArray(ai.retentionActions)) {
-              const aiActions = (ai.retentionActions as unknown[])
-                .map((a) => clampString(a, 200, ''))
-                .filter((a) => a.length > 0)
-                .slice(0, 4);
-              if (aiActions.length > 0) match.retentionActions = aiActions;
-            }
-
-            const retentionMessage = clampString(
-              ai.retentionMessage,
-              400,
-              '',
-            );
-            if (retentionMessage) match.retentionMessage = retentionMessage;
-
-            // Predicted churn date validation
-            if (
-              typeof ai.predictedChurnDate === 'string' &&
-              ai.predictedChurnDate.trim()
-            ) {
-              const churnMs = toMs(new Date(ai.predictedChurnDate));
-              if (churnMs > now) {
-                match.predictedChurnDate = ai.predictedChurnDate.slice(0, 30);
-                match.daysUntilChurn = Math.min(
-                  365,
-                  Math.max(0, daysBetween(now, churnMs)),
-                );
-              }
-            }
-          }
-          // Re-sort sellers by clamped score desc
-          sellers.sort((a, b) => b.churnRiskScore - a.churnRiskScore);
-        }
-
-        // Summary override
-        if (parsed.summary && typeof parsed.summary === 'object') {
-          const s = parsed.summary as Record<string, unknown>;
-          // Recompute counts from clamped sellers
-          const low = sellers.filter((s) => s.churnRiskLevel === 'LOW').length;
-          const med = sellers.filter((s) => s.churnRiskLevel === 'MEDIUM').length;
-          const high = sellers.filter((s) => s.churnRiskLevel === 'HIGH').length;
-          const crit = sellers.filter((s) => s.churnRiskLevel === 'CRITICAL').length;
-          const urgent = sellers.filter(
-            (s) => s.retentionPriority === 'URGENT',
-          ).length;
-          // Supplier health score: AI can adjust ±5
-          const detHealth = computeSupplierHealthScore(sellers);
-          const aiHealth = clampNumber(s.supplierHealthScore, 0, 100, detHealth);
-          const clampedHealth = Math.max(
-            0,
-            Math.min(
-              100,
-              Math.round(
-                detHealth + Math.max(-5, Math.min(5, aiHealth - detHealth)),
-              ),
-            ),
-          );
-
-          const advice = clampString(
-            s.advice,
-            400,
-            deterministicAdvice,
-          );
-
-          finalSummary = {
-            totalSellers: sellers.length,
-            lowRiskCount: low,
-            mediumRiskCount: med,
-            highRiskCount: high,
-            criticalRiskCount: crit,
-            supplierHealthScore: clampedHealth,
-            urgentRetentionCount: urgent,
-            advice,
-          };
-        }
-
-        aiUsed = true;
-      }
+      const raw = await callAi(prompt);
+      const parsed = parseAi(raw) as AiChurnResponse | null;
+      const result = applyAiOverrides(
+        parsed,
+        sellers,
+        deterministicSummary,
+        deterministicAdvice,
+        now,
+      );
+      finalSummary = result.summary;
+      aiUsed = result.aiUsed;
     } catch (err) {
       logger.warn(
         '/api/ai/seller-churn-predictor',
@@ -878,17 +911,14 @@ VRNI LE JSON:
       });
     }
 
-    return NextResponse.json({
+    return apiOk({
       ok: true,
       sellers,
       summary: finalSummary,
       aiUsed,
     });
-  } catch (err: any) {
-    logger.error('/api/ai/seller-churn-predictor', 'handler failed', err);
-    return NextResponse.json(
-      { error: err?.message ?? 'Napaka' },
-      { status: 500 },
-    );
-  }
-}
+  },
+});
+
+export const GET = sellerChurnHandler;
+export const POST = sellerChurnHandler;

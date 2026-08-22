@@ -1,4 +1,4 @@
-// v7.86: AI Price Volatility Analyzer — AI analizira PRICE VOLATILITY
+// v7.86 / v8.96.5-batch2: AI Price Volatility Analyzer — AI analizira PRICE VOLATILITY
 // (nihanje cen) čez kategorije zadnjih 90 dni. Meri coefficient of variation
 // (stddev / mean × 100) tedenskih povprečnih cen, identifies high-volatility
 // (risky but profitable) vs low-volatility (safe but lower profit) kategorije.
@@ -18,24 +18,20 @@
 //
 // GET+POST /api/ai/price-volatility-analyzer
 // (AI-enhanced + grounding + anti-hallucination + 6h cache + deterministic fallback)
+// Refaktoriran z withAiRoute helperjem (v8.96.5) + enforceBudget guard.
 
-import { NextRequest, NextResponse } from 'next/server';
-import { db } from '@/lib/db';
-import { getSettingsRow } from '@/lib/pipeline';
-import {
-  callProviderForRaw,
-  parseJsonLooseExported,
-  type AiProviderType,
-  type AiSettings,
-} from '@/lib/ai';
+import { withAiRoute, AI_ROUTE_DEFAULTS, type AiRouteContext } from '@/lib/with-ai-route';
+import { apiOk } from '@/lib/api-response';
 import { GROUNDING_PROMPT_SUFFIX } from '@/lib/anti-hallucination';
 import { getCachedAI, setCachedAI } from '@/lib/ai-cache';
-import { checkRateLimit, rateLimitResponse } from '@/lib/rate-limit';
-import { logger } from '@/lib/logger';
 
-export const runtime = 'nodejs';
-export const dynamic = 'force-dynamic';
+export const { runtime, dynamic } = AI_ROUTE_DEFAULTS;
 export const maxDuration = 60;
+
+// --- Input ----------------------------------------------------------------
+
+// eslint-disable-next-line @typescript-eslint/no-empty-object-type
+interface PriceVolatilityAnalyzerInput {}
 
 // --- Types ---------------------------------------------------------------
 
@@ -504,19 +500,273 @@ function buildDeterministicSummary(
   return parts.join(' ');
 }
 
+// --- AI prompt + merge helpers (pure, testable) ---------------------------
+
+interface PromptData {
+  totalCategories: number;
+  totalListings: number;
+  avgVolatility: number;
+  categories: Array<{
+    category: string;
+    priceVolatility: number;
+    volatilityLevel: VolatilityLevel;
+    riskProfile: RiskProfile;
+    priceRange: { min: number; max: number };
+    priceChangePercent: number;
+    priceDropFrequency: number;
+    weeklyAvgPrices: number[];
+    listingCount: number;
+    deterministicStrategy: string;
+    deterministicArbitrage: number;
+  }>;
+  deterministicAnalysis: VolatilityAnalysis;
+}
+
+function buildPromptData(
+  categories: CategoryVolatility[],
+  totalListings: number,
+  detAnalysis: VolatilityAnalysis,
+): PromptData {
+  const topCats = [...categories]
+    .sort((a, b) => b.listingCount - a.listingCount)
+    .slice(0, 8)
+    .map((c) => ({
+      category: c.category,
+      priceVolatility: c.priceVolatility,
+      volatilityLevel: c.volatilityLevel,
+      riskProfile: c.riskProfile,
+      priceRange: c.priceRange,
+      priceChangePercent: c.priceChangePercent,
+      priceDropFrequency: c.priceDropFrequency,
+      weeklyAvgPrices: c.weeklyAvgPrices,
+      listingCount: c.listingCount,
+      deterministicStrategy: c.tradingStrategy,
+      deterministicArbitrage: c.arbitragePotential,
+    }));
+
+  return {
+    totalCategories: categories.length,
+    totalListings,
+    avgVolatility: round1(
+      categories.reduce((s, c) => s + c.priceVolatility, 0) / categories.length,
+    ),
+    categories: topCats,
+    deterministicAnalysis: {
+      volatilityAssessment: detAnalysis.volatilityAssessment,
+      bestVolatilityCategories: detAnalysis.bestVolatilityCategories,
+      worstVolatilityCategories: detAnalysis.worstVolatilityCategories,
+      riskMitigationActions: detAnalysis.riskMitigationActions,
+    },
+  };
+}
+
+function buildPrompt(promptData: PromptData): string {
+  return `Si AI "Price Volatility Analyzer" za slovenske in srednjeevropske oglasne platforme (Bolha, Vinted, Facebook, Avtonet, mobile.de).
+Analiziraš CENOVNO VOLATILNOST (coefficient of variation = stddev / mean × 100 tedenskih povprečnih cen) čez kategorije zadnjih 90 dni.
+
+DETERMINISTIČNI PODATKI (izračunano iz DB):
+${JSON.stringify(promptData, null, 2)}
+
+PRAVILA ZA AI ODGOVOR:
+1. categoriesPatch: array of { category (max 60), tradingStrategy (max 250, slovensko), arbitragePotential: 0-100 }
+   - Za vsako od top kategorij izboljšaj tradingStrategy z AI vpogledom (glede na volatilityLevel in priceChangePercent).
+   - HIGH_VOL (VERY_HIGH/HIGH): kupuj nizko, prodaj hitro, watch for dips, hitre flip operacije.
+   - LOW_VOL (LOW/VERY_LOW): drži dlje, stabilne marže, dolgoročno.
+   - MODERATE: uravnotežena strategija.
+   - arbitragePotential: ±20 od deterministične vrednosti, clamped [0, 100]. Višja volatilnost + višja priceDropFrequency = višji arbitrage potential.
+2. analysis: {
+   - volatilityAssessment: slovenski povzetek (max 500 znakov) — kaj volatilnost pomeni za trading decisions. NE izmišljuj številk — uporabi zgornje deterministične.
+   - bestVolatilityCategories: 2-3 kategorije z OPTIMALNIM risk/reward razmerjem (max 3) z { category, volatility, reasoning (max 250) }
+     * Optimalna = MODERATE ali LOW volatilnost z visokim arbitragePotential (ne premajhna profit priložnost, ne preveliko tveganje).
+   - worstVolatilityCategories: 2-3 kategorije ki so preveč tveganje (VERY_HIGH) ali premajhna profit priložnost (VERY_LOW) z { category, volatility, reasoning (max 250) }
+   - riskMitigationActions: 3-4 akcije za zaščito proti volatilnosti z { action (max 200), priority: HIGH|MEDIUM|LOW, detail (max 250) }
+3. summary: slovenski povzetek (max 400 znakov).
+
+VRNI LE JSON:
+{
+  "categoriesPatch": [
+    { "category": "elektronika", "tradingStrategy": "HIGH volatilnost — kupuj nizko, prodaj hitro. Watch for dips.", "arbitragePotential": 75 }
+  ],
+  "analysis": {
+    "volatilityAssessment": "Portfolio je...",
+    "bestVolatilityCategories": [
+      { "category": "mobilni_telefoni", "volatility": 15, "reasoning": "MODERATE volatilnost, visok arbitrage potential." }
+    ],
+    "worstVolatilityCategories": [
+      { "category": "avto_deli", "volatility": 45, "reasoning": "VERY_HIGH volatilnost — preveliko tveganje." }
+    ],
+    "riskMitigationActions": [
+      { "action": "Diversificiraj...", "priority": "HIGH", "detail": "Zmanjšaj izpostavljenost VERY_HIGH kategorijam." }
+    ]
+  },
+  "summary": "Analiziranih 8 kategorij. Povprečna volatilnost 18%. Najboljša: mobilni_telefoni."
+}${GROUNDING_PROMPT_SUFFIX}`;
+}
+
+function mergeAiIntoVolatility(
+  parsed: AiVolatilityResponse | null,
+  categories: CategoryVolatility[],
+  detAnalysis: VolatilityAnalysis,
+  detSummary: string,
+): { analysis: VolatilityAnalysis; summary: string; aiUsed: boolean } {
+  if (!parsed || typeof parsed !== 'object') {
+    return { analysis: detAnalysis, summary: detSummary, aiUsed: false };
+  }
+
+  let analysis: VolatilityAnalysis = detAnalysis;
+  let finalSummary = detSummary;
+
+  // 1) categoriesPatch — apply AI tradingStrategy and arbitragePotential
+  if (Array.isArray(parsed.categoriesPatch)) {
+    const patchMap = new Map<string, { tradingStrategy: string; arbitragePotential: number }>();
+    for (const p of parsed.categoriesPatch as unknown[]) {
+      const pr = p as Record<string, unknown>;
+      if (!pr || typeof pr !== 'object') continue;
+      const cat = clampString(pr.category, 60, '');
+      if (!cat) continue;
+      const strategy = clampString(pr.tradingStrategy, 250, '');
+      const arbRaw = clampNumber(
+        pr.arbitragePotential,
+        ARBITRAGE_MIN,
+        ARBITRAGE_MAX,
+        50,
+      );
+      // ±20 from deterministic
+      const existing = categories.find((c) => c.category === cat);
+      if (existing && strategy) {
+        const adjArb = Math.max(
+          ARBITRAGE_MIN,
+          Math.min(
+            ARBITRAGE_MAX,
+            existing.arbitragePotential + Math.max(-20, Math.min(20, arbRaw - existing.arbitragePotential)),
+          ),
+        );
+        patchMap.set(cat, {
+          tradingStrategy: strategy,
+          arbitragePotential: round0(adjArb),
+        });
+      }
+    }
+    for (const c of categories) {
+      const p = patchMap.get(c.category);
+      if (p) {
+        c.tradingStrategy = p.tradingStrategy;
+        c.arbitragePotential = p.arbitragePotential;
+      }
+    }
+  }
+
+  // 2) analysis override (with anti-hallucination)
+  if (parsed.analysis && typeof parsed.analysis === 'object') {
+    const a = parsed.analysis as Record<string, unknown>;
+
+    let mergedAssessment = analysis.volatilityAssessment;
+    if (typeof a.volatilityAssessment === 'string' && a.volatilityAssessment.trim()) {
+      mergedAssessment = clampString(
+        a.volatilityAssessment,
+        500,
+        detAnalysis.volatilityAssessment,
+      );
+    }
+
+    let mergedBest = analysis.bestVolatilityCategories;
+    if (Array.isArray(a.bestVolatilityCategories)) {
+      const aiBest = (a.bestVolatilityCategories as unknown[])
+        .map((b: unknown) => {
+          const br = b as Record<string, unknown>;
+          if (!br || typeof br !== 'object') return null;
+          const category = clampString(br.category, 60, '');
+          if (!category) return null;
+          const existing = categories.find((c) => c.category === category);
+          const volatility = clampNumber(
+            br.volatility,
+            VOLATILITY_MIN,
+            VOLATILITY_MAX,
+            existing?.priceVolatility ?? 0,
+          );
+          const reasoning = clampString(br.reasoning, 250, '');
+          if (!reasoning) return null;
+          return { category, volatility: round1(volatility), reasoning };
+        })
+        .filter((b): b is BestWorstCategory => b !== null)
+        .slice(0, 3);
+      if (aiBest.length > 0) mergedBest = aiBest;
+    }
+
+    let mergedWorst = analysis.worstVolatilityCategories;
+    if (Array.isArray(a.worstVolatilityCategories)) {
+      const aiWorst = (a.worstVolatilityCategories as unknown[])
+        .map((b: unknown) => {
+          const br = b as Record<string, unknown>;
+          if (!br || typeof br !== 'object') return null;
+          const category = clampString(br.category, 60, '');
+          if (!category) return null;
+          const existing = categories.find((c) => c.category === category);
+          const volatility = clampNumber(
+            br.volatility,
+            VOLATILITY_MIN,
+            VOLATILITY_MAX,
+            existing?.priceVolatility ?? 0,
+          );
+          const reasoning = clampString(br.reasoning, 250, '');
+          if (!reasoning) return null;
+          return { category, volatility: round1(volatility), reasoning };
+        })
+        .filter((b): b is BestWorstCategory => b !== null)
+        .slice(0, 3);
+      if (aiWorst.length > 0) mergedWorst = aiWorst;
+    }
+
+    let mergedActions = analysis.riskMitigationActions;
+    if (Array.isArray(a.riskMitigationActions)) {
+      const aiActions = (a.riskMitigationActions as unknown[])
+        .map((ac: unknown) => {
+          const a2 = ac as Record<string, unknown>;
+          if (!a2 || typeof a2 !== 'object') return null;
+          const action = clampString(a2.action, 200, '');
+          if (!action) return null;
+          const priority = clampEnum(a2.priority, VALID_PRIORITY, 'MEDIUM');
+          const detail = clampString(a2.detail, 250, '');
+          if (!detail) return null;
+          return { action, priority, detail };
+        })
+        .filter((ac): ac is RiskMitigationAction => ac !== null)
+        .slice(0, 4);
+      if (aiActions.length > 0) mergedActions = aiActions;
+    }
+
+    analysis = {
+      volatilityAssessment: mergedAssessment,
+      bestVolatilityCategories: mergedBest,
+      worstVolatilityCategories: mergedWorst,
+      riskMitigationActions: mergedActions,
+    };
+  }
+
+  // 3) summary
+  if (typeof parsed.summary === 'string' && parsed.summary.trim()) {
+    finalSummary = clampString(parsed.summary, 400, detSummary);
+  }
+
+  return { analysis, summary: finalSummary, aiUsed: true };
+}
+
 // --- Handler -------------------------------------------------------------
 
-export async function GET(req: NextRequest) {
-  return handlePriceVolatilityAnalyzer(req);
-}
-export async function POST(req: NextRequest) {
-  return handlePriceVolatilityAnalyzer(req);
-}
+const priceVolatilityAnalyzerHandler = withAiRoute<PriceVolatilityAnalyzerInput>({
+  endpoint: '/api/ai/price-volatility-analyzer',
+  maxDuration: 60,
+  enforceBudget: true, // AI klic — preveri budget
+  method: 'GET', // Endpoint sprejema GET + POST — bypass POST-only check
 
-async function handlePriceVolatilityAnalyzer(req: NextRequest) {
-  try {
-    const rl = checkRateLimit(req, 'ai-price-volatility-analyzer', 20);
-    if (!rl.allowed) return rateLimitResponse(rl);
+  parseBody: async (req) => {
+    await req.json().catch(() => ({}));
+    return {};
+  },
+
+  // No validateInput — body ignored, identična logika za GET in POST
+  handler: async (_input, ctx: AiRouteContext) => {
+    const { db, callAi, parseAi, logger } = ctx;
 
     const now = Date.now();
     const cutoff = new Date(now - HORIZON_90D);
@@ -551,7 +801,7 @@ async function handlePriceVolatilityAnalyzer(req: NextRequest) {
 
     // Empty state
     if (categories.length === 0) {
-      return NextResponse.json({
+      return apiOk({
         ok: true,
         categories: [],
         analysis: {
@@ -607,7 +857,7 @@ async function handlePriceVolatilityAnalyzer(req: NextRequest) {
           }
         }
       }
-      return NextResponse.json({
+      return apiOk({
         ok: true,
         categories,
         analysis: cached.analysis,
@@ -618,224 +868,21 @@ async function handlePriceVolatilityAnalyzer(req: NextRequest) {
     }
 
     // 5) AI prompt with grounding
-    const settings = await getSettingsRow();
-    const aiSettings: AiSettings = {
-      provider: settings.aiProvider as AiProviderType,
-      baseUrl: settings.aiBaseUrl,
-      apiKey: settings.aiApiKey,
-      model: settings.aiModel,
-      fallbackProvider: (settings.fallbackProvider || '') as
-        | AiProviderType
-        | '',
-      fallbackBaseUrl: settings.fallbackBaseUrl || '',
-      fallbackApiKey: settings.fallbackApiKey || '',
-      fallbackModel: settings.fallbackModel || '',
-    };
-
-    // Build compact AI prompt data (top 8 categories by listing count, all relevant fields)
-    const topCats = [...categories]
-      .sort((a, b) => b.listingCount - a.listingCount)
-      .slice(0, 8)
-      .map((c) => ({
-        category: c.category,
-        priceVolatility: c.priceVolatility,
-        volatilityLevel: c.volatilityLevel,
-        riskProfile: c.riskProfile,
-        priceRange: c.priceRange,
-        priceChangePercent: c.priceChangePercent,
-        priceDropFrequency: c.priceDropFrequency,
-        weeklyAvgPrices: c.weeklyAvgPrices,
-        listingCount: c.listingCount,
-        deterministicStrategy: c.tradingStrategy,
-        deterministicArbitrage: c.arbitragePotential,
-      }));
-
-    const promptData = {
-      totalCategories: categories.length,
-      totalListings: rows.length,
-      avgVolatility: round1(
-        categories.reduce((s, c) => s + c.priceVolatility, 0) / categories.length,
-      ),
-      categories: topCats,
-      deterministicAnalysis: {
-        volatilityAssessment: detAnalysis.volatilityAssessment,
-        bestVolatilityCategories: detAnalysis.bestVolatilityCategories,
-        worstVolatilityCategories: detAnalysis.worstVolatilityCategories,
-        riskMitigationActions: detAnalysis.riskMitigationActions,
-      },
-    };
-
-    const prompt = `Si AI "Price Volatility Analyzer" za slovenske in srednjeevropske oglasne platforme (Bolha, Vinted, Facebook, Avtonet, mobile.de).
-Analiziraš CENOVNO VOLATILNOST (coefficient of variation = stddev / mean × 100 tedenskih povprečnih cen) čez kategorije zadnjih 90 dni.
-
-DETERMINISTIČNI PODATKI (izračunano iz DB):
-${JSON.stringify(promptData, null, 2)}
-
-PRAVILA ZA AI ODGOVOR:
-1. categoriesPatch: array of { category (max 60), tradingStrategy (max 250, slovensko), arbitragePotential: 0-100 }
-   - Za vsako od top kategorij izboljšaj tradingStrategy z AI vpogledom (glede na volatilityLevel in priceChangePercent).
-   - HIGH_VOL (VERY_HIGH/HIGH): kupuj nizko, prodaj hitro, watch for dips, hitre flip operacije.
-   - LOW_VOL (LOW/VERY_LOW): drži dlje, stabilne marže, dolgoročno.
-   - MODERATE: uravnotežena strategija.
-   - arbitragePotential: ±20 od deterministične vrednosti, clamped [0, 100]. Višja volatilnost + višja priceDropFrequency = višji arbitrage potential.
-2. analysis: {
-   - volatilityAssessment: slovenski povzetek (max 500 znakov) — kaj volatilnost pomeni za trading decisions. NE izmišljuj številk — uporabi zgornje deterministične.
-   - bestVolatilityCategories: 2-3 kategorije z OPTIMALNIM risk/reward razmerjem (max 3) z { category, volatility, reasoning (max 250) }
-     * Optimalna = MODERATE ali LOW volatilnost z visokim arbitragePotential (ne premajhna profit priložnost, ne preveliko tveganje).
-   - worstVolatilityCategories: 2-3 kategorije ki so preveč tveganje (VERY_HIGH) ali premajhna profit priložnost (VERY_LOW) z { category, volatility, reasoning (max 250) }
-   - riskMitigationActions: 3-4 akcije za zaščito proti volatilnosti z { action (max 200), priority: HIGH|MEDIUM|LOW, detail (max 250) }
-3. summary: slovenski povzetek (max 400 znakov).
-
-VRNI LE JSON:
-{
-  "categoriesPatch": [
-    { "category": "elektronika", "tradingStrategy": "HIGH volatilnost — kupuj nizko, prodaj hitro. Watch for dips.", "arbitragePotential": 75 }
-  ],
-  "analysis": {
-    "volatilityAssessment": "Portfolio je...",
-    "bestVolatilityCategories": [
-      { "category": "mobilni_telefoni", "volatility": 15, "reasoning": "MODERATE volatilnost, visok arbitrage potential." }
-    ],
-    "worstVolatilityCategories": [
-      { "category": "avto_deli", "volatility": 45, "reasoning": "VERY_HIGH volatilnost — preveliko tveganje." }
-    ],
-    "riskMitigationActions": [
-      { "action": "Diversificiraj...", "priority": "HIGH", "detail": "Zmanjšaj izpostavljenost VERY_HIGH kategorijam." }
-    ]
-  },
-  "summary": "Analiziranih 8 kategorij. Povprečna volatilnost 18%. Najboljša: mobilni_telefoni."
-}${GROUNDING_PROMPT_SUFFIX}`;
+    const promptData = buildPromptData(categories, rows.length, detAnalysis);
+    const prompt = buildPrompt(promptData);
 
     let aiUsed = false;
 
     try {
-      const raw = await callProviderForRaw(aiSettings, prompt);
-      const parsed = parseJsonLooseExported(
+      const raw = await callAi(prompt);
+      const parsed = parseAi(
         raw,
       ) as AiVolatilityResponse | null;
 
-      if (parsed && typeof parsed === 'object') {
-        // 1) categoriesPatch — apply AI tradingStrategy and arbitragePotential
-        if (Array.isArray(parsed.categoriesPatch)) {
-          const patchMap = new Map<string, { tradingStrategy: string; arbitragePotential: number }>();
-          for (const p of parsed.categoriesPatch as unknown[]) {
-            const pr = p as Record<string, unknown>;
-            if (!pr || typeof pr !== 'object') continue;
-            const cat = clampString(pr.category, 60, '');
-            if (!cat) continue;
-            const strategy = clampString(pr.tradingStrategy, 250, '');
-            const arbRaw = clampNumber(
-              pr.arbitragePotential,
-              ARBITRAGE_MIN,
-              ARBITRAGE_MAX,
-              50,
-            );
-            // ±20 from deterministic
-            const existing = categories.find((c) => c.category === cat);
-            if (existing && strategy) {
-              const adjArb = Math.max(
-                ARBITRAGE_MIN,
-                Math.min(
-                  ARBITRAGE_MAX,
-                  existing.arbitragePotential + Math.max(-20, Math.min(20, arbRaw - existing.arbitragePotential)),
-                ),
-              );
-              patchMap.set(cat, {
-                tradingStrategy: strategy,
-                arbitragePotential: round0(adjArb),
-              });
-            }
-          }
-          for (const c of categories) {
-            const p = patchMap.get(c.category);
-            if (p) {
-              c.tradingStrategy = p.tradingStrategy;
-              c.arbitragePotential = p.arbitragePotential;
-            }
-          }
-        }
-
-        // 2) analysis override (with anti-hallucination)
-        if (parsed.analysis && typeof parsed.analysis === 'object') {
-          const a = parsed.analysis as Record<string, unknown>;
-
-          if (typeof a.volatilityAssessment === 'string' && a.volatilityAssessment.trim()) {
-            analysis.volatilityAssessment = clampString(
-              a.volatilityAssessment,
-              500,
-              detAnalysis.volatilityAssessment,
-            );
-          }
-
-          if (Array.isArray(a.bestVolatilityCategories)) {
-            const aiBest = (a.bestVolatilityCategories as unknown[])
-              .map((b: unknown) => {
-                const br = b as Record<string, unknown>;
-                if (!br || typeof br !== 'object') return null;
-                const category = clampString(br.category, 60, '');
-                if (!category) return null;
-                const existing = categories.find((c) => c.category === category);
-                const volatility = clampNumber(
-                  br.volatility,
-                  VOLATILITY_MIN,
-                  VOLATILITY_MAX,
-                  existing?.priceVolatility ?? 0,
-                );
-                const reasoning = clampString(br.reasoning, 250, '');
-                if (!reasoning) return null;
-                return { category, volatility: round1(volatility), reasoning };
-              })
-              .filter((b): b is BestWorstCategory => b !== null)
-              .slice(0, 3);
-            if (aiBest.length > 0) analysis.bestVolatilityCategories = aiBest;
-          }
-
-          if (Array.isArray(a.worstVolatilityCategories)) {
-            const aiWorst = (a.worstVolatilityCategories as unknown[])
-              .map((b: unknown) => {
-                const br = b as Record<string, unknown>;
-                if (!br || typeof br !== 'object') return null;
-                const category = clampString(br.category, 60, '');
-                if (!category) return null;
-                const existing = categories.find((c) => c.category === category);
-                const volatility = clampNumber(
-                  br.volatility,
-                  VOLATILITY_MIN,
-                  VOLATILITY_MAX,
-                  existing?.priceVolatility ?? 0,
-                );
-                const reasoning = clampString(br.reasoning, 250, '');
-                if (!reasoning) return null;
-                return { category, volatility: round1(volatility), reasoning };
-              })
-              .filter((b): b is BestWorstCategory => b !== null)
-              .slice(0, 3);
-            if (aiWorst.length > 0) analysis.worstVolatilityCategories = aiWorst;
-          }
-
-          if (Array.isArray(a.riskMitigationActions)) {
-            const aiActions = (a.riskMitigationActions as unknown[])
-              .map((ac: unknown) => {
-                const a2 = ac as Record<string, unknown>;
-                if (!a2 || typeof a2 !== 'object') return null;
-                const action = clampString(a2.action, 200, '');
-                if (!action) return null;
-                const priority = clampEnum(a2.priority, VALID_PRIORITY, 'MEDIUM');
-                const detail = clampString(a2.detail, 250, '');
-                if (!detail) return null;
-                return { action, priority, detail };
-              })
-              .filter((ac): ac is RiskMitigationAction => ac !== null)
-              .slice(0, 4);
-            if (aiActions.length > 0) analysis.riskMitigationActions = aiActions;
-          }
-        }
-
-        // 3) summary
-        if (typeof parsed.summary === 'string' && parsed.summary.trim()) {
-          finalSummary = clampString(parsed.summary, 400, detSummary);
-        }
-
+      const result = mergeAiIntoVolatility(parsed, categories, detAnalysis, detSummary);
+      if (result.aiUsed) {
+        analysis = result.analysis;
+        finalSummary = result.summary;
         aiUsed = true;
       }
     } catch (err) {
@@ -859,22 +906,15 @@ VRNI LE JSON:
       });
     }
 
-    return NextResponse.json({
+    return apiOk({
       ok: true,
       categories,
       analysis,
       summary: finalSummary,
       aiUsed,
     });
-  } catch (err: any) {
-    logger.error(
-      '/api/ai/price-volatility-analyzer',
-      'handler failed',
-      err,
-    );
-    return NextResponse.json(
-      { error: err?.message ?? 'Napaka' },
-      { status: 500 },
-    );
-  }
-}
+  },
+});
+
+export const GET = priceVolatilityAnalyzerHandler;
+export const POST = priceVolatilityAnalyzerHandler;
