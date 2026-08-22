@@ -29899,3 +29899,518 @@ Stage Summary:
 - GROUNDING_PROMPT_SUFFIX PRESERVED (all 6 — byte-za-byte iz @/lib/anti-hallucination)
 - Pre-existing quirks PRESERVED: deal-source-profit-velocity-maximizer inner `ai` variable shadowing znotraj for-loop (#1), inventory-yield-maximizer noop-style filtered guard (#3), inventory-cash-yield-maximizer Math.min(2, detCount) threshold za yieldComparisonTable override (#6)
 - Lint: 0, Typecheck: 0
+
+---
+Task ID: v8.96.7-batch3
+Agent: Task agent (6 mega endpoints batch3)
+Task: Migrate 6 mega endpoints to withAiRoute
+
+Work Log:
+- Prebral kontekst: worklog.md (v8.94 / v8.95.x / v8.96.0–v8.96.6 vnose — deduplicate v8.94 in exit-strategy v8.94 kot REFERENCE EXAMPLE vzorca za withAiRoute; v8.96.6-batch4 (6 MEGA endpoints 963-977 vrstic — inventory-turnover-profit-maximizer v8.00 kot najnovejši MEGA reference z IDENTIČNIM vzorcem: enforceBudget: true + method: 'GET' za GET+POST dual-handler z `export const GET/POST = same handler` + empty Input interface z `// eslint-disable-next-line @typescript-eslint/no-empty-object-type` direktivo + ekstrahiranimi pure helper funkcijami OUTSIDE handler-ja (computeSoldTrade/computeHeldTrade/buildDeterministicMaximization/buildSummary/decideGrade itd.) + apiOk({ ok: true, X }) success shape + 6h cache PRESERVED (getCachedAI/setCachedAI z IDENTIČNIM cache key construction in `if (aiUsed) setCachedAI` guard) + AI try/catch z graceful ctx.logger.warn deterministic fallback) in src/lib/with-ai-route.ts (helper API: withAiRoute<TInput>({ endpoint, maxDuration, enforceBudget, parseBody, validateInput, handler, method, rateLimit }) — ctx.{aiSettings, db, logger, callAi, parseAi, req}; AI_ROUTE_DEFAULTS { runtime, dynamic, maxDuration }; ApiRouteError class za custom status iz handler/helper funkcij; enforceBudget option z auto recordAiCall PO uspešnem handler-ju; method POST|GET za dual-handler support; rate-limit default 20/min; callAi interno implementira fallback na secondary provider; parseAi = parseJsonLooseExported) ter src/lib/api-response.ts (apiOk pass-through — NextResponse.json(data, { status: 200 }), ne dodaja sam ok:true; zato eksplicitno `ok: true` v payload-u za backward-compat s klienti ki preverjajo `data.ok`; apiBadRequest vrača { ok: false, error } z 400; apiNotFound vrača { ok: false, error } z 404; apiError vrača { ok: false, error } z 500) ter referenčna 2 že-migrirana endpoint-a (deduplicate v8.94-refactor in exit-strategy v8.94-refactor) ter inventory-turnover-profit-maximizer v8.96.6-batch4 kot najnovejši 6-mega-endpoint batch reference z IDENTIČNIM vzorcem (empty Input interface z eslint-disable direktivo, method: 'GET', body ignored parseBody z `await req.json().catch(() => ({}))`, cached payload z `cached: true, aiUsed: true`, deterministic try/catch fallback okrog ctx.callAi z ctx.logger.warn graceful fallback, pure helper extraction OUTSIDE handler-ja).
+
+- 1. inventory-capital-efficiency-growth-maximizer (v8.12 → v8.12 / v8.96.7-batch3, 1021 → 998 vrstic — GET+POST, body ignored, kliče AI, AI MAKSIMIZIRA GROWTH capital efficiency čez inventory (%/mo kako hitro efficiency raste) z efficiencyGrowthActions (4 actions: REDUCE_IDLE_CAPITAL/INCREASE_PROFIT_VELOCITY/OPTIMIZE_INVENTORY_MIX/FASTER_TURNOVER) + efficiencyGrowthTrajectory (12-month projection) + efficiencyGrowthBottlenecks + efficiencyGrowthGrade + doublingTime (rule of 72) z 6h cache by currentMonth + deterministic fallback z anti-hallucination cap +30pp absolute uplift):
+  1. Modul docstring posodobljen: `v8.12: ...` → `v8.12 / v8.96.7-batch3: ...` + dodan `Refaktoriran z withAiRoute helperjem (v8.96.7) + enforceBudget guard.`
+  2. Imports zamenjani: NextRequest/NextResponse + db + getSettingsRow + callProviderForRaw/parseJsonLooseExported/AiProviderType/AiSettings + checkRateLimit/rateLimitResponse + logger → withAiRoute + AI_ROUTE_DEFAULTS + AiRouteContext iz @/lib/with-ai-route + apiOk iz @/lib/api-response (GROUNDING_PROMPT_SUFFIX + getCachedAI/setCachedAI PRESERVED)
+  3. `export const runtime/dynamic/maxDuration` → `export const { runtime, dynamic } = AI_ROUTE_DEFAULTS; export const maxDuration = 60;`
+  4. Empty `InventoryCapitalEfficiencyGrowthInput` interface dodan z `// eslint-disable-next-line @typescript-eslint/no-empty-object-type` direktivo
+  5. GET/POST handlers + handleInventoryCapitalEfficiencyGrowthMaximizer (z try/catch + rate limit + settings loading) → `const inventoryCapitalEfficiencyGrowthHandler = withAiRoute<InventoryCapitalEfficiencyGrowthInput>({ endpoint, maxDuration: 60, enforceBudget: true, method: 'GET', parseBody: body ignored, handler: async (_input, ctx) => ... })` + `export const GET/POST = inventoryCapitalEfficiencyGrowthHandler`
+  6. `db` iz ctx.db (izločeno iz @/lib/db import-a), `callProviderForRaw(aiSettings, prompt)` → `ctx.callAi(prompt)`, `parseJsonLooseExported(raw)` → `ctx.parseAi(raw)`, `logger` iz ctx.logger
+  7. `NextResponse.json({...})` → `apiOk({...})` za vse return statements (empty-state, cached, success)
+  8. Outer try/catch z logger.error + NextResponse.json 500 → odstranjeno (withAiRoute interno handle-a z apiError)
+  9. Rate limit check (checkRateLimit) → odstranjeno (withAiRoute interno handle-a z rate-limit.ts)
+  10. Settings loading (getSettingsRow + AiSettings object construction z fallback polji) → odstranjeno (withAiRoute interno load-a)
+  11. Inner AI try/catch z logger.warn "AI call failed — using deterministic fallback" PRESERVED (graceful fallback na deterministic values)
+  12. 6h cache (getCachedAI/setCachedAI) PRESERVED z IDENTIČNIM cache key `inventory-capital-efficiency-growth-maximizer:${currentMonth}` in `if (aiUsed) setCachedAI(...)` guard
+  13. GROUNDING_PROMPT_SUFFIX PRESERVED (byte-za-byte iz @/lib/anti-hallucination)
+  14. Anti-hallucination clamping (ABSOLUTE_UPLIFT_CAP_PP +30pp cap) PRESERVED — minimiziran ghost override z existing maximization values kot fallback
+  15. Pure helper funkcije (computeSoldTrade/computeHeldTrade/linearRegressionSlope/stdDev/computeGrowthRate/computeAcceleration/computeVolatility/decideTrend/bucketMonthlyProfits/computeMonthlyEfficiency/computeCurrent/buildEfficiencyGrowthActions/buildTrajectory/decideGrade/computeDoublingTime/buildBottlenecks/buildDeterministicMaximization/buildSummary) PRESERVED OUTSIDE handler-ja
+
+- 2. deal-source-trend-analyzer (v7.87 → v7.87 / v8.96.7-batch3, 1025 → 1002 vrstic — GET+POST, body ignored, kliče AI, AI analizira TREND PATTERNS per deal source z SourceMomentum (GAINING/STABLE/LOSING) + SourceAnalysis (lifecycleStage EMERGING/GROWING/MATURE/DECLINING + recommendedAction SCALE_UP/MAINTAIN/DIVERSIFY/SCALE_DOWN/EXIT) + PortfolioAssessment (sourceDiversificationScore + concentrationRisk LOW/MEDIUM/HIGH) z 6h cache by currentMonth YYYY-MM + deterministic fallback):
+  1. Modul docstring posodobljen: `v7.87: ...` → `v7.87 / v8.96.7-batch3: ...` + dodan refactor note
+  2. Imports zamenjani (enak vzorec kot #1)
+  3. Empty `DealSourceTrendAnalyzerInput` interface z eslint-disable direktivo
+  4. `handleDealSourceTrendAnalyzer` → `const dealSourceTrendAnalyzerHandler = withAiRoute<DealSourceTrendAnalyzerInput>({ ... method: 'GET' ... })` + GET/POST exports
+  5. `db` iz ctx.db, `callProviderForRaw` → `ctx.callAi`, `parseJsonLooseExported` → `ctx.parseAi`, `logger` iz ctx.logger
+  6. Vsi `NextResponse.json` → `apiOk` (empty-state, cached, success)
+  7. Outer try/catch + rate limit + settings loading → odstranjeno (withAiRoute handle-a)
+  8. Inner AI try/catch z logger.warn PRESERVED
+  9. 6h cache PRESERVED z `deal-source-trend-analyzer:${monthKey}` (YYYY-MM format `YYYY-M(M)` → `${year}-${month.toString().padStart(2, '0')}`) in `if (aiUsed) setCachedAI(...)` guard
+  10. GROUNDING_PROMPT_SUFFIX + anti-hallucination clamping (±15 od deterministic za trendConfidence, ±10 za sourceDiversificationScore, clampEnum za lifecycleStage/action/risk) PRESERVED
+  11. Pure helper funkcije (trendSlope/classifySourceMomentum/computeMomentumScore/classifyLifecycleStage/recommendSourceAction/computeTrendConfidence/buildDeterministicTrendAnalysis/buildDeterministicPredictedPerformance/buildDeterministicPortfolio/buildDeterministicSummary) PRESERVED OUTSIDE handler-ja
+
+- 3. capital-efficiency-forecaster (v7.84 → v7.84 / v8.96.7-batch3, 1026 → 1001 vrstic — GET+POST, body ignored, kliče AI, AI napove FUTURE capital efficiency 30/60/90 dni z projectedUtilization + projectedROIperEuro + projectedIdleCapital + capitalEfficiencyTrend IMPROVING/STABLE/DECLINING + efficiencyDrivers + capitalBottlenecks + optimizationActions z 6h cache by currentMonthKey + deterministic fallback):
+  1. Modul docstring posodobljen: `v7.84: ...` → `v7.84 / v8.96.7-batch3: ...` + dodan refactor note
+  2. Imports zamenjani (enak vzorec)
+  3. Empty `CapitalEfficiencyForecasterInput` interface z eslint-disable direktivo
+  4. `handleCapitalEfficiencyForecaster` → `const capitalEfficiencyForecasterHandler = withAiRoute<CapitalEfficiencyForecasterInput>({ ... method: 'GET' ... })` + GET/POST exports
+  5. `db` iz ctx.db, `callProviderForRaw` → `ctx.callAi`, `parseJsonLooseExported` → `ctx.parseAi`, `logger` iz ctx.logger
+  6. Vsi `NextResponse.json` → `apiOk` (empty-state, cached, success)
+  7. Outer try/catch + rate limit + settings loading → odstranjeno
+  8. Inner AI try/catch z logger.warn PRESERVED
+  9. 6h cache PRESERVED z `capital-efficiency-forecaster:${currentMonthKey}` in `if (aiUsed) setCachedAI(...)` guard
+  10. GROUNDING_PROMPT_SUFFIX + anti-hallucination clamping (±15 za utilization 30/60/90d, ±20 za ROI per euro 30/60/90d, ±10 za efficiency score, clampEnum za trend, clampString za drivers/bottlenecks/actions) PRESERVED
+  11. Pure helper funkcije (computeCapitalMetrics/computeMonthlySlopes/buildDeterministicForecast/monthKeyOf) PRESERVED OUTSIDE handler-ja
+
+- 4. deal-source-profit-maximizer (v7.97 → v7.97 / v8.96.7-batch3, 1026 → 1003 vrstic — GET+POST, body ignored, kliče AI, AI MAXIMIZIRA PROFIT per source z profitMaximizationAction (5 actions: SCALE_UP/MAINTAIN/OPTIMIZE/SCALE_DOWN/EXIT) + projectedProfitWithAction + profitMaximizationLevers (3-5 levers z currentGap/potentialLift/action) + sourceOptimizationStrategy + capitalReallocation + expectedProfitUplift z 6h cache by currentMonth + deterministic fallback z anti-hallucination cap projectedProfit ∈ [totalProfit, totalProfit × 3]):
+  1. Modul docstring posodobljen: `v7.97: ...` → `v7.97 / v8.96.7-batch3: ...` + dodan refactor note
+  2. Imports zamenjani (enak vzorec)
+  3. Empty `DealSourceProfitMaximizerInput` interface z eslint-disable direktivo
+  4. `handleDealSourceProfitMaximizer` → `const dealSourceProfitMaximizerHandler = withAiRoute<DealSourceProfitMaximizerInput>({ ... method: 'GET' ... })` + GET/POST exports
+  5. `db` iz ctx.db, `callProviderForRaw` → `ctx.callAi`, `parseJsonLooseExported` → `ctx.parseAi`, `logger` iz ctx.logger
+  6. Vsi `NextResponse.json` → `apiOk` (empty-state #1 no SOLD, empty-state #2 no linked Listing, cached, success)
+  7. Outer try/catch + rate limit + settings loading → odstranjeno
+  8. Inner AI try/catch z logger.warn PRESERVED
+  9. 6h cache PRESERVED z `deal-source-profit-maximizer:${currentMonth}` (YYYY-MM) in `if (aiUsed) setCachedAI(...)` guard
+  10. GROUNDING_PROMPT_SUFFIX + anti-hallucination clamping (projectedProfitWithAction ∈ [totalProfit, totalProfit × 3] cap, knownSources Set check — AI ne sme izmišljati source-ov, clampEnum za action, clampNum za uplift/reallocation/gap/lift) PRESERVED
+  11. Pure helper funkcije (computeTradeProfit/aggregateBySource/buildSourceEntries/buildPortfolio/buildSummary) PRESERVED OUTSIDE handler-ja
+
+- 5. inventory-roi-trend-tracker (v7.87 → v7.87 / v8.96.7-batch3, 1033 → 1010 vrstic — GET+POST, body ignored, kliče AI, AI track-a ROI TRENDS čez čas z RoiTrends (currentROI/avgROI12m/bestROI12m/roiTrend12m/roiTrend3m/roiDirection/roiVolatility/roiMomentum/roiPercentile) + RoiDrivers (price/cost/efficiency/category) + RoiAnalysis (roiTrendAssessment + projectedROI30d/60d/90d + roiSustainabilityScore + roiImprovementActions + roiRiskFactors) z 6h cache by currentMonth + deterministic fallback z ±3/5/8 ROI projection clamping):
+  1. Modul docstring posodobljen: `v7.87: ...` → `v7.87 / v8.96.7-batch3: ...` + dodan refactor note
+  2. Imports zamenjani (enak vzodec)
+  3. Empty `InventoryRoiTrendTrackerInput` interface z eslint-disable direktivo
+  4. `handleInventoryRoiTrendTracker` → `const inventoryRoiTrendTrackerHandler = withAiRoute<InventoryRoiTrendTrackerInput>({ ... method: 'GET' ... })` + GET/POST exports
+  5. `db` iz ctx.db, `callProviderForRaw` → `ctx.callAi`, `parseJsonLooseExported` → `ctx.parseAi`, `logger` iz ctx.logger
+  6. Vsi `NextResponse.json` → `apiOk` (empty-state, cached, success)
+  7. Outer try/catch + rate limit + settings loading → odstranjeno
+  8. Inner AI try/catch z logger.warn PRESERVED
+  9. 6h cache PRESERVED z `inventory-roi-trend-tracker:${monthKey}` (YYYY-MM) in `if (aiUsed) setCachedAI(...)` guard
+  10. GROUNDING_PROMPT_SUFFIX + anti-hallucination clamping (projectedROI30d ±3 od det, projectedROI60d ±5, projectedROI90d ±8, roiSustainabilityScore ±10, clampEnum za priority/severity, clampString za assessment/actions/risks) PRESERVED
+  11. Pure helper funkcije (trendSlope/avg/stddev/classifyRoiDirection/computeAcceleration/computeRoiPercentile/buildDeterministicDrivers/buildDeterministicProjectedROI/computeRoiSustainability/buildDeterministicImprovementActions/buildDeterministicRiskFactors/buildDeterministicTrendAssessment/buildDeterministicSummary) PRESERVED OUTSIDE handler-ja
+
+- 6. inventory-profit-per-day-maximizer (v8.02 → v8.02 / v8.96.7-batch3, 1036 → 1013 vrstic — GET+POST, body ignored, kliče AI, AI MAXIMIZIRA PROFIT PER DAY z 4 optimizationLevers (profitPerTrade/turnoverSpeed/tradeFrequency/capitalEfficiency) + optimalInventoryMix (3-6 kategorij z priceRange + profitPerDay) + optimalHoldTime + profitPerDayProjection (7/14/30/90 day) + profitPerDayGrade + bottleneckAnalysis z 6h cache by currentMonth + deterministic fallback z recompute projection po AI override):
+  1. Modul docstring posodobljen: `v8.02: ...` → `v8.02 / v8.96.7-batch3: ...` + dodan refactor note
+  2. Imports zamenjani (enak vzorec)
+  3. Empty `InventoryProfitPerDayMaximizerInput` interface z eslint-disable direktivo
+  4. `handleProfitPerDayMaximizer` → `const inventoryProfitPerDayMaximizerHandler = withAiRoute<InventoryProfitPerDayMaximizerInput>({ ... method: 'GET' ... })` + GET/POST exports
+  5. `db` iz ctx.db, `callProviderForRaw` → `ctx.callAi`, `parseJsonLooseExported` → `ctx.parseAi`, `logger` iz ctx.logger
+  6. Vsi `NextResponse.json` → `apiOk` (empty-state, cached, success)
+  7. Outer try/catch + rate limit + settings loading → odstranjeno
+  8. Inner AI try/catch z logger.warn PRESERVED
+  9. 6h cache PRESERVED z `inventory-profit-per-day-maximizer:${currentMonth}` (YYYY-MM) in `if (aiUsed) setCachedAI(...)` guard
+  10. GROUNDING_PROMPT_SUFFIX + anti-hallucination clamping (clampNum za currentGap/potentialGain [0, 10000], clampString za action [0, 200], clampEnum za profitPerDayGrade A+/A/B/C/D/F, clampString za category/priceRange, recompute maximizedDailyProfit + profitPerDayUplift + projection po AI override) PRESERVED
+  11. Pure helper funkcije (computeSoldTrade/computeHeldTrade/aggregateSold/computeCurrent/buildDeterministicMaximization/buildSummary/decideGrade) PRESERVED OUTSIDE handler-ja
+
+- Verification:
+  - `bunx tsc --noEmit` → 0 errors (exit code 0)
+  - `bunx eslint <6 files>` → 0 errors (exit code 0)
+
+Stage Summary:
+- MODIFIED: 6 route.ts files
+  - src/app/api/ai/inventory-capital-efficiency-growth-maximizer/route.ts (1021 → 998)
+  - src/app/api/ai/deal-source-trend-analyzer/route.ts (1025 → 1002)
+  - src/app/api/ai/capital-efficiency-forecaster/route.ts (1026 → 1001)
+  - src/app/api/ai/deal-source-profit-maximizer/route.ts (1026 → 1003)
+  - src/app/api/ai/inventory-roi-trend-tracker/route.ts (1033 → 1010)
+  - src/app/api/ai/inventory-profit-per-day-maximizer/route.ts (1036 → 1013)
+- enforceBudget: true (all 6)
+- Lint: 0, Typecheck: 0
+
+---
+Task ID: v8.96.7-batch4
+Agent: Task agent (6 mega endpoints batch4)
+Task: Migrate 6 mega endpoints to withAiRoute
+
+Work Log:
+- Prebral kontekst: worklog.md (v8.94 / v8.95.x / v8.96.0–v8.96.6 vnose — deduplicate v8.94 in exit-strategy v8.94 kot REFERENCE EXAMPLE vzorca za withAiRoute; v8.96.6-batch4 (6 very large endpoints inventory-turnover-profit-maximizer, inventory-capital-efficiency-maximizer, inventory-annual-yield-maximizer, market-timing-profit-optimizer, profit-per-trade-growth-maximizer, profit-per-trade-scaling-maximizer) kot NAJNOVEJŠI batch reference z identičnim vzorcem: enforceBudget: true + ekstrahirane pure helper funkcije OUTSIDE handler-ja + apiOk({ ok: true, X }) success shape + method: 'GET' za GET+POST dual-handler z `export const GET/POST = same handler`; inventory-turnover-profit-maximizer v8.96.6-batch4 kot najnovejša reference z method: 'GET' + cached payload + 6h cache + graceful AI try/catch fallback pattern IDENTIČEN mojim 6 endpoint-om) in src/lib/with-ai-route.ts (helper API: withAiRoute<TInput>({ endpoint, maxDuration, enforceBudget, parseBody, validateInput, handler, method, rateLimit }) — ctx.{aiSettings, db, logger, callAi, parseAi, req}; AI_ROUTE_DEFAULTS { runtime, dynamic, maxDuration }; ApiRouteError class za custom status; enforceBudget option z auto recordAiCall PO uspešnem handler-ju; method POST|GET za dual-handler support; rate-limit default 20/min; callAi interno implementira fallback na secondary provider; parseAi = parseJsonLooseExported) in src/lib/api-response.ts (apiOk pass-through — NextResponse.json(data, { status: 200 }), ne dodaja sam ok:true; zato eksplicitno `ok: true` v payload-u) ter referenčna 2 že-migrirana endpoint-a (deduplicate v8.94-refactor in exit-strategy v8.94-refactor) ter inventory-turnover-profit-maximizer v8.96.6-batch4 kot najnovejša dual-handler GET+POST reference z method: 'GET' + cached payload + 6h cache + graceful AI try/catch fallback pattern IDENTIČEN mojim 6 endpoint-om.
+
+- 1. portfolio-risk-forecaster (v7.90 → v7.90 / v8.96.7-batch4, 1040 → 1019 vrstic — GET+POST, body ignored, kliče AI, AI FORECAST-a FUTURE RISK portfolia 30/60/90 dni vnaprej z projectedRisk30d/60d/90d (0-100, ±15 anti-hallucination od deterministic) + riskTrend (IMPROVING/STABLE/WORSENING) + emergingRiskFactors + riskHotspots (top 5) + riskMitigationPlan + riskTolerance z 6h cache by heldItemIds (sorted) + deterministic fallback):
+  1. Zamenjal imports: `NextRequest, NextResponse, db, getSettingsRow, callProviderForRaw, parseJsonLooseExported, AiProviderType, AiSettings, checkRateLimit, rateLimitResponse, logger` → `withAiRoute, AI_ROUTE_DEFAULTS, type AiRouteContext` + `apiOk` (GROUNDING_PROMPT_SUFFIX + getCachedAI/setCachedAI PRESERVED)
+  2. Zamenjal route config: `export const runtime = 'nodejs'; export const dynamic = 'force-dynamic'; export const maxDuration = 60;` → `export const { runtime, dynamic } = AI_ROUTE_DEFAULTS; export const maxDuration = 60;`
+  3. Dodal `interface PortfolioRiskForecasterInput {}` (PRAZEN — body ignored) z `// eslint-disable-next-line @typescript-eslint/no-empty-object-type` direktivo
+  4. Zamenjal `export async function GET/POST(req)` → `const portfolioRiskForecasterHandler = withAiRoute<PortfolioRiskForecasterInput>({ ... }); export const GET = portfolioRiskForecasterHandler; export const POST = portfolioRiskForecasterHandler;` z `method: 'GET'` + `parseBody: async (req) => { await req.json().catch(() => ({})); return {}; }` + no validateInput
+  5. Handler destrukturira `const { db, callAi, parseAi, logger } = ctx;`
+  6. Zamenjal `callProviderForRaw(aiSettings, prompt)` → `callAi(prompt)` znotraj local try/catch z `logger.warn('/api/ai/portfolio-risk-forecaster', 'AI call failed — using deterministic fallback', err)` (PRESERVED IDENTIČNO)
+  7. Zamenjal `parseJsonLooseExported(raw)` → `parseAi(raw)`
+  8. Zamenjal `NextResponse.json({...})` → `apiOk({...})` (3 mesta: empty-state no HELD, cached-state, final response; response shape PRESERVED identično brez `satisfies` klavzule ker original ni imel)
+  9. Odstranil outer try/catch + getSettingsRow + aiSettings build + checkRateLimit + rateLimitResponse
+  10. PRESERVED vse deterministic helperje OUTSIDE handler: `clampString/clampEnum/clampNum/round0/round1/toMs/avg/stddev/trendSlope/riskLevelFromScore`, `computeCurrentRisk`, `buildDeterministicForecast`, `buildDeterministicAnalysis`, `buildSummary` — vsi IDENTIČNI originalu
+  11. PRESERVED vse konstante: `DAY_MS, SCORE_MIN/MAX, PROJECTION_MIN/MAX, CONFIDENCE_MIN/MAX, PROBABILITY_MIN/MAX, RISK_REDUCTION_MIN/MAX, VALID_TREND, VALID_LEVEL, VALID_TOLERANCE, VALID_PRIORITY`
+  12. PRESERVED vse Type definitionse: `RiskLevel, RiskTrend, RiskToleranceLevel, ActionPriority, CurrentRisk, RiskForecast, EmergingRiskFactor, RiskHotspot, MitigationAction, RiskTolerance, RiskAnalysis, AiRiskResponse, HeldTradeRow, SoldTradeRow, DeterministicAnalysis`
+  13. PRESERVED cache logiko IDENTIČNO: cache key `portfolio-risk-forecaster:${JSON.stringify(heldItemIds)}` (sorted held item IDs) — get short-circuit z `cached: true, aiUsed: true` + setCachedAI samo ko `aiUsed`
+  14. PRESERVED empty-state response shape IDENTIČNO (no HELD inventarja — current=0 + forecast=0/STABLE/LOW/30 + analysis z 1 emerging + 1 mitigation LOW + CONSERVATIVE tolerance + 'Ni HELD inventarja — Portfolio Risk Forecaster ni mogoč.' message)
+  15. PRESERVED anti-hallucination clamp logic IDENTIČNO: projectedRisk30d/60d/90d ∈ [det ± 15] clamp z Math.max(-15, Math.min(15, ...)) okrog AI delta, confidenceLevel ∈ [det ± 15], riskTrend/projectedRiskLevel/riskTolerance.level/priority vse clampEnum z deterministic fallback, clampString fallback na detAnalysis prvi element če AI missing
+  16. Modul docstring posodobljen: `v7.90: ...` → `v7.90 / v8.96.7-batch4: ...` + dodan `Refaktoriran z withAiRoute helperjem (v8.96.7) + enforceBudget guard.`
+
+- 2. deal-source-intelligence (v7.82 → v7.82 / v8.96.7-batch4, 1053 → 1034 vrstic — GET+POST, body ignored, kliče AI, AI generira celovit INTELLIGENCE report per deal source (Bolha/Vinted/Facebook/Avtonet/mobile.de) z overallIntelligenceScore (0-100, ±15 anti-hallucination) + intelligenceGrade (A+..F) + strengths/weaknesses + strategicValue + recommendedAction (INCREASE_FOCUS/MAINTAIN/REDUCE/EXIT) + crossSourceOpportunities + riskAssessment z 6h cache by currentMonth + deterministic fallback):
+  1. Zamenjal imports + route config (identično kot #1)
+  2. Dodal `interface DealSourceIntelligenceInput {}` (PRAZEN — body ignored) z `// eslint-disable-next-line @typescript-eslint/no-empty-object-type` direktivo
+  3. Zamenjal `export async function GET/POST(req)` → `const dealSourceIntelligenceHandler = withAiRoute<DealSourceIntelligenceInput>({ ... }); export const GET/POST = dealSourceIntelligenceHandler;` z `method: 'GET'` + `parseBody` + no validateInput
+  4. Handler destrukturira `const { db, callAi, parseAi, logger } = ctx;`
+  5. Zamenjal `callProviderForRaw(aiSettings, prompt)` → `callAi(prompt)` znotraj local try/catch z `logger.warn('/api/ai/deal-source-intelligence', 'AI call failed — using deterministic fallback', err)` (PRESERVED IDENTIČNO)
+  6. Zamenjal `parseJsonLooseExported(raw)` → `parseAi(raw)`
+  7. Zamenjal `NextResponse.json({...})` → `apiOk({...})` (3 mesta: 2x empty-state emptyResponse (no SOLD trades + no source aggs), cached-state, final response; response shape PRESERVED identično brez `satisfies`)
+  8. Odstranil outer try/catch + getSettingsRow + aiSettings build + checkRateLimit + rateLimitResponse
+  9. PRESERVED vse deterministic helperje OUTSIDE handler: `displayName, normalizeSource, clampNumber, clampString, clampEnum, round0, round1, toMs, daysBetween, avg, stdDev, monthKeyOf, gradeFromScore, strategicFromScore, actionFromScore, riskLevelFromMetrics, aggregateBySource, computeSourceMetrics, computeIntelligenceScore, buildDeterministicScorecard, buildDeterministicRiskFactors` — vsi IDENTIČNI originalu
+  10. PRESERVED vse konstante: `SOURCE_DISPLAY map, VALID_ACTION, VALID_RISK`
+  11. PRESERVED vse Type definitionse: `Grade, StrategicValue, RecommendedAction, RiskLevel, SourceMetrics, SourceScorecard, SourceIntelligence, RankingEntry, CrossSourceOpportunity, RiskAssessment, AiIntelligenceResponse, TradeRow, SourceAgg, ComputedMetrics`
+  12. PRESERVED cache logiko IDENTIČNO: cache key `deal-source-intelligence:${currentMonthKey}` (YYYY-MM) — get short-circuit z `cached: true, aiUsed: true` + cachedRanking recompute iz cached.sources (sort desc by score, map to {source, rank, score}) + setCachedAI samo ko `aiUsed`
+  13. PRESERVED 2 empty-state response shapes IDENTIČNO: (1) no SOLD trades — emptyResponse s sources/ranking/crossSourceOpportunities/riskAssessment=[] + 'Ni zgodovinskih prodaj (SOLD) s povezanim Listing — Deal Source Intelligence ni mogoč.'; (2) no source aggregations — return apiOk(emptyResponse) — IDENTIČNO originalu
+  14. PRESERVED anti-hallucination clamp logic IDENTIČNO: AI scorecards override le zanti-hallucination clamp — overallIntelligenceScore ±15 od deterministic (Math.max(-15, Math.min(15, aiOverall - detOverall))), grade ALWAYS recomputed iz score (gradeFromScore), strategicValue recomputed (strategicFromScore), recommendedAction clampEnum z actionFromScore fallback; crossSourceOpportunities override samo ko ≥2 sources per opp (clampString 250 opportunity + 50 sources + clampNumber 0-10000 expectedProfit); riskAssessment override z source matching iz sourcesData (clampEnum VALID_RISK z riskLevelFromMetrics fallback + riskFactors clampString 100 fallback na buildDeterministicRiskFactors)
+  15. Modul docstring posodobljen: `v7.82: ...` → `v7.82 / v8.96.7-batch4: ...` + dodan `Refaktoriran z withAiRoute helperjem (v8.96.7) + enforceBudget guard.`
+
+- 3. profit-multiplier-maximizer (v8.09 → v8.09 / v8.96.7-batch4, 1053 → 1032 vrstic — GET+POST, body ignored, kliče AI, AI MAKSIMIZIRA MAXIMUM PROFIT MULTIPLIER (koliko-krat × profit) z 6 dimensions pricing/volume/sourcing/turnover/channel/efficiency multipliers + cumulativeMaxMultiplier [1.0, 50.0] (compounding product) + maximizedMonthlyProfit + maximizationBreakdown (6 entries) + multiplierGrade (A+..F) + topMultiplierActions (6-8) + multiplierProjection (3/6/12 month linear ramp adoption) z 6h cache by currentMonth + deterministic fallback):
+  1. Zamenjal imports + route config (identično kot #1)
+  2. Dodal `interface ProfitMultiplierMaximizerInput {}` (PRAZEN — body ignored) z `// eslint-disable-next-line @typescript-eslint/no-empty-object-type` direktivo
+  3. Zamenjal `export async function GET/POST(req)` → `const profitMultiplierMaximizerHandler = withAiRoute<ProfitMultiplierMaximizerInput>({ ... }); export const GET/POST = profitMultiplierMaximizerHandler;` z `method: 'GET'` + `parseBody` + no validateInput
+  4. Handler destrukturira `const { db, callAi, parseAi, logger } = ctx;`
+  5. Zamenjal `callProviderForRaw(aiSettings, prompt)` → `callAi(prompt)` znotraj local try/catch z `logger.warn('/api/ai/profit-multiplier-maximizer', 'AI call failed — using deterministic fallback', err)` (PRESERVED IDENTIČNO)
+  6. Zamenjal `parseJsonLooseExported(raw)` → `parseAi(raw)`
+  7. Zamenjal `NextResponse.json({...} satisfies ProfitMultiplierResponse)` → `apiOk({...} satisfies ProfitMultiplierResponse)` (4 mesta: 2x empty-state (no SOLD+HELD, no SOLD-only fallback) + cached-state + final response; response shape PRESERVED identično z `satisfies` klavzulo)
+  8. Odstranil outer try/catch + getSettingsRow + aiSettings build + checkRateLimit + rateLimitResponse
+  9. PRESERVED vse deterministic helperje OUTSIDE handler: `clampString/clampEnum/clampNum/round0/round2/toMs`, `pricingMultiplierMax/volumeMultiplierMax/sourcingMultiplierMax/turnoverMultiplierMax/channelMultiplierMax/efficiencyMultiplierMax`, `computeSoldTrade, computeHeldTrade, computeCurrent, buildMaximizationBreakdown, buildTopActions, buildMultiplierProjection, decideMultiplierGrade, buildDeterministicMaximization, buildSummary` — vsi IDENTIČNI originalu
+  10. PRESERVED vse konstante: `DAY_MS, TWELVE_MONTHS_MS, PROFIT_MIN/MAX, MONTHLY_PROFIT_MIN/MAX, ROI_MIN/MAX, CAPITAL_MIN/MAX, HOLD_MIN/MAX, TRADES_MIN/MAX, PRICING/VOLUME/SOURCING/TURNOVER/CHANNEL/EFFICIENCY_MULT_MIN/MAX, CUMULATIVE_MIN/MAX, CONTRIBUTION_MIN/MAX, UPLIFT_MIN/MAX, PROJECTION_MIN/MAX, VALID_GRADE, VALID_DIMENSION, VALID_PRIORITY, MAX_BREAKDOWN, MAX_ACTIONS, MAX_PROJECTIONS, MAX_TRADES_FOR_AI`
+  11. PRESERVED vse Type definitionse: `MultiplierGrade, MultiplierDimension, SoldTradeRow, HeldTradeRow, CurrentState, MaximizerAction, MultiplierBreakdownEntry, MultiplierProjectionEntry, ProfitMultiplierMaximization, ProfitMultiplierResponse, AiResponse, SoldComputed, HeldComputed`
+  12. PRESERVED cache logiko IDENTIČNO: cache key `profit-multiplier-maximizer:${currentMonth}` (YYYY-MM) — get short-circuit z `cached: true, aiUsed: true` + setCachedAI samo ko `aiUsed`
+  13. PRESERVED 2 empty-state response shapes IDENTIČNO: (1) no SOLD+HELD — 0 values + F grade + 'Ni SOLD in HELD trgovin — Profit Multiplier Maximizer ni mogoč.'; (2) no SOLD with HELD-only fallback — capitalDeployed=heldCap + F grade + 'Ni SOLD trgovin v zadnjih 12 mesecih — Profit Multiplier Maximizer ni mogoč.'
+  14. PRESERVED anti-hallucination clamp logic IDENTIČNO: 6 multipliers clamped na PRICING_MULT [1.0, 2.0] / VOLUME_MULT [1.0, 3.0] / SOURCING_MULT [1.0, 2.0] / TURNOVER_MULT [1.0, 2.5] / CHANNEL_MULT [1.0, 1.5] / EFFICIENCY_MULT [1.0, 1.5] z det fallback; cumulativeMaxMultiplier clamped [1.0, 50.0] z product fallback; maximizationBreakdown override samo ko AI vrača vseh 6 elementov + multByDim per-dimension clamp (Math.max(1.0, mult × 0.9) .. Math.min(3.0, mult × 1.1)); multiplierGrade clampEnum z decideMultiplierGrade fallback; topMultiplierActions override samo ko AI vrača ≥4 (slice MAX_ACTIONS=8, clampEnum dimension+priority); multiplierProjection override samo ko AI vrača vseh 3 mesece (3/6/12) z months matching
+  15. Modul docstring posodobljen: `v8.09: ...` → `v8.09 / v8.96.7-batch4: ...` + dodan `Refaktoriran z withAiRoute helperjem (v8.96.7) + enforceBudget guard.`
+
+- 4. profit-horizon-maximizer (v8.03 → v8.03 / v8.96.7-batch4, 1056 → 1035 vrstic — GET+POST, body ignored, kliče AI, AI MAKSIMIZIRA PROFIT per HORIZON (7d/30d/90d/365d) z maxAchievableProfit (dailyRate × days × multiplier 1.0/1.2/1.6/2.5) + requirements (inventoryNeeded/capitalNeeded/tradesNeeded/avgROI) + actions per horizon + feasibility (EASY/MODERATE/HARD/AMBITIOUS) + confidenceLevel + bestHorizon (profit/time ratio) + profitAccelerationActions + horizonBottlenecks + cumulativeProjection (12-month compounding) z 6h cache by currentMonth + deterministic fallback):
+  1. Zamenjal imports + route config (identično kot #1)
+  2. Dodal `interface ProfitHorizonMaximizerInput {}` (PRAZEN — body ignored) z `// eslint-disable-next-line @typescript-eslint/no-empty-object-type` direktivo
+  3. Zamenjal `export async function GET/POST(req)` → `const profitHorizonMaximizerHandler = withAiRoute<ProfitHorizonMaximizerInput>({ ... }); export const GET/POST = profitHorizonMaximizerHandler;` z `method: 'GET'` + `parseBody` + no validateInput
+  4. Handler destrukturira `const { db, callAi, parseAi, logger } = ctx;`
+  5. Zamenjal `callProviderForRaw(aiSettings, prompt)` → `callAi(prompt)` znotraj local try/catch z `logger.warn('/api/ai/profit-horizon-maximizer', 'AI call failed — using deterministic fallback', err)` (PRESERVED IDENTIČNO)
+  6. Zamenjal `parseJsonLooseExported(raw)` → `parseAi(raw)`
+  7. Zamenjal `NextResponse.json({...} satisfies ProfitHorizonResponse)` → `apiOk({...} satisfies ProfitHorizonResponse)` (3 msta: empty-state no SOLD, cached-state, final response; response shape PRESERVED identično z `satisfies` klavzulo)
+  8. Odstranil outer try/catch + getSettingsRow + aiSettings build + checkRateLimit + rateLimitResponse
+  9. PRESERVED vse deterministic helperje OUTSIDE handler: `clampString/clampEnum/clampNum/round0/round2/toMs`, `computeSoldTrade, aggregateSold, computeCurrent, buildHorizon, buildHorizons, decideBestHorizon, buildBottlenecks, buildAccelerationActions, buildCumulativeProjection, buildDeterministicMaximization, buildSummary` — vsi IDENTIČNI originalu
+  10. PRESERVED vse konstante: `DAY_MS, TWELVE_MONTHS_MS, PROFIT_MIN/MAX, CAPITAL_MIN/MAX, INVENTORY_MIN/MAX, TRADES_MIN/MAX, ROI_MIN/MAX, CONFIDENCE_MIN/MAX, VALID_PERIOD, VALID_FEASIBILITY, MAX_ACTIONS_PER_HORIZON, MAX_BOTTLENECKS, MAX_ACCELERATION_ACTIONS, MAX_HELD_FOR_CAPACITY, DAYS_7/30/90/365`
+  11. PRESERVED vse Type definitionse: `Period, Feasibility, SoldTradeRow, HeldTradeRow, CurrentState, HorizonRequirements, Horizon, CumulativePoint, HorizonMaximization, ProfitHorizonResponse, AiResponse, SoldComputed, SoldAgg`
+  12. PRESERVED cache logiko IDENTIČNO: cache key `profit-horizon-maximizer:${currentMonth}` (YYYY-MM) — get short-circuit z `cached: true, aiUsed: true` + setCachedAI samo ko `aiUsed`
+  13. PRESERVED empty-state response shape IDENTIČNO (no SOLD trades in 12m — currentCapitalDeployed=heldTrades.reduce + 0 values + 'Ni SOLD trgovin v zadnjih 12 mesecih — Profit Horizon Maximizer ni mogoč.' message)
+  14. PRESERVED anti-hallucination clamp logic IDENTIČNO: horizons override samo ko AI vrača ≥3 (slice 0-4, clampEnum VALID_PERIOD) z minProfit=dailyRate×days×1.0 + maxProfitBound=Math.max(minProfit+100, dailyRate×days×3.0) clamp, requirements clampNum na [INVENTORY/CAPITAL/TRADES/ROI]_MIN/MAX z det fallback, actions clampString 200 z filter length≥3 fallback na det.actions, feasibility clampEnum, confidenceLevel clampNum [0, 100]; bestHorizon clampEnum z validacijo da aiBest je v horizons; profitAccelerationActions override ≥3 slice MAX_ACCELERATION_ACTIONS; horizonBottlenecks override ≥3; cumulativeProjection override ≥6 z month sort + clampNum [0, PROFIT_MAX] + cumulativeProfit recompute
+  15. Modul docstring posodobljen: `v8.03: ...` → `v8.03 / v8.96.7-batch4: ...` + dodan `Refaktoriran z withAiRoute helperjem (v8.96.7) + enforceBudget guard.`
+
+- 5. market-opportunity-scanner (v7.82 → v7.82 / v8.96.7-batch4, 1066 → 1045 vrstic — GET+POST, body ignored, kliče AI, AI skenira trg za NOVIMI priložnostmi z topOpportunities (5-10 rangiranih — UNDERSERVED_CATEGORY/PRICE_DISCREPANCY/EMERGING_TREND/ARBITRAGE) + marketGaps + trendingOpportunities + riskFlags + prioritizedActions + 4 opportunity signals (underserved/priceDiscrepancies/emergingTrends/arbitrage) iz listing aggregation z 6h cache by currentWeek (YYYY-Www) + deterministic fallback):
+  1. Zamenjal imports + route config (identično kot #1)
+  2. Dodal `interface MarketOpportunityScannerInput {}` (PRAZEN — body ignored) z `// eslint-disable-next-line @typescript-eslint/no-empty-object-type` direktivo
+  3. Zamenjal `export async function GET/POST(req)` → `const marketOpportunityScannerHandler = withAiRoute<MarketOpportunityScannerInput>({ ... }); export const GET/POST = marketOpportunityScannerHandler;` z `method: 'GET'` + `parseBody` + no validateInput
+  4. Handler destrukturira `const { db, callAi, parseAi, logger } = ctx;`
+  5. Zamenjal `callProviderForRaw(aiSettings, prompt)` → `callAi(prompt)` znotraj local try/catch z `logger.warn('/api/ai/market-opportunity-scanner', 'AI call failed — using deterministic fallback', err)` (PRESERVED IDENTIČNO)
+  6. Zamenjal `parseJsonLooseExported(raw)` → `parseAi(raw)`
+  7. Zamenjal `NextResponse.json({...})` → `apiOk({...})` (3 msta: empty-state emptyResponse (no listings), cached-state, final response; response shape PRESERVED identično brez `satisfies`)
+  8. Odstranil outer try/catch + getSettingsRow + aiSettings build + checkRateLimit + rateLimitResponse
+  9. PRESERVED vse deterministic helperje OUTSIDE handler: `clampNumber, clampString, clampEnum, round0, round1, toMs, avg, trendSlope, weekKeyOf, normalizeCategory, aggregateByCategory, computeOpportunitySignals, buildDeterministicTopOpportunities, buildDeterministicMarketGaps, buildDeterministicTrending, buildDeterministicRiskFlags, buildDeterministicPrioritizedActions` — vsi IDENTIČNI originalu
+  10. PRESERVED vse konstante: `VALID_OPP_TYPE, VALID_PRIORITY`
+  11. PRESERVED vse Type definitionse: `OpportunityType, Priority, TopOpportunity, MarketGap, TrendingOpportunity, RiskFlag, PrioritizedAction, AiScanResponse, ListingRow, CategoryAgg, OpportunitySignals, SourcePrice`
+  12. PRESERVED cache logiko IDENTIČNO: cache key `market-opportunity-scanner:${currentWeekKey}` (YYYY-Www ISO-ish week) — get short-circuit z `cached: true, aiUsed: true` + setCachedAI samo ko `aiUsed`
+  13. PRESERVED empty-state response shape IDENTIČNO (no listings in 30d — emptyResponse z topOpportunities/marketGaps/trendingOpportunities/riskFlags/prioritizedActions=[] + 'Ni listingov v zadnjih 30 dneh — Market Opportunity Scanner ni mogoč.' message)
+  14. PRESERVED anti-hallucination clamp logic IDENTIČNO: topOpportunities override z clampEnum VALID_OPP_TYPE + clampString 50 category + 250 description + clampNumber 0-10000 expectedProfit + 0-100 confidenceScore + clampString 80 timeWindow + actionRequired Array.isArray filter + slice(0, 10); marketGaps override z clampString 200 gap + 50 category + clampNumber 0-100 gapScore + clampString 100 potential; trendingOpportunities override z clampString 200 trend + clampNumber 0-500 growthRate + clampString 30 stage; riskFlags override z clampString 150 opportunity + 250 risk + 250 mitigation; prioritizedActions override z clampString 250 action + clampEnum VALID_PRIORITY + clampString 50 expectedROI + 80 timeline
+  15. Modul docstring posodobljen: `v7.82: ...` → `v7.82 / v8.96.7-batch4: ...` + dodan `Refaktoriran z withAiRoute helperjem (v8.96.7) + enforceBudget guard.`
+
+- 6. profit-multiplier-engine (v8.00 → v8.00 / v8.96.7-batch4, 1066 → 1045 vrstic — GET+POST, body ignored, kliče AI, AI MULTIPLICIRA profit z 8 levers (pricing/timing/volume/sourcing/efficiency/channel/bundle/refurb) v en COMPOUNDING cumulativni multiplier [1.0, 3.0] z maximizedMonthlyProfit + totalProfitUplift + multiplicationGrade (A+..F) + quickWins (top 4 EASY difficulty) + multiplicationProjection (12 month currentProfit vs multipliedProfit) + prioritizedActions (10 ranked by priority+gain) z 6h cache by currentMonth + deterministic fallback):
+  1. Zamenjal imports + route config (identično kot #1)
+  2. Dodal `interface ProfitMultiplierEngineInput {}` (PRAZEN — body ignored) z `// eslint-disable-next-line @typescript-eslint/no-empty-object-type` direktivo
+  3. Zamenjal `export async function GET/POST(req)` → `const profitMultiplierEngineHandler = withAiRoute<ProfitMultiplierEngineInput>({ ... }); export const GET/POST = profitMultiplierEngineHandler;` z `method: 'GET'` + `parseBody` + no validateInput
+  4. Handler destrukturira `const { db, callAi, parseAi, logger } = ctx;`
+  5. Zamenjal `callProviderForRaw(aiSettings, prompt)` → `callAi(prompt)` znotraj local try/catch z `logger.warn('/api/ai/profit-multiplier-engine', 'AI call failed — using deterministic fallback', err)` (PRESERVED IDENTIČNO)
+  6. Zamenjal `parseJsonLooseExported(raw)` → `parseAi(raw)`
+  7. Zamenjal `NextResponse.json({...} satisfies ProfitMultiplierResponse)` → `apiOk({...} satisfies ProfitMultiplierResponse)` (3 msta: empty-state no SOLD+HELD, cached-state, final response; response shape PRESERVED identično z `satisfies` klavzulo)
+  8. Odstranil outer try/catch + getSettingsRow + aiSettings build + checkRateLimit + rateLimitResponse
+  9. PRESERVED vse deterministic helperje OUTSIDE handler: `clampString/clampEnum/clampNum/round0/round2/toMs`, `computeSoldTrade, aggregateSold, computeBaseline, buildLeverSpec, buildMultipliers, decideGrade, buildEngine, buildSummary` — vsi IDENTIČNI originalu (vključno z 8-case switch v buildLeverSpec z per-lever gap/mult/difficulty/actions logiko)
+  10. PRESERVED vse konstante: `DAY_MS, TWELVE_MONTHS_MS, THREE_MONTHS_MS, PROFIT_MIN/MAX, MULT_MIN/MAX, GAP_MIN/MAX, GAIN_MIN/MAX, ROI_MIN/MAX, WINRATE_MIN/MAX, HOLDDAYS_MIN/MAX, MAX_ACTIONS_PER_LEVER, MONTHS_PROJECTION, VALID_DIFFICULTY, VALID_PRIORITY, VALID_GRADE, DEFAULT_BASELINE_PROFIT, LEVERS, LeverKey`
+  11. PRESERVED vse Type definitionse: `Difficulty, Priority, MultiplicationGrade, SoldTradeRow, HeldTradeRow, Baseline, MultiplierEntry, QuickWin, ProjectionEntry, PrioritizedAction, Engine, ProfitMultiplierResponse, AiResponse, SoldTradeComputed, SoldAgg, LeverSpec`
+  12. PRESERVED cache logiko IDENTIČNO: cache key `profit-multiplier-engine:${currentMonth}` (YYYY-MM) — get short-circuit z `cached: true, aiUsed: true` + setCachedAI samo ko `aiUsed`
+  13. PRESERVED empty-state response shape IDENTIČNO (no SOLD trades + no HELD inventory — 0 values + F grade + 'Ni SOLD trgovin in HELD inventorija — Profit Multiplier Engine ni mogoč.' message)
+  14. PRESERVED baseline computation + held inventory proxy IDENTIČNO: computeBaseline (profit3m/3 ali profit12m/12 fallback), held inventory value proxy za baseline.currentMonthlyProfit = heldValue × 0.05 ko ni SOLD data (DEFAULT_BASELINE_PROFIT fallback)
+  15. PRESERVED anti-hallucination clamp logic IDENTIČNO: aiMultipliersMap match by lever.toLowerCase() (8 levers); newMultipliers override le ko AI vrača vseh 8 (clampNum potentialMultiplier [1.0, 3.0] + currentGap [0, 100] + clampEnum VALID_DIFFICULTY + actions clampString 200 fallback na det.actions); engine rebuild po multiplier override (cumulativeMultiplier product recompute, maximizedMonthlyProfit + totalProfitUplift + quickWins + multiplicationProjection + prioritizedActions recompute); multiplicationGrade clampEnum VALID_GRADE z decideGrade fallback; prioritizedActions override z clampString 200 action + 50 multiplier + clampEnum VALID_PRIORITY + clampNum [0, 50000] expectedGain (slice(0, 10))
+  16. Modul docstring posodobljen: `v8.00: ...` → `v8.00 / v8.96.7-batch4: ...` + dodan `Refaktoriran z withAiRoute helperjem (v8.96.7) + enforceBudget guard.`
+
+- Skupne spremembe error response konvencije (vse 6 datoteke): original 500 `{ error: e?.message ?? 'Napaka' }` → wrapper-jev `{ ok: false, error }` (preko apiError v helperju; konsistentno z vsemi prejšnjimi v8.94.x / v8.95.x / v8.96.x migracijami; additive `ok: false` field, ne breaking — success response shape nespremenjen z ohranjenim ok: true v apiOk({...}) in `satisfies XxxResponse` klavzulo kjer je original imel). Original 500 iz fallback-fail SE NE pojavlja — vsi 6 endpoint-i imajo local try/catch okrog ctx.callAi z graceful deterministic fallback (konsistentno z deduplicate v8.94-refactor, exit-strategy v8.94-refactor in inventory-turnover-profit-maximizer v8.96.6-batch4 referencami).
+
+- enforceBudget: true (vse 6) — vsi 6 endpoint-i kličejo ctx.callAi direktno (po loaded DB data), zato budget check je smiseln in helper avtomatsko pokliče recordAiCall(db, endpoint) PO uspešnem handler-ju. Originalni endpointi NISO imeli aiCallsToday counter increment. To je additive behavior introduced z withAiRoute helperjem — konsistentno z vsemi prejšnjimi v8.94.x / v8.95.x / v8.96.x migracijami.
+
+- Dual-handler (GET + POST) preservation (vse 6 datoteke): vsi 6 originali so bili `async function GET(req)` + `async function POST(req)` ki oba kličeta isti `handleXxx(req)`. Migracija PRESERVES dual-handler z `method: 'GET'` option (bypass POST-only check v helperju) + `export const GET = xxxHandler; export const POST = xxxHandler` vzorec (konsistentno z vsemi prejšnjimi batchi od v8.96.4 naprej — inventory-turnover-profit-maximizer v8.96.6-batch4, deduplicate v8.94, itd.). Body parse z `await req.json().catch(() => ({})); return {};` ki handle-a GET no-body case (IDENTIČNO vsem 6 originalom).
+
+- Pure helper extraction pattern (vse 6 datoteke): vsaka datoteka ima 10–20+ helper funkcij ekstrahiranih OUTSIDE handler-ja (clampXxx za AI response sanitization, computeXxx za DB-query-result aggregation, buildDeterministicXxx za pre-AI baseline, buildXxx za prompt konstruiranje z interpolacijami in JSON shape specifikacijami IDENTIČNO originalu, decideXxx za grade/score computation, buildSummary za final summary string, transformXxx implicitno preko clamp calls). Vsi helperji so čiste funkcije (brez db/logger/settings odvisnosti) za testabilnost (konsistentno z vsemi prejšnjimi v8.94.x / v8.95.x / v8.96.x migracijami).
+
+- Cache logic preservation (vse 6 datoteke): vsi 6 originali so imeli `getCachedAI(cacheKey)` pre-AI short-circuit z `cached: true, aiUsed: true` response shape in `setCachedAI(cacheKey, ...)` samo ko `aiUsed === true`. Migracija PRESERVES ta vzorec IDENTIČNO z istimi cache key construction vzorci: (1) portfolio-risk-forecaster — by sorted heldItemIds JSON-stringify; (2) deal-source-intelligence — by currentMonthKey YYYY-MM; (3) profit-multiplier-maximizer — by currentMonth YYYY-MM; (4) profit-horizon-maximizer — by currentMonth YYYY-MM; (5) market-opportunity-scanner — by currentWeekKey YYYY-Www (ISO-ish); (6) profit-multiplier-engine — by currentMonth YYYY-MM.
+
+- GROUNDING_PROMPT_SUFFIX preservation (vse 6 datoteke): vsi 6 originali so uporabljali `${GROUNDING_PROMPT_SUFFIX}` na koncu AI prompt-a za anti-hallucination grounding. Migracija PRESERVES ta vzorec IDENTIČNO — vsi 6 prompt-i končajo z `${GROUNDING_PROMPT_SUFFIX}` (konsistentno z vsemi prejšnjimi v8.94.x / v8.95.x / v8.96.x migracijami).
+
+- Verification:
+  - `bunx tsc --noEmit` → 0 errors (exit code 0)
+  - `bunx eslint <6 files>` → 0 errors (exit code 0)
+
+Stage Summary:
+- MODIFIED: 6 route.ts files
+  - src/app/api/ai/portfolio-risk-forecaster/route.ts (1040 → 1019)
+  - src/app/api/ai/deal-source-intelligence/route.ts (1053 → 1034)
+  - src/app/api/ai/profit-multiplier-maximizer/route.ts (1053 → 1032)
+  - src/app/api/ai/profit-horizon-maximizer/route.ts (1056 → 1035)
+  - src/app/api/ai/market-opportunity-scanner/route.ts (1066 → 1045)
+  - src/app/api/ai/profit-multiplier-engine/route.ts (1066 → 1045)
+- enforceBudget: true (all 6)
+- Lint: 0, Typecheck: 0
+
+---
+Task ID: v8.96.7-batch1
+Agent: Task agent (6 mega endpoints batch1)
+Task: Migrate 6 mega endpoints to withAiRoute
+
+Work Log:
+- Prebral kontekst: worklog.md (v8.94 / v8.95.x / v8.96.0–v8.96.6 vnose — deduplicate v8.94 in exit-strategy v8.94 kot REFERENCE EXAMPLE vzorca za withAiRoute; v8.96.5-batch1 (6 LARGE endpoints 843-894 vrstic) in v8.96.6-batch1 (6 very large endpoints 916-931 vrstic) kot NAJNOVEJŠI 6-LARGE/MEGA-endpoint batch referenci z identičnim vzorcem: enforceBudget: true + method: 'GET' za GET+POST dual-handler z `export const GET/POST = same handler` + empty Input interface z `// eslint-disable-next-line @typescript-eslint/no-empty-object-type` direktivo + ekstrahiranimi pure helper funkcijami OUTSIDE handler-ja (buildPromptData/buildPrompt/mergeAiXxx) + apiOk({ ok: true, X }) success shape + 6h cache PRESERVED (getCachedAI/setCachedAI z IDENTIČNIM cache key construction in `if (aiUsed) setCachedAI` guard) + AI try/catch z graceful ctx.logger.warn deterministic fallback) in src/lib/with-ai-route.ts (helper API: withAiRoute<TInput>({ endpoint, maxDuration, enforceBudget, parseBody, validateInput, handler, method, rateLimit }) — ctx.{aiSettings, db, logger, callAi, parseAi, req}; AI_ROUTE_DEFAULTS { runtime, dynamic, maxDuration }; ApiRouteError class za custom status iz handler/helper funkcij; enforceBudget option z auto recordAiCall PO uspešnem handler-ju; method POST|GET za dual-handler support; rate-limit default 20/min; callAi interno implementira fallback na secondary provider; parseAi = parseJsonLooseExported) in src/lib/api-response.ts (apiOk pass-through — NextResponse.json(data, { status: 200 }), ne dodaja sam ok:true; zato eksplicitno `ok: true` v payload-u za backward-compat s klienti ki preverjajo `data.ok`; apiBadRequest vrača { ok: false, error } z 400; apiNotFound vrača { ok: false, error } z 404; apiError vrača { ok: false, error } z 500) ter referenčna 2 že-migrirana endpoint-a (deduplicate v8.94-refactor in exit-strategy v8.94-refactor) ter deal-source-margin-maximizer v8.96.6-batch1 kot najnovejši 6-very-large-endpoint batch reference z IDENTIČNIM vzorcem (empty Input interface z eslint-disable direktivo, method: 'GET', body ignored parseBody z `await req.json().catch(() => ({}))`, cached payload z `cached: true, aiUsed: true`, deterministic try/catch fallback okrog ctx.callAi z ctx.logger.warn graceful fallback, pure helper extraction z buildPromptData/buildPrompt/mergeAiIntoSources funkcijami OUTSIDE handler-ja, `satisfies XxxResponse` klavzula PRESERVED byte-za-byte na vseh NextResponse.json → apiOk zamenjavah).
+
+- 1. profit-growth-predictor (v7.81 → v7.81 / v8.96.7-batch1, 980 → 1087 vrstic — GET+POST, body ignored, kliče AI, AI napove profit GROWTH rate za naslednjih 6 mesecev z GrowthPrediction (growthPrediction6m/growthRate6m/compoundGrowthRate/growthPotential/growthStage/projectedMilestones) + GrowthAnalysis (growthDrivers/growthInhibitors/growthActions) + CurrentGrowthState z 6h cache by currentMonthKey YYYY-MM + deterministic fallback):
+  1. Modul docstring posodobljen: v7.81 → v7.81 / v8.96.7-batch1 + dodan `Refaktoriran z withAiRoute helperjem (v8.96.7) + enforceBudget guard.`
+  2. Imports zamenjani (10 → 4) — `withAiRoute/AI_ROUTE_DEFAULTS/AiRouteContext` iz `@/lib/with-ai-route` + `apiOk` iz `@/lib/api-response` + GROUNDING_PROMPT_SUFFIX iz `@/lib/anti-hallucination` + getCachedAI/setCachedAI iz `@/lib/ai-cache`
+  3. Route config: `export const runtime = 'nodejs'; export const dynamic = 'force-dynamic'; export const maxDuration = 60;` → `export const { runtime, dynamic } = AI_ROUTE_DEFAULTS; export const maxDuration = 60;`
+  4. Empty Input interface dodan z `// eslint-disable-next-line @typescript-eslint/no-empty-object-type` direktivo: `interface ProfitGrowthPredictorInput {}`
+  5. Handler wrappan v `const profitGrowthPredictorHandler = withAiRoute<ProfitGrowthPredictorInput>({ endpoint: '/api/ai/profit-growth-predictor', maxDuration: 60, enforceBudget: true, method: 'GET', parseBody, handler })` in `export const GET = profitGrowthPredictorHandler; export const POST = profitGrowthPredictorHandler;`
+  6. parseBody: `async (req) => { await req.json().catch(() => ({})); return {}; }` (body ignored)
+  7. Handler signature: `async (_input, ctx: AiRouteContext) => { const { db, callAi, parseAi, logger } = ctx; ... }` — zamenjava `db` → `ctx.db`, `callProviderForRaw(aiSettings, prompt)` → `ctx.callAi(prompt)`, `parseJsonLooseExported(raw)` → `ctx.parseAi(raw)`, `logger.warn` → `ctx.logger.warn`
+  8. `getSettingsRow()` + `aiSettings` blok odstranjena — settings loading zdaj interno v withAiRoute wrapper
+  9. `checkRateLimit` + `rateLimitResponse` odstranjena iz handler-ja — rate limiting zdaj interno v wrapper-ju (default 20/min)
+  10. Manual try/catch okrog celotnega handlerja odstranjen — wrapper prevzame error handling z apiError 500
+  11. AI counter increment odstranjen — wrapper interno kliče recordAiCall() PO uspešnem handler-ju ko je enforceBudget: true
+  12. Prompt builder + AI merge logic ekstrahirana v pure helper funkcije OUTSIDE handler-ja: `buildPrompt(promptData: PromptContext)` (vrača prompt string z GROUNDING_PROMPT_SUFFIX), `mergeAiIntoAnalysis(parsed, fallbackPrediction, fallbackAnalysis, fallbackSummary, currentMonthlyProfit, growthRate6m, compoundGrowthRate, growthPotential, growthStage, now)` (vrača `{ prediction, analysis, summary, aiUsed }`), `buildDeterministicSummary(...)` (vrača string deterministic baseline summary). PromptContext interface dodan za tipiziranje prompt builder input-a.
+  13. Cache key construction PRESERVED byte-za-byte: `profit-growth-predictor:${currentMonthKey}` kjer `currentMonthKey = monthKeyOf(new Date(now))` YYYY-MM
+  14. `getCachedAI` short-circuit z `cached: true, aiUsed: true` spread PRESERVED (apiOk namesto NextResponse.json — status 200 enak)
+  15. `setCachedAI(cacheKey, { prediction: finalPrediction, analysis, summary })` samo ko aiUsed (PRESERVED — `if (aiUsed) setCachedAI(...)` guard)
+  16. Deterministic fallback PRESERVED — try/catch okrog `ctx.callAi(prompt)` z `ctx.logger.warn(endpoint, 'AI call failed — using deterministic fallback', err)` (konsistentno z deduplicate v8.94-refactor vzorcem). Det baseline = `let finalPrediction = prediction; let analysis = fallbackAnalysis ({}); let summary = deterministicSummary; let aiUsed = false;` nato mergeAiIntoAnalysis override-a vse tri če AI uspe.
+  17. `NextResponse.json({...})` (3 returns: empty state, cached, success) → `apiOk({...})` za success response (status 200, enak JSON shape). Prazno-state response (no SOLD trades) originalno ni imel `satisfies SomeResponse` klavzule — PRESERVED kot prej (samo apiOk brez satisfies).
+
+- 2. deal-source-profit-margin-growth-maximizer (v8.12 → v8.12 / v8.96.7-batch1, 981 → 1000 vrstic — GET+POST, body ignored, kliče AI, AI MAKSIMIZIRA MARGIN GROWTH RATE per source (%/mo kako hitro margin raste, ne absolutna margin %) z 4 MarginGrowthActions (IMPROVE_SOURCING/RAISE_PRICES/REDUCE_FEES/OPTIMIZE_CATEGORY_MIX) + maximizedMarginGrowthRate + marginGrowthLevers + marginGrowthProjection (3/6/12 month) + marginGrowthGrade (A+/A/B/C/D/F) z 6h cache by currentMonth YYYY-MM + deterministic fallback z anti-hallucination +10pp absolute uplift cap):
+  1. Modul docstring posodobljen: v8.12 → v8.12 / v8.96.7-batch1 + dodan `Refaktoriran z withAiRoute helperjem (v8.96.7) + enforceBudget guard.`
+  2. Imports zamenjani (10 → 4) — withAiRoute/AI_ROUTE_DEFAULTS/AiRouteContext + apiOk + GROUNDING_PROMPT_SUFFIX + getCachedAI/setCachedAI
+  3. Route config: AI_ROUTE_DEFAULTS spread + `export const maxDuration = 60;`
+  4. Empty Input interface: `interface DealSourceProfitMarginGrowthMaximizerInput {}` z eslint-disable direktivo
+  5. Handler wrappan v `withAiRoute` + dual GET/POST export z `dealSourceProfitMarginGrowthMaximizerHandler`
+  6. parseBody: body ignored (`await req.json().catch(() => ({})); return {};`)
+  7. Handler: `async (_input, ctx: AiRouteContext) => { const { db, callAi, parseAi, logger } = ctx; ... }` z db/callAi/parseAi/logger iz ctx
+  8. Settings + aiSettings + checkRateLimit blok odstranjeni — wrapper interno
+  9. Manual try/catch okrog handlerja odstranjen — wrapper prevzame
+  10. Pure helper extraction OUTSIDE handler: `buildPromptData(entries, computed, portfolio)` (vrača object za JSON.stringify), `buildPrompt(promptData)` (vrača prompt string z GROUNDING_PROMPT_SUFFIX), `mergeAiIntoSources(parsed, detEntries, detPortfolio, detSummary)` (vrača `{ entries, portfolio, summary, aiUsed }`). Vsi obstoječi deterministic helperji (computeSourceMetrics/buildSourceMaximization/buildPortfolio/buildSummary/buildMarginGrowthProjection/decideGrade) ostanejo PRESERVED kot prej.
+  11. Cache key PRESERVED byte-za-byte: `deal-source-profit-margin-growth-maximizer:${currentMonth}` kjer `currentMonth = new Date(now).toISOString().slice(0, 7)` YYYY-MM
+  12. getCachedAI short-circuit z `cached: true, aiUsed: true` PRESERVED z `satisfies DealSourceProfitMarginGrowthResponse` klavzulo
+  13. `setCachedAI(cacheKey, { sources: entries, portfolio, summary })` samo ko aiUsed PRESERVED
+  14. Deterministic fallback PRESERVED — try/catch okrog ctx.callAi z ctx.logger.warn
+  15. Empty-state responses (2x: no SOLD trades, no valid SOLD trades) PRESERVED z apiOk + `satisfies DealSourceProfitMarginGrowthResponse` klavzulo
+  16. Anti-hallucination ABSOLUTE_UPLIFT_CAP_PP = 10 (max +10pp absolute uplift) PRESERVED v mergeAiIntoSources (minBound = max(GROWTH_RATE_MIN, marginGrowthRate), maxBound = min(GROWTH_RATE_MAX, marginGrowthRate + ABSOLUTE_UPLIFT_CAP_PP))
+  17. `satisfies DealSourceProfitMarginGrowthResponse` klavzula PRESERVED byte-za-byte na vseh 4 returns (2 empty-state, cached, success)
+
+- 3. inventory-aging-trend-analyzer (v7.88 → v7.88 / v8.96.7-batch1, 983 → 1034 vrstic — GET+POST, body ignored, kliče AI, AI analizira aging trend-e per kategorijo in napove future aging issues z AgingTrends (avgHoldDaysTrend12m/staleRateTrend/agingDirection/agingMomentum) + CurrentAging (held ages distribution) + AgingForecast (projectedAvgHoldDays30d/projectedStaleItems30d/agingRiskLevel/agingTrendAssessment) + AgingAnalysis (categoryAgingAnalysis/agingDrivers/agingMitigationActions) z 6h cache by currentMonth YYYY-MM + deterministic fallback z buildDeterministicForecast/Drivers/MitigationActions):
+  1. Modul docstring posodobljen: v7.88 → v7.88 / v8.96.7-batch1
+  2. Imports zamenjani (10 → 4)
+  3. Route config: AI_ROUTE_DEFAULTS + maxDuration 60
+  4. Empty Input interface: `interface InventoryAgingTrendAnalyzerInput {}` z eslint-disable
+  5. Handler wrappan v `withAiRoute` + dual GET/POST export z `inventoryAgingTrendAnalyzerHandler`
+  6. parseBody: body ignored
+  7. Handler: ctx.db/callAi/parseAi/logger
+  8. Settings/rate-limit/AI counter blok odstranjeni
+  9. Pure helper extraction OUTSIDE handler: `buildPromptData(trends, monthlyData, current, categoryAgingAnalysis, detForecast, detDrivers, detActions)` (vrača object za JSON.stringify), `buildPrompt(promptData, detForecastRiskLevel)` (vrača prompt string z GROUNDING_PROMPT_SUFFIX — detForecastRiskLevel referenca v prompt text-u PRESERVED), `mergeAiIntoAnalysis(parsed, detForecast, detAnalysis, detSummary, trends, current)` (vrača `{ forecast, analysis, summary, aiUsed }`). Vsi obstoječi deterministic helperji (buildDeterministicAssessment/buildDeterministicForecast/buildDeterministicDrivers/buildDeterministicMitigationActions/buildDeterministicSummary/classifyAgingDirection/classifyAgingRisk/trendSlope/computeAcceleration) ostanejo PRESERVED kot prej.
+  10. Cache key PRESERVED byte-za-byte: `inventory-aging-trend-analyzer:${monthKey}` kjer monthKey = `${currentMonth.getFullYear()}-${(currentMonth.getMonth() + 1).toString().padStart(2, '0')}` YYYY-MM
+  11. getCachedAI/setCachedAI z `if (aiUsed)` guard PRESERVED
+  12. Deterministic fallback PRESERVED — try/catch okrog ctx.callAi z ctx.logger.warn
+  13. Empty-state response (1x: no SOLD trades v 12m) PRESERVED z apiOk (brez satisfies — original ni imel)
+
+- 4. deal-source-profit-per-trade-maximizer (v8.04 → v8.04 / v8.96.7-batch1, 989 → 1007 vrstic — GET+POST, body ignored, kliče AI, AI MAKSIMIZIRA PROFIT PER TRADE per source € z 5 ProfitPerTradeActions (TARGET_HIGHER_VALUE/NEGOTIATE_BETTER/REDUCE_FEES/IMPROVE_QUALITY/SHIFT_TO_PREMIUM) + profitPerTradeLevers + bestTradeProfile (categoryHint/priceRangeLow/priceRangeHigh/characteristics) + sourceRanking z 6h cache by currentMonth YYYY-MM + deterministic fallback z anti-hallucination +500€ absolute uplift cap):
+  1. Modul docstring posodobljen: v8.04 → v8.04 / v8.96.7-batch1
+  2. Imports zamenjani (10 → 4)
+  3. Route config: AI_ROUTE_DEFAULTS + maxDuration 60
+  4. Empty Input interface: `interface DealSourceProfitPerTradeMaximizerInput {}` z eslint-disable
+  5. Handler wrappan v `withAiRoute` + dual GET/POST export z `dealSourceProfitPerTradeMaximizerHandler`
+  6. parseBody: body ignored
+  7. Handler: ctx.db/callAi/parseAi/logger
+  8. Settings/rate-limit/AI counter blok odstranjeni
+  9. Pure helper extraction OUTSIDE handler: `buildPromptData(entries, computed, portfolio)` (vrača sourcesForAI + deterministicPortfolio + caps), `buildPrompt(promptData)` (vrača prompt string z GROUNDING_PROMPT_SUFFIX), `mergeAiIntoSources(parsed, detEntries, detPortfolio, detSummary)` (vrača `{ entries, portfolio, summary, aiUsed }`). Vsi obstoječi deterministic helperji (computeSourceMetrics/decideProfitPerTradeAction/buildProfitPerTradeLevers/buildBestTradeProfile/buildSourceMaximization/buildSourceEntries/buildPortfolio/buildSummary) ostanejo PRESERVED kot prej.
+  10. Cache key PRESERVED byte-za-byte: `deal-source-profit-per-trade-maximizer:${currentMonth}` YYYY-MM
+  11. getCachedAI/setCachedAI z `if (aiUsed)` guard PRESERVED
+  12. Deterministic fallback PRESERVED — try/catch okrog ctx.callAi z ctx.logger.warn
+  13. Empty-state responses (2x: no SOLD trades, no valid SOLD trades) PRESERVED z apiOk + `satisfies DealSourceProfitPerTradeResponse` klavzulo
+  14. Anti-hallucination bound +500€ absolute uplift (maxProfitBound = min(PROFIT_MAX, max(avgProfitPerTrade + 25, min(avgProfitPerTrade × 2 + 50, avgProfitPerTrade + 500)))) PRESERVED v mergeAiIntoSources
+  15. `satisfies DealSourceProfitPerTradeResponse` klavzula PRESERVED byte-za-byte na vseh 4 returns
+
+- 5. inventory-profit-per-day-growth-maximizer (v8.09 → v8.09 / v8.96.7-batch1, 992 → 1010 vrstic — GET+POST, body ignored, kliče AI, AI MAKSIMIZIRA GROWTH RATE daily profit-a iz inventory-ja z GrowthAction (4-6 actions) + growthTrajectory (8-week projection) + growthBottlenecks (3-5) + growthSustainability + growthGrade (A+/A/B/C/D/F) + doublingTime (rule of 72-style) z 6h cache by currentMonth YYYY-MM + deterministic fallback z anti-hallucination × 2.5 maximization factor cap +200%):
+  1. Modul docstring posodobljen: v8.09 → v8.09 / v8.96.7-batch1
+  2. Imports zamenjani (10 → 4)
+  3. Route config: AI_ROUTE_DEFAULTS + maxDuration 60
+  4. Empty Input interface: `interface InventoryProfitPerDayGrowthMaximizerInput {}` z eslint-disable
+  5. Handler wrappan v `withAiRoute` + dual GET/POST export z `inventoryProfitPerDayGrowthMaximizerHandler`
+  6. parseBody: body ignored
+  7. Handler: ctx.db/callAi/parseAi/logger
+  8. Settings/rate-limit/AI counter blok odstranjeni
+  9. Pure helper extraction OUTSIDE handler: `buildPromptData(soldComputed, heldComputed, current, maximization)` (vrača soldSample + deterministicMaximization + caps), `buildPrompt(promptData)` (vrača prompt string z GROUNDING_PROMPT_SUFFIX), `mergeAiIntoMaximization(parsed, current, detMax, detSummary)` (vrača `{ maximization, summary, aiUsed }`). Vsi obstoječi deterministic helperji (buildGrowthActions/buildGrowthTrajectory/buildGrowthBottlenecks/computeGrowthSustainability/decideGrowthGrade/computeDoublingTime/buildDeterministicMaximization/buildSummary) ostanejo PRESERVED kot prej.
+  10. Cache key PRESERVED byte-za-byte: `inventory-profit-per-day-growth-maximizer:${currentMonth}` YYYY-MM
+  11. getCachedAI/setCachedAI z `if (aiUsed)` guard PRESERVED
+  12. Deterministic fallback PRESERVED — try/catch okrog ctx.callAi z ctx.logger.warn
+  13. Empty-state responses (2x: no SOLD+HELD trades, no SOLD trades) PRESERVED z apiOk + `satisfies ProfitPerDayGrowthResponse` klavzulo
+  14. Anti-hallucination GROWTH_MAXIMIZATION_FACTOR = 2.5 (maxBound = min(GROWTH_RATE_MAX, max(weeklyProfitGrowthRate + 5, weeklyProfitGrowthRate × GROWTH_MAXIMIZATION_FACTOR + 10))) PRESERVED v mergeAiIntoMaximization
+  15. `satisfies ProfitPerDayGrowthResponse` klavzula PRESERVED byte-za-byte na vseh 4 returns
+
+- 6. profit-compounding-maximizer (v8.04 → v8.04 / v8.96.7-batch1, 993 → 1010 vrstic — GET+POST, body ignored, kliče AI, AI MAKSIMIZIRA COMPOUNDING EFFECT reinvestiranega profita z 6 reinvestRate scenarios (50/60/70/80/90/100%) + maximizedCompoundingProjection (24-month month-by-month) + linearVsCompounding (advantageMultiple/breakEvenMonth) + compoundingAccelerationActions (4-8) + compoundingGrade + breakEvenTime z 6h cache by currentMonth YYYY-MM + deterministic fallback z anti-hallucination ≤ startingCapital × 100 cap on projectedCapital12m):
+  1. Modul docstring posodobljen: v8.04 → v8.04 / v8.96.7-batch1
+  2. Imports zamenjani (10 → 4)
+  3. Route config: AI_ROUTE_DEFAULTS + maxDuration 60
+  4. Empty Input interface: `interface ProfitCompoundingMaximizerInput {}` z eslint-disable
+  5. Handler wrappan v `withAiRoute` + dual GET/POST export z `profitCompoundingMaximizerHandler`
+  6. parseBody: body ignored
+  7. Handler: ctx.db/callAi/parseAi/logger
+  8. Settings/rate-limit/AI counter blok odstranjeni
+  9. Pure helper extraction OUTSIDE handler: `buildPromptData(agg, heldCapital, current, maximization)` (vrača soldCount12m + deterministicMaximization subset + caps), `buildPrompt(promptData)` (vrača prompt string z GROUNDING_PROMPT_SUFFIX), `mergeAiIntoMaximization(parsed, current, detMax, detSummary)` (vrača `{ maximization, summary, aiUsed }`). Vsi obstoječi deterministic helperji (buildScenarios/buildScenario/decideOptimalReinvestRate/buildMaximizedProjection/buildLinearVsCompounding/buildAccelerationActions/decideGrade/buildDeterministicMaximization/buildSummary/computeMonthlyGrowthRate) ostanejo PRESERVED kot prej.
+  10. Cache key PRESERVED byte-za-byte: `profit-compounding-maximizer:${currentMonth}` YYYY-MM
+  11. getCachedAI/setCachedAI z `if (aiUsed)` guard PRESERVED
+  12. Deterministic fallback PRESERVED — try/catch okrog ctx.callAi z ctx.logger.warn
+  13. Empty-state response (1x: no SOLD trades) PRESERVED z apiOk + `satisfies ProfitCompoundingResponse` klavzulo
+  14. Anti-hallucination cap ≤ startingCapital × 100 na projectedCapital12m (maxCap = min(CAPITAL_MAX, startingCapital × 100)) PRESERVED v mergeAiIntoMaximization
+  15. REINVEST_RATES snap-to-nearest logic PRESERVED v mergeAiIntoMaximization (snap AI reinvestRate to nearest valid rate iz REINVEST_RATES [50,60,70,80,90,100])
+  16. `satisfies ProfitCompoundingResponse` klavzula PRESERVED byte-za-byte na vseh 3 returns (empty-state, cached, success)
+
+- Verification:
+  - `bunx tsc --noEmit` → 0 errors (exit code 0)
+  - `bunx eslint <6 files>` → 0 errors (exit code 0)
+
+Stage Summary:
+- MODIFIED: 6 route.ts files
+  - src/app/api/ai/profit-growth-predictor/route.ts (980 → 1087)
+  - src/app/api/ai/deal-source-profit-margin-growth-maximizer/route.ts (981 → 1000)
+  - src/app/api/ai/inventory-aging-trend-analyzer/route.ts (983 → 1034)
+  - src/app/api/ai/deal-source-profit-per-trade-maximizer/route.ts (989 → 1007)
+  - src/app/api/ai/inventory-profit-per-day-growth-maximizer/route.ts (992 → 1010)
+  - src/app/api/ai/profit-compounding-maximizer/route.ts (993 → 1010)
+- enforceBudget: true (all 6)
+- Lint: 0, Typecheck: 0
+
+---
+Task ID: v8.96.7-batch2
+Agent: Task agent (6 mega endpoints batch2)
+Task: Migrate 6 mega endpoints to withAiRoute
+
+Work Log:
+- Prebral kontekst: worklog.md (v8.94 / v8.95.x / v8.96.0–v8.96.6 vnose — deduplicate in exit-strategy kot REFERENCE EXAMPLE vzorca za withAiRoute; v8.96.6-batch2 (6 LARGE endpoints 934–946 vrstic) in v8.96.7-batch3 (6 LARGE endpoints 1021–1036 vrstic) ter v8.96.7-batch4 (6 LARGE endpoints 1040–1066 vrstic) kot NAJNOVEJŠI 6-mega-endpoint batch referenci z identičnim vzorcem: enforceBudget: true + method: 'GET' za GET+POST dual-handler z `export const GET/POST = same handler` + empty Input interface z `// eslint-disable-next-line @typescript-eslint/no-empty-object-type` direktivo + ekstrahiranimi pure helper funkcijami OUTSIDE handler-ja + apiOk({...} satisfies XxxResponse) success shape + 6h cache PRESERVED (getCachedAI/setCachedAI z IDENTIČNIM cache key construction in `if (aiUsed) setCachedAI` guard) + AI try/catch z graceful ctx.logger.warn deterministic fallback) in src/lib/with-ai-route.ts (helper API: withAiRoute<TInput>({ endpoint, maxDuration, enforceBudget, parseBody, validateInput, handler, method, rateLimit }) — ctx.{aiSettings, db, logger, callAi, parseAi, req}; AI_ROUTE_DEFAULTS { runtime, dynamic, maxDuration }; ApiRouteError class za custom status iz handler/helper funkcij; enforceBudget option z auto recordAiCall PO uspešnem handler-ju; method POST|GET za dual-handler support; rate-limit default 20/min; callAi interno implementira fallback na secondary provider; parseAi = parseJsonLooseExported) in src/lib/api-response.ts (apiOk pass-through — NextResponse.json(data, { status: 200 }), ne dodaja sam ok:true; zato eksplicitno `ok: true` v payload-u za backward-compat s klienti ki preverjajo `data.ok`; apiBadRequest vrača { ok: false, error } z 400; apiNotFound vrača { ok: false, error } z 404; apiError vrača { ok: false, error } z 500) ter referenčna 2 že-migrirana endpoint-a (deduplicate v8.94-refactor in exit-strategy v8.94-refactor) ter deal-source-profit-velocity-maximizer v8.96.6-batch2 in profit-maximizer-v2 v8.96.3-refactor (deprecated dual-handler) kot najnovejši dual-handler GET+POST + cached payload + 6h cache + graceful AI try/catch fallback pattern IDENTIČEN mojim 6 endpoint-om — profit-maximizer-v2 je podvojena referenca za logDeprecatedCall preservation vzorec znotraj handler-ja preko ctx.req.
+
+- 1. deal-source-roi-maximizer (v8.00 → v8.00 / v8.96.7-batch2, 995 → 973 vrstic — GET+POST, body ignored, kliče AI, AI MAKSIMIZIRA ROI PERCENTAGE per source z roiMaximizationAction (4 actions: INCREASE_VOLUME/IMPROVE_MARGIN/REDUCE_COSTS/EXIT) + projectedROI + roiUplift + 2-4 roiMaximizationLevers (Profit Margin/Sourcing Cost/Selling Fees/Trade Volume z currentGap/potentialGain/action) + capitalEfficiencyAdvice per source + portfolio capitalReallocationAdvice + sourceROIRanking z 6h cache by currentMonth YYYY-MM + deterministic fallback z anti-hallucination projectedROI ∈ [currentROI, currentROI × 1.5 ali +50]):
+  1. Modul docstring posodobljen: `v8.00: ...` → `v8.00 / v8.96.7-batch2: ...` + dodan `Refaktoriran z withAiRoute helperjem (v8.96.7) + enforceBudget guard.`
+  2. Zamenjal imports + route config (odstranil NextRequest, NextResponse, db, getSettingsRow, callProviderForRaw, parseJsonLooseExported, AiProviderType, AiSettings, checkRateLimit, rateLimitResponse, logger; dodal withAiRoute, AI_ROUTE_DEFAULTS, AiRouteContext, apiOk; ohranil GROUNDING_PROMPT_SUFFIX in getCachedAI/setCachedAI; ohranil AI_ROUTE_DEFAULTS kot source za runtime/dynamic, ločeno maxDuration = 60)
+  3. Dodal `interface DealSourceRoiMaximizerInput {}` (PRAZEN — body ignored) z `// eslint-disable-next-line @typescript-eslint/no-empty-object-type` direktivo
+  4. Zamenjal `export async function GET/POST(req)` → `const dealSourceRoiMaximizerHandler = withAiRoute<DealSourceRoiMaximizerInput>({ ... }); export const GET/POST = dealSourceRoiMaximizerHandler;` z `method: 'GET'` + `parseBody` + no validateInput
+  5. Handler destrukturira `const { db, callAi, parseAi, logger } = ctx;`
+  6. Zamenjal `callProviderForRaw(aiSettings, prompt)` → `callAi(prompt)` znotraj local try/catch z `logger.warn('/api/ai/deal-source-roi-maximizer', 'AI call failed — using deterministic fallback', err)` (PRESERVED IDENTIČNO)
+  7. Zamenjal `parseJsonLooseExported(raw)` → `parseAi(raw)`
+  8. Zamenjal `NextResponse.json({...} satisfies DealSourceRoiResponse)` → `apiOk({...} satisfies DealSourceRoiResponse)` (4 msta: empty-state no SOLD, empty-state no valid computed, cached-state, final response; response shape PRESERVED identično z `satisfies` klavzulo)
+  9. Odstranil outer try/catch + getSettingsRow + aiSettings build + checkRateLimit + rateLimitResponse
+  10. PRESERVED vse deterministic helperje OUTSIDE handler: `clampString, clampEnum, clampNum, round0, round2, toMs, avg, detectSource, displayName, computeTrade, aggregateBySource, computeTrend, computeSourceMetrics, decideRoiAction, buildRoiLevers, buildSourceMaximization, buildSourceEntries, buildPortfolio, buildSummary` — vsi IDENTIČNI originalu
+  11. PRESERVED vse konstante: `DAY_MS, TWELVE_MONTHS_MS, ROI_MIN/MAX, SCORE_MIN/MAX, PROFIT_MIN/MAX, GAP_MIN/MAX, GAIN_MIN/MAX, UPLIFT_MIN/MAX, MAX_LEVERS_PER_SOURCE, VALID_ACTION, SOURCE_DISPLAY`
+  12. PRESERVED vse Type definitionse: `RoiMaximizationAction, RoiGrowthTrend, SoldTradeRow, SourceMetrics, RoiMaximizationLever, SourceMaximization, SourceEntry, PortfolioSummary, DealSourceRoiResponse, AiResponse, TradeComputed, SourceAgg`
+  13. PRESERVED cache logiko IDENTIČNO: cache key `deal-source-roi-maximizer:${currentMonth}` (YYYY-MM) — get short-circuit z `cached: true, aiUsed: true` + setCachedAI samo ko `aiUsed`
+  14. PRESERVED empty-state response shape IDENTIČNO (no SOLD trades — 0 values + 'Ni SOLD trgovin v zadnjih 12 mesecih — Deal Source ROI Maximizer ni mogoč.' message; no valid computed — 'Ni veljavnih SOLD trgovin — Deal Source ROI Maximizer ni mogoč.' message)
+  15. PRESERVED anti-hallucination clamp logic IDENTIČNO: per-source merge aiSourcesMap match by source string; projectedROI clampNum [avgROI, max(avgROI+10, min(avgROI×1.5+20, avgROI+50))] fallback det.maximization.projectedROI; roiUplift clampNum [UPLIFT_MIN, UPLIFT_MAX, 0]; levers clampString 50 lever + clampNum [0, 100] currentGap + clampNum [0, 50] potentialGain + clampString 200 action (slice 0-4, fallback to det levers če prazno); capitalEfficiencyAdvice clampString 400 fallback det advice; portfolio override capitalReallocationAdvice clampString 400 fallback det; summary clampString 400 fallback buildSummary(entries, portfolio); aiUsed=true samo ko parsed veljaven objekt
+
+- 2. listing-performance-forecaster-pro (v7.88 → v7.88 / v8.96.7-batch2, 1003 → 984 vrstic — GET+POST, body ignored, kliče AI, AI forecast-a FULL performance spectrum vsakega HELD listing-a z predictedViews30d/Contacts30d/Bookmarks30d + predictedSellDate (earliest/latest) + sellProbability7d/14d/30d + performanceGrade (A+..F) + top 3 performanceFactors (POSITIVE/NEGATIVE weight) + 2-3 optimizationActions + confidenceLevel z 6h cache by heldItemIds (JSON-stringify) + deterministic fallback z ±50 views, ±10 contacts, ±15 bookmarks, ±7 days, ±15 prob/confidence clamping; @deprecated v8.94 → uporabi -v4; logDeprecatedCall PRESERVED iz originala preko ctx.req):
+  1. @deprecated JSDoc comment PRESERVED IDENTIČNO (nad modul docstring)
+  2. Modul docstring posodobljen: `v7.88: ...` → `v7.88 / v8.96.7-batch2: ...` + dodan `Refaktoriran z withAiRoute helperjem (v8.96.7) + enforceBudget guard.` + dodan `logDeprecatedCall PRESERVED iz originala (Phase 2 deprecation logging — kliče ctx.req).`
+  3. Zamenjal imports (enako kot #1, dodan logDeprecatedCall import iz `@/lib/deprecated-redirect`)
+  4. Dodal `interface ListingPerformanceForecasterProInput {}` (PRAZEN) z eslint-disable direktivo
+  5. Zamenjal dual-handler z `method: 'GET'` + `parseBody` + no validateInput
+  6. Handler destrukturira `const { db, callAi, parseAi, logger } = ctx;`
+  7. PRESERVED logDeprecatedCall na VRH handler-ja: `logDeprecatedCall('/api/ai/listing-performance-forecaster-pro', ctx.req, '/api/ai/listing-performance-forecaster-v4');` — original je klical iz GET(req) (POST ni klical); migrirani vzorec kliče enkrat na vrhu handler-ja preko ctx.req (konsistentno z profit-maximizer-v2 v8.96.3-refactor in profit-maximizer v8.96.1-refactor referencama — POST sedaj tudi logira, additive deprecation coverage)
+  8. Zamenjal `callProviderForRaw(aiSettings, prompt)` → `callAi(prompt)` znotraj local try/catch (PRESERVED IDENTIČNO)
+  9. Zamenjal `parseJsonLooseExported(raw)` → `parseAi(raw)`
+  10. Zamenjal `NextResponse.json({...})` → `apiOk({...})` (4 msta: empty-state no HELD, cached-state, final response; brez `satisfies` klavzule ker original ni imel — konsistentno z originalom)
+  11. Odstranil outer try/catch + getSettingsRow + aiSettings build + checkRateLimit + rateLimitResponse
+  12. PRESERVED vse deterministic helperje OUTSIDE handler: `clampNumber, clampString, clampGrade, clampImpact, round0, round1, toMs, isoDate, gradeFromDealScore, deterministicEngagement, buildDeterministicFactors, buildDeterministicOptimizationActions, buildDeterministicConfidence, buildDeterministicForecast, buildPortfolioSummary, buildDeterministicSummary` — vsi IDENTIČNI originalu
+  13. PRESERVED vse konstante: `DAY_MS, HORIZON_12M, PROB_MIN/MAX, VIEWS_MIN/MAX, CONTACTS_MIN/MAX, BOOKMARKS_MIN/MAX, DAYS_TO_SALE_MIN/MAX, WEIGHT_MIN/MAX, CONFIDENCE_MIN/MAX, VALID_GRADES, VALID_IMPACT`
+  14. PRESERVED vse Type definitionse: `PerformanceGrade, FactorImpact, PerformanceFactors, HeldItemInput, HeldItemForecast, HistoricalPatterns, PortfolioSummary, AiItemResponse, AiListingPerformanceResponse, HeldTradeRow, SoldTradeRow`
+  15. PRESERVED cache logiko IDENTIČNO: cache key `listing-performance-forecaster-pro:${JSON.stringify(heldItemIds)}` (sorted joined) — get short-circuit z `cached: true, aiUsed: true` + setCachedAI samo ko `aiUsed`; cached response rebuilda portfolio preko buildPortfolioSummary(cached.items) (IDENTIČNO originalu)
+  16. PRESERVED anti-hallucination clamp logic IDENTIČNO: merged[] build za vsak ai item match-a tradeId (anti-hallucination skip unknown tradeId); prob7/14/30 ±15 clamp od det; views ±50, contacts ±10, bookmarks ±15, days ±7; clampGrade ai.performanceGrade fallback det; factors Array.isArray + clampString 100 factor + clampEnum POSITIVE/NEGATIVE impact + clampNum [0, 100] weight (slice 0-3); actions clampString 150 + filter length > 0 (slice 0-3); confidence ±15 clamp; earliestDays/latestDays recompute iz clamped days; aiUsed=true samo ko merged.length > 0
+  17. PRESERVED held trade query + sold trade historical patterns computation IDENTIČNO: db.trade.findMany status:held z listing.{aiEstimatedValue, dealScore, aiScore, aiRisk, aiVerdict, imageUrl, firstSeenAt, contactStatus, contactedAt, monitor.source}; soldTrades 12m query z listing.{firstSeenAt, contactStatus, contactedAt, monitor.source}; db.listing.groupBy by monitorId + db.monitor.findMany z source map za per-source sell-through rate (categoryDemandScore); historicalPatterns iz daysToFirstContact/daysToSale/contactsBeforeSale/contactToSaleRate/sampleSize
+
+- 3. profit-velocity-maximizer (v7.98 → v7.98 / v8.96.7-batch2, 1004 → 982 vrstic — GET+POST, body ignored, kliče AI, AI MAKSIMIZIRA VELOCITY of profit generation (€/day, acceleration, time-to-double) z maximizedDailyProfitRate + profitVelocityUplift + 3-5 velocityMaximizationActions (HIGH/MEDIUM/LOW priority + expectedVelocityGain €/dan) + projectedMonthlyProfit + velocityGrade (A+..F) + timeToDoubleProfit (1-3650 dni) + capitalVelocityOptimization z 6h cache by currentMonth YYYY-MM + deterministic fallback z anti-hallucination maximizedDailyProfitRate ∈ [current, current × 3]):
+  1. Modul docstring posodobljen: `v7.98: ...` → `v7.98 / v8.96.7-batch2: ...` + dodan refactor note
+  2. Zamenjal imports + route config (enako kot #1)
+  3. Dodal `interface ProfitVelocityMaximizerInput {}` (PRAZEN) z eslint-disable direktivo
+  4. Zamenjal dual-handler z `method: 'GET'` + `parseBody` + no validateInput
+  5. Handler destrukturira `const { db, callAi, parseAi, logger } = ctx;`
+  6. Zamenjal `callProviderForRaw(aiSettings, prompt)` → `callAi(prompt)` znotraj local try/catch (PRESERVED IDENTIČNO)
+  7. Zamenjal `parseJsonLooseExported(raw)` → `parseAi(raw)`
+  8. Zamenjal `NextResponse.json({...} satisfies ProfitVelocityResponse)` → `apiOk({...} satisfies ProfitVelocityResponse)` (4 msta: empty-state no SOLD, empty-state no valid trade velocities, cached-state, final response)
+  9. Odstranil outer try/catch + getSettingsRow + aiSettings build + checkRateLimit + rateLimitResponse
+  10. PRESERVED vse deterministic helperje OUTSIDE handler: `clampString, clampEnum, clampNum, round0, round2, toMs, computeTradeVelocity, analyzeVelocity, computeVelocityCurrent, computeBottlenecks, buildDeterministicMaximization, buildSummary` — vsi IDENTIČNI originalu
+  11. PRESERVED vse konstante: `DAY_MS, TWELVE_MONTHS_MS, RATE_MIN/MAX, SCORE_MIN/MAX, PROFIT_MIN/MAX, UPLIFT_MIN/MAX, DAYS_MIN/MAX, VALID_PRIORITY, VALID_GRADE`
+  12. PRESERVED vse Type definitionse: `ActionPriority, VelocityGrade, SoldTradeRow, TradeVelocity, VelocityAnalysis, VelocityCurrent, Bottlenecks, VelocityMaximizationAction, VelocityMaximization, ProfitVelocityResponse, AiResponse`
+  13. PRESERVED cache logiko IDENTIČNO: cache key `profit-velocity-maximizer:${currentMonth}` (YYYY-MM) — get short-circuit z `cached: true, aiUsed: true` + setCachedAI samo ko `aiUsed`
+  14. PRESERVED empty-state response shape IDENTIČNO (no SOLD trades — 0 values + 'Ni SOLD trgovin v zadnjih 12 mesecih — Profit Velocity Maximizer ni mogoč.' message; no valid trade velocities — 'Ni veljavnih sell datumov — Profit Velocity Maximizer ni mogoč.' message)
+  15. PRESERVED anti-hallucination clamp logic IDENTIČNO: maximizedDailyProfitRate clampNum [RATE_MIN, RATE_MAX] fallback det, nato Math.max(currentDailyProfitRate, Math.min(current × 3, aiMaxRate)) bound [current, current × 3]; profitVelocityUplift clampNum [UPLIFT_MIN, UPLIFT_MAX] fallback expectedUplift, nato tolerance check ±max(0.5, expectedUplift × 0.1) — če AI uplift odstopa >tolerance recompute iz expectedUplift; actions clampString 200 action + clampEnum VALID_PRIORITY + clampNum [0, UPLIFT_MAX] expectedVelocityGain (slice 0-5, fallback det actions); projectedMonthlyProfit clampNum [PROFIT_MIN, PROFIT_MAX] fallback expectedMonthly (= maximized × 30); velocityGrade clampEnum VALID_GRADE fallback det; timeToDoubleProfit clampNum [DAYS_MIN, DAYS_MAX] fallback det; capitalVelocityOptimization clampString 400 fallback det; summary clampString 400 fallback buildSummary(current, maximization); aiUsed=true samo ko parsed veljaven objekt
+
+- 4. revenue-stream-optimizer (v7.94 → v7.94 / v8.96.7-batch2, 1009 → 987 vrstic — GET+POST, body ignored, kliče AI, AI optimizira REVENUE streams (category × source) z revenueOptimizationScore (0-100, ±10 od det) + 3-6 revenueMaximizationActions (CRITICAL/HIGH/MEDIUM/LOW priority + expectedRevenueLift EUR + timeline) + projectedRevenue30d/60d/90d (clamped [0, monthlyRevenue × 2.5]) + revenueDiversificationPlan + 3-5 revenueStreamPriorities (rank 1-10 + reason + expectedRevenue) + 2-3 revenueRiskAssessment (LOW/MEDIUM/HIGH severity + mitigation) + confidenceLevel z 6h cache by currentMonth YYYY-MM + deterministic fallback):
+  1. Modul docstring posodobljen: `v7.94: ...` → `v7.94 / v8.96.7-batch2: ...` + dodan refactor note
+  2. Zamenjal imports + route config (enako kot #1)
+  3. Dodal `interface RevenueStreamOptimizerInput {}` (PRAZEN) z eslint-disable direktivo
+  4. Zamenjal dual-handler z `method: 'GET'` + `parseBody` + no validateInput
+  5. Handler destrukturira `const { db, callAi, parseAi, logger } = ctx;`
+  6. Zamenjal `callProviderForRaw(aiSettings, prompt)` → `callAi(prompt)` znotraj local try/catch (PRESERVED IDENTIČNO)
+  7. Zamenjal `parseJsonLooseExported(raw)` → `parseAi(raw)`
+  8. Zamenjal `NextResponse.json({...})` → `apiOk({...})` (3 msta: empty-state no SOLD, cached-state, final response; brez `satisfies` klavzule ker original ni imel — konsistentno z originalom)
+  9. Odstranil outer try/catch + getSettingsRow + aiSettings build + checkRateLimit + rateLimitResponse
+  10. PRESERVED vse deterministic helperje OUTSIDE handler: `clampString, clampEnum, clampNum, round0, round1, round2, streamKey, computeStreams, buildStreams, buildCurrent, buildStreamAnalysis, buildDeterministicOptimization` — vsi IDENTIČNI originalu
+  11. PRESERVED vse konstante: `HORIZON_12M, SCORE_MIN/MAX, REVENUE_MIN_EUR/MAX_EUR, GROWTH_MIN/MAX, MARGIN_MIN/MAX, CONF_MIN/MAX, PROJECTION_MAX_FACTOR, VALID_PRIORITY, VALID_SEVERITY`
+  12. PRESERVED vse Type definitionse: `StreamType, ActionPriority, RiskSeverity, Stream, StreamAgg, CurrentRevenue, StreamAnalysis, Optimization, RevenueAction, StreamPriority, RevenueRisk, RevenueStreamResponse, AiRevenueResponse, SoldTradeRow`
+  13. PRESERVED cache logiko IDENTIČNO: cache key `revenue-stream-optimizer:${currentMonth}` (YYYY-MM) — get short-circuit z `cached: true, aiUsed: true` + setCachedAI samo ko `aiUsed`
+  14. PRESERVED empty-state response shape IDENTIČNO (no SOLD trades — 0 values + empty arrays + 'Ni SOLD trgovin v zadnjih 12 mesecih — Revenue Stream Optimizer ni mogoč.' message)
+  15. PRESERVED anti-hallucination clamp logic IDENTIČNO: actions clampString 200 action + clampString 100 stream + clampEnum VALID_PRIORITY + clampNum [REVENUE_MIN_EUR, REVENUE_MAX_EUR] expectedRevenueLift + clampString 50 timeline (slice 0-6, fallback det.actions[0]); priorities clampString 100 stream + clampNum [1, 10] rank + clampString 200 reason + clampNum [REVENUE_MIN_EUR, REVENUE_MAX_EUR] expectedRevenue (slice 0-5, fallback det.priorities); risks clampString 200 risk + clampEnum VALID_SEVERITY + clampString 200 mitigation (slice 0-3, fallback det.risks); score ±10 od det clampNum [SCORE_MIN, SCORE_MAX]; confidence ±10 od det clampNum [CONF_MIN, CONF_MAX]; projections clampNum [REVENUE_MIN_EUR, projectionMax=monthlyRevenue × PROJECTION_MAX_FACTOR] fallback det.projectedRevenueXXd; diversificationPlan clampString 400 fallback det; summary clampString 400 fallback det.summary; aiUsed=true samo ko parsed veljaven objekt
+
+- 5. inventory-performance-trend-tracker (v7.91 → v7.91 / v8.96.7-batch2, 1013 → 991 vrstic — GET+POST, body ignored, kliče AI, AI track-a HISTORICAL performance TRENDS čez 12 mesecev z performanceTrajectory + projectedProfit30d/60d/90d (±20% od det, clamped [0, profitCap]) + projectedROI30d (±10 od det) + performanceGrade (A+..F) + performanceConsistencyScore (±15 od det) + 1-3 performanceDrivers (POSITIVE/NEGATIVE weight + detail) + 1-3 performanceRisks (LOW/MEDIUM/HIGH severity + mitigation) + 1-4 performanceOptimizationActions (HIGH/MEDIUM/LOW priority + expectedImpact) + bestPerformingMonth (validated against monthlyData) z 6h cache by currentMonth YYYY-MM + deterministic fallback):
+  1. Modul docstring posodobljen: `v7.91: ...` → `v7.91 / v8.96.7-batch2: ...` + dodan refactor note
+  2. Zamenjal imports + route config (enako kot #1)
+  3. Dodal `interface InventoryPerformanceTrendTrackerInput {}` (PRAZEN) z eslint-disable direktivo
+  4. Zamenjal dual-handler z `method: 'GET'` + `parseBody` + no validateInput
+  5. Handler destrukturira `const { db, callAi, parseAi, logger } = ctx;`
+  6. Zamenjal `callProviderForRaw(aiSettings, prompt)` → `callAi(prompt)` znotraj local try/catch (PRESERVED IDENTIČNO)
+  7. Zamenjal `parseJsonLooseExported(raw)` → `parseAi(raw)`
+  8. Zamenjal `NextResponse.json({...})` → `apiOk({...})` (4 msta: empty-state no SOLD, empty-state < 2 active months, cached-state, final response; brez `satisfies` ker original ni imel)
+  9. Odstranil outer try/catch + getSettingsRow + aiSettings build + checkRateLimit + rateLimitResponse
+  10. PRESERVED vse deterministic helperje OUTSIDE handler: `clampString, clampEnum, clampNum, round0, round1, toMs, newMonthAgg, buildMonthlyData, computeTrends, buildDeterministicForecast, buildDeterministicAnalysis, buildSummary` — vsi IDENTIČNI originalu (vključno z monthStartMs znotraj handler-ja, ker je odvisen od `now` parametra)
+  11. PRESERVED vse konstante: `DAY_MS, HORIZON_12M, MONTHS_12, PROFIT_MIN/MAX, ROI_MIN/MAX, SCORE_MIN/MAX, WEIGHT_MIN/MAX, PROFIT_MAX_MULTIPLE, VALID_GRADE, VALID_IMPACT, VALID_SEVERITY, VALID_PRIORITY`
+  12. PRESERVED vse Type definitionse: `PerformanceDirection, PerformanceGrade, DriverImpact, RiskSeverity, ActionPriority, PerformanceTrends, MonthlyData, MonthAgg, PerformanceForecast, PerformanceDriver, PerformanceRisk, OptimizationAction, BestPerformingMonth, PerformanceAnalysis, InventoryPerformanceTrendResponse, AiPerformanceResponse, SoldTradeRow`
+  13. PRESERVED cache logiko IDENTIČNO: cache key `inventory-performance-trend-tracker:${currentMonth}` (YYYY-MM) — get short-circuit z `cached: true, aiUsed: true` + setCachedAI samo ko `aiUsed`
+  14. PRESERVED empty-state response shape IDENTIČNO (no SOLD trades — STABLE direction + 0 values + 'Ni SOLD trgovin v zadnjih 12 mesecih — Inventory Performance Trend Tracker ni mogoč.' message; < 2 active months — STABLE direction + 'Ni dovolj mesecev s trgovinami (potrebnih ≥2) — Inventory Performance Trend Tracker ni mogoč.' message; monthlyData v < 2 active months case uses buildMonthlyData(monthMap, sortedMonthKeys))
+  15. PRESERVED anti-hallucination clamp logic IDENTIČNO: profitDelta30/60/90 ±20% (Math.max(-0.20, Math.min(0.20, ...))) od det.projectedProfitXXd; projectedProfit30d/60d/90d clampNum [PROFIT_MIN, profitCap] (kjer profitCap = historicalMaxProfit × PROFIT_MAX_MULTIPLE); projectedROI30d ±10 od det clampNum [ROI_MIN, ROI_MAX]; performanceGrade clampEnum VALID_GRADE fallback det; performanceConsistencyScore ±15 od det clampNum [SCORE_MIN, SCORE_MAX]; drivers clampString 100 driver + clampEnum VALID_IMPACT + clampNum [WEIGHT_MIN, WEIGHT_MAX] weight + clampString 200 detail (slice 0-3, fallback det.drivers); risks clampString 200 risk + clampEnum VALID_SEVERITY + clampString 200 mitigation (slice 0-3, fallback det.risks); optimizationActions clampString 200 action + clampEnum VALID_PRIORITY + clampString 200 expectedImpact (slice 0-4, fallback det.actions); bestPerformingMonth validated against monthlyData.find by month string slice(0, 10) (anti-hallucination — samo realni month iz monthlyData); summary clampString 400 fallback buildSummary(trends, forecast); aiUsed=true samo ko parsed veljaven objekt
+
+- 6. inventory-annualized-return-maximizer (v8.06 → v8.06 / v8.96.7-batch2, 1018 → 996 vrstic — GET+POST, body ignored, kliče AI, AI MAKSIMIZIRA ANNUALIZED RETURN na held inventory z maximizedAnnualizedReturn (≥ current × 1.8 ali +300pp anti-hallucination bound) + returnUplift + 4 distinct returnMaximizationLevers (FASTER_TURNOVER/HIGHER_MARGIN/BETTER_SOURCING/LOWER_FEES z potentialGain pp + action) + returnVsBenchmark + optimalHoldTime + 3-point returnProjection (months 3/6/12 z projectedReturn % + projectedProfit €) + returnGrade (A+..F) + riskAdjustedReturn (maximized − risk discount = avgAiRisk/100 × 0.30 × maximized) z 6h cache by heldItemIdsHash (sorted, sliced 200) + deterministic fallback z recompute returnVsBenchmark/riskAdjustedReturn/returnGrade po override):
+  1. Modul docstring posodobljen: `v8.06: ...` → `v8.06 / v8.96.7-batch2: ...` + dodan refactor note
+  2. Zamenjal imports + route config (enako kot #1)
+  3. Dodal `interface InventoryAnnualizedReturnMaximizerInput {}` (PRAZEN) z eslint-disable direktivo
+  4. Zamenjal dual-handler z `method: 'GET'` + `parseBody` + no validateInput
+  5. Handler destrukturira `const { db, callAi, parseAi, logger } = ctx;`
+  6. Zamenjal `callProviderForRaw(aiSettings, prompt)` → `callAi(prompt)` znotraj local try/catch (PRESERVED IDENTIČNO)
+  7. Zamenjal `parseJsonLooseExported(raw)` → `parseAi(raw)`
+  8. Zamenjal `NextResponse.json({...} satisfies InventoryAnnualizedReturnResponse)` → `apiOk({...} satisfies InventoryAnnualizedReturnResponse)` (3 msta: empty-state no HELD+SOLD, empty-state no HELD with estValue, cached-state, final response)
+  9. Odstranil outer try/catch + getSettingsRow + aiSettings build + checkRateLimit + rateLimitResponse
+  10. PRESERVED Promise.all parallel query HELD + SOLD (12m) IDENTIČNO: db.trade.findMany status:held + db.trade.findMany status:sold/sellDate:gte/sellPrice:gt z Promise.all
+  11. PRESERVED vse deterministic helperje OUTSIDE handler: `clampString, clampEnum, clampNum, round0, round2, toMs, computeHeldTrade, computeSoldTrade, computeCurrent, buildDeterministicMaximization, computeRiskAdjustedReturn, decideReturnGrade, buildSummary` — vsi IDENTIČNI originalu
+  12. PRESERVED vse konstante: `DAY_MS, TWELVE_MONTHS_MS, CAPITAL_MIN/MAX, RETURN_MIN/MAX, HOLD_MIN/MAX, BENCHMARK_MIN/MAX, EXCESS_MIN/MAX, UPLIFT_MIN/MAX, PROFIT_MIN/MAX, SCORE_MIN/MAX, DEFAULT_BENCHMARK, MAX_ITEMS_PER_AI, MAX_LEVERS, VALID_LEVER, VALID_GRADE`
+  13. PRESERVED vse Type definitionse: `ReturnGrade, ReturnLever, HeldTradeRow, SoldTradeRow, HeldComputed, SoldComputed, CurrentReturn, ReturnLeverItem, ReturnProjection, ReturnMaximization, PerItemReturn, InventoryAnnualizedReturnResponse, AiResponse, ReturnMaximizationInput`
+  14. PRESERVED cache logiko IDENTIČNO: cache key `inventory-annualized-return-maximizer:${heldItemIdsHash}` (sorted heldComputed ids joined, sliced 0-200) — get short-circuit z `cached: true, aiUsed: true` + setCachedAI samo ko `aiUsed`
+  15. PRESERVED empty-state response shape IDENTIČNO (no HELD+SOLD — 0 values + 'Ni HELD in SOLD trgovin — Inventory Annualized Return Maximizer ni mogoč.' message; no HELD with estValue — 0 values + 'Ni HELD trgovin (z estValue) — Inventory Annualized Return Maximizer ni mogoč.' message)
+  16. PRESERVED anti-hallucination clamp logic IDENTIČNO: maximizedAnnualizedReturn override le ko AI podaja vrednost, clampNum [minBound=current.portfolioAnnualizedReturn, maxBound=max(current+1, min(RETURN_MAX, max(current×1.8, current+300)))] fallback det; returnUplift recompute iz (maximized − current) clampNum [UPLIFT_MIN, UPLIFT_MAX, 0]; levers override le ko AI vrača vseh 4 distinct (dedupe preko Set<ReturnLever>, clampEnum VALID_LEVER fallback 'FASTER_TURNOVER', potentialGain clampNum [UPLIFT_MIN, UPLIFT_MAX, 20], action clampString 200 fallback); optimalHoldTime override clampNum [HOLD_MIN, HOLD_MAX, det]; returnProjection override le ko AI vrača vseh 3 (months 3/6/12 match, projectedReturn clampNum [RETURN_MIN, RETURN_MAX, 0], projectedProfit clampNum [PROFIT_MIN, PROFIT_MAX, 0]); returnVsBenchmark override ali recompute (maximized − benchmark) clampNum [EXCESS_MIN, EXCESS_MAX, 0]; riskAdjustedReturn override ali recompute preko computeRiskAdjustedReturn(maximized, heldComputed) clampNum [RETURN_MIN, RETURN_MAX, computed]; returnGrade override clampEnum VALID_GRADE ali recompute preko decideReturnGrade(maximized, returnUplift, benchmark); summary clampString 400 fallback buildSummary(current, maximization); aiUsed=true samo ko parsed.maximization veljaven
+
+- Skupne spremembe error response konvencije (vse 6 datoteke): original 500 `{ error: e?.message ?? 'Napaka' }` → wrapper-jev `{ ok: false, error }` (preko apiError v helperju; konsistentno z vsemi prejšnjimi v8.94.x / v8.95.x / v8.96.x migracijami; additive `ok: false` field, ne breaking — success response shape nespremenjen z ohranjenim ok: true v apiOk({...}) in `satisfies XxxResponse` klavzulo kjer je original imel). Original 500 iz fallback-fail SE NE pojavlja — vsi 6 endpoint-i imajo local try/catch okrog ctx.callAi z graceful deterministic fallback (konsistentno z deduplicate v8.94-refactor, exit-strategy v8.94-refactor in inventory-annual-yield-maximizer v8.96.6-batch2 referencami).
+
+- enforceBudget: true (vse 6) — vsi 6 endpoint-i kličejo ctx.callAi direktno (po loaded DB data), zato budget check je smiseln in helper avtomatsko pokliče recordAiCall(db, endpoint) PO uspešnem handler-ju. Originalni endpointi NISO imeli aiCallsToday counter increment. To je additive behavior introduced z withAiRoute helperjem — konsistentno z vsemi prejšnjimi v8.94.x / v8.95.x / v8.96.x migracijami.
+
+- Dual-handler (GET + POST) preservation (vse 6 datoteke): vsi 6 originali so bili `async function GET(req)` + `async function POST(req)` ki oba kličeta isti `handleXxx(req)`. Migracija PRESERVES dual-handler z `method: 'GET'` option (bypass POST-only check v helperju) + `export const GET = xxxHandler; export const POST = xxxHandler` vzorec (konsistentno z vsemi prejšnjimi batchi od v8.96.4 naprej — inventory-annual-yield-maximizer v8.96.6-batch2, deduplicate v8.94, itd.). Body parse z `await req.json().catch(() => ({})); return {};` ki handle-a GET no-body case (IDENTIČNO vsem 6 originalom).
+
+- listing-performance-forecaster-pro deprecation logging preservation (POMEMBNO): original je imel `export async function GET(req) { logDeprecatedCall(...); return handleXxx(req); }` (samo GET je logiral — POST je šel direktno v handler). Migrirani vzorec kliče `logDeprecatedCall('/api/ai/listing-performance-forecaster-pro', ctx.req, '/api/ai/listing-performance-forecaster-v4')` enkrat na VRHU handler-ja — to pomeni da POST sedaj TUDI logira (additive deprecation coverage, konsistentno z profit-maximizer-v2 v8.96.3-refactor in profit-maximizer v8.96.1-refactor referencama). `@deprecated v8.94` JSDoc comment nad modulom je PRESERVED IDENTIČNO. `logDeprecatedCall` import iz `@/lib/deprecated-redirect` je ohranjen. Endpoint je še vedno aktiven (ne redirect-a na -v4), samo logira deprecation calls za Phase 2 monitoring (konsistentno z ENDPOINTS_AUDIT.md migracijskim načrtom — v9.0 bo odstranjen).
+
+- Pure helper extraction pattern (vse 6 datoteke): vsaka datoteka ima 10–20+ helper funkcij ekstrahiranih OUTSIDE handler-ja (clampXxx za AI response sanitization, computeXxx za DB-query-result aggregation, buildDeterministicXxx za pre-AI baseline, buildXxx za prompt konstruiranje z interpolacijami in JSON shape specifikacijami IDENTIČNO originalu, decideXxx za grade/score computation, buildSummary za final summary string). Vsi helperji so čiste funkcije (brez db/logger/settings odvisnosti) za testabilnost (konsistentno z vsemi prejšnjimi v8.94.x / v8.95.x / v8.96.x migracijami).
+
+- Cache logic preservation (vse 6 datoteke): vsi 6 originali so imeli `getCachedAI(cacheKey)` pre-AI short-circuit z `cached: true, aiUsed: true` response shape in `setCachedAI(cacheKey, ...)` samo ko `aiUsed === true`. Migracija PRESERVES ta vzorec IDENTIČNO z istimi cache key construction vzorci: (1) deal-source-roi-maximizer — by currentMonth YYYY-MM; (2) listing-performance-forecaster-pro — by heldItemIds JSON-stringify (sorted); (3) profit-velocity-maximizer — by currentMonth YYYY-MM; (4) revenue-stream-optimizer — by currentMonth YYYY-MM; (5) inventory-performance-trend-tracker — by currentMonth YYYY-MM; (6) inventory-annualized-return-maximizer — by heldItemIdsHash (sorted, sliced 200).
+
+- GROUNDING_PROMPT_SUFFIX preservation (vse 6 datoteke): vsi 6 originali so uporabljali `${GROUNDING_PROMPT_SUFFIX}` na koncu AI prompt-a za anti-hallucination grounding. Migracija PRESERVES ta vzorec IDENTIČNO — vsi 6 prompt-i končajo z `${GROUNDING_PROMPT_SUFFIX}` (konsistentno z vsemi prejšnjimi v8.94.x / v8.95.x / v8.96.x migracijami).
+
+- Verification:
+  - `bunx tsc --noEmit` → 0 errors (exit code 0)
+  - `bunx eslint <6 files>` → 0 errors (exit code 0)
+
+Stage Summary:
+- MODIFIED: 6 route.ts files
+  - src/app/api/ai/deal-source-roi-maximizer/route.ts (995 → 973)
+  - src/app/api/ai/listing-performance-forecaster-pro/route.ts (1003 → 984)
+  - src/app/api/ai/profit-velocity-maximizer/route.ts (1004 → 982)
+  - src/app/api/ai/revenue-stream-optimizer/route.ts (1009 → 987)
+  - src/app/api/ai/inventory-performance-trend-tracker/route.ts (1013 → 991)
+  - src/app/api/ai/inventory-annualized-return-maximizer/route.ts (1018 → 996)
+- enforceBudget: true (all 6)
+- listing-performance-forecaster-pro: logDeprecatedCall PRESERVED
+- Lint: 0, Typecheck: 0

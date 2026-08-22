@@ -39,24 +39,20 @@
 
 // GET+POST /api/ai/deal-source-profit-margin-growth-maximizer
 // (AI-enhanced + grounding + anti-hallucination + 6h cache + deterministic fallback)
+// Refaktoriran z withAiRoute helperjem (v8.96.7) + enforceBudget guard.
 
-import { NextRequest, NextResponse } from 'next/server';
-import { db } from '@/lib/db';
-import { getSettingsRow } from '@/lib/pipeline';
-import {
-  callProviderForRaw,
-  parseJsonLooseExported,
-  type AiProviderType,
-  type AiSettings,
-} from '@/lib/ai';
+import { withAiRoute, AI_ROUTE_DEFAULTS, type AiRouteContext } from '@/lib/with-ai-route';
+import { apiOk } from '@/lib/api-response';
 import { GROUNDING_PROMPT_SUFFIX } from '@/lib/anti-hallucination';
 import { getCachedAI, setCachedAI } from '@/lib/ai-cache';
-import { checkRateLimit, rateLimitResponse } from '@/lib/rate-limit';
-import { logger } from '@/lib/logger';
 
-export const runtime = 'nodejs';
-export const dynamic = 'force-dynamic';
+export const { runtime, dynamic } = AI_ROUTE_DEFAULTS;
 export const maxDuration = 60;
+
+// --- Input ----------------------------------------------------------------
+
+// eslint-disable-next-line @typescript-eslint/no-empty-object-type
+interface DealSourceProfitMarginGrowthMaximizerInput {}
 
 // --- Types ---------------------------------------------------------------
 
@@ -657,160 +653,45 @@ function buildSummary(entries: SourceEntry[], portfolio: PortfolioSummary): stri
   return parts.join(' ').slice(0, 500);
 }
 
-// --- Handler -------------------------------------------------------------
+// --- Extracted prompt helpers (pure, testable) ---------------------------
 
-export async function GET(req: NextRequest) {
-  return handleDealSourceProfitMarginGrowthMaximizer(req);
+function buildPromptData(
+  entries: SourceEntry[],
+  computed: TradeComputed[],
+  portfolio: PortfolioSummary,
+): unknown {
+  const sourcesForAI = entries.map((e) => ({
+    source: e.source,
+    displayName: e.displayName,
+    metrics: e.metrics,
+    deterministicMaximization: e.maximization,
+  }));
+
+  return {
+    totalTrades: computed.length,
+    totalSources: entries.length,
+    sources: sourcesForAI,
+    deterministicPortfolio: {
+      currentPortfolioMarginGrowth: portfolio.currentPortfolioMarginGrowth,
+      maximizedPortfolioMarginGrowth: portfolio.maximizedPortfolioMarginGrowth,
+      portfolioMarginGrowthUplift: portfolio.portfolioMarginGrowthUplift,
+      sourceMarginGrowthRanking: portfolio.sourceMarginGrowthRanking,
+      bestMarginGrowthSource: portfolio.bestMarginGrowthSource,
+    },
+    caps: {
+      marginMin: MARGIN_MIN, marginMax: MARGIN_MAX,
+      growthRateMin: GROWTH_RATE_MIN, growthRateMax: GROWTH_RATE_MAX,
+      accelerationMin: ACCELERATION_MIN, accelerationMax: ACCELERATION_MAX,
+      upliftMin: UPLIFT_MIN, upliftMax: UPLIFT_MAX,
+      projectedMarginMin: PROJECTED_MARGIN_MIN, projectedMarginMax: PROJECTED_MARGIN_MAX,
+      absoluteUpliftCapPp: ABSOLUTE_UPLIFT_CAP_PP,
+    },
+    actionGainPp: ACTION_GAIN_PP,
+  };
 }
-export async function POST(req: NextRequest) {
-  return handleDealSourceProfitMarginGrowthMaximizer(req);
-}
 
-async function handleDealSourceProfitMarginGrowthMaximizer(req: NextRequest) {
-  try {
-    const rl = checkRateLimit(req, 'ai-deal-source-profit-margin-growth-maximizer', 20);
-    if (!rl.allowed) return rateLimitResponse(rl);
-
-    const now = Date.now();
-    const twelveMonthsAgo = new Date(now - TWELVE_MONTHS_MS);
-
-    // 1) Query SOLD trades last 12 months with linked Listing for source
-    const soldTrades = await db.trade.findMany({
-      where: {
-        status: 'sold',
-        sellDate: { gte: twelveMonthsAgo },
-        sellPrice: { gt: 0 },
-      },
-      select: {
-        id: true,
-        buyPrice: true,
-        buyFees: true,
-        buyDate: true,
-        sellPrice: true,
-        sellFees: true,
-        sellDate: true,
-        buyLocation: true,
-        listing: {
-          select: {
-            monitor: { select: { source: true, tags: true } },
-          },
-        },
-      },
-      orderBy: { sellDate: 'asc' },
-      take: 100000,
-    }) as unknown as SoldTradeRow[];
-
-    // Empty-state: no SOLD trades
-    if (soldTrades.length === 0) {
-      return NextResponse.json({
-        ok: true,
-        sources: [],
-        portfolio: {
-          currentPortfolioMarginGrowth: 0,
-          maximizedPortfolioMarginGrowth: 0,
-          portfolioMarginGrowthUplift: 0,
-          sourceMarginGrowthRanking: [],
-          bestMarginGrowthSource: '',
-        },
-        summary: 'Ni SOLD trgovin v zadnjih 12 mesecih — Deal Source Profit Margin Growth Maximizer ni mogoč.',
-        aiUsed: false,
-        message: 'Ni SOLD trgovin v zadnjih 12 mesecih — Deal Source Profit Margin Growth Maximizer ni mogoč.',
-      } satisfies DealSourceProfitMarginGrowthResponse);
-    }
-
-    // 2) Compute trades within 12m
-    const computed: TradeComputed[] = [];
-    for (const t of soldTrades) {
-      const c = computeTrade(t, now);
-      if (c) computed.push(c);
-    }
-
-    if (computed.length === 0) {
-      return NextResponse.json({
-        ok: true,
-        sources: [],
-        portfolio: {
-          currentPortfolioMarginGrowth: 0,
-          maximizedPortfolioMarginGrowth: 0,
-          portfolioMarginGrowthUplift: 0,
-          sourceMarginGrowthRanking: [],
-          bestMarginGrowthSource: '',
-        },
-        summary: 'Ni veljavnih SOLD trgovin — Deal Source Profit Margin Growth Maximizer ni mogoč.',
-        aiUsed: false,
-        message: 'Ni veljavnih SOLD trgovin — Deal Source Profit Margin Growth Maximizer ni mogoč.',
-      } satisfies DealSourceProfitMarginGrowthResponse);
-    }
-
-    const aggMap = aggregateBySource(computed);
-    let entries = buildSourceEntries(aggMap, now);
-    let portfolio = buildPortfolio(entries);
-    let summary = buildSummary(entries, portfolio);
-
-    // 3) AI cache check (6h TTL) — key by current month
-    const currentMonth = new Date(now).toISOString().slice(0, 7);
-    const cacheKey = `deal-source-profit-margin-growth-maximizer:${currentMonth}`;
-    const cached = getCachedAI<{
-      sources: SourceEntry[];
-      portfolio: PortfolioSummary;
-      summary: string;
-    }>(cacheKey);
-    if (cached) {
-      return NextResponse.json({
-        ok: true,
-        sources: cached.sources,
-        portfolio: cached.portfolio,
-        summary: cached.summary,
-        cached: true,
-        aiUsed: true,
-      } satisfies DealSourceProfitMarginGrowthResponse);
-    }
-
-    // 4) AI prompt with grounding
-    const settings = await getSettingsRow();
-    const aiSettings: AiSettings = {
-      provider: settings.aiProvider as AiProviderType,
-      baseUrl: settings.aiBaseUrl,
-      apiKey: settings.aiApiKey,
-      model: settings.aiModel,
-      fallbackProvider: (settings.fallbackProvider || '') as
-        | AiProviderType
-        | '',
-      fallbackBaseUrl: settings.fallbackBaseUrl || '',
-      fallbackApiKey: settings.fallbackApiKey || '',
-      fallbackModel: settings.fallbackModel || '',
-    };
-
-    const sourcesForAI = entries.map((e) => ({
-      source: e.source,
-      displayName: e.displayName,
-      metrics: e.metrics,
-      deterministicMaximization: e.maximization,
-    }));
-
-    const promptData = {
-      totalTrades: computed.length,
-      totalSources: entries.length,
-      sources: sourcesForAI,
-      deterministicPortfolio: {
-        currentPortfolioMarginGrowth: portfolio.currentPortfolioMarginGrowth,
-        maximizedPortfolioMarginGrowth: portfolio.maximizedPortfolioMarginGrowth,
-        portfolioMarginGrowthUplift: portfolio.portfolioMarginGrowthUplift,
-        sourceMarginGrowthRanking: portfolio.sourceMarginGrowthRanking,
-        bestMarginGrowthSource: portfolio.bestMarginGrowthSource,
-      },
-      caps: {
-        marginMin: MARGIN_MIN, marginMax: MARGIN_MAX,
-        growthRateMin: GROWTH_RATE_MIN, growthRateMax: GROWTH_RATE_MAX,
-        accelerationMin: ACCELERATION_MIN, accelerationMax: ACCELERATION_MAX,
-        upliftMin: UPLIFT_MIN, upliftMax: UPLIFT_MAX,
-        projectedMarginMin: PROJECTED_MARGIN_MIN, projectedMarginMax: PROJECTED_MARGIN_MAX,
-        absoluteUpliftCapPp: ABSOLUTE_UPLIFT_CAP_PP,
-      },
-      actionGainPp: ACTION_GAIN_PP,
-    };
-
-    const prompt = `Si AI "Deal Source Profit Margin Growth Maximizer" za slovenske in srednjeevropske oglasne platforme (Bolha, Vinted, Avtonet, mobile.de).
+function buildPrompt(promptData: unknown): string {
+  return `Si AI "Deal Source Profit Margin Growth Maximizer" za slovenske in srednjeevropske oglasne platforme (Bolha, Vinted, Avtonet, mobile.de).
 Si strokovnjak za MARGIN GROWTH RATE MAXIMIZATION per source — kako maksimizirati GROWTH RATE profit margin-e PER SOURCE (koliko hitro margin raste per source month-over-month). Tvoj cilj je "Bolha margin raste +1.5%/mo, Vinted +0.5%/mo — ampak bi lahko bilo +3%/mo in +2%/mo." Razlika od deal-source-margin-maximizer (v8.03 ki maksimizira margin % per source) — ti MAKSIMIZIRAŠ MARGIN GROWTH RATE per source (%/mo kako hitro margin raste, ne absolutna margin %). Razlika od deal-source-profit-per-day-maximizer (v8.11 ki maksimizira profit per day per source €/dan) — ti MAKSIMIZIRAŠ MARGIN GROWTH per source (%/mo margin growth, ne €/dan profit). Razlika od deal-source-annual-return-maximizer (v8.10 ki maksimizira annualized return per source z benchmark) — ti MAKSIMIZIRAŠ MARGIN GROWTH RATE per source (%/mo, ne % annual return). Razlika od deal-source-profit-velocity-maximizer (v8.08 ki maksimizira velocity profit-a per source €/teden) — ti MAKSIMIZIRAŠ MARGIN GROWTH per source (%/mo, ne €/teden). Razlika od profit-growth-rate-maximizer (v8.11 ki maksimizira growth rate skupnega profit-a v %/mo) — ti MAKSIMIZIRAŠ MARGIN GROWTH per source (per-source margin % growth, ne skupni profit € growth). Razlika od profit-per-cycle-maximizer (v8.12 ki maksimizira profit per cycle €/cycle) — ta MAKSIMIZIRA MARGIN GROWTH per source (%/mo margin growth rate, ne €/cycle profit). Razlika od inventory-capital-velocity-maximizer (v8.10 ki maksimizira velocity kapitala skozi inventory — koliko cycle-ov/leto) — ta MAKSIMIZIRA MARGIN GROWTH per source (%/mo margin growth, ne cycle count). Razlika od profit-margin-acceleration-tracker (v8.03 ki trakira acceleration margin-a) — ta MAKSIMIZIRA MARGIN GROWTH RATE per source z maximizedMarginGrowthRate in marginGrowthLevers. Razlika od deal-source-profitability-analyzer (v8.06 ki analizira profitability per source) — ta MAKSIMIZIRA MARGIN GROWTH per source (%/mo growth, ne profitability snapshot). Razlika od deal-source-profit-per-trade-maximizer (v8.04 ki maksimizira profit per trade per source €) — ta MAKSIMIZIRA MARGIN GROWTH per source (%/mo margin growth, ne €/trade profit). Razlika od deal-source-cash-flow-maximizer (v8.06 ki maksimizira net cash flow per source) — ta MAKSIMIZIRA MARGIN GROWTH per source (%/mo margin growth rate, ne € net cash flow). Razlika od inventory-capital-efficiency-growth-maximizer (v8.12 ki maksimizira capital efficiency growth čez inventory) — ta MAKSIMIZIRA MARGIN GROWTH PER SOURCE (per-source margin growth, ne capital efficiency growth).
 
 DETERMINISTIČNI PODATKI (izračunano iz DB — SOLD trgovin v zadnjih 12 mesecih z linked Listing za source, grouped by month):
@@ -858,95 +739,240 @@ VRNI LE JSON:
   ],
   "summary": "2 source-a. Portfolio margin growth: 1.00%/mo → 2.50%/mo (+1.50pp uplift). Best: Bolha (1.50%/mo → 3.00%/mo)."
 }${GROUNDING_PROMPT_SUFFIX}`;
+}
+
+interface MergeAiResult {
+  entries: SourceEntry[];
+  portfolio: PortfolioSummary;
+  summary: string;
+  aiUsed: boolean;
+}
+
+function mergeAiIntoSources(
+  parsed: AiResponse | null,
+  detEntries: SourceEntry[],
+  detPortfolio: PortfolioSummary,
+  detSummary: string,
+): MergeAiResult {
+  const result: MergeAiResult = {
+    entries: detEntries,
+    portfolio: detPortfolio,
+    summary: detSummary,
+    aiUsed: false,
+  };
+
+  if (!parsed || typeof parsed !== 'object') return result;
+
+  const aiSourcesMap = new Map<string, NonNullable<AiResponse['sources']>[number]>();
+  if (Array.isArray(parsed.sources)) {
+    for (const ai of parsed.sources) {
+      if (ai && typeof ai === 'object' && typeof ai.source === 'string') {
+        aiSourcesMap.set(ai.source, ai);
+      }
+    }
+  }
+
+  const newEntries: SourceEntry[] = [];
+  for (const det of detEntries) {
+    const ai = aiSourcesMap.get(det.source);
+    if (!ai || !ai.maximization) {
+      newEntries.push(det);
+      continue;
+    }
+
+    const aiMax = ai.maximization;
+    const action = clampEnum(
+      aiMax.marginGrowthMaximizationAction,
+      VALID_ACTION,
+      det.maximization.marginGrowthMaximizationAction,
+    );
+
+    // Anti-hallucination: maximized ∈ [current, min(current + 10pp, 50%/mo)]
+    const minBound = Math.max(GROWTH_RATE_MIN, det.metrics.marginGrowthRate);
+    const maxBound = Math.min(GROWTH_RATE_MAX, det.metrics.marginGrowthRate + ABSOLUTE_UPLIFT_CAP_PP);
+    const maximizedMarginGrowthRate = round2(clampNum(
+      aiMax.maximizedMarginGrowthRate,
+      minBound, maxBound,
+      det.maximization.maximizedMarginGrowthRate,
+    ));
+    const marginGrowthUplift = round2(clampNum(
+      Math.max(0, maximizedMarginGrowthRate - det.metrics.marginGrowthRate),
+      UPLIFT_MIN, UPLIFT_MAX, 0,
+    ));
+
+    let marginGrowthLevers = det.maximization.marginGrowthLevers;
+    if (Array.isArray(aiMax.marginGrowthLevers) &&
+        aiMax.marginGrowthLevers.length >= 2) {
+      const aiLevers: string[] = [];
+      for (const l of aiMax.marginGrowthLevers.slice(0, MAX_LEVERS)) {
+        aiLevers.push(clampString(l, 200, 'Margin growth lever neopisan.'));
+      }
+      if (aiLevers.length >= 2) {
+        marginGrowthLevers = aiLevers;
+      }
+    }
+
+    // Recompute projection with new maximizedMarginGrowthRate
+    const marginGrowthProjection = buildMarginGrowthProjection(
+      det.metrics.currentMonthlyMargin,
+      maximizedMarginGrowthRate,
+    );
+
+    const marginGrowthGrade = decideGrade(maximizedMarginGrowthRate);
+
+    newEntries.push({
+      source: det.source,
+      displayName: det.displayName,
+      metrics: det.metrics,
+      maximization: {
+        marginGrowthMaximizationAction: action,
+        maximizedMarginGrowthRate,
+        marginGrowthUplift,
+        marginGrowthLevers,
+        marginGrowthProjection,
+        marginGrowthGrade,
+      },
+    });
+  }
+
+  if (newEntries.length === detEntries.length) {
+    result.entries = newEntries;
+  }
+
+  // Rebuild portfolio
+  result.portfolio = buildPortfolio(result.entries);
+  result.summary = clampString(parsed.summary, 500, buildSummary(result.entries, result.portfolio));
+  result.aiUsed = true;
+  return result;
+}
+
+// --- Handler -------------------------------------------------------------
+
+const dealSourceProfitMarginGrowthMaximizerHandler = withAiRoute<DealSourceProfitMarginGrowthMaximizerInput>({
+  endpoint: '/api/ai/deal-source-profit-margin-growth-maximizer',
+  maxDuration: 60,
+  enforceBudget: true, // AI klic — preveri budget
+  method: 'GET', // Endpoint sprejema GET + POST — bypass POST-only check
+
+  parseBody: async (req) => {
+    await req.json().catch(() => ({}));
+    return {};
+  },
+
+  // No validateInput — body ignored, identična logika za GET in POST
+  handler: async (_input, ctx: AiRouteContext) => {
+    const { db, callAi, parseAi, logger } = ctx;
+
+    const now = Date.now();
+    const twelveMonthsAgo = new Date(now - TWELVE_MONTHS_MS);
+
+    // 1) Query SOLD trades last 12 months with linked Listing for source
+    const soldTrades = await db.trade.findMany({
+      where: {
+        status: 'sold',
+        sellDate: { gte: twelveMonthsAgo },
+        sellPrice: { gt: 0 },
+      },
+      select: {
+        id: true,
+        buyPrice: true,
+        buyFees: true,
+        buyDate: true,
+        sellPrice: true,
+        sellFees: true,
+        sellDate: true,
+        buyLocation: true,
+        listing: {
+          select: {
+            monitor: { select: { source: true, tags: true } },
+          },
+        },
+      },
+      orderBy: { sellDate: 'asc' },
+      take: 100000,
+    }) as unknown as SoldTradeRow[];
+
+    // Empty-state: no SOLD trades
+    if (soldTrades.length === 0) {
+      return apiOk({
+        ok: true,
+        sources: [],
+        portfolio: {
+          currentPortfolioMarginGrowth: 0,
+          maximizedPortfolioMarginGrowth: 0,
+          portfolioMarginGrowthUplift: 0,
+          sourceMarginGrowthRanking: [],
+          bestMarginGrowthSource: '',
+        },
+        summary: 'Ni SOLD trgovin v zadnjih 12 mesecih — Deal Source Profit Margin Growth Maximizer ni mogoč.',
+        aiUsed: false,
+        message: 'Ni SOLD trgovin v zadnjih 12 mesecih — Deal Source Profit Margin Growth Maximizer ni mogoč.',
+      } satisfies DealSourceProfitMarginGrowthResponse);
+    }
+
+    // 2) Compute trades within 12m
+    const computed: TradeComputed[] = [];
+    for (const t of soldTrades) {
+      const c = computeTrade(t, now);
+      if (c) computed.push(c);
+    }
+
+    if (computed.length === 0) {
+      return apiOk({
+        ok: true,
+        sources: [],
+        portfolio: {
+          currentPortfolioMarginGrowth: 0,
+          maximizedPortfolioMarginGrowth: 0,
+          portfolioMarginGrowthUplift: 0,
+          sourceMarginGrowthRanking: [],
+          bestMarginGrowthSource: '',
+        },
+        summary: 'Ni veljavnih SOLD trgovin — Deal Source Profit Margin Growth Maximizer ni mogoč.',
+        aiUsed: false,
+        message: 'Ni veljavnih SOLD trgovin — Deal Source Profit Margin Growth Maximizer ni mogoč.',
+      } satisfies DealSourceProfitMarginGrowthResponse);
+    }
+
+    const aggMap = aggregateBySource(computed);
+    let entries = buildSourceEntries(aggMap, now);
+    let portfolio = buildPortfolio(entries);
+    let summary = buildSummary(entries, portfolio);
+
+    // 3) AI cache check (6h TTL) — key by current month
+    const currentMonth = new Date(now).toISOString().slice(0, 7);
+    const cacheKey = `deal-source-profit-margin-growth-maximizer:${currentMonth}`;
+    const cached = getCachedAI<{
+      sources: SourceEntry[];
+      portfolio: PortfolioSummary;
+      summary: string;
+    }>(cacheKey);
+    if (cached) {
+      return apiOk({
+        ok: true,
+        sources: cached.sources,
+        portfolio: cached.portfolio,
+        summary: cached.summary,
+        cached: true,
+        aiUsed: true,
+      } satisfies DealSourceProfitMarginGrowthResponse);
+    }
+
+    // 4) AI prompt with grounding
+    const promptData = buildPromptData(entries, computed, portfolio);
+    const prompt = buildPrompt(promptData);
 
     let aiUsed = false;
 
     try {
-      const raw = await callProviderForRaw(aiSettings, prompt);
-      const parsed = parseJsonLooseExported(raw) as AiResponse | null;
+      const raw = await callAi(prompt);
+      const parsed = parseAi(raw) as AiResponse | null;
 
-      if (parsed && typeof parsed === 'object') {
-        const aiSourcesMap = new Map<string, NonNullable<AiResponse['sources']>[number]>();
-        if (Array.isArray(parsed.sources)) {
-          for (const ai of parsed.sources) {
-            if (ai && typeof ai === 'object' && typeof ai.source === 'string') {
-              aiSourcesMap.set(ai.source, ai);
-            }
-          }
-        }
-
-        const newEntries: SourceEntry[] = [];
-        for (const det of entries) {
-          const ai = aiSourcesMap.get(det.source);
-          if (!ai || !ai.maximization) {
-            newEntries.push(det);
-            continue;
-          }
-
-          const aiMax = ai.maximization;
-          const action = clampEnum(
-            aiMax.marginGrowthMaximizationAction,
-            VALID_ACTION,
-            det.maximization.marginGrowthMaximizationAction,
-          );
-
-          // Anti-hallucination: maximized ∈ [current, min(current + 10pp, 50%/mo)]
-          const minBound = Math.max(GROWTH_RATE_MIN, det.metrics.marginGrowthRate);
-          const maxBound = Math.min(GROWTH_RATE_MAX, det.metrics.marginGrowthRate + ABSOLUTE_UPLIFT_CAP_PP);
-          const maximizedMarginGrowthRate = round2(clampNum(
-            aiMax.maximizedMarginGrowthRate,
-            minBound, maxBound,
-            det.maximization.maximizedMarginGrowthRate,
-          ));
-          const marginGrowthUplift = round2(clampNum(
-            Math.max(0, maximizedMarginGrowthRate - det.metrics.marginGrowthRate),
-            UPLIFT_MIN, UPLIFT_MAX, 0,
-          ));
-
-          let marginGrowthLevers = det.maximization.marginGrowthLevers;
-          if (Array.isArray(aiMax.marginGrowthLevers) &&
-              aiMax.marginGrowthLevers.length >= 2) {
-            const aiLevers: string[] = [];
-            for (const l of aiMax.marginGrowthLevers.slice(0, MAX_LEVERS)) {
-              aiLevers.push(clampString(l, 200, 'Margin growth lever neopisan.'));
-            }
-            if (aiLevers.length >= 2) {
-              marginGrowthLevers = aiLevers;
-            }
-          }
-
-          // Recompute projection with new maximizedMarginGrowthRate
-          const marginGrowthProjection = buildMarginGrowthProjection(
-            det.metrics.currentMonthlyMargin,
-            maximizedMarginGrowthRate,
-          );
-
-          const marginGrowthGrade = decideGrade(maximizedMarginGrowthRate);
-
-          newEntries.push({
-            source: det.source,
-            displayName: det.displayName,
-            metrics: det.metrics,
-            maximization: {
-              marginGrowthMaximizationAction: action,
-              maximizedMarginGrowthRate,
-              marginGrowthUplift,
-              marginGrowthLevers,
-              marginGrowthProjection,
-              marginGrowthGrade,
-            },
-          });
-        }
-
-        if (newEntries.length === entries.length) {
-          entries = newEntries;
-        }
-
-        // Rebuild portfolio
-        portfolio = buildPortfolio(entries);
-        summary = clampString(parsed.summary, 500, buildSummary(entries, portfolio));
-        aiUsed = true;
-      }
+      const merged = mergeAiIntoSources(parsed, entries, portfolio, summary);
+      entries = merged.entries;
+      portfolio = merged.portfolio;
+      summary = merged.summary;
+      aiUsed = merged.aiUsed;
     } catch (err) {
       logger.warn(
         '/api/ai/deal-source-profit-margin-growth-maximizer',
@@ -960,22 +986,15 @@ VRNI LE JSON:
       setCachedAI(cacheKey, { sources: entries, portfolio, summary });
     }
 
-    return NextResponse.json({
+    return apiOk({
       ok: true,
       sources: entries,
       portfolio,
       summary,
       aiUsed,
     } satisfies DealSourceProfitMarginGrowthResponse);
-  } catch (err: any) {
-    logger.error(
-      '/api/ai/deal-source-profit-margin-growth-maximizer',
-      'handler failed',
-      err,
-    );
-    return NextResponse.json(
-      { error: err?.message ?? 'Napaka' },
-      { status: 500 },
-    );
-  }
-}
+  },
+});
+
+export const GET = dealSourceProfitMarginGrowthMaximizerHandler;
+export const POST = dealSourceProfitMarginGrowthMaximizerHandler;

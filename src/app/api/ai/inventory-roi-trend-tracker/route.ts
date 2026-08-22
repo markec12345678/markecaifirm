@@ -1,4 +1,4 @@
-// v7.87: AI Inventory ROI Trend Tracker — AI track-a ROI TRENDS čez čas —
+// v7.87 / v8.96.7-batch3: AI Inventory ROI Trend Tracker — AI track-a ROI TRENDS čez čas —
 // ali se ROI izboljšuje, upada ali je stabilen? Identificira kaj driver-ja
 // spremembe ROI in napove future ROI trajectory. Razlika od inventory-roi-optimizer
 // (v7.79 ki optimira current ROI) — ta track-a ROI TRENDS čez čas.
@@ -19,23 +19,14 @@
 //
 // GET+POST /api/ai/inventory-roi-trend-tracker
 // (AI-enhanced + grounding + anti-hallucination + 6h cache + deterministic fallback)
+// Refaktoriran z withAiRoute helperjem (v8.96.7) + enforceBudget guard.
 
-import { NextRequest, NextResponse } from 'next/server';
-import { db } from '@/lib/db';
-import { getSettingsRow } from '@/lib/pipeline';
-import {
-  callProviderForRaw,
-  parseJsonLooseExported,
-  type AiProviderType,
-  type AiSettings,
-} from '@/lib/ai';
+import { withAiRoute, AI_ROUTE_DEFAULTS, type AiRouteContext } from '@/lib/with-ai-route';
+import { apiOk } from '@/lib/api-response';
 import { GROUNDING_PROMPT_SUFFIX } from '@/lib/anti-hallucination';
 import { getCachedAI, setCachedAI } from '@/lib/ai-cache';
-import { checkRateLimit, rateLimitResponse } from '@/lib/rate-limit';
-import { logger } from '@/lib/logger';
 
-export const runtime = 'nodejs';
-export const dynamic = 'force-dynamic';
+export const { runtime, dynamic } = AI_ROUTE_DEFAULTS;
 export const maxDuration = 60;
 
 // --- Types ---------------------------------------------------------------
@@ -578,19 +569,27 @@ function buildDeterministicSummary(
   return `ROI trend: ${roiDirection} (${roiTrend12m >= 0 ? '+' : ''}${round2(roiTrend12m)}%/mo, momentum ${round2(roiMomentum)}). Current ${round1(currentROI)}%, 30d projection ${proj.projected30d}%. Driver: ${driverSummary}. Best: ${drivers.categoryDriver.bestCategory}.`.slice(0, 400);
 }
 
+// --- Input ---------------------------------------------------------------
+
+// eslint-disable-next-line @typescript-eslint/no-empty-object-type
+interface InventoryRoiTrendTrackerInput {}
+
 // --- Handler -------------------------------------------------------------
 
-export async function GET(req: NextRequest) {
-  return handleInventoryRoiTrendTracker(req);
-}
-export async function POST(req: NextRequest) {
-  return handleInventoryRoiTrendTracker(req);
-}
+const inventoryRoiTrendTrackerHandler = withAiRoute<InventoryRoiTrendTrackerInput>({
+  endpoint: '/api/ai/inventory-roi-trend-tracker',
+  maxDuration: 60,
+  enforceBudget: true, // AI klic — preveri budget
+  method: 'GET', // GET+POST — body ignored
 
-async function handleInventoryRoiTrendTracker(req: NextRequest) {
-  try {
-    const rl = checkRateLimit(req, 'ai-inventory-roi-trend-tracker', 20);
-    if (!rl.allowed) return rateLimitResponse(rl);
+  parseBody: async (req) => {
+    await req.json().catch(() => ({}));
+    return {};
+  },
+
+  // No validateInput — body ignored
+  handler: async (_input, ctx: AiRouteContext) => {
+    const { db, callAi, parseAi, logger } = ctx;
 
     const now = Date.now();
     const cutoff12m = new Date(now - HORIZON_12M);
@@ -676,7 +675,7 @@ async function handleInventoryRoiTrendTracker(req: NextRequest) {
 
     // Empty state
     if (monthlyMap.size === 0) {
-      return NextResponse.json({
+      return apiOk({
         ok: true,
         trends: {
           currentROI: 0,
@@ -798,7 +797,7 @@ async function handleInventoryRoiTrendTracker(req: NextRequest) {
       summary: string;
     }>(cacheKey);
     if (cached) {
-      return NextResponse.json({
+      return apiOk({
         ok: true,
         trends,
         monthlyData,
@@ -809,21 +808,6 @@ async function handleInventoryRoiTrendTracker(req: NextRequest) {
         aiUsed: true,
       });
     }
-
-    // 8) AI prompt with grounding
-    const settings = await getSettingsRow();
-    const aiSettings: AiSettings = {
-      provider: settings.aiProvider as AiProviderType,
-      baseUrl: settings.aiBaseUrl,
-      apiKey: settings.aiApiKey,
-      model: settings.aiModel,
-      fallbackProvider: (settings.fallbackProvider || '') as
-        | AiProviderType
-        | '',
-      fallbackBaseUrl: settings.fallbackBaseUrl || '',
-      fallbackApiKey: settings.fallbackApiKey || '',
-      fallbackModel: settings.fallbackModel || '',
-    };
 
     const promptData = {
       trends,
@@ -883,8 +867,8 @@ VRNI LE JSON:
     let aiUsed = false;
 
     try {
-      const raw = await callProviderForRaw(aiSettings, prompt);
-      const parsed = parseJsonLooseExported(raw) as AiRoiResponse | null;
+      const raw = await callAi(prompt);
+      const parsed = parseAi(raw) as AiRoiResponse | null;
 
       if (parsed && typeof parsed === 'object') {
         if (parsed.analysis && typeof parsed.analysis === 'object') {
@@ -1010,7 +994,7 @@ VRNI LE JSON:
       });
     }
 
-    return NextResponse.json({
+    return apiOk({
       ok: true,
       trends,
       monthlyData,
@@ -1019,15 +1003,8 @@ VRNI LE JSON:
       summary: finalSummary,
       aiUsed,
     });
-  } catch (err: any) {
-    logger.error(
-      '/api/ai/inventory-roi-trend-tracker',
-      'handler failed',
-      err,
-    );
-    return NextResponse.json(
-      { error: err?.message ?? 'Napaka' },
-      { status: 500 },
-    );
-  }
-}
+  },
+});
+
+export const GET = inventoryRoiTrendTrackerHandler;
+export const POST = inventoryRoiTrendTrackerHandler;

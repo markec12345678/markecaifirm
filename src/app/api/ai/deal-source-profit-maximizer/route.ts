@@ -1,4 +1,4 @@
-// v7.97: AI Deal Source Profit Maximizer — AI identifies which deal sources
+// v7.97 / v8.96.7-batch3: AI Deal Source Profit Maximizer — AI identifies which deal sources
 // (Bolha, Vinted, Avtonet, mobile.de, ...) generate the MOST PROFIT in zadnjih
 // 12 mesecih in priporoči kako MAXIMIZIRATI profit iz vsakega source-a posebej.
 // Kombinira source ROI, volume, momentum in consistency v actionable profit-
@@ -24,23 +24,14 @@
 //
 // GET+POST /api/ai/deal-source-profit-maximizer
 // (AI-enhanced + grounding + anti-hallucination + 6h cache + deterministic fallback)
+// Refaktoriran z withAiRoute helperjem (v8.96.7) + enforceBudget guard.
 
-import { NextRequest, NextResponse } from 'next/server';
-import { db } from '@/lib/db';
-import { getSettingsRow } from '@/lib/pipeline';
-import {
-  callProviderForRaw,
-  parseJsonLooseExported,
-  type AiProviderType,
-  type AiSettings,
-} from '@/lib/ai';
+import { withAiRoute, AI_ROUTE_DEFAULTS, type AiRouteContext } from '@/lib/with-ai-route';
+import { apiOk } from '@/lib/api-response';
 import { GROUNDING_PROMPT_SUFFIX } from '@/lib/anti-hallucination';
 import { getCachedAI, setCachedAI } from '@/lib/ai-cache';
-import { checkRateLimit, rateLimitResponse } from '@/lib/rate-limit';
-import { logger } from '@/lib/logger';
 
-export const runtime = 'nodejs';
-export const dynamic = 'force-dynamic';
+export const { runtime, dynamic } = AI_ROUTE_DEFAULTS;
 export const maxDuration = 60;
 
 // --- Types ---------------------------------------------------------------
@@ -669,19 +660,27 @@ function buildSummary(
   return parts.join(' ').slice(0, 400);
 }
 
+// --- Input ---------------------------------------------------------------
+
+// eslint-disable-next-line @typescript-eslint/no-empty-object-type
+interface DealSourceProfitMaximizerInput {}
+
 // --- Handler -------------------------------------------------------------
 
-export async function GET(req: NextRequest) {
-  return handleDealSourceProfitMaximizer(req);
-}
-export async function POST(req: NextRequest) {
-  return handleDealSourceProfitMaximizer(req);
-}
+const dealSourceProfitMaximizerHandler = withAiRoute<DealSourceProfitMaximizerInput>({
+  endpoint: '/api/ai/deal-source-profit-maximizer',
+  maxDuration: 60,
+  enforceBudget: true, // AI klic — preveri budget
+  method: 'GET', // GET+POST — body ignored
 
-async function handleDealSourceProfitMaximizer(req: NextRequest) {
-  try {
-    const rl = checkRateLimit(req, 'ai-deal-source-profit-maximizer', 20);
-    if (!rl.allowed) return rateLimitResponse(rl);
+  parseBody: async (req) => {
+    await req.json().catch(() => ({}));
+    return {};
+  },
+
+  // No validateInput — body ignored
+  handler: async (_input, ctx: AiRouteContext) => {
+    const { db, callAi, parseAi, logger } = ctx;
 
     const now = Date.now();
     const twelveMonthsAgo = new Date(now - TWELVE_MONTHS_MS);
@@ -716,7 +715,7 @@ async function handleDealSourceProfitMaximizer(req: NextRequest) {
 
     // Empty-state: no SOLD trades
     if (soldTrades.length === 0) {
-      return NextResponse.json({
+      return apiOk({
         ok: true,
         sources: [],
         portfolio: {
@@ -745,7 +744,7 @@ async function handleDealSourceProfitMaximizer(req: NextRequest) {
 
     // Empty-state: 0 sources with trades (shouldn't happen since soldTrades > 0)
     if (sources.length === 0) {
-      return NextResponse.json({
+      return apiOk({
         ok: true,
         sources: [],
         portfolio: {
@@ -770,7 +769,7 @@ async function handleDealSourceProfitMaximizer(req: NextRequest) {
       summary: string;
     }>(cacheKey);
     if (cached) {
-      return NextResponse.json({
+      return apiOk({
         ok: true,
         sources: cached.sources,
         portfolio: cached.portfolio,
@@ -779,21 +778,6 @@ async function handleDealSourceProfitMaximizer(req: NextRequest) {
         aiUsed: true,
       } satisfies DealSourceProfitResponse);
     }
-
-    // 4) AI prompt with grounding
-    const settings = await getSettingsRow();
-    const aiSettings: AiSettings = {
-      provider: settings.aiProvider as AiProviderType,
-      baseUrl: settings.aiBaseUrl,
-      apiKey: settings.aiApiKey,
-      model: settings.aiModel,
-      fallbackProvider: (settings.fallbackProvider || '') as
-        | AiProviderType
-        | '',
-      fallbackBaseUrl: settings.fallbackBaseUrl || '',
-      fallbackApiKey: settings.fallbackApiKey || '',
-      fallbackModel: settings.fallbackModel || '',
-    };
 
     // Compact context for AI (top 15 sources by efficiency)
     const topSourcesForAI = sources.slice(0, 15).map((s) => ({
@@ -864,8 +848,8 @@ VRNI LE JSON:
     let aiUsed = false;
 
     try {
-      const raw = await callProviderForRaw(aiSettings, prompt);
-      const parsed = parseJsonLooseExported(raw) as AiResponse | null;
+      const raw = await callAi(prompt);
+      const parsed = parseAi(raw) as AiResponse | null;
 
       if (parsed && typeof parsed === 'object') {
         const knownSources = new Set(sources.map((s) => s.source));
@@ -1005,22 +989,15 @@ VRNI LE JSON:
       setCachedAI(cacheKey, { sources, portfolio, summary });
     }
 
-    return NextResponse.json({
+    return apiOk({
       ok: true,
       sources,
       portfolio,
       summary,
       aiUsed,
     } satisfies DealSourceProfitResponse);
-  } catch (err: any) {
-    logger.error(
-      '/api/ai/deal-source-profit-maximizer',
-      'handler failed',
-      err,
-    );
-    return NextResponse.json(
-      { error: err?.message ?? 'Napaka' },
-      { status: 500 },
-    );
-  }
-}
+  },
+});
+
+export const GET = dealSourceProfitMaximizerHandler;
+export const POST = dealSourceProfitMaximizerHandler;

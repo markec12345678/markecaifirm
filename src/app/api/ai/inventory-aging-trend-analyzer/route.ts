@@ -18,24 +18,20 @@
 //
 // GET+POST /api/ai/inventory-aging-trend-analyzer
 // (AI-enhanced + grounding + anti-hallucination + 6h cache + deterministic fallback)
+// Refaktoriran z withAiRoute helperjem (v8.96.7) + enforceBudget guard.
 
-import { NextRequest, NextResponse } from 'next/server';
-import { db } from '@/lib/db';
-import { getSettingsRow } from '@/lib/pipeline';
-import {
-  callProviderForRaw,
-  parseJsonLooseExported,
-  type AiProviderType,
-  type AiSettings,
-} from '@/lib/ai';
+import { withAiRoute, AI_ROUTE_DEFAULTS, type AiRouteContext } from '@/lib/with-ai-route';
+import { apiOk } from '@/lib/api-response';
 import { GROUNDING_PROMPT_SUFFIX } from '@/lib/anti-hallucination';
 import { getCachedAI, setCachedAI } from '@/lib/ai-cache';
-import { checkRateLimit, rateLimitResponse } from '@/lib/rate-limit';
-import { logger } from '@/lib/logger';
 
-export const runtime = 'nodejs';
-export const dynamic = 'force-dynamic';
+export const { runtime, dynamic } = AI_ROUTE_DEFAULTS;
 export const maxDuration = 60;
+
+// --- Input ----------------------------------------------------------------
+
+// eslint-disable-next-line @typescript-eslint/no-empty-object-type
+interface InventoryAgingTrendAnalyzerInput {}
 
 // --- Types ---------------------------------------------------------------
 
@@ -460,19 +456,223 @@ function buildDeterministicSummary(
   return `Aging trend: ${trends.agingDirection} (hold days ${trends.avgHoldDaysTrend12m >= 0 ? '+' : ''}${round2(trends.avgHoldDaysTrend12m)}/mo). Current: ${round1(current.avgDaysHeld)}d avg, ${round1(trends.currentStaleRate)}% stale. 30d forecast: ${forecast.projectedAvgHoldDays30d}d avg, ${forecast.projectedStaleItems30d} stale items.${bestCat}`.slice(0, 400);
 }
 
+// --- Extracted prompt helpers (pure, testable) ---------------------------
+
+function buildPromptData(
+  trends: AgingTrends,
+  monthlyData: MonthlyAgingDatum[],
+  current: CurrentAging,
+  categoryAgingAnalysis: CategoryAgingAnalysis[],
+  detForecast: AgingForecast,
+  detDrivers: AgingDriver[],
+  detActions: AgingMitigationAction[],
+): unknown {
+  return {
+    trends,
+    monthlyData,
+    current,
+    categoryAgingAnalysis,
+    deterministicForecast: detForecast,
+    deterministicDrivers: detDrivers,
+    deterministicActions: detActions,
+    caps: {
+      holdDaysMin: HOLD_DAYS_MIN, holdDaysMax: HOLD_DAYS_MAX,
+      rateMin: RATE_MIN, rateMax: RATE_MAX,
+      weightMax: WEIGHT_MAX,
+    },
+  };
+}
+
+function buildPrompt(
+  promptData: unknown,
+  detForecastRiskLevel: AgingRiskLevel,
+): string {
+  return `Si AI "Inventory Aging Trend Analyzer" za slovenske in srednjeevropske oglasne platforme (Bolha, Vinted, Facebook, Avtonet, mobile.de).
+Analiziraš kako inventory aging pattern-i se spreminjajo čez čas — ali aging pospešuje ali upočasnjuje? Identificiraš aging trend-e per kategorijo in napoveš future aging issues.
+
+DETERMINISTIČNI PODATKI (izračunano iz DB):
+${JSON.stringify(promptData, null, 2)}
+
+PRAVILA ZA AI ODGOVOR:
+1. forecast: {
+   - agingTrendAssessment: slovenski povzetek (max 800 znakov) — kaj driver-ja aging spremembe, ali je trend vzdržen, kaj pomeni za trading decisions.
+   - agingRiskLevel: LOW | MEDIUM | HIGH (validirana proti deterministični ${detForecastRiskLevel})
+   - agingDrivers: 3-4 driver-ji z { driver (max 100, slovensko), impact: POSITIVE | NEGATIVE, weight: 0-100, detail (max 200, slovensko) }
+   - agingMitigationActions: 3-5 akcij z { action (max 200, slovensko), priority: HIGH | MEDIUM | LOW, expectedImpact (max 200, slovensko) }
+}
+2. summary: slovenski povzetek (max 400 znakov). NE izmišljuj številk — uporabi zgornje deterministične.
+
+VRNI LE JSON:
+{
+  "forecast": {
+    "agingTrendAssessment": "Aging trend: IMPROVING (hold days -2.5/mo, momentum -0.4). Current 28d avg, 15% stale. Driver: pricing optimizacija. Stale items: 3 (>60d). 30d forecast: 25d avg, 2 stale items.",
+    "agingRiskLevel": "MEDIUM",
+    "agingDrivers": [
+      { "driver": "Hold time trend", "impact": "POSITIVE", "weight": 75, "detail": "Hold days se zmanjšujejo -2.5d/mo — pricing strategija je učinkovita." },
+      { "driver": "Stale rate trend", "impact": "POSITIVE", "weight": 60, "detail": "Stale rate pada -0.8%/mo — manj kopičenja inventory." }
+    ],
+    "agingMitigationActions": [
+      { "action": "Znižaj cene za 3 stale items (>60 dni) za 10-15%", "priority": "HIGH", "expectedImpact": "Stale items prodani v 7-14 dneh — sproščen kapital" }
+    ]
+  },
+  "summary": "Aging trend: IMPROVING (hold days -2.5/mo). Current: 28d avg, 15% stale. 30d forecast: 25d avg, 2 stale items. Best: elektronika (18d)."
+}${GROUNDING_PROMPT_SUFFIX}`;
+}
+
+interface MergeAiResult {
+  forecast: AgingForecast;
+  analysis: AgingAnalysis;
+  summary: string;
+  aiUsed: boolean;
+}
+
+function mergeAiIntoAnalysis(
+  parsed: AiAgingResponse | null,
+  detForecast: AgingForecast,
+  detAnalysis: AgingAnalysis,
+  detSummary: string,
+  trends: AgingTrends,
+  current: CurrentAging,
+): MergeAiResult {
+  const result: MergeAiResult = {
+    forecast: { ...detForecast },
+    analysis: {
+      categoryAgingAnalysis: [...detAnalysis.categoryAgingAnalysis],
+      agingDrivers: [...detAnalysis.agingDrivers],
+      agingMitigationActions: [...detAnalysis.agingMitigationActions],
+    },
+    summary: detSummary,
+    aiUsed: false,
+  };
+
+  if (!parsed || typeof parsed !== 'object') return result;
+
+  // Handle forecast object (preferred) or analysis object
+  const aiForecast = parsed.forecast;
+  const aiAnalysis = parsed.analysis;
+
+  if (aiForecast && typeof aiForecast === 'object') {
+    const f = aiForecast as {
+      agingTrendAssessment?: string;
+      agingRiskLevel?: AgingRiskLevel;
+      agingDrivers?: AgingDriver[];
+      agingMitigationActions?: AgingMitigationAction[];
+    };
+
+    if (typeof f.agingTrendAssessment === 'string' && f.agingTrendAssessment.trim()) {
+      result.forecast.agingTrendAssessment = clampString(
+        f.agingTrendAssessment,
+        800,
+        detForecast.agingTrendAssessment,
+      );
+    }
+
+    if (f.agingRiskLevel != null) {
+      result.forecast.agingRiskLevel = clampEnum(
+        f.agingRiskLevel,
+        VALID_RISK,
+        detForecast.agingRiskLevel,
+      );
+    }
+
+    // Drivers
+    let driversSource: AgingDriver[] | undefined;
+    if (Array.isArray(f.agingDrivers)) driversSource = f.agingDrivers;
+    else if (aiAnalysis && Array.isArray(aiAnalysis.agingDrivers)) driversSource = aiAnalysis.agingDrivers;
+
+    if (driversSource) {
+      const aiDrivers = driversSource
+        .map((d) => {
+          if (!d || typeof d !== 'object') return null;
+          const driver = clampString(d.driver, 100, '');
+          if (!driver) return null;
+          const impact = clampEnum(d.impact, VALID_IMPACT, 'POSITIVE');
+          const weight = round0(clampNumber(d.weight, WEIGHT_MIN, WEIGHT_MAX, 50));
+          const detail = clampString(d.detail, 200, '');
+          if (!detail) return null;
+          return { driver, impact, weight, detail };
+        })
+        .filter((d): d is AgingDriver => d !== null)
+        .slice(0, 4);
+      if (aiDrivers.length > 0) result.analysis.agingDrivers = aiDrivers;
+    }
+
+    // Mitigation actions
+    let actionsSource: AgingMitigationAction[] | undefined;
+    if (Array.isArray(f.agingMitigationActions)) actionsSource = f.agingMitigationActions;
+    else if (aiAnalysis && Array.isArray(aiAnalysis.agingMitigationActions)) actionsSource = aiAnalysis.agingMitigationActions;
+
+    if (actionsSource) {
+      const aiActions = actionsSource
+        .map((a) => {
+          if (!a || typeof a !== 'object') return null;
+          const action = clampString(a.action, 200, '');
+          if (!action) return null;
+          const priority = clampEnum(a.priority, VALID_PRIORITY, 'MEDIUM');
+          const expectedImpact = clampString(a.expectedImpact, 200, '');
+          if (!expectedImpact) return null;
+          return { action, priority, expectedImpact };
+        })
+        .filter((a): a is AgingMitigationAction => a !== null)
+        .slice(0, 5);
+      if (aiActions.length > 0) result.analysis.agingMitigationActions = aiActions;
+    }
+
+    // Per-category analysis (from aiAnalysis if present)
+    if (aiAnalysis && Array.isArray(aiAnalysis.categoryAgingAnalysis)) {
+      const aiCats = aiAnalysis.categoryAgingAnalysis as Array<{
+        category: string;
+        direction?: CategoryDirection;
+        riskLevel?: AgingRiskLevel;
+      }>;
+      // Merge AI direction/riskLevel into existing categoryAgingAnalysis
+      const merged = result.analysis.categoryAgingAnalysis.map((c) => {
+        const aiMatch = aiCats.find((ac) => ac.category === c.category);
+        if (aiMatch) {
+          return {
+            ...c,
+            direction: aiMatch.direction
+              ? clampEnum(aiMatch.direction, VALID_CAT_DIRECTION, c.direction)
+              : c.direction,
+            riskLevel: aiMatch.riskLevel
+              ? clampEnum(aiMatch.riskLevel, VALID_RISK, c.riskLevel)
+              : c.riskLevel,
+          };
+        }
+        return c;
+      });
+      result.analysis.categoryAgingAnalysis = merged;
+    }
+  }
+
+  if (typeof parsed.summary === 'string' && parsed.summary.trim()) {
+    result.summary = clampString(
+      parsed.summary,
+      400,
+      buildDeterministicSummary(trends, current, detForecast),
+    );
+  }
+
+  result.aiUsed = true;
+  return result;
+}
+
 // --- Handler -------------------------------------------------------------
 
-export async function GET(req: NextRequest) {
-  return handleInventoryAgingTrendAnalyzer(req);
-}
-export async function POST(req: NextRequest) {
-  return handleInventoryAgingTrendAnalyzer(req);
-}
+const inventoryAgingTrendAnalyzerHandler = withAiRoute<InventoryAgingTrendAnalyzerInput>({
+  endpoint: '/api/ai/inventory-aging-trend-analyzer',
+  maxDuration: 60,
+  enforceBudget: true, // AI klic — preveri budget
+  method: 'GET', // Endpoint sprejema GET + POST — bypass POST-only check
 
-async function handleInventoryAgingTrendAnalyzer(req: NextRequest) {
-  try {
-    const rl = checkRateLimit(req, 'ai-inventory-aging-trend-analyzer', 20);
-    if (!rl.allowed) return rateLimitResponse(rl);
+  parseBody: async (req) => {
+    await req.json().catch(() => ({}));
+    return {};
+  },
+
+  // No validateInput — body ignored, identična logika za GET in POST
+  handler: async (_input, ctx: AiRouteContext) => {
+    const { db, callAi, parseAi, logger } = ctx;
 
     const now = Date.now();
     const cutoff12m = new Date(now - HORIZON_12M);
@@ -587,7 +787,7 @@ async function handleInventoryAgingTrendAnalyzer(req: NextRequest) {
 
     // Empty state
     if (monthlyMap.size === 0) {
-      return NextResponse.json({
+      return apiOk({
         ok: true,
         trends: {
           avgHoldDaysTrend12m: 0,
@@ -757,7 +957,7 @@ async function handleInventoryAgingTrendAnalyzer(req: NextRequest) {
       summary: string;
     }>(cacheKey);
     if (cached) {
-      return NextResponse.json({
+      return apiOk({
         ok: true,
         trends,
         monthlyData,
@@ -771,177 +971,35 @@ async function handleInventoryAgingTrendAnalyzer(req: NextRequest) {
     }
 
     // 8) AI prompt with grounding
-    const settings = await getSettingsRow();
-    const aiSettings: AiSettings = {
-      provider: settings.aiProvider as AiProviderType,
-      baseUrl: settings.aiBaseUrl,
-      apiKey: settings.aiApiKey,
-      model: settings.aiModel,
-      fallbackProvider: (settings.fallbackProvider || '') as
-        | AiProviderType
-        | '',
-      fallbackBaseUrl: settings.fallbackBaseUrl || '',
-      fallbackApiKey: settings.fallbackApiKey || '',
-      fallbackModel: settings.fallbackModel || '',
-    };
-
-    const promptData = {
+    const promptData = buildPromptData(
       trends,
       monthlyData,
       current,
       categoryAgingAnalysis,
-      deterministicForecast: detForecast,
-      deterministicDrivers: detDrivers,
-      deterministicActions: detActions,
-      caps: {
-        holdDaysMin: HOLD_DAYS_MIN, holdDaysMax: HOLD_DAYS_MAX,
-        rateMin: RATE_MIN, rateMax: RATE_MAX,
-        weightMax: WEIGHT_MAX,
-      },
-    };
-
-    const prompt = `Si AI "Inventory Aging Trend Analyzer" za slovenske in srednjeevropske oglasne platforme (Bolha, Vinted, Facebook, Avtonet, mobile.de).
-Analiziraš kako inventory aging pattern-i se spreminjajo čez čas — ali aging pospešuje ali upočasnjuje? Identificiraš aging trend-e per kategorijo in napoveš future aging issues.
-
-DETERMINISTIČNI PODATKI (izračunano iz DB):
-${JSON.stringify(promptData, null, 2)}
-
-PRAVILA ZA AI ODGOVOR:
-1. forecast: {
-   - agingTrendAssessment: slovenski povzetek (max 800 znakov) — kaj driver-ja aging spremembe, ali je trend vzdržen, kaj pomeni za trading decisions.
-   - agingRiskLevel: LOW | MEDIUM | HIGH (validirana proti deterministični ${detForecast.agingRiskLevel})
-   - agingDrivers: 3-4 driver-ji z { driver (max 100, slovensko), impact: POSITIVE | NEGATIVE, weight: 0-100, detail (max 200, slovensko) }
-   - agingMitigationActions: 3-5 akcij z { action (max 200, slovensko), priority: HIGH | MEDIUM | LOW, expectedImpact (max 200, slovensko) }
-}
-2. summary: slovenski povzetek (max 400 znakov). NE izmišljuj številk — uporabi zgornje deterministične.
-
-VRNI LE JSON:
-{
-  "forecast": {
-    "agingTrendAssessment": "Aging trend: IMPROVING (hold days -2.5/mo, momentum -0.4). Current 28d avg, 15% stale. Driver: pricing optimizacija. Stale items: 3 (>60d). 30d forecast: 25d avg, 2 stale items.",
-    "agingRiskLevel": "MEDIUM",
-    "agingDrivers": [
-      { "driver": "Hold time trend", "impact": "POSITIVE", "weight": 75, "detail": "Hold days se zmanjšujejo -2.5d/mo — pricing strategija je učinkovita." },
-      { "driver": "Stale rate trend", "impact": "POSITIVE", "weight": 60, "detail": "Stale rate pada -0.8%/mo — manj kopičenja inventory." }
-    ],
-    "agingMitigationActions": [
-      { "action": "Znižaj cene za 3 stale items (>60 dni) za 10-15%", "priority": "HIGH", "expectedImpact": "Stale items prodani v 7-14 dneh — sproščen kapital" }
-    ]
-  },
-  "summary": "Aging trend: IMPROVING (hold days -2.5/mo). Current: 28d avg, 15% stale. 30d forecast: 25d avg, 2 stale items. Best: elektronika (18d)."
-}${GROUNDING_PROMPT_SUFFIX}`;
+      detForecast,
+      detDrivers,
+      detActions,
+    );
+    const prompt = buildPrompt(promptData, detForecast.agingRiskLevel);
 
     let aiUsed = false;
 
     try {
-      const raw = await callProviderForRaw(aiSettings, prompt);
-      const parsed = parseJsonLooseExported(raw) as AiAgingResponse | null;
+      const raw = await callAi(prompt);
+      const parsed = parseAi(raw) as AiAgingResponse | null;
 
-      if (parsed && typeof parsed === 'object') {
-        // Handle forecast object (preferred) or analysis object
-        const aiForecast = parsed.forecast;
-        const aiAnalysis = parsed.analysis;
-
-        if (aiForecast && typeof aiForecast === 'object') {
-          const f = aiForecast as {
-            agingTrendAssessment?: string;
-            agingRiskLevel?: AgingRiskLevel;
-            agingDrivers?: AgingDriver[];
-            agingMitigationActions?: AgingMitigationAction[];
-          };
-
-          if (typeof f.agingTrendAssessment === 'string' && f.agingTrendAssessment.trim()) {
-            forecast.agingTrendAssessment = clampString(
-              f.agingTrendAssessment,
-              800,
-              detForecast.agingTrendAssessment,
-            );
-          }
-
-          if (f.agingRiskLevel != null) {
-            forecast.agingRiskLevel = clampEnum(
-              f.agingRiskLevel,
-              VALID_RISK,
-              detForecast.agingRiskLevel,
-            );
-          }
-
-          // Drivers
-          let driversSource: AgingDriver[] | undefined;
-          if (Array.isArray(f.agingDrivers)) driversSource = f.agingDrivers;
-          else if (aiAnalysis && Array.isArray(aiAnalysis.agingDrivers)) driversSource = aiAnalysis.agingDrivers;
-
-          if (driversSource) {
-            const aiDrivers = driversSource
-              .map((d) => {
-                if (!d || typeof d !== 'object') return null;
-                const driver = clampString(d.driver, 100, '');
-                if (!driver) return null;
-                const impact = clampEnum(d.impact, VALID_IMPACT, 'POSITIVE');
-                const weight = round0(clampNumber(d.weight, WEIGHT_MIN, WEIGHT_MAX, 50));
-                const detail = clampString(d.detail, 200, '');
-                if (!detail) return null;
-                return { driver, impact, weight, detail };
-              })
-              .filter((d): d is AgingDriver => d !== null)
-              .slice(0, 4);
-            if (aiDrivers.length > 0) analysis.agingDrivers = aiDrivers;
-          }
-
-          // Mitigation actions
-          let actionsSource: AgingMitigationAction[] | undefined;
-          if (Array.isArray(f.agingMitigationActions)) actionsSource = f.agingMitigationActions;
-          else if (aiAnalysis && Array.isArray(aiAnalysis.agingMitigationActions)) actionsSource = aiAnalysis.agingMitigationActions;
-
-          if (actionsSource) {
-            const aiActions = actionsSource
-              .map((a) => {
-                if (!a || typeof a !== 'object') return null;
-                const action = clampString(a.action, 200, '');
-                if (!action) return null;
-                const priority = clampEnum(a.priority, VALID_PRIORITY, 'MEDIUM');
-                const expectedImpact = clampString(a.expectedImpact, 200, '');
-                if (!expectedImpact) return null;
-                return { action, priority, expectedImpact };
-              })
-              .filter((a): a is AgingMitigationAction => a !== null)
-              .slice(0, 5);
-            if (aiActions.length > 0) analysis.agingMitigationActions = aiActions;
-          }
-
-          // Per-category analysis (from aiAnalysis if present)
-          if (aiAnalysis && Array.isArray(aiAnalysis.categoryAgingAnalysis)) {
-            const aiCats = aiAnalysis.categoryAgingAnalysis as Array<{
-              category: string;
-              direction?: CategoryDirection;
-              riskLevel?: AgingRiskLevel;
-            }>;
-            // Merge AI direction/riskLevel into existing categoryAgingAnalysis
-            const merged = analysis.categoryAgingAnalysis.map((c) => {
-              const aiMatch = aiCats.find((ac) => ac.category === c.category);
-              if (aiMatch) {
-                return {
-                  ...c,
-                  direction: aiMatch.direction
-                    ? clampEnum(aiMatch.direction, VALID_CAT_DIRECTION, c.direction)
-                    : c.direction,
-                  riskLevel: aiMatch.riskLevel
-                    ? clampEnum(aiMatch.riskLevel, VALID_RISK, c.riskLevel)
-                    : c.riskLevel,
-                };
-              }
-              return c;
-            });
-            analysis.categoryAgingAnalysis = merged;
-          }
-        }
-
-        if (typeof parsed.summary === 'string' && parsed.summary.trim()) {
-          finalSummary = clampString(parsed.summary, 400, buildDeterministicSummary(trends, current, detForecast));
-        }
-
-        aiUsed = true;
-      }
+      const merged = mergeAiIntoAnalysis(
+        parsed,
+        detForecast,
+        analysis,
+        finalSummary,
+        trends,
+        current,
+      );
+      forecast = merged.forecast;
+      analysis = merged.analysis;
+      finalSummary = merged.summary;
+      aiUsed = merged.aiUsed;
     } catch (err) {
       logger.warn(
         '/api/ai/inventory-aging-trend-analyzer',
@@ -959,7 +1017,7 @@ VRNI LE JSON:
       });
     }
 
-    return NextResponse.json({
+    return apiOk({
       ok: true,
       trends,
       monthlyData,
@@ -969,15 +1027,8 @@ VRNI LE JSON:
       summary: finalSummary,
       aiUsed,
     });
-  } catch (err: any) {
-    logger.error(
-      '/api/ai/inventory-aging-trend-analyzer',
-      'handler failed',
-      err,
-    );
-    return NextResponse.json(
-      { error: err?.message ?? 'Napaka' },
-      { status: 500 },
-    );
-  }
-}
+  },
+});
+
+export const GET = inventoryAgingTrendAnalyzerHandler;
+export const POST = inventoryAgingTrendAnalyzerHandler;

@@ -30,24 +30,20 @@
 
 // GET+POST /api/ai/deal-source-profit-per-trade-maximizer
 // (AI-enhanced + grounding + anti-hallucination + 6h cache + deterministic fallback)
+// Refaktoriran z withAiRoute helperjem (v8.96.7) + enforceBudget guard.
 
-import { NextRequest, NextResponse } from 'next/server';
-import { db } from '@/lib/db';
-import { getSettingsRow } from '@/lib/pipeline';
-import {
-  callProviderForRaw,
-  parseJsonLooseExported,
-  type AiProviderType,
-  type AiSettings,
-} from '@/lib/ai';
+import { withAiRoute, AI_ROUTE_DEFAULTS, type AiRouteContext } from '@/lib/with-ai-route';
+import { apiOk } from '@/lib/api-response';
 import { GROUNDING_PROMPT_SUFFIX } from '@/lib/anti-hallucination';
 import { getCachedAI, setCachedAI } from '@/lib/ai-cache';
-import { checkRateLimit, rateLimitResponse } from '@/lib/rate-limit';
-import { logger } from '@/lib/logger';
 
-export const runtime = 'nodejs';
-export const dynamic = 'force-dynamic';
+export const { runtime, dynamic } = AI_ROUTE_DEFAULTS;
 export const maxDuration = 60;
+
+// --- Input ----------------------------------------------------------------
+
+// eslint-disable-next-line @typescript-eslint/no-empty-object-type
+interface DealSourceProfitPerTradeMaximizerInput {}
 
 // --- Types ---------------------------------------------------------------
 
@@ -633,163 +629,48 @@ function buildSummary(entries: SourceEntry[], portfolio: PortfolioSummary): stri
   return parts.join(' ').slice(0, 400);
 }
 
-// --- Handler -------------------------------------------------------------
+// --- Extracted prompt helpers (pure, testable) ---------------------------
 
-export async function GET(req: NextRequest) {
-  return handleDealSourceProfitPerTradeMaximizer(req);
+function buildPromptData(
+  entries: SourceEntry[],
+  computed: TradeComputed[],
+  portfolio: PortfolioSummary,
+): unknown {
+  // Compact context for AI
+  const sourcesForAI = entries.map((e) => ({
+    source: e.source,
+    displayName: e.displayName,
+    metrics: e.metrics,
+    deterministicMaximization: {
+      profitPerTradeAction: e.maximization.profitPerTradeAction,
+      projectedProfitPerTrade: e.maximization.projectedProfitPerTrade,
+      profitPerTradeUplift: e.maximization.profitPerTradeUplift,
+      profitPerTradeLevers: e.maximization.profitPerTradeLevers,
+      bestTradeProfile: e.maximization.bestTradeProfile,
+    },
+  }));
+
+  return {
+    totalTrades: computed.length,
+    totalSources: entries.length,
+    sources: sourcesForAI,
+    deterministicPortfolio: {
+      avgProfitPerTrade: portfolio.avgProfitPerTrade,
+      maximizedAvgProfitPerTrade: portfolio.maximizedAvgProfitPerTrade,
+      totalUpliftPerTrade: portfolio.totalUpliftPerTrade,
+    },
+    caps: {
+      profitMin: PROFIT_MIN, profitMax: PROFIT_MAX,
+      revenueMin: REVENUE_MIN, revenueMax: REVENUE_MAX,
+      costMin: COST_MIN, costMax: COST_MAX,
+      upliftMin: UPLIFT_MIN, upliftMax: UPLIFT_MAX,
+      scoreMin: SCORE_MIN, scoreMax: SCORE_MAX,
+    },
+  };
 }
-export async function POST(req: NextRequest) {
-  return handleDealSourceProfitPerTradeMaximizer(req);
-}
 
-async function handleDealSourceProfitPerTradeMaximizer(req: NextRequest) {
-  try {
-    const rl = checkRateLimit(req, 'ai-deal-source-profit-per-trade-maximizer', 20);
-    if (!rl.allowed) return rateLimitResponse(rl);
-
-    const now = Date.now();
-    const twelveMonthsAgo = new Date(now - TWELVE_MONTHS_MS);
-
-    // 1) Query SOLD trades from last 12 months with linked Listing (for source)
-    const soldTrades = await db.trade.findMany({
-      where: {
-        status: 'sold',
-        sellDate: { gte: twelveMonthsAgo },
-        sellPrice: { gt: 0 },
-      },
-      select: {
-        id: true,
-        title: true,
-        buyPrice: true,
-        buyFees: true,
-        buyDate: true,
-        sellPrice: true,
-        sellFees: true,
-        sellDate: true,
-        buyLocation: true,
-        listing: {
-          select: {
-            monitor: { select: { source: true, tags: true } },
-          },
-        },
-      },
-      orderBy: { sellDate: 'asc' },
-      take: 100000,
-    }) as unknown as SoldTradeRow[];
-
-    // Empty-state: no SOLD trades
-    if (soldTrades.length === 0) {
-      return NextResponse.json({
-        ok: true,
-        sources: [],
-        portfolio: {
-          avgProfitPerTrade: 0,
-          maximizedAvgProfitPerTrade: 0,
-          totalUpliftPerTrade: 0,
-          sourceRanking: [],
-        },
-        summary: 'Ni SOLD trgovin v zadnjih 12 mesecih — Deal Source Profit Per Trade Maximizer ni mogoč.',
-        aiUsed: false,
-        message: 'Ni SOLD trgovin v zadnjih 12 mesecih — Deal Source Profit Per Trade Maximizer ni mogoč.',
-      } satisfies DealSourceProfitPerTradeResponse);
-    }
-
-    // 2) Compute per-trade metrics and aggregate by source
-    const computed: TradeComputed[] = [];
-    for (const t of soldTrades) {
-      const c = computeTrade(t);
-      if (c) computed.push(c);
-    }
-
-    if (computed.length === 0) {
-      return NextResponse.json({
-        ok: true,
-        sources: [],
-        portfolio: {
-          avgProfitPerTrade: 0,
-          maximizedAvgProfitPerTrade: 0,
-          totalUpliftPerTrade: 0,
-          sourceRanking: [],
-        },
-        summary: 'Ni veljavnih SOLD trgovin — Deal Source Profit Per Trade Maximizer ni mogoč.',
-        aiUsed: false,
-        message: 'Ni veljavnih SOLD trgovin — Deal Source Profit Per Trade Maximizer ni mogoč.',
-      } satisfies DealSourceProfitPerTradeResponse);
-    }
-
-    const aggMap = aggregateBySource(computed);
-    let entries = buildSourceEntries(aggMap);
-
-    let portfolio = buildPortfolio(entries);
-    let summary = buildSummary(entries, portfolio);
-
-    // 3) AI cache check (6h TTL) — key by current month
-    const currentMonth = new Date(now).toISOString().slice(0, 7); // YYYY-MM
-    const cacheKey = `deal-source-profit-per-trade-maximizer:${currentMonth}`;
-    const cached = getCachedAI<{
-      sources: SourceEntry[];
-      portfolio: PortfolioSummary;
-      summary: string;
-    }>(cacheKey);
-    if (cached) {
-      return NextResponse.json({
-        ok: true,
-        sources: cached.sources,
-        portfolio: cached.portfolio,
-        summary: cached.summary,
-        cached: true,
-        aiUsed: true,
-      } satisfies DealSourceProfitPerTradeResponse);
-    }
-
-    // 4) AI prompt with grounding
-    const settings = await getSettingsRow();
-    const aiSettings: AiSettings = {
-      provider: settings.aiProvider as AiProviderType,
-      baseUrl: settings.aiBaseUrl,
-      apiKey: settings.aiApiKey,
-      model: settings.aiModel,
-      fallbackProvider: (settings.fallbackProvider || '') as
-        | AiProviderType
-        | '',
-      fallbackBaseUrl: settings.fallbackBaseUrl || '',
-      fallbackApiKey: settings.fallbackApiKey || '',
-      fallbackModel: settings.fallbackModel || '',
-    };
-
-    // Compact context for AI
-    const sourcesForAI = entries.map((e) => ({
-      source: e.source,
-      displayName: e.displayName,
-      metrics: e.metrics,
-      deterministicMaximization: {
-        profitPerTradeAction: e.maximization.profitPerTradeAction,
-        projectedProfitPerTrade: e.maximization.projectedProfitPerTrade,
-        profitPerTradeUplift: e.maximization.profitPerTradeUplift,
-        profitPerTradeLevers: e.maximization.profitPerTradeLevers,
-        bestTradeProfile: e.maximization.bestTradeProfile,
-      },
-    }));
-
-    const promptData = {
-      totalTrades: computed.length,
-      totalSources: entries.length,
-      sources: sourcesForAI,
-      deterministicPortfolio: {
-        avgProfitPerTrade: portfolio.avgProfitPerTrade,
-        maximizedAvgProfitPerTrade: portfolio.maximizedAvgProfitPerTrade,
-        totalUpliftPerTrade: portfolio.totalUpliftPerTrade,
-      },
-      caps: {
-        profitMin: PROFIT_MIN, profitMax: PROFIT_MAX,
-        revenueMin: REVENUE_MIN, revenueMax: REVENUE_MAX,
-        costMin: COST_MIN, costMax: COST_MAX,
-        upliftMin: UPLIFT_MIN, upliftMax: UPLIFT_MAX,
-        scoreMin: SCORE_MIN, scoreMax: SCORE_MAX,
-      },
-    };
-
-    const prompt = `Si AI "Deal Source Profit Per Trade Maximizer" za slovenske in srednjeevropske oglasne platforme (Bolha, Vinted, Avtonet, mobile.de).
+function buildPrompt(promptData: unknown): string {
+  return `Si AI "Deal Source Profit Per Trade Maximizer" za slovenske in srednjeevropske oglasne platforme (Bolha, Vinted, Avtonet, mobile.de).
 Si strokovnjak za PROFIT PER TRADE MAXIMIZATION — kako maksimizirati ABSOLUTNI PROFIT € per individual deal za vsak source. Tvoj cilj je "kateri source-i dajejo najvišji profit PER DEAL in kako povečati". Razlika od deal-source-margin-maximizer (v8.03 ki maksimizira margin % per source) — ti MAKSIMIZIRAŠ PROFIT PER TRADE € (absolutni profit, ne %), z profitPerTradeAction (TARGET_HIGHER_VALUE/NEGOTIATE_BETTER/REDUCE_FEES/IMPROVE_QUALITY/SHIFT_TO_PREMIUM) in bestTradeProfile. Razlika od deal-source-roi-maximizer (v8.00 ki maksimizira ROI per source) — ti maksimiziraš PER-TRADE absolutni profit z bestTradeProfile. Razlika od deal-source-profit-maximizer (v7.97 ki maksimizira total profit per source) — ti maksimiziraš PER-TRADE profit (povprečje per deal, ne vsota). Razlika od deal-source-volume-maximizer (v8.02 ki maksimizira VOLUME per source) — ti maksimiziraš PROFIT PER TRADE (kvaliteta, ne kvantiteta). Razlika od deal-profit-margin-enhancer-pro (v8.01 ki enhanca margin per HELD item) — ti maksimiziraš profit per trade PER SOURCE (zgodovinski sold). Razlika od profit-scale-engine (v8.02 ki scale-a cel business) — ti daje PER-SOURCE per-trade maximization z bestTradeProfile in sourceRanking. Razlika od profit-multiplier-engine (v8.00 ki multiplicira profit z 8 levers) — ti fokusiraš na PROFIT PER TRADE € per source z profitPerTradeLevers. Razlika od revenue-growth-maximizer (v8.01 ki maksimizira revenue growth) — ti maksimiziraš PROFIT PER TRADE (ne revenue), z profitPerTradeUplift per source.
 
 DETERMINISTIČNI PODATKI (izračunano iz DB — SOLD trgovin v zadnjih 12 mesecih z linked Listing za source):
@@ -827,134 +708,278 @@ VRNI LE JSON:
   ],
   "summary": "3 source-i. Portfolio avg profit/trade: 167€ → 245€ (+78€ uplift). Top: Avtonet (280€/trade)."
 }${GROUNDING_PROMPT_SUFFIX}`;
+}
+
+interface MergeAiResult {
+  entries: SourceEntry[];
+  portfolio: PortfolioSummary;
+  summary: string;
+  aiUsed: boolean;
+}
+
+function mergeAiIntoSources(
+  parsed: AiResponse | null,
+  detEntries: SourceEntry[],
+  detPortfolio: PortfolioSummary,
+  detSummary: string,
+): MergeAiResult {
+  const result: MergeAiResult = {
+    entries: detEntries,
+    portfolio: detPortfolio,
+    summary: detSummary,
+    aiUsed: false,
+  };
+
+  if (!parsed || typeof parsed !== 'object') return result;
+
+  const aiSourcesMap = new Map<string, NonNullable<AiResponse['sources']>[number]>();
+  if (Array.isArray(parsed.sources)) {
+    for (const ai of parsed.sources) {
+      if (ai && typeof ai === 'object' && typeof ai.source === 'string') {
+        aiSourcesMap.set(ai.source, ai);
+      }
+    }
+  }
+
+  const newEntries: SourceEntry[] = [];
+  for (const det of detEntries) {
+    const ai = aiSourcesMap.get(det.source);
+    if (!ai || !ai.maximization) {
+      newEntries.push(det);
+      continue;
+    }
+
+    const aiMax = ai.maximization;
+    const action = clampEnum(
+      aiMax.profitPerTradeAction,
+      VALID_ACTION,
+      det.maximization.profitPerTradeAction,
+    );
+
+    // Anti-hallucination: projectedProfitPerTrade ∈ [avgProfitPerTrade, avgProfitPerTrade × 2 ali +500€]
+    const maxProfitBound = Math.min(
+      PROFIT_MAX,
+      Math.max(
+        det.metrics.avgProfitPerTrade + 25,
+        Math.min(det.metrics.avgProfitPerTrade * 2 + 50, det.metrics.avgProfitPerTrade + 500),
+      ),
+    );
+    const minProfitBound = Math.max(0, det.metrics.avgProfitPerTrade);
+    const projectedProfitPerTrade = round0(clampNum(
+      aiMax.projectedProfitPerTrade,
+      minProfitBound, maxProfitBound,
+      det.maximization.projectedProfitPerTrade,
+    ));
+    const profitPerTradeUplift = round0(clampNum(
+      projectedProfitPerTrade - det.metrics.avgProfitPerTrade,
+      UPLIFT_MIN, UPLIFT_MAX, 0,
+    ));
+
+    // Levers
+    const levers: ProfitPerTradeLever[] = [];
+    if (Array.isArray(aiMax.profitPerTradeLevers)) {
+      for (const l of aiMax.profitPerTradeLevers.slice(0, MAX_LEVERS_PER_SOURCE)) {
+        if (!l || typeof l !== 'object') continue;
+        levers.push({
+          lever: clampString(l.lever, 50, 'Lever'),
+          currentProfit: round0(clampNum(
+            l.currentProfit, 0, PROFIT_MAX, Math.max(0, det.metrics.avgProfitPerTrade),
+          )),
+          upliftPotential: round0(clampNum(
+            l.upliftPotential, UPLIFT_MIN, UPLIFT_MAX, 0,
+          )),
+          action: clampString(l.action, 200, 'Akcija.'),
+        });
+      }
+    }
+    if (levers.length === 0) {
+      for (const l of det.maximization.profitPerTradeLevers) levers.push(l);
+    }
+
+    // Best trade profile
+    let bestTradeProfile = det.maximization.bestTradeProfile;
+    if (aiMax.bestTradeProfile && typeof aiMax.bestTradeProfile === 'object') {
+      const btp = aiMax.bestTradeProfile;
+      const priceRangeLow = round0(clampNum(
+        btp.priceRangeLow,
+        COST_MIN, COST_MAX, det.maximization.bestTradeProfile.priceRangeLow,
+      ));
+      const priceRangeHigh = round0(clampNum(
+        btp.priceRangeHigh,
+        priceRangeLow, COST_MAX, det.maximization.bestTradeProfile.priceRangeHigh,
+      ));
+      const characteristics: string[] = Array.isArray(btp.characteristics)
+        ? btp.characteristics.slice(0, MAX_TRADE_PROFILE_CHARS).map((c) =>
+            clampString(c, 200, 'Specifična lastnost.'),
+          ).filter((s) => s.length > 0)
+        : det.maximization.bestTradeProfile.characteristics;
+      bestTradeProfile = {
+        categoryHint: clampString(
+          btp.categoryHint,
+          100,
+          det.maximization.bestTradeProfile.categoryHint,
+        ),
+        priceRangeLow,
+        priceRangeHigh,
+        characteristics: characteristics.length >= 1
+          ? characteristics
+          : det.maximization.bestTradeProfile.characteristics,
+      };
+    }
+
+    newEntries.push({
+      source: det.source,
+      displayName: det.displayName,
+      metrics: det.metrics,
+      maximization: {
+        profitPerTradeAction: action,
+        projectedProfitPerTrade,
+        profitPerTradeUplift,
+        profitPerTradeLevers: levers,
+        bestTradeProfile,
+        sourceRanking: det.maximization.sourceRanking,
+      },
+    });
+  }
+
+  if (newEntries.length === detEntries.length) {
+    result.entries = newEntries;
+  }
+
+  // Rebuild portfolio with new entries
+  result.portfolio = buildPortfolio(result.entries);
+  result.summary = clampString(parsed.summary, 400, buildSummary(result.entries, result.portfolio));
+  result.aiUsed = true;
+  return result;
+}
+
+// --- Handler -------------------------------------------------------------
+
+const dealSourceProfitPerTradeMaximizerHandler = withAiRoute<DealSourceProfitPerTradeMaximizerInput>({
+  endpoint: '/api/ai/deal-source-profit-per-trade-maximizer',
+  maxDuration: 60,
+  enforceBudget: true, // AI klic — preveri budget
+  method: 'GET', // Endpoint sprejema GET + POST — bypass POST-only check
+
+  parseBody: async (req) => {
+    await req.json().catch(() => ({}));
+    return {};
+  },
+
+  // No validateInput — body ignored, identična logika za GET in POST
+  handler: async (_input, ctx: AiRouteContext) => {
+    const { db, callAi, parseAi, logger } = ctx;
+
+    const now = Date.now();
+    const twelveMonthsAgo = new Date(now - TWELVE_MONTHS_MS);
+
+    // 1) Query SOLD trades from last 12 months with linked Listing (for source)
+    const soldTrades = await db.trade.findMany({
+      where: {
+        status: 'sold',
+        sellDate: { gte: twelveMonthsAgo },
+        sellPrice: { gt: 0 },
+      },
+      select: {
+        id: true,
+        title: true,
+        buyPrice: true,
+        buyFees: true,
+        buyDate: true,
+        sellPrice: true,
+        sellFees: true,
+        sellDate: true,
+        buyLocation: true,
+        listing: {
+          select: {
+            monitor: { select: { source: true, tags: true } },
+          },
+        },
+      },
+      orderBy: { sellDate: 'asc' },
+      take: 100000,
+    }) as unknown as SoldTradeRow[];
+
+    // Empty-state: no SOLD trades
+    if (soldTrades.length === 0) {
+      return apiOk({
+        ok: true,
+        sources: [],
+        portfolio: {
+          avgProfitPerTrade: 0,
+          maximizedAvgProfitPerTrade: 0,
+          totalUpliftPerTrade: 0,
+          sourceRanking: [],
+        },
+        summary: 'Ni SOLD trgovin v zadnjih 12 mesecih — Deal Source Profit Per Trade Maximizer ni mogoč.',
+        aiUsed: false,
+        message: 'Ni SOLD trgovin v zadnjih 12 mesecih — Deal Source Profit Per Trade Maximizer ni mogoč.',
+      } satisfies DealSourceProfitPerTradeResponse);
+    }
+
+    // 2) Compute per-trade metrics and aggregate by source
+    const computed: TradeComputed[] = [];
+    for (const t of soldTrades) {
+      const c = computeTrade(t);
+      if (c) computed.push(c);
+    }
+
+    if (computed.length === 0) {
+      return apiOk({
+        ok: true,
+        sources: [],
+        portfolio: {
+          avgProfitPerTrade: 0,
+          maximizedAvgProfitPerTrade: 0,
+          totalUpliftPerTrade: 0,
+          sourceRanking: [],
+        },
+        summary: 'Ni veljavnih SOLD trgovin — Deal Source Profit Per Trade Maximizer ni mogoč.',
+        aiUsed: false,
+        message: 'Ni veljavnih SOLD trgovin — Deal Source Profit Per Trade Maximizer ni mogoč.',
+      } satisfies DealSourceProfitPerTradeResponse);
+    }
+
+    const aggMap = aggregateBySource(computed);
+    let entries = buildSourceEntries(aggMap);
+
+    let portfolio = buildPortfolio(entries);
+    let summary = buildSummary(entries, portfolio);
+
+    // 3) AI cache check (6h TTL) — key by current month
+    const currentMonth = new Date(now).toISOString().slice(0, 7); // YYYY-MM
+    const cacheKey = `deal-source-profit-per-trade-maximizer:${currentMonth}`;
+    const cached = getCachedAI<{
+      sources: SourceEntry[];
+      portfolio: PortfolioSummary;
+      summary: string;
+    }>(cacheKey);
+    if (cached) {
+      return apiOk({
+        ok: true,
+        sources: cached.sources,
+        portfolio: cached.portfolio,
+        summary: cached.summary,
+        cached: true,
+        aiUsed: true,
+      } satisfies DealSourceProfitPerTradeResponse);
+    }
+
+    // 4) AI prompt with grounding
+    const promptData = buildPromptData(entries, computed, portfolio);
+    const prompt = buildPrompt(promptData);
 
     let aiUsed = false;
 
     try {
-      const raw = await callProviderForRaw(aiSettings, prompt);
-      const parsed = parseJsonLooseExported(raw) as AiResponse | null;
+      const raw = await callAi(prompt);
+      const parsed = parseAi(raw) as AiResponse | null;
 
-      if (parsed && typeof parsed === 'object') {
-        const aiSourcesMap = new Map<string, NonNullable<AiResponse['sources']>[number]>();
-        if (Array.isArray(parsed.sources)) {
-          for (const ai of parsed.sources) {
-            if (ai && typeof ai === 'object' && typeof ai.source === 'string') {
-              aiSourcesMap.set(ai.source, ai);
-            }
-          }
-        }
-
-        const newEntries: SourceEntry[] = [];
-        for (const det of entries) {
-          const ai = aiSourcesMap.get(det.source);
-          if (!ai || !ai.maximization) {
-            newEntries.push(det);
-            continue;
-          }
-
-          const aiMax = ai.maximization;
-          const action = clampEnum(
-            aiMax.profitPerTradeAction,
-            VALID_ACTION,
-            det.maximization.profitPerTradeAction,
-          );
-
-          // Anti-hallucination: projectedProfitPerTrade ∈ [avgProfitPerTrade, avgProfitPerTrade × 2 ali +500€]
-          const maxProfitBound = Math.min(
-            PROFIT_MAX,
-            Math.max(
-              det.metrics.avgProfitPerTrade + 25,
-              Math.min(det.metrics.avgProfitPerTrade * 2 + 50, det.metrics.avgProfitPerTrade + 500),
-            ),
-          );
-          const minProfitBound = Math.max(0, det.metrics.avgProfitPerTrade);
-          const projectedProfitPerTrade = round0(clampNum(
-            aiMax.projectedProfitPerTrade,
-            minProfitBound, maxProfitBound,
-            det.maximization.projectedProfitPerTrade,
-          ));
-          const profitPerTradeUplift = round0(clampNum(
-            projectedProfitPerTrade - det.metrics.avgProfitPerTrade,
-            UPLIFT_MIN, UPLIFT_MAX, 0,
-          ));
-
-          // Levers
-          const levers: ProfitPerTradeLever[] = [];
-          if (Array.isArray(aiMax.profitPerTradeLevers)) {
-            for (const l of aiMax.profitPerTradeLevers.slice(0, MAX_LEVERS_PER_SOURCE)) {
-              if (!l || typeof l !== 'object') continue;
-              levers.push({
-                lever: clampString(l.lever, 50, 'Lever'),
-                currentProfit: round0(clampNum(
-                  l.currentProfit, 0, PROFIT_MAX, Math.max(0, det.metrics.avgProfitPerTrade),
-                )),
-                upliftPotential: round0(clampNum(
-                  l.upliftPotential, UPLIFT_MIN, UPLIFT_MAX, 0,
-                )),
-                action: clampString(l.action, 200, 'Akcija.'),
-              });
-            }
-          }
-          if (levers.length === 0) {
-            for (const l of det.maximization.profitPerTradeLevers) levers.push(l);
-          }
-
-          // Best trade profile
-          let bestTradeProfile = det.maximization.bestTradeProfile;
-          if (aiMax.bestTradeProfile && typeof aiMax.bestTradeProfile === 'object') {
-            const btp = aiMax.bestTradeProfile;
-            const priceRangeLow = round0(clampNum(
-              btp.priceRangeLow,
-              COST_MIN, COST_MAX, det.maximization.bestTradeProfile.priceRangeLow,
-            ));
-            const priceRangeHigh = round0(clampNum(
-              btp.priceRangeHigh,
-              priceRangeLow, COST_MAX, det.maximization.bestTradeProfile.priceRangeHigh,
-            ));
-            const characteristics: string[] = Array.isArray(btp.characteristics)
-              ? btp.characteristics.slice(0, MAX_TRADE_PROFILE_CHARS).map((c) =>
-                  clampString(c, 200, 'Specifična lastnost.'),
-                ).filter((s) => s.length > 0)
-              : det.maximization.bestTradeProfile.characteristics;
-            bestTradeProfile = {
-              categoryHint: clampString(
-                btp.categoryHint,
-                100,
-                det.maximization.bestTradeProfile.categoryHint,
-              ),
-              priceRangeLow,
-              priceRangeHigh,
-              characteristics: characteristics.length >= 1
-                ? characteristics
-                : det.maximization.bestTradeProfile.characteristics,
-            };
-          }
-
-          newEntries.push({
-            source: det.source,
-            displayName: det.displayName,
-            metrics: det.metrics,
-            maximization: {
-              profitPerTradeAction: action,
-              projectedProfitPerTrade,
-              profitPerTradeUplift,
-              profitPerTradeLevers: levers,
-              bestTradeProfile,
-              sourceRanking: det.maximization.sourceRanking,
-            },
-          });
-        }
-
-        if (newEntries.length === entries.length) {
-          entries = newEntries;
-        }
-
-        // Rebuild portfolio with new entries
-        portfolio = buildPortfolio(entries);
-
-        summary = clampString(parsed.summary, 400, buildSummary(entries, portfolio));
-        aiUsed = true;
-      }
+      const merged = mergeAiIntoSources(parsed, entries, portfolio, summary);
+      entries = merged.entries;
+      portfolio = merged.portfolio;
+      summary = merged.summary;
+      aiUsed = merged.aiUsed;
     } catch (err) {
       logger.warn(
         '/api/ai/deal-source-profit-per-trade-maximizer',
@@ -968,22 +993,15 @@ VRNI LE JSON:
       setCachedAI(cacheKey, { sources: entries, portfolio, summary });
     }
 
-    return NextResponse.json({
+    return apiOk({
       ok: true,
       sources: entries,
       portfolio,
       summary,
       aiUsed,
     } satisfies DealSourceProfitPerTradeResponse);
-  } catch (err: any) {
-    logger.error(
-      '/api/ai/deal-source-profit-per-trade-maximizer',
-      'handler failed',
-      err,
-    );
-    return NextResponse.json(
-      { error: err?.message ?? 'Napaka' },
-      { status: 500 },
-    );
-  }
-}
+  },
+});
+
+export const GET = dealSourceProfitPerTradeMaximizerHandler;
+export const POST = dealSourceProfitPerTradeMaximizerHandler;

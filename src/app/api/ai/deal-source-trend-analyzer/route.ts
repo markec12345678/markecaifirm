@@ -1,4 +1,4 @@
-// v7.87: AI Deal Source Trend Analyzer — AI analizira TREND PATTERNS per
+// v7.87 / v8.96.7-batch3: AI Deal Source Trend Analyzer — AI analizira TREND PATTERNS per
 // deal source — kateri viri pridobivajo momentum in kateri upadajo, ter
 // napove future source performance. Razlika od deal-source-performance-tracker
 // (v7.85 ki track-a metrics) — ta analizira TRENDS in dela predictions.
@@ -19,23 +19,14 @@
 //
 // GET+POST /api/ai/deal-source-trend-analyzer
 // (AI-enhanced + grounding + anti-hallucination + 6h cache + deterministic fallback)
+// Refaktoriran z withAiRoute helperjem (v8.96.7) + enforceBudget guard.
 
-import { NextRequest, NextResponse } from 'next/server';
-import { db } from '@/lib/db';
-import { getSettingsRow } from '@/lib/pipeline';
-import {
-  callProviderForRaw,
-  parseJsonLooseExported,
-  type AiProviderType,
-  type AiSettings,
-} from '@/lib/ai';
+import { withAiRoute, AI_ROUTE_DEFAULTS, type AiRouteContext } from '@/lib/with-ai-route';
+import { apiOk } from '@/lib/api-response';
 import { GROUNDING_PROMPT_SUFFIX } from '@/lib/anti-hallucination';
 import { getCachedAI, setCachedAI } from '@/lib/ai-cache';
-import { checkRateLimit, rateLimitResponse } from '@/lib/rate-limit';
-import { logger } from '@/lib/logger';
 
-export const runtime = 'nodejs';
-export const dynamic = 'force-dynamic';
+export const { runtime, dynamic } = AI_ROUTE_DEFAULTS;
 export const maxDuration = 60;
 
 // --- Types ---------------------------------------------------------------
@@ -489,19 +480,27 @@ function buildDeterministicPortfolio(
   };
 }
 
+// --- Input ---------------------------------------------------------------
+
+// eslint-disable-next-line @typescript-eslint/no-empty-object-type
+interface DealSourceTrendAnalyzerInput {}
+
 // --- Handler -------------------------------------------------------------
 
-export async function GET(req: NextRequest) {
-  return handleDealSourceTrendAnalyzer(req);
-}
-export async function POST(req: NextRequest) {
-  return handleDealSourceTrendAnalyzer(req);
-}
+const dealSourceTrendAnalyzerHandler = withAiRoute<DealSourceTrendAnalyzerInput>({
+  endpoint: '/api/ai/deal-source-trend-analyzer',
+  maxDuration: 60,
+  enforceBudget: true, // AI klic — preveri budget
+  method: 'GET', // GET+POST — body ignored
 
-async function handleDealSourceTrendAnalyzer(req: NextRequest) {
-  try {
-    const rl = checkRateLimit(req, 'ai-deal-source-trend-analyzer', 20);
-    if (!rl.allowed) return rateLimitResponse(rl);
+  parseBody: async (req) => {
+    await req.json().catch(() => ({}));
+    return {};
+  },
+
+  // No validateInput — body ignored
+  handler: async (_input, ctx: AiRouteContext) => {
+    const { db, callAi, parseAi, logger } = ctx;
 
     const now = Date.now();
     const cutoff12m = new Date(now - HORIZON_12M);
@@ -576,7 +575,7 @@ async function handleDealSourceTrendAnalyzer(req: NextRequest) {
 
     // Empty state
     if (sourceMap.size === 0) {
-      return NextResponse.json({
+      return apiOk({
         ok: true,
         sources: [],
         portfolio: {
@@ -741,7 +740,7 @@ async function handleDealSourceTrendAnalyzer(req: NextRequest) {
           s.analysis.recommendedSourceAction = p.recommendedSourceAction;
         }
       }
-      return NextResponse.json({
+      return apiOk({
         ok: true,
         sources,
         portfolio: cached.portfolio,
@@ -750,21 +749,6 @@ async function handleDealSourceTrendAnalyzer(req: NextRequest) {
         aiUsed: true,
       });
     }
-
-    // 7) AI prompt with grounding
-    const settings = await getSettingsRow();
-    const aiSettings: AiSettings = {
-      provider: settings.aiProvider as AiProviderType,
-      baseUrl: settings.aiBaseUrl,
-      apiKey: settings.aiApiKey,
-      model: settings.aiModel,
-      fallbackProvider: (settings.fallbackProvider || '') as
-        | AiProviderType
-        | '',
-      fallbackBaseUrl: settings.fallbackBaseUrl || '',
-      fallbackApiKey: settings.fallbackApiKey || '',
-      fallbackModel: settings.fallbackModel || '',
-    };
 
     const promptData = {
       totalSources: sources.length,
@@ -827,8 +811,8 @@ VRNI LE JSON:
     let aiUsed = false;
 
     try {
-      const raw = await callProviderForRaw(aiSettings, prompt);
-      const parsed = parseJsonLooseExported(raw) as AiTrendResponse | null;
+      const raw = await callAi(prompt);
+      const parsed = parseAi(raw) as AiTrendResponse | null;
 
       if (parsed && typeof parsed === 'object') {
         // 1) sourcesPatch — apply AI analysis with anti-hallucination
@@ -984,25 +968,18 @@ VRNI LE JSON:
       });
     }
 
-    return NextResponse.json({
+    return apiOk({
       ok: true,
       sources,
       portfolio,
       summary: finalSummary,
       aiUsed,
     });
-  } catch (err: any) {
-    logger.error(
-      '/api/ai/deal-source-trend-analyzer',
-      'handler failed',
-      err,
-    );
-    return NextResponse.json(
-      { error: err?.message ?? 'Napaka' },
-      { status: 500 },
-    );
-  }
-}
+  },
+});
+
+export const GET = dealSourceTrendAnalyzerHandler;
+export const POST = dealSourceTrendAnalyzerHandler;
 
 // Deterministic summary
 function buildDeterministicSummary(

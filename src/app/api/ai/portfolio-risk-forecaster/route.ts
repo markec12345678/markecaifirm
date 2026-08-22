@@ -1,4 +1,4 @@
-// v7.90: AI Portfolio Risk Forecaster — AI forecast-a FUTURE RISK portfolia
+// v7.90 / v8.96.7-batch4: AI Portfolio Risk Forecaster — AI forecast-a FUTURE RISK portfolia
 // 30/60/90 dni vnaprej — projected risk score, emerging risk factors, in
 // risk mitigation plan. Razlika od portfolio-stress-test (v7.59 ki test-a
 // CURRENT portfolio pod stresnimi scenariji) — ta FORECAST-a kako bo
@@ -19,23 +19,14 @@
 //
 // GET+POST /api/ai/portfolio-risk-forecaster
 // (AI-enhanced + grounding + anti-hallucination + 6h cache + deterministic fallback)
+// Refaktoriran z withAiRoute helperjem (v8.96.7) + enforceBudget guard.
 
-import { NextRequest, NextResponse } from 'next/server';
-import { db } from '@/lib/db';
-import { getSettingsRow } from '@/lib/pipeline';
-import {
-  callProviderForRaw,
-  parseJsonLooseExported,
-  type AiProviderType,
-  type AiSettings,
-} from '@/lib/ai';
+import { withAiRoute, AI_ROUTE_DEFAULTS, type AiRouteContext } from '@/lib/with-ai-route';
+import { apiOk } from '@/lib/api-response';
 import { GROUNDING_PROMPT_SUFFIX } from '@/lib/anti-hallucination';
 import { getCachedAI, setCachedAI } from '@/lib/ai-cache';
-import { checkRateLimit, rateLimitResponse } from '@/lib/rate-limit';
-import { logger } from '@/lib/logger';
 
-export const runtime = 'nodejs';
-export const dynamic = 'force-dynamic';
+export const { runtime, dynamic } = AI_ROUTE_DEFAULTS;
 export const maxDuration = 60;
 
 // --- Types ---------------------------------------------------------------
@@ -655,19 +646,27 @@ function buildDeterministicAnalysis(
   };
 }
 
+// --- Input ---------------------------------------------------------------
+
+// eslint-disable-next-line @typescript-eslint/no-empty-object-type
+interface PortfolioRiskForecasterInput {}
+
 // --- Handler -------------------------------------------------------------
 
-export async function GET(req: NextRequest) {
-  return handlePortfolioRiskForecaster(req);
-}
-export async function POST(req: NextRequest) {
-  return handlePortfolioRiskForecaster(req);
-}
+const portfolioRiskForecasterHandler = withAiRoute<PortfolioRiskForecasterInput>({
+  endpoint: '/api/ai/portfolio-risk-forecaster',
+  maxDuration: 60,
+  enforceBudget: true, // AI klic — preveri budget
+  method: 'GET', // GET+POST — body ignored
 
-async function handlePortfolioRiskForecaster(req: NextRequest) {
-  try {
-    const rl = checkRateLimit(req, 'ai-portfolio-risk-forecaster', 20);
-    if (!rl.allowed) return rateLimitResponse(rl);
+  parseBody: async (req) => {
+    await req.json().catch(() => ({}));
+    return {};
+  },
+
+  // No validateInput — body ignored
+  handler: async (_input, ctx: AiRouteContext) => {
+    const { db, callAi, parseAi, logger } = ctx;
 
     const now = Date.now();
 
@@ -718,7 +717,7 @@ async function handlePortfolioRiskForecaster(req: NextRequest) {
 
     // 4) Empty state
     if (heldTrades.length === 0) {
-      return NextResponse.json({
+      return apiOk({
         ok: true,
         current: {
           concentrationRisk: 0,
@@ -780,7 +779,7 @@ async function handlePortfolioRiskForecaster(req: NextRequest) {
       summary: string;
     }>(cacheKey);
     if (cached) {
-      return NextResponse.json({
+      return apiOk({
         ok: true,
         current,
         forecast: cached.forecast,
@@ -792,20 +791,6 @@ async function handlePortfolioRiskForecaster(req: NextRequest) {
     }
 
     // 7) AI prompt with grounding
-    const settings = await getSettingsRow();
-    const aiSettings: AiSettings = {
-      provider: settings.aiProvider as AiProviderType,
-      baseUrl: settings.aiBaseUrl,
-      apiKey: settings.aiApiKey,
-      model: settings.aiModel,
-      fallbackProvider: (settings.fallbackProvider || '') as
-        | AiProviderType
-        | '',
-      fallbackBaseUrl: settings.fallbackBaseUrl || '',
-      fallbackApiKey: settings.fallbackApiKey || '',
-      fallbackModel: settings.fallbackModel || '',
-    };
-
     const promptData = {
       current,
       deterministicForecast: detForecast,
@@ -871,8 +856,8 @@ VRNI LE JSON:
     let aiUsed = false;
 
     try {
-      const raw = await callProviderForRaw(aiSettings, prompt);
-      const parsed = parseJsonLooseExported(raw) as AiRiskResponse | null;
+      const raw = await callAi(prompt);
+      const parsed = parseAi(raw) as AiRiskResponse | null;
 
       if (parsed && typeof parsed === 'object') {
         // Anti-hallucination: clamp projections within ±15 of deterministic
@@ -997,7 +982,7 @@ VRNI LE JSON:
       });
     }
 
-    return NextResponse.json({
+    return apiOk({
       ok: true,
       current,
       forecast,
@@ -1005,18 +990,12 @@ VRNI LE JSON:
       summary,
       aiUsed,
     });
-  } catch (err: any) {
-    logger.error(
-      '/api/ai/portfolio-risk-forecaster',
-      'handler failed',
-      err,
-    );
-    return NextResponse.json(
-      { error: err?.message ?? 'Napaka' },
-      { status: 500 },
-    );
-  }
-}
+  },
+});
+
+export const GET = portfolioRiskForecasterHandler;
+export const POST = portfolioRiskForecasterHandler;
+
 
 function buildSummary(
   current: CurrentRisk,
