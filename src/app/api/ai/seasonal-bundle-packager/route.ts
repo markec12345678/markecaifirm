@@ -1,16 +1,14 @@
-// v6.49: AI Seasonal Bundle Packager — ustvarja season-aware bundle pakete iz inventarja
+// v6.49 / v8.96.3-batch1: AI Seasonal Bundle Packager — ustvarja season-aware bundle pakete iz inventarja
+// Refaktoriran z withAiRoute helperjem (v8.96.3-batch1) + enforceBudget guard.
+//
 // POST /api/ai/seasonal-bundle-packager
 // Body: { season?: 'spring'|'summer'|'autumn'|'winter'|'christmas'|'easter'|'back_to_school'|'black_friday' }
 // Returns: { ok, packager: { season, bundles, targeting, pricing, timeline, recommendations, summary } }
 
-import { NextRequest, NextResponse } from 'next/server';
-import { db } from '@/lib/db';
-import { getSettingsRow } from '@/lib/pipeline';
-import { callProviderForRaw, parseJsonLooseExported, type AiProviderType, type AiSettings } from '@/lib/ai';
-import { logger } from '@/lib/logger';
+import { withAiRoute, AI_ROUTE_DEFAULTS, type AiRouteContext } from '@/lib/with-ai-route';
+import { apiOk } from '@/lib/api-response';
 
-export const runtime = 'nodejs';
-export const dynamic = 'force-dynamic';
+export const { runtime, dynamic } = AI_ROUTE_DEFAULTS;
 export const maxDuration = 90;
 
 interface SeasonInfo {
@@ -106,11 +104,26 @@ function getCurrentSeason(): SeasonInfo {
   return SEASONS.winter;
 }
 
-export async function POST(req: NextRequest) {
-  try {
+interface SeasonalBundleInput {
+  season: SeasonInfo;
+}
+
+export const POST = withAiRoute<SeasonalBundleInput>({
+  endpoint: '/api/ai/seasonal-bundle-packager',
+  maxDuration: 90,
+  enforceBudget: true, // AI klic — preveri budget
+
+  parseBody: async (req) => {
     const body = await req.json().catch(() => ({}));
     const requestedSeason = body?.season && SEASONS[body.season] ? body.season : getCurrentSeason().key;
-    const season = SEASONS[requestedSeason];
+    return { season: SEASONS[requestedSeason] };
+  },
+
+  // No validateInput — season ima vedno default
+
+  handler: async (input, ctx: AiRouteContext) => {
+    const { db, callAi, parseAi } = ctx;
+    const { season } = input;
 
     // 1. Pridobi held trade-e
     const heldTrades = await db.trade.findMany({
@@ -125,43 +138,73 @@ export async function POST(req: NextRequest) {
     });
 
     if (heldTrades.length < 2) {
-      return NextResponse.json({ ok: true, packager: null, message: 'Potrebnih vsaj 2 held trade za bundle pakiranje.' });
+      return apiOk({ ok: true, packager: null, message: 'Potrebnih vsaj 2 held trade za bundle pakiranje.' });
     }
 
-    const settings = await getSettingsRow();
-    const aiSettings: AiSettings = {
-      provider: settings.aiProvider as AiProviderType,
-      baseUrl: settings.aiBaseUrl, apiKey: settings.aiApiKey, model: settings.aiModel,
-      fallbackProvider: (settings.fallbackProvider || '') as AiProviderType | '',
-      fallbackBaseUrl: settings.fallbackBaseUrl || '', fallbackApiKey: settings.fallbackApiKey || '',
-      fallbackModel: settings.fallbackModel || '',
-    };
-
     // 2. Kategorizacija held tradeov glede na sezonsko ujemanje
-    const items = heldTrades.map(t => {
-      const cat = (t.category || 'drugo').toLowerCase();
-      const cost = t.buyPrice + (t.buyFees ?? 0);
-      const estValue = t.listing?.aiEstimatedValue ?? Math.round(cost * 1.25);
-      const daysHeld = Math.round((Date.now() - t.buyDate.getTime()) / (24*60*60*1000));
+    const items = prepareItems(heldTrades, season);
 
-      const isHot = season.hotCategories.some(hc => cat.includes(hc) || hc.includes(cat));
-      const isCold = season.coldCategories.some(cc => cat.includes(cc) || cc.includes(cat));
-      const seasonalFit = isHot ? 'hot' : isCold ? 'cold' : 'neutral';
-      const seasonalPriceMultiplier = isHot ? season.premiumMultiplier : isCold ? 0.85 : 1.0;
-      const seasonalPriceEur = Math.round(estValue * seasonalPriceMultiplier);
+    const prompt = buildPrompt(items, season);
+    const raw = await callAi(prompt);
+    const parsed: any = parseAi(raw);
+    const packager = transformPackager(parsed, items, season);
 
-      return {
-        id: t.id, title: t.title, category: cat, cost, estValue, seasonalPriceEur,
-        daysHeld, seasonalFit, dealScore: t.listing?.dealScore ?? 50,
-        description: (t.listing?.description || '').slice(0, 200),
-      };
-    });
+    return apiOk({ ok: true, packager });
+  },
+});
 
-    const itemsStr = items.map(i =>
-      `- [${i.id}] "${i.title}" | ${i.category} | ${i.cost}€→${i.seasonalPriceEur}€ | ${i.seasonalFit} za ${season.key} | ${i.daysHeld}d`
-    ).join('\n');
+// --- Pomožne funkcije (čiste, testabilne) --------------------------------
 
-    const prompt = `Si AI seasonal bundle packager za slovenske oglasne platforme.
+interface PreparedItem {
+  id: string;
+  title: string;
+  category: string;
+  cost: number;
+  estValue: number;
+  seasonalPriceEur: number;
+  daysHeld: number;
+  seasonalFit: string;
+  dealScore: number;
+  description: string;
+}
+
+function prepareItems(
+  heldTrades: Array<{
+    id: string; title: string; category: string | null;
+    buyPrice: number; buyFees: number | null; buyDate: Date;
+    listing: {
+      aiEstimatedValue: number | null; dealScore: number | null;
+      imageUrl: string | null; location: string | null; description: string | null;
+    } | null;
+  }>,
+  season: SeasonInfo,
+): PreparedItem[] {
+  return heldTrades.map(t => {
+    const cat = (t.category || 'drugo').toLowerCase();
+    const cost = t.buyPrice + (t.buyFees ?? 0);
+    const estValue = t.listing?.aiEstimatedValue ?? Math.round(cost * 1.25);
+    const daysHeld = Math.round((Date.now() - t.buyDate.getTime()) / (24*60*60*1000));
+
+    const isHot = season.hotCategories.some(hc => cat.includes(hc) || hc.includes(cat));
+    const isCold = season.coldCategories.some(cc => cat.includes(cc) || cc.includes(cat));
+    const seasonalFit = isHot ? 'hot' : isCold ? 'cold' : 'neutral';
+    const seasonalPriceMultiplier = isHot ? season.premiumMultiplier : isCold ? 0.85 : 1.0;
+    const seasonalPriceEur = Math.round(estValue * seasonalPriceMultiplier);
+
+    return {
+      id: t.id, title: t.title, category: cat, cost, estValue, seasonalPriceEur,
+      daysHeld, seasonalFit, dealScore: t.listing?.dealScore ?? 50,
+      description: (t.listing?.description || '').slice(0, 200),
+    };
+  });
+}
+
+function buildPrompt(items: PreparedItem[], season: SeasonInfo): string {
+  const itemsStr = items.map(i =>
+    `- [${i.id}] "${i.title}" | ${i.category} | ${i.cost}€→${i.seasonalPriceEur}€ | ${i.seasonalFit} za ${season.key} | ${i.daysHeld}d`
+  ).join('\n');
+
+  return `Si AI seasonal bundle packager za slovenske oglasne platforme.
 Ustvari season-aware bundle pakete iz inventarja, ki maksimirajo profit in konverzijo.
 
 SEZONA: ${season.name} (${season.key})
@@ -244,115 +287,103 @@ Odgovori LE z JSON:
     "time_sensitive_action": "<max 100 znakov>"
   }
 }`;
+}
 
-    let raw = '';
-    try { raw = await callProviderForRaw(aiSettings, prompt); }
-    catch (primaryError: any) {
-      if (aiSettings.fallbackProvider && aiSettings.fallbackModel) {
-        const fb: AiSettings = { provider: aiSettings.fallbackProvider, baseUrl: aiSettings.fallbackBaseUrl || '', apiKey: aiSettings.fallbackApiKey || '', model: aiSettings.fallbackModel };
-        raw = await callProviderForRaw(fb, prompt);
-      } else { return NextResponse.json({ error: primaryError?.message ?? 'AI failed' }, { status: 500 }); }
-    }
+function computeDaysRemaining(season: SeasonInfo): number {
+  // Izračun dni do konca sezone
+  const now = new Date();
+  const currentMonth = now.getMonth() + 1;
+  const seasonMonths = season.months;
+  const lastSeasonMonth = Math.max(...seasonMonths);
+  let daysRemaining: number;
+  if (seasonMonths.includes(currentMonth)) {
+    // Trenutno v sezoni
+    const endOfSeason = new Date(now.getFullYear(), lastSeasonMonth, 0); // zadnji dan sezone
+    daysRemaining = Math.max(0, Math.round((endOfSeason.getTime() - now.getTime()) / (24*60*60*1000)));
+  } else {
+    // Ni v sezoni, izračun do naslednje sezone
+    const nextSeasonMonth = seasonMonths.find(m => m > currentMonth) ?? seasonMonths[0];
+    const targetYear = nextSeasonMonth > currentMonth ? now.getFullYear() : now.getFullYear() + 1;
+    const seasonStart = new Date(targetYear, nextSeasonMonth - 1, 1);
+    daysRemaining = Math.max(0, Math.round((seasonStart.getTime() - now.getTime()) / (24*60*60*1000)));
+  }
+  return daysRemaining;
+}
 
-    const parsed: any = parseJsonLooseExported(raw);
-    const validIds = new Set(items.map(i => i.id));
+function transformPackager(parsed: any, items: PreparedItem[], season: SeasonInfo) {
+  const validIds = new Set(items.map(i => i.id));
+  const daysRemaining = computeDaysRemaining(season);
 
-    // Izračun dni do konca sezone
-    const now = new Date();
-    const currentMonth = now.getMonth() + 1;
-    const seasonMonths = season.months;
-    const lastSeasonMonth = Math.max(...seasonMonths);
-    let daysRemaining: number;
-    if (seasonMonths.includes(currentMonth)) {
-      // Trenutno v sezoni
-      const nextMonth = currentMonth + 1;
-      const endOfSeason = new Date(now.getFullYear(), lastSeasonMonth, 0); // zadnji dan sezone
-      daysRemaining = Math.max(0, Math.round((endOfSeason.getTime() - now.getTime()) / (24*60*60*1000)));
-    } else {
-      // Ni v sezoni, izračun do naslednje sezone
-      const nextSeasonMonth = seasonMonths.find(m => m > currentMonth) ?? seasonMonths[0];
-      const targetYear = nextSeasonMonth > currentMonth ? now.getFullYear() : now.getFullYear() + 1;
-      const seasonStart = new Date(targetYear, nextSeasonMonth - 1, 1);
-      daysRemaining = Math.max(0, Math.round((seasonStart.getTime() - now.getTime()) / (24*60*60*1000)));
-    }
-
-    const packager = {
-      season: {
-        key: season.key,
-        name: season.name,
-        description: season.description,
-        buyerPersonas: season.buyerPersonas,
-        hotCategories: season.hotCategories,
-        coldCategories: season.coldCategories,
-        premiumMultiplier: season.premiumMultiplier,
-        daysRemaining,
-        peakBuyingWindow: String(parsed?.season?.peak_buying_window ?? '').slice(0, 200),
-        bestListingDate: String(parsed?.season?.best_listing_date ?? '').slice(0, 20),
-        urgencyLevel: ['low', 'medium', 'high', 'critical'].includes(String(parsed?.season?.urgency_level)) ? String(parsed.season.urgency_level) : 'medium',
-      },
-      insights: String(parsed?.insights ?? '').slice(0, 500),
-      bundles: (parsed?.bundles || [])
-        .filter((b: any) => (b?.item_ids || []).some((id: any) => validIds.has(String(id))))
-        .slice(0, 12)
-        .map((b: any) => ({
-          bundleName: String(b?.bundle_name ?? '').slice(0, 100),
-          bundleType: ['christmas_gift_pack', 'summer_outing_kit', 'back_to_school_bundle', 'winter_warmth_pack', 'spring_cleaning_kit', 'student_pack', 'family_pack', 'hobby_starter'].includes(String(b?.bundle_type)) ? String(b.bundle_type) : 'family_pack',
-          itemIds: (b?.item_ids || []).filter((id: any) => validIds.has(String(id))).slice(0, 6).map((id: any) => String(id).slice(0, 50)),
-          targetPersona: String(b?.target_persona ?? '').slice(0, 150),
-          individualTotalEur: Math.max(0, Math.round(Number(b?.individual_total_eur ?? 0))),
-          bundlePriceEur: Math.max(0, Math.round(Number(b?.bundle_price_eur ?? 0))),
-          discountPct: Math.round(Number(b?.discount_pct ?? 0)),
-          seasonalPremiumPct: Math.round(Number(b?.seasonal_premium_pct ?? 0)),
-          profitEur: Math.round(Number(b?.profit_eur ?? 0)),
-          marginPct: Math.round(Number(b?.margin_pct ?? 0)),
-          sellingPoint: String(b?.selling_point ?? '').slice(0, 300),
-          bestPlatform: ['bolha', 'facebook', 'vinted', 'ebay'].includes(String(b?.best_platform)) ? String(b.best_platform) : 'bolha',
-          expectedSellDays: Math.max(1, Number(b?.expected_sell_days ?? 7)),
-          expectedBuyerCount: Math.max(0, Number(b?.expected_buyer_count ?? 0)),
-        })),
-      targeting: (parsed?.targeting || []).slice(0, 6).map((t: any) => ({
-        persona: String(t?.persona ?? '').slice(0, 150),
-        demographics: String(t?.demographics ?? '').slice(0, 200),
-        preferredChannel: ['email', 'sms', 'social', 'in_person'].includes(String(t?.preferred_channel)) ? String(t.preferred_channel) : 'email',
-        bestTimeToContact: String(t?.best_time_to_contact ?? '').slice(0, 150),
-        expectedConversionPct: Math.max(0, Math.min(100, Number(t?.expected_conversion_pct ?? 30))),
+  return {
+    season: {
+      key: season.key,
+      name: season.name,
+      description: season.description,
+      buyerPersonas: season.buyerPersonas,
+      hotCategories: season.hotCategories,
+      coldCategories: season.coldCategories,
+      premiumMultiplier: season.premiumMultiplier,
+      daysRemaining,
+      peakBuyingWindow: String(parsed?.season?.peak_buying_window ?? '').slice(0, 200),
+      bestListingDate: String(parsed?.season?.best_listing_date ?? '').slice(0, 20),
+      urgencyLevel: ['low', 'medium', 'high', 'critical'].includes(String(parsed?.season?.urgency_level)) ? String(parsed.season.urgency_level) : 'medium',
+    },
+    insights: String(parsed?.insights ?? '').slice(0, 500),
+    bundles: (parsed?.bundles || [])
+      .filter((b: any) => (b?.item_ids || []).some((id: any) => validIds.has(String(id))))
+      .slice(0, 12)
+      .map((b: any) => ({
+        bundleName: String(b?.bundle_name ?? '').slice(0, 100),
+        bundleType: ['christmas_gift_pack', 'summer_outing_kit', 'back_to_school_bundle', 'winter_warmth_pack', 'spring_cleaning_kit', 'student_pack', 'family_pack', 'hobby_starter'].includes(String(b?.bundle_type)) ? String(b.bundle_type) : 'family_pack',
+        itemIds: (b?.item_ids || []).filter((id: any) => validIds.has(String(id))).slice(0, 6).map((id: any) => String(id).slice(0, 50)),
+        targetPersona: String(b?.target_persona ?? '').slice(0, 150),
+        individualTotalEur: Math.max(0, Math.round(Number(b?.individual_total_eur ?? 0))),
+        bundlePriceEur: Math.max(0, Math.round(Number(b?.bundle_price_eur ?? 0))),
+        discountPct: Math.round(Number(b?.discount_pct ?? 0)),
+        seasonalPremiumPct: Math.round(Number(b?.seasonal_premium_pct ?? 0)),
+        profitEur: Math.round(Number(b?.profit_eur ?? 0)),
+        marginPct: Math.round(Number(b?.margin_pct ?? 0)),
+        sellingPoint: String(b?.selling_point ?? '').slice(0, 300),
+        bestPlatform: ['bolha', 'facebook', 'vinted', 'ebay'].includes(String(b?.best_platform)) ? String(b.best_platform) : 'bolha',
+        expectedSellDays: Math.max(1, Number(b?.expected_sell_days ?? 7)),
+        expectedBuyerCount: Math.max(0, Number(b?.expected_buyer_count ?? 0)),
       })),
-      pricing: (parsed?.pricing || []).slice(0, 5).map((p: any) => ({
-        strategy: ['volume_discount', 'seasonal_premium', 'psychological', 'anchor', 'loss_leader'].includes(String(p?.strategy)) ? String(p.strategy) : 'volume_discount',
-        description: String(p?.description ?? '').slice(0, 250),
-        bestForBundleType: String(p?.best_for_bundle_type ?? '').slice(0, 150),
-        expectedRevenueIncreasePct: Math.round(Number(p?.expected_revenue_increase_pct ?? 0)),
-      })),
-      timeline: (parsed?.timeline || []).slice(0, 4).map((tl: any) => ({
-        phase: ['prep', 'launch', 'peak', 'clearance'].includes(String(tl?.phase)) ? String(tl.phase) : 'prep',
-        dateRange: String(tl?.date_range ?? '').slice(0, 150),
-        actions: (tl?.actions || []).slice(0, 5).map((a: any) => String(a).slice(0, 150)),
-        expectedRevenueEur: Math.round(Number(tl?.expected_revenue_eur ?? 0)),
-      })),
-      recommendations: (parsed?.recommendations || []).slice(0, 6).map((r: any) => ({
-        action: String(r?.action ?? '').slice(0, 300),
-        priority: ['high', 'medium', 'low'].includes(String(r?.priority)) ? String(r.priority) : 'medium',
-        expectedImpactEur: Math.round(Number(r?.expected_impact_eur ?? 0)),
-        itemsAffected: Math.max(0, Number(r?.items_affected ?? 0)),
-      })),
-      summary: {
-        totalBundlesCreated: Math.max(0, Number(parsed?.summary?.total_bundles_created ?? 0)),
-        totalBundleRevenueEur: Math.round(Number(parsed?.summary?.total_bundle_revenue_eur ?? 0)),
-        totalBundleProfitEur: Math.round(Number(parsed?.summary?.total_bundle_profit_eur ?? 0)),
-        avgBundleMarginPct: Math.round(Number(parsed?.summary?.avg_bundle_margin_pct ?? 0)),
-        itemsUsed: Math.max(0, Number(parsed?.summary?.items_used ?? 0)),
-        itemsRemaining: Math.max(0, Number(parsed?.summary?.items_remaining ?? items.length)),
-        bestBundle: String(parsed?.summary?.best_bundle ?? '').slice(0, 150),
-        seasonalEfficiencyScore: Math.max(0, Math.min(100, Number(parsed?.summary?.seasonal_efficiency_score ?? 50))),
-        biggestOpportunity: String(parsed?.summary?.biggest_opportunity ?? '').slice(0, 200),
-        timeSensitiveAction: String(parsed?.summary?.time_sensitive_action ?? '').slice(0, 200),
-      },
-    };
-
-    const today = new Date().toISOString().slice(0, 10);
-    if (settings.aiCallsDate !== today) { await db.settings.update({ where: { id: 'singleton' }, data: { aiCallsDate: today, aiCallsToday: 1 } }); }
-    else { await db.settings.update({ where: { id: 'singleton' }, data: { aiCallsToday: { increment: 1 } } }); }
-
-    return NextResponse.json({ ok: true, packager });
-  } catch (e: any) { logger.error("/api/ai/seasonal-bundle-packager", "POST handler failed", e); return NextResponse.json({ error: e?.message ?? 'Napaka' }, { status: 500 }); }
+    targeting: (parsed?.targeting || []).slice(0, 6).map((t: any) => ({
+      persona: String(t?.persona ?? '').slice(0, 150),
+      demographics: String(t?.demographics ?? '').slice(0, 200),
+      preferredChannel: ['email', 'sms', 'social', 'in_person'].includes(String(t?.preferred_channel)) ? String(t.preferred_channel) : 'email',
+      bestTimeToContact: String(t?.best_time_to_contact ?? '').slice(0, 150),
+      expectedConversionPct: Math.max(0, Math.min(100, Number(t?.expected_conversion_pct ?? 30))),
+    })),
+    pricing: (parsed?.pricing || []).slice(0, 5).map((p: any) => ({
+      strategy: ['volume_discount', 'seasonal_premium', 'psychological', 'anchor', 'loss_leader'].includes(String(p?.strategy)) ? String(p.strategy) : 'volume_discount',
+      description: String(p?.description ?? '').slice(0, 250),
+      bestForBundleType: String(p?.best_for_bundle_type ?? '').slice(0, 150),
+      expectedRevenueIncreasePct: Math.round(Number(p?.expected_revenue_increase_pct ?? 0)),
+    })),
+    timeline: (parsed?.timeline || []).slice(0, 4).map((tl: any) => ({
+      phase: ['prep', 'launch', 'peak', 'clearance'].includes(String(tl?.phase)) ? String(tl.phase) : 'prep',
+      dateRange: String(tl?.date_range ?? '').slice(0, 150),
+      actions: (tl?.actions || []).slice(0, 5).map((a: any) => String(a).slice(0, 150)),
+      expectedRevenueEur: Math.round(Number(tl?.expected_revenue_eur ?? 0)),
+    })),
+    recommendations: (parsed?.recommendations || []).slice(0, 6).map((r: any) => ({
+      action: String(r?.action ?? '').slice(0, 300),
+      priority: ['high', 'medium', 'low'].includes(String(r?.priority)) ? String(r.priority) : 'medium',
+      expectedImpactEur: Math.round(Number(r?.expected_impact_eur ?? 0)),
+      itemsAffected: Math.max(0, Number(r?.items_affected ?? 0)),
+    })),
+    summary: {
+      totalBundlesCreated: Math.max(0, Number(parsed?.summary?.total_bundles_created ?? 0)),
+      totalBundleRevenueEur: Math.round(Number(parsed?.summary?.total_bundle_revenue_eur ?? 0)),
+      totalBundleProfitEur: Math.round(Number(parsed?.summary?.total_bundle_profit_eur ?? 0)),
+      avgBundleMarginPct: Math.round(Number(parsed?.summary?.avg_bundle_margin_pct ?? 0)),
+      itemsUsed: Math.max(0, Number(parsed?.summary?.items_used ?? 0)),
+      itemsRemaining: Math.max(0, Number(parsed?.summary?.items_remaining ?? items.length)),
+      bestBundle: String(parsed?.summary?.best_bundle ?? '').slice(0, 150),
+      seasonalEfficiencyScore: Math.max(0, Math.min(100, Number(parsed?.summary?.seasonal_efficiency_score ?? 50))),
+      biggestOpportunity: String(parsed?.summary?.biggest_opportunity ?? '').slice(0, 200),
+      timeSensitiveAction: String(parsed?.summary?.time_sensitive_action ?? '').slice(0, 200),
+    },
+  };
 }

@@ -1,4 +1,4 @@
-// v7.61: AI Negotiation Script Generator — za specifičen listing/trade
+// v7.61 / v8.96.3-batch4: AI Negotiation Script Generator — za specifičen listing/trade
 // generira CEL estrategia dokument za pogajanje kot KUPEC. Razlika od
 // realtime-negotiation-bot (ki je chatbot) — ta vrne strukturiran STRATEGY
 // DOKUMENT z opening line, anchoring offer, offer ladder (3-5 korakov),
@@ -9,24 +9,20 @@
 //
 // GET+POST /api/ai/negotiation-script-generator
 // (AI-enhanced + grounding + anti-hallucination + 6h cache + deterministic fallback)
+// Refaktoriran z withAiRoute helperjem (v8.96.3) + enforceBudget guard.
 
-import { NextRequest, NextResponse } from 'next/server';
-import { db } from '@/lib/db';
-import { getSettingsRow } from '@/lib/pipeline';
-import {
-  callProviderForRaw,
-  parseJsonLooseExported,
-  type AiProviderType,
-  type AiSettings,
-} from '@/lib/ai';
+import { withAiRoute, AI_ROUTE_DEFAULTS, type AiRouteContext } from '@/lib/with-ai-route';
+import { apiOk } from '@/lib/api-response';
 import { GROUNDING_PROMPT_SUFFIX } from '@/lib/anti-hallucination';
 import { getCachedAI, setCachedAI } from '@/lib/ai-cache';
-import { checkRateLimit, rateLimitResponse } from '@/lib/rate-limit';
-import { logger } from '@/lib/logger';
 
-export const runtime = 'nodejs';
-export const dynamic = 'force-dynamic';
+export const { runtime, dynamic } = AI_ROUTE_DEFAULTS;
 export const maxDuration = 60;
+
+interface NegotiationScriptInput {
+  listingId: string | null;
+  tradeId: string | null;
+}
 
 // --- Types ---------------------------------------------------------------
 
@@ -300,225 +296,156 @@ function validateAiScript(
   };
 }
 
-// --- Handler -------------------------------------------------------------
+// --- Context resolver (3-branch DB lookup) ------------------------------
 
-export async function GET(req: NextRequest) {
-  return handleNegotiationScript(req);
+const LISTING_SELECT_BASE = {
+  id: true,
+  title: true,
+  price: true,
+  aiEstimatedValue: true,
+  aiScore: true,
+  aiRisk: true,
+  aiVerdict: true,
+  dealScore: true,
+  sellerName: true,
+  firstSeenAt: true,
+} as const;
+
+async function resolveContextFromTrade(
+  db: AiRouteContext['db'],
+  tradeId: string,
+): Promise<NegotiationContext | null> {
+  const trade = await db.trade.findUnique({
+    where: { id: tradeId },
+    select: {
+      id: true,
+      title: true,
+      category: true,
+      buyPrice: true,
+      listingId: true,
+      listing: {
+        select: LISTING_SELECT_BASE,
+      },
+    },
+  });
+  if (!trade) return null;
+
+  const listing = trade.listing;
+  const estValue =
+    listing?.aiEstimatedValue && listing.aiEstimatedValue > 0
+      ? listing.aiEstimatedValue
+      : Math.round(trade.buyPrice * 1.2);
+  const askingPrice = listing?.price && listing.price > 0 ? listing.price : Math.round(trade.buyPrice * 1.15);
+  const daysListed = listing?.firstSeenAt
+    ? Math.max(0, Math.round((Date.now() - listing.firstSeenAt.getTime()) / 86_400_000))
+    : 0;
+  return {
+    listingId: listing?.id ?? `trade:${trade.id}`,
+    title: trade.title,
+    askingPrice,
+    aiEstimatedValue: estValue,
+    dealScore: listing?.dealScore ?? 0,
+    sellerName: listing?.sellerName ?? null,
+    category: (trade.category || 'drugo').trim().toLowerCase(),
+    daysListed,
+  };
 }
-export async function POST(req: NextRequest) {
-  return handleNegotiationScript(req);
+
+async function resolveContextFromListing(
+  db: AiRouteContext['db'],
+  listingId: string,
+): Promise<NegotiationContext | null> {
+  const listing = await db.listing.findUnique({
+    where: { id: listingId },
+    select: LISTING_SELECT_BASE,
+  });
+  if (!listing) return null;
+
+  const price = listing.price ?? 0;
+  const estValue =
+    listing.aiEstimatedValue && listing.aiEstimatedValue > 0
+      ? listing.aiEstimatedValue
+      : price > 0
+        ? Math.round(price * 0.95)
+        : 100;
+  const daysListed = listing.firstSeenAt
+    ? Math.max(0, Math.round((Date.now() - listing.firstSeenAt.getTime()) / 86_400_000))
+    : 0;
+  return {
+    listingId: listing.id,
+    title: listing.title,
+    askingPrice: price,
+    aiEstimatedValue: estValue,
+    dealScore: listing.dealScore ?? 0,
+    sellerName: listing.sellerName ?? null,
+    category: 'drugo',
+    daysListed,
+  };
 }
 
-async function handleNegotiationScript(req: NextRequest) {
-  try {
-    const rl = checkRateLimit(req, 'ai-negotiation-script-generator', 20);
-    if (!rl.allowed) return rateLimitResponse(rl);
+async function resolveContextFromPrilika(
+  db: AiRouteContext['db'],
+): Promise<NegotiationContext | null> {
+  // Pick most recent PRILIKA listing (or most recent listing if none PRILIKA)
+  let listing = await db.listing.findFirst({
+    where: { aiVerdict: 'PRILIKA', price: { gt: 0 } },
+    orderBy: { firstSeenAt: 'desc' },
+    select: LISTING_SELECT_BASE,
+  });
+  if (!listing) {
+    // Fallback: most recent listing with price > 0
+    listing = await db.listing.findFirst({
+      where: { price: { gt: 0 } },
+      orderBy: { firstSeenAt: 'desc' },
+      select: LISTING_SELECT_BASE,
+    });
+  }
+  if (!listing) return null;
 
-    // Parse body for optional listingId or tradeId
-    let requestedListingId: string | null = null;
-    let requestedTradeId: string | null = null;
-    try {
-      const body = await req.json().catch(() => ({}));
-      if (body && typeof body === 'object') {
-        if (typeof body.listingId === 'string' && body.listingId.trim()) {
-          requestedListingId = body.listingId.trim();
-        }
-        if (typeof body.tradeId === 'string' && body.tradeId.trim()) {
-          requestedTradeId = body.tradeId.trim();
-        }
-      }
-    } catch {
-      // GET request — no body, ignore
-    }
+  const price = listing.price ?? 0;
+  const estValue =
+    listing.aiEstimatedValue && listing.aiEstimatedValue > 0
+      ? listing.aiEstimatedValue
+      : price > 0
+        ? Math.round(price * 0.95)
+        : 100;
+  const daysListed = listing.firstSeenAt
+    ? Math.max(0, Math.round((Date.now() - listing.firstSeenAt.getTime()) / 86_400_000))
+    : 0;
+  return {
+    listingId: listing.id,
+    title: listing.title,
+    askingPrice: price,
+    aiEstimatedValue: estValue,
+    dealScore: listing.dealScore ?? 0,
+    sellerName: listing.sellerName ?? null,
+    category: 'drugo',
+    daysListed,
+  };
+}
 
-    // 1) Resolve target listing/trade
-    // Strategy:
-    //   - If tradeId provided → look up that Trade (with linked Listing for context)
-    //   - Else if listingId provided → look up that Listing
-    //   - Else → pick most recent PRILIKA listing
-    let ctx: NegotiationContext | null = null;
+async function resolveNegotiationContext(
+  db: AiRouteContext['db'],
+  tradeId: string | null,
+  listingId: string | null,
+): Promise<NegotiationContext | null> {
+  // Strategy:
+  //   - If tradeId provided → look up that Trade (with linked Listing for context)
+  //   - Else if listingId provided → look up that Listing
+  //   - Else → pick most recent PRILIKA listing
+  if (tradeId) {
+    return await resolveContextFromTrade(db, tradeId);
+  }
+  if (listingId) {
+    return await resolveContextFromListing(db, listingId);
+  }
+  return await resolveContextFromPrilika(db);
+}
 
-    if (requestedTradeId) {
-      const trade = await db.trade.findUnique({
-        where: { id: requestedTradeId },
-        select: {
-          id: true,
-          title: true,
-          category: true,
-          buyPrice: true,
-          listingId: true,
-          listing: {
-            select: {
-              id: true,
-              price: true,
-              aiEstimatedValue: true,
-              aiScore: true,
-              aiRisk: true,
-              aiVerdict: true,
-              dealScore: true,
-              sellerName: true,
-              firstSeenAt: true,
-            },
-          },
-        },
-      });
-      if (trade) {
-        const listing = trade.listing;
-        const estValue =
-          listing?.aiEstimatedValue && listing.aiEstimatedValue > 0
-            ? listing.aiEstimatedValue
-            : Math.round(trade.buyPrice * 1.2);
-        const askingPrice = listing?.price && listing.price > 0 ? listing.price : Math.round(trade.buyPrice * 1.15);
-        const daysListed = listing?.firstSeenAt
-          ? Math.max(0, Math.round((Date.now() - listing.firstSeenAt.getTime()) / 86_400_000))
-          : 0;
-        ctx = {
-          listingId: listing?.id ?? `trade:${trade.id}`,
-          title: trade.title,
-          askingPrice,
-          aiEstimatedValue: estValue,
-          dealScore: listing?.dealScore ?? 0,
-          sellerName: listing?.sellerName ?? null,
-          category: (trade.category || 'drugo').trim().toLowerCase(),
-          daysListed,
-        };
-      }
-    } else if (requestedListingId) {
-      const listing = await db.listing.findUnique({
-        where: { id: requestedListingId },
-        select: {
-          id: true,
-          title: true,
-          price: true,
-          aiEstimatedValue: true,
-          aiScore: true,
-          aiRisk: true,
-          aiVerdict: true,
-          dealScore: true,
-          sellerName: true,
-          firstSeenAt: true,
-        },
-      });
-      if (listing) {
-        const price = listing.price ?? 0;
-        const estValue =
-          listing.aiEstimatedValue && listing.aiEstimatedValue > 0
-            ? listing.aiEstimatedValue
-            : price > 0
-              ? Math.round(price * 0.95)
-              : 100;
-        const daysListed = listing.firstSeenAt
-          ? Math.max(0, Math.round((Date.now() - listing.firstSeenAt.getTime()) / 86_400_000))
-          : 0;
-        ctx = {
-          listingId: listing.id,
-          title: listing.title,
-          askingPrice: price,
-          aiEstimatedValue: estValue,
-          dealScore: listing.dealScore ?? 0,
-          sellerName: listing.sellerName ?? null,
-          category: 'drugo',
-          daysListed,
-        };
-      }
-    } else {
-      // Pick most recent PRILIKA listing (or most recent listing if none PRILIKA)
-      let listing = await db.listing.findFirst({
-        where: { aiVerdict: 'PRILIKA', price: { gt: 0 } },
-        orderBy: { firstSeenAt: 'desc' },
-        select: {
-          id: true,
-          title: true,
-          price: true,
-          aiEstimatedValue: true,
-          aiScore: true,
-          aiRisk: true,
-          aiVerdict: true,
-          dealScore: true,
-          sellerName: true,
-          firstSeenAt: true,
-        },
-      });
-      if (!listing) {
-        // Fallback: most recent listing with price > 0
-        listing = await db.listing.findFirst({
-          where: { price: { gt: 0 } },
-          orderBy: { firstSeenAt: 'desc' },
-          select: {
-            id: true,
-            title: true,
-            price: true,
-            aiEstimatedValue: true,
-            aiScore: true,
-            aiRisk: true,
-            aiVerdict: true,
-            dealScore: true,
-            sellerName: true,
-            firstSeenAt: true,
-          },
-        });
-      }
-      if (listing) {
-        const price = listing.price ?? 0;
-        const estValue =
-          listing.aiEstimatedValue && listing.aiEstimatedValue > 0
-            ? listing.aiEstimatedValue
-            : price > 0
-              ? Math.round(price * 0.95)
-              : 100;
-        const daysListed = listing.firstSeenAt
-          ? Math.max(0, Math.round((Date.now() - listing.firstSeenAt.getTime()) / 86_400_000))
-          : 0;
-        ctx = {
-          listingId: listing.id,
-          title: listing.title,
-          askingPrice: price,
-          aiEstimatedValue: estValue,
-          dealScore: listing.dealScore ?? 0,
-          sellerName: listing.sellerName ?? null,
-          category: 'drugo',
-          daysListed,
-        };
-      }
-    }
+// --- Prompt builder (čisti helper) -------------------------------------
 
-    if (!ctx) {
-      return NextResponse.json({
-        ok: true,
-        context: null,
-        script: null,
-        aiUsed: false,
-        message: 'Ni najdenega oglasa ali trade-a — negotiation script ni mogoče generirati.',
-      });
-    }
-
-    // 2) AI cache
-    const cacheKey = `negotiation-script:${ctx.listingId}`;
-    const cached = getCachedAI<{ context: NegotiationContext; script: NegotiationScript }>(cacheKey);
-    if (cached) {
-      return NextResponse.json({
-        ok: true,
-        context: cached.context,
-        script: cached.script,
-        cached: true,
-        aiUsed: true,
-      });
-    }
-
-    // 3) Build AI prompt with grounding
-    const settings = await getSettingsRow();
-    const aiSettings: AiSettings = {
-      provider: settings.aiProvider as AiProviderType,
-      baseUrl: settings.aiBaseUrl,
-      apiKey: settings.aiApiKey,
-      model: settings.aiModel,
-      fallbackProvider: (settings.fallbackProvider || '') as AiProviderType | '',
-      fallbackBaseUrl: settings.fallbackBaseUrl || '',
-      fallbackApiKey: settings.fallbackApiKey || '',
-      fallbackModel: settings.fallbackModel || '',
-    };
-
-    const prompt = `Si veteran pregajanja na slovenskih oglasnih platformah (Bolha, Vinted, mobile.de, Kleinanzeigen).
+function buildPrompt(ctx: NegotiationContext): string {
+  return `Si veteran pregajanja na slovenskih oglasnih platformah (Bolha, Vinted, mobile.de, Kleinanzeigen).
 Generiraj CEL STRATEGIA DOKUMENT za pogajanje kot KUPEC za naslednji oglas.
 
 KONTEKST:
@@ -563,15 +490,72 @@ Odgovori LE z JSON:
   "closingLine": "<slovensko>",
   "negotiationStyle": "AGGRESSIVE|BALANCED|FRIENDLY"
 }${GROUNDING_PROMPT_SUFFIX}`;
+}
+
+// --- Handler -------------------------------------------------------------
+
+const negotiationScriptHandler = withAiRoute<NegotiationScriptInput>({
+  endpoint: '/api/ai/negotiation-script-generator',
+  maxDuration: 60,
+  enforceBudget: true, // AI klic — preveri budget
+  method: 'GET', // Endpoint sprejema GET + POST — bypass POST-only check
+
+  parseBody: async (req) => {
+    const body = await req.json().catch(() => ({}));
+    let requestedListingId: string | null = null;
+    let requestedTradeId: string | null = null;
+    if (body && typeof body === 'object') {
+      if (typeof body.listingId === 'string' && body.listingId.trim()) {
+        requestedListingId = body.listingId.trim();
+      }
+      if (typeof body.tradeId === 'string' && body.tradeId.trim()) {
+        requestedTradeId = body.tradeId.trim();
+      }
+    }
+    return { listingId: requestedListingId, tradeId: requestedTradeId };
+  },
+
+  // No validateInput — both are optional; resolution logic decides
+  handler: async (input, ctx: AiRouteContext) => {
+    const { db, callAi, parseAi, logger } = ctx;
+
+    // 1) Resolve target listing/trade
+    const nctx = await resolveNegotiationContext(db, input.tradeId, input.listingId);
+
+    if (!nctx) {
+      return apiOk({
+        ok: true,
+        context: null,
+        script: null,
+        aiUsed: false,
+        message: 'Ni najdenega oglasa ali trade-a — negotiation script ni mogoče generirati.',
+      });
+    }
+
+    // 2) AI cache
+    const cacheKey = `negotiation-script:${nctx.listingId}`;
+    const cached = getCachedAI<{ context: NegotiationContext; script: NegotiationScript }>(cacheKey);
+    if (cached) {
+      return apiOk({
+        ok: true,
+        context: cached.context,
+        script: cached.script,
+        cached: true,
+        aiUsed: true,
+      });
+    }
+
+    // 3) Build AI prompt with grounding + call AI (try/catch z graceful fallback)
+    const prompt = buildPrompt(nctx);
 
     let aiUsed = false;
-    let script: NegotiationScript = deterministicScript(ctx);
+    let script: NegotiationScript = deterministicScript(nctx);
 
     try {
-      const raw = await callProviderForRaw(aiSettings, prompt);
-      const parsed = parseJsonLooseExported(raw) as AiScriptResponse | null;
+      const raw = await callAi(prompt);
+      const parsed = parseAi(raw) as AiScriptResponse | null;
       if (parsed) {
-        script = validateAiScript(parsed, ctx);
+        script = validateAiScript(parsed, nctx);
         aiUsed = true;
       }
     } catch (err) {
@@ -584,17 +568,17 @@ Odgovori LE z JSON:
 
     // 4) Cache (6h TTL) — only when AI was used
     if (aiUsed) {
-      setCachedAI(cacheKey, { context: ctx, script });
+      setCachedAI(cacheKey, { context: nctx, script });
     }
 
-    return NextResponse.json({
+    return apiOk({
       ok: true,
-      context: ctx,
+      context: nctx,
       script,
       aiUsed,
     });
-  } catch (err: any) {
-    logger.error('/api/ai/negotiation-script-generator', 'handler failed', err);
-    return NextResponse.json({ error: err?.message ?? 'Napaka' }, { status: 500 });
-  }
-}
+  },
+});
+
+export const GET = negotiationScriptHandler;
+export const POST = negotiationScriptHandler;

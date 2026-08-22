@@ -1,17 +1,20 @@
-// v6.53: AI Listing Description Sentiment Optimizer — optimizira opise za max emotional response
+// v6.53 / v8.96.3-batch1: AI Listing Description Sentiment Optimizer — optimizira opise za max emotional response
+// Refaktoriran z withAiRoute helperjem (v8.96.3-batch1) + enforceBudget guard.
+//
 // POST /api/ai/listing-description-sentiment-optimizer
 // Body: { tradeId?: string, listingId?: string }
 // Returns: { ok, optimizer: { listings, sentimentAnalysis, optimizations, abTestPlan, recommendations, summary } }
 
-import { NextRequest, NextResponse } from 'next/server';
-import { db } from '@/lib/db';
-import { getSettingsRow } from '@/lib/pipeline';
-import { callProviderForRaw, parseJsonLooseExported, type AiProviderType, type AiSettings } from '@/lib/ai';
-import { logger } from '@/lib/logger';
+import { withAiRoute, AI_ROUTE_DEFAULTS, ApiRouteError, type AiRouteContext } from '@/lib/with-ai-route';
+import { apiOk } from '@/lib/api-response';
 
-export const runtime = 'nodejs';
-export const dynamic = 'force-dynamic';
+export const { runtime, dynamic } = AI_ROUTE_DEFAULTS;
 export const maxDuration = 90;
+
+interface SentimentOptimizerInput {
+  tradeId: string | null;
+  listingId: string | null;
+}
 
 interface SentimentFactor {
   trust: number;
@@ -23,6 +26,111 @@ interface SentimentFactor {
   professional: number;
   persuasive: number;
 }
+
+interface TargetListing {
+  id: string;
+  title: string;
+  description: string;
+  category: string;
+  price: number;
+  estValue: number;
+  imageUrl: string;
+}
+
+export const POST = withAiRoute<SentimentOptimizerInput>({
+  endpoint: '/api/ai/listing-description-sentiment-optimizer',
+  maxDuration: 90,
+  enforceBudget: true, // AI klic — preveri budget
+
+  parseBody: async (req) => {
+    const body = await req.json().catch(() => ({}));
+    return {
+      tradeId: body?.tradeId ? String(body.tradeId) : null,
+      listingId: body?.listingId ? String(body.listingId) : null,
+    };
+  },
+
+  // No validateInput — vsi input-i so opcijski
+
+  handler: async (input, ctx: AiRouteContext) => {
+    const { db, callAi, parseAi } = ctx;
+    const { tradeId, listingId } = input;
+
+    let targetListings: TargetListing[] = [];
+
+    if (tradeId) {
+      const t = await db.trade.findUnique({
+        where: { id: tradeId },
+        select: {
+          id: true, title: true, category: true, buyPrice: true,
+          listing: { select: { description: true, detailDescription: true, imageUrl: true, aiEstimatedValue: true, price: true } },
+        },
+      });
+      if (!t) throw new ApiRouteError('Trade ne obstaja', 404);
+      targetListings = [{
+        id: t.id, title: t.title, category: t.category || 'drugo',
+        description: (t.listing?.detailDescription || t.listing?.description || '').slice(0, 800),
+        price: t.listing?.price ?? Math.round(t.buyPrice * 1.25),
+        estValue: t.listing?.aiEstimatedValue ?? Math.round(t.buyPrice * 1.25),
+        imageUrl: t.listing?.imageUrl ?? '',
+      }];
+    } else if (listingId) {
+      const l = await db.listing.findUnique({
+        where: { id: listingId },
+        select: { id: true, title: true, description: true, detailDescription: true, price: true, imageUrl: true, aiEstimatedValue: true },
+      });
+      if (!l) throw new ApiRouteError('Listing ne obstaja', 404);
+      targetListings = [{
+        id: l.id, title: l.title, category: '',
+        description: (l.detailDescription || l.description || '').slice(0, 800),
+        price: l.price ?? 0, estValue: l.aiEstimatedValue ?? l.price ?? 0,
+        imageUrl: l.imageUrl ?? '',
+      }];
+    } else {
+      // Pridobi held trades z opisi
+      const heldTrades = await db.trade.findMany({
+        where: { status: 'held' },
+        select: {
+          id: true, title: true, category: true, buyPrice: true,
+          listing: { select: { description: true, detailDescription: true, imageUrl: true, aiEstimatedValue: true, price: true } },
+        },
+        take: 15,
+        orderBy: { buyDate: 'desc' },
+      });
+      targetListings = heldTrades.map(t => ({
+        id: t.id, title: t.title, category: t.category || 'drugo',
+        description: (t.listing?.detailDescription || t.listing?.description || '').slice(0, 800),
+        price: t.listing?.price ?? Math.round(t.buyPrice * 1.25),
+        estValue: t.listing?.aiEstimatedValue ?? Math.round(t.buyPrice * 1.25),
+        imageUrl: t.listing?.imageUrl ?? '',
+      }));
+    }
+
+    if (targetListings.length === 0) {
+      return apiOk({ ok: true, optimizer: null, message: 'Ni listingov za sentiment analizo.' });
+    }
+
+    // Sentiment analiza za vsak listing
+    const itemsWithSentiment = targetListings.map(l => {
+      const sentiment = analyzeSentiment(l.description);
+      const overallScore = Math.round(
+        (sentiment.trust * 0.15) + (sentiment.urgency * 0.10) + (sentiment.excitement * 0.15) +
+        (sentiment.scarcity * 0.10) + (sentiment.socialProof * 0.10) + (sentiment.emotional * 0.15) +
+        (sentiment.professional * 0.15) + (sentiment.persuasive * 0.10)
+      );
+      return { ...l, sentiment, overallScore };
+    });
+
+    const prompt = buildPrompt(itemsWithSentiment);
+    const raw = await callAi(prompt);
+    const parsed: any = parseAi(raw);
+    const optimizer = transformOptimizer(parsed, itemsWithSentiment);
+
+    return apiOk({ ok: true, optimizer });
+  },
+});
+
+// --- Pomožne funkcije (čiste, testabilne) --------------------------------
 
 // Hevristika za sentiment analizo besedila
 function analyzeSentiment(text: string): SentimentFactor {
@@ -67,94 +175,17 @@ function analyzeSentiment(text: string): SentimentFactor {
   };
 }
 
-export async function POST(req: NextRequest) {
-  try {
-    const body = await req.json().catch(() => ({}));
-    const tradeId = body?.tradeId ? String(body.tradeId) : null;
-    const listingId = body?.listingId ? String(body.listingId) : null;
+interface ItemWithSentiment extends TargetListing {
+  sentiment: SentimentFactor;
+  overallScore: number;
+}
 
-    let targetListings: Array<{
-      id: string; title: string; description: string; category: string;
-      price: number; estValue: number; imageUrl: string;
-    }> = [];
+function buildPrompt(itemsWithSentiment: ItemWithSentiment[]): string {
+  const itemsStr = itemsWithSentiment.slice(0, 15).map(i =>
+    `- [${i.id}] "${i.title}" | ${i.category} | ${i.price}€ | trust ${i.sentiment.trust}/100 urgency ${i.sentiment.urgency}/100 excitement ${i.sentiment.excitement}/100 scarcity ${i.sentiment.scarcity}/100 social ${i.sentiment.socialProof}/100 emotional ${i.sentiment.emotional}/100 prof ${i.sentiment.professional}/100 persu ${i.sentiment.persuasive}/100 | overall ${i.overallScore}/100\n  OPIS: ${i.description.slice(0, 200)}...`
+  ).join('\n');
 
-    if (tradeId) {
-      const t = await db.trade.findUnique({
-        where: { id: tradeId },
-        select: {
-          id: true, title: true, category: true, buyPrice: true,
-          listing: { select: { description: true, detailDescription: true, imageUrl: true, aiEstimatedValue: true, price: true } },
-        },
-      });
-      if (!t) return NextResponse.json({ error: 'Trade ne obstaja' }, { status: 404 });
-      targetListings = [{
-        id: t.id, title: t.title, category: t.category || 'drugo',
-        description: (t.listing?.detailDescription || t.listing?.description || '').slice(0, 800),
-        price: t.listing?.price ?? Math.round(t.buyPrice * 1.25),
-        estValue: t.listing?.aiEstimatedValue ?? Math.round(t.buyPrice * 1.25),
-        imageUrl: t.listing?.imageUrl ?? '',
-      }];
-    } else if (listingId) {
-      const l = await db.listing.findUnique({
-        where: { id: listingId },
-        select: { id: true, title: true, description: true, detailDescription: true, price: true, imageUrl: true, aiEstimatedValue: true },
-      });
-      if (!l) return NextResponse.json({ error: 'Listing ne obstaja' }, { status: 404 });
-      targetListings = [{
-        id: l.id, title: l.title, category: '',
-        description: (l.detailDescription || l.description || '').slice(0, 800),
-        price: l.price ?? 0, estValue: l.aiEstimatedValue ?? l.price ?? 0,
-        imageUrl: l.imageUrl ?? '',
-      }];
-    } else {
-      // Pridobi held trades z opisi
-      const heldTrades = await db.trade.findMany({
-        where: { status: 'held' },
-        select: {
-          id: true, title: true, category: true, buyPrice: true,
-          listing: { select: { description: true, detailDescription: true, imageUrl: true, aiEstimatedValue: true, price: true } },
-        },
-        take: 15,
-        orderBy: { buyDate: 'desc' },
-      });
-      targetListings = heldTrades.map(t => ({
-        id: t.id, title: t.title, category: t.category || 'drugo',
-        description: (t.listing?.detailDescription || t.listing?.description || '').slice(0, 800),
-        price: t.listing?.price ?? Math.round(t.buyPrice * 1.25),
-        estValue: t.listing?.aiEstimatedValue ?? Math.round(t.buyPrice * 1.25),
-        imageUrl: t.listing?.imageUrl ?? '',
-      }));
-    }
-
-    if (targetListings.length === 0) {
-      return NextResponse.json({ ok: true, optimizer: null, message: 'Ni listingov za sentiment analizo.' });
-    }
-
-    const settings = await getSettingsRow();
-    const aiSettings: AiSettings = {
-      provider: settings.aiProvider as AiProviderType,
-      baseUrl: settings.aiBaseUrl, apiKey: settings.aiApiKey, model: settings.aiModel,
-      fallbackProvider: (settings.fallbackProvider || '') as AiProviderType | '',
-      fallbackBaseUrl: settings.fallbackBaseUrl || '', fallbackApiKey: settings.fallbackApiKey || '',
-      fallbackModel: settings.fallbackModel || '',
-    };
-
-    // Sentiment analiza za vsak listing
-    const itemsWithSentiment = targetListings.map(l => {
-      const sentiment = analyzeSentiment(l.description);
-      const overallScore = Math.round(
-        (sentiment.trust * 0.15) + (sentiment.urgency * 0.10) + (sentiment.excitement * 0.15) +
-        (sentiment.scarcity * 0.10) + (sentiment.socialProof * 0.10) + (sentiment.emotional * 0.15) +
-        (sentiment.professional * 0.15) + (sentiment.persuasive * 0.10)
-      );
-      return { ...l, sentiment, overallScore };
-    });
-
-    const itemsStr = itemsWithSentiment.slice(0, 15).map(i =>
-      `- [${i.id}] "${i.title}" | ${i.category} | ${i.price}€ | trust ${i.sentiment.trust}/100 urgency ${i.sentiment.urgency}/100 excitement ${i.sentiment.excitement}/100 scarcity ${i.sentiment.scarcity}/100 social ${i.sentiment.socialProof}/100 emotional ${i.sentiment.emotional}/100 prof ${i.sentiment.professional}/100 persu ${i.sentiment.persuasive}/100 | overall ${i.overallScore}/100\n  OPIS: ${i.description.slice(0, 200)}...`
-    ).join('\n');
-
-    const prompt = `Si AI listing description sentiment optimizer za slovenske oglasne platforme.
+  return `Si AI listing description sentiment optimizer za slovenske oglasne platforme.
 Analiziraj sentiment opisov in predlagaj optimizacije za maksimalen emotional response.
 
 OGLASI ZA ANALIZO (${itemsWithSentiment.length}):
@@ -242,114 +273,99 @@ Odgovori LE z JSON:
     "sentiment_optimization_score": <number 0-100>
   }
 }`;
+}
 
-    let raw = '';
-    try { raw = await callProviderForRaw(aiSettings, prompt); }
-    catch (primaryError: any) {
-      if (aiSettings.fallbackProvider && aiSettings.fallbackModel) {
-        const fb: AiSettings = { provider: aiSettings.fallbackProvider, baseUrl: aiSettings.fallbackBaseUrl || '', apiKey: aiSettings.fallbackApiKey || '', model: aiSettings.fallbackModel };
-        raw = await callProviderForRaw(fb, prompt);
-      } else { return NextResponse.json({ error: primaryError?.message ?? 'AI failed' }, { status: 500 }); }
-    }
+function transformOptimizer(parsed: any, itemsWithSentiment: ItemWithSentiment[]) {
+  const validIds = new Set(itemsWithSentiment.map(i => i.id));
 
-    const parsed: any = parseJsonLooseExported(raw);
-    const validIds = new Set(itemsWithSentiment.map(i => i.id));
-
-    const optimizer = {
-      insights: String(parsed?.insights ?? '').slice(0, 500),
-      listings: (parsed?.listings || [])
-        .filter((l: any) => validIds.has(String(l?.id ?? '')))
-        .slice(0, 15)
-        .map((l: any) => {
-          const orig = itemsWithSentiment.find(x => x.id === String(l?.id));
-          return {
-            listingId: String(l?.id ?? ''),
-            title: String(l?.title ?? orig?.title ?? '').slice(0, 150),
-            currentSentiment: {
-              trust: Math.max(0, Math.min(100, Number(l?.current_sentiment?.trust ?? orig?.sentiment.trust ?? 0))),
-              urgency: Math.max(0, Math.min(100, Number(l?.current_sentiment?.urgency ?? orig?.sentiment.urgency ?? 0))),
-              excitement: Math.max(0, Math.min(100, Number(l?.current_sentiment?.excitement ?? orig?.sentiment.excitement ?? 0))),
-              scarcity: Math.max(0, Math.min(100, Number(l?.current_sentiment?.scarcity ?? orig?.sentiment.scarcity ?? 0))),
-              socialProof: Math.max(0, Math.min(100, Number(l?.current_sentiment?.social_proof ?? orig?.sentiment.socialProof ?? 0))),
-              emotional: Math.max(0, Math.min(100, Number(l?.current_sentiment?.emotional ?? orig?.sentiment.emotional ?? 0))),
-              professional: Math.max(0, Math.min(100, Number(l?.current_sentiment?.professional ?? orig?.sentiment.professional ?? 0))),
-              persuasive: Math.max(0, Math.min(100, Number(l?.current_sentiment?.persuasive ?? orig?.sentiment.persuasive ?? 0))),
-              overall: Math.max(0, Math.min(100, Number(l?.current_sentiment?.overall ?? orig?.overallScore ?? 0))),
-            },
-            optimizedSentiment: {
-              trust: Math.max(0, Math.min(100, Number(l?.optimized_sentiment?.trust ?? 0))),
-              urgency: Math.max(0, Math.min(100, Number(l?.optimized_sentiment?.urgency ?? 0))),
-              excitement: Math.max(0, Math.min(100, Number(l?.optimized_sentiment?.excitement ?? 0))),
-              scarcity: Math.max(0, Math.min(100, Number(l?.optimized_sentiment?.scarcity ?? 0))),
-              socialProof: Math.max(0, Math.min(100, Number(l?.optimized_sentiment?.social_proof ?? 0))),
-              emotional: Math.max(0, Math.min(100, Number(l?.optimized_sentiment?.emotional ?? 0))),
-              professional: Math.max(0, Math.min(100, Number(l?.optimized_sentiment?.professional ?? 0))),
-              persuasive: Math.max(0, Math.min(100, Number(l?.optimized_sentiment?.persuasive ?? 0))),
-              overall: Math.max(0, Math.min(100, Number(l?.optimized_sentiment?.overall ?? 0))),
-            },
-            improvementPct: Math.round(Number(l?.improvement_pct ?? 0) * 10) / 10,
-            currentDescription: String(l?.current_description ?? orig?.description ?? '').slice(0, 800),
-            optimizedDescription: String(l?.optimized_description ?? '').slice(0, 1200),
-            keyChanges: (l?.key_changes || []).slice(0, 6).map((c: any) => String(c).slice(0, 200)),
-            expectedEngagementIncreasePct: Math.round(Number(l?.expected_engagement_increase_pct ?? 0)),
-            expectedConversionIncreasePct: Math.round(Number(l?.expected_conversion_increase_pct ?? 0)),
-            buyerEmotionalResponse: ['curious', 'excited', 'trusted', 'urgent', 'indifferent', 'skeptical'].includes(String(l?.buyer_emotional_response)) ? String(l.buyer_emotional_response) : 'curious',
-          };
-        }),
-      sentimentAnalysis: (parsed?.sentiment_analysis || []).slice(0, 8).map((s: any) => ({
-        factor: ['trust', 'urgency', 'excitement', 'scarcity', 'social_proof', 'emotional', 'professional', 'persuasive'].includes(String(s?.factor)) ? String(s.factor) : 'trust',
-        avgScore: Math.max(0, Math.min(100, Number(s?.avg_score ?? 0))),
-        benchmark: Math.max(0, Math.min(100, Number(s?.benchmark ?? 50))),
-        gapPct: Math.round(Number(s?.gap_pct ?? 0) * 10) / 10,
-        improvementPotential: ['high', 'medium', 'low'].includes(String(s?.improvement_potential)) ? String(s.improvement_potential) : 'medium',
-        tactic: String(s?.tactic ?? '').slice(0, 250),
+  return {
+    insights: String(parsed?.insights ?? '').slice(0, 500),
+    listings: (parsed?.listings || [])
+      .filter((l: any) => validIds.has(String(l?.id ?? '')))
+      .slice(0, 15)
+      .map((l: any) => {
+        const orig = itemsWithSentiment.find(x => x.id === String(l?.id));
+        return {
+          listingId: String(l?.id ?? ''),
+          title: String(l?.title ?? orig?.title ?? '').slice(0, 150),
+          currentSentiment: {
+            trust: Math.max(0, Math.min(100, Number(l?.current_sentiment?.trust ?? orig?.sentiment.trust ?? 0))),
+            urgency: Math.max(0, Math.min(100, Number(l?.current_sentiment?.urgency ?? orig?.sentiment.urgency ?? 0))),
+            excitement: Math.max(0, Math.min(100, Number(l?.current_sentiment?.excitement ?? orig?.sentiment.excitement ?? 0))),
+            scarcity: Math.max(0, Math.min(100, Number(l?.current_sentiment?.scarcity ?? orig?.sentiment.scarcity ?? 0))),
+            socialProof: Math.max(0, Math.min(100, Number(l?.current_sentiment?.social_proof ?? orig?.sentiment.socialProof ?? 0))),
+            emotional: Math.max(0, Math.min(100, Number(l?.current_sentiment?.emotional ?? orig?.sentiment.emotional ?? 0))),
+            professional: Math.max(0, Math.min(100, Number(l?.current_sentiment?.professional ?? orig?.sentiment.professional ?? 0))),
+            persuasive: Math.max(0, Math.min(100, Number(l?.current_sentiment?.persuasive ?? orig?.sentiment.persuasive ?? 0))),
+            overall: Math.max(0, Math.min(100, Number(l?.current_sentiment?.overall ?? orig?.overallScore ?? 0))),
+          },
+          optimizedSentiment: {
+            trust: Math.max(0, Math.min(100, Number(l?.optimized_sentiment?.trust ?? 0))),
+            urgency: Math.max(0, Math.min(100, Number(l?.optimized_sentiment?.urgency ?? 0))),
+            excitement: Math.max(0, Math.min(100, Number(l?.optimized_sentiment?.excitement ?? 0))),
+            scarcity: Math.max(0, Math.min(100, Number(l?.optimized_sentiment?.scarcity ?? 0))),
+            socialProof: Math.max(0, Math.min(100, Number(l?.optimized_sentiment?.social_proof ?? 0))),
+            emotional: Math.max(0, Math.min(100, Number(l?.optimized_sentiment?.emotional ?? 0))),
+            professional: Math.max(0, Math.min(100, Number(l?.optimized_sentiment?.professional ?? 0))),
+            persuasive: Math.max(0, Math.min(100, Number(l?.optimized_sentiment?.persuasive ?? 0))),
+            overall: Math.max(0, Math.min(100, Number(l?.optimized_sentiment?.overall ?? 0))),
+          },
+          improvementPct: Math.round(Number(l?.improvement_pct ?? 0) * 10) / 10,
+          currentDescription: String(l?.current_description ?? orig?.description ?? '').slice(0, 800),
+          optimizedDescription: String(l?.optimized_description ?? '').slice(0, 1200),
+          keyChanges: (l?.key_changes || []).slice(0, 6).map((c: any) => String(c).slice(0, 200)),
+          expectedEngagementIncreasePct: Math.round(Number(l?.expected_engagement_increase_pct ?? 0)),
+          expectedConversionIncreasePct: Math.round(Number(l?.expected_conversion_increase_pct ?? 0)),
+          buyerEmotionalResponse: ['curious', 'excited', 'trusted', 'urgent', 'indifferent', 'skeptical'].includes(String(l?.buyer_emotional_response)) ? String(l.buyer_emotional_response) : 'curious',
+        };
+      }),
+    sentimentAnalysis: (parsed?.sentiment_analysis || []).slice(0, 8).map((s: any) => ({
+      factor: ['trust', 'urgency', 'excitement', 'scarcity', 'social_proof', 'emotional', 'professional', 'persuasive'].includes(String(s?.factor)) ? String(s.factor) : 'trust',
+      avgScore: Math.max(0, Math.min(100, Number(s?.avg_score ?? 0))),
+      benchmark: Math.max(0, Math.min(100, Number(s?.benchmark ?? 50))),
+      gapPct: Math.round(Number(s?.gap_pct ?? 0) * 10) / 10,
+      improvementPotential: ['high', 'medium', 'low'].includes(String(s?.improvement_potential)) ? String(s.improvement_potential) : 'medium',
+      tactic: String(s?.tactic ?? '').slice(0, 250),
+    })),
+    optimizations: (parsed?.optimizations || []).slice(0, 10).map((o: any) => ({
+      strategy: ['add_trust', 'add_urgency', 'add_excitement', 'add_scarcity', 'add_social_proof', 'add_emotional', 'add_professional', 'add_persuasive', 'restructure', 'remove_negative'].includes(String(o?.strategy)) ? String(o.strategy) : 'add_trust',
+      description: String(o?.description ?? '').slice(0, 250),
+      bestForFactor: String(o?.best_for_factor ?? '').slice(0, 50),
+      expectedLiftPct: Math.round(Number(o?.expected_lift_pct ?? 0)),
+      implementationEffort: ['low', 'medium', 'high'].includes(String(o?.implementation_effort)) ? String(o.implementation_effort) : 'low',
+      examplePhrase: String(o?.example_phrase ?? '').slice(0, 300),
+    })),
+    abTestPlan: (parsed?.ab_test_plan || [])
+      .filter((t: any) => validIds.has(String(t?.listing_id ?? '')))
+      .slice(0, 15)
+      .map((t: any) => ({
+        listingId: String(t?.listing_id ?? '').slice(0, 50),
+        variantADescription: String(t?.variant_a_description ?? '').slice(0, 800),
+        variantAFocus: String(t?.variant_a_focus ?? '').slice(0, 50),
+        variantBDescription: String(t?.variant_b_description ?? '').slice(0, 800),
+        variantBFocus: String(t?.variant_b_focus ?? '').slice(0, 50),
+        testDurationDays: Math.max(1, Math.min(30, Number(t?.test_duration_days ?? 7))),
+        primaryMetric: ['views', 'inquiries', 'conversion_rate', 'time_to_sell'].includes(String(t?.primary_metric)) ? String(t.primary_metric) : 'conversion_rate',
+        expectedWinner: ['a', 'b'].includes(String(t?.expected_winner)) ? String(t.expected_winner) : 'b',
+        successThresholdPct: Math.round(Number(t?.success_threshold_pct ?? 5)),
       })),
-      optimizations: (parsed?.optimizations || []).slice(0, 10).map((o: any) => ({
-        strategy: ['add_trust', 'add_urgency', 'add_excitement', 'add_scarcity', 'add_social_proof', 'add_emotional', 'add_professional', 'add_persuasive', 'restructure', 'remove_negative'].includes(String(o?.strategy)) ? String(o.strategy) : 'add_trust',
-        description: String(o?.description ?? '').slice(0, 250),
-        bestForFactor: String(o?.best_for_factor ?? '').slice(0, 50),
-        expectedLiftPct: Math.round(Number(o?.expected_lift_pct ?? 0)),
-        implementationEffort: ['low', 'medium', 'high'].includes(String(o?.implementation_effort)) ? String(o.implementation_effort) : 'low',
-        examplePhrase: String(o?.example_phrase ?? '').slice(0, 300),
-      })),
-      abTestPlan: (parsed?.ab_test_plan || [])
-        .filter((t: any) => validIds.has(String(t?.listing_id ?? '')))
-        .slice(0, 15)
-        .map((t: any) => ({
-          listingId: String(t?.listing_id ?? '').slice(0, 50),
-          variantADescription: String(t?.variant_a_description ?? '').slice(0, 800),
-          variantAFocus: String(t?.variant_a_focus ?? '').slice(0, 50),
-          variantBDescription: String(t?.variant_b_description ?? '').slice(0, 800),
-          variantBFocus: String(t?.variant_b_focus ?? '').slice(0, 50),
-          testDurationDays: Math.max(1, Math.min(30, Number(t?.test_duration_days ?? 7))),
-          primaryMetric: ['views', 'inquiries', 'conversion_rate', 'time_to_sell'].includes(String(t?.primary_metric)) ? String(t.primary_metric) : 'conversion_rate',
-          expectedWinner: ['a', 'b'].includes(String(t?.expected_winner)) ? String(t.expected_winner) : 'b',
-          successThresholdPct: Math.round(Number(t?.success_threshold_pct ?? 5)),
-        })),
-      recommendations: (parsed?.recommendations || []).slice(0, 6).map((r: any) => ({
-        action: String(r?.action ?? '').slice(0, 300),
-        priority: ['high', 'medium', 'low'].includes(String(r?.priority)) ? String(r.priority) : 'medium',
-        factorTargeted: String(r?.factor_targeted ?? 'all').slice(0, 50),
-        expectedConversionLiftPct: Math.round(Number(r?.expected_conversion_lift_pct ?? 0)),
-        listingsAffected: Math.max(0, Number(r?.listings_affected ?? 0)),
-      })),
-      summary: {
-        totalListingsAnalyzed: itemsWithSentiment.length,
-        avgCurrentOverallScore: Math.max(0, Math.min(100, Number(parsed?.summary?.avg_current_overall_score ?? Math.round(itemsWithSentiment.reduce((s, i) => s + i.overallScore, 0) / Math.max(1, itemsWithSentiment.length))))),
-        avgOptimizedOverallScore: Math.max(0, Math.min(100, Number(parsed?.summary?.avg_optimized_overall_score ?? 0))),
-        avgImprovementPct: Math.round(Number(parsed?.summary?.avg_improvement_pct ?? 0) * 10) / 10,
-        weakestFactor: String(parsed?.summary?.weakest_factor ?? '').slice(0, 150),
-        strongestFactor: String(parsed?.summary?.strongest_factor ?? '').slice(0, 150),
-        biggestOpportunityFactor: String(parsed?.summary?.biggest_opportunity_factor ?? '').slice(0, 150),
-        avgExpectedConversionIncreasePct: Math.round(Number(parsed?.summary?.avg_expected_conversion_increase_pct ?? 0)),
-        sentimentOptimizationScore: Math.max(0, Math.min(100, Number(parsed?.summary?.sentiment_optimization_score ?? 50))),
-      },
-    };
-
-    const today = new Date().toISOString().slice(0, 10);
-    if (settings.aiCallsDate !== today) { await db.settings.update({ where: { id: 'singleton' }, data: { aiCallsDate: today, aiCallsToday: 1 } }); }
-    else { await db.settings.update({ where: { id: 'singleton' }, data: { aiCallsToday: { increment: 1 } } }); }
-
-    return NextResponse.json({ ok: true, optimizer });
-  } catch (e: any) { logger.error("/api/ai/listing-description-sentiment-optimizer", "POST handler failed", e); return NextResponse.json({ error: e?.message ?? 'Napaka' }, { status: 500 }); }
+    recommendations: (parsed?.recommendations || []).slice(0, 6).map((r: any) => ({
+      action: String(r?.action ?? '').slice(0, 300),
+      priority: ['high', 'medium', 'low'].includes(String(r?.priority)) ? String(r.priority) : 'medium',
+      factorTargeted: String(r?.factor_targeted ?? 'all').slice(0, 50),
+      expectedConversionLiftPct: Math.round(Number(r?.expected_conversion_lift_pct ?? 0)),
+      listingsAffected: Math.max(0, Number(r?.listings_affected ?? 0)),
+    })),
+    summary: {
+      totalListingsAnalyzed: itemsWithSentiment.length,
+      avgCurrentOverallScore: Math.max(0, Math.min(100, Number(parsed?.summary?.avg_current_overall_score ?? Math.round(itemsWithSentiment.reduce((s, i) => s + i.overallScore, 0) / Math.max(1, itemsWithSentiment.length))))),
+      avgOptimizedOverallScore: Math.max(0, Math.min(100, Number(parsed?.summary?.avg_optimized_overall_score ?? 0))),
+      avgImprovementPct: Math.round(Number(parsed?.summary?.avg_improvement_pct ?? 0) * 10) / 10,
+      weakestFactor: String(parsed?.summary?.weakest_factor ?? '').slice(0, 150),
+      strongestFactor: String(parsed?.summary?.strongest_factor ?? '').slice(0, 150),
+      biggestOpportunityFactor: String(parsed?.summary?.biggest_opportunity_factor ?? '').slice(0, 150),
+      avgExpectedConversionIncreasePct: Math.round(Number(parsed?.summary?.avg_expected_conversion_increase_pct ?? 0)),
+      sentimentOptimizationScore: Math.max(0, Math.min(100, Number(parsed?.summary?.sentiment_optimization_score ?? 50))),
+    },
+  };
 }

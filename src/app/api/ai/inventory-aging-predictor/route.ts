@@ -3,20 +3,19 @@
  * Zastareli v1 — Pro verzija je najboljša.
  * Ta endpoint bo odstranjen v v9.0. Glej ENDPOINTS_AUDIT.md za migracijski načrt.
  */
-// v6.48: AI Inventory Aging Predictor — depreciation curve in sell-by deadline za vsak item
+// v6.48 / v8.96.3-batch2: AI Inventory Aging Predictor — depreciation curve in sell-by deadline za vsak item
+// Refaktoriran z withAiRoute helperjem (v8.96.3) + enforceBudget guard.
+// logDeprecatedCall() PRESERVED — kliče se znotraj handler-ja preko ctx.req.
+//
 // POST /api/ai/inventory-aging-predictor
 // Body: { tradeId?: string }
 // Returns: { ok, predictor: { items, depreciationCurves, sellByDeadlines, actions, summary } }
 
-import { NextRequest, NextResponse } from 'next/server';
-import { db } from '@/lib/db';
-import { getSettingsRow } from '@/lib/pipeline';
-import { callProviderForRaw, parseJsonLooseExported, type AiProviderType, type AiSettings } from '@/lib/ai';
-import { logger } from '@/lib/logger';
+import { withAiRoute, AI_ROUTE_DEFAULTS, type AiRouteContext } from '@/lib/with-ai-route';
+import { apiOk } from '@/lib/api-response';
 import { logDeprecatedCall } from '@/lib/deprecated-redirect';
 
-export const runtime = 'nodejs';
-export const dynamic = 'force-dynamic';
+export const { runtime, dynamic } = AI_ROUTE_DEFAULTS;
 export const maxDuration = 90;
 
 // Kategorijski depreciation profili (letni % padec vrednosti)
@@ -72,11 +71,26 @@ function calcDepreciationCurve(profile: typeof DEPRECIATION_PROFILES[string], in
   return points;
 }
 
-export async function POST(req: NextRequest) {
-  logDeprecatedCall('/api/ai/inventory-aging-predictor', req, '/api/ai/inventory-aging-predictor-pro');
-  try {
+interface InventoryAgingPredictorInput {
+  tradeId: string | null;
+}
+
+export const POST = withAiRoute<InventoryAgingPredictorInput>({
+  endpoint: '/api/ai/inventory-aging-predictor',
+  maxDuration: 90,
+  enforceBudget: true,
+
+  parseBody: async (req) => {
     const body = await req.json().catch(() => ({}));
-    const tradeId = body?.tradeId ? String(body.tradeId) : null;
+    return { tradeId: body?.tradeId ? String(body.tradeId) : null };
+  },
+
+  handler: async (input, ctx: AiRouteContext) => {
+    const { db, req, callAi, parseAi } = ctx;
+    // @deprecated v8.94 — preserved: log usage of deprecated endpoint
+    logDeprecatedCall('/api/ai/inventory-aging-predictor', req, '/api/ai/inventory-aging-predictor-pro');
+
+    const { tradeId } = input;
 
     const where: any = { status: 'held' };
     if (tradeId) where.id = tradeId;
@@ -91,101 +105,11 @@ export async function POST(req: NextRequest) {
     });
 
     if (heldTrades.length === 0) {
-      return NextResponse.json({ ok: true, predictor: null, message: 'Ni held tradeov za aging analizo.' });
+      return apiOk({ ok: true, predictor: null, message: 'Ni held tradeov za aging analizo.' });
     }
 
-    const settings = await getSettingsRow();
-    const aiSettings: AiSettings = {
-      provider: settings.aiProvider as AiProviderType,
-      baseUrl: settings.aiBaseUrl, apiKey: settings.aiApiKey, model: settings.aiModel,
-      fallbackProvider: (settings.fallbackProvider || '') as AiProviderType | '',
-      fallbackBaseUrl: settings.fallbackBaseUrl || '', fallbackApiKey: settings.fallbackApiKey || '',
-      fallbackModel: settings.fallbackModel || '',
-    };
-
     const now = Date.now();
-
-    const items = heldTrades.map(t => {
-      const cat = (t.category || 'drugo').toLowerCase();
-      const profile = DEPRECIATION_PROFILES[cat] ?? DEPRECIATION_PROFILES['drugo'];
-      const cost = t.buyPrice + (t.buyFees ?? 0);
-      const initialValue = t.listing?.aiEstimatedValue ?? Math.round(cost * 1.25);
-      const daysHeld = Math.max(0, Math.round((now - t.buyDate.getTime()) / (24*60*60*1000)));
-      const yearFraction = daysHeld / 365;
-
-      // Trenutna depreciated vrednost
-      let currentDepreciationPct: number;
-      switch (profile.curveType) {
-        case 'exponential':
-          currentDepreciationPct = profile.firstYearDropPct * (1 - Math.exp(-2 * yearFraction)) + profile.annualDepreciationPct * Math.max(0, yearFraction - 1);
-          break;
-        case 'linear':
-          currentDepreciationPct = profile.annualDepreciationPct * yearFraction;
-          break;
-        case 'logarithmic':
-          currentDepreciationPct = profile.annualDepreciationPct * Math.log10(1 + 9 * yearFraction);
-          break;
-        case 'step':
-          currentDepreciationPct = yearFraction >= 1 ? profile.firstYearDropPct + (yearFraction - 1) * profile.annualDepreciationPct : profile.firstYearDropPct * yearFraction;
-          break;
-        default:
-          currentDepreciationPct = profile.annualDepreciationPct * yearFraction;
-      }
-      currentDepreciationPct = Math.min(100 - profile.floorValuePct, Math.max(0, currentDepreciationPct));
-      const currentValue = Math.round(initialValue * (1 - currentDepreciationPct / 100));
-      const currentValueVsCost = currentValue - cost;
-
-      // Sell-by deadline (kdaj currentValue pade pod cost)
-      let sellByDeadline: number | null = null;
-      if (currentValueVsCost > 0) {
-        // Iterativno poišči kdaj currentValue <= cost
-        for (let d = daysHeld; d <= 730; d += 7) {
-          const yf = d / 365;
-          let depPct: number;
-          switch (profile.curveType) {
-            case 'exponential':
-              depPct = profile.firstYearDropPct * (1 - Math.exp(-2 * yf)) + profile.annualDepreciationPct * Math.max(0, yf - 1);
-              break;
-            case 'linear':
-              depPct = profile.annualDepreciationPct * yf;
-              break;
-            case 'logarithmic':
-              depPct = profile.annualDepreciationPct * Math.log10(1 + 9 * yf);
-              break;
-            case 'step':
-              depPct = yf >= 1 ? profile.firstYearDropPct + (yf - 1) * profile.annualDepreciationPct : profile.firstYearDropPct * yf;
-              break;
-            default:
-              depPct = profile.annualDepreciationPct * yf;
-          }
-          depPct = Math.min(100 - profile.floorValuePct, Math.max(0, depPct));
-          const v = initialValue * (1 - depPct / 100);
-          if (v <= cost) { sellByDeadline = d; break; }
-        }
-      }
-
-      // Holding cost (opportunity cost)
-      const opportunityCostPerDay = Math.round((initialValue * 0.0003 + cost * 0.0002) * 100) / 100; // ~0.05% daily
-      const totalHoldingCost = Math.round(opportunityCostPerDay * daysHeld * 100) / 100;
-
-      return {
-        id: t.id,
-        title: t.title,
-        category: cat,
-        cost,
-        initialValue,
-        daysHeld,
-        profile,
-        currentValue,
-        currentDepreciationPct: Math.round(currentDepreciationPct * 10) / 10,
-        currentValueVsCost: Math.round(currentValueVsCost),
-        sellByDeadlineDays: sellByDeadline,
-        sellByDeadlineDate: sellByDeadline ? new Date(now + sellByDeadline * 24*60*60*1000).toISOString().slice(0, 10) : null,
-        opportunityCostPerDay,
-        totalHoldingCost,
-        liquidityHalfLifeDays: profile.liquidityHalfLifeDays,
-      };
-    });
+    const items = buildItems(heldTrades, now);
 
     // Sortiraj po urgency (sellByDeadlineDays ascending)
     items.sort((a, b) => {
@@ -198,7 +122,149 @@ export async function POST(req: NextRequest) {
       `- [${i.id}] "${i.title}" | ${i.category} | ${i.cost}€→${i.initialValue}€ | ${i.daysHeld}d | sedaj ${i.currentValue}€ (${i.currentDepreciationPct}% depc) | sell-by ${i.sellByDeadlineDays ?? 'prekoračen'}d | holding cost ${i.totalHoldingCost}€ | curve ${i.profile.curveType}`
     ).join('\n');
 
-    const prompt = `Si AI inventory aging predictor z depreciation curve analizo.
+    const curvesByCategory = buildCurvesByCategory(items);
+
+    const prompt = buildPrompt(items, itemsStr);
+    const raw = await callAi(prompt);
+    const parsed: any = parseAi(raw);
+    const predictor = transformPredictor(parsed, items, curvesByCategory);
+
+    return apiOk({ ok: true, predictor });
+  },
+});
+
+// --- Pomožne funkcije (čiste, testabilne) --------------------------------
+
+interface HeldTradeRow {
+  id: string;
+  title: string;
+  category: string | null;
+  buyPrice: number;
+  buyFees: number | null;
+  buyDate: Date;
+  listing: {
+    aiEstimatedValue: number | null;
+    dealScore: number | null;
+    aiRisk: number | null;
+    imageUrl: string | null;
+    location: string | null;
+  } | null;
+}
+
+interface AgingItem {
+  id: string;
+  title: string;
+  category: string;
+  cost: number;
+  initialValue: number;
+  daysHeld: number;
+  profile: typeof DEPRECIATION_PROFILES[string];
+  currentValue: number;
+  currentDepreciationPct: number;
+  currentValueVsCost: number;
+  sellByDeadlineDays: number | null;
+  sellByDeadlineDate: string | null;
+  opportunityCostPerDay: number;
+  totalHoldingCost: number;
+  liquidityHalfLifeDays: number;
+}
+
+function buildItems(heldTrades: HeldTradeRow[], now: number): AgingItem[] {
+  return heldTrades.map(t => {
+    const cat = (t.category || 'drugo').toLowerCase();
+    const profile = DEPRECIATION_PROFILES[cat] ?? DEPRECIATION_PROFILES['drugo'];
+    const cost = t.buyPrice + (t.buyFees ?? 0);
+    const initialValue = t.listing?.aiEstimatedValue ?? Math.round(cost * 1.25);
+    const daysHeld = Math.max(0, Math.round((now - t.buyDate.getTime()) / (24*60*60*1000)));
+    const yearFraction = daysHeld / 365;
+
+    // Trenutna depreciated vrednost
+    let currentDepreciationPct: number;
+    switch (profile.curveType) {
+      case 'exponential':
+        currentDepreciationPct = profile.firstYearDropPct * (1 - Math.exp(-2 * yearFraction)) + profile.annualDepreciationPct * Math.max(0, yearFraction - 1);
+        break;
+      case 'linear':
+        currentDepreciationPct = profile.annualDepreciationPct * yearFraction;
+        break;
+      case 'logarithmic':
+        currentDepreciationPct = profile.annualDepreciationPct * Math.log10(1 + 9 * yearFraction);
+        break;
+      case 'step':
+        currentDepreciationPct = yearFraction >= 1 ? profile.firstYearDropPct + (yearFraction - 1) * profile.annualDepreciationPct : profile.firstYearDropPct * yearFraction;
+        break;
+      default:
+        currentDepreciationPct = profile.annualDepreciationPct * yearFraction;
+    }
+    currentDepreciationPct = Math.min(100 - profile.floorValuePct, Math.max(0, currentDepreciationPct));
+    const currentValue = Math.round(initialValue * (1 - currentDepreciationPct / 100));
+    const currentValueVsCost = currentValue - cost;
+
+    // Sell-by deadline (kdaj currentValue pade pod cost)
+    let sellByDeadline: number | null = null;
+    if (currentValueVsCost > 0) {
+      // Iterativno poišči kdaj currentValue <= cost
+      for (let d = daysHeld; d <= 730; d += 7) {
+        const yf = d / 365;
+        let depPct: number;
+        switch (profile.curveType) {
+          case 'exponential':
+            depPct = profile.firstYearDropPct * (1 - Math.exp(-2 * yf)) + profile.annualDepreciationPct * Math.max(0, yf - 1);
+            break;
+          case 'linear':
+            depPct = profile.annualDepreciationPct * yf;
+            break;
+          case 'logarithmic':
+            depPct = profile.annualDepreciationPct * Math.log10(1 + 9 * yf);
+            break;
+          case 'step':
+            depPct = yf >= 1 ? profile.firstYearDropPct + (yf - 1) * profile.annualDepreciationPct : profile.firstYearDropPct * yf;
+            break;
+          default:
+            depPct = profile.annualDepreciationPct * yf;
+        }
+        depPct = Math.min(100 - profile.floorValuePct, Math.max(0, depPct));
+        const v = initialValue * (1 - depPct / 100);
+        if (v <= cost) { sellByDeadline = d; break; }
+      }
+    }
+
+    // Holding cost (opportunity cost)
+    const opportunityCostPerDay = Math.round((initialValue * 0.0003 + cost * 0.0002) * 100) / 100; // ~0.05% daily
+    const totalHoldingCost = Math.round(opportunityCostPerDay * daysHeld * 100) / 100;
+
+    return {
+      id: t.id,
+      title: t.title,
+      category: cat,
+      cost,
+      initialValue,
+      daysHeld,
+      profile,
+      currentValue,
+      currentDepreciationPct: Math.round(currentDepreciationPct * 10) / 10,
+      currentValueVsCost: Math.round(currentValueVsCost),
+      sellByDeadlineDays: sellByDeadline,
+      sellByDeadlineDate: sellByDeadline ? new Date(now + sellByDeadline * 24*60*60*1000).toISOString().slice(0, 10) : null,
+      opportunityCostPerDay,
+      totalHoldingCost,
+      liquidityHalfLifeDays: profile.liquidityHalfLifeDays,
+    };
+  });
+}
+
+function buildCurvesByCategory(items: AgingItem[]): Map<string, Array<{ day: number; valueEur: number; depreciationPct: number }>> {
+  const curvesByCategory = new Map<string, any[]>();
+  for (const item of items) {
+    if (!curvesByCategory.has(item.category)) {
+      curvesByCategory.set(item.category, calcDepreciationCurve(item.profile, item.initialValue, 365));
+    }
+  }
+  return curvesByCategory;
+}
+
+function buildPrompt(items: AgingItem[], itemsStr: string): string {
+  return `Si AI inventory aging predictor z depreciation curve analizo.
 Analiziraj staranje inventarja in predlagaj akcije glede na to kdaj item postane negativen.
 
 INVENTAR (${items.length}):
@@ -272,108 +338,85 @@ Odgovori LE z JSON:
     "quickest_action": "<max 100 znakov>"
   }
 }`;
+}
 
-    let raw = '';
-    try { raw = await callProviderForRaw(aiSettings, prompt); }
-    catch (primaryError: any) {
-      if (aiSettings.fallbackProvider && aiSettings.fallbackModel) {
-        const fb: AiSettings = { provider: aiSettings.fallbackProvider, baseUrl: aiSettings.fallbackBaseUrl || '', apiKey: aiSettings.fallbackApiKey || '', model: aiSettings.fallbackModel };
-        raw = await callProviderForRaw(fb, prompt);
-      } else { return NextResponse.json({ error: primaryError?.message ?? 'AI failed' }, { status: 500 }); }
-    }
+function transformPredictor(parsed: any, items: AgingItem[], curvesByCategory: Map<string, any[]>): any {
+  const validIds = new Set(items.map(i => i.id));
 
-    const parsed: any = parseJsonLooseExported(raw);
-    const validIds = new Set(items.map(i => i.id));
-
-    // Generiraj depreciation curves za AI prikaz
-    const curvesByCategory = new Map<string, any[]>();
-    for (const item of items) {
-      if (!curvesByCategory.has(item.category)) {
-        curvesByCategory.set(item.category, calcDepreciationCurve(item.profile, item.initialValue, 365));
-      }
-    }
-
-    const predictor = {
-      insights: String(parsed?.insights ?? '').slice(0, 500),
-      items: (parsed?.items || [])
-        .filter((it: any) => validIds.has(String(it?.id ?? '')))
-        .slice(0, 30)
-        .map((it: any) => {
-          const orig = items.find(x => x.id === String(it?.id));
-          return {
-            tradeId: String(it?.id ?? ''),
-            title: orig?.title ?? '',
-            category: orig?.category ?? '',
-            agingPhase: ['fresh', 'normal', 'aging', 'stale', 'critical', 'dead', 'zombie'].includes(String(it?.aging_phase)) ? String(it.aging_phase) : 'normal',
-            currentValueEur: Math.max(0, Math.round(Number(it?.current_value_eur ?? orig?.currentValue ?? 0))),
-            projectedValue30dEur: Math.max(0, Math.round(Number(it?.projected_value_30d_eur ?? (orig?.currentValue ? orig.currentValue * 0.95 : 0)))),
-            projectedValue90dEur: Math.max(0, Math.round(Number(it?.projected_value_90d_eur ?? (orig?.currentValue ? orig.currentValue * 0.85 : 0)))),
-            recommendedAction: ['hold', 'list_again', 'price_drop_5', 'price_drop_10', 'bundle_offer', 'liquidate', 'write_off'].includes(String(it?.recommended_action)) ? String(it.recommended_action) : 'hold',
-            recommendedPriceEur: Math.max(0, Math.round(Number(it?.recommended_price_eur ?? orig?.currentValue ?? 0))),
-            urgencyScore: Math.max(0, Math.min(100, Number(it?.urgency_score ?? 50))),
-            daysUntilLoss: it?.days_until_loss !== null && it?.days_until_loss !== undefined ? Math.max(0, Number(it.days_until_loss)) : orig?.sellByDeadlineDays ?? null,
-            lossIfNoActionEur: Math.round(Number(it?.loss_if_no_action_eur ?? 0)),
-            reasoning: String(it?.reasoning ?? '').slice(0, 250),
-          };
-        }),
-      depreciationCurves: Array.from(curvesByCategory.entries()).map(([cat, curve]) => {
-        const profile = DEPRECIATION_PROFILES[cat] ?? DEPRECIATION_PROFILES['drugo'];
-        const aiCurve = (parsed?.depreciation_curves || []).find((c: any) => String(c?.category) === cat);
+  return {
+    insights: String(parsed?.insights ?? '').slice(0, 500),
+    items: (parsed?.items || [])
+      .filter((it: any) => validIds.has(String(it?.id ?? '')))
+      .slice(0, 30)
+      .map((it: any) => {
+        const orig = items.find(x => x.id === String(it?.id));
         return {
-          category: cat,
-          curveType: profile.curveType,
-          annualDepreciationPct: profile.annualDepreciationPct,
-          firstYearDropPct: profile.firstYearDropPct,
-          floorValuePct: profile.floorValuePct,
-          saturationAgeDays: profile.saturationAgeDays,
-          description: String(aiCurve?.description ?? '').slice(0, 200),
-          points: curve,
+          tradeId: String(it?.id ?? ''),
+          title: orig?.title ?? '',
+          category: orig?.category ?? '',
+          agingPhase: ['fresh', 'normal', 'aging', 'stale', 'critical', 'dead', 'zombie'].includes(String(it?.aging_phase)) ? String(it.aging_phase) : 'normal',
+          currentValueEur: Math.max(0, Math.round(Number(it?.current_value_eur ?? orig?.currentValue ?? 0))),
+          projectedValue30dEur: Math.max(0, Math.round(Number(it?.projected_value_30d_eur ?? (orig?.currentValue ? orig.currentValue * 0.95 : 0)))),
+          projectedValue90dEur: Math.max(0, Math.round(Number(it?.projected_value_90d_eur ?? (orig?.currentValue ? orig.currentValue * 0.85 : 0)))),
+          recommendedAction: ['hold', 'list_again', 'price_drop_5', 'price_drop_10', 'bundle_offer', 'liquidate', 'write_off'].includes(String(it?.recommended_action)) ? String(it.recommended_action) : 'hold',
+          recommendedPriceEur: Math.max(0, Math.round(Number(it?.recommended_price_eur ?? orig?.currentValue ?? 0))),
+          urgencyScore: Math.max(0, Math.min(100, Number(it?.urgency_score ?? 50))),
+          daysUntilLoss: it?.days_until_loss !== null && it?.days_until_loss !== undefined ? Math.max(0, Number(it.days_until_loss)) : orig?.sellByDeadlineDays ?? null,
+          lossIfNoActionEur: Math.round(Number(it?.loss_if_no_action_eur ?? 0)),
+          reasoning: String(it?.reasoning ?? '').slice(0, 250),
         };
       }),
-      sellByDeadlines: (parsed?.sell_by_deadlines || [])
-        .filter((d: any) => validIds.has(String(d?.trade_id ?? '')))
-        .slice(0, 20)
-        .map((d: any) => {
-          const orig = items.find(x => x.id === String(d?.trade_id));
-          return {
-            tradeId: String(d?.trade_id ?? ''),
-            title: String(d?.title ?? orig?.title ?? '').slice(0, 100),
-            sellByDate: String(d?.sell_by_date ?? orig?.sellByDeadlineDate ?? '').slice(0, 20),
-            daysRemaining: d?.days_remaining !== null && d?.days_remaining !== undefined ? Math.max(0, Number(d.days_remaining)) : orig?.sellByDeadlineDays ?? null,
-            status: ['safe', 'warning', 'critical', 'overdue'].includes(String(d?.status)) ? String(d.status) : 'safe',
-            currentLossEur: Math.round(Number(d?.current_loss_eur ?? 0)),
-          };
-        }),
-      actions: (parsed?.actions || []).slice(0, 6).map((a: any) => ({
-        action: String(a?.action ?? '').slice(0, 250),
-        itemsAffected: Math.max(0, Number(a?.items_affected ?? 0)),
-        expectedRevenueRecoveryEur: Math.round(Number(a?.expected_revenue_recovery_eur ?? 0)),
-        priority: ['high', 'medium', 'low'].includes(String(a?.priority)) ? String(a.priority) : 'medium',
-        deadline: String(a?.deadline ?? '').slice(0, 20),
-      })),
-      summary: {
-        totalItems: items.length,
-        freshCount: Math.max(0, Number(parsed?.summary?.fresh_count ?? items.filter(i => i.daysHeld <= 7).length)),
-        agingCount: Math.max(0, Number(parsed?.summary?.aging_count ?? items.filter(i => i.daysHeld > 30 && i.daysHeld <= 60).length)),
-        staleCount: Math.max(0, Number(parsed?.summary?.stale_count ?? items.filter(i => i.daysHeld > 60 && i.daysHeld <= 90).length)),
-        criticalCount: Math.max(0, Number(parsed?.summary?.critical_count ?? items.filter(i => i.daysHeld > 90 && i.daysHeld <= 180).length)),
-        deadCount: Math.max(0, Number(parsed?.summary?.dead_count ?? items.filter(i => i.daysHeld > 180).length)),
-        totalCurrentValueEur: Math.round(items.reduce((s, i) => s + i.currentValue, 0)),
-        totalInitialValueEur: Math.round(items.reduce((s, i) => s + i.initialValue, 0)),
-        totalDepreciationLossEur: Math.round(items.reduce((s, i) => s + (i.initialValue - i.currentValue), 0)),
-        totalHoldingCostEur: Math.round(items.reduce((s, i) => s + i.totalHoldingCost, 0)),
-        itemsLosingMoney: Math.max(0, Number(parsed?.summary?.items_losing_money ?? items.filter(i => i.currentValueVsCost < 0).length)),
-        next30dProjectedLossEur: Math.round(Number(parsed?.summary?.next_30d_projected_loss_eur ?? 0)),
-        agingEfficiencyScore: Math.max(0, Math.min(100, Number(parsed?.summary?.aging_efficiency_score ?? 50))),
-        biggestThreat: String(parsed?.summary?.biggest_threat ?? '').slice(0, 200),
-        quickestAction: String(parsed?.summary?.quickest_action ?? '').slice(0, 200),
-      },
-    };
-
-    const today = new Date().toISOString().slice(0, 10);
-    if (settings.aiCallsDate !== today) { await db.settings.update({ where: { id: 'singleton' }, data: { aiCallsDate: today, aiCallsToday: 1 } }); }
-    else { await db.settings.update({ where: { id: 'singleton' }, data: { aiCallsToday: { increment: 1 } } }); }
-
-    return NextResponse.json({ ok: true, predictor });
-  } catch (e: any) { logger.error("/api/ai/inventory-aging-predictor", "POST handler failed", e); return NextResponse.json({ error: e?.message ?? 'Napaka' }, { status: 500 }); }
+    depreciationCurves: Array.from(curvesByCategory.entries()).map(([cat, curve]) => {
+      const profile = DEPRECIATION_PROFILES[cat] ?? DEPRECIATION_PROFILES['drugo'];
+      const aiCurve = (parsed?.depreciation_curves || []).find((c: any) => String(c?.category) === cat);
+      return {
+        category: cat,
+        curveType: profile.curveType,
+        annualDepreciationPct: profile.annualDepreciationPct,
+        firstYearDropPct: profile.firstYearDropPct,
+        floorValuePct: profile.floorValuePct,
+        saturationAgeDays: profile.saturationAgeDays,
+        description: String(aiCurve?.description ?? '').slice(0, 200),
+        points: curve,
+      };
+    }),
+    sellByDeadlines: (parsed?.sell_by_deadlines || [])
+      .filter((d: any) => validIds.has(String(d?.trade_id ?? '')))
+      .slice(0, 20)
+      .map((d: any) => {
+        const orig = items.find(x => x.id === String(d?.trade_id));
+        return {
+          tradeId: String(d?.trade_id ?? ''),
+          title: String(d?.title ?? orig?.title ?? '').slice(0, 100),
+          sellByDate: String(d?.sell_by_date ?? orig?.sellByDeadlineDate ?? '').slice(0, 20),
+          daysRemaining: d?.days_remaining !== null && d?.days_remaining !== undefined ? Math.max(0, Number(d.days_remaining)) : orig?.sellByDeadlineDays ?? null,
+          status: ['safe', 'warning', 'critical', 'overdue'].includes(String(d?.status)) ? String(d.status) : 'safe',
+          currentLossEur: Math.round(Number(d?.current_loss_eur ?? 0)),
+        };
+      }),
+    actions: (parsed?.actions || []).slice(0, 6).map((a: any) => ({
+      action: String(a?.action ?? '').slice(0, 250),
+      itemsAffected: Math.max(0, Number(a?.items_affected ?? 0)),
+      expectedRevenueRecoveryEur: Math.round(Number(a?.expected_revenue_recovery_eur ?? 0)),
+      priority: ['high', 'medium', 'low'].includes(String(a?.priority)) ? String(a.priority) : 'medium',
+      deadline: String(a?.deadline ?? '').slice(0, 20),
+    })),
+    summary: {
+      totalItems: items.length,
+      freshCount: Math.max(0, Number(parsed?.summary?.fresh_count ?? items.filter(i => i.daysHeld <= 7).length)),
+      agingCount: Math.max(0, Number(parsed?.summary?.aging_count ?? items.filter(i => i.daysHeld > 30 && i.daysHeld <= 60).length)),
+      staleCount: Math.max(0, Number(parsed?.summary?.stale_count ?? items.filter(i => i.daysHeld > 60 && i.daysHeld <= 90).length)),
+      criticalCount: Math.max(0, Number(parsed?.summary?.critical_count ?? items.filter(i => i.daysHeld > 90 && i.daysHeld <= 180).length)),
+      deadCount: Math.max(0, Number(parsed?.summary?.dead_count ?? items.filter(i => i.daysHeld > 180).length)),
+      totalCurrentValueEur: Math.round(items.reduce((s, i) => s + i.currentValue, 0)),
+      totalInitialValueEur: Math.round(items.reduce((s, i) => s + i.initialValue, 0)),
+      totalDepreciationLossEur: Math.round(items.reduce((s, i) => s + (i.initialValue - i.currentValue), 0)),
+      totalHoldingCostEur: Math.round(items.reduce((s, i) => s + i.totalHoldingCost, 0)),
+      itemsLosingMoney: Math.max(0, Number(parsed?.summary?.items_losing_money ?? items.filter(i => i.currentValueVsCost < 0).length)),
+      next30dProjectedLossEur: Math.round(Number(parsed?.summary?.next_30d_projected_loss_eur ?? 0)),
+      agingEfficiencyScore: Math.max(0, Math.min(100, Number(parsed?.summary?.aging_efficiency_score ?? 50))),
+      biggestThreat: String(parsed?.summary?.biggest_threat ?? '').slice(0, 200),
+      quickestAction: String(parsed?.summary?.quickest_action ?? '').slice(0, 200),
+    },
+  };
 }

@@ -1,4 +1,4 @@
-// v7.68: AI Supply Demand Balance Analyzer — AI analizira razmerje med
+// v7.68 / v8.96.3-batch4: AI Supply Demand Balance Analyzer — AI analizira razmerje med
 // ponudbo (supply = aktivni oglasi) in povpraševanjem (demand = bookmarked /
 // contacted / prodani) per kategorija. Identificira SELLER_MARKET (demand >
 // 70% supply) vs BUYER_MARKET (<40%).
@@ -17,24 +17,18 @@
 //
 // GET+POST /api/ai/supply-demand-balance
 // (AI-enhanced + grounding + anti-hallucination + 6h cache + deterministic fallback)
+// Refaktoriran z withAiRoute helperjem (v8.96.3) + enforceBudget guard.
 
-import { NextRequest, NextResponse } from 'next/server';
-import { db } from '@/lib/db';
-import { getSettingsRow } from '@/lib/pipeline';
-import {
-  callProviderForRaw,
-  parseJsonLooseExported,
-  type AiProviderType,
-  type AiSettings,
-} from '@/lib/ai';
+import { withAiRoute, AI_ROUTE_DEFAULTS, type AiRouteContext } from '@/lib/with-ai-route';
+import { apiOk } from '@/lib/api-response';
 import { GROUNDING_PROMPT_SUFFIX } from '@/lib/anti-hallucination';
 import { getCachedAI, setCachedAI } from '@/lib/ai-cache';
-import { checkRateLimit, rateLimitResponse } from '@/lib/rate-limit';
-import { logger } from '@/lib/logger';
 
-export const runtime = 'nodejs';
-export const dynamic = 'force-dynamic';
+export const { runtime, dynamic } = AI_ROUTE_DEFAULTS;
 export const maxDuration = 60;
+
+// eslint-disable-next-line @typescript-eslint/no-empty-object-type
+interface SupplyDemandBalanceInput {}
 
 // --- Types ---------------------------------------------------------------
 
@@ -237,26 +231,118 @@ function buildOverall(rows: CategoryBalanceRow[]) {
   };
 }
 
+// --- Prompt builder + AI response transform (čisti helperji) ------------
+
+function buildPrompt(categoryRows: CategoryBalanceRow[]): string {
+  const categoryBlock = categoryRows
+    .slice(0, 15)
+    .map(
+      (r, i) =>
+        `${i + 1}. ${r.category}: supply=${r.supply}, demand=${r.demand}, sellThroughRate=${r.sellThroughRate}%, avgDaysListed=${r.avgDaysListed}, priceStability=${r.priceStability}%`,
+    )
+    .join('\n');
+
+  return `Si AI analitik ponudbe in povpraševanja za slovenske in srednjeevropske oglasne platforme (Bolha, Vinted, Avtonet, mobile.de).
+Na podlagi podatkov o supply (aktivni oglasi) in demand (bookmarked / contacted / sold) per kategorija, oceni balance, demandStrength, supplyPressure, priceOutlook in recommendedAction.
+
+KATEGORIJE (top ${Math.min(15, categoryRows.length)} od ${categoryRows.length}):
+${categoryBlock}
+
+PRAVILA ZA ANALIZO:
+1. balanceStatus per kategorija:
+   - SELLER_MARKET: sellThroughRate >= 70 (demand > 70% supply — povpraševanje presega ponudbo, cene rastejo)
+   - BALANCED: 40-70% (ravnovesje)
+   - BUYER_MARKET: < 40% (presežek ponudbe, kupcu ugodno)
+2. demandStrength 0-100: višji = več povpraševanja (uporabi sellThroughRate kot osnovo + bonus za velik demand volumen)
+3. supplyPressure 0-100: višji = večja presežek ponudbe (100 - sellThroughRate + bonus za velik supply volumen)
+4. priceOutlook: RISING (SELLER_MARKET), STABLE (BALANCED), FALLING (BUYER_MARKET)
+5. recommendedAction:
+   - SELL_AGGRESSIVELY: SELLER_MARKET — prodi zdaj ko cene visoke
+   - SELL_NORMAL: BALANCED z dobrim demandStrength (>50)
+   - HOLD: BALANCED z nizkim demandStrength (<50)
+   - BUY_AGGRESSIVELY: BUYER_MARKET — kupi zdaj ko so cene nizke
+6. reasoning: 1-2 povedi slovensko — zakaj ta ocena, kaj pomeni za uporabnika.
+
+VRNI LE JSON:
+{
+  "categories": [
+    {
+      "category": "elektronika",
+      "balanceStatus": "SELLER_MARKET",
+      "demandStrength": 85,
+      "supplyPressure": 15,
+      "priceOutlook": "RISING",
+      "recommendedAction": "SELL_AGGRESSIVELY",
+      "reasoning": "Povpraševanje presega ponudbo (75% sell-through). Prodi elektroniko zdaj — cene rastejo."
+    }
+  ]
+}${GROUNDING_PROMPT_SUFFIX}`;
+}
+
+function parseAiCategories(raw: unknown): Map<string, CategoryBalanceRow> {
+  const parsed = raw as AiSupplyDemandResponse | null;
+  const aiCatMap = new Map<string, CategoryBalanceRow>();
+  if (!parsed || !Array.isArray(parsed.categories)) return aiCatMap;
+
+  for (const item of parsed.categories) {
+    const a = item as Record<string, unknown> | null;
+    if (!a || typeof a !== 'object') continue;
+    const category = clampString(a.category, 100, '');
+    if (!category) continue;
+    aiCatMap.set(category, {
+      category,
+      supply: 0,
+      demand: 0,
+      sellThroughRate: 0,
+      avgDaysListed: 0,
+      priceStability: 0,
+      balanceStatus: clampEnum(a.balanceStatus, VALID_BALANCE, 'BALANCED'),
+      demandStrength: clampNumber(a.demandStrength, 0, 100, 0),
+      supplyPressure: clampNumber(a.supplyPressure, 0, 100, 0),
+      priceOutlook: clampEnum(a.priceOutlook, VALID_OUTLOOK, 'STABLE'),
+      recommendedAction: clampEnum(a.recommendedAction, VALID_ACTION, 'HOLD'),
+      reasoning: clampString(a.reasoning, 400, ''),
+    });
+  }
+  return aiCatMap;
+}
+
+// Merges AI predictions onto deterministic category rows. Mutates rows.
+function mergeAiIntoRows(
+  categoryRows: CategoryBalanceRow[],
+  aiCatMap: Map<string, CategoryBalanceRow>,
+): void {
+  for (const row of categoryRows) {
+    const ai = aiCatMap.get(row.category);
+    if (!ai) {
+      row.reasoning = deterministicReasoning(row.category, row);
+      continue;
+    }
+    row.balanceStatus = ai.balanceStatus;
+    row.priceOutlook = ai.priceOutlook;
+    row.recommendedAction = ai.recommendedAction;
+    row.demandStrength = ai.demandStrength;
+    row.supplyPressure = ai.supplyPressure;
+    row.reasoning = ai.reasoning || deterministicReasoning(row.category, row);
+  }
+}
+
 // --- Handler -------------------------------------------------------------
 
-export async function GET(req: NextRequest) {
-  return handleSupplyDemand(req);
-}
-export async function POST(req: NextRequest) {
-  return handleSupplyDemand(req);
-}
+const supplyDemandHandler = withAiRoute<SupplyDemandBalanceInput>({
+  endpoint: '/api/ai/supply-demand-balance',
+  maxDuration: 60,
+  enforceBudget: true, // AI klic — preveri budget
+  method: 'GET', // Endpoint sprejema GET + POST — bypass POST-only check
 
-async function handleSupplyDemand(req: NextRequest) {
-  try {
-    const rl = checkRateLimit(req, 'ai-supply-demand', 20);
-    if (!rl.allowed) return rateLimitResponse(rl);
+  parseBody: async (req) => {
+    await req.json().catch(() => ({}));
+    return {};
+  },
 
-    // Parse body (optional — analysis uses global data)
-    try {
-      await req.json().catch(() => ({}));
-    } catch {
-      // GET request — no body, ignore
-    }
+  // No validateInput — body ignored, identična logika za GET in POST
+  handler: async (_input, ctx: AiRouteContext) => {
+    const { db, callAi, parseAi, logger } = ctx;
 
     const now = Date.now();
     const thirtyDaysAgo = new Date(now - 30 * DAY_MS);
@@ -285,7 +371,7 @@ async function handleSupplyDemand(req: NextRequest) {
 
     // 2) Empty state
     if (listings.length === 0) {
-      return NextResponse.json({
+      return apiOk({
         ok: true,
         categories: [],
         overall: {
@@ -430,7 +516,7 @@ async function handleSupplyDemand(req: NextRequest) {
         };
       });
 
-      return NextResponse.json({
+      return apiOk({
         ok: true,
         categories: merged,
         overall: buildOverall(merged),
@@ -439,111 +525,16 @@ async function handleSupplyDemand(req: NextRequest) {
       });
     }
 
-    // 6) Build AI prompt with grounding
-    const settings = await getSettingsRow();
-    const aiSettings: AiSettings = {
-      provider: settings.aiProvider as AiProviderType,
-      baseUrl: settings.aiBaseUrl,
-      apiKey: settings.aiApiKey,
-      model: settings.aiModel,
-      fallbackProvider: (settings.fallbackProvider || '') as
-        | AiProviderType
-        | '',
-      fallbackBaseUrl: settings.fallbackBaseUrl || '',
-      fallbackApiKey: settings.fallbackApiKey || '',
-      fallbackModel: settings.fallbackModel || '',
-    };
-
-    const categoryBlock = categoryRows
-      .slice(0, 15)
-      .map(
-        (r, i) =>
-          `${i + 1}. ${r.category}: supply=${r.supply}, demand=${r.demand}, sellThroughRate=${r.sellThroughRate}%, avgDaysListed=${r.avgDaysListed}, priceStability=${r.priceStability}%`,
-      )
-      .join('\n');
-
-    const prompt = `Si AI analitik ponudbe in povpraševanja za slovenske in srednjeevropske oglasne platforme (Bolha, Vinted, Avtonet, mobile.de).
-Na podlagi podatkov o supply (aktivni oglasi) in demand (bookmarked / contacted / sold) per kategorija, oceni balance, demandStrength, supplyPressure, priceOutlook in recommendedAction.
-
-KATEGORIJE (top ${Math.min(15, categoryRows.length)} od ${categoryRows.length}):
-${categoryBlock}
-
-PRAVILA ZA ANALIZO:
-1. balanceStatus per kategorija:
-   - SELLER_MARKET: sellThroughRate >= 70 (demand > 70% supply — povpraševanje presega ponudbo, cene rastejo)
-   - BALANCED: 40-70% (ravnovesje)
-   - BUYER_MARKET: < 40% (presežek ponudbe, kupcu ugodno)
-2. demandStrength 0-100: višji = več povpraševanja (uporabi sellThroughRate kot osnovo + bonus za velik demand volumen)
-3. supplyPressure 0-100: višji = večja presežek ponudbe (100 - sellThroughRate + bonus za velik supply volumen)
-4. priceOutlook: RISING (SELLER_MARKET), STABLE (BALANCED), FALLING (BUYER_MARKET)
-5. recommendedAction:
-   - SELL_AGGRESSIVELY: SELLER_MARKET — prodi zdaj ko cene visoke
-   - SELL_NORMAL: BALANCED z dobrim demandStrength (>50)
-   - HOLD: BALANCED z nizkim demandStrength (<50)
-   - BUY_AGGRESSIVELY: BUYER_MARKET — kupi zdaj ko so cene nizke
-6. reasoning: 1-2 povedi slovensko — zakaj ta ocena, kaj pomeni za uporabnika.
-
-VRNI LE JSON:
-{
-  "categories": [
-    {
-      "category": "elektronika",
-      "balanceStatus": "SELLER_MARKET",
-      "demandStrength": 85,
-      "supplyPressure": 15,
-      "priceOutlook": "RISING",
-      "recommendedAction": "SELL_AGGRESSIVELY",
-      "reasoning": "Povpraševanje presega ponudbo (75% sell-through). Prodi elektroniko zdaj — cene rastejo."
-    }
-  ]
-}${GROUNDING_PROMPT_SUFFIX}`;
+    // 6) Build AI prompt with grounding + call AI (try/catch z graceful fallback)
+    const prompt = buildPrompt(categoryRows);
 
     let aiUsed = false;
     try {
-      const raw = await callProviderForRaw(aiSettings, prompt);
-      const parsed = parseJsonLooseExported(raw) as
-        | AiSupplyDemandResponse
-        | null;
-
-      if (parsed && Array.isArray(parsed.categories)) {
-        const aiCatMap = new Map<string, CategoryBalanceRow>();
-        for (const item of parsed.categories) {
-          const a = item as Record<string, unknown> | null;
-          if (!a || typeof a !== 'object') continue;
-          const category = clampString(a.category, 100, '');
-          if (!category) continue;
-          aiCatMap.set(category, {
-            category,
-            supply: 0,
-            demand: 0,
-            sellThroughRate: 0,
-            avgDaysListed: 0,
-            priceStability: 0,
-            balanceStatus: clampEnum(a.balanceStatus, VALID_BALANCE, 'BALANCED'),
-            demandStrength: clampNumber(a.demandStrength, 0, 100, 0),
-            supplyPressure: clampNumber(a.supplyPressure, 0, 100, 0),
-            priceOutlook: clampEnum(a.priceOutlook, VALID_OUTLOOK, 'STABLE'),
-            recommendedAction: clampEnum(a.recommendedAction, VALID_ACTION, 'HOLD'),
-            reasoning: clampString(a.reasoning, 400, ''),
-          });
-        }
-
-        if (aiCatMap.size > 0) {
-          for (const row of categoryRows) {
-            const ai = aiCatMap.get(row.category);
-            if (!ai) {
-              row.reasoning = deterministicReasoning(row.category, row);
-              continue;
-            }
-            row.balanceStatus = ai.balanceStatus;
-            row.priceOutlook = ai.priceOutlook;
-            row.recommendedAction = ai.recommendedAction;
-            row.demandStrength = ai.demandStrength;
-            row.supplyPressure = ai.supplyPressure;
-            row.reasoning = ai.reasoning || deterministicReasoning(row.category, row);
-          }
-          aiUsed = true;
-        }
+      const raw = await callAi(prompt);
+      const aiCatMap = parseAiCategories(parseAi(raw));
+      if (aiCatMap.size > 0) {
+        mergeAiIntoRows(categoryRows, aiCatMap);
+        aiUsed = true;
       }
     } catch (err) {
       logger.warn(
@@ -570,17 +561,14 @@ VRNI LE JSON:
     // 9) Overall summary
     const overall = buildOverall(categoryRows);
 
-    return NextResponse.json({
+    return apiOk({
       ok: true,
       categories: categoryRows,
       overall,
       aiUsed,
     });
-  } catch (err: any) {
-    logger.error('/api/ai/supply-demand-balance', 'handler failed', err);
-    return NextResponse.json(
-      { error: err?.message ?? 'Napaka' },
-      { status: 500 },
-    );
-  }
-}
+  },
+});
+
+export const GET = supplyDemandHandler;
+export const POST = supplyDemandHandler;

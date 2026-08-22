@@ -1,31 +1,25 @@
-// v7.60: Margin Guardian Pro — real-time margin monitoring z AI-driven
+// v7.60 / v8.96.3-batch3: Margin Guardian Pro — real-time margin monitoring z AI-driven
 // pricing priporočili. Skenira ves HELD inventar, identificira iteme kjer
 // je profitni margin ogrožen (carrying cost, market price drop), in
-// priporoči takojšnje prilagoditve cene.
+// priporoča takojšnje prilagoditve cene.
 //
 // "PS5 držan 45 dni — carrying cost 22.5€, margin 8% (WARNING) →
 //  znižaj ceno za 10% na 380€"
 //
 // GET+POST /api/ai/margin-guardian-pro
+// Refaktoriran z withAiRoute helperjem (v8.94) + enforceBudget guard.
 // (AI-enhanced + grounding + anti-hallucination + 6h cache + deterministic fallback)
 
-import { NextRequest, NextResponse } from 'next/server';
-import { db } from '@/lib/db';
-import { getSettingsRow } from '@/lib/pipeline';
-import {
-  callProviderForRaw,
-  parseJsonLooseExported,
-  type AiProviderType,
-  type AiSettings,
-} from '@/lib/ai';
+import { withAiRoute, AI_ROUTE_DEFAULTS, type AiRouteContext } from '@/lib/with-ai-route';
+import { apiOk } from '@/lib/api-response';
 import { GROUNDING_PROMPT_SUFFIX } from '@/lib/anti-hallucination';
 import { getCachedAI, setCachedAI } from '@/lib/ai-cache';
-import { checkRateLimit, rateLimitResponse } from '@/lib/rate-limit';
-import { logger } from '@/lib/logger';
 
-export const runtime = 'nodejs';
-export const dynamic = 'force-dynamic';
+export const { runtime, dynamic } = AI_ROUTE_DEFAULTS;
 export const maxDuration = 60;
+
+// eslint-disable-next-line @typescript-eslint/no-empty-object-type
+interface MarginGuardianProInput {}
 
 // --- Config -------------------------------------------------------------
 
@@ -77,7 +71,25 @@ interface AiMarginResponse {
   alerts?: AiMarginEntry[];
 }
 
-// --- Helpers -------------------------------------------------------------
+interface ItemAlertComputed {
+  item: HeldItemData;
+  carryingCost: number;
+  breakevenPrice: number;
+  currentMargin: number;
+  marginStatus: MarginStatus;
+}
+
+interface AllSummary {
+  totalItems: number;
+  healthy: number;
+  warning: number;
+  atRisk: number;
+  loss: number;
+  potentialLossEur: number;
+  avgMargin: number;
+}
+
+// --- Pure helpers (extracted OUTSIDE handler) ----------------------------
 
 function classifyMargin(pct: number): MarginStatus {
   if (pct < 0) return 'LOSS';
@@ -227,168 +239,92 @@ function validateAiAlert(
   };
 }
 
-// --- Handler -------------------------------------------------------------
-
-export async function GET(req: NextRequest) {
-  return handleMarginGuardian(req);
-}
-export async function POST(req: NextRequest) {
-  return handleMarginGuardian(req);
-}
-
-async function handleMarginGuardian(req: NextRequest) {
-  try {
-    const rl = checkRateLimit(req, 'ai-margin-guardian-pro', 20);
-    if (!rl.allowed) return rateLimitResponse(rl);
-
-    const today = new Date();
-
-    // 1) HELD trades with linked Listing
-    const heldTrades = await db.trade.findMany({
-      where: { status: 'held' },
-      select: {
-        id: true,
-        title: true,
-        category: true,
-        buyPrice: true,
-        buyFees: true,
-        buyDate: true,
-        listing: {
-          select: {
-            aiEstimatedValue: true,
-            dealScore: true,
-          },
-        },
-      },
-      take: 1000,
-    });
-
-    if (heldTrades.length === 0) {
-      return NextResponse.json({
-        ok: true,
-        alerts: [],
-        summary: {
-          totalItems: 0,
-          healthy: 0,
-          warning: 0,
-          atRisk: 0,
-          loss: 0,
-          potentialLossEur: 0,
-          avgMargin: 0,
-        },
-        aiUsed: false,
-        message: 'Ni held inventarja — Margin Guardian nima kaj čuvati.',
-      });
-    }
-
-    const items: HeldItemData[] = heldTrades.map(t => {
-      const estValue =
-        t.listing?.aiEstimatedValue && t.listing.aiEstimatedValue > 0
-          ? t.listing.aiEstimatedValue
-          : Math.round(t.buyPrice * 1.2);
-      const daysHeld = Math.max(
-        0,
-        Math.round((today.getTime() - t.buyDate.getTime()) / (1000 * 60 * 60 * 24)),
-      );
-      return {
-        tradeId: t.id,
-        title: t.title,
-        category: (t.category || 'drugo').trim().toLowerCase(),
-        buyPrice: t.buyPrice,
-        buyFees: t.buyFees,
-        aiEstimatedValue: estValue,
-        daysHeld,
-      };
-    });
-
-    // 2) Compute per-item margin health
-    const itemAlerts = items.map(item => {
-      const carryingCost = Math.round(item.daysHeld * CARRYING_COST_PER_DAY_EUR);
-      const breakevenPrice = Math.round(item.buyPrice + item.buyFees + carryingCost);
-      const currentMargin = item.buyPrice > 0
-        ? Math.round(((item.aiEstimatedValue - item.buyPrice - item.buyFees - carryingCost) / item.buyPrice) * 100)
-        : 0;
-      const marginStatus = classifyMargin(currentMargin);
-      return { item, carryingCost, breakevenPrice, currentMargin, marginStatus };
-    });
-
-    // 3) Filter to items that need attention (WARNING / AT_RISK / LOSS)
-    const atRisk = itemAlerts.filter(x => x.marginStatus !== 'HEALTHY');
-
-    // Compute summary across ALL held items (not just at-risk) — for transparency
-    const allSummary = (() => {
-      let healthy = 0, warning = 0, atRisk = 0, loss = 0, marginSum = 0;
-      let potentialLossEur = 0;
-      for (const x of itemAlerts) {
-        if (x.marginStatus === 'HEALTHY') healthy++;
-        else if (x.marginStatus === 'WARNING') warning++;
-        else if (x.marginStatus === 'AT_RISK') atRisk++;
-        else if (x.marginStatus === 'LOSS') loss++;
-        marginSum += x.currentMargin;
-        if (x.currentMargin < 0) potentialLossEur += Math.abs(x.currentMargin * x.item.buyPrice / 100);
-      }
-      return {
-        totalItems: items.length,
-        healthy,
-        warning,
-        atRisk,
-        loss,
-        potentialLossEur: Math.round(potentialLossEur),
-        avgMargin: items.length > 0 ? Math.round(marginSum / items.length) : 0,
-      };
-    })();
-
-    // Empty at-risk state — all margins healthy
-    if (atRisk.length === 0) {
-      return NextResponse.json({
-        ok: true,
-        alerts: [],
-        summary: allSummary,
-        aiUsed: false,
-        message: `Vsi held item-i imajo zdrav margin (>=15%). ${items.length} item-ov pod nadzorom.`,
-      });
-    }
-
-    // 4) AI cache — keyed by held item IDs
-    const sortedIds = items.map(i => i.tradeId).sort().join(',');
-    const cacheKey = `margin-guardian-pro:${JSON.stringify(sortedIds)}`;
-    const cached = getCachedAI<{
-      alerts: MarginAlert[];
-      summary: typeof allSummary;
-    }>(cacheKey);
-    if (cached) {
-      return NextResponse.json({
-        ok: true,
-        ...cached,
-        cached: true,
-        aiUsed: true,
-      });
-    }
-
-    // 5) Build AI prompt with grounding
-    const settings = await getSettingsRow();
-    const aiSettings: AiSettings = {
-      provider: settings.aiProvider as AiProviderType,
-      baseUrl: settings.aiBaseUrl,
-      apiKey: settings.aiApiKey,
-      model: settings.aiModel,
-      fallbackProvider: (settings.fallbackProvider || '') as AiProviderType | '',
-      fallbackBaseUrl: settings.fallbackBaseUrl || '',
-      fallbackApiKey: settings.fallbackApiKey || '',
-      fallbackModel: settings.fallbackModel || '',
+/** Map raw trade rows to HeldItemData items (with fallback estValue). */
+function computeHeldItems(
+  heldTrades: Array<{
+    id: string;
+    title: string;
+    category: string | null;
+    buyPrice: number;
+    buyFees: number;
+    buyDate: Date;
+    listing: { aiEstimatedValue: number | null; dealScore: number | null } | null;
+  }>,
+  today: Date,
+): HeldItemData[] {
+  return heldTrades.map(t => {
+    const estValue =
+      t.listing?.aiEstimatedValue && t.listing.aiEstimatedValue > 0
+        ? t.listing.aiEstimatedValue
+        : Math.round(t.buyPrice * 1.2);
+    const daysHeld = Math.max(
+      0,
+      Math.round((today.getTime() - t.buyDate.getTime()) / (1000 * 60 * 60 * 24)),
+    );
+    return {
+      tradeId: t.id,
+      title: t.title,
+      category: (t.category || 'drugo').trim().toLowerCase(),
+      buyPrice: t.buyPrice,
+      buyFees: t.buyFees,
+      aiEstimatedValue: estValue,
+      daysHeld,
     };
+  });
+}
 
-    // Cap to 60 at-risk items for AI (the rest use deterministic fallback)
-    const aiSlice = atRisk.slice(0, 60);
+/** Compute per-item margin health (carrying cost, breakeven, margin status). */
+function computeItemAlerts(items: HeldItemData[]): ItemAlertComputed[] {
+  return items.map(item => {
+    const carryingCost = Math.round(item.daysHeld * CARRYING_COST_PER_DAY_EUR);
+    const breakevenPrice = Math.round(item.buyPrice + item.buyFees + carryingCost);
+    const currentMargin = item.buyPrice > 0
+      ? Math.round(((item.aiEstimatedValue - item.buyPrice - item.buyFees - carryingCost) / item.buyPrice) * 100)
+      : 0;
+    const marginStatus = classifyMargin(currentMargin);
+    return { item, carryingCost, breakevenPrice, currentMargin, marginStatus };
+  });
+}
 
-    const itemsBlock = aiSlice
-      .map(
-        (x, i) =>
-          `${i + 1}. tradeId=${x.item.tradeId} | ${x.item.title} | kategorija=${x.item.category} | nabava=${x.item.buyPrice}€ | estValue=${x.item.aiEstimatedValue}€ | dneviHeld=${x.item.daysHeld} | carrying=${x.carryingCost}€ | breakeven=${x.breakevenPrice}€ | margin=${x.currentMargin}% | status=${x.marginStatus}`,
-      )
-      .join('\n');
+/** Compute summary across ALL held items (not just at-risk) — for transparency. */
+function computeAllSummary(
+  items: HeldItemData[],
+  itemAlerts: ItemAlertComputed[],
+): AllSummary {
+  let healthy = 0, warning = 0, atRisk = 0, loss = 0, marginSum = 0;
+  let potentialLossEur = 0;
+  for (const x of itemAlerts) {
+    if (x.marginStatus === 'HEALTHY') healthy++;
+    else if (x.marginStatus === 'WARNING') warning++;
+    else if (x.marginStatus === 'AT_RISK') atRisk++;
+    else if (x.marginStatus === 'LOSS') loss++;
+    marginSum += x.currentMargin;
+    if (x.currentMargin < 0) potentialLossEur += Math.abs(x.currentMargin * x.item.buyPrice / 100);
+  }
+  return {
+    totalItems: items.length,
+    healthy,
+    warning,
+    atRisk,
+    loss,
+    potentialLossEur: Math.round(potentialLossEur),
+    avgMargin: items.length > 0 ? Math.round(marginSum / items.length) : 0,
+  };
+}
 
-    const prompt = `Si finančni analitik za trading firmo na oglasnih platformah (Bolha, Vinted, mobile.de).
+/** Build items block for AI prompt from the at-risk slice. */
+function buildItemsBlock(aiSlice: ItemAlertComputed[]): string {
+  return aiSlice
+    .map(
+      (x, i) =>
+        `${i + 1}. tradeId=${x.item.tradeId} | ${x.item.title} | kategorija=${x.item.category} | nabava=${x.item.buyPrice}€ | estValue=${x.item.aiEstimatedValue}€ | dneviHeld=${x.item.daysHeld} | carrying=${x.carryingCost}€ | breakeven=${x.breakevenPrice}€ | margin=${x.currentMargin}% | status=${x.marginStatus}`,
+    )
+    .join('\n');
+}
+
+/** Build the AI prompt with grounding suffix. */
+function buildPrompt(aiSlice: ItemAlertComputed[], itemsBlock: string): string {
+  return `Si finančni analitik za trading firmo na oglasnih platformah (Bolha, Vinted, mobile.de).
 Skeniraj HELD inventar z ogroženim margin-om in priporoči takojšnje ukrepanje.
 
 CILJNI MARGIN: ${Math.round(TARGET_MARGIN * 100)}%
@@ -425,6 +361,115 @@ Odgovori LE z JSON:
     }
   ]
 }${GROUNDING_PROMPT_SUFFIX}`;
+}
+
+/** Sort alerts by urgency (IMMEDIATE first), then by margin ascending. */
+function sortAlerts(alerts: MarginAlert[]): MarginAlert[] {
+  const urgencyRank: Record<Urgency, number> = { IMMEDIATE: 0, THIS_WEEK: 1, THIS_MONTH: 2 };
+  return alerts.sort(
+    (a, b) => urgencyRank[a.urgency] - urgencyRank[b.urgency] || a.currentMargin - b.currentMargin,
+  );
+}
+
+// --- Handler -------------------------------------------------------------
+
+const marginGuardianProHandler = withAiRoute<MarginGuardianProInput>({
+  endpoint: '/api/ai/margin-guardian-pro',
+  maxDuration: 60,
+  enforceBudget: true, // AI klic — preveri budget
+  method: 'GET', // Endpoint sprejema GET + POST — bypass POST-only check
+
+  parseBody: async (req) => {
+    await req.json().catch(() => ({}));
+    return {};
+  },
+
+  handler: async (_input, ctx: AiRouteContext) => {
+    const { db, callAi, parseAi, logger } = ctx;
+
+    const today = new Date();
+
+    // 1) HELD trades with linked Listing
+    const heldTrades = await db.trade.findMany({
+      where: { status: 'held' },
+      select: {
+        id: true,
+        title: true,
+        category: true,
+        buyPrice: true,
+        buyFees: true,
+        buyDate: true,
+        listing: {
+          select: {
+            aiEstimatedValue: true,
+            dealScore: true,
+          },
+        },
+      },
+      take: 1000,
+    });
+
+    if (heldTrades.length === 0) {
+      return apiOk({
+        ok: true,
+        alerts: [],
+        summary: {
+          totalItems: 0,
+          healthy: 0,
+          warning: 0,
+          atRisk: 0,
+          loss: 0,
+          potentialLossEur: 0,
+          avgMargin: 0,
+        },
+        aiUsed: false,
+        message: 'Ni held inventarja — Margin Guardian nima kaj čuvati.',
+      });
+    }
+
+    const items = computeHeldItems(heldTrades, today);
+
+    // 2) Compute per-item margin health
+    const itemAlerts = computeItemAlerts(items);
+
+    // 3) Filter to items that need attention (WARNING / AT_RISK / LOSS)
+    const atRisk = itemAlerts.filter(x => x.marginStatus !== 'HEALTHY');
+
+    // Compute summary across ALL held items (not just at-risk) — for transparency
+    const allSummary = computeAllSummary(items, itemAlerts);
+
+    // Empty at-risk state — all margins healthy
+    if (atRisk.length === 0) {
+      return apiOk({
+        ok: true,
+        alerts: [],
+        summary: allSummary,
+        aiUsed: false,
+        message: `Vsi held item-i imajo zdrav margin (>=15%). ${items.length} item-ov pod nadzorom.`,
+      });
+    }
+
+    // 4) AI cache — keyed by held item IDs
+    const sortedIds = items.map(i => i.tradeId).sort().join(',');
+    const cacheKey = `margin-guardian-pro:${JSON.stringify(sortedIds)}`;
+    const cached = getCachedAI<{
+      alerts: MarginAlert[];
+      summary: AllSummary;
+    }>(cacheKey);
+    if (cached) {
+      return apiOk({
+        ok: true,
+        ...cached,
+        cached: true,
+        aiUsed: true,
+      });
+    }
+
+    // 5) Build AI prompt with grounding
+    // Cap to 60 at-risk items for AI (the rest use deterministic fallback)
+    const aiSlice = atRisk.slice(0, 60);
+    const itemsBlock = buildItemsBlock(aiSlice);
+    const prompt = buildPrompt(aiSlice, itemsBlock);
 
     let aiUsed = false;
     let alerts: MarginAlert[] = [];
@@ -433,8 +478,8 @@ Odgovori LE z JSON:
     const itemById = new Map<string, HeldItemData>(aiSlice.map(x => [x.item.tradeId, x.item]));
 
     try {
-      const raw = await callProviderForRaw(aiSettings, prompt);
-      const parsed = parseJsonLooseExported(raw) as AiMarginResponse | null;
+      const raw = await callAi(prompt);
+      const parsed = parseAi(raw) as AiMarginResponse | null;
       if (parsed && Array.isArray(parsed.alerts)) {
         for (const rawEntry of parsed.alerts) {
           const tid = String(rawEntry.tradeId || '').trim();
@@ -462,24 +507,21 @@ Odgovori LE z JSON:
     }
 
     // Sort alerts by urgency (IMMEDIATE first)
-    const urgencyRank: Record<Urgency, number> = { IMMEDIATE: 0, THIS_WEEK: 1, THIS_MONTH: 2 };
-    alerts.sort(
-      (a, b) => urgencyRank[a.urgency] - urgencyRank[b.urgency] || a.currentMargin - b.currentMargin,
-    );
+    alerts = sortAlerts(alerts);
 
     // 7) Cache (6h TTL) — only when AI was used
     if (aiUsed) {
       setCachedAI(cacheKey, { alerts, summary: allSummary });
     }
 
-    return NextResponse.json({
+    return apiOk({
       ok: true,
       alerts,
       summary: allSummary,
       aiUsed,
     });
-  } catch (err: any) {
-    logger.error('/api/ai/margin-guardian-pro', 'handler failed', err);
-    return NextResponse.json({ error: err?.message ?? 'Napaka' }, { status: 500 });
-  }
-}
+  },
+});
+
+export const GET = marginGuardianProHandler;
+export const POST = marginGuardianProHandler;

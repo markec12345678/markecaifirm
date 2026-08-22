@@ -1,4 +1,4 @@
-// v7.60: Demand Forecast AI — AI napoved katere kategorije bodo v visokem
+// v7.60 / v8.96.3-batch4: Demand Forecast AI — AI napoved katere kategorije bodo v visokem
 // povpraševanju naslednji mesec glede na zgodovinsko pogostost oglasov,
 // sell-through rate in sezonske vzorce. Pomaga odločiti KAM investirati
 // kapital.
@@ -7,24 +7,18 @@
 //
 // GET+POST /api/ai/demand-forecast
 // (AI-enhanced + grounding + anti-hallucination + 6h cache + deterministic fallback)
+// Refaktoriran z withAiRoute helperjem (v8.96.3) + enforceBudget guard.
 
-import { NextRequest, NextResponse } from 'next/server';
-import { db } from '@/lib/db';
-import { getSettingsRow } from '@/lib/pipeline';
-import {
-  callProviderForRaw,
-  parseJsonLooseExported,
-  type AiProviderType,
-  type AiSettings,
-} from '@/lib/ai';
+import { withAiRoute, AI_ROUTE_DEFAULTS, type AiRouteContext } from '@/lib/with-ai-route';
+import { apiOk } from '@/lib/api-response';
 import { GROUNDING_PROMPT_SUFFIX } from '@/lib/anti-hallucination';
 import { getCachedAI, setCachedAI } from '@/lib/ai-cache';
-import { checkRateLimit, rateLimitResponse } from '@/lib/rate-limit';
-import { logger } from '@/lib/logger';
 
-export const runtime = 'nodejs';
-export const dynamic = 'force-dynamic';
+export const { runtime, dynamic } = AI_ROUTE_DEFAULTS;
 export const maxDuration = 60;
+
+// eslint-disable-next-line @typescript-eslint/no-empty-object-type
+interface DemandForecastInput {}
 
 // --- Types ---------------------------------------------------------------
 
@@ -291,217 +285,139 @@ function validateAiForecast(
   };
 }
 
-// --- Handler -------------------------------------------------------------
+// --- Category aggregation (čisti helper) --------------------------------
 
-export async function GET(req: NextRequest) {
-  return handleDemandForecast(req);
+interface CatAgg {
+  listingsNow4w: number;
+  listingsPrev4w: number;
+  soldCount: number;
+  priceSumNow4w: number;
+  priceCountNow4w: number;
+  priceSumPrev4w: number;
+  priceCountPrev4w: number;
+  totalListings: number;
 }
-export async function POST(req: NextRequest) {
-  return handleDemandForecast(req);
+
+interface ListingRow {
+  title: string;
+  price: number | null;
+  firstSeenAt: Date;
+  monitor: { tags: string | null } | null;
 }
 
-async function handleDemandForecast(req: NextRequest) {
-  try {
-    const rl = checkRateLimit(req, 'ai-demand-forecast', 20);
-    if (!rl.allowed) return rateLimitResponse(rl);
+interface SoldTradeRow {
+  title: string;
+  category: string | null;
+  sellPrice: number | null;
+  sellDate: Date | null;
+  buyPrice: number | null;
+}
 
-    const today = new Date();
-    const cutoff90 = new Date(today.getTime() - 90 * 24 * 60 * 60 * 1000);
-    const cutoff56 = new Date(today.getTime() - 56 * 24 * 60 * 60 * 1000); // 8 weeks ago (prev4w start)
-    const cutoff28 = new Date(today.getTime() - 28 * 24 * 60 * 60 * 1000); // 4 weeks ago (now4w start)
+function aggregateCategoryStats(
+  listings: ListingRow[],
+  soldTrades: SoldTradeRow[],
+  today: Date,
+  cutoff28: Date,
+  cutoff56: Date,
+): CategoryStats[] {
+  const agg = new Map<string, CatAgg>();
 
-    // 1) Listings from last 90 days — group by category (extract from title or monitor.tags)
-    const listings = await db.listing.findMany({
-      where: { firstSeenAt: { gte: cutoff90 } },
-      select: {
-        title: true,
-        price: true,
-        firstSeenAt: true,
-        monitor: { select: { tags: true } },
-      },
-      take: 5000,
-    });
-
-    // 2) SOLD trades from last 90 days — group by category
-    const soldTrades = await db.trade.findMany({
-      where: {
-        status: 'sold',
-        sellDate: { gte: cutoff90 },
-      },
-      select: {
-        title: true,
-        category: true,
-        sellPrice: true,
-        sellDate: true,
-        buyPrice: true,
-      },
-      take: 5000,
-    });
-
-    // 3) Compute per-category stats
-    interface CatAgg {
-      listingsNow4w: number;
-      listingsPrev4w: number;
-      soldCount: number;
-      priceSumNow4w: number;
-      priceCountNow4w: number;
-      priceSumPrev4w: number;
-      priceCountPrev4w: number;
-      totalListings: number;
+  function bump(cat: string, init: Partial<CatAgg> = {}) {
+    const key = cat || 'drugo';
+    if (!agg.has(key)) {
+      agg.set(key, {
+        listingsNow4w: 0,
+        listingsPrev4w: 0,
+        soldCount: 0,
+        priceSumNow4w: 0,
+        priceCountNow4w: 0,
+        priceSumPrev4w: 0,
+        priceCountPrev4w: 0,
+        totalListings: 0,
+        ...init,
+      });
     }
-    const agg = new Map<string, CatAgg>();
+    return agg.get(key)!;
+  }
 
-    function bump(cat: string, init: Partial<CatAgg> = {}) {
-      const key = cat || 'drugo';
-      if (!agg.has(key)) {
-        agg.set(key, {
-          listingsNow4w: 0,
-          listingsPrev4w: 0,
-          soldCount: 0,
-          priceSumNow4w: 0,
-          priceCountNow4w: 0,
-          priceSumPrev4w: 0,
-          priceCountPrev4w: 0,
-          totalListings: 0,
-          ...init,
-        });
+  for (const l of listings) {
+    const fromTitle = inferCategoryFromTitle(l.title);
+    const tags = l.monitor?.tags || '';
+    const tag = tags.split(',').map(t => t.trim().toLowerCase()).find(Boolean);
+    const category = (fromTitle || tag || 'drugo').toLowerCase();
+    const a = bump(category);
+    a.totalListings += 1;
+    const seen = l.firstSeenAt;
+    const price = l.price ?? 0;
+    if (seen >= cutoff28) {
+      a.listingsNow4w += 1;
+      if (price > 0) {
+        a.priceSumNow4w += price;
+        a.priceCountNow4w += 1;
       }
-      return agg.get(key)!;
-    }
-
-    for (const l of listings) {
-      const fromTitle = inferCategoryFromTitle(l.title);
-      const tags = l.monitor?.tags || '';
-      const tag = tags.split(',').map(t => t.trim().toLowerCase()).find(Boolean);
-      const category = (fromTitle || tag || 'drugo').toLowerCase();
-      const a = bump(category);
-      a.totalListings += 1;
-      const seen = l.firstSeenAt;
-      const price = l.price ?? 0;
-      if (seen >= cutoff28) {
-        a.listingsNow4w += 1;
-        if (price > 0) {
-          a.priceSumNow4w += price;
-          a.priceCountNow4w += 1;
-        }
-      } else if (seen >= cutoff56) {
-        a.listingsPrev4w += 1;
-        if (price > 0) {
-          a.priceSumPrev4w += price;
-          a.priceCountPrev4w += 1;
-        }
+    } else if (seen >= cutoff56) {
+      a.listingsPrev4w += 1;
+      if (price > 0) {
+        a.priceSumPrev4w += price;
+        a.priceCountPrev4w += 1;
       }
     }
+  }
 
-    for (const t of soldTrades) {
-      const fromTitle = inferCategoryFromTitle(t.title);
-      const category = (fromTitle || t.category || 'drugo').toLowerCase();
-      const a = bump(category);
-      a.soldCount += 1;
-    }
+  for (const t of soldTrades) {
+    const fromTitle = inferCategoryFromTitle(t.title);
+    const category = (fromTitle || t.category || 'drugo').toLowerCase();
+    const a = bump(category);
+    a.soldCount += 1;
+  }
 
-    const stats: CategoryStats[] = [];
-    for (const [category, a] of agg.entries()) {
-      const listingsNow4w = a.listingsNow4w;
-      const listingsPrev4w = a.listingsPrev4w;
-      // per week (4 weeks in window)
-      const listingFrequency = listingsNow4w / 4;
-      const frequencyTrend = classifyFrequencyTrend(listingsNow4w, listingsPrev4w);
+  const stats: CategoryStats[] = [];
+  for (const [category, a] of agg.entries()) {
+    const listingsNow4w = a.listingsNow4w;
+    const listingsPrev4w = a.listingsPrev4w;
+    // per week (4 weeks in window)
+    const listingFrequency = listingsNow4w / 4;
+    const frequencyTrend = classifyFrequencyTrend(listingsNow4w, listingsPrev4w);
 
-      const avgPriceNow = a.priceCountNow4w > 0 ? a.priceSumNow4w / a.priceCountNow4w : 0;
-      const avgPricePrev = a.priceCountPrev4w > 0 ? a.priceSumPrev4w / a.priceCountPrev4w : 0;
-      const avgPriceTrend = classifyPriceTrend(avgPriceNow, avgPricePrev);
+    const avgPriceNow = a.priceCountNow4w > 0 ? a.priceSumNow4w / a.priceCountNow4w : 0;
+    const avgPricePrev = a.priceCountPrev4w > 0 ? a.priceSumPrev4w / a.priceCountPrev4w : 0;
+    const avgPriceTrend = classifyPriceTrend(avgPriceNow, avgPricePrev);
 
-      const sellThroughRate =
-        a.totalListings > 0 ? Math.min(100, (a.soldCount / a.totalListings) * 100) : 0;
+    const sellThroughRate =
+      a.totalListings > 0 ? Math.min(100, (a.soldCount / a.totalListings) * 100) : 0;
 
-      stats.push({
-        category,
-        listingFrequency,
-        frequencyTrend,
-        sellThroughRate,
-        avgPrice: Math.round(avgPriceNow),
-        avgPriceTrend,
-        seasonalityScore: seasonalityScoreFor(category, today),
-        totalListings: a.totalListings,
-        soldTrades: a.soldCount,
-      });
-    }
+    stats.push({
+      category,
+      listingFrequency,
+      frequencyTrend,
+      sellThroughRate,
+      avgPrice: Math.round(avgPriceNow),
+      avgPriceTrend,
+      seasonalityScore: seasonalityScoreFor(category, today),
+      totalListings: a.totalListings,
+      soldTrades: a.soldCount,
+    });
+  }
 
-    // Empty state
-    if (stats.length === 0) {
-      return NextResponse.json({
-        ok: true,
-        categories: [],
-        summary: {
-          totalCategories: 0,
-          highDemand: 0,
-          bestOpportunity: null,
-          worstCategory: null,
-          reasoning: 'Ni zgodovinskih oglasov v zadnjih 90 dneh — napoved povpraševanja ni mogoča.',
-        },
-        aiUsed: false,
-        message: 'Ni zgodovinskih oglasov v zadnjih 90 dneh — napoved povpraševanja ni mogoča.',
-      });
-    }
+  return stats;
+}
 
-    // Sort by sellThrough × frequency (signal-weighted)
-    stats.sort(
-      (a, b) =>
-        b.sellThroughRate * 0.5 + b.listingFrequency * 2 -
-        (a.sellThroughRate * 0.5 + a.listingFrequency * 2),
-    );
-    // Take top 15 categories to send to AI
-    const topStats = stats.slice(0, 15);
+// --- Prompt builder + summary (čisti helperji) --------------------------
 
-    // 4) AI cache — keyed by current month (refreshes ~daily due to 6h TTL)
-    const currentMonth = `${today.getFullYear()}-${today.getMonth() + 1}`;
-    const cacheKey = `demand-forecast:${currentMonth}`;
-    const cached = getCachedAI<{
-      categories: CategoryForecast[];
-      summary: {
-        totalCategories: number;
-        highDemand: number;
-        bestOpportunity: string | null;
-        worstCategory: string | null;
-        reasoning: string;
-      };
-    }>(cacheKey);
-    if (cached) {
-      return NextResponse.json({
-        ok: true,
-        ...cached,
-        cached: true,
-        aiUsed: true,
-      });
-    }
+function buildPrompt(topStats: CategoryStats[], today: Date): string {
+  const statsBlock = topStats
+    .map(
+      (s, i) =>
+        `${i + 1}. kategorija=${s.category} | listings4w=${Math.round(s.listingFrequency * 4)} | sellThrough=${Math.round(s.sellThroughRate)}% | avgPrice=${s.avgPrice}€ | trend=${s.frequencyTrend} | seasonality=${s.seasonalityScore}/100`,
+    )
+    .join('\n');
 
-    // 5) Build AI prompt with grounding
-    const settings = await getSettingsRow();
-    const aiSettings: AiSettings = {
-      provider: settings.aiProvider as AiProviderType,
-      baseUrl: settings.aiBaseUrl,
-      apiKey: settings.aiApiKey,
-      model: settings.aiModel,
-      fallbackProvider: (settings.fallbackProvider || '') as AiProviderType | '',
-      fallbackBaseUrl: settings.fallbackBaseUrl || '',
-      fallbackApiKey: settings.fallbackApiKey || '',
-      fallbackModel: settings.fallbackModel || '',
-    };
+  // Provide explicit numeric fields for the AI to be deterministic about
+  const aiStatsBlock = topStats
+    .map(s => `${s.category}|${Math.round(s.sellThroughRate)}|${s.frequencyTrend}|${s.avgPriceTrend}|${s.seasonalityScore}|${Math.round(s.listingFrequency * 10) / 10}`)
+    .join('\n');
 
-    const statsBlock = topStats
-      .map(
-        (s, i) =>
-          `${i + 1}. kategorija=${s.category} | listings4w=${Math.round(s.listingFrequency * 4)} | sellThrough=${Math.round(s.sellThroughRate)}% | avgPrice=${s.avgPrice}€ | trend=${s.frequencyTrend} | seasonality=${s.seasonalityScore}/100`,
-      )
-      .join('\n');
-
-    // Provide explicit numeric fields for the AI to be deterministic about
-    const aiStatsBlock = topStats
-      .map(s => `${s.category}|${Math.round(s.sellThroughRate)}|${s.frequencyTrend}|${s.avgPriceTrend}|${s.seasonalityScore}|${Math.round(s.listingFrequency * 10) / 10}`)
-      .join('\n');
-
-    const prompt = `Si analitik povpraševanja na slovenskem/EU oglasnem trgu (Bolha, Vinted, mobile.de, Kleinanzeigen).
+  return `Si analitik povpraševanja na slovenskem/EU oglasnem trgu (Bolha, Vinted, mobile.de, Kleinanzeigen).
 Napovej povpraševanje za naslednjih 30 dni za vsako kategorijo.
 
 ZGODOVINSKI PODATKI (zadnjih 8 tednov, razdeljeno na "now4w" in "prev4w"):
@@ -539,13 +455,149 @@ Odgovori LE z JSON:
     }
   ]
 }${GROUNDING_PROMPT_SUFFIX}`;
+}
+
+interface DemandForecastSummary {
+  totalCategories: number;
+  highDemand: number;
+  bestOpportunity: string | null;
+  worstCategory: string | null;
+  reasoning: string;
+}
+
+function buildSummary(
+  topForecasts: CategoryForecast[],
+): DemandForecastSummary {
+  const highDemand = topForecasts.filter(f => f.predictedDemand === 'HIGH').length;
+  const bestOpportunity =
+    topForecasts.find(f => f.recommendedAction === 'BUY_MORE')?.category ?? null;
+  const worstCategory =
+    [...topForecasts]
+      .reverse()
+      .find(f => f.recommendedAction === 'AVOID' || f.recommendedAction === 'REDUCE')?.category ??
+    null;
+  return {
+    totalCategories: topForecasts.length,
+    highDemand,
+    bestOpportunity,
+    worstCategory,
+    reasoning:
+      highDemand > 0
+        ? `${highDemand} kategorij v HIGH povpraševanju. Najboljša priložnost: ${bestOpportunity ?? '—'}.`
+        : 'Brez kategorij v HIGH povpraševanju — prestavi kapital v zdrave kategorije.',
+  };
+}
+
+// --- Handler -------------------------------------------------------------
+
+const demandForecastHandler = withAiRoute<DemandForecastInput>({
+  endpoint: '/api/ai/demand-forecast',
+  maxDuration: 60,
+  enforceBudget: true, // AI klic — preveri budget
+  method: 'GET', // Endpoint sprejema GET + POST — bypass POST-only check
+
+  parseBody: async (req) => {
+    await req.json().catch(() => ({}));
+    return {};
+  },
+
+  // No validateInput — body ignored
+  handler: async (_input, ctx: AiRouteContext) => {
+    const { db, callAi, parseAi, logger } = ctx;
+
+    const today = new Date();
+    const cutoff90 = new Date(today.getTime() - 90 * 24 * 60 * 60 * 1000);
+    const cutoff56 = new Date(today.getTime() - 56 * 24 * 60 * 60 * 1000); // 8 weeks ago (prev4w start)
+    const cutoff28 = new Date(today.getTime() - 28 * 24 * 60 * 60 * 1000); // 4 weeks ago (now4w start)
+
+    // 1) Listings from last 90 days — group by category (extract from title or monitor.tags)
+    const listings = await db.listing.findMany({
+      where: { firstSeenAt: { gte: cutoff90 } },
+      select: {
+        title: true,
+        price: true,
+        firstSeenAt: true,
+        monitor: { select: { tags: true } },
+      },
+      take: 5000,
+    });
+
+    // 2) SOLD trades from last 90 days — group by category
+    const soldTrades = await db.trade.findMany({
+      where: {
+        status: 'sold',
+        sellDate: { gte: cutoff90 },
+      },
+      select: {
+        title: true,
+        category: true,
+        sellPrice: true,
+        sellDate: true,
+        buyPrice: true,
+      },
+      take: 5000,
+    });
+
+    // 3) Compute per-category stats
+    const stats = aggregateCategoryStats(
+      listings as ListingRow[],
+      soldTrades as SoldTradeRow[],
+      today,
+      cutoff28,
+      cutoff56,
+    );
+
+    // Empty state
+    if (stats.length === 0) {
+      return apiOk({
+        ok: true,
+        categories: [],
+        summary: {
+          totalCategories: 0,
+          highDemand: 0,
+          bestOpportunity: null,
+          worstCategory: null,
+          reasoning: 'Ni zgodovinskih oglasov v zadnjih 90 dneh — napoved povpraševanja ni mogoča.',
+        },
+        aiUsed: false,
+        message: 'Ni zgodovinskih oglasov v zadnjih 90 dneh — napoved povpraševanja ni mogoča.',
+      });
+    }
+
+    // Sort by sellThrough × frequency (signal-weighted)
+    stats.sort(
+      (a, b) =>
+        b.sellThroughRate * 0.5 + b.listingFrequency * 2 -
+        (a.sellThroughRate * 0.5 + a.listingFrequency * 2),
+    );
+    // Take top 15 categories to send to AI
+    const topStats = stats.slice(0, 15);
+
+    // 4) AI cache — keyed by current month (refreshes ~daily due to 6h TTL)
+    const currentMonth = `${today.getFullYear()}-${today.getMonth() + 1}`;
+    const cacheKey = `demand-forecast:${currentMonth}`;
+    const cached = getCachedAI<{
+      categories: CategoryForecast[];
+      summary: DemandForecastSummary;
+    }>(cacheKey);
+    if (cached) {
+      return apiOk({
+        ok: true,
+        ...cached,
+        cached: true,
+        aiUsed: true,
+      });
+    }
+
+    // 5) Build AI prompt with grounding + call AI (try/catch z graceful fallback)
+    const prompt = buildPrompt(topStats, today);
 
     let aiUsed = false;
     let forecasts: CategoryForecast[] = [];
 
     try {
-      const raw = await callProviderForRaw(aiSettings, prompt);
-      const parsed = parseJsonLooseExported(raw) as AiForecastResponse | null;
+      const raw = await callAi(prompt);
+      const parsed = parseAi(raw) as AiForecastResponse | null;
       if (parsed && Array.isArray(parsed.categories)) {
         const statsByCat = new Map<string, CategoryStats>(topStats.map(s => [s.category, s]));
         for (const rawEntry of parsed.categories) {
@@ -589,39 +641,21 @@ Odgovori LE z JSON:
     // Cap to 10 categories
     const topForecasts = forecasts.slice(0, 10);
 
-    const highDemand = topForecasts.filter(f => f.predictedDemand === 'HIGH').length;
-    const bestOpportunity =
-      topForecasts.find(f => f.recommendedAction === 'BUY_MORE')?.category ?? null;
-    const worstCategory =
-      [...topForecasts]
-        .reverse()
-        .find(f => f.recommendedAction === 'AVOID' || f.recommendedAction === 'REDUCE')?.category ??
-      null;
-
-    const summary = {
-      totalCategories: topForecasts.length,
-      highDemand,
-      bestOpportunity,
-      worstCategory,
-      reasoning:
-        highDemand > 0
-          ? `${highDemand} kategorij v HIGH povpraševanju. Najboljša priložnost: ${bestOpportunity ?? '—'}.`
-          : 'Brez kategorij v HIGH povpraševanju — prestavi kapital v zdrave kategorije.',
-    };
+    const summary = buildSummary(topForecasts);
 
     // 7) Cache (6h TTL) — only when AI was used
     if (aiUsed) {
       setCachedAI(cacheKey, { categories: topForecasts, summary });
     }
 
-    return NextResponse.json({
+    return apiOk({
       ok: true,
       categories: topForecasts,
       summary,
       aiUsed,
     });
-  } catch (err: any) {
-    logger.error('/api/ai/demand-forecast', 'handler failed', err);
-    return NextResponse.json({ error: err?.message ?? 'Napaka' }, { status: 500 });
-  }
-}
+  },
+});
+
+export const GET = demandForecastHandler;
+export const POST = demandForecastHandler;

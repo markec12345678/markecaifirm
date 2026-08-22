@@ -1,23 +1,37 @@
-// v6.52: AI Listing Performance Tracker v2 — ML predikcija konverzije z demographic data
+// v6.52 / v8.96.3-batch2: AI Listing Performance Tracker v2 — ML predikcija konverzije z demographic data
+// Refaktoriran z withAiRoute helperjem (v8.96.3) + enforceBudget guard.
+//
 // POST /api/ai/listing-performance-tracker-v2
 // Body: { tradeId?: string, days?: number }
 // Returns: { ok, tracker: { listings, mlPredictions, demographicFactors, channelAnalysis, timeSeries, recommendations, summary } }
 
-import { NextRequest, NextResponse } from 'next/server';
-import { db } from '@/lib/db';
-import { getSettingsRow } from '@/lib/pipeline';
-import { callProviderForRaw, parseJsonLooseExported, type AiProviderType, type AiSettings } from '@/lib/ai';
-import { logger } from '@/lib/logger';
+import { withAiRoute, AI_ROUTE_DEFAULTS, type AiRouteContext } from '@/lib/with-ai-route';
+import { apiOk } from '@/lib/api-response';
 
-export const runtime = 'nodejs';
-export const dynamic = 'force-dynamic';
+export const { runtime, dynamic } = AI_ROUTE_DEFAULTS;
 export const maxDuration = 90;
 
-export async function POST(req: NextRequest) {
-  try {
+interface ListingPerformanceTrackerInput {
+  tradeId: string | null;
+  days: number;
+}
+
+export const POST = withAiRoute<ListingPerformanceTrackerInput>({
+  endpoint: '/api/ai/listing-performance-tracker-v2',
+  maxDuration: 90,
+  enforceBudget: true,
+
+  parseBody: async (req) => {
     const body = await req.json().catch(() => ({}));
-    const tradeId = body?.tradeId ? String(body.tradeId) : null;
-    const days = Math.max(7, Math.min(365, Number(body?.days ?? 30)));
+    return {
+      tradeId: body?.tradeId ? String(body.tradeId) : null,
+      days: Math.max(7, Math.min(365, Number(body?.days ?? 30))),
+    };
+  },
+
+  handler: async (input, ctx: AiRouteContext) => {
+    const { db, callAi, parseAi } = ctx;
+    const { tradeId, days } = input;
 
     const since = new Date(Date.now() - days * 24 * 60 * 60 * 1000);
 
@@ -47,17 +61,8 @@ export async function POST(req: NextRequest) {
     });
 
     if (heldTrades.length === 0) {
-      return NextResponse.json({ ok: true, tracker: null, message: 'Ni held tradeov za ML analizo.' });
+      return apiOk({ ok: true, tracker: null, message: 'Ni held tradeov za ML analizo.' });
     }
-
-    const settings = await getSettingsRow();
-    const aiSettings: AiSettings = {
-      provider: settings.aiProvider as AiProviderType,
-      baseUrl: settings.aiBaseUrl, apiKey: settings.aiApiKey, model: settings.aiModel,
-      fallbackProvider: (settings.fallbackProvider || '') as AiProviderType | '',
-      fallbackBaseUrl: settings.fallbackBaseUrl || '', fallbackApiKey: settings.fallbackApiKey || '',
-      fallbackModel: settings.fallbackModel || '',
-    };
 
     // 3. Agregacija sold data za ML features
     const soldByCategory = new Map<string, { count: number; avgDaysToSell: number; avgMarginPct: number; avgSellPrice: number }>();
@@ -143,7 +148,19 @@ export async function POST(req: NextRequest) {
       `- ${src}: ${v.count}x sold, ${v.avgDaysToSell}d povp, ${v.avgSellPrice}€ povp cena`
     ).join('\n');
 
-    const prompt = `Si AI listing performance tracker v2 z ML modelom za predikcijo konverzije.
+    const prompt = buildPrompt(itemsStr, catStr, srcStr, itemsWithFeatures.length, days);
+    const raw = await callAi(prompt);
+    const parsed: any = parseAi(raw);
+    const tracker = transformTracker(parsed, itemsWithFeatures);
+
+    return apiOk({ ok: true, tracker });
+  },
+});
+
+// --- Pomožne funkcije (čiste, testabilne) --------------------------------
+
+function buildPrompt(itemsStr: string, catStr: string, srcStr: string, itemsLength: number, days: number): string {
+  return `Si AI listing performance tracker v2 z ML modelom za predikcijo konverzije.
 Uporabi historical data in ML features za napovedovanje performance za vsak held item.
 
 ML FEATURES (inputs):
@@ -152,7 +169,7 @@ ML FEATURES (inputs):
 - Source stats: avgDaysToSell
 - Demographic: location (city/region), source (bolha/facebook/vinted/ebay)
 
-HELD INVENTAR (${itemsWithFeatures.length}):
+HELD INVENTAR (${itemsLength}):
 ${itemsStr}
 
 HISTORICAL DATA (zadnjih ${days} dni):
@@ -249,115 +266,118 @@ Odgovori LE z JSON:
     "performance_prediction_score": <number 0-100>
   }
 }`;
+}
 
-    let raw = '';
-    try { raw = await callProviderForRaw(aiSettings, prompt); }
-    catch (primaryError: any) {
-      if (aiSettings.fallbackProvider && aiSettings.fallbackModel) {
-        const fb: AiSettings = { provider: aiSettings.fallbackProvider, baseUrl: aiSettings.fallbackBaseUrl || '', apiKey: aiSettings.fallbackApiKey || '', model: aiSettings.fallbackModel };
-        raw = await callProviderForRaw(fb, prompt);
-      } else { return NextResponse.json({ error: primaryError?.message ?? 'AI failed' }, { status: 500 }); }
-    }
+interface ItemWithFeatures {
+  id: string;
+  title: string;
+  category: string;
+  cost: number;
+  estValue: number;
+  daysHeld: number;
+  dealScore: number;
+  aiScore: number;
+  aiRisk: number;
+  location: string;
+  source: string;
+  catAvgDaysToSell: number;
+  catAvgMarginPct: number;
+  catAvgSellPrice: number;
+  sourceAvgDaysToSell: number;
+}
 
-    const parsed: any = parseJsonLooseExported(raw);
-    const validIds = new Set(itemsWithFeatures.map(i => i.id));
+function transformTracker(parsed: any, itemsWithFeatures: ItemWithFeatures[]): any {
+  const validIds = new Set(itemsWithFeatures.map(i => i.id));
 
-    const tracker = {
-      insights: String(parsed?.insights ?? '').slice(0, 500),
-      listings: (parsed?.listings || [])
-        .filter((l: any) => validIds.has(String(l?.id ?? '')))
-        .slice(0, 25)
-        .map((l: any) => {
-          const orig = itemsWithFeatures.find(x => x.id === String(l?.id));
-          return {
-            tradeId: String(l?.id ?? ''),
-            title: String(l?.title ?? orig?.title ?? '').slice(0, 150),
-            mlPredictions: {
-              conversionProbability30dPct: Math.max(0, Math.min(100, Number(l?.ml_predictions?.conversion_probability_30d_pct ?? 50))),
-              predictedTimeToSellDays: Math.max(0, Math.round(Number(l?.ml_predictions?.predicted_time_to_sell_days ?? orig?.catAvgDaysToSell ?? 14))),
-              predictedFinalPriceEur: Math.max(0, Math.round(Number(l?.ml_predictions?.predicted_final_price_eur ?? orig?.estValue ?? 0))),
-              predictedProfitEur: Math.round(Number(l?.ml_predictions?.predicted_profit_eur ?? 0)),
-              predictedInquiries7d: Math.max(0, Math.round(Number(l?.ml_predictions?.predicted_inquiries_7d ?? 0))),
-              predictedViews7d: Math.max(0, Math.round(Number(l?.ml_predictions?.predicted_views_7d ?? 0))),
-              bounceRatePct: Math.max(0, Math.min(100, Number(l?.ml_predictions?.bounce_rate_pct ?? 60))),
-              negotiationProbabilityPct: Math.max(0, Math.min(100, Number(l?.ml_predictions?.negotiation_probability_pct ?? 30))),
-            },
-            demographicMatch: {
-              locationImpactScore: Math.max(0, Math.min(100, Number(l?.demographic_match?.location_impact_score ?? 50))),
-              bestSource: ['bolha', 'facebook', 'vinted', 'ebay', 'kleinanzeigen'].includes(String(l?.demographic_match?.best_source)) ? String(l.demographic_match.best_source) : 'bolha',
-              audienceMatchScore: Math.max(0, Math.min(100, Number(l?.demographic_match?.audience_match_score ?? 50))),
-              seasonalFitScore: Math.max(0, Math.min(100, Number(l?.demographic_match?.seasonal_fit_score ?? 50))),
-            },
-            performanceForecast: {
-              next7dViews: Math.max(0, Math.round(Number(l?.performance_forecast?.next_7d_views ?? 0))),
-              next7dInquiries: Math.max(0, Math.round(Number(l?.performance_forecast?.next_7d_inquiries ?? 0))),
-              next30dSaleProbabilityPct: Math.max(0, Math.min(100, Number(l?.performance_forecast?.next_30d_sale_probability_pct ?? 30))),
-              next90dSaleProbabilityPct: Math.max(0, Math.min(100, Number(l?.performance_forecast?.next_90d_sale_probability_pct ?? 60))),
-            },
-            riskFactors: (l?.risk_factors || []).slice(0, 5).map((r: any) => String(r).slice(0, 150)),
-            opportunityFactors: (l?.opportunity_factors || []).slice(0, 5).map((o: any) => String(o).slice(0, 150)),
-            recommendedAction: ['hold', 'price_adjust', 'relist', 'cross_post', 'bundle', 'liquidate'].includes(String(l?.recommended_action)) ? String(l.recommended_action) : 'hold',
-            confidenceScore: Math.max(0, Math.min(100, Number(l?.confidence_score ?? 50))),
-          };
-        }),
-      mlPredictions: (parsed?.ml_predictions || []).slice(0, 8).map((m: any) => ({
-        metric: ['conversion_probability', 'time_to_sell', 'final_price', 'profit', 'inquiry_rate', 'view_rate', 'bounce_rate', 'negotiation_probability'].includes(String(m?.metric)) ? String(m.metric) : 'conversion_probability',
-        avgValue: Math.round(Number(m?.avg_value ?? 0) * 100) / 100,
-        minValue: Math.round(Number(m?.min_value ?? 0) * 100) / 100,
-        maxValue: Math.round(Number(m?.max_value ?? 0) * 100) / 100,
-        stdDev: Math.round(Number(m?.std_dev ?? 0) * 100) / 100,
-        trend: ['up', 'down', 'stable'].includes(String(m?.trend)) ? String(m.trend) : 'stable',
-        confidencePct: Math.max(0, Math.min(100, Number(m?.confidence_pct ?? 50))),
-      })),
-      demographicFactors: (parsed?.demographic_factors || []).slice(0, 4).map((d: any) => ({
-        factor: ['location_impact', 'source_preference', 'audience_match', 'seasonal_fit'].includes(String(d?.factor)) ? String(d.factor) : 'audience_match',
-        weight: Math.max(0, Math.min(100, Number(d?.weight ?? 50))),
-        description: String(d?.description ?? '').slice(0, 200),
-        bestPerformingValue: String(d?.best_performing_value ?? '').slice(0, 150),
-        impactOnConversionPct: Math.round(Number(d?.impact_on_conversion_pct ?? 0)),
-      })),
-      channelAnalysis: (parsed?.channel_analysis || []).slice(0, 5).map((c: any) => ({
-        source: ['bolha', 'facebook', 'vinted', 'ebay', 'kleinanzeigen'].includes(String(c?.source)) ? String(c.source) : 'bolha',
-        itemsRecommended: Math.max(0, Number(c?.items_recommended ?? 0)),
-        avgPredictedConversionPct: Math.max(0, Math.min(100, Number(c?.avg_predicted_conversion_pct ?? 30))),
-        avgPredictedDaysToSell: Math.round(Number(c?.avg_predicted_days_to_sell ?? 14)),
-        totalPredictedRevenueEur: Math.round(Number(c?.total_predicted_revenue_eur ?? 0)),
-        feePct: Math.round(Number(c?.fee_pct ?? 0)),
-        netRevenueEur: Math.round(Number(c?.net_revenue_eur ?? 0)),
-      })),
-      timeSeries: (parsed?.time_series || []).slice(0, 30).map((t: any) => ({
-        dayOffset: Math.max(0, Math.min(30, Number(t?.day_offset ?? 0))),
-        predictedViews: Math.max(0, Math.round(Number(t?.predicted_views ?? 0))),
-        predictedInquiries: Math.max(0, Math.round(Number(t?.predicted_inquiries ?? 0))),
-        predictedSales: Math.max(0, Math.round(Number(t?.predicted_sales ?? 0))),
-        cumulativeRevenueEur: Math.round(Number(t?.cumulative_revenue_eur ?? 0)),
-      })),
-      recommendations: (parsed?.recommendations || []).slice(0, 6).map((r: any) => ({
-        action: String(r?.action ?? '').slice(0, 300),
-        priority: ['high', 'medium', 'low'].includes(String(r?.priority)) ? String(r.priority) : 'medium',
-        itemsAffected: Math.max(0, Number(r?.items_affected ?? 0)),
-        expectedRevenueImpactEur: Math.round(Number(r?.expected_revenue_impact_eur ?? 0)),
-        implementationEffort: ['low', 'medium', 'high'].includes(String(r?.implementation_effort)) ? String(r.implementation_effort) : 'medium',
-      })),
-      summary: {
-        totalItemsAnalyzed: itemsWithFeatures.length,
-        avgConversionProbability30dPct: Math.max(0, Math.min(100, Number(parsed?.summary?.avg_conversion_probability_30d_pct ?? 50))),
-        avgPredictedTimeToSellDays: Math.max(0, Math.round(Number(parsed?.summary?.avg_predicted_time_to_sell_days ?? 14))),
-        totalPredictedRevenueEur: Math.round(Number(parsed?.summary?.total_predicted_revenue_eur ?? 0)),
-        totalPredictedProfitEur: Math.round(Number(parsed?.summary?.total_predicted_profit_eur ?? 0)),
-        bestPerformingSource: ['bolha', 'facebook', 'vinted', 'ebay', 'kleinanzeigen'].includes(String(parsed?.summary?.best_performing_source)) ? String(parsed.summary.best_performing_source) : 'bolha',
-        bestPerformingCategory: String(parsed?.summary?.best_performing_category ?? '').slice(0, 150),
-        mlConfidenceAvgPct: Math.max(0, Math.min(100, Number(parsed?.summary?.ml_confidence_avg_pct ?? 50))),
-        biggestOpportunityId: String(parsed?.summary?.biggest_opportunity_id ?? '').slice(0, 50),
-        biggestRiskId: String(parsed?.summary?.biggest_risk_id ?? '').slice(0, 50),
-        performancePredictionScore: Math.max(0, Math.min(100, Number(parsed?.summary?.performance_prediction_score ?? 50))),
-      },
-    };
-
-    const today = new Date().toISOString().slice(0, 10);
-    if (settings.aiCallsDate !== today) { await db.settings.update({ where: { id: 'singleton' }, data: { aiCallsDate: today, aiCallsToday: 1 } }); }
-    else { await db.settings.update({ where: { id: 'singleton' }, data: { aiCallsToday: { increment: 1 } } }); }
-
-    return NextResponse.json({ ok: true, tracker });
-  } catch (e: any) { logger.error("/api/ai/listing-performance-tracker-v2", "POST handler failed", e); return NextResponse.json({ error: e?.message ?? 'Napaka' }, { status: 500 }); }
+  return {
+    insights: String(parsed?.insights ?? '').slice(0, 500),
+    listings: (parsed?.listings || [])
+      .filter((l: any) => validIds.has(String(l?.id ?? '')))
+      .slice(0, 25)
+      .map((l: any) => {
+        const orig = itemsWithFeatures.find(x => x.id === String(l?.id));
+        return {
+          tradeId: String(l?.id ?? ''),
+          title: String(l?.title ?? orig?.title ?? '').slice(0, 150),
+          mlPredictions: {
+            conversionProbability30dPct: Math.max(0, Math.min(100, Number(l?.ml_predictions?.conversion_probability_30d_pct ?? 50))),
+            predictedTimeToSellDays: Math.max(0, Math.round(Number(l?.ml_predictions?.predicted_time_to_sell_days ?? orig?.catAvgDaysToSell ?? 14))),
+            predictedFinalPriceEur: Math.max(0, Math.round(Number(l?.ml_predictions?.predicted_final_price_eur ?? orig?.estValue ?? 0))),
+            predictedProfitEur: Math.round(Number(l?.ml_predictions?.predicted_profit_eur ?? 0)),
+            predictedInquiries7d: Math.max(0, Math.round(Number(l?.ml_predictions?.predicted_inquiries_7d ?? 0))),
+            predictedViews7d: Math.max(0, Math.round(Number(l?.ml_predictions?.predicted_views_7d ?? 0))),
+            bounceRatePct: Math.max(0, Math.min(100, Number(l?.ml_predictions?.bounce_rate_pct ?? 60))),
+            negotiationProbabilityPct: Math.max(0, Math.min(100, Number(l?.ml_predictions?.negotiation_probability_pct ?? 30))),
+          },
+          demographicMatch: {
+            locationImpactScore: Math.max(0, Math.min(100, Number(l?.demographic_match?.location_impact_score ?? 50))),
+            bestSource: ['bolha', 'facebook', 'vinted', 'ebay', 'kleinanzeigen'].includes(String(l?.demographic_match?.best_source)) ? String(l.demographic_match.best_source) : 'bolha',
+            audienceMatchScore: Math.max(0, Math.min(100, Number(l?.demographic_match?.audience_match_score ?? 50))),
+            seasonalFitScore: Math.max(0, Math.min(100, Number(l?.demographic_match?.seasonal_fit_score ?? 50))),
+          },
+          performanceForecast: {
+            next7dViews: Math.max(0, Math.round(Number(l?.performance_forecast?.next_7d_views ?? 0))),
+            next7dInquiries: Math.max(0, Math.round(Number(l?.performance_forecast?.next_7d_inquiries ?? 0))),
+            next30dSaleProbabilityPct: Math.max(0, Math.min(100, Number(l?.performance_forecast?.next_30d_sale_probability_pct ?? 30))),
+            next90dSaleProbabilityPct: Math.max(0, Math.min(100, Number(l?.performance_forecast?.next_90d_sale_probability_pct ?? 60))),
+          },
+          riskFactors: (l?.risk_factors || []).slice(0, 5).map((r: any) => String(r).slice(0, 150)),
+          opportunityFactors: (l?.opportunity_factors || []).slice(0, 5).map((o: any) => String(o).slice(0, 150)),
+          recommendedAction: ['hold', 'price_adjust', 'relist', 'cross_post', 'bundle', 'liquidate'].includes(String(l?.recommended_action)) ? String(l.recommended_action) : 'hold',
+          confidenceScore: Math.max(0, Math.min(100, Number(l?.confidence_score ?? 50))),
+        };
+      }),
+    mlPredictions: (parsed?.ml_predictions || []).slice(0, 8).map((m: any) => ({
+      metric: ['conversion_probability', 'time_to_sell', 'final_price', 'profit', 'inquiry_rate', 'view_rate', 'bounce_rate', 'negotiation_probability'].includes(String(m?.metric)) ? String(m.metric) : 'conversion_probability',
+      avgValue: Math.round(Number(m?.avg_value ?? 0) * 100) / 100,
+      minValue: Math.round(Number(m?.min_value ?? 0) * 100) / 100,
+      maxValue: Math.round(Number(m?.max_value ?? 0) * 100) / 100,
+      stdDev: Math.round(Number(m?.std_dev ?? 0) * 100) / 100,
+      trend: ['up', 'down', 'stable'].includes(String(m?.trend)) ? String(m.trend) : 'stable',
+      confidencePct: Math.max(0, Math.min(100, Number(m?.confidence_pct ?? 50))),
+    })),
+    demographicFactors: (parsed?.demographic_factors || []).slice(0, 4).map((d: any) => ({
+      factor: ['location_impact', 'source_preference', 'audience_match', 'seasonal_fit'].includes(String(d?.factor)) ? String(d.factor) : 'audience_match',
+      weight: Math.max(0, Math.min(100, Number(d?.weight ?? 50))),
+      description: String(d?.description ?? '').slice(0, 200),
+      bestPerformingValue: String(d?.best_performing_value ?? '').slice(0, 150),
+      impactOnConversionPct: Math.round(Number(d?.impact_on_conversion_pct ?? 0)),
+    })),
+    channelAnalysis: (parsed?.channel_analysis || []).slice(0, 5).map((c: any) => ({
+      source: ['bolha', 'facebook', 'vinted', 'ebay', 'kleinanzeigen'].includes(String(c?.source)) ? String(c.source) : 'bolha',
+      itemsRecommended: Math.max(0, Number(c?.items_recommended ?? 0)),
+      avgPredictedConversionPct: Math.max(0, Math.min(100, Number(c?.avg_predicted_conversion_pct ?? 30))),
+      avgPredictedDaysToSell: Math.round(Number(c?.avg_predicted_days_to_sell ?? 14)),
+      totalPredictedRevenueEur: Math.round(Number(c?.total_predicted_revenue_eur ?? 0)),
+      feePct: Math.round(Number(c?.fee_pct ?? 0)),
+      netRevenueEur: Math.round(Number(c?.net_revenue_eur ?? 0)),
+    })),
+    timeSeries: (parsed?.time_series || []).slice(0, 30).map((t: any) => ({
+      dayOffset: Math.max(0, Math.min(30, Number(t?.day_offset ?? 0))),
+      predictedViews: Math.max(0, Math.round(Number(t?.predicted_views ?? 0))),
+      predictedInquiries: Math.max(0, Math.round(Number(t?.predicted_inquiries ?? 0))),
+      predictedSales: Math.max(0, Math.round(Number(t?.predicted_sales ?? 0))),
+      cumulativeRevenueEur: Math.round(Number(t?.cumulative_revenue_eur ?? 0)),
+    })),
+    recommendations: (parsed?.recommendations || []).slice(0, 6).map((r: any) => ({
+      action: String(r?.action ?? '').slice(0, 300),
+      priority: ['high', 'medium', 'low'].includes(String(r?.priority)) ? String(r.priority) : 'medium',
+      itemsAffected: Math.max(0, Number(r?.items_affected ?? 0)),
+      expectedRevenueImpactEur: Math.round(Number(r?.expected_revenue_impact_eur ?? 0)),
+      implementationEffort: ['low', 'medium', 'high'].includes(String(r?.implementation_effort)) ? String(r.implementation_effort) : 'medium',
+    })),
+    summary: {
+      totalItemsAnalyzed: itemsWithFeatures.length,
+      avgConversionProbability30dPct: Math.max(0, Math.min(100, Number(parsed?.summary?.avg_conversion_probability_30d_pct ?? 50))),
+      avgPredictedTimeToSellDays: Math.max(0, Math.round(Number(parsed?.summary?.avg_predicted_time_to_sell_days ?? 14))),
+      totalPredictedRevenueEur: Math.round(Number(parsed?.summary?.total_predicted_revenue_eur ?? 0)),
+      totalPredictedProfitEur: Math.round(Number(parsed?.summary?.total_predicted_profit_eur ?? 0)),
+      bestPerformingSource: ['bolha', 'facebook', 'vinted', 'ebay', 'kleinanzeigen'].includes(String(parsed?.summary?.best_performing_source)) ? String(parsed.summary.best_performing_source) : 'bolha',
+      bestPerformingCategory: String(parsed?.summary?.best_performing_category ?? '').slice(0, 150),
+      mlConfidenceAvgPct: Math.max(0, Math.min(100, Number(parsed?.summary?.ml_confidence_avg_pct ?? 50))),
+      biggestOpportunityId: String(parsed?.summary?.biggest_opportunity_id ?? '').slice(0, 50),
+      biggestRiskId: String(parsed?.summary?.biggest_risk_id ?? '').slice(0, 50),
+      performancePredictionScore: Math.max(0, Math.min(100, Number(parsed?.summary?.performance_prediction_score ?? 50))),
+    },
+  };
 }
