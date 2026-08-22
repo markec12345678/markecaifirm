@@ -1,23 +1,66 @@
-// v6.53: AI Profit Distribution Optimizer — optimizira porazdelitev dobička (reinvest/reserve/cash/tax)
+// v6.53 / v8.96.1-batch4: AI Profit Distribution Optimizer — optimizira porazdelitev dobička (reinvest/reserve/cash/tax)
+// Refaktoriran z withAiRoute helperjem (v8.94) + enforceBudget guard.
+//
 // POST /api/ai/profit-distribution-optimizer
 // Body: { monthsAhead?: number, totalProfitEur?: number }
 // Returns: { ok, optimizer: { current, distribution, scenarios, taxPlan, reinvestPlan, summary } }
 
-import { NextRequest, NextResponse } from 'next/server';
-import { db } from '@/lib/db';
-import { getSettingsRow } from '@/lib/pipeline';
-import { callProviderForRaw, parseJsonLooseExported, type AiProviderType, type AiSettings } from '@/lib/ai';
-import { logger } from '@/lib/logger';
+import { withAiRoute, AI_ROUTE_DEFAULTS, type AiRouteContext } from '@/lib/with-ai-route';
+import { apiOk } from '@/lib/api-response';
 
-export const runtime = 'nodejs';
-export const dynamic = 'force-dynamic';
+export const { runtime, dynamic } = AI_ROUTE_DEFAULTS;
 export const maxDuration = 90;
 
-export async function POST(req: NextRequest) {
-  try {
+interface ProfitDistributionOptimizerInput {
+  monthsAhead: number;
+  totalProfitEur: number;
+}
+
+interface SoldTradeRow {
+  buyPrice: number;
+  buyFees: number | null;
+  sellPrice: number | null;
+  sellFees: number | null;
+  sellDate: Date | null;
+  buyDate: Date;
+}
+
+interface HeldTradeRow {
+  buyPrice: number;
+  buyFees: number | null;
+  buyDate: Date;
+  category: string;
+  listing: { aiEstimatedValue: number | null } | null;
+}
+
+interface PromptData {
+  monthsAhead: number;
+  profit30d: number;
+  profit90d: number;
+  profit12m: number;
+  monthlyAvgProfit: number;
+  capitalInvested: number;
+  inventoryValue: number;
+  totalProfit: number;
+}
+
+export const POST = withAiRoute<ProfitDistributionOptimizerInput>({
+  endpoint: '/api/ai/profit-distribution-optimizer',
+  maxDuration: 90,
+  enforceBudget: true,
+
+  parseBody: async (req) => {
     const body = await req.json().catch(() => ({}));
-    const monthsAhead = Math.max(1, Math.min(24, Number(body?.monthsAhead ?? 12)));
-    const providedProfit = Number(body?.totalProfitEur ?? 0);
+    return {
+      monthsAhead: Math.max(1, Math.min(24, Number(body?.monthsAhead ?? 12))),
+      totalProfitEur: Number(body?.totalProfitEur ?? 0),
+    };
+  },
+
+  // No validateInput — defaults handle clamping
+  handler: async (input, ctx: AiRouteContext) => {
+    const { db, callAi, parseAi } = ctx;
+    const { monthsAhead, totalProfitEur: providedProfit } = input;
 
     // 1. Pridobi sold trades za profit analizo (zadnji 90 dni)
     const since90 = new Date(Date.now() - 90 * 24 * 60 * 60 * 1000);
@@ -47,16 +90,10 @@ export async function POST(req: NextRequest) {
     });
 
     if (soldTrades90.length === 0 && heldTrades.length === 0) {
-      return NextResponse.json({ ok: true, optimizer: null, message: 'Ni podatkov za profit distribution analizo.' });
+      return apiOk({ ok: true, optimizer: null, message: 'Ni podatkov za profit distribution analizo.' });
     }
 
     // 3. Compute profit metrics
-    const calcProfit = (trades: typeof soldTrades90) => trades.reduce((s, t) => {
-      const cost = t.buyPrice + (t.buyFees ?? 0);
-      const revenue = (t.sellPrice ?? 0) - (t.sellFees ?? 0);
-      return s + (revenue - cost);
-    }, 0);
-
     const profit90d = calcProfit(soldTrades90);
     const profit30d = calcProfit(soldTrades30);
     const profit12m = calcProfit(soldTrades12m);
@@ -66,26 +103,44 @@ export async function POST(req: NextRequest) {
     const capitalInvested = heldTrades.reduce((s, t) => s + t.buyPrice + (t.buyFees ?? 0), 0);
     const inventoryValue = heldTrades.reduce((s, t) => s + (t.listing?.aiEstimatedValue ?? t.buyPrice * 1.25), 0);
 
-    const settings = await getSettingsRow();
-    const aiSettings: AiSettings = {
-      provider: settings.aiProvider as AiProviderType,
-      baseUrl: settings.aiBaseUrl, apiKey: settings.aiApiKey, model: settings.aiModel,
-      fallbackProvider: (settings.fallbackProvider || '') as AiProviderType | '',
-      fallbackBaseUrl: settings.fallbackBaseUrl || '', fallbackApiKey: settings.fallbackApiKey || '',
-      fallbackModel: settings.fallbackModel || '',
-    };
+    const prompt = buildPrompt({
+      monthsAhead,
+      profit30d, profit90d, profit12m,
+      monthlyAvgProfit, capitalInvested, inventoryValue, totalProfit,
+    });
+    const raw = await callAi(prompt);
 
-    const prompt = `Si AI profit distribution optimizer za slovenske oglasne platforme.
-Optimiziraj porazdelitev dobička čez ${monthsAhead} mesecev za maksimalno rast in varnost.
+    const parsed: any = parseAi(raw);
+    const optimizer = transformOptimizer(parsed, {
+      monthlyAvgProfit, capitalInvested, inventoryValue, totalProfit,
+    });
+
+    return apiOk({ ok: true, optimizer });
+  },
+});
+
+// --- Pomožne funkcije (čiste, testabilne) --------------------------------
+
+function calcProfit(trades: SoldTradeRow[]): number {
+  return trades.reduce((s, t) => {
+    const cost = t.buyPrice + (t.buyFees ?? 0);
+    const revenue = (t.sellPrice ?? 0) - (t.sellFees ?? 0);
+    return s + (revenue - cost);
+  }, 0);
+}
+
+function buildPrompt(d: PromptData): string {
+  return `Si AI profit distribution optimizer za slovenske oglasne platforme.
+Optimiziraj porazdelitev dobička čez ${d.monthsAhead} mesecev za maksimalno rast in varnost.
 
 FINANČNI PODATKI:
-- Profit v zadnjih 30 dneh: ${Math.round(profit30d)}€
-- Profit v zadnjih 90 dneh: ${Math.round(profit90d)}€
-- Profit v zadnjih 12 mesecih: ${Math.round(profit12m)}€
-- Povprečni mesečni profit: ${Math.round(monthlyAvgProfit)}€
-- Trenutno vložen kapital: ${Math.round(capitalInvested)}€
-- Trenutna vrednost inventarja: ${Math.round(inventoryValue)}€
-- Pričakovan profit v ${monthsAhead} mesecih: ${totalProfit}€
+- Profit v zadnjih 30 dneh: ${Math.round(d.profit30d)}€
+- Profit v zadnjih 90 dneh: ${Math.round(d.profit90d)}€
+- Profit v zadnjih 12 mesecih: ${Math.round(d.profit12m)}€
+- Povprečni mesečni profit: ${Math.round(d.monthlyAvgProfit)}€
+- Trenutno vložen kapital: ${Math.round(d.capitalInvested)}€
+- Trenutna vrednost inventarja: ${Math.round(d.inventoryValue)}€
+- Pričakovan profit v ${d.monthsAhead} mesecih: ${d.totalProfit}€
 
 Porazdelitvene kategorije:
 1. REINVEST (vloži nazaj v inventar) — za rast business-a
@@ -187,102 +242,90 @@ Odgovori LE z JSON:
     "distribution_efficiency_score": <number 0-100>
   }
 }`;
+}
 
-    let raw = '';
-    try { raw = await callProviderForRaw(aiSettings, prompt); }
-    catch (primaryError: any) {
-      if (aiSettings.fallbackProvider && aiSettings.fallbackModel) {
-        const fb: AiSettings = { provider: aiSettings.fallbackProvider, baseUrl: aiSettings.fallbackBaseUrl || '', apiKey: aiSettings.fallbackApiKey || '', model: aiSettings.fallbackModel };
-        raw = await callProviderForRaw(fb, prompt);
-      } else { return NextResponse.json({ error: primaryError?.message ?? 'AI failed' }, { status: 500 }); }
-    }
-
-    const parsed: any = parseJsonLooseExported(raw);
-
-    const optimizer = {
-      insights: String(parsed?.insights ?? '').slice(0, 500),
-      current: {
-        monthlyAvgProfitEur: Math.round(Number(parsed?.current?.monthly_avg_profit_eur ?? monthlyAvgProfit)),
-        annualProjectedProfitEur: Math.round(Number(parsed?.current?.annual_projected_profit_eur ?? monthlyAvgProfit * 12)),
-        capitalInvestedEur: Math.round(Number(parsed?.current?.capital_invested_eur ?? capitalInvested)),
-        inventoryValueEur: Math.round(Number(parsed?.current?.inventory_value_eur ?? inventoryValue)),
-        currentDistributionPct: {
-          reinvest: Math.max(0, Math.min(100, Number(parsed?.current?.current_distribution_pct?.reinvest ?? 30))),
-          reserve: Math.max(0, Math.min(100, Number(parsed?.current?.current_distribution_pct?.reserve ?? 20))),
-          cashOut: Math.max(0, Math.min(100, Number(parsed?.current?.current_distribution_pct?.cash_out ?? 25))),
-          taxReserve: Math.max(0, Math.min(100, Number(parsed?.current?.current_distribution_pct?.tax_reserve ?? 25))),
-          emergency: Math.max(0, Math.min(100, Number(parsed?.current?.current_distribution_pct?.emergency ?? 0))),
-          growth: Math.max(0, Math.min(100, Number(parsed?.current?.current_distribution_pct?.growth ?? 0))),
-        },
+function transformOptimizer(
+  parsed: any,
+  ctx: { monthlyAvgProfit: number; capitalInvested: number; inventoryValue: number; totalProfit: number }
+) {
+  const { monthlyAvgProfit, capitalInvested, inventoryValue, totalProfit } = ctx;
+  return {
+    insights: String(parsed?.insights ?? '').slice(0, 500),
+    current: {
+      monthlyAvgProfitEur: Math.round(Number(parsed?.current?.monthly_avg_profit_eur ?? monthlyAvgProfit)),
+      annualProjectedProfitEur: Math.round(Number(parsed?.current?.annual_projected_profit_eur ?? monthlyAvgProfit * 12)),
+      capitalInvestedEur: Math.round(Number(parsed?.current?.capital_invested_eur ?? capitalInvested)),
+      inventoryValueEur: Math.round(Number(parsed?.current?.inventory_value_eur ?? inventoryValue)),
+      currentDistributionPct: {
+        reinvest: Math.max(0, Math.min(100, Number(parsed?.current?.current_distribution_pct?.reinvest ?? 30))),
+        reserve: Math.max(0, Math.min(100, Number(parsed?.current?.current_distribution_pct?.reserve ?? 20))),
+        cashOut: Math.max(0, Math.min(100, Number(parsed?.current?.current_distribution_pct?.cash_out ?? 25))),
+        taxReserve: Math.max(0, Math.min(100, Number(parsed?.current?.current_distribution_pct?.tax_reserve ?? 25))),
+        emergency: Math.max(0, Math.min(100, Number(parsed?.current?.current_distribution_pct?.emergency ?? 0))),
+        growth: Math.max(0, Math.min(100, Number(parsed?.current?.current_distribution_pct?.growth ?? 0))),
       },
-      distribution: (parsed?.distribution || []).slice(0, 8).map((d: any) => ({
-        category: ['reinvest', 'reserve', 'cash_out', 'tax_reserve', 'emergency_fund', 'growth_fund', 'debt_repayment', 'education'].includes(String(d?.category)) ? String(d.category) : 'reinvest',
-        recommendedPct: Math.max(0, Math.min(100, Number(d?.recommended_pct ?? 0))),
-        amountEur: Math.round(Number(d?.amount_eur ?? 0)),
-        monthlyAmountEur: Math.round(Number(d?.monthly_amount_eur ?? 0)),
-        purpose: String(d?.purpose ?? '').slice(0, 200),
-        rationale: String(d?.rationale ?? '').slice(0, 300),
-        expectedGrowthContributionPct: Math.round(Number(d?.expected_growth_contribution_pct ?? 0)),
-        riskLevel: ['low', 'medium', 'high'].includes(String(d?.risk_level)) ? String(d.risk_level) : 'medium',
-        timeHorizon: ['short', 'medium', 'long'].includes(String(d?.time_horizon)) ? String(d.time_horizon) : 'medium',
-      })),
-      scenarios: (parsed?.scenarios || []).slice(0, 4).map((s: any) => ({
-        scenario: ['aggressive_growth', 'balanced', 'conservative', 'cash_focus'].includes(String(s?.scenario)) ? String(s.scenario) : 'balanced',
-        reinvestPct: Math.max(0, Math.min(100, Number(s?.reinvest_pct ?? 30))),
-        reservePct: Math.max(0, Math.min(100, Number(s?.reserve_pct ?? 20))),
-        cashOutPct: Math.max(0, Math.min(100, Number(s?.cash_out_pct ?? 25))),
-        taxPct: Math.max(0, Math.min(100, Number(s?.tax_pct ?? 25))),
-        growthPct: Math.max(0, Math.min(100, Number(s?.growth_pct ?? 0))),
-        projected12mValueEur: Math.round(Number(s?.projected_12m_value_eur ?? 0)),
-        projected24mValueEur: Math.round(Number(s?.projected_24m_value_eur ?? 0)),
-        projected36mValueEur: Math.round(Number(s?.projected_36m_value_eur ?? 0)),
-        annualGrowthRatePct: Math.round(Number(s?.annual_growth_rate_pct ?? 0) * 10) / 10,
-        riskScore: Math.max(0, Math.min(100, Number(s?.risk_score ?? 50))),
-        bestFor: String(s?.best_for ?? '').slice(0, 200),
-      })),
-      taxPlan: (parsed?.tax_plan || []).slice(0, 3).map((t: any) => ({
-        year: Math.max(2024, Number(t?.year ?? 2026)),
-        grossProfitEur: Math.round(Number(t?.gross_profit_eur ?? 0)),
-        estimatedTaxEur: Math.round(Number(t?.estimated_tax_eur ?? 0)),
-        netProfitEur: Math.round(Number(t?.net_profit_eur ?? 0)),
-        effectiveTaxRatePct: Math.round(Number(t?.effective_tax_rate_pct ?? 25) * 10) / 10,
-        deductionsAvailable: (t?.deductions_available || []).slice(0, 5).map((d: any) => String(d).slice(0, 150)),
-        taxOptimizationTips: (t?.tax_optimization_tips || []).slice(0, 5).map((tip: any) => String(tip).slice(0, 200)),
-      })),
-      reinvestPlan: (parsed?.reinvest_plan || []).slice(0, 12).map((r: any) => ({
-        month: Math.max(1, Math.min(12, Number(r?.month ?? 1))),
-        reinvestAmountEur: Math.round(Number(r?.reinvest_amount_eur ?? 0)),
-        categoryFocus: String(r?.category_focus ?? '').slice(0, 150),
-        expectedInventoryCount: Math.max(0, Number(r?.expected_inventory_count ?? 0)),
-        expectedMonthlyProfitIncreaseEur: Math.round(Number(r?.expected_monthly_profit_increase_eur ?? 0)),
-        cumulativeCapitalEur: Math.round(Number(r?.cumulative_capital_eur ?? 0)),
-      })),
-      recommendations: (parsed?.recommendations || []).slice(0, 6).map((r: any) => ({
-        action: String(r?.action ?? '').slice(0, 300),
-        priority: ['high', 'medium', 'low'].includes(String(r?.priority)) ? String(r.priority) : 'medium',
-        category: ['reinvest', 'reserve', 'cash_out', 'tax', 'growth'].includes(String(r?.category)) ? String(r.category) : 'reinvest',
-        expectedImpactEur: Math.round(Number(r?.expected_impact_eur ?? 0)),
-        timeframeMonths: Math.max(1, Number(r?.timeframe_months ?? 1)),
-      })),
-      summary: {
-        totalProfitToDistributeEur: Math.round(Number(parsed?.summary?.total_profit_to_distribute_eur ?? totalProfit)),
-        recommendedReinvestEur: Math.round(Number(parsed?.summary?.recommended_reinvest_eur ?? 0)),
-        recommendedReserveEur: Math.round(Number(parsed?.summary?.recommended_reserve_eur ?? 0)),
-        recommendedCashOutEur: Math.round(Number(parsed?.summary?.recommended_cash_out_eur ?? 0)),
-        recommendedTaxReserveEur: Math.round(Number(parsed?.summary?.recommended_tax_reserve_eur ?? 0)),
-        projected12mGrowthPct: Math.round(Number(parsed?.summary?.projected_12m_growth_pct ?? 0) * 10) / 10,
-        projected24mValueEur: Math.round(Number(parsed?.summary?.projected_24m_value_eur ?? 0)),
-        bestScenario: ['aggressive_growth', 'balanced', 'conservative', 'cash_focus'].includes(String(parsed?.summary?.best_scenario)) ? String(parsed.summary.best_scenario) : 'balanced',
-        biggestRisk: String(parsed?.summary?.biggest_risk ?? '').slice(0, 200),
-        biggestOpportunity: String(parsed?.summary?.biggest_opportunity ?? '').slice(0, 200),
-        distributionEfficiencyScore: Math.max(0, Math.min(100, Number(parsed?.summary?.distribution_efficiency_score ?? 60))),
-      },
-    };
-
-    const today = new Date().toISOString().slice(0, 10);
-    if (settings.aiCallsDate !== today) { await db.settings.update({ where: { id: 'singleton' }, data: { aiCallsDate: today, aiCallsToday: 1 } }); }
-    else { await db.settings.update({ where: { id: 'singleton' }, data: { aiCallsToday: { increment: 1 } } }); }
-
-    return NextResponse.json({ ok: true, optimizer });
-  } catch (e: any) { logger.error("/api/ai/profit-distribution-optimizer", "POST handler failed", e); return NextResponse.json({ error: e?.message ?? 'Napaka' }, { status: 500 }); }
+    },
+    distribution: (parsed?.distribution || []).slice(0, 8).map((d: any) => ({
+      category: ['reinvest', 'reserve', 'cash_out', 'tax_reserve', 'emergency_fund', 'growth_fund', 'debt_repayment', 'education'].includes(String(d?.category)) ? String(d.category) : 'reinvest',
+      recommendedPct: Math.max(0, Math.min(100, Number(d?.recommended_pct ?? 0))),
+      amountEur: Math.round(Number(d?.amount_eur ?? 0)),
+      monthlyAmountEur: Math.round(Number(d?.monthly_amount_eur ?? 0)),
+      purpose: String(d?.purpose ?? '').slice(0, 200),
+      rationale: String(d?.rationale ?? '').slice(0, 300),
+      expectedGrowthContributionPct: Math.round(Number(d?.expected_growth_contribution_pct ?? 0)),
+      riskLevel: ['low', 'medium', 'high'].includes(String(d?.risk_level)) ? String(d.risk_level) : 'medium',
+      timeHorizon: ['short', 'medium', 'long'].includes(String(d?.time_horizon)) ? String(d.time_horizon) : 'medium',
+    })),
+    scenarios: (parsed?.scenarios || []).slice(0, 4).map((s: any) => ({
+      scenario: ['aggressive_growth', 'balanced', 'conservative', 'cash_focus'].includes(String(s?.scenario)) ? String(s.scenario) : 'balanced',
+      reinvestPct: Math.max(0, Math.min(100, Number(s?.reinvest_pct ?? 30))),
+      reservePct: Math.max(0, Math.min(100, Number(s?.reserve_pct ?? 20))),
+      cashOutPct: Math.max(0, Math.min(100, Number(s?.cash_out_pct ?? 25))),
+      taxPct: Math.max(0, Math.min(100, Number(s?.tax_pct ?? 25))),
+      growthPct: Math.max(0, Math.min(100, Number(s?.growth_pct ?? 0))),
+      projected12mValueEur: Math.round(Number(s?.projected_12m_value_eur ?? 0)),
+      projected24mValueEur: Math.round(Number(s?.projected_24m_value_eur ?? 0)),
+      projected36mValueEur: Math.round(Number(s?.projected_36m_value_eur ?? 0)),
+      annualGrowthRatePct: Math.round(Number(s?.annual_growth_rate_pct ?? 0) * 10) / 10,
+      riskScore: Math.max(0, Math.min(100, Number(s?.risk_score ?? 50))),
+      bestFor: String(s?.best_for ?? '').slice(0, 200),
+    })),
+    taxPlan: (parsed?.tax_plan || []).slice(0, 3).map((t: any) => ({
+      year: Math.max(2024, Number(t?.year ?? 2026)),
+      grossProfitEur: Math.round(Number(t?.gross_profit_eur ?? 0)),
+      estimatedTaxEur: Math.round(Number(t?.estimated_tax_eur ?? 0)),
+      netProfitEur: Math.round(Number(t?.net_profit_eur ?? 0)),
+      effectiveTaxRatePct: Math.round(Number(t?.effective_tax_rate_pct ?? 25) * 10) / 10,
+      deductionsAvailable: (t?.deductions_available || []).slice(0, 5).map((d: any) => String(d).slice(0, 150)),
+      taxOptimizationTips: (t?.tax_optimization_tips || []).slice(0, 5).map((tip: any) => String(tip).slice(0, 200)),
+    })),
+    reinvestPlan: (parsed?.reinvest_plan || []).slice(0, 12).map((r: any) => ({
+      month: Math.max(1, Math.min(12, Number(r?.month ?? 1))),
+      reinvestAmountEur: Math.round(Number(r?.reinvest_amount_eur ?? 0)),
+      categoryFocus: String(r?.category_focus ?? '').slice(0, 150),
+      expectedInventoryCount: Math.max(0, Number(r?.expected_inventory_count ?? 0)),
+      expectedMonthlyProfitIncreaseEur: Math.round(Number(r?.expected_monthly_profit_increase_eur ?? 0)),
+      cumulativeCapitalEur: Math.round(Number(r?.cumulative_capital_eur ?? 0)),
+    })),
+    recommendations: (parsed?.recommendations || []).slice(0, 6).map((r: any) => ({
+      action: String(r?.action ?? '').slice(0, 300),
+      priority: ['high', 'medium', 'low'].includes(String(r?.priority)) ? String(r.priority) : 'medium',
+      category: ['reinvest', 'reserve', 'cash_out', 'tax', 'growth'].includes(String(r?.category)) ? String(r.category) : 'reinvest',
+      expectedImpactEur: Math.round(Number(r?.expected_impact_eur ?? 0)),
+      timeframeMonths: Math.max(1, Number(r?.timeframe_months ?? 1)),
+    })),
+    summary: {
+      totalProfitToDistributeEur: Math.round(Number(parsed?.summary?.total_profit_to_distribute_eur ?? totalProfit)),
+      recommendedReinvestEur: Math.round(Number(parsed?.summary?.recommended_reinvest_eur ?? 0)),
+      recommendedReserveEur: Math.round(Number(parsed?.summary?.recommended_reserve_eur ?? 0)),
+      recommendedCashOutEur: Math.round(Number(parsed?.summary?.recommended_cash_out_eur ?? 0)),
+      recommendedTaxReserveEur: Math.round(Number(parsed?.summary?.recommended_tax_reserve_eur ?? 0)),
+      projected12mGrowthPct: Math.round(Number(parsed?.summary?.projected_12m_growth_pct ?? 0) * 10) / 10,
+      projected24mValueEur: Math.round(Number(parsed?.summary?.projected_24m_value_eur ?? 0)),
+      bestScenario: ['aggressive_growth', 'balanced', 'conservative', 'cash_focus'].includes(String(parsed?.summary?.best_scenario)) ? String(parsed.summary.best_scenario) : 'balanced',
+      biggestRisk: String(parsed?.summary?.biggest_risk ?? '').slice(0, 200),
+      biggestOpportunity: String(parsed?.summary?.biggest_opportunity ?? '').slice(0, 200),
+      distributionEfficiencyScore: Math.max(0, Math.min(100, Number(parsed?.summary?.distribution_efficiency_score ?? 60))),
+    },
+  };
 }

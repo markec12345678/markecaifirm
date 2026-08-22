@@ -1,22 +1,33 @@
-// v6.61: AI Inventory Cash Flow Optimizer — optimizira cash flow z ML forecasting in working capital management
+// v6.61 / v8.96.1-batch3: AI Inventory Cash Flow Optimizer — optimizira cash flow z ML forecasting in working capital management
+// Refaktoriran z withAiRoute helperjem (v8.96.1-batch3) + enforceBudget guard.
+//
 // POST /api/ai/inventory-cash-flow-optimizer
 // Body: { monthsAhead?: number }
 // Returns: { ok, optimizer: { current, forecast, optimization, scenarios, workingCapital, recommendations, summary } }
 
-import { NextRequest, NextResponse } from 'next/server';
-import { db } from '@/lib/db';
-import { getSettingsRow } from '@/lib/pipeline';
-import { callProviderForRaw, parseJsonLooseExported, type AiProviderType, type AiSettings } from '@/lib/ai';
-import { logger } from '@/lib/logger';
+import { withAiRoute, AI_ROUTE_DEFAULTS, type AiRouteContext } from '@/lib/with-ai-route';
+import { apiOk } from '@/lib/api-response';
 
-export const runtime = 'nodejs';
-export const dynamic = 'force-dynamic';
+export const { runtime, dynamic } = AI_ROUTE_DEFAULTS;
 export const maxDuration = 90;
 
-export async function POST(req: NextRequest) {
-  try {
+interface InventoryCashFlowOptimizerInput {
+  monthsAhead: number;
+}
+
+export const POST = withAiRoute<InventoryCashFlowOptimizerInput>({
+  endpoint: '/api/ai/inventory-cash-flow-optimizer',
+  maxDuration: 90,
+  enforceBudget: true,
+
+  parseBody: async (req) => {
     const body = await req.json().catch(() => ({}));
-    const monthsAhead = Math.max(1, Math.min(12, Number(body?.monthsAhead ?? 6)));
+    return { monthsAhead: Math.max(1, Math.min(12, Number(body?.monthsAhead ?? 6))) };
+  },
+
+  handler: async (input, ctx: AiRouteContext) => {
+    const { db, callAi, parseAi } = ctx;
+    const { monthsAhead } = input;
 
     const since = new Date(Date.now() - 90 * 24 * 60 * 60 * 1000);
 
@@ -35,7 +46,7 @@ export async function POST(req: NextRequest) {
     });
 
     if (soldTrades.length === 0 && heldTrades.length === 0) {
-      return NextResponse.json({ ok: true, optimizer: null, message: 'Ni podatkov za cash flow optimizacijo.' });
+      return apiOk({ ok: true, optimizer: null, message: 'Ni podatkov za cash flow optimizacijo.' });
     }
 
     // Compute current cash flow metrics
@@ -50,28 +61,50 @@ export async function POST(req: NextRequest) {
     const staleCapital = heldTrades.filter(t => Math.round((now - t.buyDate.getTime()) / (24*60*60*1000)) > 30).reduce((s, t) => s + t.buyPrice + (t.buyFees ?? 0), 0);
     const deadCapital = heldTrades.filter(t => Math.round((now - t.buyDate.getTime()) / (24*60*60*1000)) > 90).reduce((s, t) => s + t.buyPrice + (t.buyFees ?? 0), 0);
 
-    const settings = await getSettingsRow();
-    const aiSettings: AiSettings = {
-      provider: settings.aiProvider as AiProviderType,
-      baseUrl: settings.aiBaseUrl, apiKey: settings.aiApiKey, model: settings.aiModel,
-      fallbackProvider: (settings.fallbackProvider || '') as AiProviderType | '',
-      fallbackBaseUrl: settings.fallbackBaseUrl || '', fallbackApiKey: settings.fallbackApiKey || '',
-      fallbackModel: settings.fallbackModel || '',
+    const metrics = {
+      last30dRevenue, last30dCost, last30dProfit,
+      capitalInvested, inventoryValue, avgDaysHeld, staleCapital, deadCapital,
+      heldCount: heldTrades.length,
     };
 
-    const prompt = `Si AI inventory cash flow optimizer z ML forecasting in working capital management.
+    const prompt = buildPrompt(monthsAhead, metrics);
+    const raw = await callAi(prompt);
+    const parsed: any = parseAi(raw);
+
+    const optimizer = transformOptimizer(parsed, metrics, monthsAhead);
+
+    return apiOk({ ok: true, optimizer });
+  },
+});
+
+// --- Pomožne funkcije (čiste, testabilne) --------------------------------
+
+interface Metrics {
+  last30dRevenue: number;
+  last30dCost: number;
+  last30dProfit: number;
+  capitalInvested: number;
+  inventoryValue: number;
+  avgDaysHeld: number;
+  staleCapital: number;
+  deadCapital: number;
+  heldCount: number;
+}
+
+function buildPrompt(monthsAhead: number, m: Metrics): string {
+  return `Si AI inventory cash flow optimizer z ML forecasting in working capital management.
 Optimizira cash flow za naslednjih ${monthsAhead} mesecev.
 
 TRENUTNO STANJE:
-- Prihodek (30d): ${Math.round(last30dRevenue)}€
-- Cost (30d): ${Math.round(last30dCost)}€
-- Profit (30d): ${Math.round(last30dProfit)}€
-- Vložen kapital: ${Math.round(capitalInvested)}€
-- Vrednost inventarja: ${Math.round(inventoryValue)}€
-- Povp dni v skladišču: ${avgDaysHeld}
-- Stale capital (>30d): ${Math.round(staleCapital)}€
-- Dead capital (>90d): ${Math.round(deadCapital)}€
-- Held items: ${heldTrades.length}
+- Prihodek (30d): ${Math.round(m.last30dRevenue)}€
+- Cost (30d): ${Math.round(m.last30dCost)}€
+- Profit (30d): ${Math.round(m.last30dProfit)}€
+- Vložen kapital: ${Math.round(m.capitalInvested)}€
+- Vrednost inventarja: ${Math.round(m.inventoryValue)}€
+- Povp dni v skladišču: ${m.avgDaysHeld}
+- Stale capital (>30d): ${Math.round(m.staleCapital)}€
+- Dead capital (>90d): ${Math.round(m.deadCapital)}€
+- Held items: ${m.heldCount}
 
 Cash flow optimization cilji:
 1. MAXIMIZE_LIQUIDITY: več cash na voljo
@@ -173,91 +206,75 @@ Odgovori LE z JSON:
     "cash_flow_optimization_score": <number 0-100>
   }
 }`;
+}
 
-    let raw = '';
-    try { raw = await callProviderForRaw(aiSettings, prompt); }
-    catch (primaryError: any) {
-      if (aiSettings.fallbackProvider && aiSettings.fallbackModel) {
-        const fb: AiSettings = { provider: aiSettings.fallbackProvider, baseUrl: aiSettings.fallbackBaseUrl || '', apiKey: aiSettings.fallbackApiKey || '', model: aiSettings.fallbackModel };
-        raw = await callProviderForRaw(fb, prompt);
-      } else { return NextResponse.json({ error: primaryError?.message ?? 'AI failed' }, { status: 500 }); }
-    }
-
-    const parsed: any = parseJsonLooseExported(raw);
-
-    const optimizer = {
-      insights: String(parsed?.insights ?? '').slice(0, 500),
-      current: {
-        monthlyRevenueEur: Math.round(Number(parsed?.current?.monthly_revenue_eur ?? last30dRevenue)),
-        monthlyCostEur: Math.round(Number(parsed?.current?.monthly_cost_eur ?? last30dCost)),
-        monthlyProfitEur: Math.round(Number(parsed?.current?.monthly_profit_eur ?? last30dProfit)),
-        capitalInvestedEur: Math.round(Number(parsed?.current?.capital_invested_eur ?? capitalInvested)),
-        inventoryValueEur: Math.round(Number(parsed?.current?.inventory_value_eur ?? inventoryValue)),
-        staleCapitalEur: Math.round(Number(parsed?.current?.stale_capital_eur ?? staleCapital)),
-        deadCapitalEur: Math.round(Number(parsed?.current?.dead_capital_eur ?? deadCapital)),
-        cashConversionCycleDays: Math.max(0, Number(parsed?.current?.cash_conversion_cycle_days ?? avgDaysHeld)),
-        workingCapitalEur: Math.round(Number(parsed?.current?.working_capital_eur ?? inventoryValue - capitalInvested)),
-        currentRatio: Math.round(Number(parsed?.current?.current_ratio ?? 1.5) * 100) / 100,
-        cashFlowScore: Math.max(0, Math.min(100, Number(parsed?.current?.cash_flow_score ?? 60))),
-      },
-      forecast: (parsed?.forecast || []).slice(0, monthsAhead).map((f: any) => ({
-        month: Math.max(1, Math.min(12, Number(f?.month ?? 1))),
-        projectedInflowEur: Math.round(Number(f?.projected_inflow_eur ?? 0)),
-        projectedOutflowEur: Math.round(Number(f?.projected_outflow_eur ?? 0)),
-        netCashFlowEur: Math.round(Number(f?.net_cash_flow_eur ?? 0)),
-        cumulativeCashEur: Math.round(Number(f?.cumulative_cash_eur ?? 0)),
-        confidencePct: Math.max(0, Math.min(100, Number(f?.confidence_pct ?? 60))),
-        keyAssumptions: (f?.key_assumptions || []).slice(0, 4).map((a: any) => String(a).slice(0, 150)),
-      })),
-      optimization: (parsed?.optimization || []).slice(0, 6).map((o: any) => ({
-        strategy: ['accelerate_sales', 'delay_purchases', 'liquidate_dead', 'factor_receivables', 'leverage_credit', 'seasonal_reserve'].includes(String(o?.strategy)) ? String(o.strategy) : 'accelerate_sales',
-        description: String(o?.description ?? '').slice(0, 250),
-        expectedCashImpactEur: Math.round(Number(o?.expected_cash_impact_eur ?? 0)),
-        timeframeDays: Math.max(1, Number(o?.timeframe_days ?? 7)),
-        implementationDifficulty: ['low', 'medium', 'high'].includes(String(o?.implementation_difficulty)) ? String(o.implementation_difficulty) : 'medium',
-        riskLevel: ['low', 'medium', 'high'].includes(String(o?.risk_level)) ? String(o.risk_level) : 'medium',
-        priority: ['high', 'medium', 'low'].includes(String(o?.priority)) ? String(o.priority) : 'medium',
-      })),
-      scenarios: (parsed?.scenarios || []).slice(0, 4).map((s: any) => ({
-        scenario: ['base_case', 'optimized', 'aggressive', 'conservative'].includes(String(s?.scenario)) ? String(s.scenario) : 'base_case',
-        totalCashGeneratedEur: Math.round(Number(s?.total_cash_generated_eur ?? 0)),
-        avgMonthlyCashFlowEur: Math.round(Number(s?.avg_monthly_cash_flow_eur ?? 0)),
-        cashFlowStabilityPct: Math.max(0, Math.min(100, Number(s?.cash_flow_stability_pct ?? 60))),
-        peakCashEur: Math.round(Number(s?.peak_cash_eur ?? 0)),
-        troughCashEur: Math.round(Number(s?.trough_cash_eur ?? 0)),
-        probabilityPct: Math.max(0, Math.min(100, Number(s?.probability_pct ?? 50))),
-      })),
-      workingCapital: (parsed?.working_capital || []).slice(0, 5).map((w: any) => ({
-        component: ['cash', 'inventory', 'receivables', 'payables', 'fees'].includes(String(w?.component)) ? String(w.component) : 'cash',
-        currentValueEur: Math.round(Number(w?.current_value_eur ?? 0)),
-        optimizedValueEur: Math.round(Number(w?.optimized_value_eur ?? 0)),
-        changeEur: Math.round(Number(w?.change_eur ?? 0)),
-        optimizationAction: String(w?.optimization_action ?? '').slice(0, 250),
-        impactOnCashFlowEur: Math.round(Number(w?.impact_on_cash_flow_eur ?? 0)),
-      })),
-      recommendations: (parsed?.recommendations || []).slice(0, 6).map((r: any) => ({
-        action: String(r?.action ?? '').slice(0, 300),
-        priority: ['high', 'medium', 'low'].includes(String(r?.priority)) ? String(r.priority) : 'medium',
-        expectedCashImpactEur: Math.round(Number(r?.expected_cash_impact_eur ?? 0)),
-        timeframeDays: Math.max(1, Number(r?.timeframe_days ?? 7)),
-        riskLevel: ['low', 'medium', 'high'].includes(String(r?.risk_level)) ? String(r.risk_level) : 'medium',
-      })),
-      summary: {
-        currentMonthlyCashFlowEur: Math.round(Number(parsed?.summary?.current_monthly_cash_flow_eur ?? last30dProfit)),
-        projectedMonthlyCashFlowEur: Math.round(Number(parsed?.summary?.projected_monthly_cash_flow_eur ?? 0)),
-        improvementPct: Math.round(Number(parsed?.summary?.improvement_pct ?? 0) * 10) / 10,
-        totalCashImprovementEur: Math.round(Number(parsed?.summary?.total_cash_improvement_eur ?? 0)),
-        cashFlowStabilityScore: Math.max(0, Math.min(100, Number(parsed?.summary?.cash_flow_stability_score ?? 60))),
-        biggestCashFlowBottleneck: String(parsed?.summary?.biggest_cash_flow_bottleneck ?? '').slice(0, 200),
-        biggestCashOpportunity: String(parsed?.summary?.biggest_cash_opportunity ?? '').slice(0, 200),
-        cashFlowOptimizationScore: Math.max(0, Math.min(100, Number(parsed?.summary?.cash_flow_optimization_score ?? 60))),
-      },
-    };
-
-    const today = new Date().toISOString().slice(0, 10);
-    if (settings.aiCallsDate !== today) { await db.settings.update({ where: { id: 'singleton' }, data: { aiCallsDate: today, aiCallsToday: 1 } }); }
-    else { await db.settings.update({ where: { id: 'singleton' }, data: { aiCallsToday: { increment: 1 } } }); }
-
-    return NextResponse.json({ ok: true, optimizer });
-  } catch (e: any) { logger.error("/api/ai/inventory-cash-flow-optimizer", "POST handler failed", e); return NextResponse.json({ error: e?.message ?? 'Napaka' }, { status: 500 }); }
+function transformOptimizer(parsed: any, m: Metrics, monthsAhead: number): any {
+  return {
+    insights: String(parsed?.insights ?? '').slice(0, 500),
+    current: {
+      monthlyRevenueEur: Math.round(Number(parsed?.current?.monthly_revenue_eur ?? m.last30dRevenue)),
+      monthlyCostEur: Math.round(Number(parsed?.current?.monthly_cost_eur ?? m.last30dCost)),
+      monthlyProfitEur: Math.round(Number(parsed?.current?.monthly_profit_eur ?? m.last30dProfit)),
+      capitalInvestedEur: Math.round(Number(parsed?.current?.capital_invested_eur ?? m.capitalInvested)),
+      inventoryValueEur: Math.round(Number(parsed?.current?.inventory_value_eur ?? m.inventoryValue)),
+      staleCapitalEur: Math.round(Number(parsed?.current?.stale_capital_eur ?? m.staleCapital)),
+      deadCapitalEur: Math.round(Number(parsed?.current?.dead_capital_eur ?? m.deadCapital)),
+      cashConversionCycleDays: Math.max(0, Number(parsed?.current?.cash_conversion_cycle_days ?? m.avgDaysHeld)),
+      workingCapitalEur: Math.round(Number(parsed?.current?.working_capital_eur ?? m.inventoryValue - m.capitalInvested)),
+      currentRatio: Math.round(Number(parsed?.current?.current_ratio ?? 1.5) * 100) / 100,
+      cashFlowScore: Math.max(0, Math.min(100, Number(parsed?.current?.cash_flow_score ?? 60))),
+    },
+    forecast: (parsed?.forecast || []).slice(0, monthsAhead).map((f: any) => ({
+      month: Math.max(1, Math.min(12, Number(f?.month ?? 1))),
+      projectedInflowEur: Math.round(Number(f?.projected_inflow_eur ?? 0)),
+      projectedOutflowEur: Math.round(Number(f?.projected_outflow_eur ?? 0)),
+      netCashFlowEur: Math.round(Number(f?.net_cash_flow_eur ?? 0)),
+      cumulativeCashEur: Math.round(Number(f?.cumulative_cash_eur ?? 0)),
+      confidencePct: Math.max(0, Math.min(100, Number(f?.confidence_pct ?? 60))),
+      keyAssumptions: (f?.key_assumptions || []).slice(0, 4).map((a: any) => String(a).slice(0, 150)),
+    })),
+    optimization: (parsed?.optimization || []).slice(0, 6).map((o: any) => ({
+      strategy: ['accelerate_sales', 'delay_purchases', 'liquidate_dead', 'factor_receivables', 'leverage_credit', 'seasonal_reserve'].includes(String(o?.strategy)) ? String(o.strategy) : 'accelerate_sales',
+      description: String(o?.description ?? '').slice(0, 250),
+      expectedCashImpactEur: Math.round(Number(o?.expected_cash_impact_eur ?? 0)),
+      timeframeDays: Math.max(1, Number(o?.timeframe_days ?? 7)),
+      implementationDifficulty: ['low', 'medium', 'high'].includes(String(o?.implementation_difficulty)) ? String(o.implementation_difficulty) : 'medium',
+      riskLevel: ['low', 'medium', 'high'].includes(String(o?.risk_level)) ? String(o.risk_level) : 'medium',
+      priority: ['high', 'medium', 'low'].includes(String(o?.priority)) ? String(o.priority) : 'medium',
+    })),
+    scenarios: (parsed?.scenarios || []).slice(0, 4).map((s: any) => ({
+      scenario: ['base_case', 'optimized', 'aggressive', 'conservative'].includes(String(s?.scenario)) ? String(s.scenario) : 'base_case',
+      totalCashGeneratedEur: Math.round(Number(s?.total_cash_generated_eur ?? 0)),
+      avgMonthlyCashFlowEur: Math.round(Number(s?.avg_monthly_cash_flow_eur ?? 0)),
+      cashFlowStabilityPct: Math.max(0, Math.min(100, Number(s?.cash_flow_stability_pct ?? 60))),
+      peakCashEur: Math.round(Number(s?.peak_cash_eur ?? 0)),
+      troughCashEur: Math.round(Number(s?.trough_cash_eur ?? 0)),
+      probabilityPct: Math.max(0, Math.min(100, Number(s?.probability_pct ?? 50))),
+    })),
+    workingCapital: (parsed?.working_capital || []).slice(0, 5).map((w: any) => ({
+      component: ['cash', 'inventory', 'receivables', 'payables', 'fees'].includes(String(w?.component)) ? String(w.component) : 'cash',
+      currentValueEur: Math.round(Number(w?.current_value_eur ?? 0)),
+      optimizedValueEur: Math.round(Number(w?.optimized_value_eur ?? 0)),
+      changeEur: Math.round(Number(w?.change_eur ?? 0)),
+      optimizationAction: String(w?.optimization_action ?? '').slice(0, 250),
+      impactOnCashFlowEur: Math.round(Number(w?.impact_on_cash_flow_eur ?? 0)),
+    })),
+    recommendations: (parsed?.recommendations || []).slice(0, 6).map((r: any) => ({
+      action: String(r?.action ?? '').slice(0, 300),
+      priority: ['high', 'medium', 'low'].includes(String(r?.priority)) ? String(r.priority) : 'medium',
+      expectedCashImpactEur: Math.round(Number(r?.expected_cash_impact_eur ?? 0)),
+      timeframeDays: Math.max(1, Number(r?.timeframe_days ?? 7)),
+      riskLevel: ['low', 'medium', 'high'].includes(String(r?.risk_level)) ? String(r.risk_level) : 'medium',
+    })),
+    summary: {
+      currentMonthlyCashFlowEur: Math.round(Number(parsed?.summary?.current_monthly_cash_flow_eur ?? m.last30dProfit)),
+      projectedMonthlyCashFlowEur: Math.round(Number(parsed?.summary?.projected_monthly_cash_flow_eur ?? 0)),
+      improvementPct: Math.round(Number(parsed?.summary?.improvement_pct ?? 0) * 10) / 10,
+      totalCashImprovementEur: Math.round(Number(parsed?.summary?.total_cash_improvement_eur ?? 0)),
+      cashFlowStabilityScore: Math.max(0, Math.min(100, Number(parsed?.summary?.cash_flow_stability_score ?? 60))),
+      biggestCashFlowBottleneck: String(parsed?.summary?.biggest_cash_flow_bottleneck ?? '').slice(0, 200),
+      biggestCashOpportunity: String(parsed?.summary?.biggest_cash_opportunity ?? '').slice(0, 200),
+      cashFlowOptimizationScore: Math.max(0, Math.min(100, Number(parsed?.summary?.cash_flow_optimization_score ?? 60))),
+    },
+  };
 }

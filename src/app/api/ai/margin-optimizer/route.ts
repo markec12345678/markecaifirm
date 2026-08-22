@@ -1,16 +1,14 @@
-// v6.15: AI Profit Margin Optimizer — optimizira dobičkovno maržo preko pristojbin, davkov, shippinga
+// v6.15 / v8.96.1-batch2: AI Profit Margin Optimizer — optimizira dobičkovno maržo preko pristojbin, davkov, shippinga
+// Refaktoriran z withAiRoute helperjem (v8.96.1) + enforceBudget guard.
+//
 // POST /api/ai/margin-optimizer
 // Body: { tradeIds?: string[] }
 // Returns: { ok, items: [{ id, title, currentMargin, optimizedMargin, improvements: [...] }], summary, recommendations }
 
-import { NextRequest, NextResponse } from 'next/server';
-import { db } from '@/lib/db';
-import { getSettingsRow } from '@/lib/pipeline';
-import { callProviderForRaw, parseJsonLooseExported, type AiProviderType, type AiSettings } from '@/lib/ai';
-import { logger } from '@/lib/logger';
+import { withAiRoute, AI_ROUTE_DEFAULTS, type AiRouteContext } from '@/lib/with-ai-route';
+import { apiOk } from '@/lib/api-response';
 
-export const runtime = 'nodejs';
-export const dynamic = 'force-dynamic';
+export const { runtime, dynamic } = AI_ROUTE_DEFAULTS;
 export const maxDuration = 90;
 
 // Platform fees (realni podatki)
@@ -32,16 +30,31 @@ const SHIPPING_OPTIONS = [
   { name: 'Personal pickup', sloveniaEur: 0, euEur: 0 },
 ];
 
-export async function POST(req: NextRequest) {
-  try {
+interface MarginOptimizerInput {
+  tradeIds: string[];
+}
+
+export const POST = withAiRoute<MarginOptimizerInput>({
+  endpoint: '/api/ai/margin-optimizer',
+  maxDuration: 90,
+  enforceBudget: true, // AI klic — preveri budget
+
+  parseBody: async (req) => {
     const body = await req.json().catch(() => ({}));
-    const requestedIds: string[] = Array.isArray(body?.tradeIds) ? body.tradeIds.filter(Boolean) : [];
+    const tradeIds: string[] = Array.isArray(body?.tradeIds) ? body.tradeIds.filter(Boolean) : [];
+    return { tradeIds };
+  },
+
+  // No validateInput — tradeIds je opcijski (če prazen, vzame vse held)
+  handler: async (input, ctx: AiRouteContext) => {
+    const { db, callAi, parseAi } = ctx;
+    const { tradeIds } = input;
 
     // 1. Pridobi sold trades za kontekst
     const heldTrades = await db.trade.findMany({
       where: {
         status: 'held',
-        ...(requestedIds.length > 0 ? { id: { in: requestedIds } } : {}),
+        ...(tradeIds.length > 0 ? { id: { in: tradeIds } } : {}),
       },
       select: {
         id: true, title: true, category: true, buyPrice: true, buyFees: true, buyDate: true,
@@ -52,7 +65,7 @@ export async function POST(req: NextRequest) {
     });
 
     if (heldTrades.length === 0) {
-      return NextResponse.json({
+      return apiOk({
         ok: true,
         items: [],
         message: 'Ni held tradeov za optimizacijo marže.',
@@ -60,48 +73,96 @@ export async function POST(req: NextRequest) {
     }
 
     // 2. Pripravi iteme z izračunom trenutne marže
-    const items = heldTrades.map(t => {
-      const cost = t.buyPrice + (t.buyFees ?? 0);
-      const estimatedValue = t.listing?.aiEstimatedValue ?? Math.round(cost * 1.25);
-      const currentMargin = estimatedValue - cost;
-      const currentMarginPct = cost > 0 ? Math.round((currentMargin / cost) * 100) : 0;
-      const daysHeld = Math.round((Date.now() - t.buyDate.getTime()) / (24 * 60 * 60 * 1000));
-      return {
-        id: t.id,
-        title: t.title,
-        category: t.category || 'drugo',
-        buyLocation: t.buyLocation || 'neznan',
-        cost,
-        estimatedValue,
-        currentMargin,
-        currentMarginPct,
-        daysHeld,
-      };
-    });
+    const items = computeItems(heldTrades);
 
     // 3. AI optimizacija marže
-    const settings = await getSettingsRow();
-    const aiSettings: AiSettings = {
-      provider: settings.aiProvider as AiProviderType,
-      baseUrl: settings.aiBaseUrl, apiKey: settings.aiApiKey, model: settings.aiModel,
-      fallbackProvider: (settings.fallbackProvider || '') as AiProviderType | '',
-      fallbackBaseUrl: settings.fallbackBaseUrl || '', fallbackApiKey: settings.fallbackApiKey || '',
-      fallbackModel: settings.fallbackModel || '',
+    const prompt = buildPrompt(items);
+    const raw = await callAi(prompt);
+    const parsed: any = parseAi(raw);
+
+    const optimizedItems = transformItems(parsed, items);
+
+    // Summary
+    const totalCurrentMargin = optimizedItems.reduce((s, i) => s + i.currentMargin, 0);
+    const totalOptimizedMargin = optimizedItems.reduce((s, i) => s + i.optimizedMarginEur, 0);
+    const totalImprovement = totalOptimizedMargin - totalCurrentMargin;
+    const avgImprovementPct = optimizedItems.length > 0
+      ? Math.round(optimizedItems.reduce((s, i) => s + i.improvementPct, 0) / optimizedItems.length)
+      : 0;
+
+    const recommendations = (parsed?.recommendations || []).slice(0, 6).map((r: any) => String(r).slice(0, 300));
+
+    return apiOk({
+      ok: true,
+      items: optimizedItems,
+      summary: {
+        summary: String(parsed?.summary ?? '').slice(0, 500),
+        totalItems: optimizedItems.length,
+        totalCurrentMargin: Math.round(totalCurrentMargin),
+        totalOptimizedMargin: Math.round(totalOptimizedMargin),
+        totalImprovement: Math.round(totalImprovement),
+        avgImprovementPct,
+        platformFees: PLATFORM_FEES,
+        shippingOptions: SHIPPING_OPTIONS,
+      },
+      recommendations,
+    });
+  },
+});
+
+// --- Pomožne funkcije (čiste, testabilne) --------------------------------
+
+interface ItemRow {
+  id: string;
+  title: string;
+  category: string;
+  buyLocation: string;
+  cost: number;
+  estimatedValue: number;
+  currentMargin: number;
+  currentMarginPct: number;
+  daysHeld: number;
+}
+
+function computeItems(heldTrades: Array<{
+  id: string; title: string; category: string | null; buyPrice: number; buyFees: number | null;
+  buyDate: Date; buyLocation: string | null;
+  listing: { aiEstimatedValue: number | null; dealScore: number | null } | null;
+}>): ItemRow[] {
+  return heldTrades.map(t => {
+    const cost = t.buyPrice + (t.buyFees ?? 0);
+    const estimatedValue = t.listing?.aiEstimatedValue ?? Math.round(cost * 1.25);
+    const currentMargin = estimatedValue - cost;
+    const currentMarginPct = cost > 0 ? Math.round((currentMargin / cost) * 100) : 0;
+    const daysHeld = Math.round((Date.now() - t.buyDate.getTime()) / (24 * 60 * 60 * 1000));
+    return {
+      id: t.id,
+      title: t.title,
+      category: t.category || 'drugo',
+      buyLocation: t.buyLocation || 'neznan',
+      cost,
+      estimatedValue,
+      currentMargin,
+      currentMarginPct,
+      daysHeld,
     };
+  });
+}
 
-    const itemsStr = items.map(i =>
-      `- [${i.id}] ${i.title} | ${i.category} | nabavna: ${i.cost}€ | est. prodajna: ${i.estimatedValue}€ | marža: ${i.currentMargin}€ (${i.currentMarginPct}%) | ${i.daysHeld}d v skladišču | kupljeno na: ${i.buyLocation}`
-    ).join('\n');
+function buildPrompt(items: ItemRow[]): string {
+  const itemsStr = items.map(i =>
+    `- [${i.id}] ${i.title} | ${i.category} | nabavna: ${i.cost}€ | est. prodajna: ${i.estimatedValue}€ | marža: ${i.currentMargin}€ (${i.currentMarginPct}%) | ${i.daysHeld}d v skladišču | kupljeno na: ${i.buyLocation}`
+  ).join('\n');
 
-    const platformsStr = Object.entries(PLATFORM_FEES).map(([p, f]) =>
-      `- ${p}: ${f.pct * 100}% provizija + ${f.fixedFee}€ fiksno + ${f.currencyConversionFee * 100}% konverzija`
-    ).join('\n');
+  const platformsStr = Object.entries(PLATFORM_FEES).map(([p, f]) =>
+    `- ${p}: ${f.pct * 100}% provizija + ${f.fixedFee}€ fiksno + ${f.currencyConversionFee * 100}% konverzija`
+  ).join('\n');
 
-    const shippingStr = SHIPPING_OPTIONS.map(s =>
-      `- ${s.name}: SI ${s.sloveniaEur}€, EU ${s.euEur}€`
-    ).join('\n');
+  const shippingStr = SHIPPING_OPTIONS.map(s =>
+    `- ${s.name}: SI ${s.sloveniaEur}€, EU ${s.euEur}€`
+  ).join('\n');
 
-    const prompt = `Si ekspert za optimizacijo dobičkovne marže pri preprodaji.
+  return `Si ekspert za optimizacijo dobičkovne marže pri preprodaji.
 Optimiziraj maržo za vsak item preko pristojbin, davkov, shippinga in platforme.
 
 ITEMI V SKLADIŠČU:
@@ -160,94 +221,57 @@ Odgovori LE z JSON:
   ],
   "recommendations": ["<splošno priporočilo, max 150 znakov>", "..."]
 }`;
+}
 
-    let raw = '';
-    try {
-      raw = await callProviderForRaw(aiSettings, prompt);
-    } catch (primaryError: any) {
-      if (aiSettings.fallbackProvider && aiSettings.fallbackModel) {
-        const fb: AiSettings = {
-          provider: aiSettings.fallbackProvider,
-          baseUrl: aiSettings.fallbackBaseUrl || '',
-          apiKey: aiSettings.fallbackApiKey || '',
-          model: aiSettings.fallbackModel,
-        };
-        raw = await callProviderForRaw(fb, prompt);
-      } else {
-        return NextResponse.json({ error: primaryError?.message ?? 'AI failed' }, { status: 500 });
-      }
-    }
+function transformItems(parsed: any, items: ItemRow[]): Array<{
+  id: string;
+  title: string;
+  category: string;
+  cost: number;
+  estimatedValue: number;
+  currentMargin: number;
+  currentMarginPct: number;
+  optimizedPlatform: string;
+  optimizedShipping: string;
+  optimizedPriceEur: number;
+  optimizedMarginEur: number;
+  optimizedMarginPct: number;
+  improvementEur: number;
+  improvementPct: number;
+  improvements: Array<{ type: string; savingsEur: number; description: string }>;
+  reasoning: string;
+}> {
+  const validIds = new Set(items.map(i => i.id));
+  const itemMap = new Map(items.map(i => [i.id, i]));
 
-    const parsed: any = parseJsonLooseExported(raw);
-    const validIds = new Set(items.map(i => i.id));
-    const itemMap = new Map(items.map(i => [i.id, i]));
-
-    const optimizedItems = (parsed?.items || [])
-      .filter((it: any) => validIds.has(String(it?.id ?? '')))
-      .map((it: any) => {
-        const id = String(it.id);
-        const orig = itemMap.get(id)!;
-        const optimizedMarginEur = Number(it?.optimized_margin_eur ?? orig.currentMargin);
-        const improvementEur = optimizedMarginEur - orig.currentMargin;
-        return {
-          id,
-          title: orig.title,
-          category: orig.category,
-          cost: orig.cost,
-          estimatedValue: orig.estimatedValue,
-          currentMargin: orig.currentMargin,
-          currentMarginPct: orig.currentMarginPct,
-          optimizedPlatform: String(it?.optimized_platform ?? 'bolha').slice(0, 30),
-          optimizedShipping: String(it?.optimized_shipping ?? 'Personal pickup').slice(0, 30),
-          optimizedPriceEur: Math.max(0, Number(it?.optimized_price_eur ?? orig.estimatedValue)),
-          optimizedMarginEur: Math.round(optimizedMarginEur),
-          optimizedMarginPct: orig.cost > 0 ? Math.round((optimizedMarginEur / orig.cost) * 100) : 0,
-          improvementEur: Math.round(improvementEur),
-          improvementPct: Math.round(Number(it?.improvement_pct ?? (orig.currentMargin > 0 ? (improvementEur / orig.currentMargin) * 100 : 0))),
-          improvements: (Array.isArray(it?.improvements) ? it.improvements : []).slice(0, 5).map((imp: any) => ({
-            type: String(imp?.type ?? '').slice(0, 50),
-            savingsEur: Math.max(0, Number(imp?.savings_eur ?? 0)),
-            description: String(imp?.description ?? '').slice(0, 200),
-          })),
-          reasoning: String(it?.reasoning ?? '').slice(0, 250),
-        };
-      });
-
-    // Summary
-    const totalCurrentMargin = optimizedItems.reduce((s, i) => s + i.currentMargin, 0);
-    const totalOptimizedMargin = optimizedItems.reduce((s, i) => s + i.optimizedMarginEur, 0);
-    const totalImprovement = totalOptimizedMargin - totalCurrentMargin;
-    const avgImprovementPct = optimizedItems.length > 0
-      ? Math.round(optimizedItems.reduce((s, i) => s + i.improvementPct, 0) / optimizedItems.length)
-      : 0;
-
-    const recommendations = (parsed?.recommendations || []).slice(0, 6).map((r: any) => String(r).slice(0, 300));
-
-    // Increment AI usage
-    const today = new Date().toISOString().slice(0, 10);
-    if (settings.aiCallsDate !== today) {
-      await db.settings.update({ where: { id: 'singleton' }, data: { aiCallsDate: today, aiCallsToday: 1 } });
-    } else {
-      await db.settings.update({ where: { id: 'singleton' }, data: { aiCallsToday: { increment: 1 } } });
-    }
-
-    return NextResponse.json({
-      ok: true,
-      items: optimizedItems,
-      summary: {
-        summary: String(parsed?.summary ?? '').slice(0, 500),
-        totalItems: optimizedItems.length,
-        totalCurrentMargin: Math.round(totalCurrentMargin),
-        totalOptimizedMargin: Math.round(totalOptimizedMargin),
-        totalImprovement: Math.round(totalImprovement),
-        avgImprovementPct,
-        platformFees: PLATFORM_FEES,
-        shippingOptions: SHIPPING_OPTIONS,
-      },
-      recommendations,
+  return (parsed?.items || [])
+    .filter((it: any) => validIds.has(String(it?.id ?? '')))
+    .map((it: any) => {
+      const id = String(it.id);
+      const orig = itemMap.get(id)!;
+      const optimizedMarginEur = Number(it?.optimized_margin_eur ?? orig.currentMargin);
+      const improvementEur = optimizedMarginEur - orig.currentMargin;
+      return {
+        id,
+        title: orig.title,
+        category: orig.category,
+        cost: orig.cost,
+        estimatedValue: orig.estimatedValue,
+        currentMargin: orig.currentMargin,
+        currentMarginPct: orig.currentMarginPct,
+        optimizedPlatform: String(it?.optimized_platform ?? 'bolha').slice(0, 30),
+        optimizedShipping: String(it?.optimized_shipping ?? 'Personal pickup').slice(0, 30),
+        optimizedPriceEur: Math.max(0, Number(it?.optimized_price_eur ?? orig.estimatedValue)),
+        optimizedMarginEur: Math.round(optimizedMarginEur),
+        optimizedMarginPct: orig.cost > 0 ? Math.round((optimizedMarginEur / orig.cost) * 100) : 0,
+        improvementEur: Math.round(improvementEur),
+        improvementPct: Math.round(Number(it?.improvement_pct ?? (orig.currentMargin > 0 ? (improvementEur / orig.currentMargin) * 100 : 0))),
+        improvements: (Array.isArray(it?.improvements) ? it.improvements : []).slice(0, 5).map((imp: any) => ({
+          type: String(imp?.type ?? '').slice(0, 50),
+          savingsEur: Math.max(0, Number(imp?.savings_eur ?? 0)),
+          description: String(imp?.description ?? '').slice(0, 200),
+        })),
+        reasoning: String(it?.reasoning ?? '').slice(0, 250),
+      };
     });
-  } catch (e: any) {
-    logger.error("/api/ai/margin-optimizer", "POST handler failed", e);
-    return NextResponse.json({ error: e?.message ?? 'Napaka' }, { status: 500 });
-  }
 }

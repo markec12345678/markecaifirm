@@ -1,17 +1,18 @@
-// v6.24: AI Inventory Aging Alert System — sledi staranju inventarja in opozarja
+// v6.24 / v8.96.1-batch4: AI Inventory Aging Alert System — sledi staranju inventarja in opozarja
+// Refaktoriran z withAiRoute helperjem (v8.94) + enforceBudget guard.
+//
 // POST /api/ai/inventory-aging
 // Body: {}
 // Returns: { ok, alerts: [{ tradeId, title, category, daysHeld, agingStage, holdingCost, opportunityCost, action, urgency }], insights, summary }
 
-import { NextRequest, NextResponse } from 'next/server';
-import { db } from '@/lib/db';
-import { getSettingsRow } from '@/lib/pipeline';
-import { callProviderForRaw, parseJsonLooseExported, type AiProviderType, type AiSettings } from '@/lib/ai';
-import { logger } from '@/lib/logger';
+import { withAiRoute, AI_ROUTE_DEFAULTS, type AiRouteContext } from '@/lib/with-ai-route';
+import { apiOk } from '@/lib/api-response';
 
-export const runtime = 'nodejs';
-export const dynamic = 'force-dynamic';
+export const { runtime, dynamic } = AI_ROUTE_DEFAULTS;
 export const maxDuration = 90;
+
+// eslint-disable-next-line @typescript-eslint/no-empty-object-type
+interface InventoryAgingInput {}
 
 // Aging stages (dnevi v skladišču)
 const AGING_STAGES = [
@@ -24,9 +25,57 @@ const AGING_STAGES = [
   { maxDays: 99999, stage: 'zombie', color: 'black', description: 'Zombi — zapiši kot izgubo' },
 ];
 
-export async function POST(req: NextRequest) {
-  try {
+interface HeldTradeRow {
+  id: string;
+  title: string;
+  category: string;
+  buyPrice: number;
+  buyFees: number | null;
+  buyDate: Date;
+  listing: { aiEstimatedValue: number | null; dealScore: number | null } | null;
+}
+
+interface SoldTradeRow {
+  category: string;
+  buyDate: Date;
+  sellDate: Date | null;
+  buyPrice: number;
+  sellPrice: number | null;
+}
+
+interface AgingItem {
+  id: string;
+  title: string;
+  category: string;
+  cost: number;
+  estValue: number;
+  daysHeld: number;
+  stage: string;
+  stageDescription: string;
+  stageColor: string;
+  holdingCost: number;
+  opportunityCost: number;
+  totalHoldingCost: number;
+  expectedProfit: number;
+  adjustedProfit: number;
+  avgDaysToSell: number;
+  urgency: string;
+  daysOverdue: number;
+}
+
+export const POST = withAiRoute<InventoryAgingInput>({
+  endpoint: '/api/ai/inventory-aging',
+  maxDuration: 90,
+  enforceBudget: true,
+
+  parseBody: async (req) => {
     await req.json().catch(() => ({}));
+    return {} as InventoryAgingInput;
+  },
+
+  // No validateInput — body ignored
+  handler: async (_input, ctx: AiRouteContext) => {
+    const { db, callAi, parseAi } = ctx;
 
     // 1. Pridobi held trades
     const heldTrades = await db.trade.findMany({
@@ -39,7 +88,7 @@ export async function POST(req: NextRequest) {
     });
 
     if (heldTrades.length === 0) {
-      return NextResponse.json({
+      return apiOk({
         ok: true,
         alerts: [],
         message: 'Ni held tradeov za analizo staranja.',
@@ -53,89 +102,108 @@ export async function POST(req: NextRequest) {
       take: 200,
     });
 
-    const catAvgDaysToSell: Record<string, number> = {};
-    for (const t of soldTrades) {
-      const cat = t.category || 'drugo';
-      if (!catAvgDaysToSell[cat]) catAvgDaysToSell[cat] = 0;
-      if (t.sellDate && t.buyDate) {
-        catAvgDaysToSell[cat] += Math.round((t.sellDate.getTime() - t.buyDate.getTime()) / (24 * 60 * 60 * 1000));
-      }
-    }
-    const catCounts: Record<string, number> = {};
-    for (const t of soldTrades) {
-      const cat = t.category || 'drugo';
-      catCounts[cat] = (catCounts[cat] ?? 0) + 1;
-    }
-    for (const cat of Object.keys(catAvgDaysToSell)) {
-      catAvgDaysToSell[cat] = catCounts[cat] > 0 ? Math.round(catAvgDaysToSell[cat] / catCounts[cat]) : 30;
-    }
+    const catAvgDaysToSell = computeCatAvgDaysToSell(soldTrades);
 
     // 3. Izračunaj aging za vsak item
-    const items = heldTrades.map(t => {
-      const cost = t.buyPrice + (t.buyFees ?? 0);
-      const estValue = t.listing?.aiEstimatedValue ?? Math.round(cost * 1.2);
-      const daysHeld = Math.round((Date.now() - t.buyDate.getTime()) / (24 * 60 * 60 * 1000));
-      const stage = AGING_STAGES.find(s => daysHeld <= s.maxDays) ?? AGING_STAGES[AGING_STAGES.length - 1];
-      const cat = t.category || 'drugo';
-      const avgDaysToSell = catAvgDaysToSell[cat] ?? 30;
-
-      // Holding cost: 0.5% na teden od nabavne cene (opportunity cost + storage)
-      const holdingCostPerWeek = cost * 0.005;
-      const holdingCost = Math.round(holdingCostPerWeek * (daysHeld / 7));
-
-      // Opportunity cost: koliko bi lahko zaslužil z investicijo drugje (5%/leto)
-      const opportunityCost = Math.round(cost * 0.05 * (daysHeld / 365));
-
-      // Total cost of holding
-      const totalHoldingCost = holdingCost + opportunityCost;
-
-      // Expected profit ob nakupu
-      const expectedProfit = estValue - cost;
-      // Adjusted profit (ob upoštevanju holding cost)
-      const adjustedProfit = expectedProfit - totalHoldingCost;
-
-      // Urgency
-      let urgency = 'low';
-      if (daysHeld > avgDaysToSell * 2) urgency = 'critical';
-      else if (daysHeld > avgDaysToSell * 1.5) urgency = 'high';
-      else if (daysHeld > avgDaysToSell) urgency = 'medium';
-
-      return {
-        id: t.id,
-        title: t.title,
-        category: cat,
-        cost,
-        estValue,
-        daysHeld,
-        stage: stage.stage,
-        stageDescription: stage.description,
-        stageColor: stage.color,
-        holdingCost,
-        opportunityCost,
-        totalHoldingCost,
-        expectedProfit,
-        adjustedProfit,
-        avgDaysToSell,
-        urgency,
-        daysOverdue: Math.max(0, daysHeld - avgDaysToSell),
-      };
-    });
+    const items = heldTrades.map(t => computeAgingItem(t, catAvgDaysToSell));
 
     // 4. AI analiza in priporočila
-    const settings = await getSettingsRow();
-    const aiSettings: AiSettings = {
-      provider: settings.aiProvider as AiProviderType,
-      baseUrl: settings.aiBaseUrl, apiKey: settings.aiApiKey, model: settings.aiModel,
-      fallbackProvider: (settings.fallbackProvider || '') as AiProviderType | '',
-      fallbackBaseUrl: settings.fallbackBaseUrl || '', fallbackApiKey: settings.fallbackApiKey || '',
-      fallbackModel: settings.fallbackModel || '',
-    };
-
     const itemsStr = items.slice(0, 25).map(i =>
       `- [${i.id}] ${i.title} | ${i.category} | ${i.daysHeld}d (povp. ${i.avgDaysToSell}d) | stage: ${i.stage} | nabavna: ${i.cost}€ | est: ${i.estValue}€ | holding cost: ${i.totalHoldingCost}€ | adjusted profit: ${i.adjustedProfit}€ | urgency: ${i.urgency}`
     ).join('\n');
 
-    const prompt = `Si ekspert za upravljanje inventarja in staranja zalog.
+    const prompt = buildPrompt(itemsStr);
+    const raw = await callAi(prompt);
+
+    const parsed: any = parseAi(raw);
+    const validIds = new Set(items.map(i => i.id));
+    const itemMap = new Map(items.map(i => [i.id, i]));
+
+    const { alerts, summary } = transformAging(parsed, itemMap, validIds);
+
+    return apiOk({
+      ok: true,
+      insights: String(parsed?.insights ?? '').slice(0, 600),
+      alerts,
+      summary,
+    });
+  },
+});
+
+// --- Pomožne funkcije (čiste, testabilne) --------------------------------
+
+function computeCatAvgDaysToSell(soldTrades: SoldTradeRow[]): Record<string, number> {
+  const catAvgDaysToSell: Record<string, number> = {};
+  for (const t of soldTrades) {
+    const cat = t.category || 'drugo';
+    if (!catAvgDaysToSell[cat]) catAvgDaysToSell[cat] = 0;
+    if (t.sellDate && t.buyDate) {
+      catAvgDaysToSell[cat] += Math.round((t.sellDate.getTime() - t.buyDate.getTime()) / (24 * 60 * 60 * 1000));
+    }
+  }
+  const catCounts: Record<string, number> = {};
+  for (const t of soldTrades) {
+    const cat = t.category || 'drugo';
+    catCounts[cat] = (catCounts[cat] ?? 0) + 1;
+  }
+  for (const cat of Object.keys(catAvgDaysToSell)) {
+    catAvgDaysToSell[cat] = catCounts[cat] > 0 ? Math.round(catAvgDaysToSell[cat] / catCounts[cat]) : 30;
+  }
+  return catAvgDaysToSell;
+}
+
+function computeAgingItem(t: HeldTradeRow, catAvgDaysToSell: Record<string, number>): AgingItem {
+  const cost = t.buyPrice + (t.buyFees ?? 0);
+  const estValue = t.listing?.aiEstimatedValue ?? Math.round(cost * 1.2);
+  const daysHeld = Math.round((Date.now() - t.buyDate.getTime()) / (24 * 60 * 60 * 1000));
+  const stage = AGING_STAGES.find(s => daysHeld <= s.maxDays) ?? AGING_STAGES[AGING_STAGES.length - 1];
+  const cat = t.category || 'drugo';
+  const avgDaysToSell = catAvgDaysToSell[cat] ?? 30;
+
+  // Holding cost: 0.5% na teden od nabavne cene (opportunity cost + storage)
+  const holdingCostPerWeek = cost * 0.005;
+  const holdingCost = Math.round(holdingCostPerWeek * (daysHeld / 7));
+
+  // Opportunity cost: koliko bi lahko zaslužil z investicijo drugje (5%/leto)
+  const opportunityCost = Math.round(cost * 0.05 * (daysHeld / 365));
+
+  // Total cost of holding
+  const totalHoldingCost = holdingCost + opportunityCost;
+
+  // Expected profit ob nakupu
+  const expectedProfit = estValue - cost;
+  // Adjusted profit (ob upoštevanju holding cost)
+  const adjustedProfit = expectedProfit - totalHoldingCost;
+
+  // Urgency
+  let urgency = 'low';
+  if (daysHeld > avgDaysToSell * 2) urgency = 'critical';
+  else if (daysHeld > avgDaysToSell * 1.5) urgency = 'high';
+  else if (daysHeld > avgDaysToSell) urgency = 'medium';
+
+  return {
+    id: t.id,
+    title: t.title,
+    category: cat,
+    cost,
+    estValue,
+    daysHeld,
+    stage: stage.stage,
+    stageDescription: stage.description,
+    stageColor: stage.color,
+    holdingCost,
+    opportunityCost,
+    totalHoldingCost,
+    expectedProfit,
+    adjustedProfit,
+    avgDaysToSell,
+    urgency,
+    daysOverdue: Math.max(0, daysHeld - avgDaysToSell),
+  };
+}
+
+function buildPrompt(itemsStr: string): string {
+  return `Si ekspert za upravljanje inventarja in staranja zalog.
 Analiziraj staranje inventarja in priporoči konkretne akcije za vsak item.
 
 INVENTAR Z AGING PODATKI:
@@ -191,91 +259,59 @@ Odgovori LE z JSON:
     "recommended_action": "<aggressive_liquidation|balanced|patient>"
   }
 }`;
+}
 
-    let raw = '';
-    try {
-      raw = await callProviderForRaw(aiSettings, prompt);
-    } catch (primaryError: any) {
-      if (aiSettings.fallbackProvider && aiSettings.fallbackModel) {
-        const fb: AiSettings = {
-          provider: aiSettings.fallbackProvider,
-          baseUrl: aiSettings.fallbackBaseUrl || '',
-          apiKey: aiSettings.fallbackApiKey || '',
-          model: aiSettings.fallbackModel,
-        };
-        raw = await callProviderForRaw(fb, prompt);
-      } else {
-        return NextResponse.json({ error: primaryError?.message ?? 'AI failed' }, { status: 500 });
-      }
-    }
-
-    const parsed: any = parseJsonLooseExported(raw);
-    const validIds = new Set(items.map(i => i.id));
-    const itemMap = new Map(items.map(i => [i.id, i]));
-
-    const alerts = (parsed?.alerts || [])
-      .filter((a: any) => validIds.has(String(a?.id ?? '')))
-      .map((a: any) => {
-        const id = String(a.id);
-        const orig = itemMap.get(id)!;
-        return {
-          tradeId: id,
-          title: orig.title,
-          category: orig.category,
-          cost: orig.cost,
-          estValue: orig.estValue,
-          daysHeld: orig.daysHeld,
-          agingStage: ['fresh', 'normal', 'aging', 'stale', 'critical', 'dead', 'zombie'].includes(String(a?.aging_stage))
-            ? String(a.aging_stage) : orig.stage,
-          stageDescription: orig.stageDescription,
-          stageColor: orig.stageColor,
-          holdingCostEur: Math.max(0, Number(a?.holding_cost_eur ?? orig.holdingCost)),
-          opportunityCostEur: Math.max(0, Number(a?.opportunity_cost_eur ?? orig.opportunityCost)),
-          totalHoldingCostEur: Math.max(0, Number(a?.total_holding_cost_eur ?? orig.totalHoldingCost)),
-          expectedProfitEur: Math.round(Number(a?.expected_profit_eur ?? orig.expectedProfit)),
-          adjustedProfitEur: Math.round(Number(a?.adjusted_profit_eur ?? orig.adjustedProfit)),
-          urgency: ['low', 'medium', 'high', 'critical'].includes(String(a?.urgency))
-            ? String(a.urgency) : orig.urgency,
-          action: ['sell_aggressive', 'sell_bundle', 'sell_auction', 'relist', 'refurbish', 'part_out', 'donate', 'hold_vintage', 'write_off'].includes(String(a?.action))
-            ? String(a.action) : 'relist',
-          suggestedDiscountPct: Math.max(0, Math.min(50, Number(a?.suggested_discount_pct ?? 0))),
-          suggestedPriceEur: Math.max(0, Number(a?.suggested_price_eur ?? orig.estValue)),
-          deadlineDays: Math.max(0, Number(a?.deadline_days ?? 7)),
-          reasoning: String(a?.reasoning ?? '').slice(0, 250),
-        };
-      })
-      .sort((a, b) => {
-        const order = { critical: 0, high: 1, medium: 2, low: 3 };
-        return (order[a.urgency as keyof typeof order] ?? 4) - (order[b.urgency as keyof typeof order] ?? 4);
-      });
-
-    const summary = {
-      totalItems: alerts.length,
-      totalHoldingCostEur: alerts.reduce((s, a) => s + a.holdingCostEur, 0),
-      totalOpportunityCostEur: alerts.reduce((s, a) => s + a.opportunityCostEur, 0),
-      criticalCount: alerts.filter(a => a.urgency === 'critical').length,
-      deadCount: alerts.filter(a => a.agingStage === 'dead' || a.agingStage === 'zombie').length,
-      potentialLossEur: alerts.filter(a => a.adjustedProfitEur < 0).reduce((s, a) => s + Math.abs(a.adjustedProfitEur), 0),
-      recommendedAction: ['aggressive_liquidation', 'balanced', 'patient'].includes(String(parsed?.summary?.recommended_action))
-        ? String(parsed.summary.recommended_action) : 'balanced',
-    };
-
-    // Increment AI usage
-    const today = new Date().toISOString().slice(0, 10);
-    if (settings.aiCallsDate !== today) {
-      await db.settings.update({ where: { id: 'singleton' }, data: { aiCallsDate: today, aiCallsToday: 1 } });
-    } else {
-      await db.settings.update({ where: { id: 'singleton' }, data: { aiCallsToday: { increment: 1 } } });
-    }
-
-    return NextResponse.json({
-      ok: true,
-      insights: String(parsed?.insights ?? '').slice(0, 600),
-      alerts,
-      summary,
+function transformAging(
+  parsed: any,
+  itemMap: Map<string, AgingItem>,
+  validIds: Set<string>
+): { alerts: any[]; summary: any } {
+  const alerts = (parsed?.alerts || [])
+    .filter((a: any) => validIds.has(String(a?.id ?? '')))
+    .map((a: any) => {
+      const id = String(a.id);
+      const orig = itemMap.get(id)!;
+      return {
+        tradeId: id,
+        title: orig.title,
+        category: orig.category,
+        cost: orig.cost,
+        estValue: orig.estValue,
+        daysHeld: orig.daysHeld,
+        agingStage: ['fresh', 'normal', 'aging', 'stale', 'critical', 'dead', 'zombie'].includes(String(a?.aging_stage))
+          ? String(a.aging_stage) : orig.stage,
+        stageDescription: orig.stageDescription,
+        stageColor: orig.stageColor,
+        holdingCostEur: Math.max(0, Number(a?.holding_cost_eur ?? orig.holdingCost)),
+        opportunityCostEur: Math.max(0, Number(a?.opportunity_cost_eur ?? orig.opportunityCost)),
+        totalHoldingCostEur: Math.max(0, Number(a?.total_holding_cost_eur ?? orig.totalHoldingCost)),
+        expectedProfitEur: Math.round(Number(a?.expected_profit_eur ?? orig.expectedProfit)),
+        adjustedProfitEur: Math.round(Number(a?.adjusted_profit_eur ?? orig.adjustedProfit)),
+        urgency: ['low', 'medium', 'high', 'critical'].includes(String(a?.urgency))
+          ? String(a.urgency) : orig.urgency,
+        action: ['sell_aggressive', 'sell_bundle', 'sell_auction', 'relist', 'refurbish', 'part_out', 'donate', 'hold_vintage', 'write_off'].includes(String(a?.action))
+          ? String(a.action) : 'relist',
+        suggestedDiscountPct: Math.max(0, Math.min(50, Number(a?.suggested_discount_pct ?? 0))),
+        suggestedPriceEur: Math.max(0, Number(a?.suggested_price_eur ?? orig.estValue)),
+        deadlineDays: Math.max(0, Number(a?.deadline_days ?? 7)),
+        reasoning: String(a?.reasoning ?? '').slice(0, 250),
+      };
+    })
+    .sort((a, b) => {
+      const order = { critical: 0, high: 1, medium: 2, low: 3 };
+      return (order[a.urgency as keyof typeof order] ?? 4) - (order[b.urgency as keyof typeof order] ?? 4);
     });
-  } catch (e: any) {
-    logger.error("/api/ai/inventory-aging", "POST handler failed", e);
-    return NextResponse.json({ error: e?.message ?? 'Napaka' }, { status: 500 });
-  }
+
+  const summary = {
+    totalItems: alerts.length,
+    totalHoldingCostEur: alerts.reduce((s, a) => s + a.holdingCostEur, 0),
+    totalOpportunityCostEur: alerts.reduce((s, a) => s + a.opportunityCostEur, 0),
+    criticalCount: alerts.filter(a => a.urgency === 'critical').length,
+    deadCount: alerts.filter(a => a.agingStage === 'dead' || a.agingStage === 'zombie').length,
+    potentialLossEur: alerts.filter(a => a.adjustedProfitEur < 0).reduce((s, a) => s + Math.abs(a.adjustedProfitEur), 0),
+    recommendedAction: ['aggressive_liquidation', 'balanced', 'patient'].includes(String(parsed?.summary?.recommended_action))
+      ? String(parsed.summary.recommended_action) : 'balanced',
+  };
+
+  return { alerts, summary };
 }

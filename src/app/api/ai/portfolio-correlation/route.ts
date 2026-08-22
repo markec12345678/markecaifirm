@@ -1,4 +1,6 @@
-// v6.12: AI Multi-Asset Portfolio Correlation — analiza korelacij med kategorijami
+// v6.12 / v8.96.1-batch3: AI Multi-Asset Portfolio Correlation — analiza korelacij med kategorijami
+// Refaktoriran z withAiRoute helperjem (v8.96.1-batch3) + enforceBudget guard.
+//
 // POST /api/ai/portfolio-correlation
 // Body: {}
 // Returns: { ok, correlations: Array<{ catA, catB, correlation, relationship, insight }>,
@@ -6,15 +8,14 @@
 //            diversification: { score, concentrationRisk, suggestions },
 //            insights }
 
-import { NextRequest, NextResponse } from 'next/server';
-import { db } from '@/lib/db';
-import { getSettingsRow } from '@/lib/pipeline';
-import { callProviderForRaw, parseJsonLooseExported, type AiProviderType, type AiSettings } from '@/lib/ai';
-import { logger } from '@/lib/logger';
+import { withAiRoute, AI_ROUTE_DEFAULTS, type AiRouteContext } from '@/lib/with-ai-route';
+import { apiOk } from '@/lib/api-response';
 
-export const runtime = 'nodejs';
-export const dynamic = 'force-dynamic';
+export const { runtime, dynamic } = AI_ROUTE_DEFAULTS;
 export const maxDuration = 90;
+
+// eslint-disable-next-line @typescript-eslint/no-empty-object-type
+interface PortfolioCorrelationInput {}
 
 // Pearson correlation coefficient
 function pearson(x: number[], y: number[]): number {
@@ -31,9 +32,18 @@ function pearson(x: number[], y: number[]): number {
   return num / den;
 }
 
-export async function POST(req: NextRequest) {
-  try {
+export const POST = withAiRoute<PortfolioCorrelationInput>({
+  endpoint: '/api/ai/portfolio-correlation',
+  maxDuration: 90,
+  enforceBudget: true,
+
+  parseBody: async (req) => {
     await req.json().catch(() => ({}));
+    return {} as PortfolioCorrelationInput;
+  },
+
+  handler: async (_input, ctx: AiRouteContext) => {
+    const { db, callAi, parseAi } = ctx;
 
     // 1. Pridobi vse sold tradeove
     const soldTrades = await db.trade.findMany({
@@ -52,7 +62,7 @@ export async function POST(req: NextRequest) {
     });
 
     if (soldTrades.length < 5 && heldTrades.length < 3) {
-      return NextResponse.json({
+      return apiOk({
         ok: true,
         correlations: [],
         message: 'Ni dovolj podatkov za analizo korelacij (potrebnih vsaj 5 prodaj ali 3 aktivni itemi).',
@@ -113,15 +123,6 @@ export async function POST(req: NextRequest) {
       : 0;
 
     // 7. AI analiza
-    const settings = await getSettingsRow();
-    const aiSettings: AiSettings = {
-      provider: settings.aiProvider as AiProviderType,
-      baseUrl: settings.aiBaseUrl, apiKey: settings.aiApiKey, model: settings.aiModel,
-      fallbackProvider: (settings.fallbackProvider || '') as AiProviderType | '',
-      fallbackBaseUrl: settings.fallbackBaseUrl || '', fallbackApiKey: settings.fallbackApiKey || '',
-      fallbackModel: settings.fallbackModel || '',
-    };
-
     const topCorrelations = correlations.slice(0, 15).map(c =>
       `- ${c.catA} ↔ ${c.catB}: ${c.correlation > 0 ? '+' : ''}${c.correlation} (${c.correlation > 0.5 ? 'močno pozitivna' : c.correlation > 0.2 ? 'šibko pozitivna' : c.correlation < -0.5 ? 'močno negativna' : c.correlation < -0.2 ? 'šibko negativna' : 'neznačilna'})`
     ).join('\n');
@@ -131,7 +132,28 @@ export async function POST(req: NextRequest) {
       .map(([cat, c]) => `- ${cat}: ${c.invested}€ (${c.count} itemov, ${Math.round((c.invested / Math.max(1, totalInvested)) * 100)}%)`)
       .join('\n');
 
-    const prompt = `Si ekspert za portfolio management in analizo korelacij med razreda sredstev.
+    const prompt = buildPrompt(allocationStr, totalInvested, hhi, concentrationRisk, topCatPct, topCorrelations);
+    const raw = await callAi(prompt);
+    const parsed: any = parseAi(raw);
+
+    return apiOk(transformResponse(
+      parsed, correlations, concentrationRisk, categories,
+      totalInvested, hhi, topCatPct, heldTrades.length, soldTrades.length,
+    ));
+  },
+});
+
+// --- Pomožne funkcije (čiste, testabilne) --------------------------------
+
+function buildPrompt(
+  allocationStr: string,
+  totalInvested: number,
+  hhi: number,
+  concentrationRisk: string,
+  topCatPct: number,
+  topCorrelations: string
+): string {
+  return `Si ekspert za portfolio management in analizo korelacij med razreda sredstev.
 Analiziraj korelacije med kategorijami v portfoliu in predlagaj diverzifikacijo.
 
 TRENUTNA ALOKACIJA:
@@ -181,88 +203,69 @@ Odgovori LE z JSON:
     }
   ]
 }`;
+}
 
-    let raw = '';
-    try {
-      raw = await callProviderForRaw(aiSettings, prompt);
-    } catch (primaryError: any) {
-      if (aiSettings.fallbackProvider && aiSettings.fallbackModel) {
-        const fb: AiSettings = {
-          provider: aiSettings.fallbackProvider,
-          baseUrl: aiSettings.fallbackBaseUrl || '',
-          apiKey: aiSettings.fallbackApiKey || '',
-          model: aiSettings.fallbackModel,
-        };
-        raw = await callProviderForRaw(fb, prompt);
-      } else {
-        return NextResponse.json({ error: primaryError?.message ?? 'AI failed' }, { status: 500 });
-      }
-    }
+function transformResponse(
+  parsed: any,
+  correlations: Array<{ catA: string; catB: string; correlation: number }>,
+  concentrationRisk: string,
+  categories: string[],
+  totalInvested: number,
+  hhi: number,
+  topCatPct: number,
+  heldItemsCount: number,
+  soldTradesAnalyzedCount: number
+): any {
+  const clusters = (parsed?.clusters || []).slice(0, 6).map((c: any) => ({
+    name: String(c?.name ?? '').slice(0, 80),
+    categories: Array.isArray(c?.categories) ? c.categories.slice(0, 6).map((cat: any) => String(cat).slice(0, 50)) : [],
+    characteristic: String(c?.characteristic ?? '').slice(0, 200),
+    risk: ['low', 'medium', 'high'].includes(String(c?.risk)) ? String(c.risk) : 'medium',
+  }));
 
-    const parsed: any = parseJsonLooseExported(raw);
+  const diversification = {
+    score: Math.max(0, Math.min(100, Number(parsed?.diversification?.score ?? 50))),
+    concentrationRisk: ['low', 'medium', 'high'].includes(String(parsed?.diversification?.concentration_risk))
+      ? String(parsed.diversification.concentration_risk) : concentrationRisk,
+    topRisks: Array.isArray(parsed?.diversification?.top_risks)
+      ? parsed.diversification.top_risks.slice(0, 5).map((r: any) => String(r).slice(0, 200))
+      : [],
+    suggestions: Array.isArray(parsed?.diversification?.suggestions)
+      ? parsed.diversification.suggestions.slice(0, 6).map((s: any) => String(s).slice(0, 250))
+      : [],
+  };
 
-    const clusters = (parsed?.clusters || []).slice(0, 6).map((c: any) => ({
-      name: String(c?.name ?? '').slice(0, 80),
-      categories: Array.isArray(c?.categories) ? c.categories.slice(0, 6).map((cat: any) => String(cat).slice(0, 50)) : [],
-      characteristic: String(c?.characteristic ?? '').slice(0, 200),
-      risk: ['low', 'medium', 'high'].includes(String(c?.risk)) ? String(c.risk) : 'medium',
-    }));
+  const hedgingOpportunities = (parsed?.hedging_opportunities || []).slice(0, 5).map((h: any) => ({
+    category: String(h?.category ?? '').slice(0, 50),
+    hedgesAgainst: String(h?.hedges_against ?? '').slice(0, 50),
+    expectedCorrelation: Math.max(-1, Math.min(1, Number(h?.expected_correlation ?? 0))),
+    reasoning: String(h?.reasoning ?? '').slice(0, 200),
+  }));
 
-    const diversification = {
-      score: Math.max(0, Math.min(100, Number(parsed?.diversification?.score ?? 50))),
-      concentrationRisk: ['low', 'medium', 'high'].includes(String(parsed?.diversification?.concentration_risk))
-        ? String(parsed.diversification.concentration_risk) : concentrationRisk,
-      topRisks: Array.isArray(parsed?.diversification?.top_risks)
-        ? parsed.diversification.top_risks.slice(0, 5).map((r: any) => String(r).slice(0, 200))
-        : [],
-      suggestions: Array.isArray(parsed?.diversification?.suggestions)
-        ? parsed.diversification.suggestions.slice(0, 6).map((s: any) => String(s).slice(0, 250))
-        : [],
-    };
+  // Top correlations z oznakami
+  const topCorrAnnotated = correlations.slice(0, 10).map(c => ({
+    ...c,
+    strength: c.correlation > 0.5 ? 'strong_positive' :
+              c.correlation > 0.2 ? 'weak_positive' :
+              c.correlation < -0.5 ? 'strong_negative' :
+              c.correlation < -0.2 ? 'weak_negative' : 'neutral',
+  }));
 
-    const hedgingOpportunities = (parsed?.hedging_opportunities || []).slice(0, 5).map((h: any) => ({
-      category: String(h?.category ?? '').slice(0, 50),
-      hedgesAgainst: String(h?.hedges_against ?? '').slice(0, 50),
-      expectedCorrelation: Math.max(-1, Math.min(1, Number(h?.expected_correlation ?? 0))),
-      reasoning: String(h?.reasoning ?? '').slice(0, 200),
-    }));
-
-    // Top correlations z oznakami
-    const topCorrAnnotated = correlations.slice(0, 10).map(c => ({
-      ...c,
-      strength: c.correlation > 0.5 ? 'strong_positive' :
-                c.correlation > 0.2 ? 'weak_positive' :
-                c.correlation < -0.5 ? 'strong_negative' :
-                c.correlation < -0.2 ? 'weak_negative' : 'neutral',
-    }));
-
-    // Increment AI usage
-    const today = new Date().toISOString().slice(0, 10);
-    if (settings.aiCallsDate !== today) {
-      await db.settings.update({ where: { id: 'singleton' }, data: { aiCallsDate: today, aiCallsToday: 1 } });
-    } else {
-      await db.settings.update({ where: { id: 'singleton' }, data: { aiCallsToday: { increment: 1 } } });
-    }
-
-    return NextResponse.json({
-      ok: true,
-      insights: String(parsed?.insights ?? '').slice(0, 600),
-      correlations: topCorrAnnotated,
-      clusters,
-      diversification,
-      hedgingOpportunities,
-      summary: {
-        totalCategories: categories.length,
-        totalCorrelations: correlations.length,
-        totalInvested,
-        hhi: Math.round(hhi),
-        topCatPct: Math.round(topCatPct),
-        heldItems: heldTrades.length,
-        soldTradesAnalyzed: soldTrades.length,
-      },
-    });
-  } catch (e: any) {
-    logger.error("/api/ai/portfolio-correlation", "POST handler failed", e);
-    return NextResponse.json({ error: e?.message ?? 'Napaka' }, { status: 500 });
-  }
+  return {
+    ok: true,
+    insights: String(parsed?.insights ?? '').slice(0, 600),
+    correlations: topCorrAnnotated,
+    clusters,
+    diversification,
+    hedgingOpportunities,
+    summary: {
+      totalCategories: categories.length,
+      totalCorrelations: correlations.length,
+      totalInvested,
+      hhi: Math.round(hhi),
+      topCatPct: Math.round(topCatPct),
+      heldItems: heldItemsCount,
+      soldTradesAnalyzed: soldTradesAnalyzedCount,
+    },
+  };
 }
