@@ -1,8 +1,8 @@
-// v7.68: AI Risk Reward Calculator — AI izračuna risk-adjusted reward za
-// potencialne trade-e. Za vsak held item ali listing izračuna potentialReward
-// (upside), potentialLoss (max 30% downside), rewardToRiskRatio,
-// probabilityOfProfit (iz dealScore), expectedValue. AI generira
-// riskLevel/rewardLevel/riskRewardGrade (A+ do F), keyRiskFactors,
+// v7.68 / v8.96.4-batch1: AI Risk Reward Calculator — AI izračuna
+// risk-adjusted reward za potencialne trade-e. Za vsak held item ali listing
+// izračuna potentialReward (upside), potentialLoss (max 30% downside),
+// rewardToRiskRatio, probabilityOfProfit (iz dealScore), expectedValue. AI
+// generira riskLevel/rewardLevel/riskRewardGrade (A+ do F), keyRiskFactors,
 // mitigationStrategies, finalRecommendation (STRONG_BUY..STRONG_SELL).
 //
 // "PS5: ratio 2.5 (A grade), EV +85€, STRONG_BUY. Jakna: ratio 0.8 (C),
@@ -17,23 +17,14 @@
 //
 // GET+POST /api/ai/risk-reward-calculator
 // (AI-enhanced + grounding + anti-hallucination + 6h cache + deterministic fallback)
+// Refaktoriran z withAiRoute helperjem (v8.96.4-batch1) + enforceBudget guard.
 
-import { NextRequest, NextResponse } from 'next/server';
-import { db } from '@/lib/db';
-import { getSettingsRow } from '@/lib/pipeline';
-import {
-  callProviderForRaw,
-  parseJsonLooseExported,
-  type AiProviderType,
-  type AiSettings,
-} from '@/lib/ai';
+import { withAiRoute, AI_ROUTE_DEFAULTS, type AiRouteContext } from '@/lib/with-ai-route';
+import { apiOk } from '@/lib/api-response';
 import { GROUNDING_PROMPT_SUFFIX } from '@/lib/anti-hallucination';
 import { getCachedAI, setCachedAI } from '@/lib/ai-cache';
-import { checkRateLimit, rateLimitResponse } from '@/lib/rate-limit';
-import { logger } from '@/lib/logger';
 
-export const runtime = 'nodejs';
-export const dynamic = 'force-dynamic';
+export const { runtime, dynamic } = AI_ROUTE_DEFAULTS;
 export const maxDuration = 60;
 
 // --- Types ---------------------------------------------------------------
@@ -70,6 +61,11 @@ interface ItemAssessment {
 
 interface AiRiskRewardResponse {
   items?: unknown;
+}
+
+interface RiskRewardInput {
+  listingId?: string;
+  tradeId?: string;
 }
 
 // --- Helpers -------------------------------------------------------------
@@ -291,343 +287,9 @@ function buildPortfolioSummary(items: ItemAssessment[]) {
   };
 }
 
-// --- Handler -------------------------------------------------------------
+// --- Base item type (DB-derived deterministic numbers) -------------------
 
-export async function GET(req: NextRequest) {
-  return handleRiskReward(req);
-}
-export async function POST(req: NextRequest) {
-  return handleRiskReward(req);
-}
-
-async function handleRiskReward(req: NextRequest) {
-  try {
-    const rl = checkRateLimit(req, 'ai-risk-reward', 20);
-    if (!rl.allowed) return rateLimitResponse(rl);
-
-    // Parse body — optional listingId or tradeId
-    let body: { listingId?: string; tradeId?: string } = {};
-    try {
-      const parsed = await req.json();
-      if (parsed && typeof parsed === 'object') {
-        body = parsed as { listingId?: string; tradeId?: string };
-      }
-    } catch {
-      // GET request — no body, analyze all held trades
-    }
-
-    // 1) Determine which trades to analyze
-    const statuses: ('held' | 'sold')[] = ['held', 'sold'];
-    const where = body.tradeId
-      ? { id: body.tradeId, status: { in: statuses } }
-      : body.listingId
-        ? {
-            listingId: body.listingId,
-            status: { in: statuses },
-          }
-        : { status: 'held' as const };
-
-    const trades = await db.trade.findMany({
-      where,
-      select: {
-        id: true,
-        title: true,
-        category: true,
-        buyPrice: true,
-        listing: {
-          select: {
-            id: true,
-            aiEstimatedValue: true,
-            aiScore: true,
-            aiRisk: true,
-            dealScore: true,
-          },
-        },
-      },
-      take: 500,
-    });
-
-    // Empty state
-    if (trades.length === 0) {
-      return NextResponse.json({
-        ok: true,
-        items: [],
-        portfolioRiskSummary: {
-          totalItems: 0,
-          avgRiskLevel: 'N/A',
-          avgRewardLevel: 'N/A',
-          portfolioGrade: 'N/A',
-          strongBuyCount: 0,
-          avoidCount: 0,
-          totalExpectedValue: 0,
-          portfolioRecommendation:
-            'Ni held trade-ov za analizo — dodaš trades za začetek Risk/Reward analize.',
-        },
-        aiUsed: false,
-        message:
-          'Ni held trade-ov — Risk/Reward analiza ni mogoča. Dodaš trades z veljavnim buyPrice za začetek.',
-      });
-    }
-
-    // 2) Compute deterministic metrics per item
-    const itemIds = trades.map(t => t.id).sort();
-    type BaseItem = {
-      tradeId: string;
-      title: string;
-      category: string;
-      buyPrice: number;
-      aiEstimatedValue: number;
-      potentialReward: number;
-      potentialLoss: number;
-      rewardToRiskRatio: number;
-      probabilityOfProfit: number;
-      expectedValue: number;
-      dealScore: number;
-      aiRisk: number;
-    };
-
-    const baseItems: BaseItem[] = [];
-    for (const t of trades) {
-      const buyPrice = t.buyPrice ?? 0;
-      const aiEstimatedValue = t.listing?.aiEstimatedValue ?? buyPrice;
-      const potentialReward = Math.max(0, aiEstimatedValue - buyPrice);
-      const potentialLoss = buyPrice * 0.3; // assume max 30% downside
-      const rewardToRiskRatio =
-        potentialLoss > 0 ? round1(potentialReward / potentialLoss) : 0;
-
-      // probabilityOfProfit: based on dealScore (0-100 → 0-95%)
-      const dealScore = t.listing?.dealScore ?? 0;
-      const probabilityOfProfit = Math.max(
-        5,
-        Math.min(95, Math.round(dealScore * 0.95)),
-      );
-
-      // expectedValue = (p_win × reward) - (p_loss × loss)
-      const pWin = probabilityOfProfit / 100;
-      const pLoss = 1 - pWin;
-      const expectedValue = Math.round(
-        pWin * potentialReward - pLoss * potentialLoss,
-      );
-
-      baseItems.push({
-        tradeId: t.id,
-        title: t.title,
-        category: t.category || 'drugo',
-        buyPrice,
-        aiEstimatedValue,
-        potentialReward,
-        potentialLoss,
-        rewardToRiskRatio,
-        probabilityOfProfit,
-        expectedValue,
-        dealScore,
-        aiRisk: t.listing?.aiRisk ?? 0,
-      });
-    }
-
-    // 3) AI cache — keyed by sorted item IDs
-    const cacheKey = `risk-reward-calc:${JSON.stringify(itemIds)}`;
-    const cached = getCachedAI<{ items: ItemAssessment[] }>(cacheKey);
-    if (cached && Array.isArray(cached.items) && cached.items.length > 0) {
-      // Merge cached AI fields with fresh DB numbers (in case buyPrice changed)
-      const merged: ItemAssessment[] = baseItems.map(base => {
-        const c = cached.items.find(x => x.tradeId === base.tradeId);
-        if (!c) {
-          // No cache for this item — build deterministic
-          return buildDeterministicItem(base);
-        }
-        return {
-          tradeId: base.tradeId,
-          title: base.title,
-          category: base.category,
-          buyPrice: base.buyPrice,
-          aiEstimatedValue: base.aiEstimatedValue,
-          potentialReward: base.potentialReward,
-          potentialLoss: base.potentialLoss,
-          rewardToRiskRatio: base.rewardToRiskRatio,
-          probabilityOfProfit: base.probabilityOfProfit,
-          expectedValue: base.expectedValue,
-          riskLevel: clampEnum(c.riskLevel, VALID_RISK, deterministicRiskLevel(base.rewardToRiskRatio)),
-          rewardLevel: clampEnum(c.rewardLevel, VALID_REWARD, deterministicRewardLevel(base.potentialReward, base.buyPrice)),
-          riskRewardGrade: clampEnum(c.riskRewardGrade, VALID_GRADE, deterministicGrade(base.rewardToRiskRatio)),
-          confidenceInAssessment: clampNumber(c.confidenceInAssessment, 0, 100, 60),
-          keyRiskFactors: sanitizeStringArray(c.keyRiskFactors, 5),
-          mitigationStrategies: sanitizeStringArray(c.mitigationStrategies, 5),
-          finalRecommendation: clampEnum(
-            c.finalRecommendation,
-            VALID_REC,
-            deterministicRecommendation(base.rewardToRiskRatio, base.expectedValue),
-          ),
-        };
-      });
-      return NextResponse.json({
-        ok: true,
-        items: merged,
-        portfolioRiskSummary: buildPortfolioSummary(merged),
-        cached: true,
-        aiUsed: true,
-      });
-    }
-
-    // 4) Build AI prompt with grounding
-    const settings = await getSettingsRow();
-    const aiSettings: AiSettings = {
-      provider: settings.aiProvider as AiProviderType,
-      baseUrl: settings.aiBaseUrl,
-      apiKey: settings.aiApiKey,
-      model: settings.aiModel,
-      fallbackProvider: (settings.fallbackProvider || '') as
-        | AiProviderType
-        | '',
-      fallbackBaseUrl: settings.fallbackBaseUrl || '',
-      fallbackApiKey: settings.fallbackApiKey || '',
-      fallbackModel: settings.fallbackModel || '',
-    };
-
-    const itemBlock = baseItems
-      .slice(0, 20)
-      .map(
-        (it, i) =>
-          `${i + 1}. tradeId=${it.tradeId}, title="${it.title}", category="${it.category}", buyPrice=${it.buyPrice}€, aiEstimatedValue=${it.aiEstimatedValue}€, potentialReward=${it.potentialReward}€, potentialLoss=${it.potentialLoss}€, rewardToRiskRatio=${it.rewardToRiskRatio}, probabilityOfProfit=${it.probabilityOfProfit}%, expectedValue=${it.expectedValue}€, dealScore=${it.dealScore}, aiRisk=${it.aiRisk}/10`,
-      )
-      .join('\n');
-
-    const prompt = `Si AI analitik tveganja in nagrajevanja za slovenske in srednjeevropske oglasne platforme (Bolha, Vinted, Avtonet, mobile.de).
-Za vsak trade izračunaj riskLevel, rewardLevel, riskRewardGrade (A+ do F), confidenceInAssessment (0-100), keyRiskFactors (2-5), mitigationStrategies (2-5) in finalRecommendation (STRONG_BUY..STRONG_SELL).
-
-ITEM-I (${Math.min(20, baseItems.length)} od ${baseItems.length}):
-${itemBlock}
-
-PRAVILA ZA ANALIZO:
-1. riskLevel: LOW (ratio >=2, aiRisk <4), MEDIUM (ratio 1-2, aiRisk 4-6), HIGH (ratio 0.5-1, aiRisk 6-8), VERY_HIGH (ratio <0.5, aiRisk >=8)
-2. rewardLevel: LOW (rewardPct <15%), MEDIUM (15-30%), HIGH (30-50%), VERY_HIGH (>50%)
-3. riskRewardGrade: A+ (ratio >=3 + EV>0), A (ratio 2-3 + EV>0), B (ratio 1-2 + EV>=0), C (ratio 0.5-1), D (ratio 0.25-0.5), F (ratio <0.25 ali EV<0)
-4. confidenceInAssessment: višji = bolj zanesljiva ocena (glede na dealScore kvaliteto podatkov in aiRisk konsistentnost)
-5. keyRiskFactors: 2-5 konkretnih tveganj (npr. "visoka koncentracija v eni kategoriji", "stari listing", "nizka ocena kakovosti", "visoka cena glede na trg")
-6. mitigationStrategies: 2-5 konkretnih nasvetov (npr. "znižaj ceno za 10% za hitro prodajo", "izboljšaj slike", "ponovno oceni trg", "čakaj na boljši čas")
-7. finalRecommendation:
-   - STRONG_BUY: ratio >=3, EV>0, grade A+
-   - BUY: ratio 2-3, EV>0, grade A
-   - HOLD: ratio 1-2, EV>=0, grade B
-   - AVOID: ratio 0.25-1 ali EV<0
-   - STRONG_SELL: ratio <0.25, zelo negativen EV
-
-VRNI LE JSON:
-{
-  "items": [
-    {
-      "tradeId": "abc123",
-      "riskLevel": "LOW",
-      "rewardLevel": "HIGH",
-      "riskRewardGrade": "A",
-      "confidenceInAssessment": 80,
-      "keyRiskFactors": ["..."],
-      "mitigationStrategies": ["..."],
-      "finalRecommendation": "BUY"
-    }
-  ]
-}${GROUNDING_PROMPT_SUFFIX}`;
-
-    // Start with deterministic baseline items
-    const items: ItemAssessment[] = baseItems.map(b => buildDeterministicItem(b));
-
-    let aiUsed = false;
-    try {
-      const raw = await callProviderForRaw(aiSettings, prompt);
-      const parsed = parseJsonLooseExported(raw) as
-        | AiRiskRewardResponse
-        | null;
-
-      if (parsed && Array.isArray(parsed.items)) {
-        const aiMap = new Map<string, ItemAssessment>();
-        for (const it of parsed.items) {
-          const a = it as Record<string, unknown> | null;
-          if (!a || typeof a !== 'object') continue;
-          const tradeId = clampString(a.tradeId, 100, '');
-          if (!tradeId) continue;
-          aiMap.set(tradeId, {
-            tradeId,
-            title: '',
-            category: '',
-            buyPrice: 0,
-            aiEstimatedValue: 0,
-            potentialReward: 0,
-            potentialLoss: 0,
-            rewardToRiskRatio: 0,
-            probabilityOfProfit: 0,
-            expectedValue: 0,
-            riskLevel: clampEnum(a.riskLevel, VALID_RISK, 'MEDIUM'),
-            rewardLevel: clampEnum(a.rewardLevel, VALID_REWARD, 'MEDIUM'),
-            riskRewardGrade: clampEnum(a.riskRewardGrade, VALID_GRADE, 'C'),
-            confidenceInAssessment: clampNumber(
-              a.confidenceInAssessment,
-              0,
-              100,
-              60,
-            ),
-            keyRiskFactors: sanitizeStringArray(a.keyRiskFactors, 5),
-            mitigationStrategies: sanitizeStringArray(
-              a.mitigationStrategies,
-              5,
-            ),
-            finalRecommendation: clampEnum(
-              a.finalRecommendation,
-              VALID_REC,
-              'HOLD',
-            ),
-          });
-        }
-
-        // Merge AI fields back into items (preserve DB numbers)
-        if (aiMap.size > 0) {
-          for (const item of items) {
-            const ai = aiMap.get(item.tradeId);
-            if (!ai) continue;
-            item.riskLevel = ai.riskLevel;
-            item.rewardLevel = ai.rewardLevel;
-            item.riskRewardGrade = ai.riskRewardGrade;
-            item.confidenceInAssessment = ai.confidenceInAssessment;
-            if (ai.keyRiskFactors.length > 0) item.keyRiskFactors = ai.keyRiskFactors;
-            if (ai.mitigationStrategies.length > 0) item.mitigationStrategies = ai.mitigationStrategies;
-            item.finalRecommendation = ai.finalRecommendation;
-          }
-          aiUsed = true;
-        }
-      }
-    } catch (err) {
-      logger.warn(
-        '/api/ai/risk-reward-calculator',
-        'AI call failed — using deterministic fallback',
-        err,
-      );
-    }
-
-    // 5) Cache (6h TTL) — only when AI was used
-    if (aiUsed) {
-      setCachedAI(cacheKey, { items });
-    }
-
-    // 6) Portfolio summary
-    const portfolioRiskSummary = buildPortfolioSummary(items);
-
-    return NextResponse.json({
-      ok: true,
-      items,
-      portfolioRiskSummary,
-      aiUsed,
-    });
-  } catch (err: any) {
-    logger.error('/api/ai/risk-reward-calculator', 'handler failed', err);
-    return NextResponse.json(
-      { error: err?.message ?? 'Napaka' },
-      { status: 500 },
-    );
-  }
-}
-
-// --- Helper: build deterministic item assessment -------------------------
-
-function buildDeterministicItem(base: {
+interface BaseItem {
   tradeId: string;
   title: string;
   category: string;
@@ -640,7 +302,11 @@ function buildDeterministicItem(base: {
   expectedValue: number;
   dealScore: number;
   aiRisk: number;
-}): ItemAssessment {
+}
+
+// --- Helper: build deterministic item assessment -------------------------
+
+function buildDeterministicItem(base: BaseItem): ItemAssessment {
   const ratio = base.rewardToRiskRatio;
   const riskLevel = deterministicRiskLevel(ratio);
   const rewardLevel = deterministicRewardLevel(
@@ -714,3 +380,348 @@ function sanitizeStringArray(raw: unknown, maxItems: number): string[] {
   }
   return out;
 }
+
+// --- Prompt builder ------------------------------------------------------
+
+interface PromptArgs {
+  baseItems: BaseItem[];
+}
+
+function buildPrompt(args: PromptArgs): string {
+  const { baseItems } = args;
+
+  const itemBlock = baseItems
+    .slice(0, 20)
+    .map(
+      (it, i) =>
+        `${i + 1}. tradeId=${it.tradeId}, title="${it.title}", category="${it.category}", buyPrice=${it.buyPrice}€, aiEstimatedValue=${it.aiEstimatedValue}€, potentialReward=${it.potentialReward}€, potentialLoss=${it.potentialLoss}€, rewardToRiskRatio=${it.rewardToRiskRatio}, probabilityOfProfit=${it.probabilityOfProfit}%, expectedValue=${it.expectedValue}€, dealScore=${it.dealScore}, aiRisk=${it.aiRisk}/10`,
+    )
+    .join('\n');
+
+  return `Si AI analitik tveganja in nagrajevanja za slovenske in srednjeevropske oglasne platforme (Bolha, Vinted, Avtonet, mobile.de).
+Za vsak trade izračunaj riskLevel, rewardLevel, riskRewardGrade (A+ do F), confidenceInAssessment (0-100), keyRiskFactors (2-5), mitigationStrategies (2-5) in finalRecommendation (STRONG_BUY..STRONG_SELL).
+
+ITEM-I (${Math.min(20, baseItems.length)} od ${baseItems.length}):
+${itemBlock}
+
+PRAVILA ZA ANALIZO:
+1. riskLevel: LOW (ratio >=2, aiRisk <4), MEDIUM (ratio 1-2, aiRisk 4-6), HIGH (ratio 0.5-1, aiRisk 6-8), VERY_HIGH (ratio <0.5, aiRisk >=8)
+2. rewardLevel: LOW (rewardPct <15%), MEDIUM (15-30%), HIGH (30-50%), VERY_HIGH (>50%)
+3. riskRewardGrade: A+ (ratio >=3 + EV>0), A (ratio 2-3 + EV>0), B (ratio 1-2 + EV>=0), C (ratio 0.5-1), D (ratio 0.25-0.5), F (ratio <0.25 ali EV<0)
+4. confidenceInAssessment: višji = bolj zanesljiva ocena (glede na dealScore kvaliteto podatkov in aiRisk konsistentnost)
+5. keyRiskFactors: 2-5 konkretnih tveganj (npr. "visoka koncentracija v eni kategoriji", "stari listing", "nizka ocena kakovosti", "visoka cena glede na trg")
+6. mitigationStrategies: 2-5 konkretnih nasvetov (npr. "znižaj ceno za 10% za hitro prodajo", "izboljšaj slike", "ponovno oceni trg", "čakaj na boljši čas")
+7. finalRecommendation:
+   - STRONG_BUY: ratio >=3, EV>0, grade A+
+   - BUY: ratio 2-3, EV>0, grade A
+   - HOLD: ratio 1-2, EV>=0, grade B
+   - AVOID: ratio 0.25-1 ali EV<0
+   - STRONG_SELL: ratio <0.25, zelo negativen EV
+
+VRNI LE JSON:
+{
+  "items": [
+    {
+      "tradeId": "abc123",
+      "riskLevel": "LOW",
+      "rewardLevel": "HIGH",
+      "riskRewardGrade": "A",
+      "confidenceInAssessment": 80,
+      "keyRiskFactors": ["..."],
+      "mitigationStrategies": ["..."],
+      "finalRecommendation": "BUY"
+    }
+  ]
+}${GROUNDING_PROMPT_SUFFIX}`;
+}
+
+// --- AI response parser --------------------------------------------------
+
+/**
+ * Merge AI-parsed items into existing deterministic `items` array (mutating).
+ * Preserves DB numbers (buyPrice, potentialReward, etc.) — only overrides
+ * AI-specific fields (riskLevel, rewardLevel, grade, confidence, risks,
+ * mitigations, finalRecommendation).
+ *
+ * Returns true if any AI fields were merged (aiUsed=true).
+ */
+function mergeAiIntoItems(
+  parsed: AiRiskRewardResponse | null,
+  items: ItemAssessment[],
+): boolean {
+  if (!parsed || !Array.isArray(parsed.items)) return false;
+
+  const aiMap = new Map<string, ItemAssessment>();
+  for (const it of parsed.items) {
+    const a = it as Record<string, unknown> | null;
+    if (!a || typeof a !== 'object') continue;
+    const tradeId = clampString(a.tradeId, 100, '');
+    if (!tradeId) continue;
+    aiMap.set(tradeId, {
+      tradeId,
+      title: '',
+      category: '',
+      buyPrice: 0,
+      aiEstimatedValue: 0,
+      potentialReward: 0,
+      potentialLoss: 0,
+      rewardToRiskRatio: 0,
+      probabilityOfProfit: 0,
+      expectedValue: 0,
+      riskLevel: clampEnum(a.riskLevel, VALID_RISK, 'MEDIUM'),
+      rewardLevel: clampEnum(a.rewardLevel, VALID_REWARD, 'MEDIUM'),
+      riskRewardGrade: clampEnum(a.riskRewardGrade, VALID_GRADE, 'C'),
+      confidenceInAssessment: clampNumber(
+        a.confidenceInAssessment,
+        0,
+        100,
+        60,
+      ),
+      keyRiskFactors: sanitizeStringArray(a.keyRiskFactors, 5),
+      mitigationStrategies: sanitizeStringArray(
+        a.mitigationStrategies,
+        5,
+      ),
+      finalRecommendation: clampEnum(
+        a.finalRecommendation,
+        VALID_REC,
+        'HOLD',
+      ),
+    });
+  }
+
+  // Merge AI fields back into items (preserve DB numbers)
+  if (aiMap.size === 0) return false;
+  for (const item of items) {
+    const ai = aiMap.get(item.tradeId);
+    if (!ai) continue;
+    item.riskLevel = ai.riskLevel;
+    item.rewardLevel = ai.rewardLevel;
+    item.riskRewardGrade = ai.riskRewardGrade;
+    item.confidenceInAssessment = ai.confidenceInAssessment;
+    if (ai.keyRiskFactors.length > 0) item.keyRiskFactors = ai.keyRiskFactors;
+    if (ai.mitigationStrategies.length > 0) item.mitigationStrategies = ai.mitigationStrategies;
+    item.finalRecommendation = ai.finalRecommendation;
+  }
+  return true;
+}
+
+// --- Cached items merge --------------------------------------------------
+
+/**
+ * Merge cached AI assessment fields with fresh DB numbers (in case buyPrice
+ * changed since caching). Items not in cache get deterministic values.
+ */
+function mergeCachedItems(
+  baseItems: BaseItem[],
+  cachedItems: ItemAssessment[],
+): ItemAssessment[] {
+  return baseItems.map(base => {
+    const c = cachedItems.find(x => x.tradeId === base.tradeId);
+    if (!c) {
+      // No cache for this item — build deterministic
+      return buildDeterministicItem(base);
+    }
+    return {
+      tradeId: base.tradeId,
+      title: base.title,
+      category: base.category,
+      buyPrice: base.buyPrice,
+      aiEstimatedValue: base.aiEstimatedValue,
+      potentialReward: base.potentialReward,
+      potentialLoss: base.potentialLoss,
+      rewardToRiskRatio: base.rewardToRiskRatio,
+      probabilityOfProfit: base.probabilityOfProfit,
+      expectedValue: base.expectedValue,
+      riskLevel: clampEnum(c.riskLevel, VALID_RISK, deterministicRiskLevel(base.rewardToRiskRatio)),
+      rewardLevel: clampEnum(c.rewardLevel, VALID_REWARD, deterministicRewardLevel(base.potentialReward, base.buyPrice)),
+      riskRewardGrade: clampEnum(c.riskRewardGrade, VALID_GRADE, deterministicGrade(base.rewardToRiskRatio)),
+      confidenceInAssessment: clampNumber(c.confidenceInAssessment, 0, 100, 60),
+      keyRiskFactors: sanitizeStringArray(c.keyRiskFactors, 5),
+      mitigationStrategies: sanitizeStringArray(c.mitigationStrategies, 5),
+      finalRecommendation: clampEnum(
+        c.finalRecommendation,
+        VALID_REC,
+        deterministicRecommendation(base.rewardToRiskRatio, base.expectedValue),
+      ),
+    };
+  });
+}
+
+// --- Handler -------------------------------------------------------------
+
+const riskRewardHandler = withAiRoute<RiskRewardInput>({
+  endpoint: '/api/ai/risk-reward-calculator',
+  maxDuration: 60,
+  enforceBudget: true, // AI klic — preveri budget
+  method: 'GET', // dual GET+POST
+
+  parseBody: async (req) => {
+    // Parse body — optional listingId or tradeId (GET requests have no body)
+    try {
+      const parsed = await req.json();
+      if (parsed && typeof parsed === 'object') {
+        return parsed as RiskRewardInput;
+      }
+    } catch {
+      // GET request — no body, analyze all held trades
+    }
+    return {};
+  },
+
+  // No validateInput — both fields optional, query decides
+
+  handler: async (input, ctx: AiRouteContext) => {
+    const { db, callAi, parseAi, logger } = ctx;
+    const { tradeId, listingId } = input;
+
+    // 1) Determine which trades to analyze
+    const statuses: ('held' | 'sold')[] = ['held', 'sold'];
+    const where = tradeId
+      ? { id: tradeId, status: { in: statuses } }
+      : listingId
+        ? {
+            listingId: listingId,
+            status: { in: statuses },
+          }
+        : { status: 'held' as const };
+
+    const trades = await db.trade.findMany({
+      where,
+      select: {
+        id: true,
+        title: true,
+        category: true,
+        buyPrice: true,
+        listing: {
+          select: {
+            id: true,
+            aiEstimatedValue: true,
+            aiScore: true,
+            aiRisk: true,
+            dealScore: true,
+          },
+        },
+      },
+      take: 500,
+    });
+
+    // Empty state
+    if (trades.length === 0) {
+      return apiOk({
+        ok: true,
+        items: [],
+        portfolioRiskSummary: {
+          totalItems: 0,
+          avgRiskLevel: 'N/A',
+          avgRewardLevel: 'N/A',
+          portfolioGrade: 'N/A',
+          strongBuyCount: 0,
+          avoidCount: 0,
+          totalExpectedValue: 0,
+          portfolioRecommendation:
+            'Ni held trade-ov za analizo — dodaš trades za začetek Risk/Reward analize.',
+        },
+        aiUsed: false,
+        message:
+          'Ni held trade-ov — Risk/Reward analiza ni mogoča. Dodaš trades z veljavnim buyPrice za začetek.',
+      });
+    }
+
+    // 2) Compute deterministic metrics per item
+    const itemIds = trades.map(t => t.id).sort();
+    const baseItems: BaseItem[] = [];
+    for (const t of trades) {
+      const buyPrice = t.buyPrice ?? 0;
+      const aiEstimatedValue = t.listing?.aiEstimatedValue ?? buyPrice;
+      const potentialReward = Math.max(0, aiEstimatedValue - buyPrice);
+      const potentialLoss = buyPrice * 0.3; // assume max 30% downside
+      const rewardToRiskRatio =
+        potentialLoss > 0 ? round1(potentialReward / potentialLoss) : 0;
+
+      // probabilityOfProfit: based on dealScore (0-100 → 0-95%)
+      const dealScore = t.listing?.dealScore ?? 0;
+      const probabilityOfProfit = Math.max(
+        5,
+        Math.min(95, Math.round(dealScore * 0.95)),
+      );
+
+      // expectedValue = (p_win × reward) - (p_loss × loss)
+      const pWin = probabilityOfProfit / 100;
+      const pLoss = 1 - pWin;
+      const expectedValue = Math.round(
+        pWin * potentialReward - pLoss * potentialLoss,
+      );
+
+      baseItems.push({
+        tradeId: t.id,
+        title: t.title,
+        category: t.category || 'drugo',
+        buyPrice,
+        aiEstimatedValue,
+        potentialReward,
+        potentialLoss,
+        rewardToRiskRatio,
+        probabilityOfProfit,
+        expectedValue,
+        dealScore,
+        aiRisk: t.listing?.aiRisk ?? 0,
+      });
+    }
+
+    // 3) AI cache — keyed by sorted item IDs
+    const cacheKey = `risk-reward-calc:${JSON.stringify(itemIds)}`;
+    const cached = getCachedAI<{ items: ItemAssessment[] }>(cacheKey);
+    if (cached && Array.isArray(cached.items) && cached.items.length > 0) {
+      // Merge cached AI fields with fresh DB numbers (in case buyPrice changed)
+      const merged = mergeCachedItems(baseItems, cached.items);
+      return apiOk({
+        ok: true,
+        items: merged,
+        portfolioRiskSummary: buildPortfolioSummary(merged),
+        cached: true,
+        aiUsed: true,
+      });
+    }
+
+    // 4) Build AI prompt with grounding
+    const prompt = buildPrompt({ baseItems });
+
+    // Start with deterministic baseline items
+    const items: ItemAssessment[] = baseItems.map(b => buildDeterministicItem(b));
+
+    let aiUsed = false;
+    try {
+      const raw = await callAi(prompt);
+      const parsed = parseAi(raw) as
+        | AiRiskRewardResponse
+        | null;
+
+      aiUsed = mergeAiIntoItems(parsed, items);
+    } catch (err) {
+      logger.warn(
+        '/api/ai/risk-reward-calculator',
+        'AI call failed — using deterministic fallback',
+        err,
+      );
+    }
+
+    // 5) Cache (6h TTL) — only when AI was used
+    if (aiUsed) {
+      setCachedAI(cacheKey, { items });
+    }
+
+    // 6) Portfolio summary
+    const portfolioRiskSummary = buildPortfolioSummary(items);
+
+    return apiOk({
+      ok: true,
+      items,
+      portfolioRiskSummary,
+      aiUsed,
+    });
+  },
+});
+
+export const GET = riskRewardHandler;
+export const POST = riskRewardHandler;

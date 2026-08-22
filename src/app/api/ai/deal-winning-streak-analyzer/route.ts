@@ -1,6 +1,6 @@
-// v7.77: AI Deal Winning Streak Analyzer — AI analizira tvoje winning in
-// losing streak-e (zaporedni dobičkonosni deal-i vs zaporedne izgube).
-// Identificira kaj sproži streak-e in kako jih vzdrževati/prekiniti.
+// v7.77 / v8.96.4-batch2: AI Deal Winning Streak Analyzer — AI analizira
+// tvoje winning in losing streak-e (zaporedni dobičkonosni deal-i vs zaporedne
+// izgube). Identificira kaj sproži streak-e in kako jih vzdrževati/prekiniti.
 // "Current: 5-win streak! Best ever: 8. Trigger: elektronika deals. Keep
 // buying elektronika."
 //
@@ -14,25 +14,17 @@
 // Razlika od deal-velocity (ki meri market temperature) — ta gleda tvojo
 // osebno winning/losing spiralo.
 //
+// Refaktoriran z withAiRoute helperjem (v8.96.4) + enforceBudget guard.
+//
 // GET+POST /api/ai/deal-winning-streak-analyzer
 // (AI-enhanced + grounding + anti-hallucination + 6h cache + deterministic fallback)
 
-import { NextRequest, NextResponse } from 'next/server';
-import { db } from '@/lib/db';
-import { getSettingsRow } from '@/lib/pipeline';
-import {
-  callProviderForRaw,
-  parseJsonLooseExported,
-  type AiProviderType,
-  type AiSettings,
-} from '@/lib/ai';
+import { withAiRoute, AI_ROUTE_DEFAULTS, type AiRouteContext } from '@/lib/with-ai-route';
+import { apiOk } from '@/lib/api-response';
 import { GROUNDING_PROMPT_SUFFIX } from '@/lib/anti-hallucination';
 import { getCachedAI, setCachedAI } from '@/lib/ai-cache';
-import { checkRateLimit, rateLimitResponse } from '@/lib/rate-limit';
-import { logger } from '@/lib/logger';
 
-export const runtime = 'nodejs';
-export const dynamic = 'force-dynamic';
+export const { runtime, dynamic } = AI_ROUTE_DEFAULTS;
 export const maxDuration = 60;
 
 // --- Types ---------------------------------------------------------------
@@ -459,17 +451,21 @@ function buildDeterministicAnalysis(
 
 // --- Handler -------------------------------------------------------------
 
-export async function GET(req: NextRequest) {
-  return handleDealWinningStreakAnalyzer(req);
-}
-export async function POST(req: NextRequest) {
-  return handleDealWinningStreakAnalyzer(req);
-}
+// eslint-disable-next-line @typescript-eslint/no-empty-object-type
+interface DealWinningStreakAnalyzerInput {}
 
-async function handleDealWinningStreakAnalyzer(req: NextRequest) {
-  try {
-    const rl = checkRateLimit(req, 'ai-deal-winning-streak-analyzer', 20);
-    if (!rl.allowed) return rateLimitResponse(rl);
+const dealWinningStreakHandler = withAiRoute<DealWinningStreakAnalyzerInput>({
+  endpoint: '/api/ai/deal-winning-streak-analyzer',
+  maxDuration: 60,
+  enforceBudget: true, // AI klic — preveri budget
+  method: 'GET', // Endpoint sprejema GET + POST — bypass POST-only check
+
+  parseBody: async () => ({}),
+
+  // No validateInput — endpoint ne sprejema inputa
+
+  handler: async (_input, ctx: AiRouteContext) => {
+    const { db, callAi, parseAi, logger } = ctx;
 
     // 1) Query all SOLD trades sorted by sellDate asc
     const soldTrades = await db.trade.findMany({
@@ -493,7 +489,7 @@ async function handleDealWinningStreakAnalyzer(req: NextRequest) {
 
     // Empty state — no sold trades
     if (soldTrades.length === 0) {
-      return NextResponse.json({
+      return apiOk({
         ok: true,
         streaks: {
           currentStreak: 0,
@@ -583,7 +579,7 @@ async function handleDealWinningStreakAnalyzer(req: NextRequest) {
     if (cached) {
       // Recompute summary deterministically (do not trust AI cache text)
       const summary = buildSummary(streaks, cached.analysis);
-      return NextResponse.json({
+      return apiOk({
         ok: true,
         streaks,
         patterns,
@@ -602,47 +598,91 @@ async function handleDealWinningStreakAnalyzer(req: NextRequest) {
     );
 
     // 7) AI prompt with grounding
-    const settings = await getSettingsRow();
-    const aiSettings: AiSettings = {
-      provider: settings.aiProvider as AiProviderType,
-      baseUrl: settings.aiBaseUrl,
-      apiKey: settings.aiApiKey,
-      model: settings.aiModel,
-      fallbackProvider: (settings.fallbackProvider || '') as
-        | AiProviderType
-        | '',
-      fallbackBaseUrl: settings.fallbackBaseUrl || '',
-      fallbackApiKey: settings.fallbackApiKey || '',
-      fallbackModel: settings.fallbackModel || '',
-    };
-
-    // Build compact outcome timeline for AI prompt (last 50 deals)
     const timeline = outcomes
       .slice(-50)
       .map((o, i) => `${i + 1}:${o.type === 'WIN' ? 'W' : 'L'}:${o.category}:${priceBucket(o.buyPrice)}:${dayOfWeekLabel(o.sellDate)}`)
       .join(' | ');
 
-    const prompt = `Si AI "Deal Winning Streak Analyzer" za slovenske in srednjeevropske oglasne platforme (Bolha, Vinted, Avtonet, mobile.de).
+    const prompt = buildPrompt({
+      streaks,
+      patterns,
+      totalSoldDeals: soldTrades.length,
+      timeline,
+    });
+
+    let analysis = deterministicAnalysis;
+    let aiUsed = false;
+
+    try {
+      const raw = await callAi(prompt);
+      const parsed = parseAi(raw) as AiStreakResponse | null;
+
+      if (parsed && typeof parsed === 'object' && parsed.analysis) {
+        analysis = transformStreak(parsed, deterministicAnalysis);
+        aiUsed = true;
+      }
+    } catch (err) {
+      logger.warn(
+        '/api/ai/deal-winning-streak-analyzer',
+        'AI call failed — using deterministic fallback',
+        err,
+      );
+    }
+
+    // 8) Cache (6h TTL) — only when AI was used
+    if (aiUsed) {
+      setCachedAI(cacheKey, { analysis });
+    }
+
+    // 9) Build summary deterministically (NOT from AI)
+    const summary = buildSummary(streaks, analysis);
+
+    return apiOk({
+      ok: true,
+      streaks,
+      patterns,
+      analysis,
+      summary,
+      aiUsed,
+    });
+  },
+});
+
+// AI Hub runner compatibility — body is ignored, identical logic.
+export const GET = dealWinningStreakHandler;
+export const POST = dealWinningStreakHandler;
+
+// --- Pomožne funkcije (čiste, testabilne) --------------------------------
+
+interface PromptParams {
+  streaks: StreakSummary;
+  patterns: StreakPatterns;
+  totalSoldDeals: number;
+  timeline: string;
+}
+
+function buildPrompt(p: PromptParams): string {
+  return `Si AI "Deal Winning Streak Analyzer" za slovenske in srednjeevropske oglasne platforme (Bolha, Vinted, Avtonet, mobile.de).
 Analiziraj winning in losing streak-e (zaporedne dobičkonosne deal-e vs zaporedne izgube). Identificiraj kaj sproži streak-e in kako jih vzdrževati/prekiniti.
 
 STREAK PODATKI (deterministično izračunano):
-- currentStreak: ${streaks.currentStreak}
-- currentStreakType: ${streaks.currentStreakType}
-- longestWinningStreak: ${streaks.longestWinningStreak}
-- longestLosingStreak: ${streaks.longestLosingStreak}
-- avgWinningStreakLength: ${streaks.avgWinningStreakLength}
-- avgLosingStreakLength: ${streaks.avgLosingStreakLength}
-- totalStreaks: ${streaks.totalStreaks}
-- totalSoldDeals: ${soldTrades.length}
+- currentStreak: ${p.streaks.currentStreak}
+- currentStreakType: ${p.streaks.currentStreakType}
+- longestWinningStreak: ${p.streaks.longestWinningStreak}
+- longestLosingStreak: ${p.streaks.longestLosingStreak}
+- avgWinningStreakLength: ${p.streaks.avgWinningStreakLength}
+- avgLosingStreakLength: ${p.streaks.avgLosingStreakLength}
+- totalStreaks: ${p.streaks.totalStreaks}
+- totalSoldDeals: ${p.totalSoldDeals}
 
 PATTERNS (deterministično izračunano):
-- bestCategoryForStreaks: ${patterns.bestCategoryForStreaks ?? 'Ni podatkov'}
-- bestPriceRangeForStreaks: ${patterns.bestPriceRangeForStreaks ?? 'Ni podatkov'}
-- bestTimeForStreaks: ${patterns.bestTimeForStreaks ?? 'Ni podatkov'}
-- streakCorrelationFactors: ${JSON.stringify(patterns.streakCorrelationFactors)}
+- bestCategoryForStreaks: ${p.patterns.bestCategoryForStreaks ?? 'Ni podatkov'}
+- bestPriceRangeForStreaks: ${p.patterns.bestPriceRangeForStreaks ?? 'Ni podatkov'}
+- bestTimeForStreaks: ${p.patterns.bestTimeForStreaks ?? 'Ni podatkov'}
+- streakCorrelationFactors: ${JSON.stringify(p.patterns.streakCorrelationFactors)}
 
 ZADNJIH 50 DEAL-OV (W=win, L=loss, format: index:type:category:priceBucket:dayOfWeek):
-${timeline}
+${p.timeline}
 
 PRAVILA ZA AI ODGOVOR:
 1. streakAssessment: slovenski opis trenutnega streak momentum-a (max 500 znakov). NE izmišljuj številk — uporabi zgornje deterministične podatke.
@@ -663,85 +703,48 @@ VRNI LE JSON:
     "confidenceLevel": 75
   }
 }${GROUNDING_PROMPT_SUFFIX}`;
+}
 
-    let analysis = deterministicAnalysis;
-    let aiUsed = false;
-
-    try {
-      const raw = await callProviderForRaw(aiSettings, prompt);
-      const parsed = parseJsonLooseExported(raw) as AiStreakResponse | null;
-
-      if (parsed && typeof parsed === 'object' && parsed.analysis) {
-        const a = parsed.analysis as Record<string, unknown>;
-        const aiAnalysis: StreakAnalysis = {
-          streakAssessment: clampString(
-            a.streakAssessment,
-            500,
-            deterministicAnalysis.streakAssessment,
-          ),
-          streakTriggers: clampStringArray(
-            a.streakTriggers,
-            5,
-            200,
-            deterministicAnalysis.streakTriggers,
-          ),
-          streakBreakers: clampStringArray(
-            a.streakBreakers,
-            5,
-            200,
-            deterministicAnalysis.streakBreakers,
-          ),
-          streakForecast: clampString(
-            a.streakForecast,
-            400,
-            deterministicAnalysis.streakForecast,
-          ),
-          streakAdvice: clampString(
-            a.streakAdvice,
-            500,
-            deterministicAnalysis.streakAdvice,
-          ),
-          confidenceLevel: clampNumber(
-            a.confidenceLevel,
-            0,
-            100,
-            deterministicAnalysis.confidenceLevel,
-          ),
-        };
-        analysis = aiAnalysis;
-        aiUsed = true;
-      }
-    } catch (err) {
-      logger.warn(
-        '/api/ai/deal-winning-streak-analyzer',
-        'AI call failed — using deterministic fallback',
-        err,
-      );
-    }
-
-    // 8) Cache (6h TTL) — only when AI was used
-    if (aiUsed) {
-      setCachedAI(cacheKey, { analysis });
-    }
-
-    // 9) Build summary deterministically (NOT from AI)
-    const summary = buildSummary(streaks, analysis);
-
-    return NextResponse.json({
-      ok: true,
-      streaks,
-      patterns,
-      analysis,
-      summary,
-      aiUsed,
-    });
-  } catch (err: any) {
-    logger.error('/api/ai/deal-winning-streak-analyzer', 'handler failed', err);
-    return NextResponse.json(
-      { error: err?.message ?? 'Napaka' },
-      { status: 500 },
-    );
-  }
+function transformStreak(
+  parsed: AiStreakResponse,
+  deterministicAnalysis: StreakAnalysis,
+): StreakAnalysis {
+  const a = parsed.analysis as Record<string, unknown>;
+  return {
+    streakAssessment: clampString(
+      a.streakAssessment,
+      500,
+      deterministicAnalysis.streakAssessment,
+    ),
+    streakTriggers: clampStringArray(
+      a.streakTriggers,
+      5,
+      200,
+      deterministicAnalysis.streakTriggers,
+    ),
+    streakBreakers: clampStringArray(
+      a.streakBreakers,
+      5,
+      200,
+      deterministicAnalysis.streakBreakers,
+    ),
+    streakForecast: clampString(
+      a.streakForecast,
+      400,
+      deterministicAnalysis.streakForecast,
+    ),
+    streakAdvice: clampString(
+      a.streakAdvice,
+      500,
+      deterministicAnalysis.streakAdvice,
+    ),
+    confidenceLevel: clampNumber(
+      a.confidenceLevel,
+      0,
+      100,
+      deterministicAnalysis.confidenceLevel,
+    ),
+  };
 }
 
 // Build summary from streak data (deterministic, NOT from AI)

@@ -1,4 +1,4 @@
-// v7.73: AI Listing Conversion Forecaster — AI napove verjetnost konverzije
+// v7.73 / v8.96.4-batch4: AI Listing Conversion Forecaster — AI napove verjetnost konverzije
 // (0-100%) za vsak HELD inventar — ali se bo prodal v 7/14/30 dneh?
 // Pomaga prioritizirati katere iteme potisniti, katere relistati, katere
 // likvidirati. "PS5 350€: 75% prob v 7d (cena -12%, dealScore 85). Jakna
@@ -14,24 +14,20 @@
 //
 // GET+POST /api/ai/listing-conversion-forecaster
 // (AI-enhanced + grounding + anti-hallucination + 6h cache + deterministic fallback)
+// Refaktoriran z withAiRoute helperjem (v8.96.4) + enforceBudget guard.
 
-import { NextRequest, NextResponse } from 'next/server';
-import { db } from '@/lib/db';
-import { getSettingsRow } from '@/lib/pipeline';
-import {
-  callProviderForRaw,
-  parseJsonLooseExported,
-  type AiProviderType,
-  type AiSettings,
-} from '@/lib/ai';
+import { withAiRoute, AI_ROUTE_DEFAULTS, type AiRouteContext } from '@/lib/with-ai-route';
+import { apiOk } from '@/lib/api-response';
 import { GROUNDING_PROMPT_SUFFIX } from '@/lib/anti-hallucination';
 import { getCachedAI, setCachedAI } from '@/lib/ai-cache';
-import { checkRateLimit, rateLimitResponse } from '@/lib/rate-limit';
-import { logger } from '@/lib/logger';
 
-export const runtime = 'nodejs';
-export const dynamic = 'force-dynamic';
+export const { runtime, dynamic } = AI_ROUTE_DEFAULTS;
 export const maxDuration = 60;
+
+// --- Input ----------------------------------------------------------------
+
+// eslint-disable-next-line @typescript-eslint/no-empty-object-type
+interface ListingConversionForecasterInput {}
 
 // --- Types ---------------------------------------------------------------
 
@@ -314,19 +310,294 @@ function buildImprovementActions(factors: ConversionFactors): string[] {
   return actions.slice(0, 3);
 }
 
+// --- Build baseline item from factors ------------------------------------
+
+function buildBaselineItem(factors: ConversionFactors): ConversionItem {
+  const p7d = deterministicProbability(factors, 7);
+  const p14d = deterministicProbability(factors, 14);
+  const p30d = deterministicProbability(factors, 30);
+  // Anti-hallucination: p7d ≤ p14d ≤ p30d
+  const p7 = Math.min(p7d, p14d, p30d);
+  const p14 = Math.min(p14d, p30d);
+  const p30 = p30d;
+  const confidenceScore = computeConfidence(factors);
+  const keyFactors = buildKeyFactors(factors);
+  const improvementActions = buildImprovementActions(factors);
+  return {
+    tradeId: factors.tradeId,
+    title: factors.title,
+    category: factors.category,
+    buyPrice: factors.buyPrice,
+    aiEstimatedValue: factors.aiEstimatedValue,
+    daysListed: factors.daysListed,
+    conversionProbability7d: p7,
+    conversionProbability14d: p14,
+    conversionProbability30d: p30,
+    expectedSellDate: expectedSellDateRange(p30),
+    confidenceScore,
+    keyFactors,
+    improvementActions,
+  };
+}
+
+// --- Build baseline summary ----------------------------------------------
+
+function buildBaselineSummary(baselineItems: ConversionItem[]): Summary {
+  const totalItems = baselineItems.length;
+  const highProbabilityCount = baselineItems.filter(
+    (i) => i.conversionProbability7d > 70,
+  ).length;
+  const mediumProbabilityCount = baselineItems.filter(
+    (i) => i.conversionProbability7d >= 40 && i.conversionProbability7d <= 70,
+  ).length;
+  const lowProbabilityCount = baselineItems.filter(
+    (i) => i.conversionProbability7d < 40,
+  ).length;
+  const avgConversionProbability7d = totalItems > 0
+    ? Math.round(
+        (baselineItems.reduce((s, i) => s + i.conversionProbability7d, 0) / totalItems) * 10,
+      ) / 10
+    : 0;
+
+  let advice: string;
+  if (highProbabilityCount > 0) {
+    advice = `${highProbabilityCount} item${highProbabilityCount > 1 ? 'a' : ''} z visoko verjetnostjo prodaje (>70% v 7d) — potisni aktivno. `;
+    if (lowProbabilityCount > 0) {
+      advice += `${lowProbabilityCount} item${lowProbabilityCount > 1 ? 'a' : ''} z nizko verjetnostjo — premisli relist ali likvidacijo.`;
+    }
+  } else if (mediumProbabilityCount > 0) {
+    advice = `Večina item-ov v srednji coni (40-70%) — izvedi improvement akcije (slike, relist) za dvig konverzije.`;
+  } else {
+    advice = `Vsi item-i imajo nizko verjetnost konverzije (<40% v 7d) — poglobljen pregled listingov in strategije prodaje.`;
+  }
+
+  return {
+    totalItems,
+    highProbabilityCount,
+    mediumProbabilityCount,
+    lowProbabilityCount,
+    avgConversionProbability7d,
+    advice,
+  };
+}
+
+// --- Prompt builder -------------------------------------------------------
+
+function buildItemsForPrompt(factorsList: ConversionFactors[]): Array<Record<string, unknown>> {
+  return factorsList.slice(0, 25).map((f) => ({
+    tradeId: f.tradeId,
+    title: f.title,
+    category: f.category,
+    buyPrice: f.buyPrice,
+    aiEstimatedValue: f.aiEstimatedValue,
+    daysListed: f.daysListed,
+    priceCompetitiveness: Math.round(f.priceCompetitiveness * 100) / 100,
+    listingAgeScore: f.listingAgeScore,
+    categoryDemandScore: f.categoryDemandScore,
+    dealScoreFactor: Math.round(f.dealScoreFactor * 100) / 100,
+    imageScore: f.imageScore,
+    contactActivityScore: f.contactActivityScore,
+    deterministicProb7d: deterministicProbability(f, 7),
+    deterministicProb14d: deterministicProbability(f, 14),
+    deterministicProb30d: deterministicProbability(f, 30),
+  }));
+}
+
+function buildPrompt(
+  factorsList: ConversionFactors[],
+  sellThroughByCat: Map<string, number>,
+): string {
+  const itemsForPrompt = buildItemsForPrompt(factorsList);
+  return `Si AI "Listing Conversion Forecaster" za slovenske in srednjeevropske oglasne platforme (Bolha, Vinted, Avtonet, mobile.de).
+Napovej verjetnost konverzije (0-100%) za vsak HELD inventar — ali se bo prodal v 7/14/30 dneh?
+
+HELD INVENTAR S FAKTORJI (deterministično izračunano):
+${JSON.stringify(itemsForPrompt, null, 2)}
+
+HISTORIČNI SELL-THROUGH RATE PER KATEGORIJA (iz sold trade-ov zadnjih 365 dni):
+${JSON.stringify(Object.fromEntries(sellThroughByCat), null, 2)}
+
+PRAVILA ZA AI ODGOVOR:
+1. items: array (sprejmi obstoječe tradeId-je, posodobi conversionProbability7d/14d/30d)
+   - Vse verjetnosti MORAJO biti v [0, 100] (anti-hallucination)
+   - conversionProbability7d ≤ conversionProbability14d ≤ conversionProbability30d (obvezno!)
+   - confidenceScore 0-100 (kakovost podatkov)
+   - keyFactors: top 3 faktorji (factor, impact POSITIVE/NEGATIVE, detail v slovenščini)
+   - improvementActions: 2-3 konkretne akcije v slovenščini
+   - expectedSellDate: { earliest: "YYYY-MM-DD", latest: "YYYY-MM-DD" }
+2. summary: totalItems, highProbabilityCount (>70% 7d), mediumProbabilityCount (40-70%), lowProbabilityCount (<40%), avgConversionProbability7d, advice v slovenščini
+
+VRNI LE JSON:
+{
+  "items": [
+    { "tradeId": "...", "conversionProbability7d": 0, "conversionProbability14d": 0, "conversionProbability30d": 0, "expectedSellDate": { "earliest": "YYYY-MM-DD", "latest": "YYYY-MM-DD" }, "confidenceScore": 0, "keyFactors": [{ "factor": "...", "impact": "POSITIVE", "detail": "..." }], "improvementActions": ["..."] }
+  ],
+  "summary": { "totalItems": 0, "highProbabilityCount": 0, "mediumProbabilityCount": 0, "lowProbabilityCount": 0, "avgConversionProbability7d": 0, "advice": "..." }
+}${GROUNDING_PROMPT_SUFFIX}`;
+}
+
+// --- AI merge ------------------------------------------------------------
+
+interface AiMergedConversion {
+  items: ConversionItem[];
+  summary: Summary;
+  aiUsed: boolean;
+}
+
+function mergeAiIntoConversion(
+  parsed: AiConversionResponse | null,
+  baselineItems: ConversionItem[],
+  baselineSummary: Summary,
+): AiMergedConversion {
+  if (!parsed || typeof parsed !== 'object') {
+    return { items: baselineItems, summary: baselineSummary, aiUsed: false };
+  }
+
+  let finalItems = baselineItems;
+  let summary = baselineSummary;
+  let aiUsed = false;
+
+  // Parse items — apply anti-hallucination clamps
+  if (Array.isArray(parsed.items)) {
+    const updated: ConversionItem[] = [];
+    for (const item of parsed.items) {
+      const r = item as Record<string, unknown>;
+      if (!r || typeof r !== 'object') continue;
+      const tradeId = String(r.tradeId || '');
+      const existing = baselineItems.find((i) => i.tradeId === tradeId);
+      if (!existing) continue;
+
+      // Clamp probabilities [0, 100]
+      const p7 = clampNumber(r.conversionProbability7d, 0, 100, existing.conversionProbability7d);
+      const p14 = clampNumber(r.conversionProbability14d, 0, 100, existing.conversionProbability14d);
+      const p30 = clampNumber(r.conversionProbability30d, 0, 100, existing.conversionProbability30d);
+
+      // Anti-hallucination: enforce p7d ≤ p14d ≤ p30d
+      const ordered = [p7, p14, p30].sort((a, b) => a - b);
+
+      const confidenceScore = clampNumber(
+        r.confidenceScore,
+        0,
+        100,
+        existing.confidenceScore,
+      );
+
+      // Parse expectedSellDate
+      const esd = r.expectedSellDate as Record<string, unknown> | undefined;
+      const earliest = esd && typeof esd.earliest === 'string'
+        ? esd.earliest.slice(0, 10)
+        : existing.expectedSellDate.earliest;
+      const latest = esd && typeof esd.latest === 'string'
+        ? esd.latest.slice(0, 10)
+        : existing.expectedSellDate.latest;
+
+      // Parse keyFactors
+      const keyFactors: KeyFactor[] = [];
+      if (Array.isArray(r.keyFactors)) {
+        for (const kf of r.keyFactors) {
+          const kfR = kf as Record<string, unknown>;
+          if (!kfR || typeof kfR !== 'object') continue;
+          const factor = clampString(kfR.factor, 80, '');
+          const impact = clampImpact(kfR.impact, 'POSITIVE');
+          const detail = clampString(kfR.detail, 300, '');
+          if (factor && detail) {
+            keyFactors.push({ factor, impact, detail });
+          }
+          if (keyFactors.length >= 5) break;
+        }
+      }
+
+      // Parse improvementActions
+      const improvementActions: string[] = [];
+      if (Array.isArray(r.improvementActions)) {
+        for (const a of r.improvementActions) {
+          if (typeof a === 'string' && a.trim().length > 0) {
+            improvementActions.push(a.trim().slice(0, 300));
+          }
+          if (improvementActions.length >= 5) break;
+        }
+      }
+
+      updated.push({
+        ...existing,
+        conversionProbability7d: Math.round(ordered[0]!),
+        conversionProbability14d: Math.round(ordered[1]!),
+        conversionProbability30d: Math.round(ordered[2]!),
+        expectedSellDate: { earliest, latest },
+        confidenceScore: Math.round(confidenceScore),
+        keyFactors: keyFactors.length > 0 ? keyFactors : existing.keyFactors,
+        improvementActions: improvementActions.length > 0
+          ? improvementActions
+          : existing.improvementActions,
+      });
+    }
+    if (updated.length > 0) {
+      // Sort by conversionProbability7d desc
+      updated.sort((a, b) => b.conversionProbability7d - a.conversionProbability7d);
+      finalItems = updated;
+    }
+  }
+
+  // Parse summary
+  if (parsed.summary && typeof parsed.summary === 'object') {
+    const s = parsed.summary as Record<string, unknown>;
+    const highProbabilityCount = clampNumber(
+      s.highProbabilityCount,
+      0,
+      finalItems.length,
+      finalItems.filter((i) => i.conversionProbability7d > 70).length,
+    );
+    const mediumProbabilityCount = clampNumber(
+      s.mediumProbabilityCount,
+      0,
+      finalItems.length,
+      finalItems.filter((i) => i.conversionProbability7d >= 40 && i.conversionProbability7d <= 70).length,
+    );
+    const lowProbabilityCount = clampNumber(
+      s.lowProbabilityCount,
+      0,
+      finalItems.length,
+      finalItems.filter((i) => i.conversionProbability7d < 40).length,
+    );
+    const avgConversionProbability7d = clampNumber(
+      s.avgConversionProbability7d,
+      0,
+      100,
+      finalItems.length > 0
+        ? finalItems.reduce((sum, i) => sum + i.conversionProbability7d, 0) / finalItems.length
+        : 0,
+    );
+    const advice = clampString(s.advice, 600, baselineSummary.advice);
+    summary = {
+      totalItems: finalItems.length,
+      highProbabilityCount: Math.round(highProbabilityCount),
+      mediumProbabilityCount: Math.round(mediumProbabilityCount),
+      lowProbabilityCount: Math.round(lowProbabilityCount),
+      avgConversionProbability7d: Math.round(avgConversionProbability7d * 10) / 10,
+      advice,
+    };
+  }
+
+  aiUsed = true;
+  return { items: finalItems, summary, aiUsed };
+}
+
 // --- Handler -------------------------------------------------------------
 
-export async function GET(req: NextRequest) {
-  return handleListingConversionForecast(req);
-}
-export async function POST(req: NextRequest) {
-  return handleListingConversionForecast(req);
-}
+const listingConversionHandler = withAiRoute<ListingConversionForecasterInput>({
+  endpoint: '/api/ai/listing-conversion-forecaster',
+  maxDuration: 60,
+  enforceBudget: true, // AI klic — preveri budget
+  method: 'GET', // Endpoint sprejema GET + POST — bypass POST-only check
 
-async function handleListingConversionForecast(req: NextRequest) {
-  try {
-    const rl = checkRateLimit(req, 'ai-listing-conversion-forecast', 20);
-    if (!rl.allowed) return rateLimitResponse(rl);
+  parseBody: async (req) => {
+    await req.json().catch(() => ({}));
+    return {};
+  },
+
+  // No validateInput — body ignored, identična logika za GET in POST
+  handler: async (_input, ctx: AiRouteContext) => {
+    const { db, callAi, parseAi, logger } = ctx;
 
     // 1) Query all HELD trades with linked Listing
     const heldTrades = await db.trade.findMany({
@@ -363,7 +634,7 @@ async function handleListingConversionForecast(req: NextRequest) {
 
     // Empty state — no HELD trades
     if (heldTrades.length === 0) {
-      return NextResponse.json({
+      return apiOk({
         ok: true,
         items: [],
         summary: {
@@ -507,74 +778,13 @@ async function handleListingConversionForecast(req: NextRequest) {
     }
 
     // 4) Compute deterministic baseline (used as fallback / starting point)
-    const baselineItems: ConversionItem[] = factorsList.map((factors) => {
-      const p7d = deterministicProbability(factors, 7);
-      const p14d = deterministicProbability(factors, 14);
-      const p30d = deterministicProbability(factors, 30);
-      // Anti-hallucination: p7d ≤ p14d ≤ p30d
-      const p7 = Math.min(p7d, p14d, p30d);
-      const p14 = Math.min(p14d, p30d);
-      const p30 = p30d;
-      const confidenceScore = computeConfidence(factors);
-      const keyFactors = buildKeyFactors(factors);
-      const improvementActions = buildImprovementActions(factors);
-      return {
-        tradeId: factors.tradeId,
-        title: factors.title,
-        category: factors.category,
-        buyPrice: factors.buyPrice,
-        aiEstimatedValue: factors.aiEstimatedValue,
-        daysListed: factors.daysListed,
-        conversionProbability7d: p7,
-        conversionProbability14d: p14,
-        conversionProbability30d: p30,
-        expectedSellDate: expectedSellDateRange(p30),
-        confidenceScore,
-        keyFactors,
-        improvementActions,
-      };
-    });
+    const baselineItems: ConversionItem[] = factorsList.map(buildBaselineItem);
 
     // Sort by conversionProbability7d desc
     baselineItems.sort((a, b) => b.conversionProbability7d - a.conversionProbability7d);
 
     // 5) Compute summary
-    const totalItems = baselineItems.length;
-    const highProbabilityCount = baselineItems.filter(
-      (i) => i.conversionProbability7d > 70,
-    ).length;
-    const mediumProbabilityCount = baselineItems.filter(
-      (i) => i.conversionProbability7d >= 40 && i.conversionProbability7d <= 70,
-    ).length;
-    const lowProbabilityCount = baselineItems.filter(
-      (i) => i.conversionProbability7d < 40,
-    ).length;
-    const avgConversionProbability7d = totalItems > 0
-      ? Math.round(
-          (baselineItems.reduce((s, i) => s + i.conversionProbability7d, 0) / totalItems) * 10,
-        ) / 10
-      : 0;
-
-    let advice: string;
-    if (highProbabilityCount > 0) {
-      advice = `${highProbabilityCount} item${highProbabilityCount > 1 ? 'a' : ''} z visoko verjetnostjo prodaje (>70% v 7d) — potisni aktivno. `;
-      if (lowProbabilityCount > 0) {
-        advice += `${lowProbabilityCount} item${lowProbabilityCount > 1 ? 'a' : ''} z nizko verjetnostjo — premisli relist ali likvidacijo.`;
-      }
-    } else if (mediumProbabilityCount > 0) {
-      advice = `Večina item-ov v srednji coni (40-70%) — izvedi improvement akcije (slike, relist) za dvig konverzije.`;
-    } else {
-      advice = `Vsi item-i imajo nizko verjetnost konverzije (<40% v 7d) — poglobljen pregled listingov in strategije prodaje.`;
-    }
-
-    const baselineSummary: Summary = {
-      totalItems,
-      highProbabilityCount,
-      mediumProbabilityCount,
-      lowProbabilityCount,
-      avgConversionProbability7d,
-      advice,
-    };
+    const baselineSummary = buildBaselineSummary(baselineItems);
 
     // 6) AI cache check (6h TTL) — key by held item IDs
     const heldItemIds = factorsList.map((f) => f.tradeId).sort();
@@ -584,7 +794,7 @@ async function handleListingConversionForecast(req: NextRequest) {
       summary: Summary;
     }>(cacheKey);
     if (cached) {
-      return NextResponse.json({
+      return apiOk({
         ok: true,
         items: cached.items,
         summary: cached.summary,
@@ -594,195 +804,20 @@ async function handleListingConversionForecast(req: NextRequest) {
     }
 
     // 7) AI prompt with grounding — pass factors + historical sold-through rates
-    const settings = await getSettingsRow();
-    const aiSettings: AiSettings = {
-      provider: settings.aiProvider as AiProviderType,
-      baseUrl: settings.aiBaseUrl,
-      apiKey: settings.aiApiKey,
-      model: settings.aiModel,
-      fallbackProvider: (settings.fallbackProvider || '') as
-        | AiProviderType
-        | '',
-      fallbackBaseUrl: settings.fallbackBaseUrl || '',
-      fallbackApiKey: settings.fallbackApiKey || '',
-      fallbackModel: settings.fallbackModel || '',
-    };
-
-    const itemsForPrompt = factorsList.slice(0, 25).map((f) => ({
-      tradeId: f.tradeId,
-      title: f.title,
-      category: f.category,
-      buyPrice: f.buyPrice,
-      aiEstimatedValue: f.aiEstimatedValue,
-      daysListed: f.daysListed,
-      priceCompetitiveness: Math.round(f.priceCompetitiveness * 100) / 100,
-      listingAgeScore: f.listingAgeScore,
-      categoryDemandScore: f.categoryDemandScore,
-      dealScoreFactor: Math.round(f.dealScoreFactor * 100) / 100,
-      imageScore: f.imageScore,
-      contactActivityScore: f.contactActivityScore,
-      deterministicProb7d: deterministicProbability(f, 7),
-      deterministicProb14d: deterministicProbability(f, 14),
-      deterministicProb30d: deterministicProbability(f, 30),
-    }));
-
-    const prompt = `Si AI "Listing Conversion Forecaster" za slovenske in srednjeevropske oglasne platforme (Bolha, Vinted, Avtonet, mobile.de).
-Napovej verjetnost konverzije (0-100%) za vsak HELD inventar — ali se bo prodal v 7/14/30 dneh?
-
-HELD INVENTAR S FAKTORJI (deterministično izračunano):
-${JSON.stringify(itemsForPrompt, null, 2)}
-
-HISTORIČNI SELL-THROUGH RATE PER KATEGORIJA (iz sold trade-ov zadnjih 365 dni):
-${JSON.stringify(Object.fromEntries(sellThroughByCat), null, 2)}
-
-PRAVILA ZA AI ODGOVOR:
-1. items: array (sprejmi obstoječe tradeId-je, posodobi conversionProbability7d/14d/30d)
-   - Vse verjetnosti MORAJO biti v [0, 100] (anti-hallucination)
-   - conversionProbability7d ≤ conversionProbability14d ≤ conversionProbability30d (obvezno!)
-   - confidenceScore 0-100 (kakovost podatkov)
-   - keyFactors: top 3 faktorji (factor, impact POSITIVE/NEGATIVE, detail v slovenščini)
-   - improvementActions: 2-3 konkretne akcije v slovenščini
-   - expectedSellDate: { earliest: "YYYY-MM-DD", latest: "YYYY-MM-DD" }
-2. summary: totalItems, highProbabilityCount (>70% 7d), mediumProbabilityCount (40-70%), lowProbabilityCount (<40%), avgConversionProbability7d, advice v slovenščini
-
-VRNI LE JSON:
-{
-  "items": [
-    { "tradeId": "...", "conversionProbability7d": 0, "conversionProbability14d": 0, "conversionProbability30d": 0, "expectedSellDate": { "earliest": "YYYY-MM-DD", "latest": "YYYY-MM-DD" }, "confidenceScore": 0, "keyFactors": [{ "factor": "...", "impact": "POSITIVE", "detail": "..." }], "improvementActions": ["..."] }
-  ],
-  "summary": { "totalItems": 0, "highProbabilityCount": 0, "mediumProbabilityCount": 0, "lowProbabilityCount": 0, "avgConversionProbability7d": 0, "advice": "..." }
-}${GROUNDING_PROMPT_SUFFIX}`;
+    const prompt = buildPrompt(factorsList, sellThroughByCat);
 
     let finalItems = baselineItems;
     let summary = baselineSummary;
     let aiUsed = false;
 
     try {
-      const raw = await callProviderForRaw(aiSettings, prompt);
-      const parsed = parseJsonLooseExported(raw) as AiConversionResponse | null;
+      const raw = await callAi(prompt);
+      const parsed = parseAi(raw) as AiConversionResponse | null;
 
-      if (parsed && typeof parsed === 'object') {
-        // Parse items — apply anti-hallucination clamps
-        if (Array.isArray(parsed.items)) {
-          const updated: ConversionItem[] = [];
-          for (const item of parsed.items) {
-            const r = item as Record<string, unknown>;
-            if (!r || typeof r !== 'object') continue;
-            const tradeId = String(r.tradeId || '');
-            const existing = baselineItems.find((i) => i.tradeId === tradeId);
-            if (!existing) continue;
-
-            // Clamp probabilities [0, 100]
-            const p7 = clampNumber(r.conversionProbability7d, 0, 100, existing.conversionProbability7d);
-            const p14 = clampNumber(r.conversionProbability14d, 0, 100, existing.conversionProbability14d);
-            const p30 = clampNumber(r.conversionProbability30d, 0, 100, existing.conversionProbability30d);
-
-            // Anti-hallucination: enforce p7d ≤ p14d ≤ p30d
-            const ordered = [p7, p14, p30].sort((a, b) => a - b);
-
-            const confidenceScore = clampNumber(
-              r.confidenceScore,
-              0,
-              100,
-              existing.confidenceScore,
-            );
-
-            // Parse expectedSellDate
-            const esd = r.expectedSellDate as Record<string, unknown> | undefined;
-            const earliest = esd && typeof esd.earliest === 'string'
-              ? esd.earliest.slice(0, 10)
-              : existing.expectedSellDate.earliest;
-            const latest = esd && typeof esd.latest === 'string'
-              ? esd.latest.slice(0, 10)
-              : existing.expectedSellDate.latest;
-
-            // Parse keyFactors
-            const keyFactors: KeyFactor[] = [];
-            if (Array.isArray(r.keyFactors)) {
-              for (const kf of r.keyFactors) {
-                const kfR = kf as Record<string, unknown>;
-                if (!kfR || typeof kfR !== 'object') continue;
-                const factor = clampString(kfR.factor, 80, '');
-                const impact = clampImpact(kfR.impact, 'POSITIVE');
-                const detail = clampString(kfR.detail, 300, '');
-                if (factor && detail) {
-                  keyFactors.push({ factor, impact, detail });
-                }
-                if (keyFactors.length >= 5) break;
-              }
-            }
-
-            // Parse improvementActions
-            const improvementActions: string[] = [];
-            if (Array.isArray(r.improvementActions)) {
-              for (const a of r.improvementActions) {
-                if (typeof a === 'string' && a.trim().length > 0) {
-                  improvementActions.push(a.trim().slice(0, 300));
-                }
-                if (improvementActions.length >= 5) break;
-              }
-            }
-
-            updated.push({
-              ...existing,
-              conversionProbability7d: Math.round(ordered[0]!),
-              conversionProbability14d: Math.round(ordered[1]!),
-              conversionProbability30d: Math.round(ordered[2]!),
-              expectedSellDate: { earliest, latest },
-              confidenceScore: Math.round(confidenceScore),
-              keyFactors: keyFactors.length > 0 ? keyFactors : existing.keyFactors,
-              improvementActions: improvementActions.length > 0
-                ? improvementActions
-                : existing.improvementActions,
-            });
-          }
-          if (updated.length > 0) {
-            // Sort by conversionProbability7d desc
-            updated.sort((a, b) => b.conversionProbability7d - a.conversionProbability7d);
-            finalItems = updated;
-          }
-        }
-
-        // Parse summary
-        if (parsed.summary && typeof parsed.summary === 'object') {
-          const s = parsed.summary as Record<string, unknown>;
-          const highProbabilityCount = clampNumber(
-            s.highProbabilityCount,
-            0,
-            finalItems.length,
-            finalItems.filter((i) => i.conversionProbability7d > 70).length,
-          );
-          const mediumProbabilityCount = clampNumber(
-            s.mediumProbabilityCount,
-            0,
-            finalItems.length,
-            finalItems.filter((i) => i.conversionProbability7d >= 40 && i.conversionProbability7d <= 70).length,
-          );
-          const lowProbabilityCount = clampNumber(
-            s.lowProbabilityCount,
-            0,
-            finalItems.length,
-            finalItems.filter((i) => i.conversionProbability7d < 40).length,
-          );
-          const avgConversionProbability7d = clampNumber(
-            s.avgConversionProbability7d,
-            0,
-            100,
-            finalItems.length > 0
-              ? finalItems.reduce((sum, i) => sum + i.conversionProbability7d, 0) / finalItems.length
-              : 0,
-          );
-          const advice = clampString(s.advice, 600, baselineSummary.advice);
-          summary = {
-            totalItems: finalItems.length,
-            highProbabilityCount: Math.round(highProbabilityCount),
-            mediumProbabilityCount: Math.round(mediumProbabilityCount),
-            lowProbabilityCount: Math.round(lowProbabilityCount),
-            avgConversionProbability7d: Math.round(avgConversionProbability7d * 10) / 10,
-            advice,
-          };
-        }
-
+      const result = mergeAiIntoConversion(parsed, baselineItems, baselineSummary);
+      if (result.aiUsed) {
+        finalItems = result.items;
+        summary = result.summary;
         aiUsed = true;
       }
     } catch (err) {
@@ -801,17 +836,14 @@ VRNI LE JSON:
       });
     }
 
-    return NextResponse.json({
+    return apiOk({
       ok: true,
       items: finalItems,
       summary,
       aiUsed,
     });
-  } catch (err: any) {
-    logger.error('/api/ai/listing-conversion-forecaster', 'handler failed', err);
-    return NextResponse.json(
-      { error: err?.message ?? 'Napaka' },
-      { status: 500 },
-    );
-  }
-}
+  },
+});
+
+export const GET = listingConversionHandler;
+export const POST = listingConversionHandler;

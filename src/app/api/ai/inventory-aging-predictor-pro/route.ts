@@ -1,4 +1,4 @@
-// v7.83: AI Inventory Aging Predictor PRO — AI napove KDAJ bo vsak HELD
+// v7.83 / v8.96.4-batch3: AI Inventory Aging Predictor PRO — AI napove KDAJ bo vsak HELD
 // item postal "stale" (problematski) in priporoči PROAKTIVNE akcije PREDEN
 // staranje postane problem. "PS5: 28d held, avg 22d → MEDIUM risk. Stale in
 // 32d. Preventive: drop 5% in 14d."
@@ -17,24 +17,18 @@
 //
 // GET+POST /api/ai/inventory-aging-predictor-pro
 // (AI-enhanced + grounding + anti-hallucination + 6h cache + deterministic fallback)
+// Refaktoriran z withAiRoute helperjem (v8.96.4) + enforceBudget guard.
 
-import { NextRequest, NextResponse } from 'next/server';
-import { db } from '@/lib/db';
-import { getSettingsRow } from '@/lib/pipeline';
-import {
-  callProviderForRaw,
-  parseJsonLooseExported,
-  type AiProviderType,
-  type AiSettings,
-} from '@/lib/ai';
+import { withAiRoute, AI_ROUTE_DEFAULTS, type AiRouteContext } from '@/lib/with-ai-route';
+import { apiOk } from '@/lib/api-response';
 import { GROUNDING_PROMPT_SUFFIX } from '@/lib/anti-hallucination';
 import { getCachedAI, setCachedAI } from '@/lib/ai-cache';
-import { checkRateLimit, rateLimitResponse } from '@/lib/rate-limit';
-import { logger } from '@/lib/logger';
 
-export const runtime = 'nodejs';
-export const dynamic = 'force-dynamic';
+export const { runtime, dynamic } = AI_ROUTE_DEFAULTS;
 export const maxDuration = 60;
+
+// eslint-disable-next-line @typescript-eslint/no-empty-object-type
+interface InventoryAgingPredictorProInput {}
 
 // --- Types ---------------------------------------------------------------
 
@@ -75,6 +69,16 @@ interface PortfolioRisk {
   projectedStaleItems30d: number;
   projectedDeadItems60d: number;
   urgencyLevel: UrgencyLevel;
+}
+
+interface InventoryAgingPredictorProResponse {
+  ok: true;
+  items: HeldItemAgingPrediction[];
+  portfolioRisk: PortfolioRisk;
+  summary: string;
+  aiUsed: boolean;
+  cached?: boolean;
+  message?: string;
 }
 
 interface AiAgingResponse {
@@ -405,19 +409,242 @@ function buildDeterministicPortfolioRisk(
   };
 }
 
+// --- Prompt builder + AI response transform (čisti helperji) ------------
+
+function buildPrompt(
+  preparedItems: PreparedItem[],
+  portfolioRisk: PortfolioRisk,
+): string {
+  const itemsForPrompt = preparedItems.map((p) => ({
+    tradeId: p.tradeId,
+    title: p.title,
+    category: p.category,
+    buyPrice: p.buyPrice,
+    daysHeld: p.daysHeld,
+    daysListed: p.daysListed,
+    categoryAvgHoldDays: p.categoryAvgHoldDays,
+    dealScore: p.dealScore,
+    deterministicRiskScore: p.agingRiskScore,
+    deterministicRiskLevel: p.agingRiskLevel,
+    daysUntilStale: p.daysUntilStale,
+  }));
+
+  return `Si AI "Inventory Aging Predictor PRO" za slovenske in srednjeevropske oglasne platforme (Bolha, Vinted, Facebook, Avtonet, mobile.de).
+Napoveš KDAJ bo vsak HELD item postal "stale" (problematsko staranje) in priporočiš PROAKTIVNE akcije PREDEN staranje postane problem.
+
+HELD INVENTAR (deterministično izračunano):
+${JSON.stringify(itemsForPrompt, null, 2)}
+
+PORTFOLIO STATS:
+- Skupno HELD itemov: ${preparedItems.length}
+- Povprečen aging risk score: ${portfolioRisk.totalAgingRiskScore}/100
+- Items at risk (HIGH/CRITICAL): ${portfolioRisk.itemsAtRisk}
+- Projected stale items v 30 dneh: ${portfolioRisk.projectedStaleItems30d}
+
+PRAVILA ZA AI ODGOVOR:
+1. items: array per held item z:
+   - tradeId: enak kot v promptu (max 50 znakov)
+   - agingRiskScore: 0-100 (lahko prilagodiš znotraj [-10, +10] od deterministične vrednosti — anti-hallucination)
+   - agingRiskLevel: LOW (<25) | MEDIUM (25-54) | HIGH (55-79) | CRITICAL (80+). Vedno izračunaj iz score.
+   - preventiveAction: slovenska konkretna akcija (max 250 znakov). Npr. "Znižaj ceno za 5% v 14 dneh in osveži fotografije."
+   - optimalSellWindow: { start: ISO date, end: ISO date }. Start = sedaj ali kmalu. End = pred predictedStaleDate (14 dni pred).
+2. portfolioRisk: {
+   - totalAgingRiskScore: 0-100 (lahko prilagodiš znotraj [-5, +5] od deterministične vrednosti)
+   - urgencyLevel: LOW/MEDIUM/HIGH/CRITICAL (izračunaj iz score)
+   - projectedStaleItems30d: število itemov ki bodo postali stale v 30 dneh
+   - projectedDeadItems60d: število itemov ki bodo dosegli dead threshold v 60 dneh
+}
+3. summary: slovenski povzetek (max 400 znakov). NE izmišljuj številk — uporabi zgornje deterministične podatke.
+
+VRNI LE JSON:
+{
+  "items": [
+    {
+      "tradeId": "abc123",
+      "agingRiskScore": 65,
+      "agingRiskLevel": "HIGH",
+      "preventiveAction": "Znižaj ceno za 10% v 14 dneh in osveži fotografije za boljšo izpostavljenost.",
+      "optimalSellWindow": { "start": "2026-08-08T00:00:00.000Z", "end": "2026-08-29T00:00:00.000Z" }
+    }
+  ],
+  "portfolioRisk": {
+    "totalAgingRiskScore": 55,
+    "urgencyLevel": "MEDIUM",
+    "projectedStaleItems30d": 2,
+    "projectedDeadItems60d": 0
+  },
+  "summary": "5 HELD itemov. Portfolio aging risk: 55/100 (MEDIUM). 2 itema postala stale v 30 dneh. Najbolj kritičen: iPhone (stale v 18d)."
+}${GROUNDING_PROMPT_SUFFIX}`;
+}
+
+interface AiTransformResult {
+  items: HeldItemAgingPrediction[];
+  portfolioRisk: PortfolioRisk;
+  summary: string;
+}
+
+function transformAiResponse(
+  parsed: unknown,
+  baseItems: HeldItemAgingPrediction[],
+  basePortfolioRisk: PortfolioRisk,
+  preparedItems: PreparedItem[],
+  deterministicSummary: string,
+): AiTransformResult | null {
+  if (!parsed || typeof parsed !== 'object') return null;
+  const ai = parsed as AiAgingResponse;
+
+  // Deep-clone items so we don't mutate the deterministic baseline
+  const items: HeldItemAgingPrediction[] = baseItems.map((it) => ({
+    ...it,
+    optimalSellWindow: { ...it.optimalSellWindow },
+    priceAdjustmentTimeline: it.priceAdjustmentTimeline.slice(),
+  }));
+  let portfolioRisk = basePortfolioRisk;
+  let summary = deterministicSummary;
+
+  // AI may override per-item fields with anti-hallucination
+  if (ai.items && Array.isArray(ai.items)) {
+    const aiItems = ai.items as Array<Record<string, unknown>>;
+    for (const aiItem of aiItems) {
+      const tradeId = clampString(aiItem.tradeId, 50, '');
+      if (!tradeId) continue;
+      const match = items.find((it) => it.tradeId === tradeId);
+      if (!match) continue;
+
+      const detScore = match.agingRiskScore;
+      const aiScore = clampNumber(
+        aiItem.agingRiskScore,
+        0,
+        100,
+        detScore,
+      );
+      // Anti-hallucination: AI can adjust by max ±10
+      const clampedScore = Math.max(
+        0,
+        Math.min(
+          100,
+          Math.round(
+            detScore +
+              Math.max(-10, Math.min(10, aiScore - detScore)),
+          ),
+        ),
+      );
+      match.agingRiskScore = clampedScore;
+      // Risk level ALWAYS recomputed from clamped score
+      match.agingRiskLevel = clampEnum(
+        aiItem.agingRiskLevel,
+        VALID_RISK_LEVEL,
+        riskLevelFromScore(clampedScore),
+      );
+
+      const preventiveAction = clampString(
+        aiItem.preventiveAction,
+        250,
+        '',
+      );
+      if (preventiveAction) match.preventiveAction = preventiveAction;
+
+      // optimalSellWindow validation
+      if (
+        aiItem.optimalSellWindow &&
+        typeof aiItem.optimalSellWindow === 'object'
+      ) {
+        const w = aiItem.optimalSellWindow as Record<string, unknown>;
+        const start = clampString(w.start, 30, match.optimalSellWindow.start);
+        const end = clampString(w.end, 30, match.optimalSellWindow.end);
+        match.optimalSellWindow = { start, end };
+      }
+    }
+    // Re-sort items by clamped score desc
+    items.sort((a, b) => b.agingRiskScore - a.agingRiskScore);
+  }
+
+  // Portfolio risk override
+  if (
+    ai.portfolioRisk &&
+    typeof ai.portfolioRisk === 'object'
+  ) {
+    const pr = ai.portfolioRisk as Record<string, unknown>;
+    const detPortfolio = portfolioRisk.totalAgingRiskScore;
+    const aiPortfolio = clampNumber(
+      pr.totalAgingRiskScore,
+      0,
+      100,
+      detPortfolio,
+    );
+    // Anti-hallucination: AI can adjust by max ±5
+    const clampedPortfolioScore = Math.max(
+      0,
+      Math.min(
+        100,
+        Math.round(
+          detPortfolio +
+            Math.max(-5, Math.min(5, aiPortfolio - detPortfolio)),
+        ),
+      ),
+    );
+    // Recompute portfolio score from individual item scores (more accurate)
+    const recomputedScore =
+      items.length > 0
+        ? round0(
+            avg(items.map((i) => i.agingRiskScore)),
+          )
+        : clampedPortfolioScore;
+    const itemsAtRisk = items.filter(
+      (i) => i.agingRiskLevel === 'HIGH' || i.agingRiskLevel === 'CRITICAL',
+    ).length;
+    const projectedStaleItems30d = clampInt(
+      pr.projectedStaleItems30d,
+      0,
+      items.length,
+      preparedItems.filter((p) => p.daysUntilStale <= 30).length,
+    );
+    const projectedDeadItems60d = clampInt(
+      pr.projectedDeadItems60d,
+      0,
+      items.length,
+      preparedItems.filter(
+        (p) =>
+          p.daysHeld + 60 >= DEAD_THRESHOLD_DAYS &&
+          p.daysHeld < DEAD_THRESHOLD_DAYS,
+      ).length,
+    );
+    portfolioRisk = {
+      totalAgingRiskScore: recomputedScore,
+      itemsAtRisk,
+      projectedStaleItems30d,
+      projectedDeadItems60d,
+      urgencyLevel: clampEnum(
+        pr.urgencyLevel,
+        VALID_URGENCY,
+        urgencyFromScore(recomputedScore),
+      ),
+    };
+  }
+
+  if (typeof ai.summary === 'string' && ai.summary.trim()) {
+    summary = clampString(ai.summary, 400, deterministicSummary);
+  }
+
+  return { items, portfolioRisk, summary };
+}
+
 // --- Handler -------------------------------------------------------------
 
-export async function GET(req: NextRequest) {
-  return handleInventoryAgingPredictorPro(req);
-}
-export async function POST(req: NextRequest) {
-  return handleInventoryAgingPredictorPro(req);
-}
+const inventoryAgingPredictorProHandler = withAiRoute<InventoryAgingPredictorProInput>({
+  endpoint: '/api/ai/inventory-aging-predictor-pro',
+  maxDuration: 60,
+  enforceBudget: true, // AI klic — preveri budget
+  method: 'GET', // Endpoint sprejema GET + POST — bypass POST-only check
 
-async function handleInventoryAgingPredictorPro(req: NextRequest) {
-  try {
-    const rl = checkRateLimit(req, 'ai-inventory-aging-predictor-pro', 20);
-    if (!rl.allowed) return rateLimitResponse(rl);
+  parseBody: async (req) => {
+    await req.json().catch(() => ({}));
+    return {};
+  },
+
+  // No validateInput — body ignored, identična logika za GET in POST
+  handler: async (_input, ctx: AiRouteContext) => {
+    const { db, callAi, parseAi, logger } = ctx;
 
     const now = Date.now();
 
@@ -441,15 +668,15 @@ async function handleInventoryAgingPredictorPro(req: NextRequest) {
       take: 100000,
     });
 
-    const emptyResponse = {
+    const emptyResponse: InventoryAgingPredictorProResponse = {
       ok: true,
-      items: [] as HeldItemAgingPrediction[],
+      items: [],
       portfolioRisk: {
         totalAgingRiskScore: 0,
         itemsAtRisk: 0,
         projectedStaleItems30d: 0,
         projectedDeadItems60d: 0,
-        urgencyLevel: 'LOW' as UrgencyLevel,
+        urgencyLevel: 'LOW',
       },
       summary:
         'Ni HELD inventarja — Inventory Aging Predictor Pro ni mogoč.',
@@ -459,7 +686,7 @@ async function handleInventoryAgingPredictorPro(req: NextRequest) {
     };
 
     if (heldTrades.length === 0) {
-      return NextResponse.json(emptyResponse);
+      return apiOk(emptyResponse);
     }
 
     // 2) Compute categoryAvgHoldDays from SOLD trades (historical hold times)
@@ -531,226 +758,37 @@ async function handleInventoryAgingPredictorPro(req: NextRequest) {
       summary: string;
     }>(cacheKey);
     if (cached) {
-      return NextResponse.json({
+      return apiOk({
         ok: true,
         items: cached.items,
         portfolioRisk: cached.portfolioRisk,
         summary: cached.summary,
         cached: true,
         aiUsed: true,
-      });
+      } satisfies InventoryAgingPredictorProResponse);
     }
 
-    // 6) AI prompt with grounding
-    const settings = await getSettingsRow();
-    const aiSettings: AiSettings = {
-      provider: settings.aiProvider as AiProviderType,
-      baseUrl: settings.aiBaseUrl,
-      apiKey: settings.aiApiKey,
-      model: settings.aiModel,
-      fallbackProvider: (settings.fallbackProvider || '') as
-        | AiProviderType
-        | '',
-      fallbackBaseUrl: settings.fallbackBaseUrl || '',
-      fallbackApiKey: settings.fallbackApiKey || '',
-      fallbackModel: settings.fallbackModel || '',
-    };
-
-    const itemsForPrompt = preparedItems.map((p) => ({
-      tradeId: p.tradeId,
-      title: p.title,
-      category: p.category,
-      buyPrice: p.buyPrice,
-      daysHeld: p.daysHeld,
-      daysListed: p.daysListed,
-      categoryAvgHoldDays: p.categoryAvgHoldDays,
-      dealScore: p.dealScore,
-      deterministicRiskScore: p.agingRiskScore,
-      deterministicRiskLevel: p.agingRiskLevel,
-      daysUntilStale: p.daysUntilStale,
-    }));
-
-    const prompt = `Si AI "Inventory Aging Predictor PRO" za slovenske in srednjeevropske oglasne platforme (Bolha, Vinted, Facebook, Avtonet, mobile.de).
-Napoveš KDAJ bo vsak HELD item postal "stale" (problematsko staranje) in priporočiš PROAKTIVNE akcije PREDEN staranje postane problem.
-
-HELD INVENTAR (deterministično izračunano):
-${JSON.stringify(itemsForPrompt, null, 2)}
-
-PORTFOLIO STATS:
-- Skupno HELD itemov: ${preparedItems.length}
-- Povprečen aging risk score: ${portfolioRisk.totalAgingRiskScore}/100
-- Items at risk (HIGH/CRITICAL): ${portfolioRisk.itemsAtRisk}
-- Projected stale items v 30 dneh: ${portfolioRisk.projectedStaleItems30d}
-
-PRAVILA ZA AI ODGOVOR:
-1. items: array per held item z:
-   - tradeId: enak kot v promptu (max 50 znakov)
-   - agingRiskScore: 0-100 (lahko prilagodiš znotraj [-10, +10] od deterministične vrednosti — anti-hallucination)
-   - agingRiskLevel: LOW (<25) | MEDIUM (25-54) | HIGH (55-79) | CRITICAL (80+). Vedno izračunaj iz score.
-   - preventiveAction: slovenska konkretna akcija (max 250 znakov). Npr. "Znižaj ceno za 5% v 14 dneh in osveži fotografije."
-   - optimalSellWindow: { start: ISO date, end: ISO date }. Start = sedaj ali kmalu. End = pred predictedStaleDate (14 dni pred).
-2. portfolioRisk: {
-   - totalAgingRiskScore: 0-100 (lahko prilagodiš znotraj [-5, +5] od deterministične vrednosti)
-   - urgencyLevel: LOW/MEDIUM/HIGH/CRITICAL (izračunaj iz score)
-   - projectedStaleItems30d: število itemov ki bodo postali stale v 30 dneh
-   - projectedDeadItems60d: število itemov ki bodo dosegli dead threshold v 60 dneh
-}
-3. summary: slovenski povzetek (max 400 znakov). NE izmišljuj številk — uporabi zgornje deterministične podatke.
-
-VRNI LE JSON:
-{
-  "items": [
-    {
-      "tradeId": "abc123",
-      "agingRiskScore": 65,
-      "agingRiskLevel": "HIGH",
-      "preventiveAction": "Znižaj ceno za 10% v 14 dneh in osveži fotografije za boljšo izpostavljenost.",
-      "optimalSellWindow": { "start": "2026-08-08T00:00:00.000Z", "end": "2026-08-29T00:00:00.000Z" }
-    }
-  ],
-  "portfolioRisk": {
-    "totalAgingRiskScore": 55,
-    "urgencyLevel": "MEDIUM",
-    "projectedStaleItems30d": 2,
-    "projectedDeadItems60d": 0
-  },
-  "summary": "5 HELD itemov. Portfolio aging risk: 55/100 (MEDIUM). 2 itema postala stale v 30 dneh. Najbolj kritičen: iPhone (stale v 18d)."
-}${GROUNDING_PROMPT_SUFFIX}`;
+    // 6) Build AI prompt with grounding + call AI (try/catch z graceful fallback)
+    const prompt = buildPrompt(preparedItems, portfolioRisk);
 
     let finalSummary = deterministicSummary;
     let aiUsed = false;
 
     try {
-      const raw = await callProviderForRaw(aiSettings, prompt);
-      const parsed = parseJsonLooseExported(
-        raw,
-      ) as AiAgingResponse | null;
+      const raw = await callAi(prompt);
+      const parsed = parseAi(raw) as AiAgingResponse | null;
 
-      if (parsed && typeof parsed === 'object') {
-        // AI may override per-item fields with anti-hallucination
-        if (parsed.items && Array.isArray(parsed.items)) {
-          const aiItems = parsed.items as Array<Record<string, unknown>>;
-          for (const ai of aiItems) {
-            const tradeId = clampString(ai.tradeId, 50, '');
-            if (!tradeId) continue;
-            const match = items.find((it) => it.tradeId === tradeId);
-            if (!match) continue;
-
-            const detScore = match.agingRiskScore;
-            const aiScore = clampNumber(
-              ai.agingRiskScore,
-              0,
-              100,
-              detScore,
-            );
-            // Anti-hallucination: AI can adjust by max ±10
-            const clampedScore = Math.max(
-              0,
-              Math.min(
-                100,
-                Math.round(
-                  detScore +
-                    Math.max(-10, Math.min(10, aiScore - detScore)),
-                ),
-              ),
-            );
-            match.agingRiskScore = clampedScore;
-            // Risk level ALWAYS recomputed from clamped score
-            match.agingRiskLevel = clampEnum(
-              ai.agingRiskLevel,
-              VALID_RISK_LEVEL,
-              riskLevelFromScore(clampedScore),
-            );
-
-            const preventiveAction = clampString(
-              ai.preventiveAction,
-              250,
-              '',
-            );
-            if (preventiveAction) match.preventiveAction = preventiveAction;
-
-            // optimalSellWindow validation
-            if (
-              ai.optimalSellWindow &&
-              typeof ai.optimalSellWindow === 'object'
-            ) {
-              const w = ai.optimalSellWindow as Record<string, unknown>;
-              const start = clampString(w.start, 30, match.optimalSellWindow.start);
-              const end = clampString(w.end, 30, match.optimalSellWindow.end);
-              match.optimalSellWindow = { start, end };
-            }
-          }
-          // Re-sort items by clamped score desc
-          items.sort((a, b) => b.agingRiskScore - a.agingRiskScore);
-        }
-
-        // Portfolio risk override
-        if (
-          parsed.portfolioRisk &&
-          typeof parsed.portfolioRisk === 'object'
-        ) {
-          const pr = parsed.portfolioRisk as Record<string, unknown>;
-          const detPortfolio = portfolioRisk.totalAgingRiskScore;
-          const aiPortfolio = clampNumber(
-            pr.totalAgingRiskScore,
-            0,
-            100,
-            detPortfolio,
-          );
-          // Anti-hallucination: AI can adjust by max ±5
-          const clampedPortfolioScore = Math.max(
-            0,
-            Math.min(
-              100,
-              Math.round(
-                detPortfolio +
-                  Math.max(-5, Math.min(5, aiPortfolio - detPortfolio)),
-              ),
-            ),
-          );
-          // Recompute portfolio score from individual item scores (more accurate)
-          const recomputedScore =
-            items.length > 0
-              ? round0(
-                  avg(items.map((i) => i.agingRiskScore)),
-                )
-              : clampedPortfolioScore;
-          const itemsAtRisk = items.filter(
-            (i) => i.agingRiskLevel === 'HIGH' || i.agingRiskLevel === 'CRITICAL',
-          ).length;
-          const projectedStaleItems30d = clampInt(
-            pr.projectedStaleItems30d,
-            0,
-            items.length,
-            preparedItems.filter((p) => p.daysUntilStale <= 30).length,
-          );
-          const projectedDeadItems60d = clampInt(
-            pr.projectedDeadItems60d,
-            0,
-            items.length,
-            preparedItems.filter(
-              (p) =>
-                p.daysHeld + 60 >= DEAD_THRESHOLD_DAYS &&
-                p.daysHeld < DEAD_THRESHOLD_DAYS,
-            ).length,
-          );
-          portfolioRisk = {
-            totalAgingRiskScore: recomputedScore,
-            itemsAtRisk,
-            projectedStaleItems30d,
-            projectedDeadItems60d,
-            urgencyLevel: clampEnum(
-              pr.urgencyLevel,
-              VALID_URGENCY,
-              urgencyFromScore(recomputedScore),
-            ),
-          };
-        }
-
-        if (typeof parsed.summary === 'string' && parsed.summary.trim()) {
-          finalSummary = clampString(parsed.summary, 400, deterministicSummary);
-        }
-
+      const transformed = transformAiResponse(
+        parsed,
+        items,
+        portfolioRisk,
+        preparedItems,
+        deterministicSummary,
+      );
+      if (transformed) {
+        items = transformed.items;
+        portfolioRisk = transformed.portfolioRisk;
+        finalSummary = transformed.summary;
         aiUsed = true;
       }
     } catch (err) {
@@ -770,22 +808,15 @@ VRNI LE JSON:
       });
     }
 
-    return NextResponse.json({
+    return apiOk({
       ok: true,
       items,
       portfolioRisk,
       summary: finalSummary,
       aiUsed,
-    });
-  } catch (err: any) {
-    logger.error(
-      '/api/ai/inventory-aging-predictor-pro',
-      'handler failed',
-      err,
-    );
-    return NextResponse.json(
-      { error: err?.message ?? 'Napaka' },
-      { status: 500 },
-    );
-  }
-}
+    } satisfies InventoryAgingPredictorProResponse);
+  },
+});
+
+export const GET = inventoryAgingPredictorProHandler;
+export const POST = inventoryAgingPredictorProHandler;

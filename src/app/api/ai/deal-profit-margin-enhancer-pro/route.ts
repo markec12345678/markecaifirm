@@ -1,4 +1,4 @@
-// v8.01: AI Deal Profit Margin Enhancer Pro — AI ENHANCE-A profit margin
+// v8.01 / v8.96.4-batch4: AI Deal Profit Margin Enhancer Pro — AI ENHANCE-A profit margin
 // na vsakem HELD item-u preko specifičnih FIZIČNIH/LISTING enhancement akcij
 // (refurbishment, repositioning, premium packaging, better photos, improved
 // descriptions, certification). Gre BEYOND pricing optimization — fokus na
@@ -28,27 +28,23 @@
 // +180€, ROI 1.24x. Quick wins: REPHOTOGRAPH (EASY, ROI 8.0), BUNDLE (EASY,
 // ROI 5.2). Priority ranking: 1. PS5 REFURBISH (ROI 4.5), 2. iPhone 13
 // REPHOTOGRAPH (ROI 8.0)..."
-
+//
 // GET+POST /api/ai/deal-profit-margin-enhancer-pro
 // (AI-enhanced + grounding + anti-hallucination + 6h cache + deterministic fallback)
+// Refaktoriran z withAiRoute helperjem (v8.96.4) + enforceBudget guard.
 
-import { NextRequest, NextResponse } from 'next/server';
-import { db } from '@/lib/db';
-import { getSettingsRow } from '@/lib/pipeline';
-import {
-  callProviderForRaw,
-  parseJsonLooseExported,
-  type AiProviderType,
-  type AiSettings,
-} from '@/lib/ai';
+import { withAiRoute, AI_ROUTE_DEFAULTS, type AiRouteContext } from '@/lib/with-ai-route';
+import { apiOk } from '@/lib/api-response';
 import { GROUNDING_PROMPT_SUFFIX } from '@/lib/anti-hallucination';
 import { getCachedAI, setCachedAI } from '@/lib/ai-cache';
-import { checkRateLimit, rateLimitResponse } from '@/lib/rate-limit';
-import { logger } from '@/lib/logger';
 
-export const runtime = 'nodejs';
-export const dynamic = 'force-dynamic';
+export const { runtime, dynamic } = AI_ROUTE_DEFAULTS;
 export const maxDuration = 60;
+
+// --- Input ----------------------------------------------------------------
+
+// eslint-disable-next-line @typescript-eslint/no-empty-object-type
+interface MarginEnhancerInput {}
 
 // --- Types ---------------------------------------------------------------
 
@@ -366,9 +362,9 @@ function computeEnhancementItem(c: HeldComputed): MarginEnhancementItem {
   ));
 
   // Anti-hallucination: estimatedMarginAfter can't exceed estValue-implied margin
-  const maxPossibleMargin = cost => {
+  const maxPossibleMargin = (cost: number) => {
     const maxProfit = c.estValue - c.cost - (c.estValue * FEE_PCT);
-    return c.cost > 0 ? (maxProfit / c.cost) * 100 : 0;
+    return c.cost > 0 ? (maxProfit / cost) * 100 : 0;
   };
   const capMargin = maxPossibleMargin(c.cost) + 20; // allow some uplift from enhancement itself
   estimatedMarginAfter = round2(clampNum(
@@ -530,19 +526,175 @@ function buildSummary(items: MarginEnhancementItem[], portfolio: Portfolio): str
   return parts.join(' ').slice(0, 400);
 }
 
+// --- Prompt builder -------------------------------------------------------
+
+function buildPromptData(
+  computed: HeldComputed[],
+  items: MarginEnhancementItem[],
+  topForPrompt: MarginEnhancementItem[],
+) {
+  return {
+    heldCount: computed.length,
+    topItems: topForPrompt.map((i) => ({
+      tradeId: i.tradeId,
+      title: i.title,
+      category: i.category,
+      buyPrice: i.buyPrice,
+      aiEstimatedValue: i.aiEstimatedValue,
+      currentMargin: i.currentMargin,
+      marginEnhancementPotential: i.marginEnhancementPotential,
+      enhancementDifficulty: i.enhancementDifficulty,
+      deterministicEnhancementAction: i.enhancementAction,
+      deterministicEstimatedCost: i.estimatedCost,
+      deterministicMarginAfter: i.estimatedMarginAfter,
+      deterministicMarginEnhancement: i.marginEnhancement,
+      deterministicEnhancementROI: i.enhancementROI,
+    })),
+    caps: {
+      costMin: COST_MIN, costMax: COST_MAX,
+      marginMin: MARGIN_MIN, marginMax: MARGIN_MAX,
+      roiMin: ROI_MIN, roiMax: ROI_MAX,
+      daysMin: DAYS_MIN, daysMax: DAYS_MAX,
+      probMin: PROB_MIN, probMax: PROB_MAX,
+    },
+  };
+}
+
+function buildPrompt(topForPrompt: MarginEnhancementItem[], computed: HeldComputed[]): string {
+  const promptData = buildPromptData(computed, [], topForPrompt);
+  return `Si AI "Deal Profit Margin Enhancer Pro" za slovenske in srednjeevropske oglasne platforme (Bolha, Vinted, Avtonet, mobile.de).
+Si strokovnjak za MARGIN ENHANCEMENT preko specifičnih FIZIČNIH in LISTING enhancement akcij. Greš BEYOND pricing optimization — fokusiraš se na physical/listing improvements ki dejansko povečajo PERCEIVED VALUE in consequently margin. Razlika od profit-multiplier-engine (v8.00 ki multiplicira profit z 8 levers) — ti ENHANCE-AŠ MARGIN per item z specifičnimi fizikalnimi akcijami. Razlika od inventory-roi-maximizer-pro (v7.99 ki maksimizira ROI per item z abstract strategies) — ti fokusiraš na MARGIN ENHANCEMENT z enhancment ROI (marginGain / cost). Razlika od deal-profit-accelerator-pro (v7.99 ki accelera profit per item) — ti ENHANCE-AŠ margin preko physical/listing improvements (ne time/profit acceleration).
+
+DETERMINISTIČNI PODATKI (top ${topForPrompt.length} HELD item-ov z najvišjim enhancement potential):
+${JSON.stringify(promptData, null, 2)}
+
+PRAVILA ZA AI ODGOVOR:
+1. items: za vsak tradeId MORAŠ vrniti enhancement data:
+   - tradeId (MORA match-at topItems — skip unknown),
+   - enhancementAction: REFURBISH | REPOSITION | REPHOTOGRAPH | REWRITE_DESCRIPTION | REPRICE_PREMIUM | BUNDLE_WITH_ACCESSORY | CERTIFY_AUTHENTICITY | NONE_NEEDED,
+   - estimatedCost € [0, 500] (koliko € stane enhancement — material, čas),
+   - estimatedMarginAfter % [-50, 200] (MORA biti ≥ currentMargin — anti-hallucination),
+   - timeToImplement dni [0, 365],
+   - enhancementSteps: 3-6 stringov (max 200 vsak, slovenski — specifični koraki),
+   - successProbability % [0, 100],
+2. summary: slovenski povzetek (max 400 znakov).
+
+VRNI LE JSON:
+{
+  "items": [
+    { "tradeId": "abc123", "enhancementAction": "REFURBISH", "estimatedCost": 25, "estimatedMarginAfter": 35, "timeToImplement": 3, "enhancementSteps": ["Očisti površino.", "Poliraj zaslon."], "successProbability": 85 }
+  ],
+  "summary": "Portfolio: 8 items z enhancement potential. Total cost 145€, gain +180€, ROI 1.24x."
+}${GROUNDING_PROMPT_SUFFIX}`;
+}
+
+// --- AI merge ------------------------------------------------------------
+
+function mergeAiIntoItems(
+  items: MarginEnhancementItem[],
+  parsed: AiResponse | null,
+): MarginEnhancementItem[] {
+  if (!parsed || typeof parsed !== 'object' || !Array.isArray(parsed.items)) {
+    return items;
+  }
+
+  // Build map of AI enhancements by tradeId
+  const aiMap = new Map<string, NonNullable<AiResponse['items']>[number]>();
+  for (const it of parsed.items) {
+    if (it && typeof it === 'object' && typeof it.tradeId === 'string') {
+      aiMap.set(it.tradeId, it);
+    }
+  }
+
+  // Override deterministic items with AI data (anti-hallucination clamping)
+  const newItems: MarginEnhancementItem[] = [];
+  for (const det of items) {
+    const ai = aiMap.get(det.tradeId);
+    if (!ai) {
+      newItems.push(det);
+      continue;
+    }
+
+    const enhancementAction = clampEnum(
+      ai.enhancementAction, VALID_ACTION, det.enhancementAction,
+    );
+    const profile = ACTION_PROFILES[enhancementAction];
+    const estimatedCost = round0(clampNum(
+      ai.estimatedCost, COST_MIN, COST_MAX, profile.defaultCost,
+    ));
+    // Anti-hallucination: estimatedMarginAfter must be ≥ currentMargin
+    const minMarginAfter = det.currentMargin;
+    const maxMarginAfter = Math.min(MARGIN_MAX, det.currentMargin + 50);
+    const estimatedMarginAfter = round2(clampNum(
+      ai.estimatedMarginAfter,
+      minMarginAfter,
+      maxMarginAfter,
+      det.estimatedMarginAfter,
+    ));
+    const marginEnhancement = round2(clampNum(
+      estimatedMarginAfter - det.currentMargin,
+      0, MARGIN_MAX, det.marginEnhancement,
+    ));
+    const marginGainEur = (marginEnhancement / 100) * det.buyPrice;
+    const enhancementROI = round2(clampNum(
+      estimatedCost > 0 ? marginGainEur / estimatedCost : 0,
+      ROI_MIN, ROI_MAX, det.enhancementROI,
+    ));
+    const timeToImplement = round0(clampNum(
+      ai.timeToImplement, DAYS_MIN, DAYS_MAX, profile.defaultDays,
+    ));
+    const successProbability = round0(clampNum(
+      ai.successProbability, PROB_MIN, PROB_MAX, profile.defaultSuccess,
+    ));
+
+    // Build enhancement steps if AI provided them
+    let enhancementSteps = det.enhancementSteps;
+    if (Array.isArray(ai.enhancementSteps) && ai.enhancementSteps.length >= 2) {
+      const aiSteps: string[] = [];
+      for (const s of ai.enhancementSteps.slice(0, MAX_STEPS)) {
+        if (typeof s !== 'string') continue;
+        aiSteps.push(clampString(s, 200, 'Korak.'));
+      }
+      if (aiSteps.length >= 2) {
+        enhancementSteps = aiSteps;
+      }
+    }
+
+    newItems.push({
+      ...det,
+      enhancementAction,
+      estimatedCost,
+      estimatedMarginAfter,
+      marginEnhancement,
+      enhancementROI,
+      timeToImplement,
+      enhancementSteps,
+      successProbability,
+    });
+  }
+
+  if (newItems.length === items.length) {
+    return newItems;
+  }
+  return items;
+}
+
 // --- Handler -------------------------------------------------------------
 
-export async function GET(req: NextRequest) {
-  return handleDealProfitMarginEnhancerPro(req);
-}
-export async function POST(req: NextRequest) {
-  return handleDealProfitMarginEnhancerPro(req);
-}
+const marginEnhancerHandler = withAiRoute<MarginEnhancerInput>({
+  endpoint: '/api/ai/deal-profit-margin-enhancer-pro',
+  maxDuration: 60,
+  enforceBudget: true, // AI klic — preveri budget
+  method: 'GET', // Endpoint sprejema GET + POST — bypass POST-only check
 
-async function handleDealProfitMarginEnhancerPro(req: NextRequest) {
-  try {
-    const rl = checkRateLimit(req, 'ai-deal-profit-margin-enhancer-pro', 20);
-    if (!rl.allowed) return rateLimitResponse(rl);
+  parseBody: async (req) => {
+    await req.json().catch(() => ({}));
+    return {};
+  },
+
+  // No validateInput — body ignored, identična logika za GET in POST
+  handler: async (_input, ctx: AiRouteContext) => {
+    const { db, callAi, parseAi, logger } = ctx;
 
     const now = Date.now();
 
@@ -571,7 +723,7 @@ async function handleDealProfitMarginEnhancerPro(req: NextRequest) {
 
     // Empty-state: no HELD trades
     if (heldTrades.length === 0) {
-      return NextResponse.json({
+      return apiOk({
         ok: true,
         items: [],
         portfolio: {
@@ -610,7 +762,7 @@ async function handleDealProfitMarginEnhancerPro(req: NextRequest) {
     }>(cacheKey);
     if (cached) {
       const portfolio = buildPortfolio(cached.items);
-      return NextResponse.json({
+      return apiOk({
         ok: true,
         items: cached.items,
         portfolio,
@@ -623,157 +775,19 @@ async function handleDealProfitMarginEnhancerPro(req: NextRequest) {
     let summary = buildSummary(items, buildPortfolio(items));
 
     // 4) AI prompt with grounding
-    const settings = await getSettingsRow();
-    const aiSettings: AiSettings = {
-      provider: settings.aiProvider as AiProviderType,
-      baseUrl: settings.aiBaseUrl,
-      apiKey: settings.aiApiKey,
-      model: settings.aiModel,
-      fallbackProvider: (settings.fallbackProvider || '') as
-        | AiProviderType
-        | '',
-      fallbackBaseUrl: settings.fallbackBaseUrl || '',
-      fallbackApiKey: settings.fallbackApiKey || '',
-      fallbackModel: settings.fallbackModel || '',
-    };
-
-    const promptData = {
-      heldCount: computed.length,
-      topItems: topForPrompt.map((i) => ({
-        tradeId: i.tradeId,
-        title: i.title,
-        category: i.category,
-        buyPrice: i.buyPrice,
-        aiEstimatedValue: i.aiEstimatedValue,
-        currentMargin: i.currentMargin,
-        marginEnhancementPotential: i.marginEnhancementPotential,
-        enhancementDifficulty: i.enhancementDifficulty,
-        deterministicEnhancementAction: i.enhancementAction,
-        deterministicEstimatedCost: i.estimatedCost,
-        deterministicMarginAfter: i.estimatedMarginAfter,
-        deterministicMarginEnhancement: i.marginEnhancement,
-        deterministicEnhancementROI: i.enhancementROI,
-      })),
-      caps: {
-        costMin: COST_MIN, costMax: COST_MAX,
-        marginMin: MARGIN_MIN, marginMax: MARGIN_MAX,
-        roiMin: ROI_MIN, roiMax: ROI_MAX,
-        daysMin: DAYS_MIN, daysMax: DAYS_MAX,
-        probMin: PROB_MIN, probMax: PROB_MAX,
-      },
-    };
-
-    const prompt = `Si AI "Deal Profit Margin Enhancer Pro" za slovenske in srednjeevropske oglasne platforme (Bolha, Vinted, Avtonet, mobile.de).
-Si strokovnjak za MARGIN ENHANCEMENT preko specifičnih FIZIČNIH in LISTING enhancement akcij. Greš BEYOND pricing optimization — fokusiraš se na physical/listing improvements ki dejansko povečajo PERCEIVED VALUE in consequently margin. Razlika od profit-multiplier-engine (v8.00 ki multiplicira profit z 8 levers) — ti ENHANCE-AŠ MARGIN per item z specifičnimi fizikalnimi akcijami. Razlika od inventory-roi-maximizer-pro (v7.99 ki maksimizira ROI per item z abstract strategies) — ti fokusiraš na MARGIN ENHANCEMENT z enhancment ROI (marginGain / cost). Razlika od deal-profit-accelerator-pro (v7.99 ki accelera profit per item) — ti ENHANCE-AŠ margin preko physical/listing improvements (ne time/profit acceleration).
-
-DETERMINISTIČNI PODATKI (top ${topForPrompt.length} HELD item-ov z najvišjim enhancement potential):
-${JSON.stringify(promptData, null, 2)}
-
-PRAVILA ZA AI ODGOVOR:
-1. items: za vsak tradeId MORAŠ vrniti enhancement data:
-   - tradeId (MORA match-at topItems — skip unknown),
-   - enhancementAction: REFURBISH | REPOSITION | REPHOTOGRAPH | REWRITE_DESCRIPTION | REPRICE_PREMIUM | BUNDLE_WITH_ACCESSORY | CERTIFY_AUTHENTICITY | NONE_NEEDED,
-   - estimatedCost € [0, 500] (koliko € stane enhancement — material, čas),
-   - estimatedMarginAfter % [-50, 200] (MORA biti ≥ currentMargin — anti-hallucination),
-   - timeToImplement dni [0, 365],
-   - enhancementSteps: 3-6 stringov (max 200 vsak, slovenski — specifični koraki),
-   - successProbability % [0, 100],
-2. summary: slovenski povzetek (max 400 znakov).
-
-VRNI LE JSON:
-{
-  "items": [
-    { "tradeId": "abc123", "enhancementAction": "REFURBISH", "estimatedCost": 25, "estimatedMarginAfter": 35, "timeToImplement": 3, "enhancementSteps": ["Očisti površino.", "Poliraj zaslon."], "successProbability": 85 }
-  ],
-  "summary": "Portfolio: 8 items z enhancement potential. Total cost 145€, gain +180€, ROI 1.24x."
-}${GROUNDING_PROMPT_SUFFIX}`;
+    const prompt = buildPrompt(topForPrompt, computed);
 
     let aiUsed = false;
 
     try {
-      const raw = await callProviderForRaw(aiSettings, prompt);
-      const parsed = parseJsonLooseExported(raw) as AiResponse | null;
+      const raw = await callAi(prompt);
+      const parsed = parseAi(raw) as AiResponse | null;
 
       if (parsed && typeof parsed === 'object' && Array.isArray(parsed.items)) {
-        // Build map of AI enhancements by tradeId
-        const aiMap = new Map<string, NonNullable<AiResponse['items']>[number]>();
-        for (const it of parsed.items) {
-          if (it && typeof it === 'object' && typeof it.tradeId === 'string') {
-            aiMap.set(it.tradeId, it);
-          }
+        const merged = mergeAiIntoItems(items, parsed);
+        if (merged.length === items.length) {
+          items = merged;
         }
-
-        // Override deterministic items with AI data (anti-hallucination clamping)
-        const newItems: MarginEnhancementItem[] = [];
-        for (const det of items) {
-          const ai = aiMap.get(det.tradeId);
-          if (!ai) {
-            newItems.push(det);
-            continue;
-          }
-
-          const enhancementAction = clampEnum(
-            ai.enhancementAction, VALID_ACTION, det.enhancementAction,
-          );
-          const profile = ACTION_PROFILES[enhancementAction];
-          const estimatedCost = round0(clampNum(
-            ai.estimatedCost, COST_MIN, COST_MAX, profile.defaultCost,
-          ));
-          // Anti-hallucination: estimatedMarginAfter must be ≥ currentMargin
-          const minMarginAfter = det.currentMargin;
-          const maxMarginAfter = Math.min(MARGIN_MAX, det.currentMargin + 50);
-          const estimatedMarginAfter = round2(clampNum(
-            ai.estimatedMarginAfter,
-            minMarginAfter,
-            maxMarginAfter,
-            det.estimatedMarginAfter,
-          ));
-          const marginEnhancement = round2(clampNum(
-            estimatedMarginAfter - det.currentMargin,
-            0, MARGIN_MAX, det.marginEnhancement,
-          ));
-          const marginGainEur = (marginEnhancement / 100) * det.buyPrice;
-          const enhancementROI = round2(clampNum(
-            estimatedCost > 0 ? marginGainEur / estimatedCost : 0,
-            ROI_MIN, ROI_MAX, det.enhancementROI,
-          ));
-          const timeToImplement = round0(clampNum(
-            ai.timeToImplement, DAYS_MIN, DAYS_MAX, profile.defaultDays,
-          ));
-          const successProbability = round0(clampNum(
-            ai.successProbability, PROB_MIN, PROB_MAX, profile.defaultSuccess,
-          ));
-
-          // Build enhancement steps if AI provided them
-          let enhancementSteps = det.enhancementSteps;
-          if (Array.isArray(ai.enhancementSteps) && ai.enhancementSteps.length >= 2) {
-            const aiSteps: string[] = [];
-            for (const s of ai.enhancementSteps.slice(0, MAX_STEPS)) {
-              if (typeof s !== 'string') continue;
-              aiSteps.push(clampString(s, 200, 'Korak.'));
-            }
-            if (aiSteps.length >= 2) {
-              enhancementSteps = aiSteps;
-            }
-          }
-
-          newItems.push({
-            ...det,
-            enhancementAction,
-            estimatedCost,
-            estimatedMarginAfter,
-            marginEnhancement,
-            enhancementROI,
-            timeToImplement,
-            enhancementSteps,
-            successProbability,
-          });
-        }
-
-        if (newItems.length === items.length) {
-          items = newItems;
-        }
-
         summary = clampString(parsed.summary, 400, buildSummary(items, buildPortfolio(items)));
         aiUsed = true;
       }
@@ -793,22 +807,15 @@ VRNI LE JSON:
       setCachedAI(cacheKey, { items, summary });
     }
 
-    return NextResponse.json({
+    return apiOk({
       ok: true,
       items,
       portfolio,
       summary,
       aiUsed,
     } satisfies MarginEnhancerResponse);
-  } catch (err: any) {
-    logger.error(
-      '/api/ai/deal-profit-margin-enhancer-pro',
-      'handler failed',
-      err,
-    );
-    return NextResponse.json(
-      { error: err?.message ?? 'Napaka' },
-      { status: 500 },
-    );
-  }
-}
+  },
+});
+
+export const GET = marginEnhancerHandler;
+export const POST = marginEnhancerHandler;

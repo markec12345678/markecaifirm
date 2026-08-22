@@ -1,4 +1,4 @@
-// v7.95: AI Price Optimization Engine Pro — AI GENERIRA optimalne cene za
+// v7.95 / v8.96.4-batch3: AI Price Optimization Engine Pro — AI GENERIRA optimalne cene za
 // VSE HELD inventorija hkrati z A/B testing priporočili in dynamic
 // pricing rules. Razlika od price-intelligence-engine (v7.72 ki analizira
 // pricing patterns) — ta GENERIRA optimal price per item z A/B testing
@@ -16,24 +16,18 @@
 //
 // GET+POST /api/ai/price-optimization-engine-pro
 // (AI-enhanced + grounding + anti-hallucination + 6h cache + deterministic fallback)
+// Refaktoriran z withAiRoute helperjem (v8.96.4) + enforceBudget guard.
 
-import { NextRequest, NextResponse } from 'next/server';
-import { db } from '@/lib/db';
-import { getSettingsRow } from '@/lib/pipeline';
-import {
-  callProviderForRaw,
-  parseJsonLooseExported,
-  type AiProviderType,
-  type AiSettings,
-} from '@/lib/ai';
+import { withAiRoute, AI_ROUTE_DEFAULTS, type AiRouteContext } from '@/lib/with-ai-route';
+import { apiOk } from '@/lib/api-response';
 import { GROUNDING_PROMPT_SUFFIX } from '@/lib/anti-hallucination';
 import { getCachedAI, setCachedAI } from '@/lib/ai-cache';
-import { checkRateLimit, rateLimitResponse } from '@/lib/rate-limit';
-import { logger } from '@/lib/logger';
 
-export const runtime = 'nodejs';
-export const dynamic = 'force-dynamic';
+export const { runtime, dynamic } = AI_ROUTE_DEFAULTS;
 export const maxDuration = 60;
+
+// eslint-disable-next-line @typescript-eslint/no-empty-object-type
+interface PriceOptimizationEngineProInput {}
 
 // --- Types ---------------------------------------------------------------
 
@@ -332,6 +326,8 @@ function computeSellProbability(
   // Lower price = higher sell probability; higher price = lower sell probability
   const sellProbAtOptimal = atCurrent - (adjustmentRatio * 100); // negative ratio (lower price) increases prob
   const atOptimal = round0(Math.max(5, Math.min(95, sellProbAtOptimal)));
+  // Reference estValue to keep signature behaviour identical
+  void estValue;
   return { atCurrent, atOptimal };
 }
 
@@ -469,19 +465,245 @@ function buildSummary(items: PriceOptItem[], portfolio: Portfolio): string {
   return parts.join(' ').slice(0, 400);
 }
 
+// --- Prompt builder + AI response transform (čisti helperji) ------------
+
+interface PromptData {
+  heldItems: Array<{
+    tradeId: string;
+    title: string;
+    category: string;
+    buyPrice: number;
+    currentPrice: number;
+    estValue: number | null;
+    pricePosition: 'BELOW' | 'AT' | 'ABOVE';
+    deterministic: {
+      optimalPrice: number;
+      priceAction: PriceAction;
+      priceAdjustmentPercent: number;
+      pricingStrategy: PricingStrategy;
+    };
+  }>;
+  historicalPatterns: {
+    avgSellPriceVsEstValue: number;
+    sampleSize: number;
+    categoryStats: Record<string, unknown>;
+    priceElasticityByCategory: Record<string, number>;
+    optimalPricePointByCategory: Record<string, number>;
+  };
+  deterministicPortfolio: Portfolio;
+  caps: {
+    percentMin: number; percentMax: number;
+    sellProbMin: number; sellProbMax: number;
+    profitChangeMin: number; profitChangeMax: number;
+  };
+}
+
+function buildPrompt(
+  items: PriceOptItem[],
+  patterns: HistoricalPatterns,
+  portfolio: Portfolio,
+): string {
+  const promptData: PromptData = {
+    heldItems: items.slice(0, 30).map((i) => ({
+      tradeId: i.tradeId,
+      title: i.title,
+      category: i.category,
+      buyPrice: i.buyPrice,
+      currentPrice: i.currentPrice,
+      estValue: i.estValue,
+      pricePosition: i.pricePosition,
+      deterministic: {
+        optimalPrice: i.optimalPrice,
+        priceAction: i.priceAction,
+        priceAdjustmentPercent: i.priceAdjustmentPercent,
+        pricingStrategy: i.pricingStrategy,
+      },
+    })),
+    historicalPatterns: {
+      avgSellPriceVsEstValue: patterns.avgSellPriceVsEstValue,
+      sampleSize: patterns.sampleSize,
+      categoryStats: Object.fromEntries(
+        Array.from(patterns.categoryStats.entries()).slice(0, 10).map(([k, v]) => [k, v]),
+      ),
+      priceElasticityByCategory: Object.fromEntries(patterns.priceElasticityByCategory),
+      optimalPricePointByCategory: Object.fromEntries(patterns.optimalPricePointByCategory),
+    },
+    deterministicPortfolio: portfolio,
+    caps: {
+      percentMin: PERCENT_MIN, percentMax: PERCENT_MAX,
+      sellProbMin: SELL_PROB_MIN, sellProbMax: SELL_PROB_MAX,
+      profitChangeMin: PROFIT_CHANGE_MIN, profitChangeMax: PROFIT_CHANGE_MAX,
+    },
+  };
+
+  return `Si AI "Price Optimization Engine Pro" za slovenske in srednjeevropske oglasne platforme (Bolha, Vinted, Avtonet, mobile.de).
+Ti GENERIRAŠ optimalne cene za VSE HELD inventorija hkrati z A/B testing priporočili in dynamic pricing rules. Razlika od price-intelligence-engine (ki analizira pricing patterns) — ti GENERIRAŠ optimal price per item z A/B testing in dynamic pricing. Razlika od smart-pricing-engine (basic) — ti si PRO z A/B testing in dynamic pricing rules.
+
+DETERMINISTIČNI PODATKI (izračunano iz DB — HELD trgovine z linked Listing + SOLD 12m za historical patterns):
+${JSON.stringify(promptData, null, 2)}
+
+PRAVILA ZA AI ODGOVOR:
+1. items: za vsak HELD item generiraj optimal price. Per item: { tradeId (string), optimalPrice EUR (CLAMPED to [0.5x, 1.3x] estValue anti-hallucination; če ni estValue, [0.8x, 1.5x] buyPrice), priceAction INCREASE|DECREASE|MAINTAIN (INCREASE če optimal > current+3%, DECREASE če optimal < current-3%, sicer MAINTAIN), priceAdjustmentPercent [-50, 50] (= (optimal-current)/current × 100), expectedSellProbabilityLift [-25, 25] pp (positive = boljša prodaja, negativna = slabša ampak večji profit), expectedProfitChange € [-5000, 5000] (= optimal-current pri buyPrice不变), pricingStrategy PREMIUM|COMPETITIVE|VALUE|LIQUIDATION (PREMIUM >1.1×estValue, COMPETITIVE 0.95-1.1, VALUE 0.75-0.95, LIQUIDATION <0.75), dynamicPricingRule (max 300 chars — npr. "drop 5% every 14 days until min €X"), abTestRecommendation boolean (true če |adjustment| >= 5%), reasoning (max 400 chars — slovenski povzetek) }.
+2. portfolio: { totalExpectedProfitLift € (sum max(0, profitChange)), totalExpectedSellProbabilityLift pp (sum), pricingPortfolioScore 0-100 (višji = bolje optimizirano; ±10 od deterministic), averagePriceAdjustment % (avg |pct|), itemsNeedingIncrease count, itemsNeedingDecrease count }.
+3. summary: slovenski povzetek (max 400 znakov). NE izmišljuj številk — uporabi deterministic baseline. Primer: "PS5: current 380€, optimal 395€ (+4%, PREMIUM). Expected: +15€ profit, -5% sell prob. A/B test: yes."
+
+VRNI LE JSON:
+{
+  "items": [
+    { "tradeId": "abc", "optimalPrice": 395, "priceAction": "INCREASE", "priceAdjustmentPercent": 4, "expectedSellProbabilityLift": -5, "expectedProfitChange": 15, "pricingStrategy": "PREMIUM", "dynamicPricingRule": "Povišaj na 395€; če ni prodano v 14 dneh, znižaj 3%.", "abTestRecommendation": true, "reasoning": "PS5 current 380€, optimal 395€ (estValue 410€, 0.96 ratio)." }
+  ],
+  "portfolio": {
+    "totalExpectedProfitLift": 250,
+    "totalExpectedSellProbabilityLift": -20,
+    "pricingPortfolioScore": 72,
+    "averagePriceAdjustment": 6.5,
+    "itemsNeedingIncrease": 8,
+    "itemsNeedingDecrease": 3
+  },
+  "summary": "30 items optimiziranih. Score: 72/100. PS5: 380€ → 395€ (+4%, PREMIUM). Portfolio lift: +250€ profit."
+}${GROUNDING_PROMPT_SUFFIX}`;
+}
+
+interface AiTransformResult {
+  items: PriceOptItem[];
+  portfolio: Portfolio;
+  summary: string;
+}
+
+function transformAiResponse(
+  parsed: unknown,
+  detItems: PriceOptItem[],
+  detPortfolio: Portfolio,
+): AiTransformResult | null {
+  if (!parsed || typeof parsed !== 'object' || !Array.isArray((parsed as AiPriceOptResponse).items)) {
+    return null;
+  }
+  const ai = parsed as AiPriceOptResponse;
+
+  // Build a map for quick lookup of deterministic item by tradeId
+  const detMap = new Map(detItems.map((i) => [i.tradeId, i]));
+  const aiItems: PriceOptItem[] = [];
+
+  for (const a of ai.items ?? []) {
+    if (!a || typeof a !== 'object') continue;
+    const tradeId = String(a.tradeId ?? '').trim();
+    const det = detMap.get(tradeId);
+    if (!det) continue; // skip unknown tradeIds (anti-hallucination: must match held item)
+
+    // Anti-hallucination: optimalPrice clamped to [0.5x, 1.3x] estValue (if estValue exists)
+    let optimalPrice: number;
+    if (det.estValue && det.estValue > 0) {
+      const minAllowed = det.estValue * 0.5;
+      const maxAllowed = det.estValue * 1.3;
+      optimalPrice = round0(
+        Math.max(minAllowed, Math.min(maxAllowed, clampNum(a.optimalPrice, minAllowed, maxAllowed, det.optimalPrice))),
+      );
+    } else {
+      // Fallback: [0.8x, 1.5x] buyPrice
+      const minAllowed = det.buyPrice * 0.8;
+      const maxAllowed = det.buyPrice * 1.5;
+      optimalPrice = round0(
+        Math.max(minAllowed, Math.min(maxAllowed, clampNum(a.optimalPrice, minAllowed, maxAllowed, det.optimalPrice))),
+      );
+    }
+
+    const priceAdjustmentPercent = round0(
+      clampNum(a.priceAdjustmentPercent, PERCENT_MIN, PERCENT_MAX, det.priceAdjustmentPercent),
+    );
+
+    const priceAction = clampEnum(a.priceAction, VALID_PRICE_ACTION, det.priceAction);
+    // Re-validate action matches pct sign
+    let finalAction = priceAction;
+    if (priceAdjustmentPercent > 3 && finalAction !== 'INCREASE') finalAction = 'INCREASE';
+    else if (priceAdjustmentPercent < -3 && finalAction !== 'DECREASE') finalAction = 'DECREASE';
+    else if (Math.abs(priceAdjustmentPercent) <= 3) finalAction = 'MAINTAIN';
+
+    const expectedSellProbabilityLift = round0(
+      clampNum(a.expectedSellProbabilityLift, SELL_PROB_MIN, SELL_PROB_MAX, det.expectedSellProbabilityLift),
+    );
+    const expectedProfitChange = round0(
+      clampNum(a.expectedProfitChange, PROFIT_CHANGE_MIN, PROFIT_CHANGE_MAX, det.expectedProfitChange),
+    );
+    const pricingStrategy = clampEnum(a.pricingStrategy, VALID_STRATEGY, det.pricingStrategy);
+    const dynamicPricingRule = clampString(a.dynamicPricingRule, 300, det.dynamicPricingRule);
+    const abTestRecommendation = typeof a.abTestRecommendation === 'boolean'
+      ? a.abTestRecommendation
+      : det.abTestRecommendation;
+    const reasoning = clampString(a.reasoning, 400, det.reasoning);
+
+    aiItems.push({
+      tradeId: det.tradeId,
+      title: det.title,
+      category: det.category,
+      buyPrice: det.buyPrice,
+      currentPrice: det.currentPrice,
+      estValue: det.estValue,
+      pricePosition: det.pricePosition,
+      optimalPrice,
+      priceAction: finalAction,
+      priceAdjustmentPercent,
+      expectedSellProbabilityLift,
+      expectedProfitChange,
+      pricingStrategy,
+      dynamicPricingRule,
+      abTestRecommendation,
+      reasoning,
+    });
+  }
+
+  if (aiItems.length === 0) {
+    return null;
+  }
+
+  let items = aiItems;
+  let portfolio = detPortfolio;
+  const aiPortfolio = ai.portfolio;
+  if (aiPortfolio && typeof aiPortfolio === 'object') {
+    const detScore = detPortfolio.pricingPortfolioScore;
+    const pricingPortfolioScore = round0(
+      Math.max(SCORE_MIN, Math.min(SCORE_MAX,
+        detScore + Math.max(-10, Math.min(10,
+          (Number(aiPortfolio.pricingPortfolioScore ?? detScore)) - detScore)))),
+    );
+    portfolio = {
+      totalExpectedProfitLift: round0(
+        clampNum(aiPortfolio.totalExpectedProfitLift, 0, 1_000_000, detPortfolio.totalExpectedProfitLift),
+      ),
+      totalExpectedSellProbabilityLift: round0(
+        clampNum(aiPortfolio.totalExpectedSellProbabilityLift, -500, 500, detPortfolio.totalExpectedSellProbabilityLift),
+      ),
+      pricingPortfolioScore,
+      averagePriceAdjustment: round0(
+        clampNum(aiPortfolio.averagePriceAdjustment, 0, 100, detPortfolio.averagePriceAdjustment) * 100,
+      ) / 100,
+      itemsNeedingIncrease: items.filter((i) => i.priceAction === 'INCREASE').length,
+      itemsNeedingDecrease: items.filter((i) => i.priceAction === 'DECREASE').length,
+    };
+  } else {
+    portfolio = buildDeterministicPortfolio(items);
+  }
+
+  const summary = clampString(ai.summary, 400, buildSummary(items, portfolio));
+
+  return { items, portfolio, summary };
+}
+
 // --- Handler -------------------------------------------------------------
 
-export async function GET(req: NextRequest) {
-  return handlePriceOptimizationEnginePro(req);
-}
-export async function POST(req: NextRequest) {
-  return handlePriceOptimizationEnginePro(req);
-}
+const priceOptimizationEngineProHandler = withAiRoute<PriceOptimizationEngineProInput>({
+  endpoint: '/api/ai/price-optimization-engine-pro',
+  maxDuration: 60,
+  enforceBudget: true, // AI klic — preveri budget
+  method: 'GET', // Endpoint sprejema GET + POST — bypass POST-only check
 
-async function handlePriceOptimizationEnginePro(req: NextRequest) {
-  try {
-    const rl = checkRateLimit(req, 'ai-price-optimization-engine-pro', 20);
-    if (!rl.allowed) return rateLimitResponse(rl);
+  parseBody: async (req) => {
+    await req.json().catch(() => ({}));
+    return {};
+  },
+
+  // No validateInput — body ignored, identična logika za GET in POST
+  handler: async (_input, ctx: AiRouteContext) => {
+    const { db, callAi, parseAi, logger } = ctx;
 
     const now = Date.now();
     const cutoff12m = new Date(now - HORIZON_12M);
@@ -516,7 +738,7 @@ async function handlePriceOptimizationEnginePro(req: NextRequest) {
 
     // Empty-state: no HELD trades
     if (heldTrades.length === 0) {
-      return NextResponse.json({
+      return apiOk({
         ok: true,
         items: [],
         portfolio: {
@@ -570,7 +792,7 @@ async function handlePriceOptimizationEnginePro(req: NextRequest) {
     const cacheKey = `price-optimization-engine-pro:${JSON.stringify(heldItemIds)}`;
     const cached = getCachedAI<{ items: PriceOptItem[]; portfolio: Portfolio; summary: string }>(cacheKey);
     if (cached) {
-      return NextResponse.json({
+      return apiOk({
         ok: true,
         items: cached.items,
         portfolio: cached.portfolio,
@@ -580,193 +802,20 @@ async function handlePriceOptimizationEnginePro(req: NextRequest) {
       } satisfies PriceOptResponse);
     }
 
-    // 6) AI prompt with grounding
-    const settings = await getSettingsRow();
-    const aiSettings: AiSettings = {
-      provider: settings.aiProvider as AiProviderType,
-      baseUrl: settings.aiBaseUrl,
-      apiKey: settings.aiApiKey,
-      model: settings.aiModel,
-      fallbackProvider: (settings.fallbackProvider || '') as
-        | AiProviderType
-        | '',
-      fallbackBaseUrl: settings.fallbackBaseUrl || '',
-      fallbackApiKey: settings.fallbackApiKey || '',
-      fallbackModel: settings.fallbackModel || '',
-    };
-
-    // Provide AI with deterministic baseline for grounding
-    const promptData = {
-      heldItems: items.slice(0, 30).map((i) => ({
-        tradeId: i.tradeId,
-        title: i.title,
-        category: i.category,
-        buyPrice: i.buyPrice,
-        currentPrice: i.currentPrice,
-        estValue: i.estValue,
-        pricePosition: i.pricePosition,
-        deterministic: {
-          optimalPrice: i.optimalPrice,
-          priceAction: i.priceAction,
-          priceAdjustmentPercent: i.priceAdjustmentPercent,
-          pricingStrategy: i.pricingStrategy,
-        },
-      })),
-      historicalPatterns: {
-        avgSellPriceVsEstValue: patterns.avgSellPriceVsEstValue,
-        sampleSize: patterns.sampleSize,
-        categoryStats: Object.fromEntries(
-          Array.from(patterns.categoryStats.entries()).slice(0, 10).map(([k, v]) => [k, v]),
-        ),
-        priceElasticityByCategory: Object.fromEntries(patterns.priceElasticityByCategory),
-        optimalPricePointByCategory: Object.fromEntries(patterns.optimalPricePointByCategory),
-      },
-      deterministicPortfolio: portfolio,
-      caps: {
-        percentMin: PERCENT_MIN, percentMax: PERCENT_MAX,
-        sellProbMin: SELL_PROB_MIN, sellProbMax: SELL_PROB_MAX,
-        profitChangeMin: PROFIT_CHANGE_MIN, profitChangeMax: PROFIT_CHANGE_MAX,
-      },
-    };
-
-    const prompt = `Si AI "Price Optimization Engine Pro" za slovenske in srednjeevropske oglasne platforme (Bolha, Vinted, Avtonet, mobile.de).
-Ti GENERIRAŠ optimalne cene za VSE HELD inventorija hkrati z A/B testing priporočili in dynamic pricing rules. Razlika od price-intelligence-engine (ki analizira pricing patterns) — ti GENERIRAŠ optimal price per item z A/B testing in dynamic pricing. Razlika od smart-pricing-engine (basic) — ti si PRO z A/B testing in dynamic pricing rules.
-
-DETERMINISTIČNI PODATKI (izračunano iz DB — HELD trgovine z linked Listing + SOLD 12m za historical patterns):
-${JSON.stringify(promptData, null, 2)}
-
-PRAVILA ZA AI ODGOVOR:
-1. items: za vsak HELD item generiraj optimal price. Per item: { tradeId (string), optimalPrice EUR (CLAMPED to [0.5x, 1.3x] estValue anti-hallucination; če ni estValue, [0.8x, 1.5x] buyPrice), priceAction INCREASE|DECREASE|MAINTAIN (INCREASE če optimal > current+3%, DECREASE če optimal < current-3%, sicer MAINTAIN), priceAdjustmentPercent [-50, 50] (= (optimal-current)/current × 100), expectedSellProbabilityLift [-25, 25] pp (positive = boljša prodaja, negativna = slabša ampak večji profit), expectedProfitChange € [-5000, 5000] (= optimal-current pri buyPrice不变), pricingStrategy PREMIUM|COMPETITIVE|VALUE|LIQUIDATION (PREMIUM >1.1×estValue, COMPETITIVE 0.95-1.1, VALUE 0.75-0.95, LIQUIDATION <0.75), dynamicPricingRule (max 300 chars — npr. "drop 5% every 14 days until min €X"), abTestRecommendation boolean (true če |adjustment| >= 5%), reasoning (max 400 chars — slovenski povzetek) }.
-2. portfolio: { totalExpectedProfitLift € (sum max(0, profitChange)), totalExpectedSellProbabilityLift pp (sum), pricingPortfolioScore 0-100 (višji = bolje optimizirano; ±10 od deterministic), averagePriceAdjustment % (avg |pct|), itemsNeedingIncrease count, itemsNeedingDecrease count }.
-3. summary: slovenski povzetek (max 400 znakov). NE izmišljuj številk — uporabi deterministic baseline. Primer: "PS5: current 380€, optimal 395€ (+4%, PREMIUM). Expected: +15€ profit, -5% sell prob. A/B test: yes."
-
-VRNI LE JSON:
-{
-  "items": [
-    { "tradeId": "abc", "optimalPrice": 395, "priceAction": "INCREASE", "priceAdjustmentPercent": 4, "expectedSellProbabilityLift": -5, "expectedProfitChange": 15, "pricingStrategy": "PREMIUM", "dynamicPricingRule": "Povišaj na 395€; če ni prodano v 14 dneh, znižaj 3%.", "abTestRecommendation": true, "reasoning": "PS5 current 380€, optimal 395€ (estValue 410€, 0.96 ratio)." }
-  ],
-  "portfolio": {
-    "totalExpectedProfitLift": 250,
-    "totalExpectedSellProbabilityLift": -20,
-    "pricingPortfolioScore": 72,
-    "averagePriceAdjustment": 6.5,
-    "itemsNeedingIncrease": 8,
-    "itemsNeedingDecrease": 3
-  },
-  "summary": "30 items optimiziranih. Score: 72/100. PS5: 380€ → 395€ (+4%, PREMIUM). Portfolio lift: +250€ profit."
-}${GROUNDING_PROMPT_SUFFIX}`;
+    // 6) Build AI prompt with grounding + call AI (try/catch z graceful fallback)
+    const prompt = buildPrompt(items, patterns, portfolio);
 
     let aiUsed = false;
 
     try {
-      const raw = await callProviderForRaw(aiSettings, prompt);
-      const parsed = parseJsonLooseExported(raw) as AiPriceOptResponse | null;
+      const raw = await callAi(prompt);
+      const parsed = parseAi(raw) as AiPriceOptResponse | null;
 
-      if (parsed && typeof parsed === 'object' && Array.isArray(parsed.items)) {
-        // Build a map for quick lookup of deterministic item by tradeId
-        const detMap = new Map(items.map((i) => [i.tradeId, i]));
-        const aiItems: PriceOptItem[] = [];
-
-        for (const ai of parsed.items) {
-          if (!ai || typeof ai !== 'object') continue;
-          const tradeId = String(ai.tradeId ?? '').trim();
-          const det = detMap.get(tradeId);
-          if (!det) continue; // skip unknown tradeIds (anti-hallucination: must match held item)
-
-          // Anti-hallucination: optimalPrice clamped to [0.5x, 1.3x] estValue (if estValue exists)
-          let optimalPrice: number;
-          if (det.estValue && det.estValue > 0) {
-            const minAllowed = det.estValue * 0.5;
-            const maxAllowed = det.estValue * 1.3;
-            optimalPrice = round0(
-              Math.max(minAllowed, Math.min(maxAllowed, clampNum(ai.optimalPrice, minAllowed, maxAllowed, det.optimalPrice))),
-            );
-          } else {
-            // Fallback: [0.8x, 1.5x] buyPrice
-            const minAllowed = det.buyPrice * 0.8;
-            const maxAllowed = det.buyPrice * 1.5;
-            optimalPrice = round0(
-              Math.max(minAllowed, Math.min(maxAllowed, clampNum(ai.optimalPrice, minAllowed, maxAllowed, det.optimalPrice))),
-            );
-          }
-
-          const priceAdjustmentPercent = round0(
-            clampNum(ai.priceAdjustmentPercent, PERCENT_MIN, PERCENT_MAX, det.priceAdjustmentPercent),
-          );
-
-          const priceAction = clampEnum(ai.priceAction, VALID_PRICE_ACTION, det.priceAction);
-          // Re-validate action matches pct sign
-          let finalAction = priceAction;
-          if (priceAdjustmentPercent > 3 && finalAction !== 'INCREASE') finalAction = 'INCREASE';
-          else if (priceAdjustmentPercent < -3 && finalAction !== 'DECREASE') finalAction = 'DECREASE';
-          else if (Math.abs(priceAdjustmentPercent) <= 3) finalAction = 'MAINTAIN';
-
-          const expectedSellProbabilityLift = round0(
-            clampNum(ai.expectedSellProbabilityLift, SELL_PROB_MIN, SELL_PROB_MAX, det.expectedSellProbabilityLift),
-          );
-          const expectedProfitChange = round0(
-            clampNum(ai.expectedProfitChange, PROFIT_CHANGE_MIN, PROFIT_CHANGE_MAX, det.expectedProfitChange),
-          );
-          const pricingStrategy = clampEnum(ai.pricingStrategy, VALID_STRATEGY, det.pricingStrategy);
-          const dynamicPricingRule = clampString(ai.dynamicPricingRule, 300, det.dynamicPricingRule);
-          const abTestRecommendation = typeof ai.abTestRecommendation === 'boolean'
-            ? ai.abTestRecommendation
-            : det.abTestRecommendation;
-          const reasoning = clampString(ai.reasoning, 400, det.reasoning);
-
-          aiItems.push({
-            tradeId: det.tradeId,
-            title: det.title,
-            category: det.category,
-            buyPrice: det.buyPrice,
-            currentPrice: det.currentPrice,
-            estValue: det.estValue,
-            pricePosition: det.pricePosition,
-            optimalPrice,
-            priceAction: finalAction,
-            priceAdjustmentPercent,
-            expectedSellProbabilityLift,
-            expectedProfitChange,
-            pricingStrategy,
-            dynamicPricingRule,
-            abTestRecommendation,
-            reasoning,
-          });
-        }
-
-        if (aiItems.length > 0) {
-          items = aiItems;
-        }
-
-        // Portfolio
-        const detPortfolio = portfolio;
-        const aiPortfolio = parsed.portfolio;
-        if (aiPortfolio && typeof aiPortfolio === 'object') {
-          const detScore = detPortfolio.pricingPortfolioScore;
-          const pricingPortfolioScore = round0(
-            Math.max(SCORE_MIN, Math.min(SCORE_MAX,
-              detScore + Math.max(-10, Math.min(10,
-                (Number(aiPortfolio.pricingPortfolioScore ?? detScore)) - detScore)))),
-          );
-          portfolio = {
-            totalExpectedProfitLift: round0(
-              clampNum(aiPortfolio.totalExpectedProfitLift, 0, 1_000_000, detPortfolio.totalExpectedProfitLift),
-            ),
-            totalExpectedSellProbabilityLift: round0(
-              clampNum(aiPortfolio.totalExpectedSellProbabilityLift, -500, 500, detPortfolio.totalExpectedSellProbabilityLift),
-            ),
-            pricingPortfolioScore,
-            averagePriceAdjustment: round0(
-              clampNum(aiPortfolio.averagePriceAdjustment, 0, 100, detPortfolio.averagePriceAdjustment) * 100,
-            ) / 100,
-            itemsNeedingIncrease: items.filter((i) => i.priceAction === 'INCREASE').length,
-            itemsNeedingDecrease: items.filter((i) => i.priceAction === 'DECREASE').length,
-          };
-        } else {
-          portfolio = buildDeterministicPortfolio(items);
-        }
-
-        summary = clampString(parsed.summary, 400, buildSummary(items, portfolio));
+      const transformed = transformAiResponse(parsed, items, portfolio);
+      if (transformed) {
+        items = transformed.items;
+        portfolio = transformed.portfolio;
+        summary = transformed.summary;
         aiUsed = true;
       }
     } catch (err) {
@@ -782,22 +831,15 @@ VRNI LE JSON:
       setCachedAI(cacheKey, { items, portfolio, summary });
     }
 
-    return NextResponse.json({
+    return apiOk({
       ok: true,
       items,
       portfolio,
       summary,
       aiUsed,
     } satisfies PriceOptResponse);
-  } catch (err: any) {
-    logger.error(
-      '/api/ai/price-optimization-engine-pro',
-      'handler failed',
-      err,
-    );
-    return NextResponse.json(
-      { error: err?.message ?? 'Napaka' },
-      { status: 500 },
-    );
-  }
-}
+  },
+});
+
+export const GET = priceOptimizationEngineProHandler;
+export const POST = priceOptimizationEngineProHandler;

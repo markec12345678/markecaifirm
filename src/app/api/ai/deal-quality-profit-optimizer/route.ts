@@ -1,4 +1,4 @@
-// v7.98: AI Deal Quality Profit Optimizer — AI identificira RELATIONSHIP med
+// v7.98 / v8.96.4-batch3: AI Deal Quality Profit Optimizer — AI identificira RELATIONSHIP med
 // deal quality scores in actual profit — kateri quality range-i produkujejo
 // največ profit-a? Priporoči katere quality deals-a追求 za maximum profit.
 // The "ultimate deal-quality → profit optimizer."
@@ -27,24 +27,18 @@
 //
 // GET+POST /api/ai/deal-quality-profit-optimizer
 // (AI-enhanced + grounding + anti-hallucination + 6h cache + deterministic fallback)
+// Refaktoriran z withAiRoute helperjem (v8.96.4) + enforceBudget guard.
 
-import { NextRequest, NextResponse } from 'next/server';
-import { db } from '@/lib/db';
-import { getSettingsRow } from '@/lib/pipeline';
-import {
-  callProviderForRaw,
-  parseJsonLooseExported,
-  type AiProviderType,
-  type AiSettings,
-} from '@/lib/ai';
+import { withAiRoute, AI_ROUTE_DEFAULTS, type AiRouteContext } from '@/lib/with-ai-route';
+import { apiOk } from '@/lib/api-response';
 import { GROUNDING_PROMPT_SUFFIX } from '@/lib/anti-hallucination';
 import { getCachedAI, setCachedAI } from '@/lib/ai-cache';
-import { checkRateLimit, rateLimitResponse } from '@/lib/rate-limit';
-import { logger } from '@/lib/logger';
 
-export const runtime = 'nodejs';
-export const dynamic = 'force-dynamic';
+export const { runtime, dynamic } = AI_ROUTE_DEFAULTS;
 export const maxDuration = 60;
+
+// eslint-disable-next-line @typescript-eslint/no-empty-object-type
+interface DealQualityProfitInput {}
 
 // --- Types ---------------------------------------------------------------
 
@@ -278,6 +272,7 @@ function computeCorrelation(trades: TradeQuality[]): QualityProfitCorrelation {
   const sumYY = trades.reduce((s, t) => s + t.profit * t.profit, 0);
   const denom = Math.sqrt((n * sumXX - sumX * sumX) * (n * sumYY - sumY * sumY));
   if (denom === 0) return 'NONE';
+
   const r = (n * sumXY - sumX * sumY) / denom;
   if (r >= 0.5) return 'STRONG_POSITIVE';
   if (r >= 0.2) return 'WEAK_POSITIVE';
@@ -420,6 +415,9 @@ function buildDeterministicOptimization(
     `Diverzificiraj: 70% v ${optimalQualityRange}, 20% v ${analysis.bestROIRange}, 10% v ${analysis.bestWinRateRange}.`,
   );
 
+  // Reference unused locals so the original behaviour/shape is preserved.
+  void optimalTradeCount;
+
   return {
     optimalQualityRange,
     qualityProfitStrategy,
@@ -448,19 +446,192 @@ function buildSummary(
   return parts.join(' ').slice(0, 400);
 }
 
+// --- Prompt builder + AI response transform (čisti helperji) ------------
+
+interface PromptData {
+  tradeCount12m: number;
+  totalCurrentProfit: number;
+  analysis: QualityAnalysis;
+  deterministicOptimization: QualityOptimization;
+  caps: {
+    scoreMin: number; scoreMax: number;
+    profitMin: number; profitMax: number;
+    upliftMin: number; upliftMax: number;
+    roiMin: number; roiMax: number;
+    winrateMin: number; winrateMax: number;
+  };
+}
+
+function buildPrompt(
+  tradeQualities: TradeQuality[],
+  analysis: QualityAnalysis,
+  optimization: QualityOptimization,
+  totalCurrentProfit: number,
+): string {
+  const promptData: PromptData = {
+    tradeCount12m: tradeQualities.length,
+    totalCurrentProfit: round0(totalCurrentProfit),
+    analysis,
+    deterministicOptimization: optimization,
+    caps: {
+      scoreMin: SCORE_MIN, scoreMax: SCORE_MAX,
+      profitMin: PROFIT_MIN, profitMax: PROFIT_MAX,
+      upliftMin: UPLIFT_MIN, upliftMax: UPLIFT_MAX,
+      roiMin: ROI_MIN, roiMax: ROI_MAX,
+      winrateMin: WINRATE_MIN, winrateMax: WINRATE_MAX,
+    },
+  };
+
+  return `Si AI "Deal Quality Profit Optimizer" za slovenske in srednjeevropske oglasne platforme (Bolha, Vinted, Avtonet, mobile.de).
+Si strokovnjak za QUALITY-PROFIT optimization — identificiraš RELATIONSHIP med deal quality scores in actual profit in priporočaš KATERE quality deals ciljati za maximum profit. Razlika od deal-quality-forecaster (ki napove deal quality) — ti RELATES quality → actual profit in optimiraš sourcing. Razlika od deal-quality-distribution-analyzer (ki analizira quality distribution) — ti MAXIMIZIRAŠ profit iz quality ranges z actionable filtering advice. Razlika od deal-quality-trend-analyzer (ki track-a quality trend) — ti daje quality → profit correlation + optimal range targeting. Razlika od deal-quality-scorecard (ki scor-a deals) — ti optimiraš KATERI quality range ciljati za max profit. Razlika od profit-maximizer-pro (ki maksimizira profit preko 7 levers) — ti fokusiraš na QUALITY-PROFIT correlation. Razlika od deal-source-profit-maximizer (ki maksimizira per-source) — ti maksimiziraš per-QUALITY-RANGE. Razlika od profit-velocity-maximizer (ki maksimizira velocity) — ti maksimiziraš per-quality profit.
+
+DETERMINISTIČNI PODATKI (izračunano iz DB — SOLD trgovin v zadnjih 12 mesecih z linked Listing.dealScore):
+${JSON.stringify(promptData, null, 2)}
+
+PRAVILA ZA AI ODGOVOR:
+1. optimization.optimalQualityRange (string, format "X-Y" — npr. "60-80"; MORA biti ena iz qualityBuckets ranges anti-hallucination),
+2. optimization.qualityProfitStrategy (max 400, slovenski — kako prilagoditi sourcing da ciljaš optimal range),
+3. optimization.qualityFilterRecommendation: { minDealScore [0, 100], reasoning (max 400, slovenski) },
+4. optimization.projectedProfitWithOptimalQuality € [0, 100000] (≥ totalCurrentProfit, ≤ totalCurrentProfit × 2.5 anti-hallucination),
+5. optimization.profitUpliftFromQualityOptimization € [0, 100000] (= projected - totalCurrentProfit anti-hallucination),
+6. optimization.qualityRiskAssessment: 2-4 risks { risk (max 200, slovenski), mitigation (max 200, slovenski) },
+7. optimization.qualityDiversificationAdvice (max 400, slovenski — kako diverzificirati med quality ranges),
+8. summary: slovenski povzetek (max 400 znakov).
+
+VRNI LE JSON:
+{
+  "optimization": {
+    "optimalQualityRange": "60-80",
+    "qualityProfitStrategy": "Premakni sourcing v 60-80 quality range — najvišji total profit (4,200€) in win rate (84%).",
+    "qualityFilterRecommendation": {
+      "minDealScore": 55,
+      "reasoning": "Ciljaj deals z dealScore ≥ 55 — ta range produkuje 92% ROI in 84% win rate."
+    },
+    "projectedProfitWithOptimalQuality": 4800,
+    "profitUpliftFromQualityOptimization": 1200,
+    "qualityRiskAssessment": [
+      { "risk": "Zmanjšanje trade volume-a.", "mitigation": "Diverzificiraj med 60-80 in 80-100." }
+    ],
+    "qualityDiversificationAdvice": "70% capital v 60-80, 20% v 80-100, 10% v 40-60 za steady volume."
+  },
+  "summary": "Most profitable: 60-80 (4200€). Correlation: STRONG_POSITIVE. Optimal: 60-80 → projected 4800€ (+1200€ uplift). Min filter: 55."
+}${GROUNDING_PROMPT_SUFFIX}`;
+}
+
+interface AiTransformResult {
+  optimization: QualityOptimization;
+  summary: string;
+}
+
+function transformAiResponse(
+  parsed: unknown,
+  analysis: QualityAnalysis,
+  baseOptimization: QualityOptimization,
+  totalCurrentProfit: number,
+): AiTransformResult | null {
+  if (!parsed || typeof parsed !== 'object') return null;
+  const ai = parsed as AiResponse;
+  const aiOpt = ai.optimization ?? {};
+
+  // Anti-hallucination: optimalQualityRange must be one of valid bucket labels
+  const validLabels = BUCKETS.map((b) => b.label);
+  const optimalQualityRange = validLabels.includes(String(aiOpt.optimalQualityRange ?? '').trim())
+    ? String(aiOpt.optimalQualityRange).trim()
+    : baseOptimization.optimalQualityRange;
+
+  const qualityProfitStrategy = clampString(
+    aiOpt.qualityProfitStrategy,
+    400,
+    baseOptimization.qualityProfitStrategy,
+  );
+
+  // minDealScore clamped to [0, 100]
+  const minDealScore = round0(clampNum(
+    aiOpt.qualityFilterRecommendation?.minDealScore,
+    SCORE_MIN, SCORE_MAX,
+    baseOptimization.qualityFilterRecommendation.minDealScore,
+  ));
+  const reasoning = clampString(
+    aiOpt.qualityFilterRecommendation?.reasoning,
+    400,
+    baseOptimization.qualityFilterRecommendation.reasoning,
+  );
+
+  // Anti-hallucination: projected ≥ totalCurrentProfit, ≤ totalCurrentProfit × 2.5
+  const projectedLowBound = totalCurrentProfit;
+  const projectedHighBound = Math.min(PROFIT_MAX, totalCurrentProfit * 2.5);
+  const aiProjected = round0(clampNum(
+    aiOpt.projectedProfitWithOptimalQuality,
+    PROFIT_MIN, PROFIT_MAX,
+    baseOptimization.projectedProfitWithOptimalQuality,
+  ));
+  const projectedProfitWithOptimalQuality = round0(
+    Math.max(projectedLowBound, Math.min(projectedHighBound, aiProjected)),
+  );
+
+  // profitUplift = projected - totalCurrentProfit (anti-hallucination within ±10% else recompute)
+  const expectedUplift = Math.max(0, projectedProfitWithOptimalQuality - totalCurrentProfit);
+  const aiUplift = round0(clampNum(
+    aiOpt.profitUpliftFromQualityOptimization,
+    UPLIFT_MIN, UPLIFT_MAX,
+    expectedUplift,
+  ));
+  const profitUpliftFromQualityOptimization = Math.abs(aiUplift - expectedUplift) <= Math.max(10, expectedUplift * 0.1)
+    ? aiUplift
+    : round0(expectedUplift);
+
+  // qualityRiskAssessment
+  const qualityRiskAssessment: QualityRiskEntry[] = [];
+  if (Array.isArray(aiOpt.qualityRiskAssessment)) {
+    for (const r of aiOpt.qualityRiskAssessment.slice(0, 4)) {
+      if (!r || typeof r !== 'object') continue;
+      qualityRiskAssessment.push({
+        risk: clampString(r.risk, 200, 'Risk.'),
+        mitigation: clampString(r.mitigation, 200, 'Mitigacija.'),
+      });
+    }
+  }
+  if (qualityRiskAssessment.length === 0) {
+    for (const r of baseOptimization.qualityRiskAssessment) qualityRiskAssessment.push(r);
+  }
+
+  const qualityDiversificationAdvice = clampString(
+    aiOpt.qualityDiversificationAdvice,
+    400,
+    baseOptimization.qualityDiversificationAdvice,
+  );
+
+  const optimization: QualityOptimization = {
+    optimalQualityRange,
+    qualityProfitStrategy,
+    qualityFilterRecommendation: { minDealScore, reasoning },
+    projectedProfitWithOptimalQuality,
+    profitUpliftFromQualityOptimization,
+    qualityRiskAssessment,
+    qualityDiversificationAdvice,
+  };
+
+  const summary = clampString(ai.summary, 400, buildSummary(analysis, optimization));
+
+  return { optimization, summary };
+}
+
 // --- Handler -------------------------------------------------------------
 
-export async function GET(req: NextRequest) {
-  return handleDealQualityProfitOptimizer(req);
-}
-export async function POST(req: NextRequest) {
-  return handleDealQualityProfitOptimizer(req);
-}
+const dealQualityProfitOptimizerHandler = withAiRoute<DealQualityProfitInput>({
+  endpoint: '/api/ai/deal-quality-profit-optimizer',
+  maxDuration: 60,
+  enforceBudget: true, // AI klic — preveri budget
+  method: 'GET', // Endpoint sprejema GET + POST — bypass POST-only check
 
-async function handleDealQualityProfitOptimizer(req: NextRequest) {
-  try {
-    const rl = checkRateLimit(req, 'ai-deal-quality-profit-optimizer', 20);
-    if (!rl.allowed) return rateLimitResponse(rl);
+  parseBody: async (req) => {
+    await req.json().catch(() => ({}));
+    return {};
+  },
+
+  // No validateInput — body ignored, identična logika za GET in POST
+  handler: async (_input, ctx: AiRouteContext) => {
+    const { db, callAi, parseAi, logger } = ctx;
 
     const now = Date.now();
     const twelveMonthsAgo = new Date(now - TWELVE_MONTHS_MS);
@@ -490,7 +661,7 @@ async function handleDealQualityProfitOptimizer(req: NextRequest) {
 
     // Empty-state: no SOLD trades
     if (soldTrades.length === 0) {
-      return NextResponse.json({
+      return apiOk({
         ok: true,
         analysis: {
           qualityBuckets: BUCKETS.map((b) => ({
@@ -533,7 +704,7 @@ async function handleDealQualityProfitOptimizer(req: NextRequest) {
     }
 
     if (tradeQualities.length === 0) {
-      return NextResponse.json({
+      return apiOk({
         ok: true,
         analysis: {
           qualityBuckets: BUCKETS.map((b) => ({
@@ -581,7 +752,7 @@ async function handleDealQualityProfitOptimizer(req: NextRequest) {
       summary: string;
     }>(cacheKey);
     if (cached) {
-      return NextResponse.json({
+      return apiOk({
         ok: true,
         analysis,
         optimization: cached.optimization,
@@ -591,163 +762,23 @@ async function handleDealQualityProfitOptimizer(req: NextRequest) {
       } satisfies DealQualityProfitResponse);
     }
 
-    // 4) AI prompt with grounding
-    const settings = await getSettingsRow();
-    const aiSettings: AiSettings = {
-      provider: settings.aiProvider as AiProviderType,
-      baseUrl: settings.aiBaseUrl,
-      apiKey: settings.aiApiKey,
-      model: settings.aiModel,
-      fallbackProvider: (settings.fallbackProvider || '') as
-        | AiProviderType
-        | '',
-      fallbackBaseUrl: settings.fallbackBaseUrl || '',
-      fallbackApiKey: settings.fallbackApiKey || '',
-      fallbackModel: settings.fallbackModel || '',
-    };
-
+    // 4) Build AI prompt with grounding + call AI (try/catch z graceful fallback)
     const totalCurrentProfit = analysis.qualityBuckets.reduce(
       (s, b) => s + Math.max(0, b.totalProfit),
       0,
     );
-
-    const promptData = {
-      tradeCount12m: tradeQualities.length,
-      totalCurrentProfit: round0(totalCurrentProfit),
-      analysis,
-      deterministicOptimization: optimization,
-      caps: {
-        scoreMin: SCORE_MIN, scoreMax: SCORE_MAX,
-        profitMin: PROFIT_MIN, profitMax: PROFIT_MAX,
-        upliftMin: UPLIFT_MIN, upliftMax: UPLIFT_MAX,
-        roiMin: ROI_MIN, roiMax: ROI_MAX,
-        winrateMin: WINRATE_MIN, winrateMax: WINRATE_MAX,
-      },
-    };
-
-    const prompt = `Si AI "Deal Quality Profit Optimizer" za slovenske in srednjeevropske oglasne platforme (Bolha, Vinted, Avtonet, mobile.de).
-Si strokovnjak za QUALITY-PROFIT optimization — identificiraš RELATIONSHIP med deal quality scores in actual profit in priporočaš KATERE quality deals ciljati za maximum profit. Razlika od deal-quality-forecaster (ki napove deal quality) — ti RELATES quality → actual profit in optimiraš sourcing. Razlika od deal-quality-distribution-analyzer (ki analizira quality distribution) — ti MAXIMIZIRAŠ profit iz quality ranges z actionable filtering advice. Razlika od deal-quality-trend-analyzer (ki track-a quality trend) — ti daje quality → profit correlation + optimal range targeting. Razlika od deal-quality-scorecard (ki scor-a deals) — ti optimiraš KATERI quality range ciljati za max profit. Razlika od profit-maximizer-pro (ki maksimizira profit preko 7 levers) — ti fokusiraš na QUALITY-PROFIT correlation. Razlika od deal-source-profit-maximizer (ki maksimizira per-source) — ti maksimiziraš per-QUALITY-RANGE. Razlika od profit-velocity-maximizer (ki maksimizira velocity) — ti maksimiziraš per-quality profit.
-
-DETERMINISTIČNI PODATKI (izračunano iz DB — SOLD trgovin v zadnjih 12 mesecih z linked Listing.dealScore):
-${JSON.stringify(promptData, null, 2)}
-
-PRAVILA ZA AI ODGOVOR:
-1. optimization.optimalQualityRange (string, format "X-Y" — npr. "60-80"; MORA biti ena iz qualityBuckets ranges anti-hallucination),
-2. optimization.qualityProfitStrategy (max 400, slovenski — kako prilagoditi sourcing da ciljaš optimal range),
-3. optimization.qualityFilterRecommendation: { minDealScore [0, 100], reasoning (max 400, slovenski) },
-4. optimization.projectedProfitWithOptimalQuality € [0, 100000] (≥ totalCurrentProfit, ≤ totalCurrentProfit × 2.5 anti-hallucination),
-5. optimization.profitUpliftFromQualityOptimization € [0, 100000] (= projected - totalCurrentProfit anti-hallucination),
-6. optimization.qualityRiskAssessment: 2-4 risks { risk (max 200, slovenski), mitigation (max 200, slovenski) },
-7. optimization.qualityDiversificationAdvice (max 400, slovenski — kako diverzificirati med quality ranges),
-8. summary: slovenski povzetek (max 400 znakov).
-
-VRNI LE JSON:
-{
-  "optimization": {
-    "optimalQualityRange": "60-80",
-    "qualityProfitStrategy": "Premakni sourcing v 60-80 quality range — najvišji total profit (4,200€) in win rate (84%).",
-    "qualityFilterRecommendation": {
-      "minDealScore": 55,
-      "reasoning": "Ciljaj deals z dealScore ≥ 55 — ta range produkuje 92% ROI in 84% win rate."
-    },
-    "projectedProfitWithOptimalQuality": 4800,
-    "profitUpliftFromQualityOptimization": 1200,
-    "qualityRiskAssessment": [
-      { "risk": "Zmanjšanje trade volume-a.", "mitigation": "Diverzificiraj med 60-80 in 80-100." }
-    ],
-    "qualityDiversificationAdvice": "70% capital v 60-80, 20% v 80-100, 10% v 40-60 za steady volume."
-  },
-  "summary": "Most profitable: 60-80 (4200€). Correlation: STRONG_POSITIVE. Optimal: 60-80 → projected 4800€ (+1200€ uplift). Min filter: 55."
-}${GROUNDING_PROMPT_SUFFIX}`;
+    const prompt = buildPrompt(tradeQualities, analysis, optimization, totalCurrentProfit);
 
     let aiUsed = false;
 
     try {
-      const raw = await callProviderForRaw(aiSettings, prompt);
-      const parsed = parseJsonLooseExported(raw) as AiResponse | null;
+      const raw = await callAi(prompt);
+      const parsed = parseAi(raw) as AiResponse | null;
 
-      if (parsed && typeof parsed === 'object') {
-        const aiOpt = parsed.optimization ?? {};
-
-        // Anti-hallucination: optimalQualityRange must be one of valid bucket labels
-        const validLabels = BUCKETS.map((b) => b.label);
-        const optimalQualityRange = validLabels.includes(String(aiOpt.optimalQualityRange ?? '').trim())
-          ? String(aiOpt.optimalQualityRange).trim()
-          : optimization.optimalQualityRange;
-
-        const qualityProfitStrategy = clampString(
-          aiOpt.qualityProfitStrategy,
-          400,
-          optimization.qualityProfitStrategy,
-        );
-
-        // minDealScore clamped to [0, 100]
-        const minDealScore = round0(clampNum(
-          aiOpt.qualityFilterRecommendation?.minDealScore,
-          SCORE_MIN, SCORE_MAX,
-          optimization.qualityFilterRecommendation.minDealScore,
-        ));
-        const reasoning = clampString(
-          aiOpt.qualityFilterRecommendation?.reasoning,
-          400,
-          optimization.qualityFilterRecommendation.reasoning,
-        );
-
-        // Anti-hallucination: projected ≥ totalCurrentProfit, ≤ totalCurrentProfit × 2.5
-        const projectedLowBound = totalCurrentProfit;
-        const projectedHighBound = Math.min(PROFIT_MAX, totalCurrentProfit * 2.5);
-        const aiProjected = round0(clampNum(
-          aiOpt.projectedProfitWithOptimalQuality,
-          PROFIT_MIN, PROFIT_MAX,
-          optimization.projectedProfitWithOptimalQuality,
-        ));
-        const projectedProfitWithOptimalQuality = round0(
-          Math.max(projectedLowBound, Math.min(projectedHighBound, aiProjected)),
-        );
-
-        // profitUplift = projected - totalCurrentProfit (anti-hallucination within ±10% else recompute)
-        const expectedUplift = Math.max(0, projectedProfitWithOptimalQuality - totalCurrentProfit);
-        const aiUplift = round0(clampNum(
-          aiOpt.profitUpliftFromQualityOptimization,
-          UPLIFT_MIN, UPLIFT_MAX,
-          expectedUplift,
-        ));
-        const profitUpliftFromQualityOptimization = Math.abs(aiUplift - expectedUplift) <= Math.max(10, expectedUplift * 0.1)
-          ? aiUplift
-          : round0(expectedUplift);
-
-        // qualityRiskAssessment
-        const qualityRiskAssessment: QualityRiskEntry[] = [];
-        if (Array.isArray(aiOpt.qualityRiskAssessment)) {
-          for (const r of aiOpt.qualityRiskAssessment.slice(0, 4)) {
-            if (!r || typeof r !== 'object') continue;
-            qualityRiskAssessment.push({
-              risk: clampString(r.risk, 200, 'Risk.'),
-              mitigation: clampString(r.mitigation, 200, 'Mitigacija.'),
-            });
-          }
-        }
-        if (qualityRiskAssessment.length === 0) {
-          for (const r of optimization.qualityRiskAssessment) qualityRiskAssessment.push(r);
-        }
-
-        const qualityDiversificationAdvice = clampString(
-          aiOpt.qualityDiversificationAdvice,
-          400,
-          optimization.qualityDiversificationAdvice,
-        );
-
-        optimization = {
-          optimalQualityRange,
-          qualityProfitStrategy,
-          qualityFilterRecommendation: { minDealScore, reasoning },
-          projectedProfitWithOptimalQuality,
-          profitUpliftFromQualityOptimization,
-          qualityRiskAssessment,
-          qualityDiversificationAdvice,
-        };
-
-        summary = clampString(parsed.summary, 400, buildSummary(analysis, optimization));
+      const transformed = transformAiResponse(parsed, analysis, optimization, totalCurrentProfit);
+      if (transformed) {
+        optimization = transformed.optimization;
+        summary = transformed.summary;
         aiUsed = true;
       }
     } catch (err) {
@@ -763,22 +794,15 @@ VRNI LE JSON:
       setCachedAI(cacheKey, { optimization, summary });
     }
 
-    return NextResponse.json({
+    return apiOk({
       ok: true,
       analysis,
       optimization,
       summary,
       aiUsed,
     } satisfies DealQualityProfitResponse);
-  } catch (err: any) {
-    logger.error(
-      '/api/ai/deal-quality-profit-optimizer',
-      'handler failed',
-      err,
-    );
-    return NextResponse.json(
-      { error: err?.message ?? 'Napaka' },
-      { status: 500 },
-    );
-  }
-}
+  },
+});
+
+export const GET = dealQualityProfitOptimizerHandler;
+export const POST = dealQualityProfitOptimizerHandler;

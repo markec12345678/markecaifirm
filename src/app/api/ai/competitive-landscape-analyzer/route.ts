@@ -1,6 +1,7 @@
-// v7.66: AI Competitive Landscape Analyzer — AI analizira konkurenčno krajino,
-// identificira druge flipper-je/prodajalce aktivne v tvojih kategorijah,
-// njihove cenovne strategije, frekvenco oglasov in market share.
+// v7.66 / v8.96.4-batch2: AI Competitive Landscape Analyzer — AI analizira
+// konkurenčno krajino, identificira druge flipper-je/prodajalce aktivne v
+// tvojih kategorijah, njihove cenovne strategije, frekvenco oglasov in
+// market share.
 //
 // "Top konkurent: Elektro Marjan (15 oglasov, BUDGET strategy, 25% market share).
 //  Tvoja prednost: boljše slike. Specializacija: elektronika. Threat: HIGH."
@@ -12,25 +13,17 @@
 // grožnjo. Razlika od analytics/supplier-crm (ki CRM-upravlja dobavitelje) — ta
 // gleda KONKURENCO (ljudje ki prodajajo podobne item-e kot ti).
 //
+// Refaktoriran z withAiRoute helperjem (v8.96.4) + enforceBudget guard.
+//
 // GET+POST /api/ai/competitive-landscape-analyzer
 // (AI-enhanced + grounding + anti-hallucination + 6h cache + deterministic fallback)
 
-import { NextRequest, NextResponse } from 'next/server';
-import { db } from '@/lib/db';
-import { getSettingsRow } from '@/lib/pipeline';
-import {
-  callProviderForRaw,
-  parseJsonLooseExported,
-  type AiProviderType,
-  type AiSettings,
-} from '@/lib/ai';
+import { withAiRoute, AI_ROUTE_DEFAULTS, type AiRouteContext } from '@/lib/with-ai-route';
+import { apiOk } from '@/lib/api-response';
 import { GROUNDING_PROMPT_SUFFIX } from '@/lib/anti-hallucination';
 import { getCachedAI, setCachedAI } from '@/lib/ai-cache';
-import { checkRateLimit, rateLimitResponse } from '@/lib/rate-limit';
-import { logger } from '@/lib/logger';
 
-export const runtime = 'nodejs';
-export const dynamic = 'force-dynamic';
+export const { runtime, dynamic } = AI_ROUTE_DEFAULTS;
 export const maxDuration = 60;
 
 // --- Types ---------------------------------------------------------------
@@ -174,16 +167,18 @@ function deterministicThreatLevel(
 
 // --- Deterministic analysis (fallback) -----------------------------------
 
-function buildDeterministicAnalysis(
-  competitors: CompetitorRow[],
-  yourAvgPrice: number,
-): {
+interface DeterministicAnalysisResult {
   analysis: CompetitorAnalysis[];
   marketPosition: MarketPosition;
   competitiveActions: CompetitiveAction[];
   differentiationOpportunity: DifferentiationOpportunity[];
   summary: string;
-} {
+}
+
+function buildDeterministicAnalysis(
+  competitors: CompetitorRow[],
+  yourAvgPrice: number,
+): DeterministicAnalysisResult {
   const allAvgPrices = competitors.map(c => c.avgPrice);
   const competitorAvgPrice =
     allAvgPrices.length > 0
@@ -315,24 +310,25 @@ function buildDeterministicAnalysis(
 
 // --- Handler -------------------------------------------------------------
 
-export async function GET(req: NextRequest) {
-  return handleCompetitiveLandscape(req);
-}
-export async function POST(req: NextRequest) {
-  return handleCompetitiveLandscape(req);
-}
+// eslint-disable-next-line @typescript-eslint/no-empty-object-type
+interface CompetitiveLandscapeInput {}
 
-async function handleCompetitiveLandscape(req: NextRequest) {
-  try {
-    const rl = checkRateLimit(req, 'ai-competitive-landscape', 20);
-    if (!rl.allowed) return rateLimitResponse(rl);
+const competitiveLandscapeHandler = withAiRoute<CompetitiveLandscapeInput>({
+  endpoint: '/api/ai/competitive-landscape-analyzer',
+  maxDuration: 60,
+  enforceBudget: true, // AI klic — preveri budget
+  method: 'GET', // Endpoint sprejema GET + POST — bypass POST-only check
+
+  parseBody: async () => ({}),
+
+  // No validateInput — endpoint ne sprejema inputa
+
+  handler: async (_input, ctx: AiRouteContext) => {
+    const { db, callAi, parseAi, logger } = ctx;
 
     // Parse body (optional, ignored — analysis uses global listing data)
-    try {
-      await req.json().catch(() => ({}));
-    } catch {
-      // GET request — no body, ignore
-    }
+    // Original: try { await req.json().catch(() => ({})); } catch { /* GET */ }
+    // No-op now — body is ignored regardless.
 
     const now = Date.now();
     const dayMs = 86_400_000;
@@ -359,7 +355,7 @@ async function handleCompetitiveLandscape(req: NextRequest) {
 
     // Empty state — return gracefully
     if (listings.length === 0) {
-      return NextResponse.json({
+      return apiOk({
         ok: true,
         competitors: [],
         analysis: [],
@@ -483,7 +479,7 @@ async function handleCompetitiveLandscape(req: NextRequest) {
     const topCompetitors = competitors.slice(0, 20);
 
     if (topCompetitors.length === 0) {
-      return NextResponse.json({
+      return apiOk({
         ok: true,
         competitors: [],
         analysis: [],
@@ -529,7 +525,7 @@ async function handleCompetitiveLandscape(req: NextRequest) {
       summary: string;
     }>(cacheKey);
     if (cached) {
-      return NextResponse.json({
+      return apiOk({
         ok: true,
         competitors: topCompetitors,
         analysis: cached.analysis,
@@ -543,18 +539,6 @@ async function handleCompetitiveLandscape(req: NextRequest) {
     }
 
     // 7) AI prompt with grounding
-    const settings = await getSettingsRow();
-    const aiSettings: AiSettings = {
-      provider: settings.aiProvider as AiProviderType,
-      baseUrl: settings.aiBaseUrl,
-      apiKey: settings.aiApiKey,
-      model: settings.aiModel,
-      fallbackProvider: (settings.fallbackProvider || '') as AiProviderType | '',
-      fallbackBaseUrl: settings.fallbackBaseUrl || '',
-      fallbackApiKey: settings.fallbackApiKey || '',
-      fallbackModel: settings.fallbackModel || '',
-    };
-
     // Compute market-wide bounds for anti-hallucination
     const allPrices = topCompetitors.flatMap(c => [
       c.priceRange.min,
@@ -578,41 +562,18 @@ async function handleCompetitiveLandscape(req: NextRequest) {
       )
       .join('\n');
 
-    const prompt = `Si AI analitik konkurenčne krajine za slovenske in srednjeevropske oglasne platforme (Bolha, Vinted, Avtonet, mobile.de).
-Na podlagi ZGODOVINSKIH podatkov o aktivnih prodajalcih v zadnjih 30 dneh analiziraj konkurenčno krajino in identificiraj njihove strategije ter tvoje prednosti.
-
-DETEKTIRANI KONKURENTI (top ${Math.min(10, topCompetitors.length)} od ${topCompetitors.length} skupno, ${totalListingsCount} oglasov v 30 dneh):
-${competitorBlock}
-
-TVOJA POVPREČNA CENA (iz held inventarja): ${yourAvgPrice}€
-TRŽNA POVPREČNA CENA: ${marketAvgPrice}€ (range ${marketMinPrice}-${marketMaxPrice}€)
-
-DETERMINISTIČNA OSNOVA (uporabi kot referenco, AI lahko prilagodi):
-- Top konkurent: ${topCompetitors[0]?.sellerName ?? '—'} (${topCompetitors[0]?.totalListings ?? 0} oglasov, ${det.analysis[0]?.pricingStrategy ?? 'MID_MARKET'} strategija, ${det.analysis[0]?.threatLevel ?? 'LOW'} grožnja)
-- Tvoja pozicija: ${det.marketPosition.yourPosition} (${yourAvgPrice}€ vs tržno ${marketAvgPrice}€)
-
-PRAVILA ZA ANALIZO:
-1. Za vsakega od top konkurentov določi:
-   - pricingStrategy: PREMIUM (višje od tržnega avg), MID_MARKET (v ±10% tržnega), BUDGET (nižje)
-   - specialization: glavna kategorija/niša (npr. "elektronika - iPhone")
-   - threatLevel: HIGH (marketShare >= 15% in 7+ oglasov), MEDIUM (5-15% ali 3-7 oglasov), LOW (manj)
-   - yourAdvantage: kje imaš prednost (cena, kvalitetne slike, hitrost odgovora, opisi)
-   - recommendedAction: specifična akcija za ta konkurent (1 stavek)
-2. marketPosition: yourPosition (BELOW_MARKET/AT_MARKET/ABOVE_MARKET glede na +-10% tržnega avg) in positioningAdvice (slovensko).
-3. competitiveActions: 3-5 specifičnih akcij z priority (HIGH/MEDIUM/LOW) in expectedImpact (kaj prinese).
-4. differentiationOpportunity: 2-3 manj zasedene niše (kategorije z malo konkurenčnih oglasov) z reasoning in potentialProfit (EUR).
-5. summary: 1-2 povedi slovensko z najpomembnejšimi ugotovitvami.
-
-VRNI LE JSON:
-{
-  "analysis": [
-    { "sellerName": "Elektro Marjan", "pricingStrategy": "BUDGET", "specialization": "elektronika", "threatLevel": "HIGH", "yourAdvantage": "...", "recommendedAction": "..." }
-  ],
-  "marketPosition": { "yourAvgPrice": ${yourAvgPrice}, "competitorAvgPrice": ${marketAvgPrice}, "yourPosition": "AT_MARKET", "positioningAdvice": "..." },
-  "competitiveActions": [ { "action": "...", "priority": "HIGH", "expectedImpact": "..." } ],
-  "differentiationOpportunity": [ { "niche": "...", "reasoning": "...", "potentialProfit": 200 } ],
-  "summary": "..."
-}${GROUNDING_PROMPT_SUFFIX}`;
+    const prompt = buildPrompt({
+      competitorBlock,
+      topCompetitorsCount: topCompetitors.length,
+      totalListingsCount,
+      yourAvgPrice,
+      marketAvgPrice,
+      marketMinPrice,
+      marketMaxPrice,
+      topCompetitor0SellerName: topCompetitors[0]?.sellerName ?? '—',
+      topCompetitor0TotalListings: topCompetitors[0]?.totalListings ?? 0,
+      det,
+    });
 
     let aiUsed = false;
     let analysis = det.analysis;
@@ -622,99 +583,22 @@ VRNI LE JSON:
     let summary = det.summary;
 
     try {
-      const raw = await callProviderForRaw(aiSettings, prompt);
-      const parsed = parseJsonLooseExported(raw) as AiCompetitiveResponse | null;
+      const raw = await callAi(prompt);
+      const parsed = parseAi(raw) as AiCompetitiveResponse | null;
 
       if (parsed) {
-        // Parse AI analysis array
-        const aiAnalysis: CompetitorAnalysis[] = [];
-        if (Array.isArray(parsed.analysis)) {
-          for (const item of parsed.analysis) {
-            const a = item as Record<string, unknown> | null;
-            if (!a || typeof a !== 'object') continue;
-            const sellerName = clampString(a.sellerName, 100, '');
-            if (!sellerName) continue;
-            // Validate sellerName exists in our competitors list
-            const comp = topCompetitors.find(c => c.sellerName === sellerName);
-            if (!comp) continue;
-            aiAnalysis.push({
-              sellerName,
-              pricingStrategy: clampEnum(
-                a.pricingStrategy,
-                VALID_PRICING,
-                deterministicPricingStrategy(comp.avgPrice, topCompetitors.map(c => c.avgPrice)),
-              ),
-              specialization: clampString(a.specialization, 200, comp.categories.slice(0, 3).join(', ')),
-              threatLevel: clampEnum(
-                a.threatLevel,
-                VALID_THREAT,
-                deterministicThreatLevel(comp.marketShare, comp.totalListings, comp.avgDealScore),
-              ),
-              yourAdvantage: clampString(a.yourAdvantage, 300, 'Ostani aktiven in personaliziran.'),
-              recommendedAction: clampString(a.recommendedAction, 300, 'Spremljaj nove oglase tega prodajalca.'),
-            });
-          }
-        }
-        if (aiAnalysis.length > 0) {
-          analysis = aiAnalysis;
-        }
-
-        // marketPosition
-        if (parsed.marketPosition && typeof parsed.marketPosition === 'object') {
-          const mp = parsed.marketPosition as Record<string, unknown>;
-          const yourAvg = clampNumber(mp.yourAvgPrice, 0, 1_000_000, yourAvgPrice);
-          const compAvg = clampNumber(mp.competitorAvgPrice, 0, 1_000_000, marketAvgPrice);
-          marketPosition = {
-            yourAvgPrice: yourAvg,
-            competitorAvgPrice: compAvg,
-            yourPosition: clampEnum(
-              mp.yourPosition,
-              VALID_POSITION,
-              det.marketPosition.yourPosition,
-            ),
-            positioningAdvice: clampString(mp.positioningAdvice, 400, det.marketPosition.positioningAdvice),
-          };
-        }
-
-        // competitiveActions
-        const aiActions: CompetitiveAction[] = [];
-        if (Array.isArray(parsed.competitiveActions)) {
-          for (const item of parsed.competitiveActions) {
-            const a = item as Record<string, unknown> | null;
-            if (!a || typeof a !== 'object') continue;
-            const action = clampString(a.action, 300, '');
-            if (!action) continue;
-            aiActions.push({
-              action,
-              priority: clampEnum(a.priority, VALID_PRIORITY, 'MEDIUM'),
-              expectedImpact: clampString(a.expectedImpact, 200, 'Boljša pozicija na trgu.'),
-            });
-          }
-        }
-        if (aiActions.length > 0) {
-          competitiveActions = aiActions.slice(0, 5);
-        }
-
-        // differentiationOpportunity
-        const aiDiff: DifferentiationOpportunity[] = [];
-        if (Array.isArray(parsed.differentiationOpportunity)) {
-          for (const item of parsed.differentiationOpportunity) {
-            const a = item as Record<string, unknown> | null;
-            if (!a || typeof a !== 'object') continue;
-            const niche = clampString(a.niche, 100, '');
-            if (!niche) continue;
-            aiDiff.push({
-              niche,
-              reasoning: clampString(a.reasoning, 300, 'Manj zasedena niša.'),
-              potentialProfit: clampNumber(a.potentialProfit, 0, 100_000, 200),
-            });
-          }
-        }
-        if (aiDiff.length > 0) {
-          differentiationOpportunity = aiDiff.slice(0, 5);
-        }
-
-        summary = clampString(parsed.summary, 500, det.summary);
+        const transformed = transformCompetitive(
+          parsed,
+          topCompetitors,
+          yourAvgPrice,
+          marketAvgPrice,
+          det,
+        );
+        analysis = transformed.analysis;
+        marketPosition = transformed.marketPosition;
+        competitiveActions = transformed.competitiveActions;
+        differentiationOpportunity = transformed.differentiationOpportunity;
+        summary = transformed.summary;
         aiUsed = true;
       }
     } catch (err) {
@@ -736,7 +620,7 @@ VRNI LE JSON:
       });
     }
 
-    return NextResponse.json({
+    return apiOk({
       ok: true,
       competitors: topCompetitors,
       analysis,
@@ -746,8 +630,180 @@ VRNI LE JSON:
       summary,
       aiUsed,
     });
-  } catch (err: any) {
-    logger.error('/api/ai/competitive-landscape-analyzer', 'handler failed', err);
-    return NextResponse.json({ error: err?.message ?? 'Napaka' }, { status: 500 });
+  },
+});
+
+// AI Hub runner compatibility — body is ignored, identical logic.
+export const GET = competitiveLandscapeHandler;
+export const POST = competitiveLandscapeHandler;
+
+// --- Pomožne funkcije (čiste, testabilne) --------------------------------
+
+interface PromptParams {
+  competitorBlock: string;
+  topCompetitorsCount: number;
+  totalListingsCount: number;
+  yourAvgPrice: number;
+  marketAvgPrice: number;
+  marketMinPrice: number;
+  marketMaxPrice: number;
+  topCompetitor0SellerName: string;
+  topCompetitor0TotalListings: number;
+  det: DeterministicAnalysisResult;
+}
+
+function buildPrompt(p: PromptParams): string {
+  return `Si AI analitik konkurenčne krajine za slovenske in srednjeevropske oglasne platforme (Bolha, Vinted, Avtonet, mobile.de).
+Na podlagi ZGODOVINSKIH podatkov o aktivnih prodajalcih v zadnjih 30 dneh analiziraj konkurenčno krajino in identificiraj njihove strategije ter tvoje prednosti.
+
+DETEKTIRANI KONKURENTI (top ${Math.min(10, p.topCompetitorsCount)} od ${p.topCompetitorsCount} skupno, ${p.totalListingsCount} oglasov v 30 dneh):
+${p.competitorBlock}
+
+TVOJA POVPREČNA CENA (iz held inventarja): ${p.yourAvgPrice}€
+TRŽNA POVPREČNA CENA: ${p.marketAvgPrice}€ (range ${p.marketMinPrice}-${p.marketMaxPrice}€)
+
+DETERMINISTIČNA OSNOVA (uporabi kot referenco, AI lahko prilagodi):
+- Top konkurent: ${p.topCompetitor0SellerName} (${p.topCompetitor0TotalListings} oglasov, ${p.det.analysis[0]?.pricingStrategy ?? 'MID_MARKET'} strategija, ${p.det.analysis[0]?.threatLevel ?? 'LOW'} grožnja)
+- Tvoja pozicija: ${p.det.marketPosition.yourPosition} (${p.yourAvgPrice}€ vs tržno ${p.marketAvgPrice}€)
+
+PRAVILA ZA ANALIZO:
+1. Za vsakega od top konkurentov določi:
+   - pricingStrategy: PREMIUM (višje od tržnega avg), MID_MARKET (v ±10% tržnega), BUDGET (nižje)
+   - specialization: glavna kategorija/niša (npr. "elektronika - iPhone")
+   - threatLevel: HIGH (marketShare >= 15% in 7+ oglasov), MEDIUM (5-15% ali 3-7 oglasov), LOW (manj)
+   - yourAdvantage: kje imaš prednost (cena, kvalitetne slike, hitrost odgovora, opisi)
+   - recommendedAction: specifična akcija za ta konkurent (1 stavek)
+2. marketPosition: yourPosition (BELOW_MARKET/AT_MARKET/ABOVE_MARKET glede na +-10% tržnega avg) in positioningAdvice (slovensko).
+3. competitiveActions: 3-5 specifičnih akcij z priority (HIGH/MEDIUM/LOW) in expectedImpact (kaj prinese).
+4. differentiationOpportunity: 2-3 manj zasedene niše (kategorije z malo konkurenčnih oglasov) z reasoning in potentialProfit (EUR).
+5. summary: 1-2 povedi slovensko z najpomembnejšimi ugotovitvami.
+
+VRNI LE JSON:
+{
+  "analysis": [
+    { "sellerName": "Elektro Marjan", "pricingStrategy": "BUDGET", "specialization": "elektronika", "threatLevel": "HIGH", "yourAdvantage": "...", "recommendedAction": "..." }
+  ],
+  "marketPosition": { "yourAvgPrice": ${p.yourAvgPrice}, "competitorAvgPrice": ${p.marketAvgPrice}, "yourPosition": "AT_MARKET", "positioningAdvice": "..." },
+  "competitiveActions": [ { "action": "...", "priority": "HIGH", "expectedImpact": "..." } ],
+  "differentiationOpportunity": [ { "niche": "...", "reasoning": "...", "potentialProfit": 200 } ],
+  "summary": "..."
+}${GROUNDING_PROMPT_SUFFIX}`;
+}
+
+function transformCompetitive(
+  parsed: AiCompetitiveResponse,
+  topCompetitors: CompetitorRow[],
+  yourAvgPrice: number,
+  marketAvgPrice: number,
+  det: DeterministicAnalysisResult,
+): {
+  analysis: CompetitorAnalysis[];
+  marketPosition: MarketPosition;
+  competitiveActions: CompetitiveAction[];
+  differentiationOpportunity: DifferentiationOpportunity[];
+  summary: string;
+} {
+  let analysis = det.analysis;
+  let marketPosition = det.marketPosition;
+  let competitiveActions = det.competitiveActions;
+  let differentiationOpportunity = det.differentiationOpportunity;
+  let summary = det.summary;
+
+  // Parse AI analysis array
+  const aiAnalysis: CompetitorAnalysis[] = [];
+  if (Array.isArray(parsed.analysis)) {
+    for (const item of parsed.analysis) {
+      const a = item as Record<string, unknown> | null;
+      if (!a || typeof a !== 'object') continue;
+      const sellerName = clampString(a.sellerName, 100, '');
+      if (!sellerName) continue;
+      // Validate sellerName exists in our competitors list
+      const comp = topCompetitors.find(c => c.sellerName === sellerName);
+      if (!comp) continue;
+      aiAnalysis.push({
+        sellerName,
+        pricingStrategy: clampEnum(
+          a.pricingStrategy,
+          VALID_PRICING,
+          deterministicPricingStrategy(comp.avgPrice, topCompetitors.map(c => c.avgPrice)),
+        ),
+        specialization: clampString(a.specialization, 200, comp.categories.slice(0, 3).join(', ')),
+        threatLevel: clampEnum(
+          a.threatLevel,
+          VALID_THREAT,
+          deterministicThreatLevel(comp.marketShare, comp.totalListings, comp.avgDealScore),
+        ),
+        yourAdvantage: clampString(a.yourAdvantage, 300, 'Ostani aktiven in personaliziran.'),
+        recommendedAction: clampString(a.recommendedAction, 300, 'Spremljaj nove oglase tega prodajalca.'),
+      });
+    }
   }
+  if (aiAnalysis.length > 0) {
+    analysis = aiAnalysis;
+  }
+
+  // marketPosition
+  if (parsed.marketPosition && typeof parsed.marketPosition === 'object') {
+    const mp = parsed.marketPosition as Record<string, unknown>;
+    const yourAvg = clampNumber(mp.yourAvgPrice, 0, 1_000_000, yourAvgPrice);
+    const compAvg = clampNumber(mp.competitorAvgPrice, 0, 1_000_000, marketAvgPrice);
+    marketPosition = {
+      yourAvgPrice: yourAvg,
+      competitorAvgPrice: compAvg,
+      yourPosition: clampEnum(
+        mp.yourPosition,
+        VALID_POSITION,
+        det.marketPosition.yourPosition,
+      ),
+      positioningAdvice: clampString(mp.positioningAdvice, 400, det.marketPosition.positioningAdvice),
+    };
+  }
+
+  // competitiveActions
+  const aiActions: CompetitiveAction[] = [];
+  if (Array.isArray(parsed.competitiveActions)) {
+    for (const item of parsed.competitiveActions) {
+      const a = item as Record<string, unknown> | null;
+      if (!a || typeof a !== 'object') continue;
+      const action = clampString(a.action, 300, '');
+      if (!action) continue;
+      aiActions.push({
+        action,
+        priority: clampEnum(a.priority, VALID_PRIORITY, 'MEDIUM'),
+        expectedImpact: clampString(a.expectedImpact, 200, 'Boljša pozicija na trgu.'),
+      });
+    }
+  }
+  if (aiActions.length > 0) {
+    competitiveActions = aiActions.slice(0, 5);
+  }
+
+  // differentiationOpportunity
+  const aiDiff: DifferentiationOpportunity[] = [];
+  if (Array.isArray(parsed.differentiationOpportunity)) {
+    for (const item of parsed.differentiationOpportunity) {
+      const a = item as Record<string, unknown> | null;
+      if (!a || typeof a !== 'object') continue;
+      const niche = clampString(a.niche, 100, '');
+      if (!niche) continue;
+      aiDiff.push({
+        niche,
+        reasoning: clampString(a.reasoning, 300, 'Manj zasedena niša.'),
+        potentialProfit: clampNumber(a.potentialProfit, 0, 100_000, 200),
+      });
+    }
+  }
+  if (aiDiff.length > 0) {
+    differentiationOpportunity = aiDiff.slice(0, 5);
+  }
+
+  summary = clampString(parsed.summary, 500, det.summary);
+
+  return {
+    analysis,
+    marketPosition,
+    competitiveActions,
+    differentiationOpportunity,
+    summary,
+  };
 }

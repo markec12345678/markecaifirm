@@ -1,4 +1,4 @@
-// v7.78: AI Inventory Turnover Forecast — AI napove turnover rate za naslednje
+// v7.78 / v8.96.4-batch4: AI Inventory Turnover Forecast — AI napove turnover rate za naslednje
 // 30/60/90 dni glede na historično prodajno hitrost, trenutno zalogo in
 // tržne razmere. "Tvoj turnover: 3.2x/mesec, projected 2.5x v 30 dneh (aging
 // stock). Action: likvidiraj 3 item-e >60d → nazaj na 3.5x."
@@ -19,24 +19,20 @@
 //
 // GET+POST /api/ai/inventory-turnover-forecast
 // (AI-enhanced + grounding + anti-hallucination + 6h cache + deterministic fallback)
+// Refaktoriran z withAiRoute helperjem (v8.96.4) + enforceBudget guard.
 
-import { NextRequest, NextResponse } from 'next/server';
-import { db } from '@/lib/db';
-import { getSettingsRow } from '@/lib/pipeline';
-import {
-  callProviderForRaw,
-  parseJsonLooseExported,
-  type AiProviderType,
-  type AiSettings,
-} from '@/lib/ai';
+import { withAiRoute, AI_ROUTE_DEFAULTS, type AiRouteContext } from '@/lib/with-ai-route';
+import { apiOk } from '@/lib/api-response';
 import { GROUNDING_PROMPT_SUFFIX } from '@/lib/anti-hallucination';
 import { getCachedAI, setCachedAI } from '@/lib/ai-cache';
-import { checkRateLimit, rateLimitResponse } from '@/lib/rate-limit';
-import { logger } from '@/lib/logger';
 
-export const runtime = 'nodejs';
-export const dynamic = 'force-dynamic';
+export const { runtime, dynamic } = AI_ROUTE_DEFAULTS;
 export const maxDuration = 60;
+
+// --- Input ----------------------------------------------------------------
+
+// eslint-disable-next-line @typescript-eslint/no-empty-object-type
+interface InventoryTurnoverForecastInput {}
 
 // --- Types ---------------------------------------------------------------
 
@@ -219,6 +215,7 @@ function computeDeterministicForecast(
     Math.min(95, sampleConfidence + (trend === 'STABLE' ? 10 : 0)),
   );
 
+  void avgHoldDays;
   return {
     projectedTurnover30d: round1(Math.max(0, base30 * stockFactor)),
     projectedTurnover60d: round1(Math.max(0, base60 * stockFactor * 0.95)),
@@ -349,19 +346,339 @@ function buildDeterministicActions(
   return actions.slice(0, 5);
 }
 
+// --- Build deterministic assessment + summary -----------------------------
+
+function buildDeterministicAssessment(
+  avgMonthlyTurnover: number,
+  avgHoldDays: number,
+  currentStock: number,
+  totalHeldCapital: number,
+  agingItems: number,
+  turnoverTrend: TurnoverTrend,
+  deterministicForecast: {
+    projectedTurnover30d: number;
+    projectedTurnover60d: number;
+    projectedTurnover90d: number;
+  },
+): string {
+  const trendLabel =
+    turnoverTrend === 'IMPROVING'
+      ? 'trend turnover-a se izboljšuje'
+      : turnoverTrend === 'DECLINING'
+        ? 'trend turnover-a pada'
+        : 'trend turnover-a je stabilen';
+  const agingWarn =
+    agingItems > 0
+      ? ` ${agingItems} aging item-ov (>30 dni) bodo upočasnila prihodnji turnover.`
+      : ' Brez aging item-ov.';
+  return `Trenutni monthly turnover: ${avgMonthlyTurnover}x (avg hold ${avgHoldDays} dni, ${currentStock} HELD item-ov, ${totalHeldCapital}€ kapitala). ${trendLabel}.${agingWarn} Projected 30d: ${deterministicForecast.projectedTurnover30d}x, 60d: ${deterministicForecast.projectedTurnover60d}x, 90d: ${deterministicForecast.projectedTurnover90d}x.`;
+}
+
+function buildDeterministicSummary(
+  deterministicForecast: {
+    projectedTurnover30d: number;
+    projectedTurnover60d: number;
+    projectedTurnover90d: number;
+  },
+  agingItems: number,
+  turnoverTrend: TurnoverTrend,
+  currentStock: number,
+  avgMonthlyTurnover: number,
+  avgHoldDays: number,
+): TurnoverSummary {
+  return {
+    expectedTurnoverRate: round1(
+      (deterministicForecast.projectedTurnover30d +
+        deterministicForecast.projectedTurnover60d +
+        deterministicForecast.projectedTurnover90d) /
+        3,
+    ),
+    riskFactors: (() => {
+      const risks: string[] = [];
+      if (agingItems > 0) {
+        risks.push(
+          `${agingItems} aging item-ov (>30 dni) — tveganje stagnacije kapitala.`,
+        );
+      }
+      if (turnoverTrend === 'DECLINING') {
+        risks.push('Padajoči trend turnover-a — potreben takojšen poseg.');
+      }
+      if (currentStock > 0 && avgMonthlyTurnover > currentStock) {
+        risks.push(
+          'Trenutna zaloga manjša od monthly turnover-a — tveganje izčrpanja inventarja.',
+        );
+      }
+      if (avgHoldDays > 45) {
+        risks.push(
+          `Povprečni hold time ${avgHoldDays} dni je visok — optimiziraj buying ali pricing.`,
+        );
+      }
+      if (risks.length === 0) {
+        risks.push('Ni specifičnih tveganj — ohrani trenutno strategijo.');
+      }
+      return risks.slice(0, 5);
+    })(),
+    advice: (() => {
+      if (agingItems > 0) {
+        return `Prioritetno likvidiraj ${agingItems} aging item-ov z 15-25% popustom — sproščeno kapital reinvestiraj v item-e z višjim dealScore.`;
+      }
+      if (turnoverTrend === 'DECLINING') {
+        return 'Trend turnover-a pada — diverzificiraj kategorije in povečaj buying disciplino.';
+      }
+      if (turnoverTrend === 'IMPROVING') {
+        return 'Turnover raste — povečaj buying volume zmerno (20-30%) za izkoristek momentum-a.';
+      }
+      return 'Turnover stabilen — fokusiraj se na deal quality (dealScore >60) za boljšo konverzijo.';
+    })(),
+  };
+}
+
+// --- Prompt builder -------------------------------------------------------
+
+function buildBottleneckForPrompt(bottleneckItems: BottleneckItem[]): Array<Record<string, unknown>> {
+  return bottleneckItems.slice(0, 5).map((b) => ({
+    tradeId: b.tradeId,
+    title: b.title,
+    daysHeld: b.daysHeld,
+    dealScore: b.dealScore,
+    bottleneckReason: b.bottleneckReason,
+  }));
+}
+
+function buildPrompt(args: {
+  avgMonthlyTurnover: number;
+  avgTurnoverRate: number;
+  avgHoldDays: number;
+  currentStock: number;
+  totalHeldCapital: number;
+  agingItems: number;
+  freshItems: number;
+  turnoverTrend: TurnoverTrend;
+  month3Count: number;
+  month2Count: number;
+  month1Count: number;
+  bottleneckForPrompt: Array<Record<string, unknown>>;
+}): string {
+  const {
+    avgMonthlyTurnover, avgTurnoverRate, avgHoldDays, currentStock,
+    totalHeldCapital, agingItems, freshItems, turnoverTrend,
+    month3Count, month2Count, month1Count, bottleneckForPrompt,
+  } = args;
+  return `Si AI "Inventory Turnover Forecaster" za slovenske in srednjeevropske oglasne platforme (Bolha, Vinted, Avtonet, mobile.de).
+Napovej turnover rate (koliko item-ov/month prodaš) za naslednje 30/60/90 dni glede na historično prodajno hitrost, trenutno zalogo in tržne razmere.
+
+TRENUTNO STANJE (deterministično izračunano):
+- avgMonthlyTurnover: ${avgMonthlyTurnover}x (zadnjih 90 dni / 3 mesece)
+- avgTurnoverRate: ${avgTurnoverRate}x (sold items / avg inventory held per month)
+- avgHoldDays: ${avgHoldDays} dni (povprečni čas od buy do sell)
+- currentStock (HELD item-i): ${currentStock}
+- totalHeldCapital: ${totalHeldCapital}€
+- agingItems (>30 dni): ${agingItems}
+- freshItems (<7 dni): ${freshItems}
+- turnoverTrend: ${turnoverTrend}
+- monthlySoldCount (zadnji 3 meseci): [${month3Count}, ${month2Count}, ${month1Count}]
+
+BOTTLENECK ITEMS (deterministično identificirano — top 5):
+${JSON.stringify(bottleneckForPrompt, null, 2)}
+
+PRAVILA ZA AI ODGOVOR:
+1. forecast:
+   - projectedTurnover30d: število item-ov, ki jih boš prodal v naslednjih 30 dneh (clamped [0, 20])
+   - projectedTurnover60d: 60 dni projection (clamped [0, 20])
+   - projectedTurnover90d: 90 dni projection (clamped [0, 20])
+   - turnoverAssessment: slovenski opis trenutnega stanja turnover-a z aging stock analizo (max 500 znakov). NE izmišljuj številk — uporabi zgornje deterministične podatke.
+   - confidence: 0-100 (glede na sample size in konsistentnost signalov)
+2. actions: array 3-5 konkretnih ukrepov za izboljšanje turnover-a, vsak z:
+   - action: slovenski opis ukrepa (max 200 znakov)
+   - priority: HIGH / MEDIUM / LOW (validiraj proti enum)
+   - expectedImpact: slovenski opis pričakovanega učinka (max 200 znakov)
+   - expectedTurnoverImprovement: % izboljšanje turnover-a (clamped [0, 100])
+3. summary:
+   - expectedTurnoverRate: pričakovan povprečni turnover rate z implementiranimi actions (clamped [0, 20])
+   - riskFactors: array 3-5 slovenskih opisov tveganj (max 200 znakov vsak)
+   - advice: slovenski nasvet (max 500 znakov)
+
+VRNI LE JSON:
+{
+  "forecast": {
+    "projectedTurnover30d": 0,
+    "projectedTurnover60d": 0,
+    "projectedTurnover90d": 0,
+    "turnoverAssessment": "...",
+    "confidence": 75
+  },
+  "actions": [
+    { "action": "...", "priority": "HIGH", "expectedImpact": "...", "expectedTurnoverImprovement": 15 }
+  ],
+  "summary": {
+    "expectedTurnoverRate": 0,
+    "riskFactors": ["...", "...", "..."],
+    "advice": "..."
+  }
+}${GROUNDING_PROMPT_SUFFIX}`;
+}
+
+// --- AI merge ------------------------------------------------------------
+
+interface AiMergedForecast {
+  forecast: TurnoverForecast;
+  actions: TurnoverAction[];
+  summary: TurnoverSummary;
+  aiUsed: boolean;
+}
+
+function mergeAiIntoForecast(
+  parsed: AiTurnoverResponse | null,
+  deterministicForecast: {
+    projectedTurnover30d: number;
+    projectedTurnover60d: number;
+    projectedTurnover90d: number;
+    confidence: number;
+  },
+  deterministicAssessment: string,
+  deterministicActions: TurnoverAction[],
+  deterministicSummary: TurnoverSummary,
+): AiMergedForecast {
+  let forecast: TurnoverForecast = {
+    ...deterministicForecast,
+    turnoverAssessment: deterministicAssessment,
+  };
+  let actions = deterministicActions;
+  let summary = deterministicSummary;
+  let aiUsed = false;
+
+  if (parsed && typeof parsed === 'object') {
+    // Parse forecast
+    if (parsed.forecast && typeof parsed.forecast === 'object') {
+      const f = parsed.forecast as Record<string, unknown>;
+      forecast = {
+        projectedTurnover30d: clampNumber(
+          f.projectedTurnover30d,
+          0,
+          20,
+          deterministicForecast.projectedTurnover30d,
+        ),
+        projectedTurnover60d: clampNumber(
+          f.projectedTurnover60d,
+          0,
+          20,
+          deterministicForecast.projectedTurnover60d,
+        ),
+        projectedTurnover90d: clampNumber(
+          f.projectedTurnover90d,
+          0,
+          20,
+          deterministicForecast.projectedTurnover90d,
+        ),
+        turnoverAssessment: clampString(
+          f.turnoverAssessment,
+          500,
+          deterministicAssessment,
+        ),
+        confidence: clampNumber(
+          f.confidence,
+          0,
+          100,
+          deterministicForecast.confidence,
+        ),
+      };
+    }
+
+    // Parse actions
+    if (Array.isArray(parsed.actions)) {
+      const newActions: TurnoverAction[] = [];
+      for (const a of parsed.actions) {
+        const ar = a as Record<string, unknown>;
+        if (!ar || typeof ar !== 'object') continue;
+        const actionStr = clampString(
+          ar.action,
+          200,
+          'Izboljšaj turnover strategijo.',
+        );
+        const priority = clampEnum(ar.priority, VALID_PRIORITY, 'MEDIUM');
+        const expectedImpact = clampString(
+          ar.expectedImpact,
+          200,
+          'Izboljša turnover rate.',
+        );
+        const expectedTurnoverImprovement = clampNumber(
+          ar.expectedTurnoverImprovement,
+          0,
+          100,
+          10,
+        );
+        newActions.push({
+          action: actionStr,
+          priority,
+          expectedImpact,
+          expectedTurnoverImprovement: round0(expectedTurnoverImprovement),
+        });
+        if (newActions.length >= 5) break;
+      }
+      if (newActions.length > 0) {
+        // Sort by priority HIGH > MEDIUM > LOW, then by expectedTurnoverImprovement desc
+        const priorityRank: Record<ActionPriority, number> = {
+          HIGH: 0,
+          MEDIUM: 1,
+          LOW: 2,
+        };
+        newActions.sort(
+          (a, b) =>
+            priorityRank[a.priority] - priorityRank[b.priority] ||
+            b.expectedTurnoverImprovement - a.expectedTurnoverImprovement,
+        );
+        actions = newActions;
+      }
+    }
+
+    // Parse summary
+    if (parsed.summary && typeof parsed.summary === 'object') {
+      const s = parsed.summary as Record<string, unknown>;
+      const riskFactors: string[] = Array.isArray(s.riskFactors)
+        ? (s.riskFactors as unknown[])
+            .filter((r): r is string => typeof r === 'string' && r.trim().length > 0)
+            .map((r) => r.trim().slice(0, 200))
+            .slice(0, 5)
+        : deterministicSummary.riskFactors;
+      if (riskFactors.length === 0 && deterministicSummary.riskFactors.length > 0) {
+        riskFactors.push(...deterministicSummary.riskFactors);
+      }
+      summary = {
+        expectedTurnoverRate: clampNumber(
+          s.expectedTurnoverRate,
+          0,
+          20,
+          deterministicSummary.expectedTurnoverRate,
+        ),
+        riskFactors,
+        advice: clampString(s.advice, 500, deterministicSummary.advice),
+      };
+    }
+
+    aiUsed = true;
+  }
+
+  return { forecast, actions, summary, aiUsed };
+}
+
+void VALID_TREND; // referenced indirectly via classifyTrend return value
+
 // --- Handler -------------------------------------------------------------
 
-export async function GET(req: NextRequest) {
-  return handleInventoryTurnoverForecast(req);
-}
-export async function POST(req: NextRequest) {
-  return handleInventoryTurnoverForecast(req);
-}
+const inventoryTurnoverForecastHandler = withAiRoute<InventoryTurnoverForecastInput>({
+  endpoint: '/api/ai/inventory-turnover-forecast',
+  maxDuration: 60,
+  enforceBudget: true, // AI klic — preveri budget
+  method: 'GET', // Endpoint sprejema GET + POST — bypass POST-only check
 
-async function handleInventoryTurnoverForecast(req: NextRequest) {
-  try {
-    const rl = checkRateLimit(req, 'ai-inventory-turnover-forecast', 20);
-    if (!rl.allowed) return rateLimitResponse(rl);
+  parseBody: async (req) => {
+    await req.json().catch(() => ({}));
+    return {};
+  },
+
+  // No validateInput — body ignored, identična logika za GET in POST
+  handler: async (_input, ctx: AiRouteContext) => {
+    const { db, callAi, parseAi, logger } = ctx;
 
     const now = Date.now();
     const cutoff90d = new Date(now - 90 * 86_400_000);
@@ -473,7 +790,7 @@ async function handleInventoryTurnoverForecast(req: NextRequest) {
 
     // Empty state — no SOLD trades and no HELD trades
     if (soldTrades.length === 0 && currentStock === 0) {
-      return NextResponse.json({
+      return apiOk({
         ok: true,
         current,
         forecast: {
@@ -510,7 +827,7 @@ async function handleInventoryTurnoverForecast(req: NextRequest) {
       summary: TurnoverSummary;
     }>(cacheKey);
     if (cached) {
-      return NextResponse.json({
+      return apiOk({
         ok: true,
         current,
         forecast: cached.forecast,
@@ -539,141 +856,41 @@ async function handleInventoryTurnoverForecast(req: NextRequest) {
       turnoverTrend,
     );
 
-    const deterministicAssessment = (() => {
-      const trendLabel =
-        turnoverTrend === 'IMPROVING'
-          ? 'trend turnover-a se izboljšuje'
-          : turnoverTrend === 'DECLINING'
-            ? 'trend turnover-a pada'
-            : 'trend turnover-a je stabilen';
-      const agingWarn =
-        agingItems > 0
-          ? ` ${agingItems} aging item-ov (>30 dni) bodo upočasnila prihodnji turnover.`
-          : ' Brez aging item-ov.';
-      return `Trenutni monthly turnover: ${avgMonthlyTurnover}x (avg hold ${avgHoldDays} dni, ${currentStock} HELD item-ov, ${totalHeldCapital}€ kapitala). ${trendLabel}.${agingWarn} Projected 30d: ${deterministicForecast.projectedTurnover30d}x, 60d: ${deterministicForecast.projectedTurnover60d}x, 90d: ${deterministicForecast.projectedTurnover90d}x.`;
-    })();
+    const deterministicAssessment = buildDeterministicAssessment(
+      avgMonthlyTurnover,
+      avgHoldDays,
+      currentStock,
+      totalHeldCapital,
+      agingItems,
+      turnoverTrend,
+      deterministicForecast,
+    );
 
-    const deterministicSummary: TurnoverSummary = {
-      expectedTurnoverRate: round1(
-        (deterministicForecast.projectedTurnover30d +
-          deterministicForecast.projectedTurnover60d +
-          deterministicForecast.projectedTurnover90d) /
-          3,
-      ),
-      riskFactors: (() => {
-        const risks: string[] = [];
-        if (agingItems > 0) {
-          risks.push(
-            `${agingItems} aging item-ov (>30 dni) — tveganje stagnacije kapitala.`,
-          );
-        }
-        if (turnoverTrend === 'DECLINING') {
-          risks.push('Padajoči trend turnover-a — potreben takojšen poseg.');
-        }
-        if (currentStock > 0 && avgMonthlyTurnover > currentStock) {
-          risks.push(
-            'Trenutna zaloga manjša od monthly turnover-a — tveganje izčrpanja inventarja.',
-          );
-        }
-        if (avgHoldDays > 45) {
-          risks.push(
-            `Povprečni hold time ${avgHoldDays} dni je visok — optimiziraj buying ali pricing.`,
-          );
-        }
-        if (risks.length === 0) {
-          risks.push('Ni specifičnih tveganj — ohrani trenutno strategijo.');
-        }
-        return risks.slice(0, 5);
-      })(),
-      advice: (() => {
-        if (agingItems > 0) {
-          return `Prioritetno likvidiraj ${agingItems} aging item-ov z 15-25% popustom — sproščeno kapital reinvestiraj v item-e z višjim dealScore.`;
-        }
-        if (turnoverTrend === 'DECLINING') {
-          return 'Trend turnover-a pada — diverzificiraj kategorije in povečaj buying disciplino.';
-        }
-        if (turnoverTrend === 'IMPROVING') {
-          return 'Turnover raste — povečaj buying volume zmerno (20-30%) za izkoristek momentum-a.';
-        }
-        return 'Turnover stabilen — fokusiraj se na deal quality (dealScore >60) za boljšo konverzijo.';
-      })(),
-    };
+    const deterministicSummary = buildDeterministicSummary(
+      deterministicForecast,
+      agingItems,
+      turnoverTrend,
+      currentStock,
+      avgMonthlyTurnover,
+      avgHoldDays,
+    );
 
     // 6) AI prompt with grounding
-    const settings = await getSettingsRow();
-    const aiSettings: AiSettings = {
-      provider: settings.aiProvider as AiProviderType,
-      baseUrl: settings.aiBaseUrl,
-      apiKey: settings.aiApiKey,
-      model: settings.aiModel,
-      fallbackProvider: (settings.fallbackProvider || '') as
-        | AiProviderType
-        | '',
-      fallbackBaseUrl: settings.fallbackBaseUrl || '',
-      fallbackApiKey: settings.fallbackApiKey || '',
-      fallbackModel: settings.fallbackModel || '',
-    };
-
-    const bottleneckForPrompt = bottleneckItems.slice(0, 5).map((b) => ({
-      tradeId: b.tradeId,
-      title: b.title,
-      daysHeld: b.daysHeld,
-      dealScore: b.dealScore,
-      bottleneckReason: b.bottleneckReason,
-    }));
-
-    const prompt = `Si AI "Inventory Turnover Forecaster" za slovenske in srednjeevropske oglasne platforme (Bolha, Vinted, Avtonet, mobile.de).
-Napovej turnover rate (koliko item-ov/month prodaš) za naslednje 30/60/90 dni glede na historično prodajno hitrost, trenutno zalogo in tržne razmere.
-
-TRENUTNO STANJE (deterministično izračunano):
-- avgMonthlyTurnover: ${avgMonthlyTurnover}x (zadnjih 90 dni / 3 mesece)
-- avgTurnoverRate: ${avgTurnoverRate}x (sold items / avg inventory held per month)
-- avgHoldDays: ${avgHoldDays} dni (povprečni čas od buy do sell)
-- currentStock (HELD item-i): ${currentStock}
-- totalHeldCapital: ${totalHeldCapital}€
-- agingItems (>30 dni): ${agingItems}
-- freshItems (<7 dni): ${freshItems}
-- turnoverTrend: ${turnoverTrend}
-- monthlySoldCount (zadnji 3 meseci): [${month3Count}, ${month2Count}, ${month1Count}]
-
-BOTTLENECK ITEMS (deterministično identificirano — top 5):
-${JSON.stringify(bottleneckForPrompt, null, 2)}
-
-PRAVILA ZA AI ODGOVOR:
-1. forecast:
-   - projectedTurnover30d: število item-ov, ki jih boš prodal v naslednjih 30 dneh (clamped [0, 20])
-   - projectedTurnover60d: 60 dni projection (clamped [0, 20])
-   - projectedTurnover90d: 90 dni projection (clamped [0, 20])
-   - turnoverAssessment: slovenski opis trenutnega stanja turnover-a z aging stock analizo (max 500 znakov). NE izmišljuj številk — uporabi zgornje deterministične podatke.
-   - confidence: 0-100 (glede na sample size in konsistentnost signalov)
-2. actions: array 3-5 konkretnih ukrepov za izboljšanje turnover-a, vsak z:
-   - action: slovenski opis ukrepa (max 200 znakov)
-   - priority: HIGH / MEDIUM / LOW (validiraj proti enum)
-   - expectedImpact: slovenski opis pričakovanega učinka (max 200 znakov)
-   - expectedTurnoverImprovement: % izboljšanje turnover-a (clamped [0, 100])
-3. summary:
-   - expectedTurnoverRate: pričakovan povprečni turnover rate z implementiranimi actions (clamped [0, 20])
-   - riskFactors: array 3-5 slovenskih opisov tveganj (max 200 znakov vsak)
-   - advice: slovenski nasvet (max 500 znakov)
-
-VRNI LE JSON:
-{
-  "forecast": {
-    "projectedTurnover30d": 0,
-    "projectedTurnover60d": 0,
-    "projectedTurnover90d": 0,
-    "turnoverAssessment": "...",
-    "confidence": 75
-  },
-  "actions": [
-    { "action": "...", "priority": "HIGH", "expectedImpact": "...", "expectedTurnoverImprovement": 15 }
-  ],
-  "summary": {
-    "expectedTurnoverRate": 0,
-    "riskFactors": ["...", "...", "..."],
-    "advice": "..."
-  }
-}${GROUNDING_PROMPT_SUFFIX}`;
+    const bottleneckForPrompt = buildBottleneckForPrompt(bottleneckItems);
+    const prompt = buildPrompt({
+      avgMonthlyTurnover,
+      avgTurnoverRate,
+      avgHoldDays,
+      currentStock,
+      totalHeldCapital,
+      agingItems,
+      freshItems,
+      turnoverTrend,
+      month3Count,
+      month2Count,
+      month1Count,
+      bottleneckForPrompt,
+    });
 
     let forecast: TurnoverForecast = {
       ...deterministicForecast,
@@ -684,117 +901,20 @@ VRNI LE JSON:
     let aiUsed = false;
 
     try {
-      const raw = await callProviderForRaw(aiSettings, prompt);
-      const parsed = parseJsonLooseExported(raw) as AiTurnoverResponse | null;
+      const raw = await callAi(prompt);
+      const parsed = parseAi(raw) as AiTurnoverResponse | null;
 
-      if (parsed && typeof parsed === 'object') {
-        // Parse forecast
-        if (parsed.forecast && typeof parsed.forecast === 'object') {
-          const f = parsed.forecast as Record<string, unknown>;
-          forecast = {
-            projectedTurnover30d: clampNumber(
-              f.projectedTurnover30d,
-              0,
-              20,
-              deterministicForecast.projectedTurnover30d,
-            ),
-            projectedTurnover60d: clampNumber(
-              f.projectedTurnover60d,
-              0,
-              20,
-              deterministicForecast.projectedTurnover60d,
-            ),
-            projectedTurnover90d: clampNumber(
-              f.projectedTurnover90d,
-              0,
-              20,
-              deterministicForecast.projectedTurnover90d,
-            ),
-            turnoverAssessment: clampString(
-              f.turnoverAssessment,
-              500,
-              deterministicAssessment,
-            ),
-            confidence: clampNumber(
-              f.confidence,
-              0,
-              100,
-              deterministicForecast.confidence,
-            ),
-          };
-        }
-
-        // Parse actions
-        if (Array.isArray(parsed.actions)) {
-          const newActions: TurnoverAction[] = [];
-          for (const a of parsed.actions) {
-            const ar = a as Record<string, unknown>;
-            if (!ar || typeof ar !== 'object') continue;
-            const actionStr = clampString(
-              ar.action,
-              200,
-              'Izboljšaj turnover strategijo.',
-            );
-            const priority = clampEnum(ar.priority, VALID_PRIORITY, 'MEDIUM');
-            const expectedImpact = clampString(
-              ar.expectedImpact,
-              200,
-              'Izboljša turnover rate.',
-            );
-            const expectedTurnoverImprovement = clampNumber(
-              ar.expectedTurnoverImprovement,
-              0,
-              100,
-              10,
-            );
-            newActions.push({
-              action: actionStr,
-              priority,
-              expectedImpact,
-              expectedTurnoverImprovement: round0(expectedTurnoverImprovement),
-            });
-            if (newActions.length >= 5) break;
-          }
-          if (newActions.length > 0) {
-            // Sort by priority HIGH > MEDIUM > LOW, then by expectedTurnoverImprovement desc
-            const priorityRank: Record<ActionPriority, number> = {
-              HIGH: 0,
-              MEDIUM: 1,
-              LOW: 2,
-            };
-            newActions.sort(
-              (a, b) =>
-                priorityRank[a.priority] - priorityRank[b.priority] ||
-                b.expectedTurnoverImprovement - a.expectedTurnoverImprovement,
-            );
-            actions = newActions;
-          }
-        }
-
-        // Parse summary
-        if (parsed.summary && typeof parsed.summary === 'object') {
-          const s = parsed.summary as Record<string, unknown>;
-          const riskFactors: string[] = Array.isArray(s.riskFactors)
-            ? (s.riskFactors as unknown[])
-                .filter((r): r is string => typeof r === 'string' && r.trim().length > 0)
-                .map((r) => r.trim().slice(0, 200))
-                .slice(0, 5)
-            : deterministicSummary.riskFactors;
-          if (riskFactors.length === 0 && deterministicSummary.riskFactors.length > 0) {
-            riskFactors.push(...deterministicSummary.riskFactors);
-          }
-          summary = {
-            expectedTurnoverRate: clampNumber(
-              s.expectedTurnoverRate,
-              0,
-              20,
-              deterministicSummary.expectedTurnoverRate,
-            ),
-            riskFactors,
-            advice: clampString(s.advice, 500, deterministicSummary.advice),
-          };
-        }
-
+      const result = mergeAiIntoForecast(
+        parsed,
+        deterministicForecast,
+        deterministicAssessment,
+        deterministicActions,
+        deterministicSummary,
+      );
+      if (result.aiUsed) {
+        forecast = result.forecast;
+        actions = result.actions;
+        summary = result.summary;
         aiUsed = true;
       }
     } catch (err) {
@@ -810,7 +930,7 @@ VRNI LE JSON:
       setCachedAI(cacheKey, { forecast, actions, summary });
     }
 
-    return NextResponse.json({
+    return apiOk({
       ok: true,
       current,
       forecast,
@@ -819,11 +939,8 @@ VRNI LE JSON:
       summary,
       aiUsed,
     });
-  } catch (err: any) {
-    logger.error('/api/ai/inventory-turnover-forecast', 'handler failed', err);
-    return NextResponse.json(
-      { error: err?.message ?? 'Napaka' },
-      { status: 500 },
-    );
-  }
-}
+  },
+});
+
+export const GET = inventoryTurnoverForecastHandler;
+export const POST = inventoryTurnoverForecastHandler;

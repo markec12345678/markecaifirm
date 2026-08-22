@@ -1,5 +1,5 @@
-// v7.65: AI Deal Quality Forecaster — AI napove kvaliteto deal-ov za naslednjih
-// 7 dni na podlagi zgodovinskih vzorcev po dnevih v tednu.
+// v7.65 / v8.96.4-batch1: AI Deal Quality Forecaster — AI napove kvaliteto
+// deal-ov za naslednjih 7 dni na podlagi zgodovinskih vzorcev po dnevih v tednu.
 // "Torek = najboljši dan za skeniranje (avg dealScore 72, 15 oglasov).
 //  Petek = najslabši (45, 8 oglasov). Načrtuj nakupe za torek."
 //
@@ -12,23 +12,14 @@
 //
 // GET+POST /api/ai/deal-quality-forecaster
 // (AI-enhanced + grounding + anti-hallucination + 6h cache + deterministic fallback)
+// Refaktoriran z withAiRoute helperjem (v8.96.4-batch1) + enforceBudget guard.
 
-import { NextRequest, NextResponse } from 'next/server';
-import { db } from '@/lib/db';
-import { getSettingsRow } from '@/lib/pipeline';
-import {
-  callProviderForRaw,
-  parseJsonLooseExported,
-  type AiProviderType,
-  type AiSettings,
-} from '@/lib/ai';
+import { withAiRoute, AI_ROUTE_DEFAULTS, type AiRouteContext } from '@/lib/with-ai-route';
+import { apiOk } from '@/lib/api-response';
 import { GROUNDING_PROMPT_SUFFIX } from '@/lib/anti-hallucination';
 import { getCachedAI, setCachedAI } from '@/lib/ai-cache';
-import { checkRateLimit, rateLimitResponse } from '@/lib/rate-limit';
-import { logger } from '@/lib/logger';
 
-export const runtime = 'nodejs';
-export const dynamic = 'force-dynamic';
+export const { runtime, dynamic } = AI_ROUTE_DEFAULTS;
 export const maxDuration = 60;
 
 // --- Types ---------------------------------------------------------------
@@ -63,6 +54,9 @@ interface AiForecastResponse {
   bestDayReasoning?: unknown;
   trend?: unknown;
 }
+
+// eslint-disable-next-line @typescript-eslint/no-empty-object-type
+interface DealQualityForecasterInput {}
 
 // --- Helpers -------------------------------------------------------------
 
@@ -263,26 +257,209 @@ function buildDeterministicForecast(
   return { forecast, bestDayReasoning, trend };
 }
 
+// --- Prompt builder ------------------------------------------------------
+
+interface PromptArgs {
+  listingsLength: number;
+  byDayOfWeek: DayOfWeekStat[];
+  bestDay: string;
+  worstDay: string;
+  recent14AvgDealScore: number;
+  recent14AvgListingCountPerDay: number;
+  overallAvgListingCountPerDay: number;
+  recent14Prilika: number;
+  det: {
+    forecast: ForecastDay[];
+    bestDayReasoning: string;
+    trend: 'IMPROVING' | 'STABLE' | 'DECLINING';
+  };
+  maxListingCountPerDayX2: number;
+}
+
+function buildPrompt(args: PromptArgs): string {
+  const {
+    listingsLength,
+    byDayOfWeek,
+    bestDay,
+    worstDay,
+    recent14AvgDealScore,
+    recent14AvgListingCountPerDay,
+    overallAvgListingCountPerDay,
+    recent14Prilika,
+    det,
+    maxListingCountPerDayX2,
+  } = args;
+
+  const dayBlock = byDayOfWeek
+    .map(
+      d =>
+        `- ${d.day} (SL: ${DAY_NAMES_SL[DAY_NAMES_EN.indexOf(d.day)]}): avgDealScore=${d.avgDealScore}, avgEstValue=${d.avgEstValue}€, listingCount=${d.listingCount}, prilikaRate=${d.prilikaRate}%`,
+    )
+    .join('\n');
+
+  const overall90dAvg = byDayOfWeek.reduce((s, d) => s + d.avgDealScore * d.listingCount, 0) / Math.max(1, listingsLength);
+  const overall90dAvgRounded = overall90dAvg > 0 ? Math.round(overall90dAvg) : 0;
+
+  return `Si AI napovedovalec kvalitete deal-ov za slovenske in srednjeevropske oglasne platforme (Bolha, Vinted, Avtonet, mobile.de).
+Na podlagi ZGODOVINSKIH vzorcev po dnevih v tednu (zadnjih 90 dni) in recent trend-a (zadnjih 14 dni) napovi kvaliteto deal-ov za naslednjih 7 dni.
+
+ZGODOVINSKI VZORCI (po dnevih v tednu, zadnjih 90 dni, skupno ${listingsLength} oglasov):
+${dayBlock}
+
+BEST dan (zgodovinsko): ${bestDay}
+WORST dan (zgodovinsko): ${worstDay}
+
+RECENT TREND (zadnjih 14 dni):
+- avgDealScore: ${recent14AvgDealScore} (90d avg: ${overall90dAvgRounded})
+- avg listingCount/day: ${recent14AvgListingCountPerDay} (90d avg: ${overallAvgListingCountPerDay}/day)
+- prilikaRate: ${recent14Prilika}%
+
+DETERMINISTIČNA OSNOVA (uporabi kot referenco, AI lahko prilagodi ±20%):
+${det.forecast
+  .map(
+    f =>
+      `- ${f.date} (${f.dayOfWeek}): predvideno dealScore=${f.predictedDealScore}, listingCount=${f.predictedListingCount}, prilikaCount=${f.predictedPrilikaCount}, confidence=${f.confidenceScore}, rec=${f.recommendation}`,
+  )
+  .join('\n')}
+
+PRAVILA ZA NAPOVED:
+1. Za vsak od naslednjih 7 dni (start jutri) izračunaj:
+   - predictedDealScore (0-100, clamp): baziraj na zgodovinskem avg za ta dan v tednu, prilagodi glede na recent trend (±20%).
+   - predictedListingCount: baziraj na zgodovinskem avg za ta dan v tednu (clamp 0 do 2× max historical listingCount = ${maxListingCountPerDayX2}).
+   - predictedPrilikaCount: predictedListingCount × prilikaRate / 100 (clamp 0+).
+   - confidenceScore (0-100, clamp): višji če je več zgodovinskih podatkov + nižja variansa.
+   - recommendation: SCAN_ACTIVELY (dealScore >= 65 in prilikaCount >= 2), SCAN_NORMAL (50-64 in prilika >= 1), SKIP (< 35 in < 4 listings), CHECK_MORNING (45+ z malo prilik — jutra so aktivna), CHECK_EVENING (drugače).
+2. trend: IMPROVING (recent > 90d avg +5), STABLE (±5), DECLINING (recent < 90d avg -5).
+3. bestDayReasoning: 1-2 povedi slovensko, zakaj je izbran najboljši dan (z navedbo specificnih številk).
+
+VRNI LE JSON:
+{
+  "forecast": [
+    { "date": "YYYY-MM-DD", "dayOfWeek": "Monday", "predictedDealScore": 70, "predictedListingCount": 12, "predictedPrilikaCount": 3, "confidenceScore": 65, "recommendation": "SCAN_ACTIVELY" }
+  ],
+  "bestDayReasoning": "Torek = najboljši dan: ...",
+  "trend": "IMPROVING|STABLE|DECLINING"
+}${GROUNDING_PROMPT_SUFFIX}`;
+}
+
+// --- AI response parser --------------------------------------------------
+
+interface ParsedArgs {
+  parsed: AiForecastResponse | null;
+  det: {
+    forecast: ForecastDay[];
+    bestDayReasoning: string;
+    trend: 'IMPROVING' | 'STABLE' | 'DECLINING';
+  };
+  listingCountUpperBound: number;
+}
+
+function parseAiForecast(args: ParsedArgs): {
+  forecast: ForecastDay[];
+  bestDayReasoning: string;
+  trend: 'IMPROVING' | 'STABLE' | 'DECLINING';
+  aiUsed: boolean;
+} {
+  const { parsed, det, listingCountUpperBound } = args;
+
+  if (!parsed) {
+    return {
+      forecast: det.forecast,
+      bestDayReasoning: det.bestDayReasoning,
+      trend: det.trend,
+      aiUsed: false,
+    };
+  }
+
+  const aiForecast: ForecastDay[] = [];
+  if (Array.isArray(parsed.forecast)) {
+    for (let i = 0; i < Math.min(parsed.forecast.length, 7); i++) {
+      const f = parsed.forecast[i] as Record<string, unknown> | null;
+      if (!f || typeof f !== 'object') continue;
+      // Determine date — use deterministic date if AI didn't provide valid one
+      const detDay = det.forecast[i];
+      const aiDate =
+        typeof f.date === 'string' && f.date.length === 10
+          ? f.date
+          : detDay.date;
+      const aiDayOfWeek =
+        typeof f.dayOfWeek === 'string' &&
+        DAY_NAMES_EN.includes(f.dayOfWeek as (typeof DAY_NAMES_EN)[number])
+          ? (f.dayOfWeek as string)
+          : detDay.dayOfWeek;
+      const predictedDealScore = clampNumber(
+        f.predictedDealScore,
+        0,
+        100,
+        detDay.predictedDealScore,
+      );
+      const predictedListingCount = clampNumber(
+        f.predictedListingCount,
+        0,
+        listingCountUpperBound,
+        detDay.predictedListingCount,
+      );
+      const predictedPrilikaCount = clampNumber(
+        f.predictedPrilikaCount,
+        0,
+        predictedListingCount,
+        detDay.predictedPrilikaCount,
+      );
+      const confidenceScore = clampNumber(
+        f.confidenceScore,
+        0,
+        100,
+        detDay.confidenceScore,
+      );
+      const recommendation = clampEnum(
+        f.recommendation,
+        VALID_RECS,
+        detDay.recommendation,
+      );
+      aiForecast.push({
+        date: aiDate,
+        dayOfWeek: aiDayOfWeek,
+        predictedDealScore,
+        predictedListingCount,
+        predictedPrilikaCount,
+        confidenceScore,
+        recommendation,
+      });
+    }
+  }
+
+  const forecast = aiForecast.length > 0 ? aiForecast : det.forecast;
+  const bestDayReasoning = clampString(
+    parsed.bestDayReasoning,
+    400,
+    det.bestDayReasoning,
+  );
+  const trend = clampEnum(
+    parsed.trend,
+    ['IMPROVING', 'STABLE', 'DECLINING'] as const,
+    det.trend,
+  );
+
+  return { forecast, bestDayReasoning, trend, aiUsed: true };
+}
+
 // --- Handler -------------------------------------------------------------
 
-export async function GET(req: NextRequest) {
-  return handleDealQualityForecaster(req);
-}
-export async function POST(req: NextRequest) {
-  return handleDealQualityForecaster(req);
-}
+const dealQualityHandler = withAiRoute<DealQualityForecasterInput>({
+  endpoint: '/api/ai/deal-quality-forecaster',
+  maxDuration: 60,
+  enforceBudget: true, // AI klic — preveri budget
+  method: 'GET', // dual GET+POST
 
-async function handleDealQualityForecaster(req: NextRequest) {
-  try {
-    const rl = checkRateLimit(req, 'ai-deal-quality-forecaster', 20);
-    if (!rl.allowed) return rateLimitResponse(rl);
+  parseBody: async () => {
+    // Body ignored — forecast uses global listing history
+    return {};
+  },
 
-    // Parse body (optional, ignored — forecast uses global listing history)
-    try {
-      await req.json().catch(() => ({}));
-    } catch {
-      // GET request — no body, ignore
-    }
+  // No validateInput — body ignored
+
+  handler: async (_input, ctx: AiRouteContext) => {
+    const { db, callAi, parseAi, logger } = ctx;
 
     const now = Date.now();
     const dayMs = 86_400_000;
@@ -306,7 +483,7 @@ async function handleDealQualityForecaster(req: NextRequest) {
 
     // Empty state — return gracefully
     if (listings.length === 0) {
-      return NextResponse.json({
+      return apiOk({
         ok: true,
         historical: {
           byDayOfWeek: [],
@@ -450,7 +627,7 @@ async function handleDealQualityForecaster(req: NextRequest) {
       trend: 'IMPROVING' | 'STABLE' | 'DECLINING';
     }>(cacheKey);
     if (cached) {
-      return NextResponse.json({
+      return apiOk({
         ok: true,
         historical: {
           byDayOfWeek,
@@ -484,156 +661,38 @@ async function handleDealQualityForecaster(req: NextRequest) {
     }
 
     // 6) AI prompt with grounding
-    const settings = await getSettingsRow();
-    const aiSettings: AiSettings = {
-      provider: settings.aiProvider as AiProviderType,
-      baseUrl: settings.aiBaseUrl,
-      apiKey: settings.aiApiKey,
-      model: settings.aiModel,
-      fallbackProvider: (settings.fallbackProvider || '') as AiProviderType | '',
-      fallbackBaseUrl: settings.fallbackBaseUrl || '',
-      fallbackApiKey: settings.fallbackApiKey || '',
-      fallbackModel: settings.fallbackModel || '',
-    };
-
-    const dayBlock = byDayOfWeek
-      .map(
-        d =>
-          `- ${d.day} (SL: ${DAY_NAMES_SL[DAY_NAMES_EN.indexOf(d.day)]}): avgDealScore=${d.avgDealScore}, avgEstValue=${d.avgEstValue}€, listingCount=${d.listingCount}, prilikaRate=${d.prilikaRate}%`,
-      )
-      .join('\n');
-
-    const prompt = `Si AI napovedovalec kvalitete deal-ov za slovenske in srednjeevropske oglasne platforme (Bolha, Vinted, Avtonet, mobile.de).
-Na podlagi ZGODOVINSKIH vzorcev po dnevih v tednu (zadnjih 90 dni) in recent trend-a (zadnjih 14 dni) napovi kvaliteto deal-ov za naslednjih 7 dni.
-
-ZGODOVINSKI VZORCI (po dnevih v tednu, zadnjih 90 dni, skupno ${listings.length} oglasov):
-${dayBlock}
-
-BEST dan (zgodovinsko): ${bestDay}
-WORST dan (zgodovinsko): ${worstDay}
-
-RECENT TREND (zadnjih 14 dni):
-- avgDealScore: ${recent14AvgDealScore} (90d avg: ${byDayOfWeek.reduce((s, d) => s + d.avgDealScore * d.listingCount, 0) / Math.max(1, listings.length) > 0 ? Math.round(byDayOfWeek.reduce((s, d) => s + d.avgDealScore * d.listingCount, 0) / Math.max(1, listings.length)) : 0})
-- avg listingCount/day: ${recent14AvgListingCountPerDay} (90d avg: ${overallAvgListingCountPerDay}/day)
-- prilikaRate: ${recent14Prilika}%
-
-DETERMINISTIČNA OSNOVA (uporabi kot referenco, AI lahko prilagodi ±20%):
-${det.forecast
-  .map(
-    f =>
-      `- ${f.date} (${f.dayOfWeek}): predvideno dealScore=${f.predictedDealScore}, listingCount=${f.predictedListingCount}, prilikaCount=${f.predictedPrilikaCount}, confidence=${f.confidenceScore}, rec=${f.recommendation}`,
-  )
-  .join('\n')}
-
-PRAVILA ZA NAPOVED:
-1. Za vsak od naslednjih 7 dni (start jutri) izračunaj:
-   - predictedDealScore (0-100, clamp): baziraj na zgodovinskem avg za ta dan v tednu, prilagodi glede na recent trend (±20%).
-   - predictedListingCount: baziraj na zgodovinskem avg za ta dan v tednu (clamp 0 do 2× max historical listingCount = ${Math.max(...byDayOfWeek.map(d => d.listingCount), 0) * 2}).
-   - predictedPrilikaCount: predictedListingCount × prilikaRate / 100 (clamp 0+).
-   - confidenceScore (0-100, clamp): višji če je več zgodovinskih podatkov + nižja variansa.
-   - recommendation: SCAN_ACTIVELY (dealScore >= 65 in prilikaCount >= 2), SCAN_NORMAL (50-64 in prilika >= 1), SKIP (< 35 in < 4 listings), CHECK_MORNING (45+ z malo prilik — jutra so aktivna), CHECK_EVENING (drugače).
-2. trend: IMPROVING (recent > 90d avg +5), STABLE (±5), DECLINING (recent < 90d avg -5).
-3. bestDayReasoning: 1-2 povedi slovensko, zakaj je izbran najboljši dan (z navedbo specificnih številk).
-
-VRNI LE JSON:
-{
-  "forecast": [
-    { "date": "YYYY-MM-DD", "dayOfWeek": "Monday", "predictedDealScore": 70, "predictedListingCount": 12, "predictedPrilikaCount": 3, "confidenceScore": 65, "recommendation": "SCAN_ACTIVELY" }
-  ],
-  "bestDayReasoning": "Torek = najboljši dan: ...",
-  "trend": "IMPROVING|STABLE|DECLINING"
-}${GROUNDING_PROMPT_SUFFIX}`;
-
-    let aiUsed = false;
-    let forecast: ForecastDay[] = det.forecast;
-    let bestDayReasoning = det.bestDayReasoning;
-    let trend: 'IMPROVING' | 'STABLE' | 'DECLINING' = det.trend;
-
-    // Compute historical max listing count per day (for clamping)
     const maxListingCountPerDay = Math.max(
       ...byDayOfWeek.map(d => d.listingCount),
       0,
     );
     const listingCountUpperBound = maxListingCountPerDay * 2;
 
+    const prompt = buildPrompt({
+      listingsLength: listings.length,
+      byDayOfWeek,
+      bestDay,
+      worstDay,
+      recent14AvgDealScore,
+      recent14AvgListingCountPerDay,
+      overallAvgListingCountPerDay,
+      recent14Prilika,
+      det,
+      maxListingCountPerDayX2: maxListingCountPerDay * 2,
+    });
+
+    let aiUsed = false;
+    let forecast: ForecastDay[] = det.forecast;
+    let bestDayReasoning = det.bestDayReasoning;
+    let trend: 'IMPROVING' | 'STABLE' | 'DECLINING' = det.trend;
+
     try {
-      const raw = await callProviderForRaw(aiSettings, prompt);
-      const parsed = parseJsonLooseExported(raw) as AiForecastResponse | null;
-
-      if (parsed) {
-        // Parse AI forecast array
-        const aiForecast: ForecastDay[] = [];
-        if (Array.isArray(parsed.forecast)) {
-          for (let i = 0; i < Math.min(parsed.forecast.length, 7); i++) {
-            const f = parsed.forecast[i] as Record<string, unknown> | null;
-            if (!f || typeof f !== 'object') continue;
-            // Determine date — use deterministic date if AI didn't provide valid one
-            const detDay = det.forecast[i];
-            const aiDate =
-              typeof f.date === 'string' && f.date.length === 10
-                ? f.date
-                : detDay.date;
-            const aiDayOfWeek =
-              typeof f.dayOfWeek === 'string' &&
-              DAY_NAMES_EN.includes(f.dayOfWeek as (typeof DAY_NAMES_EN)[number])
-                ? (f.dayOfWeek as string)
-                : detDay.dayOfWeek;
-            const predictedDealScore = clampNumber(
-              f.predictedDealScore,
-              0,
-              100,
-              detDay.predictedDealScore,
-            );
-            const predictedListingCount = clampNumber(
-              f.predictedListingCount,
-              0,
-              listingCountUpperBound,
-              detDay.predictedListingCount,
-            );
-            const predictedPrilikaCount = clampNumber(
-              f.predictedPrilikaCount,
-              0,
-              predictedListingCount,
-              detDay.predictedPrilikaCount,
-            );
-            const confidenceScore = clampNumber(
-              f.confidenceScore,
-              0,
-              100,
-              detDay.confidenceScore,
-            );
-            const recommendation = clampEnum(
-              f.recommendation,
-              VALID_RECS,
-              detDay.recommendation,
-            );
-            aiForecast.push({
-              date: aiDate,
-              dayOfWeek: aiDayOfWeek,
-              predictedDealScore,
-              predictedListingCount,
-              predictedPrilikaCount,
-              confidenceScore,
-              recommendation,
-            });
-          }
-        }
-        if (aiForecast.length > 0) {
-          forecast = aiForecast;
-        }
-
-        bestDayReasoning = clampString(
-          parsed.bestDayReasoning,
-          400,
-          det.bestDayReasoning,
-        );
-        trend = clampEnum(
-          parsed.trend,
-          ['IMPROVING', 'STABLE', 'DECLINING'] as const,
-          det.trend,
-        );
-        aiUsed = true;
-      }
+      const raw = await callAi(prompt);
+      const parsed = parseAi(raw) as AiForecastResponse | null;
+      const result = parseAiForecast({ parsed, det, listingCountUpperBound });
+      forecast = result.forecast;
+      bestDayReasoning = result.bestDayReasoning;
+      trend = result.trend;
+      aiUsed = result.aiUsed;
     } catch (err) {
       logger.warn(
         '/api/ai/deal-quality-forecaster',
@@ -661,7 +720,7 @@ VRNI LE JSON:
           )
         : 0;
 
-    return NextResponse.json({
+    return apiOk({
       ok: true,
       historical: {
         byDayOfWeek,
@@ -678,8 +737,8 @@ VRNI LE JSON:
       },
       aiUsed,
     });
-  } catch (err: any) {
-    logger.error('/api/ai/deal-quality-forecaster', 'handler failed', err);
-    return NextResponse.json({ error: err?.message ?? 'Napaka' }, { status: 500 });
-  }
-}
+  },
+});
+
+export const GET = dealQualityHandler;
+export const POST = dealQualityHandler;

@@ -1,4 +1,4 @@
-// v8.06: AI Deal Source Cash Flow Maximizer — AI MAXIMIZIRA CASH FLOW per
+// v8.06 / v8.96.4-batch4: AI Deal Source Cash Flow Maximizer — AI MAXIMIZIRA CASH FLOW per
 // source (ne samo profit ampak dejanski cash generated per source — accounting
 // za fees, carrying costs in time value of money). "Bolha generira 3200€
 // cash flow/month ampak bi lahko bilo 4800€ z 3 akcijami — Vinted samo 800€."
@@ -19,27 +19,23 @@
 // maksimizira CASH FLOW PER SOURCE z projectedCashFlow30d. Razlika od
 // profit-compounding-maximizer (v8.04 ki maksimizira compounding reinvest rate)
 // — ta daje per-source cash flow z feeOptimizationPlan in sourceCashFlowRanking.
-
+//
 // GET+POST /api/ai/deal-source-cash-flow-maximizer
 // (AI-enhanced + grounding + anti-hallucination + 6h cache + deterministic fallback)
+// Refaktoriran z withAiRoute helperjem (v8.96.4) + enforceBudget guard.
 
-import { NextRequest, NextResponse } from 'next/server';
-import { db } from '@/lib/db';
-import { getSettingsRow } from '@/lib/pipeline';
-import {
-  callProviderForRaw,
-  parseJsonLooseExported,
-  type AiProviderType,
-  type AiSettings,
-} from '@/lib/ai';
+import { withAiRoute, AI_ROUTE_DEFAULTS, type AiRouteContext } from '@/lib/with-ai-route';
+import { apiOk } from '@/lib/api-response';
 import { GROUNDING_PROMPT_SUFFIX } from '@/lib/anti-hallucination';
 import { getCachedAI, setCachedAI } from '@/lib/ai-cache';
-import { checkRateLimit, rateLimitResponse } from '@/lib/rate-limit';
-import { logger } from '@/lib/logger';
 
-export const runtime = 'nodejs';
-export const dynamic = 'force-dynamic';
+export const { runtime, dynamic } = AI_ROUTE_DEFAULTS;
 export const maxDuration = 60;
+
+// --- Input ----------------------------------------------------------------
+
+// eslint-disable-next-line @typescript-eslint/no-empty-object-type
+interface DealSourceCashFlowMaximizerInput {}
 
 // --- Types ---------------------------------------------------------------
 
@@ -502,161 +498,53 @@ function buildSummary(entries: SourceEntry[], portfolio: PortfolioSummary): stri
   return parts.join(' ').slice(0, 400);
 }
 
-// --- Handler -------------------------------------------------------------
+// --- Prompt builder -------------------------------------------------------
 
-export async function GET(req: NextRequest) {
-  return handleDealSourceCashFlowMaximizer(req);
+function buildPromptData(
+  entries: SourceEntry[],
+  portfolio: PortfolioSummary,
+  computedCount: number,
+) {
+  // Compact context for AI
+  const sourcesForAI = entries.map((e) => ({
+    source: e.source,
+    displayName: e.displayName,
+    metrics: e.metrics,
+    deterministicMaximization: e.maximization,
+  }));
+
+  return {
+    totalTrades: computedCount,
+    totalSources: entries.length,
+    sources: sourcesForAI,
+    deterministicPortfolio: {
+      totalCurrentCashFlow: portfolio.totalCurrentCashFlow,
+      totalMaximizedCashFlow: portfolio.totalMaximizedCashFlow,
+      totalCashFlowUplift: portfolio.totalCashFlowUplift,
+      sourceCashFlowRanking: portfolio.sourceCashFlowRanking,
+    },
+    caps: {
+      revenueMin: REVENUE_MIN, revenueMax: REVENUE_MAX,
+      feesMin: FEES_MIN, feesMax: FEES_MAX,
+      carryingMin: CARRYING_MIN, carryingMax: CARRYING_MAX,
+      cashFlowMin: CASH_FLOW_MIN, cashFlowMax: CASH_FLOW_MAX,
+      cashFlowPerMonthMin: CASH_FLOW_PER_MONTH_MIN, cashFlowPerMonthMax: CASH_FLOW_PER_MONTH_MAX,
+      upliftMin: UPLIFT_MIN, upliftMax: UPLIFT_MAX,
+      scoreMin: SCORE_MIN, scoreMax: SCORE_MAX,
+      capitalMin: CAPITAL_MIN, capitalMax: CAPITAL_MAX,
+      holdMin: HOLD_MIN, holdMax: HOLD_MAX,
+      projected30dMin: PROJECTED_30D_MIN, projected30dMax: PROJECTED_30D_MAX,
+    },
+  };
 }
-export async function POST(req: NextRequest) {
-  return handleDealSourceCashFlowMaximizer(req);
-}
 
-async function handleDealSourceCashFlowMaximizer(req: NextRequest) {
-  try {
-    const rl = checkRateLimit(req, 'ai-deal-source-cash-flow-maximizer', 20);
-    if (!rl.allowed) return rateLimitResponse(rl);
-
-    const now = Date.now();
-    const twelveMonthsAgo = new Date(now - TWELVE_MONTHS_MS);
-
-    // 1) Query SOLD trades from last 12 months with linked Listing (for source)
-    const soldTrades = await db.trade.findMany({
-      where: {
-        status: 'sold',
-        sellDate: { gte: twelveMonthsAgo },
-        sellPrice: { gt: 0 },
-      },
-      select: {
-        id: true,
-        buyPrice: true,
-        buyFees: true,
-        buyDate: true,
-        sellPrice: true,
-        sellFees: true,
-        sellDate: true,
-        buyLocation: true,
-        listing: {
-          select: {
-            monitor: { select: { source: true, tags: true } },
-          },
-        },
-      },
-      orderBy: { sellDate: 'asc' },
-      take: 100000,
-    }) as unknown as SoldTradeRow[];
-
-    // Empty-state: no SOLD trades
-    if (soldTrades.length === 0) {
-      return NextResponse.json({
-        ok: true,
-        sources: [],
-        portfolio: {
-          totalCurrentCashFlow: 0,
-          totalMaximizedCashFlow: 0,
-          totalCashFlowUplift: 0,
-          sourceCashFlowRanking: [],
-        },
-        summary: 'Ni SOLD trgovin v zadnjih 12 mesecih — Deal Source Cash Flow Maximizer ni mogoč.',
-        aiUsed: false,
-        message: 'Ni SOLD trgovin v zadnjih 12 mesecih — Deal Source Cash Flow Maximizer ni mogoč.',
-      } satisfies DealSourceCashFlowResponse);
-    }
-
-    // 2) Compute per-trade metrics and aggregate by source
-    const computed: TradeComputed[] = [];
-    for (const t of soldTrades) {
-      const c = computeTrade(t, now);
-      if (c) computed.push(c);
-    }
-
-    if (computed.length === 0) {
-      return NextResponse.json({
-        ok: true,
-        sources: [],
-        portfolio: {
-          totalCurrentCashFlow: 0,
-          totalMaximizedCashFlow: 0,
-          totalCashFlowUplift: 0,
-          sourceCashFlowRanking: [],
-        },
-        summary: 'Ni veljavnih SOLD trgovin — Deal Source Cash Flow Maximizer ni mogoč.',
-        aiUsed: false,
-        message: 'Ni veljavnih SOLD trgovin — Deal Source Cash Flow Maximizer ni mogoč.',
-      } satisfies DealSourceCashFlowResponse);
-    }
-
-    const aggMap = aggregateBySource(computed);
-    let entries = buildSourceEntries(aggMap);
-    let portfolio = buildPortfolio(entries);
-    let summary = buildSummary(entries, portfolio);
-
-    // 3) AI cache check (6h TTL) — key by current month
-    const currentMonth = new Date(now).toISOString().slice(0, 7); // YYYY-MM
-    const cacheKey = `deal-source-cash-flow-maximizer:${currentMonth}`;
-    const cached = getCachedAI<{
-      sources: SourceEntry[];
-      portfolio: PortfolioSummary;
-      summary: string;
-    }>(cacheKey);
-    if (cached) {
-      return NextResponse.json({
-        ok: true,
-        sources: cached.sources,
-        portfolio: cached.portfolio,
-        summary: cached.summary,
-        cached: true,
-        aiUsed: true,
-      } satisfies DealSourceCashFlowResponse);
-    }
-
-    // 4) AI prompt with grounding
-    const settings = await getSettingsRow();
-    const aiSettings: AiSettings = {
-      provider: settings.aiProvider as AiProviderType,
-      baseUrl: settings.aiBaseUrl,
-      apiKey: settings.aiApiKey,
-      model: settings.aiModel,
-      fallbackProvider: (settings.fallbackProvider || '') as
-        | AiProviderType
-        | '',
-      fallbackBaseUrl: settings.fallbackBaseUrl || '',
-      fallbackApiKey: settings.fallbackApiKey || '',
-      fallbackModel: settings.fallbackModel || '',
-    };
-
-    // Compact context for AI
-    const sourcesForAI = entries.map((e) => ({
-      source: e.source,
-      displayName: e.displayName,
-      metrics: e.metrics,
-      deterministicMaximization: e.maximization,
-    }));
-
-    const promptData = {
-      totalTrades: computed.length,
-      totalSources: entries.length,
-      sources: sourcesForAI,
-      deterministicPortfolio: {
-        totalCurrentCashFlow: portfolio.totalCurrentCashFlow,
-        totalMaximizedCashFlow: portfolio.totalMaximizedCashFlow,
-        totalCashFlowUplift: portfolio.totalCashFlowUplift,
-        sourceCashFlowRanking: portfolio.sourceCashFlowRanking,
-      },
-      caps: {
-        revenueMin: REVENUE_MIN, revenueMax: REVENUE_MAX,
-        feesMin: FEES_MIN, feesMax: FEES_MAX,
-        carryingMin: CARRYING_MIN, carryingMax: CARRYING_MAX,
-        cashFlowMin: CASH_FLOW_MIN, cashFlowMax: CASH_FLOW_MAX,
-        cashFlowPerMonthMin: CASH_FLOW_PER_MONTH_MIN, cashFlowPerMonthMax: CASH_FLOW_PER_MONTH_MAX,
-        upliftMin: UPLIFT_MIN, upliftMax: UPLIFT_MAX,
-        scoreMin: SCORE_MIN, scoreMax: SCORE_MAX,
-        capitalMin: CAPITAL_MIN, capitalMax: CAPITAL_MAX,
-        holdMin: HOLD_MIN, holdMax: HOLD_MAX,
-        projected30dMin: PROJECTED_30D_MIN, projected30dMax: PROJECTED_30D_MAX,
-      },
-    };
-
-    const prompt = `Si AI "Deal Source Cash Flow Maximizer" za slovenske in srednjeevropske oglasne platforme (Bolha, Vinted, Avtonet, mobile.de).
+function buildPrompt(
+  entries: SourceEntry[],
+  portfolio: PortfolioSummary,
+  computedCount: number,
+): string {
+  const promptData = buildPromptData(entries, portfolio, computedCount);
+  return `Si AI "Deal Source Cash Flow Maximizer" za slovenske in srednjeevropske oglasne platforme (Bolha, Vinted, Avtonet, mobile.de).
 Si strokovnjak za CASH FLOW MAXIMIZATION per source — kako maksimizirati NET CASH FLOW (revenue − fees − carrying costs) per source per month. Tvoj cilj je "Bolha generira 3200€ cash flow/mesec ampak bi lahko bilo 4800€ z 3 akcijami — Vinted samo 800€". Razlika od deal-source-capital-efficiency-maximizer (v8.05 ki maksimizira capital efficiency per source = profit per euro per day) — ti MAKSIMIZIRAŠ CASH FLOW per source (cash generiran per mesec po fees + carrying costs). Razlika od deal-source-profit-maximizer (v7.97 ki maksimizira total profit per source) — ta maksimizira NET CASH FLOW (revenue − fees − carrying costs) z cashFlowEfficiency. Razlika od deal-source-profit-per-trade-maximizer (v8.04 ki maksimizira profit per trade €) — ta maksimizira CASH FLOW per source per month. Razlika od deal-source-margin-maximizer (v8.03 ki maksimizira margin %) — ta maksimizira CASH FLOW z feeOptimizationPlan in carryingCostReduction. Razlika od deal-source-roi-maximizer (v8.00 ki maksimizira ROI per source) — ta maksimizira cashFlowVelocityScore. Razlika od cashflow engine (v7.40 ki analyzia cashflow čez portfolio) — ta maksimizira per-source CASH FLOW z cashFlowMaximizationAction. Razlika od cash-recovery-accelerator (v7.97 ki accelerira cash recovery) — ta maksimizira CASH FLOW PER SOURCE z projectedCashFlow30d. Razlika od profit-compounding-maximizer (v8.04 ki maksimizira compounding reinvest rate) — ta daje per-source cash flow z feeOptimizationPlan in sourceCashFlowRanking.
 
 DETERMINISTIČNI PODATKI (izračunano iz DB — SOLD trgovin v zadnjih 12 mesecih z linked Listing za source):
@@ -701,91 +589,231 @@ VRNI LE JSON:
   ],
   "summary": "2 source-a. Bolha 3200€/mo → 4800€/mo (+1600€, MORE_VOLUME). Vinted 800€/mo → 1100€/mo (+300€, REDUCE_FEES). Portfolio: 4000€ → 5900€/mo (+1900€)."
 }${GROUNDING_PROMPT_SUFFIX}`;
+}
+
+// --- AI merge ------------------------------------------------------------
+
+interface AiMergedSources {
+  entries: SourceEntry[];
+  portfolio: PortfolioSummary;
+  summary: string;
+  aiUsed: boolean;
+}
+
+function mergeAiIntoSources(
+  parsed: AiResponse | null,
+  entries: SourceEntry[],
+  portfolio: PortfolioSummary,
+  detSummary: string,
+): AiMergedSources {
+  if (!parsed || typeof parsed !== 'object') {
+    return { entries, portfolio, summary: detSummary, aiUsed: false };
+  }
+
+  const aiSourcesMap = new Map<string, NonNullable<AiResponse['sources']>[number]>();
+  if (Array.isArray(parsed.sources)) {
+    for (const ai of parsed.sources) {
+      if (ai && typeof ai === 'object' && typeof ai.source === 'string') {
+        aiSourcesMap.set(ai.source, ai);
+      }
+    }
+  }
+
+  const newEntries: SourceEntry[] = [];
+  for (const det of entries) {
+    const ai = aiSourcesMap.get(det.source);
+    if (!ai || !ai.maximization) {
+      newEntries.push(det);
+      continue;
+    }
+
+    const aiMax = ai.maximization;
+    const action = clampEnum(
+      aiMax.cashFlowMaximizationAction,
+      VALID_ACTION,
+      det.maximization.cashFlowMaximizationAction,
+    );
+
+    // Anti-hallucination: projectedCashFlow30d ∈ [current, current × 1.5 ali +5000€]
+    const maxBound = Math.min(
+      PROJECTED_30D_MAX,
+      Math.max(
+        det.metrics.cashFlowPerMonth + 100,
+        Math.min(det.metrics.cashFlowPerMonth * 1.5 + 500, det.metrics.cashFlowPerMonth + 5000),
+      ),
+    );
+    const minBound = Math.max(PROJECTED_30D_MIN, det.metrics.cashFlowPerMonth);
+    const projectedCashFlow30d = round0(clampNum(
+      aiMax.projectedCashFlow30d,
+      minBound, maxBound,
+      det.maximization.projectedCashFlow30d,
+    ));
+    const cashFlowUplift = round0(clampNum(
+      Math.max(0, projectedCashFlow30d - det.metrics.cashFlowPerMonth),
+      UPLIFT_MIN, UPLIFT_MAX, 0,
+    ));
+    const cashFlowVelocityScore = round0(clampNum(
+      aiMax.cashFlowVelocityScore,
+      SCORE_MIN, SCORE_MAX,
+      det.maximization.cashFlowVelocityScore,
+    ));
+    const feeOptimizationPlan = clampString(
+      aiMax.feeOptimizationPlan, 400, det.maximization.feeOptimizationPlan,
+    );
+    const carryingCostReduction = clampString(
+      aiMax.carryingCostReduction, 400, det.maximization.carryingCostReduction,
+    );
+
+    newEntries.push({
+      source: det.source,
+      displayName: det.displayName,
+      metrics: det.metrics,
+      maximization: {
+        cashFlowMaximizationAction: action,
+        projectedCashFlow30d,
+        cashFlowUplift,
+        feeOptimizationPlan,
+        carryingCostReduction,
+        cashFlowVelocityScore,
+      },
+    });
+  }
+
+  let finalEntries = entries;
+  if (newEntries.length === entries.length) {
+    finalEntries = newEntries;
+  }
+
+  // Rebuild portfolio with new entries
+  const newPortfolio = buildPortfolio(finalEntries);
+  const summary = clampString(parsed.summary, 400, buildSummary(finalEntries, newPortfolio));
+  return { entries: finalEntries, portfolio: newPortfolio, summary, aiUsed: true };
+}
+
+// --- Handler -------------------------------------------------------------
+
+const cashFlowMaximizerHandler = withAiRoute<DealSourceCashFlowMaximizerInput>({
+  endpoint: '/api/ai/deal-source-cash-flow-maximizer',
+  maxDuration: 60,
+  enforceBudget: true, // AI klic — preveri budget
+  method: 'GET', // Endpoint sprejema GET + POST — bypass POST-only check
+
+  parseBody: async (req) => {
+    await req.json().catch(() => ({}));
+    return {};
+  },
+
+  // No validateInput — body ignored, identična logika za GET in POST
+  handler: async (_input, ctx: AiRouteContext) => {
+    const { db, callAi, parseAi, logger } = ctx;
+
+    const now = Date.now();
+    const twelveMonthsAgo = new Date(now - TWELVE_MONTHS_MS);
+
+    // 1) Query SOLD trades from last 12 months with linked Listing (for source)
+    const soldTrades = await db.trade.findMany({
+      where: {
+        status: 'sold',
+        sellDate: { gte: twelveMonthsAgo },
+        sellPrice: { gt: 0 },
+      },
+      select: {
+        id: true,
+        buyPrice: true,
+        buyFees: true,
+        buyDate: true,
+        sellPrice: true,
+        sellFees: true,
+        sellDate: true,
+        buyLocation: true,
+        listing: {
+          select: {
+            monitor: { select: { source: true, tags: true } },
+          },
+        },
+      },
+      orderBy: { sellDate: 'asc' },
+      take: 100000,
+    }) as unknown as SoldTradeRow[];
+
+    // Empty-state: no SOLD trades
+    if (soldTrades.length === 0) {
+      return apiOk({
+        ok: true,
+        sources: [],
+        portfolio: {
+          totalCurrentCashFlow: 0,
+          totalMaximizedCashFlow: 0,
+          totalCashFlowUplift: 0,
+          sourceCashFlowRanking: [],
+        },
+        summary: 'Ni SOLD trgovin v zadnjih 12 mesecih — Deal Source Cash Flow Maximizer ni mogoč.',
+        aiUsed: false,
+        message: 'Ni SOLD trgovin v zadnjih 12 mesecih — Deal Source Cash Flow Maximizer ni mogoč.',
+      } satisfies DealSourceCashFlowResponse);
+    }
+
+    // 2) Compute per-trade metrics and aggregate by source
+    const computed: TradeComputed[] = [];
+    for (const t of soldTrades) {
+      const c = computeTrade(t, now);
+      if (c) computed.push(c);
+    }
+
+    if (computed.length === 0) {
+      return apiOk({
+        ok: true,
+        sources: [],
+        portfolio: {
+          totalCurrentCashFlow: 0,
+          totalMaximizedCashFlow: 0,
+          totalCashFlowUplift: 0,
+          sourceCashFlowRanking: [],
+        },
+        summary: 'Ni veljavnih SOLD trgovin — Deal Source Cash Flow Maximizer ni mogoč.',
+        aiUsed: false,
+        message: 'Ni veljavnih SOLD trgovin — Deal Source Cash Flow Maximizer ni mogoč.',
+      } satisfies DealSourceCashFlowResponse);
+    }
+
+    const aggMap = aggregateBySource(computed);
+    let entries = buildSourceEntries(aggMap);
+    let portfolio = buildPortfolio(entries);
+    let summary = buildSummary(entries, portfolio);
+
+    // 3) AI cache check (6h TTL) — key by current month
+    const currentMonth = new Date(now).toISOString().slice(0, 7); // YYYY-MM
+    const cacheKey = `deal-source-cash-flow-maximizer:${currentMonth}`;
+    const cached = getCachedAI<{
+      sources: SourceEntry[];
+      portfolio: PortfolioSummary;
+      summary: string;
+    }>(cacheKey);
+    if (cached) {
+      return apiOk({
+        ok: true,
+        sources: cached.sources,
+        portfolio: cached.portfolio,
+        summary: cached.summary,
+        cached: true,
+        aiUsed: true,
+      } satisfies DealSourceCashFlowResponse);
+    }
+
+    // 4) AI prompt with grounding
+    const prompt = buildPrompt(entries, portfolio, computed.length);
 
     let aiUsed = false;
 
     try {
-      const raw = await callProviderForRaw(aiSettings, prompt);
-      const parsed = parseJsonLooseExported(raw) as AiResponse | null;
+      const raw = await callAi(prompt);
+      const parsed = parseAi(raw) as AiResponse | null;
 
-      if (parsed && typeof parsed === 'object') {
-        const aiSourcesMap = new Map<string, NonNullable<AiResponse['sources']>[number]>();
-        if (Array.isArray(parsed.sources)) {
-          for (const ai of parsed.sources) {
-            if (ai && typeof ai === 'object' && typeof ai.source === 'string') {
-              aiSourcesMap.set(ai.source, ai);
-            }
-          }
-        }
-
-        const newEntries: SourceEntry[] = [];
-        for (const det of entries) {
-          const ai = aiSourcesMap.get(det.source);
-          if (!ai || !ai.maximization) {
-            newEntries.push(det);
-            continue;
-          }
-
-          const aiMax = ai.maximization;
-          const action = clampEnum(
-            aiMax.cashFlowMaximizationAction,
-            VALID_ACTION,
-            det.maximization.cashFlowMaximizationAction,
-          );
-
-          // Anti-hallucination: projectedCashFlow30d ∈ [current, current × 1.5 ali +5000€]
-          const maxBound = Math.min(
-            PROJECTED_30D_MAX,
-            Math.max(
-              det.metrics.cashFlowPerMonth + 100,
-              Math.min(det.metrics.cashFlowPerMonth * 1.5 + 500, det.metrics.cashFlowPerMonth + 5000),
-            ),
-          );
-          const minBound = Math.max(PROJECTED_30D_MIN, det.metrics.cashFlowPerMonth);
-          const projectedCashFlow30d = round0(clampNum(
-            aiMax.projectedCashFlow30d,
-            minBound, maxBound,
-            det.maximization.projectedCashFlow30d,
-          ));
-          const cashFlowUplift = round0(clampNum(
-            Math.max(0, projectedCashFlow30d - det.metrics.cashFlowPerMonth),
-            UPLIFT_MIN, UPLIFT_MAX, 0,
-          ));
-          const cashFlowVelocityScore = round0(clampNum(
-            aiMax.cashFlowVelocityScore,
-            SCORE_MIN, SCORE_MAX,
-            det.maximization.cashFlowVelocityScore,
-          ));
-          const feeOptimizationPlan = clampString(
-            aiMax.feeOptimizationPlan, 400, det.maximization.feeOptimizationPlan,
-          );
-          const carryingCostReduction = clampString(
-            aiMax.carryingCostReduction, 400, det.maximization.carryingCostReduction,
-          );
-
-          newEntries.push({
-            source: det.source,
-            displayName: det.displayName,
-            metrics: det.metrics,
-            maximization: {
-              cashFlowMaximizationAction: action,
-              projectedCashFlow30d,
-              cashFlowUplift,
-              feeOptimizationPlan,
-              carryingCostReduction,
-              cashFlowVelocityScore,
-            },
-          });
-        }
-
-        if (newEntries.length === entries.length) {
-          entries = newEntries;
-        }
-
-        // Rebuild portfolio with new entries
-        portfolio = buildPortfolio(entries);
-
-        summary = clampString(parsed.summary, 400, buildSummary(entries, portfolio));
+      const result = mergeAiIntoSources(parsed, entries, portfolio, summary);
+      if (result.aiUsed) {
+        entries = result.entries;
+        portfolio = result.portfolio;
+        summary = result.summary;
         aiUsed = true;
       }
     } catch (err) {
@@ -801,22 +829,15 @@ VRNI LE JSON:
       setCachedAI(cacheKey, { sources: entries, portfolio, summary });
     }
 
-    return NextResponse.json({
+    return apiOk({
       ok: true,
       sources: entries,
       portfolio,
       summary,
       aiUsed,
     } satisfies DealSourceCashFlowResponse);
-  } catch (err: any) {
-    logger.error(
-      '/api/ai/deal-source-cash-flow-maximizer',
-      'handler failed',
-      err,
-    );
-    return NextResponse.json(
-      { error: err?.message ?? 'Napaka' },
-      { status: 500 },
-    );
-  }
-}
+  },
+});
+
+export const GET = cashFlowMaximizerHandler;
+export const POST = cashFlowMaximizerHandler;
