@@ -1,21 +1,32 @@
-// v6.42: AI Predictive Risk Hedging — hedža tveganja z diverzifikacijo in zavarovanjem
+// v6.42 / v8.95.8-refactor: AI Predictive Risk Hedging — hedža tveganja z diverzifikacijo in zavarovanjem
 // POST /api/ai/risk-hedging
 // Body: {}
 // Returns: { ok, hedging: { risks, hedges, strategies, coverage, recommendations } }
+// Refaktoriran z withAiRoute helperjem (v8.95.8) + enforceBudget guard.
 
-import { NextRequest, NextResponse } from 'next/server';
-import { db } from '@/lib/db';
-import { getSettingsRow } from '@/lib/pipeline';
-import { callProviderForRaw, parseJsonLooseExported, type AiProviderType, type AiSettings } from '@/lib/ai';
-import { logger } from '@/lib/logger';
+import { withAiRoute, AI_ROUTE_DEFAULTS, type AiRouteContext } from '@/lib/with-ai-route';
+import { apiOk } from '@/lib/api-response';
 
-export const runtime = 'nodejs';
-export const dynamic = 'force-dynamic';
+export const { runtime, dynamic } = AI_ROUTE_DEFAULTS;
 export const maxDuration = 90;
 
-export async function POST(req: NextRequest) {
-  try {
+// eslint-disable-next-line @typescript-eslint/no-empty-object-type
+interface RiskHedgingInput {}
+
+export const POST = withAiRoute<RiskHedgingInput>({
+  endpoint: '/api/ai/risk-hedging',
+  maxDuration: 90,
+  enforceBudget: true, // AI klic — preveri budget
+
+  parseBody: async (req) => {
     await req.json().catch(() => ({}));
+    return {};
+  },
+
+  // No validateInput — body je prazen
+
+  handler: async (_input, ctx: AiRouteContext) => {
+    const { db, callAi, parseAi } = ctx;
 
     const heldTrades = await db.trade.findMany({
       where: { status: 'held' },
@@ -30,36 +41,62 @@ export async function POST(req: NextRequest) {
       take: 200,
     });
 
-    if (heldTrades.length === 0) { return NextResponse.json({ ok: true, hedging: null, message: 'Ni held tradeov za risk hedging.' }); }
-
-    const settings = await getSettingsRow();
-    const aiSettings: AiSettings = {
-      provider: settings.aiProvider as AiProviderType,
-      baseUrl: settings.aiBaseUrl, apiKey: settings.aiApiKey, model: settings.aiModel,
-      fallbackProvider: (settings.fallbackProvider || '') as AiProviderType | '',
-      fallbackBaseUrl: settings.fallbackBaseUrl || '', fallbackApiKey: settings.fallbackApiKey || '',
-      fallbackModel: settings.fallbackModel || '',
-    };
+    if (heldTrades.length === 0) {
+      return apiOk({ ok: true, hedging: null, message: 'Ni held tradeov za risk hedging.' });
+    }
 
     const totalValue = heldTrades.reduce((s, t) => s + t.buyPrice + (t.buyFees ?? 0), 0);
     const byCat: Record<string, { count: number; value: number }> = {};
-    for (const t of heldTrades) { const c = t.category || 'drugo'; if (!byCat[c]) byCat[c] = { count: 0, value: 0 }; byCat[c].count++; byCat[c].value += t.buyPrice; }
-    const topCat = Object.entries(byCat).sort(([,a],[,b]) => b.value - a.value)[0];
+    for (const t of heldTrades) {
+      const c = t.category || 'drugo';
+      if (!byCat[c]) byCat[c] = { count: 0, value: 0 };
+      byCat[c].count++; byCat[c].value += t.buyPrice;
+    }
+    const topCat = Object.entries(byCat).sort(([, a], [, b]) => b.value - a.value)[0];
     const concentrationPct = topCat ? Math.round((topCat[1].value / totalValue) * 100) : 0;
     const highRiskItems = heldTrades.filter(t => (t.listing?.aiRisk ?? 0) >= 7).length;
-    const stalled = heldTrades.filter(t => Math.round((Date.now() - t.buyDate.getTime()) / (24*60*60*1000)) > 30).length;
+    const stalled = heldTrades.filter(t => Math.round((Date.now() - t.buyDate.getTime()) / (24 * 60 * 60 * 1000)) > 30).length;
 
-    const itemsStr = heldTrades.slice(0, 15).map(t => `- ${t.title} | ${t.category} | ${t.buyPrice}€ | risk ${t.listing?.aiRisk ?? 5}/10 | ${Math.round((Date.now()-t.buyDate.getTime())/(24*60*60*1000))}d`).join('\n');
+    const itemsStr = heldTrades.slice(0, 15).map(t => `- ${t.title} | ${t.category} | ${t.buyPrice}€ | risk ${t.listing?.aiRisk ?? 5}/10 | ${Math.round((Date.now() - t.buyDate.getTime()) / (24 * 60 * 60 * 1000))}d`).join('\n');
 
-    const prompt = `Si AI risk hedging strategist. Hedžaj tveganja portfolia z diverzifikacijo in protistrategijami.
+    const prompt = buildPrompt({
+      heldCount: heldTrades.length,
+      totalValue: Math.round(totalValue),
+      concentrationPct,
+      highRiskItems,
+      stalled,
+      itemsStr,
+    });
 
-PORTFOLIO: ${heldTrades.length} itemov, ${Math.round(totalValue)}€
-- Koncentracija top kategorije: ${concentrationPct}%
-- High risk itemi: ${highRiskItems}
-- Stalled (>30d): ${stalled}
+    const raw = await callAi(prompt);
+    const parsed: any = parseAi(raw);
+    const hedging = transformHedging(parsed);
+
+    return apiOk({ ok: true, hedging });
+  },
+});
+
+// --- Pomožne funkcije (čiste, testabilne) --------------------------------
+
+interface PromptData {
+  heldCount: number;
+  totalValue: number;
+  concentrationPct: number;
+  highRiskItems: number;
+  stalled: number;
+  itemsStr: string;
+}
+
+function buildPrompt(d: PromptData): string {
+  return `Si AI risk hedging strategist. Hedžaj tveganja portfolia z diverzifikacijo in protistrategijami.
+
+PORTFOLIO: ${d.heldCount} itemov, ${d.totalValue}€
+- Koncentracija top kategorije: ${d.concentrationPct}%
+- High risk itemi: ${d.highRiskItems}
+- Stalled (>30d): ${d.stalled}
 
 INVENTAR:
-${itemsStr}
+${d.itemsStr}
 
 Risk hedging strategije:
 1. DIVERSIFICATION: razprši tveganje čez kategorije (max 30% per kategorija)
@@ -101,59 +138,51 @@ Odgovori LE z JSON:
     "hedging_efficiency_score": <number 0-100>
   }
 }`;
+}
 
-    let raw = '';
-    try { raw = await callProviderForRaw(aiSettings, prompt); }
-    catch (primaryError: any) {
-      if (aiSettings.fallbackProvider && aiSettings.fallbackModel) {
-        const fb: AiSettings = { provider: aiSettings.fallbackProvider, baseUrl: aiSettings.fallbackBaseUrl || '', apiKey: aiSettings.fallbackApiKey || '', model: aiSettings.fallbackModel };
-        raw = await callProviderForRaw(fb, prompt);
-      } else { return NextResponse.json({ error: primaryError?.message ?? 'AI failed' }, { status: 500 }); }
-    }
-
-    const parsed: any = parseJsonLooseExported(raw);
-
-    const hedging = {
-      insights: String(parsed?.insights ?? '').slice(0, 500),
-      risks: (parsed?.risks || []).slice(0, 8).map((r: any) => ({
-        type: String(r?.type ?? '').slice(0, 50), severity: ['high', 'medium', 'low'].includes(String(r?.severity)) ? String(r.severity) : 'medium',
-        description: String(r?.description ?? '').slice(0, 150), currentExposurePct: Math.round(Number(r?.current_exposure_pct ?? 0)),
-        recommendedMaxPct: Math.round(Number(r?.recommended_max_pct ?? 0)), action: String(r?.action ?? '').slice(0, 150),
-      })),
-      hedges: (parsed?.hedges || []).slice(0, 8).map((h: any) => ({
-        riskAddressed: String(h?.risk_addressed ?? '').slice(0, 50), hedgeStrategy: String(h?.hedge_strategy ?? '').slice(0, 150),
-        implementation: String(h?.implementation ?? '').slice(0, 200), costEur: Math.round(Number(h?.cost_eur ?? 0)),
-        expectedRiskReductionPct: Math.round(Number(h?.expected_risk_reduction_pct ?? 0)),
-      })),
-      strategies: (parsed?.strategies || []).slice(0, 6).map((s: any) => ({
-        name: String(s?.name ?? '').slice(0, 80), description: String(s?.description ?? '').slice(0, 200),
-        itemsAffected: Math.max(0, Number(s?.items_affected ?? 0)), riskReductionPct: Math.round(Number(s?.risk_reduction_pct ?? 0)),
-        profitImpactPct: Math.round(Number(s?.profit_impact_pct ?? 0)),
-      })),
-      coverage: {
-        diversificationScore: Math.max(0, Math.min(100, Number(parsed?.coverage?.diversification_score ?? 50))),
-        liquidityCoveragePct: Math.round(Number(parsed?.coverage?.liquidity_coverage_pct ?? 0)),
-        seasonalBalancePct: Math.round(Number(parsed?.coverage?.seasonal_balance_pct ?? 0)),
-        priceRiskCoveragePct: Math.round(Number(parsed?.coverage?.price_risk_coverage_pct ?? 0)),
-        overallHedgeCoveragePct: Math.round(Number(parsed?.coverage?.overall_hedge_coverage_pct ?? 0)),
-      },
-      recommendations: (parsed?.recommendations || []).slice(0, 6).map((r: any) => ({
-        action: String(r?.action ?? '').slice(0, 250), priority: ['high', 'medium', 'low'].includes(String(r?.priority)) ? String(r.priority) : 'medium',
-        riskReduced: String(r?.risk_reduced ?? '').slice(0, 80), expectedImpactEur: Math.round(Number(r?.expected_impact_eur ?? 0)),
-      })),
-      summary: {
-        currentRiskScore: Math.max(0, Math.min(100, Number(parsed?.summary?.current_risk_score ?? 50))),
-        hedgedRiskScore: Math.max(0, Math.min(100, Number(parsed?.summary?.hedged_risk_score ?? 30))),
-        riskReductionPct: Math.round(Number(parsed?.summary?.risk_reduction_pct ?? 0)),
-        biggestUnhedgedRisk: String(parsed?.summary?.biggest_unhedged_risk ?? '').slice(0, 150),
-        hedgingEfficiencyScore: Math.max(0, Math.min(100, Number(parsed?.summary?.hedging_efficiency_score ?? 50))),
-      },
-    };
-
-    const today = new Date().toISOString().slice(0, 10);
-    if (settings.aiCallsDate !== today) { await db.settings.update({ where: { id: 'singleton' }, data: { aiCallsDate: today, aiCallsToday: 1 } }); }
-    else { await db.settings.update({ where: { id: 'singleton' }, data: { aiCallsToday: { increment: 1 } } }); }
-
-    return NextResponse.json({ ok: true, hedging });
-  } catch (e: any) { logger.error("/api/ai/risk-hedging", "POST handler failed", e); return NextResponse.json({ error: e?.message ?? 'Napaka' }, { status: 500 }); }
+function transformHedging(parsed: any): {
+  insights: string;
+  risks: any[];
+  hedges: any[];
+  strategies: any[];
+  coverage: any;
+  recommendations: any[];
+  summary: any;
+} {
+  return {
+    insights: String(parsed?.insights ?? '').slice(0, 500),
+    risks: (parsed?.risks || []).slice(0, 8).map((r: any) => ({
+      type: String(r?.type ?? '').slice(0, 50), severity: ['high', 'medium', 'low'].includes(String(r?.severity)) ? String(r.severity) : 'medium',
+      description: String(r?.description ?? '').slice(0, 150), currentExposurePct: Math.round(Number(r?.current_exposure_pct ?? 0)),
+      recommendedMaxPct: Math.round(Number(r?.recommended_max_pct ?? 0)), action: String(r?.action ?? '').slice(0, 150),
+    })),
+    hedges: (parsed?.hedges || []).slice(0, 8).map((h: any) => ({
+      riskAddressed: String(h?.risk_addressed ?? '').slice(0, 50), hedgeStrategy: String(h?.hedge_strategy ?? '').slice(0, 150),
+      implementation: String(h?.implementation ?? '').slice(0, 200), costEur: Math.round(Number(h?.cost_eur ?? 0)),
+      expectedRiskReductionPct: Math.round(Number(h?.expected_risk_reduction_pct ?? 0)),
+    })),
+    strategies: (parsed?.strategies || []).slice(0, 6).map((s: any) => ({
+      name: String(s?.name ?? '').slice(0, 80), description: String(s?.description ?? '').slice(0, 200),
+      itemsAffected: Math.max(0, Number(s?.items_affected ?? 0)), riskReductionPct: Math.round(Number(s?.risk_reduction_pct ?? 0)),
+      profitImpactPct: Math.round(Number(s?.profit_impact_pct ?? 0)),
+    })),
+    coverage: {
+      diversificationScore: Math.max(0, Math.min(100, Number(parsed?.coverage?.diversification_score ?? 50))),
+      liquidityCoveragePct: Math.round(Number(parsed?.coverage?.liquidity_coverage_pct ?? 0)),
+      seasonalBalancePct: Math.round(Number(parsed?.coverage?.seasonal_balance_pct ?? 0)),
+      priceRiskCoveragePct: Math.round(Number(parsed?.coverage?.price_risk_coverage_pct ?? 0)),
+      overallHedgeCoveragePct: Math.round(Number(parsed?.coverage?.overall_hedge_coverage_pct ?? 0)),
+    },
+    recommendations: (parsed?.recommendations || []).slice(0, 6).map((r: any) => ({
+      action: String(r?.action ?? '').slice(0, 250), priority: ['high', 'medium', 'low'].includes(String(r?.priority)) ? String(r.priority) : 'medium',
+      riskReduced: String(r?.risk_reduced ?? '').slice(0, 80), expectedImpactEur: Math.round(Number(r?.expected_impact_eur ?? 0)),
+    })),
+    summary: {
+      currentRiskScore: Math.max(0, Math.min(100, Number(parsed?.summary?.current_risk_score ?? 50))),
+      hedgedRiskScore: Math.max(0, Math.min(100, Number(parsed?.summary?.hedged_risk_score ?? 30))),
+      riskReductionPct: Math.round(Number(parsed?.summary?.risk_reduction_pct ?? 0)),
+      biggestUnhedgedRisk: String(parsed?.summary?.biggest_unhedged_risk ?? '').slice(0, 150),
+      hedgingEfficiencyScore: Math.max(0, Math.min(100, Number(parsed?.summary?.hedging_efficiency_score ?? 50))),
+    },
+  };
 }

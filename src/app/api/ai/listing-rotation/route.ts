@@ -1,23 +1,72 @@
-// v6.26: AI Listing Rotation Scheduler — optimizira časovni razpored objav oglasov
+// v6.26 / v8.95.8-listing: AI Listing Rotation Scheduler — optimizira časovni razpored objav oglasov
+// Refaktoriran z withAiRoute helperjem (v8.95.8) + enforceBudget guard.
+//
 // POST /api/ai/listing-rotation
 // Body: {}
-// Returns: { ok, schedule: [{ tradeId, title, platform, day, hour, frequency, duration, priority }], insights, summary }
+// Returns: { ok, insights, schedule, weeklyCalendar, summary }
 
-import { NextRequest, NextResponse } from 'next/server';
-import { db } from '@/lib/db';
-import { getSettingsRow } from '@/lib/pipeline';
-import { callProviderForRaw, parseJsonLooseExported, type AiProviderType, type AiSettings } from '@/lib/ai';
-import { logger } from '@/lib/logger';
+import { withAiRoute, AI_ROUTE_DEFAULTS, type AiRouteContext } from '@/lib/with-ai-route';
+import { apiOk } from '@/lib/api-response';
 
-export const runtime = 'nodejs';
-export const dynamic = 'force-dynamic';
-export const maxDuration = 90;
+export const { runtime, dynamic, maxDuration } = AI_ROUTE_DEFAULTS;
+
+// eslint-disable-next-line @typescript-eslint/no-empty-object-type
+interface RotationInput {}
+
+interface HeldTradeRow {
+  id: string;
+  title: string;
+  category: string;
+  buyPrice: number;
+  buyDate: Date;
+  listing: {
+    aiEstimatedValue: number | null;
+    dealScore: number | null;
+  } | null;
+}
+
+interface SoldTradeRow {
+  sellDate: Date | null;
+  buyDate: Date;
+  sellPrice: number | null;
+  buyPrice: number;
+  category: string;
+}
+
+interface RotationItem {
+  id: string;
+  title: string;
+  category: string;
+  cost: number;
+  estValue: number;
+  daysHeld: number;
+  dealScore: number;
+}
+
+interface SalesStats {
+  salesByDay: Record<number, number>;
+  salesByHour: Record<number, number>;
+  bestDay: string;
+  bestHour: string;
+  dayStr: string;
+  hourStr: string;
+}
 
 const DAYS = ['ponedeljek', 'torek', 'sreda', 'četrtek', 'petek', 'sobota', 'nedelja'];
+const STRATEGIES = ['staggered', 'concentrated', 'rolling'] as const;
 
-export async function POST(req: NextRequest) {
-  try {
+export const POST = withAiRoute<RotationInput>({
+  endpoint: '/api/ai/listing-rotation',
+  maxDuration: 90,
+  enforceBudget: true,
+
+  parseBody: async (req) => {
     await req.json().catch(() => ({}));
+    return {};
+  },
+
+  handler: async (_input, ctx: AiRouteContext) => {
+    const { db, callAi, parseAi } = ctx;
 
     const heldTrades = await db.trade.findMany({
       where: { status: 'held' },
@@ -27,7 +76,7 @@ export async function POST(req: NextRequest) {
     });
 
     if (heldTrades.length === 0) {
-      return NextResponse.json({ ok: true, schedule: [], message: 'Ni held tradeov za razpored.' });
+      return apiOk({ ok: true, schedule: [], message: 'Ni held tradeov za razpored.' });
     }
 
     const soldTrades = await db.trade.findMany({
@@ -36,49 +85,65 @@ export async function POST(req: NextRequest) {
       take: 200,
     });
 
-    // Analiza prodaj po dnevih in urah
-    const salesByDay: Record<number, number> = { 0: 0, 1: 0, 2: 0, 3: 0, 4: 0, 5: 0, 6: 0 };
-    const salesByHour: Record<number, number> = {};
-    for (let i = 0; i < 24; i++) salesByHour[i] = 0;
-    for (const t of soldTrades) {
-      if (t.sellDate) {
-        salesByDay[(t.sellDate.getDay() + 6) % 7]++;
-        salesByHour[t.sellDate.getHours()]++;
-      }
+    const salesStats = computeSalesStats(soldTrades);
+    const items = buildItems(heldTrades);
+    const prompt = buildPrompt(items, salesStats);
+
+    const raw = await callAi(prompt);
+    const parsed: any = parseAi(raw);
+
+    const validIds = new Set(items.map(i => i.id));
+    const result = transformRotation(parsed, validIds);
+
+    return apiOk({
+      ok: true,
+      insights: String(parsed?.insights ?? '').slice(0, 500),
+      ...result,
+    });
+  },
+});
+
+// --- Pomožne funkcije (čiste, testabilne) ---------------------------------
+
+function computeSalesStats(soldTrades: SoldTradeRow[]): SalesStats {
+  const salesByDay: Record<number, number> = { 0: 0, 1: 0, 2: 0, 3: 0, 4: 0, 5: 0, 6: 0 };
+  const salesByHour: Record<number, number> = {};
+  for (let i = 0; i < 24; i++) salesByHour[i] = 0;
+  for (const t of soldTrades) {
+    if (t.sellDate) {
+      salesByDay[(t.sellDate.getDay() + 6) % 7]++;
+      salesByHour[t.sellDate.getHours()]++;
     }
-    const bestDay = Object.entries(salesByDay).sort(([, a], [, b]) => b - a)[0]?.[0] ?? '5';
-    const bestHour = Object.entries(salesByHour).sort(([, a], [, b]) => b - a)[0]?.[0] ?? '19';
+  }
+  const bestDay = Object.entries(salesByDay).sort(([, a], [, b]) => b - a)[0]?.[0] ?? '5';
+  const bestHour = Object.entries(salesByHour).sort(([, a], [, b]) => b - a)[0]?.[0] ?? '19';
+  const dayStr = DAYS.map((d, i) => `${d}: ${salesByDay[i]}`).join(', ');
+  const hourStr = Object.entries(salesByHour).filter(([, c]) => c > 0).sort(([, a], [, b]) => b - a).slice(0, 5).map(([h, c]) => `${h}:00 (${c})`).join(', ');
+  return { salesByDay, salesByHour, bestDay, bestHour, dayStr, hourStr };
+}
 
-    const items = heldTrades.map(t => ({
-      id: t.id, title: t.title, category: t.category || 'drugo',
-      cost: t.buyPrice, estValue: t.listing?.aiEstimatedValue ?? Math.round(t.buyPrice * 1.25),
-      daysHeld: Math.round((Date.now() - t.buyDate.getTime()) / (24 * 60 * 60 * 1000)),
-      dealScore: t.listing?.dealScore ?? 0,
-    }));
+function buildItems(heldTrades: HeldTradeRow[]): RotationItem[] {
+  return heldTrades.map(t => ({
+    id: t.id, title: t.title, category: t.category || 'drugo',
+    cost: t.buyPrice, estValue: t.listing?.aiEstimatedValue ?? Math.round(t.buyPrice * 1.25),
+    daysHeld: Math.round((Date.now() - t.buyDate.getTime()) / (24 * 60 * 60 * 1000)),
+    dealScore: t.listing?.dealScore ?? 0,
+  }));
+}
 
-    const settings = await getSettingsRow();
-    const aiSettings: AiSettings = {
-      provider: settings.aiProvider as AiProviderType,
-      baseUrl: settings.aiBaseUrl, apiKey: settings.aiApiKey, model: settings.aiModel,
-      fallbackProvider: (settings.fallbackProvider || '') as AiProviderType | '',
-      fallbackBaseUrl: settings.fallbackBaseUrl || '', fallbackApiKey: settings.fallbackApiKey || '',
-      fallbackModel: settings.fallbackModel || '',
-    };
+function buildPrompt(items: RotationItem[], stats: SalesStats): string {
+  const itemsStr = items.map(i => `- [${i.id}] ${i.title} | ${i.category} | ${i.daysHeld}d | est. ${i.estValue}€ | deal: ${i.dealScore}`).join('\n');
 
-    const itemsStr = items.map(i => `- [${i.id}] ${i.title} | ${i.category} | ${i.daysHeld}d | est. ${i.estValue}€ | deal: ${i.dealScore}`).join('\n');
-    const dayStr = DAYS.map((d, i) => `${d}: ${salesByDay[i]}`).join(', ');
-    const hourStr = Object.entries(salesByHour).filter(([_, c]) => c > 0).sort(([, a], [, b]) => b - a).slice(0, 5).map(([h, c]) => `${h}:00 (${c})`).join(', ');
-
-    const prompt = `Si ekspert za optimizacijo razporeda objav oglasov.
+  return `Si ekspert za optimizacijo razporeda objav oglasov.
 Za vsak held item ustvari optimalen razpored objav za maksimalno izpostavljenost in prodajo.
 
 INVENTAR (${items.length} itemov):
 ${itemsStr}
 
 ZGODOVINSKI PODATKI:
-- Najboljši dan za prodajo: ${DAYS[Number(bestDay)]}
-- Top ure: ${hourStr}
-- Prodaje po dnevih: ${dayStr}
+- Najboljši dan za prodajo: ${DAYS[Number(stats.bestDay)]}
+- Top ure: ${stats.hourStr}
+- Prodaje po dnevih: ${stats.dayStr}
 
 Pravila:
 1. Razporedi oglase čez teden (ne vsi na isti dan)
@@ -124,67 +189,38 @@ Odgovori LE z JSON:
     "estimated_sell_through_rate_pct": <number>
   }
 }`;
+}
 
-    let raw = '';
-    try {
-      raw = await callProviderForRaw(aiSettings, prompt);
-    } catch (primaryError: any) {
-      if (aiSettings.fallbackProvider && aiSettings.fallbackModel) {
-        const fb: AiSettings = { provider: aiSettings.fallbackProvider, baseUrl: aiSettings.fallbackBaseUrl || '',
-          apiKey: aiSettings.fallbackApiKey || '', model: aiSettings.fallbackModel };
-        raw = await callProviderForRaw(fb, prompt);
-      } else { return NextResponse.json({ error: primaryError?.message ?? 'AI failed' }, { status: 500 }); }
-    }
+function transformRotation(parsed: any, validIds: Set<string>): { schedule: any[]; weeklyCalendar: any[]; summary: any } {
+  const schedule = (parsed?.schedule || []).filter((s: any) => validIds.has(String(s?.id ?? ''))).map((s: any) => ({
+    tradeId: String(s?.id ?? ''),
+    title: String(s?.title ?? '').slice(0, 150),
+    platforms: (s?.platforms || []).slice(0, 4).map((p: any) => String(p).slice(0, 20)),
+    primaryDay: String(s?.primary_day ?? 'sobota').slice(0, 20),
+    primaryHour: Math.max(0, Math.min(23, Number(s?.primary_hour ?? 19))),
+    frequencyDays: Math.max(1, Math.min(30, Number(s?.frequency_days ?? 5))),
+    durationDays: Math.max(1, Math.min(60, Number(s?.duration_days ?? 14))),
+    strategy: STRATEGIES.includes(String(s?.strategy) as any) ? String(s.strategy) : 'staggered',
+    priority: ['high', 'medium', 'low'].includes(String(s?.priority)) ? String(s.priority) : 'medium',
+    reasoning: String(s?.reasoning ?? '').slice(0, 200),
+  }));
 
-    const parsed: any = parseJsonLooseExported(raw);
-    const validIds = new Set(items.map(i => i.id));
+  const weeklyCalendar = (parsed?.weekly_calendar || []).slice(0, 7).map((d: any) => ({
+    day: String(d?.day ?? '').slice(0, 20),
+    slots: (d?.slots || []).slice(0, 4).map((s: any) => ({
+      hour: Math.max(0, Math.min(23, Number(s?.hour ?? 19))),
+      items: Math.max(0, Number(s?.items ?? 0)),
+      platform: String(s?.platform ?? '').slice(0, 20),
+    })),
+  }));
 
-    const schedule = (parsed?.schedule || []).filter((s: any) => validIds.has(String(s?.id ?? ''))).map((s: any) => ({
-      tradeId: String(s?.id ?? ''),
-      title: String(s?.title ?? '').slice(0, 150),
-      platforms: (s?.platforms || []).slice(0, 4).map((p: any) => String(p).slice(0, 20)),
-      primaryDay: String(s?.primary_day ?? 'sobota').slice(0, 20),
-      primaryHour: Math.max(0, Math.min(23, Number(s?.primary_hour ?? 19))),
-      frequencyDays: Math.max(1, Math.min(30, Number(s?.frequency_days ?? 5))),
-      durationDays: Math.max(1, Math.min(60, Number(s?.duration_days ?? 14))),
-      strategy: ['staggered', 'concentrated', 'rolling'].includes(String(s?.strategy)) ? String(s.strategy) : 'staggered',
-      priority: ['high', 'medium', 'low'].includes(String(s?.priority)) ? String(s.priority) : 'medium',
-      reasoning: String(s?.reasoning ?? '').slice(0, 200),
-    }));
+  const summary = {
+    totalScheduled: schedule.length,
+    bestDay: String(parsed?.summary?.best_day ?? '').slice(0, 20),
+    bestHour: Math.max(0, Math.min(23, Number(parsed?.summary?.best_hour ?? 19))),
+    strategy: STRATEGIES.includes(String(parsed?.summary?.strategy) as any) ? String(parsed.summary.strategy) : 'staggered',
+    estimatedSellThroughRatePct: Math.max(0, Math.min(100, Number(parsed?.summary?.estimated_sell_through_rate_pct ?? 50))),
+  };
 
-    const weeklyCalendar = (parsed?.weekly_calendar || []).slice(0, 7).map((d: any) => ({
-      day: String(d?.day ?? '').slice(0, 20),
-      slots: (d?.slots || []).slice(0, 4).map((s: any) => ({
-        hour: Math.max(0, Math.min(23, Number(s?.hour ?? 19))),
-        items: Math.max(0, Number(s?.items ?? 0)),
-        platform: String(s?.platform ?? '').slice(0, 20),
-      })),
-    }));
-
-    const summary = {
-      totalScheduled: schedule.length,
-      bestDay: String(parsed?.summary?.best_day ?? '').slice(0, 20),
-      bestHour: Math.max(0, Math.min(23, Number(parsed?.summary?.best_hour ?? 19))),
-      strategy: ['staggered', 'concentrated', 'rolling'].includes(String(parsed?.summary?.strategy)) ? String(parsed.summary.strategy) : 'staggered',
-      estimatedSellThroughRatePct: Math.max(0, Math.min(100, Number(parsed?.summary?.estimated_sell_through_rate_pct ?? 50))),
-    };
-
-    const today = new Date().toISOString().slice(0, 10);
-    if (settings.aiCallsDate !== today) {
-      await db.settings.update({ where: { id: 'singleton' }, data: { aiCallsDate: today, aiCallsToday: 1 } });
-    } else {
-      await db.settings.update({ where: { id: 'singleton' }, data: { aiCallsToday: { increment: 1 } } });
-    }
-
-    return NextResponse.json({
-      ok: true,
-      insights: String(parsed?.insights ?? '').slice(0, 500),
-      schedule,
-      weeklyCalendar,
-      summary,
-    });
-  } catch (e: any) {
-    logger.error("/api/ai/listing-rotation", "POST handler failed", e);
-    return NextResponse.json({ error: e?.message ?? 'Napaka' }, { status: 500 });
-  }
+  return { schedule, weeklyCalendar, summary };
 }
