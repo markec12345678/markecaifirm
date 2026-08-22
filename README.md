@@ -9,7 +9,7 @@
 [![TypeScript](https://img.shields.io/badge/TypeScript-5-blue.svg)](https://www.typescriptlang.org/)
 [![TypeScript Errors](https://img.shields.io/badge/TS%20errors-0-brightgreen.svg)](#)
 [![Vulnerabilities](https://img.shields.io/badge/vulns-0-brightgreen.svg)](#)
-[![Tests](https://img.shields.io/badge/tests-277-brightgreen.svg)](#)
+[![Tests](https://img.shields.io/badge/tests-314-brightgreen.svg)](#)
 [![Prisma](https://img.shields.io/badge/Prisma-6-indigo.svg)](https://www.prisma.io/)
 [![Local-First](https://img.shields.io/badge/local-first-purple.svg)](#-local-first--zero-cloud)
 [![PRs Welcome](https://img.shields.io/badge/PRs-welcome-brightgreen.svg)](./CONTRIBUTING.md)

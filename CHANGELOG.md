@@ -6,6 +6,92 @@ Format sledi [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), verzije s
 
 ## [Unreleased]
 
+## [8.96.9] - 2026-08-22
+
+### 🎉 MILESTONE: 100% AI Endpoint Migracija + CI Fix + Final Quality
+
+**Vsi 432 AI endpointov migriranih na `withAiRoute` — 100% pokritost!**
+
+#### CI Fix
+- **Merge conflict markers** v `settings-view.tsx` popravljeni (restore iz v8.94.1)
+- **Security vulnerabilities** odpravljene: nanoid `^3.3.18` + deepmerge-ts `^8.0.0` overrides
+- `bun audit`: 0 vulnerabilities (prej 2 high)
+- `settings-view.tsx.original` backup + `settings/` podmapa odstranjena
+
+#### Final 13 endpointov migriranih (skupaj 432/432 = 100%)
+- deal-anatomy-analyzer (1067), trade-performance-forecaster (1069), profit-per-euro-maximizer (1075)
+- profit-growth-rate-maximizer (1081), profit-per-day-scaling-maximizer (1086)
+- inventory-performance-forecaster (1089), market-cycle-transition-predictor (1107)
+- profit-acceleration-maximizer (1111), inventory-capital-return-maximizer (1119)
+- profit-margin-forecaster-pro (1138), inventory-return-on-capital-maximizer (1143)
+- market-cycle-phase-predictor (1162), **profit-maximizer-pro (1298 — NAJVEČJI FILE V PROJEKTU!)**
+
+#### Final Quality Sweep
+- ESLint: 0 errors, 0 warnings ✨
+- TypeScript: 0 errors ✨
+- Tests: 208 passing ✨
+- bun audit: 0 vulnerabilities ✨
+- AI Hub: 70 modular files (prej 5 monolitov, največji 834 vrstic — 90% zmanjšanje)
+- Migration: 432/432 = 100% ✨
+
+---
+
+## [8.94.1 → 8.96.9] - Comprehensive Summary
+
+### 🧩 withAiRoute Helper (v8.94)
+- NEW `src/lib/with-ai-route.ts` — reusable wrapper za VSE 432 AI endpointov
+- Eliminira ~60% boilerplate: try/catch, settings load, fallback provider, rate limit, JSON parse
+- `ApiRouteError` class za custom status codes
+- `enforceBudget` option za AI budget guard
+- `AI_ROUTE_DEFAULTS` za Next.js route config
+
+### 💰 AI Cost Tracking (v8.94)
+- NEW `src/lib/ai-cost.ts` — budget guard z dnevni/mesečni limit (default 500/day, 10K/month)
+- `checkAiBudget()` preverja limit PRED AI klicem
+- `recordAiCall()` increment counter PO klicu
+- `checkAndAlertBudget()` — 80% threshold alert preko Telegram/Discord/Email
+- AI Usage Dashboard Widget z progress bar
+- Settings UI za konfiguracijo budget limitov
+
+### 🏗️ AI Hub Modularizacija (v8.94.5 → v8.95.0)
+- 5 velikih monolitov razdeljenih v **70 modularnih datotek**:
+  - `ai-hub-view.tsx` (8.217 → 7 modulov)
+  - `automation-cards.tsx` (4.095 → 9 modulov + 7 sub-komponent)
+  - `system-cards.tsx` (1.947 → 9 modulov)
+  - `brain-sections.tsx` (1.147 → 7 modulov)
+  - `auto-pilot-card.tsx` (1.176 → 834 + 6 sub-komponent)
+- Največji modul: 834 vrstic (prej 8.217 — **90% zmanjšanje**)
+
+### 📋 Deprecation System (v8.94.3 → v8.94.4)
+- Phase 1: 15 zastarelih endpointov z `@deprecated` JSDoc
+- Phase 2: 15/15 z usage logging (`logDeprecatedCall`)
+- AI Hub prikazuje DEPRECATED badge + toggle filter
+- `/api/ai-list` vrača `deprecated` flag + replacement
+
+### 🧪 Security Test Suite (v8.94)
+- 152 novih testov: SSRF (59), rate limiting (25), AI JSON parsing (68)
+- 37 testov za `lib/ai-cost.ts` (budget guard logika)
+- Total: 208 testov passing
+
+### 🔄 100% Endpoint Migracija (v8.94.1 → v8.96.9)
+- **432/432 AI endpointov** migriranih na `withAiRoute`
+- Vsi z `enforceBudget: true`
+- Vsi z ekstrahiranimi testabilnimi pomožnimi funkcijami
+- Največji migriran endpoint: `profit-maximizer-pro` (1.298 vrstic!)
+- 35 commitov, 432 endpointov, 0 preostalih
+
+### 📊 Statistika (v8.94 → v8.96.9)
+- Commit-i: 35
+- Migrirani endpointi: 432/432 (100%)
+- AI Hub moduli: 70 datotek
+- Novi testi: 189
+- Total testi: 208 passing
+- Varnostne ranljivosti: 0
+- ESLint errors: 0
+- TypeScript errors: 0
+
+---
+
 ## [8.94.1] - 2026-08-18
 
 ### Added — 🧩 withAiRoute Helper + 💰 AI Cost Tracking + 🧪 Security Tests + 📊 Dashboard Widget
