@@ -1,4 +1,4 @@
-// v8.06: AI Inventory Annualized Return Maximizer — AI MAXIMIZIRA ANNUALIZED
+// v8.06 / v8.96.7-batch2: AI Inventory Annualized Return Maximizer — AI MAXIMIZIRA ANNUALIZED
 // RETURN na held inventory — pretvarja per-trade ROI v annualiziran rate za
 // primerjavo z drugimi investicijami (stocks, bonds). "Tvoj annualized return
 // je 52% — boljše od stocks, ampak bi lahko bilo 95% z optimalnim turnover."
@@ -25,24 +25,20 @@
 
 // GET+POST /api/ai/inventory-annualized-return-maximizer
 // (AI-enhanced + grounding + anti-hallucination + 6h cache + deterministic fallback)
+// Refaktoriran z withAiRoute helperjem (v8.96.7) + enforceBudget guard.
 
-import { NextRequest, NextResponse } from 'next/server';
-import { db } from '@/lib/db';
-import { getSettingsRow } from '@/lib/pipeline';
-import {
-  callProviderForRaw,
-  parseJsonLooseExported,
-  type AiProviderType,
-  type AiSettings,
-} from '@/lib/ai';
+import { withAiRoute, AI_ROUTE_DEFAULTS, type AiRouteContext } from '@/lib/with-ai-route';
+import { apiOk } from '@/lib/api-response';
 import { GROUNDING_PROMPT_SUFFIX } from '@/lib/anti-hallucination';
 import { getCachedAI, setCachedAI } from '@/lib/ai-cache';
-import { checkRateLimit, rateLimitResponse } from '@/lib/rate-limit';
-import { logger } from '@/lib/logger';
 
-export const runtime = 'nodejs';
-export const dynamic = 'force-dynamic';
+export const { runtime, dynamic } = AI_ROUTE_DEFAULTS;
 export const maxDuration = 60;
+
+// --- Input ----------------------------------------------------------------
+
+// eslint-disable-next-line @typescript-eslint/no-empty-object-type
+interface InventoryAnnualizedReturnMaximizerInput {}
 
 // --- Types ---------------------------------------------------------------
 
@@ -562,17 +558,20 @@ function buildDeterministicMaximization(
 
 // --- Handler -------------------------------------------------------------
 
-export async function GET(req: NextRequest) {
-  return handleInventoryAnnualizedReturnMaximizer(req);
-}
-export async function POST(req: NextRequest) {
-  return handleInventoryAnnualizedReturnMaximizer(req);
-}
+const inventoryAnnualizedReturnMaximizerHandler = withAiRoute<InventoryAnnualizedReturnMaximizerInput>({
+  endpoint: '/api/ai/inventory-annualized-return-maximizer',
+  maxDuration: 60,
+  enforceBudget: true, // AI klic — preveri budget
+  method: 'GET', // Endpoint sprejema GET + POST — bypass POST-only check
 
-async function handleInventoryAnnualizedReturnMaximizer(req: NextRequest) {
-  try {
-    const rl = checkRateLimit(req, 'ai-inventory-annualized-return-maximizer', 20);
-    if (!rl.allowed) return rateLimitResponse(rl);
+  parseBody: async (req) => {
+    await req.json().catch(() => ({}));
+    return {};
+  },
+
+  // No validateInput — body ignored, identična logika za GET in POST
+  handler: async (_input, ctx: AiRouteContext) => {
+    const { db, callAi, parseAi, logger } = ctx;
 
     const now = Date.now();
     const twelveMonthsAgo = new Date(now - TWELVE_MONTHS_MS);
@@ -622,7 +621,7 @@ async function handleInventoryAnnualizedReturnMaximizer(req: NextRequest) {
 
     // Empty-state: no HELD and no SOLD trades
     if (heldTrades.length === 0 && soldTrades.length === 0) {
-      return NextResponse.json({
+      return apiOk({
         ok: true,
         current: {
           totalCapitalDeployed: 0,
@@ -659,7 +658,7 @@ async function handleInventoryAnnualizedReturnMaximizer(req: NextRequest) {
 
     // If no HELD trades, can't compute annualized return (need estValue)
     if (heldComputed.length === 0) {
-      return NextResponse.json({
+      return apiOk({
         ok: true,
         current: {
           totalCapitalDeployed: 0,
@@ -720,7 +719,7 @@ async function handleInventoryAnnualizedReturnMaximizer(req: NextRequest) {
       summary: string;
     }>(cacheKey);
     if (cached) {
-      return NextResponse.json({
+      return apiOk({
         ok: true,
         current,
         perItem,
@@ -732,20 +731,6 @@ async function handleInventoryAnnualizedReturnMaximizer(req: NextRequest) {
     }
 
     // 4) AI prompt with grounding
-    const settings = await getSettingsRow();
-    const aiSettings: AiSettings = {
-      provider: settings.aiProvider as AiProviderType,
-      baseUrl: settings.aiBaseUrl,
-      apiKey: settings.aiApiKey,
-      model: settings.aiModel,
-      fallbackProvider: (settings.fallbackProvider || '') as
-        | AiProviderType
-        | '',
-      fallbackBaseUrl: settings.fallbackBaseUrl || '',
-      fallbackApiKey: settings.fallbackApiKey || '',
-      fallbackModel: settings.fallbackModel || '',
-    };
-
     // Compact context for AI — top N items by capital
     const perItemForAI = perItem
       .slice()
@@ -832,8 +817,8 @@ VRNI LE JSON:
     let aiUsed = false;
 
     try {
-      const raw = await callProviderForRaw(aiSettings, prompt);
-      const parsed = parseJsonLooseExported(raw) as AiResponse | null;
+      const raw = await callAi(prompt);
+      const parsed = parseAi(raw) as AiResponse | null;
 
       if (parsed && typeof parsed === 'object' && parsed.maximization) {
         const aiMax = parsed.maximization;
@@ -996,7 +981,7 @@ VRNI LE JSON:
       setCachedAI(cacheKey, { maximization, summary });
     }
 
-    return NextResponse.json({
+    return apiOk({
       ok: true,
       current,
       perItem,
@@ -1004,15 +989,8 @@ VRNI LE JSON:
       summary,
       aiUsed,
     } satisfies InventoryAnnualizedReturnResponse);
-  } catch (err: any) {
-    logger.error(
-      '/api/ai/inventory-annualized-return-maximizer',
-      'handler failed',
-      err,
-    );
-    return NextResponse.json(
-      { error: err?.message ?? 'Napaka' },
-      { status: 500 },
-    );
-  }
-}
+  },
+});
+
+export const GET = inventoryAnnualizedReturnMaximizerHandler;
+export const POST = inventoryAnnualizedReturnMaximizerHandler;

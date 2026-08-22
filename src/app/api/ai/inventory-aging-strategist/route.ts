@@ -1,61 +1,129 @@
-// v6.89: AI Inventory Aging Strategist — ML strategija za staranje inventarja z action planning
+// v6.89 / v8.95.6-inventory: AI Inventory Aging Strategist — ML strategija za staranje inventarja z action planning
+// Refaktoriran z withAiRoute helperjem (v8.94) + enforceBudget guard.
+//
 // POST /api/ai/inventory-aging-strategist
 // Body: { days?: number }
 // Returns: { ok, strategist: { overview, agingStrategy, categoryAging, actionPlan, mlModels, summary } }
 
-import { NextRequest, NextResponse } from 'next/server';
-import { db } from '@/lib/db';
-import { getSettingsRow } from '@/lib/pipeline';
-import { callProviderForRaw, parseJsonLooseExported, type AiProviderType, type AiSettings } from '@/lib/ai';
-import { logger } from '@/lib/logger';
+import { withAiRoute, AI_ROUTE_DEFAULTS, type AiRouteContext } from '@/lib/with-ai-route';
+import { apiOk } from '@/lib/api-response';
 
-export const runtime = 'nodejs';
-export const dynamic = 'force-dynamic';
+export const { runtime, dynamic } = AI_ROUTE_DEFAULTS;
 export const maxDuration = 90;
 
 const STRATEGY_TIERS = ['aggressive_disposal', 'discount_heavy', 'moderate_discount', 'strategic_hold', 'opportunistic_sale', 'premium_positioning'] as const;
 const AGING_PHASES = ['introduction', 'growth', 'maturity', 'decline', 'critical', 'terminal'] as const;
 
-export async function POST(req: NextRequest) {
-  try {
+interface InventoryAgingStrategistInput {
+  days: number;
+}
+
+export const POST = withAiRoute<InventoryAgingStrategistInput>({
+  endpoint: '/api/ai/inventory-aging-strategist',
+  maxDuration: 90,
+  enforceBudget: true, // AI klic — preveri budget + avtomatsko recordAiCall po uspehu
+
+  parseBody: async (req) => {
     const body = await req.json().catch(() => ({}));
-    const days = Math.max(7, Math.min(365, Number(body?.days ?? 90)));
+    return {
+      days: Math.max(7, Math.min(365, Number(body?.days ?? 90))),
+    };
+  },
+
+  // No validateInput — days ima default 90 z clamp 7-365
+
+  handler: async (input, ctx: AiRouteContext) => {
+    const { db, callAi, parseAi } = ctx;
+    const { days } = input;
 
     const heldTrades = await db.trade.findMany({ where: { status: 'held' }, select: { id: true, title: true, category: true, buyPrice: true, buyFees: true, buyDate: true, buyLocation: true, notes: true, listingId: true }, take: 500, orderBy: { buyDate: 'desc' } });
-    if (heldTrades.length === 0) return NextResponse.json({ ok: true, strategist: null, message: 'Ni inventarja za aging strategijo.' });
+    if (heldTrades.length === 0) {
+      return apiOk({ ok: true, strategist: null, message: 'Ni inventarja za aging strategijo.' });
+    }
 
     const now = Date.now();
-    const DAY = 24 * 60 * 60 * 1000;
+    const items = computeStrategistItems(heldTrades, now);
+    const stats = computeStrategistStats(items);
 
-    const items = heldTrades.map(t => {
-      const ageDays = Math.floor((now - t.buyDate.getTime()) / DAY);
-      const cost = t.buyPrice + (t.buyFees ?? 0);
-      let phase = 'introduction';
-      if (ageDays > 365) phase = 'terminal';
-      else if (ageDays > 180) phase = 'critical';
-      else if (ageDays > 90) phase = 'decline';
-      else if (ageDays > 60) phase = 'maturity';
-      else if (ageDays > 30) phase = 'growth';
-      return { id: t.id, title: t.title, category: t.category, ageDays, cost, phase };
-    });
+    const topCritical = stats.criticalItems.slice(0, 10).map(i => `- ${i.title} | ${i.category} | ${i.ageDays}d | ${i.cost}€ | ${i.phase}`).join('\n');
 
-    const totalValue = items.reduce((s, i) => s + i.cost, 0);
-    const avgAge = Math.round(items.reduce((s, i) => s + i.ageDays, 0) / Math.max(1, items.length));
-    const criticalItems = items.filter(i => i.phase === 'critical' || i.phase === 'terminal');
-    const criticalValue = criticalItems.reduce((s, i) => s + i.cost, 0);
+    const prompt = buildStrategistPrompt({ stats, days, itemsCount: items.length, topCritical });
 
-    const settings = await getSettingsRow();
-    const aiSettings: AiSettings = { provider: settings.aiProvider as AiProviderType, baseUrl: settings.aiBaseUrl, apiKey: settings.aiApiKey, model: settings.aiModel, fallbackProvider: (settings.fallbackProvider || '') as AiProviderType | '', fallbackBaseUrl: settings.fallbackBaseUrl || '', fallbackApiKey: settings.fallbackApiKey || '', fallbackModel: settings.fallbackModel || '' };
+    const raw = await callAi(prompt);
+    const parsed: any = parseAi(raw);
 
-    const topCritical = criticalItems.slice(0, 10).map(i => `- ${i.title} | ${i.category} | ${i.ageDays}d | ${i.cost}€ | ${i.phase}`).join('\n');
+    const strategist = transformStrategist(parsed, stats, items.length);
 
-    const prompt = `Si AI inventory aging strategist z ML in lifecycle analysis.
+    return apiOk({ ok: true, strategist });
+  },
+});
+
+// --- Pomožne funkcije (čiste, testabilne) --------------------------------
+
+interface StrategistHeldRow {
+  id: string;
+  title: string;
+  category: string;
+  buyPrice: number;
+  buyFees: number | null;
+  buyDate: Date;
+}
+
+interface StrategistItem {
+  id: string;
+  title: string;
+  category: string;
+  ageDays: number;
+  cost: number;
+  phase: string;
+}
+
+interface StrategistStats {
+  totalValue: number;
+  avgAge: number;
+  criticalItems: StrategistItem[];
+  criticalValue: number;
+}
+
+function computeStrategistItems(heldTrades: StrategistHeldRow[], now: number): StrategistItem[] {
+  const DAY = 24 * 60 * 60 * 1000;
+  return heldTrades.map(t => {
+    const ageDays = Math.floor((now - t.buyDate.getTime()) / DAY);
+    const cost = t.buyPrice + (t.buyFees ?? 0);
+    let phase = 'introduction';
+    if (ageDays > 365) phase = 'terminal';
+    else if (ageDays > 180) phase = 'critical';
+    else if (ageDays > 90) phase = 'decline';
+    else if (ageDays > 60) phase = 'maturity';
+    else if (ageDays > 30) phase = 'growth';
+    return { id: t.id, title: t.title, category: t.category, ageDays, cost, phase };
+  });
+}
+
+function computeStrategistStats(items: StrategistItem[]): StrategistStats {
+  const totalValue = items.reduce((s, i) => s + i.cost, 0);
+  const avgAge = Math.round(items.reduce((s, i) => s + i.ageDays, 0) / Math.max(1, items.length));
+  const criticalItems = items.filter(i => i.phase === 'critical' || i.phase === 'terminal');
+  const criticalValue = criticalItems.reduce((s, i) => s + i.cost, 0);
+  return { totalValue, avgAge, criticalItems, criticalValue };
+}
+
+interface StrategistPromptInput {
+  stats: StrategistStats;
+  days: number;
+  itemsCount: number;
+  topCritical: string;
+}
+
+function buildStrategistPrompt(input: StrategistPromptInput): string {
+  const { stats, days, itemsCount, topCritical } = input;
+  return `Si AI inventory aging strategist z ML in lifecycle analysis.
 Strategizira staranje inventarja z 6 strategijami in 6 fazami.
 
 STATS:
-- Total items: ${items.length} | vrednost: ${Math.round(totalValue)}€
-- Povprečna starost: ${avgAge} dni
-- Critical/terminal items: ${criticalItems.length} | vrednost: ${Math.round(criticalValue)}€
+- Total items: ${itemsCount} | vrednost: ${Math.round(stats.totalValue)}€
+- Povprečna starost: ${stats.avgAge} dni
+- Critical/terminal items: ${stats.criticalItems.length} | vrednost: ${Math.round(stats.criticalValue)}€
 - Analiza za: ${days} dni
 
 TOP CRITICAL/TERMINAL ITEMS:
@@ -94,27 +162,16 @@ Odgovori LE z JSON:
     "quickest_aging_win": "<max 100 znakov>", "aging_strategy_analysis_score": <number 0-100>
   }
 }`;
+}
 
-    let raw = '';
-    try { raw = await callProviderForRaw(aiSettings, prompt); }
-    catch (e: any) { if (aiSettings.fallbackProvider && aiSettings.fallbackModel) { const fb: AiSettings = { provider: aiSettings.fallbackProvider, baseUrl: aiSettings.fallbackBaseUrl || '', apiKey: aiSettings.fallbackApiKey || '', model: aiSettings.fallbackModel }; raw = await callProviderForRaw(fb, prompt); } else { return NextResponse.json({ error: e?.message ?? 'AI failed' }, { status: 500 }); } }
-
-    const parsed: any = parseJsonLooseExported(raw);
-
-    const strategist = {
-      insights: String(parsed?.insights ?? '').slice(0, 500),
-      overview: { totalItems: Math.max(0, Number(parsed?.overview?.total_items ?? items.length)), totalValueEur: Math.round(Number(parsed?.overview?.total_value_eur ?? totalValue)), avgAgeDays: Math.max(0, Number(parsed?.overview?.avg_age_days ?? avgAge)), criticalItemsCount: Math.max(0, Number(parsed?.overview?.critical_items_count ?? criticalItems.length)), criticalValueEur: Math.round(Number(parsed?.overview?.critical_value_eur ?? criticalValue)), devaluationAtRiskEur: Math.round(Number(parsed?.overview?.devaluation_at_risk_eur ?? criticalValue * 0.3)), agingStrategyGrade: ['A', 'B', 'C', 'D', 'F'].includes(String(parsed?.overview?.aging_strategy_grade)) ? String(parsed.overview.aging_strategy_grade) : 'C' },
-      agingStrategy: (parsed?.agingStrategy || []).slice(0, 6).map((s: any) => ({ phase: (AGING_PHASES as readonly string[]).includes(String(s?.phase)) ? String(s.phase) : 'introduction', itemCount: Math.max(0, Number(s?.item_count ?? 0)), totalValueEur: Math.round(Number(s?.total_value_eur ?? 0)), valuePct: Math.max(0, Math.min(100, Number(s?.value_pct ?? 0))), recommendedStrategy: (STRATEGY_TIERS as readonly string[]).includes(String(s?.recommended_strategy)) ? String(s.recommended_strategy) : 'strategic_hold', timeWindowDays: Math.max(0, Number(s?.time_window_days ?? 30)), expectedRecoveryPct: Math.max(0, Math.min(100, Number(s?.expected_recovery_pct ?? 60))), actionUrgency: ['immediate', 'within_7d', 'within_30d', 'within_90d'].includes(String(s?.action_urgency)) ? String(s.action_urgency) : 'within_30d' })),
-      categoryAging: (parsed?.categoryAging || []).slice(0, 12).map((c: any) => ({ category: String(c?.category ?? '').slice(0, 50), totalItems: Math.max(0, Number(c?.total_items ?? 0)), avgAgeDays: Math.max(0, Number(c?.avg_age_days ?? 0)), oldestItemDays: Math.max(0, Number(c?.oldest_item_days ?? 0)), criticalCount: Math.max(0, Number(c?.critical_count ?? 0)), devaluationRiskEur: Math.round(Number(c?.devaluation_risk_eur ?? 0)), categoryStrategy: (STRATEGY_TIERS as readonly string[]).includes(String(c?.category_strategy)) ? String(c.category_strategy) : 'strategic_hold', trend: ['improving', 'stable', 'worsening'].includes(String(c?.trend)) ? String(c.trend) : 'stable' })),
-      actionPlan: (parsed?.actionPlan || []).slice(0, 10).map((a: any) => ({ action: String(a?.action ?? '').slice(0, 300), strategyTier: (STRATEGY_TIERS as readonly string[]).includes(String(a?.strategy_tier)) ? String(a.strategy_tier) : 'strategic_hold', targetItemsCount: Math.max(0, Number(a?.target_items_count ?? 0)), expectedRecoveryEur: Math.round(Number(a?.expected_recovery_eur ?? 0)), lossAcceptanceEur: Math.round(Number(a?.loss_acceptance_eur ?? 0)), implementationDays: Math.max(1, Number(a?.implementation_days ?? 7)), priority: ['high', 'medium', 'low'].includes(String(a?.priority)) ? String(a.priority) : 'medium', successProbabilityPct: Math.max(0, Math.min(100, Number(a?.success_probability_pct ?? 60))) })),
-      mlModels: (parsed?.mlModels || []).slice(0, 5).map((m: any) => ({ model: ['prophet', 'lstm', 'arima', 'xgboost', 'ensemble'].includes(String(m?.model)) ? String(m.model) : 'ensemble', accuracyPct: Math.max(0, Math.min(100, Number(m?.accuracy_pct ?? 75))), predictionType: ['aging_forecast', 'devaluation_prediction', 'recovery_optimization', 'lifecycle_analysis'].includes(String(m?.prediction_type)) ? String(m.prediction_type) : 'aging_forecast', weightInEnsemble: Math.max(0, Math.min(100, Number(m?.weight_in_ensemble ?? 20))) })),
-      summary: { agingStrategyScore: Math.max(0, Math.min(100, Number(parsed?.summary?.aging_strategy_score ?? 50))), agingStrategyGrade: ['A', 'B', 'C', 'D', 'F'].includes(String(parsed?.summary?.aging_strategy_grade)) ? String(parsed.summary.aging_strategy_grade) : 'C', totalDevaluationAtRiskEur: Math.round(Number(parsed?.summary?.total_devaluation_at_risk_eur ?? criticalValue * 0.3)), recoverableValueEur: Math.round(Number(parsed?.summary?.recoverable_value_eur ?? criticalValue * 0.6)), immediateActionCount: Math.max(0, Number(parsed?.summary?.immediate_action_count ?? 0)), biggestAgingRisk: String(parsed?.summary?.biggest_aging_risk ?? '').slice(0, 200), biggestAgingOpportunity: String(parsed?.summary?.biggest_aging_opportunity ?? '').slice(0, 200), quickestAgingWin: String(parsed?.summary?.quickest_aging_win ?? '').slice(0, 200), agingStrategyAnalysisScore: Math.max(0, Math.min(100, Number(parsed?.summary?.aging_strategy_analysis_score ?? 50))) },
-    };
-
-    const today = new Date().toISOString().slice(0, 10);
-    if (settings.aiCallsDate !== today) { await db.settings.update({ where: { id: 'singleton' }, data: { aiCallsDate: today, aiCallsToday: 1 } }); }
-    else { await db.settings.update({ where: { id: 'singleton' }, data: { aiCallsToday: { increment: 1 } } }); }
-
-    return NextResponse.json({ ok: true, strategist });
-  } catch (e: any) { logger.error("/api/ai/inventory-aging-strategist", "POST handler failed", e); return NextResponse.json({ error: e?.message ?? 'Napaka' }, { status: 500 }); }
+function transformStrategist(parsed: any, stats: StrategistStats, itemsCount: number) {
+  return {
+    insights: String(parsed?.insights ?? '').slice(0, 500),
+    overview: { totalItems: Math.max(0, Number(parsed?.overview?.total_items ?? itemsCount)), totalValueEur: Math.round(Number(parsed?.overview?.total_value_eur ?? stats.totalValue)), avgAgeDays: Math.max(0, Number(parsed?.overview?.avg_age_days ?? stats.avgAge)), criticalItemsCount: Math.max(0, Number(parsed?.overview?.critical_items_count ?? stats.criticalItems.length)), criticalValueEur: Math.round(Number(parsed?.overview?.critical_value_eur ?? stats.criticalValue)), devaluationAtRiskEur: Math.round(Number(parsed?.overview?.devaluation_at_risk_eur ?? stats.criticalValue * 0.3)), agingStrategyGrade: ['A', 'B', 'C', 'D', 'F'].includes(String(parsed?.overview?.aging_strategy_grade)) ? String(parsed.overview.aging_strategy_grade) : 'C' },
+    agingStrategy: (parsed?.agingStrategy || []).slice(0, 6).map((s: any) => ({ phase: (AGING_PHASES as readonly string[]).includes(String(s?.phase)) ? String(s.phase) : 'introduction', itemCount: Math.max(0, Number(s?.item_count ?? 0)), totalValueEur: Math.round(Number(s?.total_value_eur ?? 0)), valuePct: Math.max(0, Math.min(100, Number(s?.value_pct ?? 0))), recommendedStrategy: (STRATEGY_TIERS as readonly string[]).includes(String(s?.recommended_strategy)) ? String(s.recommended_strategy) : 'strategic_hold', timeWindowDays: Math.max(0, Number(s?.time_window_days ?? 30)), expectedRecoveryPct: Math.max(0, Math.min(100, Number(s?.expected_recovery_pct ?? 60))), actionUrgency: ['immediate', 'within_7d', 'within_30d', 'within_90d'].includes(String(s?.action_urgency)) ? String(s.action_urgency) : 'within_30d' })),
+    categoryAging: (parsed?.categoryAging || []).slice(0, 12).map((c: any) => ({ category: String(c?.category ?? '').slice(0, 50), totalItems: Math.max(0, Number(c?.total_items ?? 0)), avgAgeDays: Math.max(0, Number(c?.avg_age_days ?? 0)), oldestItemDays: Math.max(0, Number(c?.oldest_item_days ?? 0)), criticalCount: Math.max(0, Number(c?.critical_count ?? 0)), devaluationRiskEur: Math.round(Number(c?.devaluation_risk_eur ?? 0)), categoryStrategy: (STRATEGY_TIERS as readonly string[]).includes(String(c?.category_strategy)) ? String(c.category_strategy) : 'strategic_hold', trend: ['improving', 'stable', 'worsening'].includes(String(c?.trend)) ? String(c.trend) : 'stable' })),
+    actionPlan: (parsed?.actionPlan || []).slice(0, 10).map((a: any) => ({ action: String(a?.action ?? '').slice(0, 300), strategyTier: (STRATEGY_TIERS as readonly string[]).includes(String(a?.strategy_tier)) ? String(a.strategy_tier) : 'strategic_hold', targetItemsCount: Math.max(0, Number(a?.target_items_count ?? 0)), expectedRecoveryEur: Math.round(Number(a?.expected_recovery_eur ?? 0)), lossAcceptanceEur: Math.round(Number(a?.loss_acceptance_eur ?? 0)), implementationDays: Math.max(1, Number(a?.implementation_days ?? 7)), priority: ['high', 'medium', 'low'].includes(String(a?.priority)) ? String(a.priority) : 'medium', successProbabilityPct: Math.max(0, Math.min(100, Number(a?.success_probability_pct ?? 60))) })),
+    mlModels: (parsed?.mlModels || []).slice(0, 5).map((m: any) => ({ model: ['prophet', 'lstm', 'arima', 'xgboost', 'ensemble'].includes(String(m?.model)) ? String(m.model) : 'ensemble', accuracyPct: Math.max(0, Math.min(100, Number(m?.accuracy_pct ?? 75))), predictionType: ['aging_forecast', 'devaluation_prediction', 'recovery_optimization', 'lifecycle_analysis'].includes(String(m?.prediction_type)) ? String(m.prediction_type) : 'aging_forecast', weightInEnsemble: Math.max(0, Math.min(100, Number(m?.weight_in_ensemble ?? 20))) })),
+    summary: { agingStrategyScore: Math.max(0, Math.min(100, Number(parsed?.summary?.aging_strategy_score ?? 50))), agingStrategyGrade: ['A', 'B', 'C', 'D', 'F'].includes(String(parsed?.summary?.aging_strategy_grade)) ? String(parsed.summary.aging_strategy_grade) : 'C', totalDevaluationAtRiskEur: Math.round(Number(parsed?.summary?.total_devaluation_at_risk_eur ?? stats.criticalValue * 0.3)), recoverableValueEur: Math.round(Number(parsed?.summary?.recoverable_value_eur ?? stats.criticalValue * 0.6)), immediateActionCount: Math.max(0, Number(parsed?.summary?.immediate_action_count ?? 0)), biggestAgingRisk: String(parsed?.summary?.biggest_aging_risk ?? '').slice(0, 200), biggestAgingOpportunity: String(parsed?.summary?.biggest_aging_opportunity ?? '').slice(0, 200), quickestAgingWin: String(parsed?.summary?.quickest_aging_win ?? '').slice(0, 200), agingStrategyAnalysisScore: Math.max(0, Math.min(100, Number(parsed?.summary?.aging_strategy_analysis_score ?? 50))) },
+  };
 }

@@ -1,4 +1,4 @@
-// v7.63: Capital Allocation Optimizer — AI-driven optimal allocation of
+// v7.63 / v8.96.5-batch2: Capital Allocation Optimizer — AI-driven optimal allocation of
 // available capital across categories, optimizing for risk-adjusted
 // (Sharpe-like) returns. Generira 3 strategije (CONSERVATIVE, BALANCED,
 // AGGRESSIVE) bazirane na zgodovinskih ROI + volatilnosti per kategorija.
@@ -13,24 +13,21 @@
 //
 // GET+POST /api/ai/capital-allocation-optimizer
 // (AI-enhanced + grounding + anti-hallucination + 6h cache + deterministic fallback)
+// Refaktoriran z withAiRoute helperjem (v8.96.5) + enforceBudget guard.
 
-import { NextRequest, NextResponse } from 'next/server';
-import { db } from '@/lib/db';
-import { getSettingsRow } from '@/lib/pipeline';
-import {
-  callProviderForRaw,
-  parseJsonLooseExported,
-  type AiProviderType,
-  type AiSettings,
-} from '@/lib/ai';
+import { withAiRoute, AI_ROUTE_DEFAULTS, type AiRouteContext } from '@/lib/with-ai-route';
+import { apiOk } from '@/lib/api-response';
 import { GROUNDING_PROMPT_SUFFIX } from '@/lib/anti-hallucination';
 import { getCachedAI, setCachedAI } from '@/lib/ai-cache';
-import { checkRateLimit, rateLimitResponse } from '@/lib/rate-limit';
-import { logger } from '@/lib/logger';
 
-export const runtime = 'nodejs';
-export const dynamic = 'force-dynamic';
+export const { runtime, dynamic } = AI_ROUTE_DEFAULTS;
 export const maxDuration = 60;
+
+// --- Input ----------------------------------------------------------------
+
+interface CapitalAllocationOptimizerInput {
+  availableCapital?: number;
+}
 
 // --- Types ---------------------------------------------------------------
 
@@ -264,32 +261,316 @@ function buildDeterministicStrategy(
   };
 }
 
+// --- AI prompt + merge helpers (pure, testable) ---------------------------
+
+function buildPrompt(
+  availableCapital: number,
+  categoriesForAI: Array<{ category: string; avgROI: number; vol: number; riskScore: number }>,
+  currentAllocation: CurrentAllocationEntry[],
+): string {
+  const catsBlock = categoriesForAI
+    .map(
+      (c, i) =>
+        `${i + 1}. ${c.category} | avgROI=${c.avgROI}% | volatility=${c.vol}% | riskScore=${c.riskScore}/100`,
+    )
+    .join('\n');
+
+  const currentAllocBlock = currentAllocation.length > 0
+    ? currentAllocation
+        .map(
+          (a, i) =>
+            `${i + 1}. ${a.category} | ${a.percentage}% | ${a.capital}€`,
+        )
+        .join('\n')
+    : '(ni held inventarja)';
+
+  return `Si AI finančni optimizer za trading firmo na oglasnih platformah (Bolha, Vinted, mobile.de).
+Tvoja naloga je optimirati alokacijo razpoložljivega kapitala čez kategorije tako, da maksimiraš
+risk-adjusted return (Sharpe-like ratio = expectedROI / riskScore).
+
+RAZPOLOŽLJIVI KAPITAL: ${availableCapital}€
+
+ZGODOVINSKI ROI PER KATEGORIJA (iz sold trades):
+${catsBlock}
+
+TRENUTNA ALOKACIJA HELD INVENTARJA:
+${currentAllocBlock}
+
+NALOGA:
+Generiraj 3 strategije alokacije — CONSERVATIVE, BALANCED, AGGRESSIVE.
+
+1. CONSERVATIVE (LOW risk tolerance):
+   - Nagib k nizko-volatilnim kategorijam (riskScore < 40)
+   - expectedROI nekoliko nižji (clamped [-20, 100] %)
+   - Manjše pozicije v visoko-tveganih kategorijah
+
+2. BALANCED (MEDIUM risk tolerance):
+   - Enakomerna mešanica ROI in tveganja
+   - Sharpe-like ratio maximization
+
+3. AGGRESSIVE (HIGH risk tolerance):
+   - Nagib k visokemu ROI (tudi če volatilnost visoka)
+   - Večje pozicije v top kategorijah
+
+PRAVILA ZA VSAKO STRATEGIJO:
+- allocations[]: za vsako kategorijo določi percentage (0-100), expectedROI clamped na [-20, 100] %,
+  riskScore (0-100, baziran na volatilnosti), reasoning (1 stavek slovensko).
+- Skupna suma percentage mora biti 100.
+- sharpeLikeRatio = expectedROI / riskScore (kategorija).
+- expectedTotalROI = Σ(expectedROI × percentage / 100) — za strategijo.
+- expectedTotalProfit = round(expectedTotalROI / 100 × ${availableCapital}).
+- sharpeLikeRatio za strategijo = expectedTotalROI / Σ(riskScore × percentage / 100).
+
+REBALANCE ACTIONS:
+- BUY: kategorije kjer je trenutna alokacija premajhna glede na novo BALANCED strategijo
+- SELL: kategorije kjer je trenutna alokacija prevelika
+- HOLD: kategorije kjer je razlika < 5%
+- Za vsako akcijo določi amount (€) in reason (slovensko).
+
+VRNI LE JSON:
+{
+  "strategies": [
+    {
+      "name": "CONSERVATIVE|BALANCED|AGGRESSIVE",
+      "allocations": [
+        {
+          "category": "...",
+          "percentage": <0-100>,
+          "expectedROI": <-20 do 100>,
+          "riskScore": <0-100>,
+          "reasoning": "<1 stavek>"
+        }
+      ]
+    }
+  ],
+  "bestStrategy": "CONSERVATIVE|BALANCED|AGGRESSIVE",
+  "reasoning": "<slovensko, 1-2 stavka, zakaj ta strategija>",
+  "confidence": <0-100>,
+  "rebalanceActions": [
+    { "action": "BUY|SELL|HOLD", "category": "...", "amount": <€>, "reason": "<slovensko>" }
+  ]
+}${GROUNDING_PROMPT_SUFFIX}`;
+}
+
+function mergeAiIntoStrategies(
+  parsed: AiOptimizerResponse | null,
+  categoriesForAI: Array<{ category: string; avgROI: number; vol: number; riskScore: number }>,
+  availableCapital: number,
+): {
+  strategies: Strategy[];
+  bestStrategy: string;
+  bestReasoning: string;
+  confidence: number;
+  rebalanceActions: RebalanceAction[];
+  aiUsed: boolean;
+} {
+  const strategies: Strategy[] = [];
+  let bestStrategy = 'BALANCED';
+  let bestReasoning = '';
+  let confidence = 50;
+  const rebalanceActions: RebalanceAction[] = [];
+  let aiUsed = false;
+
+  if (!parsed || !Array.isArray(parsed.strategies)) {
+    return { strategies, bestStrategy, bestReasoning, confidence, rebalanceActions, aiUsed };
+  }
+
+  const validStrategyNames = new Set([
+    'CONSERVATIVE',
+    'BALANCED',
+    'AGGRESSIVE',
+  ]);
+  const riskTolMap: Record<string, 'LOW' | 'MEDIUM' | 'HIGH'> = {
+    CONSERVATIVE: 'LOW',
+    BALANCED: 'MEDIUM',
+    AGGRESSIVE: 'HIGH',
+  };
+  const riskMultMap: Record<string, number> = {
+    CONSERVATIVE: 0.5,
+    BALANCED: 1.0,
+    AGGRESSIVE: 1.5,
+  };
+
+  for (const rawStrat of parsed.strategies) {
+    const nameRaw = String(rawStrat.name || '').toUpperCase().trim();
+    if (!validStrategyNames.has(nameRaw)) continue;
+    const name = nameRaw as 'CONSERVATIVE' | 'BALANCED' | 'AGGRESSIVE';
+    // Build allocations: validate each AI entry, fallback to deterministic
+    const det = buildDeterministicStrategy(
+      categoriesForAI,
+      availableCapital,
+      name,
+      riskMultMap[name],
+      riskTolMap[name],
+    );
+
+    // Match AI allocations to historical categories
+    const histByCat = new Map(
+      categoriesForAI.map(c => [c.category, c]),
+    );
+    const aiAllocs = Array.isArray(rawStrat.allocations)
+      ? rawStrat.allocations
+      : [];
+
+    const allocations: AllocationEntry[] = [];
+    let totalPctRaw = 0;
+    for (const rawAlloc of aiAllocs) {
+      const cat = clampString(rawAlloc.category, 60, '')
+        .toLowerCase()
+        .trim();
+      if (!cat || !histByCat.has(cat)) continue;
+      const hist = histByCat.get(cat)!;
+      const percentage = clampNumber(rawAlloc.percentage, 0, 100, 0);
+      if (percentage <= 0) continue;
+      const expectedROI = clampNumber(
+        rawAlloc.expectedROI,
+        -20,
+        100,
+        hist.avgROI,
+      );
+      const riskScore = clampNumber(
+        rawAlloc.riskScore,
+        5,
+        95,
+        hist.riskScore,
+      );
+      const sharpeLikeRatio =
+        riskScore > 0
+          ? Math.round((expectedROI / riskScore) * 100) / 100
+          : 0;
+      const reasoning = clampString(
+        rawAlloc.reasoning,
+        240,
+        `${cat}: ${expectedROI}% ROI, risk ${riskScore}/100.`,
+      );
+      allocations.push({
+        category: cat,
+        percentage,
+        amountToInvest: 0, // filled after normalization
+        expectedROI,
+        riskScore,
+        sharpeLikeRatio,
+        reasoning,
+      });
+      totalPctRaw += percentage;
+    }
+
+    // Anti-hallucination: if AI skipped categories or sum != 100, fall back to deterministic
+    if (allocations.length === 0 || Math.abs(totalPctRaw - 100) > 1) {
+      // Use deterministic for this strategy
+      strategies.push(det);
+      continue;
+    }
+
+    // Normalize percentages to sum exactly 100 + compute amounts
+    const scale = 100 / totalPctRaw;
+    let acc = 0;
+    for (let i = 0; i < allocations.length; i++) {
+      const isLast = i === allocations.length - 1;
+      const newPct = isLast
+        ? Math.round((100 - acc) * 10) / 10
+        : Math.round(allocations[i].percentage * scale * 10) / 10;
+      acc += newPct;
+      allocations[i].percentage = newPct;
+      allocations[i].amountToInvest = Math.round(
+        (newPct / 100) * availableCapital,
+      );
+    }
+
+    // Compute strategy-level metrics
+    const expectedTotalROI = Math.round(
+      allocations.reduce(
+        (s, a) => s + (a.expectedROI * a.percentage) / 100,
+        0,
+      ),
+    );
+    const expectedTotalProfit = Math.round(
+      (expectedTotalROI / 100) * availableCapital,
+    );
+    const totalRisk = allocations.reduce(
+      (s, a) => s + (a.riskScore * a.percentage) / 100,
+      0,
+    );
+    const sharpeLikeRatio =
+      totalRisk > 0
+        ? Math.round((expectedTotalROI / totalRisk) * 100) / 100
+        : 0;
+
+    strategies.push({
+      name,
+      riskTolerance: riskTolMap[name],
+      expectedTotalROI,
+      expectedTotalProfit,
+      sharpeLikeRatio,
+      allocations,
+    });
+  }
+
+  // Validate bestStrategy
+  const bestRaw = String(parsed.bestStrategy || '').toUpperCase().trim();
+  if (validStrategyNames.has(bestRaw)) {
+    bestStrategy = bestRaw;
+  }
+  bestReasoning = clampString(parsed.reasoning, 360, '');
+  confidence = clampNumber(parsed.confidence, 0, 100, 50);
+
+  // Rebalance actions
+  if (Array.isArray(parsed.rebalanceActions)) {
+    const validActions = new Set(['BUY', 'SELL', 'HOLD']);
+    for (const ra of parsed.rebalanceActions) {
+      const actionRaw = String(ra.action || '').toUpperCase().trim();
+      if (!validActions.has(actionRaw)) continue;
+      const category = clampString(ra.category, 60, '')
+        .toLowerCase()
+        .trim();
+      if (!category) continue;
+      const amount = clampNumber(ra.amount, 0, availableCapital * 2, 0);
+      const reason = clampString(
+        ra.reason,
+        240,
+        `${actionRaw} ${category}: rebalance po BALANCED strategiji.`,
+      );
+      rebalanceActions.push({
+        action: actionRaw as 'BUY' | 'SELL' | 'HOLD',
+        category,
+        amount: Math.round(amount),
+        reason,
+      });
+    }
+  }
+
+  if (strategies.length > 0) aiUsed = true;
+
+  return { strategies, bestStrategy, bestReasoning, confidence, rebalanceActions, aiUsed };
+}
+
 // --- Handler -------------------------------------------------------------
 
-export async function GET(req: NextRequest) {
-  return handleCapitalAllocationOptimizer(req);
-}
-export async function POST(req: NextRequest) {
-  return handleCapitalAllocationOptimizer(req);
-}
+const capitalAllocationOptimizerHandler = withAiRoute<CapitalAllocationOptimizerInput>({
+  endpoint: '/api/ai/capital-allocation-optimizer',
+  maxDuration: 60,
+  enforceBudget: true, // AI klic — preveri budget
+  method: 'GET', // Endpoint sprejema GET + POST — bypass POST-only check
 
-async function handleCapitalAllocationOptimizer(req: NextRequest) {
-  try {
-    const rl = checkRateLimit(req, 'ai-capital-allocation-optimizer', 20);
-    if (!rl.allowed) return rateLimitResponse(rl);
-
-    // Parse body (optional availableCapital override)
-    let overrideCapital: number | null = null;
+  parseBody: async (req) => {
+    let availableCapital: number | undefined;
     try {
       const body = await req.json().catch(() => ({}));
       if (body && typeof body === 'object') {
         if (typeof body.availableCapital === 'number' && body.availableCapital >= 0) {
-          overrideCapital = body.availableCapital;
+          availableCapital = body.availableCapital;
         }
       }
     } catch {
       // GET request — no body
     }
+    return { availableCapital };
+  },
+
+  // No validateInput — optional availableCapital override
+  handler: async (input, ctx: AiRouteContext) => {
+    const { db, callAi, parseAi, logger } = ctx;
+    const overrideCapital = input.availableCapital ?? null;
 
     // 1) Query SOLD trades (last 30d) for available capital (sellPrice - sellFees)
     const thirtyDaysAgo = new Date(Date.now() - 30 * 86_400_000);
@@ -416,7 +697,7 @@ async function handleCapitalAllocationOptimizer(req: NextRequest) {
 
     // Empty-state fallback
     if (availableCapital <= 0 || categoriesForAI.length === 0) {
-      return NextResponse.json({
+      return apiOk({
         ok: true,
         current: {
           availableCapital,
@@ -453,7 +734,7 @@ async function handleCapitalAllocationOptimizer(req: NextRequest) {
       };
     }>(cacheKey);
     if (cached) {
-      return NextResponse.json({
+      return apiOk({
         ok: true,
         current: {
           availableCapital,
@@ -467,100 +748,7 @@ async function handleCapitalAllocationOptimizer(req: NextRequest) {
     }
 
     // 8) Build AI prompt with grounding
-    const settings = await getSettingsRow();
-    const aiSettings: AiSettings = {
-      provider: settings.aiProvider as AiProviderType,
-      baseUrl: settings.aiBaseUrl,
-      apiKey: settings.aiApiKey,
-      model: settings.aiModel,
-      fallbackProvider: (settings.fallbackProvider || '') as AiProviderType | '',
-      fallbackBaseUrl: settings.fallbackBaseUrl || '',
-      fallbackApiKey: settings.fallbackApiKey || '',
-      fallbackModel: settings.fallbackModel || '',
-    };
-
-    const catsBlock = categoriesForAI
-      .map(
-        (c, i) =>
-          `${i + 1}. ${c.category} | avgROI=${c.avgROI}% | volatility=${c.vol}% | riskScore=${c.riskScore}/100`,
-      )
-      .join('\n');
-
-    const currentAllocBlock = currentAllocation.length > 0
-      ? currentAllocation
-          .map(
-            (a, i) =>
-              `${i + 1}. ${a.category} | ${a.percentage}% | ${a.capital}€`,
-          )
-          .join('\n')
-      : '(ni held inventarja)';
-
-    const prompt = `Si AI finančni optimizer za trading firmo na oglasnih platformah (Bolha, Vinted, mobile.de).
-Tvoja naloga je optimirati alokacijo razpoložljivega kapitala čez kategorije tako, da maksimiraš
-risk-adjusted return (Sharpe-like ratio = expectedROI / riskScore).
-
-RAZPOLOŽLJIVI KAPITAL: ${availableCapital}€
-
-ZGODOVINSKI ROI PER KATEGORIJA (iz sold trades):
-${catsBlock}
-
-TRENUTNA ALOKACIJA HELD INVENTARJA:
-${currentAllocBlock}
-
-NALOGA:
-Generiraj 3 strategije alokacije — CONSERVATIVE, BALANCED, AGGRESSIVE.
-
-1. CONSERVATIVE (LOW risk tolerance):
-   - Nagib k nizko-volatilnim kategorijam (riskScore < 40)
-   - expectedROI nekoliko nižji (clamped [-20, 100] %)
-   - Manjše pozicije v visoko-tveganih kategorijah
-
-2. BALANCED (MEDIUM risk tolerance):
-   - Enakomerna mešanica ROI in tveganja
-   - Sharpe-like ratio maximization
-
-3. AGGRESSIVE (HIGH risk tolerance):
-   - Nagib k visokemu ROI (tudi če volatilnost visoka)
-   - Večje pozicije v top kategorijah
-
-PRAVILA ZA VSAKO STRATEGIJO:
-- allocations[]: za vsako kategorijo določi percentage (0-100), expectedROI clamped na [-20, 100] %,
-  riskScore (0-100, baziran na volatilnosti), reasoning (1 stavek slovensko).
-- Skupna suma percentage mora biti 100.
-- sharpeLikeRatio = expectedROI / riskScore (kategorija).
-- expectedTotalROI = Σ(expectedROI × percentage / 100) — za strategijo.
-- expectedTotalProfit = round(expectedTotalROI / 100 × ${availableCapital}).
-- sharpeLikeRatio za strategijo = expectedTotalROI / Σ(riskScore × percentage / 100).
-
-REBALANCE ACTIONS:
-- BUY: kategorije kjer je trenutna alokacija premajhna glede na novo BALANCED strategijo
-- SELL: kategorije kjer je trenutna alokacija prevelika
-- HOLD: kategorije kjer je razlika < 5%
-- Za vsako akcijo določi amount (€) in reason (slovensko).
-
-VRNI LE JSON:
-{
-  "strategies": [
-    {
-      "name": "CONSERVATIVE|BALANCED|AGGRESSIVE",
-      "allocations": [
-        {
-          "category": "...",
-          "percentage": <0-100>,
-          "expectedROI": <-20 do 100>,
-          "riskScore": <0-100>,
-          "reasoning": "<1 stavek>"
-        }
-      ]
-    }
-  ],
-  "bestStrategy": "CONSERVATIVE|BALANCED|AGGRESSIVE",
-  "reasoning": "<slovensko, 1-2 stavka, zakaj ta strategija>",
-  "confidence": <0-100>,
-  "rebalanceActions": [
-    { "action": "BUY|SELL|HOLD", "category": "...", "amount": <€>, "reason": "<slovensko>" }
-  ]
-}${GROUNDING_PROMPT_SUFFIX}`;
+    const prompt = buildPrompt(availableCapital, categoriesForAI, currentAllocation);
 
     let aiUsed = false;
     let strategies: Strategy[] = [];
@@ -570,175 +758,15 @@ VRNI LE JSON:
     let rebalanceActions: RebalanceAction[] = [];
 
     try {
-      const raw = await callProviderForRaw(aiSettings, prompt);
-      const parsed = parseJsonLooseExported(raw) as AiOptimizerResponse | null;
-      if (parsed && Array.isArray(parsed.strategies)) {
-        const validStrategyNames = new Set([
-          'CONSERVATIVE',
-          'BALANCED',
-          'AGGRESSIVE',
-        ]);
-        const riskTolMap: Record<string, 'LOW' | 'MEDIUM' | 'HIGH'> = {
-          CONSERVATIVE: 'LOW',
-          BALANCED: 'MEDIUM',
-          AGGRESSIVE: 'HIGH',
-        };
-        const riskMultMap: Record<string, number> = {
-          CONSERVATIVE: 0.5,
-          BALANCED: 1.0,
-          AGGRESSIVE: 1.5,
-        };
-
-        for (const rawStrat of parsed.strategies) {
-          const nameRaw = String(rawStrat.name || '').toUpperCase().trim();
-          if (!validStrategyNames.has(nameRaw)) continue;
-          const name = nameRaw as 'CONSERVATIVE' | 'BALANCED' | 'AGGRESSIVE';
-          // Build allocations: validate each AI entry, fallback to deterministic
-          const det = buildDeterministicStrategy(
-            categoriesForAI,
-            availableCapital,
-            name,
-            riskMultMap[name],
-            riskTolMap[name],
-          );
-
-          // Match AI allocations to historical categories
-          const histByCat = new Map(
-            categoriesForAI.map(c => [c.category, c]),
-          );
-          const aiAllocs = Array.isArray(rawStrat.allocations)
-            ? rawStrat.allocations
-            : [];
-
-          const allocations: AllocationEntry[] = [];
-          let totalPctRaw = 0;
-          for (const rawAlloc of aiAllocs) {
-            const cat = clampString(rawAlloc.category, 60, '')
-              .toLowerCase()
-              .trim();
-            if (!cat || !histByCat.has(cat)) continue;
-            const hist = histByCat.get(cat)!;
-            const percentage = clampNumber(rawAlloc.percentage, 0, 100, 0);
-            if (percentage <= 0) continue;
-            const expectedROI = clampNumber(
-              rawAlloc.expectedROI,
-              -20,
-              100,
-              hist.avgROI,
-            );
-            const riskScore = clampNumber(
-              rawAlloc.riskScore,
-              5,
-              95,
-              hist.riskScore,
-            );
-            const sharpeLikeRatio =
-              riskScore > 0
-                ? Math.round((expectedROI / riskScore) * 100) / 100
-                : 0;
-            const reasoning = clampString(
-              rawAlloc.reasoning,
-              240,
-              `${cat}: ${expectedROI}% ROI, risk ${riskScore}/100.`,
-            );
-            allocations.push({
-              category: cat,
-              percentage,
-              amountToInvest: 0, // filled after normalization
-              expectedROI,
-              riskScore,
-              sharpeLikeRatio,
-              reasoning,
-            });
-            totalPctRaw += percentage;
-          }
-
-          // Anti-hallucination: if AI skipped categories or sum != 100, fall back to deterministic
-          if (allocations.length === 0 || Math.abs(totalPctRaw - 100) > 1) {
-            // Use deterministic for this strategy
-            strategies.push(det);
-            continue;
-          }
-
-          // Normalize percentages to sum exactly 100 + compute amounts
-          const scale = 100 / totalPctRaw;
-          let acc = 0;
-          for (let i = 0; i < allocations.length; i++) {
-            const isLast = i === allocations.length - 1;
-            const newPct = isLast
-              ? Math.round((100 - acc) * 10) / 10
-              : Math.round(allocations[i].percentage * scale * 10) / 10;
-            acc += newPct;
-            allocations[i].percentage = newPct;
-            allocations[i].amountToInvest = Math.round(
-              (newPct / 100) * availableCapital,
-            );
-          }
-
-          // Compute strategy-level metrics
-          const expectedTotalROI = Math.round(
-            allocations.reduce(
-              (s, a) => s + (a.expectedROI * a.percentage) / 100,
-              0,
-            ),
-          );
-          const expectedTotalProfit = Math.round(
-            (expectedTotalROI / 100) * availableCapital,
-          );
-          const totalRisk = allocations.reduce(
-            (s, a) => s + (a.riskScore * a.percentage) / 100,
-            0,
-          );
-          const sharpeLikeRatio =
-            totalRisk > 0
-              ? Math.round((expectedTotalROI / totalRisk) * 100) / 100
-              : 0;
-
-          strategies.push({
-            name,
-            riskTolerance: riskTolMap[name],
-            expectedTotalROI,
-            expectedTotalProfit,
-            sharpeLikeRatio,
-            allocations,
-          });
-        }
-
-        // Validate bestStrategy
-        const bestRaw = String(parsed.bestStrategy || '').toUpperCase().trim();
-        if (validStrategyNames.has(bestRaw)) {
-          bestStrategy = bestRaw;
-        }
-        bestReasoning = clampString(parsed.reasoning, 360, '');
-        confidence = clampNumber(parsed.confidence, 0, 100, 50);
-
-        // Rebalance actions
-        if (Array.isArray(parsed.rebalanceActions)) {
-          const validActions = new Set(['BUY', 'SELL', 'HOLD']);
-          for (const ra of parsed.rebalanceActions) {
-            const actionRaw = String(ra.action || '').toUpperCase().trim();
-            if (!validActions.has(actionRaw)) continue;
-            const category = clampString(ra.category, 60, '')
-              .toLowerCase()
-              .trim();
-            if (!category) continue;
-            const amount = clampNumber(ra.amount, 0, availableCapital * 2, 0);
-            const reason = clampString(
-              ra.reason,
-              240,
-              `${actionRaw} ${category}: rebalance po BALANCED strategiji.`,
-            );
-            rebalanceActions.push({
-              action: actionRaw as 'BUY' | 'SELL' | 'HOLD',
-              category,
-              amount: Math.round(amount),
-              reason,
-            });
-          }
-        }
-
-        if (strategies.length > 0) aiUsed = true;
-      }
+      const raw = await callAi(prompt);
+      const parsed = parseAi(raw) as AiOptimizerResponse | null;
+      const result = mergeAiIntoStrategies(parsed, categoriesForAI, availableCapital);
+      strategies = result.strategies;
+      bestStrategy = result.bestStrategy;
+      bestReasoning = result.bestReasoning;
+      confidence = result.confidence;
+      rebalanceActions = result.rebalanceActions;
+      aiUsed = result.aiUsed;
     } catch (err) {
       logger.warn(
         '/api/ai/capital-allocation-optimizer',
@@ -867,7 +895,7 @@ VRNI LE JSON:
       setCachedAI(cacheKey, { strategies, recommendation });
     }
 
-    return NextResponse.json({
+    return apiOk({
       ok: true,
       current: {
         availableCapital,
@@ -878,8 +906,8 @@ VRNI LE JSON:
       recommendation,
       aiUsed,
     });
-  } catch (err: any) {
-    logger.error('/api/ai/capital-allocation-optimizer', 'handler failed', err);
-    return NextResponse.json({ error: err?.message ?? 'Napaka' }, { status: 500 });
-  }
-}
+  },
+});
+
+export const GET = capitalAllocationOptimizerHandler;
+export const POST = capitalAllocationOptimizerHandler;

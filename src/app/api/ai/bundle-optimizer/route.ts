@@ -1,28 +1,59 @@
-// v6.10: AI Bundle Profit Optimizer — AI kombinira inventar v bundle za maksimalni profit
+// v6.10 / v8.95.4-batch4: AI Bundle Profit Optimizer — AI kombinira inventar v bundle za maksimalni profit
+// Refaktoriran z withAiRoute helperjem (v8.94) + enforceBudget guard.
+//
 // POST /api/ai/bundle-optimizer
 // Body: { tradeIds?: string[] } // če ni podan, uporabi vse held tradeove
 // Returns: { ok, bundles: Array<{ name, items: [{id,title}], individualValue, bundlePrice, savings, expectedProfit, reasoning }>, strategy }
 
-import { NextRequest, NextResponse } from 'next/server';
-import { db } from '@/lib/db';
-import { getSettingsRow } from '@/lib/pipeline';
-import { callProviderForRaw, parseJsonLooseExported, type AiProviderType, type AiSettings } from '@/lib/ai';
-import { logger } from '@/lib/logger';
+import { withAiRoute, AI_ROUTE_DEFAULTS, type AiRouteContext } from '@/lib/with-ai-route';
+import { apiOk } from '@/lib/api-response';
 
-export const runtime = 'nodejs';
-export const dynamic = 'force-dynamic';
+export const { runtime, dynamic } = AI_ROUTE_DEFAULTS;
 export const maxDuration = 90;
 
-export async function POST(req: NextRequest) {
-  try {
+interface BundleOptimizerInput {
+  tradeIds: string[];
+}
+
+interface HeldTradeRow {
+  id: string;
+  title: string;
+  category: string | null;
+  buyPrice: number;
+  buyFees: number | null;
+  buyDate: Date;
+  listing: { aiEstimatedValue: number | null; dealScore: number | null; aiVerdict: string | null; url: string | null } | null;
+}
+
+interface Item {
+  id: string;
+  title: string;
+  category: string;
+  cost: number;
+  estimatedValue: number;
+  daysHeld: number;
+  dealScore: number;
+}
+
+export const POST = withAiRoute<BundleOptimizerInput>({
+  endpoint: '/api/ai/bundle-optimizer',
+  maxDuration: 90,
+  enforceBudget: true,
+
+  parseBody: async (req) => {
     const body = await req.json().catch(() => ({}));
-    const requestedIds: string[] = Array.isArray(body?.tradeIds) ? body.tradeIds.filter(Boolean) : [];
+    return { tradeIds: Array.isArray(body?.tradeIds) ? body.tradeIds.filter(Boolean) : [] };
+  },
+
+  handler: async (input, ctx: AiRouteContext) => {
+    const { db, callAi, parseAi } = ctx;
+    const { tradeIds } = input;
 
     // 1. Pridobi held tradeove (vse ali samo izbrane)
     const heldTrades = await db.trade.findMany({
       where: {
         status: 'held',
-        ...(requestedIds.length > 0 ? { id: { in: requestedIds } } : {}),
+        ...(tradeIds.length > 0 ? { id: { in: tradeIds } } : {}),
       },
       select: {
         id: true, title: true, category: true, buyPrice: true, buyFees: true,
@@ -32,7 +63,7 @@ export async function POST(req: NextRequest) {
     });
 
     if (heldTrades.length < 2) {
-      return NextResponse.json({
+      return apiOk({
         ok: true,
         bundles: [],
         message: 'Za bundle optimizacijo so potrebni vsaj 2 itema v skladišču.',
@@ -40,96 +71,16 @@ export async function POST(req: NextRequest) {
     }
 
     // 2. Pripravi podatke za AI
-    const items = heldTrades.map((t) => {
-      const cost = t.buyPrice + (t.buyFees ?? 0);
-      const estValue = t.listing?.aiEstimatedValue ?? Math.round(cost * 1.25);
-      const daysHeld = Math.round((Date.now() - t.buyDate.getTime()) / (24 * 60 * 60 * 1000));
-      return {
-        id: t.id,
-        title: t.title,
-        category: t.category || 'drugo',
-        cost: Math.round(cost),
-        estimatedValue: Math.round(estValue),
-        daysHeld,
-        dealScore: t.listing?.dealScore ?? 0,
-      };
-    });
+    const items = mapItems(heldTrades);
 
     const totalCost = items.reduce((s, i) => s + i.cost, 0);
     const totalEstValue = items.reduce((s, i) => s + i.estimatedValue, 0);
     const avgDays = Math.round(items.reduce((s, i) => s + i.daysHeld, 0) / items.length);
 
     // 3. AI optimizacija bundlov
-    const settings = await getSettingsRow();
-    const aiSettings: AiSettings = {
-      provider: settings.aiProvider as AiProviderType,
-      baseUrl: settings.aiBaseUrl, apiKey: settings.aiApiKey, model: settings.aiModel,
-      fallbackProvider: (settings.fallbackProvider || '') as AiProviderType | '',
-      fallbackBaseUrl: settings.fallbackBaseUrl || '', fallbackApiKey: settings.fallbackApiKey || '',
-      fallbackModel: settings.fallbackModel || '',
-    };
-
-    const prompt = `Si ekspert za bundle strategije pri preprodaji.
-Tvoj cilj: kombiniraj iteme v bundle, ki prinesejo VEČ dobička kot posamezna prodaja.
-
-Itemi v skladišču:
-${items.map(i => `- [${i.id}] ${i.title} | kategorija: ${i.category} | nabavna: ${i.cost}€ | est. vrednost: ${i.estimatedValue}€ | v skladišču: ${i.daysHeld}d | deal score: ${i.dealScore}`).join('\n')}
-
-Skupaj: ${items.length} itemov, ${totalCost}€ nabavne vrednosti, ${totalEstValue}€ est. vrednosti, povp. ${avgDays}d v skladišču.
-
-Pravila za bundle:
-1. Kombiniraj komplementarne iteme (npr. telefon + polnilnik + slušalke; kolo + čelada + luči)
-2. Bundle cena naj bo 5-15% NIŽJA od vsote posameznih cen (incentiv za kupec)
-3. Skupni dobiček bundle mora biti ≥ vsote posameznih dobičkov
-4. Prioritiziraj iteme, ki so dalj časa v skladišču (>30 dni)
-5. Kategorije naj se dopolnjuje (ne mešaj nepremičnin z elektroniko)
-6. Vsak item je lahko samo v enem bundleu
-7. Itemi, ki jih ne daš v bundle, ostanejo za individualno prodajo
-
-Strategije:
-- "complete_set": kompletiraj komplet (npr. gaming setup)
-- "upgrade_path": cenejši + dražji (kupec lahko upgrade-a)
-- "bulk_discount": več istih itemov z discountom
-- "starter_pack": začetniški paket za novince
-- "premium_bundle": luxury itemi skupaj
-
-Odgovori LE z JSON:
-{
-  "strategy": "<splošna strategija, max 200 znakov>",
-  "bundles": [
-    {
-      "name": "<ime bundla, npr. 'Gaming setup bundle'>",
-      "strategy": "<complete_set|upgrade_path|bulk_discount|starter_pack|premium_bundle>",
-      "item_ids": ["<trade_id>", "<trade_id>"],
-      "individual_total": <number>,
-      "bundle_price": <number>,
-      "savings_pct": <number>,
-      "expected_profit": <number>,
-      "expected_sell_time_days": <number>,
-      "reasoning": "<zakaj ta bundle, max 150 znakov>"
-    }
-  ],
-  "individual_sale": ["<trade_id>", ...]
-}`;
-
-    let raw = '';
-    try {
-      raw = await callProviderForRaw(aiSettings, prompt);
-    } catch (primaryError: any) {
-      if (aiSettings.fallbackProvider && aiSettings.fallbackModel) {
-        const fb: AiSettings = {
-          provider: aiSettings.fallbackProvider,
-          baseUrl: aiSettings.fallbackBaseUrl || '',
-          apiKey: aiSettings.fallbackApiKey || '',
-          model: aiSettings.fallbackModel,
-        };
-        raw = await callProviderForRaw(fb, prompt);
-      } else {
-        return NextResponse.json({ error: primaryError?.message ?? 'AI failed' }, { status: 500 });
-      }
-    }
-
-    const parsed: any = parseJsonLooseExported(raw);
+    const prompt = buildPrompt({ items, totalCost, totalEstValue, avgDays });
+    const raw = await callAi(prompt);
+    const parsed: any = parseAi(raw);
 
     // Validiraj bundle-je (item_ids morajo obstajati v skladišču)
     const validIds = new Set(items.map(i => i.id));
@@ -178,15 +129,7 @@ Odgovori LE z JSON:
     const totalBundleProfit = bundles.reduce((s: number, b: any) => s + (b?.expectedProfit ?? 0), 0);
     const totalIndividualProfit = individualSale.reduce((s, i) => s + i.expectedProfit, 0);
 
-    // Increment AI usage
-    const today = new Date().toISOString().slice(0, 10);
-    if (settings.aiCallsDate !== today) {
-      await db.settings.update({ where: { id: 'singleton' }, data: { aiCallsDate: today, aiCallsToday: 1 } });
-    } else {
-      await db.settings.update({ where: { id: 'singleton' }, data: { aiCallsToday: { increment: 1 } } });
-    }
-
-    return NextResponse.json({
+    return apiOk({
       ok: true,
       strategy: String(parsed?.strategy ?? '').slice(0, 500),
       bundles,
@@ -203,8 +146,77 @@ Odgovori LE z JSON:
           : 0,
       },
     });
-  } catch (e: any) {
-    logger.error("/api/ai/bundle-optimizer", "POST handler failed", e);
-    return NextResponse.json({ error: e?.message ?? 'Napaka' }, { status: 500 });
-  }
+  },
+});
+
+// --- Pomožne funkcije (čiste, testabilne) --------------------------------
+
+function mapItems(heldTrades: HeldTradeRow[]): Item[] {
+  return heldTrades.map((t) => {
+    const cost = t.buyPrice + (t.buyFees ?? 0);
+    const estValue = t.listing?.aiEstimatedValue ?? Math.round(cost * 1.25);
+    const daysHeld = Math.round((Date.now() - t.buyDate.getTime()) / (24 * 60 * 60 * 1000));
+    return {
+      id: t.id,
+      title: t.title,
+      category: t.category || 'drugo',
+      cost: Math.round(cost),
+      estimatedValue: Math.round(estValue),
+      daysHeld,
+      dealScore: t.listing?.dealScore ?? 0,
+    };
+  });
+}
+
+interface PromptContext {
+  items: Item[];
+  totalCost: number;
+  totalEstValue: number;
+  avgDays: number;
+}
+
+function buildPrompt(ctx: PromptContext): string {
+  const { items, totalCost, totalEstValue, avgDays } = ctx;
+  return `Si ekspert za bundle strategije pri preprodaji.
+Tvoj cilj: kombiniraj iteme v bundle, ki prinesejo VEČ dobička kot posamezna prodaja.
+
+Itemi v skladišču:
+${items.map(i => `- [${i.id}] ${i.title} | kategorija: ${i.category} | nabavna: ${i.cost}€ | est. vrednost: ${i.estimatedValue}€ | v skladišču: ${i.daysHeld}d | deal score: ${i.dealScore}`).join('\n')}
+
+Skupaj: ${items.length} itemov, ${totalCost}€ nabavne vrednosti, ${totalEstValue}€ est. vrednosti, povp. ${avgDays}d v skladišču.
+
+Pravila za bundle:
+1. Kombiniraj komplementarne iteme (npr. telefon + polnilnik + slušalke; kolo + čelada + luči)
+2. Bundle cena naj bo 5-15% NIŽJA od vsote posameznih cen (incentiv za kupec)
+3. Skupni dobiček bundle mora biti ≥ vsote posameznih dobičkov
+4. Prioritiziraj iteme, ki so dalj časa v skladišču (>30 dni)
+5. Kategorije naj se dopolnjuje (ne mešaj nepremičnin z elektroniko)
+6. Vsak item je lahko samo v enem bundleu
+7. Itemi, ki jih ne daš v bundle, ostanejo za individualno prodajo
+
+Strategije:
+- "complete_set": kompletiraj komplet (npr. gaming setup)
+- "upgrade_path": cenejši + dražji (kupec lahko upgrade-a)
+- "bulk_discount": več istih itemov z discountom
+- "starter_pack": začetniški paket za novince
+- "premium_bundle": luxury itemi skupaj
+
+Odgovori LE z JSON:
+{
+  "strategy": "<splošna strategija, max 200 znakov>",
+  "bundles": [
+    {
+      "name": "<ime bundla, npr. 'Gaming setup bundle'>",
+      "strategy": "<complete_set|upgrade_path|bulk_discount|starter_pack|premium_bundle>",
+      "item_ids": ["<trade_id>", "<trade_id>"],
+      "individual_total": <number>,
+      "bundle_price": <number>,
+      "savings_pct": <number>,
+      "expected_profit": <number>,
+      "expected_sell_time_days": <number>,
+      "reasoning": "<zakaj ta bundle, max 150 znakov>"
+    }
+  ],
+  "individual_sale": ["<trade_id>", ...]
+}`;
 }

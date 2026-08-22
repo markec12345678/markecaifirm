@@ -1,101 +1,57 @@
-// v5.6: AI Anomaly Detection — AI sam zazna sumljive oglase (prevarantski vzorci)
+// v5.6 / v8.94-refactor: AI Anomaly Detection — AI sam zazna sumljive oglase
+// Refaktoriran z withAiRoute helperjem (v8.94) + enforceBudget guard.
+//
 // POST /api/ai/detect-anomalies
 // Body: { listingId: string } — single listing
 // Body: { monitorId: string, limit?: number } — bulk scan
 // Body: { days?: number } — scan last N days (default 7)
 // Returns: { ok, anomalies: Array<{ listingId, title, anomalyScore, flags, reasoning }> }
 
-import { NextRequest, NextResponse } from 'next/server';
-import { db } from '@/lib/db';
-import { getSettingsRow } from '@/lib/pipeline';
-import { callProviderForRaw, parseJsonLooseExported, type AiProviderType, type AiSettings } from '@/lib/ai';
-import { logger } from '@/lib/logger';
+import { NextResponse } from 'next/server';
+import { withAiRoute, AI_ROUTE_DEFAULTS, ApiRouteError, type AiRouteContext } from '@/lib/with-ai-route';
+import { apiOk } from '@/lib/api-response';
 
-export const runtime = 'nodejs';
-export const dynamic = 'force-dynamic';
+export const { runtime, dynamic } = AI_ROUTE_DEFAULTS;
 export const maxDuration = 120;
 
-export async function POST(req: NextRequest) {
-  try {
+interface DetectAnomaliesInput {
+  listingId?: string;
+  monitorId?: string;
+  days: number;
+  limit: number;
+}
+
+export const POST = withAiRoute<DetectAnomaliesInput>({
+  endpoint: '/api/ai/detect-anomalies',
+  maxDuration: 120,
+  enforceBudget: true,
+
+  parseBody: async (req) => {
     const body = await req.json().catch(() => ({}));
-    const listingId = body?.listingId;
-    const monitorId = body?.monitorId;
     const daysRaw = typeof body?.days === 'number' ? body.days : Number(body?.days);
-    const days = Number.isFinite(daysRaw) ? Math.min(90, Math.max(1, daysRaw)) : 7;
-    const limit = Math.min(50, Math.max(1, body?.limit ?? 20));
-
-    // Gather listings to analyze
-    let listings: any[] = [];
-    if (listingId) {
-      const l = await db.listing.findUnique({
-        where: { id: listingId },
-        select: {
-          id: true, title: true, price: true, priceText: true, url: true,
-          location: true, description: true, detailDescription: true,
-          imageUrl: true, firstSeenAt: true, aiVerdict: true, aiScore: true,
-          aiRisk: true, aiEstimatedValue: true, dealScore: true,
-          sellerName: true, sellerListingCount: true,
-          monitor: { select: { name: true, source: true } },
-        },
-      });
-      if (!l) return NextResponse.json({ error: 'Listing ne obstaja' }, { status: 404 });
-      listings = [l];
-    } else {
-      const since = new Date(Date.now() - days * 24 * 60 * 60 * 1000);
-      const where: any = { firstSeenAt: { gte: since }, isHidden: false };
-      if (monitorId) where.monitorId = monitorId;
-      listings = await db.listing.findMany({
-        where,
-        select: {
-          id: true, title: true, price: true, priceText: true, url: true,
-          location: true, description: true, detailDescription: true,
-          imageUrl: true, firstSeenAt: true, aiVerdict: true, aiScore: true,
-          aiRisk: true, aiEstimatedValue: true, dealScore: true,
-          sellerName: true, sellerListingCount: true,
-          monitor: { select: { name: true, source: true } },
-        },
-        orderBy: { firstSeenAt: 'desc' },
-        take: limit,
-      });
-    }
-
-    if (listings.length === 0) {
-      return NextResponse.json({ ok: true, anomalies: [], message: 'Ni oglasov za analizo.' });
-    }
-
-    const settings = await getSettingsRow();
-    const aiSettings: AiSettings = {
-      provider: settings.aiProvider as AiProviderType,
-      baseUrl: settings.aiBaseUrl,
-      apiKey: settings.aiApiKey,
-      model: settings.aiModel,
-      fallbackProvider: (settings.fallbackProvider || '') as AiProviderType | '',
-      fallbackBaseUrl: settings.fallbackBaseUrl || '',
-      fallbackApiKey: settings.fallbackApiKey || '',
-      fallbackModel: settings.fallbackModel || '',
+    return {
+      listingId: body?.listingId ? String(body.listingId) : undefined,
+      monitorId: body?.monitorId ? String(body.monitorId) : undefined,
+      days: Number.isFinite(daysRaw) ? Math.min(90, Math.max(1, daysRaw)) : 7,
+      limit: Math.min(50, Math.max(1, Number(body?.limit ?? 20))),
     };
+  },
 
-    // Build prompt for batch anomaly detection
-    const prompt = buildAnomalyPrompt(listings);
+  handler: async (input, ctx: AiRouteContext) => {
+    const { db, callAi, parseAi } = ctx;
 
-    let raw = '';
-    try {
-      raw = await callProviderForRaw(aiSettings, prompt);
-    } catch (primaryError: any) {
-      if (aiSettings.fallbackProvider && aiSettings.fallbackModel) {
-        const fallbackSettings: AiSettings = {
-          provider: aiSettings.fallbackProvider,
-          baseUrl: aiSettings.fallbackBaseUrl || '',
-          apiKey: aiSettings.fallbackApiKey || '',
-          model: aiSettings.fallbackModel,
-        };
-        raw = await callProviderForRaw(fallbackSettings, prompt);
-      } else {
-        throw primaryError;
-      }
+    // 1. Pridobi listings za analizo
+    const listings = await resolveListingsForAnomaly(input, db);
+    if (listings.length === 0) {
+      return apiOk({ anomalies: [], message: 'Ni oglasov za analizo.' });
     }
 
-    const parsed: any = parseJsonLooseExported(raw);
+    // 2. AI klic
+    const prompt = buildAnomalyPrompt(listings);
+    const raw = await callAi(prompt);
+    const parsed: any = parseAi(raw);
+
+    // 3. Transformacija rezultatov
     const results = (parsed?.anomalies || []).map((a: any, i: number) => ({
       listingId: listings[i]?.id ?? null,
       title: listings[i]?.title ?? '',
@@ -107,34 +63,58 @@ export async function POST(req: NextRequest) {
       recommendation: String(a?.recommendation ?? '').slice(0, 200),
     }));
 
-    // Sort by anomaly score descending
+    // 4. Sort by anomaly score (highest first)
     results.sort((a, b) => b.anomalyScore - a.anomalyScore);
 
-    // Increment AI usage counter
-    const today = new Date().toISOString().slice(0, 10);
-    if (settings.aiCallsDate !== today) {
-      await db.settings.update({
-        where: { id: 'singleton' },
-        data: { aiCallsDate: today, aiCallsToday: 1 },
-      });
-    } else {
-      await db.settings.update({
-        where: { id: 'singleton' },
-        data: { aiCallsToday: { increment: 1 } },
-      });
-    }
-
-    return NextResponse.json({
-      ok: true,
+    return apiOk({
       anomalies: results,
       analyzedAt: new Date().toISOString(),
       analyzedCount: listings.length,
       suspiciousCount: results.filter(r => r.anomalyScore >= 50).length,
     });
-  } catch (e: any) {
-    logger.error("/api/ai/detect-anomalies", "POST handler failed", e);
-    return NextResponse.json({ error: e?.message ?? 'Napaka pri AI analizi anomalij' }, { status: 500 });
+  },
+});
+
+// --- Pomožne funkcije -----------------------------------------------------
+
+async function resolveListingsForAnomaly(
+  input: DetectAnomaliesInput,
+  db: AiRouteContext['db']
+): Promise<any[]> {
+  if (input.listingId) {
+    const l = await db.listing.findUnique({
+      where: { id: input.listingId },
+      select: {
+        id: true, title: true, price: true, priceText: true, url: true,
+        location: true, description: true, detailDescription: true,
+        imageUrl: true, firstSeenAt: true, aiVerdict: true, aiScore: true,
+        aiRisk: true, aiEstimatedValue: true, dealScore: true,
+        sellerName: true, sellerListingCount: true,
+        monitor: { select: { name: true, source: true } },
+      },
+    });
+    if (!l) {
+      throw new ApiRouteError('Listing ne obstaja', 404);
+    }
+    return [l];
   }
+
+  const since = new Date(Date.now() - input.days * 24 * 60 * 60 * 1000);
+  const where: any = { firstSeenAt: { gte: since }, isHidden: false };
+  if (input.monitorId) where.monitorId = input.monitorId;
+  return await db.listing.findMany({
+    where,
+    select: {
+      id: true, title: true, price: true, priceText: true, url: true,
+      location: true, description: true, detailDescription: true,
+      imageUrl: true, firstSeenAt: true, aiVerdict: true, aiScore: true,
+      aiRisk: true, aiEstimatedValue: true, dealScore: true,
+      sellerName: true, sellerListingCount: true,
+      monitor: { select: { name: true, source: true } },
+    },
+    orderBy: { firstSeenAt: 'desc' },
+    take: input.limit,
+  });
 }
 
 function buildAnomalyPrompt(listings: any[]): string {
@@ -167,8 +147,7 @@ function buildAnomalyPrompt(listings: any[]): string {
     if (l.sellerName) parts.push(`Prodajalec: ${l.sellerName} (${l.sellerListingCount ?? '?'} oglasov)`);
     parts.push(`Vir: ${l.monitor?.source ?? '?'}`);
     parts.push(`Opis: ${(l.detailDescription || l.description || '(brez opisa)').slice(0, 400)}`);
-    if (l.imageUrl) parts.push(`Slika: da`);
-    else parts.push(`Slika: ne`);
+    parts.push(`Slika: ${l.imageUrl ? 'da' : 'ne'}`);
     parts.push('');
   });
 
@@ -188,7 +167,7 @@ function buildAnomalyPrompt(listings: any[]): string {
   return parts.join('\n');
 }
 
-function clampInt(v: any, min: number, max: number): number | null {
+function clampInt(v: unknown, min: number, max: number): number | null {
   if (v === null || v === undefined || v === '') return null;
   const n = typeof v === 'number' ? v : parseInt(String(v), 10);
   if (Number.isNaN(n)) return null;

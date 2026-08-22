@@ -26,7 +26,8 @@ const StatisticsView = dynamic(() => import('@/components/dashboard/statistics-v
 // v7.00: BuyersView — nov pogled za upravljanje kupcev (40 orphan buyer endpointi)
 const BuyersView = memo(dynamic(() => import('@/components/dashboard/buyers-view').then(m => ({ default: m.BuyersView })), { ssr: false, loading: () => <LoadingFallback /> }));
 // v7.01: AIHubView — centralen pregled vseh 254 AI endpointov z iskalnikom
-const AIHubView = memo(dynamic(() => import('@/components/dashboard/ai-hub-view').then(m => ({ default: m.AIHubView })), { ssr: false, loading: () => <LoadingFallback /> }));
+// v8.94.5-split: ai-hub-view.tsx (8217 lines) razdeljen v src/components/dashboard/ai-hub/
+const AIHubView = memo(dynamic(() => import('@/components/dashboard/ai-hub').then(m => ({ default: m.AIHubView })), { ssr: false, loading: () => <LoadingFallback /> }));
 // v7.02: InventoryView — AI analiza skladišča (aging, stockout, shrinkage, liquidation, rebalancer)
 const InventoryView = memo(dynamic(() => import('@/components/dashboard/inventory-view').then(m => ({ default: m.InventoryView })), { ssr: false, loading: () => <LoadingFallback /> }));
 // v7.04: PricingView — AI analiza cen in dobička (smart-pricing, forecast, margin, price-war, seasonal)

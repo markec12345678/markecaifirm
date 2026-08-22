@@ -1,16 +1,14 @@
-// v6.61: AI Buyer Lifecycle Predictor — napove lifecycle kupca z ML stage transition modeling
+// v6.61 / v8.96.3-batch1: AI Buyer Lifecycle Predictor — napove lifecycle kupca z ML stage transition modeling
+// Refaktoriran z withAiRoute helperjem (v8.96.3-batch1) + enforceBudget guard.
+//
 // POST /api/ai/buyer-lifecycle-predictor
 // Body: { customerName?: string, monthsAhead?: number }
 // Returns: { ok, predictor: { buyers, lifecycleStages, transitions, mlPredictions, valueProjection, recommendations, summary } }
 
-import { NextRequest, NextResponse } from 'next/server';
-import { db } from '@/lib/db';
-import { getSettingsRow } from '@/lib/pipeline';
-import { callProviderForRaw, parseJsonLooseExported, type AiProviderType, type AiSettings } from '@/lib/ai';
-import { logger } from '@/lib/logger';
+import { withAiRoute, AI_ROUTE_DEFAULTS, type AiRouteContext } from '@/lib/with-ai-route';
+import { apiOk } from '@/lib/api-response';
 
-export const runtime = 'nodejs';
-export const dynamic = 'force-dynamic';
+export const { runtime, dynamic } = AI_ROUTE_DEFAULTS;
 export const maxDuration = 90;
 
 const LIFECYCLE_STAGES = [
@@ -25,11 +23,31 @@ const LIFECYCLE_STAGES = [
   'reactivated',     // ponovno aktiven po churn
 ] as const;
 
-export async function POST(req: NextRequest) {
-  try {
+type LifecycleStage = typeof LIFECYCLE_STAGES[number];
+
+interface BuyerLifecycleInput {
+  customerName: string | null;
+  monthsAhead: number;
+}
+
+export const POST = withAiRoute<BuyerLifecycleInput>({
+  endpoint: '/api/ai/buyer-lifecycle-predictor',
+  maxDuration: 90,
+  enforceBudget: true, // AI klic — preveri budget
+
+  parseBody: async (req) => {
     const body = await req.json().catch(() => ({}));
-    const customerName = body?.customerName ? String(body.customerName).trim() : null;
-    const monthsAhead = Math.max(1, Math.min(24, Number(body?.monthsAhead ?? 12)));
+    return {
+      customerName: body?.customerName ? String(body.customerName).trim() : null,
+      monthsAhead: Math.max(1, Math.min(24, Number(body?.monthsAhead ?? 12))),
+    };
+  },
+
+  // No validateInput — vsi input-i imajo defaults
+
+  handler: async (input, ctx: AiRouteContext) => {
+    const { db, callAi, parseAi } = ctx;
+    const { customerName, monthsAhead } = input;
 
     const soldTrades = await db.trade.findMany({
       where: { status: 'sold', sellPrice: { not: null }, sellLocation: { not: '' }, sellDate: { not: null } },
@@ -39,7 +57,7 @@ export async function POST(req: NextRequest) {
     });
 
     if (soldTrades.length === 0) {
-      return NextResponse.json({ ok: true, predictor: null, message: 'Ni prodaj za lifecycle analizo.' });
+      return apiOk({ ok: true, predictor: null, message: 'Ni prodaj za lifecycle analizo.' });
     }
 
     // Aggregation
@@ -54,7 +72,7 @@ export async function POST(req: NextRequest) {
       daysSinceLastPurchase: number;
       categories: Set<string>;
       purchaseDates: Date[];
-      currentStage: typeof LIFECYCLE_STAGES[number];
+      currentStage: LifecycleStage;
     }>();
 
     const now = Date.now();
@@ -103,26 +121,43 @@ export async function POST(req: NextRequest) {
     if (customerName) {
       const filtered = buyers.filter(b => b.name === customerName);
       if (filtered.length === 0) {
-        return NextResponse.json({ ok: true, predictor: null, message: `Kupec "${customerName}" ni najden.` });
+        return apiOk({ ok: true, predictor: null, message: `Kupec "${customerName}" ni najden.` });
       }
     }
 
-    const settings = await getSettingsRow();
-    const aiSettings: AiSettings = {
-      provider: settings.aiProvider as AiProviderType,
-      baseUrl: settings.aiBaseUrl, apiKey: settings.aiApiKey, model: settings.aiModel,
-      fallbackProvider: (settings.fallbackProvider || '') as AiProviderType | '',
-      fallbackBaseUrl: settings.fallbackBaseUrl || '', fallbackApiKey: settings.fallbackApiKey || '',
-      fallbackModel: settings.fallbackModel || '',
-    };
-
     const targetBuyers = customerName ? buyers.filter(b => b.name === customerName) : buyers.slice(0, 25);
 
-    const buyersStr = targetBuyers.slice(0, 15).map(b =>
-      `- ${b.name} | ${b.purchases}x | ${b.totalSpent}€ | ${b.daysAsCustomer}d | ${b.daysSinceLastPurchase}d zadnji | stage: ${b.currentStage} | ${b.categories.size} kat`
-    ).join('\n');
+    const prompt = buildPrompt(targetBuyers, monthsAhead);
+    const raw = await callAi(prompt);
+    const parsed: any = parseAi(raw);
+    const predictor = transformPredictor(parsed, targetBuyers, monthsAhead);
 
-    const prompt = `Si AI buyer lifecycle predictor z ML stage transition modeling.
+    return apiOk({ ok: true, predictor });
+  },
+});
+
+// --- Pomožne funkcije (čiste, testabilne) --------------------------------
+
+interface BuyerRow {
+  name: string;
+  purchases: number;
+  totalSpent: number;
+  avgOrderValue: number;
+  firstPurchase: Date | null;
+  lastPurchase: Date | null;
+  daysAsCustomer: number;
+  daysSinceLastPurchase: number;
+  categories: Set<string>;
+  purchaseDates: Date[];
+  currentStage: LifecycleStage;
+}
+
+function buildPrompt(targetBuyers: BuyerRow[], monthsAhead: number): string {
+  const buyersStr = targetBuyers.slice(0, 15).map(b =>
+    `- ${b.name} | ${b.purchases}x | ${b.totalSpent}€ | ${b.daysAsCustomer}d | ${b.daysSinceLastPurchase}d zadnji | stage: ${b.currentStage} | ${b.categories.size} kat`
+  ).join('\n');
+
+  return `Si AI buyer lifecycle predictor z ML stage transition modeling.
 Napove lifecycle kupca v naslednjih ${monthsAhead} mesecih z ML modelom.
 
 KUPCI (${targetBuyers.length}):
@@ -250,110 +285,95 @@ Odgovori LE z JSON:
     "lifecycle_efficiency_score": <number 0-100>
   }
 }`;
+}
 
-    let raw = '';
-    try { raw = await callProviderForRaw(aiSettings, prompt); }
-    catch (primaryError: any) {
-      if (aiSettings.fallbackProvider && aiSettings.fallbackModel) {
-        const fb: AiSettings = { provider: aiSettings.fallbackProvider, baseUrl: aiSettings.fallbackBaseUrl || '', apiKey: aiSettings.fallbackApiKey || '', model: aiSettings.fallbackModel };
-        raw = await callProviderForRaw(fb, prompt);
-      } else { return NextResponse.json({ error: primaryError?.message ?? 'AI failed' }, { status: 500 }); }
-    }
+function transformPredictor(parsed: any, targetBuyers: BuyerRow[], monthsAhead: number) {
+  const validNames = new Set(targetBuyers.map(b => b.name));
 
-    const parsed: any = parseJsonLooseExported(raw);
-    const validNames = new Set(targetBuyers.map(b => b.name));
-
-    const predictor = {
-      insights: String(parsed?.insights ?? '').slice(0, 500),
-      buyers: (parsed?.buyers || [])
-        .filter((b: any) => validNames.has(String(b?.name ?? '')))
-        .slice(0, 25)
-        .map((b: any) => ({
-          name: String(b?.name ?? '').slice(0, 100),
-          currentStage: LIFECYCLE_STAGES.includes(String(b?.current_stage) as any) ? String(b.current_stage) : 'first_time',
-          stageDurationDays: Math.max(0, Number(b?.stage_duration_days ?? 0)),
-          predictedNextStage: LIFECYCLE_STAGES.includes(String(b?.predicted_next_stage) as any) ? String(b.predicted_next_stage) : 'repeat_customer',
-          predictedTransitionDate: String(b?.predicted_transition_date ?? '').slice(0, 20),
-          transitionProbabilityPct: Math.max(0, Math.min(100, Number(b?.transition_probability_pct ?? 50))),
-          mlPredictions: {
-            retentionProbability12mPct: Math.max(0, Math.min(100, Number(b?.ml_predictions?.retention_probability_12m_pct ?? 60))),
-            churnProbability6mPct: Math.max(0, Math.min(100, Number(b?.ml_predictions?.churn_probability_6m_pct ?? 20))),
-            churnProbability12mPct: Math.max(0, Math.min(100, Number(b?.ml_predictions?.churn_probability_12m_pct ?? 30))),
-            nextPurchaseProbability30dPct: Math.max(0, Math.min(100, Number(b?.ml_predictions?.next_purchase_probability_30d_pct ?? 30))),
-            predictedClvEur: Math.round(Number(b?.ml_predictions?.predicted_clv_eur ?? 0)),
-            predictedRemainingPurchases: Math.max(0, Number(b?.ml_predictions?.predicted_remaining_purchases ?? 0)),
-            modelConfidencePct: Math.max(0, Math.min(100, Number(b?.ml_predictions?.model_confidence_pct ?? 60))),
-          },
-          valueProjection: (b?.value_projection || []).slice(0, monthsAhead).map((v: any) => ({
-            month: Math.max(1, Math.min(24, Number(v?.month ?? 1))),
-            predictedRevenueEur: Math.round(Number(v?.predicted_revenue_eur ?? 0)),
-            cumulativeClvEur: Math.round(Number(v?.cumulative_clv_eur ?? 0)),
-            stageAtMonth: LIFECYCLE_STAGES.includes(String(v?.stage_at_month) as any) ? String(v.stage_at_month) : 'first_time',
-          })),
-          riskFactors: (b?.risk_factors || []).slice(0, 5).map((r: any) => String(r).slice(0, 150)),
-          growthDrivers: (b?.growth_drivers || []).slice(0, 5).map((g: any) => String(g).slice(0, 150)),
-          recommendedIntervention: ['maintain', 'nurture', 'reward', 'win_back', 'reactivate', 'let_go'].includes(String(b?.recommended_intervention)) ? String(b.recommended_intervention) : 'maintain',
-          interventionPriority: ['high', 'medium', 'low'].includes(String(b?.intervention_priority)) ? String(b.intervention_priority) : 'medium',
-          expectedInterventionImpactEur: Math.round(Number(b?.expected_intervention_impact_eur ?? 0)),
+  return {
+    insights: String(parsed?.insights ?? '').slice(0, 500),
+    buyers: (parsed?.buyers || [])
+      .filter((b: any) => validNames.has(String(b?.name ?? '')))
+      .slice(0, 25)
+      .map((b: any) => ({
+        name: String(b?.name ?? '').slice(0, 100),
+        currentStage: LIFECYCLE_STAGES.includes(String(b?.current_stage) as any) ? String(b.current_stage) : 'first_time',
+        stageDurationDays: Math.max(0, Number(b?.stage_duration_days ?? 0)),
+        predictedNextStage: LIFECYCLE_STAGES.includes(String(b?.predicted_next_stage) as any) ? String(b.predicted_next_stage) : 'repeat_customer',
+        predictedTransitionDate: String(b?.predicted_transition_date ?? '').slice(0, 20),
+        transitionProbabilityPct: Math.max(0, Math.min(100, Number(b?.transition_probability_pct ?? 50))),
+        mlPredictions: {
+          retentionProbability12mPct: Math.max(0, Math.min(100, Number(b?.ml_predictions?.retention_probability_12m_pct ?? 60))),
+          churnProbability6mPct: Math.max(0, Math.min(100, Number(b?.ml_predictions?.churn_probability_6m_pct ?? 20))),
+          churnProbability12mPct: Math.max(0, Math.min(100, Number(b?.ml_predictions?.churn_probability_12m_pct ?? 30))),
+          nextPurchaseProbability30dPct: Math.max(0, Math.min(100, Number(b?.ml_predictions?.next_purchase_probability_30d_pct ?? 30))),
+          predictedClvEur: Math.round(Number(b?.ml_predictions?.predicted_clv_eur ?? 0)),
+          predictedRemainingPurchases: Math.max(0, Number(b?.ml_predictions?.predicted_remaining_purchases ?? 0)),
+          modelConfidencePct: Math.max(0, Math.min(100, Number(b?.ml_predictions?.model_confidence_pct ?? 60))),
+        },
+        valueProjection: (b?.value_projection || []).slice(0, monthsAhead).map((v: any) => ({
+          month: Math.max(1, Math.min(24, Number(v?.month ?? 1))),
+          predictedRevenueEur: Math.round(Number(v?.predicted_revenue_eur ?? 0)),
+          cumulativeClvEur: Math.round(Number(v?.cumulative_clv_eur ?? 0)),
+          stageAtMonth: LIFECYCLE_STAGES.includes(String(v?.stage_at_month) as any) ? String(v.stage_at_month) : 'first_time',
         })),
-      lifecycleStages: (parsed?.lifecycle_stages || []).slice(0, 9).map((s: any) => ({
-        stage: LIFECYCLE_STAGES.includes(String(s?.stage) as any) ? String(s.stage) : 'first_time',
-        buyerCount: Math.max(0, Number(s?.buyer_count ?? 0)),
-        avgClvEur: Math.round(Number(s?.avg_clv_eur ?? 0)),
-        totalValueEur: Math.round(Number(s?.total_value_eur ?? 0)),
-        avgDurationDays: Math.max(0, Number(s?.avg_duration_days ?? 0)),
-        conversionRateToNextPct: Math.max(0, Math.min(100, Number(s?.conversion_rate_to_next_pct ?? 50))),
-        churnRatePct: Math.max(0, Math.min(100, Number(s?.churn_rate_pct ?? 10))),
-        bestStrategy: String(s?.best_strategy ?? '').slice(0, 250),
+        riskFactors: (b?.risk_factors || []).slice(0, 5).map((r: any) => String(r).slice(0, 150)),
+        growthDrivers: (b?.growth_drivers || []).slice(0, 5).map((g: any) => String(g).slice(0, 150)),
+        recommendedIntervention: ['maintain', 'nurture', 'reward', 'win_back', 'reactivate', 'let_go'].includes(String(b?.recommended_intervention)) ? String(b.recommended_intervention) : 'maintain',
+        interventionPriority: ['high', 'medium', 'low'].includes(String(b?.intervention_priority)) ? String(b.intervention_priority) : 'medium',
+        expectedInterventionImpactEur: Math.round(Number(b?.expected_intervention_impact_eur ?? 0)),
       })),
-      transitions: (parsed?.transitions || []).slice(0, 12).map((t: any) => ({
-        fromStage: LIFECYCLE_STAGES.includes(String(t?.from_stage) as any) ? String(t.from_stage) : 'first_time',
-        toStage: LIFECYCLE_STAGES.includes(String(t?.to_stage) as any) ? String(t.to_stage) : 'repeat_customer',
-        transitionProbabilityPct: Math.max(0, Math.min(100, Number(t?.transition_probability_pct ?? 50))),
-        avgTimeToTransitionDays: Math.max(0, Number(t?.avg_time_to_transition_days ?? 0)),
-        buyerCount: Math.max(0, Number(t?.buyer_count ?? 0)),
-        keyDrivers: (t?.key_drivers || []).slice(0, 4).map((d: any) => String(d).slice(0, 150)),
-        interventionToEncourage: String(t?.intervention_to_encourage ?? '').slice(0, 250),
-      })),
-      mlPredictions: (parsed?.ml_predictions || []).slice(0, 5).map((m: any) => ({
-        model: ['markov_chain', 'lstm_sequence', 'random_forest', 'survival_analysis', 'cox_proportional_hazards'].includes(String(m?.model)) ? String(m.model) : 'markov_chain',
-        accuracyPct: Math.max(0, Math.min(100, Number(m?.accuracy_pct ?? 70))),
-        predictionType: ['stage_transition', 'churn_probability', 'clv', 'retention'].includes(String(m?.prediction_type)) ? String(m.prediction_type) : 'stage_transition',
-        weightInEnsemble: Math.max(0, Math.min(100, Number(m?.weight_in_ensemble ?? 20))),
-        bestFor: String(m?.best_for ?? '').slice(0, 150),
-      })),
-      valueProjection: (parsed?.value_projection || []).slice(0, 4).map((v: any) => ({
-        timeframeMonths: Math.max(3, Number(v?.timeframe_months ?? 12)),
-        totalProjectedRevenueEur: Math.round(Number(v?.total_projected_revenue_eur ?? 0)),
-        totalProjectedClvEur: Math.round(Number(v?.total_projected_clv_eur ?? 0)),
-        retainedBuyers: Math.max(0, Number(v?.retained_buyers ?? 0)),
-        churnedBuyers: Math.max(0, Number(v?.churned_buyers ?? 0)),
-        newBuyersNeeded: Math.max(0, Number(v?.new_buyers_needed ?? 0)),
-        netBuyerChange: Math.round(Number(v?.net_buyer_change ?? 0)),
-      })),
-      recommendations: (parsed?.recommendations || []).slice(0, 6).map((r: any) => ({
-        action: String(r?.action ?? '').slice(0, 300),
-        priority: ['high', 'medium', 'low'].includes(String(r?.priority)) ? String(r.priority) : 'medium',
-        stageTargeted: String(r?.stage_targeted ?? 'all').slice(0, 30),
-        expectedRevenueImpactEur: Math.round(Number(r?.expected_revenue_impact_eur ?? 0)),
-        implementationMonths: Math.max(1, Number(r?.implementation_months ?? 1)),
-      })),
-      summary: {
-        totalBuyersAnalyzed: targetBuyers.length,
-        avgPredictedClvEur: Math.round(Number(parsed?.summary?.avg_predicted_clv_eur ?? 0)),
-        totalProjectedClvEur: Math.round(Number(parsed?.summary?.total_projected_clv_eur ?? 0)),
-        avgRetentionProbability12mPct: Math.max(0, Math.min(100, Number(parsed?.summary?.avg_retention_probability_12m_pct ?? 60))),
-        avgChurnProbability12mPct: Math.max(0, Math.min(100, Number(parsed?.summary?.avg_churn_probability_12m_pct ?? 30))),
-        biggestChurnRiskStage: LIFECYCLE_STAGES.includes(String(parsed?.summary?.biggest_churn_risk_stage) as any) ? String(parsed.summary.biggest_churn_risk_stage) : 'at_risk',
-        biggestGrowthOpportunityStage: LIFECYCLE_STAGES.includes(String(parsed?.summary?.biggest_growth_opportunity_stage) as any) ? String(parsed.summary.biggest_growth_opportunity_stage) : 'repeat_customer',
-        lifecycleEfficiencyScore: Math.max(0, Math.min(100, Number(parsed?.summary?.lifecycle_efficiency_score ?? 60))),
-      },
-    };
-
-    const today = new Date().toISOString().slice(0, 10);
-    if (settings.aiCallsDate !== today) { await db.settings.update({ where: { id: 'singleton' }, data: { aiCallsDate: today, aiCallsToday: 1 } }); }
-    else { await db.settings.update({ where: { id: 'singleton' }, data: { aiCallsToday: { increment: 1 } } }); }
-
-    return NextResponse.json({ ok: true, predictor });
-  } catch (e: any) { logger.error("/api/ai/buyer-lifecycle-predictor", "POST handler failed", e); return NextResponse.json({ error: e?.message ?? 'Napaka' }, { status: 500 }); }
+    lifecycleStages: (parsed?.lifecycle_stages || []).slice(0, 9).map((s: any) => ({
+      stage: LIFECYCLE_STAGES.includes(String(s?.stage) as any) ? String(s.stage) : 'first_time',
+      buyerCount: Math.max(0, Number(s?.buyer_count ?? 0)),
+      avgClvEur: Math.round(Number(s?.avg_clv_eur ?? 0)),
+      totalValueEur: Math.round(Number(s?.total_value_eur ?? 0)),
+      avgDurationDays: Math.max(0, Number(s?.avg_duration_days ?? 0)),
+      conversionRateToNextPct: Math.max(0, Math.min(100, Number(s?.conversion_rate_to_next_pct ?? 50))),
+      churnRatePct: Math.max(0, Math.min(100, Number(s?.churn_rate_pct ?? 10))),
+      bestStrategy: String(s?.best_strategy ?? '').slice(0, 250),
+    })),
+    transitions: (parsed?.transitions || []).slice(0, 12).map((t: any) => ({
+      fromStage: LIFECYCLE_STAGES.includes(String(t?.from_stage) as any) ? String(t.from_stage) : 'first_time',
+      toStage: LIFECYCLE_STAGES.includes(String(t?.to_stage) as any) ? String(t.to_stage) : 'repeat_customer',
+      transitionProbabilityPct: Math.max(0, Math.min(100, Number(t?.transition_probability_pct ?? 50))),
+      avgTimeToTransitionDays: Math.max(0, Number(t?.avg_time_to_transition_days ?? 0)),
+      buyerCount: Math.max(0, Number(t?.buyer_count ?? 0)),
+      keyDrivers: (t?.key_drivers || []).slice(0, 4).map((d: any) => String(d).slice(0, 150)),
+      interventionToEncourage: String(t?.intervention_to_encourage ?? '').slice(0, 250),
+    })),
+    mlPredictions: (parsed?.ml_predictions || []).slice(0, 5).map((m: any) => ({
+      model: ['markov_chain', 'lstm_sequence', 'random_forest', 'survival_analysis', 'cox_proportional_hazards'].includes(String(m?.model)) ? String(m.model) : 'markov_chain',
+      accuracyPct: Math.max(0, Math.min(100, Number(m?.accuracy_pct ?? 70))),
+      predictionType: ['stage_transition', 'churn_probability', 'clv', 'retention'].includes(String(m?.prediction_type)) ? String(m.prediction_type) : 'stage_transition',
+      weightInEnsemble: Math.max(0, Math.min(100, Number(m?.weight_in_ensemble ?? 20))),
+      bestFor: String(m?.best_for ?? '').slice(0, 150),
+    })),
+    valueProjection: (parsed?.value_projection || []).slice(0, 4).map((v: any) => ({
+      timeframeMonths: Math.max(3, Number(v?.timeframe_months ?? 12)),
+      totalProjectedRevenueEur: Math.round(Number(v?.total_projected_revenue_eur ?? 0)),
+      totalProjectedClvEur: Math.round(Number(v?.total_projected_clv_eur ?? 0)),
+      retainedBuyers: Math.max(0, Number(v?.retained_buyers ?? 0)),
+      churnedBuyers: Math.max(0, Number(v?.churned_buyers ?? 0)),
+      newBuyersNeeded: Math.max(0, Number(v?.new_buyers_needed ?? 0)),
+      netBuyerChange: Math.round(Number(v?.net_buyer_change ?? 0)),
+    })),
+    recommendations: (parsed?.recommendations || []).slice(0, 6).map((r: any) => ({
+      action: String(r?.action ?? '').slice(0, 300),
+      priority: ['high', 'medium', 'low'].includes(String(r?.priority)) ? String(r.priority) : 'medium',
+      stageTargeted: String(r?.stage_targeted ?? 'all').slice(0, 30),
+      expectedRevenueImpactEur: Math.round(Number(r?.expected_revenue_impact_eur ?? 0)),
+      implementationMonths: Math.max(1, Number(r?.implementation_months ?? 1)),
+    })),
+    summary: {
+      totalBuyersAnalyzed: targetBuyers.length,
+      avgPredictedClvEur: Math.round(Number(parsed?.summary?.avg_predicted_clv_eur ?? 0)),
+      totalProjectedClvEur: Math.round(Number(parsed?.summary?.total_projected_clv_eur ?? 0)),
+      avgRetentionProbability12mPct: Math.max(0, Math.min(100, Number(parsed?.summary?.avg_retention_probability_12m_pct ?? 60))),
+      avgChurnProbability12mPct: Math.max(0, Math.min(100, Number(parsed?.summary?.avg_churn_probability_12m_pct ?? 30))),
+      biggestChurnRiskStage: LIFECYCLE_STAGES.includes(String(parsed?.summary?.biggest_churn_risk_stage) as any) ? String(parsed.summary.biggest_churn_risk_stage) : 'at_risk',
+      biggestGrowthOpportunityStage: LIFECYCLE_STAGES.includes(String(parsed?.summary?.biggest_growth_opportunity_stage) as any) ? String(parsed.summary.biggest_growth_opportunity_stage) : 'repeat_customer',
+      lifecycleEfficiencyScore: Math.max(0, Math.min(100, Number(parsed?.summary?.lifecycle_efficiency_score ?? 60))),
+    },
+  };
 }

@@ -1,16 +1,14 @@
-// v6.52: AI Pricing Psychology Optimizer — psihološke cene (99€, 199€, anchor, decoy, charm pricing)
+// v6.52 / v8.96.1-batch3: AI Pricing Psychology Optimizer — psihološke cene (99€, 199€, anchor, decoy, charm pricing)
+// Refaktoriran z withAiRoute helperjem (v8.96.1-batch3) + enforceBudget guard.
+//
 // POST /api/ai/pricing-psychology-optimizer
 // Body: { tradeId?: string }
 // Returns: { ok, optimizer: { items, techniques, anchorAnalysis, abTestPlan, recommendations, summary } }
 
-import { NextRequest, NextResponse } from 'next/server';
-import { db } from '@/lib/db';
-import { getSettingsRow } from '@/lib/pipeline';
-import { callProviderForRaw, parseJsonLooseExported, type AiProviderType, type AiSettings } from '@/lib/ai';
-import { logger } from '@/lib/logger';
+import { withAiRoute, AI_ROUTE_DEFAULTS, type AiRouteContext } from '@/lib/with-ai-route';
+import { apiOk } from '@/lib/api-response';
 
-export const runtime = 'nodejs';
-export const dynamic = 'force-dynamic';
+export const { runtime, dynamic } = AI_ROUTE_DEFAULTS;
 export const maxDuration = 90;
 
 // Pricing psychology techniques
@@ -29,10 +27,25 @@ const PRICING_TECHNIQUES = [
   'tiered_pricing',    // bronze/silver/gold paketi
 ] as const;
 
-export async function POST(req: NextRequest) {
-  try {
+type PricingTechnique = typeof PRICING_TECHNIQUES[number];
+
+interface PricingPsychologyOptimizerInput {
+  tradeId: string | null;
+}
+
+export const POST = withAiRoute<PricingPsychologyOptimizerInput>({
+  endpoint: '/api/ai/pricing-psychology-optimizer',
+  maxDuration: 90,
+  enforceBudget: true,
+
+  parseBody: async (req) => {
     const body = await req.json().catch(() => ({}));
-    const tradeId = body?.tradeId ? String(body.tradeId) : null;
+    return { tradeId: body?.tradeId ? String(body.tradeId) : null };
+  },
+
+  handler: async (input, ctx: AiRouteContext) => {
+    const { db, callAi, parseAi } = ctx;
+    const { tradeId } = input;
 
     const where: any = { status: 'held' };
     if (tradeId) where.id = tradeId;
@@ -47,17 +60,8 @@ export async function POST(req: NextRequest) {
     });
 
     if (heldTrades.length === 0) {
-      return NextResponse.json({ ok: true, optimizer: null, message: 'Ni held tradeov za pricing psychology analizo.' });
+      return apiOk({ ok: true, optimizer: null, message: 'Ni held tradeov za pricing psychology analizo.' });
     }
-
-    const settings = await getSettingsRow();
-    const aiSettings: AiSettings = {
-      provider: settings.aiProvider as AiProviderType,
-      baseUrl: settings.aiBaseUrl, apiKey: settings.aiApiKey, model: settings.aiModel,
-      fallbackProvider: (settings.fallbackProvider || '') as AiProviderType | '',
-      fallbackBaseUrl: settings.fallbackBaseUrl || '', fallbackApiKey: settings.fallbackApiKey || '',
-      fallbackModel: settings.fallbackModel || '',
-    };
 
     const items = heldTrades.map(t => {
       const cost = t.buyPrice + (t.buyFees ?? 0);
@@ -75,7 +79,32 @@ export async function POST(req: NextRequest) {
       `- [${i.id}] "${i.title}" | ${i.category} | ${i.cost}€→${i.estValue}€ (margin ${i.currentMarginPct}%) | ${i.daysHeld}d | deal ${i.dealScore}/100`
     ).join('\n');
 
-    const prompt = `Si AI pricing psychology optimizer za slovenske oglasne platforme.
+    const prompt = buildPrompt(items, itemsStr);
+    const raw = await callAi(prompt);
+    const parsed: any = parseAi(raw);
+
+    const optimizer = transformOptimizer(parsed, items);
+
+    return apiOk({ ok: true, optimizer });
+  },
+});
+
+// --- Pomožne funkcije (čiste, testabilne) --------------------------------
+
+interface PricingItem {
+  id: string;
+  title: string;
+  category: string;
+  cost: number;
+  estValue: number;
+  daysHeld: number;
+  currentMarginPct: number;
+  dealScore: number;
+  aiRisk: number;
+}
+
+function buildPrompt(items: PricingItem[], itemsStr: string): string {
+  return `Si AI pricing psychology optimizer za slovenske oglasne platforme.
 Optimiziraj cene z uporabo psiholoških tehnik za maksimalno konverzijo in profit.
 
 INVENTAR (${items.length}):
@@ -171,101 +200,90 @@ Odgovori LE z JSON:
     "pricing_psychology_score": <number 0-100>
   }
 }`;
+}
 
-    let raw = '';
-    try { raw = await callProviderForRaw(aiSettings, prompt); }
-    catch (primaryError: any) {
-      if (aiSettings.fallbackProvider && aiSettings.fallbackModel) {
-        const fb: AiSettings = { provider: aiSettings.fallbackProvider, baseUrl: aiSettings.fallbackBaseUrl || '', apiKey: aiSettings.fallbackApiKey || '', model: aiSettings.fallbackModel };
-        raw = await callProviderForRaw(fb, prompt);
-      } else { return NextResponse.json({ error: primaryError?.message ?? 'AI failed' }, { status: 500 }); }
-    }
+function isPricingTechnique(v: string): v is PricingTechnique {
+  return (PRICING_TECHNIQUES as readonly string[]).includes(v);
+}
 
-    const parsed: any = parseJsonLooseExported(raw);
-    const validIds = new Set(items.map(i => i.id));
+function transformOptimizer(parsed: any, items: PricingItem[]): any {
+  const validIds = new Set(items.map(i => i.id));
 
-    const optimizer = {
-      insights: String(parsed?.insights ?? '').slice(0, 500),
-      items: (parsed?.items || [])
-        .filter((it: any) => validIds.has(String(it?.id ?? '')))
-        .slice(0, 25)
-        .map((it: any) => {
-          const orig = items.find(x => x.id === String(it?.id));
-          return {
-            tradeId: String(it?.id ?? ''),
-            title: String(it?.title ?? orig?.title ?? '').slice(0, 150),
-            currentPriceEur: Math.max(0, Math.round(Number(it?.current_price_eur ?? orig?.estValue ?? 0))),
-            recommendedTechnique: PRICING_TECHNIQUES.includes(String(it?.recommended_technique) as any) ? String(it.recommended_technique) : 'charm_pricing',
-            recommendedPriceEur: Math.max(0, Math.round(Number(it?.recommended_price_eur ?? orig?.estValue ?? 0))),
-            anchorPriceEur: it?.anchor_price_eur !== null && it?.anchor_price_eur !== undefined ? Math.max(0, Math.round(Number(it.anchor_price_eur))) : null,
-            psychologicalSavingsEur: Math.round(Number(it?.psychological_savings_eur ?? 0)),
-            expectedConversionLiftPct: Math.round(Number(it?.expected_conversion_lift_pct ?? 0)),
-            expectedProfitEur: Math.round(Number(it?.expected_profit_eur ?? 0)),
-            buyerPerception: ['cheap', 'fair', 'premium', 'luxury', 'deal', 'overpriced'].includes(String(it?.buyer_perception)) ? String(it.buyer_perception) : 'fair',
-            reasoning: String(it?.reasoning ?? '').slice(0, 300),
-          };
-        }),
-      techniques: (parsed?.techniques || []).slice(0, 12).map((t: any) => ({
-        technique: PRICING_TECHNIQUES.includes(String(t?.technique) as any) ? String(t.technique) : 'charm_pricing',
-        description: String(t?.description ?? '').slice(0, 250),
-        bestFor: String(t?.best_for ?? '').slice(0, 200),
-        example: String(t?.example ?? '').slice(0, 150),
-        expectedConversionLiftPct: Math.round(Number(t?.expected_conversion_lift_pct ?? 0)),
-        implementationDifficulty: ['low', 'medium', 'high'].includes(String(t?.implementation_difficulty)) ? String(t.implementation_difficulty) : 'low',
+  return {
+    insights: String(parsed?.insights ?? '').slice(0, 500),
+    items: (parsed?.items || [])
+      .filter((it: any) => validIds.has(String(it?.id ?? '')))
+      .slice(0, 25)
+      .map((it: any) => {
+        const orig = items.find(x => x.id === String(it?.id));
+        return {
+          tradeId: String(it?.id ?? ''),
+          title: String(it?.title ?? orig?.title ?? '').slice(0, 150),
+          currentPriceEur: Math.max(0, Math.round(Number(it?.current_price_eur ?? orig?.estValue ?? 0))),
+          recommendedTechnique: isPricingTechnique(String(it?.recommended_technique)) ? String(it.recommended_technique) : 'charm_pricing',
+          recommendedPriceEur: Math.max(0, Math.round(Number(it?.recommended_price_eur ?? orig?.estValue ?? 0))),
+          anchorPriceEur: it?.anchor_price_eur !== null && it?.anchor_price_eur !== undefined ? Math.max(0, Math.round(Number(it.anchor_price_eur))) : null,
+          psychologicalSavingsEur: Math.round(Number(it?.psychological_savings_eur ?? 0)),
+          expectedConversionLiftPct: Math.round(Number(it?.expected_conversion_lift_pct ?? 0)),
+          expectedProfitEur: Math.round(Number(it?.expected_profit_eur ?? 0)),
+          buyerPerception: ['cheap', 'fair', 'premium', 'luxury', 'deal', 'overpriced'].includes(String(it?.buyer_perception)) ? String(it.buyer_perception) : 'fair',
+          reasoning: String(it?.reasoning ?? '').slice(0, 300),
+        };
+      }),
+    techniques: (parsed?.techniques || []).slice(0, 12).map((t: any) => ({
+      technique: isPricingTechnique(String(t?.technique)) ? String(t.technique) : 'charm_pricing',
+      description: String(t?.description ?? '').slice(0, 250),
+      bestFor: String(t?.best_for ?? '').slice(0, 200),
+      example: String(t?.example ?? '').slice(0, 150),
+      expectedConversionLiftPct: Math.round(Number(t?.expected_conversion_lift_pct ?? 0)),
+      implementationDifficulty: ['low', 'medium', 'high'].includes(String(t?.implementation_difficulty)) ? String(t.implementation_difficulty) : 'low',
+    })),
+    anchorAnalysis: (parsed?.anchor_analysis || [])
+      .filter((a: any) => validIds.has(String(a?.item_id ?? '')))
+      .slice(0, 15)
+      .map((a: any) => {
+        const orig = items.find(x => x.id === String(a?.item_id));
+        return {
+          tradeId: String(a?.item_id ?? ''),
+          currentPriceEur: Math.max(0, Math.round(Number(a?.current_price_eur ?? orig?.estValue ?? 0))),
+          proposedAnchorEur: Math.max(0, Math.round(Number(a?.proposed_anchor_eur ?? 0))),
+          anchorType: ['high_reference', 'comparable', 'bundle', 'original_msrp'].includes(String(a?.anchor_type)) ? String(a.anchor_type) : 'high_reference',
+          savingsDisplayEur: Math.round(Number(a?.savings_display_eur ?? 0)),
+          savingsDisplayPct: Math.round(Number(a?.savings_display_pct ?? 0)),
+          expectedPerceivedValueEur: Math.round(Number(a?.expected_perceived_value_eur ?? 0)),
+          psychologicalImpact: String(a?.psychological_impact ?? '').slice(0, 200),
+        };
+      }),
+    abTestPlan: (parsed?.ab_test_plan || [])
+      .filter((t: any) => validIds.has(String(t?.item_id ?? '')))
+      .slice(0, 15)
+      .map((t: any) => ({
+        tradeId: String(t?.item_id ?? ''),
+        variantAPriceEur: Math.max(0, Math.round(Number(t?.variant_a_price_eur ?? 0))),
+        variantATechnique: isPricingTechnique(String(t?.variant_a_technique)) ? String(t.variant_a_technique) : 'charm_pricing',
+        variantBPriceEur: Math.max(0, Math.round(Number(t?.variant_b_price_eur ?? 0))),
+        variantBTechnique: isPricingTechnique(String(t?.variant_b_technique)) ? String(t.variant_b_technique) : 'round_number',
+        testDurationDays: Math.max(1, Math.min(30, Number(t?.test_duration_days ?? 7))),
+        primaryMetric: ['conversion_rate', 'revenue', 'time_to_sell'].includes(String(t?.primary_metric)) ? String(t.primary_metric) : 'conversion_rate',
+        expectedWinner: ['a', 'b'].includes(String(t?.expected_winner)) ? String(t.expected_winner) : 'a',
+        confidenceThresholdPct: Math.round(Number(t?.confidence_threshold_pct ?? 95)),
       })),
-      anchorAnalysis: (parsed?.anchor_analysis || [])
-        .filter((a: any) => validIds.has(String(a?.item_id ?? '')))
-        .slice(0, 15)
-        .map((a: any) => {
-          const orig = items.find(x => x.id === String(a?.item_id));
-          return {
-            tradeId: String(a?.item_id ?? ''),
-            currentPriceEur: Math.max(0, Math.round(Number(a?.current_price_eur ?? orig?.estValue ?? 0))),
-            proposedAnchorEur: Math.max(0, Math.round(Number(a?.proposed_anchor_eur ?? 0))),
-            anchorType: ['high_reference', 'comparable', 'bundle', 'original_msrp'].includes(String(a?.anchor_type)) ? String(a.anchor_type) : 'high_reference',
-            savingsDisplayEur: Math.round(Number(a?.savings_display_eur ?? 0)),
-            savingsDisplayPct: Math.round(Number(a?.savings_display_pct ?? 0)),
-            expectedPerceivedValueEur: Math.round(Number(a?.expected_perceived_value_eur ?? 0)),
-            psychologicalImpact: String(a?.psychological_impact ?? '').slice(0, 200),
-          };
-        }),
-      abTestPlan: (parsed?.ab_test_plan || [])
-        .filter((t: any) => validIds.has(String(t?.item_id ?? '')))
-        .slice(0, 15)
-        .map((t: any) => ({
-          tradeId: String(t?.item_id ?? ''),
-          variantAPriceEur: Math.max(0, Math.round(Number(t?.variant_a_price_eur ?? 0))),
-          variantATechnique: PRICING_TECHNIQUES.includes(String(t?.variant_a_technique) as any) ? String(t.variant_a_technique) : 'charm_pricing',
-          variantBPriceEur: Math.max(0, Math.round(Number(t?.variant_b_price_eur ?? 0))),
-          variantBTechnique: PRICING_TECHNIQUES.includes(String(t?.variant_b_technique) as any) ? String(t.variant_b_technique) : 'round_number',
-          testDurationDays: Math.max(1, Math.min(30, Number(t?.test_duration_days ?? 7))),
-          primaryMetric: ['conversion_rate', 'revenue', 'time_to_sell'].includes(String(t?.primary_metric)) ? String(t.primary_metric) : 'conversion_rate',
-          expectedWinner: ['a', 'b'].includes(String(t?.expected_winner)) ? String(t.expected_winner) : 'a',
-          confidenceThresholdPct: Math.round(Number(t?.confidence_threshold_pct ?? 95)),
-        })),
-      recommendations: (parsed?.recommendations || []).slice(0, 6).map((r: any) => ({
-        action: String(r?.action ?? '').slice(0, 300),
-        priority: ['high', 'medium', 'low'].includes(String(r?.priority)) ? String(r.priority) : 'medium',
-        expectedRevenueLiftEur: Math.round(Number(r?.expected_revenue_lift_eur ?? 0)),
-        itemsAffected: Math.max(0, Number(r?.items_affected ?? 0)),
-      })),
-      summary: {
-        totalItemsAnalyzed: items.length,
-        avgCurrentPriceEur: Math.round(Number(parsed?.summary?.avg_current_price_eur ?? items.reduce((s, i) => s + i.estValue, 0) / Math.max(1, items.length))),
-        avgRecommendedPriceEur: Math.round(Number(parsed?.summary?.avg_recommended_price_eur ?? items.reduce((s, i) => s + i.estValue, 0) / Math.max(1, items.length))),
-        totalExpectedRevenueLiftEur: Math.round(Number(parsed?.summary?.total_expected_revenue_lift_eur ?? 0)),
-        avgExpectedConversionLiftPct: Math.round(Number(parsed?.summary?.avg_expected_conversion_lift_pct ?? 0)),
-        bestTechniqueOverall: PRICING_TECHNIQUES.includes(String(parsed?.summary?.best_technique_overall) as any) ? String(parsed.summary.best_technique_overall) : 'charm_pricing',
-        bestTechniqueAvgLiftPct: Math.round(Number(parsed?.summary?.best_technique_avg_lift_pct ?? 0)),
-        itemsBelowThreshold: Math.max(0, Number(parsed?.summary?.items_below_threshold ?? 0)),
-        pricingPsychologyScore: Math.max(0, Math.min(100, Number(parsed?.summary?.pricing_psychology_score ?? 50))),
-      },
-    };
-
-    const today = new Date().toISOString().slice(0, 10);
-    if (settings.aiCallsDate !== today) { await db.settings.update({ where: { id: 'singleton' }, data: { aiCallsDate: today, aiCallsToday: 1 } }); }
-    else { await db.settings.update({ where: { id: 'singleton' }, data: { aiCallsToday: { increment: 1 } } }); }
-
-    return NextResponse.json({ ok: true, optimizer });
-  } catch (e: any) { logger.error("/api/ai/pricing-psychology-optimizer", "POST handler failed", e); return NextResponse.json({ error: e?.message ?? 'Napaka' }, { status: 500 }); }
+    recommendations: (parsed?.recommendations || []).slice(0, 6).map((r: any) => ({
+      action: String(r?.action ?? '').slice(0, 300),
+      priority: ['high', 'medium', 'low'].includes(String(r?.priority)) ? String(r.priority) : 'medium',
+      expectedRevenueLiftEur: Math.round(Number(r?.expected_revenue_lift_eur ?? 0)),
+      itemsAffected: Math.max(0, Number(r?.items_affected ?? 0)),
+    })),
+    summary: {
+      totalItemsAnalyzed: items.length,
+      avgCurrentPriceEur: Math.round(Number(parsed?.summary?.avg_current_price_eur ?? items.reduce((s, i) => s + i.estValue, 0) / Math.max(1, items.length))),
+      avgRecommendedPriceEur: Math.round(Number(parsed?.summary?.avg_recommended_price_eur ?? items.reduce((s, i) => s + i.estValue, 0) / Math.max(1, items.length))),
+      totalExpectedRevenueLiftEur: Math.round(Number(parsed?.summary?.total_expected_revenue_lift_eur ?? 0)),
+      avgExpectedConversionLiftPct: Math.round(Number(parsed?.summary?.avg_expected_conversion_lift_pct ?? 0)),
+      bestTechniqueOverall: isPricingTechnique(String(parsed?.summary?.best_technique_overall)) ? String(parsed.summary.best_technique_overall) : 'charm_pricing',
+      bestTechniqueAvgLiftPct: Math.round(Number(parsed?.summary?.best_technique_avg_lift_pct ?? 0)),
+      itemsBelowThreshold: Math.max(0, Number(parsed?.summary?.items_below_threshold ?? 0)),
+      pricingPsychologyScore: Math.max(0, Math.min(100, Number(parsed?.summary?.pricing_psychology_score ?? 50))),
+    },
+  };
 }

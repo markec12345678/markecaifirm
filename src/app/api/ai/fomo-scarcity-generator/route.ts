@@ -1,4 +1,4 @@
-// v7.66: FOMO/Scarcity Trigger Generator — AI generira FOMO (Fear Of Missing Out)
+// v7.66 / v8.96.3-batch4: FOMO/Scarcity Trigger Generator — AI generira FOMO (Fear Of Missing Out)
 // in scarcity messaging za held inventar listings da poveča konverzijo.
 // Ustvari urgency-driven listing text additions (slovensko).
 //
@@ -15,24 +15,18 @@
 //
 // GET+POST /api/ai/fomo-scarcity-generator
 // (AI-enhanced + grounding + anti-hallucination + 6h cache + deterministic fallback)
+// Refaktoriran z withAiRoute helperjem (v8.96.3) + enforceBudget guard.
 
-import { NextRequest, NextResponse } from 'next/server';
-import { db } from '@/lib/db';
-import { getSettingsRow } from '@/lib/pipeline';
-import {
-  callProviderForRaw,
-  parseJsonLooseExported,
-  type AiProviderType,
-  type AiSettings,
-} from '@/lib/ai';
+import { withAiRoute, AI_ROUTE_DEFAULTS, type AiRouteContext } from '@/lib/with-ai-route';
+import { apiOk } from '@/lib/api-response';
 import { GROUNDING_PROMPT_SUFFIX } from '@/lib/anti-hallucination';
 import { getCachedAI, setCachedAI } from '@/lib/ai-cache';
-import { checkRateLimit, rateLimitResponse } from '@/lib/rate-limit';
-import { logger } from '@/lib/logger';
 
-export const runtime = 'nodejs';
-export const dynamic = 'force-dynamic';
+export const { runtime, dynamic } = AI_ROUTE_DEFAULTS;
 export const maxDuration = 60;
+
+// eslint-disable-next-line @typescript-eslint/no-empty-object-type
+interface FomoScarcityInput {}
 
 // --- Types ---------------------------------------------------------------
 
@@ -75,6 +69,18 @@ interface AiFomoResponse {
   items?: unknown;
   summary?: unknown;
   bestPractices?: unknown;
+}
+
+interface TradeMeta {
+  tradeId: string;
+  title: string;
+  category: string;
+  buyPrice: number;
+  daysHeld: number;
+  similarListingsCount: number;
+  isSeasonal: boolean;
+  isRare: boolean;
+  estValue: number;
 }
 
 // --- Helpers -------------------------------------------------------------
@@ -302,26 +308,200 @@ function buildDeterministicFomo(
   };
 }
 
+// --- Similar listings counter (čisti helper) ----------------------------
+
+interface RecentListingRow {
+  id: string;
+  title: string;
+  price: number | null;
+  monitor: { name: string | null } | null;
+}
+
+function countSimilarListings(
+  recentListings: RecentListingRow[],
+  tradeTitle: string,
+  tradeMonitorName: string,
+  estValue: number,
+): number {
+  const lowerBound = estValue * 0.7;
+  const upperBound = estValue * 1.3;
+  const tradeTitleLower = tradeTitle.toLowerCase().slice(0, 10);
+  return recentListings.filter(l => {
+    const lMonitor = l.monitor?.name ?? 'drugo';
+    if (lMonitor !== tradeMonitorName && l.title.toLowerCase().indexOf(tradeTitleLower) === -1) {
+      return false;
+    }
+    if (l.price == null) return false;
+    return l.price >= lowerBound && l.price <= upperBound;
+  }).length;
+}
+
+// --- Prompt builder + summary (čisti helperji) --------------------------
+
+function buildPrompt(tradeMeta: TradeMeta[]): string {
+  const itemsForAi = tradeMeta.slice(0, 50);
+  const itemBlock = itemsForAi
+    .map(
+      (m, i) =>
+        `${i + 1}. id=${m.tradeId} | "${m.title}" | kategorija=${m.category} | buyPrice=${m.buyPrice}€ | estValue=${m.estValue}€ | daysHeld=${m.daysHeld} | similarListings=${m.similarListingsCount} | seasonal=${m.isSeasonal} | rare=${m.isRare}`,
+    )
+    .join('\n');
+
+  return `Si AI copywriter za slovenske in srednjeevropske oglasne platforme (Bolha, Vinted, Avtonet, mobile.de).
+Generiraj FOMO (Fear Of Missing Out) in scarcity messaging za HELD inventar da povečaš konverzijo (inquiry rate).
+Za vsak item glede na dejansko redkost, dve dni na zalogi in konkurenco na trgu določi urgency in generiraj slovensko besedilo.
+
+HELD INVENTAR (${itemsForAi.length} item-ov):
+${itemBlock}
+
+PRAVILA ZA FOMO MESSAGING:
+1. Za vsak item določi:
+   - urgencyLevel: LOW (sveže/običajno), MEDIUM (zadržan >14 dni ali malo konkurence), HIGH (>30 dni ali redko), CRITICAL (>60 dni ali RARE_FIND)
+   - scarcityType: RARE_FIND (≤3 podobni oglasi), QUANTITY_LIMITED (1 kos na voljo), SEASONAL (v sezoni), TIME_LIMITED (urgentna prodaja)
+   - fomoPhrases: 3-5 slovenskih fraz ki ustvarijo urgentnost (npr. "Zadnji na zalogi!", "Samo 2 dneva do konca akcije", "Redko najdenje!")
+   - listingAddition: 1-2 povedi slovensko, dodane k obstoječemu opisu oglasa (max 200 znakov)
+   - callToAction: specifičen CTA (npr. "Piši zdaj, preden je prepozno!")
+   - psychologicalHook: glavni psihološki sprožilec (scarcity, urgency, social proof, loss aversion)
+   - expectedConversionLift: 0-50% (koliko se bo povpraševanje povečalo)
+2. Sporočila morajo biti resnična in utemeljena z dejanskimi podatki (similarListings count, daysHeld).
+3. NE izmišljaj ponarejenih nizkih zalog ali lažnih časovnih omejitev — utemelji na dejanski redkosti.
+
+VRNI LE JSON:
+{
+  "items": [
+    { "tradeId": "abc", "urgencyLevel": "HIGH", "scarcityType": "RARE_FIND", "fomoPhrases": ["Redko najdenje!", "Samo 3 podobni oglasi"], "listingAddition": "...", "callToAction": "Piši zdaj!", "psychologicalHook": "Scarcity principle", "expectedConversionLift": 25 }
+  ],
+  "summary": { "bestPractices": ["Uporabi konkretne številke...", "NI pretiravanja — lažna redkost zmanjša zaupanje"] }
+}${GROUNDING_PROMPT_SUFFIX}`;
+}
+
+interface FomoSummary {
+  totalItems: number;
+  criticalCount: number;
+  highUrgencyCount: number;
+  avgExpectedLift: number;
+  bestPractices: string[];
+}
+
+const DEFAULT_BEST_PRACTICES: string[] = [
+  'FOMO messaging deluje najbolje z dejanskimi številkami (npr. "samo 3 podobni oglasi" namesto "redko").',
+  'Nikoli ne pretiravaj redkosti — kupci prepoznajo lažno urgentnost in izgubijo zaupanje.',
+  'Kombiniraj time-limited in quantity-limited sporočila za maksimalen učinek.',
+  'Testiraj različne CTA-je — Piši zdaj deluje bolje kot Kontakt.',
+];
+
+function buildSummary(items: FomoItem[], bestPractices: string[]): FomoSummary {
+  const criticalCount = items.filter(i => i.urgencyLevel === 'CRITICAL').length;
+  const highUrgencyCount = items.filter(i => i.urgencyLevel === 'HIGH').length;
+  const avgExpectedLift =
+    items.length > 0
+      ? Math.round(
+          items.reduce((s, i) => s + i.expectedConversionLift, 0) /
+            items.length,
+        )
+      : 0;
+  return {
+    totalItems: items.length,
+    criticalCount,
+    highUrgencyCount,
+    avgExpectedLift,
+    bestPractices,
+  };
+}
+
+// --- Merge AI items over deterministic ones (čisti helper) ----------------
+
+function mergeAiIntoFomoItems(
+  detItems: FomoItem[],
+  tradeMeta: TradeMeta[],
+  parsed: unknown,
+): { items: FomoItem[]; bestPractices: string[]; aiUsed: boolean } {
+  const raw = parsed as AiFomoResponse | null;
+  if (!raw) {
+    return { items: detItems, bestPractices: DEFAULT_BEST_PRACTICES, aiUsed: false };
+  }
+
+  let bestPractices = DEFAULT_BEST_PRACTICES;
+  let aiUsed = false;
+
+  // Parse AI items — map by tradeId
+  const aiItemsMap = new Map<string, AiFomoItemResponse>();
+  if (Array.isArray(raw.items)) {
+    for (const item of raw.items) {
+      const a = item as AiFomoItemResponse;
+      if (a && typeof a === 'object' && typeof a.tradeId !== 'undefined') {
+        const id = String(a.tradeId ?? '').trim();
+        if (id) aiItemsMap.set(id, a);
+      }
+    }
+  }
+
+  // Merge AI items over deterministic ones (preserving order)
+  const merged: FomoItem[] = [];
+  for (const det of detItems) {
+    const ai = aiItemsMap.get(det.tradeId);
+    if (ai) {
+      // Use AI values, validated + clamped
+      const detForItem = detItems.find(d => d.tradeId === det.tradeId)!;
+      const meta = tradeMeta.find(m => m.tradeId === det.tradeId)!;
+      const detUrgency = deterministicUrgency(meta.daysHeld, meta.similarListingsCount, meta.isSeasonal, meta.isRare);
+      const detScarcity = deterministicScarcityType(meta.daysHeld, meta.similarListingsCount, meta.isSeasonal, meta.isRare);
+      merged.push({
+        tradeId: det.tradeId,
+        title: det.title,
+        category: det.category,
+        buyPrice: det.buyPrice,
+        daysHeld: det.daysHeld,
+        urgencyLevel: clampEnum(ai.urgencyLevel, VALID_URGENCY, detUrgency),
+        scarcityType: clampEnum(ai.scarcityType, VALID_SCARCITY, detScarcity),
+        fomoPhrases: clampStringArray(ai.fomoPhrases, 5, 120, detForItem.fomoPhrases),
+        listingAddition: clampString(ai.listingAddition, 200, detForItem.listingAddition),
+        callToAction: clampString(ai.callToAction, 120, detForItem.callToAction),
+        psychologicalHook: clampString(ai.psychologicalHook, 120, detForItem.psychologicalHook),
+        expectedConversionLift: clampNumber(
+          ai.expectedConversionLift,
+          0,
+          50,
+          deterministicExpectedLift(detUrgency),
+        ),
+      });
+    } else {
+      merged.push(det);
+    }
+  }
+
+  // Parse best practices from AI summary
+  if (raw.summary && typeof raw.summary === 'object') {
+    const s = raw.summary as Record<string, unknown>;
+    if (Array.isArray(s.bestPractices)) {
+      const aiBp = s.bestPractices
+        .filter((bp): bp is string => typeof bp === 'string' && bp.trim().length > 0)
+        .map(bp => bp.trim().slice(0, 200))
+        .slice(0, 5);
+      if (aiBp.length > 0) bestPractices = aiBp;
+    }
+  }
+
+  aiUsed = true;
+  return { items: merged, bestPractices, aiUsed };
+}
+
 // --- Handler -------------------------------------------------------------
 
-export async function GET(req: NextRequest) {
-  return handleFomoScarcity(req);
-}
-export async function POST(req: NextRequest) {
-  return handleFomoScarcity(req);
-}
+const fomoScarcityHandler = withAiRoute<FomoScarcityInput>({
+  endpoint: '/api/ai/fomo-scarcity-generator',
+  maxDuration: 60,
+  enforceBudget: true, // AI klic — preveri budget
+  method: 'GET', // Endpoint sprejema GET + POST — bypass POST-only check
 
-async function handleFomoScarcity(req: NextRequest) {
-  try {
-    const rl = checkRateLimit(req, 'ai-fomo-scarcity', 20);
-    if (!rl.allowed) return rateLimitResponse(rl);
+  parseBody: async (req) => {
+    await req.json().catch(() => ({}));
+    return {};
+  },
 
-    // Parse body (optional, ignored — uses all held trades)
-    try {
-      await req.json().catch(() => ({}));
-    } catch {
-      // GET request — no body, ignore
-    }
+  // No validateInput — body ignored
+  handler: async (_input, ctx: AiRouteContext) => {
+    const { db, callAi, parseAi, logger } = ctx;
 
     const now = Date.now();
     const dayMs = 86_400_000;
@@ -349,7 +529,7 @@ async function handleFomoScarcity(req: NextRequest) {
 
     // Empty state
     if (heldTrades.length === 0) {
-      return NextResponse.json({
+      return apiOk({
         ok: true,
         items: [],
         summary: {
@@ -388,17 +568,7 @@ async function handleFomoScarcity(req: NextRequest) {
 
     // Compute similarity count per trade: listings in same monitor + price range ±30%
     const detItems: FomoItem[] = [];
-    const tradeMeta: Array<{
-      tradeId: string;
-      title: string;
-      category: string;
-      buyPrice: number;
-      daysHeld: number;
-      similarListingsCount: number;
-      isSeasonal: boolean;
-      isRare: boolean;
-      estValue: number;
-    }> = [];
+    const tradeMeta: TradeMeta[] = [];
 
     // Seasonal check: simple heuristic — current month peak seasons
     const month = new Date(now).getMonth(); // 0-11
@@ -416,16 +586,12 @@ async function handleFomoScarcity(req: NextRequest) {
       const estValue = t.listing?.price ?? Math.round(t.buyPrice * 1.3);
 
       // Count similar listings: same monitor, price within ±30% of estValue
-      const lowerBound = estValue * 0.7;
-      const upperBound = estValue * 1.3;
-      const similarListingsCount = recentListings.filter(l => {
-        const lMonitor = l.monitor?.name ?? 'drugo';
-        if (lMonitor !== monitorName && l.title.toLowerCase().indexOf(t.title.toLowerCase().slice(0, 10)) === -1) {
-          return false;
-        }
-        if (l.price == null) return false;
-        return l.price >= lowerBound && l.price <= upperBound;
-      }).length;
+      const similarListingsCount = countSimilarListings(
+        recentListings as RecentListingRow[],
+        t.title,
+        monitorName,
+        estValue,
+      );
 
       // Seasonal: current month is peak season AND category is seasonal
       const isSeasonal =
@@ -463,16 +629,10 @@ async function handleFomoScarcity(req: NextRequest) {
     const cacheKey = `fomo-scarcity:${JSON.stringify(heldItemIds)}`;
     const cached = getCachedAI<{
       items: FomoItem[];
-      summary: {
-        totalItems: number;
-        criticalCount: number;
-        highUrgencyCount: number;
-        avgExpectedLift: number;
-        bestPractices: string[];
-      };
+      summary: FomoSummary;
     }>(cacheKey);
     if (cached) {
-      return NextResponse.json({
+      return apiOk({
         ok: true,
         items: cached.items,
         summary: cached.summary,
@@ -481,130 +641,19 @@ async function handleFomoScarcity(req: NextRequest) {
       });
     }
 
-    // 4) AI prompt with grounding
-    const settings = await getSettingsRow();
-    const aiSettings: AiSettings = {
-      provider: settings.aiProvider as AiProviderType,
-      baseUrl: settings.aiBaseUrl,
-      apiKey: settings.aiApiKey,
-      model: settings.aiModel,
-      fallbackProvider: (settings.fallbackProvider || '') as AiProviderType | '',
-      fallbackBaseUrl: settings.fallbackBaseUrl || '',
-      fallbackApiKey: settings.fallbackApiKey || '',
-      fallbackModel: settings.fallbackModel || '',
-    };
+    // 4) AI prompt with grounding + call AI (try/catch z graceful fallback)
+    const prompt = buildPrompt(tradeMeta);
 
-    // Build per-item context block for AI (limit to 50 items max for token budget)
-    const itemsForAi = tradeMeta.slice(0, 50);
-    const itemBlock = itemsForAi
-      .map(
-        (m, i) =>
-          `${i + 1}. id=${m.tradeId} | "${m.title}" | kategorija=${m.category} | buyPrice=${m.buyPrice}€ | estValue=${m.estValue}€ | daysHeld=${m.daysHeld} | similarListings=${m.similarListingsCount} | seasonal=${m.isSeasonal} | rare=${m.isRare}`,
-      )
-      .join('\n');
-
-    const prompt = `Si AI copywriter za slovenske in srednjeevropske oglasne platforme (Bolha, Vinted, Avtonet, mobile.de).
-Generiraj FOMO (Fear Of Missing Out) in scarcity messaging za HELD inventar da povečaš konverzijo (inquiry rate).
-Za vsak item glede na dejansko redkost, dve dni na zalogi in konkurenco na trgu določi urgency in generiraj slovensko besedilo.
-
-HELD INVENTAR (${itemsForAi.length} item-ov):
-${itemBlock}
-
-PRAVILA ZA FOMO MESSAGING:
-1. Za vsak item določi:
-   - urgencyLevel: LOW (sveže/običajno), MEDIUM (zadržan >14 dni ali malo konkurence), HIGH (>30 dni ali redko), CRITICAL (>60 dni ali RARE_FIND)
-   - scarcityType: RARE_FIND (≤3 podobni oglasi), QUANTITY_LIMITED (1 kos na voljo), SEASONAL (v sezoni), TIME_LIMITED (urgentna prodaja)
-   - fomoPhrases: 3-5 slovenskih fraz ki ustvarijo urgentnost (npr. "Zadnji na zalogi!", "Samo 2 dneva do konca akcije", "Redko najdenje!")
-   - listingAddition: 1-2 povedi slovensko, dodane k obstoječemu opisu oglasa (max 200 znakov)
-   - callToAction: specifičen CTA (npr. "Piši zdaj, preden je prepozno!")
-   - psychologicalHook: glavni psihološki sprožilec (scarcity, urgency, social proof, loss aversion)
-   - expectedConversionLift: 0-50% (koliko se bo povpraševanje povečalo)
-2. Sporočila morajo biti resnična in utemeljena z dejanskimi podatki (similarListings count, daysHeld).
-3. NE izmišljaj ponarejenih nizkih zalog ali lažnih časovnih omejitev — utemelji na dejanski redkosti.
-
-VRNI LE JSON:
-{
-  "items": [
-    { "tradeId": "abc", "urgencyLevel": "HIGH", "scarcityType": "RARE_FIND", "fomoPhrases": ["Redko najdenje!", "Samo 3 podobni oglasi"], "listingAddition": "...", "callToAction": "Piši zdaj!", "psychologicalHook": "Scarcity principle", "expectedConversionLift": 25 }
-  ],
-  "summary": { "bestPractices": ["Uporabi konkretne številke...", "NI pretiravanja — lažna redkost zmanjša zaupanje"] }
-}${GROUNDING_PROMPT_SUFFIX}`;
-
-    let aiUsed = false;
     let items: FomoItem[] = detItems;
-    let bestPractices: string[] = [
-      'FOMO messaging deluje najbolje z dejanskimi številkami (npr. "samo 3 podobni oglasi" namesto "redko").',
-      'Nikoli ne pretiravaj redkosti — kupci prepoznajo lažno urgentnost in izgubijo zaupanje.',
-      'Kombiniraj time-limited in quantity-limited sporočila za maksimalen učinek.',
-      'Testiraj različne CTA-je — Piši zdaj deluje bolje kot Kontakt.',
-    ];
+    let bestPractices: string[] = DEFAULT_BEST_PRACTICES;
+    let aiUsed = false;
 
     try {
-      const raw = await callProviderForRaw(aiSettings, prompt);
-      const parsed = parseJsonLooseExported(raw) as AiFomoResponse | null;
-
-      if (parsed) {
-        // Parse AI items — map by tradeId
-        const aiItemsMap = new Map<string, AiFomoItemResponse>();
-        if (Array.isArray(parsed.items)) {
-          for (const item of parsed.items) {
-            const a = item as AiFomoItemResponse;
-            if (a && typeof a === 'object' && typeof a.tradeId !== 'undefined') {
-              const id = String(a.tradeId ?? '').trim();
-              if (id) aiItemsMap.set(id, a);
-            }
-          }
-        }
-
-        // Merge AI items over deterministic ones (preserving order)
-        const merged: FomoItem[] = [];
-        for (const det of detItems) {
-          const ai = aiItemsMap.get(det.tradeId);
-          if (ai) {
-            // Use AI values, validated + clamped
-            const detForItem = detItems.find(d => d.tradeId === det.tradeId)!;
-            const meta = tradeMeta.find(m => m.tradeId === det.tradeId)!;
-            const detUrgency = deterministicUrgency(meta.daysHeld, meta.similarListingsCount, meta.isSeasonal, meta.isRare);
-            const detScarcity = deterministicScarcityType(meta.daysHeld, meta.similarListingsCount, meta.isSeasonal, meta.isRare);
-            merged.push({
-              tradeId: det.tradeId,
-              title: det.title,
-              category: det.category,
-              buyPrice: det.buyPrice,
-              daysHeld: det.daysHeld,
-              urgencyLevel: clampEnum(ai.urgencyLevel, VALID_URGENCY, detUrgency),
-              scarcityType: clampEnum(ai.scarcityType, VALID_SCARCITY, detScarcity),
-              fomoPhrases: clampStringArray(ai.fomoPhrases, 5, 120, detForItem.fomoPhrases),
-              listingAddition: clampString(ai.listingAddition, 200, detForItem.listingAddition),
-              callToAction: clampString(ai.callToAction, 120, detForItem.callToAction),
-              psychologicalHook: clampString(ai.psychologicalHook, 120, detForItem.psychologicalHook),
-              expectedConversionLift: clampNumber(
-                ai.expectedConversionLift,
-                0,
-                50,
-                deterministicExpectedLift(detUrgency),
-              ),
-            });
-          } else {
-            merged.push(det);
-          }
-        }
-        items = merged;
-
-        // Parse best practices from AI summary
-        if (parsed.summary && typeof parsed.summary === 'object') {
-          const s = parsed.summary as Record<string, unknown>;
-          if (Array.isArray(s.bestPractices)) {
-            const aiBp = s.bestPractices
-              .filter((bp): bp is string => typeof bp === 'string' && bp.trim().length > 0)
-              .map(bp => bp.trim().slice(0, 200))
-              .slice(0, 5);
-            if (aiBp.length > 0) bestPractices = aiBp;
-          }
-        }
-
-        aiUsed = true;
-      }
+      const raw = await callAi(prompt);
+      const result = mergeAiIntoFomoItems(detItems, tradeMeta, parseAi(raw));
+      items = result.items;
+      bestPractices = result.bestPractices;
+      aiUsed = result.aiUsed;
     } catch (err) {
       logger.warn(
         '/api/ai/fomo-scarcity-generator',
@@ -614,37 +663,21 @@ VRNI LE JSON:
     }
 
     // 5) Compute summary
-    const criticalCount = items.filter(i => i.urgencyLevel === 'CRITICAL').length;
-    const highUrgencyCount = items.filter(i => i.urgencyLevel === 'HIGH').length;
-    const avgExpectedLift =
-      items.length > 0
-        ? Math.round(
-            items.reduce((s, i) => s + i.expectedConversionLift, 0) /
-              items.length,
-          )
-        : 0;
-
-    const summary = {
-      totalItems: items.length,
-      criticalCount,
-      highUrgencyCount,
-      avgExpectedLift,
-      bestPractices,
-    };
+    const summary = buildSummary(items, bestPractices);
 
     // 6) Cache (6h TTL) — only when AI was used
     if (aiUsed) {
       setCachedAI(cacheKey, { items, summary });
     }
 
-    return NextResponse.json({
+    return apiOk({
       ok: true,
       items,
       summary,
       aiUsed,
     });
-  } catch (err: any) {
-    logger.error('/api/ai/fomo-scarcity-generator', 'handler failed', err);
-    return NextResponse.json({ error: err?.message ?? 'Napaka' }, { status: 500 });
-  }
-}
+  },
+});
+
+export const GET = fomoScarcityHandler;
+export const POST = fomoScarcityHandler;

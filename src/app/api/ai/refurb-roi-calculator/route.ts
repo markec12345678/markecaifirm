@@ -1,4 +1,4 @@
-// v7.46: Refurbishment ROI Calculator — ali se splača obnoviti item pred prodajo?
+// v7.46 / v8.95.8-refactor: Refurbishment ROI Calculator — ali se splača obnoviti item pred prodajo?
 //
 // "Čiščenje: +15€ vrednosti, nova baterija: +30€, strošek 10€ = net +35€ profit"
 // "Popravljen zaslon: +80€ vrednosti, strošek 40€ = net +40€ profit"
@@ -6,56 +6,106 @@
 // POST /api/ai/refurb-roi-calculator
 // Body: { tradeId: string }
 // Returns: { ok, analysis: { currentValue, refurbOptions, recommendation } }
+// Refaktoriran z withAiRoute helperjem (v8.95.8) + enforceBudget guard.
 
-import { NextRequest, NextResponse } from 'next/server';
-import { db } from '@/lib/db';
-import { getSettingsRow } from '@/lib/pipeline';
-import { callProviderForRaw, parseJsonLooseExported, type AiProviderType, type AiSettings } from '@/lib/ai';
-import { logger } from '@/lib/logger';
+import { withAiRoute, AI_ROUTE_DEFAULTS, ApiRouteError, type AiRouteContext } from '@/lib/with-ai-route';
+import { apiOk } from '@/lib/api-response';
 
-export const runtime = 'nodejs';
-export const dynamic = 'force-dynamic';
+export const { runtime, dynamic } = AI_ROUTE_DEFAULTS;
 export const maxDuration = 90;
 
-export async function POST(req: NextRequest) {
-  try {
+interface RefurbRoiCalculatorInput {
+  tradeId: string;
+}
+
+export const POST = withAiRoute<RefurbRoiCalculatorInput>({
+  endpoint: '/api/ai/refurb-roi-calculator',
+  maxDuration: 90,
+  enforceBudget: true, // AI klic — preveri budget
+
+  parseBody: async (req) => {
     const body = await req.json().catch(() => ({}));
-    const { tradeId } = body;
-    if (!tradeId) return NextResponse.json({ error: 'tradeId je obvezen' }, { status: 400 });
+    return { tradeId: String(body?.tradeId ?? '') };
+  },
+
+  validateInput: (input) => (input.tradeId ? null : 'tradeId je obvezen'),
+
+  handler: async (input, ctx: AiRouteContext) => {
+    const { db, callAi, parseAi } = ctx;
+    const { tradeId } = input;
 
     const trade = await db.trade.findUnique({
-      where: { id: String(tradeId) },
+      where: { id: tradeId },
       select: {
         id: true, title: true, category: true, buyPrice: true, buyFees: true,
         notes: true, imageUrl: true,
         listing: { select: { aiEstimatedValue: true, description: true, aiImageAnalysis: true, detailDescription: true } },
       },
     });
-    if (!trade) return NextResponse.json({ error: 'Trade ne obstaja' }, { status: 404 });
+    if (!trade) throw new ApiRouteError('Trade ne obstaja', 404);
 
     const totalCost = trade.buyPrice + (trade.buyFees ?? 0);
     const estValue = trade.listing?.aiEstimatedValue ?? Math.round(totalCost * 1.2);
     const description = trade.listing?.detailDescription || trade.listing?.description || trade.notes || '';
     const imageAnalysis = trade.listing?.aiImageAnalysis || '';
 
-    const settings = await getSettingsRow();
-    const aiSettings: AiSettings = {
-      provider: settings.aiProvider as AiProviderType,
-      baseUrl: settings.aiBaseUrl, apiKey: settings.aiApiKey, model: settings.aiModel,
-      fallbackProvider: (settings.fallbackProvider || '') as AiProviderType | '',
-      fallbackBaseUrl: settings.fallbackBaseUrl || '', fallbackApiKey: settings.fallbackApiKey || '',
-      fallbackModel: settings.fallbackModel || '',
-    };
+    const prompt = buildPrompt({
+      title: trade.title,
+      category: trade.category || 'splošno',
+      totalCost,
+      estValue,
+      description,
+      imageAnalysis,
+    });
 
-    const prompt = `Si ekspert za preprodajo rabljenih dobrin in ocenjevanje vrednosti obnov (refurbishment).
+    let raw: string;
+    try {
+      raw = await callAi(prompt);
+    } catch {
+      // Lokalni fallback ko AI (primary + fallback) ni na voljo — IDENTIČNO originalu
+      return apiOk({
+        ok: true,
+        analysis: {
+          currentValue: estValue,
+          refurbOptions: [{
+            action: 'Profesionalno čiščenje',
+            costEur: 5, valueIncreaseEur: 15, netRoiEur: 10,
+            difficulty: 'easy', timeHours: 1, worthIt: true,
+            reasoning: 'Čiščenje vedno poveča vrednost za 10-20€.',
+          }],
+          recommendation: 'AI ni na voljo — priporočam vsaj čiščenje pred prodajo.',
+        },
+      });
+    }
+
+    const parsed: any = parseAi(raw);
+    const analysis = transformAnalysis(parsed, estValue);
+
+    return apiOk({ ok: true, analysis });
+  },
+});
+
+// --- Pomožne funkcije (čiste, testabilne) --------------------------------
+
+interface PromptData {
+  title: string;
+  category: string;
+  totalCost: number;
+  estValue: number;
+  description: string;
+  imageAnalysis: string;
+}
+
+function buildPrompt(d: PromptData): string {
+  return `Si ekspert za preprodajo rabljenih dobrin in ocenjevanje vrednosti obnov (refurbishment).
 
 ITEM:
-- Naslov: ${trade.title}
-- Kategorija: ${trade.category || 'splošno'}
-- Nabavna cena: ${totalCost}€
-- Trenutna ocenjena vrednost: ${estValue}€
-- Opis: ${description.slice(0, 500) || 'Ni opisa'}
-${imageAnalysis ? `- AI analiza slike: ${imageAnalysis}` : ''}
+- Naslov: ${d.title}
+- Kategorija: ${d.category}
+- Nabavna cena: ${d.totalCost}€
+- Trenutna ocenjena vrednost: ${d.estValue}€
+- Opis: ${d.description.slice(0, 500) || 'Ni opisa'}
+${d.imageAnalysis ? `- AI analiza slike: ${d.imageAnalysis}` : ''}
 
 NALOGA:
 Oceni ali se splača obnoviti (refurbish) ta item pred prodajo.
@@ -110,65 +160,40 @@ Odgovori LE z JSON:
     "refurb_profit_advantage_eur": <number>
   }
 }`;
+}
 
-    let raw = '';
-    try {
-      raw = await callProviderForRaw(aiSettings, prompt);
-    } catch (primaryError: any) {
-      if (aiSettings.fallbackProvider && aiSettings.fallbackModel) {
-        const fb: AiSettings = { provider: aiSettings.fallbackProvider, baseUrl: aiSettings.fallbackBaseUrl || '', apiKey: aiSettings.fallbackApiKey || '', model: aiSettings.fallbackModel };
-        raw = await callProviderForRaw(fb, prompt);
-      } else {
-        return NextResponse.json({
-          ok: true,
-          analysis: {
-            currentValue: estValue,
-            refurbOptions: [{
-              action: 'Profesionalno čiščenje',
-              costEur: 5, valueIncreaseEur: 15, netRoiEur: 10,
-              difficulty: 'easy', timeHours: 1, worthIt: true,
-              reasoning: 'Čiščenje vedno poveča vrednost za 10-20€.',
-            }],
-            recommendation: 'AI ni na voljo — priporočam vsaj čiščenje pred prodajo.',
-          },
-        });
-      }
-    }
-
-    const parsed: any = parseJsonLooseExported(raw);
-
-    return NextResponse.json({
-      ok: true,
-      analysis: {
-        currentValue: Math.round(Number(parsed?.current_estimated_value_eur ?? estValue)),
-        refurbOptions: (parsed?.refurb_options || []).slice(0, 8).map((r: any) => ({
-          action: String(r?.action ?? '').slice(0, 100),
-          costEur: Math.round(Number(r?.cost_eur ?? 0)),
-          valueIncreaseEur: Math.round(Number(r?.value_increase_eur ?? 0)),
-          netRoiEur: Math.round(Number(r?.net_roi_eur ?? 0)),
-          difficulty: ['easy', 'medium', 'hard'].includes(String(r?.difficulty)) ? String(r.difficulty) : 'easy',
-          timeHours: Math.max(0, Number(r?.time_hours ?? 1)),
-          worthIt: Boolean(r?.worth_it ?? false),
-          reasoning: String(r?.reasoning ?? '').slice(0, 200),
-        })),
-        bestCombo: parsed?.best_combo ? {
-          actions: (parsed.best_combo.actions || []).map((a: any) => String(a).slice(0, 100)),
-          totalCostEur: Math.round(Number(parsed.best_combo.total_cost_eur ?? 0)),
-          totalValueIncreaseEur: Math.round(Number(parsed.best_combo.total_value_increase_eur ?? 0)),
-          totalNetRoiEur: Math.round(Number(parsed.best_combo.total_net_roi_eur ?? 0)),
-          newEstimatedValueEur: Math.round(Number(parsed.best_combo.new_estimated_value_eur ?? estValue)),
-          totalTimeHours: Number(parsed.best_combo.total_time_hours ?? 0),
-        } : null,
-        recommendation: String(parsed?.recommendation ?? '').slice(0, 300),
-        sellAsIsVsRefurb: parsed?.sell_as_is_vs_refurb ? {
-          sellAsIsPriceEur: Math.round(Number(parsed.sell_as_is_vs_refurb.sell_as_is_price_eur ?? estValue)),
-          sellAfterRefurbPriceEur: Math.round(Number(parsed.sell_as_is_vs_refurb.sell_after_refurb_price_eur ?? estValue)),
-          refurbProfitAdvantageEur: Math.round(Number(parsed.sell_as_is_vs_refurb.refurb_profit_advantage_eur ?? 0)),
-        } : null,
-      },
-    });
-  } catch (err: any) {
-    logger.error('/api/ai/refurb-roi-calculator', 'POST handler failed', err);
-    return NextResponse.json({ error: err?.message ?? 'Napaka' }, { status: 500 });
-  }
+function transformAnalysis(parsed: any, estValue: number): {
+  currentValue: number;
+  refurbOptions: any[];
+  bestCombo: any | null;
+  recommendation: string;
+  sellAsIsVsRefurb: any | null;
+} {
+  return {
+    currentValue: Math.round(Number(parsed?.current_estimated_value_eur ?? estValue)),
+    refurbOptions: (parsed?.refurb_options || []).slice(0, 8).map((r: any) => ({
+      action: String(r?.action ?? '').slice(0, 100),
+      costEur: Math.round(Number(r?.cost_eur ?? 0)),
+      valueIncreaseEur: Math.round(Number(r?.value_increase_eur ?? 0)),
+      netRoiEur: Math.round(Number(r?.net_roi_eur ?? 0)),
+      difficulty: ['easy', 'medium', 'hard'].includes(String(r?.difficulty)) ? String(r.difficulty) : 'easy',
+      timeHours: Math.max(0, Number(r?.time_hours ?? 1)),
+      worthIt: Boolean(r?.worth_it ?? false),
+      reasoning: String(r?.reasoning ?? '').slice(0, 200),
+    })),
+    bestCombo: parsed?.best_combo ? {
+      actions: (parsed.best_combo.actions || []).map((a: any) => String(a).slice(0, 100)),
+      totalCostEur: Math.round(Number(parsed.best_combo.total_cost_eur ?? 0)),
+      totalValueIncreaseEur: Math.round(Number(parsed.best_combo.total_value_increase_eur ?? 0)),
+      totalNetRoiEur: Math.round(Number(parsed.best_combo.total_net_roi_eur ?? 0)),
+      newEstimatedValueEur: Math.round(Number(parsed.best_combo.new_estimated_value_eur ?? estValue)),
+      totalTimeHours: Number(parsed.best_combo.total_time_hours ?? 0),
+    } : null,
+    recommendation: String(parsed?.recommendation ?? '').slice(0, 300),
+    sellAsIsVsRefurb: parsed?.sell_as_is_vs_refurb ? {
+      sellAsIsPriceEur: Math.round(Number(parsed.sell_as_is_vs_refurb.sell_as_is_price_eur ?? estValue)),
+      sellAfterRefurbPriceEur: Math.round(Number(parsed.sell_as_is_vs_refurb.sell_after_refurb_price_eur ?? estValue)),
+      refurbProfitAdvantageEur: Math.round(Number(parsed.sell_as_is_vs_refurb.refurb_profit_advantage_eur ?? 0)),
+    } : null,
+  };
 }

@@ -1,57 +1,134 @@
-// v6.79: AI Inventory Shrinkage Detector — ML detekcija izgub inventarja (krađa, škoda, izguba)
+// v6.79 / v8.94-refactor: AI Inventory Shrinkage Detector — ML detekcija izgub inventarja (krađa, škoda, izguba)
+// Refaktoriran z withAiRoute helperjem (v8.94) + enforceBudget guard.
+//
 // POST /api/ai/inventory-shrinkage-detector
 // Body: { days?: number }
 // Returns: { ok, detector: { overview, shrinkageEvents, categoryAnalysis, riskItems, recommendations, mlModels, summary } }
 
-import { NextRequest, NextResponse } from 'next/server';
-import { db } from '@/lib/db';
-import { getSettingsRow } from '@/lib/pipeline';
-import { callProviderForRaw, parseJsonLooseExported, type AiProviderType, type AiSettings } from '@/lib/ai';
-import { logger } from '@/lib/logger';
+import { withAiRoute, AI_ROUTE_DEFAULTS, type AiRouteContext } from '@/lib/with-ai-route';
+import { apiOk } from '@/lib/api-response';
 
-export const runtime = 'nodejs';
-export const dynamic = 'force-dynamic';
+export const { runtime, dynamic } = AI_ROUTE_DEFAULTS;
 export const maxDuration = 90;
 
 const SHRINKAGE_TYPES = ['theft', 'damage', 'misplacement', 'administrative_error', 'spoilage', 'obsolescence', 'loss_in_transit', 'unrecorded_sale'] as const;
 const SEVERITY_LEVELS = ['critical', 'high', 'medium', 'low'] as const;
 
-export async function POST(req: NextRequest) {
-  try {
+interface ShrinkageDetectorInput {
+  days: number;
+}
+
+export const POST = withAiRoute<ShrinkageDetectorInput>({
+  endpoint: '/api/ai/inventory-shrinkage-detector',
+  maxDuration: 90,
+  enforceBudget: true, // AI klic — preveri budget + avtomatsko recordAiCall po uspehu
+
+  parseBody: async (req) => {
     const body = await req.json().catch(() => ({}));
-    const days = Math.max(7, Math.min(365, Number(body?.days ?? 90)));
+    return {
+      days: Math.max(7, Math.min(365, Number(body?.days ?? 90))),
+    };
+  },
+
+  // No validateInput — days ima default 90 z clamp 7-365
+
+  handler: async (input, ctx: AiRouteContext) => {
+    const { db, callAi, parseAi } = ctx;
+    const { days } = input;
     const since = new Date(Date.now() - days * 24 * 60 * 60 * 1000);
 
-    const allTrades = await db.trade.findMany({ where: { OR: [{ status: 'held' }, { status: 'sold', sellDate: { gte: since } }, { status: 'cancelled' }] }, select: { id: true, title: true, category: true, buyPrice: true, buyFees: true, buyDate: true, buyLocation: true, sellPrice: true, sellFees: true, sellDate: true, sellLocation: true, status: true, notes: true, listingId: true }, take: 1000, orderBy: { buyDate: 'desc' } });
-    if (allTrades.length === 0) return NextResponse.json({ ok: true, detector: null, message: 'Ni podatkov za shrinkage analizo.' });
+    const allTrades = await db.trade.findMany({
+      where: { OR: [{ status: 'held' }, { status: 'sold', sellDate: { gte: since } }, { status: 'cancelled' }] },
+      select: { id: true, title: true, category: true, buyPrice: true, buyFees: true, buyDate: true, buyLocation: true, sellPrice: true, sellFees: true, sellDate: true, sellLocation: true, status: true, notes: true, listingId: true },
+      take: 1000,
+      orderBy: { buyDate: 'desc' },
+    });
+    if (allTrades.length === 0) {
+      return apiOk({ ok: true, detector: null, message: 'Ni podatkov za shrinkage analizo.' });
+    }
 
     const heldTrades = allTrades.filter(t => t.status === 'held');
     const soldTrades = allTrades.filter(t => t.status === 'sold' && t.sellDate);
     const cancelledTrades = allTrades.filter(t => t.status === 'cancelled');
 
-    const totalInventoryValue = heldTrades.reduce((s, t) => s + t.buyPrice + (t.buyFees ?? 0), 0);
-    const cancelledValue = cancelledTrades.reduce((s, t) => s + t.buyPrice + (t.buyFees ?? 0), 0);
-    const expectedRevenue = soldTrades.reduce((s, t) => s + (t.buyPrice * 1.2), 0);
-    const actualRevenue = soldTrades.reduce((s, t) => s + ((t.sellPrice ?? 0) - (t.sellFees ?? 0)), 0);
-    const revenueGap = expectedRevenue - actualRevenue;
-    const shrinkagePct = totalInventoryValue > 0 ? Math.round((cancelledValue / totalInventoryValue) * 1000) / 10 : 0;
-
-    const settings = await getSettingsRow();
-    const aiSettings: AiSettings = { provider: settings.aiProvider as AiProviderType, baseUrl: settings.aiBaseUrl, apiKey: settings.aiApiKey, model: settings.aiModel, fallbackProvider: (settings.fallbackProvider || '') as AiProviderType | '', fallbackBaseUrl: settings.fallbackBaseUrl || '', fallbackApiKey: settings.fallbackApiKey || '', fallbackModel: settings.fallbackModel || '' };
+    const stats = computeShrinkageStats(heldTrades, soldTrades, cancelledTrades);
 
     const topCancelled = cancelledTrades.slice(0, 5).map(t => `- ${t.title} | ${t.category} | ${t.buyPrice}€ | ${t.buyLocation}`).join('\n');
     const topHeld = heldTrades.slice(0, 8).map(t => `- ${t.title} | ${t.category} | ${t.buyPrice}€ | ${(t.notes || '').slice(0, 50) || 'brez opomb'}`).join('\n');
 
-    const prompt = `Si AI inventory shrinkage detector z ML in anomaly detection.
+    const prompt = buildShrinkagePrompt({
+      stats,
+      days,
+      heldCount: heldTrades.length,
+      soldCount: soldTrades.length,
+      cancelledCount: cancelledTrades.length,
+      topCancelled,
+      topHeld,
+    });
+
+    const raw = await callAi(prompt);
+    const parsed: any = parseAi(raw);
+
+    const detector = transformShrinkageDetector(parsed, stats);
+
+    return apiOk({ ok: true, detector });
+  },
+});
+
+// --- Pomožne funkcije (čiste, testabilne) --------------------------------
+
+interface ShrinkageTradeRow {
+  buyPrice: number;
+  buyFees: number | null;
+  sellPrice: number | null;
+  sellFees: number | null;
+}
+
+interface ShrinkageStats {
+  totalInventoryValue: number;
+  cancelledValue: number;
+  expectedRevenue: number;
+  actualRevenue: number;
+  revenueGap: number;
+  shrinkagePct: number;
+}
+
+function computeShrinkageStats(
+  heldTrades: ShrinkageTradeRow[],
+  soldTrades: ShrinkageTradeRow[],
+  cancelledTrades: ShrinkageTradeRow[]
+): ShrinkageStats {
+  const totalInventoryValue = heldTrades.reduce((s, t) => s + t.buyPrice + (t.buyFees ?? 0), 0);
+  const cancelledValue = cancelledTrades.reduce((s, t) => s + t.buyPrice + (t.buyFees ?? 0), 0);
+  const expectedRevenue = soldTrades.reduce((s, t) => s + (t.buyPrice * 1.2), 0);
+  const actualRevenue = soldTrades.reduce((s, t) => s + ((t.sellPrice ?? 0) - (t.sellFees ?? 0)), 0);
+  const revenueGap = expectedRevenue - actualRevenue;
+  const shrinkagePct = totalInventoryValue > 0 ? Math.round((cancelledValue / totalInventoryValue) * 1000) / 10 : 0;
+  return { totalInventoryValue, cancelledValue, expectedRevenue, actualRevenue, revenueGap, shrinkagePct };
+}
+
+interface ShrinkagePromptInput {
+  stats: ShrinkageStats;
+  days: number;
+  heldCount: number;
+  soldCount: number;
+  cancelledCount: number;
+  topCancelled: string;
+  topHeld: string;
+}
+
+function buildShrinkagePrompt(input: ShrinkagePromptInput): string {
+  const { stats, days, heldCount, soldCount, cancelledCount, topCancelled, topHeld } = input;
+  return `Si AI inventory shrinkage detector z ML in anomaly detection.
 Detektira izgube inventarja: krađo, škodo, izgubo, administrativne napake, pokvarljivost, zastarelost.
 
 STATS (zadnjih ${days} dni):
-- Held items: ${heldTrades.length} | vrednost: ${Math.round(totalInventoryValue)}€
-- Sold items: ${soldTrades.length}
-- Cancelled items: ${cancelledTrades.length} | izgubljena vrednost: ${Math.round(cancelledValue)}€
-- Pričakovani revenue: ${Math.round(expectedRevenue)}€ | dejanski: ${Math.round(actualRevenue)}€
-- Revenue gap: ${Math.round(revenueGap)}€
-- Shrinkage %: ${shrinkagePct}%
+- Held items: ${heldCount} | vrednost: ${Math.round(stats.totalInventoryValue)}€
+- Sold items: ${soldCount}
+- Cancelled items: ${cancelledCount} | izgubljena vrednost: ${Math.round(stats.cancelledValue)}€
+- Pričakovani revenue: ${Math.round(stats.expectedRevenue)}€ | dejanski: ${Math.round(stats.actualRevenue)}€
+- Revenue gap: ${Math.round(stats.revenueGap)}€
+- Shrinkage %: ${stats.shrinkagePct}%
 
 TOP CANCELLED (izgube):
 ${topCancelled || 'brez'}
@@ -95,28 +172,72 @@ Odgovori LE z JSON:
     "quickest_prevention_win": "<max 100 znakov>", "shrinkage_detection_score": <number 0-100>
   }
 }`;
+}
 
-    let raw = '';
-    try { raw = await callProviderForRaw(aiSettings, prompt); }
-    catch (e: any) { if (aiSettings.fallbackProvider && aiSettings.fallbackModel) { const fb: AiSettings = { provider: aiSettings.fallbackProvider, baseUrl: aiSettings.fallbackBaseUrl || '', apiKey: aiSettings.fallbackApiKey || '', model: aiSettings.fallbackModel }; raw = await callProviderForRaw(fb, prompt); } else { return NextResponse.json({ error: e?.message ?? 'AI failed' }, { status: 500 }); } }
-
-    const parsed: any = parseJsonLooseExported(raw);
-
-    const detector = {
-      insights: String(parsed?.insights ?? '').slice(0, 500),
-      overview: { totalInventoryValueEur: Math.round(Number(parsed?.overview?.total_inventory_value_eur ?? totalInventoryValue)), totalShrinkageValueEur: Math.round(Number(parsed?.overview?.total_shrinkage_value_eur ?? cancelledValue)), shrinkagePct: Math.max(0, Math.min(100, Number(parsed?.overview?.shrinkage_pct ?? shrinkagePct))), expectedRevenueEur: Math.round(Number(parsed?.overview?.expected_revenue_eur ?? expectedRevenue)), actualRevenueEur: Math.round(Number(parsed?.overview?.actual_revenue_eur ?? actualRevenue)), revenueGapEur: Math.round(Number(parsed?.overview?.revenue_gap_eur ?? revenueGap)), shrinkageTrend: ['increasing', 'decreasing', 'stable'].includes(String(parsed?.overview?.shrinkage_trend)) ? String(parsed.overview.shrinkage_trend) : 'stable', shrinkageGrade: ['A', 'B', 'C', 'D', 'F'].includes(String(parsed?.overview?.shrinkage_grade)) ? String(parsed.overview.shrinkage_grade) : 'C' },
-      shrinkageEvents: (parsed?.shrinkageEvents || []).slice(0, 10).map((e: any) => ({ eventType: (SHRINKAGE_TYPES as readonly string[]).includes(String(e?.event_type)) ? String(e.event_type) : 'damage', itemTitle: String(e?.item_title ?? '').slice(0, 200), category: String(e?.category ?? '').slice(0, 50), lostValueEur: Math.round(Number(e?.lost_value_eur ?? 0)), severity: (SEVERITY_LEVELS as readonly string[]).includes(String(e?.severity)) ? String(e.severity) : 'medium', dateDetected: String(e?.date_detected ?? '').slice(0, 10), rootCause: String(e?.root_cause ?? '').slice(0, 300), preventiveAction: String(e?.preventive_action ?? '').slice(0, 300) })),
-      categoryAnalysis: (parsed?.categoryAnalysis || []).slice(0, 10).map((c: any) => ({ category: String(c?.category ?? '').slice(0, 50), totalItems: Math.max(0, Number(c?.total_items ?? 0)), shrinkageValueEur: Math.round(Number(c?.shrinkage_value_eur ?? 0)), shrinkagePct: Math.max(0, Math.min(100, Number(c?.shrinkage_pct ?? 0))), primaryShrinkageType: (SHRINKAGE_TYPES as readonly string[]).includes(String(c?.primary_shrinkage_type)) ? String(c.primary_shrinkage_type) : 'damage', trend: ['increasing', 'decreasing', 'stable'].includes(String(c?.trend)) ? String(c.trend) : 'stable', riskLevel: ['critical', 'high', 'medium', 'low'].includes(String(c?.risk_level)) ? String(c.risk_level) : 'medium' })),
-      riskItems: (parsed?.riskItems || []).slice(0, 12).map((r: any) => ({ itemTitle: String(r?.item_title ?? '').slice(0, 200), category: String(r?.category ?? '').slice(0, 50), valueEur: Math.round(Number(r?.value_eur ?? 0)), shrinkageRiskPct: Math.max(0, Math.min(100, Number(r?.shrinkage_risk_pct ?? 30))), riskFactors: String(r?.risk_factors ?? '').slice(0, 300), recommendedAction: ['inspect', 'secure', 'relocate', 'sell_fast', 'audit'].includes(String(r?.recommended_action)) ? String(r.recommended_action) : 'inspect', priority: ['critical', 'high', 'medium', 'low'].includes(String(r?.priority)) ? String(r.priority) : 'medium' })),
-      recommendations: (parsed?.recommendations || []).slice(0, 8).map((r: any) => ({ action: String(r?.action ?? '').slice(0, 300), category: ['process', 'security', 'audit', 'insurance', 'training'].includes(String(r?.category)) ? String(r.category) : 'process', expectedSavingsEur: Math.round(Number(r?.expected_savings_eur ?? 0)), implementationDays: Math.max(1, Number(r?.implementation_days ?? 7)), priority: ['high', 'medium', 'low'].includes(String(r?.priority)) ? String(r.priority) : 'medium' })),
-      mlModels: (parsed?.mlModels || []).slice(0, 5).map((m: any) => ({ model: ['isolation_forest', 'autoencoder', 'lstm', 'gradient_boosting', 'ensemble'].includes(String(m?.model)) ? String(m.model) : 'ensemble', accuracyPct: Math.max(0, Math.min(100, Number(m?.accuracy_pct ?? 75))), predictionType: ['anomaly_detection', 'risk_forecast', 'pattern_recognition', 'trend_analysis'].includes(String(m?.prediction_type)) ? String(m.prediction_type) : 'anomaly_detection', weightInEnsemble: Math.max(0, Math.min(100, Number(m?.weight_in_ensemble ?? 20))) })),
-      summary: { shrinkageRiskScore: Math.max(0, Math.min(100, Number(parsed?.summary?.shrinkage_risk_score ?? 50))), shrinkageGrade: ['A', 'B', 'C', 'D', 'F'].includes(String(parsed?.summary?.shrinkage_grade)) ? String(parsed.summary.shrinkage_grade) : 'C', totalShrinkageValueEur: Math.round(Number(parsed?.summary?.total_shrinkage_value_eur ?? cancelledValue)), criticalEventsCount: Math.max(0, Number(parsed?.summary?.critical_events_count ?? 0)), primaryShrinkageType: (SHRINKAGE_TYPES as readonly string[]).includes(String(parsed?.summary?.primary_shrinkage_type)) ? String(parsed.summary.primary_shrinkage_type) : 'damage', biggestShrinkageRisk: String(parsed?.summary?.biggest_shrinkage_risk ?? '').slice(0, 200), biggestPreventionOpportunity: String(parsed?.summary?.biggest_prevention_opportunity ?? '').slice(0, 200), quickestPreventionWin: String(parsed?.summary?.quickest_prevention_win ?? '').slice(0, 200), shrinkageDetectionScore: Math.max(0, Math.min(100, Number(parsed?.summary?.shrinkage_detection_score ?? 50))) },
-    };
-
-    const today = new Date().toISOString().slice(0, 10);
-    if (settings.aiCallsDate !== today) { await db.settings.update({ where: { id: 'singleton' }, data: { aiCallsDate: today, aiCallsToday: 1 } }); }
-    else { await db.settings.update({ where: { id: 'singleton' }, data: { aiCallsToday: { increment: 1 } } }); }
-
-    return NextResponse.json({ ok: true, detector });
-  } catch (e: any) { logger.error("/api/ai/inventory-shrinkage-detector", "POST handler failed", e); return NextResponse.json({ error: e?.message ?? 'Napaka' }, { status: 500 }); }
+function transformShrinkageDetector(parsed: any, stats: ShrinkageStats) {
+  return {
+    insights: String(parsed?.insights ?? '').slice(0, 500),
+    overview: {
+      totalInventoryValueEur: Math.round(Number(parsed?.overview?.total_inventory_value_eur ?? stats.totalInventoryValue)),
+      totalShrinkageValueEur: Math.round(Number(parsed?.overview?.total_shrinkage_value_eur ?? stats.cancelledValue)),
+      shrinkagePct: Math.max(0, Math.min(100, Number(parsed?.overview?.shrinkage_pct ?? stats.shrinkagePct))),
+      expectedRevenueEur: Math.round(Number(parsed?.overview?.expected_revenue_eur ?? stats.expectedRevenue)),
+      actualRevenueEur: Math.round(Number(parsed?.overview?.actual_revenue_eur ?? stats.actualRevenue)),
+      revenueGapEur: Math.round(Number(parsed?.overview?.revenue_gap_eur ?? stats.revenueGap)),
+      shrinkageTrend: ['increasing', 'decreasing', 'stable'].includes(String(parsed?.overview?.shrinkage_trend)) ? String(parsed.overview.shrinkage_trend) : 'stable',
+      shrinkageGrade: ['A', 'B', 'C', 'D', 'F'].includes(String(parsed?.overview?.shrinkage_grade)) ? String(parsed.overview.shrinkage_grade) : 'C',
+    },
+    shrinkageEvents: (parsed?.shrinkageEvents || []).slice(0, 10).map((e: any) => ({
+      eventType: (SHRINKAGE_TYPES as readonly string[]).includes(String(e?.event_type)) ? String(e.event_type) : 'damage',
+      itemTitle: String(e?.item_title ?? '').slice(0, 200),
+      category: String(e?.category ?? '').slice(0, 50),
+      lostValueEur: Math.round(Number(e?.lost_value_eur ?? 0)),
+      severity: (SEVERITY_LEVELS as readonly string[]).includes(String(e?.severity)) ? String(e.severity) : 'medium',
+      dateDetected: String(e?.date_detected ?? '').slice(0, 10),
+      rootCause: String(e?.root_cause ?? '').slice(0, 300),
+      preventiveAction: String(e?.preventive_action ?? '').slice(0, 300),
+    })),
+    categoryAnalysis: (parsed?.categoryAnalysis || []).slice(0, 10).map((c: any) => ({
+      category: String(c?.category ?? '').slice(0, 50),
+      totalItems: Math.max(0, Number(c?.total_items ?? 0)),
+      shrinkageValueEur: Math.round(Number(c?.shrinkage_value_eur ?? 0)),
+      shrinkagePct: Math.max(0, Math.min(100, Number(c?.shrinkage_pct ?? 0))),
+      primaryShrinkageType: (SHRINKAGE_TYPES as readonly string[]).includes(String(c?.primary_shrinkage_type)) ? String(c.primary_shrinkage_type) : 'damage',
+      trend: ['increasing', 'decreasing', 'stable'].includes(String(c?.trend)) ? String(c.trend) : 'stable',
+      riskLevel: ['critical', 'high', 'medium', 'low'].includes(String(c?.risk_level)) ? String(c.risk_level) : 'medium',
+    })),
+    riskItems: (parsed?.riskItems || []).slice(0, 12).map((r: any) => ({
+      itemTitle: String(r?.item_title ?? '').slice(0, 200),
+      category: String(r?.category ?? '').slice(0, 50),
+      valueEur: Math.round(Number(r?.value_eur ?? 0)),
+      shrinkageRiskPct: Math.max(0, Math.min(100, Number(r?.shrinkage_risk_pct ?? 30))),
+      riskFactors: String(r?.risk_factors ?? '').slice(0, 300),
+      recommendedAction: ['inspect', 'secure', 'relocate', 'sell_fast', 'audit'].includes(String(r?.recommended_action)) ? String(r.recommended_action) : 'inspect',
+      priority: ['critical', 'high', 'medium', 'low'].includes(String(r?.priority)) ? String(r.priority) : 'medium',
+    })),
+    recommendations: (parsed?.recommendations || []).slice(0, 8).map((r: any) => ({
+      action: String(r?.action ?? '').slice(0, 300),
+      category: ['process', 'security', 'audit', 'insurance', 'training'].includes(String(r?.category)) ? String(r.category) : 'process',
+      expectedSavingsEur: Math.round(Number(r?.expected_savings_eur ?? 0)),
+      implementationDays: Math.max(1, Number(r?.implementation_days ?? 7)),
+      priority: ['high', 'medium', 'low'].includes(String(r?.priority)) ? String(r.priority) : 'medium',
+    })),
+    mlModels: (parsed?.mlModels || []).slice(0, 5).map((m: any) => ({
+      model: ['isolation_forest', 'autoencoder', 'lstm', 'gradient_boosting', 'ensemble'].includes(String(m?.model)) ? String(m.model) : 'ensemble',
+      accuracyPct: Math.max(0, Math.min(100, Number(m?.accuracy_pct ?? 75))),
+      predictionType: ['anomaly_detection', 'risk_forecast', 'pattern_recognition', 'trend_analysis'].includes(String(m?.prediction_type)) ? String(m.prediction_type) : 'anomaly_detection',
+      weightInEnsemble: Math.max(0, Math.min(100, Number(m?.weight_in_ensemble ?? 20))),
+    })),
+    summary: {
+      shrinkageRiskScore: Math.max(0, Math.min(100, Number(parsed?.summary?.shrinkage_risk_score ?? 50))),
+      shrinkageGrade: ['A', 'B', 'C', 'D', 'F'].includes(String(parsed?.summary?.shrinkage_grade)) ? String(parsed.summary.shrinkage_grade) : 'C',
+      totalShrinkageValueEur: Math.round(Number(parsed?.summary?.total_shrinkage_value_eur ?? stats.cancelledValue)),
+      criticalEventsCount: Math.max(0, Number(parsed?.summary?.critical_events_count ?? 0)),
+      primaryShrinkageType: (SHRINKAGE_TYPES as readonly string[]).includes(String(parsed?.summary?.primary_shrinkage_type)) ? String(parsed.summary.primary_shrinkage_type) : 'damage',
+      biggestShrinkageRisk: String(parsed?.summary?.biggest_shrinkage_risk ?? '').slice(0, 200),
+      biggestPreventionOpportunity: String(parsed?.summary?.biggest_prevention_opportunity ?? '').slice(0, 200),
+      quickestPreventionWin: String(parsed?.summary?.quickest_prevention_win ?? '').slice(0, 200),
+      shrinkageDetectionScore: Math.max(0, Math.min(100, Number(parsed?.summary?.shrinkage_detection_score ?? 50))),
+    },
+  };
 }

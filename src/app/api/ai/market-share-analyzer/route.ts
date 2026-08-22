@@ -1,5 +1,5 @@
-// v7.67: AI Market Share Analyzer — AI ocenjuje tvoj market share v
-// kategorijah kjer trguješ, glede na volumen oglasov vs total market
+// v7.67 / v8.96.4-batch1: AI Market Share Analyzer — AI ocenjuje tvoj market
+// share v kategorijah kjer trguješ, glede na volumen oglasov vs total market
 // listings. Prikazuje tvojo pozicijo vs konkurenco.
 //
 // "Elektronika: 12% market share (CHALLENGER). Moda: 2% (NICHE).
@@ -15,23 +15,14 @@
 //
 // GET+POST /api/ai/market-share-analyzer
 // (AI-enhanced + grounding + anti-hallucination + 6h cache + deterministic fallback)
+// Refaktoriran z withAiRoute helperjem (v8.96.4-batch1) + enforceBudget guard.
 
-import { NextRequest, NextResponse } from 'next/server';
-import { db } from '@/lib/db';
-import { getSettingsRow } from '@/lib/pipeline';
-import {
-  callProviderForRaw,
-  parseJsonLooseExported,
-  type AiProviderType,
-  type AiSettings,
-} from '@/lib/ai';
+import { withAiRoute, AI_ROUTE_DEFAULTS, type AiRouteContext } from '@/lib/with-ai-route';
+import { apiOk } from '@/lib/api-response';
 import { GROUNDING_PROMPT_SUFFIX } from '@/lib/anti-hallucination';
 import { getCachedAI, setCachedAI } from '@/lib/ai-cache';
-import { checkRateLimit, rateLimitResponse } from '@/lib/rate-limit';
-import { logger } from '@/lib/logger';
 
-export const runtime = 'nodejs';
-export const dynamic = 'force-dynamic';
+export const { runtime, dynamic } = AI_ROUTE_DEFAULTS;
 export const maxDuration = 60;
 
 // --- Types ---------------------------------------------------------------
@@ -73,6 +64,9 @@ interface AiMarketShareResponse {
   overallPosition?: unknown;
   growthOpportunity?: unknown;
 }
+
+// eslint-disable-next-line @typescript-eslint/no-empty-object-type
+interface MarketShareAnalyzerInput {}
 
 // --- Helpers -------------------------------------------------------------
 
@@ -247,26 +241,228 @@ function buildDeterministicAnalysis(
   };
 }
 
+// --- Prompt builder ------------------------------------------------------
+
+interface PromptArgs {
+  categoryRows: CategoryShareRow[];
+}
+
+function buildPrompt(args: PromptArgs): string {
+  const { categoryRows } = args;
+
+  // Build context block of category share data
+  const categoryBlock = categoryRows
+    .slice(0, 15) // top 15 categories
+    .map(
+      (r, i) =>
+        `${i + 1}. ${r.category}: yourTrades=${r.yourTradesInCategory}, sold=${r.yourSoldInCategory}, listingsInteracted=${r.yourListingsInteracted}, totalMarketListings=${r.totalMarketListings}, estimatedShare=${r.estimatedMarketShare}%, position=${r.competitivePosition}, confidence=${r.confidenceScore}`,
+    )
+    .join('\n');
+
+  return `Si AI analitik tržnega deleža za slovenske in srednjeevropske oglasne platforme (Bolha, Vinted, Avtonet, mobile.de).
+Na podlagi TVOJIH aktivnosti (trades + interakcije z oglasi) in TOTAL MARKET podatkov (vsi oglasi v monitorjih kjer trguješ) oceni tvoj market share per kategorija in priporoči strategijo za rast.
+
+TVOJE KATEGORIJE (top ${Math.min(15, categoryRows.length)} od ${categoryRows.length}):
+${categoryBlock}
+
+PRAVILA ZA ANALIZO:
+1. dominantCategories: top 2-3 kategorije kjer imaš najvišji market share. Vsaka z reasoning (zakaj dominiraš — npr. "velik volumen nakupov v elektronika ti daje 12% share").
+2. untappedCategories: 2-3 kategorije z velikim trgom (>=20 oglasov) kjer nisi aktiven (0 trade-ov). Z reasoning (zakaj je to priložnost).
+3. overallPosition: 1-2 povedi slovensko — kakovost tvoje pozicije (koliko kategorij LEADER, avg share, top priložnost).
+4. growthOpportunity: 2-3 kategorije kjer lahko rasteš (potentialShare + strategy kako).
+
+OCENJEVANJE:
+- Market share je ocenjen glede na predpostavko, da ~10% vseh oglasov rezultira v prodajo.
+- Pozicija (LEADER/CHALLENGER/FOLLOWER/NICHE) temelji na percentileih tvojega share-a across kategorije.
+- confidenceScore 0-100: višje = bolj zanesljiva ocena (več tržnih podatkov in tvoje aktivnosti).
+
+VRNI LE JSON:
+{
+  "dominantCategories": [
+    { "category": "elektronika", "share": 12.5, "reasoning": "..." }
+  ],
+  "untappedCategories": [
+    { "category": "avto", "marketSize": 145, "reasoning": "..." }
+  ],
+  "overallPosition": "Aktiven v 5 kategorijah, LEADER v 1. Avg share 8.3%...",
+  "growthOpportunity": [
+    { "category": "avto", "potentialShare": 8, "strategy": "Začni z 2-3 nakupi..." }
+  ]
+}${GROUNDING_PROMPT_SUFFIX}`;
+}
+
+// --- AI response parser --------------------------------------------------
+
+interface ParsedArgs {
+  parsed: AiMarketShareResponse | null;
+  det: {
+    dominantCategories: DominantCategory[];
+    untappedCategories: UntappedCategory[];
+    overallPosition: string;
+    growthOpportunity: GrowthOpportunity[];
+  };
+}
+
+function parseAiMarketShare(args: ParsedArgs): {
+  dominantCategories: DominantCategory[];
+  untappedCategories: UntappedCategory[];
+  overallPosition: string;
+  growthOpportunity: GrowthOpportunity[];
+  aiUsed: boolean;
+} {
+  const { parsed, det } = args;
+
+  if (!parsed) {
+    return {
+      dominantCategories: det.dominantCategories,
+      untappedCategories: det.untappedCategories,
+      overallPosition: det.overallPosition,
+      growthOpportunity: det.growthOpportunity,
+      aiUsed: false,
+    };
+  }
+
+  let dominantCategories = det.dominantCategories;
+  let untappedCategories = det.untappedCategories;
+  let overallPosition = det.overallPosition;
+  let growthOpportunity = det.growthOpportunity;
+
+  // dominantCategories
+  const aiDom: DominantCategory[] = [];
+  if (Array.isArray(parsed.dominantCategories)) {
+    for (const item of parsed.dominantCategories) {
+      const a = item as Record<string, unknown> | null;
+      if (!a || typeof a !== 'object') continue;
+      const category = clampString(a.category, 100, '');
+      if (!category) continue;
+      aiDom.push({
+        category,
+        share: clampNumber(a.share, 0, 100, 0),
+        reasoning: clampString(
+          a.reasoning,
+          300,
+          'Kategorija z višjim share-om od povprečja.',
+        ),
+      });
+    }
+  }
+  if (aiDom.length > 0) {
+    dominantCategories = aiDom.slice(0, 5);
+  }
+
+  // untappedCategories
+  const aiUntap: UntappedCategory[] = [];
+  if (Array.isArray(parsed.untappedCategories)) {
+    for (const item of parsed.untappedCategories) {
+      const a = item as Record<string, unknown> | null;
+      if (!a || typeof a !== 'object') continue;
+      const category = clampString(a.category, 100, '');
+      if (!category) continue;
+      aiUntap.push({
+        category,
+        marketSize: clampNumber(a.marketSize, 0, 1_000_000, 0),
+        reasoning: clampString(
+          a.reasoning,
+          300,
+          'Velik trg brez tvoje aktivnosti.',
+        ),
+      });
+    }
+  }
+  if (aiUntap.length > 0) {
+    untappedCategories = aiUntap.slice(0, 5);
+  }
+
+  // overallPosition
+  if (
+    typeof parsed.overallPosition === 'string' &&
+    parsed.overallPosition.trim().length > 0
+  ) {
+    overallPosition = clampString(
+      parsed.overallPosition,
+      500,
+      det.overallPosition,
+    );
+  }
+
+  // growthOpportunity
+  const aiGrowth: GrowthOpportunity[] = [];
+  if (Array.isArray(parsed.growthOpportunity)) {
+    for (const item of parsed.growthOpportunity) {
+      const a = item as Record<string, unknown> | null;
+      if (!a || typeof a !== 'object') continue;
+      const category = clampString(a.category, 100, '');
+      if (!category) continue;
+      aiGrowth.push({
+        category,
+        potentialShare: clampNumber(a.potentialShare, 0, 100, 0),
+        strategy: clampString(
+          a.strategy,
+          300,
+          'Povečaj aktivnost za višji share.',
+        ),
+      });
+    }
+  }
+  if (aiGrowth.length > 0) {
+    growthOpportunity = aiGrowth.slice(0, 5);
+  }
+
+  return {
+    dominantCategories,
+    untappedCategories,
+    overallPosition,
+    growthOpportunity,
+    aiUsed: true,
+  };
+}
+
+// --- Summary advice builder ----------------------------------------------
+
+interface AdviceArgs {
+  totalCategories: number;
+  leaderCategories: number;
+  avgMarketShare: number;
+  untappedCategories: UntappedCategory[];
+  growthOpportunity: GrowthOpportunity[];
+}
+
+function buildAdvice(args: AdviceArgs): string {
+  const { totalCategories, leaderCategories, avgMarketShare, untappedCategories, growthOpportunity } = args;
+  if (totalCategories === 0) {
+    return 'Ni kategorij — dodaš trades z veljavnim category za začetek analize.';
+  }
+  if (leaderCategories > 0) {
+    return `LEADER v ${leaderCategories} od ${totalCategories} kategorij${leaderCategories === 1 ? '' : 'ah'}. Avg market share ${avgMarketShare}%. ${
+      untappedCategories.length > 0
+        ? `Priložnost: razširi v "${untappedCategories[0].category}" (${untappedCategories[0].marketSize} oglasov).`
+        : 'Vzdržuj pozicijo z doslednim sourcing-om.'
+    }`;
+  }
+  return `Aktiven v ${totalCategories} kategorij${totalCategories === 1 ? 'i' : 'ah'}, brez LEADER pozicije. Avg share ${avgMarketShare}%. ${
+    growthOpportunity.length > 0
+      ? `Naslednji korak: ${growthOpportunity[0].strategy}`
+      : 'Povečaj volumen za višji market share.'
+  }`;
+}
+
 // --- Handler -------------------------------------------------------------
 
-export async function GET(req: NextRequest) {
-  return handleMarketShare(req);
-}
-export async function POST(req: NextRequest) {
-  return handleMarketShare(req);
-}
+const marketShareHandler = withAiRoute<MarketShareAnalyzerInput>({
+  endpoint: '/api/ai/market-share-analyzer',
+  maxDuration: 60,
+  enforceBudget: true, // AI klic — preveri budget
+  method: 'GET', // dual GET+POST
 
-async function handleMarketShare(req: NextRequest) {
-  try {
-    const rl = checkRateLimit(req, 'ai-market-share', 20);
-    if (!rl.allowed) return rateLimitResponse(rl);
+  parseBody: async () => {
+    // Body ignored — analysis uses global data
+    return {};
+  },
 
-    // Parse body (optional, ignored — analysis uses global data)
-    try {
-      await req.json().catch(() => ({}));
-    } catch {
-      // GET request — no body, ignore
-    }
+  // No validateInput — body ignored
+
+  handler: async (_input, ctx: AiRouteContext) => {
+    const { db, callAi, parseAi, logger } = ctx;
 
     const now = Date.now();
 
@@ -313,7 +509,7 @@ async function handleMarketShare(req: NextRequest) {
 
     // 3) Empty state — no trades at all
     if (allTrades.length === 0) {
-      return NextResponse.json({
+      return apiOk({
         ok: true,
         categories: [],
         analysis: {
@@ -452,7 +648,7 @@ async function handleMarketShare(req: NextRequest) {
       growthOpportunity: GrowthOpportunity[];
     }>(cacheKey);
     if (cached) {
-      return NextResponse.json({
+      return apiOk({
         ok: true,
         categories: categoryRows,
         analysis: cached,
@@ -480,57 +676,7 @@ async function handleMarketShare(req: NextRequest) {
     }
 
     // 9) AI prompt with grounding
-    const settings = await getSettingsRow();
-    const aiSettings: AiSettings = {
-      provider: settings.aiProvider as AiProviderType,
-      baseUrl: settings.aiBaseUrl,
-      apiKey: settings.aiApiKey,
-      model: settings.aiModel,
-      fallbackProvider: (settings.fallbackProvider || '') as AiProviderType | '',
-      fallbackBaseUrl: settings.fallbackBaseUrl || '',
-      fallbackApiKey: settings.fallbackApiKey || '',
-      fallbackModel: settings.fallbackModel || '',
-    };
-
-    // Build context block of category share data
-    const categoryBlock = categoryRows
-      .slice(0, 15) // top 15 categories
-      .map(
-        (r, i) =>
-          `${i + 1}. ${r.category}: yourTrades=${r.yourTradesInCategory}, sold=${r.yourSoldInCategory}, listingsInteracted=${r.yourListingsInteracted}, totalMarketListings=${r.totalMarketListings}, estimatedShare=${r.estimatedMarketShare}%, position=${r.competitivePosition}, confidence=${r.confidenceScore}`,
-      )
-      .join('\n');
-
-    const prompt = `Si AI analitik tržnega deleža za slovenske in srednjeevropske oglasne platforme (Bolha, Vinted, Avtonet, mobile.de).
-Na podlagi TVOJIH aktivnosti (trades + interakcije z oglasi) in TOTAL MARKET podatkov (vsi oglasi v monitorjih kjer trguješ) oceni tvoj market share per kategorija in priporoči strategijo za rast.
-
-TVOJE KATEGORIJE (top ${Math.min(15, categoryRows.length)} od ${categoryRows.length}):
-${categoryBlock}
-
-PRAVILA ZA ANALIZO:
-1. dominantCategories: top 2-3 kategorije kjer imaš najvišji market share. Vsaka z reasoning (zakaj dominiraš — npr. "velik volumen nakupov v elektronika ti daje 12% share").
-2. untappedCategories: 2-3 kategorije z velikim trgom (>=20 oglasov) kjer nisi aktiven (0 trade-ov). Z reasoning (zakaj je to priložnost).
-3. overallPosition: 1-2 povedi slovensko — kakovost tvoje pozicije (koliko kategorij LEADER, avg share, top priložnost).
-4. growthOpportunity: 2-3 kategorije kjer lahko rasteš (potentialShare + strategy kako).
-
-OCENJEVANJE:
-- Market share je ocenjen glede na predpostavko, da ~10% vseh oglasov rezultira v prodajo.
-- Pozicija (LEADER/CHALLENGER/FOLLOWER/NICHE) temelji na percentileih tvojega share-a across kategorije.
-- confidenceScore 0-100: višje = bolj zanesljiva ocena (več tržnih podatkov in tvoje aktivnosti).
-
-VRNI LE JSON:
-{
-  "dominantCategories": [
-    { "category": "elektronika", "share": 12.5, "reasoning": "..." }
-  ],
-  "untappedCategories": [
-    { "category": "avto", "marketSize": 145, "reasoning": "..." }
-  ],
-  "overallPosition": "Aktiven v 5 kategorijah, LEADER v 1. Avg share 8.3%...",
-  "growthOpportunity": [
-    { "category": "avto", "potentialShare": 8, "strategy": "Začni z 2-3 nakupi..." }
-  ]
-}${GROUNDING_PROMPT_SUFFIX}`;
+    const prompt = buildPrompt({ categoryRows });
 
     let aiUsed = false;
     let dominantCategories = det.dominantCategories;
@@ -539,95 +685,17 @@ VRNI LE JSON:
     let growthOpportunity = det.growthOpportunity;
 
     try {
-      const raw = await callProviderForRaw(aiSettings, prompt);
-      const parsed = parseJsonLooseExported(raw) as
+      const raw = await callAi(prompt);
+      const parsed = parseAi(raw) as
         | AiMarketShareResponse
         | null;
 
-      if (parsed) {
-        // dominantCategories
-        const aiDom: DominantCategory[] = [];
-        if (Array.isArray(parsed.dominantCategories)) {
-          for (const item of parsed.dominantCategories) {
-            const a = item as Record<string, unknown> | null;
-            if (!a || typeof a !== 'object') continue;
-            const category = clampString(a.category, 100, '');
-            if (!category) continue;
-            aiDom.push({
-              category,
-              share: clampNumber(a.share, 0, 100, 0),
-              reasoning: clampString(
-                a.reasoning,
-                300,
-                'Kategorija z višjim share-om od povprečja.',
-              ),
-            });
-          }
-        }
-        if (aiDom.length > 0) {
-          dominantCategories = aiDom.slice(0, 5);
-        }
-
-        // untappedCategories
-        const aiUntap: UntappedCategory[] = [];
-        if (Array.isArray(parsed.untappedCategories)) {
-          for (const item of parsed.untappedCategories) {
-            const a = item as Record<string, unknown> | null;
-            if (!a || typeof a !== 'object') continue;
-            const category = clampString(a.category, 100, '');
-            if (!category) continue;
-            aiUntap.push({
-              category,
-              marketSize: clampNumber(a.marketSize, 0, 1_000_000, 0),
-              reasoning: clampString(
-                a.reasoning,
-                300,
-                'Velik trg brez tvoje aktivnosti.',
-              ),
-            });
-          }
-        }
-        if (aiUntap.length > 0) {
-          untappedCategories = aiUntap.slice(0, 5);
-        }
-
-        // overallPosition
-        if (
-          typeof parsed.overallPosition === 'string' &&
-          parsed.overallPosition.trim().length > 0
-        ) {
-          overallPosition = clampString(
-            parsed.overallPosition,
-            500,
-            det.overallPosition,
-          );
-        }
-
-        // growthOpportunity
-        const aiGrowth: GrowthOpportunity[] = [];
-        if (Array.isArray(parsed.growthOpportunity)) {
-          for (const item of parsed.growthOpportunity) {
-            const a = item as Record<string, unknown> | null;
-            if (!a || typeof a !== 'object') continue;
-            const category = clampString(a.category, 100, '');
-            if (!category) continue;
-            aiGrowth.push({
-              category,
-              potentialShare: clampNumber(a.potentialShare, 0, 100, 0),
-              strategy: clampString(
-                a.strategy,
-                300,
-                'Povečaj aktivnost za višji share.',
-              ),
-            });
-          }
-        }
-        if (aiGrowth.length > 0) {
-          growthOpportunity = aiGrowth.slice(0, 5);
-        }
-
-        aiUsed = true;
-      }
+      const result = parseAiMarketShare({ parsed, det });
+      dominantCategories = result.dominantCategories;
+      untappedCategories = result.untappedCategories;
+      overallPosition = result.overallPosition;
+      growthOpportunity = result.growthOpportunity;
+      aiUsed = result.aiUsed;
     } catch (err) {
       logger.warn(
         '/api/ai/market-share-analyzer',
@@ -663,25 +731,15 @@ VRNI LE JSON:
           ) / 10
         : 0;
 
-    let advice: string;
-    if (totalCategories === 0) {
-      advice =
-        'Ni kategorij — dodaš trades z veljavnim category za začetek analize.';
-    } else if (leaderCategories > 0) {
-      advice = `LEADER v ${leaderCategories} od ${totalCategories} kategorij${leaderCategories === 1 ? '' : 'ah'}. Avg market share ${avgMarketShare}%. ${
-        untappedCategories.length > 0
-          ? `Priložnost: razširi v "${untappedCategories[0].category}" (${untappedCategories[0].marketSize} oglasov).`
-          : 'Vzdržuj pozicijo z doslednim sourcing-om.'
-      }`;
-    } else {
-      advice = `Aktiven v ${totalCategories} kategorij${totalCategories === 1 ? 'i' : 'ah'}, brez LEADER pozicije. Avg share ${avgMarketShare}%. ${
-        growthOpportunity.length > 0
-          ? `Naslednji korak: ${growthOpportunity[0].strategy}`
-          : 'Povečaj volumen za višji market share.'
-      }`;
-    }
+    const advice = buildAdvice({
+      totalCategories,
+      leaderCategories,
+      avgMarketShare,
+      untappedCategories,
+      growthOpportunity,
+    });
 
-    return NextResponse.json({
+    return apiOk({
       ok: true,
       categories: categoryRows,
       analysis: {
@@ -698,11 +756,8 @@ VRNI LE JSON:
       },
       aiUsed,
     });
-  } catch (err: any) {
-    logger.error('/api/ai/market-share-analyzer', 'handler failed', err);
-    return NextResponse.json(
-      { error: err?.message ?? 'Napaka' },
-      { status: 500 },
-    );
-  }
-}
+  },
+});
+
+export const GET = marketShareHandler;
+export const POST = marketShareHandler;

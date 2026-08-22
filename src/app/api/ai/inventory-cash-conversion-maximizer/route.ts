@@ -1,4 +1,4 @@
-// v7.98: AI Inventory Cash Conversion Maximizer — AI maksimizira cash conversion
+// v7.98 / v8.96.5-batch2: AI Inventory Cash Conversion Maximizer — AI maksimizira cash conversion
 // rate of held inventorija — kako hitro in profitably lahko ALL held items se
 // convert-a v cash? Identificira optimal sell order in pricing za maximum cash
 // recovery. The "ultimate cash conversion maximizer."
@@ -29,24 +29,20 @@
 //
 // GET+POST /api/ai/inventory-cash-conversion-maximizer
 // (AI-enhanced + grounding + anti-hallucination + 6h cache + deterministic fallback)
+// Refaktoriran z withAiRoute helperjem (v8.96.5) + enforceBudget guard.
 
-import { NextRequest, NextResponse } from 'next/server';
-import { db } from '@/lib/db';
-import { getSettingsRow } from '@/lib/pipeline';
-import {
-  callProviderForRaw,
-  parseJsonLooseExported,
-  type AiProviderType,
-  type AiSettings,
-} from '@/lib/ai';
+import { withAiRoute, AI_ROUTE_DEFAULTS, type AiRouteContext } from '@/lib/with-ai-route';
+import { apiOk } from '@/lib/api-response';
 import { GROUNDING_PROMPT_SUFFIX } from '@/lib/anti-hallucination';
 import { getCachedAI, setCachedAI } from '@/lib/ai-cache';
-import { checkRateLimit, rateLimitResponse } from '@/lib/rate-limit';
-import { logger } from '@/lib/logger';
 
-export const runtime = 'nodejs';
-export const dynamic = 'force-dynamic';
+export const { runtime, dynamic } = AI_ROUTE_DEFAULTS;
 export const maxDuration = 60;
+
+// --- Input ----------------------------------------------------------------
+
+// eslint-disable-next-line @typescript-eslint/no-empty-object-type
+interface InventoryCashConversionMaximizerInput {}
 
 // --- Types ---------------------------------------------------------------
 
@@ -505,143 +501,53 @@ function buildSummary(
   return parts.join(' ').slice(0, 400);
 }
 
-// --- Handler -------------------------------------------------------------
+// --- AI prompt + merge helpers (pure, testable) ---------------------------
 
-export async function GET(req: NextRequest) {
-  return handleInventoryCashConversionMaximizer(req);
+interface PromptData {
+  heldItemsCount: number;
+  heldItems: Array<{
+    tradeId: string;
+    title: string;
+    buyPrice: number;
+    aiEstimatedValue: number | null;
+    carryingCostAccrued: number;
+    netCashIfSoldNow: number;
+    cashConversionRate: number;
+    conversionUrgency: number;
+    conversionEfficiency: number;
+    detOptimalPrice: number;
+    detSellOrderRank: number;
+    daysHeld: number;
+    isDeclining: boolean;
+  }>;
+  deterministicMaximization: CashConversionMaximization;
+  caps: Record<string, number>;
 }
-export async function POST(req: NextRequest) {
-  return handleInventoryCashConversionMaximizer(req);
+
+function buildPromptData(
+  topItemsForAI: PromptData['heldItems'],
+  detItems: DetCashItem[],
+  maximization: CashConversionMaximization,
+): PromptData {
+  return {
+    heldItemsCount: detItems.length,
+    heldItems: topItemsForAI,
+    deterministicMaximization: maximization,
+    caps: {
+      priceMin: PRICE_MIN, priceMax: PRICE_MAX,
+      rateMin: RATE_MIN, rateMax: RATE_MAX,
+      recoveryMin: RECOVERY_MIN, recoveryMax: RECOVERY_MAX,
+      profitMin: PROFIT_MIN, profitMax: PROFIT_MAX,
+      impactMin: IMPACT_MIN, impactMax: IMPACT_MAX,
+      timelineMin: TIMELINE_MIN, timelineMax: TIMELINE_MAX,
+      roiMin: ROI_MIN, roiMax: ROI_MAX,
+      amountMin: AMOUNT_MIN, amountMax: AMOUNT_MAX,
+    },
+  };
 }
 
-async function handleInventoryCashConversionMaximizer(req: NextRequest) {
-  try {
-    const rl = checkRateLimit(req, 'ai-inventory-cash-conversion-maximizer', 20);
-    if (!rl.allowed) return rateLimitResponse(rl);
-
-    const now = Date.now();
-
-    // 1) Query all HELD trades with their linked Listing
-    const heldTrades = await db.trade.findMany({
-      where: { status: 'held' },
-      select: {
-        id: true,
-        title: true,
-        buyPrice: true,
-        buyDate: true,
-        category: true,
-        listing: {
-          select: {
-            aiEstimatedValue: true,
-            price: true,
-            aiScore: true,
-            dealScore: true,
-            monitor: { select: { source: true, tags: true } },
-          },
-        },
-      },
-      orderBy: { buyDate: 'asc' },
-      take: 100000,
-    }) as unknown as HeldItemRow[];
-
-    // Empty-state: no HELD trades
-    if (heldTrades.length === 0) {
-      return NextResponse.json({
-        ok: true,
-        items: [],
-        maximization: {
-          optimalSellOrder: [],
-          projectedCashRecovery: 0,
-          cashConversionTimeline: TARGET_TIMELINE_DAYS,
-          cashFlowOptimizationActions: [],
-          capitalRecyclingPlan: [],
-          cashConversionGrade: 'F',
-          totalProfitIfConverted: 0,
-        },
-        summary: 'Ni HELD trgovin v inventarju — Inventory Cash Conversion Maximizer ni mogoč.',
-        aiUsed: false,
-        message: 'Ni HELD trgovin v inventarju — Inventory Cash Conversion Maximizer ni mogoč.',
-      } satisfies InventoryCashConversionResponse);
-    }
-
-    // 2) Compute per-item cash conversion metrics (deterministic baseline)
-    const detItems = heldTrades.map((t) => computeCashConversionItem(t, now));
-    assignSellOrderRanks(detItems);
-
-    let maximization = buildDeterministicMaximization(detItems);
-    let items: CashConversionItem[] = detItems.map((d) => d.item);
-    let summary = buildSummary(detItems, maximization);
-
-    // 3) AI cache check (6h TTL) — key by held item ids
-    const heldItemIds = heldTrades.map((t) => t.id).sort();
-    const cacheKey = `inventory-cash-conversion-maximizer:${JSON.stringify(heldItemIds)}`;
-    const cached = getCachedAI<{
-      maximization: CashConversionMaximization;
-      summary: string;
-    }>(cacheKey);
-    if (cached) {
-      return NextResponse.json({
-        ok: true,
-        items,
-        maximization: cached.maximization,
-        summary: cached.summary,
-        cached: true,
-        aiUsed: true,
-      } satisfies InventoryCashConversionResponse);
-    }
-
-    // 4) AI prompt with grounding
-    const settings = await getSettingsRow();
-    const aiSettings: AiSettings = {
-      provider: settings.aiProvider as AiProviderType,
-      baseUrl: settings.aiBaseUrl,
-      apiKey: settings.aiApiKey,
-      model: settings.aiModel,
-      fallbackProvider: (settings.fallbackProvider || '') as
-        | AiProviderType
-        | '',
-      fallbackBaseUrl: settings.fallbackBaseUrl || '',
-      fallbackApiKey: settings.fallbackApiKey || '',
-      fallbackModel: settings.fallbackModel || '',
-    };
-
-    // Compact context for AI (top 40 items by urgency)
-    const topItemsForAI = [...detItems]
-      .sort((a, b) => b.item.conversionUrgency - a.item.conversionUrgency)
-      .slice(0, 40)
-      .map((d) => ({
-        tradeId: d.item.tradeId,
-        title: d.item.title,
-        buyPrice: d.item.buyPrice,
-        aiEstimatedValue: d.item.aiEstimatedValue,
-        carryingCostAccrued: d.item.carryingCostAccrued,
-        netCashIfSoldNow: d.item.netCashIfSoldNow,
-        cashConversionRate: d.item.cashConversionRate,
-        conversionUrgency: d.item.conversionUrgency,
-        conversionEfficiency: d.item.conversionEfficiency,
-        detOptimalPrice: d.item.optimalPrice,
-        detSellOrderRank: d.item.sellOrderRank,
-        daysHeld: d.daysHeld,
-        isDeclining: d.isDeclining,
-      }));
-
-    const promptData = {
-      heldItemsCount: detItems.length,
-      heldItems: topItemsForAI,
-      deterministicMaximization: maximization,
-      caps: {
-        priceMin: PRICE_MIN, priceMax: PRICE_MAX,
-        rateMin: RATE_MIN, rateMax: RATE_MAX,
-        recoveryMin: RECOVERY_MIN, recoveryMax: RECOVERY_MAX,
-        profitMin: PROFIT_MIN, profitMax: PROFIT_MAX,
-        impactMin: IMPACT_MIN, impactMax: IMPACT_MAX,
-        timelineMin: TIMELINE_MIN, timelineMax: TIMELINE_MAX,
-        roiMin: ROI_MIN, roiMax: ROI_MAX,
-        amountMin: AMOUNT_MIN, amountMax: AMOUNT_MAX,
-      },
-    };
-
-    const prompt = `Si AI "Inventory Cash Conversion Maximizer" za slovenske in srednjeevropske oglasne platforme (Bolha, Vinted, Avtonet, mobile.de).
+function buildPrompt(promptData: PromptData): string {
+  return `Si AI "Inventory Cash Conversion Maximizer" za slovenske in srednjeevropske oglasne platforme (Bolha, Vinted, Avtonet, mobile.de).
 Si strokovnjak za CASH CONVERSION maximization — identificiraš kako MAXIMIZIRATI cash conversion rate of HELD inventorija. Razlika od inventory-value-maximizer (v7.97 ki maksimizira value) — ti maksimiziraš CASH conversion (koliko cash dobiš po fees). Razlika od cash-recovery-accelerator (v7.96 ki accelerira cash recovery) — ti maksimiziraš CASH RATE per item + optimal sell order. Razlika od inventory-profit-maximizer (ki maksimizira profit) — ti maksimiziraš cash conversion (koliko cash se sprosti iz buyPrice capital). Razlika od inventory-liquidation-strategist (ki likvidira) — ti daje OPTIMAL SELL ORDER za max cash flow. Razlika od inventory-aging-strategist (ki strategizes aging) — ti daje CASH CONVERSION TIMELINE + capital recycling plan. Razlika od inventory-roi-optimizer (ki optimira ROI) — ti optimiraš cash conversion rate. Razlika od profit-velocity-maximizer (ki maksimizira velocity) — ti maksimiziraš per-item cash conversion.
 
 DETERMINISTIČNI PODATKI (izračunano iz DB — HELD trgovin z linked Listing):
@@ -678,154 +584,286 @@ VRNI LE JSON:
   },
   "summary": "8 held item-ov. Cash recovery: 852€ (grade B). Timeline: 14 dni. Profit if converted: 320€."
 }${GROUNDING_PROMPT_SUFFIX}`;
+}
+
+function mergeAiIntoMaximization(
+  parsed: AiResponse | null,
+  detItems: DetCashItem[],
+  items: CashConversionItem[],
+  maximization: CashConversionMaximization,
+): { items: CashConversionItem[]; maximization: CashConversionMaximization; summary: string; aiUsed: boolean } {
+  if (!parsed || typeof parsed !== 'object') {
+    return { items, maximization, summary: buildSummary(detItems, maximization), aiUsed: false };
+  }
+
+  const aiMax = parsed.maximization ?? {};
+
+  const detByTradeId = new Map<string, DetCashItem>();
+  for (const d of detItems) detByTradeId.set(d.item.tradeId, d);
+
+  // optimalSellOrder: AI may re-rank items
+  let optimalSellOrder: OptimalSellOrderEntry[] = [];
+  if (Array.isArray(aiMax.optimalSellOrder) && aiMax.optimalSellOrder.length > 0) {
+    const validTradeIds = new Set(detItems.map((d) => d.item.tradeId));
+    const seenTradeIds = new Set<string>();
+    for (const r of aiMax.optimalSellOrder) {
+      if (!r || typeof r !== 'object') continue;
+      const tradeId = String(r.tradeId ?? '');
+      if (!validTradeIds.has(tradeId) || seenTradeIds.has(tradeId)) continue;
+      seenTradeIds.add(tradeId);
+      const det = detByTradeId.get(tradeId);
+      if (!det) continue;
+      const rank = round0(clampNum(
+        r.rank,
+        1, detItems.length,
+        det.item.sellOrderRank,
+      ));
+      const reason = clampString(r.reason, 200, `Sell #${rank}: urgency ${det.item.conversionUrgency}.`);
+      optimalSellOrder.push({ tradeId, rank, reason });
+    }
+  }
+
+  let mergedItems = items;
+  // Fallback: use deterministic sell order
+  if (optimalSellOrder.length === 0) {
+    for (const d of detItems) {
+      optimalSellOrder.push({
+        tradeId: d.item.tradeId,
+        rank: d.item.sellOrderRank,
+        reason: `Sell #${d.item.sellOrderRank}: urgency ${d.item.conversionUrgency}.`,
+      });
+    }
+  } else {
+    // For items AI didn't return, append with remaining ranks
+    const seenTradeIds = new Set(optimalSellOrder.map((r) => r.tradeId));
+    let nextRank = optimalSellOrder.length + 1;
+    for (const d of detItems) {
+      if (!seenTradeIds.has(d.item.tradeId)) {
+        optimalSellOrder.push({
+          tradeId: d.item.tradeId,
+          rank: nextRank,
+          reason: `Sell #${nextRank}: urgency ${d.item.conversionUrgency}.`,
+        });
+        nextRank += 1;
+      }
+    }
+  }
+  // Sort by rank ascending
+  optimalSellOrder.sort((a, b) => a.rank - b.rank);
+  // Re-assign sellOrderRank in items based on AI optimalSellOrder
+  const rankByTradeId = new Map<string, number>();
+  optimalSellOrder.forEach((r) => rankByTradeId.set(r.tradeId, r.rank));
+  mergedItems = items.map((it) => ({
+    ...it,
+    sellOrderRank: rankByTradeId.get(it.tradeId) ?? it.sellOrderRank,
+  }));
+
+  const cashConversionTimeline = round0(clampNum(
+    aiMax.cashConversionTimeline,
+    TIMELINE_MIN, TIMELINE_MAX,
+    maximization.cashConversionTimeline,
+  ));
+
+  // cashFlowOptimizationActions
+  const cashFlowOptimizationActions: CashFlowOptimizationAction[] = [];
+  if (Array.isArray(aiMax.cashFlowOptimizationActions)) {
+    for (const a of aiMax.cashFlowOptimizationActions.slice(0, 5)) {
+      if (!a || typeof a !== 'object') continue;
+      cashFlowOptimizationActions.push({
+        action: clampString(a.action, 200, 'Cash flow akcija.'),
+        priority: clampEnum(a.priority, VALID_PRIORITY, 'MEDIUM'),
+        cashImpact: round0(clampNum(
+          a.cashImpact,
+          IMPACT_MIN, IMPACT_MAX, 0,
+        )),
+      });
+    }
+  }
+  if (cashFlowOptimizationActions.length === 0) {
+    for (const a of maximization.cashFlowOptimizationActions) cashFlowOptimizationActions.push(a);
+  }
+
+  // capitalRecyclingPlan
+  const capitalRecyclingPlan: CapitalRecyclingEntry[] = [];
+  if (Array.isArray(aiMax.capitalRecyclingPlan)) {
+    for (const r of aiMax.capitalRecyclingPlan.slice(0, 4)) {
+      if (!r || typeof r !== 'object') continue;
+      capitalRecyclingPlan.push({
+        category: clampString(r.category, 80, 'Drugo'),
+        amount: round0(clampNum(
+          r.amount,
+          AMOUNT_MIN, AMOUNT_MAX, 0,
+        )),
+        expectedROI: round0(clampNum(
+          r.expectedROI,
+          ROI_MIN, ROI_MAX, 50,
+        )),
+      });
+    }
+  }
+  if (capitalRecyclingPlan.length === 0) {
+    for (const c of maximization.capitalRecyclingPlan) capitalRecyclingPlan.push(c);
+  }
+
+  const cashConversionGrade = clampEnum(
+    aiMax.cashConversionGrade,
+    VALID_GRADE,
+    maximization.cashConversionGrade,
+  );
+
+  // Recompute projectedCashRecovery and totalProfitIfConverted from items
+  const projectedCashRecovery = computeProjectedCashRecovery(
+    mergedItems.map((it) => ({
+      item: it,
+      daysHeld: detByTradeId.get(it.tradeId)?.daysHeld ?? 0,
+      isDeclining: detByTradeId.get(it.tradeId)?.isDeclining ?? false,
+    })),
+  );
+  const totalProfitIfConverted = computeTotalProfitIfConverted(
+    mergedItems.map((it) => ({
+      item: it,
+      daysHeld: detByTradeId.get(it.tradeId)?.daysHeld ?? 0,
+      isDeclining: detByTradeId.get(it.tradeId)?.isDeclining ?? false,
+    })),
+  );
+
+  const mergedMaximization: CashConversionMaximization = {
+    optimalSellOrder,
+    projectedCashRecovery,
+    cashConversionTimeline,
+    cashFlowOptimizationActions,
+    capitalRecyclingPlan,
+    cashConversionGrade,
+    totalProfitIfConverted,
+  };
+
+  const summary = clampString(parsed.summary, 400, buildSummary(detItems, mergedMaximization));
+  return { items: mergedItems, maximization: mergedMaximization, summary, aiUsed: true };
+}
+
+// --- Handler -------------------------------------------------------------
+
+const inventoryCashConversionMaximizerHandler = withAiRoute<InventoryCashConversionMaximizerInput>({
+  endpoint: '/api/ai/inventory-cash-conversion-maximizer',
+  maxDuration: 60,
+  enforceBudget: true, // AI klic — preveri budget
+  method: 'GET', // Endpoint sprejema GET + POST — bypass POST-only check
+
+  parseBody: async (req) => {
+    await req.json().catch(() => ({}));
+    return {};
+  },
+
+  // No validateInput — body ignored, identična logika za GET in POST
+  handler: async (_input, ctx: AiRouteContext) => {
+    const { db, callAi, parseAi, logger } = ctx;
+
+    const now = Date.now();
+
+    // 1) Query all HELD trades with their linked Listing
+    const heldTrades = await db.trade.findMany({
+      where: { status: 'held' },
+      select: {
+        id: true,
+        title: true,
+        buyPrice: true,
+        buyDate: true,
+        category: true,
+        listing: {
+          select: {
+            aiEstimatedValue: true,
+            price: true,
+            aiScore: true,
+            dealScore: true,
+            monitor: { select: { source: true, tags: true } },
+          },
+        },
+      },
+      orderBy: { buyDate: 'asc' },
+      take: 100000,
+    }) as unknown as HeldItemRow[];
+
+    // Empty-state: no HELD trades
+    if (heldTrades.length === 0) {
+      return apiOk({
+        ok: true,
+        items: [],
+        maximization: {
+          optimalSellOrder: [],
+          projectedCashRecovery: 0,
+          cashConversionTimeline: TARGET_TIMELINE_DAYS,
+          cashFlowOptimizationActions: [],
+          capitalRecyclingPlan: [],
+          cashConversionGrade: 'F',
+          totalProfitIfConverted: 0,
+        },
+        summary: 'Ni HELD trgovin v inventarju — Inventory Cash Conversion Maximizer ni mogoč.',
+        aiUsed: false,
+        message: 'Ni HELD trgovin v inventarju — Inventory Cash Conversion Maximizer ni mogoč.',
+      } satisfies InventoryCashConversionResponse);
+    }
+
+    // 2) Compute per-item cash conversion metrics (deterministic baseline)
+    const detItems = heldTrades.map((t) => computeCashConversionItem(t, now));
+    assignSellOrderRanks(detItems);
+
+    let maximization = buildDeterministicMaximization(detItems);
+    let items: CashConversionItem[] = detItems.map((d) => d.item);
+    let summary = buildSummary(detItems, maximization);
+
+    // 3) AI cache check (6h TTL) — key by held item ids
+    const heldItemIds = heldTrades.map((t) => t.id).sort();
+    const cacheKey = `inventory-cash-conversion-maximizer:${JSON.stringify(heldItemIds)}`;
+    const cached = getCachedAI<{
+      maximization: CashConversionMaximization;
+      summary: string;
+    }>(cacheKey);
+    if (cached) {
+      return apiOk({
+        ok: true,
+        items,
+        maximization: cached.maximization,
+        summary: cached.summary,
+        cached: true,
+        aiUsed: true,
+      } satisfies InventoryCashConversionResponse);
+    }
+
+    // 4) AI prompt with grounding
+    // Compact context for AI (top 40 items by urgency)
+    const topItemsForAI = [...detItems]
+      .sort((a, b) => b.item.conversionUrgency - a.item.conversionUrgency)
+      .slice(0, 40)
+      .map((d) => ({
+        tradeId: d.item.tradeId,
+        title: d.item.title,
+        buyPrice: d.item.buyPrice,
+        aiEstimatedValue: d.item.aiEstimatedValue,
+        carryingCostAccrued: d.item.carryingCostAccrued,
+        netCashIfSoldNow: d.item.netCashIfSoldNow,
+        cashConversionRate: d.item.cashConversionRate,
+        conversionUrgency: d.item.conversionUrgency,
+        conversionEfficiency: d.item.conversionEfficiency,
+        detOptimalPrice: d.item.optimalPrice,
+        detSellOrderRank: d.item.sellOrderRank,
+        daysHeld: d.daysHeld,
+        isDeclining: d.isDeclining,
+      }));
+
+    const promptData = buildPromptData(topItemsForAI, detItems, maximization);
+    const prompt = buildPrompt(promptData);
 
     let aiUsed = false;
 
     try {
-      const raw = await callProviderForRaw(aiSettings, prompt);
-      const parsed = parseJsonLooseExported(raw) as AiResponse | null;
+      const raw = await callAi(prompt);
+      const parsed = parseAi(raw) as AiResponse | null;
 
-      if (parsed && typeof parsed === 'object') {
-        const aiMax = parsed.maximization ?? {};
-
-        const detByTradeId = new Map<string, DetCashItem>();
-        for (const d of detItems) detByTradeId.set(d.item.tradeId, d);
-
-        // optimalSellOrder: AI may re-rank items
-        const optimalSellOrder: OptimalSellOrderEntry[] = [];
-        if (Array.isArray(aiMax.optimalSellOrder) && aiMax.optimalSellOrder.length > 0) {
-          const validTradeIds = new Set(detItems.map((d) => d.item.tradeId));
-          const seenTradeIds = new Set<string>();
-          for (const r of aiMax.optimalSellOrder) {
-            if (!r || typeof r !== 'object') continue;
-            const tradeId = String(r.tradeId ?? '');
-            if (!validTradeIds.has(tradeId) || seenTradeIds.has(tradeId)) continue;
-            seenTradeIds.add(tradeId);
-            const det = detByTradeId.get(tradeId);
-            if (!det) continue;
-            const rank = round0(clampNum(
-              r.rank,
-              1, detItems.length,
-              det.item.sellOrderRank,
-            ));
-            const reason = clampString(r.reason, 200, `Sell #${rank}: urgency ${det.item.conversionUrgency}.`);
-            optimalSellOrder.push({ tradeId, rank, reason });
-          }
-        }
-        // Fallback: use deterministic sell order
-        if (optimalSellOrder.length === 0) {
-          for (const d of detItems) {
-            optimalSellOrder.push({
-              tradeId: d.item.tradeId,
-              rank: d.item.sellOrderRank,
-              reason: `Sell #${d.item.sellOrderRank}: urgency ${d.item.conversionUrgency}.`,
-            });
-          }
-        } else {
-          // For items AI didn't return, append with remaining ranks
-          const seenTradeIds = new Set(optimalSellOrder.map((r) => r.tradeId));
-          let nextRank = optimalSellOrder.length + 1;
-          for (const d of detItems) {
-            if (!seenTradeIds.has(d.item.tradeId)) {
-              optimalSellOrder.push({
-                tradeId: d.item.tradeId,
-                rank: nextRank,
-                reason: `Sell #${nextRank}: urgency ${d.item.conversionUrgency}.`,
-              });
-              nextRank += 1;
-            }
-          }
-        }
-        // Sort by rank ascending
-        optimalSellOrder.sort((a, b) => a.rank - b.rank);
-        // Re-assign sellOrderRank in items based on AI optimalSellOrder
-        const rankByTradeId = new Map<string, number>();
-        optimalSellOrder.forEach((r) => rankByTradeId.set(r.tradeId, r.rank));
-        items = items.map((it) => ({
-          ...it,
-          sellOrderRank: rankByTradeId.get(it.tradeId) ?? it.sellOrderRank,
-        }));
-
-        const cashConversionTimeline = round0(clampNum(
-          aiMax.cashConversionTimeline,
-          TIMELINE_MIN, TIMELINE_MAX,
-          maximization.cashConversionTimeline,
-        ));
-
-        // cashFlowOptimizationActions
-        const cashFlowOptimizationActions: CashFlowOptimizationAction[] = [];
-        if (Array.isArray(aiMax.cashFlowOptimizationActions)) {
-          for (const a of aiMax.cashFlowOptimizationActions.slice(0, 5)) {
-            if (!a || typeof a !== 'object') continue;
-            cashFlowOptimizationActions.push({
-              action: clampString(a.action, 200, 'Cash flow akcija.'),
-              priority: clampEnum(a.priority, VALID_PRIORITY, 'MEDIUM'),
-              cashImpact: round0(clampNum(
-                a.cashImpact,
-                IMPACT_MIN, IMPACT_MAX, 0,
-              )),
-            });
-          }
-        }
-        if (cashFlowOptimizationActions.length === 0) {
-          for (const a of maximization.cashFlowOptimizationActions) cashFlowOptimizationActions.push(a);
-        }
-
-        // capitalRecyclingPlan
-        const capitalRecyclingPlan: CapitalRecyclingEntry[] = [];
-        if (Array.isArray(aiMax.capitalRecyclingPlan)) {
-          for (const r of aiMax.capitalRecyclingPlan.slice(0, 4)) {
-            if (!r || typeof r !== 'object') continue;
-            capitalRecyclingPlan.push({
-              category: clampString(r.category, 80, 'Drugo'),
-              amount: round0(clampNum(
-                r.amount,
-                AMOUNT_MIN, AMOUNT_MAX, 0,
-              )),
-              expectedROI: round0(clampNum(
-                r.expectedROI,
-                ROI_MIN, ROI_MAX, 50,
-              )),
-            });
-          }
-        }
-        if (capitalRecyclingPlan.length === 0) {
-          for (const c of maximization.capitalRecyclingPlan) capitalRecyclingPlan.push(c);
-        }
-
-        const cashConversionGrade = clampEnum(
-          aiMax.cashConversionGrade,
-          VALID_GRADE,
-          maximization.cashConversionGrade,
-        );
-
-        // Recompute projectedCashRecovery and totalProfitIfConverted from items
-        const projectedCashRecovery = computeProjectedCashRecovery(
-          items.map((it) => ({
-            item: it,
-            daysHeld: detByTradeId.get(it.tradeId)?.daysHeld ?? 0,
-            isDeclining: detByTradeId.get(it.tradeId)?.isDeclining ?? false,
-          })),
-        );
-        const totalProfitIfConverted = computeTotalProfitIfConverted(
-          items.map((it) => ({
-            item: it,
-            daysHeld: detByTradeId.get(it.tradeId)?.daysHeld ?? 0,
-            isDeclining: detByTradeId.get(it.tradeId)?.isDeclining ?? false,
-          })),
-        );
-
-        maximization = {
-          optimalSellOrder,
-          projectedCashRecovery,
-          cashConversionTimeline,
-          cashFlowOptimizationActions,
-          capitalRecyclingPlan,
-          cashConversionGrade,
-          totalProfitIfConverted,
-        };
-
-        summary = clampString(parsed.summary, 400, buildSummary(detItems, maximization));
+      const result = mergeAiIntoMaximization(parsed, detItems, items, maximization);
+      if (result.aiUsed) {
+        items = result.items;
+        maximization = result.maximization;
+        summary = result.summary;
         aiUsed = true;
       }
     } catch (err) {
@@ -841,22 +879,15 @@ VRNI LE JSON:
       setCachedAI(cacheKey, { maximization, summary });
     }
 
-    return NextResponse.json({
+    return apiOk({
       ok: true,
       items,
       maximization,
       summary,
       aiUsed,
     } satisfies InventoryCashConversionResponse);
-  } catch (err: any) {
-    logger.error(
-      '/api/ai/inventory-cash-conversion-maximizer',
-      'handler failed',
-      err,
-    );
-    return NextResponse.json(
-      { error: err?.message ?? 'Napaka' },
-      { status: 500 },
-    );
-  }
-}
+  },
+});
+
+export const GET = inventoryCashConversionMaximizerHandler;
+export const POST = inventoryCashConversionMaximizerHandler;

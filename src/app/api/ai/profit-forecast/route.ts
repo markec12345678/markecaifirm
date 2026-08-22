@@ -1,22 +1,34 @@
-// v6.8: AI Profit Forecast — AI napove pričakovani dobiček za naslednji mesec
+// v6.8 / v8.95.6-profit: AI Profit Forecast — AI napove pričakovani dobiček za naslednji mesec
+// Refaktoriran z withAiRoute helperjem (v8.95.6-profit) + enforceBudget guard.
+//
 // POST /api/ai/profit-forecast
 // Body: { months?: number (default 1) }
 // Returns: { ok, forecast: { expectedProfit, confidence, scenarios, factors, recommendation } }
 
-import { NextRequest, NextResponse } from 'next/server';
-import { db } from '@/lib/db';
-import { getSettingsRow } from '@/lib/pipeline';
-import { callProviderForRaw, parseJsonLooseExported, type AiProviderType, type AiSettings } from '@/lib/ai';
-import { logger } from '@/lib/logger';
+import { withAiRoute, AI_ROUTE_DEFAULTS, type AiRouteContext } from '@/lib/with-ai-route';
+import { apiOk } from '@/lib/api-response';
 
-export const runtime = 'nodejs';
-export const dynamic = 'force-dynamic';
+export const { runtime, dynamic } = AI_ROUTE_DEFAULTS;
 export const maxDuration = 90;
 
-export async function POST(req: NextRequest) {
-  try {
+interface ProfitForecastInput {
+  months: number;
+}
+
+export const POST = withAiRoute<ProfitForecastInput>({
+  endpoint: '/api/ai/profit-forecast',
+  maxDuration: 90,
+  enforceBudget: true, // AI klic — preveri budget
+
+  parseBody: async (req) => {
     const body = await req.json().catch(() => ({}));
-    const months = Math.min(3, Math.max(1, body?.months ?? 1));
+    return { months: Math.min(3, Math.max(1, body?.months ?? 1)) };
+  },
+
+  // No validateInput — months ima clamp default
+  handler: async (input, ctx: AiRouteContext) => {
+    const { db, callAi, parseAi } = ctx;
+    const { months } = input;
 
     // Gather historical data
     const now = new Date();
@@ -38,18 +50,7 @@ export async function POST(req: NextRequest) {
     ]);
 
     // Monthly profit history
-    const monthlyProfits: Array<{ month: string; profit: number; count: number }> = [];
-    for (let i = 5; i >= 0; i--) {
-      const start = new Date(now.getFullYear(), now.getMonth() - i, 1);
-      const end = new Date(now.getFullYear(), now.getMonth() - i + 1, 1);
-      const monthTrades = soldTrades.filter(t => t.sellDate! >= start && t.sellDate! < end);
-      const profit = monthTrades.reduce((s, t) => s + ((t.sellPrice ?? 0) - (t.sellFees ?? 0) - t.buyPrice - (t.buyFees ?? 0)), 0);
-      monthlyProfits.push({
-        month: start.toISOString().slice(0, 7),
-        profit: Math.round(profit),
-        count: monthTrades.length,
-      });
-    }
+    const monthlyProfits = buildMonthlyProfits(soldTrades, now);
 
     // Calculate trends
     const avgMonthlyProfit = monthlyProfits.reduce((s, m) => s + m.profit, 0) / Math.max(1, monthlyProfits.length);
@@ -72,17 +73,94 @@ export async function POST(req: NextRequest) {
     const conversionRate = soldTrades.length > 0 && listings > 0 ? soldTrades.length / (listings * 6) : 0.05;
     const expectedNewOpportunities = Math.round(avgListingsPerMonitor * conversionRate * months * 4);
 
-    // AI forecast
-    const settings = await getSettingsRow();
-    const aiSettings: AiSettings = {
-      provider: settings.aiProvider as AiProviderType,
-      baseUrl: settings.aiBaseUrl, apiKey: settings.aiApiKey, model: settings.aiModel,
-      fallbackProvider: (settings.fallbackProvider || '') as AiSettings['fallbackProvider'] as AiProviderType | '',
-      fallbackBaseUrl: settings.fallbackBaseUrl || '', fallbackApiKey: settings.fallbackApiKey || '',
-      fallbackModel: settings.fallbackModel || '',
-    };
+    const prompt = buildPrompt(monthlyProfits, avgMonthlyProfit, trendPct, heldTrades.length, heldPotential, monitors, listings, expectedNewOpportunities, months);
 
-    const prompt = `Si ekspert za napovedovanje dobička pri preprodaji na slovenskih oglasih.
+    const raw = await callAi(prompt);
+    const parsed: any = parseAi(raw);
+
+    const forecast = transformForecast(parsed, avgMonthlyProfit, months);
+
+    return apiOk({
+      ok: true,
+      forecast,
+      historicalData: {
+        monthlyProfits,
+        avgMonthlyProfit: Math.round(avgMonthlyProfit),
+        trendPct,
+        heldPotential: Math.round(heldPotential),
+        heldCount: heldTrades.length,
+        activeMonitors: monitors,
+        recentPrilikaCount: listings,
+        expectedNewOpportunities,
+        soldTradesCount: soldTrades.length,
+      },
+      months,
+    });
+  },
+});
+
+// --- Pomožne funkcije (čiste, testabilne) --------------------------------
+
+interface SoldTradeRow {
+  buyPrice: number;
+  buyFees: number | null;
+  sellPrice: number | null;
+  sellFees: number | null;
+  sellDate: Date | null;
+  buyDate: Date | null;
+  category: string | null;
+  title: string;
+}
+
+interface HeldTradeRow {
+  buyPrice: number;
+  buyFees: number | null;
+  title: string;
+  category: string | null;
+  buyDate: Date;
+  listing: { aiEstimatedValue: number | null } | null;
+}
+
+interface MonthlyProfit {
+  month: string;
+  profit: number;
+  count: number;
+}
+
+/**
+ * Build monthly profit history za zadnjih 6 mesecev (IDENTIČNO originalu v6.8).
+ */
+function buildMonthlyProfits(soldTrades: SoldTradeRow[], now: Date): MonthlyProfit[] {
+  const monthlyProfits: MonthlyProfit[] = [];
+  for (let i = 5; i >= 0; i--) {
+    const start = new Date(now.getFullYear(), now.getMonth() - i, 1);
+    const end = new Date(now.getFullYear(), now.getMonth() - i + 1, 1);
+    const monthTrades = soldTrades.filter(t => t.sellDate! >= start && t.sellDate! < end);
+    const profit = monthTrades.reduce((s, t) => s + ((t.sellPrice ?? 0) - (t.sellFees ?? 0) - t.buyPrice - (t.buyFees ?? 0)), 0);
+    monthlyProfits.push({
+      month: start.toISOString().slice(0, 7),
+      profit: Math.round(profit),
+      count: monthTrades.length,
+    });
+  }
+  return monthlyProfits;
+}
+
+/**
+ * Build AI prompt za profit forecast (besedilo IDENTIČNO originalu v6.8).
+ */
+function buildPrompt(
+  monthlyProfits: MonthlyProfit[],
+  avgMonthlyProfit: number,
+  trendPct: number,
+  heldCount: number,
+  heldPotential: number,
+  monitors: number,
+  listings: number,
+  expectedNewOpportunities: number,
+  months: number,
+): string {
+  return `Si ekspert za napovedovanje dobička pri preprodaji na slovenskih oglasih.
 Napovej pričakovani dobiček za naslednjih ${months} mesec(-ev).
 
 Zgodovinski podatki (zadnjih 6 mesecev):
@@ -90,7 +168,7 @@ ${monthlyProfits.map(m => `${m.month}: ${m.profit}€ (${m.count} prodaj)`).join
 
 Povprečni mesečni dobiček: ${Math.round(avgMonthlyProfit)}€
 Trend (zadnji mesec vs prejšnji): ${trendPct > 0 ? '+' : ''}${trendPct}%
-Trenutno v skladišču: ${heldTrades.length} itemov, potencialni dobiček: ${Math.round(heldPotential)}€
+Trenutno v skladišču: ${heldCount} itemov, potencialni dobiček: ${Math.round(heldPotential)}€
 Aktivni monitorji: ${monitors}
 PRILIKA oglasov v zadnjih 30 dneh: ${listings}
 Pričakovane nove priložnosti: ${expectedNewOpportunities}
@@ -114,55 +192,21 @@ Odgovori LE z JSON:
   "factors": ["<faktor1>", "<faktor2>", "<faktor3>"],
   "recommendation": "<priporočilo v slovenščini, max 200 znakov>"
 }`;
+}
 
-    let raw = '';
-    try {
-      raw = await callProviderForRaw(aiSettings, prompt);
-    } catch (primaryError: any) {
-      if (aiSettings.fallbackProvider && aiSettings.fallbackModel) {
-        const fb: AiSettings = { provider: aiSettings.fallbackProvider, baseUrl: aiSettings.fallbackBaseUrl || '', apiKey: aiSettings.fallbackApiKey || '', model: aiSettings.fallbackModel };
-        raw = await callProviderForRaw(fb, prompt);
-      } else { return NextResponse.json({ error: primaryError?.message ?? 'AI failed' }, { status: 500 }); }
-    }
-
-    const parsed: any = parseJsonLooseExported(raw);
-
-    // Increment AI usage
-    const today = new Date().toISOString().slice(0, 10);
-    if (settings.aiCallsDate !== today) {
-      await db.settings.update({ where: { id: 'singleton' }, data: { aiCallsDate: today, aiCallsToday: 1 } });
-    } else {
-      await db.settings.update({ where: { id: 'singleton' }, data: { aiCallsToday: { increment: 1 } } });
-    }
-
-    return NextResponse.json({
-      ok: true,
-      forecast: {
-        expectedProfit: Number(parsed?.expected_profit ?? Math.round(avgMonthlyProfit * months)),
-        confidence: Math.min(100, Math.max(0, parseInt(parsed?.confidence, 10) || 50)),
-        scenarios: {
-          optimistic: { profit: Number(parsed?.scenarios?.optimistic?.profit ?? Math.round(avgMonthlyProfit * months * 1.3)), probability: parseInt(parsed?.scenarios?.optimistic?.probability, 10) || 25 },
-          realistic: { profit: Number(parsed?.scenarios?.realistic?.profit ?? Math.round(avgMonthlyProfit * months)), probability: parseInt(parsed?.scenarios?.realistic?.probability, 10) || 50 },
-          pessimistic: { profit: Number(parsed?.scenarios?.pessimistic?.profit ?? Math.round(avgMonthlyProfit * months * 0.6)), probability: parseInt(parsed?.scenarios?.pessimistic?.probability, 10) || 25 },
-        },
-        factors: Array.isArray(parsed?.factors) ? parsed.factors.slice(0, 5).map((f: any) => String(f).slice(0, 200)) : [],
-        recommendation: String(parsed?.recommendation ?? '').slice(0, 300),
-      },
-      historicalData: {
-        monthlyProfits,
-        avgMonthlyProfit: Math.round(avgMonthlyProfit),
-        trendPct,
-        heldPotential: Math.round(heldPotential),
-        heldCount: heldTrades.length,
-        activeMonitors: monitors,
-        recentPrilikaCount: listings,
-        expectedNewOpportunities,
-        soldTradesCount: soldTrades.length,
-      },
-      months,
-    });
-  } catch (e: any) {
-    logger.error("/api/ai/profit-forecast", "POST handler failed", e);
-    return NextResponse.json({ error: e?.message ?? 'Napaka' }, { status: 500 });
-  }
+/**
+ * Transform AI JSON v forecast rezultat. Clamp/slice logika IDENTIČNA originalu v6.8.
+ */
+function transformForecast(parsed: any, avgMonthlyProfit: number, months: number): any {
+  return {
+    expectedProfit: Number(parsed?.expected_profit ?? Math.round(avgMonthlyProfit * months)),
+    confidence: Math.min(100, Math.max(0, parseInt(parsed?.confidence, 10) || 50)),
+    scenarios: {
+      optimistic: { profit: Number(parsed?.scenarios?.optimistic?.profit ?? Math.round(avgMonthlyProfit * months * 1.3)), probability: parseInt(parsed?.scenarios?.optimistic?.probability, 10) || 25 },
+      realistic: { profit: Number(parsed?.scenarios?.realistic?.profit ?? Math.round(avgMonthlyProfit * months)), probability: parseInt(parsed?.scenarios?.realistic?.probability, 10) || 50 },
+      pessimistic: { profit: Number(parsed?.scenarios?.pessimistic?.profit ?? Math.round(avgMonthlyProfit * months * 0.6)), probability: parseInt(parsed?.scenarios?.pessimistic?.probability, 10) || 25 },
+    },
+    factors: Array.isArray(parsed?.factors) ? parsed.factors.slice(0, 5).map((f: any) => String(f).slice(0, 200)) : [],
+    recommendation: String(parsed?.recommendation ?? '').slice(0, 300),
+  };
 }

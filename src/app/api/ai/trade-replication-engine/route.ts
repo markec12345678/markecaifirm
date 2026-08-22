@@ -1,4 +1,4 @@
-// v7.62: Trade Replication Engine — AI analizira tvoje najbolj USPEŠNE past
+// v7.62 / v8.96.3-batch4: Trade Replication Engine — AI analizira tvoje najbolj USPEŠNE past
 // trades (highest ROI) in predlaga NOVE search monitorje, ki bi replicirali
 // te winning pattern-e. "PS5 35% ROI → Bolha monitor 'PS5 Digital < 300€'".
 //
@@ -8,24 +8,19 @@
 //
 // GET+POST /api/ai/trade-replication-engine
 // (AI-enhanced + grounding + anti-hallucination + 6h cache + deterministic fallback)
+// Refaktoriran z withAiRoute helperjem (v8.96.3) + enforceBudget guard.
 
-import { NextRequest, NextResponse } from 'next/server';
-import { db } from '@/lib/db';
-import { getSettingsRow } from '@/lib/pipeline';
-import {
-  callProviderForRaw,
-  parseJsonLooseExported,
-  type AiProviderType,
-  type AiSettings,
-} from '@/lib/ai';
+import { withAiRoute, AI_ROUTE_DEFAULTS, type AiRouteContext } from '@/lib/with-ai-route';
+import { apiOk } from '@/lib/api-response';
 import { GROUNDING_PROMPT_SUFFIX } from '@/lib/anti-hallucination';
 import { getCachedAI, setCachedAI } from '@/lib/ai-cache';
-import { checkRateLimit, rateLimitResponse } from '@/lib/rate-limit';
-import { logger } from '@/lib/logger';
 
-export const runtime = 'nodejs';
-export const dynamic = 'force-dynamic';
+export const { runtime, dynamic } = AI_ROUTE_DEFAULTS;
 export const maxDuration = 60;
+
+interface TradeReplicationInput {
+  limit: number;
+}
 
 // --- Types ---------------------------------------------------------------
 
@@ -293,32 +288,142 @@ function validateAiSuggestion(
   };
 }
 
+// --- Prompt builder + summary (čisti helperji) --------------------------
+
+function buildPrompt(winners: WinnerTrade[]): string {
+  const winnersBlock = winners
+    .map(
+      (w, idx) =>
+        `${idx + 1}. tradeId=${w.tradeId} | naslov="${w.title}" | kategorija=${w.category} | ` +
+        `nabava=${w.buyPrice}€ | prodaja=${w.sellPrice}€ | profit=${w.profit}€ | ` +
+        `ROI=${w.roi}% | holdDays=${w.holdDays} | source=${w.source} | keywords=[${w.keywords.join(', ')}]`,
+    )
+    .join('\n');
+
+  return `Si AI strategist za preprodajo na slovenskih in srednjeevropskih oglasnih platformah.
+Analiziral si zgodovino NAJBOLJŠIH trade-ov in predlagaš NOVE search monitorje, ki bi replicirali te winning pattern-e.
+
+TOP ${winners.length} ZMAGOVALNIH TRADE-OV (sortirano po ROI desc):
+${winnersBlock}
+
+PRAVILA ZA REPLICIRANJE:
+1. Za vsak winner generiraj 1-2 novih monitor konfiguracij (če je winner zelo obetaven, lahko 2 — različne platforme/razponi).
+2. monitorName: kratek, opisen (npr. "PS5 Digital Bolha < 300€"), max 80 znakov.
+3. platform: bolha | vinted | facebook | mobile.de | kleinanzeigen | avtonet (uporabi winner.source ali kategorijo za izbiro).
+4. searchKeywords: 2-5 ključnih besed iz winner.title (brand + model + variant).
+5. priceMin: ~70% winner.buyPrice (koliko naj boš pripravljen plačati).
+6. priceMax: ~110% winner.buyPrice (zgornja meja za nakup).
+7. expectedROI: realističen pričakovan ROI, baziran na winner.roi (lahko nekoliko nižji zaradi tržnih sprememb), CLAMP na [5, 80] %.
+8. expectedProfit: pričakovan profit v EUR = priceMin × expectedROI/100, CLAMP na [0, ${Math.round(winners[0].profit * 2)}].
+9. categoryFocus: kategorija iz winner.category.
+10. confidenceScore: 0-100 (višje = bolj verjetno da se bo pattern ponovil — upoštevaj ROI, holdDays, popularnost kategorije).
+11. reasoning: 1-2 stavka — ZAKAJ ta monitor replicira winner in kaj iskati.
+
+VRNI LE JSON:
+{
+  "suggestions": [
+    {
+      "basedOnTradeId": "<id>",
+      "monitorName": "...",
+      "platform": "bolha|vinted|...",
+      "searchKeywords": ["..."],
+      "priceMin": <eur>,
+      "priceMax": <eur>,
+      "expectedROI": <5-80>,
+      "expectedProfit": <eur>,
+      "categoryFocus": "...",
+      "confidenceScore": <0-100>,
+      "reasoning": "<slovensko, 1-2 stavka>"
+    }
+  ]
+}${GROUNDING_PROMPT_SUFFIX}`;
+}
+
+function parseAiSuggestions(
+  parsed: unknown,
+  winners: WinnerTrade[],
+): { suggestions: ReplicationSuggestion[]; aiUsed: boolean } {
+  const raw = parsed as AiReplicationResponse | null;
+  const suggestions: ReplicationSuggestion[] = [];
+  if (!raw || !Array.isArray(raw.suggestions)) {
+    return { suggestions, aiUsed: false };
+  }
+
+  // Build a lookup: tradeId → winner (so AI can return suggestions in any order)
+  const winnerById = new Map(winners.map(w => [w.tradeId, w]));
+  const seenTradeIds = new Set<string>();
+  for (const rawS of raw.suggestions) {
+    const tid = String(rawS.basedOnTradeId || '').trim();
+    const winner = winnerById.get(tid);
+    if (!winner) continue;
+    // Allow up to 2 suggestions per winner
+    if (seenTradeIds.has(tid)) {
+      // 2nd suggestion for same trade — still validate
+      const s = validateAiSuggestion(rawS, winner);
+      if (s) {
+        // Slightly differentiate the monitor name to avoid duplicate
+        s.monitorName = s.monitorName.slice(0, 70) + ' (2)';
+        suggestions.push(s);
+      }
+      continue;
+    }
+    seenTradeIds.add(tid);
+    const s = validateAiSuggestion(rawS, winner);
+    if (s) suggestions.push(s);
+    if (suggestions.length >= winners.length * 2) break;
+  }
+  return { suggestions, aiUsed: suggestions.length > 0 };
+}
+
+function buildSummary(
+  winners: WinnerTrade[],
+  suggestions: ReplicationSuggestion[],
+) {
+  const totalWinners = winners.length;
+  const totalSuggestions = suggestions.length;
+  const best = suggestions[0] ?? null;
+  const bestOpportunity = best
+    ? `${best.monitorName} (${best.platform}, ${best.expectedROI}% ROI, ~${best.expectedProfit}€)`
+    : null;
+
+  // estimatedMonthlyProfit: assume we catch 1 deal per week (4/month) at avg expectedProfit
+  const avgProfit =
+    suggestions.length > 0
+      ? suggestions.reduce((s, x) => s + x.expectedProfit, 0) / suggestions.length
+      : 0;
+  const estimatedMonthlyProfit = Math.round(avgProfit * 4);
+
+  return {
+    totalWinners,
+    totalSuggestions,
+    bestOpportunity,
+    estimatedMonthlyProfit,
+  };
+}
+
 // --- Handler -------------------------------------------------------------
 
-export async function GET(req: NextRequest) {
-  return handleTradeReplication(req);
-}
-export async function POST(req: NextRequest) {
-  return handleTradeReplication(req);
-}
+const tradeReplicationHandler = withAiRoute<TradeReplicationInput>({
+  endpoint: '/api/ai/trade-replication-engine',
+  maxDuration: 60,
+  enforceBudget: true, // AI klic — preveri budget
+  method: 'GET', // Endpoint sprejema GET + POST — bypass POST-only check
 
-async function handleTradeReplication(req: NextRequest) {
-  try {
-    const rl = checkRateLimit(req, 'ai-trade-replication-engine', 20);
-    if (!rl.allowed) return rateLimitResponse(rl);
-
-    // Parse body (optional limit)
+  parseBody: async (req) => {
+    const body = await req.json().catch(() => ({}));
     let requestedLimit = 10;
-    try {
-      const body = await req.json().catch(() => ({}));
-      if (body && typeof body === 'object') {
-        if (typeof body.limit === 'number' && body.limit >= 1 && body.limit <= 50) {
-          requestedLimit = Math.floor(body.limit);
-        }
+    if (body && typeof body === 'object') {
+      if (typeof body.limit === 'number' && body.limit >= 1 && body.limit <= 50) {
+        requestedLimit = Math.floor(body.limit);
       }
-    } catch {
-      // GET request — no body, ignore
     }
+    return { limit: requestedLimit };
+  },
+
+  // No validateInput — limit has safe default
+  handler: async (input, ctx: AiRouteContext) => {
+    const { db, callAi, parseAi, logger } = ctx;
+    const requestedLimit = input.limit;
 
     // 1) Query SOLD trades with profit > 0, sorted by ROI desc, take top winners
     const soldTrades = await db.trade.findMany({
@@ -349,7 +454,7 @@ async function handleTradeReplication(req: NextRequest) {
     });
 
     if (soldTrades.length === 0) {
-      return NextResponse.json({
+      return apiOk({
         ok: true,
         winners: [],
         suggestions: [],
@@ -400,7 +505,7 @@ async function handleTradeReplication(req: NextRequest) {
       .slice(0, requestedLimit);
 
     if (winners.length === 0) {
-      return NextResponse.json({
+      return apiOk({
         ok: true,
         winners: [],
         suggestions: [],
@@ -421,7 +526,7 @@ async function handleTradeReplication(req: NextRequest) {
       suggestions: ReplicationSuggestion[];
     }>(cacheKey);
     if (cached) {
-      return NextResponse.json({
+      return apiOk({
         ok: true,
         winners,
         suggestions: cached.suggestions,
@@ -431,98 +536,17 @@ async function handleTradeReplication(req: NextRequest) {
       });
     }
 
-    // 3) Build AI prompt with grounding (list of winning trades with their metrics)
-    const settings = await getSettingsRow();
-    const aiSettings: AiSettings = {
-      provider: settings.aiProvider as AiProviderType,
-      baseUrl: settings.aiBaseUrl,
-      apiKey: settings.aiApiKey,
-      model: settings.aiModel,
-      fallbackProvider: (settings.fallbackProvider || '') as AiProviderType | '',
-      fallbackBaseUrl: settings.fallbackBaseUrl || '',
-      fallbackApiKey: settings.fallbackApiKey || '',
-      fallbackModel: settings.fallbackModel || '',
-    };
-
-    const winnersBlock = winners
-      .map(
-        (w, idx) =>
-          `${idx + 1}. tradeId=${w.tradeId} | naslov="${w.title}" | kategorija=${w.category} | ` +
-          `nabava=${w.buyPrice}€ | prodaja=${w.sellPrice}€ | profit=${w.profit}€ | ` +
-          `ROI=${w.roi}% | holdDays=${w.holdDays} | source=${w.source} | keywords=[${w.keywords.join(', ')}]`,
-      )
-      .join('\n');
-
-    const prompt = `Si AI strategist za preprodajo na slovenskih in srednjeevropskih oglasnih platformah.
-Analiziral si zgodovino NAJBOLJŠIH trade-ov in predlagaš NOVE search monitorje, ki bi replicirali te winning pattern-e.
-
-TOP ${winners.length} ZMAGOVALNIH TRADE-OV (sortirano po ROI desc):
-${winnersBlock}
-
-PRAVILA ZA REPLICIRANJE:
-1. Za vsak winner generiraj 1-2 novih monitor konfiguracij (če je winner zelo obetaven, lahko 2 — različne platforme/razponi).
-2. monitorName: kratek, opisen (npr. "PS5 Digital Bolha < 300€"), max 80 znakov.
-3. platform: bolha | vinted | facebook | mobile.de | kleinanzeigen | avtonet (uporabi winner.source ali kategorijo za izbiro).
-4. searchKeywords: 2-5 ključnih besed iz winner.title (brand + model + variant).
-5. priceMin: ~70% winner.buyPrice (koliko naj boš pripravljen plačati).
-6. priceMax: ~110% winner.buyPrice (zgornja meja za nakup).
-7. expectedROI: realističen pričakovan ROI, baziran na winner.roi (lahko nekoliko nižji zaradi tržnih sprememb), CLAMP na [5, 80] %.
-8. expectedProfit: pričakovan profit v EUR = priceMin × expectedROI/100, CLAMP na [0, ${Math.round(winners[0].profit * 2)}].
-9. categoryFocus: kategorija iz winner.category.
-10. confidenceScore: 0-100 (višje = bolj verjetno da se bo pattern ponovil — upoštevaj ROI, holdDays, popularnost kategorije).
-11. reasoning: 1-2 stavka — ZAKAJ ta monitor replicira winner in kaj iskati.
-
-VRNI LE JSON:
-{
-  "suggestions": [
-    {
-      "basedOnTradeId": "<id>",
-      "monitorName": "...",
-      "platform": "bolha|vinted|...",
-      "searchKeywords": ["..."],
-      "priceMin": <eur>,
-      "priceMax": <eur>,
-      "expectedROI": <5-80>,
-      "expectedProfit": <eur>,
-      "categoryFocus": "...",
-      "confidenceScore": <0-100>,
-      "reasoning": "<slovensko, 1-2 stavka>"
-    }
-  ]
-}${GROUNDING_PROMPT_SUFFIX}`;
+    // 3) Build AI prompt with grounding + call AI (try/catch z graceful fallback)
+    const prompt = buildPrompt(winners);
 
     let aiUsed = false;
     let suggestions: ReplicationSuggestion[] = [];
 
     try {
-      const raw = await callProviderForRaw(aiSettings, prompt);
-      const parsed = parseJsonLooseExported(raw) as AiReplicationResponse | null;
-      if (parsed && Array.isArray(parsed.suggestions)) {
-        // Build a lookup: tradeId → winner (so AI can return suggestions in any order)
-        const winnerById = new Map(winners.map(w => [w.tradeId, w]));
-        const seenTradeIds = new Set<string>();
-        for (const rawS of parsed.suggestions) {
-          const tid = String(rawS.basedOnTradeId || '').trim();
-          const winner = winnerById.get(tid);
-          if (!winner) continue;
-          // Allow up to 2 suggestions per winner
-          if (seenTradeIds.has(tid)) {
-            // 2nd suggestion for same trade — still validate
-            const s = validateAiSuggestion(rawS, winner);
-            if (s) {
-              // Slightly differentiate the monitor name to avoid duplicate
-              s.monitorName = s.monitorName.slice(0, 70) + ' (2)';
-              suggestions.push(s);
-            }
-            continue;
-          }
-          seenTradeIds.add(tid);
-          const s = validateAiSuggestion(rawS, winner);
-          if (s) suggestions.push(s);
-          if (suggestions.length >= winners.length * 2) break;
-        }
-        if (suggestions.length > 0) aiUsed = true;
-      }
+      const raw = await callAi(prompt);
+      const result = parseAiSuggestions(parseAi(raw), winners);
+      suggestions = result.suggestions;
+      aiUsed = result.aiUsed;
     } catch (err) {
       logger.warn(
         '/api/ai/trade-replication-engine',
@@ -549,41 +573,15 @@ VRNI LE JSON:
       setCachedAI(cacheKey, { suggestions });
     }
 
-    return NextResponse.json({
+    return apiOk({
       ok: true,
       winners,
       suggestions,
       summary,
       aiUsed,
     });
-  } catch (err: any) {
-    logger.error('/api/ai/trade-replication-engine', 'handler failed', err);
-    return NextResponse.json({ error: err?.message ?? 'Napaka' }, { status: 500 });
-  }
-}
+  },
+});
 
-function buildSummary(
-  winners: WinnerTrade[],
-  suggestions: ReplicationSuggestion[],
-) {
-  const totalWinners = winners.length;
-  const totalSuggestions = suggestions.length;
-  const best = suggestions[0] ?? null;
-  const bestOpportunity = best
-    ? `${best.monitorName} (${best.platform}, ${best.expectedROI}% ROI, ~${best.expectedProfit}€)`
-    : null;
-
-  // estimatedMonthlyProfit: assume we catch 1 deal per week (4/month) at avg expectedProfit
-  const avgProfit =
-    suggestions.length > 0
-      ? suggestions.reduce((s, x) => s + x.expectedProfit, 0) / suggestions.length
-      : 0;
-  const estimatedMonthlyProfit = Math.round(avgProfit * 4);
-
-  return {
-    totalWinners,
-    totalSuggestions,
-    bestOpportunity,
-    estimatedMonthlyProfit,
-  };
-}
+export const GET = tradeReplicationHandler;
+export const POST = tradeReplicationHandler;

@@ -1,4 +1,4 @@
-// v8.21: Pricing Brain — GET+POST /api/ai/brain/pricing
+// v8.21 / v8.95.1-e-refactor: Pricing Brain — GET+POST /api/ai/brain/pricing
 //
 // Pricing Brain is the SEVENTH and FINAL "Brain" layer — a NEW architectural
 // layer ABOVE the ~39 pricing specialist endpoints (price-elasticity,
@@ -80,9 +80,16 @@
 // unavailable or no usable rows, falls back to sensible defaults — never
 // crashes the endpoint.
 // 5-MIN CACHE: cache key = `pricing-brain:${hashOfInputs}`, TTL = 300000 ms.
+//
+// Refaktoriran z withAiRoute helperjem (v8.95.1-e) + enforceBudget guard
+// (non-breaking — endpoint ne kliče AI direktno, le pricingBrain() iz
+// lib/brain/pricing; konsistentno z vsemi prejšnjimi v8.94.x / v8.95.0
+// brain migracijami vključno z brain/health, brain/explain, brain/accuracy,
+// brain/actual-profit, brain/auto-pilot, brain/drafts).
 
-import { NextRequest, NextResponse } from 'next/server';
-import { logger } from '@/lib/logger';
+import type { NextRequest } from 'next/server';
+import { withAiRoute, AI_ROUTE_DEFAULTS, type AiRouteContext } from '@/lib/with-ai-route';
+import { apiOk } from '@/lib/api-response';
 import { getCachedAIWithStats, setCachedAIWithStats } from '@/lib/ai-cache';
 // v8.33: Performance metrics — wraps pricingBrain() with response-time tracking
 import { withPerf, recordPerf } from '@/lib/brain/performance';
@@ -92,14 +99,24 @@ import {
   type PricingBrainResult,
 } from '@/lib/brain/pricing';
 
-export const runtime = 'nodejs';
-export const dynamic = 'force-dynamic';
+export const { runtime, dynamic } = AI_ROUTE_DEFAULTS;
 export const maxDuration = 60;
 
 // --- Cache TTL -----------------------------------------------------------
 const BRAIN_CACHE_TTL_MS = 5 * 60 * 1000; // 5 minutes
 
-// --- Input resolution ----------------------------------------------------
+// --- Input shape ---------------------------------------------------------
+
+/**
+ * Route input — resolved user-supplied pricing context (from BOTH query
+ * string and POST body). DB state is fetched + merged inside the handler
+ * (USER INPUT WINS over DB-derived fields).
+ */
+interface PricingBrainRouteInput {
+  user: PricingBrainInput;
+}
+
+// --- Input resolution (pure, testable) -----------------------------------
 
 /**
  * Parse inputs from BOTH query string (GET) and POST body. Body takes
@@ -233,10 +250,11 @@ interface DbDerivedState {
  * If no sold trades exist in the 30d window OR Listing table is empty,
  * returns null and falls back to defaults. NEVER crashes the endpoint.
  */
-async function fetchDbState(): Promise<DbDerivedState | null> {
+async function fetchDbState(
+  db: AiRouteContext['db'],
+  logger: AiRouteContext['logger'],
+): Promise<DbDerivedState | null> {
   try {
-    const { db } = await import('@/lib/db');
-
     const now = new Date();
     const dayMs = 86_400_000;
     const thirtyDaysAgo = new Date(now.getTime() - 30 * dayMs);
@@ -425,42 +443,60 @@ function buildCacheKey(input: PricingBrainInput): string {
   return parts.join('|');
 }
 
-// --- Handler -------------------------------------------------------------
+// --- Merge user input with DB state (pure) -------------------------------
 
-export async function GET(req: NextRequest) {
-  return handlePricingBrain(req);
+/**
+ * Merge user-supplied pricing context with DB-derived state.
+ * USER INPUT WINS over DB-derived fields (user can override).
+ * Fields without a DB fallback stay `undefined` if neither source provides
+ * a value — pricingBrain() handles `undefined` fields with sensible defaults.
+ */
+function mergeWithDbState(
+  user: PricingBrainInput,
+  dbState: DbDerivedState | null,
+): PricingBrainInput {
+  return {
+    activeListingsCount:
+      user.activeListingsCount ?? dbState?.activeListingsCount ?? undefined,
+    avgProfitMarginPct:
+      user.avgProfitMarginPct ?? dbState?.avgProfitMarginPct ?? undefined,
+    avgDaysOnMarket:
+      user.avgDaysOnMarket ?? dbState?.avgDaysOnMarket ?? undefined,
+    competitorPriceAvgPct: user.competitorPriceAvgPct ?? undefined,
+    priceElasticityScore: user.priceElasticityScore ?? undefined,
+    sellThroughRatePct:
+      user.sellThroughRatePct ?? dbState?.sellThroughRatePct ?? undefined,
+    monthlyRevenue: user.monthlyRevenue ?? dbState?.monthlyRevenue ?? undefined,
+    avgOrderValue: user.avgOrderValue ?? dbState?.avgOrderValue ?? undefined,
+    priceWarDetected: user.priceWarDetected ?? undefined,
+    seasonalMultiplier: user.seasonalMultiplier ?? undefined,
+    psychologyOptimizedPct:
+      user.psychologyOptimizedPct ?? dbState?.psychologyOptimizedPct ?? undefined,
+    lastPriceChangePct: user.lastPriceChangePct ?? undefined,
+  };
 }
 
-export async function POST(req: NextRequest) {
-  return handlePricingBrain(req);
-}
+// --- Shared handler (GET + POST) -----------------------------------------
 
-async function handlePricingBrain(req: NextRequest) {
-  try {
-    const userInput = await resolveInputs(req);
+const pricingBrainHandler = withAiRoute<PricingBrainRouteInput>({
+  endpoint: '/api/ai/brain/pricing',
+  maxDuration: 60,
+  enforceBudget: true, // v8.95.1-e: budget guard + avtomatski recordAiCall
+  method: 'GET', // Endpoint sprejema GET + POST — bypass POST-only check
+
+  parseBody: async (req) => ({ user: await resolveInputs(req) }),
+
+  // Brez validateInput — vsi input-i imajo defaults (prazen query + body
+  // → prazen PricingBrainInput → DB state fallback → pricingBrain() uporabi
+  // sensible defaults iz lib/brain/pricing)
+
+  handler: async (input, ctx: AiRouteContext) => {
+    const { db, logger } = ctx;
 
     // DB state injection — fills in any missing fields from real DB state.
     // If both DB and user input are present, USER INPUT WINS (user can override).
-    const dbState = await fetchDbState();
-    const mergedInput: PricingBrainInput = {
-      activeListingsCount:
-        userInput.activeListingsCount ?? dbState?.activeListingsCount ?? undefined,
-      avgProfitMarginPct:
-        userInput.avgProfitMarginPct ?? dbState?.avgProfitMarginPct ?? undefined,
-      avgDaysOnMarket:
-        userInput.avgDaysOnMarket ?? dbState?.avgDaysOnMarket ?? undefined,
-      competitorPriceAvgPct: userInput.competitorPriceAvgPct ?? undefined,
-      priceElasticityScore: userInput.priceElasticityScore ?? undefined,
-      sellThroughRatePct:
-        userInput.sellThroughRatePct ?? dbState?.sellThroughRatePct ?? undefined,
-      monthlyRevenue: userInput.monthlyRevenue ?? dbState?.monthlyRevenue ?? undefined,
-      avgOrderValue: userInput.avgOrderValue ?? dbState?.avgOrderValue ?? undefined,
-      priceWarDetected: userInput.priceWarDetected ?? undefined,
-      seasonalMultiplier: userInput.seasonalMultiplier ?? undefined,
-      psychologyOptimizedPct:
-        userInput.psychologyOptimizedPct ?? dbState?.psychologyOptimizedPct ?? undefined,
-      lastPriceChangePct: userInput.lastPriceChangePct ?? undefined,
-    };
+    const dbState = await fetchDbState(db, logger);
+    const mergedInput = mergeWithDbState(input.user, dbState);
 
     const cacheKey = buildCacheKey(mergedInput);
     // v8.33: Use cache stats-tracked variants. Namespace = 'pricing-brain'.
@@ -474,19 +510,18 @@ async function handlePricingBrain(req: NextRequest) {
         ...cached,
         cachedAt: Date.now(),
       };
-      return NextResponse.json(served);
+      return apiOk(served);
     }
 
     // v8.33: Wrap pricingBrain() call with perf tracking. cached=false (slow path).
     const result = await withPerf('pricing', async () => pricingBrain(mergedInput), false);
     setCachedAIWithStats('pricing-brain', cacheKey, result, BRAIN_CACHE_TTL_MS);
 
-    return NextResponse.json(result);
-  } catch (err: any) {
-    logger.error('/api/ai/brain/pricing', 'handler failed', err);
-    return NextResponse.json(
-      { error: err?.message ?? 'Napaka' },
-      { status: 500 },
-    );
-  }
-}
+    return apiOk(result);
+  },
+});
+
+export const GET = pricingBrainHandler;
+// POST also supported — same handler (POST body can supply explicit overrides
+// not available via query string, e.g. richer pricing context objects)
+export const POST = pricingBrainHandler;

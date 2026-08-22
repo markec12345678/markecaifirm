@@ -1,4 +1,4 @@
-// v8.30/v8.31: Auto-pilot API — 🎯 AUTOMATION PHASE.
+// v8.30/v8.31/v8.95-refactor: Auto-pilot API — 🎯 AUTOMATION PHASE.
 // GET  /api/ai/brain/auto-pilot — returns current config + stats (today + all-time).
 //      v8.31: config now includes 6 new fields (aggressiveConfirmedAt,
 //      anomalySuspended, anomalySuspendedAt, anomalyReason, hourlyExecCount,
@@ -65,9 +65,15 @@
 // DETERMINISTIC (aiUsed: false): no AI/LLM SDK called. Real-world side effects
 // (sending Telegram, relisting items) are OUT OF SCOPE for v8.30/v8.31 — this is
 // purely bookkeeping + audit trail. v8.32+ will add execution-side integration.
+//
+// Refaktoriran z withAiRoute helperjem (v8.95) — konsistentno z vsemi v8.94.x
+// brain migracijami (npr. brain/health). enforceBudget: true je non-breaking —
+// endpoint ne kliče AI direktno, ampak je konsistenten z ostalimi migracijami
+// (budget guard pred klicem + avtomatski recordAiCall po uspehu).
 
-import { NextRequest, NextResponse } from 'next/server';
-import { logger } from '@/lib/logger';
+import type { NextRequest } from 'next/server';
+import { withAiRoute, AI_ROUTE_DEFAULTS, type AiRouteContext } from '@/lib/with-ai-route';
+import { apiOk, apiBadRequest } from '@/lib/api-response';
 import {
   runSafeAutoPilot,
   getAutoPilotStats,
@@ -78,123 +84,151 @@ import {
   type AutoPilotConfig,
 } from '@/lib/brain/auto-pilot';
 
-export const runtime = 'nodejs';
-export const dynamic = 'force-dynamic';
+export const { runtime, dynamic } = AI_ROUTE_DEFAULTS;
 export const maxDuration = 60;
+
+// --- Input types -----------------------------------------------------------
+
+// eslint-disable-next-line @typescript-eslint/no-empty-object-type
+interface AutoPilotGetInput {}
+
+interface AutoPilotPostInput {
+  action: string;
+  config?: Record<string, unknown>;
+}
 
 // --- GET: stats + config ----------------------------------------------------
 
-export async function GET() {
-  try {
+export const GET = withAiRoute<AutoPilotGetInput>({
+  endpoint: '/api/ai/brain/auto-pilot',
+  maxDuration: 60,
+  enforceBudget: true, // v8.95: budget guard + avtomatski recordAiCall (konsistentno z brain/health)
+  method: 'GET',
+
+  // GET — brez telesa; parseBody vrne prazen objekt
+  parseBody: async () => ({}),
+
+  handler: async (_input, _ctx: AiRouteContext) => {
     const stats = await getAutoPilotStats();
-    return NextResponse.json(stats);
-  } catch (err: any) {
-    logger.error('/api/ai/brain/auto-pilot', 'GET handler failed', err);
-    return NextResponse.json(
-      { error: err?.message ?? 'Napaka' },
-      { status: 500 },
-    );
-  }
-}
+    return apiOk(stats);
+  },
+});
 
 // --- POST: run OR config update --------------------------------------------
 
-export async function POST(req: NextRequest) {
-  try {
-    let body: Record<string, unknown> = {};
-    try {
-      const ct = req.headers.get('content-type') ?? '';
-      if (ct.includes('application/json')) {
-        const cloned = req.clone();
-        body = (await cloned.json()) as Record<string, unknown>;
-      }
-    } catch {
-      body = {};
-    }
-    if (!body || typeof body !== 'object' || Array.isArray(body)) {
-      body = {};
-    }
+export const POST = withAiRoute<AutoPilotPostInput>({
+  endpoint: '/api/ai/brain/auto-pilot',
+  maxDuration: 60,
+  enforceBudget: true, // v8.95: budget guard + avtomatski recordAiCall
+  method: 'POST',
 
-    const action = typeof body.action === 'string' ? body.action.toLowerCase().trim() : '';
+  parseBody: parseAutoPilotBody,
+
+  handler: async (input, _ctx: AiRouteContext) => {
+    const { action, config } = input;
 
     // --- action: run -------------------------------------------------------
     if (action === 'run') {
       const result = await runSafeAutoPilot();
-      return NextResponse.json(result);
+      return apiOk(result);
     }
 
     // --- action: config ----------------------------------------------------
     if (action === 'config') {
-      const rawConfig = body.config;
-      if (!rawConfig || typeof rawConfig !== 'object' || Array.isArray(rawConfig)) {
-        return NextResponse.json(
-          {
-            ok: false,
-            error: `Invalid 'config' — expected an object with optional fields: enabled, mode, dailyLimit, dailyBudgetEUR.`,
-          },
-          { status: 400 },
-        );
+      const updates = extractConfigUpdates(config);
+      if (!updates) {
+        return apiBadRequest(INVALID_CONFIG_MSG);
       }
-      const cfgObj = rawConfig as Record<string, unknown>;
-      const updates: Partial<AutoPilotConfig> = {};
-      if (typeof cfgObj.enabled === 'boolean') updates.enabled = cfgObj.enabled;
-      // v8.31: 'mode' is intentionally IGNORED here. Mode changes must go
-      // through the enable_aggressive / disable_aggressive actions (they
-      // implement the double-confirmation flow). Direct mode setting via
-      // 'config' would bypass the safety mechanism.
-      if (typeof cfgObj.dailyLimit === 'number' && Number.isFinite(cfgObj.dailyLimit)) {
-        updates.dailyLimit = cfgObj.dailyLimit;
-      }
-      if (typeof cfgObj.dailyBudgetEUR === 'number' && Number.isFinite(cfgObj.dailyBudgetEUR)) {
-        updates.dailyBudgetEUR = cfgObj.dailyBudgetEUR;
-      }
-      // lastRunAt is read-only via this endpoint (only set by runSafeAutoPilot)
-
       if (Object.keys(updates).length === 0) {
-        return NextResponse.json(
-          {
-            ok: false,
-            error: `No valid config fields in body.config. Expected at least one of: enabled (boolean), dailyLimit (number), dailyBudgetEUR (number). Mode changes must use 'enable_aggressive' / 'disable_aggressive' actions.`,
-          },
-          { status: 400 },
-        );
+        return apiBadRequest(NO_VALID_FIELDS_MSG);
       }
-
       const result = await updateAutoPilotConfig(updates);
-      return NextResponse.json(result);
+      return apiOk(result);
     }
 
     // --- action: enable_aggressive (v8.31 — double confirmation) -----------
     if (action === 'enable_aggressive') {
       const result = await enableAggressiveMode();
-      return NextResponse.json(result);
+      return apiOk(result);
     }
 
     // --- action: disable_aggressive (v8.31 — immediate revert to safe) ---
     if (action === 'disable_aggressive') {
       const result = await disableAggressiveMode();
-      return NextResponse.json(result);
+      return apiOk(result);
     }
 
     // --- action: clear_anomaly (v8.31 — manual re-enable after suspension)
     if (action === 'clear_anomaly') {
       const result = await clearAnomalySuspension();
-      return NextResponse.json(result);
+      return apiOk(result);
     }
 
     // --- unknown action ----------------------------------------------------
-    return NextResponse.json(
-      {
-        ok: false,
-        error: `Unknown action: ${JSON.stringify(action)}. Must be 'run' (trigger auto-pilot), 'config' (update config), 'enable_aggressive' (start/confirm aggressive double-opt-in), 'disable_aggressive' (revert to safe), or 'clear_anomaly' (clear anomaly suspension).`,
-      },
-      { status: 400 },
+    return apiBadRequest(
+      `Unknown action: ${JSON.stringify(action)}. Must be 'run' (trigger auto-pilot), 'config' (update config), 'enable_aggressive' (start/confirm aggressive double-opt-in), 'disable_aggressive' (revert to safe), or 'clear_anomaly' (clear anomaly suspension).`,
     );
-  } catch (err: any) {
-    logger.error('/api/ai/brain/auto-pilot', 'POST handler failed', err);
-    return NextResponse.json(
-      { error: err?.message ?? 'Napaka' },
-      { status: 500 },
-    );
+  },
+});
+
+// --- Pomožne funkcije (čiste, testabilne) --------------------------------
+
+const INVALID_CONFIG_MSG = `Invalid 'config' — expected an object with optional fields: enabled, mode, dailyLimit, dailyBudgetEUR.`;
+const NO_VALID_FIELDS_MSG = `No valid config fields in body.config. Expected at least one of: enabled (boolean), dailyLimit (number), dailyBudgetEUR (number). Mode changes must use 'enable_aggressive' / 'disable_aggressive' actions.`;
+
+/**
+ * Parse POST body za auto-pilot. Prebere `action` (lowercased, trimmed) in
+ * `config` objekt (validiran da je plain object). Vrne { action: '', config: undefined }
+ * ko manjka ali je neveljaven body — handler vrne 400 "Unknown action".
+ */
+async function parseAutoPilotBody(req: NextRequest): Promise<AutoPilotPostInput> {
+  let body: Record<string, unknown> = {};
+  try {
+    const ct = req.headers.get('content-type') ?? '';
+    if (ct.includes('application/json')) {
+      const cloned = req.clone();
+      body = (await cloned.json()) as Record<string, unknown>;
+    }
+  } catch {
+    body = {};
   }
+  if (!body || typeof body !== 'object' || Array.isArray(body)) {
+    body = {};
+  }
+  const action = typeof body.action === 'string' ? body.action.toLowerCase().trim() : '';
+  const rawConfig = body.config;
+  const config =
+    rawConfig && typeof rawConfig === 'object' && !Array.isArray(rawConfig)
+      ? (rawConfig as Record<string, unknown>)
+      : undefined;
+  return { action, config };
+}
+
+/**
+ * Ekstraktne veljavna polja iz `config` objekta. Vrne:
+ * - null ko config manjka ali ni objekt (handler vrne 400 INVALID_CONFIG_MSG)
+ * - {} ko config je objekt, ampak brez veljavnih polj (handler vrne 400 NO_VALID_FIELDS_MSG)
+ * - Partial<AutoPilotConfig> z veljavnimi polji (enabled, dailyLimit, dailyBudgetEUR)
+ *
+ * v8.31: 'mode' je INTENCIONALNO ignoriran. Spremembe mode morajo iti skozi
+ * enable_aggressive / disable_aggressive akcije (double-confirmation flow).
+ */
+function extractConfigUpdates(
+  config: Record<string, unknown> | undefined,
+): Partial<AutoPilotConfig> | null {
+  if (!config) return null;
+  const updates: Partial<AutoPilotConfig> = {};
+  if (typeof config.enabled === 'boolean') updates.enabled = config.enabled;
+  // v8.31: 'mode' is intentionally IGNORED here. Mode changes must go
+  // through the enable_aggressive / disable_aggressive actions (they
+  // implement the double-confirmation flow). Direct mode setting via
+  // 'config' would bypass the safety mechanism.
+  if (typeof config.dailyLimit === 'number' && Number.isFinite(config.dailyLimit)) {
+    updates.dailyLimit = config.dailyLimit;
+  }
+  if (typeof config.dailyBudgetEUR === 'number' && Number.isFinite(config.dailyBudgetEUR)) {
+    updates.dailyBudgetEUR = config.dailyBudgetEUR;
+  }
+  // lastRunAt is read-only via this endpoint (only set by runSafeAutoPilot)
+  return updates;
 }

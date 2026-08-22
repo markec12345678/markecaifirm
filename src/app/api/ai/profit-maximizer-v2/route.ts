@@ -1,22 +1,26 @@
-// v7.56: Profit Maximizer v2 (ML Compounding) — simulacija reinvestiranja dobička
+/**
+ * @deprecated v8.94 — uporabi `/api/ai/profit-maximizer-pro` namesto tega.
+ * Zastareli v2 — Pro verzija je najbolj feature-rich.
+ * Ta endpoint bo odstranjen v v9.0. Glej ENDPOINTS_AUDIT.md za migracijski načrt.
+ */
+// v7.56 / v8.96.3-batch2: Profit Maximizer v2 (ML Compounding) — simulacija reinvestiranja dobička
 // z različnimi strategijami (conservative / balanced / aggressive) preko 24 mesecev.
 //
 // "Z 2000€ začetnega kapitala in 12% ROI, v 12 mesecih → 5400€ (balanced scenario)"
 //
-// GET /api/ai/profit-maximizer-v2
+// Refaktoriran z withAiRoute helperjem (v8.96.3) + enforceBudget guard.
+// logDeprecatedCall() PRESERVED — kliče se znotraj handler-ja preko ctx.req.
+//
+// GET+POST /api/ai/profit-maximizer-v2
 // (AI-enhanced priporočilo + grounding + anti-hallucination + 6h cache)
 
-import { NextRequest, NextResponse } from 'next/server';
-import { db } from '@/lib/db';
-import { getSettingsRow } from '@/lib/pipeline';
-import { callProviderForRaw, parseJsonLooseExported, type AiProviderType, type AiSettings } from '@/lib/ai';
+import { withAiRoute, AI_ROUTE_DEFAULTS, type AiRouteContext } from '@/lib/with-ai-route';
+import { apiOk } from '@/lib/api-response';
 import { GROUNDING_PROMPT_SUFFIX } from '@/lib/anti-hallucination';
 import { getCachedAI, setCachedAI } from '@/lib/ai-cache';
-import { checkRateLimit, rateLimitResponse } from '@/lib/rate-limit';
-import { logger } from '@/lib/logger';
+import { logDeprecatedCall } from '@/lib/deprecated-redirect';
 
-export const runtime = 'nodejs';
-export const dynamic = 'force-dynamic';
+export const { runtime, dynamic } = AI_ROUTE_DEFAULTS;
 export const maxDuration = 60;
 
 const DAY_MS = 86_400_000;
@@ -51,6 +55,14 @@ interface HistoricalMetrics {
   capitalAvailable: number;
   avgTradeSize: number;
   avgMonthlyProfit: number;
+}
+
+interface AiRecommendation {
+  recommendedScenario?: string;
+  reasoning?: string;
+  confidence?: unknown;
+  riskTolerance?: string;
+  notes?: string;
 }
 
 const SCENARIO_DEFS: Array<{
@@ -128,29 +140,23 @@ function projectScenario(
   };
 }
 
-interface AiRecommendation {
-  recommendedScenario?: string;
-  reasoning?: string;
-  confidence?: unknown;
-  riskTolerance?: string;
-  notes?: string;
-}
+// eslint-disable-next-line @typescript-eslint/no-empty-object-type
+interface ProfitMaximizerInput {}
 
-export async function GET(req: NextRequest) {
-  return handleProfitMaximizer(req);
-}
+const profitMaximizerHandler = withAiRoute<ProfitMaximizerInput>({
+  endpoint: '/api/ai/profit-maximizer-v2',
+  maxDuration: 60,
+  enforceBudget: true, // AI klic — preveri budget
+  method: 'GET', // Endpoint sprejema GET + POST — bypass POST-only check
 
-// v7.56: POST handler — AI Hub runner always sends POST with JSON body.
-// Body is ignored (this endpoint takes no input) — logic is identical to GET.
-export async function POST(req: NextRequest) {
-  return handleProfitMaximizer(req);
-}
+  parseBody: async () => ({}),
 
-async function handleProfitMaximizer(req: NextRequest) {
-  try {
-    // v7.32: AI rate limit
-    const rl = checkRateLimit(req, 'ai-profit-maximizer-v2', 20);
-    if (!rl.allowed) return rateLimitResponse(rl);
+  // No validateInput — endpoint ne sprejema inputa
+
+  handler: async (_input, ctx: AiRouteContext) => {
+    const { db, req, callAi, parseAi, logger } = ctx;
+    // @deprecated v8.94 — preserved: log usage of deprecated endpoint
+    logDeprecatedCall('/api/ai/profit-maximizer-v2', req, '/api/ai/profit-maximizer-pro');
 
     // 1) Historical sold trades
     const soldTrades = await db.trade.findMany({
@@ -243,7 +249,7 @@ async function handleProfitMaximizer(req: NextRequest) {
     };
 
     if (soldTrades.length === 0) {
-      return NextResponse.json({
+      return apiOk({
         ok: true,
         historical,
         scenarios: [],
@@ -265,7 +271,7 @@ async function handleProfitMaximizer(req: NextRequest) {
       100, // floor
     );
 
-    // 2) Check AI cache
+    // 4) Check AI cache
     const cacheKey = `profit-maximizer-v2:${projectionStartCapital}`;
     const cached = getCachedAI<{
       historical: HistoricalMetrics;
@@ -273,10 +279,10 @@ async function handleProfitMaximizer(req: NextRequest) {
       recommendation: { scenario: string; reasoning: string; confidence: number };
     }>(cacheKey);
     if (cached) {
-      return NextResponse.json({ ok: true, ...cached, cached: true });
+      return apiOk({ ok: true, ...cached, cached: true });
     }
 
-    // 4) Compute 3 deterministic scenarios
+    // 5) Compute 3 deterministic scenarios
     const scenarios: Scenario[] = SCENARIO_DEFS.map(def => {
       const s = projectScenario(
         projectionStartCapital,
@@ -291,59 +297,14 @@ async function handleProfitMaximizer(req: NextRequest) {
       return s;
     });
 
-    // 5) Build AI prompt for recommendation + reasoning
-    const settings = await getSettingsRow();
-    const aiSettings: AiSettings = {
-      provider: settings.aiProvider as AiProviderType,
-      baseUrl: settings.aiBaseUrl,
-      apiKey: settings.aiApiKey,
-      model: settings.aiModel,
-      fallbackProvider: (settings.fallbackProvider || '') as AiProviderType | '',
-      fallbackBaseUrl: settings.fallbackBaseUrl || '',
-      fallbackApiKey: settings.fallbackApiKey || '',
-      fallbackModel: settings.fallbackModel || '',
-    };
-
-    const scenariosBlock = scenarios
-      .map(s => {
-        const m12 = s.projection.find(p => p.month === 12);
-        return `${s.name.toUpperCase()} (rast ${Math.round(s.monthlyGrowthRate * 100)}%/m, ${s.riskLevel}):
-- 12m: končni kapital ${m12?.endingCapital ?? 0}€, skupni profit ${m12?.cumulativeProfit ?? 0}€
-- 24m: končni kapital ${s.finalCapital}€, skupni profit ${s.totalProfit}€`;
-      })
-      .join('\n');
-
-    const prompt = `Si finančni svetovalec za preprodajalne rabljenih dobrin.
-
-ZGODOVINSKI METRIKI:
-- Skupaj prodaj: ${historical.totalTrades}
-- Povprečni ROI: ${historical.avgROI}%
-- Povprečni čas zadrževanja: ${historical.avgHoldDays} dni
-- Win rate: ${historical.winRate}%
-- Povprečni profit na trade: ${historical.avgProfitPerTrade}€
-- Povprečna velikost trade-a: ${historical.avgTradeSize}€
-- Povprečni mesečni profit: ${historical.avgMonthlyProfit}€
-- Trenutno razpoložljivi kapital: ${historical.capitalAvailable}€
-- Kapital vezan v held inventar: ${heldCapitalTied}€
-- Začetni kapital za projekcijo: ${projectionStartCapital}€
-
-SCENARIJI (24-mesečna projekcija z reinvesticijo):
-${scenariosBlock}
-
-Odgovori LE z JSON:
-{
-  "recommendedScenario": "conservative|balanced|aggressive",
-  "reasoning": "<1-2 stavka — zakaj ta scenario glede na win rate, ROI, risk toleranco>",
-  "confidence": <number 0-100>,
-  "riskTolerance": "<low|medium|high — glede na win rate + ROI>",
-  "notes": "<1 stavek — dodatno opozorilo ali nasvet>"
-}${GROUNDING_PROMPT_SUFFIX}`;
+    // 6) Build AI prompt for recommendation + reasoning
+    const prompt = buildPrompt(historical, scenarios, heldCapitalTied, projectionStartCapital);
 
     let aiRec: AiRecommendation | null = null;
     let aiUsed = false;
     try {
-      const raw = await callProviderForRaw(aiSettings, prompt);
-      const parsed = parseJsonLooseExported(raw) as AiRecommendation | null;
+      const raw = await callAi(prompt);
+      const parsed = parseAi(raw) as AiRecommendation | null;
       if (parsed && typeof parsed === 'object') {
         aiRec = parsed;
         aiUsed = true;
@@ -352,7 +313,7 @@ Odgovori LE z JSON:
       logger.warn('/api/ai/profit-maximizer-v2', 'AI call failed — using deterministic fallback', err);
     }
 
-    // 6) Validate AI recommendation; fall back to deterministic choice
+    // 7) Validate AI recommendation; fall back to deterministic choice
     const validScenarios = new Set<ScenarioName>(['conservative', 'balanced', 'aggressive']);
     let recommendedName: ScenarioName;
     if (aiRec?.recommendedScenario && validScenarios.has(String(aiRec.recommendedScenario) as ScenarioName)) {
@@ -411,16 +372,61 @@ Odgovori LE z JSON:
       heldCapitalTied: Math.round(heldCapitalTied),
     };
 
-    // 7) Cache (6h TTL)
+    // 8) Cache (6h TTL)
     setCachedAI(cacheKey, {
       historical,
       scenarios,
       recommendation: { scenario: recommendedName, reasoning, confidence },
     });
 
-    return NextResponse.json(response);
-  } catch (err: any) {
-    logger.error('/api/ai/profit-maximizer-v2', 'GET handler failed', err);
-    return NextResponse.json({ error: err?.message ?? 'Napaka' }, { status: 500 });
-  }
+    return apiOk(response);
+  },
+});
+
+// AI Hub runner compatibility — body is ignored, identical logic.
+export const GET = profitMaximizerHandler;
+export const POST = profitMaximizerHandler;
+
+// --- Pomožne funkcije (čiste, testabilne) --------------------------------
+
+function buildPrompt(
+  historical: HistoricalMetrics,
+  scenarios: Scenario[],
+  heldCapitalTied: number,
+  projectionStartCapital: number,
+): string {
+  const scenariosBlock = scenarios
+    .map(s => {
+      const m12 = s.projection.find(p => p.month === 12);
+      return `${s.name.toUpperCase()} (rast ${Math.round(s.monthlyGrowthRate * 100)}%/m, ${s.riskLevel}):
+- 12m: končni kapital ${m12?.endingCapital ?? 0}€, skupni profit ${m12?.cumulativeProfit ?? 0}€
+- 24m: končni kapital ${s.finalCapital}€, skupni profit ${s.totalProfit}€`;
+    })
+    .join('\n');
+
+  return `Si finančni svetovalec za preprodajalne rabljenih dobrin.
+
+ZGODOVINSKI METRIKI:
+- Skupaj prodaj: ${historical.totalTrades}
+- Povprečni ROI: ${historical.avgROI}%
+- Povprečni čas zadrževanja: ${historical.avgHoldDays} dni
+- Win rate: ${historical.winRate}%
+- Povprečni profit na trade: ${historical.avgProfitPerTrade}€
+- Povprečna velikost trade-a: ${historical.avgTradeSize}€
+- Povprečni mesečni profit: ${historical.avgMonthlyProfit}€
+- Trenutno razpoložljivi kapital: ${historical.capitalAvailable}€
+- Kapital vezan v held inventar: ${heldCapitalTied}€
+- Začetni kapital za projekcijo: ${projectionStartCapital}€
+
+SCENARIJI (24-mesečna projekcija z reinvesticijo):
+${scenariosBlock}
+
+Odgovori LE z JSON:
+{
+  "recommendedScenario": "conservative|balanced|aggressive",
+  "reasoning": "<1-2 stavka — zakaj ta scenario glede na win rate, ROI, risk toleranco>",
+  "confidence": <number 0-100>,
+  "riskTolerance": "<low|medium|high — glede na win rate + ROI>",
+  "notes": "<1 stavek — dodatno opozorilo ali nasvet>"
+}${GROUNDING_PROMPT_SUFFIX}`;
 }

@@ -1,16 +1,21 @@
-// v6.55: AI Listing Performance Forecaster v3 — advanced ML z ensemble modeli in scenario planning
+/**
+ * @deprecated v8.94 — uporabi `/api/ai/listing-performance-forecaster-v4` namesto tega.
+ * Zastareli v3 — v4 je najnovejši.
+ * Ta endpoint bo odstranjen v v9.0. Glej ENDPOINTS_AUDIT.md za migracijski načrt.
+ */
+// v6.55 / v8.96.3-batch1: AI Listing Performance Forecaster v3 — advanced ML z ensemble modeli in scenario planning
+// Refaktoriran z withAiRoute helperjem (v8.96.3-batch1) + enforceBudget guard.
+// logDeprecatedCall PRESERVED iz originala (Phase 2 deprecation logging).
+//
 // POST /api/ai/listing-performance-forecaster-v3
 // Body: { tradeId?: string, horizonDays?: number }
 // Returns: { ok, forecaster: { listings, ensembleModels, scenarios, timeSeries, sensitivityAnalysis, summary } }
 
-import { NextRequest, NextResponse } from 'next/server';
-import { db } from '@/lib/db';
-import { getSettingsRow } from '@/lib/pipeline';
-import { callProviderForRaw, parseJsonLooseExported, type AiProviderType, type AiSettings } from '@/lib/ai';
-import { logger } from '@/lib/logger';
+import { withAiRoute, AI_ROUTE_DEFAULTS, type AiRouteContext } from '@/lib/with-ai-route';
+import { apiOk } from '@/lib/api-response';
+import { logDeprecatedCall } from '@/lib/deprecated-redirect';
 
-export const runtime = 'nodejs';
-export const dynamic = 'force-dynamic';
+export const { runtime, dynamic } = AI_ROUTE_DEFAULTS;
 export const maxDuration = 120;
 
 const ENSEMBLE_MODELS = [
@@ -24,11 +29,32 @@ const ENSEMBLE_MODELS = [
   'ensemble_voting',      // kombinacija vseh modelov
 ] as const;
 
-export async function POST(req: NextRequest) {
-  try {
+interface ForecasterV3Input {
+  tradeId: string | null;
+  horizonDays: number;
+}
+
+export const POST = withAiRoute<ForecasterV3Input>({
+  endpoint: '/api/ai/listing-performance-forecaster-v3',
+  maxDuration: 120,
+  enforceBudget: true, // AI klic — preveri budget
+
+  parseBody: async (req) => {
     const body = await req.json().catch(() => ({}));
-    const tradeId = body?.tradeId ? String(body.tradeId) : null;
-    const horizonDays = Math.max(7, Math.min(90, Number(body?.horizonDays ?? 30)));
+    return {
+      tradeId: body?.tradeId ? String(body.tradeId) : null,
+      horizonDays: Math.max(7, Math.min(90, Number(body?.horizonDays ?? 30))),
+    };
+  },
+
+  // No validateInput — vsi input-i imajo defaults
+
+  handler: async (input, ctx: AiRouteContext) => {
+    // logDeprecatedCall PRESERVED — Phase 2 deprecation logging (ctx.req uporabljen namesto req parametra)
+    logDeprecatedCall('/api/ai/listing-performance-forecaster-v3', ctx.req, '/api/ai/listing-performance-forecaster-v4');
+
+    const { db, callAi, parseAi } = ctx;
+    const { tradeId, horizonDays } = input;
 
     const where: any = { status: 'held' };
     if (tradeId) where.id = tradeId;
@@ -43,7 +69,7 @@ export async function POST(req: NextRequest) {
     });
 
     if (heldTrades.length === 0) {
-      return NextResponse.json({ ok: true, forecaster: null, message: 'Ni held tradeov za forecast.' });
+      return apiOk({ ok: true, forecaster: null, message: 'Ni held tradeov za forecast.' });
     }
 
     // Historical data za training features
@@ -57,44 +83,89 @@ export async function POST(req: NextRequest) {
       orderBy: { sellDate: 'desc' },
     });
 
-    const settings = await getSettingsRow();
-    const aiSettings: AiSettings = {
-      provider: settings.aiProvider as AiProviderType,
-      baseUrl: settings.aiBaseUrl, apiKey: settings.aiApiKey, model: settings.aiModel,
-      fallbackProvider: (settings.fallbackProvider || '') as AiProviderType | '',
-      fallbackBaseUrl: settings.fallbackBaseUrl || '', fallbackApiKey: settings.fallbackApiKey || '',
-      fallbackModel: settings.fallbackModel || '',
-    };
-
     // ML features za held items
-    const items = heldTrades.map(t => {
-      const cost = t.buyPrice + (t.buyFees ?? 0);
-      const estValue = t.listing?.aiEstimatedValue ?? Math.round(cost * 1.25);
-      const daysHeld = Math.round((Date.now() - t.buyDate.getTime()) / (24*60*60*1000));
-      const cat = (t.category || 'drugo').toLowerCase();
-      const similarSold = soldTrades.filter(s => (s.category || '').toLowerCase() === cat);
-      const similarPrices = similarSold.map(s => (s.sellPrice ?? 0) - (s.sellFees ?? 0));
-      const similarAvg = similarPrices.length > 0 ? Math.round(similarPrices.reduce((a, b) => a + b, 0) / similarPrices.length) : estValue;
-      const similarDaysToSell = similarSold.map(s => Math.max(0, Math.round((s.sellDate!.getTime() - s.buyDate.getTime()) / (24*60*60*1000))));
-      const avgDaysToSell = similarDaysToSell.length > 0 ? Math.round(similarDaysToSell.reduce((a, b) => a + b, 0) / similarDaysToSell.length) : 14;
-      return {
-        id: t.id, title: t.title, category: cat, cost, estValue, daysHeld,
-        dealScore: t.listing?.dealScore ?? 50,
-        aiScore: t.listing?.aiScore ?? 5,
-        aiRisk: t.listing?.aiRisk ?? 5,
-        location: t.listing?.location || '',
-        source: t.listing?.monitor?.source || 'bolha',
-        similarSoldCount: similarSold.length,
-        similarAvgPrice: similarAvg,
-        similarAvgDaysToSell: avgDaysToSell,
-      };
-    });
+    const items = prepareItems(heldTrades, soldTrades);
 
-    const itemsStr = items.slice(0, 15).map(i =>
-      `- [${i.id}] "${i.title}" | ${i.category} | ${i.cost}€→${i.estValue}€ | ${i.daysHeld}d | deal ${i.dealScore} AI ${i.aiScore} risk ${i.aiRisk} | podobnih prodanih: ${i.similarSoldCount} | povp cena ${i.similarAvgPrice}€ | povp ${i.similarAvgDaysToSell}d | ${i.source}`
-    ).join('\n');
+    const prompt = buildPrompt(items, horizonDays);
+    const raw = await callAi(prompt);
+    const parsed: any = parseAi(raw);
+    const forecaster = transformForecaster(parsed, items);
 
-    const prompt = `Si AI listing performance forecaster v3 z ensemble ML modeli za slovenske oglasne platforme.
+    return apiOk({ ok: true, forecaster });
+  },
+});
+
+// --- Pomožne funkcije (čiste, testabilne) --------------------------------
+
+interface PreparedItem {
+  id: string;
+  title: string;
+  category: string;
+  cost: number;
+  estValue: number;
+  daysHeld: number;
+  dealScore: number;
+  aiScore: number;
+  aiRisk: number;
+  location: string;
+  source: string;
+  similarSoldCount: number;
+  similarAvgPrice: number;
+  similarAvgDaysToSell: number;
+}
+
+function prepareItems(
+  heldTrades: Array<{
+    id: string; title: string; category: string | null;
+    buyPrice: number; buyFees: number | null; buyDate: Date;
+    listing: {
+      aiEstimatedValue: number | null; dealScore: number | null;
+      aiScore: number | null; aiRisk: number | null; location: string | null;
+      imageUrl: string | null; monitor: { source: string } | null;
+    } | null;
+  }>,
+  soldTrades: Array<{
+    id: string; title: string; category: string | null;
+    buyPrice: number; buyFees: number | null; sellPrice: number | null;
+    sellFees: number | null; sellDate: Date | null; buyDate: Date;
+    sellLocation: string | null;
+    listing: {
+      aiEstimatedValue: number | null; dealScore: number | null;
+      aiScore: number | null; aiRisk: number | null; location: string | null;
+      monitor: { source: string } | null;
+    } | null;
+  }>,
+): PreparedItem[] {
+  return heldTrades.map(t => {
+    const cost = t.buyPrice + (t.buyFees ?? 0);
+    const estValue = t.listing?.aiEstimatedValue ?? Math.round(cost * 1.25);
+    const daysHeld = Math.round((Date.now() - t.buyDate.getTime()) / (24*60*60*1000));
+    const cat = (t.category || 'drugo').toLowerCase();
+    const similarSold = soldTrades.filter(s => (s.category || '').toLowerCase() === cat);
+    const similarPrices = similarSold.map(s => (s.sellPrice ?? 0) - (s.sellFees ?? 0));
+    const similarAvg = similarPrices.length > 0 ? Math.round(similarPrices.reduce((a, b) => a + b, 0) / similarPrices.length) : estValue;
+    const similarDaysToSell = similarSold.map(s => Math.max(0, Math.round((s.sellDate!.getTime() - s.buyDate.getTime()) / (24*60*60*1000))));
+    const avgDaysToSell = similarDaysToSell.length > 0 ? Math.round(similarDaysToSell.reduce((a, b) => a + b, 0) / similarDaysToSell.length) : 14;
+    return {
+      id: t.id, title: t.title, category: cat, cost, estValue, daysHeld,
+      dealScore: t.listing?.dealScore ?? 50,
+      aiScore: t.listing?.aiScore ?? 5,
+      aiRisk: t.listing?.aiRisk ?? 5,
+      location: t.listing?.location || '',
+      source: t.listing?.monitor?.source || 'bolha',
+      similarSoldCount: similarSold.length,
+      similarAvgPrice: similarAvg,
+      similarAvgDaysToSell: avgDaysToSell,
+    };
+  });
+}
+
+function buildPrompt(items: PreparedItem[], horizonDays: number): string {
+  const itemsStr = items.slice(0, 15).map(i =>
+    `- [${i.id}] "${i.title}" | ${i.category} | ${i.cost}€→${i.estValue}€ | ${i.daysHeld}d | deal ${i.dealScore} AI ${i.aiScore} risk ${i.aiRisk} | podobnih prodanih: ${i.similarSoldCount} | povp cena ${i.similarAvgPrice}€ | povp ${i.similarAvgDaysToSell}d | ${i.source}`
+  ).join('\n');
+
+  return `Si AI listing performance forecaster v3 z ensemble ML modeli za slovenske oglasne platforme.
 Napove performance z 8-model ensemble in scenario planning za naslednje ${horizonDays} dni.
 
 HELD INVENTAR (${items.length}):
@@ -229,122 +300,107 @@ Odgovori LE z JSON:
     "forecast_confidence_score": <number 0-100>
   }
 }`;
+}
 
-    let raw = '';
-    try { raw = await callProviderForRaw(aiSettings, prompt); }
-    catch (primaryError: any) {
-      if (aiSettings.fallbackProvider && aiSettings.fallbackModel) {
-        const fb: AiSettings = { provider: aiSettings.fallbackProvider, baseUrl: aiSettings.fallbackBaseUrl || '', apiKey: aiSettings.fallbackApiKey || '', model: aiSettings.fallbackModel };
-        raw = await callProviderForRaw(fb, prompt);
-      } else { return NextResponse.json({ error: primaryError?.message ?? 'AI failed' }, { status: 500 }); }
-    }
+function transformForecaster(parsed: any, items: PreparedItem[]) {
+  const validIds = new Set(items.map(i => i.id));
 
-    const parsed: any = parseJsonLooseExported(raw);
-    const validIds = new Set(items.map(i => i.id));
-
-    const forecaster = {
-      insights: String(parsed?.insights ?? '').slice(0, 500),
-      listings: (parsed?.listings || [])
-        .filter((l: any) => validIds.has(String(l?.id ?? '')))
-        .slice(0, 20)
-        .map((l: any) => {
-          const orig = items.find(x => x.id === String(l?.id));
-          return {
-            tradeId: String(l?.id ?? ''),
-            title: String(l?.title ?? orig?.title ?? '').slice(0, 150),
-            ensembleForecast: {
-              baseCase: {
-                predictedViews30d: Math.max(0, Math.round(Number(l?.ensemble_forecast?.base_case?.predicted_views_30d ?? 0))),
-                predictedInquiries30d: Math.max(0, Math.round(Number(l?.ensemble_forecast?.base_case?.predicted_inquiries_30d ?? 0))),
-                predictedSaleProbability30dPct: Math.max(0, Math.min(100, Number(l?.ensemble_forecast?.base_case?.predicted_sale_probability_30d_pct ?? 30))),
-                predictedSaleDate: String(l?.ensemble_forecast?.base_case?.predicted_sale_date ?? '').slice(0, 20),
-                predictedSalePriceEur: Math.max(0, Math.round(Number(l?.ensemble_forecast?.base_case?.predicted_sale_price_eur ?? orig?.estValue ?? 0))),
-                predictedProfitEur: Math.round(Number(l?.ensemble_forecast?.base_case?.predicted_profit_eur ?? 0)),
-              },
-              bestCase: {
-                predictedViews30d: Math.max(0, Math.round(Number(l?.ensemble_forecast?.best_case?.predicted_views_30d ?? 0))),
-                predictedInquiries30d: Math.max(0, Math.round(Number(l?.ensemble_forecast?.best_case?.predicted_inquiries_30d ?? 0))),
-                predictedSaleProbability30dPct: Math.max(0, Math.min(100, Number(l?.ensemble_forecast?.best_case?.predicted_sale_probability_30d_pct ?? 50))),
-                predictedSalePriceEur: Math.max(0, Math.round(Number(l?.ensemble_forecast?.best_case?.predicted_sale_price_eur ?? 0))),
-                predictedProfitEur: Math.round(Number(l?.ensemble_forecast?.best_case?.predicted_profit_eur ?? 0)),
-              },
-              worstCase: {
-                predictedViews30d: Math.max(0, Math.round(Number(l?.ensemble_forecast?.worst_case?.predicted_views_30d ?? 0))),
-                predictedInquiries30d: Math.max(0, Math.round(Number(l?.ensemble_forecast?.worst_case?.predicted_inquiries_30d ?? 0))),
-                predictedSaleProbability30dPct: Math.max(0, Math.min(100, Number(l?.ensemble_forecast?.worst_case?.predicted_sale_probability_30d_pct ?? 15))),
-                predictedSalePriceEur: Math.max(0, Math.round(Number(l?.ensemble_forecast?.worst_case?.predicted_sale_price_eur ?? 0))),
-                predictedProfitEur: Math.round(Number(l?.ensemble_forecast?.worst_case?.predicted_profit_eur ?? 0)),
-              },
-              confidenceInterval: {
-                lowerBoundPriceEur: Math.max(0, Math.round(Number(l?.ensemble_forecast?.confidence_interval?.lower_bound_price_eur ?? 0))),
-                upperBoundPriceEur: Math.max(0, Math.round(Number(l?.ensemble_forecast?.confidence_interval?.upper_bound_price_eur ?? 0))),
-                confidencePct: Math.max(0, Math.min(100, Number(l?.ensemble_forecast?.confidence_interval?.confidence_pct ?? 50))),
-              },
-              modelConsensus: ['strong', 'moderate', 'weak'].includes(String(l?.ensemble_forecast?.model_consensus)) ? String(l.ensemble_forecast.model_consensus) : 'moderate',
-              predictionStdDev: Math.round(Number(l?.ensemble_forecast?.prediction_std_dev ?? 0) * 100) / 100,
+  return {
+    insights: String(parsed?.insights ?? '').slice(0, 500),
+    listings: (parsed?.listings || [])
+      .filter((l: any) => validIds.has(String(l?.id ?? '')))
+      .slice(0, 20)
+      .map((l: any) => {
+        const orig = items.find(x => x.id === String(l?.id));
+        return {
+          tradeId: String(l?.id ?? ''),
+          title: String(l?.title ?? orig?.title ?? '').slice(0, 150),
+          ensembleForecast: {
+            baseCase: {
+              predictedViews30d: Math.max(0, Math.round(Number(l?.ensemble_forecast?.base_case?.predicted_views_30d ?? 0))),
+              predictedInquiries30d: Math.max(0, Math.round(Number(l?.ensemble_forecast?.base_case?.predicted_inquiries_30d ?? 0))),
+              predictedSaleProbability30dPct: Math.max(0, Math.min(100, Number(l?.ensemble_forecast?.base_case?.predicted_sale_probability_30d_pct ?? 30))),
+              predictedSaleDate: String(l?.ensemble_forecast?.base_case?.predicted_sale_date ?? '').slice(0, 20),
+              predictedSalePriceEur: Math.max(0, Math.round(Number(l?.ensemble_forecast?.base_case?.predicted_sale_price_eur ?? orig?.estValue ?? 0))),
+              predictedProfitEur: Math.round(Number(l?.ensemble_forecast?.base_case?.predicted_profit_eur ?? 0)),
             },
-            recommendedActions: (l?.recommended_actions || []).slice(0, 5).map((a: any) => String(a).slice(0, 200)),
-            optimalListingDate: String(l?.optimal_listing_date ?? '').slice(0, 20),
-            optimalPriceEur: Math.max(0, Math.round(Number(l?.optimal_price_eur ?? orig?.estValue ?? 0))),
-            expectedRoiPct: Math.round(Number(l?.expected_roi_pct ?? 0) * 10) / 10,
-            riskAssessment: ['low', 'medium', 'high'].includes(String(l?.risk_assessment)) ? String(l.risk_assessment) : 'medium',
-          };
-        }),
-      ensembleModels: (parsed?.ensemble_models || []).slice(0, 8).map((m: any) => ({
-        model: ENSEMBLE_MODELS.includes(String(m?.model) as any) ? String(m.model) : 'ensemble_voting',
-        weightInEnsemble: Math.max(0, Math.min(100, Number(m?.weight_in_ensemble ?? 12))),
-        accuracyScore: Math.max(0, Math.min(100, Number(m?.accuracy_score ?? 70))),
-        predictionVariance: Math.round(Number(m?.prediction_variance ?? 0) * 100) / 100,
-        bestFor: String(m?.best_for ?? '').slice(0, 150),
-        contributionToEnsemblePct: Math.max(0, Math.min(100, Number(m?.contribution_to_ensemble_pct ?? 12))),
+            bestCase: {
+              predictedViews30d: Math.max(0, Math.round(Number(l?.ensemble_forecast?.best_case?.predicted_views_30d ?? 0))),
+              predictedInquiries30d: Math.max(0, Math.round(Number(l?.ensemble_forecast?.best_case?.predicted_inquiries_30d ?? 0))),
+              predictedSaleProbability30dPct: Math.max(0, Math.min(100, Number(l?.ensemble_forecast?.best_case?.predicted_sale_probability_30d_pct ?? 50))),
+              predictedSalePriceEur: Math.max(0, Math.round(Number(l?.ensemble_forecast?.best_case?.predicted_sale_price_eur ?? 0))),
+              predictedProfitEur: Math.round(Number(l?.ensemble_forecast?.best_case?.predicted_profit_eur ?? 0)),
+            },
+            worstCase: {
+              predictedViews30d: Math.max(0, Math.round(Number(l?.ensemble_forecast?.worst_case?.predicted_views_30d ?? 0))),
+              predictedInquiries30d: Math.max(0, Math.round(Number(l?.ensemble_forecast?.worst_case?.predicted_inquiries_30d ?? 0))),
+              predictedSaleProbability30dPct: Math.max(0, Math.min(100, Number(l?.ensemble_forecast?.worst_case?.predicted_sale_probability_30d_pct ?? 15))),
+              predictedSalePriceEur: Math.max(0, Math.round(Number(l?.ensemble_forecast?.worst_case?.predicted_sale_price_eur ?? 0))),
+              predictedProfitEur: Math.round(Number(l?.ensemble_forecast?.worst_case?.predicted_profit_eur ?? 0)),
+            },
+            confidenceInterval: {
+              lowerBoundPriceEur: Math.max(0, Math.round(Number(l?.ensemble_forecast?.confidence_interval?.lower_bound_price_eur ?? 0))),
+              upperBoundPriceEur: Math.max(0, Math.round(Number(l?.ensemble_forecast?.confidence_interval?.upper_bound_price_eur ?? 0))),
+              confidencePct: Math.max(0, Math.min(100, Number(l?.ensemble_forecast?.confidence_interval?.confidence_pct ?? 50))),
+            },
+            modelConsensus: ['strong', 'moderate', 'weak'].includes(String(l?.ensemble_forecast?.model_consensus)) ? String(l.ensemble_forecast.model_consensus) : 'moderate',
+            predictionStdDev: Math.round(Number(l?.ensemble_forecast?.prediction_std_dev ?? 0) * 100) / 100,
+          },
+          recommendedActions: (l?.recommended_actions || []).slice(0, 5).map((a: any) => String(a).slice(0, 200)),
+          optimalListingDate: String(l?.optimal_listing_date ?? '').slice(0, 20),
+          optimalPriceEur: Math.max(0, Math.round(Number(l?.optimal_price_eur ?? orig?.estValue ?? 0))),
+          expectedRoiPct: Math.round(Number(l?.expected_roi_pct ?? 0) * 10) / 10,
+          riskAssessment: ['low', 'medium', 'high'].includes(String(l?.risk_assessment)) ? String(l.risk_assessment) : 'medium',
+        };
+      }),
+    ensembleModels: (parsed?.ensemble_models || []).slice(0, 8).map((m: any) => ({
+      model: ENSEMBLE_MODELS.includes(String(m?.model) as any) ? String(m.model) : 'ensemble_voting',
+      weightInEnsemble: Math.max(0, Math.min(100, Number(m?.weight_in_ensemble ?? 12))),
+      accuracyScore: Math.max(0, Math.min(100, Number(m?.accuracy_score ?? 70))),
+      predictionVariance: Math.round(Number(m?.prediction_variance ?? 0) * 100) / 100,
+      bestFor: String(m?.best_for ?? '').slice(0, 150),
+      contributionToEnsemblePct: Math.max(0, Math.min(100, Number(m?.contribution_to_ensemble_pct ?? 12))),
+    })),
+    scenarios: (parsed?.scenarios || []).slice(0, 4).map((s: any) => ({
+      scenario: ['base_case', 'best_case', 'worst_case', 'stress_test'].includes(String(s?.scenario)) ? String(s.scenario) : 'base_case',
+      probabilityPct: Math.max(0, Math.min(100, Number(s?.probability_pct ?? 50))),
+      totalPredictedRevenueEur: Math.round(Number(s?.total_predicted_revenue_eur ?? 0)),
+      totalPredictedProfitEur: Math.round(Number(s?.total_predicted_profit_eur ?? 0)),
+      avgSaleProbabilityPct: Math.max(0, Math.min(100, Number(s?.avg_sale_probability_pct ?? 30))),
+      avgDaysToSale: Math.round(Number(s?.avg_days_to_sale ?? 14)),
+      keyAssumption: String(s?.key_assumption ?? '').slice(0, 250),
+    })),
+    timeSeries: (parsed?.time_series || []).slice(0, 31).map((t: any) => ({
+      dayOffset: Math.max(0, Math.min(30, Number(t?.day_offset ?? 0))),
+      baseCaseViews: Math.max(0, Math.round(Number(t?.base_case_views ?? 0))),
+      baseCaseInquiries: Math.max(0, Math.round(Number(t?.base_case_inquiries ?? 0))),
+      baseCaseSaleProbabilityPct: Math.max(0, Math.min(100, Number(t?.base_case_sale_probability_pct ?? 0))),
+      bestCaseViews: Math.max(0, Math.round(Number(t?.best_case_views ?? 0))),
+      worstCaseViews: Math.max(0, Math.round(Number(t?.worst_case_views ?? 0))),
+      uncertaintyBand: Math.round(Number(t?.uncertainty_band ?? 0)),
+    })),
+    sensitivityAnalysis: (parsed?.sensitivity_analysis || [])
+      .filter((s: any) => validIds.has(String(s?.listing_id ?? '')))
+      .slice(0, 15)
+      .map((s: any) => ({
+        tradeId: String(s?.listing_id ?? '').slice(0, 50),
+        variable: ['price', 'day_of_week', 'season', 'competition'].includes(String(s?.variable)) ? String(s.variable) : 'price',
+        currentValue: String(s?.current_value ?? '').slice(0, 150),
+        bestValue: String(s?.best_value ?? '').slice(0, 150),
+        impactOnSaleProbabilityPct: Math.round(Number(s?.impact_on_sale_probability_pct ?? 0) * 10) / 10,
+        recommendedAdjustment: String(s?.recommended_adjustment ?? '').slice(0, 250),
       })),
-      scenarios: (parsed?.scenarios || []).slice(0, 4).map((s: any) => ({
-        scenario: ['base_case', 'best_case', 'worst_case', 'stress_test'].includes(String(s?.scenario)) ? String(s.scenario) : 'base_case',
-        probabilityPct: Math.max(0, Math.min(100, Number(s?.probability_pct ?? 50))),
-        totalPredictedRevenueEur: Math.round(Number(s?.total_predicted_revenue_eur ?? 0)),
-        totalPredictedProfitEur: Math.round(Number(s?.total_predicted_profit_eur ?? 0)),
-        avgSaleProbabilityPct: Math.max(0, Math.min(100, Number(s?.avg_sale_probability_pct ?? 30))),
-        avgDaysToSale: Math.round(Number(s?.avg_days_to_sale ?? 14)),
-        keyAssumption: String(s?.key_assumption ?? '').slice(0, 250),
-      })),
-      timeSeries: (parsed?.time_series || []).slice(0, 31).map((t: any) => ({
-        dayOffset: Math.max(0, Math.min(30, Number(t?.day_offset ?? 0))),
-        baseCaseViews: Math.max(0, Math.round(Number(t?.base_case_views ?? 0))),
-        baseCaseInquiries: Math.max(0, Math.round(Number(t?.base_case_inquiries ?? 0))),
-        baseCaseSaleProbabilityPct: Math.max(0, Math.min(100, Number(t?.base_case_sale_probability_pct ?? 0))),
-        bestCaseViews: Math.max(0, Math.round(Number(t?.best_case_views ?? 0))),
-        worstCaseViews: Math.max(0, Math.round(Number(t?.worst_case_views ?? 0))),
-        uncertaintyBand: Math.round(Number(t?.uncertainty_band ?? 0)),
-      })),
-      sensitivityAnalysis: (parsed?.sensitivity_analysis || [])
-        .filter((s: any) => validIds.has(String(s?.listing_id ?? '')))
-        .slice(0, 15)
-        .map((s: any) => ({
-          tradeId: String(s?.listing_id ?? '').slice(0, 50),
-          variable: ['price', 'day_of_week', 'season', 'competition'].includes(String(s?.variable)) ? String(s.variable) : 'price',
-          currentValue: String(s?.current_value ?? '').slice(0, 150),
-          bestValue: String(s?.best_value ?? '').slice(0, 150),
-          impactOnSaleProbabilityPct: Math.round(Number(s?.impact_on_sale_probability_pct ?? 0) * 10) / 10,
-          recommendedAdjustment: String(s?.recommended_adjustment ?? '').slice(0, 250),
-        })),
-      summary: {
-        totalListingsForecasted: items.length,
-        avgPredictedSaleProbability30dPct: Math.max(0, Math.min(100, Number(parsed?.summary?.avg_predicted_sale_probability_30d_pct ?? 30))),
-        totalPredictedRevenueBaseCaseEur: Math.round(Number(parsed?.summary?.total_predicted_revenue_base_case_eur ?? 0)),
-        totalPredictedRevenueBestCaseEur: Math.round(Number(parsed?.summary?.total_predicted_revenue_best_case_eur ?? 0)),
-        totalPredictedRevenueWorstCaseEur: Math.round(Number(parsed?.summary?.total_predicted_revenue_worst_case_eur ?? 0)),
-        avgModelConsensusScore: Math.max(0, Math.min(100, Number(parsed?.summary?.avg_model_consensus_score ?? 50))),
-        bestPerformingModel: ENSEMBLE_MODELS.includes(String(parsed?.summary?.best_performing_model) as any) ? String(parsed.summary.best_performing_model) : 'ensemble_voting',
-        biggestUncertaintyItem: String(parsed?.summary?.biggest_uncertainty_item ?? '').slice(0, 200),
-        biggestOpportunityItem: String(parsed?.summary?.biggest_opportunity_item ?? '').slice(0, 200),
-        forecastConfidenceScore: Math.max(0, Math.min(100, Number(parsed?.summary?.forecast_confidence_score ?? 50))),
-      },
-    };
-
-    const today = new Date().toISOString().slice(0, 10);
-    if (settings.aiCallsDate !== today) { await db.settings.update({ where: { id: 'singleton' }, data: { aiCallsDate: today, aiCallsToday: 1 } }); }
-    else { await db.settings.update({ where: { id: 'singleton' }, data: { aiCallsToday: { increment: 1 } } }); }
-
-    return NextResponse.json({ ok: true, forecaster });
-  } catch (e: any) { logger.error("/api/ai/listing-performance-forecaster-v3", "POST handler failed", e); return NextResponse.json({ error: e?.message ?? 'Napaka' }, { status: 500 }); }
+    summary: {
+      totalListingsForecasted: items.length,
+      avgPredictedSaleProbability30dPct: Math.max(0, Math.min(100, Number(parsed?.summary?.avg_predicted_sale_probability_30d_pct ?? 30))),
+      totalPredictedRevenueBaseCaseEur: Math.round(Number(parsed?.summary?.total_predicted_revenue_base_case_eur ?? 0)),
+      totalPredictedRevenueBestCaseEur: Math.round(Number(parsed?.summary?.total_predicted_revenue_best_case_eur ?? 0)),
+      totalPredictedRevenueWorstCaseEur: Math.round(Number(parsed?.summary?.total_predicted_revenue_worst_case_eur ?? 0)),
+      avgModelConsensusScore: Math.max(0, Math.min(100, Number(parsed?.summary?.avg_model_consensus_score ?? 50))),
+      bestPerformingModel: ENSEMBLE_MODELS.includes(String(parsed?.summary?.best_performing_model) as any) ? String(parsed.summary.best_performing_model) : 'ensemble_voting',
+      biggestUncertaintyItem: String(parsed?.summary?.biggest_uncertainty_item ?? '').slice(0, 200),
+      biggestOpportunityItem: String(parsed?.summary?.biggest_opportunity_item ?? '').slice(0, 200),
+      forecastConfidenceScore: Math.max(0, Math.min(100, Number(parsed?.summary?.forecast_confidence_score ?? 50))),
+    },
+  };
 }

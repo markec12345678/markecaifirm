@@ -1,4 +1,4 @@
-// v8.15: Profit Brain — GET+POST /api/ai/brain/profit
+// v8.15 / v8.95.1-a-refactor: Profit Brain — GET+POST /api/ai/brain/profit
 //
 // Profit Brain is the FIRST "Brain" layer — a NEW architectural layer ABOVE
 // the 404 specialist endpoints. Each specialist (profit-growth-rate-maximizer,
@@ -26,16 +26,24 @@
 // tradesPerMonth + capitalDeployed (sum of HELD item est. values). If DB
 // unavailable or no trades, falls back to sensible defaults — never crashes.
 // 5-MIN CACHE: cache key = `profit-brain:${hashOfInputs}`, TTL = 300000 ms.
+//
+// Refaktoriran z withAiRoute helperjem (v8.95.1-a) + enforceBudget guard
+// (non-breaking — endpoint ne kliče AI direktno, ampak je konsistentno z
+// vsemi v8.94.x migracijami).
 
-import { NextRequest, NextResponse } from 'next/server';
-import { logger } from '@/lib/logger';
+import type { NextRequest } from 'next/server';
+import { withAiRoute, AI_ROUTE_DEFAULTS, type AiRouteContext } from '@/lib/with-ai-route';
+import { apiOk } from '@/lib/api-response';
 import { getCachedAIWithStats, setCachedAIWithStats } from '@/lib/ai-cache';
 // v8.33: Performance metrics — wraps profitBrain() with response-time tracking
 import { withPerf, recordPerf } from '@/lib/brain/performance';
-import { profitBrain, type ProfitBrainInput, type ProfitBrainResult } from '@/lib/brain/profit';
+import {
+  profitBrain,
+  type ProfitBrainInput,
+  type ProfitBrainResult,
+} from '@/lib/brain/profit';
 
-export const runtime = 'nodejs';
-export const dynamic = 'force-dynamic';
+export const { runtime, dynamic } = AI_ROUTE_DEFAULTS;
 export const maxDuration = 60;
 
 // --- Cache TTL -----------------------------------------------------------
@@ -144,12 +152,15 @@ interface DbDerivedState {
  * Fetch last 12 months of SOLD trades + current HELD inventory capital.
  * Wrapped in try/catch — never throws. Returns null if DB unavailable
  * or no usable data found.
+ *
+ * v8.95.1-a: db + logger sta parameterja (prej modul-level uvoza +
+ * dynamic import) — passed-in iz ctx.db/ctx.logger v withAiRoute handler-ju.
  */
-async function fetchDbState(): Promise<DbDerivedState | null> {
+async function fetchDbState(
+  db: AiRouteContext['db'],
+  logger: AiRouteContext['logger'],
+): Promise<DbDerivedState | null> {
   try {
-    // Dynamic import — avoids Prisma client init cost when DB unavailable
-    const { db } = await import('@/lib/db');
-
     const now = new Date();
     const twelveMonthsAgo = new Date(now);
     twelveMonthsAgo.setMonth(twelveMonthsAgo.getMonth() - 12);
@@ -260,21 +271,25 @@ function buildCacheKey(input: ProfitBrainInput): string {
 
 // --- Handler -------------------------------------------------------------
 
-export async function GET(req: NextRequest) {
-  return handleProfitBrain(req);
-}
+const profitBrainHandler = withAiRoute<ProfitBrainInput>({
+  endpoint: '/api/ai/brain/profit',
+  maxDuration: 60,
+  enforceBudget: true, // v8.95.1-a: budget guard + avtomatski recordAiCall
+  method: 'GET', // Endpoint sprejema GET + POST — bypass POST-only check
 
-export async function POST(req: NextRequest) {
-  return handleProfitBrain(req);
-}
+  // GET+POST — parse iz query string-a (GET) ali POST body-ja (body
+  // precedence nad query). Vsa polja so optional — ProfitBrainInput
+  // degrade gracefully z defaults kadar katerokoli polje manjka.
+  parseBody: async (req) => resolveInputs(req),
 
-async function handleProfitBrain(req: NextRequest) {
-  try {
-    const userInput = await resolveInputs(req);
+  // Brez validateInput — vsa polja so optional
+
+  handler: async (userInput, ctx: AiRouteContext) => {
+    const { db, logger } = ctx;
 
     // DB state injection — fills in any missing fields from real trade history.
     // If both DB and user input are present, USER INPUT WINS (user can override).
-    const dbState = await fetchDbState();
+    const dbState = await fetchDbState(db, logger);
     const mergedInput: ProfitBrainInput = {
       monthlyProfits:
         userInput.monthlyProfits
@@ -297,19 +312,16 @@ async function handleProfitBrain(req: NextRequest) {
         ...cached,
         cachedAt: Date.now(),
       };
-      return NextResponse.json(served);
+      return apiOk(served);
     }
 
     // v8.33: Wrap profitBrain() call with perf tracking. cached=false (slow path).
     const result = await withPerf('profit', async () => profitBrain(mergedInput), false);
     setCachedAIWithStats('profit-brain', cacheKey, result, BRAIN_CACHE_TTL_MS);
 
-    return NextResponse.json(result);
-  } catch (err: any) {
-    logger.error('/api/ai/brain/profit', 'handler failed', err);
-    return NextResponse.json(
-      { error: err?.message ?? 'Napaka' },
-      { status: 500 },
-    );
-  }
-}
+    return apiOk(result);
+  },
+});
+
+export const GET = profitBrainHandler;
+export const POST = profitBrainHandler;

@@ -1,16 +1,14 @@
-// v6.14: AI Negotiation Outcome Predictor — napove verjetnost uspeha ponudbe
+// v6.14 / v8.96.1-batch2: AI Negotiation Outcome Predictor — napove verjetnost uspeha ponudbe
+// Refaktoriran z withAiRoute helperjem (v8.96.1) + enforceBudget guard.
+//
 // POST /api/ai/negotiation-outcome
 // Body: { listingId?: string, offerPrice?: number, message?: string, listing?: {...} }
 // Returns: { ok, prediction: { successProbability, expectedCounterOffer, suggestedOffer, factors, scenarios, warnings, optimalStrategy } }
 
-import { NextRequest, NextResponse } from 'next/server';
-import { db } from '@/lib/db';
-import { getSettingsRow } from '@/lib/pipeline';
-import { callProviderForRaw, parseJsonLooseExported, type AiProviderType, type AiSettings } from '@/lib/ai';
-import { logger } from '@/lib/logger';
+import { withAiRoute, AI_ROUTE_DEFAULTS, ApiRouteError, type AiRouteContext } from '@/lib/with-ai-route';
+import { apiOk, apiBadRequest } from '@/lib/api-response';
 
-export const runtime = 'nodejs';
-export const dynamic = 'force-dynamic';
+export const { runtime, dynamic } = AI_ROUTE_DEFAULTS;
 export const maxDuration = 60;
 
 interface ListingInput {
@@ -24,13 +22,36 @@ interface ListingInput {
   sellerName?: string | null;
 }
 
-export async function POST(req: NextRequest) {
-  try {
+interface NegotiationOutcomeInput {
+  listingId: string | null;
+  offerPrice: number;
+  message: string;
+  listing: ListingInput | null;
+}
+
+export const POST = withAiRoute<NegotiationOutcomeInput>({
+  endpoint: '/api/ai/negotiation-outcome',
+  maxDuration: 60,
+  enforceBudget: true, // AI klic — preveri budget
+
+  parseBody: async (req) => {
     const body = await req.json().catch(() => ({}));
     const { listingId, offerPrice, message } = body;
-    let listingInput: ListingInput | null = body?.listing ?? null;
-    const userOffer = Number(offerPrice) || 0;
-    const userMessage = String(message || '').trim();
+    return {
+      listingId: listingId ? String(listingId) : null,
+      offerPrice: Number(offerPrice) || 0,
+      message: String(message || '').trim(),
+      listing: body?.listing ?? null,
+    };
+  },
+
+  // No validateInput — listing lookup needs DB access, validation je v handlerju
+  handler: async (input, ctx: AiRouteContext) => {
+    const { db, callAi, parseAi } = ctx;
+    const { listingId, offerPrice, message } = input;
+    let listingInput: ListingInput | null = input.listing;
+    const userOffer = offerPrice;
+    const userMessage = message;
 
     // 1. Pridobi listing
     if (listingId && !listingInput) {
@@ -44,7 +65,7 @@ export async function POST(req: NextRequest) {
           firstSeenAt: true, monitor: { select: { source: true, name: true } },
         },
       });
-      if (!listing) return NextResponse.json({ error: 'Listing ne obstaja' }, { status: 404 });
+      if (!listing) throw new ApiRouteError('Listing ne obstaja', 404);
       listingInput = {
         title: listing.title,
         price: listing.price,
@@ -58,7 +79,7 @@ export async function POST(req: NextRequest) {
     }
 
     if (!listingInput) {
-      return NextResponse.json({ error: 'listingId ali listing objekt je obvezen' }, { status: 400 });
+      return apiBadRequest('listingId ali listing objekt je obvezen');
     }
 
     const listPrice = Number(listingInput.price) || 0;
@@ -67,70 +88,111 @@ export async function POST(req: NextRequest) {
     const discountRequested = listPrice > 0 ? Math.round(((listPrice - userOfferFinal) / listPrice) * 100) : 0;
 
     // 2. Pridobi kontekst — prodajalčeva zgodovina in podobni oglasi
-    let sellerHistory = '';
-    let marketContext = '';
-
-    if (listingInput.sellerName) {
-      const sellerListings = await db.listing.findMany({
-        where: { sellerName: listingInput.sellerName, isHidden: false },
-        select: { price: true, previousPrice: true, priceDroppedAt: true, firstSeenAt: true, title: true },
-        take: 30,
-      });
-      const droppedCount = sellerListings.filter(l => l.priceDroppedAt).length;
-      const dropRate = sellerListings.length > 0 ? Math.round((droppedCount / sellerListings.length) * 100) : 0;
-      const avgDaysListed = sellerListings.length > 0
-        ? Math.round(sellerListings.reduce((s, l) => s + (Date.now() - l.firstSeenAt.getTime()) / (24 * 60 * 60 * 1000), 0) / sellerListings.length)
-        : 0;
-      sellerHistory = `${sellerListings.length} oglasov, ${dropRate}% je znižalo ceno, povp. ${avgDaysListed}d na trgu`;
-    }
-
-    if (listPrice > 0) {
-      const similar = await db.listing.findMany({
-        where: { price: { gte: Math.floor(listPrice * 0.7), lte: Math.ceil(listPrice * 1.3) }, isHidden: false },
-        select: { price: true, firstSeenAt: true },
-        take: 20,
-      });
-      const prices = similar.map(l => l.price!).filter(Boolean);
-      if (prices.length > 0) {
-        const avg = Math.round(prices.reduce((a, b) => a + b, 0) / prices.length);
-        marketContext = `Tržno povprečje: ${avg}€ (range ${Math.min(...prices)}-${Math.max(...prices)}€)`;
-      }
-    }
+    const sellerHistory = listingInput.sellerName
+      ? await fetchSellerHistory(db, listingInput.sellerName)
+      : '';
+    const marketContext = listPrice > 0
+      ? await fetchMarketContext(db, listPrice)
+      : '';
 
     // 3. AI prediction
-    const settings = await getSettingsRow();
-    const aiSettings: AiSettings = {
-      provider: settings.aiProvider as AiProviderType,
-      baseUrl: settings.aiBaseUrl, apiKey: settings.aiApiKey, model: settings.aiModel,
-      fallbackProvider: (settings.fallbackProvider || '') as AiProviderType | '',
-      fallbackBaseUrl: settings.fallbackBaseUrl || '', fallbackApiKey: settings.fallbackApiKey || '',
-      fallbackModel: settings.fallbackModel || '',
-    };
-
     const daysSincePosted = listingInput.postedAt
       ? Math.round((Date.now() - new Date(listingInput.postedAt).getTime()) / (24 * 60 * 60 * 1000))
       : 0;
 
-    const prompt = `Si ekspert za napovedovanje izida pogajanj pri nakupu rabljenih dobrin.
+    const prompt = buildPrompt({
+      listingInput,
+      listPrice,
+      sellerHistory,
+      marketContext,
+      userOfferFinal,
+      discountRequested,
+      userMessage,
+      daysSincePosted,
+    });
+
+    const raw = await callAi(prompt);
+    const parsed: any = parseAi(raw);
+
+    const prediction = transformPrediction(parsed, userOfferFinal, listPrice);
+
+    return apiOk({
+      ok: true,
+      prediction,
+      listing: listingInput,
+      userOffer: userOfferFinal,
+      discountRequested,
+      marketContext,
+      sellerHistory,
+      daysSincePosted,
+    });
+  },
+});
+
+// --- Pomožne funkcije (čiste, testabilne) --------------------------------
+
+type DbClient = AiRouteContext['db'];
+
+async function fetchSellerHistory(db: DbClient, sellerName: string): Promise<string> {
+  const sellerListings = await db.listing.findMany({
+    where: { sellerName, isHidden: false },
+    select: { price: true, previousPrice: true, priceDroppedAt: true, firstSeenAt: true, title: true },
+    take: 30,
+  });
+  const droppedCount = sellerListings.filter(l => l.priceDroppedAt).length;
+  const dropRate = sellerListings.length > 0 ? Math.round((droppedCount / sellerListings.length) * 100) : 0;
+  const avgDaysListed = sellerListings.length > 0
+    ? Math.round(sellerListings.reduce((s, l) => s + (Date.now() - l.firstSeenAt.getTime()) / (24 * 60 * 60 * 1000), 0) / sellerListings.length)
+    : 0;
+  return `${sellerListings.length} oglasov, ${dropRate}% je znižalo ceno, povp. ${avgDaysListed}d na trgu`;
+}
+
+async function fetchMarketContext(db: DbClient, listPrice: number): Promise<string> {
+  const similar = await db.listing.findMany({
+    where: { price: { gte: Math.floor(listPrice * 0.7), lte: Math.ceil(listPrice * 1.3) }, isHidden: false },
+    select: { price: true, firstSeenAt: true },
+    take: 20,
+  });
+  const prices = similar.map(l => l.price!).filter(Boolean);
+  if (prices.length > 0) {
+    const avg = Math.round(prices.reduce((a, b) => a + b, 0) / prices.length);
+    return `Tržno povprečje: ${avg}€ (range ${Math.min(...prices)}-${Math.max(...prices)}€)`;
+  }
+  return '';
+}
+
+interface PromptData {
+  listingInput: ListingInput;
+  listPrice: number;
+  sellerHistory: string;
+  marketContext: string;
+  userOfferFinal: number;
+  discountRequested: number;
+  userMessage: string;
+  daysSincePosted: number;
+}
+
+function buildPrompt(d: PromptData): string {
+  return `Si ekspert za napovedovanje izida pogajanj pri nakupu rabljenih dobrin.
 Predvidi uspešnost ponudbe uporabnika za ta oglas.
 
 OGLAS:
-Naslov: ${listingInput.title}
-Cena: ${listingInput.priceText || (listPrice + ' EUR')}
-Lokacija: ${listingInput.location || 'neznan'}
-VIR: ${listingInput.source || 'neznan'}
-Starost oglasa: ${daysSincePosted} dni
-Opis: ${(listingInput.description || '').slice(0, 500)}
+Naslov: ${d.listingInput.title}
+Cena: ${d.listingInput.priceText || (d.listPrice + ' EUR')}
+Lokacija: ${d.listingInput.location || 'neznan'}
+VIR: ${d.listingInput.source || 'neznan'}
+Starost oglasa: ${d.daysSincePosted} dni
+Opis: ${(d.listingInput.description || '').slice(0, 500)}
 
 PRODAJALEC:
-${sellerHistory || '- Ni podatkov'}
+${d.sellerHistory || '- Ni podatkov'}
 
 TRŽNI KONTEKST:
-${marketContext || '- Ni podatkov'}
+${d.marketContext || '- Ni podatkov'}
 
 UPORABNIKOVA PONUDBA:
-- Ponujena cena: ${userOfferFinal}€ (popust ${discountRequested}% glede na zahtevano)
-- Sporočilo: ${userMessage || '(brez sporočila — samo cena)'}
+- Ponujena cena: ${d.userOfferFinal}€ (popust ${d.discountRequested}% glede na zahtevano)
+- Sporočilo: ${d.userMessage || '(brez sporočila — samo cena)'}
 
 Pravila za napoved:
 1. Verjetnost uspeha (0-100%) glede na:
@@ -181,75 +243,49 @@ Odgovori LE z JSON:
   },
   "reasoning": "<celotna razlaga, max 300 znakov>"
 }`;
+}
 
-    let raw = '';
-    try {
-      raw = await callProviderForRaw(aiSettings, prompt);
-    } catch (primaryError: any) {
-      if (aiSettings.fallbackProvider && aiSettings.fallbackModel) {
-        const fb: AiSettings = {
-          provider: aiSettings.fallbackProvider,
-          baseUrl: aiSettings.fallbackBaseUrl || '',
-          apiKey: aiSettings.fallbackApiKey || '',
-          model: aiSettings.fallbackModel,
-        };
-        raw = await callProviderForRaw(fb, prompt);
-      } else {
-        return NextResponse.json({ error: primaryError?.message ?? 'AI failed' }, { status: 500 });
-      }
-    }
-
-    const parsed: any = parseJsonLooseExported(raw);
-
-    const prediction = {
-      successProbabilityPct: Math.max(0, Math.min(100, Number(parsed?.success_probability_pct ?? 50))),
-      confidence: Math.max(0, Math.min(100, Number(parsed?.confidence ?? 50))),
-      expectedCounterOfferEur: Math.max(0, Number(parsed?.expected_counter_offer_eur ?? Math.round((userOfferFinal + listPrice) / 2))),
-      suggestedOptimalOfferEur: Math.max(0, Number(parsed?.suggested_optimal_offer_eur ?? userOfferFinal)),
-      factors: (parsed?.factors || []).slice(0, 8).map((f: any) => ({
-        factor: String(f?.factor ?? '').slice(0, 100),
-        impact: ['positive', 'negative', 'neutral'].includes(String(f?.impact)) ? String(f.impact) : 'neutral',
-        weight: Math.max(1, Math.min(10, Number(f?.weight ?? 5))),
-        explanation: String(f?.explanation ?? '').slice(0, 150),
-      })),
-      scenarios: (parsed?.scenarios || []).slice(0, 4).map((s: any) => ({
-        name: String(s?.name ?? '').slice(0, 80),
-        probabilityPct: Math.max(0, Math.min(100, Number(s?.probability_pct ?? 0))),
-        outcome: String(s?.outcome ?? '').slice(0, 200),
-        finalPriceEur: Math.max(0, Number(s?.final_price_eur ?? 0)),
-      })),
-      warnings: (parsed?.warnings || []).slice(0, 5).map((w: any) => String(w).slice(0, 200)),
-      optimalStrategy: {
-        approach: ['direct_offer', 'build_rapport', 'wait_for_drop', 'bundle_offer', 'walk_away'].includes(String(parsed?.optimal_strategy?.approach))
-          ? String(parsed.optimal_strategy.approach) : 'direct_offer',
-        timing: String(parsed?.optimal_strategy?.timing ?? '').slice(0, 200),
-        messageTips: Array.isArray(parsed?.optimal_strategy?.message_tips)
-          ? parsed.optimal_strategy.message_tips.slice(0, 5).map((t: any) => String(t).slice(0, 200))
-          : [],
-      },
-      reasoning: String(parsed?.reasoning ?? '').slice(0, 500),
-    };
-
-    // Increment AI usage
-    const today = new Date().toISOString().slice(0, 10);
-    if (settings.aiCallsDate !== today) {
-      await db.settings.update({ where: { id: 'singleton' }, data: { aiCallsDate: today, aiCallsToday: 1 } });
-    } else {
-      await db.settings.update({ where: { id: 'singleton' }, data: { aiCallsToday: { increment: 1 } } });
-    }
-
-    return NextResponse.json({
-      ok: true,
-      prediction,
-      listing: listingInput,
-      userOffer: userOfferFinal,
-      discountRequested,
-      marketContext,
-      sellerHistory,
-      daysSincePosted,
-    });
-  } catch (e: any) {
-    logger.error("/api/ai/negotiation-outcome", "POST handler failed", e);
-    return NextResponse.json({ error: e?.message ?? 'Napaka' }, { status: 500 });
-  }
+function transformPrediction(parsed: any, userOfferFinal: number, listPrice: number): {
+  successProbabilityPct: number;
+  confidence: number;
+  expectedCounterOfferEur: number;
+  suggestedOptimalOfferEur: number;
+  factors: Array<{ factor: string; impact: string; weight: number; explanation: string }>;
+  scenarios: Array<{ name: string; probabilityPct: number; outcome: string; finalPriceEur: number }>;
+  warnings: string[];
+  optimalStrategy: {
+    approach: string;
+    timing: string;
+    messageTips: string[];
+  };
+  reasoning: string;
+} {
+  return {
+    successProbabilityPct: Math.max(0, Math.min(100, Number(parsed?.success_probability_pct ?? 50))),
+    confidence: Math.max(0, Math.min(100, Number(parsed?.confidence ?? 50))),
+    expectedCounterOfferEur: Math.max(0, Number(parsed?.expected_counter_offer_eur ?? Math.round((userOfferFinal + listPrice) / 2))),
+    suggestedOptimalOfferEur: Math.max(0, Number(parsed?.suggested_optimal_offer_eur ?? userOfferFinal)),
+    factors: (parsed?.factors || []).slice(0, 8).map((f: any) => ({
+      factor: String(f?.factor ?? '').slice(0, 100),
+      impact: ['positive', 'negative', 'neutral'].includes(String(f?.impact)) ? String(f.impact) : 'neutral',
+      weight: Math.max(1, Math.min(10, Number(f?.weight ?? 5))),
+      explanation: String(f?.explanation ?? '').slice(0, 150),
+    })),
+    scenarios: (parsed?.scenarios || []).slice(0, 4).map((s: any) => ({
+      name: String(s?.name ?? '').slice(0, 80),
+      probabilityPct: Math.max(0, Math.min(100, Number(s?.probability_pct ?? 0))),
+      outcome: String(s?.outcome ?? '').slice(0, 200),
+      finalPriceEur: Math.max(0, Number(s?.final_price_eur ?? 0)),
+    })),
+    warnings: (parsed?.warnings || []).slice(0, 5).map((w: any) => String(w).slice(0, 200)),
+    optimalStrategy: {
+      approach: ['direct_offer', 'build_rapport', 'wait_for_drop', 'bundle_offer', 'walk_away'].includes(String(parsed?.optimal_strategy?.approach))
+        ? String(parsed.optimal_strategy.approach) : 'direct_offer',
+      timing: String(parsed?.optimal_strategy?.timing ?? '').slice(0, 200),
+      messageTips: Array.isArray(parsed?.optimal_strategy?.message_tips)
+        ? parsed.optimal_strategy.message_tips.slice(0, 5).map((t: any) => String(t).slice(0, 200))
+        : [],
+    },
+    reasoning: String(parsed?.reasoning ?? '').slice(0, 500),
+  };
 }

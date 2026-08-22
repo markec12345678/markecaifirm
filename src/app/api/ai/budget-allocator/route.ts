@@ -1,101 +1,189 @@
-// v6.6: AI Budget Allocator — AI predlaga razporeditev proračuna po kategorijah
+// v6.6 / v8.95.3-batch1: AI Budget Allocator — AI predlaga razporeditev proračuna po kategorijah
+// Refaktoriran z withAiRoute helperjem (v8.94) + enforceBudget guard.
+//
 // POST /api/ai/budget-allocator
 // Body: { totalBudget: number }
 // Returns: { ok, allocation: Array<{ category, suggestedBudget, expectedROI, expectedProfit, reasoning }>, strategy }
 
-import { NextRequest, NextResponse } from 'next/server';
-import { db } from '@/lib/db';
-import { getSettingsRow } from '@/lib/pipeline';
-import { callProviderForRaw, parseJsonLooseExported, type AiProviderType, type AiSettings } from '@/lib/ai';
-import { logger } from '@/lib/logger';
+import { withAiRoute, AI_ROUTE_DEFAULTS, type AiRouteContext } from '@/lib/with-ai-route';
+import { apiOk } from '@/lib/api-response';
 
-export const runtime = 'nodejs';
-export const dynamic = 'force-dynamic';
+export const { runtime, dynamic } = AI_ROUTE_DEFAULTS;
 export const maxDuration = 90;
 
-export async function POST(req: NextRequest) {
-  try {
-    const body = await req.json();
-    const totalBudget = Number(body?.totalBudget) || 0;
-    if (totalBudget <= 0) return NextResponse.json({ error: 'Proračun mora biti > 0' }, { status: 400 });
+interface BudgetAllocatorInput {
+  totalBudget: number;
+}
 
-    // Get niche profitability data
+interface CategoryStats {
+  sold: number;
+  held: number;
+  totalProfit: number;
+  totalInvested: number;
+  avgRoi: number;
+  avgDays: number;
+}
+
+interface MarketStats {
+  count: number;
+  avgPrice: number;
+  prilikaCount: number;
+}
+
+interface TradeRow {
+  category: string | null;
+  status: string;
+  buyPrice: number;
+  buyFees: number | null;
+  sellPrice: number | null;
+  sellFees: number | null;
+  buyDate: Date | null;
+  sellDate: Date | null;
+}
+
+interface ListingRow {
+  price: number | null;
+  title: string;
+  aiVerdict: string | null;
+  dealScore: number | null;
+}
+
+export const POST = withAiRoute<BudgetAllocatorInput>({
+  endpoint: '/api/ai/budget-allocator',
+  maxDuration: 90,
+  enforceBudget: true,
+
+  parseBody: async (req) => {
+    const body = await req.json().catch(() => ({}));
+    return { totalBudget: Number(body?.totalBudget) || 0 };
+  },
+
+  validateInput: (input) => (input.totalBudget > 0 ? null : 'Proračun mora biti > 0'),
+
+  handler: async (input, ctx: AiRouteContext) => {
+    const { db, callAi, parseAi } = ctx;
+    const { totalBudget } = input;
+
+    // 1. Get niche profitability data
     const trades = await db.trade.findMany({
       where: { status: { in: ['held', 'sold'] } },
-      select: { category: true, status: true, buyPrice: true, buyFees: true, sellPrice: true, sellFees: true, buyDate: true, sellDate: true },
+      select: {
+        category: true, status: true, buyPrice: true, buyFees: true,
+        sellPrice: true, sellFees: true, buyDate: true, sellDate: true,
+      },
     });
 
-    // Get current listings by category for market analysis
+    // 2. Get current listings by category for market analysis
     const listings = await db.listing.findMany({
-      where: { price: { not: null }, isHidden: false, firstSeenAt: { gte: new Date(Date.now() - 30 * 24 * 60 * 60 * 1000) } },
+      where: {
+        price: { not: null },
+        isHidden: false,
+        firstSeenAt: { gte: new Date(Date.now() - 30 * 24 * 60 * 60 * 1000) },
+      },
       select: { price: true, title: true, aiVerdict: true, dealScore: true },
       take: 500,
     });
 
-    // Extract categories from listings titles
-    const extractCat = (title: string) => {
-      const t = title.toLowerCase();
-      if (/(iphone|samsung|telefon|laptop|macbook|pc|računalnik|konzola|ps5|xbox|tv)/.test(t)) return 'elektronika';
-      if (/(avto|vozilo|golf|audi|bmw|toyota)/.test(t)) return 'avto';
-      if (/(stanovanje|hiša|hisa|zemljišče)/.test(t)) return 'nepremicnine';
-      if (/(orodje|bosch|makita|dewalt)/.test(t)) return 'orodje';
-      if (/(hlače|majica|jakna|čevlji|nike|adidas)/.test(t)) return 'moda';
-      if (/(smuči|kolo|fitnes|žoga)/.test(t)) return 'sport';
-      if (/(miza|stol|omara|postelja)/.test(t)) return 'pohistvo';
-      return 'drugo';
-    };
+    // 3. Calculate category stats from trades + market opportunities
+    const catStats = computeCategoryStats(trades);
+    const marketByCat = computeMarketOpportunities(listings);
 
-    // Calculate category stats from trades
-    const catStats: Record<string, { sold: number; held: number; totalProfit: number; totalInvested: number; avgRoi: number; avgDays: number }> = {};
-    for (const t of trades) {
-      const cat = t.category || 'drugo';
-      if (!catStats[cat]) catStats[cat] = { sold: 0, held: 0, totalProfit: 0, totalInvested: 0, avgRoi: 0, avgDays: 0 };
-      const buyCost = t.buyPrice + (t.buyFees ?? 0);
-      if (t.status === 'sold') {
-        catStats[cat].sold++;
-        const profit = (t.sellPrice ?? 0) - (t.sellFees ?? 0) - buyCost;
-        catStats[cat].totalProfit += profit;
-        catStats[cat].totalInvested += buyCost;
-        if (t.sellDate && t.buyDate) {
-          catStats[cat].avgDays += Math.round((t.sellDate.getTime() - t.buyDate.getTime()) / (24 * 60 * 60 * 1000));
-        }
-      } else {
-        catStats[cat].held++;
-        catStats[cat].totalInvested += buyCost;
+    // 4. AI allocation
+    const prompt = buildPrompt(totalBudget, catStats, marketByCat);
+    const raw = await callAi(prompt);
+    const parsed: any = parseAi(raw);
+
+    const allocation = (parsed?.allocation || []).map((a: any) => ({
+      category: String(a?.category ?? ''),
+      suggestedBudget: Number(a?.suggested_budget ?? 0),
+      percentage: Number(a?.percentage ?? 0),
+      expectedROI: Number(a?.expected_roi ?? 0),
+      expectedProfit: Number(a?.expected_profit ?? 0),
+      reasoning: String(a?.reasoning ?? '').slice(0, 200),
+    }));
+
+    return apiOk({
+      ok: true,
+      allocation,
+      strategy: String(parsed?.strategy ?? '').slice(0, 500),
+      reserveAmount: Number(parsed?.reserve_amount ?? 0),
+      totalExpectedProfit: Number(parsed?.total_expected_profit ?? 0),
+      totalBudget,
+      categoryStats: Object.entries(catStats).map(([cat, s]) => ({ category: cat, ...s })),
+      marketOpportunities: Object.entries(marketByCat).map(([cat, m]) => ({ category: cat, ...m })),
+    });
+  },
+});
+
+// --- Pomožne funkcije (čiste, testabilne) --------------------------------
+
+function extractCat(title: string): string {
+  const t = title.toLowerCase();
+  if (/(iphone|samsung|telefon|laptop|macbook|pc|računalnik|konzola|ps5|xbox|tv)/.test(t)) return 'elektronika';
+  if (/(avto|vozilo|golf|audi|bmw|toyota)/.test(t)) return 'avto';
+  if (/(stanovanje|hiša|hisa|zemljišče)/.test(t)) return 'nepremicnine';
+  if (/(orodje|bosch|makita|dewalt)/.test(t)) return 'orodje';
+  if (/(hlače|majica|jakna|čevlji|nike|adidas)/.test(t)) return 'moda';
+  if (/(smuči|kolo|fitnes|žoga)/.test(t)) return 'sport';
+  if (/(miza|stol|omara|postelja)/.test(t)) return 'pohistvo';
+  return 'drugo';
+}
+
+function computeCategoryStats(trades: TradeRow[]): Record<string, CategoryStats> {
+  const catStats: Record<string, CategoryStats> = {};
+  for (const t of trades) {
+    const cat = t.category || 'drugo';
+    if (!catStats[cat]) {
+      catStats[cat] = { sold: 0, held: 0, totalProfit: 0, totalInvested: 0, avgRoi: 0, avgDays: 0 };
+    }
+    const buyCost = t.buyPrice + (t.buyFees ?? 0);
+    if (t.status === 'sold') {
+      catStats[cat].sold++;
+      const profit = (t.sellPrice ?? 0) - (t.sellFees ?? 0) - buyCost;
+      catStats[cat].totalProfit += profit;
+      catStats[cat].totalInvested += buyCost;
+      if (t.sellDate && t.buyDate) {
+        catStats[cat].avgDays += Math.round(
+          (t.sellDate.getTime() - t.buyDate.getTime()) / (24 * 60 * 60 * 1000)
+        );
       }
+    } else {
+      catStats[cat].held++;
+      catStats[cat].totalInvested += buyCost;
     }
+  }
 
-    // Calculate ROI per category
-    for (const cat of Object.keys(catStats)) {
-      const s = catStats[cat];
-      s.avgRoi = s.totalInvested > 0 ? Math.round((s.totalProfit / s.totalInvested) * 100) : 0;
-      s.avgDays = s.sold > 0 ? Math.round(s.avgDays / s.sold) : 0;
-    }
+  // Calculate ROI per category
+  for (const cat of Object.keys(catStats)) {
+    const s = catStats[cat];
+    s.avgRoi = s.totalInvested > 0 ? Math.round((s.totalProfit / s.totalInvested) * 100) : 0;
+    s.avgDays = s.sold > 0 ? Math.round(s.avgDays / s.sold) : 0;
+  }
+  return catStats;
+}
 
-    // Market opportunity by category (from listings)
-    const marketByCat: Record<string, { count: number; avgPrice: number; prilikaCount: number }> = {};
-    for (const l of listings) {
-      const cat = extractCat(l.title);
-      if (!marketByCat[cat]) marketByCat[cat] = { count: 0, avgPrice: 0, prilikaCount: 0 };
-      marketByCat[cat].count++;
-      marketByCat[cat].avgPrice += l.price ?? 0;
-      if (l.aiVerdict === 'PRILIKA') marketByCat[cat].prilikaCount++;
-    }
-    for (const cat of Object.keys(marketByCat)) {
-      marketByCat[cat].avgPrice = marketByCat[cat].count > 0 ? Math.round(marketByCat[cat].avgPrice / marketByCat[cat].count) : 0;
-    }
+function computeMarketOpportunities(listings: ListingRow[]): Record<string, MarketStats> {
+  const marketByCat: Record<string, MarketStats> = {};
+  for (const l of listings) {
+    const cat = extractCat(l.title);
+    if (!marketByCat[cat]) marketByCat[cat] = { count: 0, avgPrice: 0, prilikaCount: 0 };
+    marketByCat[cat].count++;
+    marketByCat[cat].avgPrice += l.price ?? 0;
+    if (l.aiVerdict === 'PRILIKA') marketByCat[cat].prilikaCount++;
+  }
+  for (const cat of Object.keys(marketByCat)) {
+    marketByCat[cat].avgPrice =
+      marketByCat[cat].count > 0 ? Math.round(marketByCat[cat].avgPrice / marketByCat[cat].count) : 0;
+  }
+  return marketByCat;
+}
 
-    // AI allocation
-    const settings = await getSettingsRow();
-    const aiSettings: AiSettings = {
-      provider: settings.aiProvider as AiProviderType,
-      baseUrl: settings.aiBaseUrl, apiKey: settings.aiApiKey, model: settings.aiModel,
-      fallbackProvider: (settings.fallbackProvider || '') as AiProviderType | '',
-      fallbackBaseUrl: settings.fallbackBaseUrl || '', fallbackApiKey: settings.fallbackApiKey || '',
-      fallbackModel: settings.fallbackModel || '',
-    };
-
-    const prompt = `Si ekspert za upravljanje proračuna za preprodajo na slovenskih oglasih.
+function buildPrompt(
+  totalBudget: number,
+  catStats: Record<string, CategoryStats>,
+  marketByCat: Record<string, MarketStats>
+): string {
+  return `Si ekspert za upravljanje proračuna za preprodajo na slovenskih oglasih.
 Razporedi ${totalBudget}€ proračuna po kategorijah za maksimalni dobiček.
 
 Zgodovinski podatki po kategorijah:
@@ -127,47 +215,4 @@ Odgovori LE z JSON:
   "reserve_amount": <number EUR>,
   "total_expected_profit": <number EUR>
 }`;
-
-    let raw = '';
-    try {
-      raw = await callProviderForRaw(aiSettings, prompt);
-    } catch (primaryError: any) {
-      if (aiSettings.fallbackProvider && aiSettings.fallbackModel) {
-        const fb: AiSettings = { provider: aiSettings.fallbackProvider, baseUrl: aiSettings.fallbackBaseUrl || '', apiKey: aiSettings.fallbackApiKey || '', model: aiSettings.fallbackModel };
-        raw = await callProviderForRaw(fb, prompt);
-      } else { return NextResponse.json({ error: primaryError?.message ?? 'AI failed' }, { status: 500 }); }
-    }
-
-    const parsed: any = parseJsonLooseExported(raw);
-    const allocation = (parsed?.allocation || []).map((a: any) => ({
-      category: String(a?.category ?? ''),
-      suggestedBudget: Number(a?.suggested_budget ?? 0),
-      percentage: Number(a?.percentage ?? 0),
-      expectedROI: Number(a?.expected_roi ?? 0),
-      expectedProfit: Number(a?.expected_profit ?? 0),
-      reasoning: String(a?.reasoning ?? '').slice(0, 200),
-    }));
-
-    // Increment AI usage
-    const today = new Date().toISOString().slice(0, 10);
-    if (settings.aiCallsDate !== today) {
-      await db.settings.update({ where: { id: 'singleton' }, data: { aiCallsDate: today, aiCallsToday: 1 } });
-    } else {
-      await db.settings.update({ where: { id: 'singleton' }, data: { aiCallsToday: { increment: 1 } } });
-    }
-
-    return NextResponse.json({
-      ok: true,
-      allocation,
-      strategy: String(parsed?.strategy ?? '').slice(0, 500),
-      reserveAmount: Number(parsed?.reserve_amount ?? 0),
-      totalExpectedProfit: Number(parsed?.total_expected_profit ?? 0),
-      totalBudget,
-      categoryStats: Object.entries(catStats).map(([cat, s]) => ({ category: cat, ...s })),
-      marketOpportunities: Object.entries(marketByCat).map(([cat, m]) => ({ category: cat, ...m })),
-    });
-  } catch (e: any) {
-    logger.error("/api/ai/budget-allocator", "POST handler failed", e);
-    return NextResponse.json({ error: e?.message ?? 'Napaka' }, { status: 500 });
-  }
 }

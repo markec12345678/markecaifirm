@@ -1,22 +1,35 @@
-// v6.16: AI Customer Lifetime Value Predictor — napove vrednost kupca čez čas
+// v6.16 / v8.95.9-refactor: AI Customer Lifetime Value Predictor — napove vrednost kupca čez čas
+// Refaktoriran z withAiRoute helperjem (v8.95.9) + enforceBudget guard.
+//
 // POST /api/ai/customer-ltv
 // Body: { sellerName?: string, contactStatus?: string }
 // Returns: { ok, customers: [{ name, totalSpent, purchaseCount, avgOrderValue, predictedLTV, segment, recommendations }], insights, summary }
 
-import { NextRequest, NextResponse } from 'next/server';
-import { db } from '@/lib/db';
-import { getSettingsRow } from '@/lib/pipeline';
-import { callProviderForRaw, parseJsonLooseExported, type AiProviderType, type AiSettings } from '@/lib/ai';
-import { logger } from '@/lib/logger';
+import { withAiRoute, AI_ROUTE_DEFAULTS, type AiRouteContext } from '@/lib/with-ai-route';
+import { apiOk } from '@/lib/api-response';
 
-export const runtime = 'nodejs';
-export const dynamic = 'force-dynamic';
+export const { runtime, dynamic } = AI_ROUTE_DEFAULTS;
 export const maxDuration = 90;
 
-export async function POST(req: NextRequest) {
-  try {
+interface CustomerLtvInput {
+  sellerName: string;
+}
+
+export const POST = withAiRoute<CustomerLtvInput>({
+  endpoint: '/api/ai/customer-ltv',
+  maxDuration: 90,
+  enforceBudget: true, // AI klic — preveri budget
+
+  parseBody: async (req) => {
     const body = await req.json().catch(() => ({}));
-    const filterSeller = String(body?.sellerName || '').trim();
+    return { sellerName: String(body?.sellerName || '').trim() };
+  },
+
+  // No validateInput — sellerName je opcijski
+
+  handler: async (input, ctx: AiRouteContext) => {
+    const { db, callAi, parseAi } = ctx;
+    const filterSeller = input.sellerName;
 
     // 1. Pridobi sold trades z buyLocation (predpostavimo, da je to "kupec" za nas — prodajalec)
     // In pridobi listing-e z sellerName (to so ljudje od katerih smo kupovali)
@@ -31,7 +44,7 @@ export async function POST(req: NextRequest) {
     });
 
     if (soldTrades.length === 0) {
-      return NextResponse.json({
+      return apiOk({
         ok: true,
         customers: [],
         message: 'Ni prodaj za analizo customer LTV.',
@@ -40,72 +53,10 @@ export async function POST(req: NextRequest) {
 
     // 2. Agregacija po buyLocation (klienti od katerih smo kupovali)
     // In po sellLocation (ljudje ki so kupili od nas)
-    const byBuyer: Record<string, {
-      purchases: any[];
-      totalSpent: number;
-      count: number;
-      avgOrder: number;
-      firstPurchase: Date;
-      lastPurchase: Date;
-      categories: Set<string>;
-      profit: number;
-    }> = {};
-
-    for (const t of soldTrades) {
-      const buyer = t.sellLocation || 'neznan';
-      if (filterSeller && buyer !== filterSeller) continue;
-      if (!byBuyer[buyer]) {
-        byBuyer[buyer] = {
-          purchases: [], totalSpent: 0, count: 0, avgOrder: 0,
-          firstPurchase: new Date(8e15), lastPurchase: new Date(0),
-          categories: new Set(), profit: 0,
-        };
-      }
-      const b = byBuyer[buyer];
-      b.purchases.push(t);
-      b.totalSpent += (t.sellPrice ?? 0) - (t.sellFees ?? 0);
-      b.count++;
-      b.profit += (t.sellPrice ?? 0) - (t.sellFees ?? 0) - t.buyPrice - (t.buyFees ?? 0);
-      b.categories.add(t.category || 'drugo');
-      if (t.sellDate) {
-        if (t.sellDate < b.firstPurchase) b.firstPurchase = t.sellDate;
-        if (t.sellDate > b.lastPurchase) b.lastPurchase = t.sellDate;
-      }
-    }
-
-    // Filtriraj samo kupce z vsaj 1 nakupom
-    const topBuyers = Object.entries(byBuyer)
-      .filter(([_, b]) => b.count >= 1)
-      .map(([name, b]) => {
-        const daysActive = b.firstPurchase.getTime() < b.lastPurchase.getTime()
-          ? Math.round((b.lastPurchase.getTime() - b.firstPurchase.getTime()) / (24 * 60 * 60 * 1000))
-          : 0;
-        const avgOrder = b.count > 0 ? Math.round(b.totalSpent / b.count) : 0;
-        // Purchase frequency (purchases per month)
-        const monthsActive = Math.max(1, daysActive / 30);
-        const frequencyPerMonth = b.count / monthsActive;
-        // Repeat buyer = več kot 1 nakup
-        const isRepeat = b.count > 1;
-        return {
-          name,
-          totalSpent: Math.round(b.totalSpent),
-          purchaseCount: b.count,
-          avgOrderValue: avgOrder,
-          profit: Math.round(b.profit),
-          daysActive,
-          monthsActive: Math.round(monthsActive),
-          frequencyPerMonth: Math.round(frequencyPerMonth * 10) / 10,
-          isRepeat,
-          categories: Array.from(b.categories).slice(0, 5),
-          firstPurchase: b.firstPurchase.toISOString(),
-          lastPurchase: b.lastPurchase.toISOString(),
-        };
-      })
-      .sort((a, b) => b.totalSpent - a.totalSpent)
-      .slice(0, 30);
+    const topBuyers = aggregateTopBuyers(soldTrades, filterSeller);
 
     if (topBuyers.length === 0) {
-      return NextResponse.json({
+      return apiOk({
         ok: true,
         customers: [],
         message: 'Ni dovolj kupcev za LTV analizo.',
@@ -113,20 +64,124 @@ export async function POST(req: NextRequest) {
     }
 
     // 3. AI LTV napoved
-    const settings = await getSettingsRow();
-    const aiSettings: AiSettings = {
-      provider: settings.aiProvider as AiProviderType,
-      baseUrl: settings.aiBaseUrl, apiKey: settings.aiApiKey, model: settings.aiModel,
-      fallbackProvider: (settings.fallbackProvider || '') as AiProviderType | '',
-      fallbackBaseUrl: settings.fallbackBaseUrl || '', fallbackApiKey: settings.fallbackApiKey || '',
-      fallbackModel: settings.fallbackModel || '',
-    };
+    const prompt = buildPrompt(topBuyers);
 
-    const buyersStr = topBuyers.slice(0, 25).map(b =>
-      `- ${b.name}: ${b.purchaseCount} nakupov, ${b.totalSpent}€ skupaj, ${b.avgOrderValue}€ povp., ${b.profit}€ dobička, ${b.daysActive}d aktiven, ${b.frequencyPerMonth}/mesec, kategorije: ${b.categories.join('/')}`
-    ).join('\n');
+    const raw = await callAi(prompt);
+    const parsed: any = parseAi(raw);
+    const buyerMap = new Map(topBuyers.map(b => [b.name, b]));
 
-    const prompt = `Si ekspert za customer lifetime value (CLV/LTV) analizo v e-commerce.
+    const customers = transformCustomers(parsed, buyerMap);
+    const summary = buildSummary(topBuyers, customers);
+
+    return apiOk({
+      ok: true,
+      insights: String(parsed?.insights ?? '').slice(0, 500),
+      customers,
+      summary,
+    });
+  },
+});
+
+// --- Pomožne funkcije (čiste, testabilne) --------------------------------
+
+interface BuyerAggregate {
+  name: string;
+  totalSpent: number;
+  purchaseCount: number;
+  avgOrderValue: number;
+  profit: number;
+  daysActive: number;
+  monthsActive: number;
+  frequencyPerMonth: number;
+  isRepeat: boolean;
+  categories: string[];
+  firstPurchase: string;
+  lastPurchase: string;
+}
+
+function aggregateTopBuyers(
+  soldTrades: Array<{
+    sellLocation: string | null;
+    buyPrice: number;
+    buyFees: number | null;
+    sellPrice: number | null;
+    sellFees: number | null;
+    category: string | null;
+    sellDate: Date | null;
+  }>,
+  filterSeller: string
+): BuyerAggregate[] {
+  const byBuyer: Record<string, {
+    purchases: any[];
+    totalSpent: number;
+    count: number;
+    avgOrder: number;
+    firstPurchase: Date;
+    lastPurchase: Date;
+    categories: Set<string>;
+    profit: number;
+  }> = {};
+
+  for (const t of soldTrades) {
+    const buyer = t.sellLocation || 'neznan';
+    if (filterSeller && buyer !== filterSeller) continue;
+    if (!byBuyer[buyer]) {
+      byBuyer[buyer] = {
+        purchases: [], totalSpent: 0, count: 0, avgOrder: 0,
+        firstPurchase: new Date(8e15), lastPurchase: new Date(0),
+        categories: new Set(), profit: 0,
+      };
+    }
+    const b = byBuyer[buyer];
+    b.purchases.push(t);
+    b.totalSpent += (t.sellPrice ?? 0) - (t.sellFees ?? 0);
+    b.count++;
+    b.profit += (t.sellPrice ?? 0) - (t.sellFees ?? 0) - t.buyPrice - (t.buyFees ?? 0);
+    b.categories.add(t.category || 'drugo');
+    if (t.sellDate) {
+      if (t.sellDate < b.firstPurchase) b.firstPurchase = t.sellDate;
+      if (t.sellDate > b.lastPurchase) b.lastPurchase = t.sellDate;
+    }
+  }
+
+  // Filtriraj samo kupce z vsaj 1 nakupom
+  return Object.entries(byBuyer)
+    .filter(([, b]) => b.count >= 1)
+    .map(([name, b]) => {
+      const daysActive = b.firstPurchase.getTime() < b.lastPurchase.getTime()
+        ? Math.round((b.lastPurchase.getTime() - b.firstPurchase.getTime()) / (24 * 60 * 60 * 1000))
+        : 0;
+      const avgOrder = b.count > 0 ? Math.round(b.totalSpent / b.count) : 0;
+      // Purchase frequency (purchases per month)
+      const monthsActive = Math.max(1, daysActive / 30);
+      const frequencyPerMonth = b.count / monthsActive;
+      // Repeat buyer = več kot 1 nakup
+      const isRepeat = b.count > 1;
+      return {
+        name,
+        totalSpent: Math.round(b.totalSpent),
+        purchaseCount: b.count,
+        avgOrderValue: avgOrder,
+        profit: Math.round(b.profit),
+        daysActive,
+        monthsActive: Math.round(monthsActive),
+        frequencyPerMonth: Math.round(frequencyPerMonth * 10) / 10,
+        isRepeat,
+        categories: Array.from(b.categories).slice(0, 5),
+        firstPurchase: b.firstPurchase.toISOString(),
+        lastPurchase: b.lastPurchase.toISOString(),
+      };
+    })
+    .sort((a, b) => b.totalSpent - a.totalSpent)
+    .slice(0, 30);
+}
+
+function buildPrompt(topBuyers: BuyerAggregate[]): string {
+  const buyersStr = topBuyers.slice(0, 25).map(b =>
+    `- ${b.name}: ${b.purchaseCount} nakupov, ${b.totalSpent}€ skupaj, ${b.avgOrderValue}€ povp., ${b.profit}€ dobička, ${b.daysActive}d aktiven, ${b.frequencyPerMonth}/mesec, kategorije: ${b.categories.join('/')}`
+  ).join('\n');
+
+  return `Si ekspert za customer lifetime value (CLV/LTV) analizo v e-commerce.
 Za vsakega kupca napovej prihodnjo vrednost in predlagaj strategijo zadrževanja.
 
 TOP KUPCI (po totalSpent):
@@ -174,75 +229,47 @@ Odgovori LE z JSON:
     "at_risk_count": <number>
   }
 }`;
+}
 
-    let raw = '';
-    try {
-      raw = await callProviderForRaw(aiSettings, prompt);
-    } catch (primaryError: any) {
-      if (aiSettings.fallbackProvider && aiSettings.fallbackModel) {
-        const fb: AiSettings = {
-          provider: aiSettings.fallbackProvider,
-          baseUrl: aiSettings.fallbackBaseUrl || '',
-          apiKey: aiSettings.fallbackApiKey || '',
-          model: aiSettings.fallbackModel,
-        };
-        raw = await callProviderForRaw(fb, prompt);
-      } else {
-        return NextResponse.json({ error: primaryError?.message ?? 'AI failed' }, { status: 500 });
-      }
-    }
-
-    const parsed: any = parseJsonLooseExported(raw);
-    const buyerMap = new Map(topBuyers.map(b => [b.name, b]));
-
-    const customers = (parsed?.customers || [])
-      .filter((c: any) => buyerMap.has(String(c?.name ?? '')))
-      .map((c: any) => {
-        const name = String(c.name);
-        const orig = buyerMap.get(name)!;
-        return {
-          ...orig,
-          segment: ['vip', 'loyal', 'occasional', 'one_time', 'at_risk'].includes(String(c?.segment))
-            ? String(c.segment) : 'occasional',
-          predictedLtv12mEur: Math.max(0, Number(c?.predicted_ltv_12m_eur ?? orig.totalSpent)),
-          churnRiskPct: Math.max(0, Math.min(100, Number(c?.churn_risk_pct ?? 50))),
-          retentionStrategy: ['win_back_email', 'bundle_offer', 'loyalty_discount', 'cross_sell', 'none'].includes(String(c?.retention_strategy))
-            ? String(c.retention_strategy) : 'none',
-          crossSellCategories: Array.isArray(c?.cross_sell_categories)
-            ? c.cross_sell_categories.slice(0, 5).map((s: any) => String(s).slice(0, 50))
-            : [],
-          personalizedOffer: String(c?.personalized_offer ?? '').slice(0, 250),
-          reasoning: String(c?.reasoning ?? '').slice(0, 200),
-        };
-      });
-
-    const summary = {
-      totalRevenue: topBuyers.reduce((s, b) => s + b.totalSpent, 0),
-      totalProfit: topBuyers.reduce((s, b) => s + b.profit, 0),
-      repeatCustomersPct: Math.round((topBuyers.filter(b => b.isRepeat).length / Math.max(1, topBuyers.length)) * 100),
-      avgCustomerLtv: customers.length > 0
-        ? Math.round(customers.reduce((s, c) => s + c.predictedLtv12mEur, 0) / customers.length)
-        : 0,
-      vipCount: customers.filter(c => c.segment === 'vip').length,
-      atRiskCount: customers.filter(c => c.segment === 'at_risk').length,
-    };
-
-    // Increment AI usage
-    const today = new Date().toISOString().slice(0, 10);
-    if (settings.aiCallsDate !== today) {
-      await db.settings.update({ where: { id: 'singleton' }, data: { aiCallsDate: today, aiCallsToday: 1 } });
-    } else {
-      await db.settings.update({ where: { id: 'singleton' }, data: { aiCallsToday: { increment: 1 } } });
-    }
-
-    return NextResponse.json({
-      ok: true,
-      insights: String(parsed?.insights ?? '').slice(0, 500),
-      customers,
-      summary,
+function transformCustomers(parsed: any, buyerMap: Map<string, BuyerAggregate>): any[] {
+  return (parsed?.customers || [])
+    .filter((c: any) => buyerMap.has(String(c?.name ?? '')))
+    .map((c: any) => {
+      const name = String(c.name);
+      const orig = buyerMap.get(name)!;
+      return {
+        ...orig,
+        segment: ['vip', 'loyal', 'occasional', 'one_time', 'at_risk'].includes(String(c?.segment))
+          ? String(c.segment) : 'occasional',
+        predictedLtv12mEur: Math.max(0, Number(c?.predicted_ltv_12m_eur ?? orig.totalSpent)),
+        churnRiskPct: Math.max(0, Math.min(100, Number(c?.churn_risk_pct ?? 50))),
+        retentionStrategy: ['win_back_email', 'bundle_offer', 'loyalty_discount', 'cross_sell', 'none'].includes(String(c?.retention_strategy))
+          ? String(c.retention_strategy) : 'none',
+        crossSellCategories: Array.isArray(c?.cross_sell_categories)
+          ? c.cross_sell_categories.slice(0, 5).map((s: any) => String(s).slice(0, 50))
+          : [],
+        personalizedOffer: String(c?.personalized_offer ?? '').slice(0, 250),
+        reasoning: String(c?.reasoning ?? '').slice(0, 200),
+      };
     });
-  } catch (e: any) {
-    logger.error("/api/ai/customer-ltv", "POST handler failed", e);
-    return NextResponse.json({ error: e?.message ?? 'Napaka' }, { status: 500 });
-  }
+}
+
+function buildSummary(topBuyers: BuyerAggregate[], customers: any[]): {
+  totalRevenue: number;
+  totalProfit: number;
+  repeatCustomersPct: number;
+  avgCustomerLtv: number;
+  vipCount: number;
+  atRiskCount: number;
+} {
+  return {
+    totalRevenue: topBuyers.reduce((s, b) => s + b.totalSpent, 0),
+    totalProfit: topBuyers.reduce((s, b) => s + b.profit, 0),
+    repeatCustomersPct: Math.round((topBuyers.filter(b => b.isRepeat).length / Math.max(1, topBuyers.length)) * 100),
+    avgCustomerLtv: customers.length > 0
+      ? Math.round(customers.reduce((s, c) => s + c.predictedLtv12mEur, 0) / customers.length)
+      : 0,
+    vipCount: customers.filter(c => c.segment === 'vip').length,
+    atRiskCount: customers.filter(c => c.segment === 'at_risk').length,
+  };
 }

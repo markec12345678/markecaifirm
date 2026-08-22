@@ -1,4 +1,4 @@
-// v7.82: AI Market Opportunity Scanner — AI skenira trg za NOVIMI
+// v7.82 / v8.96.7-batch4: AI Market Opportunity Scanner — AI skenira trg za NOVIMI
 // priložnostmi — underserved kategorije, price discrepancies, emerging
 // trendi, arbitrage možnosti. "Top opportunity: UNDERSERVED_CATEGORY (moda
 // accessories, +400€ potential, 85% confidence). Action: search Bolha za
@@ -19,23 +19,14 @@
 //
 // GET+POST /api/ai/market-opportunity-scanner
 // (AI-enhanced + grounding + anti-hallucination + 6h cache + deterministic fallback)
+// Refaktoriran z withAiRoute helperjem (v8.96.7) + enforceBudget guard.
 
-import { NextRequest, NextResponse } from 'next/server';
-import { db } from '@/lib/db';
-import { getSettingsRow } from '@/lib/pipeline';
-import {
-  callProviderForRaw,
-  parseJsonLooseExported,
-  type AiProviderType,
-  type AiSettings,
-} from '@/lib/ai';
+import { withAiRoute, AI_ROUTE_DEFAULTS, type AiRouteContext } from '@/lib/with-ai-route';
+import { apiOk } from '@/lib/api-response';
 import { GROUNDING_PROMPT_SUFFIX } from '@/lib/anti-hallucination';
 import { getCachedAI, setCachedAI } from '@/lib/ai-cache';
-import { checkRateLimit, rateLimitResponse } from '@/lib/rate-limit';
-import { logger } from '@/lib/logger';
 
-export const runtime = 'nodejs';
-export const dynamic = 'force-dynamic';
+export const { runtime, dynamic } = AI_ROUTE_DEFAULTS;
 export const maxDuration = 60;
 
 // --- Types ---------------------------------------------------------------
@@ -637,19 +628,27 @@ function buildDeterministicPrioritizedActions(
   return out;
 }
 
+// --- Input ---------------------------------------------------------------
+
+// eslint-disable-next-line @typescript-eslint/no-empty-object-type
+interface MarketOpportunityScannerInput {}
+
 // --- Handler -------------------------------------------------------------
 
-export async function GET(req: NextRequest) {
-  return handleMarketOpportunityScanner(req);
-}
-export async function POST(req: NextRequest) {
-  return handleMarketOpportunityScanner(req);
-}
+const marketOpportunityScannerHandler = withAiRoute<MarketOpportunityScannerInput>({
+  endpoint: '/api/ai/market-opportunity-scanner',
+  maxDuration: 60,
+  enforceBudget: true, // AI klic — preveri budget
+  method: 'GET', // GET+POST — body ignored
 
-async function handleMarketOpportunityScanner(req: NextRequest) {
-  try {
-    const rl = checkRateLimit(req, 'ai-market-opportunity-scanner', 20);
-    if (!rl.allowed) return rateLimitResponse(rl);
+  parseBody: async (req) => {
+    await req.json().catch(() => ({}));
+    return {};
+  },
+
+  // No validateInput — body ignored
+  handler: async (_input, ctx: AiRouteContext) => {
+    const { db, callAi, parseAi, logger } = ctx;
 
     const now = Date.now();
     const cutoff30d = new Date(now - 30 * 86_400_000);
@@ -731,7 +730,7 @@ async function handleMarketOpportunityScanner(req: NextRequest) {
     };
 
     if (listings.length === 0) {
-      return NextResponse.json(emptyResponse);
+      return apiOk(emptyResponse);
     }
 
     // 3) Compute deterministic scan
@@ -761,7 +760,7 @@ async function handleMarketOpportunityScanner(req: NextRequest) {
       summary: string;
     }>(cacheKey);
     if (cached) {
-      return NextResponse.json({
+      return apiOk({
         ok: true,
         topOpportunities: cached.topOpportunities,
         marketGaps: cached.marketGaps,
@@ -775,20 +774,6 @@ async function handleMarketOpportunityScanner(req: NextRequest) {
     }
 
     // 5) AI prompt with grounding
-    const settings = await getSettingsRow();
-    const aiSettings: AiSettings = {
-      provider: settings.aiProvider as AiProviderType,
-      baseUrl: settings.aiBaseUrl,
-      apiKey: settings.aiApiKey,
-      model: settings.aiModel,
-      fallbackProvider: (settings.fallbackProvider || '') as
-        | AiProviderType
-        | '',
-      fallbackBaseUrl: settings.fallbackBaseUrl || '',
-      fallbackApiKey: settings.fallbackApiKey || '',
-      fallbackModel: settings.fallbackModel || '',
-    };
-
     const catSummary = Array.from(catAggs.values())
       .sort((a, b) => b.total - a.total)
       .slice(0, 20)
@@ -872,8 +857,8 @@ VRNI LE JSON:
     let aiUsed = false;
 
     try {
-      const raw = await callProviderForRaw(aiSettings, prompt);
-      const parsed = parseJsonLooseExported(raw) as AiScanResponse | null;
+      const raw = await callAi(prompt);
+      const parsed = parseAi(raw) as AiScanResponse | null;
 
       if (parsed && typeof parsed === 'object') {
         // topOpportunities
@@ -1042,7 +1027,7 @@ VRNI LE JSON:
       });
     }
 
-    return NextResponse.json({
+    return apiOk({
       ok: true,
       topOpportunities: finalTopOpp,
       marketGaps: finalMarketGaps,
@@ -1052,15 +1037,9 @@ VRNI LE JSON:
       summary: finalSummary,
       aiUsed,
     });
-  } catch (err: any) {
-    logger.error(
-      '/api/ai/market-opportunity-scanner',
-      'handler failed',
-      err,
-    );
-    return NextResponse.json(
-      { error: err?.message ?? 'Napaka' },
-      { status: 500 },
-    );
-  }
-}
+  },
+});
+
+export const GET = marketOpportunityScannerHandler;
+export const POST = marketOpportunityScannerHandler;
+

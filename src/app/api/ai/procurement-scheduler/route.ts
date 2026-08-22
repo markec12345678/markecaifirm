@@ -1,22 +1,34 @@
-// v6.39: AI Smart Procurement Scheduler — načrtuje optimalen čas za nakupovanje
+// v6.39 / v8.96.0-batch2: AI Smart Procurement Scheduler — načrtuje optimalen čas za nakupovanje
+// Refaktoriran z withAiRoute helperjem (v8.96.0-batch2) + enforceBudget guard.
+//
 // POST /api/ai/procurement-scheduler
 // Body: { budget?: number }
 // Returns: { ok, schedule: { calendar, items: [], budgetPlan, timing, alerts } }
 
-import { NextRequest, NextResponse } from 'next/server';
-import { db } from '@/lib/db';
-import { getSettingsRow } from '@/lib/pipeline';
-import { callProviderForRaw, parseJsonLooseExported, type AiProviderType, type AiSettings } from '@/lib/ai';
-import { logger } from '@/lib/logger';
+import { withAiRoute, AI_ROUTE_DEFAULTS, type AiRouteContext } from '@/lib/with-ai-route';
+import { apiOk } from '@/lib/api-response';
 
-export const runtime = 'nodejs';
-export const dynamic = 'force-dynamic';
+export const { runtime, dynamic } = AI_ROUTE_DEFAULTS;
 export const maxDuration = 90;
 
-export async function POST(req: NextRequest) {
-  try {
+interface ProcurementSchedulerInput {
+  budget: number;
+}
+
+export const POST = withAiRoute<ProcurementSchedulerInput>({
+  endpoint: '/api/ai/procurement-scheduler',
+  maxDuration: 90,
+  enforceBudget: true, // AI klic — preveri budget
+
+  parseBody: async (req) => {
     const body = await req.json().catch(() => ({}));
-    const budget = Math.max(0, Number(body?.budget) || 0);
+    return { budget: Math.max(0, Number(body?.budget) || 0) };
+  },
+
+  // No validateInput — budget ima default 0
+  handler: async (input, ctx: AiRouteContext) => {
+    const { db, callAi, parseAi } = ctx;
+    const { budget } = input;
 
     const heldTrades = await db.trade.findMany({
       where: { status: 'held' },
@@ -41,46 +53,73 @@ export async function POST(req: NextRequest) {
     });
 
     if (soldTrades.length === 0 && recentListings.length === 0) {
-      return NextResponse.json({ ok: true, schedule: null, message: 'Ni podatkov za procurement scheduling.' });
+      return apiOk({ ok: true, schedule: null, message: 'Ni podatkov za procurement scheduling.' });
     }
-
-    const settings = await getSettingsRow();
-    const aiSettings: AiSettings = {
-      provider: settings.aiProvider as AiProviderType,
-      baseUrl: settings.aiBaseUrl, apiKey: settings.aiApiKey, model: settings.aiModel,
-      fallbackProvider: (settings.fallbackProvider || '') as AiProviderType | '',
-      fallbackBaseUrl: settings.fallbackBaseUrl || '', fallbackApiKey: settings.fallbackApiKey || '',
-      fallbackModel: settings.fallbackModel || '',
-    };
 
     // Analiza best buy timing per kategorija
-    const catData: Record<string, { count: number; avgRoi: number; avgDays: number }> = {};
-    for (const t of soldTrades) {
-      const c = t.category || 'drugo';
-      if (!catData[c]) catData[c] = { count: 0, avgRoi: 0, avgDays: 0 };
-      catData[c].count++;
-      catData[c].avgRoi += t.buyPrice > 0 ? (((t.sellPrice ?? 0) - t.buyPrice) / t.buyPrice) * 100 : 0;
-      if (t.sellDate && t.buyDate) catData[c].avgDays += Math.round((t.sellDate.getTime() - t.buyDate.getTime()) / (24*60*60*1000));
-    }
-    for (const c of Object.keys(catData)) { catData[c].avgRoi = Math.round(catData[c].avgRoi / catData[c].count); catData[c].avgDays = Math.round(catData[c].avgDays / catData[c].count); }
+    const catData = computeCatData(soldTrades);
 
     const heldStr = heldTrades.slice(0, 10).map(t => `- ${t.title} | ${t.category} | ${Math.round((Date.now()-t.buyDate.getTime())/(24*60*60*1000))}d`).join('\n');
     const recentStr = recentListings.slice(0, 10).map(l => `- ${l.title} | ${l.price}€ | deal ${l.dealScore}/100 | ${l.monitor?.source}`).join('\n');
     const catStr = Object.entries(catData).sort(([,a],[,b]) => b.avgRoi - a.avgRoi).slice(0, 8).map(([cat, d]) => `- ${cat}: ${d.count} prodaj, ${d.avgRoi}% ROI, ${d.avgDays}d`).join('\n');
 
-    const prompt = `Si AI procurement scheduler za optimalno načrtovanje nakupov.
+    const prompt = buildPrompt({
+      heldCount: heldTrades.length,
+      heldStr,
+      budget,
+      recentStr,
+      catStr,
+    });
+
+    const raw = await callAi(prompt);
+    const parsed: any = parseAi(raw);
+    const schedule = transformSchedule(parsed);
+
+    return apiOk({ ok: true, schedule, budget });
+  },
+});
+
+// --- Pomožne funkcije (čiste, testabilne) --------------------------------
+
+interface CatAgg { count: number; avgRoi: number; avgDays: number; }
+
+function computeCatData(
+  soldTrades: Array<{ category: string | null; buyPrice: number; sellPrice: number | null; buyDate: Date; sellDate: Date | null }>
+): Record<string, CatAgg> {
+  const catData: Record<string, CatAgg> = {};
+  for (const t of soldTrades) {
+    const c = t.category || 'drugo';
+    if (!catData[c]) catData[c] = { count: 0, avgRoi: 0, avgDays: 0 };
+    catData[c].count++;
+    catData[c].avgRoi += t.buyPrice > 0 ? (((t.sellPrice ?? 0) - t.buyPrice) / t.buyPrice) * 100 : 0;
+    if (t.sellDate && t.buyDate) catData[c].avgDays += Math.round((t.sellDate.getTime() - t.buyDate.getTime()) / (24*60*60*1000));
+  }
+  for (const c of Object.keys(catData)) { catData[c].avgRoi = Math.round(catData[c].avgRoi / catData[c].count); catData[c].avgDays = Math.round(catData[c].avgDays / catData[c].count); }
+  return catData;
+}
+
+interface PromptData {
+  heldCount: number;
+  heldStr: string;
+  budget: number;
+  recentStr: string;
+  catStr: string;
+}
+
+function buildPrompt(d: PromptData): string {
+  return `Si AI procurement scheduler za optimalno načrtovanje nakupov.
 Določi KDAJ, KAJ in KJE kupovati v naslednjih 30 dneh za max dobiček.
 
-TRENUTNI INVENTAR: ${heldTrades.length} itemov
-${heldStr || '- Prazno'}
+TRENUTNI INVENTAR: ${d.heldCount} itemov
+${d.heldStr || '- Prazno'}
 
-${budget > 0 ? `BUDGET: ${budget}€` : 'BUDGET: neomejen'}
+${d.budget > 0 ? `BUDGET: ${d.budget}€` : 'BUDGET: neomejen'}
 
 NEDEAVNE PRILIŽNOSTI (7d):
-${recentStr || '- Ni novih'}
+${d.recentStr || '- Ni novih'}
 
 KATEGORIJSKI PODATKI:
-${catStr || '- Ni podatkov'}
+${d.catStr || '- Ni podatkov'}
 
 Procurement timing faktorji:
 1. SEASONAL: smuči pozimi ceneje, kolesa poleti dražje → kupuj PRED sezono
@@ -90,7 +129,7 @@ Procurement timing faktorji:
 5. HOLIDAY: pred prazniki = dražje, po praznikih = ceneje (returns)
 6. MARKET_CYCLE: veliko podobnih oglasov = buyer's market (ceneje)
 7. STOCKOUT: če za kategorijo 0 held → urgentno kupi
-8. CASH_FLOW: čakaj na prodavo pred novim nakupom (razen urgentno)
+8. CASH_FLOW: čakaj na prodajo pred novim nakupom (razen urgentno)
 
 Scheduling strategije:
 - "bulk_buy": kupi več naenkrat (nižji shipping, boljša izbira)
@@ -146,74 +185,58 @@ Odgovori LE z JSON:
     "procurement_efficiency_score": <number 0-100>
   }
 }`;
+}
 
-    let raw = '';
-    try { raw = await callProviderForRaw(aiSettings, prompt); }
-    catch (primaryError: any) {
-      if (aiSettings.fallbackProvider && aiSettings.fallbackModel) {
-        const fb: AiSettings = { provider: aiSettings.fallbackProvider, baseUrl: aiSettings.fallbackBaseUrl || '', apiKey: aiSettings.fallbackApiKey || '', model: aiSettings.fallbackModel };
-        raw = await callProviderForRaw(fb, prompt);
-      } else { return NextResponse.json({ error: primaryError?.message ?? 'AI failed' }, { status: 500 }); }
-    }
-
-    const parsed: any = parseJsonLooseExported(raw);
-
-    const schedule = {
-      insights: String(parsed?.insights ?? '').slice(0, 500),
-      calendar: (parsed?.calendar || []).slice(0, 4).map((c: any) => ({
-        week: Math.max(1, Number(c?.week ?? 1)),
-        bestBuyDays: (c?.best_buy_days || []).slice(0, 5).map((d: any) => String(d).slice(0, 20)),
-        bestBuyTime: String(c?.best_buy_time ?? '').slice(0, 100),
-        categoriesToBuy: (c?.categories_to_buy || []).slice(0, 4).map((cat: any) => ({
-          category: String(cat?.category ?? '').slice(0, 50), reason: String(cat?.reason ?? '').slice(0, 100),
-          urgency: ['high', 'medium', 'low'].includes(String(cat?.urgency)) ? String(cat.urgency) : 'medium',
-        })),
-        expectedDealQuality: ['high', 'medium', 'low'].includes(String(c?.expected_deal_quality)) ? String(c.expected_deal_quality) : 'medium',
-        budgetAllocationEur: Math.max(0, Number(c?.budget_allocation_eur ?? 0)),
+function transformSchedule(parsed: any) {
+  return {
+    insights: String(parsed?.insights ?? '').slice(0, 500),
+    calendar: (parsed?.calendar || []).slice(0, 4).map((c: any) => ({
+      week: Math.max(1, Number(c?.week ?? 1)),
+      bestBuyDays: (c?.best_buy_days || []).slice(0, 5).map((d: any) => String(d).slice(0, 20)),
+      bestBuyTime: String(c?.best_buy_time ?? '').slice(0, 100),
+      categoriesToBuy: (c?.categories_to_buy || []).slice(0, 4).map((cat: any) => ({
+        category: String(cat?.category ?? '').slice(0, 50), reason: String(cat?.reason ?? '').slice(0, 100),
+        urgency: ['high', 'medium', 'low'].includes(String(cat?.urgency)) ? String(cat.urgency) : 'medium',
       })),
-      items: (parsed?.items || []).slice(0, 12).map((i: any) => ({
-        category: String(i?.category ?? '').slice(0, 50), itemToBuy: String(i?.item_to_buy ?? '').slice(0, 150),
-        source: String(i?.source ?? '').slice(0, 30), searchKeywords: String(i?.search_keywords ?? '').slice(0, 150),
-        maxBuyPriceEur: Math.max(0, Number(i?.max_buy_price_eur ?? 0)), expectedSellPriceEur: Math.max(0, Number(i?.expected_sell_price_eur ?? 0)),
-        expectedRoiPct: Math.round(Number(i?.expected_roi_pct ?? 0)), bestTimeToBuy: String(i?.best_time_to_buy ?? '').slice(0, 150),
-        monitorSetup: { keywords: String(i?.monitor_setup?.keywords ?? '').slice(0, 150),
-          alertThreshold: Math.max(0, Math.min(100, Number(i?.monitor_setup?.alert_threshold ?? 70))),
-          intervalMinutes: Math.max(5, Number(i?.monitor_setup?.interval_minutes ?? 30)) },
-        reasoning: String(i?.reasoning ?? '').slice(0, 150),
+      expectedDealQuality: ['high', 'medium', 'low'].includes(String(c?.expected_deal_quality)) ? String(c.expected_deal_quality) : 'medium',
+      budgetAllocationEur: Math.max(0, Number(c?.budget_allocation_eur ?? 0)),
+    })),
+    items: (parsed?.items || []).slice(0, 12).map((i: any) => ({
+      category: String(i?.category ?? '').slice(0, 50), itemToBuy: String(i?.item_to_buy ?? '').slice(0, 150),
+      source: String(i?.source ?? '').slice(0, 30), searchKeywords: String(i?.search_keywords ?? '').slice(0, 150),
+      maxBuyPriceEur: Math.max(0, Number(i?.max_buy_price_eur ?? 0)), expectedSellPriceEur: Math.max(0, Number(i?.expected_sell_price_eur ?? 0)),
+      expectedRoiPct: Math.round(Number(i?.expected_roi_pct ?? 0)), bestTimeToBuy: String(i?.best_time_to_buy ?? '').slice(0, 150),
+      monitorSetup: { keywords: String(i?.monitor_setup?.keywords ?? '').slice(0, 150),
+        alertThreshold: Math.max(0, Math.min(100, Number(i?.monitor_setup?.alert_threshold ?? 70))),
+        intervalMinutes: Math.max(5, Number(i?.monitor_setup?.interval_minutes ?? 30)) },
+      reasoning: String(i?.reasoning ?? '').slice(0, 150),
+    })),
+    budgetPlan: (parsed?.budget_plan || []).slice(0, 4).map((b: any) => ({
+      week: Math.max(1, Number(b?.week ?? 1)), spendEur: Math.round(Number(b?.spend_eur ?? 0)),
+      expectedReturnEur: Math.round(Number(b?.expected_return_eur ?? 0)),
+      cumulativeSpendEur: Math.round(Number(b?.cumulative_spend_eur ?? 0)),
+      cumulativeReturnEur: Math.round(Number(b?.cumulative_return_eur ?? 0)),
+    })),
+    timing: {
+      bestOverallBuyWindow: String(parsed?.timing?.best_overall_buy_window ?? '').slice(0, 150),
+      avoidPeriods: (parsed?.timing?.avoid_periods || []).slice(0, 4).map((a: any) => String(a).slice(0, 100)),
+      paydayAlerts: (parsed?.timing?.payday_alerts || []).slice(0, 4).map((p: any) => Number(p) ?? 0),
+      seasonalDeadlines: (parsed?.timing?.seasonal_deadlines || []).slice(0, 4).map((s: any) => ({
+        category: String(s?.category ?? '').slice(0, 50), deadline: String(s?.deadline ?? '').slice(0, 80),
+        reason: String(s?.reason ?? '').slice(0, 100),
       })),
-      budgetPlan: (parsed?.budget_plan || []).slice(0, 4).map((b: any) => ({
-        week: Math.max(1, Number(b?.week ?? 1)), spendEur: Math.round(Number(b?.spend_eur ?? 0)),
-        expectedReturnEur: Math.round(Number(b?.expected_return_eur ?? 0)),
-        cumulativeSpendEur: Math.round(Number(b?.cumulative_spend_eur ?? 0)),
-        cumulativeReturnEur: Math.round(Number(b?.cumulative_return_eur ?? 0)),
-      })),
-      timing: {
-        bestOverallBuyWindow: String(parsed?.timing?.best_overall_buy_window ?? '').slice(0, 150),
-        avoidPeriods: (parsed?.timing?.avoid_periods || []).slice(0, 4).map((a: any) => String(a).slice(0, 100)),
-        paydayAlerts: (parsed?.timing?.payday_alerts || []).slice(0, 4).map((p: any) => Number(p) ?? 0),
-        seasonalDeadlines: (parsed?.timing?.seasonal_deadlines || []).slice(0, 4).map((s: any) => ({
-          category: String(s?.category ?? '').slice(0, 50), deadline: String(s?.deadline ?? '').slice(0, 80),
-          reason: String(s?.reason ?? '').slice(0, 100),
-        })),
-      },
-      alerts: (parsed?.alerts || []).slice(0, 6).map((a: any) => ({
-        type: String(a?.type ?? '').slice(0, 50), message: String(a?.message ?? '').slice(0, 200),
-        action: String(a?.action ?? '').slice(0, 150), priority: ['high', 'medium', 'low'].includes(String(a?.priority)) ? String(a.priority) : 'medium',
-      })),
-      summary: {
-        totalBudgetPlannedEur: Math.round(Number(parsed?.summary?.total_budget_planned_eur ?? 0)),
-        totalExpectedProfitEur: Math.round(Number(parsed?.summary?.total_expected_profit_eur ?? 0)),
-        avgExpectedRoiPct: Math.round(Number(parsed?.summary?.avg_expected_roi_pct ?? 0)),
-        itemsPlanned: Math.max(0, Number(parsed?.summary?.items_planned ?? 0)),
-        bestWeek: Math.max(1, Number(parsed?.summary?.best_week ?? 1)),
-        procurementEfficiencyScore: Math.max(0, Math.min(100, Number(parsed?.summary?.procurement_efficiency_score ?? 50))),
-      },
-    };
-
-    const today = new Date().toISOString().slice(0, 10);
-    if (settings.aiCallsDate !== today) { await db.settings.update({ where: { id: 'singleton' }, data: { aiCallsDate: today, aiCallsToday: 1 } }); }
-    else { await db.settings.update({ where: { id: 'singleton' }, data: { aiCallsToday: { increment: 1 } } }); }
-
-    return NextResponse.json({ ok: true, schedule, budget });
-  } catch (e: any) { logger.error("/api/ai/procurement-scheduler", "POST handler failed", e); return NextResponse.json({ error: e?.message ?? 'Napaka' }, { status: 500 }); }
+    },
+    alerts: (parsed?.alerts || []).slice(0, 6).map((a: any) => ({
+      type: String(a?.type ?? '').slice(0, 50), message: String(a?.message ?? '').slice(0, 200),
+      action: String(a?.action ?? '').slice(0, 150), priority: ['high', 'medium', 'low'].includes(String(a?.priority)) ? String(a.priority) : 'medium',
+    })),
+    summary: {
+      totalBudgetPlannedEur: Math.round(Number(parsed?.summary?.total_budget_planned_eur ?? 0)),
+      totalExpectedProfitEur: Math.round(Number(parsed?.summary?.total_expected_profit_eur ?? 0)),
+      avgExpectedRoiPct: Math.round(Number(parsed?.summary?.avg_expected_roi_pct ?? 0)),
+      itemsPlanned: Math.max(0, Number(parsed?.summary?.items_planned ?? 0)),
+      bestWeek: Math.max(1, Number(parsed?.summary?.best_week ?? 1)),
+      procurementEfficiencyScore: Math.max(0, Math.min(100, Number(parsed?.summary?.procurement_efficiency_score ?? 50))),
+    },
+  };
 }

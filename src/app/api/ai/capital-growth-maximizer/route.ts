@@ -1,4 +1,4 @@
-// v7.99: AI Capital Growth Maximizer — AI maksimizira CAPITAL GROWTH — kako
+// v7.99 / v8.96.6-batch2: AI Capital Growth Maximizer — AI maksimizira CAPITAL GROWTH — kako
 // hitro kapital raste preko compounding reinvestment? Project-a optimal
 // reinvestment strategy za maximum capital growth čez 6/12/24 mesecev. The
 // "ultimate capital growth maximizer."
@@ -29,24 +29,20 @@
 
 // GET+POST /api/ai/capital-growth-maximizer
 // (AI-enhanced + grounding + anti-hallucination + 6h cache + deterministic fallback)
+// Refaktoriran z withAiRoute helperjem (v8.96.6) + enforceBudget guard.
 
-import { NextRequest, NextResponse } from 'next/server';
-import { db } from '@/lib/db';
-import { getSettingsRow } from '@/lib/pipeline';
-import {
-  callProviderForRaw,
-  parseJsonLooseExported,
-  type AiProviderType,
-  type AiSettings,
-} from '@/lib/ai';
+import { withAiRoute, AI_ROUTE_DEFAULTS, type AiRouteContext } from '@/lib/with-ai-route';
+import { apiOk } from '@/lib/api-response';
 import { GROUNDING_PROMPT_SUFFIX } from '@/lib/anti-hallucination';
 import { getCachedAI, setCachedAI } from '@/lib/ai-cache';
-import { checkRateLimit, rateLimitResponse } from '@/lib/rate-limit';
-import { logger } from '@/lib/logger';
 
-export const runtime = 'nodejs';
-export const dynamic = 'force-dynamic';
+export const { runtime, dynamic } = AI_ROUTE_DEFAULTS;
 export const maxDuration = 60;
+
+// --- Input ----------------------------------------------------------------
+
+// eslint-disable-next-line @typescript-eslint/no-empty-object-type
+interface CapitalGrowthMaximizerInput {}
 
 // --- Types ---------------------------------------------------------------
 
@@ -548,19 +544,277 @@ function buildSummary(
   return parts.join(' ').slice(0, 400);
 }
 
+// --- AI prompt + merge helpers (pure, testable) ---------------------------
+
+interface PromptData {
+  soldCount12m: number;
+  heldCount: number;
+  realizedProfit12m: number;
+  heldInventoryValue: number;
+  current: GrowthCurrent;
+  deterministicMaximization: GrowthMaximization;
+  caps: Record<string, number>;
+}
+
+function buildPromptData(
+  baseline: CapitalBaseline,
+  current: GrowthCurrent,
+  maximization: GrowthMaximization,
+): PromptData {
+  return {
+    soldCount12m: baseline.soldCount12m,
+    heldCount: baseline.heldCount,
+    realizedProfit12m: baseline.realizedProfit12m,
+    heldInventoryValue: baseline.heldInventoryValue,
+    current,
+    deterministicMaximization: maximization,
+    caps: {
+      capitalMin: CAPITAL_MIN, capitalMax: CAPITAL_MAX,
+      rateMin: RATE_MIN, rateMax: RATE_MAX,
+      compoundFactorMin: COMPOUND_FACTOR_MIN, compoundFactorMax: COMPOUND_FACTOR_MAX,
+      gapMin: GAP_MIN, gapMax: GAP_MAX,
+      gainMin: GAIN_MIN, gainMax: GAIN_MAX,
+      percentMin: PERCENT_MIN, percentMax: PERCENT_MAX,
+      daysMin: DAYS_MIN, daysMax: DAYS_MAX,
+    },
+  };
+}
+
+function buildPrompt(promptData: PromptData): string {
+  return `Si AI "Capital Growth Maximizer" za slovenske in srednjeevropske oglasne platforme (Bolha, Vinted, Avtonet, mobile.de).
+Si strokovnjak za CAPITAL GROWTH maximization — identificiraš kako MAXIMIZIRATI compounding growth rate kapitala preko reinvestment strategy. Razlika od capital-allocation-optimizer (ki alokira kapital po kategorijah) — ti maksimiziraš COMPOUNDING GROWTH rate. Razlika od reinvestment-advisor (ki svetuje reinvestment) — ti KOMBINIRAŠ growth rate maximization + compounding projection + time-to-double/10x forecast. Razlika od profit-velocity-maximizer (v7.98 ki maksimizira €/day velocity) — ti maksimiziraš COMPOUNDING growth rate (% per month). Razlika od inventory-cash-conversion-maximizer (v7.98 ki maksimizira cash conversion) — ti maksimiziraš CAPITAL GROWTH čez 6/12/24 mesecev. Razlika od deal-quality-profit-optimizer (v7.98 ki optimira quality-profit) — ti maksimiziraš compounding capital growth z reinvestment strategy.
+
+DETERMINISTIČNI PODATKI (izračunano iz DB — SOLD trgovin v zadnjih 12 mesecih + HELD inventorij):
+${JSON.stringify(promptData, null, 2)}
+
+PRAVILA ZA AI ODGOVOR:
+1. maximization.maximizedGrowthRate %/mo [0, 50] (≥ avgMonthlyGrowthRate, ≤ avgMonthlyGrowthRate × 3 ali 5% če 0 — anti-hallucination),
+2. maximization.projectedCapital6m € [0, currentCapital × 100] (= currentCapital × (1 + rate/100)^6),
+3. maximization.projectedCapital12m € [0, currentCapital × 100],
+4. maximization.projectedCapital24m € [0, currentCapital × 100],
+5. maximization.growthMaximizationLevers: 4 levers { lever (max 80), currentGap % [0, 100], potentialGain €/mo [0, 1000], action (max 200, slovenski) } (reinvestment rate, ROI per cycle, cycle speed, risk management),
+6. maximization.optimalReinvestmentStrategy: { reinvestPercent % [0, 100], withdrawPercent % [0, 100] (reinvest + withdraw = 100), reasoning (max 400, slovenski) },
+7. maximization.compoundingProjection: 24 entries { month 1-24, capital € [0, currentCapital × 100], profit € [0, capital] } (month-by-month compounding z maximizedGrowthRate),
+8. maximization.capitalGrowthGrade: A+ | A | B | C | D | F (≥20 A+, ≥12 A, ≥7 B, ≥3 C, ≥1 D, else F),
+9. maximization.timeToDoubleCapital dni [1, 7300] (koliko dni da podvojiš capital pri maximized rate),
+10. maximization.timeTo10xCapital dni [1, 7300] (koliko dni da 10x-aš capital),
+11. maximization.growthRiskAssessment: 3-5 risks { risk (max 150, slovenski), severity LOW | MEDIUM | HIGH, mitigation (max 200, slovenski) },
+12. summary: slovenski povzetek (max 400 znakov).
+
+VRNI LE JSON:
+{
+  "maximization": {
+    "maximizedGrowthRate": 14,
+    "projectedCapital6m": 9300,
+    "projectedCapital12m": 20400,
+    "projectedCapital24m": 98500,
+    "growthMaximizationLevers": [
+      { "lever": "Reinvestment rate", "currentGap": 25, "potentialGain": 80, "action": "Povečaj reinvestment na 75%." },
+      { "lever": "ROI per cycle", "currentGap": 30, "potentialGain": 120, "action": "Boljši sourcing." }
+    ],
+    "optimalReinvestmentStrategy": { "reinvestPercent": 75, "withdrawPercent": 25, "reasoning": "Reinvestiraj 75% za compounding, izplačaj 25% za cash reserve." },
+    "compoundingProjection": [
+      { "month": 1, "capital": 4845, "profit": 595 },
+      { "month": 2, "capital": 5523, "profit": 678 }
+    ],
+    "capitalGrowthGrade": "A",
+    "timeToDoubleCapital": 154,
+    "timeTo10xCapital": 511,
+    "growthRiskAssessment": [
+      { "risk": "Inventory saturation.", "severity": "HIGH", "mitigation": "Diversificiraj kategorije." }
+    ]
+  },
+  "summary": "Capital: 4250€ (growth 8%/mo, compounding 1.8x). Maximized: 14%/mo → 12m: 20400€. Grade A. 2x: 154 dni. 10x: 511 dni."
+}${GROUNDING_PROMPT_SUFFIX}`;
+}
+
+function mergeAiResponse(
+  parsed: AiResponse | null,
+  current: GrowthCurrent,
+  detMaximization: GrowthMaximization,
+): { maximization: GrowthMaximization; summary: string; aiUsed: boolean } {
+  if (!parsed || typeof parsed !== 'object') {
+    return {
+      maximization: detMaximization,
+      summary: buildSummary(current, detMaximization),
+      aiUsed: false,
+    };
+  }
+
+  const aiMax = parsed.maximization ?? {};
+
+  // Anti-hallucination: maximizedGrowthRate clamped to [avgRate, avgRate × 3]
+  const maxRateLowBound = current.avgMonthlyGrowthRate;
+  const maxRateHighBound = Math.min(
+    RATE_MAX,
+    Math.max(5, current.avgMonthlyGrowthRate * 3),
+  );
+  const aiMaxRate = clampNum(
+    aiMax.maximizedGrowthRate,
+    RATE_MIN, RATE_MAX,
+    detMaximization.maximizedGrowthRate,
+  );
+  const maximizedGrowthRate = round2(
+    Math.max(maxRateLowBound, Math.min(maxRateHighBound, aiMaxRate)),
+  );
+
+  // Capital projection high bound = currentCapital × 100
+  const projHighBound = Math.max(1000, current.currentCapital * 100);
+  const projectedCapital6m = round0(clampNum(
+    aiMax.projectedCapital6m,
+    CAPITAL_MIN, projHighBound,
+    round0(current.currentCapital * Math.pow(1 + maximizedGrowthRate / 100, 6)),
+  ));
+  const projectedCapital12m = round0(clampNum(
+    aiMax.projectedCapital12m,
+    CAPITAL_MIN, projHighBound,
+    round0(current.currentCapital * Math.pow(1 + maximizedGrowthRate / 100, 12)),
+  ));
+  const projectedCapital24m = round0(clampNum(
+    aiMax.projectedCapital24m,
+    CAPITAL_MIN, projHighBound,
+    round0(current.currentCapital * Math.pow(1 + maximizedGrowthRate / 100, 24)),
+  ));
+
+  // Growth maximization levers
+  const levers: GrowthMaximizationLever[] = [];
+  if (Array.isArray(aiMax.growthMaximizationLevers)) {
+    for (const l of aiMax.growthMaximizationLevers.slice(0, 5)) {
+      if (!l || typeof l !== 'object') continue;
+      levers.push({
+        lever: clampString(l.lever, 80, 'Lever'),
+        currentGap: round0(clampNum(l.currentGap, GAP_MIN, GAP_MAX, 0)),
+        potentialGain: round2(clampNum(l.potentialGain, GAIN_MIN, GAIN_MAX, 0)),
+        action: clampString(l.action, 200, 'Izboljšaj lever.'),
+      });
+    }
+  }
+  if (levers.length === 0) {
+    for (const l of detMaximization.growthMaximizationLevers) levers.push(l);
+  }
+
+  // Optimal reinvestment strategy
+  const aiStrat = aiMax.optimalReinvestmentStrategy ?? {};
+  const reinvestPercent = round0(clampNum(
+    aiStrat.reinvestPercent,
+    PERCENT_MIN, PERCENT_MAX,
+    detMaximization.optimalReinvestmentStrategy.reinvestPercent,
+  ));
+  const withdrawPercent = round0(clampNum(
+    aiStrat.withdrawPercent,
+    PERCENT_MIN, PERCENT_MAX,
+    100 - reinvestPercent,
+  ));
+  const optimalReinvestmentStrategy: OptimalReinvestmentStrategy = {
+    reinvestPercent,
+    withdrawPercent,
+    reasoning: clampString(
+      aiStrat.reasoning,
+      400,
+      detMaximization.optimalReinvestmentStrategy.reasoning,
+    ),
+  };
+
+  // Compounding projection
+  const compoundingProjection: CompoundingProjectionEntry[] = [];
+  const expectedProj = buildCompoundingProjection(
+    current.currentCapital,
+    maximizedGrowthRate,
+  );
+  if (Array.isArray(aiMax.compoundingProjection) && aiMax.compoundingProjection.length > 0) {
+    for (let i = 0; i < Math.min(MONTHS_PROJECTION, aiMax.compoundingProjection.length); i++) {
+      const p = aiMax.compoundingProjection[i];
+      if (!p || typeof p !== 'object') {
+        compoundingProjection.push(expectedProj[i] ?? { month: i + 1, capital: 0, profit: 0 });
+        continue;
+      }
+      const exp = expectedProj[i] ?? { month: i + 1, capital: 0, profit: 0 };
+      compoundingProjection.push({
+        month: round0(clampNum(p.month, 1, MONTHS_PROJECTION, i + 1)),
+        capital: round0(clampNum(
+          p.capital,
+          CAPITAL_MIN, projHighBound,
+          exp.capital,
+        )),
+        profit: round0(clampNum(
+          p.profit,
+          CAPITAL_MIN, projHighBound,
+          exp.profit,
+        )),
+      });
+    }
+  }
+  if (compoundingProjection.length === 0) {
+    for (const p of expectedProj) compoundingProjection.push(p);
+  }
+
+  const capitalGrowthGrade = clampEnum(
+    aiMax.capitalGrowthGrade,
+    VALID_GRADE,
+    detMaximization.capitalGrowthGrade,
+  );
+
+  const timeToDoubleCapital = round0(clampNum(
+    aiMax.timeToDoubleCapital,
+    DAYS_MIN, DAYS_MAX,
+    detMaximization.timeToDoubleCapital,
+  ));
+  const timeTo10xCapital = round0(clampNum(
+    aiMax.timeTo10xCapital,
+    DAYS_MIN, DAYS_MAX,
+    detMaximization.timeTo10xCapital,
+  ));
+
+  // Growth risk assessment
+  const risks: GrowthRiskEntry[] = [];
+  if (Array.isArray(aiMax.growthRiskAssessment)) {
+    for (const r of aiMax.growthRiskAssessment.slice(0, 5)) {
+      if (!r || typeof r !== 'object') continue;
+      risks.push({
+        risk: clampString(r.risk, 150, 'Risk.'),
+        severity: clampEnum(r.severity, VALID_SEVERITY, 'MEDIUM'),
+        mitigation: clampString(r.mitigation, 200, 'Mitigacija.'),
+      });
+    }
+  }
+  if (risks.length === 0) {
+    for (const r of detMaximization.growthRiskAssessment) risks.push(r);
+  }
+
+  const maximization: GrowthMaximization = {
+    maximizedGrowthRate,
+    projectedCapital6m,
+    projectedCapital12m,
+    projectedCapital24m,
+    growthMaximizationLevers: levers,
+    optimalReinvestmentStrategy,
+    compoundingProjection,
+    capitalGrowthGrade,
+    timeToDoubleCapital,
+    timeTo10xCapital,
+    growthRiskAssessment: risks,
+  };
+
+  const summary = clampString(parsed.summary, 400, buildSummary(current, maximization));
+  return { maximization, summary, aiUsed: true };
+}
+
 // --- Handler -------------------------------------------------------------
 
-export async function GET(req: NextRequest) {
-  return handleCapitalGrowthMaximizer(req);
-}
-export async function POST(req: NextRequest) {
-  return handleCapitalGrowthMaximizer(req);
-}
+const capitalGrowthMaximizerHandler = withAiRoute<CapitalGrowthMaximizerInput>({
+  endpoint: '/api/ai/capital-growth-maximizer',
+  maxDuration: 60,
+  enforceBudget: true, // AI klic — preveri budget
+  method: 'GET', // Endpoint sprejema GET + POST — bypass POST-only check
 
-async function handleCapitalGrowthMaximizer(req: NextRequest) {
-  try {
-    const rl = checkRateLimit(req, 'ai-capital-growth-maximizer', 20);
-    if (!rl.allowed) return rateLimitResponse(rl);
+  parseBody: async (req) => {
+    await req.json().catch(() => ({}));
+    return {};
+  },
+
+  // No validateInput — body ignored, identična logika za GET in POST
+  handler: async (_input, ctx: AiRouteContext) => {
+    const { db, callAi, parseAi, logger } = ctx;
 
     const now = Date.now();
     const twelveMonthsAgo = new Date(now - TWELVE_MONTHS_MS);
@@ -602,7 +856,7 @@ async function handleCapitalGrowthMaximizer(req: NextRequest) {
 
     // Empty-state: no SOLD trades and no HELD inventory
     if (soldTrades.length === 0 && heldTrades.length === 0) {
-      return NextResponse.json({
+      return apiOk({
         ok: true,
         current: {
           currentCapital: 0,
@@ -653,7 +907,7 @@ async function handleCapitalGrowthMaximizer(req: NextRequest) {
       summary: string;
     }>(cacheKey);
     if (cached) {
-      return NextResponse.json({
+      return apiOk({
         ok: true,
         current,
         maximization: cached.maximization,
@@ -664,248 +918,19 @@ async function handleCapitalGrowthMaximizer(req: NextRequest) {
     }
 
     // 4) AI prompt with grounding
-    const settings = await getSettingsRow();
-    const aiSettings: AiSettings = {
-      provider: settings.aiProvider as AiProviderType,
-      baseUrl: settings.aiBaseUrl,
-      apiKey: settings.aiApiKey,
-      model: settings.aiModel,
-      fallbackProvider: (settings.fallbackProvider || '') as
-        | AiProviderType
-        | '',
-      fallbackBaseUrl: settings.fallbackBaseUrl || '',
-      fallbackApiKey: settings.fallbackApiKey || '',
-      fallbackModel: settings.fallbackModel || '',
-    };
-
-    const promptData = {
-      soldCount12m: baseline.soldCount12m,
-      heldCount: baseline.heldCount,
-      realizedProfit12m: baseline.realizedProfit12m,
-      heldInventoryValue: baseline.heldInventoryValue,
-      current,
-      deterministicMaximization: maximization,
-      caps: {
-        capitalMin: CAPITAL_MIN, capitalMax: CAPITAL_MAX,
-        rateMin: RATE_MIN, rateMax: RATE_MAX,
-        compoundFactorMin: COMPOUND_FACTOR_MIN, compoundFactorMax: COMPOUND_FACTOR_MAX,
-        gapMin: GAP_MIN, gapMax: GAP_MAX,
-        gainMin: GAIN_MIN, gainMax: GAIN_MAX,
-        percentMin: PERCENT_MIN, percentMax: PERCENT_MAX,
-        daysMin: DAYS_MIN, daysMax: DAYS_MAX,
-      },
-    };
-
-    const prompt = `Si AI "Capital Growth Maximizer" za slovenske in srednjeevropske oglasne platforme (Bolha, Vinted, Avtonet, mobile.de).
-Si strokovnjak za CAPITAL GROWTH maximization — identificiraš kako MAXIMIZIRATI compounding growth rate kapitala preko reinvestment strategy. Razlika od capital-allocation-optimizer (ki alokira kapital po kategorijah) — ti maksimiziraš COMPOUNDING GROWTH rate. Razlika od reinvestment-advisor (ki svetuje reinvestment) — ti KOMBINIRAŠ growth rate maximization + compounding projection + time-to-double/10x forecast. Razlika od profit-velocity-maximizer (v7.98 ki maksimizira €/day velocity) — ti maksimiziraš COMPOUNDING growth rate (% per month). Razlika od inventory-cash-conversion-maximizer (v7.98 ki maksimizira cash conversion) — ti maksimiziraš CAPITAL GROWTH čez 6/12/24 mesecev. Razlika od deal-quality-profit-optimizer (v7.98 ki optimira quality-profit) — ti maksimiziraš compounding capital growth z reinvestment strategy.
-
-DETERMINISTIČNI PODATKI (izračunano iz DB — SOLD trgovin v zadnjih 12 mesecih + HELD inventorij):
-${JSON.stringify(promptData, null, 2)}
-
-PRAVILA ZA AI ODGOVOR:
-1. maximization.maximizedGrowthRate %/mo [0, 50] (≥ avgMonthlyGrowthRate, ≤ avgMonthlyGrowthRate × 3 ali 5% če 0 — anti-hallucination),
-2. maximization.projectedCapital6m € [0, currentCapital × 100] (= currentCapital × (1 + rate/100)^6),
-3. maximization.projectedCapital12m € [0, currentCapital × 100],
-4. maximization.projectedCapital24m € [0, currentCapital × 100],
-5. maximization.growthMaximizationLevers: 4 levers { lever (max 80), currentGap % [0, 100], potentialGain €/mo [0, 1000], action (max 200, slovenski) } (reinvestment rate, ROI per cycle, cycle speed, risk management),
-6. maximization.optimalReinvestmentStrategy: { reinvestPercent % [0, 100], withdrawPercent % [0, 100] (reinvest + withdraw = 100), reasoning (max 400, slovenski) },
-7. maximization.compoundingProjection: 24 entries { month 1-24, capital € [0, currentCapital × 100], profit € [0, capital] } (month-by-month compounding z maximizedGrowthRate),
-8. maximization.capitalGrowthGrade: A+ | A | B | C | D | F (≥20 A+, ≥12 A, ≥7 B, ≥3 C, ≥1 D, else F),
-9. maximization.timeToDoubleCapital dni [1, 7300] (koliko dni da podvojiš capital pri maximized rate),
-10. maximization.timeTo10xCapital dni [1, 7300] (koliko dni da 10x-aš capital),
-11. maximization.growthRiskAssessment: 3-5 risks { risk (max 150, slovenski), severity LOW | MEDIUM | HIGH, mitigation (max 200, slovenski) },
-12. summary: slovenski povzetek (max 400 znakov).
-
-VRNI LE JSON:
-{
-  "maximization": {
-    "maximizedGrowthRate": 14,
-    "projectedCapital6m": 9300,
-    "projectedCapital12m": 20400,
-    "projectedCapital24m": 98500,
-    "growthMaximizationLevers": [
-      { "lever": "Reinvestment rate", "currentGap": 25, "potentialGain": 80, "action": "Povečaj reinvestment na 75%." },
-      { "lever": "ROI per cycle", "currentGap": 30, "potentialGain": 120, "action": "Boljši sourcing." }
-    ],
-    "optimalReinvestmentStrategy": { "reinvestPercent": 75, "withdrawPercent": 25, "reasoning": "Reinvestiraj 75% za compounding, izplačaj 25% za cash reserve." },
-    "compoundingProjection": [
-      { "month": 1, "capital": 4845, "profit": 595 },
-      { "month": 2, "capital": 5523, "profit": 678 }
-    ],
-    "capitalGrowthGrade": "A",
-    "timeToDoubleCapital": 154,
-    "timeTo10xCapital": 511,
-    "growthRiskAssessment": [
-      { "risk": "Inventory saturation.", "severity": "HIGH", "mitigation": "Diversificiraj kategorije." }
-    ]
-  },
-  "summary": "Capital: 4250€ (growth 8%/mo, compounding 1.8x). Maximized: 14%/mo → 12m: 20400€. Grade A. 2x: 154 dni. 10x: 511 dni."
-}${GROUNDING_PROMPT_SUFFIX}`;
+    const promptData = buildPromptData(baseline, current, maximization);
+    const prompt = buildPrompt(promptData);
 
     let aiUsed = false;
 
     try {
-      const raw = await callProviderForRaw(aiSettings, prompt);
-      const parsed = parseJsonLooseExported(raw) as AiResponse | null;
+      const raw = await callAi(prompt);
+      const parsed = parseAi(raw) as AiResponse | null;
 
-      if (parsed && typeof parsed === 'object') {
-        const aiMax = parsed.maximization ?? {};
-
-        // Anti-hallucination: maximizedGrowthRate clamped to [avgRate, avgRate × 3]
-        const maxRateLowBound = current.avgMonthlyGrowthRate;
-        const maxRateHighBound = Math.min(
-          RATE_MAX,
-          Math.max(5, current.avgMonthlyGrowthRate * 3),
-        );
-        const aiMaxRate = clampNum(
-          aiMax.maximizedGrowthRate,
-          RATE_MIN, RATE_MAX,
-          maximization.maximizedGrowthRate,
-        );
-        const maximizedGrowthRate = round2(
-          Math.max(maxRateLowBound, Math.min(maxRateHighBound, aiMaxRate)),
-        );
-
-        // Capital projection high bound = currentCapital × 100
-        const projHighBound = Math.max(1000, current.currentCapital * 100);
-        const projectedCapital6m = round0(clampNum(
-          aiMax.projectedCapital6m,
-          CAPITAL_MIN, projHighBound,
-          round0(current.currentCapital * Math.pow(1 + maximizedGrowthRate / 100, 6)),
-        ));
-        const projectedCapital12m = round0(clampNum(
-          aiMax.projectedCapital12m,
-          CAPITAL_MIN, projHighBound,
-          round0(current.currentCapital * Math.pow(1 + maximizedGrowthRate / 100, 12)),
-        ));
-        const projectedCapital24m = round0(clampNum(
-          aiMax.projectedCapital24m,
-          CAPITAL_MIN, projHighBound,
-          round0(current.currentCapital * Math.pow(1 + maximizedGrowthRate / 100, 24)),
-        ));
-
-        // Growth maximization levers
-        const levers: GrowthMaximizationLever[] = [];
-        if (Array.isArray(aiMax.growthMaximizationLevers)) {
-          for (const l of aiMax.growthMaximizationLevers.slice(0, 5)) {
-            if (!l || typeof l !== 'object') continue;
-            levers.push({
-              lever: clampString(l.lever, 80, 'Lever'),
-              currentGap: round0(clampNum(l.currentGap, GAP_MIN, GAP_MAX, 0)),
-              potentialGain: round2(clampNum(l.potentialGain, GAIN_MIN, GAIN_MAX, 0)),
-              action: clampString(l.action, 200, 'Izboljšaj lever.'),
-            });
-          }
-        }
-        if (levers.length === 0) {
-          for (const l of maximization.growthMaximizationLevers) levers.push(l);
-        }
-
-        // Optimal reinvestment strategy
-        const aiStrat = aiMax.optimalReinvestmentStrategy ?? {};
-        const reinvestPercent = round0(clampNum(
-          aiStrat.reinvestPercent,
-          PERCENT_MIN, PERCENT_MAX,
-          maximization.optimalReinvestmentStrategy.reinvestPercent,
-        ));
-        const withdrawPercent = round0(clampNum(
-          aiStrat.withdrawPercent,
-          PERCENT_MIN, PERCENT_MAX,
-          100 - reinvestPercent,
-        ));
-        const optimalReinvestmentStrategy: OptimalReinvestmentStrategy = {
-          reinvestPercent,
-          withdrawPercent,
-          reasoning: clampString(
-            aiStrat.reasoning,
-            400,
-            maximization.optimalReinvestmentStrategy.reasoning,
-          ),
-        };
-
-        // Compounding projection
-        const compoundingProjection: CompoundingProjectionEntry[] = [];
-        const expectedProj = buildCompoundingProjection(
-          current.currentCapital,
-          maximizedGrowthRate,
-        );
-        if (Array.isArray(aiMax.compoundingProjection) && aiMax.compoundingProjection.length > 0) {
-          for (let i = 0; i < Math.min(MONTHS_PROJECTION, aiMax.compoundingProjection.length); i++) {
-            const p = aiMax.compoundingProjection[i];
-            if (!p || typeof p !== 'object') {
-              compoundingProjection.push(expectedProj[i] ?? { month: i + 1, capital: 0, profit: 0 });
-              continue;
-            }
-            const exp = expectedProj[i] ?? { month: i + 1, capital: 0, profit: 0 };
-            compoundingProjection.push({
-              month: round0(clampNum(p.month, 1, MONTHS_PROJECTION, i + 1)),
-              capital: round0(clampNum(
-                p.capital,
-                CAPITAL_MIN, projHighBound,
-                exp.capital,
-              )),
-              profit: round0(clampNum(
-                p.profit,
-                CAPITAL_MIN, projHighBound,
-                exp.profit,
-              )),
-            });
-          }
-        }
-        if (compoundingProjection.length === 0) {
-          for (const p of expectedProj) compoundingProjection.push(p);
-        }
-
-        const capitalGrowthGrade = clampEnum(
-          aiMax.capitalGrowthGrade,
-          VALID_GRADE,
-          maximization.capitalGrowthGrade,
-        );
-
-        const timeToDoubleCapital = round0(clampNum(
-          aiMax.timeToDoubleCapital,
-          DAYS_MIN, DAYS_MAX,
-          maximization.timeToDoubleCapital,
-        ));
-        const timeTo10xCapital = round0(clampNum(
-          aiMax.timeTo10xCapital,
-          DAYS_MIN, DAYS_MAX,
-          maximization.timeTo10xCapital,
-        ));
-
-        // Growth risk assessment
-        const risks: GrowthRiskEntry[] = [];
-        if (Array.isArray(aiMax.growthRiskAssessment)) {
-          for (const r of aiMax.growthRiskAssessment.slice(0, 5)) {
-            if (!r || typeof r !== 'object') continue;
-            risks.push({
-              risk: clampString(r.risk, 150, 'Risk.'),
-              severity: clampEnum(r.severity, VALID_SEVERITY, 'MEDIUM'),
-              mitigation: clampString(r.mitigation, 200, 'Mitigacija.'),
-            });
-          }
-        }
-        if (risks.length === 0) {
-          for (const r of maximization.growthRiskAssessment) risks.push(r);
-        }
-
-        maximization = {
-          maximizedGrowthRate,
-          projectedCapital6m,
-          projectedCapital12m,
-          projectedCapital24m,
-          growthMaximizationLevers: levers,
-          optimalReinvestmentStrategy,
-          compoundingProjection,
-          capitalGrowthGrade,
-          timeToDoubleCapital,
-          timeTo10xCapital,
-          growthRiskAssessment: risks,
-        };
-
-        summary = clampString(parsed.summary, 400, buildSummary(current, maximization));
-        aiUsed = true;
-      }
+      const result = mergeAiResponse(parsed, current, maximization);
+      maximization = result.maximization;
+      summary = result.summary;
+      aiUsed = result.aiUsed;
     } catch (err) {
       logger.warn(
         '/api/ai/capital-growth-maximizer',
@@ -919,22 +944,15 @@ VRNI LE JSON:
       setCachedAI(cacheKey, { maximization, summary });
     }
 
-    return NextResponse.json({
+    return apiOk({
       ok: true,
       current,
       maximization,
       summary,
       aiUsed,
     } satisfies CapitalGrowthResponse);
-  } catch (err: any) {
-    logger.error(
-      '/api/ai/capital-growth-maximizer',
-      'handler failed',
-      err,
-    );
-    return NextResponse.json(
-      { error: err?.message ?? 'Napaka' },
-      { status: 500 },
-    );
-  }
-}
+  },
+});
+
+export const GET = capitalGrowthMaximizerHandler;
+export const POST = capitalGrowthMaximizerHandler;

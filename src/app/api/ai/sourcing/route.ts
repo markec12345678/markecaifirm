@@ -1,23 +1,39 @@
-// v6.10: AI Sourcing Recommendations — AI predlaga kje/kdaj/kako najti profitne inventarje
+// v6.10 / v8.96.1-refactor: AI Sourcing Recommendations — AI predlaga kje/kdaj/kako najti profitne inventarje
+// Refaktoriran z withAiRoute helperjem (v8.96.1) + enforceBudget guard.
+//
 // POST /api/ai/sourcing
 // Body: { budget?: number, category?: string }
 // Returns: { ok, recommendations: Array<{ source, category, timing, expectedROI, risk, action, reason }>, insights }
 
-import { NextRequest, NextResponse } from 'next/server';
-import { db } from '@/lib/db';
-import { getSettingsRow } from '@/lib/pipeline';
-import { callProviderForRaw, parseJsonLooseExported, type AiProviderType, type AiSettings } from '@/lib/ai';
-import { logger } from '@/lib/logger';
+import { withAiRoute, AI_ROUTE_DEFAULTS, type AiRouteContext } from '@/lib/with-ai-route';
+import { apiOk } from '@/lib/api-response';
 
-export const runtime = 'nodejs';
-export const dynamic = 'force-dynamic';
+export const { runtime, dynamic } = AI_ROUTE_DEFAULTS;
 export const maxDuration = 90;
 
-export async function POST(req: NextRequest) {
-  try {
+interface SourcingInput {
+  budget: number;
+  category: string;
+}
+
+export const POST = withAiRoute<SourcingInput>({
+  endpoint: '/api/ai/sourcing',
+  maxDuration: 90,
+  enforceBudget: true, // AI klic — preveri budget
+
+  parseBody: async (req) => {
     const body = await req.json().catch(() => ({}));
-    const budget = Number(body?.budget) || 0;
-    const categoryFilter = String(body?.category || '').trim();
+    return {
+      budget: Number(body?.budget) || 0,
+      category: String(body?.category || '').trim(),
+    };
+  },
+
+  // No validateInput — budget in category sta opcijska
+
+  handler: async (input, ctx: AiRouteContext) => {
+    const { db, callAi, parseAi } = ctx;
+    const { budget, category: categoryFilter } = input;
 
     // 1. Pridobi vse sold tradeove za analizo profitabilnosti po viru/kategoriji
     const [soldTrades, heldTrades, recentListings] = await Promise.all([
@@ -48,7 +64,7 @@ export async function POST(req: NextRequest) {
     ]);
 
     if (soldTrades.length === 0 && recentListings.length === 0) {
-      return NextResponse.json({
+      return apiOk({
         ok: true,
         recommendations: [],
         message: 'Ni dovolj podatkov za analizo (potrebne vsaj nekatere prodaje ali nedavne oglase).',
@@ -56,71 +72,155 @@ export async function POST(req: NextRequest) {
     }
 
     // 2. Analiza po viru nakupa
-    const bySource: Record<string, { count: number; profit: number; cost: number; avgDays: number }> = {};
-    for (const t of soldTrades) {
-      const src = (t.buyLocation || 'neznan').toLowerCase();
-      if (!bySource[src]) bySource[src] = { count: 0, profit: 0, cost: 0, avgDays: 0 };
-      bySource[src].count++;
-      bySource[src].profit += (t.sellPrice ?? 0) - (t.sellFees ?? 0) - t.buyPrice - (t.buyFees ?? 0);
-      bySource[src].cost += t.buyPrice + (t.buyFees ?? 0);
-      if (t.sellDate && t.buyDate) {
-        bySource[src].avgDays += Math.round((t.sellDate.getTime() - t.buyDate.getTime()) / (24 * 60 * 60 * 1000));
-      }
-    }
-    for (const s of Object.keys(bySource)) {
-      bySource[s].avgDays = bySource[s].count > 0 ? Math.round(bySource[s].avgDays / bySource[s].count) : 0;
-    }
+    const bySource = computeBySource(soldTrades);
 
     // 3. Analiza po kategoriji
-    const byCategory: Record<string, { count: number; profit: number; cost: number; avgDays: number; held: number }> = {};
-    for (const t of soldTrades) {
-      const cat = t.category || 'drugo';
-      if (categoryFilter && cat !== categoryFilter) continue;
-      if (!byCategory[cat]) byCategory[cat] = { count: 0, profit: 0, cost: 0, avgDays: 0, held: 0 };
-      byCategory[cat].count++;
-      byCategory[cat].profit += (t.sellPrice ?? 0) - (t.sellFees ?? 0) - t.buyPrice - (t.buyFees ?? 0);
-      byCategory[cat].cost += t.buyPrice + (t.buyFees ?? 0);
-      if (t.sellDate && t.buyDate) {
-        byCategory[cat].avgDays += Math.round((t.sellDate.getTime() - t.buyDate.getTime()) / (24 * 60 * 60 * 1000));
-      }
-    }
-    for (const t of heldTrades) {
-      const cat = t.category || 'drugo';
-      if (categoryFilter && cat !== categoryFilter) continue;
-      if (!byCategory[cat]) byCategory[cat] = { count: 0, profit: 0, cost: 0, avgDays: 0, held: 0 };
-      byCategory[cat].held++;
-    }
-    for (const c of Object.keys(byCategory)) {
-      byCategory[c].avgDays = byCategory[c].count > 0 ? Math.round(byCategory[c].avgDays / byCategory[c].count) : 0;
-    }
+    const byCategory = computeByCategory(soldTrades, heldTrades, categoryFilter);
 
     // 4. Analiza nedavnih oglasov — kje so se pojavile priložnosti
-    const recentBySource: Record<string, { total: number; opportunities: number; avgPrice: number; avgScore: number }> = {};
-    for (const l of recentListings) {
-      const src = l.monitor?.source || 'neznan';
-      if (!recentBySource[src]) recentBySource[src] = { total: 0, opportunities: 0, avgPrice: 0, avgScore: 0 };
-      recentBySource[src].total++;
-      if (l.aiVerdict === 'PRILIKA' || (l.dealScore ?? 0) >= 70) recentBySource[src].opportunities++;
-      recentBySource[src].avgPrice += l.price ?? 0;
-      recentBySource[src].avgScore += l.dealScore ?? l.aiScore ?? 0;
-    }
-    for (const s of Object.keys(recentBySource)) {
-      const r = recentBySource[s];
-      r.avgPrice = r.total > 0 ? Math.round(r.avgPrice / r.total) : 0;
-      r.avgScore = r.total > 0 ? Math.round(r.avgScore / r.total) : 0;
-    }
+    const recentBySource = computeRecentBySource(recentListings);
 
     // 5. AI analiza
-    const settings = await getSettingsRow();
-    const aiSettings: AiSettings = {
-      provider: settings.aiProvider as AiProviderType,
-      baseUrl: settings.aiBaseUrl, apiKey: settings.aiApiKey, model: settings.aiModel,
-      fallbackProvider: (settings.fallbackProvider || '') as AiProviderType | '',
-      fallbackBaseUrl: settings.fallbackBaseUrl || '', fallbackApiKey: settings.fallbackApiKey || '',
-      fallbackModel: settings.fallbackModel || '',
-    };
+    const prompt = buildPrompt(bySource, byCategory, recentBySource, budget, categoryFilter);
+    const raw = await callAi(prompt);
+    const parsed: any = parseAi(raw);
+    const recommendations = transformRecommendations(parsed);
 
-    const prompt = `Si ekspert za sourcing inventarja za preprodajo na slovenskem trgu.
+    return apiOk({
+      ok: true,
+      insights: String(parsed?.insights ?? '').slice(0, 500),
+      recommendations,
+      stats: {
+        bySource: Object.entries(bySource).map(([src, s]) => ({
+          source: src, count: s.count, profit: Math.round(s.profit),
+          roi: s.cost > 0 ? Math.round((s.profit / s.cost) * 100) : 0,
+          avgDays: s.avgDays,
+        })),
+        byCategory: Object.entries(byCategory).map(([cat, c]) => ({
+          category: cat, count: c.count, profit: Math.round(c.profit),
+          roi: c.cost > 0 ? Math.round((c.profit / c.cost) * 100) : 0,
+          avgDays: c.avgDays, held: c.held,
+        })),
+        recentOpportunities: Object.entries(recentBySource).map(([src, r]) => ({
+          source: src, total: r.total, opportunities: r.opportunities,
+          rate: r.total > 0 ? Math.round((r.opportunities / r.total) * 100) : 0,
+          avgPrice: r.avgPrice, avgScore: r.avgScore,
+        })),
+      },
+    });
+  },
+});
+
+// --- Pomožne funkcije (čiste, testabilne) --------------------------------
+
+interface SourceStat {
+  count: number;
+  profit: number;
+  cost: number;
+  avgDays: number;
+}
+
+function computeBySource(
+  soldTrades: Array<{
+    buyLocation: string | null; buyPrice: number; buyFees: number | null;
+    sellPrice: number | null; sellFees: number | null; sellDate: Date | null; buyDate: Date;
+  }>
+): Record<string, SourceStat> {
+  const bySource: Record<string, SourceStat> = {};
+  for (const t of soldTrades) {
+    const src = (t.buyLocation || 'neznan').toLowerCase();
+    if (!bySource[src]) bySource[src] = { count: 0, profit: 0, cost: 0, avgDays: 0 };
+    bySource[src].count++;
+    bySource[src].profit += (t.sellPrice ?? 0) - (t.sellFees ?? 0) - t.buyPrice - (t.buyFees ?? 0);
+    bySource[src].cost += t.buyPrice + (t.buyFees ?? 0);
+    if (t.sellDate && t.buyDate) {
+      bySource[src].avgDays += Math.round((t.sellDate.getTime() - t.buyDate.getTime()) / (24 * 60 * 60 * 1000));
+    }
+  }
+  for (const s of Object.keys(bySource)) {
+    bySource[s].avgDays = bySource[s].count > 0 ? Math.round(bySource[s].avgDays / bySource[s].count) : 0;
+  }
+  return bySource;
+}
+
+interface CategoryStat {
+  count: number;
+  profit: number;
+  cost: number;
+  avgDays: number;
+  held: number;
+}
+
+function computeByCategory(
+  soldTrades: Array<{
+    category: string | null; buyPrice: number; buyFees: number | null;
+    sellPrice: number | null; sellFees: number | null; sellDate: Date | null; buyDate: Date;
+  }>,
+  heldTrades: Array<{ category: string | null }>,
+  categoryFilter: string
+): Record<string, CategoryStat> {
+  const byCategory: Record<string, CategoryStat> = {};
+  for (const t of soldTrades) {
+    const cat = t.category || 'drugo';
+    if (categoryFilter && cat !== categoryFilter) continue;
+    if (!byCategory[cat]) byCategory[cat] = { count: 0, profit: 0, cost: 0, avgDays: 0, held: 0 };
+    byCategory[cat].count++;
+    byCategory[cat].profit += (t.sellPrice ?? 0) - (t.sellFees ?? 0) - t.buyPrice - (t.buyFees ?? 0);
+    byCategory[cat].cost += t.buyPrice + (t.buyFees ?? 0);
+    if (t.sellDate && t.buyDate) {
+      byCategory[cat].avgDays += Math.round((t.sellDate.getTime() - t.buyDate.getTime()) / (24 * 60 * 60 * 1000));
+    }
+  }
+  for (const t of heldTrades) {
+    const cat = t.category || 'drugo';
+    if (categoryFilter && cat !== categoryFilter) continue;
+    if (!byCategory[cat]) byCategory[cat] = { count: 0, profit: 0, cost: 0, avgDays: 0, held: 0 };
+    byCategory[cat].held++;
+  }
+  for (const c of Object.keys(byCategory)) {
+    byCategory[c].avgDays = byCategory[c].count > 0 ? Math.round(byCategory[c].avgDays / byCategory[c].count) : 0;
+  }
+  return byCategory;
+}
+
+interface RecentSourceStat {
+  total: number;
+  opportunities: number;
+  avgPrice: number;
+  avgScore: number;
+}
+
+function computeRecentBySource(
+  recentListings: Array<{
+    title: string; price: number | null; aiVerdict: string | null;
+    aiScore: number | null; dealScore: number | null; monitor: { source: string } | null;
+  }>
+): Record<string, RecentSourceStat> {
+  const recentBySource: Record<string, RecentSourceStat> = {};
+  for (const l of recentListings) {
+    const src = l.monitor?.source || 'neznan';
+    if (!recentBySource[src]) recentBySource[src] = { total: 0, opportunities: 0, avgPrice: 0, avgScore: 0 };
+    recentBySource[src].total++;
+    if (l.aiVerdict === 'PRILIKA' || (l.dealScore ?? 0) >= 70) recentBySource[src].opportunities++;
+    recentBySource[src].avgPrice += l.price ?? 0;
+    recentBySource[src].avgScore += l.dealScore ?? l.aiScore ?? 0;
+  }
+  for (const s of Object.keys(recentBySource)) {
+    const r = recentBySource[s];
+    r.avgPrice = r.total > 0 ? Math.round(r.avgPrice / r.total) : 0;
+    r.avgScore = r.total > 0 ? Math.round(r.avgScore / r.total) : 0;
+  }
+  return recentBySource;
+}
+
+function buildPrompt(
+  bySource: Record<string, SourceStat>,
+  byCategory: Record<string, CategoryStat>,
+  recentBySource: Record<string, RecentSourceStat>,
+  budget: number,
+  categoryFilter: string
+): string {
+  return `Si ekspert za sourcing inventarja za preprodajo na slovenskem trgu.
 Predlagaj, KJE, KDAJ in KAJ kupovati za maksimalni dobiček.
 
 Zgodovinska uspešnost po viru nakupa:
@@ -175,67 +275,16 @@ Odgovori LE z JSON:
     }
   ]
 }`;
+}
 
-    let raw = '';
-    try {
-      raw = await callProviderForRaw(aiSettings, prompt);
-    } catch (primaryError: any) {
-      if (aiSettings.fallbackProvider && aiSettings.fallbackModel) {
-        const fb: AiSettings = {
-          provider: aiSettings.fallbackProvider,
-          baseUrl: aiSettings.fallbackBaseUrl || '',
-          apiKey: aiSettings.fallbackApiKey || '',
-          model: aiSettings.fallbackModel,
-        };
-        raw = await callProviderForRaw(fb, prompt);
-      } else {
-        return NextResponse.json({ error: primaryError?.message ?? 'AI failed' }, { status: 500 });
-      }
-    }
-
-    const parsed: any = parseJsonLooseExported(raw);
-    const recommendations = (parsed?.recommendations || []).map((r: any) => ({
-      source: String(r?.source ?? '').slice(0, 50),
-      category: String(r?.category ?? '').slice(0, 50),
-      timing: String(r?.timing ?? '').slice(0, 100),
-      expectedROI: Math.max(0, Math.min(500, Number(r?.expected_roi ?? 0))),
-      risk: Math.max(1, Math.min(10, Number(r?.risk ?? 5))),
-      action: String(r?.action ?? '').slice(0, 200),
-      reason: String(r?.reason ?? '').slice(0, 200),
-    }));
-
-    // Increment AI usage
-    const today = new Date().toISOString().slice(0, 10);
-    if (settings.aiCallsDate !== today) {
-      await db.settings.update({ where: { id: 'singleton' }, data: { aiCallsDate: today, aiCallsToday: 1 } });
-    } else {
-      await db.settings.update({ where: { id: 'singleton' }, data: { aiCallsToday: { increment: 1 } } });
-    }
-
-    return NextResponse.json({
-      ok: true,
-      insights: String(parsed?.insights ?? '').slice(0, 500),
-      recommendations,
-      stats: {
-        bySource: Object.entries(bySource).map(([src, s]) => ({
-          source: src, count: s.count, profit: Math.round(s.profit),
-          roi: s.cost > 0 ? Math.round((s.profit / s.cost) * 100) : 0,
-          avgDays: s.avgDays,
-        })),
-        byCategory: Object.entries(byCategory).map(([cat, c]) => ({
-          category: cat, count: c.count, profit: Math.round(c.profit),
-          roi: c.cost > 0 ? Math.round((c.profit / c.cost) * 100) : 0,
-          avgDays: c.avgDays, held: c.held,
-        })),
-        recentOpportunities: Object.entries(recentBySource).map(([src, r]) => ({
-          source: src, total: r.total, opportunities: r.opportunities,
-          rate: r.total > 0 ? Math.round((r.opportunities / r.total) * 100) : 0,
-          avgPrice: r.avgPrice, avgScore: r.avgScore,
-        })),
-      },
-    });
-  } catch (e: any) {
-    logger.error("/api/ai/sourcing", "POST handler failed", e);
-    return NextResponse.json({ error: e?.message ?? 'Napaka' }, { status: 500 });
-  }
+function transformRecommendations(parsed: any): any[] {
+  return (parsed?.recommendations || []).map((r: any) => ({
+    source: String(r?.source ?? '').slice(0, 50),
+    category: String(r?.category ?? '').slice(0, 50),
+    timing: String(r?.timing ?? '').slice(0, 100),
+    expectedROI: Math.max(0, Math.min(500, Number(r?.expected_roi ?? 0))),
+    risk: Math.max(1, Math.min(10, Number(r?.risk ?? 5))),
+    action: String(r?.action ?? '').slice(0, 200),
+    reason: String(r?.reason ?? '').slice(0, 200),
+  }));
 }

@@ -58,9 +58,16 @@
 // When adaptive weights are null in Settings, hardcoded defaults are used
 // (backward compatible — no behavior change for users who haven't recorded
 // any feedback yet).
+//
+// Refaktoriran z withAiRoute helperjem (v8.95.1-f) + enforceBudget guard
+// (non-breaking — endpoint ne kliče AI direktno, ampak je konsistentno z
+// vsemi v8.94.x migracijami). masterBrain() in explainMasterBrainActions()
+// se še vedno kličeta direktno (NE preko ctx.callAi — ker endpoint je
+// deterministic in ne kliče AI providerja).
 
-import { NextRequest, NextResponse } from 'next/server';
-import { logger } from '@/lib/logger';
+import type { NextRequest } from 'next/server';
+import { withAiRoute, AI_ROUTE_DEFAULTS, type AiRouteContext } from '@/lib/with-ai-route';
+import { apiOk } from '@/lib/api-response';
 import { getCachedAIWithStats, setCachedAIWithStats } from '@/lib/ai-cache';
 // v8.33: Performance metrics — wraps masterBrain() with response-time tracking
 import { withPerf, recordPerf } from '@/lib/brain/performance';
@@ -82,10 +89,8 @@ import {
   loadAdaptiveWeights,
   loadDomainWeights,
 } from '@/lib/brain/adaptive-weights';
-import { db } from '@/lib/db';
 
-export const runtime = 'nodejs';
-export const dynamic = 'force-dynamic';
+export const { runtime, dynamic } = AI_ROUTE_DEFAULTS;
 export const maxDuration = 60;
 
 // --- Cache TTL -----------------------------------------------------------
@@ -94,7 +99,14 @@ export const maxDuration = 60;
 // that re-computing every 5 min is wasteful.
 const MASTER_CACHE_TTL_MS = 10 * 60 * 1000;
 
-// --- Input resolution ----------------------------------------------------
+// --- Input interface -----------------------------------------------------
+
+// MasterBrainInput is the resolved input for the handler — parsed by
+// resolveInputs() from BOTH query string (GET) and POST body. Re-used as
+// the withAiRoute generic type parameter (no separate Input interface needed
+// — the existing MasterBrainInput type already covers all fields).
+
+// --- Pure helpers (čiste, testabilne) ------------------------------------
 
 /**
  * Parse MasterBrainInput from BOTH query string (GET) and POST body.
@@ -201,8 +213,6 @@ async function resolveInputs(req: NextRequest): Promise<MasterBrainInput> {
   return input;
 }
 
-// --- Cache key -----------------------------------------------------------
-
 /**
  * Build a deterministic cache key from the resolved MasterBrainInput. Same
  * input → same key → cache hit.
@@ -261,23 +271,16 @@ function buildCacheKey(input: MasterBrainInput): string {
   return parts.join('|');
 }
 
-// --- Handler -------------------------------------------------------------
-
-export async function GET(req: NextRequest) {
-  return handleMasterBrain(req);
-}
-
-export async function POST(req: NextRequest) {
-  return handleMasterBrain(req);
-}
-
 // --- v8.24: User Risk Profile loader ------------------------------------
 //
 // Reads the 4 risk-profile fields from the Settings singleton row.
 // On any DB error / missing row / missing fields, returns DEFAULT_PROFILE
 // (balanced) — Master Brain must never crash because the user's profile
 // couldn't be loaded.
-async function loadUserRiskProfile(): Promise<UserRiskProfile> {
+async function loadUserRiskProfile(
+  db: AiRouteContext['db'],
+  logger: AiRouteContext['logger'],
+): Promise<UserRiskProfile> {
   try {
     const s = await db.settings.findUnique({ where: { id: 'singleton' } });
     if (!s) return DEFAULT_PROFILE;
@@ -309,9 +312,20 @@ async function loadUserRiskProfile(): Promise<UserRiskProfile> {
   }
 }
 
-async function handleMasterBrain(req: NextRequest) {
-  try {
-    const input = await resolveInputs(req);
+// --- Handler -------------------------------------------------------------
+
+const masterBrainHandler = withAiRoute<MasterBrainInput>({
+  endpoint: '/api/ai/brain/master',
+  maxDuration: 60,
+  enforceBudget: true, // v8.95.1-f: budget guard + avtomatski recordAiCall
+  method: 'GET', // Endpoint sprejema GET + POST — bypass POST-only check
+
+  parseBody: async (req: NextRequest) => resolveInputs(req),
+
+  // Brez validateInput — vsi input-i imajo defaults (query string prazna → {})
+
+  handler: async (input, ctx: AiRouteContext) => {
+    const { db, logger } = ctx;
 
     // v8.28: Load adaptive domain weights from Settings BEFORE cache key build,
     // so the cache key incorporates them (different weights → different cache
@@ -326,7 +340,7 @@ async function handleMasterBrain(req: NextRequest) {
     const cached = getCachedAIWithStats<MasterBrainResult>('master-brain', cacheKey);
     // v8.24: Always load the user's risk profile — even when serving from cache,
     // because the profile may have changed since the cached entry was created.
-    const profile = await loadUserRiskProfile();
+    const profile = await loadUserRiskProfile(db, logger);
 
     if (cached) {
       // v8.33: Record a perf entry for the cache-hit path (fast — just lookup).
@@ -345,7 +359,7 @@ async function handleMasterBrain(req: NextRequest) {
       // Explanations are PURELY derived from the master result + adjustment,
       // so they're computed every time (cheap) and reflect the current profile.
       const explanation = explainMasterBrainActions(served, adjustment);
-      return NextResponse.json({
+      return apiOk({
         ...served,
         riskProfileAdjustment: adjustment,
         // v8.26: explanations ARRAY (5 ActionExplanation) + overall summary.
@@ -373,7 +387,7 @@ async function handleMasterBrain(req: NextRequest) {
     const adjustment = adjustMasterBrainForRiskProfile(result, profile);
     // v8.26: Generate explanations for TOP 5 actions — answers "Zakaj?"
     const explanation = explainMasterBrainActions(result, adjustment);
-    return NextResponse.json({
+    return apiOk({
       ...result,
       riskProfileAdjustment: adjustment,
       // v8.26: explanations ARRAY (5 ActionExplanation) + overall summary.
@@ -385,11 +399,8 @@ async function handleMasterBrain(req: NextRequest) {
       // v8.28: include adaptive weights block (full stats + history) — see above.
       adaptiveWeights: adaptiveWeightsFull,
     });
-  } catch (err: any) {
-    logger.error('/api/ai/brain/master', 'handler failed', err);
-    return NextResponse.json(
-      { error: err?.message ?? 'Napaka' },
-      { status: 500 },
-    );
-  }
-}
+  },
+});
+
+export const GET = masterBrainHandler;
+export const POST = masterBrainHandler;

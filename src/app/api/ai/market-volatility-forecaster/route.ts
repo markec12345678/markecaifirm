@@ -1,4 +1,4 @@
-// v7.91: AI Market Volatility Forecaster — AI forecast-a FUTURE market
+// v7.91 / v8.96.6-batch2: AI Market Volatility Forecaster — AI forecast-a FUTURE market
 // volatiliteto 30/60/90 dni vnaprej — bodo cene bolj nestabilne (risk) ali
 // bolj stabilne (safe)? Razlika od price-volatility-analyzer (v7.86 ki
 // analizira CURRENT volatility per category) — ta FORECAST-a FUTURE
@@ -17,24 +17,20 @@
 //
 // GET+POST /api/ai/market-volatility-forecaster
 // (AI-enhanced + grounding + anti-hallucination + 6h cache + deterministic fallback)
+// Refaktoriran z withAiRoute helperjem (v8.96.6) + enforceBudget guard.
 
-import { NextRequest, NextResponse } from 'next/server';
-import { db } from '@/lib/db';
-import { getSettingsRow } from '@/lib/pipeline';
-import {
-  callProviderForRaw,
-  parseJsonLooseExported,
-  type AiProviderType,
-  type AiSettings,
-} from '@/lib/ai';
+import { withAiRoute, AI_ROUTE_DEFAULTS, type AiRouteContext } from '@/lib/with-ai-route';
+import { apiOk } from '@/lib/api-response';
 import { GROUNDING_PROMPT_SUFFIX } from '@/lib/anti-hallucination';
 import { getCachedAI, setCachedAI } from '@/lib/ai-cache';
-import { checkRateLimit, rateLimitResponse } from '@/lib/rate-limit';
-import { logger } from '@/lib/logger';
 
-export const runtime = 'nodejs';
-export const dynamic = 'force-dynamic';
+export const { runtime, dynamic } = AI_ROUTE_DEFAULTS;
 export const maxDuration = 60;
+
+// --- Input ----------------------------------------------------------------
+
+// eslint-disable-next-line @typescript-eslint/no-empty-object-type
+interface MarketVolatilityForecasterInput {}
 
 // --- Types ---------------------------------------------------------------
 
@@ -455,19 +451,197 @@ function buildDeterministicAnalysis(
   };
 }
 
+// --- AI prompt + merge helpers (pure, testable) ---------------------------
+
+interface PromptData {
+  current: CurrentVolatility;
+  deterministicForecast: VolatilityForecast;
+  deterministicAnalysis: VolatilityAnalysis;
+  categoryProjections: CategoryForecast[];
+  caps: Record<string, number>;
+}
+
+function buildPromptData(
+  current: CurrentVolatility,
+  detForecast: VolatilityForecast,
+  detAnalysis: VolatilityAnalysis,
+  catProjections: CategoryForecast[],
+): PromptData {
+  return {
+    current,
+    deterministicForecast: detForecast,
+    deterministicAnalysis: detAnalysis,
+    categoryProjections: catProjections,
+    caps: {
+      volMin: VOL_MIN, volMax: VOL_MAX,
+      confidenceMin: CONFIDENCE_MIN, confidenceMax: CONFIDENCE_MAX,
+    },
+  };
+}
+
+function buildPrompt(promptData: PromptData): string {
+  return `Si AI "Market Volatility Forecaster" za slovenske in srednjeevropske oglasne platforme (Bolha, Vinted, Facebook, Avtonet, mobile.de).
+Forecast-aš FUTURE market volatiliteto 30/60/90 dni vnaprej — bodo cene bolj nestabilne (risk) ali bolj stabilne (safe)? Razlika od price-volatility-analyzer (ki da current volatility) — ti FORECAST-a FUTURE volatility z outlook + risk implication + mitigation actions.
+
+DETERMINISTIČNI PODATKI (izračunano iz DB — zadnjih 26 tednov oglasov z monitor.source kot kategorija proxy, per-week CV of avg prices):
+${JSON.stringify(promptData, null, 2)}
+
+PRAVILA ZA AI ODGOVOR:
+1. forecast: { projectedAvgVolatility30d/60d/90d (clamped [0, 200], ±15 od deterministic), volatilityOutlook INCREASING | STABLE | DECREASING, confidenceLevel 0-100 ±15 od deterministic }.
+2. analysis.riskImplication: slovensko, max 500 znakov — kaj pomeni projected volatility za trgovanje
+3. analysis.volatilityHotspots: 1-3 kategorij z najvišjo projected volatility { category (max 60 chars), projectedVolatility 0-200, risk (max 200 chars) }
+4. analysis.stabilityZones: 1-3 kategorij z najnižjo projected volatility { category (max 60 chars), projectedVolatility 0-200, benefit (max 200 chars) }
+5. analysis.volatilityMitigationActions: 2-4 akcij { action (max 200 chars), priority HIGH | MEDIUM | LOW, detail (max 200 chars) }
+6. analysis.tradingStrategyAdjustment: slovensko, max 400 znakov — kako prilagoditi strategijo glede na volatility forecast
+7. summary: slovenski povzetek (max 400 znakov). NE izmišljuj številk — uporabi deterministične.
+
+VRNI LE JSON:
+{
+  "projectedAvgVolatility30d": 22,
+  "projectedAvgVolatility60d": 25,
+  "projectedAvgVolatility90d": 28,
+  "volatilityOutlook": "INCREASING",
+  "confidenceLevel": 72,
+  "riskImplication": "Volatility narašča (18% → 28% v 90d). Povečana nestabilnost cen pomeni višje tveganje...",
+  "volatilityHotspots": [
+    { "category": "elektronika", "projectedVolatility": 28, "risk": "Cenovni skoki in padci — težko napovedovanje." }
+  ],
+  "stabilityZones": [
+    { "category": "moda", "projectedVolatility": 6, "benefit": "Stabilne cene — idealno za dolgoročne pozicije." }
+  ],
+  "volatilityMitigationActions": [
+    { "action": "Zmanjšaj povprečno velikost pozicij za 20-30%", "priority": "HIGH", "detail": "Manjše pozicije zmanjšajo exposure." }
+  ],
+  "tradingStrategyAdjustment": "Strategija: DEFENZIVNA. Premakni fokus na moda, skrajšaj hold time.",
+  "summary": "Volatility outlook: INCREASING (18% → 28%). Elektronika hotspot. Moda stability zone."
+}${GROUNDING_PROMPT_SUFFIX}`;
+}
+
+function mergeAiResponse(
+  parsed: AiVolatilityResponse | null,
+  detForecast: VolatilityForecast,
+  detAnalysis: VolatilityAnalysis,
+  current: CurrentVolatility,
+): { forecast: VolatilityForecast; analysis: VolatilityAnalysis; summary: string; aiUsed: boolean } {
+  if (!parsed || typeof parsed !== 'object') {
+    return {
+      forecast: detForecast,
+      analysis: detAnalysis,
+      summary: buildSummary(current, detForecast),
+      aiUsed: false,
+    };
+  }
+
+  // Projected volatility — ±15 of deterministic, clamped [0, 200]
+  const projectedAvgVolatility30d = round1(
+    Math.max(VOL_MIN, Math.min(VOL_MAX,
+      detForecast.projectedAvgVolatility30d + Math.max(-15, Math.min(15,
+        (Number(parsed.projectedAvgVolatility30d ?? detForecast.projectedAvgVolatility30d)) - detForecast.projectedAvgVolatility30d)))),
+  );
+  const projectedAvgVolatility60d = round1(
+    Math.max(VOL_MIN, Math.min(VOL_MAX,
+      detForecast.projectedAvgVolatility60d + Math.max(-15, Math.min(15,
+        (Number(parsed.projectedAvgVolatility60d ?? detForecast.projectedAvgVolatility60d)) - detForecast.projectedAvgVolatility60d)))),
+  );
+  const projectedAvgVolatility90d = round1(
+    Math.max(VOL_MIN, Math.min(VOL_MAX,
+      detForecast.projectedAvgVolatility90d + Math.max(-15, Math.min(15,
+        (Number(parsed.projectedAvgVolatility90d ?? detForecast.projectedAvgVolatility90d)) - detForecast.projectedAvgVolatility90d)))),
+  );
+
+  const volatilityOutlook = clampEnum(parsed.volatilityOutlook, VALID_DIRECTION, detForecast.volatilityOutlook);
+  const confidenceLevel = round0(
+    Math.max(CONFIDENCE_MIN, Math.min(CONFIDENCE_MAX,
+      detForecast.confidenceLevel + Math.max(-15, Math.min(15,
+        (Number(parsed.confidenceLevel ?? detForecast.confidenceLevel)) - detForecast.confidenceLevel)))),
+  );
+
+  const forecast: VolatilityForecast = {
+    projectedAvgVolatility30d,
+    projectedAvgVolatility60d,
+    projectedAvgVolatility90d,
+    volatilityOutlook,
+    confidenceLevel,
+  };
+
+  // Hotspots validation
+  const volatilityHotspots: VolatilityHotspot[] = [];
+  if (Array.isArray(parsed.volatilityHotspots)) {
+    for (const h of parsed.volatilityHotspots.slice(0, 3)) {
+      if (!h || typeof h !== 'object') continue;
+      volatilityHotspots.push({
+        category: clampString(h.category, 60, detAnalysis.volatilityHotspots[0]?.category ?? 'neznan'),
+        projectedVolatility: clampNum(h.projectedVolatility, VOL_MIN, VOL_MAX,
+          detAnalysis.volatilityHotspots[0]?.projectedVolatility ?? 50),
+        risk: clampString(h.risk, 200, detAnalysis.volatilityHotspots[0]?.risk ?? 'Povečano tveganje.'),
+      });
+    }
+  }
+  if (volatilityHotspots.length === 0) {
+    for (const h of detAnalysis.volatilityHotspots) volatilityHotspots.push(h);
+  }
+
+  // Stability zones validation
+  const stabilityZones: StabilityZone[] = [];
+  if (Array.isArray(parsed.stabilityZones)) {
+    for (const z of parsed.stabilityZones.slice(0, 3)) {
+      if (!z || typeof z !== 'object') continue;
+      stabilityZones.push({
+        category: clampString(z.category, 60, detAnalysis.stabilityZones[0]?.category ?? 'neznan'),
+        projectedVolatility: clampNum(z.projectedVolatility, VOL_MIN, VOL_MAX,
+          detAnalysis.stabilityZones[0]?.projectedVolatility ?? 10),
+        benefit: clampString(z.benefit, 200, detAnalysis.stabilityZones[0]?.benefit ?? 'Stabilne cene.'),
+      });
+    }
+  }
+  if (stabilityZones.length === 0) {
+    for (const z of detAnalysis.stabilityZones) stabilityZones.push(z);
+  }
+
+  // Mitigation actions validation
+  const mitigationActions: VolatilityMitigationAction[] = [];
+  if (Array.isArray(parsed.volatilityMitigationActions)) {
+    for (const m of parsed.volatilityMitigationActions.slice(0, 4)) {
+      if (!m || typeof m !== 'object') continue;
+      mitigationActions.push({
+        action: clampString(m.action, 200, detAnalysis.volatilityMitigationActions[0]?.action ?? 'Vzdržuj strategijo.'),
+        priority: clampEnum(m.priority, VALID_PRIORITY, detAnalysis.volatilityMitigationActions[0]?.priority ?? 'MEDIUM'),
+        detail: clampString(m.detail, 200, detAnalysis.volatilityMitigationActions[0]?.detail ?? 'Redno monitoring.'),
+      });
+    }
+  }
+  if (mitigationActions.length === 0) {
+    for (const m of detAnalysis.volatilityMitigationActions) mitigationActions.push(m);
+  }
+
+  const analysis: VolatilityAnalysis = {
+    riskImplication: clampString(parsed.riskImplication, 500, detAnalysis.riskImplication),
+    volatilityHotspots,
+    stabilityZones,
+    volatilityMitigationActions: mitigationActions,
+    tradingStrategyAdjustment: clampString(parsed.tradingStrategyAdjustment, 400, detAnalysis.tradingStrategyAdjustment),
+  };
+
+  const summary = clampString(parsed.summary, 400, buildSummary(current, forecast));
+  return { forecast, analysis, summary, aiUsed: true };
+}
+
 // --- Handler -------------------------------------------------------------
 
-export async function GET(req: NextRequest) {
-  return handleMarketVolatilityForecaster(req);
-}
-export async function POST(req: NextRequest) {
-  return handleMarketVolatilityForecaster(req);
-}
+const marketVolatilityForecasterHandler = withAiRoute<MarketVolatilityForecasterInput>({
+  endpoint: '/api/ai/market-volatility-forecaster',
+  maxDuration: 60,
+  enforceBudget: true, // AI klic — preveri budget
+  method: 'GET', // Endpoint sprejema GET + POST — bypass POST-only check
 
-async function handleMarketVolatilityForecaster(req: NextRequest) {
-  try {
-    const rl = checkRateLimit(req, 'ai-market-volatility-forecaster', 20);
-    if (!rl.allowed) return rateLimitResponse(rl);
+  parseBody: async (req) => {
+    await req.json().catch(() => ({}));
+    return {};
+  },
+
+  // No validateInput — body ignored, identična logika za GET in POST
+  handler: async (_input, ctx: AiRouteContext) => {
+    const { db, callAi, parseAi, logger } = ctx;
 
     const now = Date.now();
     const cutoff180d = new Date(now - HORIZON_180D);
@@ -487,7 +661,7 @@ async function handleMarketVolatilityForecaster(req: NextRequest) {
     }) as unknown as ListingRow[];
 
     if (listings.length === 0) {
-      return NextResponse.json({
+      return apiOk({
         ok: true,
         current: {
           avgVolatility: 0,
@@ -564,7 +738,7 @@ async function handleMarketVolatilityForecaster(req: NextRequest) {
     const sortedWeeks = Array.from(allWeeksSet).sort((a, b) => a - b).slice(-WEEKS_26);
 
     if (sortedWeeks.length < 4) {
-      return NextResponse.json({
+      return apiOk({
         ok: true,
         current: {
           avgVolatility: 0,
@@ -599,7 +773,7 @@ async function handleMarketVolatilityForecaster(req: NextRequest) {
     const categorySeries = buildCategorySeries(catMap, sortedWeeks);
 
     if (categorySeries.length === 0) {
-      return NextResponse.json({
+      return apiOk({
         ok: true,
         current: {
           avgVolatility: 0,
@@ -675,7 +849,7 @@ async function handleMarketVolatilityForecaster(req: NextRequest) {
     const detAnalysis = buildDeterministicAnalysis(detForecast, categorySeries, current);
 
     // Per-category forecast list
-    const catProjections = categorySeries.map((c) => {
+    const catProjections: CategoryForecast[] = categorySeries.map((c) => {
       const slope = trendSlope(c.weeklyAvgPrices);
       const accel = computeAcceleration(c.weeklyAvgPrices);
       const momFactor = Math.max(0.5, Math.min(1.5, 1 + accel * 0.1));
@@ -708,7 +882,7 @@ async function handleMarketVolatilityForecaster(req: NextRequest) {
       summary: string;
     }>(cacheKey);
     if (cached) {
-      return NextResponse.json({
+      return apiOk({
         ok: true,
         current,
         forecast: cached.forecast,
@@ -721,167 +895,20 @@ async function handleMarketVolatilityForecaster(req: NextRequest) {
     }
 
     // 7) AI prompt with grounding
-    const settings = await getSettingsRow();
-    const aiSettings: AiSettings = {
-      provider: settings.aiProvider as AiProviderType,
-      baseUrl: settings.aiBaseUrl,
-      apiKey: settings.aiApiKey,
-      model: settings.aiModel,
-      fallbackProvider: (settings.fallbackProvider || '') as
-        | AiProviderType
-        | '',
-      fallbackBaseUrl: settings.fallbackBaseUrl || '',
-      fallbackApiKey: settings.fallbackApiKey || '',
-      fallbackModel: settings.fallbackModel || '',
-    };
-
-    const promptData = {
-      current,
-      deterministicForecast: detForecast,
-      deterministicAnalysis: detAnalysis,
-      categoryProjections: catProjections,
-      caps: {
-        volMin: VOL_MIN, volMax: VOL_MAX,
-        confidenceMin: CONFIDENCE_MIN, confidenceMax: CONFIDENCE_MAX,
-      },
-    };
-
-    const prompt = `Si AI "Market Volatility Forecaster" za slovenske in srednjeevropske oglasne platforme (Bolha, Vinted, Facebook, Avtonet, mobile.de).
-Forecast-aš FUTURE market volatiliteto 30/60/90 dni vnaprej — bodo cene bolj nestabilne (risk) ali bolj stabilne (safe)? Razlika od price-volatility-analyzer (ki da current volatility) — ti FORECAST-a FUTURE volatility z outlook + risk implication + mitigation actions.
-
-DETERMINISTIČNI PODATKI (izračunano iz DB — zadnjih 26 tednov oglasov z monitor.source kot kategorija proxy, per-week CV of avg prices):
-${JSON.stringify(promptData, null, 2)}
-
-PRAVILA ZA AI ODGOVOR:
-1. forecast: { projectedAvgVolatility30d/60d/90d (clamped [0, 200], ±15 od deterministic), volatilityOutlook INCREASING | STABLE | DECREASING, confidenceLevel 0-100 ±15 od deterministic }.
-2. analysis.riskImplication: slovensko, max 500 znakov — kaj pomeni projected volatility za trgovanje
-3. analysis.volatilityHotspots: 1-3 kategorij z najvišjo projected volatility { category (max 60 chars), projectedVolatility 0-200, risk (max 200 chars) }
-4. analysis.stabilityZones: 1-3 kategorij z najnižjo projected volatility { category (max 60 chars), projectedVolatility 0-200, benefit (max 200 chars) }
-5. analysis.volatilityMitigationActions: 2-4 akcij { action (max 200 chars), priority HIGH | MEDIUM | LOW, detail (max 200 chars) }
-6. analysis.tradingStrategyAdjustment: slovensko, max 400 znakov — kako prilagoditi strategijo glede na volatility forecast
-7. summary: slovenski povzetek (max 400 znakov). NE izmišljuj številk — uporabi deterministične.
-
-VRNI LE JSON:
-{
-  "projectedAvgVolatility30d": 22,
-  "projectedAvgVolatility60d": 25,
-  "projectedAvgVolatility90d": 28,
-  "volatilityOutlook": "INCREASING",
-  "confidenceLevel": 72,
-  "riskImplication": "Volatility narašča (18% → 28% v 90d). Povečana nestabilnost cen pomeni višje tveganje...",
-  "volatilityHotspots": [
-    { "category": "elektronika", "projectedVolatility": 28, "risk": "Cenovni skoki in padci — težko napovedovanje." }
-  ],
-  "stabilityZones": [
-    { "category": "moda", "projectedVolatility": 6, "benefit": "Stabilne cene — idealno za dolgoročne pozicije." }
-  ],
-  "volatilityMitigationActions": [
-    { "action": "Zmanjšaj povprečno velikost pozicij za 20-30%", "priority": "HIGH", "detail": "Manjše pozicije zmanjšajo exposure." }
-  ],
-  "tradingStrategyAdjustment": "Strategija: DEFENZIVNA. Premakni fokus na moda, skrajšaj hold time.",
-  "summary": "Volatility outlook: INCREASING (18% → 28%). Elektronika hotspot. Moda stability zone."
-}${GROUNDING_PROMPT_SUFFIX}`;
+    const promptData = buildPromptData(current, detForecast, detAnalysis, catProjections);
+    const prompt = buildPrompt(promptData);
 
     let aiUsed = false;
 
     try {
-      const raw = await callProviderForRaw(aiSettings, prompt);
-      const parsed = parseJsonLooseExported(raw) as AiVolatilityResponse | null;
+      const raw = await callAi(prompt);
+      const parsed = parseAi(raw) as AiVolatilityResponse | null;
 
-      if (parsed && typeof parsed === 'object') {
-        // Projected volatility — ±15 of deterministic, clamped [0, 200]
-        const projectedAvgVolatility30d = round1(
-          Math.max(VOL_MIN, Math.min(VOL_MAX,
-            detForecast.projectedAvgVolatility30d + Math.max(-15, Math.min(15,
-              (Number(parsed.projectedAvgVolatility30d ?? detForecast.projectedAvgVolatility30d)) - detForecast.projectedAvgVolatility30d)))),
-        );
-        const projectedAvgVolatility60d = round1(
-          Math.max(VOL_MIN, Math.min(VOL_MAX,
-            detForecast.projectedAvgVolatility60d + Math.max(-15, Math.min(15,
-              (Number(parsed.projectedAvgVolatility60d ?? detForecast.projectedAvgVolatility60d)) - detForecast.projectedAvgVolatility60d)))),
-        );
-        const projectedAvgVolatility90d = round1(
-          Math.max(VOL_MIN, Math.min(VOL_MAX,
-            detForecast.projectedAvgVolatility90d + Math.max(-15, Math.min(15,
-              (Number(parsed.projectedAvgVolatility90d ?? detForecast.projectedAvgVolatility90d)) - detForecast.projectedAvgVolatility90d)))),
-        );
-
-        const volatilityOutlook = clampEnum(parsed.volatilityOutlook, VALID_DIRECTION, detForecast.volatilityOutlook);
-        const confidenceLevel = round0(
-          Math.max(CONFIDENCE_MIN, Math.min(CONFIDENCE_MAX,
-            detForecast.confidenceLevel + Math.max(-15, Math.min(15,
-              (Number(parsed.confidenceLevel ?? detForecast.confidenceLevel)) - detForecast.confidenceLevel)))),
-        );
-
-        forecast = {
-          projectedAvgVolatility30d,
-          projectedAvgVolatility60d,
-          projectedAvgVolatility90d,
-          volatilityOutlook,
-          confidenceLevel,
-        };
-
-        // Hotspots validation
-        const volatilityHotspots: VolatilityHotspot[] = [];
-        if (Array.isArray(parsed.volatilityHotspots)) {
-          for (const h of parsed.volatilityHotspots.slice(0, 3)) {
-            if (!h || typeof h !== 'object') continue;
-            volatilityHotspots.push({
-              category: clampString(h.category, 60, detAnalysis.volatilityHotspots[0]?.category ?? 'neznan'),
-              projectedVolatility: clampNum(h.projectedVolatility, VOL_MIN, VOL_MAX,
-                detAnalysis.volatilityHotspots[0]?.projectedVolatility ?? 50),
-              risk: clampString(h.risk, 200, detAnalysis.volatilityHotspots[0]?.risk ?? 'Povečano tveganje.'),
-            });
-          }
-        }
-        if (volatilityHotspots.length === 0) {
-          for (const h of detAnalysis.volatilityHotspots) volatilityHotspots.push(h);
-        }
-
-        // Stability zones validation
-        const stabilityZones: StabilityZone[] = [];
-        if (Array.isArray(parsed.stabilityZones)) {
-          for (const z of parsed.stabilityZones.slice(0, 3)) {
-            if (!z || typeof z !== 'object') continue;
-            stabilityZones.push({
-              category: clampString(z.category, 60, detAnalysis.stabilityZones[0]?.category ?? 'neznan'),
-              projectedVolatility: clampNum(z.projectedVolatility, VOL_MIN, VOL_MAX,
-                detAnalysis.stabilityZones[0]?.projectedVolatility ?? 10),
-              benefit: clampString(z.benefit, 200, detAnalysis.stabilityZones[0]?.benefit ?? 'Stabilne cene.'),
-            });
-          }
-        }
-        if (stabilityZones.length === 0) {
-          for (const z of detAnalysis.stabilityZones) stabilityZones.push(z);
-        }
-
-        // Mitigation actions validation
-        const mitigationActions: VolatilityMitigationAction[] = [];
-        if (Array.isArray(parsed.volatilityMitigationActions)) {
-          for (const m of parsed.volatilityMitigationActions.slice(0, 4)) {
-            if (!m || typeof m !== 'object') continue;
-            mitigationActions.push({
-              action: clampString(m.action, 200, detAnalysis.volatilityMitigationActions[0]?.action ?? 'Vzdržuj strategijo.'),
-              priority: clampEnum(m.priority, VALID_PRIORITY, detAnalysis.volatilityMitigationActions[0]?.priority ?? 'MEDIUM'),
-              detail: clampString(m.detail, 200, detAnalysis.volatilityMitigationActions[0]?.detail ?? 'Redno monitoring.'),
-            });
-          }
-        }
-        if (mitigationActions.length === 0) {
-          for (const m of detAnalysis.volatilityMitigationActions) mitigationActions.push(m);
-        }
-
-        analysis = {
-          riskImplication: clampString(parsed.riskImplication, 500, detAnalysis.riskImplication),
-          volatilityHotspots,
-          stabilityZones,
-          volatilityMitigationActions: mitigationActions,
-          tradingStrategyAdjustment: clampString(parsed.tradingStrategyAdjustment, 400, detAnalysis.tradingStrategyAdjustment),
-        };
-
-        summary = clampString(parsed.summary, 400, buildSummary(current, forecast));
-        aiUsed = true;
-      }
+      const result = mergeAiResponse(parsed, detForecast, detAnalysis, current);
+      forecast = result.forecast;
+      analysis = result.analysis;
+      summary = result.summary;
+      aiUsed = result.aiUsed;
     } catch (err) {
       logger.warn(
         '/api/ai/market-volatility-forecaster',
@@ -899,7 +926,7 @@ VRNI LE JSON:
       });
     }
 
-    return NextResponse.json({
+    return apiOk({
       ok: true,
       current,
       forecast,
@@ -908,18 +935,11 @@ VRNI LE JSON:
       summary,
       aiUsed,
     });
-  } catch (err: any) {
-    logger.error(
-      '/api/ai/market-volatility-forecaster',
-      'handler failed',
-      err,
-    );
-    return NextResponse.json(
-      { error: err?.message ?? 'Napaka' },
-      { status: 500 },
-    );
-  }
-}
+  },
+});
+
+export const GET = marketVolatilityForecasterHandler;
+export const POST = marketVolatilityForecasterHandler;
 
 function buildSummary(
   current: CurrentVolatility,

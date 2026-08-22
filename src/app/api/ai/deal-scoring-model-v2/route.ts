@@ -1,4 +1,4 @@
-// v7.69: AI Deal Scoring Model v2 — advanced ML-style deal scoring ki primerja
+// v7.69 / v8.96.4-batch4: AI Deal Scoring Model v2 — advanced ML-style deal scoring ki primerja
 // več faktorjev (price, demand, risk, market depth, seller reliability,
 // category performance, time) in producira 0-100 score. Razlika od obstoječega
 // basic dealScore-a — ta uporablja weighted multi-factor model.
@@ -17,24 +17,21 @@
 //
 // GET+POST /api/ai/deal-scoring-model-v2
 // (AI-enhanced + grounding + anti-hallucination + 6h cache + deterministic fallback)
+// Refaktoriran z withAiRoute helperjem (v8.96.4) + enforceBudget guard.
 
-import { NextRequest, NextResponse } from 'next/server';
-import { db } from '@/lib/db';
-import { getSettingsRow } from '@/lib/pipeline';
-import {
-  callProviderForRaw,
-  parseJsonLooseExported,
-  type AiProviderType,
-  type AiSettings,
-} from '@/lib/ai';
+import { withAiRoute, AI_ROUTE_DEFAULTS, type AiRouteContext } from '@/lib/with-ai-route';
+import { apiOk } from '@/lib/api-response';
 import { GROUNDING_PROMPT_SUFFIX } from '@/lib/anti-hallucination';
 import { getCachedAI, setCachedAI } from '@/lib/ai-cache';
-import { checkRateLimit, rateLimitResponse } from '@/lib/rate-limit';
-import { logger } from '@/lib/logger';
 
-export const runtime = 'nodejs';
-export const dynamic = 'force-dynamic';
+export const { runtime, dynamic } = AI_ROUTE_DEFAULTS;
 export const maxDuration = 60;
+
+// --- Input ----------------------------------------------------------------
+
+interface DealScoringModelV2Input {
+  listingId?: string;
+}
 
 // --- Types ---------------------------------------------------------------
 
@@ -305,38 +302,262 @@ function deriveStrengthsWeaknesses(
   if (strengths.length === 0) strengths.push('ni izrazitih prednosti');
   if (weaknesses.length === 0) weaknesses.push('ni izrazitih slabosti');
 
+  void breakdown; // breakdown used implicitly via factors
   return { strengths: strengths.slice(0, 2), weaknesses: weaknesses.slice(0, 2) };
+}
+
+// --- Helper: build deterministic listing --------------------------------
+
+interface BaseListing {
+  listingId: string;
+  title: string;
+  price: number;
+  aiEstimatedValue: number;
+  category: string;
+  factors: FactorSet;
+  hasCategoryHistory: boolean;
+  sellerName: string | null;
+  aiRisk: number | null;
+}
+
+function buildDeterministicListing(
+  base: BaseListing,
+  weights: FactorWeight[],
+): ScoredListing {
+  const { score, breakdown } = computeWeightedScore(base.factors, weights);
+  const grade = gradeFromScore(score);
+  const rec = recFromGrade(grade);
+  const sw = deriveStrengthsWeaknesses(base.factors, breakdown);
+  return {
+    listingId: base.listingId,
+    title: base.title,
+    price: base.price,
+    aiEstimatedValue: base.aiEstimatedValue,
+    factors: base.factors,
+    weightedScore: score,
+    scoreBreakdown: breakdown,
+    confidenceLevel: computeConfidence(
+      base.aiEstimatedValue > 0 ? base.aiEstimatedValue : null,
+      base.aiRisk,
+      base.sellerName,
+      base.hasCategoryHistory,
+    ),
+    grade,
+    recommendation: rec,
+    keyStrengths: sw.strengths,
+    keyWeaknesses: sw.weaknesses,
+  };
+}
+
+// --- Helper: build model info --------------------------------------------
+
+function buildModelInfo(
+  listings: ScoredListing[],
+  factorWeights: FactorWeight[],
+): ModelInfo {
+  const total = listings.length;
+  if (total === 0) {
+    return {
+      factorWeights,
+      totalListingsScored: 0,
+      avgScore: 0,
+      topGrade: 'N/A',
+      strongBuyCount: 0,
+    };
+  }
+  const avgScore = Math.round(
+    listings.reduce((s, l) => s + l.weightedScore, 0) / total,
+  );
+  const top = listings[0];
+  const strongBuyCount = listings.filter(
+    l => l.recommendation === 'STRONG_BUY',
+  ).length;
+  return {
+    factorWeights,
+    totalListingsScored: total,
+    avgScore,
+    topGrade: top?.grade ?? 'N/A',
+    strongBuyCount,
+  };
+}
+
+// --- Prompt builder -------------------------------------------------------
+
+function buildListingBlock(baseListings: BaseListing[]): string {
+  return baseListings
+    .slice(0, 30)
+    .map(
+      (l, i) =>
+        `${i + 1}. listingId=${l.listingId}, title="${l.title}", price=${l.price}€, estValue=${l.aiEstimatedValue}€, category="${l.category}", priceFactor=${round1(l.factors.priceFactor)}, demandFactor=${round1(l.factors.demandFactor)}, riskFactor=${round1(l.factors.riskFactor)}, marketDepthFactor=${round1(l.factors.marketDepthFactor)}, sellerReliabilityFactor=${round1(l.factors.sellerReliabilityFactor)}, categoryPerformanceFactor=${round1(l.factors.categoryPerformanceFactor)}, timeFactor=${round1(l.factors.timeFactor)}`,
+    )
+    .join('\n');
+}
+
+function buildPrompt(baseListings: BaseListing[]): string {
+  const listingBlock = buildListingBlock(baseListings);
+  return `Si AI deal scoring model za slovenske in srednjeevropske oglasne platforme (Bolha, Vinted, Avtonet, mobile.de).
+Iz 7 faktorjev (priceFactor, demandFactor, riskFactor, marketDepthFactor, sellerReliabilityFactor, categoryPerformanceFactor, timeFactor) generiraj WEIGHTED 0-100 score per listing.
+
+PODATKI O LISTING-IH (top ${Math.min(30, baseListings.length)} od ${baseListings.length}):
+${listingBlock}
+
+PRAVILA ZA SCORING:
+1. factorWeights: določi uteži (% ) za vsak od 7 faktorjev — skupaj morajo znašati 100%. Tipično: priceFactor 25%, demandFactor 20%, riskFactor 15%, marketDepthFactor 10%, sellerReliabilityFactor 10%, categoryPerformanceFactor 10%, timeFactor 10%.
+2. listings: za vsak listing napiši weightedScore (0-100) glede na faktorje in uteži, confidenceLevel (0-100 glede na popolnost podatkov), grade (S/A/B/C/D/F), recommendation (STRONG_BUY/BUY/CONSIDER/PASS), keyStrengths (top 2 faktorja z visokimi vrednostmi), keyWeaknesses (top 2 faktorja z nizkimi vrednostmi).
+
+GRADE LOGIKA: S (90+), A (80-89), B (70-79), C (60-69), D (50-59), F (<50).
+RECOMMENDATION LOGIKA: STRONG_BUY (S/A), BUY (B/C), CONSIDER (D), PASS (F).
+
+VRNI LE JSON:
+{
+  "factorWeights": [
+    { "factor": "priceFactor", "weight": 25 },
+    { "factor": "demandFactor", "weight": 20 },
+    { "factor": "riskFactor", "weight": 15 },
+    { "factor": "marketDepthFactor", "weight": 10 },
+    { "factor": "sellerReliabilityFactor", "weight": 10 },
+    { "factor": "categoryPerformanceFactor", "weight": 10 },
+    { "factor": "timeFactor", "weight": 10 }
+  ],
+  "listings": [
+    {
+      "listingId": "abc",
+      "weightedScore": 87,
+      "confidenceLevel": 80,
+      "grade": "A",
+      "recommendation": "STRONG_BUY",
+      "keyStrengths": ["cenovni popust (85%)", "povpraševanje (70%)"],
+      "keyWeaknesses": ["globina trga (20%)"]
+    }
+  ]
+}${GROUNDING_PROMPT_SUFFIX}`;
+}
+
+// --- AI merge ------------------------------------------------------------
+
+interface AiWeightsAndListings {
+  factorWeights: FactorWeight[];
+  scoredListings: ScoredListing[];
+  aiUsed: boolean;
+}
+
+function parseAiWeightsAndListings(
+  parsed: AiDealScoringResponse | null,
+  baseListings: BaseListing[],
+  fallbackWeights: FactorWeight[],
+): AiWeightsAndListings {
+  let factorWeights: FactorWeight[] = fallbackWeights;
+  let scoredListings: ScoredListing[] = baseListings.map(b =>
+    buildDeterministicListing(b, fallbackWeights),
+  );
+  let aiUsed = false;
+
+  if (parsed && typeof parsed === 'object') {
+    // Parse factorWeights — normalize to sum 100%
+    if (Array.isArray(parsed.factorWeights)) {
+      const aiWeights: FactorWeight[] = [];
+      for (const w of parsed.factorWeights) {
+        const a = w as Record<string, unknown> | null;
+        if (!a || typeof a !== 'object') continue;
+        const factorName = clampString(a.factor, 50, '');
+        if (!FACTOR_NAMES.includes(factorName as typeof FACTOR_NAMES[number])) continue;
+        const weight = clampNumber(a.weight, 0, 100, 0);
+        aiWeights.push({ factor: factorName, weight });
+      }
+      if (aiWeights.length === FACTOR_NAMES.length) {
+        // Normalize to 100%
+        const sum = aiWeights.reduce((s, w) => s + w.weight, 0);
+        if (sum > 0) {
+          factorWeights = aiWeights.map(w => ({
+            factor: w.factor,
+            weight: Math.round((w.weight / sum) * 1000) / 10,
+          }));
+        }
+      }
+    }
+
+    // Parse listings — preserve DB numbers, override AI fields
+    if (Array.isArray(parsed.listings)) {
+      const aiMap = new Map<string, Partial<ScoredListing>>();
+      for (const l of parsed.listings) {
+        const a = l as Record<string, unknown> | null;
+        if (!a || typeof a !== 'object') continue;
+        const listingId = clampString(a.listingId, 100, '');
+        if (!listingId) continue;
+        aiMap.set(listingId, {
+          listingId,
+          keyStrengths: sanitizeStringArray(a.keyStrengths, 2),
+          keyWeaknesses: sanitizeStringArray(a.keyWeaknesses, 2),
+        });
+      }
+
+      // Recompute all listings with new factorWeights + AI-provided strengths/weaknesses
+      scoredListings = baseListings.map(base => {
+        const { score, breakdown } = computeWeightedScore(base.factors, factorWeights);
+        const grade = gradeFromScore(score);
+        const rec = recFromGrade(grade);
+        const sw = deriveStrengthsWeaknesses(base.factors, breakdown);
+        const ai = aiMap.get(base.listingId);
+        return {
+          listingId: base.listingId,
+          title: base.title,
+          price: base.price,
+          aiEstimatedValue: base.aiEstimatedValue,
+          factors: base.factors,
+          weightedScore: score,
+          scoreBreakdown: breakdown,
+          confidenceLevel: computeConfidence(
+            base.aiEstimatedValue > 0 ? base.aiEstimatedValue : null,
+            base.aiRisk,
+            base.sellerName,
+            base.hasCategoryHistory,
+          ),
+          grade,
+          recommendation: rec,
+          keyStrengths: ai?.keyStrengths?.length ? ai.keyStrengths : sw.strengths,
+          keyWeaknesses: ai?.keyWeaknesses?.length ? ai.keyWeaknesses : sw.weaknesses,
+        };
+      });
+      aiUsed = true;
+    }
+  }
+
+  return { factorWeights, scoredListings, aiUsed };
 }
 
 // --- Handler -------------------------------------------------------------
 
-export async function GET(req: NextRequest) {
-  return handleDealScoringModelV2(req);
-}
-export async function POST(req: NextRequest) {
-  return handleDealScoringModelV2(req);
-}
+const dealScoringHandler = withAiRoute<DealScoringModelV2Input>({
+  endpoint: '/api/ai/deal-scoring-model-v2',
+  maxDuration: 60,
+  enforceBudget: true, // AI klic — preveri budget
+  method: 'GET', // Endpoint sprejema GET + POST — bypass POST-only check
 
-async function handleDealScoringModelV2(req: NextRequest) {
-  try {
-    const rl = checkRateLimit(req, 'ai-deal-scoring-v2', 20);
-    if (!rl.allowed) return rateLimitResponse(rl);
-
-    // 1) Parse body — optional listingId
-    let body: { listingId?: string } = {};
+  parseBody: async (req) => {
+    let listingId: string | undefined;
     try {
       const parsed = await req.json();
       if (parsed && typeof parsed === 'object') {
-        body = parsed as { listingId?: string };
+        const body = parsed as { listingId?: string };
+        if (typeof body.listingId === 'string' && body.listingId.trim().length > 0) {
+          listingId = body.listingId;
+        }
       }
     } catch {
       // GET request — no body, score all active PRILIKA listings
     }
+    return { listingId };
+  },
 
-    // 2) Query listings (PRILIKA = active opportunity listings)
-    const listingWhere = body.listingId
+  // No validateInput — listingId je optional
+  handler: async (input, ctx: AiRouteContext) => {
+    const { db, callAi, parseAi, logger } = ctx;
+    const { listingId } = input;
+
+    // 1) Query listings (PRILIKA = active opportunity listings)
+    const listingWhere = listingId
       ? {
-          id: body.listingId,
+          id: listingId,
           isHidden: false,
           aiVerdict: 'PRILIKA',
         }
@@ -362,13 +583,13 @@ async function handleDealScoringModelV2(req: NextRequest) {
         contactStatus: true,
         monitor: { select: { tags: true } },
       },
-      take: body.listingId ? 1 : 200,
-      orderBy: body.listingId ? undefined : { dealScore: 'desc' },
+      take: listingId ? 1 : 200,
+      orderBy: listingId ? undefined : { dealScore: 'desc' },
     });
 
     // Empty state
     if (listings.length === 0) {
-      return NextResponse.json({
+      return apiOk({
         ok: true,
         listings: [],
         modelInfo: {
@@ -384,7 +605,7 @@ async function handleDealScoringModelV2(req: NextRequest) {
       });
     }
 
-    // 3) Compute category-level statistics (for demand, marketDepth, categoryPerformance)
+    // 2) Compute category-level statistics (for demand, marketDepth, categoryPerformance)
     const categories = new Set<string>();
     for (const l of listings) {
       const tagsRaw = (l.monitor?.tags as string | undefined) || '';
@@ -454,18 +675,6 @@ async function handleDealScoringModelV2(req: NextRequest) {
     }
 
     // 4) Compute factors per listing
-    type BaseListing = {
-      listingId: string;
-      title: string;
-      price: number;
-      aiEstimatedValue: number;
-      category: string;
-      factors: FactorSet;
-      hasCategoryHistory: boolean;
-      sellerName: string | null;
-      aiRisk: number | null;
-    };
-
     const baseListings: BaseListing[] = [];
     for (const l of listings) {
       const price = l.price ?? 0;
@@ -516,6 +725,8 @@ async function handleDealScoringModelV2(req: NextRequest) {
       });
     }
 
+    void categories;
+
     // 5) AI cache check (6h TTL)
     const sortedListingIds = baseListings.map(l => l.listingId).sort();
     const cacheKey = `deal-scoring-model-v2:${JSON.stringify(sortedListingIds)}`;
@@ -563,7 +774,7 @@ async function handleDealScoringModelV2(req: NextRequest) {
         };
       });
       const sortedMerged = merged.sort((a, b) => b.weightedScore - a.weightedScore);
-      return NextResponse.json({
+      return apiOk({
         ok: true,
         listings: sortedMerged,
         modelInfo: buildModelInfo(sortedMerged, cached.factorWeights),
@@ -573,144 +784,24 @@ async function handleDealScoringModelV2(req: NextRequest) {
     }
 
     // 6) AI prompt with grounding
-    const settings = await getSettingsRow();
-    const aiSettings: AiSettings = {
-      provider: settings.aiProvider as AiProviderType,
-      baseUrl: settings.aiBaseUrl,
-      apiKey: settings.aiApiKey,
-      model: settings.aiModel,
-      fallbackProvider: (settings.fallbackProvider || '') as
-        | AiProviderType
-        | '',
-      fallbackBaseUrl: settings.fallbackBaseUrl || '',
-      fallbackApiKey: settings.fallbackApiKey || '',
-      fallbackModel: settings.fallbackModel || '',
-    };
-
-    const listingBlock = baseListings
-      .slice(0, 30)
-      .map(
-        (l, i) =>
-          `${i + 1}. listingId=${l.listingId}, title="${l.title}", price=${l.price}€, estValue=${l.aiEstimatedValue}€, category="${l.category}", priceFactor=${round1(l.factors.priceFactor)}, demandFactor=${round1(l.factors.demandFactor)}, riskFactor=${round1(l.factors.riskFactor)}, marketDepthFactor=${round1(l.factors.marketDepthFactor)}, sellerReliabilityFactor=${round1(l.factors.sellerReliabilityFactor)}, categoryPerformanceFactor=${round1(l.factors.categoryPerformanceFactor)}, timeFactor=${round1(l.factors.timeFactor)}`,
-      )
-      .join('\n');
-
-    const prompt = `Si AI deal scoring model za slovenske in srednjeevropske oglasne platforme (Bolha, Vinted, Avtonet, mobile.de).
-Iz 7 faktorjev (priceFactor, demandFactor, riskFactor, marketDepthFactor, sellerReliabilityFactor, categoryPerformanceFactor, timeFactor) generiraj WEIGHTED 0-100 score per listing.
-
-PODATKI O LISTING-IH (top ${Math.min(30, baseListings.length)} od ${baseListings.length}):
-${listingBlock}
-
-PRAVILA ZA SCORING:
-1. factorWeights: določi uteži (% ) za vsak od 7 faktorjev — skupaj morajo znašati 100%. Tipično: priceFactor 25%, demandFactor 20%, riskFactor 15%, marketDepthFactor 10%, sellerReliabilityFactor 10%, categoryPerformanceFactor 10%, timeFactor 10%.
-2. listings: za vsak listing napiši weightedScore (0-100) glede na faktorje in uteži, confidenceLevel (0-100 glede na popolnost podatkov), grade (S/A/B/C/D/F), recommendation (STRONG_BUY/BUY/CONSIDER/PASS), keyStrengths (top 2 faktorja z visokimi vrednostmi), keyWeaknesses (top 2 faktorja z nizkimi vrednostmi).
-
-GRADE LOGIKA: S (90+), A (80-89), B (70-79), C (60-69), D (50-59), F (<50).
-RECOMMENDATION LOGIKA: STRONG_BUY (S/A), BUY (B/C), CONSIDER (D), PASS (F).
-
-VRNI LE JSON:
-{
-  "factorWeights": [
-    { "factor": "priceFactor", "weight": 25 },
-    { "factor": "demandFactor", "weight": 20 },
-    { "factor": "riskFactor", "weight": 15 },
-    { "factor": "marketDepthFactor", "weight": 10 },
-    { "factor": "sellerReliabilityFactor", "weight": 10 },
-    { "factor": "categoryPerformanceFactor", "weight": 10 },
-    { "factor": "timeFactor", "weight": 10 }
-  ],
-  "listings": [
-    {
-      "listingId": "abc",
-      "weightedScore": 87,
-      "confidenceLevel": 80,
-      "grade": "A",
-      "recommendation": "STRONG_BUY",
-      "keyStrengths": ["cenovni popust (85%)", "povpraševanje (70%)"],
-      "keyWeaknesses": ["globina trga (20%)"]
-    }
-  ]
-}${GROUNDING_PROMPT_SUFFIX}`;
+    const prompt = buildPrompt(baseListings);
 
     // Start with deterministic baseline (equal weights)
     let factorWeights: FactorWeight[] = EQUAL_WEIGHTS;
-    let scoredListings: ScoredListing[] = baseListings.map(b =>
+    let scoredListingsFinal: ScoredListing[] = baseListings.map(b =>
       buildDeterministicListing(b, EQUAL_WEIGHTS),
     );
-
     let aiUsed = false;
+
     try {
-      const raw = await callProviderForRaw(aiSettings, prompt);
-      const parsed = parseJsonLooseExported(raw) as AiDealScoringResponse | null;
-
-      if (parsed && typeof parsed === 'object') {
-        // Parse factorWeights — normalize to sum 100%
-        if (Array.isArray(parsed.factorWeights)) {
-          const aiWeights: FactorWeight[] = [];
-          for (const w of parsed.factorWeights) {
-            const a = w as Record<string, unknown> | null;
-            if (!a || typeof a !== 'object') continue;
-            const factorName = clampString(a.factor, 50, '');
-            if (!FACTOR_NAMES.includes(factorName as typeof FACTOR_NAMES[number])) continue;
-            const weight = clampNumber(a.weight, 0, 100, 0);
-            aiWeights.push({ factor: factorName, weight });
-          }
-          if (aiWeights.length === FACTOR_NAMES.length) {
-            // Normalize to 100%
-            const sum = aiWeights.reduce((s, w) => s + w.weight, 0);
-            if (sum > 0) {
-              factorWeights = aiWeights.map(w => ({
-                factor: w.factor,
-                weight: Math.round((w.weight / sum) * 1000) / 10,
-              }));
-            }
-          }
-        }
-
-        // Parse listings — preserve DB numbers, override AI fields
-        if (Array.isArray(parsed.listings)) {
-          const aiMap = new Map<string, Partial<ScoredListing>>();
-          for (const l of parsed.listings) {
-            const a = l as Record<string, unknown> | null;
-            if (!a || typeof a !== 'object') continue;
-            const listingId = clampString(a.listingId, 100, '');
-            if (!listingId) continue;
-            aiMap.set(listingId, {
-              listingId,
-              keyStrengths: sanitizeStringArray(a.keyStrengths, 2),
-              keyWeaknesses: sanitizeStringArray(a.keyWeaknesses, 2),
-            });
-          }
-
-          // Recompute all listings with new factorWeights + AI-provided strengths/weaknesses
-          scoredListings = baseListings.map(base => {
-            const { score, breakdown } = computeWeightedScore(base.factors, factorWeights);
-            const grade = gradeFromScore(score);
-            const rec = recFromGrade(grade);
-            const sw = deriveStrengthsWeaknesses(base.factors, breakdown);
-            const ai = aiMap.get(base.listingId);
-            return {
-              listingId: base.listingId,
-              title: base.title,
-              price: base.price,
-              aiEstimatedValue: base.aiEstimatedValue,
-              factors: base.factors,
-              weightedScore: score,
-              scoreBreakdown: breakdown,
-              confidenceLevel: computeConfidence(
-                base.aiEstimatedValue > 0 ? base.aiEstimatedValue : null,
-                base.aiRisk,
-                base.sellerName,
-                base.hasCategoryHistory,
-              ),
-              grade,
-              recommendation: rec,
-              keyStrengths: ai?.keyStrengths?.length ? ai.keyStrengths : sw.strengths,
-              keyWeaknesses: ai?.keyWeaknesses?.length ? ai.keyWeaknesses : sw.weaknesses,
-            };
-          });
-          aiUsed = true;
-        }
+      const raw = await callAi(prompt);
+      const parsed = parseAi(raw) as AiDealScoringResponse | null;
+      const result = parseAiWeightsAndListings(parsed, baseListings, EQUAL_WEIGHTS);
+      // factorWeights gets updated whenever AI returned valid weights (even without listings)
+      factorWeights = result.factorWeights;
+      if (result.aiUsed) {
+        scoredListingsFinal = result.scoredListings;
+        aiUsed = true;
       }
     } catch (err) {
       logger.warn(
@@ -721,96 +812,21 @@ VRNI LE JSON:
     }
 
     // 7) Sort by weightedScore desc
-    scoredListings.sort((a, b) => b.weightedScore - a.weightedScore);
+    scoredListingsFinal.sort((a, b) => b.weightedScore - a.weightedScore);
 
-    // 8) Cache (6h TTL) — only when AI was used
+    // 8) Cache (6h TTL) — only when AI was used (listings were parsed)
     if (aiUsed) {
-      setCachedAI(cacheKey, { factorWeights, listings: scoredListings });
+      setCachedAI(cacheKey, { factorWeights, listings: scoredListingsFinal });
     }
 
-    return NextResponse.json({
+    return apiOk({
       ok: true,
-      listings: scoredListings,
-      modelInfo: buildModelInfo(scoredListings, factorWeights),
+      listings: scoredListingsFinal,
+      modelInfo: buildModelInfo(scoredListingsFinal, factorWeights),
       aiUsed,
     });
-  } catch (err: any) {
-    logger.error('/api/ai/deal-scoring-model-v2', 'handler failed', err);
-    return NextResponse.json(
-      { error: err?.message ?? 'Napaka' },
-      { status: 500 },
-    );
-  }
-}
-
-// --- Helper: build deterministic listing --------------------------------
-
-function buildDeterministicListing(
-  base: {
-    listingId: string;
-    title: string;
-    price: number;
-    aiEstimatedValue: number;
-    factors: FactorSet;
-    hasCategoryHistory: boolean;
-    sellerName: string | null;
-    aiRisk: number | null;
   },
-  weights: FactorWeight[],
-): ScoredListing {
-  const { score, breakdown } = computeWeightedScore(base.factors, weights);
-  const grade = gradeFromScore(score);
-  const rec = recFromGrade(grade);
-  const sw = deriveStrengthsWeaknesses(base.factors, breakdown);
-  return {
-    listingId: base.listingId,
-    title: base.title,
-    price: base.price,
-    aiEstimatedValue: base.aiEstimatedValue,
-    factors: base.factors,
-    weightedScore: score,
-    scoreBreakdown: breakdown,
-    confidenceLevel: computeConfidence(
-      base.aiEstimatedValue > 0 ? base.aiEstimatedValue : null,
-      base.aiRisk,
-      base.sellerName,
-      base.hasCategoryHistory,
-    ),
-    grade,
-    recommendation: rec,
-    keyStrengths: sw.strengths,
-    keyWeaknesses: sw.weaknesses,
-  };
-}
+});
 
-// --- Helper: build model info --------------------------------------------
-
-function buildModelInfo(
-  listings: ScoredListing[],
-  factorWeights: FactorWeight[],
-): ModelInfo {
-  const total = listings.length;
-  if (total === 0) {
-    return {
-      factorWeights,
-      totalListingsScored: 0,
-      avgScore: 0,
-      topGrade: 'N/A',
-      strongBuyCount: 0,
-    };
-  }
-  const avgScore = Math.round(
-    listings.reduce((s, l) => s + l.weightedScore, 0) / total,
-  );
-  const top = listings[0];
-  const strongBuyCount = listings.filter(
-    l => l.recommendation === 'STRONG_BUY',
-  ).length;
-  return {
-    factorWeights,
-    totalListingsScored: total,
-    avgScore,
-    topGrade: top?.grade ?? 'N/A',
-    strongBuyCount,
-  };
-}
+export const GET = dealScoringHandler;
+export const POST = dealScoringHandler;

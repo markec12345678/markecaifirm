@@ -1,45 +1,111 @@
-// v6.88: AI Listing Visual Hierarchy — ML optimizacija vizualne hierarhije oglasov z eye-tracking
+// v6.88 / v8.95.8-refactor: AI Listing Visual Hierarchy — ML optimizacija vizualne hierarhije oglasov z eye-tracking
+// Refaktoriran z withAiRoute helperjem (v8.94) + enforceBudget guard.
+//
 // POST /api/ai/listing-visual-hierarchy
 // Body: { tradeId?: string }
 // Returns: { ok, optimizer: { listing, visualElements, hierarchyScore, attentionFlow, optimization, mlModels, summary } }
 
-import { NextRequest, NextResponse } from 'next/server';
-import { db } from '@/lib/db';
-import { getSettingsRow } from '@/lib/pipeline';
-import { callProviderForRaw, parseJsonLooseExported, type AiProviderType, type AiSettings } from '@/lib/ai';
-import { logger } from '@/lib/logger';
+import { withAiRoute, AI_ROUTE_DEFAULTS, type AiRouteContext } from '@/lib/with-ai-route';
+import { apiOk } from '@/lib/api-response';
 
-export const runtime = 'nodejs';
-export const dynamic = 'force-dynamic';
+export const { runtime, dynamic } = AI_ROUTE_DEFAULTS;
 export const maxDuration = 90;
 
 const VISUAL_ELEMENTS = ['hero_image', 'secondary_images', 'title_block', 'price_block', 'description_block', 'specs_table', 'cta_button', 'trust_badges', 'social_proof', 'shipping_info'] as const;
 const ATTENTION_ZONES = ['top_left', 'top_center', 'top_right', 'middle_left', 'middle_center', 'middle_right', 'bottom_left', 'bottom_center', 'bottom_right'] as const;
 
-export async function POST(req: NextRequest) {
-  try {
-    const body = await req.json().catch(() => ({}));
-    const tradeId = body?.tradeId ? String(body.tradeId).trim() : null;
+interface VisualHierarchyInput {
+  tradeId: string | null;
+}
 
-    const heldTrades = await db.trade.findMany({ where: { status: 'held' }, select: { id: true, title: true, category: true, buyPrice: true, buyDate: true, buyLocation: true, notes: true, listingId: true }, take: 200, orderBy: { buyDate: 'desc' } });
-    if (heldTrades.length === 0) return NextResponse.json({ ok: true, optimizer: null, message: 'Ni aktivnih oglasov za visual hierarchy analizo.' });
+interface HeldTradeRow {
+  id: string;
+  title: string;
+  category: string;
+  buyPrice: number;
+  buyDate: Date;
+  buyLocation: string | null;
+  notes: string | null;
+  listingId: string | null;
+}
+
+interface TargetListingRow {
+  aiEstimatedValue: number | null;
+  aiRisk: number | null;
+  url: string | null;
+  imageUrl: string | null;
+}
+
+export const POST = withAiRoute<VisualHierarchyInput>({
+  endpoint: '/api/ai/listing-visual-hierarchy',
+  maxDuration: 90,
+  enforceBudget: true,
+
+  parseBody: async (req) => {
+    const body = await req.json().catch(() => ({}));
+    return {
+      tradeId: body?.tradeId ? String(body.tradeId).trim() : null,
+    };
+  },
+
+  handler: async (input, ctx: AiRouteContext) => {
+    const { db, callAi, parseAi } = ctx;
+    const { tradeId } = input;
+
+    const heldTrades = await db.trade.findMany({
+      where: { status: 'held' },
+      select: { id: true, title: true, category: true, buyPrice: true, buyDate: true, buyLocation: true, notes: true, listingId: true },
+      take: 200,
+      orderBy: { buyDate: 'desc' },
+    });
+    if (heldTrades.length === 0) {
+      return apiOk({ ok: true, optimizer: null, message: 'Ni aktivnih oglasov za visual hierarchy analizo.' });
+    }
 
     const target = heldTrades.find(t => t.id === tradeId) ?? heldTrades[0];
-    const targetListing = target.listingId ? await db.listing.findUnique({ where: { id: target.listingId }, select: { aiEstimatedValue: true, aiRisk: true, url: true, imageUrl: true } }) : null;
+    const targetListing: TargetListingRow | null = target.listingId
+      ? await db.listing.findUnique({ where: { id: target.listingId }, select: { aiEstimatedValue: true, aiRisk: true, url: true, imageUrl: true } })
+      : null;
     const suggestedPrice = targetListing?.aiEstimatedValue ?? Math.round(target.buyPrice * 1.25);
 
-    const settings = await getSettingsRow();
-    const aiSettings: AiSettings = { provider: settings.aiProvider as AiProviderType, baseUrl: settings.aiBaseUrl, apiKey: settings.aiApiKey, model: settings.aiModel, fallbackProvider: (settings.fallbackProvider || '') as AiProviderType | '', fallbackBaseUrl: settings.fallbackBaseUrl || '', fallbackApiKey: settings.fallbackApiKey || '', fallbackModel: settings.fallbackModel || '' };
+    const prompt = buildPrompt({
+      title: target.title,
+      category: target.category,
+      buyPrice: target.buyPrice,
+      suggestedPrice,
+      imageUrl: targetListing?.imageUrl || 'brez',
+    });
 
-    const prompt = `Si AI listing visual hierarchy optimizer z ML in eye-tracking simulation.
+    const raw = await callAi(prompt);
+    const parsed: any = parseAi(raw);
+
+    const optimizer = transformOptimizer(parsed, { target });
+
+    return apiOk({ ok: true, optimizer });
+  },
+});
+
+// --- Pomožne funkcije (čiste, testabilne) --------------------------------
+
+interface VisualHierarchyPromptInput {
+  title: string;
+  category: string;
+  buyPrice: number;
+  suggestedPrice: number;
+  imageUrl: string;
+}
+
+function buildPrompt(input: VisualHierarchyPromptInput): string {
+  const { title, category, buyPrice, suggestedPrice, imageUrl } = input;
+  return `Si AI listing visual hierarchy optimizer z ML in eye-tracking simulation.
 Optimizira vizualno hierarhijo oglasov z 10 elementi in 9 conami pozornosti.
 
 CILJNI OGLAS:
-- Naslov: ${target.title}
-- Kategorija: ${target.category}
-- Nabavna cena: ${target.buyPrice}€
+- Naslov: ${title}
+- Kategorija: ${category}
+- Nabavna cena: ${buyPrice}€
 - Predlagana cena: ${suggestedPrice}€
-- Image URL: ${targetListing?.imageUrl || 'brez'}
+- Image URL: ${imageUrl}
 
 10 vizualnih elementov:
 1. HERO_IMAGE: glavna slika
@@ -81,28 +147,75 @@ Odgovori LE z JSON:
     "quickest_visual_win": "<max 100 znakov>", "visual_analysis_score": <number 0-100>
   }
 }`;
+}
 
-    let raw = '';
-    try { raw = await callProviderForRaw(aiSettings, prompt); }
-    catch (e: any) { if (aiSettings.fallbackProvider && aiSettings.fallbackModel) { const fb: AiSettings = { provider: aiSettings.fallbackProvider, baseUrl: aiSettings.fallbackBaseUrl || '', apiKey: aiSettings.fallbackApiKey || '', model: aiSettings.fallbackModel }; raw = await callProviderForRaw(fb, prompt); } else { return NextResponse.json({ error: e?.message ?? 'AI failed' }, { status: 500 }); } }
+interface TransformStats {
+  target: HeldTradeRow;
+}
 
-    const parsed: any = parseJsonLooseExported(raw);
-
-    const optimizer = {
-      insights: String(parsed?.insights ?? '').slice(0, 500),
-      listing: { title: String(parsed?.listing?.title ?? target.title).slice(0, 200), category: String(parsed?.listing?.category ?? target.category).slice(0, 50), currentVisualScore: Math.max(0, Math.min(100, Number(parsed?.listing?.current_visual_score ?? 50))), optimizedVisualScore: Math.max(0, Math.min(100, Number(parsed?.listing?.optimized_visual_score ?? 75))), currentAttentionEfficiencyPct: Math.max(0, Math.min(100, Number(parsed?.listing?.current_attention_efficiency_pct ?? 50))), optimizedAttentionEfficiencyPct: Math.max(0, Math.min(100, Number(parsed?.listing?.optimized_attention_efficiency_pct ?? 80))), visualHierarchyGrade: ['A', 'B', 'C', 'D', 'F'].includes(String(parsed?.listing?.visual_hierarchy_grade)) ? String(parsed.listing.visual_hierarchy_grade) : 'C' },
-      visualElements: (parsed?.visualElements || []).slice(0, 10).map((e: any) => ({ element: (VISUAL_ELEMENTS as readonly string[]).includes(String(e?.element)) ? String(e.element) : 'hero_image', currentProminencePct: Math.max(0, Math.min(100, Number(e?.current_prominence_pct ?? 50))), optimizedProminencePct: Math.max(0, Math.min(100, Number(e?.optimized_prominence_pct ?? 75))), currentPosition: (ATTENTION_ZONES as readonly string[]).includes(String(e?.current_position)) ? String(e.current_position) : 'middle_center', optimizedPosition: (ATTENTION_ZONES as readonly string[]).includes(String(e?.optimized_position)) ? String(e.optimized_position) : 'top_center', attentionWeightPct: Math.max(0, Math.min(100, Number(e?.attention_weight_pct ?? 10))), issue: String(e?.issue ?? '').slice(0, 200), fix: String(e?.fix ?? '').slice(0, 250) })),
-      hierarchyScore: (parsed?.hierarchyScore || []).slice(0, 8).map((h: any) => ({ principle: String(h?.principle ?? 'contrast').slice(0, 50), currentScore: Math.max(0, Math.min(100, Number(h?.current_score ?? 50))), optimizedScore: Math.max(0, Math.min(100, Number(h?.optimized_score ?? 75))), weightPct: Math.max(0, Math.min(100, Number(h?.weight_pct ?? 12))), improvementPct: Math.max(0, Math.min(50, Number(h?.improvement_pct ?? 15))), recommendation: String(h?.recommendation ?? '').slice(0, 250) })),
-      attentionFlow: (parsed?.attentionFlow || []).slice(0, 9).map((a: any) => ({ zone: (ATTENTION_ZONES as readonly string[]).includes(String(a?.zone)) ? String(a.zone) : 'top_center', currentAttentionPct: Math.max(0, Math.min(100, Number(a?.current_attention_pct ?? 15))), optimizedAttentionPct: Math.max(0, Math.min(100, Number(a?.optimized_attention_pct ?? 15))), primaryElement: (VISUAL_ELEMENTS as readonly string[]).includes(String(a?.primary_element)) ? String(a.primary_element) : 'hero_image', fixationTimeMs: Math.max(0, Number(a?.fixation_time_ms ?? 500)), conversionImpactPct: Math.max(-20, Math.min(30, Number(a?.conversion_impact_pct ?? 0))) })),
-      optimization: (parsed?.optimization || []).slice(0, 10).map((o: any) => ({ action: String(o?.action ?? '').slice(0, 300), element: (VISUAL_ELEMENTS as readonly string[]).includes(String(o?.element)) ? String(o.element) : 'hero_image', changeType: ['reposition', 'resize', 'recolor', 'reorder', 'emphasize', 'de_emphasize'].includes(String(o?.change_type)) ? String(o.change_type) : 'reposition', expectedConversionLiftPct: Math.max(0, Math.min(30, Number(o?.expected_conversion_lift_pct ?? 5))), implementationDifficulty: ['easy', 'medium', 'hard'].includes(String(o?.implementation_difficulty)) ? String(o.implementation_difficulty) : 'medium', priority: ['high', 'medium', 'low'].includes(String(o?.priority)) ? String(o.priority) : 'medium' })),
-      mlModels: (parsed?.mlModels || []).slice(0, 5).map((m: any) => ({ model: ['cnn', 'resnet', 'vit', 'efficientnet', 'ensemble'].includes(String(m?.model)) ? String(m.model) : 'ensemble', accuracyPct: Math.max(0, Math.min(100, Number(m?.accuracy_pct ?? 75))), predictionType: ['attention_prediction', 'visual_scoring', 'conversion_forecast', 'eye_tracking_simulation'].includes(String(m?.prediction_type)) ? String(m.prediction_type) : 'attention_prediction', weightInEnsemble: Math.max(0, Math.min(100, Number(m?.weight_in_ensemble ?? 20))) })),
-      summary: { visualHierarchyScore: Math.max(0, Math.min(100, Number(parsed?.summary?.visual_hierarchy_score ?? 50))), visualHierarchyGrade: ['A', 'B', 'C', 'D', 'F'].includes(String(parsed?.summary?.visual_hierarchy_grade)) ? String(parsed.summary.visual_hierarchy_grade) : 'C', currentVisualScore: Math.max(0, Math.min(100, Number(parsed?.summary?.current_visual_score ?? 50))), optimizedVisualScore: Math.max(0, Math.min(100, Number(parsed?.summary?.optimized_visual_score ?? 75))), expectedConversionLiftPct: Math.max(0, Math.min(100, Number(parsed?.summary?.expected_conversion_lift_pct ?? 20))), biggestVisualRisk: String(parsed?.summary?.biggest_visual_risk ?? '').slice(0, 200), biggestVisualOpportunity: String(parsed?.summary?.biggest_visual_opportunity ?? '').slice(0, 200), quickestVisualWin: String(parsed?.summary?.quickest_visual_win ?? '').slice(0, 200), visualAnalysisScore: Math.max(0, Math.min(100, Number(parsed?.summary?.visual_analysis_score ?? 50))) },
-    };
-
-    const today = new Date().toISOString().slice(0, 10);
-    if (settings.aiCallsDate !== today) { await db.settings.update({ where: { id: 'singleton' }, data: { aiCallsDate: today, aiCallsToday: 1 } }); }
-    else { await db.settings.update({ where: { id: 'singleton' }, data: { aiCallsToday: { increment: 1 } } }); }
-
-    return NextResponse.json({ ok: true, optimizer });
-  } catch (e: any) { logger.error("/api/ai/listing-visual-hierarchy", "POST handler failed", e); return NextResponse.json({ error: e?.message ?? 'Napaka' }, { status: 500 }); }
+function transformOptimizer(parsed: any, stats: TransformStats) {
+  const { target } = stats;
+  return {
+    insights: String(parsed?.insights ?? '').slice(0, 500),
+    listing: {
+      title: String(parsed?.listing?.title ?? target.title).slice(0, 200),
+      category: String(parsed?.listing?.category ?? target.category).slice(0, 50),
+      currentVisualScore: Math.max(0, Math.min(100, Number(parsed?.listing?.current_visual_score ?? 50))),
+      optimizedVisualScore: Math.max(0, Math.min(100, Number(parsed?.listing?.optimized_visual_score ?? 75))),
+      currentAttentionEfficiencyPct: Math.max(0, Math.min(100, Number(parsed?.listing?.current_attention_efficiency_pct ?? 50))),
+      optimizedAttentionEfficiencyPct: Math.max(0, Math.min(100, Number(parsed?.listing?.optimized_attention_efficiency_pct ?? 80))),
+      visualHierarchyGrade: ['A', 'B', 'C', 'D', 'F'].includes(String(parsed?.listing?.visual_hierarchy_grade)) ? String(parsed.listing.visual_hierarchy_grade) : 'C',
+    },
+    visualElements: (parsed?.visualElements || []).slice(0, 10).map((e: any) => ({
+      element: (VISUAL_ELEMENTS as readonly string[]).includes(String(e?.element)) ? String(e.element) : 'hero_image',
+      currentProminencePct: Math.max(0, Math.min(100, Number(e?.current_prominence_pct ?? 50))),
+      optimizedProminencePct: Math.max(0, Math.min(100, Number(e?.optimized_prominence_pct ?? 75))),
+      currentPosition: (ATTENTION_ZONES as readonly string[]).includes(String(e?.current_position)) ? String(e.current_position) : 'middle_center',
+      optimizedPosition: (ATTENTION_ZONES as readonly string[]).includes(String(e?.optimized_position)) ? String(e.optimized_position) : 'top_center',
+      attentionWeightPct: Math.max(0, Math.min(100, Number(e?.attention_weight_pct ?? 10))),
+      issue: String(e?.issue ?? '').slice(0, 200),
+      fix: String(e?.fix ?? '').slice(0, 250),
+    })),
+    hierarchyScore: (parsed?.hierarchyScore || []).slice(0, 8).map((h: any) => ({
+      principle: String(h?.principle ?? 'contrast').slice(0, 50),
+      currentScore: Math.max(0, Math.min(100, Number(h?.current_score ?? 50))),
+      optimizedScore: Math.max(0, Math.min(100, Number(h?.optimized_score ?? 75))),
+      weightPct: Math.max(0, Math.min(100, Number(h?.weight_pct ?? 12))),
+      improvementPct: Math.max(0, Math.min(50, Number(h?.improvement_pct ?? 15))),
+      recommendation: String(h?.recommendation ?? '').slice(0, 250),
+    })),
+    attentionFlow: (parsed?.attentionFlow || []).slice(0, 9).map((a: any) => ({
+      zone: (ATTENTION_ZONES as readonly string[]).includes(String(a?.zone)) ? String(a.zone) : 'top_center',
+      currentAttentionPct: Math.max(0, Math.min(100, Number(a?.current_attention_pct ?? 15))),
+      optimizedAttentionPct: Math.max(0, Math.min(100, Number(a?.optimized_attention_pct ?? 15))),
+      primaryElement: (VISUAL_ELEMENTS as readonly string[]).includes(String(a?.primary_element)) ? String(a.primary_element) : 'hero_image',
+      fixationTimeMs: Math.max(0, Number(a?.fixation_time_ms ?? 500)),
+      conversionImpactPct: Math.max(-20, Math.min(30, Number(a?.conversion_impact_pct ?? 0))),
+    })),
+    optimization: (parsed?.optimization || []).slice(0, 10).map((o: any) => ({
+      action: String(o?.action ?? '').slice(0, 300),
+      element: (VISUAL_ELEMENTS as readonly string[]).includes(String(o?.element)) ? String(o.element) : 'hero_image',
+      changeType: ['reposition', 'resize', 'recolor', 'reorder', 'emphasize', 'de_emphasize'].includes(String(o?.change_type)) ? String(o.change_type) : 'reposition',
+      expectedConversionLiftPct: Math.max(0, Math.min(30, Number(o?.expected_conversion_lift_pct ?? 5))),
+      implementationDifficulty: ['easy', 'medium', 'hard'].includes(String(o?.implementation_difficulty)) ? String(o.implementation_difficulty) : 'medium',
+      priority: ['high', 'medium', 'low'].includes(String(o?.priority)) ? String(o.priority) : 'medium',
+    })),
+    mlModels: (parsed?.mlModels || []).slice(0, 5).map((m: any) => ({
+      model: ['cnn', 'resnet', 'vit', 'efficientnet', 'ensemble'].includes(String(m?.model)) ? String(m.model) : 'ensemble',
+      accuracyPct: Math.max(0, Math.min(100, Number(m?.accuracy_pct ?? 75))),
+      predictionType: ['attention_prediction', 'visual_scoring', 'conversion_forecast', 'eye_tracking_simulation'].includes(String(m?.prediction_type)) ? String(m.prediction_type) : 'attention_prediction',
+      weightInEnsemble: Math.max(0, Math.min(100, Number(m?.weight_in_ensemble ?? 20))),
+    })),
+    summary: {
+      visualHierarchyScore: Math.max(0, Math.min(100, Number(parsed?.summary?.visual_hierarchy_score ?? 50))),
+      visualHierarchyGrade: ['A', 'B', 'C', 'D', 'F'].includes(String(parsed?.summary?.visual_hierarchy_grade)) ? String(parsed.summary.visual_hierarchy_grade) : 'C',
+      currentVisualScore: Math.max(0, Math.min(100, Number(parsed?.summary?.current_visual_score ?? 50))),
+      optimizedVisualScore: Math.max(0, Math.min(100, Number(parsed?.summary?.optimized_visual_score ?? 75))),
+      expectedConversionLiftPct: Math.max(0, Math.min(100, Number(parsed?.summary?.expected_conversion_lift_pct ?? 20))),
+      biggestVisualRisk: String(parsed?.summary?.biggest_visual_risk ?? '').slice(0, 200),
+      biggestVisualOpportunity: String(parsed?.summary?.biggest_visual_opportunity ?? '').slice(0, 200),
+      quickestVisualWin: String(parsed?.summary?.quickest_visual_win ?? '').slice(0, 200),
+      visualAnalysisScore: Math.max(0, Math.min(100, Number(parsed?.summary?.visual_analysis_score ?? 50))),
+    },
+  };
 }

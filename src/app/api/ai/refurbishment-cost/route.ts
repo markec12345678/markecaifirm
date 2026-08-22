@@ -1,17 +1,14 @@
-// v6.20: AI Refurbishment Cost Estimator — ocena stroškov obnove z vizualno analizo slike
+// v6.20 / v8.96.0-batch4: AI Refurbishment Cost Estimator — ocena stroškov obnove z vizualno analizo slike
+// Refaktoriran z withAiRoute helperjem (v8.96) + enforceBudget guard.
+//
 // POST /api/ai/refurbishment-cost
 // Body: { listingId?: string, tradeId?: string }
 // Returns: { ok, estimate: { totalRefurbCost, items: [{ name, cost, complexity, optional }], resaleValue, profitPotential, recommendedAction, breakdown }, imageAnalysis }
 
-import { NextRequest, NextResponse } from 'next/server';
-import { db } from '@/lib/db';
-import { getSettingsRow } from '@/lib/pipeline';
-import { callProviderForRaw, parseJsonLooseExported, type AiProviderType, type AiSettings } from '@/lib/ai';
-import { evaluateListing, type ListingEvaluationInput } from '@/lib/ai';
-import { logger } from '@/lib/logger';
+import { withAiRoute, AI_ROUTE_DEFAULTS, ApiRouteError, type AiRouteContext } from '@/lib/with-ai-route';
+import { apiOk } from '@/lib/api-response';
 
-export const runtime = 'nodejs';
-export const dynamic = 'force-dynamic';
+export const { runtime, dynamic } = AI_ROUTE_DEFAULTS;
 export const maxDuration = 90;
 
 // Slovenske cene za refurbishment (povprečne 2024)
@@ -43,10 +40,29 @@ const REFURB_PRICES: Record<string, { low: number; high: number; unit: string }>
   'professional_service': { low: 50, high: 300, unit: '€' },
 };
 
-export async function POST(req: NextRequest) {
-  try {
+interface RefurbishmentCostInput {
+  listingId: string | null;
+  tradeId: string | null;
+}
+
+export const POST = withAiRoute<RefurbishmentCostInput>({
+  endpoint: '/api/ai/refurbishment-cost',
+  maxDuration: 90,
+  enforceBudget: true, // AI klic — preveri budget
+
+  parseBody: async (req) => {
     const body = await req.json().catch(() => ({}));
-    const { listingId, tradeId } = body;
+    return {
+      listingId: body?.listingId ? String(body.listingId) : null,
+      tradeId: body?.tradeId ? String(body.tradeId) : null,
+    };
+  },
+
+  validateInput: (input) => (input.listingId || input.tradeId ? null : 'listingId ali tradeId je obvezen'),
+
+  handler: async (input, ctx: AiRouteContext) => {
+    const { db, callAi, parseAi } = ctx;
+    const { listingId, tradeId } = input;
 
     // 1. Pridobi listing ali trade
     let listing: any = null;
@@ -63,7 +79,7 @@ export async function POST(req: NextRequest) {
           aiRisk: true, aiVerdict: true, monitor: { select: { source: true } },
         },
       });
-      if (!listing) return NextResponse.json({ error: 'Listing ne obstaja' }, { status: 404 });
+      if (!listing) throw new ApiRouteError('Listing ne obstaja', 404);
     } else if (tradeId) {
       trade = await db.trade.findUnique({
         where: { id: String(tradeId) },
@@ -72,9 +88,7 @@ export async function POST(req: NextRequest) {
           listing: { select: { imageUrl: true, description: true, detailDescription: true, aiEstimatedValue: true } },
         },
       });
-      if (!trade) return NextResponse.json({ error: 'Trade ne obstaja' }, { status: 404 });
-    } else {
-      return NextResponse.json({ error: 'listingId ali tradeId je obvezen' }, { status: 400 });
+      if (!trade) throw new ApiRouteError('Trade ne obstaja', 404);
     }
 
     const title = listing?.title || trade?.title || '';
@@ -83,7 +97,6 @@ export async function POST(req: NextRequest) {
     const price = listing?.price ?? trade?.buyPrice ?? 0;
 
     // 2. Pridobi sliko za vizualno analizo (če je na voljo)
-    let imageAnalysis = '';
     if (imageUrl) {
       try {
         const { downloadImageAsBase64 } = await import('@/lib/ai');
@@ -94,22 +107,44 @@ export async function POST(req: NextRequest) {
     }
 
     // 3. AI analiza
-    const settings = await getSettingsRow();
-    const aiSettings: AiSettings = {
-      provider: settings.aiProvider as AiProviderType,
-      baseUrl: settings.aiBaseUrl, apiKey: settings.aiApiKey, model: settings.aiModel,
-      fallbackProvider: (settings.fallbackProvider || '') as AiProviderType | '',
-      fallbackBaseUrl: settings.fallbackBaseUrl || '', fallbackApiKey: settings.fallbackApiKey || '',
-      fallbackModel: settings.fallbackModel || '',
-    };
+    const prompt = buildPrompt({
+      title,
+      price,
+      description,
+      aiImageAnalysis: listing?.aiImageAnalysis ?? null,
+    });
 
-    const prompt = `Si ekspert za vrednotenje in obnovo rabljenih dobrin.
+    const raw = await callAi(prompt);
+    const parsed: any = parseAi(raw);
+    const estimate = transformEstimate(parsed, price);
+
+    return apiOk({
+      ok: true,
+      estimate,
+      imageAnalysis: imageBase64 ? 'Slika pridobljena in analizirana' : 'Slika ni na voljo',
+      hasImage: !!imageBase64,
+      source: listing ? 'listing' : 'trade',
+    });
+  },
+});
+
+// --- Pomožne funkcije (čiste, testabilne) --------------------------------
+
+interface PromptData {
+  title: string;
+  price: number;
+  description: string;
+  aiImageAnalysis: string | null;
+}
+
+function buildPrompt(d: PromptData): string {
+  return `Si ekspert za vrednotenje in obnovo rabljenih dobrin.
 Oceni stroške obnove (refurbishment) za ta artikel in potencionalni dobiček po preprodaji.
 
-NASLOV: ${title}
-CENA: ${price}€
-OPIS: ${description.slice(0, 800)}
-${listing?.aiImageAnalysis ? `AI SLIKOVNA ANALIZA: ${listing.aiImageAnalysis}` : ''}
+NASLOV: ${d.title}
+CENA: ${d.price}€
+OPIS: ${d.description.slice(0, 800)}
+${d.aiImageAnalysis ? `AI SLIKOVNA ANALIZA: ${d.aiImageAnalysis}` : ''}
 
 Slovenske povprečne cene refurbishment postopkov (za referenco):
 ${Object.entries(REFURB_PRICES).slice(0, 12).map(([k, v]) => `- ${k}: ${v.low}-${v.high}${v.unit}`).join('\n')}
@@ -151,81 +186,44 @@ Odgovori LE z JSON:
   "warnings": ["<opozorilo, max 80 znakov>", "..."],
   "reasoning": "<max 200 znakov>"
 }`;
+}
 
-    let raw = '';
-    try {
-      raw = await callProviderForRaw(aiSettings, prompt);
-    } catch (primaryError: any) {
-      if (aiSettings.fallbackProvider && aiSettings.fallbackModel) {
-        const fb: AiSettings = {
-          provider: aiSettings.fallbackProvider,
-          baseUrl: aiSettings.fallbackBaseUrl || '',
-          apiKey: aiSettings.fallbackApiKey || '',
-          model: aiSettings.fallbackModel,
-        };
-        raw = await callProviderForRaw(fb, prompt);
-      } else {
-        return NextResponse.json({ error: primaryError?.message ?? 'AI failed' }, { status: 500 });
-      }
-    }
-
-    const parsed: any = parseJsonLooseExported(raw);
-
-    const items = (parsed?.items || []).slice(0, 15).map((it: any) => {
-      const cost = Math.max(0, Number(it?.cost_eur ?? 0));
-      return {
-        name: String(it?.name ?? '').slice(0, 100),
-        costEur: cost,
-        complexity: ['easy', 'medium', 'hard'].includes(String(it?.complexity)) ? String(it.complexity) : 'medium',
-        optional: Boolean(it?.optional ?? false),
-        reasoning: String(it?.reasoning ?? '').slice(0, 150),
-      };
-    });
-
-    const totalRefurbCost = items.reduce((s, i) => s + i.costEur, 0);
-    const resaleValue = Math.max(0, Number(parsed?.resale_value_eur ?? 0));
-    const totalCost = price + totalRefurbCost;
-    const profitPotential = Math.round(resaleValue - totalCost);
-    const roiPct = totalCost > 0 ? Math.round((profitPotential / totalCost) * 100) : 0;
-
-    const estimate = {
-      imageFindings: String(parsed?.image_findings ?? '').slice(0, 400),
-      items,
-      totalRefurbCostEur: Math.round(totalRefurbCost),
-      refurbStrategy: ['cosmetical_only', 'functional_repair', 'full_restoration', 'part_out'].includes(String(parsed?.refurb_strategy))
-        ? String(parsed.refurb_strategy) : 'cosmetical_only',
-      resaleValueEur: resaleValue,
-      profitPotentialEur: profitPotential,
-      roiPct,
-      buyPrice: price,
-      totalCostEur: Math.round(totalCost),
-      recommendedAction: ['buy_and_refurb', 'buy_as_is', 'avoid', 'marginal'].includes(String(parsed?.recommended_action))
-        ? String(parsed.recommended_action) : 'buy_as_is',
-      timeRequiredDays: Math.max(0, Math.min(365, Number(parsed?.time_required_days ?? 7))),
-      toolsNeeded: (parsed?.tools_needed || []).slice(0, 8).map((t: any) => String(t).slice(0, 80)),
-      skillsRequired: ['beginner', 'intermediate', 'expert'].includes(String(parsed?.skills_required))
-        ? String(parsed.skills_required) : 'beginner',
-      warnings: (parsed?.warnings || []).slice(0, 5).map((w: any) => String(w).slice(0, 150)),
-      reasoning: String(parsed?.reasoning ?? '').slice(0, 400),
+function transformEstimate(parsed: any, price: number) {
+  const items = (parsed?.items || []).slice(0, 15).map((it: any) => {
+    const cost = Math.max(0, Number(it?.cost_eur ?? 0));
+    return {
+      name: String(it?.name ?? '').slice(0, 100),
+      costEur: cost,
+      complexity: ['easy', 'medium', 'hard'].includes(String(it?.complexity)) ? String(it.complexity) : 'medium',
+      optional: Boolean(it?.optional ?? false),
+      reasoning: String(it?.reasoning ?? '').slice(0, 150),
     };
+  });
 
-    // Increment AI usage
-    const today = new Date().toISOString().slice(0, 10);
-    if (settings.aiCallsDate !== today) {
-      await db.settings.update({ where: { id: 'singleton' }, data: { aiCallsDate: today, aiCallsToday: 1 } });
-    } else {
-      await db.settings.update({ where: { id: 'singleton' }, data: { aiCallsToday: { increment: 1 } } });
-    }
+  const totalRefurbCost = items.reduce((s, i) => s + i.costEur, 0);
+  const resaleValue = Math.max(0, Number(parsed?.resale_value_eur ?? 0));
+  const totalCost = price + totalRefurbCost;
+  const profitPotential = Math.round(resaleValue - totalCost);
+  const roiPct = totalCost > 0 ? Math.round((profitPotential / totalCost) * 100) : 0;
 
-    return NextResponse.json({
-      ok: true,
-      estimate,
-      imageAnalysis: imageBase64 ? 'Slika pridobljena in analizirana' : 'Slika ni na voljo',
-      hasImage: !!imageBase64,
-      source: listing ? 'listing' : 'trade',
-    });
-  } catch (e: any) {
-    logger.error("/api/ai/refurbishment-cost", "POST handler failed", e);
-    return NextResponse.json({ error: e?.message ?? 'Napaka' }, { status: 500 });
-  }
+  return {
+    imageFindings: String(parsed?.image_findings ?? '').slice(0, 400),
+    items,
+    totalRefurbCostEur: Math.round(totalRefurbCost),
+    refurbStrategy: ['cosmetical_only', 'functional_repair', 'full_restoration', 'part_out'].includes(String(parsed?.refurb_strategy))
+      ? String(parsed.refurb_strategy) : 'cosmetical_only',
+    resaleValueEur: resaleValue,
+    profitPotentialEur: profitPotential,
+    roiPct,
+    buyPrice: price,
+    totalCostEur: Math.round(totalCost),
+    recommendedAction: ['buy_and_refurb', 'buy_as_is', 'avoid', 'marginal'].includes(String(parsed?.recommended_action))
+      ? String(parsed.recommended_action) : 'buy_as_is',
+    timeRequiredDays: Math.max(0, Math.min(365, Number(parsed?.time_required_days ?? 7))),
+    toolsNeeded: (parsed?.tools_needed || []).slice(0, 8).map((t: any) => String(t).slice(0, 80)),
+    skillsRequired: ['beginner', 'intermediate', 'expert'].includes(String(parsed?.skills_required))
+      ? String(parsed.skills_required) : 'beginner',
+    warnings: (parsed?.warnings || []).slice(0, 5).map((w: any) => String(w).slice(0, 150)),
+    reasoning: String(parsed?.reasoning ?? '').slice(0, 400),
+  };
 }

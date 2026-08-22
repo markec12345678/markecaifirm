@@ -69,6 +69,11 @@ export async function GET() {
       autoCleanupListingsDays: s.autoCleanupListingsDays,
       // v4.2: Profit goal
       monthlyProfitGoal: s.monthlyProfitGoal,
+      // v8.94: AI budget limits + monthly counter
+      aiMaxDailyCalls: s.aiMaxDailyCalls,
+      aiMaxMonthlyCalls: s.aiMaxMonthlyCalls,
+      aiCallsToday: s.aiCallsToday,
+      aiCallsMonth: s.aiCallsMonth,
       // v8.50: First-Run Onboarding
       onboardingCompleted: s.onboardingCompleted,
       // v5.5: Category notifications
@@ -241,6 +246,13 @@ export async function POST(req: NextRequest) {
     if (typeof body.autoCleanupListingsDays === 'number') data.autoCleanupListingsDays = body.autoCleanupListingsDays;
     // v4.2: Profit goal
     if (typeof body.monthlyProfitGoal === 'number') data.monthlyProfitGoal = body.monthlyProfitGoal;
+    // v8.94: AI budget limits — solo dev cost control
+    if (typeof body.aiMaxDailyCalls === 'number') {
+      data.aiMaxDailyCalls = Math.max(1, Math.min(100000, Math.floor(body.aiMaxDailyCalls)));
+    }
+    if (typeof body.aiMaxMonthlyCalls === 'number') {
+      data.aiMaxMonthlyCalls = Math.max(1, Math.min(1000000, Math.floor(body.aiMaxMonthlyCalls)));
+    }
     // v8.50: First-Run Onboarding
     if (typeof body.onboardingCompleted === 'boolean') data.onboardingCompleted = body.onboardingCompleted;
     // v5.5: Category notifications

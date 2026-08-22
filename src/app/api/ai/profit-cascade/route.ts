@@ -1,21 +1,32 @@
-// v6.34: AI Profit Cascade Optimizer — kaskadno optimizira dobiček skozi celotno verigo
+// v6.34 / v8.95.6-profit: AI Profit Cascade Optimizer — kaskadno optimizira dobiček skozi celotno verigo
+// Refaktoriran z withAiRoute helperjem (v8.95.6-profit) + enforceBudget guard.
+//
 // POST /api/ai/profit-cascade
 // Body: {}
 // Returns: { ok, cascade: { levels, optimizations, totalGain, waterfall } }
 
-import { NextRequest, NextResponse } from 'next/server';
-import { db } from '@/lib/db';
-import { getSettingsRow } from '@/lib/pipeline';
-import { callProviderForRaw, parseJsonLooseExported, type AiProviderType, type AiSettings } from '@/lib/ai';
-import { logger } from '@/lib/logger';
+import { withAiRoute, AI_ROUTE_DEFAULTS, type AiRouteContext } from '@/lib/with-ai-route';
+import { apiOk } from '@/lib/api-response';
 
-export const runtime = 'nodejs';
-export const dynamic = 'force-dynamic';
+export const { runtime, dynamic } = AI_ROUTE_DEFAULTS;
 export const maxDuration = 90;
 
-export async function POST(req: NextRequest) {
-  try {
+// eslint-disable-next-line @typescript-eslint/no-empty-object-type
+interface ProfitCascadeInput {}
+
+export const POST = withAiRoute<ProfitCascadeInput>({
+  endpoint: '/api/ai/profit-cascade',
+  maxDuration: 90,
+  enforceBudget: true, // AI klic — preveri budget
+
+  parseBody: async (req) => {
     await req.json().catch(() => ({}));
+    return {} as ProfitCascadeInput;
+  },
+
+  // No validateInput — brez polj
+  handler: async (_input, ctx: AiRouteContext) => {
+    const { db, callAi, parseAi } = ctx;
 
     const heldTrades = await db.trade.findMany({
       where: { status: 'held' },
@@ -32,28 +43,48 @@ export async function POST(req: NextRequest) {
     });
 
     if (heldTrades.length === 0 && soldTrades.length === 0) {
-      return NextResponse.json({ ok: true, cascade: null, message: 'Ni podatkov za cascade analizo.' });
+      return apiOk({ ok: true, cascade: null, message: 'Ni podatkov za cascade analizo.' });
     }
 
     const currentProfit = soldTrades.reduce((s, t) => s + (t.sellPrice ?? 0) - (t.sellFees ?? 0) - t.buyPrice - (t.buyFees ?? 0), 0);
     const totalHeldValue = heldTrades.reduce((s, t) => s + t.buyPrice + (t.buyFees ?? 0), 0);
 
-    const settings = await getSettingsRow();
-    const aiSettings: AiSettings = {
-      provider: settings.aiProvider as AiProviderType,
-      baseUrl: settings.aiBaseUrl, apiKey: settings.aiApiKey, model: settings.aiModel,
-      fallbackProvider: (settings.fallbackProvider || '') as AiProviderType | '',
-      fallbackBaseUrl: settings.fallbackBaseUrl || '', fallbackApiKey: settings.fallbackApiKey || '',
-      fallbackModel: settings.fallbackModel || '',
-    };
+    const prompt = buildPrompt(currentProfit, totalHeldValue, heldTrades.length, soldTrades.length);
+    const raw = await callAi(prompt);
+    const parsed: any = parseAi(raw);
 
-    const prompt = `Si ekspert za kaskadno optimizacijo dobička skozi celotno preprodajno verigo.
+    const cascade = transformCascade(parsed, currentProfit);
+
+    return apiOk({ ok: true, cascade });
+  },
+});
+
+// --- Pomožne funkcije (čiste, testabilne) --------------------------------
+
+const DIFFICULTIES = ['easy', 'medium', 'hard'] as const;
+const PRIORITIES = ['high', 'medium', 'low'] as const;
+const EFFORTS = ['low', 'medium', 'high'] as const;
+
+function includes<T extends string>(arr: readonly T[], v: string): v is T {
+  return (arr as readonly string[]).includes(v);
+}
+
+/**
+ * Build AI prompt za profit cascade (besedilo IDENTIČNO originalu v6.34).
+ */
+function buildPrompt(
+  currentProfit: number,
+  totalHeldValue: number,
+  heldCount: number,
+  soldCount: number,
+): string {
+  return `Si ekspert za kaskadno optimizacijo dobička skozi celotno preprodajno verigo.
 Analiziraj vsako stopnjo verige in identificiraj kumulativne izboljšave.
 
 TRENUTNO STANJE:
 - Realizirani dobiček: ${Math.round(currentProfit)}€
-- Vezano v inventarju: ${Math.round(totalHeldValue)}€ (${heldTrades.length} itemov)
-- Prodaj: ${soldTrades.length}
+- Vezano v inventarju: ${Math.round(totalHeldValue)}€ (${heldCount} itemov)
+- Prodaj: ${soldCount}
 
 KASKADNE STOPINJE (vsaka stopnja vpliva na naslednjo):
 1. SOURCING (kje kupovati): boljši vir = nižja nabavna cena → +5-15% dobička
@@ -110,71 +141,50 @@ Odgovori LE z JSON:
     "projected_roi_improvement_pct": <number>
   }
 }`;
+}
 
-    let raw = '';
-    try {
-      raw = await callProviderForRaw(aiSettings, prompt);
-    } catch (primaryError: any) {
-      if (aiSettings.fallbackProvider && aiSettings.fallbackModel) {
-        const fb: AiSettings = { provider: aiSettings.fallbackProvider, baseUrl: aiSettings.fallbackBaseUrl || '',
-          apiKey: aiSettings.fallbackApiKey || '', model: aiSettings.fallbackModel };
-        raw = await callProviderForRaw(fb, prompt);
-      } else { return NextResponse.json({ error: primaryError?.message ?? 'AI failed' }, { status: 500 }); }
-    }
-
-    const parsed: any = parseJsonLooseExported(raw);
-
-    const cascade = {
-      insights: String(parsed?.insights ?? '').slice(0, 600),
-      levels: (parsed?.levels || []).slice(0, 10).map((l: any) => ({
-        level: Math.max(1, Math.min(10, Number(l?.level ?? 1))),
-        name: String(l?.name ?? '').slice(0, 80),
-        currentEfficiencyPct: Math.max(0, Math.min(100, Number(l?.current_efficiency_pct ?? 50))),
-        currentContributionEur: Math.round(Number(l?.current_contribution_eur ?? 0)),
-        optimizedContributionEur: Math.round(Number(l?.optimized_contribution_eur ?? 0)),
-        gainEur: Math.round(Number(l?.gain_eur ?? 0)),
-        gainPct: Math.round(Number(l?.gain_pct ?? 0)),
-        action: String(l?.action ?? '').slice(0, 250),
-        tool: String(l?.tool ?? '').slice(0, 80),
-        difficulty: ['easy', 'medium', 'hard'].includes(String(l?.difficulty)) ? String(l.difficulty) : 'medium',
-        priority: ['high', 'medium', 'low'].includes(String(l?.priority)) ? String(l.priority) : 'medium',
-      })),
-      waterfall: (parsed?.waterfall || []).slice(0, 10).map((w: any) => ({
-        step: String(w?.step ?? '').slice(0, 80),
-        currentEur: Math.round(Number(w?.current_eur ?? 0)),
-        optimizedEur: Math.round(Number(w?.optimized_eur ?? 0)),
-        cumulativeEur: Math.round(Number(w?.cumulative_eur ?? 0)),
-      })),
-      cumulativeGain: {
-        currentTotalProfitEur: Math.round(Number(parsed?.cumulative_gain?.current_total_profit_eur ?? currentProfit)),
-        optimizedTotalProfitEur: Math.round(Number(parsed?.cumulative_gain?.optimized_total_profit_eur ?? 0)),
-        totalGainEur: Math.round(Number(parsed?.cumulative_gain?.total_gain_eur ?? 0)),
-        totalGainPct: Math.round(Number(parsed?.cumulative_gain?.total_gain_pct ?? 0)),
-      },
-      quickWins: (parsed?.quick_wins || []).slice(0, 5).map((q: any) => ({
-        action: String(q?.action ?? '').slice(0, 200),
-        gainEur: Math.round(Number(q?.gain_eur ?? 0)),
-        effort: ['low', 'medium', 'high'].includes(String(q?.effort)) ? String(q.effort) : 'medium',
-        timelineDays: Math.max(0, Number(q?.timeline_days ?? 7)),
-      })),
-      summary: {
-        overallEfficiencyPct: Math.max(0, Math.min(100, Number(parsed?.summary?.overall_efficiency_pct ?? 50))),
-        biggestOpportunity: String(parsed?.summary?.biggest_opportunity ?? '').slice(0, 80),
-        totalOptimizationPotentialEur: Math.round(Number(parsed?.summary?.total_optimization_potential_eur ?? 0)),
-        projectedRoiImprovementPct: Math.round(Number(parsed?.summary?.projected_roi_improvement_pct ?? 0)),
-      },
-    };
-
-    const today = new Date().toISOString().slice(0, 10);
-    if (settings.aiCallsDate !== today) {
-      await db.settings.update({ where: { id: 'singleton' }, data: { aiCallsDate: today, aiCallsToday: 1 } });
-    } else {
-      await db.settings.update({ where: { id: 'singleton' }, data: { aiCallsToday: { increment: 1 } } });
-    }
-
-    return NextResponse.json({ ok: true, cascade });
-  } catch (e: any) {
-    logger.error("/api/ai/profit-cascade", "POST handler failed", e);
-    return NextResponse.json({ error: e?.message ?? 'Napaka' }, { status: 500 });
-  }
+/**
+ * Transform AI JSON v cascade rezultat. Clamp/slice logika IDENTIČNA originalu v6.34.
+ */
+function transformCascade(parsed: any, currentProfit: number): any {
+  return {
+    insights: String(parsed?.insights ?? '').slice(0, 600),
+    levels: (parsed?.levels || []).slice(0, 10).map((l: any) => ({
+      level: Math.max(1, Math.min(10, Number(l?.level ?? 1))),
+      name: String(l?.name ?? '').slice(0, 80),
+      currentEfficiencyPct: Math.max(0, Math.min(100, Number(l?.current_efficiency_pct ?? 50))),
+      currentContributionEur: Math.round(Number(l?.current_contribution_eur ?? 0)),
+      optimizedContributionEur: Math.round(Number(l?.optimized_contribution_eur ?? 0)),
+      gainEur: Math.round(Number(l?.gain_eur ?? 0)),
+      gainPct: Math.round(Number(l?.gain_pct ?? 0)),
+      action: String(l?.action ?? '').slice(0, 250),
+      tool: String(l?.tool ?? '').slice(0, 80),
+      difficulty: includes(DIFFICULTIES, String(l?.difficulty)) ? String(l.difficulty) : 'medium',
+      priority: includes(PRIORITIES, String(l?.priority)) ? String(l.priority) : 'medium',
+    })),
+    waterfall: (parsed?.waterfall || []).slice(0, 10).map((w: any) => ({
+      step: String(w?.step ?? '').slice(0, 80),
+      currentEur: Math.round(Number(w?.current_eur ?? 0)),
+      optimizedEur: Math.round(Number(w?.optimized_eur ?? 0)),
+      cumulativeEur: Math.round(Number(w?.cumulative_eur ?? 0)),
+    })),
+    cumulativeGain: {
+      currentTotalProfitEur: Math.round(Number(parsed?.cumulative_gain?.current_total_profit_eur ?? currentProfit)),
+      optimizedTotalProfitEur: Math.round(Number(parsed?.cumulative_gain?.optimized_total_profit_eur ?? 0)),
+      totalGainEur: Math.round(Number(parsed?.cumulative_gain?.total_gain_eur ?? 0)),
+      totalGainPct: Math.round(Number(parsed?.cumulative_gain?.total_gain_pct ?? 0)),
+    },
+    quickWins: (parsed?.quick_wins || []).slice(0, 5).map((q: any) => ({
+      action: String(q?.action ?? '').slice(0, 200),
+      gainEur: Math.round(Number(q?.gain_eur ?? 0)),
+      effort: includes(EFFORTS, String(q?.effort)) ? String(q.effort) : 'medium',
+      timelineDays: Math.max(0, Number(q?.timeline_days ?? 7)),
+    })),
+    summary: {
+      overallEfficiencyPct: Math.max(0, Math.min(100, Number(parsed?.summary?.overall_efficiency_pct ?? 50))),
+      biggestOpportunity: String(parsed?.summary?.biggest_opportunity ?? '').slice(0, 80),
+      totalOptimizationPotentialEur: Math.round(Number(parsed?.summary?.total_optimization_potential_eur ?? 0)),
+      projectedRoiImprovementPct: Math.round(Number(parsed?.summary?.projected_roi_improvement_pct ?? 0)),
+    },
+  };
 }

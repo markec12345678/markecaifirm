@@ -1,4 +1,5 @@
-// v8.37: Deal Calculator API — hitra ROI kalkulacija.
+// v8.37 / v8.95.5-deal: Deal Calculator API — hitra ROI kalkulacija.
+// Refaktoriran z withAiRoute helperjem (v8.95.5-deal) + enforceBudget guard.
 //
 // GET  /api/ai/deal-calculator?buyPrice=280&expectedSellPrice=380&buyFees=0&sellFees=15
 //      → DealCalculatorResult { ok, netProfit, roiPct, marginPct, breakEvenPrice,
@@ -12,12 +13,19 @@
 // Pure math — no DB, no AI. Calls calculateDeal() from src/lib/trades/deal-calculator.ts.
 // Categoriziran kot 'pricing' v /api/ai-list (ker vsebuje 'cost'/'profit' besede).
 
-import { NextRequest, NextResponse } from 'next/server';
-import { logger } from '@/lib/logger';
+import { withAiRoute, AI_ROUTE_DEFAULTS, ApiRouteError, type AiRouteContext } from '@/lib/with-ai-route';
+import { apiOk } from '@/lib/api-response';
 import { calculateDeal, type DealCalculatorInput } from '@/lib/trades/deal-calculator';
+import type { NextResponse } from 'next/server';
 
-export const runtime = 'nodejs';
-export const dynamic = 'force-dynamic';
+export const { runtime, dynamic } = AI_ROUTE_DEFAULTS;
+export const maxDuration = 90;
+
+interface DealCalcRawInput {
+  raw: Record<string, unknown>;
+}
+
+const REQUIRED_FIELDS = ['buyPrice', 'expectedSellPrice', 'buyFees', 'sellFees'] as const;
 
 /**
  * Parse a number from query param or body field.
@@ -78,39 +86,56 @@ function coerceInput(raw: Record<string, unknown>): DealCalculatorInput {
 }
 
 /**
+ * GET validateInput — required fields must be present (pre-check pred coerceInput).
+ * Konsistentno z originalom v8.37 (GET vrne "Manjka obvezni parameter: X").
+ */
+function validateRequiredFields(raw: Record<string, unknown>): string | null {
+  for (const f of REQUIRED_FIELDS) {
+    if (raw[f] == null || raw[f] === '') {
+      return `Manjka obvezni parameter: ${f}`;
+    }
+  }
+  return null;
+}
+
+/**
+ * Skupni handler za GET in POST — coerceInput + calculateDeal.
+ * coerceInput napake (vsebujejo "mora biti") pretvori v ApiRouteError(400).
+ */
+async function dealCalcHandler(input: DealCalcRawInput, _ctx: AiRouteContext): Promise<NextResponse> {
+  let dealInput: DealCalculatorInput;
+  try {
+    dealInput = coerceInput(input.raw);
+  } catch (err: unknown) {
+    const msg = err instanceof Error ? err.message : 'Napaka';
+    throw new ApiRouteError(msg, 400);
+  }
+  return apiOk(calculateDeal(dealInput));
+}
+
+/**
  * GET handler — query params.
  *
  * Example: ?buyPrice=280&expectedSellPrice=380&buyFees=0&sellFees=15
  * Optional: &shippingCost=10&refurbCost=20&avgHoldDays=14&category=elektronika
  */
-export async function GET(req: NextRequest) {
-  try {
+export const GET = withAiRoute<DealCalcRawInput>({
+  endpoint: '/api/ai/deal-calculator',
+  maxDuration: 90,
+  enforceBudget: true,
+  method: 'GET',
+
+  parseBody: async (req) => {
     const url = new URL(req.url);
-    const params: Record<string, string> = {};
-    url.searchParams.forEach((v, k) => { params[k] = v; });
+    const raw: Record<string, unknown> = {};
+    url.searchParams.forEach((v, k) => { raw[k] = v; });
+    return { raw };
+  },
 
-    // Required fields must be present
-    for (const f of ['buyPrice', 'expectedSellPrice', 'buyFees', 'sellFees']) {
-      if (!params[f]) {
-        return NextResponse.json(
-          { ok: false, error: `Manjka obvezni parameter: ${f}` },
-          { status: 400 },
-        );
-      }
-    }
+  validateInput: (input) => validateRequiredFields(input.raw),
 
-    const input = coerceInput(params);
-    const result = calculateDeal(input);
-    return NextResponse.json(result);
-  } catch (err: any) {
-    logger.error('/api/ai/deal-calculator', 'GET handler failed', err);
-    const status = err?.message?.includes('mora biti') ? 400 : 500;
-    return NextResponse.json(
-      { ok: false, error: err?.message ?? 'Napaka' },
-      { status },
-    );
-  }
-}
+  handler: dealCalcHandler,
+});
 
 /**
  * POST handler — JSON body.
@@ -118,33 +143,25 @@ export async function GET(req: NextRequest) {
  * Body: { buyPrice, expectedSellPrice, buyFees, sellFees,
  *         shippingCost?, refurbCost?, avgHoldDays?, category? }
  */
-export async function POST(req: NextRequest) {
-  try {
+export const POST = withAiRoute<DealCalcRawInput>({
+  endpoint: '/api/ai/deal-calculator',
+  maxDuration: 90,
+  enforceBudget: true,
+  method: 'POST',
+
+  parseBody: async (req) => {
     let body: unknown;
     try {
       body = await req.json();
     } catch {
-      return NextResponse.json(
-        { ok: false, error: 'Telo mora biti veljaven JSON' },
-        { status: 400 },
-      );
+      throw new ApiRouteError('Telo mora biti veljaven JSON', 400);
     }
     if (typeof body !== 'object' || body === null || Array.isArray(body)) {
-      return NextResponse.json(
-        { ok: false, error: 'Telo mora biti JSON objekt' },
-        { status: 400 },
-      );
+      throw new ApiRouteError('Telo mora biti JSON objekt', 400);
     }
+    return { raw: body as Record<string, unknown> };
+  },
 
-    const input = coerceInput(body as Record<string, unknown>);
-    const result = calculateDeal(input);
-    return NextResponse.json(result);
-  } catch (err: any) {
-    logger.error('/api/ai/deal-calculator', 'POST handler failed', err);
-    const status = err?.message?.includes('mora biti') ? 400 : 500;
-    return NextResponse.json(
-      { ok: false, error: err?.message ?? 'Napaka' },
-      { status },
-    );
-  }
-}
+  // No validateInput — coerceInput v handler-ju validira in vrne 400 z "mora biti" sporočilom
+  handler: dealCalcHandler,
+});

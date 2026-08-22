@@ -1,6 +1,6 @@
-// v7.79: AI Inventory ROI Optimizer — AI optimira ROI čez celoten HELD
-// inventar — identificira kateri item-i imajo najboljši/najslabši ROI
-// potencial in predlaga rebalancing (prodaj nizko-ROI item-e, obdrži
+// v7.79 / v8.96.4-batch2: AI Inventory ROI Optimizer — AI optimira ROI čez
+// celoten HELD inventar — identificira kateri item-i imajo najboljši/najslabši
+// ROI potencial in predlaga rebalancing (prodaj nizko-ROI item-e, obdrži
 // visoko-ROI). "Portfolio ROI: 18% → projected 24% z optimizacijami.
 // Sell 2 negativnih item-ov, obdrži 3 visoko-ROI. +320€ izboljšanje."
 //
@@ -28,25 +28,17 @@
 // Razlika od inventory-capital-allocator (ki alokira kapital po novih
 // kategorijah) — ta optimira RAZPOLOŽLJIVI inventar z rebalance actions.
 //
+// Refaktoriran z withAiRoute helperjem (v8.96.4) + enforceBudget guard.
+//
 // GET+POST /api/ai/inventory-roi-optimizer
 // (AI-enhanced + grounding + anti-hallucination + 6h cache + deterministic fallback)
 
-import { NextRequest, NextResponse } from 'next/server';
-import { db } from '@/lib/db';
-import { getSettingsRow } from '@/lib/pipeline';
-import {
-  callProviderForRaw,
-  parseJsonLooseExported,
-  type AiProviderType,
-  type AiSettings,
-} from '@/lib/ai';
+import { withAiRoute, AI_ROUTE_DEFAULTS, type AiRouteContext } from '@/lib/with-ai-route';
+import { apiOk } from '@/lib/api-response';
 import { GROUNDING_PROMPT_SUFFIX } from '@/lib/anti-hallucination';
 import { getCachedAI, setCachedAI } from '@/lib/ai-cache';
-import { checkRateLimit, rateLimitResponse } from '@/lib/rate-limit';
-import { logger } from '@/lib/logger';
 
-export const runtime = 'nodejs';
-export const dynamic = 'force-dynamic';
+export const { runtime, dynamic } = AI_ROUTE_DEFAULTS;
 export const maxDuration = 60;
 
 // --- Types ---------------------------------------------------------------
@@ -276,17 +268,21 @@ function computeExpectedROIAfterAction(
 
 // --- Handler -------------------------------------------------------------
 
-export async function GET(req: NextRequest) {
-  return handleInventoryRoiOptimizer(req);
-}
-export async function POST(req: NextRequest) {
-  return handleInventoryRoiOptimizer(req);
-}
+// eslint-disable-next-line @typescript-eslint/no-empty-object-type
+interface InventoryRoiOptimizerInput {}
 
-async function handleInventoryRoiOptimizer(req: NextRequest) {
-  try {
-    const rl = checkRateLimit(req, 'ai-inventory-roi-optimizer', 20);
-    if (!rl.allowed) return rateLimitResponse(rl);
+const inventoryRoiOptimizerHandler = withAiRoute<InventoryRoiOptimizerInput>({
+  endpoint: '/api/ai/inventory-roi-optimizer',
+  maxDuration: 60,
+  enforceBudget: true, // AI klic — preveri budget
+  method: 'GET', // Endpoint sprejema GET + POST — bypass POST-only check
+
+  parseBody: async () => ({}),
+
+  // No validateInput — endpoint ne sprejema inputa
+
+  handler: async (_input, ctx: AiRouteContext) => {
+    const { db, callAi, parseAi, logger } = ctx;
 
     const now = Date.now();
 
@@ -406,7 +402,7 @@ async function handleInventoryRoiOptimizer(req: NextRequest) {
 
     // Empty state — no HELD items
     if (totalItems === 0) {
-      return NextResponse.json({
+      return apiOk({
         ok: true,
         portfolio,
         items: [],
@@ -435,7 +431,7 @@ async function handleInventoryRoiOptimizer(req: NextRequest) {
       summary: string;
     }>(cacheKey);
     if (cached) {
-      return NextResponse.json({
+      return apiOk({
         ok: true,
         portfolio,
         items: cached.items,
@@ -477,20 +473,6 @@ async function handleInventoryRoiOptimizer(req: NextRequest) {
     const deterministicSummary = `Portfolio ROI: ${currentAvgROI}% → projected ${projectedAvgROI}% z optimizacijami. Sell ${sellCount} nizko-ROI item-ov, obdrži ${holdCount} visoko-ROI. Pričakovano izboljšanje: +${totalExpectedImprovement}€.`;
 
     // 5) AI prompt with grounding
-    const settings = await getSettingsRow();
-    const aiSettings: AiSettings = {
-      provider: settings.aiProvider as AiProviderType,
-      baseUrl: settings.aiBaseUrl,
-      apiKey: settings.aiApiKey,
-      model: settings.aiModel,
-      fallbackProvider: (settings.fallbackProvider || '') as
-        | AiProviderType
-        | '',
-      fallbackBaseUrl: settings.fallbackBaseUrl || '',
-      fallbackApiKey: settings.fallbackApiKey || '',
-      fallbackModel: settings.fallbackModel || '',
-    };
-
     const itemsForPrompt = items.slice(0, 20).map((i) => ({
       tradeId: i.tradeId,
       title: i.title,
@@ -506,20 +488,121 @@ async function handleInventoryRoiOptimizer(req: NextRequest) {
       deterministicExpectedROI: i.expectedROIAfterAction,
     }));
 
-    const prompt = `Si AI "Inventory ROI Optimizer" za slovenske in srednjeevropske oglasne platforme (Bolha, Vinted, Avtonet, mobile.de).
+    const prompt = buildPrompt({
+      totalItems,
+      totalInvested: portfolio.totalInvested,
+      totalEstimatedValue: portfolio.totalEstimatedValue,
+      totalEstimatedValueCount,
+      currentAvgROI,
+      projectedAvgROI,
+      roiOptimizationPotential,
+      highCount,
+      mediumCount,
+      lowCount,
+      negativeCount,
+      itemsForPrompt,
+    });
+
+    let optimization = deterministicOptimization;
+    let optimizedItems = items;
+    let summary = deterministicSummary;
+    let aiUsed = false;
+
+    try {
+      const raw = await callAi(prompt);
+      const parsed = parseAi(raw) as AiRoiResponse | null;
+
+      if (parsed && typeof parsed === 'object') {
+        const transformed = transformOptimization(
+          parsed,
+          items,
+          deterministicOptimization,
+          deterministicSummary,
+          projectedAvgROI,
+          totalExpectedImprovement,
+        );
+        optimization = transformed.optimization;
+        optimizedItems = transformed.optimizedItems;
+        summary = transformed.summary;
+        aiUsed = true;
+      }
+    } catch (err) {
+      logger.warn(
+        '/api/ai/inventory-roi-optimizer',
+        'AI call failed — using deterministic fallback',
+        err,
+      );
+    }
+
+    // 6) Cache (6h TTL) — only when AI was used
+    if (aiUsed) {
+      setCachedAI(cacheKey, {
+        items: optimizedItems,
+        optimization,
+        summary,
+      });
+    }
+
+    return apiOk({
+      ok: true,
+      portfolio,
+      items: optimizedItems,
+      optimization,
+      summary,
+      aiUsed,
+    });
+  },
+});
+
+// AI Hub runner compatibility — body is ignored, identical logic.
+export const GET = inventoryRoiOptimizerHandler;
+export const POST = inventoryRoiOptimizerHandler;
+
+// --- Pomožne funkcije (čiste, testabilne) --------------------------------
+
+interface PromptParams {
+  totalItems: number;
+  totalInvested: number;
+  totalEstimatedValue: number;
+  totalEstimatedValueCount: number;
+  currentAvgROI: number;
+  projectedAvgROI: number;
+  roiOptimizationPotential: number;
+  highCount: number;
+  mediumCount: number;
+  lowCount: number;
+  negativeCount: number;
+  itemsForPrompt: Array<{
+    tradeId: string;
+    title: string;
+    category: string;
+    buyPrice: number;
+    aiEstimatedValue: number | null;
+    currentROI: number;
+    projectedROI: number;
+    roiPotential: number;
+    urgencyScore: number;
+    roiCategory: RoiCategory;
+    deterministicAction: RebalanceAction;
+    deterministicExpectedROI: number;
+  }>;
+}
+
+function buildPrompt(p: PromptParams): string {
+  return `Si AI "Inventory ROI Optimizer" za slovenske in srednjeevropske oglasne platforme (Bolha, Vinted, Avtonet, mobile.de).
 Optimiraj ROI čez celoten HELD inventar — identificira kateri item-i imajo najboljši/najslabši ROI potencial in predlagaj rebalancing (sell nizko-ROI, hold visoko-ROI).
 
 PORTFOLIO STANJE (deterministično izračunano):
-- totalItems: ${totalItems}
-- totalInvested: ${portfolio.totalInvested}€
-- totalEstimatedValue: ${portfolio.totalEstimatedValue}€ (iz ${totalEstimatedValueCount} item-ov z AI estValue)
-- currentAvgROI: ${currentAvgROI}%
-- projectedAvgROI: ${projectedAvgROI}%
-- roiOptimizationPotential: ${roiOptimizationPotential}%
-- ROI distribution: ${highCount} HIGH_ROI (>30%), ${mediumCount} MEDIUM_ROI (10-30%), ${lowCount} LOW_ROI (0-10%), ${negativeCount} NEGATIVE_ROI (<0%)
+- totalItems: ${p.totalItems}
+- totalInvested: ${p.totalInvested}€
+- totalEstimatedValue: ${p.totalEstimatedValue}€ (iz ${p.totalEstimatedValueCount} item-ov z AI estValue)
+- currentAvgROI: ${p.currentAvgROI}%
+- projectedAvgROI: ${p.projectedAvgROI}%
+- roiOptimizationPotential: ${p.roiOptimizationPotential}%
+- ROI distribution: ${p.highCount} HIGH_ROI (>30%), ${p.mediumCount} MEDIUM_ROI (10-30%), ${p.lowCount} LOW_ROI (0-10%), ${p.negativeCount} NEGATIVE_ROI (<0%)
 
 ITEM-I (top 20, deterministično izračunano):
-${JSON.stringify(itemsForPrompt, null, 2)}
+${JSON.stringify(p.itemsForPrompt, null, 2)}
 
 PRAVILA ZA AI ODGOVOR:
 1. optimization:
@@ -549,138 +632,112 @@ VRNI LE JSON:
   ],
   "summary": "..."
 }${GROUNDING_PROMPT_SUFFIX}`;
+}
 
-    let optimization = deterministicOptimization;
-    let optimizedItems = items;
-    let summary = deterministicSummary;
-    let aiUsed = false;
+function transformOptimization(
+  parsed: AiRoiResponse,
+  items: OptimizationItem[],
+  deterministicOptimization: Optimization,
+  deterministicSummary: string,
+  projectedAvgROI: number,
+  totalExpectedImprovement: number,
+): {
+  optimization: Optimization;
+  optimizedItems: OptimizationItem[];
+  summary: string;
+} {
+  let optimization = deterministicOptimization;
+  let optimizedItems = items;
+  let summary = deterministicSummary;
 
-    try {
-      const raw = await callProviderForRaw(aiSettings, prompt);
-      const parsed = parseJsonLooseExported(raw) as AiRoiResponse | null;
-
-      if (parsed && typeof parsed === 'object') {
-        // Parse optimization
-        if (parsed.optimization && typeof parsed.optimization === 'object') {
-          const o = parsed.optimization as Record<string, unknown>;
-          optimization = {
-            portfolioROIOptimization: clampString(
-              o.portfolioROIOptimization,
-              500,
-              deterministicOptimization.portfolioROIOptimization,
-            ),
-            projectedPortfolioROI: clampNumber(
-              o.projectedPortfolioROI,
-              -50,
-              200,
-              projectedAvgROI,
-            ),
-            riskMitigation: clampString(
-              o.riskMitigation,
-              400,
-              deterministicOptimization.riskMitigation,
-            ),
-            totalExpectedImprovement: clampNumber(
-              o.totalExpectedImprovement,
-              0,
-              100000,
-              totalExpectedImprovement,
-            ),
-          };
-        }
-
-        // Parse items (AI overrides per-item actions)
-        if (Array.isArray(parsed.items)) {
-          const aiItemMap = new Map<string, Record<string, unknown>>();
-          for (const a of parsed.items) {
-            const ar = a as Record<string, unknown>;
-            if (!ar || typeof ar !== 'object') continue;
-            const tid = String(ar.tradeId || '').trim();
-            if (tid) aiItemMap.set(tid, ar);
-          }
-          optimizedItems = items.map((it) => {
-            const aiItem = aiItemMap.get(it.tradeId);
-            if (!aiItem) return it;
-            const action = clampEnum(
-              aiItem.action,
-              VALID_REBALANCE_ACTION,
-              it.action,
-            );
-            const newTargetPrice =
-              action === 'PRICE_ADJUST'
-                ? clampTargetPrice(aiItem.newTargetPrice, it.buyPrice)
-                : null;
-            const expectedROIAfterAction = clampNumber(
-              aiItem.expectedROIAfterAction,
-              -50,
-              200,
-              computeExpectedROIAfterAction(
-                action,
-                it.currentROI,
-                it.projectedROI,
-                it.roiPotential,
-              ),
-            );
-            const timingAdvice = clampString(
-              aiItem.timingAdvice,
-              200,
-              it.timingAdvice,
-            );
-            const reasoning = clampString(
-              aiItem.reasoning,
-              300,
-              it.reasoning,
-            );
-            return {
-              ...it,
-              action,
-              newTargetPrice,
-              expectedROIAfterAction: round1(expectedROIAfterAction),
-              timingAdvice,
-              reasoning,
-            };
-          });
-        }
-
-        // Parse summary
-        if (typeof parsed.summary === 'string' && parsed.summary.trim()) {
-          summary = clampString(parsed.summary, 500, deterministicSummary);
-        }
-
-        aiUsed = true;
-      }
-    } catch (err) {
-      logger.warn(
-        '/api/ai/inventory-roi-optimizer',
-        'AI call failed — using deterministic fallback',
-        err,
-      );
-    }
-
-    // 6) Cache (6h TTL) — only when AI was used
-    if (aiUsed) {
-      setCachedAI(cacheKey, {
-        items: optimizedItems,
-        optimization,
-        summary,
-      });
-    }
-
-    return NextResponse.json({
-      ok: true,
-      portfolio,
-      items: optimizedItems,
-      optimization,
-      summary,
-      aiUsed,
-    });
-  } catch (err: any) {
-    logger.error('/api/ai/inventory-roi-optimizer', 'handler failed', err);
-    return NextResponse.json(
-      { error: err?.message ?? 'Napaka' },
-      { status: 500 },
-    );
+  // Parse optimization
+  if (parsed.optimization && typeof parsed.optimization === 'object') {
+    const o = parsed.optimization as Record<string, unknown>;
+    optimization = {
+      portfolioROIOptimization: clampString(
+        o.portfolioROIOptimization,
+        500,
+        deterministicOptimization.portfolioROIOptimization,
+      ),
+      projectedPortfolioROI: clampNumber(
+        o.projectedPortfolioROI,
+        -50,
+        200,
+        projectedAvgROI,
+      ),
+      riskMitigation: clampString(
+        o.riskMitigation,
+        400,
+        deterministicOptimization.riskMitigation,
+      ),
+      totalExpectedImprovement: clampNumber(
+        o.totalExpectedImprovement,
+        0,
+        100000,
+        totalExpectedImprovement,
+      ),
+    };
   }
+
+  // Parse items (AI overrides per-item actions)
+  if (Array.isArray(parsed.items)) {
+    const aiItemMap = new Map<string, Record<string, unknown>>();
+    for (const a of parsed.items) {
+      const ar = a as Record<string, unknown>;
+      if (!ar || typeof ar !== 'object') continue;
+      const tid = String(ar.tradeId || '').trim();
+      if (tid) aiItemMap.set(tid, ar);
+    }
+    optimizedItems = items.map((it) => {
+      const aiItem = aiItemMap.get(it.tradeId);
+      if (!aiItem) return it;
+      const action = clampEnum(
+        aiItem.action,
+        VALID_REBALANCE_ACTION,
+        it.action,
+      );
+      const newTargetPrice =
+        action === 'PRICE_ADJUST'
+          ? clampTargetPrice(aiItem.newTargetPrice, it.buyPrice)
+          : null;
+      const expectedROIAfterAction = clampNumber(
+        aiItem.expectedROIAfterAction,
+        -50,
+        200,
+        computeExpectedROIAfterAction(
+          action,
+          it.currentROI,
+          it.projectedROI,
+          it.roiPotential,
+        ),
+      );
+      const timingAdvice = clampString(
+        aiItem.timingAdvice,
+        200,
+        it.timingAdvice,
+      );
+      const reasoning = clampString(
+        aiItem.reasoning,
+        300,
+        it.reasoning,
+      );
+      return {
+        ...it,
+        action,
+        newTargetPrice,
+        expectedROIAfterAction: round1(expectedROIAfterAction),
+        timingAdvice,
+        reasoning,
+      };
+    });
+  }
+
+  // Parse summary
+  if (typeof parsed.summary === 'string' && parsed.summary.trim()) {
+    summary = clampString(parsed.summary, 500, deterministicSummary);
+  }
+
+  return { optimization, optimizedItems, summary };
 }
 
 // --- Helpers (deterministic advice) -------------------------------------

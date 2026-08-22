@@ -1,4 +1,4 @@
-// v7.99: AI Inventory ROI Maximizer Pro — AI maksimizira ROI čez celoten
+// v7.99 / v8.96.4-batch3: AI Inventory ROI Maximizer Pro — AI maksimizira ROI čez celoten
 // held inventar z per-item specifičnimi recommendations. Razlika od
 // inventory-roi-optimizer (v7.79 ki optimira ROI z rebalance actions) — ta
 // MAXIMIZIRA ROI z absolutno best strategy per item (HOLD_AND_WAIT,
@@ -20,27 +20,21 @@
 // lift, REFURB_FOR_PREMIUM, €240 profit, 21d to max ROI, risk: refurb cost
 // overrun). Portfolio: current 24% → maximized 41% (+17% lift, grade A).
 // Total additional profit: €425."
-
+//
 // GET+POST /api/ai/inventory-roi-maximizer-pro
 // (AI-enhanced + grounding + anti-hallucination + 6h cache + deterministic fallback)
+// Refaktoriran z withAiRoute helperjem (v8.96.4) + enforceBudget guard.
 
-import { NextRequest, NextResponse } from 'next/server';
-import { db } from '@/lib/db';
-import { getSettingsRow } from '@/lib/pipeline';
-import {
-  callProviderForRaw,
-  parseJsonLooseExported,
-  type AiProviderType,
-  type AiSettings,
-} from '@/lib/ai';
+import { withAiRoute, AI_ROUTE_DEFAULTS, type AiRouteContext } from '@/lib/with-ai-route';
+import { apiOk } from '@/lib/api-response';
 import { GROUNDING_PROMPT_SUFFIX } from '@/lib/anti-hallucination';
 import { getCachedAI, setCachedAI } from '@/lib/ai-cache';
-import { checkRateLimit, rateLimitResponse } from '@/lib/rate-limit';
-import { logger } from '@/lib/logger';
 
-export const runtime = 'nodejs';
-export const dynamic = 'force-dynamic';
+export const { runtime, dynamic } = AI_ROUTE_DEFAULTS;
 export const maxDuration = 60;
+
+// eslint-disable-next-line @typescript-eslint/no-empty-object-type
+interface InventoryRoiMaximizerInput {}
 
 // --- Types ---------------------------------------------------------------
 
@@ -439,134 +433,67 @@ function buildSummary(
   return parts.join(' ').slice(0, 400);
 }
 
-// --- Handler -------------------------------------------------------------
+// --- Prompt builder + AI response transform (čisti helperji) ------------
 
-export async function GET(req: NextRequest) {
-  return handleInventoryRoiMaximizerPro(req);
+interface PromptData {
+  heldItemsCount: number;
+  heldItems: Array<{
+    tradeId: string;
+    title: string;
+    category: string;
+    buyPrice: number;
+    estValue: number;
+    cost: number;
+    detCurrentROI: number;
+    detMaximizedROI: number;
+    detRoiGap: number;
+    detRoiCategory: RoiCategory;
+    detStrategy: RoiMaximizationStrategy;
+    detExpectedProfitAtMaxROI: number;
+    detTimeToMaxROI: number;
+  }>;
+  deterministicPortfolio: PortfolioRoiMaximization;
+  caps: {
+    roiMin: number; roiMax: number;
+    liftMin: number; liftMax: number;
+    profitMin: number; profitMax: number;
+    daysMin: number; daysMax: number;
+  };
 }
-export async function POST(req: NextRequest) {
-  return handleInventoryRoiMaximizerPro(req);
-}
 
-async function handleInventoryRoiMaximizerPro(req: NextRequest) {
-  try {
-    const rl = checkRateLimit(req, 'ai-inventory-roi-maximizer-pro', 20);
-    if (!rl.allowed) return rateLimitResponse(rl);
+function buildPrompt(detItems: DetRoiItem[], portfolio: PortfolioRoiMaximization): string {
+  const topItemsForAI = [...detItems]
+    .sort((a, b) => b.item.roiGap - a.item.roiGap)
+    .slice(0, 40)
+    .map((d) => ({
+      tradeId: d.item.tradeId,
+      title: d.item.title,
+      category: d.item.category,
+      buyPrice: d.item.buyPrice,
+      estValue: d.estValue,
+      cost: d.cost,
+      detCurrentROI: d.item.currentROI,
+      detMaximizedROI: d.item.maximizedROI,
+      detRoiGap: d.item.roiGap,
+      detRoiCategory: d.item.roiCategory,
+      detStrategy: d.item.roiMaximizationStrategy,
+      detExpectedProfitAtMaxROI: d.item.expectedProfitAtMaxROI,
+      detTimeToMaxROI: d.item.timeToMaxROI,
+    }));
 
-    // 1) Query all HELD trades with their linked Listing
-    const heldTrades = await db.trade.findMany({
-      where: { status: 'held' },
-      select: {
-        id: true,
-        title: true,
-        buyPrice: true,
-        buyFees: true,
-        category: true,
-        listing: {
-          select: {
-            aiEstimatedValue: true,
-            price: true,
-            aiScore: true,
-            dealScore: true,
-          },
-        },
-      },
-      orderBy: { buyDate: 'asc' },
-      take: 100000,
-    }) as unknown as HeldItemRow[];
+  const promptData: PromptData = {
+    heldItemsCount: detItems.length,
+    heldItems: topItemsForAI,
+    deterministicPortfolio: portfolio,
+    caps: {
+      roiMin: ROI_MIN, roiMax: ROI_MAX,
+      liftMin: LIFT_MIN, liftMax: LIFT_MAX,
+      profitMin: PROFIT_MIN, profitMax: PROFIT_MAX,
+      daysMin: DAYS_MIN, daysMax: DAYS_MAX,
+    },
+  };
 
-    // Empty-state: no HELD trades
-    if (heldTrades.length === 0) {
-      return NextResponse.json({
-        ok: true,
-        items: [],
-        portfolio: {
-          currentPortfolioROI: 0,
-          maximizedPortfolioROI: 0,
-          totalROILift: 0,
-          roiMaximizationGrade: 'F',
-          totalAdditionalProfit: 0,
-        },
-        summary: 'Ni HELD trgovin v inventarju — Inventory ROI Maximizer Pro ni mogoč.',
-        aiUsed: false,
-        message: 'Ni HELD trgovin v inventarju — Inventory ROI Maximizer Pro ni mogoč.',
-      } satisfies InventoryRoiMaximizerResponse);
-    }
-
-    // 2) Compute per-item ROI maximization metrics (deterministic baseline)
-    const detItems = heldTrades.map((t) => computeRoiMaximizationItem(t));
-
-    let items: RoiMaximizationItem[] = detItems.map((d) => d.item);
-    let portfolio = buildPortfolio(detItems);
-    let summary = buildSummary(detItems, portfolio);
-
-    // 3) AI cache check (6h TTL) — key by held item ids
-    const heldItemIds = heldTrades.map((t) => t.id).sort();
-    const cacheKey = `inventory-roi-maximizer-pro:${JSON.stringify(heldItemIds)}`;
-    const cached = getCachedAI<{
-      items: RoiMaximizationItem[];
-      portfolio: PortfolioRoiMaximization;
-      summary: string;
-    }>(cacheKey);
-    if (cached) {
-      return NextResponse.json({
-        ok: true,
-        items: cached.items,
-        portfolio: cached.portfolio,
-        summary: cached.summary,
-        cached: true,
-        aiUsed: true,
-      } satisfies InventoryRoiMaximizerResponse);
-    }
-
-    // 4) AI prompt with grounding
-    const settings = await getSettingsRow();
-    const aiSettings: AiSettings = {
-      provider: settings.aiProvider as AiProviderType,
-      baseUrl: settings.aiBaseUrl,
-      apiKey: settings.aiApiKey,
-      model: settings.aiModel,
-      fallbackProvider: (settings.fallbackProvider || '') as
-        | AiProviderType
-        | '',
-      fallbackBaseUrl: settings.fallbackBaseUrl || '',
-      fallbackApiKey: settings.fallbackApiKey || '',
-      fallbackModel: settings.fallbackModel || '',
-    };
-
-    // Compact context for AI (top 40 items by ROI gap)
-    const topItemsForAI = [...detItems]
-      .sort((a, b) => b.item.roiGap - a.item.roiGap)
-      .slice(0, 40)
-      .map((d) => ({
-        tradeId: d.item.tradeId,
-        title: d.item.title,
-        category: d.item.category,
-        buyPrice: d.item.buyPrice,
-        estValue: d.estValue,
-        cost: d.cost,
-        detCurrentROI: d.item.currentROI,
-        detMaximizedROI: d.item.maximizedROI,
-        detRoiGap: d.item.roiGap,
-        detRoiCategory: d.item.roiCategory,
-        detStrategy: d.item.roiMaximizationStrategy,
-        detExpectedProfitAtMaxROI: d.item.expectedProfitAtMaxROI,
-        detTimeToMaxROI: d.item.timeToMaxROI,
-      }));
-
-    const promptData = {
-      heldItemsCount: detItems.length,
-      heldItems: topItemsForAI,
-      deterministicPortfolio: portfolio,
-      caps: {
-        roiMin: ROI_MIN, roiMax: ROI_MAX,
-        liftMin: LIFT_MIN, liftMax: LIFT_MAX,
-        profitMin: PROFIT_MIN, profitMax: PROFIT_MAX,
-        daysMin: DAYS_MIN, daysMax: DAYS_MAX,
-      },
-    };
-
-    const prompt = `Si AI "Inventory ROI Maximizer Pro" za slovenske in srednjeevropske oglasne platforme (Bolha, Vinted, Avtonet, mobile.de).
+  return `Si AI "Inventory ROI Maximizer Pro" za slovenske in srednjeevropske oglasne platforme (Bolha, Vinted, Avtonet, mobile.de).
 Si strokovnjak za ROI MAXIMIZATION per held item — identificiraš kako MAXIMIZIRATI ROI % za vsak held item z absolutno best strategy. Razlika od inventory-roi-optimizer (v7.79 ki optimira ROI z rebalance) — ti MAXIMIZIRAŠ ROI z 6 strategies per item. Razlika od inventory-profit-maximizer (ki maksimizira profit) — ti maksimiziraš ROI % (ne € profit). Razlika od capital-growth-maximizer (v7.99 ki maksimizira capital growth) — ti maksimiziraš per-item ROI. Razlika od deal-profit-accelerator-pro (v7.99 ki accelera profit) — ti maksimiziraš ROI % (ne profit acceleration €).
 
 DETERMINISTIČNI PODATKI (izračunano iz DB — HELD trgovin z linked Listing):
@@ -599,151 +526,258 @@ VRNI LE JSON:
   "portfolio": { "roiMaximizationGrade": "A" },
   "summary": "12 held item-ov. Portfolio ROI: 24% → 41% (+17% lift). Grade A. Additional profit: 425€."
 }${GROUNDING_PROMPT_SUFFIX}`;
+}
+
+interface AiTransformResult {
+  items: RoiMaximizationItem[];
+  portfolio: PortfolioRoiMaximization;
+  summary: string;
+}
+
+function transformAiResponse(
+  parsed: unknown,
+  detItems: DetRoiItem[],
+  detByTradeId: Map<string, DetRoiItem>,
+): AiTransformResult | null {
+  if (!parsed || typeof parsed !== 'object') return null;
+  const ai = parsed as AiResponse;
+
+  const aiItemsMap = new Map<string, NonNullable<AiResponse['items']>[number]>();
+  if (Array.isArray(ai.items)) {
+    for (const it of ai.items) {
+      if (it && typeof it === 'object' && typeof it.tradeId === 'string') {
+        aiItemsMap.set(it.tradeId, it);
+      }
+    }
+  }
+
+  const aiItems: RoiMaximizationItem[] = [];
+  for (const d of detItems) {
+    const a = aiItemsMap.get(d.item.tradeId);
+    if (!a) {
+      aiItems.push(d.item);
+      continue;
+    }
+
+    const strategy = clampEnum(
+      a.roiMaximizationStrategy,
+      VALID_STRATEGY,
+      d.item.roiMaximizationStrategy,
+    );
+
+    // Anti-hallucination: maximizedROI ∈ [currentROI, currentROI × 1.8 OR currentROI + 25]
+    const maxROIBound = Math.min(
+      ROI_MAX,
+      Math.max(
+        d.item.currentROI * MAX_ROI_UPGRADE_MULT,
+        d.item.currentROI + MAX_ROI_UPGRADE_ADD,
+      ),
+    );
+    const aiMaxROI = clampNum(
+      a.maximizedROI,
+      ROI_MIN, ROI_MAX,
+      d.item.maximizedROI,
+    );
+    const maximizedROI = round2(
+      Math.max(d.item.currentROI, Math.min(maxROIBound, aiMaxROI)),
+    );
+
+    const roiGap = round2(clampNum(
+      maximizedROI - d.item.currentROI,
+      LIFT_MIN, LIFT_MAX, 0,
+    ));
+
+    const roiLift = roiGap;
+
+    // Recompute expected profit at max ROI based on cost
+    const expectedProfitAtMaxROI = round0(clampNum(
+      (maximizedROI / 100) * d.cost,
+      PROFIT_MIN, Math.min(PROFIT_MAX, d.estValue * MAX_PROFIT_BASIS), 0,
+    ));
+
+    // Implementation actions (3-5 strings)
+    const implementationActions: string[] = [];
+    if (Array.isArray(a.implementationActions)) {
+      for (const s of a.implementationActions.slice(0, MAX_ACTIONS_PER_ITEM)) {
+        if (typeof s !== 'string') continue;
+        implementationActions.push(clampString(s, 200, 'Akcija.'));
+      }
+    }
+    if (implementationActions.length === 0) {
+      for (const s of d.item.implementationActions) implementationActions.push(s);
+    }
+    if (implementationActions.length === 0) {
+      implementationActions.push('Izvedi akcijo za ROI maximization.');
+    }
+
+    const timeToMaxROI = round0(clampNum(
+      a.timeToMaxROI,
+      DAYS_MIN, DAYS_MAX,
+      d.item.timeToMaxROI,
+    ));
+
+    const riskToMaxROI = clampString(
+      a.riskToMaxROI,
+      200,
+      d.item.riskToMaxROI,
+    );
+
+    aiItems.push({
+      tradeId: d.item.tradeId,
+      title: d.item.title,
+      category: d.item.category,
+      buyPrice: d.item.buyPrice,
+      aiEstimatedValue: d.item.aiEstimatedValue,
+      currentROI: d.item.currentROI,
+      maximizedROI,
+      roiGap,
+      roiCategory: d.item.roiCategory,
+      roiMaximizationStrategy: strategy,
+      roiLift,
+      expectedProfitAtMaxROI,
+      implementationActions: implementationActions.slice(0, MAX_ACTIONS_PER_ITEM),
+      timeToMaxROI,
+      riskToMaxROI,
+    });
+  }
+
+  let portfolio = buildPortfolio(
+    aiItems.map((it) => {
+      const det = detByTradeId.get(it.tradeId);
+      return {
+        item: it,
+        estValue: det?.estValue ?? 0,
+        cost: det?.cost ?? it.buyPrice,
+      };
+    }),
+  );
+
+  // Override portfolio grade if AI provided one
+  if (ai.portfolio?.roiMaximizationGrade) {
+    portfolio = {
+      ...portfolio,
+      roiMaximizationGrade: clampEnum(
+        ai.portfolio.roiMaximizationGrade,
+        VALID_GRADE,
+        portfolio.roiMaximizationGrade,
+      ),
+    };
+  }
+
+  const summary = clampString(ai.summary, 400, buildSummary(
+    aiItems.map((it) => {
+      const det = detByTradeId.get(it.tradeId);
+      return {
+        item: it,
+        estValue: det?.estValue ?? 0,
+        cost: det?.cost ?? it.buyPrice,
+      };
+    }),
+    portfolio,
+  ));
+
+  return { items: aiItems, portfolio, summary };
+}
+
+// --- Handler -------------------------------------------------------------
+
+const inventoryRoiMaximizerProHandler = withAiRoute<InventoryRoiMaximizerInput>({
+  endpoint: '/api/ai/inventory-roi-maximizer-pro',
+  maxDuration: 60,
+  enforceBudget: true, // AI klic — preveri budget
+  method: 'GET', // Endpoint sprejema GET + POST — bypass POST-only check
+
+  parseBody: async (req) => {
+    await req.json().catch(() => ({}));
+    return {};
+  },
+
+  // No validateInput — body ignored, identična logika za GET in POST
+  handler: async (_input, ctx: AiRouteContext) => {
+    const { db, callAi, parseAi, logger } = ctx;
+
+    // 1) Query all HELD trades with their linked Listing
+    const heldTrades = await db.trade.findMany({
+      where: { status: 'held' },
+      select: {
+        id: true,
+        title: true,
+        buyPrice: true,
+        buyFees: true,
+        category: true,
+        listing: {
+          select: {
+            aiEstimatedValue: true,
+            price: true,
+            aiScore: true,
+            dealScore: true,
+          },
+        },
+      },
+      orderBy: { buyDate: 'asc' },
+      take: 100000,
+    }) as unknown as HeldItemRow[];
+
+    // Empty-state: no HELD trades
+    if (heldTrades.length === 0) {
+      return apiOk({
+        ok: true,
+        items: [],
+        portfolio: {
+          currentPortfolioROI: 0,
+          maximizedPortfolioROI: 0,
+          totalROILift: 0,
+          roiMaximizationGrade: 'F',
+          totalAdditionalProfit: 0,
+        },
+        summary: 'Ni HELD trgovin v inventarju — Inventory ROI Maximizer Pro ni mogoč.',
+        aiUsed: false,
+        message: 'Ni HELD trgovin v inventarju — Inventory ROI Maximizer Pro ni mogoč.',
+      } satisfies InventoryRoiMaximizerResponse);
+    }
+
+    // 2) Compute per-item ROI maximization metrics (deterministic baseline)
+    const detItems = heldTrades.map((t) => computeRoiMaximizationItem(t));
+
+    let items: RoiMaximizationItem[] = detItems.map((d) => d.item);
+    let portfolio = buildPortfolio(detItems);
+    let summary = buildSummary(detItems, portfolio);
+
+    // 3) AI cache check (6h TTL) — key by held item ids
+    const heldItemIds = heldTrades.map((t) => t.id).sort();
+    const cacheKey = `inventory-roi-maximizer-pro:${JSON.stringify(heldItemIds)}`;
+    const cached = getCachedAI<{
+      items: RoiMaximizationItem[];
+      portfolio: PortfolioRoiMaximization;
+      summary: string;
+    }>(cacheKey);
+    if (cached) {
+      return apiOk({
+        ok: true,
+        items: cached.items,
+        portfolio: cached.portfolio,
+        summary: cached.summary,
+        cached: true,
+        aiUsed: true,
+      } satisfies InventoryRoiMaximizerResponse);
+    }
+
+    // 4) Build AI prompt with grounding + call AI (try/catch z graceful fallback)
+    const prompt = buildPrompt(detItems, portfolio);
+    const detByTradeId = new Map<string, DetRoiItem>();
+    for (const d of detItems) detByTradeId.set(d.item.tradeId, d);
 
     let aiUsed = false;
 
     try {
-      const raw = await callProviderForRaw(aiSettings, prompt);
-      const parsed = parseJsonLooseExported(raw) as AiResponse | null;
+      const raw = await callAi(prompt);
+      const parsed = parseAi(raw) as AiResponse | null;
 
-      if (parsed && typeof parsed === 'object') {
-        const detByTradeId = new Map<string, DetRoiItem>();
-        for (const d of detItems) detByTradeId.set(d.item.tradeId, d);
-
-        const aiItemsMap = new Map<string, NonNullable<AiResponse['items']>[number]>();
-        if (Array.isArray(parsed.items)) {
-          for (const ai of parsed.items) {
-            if (ai && typeof ai === 'object' && typeof ai.tradeId === 'string') {
-              aiItemsMap.set(ai.tradeId, ai);
-            }
-          }
-        }
-
-        const aiItems: RoiMaximizationItem[] = [];
-        for (const d of detItems) {
-          const ai = aiItemsMap.get(d.item.tradeId);
-          if (!ai) {
-            aiItems.push(d.item);
-            continue;
-          }
-
-          const strategy = clampEnum(
-            ai.roiMaximizationStrategy,
-            VALID_STRATEGY,
-            d.item.roiMaximizationStrategy,
-          );
-
-          // Anti-hallucination: maximizedROI ∈ [currentROI, currentROI × 1.8 OR currentROI + 25]
-          const maxROIBound = Math.min(
-            ROI_MAX,
-            Math.max(
-              d.item.currentROI * MAX_ROI_UPGRADE_MULT,
-              d.item.currentROI + MAX_ROI_UPGRADE_ADD,
-            ),
-          );
-          const aiMaxROI = clampNum(
-            ai.maximizedROI,
-            ROI_MIN, ROI_MAX,
-            d.item.maximizedROI,
-          );
-          const maximizedROI = round2(
-            Math.max(d.item.currentROI, Math.min(maxROIBound, aiMaxROI)),
-          );
-
-          const roiGap = round2(clampNum(
-            maximizedROI - d.item.currentROI,
-            LIFT_MIN, LIFT_MAX, 0,
-          ));
-
-          const roiLift = roiGap;
-
-          // Recompute expected profit at max ROI based on cost
-          const expectedProfitAtMaxROI = round0(clampNum(
-            (maximizedROI / 100) * d.cost,
-            PROFIT_MIN, Math.min(PROFIT_MAX, d.estValue * MAX_PROFIT_BASIS), 0,
-          ));
-
-          // Implementation actions (3-5 strings)
-          const implementationActions: string[] = [];
-          if (Array.isArray(ai.implementationActions)) {
-            for (const s of ai.implementationActions.slice(0, MAX_ACTIONS_PER_ITEM)) {
-              if (typeof s !== 'string') continue;
-              implementationActions.push(clampString(s, 200, 'Akcija.'));
-            }
-          }
-          if (implementationActions.length === 0) {
-            for (const s of d.item.implementationActions) implementationActions.push(s);
-          }
-          if (implementationActions.length === 0) {
-            implementationActions.push('Izvedi akcijo za ROI maximization.');
-          }
-
-          const timeToMaxROI = round0(clampNum(
-            ai.timeToMaxROI,
-            DAYS_MIN, DAYS_MAX,
-            d.item.timeToMaxROI,
-          ));
-
-          const riskToMaxROI = clampString(
-            ai.riskToMaxROI,
-            200,
-            d.item.riskToMaxROI,
-          );
-
-          aiItems.push({
-            tradeId: d.item.tradeId,
-            title: d.item.title,
-            category: d.item.category,
-            buyPrice: d.item.buyPrice,
-            aiEstimatedValue: d.item.aiEstimatedValue,
-            currentROI: d.item.currentROI,
-            maximizedROI,
-            roiGap,
-            roiCategory: d.item.roiCategory,
-            roiMaximizationStrategy: strategy,
-            roiLift,
-            expectedProfitAtMaxROI,
-            implementationActions: implementationActions.slice(0, MAX_ACTIONS_PER_ITEM),
-            timeToMaxROI,
-            riskToMaxROI,
-          });
-        }
-
-        items = aiItems;
-        portfolio = buildPortfolio(
-          aiItems.map((it) => {
-            const det = detByTradeId.get(it.tradeId);
-            return {
-              item: it,
-              estValue: det?.estValue ?? 0,
-              cost: det?.cost ?? it.buyPrice,
-            };
-          }),
-        );
-
-        // Override portfolio grade if AI provided one
-        if (parsed.portfolio?.roiMaximizationGrade) {
-          portfolio = {
-            ...portfolio,
-            roiMaximizationGrade: clampEnum(
-              parsed.portfolio.roiMaximizationGrade,
-              VALID_GRADE,
-              portfolio.roiMaximizationGrade,
-            ),
-          };
-        }
-
-        summary = clampString(parsed.summary, 400, buildSummary(
-          aiItems.map((it) => {
-            const det = detByTradeId.get(it.tradeId);
-            return {
-              item: it,
-              estValue: det?.estValue ?? 0,
-              cost: det?.cost ?? it.buyPrice,
-            };
-          }),
-          portfolio,
-        ));
+      const transformed = transformAiResponse(parsed, detItems, detByTradeId);
+      if (transformed) {
+        items = transformed.items;
+        portfolio = transformed.portfolio;
+        summary = transformed.summary;
         aiUsed = true;
       }
     } catch (err) {
@@ -759,22 +793,15 @@ VRNI LE JSON:
       setCachedAI(cacheKey, { items, portfolio, summary });
     }
 
-    return NextResponse.json({
+    return apiOk({
       ok: true,
       items,
       portfolio,
       summary,
       aiUsed,
     } satisfies InventoryRoiMaximizerResponse);
-  } catch (err: any) {
-    logger.error(
-      '/api/ai/inventory-roi-maximizer-pro',
-      'handler failed',
-      err,
-    );
-    return NextResponse.json(
-      { error: err?.message ?? 'Napaka' },
-      { status: 500 },
-    );
-  }
-}
+  },
+});
+
+export const GET = inventoryRoiMaximizerProHandler;
+export const POST = inventoryRoiMaximizerProHandler;

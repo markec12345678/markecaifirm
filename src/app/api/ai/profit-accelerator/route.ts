@@ -1,7 +1,7 @@
-// v7.71: AI Profit Accelerator — AI identificira specifične akcije da
-// POSPEŠI rast profita — ne samo maksimizira, ampak pohitri. "Če objaviš 2
-// dodatna oglasa na teden in skrajšaš hold za 5 dni, dosežeš 5000€ profit
-// 60 dni prej."
+// v7.71 / v8.96.4-batch2: AI Profit Accelerator — AI identificira specifične
+// akcije da POSPEŠI rast profita — ne samo maksimizira, ampak pohitri.
+// "Če objaviš 2 dodatna oglasa na teden in skrajšaš hold za 5 dni, dosežeš
+// 5000€ profit 60 dni prej."
 //
 // "Accelerate: list 3/week (+150€/wk), cut hold 5d (+80€/wk). Time to 5000€:
 //  12wk → 7wk (save 5wk)."
@@ -14,25 +14,17 @@
 // načrt za pospešitev. Razlika od profit-leakage-detector (ki gleda kje profit
 // teče) — ta gleda kako POHITRITI rast profita (ne samo preprečiti izgube).
 //
+// Refaktoriran z withAiRoute helperjem (v8.96.4) + enforceBudget guard.
+//
 // GET+POST /api/ai/profit-accelerator
 // (AI-enhanced + grounding + anti-hallucination + 6h cache + deterministic fallback)
 
-import { NextRequest, NextResponse } from 'next/server';
-import { db } from '@/lib/db';
-import { getSettingsRow } from '@/lib/pipeline';
-import {
-  callProviderForRaw,
-  parseJsonLooseExported,
-  type AiProviderType,
-  type AiSettings,
-} from '@/lib/ai';
+import { withAiRoute, AI_ROUTE_DEFAULTS, type AiRouteContext } from '@/lib/with-ai-route';
+import { apiOk } from '@/lib/api-response';
 import { GROUNDING_PROMPT_SUFFIX } from '@/lib/anti-hallucination';
 import { getCachedAI, setCachedAI } from '@/lib/ai-cache';
-import { checkRateLimit, rateLimitResponse } from '@/lib/rate-limit';
-import { logger } from '@/lib/logger';
 
-export const runtime = 'nodejs';
-export const dynamic = 'force-dynamic';
+export const { runtime, dynamic } = AI_ROUTE_DEFAULTS;
 export const maxDuration = 60;
 
 // --- Types ---------------------------------------------------------------
@@ -287,17 +279,21 @@ function buildDeterministicPlan(m: MetricsBase): {
 
 // --- Handler -------------------------------------------------------------
 
-export async function GET(req: NextRequest) {
-  return handleProfitAccelerator(req);
-}
-export async function POST(req: NextRequest) {
-  return handleProfitAccelerator(req);
-}
+// eslint-disable-next-line @typescript-eslint/no-empty-object-type
+interface ProfitAcceleratorInput {}
 
-async function handleProfitAccelerator(req: NextRequest) {
-  try {
-    const rl = checkRateLimit(req, 'ai-profit-accelerator', 20);
-    if (!rl.allowed) return rateLimitResponse(rl);
+const profitAcceleratorHandler = withAiRoute<ProfitAcceleratorInput>({
+  endpoint: '/api/ai/profit-accelerator',
+  maxDuration: 60,
+  enforceBudget: true, // AI klic — preveri budget
+  method: 'GET', // Endpoint sprejema GET + POST — bypass POST-only check
+
+  parseBody: async () => ({}),
+
+  // No validateInput — endpoint ne sprejema inputa
+
+  handler: async (_input, ctx: AiRouteContext) => {
+    const { db, callAi, parseAi, logger } = ctx;
 
     // 1) Query SOLD trades last 4 weeks for currentWeeklyProfit + winRate
     const fourWeeksAgo = new Date(Date.now() - 28 * DAY_MS);
@@ -358,7 +354,7 @@ async function handleProfitAccelerator(req: NextRequest) {
 
     // Empty state — no sold trades at all
     if (recentSold.length === 0 && soldThisYear.length === 0 && heldTrades.length === 0) {
-      return NextResponse.json({
+      return apiOk({
         ok: true,
         currentMetrics: {
           weeklyProfit: 0,
@@ -472,7 +468,7 @@ async function handleProfitAccelerator(req: NextRequest) {
       summary: string;
     }>(cacheKey);
     if (cached) {
-      return NextResponse.json({
+      return apiOk({
         ok: true,
         currentMetrics,
         timeline,
@@ -536,36 +532,99 @@ async function handleProfitAccelerator(req: NextRequest) {
       longTermAccelerators: baseline.longTermAccelerators,
     };
 
-    // 6) AI prompt with grounding
-    const settings = await getSettingsRow();
-    const aiSettings: AiSettings = {
-      provider: settings.aiProvider as AiProviderType,
-      baseUrl: settings.aiBaseUrl,
-      apiKey: settings.aiApiKey,
-      model: settings.aiModel,
-      fallbackProvider: (settings.fallbackProvider || '') as
-        | AiProviderType
-        | '',
-      fallbackBaseUrl: settings.fallbackBaseUrl || '',
-      fallbackApiKey: settings.fallbackApiKey || '',
-      fallbackModel: settings.fallbackModel || '',
-    };
+    const baselineSummary = `Pospeši rast profita: ${baseline.actions.length} akcij pričakovano +${Math.round(baselineProfitIncrease)}€/teden. Time to 5000€: ${timeline.timeTo5000Profit} → ${baselineProjected.acceleratedTimeTo5000} tednov (prihranek ${baselineProjected.timeSaved5000} tednov).`;
 
-    const prompt = `Si AI pospeševalnik profita za slovenske in srednjeevropske oglasne platforme (Bolha, Vinted, Avtonet, mobile.de).
+    // 6) AI prompt with grounding
+    const prompt = buildPrompt({
+      currentMetrics,
+      timeline,
+      totalTrades,
+      maxNewWeekly,
+      maxTimeSaved5000,
+      maxTimeSaved10000,
+    });
+
+    let accelerationPlan: AccelerationPlan = baselinePlan;
+    let summary = baselineSummary;
+    let aiUsed = false;
+
+    try {
+      const raw = await callAi(prompt);
+      const parsed = parseAi(raw) as AiAcceleratorResponse | null;
+
+      if (parsed && typeof parsed === 'object') {
+        const transformed = transformAccelerator(parsed, {
+          baseline,
+          baselineProjected,
+          baselineSummary,
+          weeklyProfit,
+          remaining5000,
+          remaining10000,
+          timeTo5000Profit,
+          timeTo10000Profit,
+          maxNewWeekly,
+          maxTimeSaved5000,
+          maxTimeSaved10000,
+        });
+        accelerationPlan = transformed.accelerationPlan;
+        summary = transformed.summary;
+        aiUsed = true;
+      }
+    } catch (err) {
+      logger.warn(
+        '/api/ai/profit-accelerator',
+        'AI call failed — using deterministic fallback',
+        err,
+      );
+    }
+
+    // 7) Cache (6h TTL) — only when AI was used
+    if (aiUsed) {
+      setCachedAI(cacheKey, { accelerationPlan, summary });
+    }
+
+    return apiOk({
+      ok: true,
+      currentMetrics,
+      timeline,
+      accelerationPlan,
+      summary,
+      aiUsed,
+    });
+  },
+});
+
+// AI Hub runner compatibility — body is ignored, identical logic.
+export const GET = profitAcceleratorHandler;
+export const POST = profitAcceleratorHandler;
+
+// --- Pomožne funkcije (čiste, testabilne) --------------------------------
+
+interface PromptParams {
+  currentMetrics: CurrentMetrics;
+  timeline: TimelineInfo;
+  totalTrades: number;
+  maxNewWeekly: number;
+  maxTimeSaved5000: number;
+  maxTimeSaved10000: number;
+}
+
+function buildPrompt(p: PromptParams): string {
+  return `Si AI pospeševalnik profita za slovenske in srednjeevropske oglasne platforme (Bolha, Vinted, Avtonet, mobile.de).
 Identificiraj KONKRETNE akcije za POSPEŠITEV rasti profita — ne maksimiziranje posameznega trade-a, ampak pohitritev celotne rasti.
 
 TRENUTNE METRIKE:
-- weeklyProfit: ${currentMetrics.weeklyProfit}€/teden (povprečje zadnjih 4 tednov)
-- avgHoldDays: ${currentMetrics.avgHoldDays} dni
-- listingFrequency: ${currentMetrics.listingFrequency} listing-ov/teden (novi HELD v zadnjih 4 tednih)
-- winRate: ${currentMetrics.winRate}% (zadnji 4 tedni, ${totalTrades} sold)
-- capitalDeployed: ${currentMetrics.capitalDeployed}€ v HELD inventarju
-- profitVelocity: ${currentMetrics.profitVelocity}€/teden
-- totalProfitThisYear: ${timeline.totalProfitThisYear}€
+- weeklyProfit: ${p.currentMetrics.weeklyProfit}€/teden (povprečje zadnjih 4 tednov)
+- avgHoldDays: ${p.currentMetrics.avgHoldDays} dni
+- listingFrequency: ${p.currentMetrics.listingFrequency} listing-ov/teden (novi HELD v zadnjih 4 tednih)
+- winRate: ${p.currentMetrics.winRate}% (zadnji 4 tedni, ${p.totalTrades} sold)
+- capitalDeployed: ${p.currentMetrics.capitalDeployed}€ v HELD inventarju
+- profitVelocity: ${p.currentMetrics.profitVelocity}€/teden
+- totalProfitThisYear: ${p.timeline.totalProfitThisYear}€
 
 TIMELINE NAPOVED:
-- timeTo5000Profit: ${timeline.timeTo5000Profit} tednov (pri trenutnem tempu)
-- timeTo10000Profit: ${timeline.timeTo10000Profit} tednov
+- timeTo5000Profit: ${p.timeline.timeTo5000Profit} tednov (pri trenutnem tempu)
+- timeTo10000Profit: ${p.timeline.timeTo10000Profit} tednov
 
 PRAVILA ZA POSPEŠEVALNI NAČRT:
 1. accelerationActions: 3-5 konkretnih akcij. Vsaka:
@@ -576,11 +635,11 @@ PRAVILA ZA POSPEŠEVALNI NAČRT:
    - effort: LOW | MEDIUM | HIGH
    - riskLevel: LOW | MEDIUM | HIGH
 2. projectedTimeline:
-   - newWeeklyProfit: nov tedenski profit po implementaciji vseh akcij (mora biti v [${currentMetrics.weeklyProfit}, ${maxNewWeekly.toFixed(2)}])
+   - newWeeklyProfit: nov tedenski profit po implementaciji vseh akcij (mora biti v [${p.currentMetrics.weeklyProfit}, ${p.maxNewWeekly.toFixed(2)}])
    - acceleratedTimeTo5000: skrajšan čas do 5000€ (v tednih)
    - acceleratedTimeTo10000: skrajšan čas do 10000€ (v tednih)
-   - timeSaved5000: prihranjeno tednov do 5000€ (mora biti v [0, ${maxTimeSaved5000.toFixed(2)}])
-   - timeSaved10000: prihranjeno tednov do 10000€ (mora biti v [0, ${maxTimeSaved10000.toFixed(2)}])
+   - timeSaved5000: prihranjeno tednov do 5000€ (mora biti v [0, ${p.maxTimeSaved5000.toFixed(2)}])
+   - timeSaved10000: prihranjeno tednov do 10000€ (mora biti v [0, ${p.maxTimeSaved10000.toFixed(2)}])
 3. bottleneckAnalysis: kaj trenutno najbolj upočasnjuje rast profita (1-2 stavka)
 4. quickWins: 1-2 akcije ki jih lahko izvedeš DANES za takojšen vpliv
 5. longTermAccelerators: 2-3 strukturne spremembe za trajno pospešitev
@@ -604,154 +663,142 @@ VRNI LE JSON:
   },
   "summary": "1-2 stavka povzetka v slovenščini — kaj storiti in koliko časa prihraniti"
 }${GROUNDING_PROMPT_SUFFIX}`;
+}
 
-    let accelerationPlan: AccelerationPlan = baselinePlan;
-    let summary = `Pospeši rast profita: ${baseline.actions.length} akcij pričakovano +${Math.round(baselineProfitIncrease)}€/teden. Time to 5000€: ${timeline.timeTo5000Profit} → ${baselineProjected.acceleratedTimeTo5000} tednov (prihranek ${baselineProjected.timeSaved5000} tednov).`;
-    let aiUsed = false;
+interface TransformParams {
+  baseline: ReturnType<typeof buildDeterministicPlan>;
+  baselineProjected: ProjectedTimeline;
+  baselineSummary: string;
+  weeklyProfit: number;
+  remaining5000: number;
+  remaining10000: number;
+  timeTo5000Profit: number;
+  timeTo10000Profit: number;
+  maxNewWeekly: number;
+  maxTimeSaved5000: number;
+  maxTimeSaved10000: number;
+}
 
-    try {
-      const raw = await callProviderForRaw(aiSettings, prompt);
-      const parsed = parseJsonLooseExported(
-        raw,
-      ) as AiAcceleratorResponse | null;
+function transformAccelerator(
+  parsed: AiAcceleratorResponse,
+  p: TransformParams,
+): { accelerationPlan: AccelerationPlan; summary: string } {
+  let accelerationPlan: AccelerationPlan = {
+    accelerationActions: p.baseline.actions,
+    projectedTimeline: p.baselineProjected,
+    bottleneckAnalysis: p.baseline.bottleneckAnalysis,
+    quickWins: p.baseline.quickWins,
+    longTermAccelerators: p.baseline.longTermAccelerators,
+  };
+  let summary = p.baselineSummary;
 
-      if (parsed && typeof parsed === 'object') {
-        if (
-          parsed.accelerationPlan &&
-          typeof parsed.accelerationPlan === 'object'
-        ) {
-          const ap = parsed.accelerationPlan as Record<string, unknown>;
+  if (
+    parsed.accelerationPlan &&
+    typeof parsed.accelerationPlan === 'object'
+  ) {
+    const ap = parsed.accelerationPlan as Record<string, unknown>;
 
-          // Parse actions
-          let accelerationActions = baseline.actions;
-          if (Array.isArray(ap.accelerationActions)) {
-            const aa: AccelerationAction[] = [];
-            for (const a of ap.accelerationActions) {
-              const ar = a as Record<string, unknown> | null;
-              if (!ar || typeof ar !== 'object') continue;
-              const profitInc = clampNumber(
-                ar.expectedProfitIncrease,
-                0,
-                Math.max(1000, weeklyProfit * 2),
-                0,
-              );
-              aa.push({
-                action: clampString(ar.action, 300, 'neznan'),
-                expectedImpact: clampString(ar.expectedImpact, 200, ''),
-                expectedProfitIncrease: Math.round(profitInc),
-                timeToImplement: Math.max(
-                  1,
-                  Math.round(clampNumber(ar.timeToImplement, 1, 90, 7)),
-                ),
-                effort: clampEnum(ar.effort, VALID_EFFORT, 'MEDIUM'),
-                riskLevel: clampEnum(ar.riskLevel, VALID_RISK, 'MEDIUM'),
-              });
-            }
-            if (aa.length > 0) accelerationActions = aa.slice(0, 5);
-          }
-
-          // Parse projectedTimeline
-          let projectedTimeline = baselineProjected;
-          if (
-            ap.projectedTimeline &&
-            typeof ap.projectedTimeline === 'object'
-          ) {
-            const pt = ap.projectedTimeline as Record<string, unknown>;
-            const totalNewIncrease = accelerationActions.reduce(
-              (s, a) => s + a.expectedProfitIncrease,
-              0,
-            );
-            const aiNewWeekly = clampNumber(
-              pt.newWeeklyProfit,
-              weeklyProfit,
-              maxNewWeekly,
-              Math.min(maxNewWeekly, weeklyProfit + totalNewIncrease),
-            );
-            const aiAccel5000 =
-              aiNewWeekly > 0 ? remaining5000 / aiNewWeekly : timeTo5000Profit;
-            const aiAccel10000 =
-              aiNewWeekly > 0
-                ? remaining10000 / aiNewWeekly
-                : timeTo10000Profit;
-            const aiSaved5000 = Math.max(
-              0,
-              Math.min(maxTimeSaved5000, timeTo5000Profit - aiAccel5000),
-            );
-            const aiSaved10000 = Math.max(
-              0,
-              Math.min(maxTimeSaved10000, timeTo10000Profit - aiAccel10000),
-            );
-            projectedTimeline = {
-              newWeeklyProfit: Math.round(aiNewWeekly * 100) / 100,
-              acceleratedTimeTo5000: Math.round(aiAccel5000 * 10) / 10,
-              acceleratedTimeTo10000: Math.round(aiAccel10000 * 10) / 10,
-              timeSaved5000: Math.round(aiSaved5000 * 10) / 10,
-              timeSaved10000: Math.round(aiSaved10000 * 10) / 10,
-            };
-          }
-
-          const bottleneckAnalysis = clampString(
-            ap.bottleneckAnalysis,
-            600,
-            baseline.bottleneckAnalysis,
-          );
-
-          const quickWins = clampStringArray(
-            ap.quickWins,
-            5,
-            baseline.quickWins,
-          );
-
-          const longTermAccelerators = clampStringArray(
-            ap.longTermAccelerators,
-            5,
-            baseline.longTermAccelerators,
-          );
-
-          accelerationPlan = {
-            accelerationActions,
-            projectedTimeline,
-            bottleneckAnalysis,
-            quickWins,
-            longTermAccelerators,
-          };
-        }
-
-        if (
-          typeof parsed.summary === 'string' &&
-          parsed.summary.trim().length > 0
-        ) {
-          summary = parsed.summary.trim().slice(0, 600);
-        }
-
-        aiUsed = true;
+    // Parse actions
+    let accelerationActions = p.baseline.actions;
+    if (Array.isArray(ap.accelerationActions)) {
+      const aa: AccelerationAction[] = [];
+      for (const a of ap.accelerationActions) {
+        const ar = a as Record<string, unknown> | null;
+        if (!ar || typeof ar !== 'object') continue;
+        const profitInc = clampNumber(
+          ar.expectedProfitIncrease,
+          0,
+          Math.max(1000, p.weeklyProfit * 2),
+          0,
+        );
+        aa.push({
+          action: clampString(ar.action, 300, 'neznan'),
+          expectedImpact: clampString(ar.expectedImpact, 200, ''),
+          expectedProfitIncrease: Math.round(profitInc),
+          timeToImplement: Math.max(
+            1,
+            Math.round(clampNumber(ar.timeToImplement, 1, 90, 7)),
+          ),
+          effort: clampEnum(ar.effort, VALID_EFFORT, 'MEDIUM'),
+          riskLevel: clampEnum(ar.riskLevel, VALID_RISK, 'MEDIUM'),
+        });
       }
-    } catch (err) {
-      logger.warn(
-        '/api/ai/profit-accelerator',
-        'AI call failed — using deterministic fallback',
-        err,
+      if (aa.length > 0) accelerationActions = aa.slice(0, 5);
+    }
+
+    // Parse projectedTimeline
+    let projectedTimeline = p.baselineProjected;
+    if (
+      ap.projectedTimeline &&
+      typeof ap.projectedTimeline === 'object'
+    ) {
+      const pt = ap.projectedTimeline as Record<string, unknown>;
+      const totalNewIncrease = accelerationActions.reduce(
+        (s, a) => s + a.expectedProfitIncrease,
+        0,
       );
+      const aiNewWeekly = clampNumber(
+        pt.newWeeklyProfit,
+        p.weeklyProfit,
+        p.maxNewWeekly,
+        Math.min(p.maxNewWeekly, p.weeklyProfit + totalNewIncrease),
+      );
+      const aiAccel5000 =
+        aiNewWeekly > 0 ? p.remaining5000 / aiNewWeekly : p.timeTo5000Profit;
+      const aiAccel10000 =
+        aiNewWeekly > 0
+          ? p.remaining10000 / aiNewWeekly
+          : p.timeTo10000Profit;
+      const aiSaved5000 = Math.max(
+        0,
+        Math.min(p.maxTimeSaved5000, p.timeTo5000Profit - aiAccel5000),
+      );
+      const aiSaved10000 = Math.max(
+        0,
+        Math.min(p.maxTimeSaved10000, p.timeTo10000Profit - aiAccel10000),
+      );
+      projectedTimeline = {
+        newWeeklyProfit: Math.round(aiNewWeekly * 100) / 100,
+        acceleratedTimeTo5000: Math.round(aiAccel5000 * 10) / 10,
+        acceleratedTimeTo10000: Math.round(aiAccel10000 * 10) / 10,
+        timeSaved5000: Math.round(aiSaved5000 * 10) / 10,
+        timeSaved10000: Math.round(aiSaved10000 * 10) / 10,
+      };
     }
 
-    // 7) Cache (6h TTL) — only when AI was used
-    if (aiUsed) {
-      setCachedAI(cacheKey, { accelerationPlan, summary });
-    }
-
-    return NextResponse.json({
-      ok: true,
-      currentMetrics,
-      timeline,
-      accelerationPlan,
-      summary,
-      aiUsed,
-    });
-  } catch (err: any) {
-    logger.error('/api/ai/profit-accelerator', 'handler failed', err);
-    return NextResponse.json(
-      { error: err?.message ?? 'Napaka' },
-      { status: 500 },
+    const bottleneckAnalysis = clampString(
+      ap.bottleneckAnalysis,
+      600,
+      p.baseline.bottleneckAnalysis,
     );
+
+    const quickWins = clampStringArray(
+      ap.quickWins,
+      5,
+      p.baseline.quickWins,
+    );
+
+    const longTermAccelerators = clampStringArray(
+      ap.longTermAccelerators,
+      5,
+      p.baseline.longTermAccelerators,
+    );
+
+    accelerationPlan = {
+      accelerationActions,
+      projectedTimeline,
+      bottleneckAnalysis,
+      quickWins,
+      longTermAccelerators,
+    };
   }
+
+  if (
+    typeof parsed.summary === 'string' &&
+    parsed.summary.trim().length > 0
+  ) {
+    summary = parsed.summary.trim().slice(0, 600);
+  }
+
+  return { accelerationPlan, summary };
 }

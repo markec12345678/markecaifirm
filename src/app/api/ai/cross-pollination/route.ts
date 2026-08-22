@@ -1,21 +1,32 @@
-// v6.37: AI Listing Cross-Pollination — povezuje oglase med platformami za sinergično prodajo
+// v6.37 / v8.95.5-deal: AI Listing Cross-Pollination — povezuje oglase med platformami za sinergično prodajo
+// Refaktoriran z withAiRoute helperjem (v8.95.5-deal) + enforceBudget guard.
+//
 // POST /api/ai/cross-pollination
 // Body: {}
 // Returns: { ok, pollination: { synergies, crossPosts, referralChains, amplification } }
 
-import { NextRequest, NextResponse } from 'next/server';
-import { db } from '@/lib/db';
-import { getSettingsRow } from '@/lib/pipeline';
-import { callProviderForRaw, parseJsonLooseExported, type AiProviderType, type AiSettings } from '@/lib/ai';
-import { logger } from '@/lib/logger';
+import { withAiRoute, AI_ROUTE_DEFAULTS, type AiRouteContext } from '@/lib/with-ai-route';
+import { apiOk } from '@/lib/api-response';
 
-export const runtime = 'nodejs';
-export const dynamic = 'force-dynamic';
+export const { runtime, dynamic } = AI_ROUTE_DEFAULTS;
 export const maxDuration = 90;
 
-export async function POST(req: NextRequest) {
-  try {
+// eslint-disable-next-line @typescript-eslint/no-empty-object-type
+interface CrossPollinationInput {}
+
+export const POST = withAiRoute<CrossPollinationInput>({
+  endpoint: '/api/ai/cross-pollination',
+  maxDuration: 90,
+  enforceBudget: true, // AI klic — preveri budget
+
+  parseBody: async (req) => {
     await req.json().catch(() => ({}));
+    return {} as CrossPollinationInput;
+  },
+
+  // No validateInput — brez polj
+  handler: async (_input, ctx: AiRouteContext) => {
+    const { db, callAi, parseAi } = ctx;
 
     const heldTrades = await db.trade.findMany({
       where: { status: 'held' },
@@ -31,28 +42,87 @@ export async function POST(req: NextRequest) {
     });
 
     if (heldTrades.length === 0) {
-      return NextResponse.json({ ok: true, pollination: null, message: 'Ni held tradeov za cross-pollination.' });
+      return apiOk({ ok: true, pollination: null, message: 'Ni held tradeov za cross-pollination.' });
     }
 
-    const settings = await getSettingsRow();
-    const aiSettings: AiSettings = {
-      provider: settings.aiProvider as AiProviderType,
-      baseUrl: settings.aiBaseUrl, apiKey: settings.aiApiKey, model: settings.aiModel,
-      fallbackProvider: (settings.fallbackProvider || '') as AiProviderType | '',
-      fallbackBaseUrl: settings.fallbackBaseUrl || '', fallbackApiKey: settings.fallbackApiKey || '',
-      fallbackModel: settings.fallbackModel || '',
-    };
+    const items = mapItems(heldTrades);
+    const channelStr = buildChannelStr(soldTrades);
 
-    const items = heldTrades.map(t => ({
-      id: t.id, title: t.title, category: t.category || 'drugo',
-      cost: t.buyPrice, estValue: t.listing?.aiEstimatedValue ?? Math.round(t.buyPrice * 1.25),
-      daysHeld: Math.round((Date.now() - t.buyDate.getTime()) / (24*60*60*1000)),
-    }));
+    const prompt = buildPrompt(items, channelStr);
+    const raw = await callAi(prompt);
+    const parsed: any = parseAi(raw);
+    const validIds = new Set(items.map(i => i.id));
 
-    const itemsStr = items.slice(0, 15).map(i => `- [${i.id}] ${i.title} | ${i.category} | ${i.estValue}€ | ${i.daysHeld}d`).join('\n');
-    const channelStr = Object.entries(soldTrades.reduce((acc, t) => { const s = t.sellLocation || 'neznan'; acc[s] = (acc[s] ?? 0) + 1; return acc; }, {} as Record<string, number>)).sort(([,a],[,b]) => b - a).slice(0, 5).map(([s, c]) => `${s}: ${c}`).join(', ');
+    const pollination = transformPollination(parsed, validIds);
 
-    const prompt = `Si AI cross-pollination strategist za sinergično prodajo čez platforme.
+    return apiOk({ ok: true, pollination });
+  },
+});
+
+// --- Pomožne funkcije (čiste, testabilne) --------------------------------
+
+interface HeldTradeRow {
+  id: string;
+  title: string;
+  category: string | null;
+  buyPrice: number;
+  buyDate: Date;
+  listing: { aiEstimatedValue: number | null; dealScore: number | null; url: string | null } | null;
+}
+
+interface SoldTradeRow {
+  sellLocation: string | null;
+}
+
+interface Item {
+  id: string;
+  title: string;
+  category: string;
+  cost: number;
+  estValue: number;
+  daysHeld: number;
+}
+
+const SYNERGY_TYPES = ['cross_post', 'referral_chain', 'bundle_cross_ref', 'profile_link', 'seasonal_cross', 'complementary_cross'] as const;
+
+function includes<T extends string>(arr: readonly T[], v: string): v is T {
+  return (arr as readonly string[]).includes(v);
+}
+
+/**
+ * Map heldTrades v items array. Logika IDENTIČNA originalu v6.37.
+ */
+function mapItems(heldTrades: HeldTradeRow[]): Item[] {
+  return heldTrades.map(t => ({
+    id: t.id, title: t.title, category: t.category || 'drugo',
+    cost: t.buyPrice, estValue: t.listing?.aiEstimatedValue ?? Math.round(t.buyPrice * 1.25),
+    daysHeld: Math.round((Date.now() - t.buyDate.getTime()) / (24 * 60 * 60 * 1000)),
+  }));
+}
+
+/**
+ * Build string iz prodajnih kanalov (top 5 po številu prodaj).
+ * Logika IDENTIČNA originalu v6.37.
+ */
+function buildChannelStr(soldTrades: SoldTradeRow[]): string {
+  return Object.entries(soldTrades.reduce((acc, t) => {
+    const s = t.sellLocation || 'neznan';
+    acc[s] = (acc[s] ?? 0) + 1;
+    return acc;
+  }, {} as Record<string, number>))
+    .sort(([, a], [, b]) => b - a)
+    .slice(0, 5)
+    .map(([s, c]) => `${s}: ${c}`)
+    .join(', ');
+}
+
+/**
+ * Build AI prompt za cross-pollination (besedilo IDENTIČNO originalu v6.37).
+ */
+function buildPrompt(items: Item[], channelStr: string): string {
+  const itemsStr = items.slice(0, 15).map(i => `- [${i.id}] ${i.title} | ${i.category} | ${i.estValue}€ | ${i.daysHeld}d`).join('\n');
+
+  return `Si AI cross-pollination strategist za sinergično prodajo čez platforme.
 Poveži oglase med platformami tako, da si medsebojno povečujejo izpostavljenost in prodajo.
 
 INVENTAR (${items.length}):
@@ -110,64 +180,50 @@ Odgovori LE z JSON:
     "items_benefiting": <number>
   }
 }`;
+}
 
-    let raw = '';
-    try { raw = await callProviderForRaw(aiSettings, prompt); }
-    catch (primaryError: any) {
-      if (aiSettings.fallbackProvider && aiSettings.fallbackModel) {
-        const fb: AiSettings = { provider: aiSettings.fallbackProvider, baseUrl: aiSettings.fallbackBaseUrl || '', apiKey: aiSettings.fallbackApiKey || '', model: aiSettings.fallbackModel };
-        raw = await callProviderForRaw(fb, prompt);
-      } else { return NextResponse.json({ error: primaryError?.message ?? 'AI failed' }, { status: 500 }); }
-    }
-
-    const parsed: any = parseJsonLooseExported(raw);
-    const validIds = new Set(items.map(i => i.id));
-
-    const pollination = {
-      insights: String(parsed?.insights ?? '').slice(0, 500),
-      synergies: (parsed?.synergies || []).filter((s: any) => validIds.has(String(s?.primary_item_id ?? '')) && validIds.has(String(s?.complementary_item_id ?? ''))).slice(0, 10).map((s: any) => ({
-        primaryItemId: String(s?.primary_item_id ?? ''),
-        primaryTitle: String(s?.primary_title ?? '').slice(0, 100),
-        complementaryItemId: String(s?.complementary_item_id ?? ''),
-        complementaryTitle: String(s?.complementary_title ?? '').slice(0, 100),
-        synergyType: ['cross_post', 'referral_chain', 'bundle_cross_ref', 'profile_link', 'seasonal_cross', 'complementary_cross'].includes(String(s?.synergy_type)) ? String(s.synergy_type) : 'cross_post',
-        description: String(s?.description ?? '').slice(0, 200),
-        platforms: (s?.platforms || []).slice(0, 4).map((p: any) => String(p).slice(0, 30)),
-        expectedExposureBoostPct: Math.round(Number(s?.expected_exposure_boost_pct ?? 0)),
-        expectedSellTimeReductionDays: Math.round(Number(s?.expected_sell_time_reduction_days ?? 0)),
-        reasoning: String(s?.reasoning ?? '').slice(0, 200),
+/**
+ * Transform AI JSON v pollination objekt. Clamp/slice/whitelist logika IDENTIČNA originalu v6.37.
+ */
+function transformPollination(parsed: any, validIds: Set<string>): any {
+  return {
+    insights: String(parsed?.insights ?? '').slice(0, 500),
+    synergies: (parsed?.synergies || []).filter((s: any) => validIds.has(String(s?.primary_item_id ?? '')) && validIds.has(String(s?.complementary_item_id ?? ''))).slice(0, 10).map((s: any) => ({
+      primaryItemId: String(s?.primary_item_id ?? ''),
+      primaryTitle: String(s?.primary_title ?? '').slice(0, 100),
+      complementaryItemId: String(s?.complementary_item_id ?? ''),
+      complementaryTitle: String(s?.complementary_title ?? '').slice(0, 100),
+      synergyType: includes(SYNERGY_TYPES, String(s?.synergy_type)) ? String(s.synergy_type) : 'cross_post',
+      description: String(s?.description ?? '').slice(0, 200),
+      platforms: (s?.platforms || []).slice(0, 4).map((p: any) => String(p).slice(0, 30)),
+      expectedExposureBoostPct: Math.round(Number(s?.expected_exposure_boost_pct ?? 0)),
+      expectedSellTimeReductionDays: Math.round(Number(s?.expected_sell_time_reduction_days ?? 0)),
+      reasoning: String(s?.reasoning ?? '').slice(0, 200),
+    })),
+    crossPosts: (parsed?.cross_posts || []).filter((c: any) => validIds.has(String(c?.item_id ?? ''))).slice(0, 10).map((c: any) => ({
+      itemId: String(c?.item_id ?? ''),
+      title: String(c?.title ?? '').slice(0, 100),
+      platforms: (c?.platforms || []).slice(0, 4).map((p: any) => ({
+        platform: String(p?.platform ?? '').slice(0, 30),
+        titleAdapted: String(p?.title_adapted ?? '').slice(0, 150),
+        priceEur: Math.max(0, Number(p?.price_eur ?? 0)),
+        descriptionSnippet: String(p?.description_snippet ?? '').slice(0, 200),
       })),
-      crossPosts: (parsed?.cross_posts || []).filter((c: any) => validIds.has(String(c?.item_id ?? ''))).slice(0, 10).map((c: any) => ({
-        itemId: String(c?.item_id ?? ''),
-        title: String(c?.title ?? '').slice(0, 100),
-        platforms: (c?.platforms || []).slice(0, 4).map((p: any) => ({
-          platform: String(p?.platform ?? '').slice(0, 30),
-          titleAdapted: String(p?.title_adapted ?? '').slice(0, 150),
-          priceEur: Math.max(0, Number(p?.price_eur ?? 0)),
-          descriptionSnippet: String(p?.description_snippet ?? '').slice(0, 200),
-        })),
-        expectedReachIncreasePct: Math.round(Number(c?.expected_reach_increase_pct ?? 0)),
-      })),
-      referralChain: (parsed?.referral_chain || []).slice(0, 8).map((r: any) => ({
-        fromItem: String(r?.from_item ?? '').slice(0, 100),
-        toItem: String(r?.to_item ?? '').slice(0, 100),
-        referralText: String(r?.referral_text ?? '').slice(0, 200),
-        platform: String(r?.platform ?? '').slice(0, 30),
-      })),
-      amplification: {
-        totalSynergies: Math.max(0, Number(parsed?.amplification?.total_synergies ?? 0)),
-        totalCrossPosts: Math.max(0, Number(parsed?.amplification?.total_cross_posts ?? 0)),
-        totalReferrals: Math.max(0, Number(parsed?.amplification?.total_referrals ?? 0)),
-        expectedAvgExposureBoostPct: Math.round(Number(parsed?.amplification?.expected_avg_exposure_boost_pct ?? 0)),
-        expectedSellTimeReductionDays: Math.round(Number(parsed?.amplification?.expected_sell_time_reduction_days ?? 0)),
-        itemsBenefiting: Math.max(0, Number(parsed?.amplification?.items_benefiting ?? 0)),
-      },
-    };
-
-    const today = new Date().toISOString().slice(0, 10);
-    if (settings.aiCallsDate !== today) { await db.settings.update({ where: { id: 'singleton' }, data: { aiCallsDate: today, aiCallsToday: 1 } }); }
-    else { await db.settings.update({ where: { id: 'singleton' }, data: { aiCallsToday: { increment: 1 } } }); }
-
-    return NextResponse.json({ ok: true, pollination });
-  } catch (e: any) { logger.error("/api/ai/cross-pollination", "POST handler failed", e); return NextResponse.json({ error: e?.message ?? 'Napaka' }, { status: 500 }); }
+      expectedReachIncreasePct: Math.round(Number(c?.expected_reach_increase_pct ?? 0)),
+    })),
+    referralChain: (parsed?.referral_chain || []).slice(0, 8).map((r: any) => ({
+      fromItem: String(r?.from_item ?? '').slice(0, 100),
+      toItem: String(r?.to_item ?? '').slice(0, 100),
+      referralText: String(r?.referral_text ?? '').slice(0, 200),
+      platform: String(r?.platform ?? '').slice(0, 30),
+    })),
+    amplification: {
+      totalSynergies: Math.max(0, Number(parsed?.amplification?.total_synergies ?? 0)),
+      totalCrossPosts: Math.max(0, Number(parsed?.amplification?.total_cross_posts ?? 0)),
+      totalReferrals: Math.max(0, Number(parsed?.amplification?.total_referrals ?? 0)),
+      expectedAvgExposureBoostPct: Math.round(Number(parsed?.amplification?.expected_avg_exposure_boost_pct ?? 0)),
+      expectedSellTimeReductionDays: Math.round(Number(parsed?.amplification?.expected_sell_time_reduction_days ?? 0)),
+      itemsBenefiting: Math.max(0, Number(parsed?.amplification?.items_benefiting ?? 0)),
+    },
+  };
 }

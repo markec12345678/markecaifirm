@@ -1,8 +1,9 @@
-// v7.89: AI Seller Performance Forecaster — AI forecast-a FUTURE performance
-// vsakega sellerja — predicted deal volume, profit, in reliability čez
-// naslednjih 30/60/90 dni. Razlika od seller-performance-analytics (v7.77 ki da
-// current performance snapshot) — ta FORECAST-a future performance z
-// lifecycle stage + recommended engagement + outreach timing.
+// v7.89 / v8.96.4-batch2: AI Seller Performance Forecaster — AI forecast-a
+// FUTURE performance vsakega sellerja — predicted deal volume, profit, in
+// reliability čez naslednjih 30/60/90 dni. Razlika od seller-performance-
+// analytics (v7.77 ki da current performance snapshot) — ta FORECAST-a
+// future performance z lifecycle stage + recommended engagement + outreach
+// timing.
 // "Marjan: 12 trades, +8%/mo trend. 30d forecast: 3 trades, +450€. Stage:
 // GROWING. Increase engagement."
 //
@@ -14,25 +15,17 @@
 // lifecycle stage + engagement action. Razlika od seller-performance-analytics
 // (current snapshot) — ta je FORWARD-LOOKING z 30/60/90d projection.
 //
+// Refaktoriran z withAiRoute helperjem (v8.96.4) + enforceBudget guard.
+//
 // GET+POST /api/ai/seller-performance-forecaster
 // (AI-enhanced + grounding + anti-hallucination + 6h cache + deterministic fallback)
 
-import { NextRequest, NextResponse } from 'next/server';
-import { db } from '@/lib/db';
-import { getSettingsRow } from '@/lib/pipeline';
-import {
-  callProviderForRaw,
-  parseJsonLooseExported,
-  type AiProviderType,
-  type AiSettings,
-} from '@/lib/ai';
+import { withAiRoute, AI_ROUTE_DEFAULTS, type AiRouteContext } from '@/lib/with-ai-route';
+import { apiOk } from '@/lib/api-response';
 import { GROUNDING_PROMPT_SUFFIX } from '@/lib/anti-hallucination';
 import { getCachedAI, setCachedAI } from '@/lib/ai-cache';
-import { checkRateLimit, rateLimitResponse } from '@/lib/rate-limit';
-import { logger } from '@/lib/logger';
 
-export const runtime = 'nodejs';
-export const dynamic = 'force-dynamic';
+export const { runtime, dynamic } = AI_ROUTE_DEFAULTS;
 export const maxDuration = 60;
 
 // --- Types ---------------------------------------------------------------
@@ -394,17 +387,21 @@ interface SoldTradeRow {
 
 // --- Handler -------------------------------------------------------------
 
-export async function GET(req: NextRequest) {
-  return handleSellerPerformanceForecaster(req);
-}
-export async function POST(req: NextRequest) {
-  return handleSellerPerformanceForecaster(req);
-}
+// eslint-disable-next-line @typescript-eslint/no-empty-object-type
+interface SellerPerformanceForecasterInput {}
 
-async function handleSellerPerformanceForecaster(req: NextRequest) {
-  try {
-    const rl = checkRateLimit(req, 'ai-seller-performance-forecaster', 20);
-    if (!rl.allowed) return rateLimitResponse(rl);
+const sellerPerformanceForecasterHandler = withAiRoute<SellerPerformanceForecasterInput>({
+  endpoint: '/api/ai/seller-performance-forecaster',
+  maxDuration: 60,
+  enforceBudget: true, // AI klic — preveri budget
+  method: 'GET', // Endpoint sprejema GET + POST — bypass POST-only check
+
+  parseBody: async () => ({}),
+
+  // No validateInput — endpoint ne sprejema inputa
+
+  handler: async (_input, ctx: AiRouteContext) => {
+    const { db, callAi, parseAi, logger } = ctx;
 
     const now = Date.now();
     const cutoff12m = new Date(now - HORIZON_12M);
@@ -530,7 +527,7 @@ async function handleSellerPerformanceForecaster(req: NextRequest) {
     }
 
     if (sellerHistories.length === 0) {
-      return NextResponse.json({
+      return apiOk({
         ok: true,
         sellers: [],
         summary: {
@@ -562,7 +559,7 @@ async function handleSellerPerformanceForecaster(req: NextRequest) {
       summary: PortfolioSummary;
     }>(cacheKey);
     if (cached) {
-      return NextResponse.json({
+      return apiOk({
         ok: true,
         sellers: cached.sellers,
         summary: cached.summary,
@@ -572,20 +569,6 @@ async function handleSellerPerformanceForecaster(req: NextRequest) {
     }
 
     // 6) AI prompt with grounding
-    const settings = await getSettingsRow();
-    const aiSettings: AiSettings = {
-      provider: settings.aiProvider as AiProviderType,
-      baseUrl: settings.aiBaseUrl,
-      apiKey: settings.aiApiKey,
-      model: settings.aiModel,
-      fallbackProvider: (settings.fallbackProvider || '') as
-        | AiProviderType
-        | '',
-      fallbackBaseUrl: settings.fallbackBaseUrl || '',
-      fallbackApiKey: settings.fallbackApiKey || '',
-      fallbackModel: settings.fallbackModel || '',
-    };
-
     const promptData = {
       sellers: sellerHistories.map((s) => ({
         sellerName: s.sellerName,
@@ -600,7 +583,71 @@ async function handleSellerPerformanceForecaster(req: NextRequest) {
       },
     };
 
-    const prompt = `Si AI "Seller Performance Forecaster" za slovenske in srednjeevropske oglasne platforme (Bolha, Vinted, Facebook, Avtonet, mobile.de).
+    const prompt = buildPrompt(promptData);
+
+    let aiUsed = false;
+
+    try {
+      const raw = await callAi(prompt);
+      const parsed = parseAi(raw) as AiSellerResponse | null;
+
+      if (parsed && typeof parsed === 'object' && Array.isArray(parsed.sellers)) {
+        const merged = transformSellers(parsed, sellerHistories);
+        if (merged.length > 0) {
+          sellersOut = merged;
+          summary = buildPortfolioSummary(sellersOut);
+          aiUsed = true;
+        }
+      }
+    } catch (err) {
+      logger.warn(
+        '/api/ai/seller-performance-forecaster',
+        'AI call failed — using deterministic fallback',
+        err,
+      );
+    }
+
+    // 7) Cache (6h TTL) — only when AI was used
+    if (aiUsed) {
+      setCachedAI(cacheKey, {
+        sellers: sellersOut,
+        summary,
+      });
+    }
+
+    return apiOk({
+      ok: true,
+      sellers: sellersOut,
+      summary,
+      aiUsed,
+    });
+  },
+});
+
+// AI Hub runner compatibility — body is ignored, identical logic.
+export const GET = sellerPerformanceForecasterHandler;
+export const POST = sellerPerformanceForecasterHandler;
+
+// --- Pomožne funkcije (čiste, testabilne) --------------------------------
+
+function buildPrompt(promptData: {
+  sellers: Array<{
+    sellerName: string;
+    historical: SellerHistorical;
+    deterministicForecast: SellerForecast;
+  }>;
+  caps: {
+    predTradesMin: number;
+    predTradesMax: number;
+    predProfitMin: number;
+    predProfitMax: number;
+    roiMin: number;
+    roiMax: number;
+    confidenceMin: number;
+    confidenceMax: number;
+  };
+}): string {
+  return `Si AI "Seller Performance Forecaster" za slovenske in srednjeevropske oglasne platforme (Bolha, Vinted, Facebook, Avtonet, mobile.de).
 Forecast-aš FUTURE performance vsakega sellerja — predicted deal volume, profit, in reliability čez naslednjih 30/60/90 dni. Razlika od seller-performance-analytics (ki da current snapshot) — ti forecast-a FUTURE performance z lifecycle stage in engagement action.
 
 DETERMINISTIČNI PODATKI (izračunano iz DB — zadnjih 12 mesecev SOLD trgovin):
@@ -640,129 +687,89 @@ VRNI LE JSON:
   ],
   "summary": "Portfolio v rasti: 3 sellers z IMPROVING forecast. Skupno napovedan profit v 30d: 1200€."
 }${GROUNDING_PROMPT_SUFFIX}`;
+}
 
-    let aiUsed = false;
+function transformSellers(
+  parsed: AiSellerResponse,
+  sellerHistories: SellerEntry[],
+): SellerEntry[] {
+  const aiSellers = parsed.sellers ?? [];
 
-    try {
-      const raw = await callProviderForRaw(aiSettings, prompt);
-      const parsed = parseJsonLooseExported(raw) as AiSellerResponse | null;
+  // Map of deterministic forecasts by sellerName for adjustment
+  const detMap = new Map<string, SellerEntry>();
+  for (const s of sellerHistories) detMap.set(s.sellerName, s);
 
-      if (parsed && typeof parsed === 'object' && Array.isArray(parsed.sellers)) {
-        const aiSellers = parsed.sellers;
+  const merged: SellerEntry[] = [];
+  for (const ai of aiSellers) {
+    if (!ai || typeof ai !== 'object') continue;
+    const det = detMap.get(String(ai.sellerName ?? ''));
+    if (!det) continue; // unknown seller — skip (anti-hallucination)
 
-        // Map of deterministic forecasts by sellerName for adjustment
-        const detMap = new Map<string, SellerEntry>();
-        for (const s of sellerHistories) detMap.set(s.sellerName, s);
+    const detTrades30 = det.forecast.predictedTrades30d;
+    const detTrades60 = det.forecast.predictedTrades60d;
+    const detTrades90 = det.forecast.predictedTrades90d;
+    const detProfit = det.forecast.predictedProfit30d;
+    const detROI = det.forecast.predictedAvgROI;
+    const detConf = det.forecast.forecastConfidence;
 
-        const merged: SellerEntry[] = [];
-        for (const ai of aiSellers) {
-          if (!ai || typeof ai !== 'object') continue;
-          const det = detMap.get(String(ai.sellerName ?? ''));
-          if (!det) continue; // unknown seller — skip (anti-hallucination)
+    // Predicted trades ±5/10/15 within deterministic
+    const predictedTrades30d = round0(
+      Math.max(PRED_TRADES_MIN, Math.min(PRED_TRADES_MAX,
+        detTrades30 + Math.max(-5, Math.min(5, Number(ai.predictedTrades30d ?? detTrades30) - detTrades30)))),
+    );
+    const predictedTrades60d = round0(
+      Math.max(PRED_TRADES_MIN, Math.min(PRED_TRADES_MAX,
+        detTrades60 + Math.max(-10, Math.min(10, Number(ai.predictedTrades60d ?? detTrades60) - detTrades60)))),
+    );
+    const predictedTrades90d = round0(
+      Math.max(PRED_TRADES_MIN, Math.min(PRED_TRADES_MAX,
+        detTrades90 + Math.max(-15, Math.min(15, Number(ai.predictedTrades90d ?? detTrades90) - detTrades90)))),
+    );
 
-          const detTrades30 = det.forecast.predictedTrades30d;
-          const detTrades60 = det.forecast.predictedTrades60d;
-          const detTrades90 = det.forecast.predictedTrades90d;
-          const detProfit = det.forecast.predictedProfit30d;
-          const detROI = det.forecast.predictedAvgROI;
-          const detConf = det.forecast.forecastConfidence;
+    // Predicted profit ±20% within deterministic
+    const profitDelta = Math.max(-0.20, Math.min(0.20,
+      (Number(ai.predictedProfit30d ?? detProfit) - detProfit) / Math.max(1, Math.abs(detProfit))));
+    const predictedProfit30d = round0(
+      Math.max(PRED_PROFIT_MIN, Math.min(PRED_PROFIT_MAX,
+        detProfit * (1 + profitDelta))),
+    );
 
-          // Predicted trades ±5/10/15 within deterministic
-          const predictedTrades30d = round0(
-            Math.max(PRED_TRADES_MIN, Math.min(PRED_TRADES_MAX,
-              detTrades30 + Math.max(-5, Math.min(5, Number(ai.predictedTrades30d ?? detTrades30) - detTrades30)))),
-          );
-          const predictedTrades60d = round0(
-            Math.max(PRED_TRADES_MIN, Math.min(PRED_TRADES_MAX,
-              detTrades60 + Math.max(-10, Math.min(10, Number(ai.predictedTrades60d ?? detTrades60) - detTrades60)))),
-          );
-          const predictedTrades90d = round0(
-            Math.max(PRED_TRADES_MIN, Math.min(PRED_TRADES_MAX,
-              detTrades90 + Math.max(-15, Math.min(15, Number(ai.predictedTrades90d ?? detTrades90) - detTrades90)))),
-          );
+    // Predicted ROI ±10 within deterministic
+    const predictedAvgROI = round1(
+      Math.max(PRED_ROI_MIN, Math.min(PRED_ROI_MAX,
+        detROI + Math.max(-10, Math.min(10, Number(ai.predictedAvgROI ?? detROI) - detROI)))),
+    );
 
-          // Predicted profit ±20% within deterministic
-          const profitDelta = Math.max(-0.20, Math.min(0.20,
-            (Number(ai.predictedProfit30d ?? detProfit) - detProfit) / Math.max(1, Math.abs(detProfit))));
-          const predictedProfit30d = round0(
-            Math.max(PRED_PROFIT_MIN, Math.min(PRED_PROFIT_MAX,
-              detProfit * (1 + profitDelta))),
-          );
+    // Confidence ±15
+    const forecastConfidence = round0(
+      Math.max(CONFIDENCE_MIN, Math.min(CONFIDENCE_MAX,
+        detConf + Math.max(-15, Math.min(15, Number(ai.forecastConfidence ?? detConf) - detConf)))),
+    );
 
-          // Predicted ROI ±10 within deterministic
-          const predictedAvgROI = round1(
-            Math.max(PRED_ROI_MIN, Math.min(PRED_ROI_MAX,
-              detROI + Math.max(-10, Math.min(10, Number(ai.predictedAvgROI ?? detROI) - detROI)))),
-          );
+    const performanceForecast = clampEnum(ai.performanceForecast, VALID_PERF_FC, det.forecast.performanceForecast);
+    const sellerLifecycleStage = clampEnum(ai.sellerLifecycleStage, VALID_STAGE, det.forecast.sellerLifecycleStage);
+    const recommendedEngagement = clampEnum(ai.recommendedEngagement, VALID_ENG, det.forecast.recommendedEngagement);
+    const outreachTiming = clampString(ai.outreachTiming, 200, det.forecast.outreachTiming);
+    const reasoning = clampString(ai.reasoning, 300, det.forecast.reasoning);
 
-          // Confidence ±15
-          const forecastConfidence = round0(
-            Math.max(CONFIDENCE_MIN, Math.min(CONFIDENCE_MAX,
-              detConf + Math.max(-15, Math.min(15, Number(ai.forecastConfidence ?? detConf) - detConf)))),
-          );
-
-          const performanceForecast = clampEnum(ai.performanceForecast, VALID_PERF_FC, det.forecast.performanceForecast);
-          const sellerLifecycleStage = clampEnum(ai.sellerLifecycleStage, VALID_STAGE, det.forecast.sellerLifecycleStage);
-          const recommendedEngagement = clampEnum(ai.recommendedEngagement, VALID_ENG, det.forecast.recommendedEngagement);
-          const outreachTiming = clampString(ai.outreachTiming, 200, det.forecast.outreachTiming);
-          const reasoning = clampString(ai.reasoning, 300, det.forecast.reasoning);
-
-          merged.push({
-            sellerName: det.sellerName,
-            historical: det.historical,
-            forecast: {
-              predictedTrades30d,
-              predictedTrades60d,
-              predictedTrades90d,
-              predictedProfit30d,
-              predictedAvgROI,
-              performanceForecast,
-              forecastConfidence,
-              sellerLifecycleStage,
-              recommendedEngagement,
-              outreachTiming,
-              reasoning,
-            },
-          });
-        }
-
-        if (merged.length > 0) {
-          sellersOut = merged;
-          summary = buildPortfolioSummary(sellersOut);
-          aiUsed = true;
-        }
-      }
-    } catch (err) {
-      logger.warn(
-        '/api/ai/seller-performance-forecaster',
-        'AI call failed — using deterministic fallback',
-        err,
-      );
-    }
-
-    // 7) Cache (6h TTL) — only when AI was used
-    if (aiUsed) {
-      setCachedAI(cacheKey, {
-        sellers: sellersOut,
-        summary,
-      });
-    }
-
-    return NextResponse.json({
-      ok: true,
-      sellers: sellersOut,
-      summary,
-      aiUsed,
+    merged.push({
+      sellerName: det.sellerName,
+      historical: det.historical,
+      forecast: {
+        predictedTrades30d,
+        predictedTrades60d,
+        predictedTrades90d,
+        predictedProfit30d,
+        predictedAvgROI,
+        performanceForecast,
+        forecastConfidence,
+        sellerLifecycleStage,
+        recommendedEngagement,
+        outreachTiming,
+        reasoning,
+      },
     });
-  } catch (err: any) {
-    logger.error(
-      '/api/ai/seller-performance-forecaster',
-      'handler failed',
-      err,
-    );
-    return NextResponse.json(
-      { error: err?.message ?? 'Napaka' },
-      { status: 500 },
-    );
   }
+
+  return merged;
 }

@@ -25,24 +25,20 @@
 //
 // GET+POST /api/ai/market-opportunity-maximizer
 // (AI-enhanced + grounding + anti-hallucination + 6h cache + deterministic fallback)
+// Refaktoriran z withAiRoute helperjem (v8.96.6) + enforceBudget guard.
 
-import { NextRequest, NextResponse } from 'next/server';
-import { db } from '@/lib/db';
-import { getSettingsRow } from '@/lib/pipeline';
-import {
-  callProviderForRaw,
-  parseJsonLooseExported,
-  type AiProviderType,
-  type AiSettings,
-} from '@/lib/ai';
+import { withAiRoute, AI_ROUTE_DEFAULTS, type AiRouteContext } from '@/lib/with-ai-route';
+import { apiOk } from '@/lib/api-response';
 import { GROUNDING_PROMPT_SUFFIX } from '@/lib/anti-hallucination';
 import { getCachedAI, setCachedAI } from '@/lib/ai-cache';
-import { checkRateLimit, rateLimitResponse } from '@/lib/rate-limit';
-import { logger } from '@/lib/logger';
 
-export const runtime = 'nodejs';
-export const dynamic = 'force-dynamic';
+export const { runtime, dynamic } = AI_ROUTE_DEFAULTS;
 export const maxDuration = 60;
+
+// --- Input ----------------------------------------------------------------
+
+// eslint-disable-next-line @typescript-eslint/no-empty-object-type
+interface MarketOpportunityMaximizerInput {}
 
 // --- Types ---------------------------------------------------------------
 
@@ -529,17 +525,20 @@ function buildSummary(top: TopOpportunity, strategy: ProfitStrategy): string {
 
 // --- Handler -------------------------------------------------------------
 
-export async function GET(req: NextRequest) {
-  return handleMarketOpportunityMaximizer(req);
-}
-export async function POST(req: NextRequest) {
-  return handleMarketOpportunityMaximizer(req);
-}
+const marketOpportunityMaximizerHandler = withAiRoute<MarketOpportunityMaximizerInput>({
+  endpoint: '/api/ai/market-opportunity-maximizer',
+  maxDuration: 60,
+  enforceBudget: true, // AI klic — preveri budget
+  method: 'GET', // Endpoint sprejema GET + POST — bypass POST-only check
 
-async function handleMarketOpportunityMaximizer(req: NextRequest) {
-  try {
-    const rl = checkRateLimit(req, 'ai-market-opportunity-maximizer', 20);
-    if (!rl.allowed) return rateLimitResponse(rl);
+  parseBody: async (req) => {
+    await req.json().catch(() => ({}));
+    return {};
+  },
+
+  // No validateInput — body ignored, identična logika za GET in POST
+  handler: async (_input, ctx: AiRouteContext) => {
+    const { db, callAi, parseAi, logger } = ctx;
 
     const now = Date.now();
     const cutoff30d = new Date(now - HORIZON_30D);
@@ -586,7 +585,7 @@ async function handleMarketOpportunityMaximizer(req: NextRequest) {
 
     // Empty-state: no listings + no sold trades
     if (listings.length === 0 && soldTrades.length === 0) {
-      return NextResponse.json({
+      return apiOk({
         ok: true,
         topOpportunity: {
           category: 'drugo',
@@ -648,7 +647,7 @@ async function handleMarketOpportunityMaximizer(req: NextRequest) {
     const topMetric = metrics[0];
     if (!topMetric) {
       // All categories were empty
-      return NextResponse.json({
+      return apiOk({
         ok: true,
         topOpportunity: {
           category: 'drugo',
@@ -699,7 +698,7 @@ async function handleMarketOpportunityMaximizer(req: NextRequest) {
       summary: string;
     }>(cacheKey);
     if (cached) {
-      return NextResponse.json({
+      return apiOk({
         ok: true,
         topOpportunity: cached.topOpportunity,
         top5Opportunities: cached.top5Opportunities,
@@ -712,20 +711,6 @@ async function handleMarketOpportunityMaximizer(req: NextRequest) {
     }
 
     // 7) AI prompt with grounding
-    const settings = await getSettingsRow();
-    const aiSettings: AiSettings = {
-      provider: settings.aiProvider as AiProviderType,
-      baseUrl: settings.aiBaseUrl,
-      apiKey: settings.aiApiKey,
-      model: settings.aiModel,
-      fallbackProvider: (settings.fallbackProvider || '') as
-        | AiProviderType
-        | '',
-      fallbackBaseUrl: settings.fallbackBaseUrl || '',
-      fallbackApiKey: settings.fallbackApiKey || '',
-      fallbackModel: settings.fallbackModel || '',
-    };
-
     // Compact context for AI (top 15 categories by composite score)
     const topMetricsForAI = metrics.slice(0, 15).map((m) => ({
       category: m.category,
@@ -809,8 +794,8 @@ VRNI LE JSON:
     let aiUsed = false;
 
     try {
-      const raw = await callProviderForRaw(aiSettings, prompt);
-      const parsed = parseJsonLooseExported(raw) as AiResponse | null;
+      const raw = await callAi(prompt);
+      const parsed = parseAi(raw) as AiResponse | null;
 
       if (parsed && typeof parsed === 'object') {
         // Validate topOpportunity.category against known categories (anti-hallucination)
@@ -928,7 +913,7 @@ VRNI LE JSON:
       setCachedAI(cacheKey, { topOpportunity, top5Opportunities, profitStrategy, summary });
     }
 
-    return NextResponse.json({
+    return apiOk({
       ok: true,
       topOpportunity,
       top5Opportunities,
@@ -937,15 +922,8 @@ VRNI LE JSON:
       summary,
       aiUsed,
     } satisfies MarketOpportunityResponse);
-  } catch (err: any) {
-    logger.error(
-      '/api/ai/market-opportunity-maximizer',
-      'handler failed',
-      err,
-    );
-    return NextResponse.json(
-      { error: err?.message ?? 'Napaka' },
-      { status: 500 },
-    );
-  }
-}
+  },
+});
+
+export const GET = marketOpportunityMaximizerHandler;
+export const POST = marketOpportunityMaximizerHandler;

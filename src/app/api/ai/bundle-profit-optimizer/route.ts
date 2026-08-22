@@ -1,4 +1,4 @@
-// v7.59: Bundle Profit Optimizer — AI analiza kateri held inventar
+// v7.59 / v8.96.3-batch3: Bundle Profit Optimizer — AI analiza kateri held inventar
 // združiti v pakete za cross-sell. Paketiranje komplementarnih item-ov
 // (PS5 + controller + igra) lahko da višji skupni profit kot prodaja posebej.
 //
@@ -6,25 +6,19 @@
 //  (save 10%), profit 110€ vs 80€ standalone"
 //
 // GET+POST /api/ai/bundle-profit-optimizer
+// Refaktoriran z withAiRoute helperjem (v8.94) + enforceBudget guard.
 // (AI-enhanced + grounding + anti-hallucination + 6h cache + deterministic fallback)
 
-import { NextRequest, NextResponse } from 'next/server';
-import { db } from '@/lib/db';
-import { getSettingsRow } from '@/lib/pipeline';
-import {
-  callProviderForRaw,
-  parseJsonLooseExported,
-  type AiProviderType,
-  type AiSettings,
-} from '@/lib/ai';
+import { withAiRoute, AI_ROUTE_DEFAULTS, type AiRouteContext } from '@/lib/with-ai-route';
+import { apiOk } from '@/lib/api-response';
 import { GROUNDING_PROMPT_SUFFIX } from '@/lib/anti-hallucination';
 import { getCachedAI, setCachedAI } from '@/lib/ai-cache';
-import { checkRateLimit, rateLimitResponse } from '@/lib/rate-limit';
-import { logger } from '@/lib/logger';
 
-export const runtime = 'nodejs';
-export const dynamic = 'force-dynamic';
+export const { runtime, dynamic } = AI_ROUTE_DEFAULTS;
 export const maxDuration = 60;
+
+// eslint-disable-next-line @typescript-eslint/no-empty-object-type
+interface BundleProfitOptimizerInput {}
 
 // Categories that complement each other (cross-sell compatibility)
 const COMPLEMENTARY: Record<string, string[]> = {
@@ -86,10 +80,58 @@ interface AiBundleResponse {
   bundles?: AiBundleEntry[];
 }
 
+interface BundleSummary {
+  totalBundles: number;
+  itemsBundled: number;
+  itemsUnbundled: number;
+  expectedTotalProfitBundled: number;
+  expectedTotalProfitStandalone: number;
+  profitUplift: number;
+  recommendation: string;
+}
+
+interface StandaloneAnalysis {
+  totalItems: number;
+  totalInvested: number;
+  totalEstimatedValue: number;
+  standaloneProfit: number;
+}
+
+// --- Pure helpers (extracted OUTSIDE handler) ----------------------------
+
 // Compute bundle compatibility: which categories complement this one
 function getCompatibleCategories(cat: string): string[] {
   const lower = cat.toLowerCase().trim();
   return COMPLEMENTARY[lower] || [];
+}
+
+/** Map raw trade rows to HeldItem entries. */
+function computeHeldItems(
+  heldTrades: Array<{
+    id: string;
+    title: string;
+    category: string | null;
+    buyPrice: number;
+    listing: { aiEstimatedValue: number | null; dealScore: number | null } | null;
+  }>,
+): HeldItem[] {
+  return heldTrades.map(t => {
+    const estValue =
+      t.listing?.aiEstimatedValue && t.listing.aiEstimatedValue > 0
+        ? t.listing.aiEstimatedValue
+        : Math.round(t.buyPrice * 1.2);
+    return {
+      tradeId: t.id,
+      title: t.title,
+      category: (t.category || 'drugo').trim().toLowerCase(),
+      buyPrice: t.buyPrice,
+      estimatedValue: estValue,
+      potentialProfit: estValue - t.buyPrice,
+      bundleCompatibility: getCompatibleCategories(
+        (t.category || 'drugo').trim(),
+      ),
+    };
+  });
 }
 
 // Validate and clamp AI-provided bundle suggestion
@@ -172,7 +214,7 @@ function clampBundleSuggestion(
   for (const i of bundleItems) usedTradeIds.add(i.tradeId);
 
   return {
-    bundleId: `bundle-${bundleItems[0].tradeId.slice(-6)}-${bundleItems.length}`,
+    bundleId: `bundle-${bundleItems[0]!.tradeId.slice(-6)}-${bundleItems.length}`,
     items: bundleItems,
     suggestedBundlePrice,
     combinedBuyPrice,
@@ -206,8 +248,8 @@ function deterministicBundles(items: HeldItem[]): BundleSuggestion[] {
     while (i < catItems.length - 1) {
       const candidates: HeldItem[] = [];
       for (let k = i; k < Math.min(i + 4, catItems.length); k++) {
-        if (usedTradeIds.has(catItems[k].tradeId)) continue;
-        candidates.push(catItems[k]);
+        if (usedTradeIds.has(catItems[k]!.tradeId)) continue;
+        candidates.push(catItems[k]!);
         if (candidates.length >= 2) {
           // Check combined value
           const combined = candidates.reduce((s, x) => s + x.estimatedValue, 0);
@@ -229,7 +271,7 @@ function deterministicBundles(items: HeldItem[]): BundleSuggestion[] {
             estimatedValue: c.estimatedValue,
           }));
           bundles.push({
-            bundleId: `bundle-${candidates[0].tradeId.slice(-6)}-${candidates.length}`,
+            bundleId: `bundle-${candidates[0]!.tradeId.slice(-6)}-${candidates.length}`,
             items: bundleItems,
             suggestedBundlePrice: suggestedPrice,
             combinedBuyPrice: combinedBuy,
@@ -237,7 +279,7 @@ function deterministicBundles(items: HeldItem[]): BundleSuggestion[] {
             bundleDiscountPercent: 8,
             expectedSellTimeDays: 14,
             profitVsStandalone: profit - (sumEst - combinedBuy),
-            reasoning: `Paket ${candidates.length} ${candidates[0].category} item-ov z 8% popustom — hitra prodaja.`,
+            reasoning: `Paket ${candidates.length} ${candidates[0]!.category} item-ov z 8% popustom — hitra prodaja.`,
           });
           for (const c of candidates) usedTradeIds.add(c.tradeId);
           i += candidates.length;
@@ -253,141 +295,20 @@ function deterministicBundles(items: HeldItem[]): BundleSuggestion[] {
   return bundles;
 }
 
-export async function GET(req: NextRequest) {
-  return handleBundleOptimizer(req);
+/** Build items block for the AI prompt from items (cap to 60). */
+function buildItemsBlock(items: HeldItem[]): string {
+  return items
+    .slice(0, 60)
+    .map(
+      (i, idx) =>
+        `${idx + 1}. id=${i.tradeId} | ${i.title} | kategorija=${i.category} | nabava=${i.buyPrice}€ | estVrednost=${i.estimatedValue}€`,
+    )
+    .join('\n');
 }
 
-// v7.59: POST handler — AI Hub runner always sends POST with JSON body.
-// Body is ignored (this endpoint takes no input) — logic is identical to GET.
-export async function POST(req: NextRequest) {
-  return handleBundleOptimizer(req);
-}
-
-async function handleBundleOptimizer(req: NextRequest) {
-  try {
-    // v7.32: AI rate limit
-    const rl = checkRateLimit(req, 'ai-bundle-profit-optimizer', 20);
-    if (!rl.allowed) return rateLimitResponse(rl);
-
-    // 1) Query all HELD trades with their linked Listing
-    const heldTrades = await db.trade.findMany({
-      where: { status: 'held' },
-      select: {
-        id: true,
-        title: true,
-        category: true,
-        buyPrice: true,
-        listing: {
-          select: {
-            aiEstimatedValue: true,
-            dealScore: true,
-          },
-        },
-      },
-      take: 500,
-    });
-
-    // 2) Compute per-item data
-    const items: HeldItem[] = heldTrades.map(t => {
-      const estValue =
-        t.listing?.aiEstimatedValue && t.listing.aiEstimatedValue > 0
-          ? t.listing.aiEstimatedValue
-          : Math.round(t.buyPrice * 1.2);
-      return {
-        tradeId: t.id,
-        title: t.title,
-        category: (t.category || 'drugo').trim().toLowerCase(),
-        buyPrice: t.buyPrice,
-        estimatedValue: estValue,
-        potentialProfit: estValue - t.buyPrice,
-        bundleCompatibility: getCompatibleCategories(
-          (t.category || 'drugo').trim(),
-        ),
-      };
-    });
-
-    // Graceful handling: empty inventory
-    if (items.length === 0) {
-      return NextResponse.json({
-        ok: true,
-        standaloneAnalysis: {
-          totalItems: 0,
-          totalInvested: 0,
-          totalEstimatedValue: 0,
-          standaloneProfit: 0,
-        },
-        bundles: [],
-        summary: {
-          totalBundles: 0,
-          itemsBundled: 0,
-          itemsUnbundled: 0,
-          expectedTotalProfitBundled: 0,
-          expectedTotalProfitStandalone: 0,
-          profitUplift: 0,
-          recommendation: 'Ni held inventarja — nič za pakiranje.',
-        },
-        aiUsed: false,
-        message: 'Ni held inventarja — nič za pakiranje.',
-      });
-    }
-
-    // 3) Standalone analysis
-    const totalInvested = items.reduce((s, i) => s + i.buyPrice, 0);
-    const totalEstimatedValue = items.reduce((s, i) => s + i.estimatedValue, 0);
-    const standaloneProfit = totalEstimatedValue - totalInvested;
-
-    // 4) Check AI cache (keyed by sorted held item IDs)
-    const sortedIds = items.map(i => i.tradeId).sort().join(',');
-    const cacheKey = `bundle-profit-optimizer:${JSON.stringify(sortedIds)}`;
-    const cached = getCachedAI<{
-      bundles: BundleSuggestion[];
-      summary: {
-        totalBundles: number;
-        itemsBundled: number;
-        itemsUnbundled: number;
-        expectedTotalProfitBundled: number;
-        expectedTotalProfitStandalone: number;
-        profitUplift: number;
-        recommendation: string;
-      };
-    }>(cacheKey);
-    if (cached) {
-      return NextResponse.json({
-        ok: true,
-        standaloneAnalysis: {
-          totalItems: items.length,
-          totalInvested: Math.round(totalInvested),
-          totalEstimatedValue: Math.round(totalEstimatedValue),
-          standaloneProfit: Math.round(standaloneProfit),
-        },
-        ...cached,
-        cached: true,
-        aiUsed: true,
-      });
-    }
-
-    // 5) Build AI prompt with grounding
-    const settings = await getSettingsRow();
-    const aiSettings: AiSettings = {
-      provider: settings.aiProvider as AiProviderType,
-      baseUrl: settings.aiBaseUrl,
-      apiKey: settings.aiApiKey,
-      model: settings.aiModel,
-      fallbackProvider: (settings.fallbackProvider || '') as AiProviderType | '',
-      fallbackBaseUrl: settings.fallbackBaseUrl || '',
-      fallbackApiKey: settings.fallbackApiKey || '',
-      fallbackModel: settings.fallbackModel || '',
-    };
-
-    const itemsBlock = items
-      .slice(0, 60)
-      .map(
-        (i, idx) =>
-          `${idx + 1}. id=${i.tradeId} | ${i.title} | kategorija=${i.category} | nabava=${i.buyPrice}€ | estVrednost=${i.estimatedValue}€`,
-      )
-      .join('\n');
-
-    const prompt = `Si strokovnjak za paketno prodajo na oglasnih platformah (Bolha, Vinted, FB Marketplace).
+/** Build the AI prompt with grounding suffix. */
+function buildPrompt(items: HeldItem[], itemsBlock: string): string {
+  return `Si strokovnjak za paketno prodajo na oglasnih platformah (Bolha, Vinted, FB Marketplace).
 
 HELD INVENTAR (${items.length} item-ov):
 ${itemsBlock}
@@ -424,6 +345,150 @@ Odgovori LE z JSON:
     }
   ]
 }${GROUNDING_PROMPT_SUFFIX}`;
+}
+
+/** Compute summary from bundles + items. */
+function computeSummary(
+  items: HeldItem[],
+  bundles: BundleSuggestion[],
+): BundleSummary {
+  const itemsBundled = bundles.reduce((s, b) => s + b.items.length, 0);
+  const itemsUnbundled = items.length - itemsBundled;
+  const expectedTotalProfitBundled = bundles.reduce(
+    (s, b) => s + b.expectedProfit,
+    0,
+  );
+  // Standalone profit for items that are bundled (compare apples-to-apples)
+  const bundledItemStandaloneProfit = bundles.reduce((s, b) => {
+    const standaloneForBundle =
+      b.items.reduce((x, i) => x + i.estimatedValue, 0) -
+      b.items.reduce((x, i) => x + i.buyPrice, 0);
+    return s + standaloneForBundle;
+  }, 0);
+  const profitUplift =
+    bundledItemStandaloneProfit > 0
+      ? Math.round(
+          ((expectedTotalProfitBundled - bundledItemStandaloneProfit) /
+            bundledItemStandaloneProfit) *
+            100,
+        )
+      : 0;
+
+  let recommendation: string;
+  if (bundles.length === 0) {
+    recommendation = 'Ni komplementarnih item-ov za pakete — prodaj posebej.';
+  } else if (profitUplift > 0) {
+    recommendation = `Ustvari ${bundles.length} paket-ov (${itemsBundled} item-ov). Pričakovan profit +${profitUplift}% glede na prodajo posebej.`;
+  } else {
+    recommendation = `Ustvari ${bundles.length} paket-ov (${itemsBundled} item-ov) za hitrejšo prodajo (manjši profit, hitrejši turnover).`;
+  }
+
+  return {
+    totalBundles: bundles.length,
+    itemsBundled,
+    itemsUnbundled,
+    expectedTotalProfitBundled: Math.round(expectedTotalProfitBundled),
+    expectedTotalProfitStandalone: Math.round(bundledItemStandaloneProfit),
+    profitUplift,
+    recommendation,
+  };
+}
+
+// --- Handler -------------------------------------------------------------
+
+const bundleProfitOptimizerHandler = withAiRoute<BundleProfitOptimizerInput>({
+  endpoint: '/api/ai/bundle-profit-optimizer',
+  maxDuration: 60,
+  enforceBudget: true, // AI klic — preveri budget
+  method: 'GET', // Endpoint sprejema GET + POST — bypass POST-only check
+
+  parseBody: async (req) => {
+    // v7.59: POST handler — AI Hub runner always sends POST with JSON body.
+    // Body is ignored (this endpoint takes no input) — logic is identical to GET.
+    await req.json().catch(() => ({}));
+    return {};
+  },
+
+  handler: async (_input, ctx: AiRouteContext) => {
+    const { db, callAi, parseAi, logger } = ctx;
+
+    // 1) Query all HELD trades with their linked Listing
+    const heldTrades = await db.trade.findMany({
+      where: { status: 'held' },
+      select: {
+        id: true,
+        title: true,
+        category: true,
+        buyPrice: true,
+        listing: {
+          select: {
+            aiEstimatedValue: true,
+            dealScore: true,
+          },
+        },
+      },
+      take: 500,
+    });
+
+    // 2) Compute per-item data
+    const items = computeHeldItems(heldTrades);
+
+    // Graceful handling: empty inventory
+    if (items.length === 0) {
+      return apiOk({
+        ok: true,
+        standaloneAnalysis: {
+          totalItems: 0,
+          totalInvested: 0,
+          totalEstimatedValue: 0,
+          standaloneProfit: 0,
+        } as StandaloneAnalysis,
+        bundles: [],
+        summary: {
+          totalBundles: 0,
+          itemsBundled: 0,
+          itemsUnbundled: 0,
+          expectedTotalProfitBundled: 0,
+          expectedTotalProfitStandalone: 0,
+          profitUplift: 0,
+          recommendation: 'Ni held inventarja — nič za pakiranje.',
+        },
+        aiUsed: false,
+        message: 'Ni held inventarja — nič za pakiranje.',
+      });
+    }
+
+    // 3) Standalone analysis
+    const totalInvested = items.reduce((s, i) => s + i.buyPrice, 0);
+    const totalEstimatedValue = items.reduce((s, i) => s + i.estimatedValue, 0);
+    const standaloneProfit = totalEstimatedValue - totalInvested;
+    const standaloneAnalysis: StandaloneAnalysis = {
+      totalItems: items.length,
+      totalInvested: Math.round(totalInvested),
+      totalEstimatedValue: Math.round(totalEstimatedValue),
+      standaloneProfit: Math.round(standaloneProfit),
+    };
+
+    // 4) Check AI cache (keyed by sorted held item IDs)
+    const sortedIds = items.map(i => i.tradeId).sort().join(',');
+    const cacheKey = `bundle-profit-optimizer:${JSON.stringify(sortedIds)}`;
+    const cached = getCachedAI<{
+      bundles: BundleSuggestion[];
+      summary: BundleSummary;
+    }>(cacheKey);
+    if (cached) {
+      return apiOk({
+        ok: true,
+        standaloneAnalysis,
+        ...cached,
+        cached: true,
+        aiUsed: true,
+      });
+    }
+
+    // 5) Build AI prompt with grounding
+    const itemsBlock = buildItemsBlock(items);
+    const prompt = buildPrompt(items, itemsBlock);
 
     let aiUsed = false;
     let bundles: BundleSuggestion[] = [];
@@ -433,8 +498,8 @@ Odgovori LE z JSON:
     const usedTradeIds = new Set<string>();
 
     try {
-      const raw = await callProviderForRaw(aiSettings, prompt);
-      const parsed = parseJsonLooseExported(raw) as AiBundleResponse | null;
+      const raw = await callAi(prompt);
+      const parsed = parseAi(raw) as AiBundleResponse | null;
       if (parsed && Array.isArray(parsed.bundles)) {
         for (const rawBundle of parsed.bundles) {
           const bundle = clampBundleSuggestion(rawBundle, itemsById, usedTradeIds);
@@ -457,46 +522,7 @@ Odgovori LE z JSON:
     }
 
     // 7) Compute summary
-    const itemsBundled = bundles.reduce((s, b) => s + b.items.length, 0);
-    const itemsUnbundled = items.length - itemsBundled;
-    const expectedTotalProfitBundled = bundles.reduce(
-      (s, b) => s + b.expectedProfit,
-      0,
-    );
-    // Standalone profit for items that are bundled (compare apples-to-apples)
-    const bundledItemStandaloneProfit = bundles.reduce((s, b) => {
-      const standaloneForBundle =
-        b.items.reduce((x, i) => x + i.estimatedValue, 0) -
-        b.items.reduce((x, i) => x + i.buyPrice, 0);
-      return s + standaloneForBundle;
-    }, 0);
-    const profitUplift =
-      bundledItemStandaloneProfit > 0
-        ? Math.round(
-            ((expectedTotalProfitBundled - bundledItemStandaloneProfit) /
-              bundledItemStandaloneProfit) *
-              100,
-          )
-        : 0;
-
-    let recommendation: string;
-    if (bundles.length === 0) {
-      recommendation = 'Ni komplementarnih item-ov za pakete — prodaj posebej.';
-    } else if (profitUplift > 0) {
-      recommendation = `Ustvari ${bundles.length} paket-ov (${itemsBundled} item-ov). Pričakovan profit +${profitUplift}% glede na prodajo posebej.`;
-    } else {
-      recommendation = `Ustvari ${bundles.length} paket-ov (${itemsBundled} item-ov) za hitrejšo prodajo (manjši profit, hitrejši turnover).`;
-    }
-
-    const summary = {
-      totalBundles: bundles.length,
-      itemsBundled,
-      itemsUnbundled,
-      expectedTotalProfitBundled: Math.round(expectedTotalProfitBundled),
-      expectedTotalProfitStandalone: Math.round(bundledItemStandaloneProfit),
-      profitUplift,
-      recommendation,
-    };
+    const summary = computeSummary(items, bundles);
 
     // 8) Cache (6h TTL) — only cache when AI was used (not deterministic fallback,
     // which is cheap and changes only when items change)
@@ -504,20 +530,15 @@ Odgovori LE z JSON:
       setCachedAI(cacheKey, { bundles, summary });
     }
 
-    return NextResponse.json({
+    return apiOk({
       ok: true,
-      standaloneAnalysis: {
-        totalItems: items.length,
-        totalInvested: Math.round(totalInvested),
-        totalEstimatedValue: Math.round(totalEstimatedValue),
-        standaloneProfit: Math.round(standaloneProfit),
-      },
+      standaloneAnalysis,
       bundles,
       summary,
       aiUsed,
     });
-  } catch (err: any) {
-    logger.error('/api/ai/bundle-profit-optimizer', 'handler failed', err);
-    return NextResponse.json({ error: err?.message ?? 'Napaka' }, { status: 500 });
-  }
-}
+  },
+});
+
+export const GET = bundleProfitOptimizerHandler;
+export const POST = bundleProfitOptimizerHandler;

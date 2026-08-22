@@ -1,21 +1,32 @@
-// v6.37: AI Predictive Stockout Prevention — prepreči izpraznitev zalog za profitabilne kategorije
+// v6.37 / v8.96.0-batch2: AI Predictive Stockout Prevention — prepreči izpraznitev zalog za profitabilne kategorije
+// Refaktoriran z withAiRoute helperjem (v8.96.0-batch2) + enforceBudget guard.
+//
 // POST /api/ai/stockout-prevention
 // Body: {}
 // Returns: { ok, prevention: { atRiskCategories, items: [], restockPlan, alerts, summary } }
 
-import { NextRequest, NextResponse } from 'next/server';
-import { db } from '@/lib/db';
-import { getSettingsRow } from '@/lib/pipeline';
-import { callProviderForRaw, parseJsonLooseExported, type AiProviderType, type AiSettings } from '@/lib/ai';
-import { logger } from '@/lib/logger';
+import { withAiRoute, AI_ROUTE_DEFAULTS, type AiRouteContext } from '@/lib/with-ai-route';
+import { apiOk } from '@/lib/api-response';
 
-export const runtime = 'nodejs';
-export const dynamic = 'force-dynamic';
+export const { runtime, dynamic } = AI_ROUTE_DEFAULTS;
 export const maxDuration = 90;
 
-export async function POST(req: NextRequest) {
-  try {
+// eslint-disable-next-line @typescript-eslint/no-empty-object-type
+interface StockoutPreventionInput {}
+
+export const POST = withAiRoute<StockoutPreventionInput>({
+  endpoint: '/api/ai/stockout-prevention',
+  maxDuration: 90,
+  enforceBudget: true, // AI klic — preveri budget
+
+  parseBody: async (req) => {
     await req.json().catch(() => ({}));
+    return {} as StockoutPreventionInput;
+  },
+
+  // No validateInput — body je prazen
+  handler: async (_input, ctx: AiRouteContext) => {
+    const { db, callAi, parseAi } = ctx;
 
     const heldTrades = await db.trade.findMany({
       where: { status: 'held' },
@@ -31,62 +42,97 @@ export async function POST(req: NextRequest) {
     });
 
     if (heldTrades.length === 0 && soldTrades.length === 0) {
-      return NextResponse.json({ ok: true, prevention: null, message: 'Ni podatkov za stockout prevention.' });
+      return apiOk({ ok: true, prevention: null, message: 'Ni podatkov za stockout prevention.' });
     }
 
     // Izračunaj stockout tveganja per kategorija
-    const heldByCat: Record<string, { count: number; value: number }> = {};
-    for (const t of heldTrades) { const c = t.category || 'drugo'; if (!heldByCat[c]) heldByCat[c] = { count: 0, value: 0 }; heldByCat[c].count++; heldByCat[c].value += t.buyPrice; }
-
-    const soldByCat: Record<string, { count: number; profit: number; avgDays: number; avgRoi: number }> = {};
-    for (const t of soldTrades) {
-      const c = t.category || 'drugo';
-      if (!soldByCat[c]) soldByCat[c] = { count: 0, profit: 0, avgDays: 0, avgRoi: 0 };
-      soldByCat[c].count++;
-      soldByCat[c].profit += (t.sellPrice ?? 0) - t.buyPrice;
-      const cost = t.buyPrice; soldByCat[c].avgRoi += cost > 0 ? (((t.sellPrice ?? 0) - t.buyPrice) / cost) * 100 : 0;
-      if (t.sellDate && t.buyDate) soldByCat[c].avgDays += Math.round((t.sellDate.getTime() - t.buyDate.getTime()) / (24*60*60*1000));
-    }
-    for (const c of Object.keys(soldByCat)) {
-      soldByCat[c].avgRoi = Math.round(soldByCat[c].avgRoi / soldByCat[c].count);
-      soldByCat[c].avgDays = Math.round(soldByCat[c].avgDays / soldByCat[c].count);
-    }
-
-    // Stockout = 0 held + positive history
-    const allCats = new Set([...Object.keys(heldByCat), ...Object.keys(soldByCat)]);
-    const stockoutRisks: Array<{ category: string; heldCount: number; soldCount: number; avgRoi: number; avgDays: number; risk: string }> = [];
-    for (const cat of allCats) {
-      const held = heldByCat[cat]?.count ?? 0;
-      const sold = soldByCat[cat];
-      if (held === 0 && sold && sold.count >= 2 && sold.avgRoi > 15) {
-        stockoutRisks.push({ category: cat, heldCount: 0, soldCount: sold.count, avgRoi: sold.avgRoi, avgDays: sold.avgDays, risk: 'critical' });
-      } else if (held <= 2 && sold && sold.count >= 3 && sold.avgRoi > 20) {
-        stockoutRisks.push({ category: cat, heldCount: held, soldCount: sold.count, avgRoi: sold.avgRoi, avgDays: sold.avgDays, risk: 'high' });
-      } else if (held <= 5 && sold && sold.count >= 5 && sold.avgRoi > 25) {
-        stockoutRisks.push({ category: cat, heldCount: held, soldCount: sold.count, avgRoi: sold.avgRoi, avgDays: sold.avgDays, risk: 'medium' });
-      }
-    }
-
-    const settings = await getSettingsRow();
-    const aiSettings: AiSettings = {
-      provider: settings.aiProvider as AiProviderType,
-      baseUrl: settings.aiBaseUrl, apiKey: settings.aiApiKey, model: settings.aiModel,
-      fallbackProvider: (settings.fallbackProvider || '') as AiProviderType | '',
-      fallbackBaseUrl: settings.fallbackBaseUrl || '', fallbackApiKey: settings.fallbackApiKey || '',
-      fallbackModel: settings.fallbackModel || '',
-    };
+    const { heldByCat, soldByCat } = computeCategoryAggs(heldTrades, soldTrades);
+    const stockoutRisks = computeStockoutRisks(heldByCat, soldByCat);
 
     const heldStr = heldTrades.slice(0, 15).map(t => `- ${t.title} | ${t.category} | ${Math.round((Date.now()-t.buyDate.getTime())/(24*60*60*1000))}d`).join('\n');
     const riskStr = stockoutRisks.map(r => `- ${r.category}: 0 held, ${r.soldCount} prodaj, ${r.avgRoi}% ROI, ${r.avgDays}d, risk: ${r.risk}`).join('\n');
 
-    const prompt = `Si AI sistem za preprečevanje izpraznitve zalog (stockout prevention).
+    const prompt = buildPrompt({ heldStr, riskStr });
+
+    const raw = await callAi(prompt);
+    const parsed: any = parseAi(raw);
+    const prevention = transformPrevention(parsed);
+
+    return apiOk({ ok: true, prevention });
+  },
+});
+
+// --- Pomožne funkcije (čiste, testabilne) --------------------------------
+
+interface HeldAgg { count: number; value: number; }
+interface SoldAgg { count: number; profit: number; avgDays: number; avgRoi: number; }
+
+function computeCategoryAggs(
+  heldTrades: Array<{ category: string | null; buyPrice: number }>,
+  soldTrades: Array<{ category: string | null; buyPrice: number; sellPrice: number | null; buyDate: Date; sellDate: Date | null }>
+): { heldByCat: Record<string, HeldAgg>; soldByCat: Record<string, SoldAgg> } {
+  const heldByCat: Record<string, HeldAgg> = {};
+  for (const t of heldTrades) { const c = t.category || 'drugo'; if (!heldByCat[c]) heldByCat[c] = { count: 0, value: 0 }; heldByCat[c].count++; heldByCat[c].value += t.buyPrice; }
+
+  const soldByCat: Record<string, SoldAgg> = {};
+  for (const t of soldTrades) {
+    const c = t.category || 'drugo';
+    if (!soldByCat[c]) soldByCat[c] = { count: 0, profit: 0, avgDays: 0, avgRoi: 0 };
+    soldByCat[c].count++;
+    soldByCat[c].profit += (t.sellPrice ?? 0) - t.buyPrice;
+    const cost = t.buyPrice; soldByCat[c].avgRoi += cost > 0 ? (((t.sellPrice ?? 0) - t.buyPrice) / cost) * 100 : 0;
+    if (t.sellDate && t.buyDate) soldByCat[c].avgDays += Math.round((t.sellDate.getTime() - t.buyDate.getTime()) / (24*60*60*1000));
+  }
+  for (const c of Object.keys(soldByCat)) {
+    soldByCat[c].avgRoi = Math.round(soldByCat[c].avgRoi / soldByCat[c].count);
+    soldByCat[c].avgDays = Math.round(soldByCat[c].avgDays / soldByCat[c].count);
+  }
+  return { heldByCat, soldByCat };
+}
+
+interface StockoutRisk {
+  category: string;
+  heldCount: number;
+  soldCount: number;
+  avgRoi: number;
+  avgDays: number;
+  risk: string;
+}
+
+function computeStockoutRisks(
+  heldByCat: Record<string, HeldAgg>,
+  soldByCat: Record<string, SoldAgg>
+): StockoutRisk[] {
+  const allCats = new Set([...Object.keys(heldByCat), ...Object.keys(soldByCat)]);
+  const stockoutRisks: StockoutRisk[] = [];
+  for (const cat of allCats) {
+    const held = heldByCat[cat]?.count ?? 0;
+    const sold = soldByCat[cat];
+    if (held === 0 && sold && sold.count >= 2 && sold.avgRoi > 15) {
+      stockoutRisks.push({ category: cat, heldCount: 0, soldCount: sold.count, avgRoi: sold.avgRoi, avgDays: sold.avgDays, risk: 'critical' });
+    } else if (held <= 2 && sold && sold.count >= 3 && sold.avgRoi > 20) {
+      stockoutRisks.push({ category: cat, heldCount: held, soldCount: sold.count, avgRoi: sold.avgRoi, avgDays: sold.avgDays, risk: 'high' });
+    } else if (held <= 5 && sold && sold.count >= 5 && sold.avgRoi > 25) {
+      stockoutRisks.push({ category: cat, heldCount: held, soldCount: sold.count, avgRoi: sold.avgRoi, avgDays: sold.avgDays, risk: 'medium' });
+    }
+  }
+  return stockoutRisks;
+}
+
+interface PromptData {
+  heldStr: string;
+  riskStr: string;
+}
+
+function buildPrompt(d: PromptData): string {
+  return `Si AI sistem za preprečevanje izpraznitve zalog (stockout prevention).
 Identificiraj profitabilne kategorije ki izpuščajo ali bodo izpraznile zalogo.
 
 STOCKOUT RIZIKI:
-${riskStr || '- Ni kritičnih stockoutov'}
+${d.riskStr || '- Ni kritičnih stockoutov'}
 
 TRENUTNI HELD:
-${heldStr || '- Prazno'}
+${d.heldStr || '- Prazno'}
 
 Stockout prevention pravila:
 1. CRITICAL: 0 held + ROI > 15% + >= 2 prodaje → NUJNO dopolni
@@ -142,72 +188,56 @@ Odgovori LE z JSON:
     "expected_recovery_profit_eur": <number>
   }
 }`;
+}
 
-    let raw = '';
-    try { raw = await callProviderForRaw(aiSettings, prompt); }
-    catch (primaryError: any) {
-      if (aiSettings.fallbackProvider && aiSettings.fallbackModel) {
-        const fb: AiSettings = { provider: aiSettings.fallbackProvider, baseUrl: aiSettings.fallbackBaseUrl || '', apiKey: aiSettings.fallbackApiKey || '', model: aiSettings.fallbackModel };
-        raw = await callProviderForRaw(fb, prompt);
-      } else { return NextResponse.json({ error: primaryError?.message ?? 'AI failed' }, { status: 500 }); }
-    }
-
-    const parsed: any = parseJsonLooseExported(raw);
-
-    const prevention = {
-      insights: String(parsed?.insights ?? '').slice(0, 500),
-      atRiskCategories: (parsed?.at_risk_categories || []).slice(0, 10).map((c: any) => ({
-        category: String(c?.category ?? '').slice(0, 50),
-        riskLevel: ['critical', 'high', 'medium'].includes(String(c?.risk_level)) ? String(c.risk_level) : 'medium',
-        heldCount: Math.max(0, Number(c?.held_count ?? 0)),
-        soldCount: Math.max(0, Number(c?.sold_count ?? 0)),
-        avgRoiPct: Math.round(Number(c?.avg_roi_pct ?? 0)),
-        avgDaysToSell: Math.max(0, Number(c?.avg_days_to_sell ?? 0)),
-        depletionRatePerWeek: Math.round(Number(c?.depletion_rate_per_week ?? 0) * 10) / 10,
-        estimatedStockoutDate: String(c?.estimated_stockout_date ?? '').slice(0, 50),
-        lostRevenuePerWeekEur: Math.round(Number(c?.lost_revenue_per_week_eur ?? 0)),
-        action: ['restock_urgent', 'start_sourcing', 'monitor'].includes(String(c?.action)) ? String(c.action) : 'monitor',
-        deadlineDays: Math.max(0, Number(c?.deadline_days ?? 7)),
+function transformPrevention(parsed: any) {
+  return {
+    insights: String(parsed?.insights ?? '').slice(0, 500),
+    atRiskCategories: (parsed?.at_risk_categories || []).slice(0, 10).map((c: any) => ({
+      category: String(c?.category ?? '').slice(0, 50),
+      riskLevel: ['critical', 'high', 'medium'].includes(String(c?.risk_level)) ? String(c.risk_level) : 'medium',
+      heldCount: Math.max(0, Number(c?.held_count ?? 0)),
+      soldCount: Math.max(0, Number(c?.sold_count ?? 0)),
+      avgRoiPct: Math.round(Number(c?.avg_roi_pct ?? 0)),
+      avgDaysToSell: Math.max(0, Number(c?.avg_days_to_sell ?? 0)),
+      depletionRatePerWeek: Math.round(Number(c?.depletion_rate_per_week ?? 0) * 10) / 10,
+      estimatedStockoutDate: String(c?.estimated_stockout_date ?? '').slice(0, 50),
+      lostRevenuePerWeekEur: Math.round(Number(c?.lost_revenue_per_week_eur ?? 0)),
+      action: ['restock_urgent', 'start_sourcing', 'monitor'].includes(String(c?.action)) ? String(c.action) : 'monitor',
+      deadlineDays: Math.max(0, Number(c?.deadline_days ?? 7)),
+    })),
+    restockPlan: (parsed?.restock_plan || []).slice(0, 8).map((r: any) => ({
+      category: String(r?.category ?? '').slice(0, 50),
+      itemsToBuy: (r?.items_to_buy || []).slice(0, 4).map((i: any) => ({
+        item: String(i?.item ?? '').slice(0, 150),
+        source: String(i?.source ?? '').slice(0, 30),
+        maxPriceEur: Math.max(0, Number(i?.max_price_eur ?? 0)),
+        keywords: String(i?.keywords ?? '').slice(0, 150),
       })),
-      restockPlan: (parsed?.restock_plan || []).slice(0, 8).map((r: any) => ({
-        category: String(r?.category ?? '').slice(0, 50),
-        itemsToBuy: (r?.items_to_buy || []).slice(0, 4).map((i: any) => ({
-          item: String(i?.item ?? '').slice(0, 150),
-          source: String(i?.source ?? '').slice(0, 30),
-          maxPriceEur: Math.max(0, Number(i?.max_price_eur ?? 0)),
-          keywords: String(i?.keywords ?? '').slice(0, 150),
-        })),
-        quantity: Math.max(1, Number(r?.quantity ?? 1)),
-        budgetEur: Math.max(0, Number(r?.budget_eur ?? 0)),
-        expectedProfitEur: Math.round(Number(r?.expected_profit_eur ?? 0)),
-        expectedRoiPct: Math.round(Number(r?.expected_roi_pct ?? 0)),
-        monitorSetup: {
-          keywords: String(r?.monitor_setup?.keywords ?? '').slice(0, 150),
-          alertThreshold: Math.max(0, Math.min(100, Number(r?.monitor_setup?.alert_threshold ?? 70))),
-          source: String(r?.monitor_setup?.source ?? '').slice(0, 30),
-          intervalMinutes: Math.max(5, Number(r?.monitor_setup?.interval_minutes ?? 30)),
-        },
-        urgency: ['critical', 'high', 'medium'].includes(String(r?.urgency)) ? String(r.urgency) : 'medium',
-      })),
-      alerts: (parsed?.alerts || []).slice(0, 6).map((a: any) => ({
-        category: String(a?.category ?? '').slice(0, 50),
-        message: String(a?.message ?? '').slice(0, 250),
-        severity: ['critical', 'high', 'medium'].includes(String(a?.severity)) ? String(a.severity) : 'medium',
-        action: String(a?.action ?? '').slice(0, 150),
-      })),
-      summary: {
-        totalAtRisk: Math.max(0, Number(parsed?.summary?.total_at_risk ?? 0)),
-        criticalCount: Math.max(0, Number(parsed?.summary?.critical_count ?? 0)),
-        estimatedLostRevenueEur: Math.round(Number(parsed?.summary?.estimated_lost_revenue_eur ?? 0)),
-        restockBudgetNeededEur: Math.round(Number(parsed?.summary?.restock_budget_needed_eur ?? 0)),
-        expectedRecoveryProfitEur: Math.round(Number(parsed?.summary?.expected_recovery_profit_eur ?? 0)),
+      quantity: Math.max(1, Number(r?.quantity ?? 1)),
+      budgetEur: Math.max(0, Number(r?.budget_eur ?? 0)),
+      expectedProfitEur: Math.round(Number(r?.expected_profit_eur ?? 0)),
+      expectedRoiPct: Math.round(Number(r?.expected_roi_pct ?? 0)),
+      monitorSetup: {
+        keywords: String(r?.monitor_setup?.keywords ?? '').slice(0, 150),
+        alertThreshold: Math.max(0, Math.min(100, Number(r?.monitor_setup?.alert_threshold ?? 70))),
+        source: String(r?.monitor_setup?.source ?? '').slice(0, 30),
+        intervalMinutes: Math.max(5, Number(r?.monitor_setup?.interval_minutes ?? 30)),
       },
-    };
-
-    const today = new Date().toISOString().slice(0, 10);
-    if (settings.aiCallsDate !== today) { await db.settings.update({ where: { id: 'singleton' }, data: { aiCallsDate: today, aiCallsToday: 1 } }); }
-    else { await db.settings.update({ where: { id: 'singleton' }, data: { aiCallsToday: { increment: 1 } } }); }
-
-    return NextResponse.json({ ok: true, prevention });
-  } catch (e: any) { logger.error("/api/ai/stockout-prevention", "POST handler failed", e); return NextResponse.json({ error: e?.message ?? 'Napaka' }, { status: 500 }); }
+      urgency: ['critical', 'high', 'medium'].includes(String(r?.urgency)) ? String(r.urgency) : 'medium',
+    })),
+    alerts: (parsed?.alerts || []).slice(0, 6).map((a: any) => ({
+      category: String(a?.category ?? '').slice(0, 50),
+      message: String(a?.message ?? '').slice(0, 250),
+      severity: ['critical', 'high', 'medium'].includes(String(a?.severity)) ? String(a.severity) : 'medium',
+      action: String(a?.action ?? '').slice(0, 150),
+    })),
+    summary: {
+      totalAtRisk: Math.max(0, Number(parsed?.summary?.total_at_risk ?? 0)),
+      criticalCount: Math.max(0, Number(parsed?.summary?.critical_count ?? 0)),
+      estimatedLostRevenueEur: Math.round(Number(parsed?.summary?.estimated_lost_revenue_eur ?? 0)),
+      restockBudgetNeededEur: Math.round(Number(parsed?.summary?.restock_budget_needed_eur ?? 0)),
+      expectedRecoveryProfitEur: Math.round(Number(parsed?.summary?.expected_recovery_profit_eur ?? 0)),
+    },
+  };
 }

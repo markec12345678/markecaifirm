@@ -84,17 +84,34 @@ export async function GET() {
     // v8.15: Recursive endpoint discovery (top-level + brain/... subdirectory).
     const endpointNames = discoverEndpoints(aiDir, aiDir, 0, []);
 
-    const endpoints: Array<{ name: string; description: string; bodyHint: string; category: string }> = [];
+    const endpoints: Array<{ name: string; description: string; bodyHint: string; category: string; deprecated: boolean; deprecatedReplacement?: string }> = [];
 
     for (const name of endpointNames) {
       const routePath = join(aiDir, name, 'route.ts');
       let description = '';
       let bodyHint = '{}';
+      let deprecated = false;
+      let deprecatedReplacement: string | undefined;
       try {
         const content = readFileSync(routePath, 'utf-8');
-        // Preberi prvi komentar (opis)
+        // v8.94: Zaznaj @deprecated komentar v prvih 10 vrsticah
+        const headerLines = content.split('\n').slice(0, 10).join('\n');
+        if (headerLines.includes('@deprecated')) {
+          deprecated = true;
+          // Izlušči replacement endpoint iz komentarja
+          const repMatch = headerLines.match(/uporabi `\/api\/ai\/([^`]+)`/);
+          if (repMatch) deprecatedReplacement = repMatch[1];
+        }
+        // Preberi prvi komentar (opis) — preskoči @deprecated blok
         const lines = content.split('\n');
-        for (const line of lines.slice(0, 10)) {
+        let inDeprecatedBlock = false;
+        for (const line of lines.slice(0, 15)) {
+          // Preskoči JSDoc @deprecated blok
+          if (line.includes('/**')) { inDeprecatedBlock = true; continue; }
+          if (inDeprecatedBlock) {
+            if (line.includes('*/')) { inDeprecatedBlock = false; continue; }
+            continue;
+          }
           const m = line.match(/^\/\/\s*(.+)$/);
           if (m) {
             description = m[1].trim();
@@ -120,6 +137,8 @@ export async function GET() {
         description,
         bodyHint,
         category: categorize(name),
+        deprecated,
+        ...(deprecatedReplacement ? { deprecatedReplacement } : {}),
       });
     }
 
@@ -146,6 +165,8 @@ export async function GET() {
       total: endpoints.length,
       endpoints,
       categories: categoryCounts,
+      // v8.94: deprecated count za dashboard
+      deprecatedCount: endpoints.filter(e => e.deprecated).length,
     };
 
     // v7.32: Store in cache

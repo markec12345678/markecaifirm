@@ -29,24 +29,20 @@
 
 // GET+POST /api/ai/deal-source-margin-maximizer
 // (AI-enhanced + grounding + anti-hallucination + 6h cache + deterministic fallback)
+// Refaktoriran z withAiRoute helperjem (v8.96.6) + enforceBudget guard.
 
-import { NextRequest, NextResponse } from 'next/server';
-import { db } from '@/lib/db';
-import { getSettingsRow } from '@/lib/pipeline';
-import {
-  callProviderForRaw,
-  parseJsonLooseExported,
-  type AiProviderType,
-  type AiSettings,
-} from '@/lib/ai';
+import { withAiRoute, AI_ROUTE_DEFAULTS, type AiRouteContext } from '@/lib/with-ai-route';
+import { apiOk } from '@/lib/api-response';
 import { GROUNDING_PROMPT_SUFFIX } from '@/lib/anti-hallucination';
 import { getCachedAI, setCachedAI } from '@/lib/ai-cache';
-import { checkRateLimit, rateLimitResponse } from '@/lib/rate-limit';
-import { logger } from '@/lib/logger';
 
-export const runtime = 'nodejs';
-export const dynamic = 'force-dynamic';
+export const { runtime, dynamic } = AI_ROUTE_DEFAULTS;
 export const maxDuration = 60;
+
+// --- Input ----------------------------------------------------------------
+
+// eslint-disable-next-line @typescript-eslint/no-empty-object-type
+interface DealSourceMarginMaximizerInput {}
 
 // --- Types ---------------------------------------------------------------
 
@@ -624,17 +620,20 @@ function buildSummary(
 
 // --- Handler -------------------------------------------------------------
 
-export async function GET(req: NextRequest) {
-  return handleDealSourceMarginMaximizer(req);
-}
-export async function POST(req: NextRequest) {
-  return handleDealSourceMarginMaximizer(req);
-}
+const dealSourceMarginMaximizerHandler = withAiRoute<DealSourceMarginMaximizerInput>({
+  endpoint: '/api/ai/deal-source-margin-maximizer',
+  maxDuration: 60,
+  enforceBudget: true, // AI klic — preveri budget
+  method: 'GET', // Endpoint sprejema GET + POST — bypass POST-only check
 
-async function handleDealSourceMarginMaximizer(req: NextRequest) {
-  try {
-    const rl = checkRateLimit(req, 'ai-deal-source-margin-maximizer', 20);
-    if (!rl.allowed) return rateLimitResponse(rl);
+  parseBody: async (req) => {
+    await req.json().catch(() => ({}));
+    return {};
+  },
+
+  // No validateInput — body ignored, identična logika za GET in POST
+  handler: async (_input, ctx: AiRouteContext) => {
+    const { db, callAi, parseAi, logger } = ctx;
 
     const now = Date.now();
     const twelveMonthsAgo = new Date(now - TWELVE_MONTHS_MS);
@@ -668,7 +667,7 @@ async function handleDealSourceMarginMaximizer(req: NextRequest) {
 
     // Empty-state: no SOLD trades
     if (soldTrades.length === 0) {
-      return NextResponse.json({
+      return apiOk({
         ok: true,
         sources: [],
         portfolio: {
@@ -692,7 +691,7 @@ async function handleDealSourceMarginMaximizer(req: NextRequest) {
     }
 
     if (computed.length === 0) {
-      return NextResponse.json({
+      return apiOk({
         ok: true,
         sources: [],
         portfolio: {
@@ -724,7 +723,7 @@ async function handleDealSourceMarginMaximizer(req: NextRequest) {
       summary: string;
     }>(cacheKey);
     if (cached) {
-      return NextResponse.json({
+      return apiOk({
         ok: true,
         sources: cached.sources,
         portfolio: cached.portfolio,
@@ -735,20 +734,6 @@ async function handleDealSourceMarginMaximizer(req: NextRequest) {
     }
 
     // 4) AI prompt with grounding
-    const settings = await getSettingsRow();
-    const aiSettings: AiSettings = {
-      provider: settings.aiProvider as AiProviderType,
-      baseUrl: settings.aiBaseUrl,
-      apiKey: settings.aiApiKey,
-      model: settings.aiModel,
-      fallbackProvider: (settings.fallbackProvider || '') as
-        | AiProviderType
-        | '',
-      fallbackBaseUrl: settings.fallbackBaseUrl || '',
-      fallbackApiKey: settings.fallbackApiKey || '',
-      fallbackModel: settings.fallbackModel || '',
-    };
-
     // Compact context for AI
     const sourcesForAI = entries.map((e) => ({
       source: e.source,
@@ -821,8 +806,8 @@ VRNI LE JSON:
     let aiUsed = false;
 
     try {
-      const raw = await callProviderForRaw(aiSettings, prompt);
-      const parsed = parseJsonLooseExported(raw) as AiResponse | null;
+      const raw = await callAi(prompt);
+      const parsed = parseAi(raw) as AiResponse | null;
 
       if (parsed && typeof parsed === 'object') {
         const aiSourcesMap = new Map<string, NonNullable<AiResponse['sources']>[number]>();
@@ -937,22 +922,15 @@ VRNI LE JSON:
       setCachedAI(cacheKey, { sources: entries, portfolio, summary });
     }
 
-    return NextResponse.json({
+    return apiOk({
       ok: true,
       sources: entries,
       portfolio,
       summary,
       aiUsed,
     } satisfies DealSourceMarginResponse);
-  } catch (err: any) {
-    logger.error(
-      '/api/ai/deal-source-margin-maximizer',
-      'handler failed',
-      err,
-    );
-    return NextResponse.json(
-      { error: err?.message ?? 'Napaka' },
-      { status: 500 },
-    );
-  }
-}
+  },
+});
+
+export const GET = dealSourceMarginMaximizerHandler;
+export const POST = dealSourceMarginMaximizerHandler;

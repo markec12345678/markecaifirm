@@ -1,4 +1,4 @@
-// v7.82: AI Deal Source Intelligence — AI generira celovit INTELLIGENCE
+// v7.82 / v8.96.7-batch4: AI Deal Source Intelligence — AI generira celovit INTELLIGENCE
 // report za vsak deal source (Bolha, Vinted, Facebook, mobile.de) — kombinira
 // ROI, risk, reliability, opportunity in trend v eno intelligence scorecard
 // per source. "Bolha: A grade (88/100, HIGH strategic value). Strengths: high
@@ -17,23 +17,14 @@
 //
 // GET+POST /api/ai/deal-source-intelligence
 // (AI-enhanced + grounding + anti-hallucination + 6h cache + deterministic fallback)
+// Refaktoriran z withAiRoute helperjem (v8.96.7) + enforceBudget guard.
 
-import { NextRequest, NextResponse } from 'next/server';
-import { db } from '@/lib/db';
-import { getSettingsRow } from '@/lib/pipeline';
-import {
-  callProviderForRaw,
-  parseJsonLooseExported,
-  type AiProviderType,
-  type AiSettings,
-} from '@/lib/ai';
+import { withAiRoute, AI_ROUTE_DEFAULTS, type AiRouteContext } from '@/lib/with-ai-route';
+import { apiOk } from '@/lib/api-response';
 import { GROUNDING_PROMPT_SUFFIX } from '@/lib/anti-hallucination';
 import { getCachedAI, setCachedAI } from '@/lib/ai-cache';
-import { checkRateLimit, rateLimitResponse } from '@/lib/rate-limit';
-import { logger } from '@/lib/logger';
 
-export const runtime = 'nodejs';
-export const dynamic = 'force-dynamic';
+export const { runtime, dynamic } = AI_ROUTE_DEFAULTS;
 export const maxDuration = 60;
 
 // --- Types ---------------------------------------------------------------
@@ -584,19 +575,27 @@ function buildDeterministicRiskFactors(m: ComputedMetrics): string[] {
   return factors.slice(0, 4);
 }
 
+// --- Input ---------------------------------------------------------------
+
+// eslint-disable-next-line @typescript-eslint/no-empty-object-type
+interface DealSourceIntelligenceInput {}
+
 // --- Handler -------------------------------------------------------------
 
-export async function GET(req: NextRequest) {
-  return handleDealSourceIntelligence(req);
-}
-export async function POST(req: NextRequest) {
-  return handleDealSourceIntelligence(req);
-}
+const dealSourceIntelligenceHandler = withAiRoute<DealSourceIntelligenceInput>({
+  endpoint: '/api/ai/deal-source-intelligence',
+  maxDuration: 60,
+  enforceBudget: true, // AI klic — preveri budget
+  method: 'GET', // GET+POST — body ignored
 
-async function handleDealSourceIntelligence(req: NextRequest) {
-  try {
-    const rl = checkRateLimit(req, 'ai-deal-source-intelligence', 20);
-    if (!rl.allowed) return rateLimitResponse(rl);
+  parseBody: async (req) => {
+    await req.json().catch(() => ({}));
+    return {};
+  },
+
+  // No validateInput — body ignored
+  handler: async (_input, ctx: AiRouteContext) => {
+    const { db, callAi, parseAi, logger } = ctx;
 
     const now = Date.now();
 
@@ -643,13 +642,13 @@ async function handleDealSourceIntelligence(req: NextRequest) {
     };
 
     if (soldTrades.length === 0) {
-      return NextResponse.json(emptyResponse);
+      return apiOk(emptyResponse);
     }
 
     // 2) Aggregate per source
     const sourceAggs = aggregateBySource(soldTrades as TradeRow[]);
     if (sourceAggs.length === 0) {
-      return NextResponse.json(emptyResponse);
+      return apiOk(emptyResponse);
     }
 
     // 3) Compute metrics + deterministic scorecard per source
@@ -762,7 +761,7 @@ async function handleDealSourceIntelligence(req: NextRequest) {
           rank: i + 1,
           score: s.scorecard.overallIntelligenceScore,
         }));
-      return NextResponse.json({
+      return apiOk({
         ok: true,
         sources: cached.sources,
         ranking: cachedRanking,
@@ -775,20 +774,6 @@ async function handleDealSourceIntelligence(req: NextRequest) {
     }
 
     // 6) AI prompt with grounding
-    const settings = await getSettingsRow();
-    const aiSettings: AiSettings = {
-      provider: settings.aiProvider as AiProviderType,
-      baseUrl: settings.aiBaseUrl,
-      apiKey: settings.aiApiKey,
-      model: settings.aiModel,
-      fallbackProvider: (settings.fallbackProvider || '') as
-        | AiProviderType
-        | '',
-      fallbackBaseUrl: settings.fallbackBaseUrl || '',
-      fallbackApiKey: settings.fallbackApiKey || '',
-      fallbackModel: settings.fallbackModel || '',
-    };
-
     const metricsForPrompt = sourcesData.map((s) => ({
       source: s.displayName,
       sourceKey: s.source,
@@ -859,10 +844,8 @@ VRNI LE JSON:
     let aiUsed = false;
 
     try {
-      const raw = await callProviderForRaw(aiSettings, prompt);
-      const parsed = parseJsonLooseExported(
-        raw,
-      ) as AiIntelligenceResponse | null;
+      const raw = await callAi(prompt);
+      const parsed = parseAi(raw) as AiIntelligenceResponse | null;
 
       if (parsed && typeof parsed === 'object') {
         // AI may override scorecards per source
@@ -1034,7 +1017,7 @@ VRNI LE JSON:
       });
     }
 
-    return NextResponse.json({
+    return apiOk({
       ok: true,
       sources,
       ranking,
@@ -1043,11 +1026,9 @@ VRNI LE JSON:
       summary: finalSummary,
       aiUsed,
     });
-  } catch (err: any) {
-    logger.error('/api/ai/deal-source-intelligence', 'handler failed', err);
-    return NextResponse.json(
-      { error: err?.message ?? 'Napaka' },
-      { status: 500 },
-    );
-  }
-}
+  },
+});
+
+export const GET = dealSourceIntelligenceHandler;
+export const POST = dealSourceIntelligenceHandler;
+

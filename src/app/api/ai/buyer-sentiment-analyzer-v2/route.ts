@@ -1,16 +1,14 @@
-// v6.60: AI Buyer Sentiment Analyzer v2 — NLP sentiment z emotion detection in intent classification
+// v6.60 / v8.95.4-batch4: AI Buyer Sentiment Analyzer v2 — NLP sentiment z emotion detection in intent classification
+// Refaktoriran z withAiRoute helperjem (v8.94) + enforceBudget guard.
+//
 // POST /api/ai/buyer-sentiment-analyzer-v2
 // Body: { customerName?: string, messages?: Array<{ text, timestamp }> }
 // Returns: { ok, analyzer: { buyers, emotions, intents, mlModels, recommendations, summary } }
 
-import { NextRequest, NextResponse } from 'next/server';
-import { db } from '@/lib/db';
-import { getSettingsRow } from '@/lib/pipeline';
-import { callProviderForRaw, parseJsonLooseExported, type AiProviderType, type AiSettings } from '@/lib/ai';
-import { logger } from '@/lib/logger';
+import { withAiRoute, AI_ROUTE_DEFAULTS, type AiRouteContext } from '@/lib/with-ai-route';
+import { apiOk } from '@/lib/api-response';
 
-export const runtime = 'nodejs';
-export const dynamic = 'force-dynamic';
+export const { runtime, dynamic } = AI_ROUTE_DEFAULTS;
 export const maxDuration = 90;
 
 const EMOTIONS = [
@@ -41,14 +39,36 @@ const ML_MODELS = [
   'lstm_sentiment',
 ] as const;
 
-export async function POST(req: NextRequest) {
-  try {
+interface BuyerSentimentAnalyzerV2Input {
+  customerName: string | null;
+  messages: Array<{ text: string; timestamp?: string }>;
+}
+
+interface MessageRow {
+  text: string;
+  timestamp?: string;
+  listingTitle?: string;
+}
+
+export const POST = withAiRoute<BuyerSentimentAnalyzerV2Input>({
+  endpoint: '/api/ai/buyer-sentiment-analyzer-v2',
+  maxDuration: 90,
+  enforceBudget: true,
+
+  parseBody: async (req) => {
     const body = await req.json().catch(() => ({}));
-    const customerName = body?.customerName ? String(body.customerName).trim() : null;
-    const inputMessages: Array<{ text: string; timestamp?: string }> = Array.isArray(body?.messages) ? body.messages : [];
+    return {
+      customerName: body?.customerName ? String(body.customerName).trim() : null,
+      messages: Array.isArray(body?.messages) ? body.messages : [],
+    };
+  },
+
+  handler: async (input, ctx: AiRouteContext) => {
+    const { db, callAi, parseAi } = ctx;
+    const { customerName, messages: inputMessages } = input;
 
     // Pridobi negotiation messages če so v bazi
-    let dbMessages: any[] = [];
+    let dbMessages: MessageRow[] = [];
     if (customerName && inputMessages.length === 0) {
       const listings = await db.listing.findMany({
         where: { sellerName: customerName, contactStatus: { not: 'none' } },
@@ -61,6 +81,11 @@ export async function POST(req: NextRequest) {
       ].filter(m => m.text));
     }
 
+    // NOTE: ohranjeno originalno obnašanje — `messagesToAnalyze` je const referenca
+    // nastavljena PRED morebitnim re-assignmentom dbMessages spodaj. V skladu z
+    // "same input → same output" konvencijo v8.95.4-batch4 se dbMessages re-fetch
+    // ohrani (side-effect DB klica je prisoten), vendar messagesToAnalyze še naprej
+    // kaže na originalno (prazno) referenco.
     const messagesToAnalyze = inputMessages.length > 0 ? inputMessages : dbMessages;
 
     if (messagesToAnalyze.length === 0 && !customerName) {
@@ -77,20 +102,24 @@ export async function POST(req: NextRequest) {
       ].filter(m => m.text));
     }
 
-    const settings = await getSettingsRow();
-    const aiSettings: AiSettings = {
-      provider: settings.aiProvider as AiProviderType,
-      baseUrl: settings.aiBaseUrl, apiKey: settings.aiApiKey, model: settings.aiModel,
-      fallbackProvider: (settings.fallbackProvider || '') as AiProviderType | '',
-      fallbackBaseUrl: settings.fallbackBaseUrl || '', fallbackApiKey: settings.fallbackApiKey || '',
-      fallbackModel: settings.fallbackModel || '',
-    };
+    const prompt = buildPrompt(messagesToAnalyze);
+    const raw = await callAi(prompt);
+    const parsed: any = parseAi(raw);
 
-    const messagesStr = messagesToAnalyze.slice(0, 15).map((m: any, i: number) =>
-      `- Msg ${i + 1}: "${String(m.text || '').slice(0, 200)}" | ${m.timestamp || 'nepoznano'}`
-    ).join('\n');
+    const analyzer = transformAnalyzer(parsed, messagesToAnalyze.length);
 
-    const prompt = `Si AI buyer sentiment analyzer v2 z NLP, emotion detection in intent classification.
+    return apiOk({ ok: true, analyzer });
+  },
+});
+
+// --- Pomožne funkcije (čiste, testabilne) --------------------------------
+
+function buildPrompt(messagesToAnalyze: Array<{ text: string; timestamp?: string; listingTitle?: string }>): string {
+  const messagesStr = messagesToAnalyze.slice(0, 15).map((m: any, i: number) =>
+    `- Msg ${i + 1}: "${String(m.text || '').slice(0, 200)}" | ${m.timestamp || 'nepoznano'}`
+  ).join('\n');
+
+  return `Si AI buyer sentiment analyzer v2 z NLP, emotion detection in intent classification.
 Analiziraš čustva in namere kupcev iz njihovih sporočil.
 
 SPOROČILA ZA ANALIZO (${messagesToAnalyze.length}):
@@ -179,93 +208,77 @@ Odgovori LE z JSON:
     "sentiment_analysis_score": <number 0-100>
   }
 }`;
+}
 
-    let raw = '';
-    try { raw = await callProviderForRaw(aiSettings, prompt); }
-    catch (primaryError: any) {
-      if (aiSettings.fallbackProvider && aiSettings.fallbackModel) {
-        const fb: AiSettings = { provider: aiSettings.fallbackProvider, baseUrl: aiSettings.fallbackBaseUrl || '', apiKey: aiSettings.fallbackApiKey || '', model: aiSettings.fallbackModel };
-        raw = await callProviderForRaw(fb, prompt);
-      } else { return NextResponse.json({ error: primaryError?.message ?? 'AI failed' }, { status: 500 }); }
-    }
-
-    const parsed: any = parseJsonLooseExported(raw);
-
-    const analyzer = {
-      insights: String(parsed?.insights ?? '').slice(0, 500),
-      buyers: (parsed?.buyers || []).slice(0, 15).map((b: any) => ({
-        name: String(b?.name ?? 'anonymous').slice(0, 100),
-        overallSentiment: ['very_positive', 'positive', 'neutral', 'negative', 'very_negative'].includes(String(b?.overall_sentiment)) ? String(b.overall_sentiment) : 'neutral',
-        sentimentScore: Math.max(-100, Math.min(100, Number(b?.sentiment_score ?? 0))),
-        emotions: (b?.emotions || []).slice(0, 8).map((e: any) => ({
-          emotion: EMOTIONS.includes(String(e?.emotion) as any) ? String(e.emotion) : 'joy',
-          intensity: Math.max(0, Math.min(100, Number(e?.intensity ?? 30))),
-          confidencePct: Math.max(0, Math.min(100, Number(e?.confidence_pct ?? 50))),
-        })),
-        dominantEmotion: EMOTIONS.includes(String(b?.dominant_emotion) as any) ? String(b.dominant_emotion) : 'joy',
-        intents: (b?.intents || []).slice(0, 12).map((i: any) => ({
-          intent: INTENTS.includes(String(i?.intent) as any) ? String(i.intent) : 'purchase_intent',
-          probabilityPct: Math.max(0, Math.min(100, Number(i?.probability_pct ?? 30))),
-          confidencePct: Math.max(0, Math.min(100, Number(i?.confidence_pct ?? 50))),
-        })),
-        primaryIntent: INTENTS.includes(String(b?.primary_intent) as any) ? String(b.primary_intent) : 'purchase_intent',
-        purchaseProbabilityPct: Math.max(0, Math.min(100, Number(b?.purchase_probability_pct ?? 50))),
-        churnProbabilityPct: Math.max(0, Math.min(100, Number(b?.churn_probability_pct ?? 30))),
-        satisfactionScore: Math.max(0, Math.min(100, Number(b?.satisfaction_score ?? 50))),
-        engagementLevel: ['high', 'medium', 'low'].includes(String(b?.engagement_level)) ? String(b.engagement_level) : 'medium',
-        recommendedResponseTone: ['professional', 'friendly', 'empathetic', 'urgent', 'apologetic', 'enthusiastic'].includes(String(b?.recommended_response_tone)) ? String(b.recommended_response_tone) : 'professional',
-        keyPhrases: (b?.key_phrases || []).slice(0, 5).map((p: any) => String(p).slice(0, 150)),
-        concerns: (b?.concerns || []).slice(0, 4).map((c: any) => String(c).slice(0, 200)),
-        opportunities: (b?.opportunities || []).slice(0, 4).map((o: any) => String(o).slice(0, 200)),
-      })),
-      emotions: (parsed?.emotions || []).slice(0, 8).map((e: any) => ({
+function transformAnalyzer(parsed: any, messagesCount: number): any {
+  return {
+    insights: String(parsed?.insights ?? '').slice(0, 500),
+    buyers: (parsed?.buyers || []).slice(0, 15).map((b: any) => ({
+      name: String(b?.name ?? 'anonymous').slice(0, 100),
+      overallSentiment: ['very_positive', 'positive', 'neutral', 'negative', 'very_negative'].includes(String(b?.overall_sentiment)) ? String(b.overall_sentiment) : 'neutral',
+      sentimentScore: Math.max(-100, Math.min(100, Number(b?.sentiment_score ?? 0))),
+      emotions: (b?.emotions || []).slice(0, 8).map((e: any) => ({
         emotion: EMOTIONS.includes(String(e?.emotion) as any) ? String(e.emotion) : 'joy',
-        avgIntensity: Math.max(0, Math.min(100, Number(e?.avg_intensity ?? 30))),
-        frequency: Math.max(0, Number(e?.frequency ?? 0)),
-        buyerCount: Math.max(0, Number(e?.buyer_count ?? 0)),
-        triggerPattern: String(e?.trigger_pattern ?? '').slice(0, 200),
-        recommendedResponse: String(e?.recommended_response ?? '').slice(0, 300),
+        intensity: Math.max(0, Math.min(100, Number(e?.intensity ?? 30))),
+        confidencePct: Math.max(0, Math.min(100, Number(e?.confidence_pct ?? 50))),
       })),
-      intents: (parsed?.intents || []).slice(0, 12).map((i: any) => ({
+      dominantEmotion: EMOTIONS.includes(String(b?.dominant_emotion) as any) ? String(b.dominant_emotion) : 'joy',
+      intents: (b?.intents || []).slice(0, 12).map((i: any) => ({
         intent: INTENTS.includes(String(i?.intent) as any) ? String(i.intent) : 'purchase_intent',
-        frequency: Math.max(0, Number(i?.frequency ?? 0)),
-        buyerCount: Math.max(0, Number(i?.buyer_count ?? 0)),
-        conversionCorrelationPct: Math.max(0, Math.min(100, Number(i?.conversion_correlation_pct ?? 50))),
-        bestResponseStrategy: String(i?.best_response_strategy ?? '').slice(0, 300),
+        probabilityPct: Math.max(0, Math.min(100, Number(i?.probability_pct ?? 30))),
+        confidencePct: Math.max(0, Math.min(100, Number(i?.confidence_pct ?? 50))),
       })),
-      mlModels: (parsed?.ml_models || []).slice(0, 6).map((m: any) => ({
-        model: ML_MODELS.includes(String(m?.model) as any) ? String(m.model) : 'bert_multilingual',
-        accuracyPct: Math.max(0, Math.min(100, Number(m?.accuracy_pct ?? 75))),
-        f1Score: Math.max(0, Math.min(100, Number(m?.f1_score ?? 70))),
-        inferenceTimeMs: Math.round(Number(m?.inference_time_ms ?? 100)),
-        bestFor: String(m?.best_for ?? '').slice(0, 150),
-        weightInEnsemble: Math.max(0, Math.min(100, Number(m?.weight_in_ensemble ?? 16))),
-      })),
-      recommendations: (parsed?.recommendations || []).slice(0, 6).map((r: any) => ({
-        action: String(r?.action ?? '').slice(0, 300),
-        priority: ['high', 'medium', 'low'].includes(String(r?.priority)) ? String(r.priority) : 'medium',
-        targetSentiment: String(r?.target_sentiment ?? 'all').slice(0, 30),
-        expectedOutcome: String(r?.expected_outcome ?? '').slice(0, 200),
-        buyersAffected: Math.max(0, Number(r?.buyers_affected ?? 0)),
-      })),
-      summary: {
-        totalMessagesAnalyzed: Math.max(0, Number(parsed?.summary?.total_messages_analyzed ?? messagesToAnalyze.length)),
-        totalBuyersAnalyzed: Math.max(0, Number(parsed?.summary?.total_buyers_analyzed ?? (parsed?.buyers || []).length)),
-        avgSentimentScore: Math.max(-100, Math.min(100, Number(parsed?.summary?.avg_sentiment_score ?? 0))),
-        avgPurchaseProbabilityPct: Math.max(0, Math.min(100, Number(parsed?.summary?.avg_purchase_probability_pct ?? 50))),
-        avgSatisfactionScore: Math.max(0, Math.min(100, Number(parsed?.summary?.avg_satisfaction_score ?? 50))),
-        mostCommonEmotion: EMOTIONS.includes(String(parsed?.summary?.most_common_emotion) as any) ? String(parsed.summary.most_common_emotion) : 'joy',
-        mostCommonIntent: INTENTS.includes(String(parsed?.summary?.most_common_intent) as any) ? String(parsed.summary.most_common_intent) : 'purchase_intent',
-        biggestConcern: String(parsed?.summary?.biggest_concern ?? '').slice(0, 200),
-        biggestOpportunity: String(parsed?.summary?.biggest_opportunity ?? '').slice(0, 200),
-        sentimentAnalysisScore: Math.max(0, Math.min(100, Number(parsed?.summary?.sentiment_analysis_score ?? 60))),
-      },
-    };
-
-    const today = new Date().toISOString().slice(0, 10);
-    if (settings.aiCallsDate !== today) { await db.settings.update({ where: { id: 'singleton' }, data: { aiCallsDate: today, aiCallsToday: 1 } }); }
-    else { await db.settings.update({ where: { id: 'singleton' }, data: { aiCallsToday: { increment: 1 } } }); }
-
-    return NextResponse.json({ ok: true, analyzer });
-  } catch (e: any) { logger.error("/api/ai/buyer-sentiment-analyzer-v2", "POST handler failed", e); return NextResponse.json({ error: e?.message ?? 'Napaka' }, { status: 500 }); }
+      primaryIntent: INTENTS.includes(String(b?.primary_intent) as any) ? String(b.primary_intent) : 'purchase_intent',
+      purchaseProbabilityPct: Math.max(0, Math.min(100, Number(b?.purchase_probability_pct ?? 50))),
+      churnProbabilityPct: Math.max(0, Math.min(100, Number(b?.churn_probability_pct ?? 30))),
+      satisfactionScore: Math.max(0, Math.min(100, Number(b?.satisfaction_score ?? 50))),
+      engagementLevel: ['high', 'medium', 'low'].includes(String(b?.engagement_level)) ? String(b.engagement_level) : 'medium',
+      recommendedResponseTone: ['professional', 'friendly', 'empathetic', 'urgent', 'apologetic', 'enthusiastic'].includes(String(b?.recommended_response_tone)) ? String(b.recommended_response_tone) : 'professional',
+      keyPhrases: (b?.key_phrases || []).slice(0, 5).map((p: any) => String(p).slice(0, 150)),
+      concerns: (b?.concerns || []).slice(0, 4).map((c: any) => String(c).slice(0, 200)),
+      opportunities: (b?.opportunities || []).slice(0, 4).map((o: any) => String(o).slice(0, 200)),
+    })),
+    emotions: (parsed?.emotions || []).slice(0, 8).map((e: any) => ({
+      emotion: EMOTIONS.includes(String(e?.emotion) as any) ? String(e.emotion) : 'joy',
+      avgIntensity: Math.max(0, Math.min(100, Number(e?.avg_intensity ?? 30))),
+      frequency: Math.max(0, Number(e?.frequency ?? 0)),
+      buyerCount: Math.max(0, Number(e?.buyer_count ?? 0)),
+      triggerPattern: String(e?.trigger_pattern ?? '').slice(0, 200),
+      recommendedResponse: String(e?.recommended_response ?? '').slice(0, 300),
+    })),
+    intents: (parsed?.intents || []).slice(0, 12).map((i: any) => ({
+      intent: INTENTS.includes(String(i?.intent) as any) ? String(i.intent) : 'purchase_intent',
+      frequency: Math.max(0, Number(i?.frequency ?? 0)),
+      buyerCount: Math.max(0, Number(i?.buyer_count ?? 0)),
+      conversionCorrelationPct: Math.max(0, Math.min(100, Number(i?.conversion_correlation_pct ?? 50))),
+      bestResponseStrategy: String(i?.best_response_strategy ?? '').slice(0, 300),
+    })),
+    mlModels: (parsed?.ml_models || []).slice(0, 6).map((m: any) => ({
+      model: ML_MODELS.includes(String(m?.model) as any) ? String(m.model) : 'bert_multilingual',
+      accuracyPct: Math.max(0, Math.min(100, Number(m?.accuracy_pct ?? 75))),
+      f1Score: Math.max(0, Math.min(100, Number(m?.f1_score ?? 70))),
+      inferenceTimeMs: Math.round(Number(m?.inference_time_ms ?? 100)),
+      bestFor: String(m?.best_for ?? '').slice(0, 150),
+      weightInEnsemble: Math.max(0, Math.min(100, Number(m?.weight_in_ensemble ?? 16))),
+    })),
+    recommendations: (parsed?.recommendations || []).slice(0, 6).map((r: any) => ({
+      action: String(r?.action ?? '').slice(0, 300),
+      priority: ['high', 'medium', 'low'].includes(String(r?.priority)) ? String(r.priority) : 'medium',
+      targetSentiment: String(r?.target_sentiment ?? 'all').slice(0, 30),
+      expectedOutcome: String(r?.expected_outcome ?? '').slice(0, 200),
+      buyersAffected: Math.max(0, Number(r?.buyers_affected ?? 0)),
+    })),
+    summary: {
+      totalMessagesAnalyzed: Math.max(0, Number(parsed?.summary?.total_messages_analyzed ?? messagesCount)),
+      totalBuyersAnalyzed: Math.max(0, Number(parsed?.summary?.total_buyers_analyzed ?? (parsed?.buyers || []).length)),
+      avgSentimentScore: Math.max(-100, Math.min(100, Number(parsed?.summary?.avg_sentiment_score ?? 0))),
+      avgPurchaseProbabilityPct: Math.max(0, Math.min(100, Number(parsed?.summary?.avg_purchase_probability_pct ?? 50))),
+      avgSatisfactionScore: Math.max(0, Math.min(100, Number(parsed?.summary?.avg_satisfaction_score ?? 50))),
+      mostCommonEmotion: EMOTIONS.includes(String(parsed?.summary?.most_common_emotion) as any) ? String(parsed.summary.most_common_emotion) : 'joy',
+      mostCommonIntent: INTENTS.includes(String(parsed?.summary?.most_common_intent) as any) ? String(parsed.summary.most_common_intent) : 'purchase_intent',
+      biggestConcern: String(parsed?.summary?.biggest_concern ?? '').slice(0, 200),
+      biggestOpportunity: String(parsed?.summary?.biggest_opportunity ?? '').slice(0, 200),
+      sentimentAnalysisScore: Math.max(0, Math.min(100, Number(parsed?.summary?.sentiment_analysis_score ?? 60))),
+    },
+  };
 }

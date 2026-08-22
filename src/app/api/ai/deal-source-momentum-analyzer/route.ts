@@ -1,4 +1,4 @@
-// v7.91: AI Deal Source Momentum Analyzer — AI analizira MOMENTUM (acceleration
+// v7.91 / v8.96.6-batch1: AI Deal Source Momentum Analyzer — AI analizira MOMENTUM (acceleration
 // of trends) per deal source — ne samo trends (ki jih pokriva deal-source-
 // trend-analyzer v7.87) temveč MOMENTUM (2nd derivative — pospešek trenda)
 // per source. Identificira kateri viri pridobivajo momentum najhitreje in
@@ -19,24 +19,18 @@
 //
 // GET+POST /api/ai/deal-source-momentum-analyzer
 // (AI-enhanced + grounding + anti-hallucination + 6h cache + deterministic fallback)
+// Refaktoriran z withAiRoute helperjem (v8.96.6) + enforceBudget guard.
 
-import { NextRequest, NextResponse } from 'next/server';
-import { db } from '@/lib/db';
-import { getSettingsRow } from '@/lib/pipeline';
-import {
-  callProviderForRaw,
-  parseJsonLooseExported,
-  type AiProviderType,
-  type AiSettings,
-} from '@/lib/ai';
+import { withAiRoute, AI_ROUTE_DEFAULTS, type AiRouteContext } from '@/lib/with-ai-route';
+import { apiOk } from '@/lib/api-response';
 import { GROUNDING_PROMPT_SUFFIX } from '@/lib/anti-hallucination';
 import { getCachedAI, setCachedAI } from '@/lib/ai-cache';
-import { checkRateLimit, rateLimitResponse } from '@/lib/rate-limit';
-import { logger } from '@/lib/logger';
 
-export const runtime = 'nodejs';
-export const dynamic = 'force-dynamic';
+export const { runtime, dynamic } = AI_ROUTE_DEFAULTS;
 export const maxDuration = 60;
+
+// eslint-disable-next-line @typescript-eslint/no-empty-object-type
+interface DealSourceMomentumAnalyzerInput {}
 
 // --- Types ---------------------------------------------------------------
 
@@ -443,405 +437,6 @@ interface SoldTradeRow {
   } | null;
 }
 
-// --- Handler -------------------------------------------------------------
-
-export async function GET(req: NextRequest) {
-  return handleDealSourceMomentumAnalyzer(req);
-}
-export async function POST(req: NextRequest) {
-  return handleDealSourceMomentumAnalyzer(req);
-}
-
-async function handleDealSourceMomentumAnalyzer(req: NextRequest) {
-  try {
-    const rl = checkRateLimit(req, 'ai-deal-source-momentum-analyzer', 20);
-    if (!rl.allowed) return rateLimitResponse(rl);
-
-    const now = Date.now();
-    const cutoff12m = new Date(now - HORIZON_12M);
-
-    // 1) Query all SOLD trades from last 12 months with linked Listing (for monitor.source)
-    const soldTrades = await db.trade.findMany({
-      where: {
-        status: 'sold',
-        sellDate: { not: null, gte: cutoff12m },
-      },
-      select: {
-        buyPrice: true,
-        buyFees: true,
-        buyDate: true,
-        sellPrice: true,
-        sellFees: true,
-        sellDate: true,
-        listing: {
-          select: {
-            monitor: { select: { source: true } },
-          },
-        },
-      },
-      orderBy: { sellDate: 'asc' },
-      take: 100000,
-    }) as unknown as SoldTradeRow[];
-
-    if (soldTrades.length === 0) {
-      return NextResponse.json({
-        ok: true,
-        sources: [],
-        insights: {
-          bestMomentumSource: null,
-          emergingSource: null,
-          decliningSource: null,
-          advice: 'Ni SOLD trgovin v zadnjih 12 mesecih — Deal Source Momentum Analyzer ni mogoč.',
-        },
-        summary: 'Ni SOLD trgovin v zadnjih 12 mesecih — Deal Source Momentum Analyzer ni mogoč.',
-        aiUsed: false,
-        message: 'Ni SOLD trgovin v zadnjih 12 mesecih — Deal Source Momentum Analyzer ni mogoč.',
-      });
-    }
-
-    // 2) Group by source × month (12 months back)
-    const sourceMap = new Map<string, SourceAgg>();
-    const monthStartMs = (t: number): number => {
-      const d = new Date(t);
-      return new Date(d.getFullYear(), d.getMonth(), 1).getTime();
-    };
-    const thisMonthStart = monthStartMs(now);
-
-    for (const t of soldTrades) {
-      const source = (t.listing?.monitor?.source ?? 'neznan').trim().toLowerCase() || 'neznan';
-      const sellMs = toMs(t.sellDate);
-      if (sellMs <= 0) continue;
-
-      const sellPrice = t.sellPrice ?? 0;
-      const sellFees = t.sellFees ?? 0;
-      const buyPrice = t.buyPrice ?? 0;
-      const buyFees = t.buyFees ?? 0;
-      const profit = sellPrice - sellFees - buyPrice - buyFees;
-      const cost = buyPrice + buyFees;
-
-      let agg = sourceMap.get(source);
-      if (!agg) {
-        agg = newSourceAgg(source);
-        sourceMap.set(source, agg);
-      }
-
-      // Determine which month bucket (index 0 = oldest, 11 = newest)
-      const sellMonthStart = monthStartMs(sellMs);
-      const monthsAgo = Math.round((thisMonthStart - sellMonthStart) / (30 * DAY_MS));
-      const bucketIdx = 11 - Math.max(0, Math.min(11, monthsAgo));
-      if (bucketIdx >= 0 && bucketIdx <= 11) {
-        const m = agg.months[bucketIdx]!;
-        m.profit += profit;
-        m.cost += cost;
-        m.volume += 1;
-      }
-
-      agg.totalVolume += 1;
-      agg.totalProfit += profit;
-      agg.totalCost += cost;
-    }
-
-    // 3) Compute momentum per source (require ≥2 months with data)
-    const momentumEntries: Array<{
-      source: string;
-      displayName: string;
-      momentum: SourceMomentum;
-      currentRank: number;
-      totalVolume: number;
-      totalProfit: number;
-    }> = [];
-
-    for (const [source, agg] of sourceMap.entries()) {
-      const activeMonths = agg.months.filter((m) => m.volume > 0).length;
-      if (activeMonths < 2) continue; // need ≥2 months for trend
-      const momentum = computeSourceMomentum(agg);
-      momentumEntries.push({
-        source,
-        displayName: displayName(source),
-        momentum,
-        currentRank: 0, // set below
-        totalVolume: agg.totalVolume,
-        totalProfit: agg.totalProfit,
-      });
-    }
-
-    if (momentumEntries.length === 0) {
-      return NextResponse.json({
-        ok: true,
-        sources: [],
-        insights: {
-          bestMomentumSource: null,
-          emergingSource: null,
-          decliningSource: null,
-          advice: 'Ni dovolj SOLD trgovin z znanim source-om v ≥2 mesecih — Deal Source Momentum Analyzer ni mogoč.',
-        },
-        summary: 'Ni dovolj SOLD trgovin z znanim source-om v ≥2 mesecih — Deal Source Momentum Analyzer ni mogoč.',
-        aiUsed: false,
-        message: 'Ni dovolj SOLD trgovin z znanim source-om v ≥2 mesecih — Deal Source Momentum Analyzer ni mogoč.',
-      });
-    }
-
-    // Rank sources by current total profit (1 = highest)
-    momentumEntries.sort((a, b) => b.totalProfit - a.totalProfit);
-    momentumEntries.forEach((e, i) => {
-      e.currentRank = i + 1;
-    });
-
-    // 4) Build deterministic baseline (fallback) per source
-    const deterministicSources: SourceEntry[] = momentumEntries.map((e) => {
-      const agg = sourceMap.get(e.source)!;
-      const analysis = buildDeterministicAnalysis(agg, e.momentum, e.currentRank);
-      return {
-        source: e.source,
-        displayName: e.displayName,
-        momentum: e.momentum,
-        analysis,
-      };
-    });
-
-    // Sort by composite momentum score desc for response
-    deterministicSources.sort((a, b) => b.momentum.compositeMomentumScore - a.momentum.compositeMomentumScore);
-
-    // 5) Compute insights deterministically
-    const detInsights = buildDeterministicInsights(deterministicSources, sourceMap);
-
-    let sourcesOut: SourceEntry[] = deterministicSources;
-    let insights = detInsights;
-    let summary = buildSummary(deterministicSources, detInsights);
-
-    // 6) AI cache check (6h TTL) — key by current month + source count
-    const currentMonth = new Date(now).toISOString().slice(0, 7);
-    const cacheKey = `deal-source-momentum-analyzer:${currentMonth}`;
-    const cached = getCachedAI<{
-      sources: SourceEntry[];
-      insights: MomentumInsights;
-      summary: string;
-    }>(cacheKey);
-    if (cached) {
-      return NextResponse.json({
-        ok: true,
-        sources: cached.sources,
-        insights: cached.insights,
-        summary: cached.summary,
-        cached: true,
-        aiUsed: true,
-      });
-    }
-
-    // 7) AI prompt with grounding
-    const settings = await getSettingsRow();
-    const aiSettings: AiSettings = {
-      provider: settings.aiProvider as AiProviderType,
-      baseUrl: settings.aiBaseUrl,
-      apiKey: settings.aiApiKey,
-      model: settings.aiModel,
-      fallbackProvider: (settings.fallbackProvider || '') as
-        | AiProviderType
-        | '',
-      fallbackBaseUrl: settings.fallbackBaseUrl || '',
-      fallbackApiKey: settings.fallbackApiKey || '',
-      fallbackModel: settings.fallbackModel || '',
-    };
-
-    const promptData = {
-      sources: deterministicSources.map((s) => ({
-        source: s.source,
-        displayName: s.displayName,
-        momentum: s.momentum,
-        analysis: s.analysis,
-        monthlyBreakdown: sourceMap.get(s.source)!.months.map((m, i) => ({
-          monthIndex: i,
-          profit: round0(m.profit),
-          roi: m.cost > 0 ? round1((m.profit / m.cost) * 100) : 0,
-          volume: m.volume,
-        })),
-        totalVolume: sourceMap.get(s.source)!.totalVolume,
-        totalProfit: round0(sourceMap.get(s.source)!.totalProfit),
-        currentRank: momentumEntries.find((e) => e.source === s.source)?.currentRank ?? 0,
-      })),
-      caps: {
-        scoreMin: SCORE_MIN, scoreMax: SCORE_MAX,
-        sustainabilityMin: SUSTAINABILITY_MIN, sustainabilityMax: SUSTAINABILITY_MAX,
-        rankMin: RANK_MIN, rankMax: RANK_MAX,
-        weightMin: WEIGHT_MIN, weightMax: WEIGHT_MAX,
-      },
-    };
-
-    const prompt = `Si AI "Deal Source Momentum Analyzer" za slovenske in srednjeevropske oglasne platforme (Bolha, Vinted, Facebook, Avtonet, mobile.de).
-Analiziraš MOMENTUM (2nd derivative — pospešek trenda) per deal source — kateri viri pridobivajo momentum najhitreje in kateri bodo najboljši v 30 dneh. Razlika od deal-source-trend-analyzer (ki track-a 1st-derivative trend) — ti gledaš MOMENTUM (ali rast pospešuje ali upada).
-
-DETERMINISTIČNI PODATKI (izračunano iz DB — zadnjih 12 mesecev SOLD trgovin z linked Listing → monitor.source, grouped by source × month):
-${JSON.stringify(promptData, null, 2)}
-
-PRAVILA ZA AI ODGOVOR:
-1. sources: array z istim vrstnim redom kot v inputu (po source). Za vsak source:
-   - source: enako kot v inputu (lowercase)
-   - momentumAssessment: slovensko, max 400 znakov — kaj poganja momentum tega vira
-   - predictedRank30d: 1-100, ±2 od currentRank (kolikšen rank bo vir imel čez 30 dni glede na momentum)
-   - momentumSustainability: 0-100, ±15 od deterministične (kako dolgo bo trenutni momentum trajal)
-   - momentumDrivers: 1-3 driverjev { driver (max 100 chars), impact POSITIVE | NEGATIVE, weight 0-100, detail (max 200 chars) }
-   - momentumRisks: 1-3 riskov { risk (max 200 chars), severity LOW | MEDIUM | HIGH, mitigation (max 200 chars) }
-2. insights: { bestMomentumSource (source z najvišjim compositeMomentumScore), emergingSource (source z najvišjim profitMomentum in najmanj totalVolume — dark horse), decliningSource (source z najnižjim compositeMomentumScore), advice (max 400 chars slovensko) }
-3. summary: slovenski povzetek (max 400 znakov). NE izmišljuj številk — uporabi deterministične.
-
-VRNI LE JSON:
-{
-  "sources": [
-    {
-      "source": "bolha",
-      "momentumAssessment": "Bolha pospešuje — momentum 82/100 zaradi rastočega profita v zadnjih 3 mesecih.",
-      "predictedRank30d": 1,
-      "momentumSustainability": 72,
-      "momentumDrivers": [
-        { "driver": "Profit momentum", "impact": "POSITIVE", "weight": 85, "detail": "Mesečni profit raste vse hitreje v zadnjih 6 mesecih." }
-      ],
-      "momentumRisks": [
-        { "risk": "Nasičenje trga po 3 mesecih", "severity": "MEDIUM", "mitigation": "Diversificiraj na Vinted za rezervo." }
-      ]
-    }
-  ],
-  "insights": { "bestMomentumSource": "bolha", "emergingSource": "facebook", "decliningSource": "vinted", "advice": "Bolha pridobiva momentum — povečaj obseg. Facebook je emerging dark horse." },
-  "summary": "Bolha ACCELERATING (82), Facebook emerging (65). Vinted DECELERATING (38)."
-}${GROUNDING_PROMPT_SUFFIX}`;
-
-    let aiUsed = false;
-
-    try {
-      const raw = await callProviderForRaw(aiSettings, prompt);
-      const parsed = parseJsonLooseExported(raw) as AiMomentumResponse | null;
-
-      if (parsed && typeof parsed === 'object' && Array.isArray(parsed.sources)) {
-        const detMap = new Map<string, SourceEntry>();
-        for (const s of deterministicSources) detMap.set(s.source, s);
-
-        const merged: SourceEntry[] = [];
-        for (const ai of parsed.sources) {
-          if (!ai || typeof ai !== 'object') continue;
-          const det = detMap.get(String(ai.source ?? '').toLowerCase());
-          if (!det) continue; // unknown source — skip
-
-          const detSustainability = det.analysis.momentumSustainability;
-          const momentumSustainability = round0(
-            Math.max(SUSTAINABILITY_MIN, Math.min(SUSTAINABILITY_MAX,
-              detSustainability + Math.max(-15, Math.min(15,
-                (Number(ai.momentumSustainability ?? detSustainability)) - detSustainability)))),
-          );
-
-          const currentRank = momentumEntries.find((e) => e.source === det.source)?.currentRank ?? 1;
-          const predictedRank30d = round0(
-            Math.max(RANK_MIN, Math.min(RANK_MAX,
-              currentRank + Math.max(-2, Math.min(2,
-                (Number(ai.predictedRank30d ?? currentRank)) - currentRank)))),
-          );
-
-          // Drivers validation
-          const drivers: MomentumDriver[] = [];
-          if (Array.isArray(ai.momentumDrivers)) {
-            for (const d of ai.momentumDrivers.slice(0, 3)) {
-              if (!d || typeof d !== 'object') continue;
-              drivers.push({
-                driver: clampString(d.driver, 100, det.analysis.momentumDrivers[0]?.driver ?? 'Momentum'),
-                impact: clampEnum(d.impact, VALID_IMPACT, det.analysis.momentumDrivers[0]?.impact ?? 'POSITIVE'),
-                weight: clampNum(d.weight, WEIGHT_MIN, WEIGHT_MAX, det.analysis.momentumDrivers[0]?.weight ?? 50),
-                detail: clampString(d.detail, 200, det.analysis.momentumDrivers[0]?.detail ?? 'Momentum signal.'),
-              });
-            }
-          }
-          if (drivers.length === 0) {
-            for (const d of det.analysis.momentumDrivers) drivers.push(d);
-          }
-
-          // Risks validation
-          const risks: MomentumRisk[] = [];
-          if (Array.isArray(ai.momentumRisks)) {
-            for (const r of ai.momentumRisks.slice(0, 3)) {
-              if (!r || typeof r !== 'object') continue;
-              risks.push({
-                risk: clampString(r.risk, 200, det.analysis.momentumRisks[0]?.risk ?? 'Brez specifičnega tveganja.'),
-                severity: clampEnum(r.severity, VALID_SEVERITY, det.analysis.momentumRisks[0]?.severity ?? 'LOW'),
-                mitigation: clampString(r.mitigation, 200, det.analysis.momentumRisks[0]?.mitigation ?? 'Vzdržuj strategijo.'),
-              });
-            }
-          }
-          if (risks.length === 0) {
-            for (const r of det.analysis.momentumRisks) risks.push(r);
-          }
-
-          merged.push({
-            source: det.source,
-            displayName: det.displayName,
-            momentum: det.momentum,
-            analysis: {
-              momentumAssessment: clampString(ai.momentumAssessment, 400, det.analysis.momentumAssessment),
-              predictedRank30d,
-              momentumSustainability,
-              momentumDrivers: drivers,
-              momentumRisks: risks,
-            },
-          });
-        }
-
-        if (merged.length > 0) {
-          sourcesOut = merged;
-          // Re-sort by composite momentum score desc
-          sourcesOut.sort((a, b) => b.momentum.compositeMomentumScore - a.momentum.compositeMomentumScore);
-
-          // Re-evaluate insights with merged sources
-          if (parsed.insights && typeof parsed.insights === 'object') {
-            const bestMomentumSource = sourcesOut.length > 0 ? sourcesOut[0]!.source : null;
-            const emergingSource = pickEmergingSource(sourcesOut, sourceMap);
-            const decliningSource = sourcesOut.length > 0 ? sourcesOut[sourcesOut.length - 1]!.source : null;
-            const advice = clampString(parsed.insights.advice, 400, detInsights.advice);
-            insights = {
-              bestMomentumSource,
-              emergingSource,
-              decliningSource,
-              advice,
-            };
-          } else {
-            insights = buildDeterministicInsights(sourcesOut, sourceMap);
-          }
-          summary = clampString(parsed.summary, 400, buildSummary(sourcesOut, insights));
-          aiUsed = true;
-        }
-      }
-    } catch (err) {
-      logger.warn(
-        '/api/ai/deal-source-momentum-analyzer',
-        'AI call failed — using deterministic fallback',
-        err,
-      );
-    }
-
-    // 8) Cache (6h TTL) — only when AI was used
-    if (aiUsed) {
-      setCachedAI(cacheKey, {
-        sources: sourcesOut,
-        insights,
-        summary,
-      });
-    }
-
-    return NextResponse.json({
-      ok: true,
-      sources: sourcesOut,
-      insights,
-      summary,
-      aiUsed,
-    });
-  } catch (err: any) {
-    logger.error(
-      '/api/ai/deal-source-momentum-analyzer',
-      'handler failed',
-      err,
-    );
-    return NextResponse.json(
-      { error: err?.message ?? 'Napaka' },
-      { status: 500 },
-    );
-  }
-}
-
 // Pick emerging source — highest profitMomentum in lower half by total volume
 function pickEmergingSource(
   sources: SourceEntry[],
@@ -922,3 +517,425 @@ function buildSummary(
   parts.push(`${bottom.displayName}: ${bottom.momentum.momentumDirection} (${bottom.momentum.compositeMomentumScore}).`);
   return parts.join(' ').slice(0, 400);
 }
+
+// --- Prompt builder + AI merge (čisti, testabilni) ----------------------
+
+interface MomentumEntry {
+  source: string;
+  displayName: string;
+  momentum: SourceMomentum;
+  currentRank: number;
+  totalVolume: number;
+  totalProfit: number;
+}
+
+function buildPromptData(
+  deterministicSources: SourceEntry[],
+  sourceMap: Map<string, SourceAgg>,
+  momentumEntries: MomentumEntry[],
+): unknown {
+  return {
+    sources: deterministicSources.map((s) => ({
+      source: s.source,
+      displayName: s.displayName,
+      momentum: s.momentum,
+      analysis: s.analysis,
+      monthlyBreakdown: sourceMap.get(s.source)!.months.map((m, i) => ({
+        monthIndex: i,
+        profit: round0(m.profit),
+        roi: m.cost > 0 ? round1((m.profit / m.cost) * 100) : 0,
+        volume: m.volume,
+      })),
+      totalVolume: sourceMap.get(s.source)!.totalVolume,
+      totalProfit: round0(sourceMap.get(s.source)!.totalProfit),
+      currentRank: momentumEntries.find((e) => e.source === s.source)?.currentRank ?? 0,
+    })),
+    caps: {
+      scoreMin: SCORE_MIN, scoreMax: SCORE_MAX,
+      sustainabilityMin: SUSTAINABILITY_MIN, sustainabilityMax: SUSTAINABILITY_MAX,
+      rankMin: RANK_MIN, rankMax: RANK_MAX,
+      weightMin: WEIGHT_MIN, weightMax: WEIGHT_MAX,
+    },
+  };
+}
+
+function buildPrompt(promptData: unknown): string {
+  return `Si AI "Deal Source Momentum Analyzer" za slovenske in srednjeevropske oglasne platforme (Bolha, Vinted, Facebook, Avtonet, mobile.de).
+Analiziraš MOMENTUM (2nd derivative — pospešek trenda) per deal source — kateri viri pridobivajo momentum najhitreje in kateri bodo najboljši v 30 dneh. Razlika od deal-source-trend-analyzer (ki track-a 1st-derivative trend) — ti gledaš MOMENTUM (ali rast pospešuje ali upada).
+
+DETERMINISTIČNI PODATKI (izračunano iz DB — zadnjih 12 mesecev SOLD trgovin z linked Listing → monitor.source, grouped by source × month):
+${JSON.stringify(promptData, null, 2)}
+
+PRAVILA ZA AI ODGOVOR:
+1. sources: array z istim vrstnim redom kot v inputu (po source). Za vsak source:
+   - source: enako kot v inputu (lowercase)
+   - momentumAssessment: slovensko, max 400 znakov — kaj poganja momentum tega vira
+   - predictedRank30d: 1-100, ±2 od currentRank (kolikšen rank bo vir imel čez 30 dni glede na momentum)
+   - momentumSustainability: 0-100, ±15 od deterministične (kako dolgo bo trenutni momentum trajal)
+   - momentumDrivers: 1-3 driverjev { driver (max 100 chars), impact POSITIVE | NEGATIVE, weight 0-100, detail (max 200 chars) }
+   - momentumRisks: 1-3 riskov { risk (max 200 chars), severity LOW | MEDIUM | HIGH, mitigation (max 200 chars) }
+2. insights: { bestMomentumSource (source z najvišjim compositeMomentumScore), emergingSource (source z najvišjim profitMomentum in najmanj totalVolume — dark horse), decliningSource (source z najnižjim compositeMomentumScore), advice (max 400 chars slovensko) }
+3. summary: slovenski povzetek (max 400 znakov). NE izmišljuj številk — uporabi deterministične.
+
+VRNI LE JSON:
+{
+  "sources": [
+    {
+      "source": "bolha",
+      "momentumAssessment": "Bolha pospešuje — momentum 82/100 zaradi rastočega profita v zadnjih 3 mesecih.",
+      "predictedRank30d": 1,
+      "momentumSustainability": 72,
+      "momentumDrivers": [
+        { "driver": "Profit momentum", "impact": "POSITIVE", "weight": 85, "detail": "Mesečni profit raste vse hitreje v zadnjih 6 mesecih." }
+      ],
+      "momentumRisks": [
+        { "risk": "Nasičenje trga po 3 mesecih", "severity": "MEDIUM", "mitigation": "Diversificiraj na Vinted za rezervo." }
+      ]
+    }
+  ],
+  "insights": { "bestMomentumSource": "bolha", "emergingSource": "facebook", "decliningSource": "vinted", "advice": "Bolha pridobiva momentum — povečaj obseg. Facebook je emerging dark horse." },
+  "summary": "Bolha ACCELERATING (82), Facebook emerging (65). Vinted DECELERATING (38)."
+}${GROUNDING_PROMPT_SUFFIX}`;
+}
+
+function mergeAiIntoSources(
+  parsed: AiMomentumResponse | null,
+  deterministicSources: SourceEntry[],
+  sourceMap: Map<string, SourceAgg>,
+  momentumEntries: MomentumEntry[],
+  detInsights: MomentumInsights,
+): { sourcesOut: SourceEntry[]; insights: MomentumInsights; summary: string; aiUsed: boolean } {
+  let sourcesOut: SourceEntry[] = deterministicSources;
+  let insights = detInsights;
+  let summary = buildSummary(deterministicSources, detInsights);
+  let aiUsed = false;
+
+  if (parsed && typeof parsed === 'object' && Array.isArray(parsed.sources)) {
+    const detMap = new Map<string, SourceEntry>();
+    for (const s of deterministicSources) detMap.set(s.source, s);
+
+    const merged: SourceEntry[] = [];
+    for (const ai of parsed.sources) {
+      if (!ai || typeof ai !== 'object') continue;
+      const det = detMap.get(String(ai.source ?? '').toLowerCase());
+      if (!det) continue; // unknown source — skip
+
+      const detSustainability = det.analysis.momentumSustainability;
+      const momentumSustainability = round0(
+        Math.max(SUSTAINABILITY_MIN, Math.min(SUSTAINABILITY_MAX,
+          detSustainability + Math.max(-15, Math.min(15,
+            (Number(ai.momentumSustainability ?? detSustainability)) - detSustainability)))),
+      );
+
+      const currentRank = momentumEntries.find((e) => e.source === det.source)?.currentRank ?? 1;
+      const predictedRank30d = round0(
+        Math.max(RANK_MIN, Math.min(RANK_MAX,
+          currentRank + Math.max(-2, Math.min(2,
+            (Number(ai.predictedRank30d ?? currentRank)) - currentRank)))),
+      );
+
+      // Drivers validation
+      const drivers: MomentumDriver[] = [];
+      if (Array.isArray(ai.momentumDrivers)) {
+        for (const d of ai.momentumDrivers.slice(0, 3)) {
+          if (!d || typeof d !== 'object') continue;
+          drivers.push({
+            driver: clampString(d.driver, 100, det.analysis.momentumDrivers[0]?.driver ?? 'Momentum'),
+            impact: clampEnum(d.impact, VALID_IMPACT, det.analysis.momentumDrivers[0]?.impact ?? 'POSITIVE'),
+            weight: clampNum(d.weight, WEIGHT_MIN, WEIGHT_MAX, det.analysis.momentumDrivers[0]?.weight ?? 50),
+            detail: clampString(d.detail, 200, det.analysis.momentumDrivers[0]?.detail ?? 'Momentum signal.'),
+          });
+        }
+      }
+      if (drivers.length === 0) {
+        for (const d of det.analysis.momentumDrivers) drivers.push(d);
+      }
+
+      // Risks validation
+      const risks: MomentumRisk[] = [];
+      if (Array.isArray(ai.momentumRisks)) {
+        for (const r of ai.momentumRisks.slice(0, 3)) {
+          if (!r || typeof r !== 'object') continue;
+          risks.push({
+            risk: clampString(r.risk, 200, det.analysis.momentumRisks[0]?.risk ?? 'Brez specifičnega tveganja.'),
+            severity: clampEnum(r.severity, VALID_SEVERITY, det.analysis.momentumRisks[0]?.severity ?? 'LOW'),
+            mitigation: clampString(r.mitigation, 200, det.analysis.momentumRisks[0]?.mitigation ?? 'Vzdržuj strategijo.'),
+          });
+        }
+      }
+      if (risks.length === 0) {
+        for (const r of det.analysis.momentumRisks) risks.push(r);
+      }
+
+      merged.push({
+        source: det.source,
+        displayName: det.displayName,
+        momentum: det.momentum,
+        analysis: {
+          momentumAssessment: clampString(ai.momentumAssessment, 400, det.analysis.momentumAssessment),
+          predictedRank30d,
+          momentumSustainability,
+          momentumDrivers: drivers,
+          momentumRisks: risks,
+        },
+      });
+    }
+
+    if (merged.length > 0) {
+      sourcesOut = merged;
+      // Re-sort by composite momentum score desc
+      sourcesOut.sort((a, b) => b.momentum.compositeMomentumScore - a.momentum.compositeMomentumScore);
+
+      // Re-evaluate insights with merged sources
+      if (parsed.insights && typeof parsed.insights === 'object') {
+        const bestMomentumSource = sourcesOut.length > 0 ? sourcesOut[0]!.source : null;
+        const emergingSource = pickEmergingSource(sourcesOut, sourceMap);
+        const decliningSource = sourcesOut.length > 0 ? sourcesOut[sourcesOut.length - 1]!.source : null;
+        const advice = clampString(parsed.insights.advice, 400, detInsights.advice);
+        insights = {
+          bestMomentumSource,
+          emergingSource,
+          decliningSource,
+          advice,
+        };
+      } else {
+        insights = buildDeterministicInsights(sourcesOut, sourceMap);
+      }
+      summary = clampString(parsed.summary, 400, buildSummary(sourcesOut, insights));
+      aiUsed = true;
+    }
+  }
+
+  return { sourcesOut, insights, summary, aiUsed };
+}
+
+// --- Handler -------------------------------------------------------------
+
+const dealSourceMomentumAnalyzerHandler = withAiRoute<DealSourceMomentumAnalyzerInput>({
+  endpoint: '/api/ai/deal-source-momentum-analyzer',
+  maxDuration: 60,
+  enforceBudget: true, // AI klic — preveri budget
+  method: 'GET', // Endpoint sprejema GET + POST — bypass POST-only check
+
+  parseBody: async (req) => {
+    await req.json().catch(() => ({}));
+    return {};
+  },
+
+  // No validateInput — body ignored, identična logika za GET in POST
+  handler: async (_input, ctx: AiRouteContext) => {
+    const { db, callAi, parseAi, logger } = ctx;
+
+    const now = Date.now();
+    const cutoff12m = new Date(now - HORIZON_12M);
+
+    // 1) Query all SOLD trades from last 12 months with linked Listing (for monitor.source)
+    const soldTrades = await db.trade.findMany({
+      where: {
+        status: 'sold',
+        sellDate: { not: null, gte: cutoff12m },
+      },
+      select: {
+        buyPrice: true,
+        buyFees: true,
+        buyDate: true,
+        sellPrice: true,
+        sellFees: true,
+        sellDate: true,
+        listing: {
+          select: {
+            monitor: { select: { source: true } },
+          },
+        },
+      },
+      orderBy: { sellDate: 'asc' },
+      take: 100000,
+    }) as unknown as SoldTradeRow[];
+
+    if (soldTrades.length === 0) {
+      return apiOk({
+        ok: true,
+        sources: [],
+        insights: {
+          bestMomentumSource: null,
+          emergingSource: null,
+          decliningSource: null,
+          advice: 'Ni SOLD trgovin v zadnjih 12 mesecih — Deal Source Momentum Analyzer ni mogoč.',
+        },
+        summary: 'Ni SOLD trgovin v zadnjih 12 mesecih — Deal Source Momentum Analyzer ni mogoč.',
+        aiUsed: false,
+        message: 'Ni SOLD trgovin v zadnjih 12 mesecih — Deal Source Momentum Analyzer ni mogoč.',
+      });
+    }
+
+    // 2) Group by source × month (12 months back)
+    const sourceMap = new Map<string, SourceAgg>();
+    const monthStartMs = (t: number): number => {
+      const d = new Date(t);
+      return new Date(d.getFullYear(), d.getMonth(), 1).getTime();
+    };
+    const thisMonthStart = monthStartMs(now);
+
+    for (const t of soldTrades) {
+      const source = (t.listing?.monitor?.source ?? 'neznan').trim().toLowerCase() || 'neznan';
+      const sellMs = toMs(t.sellDate);
+      if (sellMs <= 0) continue;
+
+      const sellPrice = t.sellPrice ?? 0;
+      const sellFees = t.sellFees ?? 0;
+      const buyPrice = t.buyPrice ?? 0;
+      const buyFees = t.buyFees ?? 0;
+      const profit = sellPrice - sellFees - buyPrice - buyFees;
+      const cost = buyPrice + buyFees;
+
+      let agg = sourceMap.get(source);
+      if (!agg) {
+        agg = newSourceAgg(source);
+        sourceMap.set(source, agg);
+      }
+
+      // Determine which month bucket (index 0 = oldest, 11 = newest)
+      const sellMonthStart = monthStartMs(sellMs);
+      const monthsAgo = Math.round((thisMonthStart - sellMonthStart) / (30 * DAY_MS));
+      const bucketIdx = 11 - Math.max(0, Math.min(11, monthsAgo));
+      if (bucketIdx >= 0 && bucketIdx <= 11) {
+        const m = agg.months[bucketIdx]!;
+        m.profit += profit;
+        m.cost += cost;
+        m.volume += 1;
+      }
+
+      agg.totalVolume += 1;
+      agg.totalProfit += profit;
+      agg.totalCost += cost;
+    }
+
+    // 3) Compute momentum per source (require ≥2 months with data)
+    const momentumEntries: MomentumEntry[] = [];
+
+    for (const [source, agg] of sourceMap.entries()) {
+      const activeMonths = agg.months.filter((m) => m.volume > 0).length;
+      if (activeMonths < 2) continue; // need ≥2 months for trend
+      const momentum = computeSourceMomentum(agg);
+      momentumEntries.push({
+        source,
+        displayName: displayName(source),
+        momentum,
+        currentRank: 0, // set below
+        totalVolume: agg.totalVolume,
+        totalProfit: agg.totalProfit,
+      });
+    }
+
+    if (momentumEntries.length === 0) {
+      return apiOk({
+        ok: true,
+        sources: [],
+        insights: {
+          bestMomentumSource: null,
+          emergingSource: null,
+          decliningSource: null,
+          advice: 'Ni dovolj SOLD trgovin z znanim source-om v ≥2 mesecih — Deal Source Momentum Analyzer ni mogoč.',
+        },
+        summary: 'Ni dovolj SOLD trgovin z znanim source-om v ≥2 mesecih — Deal Source Momentum Analyzer ni mogoč.',
+        aiUsed: false,
+        message: 'Ni dovolj SOLD trgovin z znanim source-om v ≥2 mesecih — Deal Source Momentum Analyzer ni mogoč.',
+      });
+    }
+
+    // Rank sources by current total profit (1 = highest)
+    momentumEntries.sort((a, b) => b.totalProfit - a.totalProfit);
+    momentumEntries.forEach((e, i) => {
+      e.currentRank = i + 1;
+    });
+
+    // 4) Build deterministic baseline (fallback) per source
+    const deterministicSources: SourceEntry[] = momentumEntries.map((e) => {
+      const agg = sourceMap.get(e.source)!;
+      const analysis = buildDeterministicAnalysis(agg, e.momentum, e.currentRank);
+      return {
+        source: e.source,
+        displayName: e.displayName,
+        momentum: e.momentum,
+        analysis,
+      };
+    });
+
+    // Sort by composite momentum score desc for response
+    deterministicSources.sort((a, b) => b.momentum.compositeMomentumScore - a.momentum.compositeMomentumScore);
+
+    // 5) Compute insights deterministically
+    const detInsights = buildDeterministicInsights(deterministicSources, sourceMap);
+
+    // 6) AI cache check (6h TTL) — key by current month + source count
+    const currentMonth = new Date(now).toISOString().slice(0, 7);
+    const cacheKey = `deal-source-momentum-analyzer:${currentMonth}`;
+    const cached = getCachedAI<{
+      sources: SourceEntry[];
+      insights: MomentumInsights;
+      summary: string;
+    }>(cacheKey);
+    if (cached) {
+      return apiOk({
+        ok: true,
+        sources: cached.sources,
+        insights: cached.insights,
+        summary: cached.summary,
+        cached: true,
+        aiUsed: true,
+      });
+    }
+
+    // 7) AI prompt with grounding (settings loaded by withAiRoute wrapper)
+    const promptData = buildPromptData(deterministicSources, sourceMap, momentumEntries);
+    const prompt = buildPrompt(promptData);
+
+    let sourcesOut: SourceEntry[] = deterministicSources;
+    let insights = detInsights;
+    let summary = buildSummary(deterministicSources, detInsights);
+    let aiUsed = false;
+
+    try {
+      const raw = await callAi(prompt);
+      const parsed = parseAi(raw) as AiMomentumResponse | null;
+
+      const merged = mergeAiIntoSources(
+        parsed,
+        deterministicSources,
+        sourceMap,
+        momentumEntries,
+        detInsights,
+      );
+      sourcesOut = merged.sourcesOut;
+      insights = merged.insights;
+      summary = merged.summary;
+      aiUsed = merged.aiUsed;
+    } catch (err) {
+      logger.warn(
+        '/api/ai/deal-source-momentum-analyzer',
+        'AI call failed — using deterministic fallback',
+        err,
+      );
+    }
+
+    // 8) Cache (6h TTL) — only when AI was used
+    if (aiUsed) {
+      setCachedAI(cacheKey, {
+        sources: sourcesOut,
+        insights,
+        summary,
+      });
+    }
+
+    return apiOk({
+      ok: true,
+      sources: sourcesOut,
+      insights,
+      summary,
+      aiUsed,
+    });
+  },
+});
+
+export const GET = dealSourceMomentumAnalyzerHandler;
+export const POST = dealSourceMomentumAnalyzerHandler;

@@ -1,4 +1,4 @@
-// v7.75: AI Buyer Retention Forecaster — AI napove KATERI kupci bodo postal
+// v7.75 / v8.94-refactor: AI Buyer Retention Forecaster — AI napove KATERI kupci bodo postal
 // repeat customers in KDAJ bodo verjetno ponovno kupili. Identificira buyers
 // z visoko retention probability in priporoča timing za outreach.
 // "Marjan: 5 kupov, retention 85/100, predicted next buy 2026-09-15.
@@ -16,25 +16,19 @@
 // tveganje) — ta forecast-a retention segment, churn risk in outreach date.
 //
 // GET+POST /api/ai/buyer-retention-forecaster
+// Refaktoriran z withAiRoute helperjem (v8.94) + enforceBudget guard.
 // (AI-enhanced + grounding + anti-hallucination + 6h cache + deterministic fallback)
 
-import { NextRequest, NextResponse } from 'next/server';
-import { db } from '@/lib/db';
-import { getSettingsRow } from '@/lib/pipeline';
-import {
-  callProviderForRaw,
-  parseJsonLooseExported,
-  type AiProviderType,
-  type AiSettings,
-} from '@/lib/ai';
+import { withAiRoute, AI_ROUTE_DEFAULTS, type AiRouteContext } from '@/lib/with-ai-route';
+import { apiOk } from '@/lib/api-response';
 import { GROUNDING_PROMPT_SUFFIX } from '@/lib/anti-hallucination';
 import { getCachedAI, setCachedAI } from '@/lib/ai-cache';
-import { checkRateLimit, rateLimitResponse } from '@/lib/rate-limit';
-import { logger } from '@/lib/logger';
 
-export const runtime = 'nodejs';
-export const dynamic = 'force-dynamic';
+export const { runtime, dynamic } = AI_ROUTE_DEFAULTS;
 export const maxDuration = 60;
+
+// eslint-disable-next-line @typescript-eslint/no-empty-object-type
+interface BuyerRetentionForecastInput {}
 
 // --- Types ---------------------------------------------------------------
 
@@ -78,7 +72,24 @@ interface AiRetentionResponse {
   summary?: unknown;
 }
 
-// --- Helpers -------------------------------------------------------------
+interface BuyerTrade {
+  sellDate: number; // ms
+  sellPrice: number;
+  sellFees: number;
+}
+
+interface SoldTradeRow {
+  id: string;
+  title: string;
+  category: string | null;
+  sellPrice: number | null;
+  sellFees: number | null;
+  sellDate: Date | null;
+  sellLocation: string | null;
+  buyDate: Date | null;
+}
+
+// --- Helpers (pure, testable) -------------------------------------------
 
 const DAY_MS = 86_400_000;
 
@@ -332,19 +343,372 @@ function computeExpectedLTV(
   return Math.round(avgOrderValue * expectedFuturePurchases);
 }
 
+// Group sold trades by buyer name (sellLocation) — extract buyer + trade info
+function groupByBuyer(soldTrades: SoldTradeRow[]): Map<string, BuyerTrade[]> {
+  const buyerMap = new Map<string, BuyerTrade[]>();
+  for (const t of soldTrades) {
+    const name = (t.sellLocation || '').trim();
+    if (!name || name.length < 2) continue;
+    const sellMs = t.sellDate
+      ? new Date(t.sellDate as unknown as Date | string).getTime()
+      : 0;
+    if (sellMs <= 0) continue;
+    const arr = buyerMap.get(name) || [];
+    arr.push({
+      sellDate: sellMs,
+      sellPrice: t.sellPrice ?? 0,
+      sellFees: t.sellFees ?? 0,
+    });
+    buyerMap.set(name, arr);
+  }
+  return buyerMap;
+}
+
+// Compute per-buyer forecast (RFM-based deterministic metrics)
+function computeBuyerForecast(
+  buyerName: string,
+  trades: BuyerTrade[],
+  now: number,
+): BuyerForecast {
+  // Sort by sellDate asc
+  trades.sort((a, b) => a.sellDate - b.sellDate);
+  const purchaseCount = trades.length;
+  const firstPurchaseMs = trades[0]!.sellDate;
+  const lastPurchaseMs = trades[trades.length - 1]!.sellDate;
+  const firstPurchaseDate = new Date(firstPurchaseMs).toISOString().slice(0, 10);
+  const lastPurchaseDate = new Date(lastPurchaseMs).toISOString().slice(0, 10);
+  const daysSinceLastPurchase = Math.max(0, Math.floor((now - lastPurchaseMs) / DAY_MS));
+
+  // avg days between purchases
+  let avgDaysBetweenPurchases = 0;
+  if (trades.length >= 2) {
+    let totalDays = 0;
+    for (let i = 1; i < trades.length; i++) {
+      totalDays += (trades[i]!.sellDate - trades[i - 1]!.sellDate) / DAY_MS;
+    }
+    avgDaysBetweenPurchases = totalDays / (trades.length - 1);
+  }
+
+  // LTV = sum of (sellPrice - sellFees)
+  const buyerLifetimeValue = trades.reduce(
+    (s, t) => s + (t.sellPrice - t.sellFees),
+    0,
+  );
+  const avgOrderValue = buyerLifetimeValue / purchaseCount;
+
+  // Compute segment, churn risk, retention score
+  const retentionSegment = computeSegment(purchaseCount);
+  const churnRisk = computeChurnRisk(
+    daysSinceLastPurchase,
+    avgDaysBetweenPurchases,
+    retentionSegment,
+  );
+  const retentionScore = computeRetentionScore(
+    purchaseCount,
+    daysSinceLastPurchase,
+    buyerLifetimeValue,
+    avgDaysBetweenPurchases,
+  );
+  const retentionProbability = computeRetentionProbability(
+    retentionScore,
+    retentionSegment,
+    churnRisk,
+  );
+
+  const predictedNextPurchaseDate = computePredictedNextPurchase(
+    lastPurchaseMs,
+    avgDaysBetweenPurchases,
+  );
+  const predictedNextPurchaseWindow = computePredictedWindow(
+    predictedNextPurchaseDate,
+    avgDaysBetweenPurchases,
+  );
+  const recommendedOutreachDate = computeOutreachDate(
+    predictedNextPurchaseDate,
+    retentionSegment,
+    daysSinceLastPurchase,
+  );
+  const outreachMessage = buildOutreachMessage(
+    buyerName,
+    retentionSegment,
+    purchaseCount,
+    avgOrderValue,
+  );
+  const expectedLifetimeValue = computeExpectedLTV(
+    avgOrderValue,
+    retentionProbability,
+    retentionSegment,
+  );
+  const reasoning = buildReasoning(
+    buyerName,
+    purchaseCount,
+    retentionScore,
+    retentionProbability,
+    predictedNextPurchaseDate,
+    churnRisk,
+    retentionSegment,
+  );
+
+  return {
+    buyerName: buyerName.slice(0, 100),
+    purchaseCount,
+    firstPurchaseDate,
+    lastPurchaseDate,
+    avgDaysBetweenPurchases: Math.round(avgDaysBetweenPurchases * 10) / 10,
+    daysSinceLastPurchase,
+    buyerLifetimeValue: Math.round(buyerLifetimeValue * 100) / 100,
+    avgOrderValue: Math.round(avgOrderValue * 100) / 100,
+    retentionScore,
+    retentionProbability,
+    predictedNextPurchaseDate,
+    predictedNextPurchaseWindow,
+    retentionSegment,
+    churnRisk,
+    recommendedOutreachDate,
+    outreachMessage,
+    expectedLifetimeValue,
+    reasoning,
+  };
+}
+
+// Compute deterministic summary from baseline buyers (no AI)
+function computeBaselineSummary(buyers: BuyerForecast[]): Summary {
+  const totalBuyers = buyers.length;
+  const loyalCount = buyers.filter((b) => b.retentionSegment === 'LOYAL').length;
+  const repeatCount = buyers.filter((b) => b.retentionSegment === 'REPEAT').length;
+  const occasionalCount = buyers.filter((b) => b.retentionSegment === 'OCCASIONAL').length;
+  const oneTimeCount = buyers.filter((b) => b.retentionSegment === 'ONE_TIME').length;
+  const avgRetentionProbability = totalBuyers > 0
+    ? Math.round(
+        (buyers.reduce((s, b) => s + b.retentionProbability, 0) / totalBuyers) * 10,
+      ) / 10
+    : 0;
+  const highChurnRiskCount = buyers.filter((b) => b.churnRisk === 'HIGH').length;
+
+  let advice: string;
+  if (loyalCount > 0) {
+    advice = `${loyalCount} zvestih kupcev (LOYAL) z visokim retention-om — kontaktiraj jih predviden datum za ponovne nakupe. `;
+    if (highChurnRiskCount > 0) {
+      advice += `${highChurnRiskCount} kupcev z visokim churn risk-om — takojšnji outreach priporočljiv.`;
+    }
+  } else if (repeatCount > 0) {
+    advice = `${repeatCount} povratnih kupcev (REPEAT) — kreiraj loyalty program za prehod v LOYAL segment. `;
+    if (highChurnRiskCount > 0) {
+      advice += `${highChurnRiskCount} kupcev z visokim churn risk-om — aktiviraj retention akcije.`;
+    }
+  } else if (occasionalCount > 0) {
+    advice = `${occasionalCount} občasnih kupcev (OCCASIONAL) — spodbujaj večjo frekvenco nakupov z personaliziranimi ponudbami.`;
+  } else {
+    advice = `Vsi kupci so enkratni (ONE_TIME) — implementiraj post-purchase follow-up strategijo za spodbujanje ponovnih nakupov.`;
+  }
+
+  return {
+    totalBuyers,
+    loyalCount,
+    repeatCount,
+    occasionalCount,
+    oneTimeCount,
+    avgRetentionProbability,
+    highChurnRiskCount,
+    advice,
+  };
+}
+
+// Build AI prompt with grounding — top 25 buyers + summary stats
+function buildAiPrompt(baselineBuyers: BuyerForecast[], summary: Summary): string {
+  const buyersForPrompt = baselineBuyers.slice(0, 25).map((b) => ({
+    buyerName: b.buyerName,
+    purchaseCount: b.purchaseCount,
+    firstPurchaseDate: b.firstPurchaseDate,
+    lastPurchaseDate: b.lastPurchaseDate,
+    avgDaysBetweenPurchases: b.avgDaysBetweenPurchases,
+    daysSinceLastPurchase: b.daysSinceLastPurchase,
+    buyerLifetimeValue: b.buyerLifetimeValue,
+    avgOrderValue: b.avgOrderValue,
+    deterministicRetentionScore: b.retentionScore,
+    deterministicRetentionProbability: b.retentionProbability,
+    deterministicSegment: b.retentionSegment,
+    deterministicChurnRisk: b.churnRisk,
+    deterministicPredictedNextPurchase: b.predictedNextPurchaseDate,
+    deterministicOutreachDate: b.recommendedOutreachDate,
+  }));
+
+  return `Si AI "Buyer Retention Forecaster" za slovenske in srednjeevropske oglasne platforme (Bolha, Vinted, Avtonet, mobile.de).
+Napovej KATERI kupci bodo postal repeat customers in KDAJ bodo ponovno kupili. Identificiraj buyers z visoko retention probability in priporoči outreach timing.
+
+KUPCI Z RFM PODATKI (deterministično izračunano):
+${JSON.stringify(buyersForPrompt, null, 2)}
+
+SKUPNI POVZETEK:
+- Skupno kupcev: ${summary.totalBuyers}
+- LOYAL (5+ kupov): ${summary.loyalCount}
+- REPEAT (3-4): ${summary.repeatCount}
+- OCCASIONAL (2): ${summary.occasionalCount}
+- ONE_TIME (1): ${summary.oneTimeCount}
+- Visok churn risk: ${summary.highChurnRiskCount}
+
+PRAVILA ZA AI ODGOVOR:
+1. buyers: array (sprejmi obstoječe buyerName-je, posodobi retentionSegment, churnRisk, recommendedOutreachDate, outreachMessage, expectedLifetimeValue, reasoning)
+   - retentionSegment: LOYAL / REPEAT / OCCASIONAL / ONE_TIME (validiraj proti enum)
+   - churnRisk: LOW / MEDIUM / HIGH (validiraj proti enum)
+   - retentionProbability: 0-100 (anti-hallucination clamp)
+   - retentionScore: 0-100 (anti-hallucination clamp)
+   - predictedNextPurchaseDate: "YYYY-MM-DD" (mora biti v prihodnosti)
+   - recommendedOutreachDate: "YYYY-MM-DD" (mora biti v prihodnosti)
+   - expectedLifetimeValue: 0-100000€ (anti-hallucination clamp)
+   - outreachMessage: personalizirano sporočilo v slovenščini (max 400 znakov)
+   - reasoning: kratek slovenski opis (max 300 znakov)
+2. summary: totalBuyers, loyalCount, repeatCount, occasionalCount, oneTimeCount, avgRetentionProbability, highChurnRiskCount, advice v slovenščini
+
+VRNI LE JSON:
+{
+  "buyers": [
+    { "buyerName": "...", "retentionSegment": "LOYAL", "churnRisk": "LOW", "retentionProbability": 0, "retentionScore": 0, "predictedNextPurchaseDate": "YYYY-MM-DD", "recommendedOutreachDate": "YYYY-MM-DD", "expectedLifetimeValue": 0, "outreachMessage": "...", "reasoning": "..." }
+  ],
+  "summary": { "totalBuyers": 0, "loyalCount": 0, "repeatCount": 0, "occasionalCount": 0, "oneTimeCount": 0, "avgRetentionProbability": 0, "highChurnRiskCount": 0, "advice": "..." }
+}${GROUNDING_PROMPT_SUFFIX}`;
+}
+
+// Apply AI updates to baseline buyers + summary (anti-hallucination clamps).
+// Returns { finalBuyers, summary, aiUsed }. aiUsed = true whenever AI parsed
+// returns an object (even if no buyers/summary actually updated).
+function applyAiUpdates(
+  baselineBuyers: BuyerForecast[],
+  baselineSummary: Summary,
+  parsed: unknown,
+): { finalBuyers: BuyerForecast[]; summary: Summary; aiUsed: boolean } {
+  if (!parsed || typeof parsed !== 'object') {
+    return { finalBuyers: baselineBuyers, summary: baselineSummary, aiUsed: false };
+  }
+
+  const parsedObj = parsed as AiRetentionResponse;
+  let finalBuyers = baselineBuyers;
+  let summary = baselineSummary;
+
+  // Parse buyers — apply anti-hallucination clamps
+  if (Array.isArray(parsedObj.buyers)) {
+    const updated: BuyerForecast[] = [];
+    for (const b of parsedObj.buyers) {
+      const r = b as Record<string, unknown>;
+      if (!r || typeof r !== 'object') continue;
+      const buyerName = String(r.buyerName || '').trim();
+      const existing = baselineBuyers.find((bb) => bb.buyerName === buyerName);
+      if (!existing) continue;
+
+      const retentionSegment = clampEnum(
+        r.retentionSegment,
+        VALID_SEGMENT,
+        existing.retentionSegment,
+      );
+      const churnRisk = clampEnum(
+        r.churnRisk,
+        VALID_CHURN,
+        existing.churnRisk,
+      );
+      const retentionScore = clampNumber(
+        r.retentionScore,
+        0,
+        100,
+        existing.retentionScore,
+      );
+      const retentionProbability = clampNumber(
+        r.retentionProbability,
+        0,
+        100,
+        existing.retentionProbability,
+      );
+      // Dates must be valid future dates (anti-hallucination)
+      const predictedNextPurchaseDate = clampFutureDate(
+        r.predictedNextPurchaseDate,
+        existing.predictedNextPurchaseDate,
+      );
+      const recommendedOutreachDate = clampFutureDate(
+        r.recommendedOutreachDate,
+        existing.recommendedOutreachDate,
+      );
+      // Validate window dates (earliest, latest)
+      const window = r.predictedNextPurchaseWindow as Record<string, unknown> | undefined;
+      const earliest = window && typeof window.earliest === 'string'
+        ? clampDate(window.earliest, existing.predictedNextPurchaseWindow.earliest)
+        : existing.predictedNextPurchaseWindow.earliest;
+      const latest = window && typeof window.latest === 'string'
+        ? clampDate(window.latest, existing.predictedNextPurchaseWindow.latest)
+        : existing.predictedNextPurchaseWindow.latest;
+      const expectedLifetimeValue = clampNumber(
+        r.expectedLifetimeValue,
+        0,
+        100000,
+        existing.expectedLifetimeValue,
+      );
+      const outreachMessage = clampString(
+        r.outreachMessage,
+        400,
+        existing.outreachMessage,
+      );
+      const reasoning = clampString(
+        r.reasoning,
+        300,
+        existing.reasoning,
+      );
+
+      updated.push({
+        ...existing,
+        retentionSegment,
+        churnRisk,
+        retentionScore: Math.round(retentionScore),
+        retentionProbability: Math.round(retentionProbability),
+        predictedNextPurchaseDate,
+        predictedNextPurchaseWindow: { earliest, latest },
+        recommendedOutreachDate,
+        expectedLifetimeValue: Math.round(expectedLifetimeValue),
+        outreachMessage,
+        reasoning,
+      });
+    }
+    if (updated.length > 0) {
+      // Re-sort by retentionScore desc
+      updated.sort((a, b) => b.retentionScore - a.retentionScore);
+      finalBuyers = updated;
+    }
+  }
+
+  // Parse summary
+  if (parsedObj.summary && typeof parsedObj.summary === 'object') {
+    const s = parsedObj.summary as Record<string, unknown>;
+    summary = {
+      totalBuyers: finalBuyers.length,
+      loyalCount: finalBuyers.filter((b) => b.retentionSegment === 'LOYAL').length,
+      repeatCount: finalBuyers.filter((b) => b.retentionSegment === 'REPEAT').length,
+      occasionalCount: finalBuyers.filter((b) => b.retentionSegment === 'OCCASIONAL').length,
+      oneTimeCount: finalBuyers.filter((b) => b.retentionSegment === 'ONE_TIME').length,
+      avgRetentionProbability: finalBuyers.length > 0
+        ? Math.round(
+            (finalBuyers.reduce((sum, b) => sum + b.retentionProbability, 0) / finalBuyers.length) * 10,
+          ) / 10
+        : 0,
+      highChurnRiskCount: finalBuyers.filter((b) => b.churnRisk === 'HIGH').length,
+      advice: clampString(s.advice, 800, baselineSummary.advice),
+    };
+  }
+
+  return { finalBuyers, summary, aiUsed: true };
+}
+
 // --- Handler -------------------------------------------------------------
 
-export async function GET(req: NextRequest) {
-  return handleBuyerRetentionForecast(req);
-}
-export async function POST(req: NextRequest) {
-  return handleBuyerRetentionForecast(req);
-}
+const buyerRetentionForecastHandler = withAiRoute<BuyerRetentionForecastInput>({
+  endpoint: '/api/ai/buyer-retention-forecaster',
+  maxDuration: 60,
+  enforceBudget: true,
+  method: 'GET', // Endpoint sprejema GET + POST — bypass POST-only check
 
-async function handleBuyerRetentionForecast(req: NextRequest) {
-  try {
-    const rl = checkRateLimit(req, 'ai-buyer-retention-forecast', 20);
-    if (!rl.allowed) return rateLimitResponse(rl);
+  parseBody: async (req) => {
+    await req.json().catch(() => ({}));
+    return {};
+  },
+
+  handler: async (_input, ctx: AiRouteContext) => {
+    const { db, callAi, parseAi, logger } = ctx;
 
     // 1) Query all SOLD trades — extract buyer info from sellLocation
     const soldTrades = await db.trade.findMany({
@@ -368,7 +732,7 @@ async function handleBuyerRetentionForecast(req: NextRequest) {
 
     // Empty state — no SOLD trades
     if (soldTrades.length === 0) {
-      return NextResponse.json({
+      return apiOk({
         ok: true,
         buyers: [],
         summary: {
@@ -388,31 +752,11 @@ async function handleBuyerRetentionForecast(req: NextRequest) {
     }
 
     // 2) Group by buyer name (sellLocation)
-    interface BuyerTrade {
-      sellDate: number; // ms
-      sellPrice: number;
-      sellFees: number;
-    }
-    const buyerMap = new Map<string, BuyerTrade[]>();
-    for (const t of soldTrades) {
-      const name = (t.sellLocation || '').trim();
-      if (!name || name.length < 2) continue;
-      const sellMs = t.sellDate
-        ? new Date(t.sellDate as unknown as Date | string).getTime()
-        : 0;
-      if (sellMs <= 0) continue;
-      const arr = buyerMap.get(name) || [];
-      arr.push({
-        sellDate: sellMs,
-        sellPrice: t.sellPrice ?? 0,
-        sellFees: t.sellFees ?? 0,
-      });
-      buyerMap.set(name, arr);
-    }
+    const buyerMap = groupByBuyer(soldTrades);
 
     // Empty state — no buyer names extracted
     if (buyerMap.size === 0) {
-      return NextResponse.json({
+      return apiOk({
         ok: true,
         buyers: [],
         summary: {
@@ -431,164 +775,26 @@ async function handleBuyerRetentionForecast(req: NextRequest) {
       });
     }
 
-    // 3) Compute per-buyer metrics
+    // 3) Compute per-buyer metrics (deterministic baseline)
     const now = Date.now();
     const baselineBuyers: BuyerForecast[] = [];
-
     for (const [buyerName, trades] of buyerMap.entries()) {
-      // Sort by sellDate asc
-      trades.sort((a, b) => a.sellDate - b.sellDate);
-      const purchaseCount = trades.length;
-      const firstPurchaseMs = trades[0]!.sellDate;
-      const lastPurchaseMs = trades[trades.length - 1]!.sellDate;
-      const firstPurchaseDate = new Date(firstPurchaseMs).toISOString().slice(0, 10);
-      const lastPurchaseDate = new Date(lastPurchaseMs).toISOString().slice(0, 10);
-      const daysSinceLastPurchase = Math.max(0, Math.floor((now - lastPurchaseMs) / DAY_MS));
-
-      // avg days between purchases
-      let avgDaysBetweenPurchases = 0;
-      if (trades.length >= 2) {
-        let totalDays = 0;
-        for (let i = 1; i < trades.length; i++) {
-          totalDays += (trades[i]!.sellDate - trades[i - 1]!.sellDate) / DAY_MS;
-        }
-        avgDaysBetweenPurchases = totalDays / (trades.length - 1);
-      }
-
-      // LTV = sum of (sellPrice - sellFees)
-      const buyerLifetimeValue = trades.reduce(
-        (s, t) => s + (t.sellPrice - t.sellFees),
-        0,
-      );
-      const avgOrderValue = buyerLifetimeValue / purchaseCount;
-
-      // Compute segment, churn risk, retention score
-      const retentionSegment = computeSegment(purchaseCount);
-      const churnRisk = computeChurnRisk(
-        daysSinceLastPurchase,
-        avgDaysBetweenPurchases,
-        retentionSegment,
-      );
-      const retentionScore = computeRetentionScore(
-        purchaseCount,
-        daysSinceLastPurchase,
-        buyerLifetimeValue,
-        avgDaysBetweenPurchases,
-      );
-      const retentionProbability = computeRetentionProbability(
-        retentionScore,
-        retentionSegment,
-        churnRisk,
-      );
-
-      const predictedNextPurchaseDate = computePredictedNextPurchase(
-        lastPurchaseMs,
-        avgDaysBetweenPurchases,
-      );
-      const predictedNextPurchaseWindow = computePredictedWindow(
-        predictedNextPurchaseDate,
-        avgDaysBetweenPurchases,
-      );
-      const recommendedOutreachDate = computeOutreachDate(
-        predictedNextPurchaseDate,
-        retentionSegment,
-        daysSinceLastPurchase,
-      );
-      const outreachMessage = buildOutreachMessage(
-        buyerName,
-        retentionSegment,
-        purchaseCount,
-        avgOrderValue,
-      );
-      const expectedLifetimeValue = computeExpectedLTV(
-        avgOrderValue,
-        retentionProbability,
-        retentionSegment,
-      );
-      const reasoning = buildReasoning(
-        buyerName,
-        purchaseCount,
-        retentionScore,
-        retentionProbability,
-        predictedNextPurchaseDate,
-        churnRisk,
-        retentionSegment,
-      );
-
-      baselineBuyers.push({
-        buyerName: buyerName.slice(0, 100),
-        purchaseCount,
-        firstPurchaseDate,
-        lastPurchaseDate,
-        avgDaysBetweenPurchases: Math.round(avgDaysBetweenPurchases * 10) / 10,
-        daysSinceLastPurchase,
-        buyerLifetimeValue: Math.round(buyerLifetimeValue * 100) / 100,
-        avgOrderValue: Math.round(avgOrderValue * 100) / 100,
-        retentionScore,
-        retentionProbability,
-        predictedNextPurchaseDate,
-        predictedNextPurchaseWindow,
-        retentionSegment,
-        churnRisk,
-        recommendedOutreachDate,
-        outreachMessage,
-        expectedLifetimeValue,
-        reasoning,
-      });
+      baselineBuyers.push(computeBuyerForecast(buyerName, trades, now));
     }
-
     // Sort by retentionScore desc (highest retention first)
     baselineBuyers.sort((a, b) => b.retentionScore - a.retentionScore);
 
     // 4) Compute summary
-    const totalBuyers = baselineBuyers.length;
-    const loyalCount = baselineBuyers.filter((b) => b.retentionSegment === 'LOYAL').length;
-    const repeatCount = baselineBuyers.filter((b) => b.retentionSegment === 'REPEAT').length;
-    const occasionalCount = baselineBuyers.filter((b) => b.retentionSegment === 'OCCASIONAL').length;
-    const oneTimeCount = baselineBuyers.filter((b) => b.retentionSegment === 'ONE_TIME').length;
-    const avgRetentionProbability = totalBuyers > 0
-      ? Math.round(
-          (baselineBuyers.reduce((s, b) => s + b.retentionProbability, 0) / totalBuyers) * 10,
-        ) / 10
-      : 0;
-    const highChurnRiskCount = baselineBuyers.filter((b) => b.churnRisk === 'HIGH').length;
-
-    let advice: string;
-    if (loyalCount > 0) {
-      advice = `${loyalCount} zvestih kupcev (LOYAL) z visokim retention-om — kontaktiraj jih predviden datum za ponovne nakupe. `;
-      if (highChurnRiskCount > 0) {
-        advice += `${highChurnRiskCount} kupcev z visokim churn risk-om — takojšnji outreach priporočljiv.`;
-      }
-    } else if (repeatCount > 0) {
-      advice = `${repeatCount} povratnih kupcev (REPEAT) — kreiraj loyalty program za prehod v LOYAL segment. `;
-      if (highChurnRiskCount > 0) {
-        advice += `${highChurnRiskCount} kupcev z visokim churn risk-om — aktiviraj retention akcije.`;
-      }
-    } else if (occasionalCount > 0) {
-      advice = `${occasionalCount} občasnih kupcev (OCCASIONAL) — spodbujaj večjo frekvenco nakupov z personaliziranimi ponudbami.`;
-    } else {
-      advice = `Vsi kupci so enkratni (ONE_TIME) — implementiraj post-purchase follow-up strategijo za spodbujanje ponovnih nakupov.`;
-    }
-
-    const baselineSummary: Summary = {
-      totalBuyers,
-      loyalCount,
-      repeatCount,
-      occasionalCount,
-      oneTimeCount,
-      avgRetentionProbability,
-      highChurnRiskCount,
-      advice,
-    };
+    const baselineSummary = computeBaselineSummary(baselineBuyers);
 
     // 5) AI cache check (6h TTL) — key by totalBuyers (snapshot of buyer base)
-    const cacheKey = `buyer-retention-forecast:${totalBuyers}`;
+    const cacheKey = `buyer-retention-forecast:${baselineBuyers.length}`;
     const cached = getCachedAI<{
       buyers: BuyerForecast[];
       summary: Summary;
     }>(cacheKey);
     if (cached) {
-      return NextResponse.json({
+      return apiOk({
         ok: true,
         buyers: cached.buyers,
         summary: cached.summary,
@@ -598,190 +804,19 @@ async function handleBuyerRetentionForecast(req: NextRequest) {
     }
 
     // 6) AI prompt with grounding
-    const settings = await getSettingsRow();
-    const aiSettings: AiSettings = {
-      provider: settings.aiProvider as AiProviderType,
-      baseUrl: settings.aiBaseUrl,
-      apiKey: settings.aiApiKey,
-      model: settings.aiModel,
-      fallbackProvider: (settings.fallbackProvider || '') as
-        | AiProviderType
-        | '',
-      fallbackBaseUrl: settings.fallbackBaseUrl || '',
-      fallbackApiKey: settings.fallbackApiKey || '',
-      fallbackModel: settings.fallbackModel || '',
-    };
-
-    // Top 25 buyers for prompt (highest retention)
-    const buyersForPrompt = baselineBuyers.slice(0, 25).map((b) => ({
-      buyerName: b.buyerName,
-      purchaseCount: b.purchaseCount,
-      firstPurchaseDate: b.firstPurchaseDate,
-      lastPurchaseDate: b.lastPurchaseDate,
-      avgDaysBetweenPurchases: b.avgDaysBetweenPurchases,
-      daysSinceLastPurchase: b.daysSinceLastPurchase,
-      buyerLifetimeValue: b.buyerLifetimeValue,
-      avgOrderValue: b.avgOrderValue,
-      deterministicRetentionScore: b.retentionScore,
-      deterministicRetentionProbability: b.retentionProbability,
-      deterministicSegment: b.retentionSegment,
-      deterministicChurnRisk: b.churnRisk,
-      deterministicPredictedNextPurchase: b.predictedNextPurchaseDate,
-      deterministicOutreachDate: b.recommendedOutreachDate,
-    }));
-
-    const prompt = `Si AI "Buyer Retention Forecaster" za slovenske in srednjeevropske oglasne platforme (Bolha, Vinted, Avtonet, mobile.de).
-Napovej KATERI kupci bodo postal repeat customers in KDAJ bodo ponovno kupili. Identificiraj buyers z visoko retention probability in priporoči outreach timing.
-
-KUPCI Z RFM PODATKI (deterministično izračunano):
-${JSON.stringify(buyersForPrompt, null, 2)}
-
-SKUPNI POVZETEK:
-- Skupno kupcev: ${totalBuyers}
-- LOYAL (5+ kupov): ${loyalCount}
-- REPEAT (3-4): ${repeatCount}
-- OCCASIONAL (2): ${occasionalCount}
-- ONE_TIME (1): ${oneTimeCount}
-- Visok churn risk: ${highChurnRiskCount}
-
-PRAVILA ZA AI ODGOVOR:
-1. buyers: array (sprejmi obstoječe buyerName-je, posodobi retentionSegment, churnRisk, recommendedOutreachDate, outreachMessage, expectedLifetimeValue, reasoning)
-   - retentionSegment: LOYAL / REPEAT / OCCASIONAL / ONE_TIME (validiraj proti enum)
-   - churnRisk: LOW / MEDIUM / HIGH (validiraj proti enum)
-   - retentionProbability: 0-100 (anti-hallucination clamp)
-   - retentionScore: 0-100 (anti-hallucination clamp)
-   - predictedNextPurchaseDate: "YYYY-MM-DD" (mora biti v prihodnosti)
-   - recommendedOutreachDate: "YYYY-MM-DD" (mora biti v prihodnosti)
-   - expectedLifetimeValue: 0-100000€ (anti-hallucination clamp)
-   - outreachMessage: personalizirano sporočilo v slovenščini (max 400 znakov)
-   - reasoning: kratek slovenski opis (max 300 znakov)
-2. summary: totalBuyers, loyalCount, repeatCount, occasionalCount, oneTimeCount, avgRetentionProbability, highChurnRiskCount, advice v slovenščini
-
-VRNI LE JSON:
-{
-  "buyers": [
-    { "buyerName": "...", "retentionSegment": "LOYAL", "churnRisk": "LOW", "retentionProbability": 0, "retentionScore": 0, "predictedNextPurchaseDate": "YYYY-MM-DD", "recommendedOutreachDate": "YYYY-MM-DD", "expectedLifetimeValue": 0, "outreachMessage": "...", "reasoning": "..." }
-  ],
-  "summary": { "totalBuyers": 0, "loyalCount": 0, "repeatCount": 0, "occasionalCount": 0, "oneTimeCount": 0, "avgRetentionProbability": 0, "highChurnRiskCount": 0, "advice": "..." }
-}${GROUNDING_PROMPT_SUFFIX}`;
+    const prompt = buildAiPrompt(baselineBuyers, baselineSummary);
 
     let finalBuyers = baselineBuyers;
     let summary = baselineSummary;
     let aiUsed = false;
 
     try {
-      const raw = await callProviderForRaw(aiSettings, prompt);
-      const parsed = parseJsonLooseExported(raw) as AiRetentionResponse | null;
-
-      if (parsed && typeof parsed === 'object') {
-        // Parse buyers — apply anti-hallucination clamps
-        if (Array.isArray(parsed.buyers)) {
-          const updated: BuyerForecast[] = [];
-          for (const b of parsed.buyers) {
-            const r = b as Record<string, unknown>;
-            if (!r || typeof r !== 'object') continue;
-            const buyerName = String(r.buyerName || '').trim();
-            const existing = baselineBuyers.find((bb) => bb.buyerName === buyerName);
-            if (!existing) continue;
-
-            const retentionSegment = clampEnum(
-              r.retentionSegment,
-              VALID_SEGMENT,
-              existing.retentionSegment,
-            );
-            const churnRisk = clampEnum(
-              r.churnRisk,
-              VALID_CHURN,
-              existing.churnRisk,
-            );
-            const retentionScore = clampNumber(
-              r.retentionScore,
-              0,
-              100,
-              existing.retentionScore,
-            );
-            const retentionProbability = clampNumber(
-              r.retentionProbability,
-              0,
-              100,
-              existing.retentionProbability,
-            );
-            // Dates must be valid future dates (anti-hallucination)
-            const predictedNextPurchaseDate = clampFutureDate(
-              r.predictedNextPurchaseDate,
-              existing.predictedNextPurchaseDate,
-            );
-            const recommendedOutreachDate = clampFutureDate(
-              r.recommendedOutreachDate,
-              existing.recommendedOutreachDate,
-            );
-            // Validate window dates (earliest, latest)
-            const window = r.predictedNextPurchaseWindow as Record<string, unknown> | undefined;
-            const earliest = window && typeof window.earliest === 'string'
-              ? clampDate(window.earliest, existing.predictedNextPurchaseWindow.earliest)
-              : existing.predictedNextPurchaseWindow.earliest;
-            const latest = window && typeof window.latest === 'string'
-              ? clampDate(window.latest, existing.predictedNextPurchaseWindow.latest)
-              : existing.predictedNextPurchaseWindow.latest;
-            const expectedLifetimeValue = clampNumber(
-              r.expectedLifetimeValue,
-              0,
-              100000,
-              existing.expectedLifetimeValue,
-            );
-            const outreachMessage = clampString(
-              r.outreachMessage,
-              400,
-              existing.outreachMessage,
-            );
-            const reasoning = clampString(
-              r.reasoning,
-              300,
-              existing.reasoning,
-            );
-
-            updated.push({
-              ...existing,
-              retentionSegment,
-              churnRisk,
-              retentionScore: Math.round(retentionScore),
-              retentionProbability: Math.round(retentionProbability),
-              predictedNextPurchaseDate,
-              predictedNextPurchaseWindow: { earliest, latest },
-              recommendedOutreachDate,
-              expectedLifetimeValue: Math.round(expectedLifetimeValue),
-              outreachMessage,
-              reasoning,
-            });
-          }
-          if (updated.length > 0) {
-            // Re-sort by retentionScore desc
-            updated.sort((a, b) => b.retentionScore - a.retentionScore);
-            finalBuyers = updated;
-          }
-        }
-
-        // Parse summary
-        if (parsed.summary && typeof parsed.summary === 'object') {
-          const s = parsed.summary as Record<string, unknown>;
-          summary = {
-            totalBuyers: finalBuyers.length,
-            loyalCount: finalBuyers.filter((b) => b.retentionSegment === 'LOYAL').length,
-            repeatCount: finalBuyers.filter((b) => b.retentionSegment === 'REPEAT').length,
-            occasionalCount: finalBuyers.filter((b) => b.retentionSegment === 'OCCASIONAL').length,
-            oneTimeCount: finalBuyers.filter((b) => b.retentionSegment === 'ONE_TIME').length,
-            avgRetentionProbability: finalBuyers.length > 0
-              ? Math.round(
-                  (finalBuyers.reduce((sum, b) => sum + b.retentionProbability, 0) / finalBuyers.length) * 10,
-                ) / 10
-              : 0,
-            highChurnRiskCount: finalBuyers.filter((b) => b.churnRisk === 'HIGH').length,
-            advice: clampString(s.advice, 800, baselineSummary.advice),
-          };
-        }
-
-        aiUsed = true;
-      }
+      const raw = await callAi(prompt);
+      const parsed = parseAi(raw);
+      const result = applyAiUpdates(baselineBuyers, baselineSummary, parsed);
+      finalBuyers = result.finalBuyers;
+      summary = result.summary;
+      aiUsed = result.aiUsed;
     } catch (err) {
       logger.warn(
         '/api/ai/buyer-retention-forecaster',
@@ -798,17 +833,14 @@ VRNI LE JSON:
       });
     }
 
-    return NextResponse.json({
+    return apiOk({
       ok: true,
       buyers: finalBuyers,
       summary,
       aiUsed,
     });
-  } catch (err: any) {
-    logger.error('/api/ai/buyer-retention-forecaster', 'handler failed', err);
-    return NextResponse.json(
-      { error: err?.message ?? 'Napaka' },
-      { status: 500 },
-    );
-  }
-}
+  },
+});
+
+export const GET = buyerRetentionForecastHandler;
+export const POST = buyerRetentionForecastHandler;

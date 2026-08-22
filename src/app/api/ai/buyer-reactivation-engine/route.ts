@@ -1,56 +1,153 @@
-// v6.91: AI Buyer Reactivation Engine — ML reaktivacija neaktivnih kupcev z win-back strategy
+// v6.91 / v8.95.4-batch2: AI Buyer Reactivation Engine — ML reaktivacija neaktivnih kupcev z win-back strategy
+// Refaktoriran z withAiRoute helperjem (v8.94) + enforceBudget guard.
+//
 // POST /api/ai/buyer-reactivation-engine
 // Body: { customerName?: string, inactiveDays?: number }
 // Returns: { ok, engine: { overview, inactiveBuyers, reactivationStrategies, campaignPlan, mlModels, summary } }
 
-import { NextRequest, NextResponse } from 'next/server';
-import { db } from '@/lib/db';
-import { getSettingsRow } from '@/lib/pipeline';
-import { callProviderForRaw, parseJsonLooseExported, type AiProviderType, type AiSettings } from '@/lib/ai';
-import { logger } from '@/lib/logger';
+import { withAiRoute, AI_ROUTE_DEFAULTS, type AiRouteContext } from '@/lib/with-ai-route';
+import { apiOk } from '@/lib/api-response';
 
-export const runtime = 'nodejs';
-export const dynamic = 'force-dynamic';
+export const { runtime, dynamic } = AI_ROUTE_DEFAULTS;
 export const maxDuration = 90;
+
+interface BuyerReactivationEngineInput {
+  customerName: string | null;
+  inactiveDays: number;
+}
+
+interface SoldTradeRow {
+  id: string;
+  title: string;
+  category: string | null;
+  sellPrice: number | null;
+  sellFees: number | null;
+  sellDate: Date | null;
+  sellLocation: string;
+  buyDate: Date | null;
+}
+
+interface BuyerInfo {
+  name: string;
+  purchases: number;
+  totalSpent: number;
+  avgOrder: number;
+  firstPurchase: Date | null;
+  lastPurchase: Date | null;
+  categories: Set<string>;
+  daysSinceLast: number;
+  lifetimeDays: number;
+}
 
 const REACTIVATION_TIERS = ['highly_reactivatable', 'reactivatable', 'difficult_to_reactivate', 'hard_to_reactivate', 'unlikely_to_reactivate', 'lost'] as const;
 const STRATEGY_TYPES = ['win_back_discount', 'personalized_outreach', 'new_product_alert', 'loyalty_reward', 'feedback_request', 'exclusive_offer', 'milestone_celebration', 're_engagement_campaign'] as const;
+const ML_MODELS = ['random_forest', 'xgboost', 'neural_net', 'survival_analysis', 'ensemble'] as const;
+const ML_PREDICTION_TYPES = ['reactivation_probability', 'churn_prediction', 'response_forecast', 'value_prediction'] as const;
+const CAMPAIGN_PHASES = ['awareness', 'consideration', 'incentive', 'follow_up', 'retention'] as const;
+const CAMPAIGN_CHANNELS = ['email', 'sms', 'whatsapp', 'push', 'social', 'phone'] as const;
+const GRADES = ['A', 'B', 'C', 'D', 'F'] as const;
 
-export async function POST(req: NextRequest) {
-  try {
+export const POST = withAiRoute<BuyerReactivationEngineInput>({
+  endpoint: '/api/ai/buyer-reactivation-engine',
+  maxDuration: 90,
+  enforceBudget: true,
+
+  parseBody: async (req) => {
     const body = await req.json().catch(() => ({}));
-    const customerName = body?.customerName ? String(body.customerName).trim() : null;
-    const inactiveDays = Math.max(30, Math.min(730, Number(body?.inactiveDays ?? 90)));
+    return {
+      customerName: body?.customerName ? String(body.customerName).trim() : null,
+      inactiveDays: Math.max(30, Math.min(730, Number(body?.inactiveDays ?? 90))),
+    };
+  },
 
-    const soldTrades = await db.trade.findMany({ where: { status: 'sold', sellPrice: { not: null }, sellLocation: { not: '' }, sellDate: { not: null } }, select: { id: true, title: true, category: true, sellPrice: true, sellFees: true, sellDate: true, sellLocation: true, buyDate: true }, take: 500, orderBy: { sellDate: 'desc' } });
-    if (soldTrades.length === 0) return NextResponse.json({ ok: true, engine: null, message: 'Ni prodaj za reactivation analizo.' });
+  handler: async (input, ctx: AiRouteContext) => {
+    const { db, callAi, parseAi } = ctx;
+    const { customerName, inactiveDays } = input;
 
-    const buyerMap = new Map<string, { name: string; purchases: number; totalSpent: number; avgOrder: number; firstPurchase: Date | null; lastPurchase: Date | null; categories: Set<string>; daysSinceLast: number; lifetimeDays: number }>();
-    const now = Date.now();
-    const DAY = 24 * 60 * 60 * 1000;
-    for (const t of soldTrades) {
-      const name = (t.sellLocation || '').trim();
-      if (!name || name.length < 2 || !t.sellDate) continue;
-      const rev = (t.sellPrice ?? 0) - (t.sellFees ?? 0);
-      if (!buyerMap.has(name)) buyerMap.set(name, { name, purchases: 0, totalSpent: 0, avgOrder: 0, firstPurchase: t.sellDate, lastPurchase: t.sellDate, categories: new Set(), daysSinceLast: 0, lifetimeDays: 0 });
-      const b = buyerMap.get(name)!;
-      b.purchases += 1; b.totalSpent += rev;
-      if (!b.firstPurchase || t.sellDate < b.firstPurchase) b.firstPurchase = t.sellDate;
-      if (!b.lastPurchase || t.sellDate > b.lastPurchase) b.lastPurchase = t.sellDate;
-      if (t.category) b.categories.add(t.category);
+    const soldTrades: SoldTradeRow[] = await db.trade.findMany({
+      where: { status: 'sold', sellPrice: { not: null }, sellLocation: { not: '' }, sellDate: { not: null } },
+      select: { id: true, title: true, category: true, sellPrice: true, sellFees: true, sellDate: true, sellLocation: true, buyDate: true },
+      take: 500,
+      orderBy: { sellDate: 'desc' },
+    });
+
+    if (soldTrades.length === 0) {
+      return apiOk({ ok: true, engine: null, message: 'Ni prodaj za reactivation analizo.' });
     }
-    const allBuyers = Array.from(buyerMap.values()).map(b => { b.avgOrder = b.purchases > 0 ? Math.round(b.totalSpent / b.purchases) : 0; b.daysSinceLast = b.lastPurchase ? Math.round((now - b.lastPurchase.getTime()) / DAY) : 999; b.lifetimeDays = b.firstPurchase ? Math.round((now - b.firstPurchase.getTime()) / DAY) : 0; return b; });
-    const inactiveBuyers = allBuyers.filter(b => b.daysSinceLast >= inactiveDays);
-    if (customerName) { const f = allBuyers.filter(b => b.name === customerName); if (f.length === 0) return NextResponse.json({ ok: true, engine: null, message: `Kupec "${customerName}" ni najden.` }); }
-    if (inactiveBuyers.length === 0) return NextResponse.json({ ok: true, engine: null, message: `Ni neaktivnih kupcev (>${inactiveDays} dni).` });
 
-    const settings = await getSettingsRow();
-    const aiSettings: AiSettings = { provider: settings.aiProvider as AiProviderType, baseUrl: settings.aiBaseUrl, apiKey: settings.aiApiKey, model: settings.aiModel, fallbackProvider: (settings.fallbackProvider || '') as AiProviderType | '', fallbackBaseUrl: settings.fallbackBaseUrl || '', fallbackApiKey: settings.fallbackApiKey || '', fallbackModel: settings.fallbackModel || '' };
+    const allBuyers = buildBuyerMap(soldTrades);
+    const inactiveBuyers = allBuyers.filter(b => b.daysSinceLast >= inactiveDays);
+
+    if (customerName) {
+      const f = allBuyers.filter(b => b.name === customerName);
+      if (f.length === 0) {
+        return apiOk({ ok: true, engine: null, message: `Kupec "${customerName}" ni najden.` });
+      }
+    }
+    if (inactiveBuyers.length === 0) {
+      return apiOk({ ok: true, engine: null, message: `Ni neaktivnih kupcev (>${inactiveDays} dni).` });
+    }
 
     const targetBuyers = customerName ? allBuyers.filter(b => b.name === customerName) : inactiveBuyers.slice(0, 25);
-    const buyersStr = targetBuyers.slice(0, 10).map(b => `- ${b.name} | ${b.purchases}x | ${b.totalSpent}€ | ${b.avgOrder}€ povp | ${b.daysSinceLast}d neaktiven | ${b.lifetimeDays}d lifetime`).join('\n');
+    const prompt = buildPrompt(targetBuyers, inactiveDays);
+    const raw = await callAi(prompt);
+    const parsed: any = parseAi(raw);
 
-    const prompt = `Si AI buyer reactivation engine z ML in win-back strategy design.
+    const engine = transformEngine(parsed, inactiveBuyers);
+    return apiOk({ ok: true, engine });
+  },
+});
+
+// --- Pomožne funkcije (čiste, testabilne) --------------------------------
+
+function buildBuyerMap(soldTrades: SoldTradeRow[]): BuyerInfo[] {
+  const buyerMap = new Map<string, BuyerInfo>();
+  const now = Date.now();
+  const DAY = 24 * 60 * 60 * 1000;
+  for (const t of soldTrades) {
+    const name = (t.sellLocation || '').trim();
+    if (!name || name.length < 2 || !t.sellDate) continue;
+    const rev = (t.sellPrice ?? 0) - (t.sellFees ?? 0);
+    if (!buyerMap.has(name)) {
+      buyerMap.set(name, {
+        name, purchases: 0, totalSpent: 0, avgOrder: 0,
+        firstPurchase: t.sellDate, lastPurchase: t.sellDate,
+        categories: new Set(), daysSinceLast: 0, lifetimeDays: 0,
+      });
+    }
+    const b = buyerMap.get(name)!;
+    b.purchases += 1;
+    b.totalSpent += rev;
+    if (!b.firstPurchase || t.sellDate < b.firstPurchase) b.firstPurchase = t.sellDate;
+    if (!b.lastPurchase || t.sellDate > b.lastPurchase) b.lastPurchase = t.sellDate;
+    if (t.category) b.categories.add(t.category);
+  }
+  return Array.from(buyerMap.values()).map(b => {
+    b.avgOrder = b.purchases > 0 ? Math.round(b.totalSpent / b.purchases) : 0;
+    b.daysSinceLast = b.lastPurchase ? Math.round((now - b.lastPurchase.getTime()) / DAY) : 999;
+    b.lifetimeDays = b.firstPurchase ? Math.round((now - b.firstPurchase.getTime()) / DAY) : 0;
+    return b;
+  });
+}
+
+function includes<T extends string>(arr: readonly T[], v: string): v is T {
+  return (arr as readonly string[]).includes(v);
+}
+
+function clamp(n: number, lo: number, hi: number): number {
+  return Math.max(lo, Math.min(hi, n));
+}
+
+function round1(n: number): number {
+  return Math.round(Number(n) * 10) / 10;
+}
+
+function buildPrompt(targetBuyers: BuyerInfo[], inactiveDays: number): string {
+  const buyersStr = targetBuyers.slice(0, 10).map(b =>
+    `- ${b.name} | ${b.purchases}x | ${b.totalSpent}€ | ${b.avgOrder}€ povp | ${b.daysSinceLast}d neaktiven | ${b.lifetimeDays}d lifetime`
+  ).join('\n');
+
+  return `Si AI buyer reactivation engine z ML in win-back strategy design.
 Reaktivira neaktivne kupce (>${inactiveDays} dni) z 6 tierji in 8 strategijami.
 
 NEAKTIVNI KUPCI (${targetBuyers.length}, >${inactiveDays} dni):
@@ -89,27 +186,61 @@ Odgovori LE z JSON:
     "quickest_reactivation_win": "<max 100 znakov>", "reactivation_analysis_score": <number 0-100>
   }
 }`;
+}
 
-    let raw = '';
-    try { raw = await callProviderForRaw(aiSettings, prompt); }
-    catch (e: any) { if (aiSettings.fallbackProvider && aiSettings.fallbackModel) { const fb: AiSettings = { provider: aiSettings.fallbackProvider, baseUrl: aiSettings.fallbackBaseUrl || '', apiKey: aiSettings.fallbackApiKey || '', model: aiSettings.fallbackModel }; raw = await callProviderForRaw(fb, prompt); } else { return NextResponse.json({ error: e?.message ?? 'AI failed' }, { status: 500 }); } }
-
-    const parsed: any = parseJsonLooseExported(raw);
-
-    const engine = {
-      insights: String(parsed?.insights ?? '').slice(0, 500),
-      overview: { totalInactiveBuyers: Math.max(0, Number(parsed?.overview?.total_inactive_buyers ?? inactiveBuyers.length)), totalInactiveValueEur: Math.round(Number(parsed?.overview?.total_inactive_value_eur ?? inactiveBuyers.reduce((s, b) => s + b.totalSpent, 0))), avgInactiveDays: Math.max(0, Number(parsed?.overview?.avg_inactive_days ?? Math.round(inactiveBuyers.reduce((s, b) => s + b.daysSinceLast, 0) / Math.max(1, inactiveBuyers.length)))), avgReactivationProbabilityPct: Math.max(0, Math.min(100, Number(parsed?.overview?.avg_reactivation_probability_pct ?? 30))), highlyReactivatableCount: Math.max(0, Number(parsed?.overview?.highly_reactivatable_count ?? 0)), reactivationGrade: ['A', 'B', 'C', 'D', 'F'].includes(String(parsed?.overview?.reactivation_grade)) ? String(parsed.overview.reactivation_grade) : 'C' },
-      inactiveBuyers: (parsed?.inactiveBuyers || []).slice(0, 25).map((b: any) => ({ name: String(b?.name ?? '').slice(0, 100), daysInactive: Math.max(0, Number(b?.days_inactive ?? 0)), lifetimeValueEur: Math.round(Number(b?.lifetime_value_eur ?? 0)), lastPurchaseValueEur: Math.round(Number(b?.last_purchase_value_eur ?? 0)), reactivationProbabilityPct: Math.max(0, Math.min(100, Number(b?.reactivation_probability_pct ?? 30))), reactivationTier: (REACTIVATION_TIERS as readonly string[]).includes(String(b?.reactivation_tier)) ? String(b.reactivation_tier) : 'reactivatable', preferredStrategy: (STRATEGY_TYPES as readonly string[]).includes(String(b?.preferred_strategy)) ? String(b.preferred_strategy) : 'personalized_outreach' })),
-      reactivationStrategies: (parsed?.reactivationStrategies || []).slice(0, 8).map((s: any) => ({ strategyType: (STRATEGY_TYPES as readonly string[]).includes(String(s?.strategy_type)) ? String(s.strategy_type) : 'personalized_outreach', targetBuyerCount: Math.max(0, Number(s?.target_buyer_count ?? 0)), estimatedCostEur: Math.round(Number(s?.estimated_cost_eur ?? 0)), expectedReactivations: Math.max(0, Number(s?.expected_reactivations ?? 0)), expectedRevenueEur: Math.round(Number(s?.expected_revenue_eur ?? 0)), roiPct: Math.round(Number(s?.roi_pct ?? 0) * 10) / 10, bestForTier: (REACTIVATION_TIERS as readonly string[]).includes(String(s?.best_for_tier)) ? String(s.best_for_tier) : 'reactivatable' })),
-      campaignPlan: (parsed?.campaignPlan || []).slice(0, 5).map((c: any) => ({ phase: ['awareness', 'consideration', 'incentive', 'follow_up', 'retention'].includes(String(c?.phase)) ? String(c.phase) : 'awareness', channel: ['email', 'sms', 'whatsapp', 'push', 'social', 'phone'].includes(String(c?.channel)) ? String(c.channel) : 'email', timingDays: Math.max(0, Number(c?.timing_days ?? 0)), messageTheme: String(c?.message_theme ?? '').slice(0, 200), estimatedCostEur: Math.round(Number(c?.estimated_cost_eur ?? 0)), expectedResponseRatePct: Math.max(0, Math.min(100, Number(c?.expected_response_rate_pct ?? 15))) })),
-      mlModels: (parsed?.mlModels || []).slice(0, 5).map((m: any) => ({ model: ['random_forest', 'xgboost', 'neural_net', 'survival_analysis', 'ensemble'].includes(String(m?.model)) ? String(m.model) : 'ensemble', accuracyPct: Math.max(0, Math.min(100, Number(m?.accuracy_pct ?? 75))), predictionType: ['reactivation_probability', 'churn_prediction', 'response_forecast', 'value_prediction'].includes(String(m?.prediction_type)) ? String(m.prediction_type) : 'reactivation_probability', weightInEnsemble: Math.max(0, Math.min(100, Number(m?.weight_in_ensemble ?? 20))) })),
-      summary: { reactivationScore: Math.max(0, Math.min(100, Number(parsed?.summary?.reactivation_score ?? 50))), reactivationGrade: ['A', 'B', 'C', 'D', 'F'].includes(String(parsed?.summary?.reactivation_grade)) ? String(parsed.summary.reactivation_grade) : 'C', totalReactivatableValueEur: Math.round(Number(parsed?.summary?.total_reactivatable_value_eur ?? 0)), expectedReactivationCount: Math.max(0, Number(parsed?.summary?.expected_reactivation_count ?? 0)), expectedRevenueRecoveryEur: Math.round(Number(parsed?.summary?.expected_revenue_recovery_eur ?? 0)), biggestReactivationRisk: String(parsed?.summary?.biggest_reactivation_risk ?? '').slice(0, 200), biggestReactivationOpportunity: String(parsed?.summary?.biggest_reactivation_opportunity ?? '').slice(0, 200), quickestReactivationWin: String(parsed?.summary?.quickest_reactivation_win ?? '').slice(0, 200), reactivationAnalysisScore: Math.max(0, Math.min(100, Number(parsed?.summary?.reactivation_analysis_score ?? 50))) },
-    };
-
-    const today = new Date().toISOString().slice(0, 10);
-    if (settings.aiCallsDate !== today) { await db.settings.update({ where: { id: 'singleton' }, data: { aiCallsDate: today, aiCallsToday: 1 } }); }
-    else { await db.settings.update({ where: { id: 'singleton' }, data: { aiCallsToday: { increment: 1 } } }); }
-
-    return NextResponse.json({ ok: true, engine });
-  } catch (e: any) { logger.error("/api/ai/buyer-reactivation-engine", "POST handler failed", e); return NextResponse.json({ error: e?.message ?? 'Napaka' }, { status: 500 }); }
+function transformEngine(parsed: any, inactiveBuyers: BuyerInfo[]): any {
+  return {
+    insights: String(parsed?.insights ?? '').slice(0, 500),
+    overview: {
+      totalInactiveBuyers: Math.max(0, Number(parsed?.overview?.total_inactive_buyers ?? inactiveBuyers.length)),
+      totalInactiveValueEur: Math.round(Number(parsed?.overview?.total_inactive_value_eur ?? inactiveBuyers.reduce((s, b) => s + b.totalSpent, 0))),
+      avgInactiveDays: Math.max(0, Number(parsed?.overview?.avg_inactive_days ?? Math.round(inactiveBuyers.reduce((s, b) => s + b.daysSinceLast, 0) / Math.max(1, inactiveBuyers.length)))),
+      avgReactivationProbabilityPct: clamp(Number(parsed?.overview?.avg_reactivation_probability_pct ?? 30), 0, 100),
+      highlyReactivatableCount: Math.max(0, Number(parsed?.overview?.highly_reactivatable_count ?? 0)),
+      reactivationGrade: includes(GRADES, String(parsed?.overview?.reactivation_grade)) ? String(parsed.overview.reactivation_grade) : 'C',
+    },
+    inactiveBuyers: (parsed?.inactiveBuyers || []).slice(0, 25).map((b: any) => ({
+      name: String(b?.name ?? '').slice(0, 100),
+      daysInactive: Math.max(0, Number(b?.days_inactive ?? 0)),
+      lifetimeValueEur: Math.round(Number(b?.lifetime_value_eur ?? 0)),
+      lastPurchaseValueEur: Math.round(Number(b?.last_purchase_value_eur ?? 0)),
+      reactivationProbabilityPct: clamp(Number(b?.reactivation_probability_pct ?? 30), 0, 100),
+      reactivationTier: includes(REACTIVATION_TIERS, String(b?.reactivation_tier)) ? String(b.reactivation_tier) : 'reactivatable',
+      preferredStrategy: includes(STRATEGY_TYPES, String(b?.preferred_strategy)) ? String(b.preferred_strategy) : 'personalized_outreach',
+    })),
+    reactivationStrategies: (parsed?.reactivationStrategies || []).slice(0, 8).map((s: any) => ({
+      strategyType: includes(STRATEGY_TYPES, String(s?.strategy_type)) ? String(s.strategy_type) : 'personalized_outreach',
+      targetBuyerCount: Math.max(0, Number(s?.target_buyer_count ?? 0)),
+      estimatedCostEur: Math.round(Number(s?.estimated_cost_eur ?? 0)),
+      expectedReactivations: Math.max(0, Number(s?.expected_reactivations ?? 0)),
+      expectedRevenueEur: Math.round(Number(s?.expected_revenue_eur ?? 0)),
+      roiPct: round1(s?.roi_pct ?? 0),
+      bestForTier: includes(REACTIVATION_TIERS, String(s?.best_for_tier)) ? String(s.best_for_tier) : 'reactivatable',
+    })),
+    campaignPlan: (parsed?.campaignPlan || []).slice(0, 5).map((c: any) => ({
+      phase: includes(CAMPAIGN_PHASES, String(c?.phase)) ? String(c.phase) : 'awareness',
+      channel: includes(CAMPAIGN_CHANNELS, String(c?.channel)) ? String(c.channel) : 'email',
+      timingDays: Math.max(0, Number(c?.timing_days ?? 0)),
+      messageTheme: String(c?.message_theme ?? '').slice(0, 200),
+      estimatedCostEur: Math.round(Number(c?.estimated_cost_eur ?? 0)),
+      expectedResponseRatePct: clamp(Number(c?.expected_response_rate_pct ?? 15), 0, 100),
+    })),
+    mlModels: (parsed?.mlModels || []).slice(0, 5).map((m: any) => ({
+      model: includes(ML_MODELS, String(m?.model)) ? String(m.model) : 'ensemble',
+      accuracyPct: clamp(Number(m?.accuracy_pct ?? 75), 0, 100),
+      predictionType: includes(ML_PREDICTION_TYPES, String(m?.prediction_type)) ? String(m.prediction_type) : 'reactivation_probability',
+      weightInEnsemble: clamp(Number(m?.weight_in_ensemble ?? 20), 0, 100),
+    })),
+    summary: {
+      reactivationScore: clamp(Number(parsed?.summary?.reactivation_score ?? 50), 0, 100),
+      reactivationGrade: includes(GRADES, String(parsed?.summary?.reactivation_grade)) ? String(parsed.summary.reactivation_grade) : 'C',
+      totalReactivatableValueEur: Math.round(Number(parsed?.summary?.total_reactivatable_value_eur ?? 0)),
+      expectedReactivationCount: Math.max(0, Number(parsed?.summary?.expected_reactivation_count ?? 0)),
+      expectedRevenueRecoveryEur: Math.round(Number(parsed?.summary?.expected_revenue_recovery_eur ?? 0)),
+      biggestReactivationRisk: String(parsed?.summary?.biggest_reactivation_risk ?? '').slice(0, 200),
+      biggestReactivationOpportunity: String(parsed?.summary?.biggest_reactivation_opportunity ?? '').slice(0, 200),
+      quickestReactivationWin: String(parsed?.summary?.quickest_reactivation_win ?? '').slice(0, 200),
+      reactivationAnalysisScore: clamp(Number(parsed?.summary?.reactivation_analysis_score ?? 50), 0, 100),
+    },
+  };
 }

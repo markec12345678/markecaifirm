@@ -1,4 +1,4 @@
-// v7.78: Market Trend Forecaster Pro — napreden AI trend forecaster, ki
+// v7.78 / v8.96.6-batch1: Market Trend Forecaster Pro — napreden AI trend forecaster, ki
 // kombinira 4 trend signale (price, volume, deal quality, demand) v
 // celovit 90-dnevni trend forecast z scenario analizo. "Elektronika:
 // STRONG_UP (price +8%, volume +12%, demand +15%). BULL 40%, BASE 45%,
@@ -22,24 +22,18 @@
 //
 // GET+POST /api/ai/market-trend-forecaster-pro
 // (AI-enhanced + grounding + anti-hallucination + 6h cache + deterministic fallback)
+// Refaktoriran z withAiRoute helperjem (v8.96.6) + enforceBudget guard.
 
-import { NextRequest, NextResponse } from 'next/server';
-import { db } from '@/lib/db';
-import { getSettingsRow } from '@/lib/pipeline';
-import {
-  callProviderForRaw,
-  parseJsonLooseExported,
-  type AiProviderType,
-  type AiSettings,
-} from '@/lib/ai';
+import { withAiRoute, AI_ROUTE_DEFAULTS, type AiRouteContext } from '@/lib/with-ai-route';
+import { apiOk } from '@/lib/api-response';
 import { GROUNDING_PROMPT_SUFFIX } from '@/lib/anti-hallucination';
 import { getCachedAI, setCachedAI } from '@/lib/ai-cache';
-import { checkRateLimit, rateLimitResponse } from '@/lib/rate-limit';
-import { logger } from '@/lib/logger';
 
-export const runtime = 'nodejs';
-export const dynamic = 'force-dynamic';
+export const { runtime, dynamic } = AI_ROUTE_DEFAULTS;
 export const maxDuration = 60;
+
+// eslint-disable-next-line @typescript-eslint/no-empty-object-type
+interface MarketTrendForecasterProInput {}
 
 // --- Types ---------------------------------------------------------------
 
@@ -398,19 +392,208 @@ function actionableInsight(
   };
 }
 
+// --- Prompt builder + AI merge (čisti, testabilni) ----------------------
+
+function buildCategoriesForPrompt(
+  categoryAnalyses: CategoryAnalysis[],
+): Array<{
+  category: string;
+  signals: CategorySignals;
+  compositeScore: number;
+  forecast: CategoryForecast;
+  scenarios: Scenarios;
+}> {
+  return categoryAnalyses.slice(0, 8).map((c) => ({
+    category: c.category,
+    signals: c.signals,
+    compositeScore: c.compositeScore,
+    forecast: c.forecast,
+    scenarios: c.scenarios,
+  }));
+}
+
+function buildDeterministicSummary(
+  categoryAnalyses: CategoryAnalysis[],
+  convergence: ConvergenceLevel,
+  trendDivergence: TrendDivergence[],
+  actionableInsights: ActionableInsight[],
+): string {
+  return `Analiza ${categoryAnalyses.length} kategorij: ${categoryAnalyses.filter((c) => c.forecast.trendDirection === 'STRONG_UP' || c.forecast.trendDirection === 'UP').length} v UP/STRONG_UP trendu, ${categoryAnalyses.filter((c) => c.forecast.trendDirection === 'DOWN' || c.forecast.trendDirection === 'STRONG_DOWN').length} v DOWN/STRONG_DOWN trendu. Convergence: ${convergence}. ${trendDivergence.length} divergence konfliktov. ${actionableInsights.filter((i) => i.action === 'BUY').length} BUY signalov, ${actionableInsights.filter((i) => i.action === 'SELL').length} SELL signalov.`;
+}
+
+function buildPrompt(
+  categoriesForPrompt: ReturnType<typeof buildCategoriesForPrompt>,
+  convergence: ConvergenceLevel,
+  compositeStd: number,
+  trendDivergence: TrendDivergence[],
+  actionableInsights: ActionableInsight[],
+): string {
+  return `Si AI "Market Trend Forecaster Pro" za slovenske in srednjeevropske oglasne platforme (Bolha, Vinted, Avtonet, mobile.de).
+Kombiniraj 4 trend signale (price, volume, deal quality, demand) v celovit 90-dnevni trend forecast z scenario analizo (BULL/BASE/BEAR) in actionable insights.
+
+KATEGORIJE Z SIGNALLI (deterministično izračunano iz zadnjih 180 dni):
+${JSON.stringify(categoriesForPrompt, null, 2)}
+
+DETERMINISTIČNA ANALIZA:
+- trendConvergence: ${convergence} (stdDev composite-a: ${round1(compositeStd)})
+- trendDivergence: ${JSON.stringify(trendDivergence.slice(0, 3))}
+- actionableInsights: ${JSON.stringify(actionableInsights.slice(0, 5))}
+
+PRAVILA ZA AI ODGOVOR:
+1. analysis.trendConvergence: HIGH / MEDIUM / LOW (koliko so signali usklajeni)
+2. analysis.trendDivergence: array 0-5 kategorij s konflikti (npr. cena raste, volumen pada — risk indicator)
+   - category: ime kategorije (mora obstajati v zgornjem seznamu!)
+   - conflict: slovenski opis konflikta (max 200 znakov)
+3. analysis.keyTrendDrivers: array 3-5 top faktorjev z:
+   - driver: slovenski opis (max 100 znakov)
+   - impact: slovenski opis učinka (max 200 znakov)
+   - weight: 0-1 (pomembnost faktorja)
+4. analysis.actionableInsights: array 3-8 buy/sell/hold priporočil z:
+   - category: ime kategorije (mora obstajati v zgornjem seznamu!)
+   - action: BUY / SELL / HOLD (validiraj proti enum)
+   - reasoning: slovenski opis (max 200 znakov)
+5. summary: celovit slovenski povzetek trend analize (max 500 znakov)
+
+VRNI LE JSON:
+{
+  "analysis": {
+    "trendConvergence": "HIGH",
+    "trendDivergence": [{ "category": "...", "conflict": "..." }],
+    "keyTrendDrivers": [{ "driver": "...", "impact": "...", "weight": 0.8 }],
+    "actionableInsights": [{ "category": "...", "action": "BUY", "reasoning": "..." }]
+  },
+  "summary": "..."
+}${GROUNDING_PROMPT_SUFFIX}`;
+}
+
+function mergeAiIntoAnalysis(
+  parsed: AiTrendResponse | null,
+  deterministicAnalysis: TrendAnalysis,
+  deterministicSummary: string,
+  categoryAnalyses: CategoryAnalysis[],
+  convergence: ConvergenceLevel,
+): { analysis: TrendAnalysis; summary: string; aiUsed: boolean } {
+  let analysis: TrendAnalysis = deterministicAnalysis;
+  let summary = deterministicSummary;
+  let aiUsed = false;
+
+  if (parsed && typeof parsed === 'object' && parsed.analysis) {
+    const a = parsed.analysis as Record<string, unknown>;
+
+    // Parse trendConvergence
+    const trendConvergence = clampEnum(
+      a.trendConvergence,
+      VALID_CONVERGENCE,
+      convergence,
+    );
+
+    // Parse trendDivergence (anti-hallucination: categories must be from list)
+    const validCategories = new Set(
+      categoryAnalyses.map((c) => c.category),
+    );
+    const trendDivergenceParsed: TrendDivergence[] = [];
+    if (Array.isArray(a.trendDivergence)) {
+      for (const d of a.trendDivergence) {
+        const dr = d as Record<string, unknown>;
+        if (!dr || typeof dr !== 'object') continue;
+        const category = String(dr.category || '').trim().toLowerCase();
+        if (!category || !validCategories.has(category)) continue;
+        const conflict = clampString(
+          dr.conflict,
+          200,
+          'Signali v konfliktu.',
+        );
+        trendDivergenceParsed.push({ category, conflict });
+        if (trendDivergenceParsed.length >= 5) break;
+      }
+    }
+    const finalDivergence =
+      trendDivergenceParsed.length > 0
+        ? trendDivergenceParsed
+        : deterministicAnalysis.trendDivergence;
+
+    // Parse keyTrendDrivers
+    const keyTrendDriversParsed: TrendDriver[] = [];
+    if (Array.isArray(a.keyTrendDrivers)) {
+      for (const d of a.keyTrendDrivers) {
+        const dr = d as Record<string, unknown>;
+        if (!dr || typeof dr !== 'object') continue;
+        keyTrendDriversParsed.push({
+          driver: clampString(dr.driver, 100, 'Trend driver'),
+          impact: clampString(dr.impact, 200, 'Vpliva na trend.'),
+          weight: clampNumber(dr.weight, 0, 1, 0.5),
+        });
+        if (keyTrendDriversParsed.length >= 5) break;
+      }
+    }
+    const finalDrivers =
+      keyTrendDriversParsed.length > 0
+        ? keyTrendDriversParsed
+        : deterministicAnalysis.keyTrendDrivers;
+
+    // Parse actionableInsights (anti-hallucination: categories must be from list)
+    const insightsParsed: ActionableInsight[] = [];
+    if (Array.isArray(a.actionableInsights)) {
+      for (const i of a.actionableInsights) {
+        const ir = i as Record<string, unknown>;
+        if (!ir || typeof ir !== 'object') continue;
+        const category = String(ir.category || '').trim().toLowerCase();
+        if (!category || !validCategories.has(category)) continue;
+        const action = clampEnum(ir.action, VALID_ACTION, 'HOLD');
+        const reasoning = clampString(
+          ir.reasoning,
+          200,
+          `${action} priporočilo za ${category}.`,
+        );
+        insightsParsed.push({ category, action, reasoning });
+        if (insightsParsed.length >= 8) break;
+      }
+    }
+    const finalInsights =
+      insightsParsed.length > 0
+        ? insightsParsed
+        : deterministicAnalysis.actionableInsights;
+
+    analysis = {
+      trendConvergence,
+      trendDivergence: finalDivergence,
+      keyTrendDrivers: finalDrivers,
+      actionableInsights: finalInsights,
+    };
+
+    // Parse summary
+    if (typeof parsed === 'object' && 'summary' in parsed) {
+      summary = clampString(
+        (parsed as Record<string, unknown>).summary,
+        500,
+        deterministicSummary,
+      );
+    } else {
+      summary = deterministicSummary;
+    }
+
+    aiUsed = true;
+  }
+
+  return { analysis, summary, aiUsed };
+}
+
 // --- Handler -------------------------------------------------------------
 
-export async function GET(req: NextRequest) {
-  return handleMarketTrendForecasterPro(req);
-}
-export async function POST(req: NextRequest) {
-  return handleMarketTrendForecasterPro(req);
-}
+const marketTrendForecasterProHandler = withAiRoute<MarketTrendForecasterProInput>({
+  endpoint: '/api/ai/market-trend-forecaster-pro',
+  maxDuration: 60,
+  enforceBudget: true, // AI klic — preveri budget
+  method: 'GET', // Endpoint sprejema GET + POST — bypass POST-only check
 
-async function handleMarketTrendForecasterPro(req: NextRequest) {
-  try {
-    const rl = checkRateLimit(req, 'ai-market-trend-forecaster-pro', 20);
-    if (!rl.allowed) return rateLimitResponse(rl);
+  parseBody: async (req) => {
+    await req.json().catch(() => ({}));
+    return {};
+  },
+
+  // No validateInput — body ignored, identična logika za GET in POST
+  handler: async (_input, ctx: AiRouteContext) => {
+    const { db, callAi, parseAi, logger } = ctx;
 
     const now = Date.now();
     const cutoff180d = new Date(now - 180 * 86_400_000); // 180 days
@@ -488,7 +671,7 @@ async function handleMarketTrendForecasterPro(req: NextRequest) {
 
     // Empty state — no listings in last 180 days
     if (listings.length === 0 || catAgg.size === 0) {
-      return NextResponse.json({
+      return apiOk({
         ok: true,
         categories: [],
         analysis: {
@@ -602,7 +785,7 @@ async function handleMarketTrendForecasterPro(req: NextRequest) {
     }
 
     if (categoryAnalyses.length === 0) {
-      return NextResponse.json({
+      return apiOk({
         ok: true,
         categories: [],
         analysis: {
@@ -713,7 +896,7 @@ async function handleMarketTrendForecasterPro(req: NextRequest) {
       summary: string;
     }>(cacheKey);
     if (cached) {
-      return NextResponse.json({
+      return apiOk({
         ok: true,
         categories: categoryAnalyses,
         analysis: cached.analysis,
@@ -723,174 +906,40 @@ async function handleMarketTrendForecasterPro(req: NextRequest) {
       });
     }
 
-    // 6) AI prompt with grounding
-    const settings = await getSettingsRow();
-    const aiSettings: AiSettings = {
-      provider: settings.aiProvider as AiProviderType,
-      baseUrl: settings.aiBaseUrl,
-      apiKey: settings.aiApiKey,
-      model: settings.aiModel,
-      fallbackProvider: (settings.fallbackProvider || '') as
-        | AiProviderType
-        | '',
-      fallbackBaseUrl: settings.fallbackBaseUrl || '',
-      fallbackApiKey: settings.fallbackApiKey || '',
-      fallbackModel: settings.fallbackModel || '',
-    };
-
-    // Build compact prompt data — top 8 categories
-    const categoriesForPrompt = categoryAnalyses.slice(0, 8).map((c) => ({
-      category: c.category,
-      signals: c.signals,
-      compositeScore: c.compositeScore,
-      forecast: c.forecast,
-      scenarios: c.scenarios,
-    }));
-
-    const deterministicSummary = `Analiza ${categoryAnalyses.length} kategorij: ${categoryAnalyses.filter((c) => c.forecast.trendDirection === 'STRONG_UP' || c.forecast.trendDirection === 'UP').length} v UP/STRONG_UP trendu, ${categoryAnalyses.filter((c) => c.forecast.trendDirection === 'DOWN' || c.forecast.trendDirection === 'STRONG_DOWN').length} v DOWN/STRONG_DOWN trendu. Convergence: ${convergence}. ${trendDivergence.length} divergence konfliktov. ${actionableInsights.filter((i) => i.action === 'BUY').length} BUY signalov, ${actionableInsights.filter((i) => i.action === 'SELL').length} SELL signalov.`;
-
-    const prompt = `Si AI "Market Trend Forecaster Pro" za slovenske in srednjeevropske oglasne platforme (Bolha, Vinted, Avtonet, mobile.de).
-Kombiniraj 4 trend signale (price, volume, deal quality, demand) v celovit 90-dnevni trend forecast z scenario analizo (BULL/BASE/BEAR) in actionable insights.
-
-KATEGORIJE Z SIGNALLI (deterministično izračunano iz zadnjih 180 dni):
-${JSON.stringify(categoriesForPrompt, null, 2)}
-
-DETERMINISTIČNA ANALIZA:
-- trendConvergence: ${convergence} (stdDev composite-a: ${round1(compositeStd)})
-- trendDivergence: ${JSON.stringify(trendDivergence.slice(0, 3))}
-- actionableInsights: ${JSON.stringify(actionableInsights.slice(0, 5))}
-
-PRAVILA ZA AI ODGOVOR:
-1. analysis.trendConvergence: HIGH / MEDIUM / LOW (koliko so signali usklajeni)
-2. analysis.trendDivergence: array 0-5 kategorij s konflikti (npr. cena raste, volumen pada — risk indicator)
-   - category: ime kategorije (mora obstajati v zgornjem seznamu!)
-   - conflict: slovenski opis konflikta (max 200 znakov)
-3. analysis.keyTrendDrivers: array 3-5 top faktorjev z:
-   - driver: slovenski opis (max 100 znakov)
-   - impact: slovenski opis učinka (max 200 znakov)
-   - weight: 0-1 (pomembnost faktorja)
-4. analysis.actionableInsights: array 3-8 buy/sell/hold priporočil z:
-   - category: ime kategorije (mora obstajati v zgornjem seznamu!)
-   - action: BUY / SELL / HOLD (validiraj proti enum)
-   - reasoning: slovenski opis (max 200 znakov)
-5. summary: celovit slovenski povzetek trend analize (max 500 znakov)
-
-VRNI LE JSON:
-{
-  "analysis": {
-    "trendConvergence": "HIGH",
-    "trendDivergence": [{ "category": "...", "conflict": "..." }],
-    "keyTrendDrivers": [{ "driver": "...", "impact": "...", "weight": 0.8 }],
-    "actionableInsights": [{ "category": "...", "action": "BUY", "reasoning": "..." }]
-  },
-  "summary": "..."
-}${GROUNDING_PROMPT_SUFFIX}`;
+    // 6) AI prompt with grounding (settings loaded by withAiRoute wrapper)
+    const categoriesForPrompt = buildCategoriesForPrompt(categoryAnalyses);
+    const deterministicSummary = buildDeterministicSummary(
+      categoryAnalyses,
+      convergence,
+      trendDivergence,
+      actionableInsights,
+    );
+    const prompt = buildPrompt(
+      categoriesForPrompt,
+      convergence,
+      compositeStd,
+      trendDivergence,
+      actionableInsights,
+    );
 
     let analysis: TrendAnalysis = deterministicAnalysis;
     let summary = deterministicSummary;
     let aiUsed = false;
 
     try {
-      const raw = await callProviderForRaw(aiSettings, prompt);
-      const parsed = parseJsonLooseExported(raw) as AiTrendResponse | null;
+      const raw = await callAi(prompt);
+      const parsed = parseAi(raw) as AiTrendResponse | null;
 
-      if (parsed && typeof parsed === 'object' && parsed.analysis) {
-        const a = parsed.analysis as Record<string, unknown>;
-
-        // Parse trendConvergence
-        const trendConvergence = clampEnum(
-          a.trendConvergence,
-          VALID_CONVERGENCE,
-          convergence,
-        );
-
-        // Parse trendDivergence (anti-hallucination: categories must be from list)
-        const validCategories = new Set(
-          categoryAnalyses.map((c) => c.category),
-        );
-        const trendDivergenceParsed: TrendDivergence[] = [];
-        if (Array.isArray(a.trendDivergence)) {
-          for (const d of a.trendDivergence) {
-            const dr = d as Record<string, unknown>;
-            if (!dr || typeof dr !== 'object') continue;
-            const category = String(dr.category || '').trim().toLowerCase();
-            if (!category || !validCategories.has(category)) continue;
-            const conflict = clampString(
-              dr.conflict,
-              200,
-              'Signali v konfliktu.',
-            );
-            trendDivergenceParsed.push({ category, conflict });
-            if (trendDivergenceParsed.length >= 5) break;
-          }
-        }
-        const finalDivergence =
-          trendDivergenceParsed.length > 0
-            ? trendDivergenceParsed
-            : deterministicAnalysis.trendDivergence;
-
-        // Parse keyTrendDrivers
-        const keyTrendDriversParsed: TrendDriver[] = [];
-        if (Array.isArray(a.keyTrendDrivers)) {
-          for (const d of a.keyTrendDrivers) {
-            const dr = d as Record<string, unknown>;
-            if (!dr || typeof dr !== 'object') continue;
-            keyTrendDriversParsed.push({
-              driver: clampString(dr.driver, 100, 'Trend driver'),
-              impact: clampString(dr.impact, 200, 'Vpliva na trend.'),
-              weight: clampNumber(dr.weight, 0, 1, 0.5),
-            });
-            if (keyTrendDriversParsed.length >= 5) break;
-          }
-        }
-        const finalDrivers =
-          keyTrendDriversParsed.length > 0
-            ? keyTrendDriversParsed
-            : deterministicAnalysis.keyTrendDrivers;
-
-        // Parse actionableInsights (anti-hallucination: categories must be from list)
-        const insightsParsed: ActionableInsight[] = [];
-        if (Array.isArray(a.actionableInsights)) {
-          for (const i of a.actionableInsights) {
-            const ir = i as Record<string, unknown>;
-            if (!ir || typeof ir !== 'object') continue;
-            const category = String(ir.category || '').trim().toLowerCase();
-            if (!category || !validCategories.has(category)) continue;
-            const action = clampEnum(ir.action, VALID_ACTION, 'HOLD');
-            const reasoning = clampString(
-              ir.reasoning,
-              200,
-              `${action} priporočilo za ${category}.`,
-            );
-            insightsParsed.push({ category, action, reasoning });
-            if (insightsParsed.length >= 8) break;
-          }
-        }
-        const finalInsights =
-          insightsParsed.length > 0
-            ? insightsParsed
-            : deterministicAnalysis.actionableInsights;
-
-        analysis = {
-          trendConvergence,
-          trendDivergence: finalDivergence,
-          keyTrendDrivers: finalDrivers,
-          actionableInsights: finalInsights,
-        };
-
-        // Parse summary
-        if (typeof parsed === 'object' && 'summary' in parsed) {
-          summary = clampString(
-            (parsed as Record<string, unknown>).summary,
-            500,
-            deterministicSummary,
-          );
-        } else {
-          summary = deterministicSummary;
-        }
-
-        aiUsed = true;
-      }
+      const merged = mergeAiIntoAnalysis(
+        parsed,
+        deterministicAnalysis,
+        deterministicSummary,
+        categoryAnalyses,
+        convergence,
+      );
+      analysis = merged.analysis;
+      summary = merged.summary;
+      aiUsed = merged.aiUsed;
     } catch (err) {
       logger.warn(
         '/api/ai/market-trend-forecaster-pro',
@@ -904,18 +953,15 @@ VRNI LE JSON:
       setCachedAI(cacheKey, { analysis, summary });
     }
 
-    return NextResponse.json({
+    return apiOk({
       ok: true,
       categories: categoryAnalyses,
       analysis,
       summary,
       aiUsed,
     });
-  } catch (err: any) {
-    logger.error('/api/ai/market-trend-forecaster-pro', 'handler failed', err);
-    return NextResponse.json(
-      { error: err?.message ?? 'Napaka' },
-      { status: 500 },
-    );
-  }
-}
+  },
+});
+
+export const GET = marketTrendForecasterProHandler;
+export const POST = marketTrendForecasterProHandler;

@@ -1,29 +1,81 @@
-// v6.27: AI Listing Quality Score Aggregator — agregira vse AI ocene v eno skupno
+// v6.27 / v8.95.8-other1: AI Listing Quality Score Aggregator — agregira vse AI ocene v eno skupno.
+// Refaktoriran z withAiRoute helperjem (v8.95.8-other1) + enforceBudget guard.
+//
 // POST /api/ai/quality-aggregator
 // Body: { listingId?: string }
-// Returns: { ok, aggregate: { overallScore, breakdown: [], strengths, weaknesses, comparisonToSimilar, recommendation } }
+// Returns: { ok, aggregate: { overallScore, breakdown, strengths, weaknesses, comparisonToSimilar, priceAnalysis, recommendation, actionItems, reasoning }, listing }
 
-import { NextRequest, NextResponse } from 'next/server';
-import { db } from '@/lib/db';
-import { getSettingsRow } from '@/lib/pipeline';
-import { callProviderForRaw, parseJsonLooseExported, type AiProviderType, type AiSettings } from '@/lib/ai';
-import { logger } from '@/lib/logger';
+import { withAiRoute, AI_ROUTE_DEFAULTS, ApiRouteError, type AiRouteContext } from '@/lib/with-ai-route';
+import { apiOk } from '@/lib/api-response';
 
-export const runtime = 'nodejs';
-export const dynamic = 'force-dynamic';
+export const { runtime, dynamic } = AI_ROUTE_DEFAULTS;
 export const maxDuration = 60;
 
-export async function POST(req: NextRequest) {
-  try {
+interface QualityAggregatorInput {
+  listingId: string;
+}
+
+interface SimilarRow {
+  dealScore: number | null;
+  aiScore: number | null;
+  aiRisk: number | null;
+  aiVerdict: string | null;
+  price: number | null;
+}
+
+interface SimilarStats {
+  avgDealScore: number;
+  avgAiScore: number;
+  avgAiRisk: number;
+  opportunityPct: number;
+}
+
+interface ListingRow {
+  id: string;
+  title: string;
+  price: number | null;
+  priceText: string | null;
+  description: string | null;
+  detailDescription: string | null;
+  imageUrl: string | null;
+  location: string | null;
+  aiScore: number | null;
+  aiRisk: number | null;
+  aiVerdict: string | null;
+  aiReason: string | null;
+  aiEstimatedValue: number | null;
+  aiImageAnalysis: string | null;
+  aiImageVerdict: string | null;
+  dealScore: number | null;
+  dealScoreReason: string | null;
+  sellerName: string | null;
+  sellerListingCount: number | null;
+  postedAt: Date | null;
+  firstSeenAt: Date | null;
+  previousPrice: number | null;
+  priceDroppedAt: Date | null;
+  monitor: { source: string | null; name: string | null } | null;
+}
+
+export const POST = withAiRoute<QualityAggregatorInput>({
+  endpoint: '/api/ai/quality-aggregator',
+  maxDuration: 60,
+  enforceBudget: true, // AI klic — preveri budget
+
+  parseBody: async (req) => {
     const body = await req.json().catch(() => ({}));
-    const { listingId } = body;
+    return { listingId: String(body?.listingId ?? '') };
+  },
 
-    if (!listingId) {
-      return NextResponse.json({ error: 'listingId je obvezen' }, { status: 400 });
-    }
+  validateInput: (input) => (input.listingId ? null : 'listingId je obvezen'),
 
+  handler: async (input, ctx: AiRouteContext) => {
+    const { db, callAi, parseAi } = ctx;
+    const { listingId } = input;
+
+    // 1. Load listing
     const listing = await db.listing.findUnique({
-      where: { id: String(listingId) },
+      where: { id: listingId },
       select: {
         id: true, title: true, price: true, priceText: true, description: true,
         detailDescription: true, imageUrl: true, location: true,
@@ -35,10 +87,9 @@ export async function POST(req: NextRequest) {
         monitor: { select: { source: true, name: true } },
       },
     });
+    if (!listing) throw new ApiRouteError('Listing ne obstaja', 404);
 
-    if (!listing) return NextResponse.json({ error: 'Listing ne obstaja' }, { status: 404 });
-
-    // 1. Podobni listingi za benchmark
+    // 2. Podobni listingi za benchmark
     const similar = await db.listing.findMany({
       where: {
         price: { gte: Math.floor((listing.price ?? 100) * 0.7), lte: Math.ceil((listing.price ?? 100) * 1.3) },
@@ -49,52 +100,66 @@ export async function POST(req: NextRequest) {
       take: 30,
     });
 
-    const avgDealScore = similar.length > 0 ? Math.round(similar.reduce((s, l) => s + (l.dealScore ?? 0), 0) / similar.length) : 50;
-    const avgAiScore = similar.length > 0 ? Math.round(similar.reduce((s, l) => s + (l.aiScore ?? 0), 0) / similar.length) : 5;
-    const avgAiRisk = similar.length > 0 ? Math.round(similar.reduce((s, l) => s + (l.aiRisk ?? 0), 0) / similar.length) : 5;
-    const opportunityPct = similar.length > 0 ? Math.round(similar.filter(l => l.aiVerdict === 'PRILIKA').length / similar.length * 100) : 0;
+    const stats = computeSimilarStats(similar);
 
-    // 2. AI agregacija vseh ocen
-    const settings = await getSettingsRow();
-    const aiSettings: AiSettings = {
-      provider: settings.aiProvider as AiProviderType,
-      baseUrl: settings.aiBaseUrl, apiKey: settings.aiApiKey, model: settings.aiModel,
-      fallbackProvider: (settings.fallbackProvider || '') as AiProviderType | '',
-      fallbackBaseUrl: settings.fallbackBaseUrl || '', fallbackApiKey: settings.fallbackApiKey || '',
-      fallbackModel: settings.fallbackModel || '',
-    };
+    // 3. Build prompt + call AI
+    const prompt = buildPrompt(listing, stats);
+    const raw = await callAi(prompt);
 
-    const prompt = `Si ekspert za agregacijo AI ocen in vrednotenje kakovosti oglasov.
+    // 4. Parse + transform
+    const parsed: any = parseAi(raw);
+    const aggregate = transformAggregate(parsed, listing);
+
+    return apiOk({
+      ok: true,
+      aggregate,
+      listing: { id: listing.id, title: listing.title, price: listing.price },
+    });
+  },
+});
+
+// --- Pomožne funkcije (čiste, testabilne) --------------------------------
+
+function computeSimilarStats(similar: SimilarRow[]): SimilarStats {
+  const avgDealScore = similar.length > 0 ? Math.round(similar.reduce((s, l) => s + (l.dealScore ?? 0), 0) / similar.length) : 50;
+  const avgAiScore = similar.length > 0 ? Math.round(similar.reduce((s, l) => s + (l.aiScore ?? 0), 0) / similar.length) : 5;
+  const avgAiRisk = similar.length > 0 ? Math.round(similar.reduce((s, l) => s + (l.aiRisk ?? 0), 0) / similar.length) : 5;
+  const opportunityPct = similar.length > 0 ? Math.round(similar.filter(l => l.aiVerdict === 'PRILIKA').length / similar.length * 100) : 0;
+  return { avgDealScore, avgAiScore, avgAiRisk, opportunityPct };
+}
+
+function buildPrompt(l: ListingRow, stats: SimilarStats): string {
+  return `Si ekspert za agregacijo AI ocen in vrednotenje kakovosti oglasov.
 Združi vse AI ocene tega oglasa v eno skupno oceno kakovosti.
 
-NASLOV: ${listing.title}
-CENA: ${listing.priceText || (listing.price + ' EUR')}
-LOKACIJA: ${listing.location}
-VIR: ${listing.monitor?.source || 'neznan'}
-STAROST: ${listing.postedAt ? Math.round((Date.now() - listing.postedAt.getTime()) / (24*60*60*1000)) : 0} dni
+NASLOV: ${l.title}
+CENA: ${l.priceText || (l.price + ' EUR')}
+LOKACIJA: ${l.location}
+VIR: ${l.monitor?.source || 'neznan'}
+STAROST: ${l.postedAt ? Math.round((Date.now() - l.postedAt.getTime()) / (24*60*60*1000)) : 0} dni
 
 AI OCENE:
-- AI Score (1-10): ${listing.aiScore ?? 'neznan'}
-- AI Risk (1-10): ${listing.aiRisk ?? 'neznan'}
-- AI Verdict: ${listing.aiVerdict ?? 'neznan'}
-- AI Reason: ${listing.aiReason ?? 'neznan'}
-- AI Est. Value: ${listing.aiEstimatedValue ?? 'neznan'}€
-- Deal Score (0-100): ${listing.dealScore ?? 'neznan'}
-- Deal Score Reason: ${listing.dealScoreReason ?? 'neznan'}
-- Image Verdict: ${listing.aiImageVerdict ?? 'neznan'}
-- Image Analysis: ${listing.aiImageAnalysis ?? 'neznan'}
+- AI Score (1-10): ${l.aiScore ?? 'neznan'}
+- AI Risk (1-10): ${l.aiRisk ?? 'neznan'}
+- AI Verdict: ${l.aiVerdict ?? 'neznan'}
+- AI Reason: ${l.aiReason ?? 'neznan'}
+- AI Est. Value: ${l.aiEstimatedValue ?? 'neznan'}€
+- Deal Score (0-100): ${l.dealScore ?? 'neznan'}
+- Deal Score Reason: ${l.dealScoreReason ?? 'neznan'}
+- Image Verdict: ${l.aiImageVerdict ?? 'neznan'}
+- Image Analysis: ${l.aiImageAnalysis ?? 'neznan'}
 
 PRODAJALEC:
-- Ime: ${listing.sellerName ?? 'neznan'}
-- Število oglasov: ${listing.sellerListingCount}
+- Ime: ${l.sellerName ?? 'neznan'}
+- Število oglasov: ${l.sellerListingCount}
 
 BENCHMARK (podobni oglasi):
-- Povp. deal score: ${avgDealScore}/100
-- Povp. AI score: ${avgAiScore}/10
-- Povp. AI risk: ${avgAiRisk}/10
-- % priložnosti: ${opportunityPct}%
+- Povp. deal score: ${stats.avgDealScore}/100
+- Povp. AI score: ${stats.avgAiScore}/10
+- Povp. AI risk: ${stats.avgAiRisk}/10
+- % priložnosti: ${stats.opportunityPct}%
 
-${listing.previousPrice ? `CENA PADLA: ${listing.previousPrice}€ → ${listing.price}€` : 'Brez padca cene'}
+${l.previousPrice ? `CENA PADLA: ${l.previousPrice}€ → ${l.price}€` : 'Brez padca cene'}
 
 Izračunaj skupno oceno (0-100) kot ponderirano povprečje:
 - Deal Score: 35% utež
@@ -130,61 +195,48 @@ Odgovori LE z JSON:
   "action_items": ["<konkretno dejanje, max 100 znakov>", "..."],
   "reasoning": "<max 200 znakov>"
 }`;
+}
 
-    let raw = '';
-    try {
-      raw = await callProviderForRaw(aiSettings, prompt);
-    } catch (primaryError: any) {
-      if (aiSettings.fallbackProvider && aiSettings.fallbackModel) {
-        const fb: AiSettings = { provider: aiSettings.fallbackProvider, baseUrl: aiSettings.fallbackBaseUrl || '',
-          apiKey: aiSettings.fallbackApiKey || '', model: aiSettings.fallbackModel };
-        raw = await callProviderForRaw(fb, prompt);
-      } else { return NextResponse.json({ error: primaryError?.message ?? 'AI failed' }, { status: 500 }); }
-    }
-
-    const parsed: any = parseJsonLooseExported(raw);
-
-    const aggregate = {
-      overallScore: Math.max(0, Math.min(100, Number(parsed?.overall_score ?? 50))),
-      grade: ['A+', 'A', 'B+', 'B', 'C+', 'C', 'D', 'F'].includes(String(parsed?.grade)) ? String(parsed.grade) : 'C',
-      breakdown: (parsed?.breakdown || []).slice(0, 8).map((b: any) => ({
-        factor: String(b?.factor ?? '').slice(0, 50),
-        score: Math.max(0, Math.min(100, Number(b?.score ?? 50))),
-        weightPct: Math.max(0, Math.min(100, Number(b?.weight_pct ?? 0))),
-        contribution: Math.round(Number(b?.contribution ?? 0)),
-      })),
-      strengths: (parsed?.strengths || []).slice(0, 5).map((s: any) => String(s).slice(0, 150)),
-      weaknesses: (parsed?.weaknesses || []).slice(0, 5).map((w: any) => String(w).slice(0, 150)),
-      comparisonToSimilar: {
-        percentile: Math.max(0, Math.min(100, Number(parsed?.comparison_to_similar?.percentile ?? 50))),
-        betterThanPct: Math.max(0, Math.min(100, Number(parsed?.comparison_to_similar?.better_than_pct ?? 50))),
-        worseThanPct: Math.max(0, Math.min(100, Number(parsed?.comparison_to_similar?.worse_than_pct ?? 50))),
-        ranking: ['top_5', 'top_10', 'top_25', 'average', 'bottom_25', 'bottom_10'].includes(String(parsed?.comparison_to_similar?.ranking))
-          ? String(parsed.comparison_to_similar.ranking) : 'average',
-      },
-      priceAnalysis: {
-        listPriceEur: Math.max(0, Number(parsed?.price_analysis?.list_price_eur ?? listing.price ?? 0)),
-        estimatedValueEur: Math.max(0, Number(parsed?.price_analysis?.estimated_value_eur ?? listing.aiEstimatedValue ?? 0)),
-        discountPct: Math.round(Number(parsed?.price_analysis?.discount_pct ?? 0)),
-        isGoodDeal: Boolean(parsed?.price_analysis?.is_good_deal ?? false),
-        fairPriceEur: Math.max(0, Number(parsed?.price_analysis?.fair_price_eur ?? 0)),
-      },
-      recommendation: ['buy_now', 'buy_with_caution', 'monitor', 'wait', 'avoid'].includes(String(parsed?.recommendation))
-        ? String(parsed.recommendation) : 'monitor',
-      actionItems: (parsed?.action_items || []).slice(0, 5).map((a: any) => String(a).slice(0, 200)),
-      reasoning: String(parsed?.reasoning ?? '').slice(0, 400),
-    };
-
-    const today = new Date().toISOString().slice(0, 10);
-    if (settings.aiCallsDate !== today) {
-      await db.settings.update({ where: { id: 'singleton' }, data: { aiCallsDate: today, aiCallsToday: 1 } });
-    } else {
-      await db.settings.update({ where: { id: 'singleton' }, data: { aiCallsToday: { increment: 1 } } });
-    }
-
-    return NextResponse.json({ ok: true, aggregate, listing: { id: listing.id, title: listing.title, price: listing.price } });
-  } catch (e: any) {
-    logger.error("/api/ai/quality-aggregator", "POST handler failed", e);
-    return NextResponse.json({ error: e?.message ?? 'Napaka' }, { status: 500 });
-  }
+function transformAggregate(parsed: any, l: ListingRow): {
+  overallScore: number;
+  grade: string;
+  breakdown: any[];
+  strengths: string[];
+  weaknesses: string[];
+  comparisonToSimilar: any;
+  priceAnalysis: any;
+  recommendation: string;
+  actionItems: string[];
+  reasoning: string;
+} {
+  return {
+    overallScore: Math.max(0, Math.min(100, Number(parsed?.overall_score ?? 50))),
+    grade: ['A+', 'A', 'B+', 'B', 'C+', 'C', 'D', 'F'].includes(String(parsed?.grade)) ? String(parsed.grade) : 'C',
+    breakdown: (parsed?.breakdown || []).slice(0, 8).map((b: any) => ({
+      factor: String(b?.factor ?? '').slice(0, 50),
+      score: Math.max(0, Math.min(100, Number(b?.score ?? 50))),
+      weightPct: Math.max(0, Math.min(100, Number(b?.weight_pct ?? 0))),
+      contribution: Math.round(Number(b?.contribution ?? 0)),
+    })),
+    strengths: (parsed?.strengths || []).slice(0, 5).map((s: any) => String(s).slice(0, 150)),
+    weaknesses: (parsed?.weaknesses || []).slice(0, 5).map((w: any) => String(w).slice(0, 150)),
+    comparisonToSimilar: {
+      percentile: Math.max(0, Math.min(100, Number(parsed?.comparison_to_similar?.percentile ?? 50))),
+      betterThanPct: Math.max(0, Math.min(100, Number(parsed?.comparison_to_similar?.better_than_pct ?? 50))),
+      worseThanPct: Math.max(0, Math.min(100, Number(parsed?.comparison_to_similar?.worse_than_pct ?? 50))),
+      ranking: ['top_5', 'top_10', 'top_25', 'average', 'bottom_25', 'bottom_10'].includes(String(parsed?.comparison_to_similar?.ranking))
+        ? String(parsed.comparison_to_similar.ranking) : 'average',
+    },
+    priceAnalysis: {
+      listPriceEur: Math.max(0, Number(parsed?.price_analysis?.list_price_eur ?? l.price ?? 0)),
+      estimatedValueEur: Math.max(0, Number(parsed?.price_analysis?.estimated_value_eur ?? l.aiEstimatedValue ?? 0)),
+      discountPct: Math.round(Number(parsed?.price_analysis?.discount_pct ?? 0)),
+      isGoodDeal: Boolean(parsed?.price_analysis?.is_good_deal ?? false),
+      fairPriceEur: Math.max(0, Number(parsed?.price_analysis?.fair_price_eur ?? 0)),
+    },
+    recommendation: ['buy_now', 'buy_with_caution', 'monitor', 'wait', 'avoid'].includes(String(parsed?.recommendation))
+      ? String(parsed.recommendation) : 'monitor',
+    actionItems: (parsed?.action_items || []).slice(0, 5).map((a: any) => String(a).slice(0, 200)),
+    reasoning: String(parsed?.reasoning ?? '').slice(0, 400),
+  };
 }

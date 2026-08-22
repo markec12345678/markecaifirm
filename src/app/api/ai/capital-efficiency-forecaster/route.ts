@@ -1,4 +1,4 @@
-// v7.84: AI Capital Efficiency Forecaster — AI napove kako učinkovito bo
+// v7.84 / v8.96.7-batch3: AI Capital Efficiency Forecaster — AI napove kako učinkovito bo
 // kapital uporabljen v naslednjih 30/60/90 dneh — projected utilization rate,
 // idle capital in ROI per euro deployed. "Capital efficiency: 72% utilization,
 // projected 65% v 30d (declining). Bottleneck: 3 items >60d. Action:
@@ -17,23 +17,14 @@
 //
 // GET+POST /api/ai/capital-efficiency-forecaster
 // (AI-enhanced + grounding + anti-hallucination + 6h cache + deterministic fallback)
+// Refaktoriran z withAiRoute helperjem (v8.96.7) + enforceBudget guard.
 
-import { NextRequest, NextResponse } from 'next/server';
-import { db } from '@/lib/db';
-import { getSettingsRow } from '@/lib/pipeline';
-import {
-  callProviderForRaw,
-  parseJsonLooseExported,
-  type AiProviderType,
-  type AiSettings,
-} from '@/lib/ai';
+import { withAiRoute, AI_ROUTE_DEFAULTS, type AiRouteContext } from '@/lib/with-ai-route';
+import { apiOk } from '@/lib/api-response';
 import { GROUNDING_PROMPT_SUFFIX } from '@/lib/anti-hallucination';
 import { getCachedAI, setCachedAI } from '@/lib/ai-cache';
-import { checkRateLimit, rateLimitResponse } from '@/lib/rate-limit';
-import { logger } from '@/lib/logger';
 
-export const runtime = 'nodejs';
-export const dynamic = 'force-dynamic';
+export const { runtime, dynamic } = AI_ROUTE_DEFAULTS;
 export const maxDuration = 60;
 
 // --- Types ---------------------------------------------------------------
@@ -650,19 +641,27 @@ function computeMonthlySlopes(
   };
 }
 
+// --- Input ---------------------------------------------------------------
+
+// eslint-disable-next-line @typescript-eslint/no-empty-object-type
+interface CapitalEfficiencyForecasterInput {}
+
 // --- Handler -------------------------------------------------------------
 
-export async function GET(req: NextRequest) {
-  return handleCapitalEfficiencyForecaster(req);
-}
-export async function POST(req: NextRequest) {
-  return handleCapitalEfficiencyForecaster(req);
-}
+const capitalEfficiencyForecasterHandler = withAiRoute<CapitalEfficiencyForecasterInput>({
+  endpoint: '/api/ai/capital-efficiency-forecaster',
+  maxDuration: 60,
+  enforceBudget: true, // AI klic — preveri budget
+  method: 'GET', // GET+POST — body ignored
 
-async function handleCapitalEfficiencyForecaster(req: NextRequest) {
-  try {
-    const rl = checkRateLimit(req, 'ai-capital-efficiency-forecaster', 20);
-    if (!rl.allowed) return rateLimitResponse(rl);
+  parseBody: async (req) => {
+    await req.json().catch(() => ({}));
+    return {};
+  },
+
+  // No validateInput — body ignored
+  handler: async (_input, ctx: AiRouteContext) => {
+    const { db, callAi, parseAi, logger } = ctx;
 
     const now = Date.now();
 
@@ -726,7 +725,7 @@ async function handleCapitalEfficiencyForecaster(req: NextRequest) {
 
     // Empty state: no SOLD history AND no HELD trades → no capital at all
     if (soldTrades.length === 0 && heldTrades.length === 0) {
-      return NextResponse.json({
+      return apiOk({
         ok: true,
         current,
         forecast,
@@ -748,7 +747,7 @@ async function handleCapitalEfficiencyForecaster(req: NextRequest) {
       summary: string;
     }>(cacheKey);
     if (cached) {
-      return NextResponse.json({
+      return apiOk({
         ok: true,
         current,
         forecast: cached.forecast,
@@ -758,21 +757,6 @@ async function handleCapitalEfficiencyForecaster(req: NextRequest) {
         aiUsed: true,
       });
     }
-
-    // 4) AI prompt with grounding
-    const settings = await getSettingsRow();
-    const aiSettings: AiSettings = {
-      provider: settings.aiProvider as AiProviderType,
-      baseUrl: settings.aiBaseUrl,
-      apiKey: settings.aiApiKey,
-      model: settings.aiModel,
-      fallbackProvider: (settings.fallbackProvider || '') as
-        | AiProviderType
-        | '',
-      fallbackBaseUrl: settings.fallbackBaseUrl || '',
-      fallbackApiKey: settings.fallbackApiKey || '',
-      fallbackModel: settings.fallbackModel || '',
-    };
 
     const promptData = {
       current: {
@@ -845,10 +829,8 @@ VRNI LE JSON:
     let aiUsed = false;
 
     try {
-      const raw = await callProviderForRaw(aiSettings, prompt);
-      const parsed = parseJsonLooseExported(
-        raw,
-      ) as AiCapitalResponse | null;
+      const raw = await callAi(prompt);
+      const parsed = parseAi(raw) as AiCapitalResponse | null;
 
       if (parsed && typeof parsed === 'object') {
         // AI forecast override (with anti-hallucination clamping)
@@ -1004,7 +986,7 @@ VRNI LE JSON:
       });
     }
 
-    return NextResponse.json({
+    return apiOk({
       ok: true,
       current,
       forecast,
@@ -1012,15 +994,8 @@ VRNI LE JSON:
       summary: finalSummary,
       aiUsed,
     });
-  } catch (err: any) {
-    logger.error(
-      '/api/ai/capital-efficiency-forecaster',
-      'handler failed',
-      err,
-    );
-    return NextResponse.json(
-      { error: err?.message ?? 'Napaka' },
-      { status: 500 },
-    );
-  }
-}
+  },
+});
+
+export const GET = capitalEfficiencyForecasterHandler;
+export const POST = capitalEfficiencyForecasterHandler;

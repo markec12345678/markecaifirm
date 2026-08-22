@@ -1,21 +1,32 @@
-// v6.33: AI Cross-Category Bundle Optimizer — kombinira iteme iz RAZLIČNIH kategorij
+// v6.33 / v8.95.5-deal: AI Cross-Category Bundle Optimizer — kombinira iteme iz RAZLIČNIH kategorij
+// Refaktoriran z withAiRoute helperjem (v8.95.5-deal) + enforceBudget guard.
+//
 // POST /api/ai/cross-category-bundle
 // Body: {}
 // Returns: { ok, bundles: [], insights, summary }
 
-import { NextRequest, NextResponse } from 'next/server';
-import { db } from '@/lib/db';
-import { getSettingsRow } from '@/lib/pipeline';
-import { callProviderForRaw, parseJsonLooseExported, type AiProviderType, type AiSettings } from '@/lib/ai';
-import { logger } from '@/lib/logger';
+import { withAiRoute, AI_ROUTE_DEFAULTS, type AiRouteContext } from '@/lib/with-ai-route';
+import { apiOk } from '@/lib/api-response';
 
-export const runtime = 'nodejs';
-export const dynamic = 'force-dynamic';
+export const { runtime, dynamic } = AI_ROUTE_DEFAULTS;
 export const maxDuration = 90;
 
-export async function POST(req: NextRequest) {
-  try {
+// eslint-disable-next-line @typescript-eslint/no-empty-object-type
+interface CrossCategoryBundleInput {}
+
+export const POST = withAiRoute<CrossCategoryBundleInput>({
+  endpoint: '/api/ai/cross-category-bundle',
+  maxDuration: 90,
+  enforceBudget: true, // AI klic — preveri budget
+
+  parseBody: async (req) => {
     await req.json().catch(() => ({}));
+    return {} as CrossCategoryBundleInput;
+  },
+
+  // No validateInput — brez polj
+  handler: async (_input, ctx: AiRouteContext) => {
+    const { db, callAi, parseAi } = ctx;
 
     const heldTrades = await db.trade.findMany({
       where: { status: 'held' },
@@ -25,36 +36,90 @@ export async function POST(req: NextRequest) {
     });
 
     if (heldTrades.length < 2) {
-      return NextResponse.json({ ok: true, bundles: [], message: 'Potrebna vsaj 2 itema za cross-category bundle.' });
+      return apiOk({ ok: true, bundles: [], message: 'Potrebna vsaj 2 itema za cross-category bundle.' });
     }
 
-    const settings = await getSettingsRow();
-    const aiSettings: AiSettings = {
-      provider: settings.aiProvider as AiProviderType,
-      baseUrl: settings.aiBaseUrl, apiKey: settings.aiApiKey, model: settings.aiModel,
-      fallbackProvider: (settings.fallbackProvider || '') as AiProviderType | '',
-      fallbackBaseUrl: settings.fallbackBaseUrl || '', fallbackApiKey: settings.fallbackApiKey || '',
-      fallbackModel: settings.fallbackModel || '',
-    };
-
-    const items = heldTrades.map(t => ({
-      id: t.id, title: t.title, category: t.category || 'drugo',
-      cost: t.buyPrice + (t.buyFees ?? 0),
-      estValue: t.listing?.aiEstimatedValue ?? Math.round(t.buyPrice * 1.25),
-      daysHeld: Math.round((Date.now() - t.buyDate.getTime()) / (24*60*60*1000)),
-    }));
+    const items = mapItems(heldTrades);
 
     // Group by category
-    const byCat: Record<string, typeof items> = {};
+    const byCat: Record<string, Item[]> = {};
     for (const i of items) {
       if (!byCat[i.category]) byCat[i.category] = [];
       byCat[i.category].push(i);
     }
     const categories = Object.keys(byCat);
 
-    const itemsStr = items.slice(0, 25).map(i => `- [${i.id}] ${i.title} | ${i.category} | nabavna: ${i.cost}€ | est: ${i.estValue}€ | ${i.daysHeld}d`).join('\n');
+    const prompt = buildPrompt(items, categories);
+    const raw = await callAi(prompt);
+    const parsed: any = parseAi(raw);
 
-    const prompt = `Si ekspert za cross-category bundle strategije.
+    const { bundles, usedIds } = transformBundles(parsed, items);
+
+    const totalBundleProfit = bundles.reduce((s: number, b: any) => s + (b?.expectedProfit ?? 0), 0);
+    const avgSavings = bundles.length > 0 ? Math.round(bundles.reduce((s: number, b: any) => s + b.savingsPct, 0) / bundles.length) : 0;
+
+    return apiOk({
+      ok: true,
+      insights: String(parsed?.insights ?? '').slice(0, 500),
+      bundles,
+      summary: {
+        totalBundles: bundles.length,
+        bundledItems: usedIds.size,
+        totalBundleProfitEur: totalBundleProfit,
+        avgSavingsPct: avgSavings,
+        unbundledItems: items.length - usedIds.size,
+      },
+    });
+  },
+});
+
+// --- Pomožne funkcije (čiste, testabilne) --------------------------------
+
+interface HeldTradeRow {
+  id: string;
+  title: string;
+  category: string | null;
+  buyPrice: number;
+  buyFees: number | null;
+  buyDate: Date;
+  listing: { aiEstimatedValue: number | null; dealScore: number | null } | null;
+}
+
+interface Item {
+  id: string;
+  title: string;
+  category: string;
+  cost: number;
+  estValue: number;
+  daysHeld: number;
+}
+
+const CONCEPTS = ['lifestyle_bundle', 'seasonal_bundle', 'upgrade_bundle', 'gift_bundle', 'starter_kit', 'complementary_bundle'] as const;
+const PLATFORMS = ['bolha', 'facebook', 'vinted'] as const;
+
+function includes<T extends string>(arr: readonly T[], v: string): v is T {
+  return (arr as readonly string[]).includes(v);
+}
+
+/**
+ * Map heldTrades v items array. Logika IDENTIČNA originalu v6.33.
+ */
+function mapItems(heldTrades: HeldTradeRow[]): Item[] {
+  return heldTrades.map(t => ({
+    id: t.id, title: t.title, category: t.category || 'drugo',
+    cost: t.buyPrice + (t.buyFees ?? 0),
+    estValue: t.listing?.aiEstimatedValue ?? Math.round(t.buyPrice * 1.25),
+    daysHeld: Math.round((Date.now() - t.buyDate.getTime()) / (24 * 60 * 60 * 1000)),
+  }));
+}
+
+/**
+ * Build AI prompt za cross-category bundle (besedilo IDENTIČNO originalu v6.33).
+ */
+function buildPrompt(items: Item[], categories: string[]): string {
+  const itemsStr = items.slice(0, 25).map(i => `- [${i.id}] ${i.title} | ${i.category} | nabavna: ${i.cost}€ | est: ${i.estValue}€ | ${i.daysHeld}d`).join('\n');
+
+  return `Si ekspert za cross-category bundle strategije.
 Kombiniraj iteme iz RAZLIČNIH kategorij v privlačne bundle za kupce.
 
 INVENTAR PO KATEGORIJAH (${categories.length} kategorij: ${categories.join(', ')}):
@@ -105,74 +170,44 @@ Odgovori LE z JSON:
     "unbundled_items": <number>
   }
 }`;
+}
 
-    let raw = '';
-    try {
-      raw = await callProviderForRaw(aiSettings, prompt);
-    } catch (primaryError: any) {
-      if (aiSettings.fallbackProvider && aiSettings.fallbackModel) {
-        const fb: AiSettings = { provider: aiSettings.fallbackProvider, baseUrl: aiSettings.fallbackBaseUrl || '',
-          apiKey: aiSettings.fallbackApiKey || '', model: aiSettings.fallbackModel };
-        raw = await callProviderForRaw(fb, prompt);
-      } else { return NextResponse.json({ error: primaryError?.message ?? 'AI failed' }, { status: 500 }); }
-    }
+/**
+ * Transform AI JSON v bundles array z dedup (usedIds Set) + compute.
+ * Clamp/slice/whitelist logika IDENTIČNA originalu v6.33.
+ * Vrne tudi usedIds Set (za summary.bundledItems in unbundledItems v handlerju).
+ */
+function transformBundles(parsed: any, items: Item[]): { bundles: any[]; usedIds: Set<string> } {
+  const validIds = new Set(items.map(i => i.id));
+  const itemMap = new Map(items.map(i => [i.id, i]));
+  const usedIds = new Set<string>();
 
-    const parsed: any = parseJsonLooseExported(raw);
-    const validIds = new Set(items.map(i => i.id));
-    const itemMap = new Map(items.map(i => [i.id, i]));
-    const usedIds = new Set<string>();
+  const bundles = (parsed?.bundles || []).map((b: any) => {
+    const itemIds: string[] = (Array.isArray(b?.item_ids) ? b.item_ids : []).filter((id: any) => validIds.has(String(id)) && !usedIds.has(String(id)));
+    if (itemIds.length < 2) return null;
+    itemIds.forEach(id => usedIds.add(id));
+    const bundleItems = itemIds.map(id => { const o = itemMap.get(id)!; return { id: o.id, title: o.title, category: o.category, cost: o.cost, estValue: o.estValue }; });
+    const individualTotal = bundleItems.reduce((s, i) => s + i.estValue, 0);
+    const totalCost = bundleItems.reduce((s, i) => s + i.cost, 0);
+    const bundlePrice = Number(b?.bundle_price_eur ?? Math.round(individualTotal * 0.9));
+    const savingsPct = individualTotal > 0 ? Math.round(((individualTotal - bundlePrice) / individualTotal) * 100) : 0;
+    return {
+      name: String(b?.name ?? 'Bundle').slice(0, 120),
+      concept: includes(CONCEPTS, String(b?.concept)) ? String(b.concept) : 'complementary_bundle',
+      story: String(b?.story ?? '').slice(0, 300),
+      items: bundleItems,
+      categories: [...new Set(bundleItems.map(i => i.category))],
+      individualTotal,
+      bundlePrice,
+      totalCost,
+      savingsPct: Math.max(0, Math.min(50, savingsPct)),
+      expectedProfit: Math.round(bundlePrice - totalCost),
+      expectedSellTimeDays: Math.max(1, Math.min(60, Number(b?.expected_sell_time_days ?? 14))),
+      targetBuyer: String(b?.target_buyer ?? '').slice(0, 150),
+      platform: includes(PLATFORMS, String(b?.platform)) ? String(b.platform) : 'bolha',
+      reasoning: String(b?.reasoning ?? '').slice(0, 250),
+    };
+  }).filter(Boolean);
 
-    const bundles = (parsed?.bundles || []).map((b: any) => {
-      const itemIds: string[] = (Array.isArray(b?.item_ids) ? b.item_ids : []).filter((id: any) => validIds.has(String(id)) && !usedIds.has(String(id)));
-      if (itemIds.length < 2) return null;
-      itemIds.forEach(id => usedIds.add(id));
-      const bundleItems = itemIds.map(id => { const o = itemMap.get(id)!; return { id: o.id, title: o.title, category: o.category, cost: o.cost, estValue: o.estValue }; });
-      const individualTotal = bundleItems.reduce((s, i) => s + i.estValue, 0);
-      const totalCost = bundleItems.reduce((s, i) => s + i.cost, 0);
-      const bundlePrice = Number(b?.bundle_price_eur ?? Math.round(individualTotal * 0.9));
-      const savingsPct = individualTotal > 0 ? Math.round(((individualTotal - bundlePrice) / individualTotal) * 100) : 0;
-      return {
-        name: String(b?.name ?? 'Bundle').slice(0, 120),
-        concept: ['lifestyle_bundle', 'seasonal_bundle', 'upgrade_bundle', 'gift_bundle', 'starter_kit', 'complementary_bundle'].includes(String(b?.concept)) ? String(b.concept) : 'complementary_bundle',
-        story: String(b?.story ?? '').slice(0, 300),
-        items: bundleItems,
-        categories: [...new Set(bundleItems.map(i => i.category))],
-        individualTotal,
-        bundlePrice,
-        totalCost,
-        savingsPct: Math.max(0, Math.min(50, savingsPct)),
-        expectedProfit: Math.round(bundlePrice - totalCost),
-        expectedSellTimeDays: Math.max(1, Math.min(60, Number(b?.expected_sell_time_days ?? 14))),
-        targetBuyer: String(b?.target_buyer ?? '').slice(0, 150),
-        platform: ['bolha', 'facebook', 'vinted'].includes(String(b?.platform)) ? String(b.platform) : 'bolha',
-        reasoning: String(b?.reasoning ?? '').slice(0, 250),
-      };
-    }).filter(Boolean);
-
-    const totalBundleProfit = bundles.reduce((s: number, b: any) => s + (b?.expectedProfit ?? 0), 0);
-    const avgSavings = bundles.length > 0 ? Math.round(bundles.reduce((s: number, b: any) => s + b.savingsPct, 0) / bundles.length) : 0;
-
-    const today = new Date().toISOString().slice(0, 10);
-    if (settings.aiCallsDate !== today) {
-      await db.settings.update({ where: { id: 'singleton' }, data: { aiCallsDate: today, aiCallsToday: 1 } });
-    } else {
-      await db.settings.update({ where: { id: 'singleton' }, data: { aiCallsToday: { increment: 1 } } });
-    }
-
-    return NextResponse.json({
-      ok: true,
-      insights: String(parsed?.insights ?? '').slice(0, 500),
-      bundles,
-      summary: {
-        totalBundles: bundles.length,
-        bundledItems: usedIds.size,
-        totalBundleProfitEur: totalBundleProfit,
-        avgSavingsPct: avgSavings,
-        unbundledItems: items.length - usedIds.size,
-      },
-    });
-  } catch (e: any) {
-    logger.error("/api/ai/cross-category-bundle", "POST handler failed", e);
-    return NextResponse.json({ error: e?.message ?? 'Napaka' }, { status: 500 });
-  }
+  return { bundles, usedIds };
 }

@@ -1,7 +1,8 @@
-// v7.97: AI Inventory Value Maximizer — AI identificira kako MAXIMIZIRATI
-// total value of HELD inventorija — kateri itemi za obdržati dlje (appreciating),
-// kateri prodati zdaj (at peak), kateri nadgraditi (replace z higher-value itemi).
-// The "ultimate inventory value optimization."
+// v7.97 / v8.96.5-batch1: AI Inventory Value Maximizer — AI identificira kako
+// MAXIMIZIRATI total value of HELD inventorija — kateri itemi za obdržati dlje
+// (appreciating), kateri prodati zdaj (at peak), kateri nadgraditi (replace z
+// higher-value itemi). The "ultimate inventory value optimization."
+// Refaktoriran z withAiRoute helperjem (v8.96) + enforceBudget guard.
 //
 // Razlika od inventory-profit-maximizer (ki maksimizira profit) — ta
 // maksimizira VALUE (koliko je inventorij vreden, ne koliko profit-a generira).
@@ -28,23 +29,16 @@
 // GET+POST /api/ai/inventory-value-maximizer
 // (AI-enhanced + grounding + anti-hallucination + 6h cache + deterministic fallback)
 
-import { NextRequest, NextResponse } from 'next/server';
-import { db } from '@/lib/db';
-import { getSettingsRow } from '@/lib/pipeline';
-import {
-  callProviderForRaw,
-  parseJsonLooseExported,
-  type AiProviderType,
-  type AiSettings,
-} from '@/lib/ai';
+import { withAiRoute, AI_ROUTE_DEFAULTS, type AiRouteContext } from '@/lib/with-ai-route';
+import { apiOk } from '@/lib/api-response';
 import { GROUNDING_PROMPT_SUFFIX } from '@/lib/anti-hallucination';
 import { getCachedAI, setCachedAI } from '@/lib/ai-cache';
-import { checkRateLimit, rateLimitResponse } from '@/lib/rate-limit';
-import { logger } from '@/lib/logger';
 
-export const runtime = 'nodejs';
-export const dynamic = 'force-dynamic';
+export const { runtime, dynamic } = AI_ROUTE_DEFAULTS;
 export const maxDuration = 60;
+
+// eslint-disable-next-line @typescript-eslint/no-empty-object-type
+interface InventoryValueMaximizerInput {}
 
 // --- Types ---------------------------------------------------------------
 
@@ -510,138 +504,62 @@ function buildSummary(portfolio: Portfolio, items: DetValueItem[]): string {
   return parts.join(' ').slice(0, 400);
 }
 
-// --- Handler -------------------------------------------------------------
+// --- AI prompt + merge helpers (pure, extracted OUTSIDE handler) ----------
 
-export async function GET(req: NextRequest) {
-  return handleInventoryValueMaximizer(req);
+interface PromptItem {
+  tradeId: string;
+  title: string;
+  category: string;
+  buyPrice: number;
+  currentValue: number;
+  appreciationRate: number;
+  valueTrajectory: ValueTrajectory;
+  daysUntilValueDecline: number | null;
+  holdValue: number;
+  sellNowValue: number;
+  detAction: ValueMaximizationAction;
+  detExpectedValue: number;
+  detValueUplift: number;
+  detOptimalSellDate: string | null;
 }
-export async function POST(req: NextRequest) {
-  return handleInventoryValueMaximizer(req);
+
+function buildPromptItems(detItems: DetValueItem[]): PromptItem[] {
+  return [...detItems]
+    .sort((a, b) => Math.abs(b.item.valueUplift) - Math.abs(a.item.valueUplift))
+    .slice(0, 40)
+    .map((d) => ({
+      tradeId: d.item.tradeId,
+      title: d.item.title,
+      category: d.item.category,
+      buyPrice: d.item.buyPrice,
+      currentValue: d.item.currentValue,
+      appreciationRate: d.item.appreciationRate,
+      valueTrajectory: d.item.valueTrajectory,
+      daysUntilValueDecline: d.item.daysUntilValueDecline,
+      holdValue: d.item.holdValue,
+      sellNowValue: d.item.sellNowValue,
+      detAction: d.item.valueMaximizationAction,
+      detExpectedValue: d.item.expectedValueWithAction,
+      detValueUplift: d.item.valueUplift,
+      detOptimalSellDate: d.item.optimalSellDate,
+    }));
 }
 
-async function handleInventoryValueMaximizer(req: NextRequest) {
-  try {
-    const rl = checkRateLimit(req, 'ai-inventory-value-maximizer', 20);
-    if (!rl.allowed) return rateLimitResponse(rl);
+function buildPromptData(portfolio: Portfolio, topItemsForAI: PromptItem[]) {
+  return {
+    portfolio,
+    heldItems: topItemsForAI,
+    caps: {
+      valueMin: VALUE_MIN, valueMax: VALUE_MAX,
+      upliftMin: UPLIFT_MIN, upliftMax: UPLIFT_MAX,
+      appreciationMin: APPRECIATION_MIN, appreciationMax: APPRECIATION_MAX,
+      daysUntilDeclineMin: DAYS_UNTIL_DECLINE_MIN, daysUntilDeclineMax: DAYS_UNTIL_DECLINE_MAX,
+    },
+  };
+}
 
-    const now = Date.now();
-
-    // 1) Query all HELD trades with their linked Listing
-    const heldTrades = await db.trade.findMany({
-      where: { status: 'held' },
-      select: {
-        id: true,
-        title: true,
-        buyPrice: true,
-        buyDate: true,
-        category: true,
-        listing: {
-          select: {
-            aiEstimatedValue: true,
-            price: true,
-            aiScore: true,
-            dealScore: true,
-            monitor: { select: { source: true, tags: true } },
-          },
-        },
-      },
-      orderBy: { buyDate: 'asc' },
-      take: 100000,
-    }) as unknown as HeldItemRow[];
-
-    // Empty-state: no HELD trades
-    if (heldTrades.length === 0) {
-      return NextResponse.json({
-        ok: true,
-        items: [],
-        portfolio: {
-          currentTotalValue: 0,
-          maximizedTotalValue: 0,
-          valueMaximizationPotential: 0,
-          valueOptimizationGrade: 'F',
-          itemsToHold: 0,
-          itemsToSell: 0,
-          itemsToUpgrade: 0,
-        },
-        summary: 'Ni HELD trgovin v inventarju — Inventory Value Maximizer ni mogoč.',
-        aiUsed: false,
-        message: 'Ni HELD trgovin v inventarju — Inventory Value Maximizer ni mogoč.',
-      } satisfies InventoryValueResponse);
-    }
-
-    // 2) Compute per-item value metrics (deterministic baseline)
-    const detItems = heldTrades.map((t) => computeValueItem(t, now));
-    let portfolio = computePortfolio(detItems);
-    let items: ValueItem[] = detItems.map((d) => d.item);
-    let summary = buildSummary(portfolio, detItems);
-
-    // 3) AI cache check (6h TTL) — key by held item ids
-    const heldItemIds = heldTrades.map((t) => t.id).sort();
-    const cacheKey = `inventory-value-maximizer:${JSON.stringify(heldItemIds)}`;
-    const cached = getCachedAI<{
-      items: ValueItem[];
-      portfolio: Portfolio;
-      summary: string;
-    }>(cacheKey);
-    if (cached) {
-      return NextResponse.json({
-        ok: true,
-        items: cached.items,
-        portfolio: cached.portfolio,
-        summary: cached.summary,
-        cached: true,
-        aiUsed: true,
-      } satisfies InventoryValueResponse);
-    }
-
-    // 4) AI prompt with grounding
-    const settings = await getSettingsRow();
-    const aiSettings: AiSettings = {
-      provider: settings.aiProvider as AiProviderType,
-      baseUrl: settings.aiBaseUrl,
-      apiKey: settings.aiApiKey,
-      model: settings.aiModel,
-      fallbackProvider: (settings.fallbackProvider || '') as
-        | AiProviderType
-        | '',
-      fallbackBaseUrl: settings.fallbackBaseUrl || '',
-      fallbackApiKey: settings.fallbackApiKey || '',
-      fallbackModel: settings.fallbackModel || '',
-    };
-
-    // Compact context for AI (top 40 items by abs(valueUplift))
-    const topItemsForAI = [...detItems]
-      .sort((a, b) => Math.abs(b.item.valueUplift) - Math.abs(a.item.valueUplift))
-      .slice(0, 40)
-      .map((d) => ({
-        tradeId: d.item.tradeId,
-        title: d.item.title,
-        category: d.item.category,
-        buyPrice: d.item.buyPrice,
-        currentValue: d.item.currentValue,
-        appreciationRate: d.item.appreciationRate,
-        valueTrajectory: d.item.valueTrajectory,
-        daysUntilValueDecline: d.item.daysUntilValueDecline,
-        holdValue: d.item.holdValue,
-        sellNowValue: d.item.sellNowValue,
-        detAction: d.item.valueMaximizationAction,
-        detExpectedValue: d.item.expectedValueWithAction,
-        detValueUplift: d.item.valueUplift,
-        detOptimalSellDate: d.item.optimalSellDate,
-      }));
-
-    const promptData = {
-      portfolio,
-      heldItems: topItemsForAI,
-      caps: {
-        valueMin: VALUE_MIN, valueMax: VALUE_MAX,
-        upliftMin: UPLIFT_MIN, upliftMax: UPLIFT_MAX,
-        appreciationMin: APPRECIATION_MIN, appreciationMax: APPRECIATION_MAX,
-        daysUntilDeclineMin: DAYS_UNTIL_DECLINE_MIN, daysUntilDeclineMax: DAYS_UNTIL_DECLINE_MAX,
-      },
-    };
-
-    const prompt = `Si AI "Inventory Value Maximizer" za slovenske in srednjeevropske oglasne platforme (Bolha, Vinted, Avtonet, mobile.de).
+function buildPrompt(promptData: ReturnType<typeof buildPromptData>): string {
+  return `Si AI "Inventory Value Maximizer" za slovenske in srednjeevropske oglasne platforme (Bolha, Vinted, Avtonet, mobile.de).
 Si strokovnjak za VALUE maximization — identificiraš kako MAXIMIZIRATI total value of HELD inventorija. Razlika od inventory-profit-maximizer (ki maksimizira profit) — ti maksimiziraš VALUE (koliko je inventorij vreden). Razlika od inventory-profit-margin-optimizer-pro (v7.96 ki optimira margin per item) — ti optimiraš VALUE per item z hold/sell/upgrade actions. Razlika od cash-recovery-accelerator (v7.96 ki accelerira cash recovery) — ti maksimiziraš VALUE (ne cash velocity). Razlika od inventory-aging-strategist (ki strategizes aging) — ti daje VALUE-maximization actions per item. Razlika od inventory-liquidation-strategist (ki likvidira) — ti daje HOLD/SELL/UPGRADE/REPLACE choice per item. Razlika od inventory-roi-optimizer (ki optimizira ROI) — ti optimiraš TOTAL VALUE appreciation. Razlika od depreciation-forecast (ki napove depreciation) — ti daje actionable value-maximization actions per item.
 
 DETERMINISTIČNI PODATKI (izračunano iz DB — HELD trgovin z linked Listing):
@@ -680,127 +598,245 @@ VRNI LE JSON:
   ],
   "summary": "Portfolio value: 8200€ → maximized 8750€ (+550€ uplift, grade B). 5 hold, 3 sell, 2 upgrade."
 }${GROUNDING_PROMPT_SUFFIX}`;
+}
+
+interface MergeResult {
+  items: ValueItem[];
+  portfolio: Portfolio;
+  summary: string;
+  aiUsed: boolean;
+}
+
+function mergeAiIntoItems(
+  parsed: AiResponse | null,
+  detItems: DetValueItem[],
+  detPortfolio: Portfolio,
+): MergeResult {
+  let items: ValueItem[] = detItems.map((d) => d.item);
+  let portfolio = detPortfolio;
+  let summary = buildSummary(detPortfolio, detItems);
+  let aiUsed = false;
+
+  if (parsed && typeof parsed === 'object') {
+    const detByTradeId = new Map<string, DetValueItem>();
+    for (const d of detItems) detByTradeId.set(d.item.tradeId, d);
+
+    const aiItems: ValueItem[] = [];
+    if (Array.isArray(parsed.items)) {
+      for (const r of parsed.items) {
+        if (!r || typeof r !== 'object') continue;
+        const det = detByTradeId.get(String(r.tradeId ?? ''));
+        if (!det) continue; // skip unknown tradeId — anti-hallucination
+
+        const action = clampEnum(
+          r.valueMaximizationAction,
+          VALID_ACTION,
+          det.item.valueMaximizationAction,
+        );
+
+        // Anti-hallucination: expectedValueWithAction clamped to [0.5x, 2x] buyPrice
+        const valueLowBound = Math.round(det.item.buyPrice * 0.5);
+        const valueHighBound = Math.round(det.item.buyPrice * 2);
+        const aiExpected = round0(clampNum(
+          r.expectedValueWithAction,
+          VALUE_MIN, VALUE_MAX,
+          det.item.expectedValueWithAction,
+        ));
+        const expectedValueWithAction = round0(
+          Math.max(valueLowBound, Math.min(valueHighBound, aiExpected)),
+        );
+
+        // Recompute valueUplift based on AI expectedValueWithAction
+        const valueUplift = round0(clampNum(
+          expectedValueWithAction - det.item.sellNowValue,
+          UPLIFT_MIN, UPLIFT_MAX, det.item.valueUplift,
+        ));
+
+        // optimalSellDate: validate format (either "now" or YYYY-MM-DD)
+        const rawSellDate = r.optimalSellDate;
+        let optimalSellDate: string | null;
+        if (rawSellDate === null || rawSellDate === undefined) {
+          optimalSellDate = det.item.optimalSellDate;
+        } else if (typeof rawSellDate === 'string') {
+          const trimmed = rawSellDate.trim().toLowerCase();
+          if (trimmed === 'now' || trimmed === '') {
+            optimalSellDate = trimmed === 'now' ? 'now' : det.item.optimalSellDate;
+          } else if (/^\d{4}-\d{2}-\d{2}$/.test(trimmed)) {
+            optimalSellDate = trimmed;
+          } else {
+            optimalSellDate = det.item.optimalSellDate;
+          }
+        } else {
+          optimalSellDate = det.item.optimalSellDate;
+        }
+
+        const holdOrSellReasoning = clampString(
+          r.holdOrSellReasoning,
+          400,
+          det.item.holdOrSellReasoning,
+        );
+
+        // upgradeRecommendation: only for UPGRADE_ITEM or REPLACE_WITH_HIGHER_VALUE
+        let upgradeRecommendation: string | null = null;
+        if (action === 'UPGRADE_ITEM' || action === 'REPLACE_WITH_HIGHER_VALUE') {
+          const rec = r.upgradeRecommendation;
+          if (typeof rec === 'string' && rec.trim().length > 0) {
+            upgradeRecommendation = clampString(rec, 250, det.item.upgradeRecommendation ?? 'Upgrade z višje-vrednostnim item-om.');
+          } else {
+            upgradeRecommendation = det.item.upgradeRecommendation ?? 'Upgrade z višje-vrednostnim item-om.';
+          }
+        }
+
+        aiItems.push({
+          ...det.item,
+          valueMaximizationAction: action,
+          expectedValueWithAction,
+          valueUplift,
+          optimalSellDate,
+          holdOrSellReasoning,
+          upgradeRecommendation,
+        });
+      }
+    }
+    // Fallback to deterministic if AI returned nothing useful
+    if (aiItems.length === 0) {
+      for (const d of detItems) aiItems.push(d.item);
+    } else {
+      // For items AI didn't return, keep deterministic values
+      const aiTradeIds = new Set(aiItems.map((r) => r.tradeId));
+      for (const d of detItems) {
+        if (!aiTradeIds.has(d.item.tradeId)) {
+          aiItems.push(d.item);
+        }
+      }
+    }
+    // Sort by valueUplift descending (biggest uplift first)
+    aiItems.sort((a, b) => b.valueUplift - a.valueUplift);
+    items = aiItems;
+
+    // Update portfolio based on AI items
+    const aiPortfolio = computePortfolio(
+      aiItems.map((i) => ({
+        item: i,
+        estValue: i.currentValue,
+        daysHeld: 0, // not needed for portfolio recompute
+      })),
+    );
+    portfolio = aiPortfolio;
+
+    summary = clampString(parsed.summary, 400, buildSummary(portfolio, aiItems.map((i) => ({
+      item: i,
+      estValue: i.currentValue,
+      daysHeld: 0,
+    }))));
+    aiUsed = true;
+  }
+
+  return { items, portfolio, summary, aiUsed };
+}
+
+// --- Handler -------------------------------------------------------------
+
+const inventoryValueHandler = withAiRoute<InventoryValueMaximizerInput>({
+  endpoint: '/api/ai/inventory-value-maximizer',
+  maxDuration: 60,
+  enforceBudget: true,
+  method: 'GET',
+
+  parseBody: async (req) => {
+    await req.json().catch(() => ({}));
+    return {};
+  },
+
+  handler: async (_input, ctx: AiRouteContext) => {
+    const { db, callAi, parseAi, logger } = ctx;
+    const now = Date.now();
+
+    // 1) Query all HELD trades with their linked Listing
+    const heldTrades = await db.trade.findMany({
+      where: { status: 'held' },
+      select: {
+        id: true,
+        title: true,
+        buyPrice: true,
+        buyDate: true,
+        category: true,
+        listing: {
+          select: {
+            aiEstimatedValue: true,
+            price: true,
+            aiScore: true,
+            dealScore: true,
+            monitor: { select: { source: true, tags: true } },
+          },
+        },
+      },
+      orderBy: { buyDate: 'asc' },
+      take: 100000,
+    }) as unknown as HeldItemRow[];
+
+    // Empty-state: no HELD trades
+    if (heldTrades.length === 0) {
+      return apiOk({
+        ok: true,
+        items: [],
+        portfolio: {
+          currentTotalValue: 0,
+          maximizedTotalValue: 0,
+          valueMaximizationPotential: 0,
+          valueOptimizationGrade: 'F',
+          itemsToHold: 0,
+          itemsToSell: 0,
+          itemsToUpgrade: 0,
+        },
+        summary: 'Ni HELD trgovin v inventarju — Inventory Value Maximizer ni mogoč.',
+        aiUsed: false,
+        message: 'Ni HELD trgovin v inventarju — Inventory Value Maximizer ni mogoč.',
+      } satisfies InventoryValueResponse);
+    }
+
+    // 2) Compute per-item value metrics (deterministic baseline)
+    const detItems = heldTrades.map((t) => computeValueItem(t, now));
+    const detPortfolio = computePortfolio(detItems);
+    let portfolio = detPortfolio;
+    let items: ValueItem[] = detItems.map((d) => d.item);
+    let summary = buildSummary(detPortfolio, detItems);
+
+    // 3) AI cache check (6h TTL) — key by held item ids
+    const heldItemIds = heldTrades.map((t) => t.id).sort();
+    const cacheKey = `inventory-value-maximizer:${JSON.stringify(heldItemIds)}`;
+    const cached = getCachedAI<{
+      items: ValueItem[];
+      portfolio: Portfolio;
+      summary: string;
+    }>(cacheKey);
+    if (cached) {
+      return apiOk({
+        ok: true,
+        items: cached.items,
+        portfolio: cached.portfolio,
+        summary: cached.summary,
+        cached: true,
+        aiUsed: true,
+      } satisfies InventoryValueResponse);
+    }
+
+    // 4) AI prompt with grounding
+    const topItemsForAI = buildPromptItems(detItems);
+    const promptData = buildPromptData(detPortfolio, topItemsForAI);
+    const prompt = buildPrompt(promptData);
 
     let aiUsed = false;
 
     try {
-      const raw = await callProviderForRaw(aiSettings, prompt);
-      const parsed = parseJsonLooseExported(raw) as AiResponse | null;
+      const raw = await callAi(prompt);
+      const parsed = parseAi(raw) as AiResponse | null;
 
-      if (parsed && typeof parsed === 'object') {
-        const detByTradeId = new Map<string, DetValueItem>();
-        for (const d of detItems) detByTradeId.set(d.item.tradeId, d);
-
-        const aiItems: ValueItem[] = [];
-        if (Array.isArray(parsed.items)) {
-          for (const r of parsed.items) {
-            if (!r || typeof r !== 'object') continue;
-            const det = detByTradeId.get(String(r.tradeId ?? ''));
-            if (!det) continue; // skip unknown tradeId — anti-hallucination
-
-            const action = clampEnum(
-              r.valueMaximizationAction,
-              VALID_ACTION,
-              det.item.valueMaximizationAction,
-            );
-
-            // Anti-hallucination: expectedValueWithAction clamped to [0.5x, 2x] buyPrice
-            const valueLowBound = Math.round(det.item.buyPrice * 0.5);
-            const valueHighBound = Math.round(det.item.buyPrice * 2);
-            const aiExpected = round0(clampNum(
-              r.expectedValueWithAction,
-              VALUE_MIN, VALUE_MAX,
-              det.item.expectedValueWithAction,
-            ));
-            const expectedValueWithAction = round0(
-              Math.max(valueLowBound, Math.min(valueHighBound, aiExpected)),
-            );
-
-            // Recompute valueUplift based on AI expectedValueWithAction
-            const valueUplift = round0(clampNum(
-              expectedValueWithAction - det.item.sellNowValue,
-              UPLIFT_MIN, UPLIFT_MAX, det.item.valueUplift,
-            ));
-
-            // optimalSellDate: validate format (either "now" or YYYY-MM-DD)
-            const rawSellDate = r.optimalSellDate;
-            let optimalSellDate: string | null;
-            if (rawSellDate === null || rawSellDate === undefined) {
-              optimalSellDate = det.item.optimalSellDate;
-            } else if (typeof rawSellDate === 'string') {
-              const trimmed = rawSellDate.trim().toLowerCase();
-              if (trimmed === 'now' || trimmed === '') {
-                optimalSellDate = trimmed === 'now' ? 'now' : det.item.optimalSellDate;
-              } else if (/^\d{4}-\d{2}-\d{2}$/.test(trimmed)) {
-                optimalSellDate = trimmed;
-              } else {
-                optimalSellDate = det.item.optimalSellDate;
-              }
-            } else {
-              optimalSellDate = det.item.optimalSellDate;
-            }
-
-            const holdOrSellReasoning = clampString(
-              r.holdOrSellReasoning,
-              400,
-              det.item.holdOrSellReasoning,
-            );
-
-            // upgradeRecommendation: only for UPGRADE_ITEM or REPLACE_WITH_HIGHER_VALUE
-            let upgradeRecommendation: string | null = null;
-            if (action === 'UPGRADE_ITEM' || action === 'REPLACE_WITH_HIGHER_VALUE') {
-              const rec = r.upgradeRecommendation;
-              if (typeof rec === 'string' && rec.trim().length > 0) {
-                upgradeRecommendation = clampString(rec, 250, det.item.upgradeRecommendation ?? 'Upgrade z višje-vrednostnim item-om.');
-              } else {
-                upgradeRecommendation = det.item.upgradeRecommendation ?? 'Upgrade z višje-vrednostnim item-om.';
-              }
-            }
-
-            aiItems.push({
-              ...det.item,
-              valueMaximizationAction: action,
-              expectedValueWithAction,
-              valueUplift,
-              optimalSellDate,
-              holdOrSellReasoning,
-              upgradeRecommendation,
-            });
-          }
-        }
-        // Fallback to deterministic if AI returned nothing useful
-        if (aiItems.length === 0) {
-          for (const d of detItems) aiItems.push(d.item);
-        } else {
-          // For items AI didn't return, keep deterministic values
-          const aiTradeIds = new Set(aiItems.map((r) => r.tradeId));
-          for (const d of detItems) {
-            if (!aiTradeIds.has(d.item.tradeId)) {
-              aiItems.push(d.item);
-            }
-          }
-        }
-        // Sort by valueUplift descending (biggest uplift first)
-        aiItems.sort((a, b) => b.valueUplift - a.valueUplift);
-        items = aiItems;
-
-        // Update portfolio based on AI items
-        const aiPortfolio = computePortfolio(
-          aiItems.map((i) => ({
-            item: i,
-            estValue: i.currentValue,
-            daysHeld: 0, // not needed for portfolio recompute
-          })),
-        );
-        Object.assign(portfolio, aiPortfolio);
-
-        summary = clampString(parsed.summary, 400, buildSummary(portfolio, aiItems.map((i) => ({
-          item: i,
-          estValue: i.currentValue,
-          daysHeld: 0,
-        }))));
-        aiUsed = true;
-      }
+      const merged = mergeAiIntoItems(parsed, detItems, detPortfolio);
+      items = merged.items;
+      portfolio = merged.portfolio;
+      summary = merged.summary;
+      aiUsed = merged.aiUsed;
     } catch (err) {
       logger.warn(
         '/api/ai/inventory-value-maximizer',
@@ -814,22 +850,15 @@ VRNI LE JSON:
       setCachedAI(cacheKey, { items, portfolio, summary });
     }
 
-    return NextResponse.json({
+    return apiOk({
       ok: true,
       items,
       portfolio,
       summary,
       aiUsed,
     } satisfies InventoryValueResponse);
-  } catch (err: any) {
-    logger.error(
-      '/api/ai/inventory-value-maximizer',
-      'handler failed',
-      err,
-    );
-    return NextResponse.json(
-      { error: err?.message ?? 'Napaka' },
-      { status: 500 },
-    );
-  }
-}
+  },
+});
+
+export const GET = inventoryValueHandler;
+export const POST = inventoryValueHandler;

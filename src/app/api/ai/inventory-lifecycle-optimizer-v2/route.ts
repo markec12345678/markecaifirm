@@ -1,16 +1,14 @@
-// v6.56: AI Inventory Lifecycle Optimizer v2 — advanced lifecycle z ML stage transitions
+// v6.56 / v8.96.2-batch2: AI Inventory Lifecycle Optimizer v2 — advanced lifecycle z ML stage transitions
+// Refaktoriran z withAiRoute helperjem (v8.96.2-batch2) + enforceBudget guard.
+//
 // POST /api/ai/inventory-lifecycle-optimizer-v2
 // Body: { tradeId?: string }
 // Returns: { ok, optimizer: { items, stages, transitions, mlPredictions, optimalActions, summary } }
 
-import { NextRequest, NextResponse } from 'next/server';
-import { db } from '@/lib/db';
-import { getSettingsRow } from '@/lib/pipeline';
-import { callProviderForRaw, parseJsonLooseExported, type AiProviderType, type AiSettings } from '@/lib/ai';
-import { logger } from '@/lib/logger';
+import { withAiRoute, AI_ROUTE_DEFAULTS, type AiRouteContext } from '@/lib/with-ai-route';
+import { apiOk } from '@/lib/api-response';
 
-export const runtime = 'nodejs';
-export const dynamic = 'force-dynamic';
+export const { runtime, dynamic } = AI_ROUTE_DEFAULTS;
 export const maxDuration = 90;
 
 const LIFECYCLE_STAGES = [
@@ -28,10 +26,24 @@ const LIFECYCLE_STAGES = [
   'returned',        // vrnjen item
 ] as const;
 
-export async function POST(req: NextRequest) {
-  try {
+interface InventoryLifecycleInput {
+  tradeId: string | null;
+}
+
+export const POST = withAiRoute<InventoryLifecycleInput>({
+  endpoint: '/api/ai/inventory-lifecycle-optimizer-v2',
+  maxDuration: 90,
+  enforceBudget: true, // AI klic — preveri budget
+
+  parseBody: async (req) => {
     const body = await req.json().catch(() => ({}));
-    const tradeId = body?.tradeId ? String(body.tradeId) : null;
+    return { tradeId: body?.tradeId ? String(body.tradeId) : null };
+  },
+
+  // No validateInput — tradeId is optional
+  handler: async (input, ctx: AiRouteContext) => {
+    const { db, callAi, parseAi } = ctx;
+    const { tradeId } = input;
 
     const where: any = { status: 'held' };
     if (tradeId) where.id = tradeId;
@@ -46,50 +58,90 @@ export async function POST(req: NextRequest) {
     });
 
     if (heldTrades.length === 0) {
-      return NextResponse.json({ ok: true, optimizer: null, message: 'Ni held tradeov za lifecycle analizo.' });
+      return apiOk({ ok: true, optimizer: null, message: 'Ni held tradeov za lifecycle analizo.' });
     }
 
-    const settings = await getSettingsRow();
-    const aiSettings: AiSettings = {
-      provider: settings.aiProvider as AiProviderType,
-      baseUrl: settings.aiBaseUrl, apiKey: settings.aiApiKey, model: settings.aiModel,
-      fallbackProvider: (settings.fallbackProvider || '') as AiProviderType | '',
-      fallbackBaseUrl: settings.fallbackBaseUrl || '', fallbackApiKey: settings.fallbackApiKey || '',
-      fallbackModel: settings.fallbackModel || '',
+    const items = buildItems(heldTrades);
+    const itemsStr = buildItemsStr(items);
+    const prompt = buildPrompt(items, itemsStr);
+
+    const raw = await callAi(prompt);
+    const parsed: any = parseAi(raw);
+    const optimizer = transformOptimizer(parsed, items);
+
+    return apiOk({ ok: true, optimizer });
+  },
+});
+
+// --- Pomožne funkcije (čiste, testabilne) --------------------------------
+
+interface HeldTradeRow {
+  id: string;
+  title: string;
+  category: string;
+  buyPrice: number;
+  buyFees: number | null;
+  buyDate: Date;
+  listing: {
+    aiEstimatedValue: number | null;
+    dealScore: number | null;
+    aiRisk: number | null;
+    location: string | null;
+    imageUrl: string | null;
+    firstSeenAt: Date | null;
+    contactStatus: string | null;
+  } | null;
+}
+
+interface ItemInfo {
+  id: string;
+  title: string;
+  category: string;
+  cost: number;
+  estValue: number;
+  daysHeld: number;
+  currentStage: typeof LIFECYCLE_STAGES[number];
+  contactStatus: string;
+  dealScore: number;
+  aiRisk: number;
+}
+
+function buildItems(heldTrades: HeldTradeRow[]): ItemInfo[] {
+  const now = Date.now();
+  return heldTrades.map(t => {
+    const cost = t.buyPrice + (t.buyFees ?? 0);
+    const estValue = t.listing?.aiEstimatedValue ?? Math.round(cost * 1.25);
+    const daysHeld = Math.round((now - t.buyDate.getTime()) / (24*60*60*1000));
+    const contactStatus = t.listing?.contactStatus ?? 'none';
+
+    // Hevristična določitev trenutne faze
+    let currentStage: typeof LIFECYCLE_STAGES[number] = 'active_marketing';
+    if (daysHeld <= 1) currentStage = 'acquisition';
+    else if (daysHeld <= 3) currentStage = 'intake';
+    else if (daysHeld <= 7) currentStage = 'preparation';
+    else if (daysHeld <= 14) currentStage = 'launch';
+    else if (daysHeld <= 30) currentStage = 'active_marketing';
+    else if (daysHeld <= 60) currentStage = 'inquiry_phase';
+    else if (contactStatus === 'contacted' || contactStatus === 'responded') currentStage = 'negotiation';
+    else if (daysHeld > 90) currentStage = 'failed';
+
+    return {
+      id: t.id, title: t.title, category: t.category || 'drugo',
+      cost, estValue, daysHeld, currentStage,
+      contactStatus, dealScore: t.listing?.dealScore ?? 50,
+      aiRisk: t.listing?.aiRisk ?? 5,
     };
+  });
+}
 
-    // Determine current lifecycle stage hevristically
-    const now = Date.now();
-    const items = heldTrades.map(t => {
-      const cost = t.buyPrice + (t.buyFees ?? 0);
-      const estValue = t.listing?.aiEstimatedValue ?? Math.round(cost * 1.25);
-      const daysHeld = Math.round((now - t.buyDate.getTime()) / (24*60*60*1000));
-      const contactStatus = t.listing?.contactStatus ?? 'none';
+function buildItemsStr(items: ItemInfo[]): string {
+  return items.slice(0, 20).map(i =>
+    `- [${i.id}] "${i.title}" | ${i.category} | ${i.cost}€→${i.estValue}€ | ${i.daysHeld}d | stage: ${i.currentStage} | contact: ${i.contactStatus} | deal ${i.dealScore}/100`
+  ).join('\n');
+}
 
-      // Hevristična določitev trenutne faze
-      let currentStage: typeof LIFECYCLE_STAGES[number] = 'active_marketing';
-      if (daysHeld <= 1) currentStage = 'acquisition';
-      else if (daysHeld <= 3) currentStage = 'intake';
-      else if (daysHeld <= 7) currentStage = 'preparation';
-      else if (daysHeld <= 14) currentStage = 'launch';
-      else if (daysHeld <= 30) currentStage = 'active_marketing';
-      else if (daysHeld <= 60) currentStage = 'inquiry_phase';
-      else if (contactStatus === 'contacted' || contactStatus === 'responded') currentStage = 'negotiation';
-      else if (daysHeld > 90) currentStage = 'failed';
-
-      return {
-        id: t.id, title: t.title, category: t.category || 'drugo',
-        cost, estValue, daysHeld, currentStage,
-        contactStatus, dealScore: t.listing?.dealScore ?? 50,
-        aiRisk: t.listing?.aiRisk ?? 5,
-      };
-    });
-
-    const itemsStr = items.slice(0, 20).map(i =>
-      `- [${i.id}] "${i.title}" | ${i.category} | ${i.cost}€→${i.estValue}€ | ${i.daysHeld}d | stage: ${i.currentStage} | contact: ${i.contactStatus} | deal ${i.dealScore}/100`
-    ).join('\n');
-
-    const prompt = `Si AI inventory lifecycle optimizer v2 z ML stage transition modelom.
+function buildPrompt(items: ItemInfo[], itemsStr: string): string {
+  return `Si AI inventory lifecycle optimizer v2 z ML stage transition modelom.
 Optimizira vsako fazo inventory lifecycle za maksimalno profit in hitrost prodaje.
 
 INVENTAR (${items.length}):
@@ -211,98 +263,83 @@ Odgovori LE z JSON:
     "biggest_opportunity": "<max 100 znakov>"
   }
 }`;
+}
 
-    let raw = '';
-    try { raw = await callProviderForRaw(aiSettings, prompt); }
-    catch (primaryError: any) {
-      if (aiSettings.fallbackProvider && aiSettings.fallbackModel) {
-        const fb: AiSettings = { provider: aiSettings.fallbackProvider, baseUrl: aiSettings.fallbackBaseUrl || '', apiKey: aiSettings.fallbackApiKey || '', model: aiSettings.fallbackModel };
-        raw = await callProviderForRaw(fb, prompt);
-      } else { return NextResponse.json({ error: primaryError?.message ?? 'AI failed' }, { status: 500 }); }
-    }
+function transformOptimizer(parsed: any, items: ItemInfo[]): any {
+  const validIds = new Set(items.map(i => i.id));
 
-    const parsed: any = parseJsonLooseExported(raw);
-    const validIds = new Set(items.map(i => i.id));
-
-    const optimizer = {
-      insights: String(parsed?.insights ?? '').slice(0, 500),
-      items: (parsed?.items || [])
-        .filter((it: any) => validIds.has(String(it?.id ?? '')))
-        .slice(0, 30)
-        .map((it: any) => {
-          const orig = items.find(x => x.id === String(it?.id));
-          return {
-            tradeId: String(it?.id ?? ''),
-            title: String(it?.title ?? orig?.title ?? '').slice(0, 150),
-            currentStage: LIFECYCLE_STAGES.includes(String(it?.current_stage) as any) ? String(it.current_stage) : (orig?.currentStage ?? 'active_marketing'),
-            daysInCurrentStage: Math.max(0, Number(it?.days_in_current_stage ?? orig?.daysHeld ?? 0)),
-            nextOptimalStage: LIFECYCLE_STAGES.includes(String(it?.next_optimal_stage) as any) ? String(it.next_optimal_stage) : 'active_marketing',
-            stageTransitionReadinessPct: Math.max(0, Math.min(100, Number(it?.stage_transition_readiness_pct ?? 50))),
-            mlPredictions: {
-              predictedDaysToNextStage: Math.max(0, Math.round(Number(it?.ml_predictions?.predicted_days_to_next_stage ?? 7))),
-              predictedFinalStage: ['sold', 'failed', 'returned'].includes(String(it?.ml_predictions?.predicted_final_stage)) ? String(it.ml_predictions.predicted_final_stage) : 'sold',
-              predictedSaleProbabilityPct: Math.max(0, Math.min(100, Number(it?.ml_predictions?.predicted_sale_probability_pct ?? 50))),
-              predictedSalePriceEur: Math.max(0, Math.round(Number(it?.ml_predictions?.predicted_sale_price_eur ?? orig?.estValue ?? 0))),
-              stageEfficiencyScore: Math.max(0, Math.min(100, Number(it?.ml_predictions?.stage_efficiency_score ?? 60))),
-            },
-            optimalAction: String(it?.optimal_action ?? '').slice(0, 250),
-            actionPriority: ['high', 'medium', 'low'].includes(String(it?.action_priority)) ? String(it.action_priority) : 'medium',
-            expectedImpactEur: Math.round(Number(it?.expected_impact_eur ?? 0)),
-            bottleneck: String(it?.bottleneck ?? '').slice(0, 200),
-            accelerationOpportunity: String(it?.acceleration_opportunity ?? '').slice(0, 250),
-          };
-        }),
-      stages: (parsed?.stages || []).slice(0, 12).map((s: any) => ({
-        stage: LIFECYCLE_STAGES.includes(String(s?.stage) as any) ? String(s.stage) : 'active_marketing',
-        itemCount: Math.max(0, Number(s?.item_count ?? 0)),
-        avgDaysInStage: Math.max(0, Number(s?.avg_days_in_stage ?? 0)),
-        optimalDaysInStage: Math.max(0, Number(s?.optimal_days_in_stage ?? 0)),
-        efficiencyPct: Math.max(0, Math.min(100, Number(s?.efficiency_pct ?? 50))),
-        bottleneckDescription: String(s?.bottleneck_description ?? '').slice(0, 250),
-        improvementAction: String(s?.improvement_action ?? '').slice(0, 300),
-        expectedTimeSavingsDays: Math.max(0, Number(s?.expected_time_savings_days ?? 0)),
-      })),
-      transitions: (parsed?.transitions || []).slice(0, 11).map((t: any) => ({
-        fromStage: LIFECYCLE_STAGES.includes(String(t?.from_stage) as any) ? String(t.from_stage) : 'acquisition',
-        toStage: LIFECYCLE_STAGES.includes(String(t?.to_stage) as any) ? String(t.to_stage) : 'intake',
-        avgTransitionDays: Math.max(0, Number(t?.avg_transition_days ?? 0)),
-        optimalTransitionDays: Math.max(0, Number(t?.optimal_transition_days ?? 0)),
-        transitionProbabilityPct: Math.max(0, Math.min(100, Number(t?.transition_probability_pct ?? 50))),
-        blockers: (t?.blockers || []).slice(0, 4).map((b: any) => String(b).slice(0, 150)),
-        accelerators: (t?.accelerators || []).slice(0, 4).map((a: any) => String(a).slice(0, 150)),
-      })),
-      mlPredictions: (parsed?.ml_predictions || []).slice(0, 5).map((m: any) => ({
-        metric: ['days_to_next_stage', 'final_stage', 'sale_probability', 'sale_price', 'stage_efficiency'].includes(String(m?.metric)) ? String(m.metric) : 'sale_probability',
-        avgValue: Math.round(Number(m?.avg_value ?? 0) * 100) / 100,
-        minValue: Math.round(Number(m?.min_value ?? 0) * 100) / 100,
-        maxValue: Math.round(Number(m?.max_value ?? 0) * 100) / 100,
-        confidencePct: Math.max(0, Math.min(100, Number(m?.confidence_pct ?? 50))),
-        trend: ['improving', 'declining', 'stable'].includes(String(m?.trend)) ? String(m.trend) : 'stable',
-      })),
-      optimalActions: (parsed?.optimal_actions || []).slice(0, 8).map((a: any) => ({
-        action: String(a?.action ?? '').slice(0, 300),
-        stageTargeted: String(a?.stage_targeted ?? 'all').slice(0, 30),
-        priority: ['high', 'medium', 'low'].includes(String(a?.priority)) ? String(a.priority) : 'medium',
-        expectedTimeSavingsDays: Math.max(0, Number(a?.expected_time_savings_days ?? 0)),
-        expectedRevenueImpactEur: Math.round(Number(a?.expected_revenue_impact_eur ?? 0)),
-        implementationEffort: ['low', 'medium', 'high'].includes(String(a?.implementation_effort)) ? String(a.implementation_effort) : 'medium',
-      })),
-      summary: {
-        totalItemsAnalyzed: items.length,
-        avgStageEfficiencyPct: Math.max(0, Math.min(100, Number(parsed?.summary?.avg_stage_efficiency_pct ?? 50))),
-        bottleneckStage: String(parsed?.summary?.bottleneck_stage ?? '').slice(0, 150),
-        bestPerformingStage: String(parsed?.summary?.best_performing_stage ?? '').slice(0, 150),
-        totalExpectedTimeSavingsDays: Math.max(0, Number(parsed?.summary?.total_expected_time_savings_days ?? 0)),
-        totalExpectedRevenueImpactEur: Math.round(Number(parsed?.summary?.total_expected_revenue_impact_eur ?? 0)),
-        lifecycleOptimizationScore: Math.max(0, Math.min(100, Number(parsed?.summary?.lifecycle_optimization_score ?? 50))),
-        biggestOpportunity: String(parsed?.summary?.biggest_opportunity ?? '').slice(0, 200),
-      },
-    };
-
-    const today = new Date().toISOString().slice(0, 10);
-    if (settings.aiCallsDate !== today) { await db.settings.update({ where: { id: 'singleton' }, data: { aiCallsDate: today, aiCallsToday: 1 } }); }
-    else { await db.settings.update({ where: { id: 'singleton' }, data: { aiCallsToday: { increment: 1 } } }); }
-
-    return NextResponse.json({ ok: true, optimizer });
-  } catch (e: any) { logger.error("/api/ai/inventory-lifecycle-optimizer-v2", "POST handler failed", e); return NextResponse.json({ error: e?.message ?? 'Napaka' }, { status: 500 }); }
+  return {
+    insights: String(parsed?.insights ?? '').slice(0, 500),
+    items: (parsed?.items || [])
+      .filter((it: any) => validIds.has(String(it?.id ?? '')))
+      .slice(0, 30)
+      .map((it: any) => {
+        const orig = items.find(x => x.id === String(it?.id));
+        return {
+          tradeId: String(it?.id ?? ''),
+          title: String(it?.title ?? orig?.title ?? '').slice(0, 150),
+          currentStage: LIFECYCLE_STAGES.includes(String(it?.current_stage) as any) ? String(it.current_stage) : (orig?.currentStage ?? 'active_marketing'),
+          daysInCurrentStage: Math.max(0, Number(it?.days_in_current_stage ?? orig?.daysHeld ?? 0)),
+          nextOptimalStage: LIFECYCLE_STAGES.includes(String(it?.next_optimal_stage) as any) ? String(it.next_optimal_stage) : 'active_marketing',
+          stageTransitionReadinessPct: Math.max(0, Math.min(100, Number(it?.stage_transition_readiness_pct ?? 50))),
+          mlPredictions: {
+            predictedDaysToNextStage: Math.max(0, Math.round(Number(it?.ml_predictions?.predicted_days_to_next_stage ?? 7))),
+            predictedFinalStage: ['sold', 'failed', 'returned'].includes(String(it?.ml_predictions?.predicted_final_stage)) ? String(it.ml_predictions.predicted_final_stage) : 'sold',
+            predictedSaleProbabilityPct: Math.max(0, Math.min(100, Number(it?.ml_predictions?.predicted_sale_probability_pct ?? 50))),
+            predictedSalePriceEur: Math.max(0, Math.round(Number(it?.ml_predictions?.predicted_sale_price_eur ?? orig?.estValue ?? 0))),
+            stageEfficiencyScore: Math.max(0, Math.min(100, Number(it?.ml_predictions?.stage_efficiency_score ?? 60))),
+          },
+          optimalAction: String(it?.optimal_action ?? '').slice(0, 250),
+          actionPriority: ['high', 'medium', 'low'].includes(String(it?.action_priority)) ? String(it.action_priority) : 'medium',
+          expectedImpactEur: Math.round(Number(it?.expected_impact_eur ?? 0)),
+          bottleneck: String(it?.bottleneck ?? '').slice(0, 200),
+          accelerationOpportunity: String(it?.acceleration_opportunity ?? '').slice(0, 250),
+        };
+      }),
+    stages: (parsed?.stages || []).slice(0, 12).map((s: any) => ({
+      stage: LIFECYCLE_STAGES.includes(String(s?.stage) as any) ? String(s.stage) : 'active_marketing',
+      itemCount: Math.max(0, Number(s?.item_count ?? 0)),
+      avgDaysInStage: Math.max(0, Number(s?.avg_days_in_stage ?? 0)),
+      optimalDaysInStage: Math.max(0, Number(s?.optimal_days_in_stage ?? 0)),
+      efficiencyPct: Math.max(0, Math.min(100, Number(s?.efficiency_pct ?? 50))),
+      bottleneckDescription: String(s?.bottleneck_description ?? '').slice(0, 250),
+      improvementAction: String(s?.improvement_action ?? '').slice(0, 300),
+      expectedTimeSavingsDays: Math.max(0, Number(s?.expected_time_savings_days ?? 0)),
+    })),
+    transitions: (parsed?.transitions || []).slice(0, 11).map((t: any) => ({
+      fromStage: LIFECYCLE_STAGES.includes(String(t?.from_stage) as any) ? String(t.from_stage) : 'acquisition',
+      toStage: LIFECYCLE_STAGES.includes(String(t?.to_stage) as any) ? String(t.to_stage) : 'intake',
+      avgTransitionDays: Math.max(0, Number(t?.avg_transition_days ?? 0)),
+      optimalTransitionDays: Math.max(0, Number(t?.optimal_transition_days ?? 0)),
+      transitionProbabilityPct: Math.max(0, Math.min(100, Number(t?.transition_probability_pct ?? 50))),
+      blockers: (t?.blockers || []).slice(0, 4).map((b: any) => String(b).slice(0, 150)),
+      accelerators: (t?.accelerators || []).slice(0, 4).map((a: any) => String(a).slice(0, 150)),
+    })),
+    mlPredictions: (parsed?.ml_predictions || []).slice(0, 5).map((m: any) => ({
+      metric: ['days_to_next_stage', 'final_stage', 'sale_probability', 'sale_price', 'stage_efficiency'].includes(String(m?.metric)) ? String(m.metric) : 'sale_probability',
+      avgValue: Math.round(Number(m?.avg_value ?? 0) * 100) / 100,
+      minValue: Math.round(Number(m?.min_value ?? 0) * 100) / 100,
+      maxValue: Math.round(Number(m?.max_value ?? 0) * 100) / 100,
+      confidencePct: Math.max(0, Math.min(100, Number(m?.confidence_pct ?? 50))),
+      trend: ['improving', 'declining', 'stable'].includes(String(m?.trend)) ? String(m.trend) : 'stable',
+    })),
+    optimalActions: (parsed?.optimal_actions || []).slice(0, 8).map((a: any) => ({
+      action: String(a?.action ?? '').slice(0, 300),
+      stageTargeted: String(a?.stage_targeted ?? 'all').slice(0, 30),
+      priority: ['high', 'medium', 'low'].includes(String(a?.priority)) ? String(a.priority) : 'medium',
+      expectedTimeSavingsDays: Math.max(0, Number(a?.expected_time_savings_days ?? 0)),
+      expectedRevenueImpactEur: Math.round(Number(a?.expected_revenue_impact_eur ?? 0)),
+      implementationEffort: ['low', 'medium', 'high'].includes(String(a?.implementation_effort)) ? String(a.implementation_effort) : 'medium',
+    })),
+    summary: {
+      totalItemsAnalyzed: items.length,
+      avgStageEfficiencyPct: Math.max(0, Math.min(100, Number(parsed?.summary?.avg_stage_efficiency_pct ?? 50))),
+      bottleneckStage: String(parsed?.summary?.bottleneck_stage ?? '').slice(0, 150),
+      bestPerformingStage: String(parsed?.summary?.best_performing_stage ?? '').slice(0, 150),
+      totalExpectedTimeSavingsDays: Math.max(0, Number(parsed?.summary?.total_expected_time_savings_days ?? 0)),
+      totalExpectedRevenueImpactEur: Math.round(Number(parsed?.summary?.total_expected_revenue_impact_eur ?? 0)),
+      lifecycleOptimizationScore: Math.max(0, Math.min(100, Number(parsed?.summary?.lifecycle_optimization_score ?? 50))),
+      biggestOpportunity: String(parsed?.summary?.biggest_opportunity ?? '').slice(0, 200),
+    },
+  };
 }

@@ -1,4 +1,5 @@
-// v7.51: AI Search Keyword Optimizer — optimiziraj Bolha naslov + tags za iskanje.
+// v7.51 / v8.95.6-other: AI Search Keyword Optimizer — optimiziraj Bolha naslov + tags za iskanje.
+// Refaktoriran z withAiRoute helperjem (v8.95.6-other) + enforceBudget guard.
 //
 // Bolha iskalnik uporablja fuzzy matching na naslovu + opisu.
 // AI analizira katere ključne besede ljudje iščejo in optimizira naslov.
@@ -10,53 +11,114 @@
 // Body: { title: string, description?: string, category?: string }
 // Returns: { ok, optimized: { title, tags, keywords, removed, added, expectedVisibilityPct } }
 
-import { NextRequest, NextResponse } from 'next/server';
-import { db } from '@/lib/db';
-import { getSettingsRow } from '@/lib/pipeline';
-import { callProviderForRaw, parseJsonLooseExported, type AiProviderType, type AiSettings } from '@/lib/ai';
-import { logger } from '@/lib/logger';
+import { withAiRoute, AI_ROUTE_DEFAULTS, type AiRouteContext } from '@/lib/with-ai-route';
+import { apiOk } from '@/lib/api-response';
 
-export const runtime = 'nodejs';
-export const dynamic = 'force-dynamic';
+export const { runtime, dynamic } = AI_ROUTE_DEFAULTS;
 export const maxDuration = 60;
 
-export async function POST(req: NextRequest) {
-  try {
-    const body = await req.json().catch(() => ({}));
-    const { title, description = '', category = '' } = body;
-    if (!title) return NextResponse.json({ error: 'title je obvezen' }, { status: 400 });
+interface SearchKeywordOptimizerInput {
+  title: string;
+  description: string;
+  category: string;
+}
 
-    // Get popular search terms from existing listings (what people post = what people search)
+interface ListingRow {
+  title: string;
+  price: number | null;
+  monitor: { source: string } | null;
+}
+
+interface OptimizedResult {
+  optimizedTitle: string;
+  tags: string[];
+  keywordsAdded: string[];
+  keywordsRemoved: string[];
+  reasoning: string;
+  expectedVisibilityPct: number;
+  searchVariations: string[];
+}
+
+export const POST = withAiRoute<SearchKeywordOptimizerInput>({
+  endpoint: '/api/ai/search-keyword-optimizer',
+  maxDuration: 60,
+  enforceBudget: true, // AI klic — preveri budget
+
+  parseBody: async (req) => {
+    const body = await req.json().catch(() => ({}));
+    return {
+      title: String(body?.title ?? ''),
+      description: String(body?.description ?? ''),
+      category: String(body?.category ?? ''),
+    };
+  },
+
+  validateInput: (input) => (input.title ? null : 'title je obvezen'),
+
+  handler: async (input, ctx: AiRouteContext) => {
+    const { db, callAi, parseAi } = ctx;
+    const { title, description, category } = input;
+
+    // 1. Get popular search terms from existing listings (what people post = what people search)
     const popularListings = await db.listing.findMany({
       where: { isHidden: false, aiVerdict: 'PRILIKA' },
       select: { title: true, price: true, monitor: { select: { source: true } } },
       take: 200,
     });
 
-    const popularTerms = new Map<string, number>();
-    for (const l of popularListings) {
-      const words = l.title.toLowerCase().split(/\s+/).filter(w => w.length > 3);
-      for (const w of words) popularTerms.set(w, (popularTerms.get(w) ?? 0) + 1);
+    const topTerms = computeTopTerms(popularListings);
+
+    // 2. Build prompt + call AI (with fallback to default response on failure)
+    const prompt = buildPrompt({ title, description, category, topTerms });
+    let raw: string;
+    try {
+      raw = await callAi(prompt);
+    } catch {
+      // Fallback to default response when AI unavailable (preserves original behavior)
+      return apiOk({
+        ok: true,
+        original: { title, description: description.slice(0, 200) },
+        optimized: buildDefaultOptimized(title),
+      });
     }
-    const topTerms = Array.from(popularTerms.entries()).sort((a, b) => b[1] - a[1]).slice(0, 20).map(([term, count]) => `${term} (${count})`);
 
-    const settings = await getSettingsRow();
-    const aiSettings: AiSettings = {
-      provider: settings.aiProvider as AiProviderType,
-      baseUrl: settings.aiBaseUrl, apiKey: settings.aiApiKey, model: settings.aiModel,
-      fallbackProvider: (settings.fallbackProvider || '') as AiProviderType | '',
-      fallbackBaseUrl: settings.fallbackBaseUrl || '', fallbackApiKey: settings.fallbackApiKey || '',
-      fallbackModel: settings.fallbackModel || '',
-    };
+    const parsed: any = parseAi(raw);
 
-    const prompt = `Si ekspert za SEO optimizacijo naslovov na slovenskih oglasnih platformah (Bolha, Vinted).
+    return apiOk({
+      ok: true,
+      original: { title, description: description.slice(0, 200) },
+      optimized: transformOptimized(parsed, title),
+    });
+  },
+});
 
-ORIGINALNI NASLOV: ${title}
-KATEGORIJA: ${category || 'splošno'}
-OPIS: ${description.slice(0, 300) || 'Ni opisa'}
+// --- Pomožne funkcije (čiste, testabilne) --------------------------------
+
+function computeTopTerms(popularListings: ListingRow[]): string[] {
+  const popularTerms = new Map<string, number>();
+  for (const l of popularListings) {
+    const words = l.title.toLowerCase().split(/\s+/).filter(w => w.length > 3);
+    for (const w of words) popularTerms.set(w, (popularTerms.get(w) ?? 0) + 1);
+  }
+  return Array.from(popularTerms.entries()).sort((a, b) => b[1] - a[1]).slice(0, 20).map(([term, count]) => `${term} (${count})`);
+}
+
+interface PromptData {
+  title: string;
+  description: string;
+  category: string;
+  topTerms: string[];
+}
+
+function buildPrompt(d: PromptData): string {
+  return `Si ekspert za SEO optimizacijo naslovov na slovenskih oglasnih platformah (Bolha, Vinted).
+
+ORIGINALNI NASLOV: ${d.title}
+KATEGORIJA: ${d.category || 'splošno'}
+OPIS: ${d.description.slice(0, 300) || 'Ni opisa'}
 
 PRILJUBLJENE ISKALNE BESEDE (iz 200 priložnosti):
-${topTerms.join(', ')}
+${d.topTerms.join(', ')}
 
 PRAVILA ZA BOLHA SEO:
 1. Naslov: max 80 znakov
@@ -83,47 +145,28 @@ Odgovori LE z JSON:
   "expected_visibility_pct": <number 0-100>,
   "search_variations": ["<kako ljudje iščejo ta item>"]
 }`;
+}
 
-    let raw = '';
-    try {
-      raw = await callProviderForRaw(aiSettings, prompt);
-    } catch (primaryError: any) {
-      if (aiSettings.fallbackProvider && aiSettings.fallbackModel) {
-        const fb: AiSettings = { provider: aiSettings.fallbackProvider, baseUrl: aiSettings.fallbackBaseUrl || '', apiKey: aiSettings.fallbackApiKey || '', model: aiSettings.fallbackModel };
-        raw = await callProviderForRaw(fb, prompt);
-      } else {
-        return NextResponse.json({
-          ok: true,
-          optimized: {
-            optimizedTitle: title.slice(0, 80),
-            tags: [],
-            keywordsAdded: [],
-            keywordsRemoved: [],
-            reasoning: 'AI ni na voljo — originalni naslov ohranjen.',
-            expectedVisibilityPct: 50,
-            searchVariations: [],
-          },
-        });
-      }
-    }
+function buildDefaultOptimized(title: string): OptimizedResult {
+  return {
+    optimizedTitle: title.slice(0, 80),
+    tags: [],
+    keywordsAdded: [],
+    keywordsRemoved: [],
+    reasoning: 'AI ni na voljo — originalni naslov ohranjen.',
+    expectedVisibilityPct: 50,
+    searchVariations: [],
+  };
+}
 
-    const parsed: any = parseJsonLooseExported(raw);
-
-    return NextResponse.json({
-      ok: true,
-      original: { title, description: description.slice(0, 200) },
-      optimized: {
-        optimizedTitle: String(parsed?.optimized_title ?? title).slice(0, 80),
-        tags: (parsed?.tags || []).slice(0, 10).map((t: any) => String(t).slice(0, 30)),
-        keywordsAdded: (parsed?.keywords_added || []).slice(0, 10).map((k: any) => String(k).slice(0, 50)),
-        keywordsRemoved: (parsed?.keywords_removed || []).slice(0, 5).map((k: any) => String(k).slice(0, 50)),
-        reasoning: String(parsed?.reasoning ?? '').slice(0, 300),
-        expectedVisibilityPct: Math.max(0, Math.min(100, Number(parsed?.expected_visibility_pct ?? 50))),
-        searchVariations: (parsed?.search_variations || []).slice(0, 8).map((s: any) => String(s).slice(0, 80)),
-      },
-    });
-  } catch (err: any) {
-    logger.error('/api/ai/search-keyword-optimizer', 'POST handler failed', err);
-    return NextResponse.json({ error: err?.message ?? 'Napaka' }, { status: 500 });
-  }
+function transformOptimized(parsed: any, title: string): OptimizedResult {
+  return {
+    optimizedTitle: String(parsed?.optimized_title ?? title).slice(0, 80),
+    tags: (parsed?.tags || []).slice(0, 10).map((t: any) => String(t).slice(0, 30)),
+    keywordsAdded: (parsed?.keywords_added || []).slice(0, 10).map((k: any) => String(k).slice(0, 50)),
+    keywordsRemoved: (parsed?.keywords_removed || []).slice(0, 5).map((k: any) => String(k).slice(0, 50)),
+    reasoning: String(parsed?.reasoning ?? '').slice(0, 300),
+    expectedVisibilityPct: Math.max(0, Math.min(100, Number(parsed?.expected_visibility_pct ?? 50))),
+    searchVariations: (parsed?.search_variations || []).slice(0, 8).map((s: any) => String(s).slice(0, 80)),
+  };
 }

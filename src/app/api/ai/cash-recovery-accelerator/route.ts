@@ -1,7 +1,8 @@
-// v7.96: AI Cash Recovery Accelerator — AI identifies how to ACCELERATE
-// cash recovery from HELD inventory — kateri itemi za prodati FIRST,
+// v7.96 / v8.96.5-batch1: AI Cash Recovery Accelerator — AI identifies how to
+// ACCELERATE cash recovery from HELD inventory — kateri itemi za prodati FIRST,
 // kateri discount-at, kateri bundle-at, kateri cross-post-at, da se
 // kapital sprosti NAJHITREJŠE za reinvestment. Maximizes cash velocity.
+// Refaktoriran z withAiRoute helperjem (v8.96) + enforceBudget guard.
 //
 // Razlika od cash-flow-velocity-tracker (ki track-a cash velocity) —
 // ta ACCELERIRA cash recovery z actionable per-item plan. Razlika od
@@ -26,23 +27,16 @@
 // GET+POST /api/ai/cash-recovery-accelerator
 // (AI-enhanced + grounding + anti-hallucination + 6h cache + deterministic fallback)
 
-import { NextRequest, NextResponse } from 'next/server';
-import { db } from '@/lib/db';
-import { getSettingsRow } from '@/lib/pipeline';
-import {
-  callProviderForRaw,
-  parseJsonLooseExported,
-  type AiProviderType,
-  type AiSettings,
-} from '@/lib/ai';
+import { withAiRoute, AI_ROUTE_DEFAULTS, type AiRouteContext } from '@/lib/with-ai-route';
+import { apiOk } from '@/lib/api-response';
 import { GROUNDING_PROMPT_SUFFIX } from '@/lib/anti-hallucination';
 import { getCachedAI, setCachedAI } from '@/lib/ai-cache';
-import { checkRateLimit, rateLimitResponse } from '@/lib/rate-limit';
-import { logger } from '@/lib/logger';
 
-export const runtime = 'nodejs';
-export const dynamic = 'force-dynamic';
+export const { runtime, dynamic } = AI_ROUTE_DEFAULTS;
 export const maxDuration = 60;
+
+// eslint-disable-next-line @typescript-eslint/no-empty-object-type
+interface CashRecoveryAcceleratorInput {}
 
 // --- Types ---------------------------------------------------------------
 
@@ -505,153 +499,61 @@ function buildSummary(portfolio: Portfolio, plan: RecoveryPlan): string {
   return parts.join(' ').slice(0, 400);
 }
 
-// --- Handler -------------------------------------------------------------
+// --- AI prompt + merge helpers (pure, extracted OUTSIDE handler) ----------
 
-export async function GET(req: NextRequest) {
-  return handleCashRecoveryAccelerator(req);
+interface PromptItem {
+  tradeId: string;
+  title: string;
+  buyPrice: number;
+  capitalTied: number;
+  carryingCostAccrued: number;
+  netRecoverableValue: number;
+  cashRecoveryUrgency: number;
+  capitalEfficiencyLoss: number;
+  detAction: QuickRecoveryAction;
+  detRecoveryAmount: number;
+  detRecoveryDays: number;
 }
-export async function POST(req: NextRequest) {
-  return handleCashRecoveryAccelerator(req);
+
+function buildPromptItems(detItems: DetRecoveryItem[]): PromptItem[] {
+  return detItems
+    .sort((a, b) => b.item.cashRecoveryUrgency - a.item.cashRecoveryUrgency)
+    .slice(0, 30)
+    .map((d) => ({
+      tradeId: d.item.tradeId,
+      title: d.item.title,
+      buyPrice: d.item.buyPrice,
+      capitalTied: d.item.capitalTied,
+      carryingCostAccrued: d.item.carryingCostAccrued,
+      netRecoverableValue: d.item.netRecoverableValue,
+      cashRecoveryUrgency: d.item.cashRecoveryUrgency,
+      capitalEfficiencyLoss: d.item.capitalEfficiencyLoss,
+      detAction: d.item.quickRecoveryAction,
+      detRecoveryAmount: d.item.expectedRecoveryAmount,
+      detRecoveryDays: d.item.expectedRecoveryDays,
+    }));
 }
 
-async function handleCashRecoveryAccelerator(req: NextRequest) {
-  try {
-    const rl = checkRateLimit(req, 'ai-cash-recovery-accelerator', 20);
-    if (!rl.allowed) return rateLimitResponse(rl);
+function buildPromptData(portfolio: Portfolio, topItemsForAI: PromptItem[], plan: RecoveryPlan) {
+  return {
+    portfolio,
+    heldItems: topItemsForAI,
+    deterministicPlan: plan,
+    caps: {
+      urgencyMin: URGENCY_MIN, urgencyMax: URGENCY_MAX,
+      efficiencyLossMin: EFFICIENCY_LOSS_MIN, efficiencyLossMax: EFFICIENCY_LOSS_MAX,
+      recoveryAmountMin: RECOVERY_AMOUNT_MIN, recoveryAmountMax: RECOVERY_AMOUNT_MAX,
+      recoveryDaysMin: RECOVERY_DAYS_MIN, recoveryDaysMax: RECOVERY_DAYS_MAX,
+      reinvestmentRoiMin: REINVESTMENT_ROI_MIN, reinvestmentRoiMax: REINVESTMENT_ROI_MAX,
+      cashImpactMin: CASH_IMPACT_MIN, cashImpactMax: CASH_IMPACT_MAX,
+      velocityMin: VELOCITY_MIN, velocityMax: VELOCITY_MAX,
+      timelineMin: TIMELINE_MIN, timelineMax: TIMELINE_MAX,
+    },
+  };
+}
 
-    const now = Date.now();
-
-    // 1) Query all HELD trades with their linked Listing
-    const heldTrades = await db.trade.findMany({
-      where: { status: 'held' },
-      select: {
-        id: true,
-        title: true,
-        buyPrice: true,
-        buyFees: true,
-        buyDate: true,
-        category: true,
-        listing: {
-          select: {
-            aiEstimatedValue: true,
-            price: true,
-            aiScore: true,
-            dealScore: true,
-            monitor: { select: { tags: true } },
-          },
-        },
-      },
-      orderBy: { buyDate: 'asc' },
-      take: 100000,
-    }) as unknown as HeldItemRow[];
-
-    // Empty-state: no HELD trades
-    if (heldTrades.length === 0) {
-      return NextResponse.json({
-        ok: true,
-        portfolio: {
-          totalCapitalTied: 0,
-          totalCarryingCostAccrued: 0,
-          totalNetRecoverableValue: 0,
-          capitalEfficiencyLoss: 0,
-          avgDaysHeld: 0,
-        },
-        recoveryItems: [],
-        plan: {
-          expectedCashRecovery: 0,
-          recoveryTimeline: 0,
-          capitalVelocityImprovement: 0,
-          reinvestmentOpportunities: [],
-          prioritizedActions: [],
-        },
-        summary: 'Ni HELD trgovin v inventarju — Cash Recovery Accelerator ni mogoč.',
-        aiUsed: false,
-        message: 'Ni HELD trgovin v inventarju — Cash Recovery Accelerator ni mogoč.',
-      } satisfies CashRecoveryResponse);
-    }
-
-    // 2) Compute recovery items (deterministic baseline)
-    const detItems = heldTrades.map((t) => computeRecoveryItem(t, now));
-    const portfolio = computePortfolio(detItems);
-    let plan = buildDeterministicPlan(detItems, portfolio);
-
-    // Recovery items array — sorted by urgency
-    let recoveryItems: RecoveryItem[] = [...detItems]
-      .sort((a, b) => b.item.cashRecoveryUrgency - a.item.cashRecoveryUrgency)
-      .map((d) => d.item);
-
-    let summary = buildSummary(portfolio, plan);
-
-    // 3) AI cache check (6h TTL) — key by held item ids
-    const heldItemIds = heldTrades.map((t) => t.id).sort();
-    const cacheKey = `cash-recovery-accelerator:${JSON.stringify(heldItemIds)}`;
-    const cached = getCachedAI<{
-      recoveryItems: RecoveryItem[];
-      plan: RecoveryPlan;
-      summary: string;
-    }>(cacheKey);
-    if (cached) {
-      return NextResponse.json({
-        ok: true,
-        portfolio,
-        recoveryItems: cached.recoveryItems,
-        plan: cached.plan,
-        summary: cached.summary,
-        cached: true,
-        aiUsed: true,
-      } satisfies CashRecoveryResponse);
-    }
-
-    // 4) AI prompt with grounding
-    const settings = await getSettingsRow();
-    const aiSettings: AiSettings = {
-      provider: settings.aiProvider as AiProviderType,
-      baseUrl: settings.aiBaseUrl,
-      apiKey: settings.aiApiKey,
-      model: settings.aiModel,
-      fallbackProvider: (settings.fallbackProvider || '') as
-        | AiProviderType
-        | '',
-      fallbackBaseUrl: settings.fallbackBaseUrl || '',
-      fallbackApiKey: settings.fallbackApiKey || '',
-      fallbackModel: settings.fallbackModel || '',
-    };
-
-    // Compact context for AI (top 30 items by urgency)
-    const topItemsForAI = detItems
-      .sort((a, b) => b.item.cashRecoveryUrgency - a.item.cashRecoveryUrgency)
-      .slice(0, 30)
-      .map((d) => ({
-        tradeId: d.item.tradeId,
-        title: d.item.title,
-        buyPrice: d.item.buyPrice,
-        capitalTied: d.item.capitalTied,
-        carryingCostAccrued: d.item.carryingCostAccrued,
-        netRecoverableValue: d.item.netRecoverableValue,
-        cashRecoveryUrgency: d.item.cashRecoveryUrgency,
-        capitalEfficiencyLoss: d.item.capitalEfficiencyLoss,
-        detAction: d.item.quickRecoveryAction,
-        detRecoveryAmount: d.item.expectedRecoveryAmount,
-        detRecoveryDays: d.item.expectedRecoveryDays,
-      }));
-
-    const promptData = {
-      portfolio,
-      heldItems: topItemsForAI,
-      deterministicPlan: plan,
-      caps: {
-        urgencyMin: URGENCY_MIN, urgencyMax: URGENCY_MAX,
-        efficiencyLossMin: EFFICIENCY_LOSS_MIN, efficiencyLossMax: EFFICIENCY_LOSS_MAX,
-        recoveryAmountMin: RECOVERY_AMOUNT_MIN, recoveryAmountMax: RECOVERY_AMOUNT_MAX,
-        recoveryDaysMin: RECOVERY_DAYS_MIN, recoveryDaysMax: RECOVERY_DAYS_MAX,
-        reinvestmentRoiMin: REINVESTMENT_ROI_MIN, reinvestmentRoiMax: REINVESTMENT_ROI_MAX,
-        cashImpactMin: CASH_IMPACT_MIN, cashImpactMax: CASH_IMPACT_MAX,
-        velocityMin: VELOCITY_MIN, velocityMax: VELOCITY_MAX,
-        timelineMin: TIMELINE_MIN, timelineMax: TIMELINE_MAX,
-      },
-    };
-
-    const prompt = `Si AI "Cash Recovery Accelerator" za slovenske in srednjeevropske oglasne platforme (Bolha, Vinted, Avtonet, mobile.de).
+function buildPrompt(promptData: ReturnType<typeof buildPromptData>): string {
+  return `Si AI "Cash Recovery Accelerator" za slovenske in srednjeevropske oglasne platforme (Bolha, Vinted, Avtonet, mobile.de).
 Si strokovnjak za CASH VELOCITY optimization — identificiraš kako NAJHITREJŠE sprostiti kapital iz HELD inventorija za reinvestment. Razlika od cash-flow-velocity-tracker (ki track-a cash velocity) — ti ACCELERIRAŠ cash recovery z actionable per-item plan. Razlika od liquidation-strategist (ki likvidira stale inventory) — ti identificiraš kateri itemi za prodati FIRST za max cash recovery (ne le stale). Razlika od turnover-optimizer (ki optimizira turnover rate) — ti optimiziraš CASH VELOCITY (kateri itemi sprostijo največ kapitala najhitreje).
 
 DETERMINISTIČNI PODATKI (izračunano iz DB — HELD trgovin z linked Listing):
@@ -688,126 +590,258 @@ VRNI LE JSON:
   },
   "summary": "Capital tied: 4500€, accrued carrying cost: 180€ (40 days). Recovery: 3200€ in 14 days (+65% velocity). Reinvest in elektronika (ROI 120%)."
 }${GROUNDING_PROMPT_SUFFIX}`;
+}
 
+interface MergeResult {
+  recoveryItems: RecoveryItem[];
+  plan: RecoveryPlan;
+  summary: string;
+  aiUsed: boolean;
+}
+
+function mergeAiIntoRecovery(
+  parsed: AiResponse | null,
+  detItems: DetRecoveryItem[],
+  portfolio: Portfolio,
+  detPlan: RecoveryPlan,
+): MergeResult {
+  let recoveryItems: RecoveryItem[] = [...detItems]
+    .sort((a, b) => b.item.cashRecoveryUrgency - a.item.cashRecoveryUrgency)
+    .map((d) => d.item);
+  let plan = detPlan;
+  let summary = buildSummary(portfolio, detPlan);
+  let aiUsed = false;
+
+  if (parsed && typeof parsed === 'object') {
+    // Build a quick lookup map of det items by tradeId
+    const detByTradeId = new Map<string, DetRecoveryItem>();
+    for (const d of detItems) detByTradeId.set(d.item.tradeId, d);
+
+    // Parse recovery items — keep deterministic for unknown tradeIds (anti-hallucination)
+    const aiRecoveryItems: RecoveryItem[] = [];
+    if (parsed.recoveryItems && Array.isArray(parsed.recoveryItems)) {
+      for (const r of parsed.recoveryItems) {
+        if (!r || typeof r !== 'object') continue;
+        const det = detByTradeId.get(String(r.tradeId ?? ''));
+        if (!det) continue; // skip unknown tradeId — anti-hallucination
+        const quickRecoveryAction = clampEnum(r.quickRecoveryAction, VALID_ACTION, det.item.quickRecoveryAction);
+        const expectedRecoveryAmount = round0(clampNum(
+          r.expectedRecoveryAmount,
+          RECOVERY_AMOUNT_MIN, RECOVERY_AMOUNT_MAX,
+          det.item.expectedRecoveryAmount,
+        ));
+        // Anti-hallucination: clamp recovery amount to [0.5x, 1.2x] buyPrice range
+        const recoveryLowBound = det.item.buyPrice * 0.5;
+        const recoveryHighBound = det.item.buyPrice * 1.2;
+        const clampedRecoveryAmount = round0(
+          Math.max(recoveryLowBound, Math.min(recoveryHighBound, expectedRecoveryAmount)),
+        );
+        const expectedRecoveryDays = round0(clampNum(
+          r.expectedRecoveryDays,
+          RECOVERY_DAYS_MIN, RECOVERY_DAYS_MAX,
+          det.item.expectedRecoveryDays,
+        ));
+        aiRecoveryItems.push({
+          ...det.item,
+          quickRecoveryAction,
+          expectedRecoveryAmount: clampedRecoveryAmount,
+          expectedRecoveryDays,
+        });
+      }
+    }
+    // Fallback to deterministic if AI returned nothing useful
+    if (aiRecoveryItems.length === 0) {
+      for (const d of detItems) aiRecoveryItems.push(d.item);
+    } else {
+      // For items AI didn't return, keep deterministic values
+      const aiTradeIds = new Set(aiRecoveryItems.map((r) => r.tradeId));
+      for (const d of detItems) {
+        if (!aiTradeIds.has(d.item.tradeId)) {
+          aiRecoveryItems.push(d.item);
+        }
+      }
+    }
+    // Sort by urgency descending
+    aiRecoveryItems.sort((a, b) => b.cashRecoveryUrgency - a.cashRecoveryUrgency);
+    recoveryItems = aiRecoveryItems;
+
+    // Parse plan
+    const aiPlan = parsed.plan ?? {};
+    const expectedCashRecovery = round0(clampNum(
+      aiPlan.expectedCashRecovery,
+      RECOVERY_AMOUNT_MIN, RECOVERY_AMOUNT_MAX,
+      detPlan.expectedCashRecovery,
+    ));
+    const recoveryTimeline = round0(clampNum(
+      aiPlan.recoveryTimeline,
+      TIMELINE_MIN, TIMELINE_MAX,
+      detPlan.recoveryTimeline,
+    ));
+    const capitalVelocityImprovement = round0(clampNum(
+      aiPlan.capitalVelocityImprovement,
+      VELOCITY_MIN, VELOCITY_MAX,
+      detPlan.capitalVelocityImprovement,
+    ));
+
+    // Reinvestment opportunities
+    const reinvestmentOpportunities: ReinvestmentOpportunity[] = [];
+    if (Array.isArray(aiPlan.reinvestmentOpportunities)) {
+      for (const o of aiPlan.reinvestmentOpportunities.slice(0, 5)) {
+        if (!o || typeof o !== 'object') continue;
+        reinvestmentOpportunities.push({
+          category: clampString(o.category, 50, detPlan.reinvestmentOpportunities[0]?.category ?? 'drugo'),
+          expectedROI: round0(clampNum(o.expectedROI, REINVESTMENT_ROI_MIN, REINVESTMENT_ROI_MAX, 0)),
+          reasoning: clampString(o.reasoning, 250, detPlan.reinvestmentOpportunities[0]?.reasoning ?? 'Kategorija z visokim ROI-jem.'),
+        });
+      }
+    }
+    if (reinvestmentOpportunities.length === 0) {
+      for (const o of detPlan.reinvestmentOpportunities) reinvestmentOpportunities.push(o);
+    }
+
+    // Prioritized actions
+    const prioritizedActions: PrioritizedAction[] = [];
+    if (Array.isArray(aiPlan.prioritizedActions)) {
+      for (const a of aiPlan.prioritizedActions.slice(0, 8)) {
+        if (!a || typeof a !== 'object') continue;
+        prioritizedActions.push({
+          action: clampString(a.action, 300, detPlan.prioritizedActions[0]?.action ?? 'Cash recovery akcija.'),
+          priority: clampEnum(a.priority, VALID_PRIORITY, detPlan.prioritizedActions[0]?.priority ?? 'MEDIUM'),
+          cashImpact: round0(clampNum(a.cashImpact, CASH_IMPACT_MIN, CASH_IMPACT_MAX, 0)),
+        });
+      }
+    }
+    if (prioritizedActions.length === 0) {
+      for (const a of detPlan.prioritizedActions) prioritizedActions.push(a);
+    }
+
+    plan = {
+      expectedCashRecovery,
+      recoveryTimeline,
+      capitalVelocityImprovement,
+      reinvestmentOpportunities,
+      prioritizedActions,
+    };
+    summary = clampString(parsed.summary, 400, buildSummary(portfolio, plan));
+    aiUsed = true;
+  }
+
+  return { recoveryItems, plan, summary, aiUsed };
+}
+
+// --- Handler -------------------------------------------------------------
+
+const cashRecoveryHandler = withAiRoute<CashRecoveryAcceleratorInput>({
+  endpoint: '/api/ai/cash-recovery-accelerator',
+  maxDuration: 60,
+  enforceBudget: true,
+  method: 'GET',
+
+  parseBody: async (req) => {
+    await req.json().catch(() => ({}));
+    return {};
+  },
+
+  handler: async (_input, ctx: AiRouteContext) => {
+    const { db, callAi, parseAi, logger } = ctx;
+    const now = Date.now();
+
+    // 1) Query all HELD trades with their linked Listing
+    const heldTrades = await db.trade.findMany({
+      where: { status: 'held' },
+      select: {
+        id: true,
+        title: true,
+        buyPrice: true,
+        buyFees: true,
+        buyDate: true,
+        category: true,
+        listing: {
+          select: {
+            aiEstimatedValue: true,
+            price: true,
+            aiScore: true,
+            dealScore: true,
+            monitor: { select: { tags: true } },
+          },
+        },
+      },
+      orderBy: { buyDate: 'asc' },
+      take: 100000,
+    }) as unknown as HeldItemRow[];
+
+    // Empty-state: no HELD trades
+    if (heldTrades.length === 0) {
+      return apiOk({
+        ok: true,
+        portfolio: {
+          totalCapitalTied: 0,
+          totalCarryingCostAccrued: 0,
+          totalNetRecoverableValue: 0,
+          capitalEfficiencyLoss: 0,
+          avgDaysHeld: 0,
+        },
+        recoveryItems: [],
+        plan: {
+          expectedCashRecovery: 0,
+          recoveryTimeline: 0,
+          capitalVelocityImprovement: 0,
+          reinvestmentOpportunities: [],
+          prioritizedActions: [],
+        },
+        summary: 'Ni HELD trgovin v inventarju — Cash Recovery Accelerator ni mogoč.',
+        aiUsed: false,
+        message: 'Ni HELD trgovin v inventarju — Cash Recovery Accelerator ni mogoč.',
+      } satisfies CashRecoveryResponse);
+    }
+
+    // 2) Compute recovery items (deterministic baseline)
+    const detItems = heldTrades.map((t) => computeRecoveryItem(t, now));
+    const portfolio = computePortfolio(detItems);
+    const detPlan = buildDeterministicPlan(detItems, portfolio);
+
+    // Baseline (deterministic) recovery items, plan, summary
+    let recoveryItems: RecoveryItem[] = [...detItems]
+      .sort((a, b) => b.item.cashRecoveryUrgency - a.item.cashRecoveryUrgency)
+      .map((d) => d.item);
+    let plan = detPlan;
+    let summary = buildSummary(portfolio, detPlan);
     let aiUsed = false;
 
+    // 3) AI cache check (6h TTL) — key by held item ids
+    const heldItemIds = heldTrades.map((t) => t.id).sort();
+    const cacheKey = `cash-recovery-accelerator:${JSON.stringify(heldItemIds)}`;
+    const cached = getCachedAI<{
+      recoveryItems: RecoveryItem[];
+      plan: RecoveryPlan;
+      summary: string;
+    }>(cacheKey);
+    if (cached) {
+      return apiOk({
+        ok: true,
+        portfolio,
+        recoveryItems: cached.recoveryItems,
+        plan: cached.plan,
+        summary: cached.summary,
+        cached: true,
+        aiUsed: true,
+      } satisfies CashRecoveryResponse);
+    }
+
+    // 4) AI prompt with grounding
+    const topItemsForAI = buildPromptItems(detItems);
+    const promptData = buildPromptData(portfolio, topItemsForAI, detPlan);
+    const prompt = buildPrompt(promptData);
+
     try {
-      const raw = await callProviderForRaw(aiSettings, prompt);
-      const parsed = parseJsonLooseExported(raw) as AiResponse | null;
+      const raw = await callAi(prompt);
+      const parsed = parseAi(raw) as AiResponse | null;
 
-      if (parsed && typeof parsed === 'object') {
-        // Build a quick lookup map of det items by tradeId
-        const detByTradeId = new Map<string, DetRecoveryItem>();
-        for (const d of detItems) detByTradeId.set(d.item.tradeId, d);
-
-        // Parse recovery items — keep deterministic for unknown tradeIds (anti-hallucination)
-        const aiRecoveryItems: RecoveryItem[] = [];
-        if (parsed.recoveryItems && Array.isArray(parsed.recoveryItems)) {
-          for (const r of parsed.recoveryItems) {
-            if (!r || typeof r !== 'object') continue;
-            const det = detByTradeId.get(String(r.tradeId ?? ''));
-            if (!det) continue; // skip unknown tradeId — anti-hallucination
-            const quickRecoveryAction = clampEnum(r.quickRecoveryAction, VALID_ACTION, det.item.quickRecoveryAction);
-            const expectedRecoveryAmount = round0(clampNum(
-              r.expectedRecoveryAmount,
-              RECOVERY_AMOUNT_MIN, RECOVERY_AMOUNT_MAX,
-              det.item.expectedRecoveryAmount,
-            ));
-            // Anti-hallucination: clamp recovery amount to [0.5x, 1.2x] buyPrice range
-            const recoveryLowBound = det.item.buyPrice * 0.5;
-            const recoveryHighBound = det.item.buyPrice * 1.2;
-            const clampedRecoveryAmount = round0(
-              Math.max(recoveryLowBound, Math.min(recoveryHighBound, expectedRecoveryAmount)),
-            );
-            const expectedRecoveryDays = round0(clampNum(
-              r.expectedRecoveryDays,
-              RECOVERY_DAYS_MIN, RECOVERY_DAYS_MAX,
-              det.item.expectedRecoveryDays,
-            ));
-            aiRecoveryItems.push({
-              ...det.item,
-              quickRecoveryAction,
-              expectedRecoveryAmount: clampedRecoveryAmount,
-              expectedRecoveryDays,
-            });
-          }
-        }
-        // Fallback to deterministic if AI returned nothing useful
-        if (aiRecoveryItems.length === 0) {
-          for (const d of detItems) aiRecoveryItems.push(d.item);
-        } else {
-          // For items AI didn't return, keep deterministic values
-          const aiTradeIds = new Set(aiRecoveryItems.map((r) => r.tradeId));
-          for (const d of detItems) {
-            if (!aiTradeIds.has(d.item.tradeId)) {
-              aiRecoveryItems.push(d.item);
-            }
-          }
-        }
-        // Sort by urgency descending
-        aiRecoveryItems.sort((a, b) => b.cashRecoveryUrgency - a.cashRecoveryUrgency);
-        recoveryItems = aiRecoveryItems;
-
-        // Parse plan
-        const aiPlan = parsed.plan ?? {};
-        const expectedCashRecovery = round0(clampNum(
-          aiPlan.expectedCashRecovery,
-          RECOVERY_AMOUNT_MIN, RECOVERY_AMOUNT_MAX,
-          plan.expectedCashRecovery,
-        ));
-        const recoveryTimeline = round0(clampNum(
-          aiPlan.recoveryTimeline,
-          TIMELINE_MIN, TIMELINE_MAX,
-          plan.recoveryTimeline,
-        ));
-        const capitalVelocityImprovement = round0(clampNum(
-          aiPlan.capitalVelocityImprovement,
-          VELOCITY_MIN, VELOCITY_MAX,
-          plan.capitalVelocityImprovement,
-        ));
-
-        // Reinvestment opportunities
-        const reinvestmentOpportunities: ReinvestmentOpportunity[] = [];
-        if (Array.isArray(aiPlan.reinvestmentOpportunities)) {
-          for (const o of aiPlan.reinvestmentOpportunities.slice(0, 5)) {
-            if (!o || typeof o !== 'object') continue;
-            reinvestmentOpportunities.push({
-              category: clampString(o.category, 50, plan.reinvestmentOpportunities[0]?.category ?? 'drugo'),
-              expectedROI: round0(clampNum(o.expectedROI, REINVESTMENT_ROI_MIN, REINVESTMENT_ROI_MAX, 0)),
-              reasoning: clampString(o.reasoning, 250, plan.reinvestmentOpportunities[0]?.reasoning ?? 'Kategorija z visokim ROI-jem.'),
-            });
-          }
-        }
-        if (reinvestmentOpportunities.length === 0) {
-          for (const o of plan.reinvestmentOpportunities) reinvestmentOpportunities.push(o);
-        }
-
-        // Prioritized actions
-        const prioritizedActions: PrioritizedAction[] = [];
-        if (Array.isArray(aiPlan.prioritizedActions)) {
-          for (const a of aiPlan.prioritizedActions.slice(0, 8)) {
-            if (!a || typeof a !== 'object') continue;
-            prioritizedActions.push({
-              action: clampString(a.action, 300, plan.prioritizedActions[0]?.action ?? 'Cash recovery akcija.'),
-              priority: clampEnum(a.priority, VALID_PRIORITY, plan.prioritizedActions[0]?.priority ?? 'MEDIUM'),
-              cashImpact: round0(clampNum(a.cashImpact, CASH_IMPACT_MIN, CASH_IMPACT_MAX, 0)),
-            });
-          }
-        }
-        if (prioritizedActions.length === 0) {
-          for (const a of plan.prioritizedActions) prioritizedActions.push(a);
-        }
-
-        plan = {
-          expectedCashRecovery,
-          recoveryTimeline,
-          capitalVelocityImprovement,
-          reinvestmentOpportunities,
-          prioritizedActions,
-        };
-        summary = clampString(parsed.summary, 400, buildSummary(portfolio, plan));
-        aiUsed = true;
-      }
+      const merged = mergeAiIntoRecovery(parsed, detItems, portfolio, detPlan);
+      recoveryItems = merged.recoveryItems;
+      plan = merged.plan;
+      summary = merged.summary;
+      aiUsed = merged.aiUsed;
     } catch (err) {
       logger.warn(
         '/api/ai/cash-recovery-accelerator',
@@ -821,7 +855,7 @@ VRNI LE JSON:
       setCachedAI(cacheKey, { recoveryItems, plan, summary });
     }
 
-    return NextResponse.json({
+    return apiOk({
       ok: true,
       portfolio,
       recoveryItems,
@@ -829,15 +863,8 @@ VRNI LE JSON:
       summary,
       aiUsed,
     } satisfies CashRecoveryResponse);
-  } catch (err: any) {
-    logger.error(
-      '/api/ai/cash-recovery-accelerator',
-      'handler failed',
-      err,
-    );
-    return NextResponse.json(
-      { error: err?.message ?? 'Napaka' },
-      { status: 500 },
-    );
-  }
-}
+  },
+});
+
+export const GET = cashRecoveryHandler;
+export const POST = cashRecoveryHandler;

@@ -1,84 +1,141 @@
-// v6.20: Smart Negotiation Chatbot — več-turn pogovor z avtomatskim odgovarjanjem
+// v6.20 / v8.94-refactor: Smart Negotiation Chatbot — več-turn pogovor z avtomatskim odgovarjanjem
+// Refaktoriran z withAiRoute helperjem (v8.94) + enforceBudget guard.
+//
 // POST /api/ai/negotiation-chatbot
 // Body: { listingId?: string, messages: [{ role: 'user'|'seller', text }], myGoal?: { maxPrice, mustInclude }, strategy?: 'aggressive'|'firm'|'patient' }
-// Returns: { ok, reply: { text, suggestedPrice, tone, nextStep, confidence, alternatives }, conversationState }
+// Returns: { ok, reply: { text, suggestedPriceEur, tone, nextStep, confidencePct, alternatives, conversationState, warning }, messageCount, strategy }
 
-import { NextRequest, NextResponse } from 'next/server';
-import { db } from '@/lib/db';
-import { getSettingsRow } from '@/lib/pipeline';
-import { callProviderForRaw, parseJsonLooseExported, type AiProviderType, type AiSettings } from '@/lib/ai';
-import { logger } from '@/lib/logger';
+import { withAiRoute, AI_ROUTE_DEFAULTS, type AiRouteContext } from '@/lib/with-ai-route';
+import { apiOk, apiBadRequest } from '@/lib/api-response';
 
-export const runtime = 'nodejs';
-export const dynamic = 'force-dynamic';
+export const { runtime, dynamic } = AI_ROUTE_DEFAULTS;
 export const maxDuration = 60;
+
+type Strategy = 'aggressive' | 'firm' | 'patient';
 
 interface ChatMessage {
   role: 'user' | 'seller';
   text: string;
 }
 
-export async function POST(req: NextRequest) {
-  try {
+interface NegotiationChatbotInput {
+  listingId?: string;
+  messages: ChatMessage[];
+  myGoal: { maxPrice?: number; mustInclude?: string[] };
+  strategy: Strategy;
+}
+
+export const POST = withAiRoute<NegotiationChatbotInput>({
+  endpoint: '/api/ai/negotiation-chatbot',
+  maxDuration: 60,
+  enforceBudget: true, // AI klic — preveri budget
+
+  parseBody: async (req) => {
     const body = await req.json().catch(() => ({}));
-    const { listingId } = body;
     const messages: ChatMessage[] = Array.isArray(body?.messages) ? body.messages : [];
     const myGoal: { maxPrice?: number; mustInclude?: string[] } = body?.myGoal ?? {};
-    const strategy = ['aggressive', 'firm', 'patient'].includes(String(body?.strategy))
-      ? String(body.strategy) : 'firm';
+    const strategy: Strategy = ['aggressive', 'firm', 'patient'].includes(String(body?.strategy))
+      ? (String(body.strategy) as Strategy) : 'firm';
+    return {
+      listingId: body?.listingId ? String(body.listingId) : undefined,
+      messages,
+      myGoal,
+      strategy,
+    };
+  },
 
-    if (messages.length === 0) {
-      return NextResponse.json({ error: 'messages array ne sme biti prazen' }, { status: 400 });
+  validateInput: (input) => {
+    if (input.messages.length === 0) {
+      return 'messages array ne sme biti prazen';
     }
+    return null;
+  },
 
-    let listingContext = '';
-    if (listingId) {
-      const listing = await db.listing.findUnique({
-        where: { id: String(listingId) },
-        select: {
-          title: true, price: true, priceText: true, location: true,
-          description: true, detailDescription: true, aiEstimatedValue: true,
-          aiRisk: true, aiVerdict: true, postedAt: true, sellerName: true,
-          previousPrice: true, priceDroppedAt: true,
-        },
-      });
-      if (listing) {
-        const daysPosted = listing.postedAt
-          ? Math.round((Date.now() - listing.postedAt.getTime()) / (24 * 60 * 60 * 1000))
-          : 0;
-        listingContext = `OGLAS: ${listing.title}
+  handler: async (input, ctx: AiRouteContext) => {
+    const { db, callAi, parseAi } = ctx;
+    const { listingId, messages, myGoal, strategy } = input;
+
+    // 1. Listing context (če je listingId podan)
+    const listingContext = listingId
+      ? await buildListingContext(listingId, db)
+      : '';
+
+    // 2. Build prompt
+    const prompt = buildPrompt(listingContext, strategy, myGoal, messages);
+
+    // 3. AI klic (helper internally upravlja fallback + retry)
+    const raw = await callAi(prompt);
+
+    // 4. Parse + transform
+    const parsed: any = parseAi(raw);
+    const reply = transformReply(parsed, strategy);
+
+    return apiOk({
+      ok: true,
+      reply,
+      messageCount: messages.length,
+      strategy,
+    });
+  },
+});
+
+// --- Pomožne funkcije (čiste, testabilne) --------------------------------
+
+/**
+ * Pridobi listing iz DB in zgradi kontekstni niz za AI prompt.
+ * Vrne '' če listing ne obstaja ali listingId ni podan.
+ */
+async function buildListingContext(
+  listingId: string,
+  db: AiRouteContext['db']
+): Promise<string> {
+  const listing = await db.listing.findUnique({
+    where: { id: listingId },
+    select: {
+      title: true, price: true, priceText: true, location: true,
+      description: true, detailDescription: true, aiEstimatedValue: true,
+      aiRisk: true, aiVerdict: true, postedAt: true, sellerName: true,
+      previousPrice: true, priceDroppedAt: true,
+    },
+  });
+  if (!listing) return '';
+
+  const daysPosted = listing.postedAt
+    ? Math.round((Date.now() - listing.postedAt.getTime()) / (24 * 60 * 60 * 1000))
+    : 0;
+
+  return `OGLAS: ${listing.title}
 Cena: ${listing.priceText || (listing.price + ' EUR')}
 Lokacija: ${listing.location}
 AI est. vrednost: ${listing.aiEstimatedValue ?? 'neznan'}€
 Starost oglasa: ${daysPosted} dni
 ${listing.previousPrice ? `Prejšnja cena: ${listing.previousPrice}€ (padla!)` : ''}
 Opis: ${(listing.detailDescription || listing.description || '').slice(0, 400)}`;
-      }
-    }
+}
 
-    // 1. AI chatbot
-    const settings = await getSettingsRow();
-    const aiSettings: AiSettings = {
-      provider: settings.aiProvider as AiProviderType,
-      baseUrl: settings.aiBaseUrl, apiKey: settings.aiApiKey, model: settings.aiModel,
-      fallbackProvider: (settings.fallbackProvider || '') as AiProviderType | '',
-      fallbackBaseUrl: settings.fallbackBaseUrl || '', fallbackApiKey: settings.fallbackApiKey || '',
-      fallbackModel: settings.fallbackModel || '',
-    };
+/**
+ * Zgradi AI prompt za naslednji pogajalski odgovor.
+ * Besedilo IDENTIČNO originalu (v6.20).
+ */
+function buildPrompt(
+  listingContext: string,
+  strategy: Strategy,
+  myGoal: { maxPrice?: number; mustInclude?: string[] },
+  messages: ChatMessage[]
+): string {
+  const messagesStr = messages.map((m, i) => {
+    const speaker = m.role === 'user' ? 'JAZ (kupec)' : 'PRODAJALEC';
+    return `[#${i + 1}] ${speaker}: ${m.text}`;
+  }).join('\n');
 
-    const messagesStr = messages.map((m, i) => {
-      const speaker = m.role === 'user' ? 'JAZ (kupec)' : 'PRODAJALEC';
-      return `[#${i + 1}] ${speaker}: ${m.text}`;
-    }).join('\n');
+  const goalStr = myGoal.maxPrice
+    ? `Moja max cena: ${myGoal.maxPrice}€`
+    : 'Cilj cena: ni specifična — minimiziraj';
+  const mustIncludeStr = myGoal.mustInclude?.length
+    ? `Pogoji: ${myGoal.mustInclude.join(', ')}`
+    : '';
 
-    const goalStr = myGoal.maxPrice
-      ? `Moja max cena: ${myGoal.maxPrice}€`
-      : 'Cilj cena: ni specifična — minimiziraj';
-    const mustIncludeStr = myGoal.mustInclude?.length
-      ? `Pogoji: ${myGoal.mustInclude.join(', ')}`
-      : '';
-
-    const prompt = `Si AI pogajalski asistent, ki mi pomaga pri nakupu rabljene dobrine.
+  return `Si AI pogajalski asistent, ki mi pomaga pri nakupu rabljene dobrine.
 Na podlagi dosedanjega pogovora in konteksta oglasa generiraj moj naslednji odgovor prodajalcu.
 
 ${listingContext ? listingContext + '\n\n' : ''}MOJA STRATEGIJA: ${strategy}
@@ -111,57 +168,26 @@ Odgovori LE z JSON:
   "conversation_state": "<opening|discovery|offer|counter|closing|stuck>",
   "warning": "<opozorilo če nekaj gre narobe, max 100 znakov | null>"
 }`;
+}
 
-    let raw = '';
-    try {
-      raw = await callProviderForRaw(aiSettings, prompt);
-    } catch (primaryError: any) {
-      if (aiSettings.fallbackProvider && aiSettings.fallbackModel) {
-        const fb: AiSettings = {
-          provider: aiSettings.fallbackProvider,
-          baseUrl: aiSettings.fallbackBaseUrl || '',
-          apiKey: aiSettings.fallbackApiKey || '',
-          model: aiSettings.fallbackModel,
-        };
-        raw = await callProviderForRaw(fb, prompt);
-      } else {
-        return NextResponse.json({ error: primaryError?.message ?? 'AI failed' }, { status: 500 });
-      }
-    }
-
-    const parsed: any = parseJsonLooseExported(raw);
-
-    const reply = {
-      text: String(parsed?.text ?? '').slice(0, 1500),
-      suggestedPriceEur: parsed?.suggested_price_eur != null
-        ? Math.max(0, Number(parsed.suggested_price_eur)) : null,
-      tone: ['aggressive', 'firm', 'friendly', 'patient', 'questioning'].includes(String(parsed?.tone))
-        ? String(parsed.tone) : strategy,
-      nextStep: String(parsed?.next_step ?? '').slice(0, 200),
-      confidencePct: Math.max(0, Math.min(100, Number(parsed?.confidence_pct ?? 60))),
-      alternatives: (parsed?.alternatives || []).slice(0, 3).map((a: any) => String(a).slice(0, 200)),
-      conversationState: ['opening', 'discovery', 'offer', 'counter', 'closing', 'stuck'].includes(String(parsed?.conversation_state))
-        ? String(parsed.conversation_state) : 'opening',
-      warning: parsed?.warning && parsed.warning !== 'null'
-        ? String(parsed.warning).slice(0, 200) : null,
-    };
-
-    // Increment AI usage
-    const today = new Date().toISOString().slice(0, 10);
-    if (settings.aiCallsDate !== today) {
-      await db.settings.update({ where: { id: 'singleton' }, data: { aiCallsDate: today, aiCallsToday: 1 } });
-    } else {
-      await db.settings.update({ where: { id: 'singleton' }, data: { aiCallsToday: { increment: 1 } } });
-    }
-
-    return NextResponse.json({
-      ok: true,
-      reply,
-      messageCount: messages.length,
-      strategy,
-    });
-  } catch (e: any) {
-    logger.error("/api/ai/negotiation-chatbot", "POST handler failed", e);
-    return NextResponse.json({ error: e?.message ?? 'Napaka' }, { status: 500 });
-  }
+/**
+ * Transformiraj AI JSON odgovor v tipiziran reply objekt.
+ * Validira in clamp-a vse numerične vrednosti; uporablja privzete
+ * vrednosti ko AI manjka polja.
+ */
+function transformReply(parsed: any, strategy: Strategy) {
+  return {
+    text: String(parsed?.text ?? '').slice(0, 1500),
+    suggestedPriceEur: parsed?.suggested_price_eur != null
+      ? Math.max(0, Number(parsed.suggested_price_eur)) : null,
+    tone: ['aggressive', 'firm', 'friendly', 'patient', 'questioning'].includes(String(parsed?.tone))
+      ? String(parsed.tone) : strategy,
+    nextStep: String(parsed?.next_step ?? '').slice(0, 200),
+    confidencePct: Math.max(0, Math.min(100, Number(parsed?.confidence_pct ?? 60))),
+    alternatives: (parsed?.alternatives || []).slice(0, 3).map((a: any) => String(a).slice(0, 200)),
+    conversationState: ['opening', 'discovery', 'offer', 'counter', 'closing', 'stuck'].includes(String(parsed?.conversation_state))
+      ? String(parsed.conversation_state) : 'opening',
+    warning: parsed?.warning && parsed.warning !== 'null'
+      ? String(parsed.warning).slice(0, 200) : null,
+  };
 }

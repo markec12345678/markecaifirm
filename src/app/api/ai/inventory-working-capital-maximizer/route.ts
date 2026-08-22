@@ -1,4 +1,4 @@
-// v8.14: AI Inventory Working Capital Maximizer — MAKSIMIZIRA WORKING
+// v8.14 / v8.96.2-batch3: AI Inventory Working Capital Maximizer — MAKSIMIZIRA WORKING
 // CAPITAL EFFICIENCY — minimizira kapital vezan v slow-moving inventory,
 // maksimizira kapital v fast-movers. "Tvoj working capital turnover je 32×/leto
 // z 28% weighted margin. Capital efficiency score 18/100. Z shiftanjem 70%
@@ -22,15 +22,21 @@
 // maximizer (v8.11 ki maksimizira annual yield inventory-ja) — ta
 // MAKSIMIZIRA WORKING CAPITAL EFFICIENCY (turnover × weighted margin z
 // fast/slow mix, ne letni yield %).
-
+//
 // GET+POST /api/ai/inventory-working-capital-maximizer
 // (Deterministic formula-based maximizer — no AI call, no DB query.)
+//
+// Refaktoriran z withAiRoute helperjem (v8.96.2-batch3) — enforceBudget: true
+// (konsistentno z vsemi AI route-i vključno z deterministic endpoint-i ki so
+// bile migrirane v v8.96.2-batch1 profit-density-maximizer in v8.96.2-batch2
+// deal-source-profit-compounding-maximizer — vse z method: 'GET' za dual-handler
+// support in enforceBudget: true za budget guard konsistentnost).
 
-import { NextRequest, NextResponse } from 'next/server';
-import { logger } from '@/lib/logger';
+import type { NextRequest } from 'next/server';
+import { withAiRoute, AI_ROUTE_DEFAULTS, type AiRouteContext } from '@/lib/with-ai-route';
+import { apiOk } from '@/lib/api-response';
 
-export const runtime = 'nodejs';
-export const dynamic = 'force-dynamic';
+export const { runtime, dynamic } = AI_ROUTE_DEFAULTS;
 export const maxDuration = 60;
 
 // --- Types ---------------------------------------------------------------
@@ -80,6 +86,20 @@ const DAYS_TO_SELL_MAX = 730;
 const PROFIT_MARGIN_MIN = 0;
 const PROFIT_MARGIN_MAX = 100;
 
+// --- Inputs -------------------------------------------------------------
+
+interface WorkingCapitalInputs {
+  capitalDeployed: number; // €
+  fastMoverCapitalPct: number; // [0, 1]
+  avgDaysToSellFast: number;
+  avgDaysToSellSlow: number;
+  avgProfitMarginFast: number; // %
+  avgProfitMarginSlow: number; // %
+}
+
+// eslint-disable-next-line @typescript-eslint/no-empty-object-type
+interface InventoryWorkingCapitalMaximizerInput extends WorkingCapitalInputs {}
+
 // --- Helpers ------------------------------------------------------------
 
 function clampNum(v: unknown, min: number, max: number, fallback: number): number {
@@ -98,19 +118,8 @@ function round2(v: number): number {
   return Math.round(v * 100) / 100;
 }
 
-// --- Inputs -------------------------------------------------------------
-
-interface WorkingCapitalInputs {
-  capitalDeployed: number; // €
-  fastMoverCapitalPct: number; // [0, 1]
-  avgDaysToSellFast: number;
-  avgDaysToSellSlow: number;
-  avgProfitMarginFast: number; // %
-  avgProfitMarginSlow: number; // %
-}
-
 // Async helper — reads body once if POST + JSON, then merges with query.
-async function resolveInputs(req: NextRequest): Promise<WorkingCapitalInputs> {
+async function resolveInputs(req: NextRequest): Promise<InventoryWorkingCapitalMaximizerInput> {
   const defaults: WorkingCapitalInputs = {
     capitalDeployed: 1500,
     fastMoverCapitalPct: 0.55,
@@ -294,34 +303,32 @@ function computeMaximization(inputs: WorkingCapitalInputs): {
 
 // --- Handler -------------------------------------------------------------
 
-export async function GET(req: NextRequest) {
-  return handleInventoryWorkingCapitalMaximizer(req);
-}
-export async function POST(req: NextRequest) {
-  return handleInventoryWorkingCapitalMaximizer(req);
-}
+const inventoryWorkingCapitalMaximizerHandler = withAiRoute<InventoryWorkingCapitalMaximizerInput>({
+  endpoint: '/api/ai/inventory-working-capital-maximizer',
+  maxDuration: 60,
+  enforceBudget: true, // v8.96.2-batch3: budget guard (konsistentno z vsemi AI route-i)
+  method: 'GET', // Endpoint sprejema GET + POST — bypass POST-only check
 
-async function handleInventoryWorkingCapitalMaximizer(req: NextRequest) {
-  try {
-    const inputs = await resolveInputs(req);
-    const { current, maximization } = computeMaximization(inputs);
+  parseBody: async (req) => {
+    return await resolveInputs(req);
+  },
 
-    return NextResponse.json({
+  // No validateInput — vsi input-i imajo defaults
+
+  handler: async (input, _ctx: AiRouteContext) => {
+    const { current, maximization } = computeMaximization(input);
+
+    const response: WorkingCapitalResponse = {
       ok: true,
       current,
       maximization,
       aiUsed: false,
       source: 'v8.14-inventory-working-capital-maximizer',
-    } satisfies WorkingCapitalResponse);
-  } catch (err: any) {
-    logger.error(
-      '/api/ai/inventory-working-capital-maximizer',
-      'handler failed',
-      err,
-    );
-    return NextResponse.json(
-      { error: err?.message ?? 'Napaka' },
-      { status: 500 },
-    );
-  }
-}
+    };
+    return apiOk(response);
+  },
+});
+
+// AI Hub runner compatibility — body is ignored, identical logic.
+export const GET = inventoryWorkingCapitalMaximizerHandler;
+export const POST = inventoryWorkingCapitalMaximizerHandler;

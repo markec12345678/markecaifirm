@@ -1,4 +1,4 @@
-// v7.91: AI Inventory Performance Trend Tracker — AI track-a kako PERFORMANCE
+// v7.91 / v8.96.7-batch2: AI Inventory Performance Trend Tracker — AI track-a kako PERFORMANCE
 // inventarja spreminja čez čas — so tvoje trgovine vedno bolj profitabilne,
 // hitrejše, ali boljše kvalitete? Identificira performance trajektorijo in
 // napove future performance. Razlika od inventory-performance-forecaster
@@ -19,24 +19,20 @@
 //
 // GET+POST /api/ai/inventory-performance-trend-tracker
 // (AI-enhanced + grounding + anti-hallucination + 6h cache + deterministic fallback)
+// Refaktoriran z withAiRoute helperjem (v8.96.7) + enforceBudget guard.
 
-import { NextRequest, NextResponse } from 'next/server';
-import { db } from '@/lib/db';
-import { getSettingsRow } from '@/lib/pipeline';
-import {
-  callProviderForRaw,
-  parseJsonLooseExported,
-  type AiProviderType,
-  type AiSettings,
-} from '@/lib/ai';
+import { withAiRoute, AI_ROUTE_DEFAULTS, type AiRouteContext } from '@/lib/with-ai-route';
+import { apiOk } from '@/lib/api-response';
 import { GROUNDING_PROMPT_SUFFIX } from '@/lib/anti-hallucination';
 import { getCachedAI, setCachedAI } from '@/lib/ai-cache';
-import { checkRateLimit, rateLimitResponse } from '@/lib/rate-limit';
-import { logger } from '@/lib/logger';
 
-export const runtime = 'nodejs';
-export const dynamic = 'force-dynamic';
+export const { runtime, dynamic } = AI_ROUTE_DEFAULTS;
 export const maxDuration = 60;
+
+// --- Input ----------------------------------------------------------------
+
+// eslint-disable-next-line @typescript-eslint/no-empty-object-type
+interface InventoryPerformanceTrendTrackerInput {}
 
 // --- Types ---------------------------------------------------------------
 
@@ -575,17 +571,20 @@ function buildDeterministicAnalysis(
 
 // --- Handler -------------------------------------------------------------
 
-export async function GET(req: NextRequest) {
-  return handleInventoryPerformanceTrendTracker(req);
-}
-export async function POST(req: NextRequest) {
-  return handleInventoryPerformanceTrendTracker(req);
-}
+const inventoryPerformanceTrendTrackerHandler = withAiRoute<InventoryPerformanceTrendTrackerInput>({
+  endpoint: '/api/ai/inventory-performance-trend-tracker',
+  maxDuration: 60,
+  enforceBudget: true, // AI klic — preveri budget
+  method: 'GET', // Endpoint sprejema GET + POST — bypass POST-only check
 
-async function handleInventoryPerformanceTrendTracker(req: NextRequest) {
-  try {
-    const rl = checkRateLimit(req, 'ai-inventory-performance-trend-tracker', 20);
-    if (!rl.allowed) return rateLimitResponse(rl);
+  parseBody: async (req) => {
+    await req.json().catch(() => ({}));
+    return {};
+  },
+
+  // No validateInput — body ignored, identična logika za GET in POST
+  handler: async (_input, ctx: AiRouteContext) => {
+    const { db, callAi, parseAi, logger } = ctx;
 
     const now = Date.now();
     const cutoff12m = new Date(now - HORIZON_12M);
@@ -614,7 +613,7 @@ async function handleInventoryPerformanceTrendTracker(req: NextRequest) {
     }) as unknown as SoldTradeRow[];
 
     if (soldTrades.length === 0) {
-      return NextResponse.json({
+      return apiOk({
         ok: true,
         trends: {
           profitTrend12m: 0,
@@ -701,7 +700,7 @@ async function handleInventoryPerformanceTrendTracker(req: NextRequest) {
     });
 
     if (activeMonths.length < 2) {
-      return NextResponse.json({
+      return apiOk({
         ok: true,
         trends: {
           profitTrend12m: 0,
@@ -755,7 +754,7 @@ async function handleInventoryPerformanceTrendTracker(req: NextRequest) {
       summary: string;
     }>(cacheKey);
     if (cached) {
-      return NextResponse.json({
+      return apiOk({
         ok: true,
         trends,
         monthlyData,
@@ -768,20 +767,6 @@ async function handleInventoryPerformanceTrendTracker(req: NextRequest) {
     }
 
     // 6) AI prompt with grounding
-    const settings = await getSettingsRow();
-    const aiSettings: AiSettings = {
-      provider: settings.aiProvider as AiProviderType,
-      baseUrl: settings.aiBaseUrl,
-      apiKey: settings.aiApiKey,
-      model: settings.aiModel,
-      fallbackProvider: (settings.fallbackProvider || '') as
-        | AiProviderType
-        | '',
-      fallbackBaseUrl: settings.fallbackBaseUrl || '',
-      fallbackApiKey: settings.fallbackApiKey || '',
-      fallbackModel: settings.fallbackModel || '',
-    };
-
     const historicalMaxProfit = Math.max(...monthlyData.map((m) => m.profit), 1);
     const profitCap = historicalMaxProfit * PROFIT_MAX_MULTIPLE;
 
@@ -841,8 +826,8 @@ VRNI LE JSON:
     let aiUsed = false;
 
     try {
-      const raw = await callProviderForRaw(aiSettings, prompt);
-      const parsed = parseJsonLooseExported(raw) as AiPerformanceResponse | null;
+      const raw = await callAi(prompt);
+      const parsed = parseAi(raw) as AiPerformanceResponse | null;
 
       if (parsed && typeof parsed === 'object') {
         // Projected profit ±20% of deterministic, clamped [0, profitCap]
@@ -977,7 +962,7 @@ VRNI LE JSON:
       });
     }
 
-    return NextResponse.json({
+    return apiOk({
       ok: true,
       trends,
       monthlyData,
@@ -986,18 +971,11 @@ VRNI LE JSON:
       summary,
       aiUsed,
     });
-  } catch (err: any) {
-    logger.error(
-      '/api/ai/inventory-performance-trend-tracker',
-      'handler failed',
-      err,
-    );
-    return NextResponse.json(
-      { error: err?.message ?? 'Napaka' },
-      { status: 500 },
-    );
-  }
-}
+  },
+});
+
+export const GET = inventoryPerformanceTrendTrackerHandler;
+export const POST = inventoryPerformanceTrendTrackerHandler;
 
 function buildSummary(
   trends: PerformanceTrends,

@@ -23,24 +23,20 @@
 //
 // GET+POST /api/ai/profit-growth-predictor
 // (AI-enhanced + grounding + anti-hallucination + 6h cache + deterministic fallback)
+// Refaktoriran z withAiRoute helperjem (v8.96.7) + enforceBudget guard.
 
-import { NextRequest, NextResponse } from 'next/server';
-import { db } from '@/lib/db';
-import { getSettingsRow } from '@/lib/pipeline';
-import {
-  callProviderForRaw,
-  parseJsonLooseExported,
-  type AiProviderType,
-  type AiSettings,
-} from '@/lib/ai';
+import { withAiRoute, AI_ROUTE_DEFAULTS, type AiRouteContext } from '@/lib/with-ai-route';
+import { apiOk } from '@/lib/api-response';
 import { GROUNDING_PROMPT_SUFFIX } from '@/lib/anti-hallucination';
 import { getCachedAI, setCachedAI } from '@/lib/ai-cache';
-import { checkRateLimit, rateLimitResponse } from '@/lib/rate-limit';
-import { logger } from '@/lib/logger';
 
-export const runtime = 'nodejs';
-export const dynamic = 'force-dynamic';
+export const { runtime, dynamic } = AI_ROUTE_DEFAULTS;
 export const maxDuration = 60;
+
+// --- Input ----------------------------------------------------------------
+
+// eslint-disable-next-line @typescript-eslint/no-empty-object-type
+interface ProfitGrowthPredictorInput {}
 
 // --- Types ---------------------------------------------------------------
 
@@ -468,19 +464,296 @@ function monthsToReach(
   return Math.max(1, Math.ceil(monthsRaw));
 }
 
+// --- Extracted prompt helpers (pure, testable) ---------------------------
+
+interface PromptContext {
+  currentMonthlyProfit: number;
+  currentMonthlyGrowth: number;
+  avgMonthlyGrowth6m: number;
+  growthAcceleration: number;
+  growthVolatility: number;
+  monthsWithData: number;
+  volumeGrowth: DriverInfo;
+  priceGrowth: DriverInfo;
+  efficiencyGrowth: DriverInfo;
+  topGrowthCategory: TopGrowthCategory | null;
+  growthPrediction6m: number;
+  growthRate6m: number;
+  compoundGrowthRate: number;
+  growthPotential: number;
+  growthStage: GrowthStage;
+  projectedMilestones: ProjectedMilestone[];
+  monthlyData: Array<{
+    month: string;
+    profit: number;
+    tradeCount: number;
+    avgHoldDays: number;
+  }>;
+  topCatsForPrompt: CategoryGrowth[];
+}
+
+function buildPrompt(promptData: PromptContext): string {
+  return `Si AI "Profit Growth Predictor" za slovenske in srednjeevropske oglasne platforme (Bolha, Vinted, Avtonet, mobile.de).
+Napoveš profit GROWTH rate za naslednjih 6 mesecev — kako hitro bo profit rastel in kateri faktorji bodo to gnali ali zavirali.
+
+TRENUTNO STANJE (deterministično izračunano):
+- currentMonthlyProfit: ${promptData.currentMonthlyProfit}€
+- currentMonthlyGrowth: ${promptData.currentMonthlyGrowth}%
+- avgMonthlyGrowth6m: ${promptData.avgMonthlyGrowth6m}%
+- growthAcceleration: ${promptData.growthAcceleration > 0 ? '+' : ''}${promptData.growthAcceleration} (recent 3m vs prior 3m)
+- growthVolatility: ${promptData.growthVolatility} (stddev mesečnih growth ratov)
+- monthsWithData: ${promptData.monthsWithData}
+
+GROWTH DRIVERS (deterministično izračunano):
+- volumeGrowth: trend ${promptData.volumeGrowth.trend}/mo, impact ${promptData.volumeGrowth.impact}, detail: ${promptData.volumeGrowth.detail}
+- priceGrowth: trend ${promptData.priceGrowth.trend}/mo, impact ${promptData.priceGrowth.impact}, detail: ${promptData.priceGrowth.detail}
+- efficiencyGrowth: trend ${promptData.efficiencyGrowth.trend}/mo, impact ${promptData.efficiencyGrowth.impact}, detail: ${promptData.efficiencyGrowth.detail}
+- topGrowthCategory: ${promptData.topGrowthCategory != null ? `${promptData.topGrowthCategory.category} (${promptData.topGrowthCategory.growthRate}%/6m)` : 'null'}
+
+DETERMINISTIČNA PREDICTION (za referenco — AI lahko prilagodi znotraj anti-hallucination pravil):
+- growthPrediction6m: ${promptData.growthPrediction6m}€
+- growthRate6m: ${promptData.growthRate6m}% (clamped [-50, 200])
+- compoundGrowthRate: ${promptData.compoundGrowthRate}%
+- growthPotential: ${promptData.growthPotential}/100
+- growthStage: ${promptData.growthStage}
+- projectedMilestones: ${JSON.stringify(promptData.projectedMilestones)}
+
+MESEČNI PODATKI (zadnjih ${promptData.monthsWithData} mesecev):
+${JSON.stringify(promptData.monthlyData, null, 2)}
+
+TOP GROWTH KATEGORIJE (zadnjih 6m vs prior 6m):
+${JSON.stringify(promptData.topCatsForPrompt, null, 2)}
+
+PRAVILA ZA AI ODGOVOR:
+1. prediction:
+   - growthPrediction6m: pričakovani profit čez 6 mesecev (EUR, min 0)
+   - growthRate6m: pričakovana mesečna growth rate za naslednjih 6m (clamped [-50, 200])
+   - compoundGrowthRate: CAGR-style compound rate (clamped [-50, 200])
+   - growthPotential: 0-100 (koliko headroom-a za rast obstaja)
+   - growthStage: EARLY | ACCELERATING | MATURING | SATURATING (validiraj proti enum)
+   - projectedMilestones: array z { target, monthsToReach, projectedDate (ISO date) } za 2x, 3x, 5x; prazni če growth ≤ 0
+2. analysis:
+   - growthDrivers: top 3 faktorji z driver, weight (0-100), detail
+   - growthInhibitors: top 3 faktorji z inhibitor, impact, mitigation
+   - growthActions: 3-5 konkretnih akcij z action, priority (HIGH/MEDIUM/LOW), expectedGrowthLift (npr. "+5%/mo")
+3. summary: slovenski povzetek (max 500 znakov). NE izmišljuj številk — uporabi zgornje deterministične podatke.
+
+VRNI LE JSON:
+{
+  "prediction": {
+    "growthPrediction6m": 0,
+    "growthRate6m": 0,
+    "compoundGrowthRate": 0,
+    "growthPotential": 0,
+    "growthStage": "ACCELERATING",
+    "projectedMilestones": [{ "target": "2x profit", "monthsToReach": 0, "projectedDate": "2026-01-01" }]
+  },
+  "analysis": {
+    "growthDrivers": [{ "driver": "...", "weight": 50, "detail": "..." }],
+    "growthInhibitors": [{ "inhibitor": "...", "impact": "...", "mitigation": "..." }],
+    "growthActions": [{ "action": "...", "priority": "HIGH", "expectedGrowthLift": "+5%/mo" }]
+  },
+  "summary": "..."
+}${GROUNDING_PROMPT_SUFFIX}`;
+}
+
+interface MergeAiResult {
+  prediction: GrowthPrediction;
+  analysis: GrowthAnalysis;
+  summary: string;
+  aiUsed: boolean;
+}
+
+function mergeAiIntoAnalysis(
+  parsed: AiGrowthResponse | null,
+  fallbackPrediction: GrowthPrediction,
+  fallbackAnalysis: GrowthAnalysis,
+  fallbackSummary: string,
+  currentMonthlyProfit: number,
+  growthRate6m: number,
+  compoundGrowthRate: number,
+  growthPotential: number,
+  growthStage: GrowthStage,
+  now: number,
+): MergeAiResult {
+  const result: MergeAiResult = {
+    prediction: fallbackPrediction,
+    analysis: fallbackAnalysis,
+    summary: fallbackSummary,
+    aiUsed: false,
+  };
+
+  if (!parsed || typeof parsed !== 'object') return result;
+
+  if (parsed.prediction && typeof parsed.prediction === 'object') {
+    const p = parsed.prediction as Record<string, unknown>;
+    const aiGrowthRate6m = clampNumber(
+      p.growthRate6m,
+      -50,
+      200,
+      growthRate6m,
+    );
+    const aiCompound = clampNumber(
+      p.compoundGrowthRate,
+      -50,
+      200,
+      compoundGrowthRate,
+    );
+    const aiGrowthPrediction6m = Math.max(
+      0,
+      projectProfit(currentMonthlyProfit, aiGrowthRate6m, 6),
+    );
+    const aiPotential = clampNumber(
+      p.growthPotential,
+      0,
+      100,
+      growthPotential,
+    );
+    const aiStage = clampEnum(p.growthStage, VALID_STAGE, growthStage);
+
+    const aiMilestones: ProjectedMilestone[] = [];
+    for (const mult of [2, 3, 5]) {
+      const months = monthsToReach(
+        currentMonthlyProfit,
+        aiGrowthRate6m,
+        mult,
+      );
+      if (months == null) continue;
+      const projectedDate = new Date(now + months * 30 * 86_400_000)
+        .toISOString()
+        .slice(0, 10);
+      aiMilestones.push({
+        target: `${mult}x profit`,
+        monthsToReach: months,
+        projectedDate,
+      });
+    }
+
+    result.prediction = {
+      growthPrediction6m: aiGrowthPrediction6m,
+      growthRate6m: round1(aiGrowthRate6m),
+      compoundGrowthRate: round1(aiCompound),
+      growthPotential: round0(aiPotential),
+      growthStage: aiStage,
+      projectedMilestones: aiMilestones,
+    };
+  }
+
+  if (parsed.analysis && typeof parsed.analysis === 'object') {
+    const a = parsed.analysis as Record<string, unknown>;
+
+    if (Array.isArray(a.growthDrivers)) {
+      result.analysis.growthDrivers = (a.growthDrivers as unknown[])
+        .map((d: unknown) => {
+          const dr = d as Record<string, unknown>;
+          if (!dr || typeof dr !== 'object') return null;
+          const driver = clampString(dr.driver, 100, '');
+          if (!driver) return null;
+          const weight = clampNumber(dr.weight, 0, 100, 50);
+          const detail = clampString(dr.detail, 200, '');
+          return { driver, weight: round0(weight), detail };
+        })
+        .filter((d): d is GrowthDriverItem => d !== null)
+        .slice(0, 3);
+    }
+
+    if (Array.isArray(a.growthInhibitors)) {
+      result.analysis.growthInhibitors = (a.growthInhibitors as unknown[])
+        .map((d: unknown) => {
+          const dr = d as Record<string, unknown>;
+          if (!dr || typeof dr !== 'object') return null;
+          const inhibitor = clampString(dr.inhibitor, 100, '');
+          if (!inhibitor) return null;
+          const impact = clampString(dr.impact, 200, '');
+          const mitigation = clampString(dr.mitigation, 200, '');
+          return { inhibitor, impact, mitigation };
+        })
+        .filter((d): d is GrowthInhibitor => d !== null)
+        .slice(0, 3);
+    }
+
+    if (Array.isArray(a.growthActions)) {
+      result.analysis.growthActions = (a.growthActions as unknown[])
+        .map((d: unknown) => {
+          const dr = d as Record<string, unknown>;
+          if (!dr || typeof dr !== 'object') return null;
+          const action = clampString(dr.action, 200, '');
+          if (!action) return null;
+          const priority = clampEnum(
+            dr.priority,
+            VALID_PRIORITY,
+            'MEDIUM',
+          );
+          const expectedGrowthLift = clampString(
+            dr.expectedGrowthLift,
+            50,
+            '',
+          );
+          return { action, priority, expectedGrowthLift };
+        })
+        .filter((d): d is GrowthAction => d !== null)
+        .slice(0, 5);
+    }
+  }
+
+  if (typeof parsed.summary === 'string' && parsed.summary.trim()) {
+    result.summary = clampString(parsed.summary, 500, fallbackSummary);
+  }
+
+  result.aiUsed = true;
+  return result;
+}
+
+function buildDeterministicSummary(
+  growthStage: GrowthStage,
+  currentMonthlyProfit: number,
+  growthRate6m: number,
+  growthAcceleration: number,
+  growthVolatility: number,
+  growthPrediction6m: number,
+  growthPotential: number,
+  topGrowthCategory: TopGrowthCategory | null,
+  projectedMilestones: ProjectedMilestone[],
+): string {
+  const driverSummary =
+    topGrowthCategory != null
+      ? ` Top category: ${topGrowthCategory.category} (${topGrowthCategory.growthRate}%/6m).`
+      : '';
+  const milestoneSummary =
+    projectedMilestones.length > 0
+      ? ` Milestones: ${projectedMilestones
+          .map((m) => `${m.target} v ${m.monthsToReach} mo`)
+          .join(', ')}.`
+      : ' Ni dosegljivih milestone-ov pri trenutni rasti.';
+  return (
+    `Profit Growth: stage=${growthStage}, ` +
+    `trenutni profit ${currentMonthlyProfit}€/mo, ` +
+    `growth ${growthRate6m > 0 ? '+' : ''}${growthRate6m}%/mo ` +
+    `(povprečno 6m), accel ${growthAcceleration > 0 ? '+' : ''}${growthAcceleration}, ` +
+    `volatilnost ${growthVolatility}. ` +
+    `6m projection: ${growthPrediction6m}€. ` +
+    `Potential ${growthPotential}/100.` +
+    driverSummary +
+    milestoneSummary
+  );
+}
+
 // --- Handler -------------------------------------------------------------
 
-export async function GET(req: NextRequest) {
-  return handleProfitGrowthPredictor(req);
-}
-export async function POST(req: NextRequest) {
-  return handleProfitGrowthPredictor(req);
-}
+const profitGrowthPredictorHandler = withAiRoute<ProfitGrowthPredictorInput>({
+  endpoint: '/api/ai/profit-growth-predictor',
+  maxDuration: 60,
+  enforceBudget: true, // AI klic — preveri budget
+  method: 'GET', // Endpoint sprejema GET + POST — bypass POST-only check
 
-async function handleProfitGrowthPredictor(req: NextRequest) {
-  try {
-    const rl = checkRateLimit(req, 'ai-profit-growth-predictor', 20);
-    if (!rl.allowed) return rateLimitResponse(rl);
+  parseBody: async (req) => {
+    await req.json().catch(() => ({}));
+    return {};
+  },
+
+  // No validateInput — body ignored, identična logika za GET in POST
+  handler: async (_input, ctx: AiRouteContext) => {
+    const { db, callAi, parseAi, logger } = ctx;
 
     const now = Date.now();
     const cutoff12m = new Date(now - 365 * 86_400_000);
@@ -539,7 +812,7 @@ async function handleProfitGrowthPredictor(req: NextRequest) {
 
     // Empty state — no historical sold trades
     if (monthsWithData === 0) {
-      return NextResponse.json({
+      return apiOk({
         ok: true,
         current,
         drivers: {
@@ -692,7 +965,7 @@ async function handleProfitGrowthPredictor(req: NextRequest) {
       summary: string;
     }>(cacheKey);
     if (cached) {
-      return NextResponse.json({
+      return apiOk({
         ok: true,
         current,
         drivers,
@@ -705,42 +978,19 @@ async function handleProfitGrowthPredictor(req: NextRequest) {
     }
 
     // 6) Deterministic summary fallback
-    const driverSummary =
-      topGrowthCategory != null
-        ? ` Top category: ${topGrowthCategory.category} (${topGrowthCategory.growthRate}%/6m).`
-        : '';
-    const milestoneSummary =
-      projectedMilestones.length > 0
-        ? ` Milestones: ${projectedMilestones
-            .map((m) => `${m.target} v ${m.monthsToReach} mo`)
-            .join(', ')}.`
-        : ' Ni dosegljivih milestone-ov pri trenutni rasti.';
-    const deterministicSummary =
-      `Profit Growth: stage=${growthStage}, ` +
-      `trenutni profit ${currentMonthlyProfit}€/mo, ` +
-      `growth ${growthRate6m > 0 ? '+' : ''}${growthRate6m}%/mo ` +
-      `(povprečno 6m), accel ${growthAcceleration > 0 ? '+' : ''}${growthAcceleration}, ` +
-      `volatilnost ${growthVolatility}. ` +
-      `6m projection: ${growthPrediction6m}€. ` +
-      `Potential ${growthPotential}/100.` +
-      driverSummary +
-      milestoneSummary;
+    const deterministicSummary = buildDeterministicSummary(
+      growthStage,
+      currentMonthlyProfit,
+      growthRate6m,
+      growthAcceleration,
+      growthVolatility,
+      growthPrediction6m,
+      growthPotential,
+      topGrowthCategory,
+      projectedMilestones,
+    );
 
     // 7) AI prompt with grounding
-    const settings = await getSettingsRow();
-    const aiSettings: AiSettings = {
-      provider: settings.aiProvider as AiProviderType,
-      baseUrl: settings.aiBaseUrl,
-      apiKey: settings.aiApiKey,
-      model: settings.aiModel,
-      fallbackProvider: (settings.fallbackProvider || '') as
-        | AiProviderType
-        | '',
-      fallbackBaseUrl: settings.fallbackBaseUrl || '',
-      fallbackApiKey: settings.fallbackApiKey || '',
-      fallbackModel: settings.fallbackModel || '',
-    };
-
     const monthlyData = agg.last12.map((b) => ({
       month: b.monthKey,
       profit: b.profit,
@@ -750,200 +1000,60 @@ async function handleProfitGrowthPredictor(req: NextRequest) {
 
     const topCatsForPrompt = catGrowth.slice(0, 10);
 
-    const prompt = `Si AI "Profit Growth Predictor" za slovenske in srednjeevropske oglasne platforme (Bolha, Vinted, Avtonet, mobile.de).
-Napoveš profit GROWTH rate za naslednjih 6 mesecev — kako hitro bo profit rastel in kateri faktorji bodo to gnali ali zavirali.
+    const promptData: PromptContext = {
+      currentMonthlyProfit,
+      currentMonthlyGrowth,
+      avgMonthlyGrowth6m,
+      growthAcceleration,
+      growthVolatility,
+      monthsWithData,
+      volumeGrowth,
+      priceGrowth,
+      efficiencyGrowth,
+      topGrowthCategory,
+      growthPrediction6m,
+      growthRate6m,
+      compoundGrowthRate,
+      growthPotential,
+      growthStage,
+      projectedMilestones,
+      monthlyData,
+      topCatsForPrompt,
+    };
 
-TRENUTNO STANJE (deterministično izračunano):
-- currentMonthlyProfit: ${currentMonthlyProfit}€
-- currentMonthlyGrowth: ${currentMonthlyGrowth}%
-- avgMonthlyGrowth6m: ${avgMonthlyGrowth6m}%
-- growthAcceleration: ${growthAcceleration > 0 ? '+' : ''}${growthAcceleration} (recent 3m vs prior 3m)
-- growthVolatility: ${growthVolatility} (stddev mesečnih growth ratov)
-- monthsWithData: ${monthsWithData}
+    const prompt = buildPrompt(promptData);
 
-GROWTH DRIVERS (deterministično izračunano):
-- volumeGrowth: trend ${volumeGrowth.trend}/mo, impact ${volumeGrowth.impact}, detail: ${volumeGrowth.detail}
-- priceGrowth: trend ${priceGrowth.trend}/mo, impact ${priceGrowth.impact}, detail: ${priceGrowth.detail}
-- efficiencyGrowth: trend ${efficiencyGrowth.trend}/mo, impact ${efficiencyGrowth.impact}, detail: ${efficiencyGrowth.detail}
-- topGrowthCategory: ${topGrowthCategory != null ? `${topGrowthCategory.category} (${topGrowthCategory.growthRate}%/6m)` : 'null'}
-
-DETERMINISTIČNA PREDICTION (za referenco — AI lahko prilagodi znotraj anti-hallucination pravil):
-- growthPrediction6m: ${growthPrediction6m}€
-- growthRate6m: ${growthRate6m}% (clamped [-50, 200])
-- compoundGrowthRate: ${compoundGrowthRate}%
-- growthPotential: ${growthPotential}/100
-- growthStage: ${growthStage}
-- projectedMilestones: ${JSON.stringify(projectedMilestones)}
-
-MESEČNI PODATKI (zadnjih ${monthsWithData} mesecev):
-${JSON.stringify(monthlyData, null, 2)}
-
-TOP GROWTH KATEGORIJE (zadnjih 6m vs prior 6m):
-${JSON.stringify(topCatsForPrompt, null, 2)}
-
-PRAVILA ZA AI ODGOVOR:
-1. prediction:
-   - growthPrediction6m: pričakovani profit čez 6 mesecev (EUR, min 0)
-   - growthRate6m: pričakovana mesečna growth rate za naslednjih 6m (clamped [-50, 200])
-   - compoundGrowthRate: CAGR-style compound rate (clamped [-50, 200])
-   - growthPotential: 0-100 (koliko headroom-a za rast obstaja)
-   - growthStage: EARLY | ACCELERATING | MATURING | SATURATING (validiraj proti enum)
-   - projectedMilestones: array z { target, monthsToReach, projectedDate (ISO date) } za 2x, 3x, 5x; prazni če growth ≤ 0
-2. analysis:
-   - growthDrivers: top 3 faktorji z driver, weight (0-100), detail
-   - growthInhibitors: top 3 faktorji z inhibitor, impact, mitigation
-   - growthActions: 3-5 konkretnih akcij z action, priority (HIGH/MEDIUM/LOW), expectedGrowthLift (npr. "+5%/mo")
-3. summary: slovenski povzetek (max 500 znakov). NE izmišljuj številk — uporabi zgornje deterministične podatke.
-
-VRNI LE JSON:
-{
-  "prediction": {
-    "growthPrediction6m": 0,
-    "growthRate6m": 0,
-    "compoundGrowthRate": 0,
-    "growthPotential": 0,
-    "growthStage": "ACCELERATING",
-    "projectedMilestones": [{ "target": "2x profit", "monthsToReach": 0, "projectedDate": "2026-01-01" }]
-  },
-  "analysis": {
-    "growthDrivers": [{ "driver": "...", "weight": 50, "detail": "..." }],
-    "growthInhibitors": [{ "inhibitor": "...", "impact": "...", "mitigation": "..." }],
-    "growthActions": [{ "action": "...", "priority": "HIGH", "expectedGrowthLift": "+5%/mo" }]
-  },
-  "summary": "..."
-}${GROUNDING_PROMPT_SUFFIX}`;
-
-    let finalPrediction = prediction;
-    let analysis: GrowthAnalysis = {
+    const fallbackAnalysis: GrowthAnalysis = {
       growthDrivers: [],
       growthInhibitors: [],
       growthActions: [],
     };
+
+    let finalPrediction = prediction;
+    let analysis: GrowthAnalysis = fallbackAnalysis;
     let summary = deterministicSummary;
     let aiUsed = false;
 
     try {
-      const raw = await callProviderForRaw(aiSettings, prompt);
-      const parsed = parseJsonLooseExported(raw) as AiGrowthResponse | null;
+      const raw = await callAi(prompt);
+      const parsed = parseAi(raw) as AiGrowthResponse | null;
 
-      if (parsed && typeof parsed === 'object') {
-        if (parsed.prediction && typeof parsed.prediction === 'object') {
-          const p = parsed.prediction as Record<string, unknown>;
-          const aiGrowthRate6m = clampNumber(
-            p.growthRate6m,
-            -50,
-            200,
-            growthRate6m,
-          );
-          const aiCompound = clampNumber(
-            p.compoundGrowthRate,
-            -50,
-            200,
-            compoundGrowthRate,
-          );
-          const aiGrowthPrediction6m = Math.max(
-            0,
-            projectProfit(currentMonthlyProfit, aiGrowthRate6m, 6),
-          );
-          const aiPotential = clampNumber(
-            p.growthPotential,
-            0,
-            100,
-            growthPotential,
-          );
-          const aiStage = clampEnum(p.growthStage, VALID_STAGE, growthStage);
-
-          const aiMilestones: ProjectedMilestone[] = [];
-          for (const mult of [2, 3, 5]) {
-            const months = monthsToReach(
-              currentMonthlyProfit,
-              aiGrowthRate6m,
-              mult,
-            );
-            if (months == null) continue;
-            const projectedDate = new Date(now + months * 30 * 86_400_000)
-              .toISOString()
-              .slice(0, 10);
-            aiMilestones.push({
-              target: `${mult}x profit`,
-              monthsToReach: months,
-              projectedDate,
-            });
-          }
-
-          finalPrediction = {
-            growthPrediction6m: aiGrowthPrediction6m,
-            growthRate6m: round1(aiGrowthRate6m),
-            compoundGrowthRate: round1(aiCompound),
-            growthPotential: round0(aiPotential),
-            growthStage: aiStage,
-            projectedMilestones: aiMilestones,
-          };
-        }
-
-        if (parsed.analysis && typeof parsed.analysis === 'object') {
-          const a = parsed.analysis as Record<string, unknown>;
-
-          if (Array.isArray(a.growthDrivers)) {
-            analysis.growthDrivers = (a.growthDrivers as unknown[])
-              .map((d: unknown) => {
-                const dr = d as Record<string, unknown>;
-                if (!dr || typeof dr !== 'object') return null;
-                const driver = clampString(dr.driver, 100, '');
-                if (!driver) return null;
-                const weight = clampNumber(dr.weight, 0, 100, 50);
-                const detail = clampString(dr.detail, 200, '');
-                return { driver, weight: round0(weight), detail };
-              })
-              .filter((d): d is GrowthDriverItem => d !== null)
-              .slice(0, 3);
-          }
-
-          if (Array.isArray(a.growthInhibitors)) {
-            analysis.growthInhibitors = (a.growthInhibitors as unknown[])
-              .map((d: unknown) => {
-                const dr = d as Record<string, unknown>;
-                if (!dr || typeof dr !== 'object') return null;
-                const inhibitor = clampString(dr.inhibitor, 100, '');
-                if (!inhibitor) return null;
-                const impact = clampString(dr.impact, 200, '');
-                const mitigation = clampString(dr.mitigation, 200, '');
-                return { inhibitor, impact, mitigation };
-              })
-              .filter((d): d is GrowthInhibitor => d !== null)
-              .slice(0, 3);
-          }
-
-          if (Array.isArray(a.growthActions)) {
-            analysis.growthActions = (a.growthActions as unknown[])
-              .map((d: unknown) => {
-                const dr = d as Record<string, unknown>;
-                if (!dr || typeof dr !== 'object') return null;
-                const action = clampString(dr.action, 200, '');
-                if (!action) return null;
-                const priority = clampEnum(
-                  dr.priority,
-                  VALID_PRIORITY,
-                  'MEDIUM',
-                );
-                const expectedGrowthLift = clampString(
-                  dr.expectedGrowthLift,
-                  50,
-                  '',
-                );
-                return { action, priority, expectedGrowthLift };
-              })
-              .filter((d): d is GrowthAction => d !== null)
-              .slice(0, 5);
-          }
-        }
-
-        if (typeof parsed.summary === 'string' && parsed.summary.trim()) {
-          summary = clampString(parsed.summary, 500, deterministicSummary);
-        }
-
-        aiUsed = true;
-      }
+      const merged = mergeAiIntoAnalysis(
+        parsed,
+        prediction,
+        fallbackAnalysis,
+        deterministicSummary,
+        currentMonthlyProfit,
+        growthRate6m,
+        compoundGrowthRate,
+        growthPotential,
+        growthStage,
+        now,
+      );
+      finalPrediction = merged.prediction;
+      analysis = merged.analysis;
+      summary = merged.summary;
+      aiUsed = merged.aiUsed;
     } catch (err) {
       logger.warn(
         '/api/ai/profit-growth-predictor',
@@ -961,7 +1071,7 @@ VRNI LE JSON:
       });
     }
 
-    return NextResponse.json({
+    return apiOk({
       ok: true,
       current,
       drivers,
@@ -970,11 +1080,8 @@ VRNI LE JSON:
       summary,
       aiUsed,
     });
-  } catch (err: any) {
-    logger.error('/api/ai/profit-growth-predictor', 'handler failed', err);
-    return NextResponse.json(
-      { error: err?.message ?? 'Napaka' },
-      { status: 500 },
-    );
-  }
-}
+  },
+});
+
+export const GET = profitGrowthPredictorHandler;
+export const POST = profitGrowthPredictorHandler;

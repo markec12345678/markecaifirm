@@ -1,36 +1,128 @@
-// v6.75: AI Listing CTR Optimizer — ML optimizacija click-through rate z element analysis
+// v6.75 / v8.94-refactor: AI Listing CTR Optimizer — ML optimizacija click-through rate z element analysis
+// Refaktoriran z withAiRoute helperjem (v8.94) + enforceBudget guard.
+//
 // POST /api/ai/listing-ctr-optimizer
 // Body: { tradeId?: string }
-// Returns: { ok, optimizer: { listings, ctrFactors, optimizations, experiments, mlModels, summary } }
+// Returns: { ok, optimizer: { listings, ctrFactors, optimizations, experiments, mlModels, summary } | null }
 
-import { NextRequest, NextResponse } from 'next/server';
-import { db } from '@/lib/db';
-import { getSettingsRow } from '@/lib/pipeline';
-import { callProviderForRaw, parseJsonLooseExported, type AiProviderType, type AiSettings } from '@/lib/ai';
-import { logger } from '@/lib/logger';
+import { withAiRoute, AI_ROUTE_DEFAULTS, type AiRouteContext } from '@/lib/with-ai-route';
+import { apiOk } from '@/lib/api-response';
 
-export const runtime = 'nodejs';
-export const dynamic = 'force-dynamic';
-export const maxDuration = 90;
+export const { runtime, dynamic, maxDuration } = AI_ROUTE_DEFAULTS;
 
-const CTR_FACTORS = ['title_relevance', 'thumbnail_quality', 'price_appeal', 'position_ranking', 'category_match', 'search_keywords', 'freshness', 'seller_rating', 'location_proximity', 'urgency_signals'] as const;
+const CTR_FACTORS = [
+  'title_relevance', 'thumbnail_quality', 'price_appeal', 'position_ranking',
+  'category_match', 'search_keywords', 'freshness', 'seller_rating',
+  'location_proximity', 'urgency_signals',
+] as const;
 
-export async function POST(req: NextRequest) {
-  try {
+interface ListingCtrOptimizerInput {
+  tradeId: string | null;
+}
+
+export const POST = withAiRoute<ListingCtrOptimizerInput>({
+  endpoint: '/api/ai/listing-ctr-optimizer',
+  maxDuration: 90,
+  enforceBudget: true, // AI klic — preveri budget
+
+  parseBody: async (req) => {
     const body = await req.json().catch(() => ({}));
-    const tradeId = body?.tradeId ? String(body.tradeId) : null;
+    return {
+      tradeId: body?.tradeId ? String(body.tradeId) : null,
+    };
+  },
+
+  // No validateInput — tradeId je opcijski (null = vsi held tradei)
+
+  handler: async (input, ctx: AiRouteContext) => {
+    const { db, callAi, parseAi } = ctx;
+    const { tradeId } = input;
+
     const where: any = { status: 'held' };
     if (tradeId) where.id = tradeId;
-    const heldTrades = await db.trade.findMany({ where, select: { id: true, title: true, category: true, buyPrice: true, buyFees: true, buyDate: true, listing: { select: { aiEstimatedValue: true, price: true, imageUrl: true, description: true, detailDescription: true, location: true, dealScore: true } } }, take: tradeId ? 1 : 15 });
-    if (heldTrades.length === 0) return NextResponse.json({ ok: true, optimizer: null, message: 'Ni held tradeov za CTR optimizacijo.' });
 
-    const settings = await getSettingsRow();
-    const aiSettings: AiSettings = { provider: settings.aiProvider as AiProviderType, baseUrl: settings.aiBaseUrl, apiKey: settings.aiApiKey, model: settings.aiModel, fallbackProvider: (settings.fallbackProvider || '') as AiProviderType | '', fallbackBaseUrl: settings.fallbackBaseUrl || '', fallbackApiKey: settings.fallbackApiKey || '', fallbackModel: settings.fallbackModel || '' };
+    const heldTrades = await db.trade.findMany({
+      where,
+      select: {
+        id: true, title: true, category: true, buyPrice: true, buyFees: true, buyDate: true,
+        listing: {
+          select: {
+            aiEstimatedValue: true, price: true, imageUrl: true, description: true,
+            detailDescription: true, location: true, dealScore: true,
+          },
+        },
+      },
+      take: tradeId ? 1 : 15,
+    });
 
-    const items = heldTrades.map(t => ({ id: t.id, title: t.title, category: t.category || 'drugo', price: t.listing?.price ?? Math.round(t.buyPrice * 1.25), imageUrl: t.listing?.imageUrl ?? '', location: t.listing?.location ?? '', description: (t.listing?.detailDescription || t.listing?.description || '').slice(0, 200) }));
-    const itemsStr = items.slice(0, 15).map(i => `- [${i.id}] "${i.title}" | ${i.category} | ${i.price}€ | ${i.location} | slika: ${i.imageUrl ? 'da' : 'ne'}`).join('\n');
+    if (heldTrades.length === 0) {
+      return apiOk({ ok: true, optimizer: null, message: 'Ni held tradeov za CTR optimizacijo.' });
+    }
 
-    const prompt = `Si AI listing CTR optimizer z ML in element analysis.
+    const items = buildItems(heldTrades);
+    const itemsStr = buildItemsStr(items);
+    const prompt = buildPrompt(items, itemsStr);
+
+    const raw = await callAi(prompt);
+    const parsed: any = parseAi(raw);
+
+    const optimizer = transformOptimizer(parsed, items);
+
+    return apiOk({ ok: true, optimizer });
+  },
+});
+
+// --- Pomožne funkcije (čiste, testabilne) --------------------------------
+
+interface HeldTradeRow {
+  id: string;
+  title: string;
+  category: string;
+  buyPrice: number;
+  buyFees: number;
+  buyDate: Date;
+  listing: {
+    aiEstimatedValue: number | null;
+    price: number | null;
+    imageUrl: string | null;
+    description: string;
+    detailDescription: string | null;
+    location: string;
+    dealScore: number | null;
+  } | null;
+}
+
+interface CtrItem {
+  id: string;
+  title: string;
+  category: string;
+  price: number;
+  imageUrl: string;
+  location: string;
+  description: string;
+}
+
+function buildItems(heldTrades: HeldTradeRow[]): CtrItem[] {
+  return heldTrades.map(t => ({
+    id: t.id,
+    title: t.title,
+    category: t.category || 'drugo',
+    price: t.listing?.price ?? Math.round(t.buyPrice * 1.25),
+    imageUrl: t.listing?.imageUrl ?? '',
+    location: t.listing?.location ?? '',
+    description: (t.listing?.detailDescription || t.listing?.description || '').slice(0, 200),
+  }));
+}
+
+function buildItemsStr(items: CtrItem[]): string {
+  return items
+    .slice(0, 15)
+    .map(i => `- [${i.id}] "${i.title}" | ${i.category} | ${i.price}€ | ${i.location} | slika: ${i.imageUrl ? 'da' : 'ne'}`)
+    .join('\n');
+}
+
+function buildPrompt(items: CtrItem[], itemsStr: string): string {
+  return `Si AI listing CTR optimizer z ML in element analysis.
 Optimizira click-through rate z 10-faktorsko analizo.
 
 OGLASI (${items.length}):
@@ -72,39 +164,78 @@ Odgovori LE z JSON:
     "quickest_ctr_win": "<max 100 znakov>", "ctr_optimization_score": <number 0-100>
   }
 }`;
+}
 
-    let raw = '';
-    try { raw = await callProviderForRaw(aiSettings, prompt); }
-    catch (e: any) { if (aiSettings.fallbackProvider && aiSettings.fallbackModel) { const fb: AiSettings = { provider: aiSettings.fallbackProvider, baseUrl: aiSettings.fallbackBaseUrl || '', apiKey: aiSettings.fallbackApiKey || '', model: aiSettings.fallbackModel }; raw = await callProviderForRaw(fb, prompt); } else { return NextResponse.json({ error: e?.message ?? 'AI failed' }, { status: 500 }); } }
+function transformOptimizer(parsed: any, items: CtrItem[]): any {
+  const validIds = new Set(items.map(i => i.id));
 
-    const parsed: any = parseJsonLooseExported(raw);
-    const validIds = new Set(items.map(i => i.id));
-
-    const optimizer = {
-      insights: String(parsed?.insights ?? '').slice(0, 500),
-      listings: (parsed?.listings || []).filter((l: any) => validIds.has(String(l?.id ?? ''))).slice(0, 15).map((l: any) => ({
-        tradeId: String(l?.id ?? ''), title: String(l?.title ?? '').slice(0, 150),
+  return {
+    insights: String(parsed?.insights ?? '').slice(0, 500),
+    listings: (parsed?.listings || [])
+      .filter((l: any) => validIds.has(String(l?.id ?? '')))
+      .slice(0, 15)
+      .map((l: any) => ({
+        tradeId: String(l?.id ?? ''),
+        title: String(l?.title ?? '').slice(0, 150),
         currentCtrPct: Math.max(0, Math.min(100, Number(l?.current_ctr_pct ?? 5))),
         optimizedCtrPct: Math.max(0, Math.min(100, Number(l?.optimized_ctr_pct ?? 10))),
         ctrLiftPct: Math.round(Number(l?.ctr_lift_pct ?? 0) * 10) / 10,
-        ctrFactors: (l?.ctr_factors || []).slice(0, 10).map((f: any) => ({ factor: CTR_FACTORS.includes(String(f?.factor) as any) ? String(f.factor) : 'title_relevance', currentScore: Math.max(0, Math.min(100, Number(f?.current_score ?? 50))), optimizedScore: Math.max(0, Math.min(100, Number(f?.optimized_score ?? 70))), impactPct: Math.round(Number(f?.impact_pct ?? 0) * 10) / 10, priority: ['high', 'medium', 'low'].includes(String(f?.priority)) ? String(f.priority) : 'medium' })),
+        ctrFactors: (l?.ctr_factors || []).slice(0, 10).map((f: any) => ({
+          factor: CTR_FACTORS.includes(String(f?.factor) as any) ? String(f.factor) : 'title_relevance',
+          currentScore: Math.max(0, Math.min(100, Number(f?.current_score ?? 50))),
+          optimizedScore: Math.max(0, Math.min(100, Number(f?.optimized_score ?? 70))),
+          impactPct: Math.round(Number(f?.impact_pct ?? 0) * 10) / 10,
+          priority: ['high', 'medium', 'low'].includes(String(f?.priority)) ? String(f.priority) : 'medium',
+        })),
         optimizedTitle: String(l?.optimized_title ?? '').slice(0, 120),
         optimizedThumbnailRecommendation: String(l?.optimized_thumbnail_recommendation ?? '').slice(0, 250),
         expectedViewsIncreasePct: Math.round(Number(l?.expected_views_increase_pct ?? 30)),
         expectedInquiriesIncreasePct: Math.round(Number(l?.expected_inquiries_increase_pct ?? 25)),
         priority: ['high', 'medium', 'low'].includes(String(l?.priority)) ? String(l.priority) : 'medium',
       })),
-      ctrFactors: (parsed?.ctrFactors || []).slice(0, 10).map((f: any) => ({ factor: CTR_FACTORS.includes(String(f?.factor) as any) ? String(f.factor) : 'title_relevance', weight: Math.max(0, Math.min(100, Number(f?.weight ?? 10))), avgScore: Math.max(0, Math.min(100, Number(f?.avg_score ?? 50))), benchmark: Math.max(0, Math.min(100, Number(f?.benchmark ?? 60))), improvementPotential: ['high', 'medium', 'low'].includes(String(f?.improvement_potential)) ? String(f.improvement_potential) : 'medium', bestPractice: String(f?.best_practice ?? '').slice(0, 250) })),
-      optimizations: (parsed?.optimizations || []).slice(0, 10).map((o: any) => ({ optimizationType: ['title_rewrite', 'thumbnail_upgrade', 'price_adjustment', 'tag_optimization', 'refresh_posting', 'keyword_injection', 'urgency_addition', 'category_correction', 'location_emphasis', 'seller_boost'].includes(String(o?.optimization_type)) ? String(o.optimization_type) : 'title_rewrite', description: String(o?.description ?? '').slice(0, 250), expectedCtrLiftPct: Math.round(Number(o?.expected_ctr_lift_pct ?? 0) * 10) / 10, implementationEffort: ['low', 'medium', 'high'].includes(String(o?.implementation_effort)) ? String(o.implementation_effort) : 'low', timeToImplementHours: Math.max(0.5, Number(o?.time_to_implement_hours ?? 1)) })),
-      experiments: (parsed?.experiments || []).filter((e: any) => validIds.has(String(e?.listing_id ?? ''))).slice(0, 10).map((e: any) => ({ tradeId: String(e?.listing_id ?? '').slice(0, 50), experimentName: String(e?.experiment_name ?? '').slice(0, 150), variantA: String(e?.variant_a ?? '').slice(0, 200), variantB: String(e?.variant_b ?? '').slice(0, 200), predictedCtrAPct: Math.max(0, Math.min(100, Number(e?.predicted_ctr_a_pct ?? 5))), predictedCtrBPct: Math.max(0, Math.min(100, Number(e?.predicted_ctr_b_pct ?? 8))), expectedWinner: ['a', 'b'].includes(String(e?.expected_winner)) ? String(e.expected_winner) : 'b', testDurationDays: Math.max(3, Number(e?.test_duration_days ?? 7)), sampleSizeNeeded: Math.max(50, Number(e?.sample_size_needed ?? 100)) })),
-      mlModels: (parsed?.mlModels || []).slice(0, 5).map((m: any) => ({ model: ['gradient_boosting', 'neural_network', 'random_forest', 'deep_learning', 'ensemble'].includes(String(m?.model)) ? String(m.model) : 'ensemble', accuracyPct: Math.max(0, Math.min(100, Number(m?.accuracy_pct ?? 75))), predictionType: ['ctr_prediction', 'element_importance', 'view_forecast', 'inquiry_forecast'].includes(String(m?.prediction_type)) ? String(m.prediction_type) : 'ctr_prediction', weightInEnsemble: Math.max(0, Math.min(100, Number(m?.weight_in_ensemble ?? 20))) })),
-      summary: { totalListingsOptimized: items.length, avgCurrentCtrPct: Math.max(0, Math.min(100, Number(parsed?.summary?.avg_current_ctr_pct ?? 5))), avgOptimizedCtrPct: Math.max(0, Math.min(100, Number(parsed?.summary?.avg_optimized_ctr_pct ?? 10))), avgCtrLiftPct: Math.round(Number(parsed?.summary?.avg_ctr_lift_pct ?? 50) * 10) / 10, biggestCtrBlocker: String(parsed?.summary?.biggest_ctr_blocker ?? '').slice(0, 200), quickestCtrWin: String(parsed?.summary?.quickest_ctr_win ?? '').slice(0, 200), ctrOptimizationScore: Math.max(0, Math.min(100, Number(parsed?.summary?.ctr_optimization_score ?? 60))) },
-    };
-
-    const today = new Date().toISOString().slice(0, 10);
-    if (settings.aiCallsDate !== today) { await db.settings.update({ where: { id: 'singleton' }, data: { aiCallsDate: today, aiCallsToday: 1 } }); }
-    else { await db.settings.update({ where: { id: 'singleton' }, data: { aiCallsToday: { increment: 1 } } }); }
-
-    return NextResponse.json({ ok: true, optimizer });
-  } catch (e: any) { logger.error("/api/ai/listing-ctr-optimizer", "POST handler failed", e); return NextResponse.json({ error: e?.message ?? 'Napaka' }, { status: 500 }); }
+    ctrFactors: (parsed?.ctrFactors || []).slice(0, 10).map((f: any) => ({
+      factor: CTR_FACTORS.includes(String(f?.factor) as any) ? String(f.factor) : 'title_relevance',
+      weight: Math.max(0, Math.min(100, Number(f?.weight ?? 10))),
+      avgScore: Math.max(0, Math.min(100, Number(f?.avg_score ?? 50))),
+      benchmark: Math.max(0, Math.min(100, Number(f?.benchmark ?? 60))),
+      improvementPotential: ['high', 'medium', 'low'].includes(String(f?.improvement_potential)) ? String(f.improvement_potential) : 'medium',
+      bestPractice: String(f?.best_practice ?? '').slice(0, 250),
+    })),
+    optimizations: (parsed?.optimizations || []).slice(0, 10).map((o: any) => ({
+      optimizationType: ['title_rewrite', 'thumbnail_upgrade', 'price_adjustment', 'tag_optimization', 'refresh_posting', 'keyword_injection', 'urgency_addition', 'category_correction', 'location_emphasis', 'seller_boost'].includes(String(o?.optimization_type)) ? String(o.optimization_type) : 'title_rewrite',
+      description: String(o?.description ?? '').slice(0, 250),
+      expectedCtrLiftPct: Math.round(Number(o?.expected_ctr_lift_pct ?? 0) * 10) / 10,
+      implementationEffort: ['low', 'medium', 'high'].includes(String(o?.implementation_effort)) ? String(o.implementation_effort) : 'low',
+      timeToImplementHours: Math.max(0.5, Number(o?.time_to_implement_hours ?? 1)),
+    })),
+    experiments: (parsed?.experiments || [])
+      .filter((e: any) => validIds.has(String(e?.listing_id ?? '')))
+      .slice(0, 10)
+      .map((e: any) => ({
+        tradeId: String(e?.listing_id ?? '').slice(0, 50),
+        experimentName: String(e?.experiment_name ?? '').slice(0, 150),
+        variantA: String(e?.variant_a ?? '').slice(0, 200),
+        variantB: String(e?.variant_b ?? '').slice(0, 200),
+        predictedCtrAPct: Math.max(0, Math.min(100, Number(e?.predicted_ctr_a_pct ?? 5))),
+        predictedCtrBPct: Math.max(0, Math.min(100, Number(e?.predicted_ctr_b_pct ?? 8))),
+        expectedWinner: ['a', 'b'].includes(String(e?.expected_winner)) ? String(e.expected_winner) : 'b',
+        testDurationDays: Math.max(3, Number(e?.test_duration_days ?? 7)),
+        sampleSizeNeeded: Math.max(50, Number(e?.sample_size_needed ?? 100)),
+      })),
+    mlModels: (parsed?.mlModels || []).slice(0, 5).map((m: any) => ({
+      model: ['gradient_boosting', 'neural_network', 'random_forest', 'deep_learning', 'ensemble'].includes(String(m?.model)) ? String(m.model) : 'ensemble',
+      accuracyPct: Math.max(0, Math.min(100, Number(m?.accuracy_pct ?? 75))),
+      predictionType: ['ctr_prediction', 'element_importance', 'view_forecast', 'inquiry_forecast'].includes(String(m?.prediction_type)) ? String(m.prediction_type) : 'ctr_prediction',
+      weightInEnsemble: Math.max(0, Math.min(100, Number(m?.weight_in_ensemble ?? 20))),
+    })),
+    summary: {
+      totalListingsOptimized: items.length,
+      avgCurrentCtrPct: Math.max(0, Math.min(100, Number(parsed?.summary?.avg_current_ctr_pct ?? 5))),
+      avgOptimizedCtrPct: Math.max(0, Math.min(100, Number(parsed?.summary?.avg_optimized_ctr_pct ?? 10))),
+      avgCtrLiftPct: Math.round(Number(parsed?.summary?.avg_ctr_lift_pct ?? 50) * 10) / 10,
+      biggestCtrBlocker: String(parsed?.summary?.biggest_ctr_blocker ?? '').slice(0, 200),
+      quickestCtrWin: String(parsed?.summary?.quickest_ctr_win ?? '').slice(0, 200),
+      ctrOptimizationScore: Math.max(0, Math.min(100, Number(parsed?.summary?.ctr_optimization_score ?? 60))),
+    },
+  };
 }

@@ -1,4 +1,4 @@
-// v7.85: AI Inventory Turnover Accelerator Pro — AI-powered PRO verzija ki
+// v7.85 / v8.96.4-batch4: AI Inventory Turnover Accelerator Pro — AI-powered PRO verzija ki
 // identificira SPECIFIČNE akcije za pospešitev inventory turnover-a — ne
 // samo "turn faster" ampak natančno kateri item-i, kakšno akcijo in
 // pričakovane dni prihranjene. "PS5: 28d held, avg 22d → PRICE_DROP_5%,
@@ -17,24 +17,20 @@
 //
 // GET+POST /api/ai/inventory-turnover-accelerator-pro
 // (AI-enhanced + grounding + anti-hallucination + 6h cache + deterministic fallback)
+// Refaktoriran z withAiRoute helperjem (v8.96.4) + enforceBudget guard.
 
-import { NextRequest, NextResponse } from 'next/server';
-import { db } from '@/lib/db';
-import { getSettingsRow } from '@/lib/pipeline';
-import {
-  callProviderForRaw,
-  parseJsonLooseExported,
-  type AiProviderType,
-  type AiSettings,
-} from '@/lib/ai';
+import { withAiRoute, AI_ROUTE_DEFAULTS, type AiRouteContext } from '@/lib/with-ai-route';
+import { apiOk } from '@/lib/api-response';
 import { GROUNDING_PROMPT_SUFFIX } from '@/lib/anti-hallucination';
 import { getCachedAI, setCachedAI } from '@/lib/ai-cache';
-import { checkRateLimit, rateLimitResponse } from '@/lib/rate-limit';
-import { logger } from '@/lib/logger';
 
-export const runtime = 'nodejs';
-export const dynamic = 'force-dynamic';
+export const { runtime, dynamic } = AI_ROUTE_DEFAULTS;
 export const maxDuration = 60;
+
+// --- Input ----------------------------------------------------------------
+
+// eslint-disable-next-line @typescript-eslint/no-empty-object-type
+interface InventoryTurnoverAcceleratorProInput {}
 
 // --- Types ---------------------------------------------------------------
 
@@ -487,19 +483,241 @@ function buildDeterministicPlan(
   return { items, portfolio, summary };
 }
 
+// --- Prompt builder -------------------------------------------------------
+
+function buildPromptData(
+  held: HeldItemRow[],
+  items: ItemAccelerationPlan[],
+  portfolio: PortfolioAcceleration,
+) {
+  // Limit to top 50 items by risk for AI prompt (avoid huge prompts)
+  const topItems = items.slice(0, 50);
+  return {
+    heldItemCount: held.length,
+    itemsForAI: topItems.map((i) => ({
+      tradeId: i.tradeId,
+      title: i.title,
+      category: i.category,
+      buyPrice: i.buyPrice,
+      daysHeld: i.daysHeld,
+      categoryAvgHoldDays: i.categoryAvgHoldDays,
+      turnoverRiskScore: i.turnoverRiskScore,
+      accelerationPotential: i.accelerationPotential,
+      deterministicAction: i.recommendedAction,
+      deterministicDaysSaved: i.expectedDaysSaved,
+      deterministicNewTargetPrice: i.newTargetPrice,
+      deterministicPriority: i.actionPriority,
+    })),
+    portfolio,
+  };
+}
+
+function buildPrompt(
+  held: HeldItemRow[],
+  items: ItemAccelerationPlan[],
+  portfolio: PortfolioAcceleration,
+): string {
+  const promptData = buildPromptData(held, items, portfolio);
+  return `Si AI "Inventory Turnover Accelerator Pro" za slovenske in srednjeevropske oglasne platforme (Bolha, Vinted, Facebook, Avtonet, mobile.de).
+Identificiraš SPECIFIČNE akcije za pospešitev inventory turnover-a — za vsak HELD item predlagaš natančno akcijo in pričakovane dni prihranjene.
+
+HELD INVENTORY (deterministično izračunano):
+${JSON.stringify(promptData, null, 2)}
+
+PRAVILA ZA AI ODGOVOR:
+1. items: za vsak item predlagaj:
+   - recommendedAction: PRICE_DROP_5% | PRICE_DROP_10% | PRICE_DROP_15% | RELIST_FRESH | CROSS_POST | BUNDLE | LIQUIDATE | HOLD (lahko prilagodiš od deterministične, validiraj proti enum)
+   - expectedDaysSaved: 0-60 (lahko prilagodiš ±10 od deterministične)
+   - newTargetPrice: EUR (samo za PRICE_DROP_* in LIQUIDATE, clamped [0.5x, 1.2x] buyPrice, drugače null)
+   - expectedSellDate: ISO date v prihodnosti (po akciji)
+   - actionPriority: URGENT | HIGH | MEDIUM | LOW (lahko prilagodiš, validiraj proti enum)
+   - reasoning: slovenski opis max 250 znakov, zakaj ta akcija (upoštevaj daysHeld, categoryAvg, buyPrice)
+2. portfolio:
+   - currentAvgTurnoverDays: iz deterministične vrednosti (±5)
+   - projectedTurnoverWithActions: iz deterministične (±5)
+   - totalDaysSaved: sum of expectedDaysSaved (±20 od deterministične)
+   - accelerationROI: EUR dodatnega profita iz hitrejšega turnover-ja (0-10000, ±200 od deterministične)
+   - urgencyLevel: LOW | MEDIUM | HIGH | CRITICAL (validiraj proti enum)
+3. summary: slovenski povzetek (max 400 znakov). NE izmišljuj številk — uporabi zgornje deterministične podatke.
+
+VRNI LE JSON:
+{
+  "items": [
+    { "tradeId": "abc", "recommendedAction": "PRICE_DROP_10%", "expectedDaysSaved": 7, "newTargetPrice": 270, "expectedSellDate": "2026-09-05T00:00:00.000Z", "actionPriority": "HIGH", "reasoning": "PS5 držan 28d (1.27x povprečja 22d). -10% drop (na 270€) kompenzira zastoj in prihrani 7d." }
+  ],
+  "portfolio": {
+    "currentAvgTurnoverDays": 28,
+    "projectedTurnoverWithActions": 21,
+    "totalDaysSaved": 35,
+    "accelerationROI": 175.5,
+    "urgencyLevel": "HIGH"
+  },
+  "summary": "Portfolio: 28d avg → 21d z akcijami (35d prihranka, +175.5€ ROI). Urgentnost: HIGH. 5 high-priority item-ov."
+}${GROUNDING_PROMPT_SUFFIX}`;
+}
+
+// --- AI merge ------------------------------------------------------------
+
+interface AiMergedResult {
+  items: ItemAccelerationPlan[];
+  portfolio: PortfolioAcceleration;
+  summary: string;
+  aiUsed: boolean;
+}
+
+function mergeAiIntoPlan(
+  parsed: AiAccelerationResponse | null,
+  items: ItemAccelerationPlan[],
+  portfolio: PortfolioAcceleration,
+  detSummary: string,
+  now: number,
+): AiMergedResult {
+  if (!parsed || typeof parsed !== 'object') {
+    return { items, portfolio, summary: detSummary, aiUsed: false };
+  }
+
+  let mergedItems = items;
+  let mergedPortfolio = portfolio;
+  let mergedSummary = detSummary;
+  let aiUsed = false;
+
+  // AI items override (with anti-hallucination)
+  if (Array.isArray(parsed.items)) {
+    // Build map for fast lookup
+    const detMap = new Map(items.map((i) => [i.tradeId, i]));
+    const aiItems: ItemAccelerationPlan[] = [];
+
+    for (const rawItem of parsed.items as unknown[]) {
+      const r = rawItem as Record<string, unknown>;
+      if (!r || typeof r !== 'object') continue;
+      const tradeId = clampString(r.tradeId, 64, '');
+      if (!tradeId) continue;
+      const detItem = detMap.get(tradeId);
+      if (!detItem) continue; // skip unknown tradeId
+
+      const action = clampEnum(r.recommendedAction, VALID_ACTIONS, detItem.recommendedAction);
+      // expectedDaysSaved ±10 from deterministic
+      const rawDays = clampNumber(r.expectedDaysSaved, 0, MAX_DAYS_SAVED, detItem.expectedDaysSaved);
+      const expectedDaysSaved = clampInt(
+        Math.max(0, Math.min(MAX_DAYS_SAVED, detItem.expectedDaysSaved + Math.max(-10, Math.min(10, rawDays - detItem.expectedDaysSaved)))),
+        0,
+        MAX_DAYS_SAVED,
+        detItem.expectedDaysSaved,
+      );
+
+      // newTargetPrice — only for PRICE_DROP_*/LIQUIDATE
+      let newTargetPrice: number | null = null;
+      if (
+        action === 'PRICE_DROP_5%' ||
+        action === 'PRICE_DROP_10%' ||
+        action === 'PRICE_DROP_15%' ||
+        action === 'LIQUIDATE'
+      ) {
+        const minPrice = detItem.buyPrice * MIN_PRICE_RATIO;
+        const maxPrice = detItem.buyPrice * MAX_PRICE_RATIO;
+        const aiPrice = clampNumber(r.newTargetPrice, minPrice, maxPrice, detItem.newTargetPrice ?? detItem.buyPrice);
+        newTargetPrice = round2(
+          Math.max(minPrice, Math.min(maxPrice, aiPrice)),
+        );
+      }
+
+      // expectedSellDate — must be future
+      const nowSellMs = now + 1 * DAY_MS;
+      let sellDateIso: string;
+      if (typeof r.expectedSellDate === 'string' && r.expectedSellDate.trim()) {
+        const parsedMs = Date.parse(r.expectedSellDate);
+        if (Number.isFinite(parsedMs) && parsedMs > nowSellMs) {
+          sellDateIso = new Date(parsedMs).toISOString();
+        } else {
+          sellDateIso = expectedSellDate(detItem.daysHeld, expectedDaysSaved, now);
+        }
+      } else {
+        sellDateIso = expectedSellDate(detItem.daysHeld, expectedDaysSaved, now);
+      }
+
+      const actionPriority = clampEnum(r.actionPriority, VALID_PRIORITY, detItem.actionPriority);
+      const reasoning = clampString(r.reasoning, 250, detItem.reasoning);
+
+      aiItems.push({
+        tradeId: detItem.tradeId,
+        title: detItem.title,
+        category: detItem.category,
+        buyPrice: detItem.buyPrice,
+        daysHeld: detItem.daysHeld,
+        categoryAvgHoldDays: detItem.categoryAvgHoldDays,
+        turnoverRiskScore: detItem.turnoverRiskScore,
+        accelerationPotential: detItem.accelerationPotential,
+        recommendedAction: action,
+        expectedDaysSaved,
+        newTargetPrice,
+        expectedSellDate: sellDateIso,
+        actionPriority,
+        reasoning,
+      });
+    }
+
+    // If AI covered at least some items, use AI items + remaining deterministic
+    if (aiItems.length > 0) {
+      const aiIds = new Set(aiItems.map((i) => i.tradeId));
+      const remaining = items.filter((i) => !aiIds.has(i.tradeId));
+      mergedItems = [...aiItems, ...remaining];
+      // Re-sort by risk
+      mergedItems.sort((a, b) => b.turnoverRiskScore - a.turnoverRiskScore);
+    }
+  }
+
+  // Portfolio override
+  if (parsed.portfolio && typeof parsed.portfolio === 'object') {
+    const p = parsed.portfolio as Record<string, unknown>;
+    const adjCurrent = clampNumber(p.currentAvgTurnoverDays, 0, 3650, mergedPortfolio.currentAvgTurnoverDays);
+    mergedPortfolio = {
+      ...mergedPortfolio,
+      currentAvgTurnoverDays: round1(
+        Math.max(0, mergedPortfolio.currentAvgTurnoverDays + Math.max(-5, Math.min(5, adjCurrent - mergedPortfolio.currentAvgTurnoverDays))),
+      ),
+    };
+    const adjProjected = clampNumber(p.projectedTurnoverWithActions, 0, 3650, mergedPortfolio.projectedTurnoverWithActions);
+    mergedPortfolio.projectedTurnoverWithActions = round1(
+      Math.max(0, mergedPortfolio.projectedTurnoverWithActions + Math.max(-5, Math.min(5, adjProjected - mergedPortfolio.projectedTurnoverWithActions))),
+    );
+    const detTotalDays = mergedItems.reduce((s, i) => s + i.expectedDaysSaved, 0);
+    mergedPortfolio.totalDaysSaved = clampInt(
+      detTotalDays,
+      0,
+      100000,
+      mergedPortfolio.totalDaysSaved,
+    );
+    const adjROI = clampNumber(p.accelerationROI, 0, 10000, mergedPortfolio.accelerationROI);
+    mergedPortfolio.accelerationROI = round2(
+      Math.max(0, mergedPortfolio.accelerationROI + Math.max(-200, Math.min(200, adjROI - mergedPortfolio.accelerationROI))),
+    );
+    mergedPortfolio.urgencyLevel = clampEnum(p.urgencyLevel, VALID_URGENCY, mergedPortfolio.urgencyLevel);
+  }
+
+  if (typeof parsed.summary === 'string' && parsed.summary.trim()) {
+    mergedSummary = clampString(parsed.summary, 400, detSummary);
+  }
+
+  aiUsed = true;
+  return { items: mergedItems, portfolio: mergedPortfolio, summary: mergedSummary, aiUsed };
+}
+
 // --- Handler -------------------------------------------------------------
 
-export async function GET(req: NextRequest) {
-  return handleInventoryTurnoverAcceleratorPro(req);
-}
-export async function POST(req: NextRequest) {
-  return handleInventoryTurnoverAcceleratorPro(req);
-}
+const turnoverAcceleratorHandler = withAiRoute<InventoryTurnoverAcceleratorProInput>({
+  endpoint: '/api/ai/inventory-turnover-accelerator-pro',
+  maxDuration: 60,
+  enforceBudget: true, // AI klic — preveri budget
+  method: 'GET', // Endpoint sprejema GET + POST — bypass POST-only check
 
-async function handleInventoryTurnoverAcceleratorPro(req: NextRequest) {
-  try {
-    const rl = checkRateLimit(req, 'ai-inventory-turnover-accelerator-pro', 20);
-    if (!rl.allowed) return rateLimitResponse(rl);
+  parseBody: async (req) => {
+    await req.json().catch(() => ({}));
+    return {};
+  },
+
+  // No validateInput — body ignored, identična logika za GET in POST
+  handler: async (_input, ctx: AiRouteContext) => {
+    const { db, callAi, parseAi, logger } = ctx;
 
     const now = Date.now();
 
@@ -549,7 +767,7 @@ async function handleInventoryTurnoverAcceleratorPro(req: NextRequest) {
 
     // Empty state: no HELD items
     if (held.length === 0) {
-      return NextResponse.json({
+      return apiOk({
         ok: true,
         items,
         portfolio,
@@ -570,7 +788,7 @@ async function handleInventoryTurnoverAcceleratorPro(req: NextRequest) {
       summary: string;
     }>(cacheKey);
     if (cached) {
-      return NextResponse.json({
+      return apiOk({
         ok: true,
         items: cached.items,
         portfolio: cached.portfolio,
@@ -581,202 +799,19 @@ async function handleInventoryTurnoverAcceleratorPro(req: NextRequest) {
     }
 
     // 4) AI prompt with grounding
-    const settings = await getSettingsRow();
-    const aiSettings: AiSettings = {
-      provider: settings.aiProvider as AiProviderType,
-      baseUrl: settings.aiBaseUrl,
-      apiKey: settings.aiApiKey,
-      model: settings.aiModel,
-      fallbackProvider: (settings.fallbackProvider || '') as
-        | AiProviderType
-        | '',
-      fallbackBaseUrl: settings.fallbackBaseUrl || '',
-      fallbackApiKey: settings.fallbackApiKey || '',
-      fallbackModel: settings.fallbackModel || '',
-    };
-
-    // Limit to top 50 items by risk for AI prompt (avoid huge prompts)
-    const topItems = items.slice(0, 50);
-
-    const promptData = {
-      heldItemCount: held.length,
-      itemsForAI: topItems.map((i) => ({
-        tradeId: i.tradeId,
-        title: i.title,
-        category: i.category,
-        buyPrice: i.buyPrice,
-        daysHeld: i.daysHeld,
-        categoryAvgHoldDays: i.categoryAvgHoldDays,
-        turnoverRiskScore: i.turnoverRiskScore,
-        accelerationPotential: i.accelerationPotential,
-        deterministicAction: i.recommendedAction,
-        deterministicDaysSaved: i.expectedDaysSaved,
-        deterministicNewTargetPrice: i.newTargetPrice,
-        deterministicPriority: i.actionPriority,
-      })),
-      portfolio: det.portfolio,
-    };
-
-    const prompt = `Si AI "Inventory Turnover Accelerator Pro" za slovenske in srednjeevropske oglasne platforme (Bolha, Vinted, Facebook, Avtonet, mobile.de).
-Identificiraš SPECIFIČNE akcije za pospešitev inventory turnover-a — za vsak HELD item predlagaš natančno akcijo in pričakovane dni prihranjene.
-
-HELD INVENTORY (deterministično izračunano):
-${JSON.stringify(promptData, null, 2)}
-
-PRAVILA ZA AI ODGOVOR:
-1. items: za vsak item predlagaj:
-   - recommendedAction: PRICE_DROP_5% | PRICE_DROP_10% | PRICE_DROP_15% | RELIST_FRESH | CROSS_POST | BUNDLE | LIQUIDATE | HOLD (lahko prilagodiš od deterministične, validiraj proti enum)
-   - expectedDaysSaved: 0-60 (lahko prilagodiš ±10 od deterministične)
-   - newTargetPrice: EUR (samo za PRICE_DROP_* in LIQUIDATE, clamped [0.5x, 1.2x] buyPrice, drugače null)
-   - expectedSellDate: ISO date v prihodnosti (po akciji)
-   - actionPriority: URGENT | HIGH | MEDIUM | LOW (lahko prilagodiš, validiraj proti enum)
-   - reasoning: slovenski opis max 250 znakov, zakaj ta akcija (upoštevaj daysHeld, categoryAvg, buyPrice)
-2. portfolio:
-   - currentAvgTurnoverDays: iz deterministične vrednosti (±5)
-   - projectedTurnoverWithActions: iz deterministične (±5)
-   - totalDaysSaved: sum of expectedDaysSaved (±20 od deterministične)
-   - accelerationROI: EUR dodatnega profita iz hitrejšega turnover-ja (0-10000, ±200 od deterministične)
-   - urgencyLevel: LOW | MEDIUM | HIGH | CRITICAL (validiraj proti enum)
-3. summary: slovenski povzetek (max 400 znakov). NE izmišljuj številk — uporabi zgornje deterministične podatke.
-
-VRNI LE JSON:
-{
-  "items": [
-    { "tradeId": "abc", "recommendedAction": "PRICE_DROP_10%", "expectedDaysSaved": 7, "newTargetPrice": 270, "expectedSellDate": "2026-09-05T00:00:00.000Z", "actionPriority": "HIGH", "reasoning": "PS5 držan 28d (1.27x povprečja 22d). -10% drop (na 270€) kompenzira zastoj in prihrani 7d." }
-  ],
-  "portfolio": {
-    "currentAvgTurnoverDays": 28,
-    "projectedTurnoverWithActions": 21,
-    "totalDaysSaved": 35,
-    "accelerationROI": 175.5,
-    "urgencyLevel": "HIGH"
-  },
-  "summary": "Portfolio: 28d avg → 21d z akcijami (35d prihranka, +175.5€ ROI). Urgentnost: HIGH. 5 high-priority item-ov."
-}${GROUNDING_PROMPT_SUFFIX}`;
+    const prompt = buildPrompt(held, items, det.portfolio);
 
     let aiUsed = false;
 
     try {
-      const raw = await callProviderForRaw(aiSettings, prompt);
-      const parsed = parseJsonLooseExported(
-        raw,
-      ) as AiAccelerationResponse | null;
+      const raw = await callAi(prompt);
+      const parsed = parseAi(raw) as AiAccelerationResponse | null;
 
-      if (parsed && typeof parsed === 'object') {
-        // AI items override (with anti-hallucination)
-        if (Array.isArray(parsed.items)) {
-          // Build map for fast lookup
-          const detMap = new Map(items.map((i) => [i.tradeId, i]));
-          const aiItems: ItemAccelerationPlan[] = [];
-
-          for (const rawItem of parsed.items as unknown[]) {
-            const r = rawItem as Record<string, unknown>;
-            if (!r || typeof r !== 'object') continue;
-            const tradeId = clampString(r.tradeId, 64, '');
-            if (!tradeId) continue;
-            const detItem = detMap.get(tradeId);
-            if (!detItem) continue; // skip unknown tradeId
-
-            const action = clampEnum(r.recommendedAction, VALID_ACTIONS, detItem.recommendedAction);
-            // expectedDaysSaved ±10 from deterministic
-            const rawDays = clampNumber(r.expectedDaysSaved, 0, MAX_DAYS_SAVED, detItem.expectedDaysSaved);
-            const expectedDaysSaved = clampInt(
-              Math.max(0, Math.min(MAX_DAYS_SAVED, detItem.expectedDaysSaved + Math.max(-10, Math.min(10, rawDays - detItem.expectedDaysSaved)))),
-              0,
-              MAX_DAYS_SAVED,
-              detItem.expectedDaysSaved,
-            );
-
-            // newTargetPrice — only for PRICE_DROP_*/LIQUIDATE
-            let newTargetPrice: number | null = null;
-            if (
-              action === 'PRICE_DROP_5%' ||
-              action === 'PRICE_DROP_10%' ||
-              action === 'PRICE_DROP_15%' ||
-              action === 'LIQUIDATE'
-            ) {
-              const minPrice = detItem.buyPrice * MIN_PRICE_RATIO;
-              const maxPrice = detItem.buyPrice * MAX_PRICE_RATIO;
-              const aiPrice = clampNumber(r.newTargetPrice, minPrice, maxPrice, detItem.newTargetPrice ?? detItem.buyPrice);
-              newTargetPrice = round2(
-                Math.max(minPrice, Math.min(maxPrice, aiPrice)),
-              );
-            }
-
-            // expectedSellDate — must be future
-            const nowSellMs = now + 1 * DAY_MS;
-            let sellDateIso: string;
-            if (typeof r.expectedSellDate === 'string' && r.expectedSellDate.trim()) {
-              const parsedMs = Date.parse(r.expectedSellDate);
-              if (Number.isFinite(parsedMs) && parsedMs > nowSellMs) {
-                sellDateIso = new Date(parsedMs).toISOString();
-              } else {
-                sellDateIso = expectedSellDate(detItem.daysHeld, expectedDaysSaved, now);
-              }
-            } else {
-              sellDateIso = expectedSellDate(detItem.daysHeld, expectedDaysSaved, now);
-            }
-
-            const actionPriority = clampEnum(r.actionPriority, VALID_PRIORITY, detItem.actionPriority);
-            const reasoning = clampString(r.reasoning, 250, detItem.reasoning);
-
-            aiItems.push({
-              tradeId: detItem.tradeId,
-              title: detItem.title,
-              category: detItem.category,
-              buyPrice: detItem.buyPrice,
-              daysHeld: detItem.daysHeld,
-              categoryAvgHoldDays: detItem.categoryAvgHoldDays,
-              turnoverRiskScore: detItem.turnoverRiskScore,
-              accelerationPotential: detItem.accelerationPotential,
-              recommendedAction: action,
-              expectedDaysSaved,
-              newTargetPrice,
-              expectedSellDate: sellDateIso,
-              actionPriority,
-              reasoning,
-            });
-          }
-
-          // If AI covered at least some items, use AI items + remaining deterministic
-          if (aiItems.length > 0) {
-            const aiIds = new Set(aiItems.map((i) => i.tradeId));
-            const remaining = items.filter((i) => !aiIds.has(i.tradeId));
-            items = [...aiItems, ...remaining];
-            // Re-sort by risk
-            items.sort((a, b) => b.turnoverRiskScore - a.turnoverRiskScore);
-          }
-        }
-
-        // Portfolio override
-        if (parsed.portfolio && typeof parsed.portfolio === 'object') {
-          const p = parsed.portfolio as Record<string, unknown>;
-          const adjCurrent = clampNumber(p.currentAvgTurnoverDays, 0, 3650, portfolio.currentAvgTurnoverDays);
-          portfolio.currentAvgTurnoverDays = round1(
-            Math.max(0, portfolio.currentAvgTurnoverDays + Math.max(-5, Math.min(5, adjCurrent - portfolio.currentAvgTurnoverDays))),
-          );
-          const adjProjected = clampNumber(p.projectedTurnoverWithActions, 0, 3650, portfolio.projectedTurnoverWithActions);
-          portfolio.projectedTurnoverWithActions = round1(
-            Math.max(0, portfolio.projectedTurnoverWithActions + Math.max(-5, Math.min(5, adjProjected - portfolio.projectedTurnoverWithActions))),
-          );
-          const detTotalDays = items.reduce((s, i) => s + i.expectedDaysSaved, 0);
-          portfolio.totalDaysSaved = clampInt(
-            detTotalDays,
-            0,
-            100000,
-            portfolio.totalDaysSaved,
-          );
-          const adjROI = clampNumber(p.accelerationROI, 0, 10000, portfolio.accelerationROI);
-          portfolio.accelerationROI = round2(
-            Math.max(0, portfolio.accelerationROI + Math.max(-200, Math.min(200, adjROI - portfolio.accelerationROI))),
-          );
-          portfolio.urgencyLevel = clampEnum(p.urgencyLevel, VALID_URGENCY, portfolio.urgencyLevel);
-        }
-
-        if (typeof parsed.summary === 'string' && parsed.summary.trim()) {
-          finalSummary = clampString(parsed.summary, 400, det.summary);
-        }
-
+      const result = mergeAiIntoPlan(parsed, items, portfolio, det.summary, now);
+      if (result.aiUsed) {
+        items = result.items;
+        portfolio = result.portfolio;
+        finalSummary = result.summary;
         aiUsed = true;
       }
     } catch (err) {
@@ -796,22 +831,15 @@ VRNI LE JSON:
       });
     }
 
-    return NextResponse.json({
+    return apiOk({
       ok: true,
       items,
       portfolio,
       summary: finalSummary,
       aiUsed,
     });
-  } catch (err: any) {
-    logger.error(
-      '/api/ai/inventory-turnover-accelerator-pro',
-      'handler failed',
-      err,
-    );
-    return NextResponse.json(
-      { error: err?.message ?? 'Napaka' },
-      { status: 500 },
-    );
-  }
-}
+  },
+});
+
+export const GET = turnoverAcceleratorHandler;
+export const POST = turnoverAcceleratorHandler;

@@ -1,21 +1,45 @@
-// v6.36: AI Competitor Price Tracker — sledi cenam konkurence v realnem času
+// v6.36 / v8.95.9-competitor: AI Competitor Price Tracker — sledi cenam konkurence v realnem času
+// Refaktoriran z withAiRoute helperjem (v8.95.9) + enforceBudget guard.
+//
 // POST /api/ai/competitor-price-tracker
 // Body: {}
 // Returns: { ok, tracking: { competitors: [], priceChanges, ourPosition, actions } }
 
-import { NextRequest, NextResponse } from 'next/server';
-import { db } from '@/lib/db';
-import { getSettingsRow } from '@/lib/pipeline';
-import { callProviderForRaw, parseJsonLooseExported, type AiProviderType, type AiSettings } from '@/lib/ai';
-import { logger } from '@/lib/logger';
+import { withAiRoute, AI_ROUTE_DEFAULTS, type AiRouteContext } from '@/lib/with-ai-route';
+import { apiOk } from '@/lib/api-response';
 
-export const runtime = 'nodejs';
-export const dynamic = 'force-dynamic';
+export const { runtime, dynamic } = AI_ROUTE_DEFAULTS;
 export const maxDuration = 90;
 
-export async function POST(req: NextRequest) {
-  try {
+// eslint-disable-next-line @typescript-eslint/no-empty-object-type
+interface CompetitorPriceTrackerInput {}
+
+interface SourceAgg {
+  count: number;
+  avgPrice: number;
+  priceDrops: number;
+  avgDealScore: number;
+}
+
+interface PriceStats {
+  priceDrops: number;
+  avgPrice: number;
+  priceRange: [number, number];
+  bySource: Record<string, SourceAgg>;
+}
+
+export const POST = withAiRoute<CompetitorPriceTrackerInput>({
+  endpoint: '/api/ai/competitor-price-tracker',
+  maxDuration: 90,
+  enforceBudget: true,
+
+  parseBody: async (req) => {
     await req.json().catch(() => ({}));
+    return {};
+  },
+
+  handler: async (_input, ctx: AiRouteContext) => {
+    const { db, callAi, parseAi } = ctx;
 
     // Pridobi podobne listinge (konkurenčni oglasi) za naše held iteme
     const heldTrades = await db.trade.findMany({
@@ -36,47 +60,73 @@ export async function POST(req: NextRequest) {
     });
 
     if (allListings.length === 0) {
-      return NextResponse.json({ ok: true, tracking: null, message: 'Ni oglasov za competitor tracking.' });
+      return apiOk({ ok: true, tracking: null, message: 'Ni oglasov za competitor tracking.' });
     }
-
-    const settings = await getSettingsRow();
-    const aiSettings: AiSettings = {
-      provider: settings.aiProvider as AiProviderType,
-      baseUrl: settings.aiBaseUrl, apiKey: settings.aiApiKey, model: settings.aiModel,
-      fallbackProvider: (settings.fallbackProvider || '') as AiProviderType | '',
-      fallbackBaseUrl: settings.fallbackBaseUrl || '', fallbackApiKey: settings.fallbackApiKey || '',
-      fallbackModel: settings.fallbackModel || '',
-    };
 
     // Analiza cenovnih sprememb
-    const priceDrops = allListings.filter(l => l.priceDroppedAt).length;
-    const avgPrice = allListings.length > 0 ? Math.round(allListings.reduce((s, l) => s + (l.price ?? 0), 0) / allListings.length) : 0;
-    const priceRange = allListings.length > 0 ? [Math.min(...allListings.map(l => l.price ?? 0)), Math.max(...allListings.map(l => l.price ?? 0))] : [0, 0];
+    const stats = computePriceStats(allListings);
 
-    // Po virih
-    const bySource: Record<string, { count: number; avgPrice: number; priceDrops: number; avgDealScore: number }> = {};
-    for (const l of allListings) {
-      const src = l.monitor?.source || 'neznan';
-      if (!bySource[src]) bySource[src] = { count: 0, avgPrice: 0, priceDrops: 0, avgDealScore: 0 };
-      bySource[src].count++;
-      bySource[src].avgPrice += l.price ?? 0;
-      if (l.priceDroppedAt) bySource[src].priceDrops++;
-      bySource[src].avgDealScore += l.dealScore ?? 0;
-    }
-    for (const s of Object.keys(bySource)) {
-      bySource[s].avgPrice = bySource[s].count > 0 ? Math.round(bySource[s].avgPrice / bySource[s].count) : 0;
-      bySource[s].avgDealScore = bySource[s].count > 0 ? Math.round(bySource[s].avgDealScore / bySource[s].count) : 0;
-    }
+    const prompt = buildPrompt(heldTrades, allListings, stats);
 
-    const heldStr = heldTrades.slice(0, 10).map(t => `- ${t.title} | ${t.category} | est: ${t.listing?.aiEstimatedValue ?? Math.round(t.buyPrice*1.25)}€`).join('\n');
-    const sourceStr = Object.entries(bySource).sort(([,a],[,b]) => b.count - a.count).map(([src, d]) => `- ${src}: ${d.count} oglasov, povp. ${d.avgPrice}€, ${d.priceDrops} padcev, deal ${d.avgDealScore}/100`).join('\n');
+    const raw = await callAi(prompt);
+    const parsed: any = parseAi(raw);
+    const validIds = new Set(heldTrades.map(t => t.id));
 
-    const prompt = `Si AI competitor price tracker za spremljanje konkurenčnih cen.
+    const tracking = transformTracking(parsed, stats, validIds, allListings.length);
+
+    return apiOk({ ok: true, tracking });
+  },
+});
+
+// --- Pomožne funkcije (čiste, testabilne) --------------------------------
+
+function computePriceStats(
+  allListings: Array<{
+    price: number | null; priceDroppedAt: Date | null;
+    dealScore: number | null;
+    monitor: { source: string | null; name: string | null } | null;
+  }>
+): PriceStats {
+  const priceDrops = allListings.filter(l => l.priceDroppedAt).length;
+  const avgPrice = allListings.length > 0 ? Math.round(allListings.reduce((s, l) => s + (l.price ?? 0), 0) / allListings.length) : 0;
+  const priceRange: [number, number] = allListings.length > 0
+    ? [Math.min(...allListings.map(l => l.price ?? 0)), Math.max(...allListings.map(l => l.price ?? 0))]
+    : [0, 0];
+
+  const bySource: Record<string, SourceAgg> = {};
+  for (const l of allListings) {
+    const src = l.monitor?.source || 'neznan';
+    if (!bySource[src]) bySource[src] = { count: 0, avgPrice: 0, priceDrops: 0, avgDealScore: 0 };
+    bySource[src].count++;
+    bySource[src].avgPrice += l.price ?? 0;
+    if (l.priceDroppedAt) bySource[src].priceDrops++;
+    bySource[src].avgDealScore += l.dealScore ?? 0;
+  }
+  for (const s of Object.keys(bySource)) {
+    bySource[s].avgPrice = bySource[s].count > 0 ? Math.round(bySource[s].avgPrice / bySource[s].count) : 0;
+    bySource[s].avgDealScore = bySource[s].count > 0 ? Math.round(bySource[s].avgDealScore / bySource[s].count) : 0;
+  }
+
+  return { priceDrops, avgPrice, priceRange, bySource };
+}
+
+function buildPrompt(
+  heldTrades: Array<{
+    title: string; category: string | null; buyPrice: number;
+    listing: { aiEstimatedValue: number | null; dealScore: number | null; price: number | null } | null;
+  }>,
+  allListings: Array<{ price: number | null; priceDroppedAt: Date | null; dealScore: number | null }>,
+  stats: PriceStats
+): string {
+  const heldStr = heldTrades.slice(0, 10).map(t => `- ${t.title} | ${t.category} | est: ${t.listing?.aiEstimatedValue ?? Math.round(t.buyPrice*1.25)}€`).join('\n');
+  const sourceStr = Object.entries(stats.bySource).sort(([,a],[,b]) => b.count - a.count).map(([src, d]) => `- ${src}: ${d.count} oglasov, povp. ${d.avgPrice}€, ${d.priceDrops} padcev, deal ${d.avgDealScore}/100`).join('\n');
+
+  return `Si AI competitor price tracker za spremljanje konkurenčnih cen.
 Analiziraj konkurenčne oglase in našo cenovno pozicijo.
 
 SKUPno: ${allListings.length} konkurenčnih oglasov (zadnjih 14 dni)
-- Povp. cena: ${avgPrice}€ (range ${priceRange[0]}-${priceRange[1]}€)
-- Padcev cen: ${priceDrops} (${Math.round(priceDrops/allListings.length*100)}%)
+- Povp. cena: ${stats.avgPrice}€ (range ${stats.priceRange[0]}-${stats.priceRange[1]}€)
+- Padcev cen: ${stats.priceDrops} (${Math.round(stats.priceDrops/allListings.length*100)}%)
 
 PODATKI PO VIRIH:
 ${sourceStr}
@@ -148,83 +198,58 @@ Odgovori LE z JSON:
     "potential_competitive_gain_eur": <number>
   }
 }`;
+}
 
-    let raw = '';
-    try {
-      raw = await callProviderForRaw(aiSettings, prompt);
-    } catch (primaryError: any) {
-      if (aiSettings.fallbackProvider && aiSettings.fallbackModel) {
-        const fb: AiSettings = { provider: aiSettings.fallbackProvider, baseUrl: aiSettings.fallbackBaseUrl || '',
-          apiKey: aiSettings.fallbackApiKey || '', model: aiSettings.fallbackModel };
-        raw = await callProviderForRaw(fb, prompt);
-      } else { return NextResponse.json({ error: primaryError?.message ?? 'AI failed' }, { status: 500 }); }
-    }
-
-    const parsed: any = parseJsonLooseExported(raw);
-    const validIds = new Set(heldTrades.map(t => t.id));
-
-    const tracking = {
-      insights: String(parsed?.insights ?? '').slice(0, 500),
-      marketOverview: {
-        totalCompetitorListings: Math.max(0, Number(parsed?.market_overview?.total_competitor_listings ?? allListings.length)),
-        avgMarketPriceEur: Math.max(0, Number(parsed?.market_overview?.avg_market_price_eur ?? avgPrice)),
-        priceTrend: ['rising', 'falling', 'stable'].includes(String(parsed?.market_overview?.price_trend)) ? String(parsed.market_overview.price_trend) : 'stable',
-        priceDropRatePct: Math.round(Number(parsed?.market_overview?.price_drop_rate_pct ?? Math.round(priceDrops/allListings.length*100))),
-        competitionLevel: ['low', 'medium', 'high'].includes(String(parsed?.market_overview?.competition_level)) ? String(parsed.market_overview.competition_level) : 'medium',
-      },
-      competitorsBySource: (parsed?.competitors_by_source || []).slice(0, 10).map((c: any) => ({
-        source: String(c?.source ?? '').slice(0, 50),
-        listingCount: Math.max(0, Number(c?.listing_count ?? 0)),
-        avgPriceEur: Math.max(0, Number(c?.avg_price_eur ?? 0)),
-        priceDropCount: Math.max(0, Number(c?.price_drop_count ?? 0)),
-        avgDealScore: Math.max(0, Math.min(100, Number(c?.avg_deal_score ?? 0))),
-        priceTrend: ['rising', 'falling', 'stable'].includes(String(c?.price_trend)) ? String(c.price_trend) : 'stable',
-        threatLevel: ['low', 'medium', 'high'].includes(String(c?.threat_level)) ? String(c.threat_level) : 'medium',
-      })),
-      ourPosition: (parsed?.our_position || []).filter((p: any) => validIds.has(String(p?.id ?? ''))).map((p: any) => ({
-        tradeId: String(p?.id ?? ''),
-        title: String(p?.title ?? '').slice(0, 150),
-        ourEstPriceEur: Math.max(0, Number(p?.our_est_price_eur ?? 0)),
-        competitorAvgPriceEur: Math.max(0, Number(p?.competitor_avg_price_eur ?? 0)),
-        priceDifferencePct: Math.round(Number(p?.price_difference_pct ?? 0)),
-        position: ['above_market', 'below_market', 'at_par'].includes(String(p?.position)) ? String(p.position) : 'at_par',
-        strategy: ['undercut', 'premium', 'match', 'wait_competitor', 'bundle_advantage'].includes(String(p?.strategy)) ? String(p.strategy) : 'match',
-        recommendedPriceEur: Math.max(0, Number(p?.recommended_price_eur ?? 0)),
-        competitiveAdvantage: String(p?.competitive_advantage ?? '').slice(0, 150),
-        reasoning: String(p?.reasoning ?? '').slice(0, 200),
-      })),
-      priceChanges: (parsed?.price_changes || []).slice(0, 10).map((c: any) => ({
-        source: String(c?.source ?? '').slice(0, 50),
-        oldPriceEur: Math.max(0, Number(c?.old_price_eur ?? 0)),
-        newPriceEur: Math.max(0, Number(c?.new_price_eur ?? 0)),
-        changePct: Math.round(Number(c?.change_pct ?? 0)),
-        daysAgo: Math.max(0, Number(c?.days_ago ?? 0)),
-      })),
-      actions: (parsed?.actions || []).slice(0, 6).map((a: any) => ({
-        action: String(a?.action ?? '').slice(0, 250),
-        priority: ['high', 'medium', 'low'].includes(String(a?.priority)) ? String(a.priority) : 'medium',
-        affectedItems: Math.max(0, Number(a?.affected_items ?? 0)),
-        expectedImpactEur: Math.round(Number(a?.expected_impact_eur ?? 0)),
-      })),
-      summary: {
-        ourAvgPosition: ['above', 'below', 'at_par'].includes(String(parsed?.summary?.our_avg_position)) ? String(parsed.summary.our_avg_position) : 'at_par',
-        bestPricedSource: String(parsed?.summary?.best_priced_source ?? '').slice(0, 50),
-        mostAggressiveSource: String(parsed?.summary?.most_aggressive_source ?? '').slice(0, 50),
-        itemsToReprice: Math.max(0, Number(parsed?.summary?.items_to_reprice ?? 0)),
-        potentialCompetitiveGainEur: Math.round(Number(parsed?.summary?.potential_competitive_gain_eur ?? 0)),
-      },
-    };
-
-    const today = new Date().toISOString().slice(0, 10);
-    if (settings.aiCallsDate !== today) {
-      await db.settings.update({ where: { id: 'singleton' }, data: { aiCallsDate: today, aiCallsToday: 1 } });
-    } else {
-      await db.settings.update({ where: { id: 'singleton' }, data: { aiCallsToday: { increment: 1 } } });
-    }
-
-    return NextResponse.json({ ok: true, tracking });
-  } catch (e: any) {
-    logger.error("/api/ai/competitor-price-tracker", "POST handler failed", e);
-    return NextResponse.json({ error: e?.message ?? 'Napaka' }, { status: 500 });
-  }
+function transformTracking(parsed: any, stats: PriceStats, validIds: Set<string>, allListingsLength: number): any {
+  return {
+    insights: String(parsed?.insights ?? '').slice(0, 500),
+    marketOverview: {
+      totalCompetitorListings: Math.max(0, Number(parsed?.market_overview?.total_competitor_listings ?? allListingsLength)),
+      avgMarketPriceEur: Math.max(0, Number(parsed?.market_overview?.avg_market_price_eur ?? stats.avgPrice)),
+      priceTrend: ['rising', 'falling', 'stable'].includes(String(parsed?.market_overview?.price_trend)) ? String(parsed.market_overview.price_trend) : 'stable',
+      priceDropRatePct: Math.round(Number(parsed?.market_overview?.price_drop_rate_pct ?? Math.round(stats.priceDrops/allListingsLength*100))),
+      competitionLevel: ['low', 'medium', 'high'].includes(String(parsed?.market_overview?.competition_level)) ? String(parsed.market_overview.competition_level) : 'medium',
+    },
+    competitorsBySource: (parsed?.competitors_by_source || []).slice(0, 10).map((c: any) => ({
+      source: String(c?.source ?? '').slice(0, 50),
+      listingCount: Math.max(0, Number(c?.listing_count ?? 0)),
+      avgPriceEur: Math.max(0, Number(c?.avg_price_eur ?? 0)),
+      priceDropCount: Math.max(0, Number(c?.price_drop_count ?? 0)),
+      avgDealScore: Math.max(0, Math.min(100, Number(c?.avg_deal_score ?? 0))),
+      priceTrend: ['rising', 'falling', 'stable'].includes(String(c?.price_trend)) ? String(c.price_trend) : 'stable',
+      threatLevel: ['low', 'medium', 'high'].includes(String(c?.threat_level)) ? String(c.threat_level) : 'medium',
+    })),
+    ourPosition: (parsed?.our_position || []).filter((p: any) => validIds.has(String(p?.id ?? ''))).map((p: any) => ({
+      tradeId: String(p?.id ?? ''),
+      title: String(p?.title ?? '').slice(0, 150),
+      ourEstPriceEur: Math.max(0, Number(p?.our_est_price_eur ?? 0)),
+      competitorAvgPriceEur: Math.max(0, Number(p?.competitor_avg_price_eur ?? 0)),
+      priceDifferencePct: Math.round(Number(p?.price_difference_pct ?? 0)),
+      position: ['above_market', 'below_market', 'at_par'].includes(String(p?.position)) ? String(p.position) : 'at_par',
+      strategy: ['undercut', 'premium', 'match', 'wait_competitor', 'bundle_advantage'].includes(String(p?.strategy)) ? String(p.strategy) : 'match',
+      recommendedPriceEur: Math.max(0, Number(p?.recommended_price_eur ?? 0)),
+      competitiveAdvantage: String(p?.competitive_advantage ?? '').slice(0, 150),
+      reasoning: String(p?.reasoning ?? '').slice(0, 200),
+    })),
+    priceChanges: (parsed?.price_changes || []).slice(0, 10).map((c: any) => ({
+      source: String(c?.source ?? '').slice(0, 50),
+      oldPriceEur: Math.max(0, Number(c?.old_price_eur ?? 0)),
+      newPriceEur: Math.max(0, Number(c?.new_price_eur ?? 0)),
+      changePct: Math.round(Number(c?.change_pct ?? 0)),
+      daysAgo: Math.max(0, Number(c?.days_ago ?? 0)),
+    })),
+    actions: (parsed?.actions || []).slice(0, 6).map((a: any) => ({
+      action: String(a?.action ?? '').slice(0, 250),
+      priority: ['high', 'medium', 'low'].includes(String(a?.priority)) ? String(a.priority) : 'medium',
+      affectedItems: Math.max(0, Number(a?.affected_items ?? 0)),
+      expectedImpactEur: Math.round(Number(a?.expected_impact_eur ?? 0)),
+    })),
+    summary: {
+      ourAvgPosition: ['above', 'below', 'at_par'].includes(String(parsed?.summary?.our_avg_position)) ? String(parsed.summary.our_avg_position) : 'at_par',
+      bestPricedSource: String(parsed?.summary?.best_priced_source ?? '').slice(0, 50),
+      mostAggressiveSource: String(parsed?.summary?.most_aggressive_source ?? '').slice(0, 50),
+      itemsToReprice: Math.max(0, Number(parsed?.summary?.items_to_reprice ?? 0)),
+      potentialCompetitiveGainEur: Math.round(Number(parsed?.summary?.potential_competitive_gain_eur ?? 0)),
+    },
+  };
 }

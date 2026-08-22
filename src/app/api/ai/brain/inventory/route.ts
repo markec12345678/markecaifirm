@@ -1,4 +1,4 @@
-// v8.16: Inventory Brain — GET+POST /api/ai/brain/inventory
+// v8.16 / v8.95.2-a-refactor: Inventory Brain — GET+POST /api/ai/brain/inventory
 //
 // Inventory Brain is the SECOND "Brain" layer — a NEW architectural layer
 // ABOVE the 72 inventory specialist endpoints (inventory-aging,
@@ -37,9 +37,14 @@
 // monthlySalesCount, monthlyRevenue, avgProfitMarginPct, avgDaysToSell. If DB
 // unavailable or no trades, falls back to sensible defaults — never crashes.
 // 5-MIN CACHE: cache key = `inventory-brain:${hashOfInputs}`, TTL = 300000 ms.
+//
+// Refaktoriran z withAiRoute helperjem (v8.95.2-a) + enforceBudget guard
+// (non-breaking — endpoint ne kliče AI direktno, ampak je konsistentno z
+// vsemi v8.94.x migracijami).
 
-import { NextRequest, NextResponse } from 'next/server';
-import { logger } from '@/lib/logger';
+import type { NextRequest } from 'next/server';
+import { withAiRoute, AI_ROUTE_DEFAULTS, type AiRouteContext } from '@/lib/with-ai-route';
+import { apiOk } from '@/lib/api-response';
 import { getCachedAIWithStats, setCachedAIWithStats } from '@/lib/ai-cache';
 // v8.33: Performance metrics — wraps inventoryBrain() with response-time tracking
 import { withPerf, recordPerf } from '@/lib/brain/performance';
@@ -49,8 +54,7 @@ import {
   type InventoryBrainResult,
 } from '@/lib/brain/inventory';
 
-export const runtime = 'nodejs';
-export const dynamic = 'force-dynamic';
+export const { runtime, dynamic } = AI_ROUTE_DEFAULTS;
 export const maxDuration = 60;
 
 // --- Cache TTL -----------------------------------------------------------
@@ -143,12 +147,15 @@ interface DbDerivedState {
  * Fetch HELD trades (current inventory) + SOLD trades (last 30d) to derive
  * all 9 InventoryBrainInput fields. Wrapped in try/catch — never throws.
  * Returns null if DB unavailable or no usable data found.
+ *
+ * v8.95.2-a: db + logger sta parameterja (prej modul-level uvoza +
+ * dynamic import) — passed-in iz ctx.db/ctx.logger v withAiRoute handler-ju.
  */
-async function fetchDbState(): Promise<DbDerivedState | null> {
+async function fetchDbState(
+  db: AiRouteContext['db'],
+  logger: AiRouteContext['logger'],
+): Promise<DbDerivedState | null> {
   try {
-    // Dynamic import — avoids Prisma client init cost when DB unavailable
-    const { db } = await import('@/lib/db');
-
     const now = new Date();
     const thirtyDaysAgo = new Date(now);
     thirtyDaysAgo.setDate(thirtyDaysAgo.getDate() - 30);
@@ -305,21 +312,25 @@ function buildCacheKey(input: InventoryBrainInput): string {
 
 // --- Handler -------------------------------------------------------------
 
-export async function GET(req: NextRequest) {
-  return handleInventoryBrain(req);
-}
+const inventoryBrainHandler = withAiRoute<InventoryBrainInput>({
+  endpoint: '/api/ai/brain/inventory',
+  maxDuration: 60,
+  enforceBudget: true, // v8.95.2-a: budget guard + avtomatski recordAiCall
+  method: 'GET', // Endpoint sprejema GET + POST — bypass POST-only check
 
-export async function POST(req: NextRequest) {
-  return handleInventoryBrain(req);
-}
+  // GET+POST — parse iz query string-a (GET) ali POST body-ja (body
+  // precedence nad query). Vsa polja so optional — InventoryBrainInput
+  // degrade gracefully z defaults kadar katerokoli polje manjka.
+  parseBody: async (req) => resolveInputs(req),
 
-async function handleInventoryBrain(req: NextRequest) {
-  try {
-    const userInput = await resolveInputs(req);
+  // Brez validateInput — vsa polja so optional
+
+  handler: async (userInput, ctx: AiRouteContext) => {
+    const { db, logger } = ctx;
 
     // DB state injection — fills in any missing fields from real trade state.
     // If both DB and user input are present, USER INPUT WINS (user can override).
-    const dbState = await fetchDbState();
+    const dbState = await fetchDbState(db, logger);
     const mergedInput: InventoryBrainInput = {
       itemCount: userInput.itemCount ?? dbState?.itemCount ?? undefined,
       totalInventoryValue:
@@ -347,19 +358,16 @@ async function handleInventoryBrain(req: NextRequest) {
         ...cached,
         cachedAt: Date.now(),
       };
-      return NextResponse.json(served);
+      return apiOk(served);
     }
 
     // v8.33: Wrap inventoryBrain() call with perf tracking. cached=false (slow path).
     const result = await withPerf('inventory', async () => inventoryBrain(mergedInput), false);
     setCachedAIWithStats('inventory-brain', cacheKey, result, BRAIN_CACHE_TTL_MS);
 
-    return NextResponse.json(result);
-  } catch (err: any) {
-    logger.error('/api/ai/brain/inventory', 'handler failed', err);
-    return NextResponse.json(
-      { error: err?.message ?? 'Napaka' },
-      { status: 500 },
-    );
-  }
-}
+    return apiOk(result);
+  },
+});
+
+export const GET = inventoryBrainHandler;
+export const POST = inventoryBrainHandler;

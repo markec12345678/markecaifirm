@@ -1,34 +1,51 @@
-// v6.39: AI Listing Performance Forecaster — napove uspešnost oglasa pred objavo
+// v6.39 / v8.94-refactor: AI Listing Performance Forecaster — napove uspešnost oglasa pred objavo
+// Refaktoriran z withAiRoute helperjem (v8.94) + enforceBudget guard.
+//
 // POST /api/ai/performance-forecaster
 // Body: { tradeId?: string, listingId?: string }
 // Returns: { ok, forecast: { performance, timeline, scenarios, benchmarks, optimization } }
 
-import { NextRequest, NextResponse } from 'next/server';
-import { db } from '@/lib/db';
-import { getSettingsRow } from '@/lib/pipeline';
-import { callProviderForRaw, parseJsonLooseExported, type AiProviderType, type AiSettings } from '@/lib/ai';
-import { logger } from '@/lib/logger';
+import { withAiRoute, AI_ROUTE_DEFAULTS, ApiRouteError, type AiRouteContext } from '@/lib/with-ai-route';
+import { apiOk } from '@/lib/api-response';
 
-export const runtime = 'nodejs';
-export const dynamic = 'force-dynamic';
+export const { runtime, dynamic } = AI_ROUTE_DEFAULTS;
 export const maxDuration = 90;
 
-export async function POST(req: NextRequest) {
-  try {
+interface PerformanceForecasterInput {
+  tradeId?: string;
+  listingId?: string;
+}
+
+export const POST = withAiRoute<PerformanceForecasterInput>({
+  endpoint: '/api/ai/performance-forecaster',
+  maxDuration: 90,
+  enforceBudget: true, // AI klic — preveri budget
+
+  parseBody: async (req) => {
     const body = await req.json().catch(() => ({}));
-    const { tradeId, listingId } = body;
+    return {
+      tradeId: body?.tradeId ? String(body.tradeId) : undefined,
+      listingId: body?.listingId ? String(body.listingId) : undefined,
+    };
+  },
+
+  validateInput: (input) => ((input.tradeId || input.listingId) ? null : 'tradeId ali listingId je obvezen'),
+
+  handler: async (input, ctx: AiRouteContext) => {
+    const { db, callAi, parseAi } = ctx;
+    const { tradeId, listingId } = input;
 
     let title = '', category = '', price = 0, estValue = 0, dealScore = 0;
     if (tradeId) {
-      const t = await db.trade.findUnique({ where: { id: String(tradeId) }, select: { title: true, category: true, buyPrice: true, listing: { select: { aiEstimatedValue: true, dealScore: true } } } });
-      if (!t) return NextResponse.json({ error: 'Trade ne obstaja' }, { status: 404 });
+      const t = await db.trade.findUnique({ where: { id: tradeId }, select: { title: true, category: true, buyPrice: true, listing: { select: { aiEstimatedValue: true, dealScore: true } } } });
+      if (!t) throw new ApiRouteError('Trade ne obstaja', 404);
       title = t.title; category = t.category || ''; price = t.buyPrice;
       estValue = t.listing?.aiEstimatedValue ?? Math.round(t.buyPrice * 1.25); dealScore = t.listing?.dealScore ?? 0;
     } else if (listingId) {
-      const l = await db.listing.findUnique({ where: { id: String(listingId) }, select: { title: true, price: true, aiEstimatedValue: true, dealScore: true, monitor: { select: { source: true } } } });
-      if (!l) return NextResponse.json({ error: 'Listing ne obstaja' }, { status: 404 });
+      const l = await db.listing.findUnique({ where: { id: listingId }, select: { title: true, price: true, aiEstimatedValue: true, dealScore: true, monitor: { select: { source: true } } } });
+      if (!l) throw new ApiRouteError('Listing ne obstaja', 404);
       title = l.title; category = l.monitor?.source || ''; price = l.price ?? 0; estValue = l.aiEstimatedValue ?? price; dealScore = l.dealScore ?? 0;
-    } else { return NextResponse.json({ error: 'tradeId ali listingId je obvezen' }, { status: 400 }); }
+    }
 
     const soldTrades = await db.trade.findMany({
       where: { status: 'sold', sellDate: { not: null }, sellPrice: { not: null } },
@@ -36,32 +53,49 @@ export async function POST(req: NextRequest) {
       take: 200,
     });
 
-    const settings = await getSettingsRow();
-    const aiSettings: AiSettings = {
-      provider: settings.aiProvider as AiProviderType,
-      baseUrl: settings.aiBaseUrl, apiKey: settings.aiApiKey, model: settings.aiModel,
-      fallbackProvider: (settings.fallbackProvider || '') as AiProviderType | '',
-      fallbackBaseUrl: settings.fallbackBaseUrl || '', fallbackApiKey: settings.fallbackApiKey || '',
-      fallbackModel: settings.fallbackModel || '',
-    };
-
     const avgDays = soldTrades.length > 0 ? Math.round(soldTrades.reduce((s, t) => { if (t.sellDate && t.buyDate) return s + (t.sellDate.getTime() - t.buyDate.getTime()) / (24*60*60*1000); return s; }, 0) / soldTrades.length) : 30;
     const avgRoi = soldTrades.length > 0 ? Math.round(soldTrades.reduce((s, t) => { const c = t.buyPrice; return s + (c > 0 ? (((t.sellPrice ?? 0) - c) / c) * 100 : 0); }, 0) / soldTrades.length) : 0;
     const successRate = soldTrades.length > 0 ? Math.round(soldTrades.filter(t => (t.sellPrice ?? 0) > t.buyPrice).length / soldTrades.length * 100) : 0;
 
-    const prompt = `Si AI performance forecaster za napoved uspešnosti oglasa.
+    const prompt = buildPrompt({
+      title, category, price, estValue, dealScore, avgDays, avgRoi, successRate,
+    });
+    const raw = await callAi(prompt);
+    const parsed: any = parseAi(raw);
+
+    const forecast = transformForecast(parsed, { avgDays, avgRoi, estValue });
+
+    return apiOk({ ok: true, forecast });
+  },
+});
+
+// --- Pomožne funkcije (čiste, testabilne) --------------------------------
+
+interface PromptData {
+  title: string;
+  category: string;
+  price: number;
+  estValue: number;
+  dealScore: number;
+  avgDays: number;
+  avgRoi: number;
+  successRate: number;
+}
+
+function buildPrompt(d: PromptData): string {
+  return `Si AI performance forecaster za napoved uspešnosti oglasa.
 Napovej kako bo ta oglas performiral v naslednjih 30 dneh.
 
-ITEM: ${title}
-KATEGORIJA: ${category}
-CENA: ${price}€
-EST. VREDNOST: ${estValue}€
-DEAL SCORE: ${dealScore}/100
+ITEM: ${d.title}
+KATEGORIJA: ${d.category}
+CENA: ${d.price}€
+EST. VREDNOST: ${d.estValue}€
+DEAL SCORE: ${d.dealScore}/100
 
 ZGODOVINSKI BENCHMARKI:
-- Povp. dni do prodaje: ${avgDays}
-- Povp. ROI: ${avgRoi}%
-- Success rate: ${successRate}%
+- Povp. dni do prodaje: ${d.avgDays}
+- Povp. ROI: ${d.avgRoi}%
+- Success rate: ${d.successRate}%
 
 Forecast modeli:
 1. VIEWS: predvideno število ogledov v 7/14/30 dneh
@@ -123,72 +157,63 @@ Odgovori LE z JSON:
     "recommendation": "<list_now|improve_first|wait|avoid>"
   }
 }`;
+}
 
-    let raw = '';
-    try { raw = await callProviderForRaw(aiSettings, prompt); }
-    catch (primaryError: any) {
-      if (aiSettings.fallbackProvider && aiSettings.fallbackModel) {
-        const fb: AiSettings = { provider: aiSettings.fallbackProvider, baseUrl: aiSettings.fallbackBaseUrl || '', apiKey: aiSettings.fallbackApiKey || '', model: aiSettings.fallbackModel };
-        raw = await callProviderForRaw(fb, prompt);
-      } else { return NextResponse.json({ error: primaryError?.message ?? 'AI failed' }, { status: 500 }); }
-    }
+interface FallbackData {
+  avgDays: number;
+  avgRoi: number;
+  estValue: number;
+}
 
-    const parsed: any = parseJsonLooseExported(raw);
-
-    const forecast = {
-      insights: String(parsed?.insights ?? '').slice(0, 500),
-      performance: {
-        predictedViews7d: Math.max(0, Number(parsed?.performance?.predicted_views_7d ?? 0)),
-        predictedViews30d: Math.max(0, Number(parsed?.performance?.predicted_views_30d ?? 0)),
-        predictedInquiries7d: Math.max(0, Number(parsed?.performance?.predicted_inquiries_7d ?? 0)),
-        predictedInquiries30d: Math.max(0, Number(parsed?.performance?.predicted_inquiries_30d ?? 0)),
-        sellProbability7dPct: Math.max(0, Math.min(100, Number(parsed?.performance?.sell_probability_7d_pct ?? 0))),
-        sellProbability14dPct: Math.max(0, Math.min(100, Number(parsed?.performance?.sell_probability_14d_pct ?? 0))),
-        sellProbability30dPct: Math.max(0, Math.min(100, Number(parsed?.performance?.sell_probability_30d_pct ?? 0))),
-        predictedFinalPriceEur: Math.max(0, Number(parsed?.performance?.predicted_final_price_eur ?? estValue)),
-        predictedDaysToSell: Math.max(0, Number(parsed?.performance?.predicted_days_to_sell ?? avgDays)),
-        predictedProfitEur: Math.round(Number(parsed?.performance?.predicted_profit_eur ?? 0)),
-        predictedRoiPct: Math.round(Number(parsed?.performance?.predicted_roi_pct ?? 0)),
-        confidencePct: Math.max(0, Math.min(100, Number(parsed?.performance?.confidence_pct ?? 50))),
-      },
-      timeline: (parsed?.timeline || []).slice(0, 6).map((t: any) => ({
-        day: Math.max(0, Number(t?.day ?? 0)), cumulativeViews: Math.max(0, Number(t?.cumulative_views ?? 0)),
-        cumulativeInquiries: Math.max(0, Number(t?.cumulative_inquiries ?? 0)),
-        sellProbabilityPct: Math.max(0, Math.min(100, Number(t?.sell_probability_pct ?? 0))),
-        event: String(t?.event ?? '').slice(0, 100),
-      })),
-      scenarios: (parsed?.scenarios || []).slice(0, 3).map((s: any) => ({
-        name: ['optimistic', 'realistic', 'pessimistic'].includes(String(s?.name)) ? String(s.name) : 'realistic',
-        sellProbabilityPct: Math.max(0, Math.min(100, Number(s?.sell_probability_pct ?? 0))),
-        finalPriceEur: Math.max(0, Number(s?.final_price_eur ?? 0)),
-        daysToSell: Math.max(0, Number(s?.days_to_sell ?? 0)),
-        profitEur: Math.round(Number(s?.profit_eur ?? 0)),
-        probabilityOfScenarioPct: Math.max(0, Math.min(100, Number(s?.probability_of_scenario_pct ?? 33))),
-      })),
-      benchmarks: {
-        categoryAvgDaysToSell: Math.max(0, Number(parsed?.benchmarks?.category_avg_days_to_sell ?? avgDays)),
-        categoryAvgRoiPct: Math.round(Number(parsed?.benchmarks?.category_avg_roi_pct ?? avgRoi)),
-        yourPredictedVsAvg: ['above', 'at_par', 'below'].includes(String(parsed?.benchmarks?.your_predicted_vs_avg)) ? String(parsed.benchmarks.your_predicted_vs_avg) : 'at_par',
-        percentile: Math.max(0, Math.min(100, Number(parsed?.benchmarks?.percentile ?? 50))),
-      },
-      optimization: (parsed?.optimization || []).slice(0, 6).map((o: any) => ({
-        action: String(o?.action ?? '').slice(0, 200), impact: ['high', 'medium', 'low'].includes(String(o?.impact)) ? String(o.impact) : 'medium',
-        metricImproved: String(o?.metric_improved ?? '').slice(0, 50), expectedImprovementPct: Math.round(Number(o?.expected_improvement_pct ?? 0)),
-      })),
-      summary: {
-        overallForecastScore: Math.max(0, Math.min(100, Number(parsed?.summary?.overall_forecast_score ?? 50))),
-        forecastGrade: ['A+', 'A', 'B+', 'B', 'C', 'D'].includes(String(parsed?.summary?.forecast_grade)) ? String(parsed.summary.forecast_grade) : 'C',
-        bestCaseProfitEur: Math.round(Number(parsed?.summary?.best_case_profit_eur ?? 0)),
-        worstCaseProfitEur: Math.round(Number(parsed?.summary?.worst_case_profit_eur ?? 0)),
-        expectedProfitEur: Math.round(Number(parsed?.summary?.expected_profit_eur ?? 0)),
-        recommendation: ['list_now', 'improve_first', 'wait', 'avoid'].includes(String(parsed?.summary?.recommendation)) ? String(parsed.summary.recommendation) : 'list_now',
-      },
-    };
-
-    const today = new Date().toISOString().slice(0, 10);
-    if (settings.aiCallsDate !== today) { await db.settings.update({ where: { id: 'singleton' }, data: { aiCallsDate: today, aiCallsToday: 1 } }); }
-    else { await db.settings.update({ where: { id: 'singleton' }, data: { aiCallsToday: { increment: 1 } } }); }
-
-    return NextResponse.json({ ok: true, forecast });
-  } catch (e: any) { logger.error("/api/ai/performance-forecaster", "POST handler failed", e); return NextResponse.json({ error: e?.message ?? 'Napaka' }, { status: 500 }); }
+function transformForecast(parsed: any, fb: FallbackData) {
+  const { avgDays, avgRoi, estValue } = fb;
+  return {
+    insights: String(parsed?.insights ?? '').slice(0, 500),
+    performance: {
+      predictedViews7d: Math.max(0, Number(parsed?.performance?.predicted_views_7d ?? 0)),
+      predictedViews30d: Math.max(0, Number(parsed?.performance?.predicted_views_30d ?? 0)),
+      predictedInquiries7d: Math.max(0, Number(parsed?.performance?.predicted_inquiries_7d ?? 0)),
+      predictedInquiries30d: Math.max(0, Number(parsed?.performance?.predicted_inquiries_30d ?? 0)),
+      sellProbability7dPct: Math.max(0, Math.min(100, Number(parsed?.performance?.sell_probability_7d_pct ?? 0))),
+      sellProbability14dPct: Math.max(0, Math.min(100, Number(parsed?.performance?.sell_probability_14d_pct ?? 0))),
+      sellProbability30dPct: Math.max(0, Math.min(100, Number(parsed?.performance?.sell_probability_30d_pct ?? 0))),
+      predictedFinalPriceEur: Math.max(0, Number(parsed?.performance?.predicted_final_price_eur ?? estValue)),
+      predictedDaysToSell: Math.max(0, Number(parsed?.performance?.predicted_days_to_sell ?? avgDays)),
+      predictedProfitEur: Math.round(Number(parsed?.performance?.predicted_profit_eur ?? 0)),
+      predictedRoiPct: Math.round(Number(parsed?.performance?.predicted_roi_pct ?? 0)),
+      confidencePct: Math.max(0, Math.min(100, Number(parsed?.performance?.confidence_pct ?? 50))),
+    },
+    timeline: (parsed?.timeline || []).slice(0, 6).map((t: any) => ({
+      day: Math.max(0, Number(t?.day ?? 0)), cumulativeViews: Math.max(0, Number(t?.cumulative_views ?? 0)),
+      cumulativeInquiries: Math.max(0, Number(t?.cumulative_inquiries ?? 0)),
+      sellProbabilityPct: Math.max(0, Math.min(100, Number(t?.sell_probability_pct ?? 0))),
+      event: String(t?.event ?? '').slice(0, 100),
+    })),
+    scenarios: (parsed?.scenarios || []).slice(0, 3).map((s: any) => ({
+      name: ['optimistic', 'realistic', 'pessimistic'].includes(String(s?.name)) ? String(s.name) : 'realistic',
+      sellProbabilityPct: Math.max(0, Math.min(100, Number(s?.sell_probability_pct ?? 0))),
+      finalPriceEur: Math.max(0, Number(s?.final_price_eur ?? 0)),
+      daysToSell: Math.max(0, Number(s?.days_to_sell ?? 0)),
+      profitEur: Math.round(Number(s?.profit_eur ?? 0)),
+      probabilityOfScenarioPct: Math.max(0, Math.min(100, Number(s?.probability_of_scenario_pct ?? 33))),
+    })),
+    benchmarks: {
+      categoryAvgDaysToSell: Math.max(0, Number(parsed?.benchmarks?.category_avg_days_to_sell ?? avgDays)),
+      categoryAvgRoiPct: Math.round(Number(parsed?.benchmarks?.category_avg_roi_pct ?? avgRoi)),
+      yourPredictedVsAvg: ['above', 'at_par', 'below'].includes(String(parsed?.benchmarks?.your_predicted_vs_avg)) ? String(parsed.benchmarks.your_predicted_vs_avg) : 'at_par',
+      percentile: Math.max(0, Math.min(100, Number(parsed?.benchmarks?.percentile ?? 50))),
+    },
+    optimization: (parsed?.optimization || []).slice(0, 6).map((o: any) => ({
+      action: String(o?.action ?? '').slice(0, 200), impact: ['high', 'medium', 'low'].includes(String(o?.impact)) ? String(o.impact) : 'medium',
+      metricImproved: String(o?.metric_improved ?? '').slice(0, 50), expectedImprovementPct: Math.round(Number(o?.expected_improvement_pct ?? 0)),
+    })),
+    summary: {
+      overallForecastScore: Math.max(0, Math.min(100, Number(parsed?.summary?.overall_forecast_score ?? 50))),
+      forecastGrade: ['A+', 'A', 'B+', 'B', 'C', 'D'].includes(String(parsed?.summary?.forecast_grade)) ? String(parsed.summary.forecast_grade) : 'C',
+      bestCaseProfitEur: Math.round(Number(parsed?.summary?.best_case_profit_eur ?? 0)),
+      worstCaseProfitEur: Math.round(Number(parsed?.summary?.worst_case_profit_eur ?? 0)),
+      expectedProfitEur: Math.round(Number(parsed?.summary?.expected_profit_eur ?? 0)),
+      recommendation: ['list_now', 'improve_first', 'wait', 'avoid'].includes(String(parsed?.summary?.recommendation)) ? String(parsed.summary.recommendation) : 'list_now',
+    },
+  };
 }

@@ -1,4 +1,4 @@
-// v8.17: Market Brain — GET+POST /api/ai/brain/market
+// v8.17 / v8.95.2-b-refactor: Market Brain — GET+POST /api/ai/brain/market
 //
 // Market Brain is the THIRD "Brain" layer — a NEW architectural layer ABOVE
 // the ~27 market specialist endpoints (market-cycle-phase-predictor,
@@ -40,9 +40,15 @@
 // If DB unavailable or no listings, falls back to sensible defaults — never
 // crashes.
 // 5-MIN CACHE: cache key = `market-brain:${hashOfInputs}`, TTL = 300000 ms.
+//
+// Refaktoriran z withAiRoute helperjem (v8.95.2-b) + enforceBudget guard
+// (non-breaking — endpoint ne kliče AI direktno, ampak je konsistentno z
+// vsemi v8.94.x / v8.95.1 migracijami). ctx.db / ctx.logger sta parameterja
+// (prej dynamic import + module-level logger).
 
-import { NextRequest, NextResponse } from 'next/server';
-import { logger } from '@/lib/logger';
+import type { NextRequest } from 'next/server';
+import { withAiRoute, AI_ROUTE_DEFAULTS, type AiRouteContext } from '@/lib/with-ai-route';
+import { apiOk } from '@/lib/api-response';
 import { getCachedAIWithStats, setCachedAIWithStats } from '@/lib/ai-cache';
 // v8.33: Performance metrics — wraps marketBrain() with response-time tracking
 import { withPerf, recordPerf } from '@/lib/brain/performance';
@@ -52,8 +58,7 @@ import {
   type MarketBrainResult,
 } from '@/lib/brain/market';
 
-export const runtime = 'nodejs';
-export const dynamic = 'force-dynamic';
+export const { runtime, dynamic } = AI_ROUTE_DEFAULTS;
 export const maxDuration = 60;
 
 // --- Cache TTL -----------------------------------------------------------
@@ -158,12 +163,15 @@ interface DbDerivedState {
  *  - sellThroughRatePct: % of listings that had dealScoreComputedAt set within 30d of firstSeenAt
  *  - avgDaysOnMarket: avg age (now - firstSeenAt) of listings still active
  *  - priceSpreadPct: (max - min) / median × 100 across priced active listings
+ *
+ * v8.95.2-b: db + logger sta parameterja (prej dynamic `await import('@/lib/db')`
+ * + modul-level import) — passed-in iz ctx.db/ctx.logger v withAiRoute handler-ju.
  */
-async function fetchDbState(): Promise<DbDerivedState | null> {
+async function fetchDbState(
+  db: AiRouteContext['db'],
+  logger: AiRouteContext['logger'],
+): Promise<DbDerivedState | null> {
   try {
-    // Dynamic import — avoids Prisma client init cost when DB unavailable
-    const { db } = await import('@/lib/db');
-
     const now = new Date();
     const sevenDaysAgo = new Date(now);
     sevenDaysAgo.setDate(sevenDaysAgo.getDate() - 7);
@@ -318,21 +326,25 @@ function buildCacheKey(input: MarketBrainInput): string {
 
 // --- Handler -------------------------------------------------------------
 
-export async function GET(req: NextRequest) {
-  return handleMarketBrain(req);
-}
+const marketBrainHandler = withAiRoute<MarketBrainInput>({
+  endpoint: '/api/ai/brain/market',
+  maxDuration: 60,
+  enforceBudget: true, // v8.95.2-b: budget guard + avtomatski recordAiCall
+  method: 'GET', // Endpoint sprejema GET + POST — bypass POST-only check
 
-export async function POST(req: NextRequest) {
-  return handleMarketBrain(req);
-}
+  // GET+POST — parse iz query string-a (GET) ali POST body-ja (body
+  // precedence nad query). Vsa polja so optional — MarketBrainInput
+  // degrade gracefully z defaults kadar katerokoli polje manjka.
+  parseBody: async (req) => resolveInputs(req),
 
-async function handleMarketBrain(req: NextRequest) {
-  try {
-    const userInput = await resolveInputs(req);
+  // Brez validateInput — vsa polja so optional
+
+  handler: async (userInput, ctx: AiRouteContext) => {
+    const { db, logger } = ctx;
 
     // DB state injection — fills in any missing fields from real market state.
     // If both DB and user input are present, USER INPUT WINS (user can override).
-    const dbState = await fetchDbState();
+    const dbState = await fetchDbState(db, logger);
     const mergedInput: MarketBrainInput = {
       activeListingCount:
         userInput.activeListingCount ?? dbState?.activeListingCount ?? undefined,
@@ -362,19 +374,16 @@ async function handleMarketBrain(req: NextRequest) {
         ...cached,
         cachedAt: Date.now(),
       };
-      return NextResponse.json(served);
+      return apiOk(served);
     }
 
     // v8.33: Wrap marketBrain() call with perf tracking. cached=false (slow path).
     const result = await withPerf('market', async () => marketBrain(mergedInput), false);
     setCachedAIWithStats('market-brain', cacheKey, result, BRAIN_CACHE_TTL_MS);
 
-    return NextResponse.json(result);
-  } catch (err: any) {
-    logger.error('/api/ai/brain/market', 'handler failed', err);
-    return NextResponse.json(
-      { error: err?.message ?? 'Napaka' },
-      { status: 500 },
-    );
-  }
-}
+    return apiOk(result);
+  },
+});
+
+export const GET = marketBrainHandler;
+export const POST = marketBrainHandler;

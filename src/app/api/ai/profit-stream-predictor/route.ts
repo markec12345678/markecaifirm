@@ -1,8 +1,8 @@
-// v7.70: AI Profit Stream Predictor — AI napoveduje "profit stream" — vzorce
-// ponavljajočega se profita. Identificira katere kategorije/zbirke prinašajo
-// stalen (STEADY) vs. sporadičen (ERRATIC) profit in projektira 90-dnevni tok
-// profita z intervali zaupanja. Razlika od profit-forecast (ki vrne eno
-// številko) — ta prikaze VZOREC profita (steady vs. lumpy).
+// v7.70 / v8.96.4-batch1: AI Profit Stream Predictor — AI napoveduje "profit
+// stream" — vzorce ponavljajočega se profita. Identificira katere kategorije/
+// zbirke prinašajo stalen (STEADY) vs. sporadičen (ERRATIC) profit in projektira
+// 90-dnevni tok profita z intervali zaupanja. Razlika od profit-forecast (ki vrne
+// eno številko) — ta prikaze VZOREC profita (steady vs. lumpy).
 //
 // "Profit stream: STEADY (volatility 0.2, consistency 85/100). 90d projection:
 //  2400€. Najbolj zanesljiva: elektronika."
@@ -17,23 +17,14 @@
 //
 // GET+POST /api/ai/profit-stream-predictor
 // (AI-enhanced + grounding + anti-hallucination + 6h cache + deterministic fallback)
+// Refaktoriran z withAiRoute helperjem (v8.96.4-batch1) + enforceBudget guard.
 
-import { NextRequest, NextResponse } from 'next/server';
-import { db } from '@/lib/db';
-import { getSettingsRow } from '@/lib/pipeline';
-import {
-  callProviderForRaw,
-  parseJsonLooseExported,
-  type AiProviderType,
-  type AiSettings,
-} from '@/lib/ai';
+import { withAiRoute, AI_ROUTE_DEFAULTS, type AiRouteContext } from '@/lib/with-ai-route';
+import { apiOk } from '@/lib/api-response';
 import { GROUNDING_PROMPT_SUFFIX } from '@/lib/anti-hallucination';
 import { getCachedAI, setCachedAI } from '@/lib/ai-cache';
-import { checkRateLimit, rateLimitResponse } from '@/lib/rate-limit';
-import { logger } from '@/lib/logger';
 
-export const runtime = 'nodejs';
-export const dynamic = 'force-dynamic';
+export const { runtime, dynamic } = AI_ROUTE_DEFAULTS;
 export const maxDuration = 60;
 
 // --- Types ---------------------------------------------------------------
@@ -74,6 +65,9 @@ interface AiStreamResponse {
   projection?: unknown;
   summary?: unknown;
 }
+
+// eslint-disable-next-line @typescript-eslint/no-empty-object-type
+interface ProfitStreamPredictorInput {}
 
 // --- Helpers -------------------------------------------------------------
 
@@ -232,19 +226,222 @@ function buildDeterministicProjection(
   };
 }
 
+// --- Prompt builder ------------------------------------------------------
+
+interface PromptArgs {
+  weeklyHistory: WeeklyData[];
+  avgWeeklyProfit: number;
+  profitVolatility: number;
+  consistencyScore: number;
+  streamType: StreamType;
+  categoryStreams: CategoryStream[];
+  maxCap: number;
+}
+
+function buildPrompt(args: PromptArgs): string {
+  const {
+    weeklyHistory,
+    avgWeeklyProfit,
+    profitVolatility,
+    consistencyScore,
+    streamType,
+    categoryStreams,
+    maxCap,
+  } = args;
+
+  const weeklyHistoryBlock = weeklyHistory
+    .map(w => `W${w.weekIdx}: profit=${w.profit}€, trades=${w.trades}`)
+    .join('\n');
+
+  const categoryBlock = categoryStreams
+    .slice(0, 15)
+    .map(
+      c =>
+        `- ${c.category}: weeklyProfit=${c.weeklyProfit}€, reliability=${c.reliability}/100, type=${c.streamType}, contribution=${c.contribution}%`,
+    )
+    .join('\n');
+
+  return `Si AI analitik profitnih tokov za slovenske in srednjeevropske oglasne platforme (Bolha, Vinted, Avtonet, mobile.de).
+Analiziraj "profit stream" — VZOREC ponavljajočega se profita skozi čas. Ali je profit stalen (STEADY) ali sporadičen (ERRATIC)? Projekciraj 90-dnevni tok profita z intervali zaupanja.
+
+PODATKI O TEDENSKEM PROFITU (zadnjih 26 tednov, W0 = najstarejši, W25 = najnovejši):
+${weeklyHistoryBlock}
+
+ZNAČILNOSTI TOKA:
+- avgWeeklyProfit: ${avgWeeklyProfit}€
+- profitVolatility: ${profitVolatility} (stdev / mean, nižje = bolj stabilno)
+- consistencyScore: ${consistencyScore}/100
+- streamType: ${streamType}
+
+KATEGORIJE PROFITNIH TOKOV (top ${Math.min(15, categoryStreams.length)}):
+${categoryBlock || '—'}
+
+PRAVILA ZA PROJEKCIJO:
+1. projection: 13 tednov (90 dni) projekcija. Za vsak teden:
+   - projectedProfit: EUR (lahko trend-up če zgodovina kaže rast, ali trend-down če padec)
+   - confidenceLow / confidenceHigh: ±1 stdev interval (širši naprej)
+   - Vsak projectedProfit mora biti v [0, ${maxCap.toFixed(2)}] (avgWeeklyProfit × 3)
+2. summary.projectedTotalProfit90d: vsota vseh 13 tednov
+3. summary.bestWeek: teden z najvišjim projectedProfit (week 1-13, profit)
+4. summary.worstWeek: teden z najnižjim projectedProfit (week 1-13, profit)
+5. summary.profitStabilityAdvice: konkreten nasvet (1-2 stavka) kako stabilizirati profit stream — npr. "diverzificiraj v elektroniko (reliability 85), zmanjšaj modno oblačilo (reliability 40)"
+
+VRNI LE JSON:
+{
+  "projection": [
+    { "week": 1, "projectedProfit": 0, "confidenceLow": 0, "confidenceHigh": 0 }
+  ],
+  "summary": {
+    "projectedTotalProfit90d": 0,
+    "bestWeek": { "week": 1, "profit": 0 },
+    "worstWeek": { "week": 1, "profit": 0 },
+    "profitStabilityAdvice": "..."
+  }
+}${GROUNDING_PROMPT_SUFFIX}`;
+}
+
+// --- AI response parser --------------------------------------------------
+
+function parseAiStream(
+  parsed: AiStreamResponse | null,
+  baseline: { projection: ProjectionWeek[]; summary: ProjectionSummary },
+  maxCap: number,
+): { projection: ProjectionWeek[]; summary: ProjectionSummary; aiUsed: boolean } {
+  if (!parsed || typeof parsed !== 'object') {
+    return { projection: baseline.projection, summary: baseline.summary, aiUsed: false };
+  }
+
+  let projection: ProjectionWeek[] = baseline.projection;
+  let summary: ProjectionSummary = baseline.summary;
+
+  // Parse projection (13 weeks)
+  if (Array.isArray(parsed.projection)) {
+    const aiProj: ProjectionWeek[] = [];
+    for (const p of parsed.projection) {
+      const a = p as Record<string, unknown> | null;
+      if (!a || typeof a !== 'object') continue;
+      const week = clampNumber(a.week, 1, WEEKS_FORECAST, 1);
+      const projectedProfit = clampNumber(
+        a.projectedProfit,
+        0,
+        maxCap,
+        0,
+      );
+      const confidenceLow = clampNumber(
+        a.confidenceLow,
+        0,
+        projectedProfit,
+        0,
+      );
+      const confidenceHigh = clampNumber(
+        a.confidenceHigh,
+        projectedProfit,
+        maxCap,
+        projectedProfit,
+      );
+      aiProj.push({
+        week,
+        projectedProfit: Math.round(projectedProfit),
+        confidenceLow: Math.round(confidenceLow),
+        confidenceHigh: Math.round(confidenceHigh),
+      });
+    }
+    if (aiProj.length > 0) {
+      // Ensure 13 weeks: pad missing weeks from baseline
+      const byWeek = new Map(aiProj.map(p => [p.week, p]));
+      projection = [];
+      for (let i = 1; i <= WEEKS_FORECAST; i++) {
+        const p = byWeek.get(i);
+        if (p) projection.push(p);
+        else {
+          const b = baseline.projection[i - 1];
+          if (b) projection.push(b);
+        }
+      }
+    }
+  }
+
+  // Parse summary
+  if (parsed.summary && typeof parsed.summary === 'object') {
+    const s = parsed.summary as Record<string, unknown>;
+    const projectedTotalProfit90d = clampNumber(
+      s.projectedTotalProfit90d,
+      0,
+      maxCap * WEEKS_FORECAST * 2,
+      projection.reduce((sum, w) => sum + w.projectedProfit, 0),
+    );
+    const bestWeekRaw = s.bestWeek as
+      | Record<string, unknown>
+      | undefined;
+    const worstWeekRaw = s.worstWeek as
+      | Record<string, unknown>
+      | undefined;
+
+    let bestWeek = baseline.summary.bestWeek;
+    if (bestWeekRaw && typeof bestWeekRaw === 'object') {
+      bestWeek = {
+        week: clampNumber(bestWeekRaw.week, 1, WEEKS_FORECAST, 1),
+        profit: clampNumber(
+          bestWeekRaw.profit,
+          0,
+          maxCap,
+          bestWeek.profit,
+        ),
+      };
+    }
+    let worstWeek = baseline.summary.worstWeek;
+    if (worstWeekRaw && typeof worstWeekRaw === 'object') {
+      worstWeek = {
+        week: clampNumber(worstWeekRaw.week, 1, WEEKS_FORECAST, 1),
+        profit: clampNumber(
+          worstWeekRaw.profit,
+          0,
+          maxCap,
+          worstWeek.profit,
+        ),
+      };
+    }
+
+    const profitStabilityAdvice = clampString(
+      s.profitStabilityAdvice,
+      500,
+      baseline.summary.profitStabilityAdvice,
+    );
+
+    summary = {
+      projectedTotalProfit90d: Math.round(projectedTotalProfit90d),
+      bestWeek: {
+        week: bestWeek.week,
+        profit: Math.round(bestWeek.profit),
+      },
+      worstWeek: {
+        week: worstWeek.week,
+        profit: Math.round(worstWeek.profit),
+      },
+      profitStabilityAdvice,
+    };
+  }
+
+  return { projection, summary, aiUsed: true };
+}
+
 // --- Handler -------------------------------------------------------------
 
-export async function GET(req: NextRequest) {
-  return handleProfitStream(req);
-}
-export async function POST(req: NextRequest) {
-  return handleProfitStream(req);
-}
+const profitStreamHandler = withAiRoute<ProfitStreamPredictorInput>({
+  endpoint: '/api/ai/profit-stream-predictor',
+  maxDuration: 60,
+  enforceBudget: true, // AI klic — preveri budget
+  method: 'GET', // dual GET+POST (konsistentno z vsemi prejšnjimi batchi)
 
-async function handleProfitStream(req: NextRequest) {
-  try {
-    const rl = checkRateLimit(req, 'ai-profit-stream', 20);
-    if (!rl.allowed) return rateLimitResponse(rl);
+  parseBody: async () => {
+    // Body ignored — analysis uses global trade history
+    return {};
+  },
+
+  // No validateInput — body ignored
+
+  handler: async (_input, ctx: AiRouteContext) => {
+    const { db, callAi, parseAi, logger } = ctx;
 
     // 1) Query all SOLD trades from last 180 days
     const cutoff = new Date(Date.now() - 180 * DAY_MS);
@@ -271,7 +468,7 @@ async function handleProfitStream(req: NextRequest) {
 
     // Empty state
     if (soldTrades.length === 0) {
-      return NextResponse.json({
+      return apiOk({
         ok: true,
         streamAnalysis: {
           avgWeeklyProfit: 0,
@@ -415,7 +612,7 @@ async function handleProfitStream(req: NextRequest) {
       summary: ProjectionSummary;
     }>(cacheKey);
     if (cached) {
-      return NextResponse.json({
+      return apiOk({
         ok: true,
         streamAnalysis,
         categoryStreams,
@@ -434,71 +631,16 @@ async function handleProfitStream(req: NextRequest) {
     );
 
     // 7) AI prompt with grounding
-    const settings = await getSettingsRow();
-    const aiSettings: AiSettings = {
-      provider: settings.aiProvider as AiProviderType,
-      baseUrl: settings.aiBaseUrl,
-      apiKey: settings.aiApiKey,
-      model: settings.aiModel,
-      fallbackProvider: (settings.fallbackProvider || '') as
-        | AiProviderType
-        | '',
-      fallbackBaseUrl: settings.fallbackBaseUrl || '',
-      fallbackApiKey: settings.fallbackApiKey || '',
-      fallbackModel: settings.fallbackModel || '',
-    };
-
     const maxCap = Math.max(0, avgWeeklyProfit * 3);
-
-    const weeklyHistoryBlock = weeklyHistory
-      .map(w => `W${w.weekIdx}: profit=${w.profit}€, trades=${w.trades}`)
-      .join('\n');
-
-    const categoryBlock = categoryStreams
-      .slice(0, 15)
-      .map(
-        c =>
-          `- ${c.category}: weeklyProfit=${c.weeklyProfit}€, reliability=${c.reliability}/100, type=${c.streamType}, contribution=${c.contribution}%`,
-      )
-      .join('\n');
-
-    const prompt = `Si AI analitik profitnih tokov za slovenske in srednjeevropske oglasne platforme (Bolha, Vinted, Avtonet, mobile.de).
-Analiziraj "profit stream" — VZOREC ponavljajočega se profita skozi čas. Ali je profit stalen (STEADY) ali sporadičen (ERRATIC)? Projekciraj 90-dnevni tok profita z intervali zaupanja.
-
-PODATKI O TEDENSKEM PROFITU (zadnjih 26 tednov, W0 = najstarejši, W25 = najnovejši):
-${weeklyHistoryBlock}
-
-ZNAČILNOSTI TOKA:
-- avgWeeklyProfit: ${avgWeeklyProfit}€
-- profitVolatility: ${profitVolatility} (stdev / mean, nižje = bolj stabilno)
-- consistencyScore: ${consistencyScore}/100
-- streamType: ${streamType}
-
-KATEGORIJE PROFITNIH TOKOV (top ${Math.min(15, categoryStreams.length)}):
-${categoryBlock || '—'}
-
-PRAVILA ZA PROJEKCIJO:
-1. projection: 13 tednov (90 dni) projekcija. Za vsak teden:
-   - projectedProfit: EUR (lahko trend-up če zgodovina kaže rast, ali trend-down če padec)
-   - confidenceLow / confidenceHigh: ±1 stdev interval (širši naprej)
-   - Vsak projectedProfit mora biti v [0, ${maxCap.toFixed(2)}] (avgWeeklyProfit × 3)
-2. summary.projectedTotalProfit90d: vsota vseh 13 tednov
-3. summary.bestWeek: teden z najvišjim projectedProfit (week 1-13, profit)
-4. summary.worstWeek: teden z najnižjim projectedProfit (week 1-13, profit)
-5. summary.profitStabilityAdvice: konkreten nasvet (1-2 stavka) kako stabilizirati profit stream — npr. "diverzificiraj v elektroniko (reliability 85), zmanjšaj modno oblačilo (reliability 40)"
-
-VRNI LE JSON:
-{
-  "projection": [
-    { "week": 1, "projectedProfit": 0, "confidenceLow": 0, "confidenceHigh": 0 }
-  ],
-  "summary": {
-    "projectedTotalProfit90d": 0,
-    "bestWeek": { "week": 1, "profit": 0 },
-    "worstWeek": { "week": 1, "profit": 0 },
-    "profitStabilityAdvice": "..."
-  }
-}${GROUNDING_PROMPT_SUFFIX}`;
+    const prompt = buildPrompt({
+      weeklyHistory,
+      avgWeeklyProfit,
+      profitVolatility,
+      consistencyScore,
+      streamType,
+      categoryStreams,
+      maxCap,
+    });
 
     // Start with deterministic baseline
     let projection: ProjectionWeek[] = baseline.projection;
@@ -506,120 +648,12 @@ VRNI LE JSON:
     let aiUsed = false;
 
     try {
-      const raw = await callProviderForRaw(aiSettings, prompt);
-      const parsed = parseJsonLooseExported(raw) as AiStreamResponse | null;
-
-      if (parsed && typeof parsed === 'object') {
-        // Parse projection (13 weeks)
-        if (Array.isArray(parsed.projection)) {
-          const aiProj: ProjectionWeek[] = [];
-          for (const p of parsed.projection) {
-            const a = p as Record<string, unknown> | null;
-            if (!a || typeof a !== 'object') continue;
-            const week = clampNumber(a.week, 1, WEEKS_FORECAST, 1);
-            const projectedProfit = clampNumber(
-              a.projectedProfit,
-              0,
-              maxCap,
-              0,
-            );
-            const confidenceLow = clampNumber(
-              a.confidenceLow,
-              0,
-              projectedProfit,
-              0,
-            );
-            const confidenceHigh = clampNumber(
-              a.confidenceHigh,
-              projectedProfit,
-              maxCap,
-              projectedProfit,
-            );
-            aiProj.push({
-              week,
-              projectedProfit: Math.round(projectedProfit),
-              confidenceLow: Math.round(confidenceLow),
-              confidenceHigh: Math.round(confidenceHigh),
-            });
-          }
-          if (aiProj.length > 0) {
-            // Ensure 13 weeks: pad missing weeks from baseline
-            const byWeek = new Map(aiProj.map(p => [p.week, p]));
-            projection = [];
-            for (let i = 1; i <= WEEKS_FORECAST; i++) {
-              const p = byWeek.get(i);
-              if (p) projection.push(p);
-              else {
-                const b = baseline.projection[i - 1];
-                if (b) projection.push(b);
-              }
-            }
-          }
-        }
-
-        // Parse summary
-        if (parsed.summary && typeof parsed.summary === 'object') {
-          const s = parsed.summary as Record<string, unknown>;
-          const projectedTotalProfit90d = clampNumber(
-            s.projectedTotalProfit90d,
-            0,
-            maxCap * WEEKS_FORECAST * 2,
-            projection.reduce((sum, w) => sum + w.projectedProfit, 0),
-          );
-          const bestWeekRaw = s.bestWeek as
-            | Record<string, unknown>
-            | undefined;
-          const worstWeekRaw = s.worstWeek as
-            | Record<string, unknown>
-            | undefined;
-
-          let bestWeek = baseline.summary.bestWeek;
-          if (bestWeekRaw && typeof bestWeekRaw === 'object') {
-            bestWeek = {
-              week: clampNumber(bestWeekRaw.week, 1, WEEKS_FORECAST, 1),
-              profit: clampNumber(
-                bestWeekRaw.profit,
-                0,
-                maxCap,
-                bestWeek.profit,
-              ),
-            };
-          }
-          let worstWeek = baseline.summary.worstWeek;
-          if (worstWeekRaw && typeof worstWeekRaw === 'object') {
-            worstWeek = {
-              week: clampNumber(worstWeekRaw.week, 1, WEEKS_FORECAST, 1),
-              profit: clampNumber(
-                worstWeekRaw.profit,
-                0,
-                maxCap,
-                worstWeek.profit,
-              ),
-            };
-          }
-
-          const profitStabilityAdvice = clampString(
-            s.profitStabilityAdvice,
-            500,
-            baseline.summary.profitStabilityAdvice,
-          );
-
-          summary = {
-            projectedTotalProfit90d: Math.round(projectedTotalProfit90d),
-            bestWeek: {
-              week: bestWeek.week,
-              profit: Math.round(bestWeek.profit),
-            },
-            worstWeek: {
-              week: worstWeek.week,
-              profit: Math.round(worstWeek.profit),
-            },
-            profitStabilityAdvice,
-          };
-        }
-
-        aiUsed = true;
-      }
+      const raw = await callAi(prompt);
+      const parsed = parseAi(raw) as AiStreamResponse | null;
+      const result = parseAiStream(parsed, baseline, maxCap);
+      projection = result.projection;
+      summary = result.summary;
+      aiUsed = result.aiUsed;
     } catch (err) {
       logger.warn(
         '/api/ai/profit-stream-predictor',
@@ -633,7 +667,7 @@ VRNI LE JSON:
       setCachedAI(cacheKey, { projection, summary });
     }
 
-    return NextResponse.json({
+    return apiOk({
       ok: true,
       streamAnalysis,
       categoryStreams,
@@ -641,11 +675,8 @@ VRNI LE JSON:
       summary,
       aiUsed,
     });
-  } catch (err: any) {
-    logger.error('/api/ai/profit-stream-predictor', 'handler failed', err);
-    return NextResponse.json(
-      { error: err?.message ?? 'Napaka' },
-      { status: 500 },
-    );
-  }
-}
+  },
+});
+
+export const GET = profitStreamHandler;
+export const POST = profitStreamHandler;

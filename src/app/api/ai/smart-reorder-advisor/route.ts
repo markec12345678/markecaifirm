@@ -1,7 +1,7 @@
-// v7.74: AI Smart Reorder Advisor — AI svetuje KDAJ in KOLIKO naročiti za
-// vsako kategorijo na podlagi sell-through rate, trenutne zaloge in
-// demand forecast. "Elektronika: 5 prodaj/mesec, 2 na zalogi → REORDER_NOW,
-// 3 item-i, 900€ budget."
+// v7.74 / v8.96.4-batch2: AI Smart Reorder Advisor — AI svetuje KDAJ in
+// KOLIKO naročiti za vsako kategorijo na podlagi sell-through rate,
+// trenutne zaloge in demand forecast. "Elektronika: 5 prodaj/mesec, 2 na
+// zalogi → REORDER_NOW, 3 item-i, 900€ budget."
 //
 // Razlika od inventory-reorder-point (ki izračuna matematični reorder point)
 // — ta AI svetuje STRATEGIJO naročanja (timing, količina, budget, strategija).
@@ -12,25 +12,17 @@
 // gleda KDAJ/ZAKAJ reorder. Razlika od cash-flow-forecast (ki napove cash flow)
 // — ta priporoča akcijo (reorder).
 //
+// Refaktoriran z withAiRoute helperjem (v8.96.4) + enforceBudget guard.
+//
 // GET+POST /api/ai/smart-reorder-advisor
 // (AI-enhanced + grounding + anti-hallucination + 6h cache + deterministic fallback)
 
-import { NextRequest, NextResponse } from 'next/server';
-import { db } from '@/lib/db';
-import { getSettingsRow } from '@/lib/pipeline';
-import {
-  callProviderForRaw,
-  parseJsonLooseExported,
-  type AiProviderType,
-  type AiSettings,
-} from '@/lib/ai';
+import { withAiRoute, AI_ROUTE_DEFAULTS, type AiRouteContext } from '@/lib/with-ai-route';
+import { apiOk } from '@/lib/api-response';
 import { GROUNDING_PROMPT_SUFFIX } from '@/lib/anti-hallucination';
 import { getCachedAI, setCachedAI } from '@/lib/ai-cache';
-import { checkRateLimit, rateLimitResponse } from '@/lib/rate-limit';
-import { logger } from '@/lib/logger';
 
-export const runtime = 'nodejs';
-export const dynamic = 'force-dynamic';
+export const { runtime, dynamic } = AI_ROUTE_DEFAULTS;
 export const maxDuration = 60;
 
 // --- Types ---------------------------------------------------------------
@@ -197,17 +189,21 @@ function buildReasoning(
 
 // --- Handler -------------------------------------------------------------
 
-export async function GET(req: NextRequest) {
-  return handleSmartReorderAdvisor(req);
-}
-export async function POST(req: NextRequest) {
-  return handleSmartReorderAdvisor(req);
-}
+// eslint-disable-next-line @typescript-eslint/no-empty-object-type
+interface SmartReorderAdvisorInput {}
 
-async function handleSmartReorderAdvisor(req: NextRequest) {
-  try {
-    const rl = checkRateLimit(req, 'ai-smart-reorder-advisor', 20);
-    if (!rl.allowed) return rateLimitResponse(rl);
+const smartReorderAdvisorHandler = withAiRoute<SmartReorderAdvisorInput>({
+  endpoint: '/api/ai/smart-reorder-advisor',
+  maxDuration: 60,
+  enforceBudget: true, // AI klic — preveri budget
+  method: 'GET', // Endpoint sprejema GET + POST — bypass POST-only check
+
+  parseBody: async () => ({}),
+
+  // No validateInput — endpoint ne sprejema inputa
+
+  handler: async (_input, ctx: AiRouteContext) => {
+    const { db, callAi, parseAi, logger } = ctx;
 
     // 1) Query SOLD trades from last 90 days grouped by category
     const soldCutoff = new Date(Date.now() - 90 * DAY_MS);
@@ -248,7 +244,7 @@ async function handleSmartReorderAdvisor(req: NextRequest) {
 
     // Empty state — no data at all
     if (soldTrades.length === 0 && heldTrades.length === 0) {
-      return NextResponse.json({
+      return apiOk({
         ok: true,
         categories: [],
         summary: {
@@ -514,7 +510,7 @@ async function handleSmartReorderAdvisor(req: NextRequest) {
       summary: Summary;
     }>(cacheKey);
     if (cached) {
-      return NextResponse.json({
+      return apiOk({
         ok: true,
         categories: cached.categories,
         summary: cached.summary,
@@ -524,20 +520,6 @@ async function handleSmartReorderAdvisor(req: NextRequest) {
     }
 
     // 9) AI prompt with grounding
-    const settings = await getSettingsRow();
-    const aiSettings: AiSettings = {
-      provider: settings.aiProvider as AiProviderType,
-      baseUrl: settings.aiBaseUrl,
-      apiKey: settings.aiApiKey,
-      model: settings.aiModel,
-      fallbackProvider: (settings.fallbackProvider || '') as
-        | AiProviderType
-        | '',
-      fallbackBaseUrl: settings.fallbackBaseUrl || '',
-      fallbackApiKey: settings.fallbackApiKey || '',
-      fallbackModel: settings.fallbackModel || '',
-    };
-
     const catsForPrompt = baselineCategories.slice(0, 30).map((c) => ({
       category: c.category,
       avgMonthlySales: c.avgMonthlySales,
@@ -552,152 +534,31 @@ async function handleSmartReorderAdvisor(req: NextRequest) {
       deterministicBudget: c.budgetAllocation,
     }));
 
-    const prompt = `Si AI "Smart Reorder Advisor" za slovenske in srednjeevropske oglasne platforme (Bolha, Vinted, Avtonet, mobile.de).
-Svetuj KDAJ in KOLIKO naročiti (reorder) za vsako kategorijo na podlagi sell-through rate in trenutne zaloge.
-
-KATEGORIJE S PODATKI (deterministično izračunano):
-${JSON.stringify(catsForPrompt, null, 2)}
-
-POZNEJNI KONTEKST:
-- Sold trades zadnjih 90 dni (3 mesece) = avgMonthlySales × 3
-- Trenutna zaloga (HELD trades) = currentStock
-- weeksOfSupply = currentStock / (avgMonthlySales / 4)
-- availableCapital (ocenjen) = ${Math.round(availableCapital)}€
-
-PRAVILA ZA AI ODGOVOR:
-1. categories: array (sprejmi obstoječe category-je, posodobi reorderStatus, recommendedQuantity, recommendedTiming, expectedStockoutDate, reorderStrategy, budgetAllocation, reasoning)
-   - reorderStatus: REORDER_NOW / REORDER_SOON / ADEQUATE_STOCK / OVERSTOCKED
-   - recommendedQuantity: 1 do (avgMonthlySales × 2), celo število (anti-hallucination clamp)
-   - recommendedTiming: 0-90 dni (kdaj naročiti)
-   - expectedStockoutDate: "YYYY-MM-DD" ali null (če OVERSTOCKED ali ADEQUATE)
-   - reorderStrategy: SINGLE_BUY / BATCH_BUY / WAIT_FOR_DEALS
-   - budgetAllocation: 0 do ${Math.round(availableCapital)}€ (anti-hallucination clamp)
-   - reasoning: kratek slovenski opis (max 300 znakov)
-2. summary: totalCategories, reorderNowCount, adequateStockCount, overstockedCount, totalBudgetNeeded, advice v slovenščini
-
-VRNI LE JSON:
-{
-  "categories": [
-    { "category": "...", "reorderStatus": "REORDER_NOW", "recommendedQuantity": 0, "recommendedTiming": 0, "expectedStockoutDate": "YYYY-MM-DD", "reorderStrategy": "SINGLE_BUY", "budgetAllocation": 0, "reasoning": "..." }
-  ],
-  "summary": { "totalCategories": 0, "reorderNowCount": 0, "adequateStockCount": 0, "overstockedCount": 0, "totalBudgetNeeded": 0, "advice": "..." }
-}${GROUNDING_PROMPT_SUFFIX}`;
+    const prompt = buildPrompt({
+      catsForPrompt,
+      availableCapital: Math.round(availableCapital),
+    });
 
     let finalCategories = baselineCategories;
     let summary = baselineSummary;
     let aiUsed = false;
 
     try {
-      const raw = await callProviderForRaw(aiSettings, prompt);
-      const parsed = parseJsonLooseExported(raw) as AiReorderResponse | null;
+      const raw = await callAi(prompt);
+      const parsed = parseAi(raw) as AiReorderResponse | null;
 
       if (parsed && typeof parsed === 'object') {
-        // Parse categories — apply anti-hallucination clamps
-        if (Array.isArray(parsed.categories)) {
-          const updated: CategoryReorder[] = [];
-          for (const c of parsed.categories) {
-            const r = c as Record<string, unknown>;
-            if (!r || typeof r !== 'object') continue;
-            const category = String(r.category || '').trim().toLowerCase();
-            const existing = baselineCategories.find((bc) => bc.category === category);
-            if (!existing) continue;
-
-            const reorderStatus = clampEnum(
-              r.reorderStatus,
-              VALID_REORDER_STATUS,
-              existing.reorderStatus,
-            );
-
-            // recommendedQuantity clamped to [1, avgMonthlySales × 2] for active reorder, [0, 0] for OVERSTOCKED/ADEQUATE
-            const qtyMin = reorderStatus === 'OVERSTOCKED' || reorderStatus === 'ADEQUATE_STOCK' ? 0 : 1;
-            const qtyMax = Math.max(1, Math.round(existing.avgMonthlySales * 2));
-            const recommendedQuantity = clampNumber(
-              r.recommendedQuantity,
-              qtyMin,
-              qtyMax,
-              existing.recommendedQuantity,
-            );
-
-            const recommendedTiming = clampNumber(
-              r.recommendedTiming,
-              0,
-              90,
-              existing.recommendedTiming,
-            );
-
-            // expectedStockoutDate
-            let expectedStockoutDate: string | null = null;
-            if (
-              reorderStatus === 'REORDER_NOW' ||
-              reorderStatus === 'REORDER_SOON'
-            ) {
-              if (
-                typeof r.expectedStockoutDate === 'string' &&
-                /^\d{4}-\d{2}-\d{2}$/.test(r.expectedStockoutDate.slice(0, 10))
-              ) {
-                expectedStockoutDate = r.expectedStockoutDate.slice(0, 10);
-              } else {
-                expectedStockoutDate = existing.expectedStockoutDate;
-              }
-            }
-
-            const reorderStrategy = clampEnum(
-              r.reorderStrategy,
-              VALID_REORDER_STRATEGY,
-              existing.reorderStrategy,
-            );
-
-            // budgetAllocation clamped to [0, availableCapital]
-            const budgetAllocation = clampNumber(
-              r.budgetAllocation,
-              0,
-              availableCapital,
-              existing.budgetAllocation,
-            );
-
-            const reasoning = clampString(r.reasoning, 300, existing.reasoning);
-
-            updated.push({
-              ...existing,
-              reorderStatus,
-              recommendedQuantity: Math.round(recommendedQuantity),
-              recommendedTiming: Math.round(recommendedTiming),
-              expectedStockoutDate,
-              reorderStrategy,
-              budgetAllocation: Math.round(budgetAllocation),
-              reasoning,
-            });
-          }
-          if (updated.length > 0) {
-            // Re-sort by urgency
-            updated.sort((a, b) => {
-              const so = statusOrder[a.reorderStatus] - statusOrder[b.reorderStatus];
-              if (so !== 0) return so;
-              return b.avgMonthlySales - a.avgMonthlySales;
-            });
-            finalCategories = updated;
-          }
+        const transformed = transformReorder(
+          parsed,
+          baselineCategories,
+          baselineSummary,
+          availableCapital,
+          statusOrder,
+        );
+        if (transformed.finalCategories !== baselineCategories) {
+          finalCategories = transformed.finalCategories;
         }
-
-        // Parse summary
-        if (parsed.summary && typeof parsed.summary === 'object') {
-          const s = parsed.summary as Record<string, unknown>;
-          const totalBudgetNeededClamped = clampNumber(
-            s.totalBudgetNeeded,
-            0,
-            availableCapital * 5, // sane upper bound (5 categories × availableCapital)
-            finalCategories.reduce((sum, c) => sum + c.budgetAllocation, 0),
-          );
-          summary = {
-            totalCategories: finalCategories.length,
-            reorderNowCount: finalCategories.filter((c) => c.reorderStatus === 'REORDER_NOW').length,
-            adequateStockCount: finalCategories.filter((c) => c.reorderStatus === 'ADEQUATE_STOCK').length,
-            overstockedCount: finalCategories.filter((c) => c.reorderStatus === 'OVERSTOCKED').length,
-            totalBudgetNeeded: Math.round(totalBudgetNeededClamped),
-            advice: clampString(s.advice, 800, baselineSummary.advice),
-          };
-        }
-
+        summary = transformed.summary;
         aiUsed = true;
       }
     } catch (err) {
@@ -716,17 +577,189 @@ VRNI LE JSON:
       });
     }
 
-    return NextResponse.json({
+    return apiOk({
       ok: true,
       categories: finalCategories,
       summary,
       aiUsed,
     });
-  } catch (err: any) {
-    logger.error('/api/ai/smart-reorder-advisor', 'handler failed', err);
-    return NextResponse.json(
-      { error: err?.message ?? 'Napaka' },
-      { status: 500 },
-    );
+  },
+});
+
+// AI Hub runner compatibility — body is ignored, identical logic.
+export const GET = smartReorderAdvisorHandler;
+export const POST = smartReorderAdvisorHandler;
+
+// --- Pomožne funkcije (čiste, testabilne) --------------------------------
+
+interface PromptParams {
+  catsForPrompt: Array<{
+    category: string;
+    avgMonthlySales: number;
+    currentStock: number;
+    weeksOfSupply: number;
+    reorderPoint: number;
+    optimalReorderQuantity: number;
+    deterministicStatus: ReorderStatus;
+    deterministicStrategy: ReorderStrategy;
+    deterministicRecommendedQuantity: number;
+    deterministicTiming: number;
+    deterministicBudget: number;
+  }>;
+  availableCapital: number;
+}
+
+function buildPrompt(p: PromptParams): string {
+  return `Si AI "Smart Reorder Advisor" za slovenske in srednjeevropske oglasne platforme (Bolha, Vinted, Avtonet, mobile.de).
+Svetuj KDAJ in KOLIKO naročiti (reorder) za vsako kategorijo na podlagi sell-through rate in trenutne zaloge.
+
+KATEGORIJE S PODATKI (deterministično izračunano):
+${JSON.stringify(p.catsForPrompt, null, 2)}
+
+POZNEJNI KONTEKST:
+- Sold trades zadnjih 90 dni (3 mesece) = avgMonthlySales × 3
+- Trenutna zaloga (HELD trades) = currentStock
+- weeksOfSupply = currentStock / (avgMonthlySales / 4)
+- availableCapital (ocenjen) = ${p.availableCapital}€
+
+PRAVILA ZA AI ODGOVOR:
+1. categories: array (sprejmi obstoječe category-je, posodobi reorderStatus, recommendedQuantity, recommendedTiming, expectedStockoutDate, reorderStrategy, budgetAllocation, reasoning)
+   - reorderStatus: REORDER_NOW / REORDER_SOON / ADEQUATE_STOCK / OVERSTOCKED
+   - recommendedQuantity: 1 do (avgMonthlySales × 2), celo število (anti-hallucination clamp)
+   - recommendedTiming: 0-90 dni (kdaj naročiti)
+   - expectedStockoutDate: "YYYY-MM-DD" ali null (če OVERSTOCKED ali ADEQUATE)
+   - reorderStrategy: SINGLE_BUY / BATCH_BUY / WAIT_FOR_DEALS
+   - budgetAllocation: 0 do ${p.availableCapital}€ (anti-hallucination clamp)
+   - reasoning: kratek slovenski opis (max 300 znakov)
+2. summary: totalCategories, reorderNowCount, adequateStockCount, overstockedCount, totalBudgetNeeded, advice v slovenščini
+
+VRNI LE JSON:
+{
+  "categories": [
+    { "category": "...", "reorderStatus": "REORDER_NOW", "recommendedQuantity": 0, "recommendedTiming": 0, "expectedStockoutDate": "YYYY-MM-DD", "reorderStrategy": "SINGLE_BUY", "budgetAllocation": 0, "reasoning": "..." }
+  ],
+  "summary": { "totalCategories": 0, "reorderNowCount": 0, "adequateStockCount": 0, "overstockedCount": 0, "totalBudgetNeeded": 0, "advice": "..." }
+}${GROUNDING_PROMPT_SUFFIX}`;
+}
+
+function transformReorder(
+  parsed: AiReorderResponse,
+  baselineCategories: CategoryReorder[],
+  baselineSummary: Summary,
+  availableCapital: number,
+  statusOrder: Record<ReorderStatus, number>,
+): {
+  finalCategories: CategoryReorder[];
+  summary: Summary;
+} {
+  let finalCategories = baselineCategories;
+  let summary = baselineSummary;
+
+  // Parse categories — apply anti-hallucination clamps
+  if (Array.isArray(parsed.categories)) {
+    const updated: CategoryReorder[] = [];
+    for (const c of parsed.categories) {
+      const r = c as Record<string, unknown>;
+      if (!r || typeof r !== 'object') continue;
+      const category = String(r.category || '').trim().toLowerCase();
+      const existing = baselineCategories.find((bc) => bc.category === category);
+      if (!existing) continue;
+
+      const reorderStatus = clampEnum(
+        r.reorderStatus,
+        VALID_REORDER_STATUS,
+        existing.reorderStatus,
+      );
+
+      // recommendedQuantity clamped to [1, avgMonthlySales × 2] for active reorder, [0, 0] for OVERSTOCKED/ADEQUATE
+      const qtyMin = reorderStatus === 'OVERSTOCKED' || reorderStatus === 'ADEQUATE_STOCK' ? 0 : 1;
+      const qtyMax = Math.max(1, Math.round(existing.avgMonthlySales * 2));
+      const recommendedQuantity = clampNumber(
+        r.recommendedQuantity,
+        qtyMin,
+        qtyMax,
+        existing.recommendedQuantity,
+      );
+
+      const recommendedTiming = clampNumber(
+        r.recommendedTiming,
+        0,
+        90,
+        existing.recommendedTiming,
+      );
+
+      // expectedStockoutDate
+      let expectedStockoutDate: string | null = null;
+      if (
+        reorderStatus === 'REORDER_NOW' ||
+        reorderStatus === 'REORDER_SOON'
+      ) {
+        if (
+          typeof r.expectedStockoutDate === 'string' &&
+          /^\d{4}-\d{2}-\d{2}$/.test(r.expectedStockoutDate.slice(0, 10))
+        ) {
+          expectedStockoutDate = r.expectedStockoutDate.slice(0, 10);
+        } else {
+          expectedStockoutDate = existing.expectedStockoutDate;
+        }
+      }
+
+      const reorderStrategy = clampEnum(
+        r.reorderStrategy,
+        VALID_REORDER_STRATEGY,
+        existing.reorderStrategy,
+      );
+
+      // budgetAllocation clamped to [0, availableCapital]
+      const budgetAllocation = clampNumber(
+        r.budgetAllocation,
+        0,
+        availableCapital,
+        existing.budgetAllocation,
+      );
+
+      const reasoning = clampString(r.reasoning, 300, existing.reasoning);
+
+      updated.push({
+        ...existing,
+        reorderStatus,
+        recommendedQuantity: Math.round(recommendedQuantity),
+        recommendedTiming: Math.round(recommendedTiming),
+        expectedStockoutDate,
+        reorderStrategy,
+        budgetAllocation: Math.round(budgetAllocation),
+        reasoning,
+      });
+    }
+    if (updated.length > 0) {
+      // Re-sort by urgency
+      updated.sort((a, b) => {
+        const so = statusOrder[a.reorderStatus] - statusOrder[b.reorderStatus];
+        if (so !== 0) return so;
+        return b.avgMonthlySales - a.avgMonthlySales;
+      });
+      finalCategories = updated;
+    }
   }
+
+  // Parse summary
+  if (parsed.summary && typeof parsed.summary === 'object') {
+    const s = parsed.summary as Record<string, unknown>;
+    const totalBudgetNeededClamped = clampNumber(
+      s.totalBudgetNeeded,
+      0,
+      availableCapital * 5, // sane upper bound (5 categories × availableCapital)
+      finalCategories.reduce((sum, c) => sum + c.budgetAllocation, 0),
+    );
+    summary = {
+      totalCategories: finalCategories.length,
+      reorderNowCount: finalCategories.filter((c) => c.reorderStatus === 'REORDER_NOW').length,
+      adequateStockCount: finalCategories.filter((c) => c.reorderStatus === 'ADEQUATE_STOCK').length,
+      overstockedCount: finalCategories.filter((c) => c.reorderStatus === 'OVERSTOCKED').length,
+      totalBudgetNeeded: Math.round(totalBudgetNeededClamped),
+      advice: clampString(s.advice, 800, baselineSummary.advice),
+    };
+  }
+
+  return { finalCategories, summary };
 }

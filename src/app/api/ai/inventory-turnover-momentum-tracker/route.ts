@@ -1,4 +1,4 @@
-// v7.92: AI Inventory Turnover Momentum Tracker — AI track-a MOMENTUM
+// v7.92 / v8.96.5-batch2: AI Inventory Turnover Momentum Tracker — AI track-a MOMENTUM
 // (acceleration) inventory turnover-a — ali turnover pospešuje ali upada?
 // Compute-a acceleration of turnover rate in napove future turnover
 // trajectory. Razlika od inventory-turnover-forecast (v7.78 ki projicira
@@ -19,24 +19,20 @@
 //
 // GET+POST /api/ai/inventory-turnover-momentum-tracker
 // (AI-enhanced + grounding + anti-hallucination + 6h cache + deterministic fallback)
+// Refaktoriran z withAiRoute helperjem (v8.96.5) + enforceBudget guard.
 
-import { NextRequest, NextResponse } from 'next/server';
-import { db } from '@/lib/db';
-import { getSettingsRow } from '@/lib/pipeline';
-import {
-  callProviderForRaw,
-  parseJsonLooseExported,
-  type AiProviderType,
-  type AiSettings,
-} from '@/lib/ai';
+import { withAiRoute, AI_ROUTE_DEFAULTS, type AiRouteContext } from '@/lib/with-ai-route';
+import { apiOk } from '@/lib/api-response';
 import { GROUNDING_PROMPT_SUFFIX } from '@/lib/anti-hallucination';
 import { getCachedAI, setCachedAI } from '@/lib/ai-cache';
-import { checkRateLimit, rateLimitResponse } from '@/lib/rate-limit';
-import { logger } from '@/lib/logger';
 
-export const runtime = 'nodejs';
-export const dynamic = 'force-dynamic';
+export const { runtime, dynamic } = AI_ROUTE_DEFAULTS;
 export const maxDuration = 60;
+
+// --- Input ----------------------------------------------------------------
+
+// eslint-disable-next-line @typescript-eslint/no-empty-object-type
+interface InventoryTurnoverMomentumTrackerInput {}
 
 // --- Types ---------------------------------------------------------------
 
@@ -482,19 +478,207 @@ function buildDeterministicAnalysis(
   };
 }
 
+// --- AI prompt + merge helpers (pure, testable) ---------------------------
+
+interface PromptData {
+  momentum: TurnoverMomentum;
+  monthlyData: MonthlyTurnover[];
+  context: { totalHeld: number; activeMonths: number };
+  deterministicBaseline: {
+    projectedTurnoverRate30d: number;
+    projectedHoldDays30d: number;
+    momentumSustainability: number;
+    momentumRiskLevel: RiskLevel;
+  };
+  caps: Record<string, number>;
+}
+
+function buildPromptData(
+  momentum: TurnoverMomentum,
+  activeMonths: MonthlyTurnover[],
+  totalHeld: number,
+  deterministicForecast: MomentumForecast,
+): PromptData {
+  return {
+    momentum,
+    monthlyData: activeMonths,
+    context: { totalHeld, activeMonths: activeMonths.length },
+    deterministicBaseline: {
+      projectedTurnoverRate30d: deterministicForecast.projectedTurnoverRate30d,
+      projectedHoldDays30d: deterministicForecast.projectedHoldDays30d,
+      momentumSustainability: deterministicForecast.momentumSustainability,
+      momentumRiskLevel: deterministicForecast.momentumRiskLevel,
+    },
+    caps: {
+      turnoverMin: TURNOVER_MIN, turnoverMax: TURNOVER_MAX,
+      holdDaysMin: HOLD_DAYS_MIN, holdDaysMax: HOLD_DAYS_MAX,
+      sustainabilityMin: SUSTAINABILITY_MIN, sustainabilityMax: SUSTAINABILITY_MAX,
+      weightMin: WEIGHT_MIN, weightMax: WEIGHT_MAX,
+    },
+  };
+}
+
+function buildPrompt(promptData: PromptData): string {
+  return `Si AI "Inventory Turnover Momentum Tracker" za slovenske in srednjeevropske oglasne platforme (Bolha, Vinted, Facebook, Avtonet, mobile.de).
+Track-aš MOMENTUM (acceleration = 2nd derivative) inventory turnover-a — ali turnover pospešuje ali upada? Compute-aš acceleration of turnover rate in napoveš future turnover trajectory. Razlika od inventory-turnover-forecast (ki projicira turnover rate) — ti gledaš MOMENTUM (2nd derivative — pospešek turnover-a).
+
+DETERMINISTIČNI PODATKI (izračunano iz DB — zadnjih 12 mesecev SOLD + HELD trades):
+${JSON.stringify(promptData, null, 2)}
+
+PRAVILA ZA AI ODGOVOR:
+1. projectedTurnoverRate30d: number, clamped [0, 20], ±20% od deterministične (kakšna bo turnover rate v 30 dneh).
+2. projectedHoldDays30d: number, clamped [0, 180], ±15 od deterministične (povprečni hold days v 30 dneh).
+3. momentumSustainability: 0-100, ±15 od deterministične (kako dolgo bo trenutni momentum trajal).
+4. momentumAssessment: slovensko, max 500 znakov — opis turnover momentum trajektorije (ACCELERATING/STEADY/DECELERATING + drivers).
+5. momentumRiskLevel: LOW | MEDIUM | HIGH (risk da turnover ustavi).
+6. momentumDrivers: 1-3 { driver (max 100 chars), impact POSITIVE | NEGATIVE, weight 0-100, detail (max 200 chars) }.
+7. momentumInhibitors: 1-4 { inhibitor (max 200 chars), impact (max 200 chars), solution (max 200 chars) }.
+8. momentumActions: 1-4 { action (max 200 chars), priority HIGH | MEDIUM | LOW, expectedMomentumLift (max 200 chars) }.
+9. summary: slovenski povzetek (max 400 znakov). NE izmišljuj številk — uporabi deterministične.
+
+VRNI LE JSON:
+{
+  "projectedTurnoverRate30d": 3.8,
+  "projectedHoldDays30d": 22,
+  "momentumSustainability": 72,
+  "momentumAssessment": "Turnover momentum ACCELERATING — strength 72, trend +0.5/mesc, acceleration +0.2/mesc². 30d forecast: 3.8x turnover, 22d hold. Sustainable for ~4 months.",
+  "momentumRiskLevel": "LOW",
+  "momentumDrivers": [
+    { "driver": "Turnover rate trend", "impact": "POSITIVE", "weight": 85, "detail": "Mesečni turnover rate raste (+0.5/mesc)." }
+  ],
+  "momentumInhibitors": [
+    { "inhibitor": "Hold days se podaljšujejo v kategoriji X.", "impact": "Nižji turnover rate.", "solution": "Znižaj cene po 30 dneh hold-a." }
+  ],
+  "momentumActions": [
+    { "action": "Izkoristi momentum — povečaj inventory v najboljših kategorijah.", "priority": "HIGH", "expectedMomentumLift": "Podaljša ACCELERATING fazo za ~3 mesece." }
+  ],
+  "summary": "Turnover momentum: ACCELERATING (strength 72, +0.5/mo²). 30d forecast: 3.8x turnover, 22d hold. Sustainable for 4 months."
+}${GROUNDING_PROMPT_SUFFIX}`;
+}
+
+function mergeAiIntoMomentum(
+  parsed: AiMomentumResponse | null,
+  momentum: TurnoverMomentum,
+  deterministicForecast: MomentumForecast,
+  deterministicAnalysis: MomentumAnalysis,
+): { forecast: MomentumForecast; analysis: MomentumAnalysis; summary: string; aiUsed: boolean } {
+  if (!parsed || typeof parsed !== 'object') {
+    return {
+      forecast: deterministicForecast,
+      analysis: deterministicAnalysis,
+      summary: buildDeterministicSummary(momentum, deterministicForecast),
+      aiUsed: false,
+    };
+  }
+
+  const det = deterministicForecast;
+  const detAnalysis = deterministicAnalysis;
+
+  // Projected turnover rate — ±20% of deterministic
+  const detRate = det.projectedTurnoverRate30d;
+  const projRate = round1(
+    Math.max(TURNOVER_MIN, Math.min(TURNOVER_MAX,
+      detRate + Math.max(-Math.abs(detRate) * 0.2 - 0.2, Math.min(Math.abs(detRate) * 0.2 + 0.2,
+        (Number(parsed.projectedTurnoverRate30d ?? detRate)) - detRate)))),
+  );
+
+  // Projected hold days — ±15 of deterministic
+  const projHold = round0(
+    Math.max(HOLD_DAYS_MIN, Math.min(HOLD_DAYS_MAX,
+      det.projectedHoldDays30d + Math.max(-15, Math.min(15,
+        (Number(parsed.projectedHoldDays30d ?? det.projectedHoldDays30d)) - det.projectedHoldDays30d)))),
+  );
+
+  // Sustainability — ±15 of deterministic
+  const sustainability = round0(
+    Math.max(SUSTAINABILITY_MIN, Math.min(SUSTAINABILITY_MAX,
+      det.momentumSustainability + Math.max(-15, Math.min(15,
+        (Number(parsed.momentumSustainability ?? det.momentumSustainability)) - det.momentumSustainability)))),
+  );
+
+  const riskLevel = clampEnum(parsed.momentumRiskLevel, VALID_RISK_LEVEL, det.momentumRiskLevel);
+
+  // Drivers validation
+  const drivers: MomentumDriver[] = [];
+  if (Array.isArray(parsed.momentumDrivers)) {
+    for (const d of parsed.momentumDrivers.slice(0, 3)) {
+      if (!d || typeof d !== 'object') continue;
+      drivers.push({
+        driver: clampString(d.driver, 100, detAnalysis.momentumDrivers[0]?.driver ?? 'Driver'),
+        impact: clampEnum(d.impact, VALID_IMPACT, detAnalysis.momentumDrivers[0]?.impact ?? 'POSITIVE'),
+        weight: clampNum(d.weight, WEIGHT_MIN, WEIGHT_MAX, detAnalysis.momentumDrivers[0]?.weight ?? 50),
+        detail: clampString(d.detail, 200, detAnalysis.momentumDrivers[0]?.detail ?? 'Detail.'),
+      });
+    }
+  }
+  if (drivers.length === 0) {
+    for (const d of detAnalysis.momentumDrivers) drivers.push(d);
+  }
+
+  // Inhibitors validation
+  const inhibitors: MomentumInhibitor[] = [];
+  if (Array.isArray(parsed.momentumInhibitors)) {
+    for (const inh of parsed.momentumInhibitors.slice(0, 4)) {
+      if (!inh || typeof inh !== 'object') continue;
+      inhibitors.push({
+        inhibitor: clampString(inh.inhibitor, 200, detAnalysis.momentumInhibitors[0]?.inhibitor ?? 'Inhibitor'),
+        impact: clampString(inh.impact, 200, detAnalysis.momentumInhibitors[0]?.impact ?? 'Vpliv na momentum.'),
+        solution: clampString(inh.solution, 200, detAnalysis.momentumInhibitors[0]?.solution ?? 'Rešitev.'),
+      });
+    }
+  }
+  if (inhibitors.length === 0) {
+    for (const inh of detAnalysis.momentumInhibitors) inhibitors.push(inh);
+  }
+
+  // Actions validation
+  const actions: MomentumAction[] = [];
+  if (Array.isArray(parsed.momentumActions)) {
+    for (const a of parsed.momentumActions.slice(0, 4)) {
+      if (!a || typeof a !== 'object') continue;
+      actions.push({
+        action: clampString(a.action, 200, detAnalysis.momentumActions[0]?.action ?? 'Akcija'),
+        priority: clampEnum(a.priority, VALID_PRIORITY, detAnalysis.momentumActions[0]?.priority ?? 'MEDIUM'),
+        expectedMomentumLift: clampString(a.expectedMomentumLift, 200, detAnalysis.momentumActions[0]?.expectedMomentumLift ?? 'Izboljšava momentum-a.'),
+      });
+    }
+  }
+  if (actions.length === 0) {
+    for (const a of detAnalysis.momentumActions) actions.push(a);
+  }
+
+  const mergedForecast: MomentumForecast = {
+    projectedTurnoverRate30d: projRate,
+    projectedHoldDays30d: projHold,
+    momentumSustainability: sustainability,
+    momentumAssessment: clampString(parsed.momentumAssessment, 500, det.momentumAssessment),
+    momentumRiskLevel: riskLevel,
+  };
+  const mergedAnalysis: MomentumAnalysis = {
+    momentumDrivers: drivers.slice(0, 3),
+    momentumInhibitors: inhibitors.slice(0, 4),
+    momentumActions: actions.slice(0, 4),
+  };
+  const summary = clampString(parsed.summary, 400, buildDeterministicSummary(momentum, mergedForecast));
+  return { forecast: mergedForecast, analysis: mergedAnalysis, summary, aiUsed: true };
+}
+
 // --- Handler -------------------------------------------------------------
 
-export async function GET(req: NextRequest) {
-  return handleInventoryTurnoverMomentumTracker(req);
-}
-export async function POST(req: NextRequest) {
-  return handleInventoryTurnoverMomentumTracker(req);
-}
+const inventoryTurnoverMomentumTrackerHandler = withAiRoute<InventoryTurnoverMomentumTrackerInput>({
+  endpoint: '/api/ai/inventory-turnover-momentum-tracker',
+  maxDuration: 60,
+  enforceBudget: true, // AI klic — preveri budget
+  method: 'GET', // Endpoint sprejema GET + POST — bypass POST-only check
 
-async function handleInventoryTurnoverMomentumTracker(req: NextRequest) {
-  try {
-    const rl = checkRateLimit(req, 'ai-inventory-turnover-momentum-tracker', 20);
-    if (!rl.allowed) return rateLimitResponse(rl);
+  parseBody: async (req) => {
+    await req.json().catch(() => ({}));
+    return {};
+  },
+
+  // No validateInput — body ignored, identična logika za GET in POST
+  handler: async (_input, ctx: AiRouteContext) => {
+    const { db, callAi, parseAi, logger } = ctx;
 
     const now = Date.now();
     const cutoff12m = new Date(now - HORIZON_12M);
@@ -590,7 +774,7 @@ async function handleInventoryTurnoverMomentumTracker(req: NextRequest) {
 
     // Empty state
     if (activeMonths.length === 0) {
-      return NextResponse.json({
+      return apiOk({
         ok: true,
         momentum: {
           turnoverRateTrend: 0,
@@ -638,7 +822,7 @@ async function handleInventoryTurnoverMomentumTracker(req: NextRequest) {
     const cacheKey = `inventory-turnover-momentum-tracker:${currentMonth}`;
     const cached = getCachedAI<{ forecast: MomentumForecast; analysis: MomentumAnalysis; summary: string }>(cacheKey);
     if (cached) {
-      return NextResponse.json({
+      return apiOk({
         ok: true,
         momentum,
         monthlyData,
@@ -651,170 +835,20 @@ async function handleInventoryTurnoverMomentumTracker(req: NextRequest) {
     }
 
     // 6) AI prompt with grounding
-    const settings = await getSettingsRow();
-    const aiSettings: AiSettings = {
-      provider: settings.aiProvider as AiProviderType,
-      baseUrl: settings.aiBaseUrl,
-      apiKey: settings.aiApiKey,
-      model: settings.aiModel,
-      fallbackProvider: (settings.fallbackProvider || '') as
-        | AiProviderType
-        | '',
-      fallbackBaseUrl: settings.fallbackBaseUrl || '',
-      fallbackApiKey: settings.fallbackApiKey || '',
-      fallbackModel: settings.fallbackModel || '',
-    };
-
-    const promptData = {
-      momentum,
-      monthlyData: activeMonths,
-      context: { totalHeld, activeMonths: activeMonths.length },
-      deterministicBaseline: {
-        projectedTurnoverRate30d: deterministicForecast.projectedTurnoverRate30d,
-        projectedHoldDays30d: deterministicForecast.projectedHoldDays30d,
-        momentumSustainability: deterministicForecast.momentumSustainability,
-        momentumRiskLevel: deterministicForecast.momentumRiskLevel,
-      },
-      caps: {
-        turnoverMin: TURNOVER_MIN, turnoverMax: TURNOVER_MAX,
-        holdDaysMin: HOLD_DAYS_MIN, holdDaysMax: HOLD_DAYS_MAX,
-        sustainabilityMin: SUSTAINABILITY_MIN, sustainabilityMax: SUSTAINABILITY_MAX,
-        weightMin: WEIGHT_MIN, weightMax: WEIGHT_MAX,
-      },
-    };
-
-    const prompt = `Si AI "Inventory Turnover Momentum Tracker" za slovenske in srednjeevropske oglasne platforme (Bolha, Vinted, Facebook, Avtonet, mobile.de).
-Track-aš MOMENTUM (acceleration = 2nd derivative) inventory turnover-a — ali turnover pospešuje ali upada? Compute-aš acceleration of turnover rate in napoveš future turnover trajectory. Razlika od inventory-turnover-forecast (ki projicira turnover rate) — ti gledaš MOMENTUM (2nd derivative — pospešek turnover-a).
-
-DETERMINISTIČNI PODATKI (izračunano iz DB — zadnjih 12 mesecev SOLD + HELD trades):
-${JSON.stringify(promptData, null, 2)}
-
-PRAVILA ZA AI ODGOVOR:
-1. projectedTurnoverRate30d: number, clamped [0, 20], ±20% od deterministične (kakšna bo turnover rate v 30 dneh).
-2. projectedHoldDays30d: number, clamped [0, 180], ±15 od deterministične (povprečni hold days v 30 dneh).
-3. momentumSustainability: 0-100, ±15 od deterministične (kako dolgo bo trenutni momentum trajal).
-4. momentumAssessment: slovensko, max 500 znakov — opis turnover momentum trajektorije (ACCELERATING/STEADY/DECELERATING + drivers).
-5. momentumRiskLevel: LOW | MEDIUM | HIGH (risk da turnover ustavi).
-6. momentumDrivers: 1-3 { driver (max 100 chars), impact POSITIVE | NEGATIVE, weight 0-100, detail (max 200 chars) }.
-7. momentumInhibitors: 1-4 { inhibitor (max 200 chars), impact (max 200 chars), solution (max 200 chars) }.
-8. momentumActions: 1-4 { action (max 200 chars), priority HIGH | MEDIUM | LOW, expectedMomentumLift (max 200 chars) }.
-9. summary: slovenski povzetek (max 400 znakov). NE izmišljuj številk — uporabi deterministične.
-
-VRNI LE JSON:
-{
-  "projectedTurnoverRate30d": 3.8,
-  "projectedHoldDays30d": 22,
-  "momentumSustainability": 72,
-  "momentumAssessment": "Turnover momentum ACCELERATING — strength 72, trend +0.5/mesc, acceleration +0.2/mesc². 30d forecast: 3.8x turnover, 22d hold. Sustainable for ~4 months.",
-  "momentumRiskLevel": "LOW",
-  "momentumDrivers": [
-    { "driver": "Turnover rate trend", "impact": "POSITIVE", "weight": 85, "detail": "Mesečni turnover rate raste (+0.5/mesc)." }
-  ],
-  "momentumInhibitors": [
-    { "inhibitor": "Hold days se podaljšujejo v kategoriji X.", "impact": "Nižji turnover rate.", "solution": "Znižaj cene po 30 dneh hold-a." }
-  ],
-  "momentumActions": [
-    { "action": "Izkoristi momentum — povečaj inventory v najboljših kategorijah.", "priority": "HIGH", "expectedMomentumLift": "Podaljša ACCELERATING fazo za ~3 mesece." }
-  ],
-  "summary": "Turnover momentum: ACCELERATING (strength 72, +0.5/mo²). 30d forecast: 3.8x turnover, 22d hold. Sustainable for 4 months."
-}${GROUNDING_PROMPT_SUFFIX}`;
+    const promptData = buildPromptData(momentum, activeMonths, totalHeld, deterministicForecast);
+    const prompt = buildPrompt(promptData);
 
     let aiUsed = false;
 
     try {
-      const raw = await callProviderForRaw(aiSettings, prompt);
-      const parsed = parseJsonLooseExported(raw) as AiMomentumResponse | null;
+      const raw = await callAi(prompt);
+      const parsed = parseAi(raw) as AiMomentumResponse | null;
 
-      if (parsed && typeof parsed === 'object') {
-        const det = deterministicForecast;
-        const detAnalysis = deterministicAnalysis;
-
-        // Projected turnover rate — ±20% of deterministic
-        const detRate = det.projectedTurnoverRate30d;
-        const projRate = round1(
-          Math.max(TURNOVER_MIN, Math.min(TURNOVER_MAX,
-            detRate + Math.max(-Math.abs(detRate) * 0.2 - 0.2, Math.min(Math.abs(detRate) * 0.2 + 0.2,
-              (Number(parsed.projectedTurnoverRate30d ?? detRate)) - detRate)))),
-        );
-
-        // Projected hold days — ±15 of deterministic
-        const projHold = round0(
-          Math.max(HOLD_DAYS_MIN, Math.min(HOLD_DAYS_MAX,
-            det.projectedHoldDays30d + Math.max(-15, Math.min(15,
-              (Number(parsed.projectedHoldDays30d ?? det.projectedHoldDays30d)) - det.projectedHoldDays30d)))),
-        );
-
-        // Sustainability — ±15 of deterministic
-        const sustainability = round0(
-          Math.max(SUSTAINABILITY_MIN, Math.min(SUSTAINABILITY_MAX,
-            det.momentumSustainability + Math.max(-15, Math.min(15,
-              (Number(parsed.momentumSustainability ?? det.momentumSustainability)) - det.momentumSustainability)))),
-        );
-
-        const riskLevel = clampEnum(parsed.momentumRiskLevel, VALID_RISK_LEVEL, det.momentumRiskLevel);
-
-        // Drivers validation
-        const drivers: MomentumDriver[] = [];
-        if (Array.isArray(parsed.momentumDrivers)) {
-          for (const d of parsed.momentumDrivers.slice(0, 3)) {
-            if (!d || typeof d !== 'object') continue;
-            drivers.push({
-              driver: clampString(d.driver, 100, detAnalysis.momentumDrivers[0]?.driver ?? 'Driver'),
-              impact: clampEnum(d.impact, VALID_IMPACT, detAnalysis.momentumDrivers[0]?.impact ?? 'POSITIVE'),
-              weight: clampNum(d.weight, WEIGHT_MIN, WEIGHT_MAX, detAnalysis.momentumDrivers[0]?.weight ?? 50),
-              detail: clampString(d.detail, 200, detAnalysis.momentumDrivers[0]?.detail ?? 'Detail.'),
-            });
-          }
-        }
-        if (drivers.length === 0) {
-          for (const d of detAnalysis.momentumDrivers) drivers.push(d);
-        }
-
-        // Inhibitors validation
-        const inhibitors: MomentumInhibitor[] = [];
-        if (Array.isArray(parsed.momentumInhibitors)) {
-          for (const inh of parsed.momentumInhibitors.slice(0, 4)) {
-            if (!inh || typeof inh !== 'object') continue;
-            inhibitors.push({
-              inhibitor: clampString(inh.inhibitor, 200, detAnalysis.momentumInhibitors[0]?.inhibitor ?? 'Inhibitor'),
-              impact: clampString(inh.impact, 200, detAnalysis.momentumInhibitors[0]?.impact ?? 'Vpliv na momentum.'),
-              solution: clampString(inh.solution, 200, detAnalysis.momentumInhibitors[0]?.solution ?? 'Rešitev.'),
-            });
-          }
-        }
-        if (inhibitors.length === 0) {
-          for (const inh of detAnalysis.momentumInhibitors) inhibitors.push(inh);
-        }
-
-        // Actions validation
-        const actions: MomentumAction[] = [];
-        if (Array.isArray(parsed.momentumActions)) {
-          for (const a of parsed.momentumActions.slice(0, 4)) {
-            if (!a || typeof a !== 'object') continue;
-            actions.push({
-              action: clampString(a.action, 200, detAnalysis.momentumActions[0]?.action ?? 'Akcija'),
-              priority: clampEnum(a.priority, VALID_PRIORITY, detAnalysis.momentumActions[0]?.priority ?? 'MEDIUM'),
-              expectedMomentumLift: clampString(a.expectedMomentumLift, 200, detAnalysis.momentumActions[0]?.expectedMomentumLift ?? 'Izboljšava momentum-a.'),
-            });
-          }
-        }
-        if (actions.length === 0) {
-          for (const a of detAnalysis.momentumActions) actions.push(a);
-        }
-
-        forecast = {
-          projectedTurnoverRate30d: projRate,
-          projectedHoldDays30d: projHold,
-          momentumSustainability: sustainability,
-          momentumAssessment: clampString(parsed.momentumAssessment, 500, det.momentumAssessment),
-          momentumRiskLevel: riskLevel,
-        };
-        analysis = {
-          momentumDrivers: drivers.slice(0, 3),
-          momentumInhibitors: inhibitors.slice(0, 4),
-          momentumActions: actions.slice(0, 4),
-        };
-        summary = clampString(parsed.summary, 400, buildDeterministicSummary(momentum, forecast));
+      const result = mergeAiIntoMomentum(parsed, momentum, deterministicForecast, deterministicAnalysis);
+      if (result.aiUsed) {
+        forecast = result.forecast;
+        analysis = result.analysis;
+        summary = result.summary;
         aiUsed = true;
       }
     } catch (err) {
@@ -830,7 +864,7 @@ VRNI LE JSON:
       setCachedAI(cacheKey, { forecast, analysis, summary });
     }
 
-    return NextResponse.json({
+    return apiOk({
       ok: true,
       momentum,
       monthlyData,
@@ -839,18 +873,11 @@ VRNI LE JSON:
       summary,
       aiUsed,
     });
-  } catch (err: any) {
-    logger.error(
-      '/api/ai/inventory-turnover-momentum-tracker',
-      'handler failed',
-      err,
-    );
-    return NextResponse.json(
-      { error: err?.message ?? 'Napaka' },
-      { status: 500 },
-    );
-  }
-}
+  },
+});
+
+export const GET = inventoryTurnoverMomentumTrackerHandler;
+export const POST = inventoryTurnoverMomentumTrackerHandler;
 
 function buildDeterministicSummary(
   momentum: TurnoverMomentum,

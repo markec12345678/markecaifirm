@@ -1,4 +1,4 @@
-// v8.00: AI Deal Source ROI Maximizer — AI maksimizira ROI PERCENTAGE per
+// v8.00 / v8.96.7-batch2: AI Deal Source ROI Maximizer — AI maksimizira ROI PERCENTAGE per
 // deal source — kateri source-i dajejo najvišji ROI in kako iz njih izvleči
 // MAXIMUM ROI %. Razlika od deal-source-profit-maximizer (v7.97 ki maksimizira
 // TOTAL PROFIT per source) — ta maksimizira ROI PERCENTAGE per source (koliko %
@@ -23,24 +23,20 @@
 
 // GET+POST /api/ai/deal-source-roi-maximizer
 // (AI-enhanced + grounding + anti-hallucination + 6h cache + deterministic fallback)
+// Refaktoriran z withAiRoute helperjem (v8.96.7) + enforceBudget guard.
 
-import { NextRequest, NextResponse } from 'next/server';
-import { db } from '@/lib/db';
-import { getSettingsRow } from '@/lib/pipeline';
-import {
-  callProviderForRaw,
-  parseJsonLooseExported,
-  type AiProviderType,
-  type AiSettings,
-} from '@/lib/ai';
+import { withAiRoute, AI_ROUTE_DEFAULTS, type AiRouteContext } from '@/lib/with-ai-route';
+import { apiOk } from '@/lib/api-response';
 import { GROUNDING_PROMPT_SUFFIX } from '@/lib/anti-hallucination';
 import { getCachedAI, setCachedAI } from '@/lib/ai-cache';
-import { checkRateLimit, rateLimitResponse } from '@/lib/rate-limit';
-import { logger } from '@/lib/logger';
 
-export const runtime = 'nodejs';
-export const dynamic = 'force-dynamic';
+export const { runtime, dynamic } = AI_ROUTE_DEFAULTS;
 export const maxDuration = 60;
+
+// --- Input ----------------------------------------------------------------
+
+// eslint-disable-next-line @typescript-eslint/no-empty-object-type
+interface DealSourceRoiMaximizerInput {}
 
 // --- Types ---------------------------------------------------------------
 
@@ -651,17 +647,20 @@ function buildSummary(
 
 // --- Handler -------------------------------------------------------------
 
-export async function GET(req: NextRequest) {
-  return handleDealSourceRoiMaximizer(req);
-}
-export async function POST(req: NextRequest) {
-  return handleDealSourceRoiMaximizer(req);
-}
+const dealSourceRoiMaximizerHandler = withAiRoute<DealSourceRoiMaximizerInput>({
+  endpoint: '/api/ai/deal-source-roi-maximizer',
+  maxDuration: 60,
+  enforceBudget: true, // AI klic — preveri budget
+  method: 'GET', // Endpoint sprejema GET + POST — bypass POST-only check
 
-async function handleDealSourceRoiMaximizer(req: NextRequest) {
-  try {
-    const rl = checkRateLimit(req, 'ai-deal-source-roi-maximizer', 20);
-    if (!rl.allowed) return rateLimitResponse(rl);
+  parseBody: async (req) => {
+    await req.json().catch(() => ({}));
+    return {};
+  },
+
+  // No validateInput — body ignored, identična logika za GET in POST
+  handler: async (_input, ctx: AiRouteContext) => {
+    const { db, callAi, parseAi, logger } = ctx;
 
     const now = Date.now();
     const twelveMonthsAgo = new Date(now - TWELVE_MONTHS_MS);
@@ -695,7 +694,7 @@ async function handleDealSourceRoiMaximizer(req: NextRequest) {
 
     // Empty-state: no SOLD trades
     if (soldTrades.length === 0) {
-      return NextResponse.json({
+      return apiOk({
         ok: true,
         sources: [],
         portfolio: {
@@ -719,7 +718,7 @@ async function handleDealSourceRoiMaximizer(req: NextRequest) {
     }
 
     if (computed.length === 0) {
-      return NextResponse.json({
+      return apiOk({
         ok: true,
         sources: [],
         portfolio: {
@@ -751,7 +750,7 @@ async function handleDealSourceRoiMaximizer(req: NextRequest) {
       summary: string;
     }>(cacheKey);
     if (cached) {
-      return NextResponse.json({
+      return apiOk({
         ok: true,
         sources: cached.sources,
         portfolio: cached.portfolio,
@@ -762,20 +761,6 @@ async function handleDealSourceRoiMaximizer(req: NextRequest) {
     }
 
     // 4) AI prompt with grounding
-    const settings = await getSettingsRow();
-    const aiSettings: AiSettings = {
-      provider: settings.aiProvider as AiProviderType,
-      baseUrl: settings.aiBaseUrl,
-      apiKey: settings.aiApiKey,
-      model: settings.aiModel,
-      fallbackProvider: (settings.fallbackProvider || '') as
-        | AiProviderType
-        | '',
-      fallbackBaseUrl: settings.fallbackBaseUrl || '',
-      fallbackApiKey: settings.fallbackApiKey || '',
-      fallbackModel: settings.fallbackModel || '',
-    };
-
     // Compact context for AI
     const sourcesForAI = entries.map((e) => ({
       source: e.source,
@@ -849,8 +834,8 @@ VRNI LE JSON:
     let aiUsed = false;
 
     try {
-      const raw = await callProviderForRaw(aiSettings, prompt);
-      const parsed = parseJsonLooseExported(raw) as AiResponse | null;
+      const raw = await callAi(prompt);
+      const parsed = parseAi(raw) as AiResponse | null;
 
       if (parsed && typeof parsed === 'object') {
         const detBySource = new Map<string, SourceEntry>();
@@ -974,22 +959,15 @@ VRNI LE JSON:
       setCachedAI(cacheKey, { sources: entries, portfolio, summary });
     }
 
-    return NextResponse.json({
+    return apiOk({
       ok: true,
       sources: entries,
       portfolio,
       summary,
       aiUsed,
     } satisfies DealSourceRoiResponse);
-  } catch (err: any) {
-    logger.error(
-      '/api/ai/deal-source-roi-maximizer',
-      'handler failed',
-      err,
-    );
-    return NextResponse.json(
-      { error: err?.message ?? 'Napaka' },
-      { status: 500 },
-    );
-  }
-}
+  },
+});
+
+export const GET = dealSourceRoiMaximizerHandler;
+export const POST = dealSourceRoiMaximizerHandler;

@@ -29,24 +29,20 @@
 
 // GET+POST /api/ai/profit-compounding-maximizer
 // (AI-enhanced + grounding + anti-hallucination + 6h cache + deterministic fallback)
+// Refaktoriran z withAiRoute helperjem (v8.96.7) + enforceBudget guard.
 
-import { NextRequest, NextResponse } from 'next/server';
-import { db } from '@/lib/db';
-import { getSettingsRow } from '@/lib/pipeline';
-import {
-  callProviderForRaw,
-  parseJsonLooseExported,
-  type AiProviderType,
-  type AiSettings,
-} from '@/lib/ai';
+import { withAiRoute, AI_ROUTE_DEFAULTS, type AiRouteContext } from '@/lib/with-ai-route';
+import { apiOk } from '@/lib/api-response';
 import { GROUNDING_PROMPT_SUFFIX } from '@/lib/anti-hallucination';
 import { getCachedAI, setCachedAI } from '@/lib/ai-cache';
-import { checkRateLimit, rateLimitResponse } from '@/lib/rate-limit';
-import { logger } from '@/lib/logger';
 
-export const runtime = 'nodejs';
-export const dynamic = 'force-dynamic';
+export const { runtime, dynamic } = AI_ROUTE_DEFAULTS;
 export const maxDuration = 60;
+
+// --- Input ----------------------------------------------------------------
+
+// eslint-disable-next-line @typescript-eslint/no-empty-object-type
+interface ProfitCompoundingMaximizerInput {}
 
 // --- Types ---------------------------------------------------------------
 
@@ -578,19 +574,304 @@ function buildSummary(current: CurrentState, max: CompoundingMaximization): stri
   return parts.join(' ').slice(0, 400);
 }
 
+// --- Extracted prompt helpers (pure, testable) ---------------------------
+
+function buildPromptData(
+  agg: SoldAgg,
+  heldCapital: number,
+  current: CurrentState,
+  maximization: CompoundingMaximization,
+): unknown {
+  return {
+    soldCount12m: agg.count12m,
+    heldInventoryCapital: heldCapital,
+    current,
+    deterministicMaximization: {
+      compoundingScenarios: maximization.compoundingScenarios,
+      optimalReinvestRate: maximization.optimalReinvestRate,
+      linearVsCompounding: maximization.linearVsCompounding,
+      compoundingGrade: maximization.compoundingGrade,
+      breakEvenTime: maximization.breakEvenTime,
+    },
+    caps: {
+      profitMin: PROFIT_MIN, profitMax: PROFIT_MAX,
+      capitalMin: CAPITAL_MIN, capitalMax: CAPITAL_MAX,
+      rateMin: RATE_MIN, rateMax: RATE_MAX,
+      reinvestMin: REINVEST_MIN, reinvestMax: REINVEST_MAX,
+      growthMin: GROWTH_MIN, growthMax: GROWTH_MAX,
+      multiplierMin: MULTIPLIER_MIN, multiplierMax: MULTIPLIER_MAX,
+      roiMin: ROI_MIN, roiMax: ROI_MAX,
+      cycleMin: CYCLE_MIN, cycleMax: CYCLE_MAX,
+    },
+  };
+}
+
+function buildPrompt(promptData: unknown): string {
+  return `Si AI "Profit Compounding Maximizer" za slovenske in srednjeevropske oglasne platforme (Bolha, Vinted, Avtonet, mobile.de).
+Si strokovnjak za COMPOUNDING EFFECT MAXIMIZATION — kako maksimizirati COMPOUNDING reinvestiranega profita za EXPONENTIAL growth. Tvoj cilj je "če reinvestiraš 80% profita pri 25% ROI per cycle, tvojih 1000€ postane 9536€ v 12 ciklih — vs 4000€ z linear growth". Razlika od capital-growth-maximizer (v7.99 ki maksimizira compounding capital growth z growth rate) — ti MAKSIMIZIRAŠ COMPOUNDING EFFECT z reinvestRate scenarios (50%/60%/70%/80%/90%/100%) in optimalReinvestRate. Razlika od profit-scale-engine (v8.02 ki SCALE-A cel business z phased plan) — ti maksimiziraš COMPOUNDING z reinvestRate optimization. Razlika od profit-horizon-maximizer (v8.03 ki maksimizira profit per horizon) — ti maksimiziraš COMPOUNDING z linearVsCompounding comparison in breakEvenTime. Razlika od profit-multiplier-engine (v8.00 ki multiplicira profit z 8 levers) — ti fokusiraš na COMPOUNDING reinvest rate optimization z month-by-month 24m projection. Razlika od revenue-growth-maximizer (v8.01 ki maksimizira REVENUE growth) — ti maksimiziraš COMPOUNDING PROFIT (bottom-line) z exponential growth projection. Razlika od profit-velocity-maximizer (v7.98 ki maksimizira €/day velocity) — ti daje COMPOUNDING view z compoundingMultiplier in breakEvenTime. Razlika od inventory-yield-maximizer (v8.03 ki maksimizira yield per item) — ti maksimiziraš COMPOUNDING čez cel portfolio z reinvest scenarios.
+
+DETERMINISTIČNI PODATKI (izračunano iz DB — SOLD trgovin v zadnjih 12 mesecih + HELD inventarja):
+${JSON.stringify(promptData, null, 2)}
+
+PRAVILA ZA AI ODGOVOR:
+1. compoundingScenarios: 6 elementi za reinvestRate 50%, 60%, 70%, 80%, 90%, 100% — za vsak:
+   - reinvestRate [50, 100] (MORA biti ena od 6 vrednosti),
+   - monthlyGrowthRate % [0, 200] (= (reinvestRate/100) × (avgROI/100) × (30/cycleTime) × 100),
+   - projectedCapital12m € [0, 1000000] (startingCapital × (1 + monthlyGrowthRate/100)^12 — anti-hallucination, ≤ startingCapital × 100),
+   - projectedProfit12m € [0, 1000000] (≥ projectedCapital12m - startingCapital),
+   - compoundingMultiplier x [1.0, 100.0] (= projectedCapital12m / startingCapital — anti-hallucination, ≤ 100),
+2. optimalReinvestRate % [50, 100] (best reinvest rate za max capital growth while maintaining cash flow),
+3. maximizedCompoundingProjection: 24 elementov { month 1-24, capitalStart € [0, 1000000], profit € [0, 1000000], reinvested € [0, 1000000], cashFlow € [0, 1000000], capitalEnd € [0, 1000000] } — month-by-month 24m projection at optimal reinvest rate,
+4. linearVsCompounding: { linear12mProfit € [0, 1000000], compounding12mProfit € [0, 1000000], advantageMultiple x [1.0, 100.0], breakEvenMonth [1, 24] (month where compounding overtakes linear) },
+5. compoundingAccelerationActions: 4-8 stringov (max 200 vsak, slovenski — kako izboljšati compounding: faster cycles, higher ROI, higher reinvest rate, capital injection, automation, cross-platform, VA team, reinvest discipline),
+6. compoundingGrade: A+ | A | B | C | D | F (A+ če multiplier ≥ 8x ali advantage ≥ 5x, A ≥ 5/3, B ≥ 3/2, C ≥ 2/1.5, D ≥ 1.5/1.2, else F),
+7. breakEvenTime: month [1, 24] (crossover point — month where compounding overtakes linear),
+8. summary: slovenski povzetek (max 400 znakov).
+
+VRNI LE JSON:
+{
+  "compoundingScenarios": [
+    { "reinvestRate": 80, "monthlyGrowthRate": 18.5, "projectedCapital12m": 28500, "projectedProfit12m": 27000, "compoundingMultiplier": 9.5 }
+  ],
+  "optimalReinvestRate": 80,
+  "maximizedCompoundingProjection": [
+    { "month": 1, "capitalStart": 1000, "profit": 150, "reinvested": 120, "cashFlow": 30, "capitalEnd": 1120 }
+  ],
+  "linearVsCompounding": {
+    "linear12mProfit": 18000, "compounding12mProfit": 82500, "advantageMultiple": 4.6, "breakEvenMonth": 3
+  },
+  "compoundingAccelerationActions": ["Dvigni reinvest rate iz 20% na 80%.", "Skrajšaj cycle time za 30%."],
+  "compoundingGrade": "B",
+  "breakEvenTime": 3,
+  "summary": "Current: 1500€/mo, 20% reinvest. Optimal: 80% → 28500€ v 12m (9.5x). Linear vs compounding: 18000€ vs 82500€ (4.6x). Grade B. Break-even M3."
+}${GROUNDING_PROMPT_SUFFIX}`;
+}
+
+interface MergeAiResult {
+  maximization: CompoundingMaximization;
+  summary: string;
+  aiUsed: boolean;
+}
+
+function mergeAiIntoMaximization(
+  parsed: AiResponse | null,
+  current: CurrentState,
+  detMax: CompoundingMaximization,
+  detSummary: string,
+): MergeAiResult {
+  let maximization = detMax;
+  let summary = detSummary;
+  let aiUsed = false;
+
+  if (!parsed || typeof parsed !== 'object') {
+    return { maximization, summary, aiUsed };
+  }
+
+  // Override compoundingScenarios if AI provided all 6
+  if (Array.isArray(parsed.compoundingScenarios) &&
+      parsed.compoundingScenarios.length >= 5) {
+    const aiScenarios: CompoundingScenario[] = [];
+    const detByRate = new Map<number, CompoundingScenario>();
+    for (const s of maximization.compoundingScenarios) detByRate.set(s.reinvestRate, s);
+
+    for (const ai of parsed.compoundingScenarios.slice(0, REINVEST_RATES.length)) {
+      if (!ai || typeof ai !== 'object') continue;
+      const reinvestRate = round0(clampNum(
+        ai.reinvestRate,
+        REINVEST_MIN, REINVEST_MAX, 80,
+      ));
+      // Snap to nearest valid rate
+      const nearest = REINVEST_RATES.reduce((prev, curr) =>
+        Math.abs(curr - reinvestRate) < Math.abs(prev - reinvestRate) ? curr : prev,
+      );
+      const det = detByRate.get(nearest);
+      if (!det) continue;
+
+      const monthlyGrowthRate = round2(clampNum(
+        ai.monthlyGrowthRate,
+        GROWTH_MIN, GROWTH_MAX, det.monthlyGrowthRate,
+      ));
+      // Anti-hallucination: projectedCapital12m ∈ [startingCapital, startingCapital × 100]
+      const minCap = current.startingCapital;
+      const maxCap = Math.min(CAPITAL_MAX, current.startingCapital * 100);
+      const projectedCapital12m = round0(clampNum(
+        ai.projectedCapital12m,
+        minCap, maxCap, det.projectedCapital12m,
+      ));
+      const projectedProfit12m = round0(clampNum(
+        ai.projectedProfit12m,
+        Math.max(0, projectedCapital12m - current.startingCapital),
+        PROFIT_MAX, det.projectedProfit12m,
+      ));
+      const compoundingMultiplier = round2(clampNum(
+        ai.compoundingMultiplier,
+        MULTIPLIER_MIN, MULTIPLIER_MAX, det.compoundingMultiplier,
+      ));
+
+      aiScenarios.push({
+        reinvestRate: nearest,
+        monthlyGrowthRate,
+        projectedCapital12m,
+        projectedProfit12m,
+        compoundingMultiplier,
+      });
+    }
+    // Ensure all 6 rates present
+    const coveredRates = new Set(aiScenarios.map((s) => s.reinvestRate));
+    for (const rate of REINVEST_RATES) {
+      if (!coveredRates.has(rate)) {
+        const det = detByRate.get(rate);
+        if (det) aiScenarios.push(det);
+      }
+    }
+    // Sort by reinvestRate asc
+    aiScenarios.sort((a, b) => a.reinvestRate - b.reinvestRate);
+    if (aiScenarios.length === REINVEST_RATES.length) {
+      maximization = { ...maximization, compoundingScenarios: aiScenarios };
+    }
+  }
+
+  // Override optimalReinvestRate
+  if (parsed.optimalReinvestRate !== undefined) {
+    const aiOptimal = round0(clampNum(
+      parsed.optimalReinvestRate,
+      REINVEST_MIN, REINVEST_MAX, maximization.optimalReinvestRate,
+    ));
+    // Snap to nearest valid rate
+    const nearest = REINVEST_RATES.reduce((prev, curr) =>
+      Math.abs(curr - aiOptimal) < Math.abs(prev - aiOptimal) ? curr : prev,
+    );
+    maximization = { ...maximization, optimalReinvestRate: nearest };
+  }
+
+  // Override maximizedCompoundingProjection if AI provided 12+
+  if (Array.isArray(parsed.maximizedCompoundingProjection) &&
+      parsed.maximizedCompoundingProjection.length >= 12) {
+    const aiProj: MonthlyProjectionPoint[] = [];
+    let lastCapitalEnd = current.startingCapital;
+    for (const p of parsed.maximizedCompoundingProjection.slice(0, 24)) {
+      if (!p || typeof p !== 'object') continue;
+      const month = round0(clampNum(p.month, MONTH_MIN, MONTH_MAX, aiProj.length + 1));
+      const capitalStart = round0(clampNum(
+        p.capitalStart ?? lastCapitalEnd,
+        CAPITAL_MIN, CAPITAL_MAX, lastCapitalEnd,
+      ));
+      const profit = round0(clampNum(p.profit, PROFIT_MIN, PROFIT_MAX, 0));
+      const reinvested = round0(clampNum(
+        p.reinvested,
+        0, Math.max(profit, PROFIT_MAX), 0,
+      ));
+      const cashFlow = round0(clampNum(
+        p.cashFlow,
+        0, Math.max(profit, PROFIT_MAX), 0,
+      ));
+      const capitalEnd = round0(clampNum(
+        p.capitalEnd ?? (capitalStart + reinvested),
+        CAPITAL_MIN, CAPITAL_MAX, capitalStart + reinvested,
+      ));
+      aiProj.push({
+        month,
+        capitalStart,
+        profit,
+        reinvested,
+        cashFlow,
+        capitalEnd,
+      });
+      lastCapitalEnd = capitalEnd;
+    }
+    if (aiProj.length >= 12) {
+      aiProj.sort((a, b) => a.month - b.month);
+      maximization = { ...maximization, maximizedCompoundingProjection: aiProj };
+    }
+  }
+
+  // Override linearVsCompounding
+  if (parsed.linearVsCompounding && typeof parsed.linearVsCompounding === 'object') {
+    const lvc = parsed.linearVsCompounding;
+    const detLvc = maximization.linearVsCompounding;
+    const linear12mProfit = round0(clampNum(
+      lvc.linear12mProfit,
+      PROFIT_MIN, PROFIT_MAX, detLvc.linear12mProfit,
+    ));
+    const compounding12mProfit = round0(clampNum(
+      lvc.compounding12mProfit,
+      Math.max(0, linear12mProfit), // compounding ≥ linear in 12m
+      PROFIT_MAX, detLvc.compounding12mProfit,
+    ));
+    const advantageMultiple = round2(clampNum(
+      lvc.advantageMultiple,
+      MULTIPLIER_MIN, MULTIPLIER_MAX, detLvc.advantageMultiple,
+    ));
+    const breakEvenMonth = round0(clampNum(
+      lvc.breakEvenMonth,
+      1, 24, detLvc.breakEvenMonth,
+    ));
+    maximization = {
+      ...maximization,
+      linearVsCompounding: {
+        linear12mProfit,
+        compounding12mProfit,
+        advantageMultiple,
+        breakEvenMonth,
+      },
+      breakEvenTime: breakEvenMonth,
+    };
+  }
+
+  // Override compoundingAccelerationActions
+  if (Array.isArray(parsed.compoundingAccelerationActions) &&
+      parsed.compoundingAccelerationActions.length >= 3) {
+    const aiActions = parsed.compoundingAccelerationActions
+      .slice(0, MAX_ACTIONS)
+      .map((a) => clampString(a, 200, 'Pospeši compounding.'))
+      .filter((s) => s.length > 0);
+    if (aiActions.length >= 3) {
+      maximization = { ...maximization, compoundingAccelerationActions: aiActions };
+    }
+  }
+
+  // Override compoundingGrade
+  if (parsed.compoundingGrade) {
+    const grade = clampEnum(parsed.compoundingGrade, VALID_GRADE, maximization.compoundingGrade);
+    maximization = { ...maximization, compoundingGrade: grade };
+  } else {
+    // Recompute grade based on updated scenarios
+    const optimalScenario = maximization.compoundingScenarios.find(
+      (s) => s.reinvestRate === maximization.optimalReinvestRate,
+    );
+    maximization = {
+      ...maximization,
+      compoundingGrade: decideGrade(optimalScenario, maximization.linearVsCompounding.advantageMultiple),
+    };
+  }
+
+  // Override breakEvenTime
+  if (parsed.breakEvenTime !== undefined) {
+    const bet = round0(clampNum(parsed.breakEvenTime, 1, 24, maximization.breakEvenTime));
+    maximization = { ...maximization, breakEvenTime: bet };
+  }
+
+  summary = clampString(parsed.summary, 400, buildSummary(current, maximization));
+  aiUsed = true;
+  return { maximization, summary, aiUsed };
+}
+
 // --- Handler -------------------------------------------------------------
 
-export async function GET(req: NextRequest) {
-  return handleProfitCompoundingMaximizer(req);
-}
-export async function POST(req: NextRequest) {
-  return handleProfitCompoundingMaximizer(req);
-}
+const profitCompoundingMaximizerHandler = withAiRoute<ProfitCompoundingMaximizerInput>({
+  endpoint: '/api/ai/profit-compounding-maximizer',
+  maxDuration: 60,
+  enforceBudget: true, // AI klic — preveri budget
+  method: 'GET', // Endpoint sprejema GET + POST — bypass POST-only check
 
-async function handleProfitCompoundingMaximizer(req: NextRequest) {
-  try {
-    const rl = checkRateLimit(req, 'ai-profit-compounding-maximizer', 20);
-    if (!rl.allowed) return rateLimitResponse(rl);
+  parseBody: async (req) => {
+    await req.json().catch(() => ({}));
+    return {};
+  },
+
+  // No validateInput — body ignored, identična logika za GET in POST
+  handler: async (_input, ctx: AiRouteContext) => {
+    const { db, callAi, parseAi, logger } = ctx;
 
     const now = Date.now();
     const twelveMonthsAgo = new Date(now - TWELVE_MONTHS_MS);
@@ -629,7 +910,7 @@ async function handleProfitCompoundingMaximizer(req: NextRequest) {
     // Empty-state: no SOLD trades
     const heldCapital = heldTrades.reduce((s, h) => s + (h.buyPrice ?? 0) + (h.buyFees ?? 0), 0);
     if (soldTrades.length === 0) {
-      return NextResponse.json({
+      return apiOk({
         ok: true,
         current: {
           currentMonthlyProfit: 0,
@@ -678,7 +959,7 @@ async function handleProfitCompoundingMaximizer(req: NextRequest) {
       summary: string;
     }>(cacheKey);
     if (cached) {
-      return NextResponse.json({
+      return apiOk({
         ok: true,
         current,
         maximization: cached.maximization,
@@ -689,276 +970,19 @@ async function handleProfitCompoundingMaximizer(req: NextRequest) {
     }
 
     // 4) AI prompt with grounding
-    const settings = await getSettingsRow();
-    const aiSettings: AiSettings = {
-      provider: settings.aiProvider as AiProviderType,
-      baseUrl: settings.aiBaseUrl,
-      apiKey: settings.aiApiKey,
-      model: settings.aiModel,
-      fallbackProvider: (settings.fallbackProvider || '') as
-        | AiProviderType
-        | '',
-      fallbackBaseUrl: settings.fallbackBaseUrl || '',
-      fallbackApiKey: settings.fallbackApiKey || '',
-      fallbackModel: settings.fallbackModel || '',
-    };
-
-    const promptData = {
-      soldCount12m: agg.count12m,
-      heldInventoryCapital: heldCapital,
-      current,
-      deterministicMaximization: {
-        compoundingScenarios: maximization.compoundingScenarios,
-        optimalReinvestRate: maximization.optimalReinvestRate,
-        linearVsCompounding: maximization.linearVsCompounding,
-        compoundingGrade: maximization.compoundingGrade,
-        breakEvenTime: maximization.breakEvenTime,
-      },
-      caps: {
-        profitMin: PROFIT_MIN, profitMax: PROFIT_MAX,
-        capitalMin: CAPITAL_MIN, capitalMax: CAPITAL_MAX,
-        rateMin: RATE_MIN, rateMax: RATE_MAX,
-        reinvestMin: REINVEST_MIN, reinvestMax: REINVEST_MAX,
-        growthMin: GROWTH_MIN, growthMax: GROWTH_MAX,
-        multiplierMin: MULTIPLIER_MIN, multiplierMax: MULTIPLIER_MAX,
-        roiMin: ROI_MIN, roiMax: ROI_MAX,
-        cycleMin: CYCLE_MIN, cycleMax: CYCLE_MAX,
-      },
-    };
-
-    const prompt = `Si AI "Profit Compounding Maximizer" za slovenske in srednjeevropske oglasne platforme (Bolha, Vinted, Avtonet, mobile.de).
-Si strokovnjak za COMPOUNDING EFFECT MAXIMIZATION — kako maksimizirati COMPOUNDING reinvestiranega profita za EXPONENTIAL growth. Tvoj cilj je "če reinvestiraš 80% profita pri 25% ROI per cycle, tvojih 1000€ postane 9536€ v 12 ciklih — vs 4000€ z linear growth". Razlika od capital-growth-maximizer (v7.99 ki maksimizira compounding capital growth z growth rate) — ti MAKSIMIZIRAŠ COMPOUNDING EFFECT z reinvestRate scenarios (50%/60%/70%/80%/90%/100%) in optimalReinvestRate. Razlika od profit-scale-engine (v8.02 ki SCALE-A cel business z phased plan) — ti maksimiziraš COMPOUNDING z reinvestRate optimization. Razlika od profit-horizon-maximizer (v8.03 ki maksimizira profit per horizon) — ti maksimiziraš COMPOUNDING z linearVsCompounding comparison in breakEvenTime. Razlika od profit-multiplier-engine (v8.00 ki multiplicira profit z 8 levers) — ti fokusiraš na COMPOUNDING reinvest rate optimization z month-by-month 24m projection. Razlika od revenue-growth-maximizer (v8.01 ki maksimizira REVENUE growth) — ti maksimiziraš COMPOUNDING PROFIT (bottom-line) z exponential growth projection. Razlika od profit-velocity-maximizer (v7.98 ki maksimizira €/day velocity) — ti daje COMPOUNDING view z compoundingMultiplier in breakEvenTime. Razlika od inventory-yield-maximizer (v8.03 ki maksimizira yield per item) — ti maksimiziraš COMPOUNDING čez cel portfolio z reinvest scenarios.
-
-DETERMINISTIČNI PODATKI (izračunano iz DB — SOLD trgovin v zadnjih 12 mesecih + HELD inventarja):
-${JSON.stringify(promptData, null, 2)}
-
-PRAVILA ZA AI ODGOVOR:
-1. compoundingScenarios: 6 elementi za reinvestRate 50%, 60%, 70%, 80%, 90%, 100% — za vsak:
-   - reinvestRate [50, 100] (MORA biti ena od 6 vrednosti),
-   - monthlyGrowthRate % [0, 200] (= (reinvestRate/100) × (avgROI/100) × (30/cycleTime) × 100),
-   - projectedCapital12m € [0, 1000000] (startingCapital × (1 + monthlyGrowthRate/100)^12 — anti-hallucination, ≤ startingCapital × 100),
-   - projectedProfit12m € [0, 1000000] (≥ projectedCapital12m - startingCapital),
-   - compoundingMultiplier x [1.0, 100.0] (= projectedCapital12m / startingCapital — anti-hallucination, ≤ 100),
-2. optimalReinvestRate % [50, 100] (best reinvest rate za max capital growth while maintaining cash flow),
-3. maximizedCompoundingProjection: 24 elementov { month 1-24, capitalStart € [0, 1000000], profit € [0, 1000000], reinvested € [0, 1000000], cashFlow € [0, 1000000], capitalEnd € [0, 1000000] } — month-by-month 24m projection at optimal reinvest rate,
-4. linearVsCompounding: { linear12mProfit € [0, 1000000], compounding12mProfit € [0, 1000000], advantageMultiple x [1.0, 100.0], breakEvenMonth [1, 24] (month where compounding overtakes linear) },
-5. compoundingAccelerationActions: 4-8 stringov (max 200 vsak, slovenski — kako izboljšati compounding: faster cycles, higher ROI, higher reinvest rate, capital injection, automation, cross-platform, VA team, reinvest discipline),
-6. compoundingGrade: A+ | A | B | C | D | F (A+ če multiplier ≥ 8x ali advantage ≥ 5x, A ≥ 5/3, B ≥ 3/2, C ≥ 2/1.5, D ≥ 1.5/1.2, else F),
-7. breakEvenTime: month [1, 24] (crossover point — month where compounding overtakes linear),
-8. summary: slovenski povzetek (max 400 znakov).
-
-VRNI LE JSON:
-{
-  "compoundingScenarios": [
-    { "reinvestRate": 80, "monthlyGrowthRate": 18.5, "projectedCapital12m": 28500, "projectedProfit12m": 27000, "compoundingMultiplier": 9.5 }
-  ],
-  "optimalReinvestRate": 80,
-  "maximizedCompoundingProjection": [
-    { "month": 1, "capitalStart": 1000, "profit": 150, "reinvested": 120, "cashFlow": 30, "capitalEnd": 1120 }
-  ],
-  "linearVsCompounding": {
-    "linear12mProfit": 18000, "compounding12mProfit": 82500, "advantageMultiple": 4.6, "breakEvenMonth": 3
-  },
-  "compoundingAccelerationActions": ["Dvigni reinvest rate iz 20% na 80%.", "Skrajšaj cycle time za 30%."],
-  "compoundingGrade": "B",
-  "breakEvenTime": 3,
-  "summary": "Current: 1500€/mo, 20% reinvest. Optimal: 80% → 28500€ v 12m (9.5x). Linear vs compounding: 18000€ vs 82500€ (4.6x). Grade B. Break-even M3."
-}${GROUNDING_PROMPT_SUFFIX}`;
+    const promptData = buildPromptData(agg, heldCapital, current, maximization);
+    const prompt = buildPrompt(promptData);
 
     let aiUsed = false;
 
     try {
-      const raw = await callProviderForRaw(aiSettings, prompt);
-      const parsed = parseJsonLooseExported(raw) as AiResponse | null;
+      const raw = await callAi(prompt);
+      const parsed = parseAi(raw) as AiResponse | null;
 
-      if (parsed && typeof parsed === 'object') {
-        // Override compoundingScenarios if AI provided all 6
-        if (Array.isArray(parsed.compoundingScenarios) &&
-            parsed.compoundingScenarios.length >= 5) {
-          const aiScenarios: CompoundingScenario[] = [];
-          const detByRate = new Map<number, CompoundingScenario>();
-          for (const s of maximization.compoundingScenarios) detByRate.set(s.reinvestRate, s);
-
-          for (const ai of parsed.compoundingScenarios.slice(0, REINVEST_RATES.length)) {
-            if (!ai || typeof ai !== 'object') continue;
-            const reinvestRate = round0(clampNum(
-              ai.reinvestRate,
-              REINVEST_MIN, REINVEST_MAX, 80,
-            ));
-            // Snap to nearest valid rate
-            const nearest = REINVEST_RATES.reduce((prev, curr) =>
-              Math.abs(curr - reinvestRate) < Math.abs(prev - reinvestRate) ? curr : prev,
-            );
-            const det = detByRate.get(nearest);
-            if (!det) continue;
-
-            const monthlyGrowthRate = round2(clampNum(
-              ai.monthlyGrowthRate,
-              GROWTH_MIN, GROWTH_MAX, det.monthlyGrowthRate,
-            ));
-            // Anti-hallucination: projectedCapital12m ∈ [startingCapital, startingCapital × 100]
-            const minCap = current.startingCapital;
-            const maxCap = Math.min(CAPITAL_MAX, current.startingCapital * 100);
-            const projectedCapital12m = round0(clampNum(
-              ai.projectedCapital12m,
-              minCap, maxCap, det.projectedCapital12m,
-            ));
-            const projectedProfit12m = round0(clampNum(
-              ai.projectedProfit12m,
-              Math.max(0, projectedCapital12m - current.startingCapital),
-              PROFIT_MAX, det.projectedProfit12m,
-            ));
-            const compoundingMultiplier = round2(clampNum(
-              ai.compoundingMultiplier,
-              MULTIPLIER_MIN, MULTIPLIER_MAX, det.compoundingMultiplier,
-            ));
-
-            aiScenarios.push({
-              reinvestRate: nearest,
-              monthlyGrowthRate,
-              projectedCapital12m,
-              projectedProfit12m,
-              compoundingMultiplier,
-            });
-          }
-          // Ensure all 6 rates present
-          const coveredRates = new Set(aiScenarios.map((s) => s.reinvestRate));
-          for (const rate of REINVEST_RATES) {
-            if (!coveredRates.has(rate)) {
-              const det = detByRate.get(rate);
-              if (det) aiScenarios.push(det);
-            }
-          }
-          // Sort by reinvestRate asc
-          aiScenarios.sort((a, b) => a.reinvestRate - b.reinvestRate);
-          if (aiScenarios.length === REINVEST_RATES.length) {
-            maximization = { ...maximization, compoundingScenarios: aiScenarios };
-          }
-        }
-
-        // Override optimalReinvestRate
-        if (parsed.optimalReinvestRate !== undefined) {
-          const aiOptimal = round0(clampNum(
-            parsed.optimalReinvestRate,
-            REINVEST_MIN, REINVEST_MAX, maximization.optimalReinvestRate,
-          ));
-          // Snap to nearest valid rate
-          const nearest = REINVEST_RATES.reduce((prev, curr) =>
-            Math.abs(curr - aiOptimal) < Math.abs(prev - aiOptimal) ? curr : prev,
-          );
-          maximization = { ...maximization, optimalReinvestRate: nearest };
-        }
-
-        // Override maximizedCompoundingProjection if AI provided 12+
-        if (Array.isArray(parsed.maximizedCompoundingProjection) &&
-            parsed.maximizedCompoundingProjection.length >= 12) {
-          const aiProj: MonthlyProjectionPoint[] = [];
-          let lastCapitalEnd = current.startingCapital;
-          for (const p of parsed.maximizedCompoundingProjection.slice(0, 24)) {
-            if (!p || typeof p !== 'object') continue;
-            const month = round0(clampNum(p.month, MONTH_MIN, MONTH_MAX, aiProj.length + 1));
-            const capitalStart = round0(clampNum(
-              p.capitalStart ?? lastCapitalEnd,
-              CAPITAL_MIN, CAPITAL_MAX, lastCapitalEnd,
-            ));
-            const profit = round0(clampNum(p.profit, PROFIT_MIN, PROFIT_MAX, 0));
-            const reinvested = round0(clampNum(
-              p.reinvested,
-              0, Math.max(profit, PROFIT_MAX), 0,
-            ));
-            const cashFlow = round0(clampNum(
-              p.cashFlow,
-              0, Math.max(profit, PROFIT_MAX), 0,
-            ));
-            const capitalEnd = round0(clampNum(
-              p.capitalEnd ?? (capitalStart + reinvested),
-              CAPITAL_MIN, CAPITAL_MAX, capitalStart + reinvested,
-            ));
-            aiProj.push({
-              month,
-              capitalStart,
-              profit,
-              reinvested,
-              cashFlow,
-              capitalEnd,
-            });
-            lastCapitalEnd = capitalEnd;
-          }
-          if (aiProj.length >= 12) {
-            aiProj.sort((a, b) => a.month - b.month);
-            maximization = { ...maximization, maximizedCompoundingProjection: aiProj };
-          }
-        }
-
-        // Override linearVsCompounding
-        if (parsed.linearVsCompounding && typeof parsed.linearVsCompounding === 'object') {
-          const lvc = parsed.linearVsCompounding;
-          const detLvc = maximization.linearVsCompounding;
-          const linear12mProfit = round0(clampNum(
-            lvc.linear12mProfit,
-            PROFIT_MIN, PROFIT_MAX, detLvc.linear12mProfit,
-          ));
-          const compounding12mProfit = round0(clampNum(
-            lvc.compounding12mProfit,
-            Math.max(0, linear12mProfit), // compounding ≥ linear in 12m
-            PROFIT_MAX, detLvc.compounding12mProfit,
-          ));
-          const advantageMultiple = round2(clampNum(
-            lvc.advantageMultiple,
-            MULTIPLIER_MIN, MULTIPLIER_MAX, detLvc.advantageMultiple,
-          ));
-          const breakEvenMonth = round0(clampNum(
-            lvc.breakEvenMonth,
-            1, 24, detLvc.breakEvenMonth,
-          ));
-          maximization = {
-            ...maximization,
-            linearVsCompounding: {
-              linear12mProfit,
-              compounding12mProfit,
-              advantageMultiple,
-              breakEvenMonth,
-            },
-            breakEvenTime: breakEvenMonth,
-          };
-        }
-
-        // Override compoundingAccelerationActions
-        if (Array.isArray(parsed.compoundingAccelerationActions) &&
-            parsed.compoundingAccelerationActions.length >= 3) {
-          const aiActions = parsed.compoundingAccelerationActions
-            .slice(0, MAX_ACTIONS)
-            .map((a) => clampString(a, 200, 'Pospeši compounding.'))
-            .filter((s) => s.length > 0);
-          if (aiActions.length >= 3) {
-            maximization = { ...maximization, compoundingAccelerationActions: aiActions };
-          }
-        }
-
-        // Override compoundingGrade
-        if (parsed.compoundingGrade) {
-          const grade = clampEnum(parsed.compoundingGrade, VALID_GRADE, maximization.compoundingGrade);
-          maximization = { ...maximization, compoundingGrade: grade };
-        } else {
-          // Recompute grade based on updated scenarios
-          const optimalScenario = maximization.compoundingScenarios.find(
-            (s) => s.reinvestRate === maximization.optimalReinvestRate,
-          );
-          maximization = {
-            ...maximization,
-            compoundingGrade: decideGrade(optimalScenario, maximization.linearVsCompounding.advantageMultiple),
-          };
-        }
-
-        // Override breakEvenTime
-        if (parsed.breakEvenTime !== undefined) {
-          const bet = round0(clampNum(parsed.breakEvenTime, 1, 24, maximization.breakEvenTime));
-          maximization = { ...maximization, breakEvenTime: bet };
-        }
-
-        summary = clampString(parsed.summary, 400, buildSummary(current, maximization));
-        aiUsed = true;
-      }
+      const merged = mergeAiIntoMaximization(parsed, current, maximization, summary);
+      maximization = merged.maximization;
+      summary = merged.summary;
+      aiUsed = merged.aiUsed;
     } catch (err) {
       logger.warn(
         '/api/ai/profit-compounding-maximizer',
@@ -972,22 +996,15 @@ VRNI LE JSON:
       setCachedAI(cacheKey, { maximization, summary });
     }
 
-    return NextResponse.json({
+    return apiOk({
       ok: true,
       current,
       maximization,
       summary,
       aiUsed,
     } satisfies ProfitCompoundingResponse);
-  } catch (err: any) {
-    logger.error(
-      '/api/ai/profit-compounding-maximizer',
-      'handler failed',
-      err,
-    );
-    return NextResponse.json(
-      { error: err?.message ?? 'Napaka' },
-      { status: 500 },
-    );
-  }
-}
+  },
+});
+
+export const GET = profitCompoundingMaximizerHandler;
+export const POST = profitCompoundingMaximizerHandler;

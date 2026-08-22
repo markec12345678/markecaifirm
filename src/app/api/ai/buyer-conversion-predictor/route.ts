@@ -1,26 +1,93 @@
-// v6.54: AI Buyer Conversion Predictor — napove konverzijo povpraševanja v nakup
+// v6.54 / v8.95.9-buyer-medium: AI Buyer Conversion Predictor — napove konverzijo povpraševanja v nakup
+// Refaktoriran z withAiRoute helperjem (v8.94) + enforceBudget guard.
+//
 // POST /api/ai/buyer-conversion-predictor
 // Body: { customerName?: string, tradeId?: string }
 // Returns: { ok, predictor: { buyers, conversionFactors, funnels, predictions, interventions, summary } }
 
-import { NextRequest, NextResponse } from 'next/server';
-import { db } from '@/lib/db';
-import { getSettingsRow } from '@/lib/pipeline';
-import { callProviderForRaw, parseJsonLooseExported, type AiProviderType, type AiSettings } from '@/lib/ai';
-import { logger } from '@/lib/logger';
+import { withAiRoute, AI_ROUTE_DEFAULTS, type AiRouteContext } from '@/lib/with-ai-route';
+import { apiOk } from '@/lib/api-response';
 
-export const runtime = 'nodejs';
-export const dynamic = 'force-dynamic';
+export const { runtime, dynamic } = AI_ROUTE_DEFAULTS;
 export const maxDuration = 90;
 
-export async function POST(req: NextRequest) {
-  try {
+interface BuyerConversionPredictorInput {
+  customerName: string | null;
+  tradeId: string | null;
+}
+
+interface SoldTradeRow {
+  id: string;
+  title: string;
+  category: string | null;
+  sellPrice: number | null;
+  sellFees: number | null;
+  sellDate: Date | null;
+  sellLocation: string;
+  buyDate: Date | null;
+}
+
+interface TargetTradeInfo {
+  title: string;
+  category: string;
+  price: number;
+}
+
+type BuyerStage = 'inquiry' | 'consideration' | 'negotiation' | 'decision' | 'won';
+
+interface BuyerConversionInfo {
+  name: string;
+  inquiries: number;
+  purchases: number;
+  conversionRate: number;
+  totalSpent: number;
+  avgOrderValue: number;
+  categories: Set<string>;
+  daysSinceLastPurchase: number;
+  lastPurchase: Date | null;
+  stage: BuyerStage;
+}
+
+const STAGES = [
+  'awareness', 'interest', 'inquiry', 'consideration',
+  'negotiation', 'decision', 'purchase',
+] as const;
+
+const CONVERSION_FACTORS = [
+  'price_match', 'item_relevance', 'seller_trust', 'urgency',
+  'social_proof', 'competition', 'listing_quality',
+  'negotiation_flexibility', 'location_convenience', 'payment_options',
+] as const;
+
+const INTERVENTIONS = [
+  'personal_outreach', 'limited_time_offer', 'bundle_deal', 'price_drop',
+  'social_proof_boost', 'urgency_injection', 'trust_building',
+  'negotiation_invite', 'free_shipping', 'extended_warranty',
+] as const;
+
+const PRIORITIES = ['high', 'medium', 'low'] as const;
+const IMPROVEMENT_POTENTIAL = ['high', 'medium', 'low'] as const;
+const DAY = 24 * 60 * 60 * 1000;
+
+export const POST = withAiRoute<BuyerConversionPredictorInput>({
+  endpoint: '/api/ai/buyer-conversion-predictor',
+  maxDuration: 90,
+  enforceBudget: true,
+
+  parseBody: async (req) => {
     const body = await req.json().catch(() => ({}));
-    const customerName = body?.customerName ? String(body.customerName).trim() : null;
-    const tradeId = body?.tradeId ? String(body.tradeId) : null;
+    return {
+      customerName: body?.customerName ? String(body.customerName).trim() : null,
+      tradeId: body?.tradeId ? String(body.tradeId) : null,
+    };
+  },
+
+  handler: async (input, ctx: AiRouteContext) => {
+    const { db, callAi, parseAi } = ctx;
+    const { customerName, tradeId } = input;
 
     // 1. Pridobi sold trades
-    const soldTrades = await db.trade.findMany({
+    const soldTrades: SoldTradeRow[] = await db.trade.findMany({
       where: { status: 'sold', sellPrice: { not: null }, sellLocation: { not: '' }, sellDate: { not: null } },
       select: { id: true, title: true, category: true, sellPrice: true, sellFees: true, sellDate: true, sellLocation: true, buyDate: true },
       take: 500,
@@ -28,104 +95,106 @@ export async function POST(req: NextRequest) {
     });
 
     if (soldTrades.length === 0) {
-      return NextResponse.json({ ok: true, predictor: null, message: 'Ni prodaj za conversion analizo.' });
+      return apiOk({ ok: true, predictor: null, message: 'Ni prodaj za conversion analizo.' });
     }
 
     // 2. Held trade context (če je podan)
-    let targetTradeTitle = '';
-    let targetTradeCategory = '';
-    let targetTradePrice = 0;
-    if (tradeId) {
-      const t = await db.trade.findUnique({
-        where: { id: tradeId },
-        select: { title: true, category: true, buyPrice: true, listing: { select: { aiEstimatedValue: true } } },
-      });
-      if (t) {
-        targetTradeTitle = t.title;
-        targetTradeCategory = t.category || '';
-        targetTradePrice = t.listing?.aiEstimatedValue ?? Math.round(t.buyPrice * 1.25);
-      }
-    }
+    const targetTrade = tradeId ? await loadTargetTrade(db, tradeId) : null;
 
     // 3. Buyer aggregation
-    const buyerMap = new Map<string, {
-      name: string;
-      inquiries: number; // approximated by purchases
-      purchases: number;
-      conversionRate: number; // 0-100 (hevristika: več nakupov = višja)
-      totalSpent: number;
-      avgOrderValue: number;
-      categories: Set<string>;
-      daysSinceLastPurchase: number;
-      lastPurchase: Date | null;
-      stage: 'inquiry' | 'consideration' | 'negotiation' | 'decision' | 'won';
-    }>();
-
     const now = Date.now();
-    for (const t of soldTrades) {
-      const name = (t.sellLocation || '').trim();
-      if (!name || name.length < 2 || !t.sellDate) continue;
-      const revenue = (t.sellPrice ?? 0) - (t.sellFees ?? 0);
-
-      if (!buyerMap.has(name)) {
-        buyerMap.set(name, {
-          name, inquiries: 1, purchases: 0, conversionRate: 50,
-          totalSpent: 0, avgOrderValue: 0, categories: new Set<string>(),
-          daysSinceLastPurchase: 0, lastPurchase: t.sellDate,
-          stage: 'won',
-        });
-      }
-      const b = buyerMap.get(name)!;
-      b.purchases += 1;
-      b.totalSpent += revenue;
-      if (t.category) b.categories.add(t.category);
-      if (t.sellDate > (b.lastPurchase as Date)) b.lastPurchase = t.sellDate;
-    }
-
-    const buyers = Array.from(buyerMap.values()).map(b => {
-      b.avgOrderValue = b.purchases > 0 ? Math.round(b.totalSpent / b.purchases) : 0;
-      if (b.lastPurchase) {
-        b.daysSinceLastPurchase = Math.round((now - b.lastPurchase.getTime()) / (24*60*60*1000));
-      }
-      // Hevristika: conversion rate ~ purchase frequency
-      b.conversionRate = Math.min(95, 30 + b.purchases * 8);
-      // Stage
-      if (b.daysSinceLastPurchase < 7) b.stage = 'won';
-      else if (b.daysSinceLastPurchase < 30) b.stage = 'decision';
-      else if (b.daysSinceLastPurchase < 60) b.stage = 'negotiation';
-      else if (b.daysSinceLastPurchase < 90) b.stage = 'consideration';
-      else b.stage = 'inquiry';
-      return b;
-    });
+    const buyers = buildBuyers(soldTrades, now, DAY);
 
     if (customerName) {
       const filtered = buyers.filter(b => b.name === customerName);
       if (filtered.length === 0) {
-        return NextResponse.json({ ok: true, predictor: null, message: `Kupec "${customerName}" ni najden.` });
+        return apiOk({ ok: true, predictor: null, message: `Kupec "${customerName}" ni najden.` });
       }
     }
-
-    const settings = await getSettingsRow();
-    const aiSettings: AiSettings = {
-      provider: settings.aiProvider as AiProviderType,
-      baseUrl: settings.aiBaseUrl, apiKey: settings.aiApiKey, model: settings.aiModel,
-      fallbackProvider: (settings.fallbackProvider || '') as AiProviderType | '',
-      fallbackBaseUrl: settings.fallbackBaseUrl || '', fallbackApiKey: settings.fallbackApiKey || '',
-      fallbackModel: settings.fallbackModel || '',
-    };
 
     const targetBuyers = customerName
       ? buyers.filter(b => b.name === customerName)
       : buyers.slice(0, 25);
 
-    const buyersStr = targetBuyers.map(b =>
-      `- ${b.name} | ${b.purchases}x nakup | ${b.totalSpent}€ | ${b.avgOrderValue}€ povp | ${b.daysSinceLastPurchase}d zadnji | conversion ${b.conversionRate}% | stage: ${b.stage} | kategorije: ${Array.from(b.categories).slice(0, 2).join(',')}`
-    ).join('\n');
+    const prompt = buildPrompt(targetBuyers, targetTrade);
+    const raw = await callAi(prompt);
+    const parsed: any = parseAi(raw);
 
-    const prompt = `Si AI buyer conversion predictor za slovenske oglasne platforme.
+    const predictor = transformPredictor(parsed, targetBuyers);
+
+    return apiOk({ ok: true, predictor });
+  },
+});
+
+// --- Pomožne funkcije (čiste, testabilne) --------------------------------
+
+async function loadTargetTrade(db: AiRouteContext['db'], tradeId: string): Promise<TargetTradeInfo | null> {
+  const t = await db.trade.findUnique({
+    where: { id: tradeId },
+    select: { title: true, category: true, buyPrice: true, listing: { select: { aiEstimatedValue: true } } },
+  });
+  if (!t) return null;
+  return {
+    title: t.title,
+    category: t.category || '',
+    price: t.listing?.aiEstimatedValue ?? Math.round(t.buyPrice * 1.25),
+  };
+}
+
+function buildBuyers(soldTrades: SoldTradeRow[], now: number, DAY: number): BuyerConversionInfo[] {
+  const buyerMap = new Map<string, BuyerConversionInfo>();
+  for (const t of soldTrades) {
+    const name = (t.sellLocation || '').trim();
+    if (!name || name.length < 2 || !t.sellDate) continue;
+    const revenue = (t.sellPrice ?? 0) - (t.sellFees ?? 0);
+
+    if (!buyerMap.has(name)) {
+      buyerMap.set(name, {
+        name, inquiries: 1, purchases: 0, conversionRate: 50,
+        totalSpent: 0, avgOrderValue: 0, categories: new Set<string>(),
+        daysSinceLastPurchase: 0, lastPurchase: t.sellDate,
+        stage: 'won',
+      });
+    }
+    const b = buyerMap.get(name)!;
+    b.purchases += 1;
+    b.totalSpent += revenue;
+    if (t.category) b.categories.add(t.category);
+    if (t.sellDate > (b.lastPurchase as Date)) b.lastPurchase = t.sellDate;
+  }
+
+  return Array.from(buyerMap.values()).map(b => {
+    b.avgOrderValue = b.purchases > 0 ? Math.round(b.totalSpent / b.purchases) : 0;
+    if (b.lastPurchase) {
+      b.daysSinceLastPurchase = Math.round((now - b.lastPurchase.getTime()) / DAY);
+    }
+    // Hevristika: conversion rate ~ purchase frequency
+    b.conversionRate = Math.min(95, 30 + b.purchases * 8);
+    // Stage
+    if (b.daysSinceLastPurchase < 7) b.stage = 'won';
+    else if (b.daysSinceLastPurchase < 30) b.stage = 'decision';
+    else if (b.daysSinceLastPurchase < 60) b.stage = 'negotiation';
+    else if (b.daysSinceLastPurchase < 90) b.stage = 'consideration';
+    else b.stage = 'inquiry';
+    return b;
+  });
+}
+
+function includes<T extends string>(arr: readonly T[], v: string): v is T {
+  return (arr as readonly string[]).includes(v);
+}
+
+function buildPrompt(targetBuyers: BuyerConversionInfo[], targetTrade: TargetTradeInfo | null): string {
+  const buyersStr = targetBuyers.map(b =>
+    `- ${b.name} | ${b.purchases}x nakup | ${b.totalSpent}€ | ${b.avgOrderValue}€ povp | ${b.daysSinceLastPurchase}d zadnji | conversion ${b.conversionRate}% | stage: ${b.stage} | kategorije: ${Array.from(b.categories).slice(0, 2).join(',')}`
+  ).join('\n');
+
+  const targetStr = targetTrade ? `CILJNI ITEM: "${targetTrade.title}" | ${targetTrade.category} | ${targetTrade.price}€\n` : '';
+
+  return `Si AI buyer conversion predictor za slovenske oglasne platforme.
 Napove verjetnost konverzije povpraševanja v dejanski nakup za vsakega kupca.
 
-${targetTradeTitle ? `CILJNI ITEM: "${targetTradeTitle}" | ${targetTradeCategory} | ${targetTradePrice}€\n` : ''}KUPCI ZA ANALIZO (${targetBuyers.length}):
+${targetStr}KUPCI ZA ANALIZO (${targetBuyers.length}):
 ${buyersStr}
 
 Conversion funnel faze:
@@ -220,96 +289,81 @@ Odgovori LE z JSON:
     "conversion_prediction_score": <number 0-100>
   }
 }`;
+}
 
-    let raw = '';
-    try { raw = await callProviderForRaw(aiSettings, prompt); }
-    catch (primaryError: any) {
-      if (aiSettings.fallbackProvider && aiSettings.fallbackModel) {
-        const fb: AiSettings = { provider: aiSettings.fallbackProvider, baseUrl: aiSettings.fallbackBaseUrl || '', apiKey: aiSettings.fallbackApiKey || '', model: aiSettings.fallbackModel };
-        raw = await callProviderForRaw(fb, prompt);
-      } else { return NextResponse.json({ error: primaryError?.message ?? 'AI failed' }, { status: 500 }); }
-    }
+function transformPredictor(parsed: any, targetBuyers: BuyerConversionInfo[]): any {
+  const validNames = new Set(targetBuyers.map(b => b.name));
 
-    const parsed: any = parseJsonLooseExported(raw);
-    const validNames = new Set(targetBuyers.map(b => b.name));
-
-    const predictor = {
-      insights: String(parsed?.insights ?? '').slice(0, 500),
-      buyers: (parsed?.buyers || [])
-        .filter((b: any) => validNames.has(String(b?.name ?? '')))
-        .slice(0, 25)
-        .map((b: any) => ({
-          name: String(b?.name ?? '').slice(0, 100),
-          currentStage: ['awareness', 'interest', 'inquiry', 'consideration', 'negotiation', 'decision', 'purchase'].includes(String(b?.current_stage)) ? String(b.current_stage) : 'consideration',
-          conversionProbabilityPct: Math.max(0, Math.min(100, Number(b?.conversion_probability_pct ?? 30))),
-          predictedPurchaseDate: String(b?.predicted_purchase_date ?? '').slice(0, 20),
-          predictedPurchaseAmountEur: Math.round(Number(b?.predicted_purchase_amount_eur ?? 0)),
-          conversionFactors: {
-            priceMatch: Math.max(0, Math.min(100, Number(b?.conversion_factors?.price_match ?? 50))),
-            itemRelevance: Math.max(0, Math.min(100, Number(b?.conversion_factors?.item_relevance ?? 50))),
-            sellerTrust: Math.max(0, Math.min(100, Number(b?.conversion_factors?.seller_trust ?? 50))),
-            urgency: Math.max(0, Math.min(100, Number(b?.conversion_factors?.urgency ?? 30))),
-            socialProof: Math.max(0, Math.min(100, Number(b?.conversion_factors?.social_proof ?? 40))),
-            competition: Math.max(0, Math.min(100, Number(b?.conversion_factors?.competition ?? 30))),
-            listingQuality: Math.max(0, Math.min(100, Number(b?.conversion_factors?.listing_quality ?? 60))),
-            negotiationFlexibility: Math.max(0, Math.min(100, Number(b?.conversion_factors?.negotiation_flexibility ?? 50))),
-            locationConvenience: Math.max(0, Math.min(100, Number(b?.conversion_factors?.location_convenience ?? 60))),
-            paymentOptions: Math.max(0, Math.min(100, Number(b?.conversion_factors?.payment_options ?? 70))),
-          },
-          biggestConversionBlocker: String(b?.biggest_conversion_blocker ?? '').slice(0, 150),
-          biggestConversionAccelerator: String(b?.biggest_conversion_accelerator ?? '').slice(0, 150),
-          recommendedIntervention: ['personal_outreach', 'limited_time_offer', 'bundle_deal', 'price_drop', 'social_proof_boost', 'urgency_injection', 'trust_building', 'negotiation_invite', 'free_shipping', 'extended_warranty'].includes(String(b?.recommended_intervention)) ? String(b.recommended_intervention) : 'personal_outreach',
-          expectedConversionUpliftPct: Math.round(Number(b?.expected_conversion_uplift_pct ?? 0)),
-          priority: ['high', 'medium', 'low'].includes(String(b?.priority)) ? String(b.priority) : 'medium',
-        })),
-      conversionFactors: (parsed?.conversion_factors || []).slice(0, 10).map((f: any) => ({
-        factor: ['price_match', 'item_relevance', 'seller_trust', 'urgency', 'social_proof', 'competition', 'listing_quality', 'negotiation_flexibility', 'location_convenience', 'payment_options'].includes(String(f?.factor)) ? String(f.factor) : 'price_match',
-        weight: Math.max(0, Math.min(100, Number(f?.weight ?? 50))),
-        avgScore: Math.max(0, Math.min(100, Number(f?.avg_score ?? 50))),
-        benchmark: Math.max(0, Math.min(100, Number(f?.benchmark ?? 50))),
-        improvementPotential: ['high', 'medium', 'low'].includes(String(f?.improvement_potential)) ? String(f.improvement_potential) : 'medium',
-        improvementAction: String(f?.improvement_action ?? '').slice(0, 250),
+  return {
+    insights: String(parsed?.insights ?? '').slice(0, 500),
+    buyers: (parsed?.buyers || [])
+      .filter((b: any) => validNames.has(String(b?.name ?? '')))
+      .slice(0, 25)
+      .map((b: any) => ({
+        name: String(b?.name ?? '').slice(0, 100),
+        currentStage: includes(STAGES, String(b?.current_stage)) ? String(b.current_stage) : 'consideration',
+        conversionProbabilityPct: Math.max(0, Math.min(100, Number(b?.conversion_probability_pct ?? 30))),
+        predictedPurchaseDate: String(b?.predicted_purchase_date ?? '').slice(0, 20),
+        predictedPurchaseAmountEur: Math.round(Number(b?.predicted_purchase_amount_eur ?? 0)),
+        conversionFactors: {
+          priceMatch: Math.max(0, Math.min(100, Number(b?.conversion_factors?.price_match ?? 50))),
+          itemRelevance: Math.max(0, Math.min(100, Number(b?.conversion_factors?.item_relevance ?? 50))),
+          sellerTrust: Math.max(0, Math.min(100, Number(b?.conversion_factors?.seller_trust ?? 50))),
+          urgency: Math.max(0, Math.min(100, Number(b?.conversion_factors?.urgency ?? 30))),
+          socialProof: Math.max(0, Math.min(100, Number(b?.conversion_factors?.social_proof ?? 40))),
+          competition: Math.max(0, Math.min(100, Number(b?.conversion_factors?.competition ?? 30))),
+          listingQuality: Math.max(0, Math.min(100, Number(b?.conversion_factors?.listing_quality ?? 60))),
+          negotiationFlexibility: Math.max(0, Math.min(100, Number(b?.conversion_factors?.negotiation_flexibility ?? 50))),
+          locationConvenience: Math.max(0, Math.min(100, Number(b?.conversion_factors?.location_convenience ?? 60))),
+          paymentOptions: Math.max(0, Math.min(100, Number(b?.conversion_factors?.payment_options ?? 70))),
+        },
+        biggestConversionBlocker: String(b?.biggest_conversion_blocker ?? '').slice(0, 150),
+        biggestConversionAccelerator: String(b?.biggest_conversion_accelerator ?? '').slice(0, 150),
+        recommendedIntervention: includes(INTERVENTIONS, String(b?.recommended_intervention)) ? String(b.recommended_intervention) : 'personal_outreach',
+        expectedConversionUpliftPct: Math.round(Number(b?.expected_conversion_uplift_pct ?? 0)),
+        priority: includes(PRIORITIES, String(b?.priority)) ? String(b.priority) : 'medium',
       })),
-      funnels: (parsed?.funnels || []).slice(0, 7).map((fn: any) => ({
-        stage: ['awareness', 'interest', 'inquiry', 'consideration', 'negotiation', 'decision', 'purchase'].includes(String(fn?.stage)) ? String(fn.stage) : 'inquiry',
-        buyerCount: Math.max(0, Number(fn?.buyer_count ?? 0)),
-        conversionRateToNextPct: Math.max(0, Math.min(100, Number(fn?.conversion_rate_to_next_pct ?? 30))),
-        avgTimeInStageDays: Math.max(0, Number(fn?.avg_time_in_stage_days ?? 0)),
-        dropOffPct: Math.max(0, Math.min(100, Number(fn?.drop_off_pct ?? 30))),
-        biggestDropReason: String(fn?.biggest_drop_reason ?? '').slice(0, 200),
-      })),
-      predictions: (parsed?.predictions || []).slice(0, 4).map((p: any) => ({
-        timeframeDays: Math.max(7, Number(p?.timeframe_days ?? 30)),
-        expectedInquiries: Math.max(0, Math.round(Number(p?.expected_inquiries ?? 0))),
-        expectedConversions: Math.max(0, Math.round(Number(p?.expected_conversions ?? 0))),
-        expectedRevenueEur: Math.round(Number(p?.expected_revenue_eur ?? 0)),
-        confidencePct: Math.max(0, Math.min(100, Number(p?.confidence_pct ?? 50))),
-      })),
-      interventions: (parsed?.interventions || []).slice(0, 10).map((i: any) => ({
-        intervention: ['personal_outreach', 'limited_time_offer', 'bundle_deal', 'price_drop', 'social_proof_boost', 'urgency_injection', 'trust_building', 'negotiation_invite', 'free_shipping', 'extended_warranty'].includes(String(i?.intervention)) ? String(i.intervention) : 'personal_outreach',
-        description: String(i?.description ?? '').slice(0, 250),
-        bestForStage: ['awareness', 'interest', 'inquiry', 'consideration', 'negotiation', 'decision', 'purchase'].includes(String(i?.best_for_stage)) ? String(i.best_for_stage) : 'consideration',
-        expectedConversionLiftPct: Math.round(Number(i?.expected_conversion_lift_pct ?? 0)),
-        implementationCostEur: Math.round(Number(i?.implementation_cost_eur ?? 0)),
-        expectedRevenueImpactEur: Math.round(Number(i?.expected_revenue_impact_eur ?? 0)),
-        roiScore: Math.max(0, Math.min(100, Number(i?.roi_score ?? 50))),
-      })),
-      summary: {
-        totalBuyersAnalyzed: targetBuyers.length,
-        avgConversionProbabilityPct: Math.max(0, Math.min(100, Number(parsed?.summary?.avg_conversion_probability_pct ?? 30))),
-        totalExpectedConversions30d: Math.max(0, Math.round(Number(parsed?.summary?.total_expected_conversions_30d ?? 0))),
-        totalExpectedRevenue30dEur: Math.round(Number(parsed?.summary?.total_expected_revenue_30d_eur ?? 0)),
-        biggestConversionBlocker: String(parsed?.summary?.biggest_conversion_blocker ?? '').slice(0, 200),
-        bestIntervention: ['personal_outreach', 'limited_time_offer', 'bundle_deal', 'price_drop', 'social_proof_boost', 'urgency_injection', 'trust_building', 'negotiation_invite', 'free_shipping', 'extended_warranty'].includes(String(parsed?.summary?.best_intervention)) ? String(parsed.summary.best_intervention) : 'personal_outreach',
-        funnelEfficiencyScore: Math.max(0, Math.min(100, Number(parsed?.summary?.funnel_efficiency_score ?? 50))),
-        conversionPredictionScore: Math.max(0, Math.min(100, Number(parsed?.summary?.conversion_prediction_score ?? 50))),
-      },
-    };
-
-    const today = new Date().toISOString().slice(0, 10);
-    if (settings.aiCallsDate !== today) { await db.settings.update({ where: { id: 'singleton' }, data: { aiCallsDate: today, aiCallsToday: 1 } }); }
-    else { await db.settings.update({ where: { id: 'singleton' }, data: { aiCallsToday: { increment: 1 } } }); }
-
-    return NextResponse.json({ ok: true, predictor });
-  } catch (e: any) { logger.error("/api/ai/buyer-conversion-predictor", "POST handler failed", e); return NextResponse.json({ error: e?.message ?? 'Napaka' }, { status: 500 }); }
+    conversionFactors: (parsed?.conversion_factors || []).slice(0, 10).map((f: any) => ({
+      factor: includes(CONVERSION_FACTORS, String(f?.factor)) ? String(f.factor) : 'price_match',
+      weight: Math.max(0, Math.min(100, Number(f?.weight ?? 50))),
+      avgScore: Math.max(0, Math.min(100, Number(f?.avg_score ?? 50))),
+      benchmark: Math.max(0, Math.min(100, Number(f?.benchmark ?? 50))),
+      improvementPotential: includes(IMPROVEMENT_POTENTIAL, String(f?.improvement_potential)) ? String(f.improvement_potential) : 'medium',
+      improvementAction: String(f?.improvement_action ?? '').slice(0, 250),
+    })),
+    funnels: (parsed?.funnels || []).slice(0, 7).map((fn: any) => ({
+      stage: includes(STAGES, String(fn?.stage)) ? String(fn.stage) : 'inquiry',
+      buyerCount: Math.max(0, Number(fn?.buyer_count ?? 0)),
+      conversionRateToNextPct: Math.max(0, Math.min(100, Number(fn?.conversion_rate_to_next_pct ?? 30))),
+      avgTimeInStageDays: Math.max(0, Number(fn?.avg_time_in_stage_days ?? 0)),
+      dropOffPct: Math.max(0, Math.min(100, Number(fn?.drop_off_pct ?? 30))),
+      biggestDropReason: String(fn?.biggest_drop_reason ?? '').slice(0, 200),
+    })),
+    predictions: (parsed?.predictions || []).slice(0, 4).map((p: any) => ({
+      timeframeDays: Math.max(7, Number(p?.timeframe_days ?? 30)),
+      expectedInquiries: Math.max(0, Math.round(Number(p?.expected_inquiries ?? 0))),
+      expectedConversions: Math.max(0, Math.round(Number(p?.expected_conversions ?? 0))),
+      expectedRevenueEur: Math.round(Number(p?.expected_revenue_eur ?? 0)),
+      confidencePct: Math.max(0, Math.min(100, Number(p?.confidence_pct ?? 50))),
+    })),
+    interventions: (parsed?.interventions || []).slice(0, 10).map((i: any) => ({
+      intervention: includes(INTERVENTIONS, String(i?.intervention)) ? String(i.intervention) : 'personal_outreach',
+      description: String(i?.description ?? '').slice(0, 250),
+      bestForStage: includes(STAGES, String(i?.best_for_stage)) ? String(i.best_for_stage) : 'consideration',
+      expectedConversionLiftPct: Math.round(Number(i?.expected_conversion_lift_pct ?? 0)),
+      implementationCostEur: Math.round(Number(i?.implementation_cost_eur ?? 0)),
+      expectedRevenueImpactEur: Math.round(Number(i?.expected_revenue_impact_eur ?? 0)),
+      roiScore: Math.max(0, Math.min(100, Number(i?.roi_score ?? 50))),
+    })),
+    summary: {
+      totalBuyersAnalyzed: targetBuyers.length,
+      avgConversionProbabilityPct: Math.max(0, Math.min(100, Number(parsed?.summary?.avg_conversion_probability_pct ?? 30))),
+      totalExpectedConversions30d: Math.max(0, Math.round(Number(parsed?.summary?.total_expected_conversions_30d ?? 0))),
+      totalExpectedRevenue30dEur: Math.round(Number(parsed?.summary?.total_expected_revenue_30d_eur ?? 0)),
+      biggestConversionBlocker: String(parsed?.summary?.biggest_conversion_blocker ?? '').slice(0, 200),
+      bestIntervention: includes(INTERVENTIONS, String(parsed?.summary?.best_intervention)) ? String(parsed.summary.best_intervention) : 'personal_outreach',
+      funnelEfficiencyScore: Math.max(0, Math.min(100, Number(parsed?.summary?.funnel_efficiency_score ?? 50))),
+      conversionPredictionScore: Math.max(0, Math.min(100, Number(parsed?.summary?.conversion_prediction_score ?? 50))),
+    },
+  };
 }

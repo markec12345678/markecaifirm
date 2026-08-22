@@ -25,24 +25,18 @@
 
 // GET+POST /api/ai/deal-source-capital-efficiency-maximizer
 // (AI-enhanced + grounding + anti-hallucination + 6h cache + deterministic fallback)
+// Refaktoriran z withAiRoute helperjem (v8.96.5) + enforceBudget guard.
 
-import { NextRequest, NextResponse } from 'next/server';
-import { db } from '@/lib/db';
-import { getSettingsRow } from '@/lib/pipeline';
-import {
-  callProviderForRaw,
-  parseJsonLooseExported,
-  type AiProviderType,
-  type AiSettings,
-} from '@/lib/ai';
+import { withAiRoute, AI_ROUTE_DEFAULTS, type AiRouteContext } from '@/lib/with-ai-route';
+import { apiOk } from '@/lib/api-response';
 import { GROUNDING_PROMPT_SUFFIX } from '@/lib/anti-hallucination';
 import { getCachedAI, setCachedAI } from '@/lib/ai-cache';
-import { checkRateLimit, rateLimitResponse } from '@/lib/rate-limit';
-import { logger } from '@/lib/logger';
 
-export const runtime = 'nodejs';
-export const dynamic = 'force-dynamic';
+export const { runtime, dynamic } = AI_ROUTE_DEFAULTS;
 export const maxDuration = 60;
+
+// eslint-disable-next-line @typescript-eslint/no-empty-object-type
+interface DealSourceCapitalEfficiencyMaximizerInput {}
 
 // --- Types ---------------------------------------------------------------
 
@@ -589,17 +583,20 @@ function buildSummary(entries: SourceEntry[], portfolio: PortfolioSummary): stri
 
 // --- Handler -------------------------------------------------------------
 
-export async function GET(req: NextRequest) {
-  return handleDealSourceCapitalEfficiencyMaximizer(req);
-}
-export async function POST(req: NextRequest) {
-  return handleDealSourceCapitalEfficiencyMaximizer(req);
-}
+const dealSourceCapitalEfficiencyMaximizerHandler = withAiRoute<DealSourceCapitalEfficiencyMaximizerInput>({
+  endpoint: '/api/ai/deal-source-capital-efficiency-maximizer',
+  maxDuration: 60,
+  enforceBudget: true, // AI klic — preveri budget
+  method: 'GET', // Endpoint sprejema GET + POST — bypass POST-only check
 
-async function handleDealSourceCapitalEfficiencyMaximizer(req: NextRequest) {
-  try {
-    const rl = checkRateLimit(req, 'ai-deal-source-capital-efficiency-maximizer', 20);
-    if (!rl.allowed) return rateLimitResponse(rl);
+  parseBody: async (req) => {
+    await req.json().catch(() => ({}));
+    return {};
+  },
+
+  // No validateInput — body ignored, identična logika za GET in POST
+  handler: async (_input, ctx: AiRouteContext) => {
+    const { db, callAi, parseAi, logger } = ctx;
 
     const now = Date.now();
     const twelveMonthsAgo = new Date(now - TWELVE_MONTHS_MS);
@@ -632,7 +629,7 @@ async function handleDealSourceCapitalEfficiencyMaximizer(req: NextRequest) {
 
     // Empty-state: no SOLD trades
     if (soldTrades.length === 0) {
-      return NextResponse.json({
+      return apiOk({
         ok: true,
         sources: [],
         portfolio: {
@@ -656,7 +653,7 @@ async function handleDealSourceCapitalEfficiencyMaximizer(req: NextRequest) {
     }
 
     if (computed.length === 0) {
-      return NextResponse.json({
+      return apiOk({
         ok: true,
         sources: [],
         portfolio: {
@@ -687,7 +684,7 @@ async function handleDealSourceCapitalEfficiencyMaximizer(req: NextRequest) {
       summary: string;
     }>(cacheKey);
     if (cached) {
-      return NextResponse.json({
+      return apiOk({
         ok: true,
         sources: cached.sources,
         portfolio: cached.portfolio,
@@ -697,96 +694,14 @@ async function handleDealSourceCapitalEfficiencyMaximizer(req: NextRequest) {
       } satisfies DealSourceCapitalEfficiencyResponse);
     }
 
-    // 4) AI prompt with grounding
-    const settings = await getSettingsRow();
-    const aiSettings: AiSettings = {
-      provider: settings.aiProvider as AiProviderType,
-      baseUrl: settings.aiBaseUrl,
-      apiKey: settings.aiApiKey,
-      model: settings.aiModel,
-      fallbackProvider: (settings.fallbackProvider || '') as
-        | AiProviderType
-        | '',
-      fallbackBaseUrl: settings.fallbackBaseUrl || '',
-      fallbackApiKey: settings.fallbackApiKey || '',
-      fallbackModel: settings.fallbackModel || '',
-    };
-
-    // Compact context for AI
-    const sourcesForAI = entries.map((e) => ({
-      source: e.source,
-      displayName: e.displayName,
-      metrics: e.metrics,
-      deterministicMaximization: e.maximization,
-    }));
-
-    const promptData = {
-      totalTrades: computed.length,
-      totalSources: entries.length,
-      sources: sourcesForAI,
-      deterministicPortfolio: {
-        currentCapitalEfficiency: portfolio.currentCapitalEfficiency,
-        maximizedCapitalEfficiency: portfolio.maximizedCapitalEfficiency,
-        totalEfficiencyUplift: portfolio.totalEfficiencyUplift,
-        totalCapital: portfolio.totalCapital,
-        capitalReallocationPlan: portfolio.capitalReallocationPlan,
-      },
-      caps: {
-        profitMin: PROFIT_MIN, profitMax: PROFIT_MAX,
-        capitalMin: CAPITAL_MIN, capitalMax: CAPITAL_MAX,
-        holdMin: HOLD_MIN, holdMax: HOLD_MAX,
-        scoreMin: SCORE_MIN, scoreMax: SCORE_MAX,
-        efficiencyMin: EFFICIENCY_MIN, efficiencyMax: EFFICIENCY_MAX,
-        upliftMin: UPLIFT_MIN, upliftMax: UPLIFT_MAX,
-        reallocMin: REALLOC_MIN, reallocMax: REALLOC_MAX,
-      },
-    };
-
-    const prompt = `Si AI "Deal Source Capital Efficiency Maximizer" za slovenske in srednjeevropske oglasne platforme (Bolha, Vinted, Avtonet, mobile.de).
-Si strokovnjak za CAPITAL EFFICIENCY MAXIMIZATION per source — kateri source-i uporabljajo kapital najbolj učinkovito (profit per euro deployed per day). Tvoj cilj je "Bolha daje 0.85€ profit per euro per day, Vinted 0.42€ — prestavi 500€ iz Vinted v Bolha za +35% efficiency". Razlika od deal-source-profit-per-trade-maximizer (v8.04 ki maksimizira profit per trade €) — ti MAKSIMIZIRAŠ CAPITAL EFFICIENCY (profit per euro per day). Razlika od deal-source-margin-maximizer (v8.03 ki maksimizira margin %) — ta maksimizira CAPITAL EFFICIENCY z capitalReallocation. Razlika od deal-source-roi-maximizer (v8.00 ki maksimizira ROI per source) — ta maksimizira profit-per-euro-per-day (časovno-tehtan ROI). Razlika od inventory-capital-efficiency-maximizer (v8.01 ki maksimizira capital efficiency per HELD item) — ta maksimizira CAPITAL EFFICIENCY per SOURCE (zgodovinski sold). Razlika od inventory-cash-yield-maximizer (v8.04 ki maksimizira cash yield čez portfolio) — ta maksimizira per-source capital efficiency z capitalReallocation plan-om. Razlika od inventory-profit-per-day-maximizer (v8.02 ki maksimizira daily profit per item) — ta maksimizira DAILY PROFIT PER EURO per source. Razlika od deal-source-profit-maximizer (v7.97 ki maksimizira total profit per source) — ta maksimizira EFFICIENCY (profit/capital/day), ne absolutni profit. Razlika od deal-source-volume-maximizer (v8.02 ki maksimizira VOLUME per source) — ta maksimizira CAPITAL EFFICIENCY (kvaliteta kapitala, ne kvantiteta trade-ov). Razlika od profit-compounding-maximizer (v8.04 ki maksimizira compounding reinvest rate) — ta daje per-source capital efficiency z efficiencyMaximizationAction in capitalReallocation.
-
-DETERMINISTIČNI PODATKI (izračunano iz DB — SOLD trgovin v zadnjih 12 mesecih z linked Listing za source):
-${JSON.stringify(promptData, null, 2)}
-
-PRAVILA ZA AI ODGOVOR:
-1. sources: za vsak source iz sources, daj:
-   - source (string, MORA match-at enega iz deterministic sources — anti-hallucination),
-   - maximization.efficiencyMaximizationAction: INCREASE_CAPITAL | REDUCE_HOLD_TIME | IMPROVE_PROFIT_MARGIN | DIVERSIFY_WITHIN | REDUCE_CAPITAL (lahko se razlikuje od deterministic),
-   - maximization.projectedEfficiency €/€/d [0, 10] (forecasted profit per euro per day — ≥ current profitPerEuroPerDay, ≤ current × 1.5 ali +2.0),
-   - maximization.efficiencyUplift €/€/d [0, 5] (improvement = projected − current),
-   - maximization.capitalReallocation € [-50000, 50000] (positive = shift TO this source, negative = shift FROM this source),
-2. summary: slovenski povzetek (max 400 znakov).
-
-VRNI LE JSON:
-{
-  "sources": [
-    {
-      "source": "bolha",
-      "maximization": {
-        "efficiencyMaximizationAction": "INCREASE_CAPITAL",
-        "projectedEfficiency": 0.98,
-        "efficiencyUplift": 0.13,
-        "capitalReallocation": 800
-      }
-    },
-    {
-      "source": "vinted",
-      "maximization": {
-        "efficiencyMaximizationAction": "REDUCE_CAPITAL",
-        "projectedEfficiency": 0.21,
-        "efficiencyUplift": 0,
-        "capitalReallocation": -500
-      }
-    }
-  ],
-  "summary": "2 source-a. Bolha 0.85€/€/d → 0.98 (+0.13, INCREASE_CAPITAL). Vinted 0.42€/€/d → 0.21 (REDUCE_CAPITAL, -500€). Portfolio: 0.65 → 0.78 (+0.13)."
-}${GROUNDING_PROMPT_SUFFIX}`;
+    // 4) AI prompt with grounding (settings loaded by withAiRoute wrapper)
+    const prompt = buildPrompt(entries, computed, portfolio);
 
     let aiUsed = false;
 
     try {
-      const raw = await callProviderForRaw(aiSettings, prompt);
-      const parsed = parseJsonLooseExported(raw) as AiResponse | null;
+      const raw = await callAi(prompt);
+      const parsed = parseAi(raw) as AiResponse | null;
 
       if (parsed && typeof parsed === 'object') {
         const aiSourcesMap = new Map<string, NonNullable<AiResponse['sources']>[number]>();
@@ -872,22 +787,93 @@ VRNI LE JSON:
       setCachedAI(cacheKey, { sources: entries, portfolio, summary });
     }
 
-    return NextResponse.json({
+    return apiOk({
       ok: true,
       sources: entries,
       portfolio,
       summary,
       aiUsed,
     } satisfies DealSourceCapitalEfficiencyResponse);
-  } catch (err: any) {
-    logger.error(
-      '/api/ai/deal-source-capital-efficiency-maximizer',
-      'handler failed',
-      err,
-    );
-    return NextResponse.json(
-      { error: err?.message ?? 'Napaka' },
-      { status: 500 },
-    );
-  }
+  },
+});
+
+export const GET = dealSourceCapitalEfficiencyMaximizerHandler;
+export const POST = dealSourceCapitalEfficiencyMaximizerHandler;
+
+// --- Prompt builder (čist, testabilen) -----------------------------------
+
+function buildPrompt(
+  entries: SourceEntry[],
+  computed: TradeComputed[],
+  portfolio: PortfolioSummary,
+): string {
+  // Compact context for AI
+  const sourcesForAI = entries.map((e) => ({
+    source: e.source,
+    displayName: e.displayName,
+    metrics: e.metrics,
+    deterministicMaximization: e.maximization,
+  }));
+
+  const promptData = {
+    totalTrades: computed.length,
+    totalSources: entries.length,
+    sources: sourcesForAI,
+    deterministicPortfolio: {
+      currentCapitalEfficiency: portfolio.currentCapitalEfficiency,
+      maximizedCapitalEfficiency: portfolio.maximizedCapitalEfficiency,
+      totalEfficiencyUplift: portfolio.totalEfficiencyUplift,
+      totalCapital: portfolio.totalCapital,
+      capitalReallocationPlan: portfolio.capitalReallocationPlan,
+    },
+    caps: {
+      profitMin: PROFIT_MIN, profitMax: PROFIT_MAX,
+      capitalMin: CAPITAL_MIN, capitalMax: CAPITAL_MAX,
+      holdMin: HOLD_MIN, holdMax: HOLD_MAX,
+      scoreMin: SCORE_MIN, scoreMax: SCORE_MAX,
+      efficiencyMin: EFFICIENCY_MIN, efficiencyMax: EFFICIENCY_MAX,
+      upliftMin: UPLIFT_MIN, upliftMax: UPLIFT_MAX,
+      reallocMin: REALLOC_MIN, reallocMax: REALLOC_MAX,
+    },
+  };
+
+  return `Si AI "Deal Source Capital Efficiency Maximizer" za slovenske in srednjeevropske oglasne platforme (Bolha, Vinted, Avtonet, mobile.de).
+Si strokovnjak za CAPITAL EFFICIENCY MAXIMIZATION per source — kateri source-i uporabljajo kapital najbolj učinkovito (profit per euro deployed per day). Tvoj cilj je "Bolha daje 0.85€ profit per euro per day, Vinted 0.42€ — prestavi 500€ iz Vinted v Bolha za +35% efficiency". Razlika od deal-source-profit-per-trade-maximizer (v8.04 ki maksimizira profit per trade €) — ti MAKSIMIZIRAŠ CAPITAL EFFICIENCY (profit per euro per day). Razlika od deal-source-margin-maximizer (v8.03 ki maksimizira margin %) — ta maksimizira CAPITAL EFFICIENCY z capitalReallocation. Razlika od deal-source-roi-maximizer (v8.00 ki maksimizira ROI per source) — ta maksimizira profit-per-euro-per-day (časovno-tehtan ROI). Razlika od inventory-capital-efficiency-maximizer (v8.01 ki maksimizira capital efficiency per HELD item) — ta maksimizira CAPITAL EFFICIENCY per SOURCE (zgodovinski sold). Razlika od inventory-cash-yield-maximizer (v8.04 ki maksimizira cash yield čez portfolio) — ta maksimizira per-source capital efficiency z capitalReallocation plan-om. Razlika od inventory-profit-per-day-maximizer (v8.02 ki maksimizira daily profit per item) — ta maksimizira DAILY PROFIT PER EURO per source. Razlika od deal-source-profit-maximizer (v7.97 ki maksimizira total profit per source) — ta maksimizira EFFICIENCY (profit/capital/day), ne absolutni profit. Razlika od deal-source-volume-maximizer (v8.02 ki maksimizira VOLUME per source) — ta maksimizira CAPITAL EFFICIENCY (kvaliteta kapitala, ne kvantiteta trade-ov). Razlika od profit-compounding-maximizer (v8.04 ki maksimizira compounding reinvest rate) — ta daje per-source capital efficiency z efficiencyMaximizationAction in capitalReallocation.
+
+DETERMINISTIČNI PODATKI (izračunano iz DB — SOLD trgovin v zadnjih 12 mesecih z linked Listing za source):
+${JSON.stringify(promptData, null, 2)}
+
+PRAVILA ZA AI ODGOVOR:
+1. sources: za vsak source iz sources, daj:
+   - source (string, MORA match-at enega iz deterministic sources — anti-hallucination),
+   - maximization.efficiencyMaximizationAction: INCREASE_CAPITAL | REDUCE_HOLD_TIME | IMPROVE_PROFIT_MARGIN | DIVERSIFY_WITHIN | REDUCE_CAPITAL (lahko se razlikuje od deterministic),
+   - maximization.projectedEfficiency €/€/d [0, 10] (forecasted profit per euro per day — ≥ current profitPerEuroPerDay, ≤ current × 1.5 ali +2.0),
+   - maximization.efficiencyUplift €/€/d [0, 5] (improvement = projected − current),
+   - maximization.capitalReallocation € [-50000, 50000] (positive = shift TO this source, negative = shift FROM this source),
+2. summary: slovenski povzetek (max 400 znakov).
+
+VRNI LE JSON:
+{
+  "sources": [
+    {
+      "source": "bolha",
+      "maximization": {
+        "efficiencyMaximizationAction": "INCREASE_CAPITAL",
+        "projectedEfficiency": 0.98,
+        "efficiencyUplift": 0.13,
+        "capitalReallocation": 800
+      }
+    },
+    {
+      "source": "vinted",
+      "maximization": {
+        "efficiencyMaximizationAction": "REDUCE_CAPITAL",
+        "projectedEfficiency": 0.21,
+        "efficiencyUplift": 0,
+        "capitalReallocation": -500
+      }
+    }
+  ],
+  "summary": "2 source-a. Bolha 0.85€/€/d → 0.98 (+0.13, INCREASE_CAPITAL). Vinted 0.42€/€/d → 0.21 (REDUCE_CAPITAL, -500€). Portfolio: 0.65 → 0.78 (+0.13)."
+}${GROUNDING_PROMPT_SUFFIX}`;
 }

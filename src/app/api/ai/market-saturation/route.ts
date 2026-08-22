@@ -1,21 +1,32 @@
-// v6.34: AI Market Saturation Detector — zazna nasičenost trga po kategorijah
+// v6.34 / v8.96.0-batch2: AI Market Saturation Detector — zazna nasičenost trga po kategorijah
+// Refaktoriran z withAiRoute helperjem (v8.96.0-batch2) + enforceBudget guard.
+//
 // POST /api/ai/market-saturation
 // Body: {}
 // Returns: { ok, saturation: { categories: [], trends, recommendations } }
 
-import { NextRequest, NextResponse } from 'next/server';
-import { db } from '@/lib/db';
-import { getSettingsRow } from '@/lib/pipeline';
-import { callProviderForRaw, parseJsonLooseExported, type AiProviderType, type AiSettings } from '@/lib/ai';
-import { logger } from '@/lib/logger';
+import { withAiRoute, AI_ROUTE_DEFAULTS, type AiRouteContext } from '@/lib/with-ai-route';
+import { apiOk } from '@/lib/api-response';
 
-export const runtime = 'nodejs';
-export const dynamic = 'force-dynamic';
+export const { runtime, dynamic } = AI_ROUTE_DEFAULTS;
 export const maxDuration = 90;
 
-export async function POST(req: NextRequest) {
-  try {
+// eslint-disable-next-line @typescript-eslint/no-empty-object-type
+interface MarketSaturationInput {}
+
+export const POST = withAiRoute<MarketSaturationInput>({
+  endpoint: '/api/ai/market-saturation',
+  maxDuration: 90,
+  enforceBudget: true, // AI klic — preveri budget
+
+  parseBody: async (req) => {
     await req.json().catch(() => ({}));
+    return {} as MarketSaturationInput;
+  },
+
+  // No validateInput — body je prazen
+  handler: async (_input, ctx: AiRouteContext) => {
+    const { db, callAi, parseAi } = ctx;
 
     // Pridobi vse listinge za analizo nasičenosti
     const allListings = await db.listing.findMany({
@@ -32,34 +43,11 @@ export async function POST(req: NextRequest) {
     });
 
     if (allListings.length === 0) {
-      return NextResponse.json({ ok: true, saturation: null, message: 'Ni oglasov za analizo nasičenosti.' });
+      return apiOk({ ok: true, saturation: null, message: 'Ni oglasov za analizo nasičenosti.' });
     }
-
-    const settings = await getSettingsRow();
-    const aiSettings: AiSettings = {
-      provider: settings.aiProvider as AiProviderType,
-      baseUrl: settings.aiBaseUrl, apiKey: settings.aiApiKey, model: settings.aiModel,
-      fallbackProvider: (settings.fallbackProvider || '') as AiProviderType | '',
-      fallbackBaseUrl: settings.fallbackBaseUrl || '', fallbackApiKey: settings.fallbackApiKey || '',
-      fallbackModel: settings.fallbackModel || '',
-    };
 
     // Analiza po virih (proxy za kategorije)
-    const bySource: Record<string, { total: number; opportunities: number; avgPrice: number; avgDealScore: number; priceRange: [number, number] }> = {};
-    for (const l of allListings) {
-      const src = l.monitor?.source || 'neznan';
-      if (!bySource[src]) bySource[src] = { total: 0, opportunities: 0, avgPrice: 0, avgDealScore: 0, priceRange: [Infinity, 0] };
-      bySource[src].total++;
-      if (l.aiVerdict === 'PRILIKA' || (l.dealScore ?? 0) >= 70) bySource[src].opportunities++;
-      bySource[src].avgPrice += l.price ?? 0;
-      bySource[src].avgDealScore += l.dealScore ?? 0;
-      bySource[src].priceRange[0] = Math.min(bySource[src].priceRange[0], l.price ?? 0);
-      bySource[src].priceRange[1] = Math.max(bySource[src].priceRange[1], l.price ?? 0);
-    }
-    for (const src of Object.keys(bySource)) {
-      bySource[src].avgPrice = bySource[src].total > 0 ? Math.round(bySource[src].avgPrice / bySource[src].total) : 0;
-      bySource[src].avgDealScore = bySource[src].total > 0 ? Math.round(bySource[src].avgDealScore / bySource[src].total) : 0;
-    }
+    const bySource = computeBySource(allListings);
 
     // Recent listings (7d) vs older (30d) za trend
     const now = Date.now();
@@ -72,18 +60,76 @@ export async function POST(req: NextRequest) {
       `- ${src}: ${d.total} oglasov, ${d.opportunities} priložnosti (${Math.round(d.opportunities/d.total*100)}%), povp. ${d.avgPrice}€, deal ${d.avgDealScore}/100`
     ).join('\n');
 
-    const prompt = `Si ekspert za analizo nasičenosti trga.
+    const prompt = buildPrompt({
+      totalListings: allListings.length,
+      recent7d,
+      recent30d,
+      opportunityRate,
+      sourceStr,
+      soldTradesCount: soldTrades.length,
+    });
+
+    const raw = await callAi(prompt);
+    const parsed: any = parseAi(raw);
+    const saturation = transformSaturation(parsed);
+
+    return apiOk({ ok: true, saturation });
+  },
+});
+
+// --- Pomožne funkcije (čiste, testabilne) --------------------------------
+
+interface SourceAgg {
+  total: number;
+  opportunities: number;
+  avgPrice: number;
+  avgDealScore: number;
+  priceRange: [number, number];
+}
+
+function computeBySource(
+  listings: Array<{ price: number | null; aiVerdict: string | null; dealScore: number | null; monitor: { source: string | null; name: string | null } | null }>
+): Record<string, SourceAgg> {
+  const bySource: Record<string, SourceAgg> = {};
+  for (const l of listings) {
+    const src = l.monitor?.source || 'neznan';
+    if (!bySource[src]) bySource[src] = { total: 0, opportunities: 0, avgPrice: 0, avgDealScore: 0, priceRange: [Infinity, 0] };
+    bySource[src].total++;
+    if (l.aiVerdict === 'PRILIKA' || (l.dealScore ?? 0) >= 70) bySource[src].opportunities++;
+    bySource[src].avgPrice += l.price ?? 0;
+    bySource[src].avgDealScore += l.dealScore ?? 0;
+    bySource[src].priceRange[0] = Math.min(bySource[src].priceRange[0], l.price ?? 0);
+    bySource[src].priceRange[1] = Math.max(bySource[src].priceRange[1], l.price ?? 0);
+  }
+  for (const src of Object.keys(bySource)) {
+    bySource[src].avgPrice = bySource[src].total > 0 ? Math.round(bySource[src].avgPrice / bySource[src].total) : 0;
+    bySource[src].avgDealScore = bySource[src].total > 0 ? Math.round(bySource[src].avgDealScore / bySource[src].total) : 0;
+  }
+  return bySource;
+}
+
+interface PromptData {
+  totalListings: number;
+  recent7d: number;
+  recent30d: number;
+  opportunityRate: number;
+  sourceStr: string;
+  soldTradesCount: number;
+}
+
+function buildPrompt(d: PromptData): string {
+  return `Si ekspert za analizo nasičenosti trga.
 Analiziraj ali je trg preasičen za določene kategorije in identificiraj priložnosti.
 
-SKUPno: ${allListings.length} oglasov
-- Zadnjih 7 dni: ${recent7d} novih
-- Zadnjih 30 dni: ${recent30d} novih
-- Stopnja priložnosti: ${opportunityRate}%
+SKUPno: ${d.totalListings} oglasov
+- Zadnjih 7 dni: ${d.recent7d} novih
+- Zadnjih 30 dni: ${d.recent30d} novih
+- Stopnja priložnosti: ${d.opportunityRate}%
 
 PODATKI PO VIRIH:
-${sourceStr}
+${d.sourceStr}
 
-ZGODOVINSKE PRODAJE: ${soldTrades.length}
+ZGODOVINSKE PRODAJE: ${d.soldTradesCount}
 
 Nasičenost trga:
 - SATURATED: veliko oglasov, nizka stopnja priložnosti (<10%), padajoče cene → izogibaj
@@ -141,68 +187,44 @@ Odgovori LE z JSON:
     "recommended_portfolio_shift": "<max 150 znakov>"
   }
 }`;
+}
 
-    let raw = '';
-    try {
-      raw = await callProviderForRaw(aiSettings, prompt);
-    } catch (primaryError: any) {
-      if (aiSettings.fallbackProvider && aiSettings.fallbackModel) {
-        const fb: AiSettings = { provider: aiSettings.fallbackProvider, baseUrl: aiSettings.fallbackBaseUrl || '',
-          apiKey: aiSettings.fallbackApiKey || '', model: aiSettings.fallbackModel };
-        raw = await callProviderForRaw(fb, prompt);
-      } else { return NextResponse.json({ error: primaryError?.message ?? 'AI failed' }, { status: 500 }); }
-    }
-
-    const parsed: any = parseJsonLooseExported(raw);
-
-    const saturation = {
-      insights: String(parsed?.insights ?? '').slice(0, 600),
-      categories: (parsed?.categories || []).slice(0, 10).map((c: any) => ({
-        source: String(c?.source ?? '').slice(0, 50),
-        totalListings: Math.max(0, Number(c?.total_listings ?? 0)),
-        opportunityRatePct: Math.max(0, Math.min(100, Number(c?.opportunity_rate_pct ?? 0))),
-        saturationLevel: ['saturated', 'competitive', 'balanced', 'opportunity', 'blue_ocean'].includes(String(c?.saturation_level))
-          ? String(c.saturation_level) : 'balanced',
-        saturationScore: Math.max(0, Math.min(100, Number(c?.saturation_score ?? 50))),
-        priceTrend: ['rising', 'falling', 'stable'].includes(String(c?.price_trend)) ? String(c.priceTrend) : 'stable',
-        opportunityTrend: ['increasing', 'decreasing', 'stable'].includes(String(c?.opportunity_trend)) ? String(c.opportunityTrend) : 'stable',
-        listingVelocityPerWeek: Math.max(0, Number(c?.listing_velocity_per_week ?? 0)),
-        avgDealScore: Math.max(0, Math.min(100, Number(c?.avg_deal_score ?? 0))),
-        action: ['increase_buying', 'maintain', 'reduce', 'exit', 'enter'].includes(String(c?.action)) ? String(c.action) : 'maintain',
-        reasoning: String(c?.reasoning ?? '').slice(0, 200),
-      })),
-      marketSignals: (parsed?.market_signals || []).slice(0, 6).map((s: any) => ({
-        signal: String(s?.signal ?? '').slice(0, 150),
-        type: ['positive', 'negative', 'neutral'].includes(String(s?.type)) ? String(s.type) : 'neutral',
-        impact: ['high', 'medium', 'low'].includes(String(s?.impact)) ? String(s.impact) : 'medium',
-        description: String(s?.description ?? '').slice(0, 200),
-      })),
-      recommendations: (parsed?.recommendations || []).slice(0, 6).map((r: any) => ({
-        action: String(r?.action ?? '').slice(0, 250),
-        targetSource: String(r?.target_source ?? '').slice(0, 50),
-        priority: ['high', 'medium', 'low'].includes(String(r?.priority)) ? String(r.priority) : 'medium',
-        expectedImpact: String(r?.expected_impact ?? '').slice(0, 150),
-      })),
-      summary: {
-        overallSaturationScore: Math.max(0, Math.min(100, Number(parsed?.summary?.overall_saturation_score ?? 50))),
-        overallMarketState: ['saturated', 'competitive', 'balanced', 'opportunity', 'blue_ocean'].includes(String(parsed?.summary?.overall_market_state))
-          ? String(parsed.summary.overall_market_state) : 'balanced',
-        bestOpportunitySource: String(parsed?.summary?.best_opportunity_source ?? '').slice(0, 50),
-        mostSaturatedSource: String(parsed?.summary?.most_saturated_source ?? '').slice(0, 50),
-        recommendedPortfolioShift: String(parsed?.summary?.recommended_portfolio_shift ?? '').slice(0, 300),
-      },
-    };
-
-    const today = new Date().toISOString().slice(0, 10);
-    if (settings.aiCallsDate !== today) {
-      await db.settings.update({ where: { id: 'singleton' }, data: { aiCallsDate: today, aiCallsToday: 1 } });
-    } else {
-      await db.settings.update({ where: { id: 'singleton' }, data: { aiCallsToday: { increment: 1 } } });
-    }
-
-    return NextResponse.json({ ok: true, saturation });
-  } catch (e: any) {
-    logger.error("/api/ai/market-saturation", "POST handler failed", e);
-    return NextResponse.json({ error: e?.message ?? 'Napaka' }, { status: 500 });
-  }
+function transformSaturation(parsed: any) {
+  return {
+    insights: String(parsed?.insights ?? '').slice(0, 600),
+    categories: (parsed?.categories || []).slice(0, 10).map((c: any) => ({
+      source: String(c?.source ?? '').slice(0, 50),
+      totalListings: Math.max(0, Number(c?.total_listings ?? 0)),
+      opportunityRatePct: Math.max(0, Math.min(100, Number(c?.opportunity_rate_pct ?? 0))),
+      saturationLevel: ['saturated', 'competitive', 'balanced', 'opportunity', 'blue_ocean'].includes(String(c?.saturation_level))
+        ? String(c.saturation_level) : 'balanced',
+      saturationScore: Math.max(0, Math.min(100, Number(c?.saturation_score ?? 50))),
+      priceTrend: ['rising', 'falling', 'stable'].includes(String(c?.price_trend)) ? String(c.priceTrend) : 'stable',
+      opportunityTrend: ['increasing', 'decreasing', 'stable'].includes(String(c?.opportunity_trend)) ? String(c.opportunityTrend) : 'stable',
+      listingVelocityPerWeek: Math.max(0, Number(c?.listing_velocity_per_week ?? 0)),
+      avgDealScore: Math.max(0, Math.min(100, Number(c?.avg_deal_score ?? 0))),
+      action: ['increase_buying', 'maintain', 'reduce', 'exit', 'enter'].includes(String(c?.action)) ? String(c.action) : 'maintain',
+      reasoning: String(c?.reasoning ?? '').slice(0, 200),
+    })),
+    marketSignals: (parsed?.market_signals || []).slice(0, 6).map((s: any) => ({
+      signal: String(s?.signal ?? '').slice(0, 150),
+      type: ['positive', 'negative', 'neutral'].includes(String(s?.type)) ? String(s.type) : 'neutral',
+      impact: ['high', 'medium', 'low'].includes(String(s?.impact)) ? String(s.impact) : 'medium',
+      description: String(s?.description ?? '').slice(0, 200),
+    })),
+    recommendations: (parsed?.recommendations || []).slice(0, 6).map((r: any) => ({
+      action: String(r?.action ?? '').slice(0, 250),
+      targetSource: String(r?.target_source ?? '').slice(0, 50),
+      priority: ['high', 'medium', 'low'].includes(String(r?.priority)) ? String(r.priority) : 'medium',
+      expectedImpact: String(r?.expected_impact ?? '').slice(0, 150),
+    })),
+    summary: {
+      overallSaturationScore: Math.max(0, Math.min(100, Number(parsed?.summary?.overall_saturation_score ?? 50))),
+      overallMarketState: ['saturated', 'competitive', 'balanced', 'opportunity', 'blue_ocean'].includes(String(parsed?.summary?.overall_market_state))
+        ? String(parsed.summary.overall_market_state) : 'balanced',
+      bestOpportunitySource: String(parsed?.summary?.best_opportunity_source ?? '').slice(0, 50),
+      mostSaturatedSource: String(parsed?.summary?.most_saturated_source ?? '').slice(0, 50),
+      recommendedPortfolioShift: String(parsed?.summary?.recommended_portfolio_shift ?? '').slice(0, 300),
+    },
+  };
 }

@@ -1,6 +1,7 @@
-// v7.69: AI Profit Leakage Detector — AI identificira kje profit "teče" —
-// skrite cene, zamujene priložnosti, suboptimalne cene. Pove natančno koliko
-// profita se izgublja in kje.
+// v7.69 / v8.96.5-batch1: AI Profit Leakage Detector — AI identificira kje
+// profit "teče" — skrite cene, zamujene priložnosti, suboptimalne cene. Pove
+// natančno koliko profita se izgublja in kje. Refaktoriran z withAiRoute
+// helperjem (v8.96) + enforceBudget guard.
 //
 // "Letna izguba: 450€. Glavni vir: podcenajevanje elektronike (-12%). Fix:
 //  prodajaj pri 95% estValue → +200€/leto."
@@ -17,23 +18,16 @@
 // GET+POST /api/ai/profit-leakage-detector
 // (AI-enhanced + grounding + anti-hallucination + 6h cache + deterministic fallback)
 
-import { NextRequest, NextResponse } from 'next/server';
-import { db } from '@/lib/db';
-import { getSettingsRow } from '@/lib/pipeline';
-import {
-  callProviderForRaw,
-  parseJsonLooseExported,
-  type AiProviderType,
-  type AiSettings,
-} from '@/lib/ai';
+import { withAiRoute, AI_ROUTE_DEFAULTS, type AiRouteContext } from '@/lib/with-ai-route';
+import { apiOk } from '@/lib/api-response';
 import { GROUNDING_PROMPT_SUFFIX } from '@/lib/anti-hallucination';
 import { getCachedAI, setCachedAI } from '@/lib/ai-cache';
-import { checkRateLimit, rateLimitResponse } from '@/lib/rate-limit';
-import { logger } from '@/lib/logger';
 
-export const runtime = 'nodejs';
-export const dynamic = 'force-dynamic';
+export const { runtime, dynamic } = AI_ROUTE_DEFAULTS;
 export const maxDuration = 60;
+
+// eslint-disable-next-line @typescript-eslint/no-empty-object-type
+interface ProfitLeakageDetectorInput {}
 
 // --- Types ---------------------------------------------------------------
 
@@ -70,6 +64,36 @@ interface AiLeakageResponse {
   estimatedAnnualLeakage?: unknown;
   fixPriorities?: unknown;
   expectedRecovery?: unknown;
+}
+
+interface SoldTradeRow {
+  id: string;
+  title: string;
+  category: string | null;
+  buyPrice: number;
+  buyFees: number;
+  buyDate: Date | null;
+  sellPrice: number | null;
+  sellFees: number;
+  sellDate: Date | null;
+  listing: { aiEstimatedValue: number | null } | null;
+}
+
+interface HeldTradeRow {
+  id: string;
+  title: string;
+  category: string | null;
+  buyPrice: number;
+  buyDate: Date | null;
+  listing: { aiEstimatedValue: number | null } | null;
+}
+
+interface CancelledTradeRow {
+  id: string;
+  title: string;
+  category: string | null;
+  buyPrice: number;
+  listing: { aiEstimatedValue: number | null } | null;
 }
 
 // --- Helpers -------------------------------------------------------------
@@ -277,19 +301,251 @@ function buildDeterministicFixes(
   return { fixPriorities, expectedRecovery };
 }
 
+// --- AI prompt + merge helpers (pure, extracted OUTSIDE handler) ----------
+
+function buildHotspotBlock(hotspots: LeakageHotspot[]): string {
+  return hotspots
+    .slice(0, 20)
+    .map(
+      (h, i) =>
+        `${i + 1}. tradeId=${h.tradeId}, title="${h.title}", actualProfit=${h.actualProfit}€, idealProfit=${h.idealProfit}€, leakage=${h.leakage}€ (${h.leakagePercent}%), source=${h.primaryLeakageSource}, detail="${h.detail}"`,
+    )
+    .join('\n');
+}
+
+function buildSystemicBlock(systemic: SystemicIssue[]): string {
+  return systemic
+    .slice(0, 10)
+    .map(
+      (s, i) =>
+        `${i + 1}. issue="${s.issue}", affectedCount=${s.affectedCount}, estimatedLoss=${s.estimatedLoss}€, pattern="${s.pattern}"`,
+    )
+    .join('\n');
+}
+
+interface PromptTotals {
+  totalActualProfit: number;
+  totalIdealProfit: number;
+  totalLeakage: number;
+  leakagePercent: number;
+  estimatedAnnualLeakage: number;
+  annualFactor: number;
+  hotspotCount: number;
+  systemicCount: number;
+}
+
+function buildPrompt(
+  hotspotBlock: string,
+  systemicBlock: string,
+  totals: PromptTotals,
+): string {
+  return `Si AI analitik profitnih izgub za slovenske in srednjeevropske oglasne platforme (Bolha, Vinted, Avtonet, mobile.de).
+Analiziraj kako profit "teče" — kje izgubljaš denar: podcenajevanje, visoke pristojbine, predolgo držanje, zamujene priložnosti.
+
+PODATKI O LEAKAGE HOTSPOTS (top ${Math.min(20, totals.hotspotCount)} od ${totals.hotspotCount}):
+${hotspotBlock || '—'}
+
+PODATKI O SISTEMSKIH TEŽAVAH (top ${Math.min(10, totals.systemicCount)} od ${totals.systemicCount}):
+${systemicBlock || '—'}
+
+SKUPNE METRIKE:
+- totalActualProfit: ${Math.round(totals.totalActualProfit)}€
+- totalIdealProfit: ${Math.round(totals.totalIdealProfit)}€
+- totalLeakage: ${Math.round(totals.totalLeakage)}€
+- leakagePercent: ${Math.round(totals.leakagePercent * 10) / 10}%
+- estimatedAnnualLeakage: ${totals.estimatedAnnualLeakage}€ (annualFactor=${totals.annualFactor.toFixed(2)})
+
+PRAVILA ZA ANALIZO:
+1. leakageHotspots: top 10 item-ov z največ leakage — za vsak napiši specifičen "detail" (kaj natančno je šlo narobe pri tem item-u).
+2. systemicIssues: 3-7 vzorcev ki se ponavljajo (npr. "vedno podcenjuješ elektroniko za 12%") — vsak z affectedCount, estimatedLoss in pattern opisom.
+3. estimatedAnnualLeakage: letna projekcija izgube v EUR (uporabi annualFactor ${totals.annualFactor.toFixed(2)}).
+4. fixPriorities: 3-5 ranked popravkov z priority (HIGH/MEDIUM/LOW), fix opisom, estimatedRecovery v EUR (70-90% izgube obvladljive) in effort (1-2 tedna / 2-4 tedne / 1-2 meseca).
+5. expectedRecovery: vsota estimatedRecovery iz fixPriorities (max 80% od totalLeakage).
+
+VRNI LE JSON:
+{
+  "leakageHotspots": [
+    {
+      "tradeId": "abc",
+      "title": "...",
+      "actualProfit": 0,
+      "idealProfit": 0,
+      "leakage": 0,
+      "leakagePercent": 0,
+      "primaryLeakageSource": "PRICING",
+      "detail": "..."
+    }
+  ],
+  "systemicIssues": [
+    {
+      "issue": "...",
+      "affectedCount": 0,
+      "estimatedLoss": 0,
+      "pattern": "..."
+    }
+  ],
+  "estimatedAnnualLeakage": 0,
+  "fixPriorities": [
+    {
+      "priority": "HIGH",
+      "fix": "...",
+      "estimatedRecovery": 0,
+      "effort": "1-2 tedna"
+    }
+  ],
+  "expectedRecovery": 0
+}${GROUNDING_PROMPT_SUFFIX}`;
+}
+
+interface MergeResult {
+  hotspots: LeakageHotspot[];
+  systemicIssues: SystemicIssue[];
+  fixPriorities: FixPriority[];
+  expectedRecovery: number;
+  aiAnnualLeakage: number;
+  aiUsed: boolean;
+}
+
+function mergeAiIntoLeakage(
+  parsed: AiLeakageResponse | null,
+  baselineHotspots: LeakageHotspot[],
+  baselineSystemic: SystemicIssue[],
+  baselineFixes: { fixPriorities: FixPriority[]; expectedRecovery: number },
+  totalLeakage: number,
+  estimatedAnnualLeakage: number,
+): MergeResult {
+  // Start with deterministic baseline
+  let hotspots: LeakageHotspot[] = baselineHotspots.slice(0, 10);
+  let systemicIssues: SystemicIssue[] = baselineSystemic.slice(0, 7);
+  let fixPriorities: FixPriority[] = baselineFixes.fixPriorities.slice(0, 5);
+  let expectedRecovery = baselineFixes.expectedRecovery;
+  let aiAnnualLeakage = estimatedAnnualLeakage;
+  let aiUsed = false;
+
+  if (parsed && typeof parsed === 'object') {
+    // Parse leakageHotspots — preserve DB numbers from baseline
+    if (Array.isArray(parsed.leakageHotspots)) {
+      const aiHotspots: LeakageHotspot[] = [];
+      const baselineMap = new Map(baselineHotspots.map(h => [h.tradeId, h]));
+      for (const h of parsed.leakageHotspots) {
+        const a = h as Record<string, unknown> | null;
+        if (!a || typeof a !== 'object') continue;
+        const tradeId = clampString(a.tradeId, 100, '');
+        const baseline = baselineMap.get(tradeId);
+        if (!baseline) continue; // only allow tradeIds we know
+        const source = clampEnum(
+          a.primaryLeakageSource,
+          [
+            'PRICING',
+            'FEE',
+            'HOLDING_COST',
+            'OPPORTUNITY',
+          ] as const,
+          baseline.primaryLeakageSource as LeakageSource,
+        );
+        aiHotspots.push({
+          tradeId: baseline.tradeId,
+          title: baseline.title,
+          actualProfit: baseline.actualProfit,
+          idealProfit: baseline.idealProfit,
+          leakage: baseline.leakage,
+          leakagePercent: baseline.leakagePercent,
+          primaryLeakageSource: source,
+          detail: clampString(a.detail, 300, baseline.detail),
+        });
+      }
+      if (aiHotspots.length > 0) hotspots = aiHotspots;
+    }
+
+    // Parse systemicIssues
+    if (Array.isArray(parsed.systemicIssues)) {
+      const aiSystemic: SystemicIssue[] = [];
+      for (const s of parsed.systemicIssues) {
+        const a = s as Record<string, unknown> | null;
+        if (!a || typeof a !== 'object') continue;
+        aiSystemic.push({
+          issue: clampString(a.issue, 200, '—'),
+          affectedCount: clampNumber(a.affectedCount, 0, 10000, 1),
+          estimatedLoss: clampNumber(
+            a.estimatedLoss,
+            0,
+            totalLeakage * 2,
+            0,
+          ),
+          pattern: clampString(a.pattern, 300, '—'),
+        });
+      }
+      if (aiSystemic.length > 0) systemicIssues = aiSystemic;
+    }
+
+    // Parse fixPriorities
+    if (Array.isArray(parsed.fixPriorities)) {
+      const aiFixes: FixPriority[] = [];
+      for (const f of parsed.fixPriorities) {
+        const a = f as Record<string, unknown> | null;
+        if (!a || typeof a !== 'object') continue;
+        const priority = clampEnum(a.priority, VALID_PRIORITY, 'MEDIUM');
+        const recovery = clampNumber(
+          a.estimatedRecovery,
+          0,
+          totalLeakage * 0.8,
+          0,
+        );
+        aiFixes.push({
+          priority,
+          fix: clampString(a.fix, 300, '—'),
+          estimatedRecovery: recovery,
+          effort: clampString(a.effort, 50, '1-2 tedna'),
+        });
+      }
+      if (aiFixes.length > 0) fixPriorities = aiFixes;
+    }
+
+    // Parse estimatedAnnualLeakage + expectedRecovery (clamped)
+    aiAnnualLeakage = clampNumber(
+      parsed.estimatedAnnualLeakage,
+      0,
+      estimatedAnnualLeakage * 2,
+      estimatedAnnualLeakage,
+    );
+
+    let aiExpected = clampNumber(
+      parsed.expectedRecovery,
+      0,
+      totalLeakage * 0.8,
+      baselineFixes.expectedRecovery,
+    );
+    // If AI returned fixPriorities, recompute from sum
+    if (fixPriorities.length > 0) {
+      const sumRecovery = fixPriorities.reduce(
+        (s, f) => s + f.estimatedRecovery,
+        0,
+      );
+      if (sumRecovery > 0) aiExpected = sumRecovery;
+    }
+    expectedRecovery = aiExpected;
+
+    aiUsed = true;
+  }
+
+  return { hotspots, systemicIssues, fixPriorities, expectedRecovery, aiAnnualLeakage, aiUsed };
+}
+
 // --- Handler -------------------------------------------------------------
 
-export async function GET(req: NextRequest) {
-  return handleProfitLeakage(req);
-}
-export async function POST(req: NextRequest) {
-  return handleProfitLeakage(req);
-}
+const profitLeakageHandler = withAiRoute<ProfitLeakageDetectorInput>({
+  endpoint: '/api/ai/profit-leakage-detector',
+  maxDuration: 60,
+  enforceBudget: true,
+  method: 'GET',
 
-async function handleProfitLeakage(req: NextRequest) {
-  try {
-    const rl = checkRateLimit(req, 'ai-profit-leakage', 20);
-    if (!rl.allowed) return rateLimitResponse(rl);
+  parseBody: async (req) => {
+    await req.json().catch(() => ({}));
+    return {};
+  },
+
+  handler: async (_input, ctx: AiRouteContext) => {
+    const { db, callAi, parseAi, logger } = ctx;
 
     // 1) Query all SOLD trades with full data
     const soldTrades = await db.trade.findMany({
@@ -311,7 +567,7 @@ async function handleProfitLeakage(req: NextRequest) {
         listing: { select: { aiEstimatedValue: true } },
       },
       take: 5000,
-    });
+    }) as unknown as SoldTradeRow[];
 
     // Query HELD trades for carrying cost
     const heldTrades = await db.trade.findMany({
@@ -325,7 +581,7 @@ async function handleProfitLeakage(req: NextRequest) {
         listing: { select: { aiEstimatedValue: true } },
       },
       take: 2000,
-    });
+    }) as unknown as HeldTradeRow[];
 
     // Query CANCELLED trades for opportunity leakage
     const cancelledTrades = await db.trade.findMany({
@@ -338,7 +594,7 @@ async function handleProfitLeakage(req: NextRequest) {
         listing: { select: { aiEstimatedValue: true } },
       },
       take: 2000,
-    });
+    }) as unknown as CancelledTradeRow[];
 
     const totalSold = soldTrades.length;
 
@@ -348,7 +604,7 @@ async function handleProfitLeakage(req: NextRequest) {
       heldTrades.length === 0 &&
       cancelledTrades.length === 0
     ) {
-      return NextResponse.json({
+      return apiOk({
         ok: true,
         summary: {
           totalActualProfit: 0,
@@ -586,7 +842,7 @@ async function handleProfitLeakage(req: NextRequest) {
       expectedRecovery: number;
     }>(cacheKey);
     if (cached) {
-      return NextResponse.json({
+      return apiOk({
         ok: true,
         summary: {
           totalActualProfit: Math.round(totalActualProfit),
@@ -611,210 +867,44 @@ async function handleProfitLeakage(req: NextRequest) {
     const baselineFixes = buildDeterministicFixes(baselineSystemic);
 
     // 6) AI prompt with grounding
-    const settings = await getSettingsRow();
-    const aiSettings: AiSettings = {
-      provider: settings.aiProvider as AiProviderType,
-      baseUrl: settings.aiBaseUrl,
-      apiKey: settings.aiApiKey,
-      model: settings.aiModel,
-      fallbackProvider: (settings.fallbackProvider || '') as
-        | AiProviderType
-        | '',
-      fallbackBaseUrl: settings.fallbackBaseUrl || '',
-      fallbackApiKey: settings.fallbackApiKey || '',
-      fallbackModel: settings.fallbackModel || '',
-    };
+    const hotspotBlock = buildHotspotBlock(baselineHotspots);
+    const systemicBlock = buildSystemicBlock(baselineSystemic);
+    const prompt = buildPrompt(hotspotBlock, systemicBlock, {
+      totalActualProfit,
+      totalIdealProfit,
+      totalLeakage,
+      leakagePercent,
+      estimatedAnnualLeakage,
+      annualFactor,
+      hotspotCount: baselineHotspots.length,
+      systemicCount: baselineSystemic.length,
+    });
 
-    const hotspotBlock = baselineHotspots
-      .slice(0, 20)
-      .map(
-        (h, i) =>
-          `${i + 1}. tradeId=${h.tradeId}, title="${h.title}", actualProfit=${h.actualProfit}€, idealProfit=${h.idealProfit}€, leakage=${h.leakage}€ (${h.leakagePercent}%), source=${h.primaryLeakageSource}, detail="${h.detail}"`,
-      )
-      .join('\n');
-
-    const systemicBlock = baselineSystemic
-      .slice(0, 10)
-      .map(
-        (s, i) =>
-          `${i + 1}. issue="${s.issue}", affectedCount=${s.affectedCount}, estimatedLoss=${s.estimatedLoss}€, pattern="${s.pattern}"`,
-      )
-      .join('\n');
-
-    const prompt = `Si AI analitik profitnih izgub za slovenske in srednjeevropske oglasne platforme (Bolha, Vinted, Avtonet, mobile.de).
-Analiziraj kako profit "teče" — kje izgubljaš denar: podcenajevanje, visoke pristojbine, predolgo držanje, zamujene priložnosti.
-
-PODATKI O LEAKAGE HOTSPOTS (top ${Math.min(20, baselineHotspots.length)} od ${baselineHotspots.length}):
-${hotspotBlock || '—'}
-
-PODATKI O SISTEMSKIH TEŽAVAH (top ${Math.min(10, baselineSystemic.length)} od ${baselineSystemic.length}):
-${systemicBlock || '—'}
-
-SKUPNE METRIKE:
-- totalActualProfit: ${Math.round(totalActualProfit)}€
-- totalIdealProfit: ${Math.round(totalIdealProfit)}€
-- totalLeakage: ${Math.round(totalLeakage)}€
-- leakagePercent: ${Math.round(leakagePercent * 10) / 10}%
-- estimatedAnnualLeakage: ${estimatedAnnualLeakage}€ (annualFactor=${annualFactor.toFixed(2)})
-
-PRAVILA ZA ANALIZO:
-1. leakageHotspots: top 10 item-ov z največ leakage — za vsak napiši specifičen "detail" (kaj natančno je šlo narobe pri tem item-u).
-2. systemicIssues: 3-7 vzorcev ki se ponavljajo (npr. "vedno podcenjuješ elektroniko za 12%") — vsak z affectedCount, estimatedLoss in pattern opisom.
-3. estimatedAnnualLeakage: letna projekcija izgube v EUR (uporabi annualFactor ${annualFactor.toFixed(2)}).
-4. fixPriorities: 3-5 ranked popravkov z priority (HIGH/MEDIUM/LOW), fix opisom, estimatedRecovery v EUR (70-90% izgube obvladljive) in effort (1-2 tedna / 2-4 tedne / 1-2 meseca).
-5. expectedRecovery: vsota estimatedRecovery iz fixPriorities (max 80% od totalLeakage).
-
-VRNI LE JSON:
-{
-  "leakageHotspots": [
-    {
-      "tradeId": "abc",
-      "title": "...",
-      "actualProfit": 0,
-      "idealProfit": 0,
-      "leakage": 0,
-      "leakagePercent": 0,
-      "primaryLeakageSource": "PRICING",
-      "detail": "..."
-    }
-  ],
-  "systemicIssues": [
-    {
-      "issue": "...",
-      "affectedCount": 0,
-      "estimatedLoss": 0,
-      "pattern": "..."
-    }
-  ],
-  "estimatedAnnualLeakage": 0,
-  "fixPriorities": [
-    {
-      "priority": "HIGH",
-      "fix": "...",
-      "estimatedRecovery": 0,
-      "effort": "1-2 tedna"
-    }
-  ],
-  "expectedRecovery": 0
-}${GROUNDING_PROMPT_SUFFIX}`;
-
-    // Start with deterministic baseline
     let hotspots: LeakageHotspot[] = baselineHotspots.slice(0, 10);
     let systemicIssues: SystemicIssue[] = baselineSystemic.slice(0, 7);
     let fixPriorities: FixPriority[] = baselineFixes.fixPriorities.slice(0, 5);
     let expectedRecovery = baselineFixes.expectedRecovery;
     let aiAnnualLeakage = estimatedAnnualLeakage;
-
     let aiUsed = false;
+
     try {
-      const raw = await callProviderForRaw(aiSettings, prompt);
-      const parsed = parseJsonLooseExported(raw) as AiLeakageResponse | null;
+      const raw = await callAi(prompt);
+      const parsed = parseAi(raw) as AiLeakageResponse | null;
 
-      if (parsed && typeof parsed === 'object') {
-        // Parse leakageHotspots — preserve DB numbers from baseline
-        if (Array.isArray(parsed.leakageHotspots)) {
-          const aiHotspots: LeakageHotspot[] = [];
-          const baselineMap = new Map(baselineHotspots.map(h => [h.tradeId, h]));
-          for (const h of parsed.leakageHotspots) {
-            const a = h as Record<string, unknown> | null;
-            if (!a || typeof a !== 'object') continue;
-            const tradeId = clampString(a.tradeId, 100, '');
-            const baseline = baselineMap.get(tradeId);
-            if (!baseline) continue; // only allow tradeIds we know
-            const source = clampEnum(
-              a.primaryLeakageSource,
-              [
-                'PRICING',
-                'FEE',
-                'HOLDING_COST',
-                'OPPORTUNITY',
-              ] as const,
-              baseline.primaryLeakageSource as LeakageSource,
-            );
-            aiHotspots.push({
-              tradeId: baseline.tradeId,
-              title: baseline.title,
-              actualProfit: baseline.actualProfit,
-              idealProfit: baseline.idealProfit,
-              leakage: baseline.leakage,
-              leakagePercent: baseline.leakagePercent,
-              primaryLeakageSource: source,
-              detail: clampString(a.detail, 300, baseline.detail),
-            });
-          }
-          if (aiHotspots.length > 0) hotspots = aiHotspots;
-        }
-
-        // Parse systemicIssues
-        if (Array.isArray(parsed.systemicIssues)) {
-          const aiSystemic: SystemicIssue[] = [];
-          for (const s of parsed.systemicIssues) {
-            const a = s as Record<string, unknown> | null;
-            if (!a || typeof a !== 'object') continue;
-            aiSystemic.push({
-              issue: clampString(a.issue, 200, '—'),
-              affectedCount: clampNumber(a.affectedCount, 0, 10000, 1),
-              estimatedLoss: clampNumber(
-                a.estimatedLoss,
-                0,
-                totalLeakage * 2,
-                0,
-              ),
-              pattern: clampString(a.pattern, 300, '—'),
-            });
-          }
-          if (aiSystemic.length > 0) systemicIssues = aiSystemic;
-        }
-
-        // Parse fixPriorities
-        if (Array.isArray(parsed.fixPriorities)) {
-          const aiFixes: FixPriority[] = [];
-          for (const f of parsed.fixPriorities) {
-            const a = f as Record<string, unknown> | null;
-            if (!a || typeof a !== 'object') continue;
-            const priority = clampEnum(a.priority, VALID_PRIORITY, 'MEDIUM');
-            const recovery = clampNumber(
-              a.estimatedRecovery,
-              0,
-              totalLeakage * 0.8,
-              0,
-            );
-            aiFixes.push({
-              priority,
-              fix: clampString(a.fix, 300, '—'),
-              estimatedRecovery: recovery,
-              effort: clampString(a.effort, 50, '1-2 tedna'),
-            });
-          }
-          if (aiFixes.length > 0) fixPriorities = aiFixes;
-        }
-
-        // Parse estimatedAnnualLeakage + expectedRecovery (clamped)
-        aiAnnualLeakage = clampNumber(
-          parsed.estimatedAnnualLeakage,
-          0,
-          estimatedAnnualLeakage * 2,
-          estimatedAnnualLeakage,
-        );
-
-        let aiExpected = clampNumber(
-          parsed.expectedRecovery,
-          0,
-          totalLeakage * 0.8,
-          baselineFixes.expectedRecovery,
-        );
-        // If AI returned fixPriorities, recompute from sum
-        if (fixPriorities.length > 0) {
-          const sumRecovery = fixPriorities.reduce(
-            (s, f) => s + f.estimatedRecovery,
-            0,
-          );
-          if (sumRecovery > 0) aiExpected = sumRecovery;
-        }
-        expectedRecovery = aiExpected;
-
-        aiUsed = true;
-      }
+      const merged = mergeAiIntoLeakage(
+        parsed,
+        baselineHotspots,
+        baselineSystemic,
+        baselineFixes,
+        totalLeakage,
+        estimatedAnnualLeakage,
+      );
+      hotspots = merged.hotspots;
+      systemicIssues = merged.systemicIssues;
+      fixPriorities = merged.fixPriorities;
+      expectedRecovery = merged.expectedRecovery;
+      aiAnnualLeakage = merged.aiAnnualLeakage;
+      aiUsed = merged.aiUsed;
     } catch (err) {
       logger.warn(
         '/api/ai/profit-leakage-detector',
@@ -834,7 +924,7 @@ VRNI LE JSON:
       });
     }
 
-    return NextResponse.json({
+    return apiOk({
       ok: true,
       summary: {
         totalActualProfit: Math.round(totalActualProfit),
@@ -850,11 +940,8 @@ VRNI LE JSON:
       expectedRecovery: Math.round(expectedRecovery),
       aiUsed,
     });
-  } catch (err: any) {
-    logger.error('/api/ai/profit-leakage-detector', 'handler failed', err);
-    return NextResponse.json(
-      { error: err?.message ?? 'Napaka' },
-      { status: 500 },
-    );
-  }
-}
+  },
+});
+
+export const GET = profitLeakageHandler;
+export const POST = profitLeakageHandler;

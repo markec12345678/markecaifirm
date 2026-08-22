@@ -1,4 +1,4 @@
-// v8.01: AI Inventory Capital Efficiency Maximizer — AI MAXIMIZIRA CAPITAL
+// v8.01 / v8.96.6-batch4: AI Inventory Capital Efficiency Maximizer — AI MAXIMIZIRA CAPITAL
 // EFFICIENCY — kako eficientno vsak evro kapitala deluje. Identificira kapital
 // ujet v low-efficiency item-ih in priporoča reallokacijo v high-efficiency
 // priložnosti. "Your capital efficiency is 1.8x, but could be 3.2x if you
@@ -33,23 +33,14 @@
 
 // GET+POST /api/ai/inventory-capital-efficiency-maximizer
 // (AI-enhanced + grounding + anti-hallucination + 6h cache + deterministic fallback)
+// Refaktoriran z withAiRoute helperjem (v8.96.6) + enforceBudget guard.
 
-import { NextRequest, NextResponse } from 'next/server';
-import { db } from '@/lib/db';
-import { getSettingsRow } from '@/lib/pipeline';
-import {
-  callProviderForRaw,
-  parseJsonLooseExported,
-  type AiProviderType,
-  type AiSettings,
-} from '@/lib/ai';
+import { withAiRoute, AI_ROUTE_DEFAULTS, type AiRouteContext } from '@/lib/with-ai-route';
+import { apiOk } from '@/lib/api-response';
 import { GROUNDING_PROMPT_SUFFIX } from '@/lib/anti-hallucination';
 import { getCachedAI, setCachedAI } from '@/lib/ai-cache';
-import { checkRateLimit, rateLimitResponse } from '@/lib/rate-limit';
-import { logger } from '@/lib/logger';
 
-export const runtime = 'nodejs';
-export const dynamic = 'force-dynamic';
+export const { runtime, dynamic } = AI_ROUTE_DEFAULTS;
 export const maxDuration = 60;
 
 // --- Types ---------------------------------------------------------------
@@ -588,19 +579,27 @@ function buildSummary(current: CurrentState, max: Maximization): string {
   return parts.join(' ').slice(0, 400);
 }
 
+// --- Input ---------------------------------------------------------------
+
+// eslint-disable-next-line @typescript-eslint/no-empty-object-type
+interface InventoryCapitalEfficiencyInput {}
+
 // --- Handler -------------------------------------------------------------
 
-export async function GET(req: NextRequest) {
-  return handleInventoryCapitalEfficiencyMaximizer(req);
-}
-export async function POST(req: NextRequest) {
-  return handleInventoryCapitalEfficiencyMaximizer(req);
-}
+const inventoryCapitalEfficiencyHandler = withAiRoute<InventoryCapitalEfficiencyInput>({
+  endpoint: '/api/ai/inventory-capital-efficiency-maximizer',
+  maxDuration: 60,
+  enforceBudget: true, // AI klic — preveri budget
+  method: 'GET', // GET+POST — body ignored
 
-async function handleInventoryCapitalEfficiencyMaximizer(req: NextRequest) {
-  try {
-    const rl = checkRateLimit(req, 'ai-inventory-capital-efficiency-maximizer', 20);
-    if (!rl.allowed) return rateLimitResponse(rl);
+  parseBody: async (req) => {
+    await req.json().catch(() => ({}));
+    return {};
+  },
+
+  // No validateInput — body ignored
+  handler: async (_input, ctx: AiRouteContext) => {
+    const { db, callAi, parseAi, logger } = ctx;
 
     const now = Date.now();
     const twelveMonthsAgo = new Date(now - TWELVE_MONTHS_MS);
@@ -651,7 +650,7 @@ async function handleInventoryCapitalEfficiencyMaximizer(req: NextRequest) {
 
     // Empty-state: no HELD trades
     if (heldTrades.length === 0) {
-      return NextResponse.json({
+      return apiOk({
         ok: true,
         current: {
           totalCapitalDeployed: 0,
@@ -706,7 +705,7 @@ async function handleInventoryCapitalEfficiencyMaximizer(req: NextRequest) {
       summary: string;
     }>(cacheKey);
     if (cached) {
-      return NextResponse.json({
+      return apiOk({
         ok: true,
         current,
         perItem,
@@ -718,20 +717,6 @@ async function handleInventoryCapitalEfficiencyMaximizer(req: NextRequest) {
     }
 
     // 4) AI prompt with grounding
-    const settings = await getSettingsRow();
-    const aiSettings: AiSettings = {
-      provider: settings.aiProvider as AiProviderType,
-      baseUrl: settings.aiBaseUrl,
-      apiKey: settings.aiApiKey,
-      model: settings.aiModel,
-      fallbackProvider: (settings.fallbackProvider || '') as
-        | AiProviderType
-        | '',
-      fallbackBaseUrl: settings.fallbackBaseUrl || '',
-      fallbackApiKey: settings.fallbackApiKey || '',
-      fallbackModel: settings.fallbackModel || '',
-    };
-
     // Sort perItem by efficiencyScore ASC (worst first) for AI prompt
     const sortedPerItem = [...perItem].sort((a, b) => a.efficiencyScore - b.efficiencyScore);
     const topForPrompt = sortedPerItem.slice(0, MAX_ITEMS_TO_PROCESS);
@@ -802,8 +787,8 @@ VRNI LE JSON:
     let aiUsed = false;
 
     try {
-      const raw = await callProviderForRaw(aiSettings, prompt);
-      const parsed = parseJsonLooseExported(raw) as AiResponse | null;
+      const raw = await callAi(prompt);
+      const parsed = parseAi(raw) as AiResponse | null;
 
       if (parsed && typeof parsed === 'object') {
         // Override low efficiency items (must match tradeIds)
@@ -948,7 +933,7 @@ VRNI LE JSON:
       setCachedAI(cacheKey, { maximization, summary });
     }
 
-    return NextResponse.json({
+    return apiOk({
       ok: true,
       current,
       perItem,
@@ -956,15 +941,8 @@ VRNI LE JSON:
       summary,
       aiUsed,
     } satisfies CapitalEfficiencyResponse);
-  } catch (err: any) {
-    logger.error(
-      '/api/ai/inventory-capital-efficiency-maximizer',
-      'handler failed',
-      err,
-    );
-    return NextResponse.json(
-      { error: err?.message ?? 'Napaka' },
-      { status: 500 },
-    );
-  }
-}
+  },
+});
+
+export const GET = inventoryCapitalEfficiencyHandler;
+export const POST = inventoryCapitalEfficiencyHandler;

@@ -1,30 +1,43 @@
-// v6.21: AI Optimal Listing Time Predictor — napove kdaj objaviti oglas za max dobiček
+// v6.21 / v8.94-refactor: AI Optimal Listing Time Predictor
+// Refaktoriran z withAiRoute helperjem (v8.94) + enforceBudget guard.
+//
 // POST /api/ai/optimal-time
 // Body: { tradeIds?: string[] } // če ni podan, uporabi vse held tradeove
-// Returns: { ok, predictions: [{ tradeId, title, category, optimalDay, optimalHour, optimalPlatform, expectedTimeToSell, expectedPrice, reasoning }], insights, summary }
+// Returns: { ok, predictions: [...], insights, summary, historicalData }
 
-import { NextRequest, NextResponse } from 'next/server';
-import { db } from '@/lib/db';
-import { getSettingsRow } from '@/lib/pipeline';
-import { callProviderForRaw, parseJsonLooseExported, type AiProviderType, type AiSettings } from '@/lib/ai';
-import { logger } from '@/lib/logger';
+import { NextResponse } from 'next/server';
+import { withAiRoute, AI_ROUTE_DEFAULTS, type AiRouteContext } from '@/lib/with-ai-route';
+import { apiOk } from '@/lib/api-response';
 
-export const runtime = 'nodejs';
-export const dynamic = 'force-dynamic';
+export const { runtime, dynamic } = AI_ROUTE_DEFAULTS;
 export const maxDuration = 90;
 
 const DAYS_SL = ['ponedeljek', 'torek', 'sreda', 'četrtek', 'petek', 'sobota', 'nedelja'];
 
-export async function POST(req: NextRequest) {
-  try {
+interface OptimalTimeInput {
+  tradeIds: string[];
+}
+
+export const POST = withAiRoute<OptimalTimeInput>({
+  endpoint: '/api/ai/optimal-time',
+  maxDuration: 90,
+  enforceBudget: true,
+
+  parseBody: async (req) => {
     const body = await req.json().catch(() => ({}));
-    const requestedIds: string[] = Array.isArray(body?.tradeIds) ? body.tradeIds.filter(Boolean) : [];
+    return {
+      tradeIds: Array.isArray(body?.tradeIds) ? body.tradeIds.filter(Boolean).map(String) : [],
+    };
+  },
+
+  handler: async (input, ctx: AiRouteContext) => {
+    const { db, callAi, parseAi } = ctx;
 
     // 1. Pridobi held trades
     const heldTrades = await db.trade.findMany({
       where: {
         status: 'held',
-        ...(requestedIds.length > 0 ? { id: { in: requestedIds } } : {}),
+        ...(input.tradeIds.length > 0 ? { id: { in: input.tradeIds } } : {}),
       },
       select: {
         id: true, title: true, category: true, buyPrice: true, buyDate: true,
@@ -34,14 +47,13 @@ export async function POST(req: NextRequest) {
     });
 
     if (heldTrades.length === 0) {
-      return NextResponse.json({
-        ok: true,
+      return apiOk({
         predictions: [],
         message: 'Ni held tradeov za analizo optimalnega časa objave.',
       });
     }
 
-    // 2. Pridobi sold trades za analizo časovnih vzorcev prodaje
+    // 2. Pridobi sold trades za analizo časovnih vzorcev
     const soldTrades = await db.trade.findMany({
       where: { status: 'sold', sellPrice: { not: null }, sellDate: { not: null } },
       select: {
@@ -51,75 +63,117 @@ export async function POST(req: NextRequest) {
       take: 200,
     });
 
-    // 3. Analiza prodaj po dnevih/urah (če imamo podatke)
-    const salesByDay: Record<number, { count: number; avgProfit: number; avgDaysToSell: number }> = {};
-    const salesByHour: Record<number, { count: number; avgProfit: number }> = {};
-    for (let i = 0; i < 7; i++) salesByDay[i] = { count: 0, avgProfit: 0, avgDaysToSell: 0 };
-    for (let i = 0; i < 24; i++) salesByHour[i] = { count: 0, avgProfit: 0 };
+    // 3. Analiza prodaj po dnevih/urah
+    const { salesByDay, salesByHour, topHours } = analyzeSalesHistory(soldTrades);
 
-    for (const t of soldTrades) {
-      if (t.sellDate) {
-        const day = (t.sellDate.getDay() + 6) % 7; // ponedeljek=0, nedelja=6
-        const hour = t.sellDate.getHours();
-        const profit = (t.sellPrice ?? 0) - t.buyPrice;
-        salesByDay[day].count++;
-        salesByDay[day].avgProfit += profit;
-        if (t.buyDate && t.sellDate) {
-          salesByDay[day].avgDaysToSell += Math.round((t.sellDate.getTime() - t.buyDate.getTime()) / (24 * 60 * 60 * 1000));
-        }
-        salesByHour[hour].count++;
-        salesByHour[hour].avgProfit += profit;
-      }
-    }
-    // Average
-    for (const d of Object.keys(salesByDay)) {
-      const day = salesByDay[Number(d)];
-      if (day.count > 0) {
-        day.avgProfit = Math.round(day.avgProfit / day.count);
-        day.avgDaysToSell = Math.round(day.avgDaysToSell / day.count);
-      }
-    }
-    for (const h of Object.keys(salesByHour)) {
-      const hour = salesByHour[Number(h)];
-      if (hour.count > 0) hour.avgProfit = Math.round(hour.avgProfit / hour.count);
-    }
+    // 4. Pripravi podatke za AI
+    const items = heldTrades.map(t => ({
+      id: t.id,
+      title: t.title,
+      category: t.category || 'drugo',
+      cost: t.buyPrice,
+      estValue: t.listing?.aiEstimatedValue ?? Math.round(t.buyPrice * 1.25),
+      daysHeld: Math.round((Date.now() - t.buyDate.getTime()) / (24 * 60 * 60 * 1000)),
+    }));
 
-    // 4. AI napoved optimalnega časa
-    const settings = await getSettingsRow();
-    const aiSettings: AiSettings = {
-      provider: settings.aiProvider as AiProviderType,
-      baseUrl: settings.aiBaseUrl, apiKey: settings.aiApiKey, model: settings.aiModel,
-      fallbackProvider: (settings.fallbackProvider || '') as AiProviderType | '',
-      fallbackBaseUrl: settings.fallbackBaseUrl || '', fallbackApiKey: settings.fallbackApiKey || '',
-      fallbackModel: settings.fallbackModel || '',
-    };
+    // 5. AI klic
+    const prompt = buildPrompt(items, salesByDay, salesByHour, topHours);
+    const raw = await callAi(prompt);
+    const parsed: any = parseAi(raw);
 
-    const items = heldTrades.map(t => {
-      const cost = t.buyPrice;
-      const estValue = t.listing?.aiEstimatedValue ?? Math.round(cost * 1.25);
-      const daysHeld = Math.round((Date.now() - t.buyDate.getTime()) / (24 * 60 * 60 * 1000));
-      return {
-        id: t.id, title: t.title, category: t.category || 'drugo',
-        cost, estValue, daysHeld,
-      };
+    // 6. Transformacija rezultatov
+    const predictions = transformPredictions(parsed, items);
+
+    // 7. Summary
+    const summary = buildSummary(predictions);
+
+    return apiOk({
+      insights: String(parsed?.insights ?? '').slice(0, 500),
+      predictions,
+      summary,
+      historicalData: {
+        totalSoldAnalyzed: soldTrades.length,
+        salesByDay: Object.entries(salesByDay).map(([d, s]) => ({
+          day: DAYS_SL[Number(d)],
+          count: s.count, avgProfit: s.avgProfit, avgDaysToSell: s.avgDaysToSell,
+        })),
+        topHours,
+      },
     });
+  },
+});
 
-    const itemsStr = items.map(i =>
-      `- [${i.id}] ${i.title} | ${i.category} | nabavna: ${i.cost}€ | est. vrednost: ${i.estValue}€ | ${i.daysHeld}d v skladišču`
-    ).join('\n');
+// --- Pomožne funkcije (čiste, testabilne) --------------------------------
 
-    const salesByDayStr = Object.entries(salesByDay).map(([d, s]) =>
-      `- ${DAYS_SL[Number(d)]}: ${s.count} prodaj, povp. ${s.avgProfit}€ dobička, povp. ${s.avgDaysToSell}d`
-    ).join('\n');
+interface SalesByDay { count: number; avgProfit: number; avgDaysToSell: number; }
+interface SalesByHour { count: number; avgProfit: number; }
+interface SalesAnalysis {
+  salesByDay: Record<number, SalesByDay>;
+  salesByHour: Record<number, SalesByHour>;
+  topHours: string;
+}
 
-    const topHours = Object.entries(salesByHour)
-      .filter(([_, s]) => s.count > 0)
-      .sort(([, a], [, b]) => b.count - a.count)
-      .slice(0, 5)
-      .map(([h, s]) => `${h}:00 (${s.count} prodaj, ${s.avgProfit}€)`)
-      .join(', ');
+function analyzeSalesHistory(soldTrades: Array<{
+  buyPrice: number; sellPrice: number | null;
+  buyDate: Date | null; sellDate: Date | null;
+}>): SalesAnalysis {
+  const salesByDay: Record<number, SalesByDay> = {};
+  const salesByHour: Record<number, SalesByHour> = {};
+  for (let i = 0; i < 7; i++) salesByDay[i] = { count: 0, avgProfit: 0, avgDaysToSell: 0 };
+  for (let i = 0; i < 24; i++) salesByHour[i] = { count: 0, avgProfit: 0 };
 
-    const prompt = `Si ekspert za e-commerce timing in optimizacijo objav oglasov.
+  for (const t of soldTrades) {
+    if (!t.sellDate) continue;
+    const day = (t.sellDate.getDay() + 6) % 7; // ponedeljek=0, nedelja=6
+    const hour = t.sellDate.getHours();
+    const profit = (t.sellPrice ?? 0) - t.buyPrice;
+    salesByDay[day].count++;
+    salesByDay[day].avgProfit += profit;
+    if (t.buyDate && t.sellDate) {
+      salesByDay[day].avgDaysToSell += Math.round((t.sellDate.getTime() - t.buyDate.getTime()) / (24 * 60 * 60 * 1000));
+    }
+    salesByHour[hour].count++;
+    salesByHour[hour].avgProfit += profit;
+  }
+
+  // Average
+  for (const d of Object.keys(salesByDay)) {
+    const day = salesByDay[Number(d)];
+    if (day.count > 0) {
+      day.avgProfit = Math.round(day.avgProfit / day.count);
+      day.avgDaysToSell = Math.round(day.avgDaysToSell / day.count);
+    }
+  }
+  for (const h of Object.keys(salesByHour)) {
+    const hour = salesByHour[Number(h)];
+    if (hour.count > 0) hour.avgProfit = Math.round(hour.avgProfit / hour.count);
+  }
+
+  const topHours = Object.entries(salesByHour)
+    .filter(([_, s]) => s.count > 0)
+    .sort(([, a], [, b]) => b.count - a.count)
+    .slice(0, 5)
+    .map(([h, s]) => `${h}:00 (${s.count} prodaj, ${s.avgProfit}€)`)
+    .join(', ');
+
+  return { salesByDay, salesByHour, topHours };
+}
+
+function buildPrompt(
+  items: Array<{ id: string; title: string; category: string; cost: number; estValue: number; daysHeld: number }>,
+  salesByDay: Record<number, SalesByDay>,
+  _salesByHour: Record<number, SalesByHour>,
+  topHours: string
+): string {
+  const itemsStr = items.map(i =>
+    `- [${i.id}] ${i.title} | ${i.category} | nabavna: ${i.cost}€ | est. vrednost: ${i.estValue}€ | ${i.daysHeld}d v skladišču`
+  ).join('\n');
+
+  const salesByDayStr = Object.entries(salesByDay).map(([d, s]) =>
+    `- ${DAYS_SL[Number(d)]}: ${s.count} prodaj, povp. ${s.avgProfit}€ dobička, povp. ${s.avgDaysToSell}d`
+  ).join('\n');
+
+  return `Si ekspert za e-commerce timing in optimizacijo objav oglasov.
 Za vsak held item predlagaj OPTIMALEN čas objave oglasa za maksimalni dobiček in hitro prodajo.
 
 INVENTAR V SKLADIŠČU:
@@ -141,7 +195,7 @@ Pravila za optimalni čas:
 1. Izberi DAN (ponedeljek-nedelja) glede na zgodovino prodaj v tej kategoriji
 2. Izberi URO (0-23) ko je ciljna publika najbolj aktivna
 3. Izberi PLATFORMO (bolha/vinted/facebook/avtonet) glede na kategorijo
-4. Upoštevaj sezonskost inbližnje praznike
+4. Upoštevaj sezonskost in bližnje praznike
 5. Če je item stalled (>30d), predlagaj agresivno strategijo (flash sale, dražba)
 6. Določi expectedPrice in expectedTimeToSell
 
@@ -171,98 +225,64 @@ Odgovori LE z JSON:
     }
   ]
 }`;
+}
 
-    let raw = '';
-    try {
-      raw = await callProviderForRaw(aiSettings, prompt);
-    } catch (primaryError: any) {
-      if (aiSettings.fallbackProvider && aiSettings.fallbackModel) {
-        const fb: AiSettings = {
-          provider: aiSettings.fallbackProvider,
-          baseUrl: aiSettings.fallbackBaseUrl || '',
-          apiKey: aiSettings.fallbackApiKey || '',
-          model: aiSettings.fallbackModel,
-        };
-        raw = await callProviderForRaw(fb, prompt);
-      } else {
-        return NextResponse.json({ error: primaryError?.message ?? 'AI failed' }, { status: 500 });
-      }
-    }
+function transformPredictions(parsed: any, items: Array<{ id: string; title: string; category: string; cost: number; estValue: number; daysHeld: number }>): any[] {
+  const validIds = new Set(items.map(i => i.id));
+  const itemMap = new Map(items.map(i => [i.id, i]));
+  const dayNames = ['ponedeljek', 'torek', 'sreda', 'četrtek', 'petek', 'sobota', 'nedelja'];
 
-    const parsed: any = parseJsonLooseExported(raw);
-    const validIds = new Set(items.map(i => i.id));
-    const itemMap = new Map(items.map(i => [i.id, i]));
-
-    const predictions = (parsed?.predictions || [])
-      .filter((p: any) => validIds.has(String(p?.id ?? '')))
-      .map((p: any) => {
-        const id = String(p.id);
-        const orig = itemMap.get(id)!;
-        const dayNames = ['ponedeljek', 'torek', 'sreda', 'četrtek', 'petek', 'sobota', 'nedelja'];
-        return {
-          tradeId: id,
-          title: orig.title,
-          category: orig.category,
-          cost: orig.cost,
-          estimatedValue: orig.estValue,
-          daysHeld: orig.daysHeld,
-          optimalDay: dayNames.includes(String(p?.optimal_day)) ? String(p.optimal_day) : 'sobota',
-          optimalHour: Math.max(0, Math.min(23, Number(p?.optimal_hour ?? 19))),
-          optimalPlatform: ['bolha', 'vinted', 'facebook', 'avtonet'].includes(String(p?.optimal_platform))
-            ? String(p.optimal_platform) : 'bolha',
-          strategy: ['premium_time', 'off_peak', 'flash_sale', 'staggered', 'wait_seasonal'].includes(String(p?.strategy))
-            ? String(p.strategy) : 'premium_time',
-          expectedPriceEur: Math.max(0, Number(p?.expected_price_eur ?? orig.estValue)),
-          expectedTimeToSellDays: Math.max(1, Math.min(120, Number(p?.expected_time_to_sell_days ?? 14))),
-          seasonalityNote: String(p?.seasonality_note ?? '').slice(0, 200),
-          reasoning: String(p?.reasoning ?? '').slice(0, 250),
-        };
-      });
-
-    // Summary
-    const strategyBreakdown: Record<string, number> = {};
-    const platformBreakdown: Record<string, number> = {};
-    for (const p of predictions) {
-      strategyBreakdown[p.strategy] = (strategyBreakdown[p.strategy] ?? 0) + 1;
-      platformBreakdown[p.optimalPlatform] = (platformBreakdown[p.optimalPlatform] ?? 0) + 1;
-    }
-    const avgExpectedPrice = predictions.length > 0
-      ? Math.round(predictions.reduce((s, p) => s + p.expectedPriceEur, 0) / predictions.length) : 0;
-    const avgTimeToSell = predictions.length > 0
-      ? Math.round(predictions.reduce((s, p) => s + p.expectedTimeToSellDays, 0) / predictions.length) : 0;
-    const totalExpectedRevenue = predictions.reduce((s, p) => s + p.expectedPriceEur, 0);
-
-    // Increment AI usage
-    const today = new Date().toISOString().slice(0, 10);
-    if (settings.aiCallsDate !== today) {
-      await db.settings.update({ where: { id: 'singleton' }, data: { aiCallsDate: today, aiCallsToday: 1 } });
-    } else {
-      await db.settings.update({ where: { id: 'singleton' }, data: { aiCallsToday: { increment: 1 } } });
-    }
-
-    return NextResponse.json({
-      ok: true,
-      insights: String(parsed?.insights ?? '').slice(0, 500),
-      predictions,
-      summary: {
-        totalItems: predictions.length,
-        avgExpectedPrice,
-        avgTimeToSell,
-        totalExpectedRevenue,
-        strategyBreakdown,
-        platformBreakdown,
-      },
-      historicalData: {
-        totalSoldAnalyzed: soldTrades.length,
-        salesByDay: Object.entries(salesByDay).map(([d, s]) => ({
-          day: DAYS_SL[Number(d)],
-          count: s.count, avgProfit: s.avgProfit, avgDaysToSell: s.avgDaysToSell,
-        })),
-        topHours: topHours,
-      },
+  return (parsed?.predictions || [])
+    .filter((p: any) => validIds.has(String(p?.id ?? '')))
+    .map((p: any) => {
+      const id = String(p.id);
+      const orig = itemMap.get(id)!;
+      return {
+        tradeId: id,
+        title: orig.title,
+        category: orig.category,
+        cost: orig.cost,
+        estimatedValue: orig.estValue,
+        daysHeld: orig.daysHeld,
+        optimalDay: dayNames.includes(String(p?.optimal_day)) ? String(p.optimal_day) : 'sobota',
+        optimalHour: Math.max(0, Math.min(23, Number(p?.optimal_hour ?? 19))),
+        optimalPlatform: ['bolha', 'vinted', 'facebook', 'avtonet'].includes(String(p?.optimal_platform))
+          ? String(p.optimal_platform) : 'bolha',
+        strategy: ['premium_time', 'off_peak', 'flash_sale', 'staggered', 'wait_seasonal'].includes(String(p?.strategy))
+          ? String(p.strategy) : 'premium_time',
+        expectedPriceEur: Math.max(0, Number(p?.expected_price_eur ?? orig.estValue)),
+        expectedTimeToSellDays: Math.max(1, Math.min(120, Number(p?.expected_time_to_sell_days ?? 14))),
+        seasonalityNote: String(p?.seasonality_note ?? '').slice(0, 200),
+        reasoning: String(p?.reasoning ?? '').slice(0, 250),
+      };
     });
-  } catch (e: any) {
-    logger.error("/api/ai/optimal-time", "POST handler failed", e);
-    return NextResponse.json({ error: e?.message ?? 'Napaka' }, { status: 500 });
+}
+
+function buildSummary(predictions: any[]): {
+  totalItems: number;
+  avgExpectedPrice: number;
+  avgTimeToSell: number;
+  totalExpectedRevenue: number;
+  strategyBreakdown: Record<string, number>;
+  platformBreakdown: Record<string, number>;
+} {
+  const strategyBreakdown: Record<string, number> = {};
+  const platformBreakdown: Record<string, number> = {};
+  for (const p of predictions) {
+    strategyBreakdown[p.strategy] = (strategyBreakdown[p.strategy] ?? 0) + 1;
+    platformBreakdown[p.optimalPlatform] = (platformBreakdown[p.optimalPlatform] ?? 0) + 1;
   }
+  const avgExpectedPrice = predictions.length > 0
+    ? Math.round(predictions.reduce((s, p) => s + p.expectedPriceEur, 0) / predictions.length) : 0;
+  const avgTimeToSell = predictions.length > 0
+    ? Math.round(predictions.reduce((s, p) => s + p.expectedTimeToSellDays, 0) / predictions.length) : 0;
+  const totalExpectedRevenue = predictions.reduce((s, p) => s + p.expectedPriceEur, 0);
+  return {
+    totalItems: predictions.length,
+    avgExpectedPrice,
+    avgTimeToSell,
+    totalExpectedRevenue,
+    strategyBreakdown,
+    platformBreakdown,
+  };
 }

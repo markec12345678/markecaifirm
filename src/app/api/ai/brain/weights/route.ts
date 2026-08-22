@@ -1,4 +1,4 @@
-// v8.28: Adaptive Domain Weights API — feedback loop.
+// v8.28 / v8.95.2-f-refactor: Adaptive Domain Weights API — feedback loop.
 // GET  /api/ai/brain/weights — returns current adaptive weights + stats + history.
 // POST /api/ai/brain/weights — 3 actions:
 //   { action: 'record', domain, feedback: 'executed'|'rejected', action?: string }
@@ -19,10 +19,18 @@
 // Domains where the user executes 80%+ of actions get weight INCREASED; domains
 // where they reject 60%+ get weight DECREASED.
 //
+// Refaktoriran z withAiRoute helperjem (v8.95.2-f) + enforceBudget guard
+// (non-breaking — endpoint ne kliče AI direktno, ampak je konsistentno z
+// vsemi v8.94.x / v8.95.x migracijami; avtomatski recordAiCall je additive).
+// EN shared handler za GET in POST (konsistentno z brain/explain, brain/snapshots,
+// brain/actual-profit vzorcem — parseBody interno razlikuje med metodami preko
+// req.method, handler nato branch-a na GET ali POST logiko).
+//
 // runtime='nodejs', dynamic='force-dynamic', maxDuration=60.
 
-import { NextRequest, NextResponse } from 'next/server';
-import { logger } from '@/lib/logger';
+import type { NextRequest } from 'next/server';
+import { withAiRoute, AI_ROUTE_DEFAULTS, type AiRouteContext } from '@/lib/with-ai-route';
+import { apiOk, apiBadRequest } from '@/lib/api-response';
 import {
   loadAdaptiveWeights,
   recordActionFeedback,
@@ -33,11 +41,10 @@ import {
 } from '@/lib/brain/adaptive-weights';
 import type { DomainName } from '@/lib/brain/master';
 
-export const runtime = 'nodejs';
-export const dynamic = 'force-dynamic';
+export const { runtime, dynamic } = AI_ROUTE_DEFAULTS;
 export const maxDuration = 60;
 
-// --- Domain name validation -----------------------------------------------
+// --- Domain name validation (pure helper, extracted OUTSIDE handler) -------
 
 const ALL_DOMAINS: DomainName[] = ['profit', 'inventory', 'market', 'sourcing', 'risk', 'buyer', 'pricing'];
 const DOMAIN_SET = new Set<string>(ALL_DOMAINS);
@@ -46,66 +53,120 @@ function isValidDomain(d: unknown): d is DomainName {
   return typeof d === 'string' && DOMAIN_SET.has(d);
 }
 
-// --- GET -------------------------------------------------------------------
+// --- Input shape ---------------------------------------------------------
 
-export async function GET() {
-  try {
-    const weights: AdaptiveWeights = await loadAdaptiveWeights();
-    return NextResponse.json({
-      ok: true as const,
-      adaptiveWeights: weights,
-      source: 'v8.28-adaptive-weights',
-    });
-  } catch (err: any) {
-    logger.error('/api/ai/brain/weights', 'GET handler failed', err);
-    return NextResponse.json(
-      { error: err?.message ?? 'Napaka' },
-      { status: 500 },
-    );
-  }
+/**
+ * Unified route-level input for both GET and POST. parseBody detects the HTTP
+ * method via `req.method` and populates:
+ *   - GET  → { method: 'GET', action: '', domain: undefined, ... }
+ *   - POST → { method: 'POST', action: <lowercased+trimmed>, domain, feedback, weight }
+ *
+ * Handler branches on `input.method`: GET returns current weights, POST
+ * routes by `input.action` ('record' | 'reset' | 'set').
+ */
+interface WeightsInput {
+  /** HTTP method detected from req — distinguishes GET from POST in handler. */
+  method: 'GET' | 'POST';
+  /** Lowercased + trimmed action string ('record'|'reset'|'set'|''). Empty for GET. */
+  action: string;
+  /** Raw domain value from POST body (validated in handler). */
+  domain: unknown;
+  /** Raw feedback value from POST body ('executed'|'rejected', validated in handler). */
+  feedback: unknown;
+  /** Raw weight value from POST body (number, validated in handler). */
+  weight: unknown;
 }
 
-// --- POST ------------------------------------------------------------------
+// --- Body parsing (pure helper, extracted OUTSIDE handler) ----------------
 
-export async function POST(req: NextRequest) {
+/**
+ * Resolve WeightsInput from the incoming request:
+ *   - GET (or any non-POST): returns method='GET' with empty action fields
+ *     → handler returns current adaptive weights
+ *   - POST: parses JSON body, lowercases+trims action, preserves raw
+ *     domain/feedback/weight for per-action validation in handler
+ *
+ * Body parsing mirrors original POST: content-type check, req.clone() to avoid
+ * consuming the stream, try/catch around JSON parse with {} fallback, object
+ * shape guard (rejects arrays / non-objects).
+ */
+async function parseWeightsInput(req: NextRequest): Promise<WeightsInput> {
+  // GET (or any non-POST) — no body parsing needed
+  if (req.method !== 'POST') {
+    return {
+      method: 'GET',
+      action: '',
+      domain: undefined,
+      feedback: undefined,
+      weight: undefined,
+    };
+  }
+
+  // POST — parse JSON body
+  let body: Record<string, unknown> = {};
   try {
-    let body: Record<string, unknown> = {};
-    try {
-      const ct = req.headers.get('content-type') ?? '';
-      if (ct.includes('application/json')) {
-        const cloned = req.clone();
-        body = (await cloned.json()) as Record<string, unknown>;
-      }
-    } catch {
-      body = {};
+    const ct = req.headers.get('content-type') ?? '';
+    if (ct.includes('application/json')) {
+      const cloned = req.clone();
+      body = (await cloned.json()) as Record<string, unknown>;
     }
-    if (!body || typeof body !== 'object' || Array.isArray(body)) {
-      body = {};
+  } catch {
+    body = {};
+  }
+  if (!body || typeof body !== 'object' || Array.isArray(body)) {
+    body = {};
+  }
+
+  const action = typeof body.action === 'string' ? body.action.toLowerCase().trim() : '';
+
+  return {
+    method: 'POST',
+    action,
+    domain: body.domain,
+    feedback: body.feedback,
+    weight: body.weight,
+  };
+}
+
+// --- Shared handler (GET + POST) -----------------------------------------
+
+const weightsHandler = withAiRoute<WeightsInput>({
+  endpoint: '/api/ai/brain/weights',
+  maxDuration: 60,
+  enforceBudget: true, // v8.95.2-f: budget guard + avtomatski recordAiCall (non-breaking za deterministic endpoint)
+  method: 'GET', // Endpoint sprejema GET + POST — bypass POST-only check
+
+  parseBody: async (req: NextRequest) => parseWeightsInput(req),
+
+  // Brez validateInput — handler interno validira per-action (domain/feedback/weight)
+
+  handler: async (input, _ctx: AiRouteContext) => {
+    const { method, action } = input;
+
+    // --- GET: return current adaptive weights -----------------------------
+    if (method === 'GET') {
+      const weights: AdaptiveWeights = await loadAdaptiveWeights();
+      return apiOk({
+        ok: true as const,
+        adaptiveWeights: weights,
+        source: 'v8.28-adaptive-weights',
+      });
     }
 
-    const action = typeof body.action === 'string' ? body.action.toLowerCase().trim() : '';
+    // --- POST: action-based routing ---------------------------------------
 
-    // --- action: record ----------------------------------------------------
+    // action: record ------------------------------------------------------
     if (action === 'record') {
-      const domain = body.domain;
-      const feedback = body.feedback;
+      const { domain, feedback } = input;
 
       if (!isValidDomain(domain)) {
-        return NextResponse.json(
-          {
-            ok: false,
-            error: `Invalid domain: ${JSON.stringify(domain)}. Must be one of: ${ALL_DOMAINS.join(', ')}.`,
-          },
-          { status: 400 },
+        return apiBadRequest(
+          `Invalid domain: ${JSON.stringify(domain)}. Must be one of: ${ALL_DOMAINS.join(', ')}.`,
         );
       }
       if (feedback !== 'executed' && feedback !== 'rejected') {
-        return NextResponse.json(
-          {
-            ok: false,
-            error: `Invalid feedback: ${JSON.stringify(feedback)}. Must be 'executed' or 'rejected'.`,
-          },
-          { status: 400 },
+        return apiBadRequest(
+          `Invalid feedback: ${JSON.stringify(feedback)}. Must be 'executed' or 'rejected'.`,
         );
       }
 
@@ -115,63 +176,49 @@ export async function POST(req: NextRequest) {
         feedback,
       });
 
-      return NextResponse.json(result);
+      return apiOk(result);
     }
 
-    // --- action: reset -----------------------------------------------------
+    // action: reset -------------------------------------------------------
     if (action === 'reset') {
       const result = await resetAdaptiveWeights();
-      return NextResponse.json(result);
+      return apiOk(result);
     }
 
-    // --- action: set -------------------------------------------------------
+    // action: set ---------------------------------------------------------
     if (action === 'set') {
-      const domain = body.domain;
-      const weight = body.weight;
+      const { domain, weight } = input;
 
       if (!isValidDomain(domain)) {
-        return NextResponse.json(
-          {
-            ok: false,
-            error: `Invalid domain: ${JSON.stringify(domain)}. Must be one of: ${ALL_DOMAINS.join(', ')}.`,
-          },
-          { status: 400 },
+        return apiBadRequest(
+          `Invalid domain: ${JSON.stringify(domain)}. Must be one of: ${ALL_DOMAINS.join(', ')}.`,
         );
       }
       if (typeof weight !== 'number' || !Number.isFinite(weight)) {
-        return NextResponse.json(
-          {
-            ok: false,
-            error: `Invalid weight: ${JSON.stringify(weight)}. Must be a finite number.`,
-          },
-          { status: 400 },
+        return apiBadRequest(
+          `Invalid weight: ${JSON.stringify(weight)}. Must be a finite number.`,
         );
       }
 
       try {
         const result = await setDomainWeight(domain, weight);
-        return NextResponse.json(result);
-      } catch (err: any) {
-        return NextResponse.json(
-          { error: err?.message ?? 'Napaka pri setDomainWeight' },
-          { status: 400 },
-        );
+        return apiOk(result);
+      } catch (err: unknown) {
+        // setDomainWeight throws on non-finite weight (unreachable — we validate
+        // above) or on DB persistence errors. Original returned 400 with { error };
+        // we use apiBadRequest for consistency with other migrations (additive
+        // `ok: false` field, non-breaking).
+        const errMsg = err instanceof Error ? err.message : 'Napaka pri setDomainWeight';
+        return apiBadRequest(errMsg);
       }
     }
 
-    // --- unknown action ----------------------------------------------------
-    return NextResponse.json(
-      {
-        ok: false,
-        error: `Unknown action: ${JSON.stringify(action)}. Must be 'record', 'reset', or 'set'.`,
-      },
-      { status: 400 },
+    // unknown action ------------------------------------------------------
+    return apiBadRequest(
+      `Unknown action: ${JSON.stringify(action)}. Must be 'record', 'reset', or 'set'.`,
     );
-  } catch (err: any) {
-    logger.error('/api/ai/brain/weights', 'POST handler failed', err);
-    return NextResponse.json(
-      { error: err?.message ?? 'Napaka' },
-      { status: 500 },
-    );
-  }
-}
+  },
+});
+
+export const GET = weightsHandler;
+export const POST = weightsHandler;

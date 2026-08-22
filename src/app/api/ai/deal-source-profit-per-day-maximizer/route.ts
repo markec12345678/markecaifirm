@@ -39,24 +39,18 @@
 
 // GET+POST /api/ai/deal-source-profit-per-day-maximizer
 // (AI-enhanced + grounding + anti-hallucination + 6h cache + deterministic fallback)
+// Refaktoriran z withAiRoute helperjem (v8.96.5) + enforceBudget guard.
 
-import { NextRequest, NextResponse } from 'next/server';
-import { db } from '@/lib/db';
-import { getSettingsRow } from '@/lib/pipeline';
-import {
-  callProviderForRaw,
-  parseJsonLooseExported,
-  type AiProviderType,
-  type AiSettings,
-} from '@/lib/ai';
+import { withAiRoute, AI_ROUTE_DEFAULTS, type AiRouteContext } from '@/lib/with-ai-route';
+import { apiOk } from '@/lib/api-response';
 import { GROUNDING_PROMPT_SUFFIX } from '@/lib/anti-hallucination';
 import { getCachedAI, setCachedAI } from '@/lib/ai-cache';
-import { checkRateLimit, rateLimitResponse } from '@/lib/rate-limit';
-import { logger } from '@/lib/logger';
 
-export const runtime = 'nodejs';
-export const dynamic = 'force-dynamic';
+export const { runtime, dynamic } = AI_ROUTE_DEFAULTS;
 export const maxDuration = 60;
+
+// eslint-disable-next-line @typescript-eslint/no-empty-object-type
+interface DealSourceProfitPerDayMaximizerInput {}
 
 // --- Types ---------------------------------------------------------------
 
@@ -565,17 +559,20 @@ function buildSummary(entries: SourceEntry[], portfolio: PortfolioSummary): stri
 
 // --- Handler -------------------------------------------------------------
 
-export async function GET(req: NextRequest) {
-  return handleDealSourceProfitPerDayMaximizer(req);
-}
-export async function POST(req: NextRequest) {
-  return handleDealSourceProfitPerDayMaximizer(req);
-}
+const dealSourceProfitPerDayMaximizerHandler = withAiRoute<DealSourceProfitPerDayMaximizerInput>({
+  endpoint: '/api/ai/deal-source-profit-per-day-maximizer',
+  maxDuration: 60,
+  enforceBudget: true, // AI klic — preveri budget
+  method: 'GET', // Endpoint sprejema GET + POST — bypass POST-only check
 
-async function handleDealSourceProfitPerDayMaximizer(req: NextRequest) {
-  try {
-    const rl = checkRateLimit(req, 'ai-deal-source-profit-per-day-maximizer', 20);
-    if (!rl.allowed) return rateLimitResponse(rl);
+  parseBody: async (req) => {
+    await req.json().catch(() => ({}));
+    return {};
+  },
+
+  // No validateInput — body ignored, identična logika za GET in POST
+  handler: async (_input, ctx: AiRouteContext) => {
+    const { db, callAi, parseAi, logger } = ctx;
 
     const now = Date.now();
     const twelveMonthsAgo = new Date(now - TWELVE_MONTHS_MS);
@@ -608,7 +605,7 @@ async function handleDealSourceProfitPerDayMaximizer(req: NextRequest) {
 
     // Empty-state: no SOLD trades
     if (soldTrades.length === 0) {
-      return NextResponse.json({
+      return apiOk({
         ok: true,
         sources: [],
         portfolio: {
@@ -632,7 +629,7 @@ async function handleDealSourceProfitPerDayMaximizer(req: NextRequest) {
     }
 
     if (computed.length === 0) {
-      return NextResponse.json({
+      return apiOk({
         ok: true,
         sources: [],
         portfolio: {
@@ -662,7 +659,7 @@ async function handleDealSourceProfitPerDayMaximizer(req: NextRequest) {
       summary: string;
     }>(cacheKey);
     if (cached) {
-      return NextResponse.json({
+      return apiOk({
         ok: true,
         sources: cached.sources,
         portfolio: cached.portfolio,
@@ -672,104 +669,14 @@ async function handleDealSourceProfitPerDayMaximizer(req: NextRequest) {
       } satisfies DealSourceProfitPerDayResponse);
     }
 
-    // 4) AI prompt with grounding
-    const settings = await getSettingsRow();
-    const aiSettings: AiSettings = {
-      provider: settings.aiProvider as AiProviderType,
-      baseUrl: settings.aiBaseUrl,
-      apiKey: settings.aiApiKey,
-      model: settings.aiModel,
-      fallbackProvider: (settings.fallbackProvider || '') as
-        | AiProviderType
-        | '',
-      fallbackBaseUrl: settings.fallbackBaseUrl || '',
-      fallbackApiKey: settings.fallbackApiKey || '',
-      fallbackModel: settings.fallbackModel || '',
-    };
-
-    const sourcesForAI = entries.map((e) => ({
-      source: e.source,
-      displayName: e.displayName,
-      metrics: e.metrics,
-      deterministicMaximization: e.maximization,
-    }));
-
-    const promptData = {
-      totalTrades: computed.length,
-      totalSources: entries.length,
-      sources: sourcesForAI,
-      deterministicPortfolio: {
-        totalCurrentDailyProfit: portfolio.totalCurrentDailyProfit,
-        totalMaximizedDailyProfit: portfolio.totalMaximizedDailyProfit,
-        totalDailyProfitUplift: portfolio.totalDailyProfitUplift,
-        profitPerDayRanking: portfolio.profitPerDayRanking,
-        bestDailyProfitSource: portfolio.bestDailyProfitSource,
-      },
-      caps: {
-        dailyProfitMin: DAILY_PROFIT_MIN, dailyProfitMax: DAILY_PROFIT_MAX,
-        upliftMin: UPLIFT_MIN, upliftMax: UPLIFT_MAX,
-        scoreMin: SCORE_MIN, scoreMax: SCORE_MAX,
-        avgProfitPerTradeMin: AVG_PROFIT_PER_TRADE_MIN,
-        avgProfitPerTradeMax: AVG_PROFIT_PER_TRADE_MAX,
-        tradesPerDayMin: TRADES_PER_DAY_MIN, tradesPerDayMax: TRADES_PER_DAY_MAX,
-      },
-      actionGainPct: ACTION_GAIN_PCT,
-    };
-
-    const prompt = `Si AI "Deal Source Profit Per Day Maximizer" za slovenske in srednjeevropske oglasne platforme (Bolha, Vinted, Avtonet, mobile.de).
-Si strokovnjak za PROFIT PER DAY MAXIMIZATION per source — kako maksimizirati PROFIT PER DAY per source (koliko €/dan vsak source generira). Tvoj cilj je "Bolha generira 15€/dan v profit, Vinted generira 8€/dan — ampak bi lahko bilo 25€/dan in 14€/dan." Razlika od deal-source-profit-velocity-maximizer (v8.08 ki maksimizira velocity profit-a per source — €/teden kako hitro profit kopiči) — ti MAKSIMIZIRAŠ PROFIT PER DAY per source (€/dan = totalProfit/365, ne €/teden velocity). Razlika od deal-source-annual-return-maximizer (v8.10 ki maksimizira annualized return per source z benchmark primerjavo) — ti MAKSIMIZIRAŠ PROFIT PER DAY per source (€/dan absolute, ne % annual return). Razlika od deal-source-profit-maximizer (v7.97 ki maksimizira total profit per source) — ti MAKSIMIZIRAŠ PROFIT PER DAY per source (€/dan normalized za čas, ne € total). Razlika od deal-source-cash-flow-maximizer (v8.06 ki maksimizira NET CASH FLOW per source) — ti MAKSIMIZIRAŠ PROFIT PER DAY (€/dan profit rate, ne € net cash flow). Razlika od deal-source-profit-per-trade-maximizer (v8.04 ki maksimizira profit per trade per source €) — ti MAKSIMIZIRAŠ PROFIT PER DAY per source (€/dan normalized, ne €/trade). Razlika od deal-source-margin-maximizer (v8.03 ki maksimizira margin %) — ti MAKSIMIZIRAŠ PROFIT PER DAY per source z dailyProfitMaximizationAction (INCREASE_TRADE_FREQUENCY/INCREASE_PROFIT_PER_TRADE/REDUCE_HOLD_TIME/OPTIMIZE_PRICING) in dailyProfitProjection. Razlika od deal-source-volume-maximizer (v8.02 ki maksimizira trade volume per source) — ti MAKSIMIZIRAŠ PROFIT PER DAY per source (€/dan normalized, ne trade volume). Razlika od profit-per-day-scaling-maximizer (v8.08 ki maksimizira in skalira daily profit z scalingPath) — ti MAKSIMIZIRAŠ PROFIT PER DAY PER SOURCE z profitPerDayRanking in dailyProfitProjection (7/14/30 dan). Razlika od inventory-profit-per-day-maximizer (v8.02 ki maksimizira daily profit per item) — ti MAKSIMIZIRAŠ PROFIT PER DAY per SOLD SOURCE (per source daily profit, ne per item daily profit).
-
-DETERMINISTIČNI PODATKI (izračunano iz DB — SOLD trgovin v zadnjih 12 mesecih z linked Listing za source):
-${JSON.stringify(promptData, null, 2)}
-
-PRAVILA ZA AI ODGOVOR:
-1. sources: za vsak source iz sources, daj:
-   - source (string, MORA match-at enega iz deterministic sources — anti-hallucination),
-   - maximization.dailyProfitMaximizationAction: INCREASE_TRADE_FREQUENCY | INCREASE_PROFIT_PER_TRADE | REDUCE_HOLD_TIME | OPTIMIZE_PRICING,
-   - maximization.maximizedProfitPerDay €/day [0, 5000] (≥ current profitPerDay, ≤ min(current × 3, 5000) — anti-hallucination),
-   - maximization.dailyProfitUplift €/day [0, 5000] (improvement = maximized − current),
-   - maximization.maximizationLevers: 3-5 stringov (max 200 vsak, slovenski — specific daily profit levers per source),
-   - (dailyProfitProjection 7/14/30 dan in profitPerDayRank in profitPerDayScore se avtomatsko izračunajo v backend-u — AI ne vrača teh),
-2. summary: slovenski povzetek (max 500 znakov — poudari total current daily profit, total maximized daily profit, total uplift, best source).
-
-VRNI LE JSON:
-{
-  "sources": [
-    {
-      "source": "bolha",
-      "maximization": {
-        "dailyProfitMaximizationAction": "INCREASE_TRADE_FREQUENCY",
-        "maximizedProfitPerDay": 25.0,
-        "dailyProfitUplift": 10.0,
-        "maximizationLevers": [
-          "Povečaj trade frequency z 0.05 na 0.075 trades/dan — dodaj 3 nove monitorje.",
-          "Aktiviraj cross-border sourcing za višji deal flow.",
-          "Vklopi AI deal flow priority queue."
-        ]
-      }
-    },
-    {
-      "source": "vinted",
-      "maximization": {
-        "dailyProfitMaximizationAction": "INCREASE_PROFIT_PER_TRADE",
-        "maximizedProfitPerDay": 14.0,
-        "dailyProfitUplift": 6.0,
-        "maximizationLevers": [
-          "Dvigni profit per trade z AI pricing engine.",
-          "Negotiate harder z AI negotiation-playbook.",
-          "Prestavi se v premium niche kategorije."
-        ]
-      }
-    }
-  ],
-  "summary": "2 source-a. Portfolio daily profit: 23.00€/dan → 39.00€/dan (+16.00€/dan uplift). Best: Bolha (15.00€/dan → 25.00€/dan)."
-}${GROUNDING_PROMPT_SUFFIX}`;
+    // 4) AI prompt with grounding (settings loaded by withAiRoute wrapper)
+    const prompt = buildPrompt(entries, computed, portfolio);
 
     let aiUsed = false;
 
     try {
-      const raw = await callProviderForRaw(aiSettings, prompt);
-      const parsed = parseJsonLooseExported(raw) as AiResponse | null;
+      const raw = await callAi(prompt);
+      const parsed = parseAi(raw) as AiResponse | null;
 
       if (parsed && typeof parsed === 'object') {
         const aiSourcesMap = new Map<string, NonNullable<AiResponse['sources']>[number]>();
@@ -867,22 +774,101 @@ VRNI LE JSON:
       setCachedAI(cacheKey, { sources: entries, portfolio, summary });
     }
 
-    return NextResponse.json({
+    return apiOk({
       ok: true,
       sources: entries,
       portfolio,
       summary,
       aiUsed,
     } satisfies DealSourceProfitPerDayResponse);
-  } catch (err: any) {
-    logger.error(
-      '/api/ai/deal-source-profit-per-day-maximizer',
-      'handler failed',
-      err,
-    );
-    return NextResponse.json(
-      { error: err?.message ?? 'Napaka' },
-      { status: 500 },
-    );
-  }
+  },
+});
+
+export const GET = dealSourceProfitPerDayMaximizerHandler;
+export const POST = dealSourceProfitPerDayMaximizerHandler;
+
+// --- Prompt builder (čist, testabilen) -----------------------------------
+
+function buildPrompt(
+  entries: SourceEntry[],
+  computed: TradeComputed[],
+  portfolio: PortfolioSummary,
+): string {
+  const sourcesForAI = entries.map((e) => ({
+    source: e.source,
+    displayName: e.displayName,
+    metrics: e.metrics,
+    deterministicMaximization: e.maximization,
+  }));
+
+  const promptData = {
+    totalTrades: computed.length,
+    totalSources: entries.length,
+    sources: sourcesForAI,
+    deterministicPortfolio: {
+      totalCurrentDailyProfit: portfolio.totalCurrentDailyProfit,
+      totalMaximizedDailyProfit: portfolio.totalMaximizedDailyProfit,
+      totalDailyProfitUplift: portfolio.totalDailyProfitUplift,
+      profitPerDayRanking: portfolio.profitPerDayRanking,
+      bestDailyProfitSource: portfolio.bestDailyProfitSource,
+    },
+    caps: {
+      dailyProfitMin: DAILY_PROFIT_MIN, dailyProfitMax: DAILY_PROFIT_MAX,
+      upliftMin: UPLIFT_MIN, upliftMax: UPLIFT_MAX,
+      scoreMin: SCORE_MIN, scoreMax: SCORE_MAX,
+      avgProfitPerTradeMin: AVG_PROFIT_PER_TRADE_MIN,
+      avgProfitPerTradeMax: AVG_PROFIT_PER_TRADE_MAX,
+      tradesPerDayMin: TRADES_PER_DAY_MIN, tradesPerDayMax: TRADES_PER_DAY_MAX,
+    },
+    actionGainPct: ACTION_GAIN_PCT,
+  };
+
+  return `Si AI "Deal Source Profit Per Day Maximizer" za slovenske in srednjeevropske oglasne platforme (Bolha, Vinted, Avtonet, mobile.de).
+Si strokovnjak za PROFIT PER DAY MAXIMIZATION per source — kako maksimizirati PROFIT PER DAY per source (koliko €/dan vsak source generira). Tvoj cilj je "Bolha generira 15€/dan v profit, Vinted generira 8€/dan — ampak bi lahko bilo 25€/dan in 14€/dan." Razlika od deal-source-profit-velocity-maximizer (v8.08 ki maksimizira velocity profit-a per source — €/teden kako hitro profit kopiči) — ti MAKSIMIZIRAŠ PROFIT PER DAY per source (€/dan = totalProfit/365, ne €/teden velocity). Razlika od deal-source-annual-return-maximizer (v8.10 ki maksimizira annualized return per source z benchmark primerjavo) — ti MAKSIMIZIRAŠ PROFIT PER DAY per source (€/dan absolute, ne % annual return). Razlika od deal-source-profit-maximizer (v7.97 ki maksimizira total profit per source) — ti MAKSIMIZIRAŠ PROFIT PER DAY per source (€/dan normalized za čas, ne € total). Razlika od deal-source-cash-flow-maximizer (v8.06 ki maksimizira NET CASH FLOW per source) — ti MAKSIMIZIRAŠ PROFIT PER DAY (€/dan profit rate, ne € net cash flow). Razlika od deal-source-profit-per-trade-maximizer (v8.04 ki maksimizira profit per trade per source €) — ti MAKSIMIZIRAŠ PROFIT PER DAY per source (€/dan normalized, ne €/trade). Razlika od deal-source-margin-maximizer (v8.03 ki maksimizira margin %) — ti MAKSIMIZIRAŠ PROFIT PER DAY per source z dailyProfitMaximizationAction (INCREASE_TRADE_FREQUENCY/INCREASE_PROFIT_PER_TRADE/REDUCE_HOLD_TIME/OPTIMIZE_PRICING) in dailyProfitProjection. Razlika od deal-source-volume-maximizer (v8.02 ki maksimizira trade volume per source) — ti MAKSIMIZIRAŠ PROFIT PER DAY per source (€/dan normalized, ne trade volume). Razlika od profit-per-day-scaling-maximizer (v8.08 ki maksimizira in skalira daily profit z scalingPath) — ti MAKSIMIZIRAŠ PROFIT PER DAY PER SOURCE z profitPerDayRanking in dailyProfitProjection (7/14/30 dan). Razlika od inventory-profit-per-day-maximizer (v8.02 ki maksimizira daily profit per item) — ti MAKSIMIZIRAŠ PROFIT PER DAY per SOLD SOURCE (per source daily profit, ne per item daily profit).
+
+DETERMINISTIČNI PODATKI (izračunano iz DB — SOLD trgovin v zadnjih 12 mesecih z linked Listing za source):
+${JSON.stringify(promptData, null, 2)}
+
+PRAVILA ZA AI ODGOVOR:
+1. sources: za vsak source iz sources, daj:
+   - source (string, MORA match-at enega iz deterministic sources — anti-hallucination),
+   - maximization.dailyProfitMaximizationAction: INCREASE_TRADE_FREQUENCY | INCREASE_PROFIT_PER_TRADE | REDUCE_HOLD_TIME | OPTIMIZE_PRICING,
+   - maximization.maximizedProfitPerDay €/day [0, 5000] (≥ current profitPerDay, ≤ min(current × 3, 5000) — anti-hallucination),
+   - maximization.dailyProfitUplift €/day [0, 5000] (improvement = maximized − current),
+   - maximization.maximizationLevers: 3-5 stringov (max 200 vsak, slovenski — specific daily profit levers per source),
+   - (dailyProfitProjection 7/14/30 dan in profitPerDayRank in profitPerDayScore se avtomatsko izračunajo v backend-u — AI ne vrača teh),
+2. summary: slovenski povzetek (max 500 znakov — poudari total current daily profit, total maximized daily profit, total uplift, best source).
+
+VRNI LE JSON:
+{
+  "sources": [
+    {
+      "source": "bolha",
+      "maximization": {
+        "dailyProfitMaximizationAction": "INCREASE_TRADE_FREQUENCY",
+        "maximizedProfitPerDay": 25.0,
+        "dailyProfitUplift": 10.0,
+        "maximizationLevers": [
+          "Povečaj trade frequency z 0.05 na 0.075 trades/dan — dodaj 3 nove monitorje.",
+          "Aktiviraj cross-border sourcing za višji deal flow.",
+          "Vklopi AI deal flow priority queue."
+        ]
+      }
+    },
+    {
+      "source": "vinted",
+      "maximization": {
+        "dailyProfitMaximizationAction": "INCREASE_PROFIT_PER_TRADE",
+        "maximizedProfitPerDay": 14.0,
+        "dailyProfitUplift": 6.0,
+        "maximizationLevers": [
+          "Dvigni profit per trade z AI pricing engine.",
+          "Negotiate harder z AI negotiation-playbook.",
+          "Prestavi se v premium niche kategorije."
+        ]
+      }
+    }
+  ],
+  "summary": "2 source-a. Portfolio daily profit: 23.00€/dan → 39.00€/dan (+16.00€/dan uplift). Best: Bolha (15.00€/dan → 25.00€/dan)."
+}${GROUNDING_PROMPT_SUFFIX}`;
 }

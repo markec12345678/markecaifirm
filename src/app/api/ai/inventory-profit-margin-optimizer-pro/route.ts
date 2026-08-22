@@ -1,7 +1,7 @@
-// v7.96: AI Inventory Profit Margin Optimizer Pro — AI provides per-item
-// margin optimization z SPECIFIC price targets, expected margin lift in
-// risk assessment. Greje dlje od profit-margin-maximizer (v7.95 ki
-// identificira optimization areas) — ta da EXACT price recommendations
+// v7.96 / v8.96.4-batch1: AI Inventory Profit Margin Optimizer Pro — AI
+// provides per-item margin optimization z SPECIFIC price targets, expected
+// margin lift in risk assessment. Greje dlje od profit-margin-maximizer
+// (v7.95 ki identificira optimization areas) — ta da EXACT price recommendations
 // z confidence intervals za vsak HELD item posebej.
 //
 // Razlika od profit-margin-maximizer (v7.95 ki identificira optimization
@@ -24,23 +24,14 @@
 //
 // GET+POST /api/ai/inventory-profit-margin-optimizer-pro
 // (AI-enhanced + grounding + anti-hallucination + 6h cache + deterministic fallback)
+// Refaktoriran z withAiRoute helperjem (v8.96.4-batch1) + enforceBudget guard.
 
-import { NextRequest, NextResponse } from 'next/server';
-import { db } from '@/lib/db';
-import { getSettingsRow } from '@/lib/pipeline';
-import {
-  callProviderForRaw,
-  parseJsonLooseExported,
-  type AiProviderType,
-  type AiSettings,
-} from '@/lib/ai';
+import { withAiRoute, AI_ROUTE_DEFAULTS, type AiRouteContext } from '@/lib/with-ai-route';
+import { apiOk } from '@/lib/api-response';
 import { GROUNDING_PROMPT_SUFFIX } from '@/lib/anti-hallucination';
 import { getCachedAI, setCachedAI } from '@/lib/ai-cache';
-import { checkRateLimit, rateLimitResponse } from '@/lib/rate-limit';
-import { logger } from '@/lib/logger';
 
-export const runtime = 'nodejs';
-export const dynamic = 'force-dynamic';
+export const { runtime, dynamic } = AI_ROUTE_DEFAULTS;
 export const maxDuration = 60;
 
 // --- Types ---------------------------------------------------------------
@@ -123,9 +114,11 @@ interface AiResponse {
   summary?: string;
 }
 
+// eslint-disable-next-line @typescript-eslint/no-empty-object-type
+interface InventoryProfitMarginOptimizerProInput {}
+
 // --- Constants -----------------------------------------------------------
 
-const DAY_MS = 86_400_000;
 const SCORE_MIN = 0;
 const SCORE_MAX = 100;
 const MARGIN_MIN = -50;
@@ -182,15 +175,6 @@ function round0(v: number): number {
 function round2(v: number): number {
   if (!Number.isFinite(v)) return 0;
   return Math.round(v * 100) / 100;
-}
-
-function toMs(d: Date | null | undefined): number {
-  if (!d) return 0;
-  try {
-    return new Date(d as unknown as Date | string).getTime();
-  } catch {
-    return 0;
-  }
 }
 
 // --- Margin computation -------------------------------------------------
@@ -385,19 +369,214 @@ function buildSummary(portfolio: Portfolio, items: DetMarginItem[]): string {
   return parts.join(' ').slice(0, 400);
 }
 
+// --- Prompt builder ------------------------------------------------------
+
+interface PromptArgs {
+  portfolio: Portfolio;
+  topItemsForAI: Array<Record<string, unknown>>;
+}
+
+function buildPrompt(args: PromptArgs): string {
+  const { portfolio, topItemsForAI } = args;
+
+  const promptData = {
+    portfolio,
+    heldItems: topItemsForAI,
+    caps: {
+      scoreMin: SCORE_MIN, scoreMax: SCORE_MAX,
+      marginMin: MARGIN_MIN, marginMax: MARGIN_MAX,
+      marginLiftMin: MARGIN_LIFT_MIN, marginLiftMax: MARGIN_LIFT_MAX,
+      probMin: PROB_MIN, probMax: PROB_MAX,
+      priceMin: PRICE_MIN, priceMax: PRICE_MAX,
+      liftEurMin: LIFT_EUR_MIN, liftEurMax: LIFT_EUR_MAX,
+    },
+  };
+
+  return `Si AI "Inventory Profit Margin Optimizer Pro" za slovenske in srednjeevropske oglasne platforme (Bolha, Vinted, Avtonet, mobile.de).
+Si strokovnjak za PER-ITEM margin optimization — daješ SPECIFIČNE price target-e z confidence intervals za vsak HELD item posebej. Razlika od profit-margin-maximizer (v7.95 ki identificira optimization AREAS z actions) — ti daš PER-ITEM specific price targets z confidence intervals. Razlika od profit-margin-optimizer-v2 (ki optimizira margin aggregate) — ti optimiraš PER ITEM z optimalPrice + sellProbability. Razlika od price-optimization-engine-pro (v7.95 ki optimira CENE z A/B testing) — ti optimiraš MARGIN per item z risk-adjusted expected margin. Razlika od profit-margin-forecaster-pro (v7.85 ki forecast-a margin) — ti OPTIMIRAŠ margin z actionable per-item plan.
+
+DETERMINISTIČNI PODATKI (izračunano iz DB — HELD trgovin z linked Listing):
+${JSON.stringify(promptData, null, 2)}
+
+PRAVILA ZA AI ODGOVOR:
+1. items: za vsak tradeId iz heldItems, daj per-item optimization:
+   - tradeId (string, MORA match-at enega iz heldItems — anti-hallucination),
+   - optimalPrice € [0, 100000] (CLAMPED to [0.5x, 1.3x] estValue anti-hallucination; ±20% od detOptimalPrice),
+   - sellProbability [0, 100] % (verjetnost prodaje pri optimalPrice; ±20 od detSellProbability),
+   - optimizationAction: HOLD_FOR_BETTER_MARGIN | SELL_AT_OPTIMAL | DISCOUNT_FOR_QUICK_SALE | REPRICE,
+   - reasoning (max 400, slovenski — zakaj ta cena maksimizira margin),
+   - competitorPricingImpact (max 300, slovenski — kako competitors vplivajo na to priporočilo).
+   Ostali field-i (currentMargin, marginCategory, expectedMarginAtOptimal, marginLift, riskAdjustedMargin, priceConfidenceInterval) se avtomatsko izračunajo iz optimalPrice v backendu.
+2. portfolio.marginOptimizationGrade: A+ | A | B | C | D | F (kako dobro optimiziran je current portfolio; ±1 grade od deterministic).
+3. summary: slovenski povzetek (max 400 znakov).
+
+VRNI LE JSON:
+{
+  "items": [
+    { "tradeId": "ckxxxxx", "optimalPrice": 365, "sellProbability": 75, "optimizationAction": "SELL_AT_OPTIMAL", "reasoning": "Pri 365€ dosežemo optimalno ravnovesje med margin in sell-through.", "competitorPricingImpact": "5% pod competitors — konkurenčno pozicioniranje." }
+  ],
+  "portfolio": {
+    "marginOptimizationGrade": "B"
+  },
+  "summary": "Portfolio margin: 22% → 28% (+6pp, €420 lift, grade B). 8 items za optimizacijo, 3 quick wins."
+}${GROUNDING_PROMPT_SUFFIX}`;
+}
+
+// --- AI response parser --------------------------------------------------
+
+interface ParsedArgs {
+  parsed: AiResponse | null;
+  detItems: DetMarginItem[];
+  portfolio: Portfolio;
+}
+
+function parseAiItems(args: ParsedArgs): {
+  items: MarginItem[];
+  portfolio: Portfolio;
+  summary: string;
+  aiUsed: boolean;
+} {
+  const { parsed, detItems, portfolio } = args;
+
+  if (!parsed || typeof parsed !== 'object') {
+    // Fallback to deterministic
+    const items = detItems.map((d) => d.item);
+    items.sort((a, b) => b.marginLift - a.marginLift);
+    return {
+      items,
+      portfolio,
+      summary: buildSummary(portfolio, detItems),
+      aiUsed: false,
+    };
+  }
+
+  // Build a quick lookup map of det items by tradeId
+  const detByTradeId = new Map<string, DetMarginItem>();
+  for (const d of detItems) detByTradeId.set(d.item.tradeId, d);
+
+  // Parse per-item AI optimization
+  const aiItems: MarginItem[] = [];
+  if (parsed.items && Array.isArray(parsed.items)) {
+    for (const r of parsed.items) {
+      if (!r || typeof r !== 'object') continue;
+      const det = detByTradeId.get(String(r.tradeId ?? ''));
+      if (!det) continue; // skip unknown tradeId — anti-hallucination
+      const aiOptimalPrice = round0(clampNum(
+        r.optimalPrice,
+        PRICE_MIN, PRICE_MAX,
+        det.item.optimalPrice,
+      ));
+      // Anti-hallucination: clamp optimalPrice to [0.5x, 1.3x] estValue
+      const estValue = det.estValue;
+      const priceLowBound = Math.round(estValue * 0.5);
+      const priceHighBound = Math.round(estValue * 1.3);
+      const optimalPrice = round0(
+        Math.max(priceLowBound, Math.min(priceHighBound, aiOptimalPrice)),
+      );
+
+      // Recompute derived fields based on optimalPrice
+      const totalCost = det.item.buyPrice;
+      const estFeesAtOptimal = Math.round(optimalPrice * 0.05);
+      const netAtOptimal = optimalPrice - estFeesAtOptimal;
+      const expectedMarginAtOptimal = totalCost > 0
+        ? round2(clampNum(((netAtOptimal - totalCost) / totalCost) * 100, MARGIN_MIN, MARGIN_MAX, det.item.expectedMarginAtOptimal))
+        : det.item.expectedMarginAtOptimal;
+      const marginLift = round2(clampNum(
+        expectedMarginAtOptimal - det.item.currentMargin,
+        MARGIN_LIFT_MIN, MARGIN_LIFT_MAX, det.item.marginLift,
+      ));
+      const sellProbability = round0(clampNum(
+        r.sellProbability,
+        PROB_MIN, PROB_MAX,
+        det.item.sellProbability,
+      ));
+      const riskAdjustedMargin = round2(clampNum(
+        expectedMarginAtOptimal * (sellProbability / 100),
+        MARGIN_MIN, MARGIN_MAX, det.item.riskAdjustedMargin,
+      ));
+      const optimizationAction = clampEnum(
+        r.optimizationAction,
+        VALID_ACTION,
+        det.item.optimizationAction,
+      );
+      const priceConfidenceInterval = {
+        low: round0(Math.max(priceLowBound, Math.round(optimalPrice * 0.9))),
+        high: round0(Math.min(priceHighBound, Math.round(optimalPrice * 1.1))),
+      };
+      const reasoning = clampString(r.reasoning, 400, det.item.reasoning);
+      const competitorPricingImpact = clampString(r.competitorPricingImpact, 300, det.item.competitorPricingImpact);
+
+      aiItems.push({
+        ...det.item,
+        optimalPrice,
+        expectedMarginAtOptimal,
+        marginLift,
+        sellProbability,
+        riskAdjustedMargin,
+        optimizationAction,
+        priceConfidenceInterval,
+        reasoning,
+        competitorPricingImpact,
+      });
+    }
+  }
+
+  // Fallback to deterministic if AI returned nothing useful
+  let items: MarginItem[];
+  if (aiItems.length === 0) {
+    items = detItems.map((d) => d.item);
+  } else {
+    // For items AI didn't return, keep deterministic values
+    const aiTradeIds = new Set(aiItems.map((r) => r.tradeId));
+    items = [...aiItems];
+    for (const d of detItems) {
+      if (!aiTradeIds.has(d.item.tradeId)) {
+        items.push(d.item);
+      }
+    }
+  }
+  // Sort by marginLift descending (biggest improvement first)
+  items.sort((a, b) => b.marginLift - a.marginLift);
+
+  // Update portfolio margin based on AI items
+  const aiPortfolio = computePortfolio(
+    items.map((i) => ({ item: i, estValue: i.aiEstimatedValue ?? i.optimalPrice })),
+  );
+  // Apply AI grade ±1 from deterministic
+  const aiGrade = clampEnum(parsed.portfolio?.marginOptimizationGrade, VALID_GRADE, portfolio.marginOptimizationGrade);
+  // Validate: AI grade must be within ±1 of deterministic grade
+  const gradeIdx = VALID_GRADE.indexOf(portfolio.marginOptimizationGrade);
+  const aiGradeIdx = VALID_GRADE.indexOf(aiGrade);
+  const finalGrade = Math.abs(aiGradeIdx - gradeIdx) <= 1 ? aiGrade : portfolio.marginOptimizationGrade;
+
+  // Update portfolio (recompute with AI prices, use final grade)
+  const updatedPortfolio: Portfolio = {
+    ...aiPortfolio,
+    marginOptimizationGrade: finalGrade,
+  };
+
+  const summary = clampString(parsed.summary, 400, buildSummary(updatedPortfolio, items.map((i) => ({ item: i, estValue: i.aiEstimatedValue ?? i.optimalPrice }))));
+
+  return { items, portfolio: updatedPortfolio, summary, aiUsed: true };
+}
+
 // --- Handler -------------------------------------------------------------
 
-export async function GET(req: NextRequest) {
-  return handleInventoryProfitMarginOptimizerPro(req);
-}
-export async function POST(req: NextRequest) {
-  return handleInventoryProfitMarginOptimizerPro(req);
-}
+const inventoryProfitMarginOptimizerProHandler = withAiRoute<InventoryProfitMarginOptimizerProInput>({
+  endpoint: '/api/ai/inventory-profit-margin-optimizer-pro',
+  maxDuration: 60,
+  enforceBudget: true, // AI klic — preveri budget
+  method: 'GET', // dual GET+POST
 
-async function handleInventoryProfitMarginOptimizerPro(req: NextRequest) {
-  try {
-    const rl = checkRateLimit(req, 'ai-inventory-profit-margin-optimizer-pro', 20);
-    if (!rl.allowed) return rateLimitResponse(rl);
+  parseBody: async () => {
+    // Body ignored
+    return {};
+  },
+
+  // No validateInput — body ignored
+
+  handler: async (_input, ctx: AiRouteContext) => {
+    const { db, callAi, parseAi, logger } = ctx;
 
     const now = Date.now();
 
@@ -428,7 +607,7 @@ async function handleInventoryProfitMarginOptimizerPro(req: NextRequest) {
 
     // Empty-state: no HELD trades
     if (heldTrades.length === 0) {
-      return NextResponse.json({
+      return apiOk({
         ok: true,
         items: [],
         portfolio: {
@@ -460,7 +639,7 @@ async function handleInventoryProfitMarginOptimizerPro(req: NextRequest) {
       summary: string;
     }>(cacheKey);
     if (cached) {
-      return NextResponse.json({
+      return apiOk({
         ok: true,
         items: cached.items,
         portfolio: cached.portfolio,
@@ -471,20 +650,6 @@ async function handleInventoryProfitMarginOptimizerPro(req: NextRequest) {
     }
 
     // 4) AI prompt with grounding
-    const settings = await getSettingsRow();
-    const aiSettings: AiSettings = {
-      provider: settings.aiProvider as AiProviderType,
-      baseUrl: settings.aiBaseUrl,
-      apiKey: settings.aiApiKey,
-      model: settings.aiModel,
-      fallbackProvider: (settings.fallbackProvider || '') as
-        | AiProviderType
-        | '',
-      fallbackBaseUrl: settings.fallbackBaseUrl || '',
-      fallbackApiKey: settings.fallbackApiKey || '',
-      fallbackModel: settings.fallbackModel || '',
-    };
-
     // Compact context for AI (top 40 items)
     const topItemsForAI = [...detItems]
       .sort((a, b) => Math.abs(b.item.marginLift) - Math.abs(a.item.marginLift))
@@ -507,163 +672,18 @@ async function handleInventoryProfitMarginOptimizerPro(req: NextRequest) {
         detCiHigh: d.item.priceConfidenceInterval.high,
       }));
 
-    const promptData = {
-      portfolio,
-      heldItems: topItemsForAI,
-      caps: {
-        scoreMin: SCORE_MIN, scoreMax: SCORE_MAX,
-        marginMin: MARGIN_MIN, marginMax: MARGIN_MAX,
-        marginLiftMin: MARGIN_LIFT_MIN, marginLiftMax: MARGIN_LIFT_MAX,
-        probMin: PROB_MIN, probMax: PROB_MAX,
-        priceMin: PRICE_MIN, priceMax: PRICE_MAX,
-        liftEurMin: LIFT_EUR_MIN, liftEurMax: LIFT_EUR_MAX,
-      },
-    };
-
-    const prompt = `Si AI "Inventory Profit Margin Optimizer Pro" za slovenske in srednjeevropske oglasne platforme (Bolha, Vinted, Avtonet, mobile.de).
-Si strokovnjak za PER-ITEM margin optimization — daješ SPECIFIČNE price target-e z confidence intervals za vsak HELD item posebej. Razlika od profit-margin-maximizer (v7.95 ki identificira optimization AREAS z actions) — ti daš PER-ITEM specific price targets z confidence intervals. Razlika od profit-margin-optimizer-v2 (ki optimizira margin aggregate) — ti optimiraš PER ITEM z optimalPrice + sellProbability. Razlika od price-optimization-engine-pro (v7.95 ki optimira CENE z A/B testing) — ti optimiraš MARGIN per item z risk-adjusted expected margin. Razlika od profit-margin-forecaster-pro (v7.85 ki forecast-a margin) — ti OPTIMIRAŠ margin z actionable per-item plan.
-
-DETERMINISTIČNI PODATKI (izračunano iz DB — HELD trgovin z linked Listing):
-${JSON.stringify(promptData, null, 2)}
-
-PRAVILA ZA AI ODGOVOR:
-1. items: za vsak tradeId iz heldItems, daj per-item optimization:
-   - tradeId (string, MORA match-at enega iz heldItems — anti-hallucination),
-   - optimalPrice € [0, 100000] (CLAMPED to [0.5x, 1.3x] estValue anti-hallucination; ±20% od detOptimalPrice),
-   - sellProbability [0, 100] % (verjetnost prodaje pri optimalPrice; ±20 od detSellProbability),
-   - optimizationAction: HOLD_FOR_BETTER_MARGIN | SELL_AT_OPTIMAL | DISCOUNT_FOR_QUICK_SALE | REPRICE,
-   - reasoning (max 400, slovenski — zakaj ta cena maksimizira margin),
-   - competitorPricingImpact (max 300, slovenski — kako competitors vplivajo na to priporočilo).
-   Ostali field-i (currentMargin, marginCategory, expectedMarginAtOptimal, marginLift, riskAdjustedMargin, priceConfidenceInterval) se avtomatsko izračunajo iz optimalPrice v backendu.
-2. portfolio.marginOptimizationGrade: A+ | A | B | C | D | F (kako dobro optimiziran je current portfolio; ±1 grade od deterministic).
-3. summary: slovenski povzetek (max 400 znakov).
-
-VRNI LE JSON:
-{
-  "items": [
-    { "tradeId": "ckxxxxx", "optimalPrice": 365, "sellProbability": 75, "optimizationAction": "SELL_AT_OPTIMAL", "reasoning": "Pri 365€ dosežemo optimalno ravnovesje med margin in sell-through.", "competitorPricingImpact": "5% pod competitors — konkurenčno pozicioniranje." }
-  ],
-  "portfolio": {
-    "marginOptimizationGrade": "B"
-  },
-  "summary": "Portfolio margin: 22% → 28% (+6pp, €420 lift, grade B). 8 items za optimizacijo, 3 quick wins."
-}${GROUNDING_PROMPT_SUFFIX}`;
+    const prompt = buildPrompt({ portfolio, topItemsForAI });
 
     let aiUsed = false;
 
     try {
-      const raw = await callProviderForRaw(aiSettings, prompt);
-      const parsed = parseJsonLooseExported(raw) as AiResponse | null;
-
-      if (parsed && typeof parsed === 'object') {
-        // Build a quick lookup map of det items by tradeId
-        const detByTradeId = new Map<string, DetMarginItem>();
-        for (const d of detItems) detByTradeId.set(d.item.tradeId, d);
-
-        // Parse per-item AI optimization
-        const aiItems: MarginItem[] = [];
-        if (parsed.items && Array.isArray(parsed.items)) {
-          for (const r of parsed.items) {
-            if (!r || typeof r !== 'object') continue;
-            const det = detByTradeId.get(String(r.tradeId ?? ''));
-            if (!det) continue; // skip unknown tradeId — anti-hallucination
-            const aiOptimalPrice = round0(clampNum(
-              r.optimalPrice,
-              PRICE_MIN, PRICE_MAX,
-              det.item.optimalPrice,
-            ));
-            // Anti-hallucination: clamp optimalPrice to [0.5x, 1.3x] estValue
-            const estValue = det.estValue;
-            const priceLowBound = Math.round(estValue * 0.5);
-            const priceHighBound = Math.round(estValue * 1.3);
-            const optimalPrice = round0(
-              Math.max(priceLowBound, Math.min(priceHighBound, aiOptimalPrice)),
-            );
-
-            // Recompute derived fields based on optimalPrice
-            const totalCost = det.item.buyPrice;
-            const estFeesAtOptimal = Math.round(optimalPrice * 0.05);
-            const netAtOptimal = optimalPrice - estFeesAtOptimal;
-            const expectedMarginAtOptimal = totalCost > 0
-              ? round2(clampNum(((netAtOptimal - totalCost) / totalCost) * 100, MARGIN_MIN, MARGIN_MAX, det.item.expectedMarginAtOptimal))
-              : det.item.expectedMarginAtOptimal;
-            const marginLift = round2(clampNum(
-              expectedMarginAtOptimal - det.item.currentMargin,
-              MARGIN_LIFT_MIN, MARGIN_LIFT_MAX, det.item.marginLift,
-            ));
-            const sellProbability = round0(clampNum(
-              r.sellProbability,
-              PROB_MIN, PROB_MAX,
-              det.item.sellProbability,
-            ));
-            const riskAdjustedMargin = round2(clampNum(
-              expectedMarginAtOptimal * (sellProbability / 100),
-              MARGIN_MIN, MARGIN_MAX, det.item.riskAdjustedMargin,
-            ));
-            const optimizationAction = clampEnum(
-              r.optimizationAction,
-              VALID_ACTION,
-              det.item.optimizationAction,
-            );
-            const priceConfidenceInterval = {
-              low: round0(Math.max(priceLowBound, Math.round(optimalPrice * 0.9))),
-              high: round0(Math.min(priceHighBound, Math.round(optimalPrice * 1.1))),
-            };
-            const reasoning = clampString(r.reasoning, 400, det.item.reasoning);
-            const competitorPricingImpact = clampString(r.competitorPricingImpact, 300, det.item.competitorPricingImpact);
-
-            aiItems.push({
-              ...det.item,
-              optimalPrice,
-              expectedMarginAtOptimal,
-              marginLift,
-              sellProbability,
-              riskAdjustedMargin,
-              optimizationAction,
-              priceConfidenceInterval,
-              reasoning,
-              competitorPricingImpact,
-            });
-          }
-        }
-        // Fallback to deterministic if AI returned nothing useful
-        if (aiItems.length === 0) {
-          for (const d of detItems) aiItems.push(d.item);
-        } else {
-          // For items AI didn't return, keep deterministic values
-          const aiTradeIds = new Set(aiItems.map((r) => r.tradeId));
-          for (const d of detItems) {
-            if (!aiTradeIds.has(d.item.tradeId)) {
-              aiItems.push(d.item);
-            }
-          }
-        }
-        // Sort by marginLift descending (biggest improvement first)
-        aiItems.sort((a, b) => b.marginLift - a.marginLift);
-        items = aiItems;
-
-        // Update portfolio margin based on AI items
-        const aiPortfolio = computePortfolio(
-          aiItems.map((i) => ({ item: i, estValue: i.aiEstimatedValue ?? i.optimalPrice })),
-        );
-        // Apply AI grade ±1 from deterministic
-        const aiGrade = clampEnum(parsed.portfolio?.marginOptimizationGrade, VALID_GRADE, portfolio.marginOptimizationGrade);
-        // Validate: AI grade must be within ±1 of deterministic grade
-        const gradeIdx = VALID_GRADE.indexOf(portfolio.marginOptimizationGrade);
-        const aiGradeIdx = VALID_GRADE.indexOf(aiGrade);
-        const finalGrade = Math.abs(aiGradeIdx - gradeIdx) <= 1 ? aiGrade : portfolio.marginOptimizationGrade;
-
-        // Update portfolio (recompute with AI prices, use final grade)
-        const updatedPortfolio: Portfolio = {
-          ...aiPortfolio,
-          marginOptimizationGrade: finalGrade,
-        };
-        // Replace portfolio (not reassigning — keep the const for clarity)
-        Object.assign(portfolio, updatedPortfolio);
-
-        summary = clampString(parsed.summary, 400, buildSummary(portfolio, aiItems.map((i) => ({ item: i, estValue: i.aiEstimatedValue ?? i.optimalPrice }))));
-        aiUsed = true;
-      }
+      const raw = await callAi(prompt);
+      const parsed = parseAi(raw) as AiResponse | null;
+      const result = parseAiItems({ parsed, detItems, portfolio });
+      items = result.items;
+      Object.assign(portfolio, result.portfolio);
+      summary = result.summary;
+      aiUsed = result.aiUsed;
     } catch (err) {
       logger.warn(
         '/api/ai/inventory-profit-margin-optimizer-pro',
@@ -677,22 +697,15 @@ VRNI LE JSON:
       setCachedAI(cacheKey, { items, portfolio, summary });
     }
 
-    return NextResponse.json({
+    return apiOk({
       ok: true,
       items,
       portfolio,
       summary,
       aiUsed,
     } satisfies InventoryMarginOptimizerResponse);
-  } catch (err: any) {
-    logger.error(
-      '/api/ai/inventory-profit-margin-optimizer-pro',
-      'handler failed',
-      err,
-    );
-    return NextResponse.json(
-      { error: err?.message ?? 'Napaka' },
-      { status: 500 },
-    );
-  }
-}
+  },
+});
+
+export const GET = inventoryProfitMarginOptimizerProHandler;
+export const POST = inventoryProfitMarginOptimizerProHandler;

@@ -1,26 +1,41 @@
-// v6.21: AI Multi-Image Quality Assessor — oceni kakovost slik oglasa
+// v6.21 / v8.96.1-refactor: AI Multi-Image Quality Assessor — oceni kakovost slik oglasa
+// Refaktoriran z withAiRoute helperjem (v8.96.1) + enforceBudget guard.
+//
 // POST /api/ai/image-quality
 // Body: { listingId?: string, imageUrl?: string }
 // Returns: { ok, assessment: { overallScore, issues: [], recommendations: [], qualityFactors: {}, suggestedShots: [] } }
 
-import { NextRequest, NextResponse } from 'next/server';
-import { db } from '@/lib/db';
-import { getSettingsRow } from '@/lib/pipeline';
-import { callProviderForRaw, parseJsonLooseExported, type AiProviderType, type AiSettings } from '@/lib/ai';
-import { logger } from '@/lib/logger';
+import { withAiRoute, AI_ROUTE_DEFAULTS, ApiRouteError, type AiRouteContext } from '@/lib/with-ai-route';
+import { apiOk, apiBadRequest } from '@/lib/api-response';
 
-export const runtime = 'nodejs';
-export const dynamic = 'force-dynamic';
+export const { runtime, dynamic } = AI_ROUTE_DEFAULTS;
 export const maxDuration = 60;
 
-export async function POST(req: NextRequest) {
-  try {
+interface ImageQualityInput {
+  listingId?: string;
+  imageUrl?: string;
+}
+
+export const POST = withAiRoute<ImageQualityInput>({
+  endpoint: '/api/ai/image-quality',
+  maxDuration: 60,
+  enforceBudget: true, // AI klic — preveri budget
+
+  parseBody: async (req) => {
     const body = await req.json().catch(() => ({}));
-    const { listingId } = body;
-    let imageUrl: string | null = body?.imageUrl ?? null;
+    const listingId = body?.listingId ? String(body.listingId) : undefined;
+    const imageUrl = body?.imageUrl ? String(body.imageUrl) : undefined;
+    return { listingId, imageUrl };
+  },
+
+  // No validateInput — kompleksna validacija (imageUrl lahko pride iz listinga)
+
+  handler: async (input, ctx: AiRouteContext) => {
+    const { db, callAi, parseAi } = ctx;
+    const { listingId } = input;
+    let imageUrl: string | null = input.imageUrl ?? null;
     let title = '';
     let description = '';
-    let detailDescription = '';
     let detailImages: string[] = [];
 
     if (listingId) {
@@ -31,24 +46,15 @@ export async function POST(req: NextRequest) {
           detailImages: true, aiImageAnalysis: true, aiImageVerdict: true,
         },
       });
-      if (!listing) return NextResponse.json({ error: 'Listing ne obstaja' }, { status: 404 });
+      if (!listing) throw new ApiRouteError('Listing ne obstaja', 404);
       title = listing.title;
       description = listing.description;
-      detailDescription = listing.detailDescription || '';
       imageUrl = imageUrl || listing.imageUrl;
-      // Parse detailImages JSON string
-      try {
-        if (listing.detailImages) {
-          detailImages = JSON.parse(listing.detailImages);
-          if (!Array.isArray(detailImages)) detailImages = [];
-        }
-      } catch {
-        detailImages = [];
-      }
+      detailImages = parseDetailImages(listing.detailImages);
     }
 
     if (!imageUrl) {
-      return NextResponse.json({ error: 'imageUrl ali listingId z sliko je obvezen' }, { status: 400 });
+      return apiBadRequest('imageUrl ali listingId z sliko je obvezen');
     }
 
     // Pridobi sliko za analizo
@@ -61,16 +67,37 @@ export async function POST(req: NextRequest) {
     }
 
     // 1. AI analiza kakovosti slike
-    const settings = await getSettingsRow();
-    const aiSettings: AiSettings = {
-      provider: settings.aiProvider as AiProviderType,
-      baseUrl: settings.aiBaseUrl, apiKey: settings.aiApiKey, model: settings.aiModel,
-      fallbackProvider: (settings.fallbackProvider || '') as AiProviderType | '',
-      fallbackBaseUrl: settings.fallbackBaseUrl || '', fallbackApiKey: settings.fallbackApiKey || '',
-      fallbackModel: settings.fallbackModel || '',
-    };
+    const prompt = buildPrompt(title, description, imageUrl, imageBase64);
+    const raw = await callAi(prompt);
+    const parsed: any = parseAi(raw);
+    const assessment = transformAssessment(parsed);
 
-    const prompt = `Si ekspert za fotografijo in e-commerce visual marketing.
+    return apiOk({
+      ok: true,
+      assessment,
+      imageUrl,
+      hasImageBase64: !!imageBase64,
+      totalImages: detailImages.length + 1,
+    });
+  },
+});
+
+// --- Pomožne funkcije (čiste, testabilne) --------------------------------
+
+function parseDetailImages(detailImages: string | null): string[] {
+  try {
+    if (detailImages) {
+      const parsed = JSON.parse(detailImages);
+      return Array.isArray(parsed) ? parsed : [];
+    }
+  } catch {
+    // ignore
+  }
+  return [];
+}
+
+function buildPrompt(title: string, description: string, imageUrl: string, imageBase64: string | null): string {
+  return `Si ekspert za fotografijo in e-commerce visual marketing.
 Analiziraj kakovost slike oglasa in podaj predloge za izboljšave.
 
 NASLOV OGLASA: ${title}
@@ -158,82 +185,64 @@ Odgovori LE z JSON:
     "facebook": "<nasvet za Facebook, max 100 znakov>"
   }
 }`;
+}
 
-    let raw = '';
-    try {
-      raw = await callProviderForRaw(aiSettings, prompt);
-    } catch (primaryError: any) {
-      if (aiSettings.fallbackProvider && aiSettings.fallbackModel) {
-        const fb: AiSettings = {
-          provider: aiSettings.fallbackProvider,
-          baseUrl: aiSettings.fallbackBaseUrl || '',
-          apiKey: aiSettings.fallbackApiKey || '',
-          model: aiSettings.fallbackModel,
-        };
-        raw = await callProviderForRaw(fb, prompt);
-      } else {
-        return NextResponse.json({ error: primaryError?.message ?? 'AI failed' }, { status: 500 });
-      }
-    }
-
-    const parsed: any = parseJsonLooseExported(raw);
-
-    const assessment = {
-      overallScore: Math.max(0, Math.min(100, Number(parsed?.overall_score ?? 50))),
-      imageFindings: String(parsed?.image_findings ?? '').slice(0, 400),
-      qualityFactors: {
-        lighting: Math.max(1, Math.min(10, Number(parsed?.quality_factors?.lighting ?? 5))),
-        composition: Math.max(1, Math.min(10, Number(parsed?.quality_factors?.composition ?? 5))),
-        background: Math.max(1, Math.min(10, Number(parsed?.quality_factors?.background ?? 5))),
-        focus: Math.max(1, Math.min(10, Number(parsed?.quality_factors?.focus ?? 5))),
-        colorAccuracy: Math.max(1, Math.min(10, Number(parsed?.quality_factors?.color_accuracy ?? 5))),
-        resolution: Math.max(1, Math.min(10, Number(parsed?.quality_factors?.resolution ?? 5))),
-        angle: Math.max(1, Math.min(10, Number(parsed?.quality_factors?.angle ?? 5))),
-        cleanliness: Math.max(1, Math.min(10, Number(parsed?.quality_factors?.cleanliness ?? 5))),
-        context: Math.max(1, Math.min(10, Number(parsed?.quality_factors?.context ?? 5))),
-        sellingPotential: Math.max(1, Math.min(10, Number(parsed?.quality_factors?.selling_potential ?? 5))),
-      },
-      issues: (parsed?.issues || []).slice(0, 10).map((i: any) => ({
-        type: String(i?.type ?? '').slice(0, 50),
-        severity: ['high', 'medium', 'low'].includes(String(i?.severity)) ? String(i.severity) : 'medium',
-        description: String(i?.description ?? '').slice(0, 200),
-        fix: String(i?.fix ?? '').slice(0, 200),
-      })),
-      recommendations: (parsed?.recommendations || []).slice(0, 8).map((r: any) => ({
-        action: String(r?.action ?? '').slice(0, 250),
-        impact: ['high', 'medium', 'low'].includes(String(r?.impact)) ? String(r.impact) : 'medium',
-        estimatedValueIncreaseEur: Math.max(0, Number(r?.estimated_value_increase_eur ?? 0)),
-      })),
-      suggestedShots: (parsed?.suggested_shots || []).slice(0, 6).map((s: any) => ({
-        type: ['main', 'detail_brand', 'detail_damage', 'context', 'video'].includes(String(s?.type))
-          ? String(s.type) : 'main',
-        description: String(s?.description ?? '').slice(0, 200),
-        priority: ['high', 'medium', 'low'].includes(String(s?.priority)) ? String(s.priority) : 'medium',
-      })),
-      platformSpecificAdvice: {
-        bolha: String(parsed?.platform_specific_advice?.bolha ?? '').slice(0, 250),
-        vinted: String(parsed?.platform_specific_advice?.vinted ?? '').slice(0, 250),
-        facebook: String(parsed?.platform_specific_advice?.facebook ?? '').slice(0, 250),
-      },
-    };
-
-    // Increment AI usage
-    const today = new Date().toISOString().slice(0, 10);
-    if (settings.aiCallsDate !== today) {
-      await db.settings.update({ where: { id: 'singleton' }, data: { aiCallsDate: today, aiCallsToday: 1 } });
-    } else {
-      await db.settings.update({ where: { id: 'singleton' }, data: { aiCallsToday: { increment: 1 } } });
-    }
-
-    return NextResponse.json({
-      ok: true,
-      assessment,
-      imageUrl,
-      hasImageBase64: !!imageBase64,
-      totalImages: detailImages.length + 1,
-    });
-  } catch (e: any) {
-    logger.error("/api/ai/image-quality", "POST handler failed", e);
-    return NextResponse.json({ error: e?.message ?? 'Napaka' }, { status: 500 });
-  }
+function transformAssessment(parsed: any): {
+  overallScore: number;
+  imageFindings: string;
+  qualityFactors: {
+    lighting: number;
+    composition: number;
+    background: number;
+    focus: number;
+    colorAccuracy: number;
+    resolution: number;
+    angle: number;
+    cleanliness: number;
+    context: number;
+    sellingPotential: number;
+  };
+  issues: any[];
+  recommendations: any[];
+  suggestedShots: any[];
+  platformSpecificAdvice: { bolha: string; vinted: string; facebook: string };
+} {
+  return {
+    overallScore: Math.max(0, Math.min(100, Number(parsed?.overall_score ?? 50))),
+    imageFindings: String(parsed?.image_findings ?? '').slice(0, 400),
+    qualityFactors: {
+      lighting: Math.max(1, Math.min(10, Number(parsed?.quality_factors?.lighting ?? 5))),
+      composition: Math.max(1, Math.min(10, Number(parsed?.quality_factors?.composition ?? 5))),
+      background: Math.max(1, Math.min(10, Number(parsed?.quality_factors?.background ?? 5))),
+      focus: Math.max(1, Math.min(10, Number(parsed?.quality_factors?.focus ?? 5))),
+      colorAccuracy: Math.max(1, Math.min(10, Number(parsed?.quality_factors?.color_accuracy ?? 5))),
+      resolution: Math.max(1, Math.min(10, Number(parsed?.quality_factors?.resolution ?? 5))),
+      angle: Math.max(1, Math.min(10, Number(parsed?.quality_factors?.angle ?? 5))),
+      cleanliness: Math.max(1, Math.min(10, Number(parsed?.quality_factors?.cleanliness ?? 5))),
+      context: Math.max(1, Math.min(10, Number(parsed?.quality_factors?.context ?? 5))),
+      sellingPotential: Math.max(1, Math.min(10, Number(parsed?.quality_factors?.selling_potential ?? 5))),
+    },
+    issues: (parsed?.issues || []).slice(0, 10).map((i: any) => ({
+      type: String(i?.type ?? '').slice(0, 50),
+      severity: ['high', 'medium', 'low'].includes(String(i?.severity)) ? String(i.severity) : 'medium',
+      description: String(i?.description ?? '').slice(0, 200),
+      fix: String(i?.fix ?? '').slice(0, 200),
+    })),
+    recommendations: (parsed?.recommendations || []).slice(0, 8).map((r: any) => ({
+      action: String(r?.action ?? '').slice(0, 250),
+      impact: ['high', 'medium', 'low'].includes(String(r?.impact)) ? String(r.impact) : 'medium',
+      estimatedValueIncreaseEur: Math.max(0, Number(r?.estimated_value_increase_eur ?? 0)),
+    })),
+    suggestedShots: (parsed?.suggested_shots || []).slice(0, 6).map((s: any) => ({
+      type: ['main', 'detail_brand', 'detail_damage', 'context', 'video'].includes(String(s?.type))
+        ? String(s.type) : 'main',
+      description: String(s?.description ?? '').slice(0, 200),
+      priority: ['high', 'medium', 'low'].includes(String(s?.priority)) ? String(s.priority) : 'medium',
+    })),
+    platformSpecificAdvice: {
+      bolha: String(parsed?.platform_specific_advice?.bolha ?? '').slice(0, 250),
+      vinted: String(parsed?.platform_specific_advice?.vinted ?? '').slice(0, 250),
+      facebook: String(parsed?.platform_specific_advice?.facebook ?? '').slice(0, 250),
+    },
+  };
 }

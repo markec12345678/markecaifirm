@@ -1,4 +1,4 @@
-// v7.99: AI Deal Profit Accelerator Pro — AI identificira kako ACCELERATE
+// v7.99 / v8.96.4-batch3: AI Deal Profit Accelerator Pro — AI identificira kako ACCELERATE
 // profit iz vsakega HELD item-a — specifične akcije da pridobiš VEČ profit-a
 // HITREJE iz trenutnega inventorija. Kombinira pricing, timing in channel
 // optimization per item. The "ultimate deal profit accelerator."
@@ -29,24 +29,18 @@
 
 // GET+POST /api/ai/deal-profit-accelerator-pro
 // (AI-enhanced + grounding + anti-hallucination + 6h cache + deterministic fallback)
+// Refaktoriran z withAiRoute helperjem (v8.96.4) + enforceBudget guard.
 
-import { NextRequest, NextResponse } from 'next/server';
-import { db } from '@/lib/db';
-import { getSettingsRow } from '@/lib/pipeline';
-import {
-  callProviderForRaw,
-  parseJsonLooseExported,
-  type AiProviderType,
-  type AiSettings,
-} from '@/lib/ai';
+import { withAiRoute, AI_ROUTE_DEFAULTS, type AiRouteContext } from '@/lib/with-ai-route';
+import { apiOk } from '@/lib/api-response';
 import { GROUNDING_PROMPT_SUFFIX } from '@/lib/anti-hallucination';
 import { getCachedAI, setCachedAI } from '@/lib/ai-cache';
-import { checkRateLimit, rateLimitResponse } from '@/lib/rate-limit';
-import { logger } from '@/lib/logger';
 
-export const runtime = 'nodejs';
-export const dynamic = 'force-dynamic';
+export const { runtime, dynamic } = AI_ROUTE_DEFAULTS;
 export const maxDuration = 60;
+
+// eslint-disable-next-line @typescript-eslint/no-empty-object-type
+interface DealProfitAcceleratorProInput {}
 
 // --- Types ---------------------------------------------------------------
 
@@ -461,141 +455,71 @@ function buildSummary(
   return parts.join(' ').slice(0, 400);
 }
 
-// --- Handler -------------------------------------------------------------
+// --- Prompt builder + AI response transform (čisti helperji) ------------
 
-export async function GET(req: NextRequest) {
-  return handleDealProfitAcceleratorPro(req);
+interface PromptData {
+  heldItemsCount: number;
+  heldItems: Array<{
+    tradeId: string;
+    title: string;
+    daysHeld: number;
+    estValue: number;
+    buyPrice: number;
+    detCurrentProfit: number;
+    detMaximizedProfit: number;
+    detAccelerationGap: number;
+    detDifficulty: AccelerationDifficulty;
+    detAction: AccelerationAction;
+    detTimeReduction: number;
+    detAccelerationROI: number;
+    detSuccessProbability: number;
+  }>;
+  deterministicPortfolio: PortfolioAcceleration;
+  caps: {
+    profitMin: number; profitMax: number;
+    gapMin: number; gapMax: number;
+    daysMin: number; daysMax: number;
+    roiMin: number; roiMax: number;
+    probMin: number; probMax: number;
+  };
 }
-export async function POST(req: NextRequest) {
-  return handleDealProfitAcceleratorPro(req);
-}
 
-async function handleDealProfitAcceleratorPro(req: NextRequest) {
-  try {
-    const rl = checkRateLimit(req, 'ai-deal-profit-accelerator-pro', 20);
-    if (!rl.allowed) return rateLimitResponse(rl);
+function buildPrompt(detItems: DetAccelItem[], portfolio: PortfolioAcceleration): string {
+  const topItemsForAI = [...detItems]
+    .sort((a, b) => b.item.accelerationROI - a.item.accelerationROI)
+    .slice(0, 40)
+    .map((d) => ({
+      tradeId: d.item.tradeId,
+      title: d.item.title,
+      daysHeld: d.daysHeld,
+      estValue: d.estValue,
+      buyPrice: d.item.currentProfitPotential > 0
+        ? Math.round(d.estValue - d.item.currentProfitPotential)
+        : d.estValue,
+      detCurrentProfit: d.item.currentProfitPotential,
+      detMaximizedProfit: d.item.maximizedProfitPotential,
+      detAccelerationGap: d.item.profitAccelerationGap,
+      detDifficulty: d.item.accelerationDifficulty,
+      detAction: d.item.accelerationAction,
+      detTimeReduction: d.item.timeReduction,
+      detAccelerationROI: d.item.accelerationROI,
+      detSuccessProbability: d.item.successProbability,
+    }));
 
-    const now = Date.now();
+  const promptData: PromptData = {
+    heldItemsCount: detItems.length,
+    heldItems: topItemsForAI,
+    deterministicPortfolio: portfolio,
+    caps: {
+      profitMin: PROFIT_MIN, profitMax: PROFIT_MAX,
+      gapMin: GAP_MIN, gapMax: GAP_MAX,
+      daysMin: DAYS_MIN, daysMax: DAYS_MAX,
+      roiMin: ROI_MIN, roiMax: ROI_MAX,
+      probMin: PROB_MIN, probMax: PROB_MAX,
+    },
+  };
 
-    // 1) Query all HELD trades with their linked Listing
-    const heldTrades = await db.trade.findMany({
-      where: { status: 'held' },
-      select: {
-        id: true,
-        title: true,
-        buyPrice: true,
-        buyFees: true,
-        buyDate: true,
-        category: true,
-        listing: {
-          select: {
-            aiEstimatedValue: true,
-            price: true,
-            aiScore: true,
-            dealScore: true,
-            monitor: { select: { source: true, tags: true } },
-          },
-        },
-      },
-      orderBy: { buyDate: 'asc' },
-      take: 100000,
-    }) as unknown as HeldItemRow[];
-
-    // Empty-state: no HELD trades
-    if (heldTrades.length === 0) {
-      return NextResponse.json({
-        ok: true,
-        items: [],
-        portfolio: {
-          totalCurrentProfitPotential: 0,
-          totalMaximizedProfitPotential: 0,
-          totalAccelerationPotential: 0,
-          portfolioAccelerationGrade: 'F',
-          topAccelerationItems: [],
-        },
-        summary: 'Ni HELD trgovin v inventarju — Deal Profit Accelerator Pro ni mogoč.',
-        aiUsed: false,
-        message: 'Ni HELD trgovin v inventarju — Deal Profit Accelerator Pro ni mogoč.',
-      } satisfies DealProfitAcceleratorResponse);
-    }
-
-    // 2) Compute per-item profit acceleration metrics (deterministic baseline)
-    const detItems = heldTrades.map((t) => computeProfitAccelerationItem(t, now));
-
-    let items: ProfitAccelerationItem[] = detItems.map((d) => d.item);
-    let portfolio = buildPortfolio(detItems);
-    let summary = buildSummary(detItems, portfolio);
-
-    // 3) AI cache check (6h TTL) — key by held item ids
-    const heldItemIds = heldTrades.map((t) => t.id).sort();
-    const cacheKey = `deal-profit-accelerator-pro:${JSON.stringify(heldItemIds)}`;
-    const cached = getCachedAI<{
-      items: ProfitAccelerationItem[];
-      portfolio: PortfolioAcceleration;
-      summary: string;
-    }>(cacheKey);
-    if (cached) {
-      return NextResponse.json({
-        ok: true,
-        items: cached.items,
-        portfolio: cached.portfolio,
-        summary: cached.summary,
-        cached: true,
-        aiUsed: true,
-      } satisfies DealProfitAcceleratorResponse);
-    }
-
-    // 4) AI prompt with grounding
-    const settings = await getSettingsRow();
-    const aiSettings: AiSettings = {
-      provider: settings.aiProvider as AiProviderType,
-      baseUrl: settings.aiBaseUrl,
-      apiKey: settings.aiApiKey,
-      model: settings.aiModel,
-      fallbackProvider: (settings.fallbackProvider || '') as
-        | AiProviderType
-        | '',
-      fallbackBaseUrl: settings.fallbackBaseUrl || '',
-      fallbackApiKey: settings.fallbackApiKey || '',
-      fallbackModel: settings.fallbackModel || '',
-    };
-
-    // Compact context for AI (top 40 items by accelerationROI)
-    const topItemsForAI = [...detItems]
-      .sort((a, b) => b.item.accelerationROI - a.item.accelerationROI)
-      .slice(0, 40)
-      .map((d) => ({
-        tradeId: d.item.tradeId,
-        title: d.item.title,
-        daysHeld: d.daysHeld,
-        estValue: d.estValue,
-        buyPrice: d.item.currentProfitPotential > 0
-          ? Math.round(d.estValue - d.item.currentProfitPotential)
-          : d.estValue,
-        detCurrentProfit: d.item.currentProfitPotential,
-        detMaximizedProfit: d.item.maximizedProfitPotential,
-        detAccelerationGap: d.item.profitAccelerationGap,
-        detDifficulty: d.item.accelerationDifficulty,
-        detAction: d.item.accelerationAction,
-        detTimeReduction: d.item.timeReduction,
-        detAccelerationROI: d.item.accelerationROI,
-        detSuccessProbability: d.item.successProbability,
-      }));
-
-    const promptData = {
-      heldItemsCount: detItems.length,
-      heldItems: topItemsForAI,
-      deterministicPortfolio: portfolio,
-      caps: {
-        profitMin: PROFIT_MIN, profitMax: PROFIT_MAX,
-        gapMin: GAP_MIN, gapMax: GAP_MAX,
-        daysMin: DAYS_MIN, daysMax: DAYS_MAX,
-        roiMin: ROI_MIN, roiMax: ROI_MAX,
-        probMin: PROB_MIN, probMax: PROB_MAX,
-      },
-    };
-
-    const prompt = `Si AI "Deal Profit Accelerator Pro" za slovenske in srednjeevropske oglasne platforme (Bolha, Vinted, Avtonet, mobile.de).
+  return `Si AI "Deal Profit Accelerator Pro" za slovenske in srednjeevropske oglasne platforme (Bolha, Vinted, Avtonet, mobile.de).
 Si strokovnjak za PROFIT ACCELERATION per held item — identificiraš kako MAXIMIZIRATI profit iz VSAKEGA held item-a z specifičnimi akcijami (pricing, timing, channel, bundle, refurb, wait). Razlika od deal-accelerator (ki accelera closing) — ti accelera PROFIT (€) per item. Razlika od profit-accelerator (v7.96 ki accelera profit generično) — ti daje PER-ITEM profit acceleration z acceleration ROI (€/day). Razlika od profit-velocity-maximizer (v7.98 ki maksimizira velocity) — ti fokusira na PROFIT ACCELERATION per held item (ne velocity of flow). Razlika od inventory-cash-conversion-maximizer (v7.98 ki maksimizira cash conversion) — ti accelera PROFIT (ne samo cash — tudi neto profit acceleration). Razlika od capital-growth-maximizer (v7.99 ki maksimizira capital growth) — ti accelera profit PER ITEM z specific actions.
 
 DETERMINISTIČNI PODATKI (izračunano iz DB — HELD trgovin z linked Listing):
@@ -631,152 +555,263 @@ VRNI LE JSON:
   "portfolio": { "portfolioAccelerationGrade": "B" },
   "summary": "12 held item-ov. Current profit: 580€. Maximized: 850€ (+270€). Grade B."
 }${GROUNDING_PROMPT_SUFFIX}`;
+}
+
+interface AiTransformResult {
+  items: ProfitAccelerationItem[];
+  portfolio: PortfolioAcceleration;
+  summary: string;
+}
+
+function transformAiResponse(
+  parsed: unknown,
+  detItems: DetAccelItem[],
+  detByTradeId: Map<string, DetAccelItem>,
+): AiTransformResult | null {
+  if (!parsed || typeof parsed !== 'object') return null;
+  const ai = parsed as AiResponse;
+
+  const aiItemsMap = new Map<string, NonNullable<AiResponse['items']>[number]>();
+  if (Array.isArray(ai.items)) {
+    for (const a of ai.items) {
+      if (a && typeof a === 'object' && typeof a.tradeId === 'string') {
+        aiItemsMap.set(a.tradeId, a);
+      }
+    }
+  }
+
+  const aiItems: ProfitAccelerationItem[] = [];
+  for (const d of detItems) {
+    const a = aiItemsMap.get(d.item.tradeId);
+    if (!a) {
+      aiItems.push(d.item);
+      continue;
+    }
+
+    const difficulty = clampEnum(
+      a.accelerationDifficulty,
+      VALID_DIFFICULTY,
+      d.item.accelerationDifficulty,
+    );
+    const action = clampEnum(
+      a.accelerationAction,
+      VALID_ACTION,
+      d.item.accelerationAction,
+    );
+
+    // Anti-hallucination: expectedProfitWithAction ∈ [currentProfit, currentProfit × 1.5 + 25]
+    const maxProfitBound = Math.min(
+      PROFIT_MAX,
+      d.item.currentProfitPotential * 1.5 + 25,
+    );
+    const expectedProfitWithAction = round0(clampNum(
+      a.expectedProfitWithAction,
+      d.item.currentProfitPotential, maxProfitBound,
+      d.item.maximizedProfitPotential,
+    ));
+    const profitAcceleration = round0(clampNum(
+      a.profitAcceleration,
+      PROFIT_MIN, PROFIT_MAX,
+      Math.max(0, expectedProfitWithAction - d.item.currentProfitPotential),
+    ));
+
+    const timeReduction = round0(clampNum(
+      a.timeReduction,
+      DAYS_MIN, DAYS_MAX,
+      d.item.timeReduction,
+    ));
+
+    const accelerationROI = timeReduction > 0
+      ? round2(clampNum(
+        profitAcceleration / timeReduction,
+        ROI_MIN, ROI_MAX, 0,
+      ))
+      : 0;
+
+    // Implementation steps (3-6 strings)
+    const implementationSteps: string[] = [];
+    if (Array.isArray(a.implementationSteps)) {
+      for (const s of a.implementationSteps.slice(0, MAX_STEPS_PER_ITEM)) {
+        if (typeof s !== 'string') continue;
+        implementationSteps.push(clampString(s, 200, 'Korak.'));
+      }
+    }
+    if (implementationSteps.length === 0) {
+      for (const s of d.item.implementationSteps) implementationSteps.push(s);
+    }
+    if (implementationSteps.length === 0) {
+      implementationSteps.push('Izvedi akcijo za profit acceleration.');
+    }
+
+    const successProbability = round0(clampNum(
+      a.successProbability,
+      PROB_MIN, PROB_MAX,
+      d.item.successProbability,
+    ));
+
+    aiItems.push({
+      tradeId: d.item.tradeId,
+      title: d.item.title,
+      currentProfitPotential: d.item.currentProfitPotential,
+      maximizedProfitPotential: expectedProfitWithAction > d.item.maximizedProfitPotential
+        ? expectedProfitWithAction
+        : d.item.maximizedProfitPotential,
+      profitAccelerationGap: round0(clampNum(
+        expectedProfitWithAction - d.item.currentProfitPotential,
+        GAP_MIN, GAP_MAX, 0,
+      )),
+      accelerationDifficulty: difficulty,
+      accelerationAction: action,
+      expectedProfitWithAction,
+      profitAcceleration,
+      timeReduction,
+      accelerationROI,
+      implementationSteps: implementationSteps.slice(0, MAX_STEPS_PER_ITEM),
+      successProbability,
+    });
+  }
+
+  let portfolio = buildPortfolio(
+    aiItems.map((it) => {
+      const det = detByTradeId.get(it.tradeId);
+      return {
+        item: it,
+        daysHeld: det?.daysHeld ?? 0,
+        estValue: det?.estValue ?? 0,
+      };
+    }),
+  );
+
+  // Override portfolio grade if AI provided one
+  if (ai.portfolio?.portfolioAccelerationGrade) {
+    portfolio = {
+      ...portfolio,
+      portfolioAccelerationGrade: clampEnum(
+        ai.portfolio.portfolioAccelerationGrade,
+        VALID_GRADE,
+        portfolio.portfolioAccelerationGrade,
+      ),
+    };
+  }
+
+  const summary = clampString(ai.summary, 400, buildSummary(
+    aiItems.map((it) => {
+      const det = detByTradeId.get(it.tradeId);
+      return {
+        item: it,
+        daysHeld: det?.daysHeld ?? 0,
+        estValue: det?.estValue ?? 0,
+      };
+    }),
+    portfolio,
+  ));
+
+  return { items: aiItems, portfolio, summary };
+}
+
+// --- Handler -------------------------------------------------------------
+
+const dealProfitAcceleratorProHandler = withAiRoute<DealProfitAcceleratorProInput>({
+  endpoint: '/api/ai/deal-profit-accelerator-pro',
+  maxDuration: 60,
+  enforceBudget: true, // AI klic — preveri budget
+  method: 'GET', // Endpoint sprejema GET + POST — bypass POST-only check
+
+  parseBody: async (req) => {
+    await req.json().catch(() => ({}));
+    return {};
+  },
+
+  // No validateInput — body ignored, identična logika za GET in POST
+  handler: async (_input, ctx: AiRouteContext) => {
+    const { db, callAi, parseAi, logger } = ctx;
+
+    const now = Date.now();
+
+    // 1) Query all HELD trades with their linked Listing
+    const heldTrades = await db.trade.findMany({
+      where: { status: 'held' },
+      select: {
+        id: true,
+        title: true,
+        buyPrice: true,
+        buyFees: true,
+        buyDate: true,
+        category: true,
+        listing: {
+          select: {
+            aiEstimatedValue: true,
+            price: true,
+            aiScore: true,
+            dealScore: true,
+            monitor: { select: { source: true, tags: true } },
+          },
+        },
+      },
+      orderBy: { buyDate: 'asc' },
+      take: 100000,
+    }) as unknown as HeldItemRow[];
+
+    // Empty-state: no HELD trades
+    if (heldTrades.length === 0) {
+      return apiOk({
+        ok: true,
+        items: [],
+        portfolio: {
+          totalCurrentProfitPotential: 0,
+          totalMaximizedProfitPotential: 0,
+          totalAccelerationPotential: 0,
+          portfolioAccelerationGrade: 'F',
+          topAccelerationItems: [],
+        },
+        summary: 'Ni HELD trgovin v inventarju — Deal Profit Accelerator Pro ni mogoč.',
+        aiUsed: false,
+        message: 'Ni HELD trgovin v inventarju — Deal Profit Accelerator Pro ni mogoč.',
+      } satisfies DealProfitAcceleratorResponse);
+    }
+
+    // 2) Compute per-item profit acceleration metrics (deterministic baseline)
+    const detItems = heldTrades.map((t) => computeProfitAccelerationItem(t, now));
+
+    let items: ProfitAccelerationItem[] = detItems.map((d) => d.item);
+    let portfolio = buildPortfolio(detItems);
+    let summary = buildSummary(detItems, portfolio);
+
+    // 3) AI cache check (6h TTL) — key by held item ids
+    const heldItemIds = heldTrades.map((t) => t.id).sort();
+    const cacheKey = `deal-profit-accelerator-pro:${JSON.stringify(heldItemIds)}`;
+    const cached = getCachedAI<{
+      items: ProfitAccelerationItem[];
+      portfolio: PortfolioAcceleration;
+      summary: string;
+    }>(cacheKey);
+    if (cached) {
+      return apiOk({
+        ok: true,
+        items: cached.items,
+        portfolio: cached.portfolio,
+        summary: cached.summary,
+        cached: true,
+        aiUsed: true,
+      } satisfies DealProfitAcceleratorResponse);
+    }
+
+    // 4) Build AI prompt with grounding + call AI (try/catch z graceful fallback)
+    const prompt = buildPrompt(detItems, portfolio);
+    const detByTradeId = new Map<string, DetAccelItem>();
+    for (const d of detItems) detByTradeId.set(d.item.tradeId, d);
 
     let aiUsed = false;
 
     try {
-      const raw = await callProviderForRaw(aiSettings, prompt);
-      const parsed = parseJsonLooseExported(raw) as AiResponse | null;
+      const raw = await callAi(prompt);
+      const parsed = parseAi(raw) as AiResponse | null;
 
-      if (parsed && typeof parsed === 'object') {
-        const detByTradeId = new Map<string, DetAccelItem>();
-        for (const d of detItems) detByTradeId.set(d.item.tradeId, d);
-
-        const aiItemsMap = new Map<string, NonNullable<AiResponse['items']>[number]>();
-        if (Array.isArray(parsed.items)) {
-          for (const ai of parsed.items) {
-            if (ai && typeof ai === 'object' && typeof ai.tradeId === 'string') {
-              aiItemsMap.set(ai.tradeId, ai);
-            }
-          }
-        }
-
-        const aiItems: ProfitAccelerationItem[] = [];
-        for (const d of detItems) {
-          const ai = aiItemsMap.get(d.item.tradeId);
-          if (!ai) {
-            aiItems.push(d.item);
-            continue;
-          }
-
-          const difficulty = clampEnum(
-            ai.accelerationDifficulty,
-            VALID_DIFFICULTY,
-            d.item.accelerationDifficulty,
-          );
-          const action = clampEnum(
-            ai.accelerationAction,
-            VALID_ACTION,
-            d.item.accelerationAction,
-          );
-
-          // Anti-hallucination: expectedProfitWithAction ∈ [currentProfit, currentProfit × 1.5 + 25]
-          const maxProfitBound = Math.min(
-            PROFIT_MAX,
-            d.item.currentProfitPotential * 1.5 + 25,
-          );
-          const expectedProfitWithAction = round0(clampNum(
-            ai.expectedProfitWithAction,
-            d.item.currentProfitPotential, maxProfitBound,
-            d.item.maximizedProfitPotential,
-          ));
-          const profitAcceleration = round0(clampNum(
-            ai.profitAcceleration,
-            PROFIT_MIN, PROFIT_MAX,
-            Math.max(0, expectedProfitWithAction - d.item.currentProfitPotential),
-          ));
-
-          const timeReduction = round0(clampNum(
-            ai.timeReduction,
-            DAYS_MIN, DAYS_MAX,
-            d.item.timeReduction,
-          ));
-
-          const accelerationROI = timeReduction > 0
-            ? round2(clampNum(
-              profitAcceleration / timeReduction,
-              ROI_MIN, ROI_MAX, 0,
-            ))
-            : 0;
-
-          // Implementation steps (3-6 strings)
-          const implementationSteps: string[] = [];
-          if (Array.isArray(ai.implementationSteps)) {
-            for (const s of ai.implementationSteps.slice(0, MAX_STEPS_PER_ITEM)) {
-              if (typeof s !== 'string') continue;
-              implementationSteps.push(clampString(s, 200, 'Korak.'));
-            }
-          }
-          if (implementationSteps.length === 0) {
-            for (const s of d.item.implementationSteps) implementationSteps.push(s);
-          }
-          if (implementationSteps.length === 0) {
-            implementationSteps.push('Izvedi akcijo za profit acceleration.');
-          }
-
-          const successProbability = round0(clampNum(
-            ai.successProbability,
-            PROB_MIN, PROB_MAX,
-            d.item.successProbability,
-          ));
-
-          aiItems.push({
-            tradeId: d.item.tradeId,
-            title: d.item.title,
-            currentProfitPotential: d.item.currentProfitPotential,
-            maximizedProfitPotential: expectedProfitWithAction > d.item.maximizedProfitPotential
-              ? expectedProfitWithAction
-              : d.item.maximizedProfitPotential,
-            profitAccelerationGap: round0(clampNum(
-              expectedProfitWithAction - d.item.currentProfitPotential,
-              GAP_MIN, GAP_MAX, 0,
-            )),
-            accelerationDifficulty: difficulty,
-            accelerationAction: action,
-            expectedProfitWithAction,
-            profitAcceleration,
-            timeReduction,
-            accelerationROI,
-            implementationSteps: implementationSteps.slice(0, MAX_STEPS_PER_ITEM),
-            successProbability,
-          });
-        }
-
-        items = aiItems;
-        portfolio = buildPortfolio(
-          aiItems.map((it) => {
-            const det = detByTradeId.get(it.tradeId);
-            return {
-              item: it,
-              daysHeld: det?.daysHeld ?? 0,
-              estValue: det?.estValue ?? 0,
-            };
-          }),
-        );
-
-        // Override portfolio grade if AI provided one
-        if (parsed.portfolio?.portfolioAccelerationGrade) {
-          portfolio = {
-            ...portfolio,
-            portfolioAccelerationGrade: clampEnum(
-              parsed.portfolio.portfolioAccelerationGrade,
-              VALID_GRADE,
-              portfolio.portfolioAccelerationGrade,
-            ),
-          };
-        }
-
-        summary = clampString(parsed.summary, 400, buildSummary(
-          aiItems.map((it) => {
-            const det = detByTradeId.get(it.tradeId);
-            return {
-              item: it,
-              daysHeld: det?.daysHeld ?? 0,
-              estValue: det?.estValue ?? 0,
-            };
-          }),
-          portfolio,
-        ));
+      const transformed = transformAiResponse(parsed, detItems, detByTradeId);
+      if (transformed) {
+        items = transformed.items;
+        portfolio = transformed.portfolio;
+        summary = transformed.summary;
         aiUsed = true;
       }
     } catch (err) {
@@ -792,22 +827,15 @@ VRNI LE JSON:
       setCachedAI(cacheKey, { items, portfolio, summary });
     }
 
-    return NextResponse.json({
+    return apiOk({
       ok: true,
       items,
       portfolio,
       summary,
       aiUsed,
     } satisfies DealProfitAcceleratorResponse);
-  } catch (err: any) {
-    logger.error(
-      '/api/ai/deal-profit-accelerator-pro',
-      'handler failed',
-      err,
-    );
-    return NextResponse.json(
-      { error: err?.message ?? 'Napaka' },
-      { status: 500 },
-    );
-  }
-}
+  },
+});
+
+export const GET = dealProfitAcceleratorProHandler;
+export const POST = dealProfitAcceleratorProHandler;

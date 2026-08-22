@@ -1,16 +1,20 @@
-// v6.58: AI Profit Margin Predictor v3 — advanced ML z multi-model ensemble in feature importance
+// v6.58 / v8.96.2-batch4: AI Profit Margin Predictor v3 — advanced ML z multi-model ensemble in feature importance
+// Refaktoriran z withAiRoute helperjem (v8.96.2) + enforceBudget guard.
+//
+// OPOMBA: Originalna datoteka (v6.58, 347 vrstic) NI vsebovala `@deprecated` JSDoc komentarja
+// niti `logDeprecatedCall()` klica — profit-margin-predictor-v3 je po ENDPOINTS_AUDIT.md
+// NAJNOVEJŠA verzija (zadnja od `profit-margin-predictor`), ne zastarela. Task spec je
+// vseboval napačno predpostavko; this endpoint migriran BREZ deprecation handling ker
+// original ni imel nobenega. Same input → same output preserved.
+//
 // POST /api/ai/profit-margin-predictor-v3
 // Body: { tradeId?: string, listingId?: string, listing?: { title, price, location, description, source } }
 // Returns: { ok, predictor: { items, ensembleModels, featureImportance, scenarios, recommendations, summary } }
 
-import { NextRequest, NextResponse } from 'next/server';
-import { db } from '@/lib/db';
-import { getSettingsRow } from '@/lib/pipeline';
-import { callProviderForRaw, parseJsonLooseExported, type AiProviderType, type AiSettings } from '@/lib/ai';
-import { logger } from '@/lib/logger';
+import { withAiRoute, AI_ROUTE_DEFAULTS, ApiRouteError, type AiRouteContext } from '@/lib/with-ai-route';
+import { apiOk } from '@/lib/api-response';
 
-export const runtime = 'nodejs';
-export const dynamic = 'force-dynamic';
+export const { runtime, dynamic } = AI_ROUTE_DEFAULTS;
 export const maxDuration = 120;
 
 const ENSEMBLE_MODELS = [
@@ -24,96 +28,145 @@ const ENSEMBLE_MODELS = [
   'lightgbm',
 ] as const;
 
-export async function POST(req: NextRequest) {
-  try {
+interface ListingInputObject {
+  title?: unknown;
+  price?: unknown;
+  location?: unknown;
+  description?: unknown;
+  source?: unknown;
+}
+
+interface ProfitMarginPredictorInput {
+  tradeId: string | null;
+  listingId?: string;
+  listing: ListingInputObject | null;
+}
+
+interface TargetListing {
+  id: string;
+  title: string;
+  price: number;
+  location: string;
+  description: string;
+  source: string;
+  category: string;
+  aiScore: number;
+  aiRisk: number;
+  dealScore: number;
+  aiEstimatedValue: number | null;
+}
+
+export const POST = withAiRoute<ProfitMarginPredictorInput>({
+  endpoint: '/api/ai/profit-margin-predictor-v3',
+  maxDuration: 120,
+  enforceBudget: true, // AI klic — preveri budget
+
+  parseBody: async (req) => {
     const body = await req.json().catch(() => ({}));
     const { listingId } = body;
     const tradeId = body?.tradeId ? String(body.tradeId) : null;
     const listingInput = body?.listing;
-
-    let targetListings: Array<{
-      id: string; title: string; price: number; location: string;
-      description: string; source: string; category: string;
-      aiScore: number; aiRisk: number; dealScore: number; aiEstimatedValue: number | null;
-    }> = [];
-
-    if (tradeId) {
-      const t = await db.trade.findUnique({
-        where: { id: tradeId },
-        select: { id: true, title: true, category: true, buyPrice: true,
-          listing: { select: { description: true, detailDescription: true, aiEstimatedValue: true, price: true, location: true,
-            aiScore: true, aiRisk: true, dealScore: true, monitor: { select: { source: true } } } } },
-      });
-      if (!t) return NextResponse.json({ error: 'Trade ne obstaja' }, { status: 404 });
-      targetListings = [{
-        id: t.id, title: t.title, category: t.category || 'drugo',
-        price: t.listing?.price ?? t.buyPrice,
-        location: t.listing?.location ?? '', description: (t.listing?.detailDescription || t.listing?.description || '').slice(0, 500),
-        source: t.listing?.monitor?.source ?? 'bolha',
-        aiScore: t.listing?.aiScore ?? 5, aiRisk: t.listing?.aiRisk ?? 5, dealScore: t.listing?.dealScore ?? 50,
-        aiEstimatedValue: t.listing?.aiEstimatedValue ?? null,
-      }];
-    } else if (listingId) {
-      const l = await db.listing.findUnique({
-        where: { id: String(listingId) },
-        select: { id: true, title: true, price: true, location: true, description: true, detailDescription: true,
-          aiScore: true, aiRisk: true, dealScore: true, aiEstimatedValue: true,
-          monitor: { select: { source: true } } },
-      });
-      if (!l) return NextResponse.json({ error: 'Listing ne obstaja' }, { status: 404 });
-      targetListings = [{
-        id: l.id, title: l.title, category: '',
-        price: l.price ?? 0, location: l.location ?? '',
-        description: (l.detailDescription || l.description || '').slice(0, 500),
-        source: l.monitor?.source ?? 'bolha',
-        aiScore: l.aiScore ?? 5, aiRisk: l.aiRisk ?? 5, dealScore: l.dealScore ?? 50,
-        aiEstimatedValue: l.aiEstimatedValue,
-      }];
-    } else if (listingInput) {
-      targetListings = [{
-        id: 'input-1', title: String(listingInput.title ?? ''),
-        category: '', price: Number(listingInput.price ?? 0),
-        location: String(listingInput.location ?? ''), description: String(listingInput.description ?? '').slice(0, 500),
-        source: String(listingInput.source ?? 'bolha'),
-        aiScore: 5, aiRisk: 5, dealScore: 50, aiEstimatedValue: null,
-      }];
-    } else {
-      const listings = await db.listing.findMany({
-        where: { aiVerdict: 'PRILIKA', aiScore: { gte: 7 }, isHidden: false, price: { not: null } },
-        orderBy: { dealScore: 'desc' }, take: 12,
-        select: { id: true, title: true, price: true, location: true, description: true, detailDescription: true,
-          aiScore: true, aiRisk: true, dealScore: true, aiEstimatedValue: true,
-          monitor: { select: { source: true } } },
-      });
-      targetListings = listings.map(l => ({
-        id: l.id, title: l.title, category: '',
-        price: l.price ?? 0, location: l.location ?? '',
-        description: (l.detailDescription || l.description || '').slice(0, 500),
-        source: l.monitor?.source ?? 'bolha',
-        aiScore: l.aiScore ?? 5, aiRisk: l.aiRisk ?? 5, dealScore: l.dealScore ?? 50,
-        aiEstimatedValue: l.aiEstimatedValue,
-      }));
-    }
-
-    if (targetListings.length === 0) {
-      return NextResponse.json({ ok: true, predictor: null, message: 'Ni listingov za profit margin analizo.' });
-    }
-
-    const settings = await getSettingsRow();
-    const aiSettings: AiSettings = {
-      provider: settings.aiProvider as AiProviderType,
-      baseUrl: settings.aiBaseUrl, apiKey: settings.aiApiKey, model: settings.aiModel,
-      fallbackProvider: (settings.fallbackProvider || '') as AiProviderType | '',
-      fallbackBaseUrl: settings.fallbackBaseUrl || '', fallbackApiKey: settings.fallbackApiKey || '',
-      fallbackModel: settings.fallbackModel || '',
+    return {
+      tradeId,
+      listingId: listingId ? String(listingId) : undefined,
+      listing: listingInput ?? null,
     };
+  },
 
-    const itemsStr = targetListings.slice(0, 12).map(l => {
-      const estVal = l.aiEstimatedValue ?? Math.round(l.price * 1.25);
-      return `- [${l.id}] "${l.title}" | ${l.price}€ | estValue ${estVal}€ | ${l.location || 'nepoznano'} | ${l.source} | AI score ${l.aiScore}/10 risk ${l.aiRisk}/10 | deal ${l.dealScore}/100`;
-    }).join('\n');
+  // No validateInput — 4-branch listing resolution, validation je v handlerju
+  handler: async (input, ctx: AiRouteContext) => {
+    const { db, callAi, parseAi } = ctx;
+    const { tradeId, listingId, listing } = input;
 
-    const prompt = `Si AI profit margin predictor v3 z multi-model ensemble in feature importance.
+    const targetListings = await resolveTargetListings(db, tradeId, listingId, listing);
+    if (targetListings.length === 0) {
+      return apiOk({ ok: true, predictor: null, message: 'Ni listingov za profit margin analizo.' });
+    }
+
+    const prompt = buildPrompt(targetListings);
+    const raw = await callAi(prompt);
+    const parsed: any = parseAi(raw);
+    const predictor = transformPredictor(parsed, targetListings);
+
+    return apiOk({ ok: true, predictor });
+  },
+});
+
+// --- Pomožne funkcije (čiste, testabilne) --------------------------------
+
+async function resolveTargetListings(
+  db: AiRouteContext['db'],
+  tradeId: string | null,
+  listingId?: string,
+  listingInput?: ListingInputObject | null
+): Promise<TargetListing[]> {
+  if (tradeId) {
+    const t = await db.trade.findUnique({
+      where: { id: tradeId },
+      select: { id: true, title: true, category: true, buyPrice: true,
+        listing: { select: { description: true, detailDescription: true, aiEstimatedValue: true, price: true, location: true,
+          aiScore: true, aiRisk: true, dealScore: true, monitor: { select: { source: true } } } } },
+    });
+    if (!t) throw new ApiRouteError('Trade ne obstaja', 404);
+    return [{
+      id: t.id, title: t.title, category: t.category || 'drugo',
+      price: t.listing?.price ?? t.buyPrice,
+      location: t.listing?.location ?? '', description: (t.listing?.detailDescription || t.listing?.description || '').slice(0, 500),
+      source: t.listing?.monitor?.source ?? 'bolha',
+      aiScore: t.listing?.aiScore ?? 5, aiRisk: t.listing?.aiRisk ?? 5, dealScore: t.listing?.dealScore ?? 50,
+      aiEstimatedValue: t.listing?.aiEstimatedValue ?? null,
+    }];
+  }
+  if (listingId) {
+    const l = await db.listing.findUnique({
+      where: { id: String(listingId) },
+      select: { id: true, title: true, price: true, location: true, description: true, detailDescription: true,
+        aiScore: true, aiRisk: true, dealScore: true, aiEstimatedValue: true,
+        monitor: { select: { source: true } } },
+    });
+    if (!l) throw new ApiRouteError('Listing ne obstaja', 404);
+    return [{
+      id: l.id, title: l.title, category: '',
+      price: l.price ?? 0, location: l.location ?? '',
+      description: (l.detailDescription || l.description || '').slice(0, 500),
+      source: l.monitor?.source ?? 'bolha',
+      aiScore: l.aiScore ?? 5, aiRisk: l.aiRisk ?? 5, dealScore: l.dealScore ?? 50,
+      aiEstimatedValue: l.aiEstimatedValue,
+    }];
+  }
+  if (listingInput) {
+    return [{
+      id: 'input-1', title: String(listingInput.title ?? ''),
+      category: '', price: Number(listingInput.price ?? 0),
+      location: String(listingInput.location ?? ''), description: String(listingInput.description ?? '').slice(0, 500),
+      source: String(listingInput.source ?? 'bolha'),
+      aiScore: 5, aiRisk: 5, dealScore: 50, aiEstimatedValue: null,
+    }];
+  }
+  const listings = await db.listing.findMany({
+    where: { aiVerdict: 'PRILIKA', aiScore: { gte: 7 }, isHidden: false, price: { not: null } },
+    orderBy: { dealScore: 'desc' }, take: 12,
+    select: { id: true, title: true, price: true, location: true, description: true, detailDescription: true,
+      aiScore: true, aiRisk: true, dealScore: true, aiEstimatedValue: true,
+      monitor: { select: { source: true } } },
+  });
+  return listings.map(l => ({
+    id: l.id, title: l.title, category: '',
+    price: l.price ?? 0, location: l.location ?? '',
+    description: (l.detailDescription || l.description || '').slice(0, 500),
+    source: l.monitor?.source ?? 'bolha',
+    aiScore: l.aiScore ?? 5, aiRisk: l.aiRisk ?? 5, dealScore: l.dealScore ?? 50,
+    aiEstimatedValue: l.aiEstimatedValue,
+  }));
+}
+
+function buildPrompt(targetListings: TargetListing[]): string {
+  const itemsStr = targetListings.slice(0, 12).map(l => {
+    const estVal = l.aiEstimatedValue ?? Math.round(l.price * 1.25);
+    return `- [${l.id}] "${l.title}" | ${l.price}€ | estValue ${estVal}€ | ${l.location || 'nepoznano'} | ${l.source} | AI score ${l.aiScore}/10 risk ${l.aiRisk}/10 | deal ${l.dealScore}/100`;
+  }).join('\n');
+
+  return `Si AI profit margin predictor v3 z multi-model ensemble in feature importance.
 Napove profit margin z 8-model ensemble in interpretabilnostjo (feature importance).
 
 LISTINGI ZA ANALIZO (${targetListings.length}):
@@ -224,124 +277,117 @@ Odgovori LE z JSON:
     "prediction_quality_score": <number 0-100>
   }
 }`;
+}
 
-    let raw = '';
-    try { raw = await callProviderForRaw(aiSettings, prompt); }
-    catch (primaryError: any) {
-      if (aiSettings.fallbackProvider && aiSettings.fallbackModel) {
-        const fb: AiSettings = { provider: aiSettings.fallbackProvider, baseUrl: aiSettings.fallbackBaseUrl || '', apiKey: aiSettings.fallbackApiKey || '', model: aiSettings.fallbackModel };
-        raw = await callProviderForRaw(fb, prompt);
-      } else { return NextResponse.json({ error: primaryError?.message ?? 'AI failed' }, { status: 500 }); }
-    }
+function transformPredictor(parsed: any, targetListings: TargetListing[]): {
+  insights: string;
+  items: any[];
+  ensembleModels: any[];
+  featureImportance: any[];
+  scenarios: any[];
+  recommendations: any[];
+  summary: any;
+} {
+  const validIds = new Set(targetListings.map(l => l.id));
 
-    const parsed: any = parseJsonLooseExported(raw);
-    const validIds = new Set(targetListings.map(l => l.id));
-
-    const predictor = {
-      insights: String(parsed?.insights ?? '').slice(0, 500),
-      items: (parsed?.items || [])
-        .filter((it: any) => validIds.has(String(it?.id ?? '')))
-        .slice(0, 12)
-        .map((it: any) => {
-          const orig = targetListings.find(l => l.id === String(it?.id));
-          return {
-            listingId: String(it?.id ?? ''),
-            title: String(it?.title ?? orig?.title ?? '').slice(0, 150),
-            ensemblePrediction: {
-              predictedMarginPct: Math.round(Number(it?.ensemble_prediction?.predicted_margin_pct ?? 25) * 10) / 10,
-              predictedProfitEur: Math.round(Number(it?.ensemble_prediction?.predicted_profit_eur ?? 0)),
-              predictedRoiPct: Math.round(Number(it?.ensemble_prediction?.predicted_roi_pct ?? 30) * 10) / 10,
-              confidencePct: Math.max(0, Math.min(100, Number(it?.ensemble_prediction?.confidence_pct ?? 50))),
-              predictionInterval: {
-                lowerPct: Math.round(Number(it?.ensemble_prediction?.prediction_interval?.lower_pct ?? 10) * 10) / 10,
-                upperPct: Math.round(Number(it?.ensemble_prediction?.prediction_interval?.upper_pct ?? 40) * 10) / 10,
-              },
-              modelConsensus: ['strong', 'moderate', 'weak'].includes(String(it?.ensemble_prediction?.model_consensus)) ? String(it.ensemble_prediction.model_consensus) : 'moderate',
+  return {
+    insights: String(parsed?.insights ?? '').slice(0, 500),
+    items: (parsed?.items || [])
+      .filter((it: any) => validIds.has(String(it?.id ?? '')))
+      .slice(0, 12)
+      .map((it: any) => {
+        const orig = targetListings.find(l => l.id === String(it?.id));
+        return {
+          listingId: String(it?.id ?? ''),
+          title: String(it?.title ?? orig?.title ?? '').slice(0, 150),
+          ensemblePrediction: {
+            predictedMarginPct: Math.round(Number(it?.ensemble_prediction?.predicted_margin_pct ?? 25) * 10) / 10,
+            predictedProfitEur: Math.round(Number(it?.ensemble_prediction?.predicted_profit_eur ?? 0)),
+            predictedRoiPct: Math.round(Number(it?.ensemble_prediction?.predicted_roi_pct ?? 30) * 10) / 10,
+            confidencePct: Math.max(0, Math.min(100, Number(it?.ensemble_prediction?.confidence_pct ?? 50))),
+            predictionInterval: {
+              lowerPct: Math.round(Number(it?.ensemble_prediction?.prediction_interval?.lower_pct ?? 10) * 10) / 10,
+              upperPct: Math.round(Number(it?.ensemble_prediction?.prediction_interval?.upper_pct ?? 40) * 10) / 10,
             },
-            scenarios: {
-              optimistic: {
-                marginPct: Math.round(Number(it?.scenarios?.optimistic?.margin_pct ?? 40) * 10) / 10,
-                profitEur: Math.round(Number(it?.scenarios?.optimistic?.profit_eur ?? 0)),
-                probabilityPct: Math.max(0, Math.min(100, Number(it?.scenarios?.optimistic?.probability_pct ?? 25))),
-              },
-              realistic: {
-                marginPct: Math.round(Number(it?.scenarios?.realistic?.margin_pct ?? 25) * 10) / 10,
-                profitEur: Math.round(Number(it?.scenarios?.realistic?.profit_eur ?? 0)),
-                probabilityPct: Math.max(0, Math.min(100, Number(it?.scenarios?.realistic?.probability_pct ?? 50))),
-              },
-              pessimistic: {
-                marginPct: Math.round(Number(it?.scenarios?.pessimistic?.margin_pct ?? 10) * 10) / 10,
-                profitEur: Math.round(Number(it?.scenarios?.pessimistic?.profit_eur ?? 0)),
-                probabilityPct: Math.max(0, Math.min(100, Number(it?.scenarios?.pessimistic?.probability_pct ?? 20))),
-              },
-              stressTest: {
-                marginPct: Math.round(Number(it?.scenarios?.stress_test?.margin_pct ?? -5) * 10) / 10,
-                profitEur: Math.round(Number(it?.scenarios?.stress_test?.profit_eur ?? 0)),
-                probabilityPct: Math.max(0, Math.min(100, Number(it?.scenarios?.stress_test?.probability_pct ?? 5))),
-              },
+            modelConsensus: ['strong', 'moderate', 'weak'].includes(String(it?.ensemble_prediction?.model_consensus)) ? String(it.ensemble_prediction.model_consensus) : 'moderate',
+          },
+          scenarios: {
+            optimistic: {
+              marginPct: Math.round(Number(it?.scenarios?.optimistic?.margin_pct ?? 40) * 10) / 10,
+              profitEur: Math.round(Number(it?.scenarios?.optimistic?.profit_eur ?? 0)),
+              probabilityPct: Math.max(0, Math.min(100, Number(it?.scenarios?.optimistic?.probability_pct ?? 25))),
             },
-            keyDrivers: (it?.key_drivers || []).slice(0, 5).map((d: any) => ({
-              feature: String(d?.feature ?? '').slice(0, 100),
-              importancePct: Math.max(0, Math.min(100, Number(d?.importance_pct ?? 50))),
-              direction: ['positive', 'negative'].includes(String(d?.direction)) ? String(d.direction) : 'positive',
-              currentValue: String(d?.current_value ?? '').slice(0, 100),
-              optimalValue: String(d?.optimal_value ?? '').slice(0, 100),
-            })),
-            recommendation: ['strong_buy', 'buy', 'consider', 'avoid', 'strong_avoid'].includes(String(it?.recommendation)) ? String(it.recommendation) : 'consider',
-            reasoning: String(it?.reasoning ?? '').slice(0, 300),
-            expectedDaysToSell: Math.max(1, Math.round(Number(it?.expected_days_to_sell ?? 14))),
-            breakEvenPriceEur: Math.max(0, Math.round(Number(it?.break_even_price_eur ?? orig?.price ?? 0))),
-          };
-        }),
-      ensembleModels: (parsed?.ensemble_models || []).slice(0, 8).map((m: any) => ({
-        model: ENSEMBLE_MODELS.includes(String(m?.model) as any) ? String(m.model) : 'gradient_boosting',
-        weightInEnsemble: Math.max(0, Math.min(100, Number(m?.weight_in_ensemble ?? 12))),
-        accuracyScore: Math.max(0, Math.min(100, Number(m?.accuracy_score ?? 70))),
-        r2Score: Math.max(0, Math.min(100, Number(m?.r2_score ?? 65))),
-        maeEur: Math.round(Number(m?.mae_eur ?? 0) * 100) / 100,
-        contributionToEnsemblePct: Math.max(0, Math.min(100, Number(m?.contribution_to_ensemble_pct ?? 12))),
-        bestFor: String(m?.best_for ?? '').slice(0, 150),
-      })),
-      featureImportance: (parsed?.feature_importance || []).slice(0, 10).map((f: any) => ({
-        feature: String(f?.feature ?? '').slice(0, 150),
-        importancePct: Math.max(0, Math.min(100, Number(f?.importance_pct ?? 50))),
-        direction: ['positive', 'negative'].includes(String(f?.direction)) ? String(f.direction) : 'positive',
-        description: String(f?.description ?? '').slice(0, 200),
-        optimalValue: String(f?.optimal_value ?? '').slice(0, 150),
-        currentAvgValue: String(f?.current_avg_value ?? '').slice(0, 150),
-      })),
-      scenarios: (parsed?.scenarios || []).slice(0, 4).map((s: any) => ({
-        scenario: ['optimistic', 'realistic', 'pessimistic', 'stress_test'].includes(String(s?.scenario)) ? String(s.scenario) : 'realistic',
-        avgMarginPct: Math.round(Number(s?.avg_margin_pct ?? 25) * 10) / 10,
-        totalProfitEur: Math.round(Number(s?.total_profit_eur ?? 0)),
-        probabilityPct: Math.max(0, Math.min(100, Number(s?.probability_pct ?? 50))),
-        keyAssumption: String(s?.key_assumption ?? '').slice(0, 250),
-      })),
-      recommendations: (parsed?.recommendations || []).slice(0, 6).map((r: any) => ({
-        action: String(r?.action ?? '').slice(0, 300),
-        priority: ['high', 'medium', 'low'].includes(String(r?.priority)) ? String(r.priority) : 'medium',
-        featureTargeted: String(r?.feature_targeted ?? '').slice(0, 150),
-        expectedMarginImprovementPct: Math.round(Number(r?.expected_margin_improvement_pct ?? 0) * 10) / 10,
-        expectedProfitImpactEur: Math.round(Number(r?.expected_profit_impact_eur ?? 0)),
-      })),
-      summary: {
-        totalListingsAnalyzed: targetListings.length,
-        avgPredictedMarginPct: Math.round(Number(parsed?.summary?.avg_predicted_margin_pct ?? 25) * 10) / 10,
-        avgPredictedProfitEur: Math.round(Number(parsed?.summary?.avg_predicted_profit_eur ?? 0)),
-        avgConfidencePct: Math.max(0, Math.min(100, Number(parsed?.summary?.avg_confidence_pct ?? 50))),
-        bestPerformingModel: ENSEMBLE_MODELS.includes(String(parsed?.summary?.best_performing_model) as any) ? String(parsed.summary.best_performing_model) : 'gradient_boosting',
-        mostImportantFeature: String(parsed?.summary?.most_important_feature ?? '').slice(0, 150),
-        biggestOpportunityId: String(parsed?.summary?.biggest_opportunity_id ?? '').slice(0, 50),
-        biggestRiskId: String(parsed?.summary?.biggest_risk_id ?? '').slice(0, 50),
-        totalExpectedProfitEur: Math.round(Number(parsed?.summary?.total_expected_profit_eur ?? 0)),
-        predictionQualityScore: Math.max(0, Math.min(100, Number(parsed?.summary?.prediction_quality_score ?? 60))),
-      },
-    };
-
-    const today = new Date().toISOString().slice(0, 10);
-    if (settings.aiCallsDate !== today) { await db.settings.update({ where: { id: 'singleton' }, data: { aiCallsDate: today, aiCallsToday: 1 } }); }
-    else { await db.settings.update({ where: { id: 'singleton' }, data: { aiCallsToday: { increment: 1 } } }); }
-
-    return NextResponse.json({ ok: true, predictor });
-  } catch (e: any) { logger.error("/api/ai/profit-margin-predictor-v3", "POST handler failed", e); return NextResponse.json({ error: e?.message ?? 'Napaka' }, { status: 500 }); }
+            realistic: {
+              marginPct: Math.round(Number(it?.scenarios?.realistic?.margin_pct ?? 25) * 10) / 10,
+              profitEur: Math.round(Number(it?.scenarios?.realistic?.profit_eur ?? 0)),
+              probabilityPct: Math.max(0, Math.min(100, Number(it?.scenarios?.realistic?.probability_pct ?? 50))),
+            },
+            pessimistic: {
+              marginPct: Math.round(Number(it?.scenarios?.pessimistic?.margin_pct ?? 10) * 10) / 10,
+              profitEur: Math.round(Number(it?.scenarios?.pessimistic?.profit_eur ?? 0)),
+              probabilityPct: Math.max(0, Math.min(100, Number(it?.scenarios?.pessimistic?.probability_pct ?? 20))),
+            },
+            stressTest: {
+              marginPct: Math.round(Number(it?.scenarios?.stress_test?.margin_pct ?? -5) * 10) / 10,
+              profitEur: Math.round(Number(it?.scenarios?.stress_test?.profit_eur ?? 0)),
+              probabilityPct: Math.max(0, Math.min(100, Number(it?.scenarios?.stress_test?.probability_pct ?? 5))),
+            },
+          },
+          keyDrivers: (it?.key_drivers || []).slice(0, 5).map((d: any) => ({
+            feature: String(d?.feature ?? '').slice(0, 100),
+            importancePct: Math.max(0, Math.min(100, Number(d?.importance_pct ?? 50))),
+            direction: ['positive', 'negative'].includes(String(d?.direction)) ? String(d.direction) : 'positive',
+            currentValue: String(d?.current_value ?? '').slice(0, 100),
+            optimalValue: String(d?.optimal_value ?? '').slice(0, 100),
+          })),
+          recommendation: ['strong_buy', 'buy', 'consider', 'avoid', 'strong_avoid'].includes(String(it?.recommendation)) ? String(it.recommendation) : 'consider',
+          reasoning: String(it?.reasoning ?? '').slice(0, 300),
+          expectedDaysToSell: Math.max(1, Math.round(Number(it?.expected_days_to_sell ?? 14))),
+          breakEvenPriceEur: Math.max(0, Math.round(Number(it?.break_even_price_eur ?? orig?.price ?? 0))),
+        };
+      }),
+    ensembleModels: (parsed?.ensemble_models || []).slice(0, 8).map((m: any) => ({
+      model: ENSEMBLE_MODELS.includes(String(m?.model) as any) ? String(m.model) : 'gradient_boosting',
+      weightInEnsemble: Math.max(0, Math.min(100, Number(m?.weight_in_ensemble ?? 12))),
+      accuracyScore: Math.max(0, Math.min(100, Number(m?.accuracy_score ?? 70))),
+      r2Score: Math.max(0, Math.min(100, Number(m?.r2_score ?? 65))),
+      maeEur: Math.round(Number(m?.mae_eur ?? 0) * 100) / 100,
+      contributionToEnsemblePct: Math.max(0, Math.min(100, Number(m?.contribution_to_ensemble_pct ?? 12))),
+      bestFor: String(m?.best_for ?? '').slice(0, 150),
+    })),
+    featureImportance: (parsed?.feature_importance || []).slice(0, 10).map((f: any) => ({
+      feature: String(f?.feature ?? '').slice(0, 150),
+      importancePct: Math.max(0, Math.min(100, Number(f?.importance_pct ?? 50))),
+      direction: ['positive', 'negative'].includes(String(f?.direction)) ? String(f.direction) : 'positive',
+      description: String(f?.description ?? '').slice(0, 200),
+      optimalValue: String(f?.optimal_value ?? '').slice(0, 150),
+      currentAvgValue: String(f?.current_avg_value ?? '').slice(0, 150),
+    })),
+    scenarios: (parsed?.scenarios || []).slice(0, 4).map((s: any) => ({
+      scenario: ['optimistic', 'realistic', 'pessimistic', 'stress_test'].includes(String(s?.scenario)) ? String(s.scenario) : 'realistic',
+      avgMarginPct: Math.round(Number(s?.avg_margin_pct ?? 25) * 10) / 10,
+      totalProfitEur: Math.round(Number(s?.total_profit_eur ?? 0)),
+      probabilityPct: Math.max(0, Math.min(100, Number(s?.probability_pct ?? 50))),
+      keyAssumption: String(s?.key_assumption ?? '').slice(0, 250),
+    })),
+    recommendations: (parsed?.recommendations || []).slice(0, 6).map((r: any) => ({
+      action: String(r?.action ?? '').slice(0, 300),
+      priority: ['high', 'medium', 'low'].includes(String(r?.priority)) ? String(r.priority) : 'medium',
+      featureTargeted: String(r?.feature_targeted ?? '').slice(0, 150),
+      expectedMarginImprovementPct: Math.round(Number(r?.expected_margin_improvement_pct ?? 0) * 10) / 10,
+      expectedProfitImpactEur: Math.round(Number(r?.expected_profit_impact_eur ?? 0)),
+    })),
+    summary: {
+      totalListingsAnalyzed: targetListings.length,
+      avgPredictedMarginPct: Math.round(Number(parsed?.summary?.avg_predicted_margin_pct ?? 25) * 10) / 10,
+      avgPredictedProfitEur: Math.round(Number(parsed?.summary?.avg_predicted_profit_eur ?? 0)),
+      avgConfidencePct: Math.max(0, Math.min(100, Number(parsed?.summary?.avg_confidence_pct ?? 50))),
+      bestPerformingModel: ENSEMBLE_MODELS.includes(String(parsed?.summary?.best_performing_model) as any) ? String(parsed.summary.best_performing_model) : 'gradient_boosting',
+      mostImportantFeature: String(parsed?.summary?.most_important_feature ?? '').slice(0, 150),
+      biggestOpportunityId: String(parsed?.summary?.biggest_opportunity_id ?? '').slice(0, 50),
+      biggestRiskId: String(parsed?.summary?.biggest_risk_id ?? '').slice(0, 50),
+      totalExpectedProfitEur: Math.round(Number(parsed?.summary?.total_expected_profit_eur ?? 0)),
+      predictionQualityScore: Math.max(0, Math.min(100, Number(parsed?.summary?.prediction_quality_score ?? 60))),
+    },
+  };
 }

@@ -1,4 +1,4 @@
-// v8.13: AI Inventory Turnover Profit Growth Maximizer — AI MAKSIMIZIRA
+// v8.13 / v8.96.6-batch1: AI Inventory Turnover Profit Growth Maximizer — AI MAKSIMIZIRA
 // GROWTH profit-a iz TURNOVER — ne trenutni turnover profit, ampak kako hitro
 // profit iz turnover raste month-over-month. Kombinira turnover rate growth z
 // profit per cycle growth. "Tvoj turnover profit raste +4%/mo, ampak bi lahko
@@ -50,27 +50,21 @@
 // growthLevers. Razlika od inventory-turnover-optimizer (ki optimira turnover
 // rate) — ta MAKSIMIZIRA GROWTH TURNOVER PROFIT (%/mo kako hitro profit raste,
 // ne optimal turnover rate).
-
+//
 // GET+POST /api/ai/inventory-turnover-profit-growth-maximizer
 // (AI-enhanced + grounding + anti-hallucination + 6h cache + deterministic fallback)
+// Refaktoriran z withAiRoute helperjem (v8.96.6) + enforceBudget guard.
 
-import { NextRequest, NextResponse } from 'next/server';
-import { db } from '@/lib/db';
-import { getSettingsRow } from '@/lib/pipeline';
-import {
-  callProviderForRaw,
-  parseJsonLooseExported,
-  type AiProviderType,
-  type AiSettings,
-} from '@/lib/ai';
+import { withAiRoute, AI_ROUTE_DEFAULTS, type AiRouteContext } from '@/lib/with-ai-route';
+import { apiOk } from '@/lib/api-response';
 import { GROUNDING_PROMPT_SUFFIX } from '@/lib/anti-hallucination';
 import { getCachedAI, setCachedAI } from '@/lib/ai-cache';
-import { checkRateLimit, rateLimitResponse } from '@/lib/rate-limit';
-import { logger } from '@/lib/logger';
 
-export const runtime = 'nodejs';
-export const dynamic = 'force-dynamic';
+export const { runtime, dynamic } = AI_ROUTE_DEFAULTS;
 export const maxDuration = 60;
+
+// eslint-disable-next-line @typescript-eslint/no-empty-object-type
+interface InventoryTurnoverProfitGrowthInput {}
 
 // --- Types ---------------------------------------------------------------
 
@@ -563,19 +557,218 @@ function buildSummary(current: CurrentState, max: TurnoverProfitGrowthMaximizati
   return parts.join(' ').slice(0, 500);
 }
 
+// --- Prompt builder + AI merge (čisti, testabilni) ----------------------
+
+function buildPromptData(
+  soldComputed: SoldComputed[],
+  current: CurrentState,
+  maximization: TurnoverProfitGrowthMaximization,
+): unknown {
+  const soldSampleForAI = soldComputed
+    .slice(-MAX_TRADES_FOR_AI)
+    .map((t) => ({
+      profit: t.profit,
+      holdDays: t.holdDays,
+    }));
+  return {
+    soldCount12m: soldComputed.length,
+    current,
+    deterministicMaximization: {
+      currentTurnoverProfitGrowth: maximization.currentTurnoverProfitGrowth,
+      maximizedTurnoverProfitGrowth: maximization.maximizedTurnoverProfitGrowth,
+      growthUplift: maximization.growthUplift,
+      growthLevers: maximization.growthLevers,
+      growthBottlenecks: maximization.growthBottlenecks,
+      growthGrade: maximization.growthGrade,
+      doublingTime: maximization.doublingTime,
+    },
+    soldSample: soldSampleForAI,
+    caps: {
+      profitMin: PROFIT_MIN, profitMax: PROFIT_MAX,
+      growthRateMin: GROWTH_RATE_MIN, growthRateMax: GROWTH_RATE_MAX,
+      accelerationMin: ACCELERATION_MIN, accelerationMax: ACCELERATION_MAX,
+      upliftMin: UPLIFT_MIN, upliftMax: UPLIFT_MAX,
+      contributionMin: CONTRIBUTION_MIN, contributionMax: CONTRIBUTION_MAX,
+      trajectoryProfitMin: TRAJECTORY_PROFIT_MIN, trajectoryProfitMax: TRAJECTORY_PROFIT_MAX,
+      doublingMin: DOUBLING_MIN, doublingMax: DOUBLING_MAX,
+      absoluteUpliftCapPp: ABSOLUTE_UPLIFT_CAP_PP,
+    },
+    leverPotentialPct: LEVER_POTENTIAL_PCT,
+  };
+}
+
+function buildPrompt(promptData: unknown): string {
+  return `Si AI "Inventory Turnover Profit Growth Maximizer" za slovenske in srednjeevropske oglasne platforme (Bolha, Vinted, Avtonet, mobile.de).
+Si strokovnjak za TURNOVER PROFIT GROWTH MAXIMIZATION — kako maksimizirati GROWTH profit-a iz TURNOVER (koliko hitro profit iz monthlyTrades × avgProfitPerTrade raste month-over-month). Tvoj cilj je "Tvoj turnover profit raste +4%/mo, ampak bi lahko rasel +10%/mo z temi 4 vzvodi." Razlika od inventory-turnover-profit-maximizer (v8.00 ki maksimizira profit preko optimal inventory turnover — najde popolno ravnovesje med turnover speed in profit per cycle) — ti MAKSIMIZIRAŠ GROWTH turnover profit-a (%/mo kako hitro profit iz turnover raste, ne optimal turnover-profit curve). Razlika od profit-growth-rate-maximizer (v8.11 ki maksimizira growth rate skupnega profit-a v %/mo) — ti MAKSIMIZIRAŠ GROWTH TURNOVER PROFIT (koliko hitro profit iz monthlyTrades × avgProfitPerTrade raste, ne skupni profit € growth). Razlika od inventory-capital-efficiency-growth-maximizer (v8.12 ki maksimizira capital efficiency growth %/mo) — ti MAKSIMIZIRAŠ TURNOVER PROFIT GROWTH (€/mo growth od turnover × profit/cycle, ne capital efficiency %/mo growth). Razlika od profit-per-cycle-maximizer (v8.12 ki maksimizira profit per cycle €/cycle) — ti MAKSIMIZIRAŠ GROWTH turnover profit-a (%/mo growth, ne €/cycle profit). Razlika od deal-source-profit-margin-growth-maximizer (v8.12 ki maksimizira margin growth per source v %/mo) — ti MAKSIMIZIRAŠ TURNOVER PROFIT GROWTH čez inventory (€/mo turnover profit growth, ne per-source margin growth). Razlika od profit-per-trade-scaling-maximizer (v8.13 ki skalira profit per trade z 4-phase progression) — ti MAKSIMIZIRAŠ GROWTH turnover profit-a (%/mo kako hitro profit raste, ne €/trade scaling). Razlika od deal-source-volume-growth-maximizer (v8.13 ki maksimizira volume growth rate per source v %/mo) — ti MAKSIMIZIRAŠ TURNOVER PROFIT GROWTH (€/mo growth od turnover × profit/cycle, ne %/mo source volume growth). Razlika od inventory-capital-velocity-maximizer (v8.10 ki maksimizira velocity kapitala — koliko cycle-ov/leto) — ti MAKSIMIZIRAŠ GROWTH turnover profit-a (%/mo growth, ne cycle count velocity). Razlika od inventory-annual-yield-maximizer (v8.11 ki maksimizira annual yield %) — ti MAKSIMIZIRAŠ GROWTH turnover profit-a (%/mo growth, ne letni yield %). Razlika od profit-per-day-scaling-maximizer (v8.08 ki skalira daily profit z requiredTradesPerDay in requiredCapital) — ti MAKSIMIZIRAŠ GROWTH turnover profit-a (%/mo growth, ne €/dan scaling). Razlika od profit-per-trade-growth-maximizer (v8.10 ki maksimizira growth rate profit-a PER TRADE v €/mo) — ti MAKSIMIZIRAŠ GROWTH TURNOVER PROFIT (%/mo kako hitro monthlyTrades × avgProfitPerTrade raste, ne per-trade €/mo growth). Razlika od inventory-profit-per-day-growth-maximizer (v8.09 ki maksimizira growth rate daily profit-a iz inventory-ja v %/teden) — ti MAKSIMIZIRAŠ GROWTH TURNOVER PROFIT (%/mo turnover profit growth, ne %/teden daily profit growth). Razlika od profit-multiplier-maximizer (v8.09 ki maksimizira max profit multiplier z 6 dimensions) — ti MAKSIMIZIRAŠ GROWTH TURNOVER PROFIT z growthLevers (INCREASE_TRADE_FREQUENCY/INCREASE_PROFIT_PER_TRADE/REDUCE_HOLD_TIME/OPTIMIZE_PRICING) in doublingTime (rule of 72). Razlika od profit-scale-engine (v7.96 ki skalira profit z growth engine) — ti MAKSIMIZIRAŠ GROWTH TURNOVER PROFIT z growthTrajectory in growthBottlenecks. Razlika od inventory-turnover-accelerator (v7.96 ki accelera turnover hitrost) — ti MAKSIMIZIRAŠ GROWTH TURNOVER PROFIT (%/mo growth, ne turnover hitrost acceleration). Razlika od inventory-turnover-yield-maximizer (v8.05 ki maksimizira yield z yieldCurve) — ti MAKSIMIZIRAŠ GROWTH TURNOVER PROFIT z doublingTime in growthLevers. Razlika od inventory-turnover-optimizer (ki optimira turnover rate) — ti MAKSIMIZIRAŠ GROWTH TURNOVER PROFIT (%/mo kako hitro profit raste, ne optimal turnover rate).
+
+DETERMINISTIČNI PODATKI (izračunano iz DB — SOLD trgovin v zadnjih 12 mesecih, grouped by month):
+${JSON.stringify(promptData, null, 2)}
+
+PRAVILA ZA AI ODGOVOR:
+1. maximization.maximizedTurnoverProfitGrowth %/mo [-50, 200] (optimal achievable, ≥ current turnoverProfitGrowthRate, ≤ current + 50pp absolute uplift — anti-hallucination),
+2. maximization.growthUplift pp [0, 100] (improvement = maximized − current),
+3. maximization.growthLevers: 4 elementi { lever INCREASE_TRADE_FREQUENCY/INCREASE_PROFIT_PER_TRADE/REDUCE_HOLD_TIME/OPTIMIZE_PRICING (potential 35/30/20/15% contribution), currentContribution % [0, 100] (koliko trenutno prispeva k growth), potentialContribution % [0, 100] (koliko bi lahko prispeval ko max), action (slovenski, max 200 — specifična akcija za ta lever) },
+4. maximization.growthBottlenecks: 3-5 stringov (max 200 vsak, slovenski — kaj limitira turnover profit growth),
+5. maximization.growthGrade: A+ | A | B | C | D | F (A+ če maximized ≥ 40, A ≥ 25, B ≥ 15, C ≥ 8, D ≥ 2, else F),
+6. summary: slovenski povzetek (max 500 znakov — poudari current turnover profit, current growth rate, maximized growth rate, uplift, grade, doubling time, 4 levers).
+
+VRNI LE JSON:
+{
+  "maximization": {
+    "maximizedTurnoverProfitGrowth": 12.0,
+    "growthUplift": 8.0,
+    "growthLevers": [
+      { "lever": "INCREASE_TRADE_FREQUENCY", "currentContribution": 10, "potentialContribution": 35, "action": "Povečaj trade frequency z 5.00 na 7.50 trades/mo z AI sourcing za +35% growth." },
+      { "lever": "INCREASE_PROFIT_PER_TRADE", "currentContribution": 8, "potentialContribution": 30, "action": "Povečaj profit per trade z 45€ na 58.50€ z AI pricing za +30% growth." },
+      { "lever": "REDUCE_HOLD_TIME", "currentContribution": 5, "potentialContribution": 20, "action": "Zmanjšaj hold time z AI timing engine za +20% growth." },
+      { "lever": "OPTIMIZE_PRICING", "currentContribution": 4, "potentialContribution": 15, "action": "Optimiziraj pricing z A/B test za +15% growth." }
+    ],
+    "growthBottlenecks": [
+      "Trade frequency bottleneck: trenutno 5.00 trades/mo.",
+      "Profit per trade bottleneck: trenutno 45.00€/trade.",
+      "Trend momentum: growth 4.00%/mo z STABLE trend."
+    ],
+    "growthGrade": "B"
+  },
+  "summary": "Current: 225€/mo turnover profit (avg 187€/mo, growth 4.00%/mo, STABLE, 8 mesecev data, 5.00 trades/mo, 45.00€/trade). Maximized: 12.00%/mo growth (+8.00pp uplift, grade B). Doubling time: 6 mesecev. 4 levers: INCREASE_TRADE_FREQUENCY (+35%), INCREASE_PROFIT_PER_TRADE (+30%), REDUCE_HOLD_TIME (+20%), OPTIMIZE_PRICING (+15%)."
+}${GROUNDING_PROMPT_SUFFIX}`;
+}
+
+function mergeAiIntoMaximization(
+  parsed: AiResponse | null,
+  current: CurrentState,
+  maximizationIn: TurnoverProfitGrowthMaximization,
+): { maximization: TurnoverProfitGrowthMaximization; summary: string; aiUsed: boolean } {
+  let maximization = maximizationIn;
+  let summary = buildSummary(current, maximization);
+  let aiUsed = false;
+
+  if (parsed && typeof parsed === 'object' && parsed.maximization) {
+    const aiMax = parsed.maximization;
+
+    // Anti-hallucination: maximized ∈ [current, min(current + 50pp, 200%/mo)]
+    const minBound = Math.max(GROWTH_RATE_MIN, current.turnoverProfitGrowthRate);
+    const maxBound = Math.min(GROWTH_RATE_MAX, current.turnoverProfitGrowthRate + ABSOLUTE_UPLIFT_CAP_PP);
+    const maximizedTurnoverProfitGrowth = round2(clampNum(
+      aiMax.maximizedTurnoverProfitGrowth,
+      minBound, maxBound,
+      maximization.maximizedTurnoverProfitGrowth,
+    ));
+    const growthUplift = round2(clampNum(
+      Math.max(0, maximizedTurnoverProfitGrowth - current.turnoverProfitGrowthRate),
+      UPLIFT_MIN, UPLIFT_MAX, 0,
+    ));
+
+    // Override growthLevers — must have 4 entries
+    let growthLevers = maximization.growthLevers;
+    if (Array.isArray(aiMax.growthLevers) && aiMax.growthLevers.length >= 3) {
+      const aiLevers: GrowthLeverEntry[] = [];
+      for (const l of aiMax.growthLevers.slice(0, MAX_LEVERS)) {
+        if (!l || typeof l !== 'object') continue;
+        const lever = clampEnum(l.lever, VALID_LEVER, 'INCREASE_TRADE_FREQUENCY');
+        aiLevers.push({
+          lever,
+          currentContribution: round2(clampNum(
+            l.currentContribution,
+            CONTRIBUTION_MIN, CONTRIBUTION_MAX,
+            LEVER_CURRENT_BASELINE[lever],
+          )),
+          potentialContribution: round2(clampNum(
+            l.potentialContribution,
+            CONTRIBUTION_MIN, CONTRIBUTION_MAX,
+            LEVER_POTENTIAL_PCT[lever],
+          )),
+          action: clampString(
+            l.action,
+            200,
+            LEVER_ACTION[lever],
+          ),
+        });
+      }
+      if (aiLevers.length >= 3) {
+        // Ensure all 4 levers present
+        const leversPresent = new Set(aiLevers.map((l) => l.lever));
+        for (const lv of VALID_LEVER) {
+          if (!leversPresent.has(lv)) {
+            aiLevers.push({
+              lever: lv,
+              currentContribution: LEVER_CURRENT_BASELINE[lv],
+              potentialContribution: LEVER_POTENTIAL_PCT[lv],
+              action: LEVER_ACTION[lv],
+            });
+          }
+        }
+        const leverOrder: Record<GrowthLever, number> = {
+          INCREASE_TRADE_FREQUENCY: 0,
+          INCREASE_PROFIT_PER_TRADE: 1,
+          REDUCE_HOLD_TIME: 2,
+          OPTIMIZE_PRICING: 3,
+        };
+        aiLevers.sort((a, b) => leverOrder[a.lever] - leverOrder[b.lever]);
+        growthLevers = aiLevers.slice(0, MAX_LEVERS);
+      }
+    }
+
+    // Override growthBottlenecks
+    let growthBottlenecks = maximization.growthBottlenecks;
+    if (Array.isArray(aiMax.growthBottlenecks) && aiMax.growthBottlenecks.length >= 2) {
+      const aiBn: string[] = [];
+      for (const b of aiMax.growthBottlenecks.slice(0, MAX_BOTTLENECKS)) {
+        aiBn.push(clampString(b, 200, 'Bottleneck neopisan.'));
+      }
+      if (aiBn.length >= 2) {
+        growthBottlenecks = aiBn;
+      }
+    }
+
+    // Override growthGrade
+    const growthGrade = aiMax.growthGrade
+      ? clampEnum(aiMax.growthGrade, VALID_GRADE, decideGrowthGrade(maximizedTurnoverProfitGrowth))
+      : decideGrowthGrade(maximizedTurnoverProfitGrowth);
+
+    // Recompute growthTrajectory with new maximizedTurnoverProfitGrowth
+    const growthTrajectory = buildGrowthTrajectory(current, maximizedTurnoverProfitGrowth);
+
+    // Recompute doublingTime
+    const doublingTime = computeDoublingTime(maximizedTurnoverProfitGrowth);
+
+    maximization = {
+      currentTurnoverProfitGrowth: round2(clampNum(
+        current.turnoverProfitGrowthRate,
+        GROWTH_RATE_MIN, GROWTH_RATE_MAX, 0,
+      )),
+      maximizedTurnoverProfitGrowth,
+      growthUplift,
+      growthLevers,
+      growthTrajectory,
+      growthBottlenecks,
+      growthGrade,
+      doublingTime,
+    };
+
+    summary = clampString(parsed.summary, 500, buildSummary(current, maximization));
+    aiUsed = true;
+  }
+
+  return { maximization, summary, aiUsed };
+}
+
 // --- Handler -------------------------------------------------------------
 
-export async function GET(req: NextRequest) {
-  return handleInventoryTurnoverProfitGrowthMaximizer(req);
-}
-export async function POST(req: NextRequest) {
-  return handleInventoryTurnoverProfitGrowthMaximizer(req);
-}
+const inventoryTurnoverProfitGrowthHandler = withAiRoute<InventoryTurnoverProfitGrowthInput>({
+  endpoint: '/api/ai/inventory-turnover-profit-growth-maximizer',
+  maxDuration: 60,
+  enforceBudget: true, // AI klic — preveri budget
+  method: 'GET', // Endpoint sprejema GET + POST — bypass POST-only check
 
-async function handleInventoryTurnoverProfitGrowthMaximizer(req: NextRequest) {
-  try {
-    const rl = checkRateLimit(req, 'ai-inventory-turnover-profit-growth-maximizer', 20);
-    if (!rl.allowed) return rateLimitResponse(rl);
+  parseBody: async (req) => {
+    await req.json().catch(() => ({}));
+    return {};
+  },
+
+  // No validateInput — body ignored, identična logika za GET in POST
+  handler: async (_input, ctx: AiRouteContext) => {
+    const { db, callAi, parseAi, logger } = ctx;
 
     const now = Date.now();
     const twelveMonthsAgo = new Date(now - TWELVE_MONTHS_MS);
@@ -602,7 +795,7 @@ async function handleInventoryTurnoverProfitGrowthMaximizer(req: NextRequest) {
 
     // Empty-state: no SOLD trades
     if (soldTrades.length === 0) {
-      return NextResponse.json({
+      return apiOk({
         ok: true,
         current: {
           monthlyTurnoverProfit: [],
@@ -641,7 +834,7 @@ async function handleInventoryTurnoverProfitGrowthMaximizer(req: NextRequest) {
     }
 
     if (soldComputed.length === 0) {
-      return NextResponse.json({
+      return apiOk({
         ok: true,
         current: {
           monthlyTurnoverProfit: [],
@@ -674,8 +867,7 @@ async function handleInventoryTurnoverProfitGrowthMaximizer(req: NextRequest) {
 
     // 3) Compute current state
     const current = computeCurrent(soldComputed, now);
-    let maximization = buildDeterministicMaximization(current);
-    let summary = buildSummary(current, maximization);
+    const deterministicMaximization = buildDeterministicMaximization(current);
 
     // 4) AI cache check (6h TTL) — key by current month
     const currentMonth = new Date(now).toISOString().slice(0, 7);
@@ -685,7 +877,7 @@ async function handleInventoryTurnoverProfitGrowthMaximizer(req: NextRequest) {
       summary: string;
     }>(cacheKey);
     if (cached) {
-      return NextResponse.json({
+      return apiOk({
         ok: true,
         current,
         maximization: cached.maximization,
@@ -695,201 +887,23 @@ async function handleInventoryTurnoverProfitGrowthMaximizer(req: NextRequest) {
       } satisfies InventoryTurnoverProfitGrowthResponse);
     }
 
-    // 5) AI prompt with grounding
-    const settings = await getSettingsRow();
-    const aiSettings: AiSettings = {
-      provider: settings.aiProvider as AiProviderType,
-      baseUrl: settings.aiBaseUrl,
-      apiKey: settings.aiApiKey,
-      model: settings.aiModel,
-      fallbackProvider: (settings.fallbackProvider || '') as
-        | AiProviderType
-        | '',
-      fallbackBaseUrl: settings.fallbackBaseUrl || '',
-      fallbackApiKey: settings.fallbackApiKey || '',
-      fallbackModel: settings.fallbackModel || '',
-    };
+    // 5) AI prompt with grounding (settings loaded by withAiRoute wrapper)
+    const promptData = buildPromptData(soldComputed, current, deterministicMaximization);
+    const prompt = buildPrompt(promptData);
 
-    const soldSampleForAI = soldComputed
-      .slice(-MAX_TRADES_FOR_AI)
-      .map((t) => ({
-        profit: t.profit,
-        holdDays: t.holdDays,
-      }));
-
-    const promptData = {
-      soldCount12m: soldComputed.length,
-      current,
-      deterministicMaximization: {
-        currentTurnoverProfitGrowth: maximization.currentTurnoverProfitGrowth,
-        maximizedTurnoverProfitGrowth: maximization.maximizedTurnoverProfitGrowth,
-        growthUplift: maximization.growthUplift,
-        growthLevers: maximization.growthLevers,
-        growthBottlenecks: maximization.growthBottlenecks,
-        growthGrade: maximization.growthGrade,
-        doublingTime: maximization.doublingTime,
-      },
-      soldSample: soldSampleForAI,
-      caps: {
-        profitMin: PROFIT_MIN, profitMax: PROFIT_MAX,
-        growthRateMin: GROWTH_RATE_MIN, growthRateMax: GROWTH_RATE_MAX,
-        accelerationMin: ACCELERATION_MIN, accelerationMax: ACCELERATION_MAX,
-        upliftMin: UPLIFT_MIN, upliftMax: UPLIFT_MAX,
-        contributionMin: CONTRIBUTION_MIN, contributionMax: CONTRIBUTION_MAX,
-        trajectoryProfitMin: TRAJECTORY_PROFIT_MIN, trajectoryProfitMax: TRAJECTORY_PROFIT_MAX,
-        doublingMin: DOUBLING_MIN, doublingMax: DOUBLING_MAX,
-        absoluteUpliftCapPp: ABSOLUTE_UPLIFT_CAP_PP,
-      },
-      leverPotentialPct: LEVER_POTENTIAL_PCT,
-    };
-
-    const prompt = `Si AI "Inventory Turnover Profit Growth Maximizer" za slovenske in srednjeevropske oglasne platforme (Bolha, Vinted, Avtonet, mobile.de).
-Si strokovnjak za TURNOVER PROFIT GROWTH MAXIMIZATION — kako maksimizirati GROWTH profit-a iz TURNOVER (koliko hitro profit iz monthlyTrades × avgProfitPerTrade raste month-over-month). Tvoj cilj je "Tvoj turnover profit raste +4%/mo, ampak bi lahko rasel +10%/mo z temi 4 vzvodi." Razlika od inventory-turnover-profit-maximizer (v8.00 ki maksimizira profit preko optimal inventory turnover — najde popolno ravnovesje med turnover speed in profit per cycle) — ti MAKSIMIZIRAŠ GROWTH turnover profit-a (%/mo kako hitro profit iz turnover raste, ne optimal turnover-profit curve). Razlika od profit-growth-rate-maximizer (v8.11 ki maksimizira growth rate skupnega profit-a v %/mo) — ti MAKSIMIZIRAŠ GROWTH TURNOVER PROFIT (koliko hitro profit iz monthlyTrades × avgProfitPerTrade raste, ne skupni profit € growth). Razlika od inventory-capital-efficiency-growth-maximizer (v8.12 ki maksimizira capital efficiency growth %/mo) — ti MAKSIMIZIRAŠ TURNOVER PROFIT GROWTH (€/mo growth od turnover × profit/cycle, ne capital efficiency %/mo growth). Razlika od profit-per-cycle-maximizer (v8.12 ki maksimizira profit per cycle €/cycle) — ti MAKSIMIZIRAŠ GROWTH turnover profit-a (%/mo growth, ne €/cycle profit). Razlika od deal-source-profit-margin-growth-maximizer (v8.12 ki maksimizira margin growth per source v %/mo) — ti MAKSIMIZIRAŠ TURNOVER PROFIT GROWTH čez inventory (€/mo turnover profit growth, ne per-source margin growth). Razlika od profit-per-trade-scaling-maximizer (v8.13 ki skalira profit per trade z 4-phase progression) — ti MAKSIMIZIRAŠ GROWTH turnover profit-a (%/mo kako hitro profit raste, ne €/trade scaling). Razlika od deal-source-volume-growth-maximizer (v8.13 ki maksimizira volume growth rate per source v %/mo) — ti MAKSIMIZIRAŠ TURNOVER PROFIT GROWTH (€/mo growth od turnover × profit/cycle, ne %/mo source volume growth). Razlika od inventory-capital-velocity-maximizer (v8.10 ki maksimizira velocity kapitala — koliko cycle-ov/leto) — ti MAKSIMIZIRAŠ GROWTH turnover profit-a (%/mo growth, ne cycle count velocity). Razlika od inventory-annual-yield-maximizer (v8.11 ki maksimizira annual yield %) — ti MAKSIMIZIRAŠ GROWTH turnover profit-a (%/mo growth, ne letni yield %). Razlika od profit-per-day-scaling-maximizer (v8.08 ki skalira daily profit z requiredTradesPerDay in requiredCapital) — ti MAKSIMIZIRAŠ GROWTH turnover profit-a (%/mo growth, ne €/dan scaling). Razlika od profit-per-trade-growth-maximizer (v8.10 ki maksimizira growth rate profit-a PER TRADE v €/mo) — ti MAKSIMIZIRAŠ GROWTH TURNOVER PROFIT (%/mo kako hitro monthlyTrades × avgProfitPerTrade raste, ne per-trade €/mo growth). Razlika od inventory-profit-per-day-growth-maximizer (v8.09 ki maksimizira growth rate daily profit-a iz inventory-ja v %/teden) — ti MAKSIMIZIRAŠ GROWTH TURNOVER PROFIT (%/mo turnover profit growth, ne %/teden daily profit growth). Razlika od profit-multiplier-maximizer (v8.09 ki maksimizira max profit multiplier z 6 dimensions) — ti MAKSIMIZIRAŠ GROWTH TURNOVER PROFIT z growthLevers (INCREASE_TRADE_FREQUENCY/INCREASE_PROFIT_PER_TRADE/REDUCE_HOLD_TIME/OPTIMIZE_PRICING) in doublingTime (rule of 72). Razlika od profit-scale-engine (v7.96 ki skalira profit z growth engine) — ti MAKSIMIZIRAŠ GROWTH TURNOVER PROFIT z growthTrajectory in growthBottlenecks. Razlika od inventory-turnover-accelerator (v7.96 ki accelera turnover hitrost) — ti MAKSIMIZIRAŠ GROWTH TURNOVER PROFIT (%/mo growth, ne turnover hitrost acceleration). Razlika od inventory-turnover-yield-maximizer (v8.05 ki maksimizira yield z yieldCurve) — ti MAKSIMIZIRAŠ GROWTH TURNOVER PROFIT z doublingTime in growthLevers. Razlika od inventory-turnover-optimizer (ki optimira turnover rate) — ti MAKSIMIZIRAŠ GROWTH TURNOVER PROFIT (%/mo kako hitro profit raste, ne optimal turnover rate).
-
-DETERMINISTIČNI PODATKI (izračunano iz DB — SOLD trgovin v zadnjih 12 mesecih, grouped by month):
-${JSON.stringify(promptData, null, 2)}
-
-PRAVILA ZA AI ODGOVOR:
-1. maximization.maximizedTurnoverProfitGrowth %/mo [-50, 200] (optimal achievable, ≥ current turnoverProfitGrowthRate, ≤ current + 50pp absolute uplift — anti-hallucination),
-2. maximization.growthUplift pp [0, 100] (improvement = maximized − current),
-3. maximization.growthLevers: 4 elementi { lever INCREASE_TRADE_FREQUENCY/INCREASE_PROFIT_PER_TRADE/REDUCE_HOLD_TIME/OPTIMIZE_PRICING (potential 35/30/20/15% contribution), currentContribution % [0, 100] (koliko trenutno prispeva k growth), potentialContribution % [0, 100] (koliko bi lahko prispeval ko max), action (slovenski, max 200 — specifična akcija za ta lever) },
-4. maximization.growthBottlenecks: 3-5 stringov (max 200 vsak, slovenski — kaj limitira turnover profit growth),
-5. maximization.growthGrade: A+ | A | B | C | D | F (A+ če maximized ≥ 40, A ≥ 25, B ≥ 15, C ≥ 8, D ≥ 2, else F),
-6. summary: slovenski povzetek (max 500 znakov — poudari current turnover profit, current growth rate, maximized growth rate, uplift, grade, doubling time, 4 levers).
-
-VRNI LE JSON:
-{
-  "maximization": {
-    "maximizedTurnoverProfitGrowth": 12.0,
-    "growthUplift": 8.0,
-    "growthLevers": [
-      { "lever": "INCREASE_TRADE_FREQUENCY", "currentContribution": 10, "potentialContribution": 35, "action": "Povečaj trade frequency z 5.00 na 7.50 trades/mo z AI sourcing za +35% growth." },
-      { "lever": "INCREASE_PROFIT_PER_TRADE", "currentContribution": 8, "potentialContribution": 30, "action": "Povečaj profit per trade z 45€ na 58.50€ z AI pricing za +30% growth." },
-      { "lever": "REDUCE_HOLD_TIME", "currentContribution": 5, "potentialContribution": 20, "action": "Zmanjšaj hold time z AI timing engine za +20% growth." },
-      { "lever": "OPTIMIZE_PRICING", "currentContribution": 4, "potentialContribution": 15, "action": "Optimiziraj pricing z A/B test za +15% growth." }
-    ],
-    "growthBottlenecks": [
-      "Trade frequency bottleneck: trenutno 5.00 trades/mo.",
-      "Profit per trade bottleneck: trenutno 45.00€/trade.",
-      "Trend momentum: growth 4.00%/mo z STABLE trend."
-    ],
-    "growthGrade": "B"
-  },
-  "summary": "Current: 225€/mo turnover profit (avg 187€/mo, growth 4.00%/mo, STABLE, 8 mesecev data, 5.00 trades/mo, 45.00€/trade). Maximized: 12.00%/mo growth (+8.00pp uplift, grade B). Doubling time: 6 mesecev. 4 levers: INCREASE_TRADE_FREQUENCY (+35%), INCREASE_PROFIT_PER_TRADE (+30%), REDUCE_HOLD_TIME (+20%), OPTIMIZE_PRICING (+15%)."
-}${GROUNDING_PROMPT_SUFFIX}`;
-
+    // Deterministic baseline (fallback if AI call fails)
+    let maximization = deterministicMaximization;
+    let summary = buildSummary(current, maximization);
     let aiUsed = false;
 
     try {
-      const raw = await callProviderForRaw(aiSettings, prompt);
-      const parsed = parseJsonLooseExported(raw) as AiResponse | null;
+      const raw = await callAi(prompt);
+      const parsed = parseAi(raw) as AiResponse | null;
 
-      if (parsed && typeof parsed === 'object' && parsed.maximization) {
-        const aiMax = parsed.maximization;
-
-        // Anti-hallucination: maximized ∈ [current, min(current + 50pp, 200%/mo)]
-        const minBound = Math.max(GROWTH_RATE_MIN, current.turnoverProfitGrowthRate);
-        const maxBound = Math.min(GROWTH_RATE_MAX, current.turnoverProfitGrowthRate + ABSOLUTE_UPLIFT_CAP_PP);
-        const maximizedTurnoverProfitGrowth = round2(clampNum(
-          aiMax.maximizedTurnoverProfitGrowth,
-          minBound, maxBound,
-          maximization.maximizedTurnoverProfitGrowth,
-        ));
-        const growthUplift = round2(clampNum(
-          Math.max(0, maximizedTurnoverProfitGrowth - current.turnoverProfitGrowthRate),
-          UPLIFT_MIN, UPLIFT_MAX, 0,
-        ));
-
-        // Override growthLevers — must have 4 entries
-        let growthLevers = maximization.growthLevers;
-        if (Array.isArray(aiMax.growthLevers) && aiMax.growthLevers.length >= 3) {
-          const aiLevers: GrowthLeverEntry[] = [];
-          for (const l of aiMax.growthLevers.slice(0, MAX_LEVERS)) {
-            if (!l || typeof l !== 'object') continue;
-            const lever = clampEnum(l.lever, VALID_LEVER, 'INCREASE_TRADE_FREQUENCY');
-            aiLevers.push({
-              lever,
-              currentContribution: round2(clampNum(
-                l.currentContribution,
-                CONTRIBUTION_MIN, CONTRIBUTION_MAX,
-                LEVER_CURRENT_BASELINE[lever],
-              )),
-              potentialContribution: round2(clampNum(
-                l.potentialContribution,
-                CONTRIBUTION_MIN, CONTRIBUTION_MAX,
-                LEVER_POTENTIAL_PCT[lever],
-              )),
-              action: clampString(
-                l.action,
-                200,
-                LEVER_ACTION[lever],
-              ),
-            });
-          }
-          if (aiLevers.length >= 3) {
-            // Ensure all 4 levers present
-            const leversPresent = new Set(aiLevers.map((l) => l.lever));
-            for (const lv of VALID_LEVER) {
-              if (!leversPresent.has(lv)) {
-                aiLevers.push({
-                  lever: lv,
-                  currentContribution: LEVER_CURRENT_BASELINE[lv],
-                  potentialContribution: LEVER_POTENTIAL_PCT[lv],
-                  action: LEVER_ACTION[lv],
-                });
-              }
-            }
-            const leverOrder: Record<GrowthLever, number> = {
-              INCREASE_TRADE_FREQUENCY: 0,
-              INCREASE_PROFIT_PER_TRADE: 1,
-              REDUCE_HOLD_TIME: 2,
-              OPTIMIZE_PRICING: 3,
-            };
-            aiLevers.sort((a, b) => leverOrder[a.lever] - leverOrder[b.lever]);
-            growthLevers = aiLevers.slice(0, MAX_LEVERS);
-          }
-        }
-
-        // Override growthBottlenecks
-        let growthBottlenecks = maximization.growthBottlenecks;
-        if (Array.isArray(aiMax.growthBottlenecks) && aiMax.growthBottlenecks.length >= 2) {
-          const aiBn: string[] = [];
-          for (const b of aiMax.growthBottlenecks.slice(0, MAX_BOTTLENECKS)) {
-            aiBn.push(clampString(b, 200, 'Bottleneck neopisan.'));
-          }
-          if (aiBn.length >= 2) {
-            growthBottlenecks = aiBn;
-          }
-        }
-
-        // Override growthGrade
-        const growthGrade = aiMax.growthGrade
-          ? clampEnum(aiMax.growthGrade, VALID_GRADE, decideGrowthGrade(maximizedTurnoverProfitGrowth))
-          : decideGrowthGrade(maximizedTurnoverProfitGrowth);
-
-        // Recompute growthTrajectory with new maximizedTurnoverProfitGrowth
-        const growthTrajectory = buildGrowthTrajectory(current, maximizedTurnoverProfitGrowth);
-
-        // Recompute doublingTime
-        const doublingTime = computeDoublingTime(maximizedTurnoverProfitGrowth);
-
-        maximization = {
-          currentTurnoverProfitGrowth: round2(clampNum(
-            current.turnoverProfitGrowthRate,
-            GROWTH_RATE_MIN, GROWTH_RATE_MAX, 0,
-          )),
-          maximizedTurnoverProfitGrowth,
-          growthUplift,
-          growthLevers,
-          growthTrajectory,
-          growthBottlenecks,
-          growthGrade,
-          doublingTime,
-        };
-
-        summary = clampString(parsed.summary, 500, buildSummary(current, maximization));
-        aiUsed = true;
-      }
+      const merged = mergeAiIntoMaximization(parsed, current, maximization);
+      maximization = merged.maximization;
+      summary = merged.summary;
+      aiUsed = merged.aiUsed;
     } catch (err) {
       logger.warn(
         '/api/ai/inventory-turnover-profit-growth-maximizer',
@@ -903,22 +917,15 @@ VRNI LE JSON:
       setCachedAI(cacheKey, { maximization, summary });
     }
 
-    return NextResponse.json({
+    return apiOk({
       ok: true,
       current,
       maximization,
       summary,
       aiUsed,
     } satisfies InventoryTurnoverProfitGrowthResponse);
-  } catch (err: any) {
-    logger.error(
-      '/api/ai/inventory-turnover-profit-growth-maximizer',
-      'handler failed',
-      err,
-    );
-    return NextResponse.json(
-      { error: err?.message ?? 'Napaka' },
-      { status: 500 },
-    );
-  }
-}
+  },
+});
+
+export const GET = inventoryTurnoverProfitGrowthHandler;
+export const POST = inventoryTurnoverProfitGrowthHandler;

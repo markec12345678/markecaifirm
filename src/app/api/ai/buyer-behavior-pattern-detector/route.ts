@@ -1,16 +1,14 @@
-// v6.59: AI Buyer Behavior Pattern Detector — ML detection of behavioral patterns z anomaly detection
+// v6.59 / v8.96.3-batch2: AI Buyer Behavior Pattern Detector — ML detection of behavioral patterns z anomaly detection
+// Refaktoriran z withAiRoute helperjem (v8.96.3) + enforceBudget guard.
+//
 // POST /api/ai/buyer-behavior-pattern-detector
 // Body: { customerName?: string, anomalyThreshold?: number }
 // Returns: { ok, detector: { buyers, patterns, anomalies, mlModels, interventions, summary } }
 
-import { NextRequest, NextResponse } from 'next/server';
-import { db } from '@/lib/db';
-import { getSettingsRow } from '@/lib/pipeline';
-import { callProviderForRaw, parseJsonLooseExported, type AiProviderType, type AiSettings } from '@/lib/ai';
-import { logger } from '@/lib/logger';
+import { withAiRoute, AI_ROUTE_DEFAULTS, type AiRouteContext } from '@/lib/with-ai-route';
+import { apiOk } from '@/lib/api-response';
 
-export const runtime = 'nodejs';
-export const dynamic = 'force-dynamic';
+export const { runtime, dynamic } = AI_ROUTE_DEFAULTS;
 export const maxDuration = 90;
 
 const PATTERN_TYPES = [
@@ -39,11 +37,27 @@ const ANOMALY_TYPES = [
   'volume_anomaly',              //nenavaden volumen
 ] as const;
 
-export async function POST(req: NextRequest) {
-  try {
+interface BuyerBehaviorPatternDetectorInput {
+  customerName: string | null;
+  anomalyThreshold: number;
+}
+
+export const POST = withAiRoute<BuyerBehaviorPatternDetectorInput>({
+  endpoint: '/api/ai/buyer-behavior-pattern-detector',
+  maxDuration: 90,
+  enforceBudget: true,
+
+  parseBody: async (req) => {
     const body = await req.json().catch(() => ({}));
-    const customerName = body?.customerName ? String(body.customerName).trim() : null;
-    const anomalyThreshold = Math.max(50, Math.min(95, Number(body?.anomalyThreshold ?? 75)));
+    return {
+      customerName: body?.customerName ? String(body.customerName).trim() : null,
+      anomalyThreshold: Math.max(50, Math.min(95, Number(body?.anomalyThreshold ?? 75))),
+    };
+  },
+
+  handler: async (input, ctx: AiRouteContext) => {
+    const { db, callAi, parseAi } = ctx;
+    const { customerName, anomalyThreshold } = input;
 
     const soldTrades = await db.trade.findMany({
       where: { status: 'sold', sellPrice: { not: null }, sellLocation: { not: '' }, sellDate: { not: null } },
@@ -53,7 +67,7 @@ export async function POST(req: NextRequest) {
     });
 
     if (soldTrades.length === 0) {
-      return NextResponse.json({ ok: true, detector: null, message: 'Ni prodaj za pattern detection.' });
+      return apiOk({ ok: true, detector: null, message: 'Ni prodaj za pattern detection.' });
     }
 
     // Aggregation
@@ -128,18 +142,9 @@ export async function POST(req: NextRequest) {
     if (customerName) {
       const filtered = buyers.filter(b => b.name === customerName);
       if (filtered.length === 0) {
-        return NextResponse.json({ ok: true, detector: null, message: `Kupec "${customerName}" ni najden.` });
+        return apiOk({ ok: true, detector: null, message: `Kupec "${customerName}" ni najden.` });
       }
     }
-
-    const settings = await getSettingsRow();
-    const aiSettings: AiSettings = {
-      provider: settings.aiProvider as AiProviderType,
-      baseUrl: settings.aiBaseUrl, apiKey: settings.aiApiKey, model: settings.aiModel,
-      fallbackProvider: (settings.fallbackProvider || '') as AiProviderType | '',
-      fallbackBaseUrl: settings.fallbackBaseUrl || '', fallbackApiKey: settings.fallbackApiKey || '',
-      fallbackModel: settings.fallbackModel || '',
-    };
 
     const targetBuyers = customerName ? buyers.filter(b => b.name === customerName) : buyers.slice(0, 25);
 
@@ -147,7 +152,32 @@ export async function POST(req: NextRequest) {
       `- ${b.name} | ${b.purchases}x | ${b.totalSpent}€ | ${b.avgOrderValue}€ povp | ${b.daysAsCustomer}d | ${b.daysSinceLastPurchase}d zadnji | povp interval ${b.avgIntervalDays}d (cv ${b.intervalCv}) | ${b.categoriesCount} kat | price cv ${b.priceCv}`
     ).join('\n');
 
-    const prompt = `Si AI buyer behavior pattern detector z ML anomaly detection.
+    const prompt = buildPrompt(targetBuyers, buyersStr, anomalyThreshold);
+    const raw = await callAi(prompt);
+    const parsed: any = parseAi(raw);
+    const detector = transformDetector(parsed, targetBuyers, anomalyThreshold);
+
+    return apiOk({ ok: true, detector });
+  },
+});
+
+// --- Pomožne funkcije (čiste, testabilne) --------------------------------
+
+interface BuyerInfo {
+  name: string;
+  purchases: number;
+  totalSpent: number;
+  daysAsCustomer: number;
+  daysSinceLastPurchase: number;
+  avgIntervalDays: number;
+  intervalCv: number;
+  avgPrice: number;
+  priceCv: number;
+  categoriesCount: number;
+}
+
+function buildPrompt(targetBuyers: BuyerInfo[], buyersStr: string, anomalyThreshold: number): string {
+  return `Si AI buyer behavior pattern detector z ML anomaly detection.
 Odkrij behavioral pattern in anomalije za vsakega kupca.
 
 KUPCI (${targetBuyers.length}):
@@ -272,98 +302,83 @@ Odgovori LE z JSON:
     "pattern_detection_score": <number 0-100>
   }
 }`;
+}
 
-    let raw = '';
-    try { raw = await callProviderForRaw(aiSettings, prompt); }
-    catch (primaryError: any) {
-      if (aiSettings.fallbackProvider && aiSettings.fallbackModel) {
-        const fb: AiSettings = { provider: aiSettings.fallbackProvider, baseUrl: aiSettings.fallbackBaseUrl || '', apiKey: aiSettings.fallbackApiKey || '', model: aiSettings.fallbackModel };
-        raw = await callProviderForRaw(fb, prompt);
-      } else { return NextResponse.json({ error: primaryError?.message ?? 'AI failed' }, { status: 500 }); }
-    }
+function transformDetector(parsed: any, targetBuyers: BuyerInfo[], anomalyThreshold: number): any {
+  const validNames = new Set(targetBuyers.map(b => b.name));
 
-    const parsed: any = parseJsonLooseExported(raw);
-    const validNames = new Set(targetBuyers.map(b => b.name));
-
-    const detector = {
-      insights: String(parsed?.insights ?? '').slice(0, 500),
-      buyers: (parsed?.buyers || [])
-        .filter((b: any) => validNames.has(String(b?.name ?? '')))
-        .slice(0, 25)
-        .map((b: any) => ({
-          name: String(b?.name ?? '').slice(0, 100),
-          detectedPatterns: (b?.detected_patterns || []).slice(0, 4).map((p: any) => ({
-            pattern: PATTERN_TYPES.includes(String(p?.pattern) as any) ? String(p.pattern) : 'occasional_buyer',
-            confidencePct: Math.max(0, Math.min(100, Number(p?.confidence_pct ?? 50))),
-            evidence: (p?.evidence || []).slice(0, 4).map((e: any) => String(e).slice(0, 150)),
-            patternStrength: ['strong', 'moderate', 'weak'].includes(String(p?.pattern_strength)) ? String(p.pattern_strength) : 'moderate',
-          })),
-          primaryPattern: PATTERN_TYPES.includes(String(b?.primary_pattern) as any) ? String(b.primary_pattern) : 'occasional_buyer',
-          anomalies: (b?.anomalies || []).filter((a: any) => Number(a?.probability_pct ?? 0) >= anomalyThreshold).slice(0, 4).map((a: any) => ({
-            type: ANOMALY_TYPES.includes(String(a?.type) as any) ? String(a.type) : 'purchase_pattern_break',
-            severity: ['low', 'medium', 'high', 'critical'].includes(String(a?.severity)) ? String(a.severity) : 'medium',
-            probabilityPct: Math.max(0, Math.min(100, Number(a?.probability_pct ?? 50))),
-            description: String(a?.description ?? '').slice(0, 250),
-            detectedBy: ['isolation_forest', 'k-means', 'dbscan', 'autoencoder', 'statistical'].includes(String(a?.detected_by)) ? String(a.detected_by) : 'statistical',
-            recommendedAction: ['monitor', 'investigate', 'contact', 'block'].includes(String(a?.recommended_action)) ? String(a.recommended_action) : 'monitor',
-          })),
-          behavioralConsistencyScore: Math.max(0, Math.min(100, Number(b?.behavioral_consistency_score ?? 50))),
-          anomalyRiskScore: Math.max(0, Math.min(100, Number(b?.anomaly_risk_score ?? 30))),
-          predictedNextAction: String(b?.predicted_next_action ?? '').slice(0, 200),
-          mlClusterId: Math.max(0, Number(b?.ml_cluster_id ?? 0)),
-          clusterDescription: String(b?.cluster_description ?? '').slice(0, 200),
+  return {
+    insights: String(parsed?.insights ?? '').slice(0, 500),
+    buyers: (parsed?.buyers || [])
+      .filter((b: any) => validNames.has(String(b?.name ?? '')))
+      .slice(0, 25)
+      .map((b: any) => ({
+        name: String(b?.name ?? '').slice(0, 100),
+        detectedPatterns: (b?.detected_patterns || []).slice(0, 4).map((p: any) => ({
+          pattern: PATTERN_TYPES.includes(String(p?.pattern) as any) ? String(p.pattern) : 'occasional_buyer',
+          confidencePct: Math.max(0, Math.min(100, Number(p?.confidence_pct ?? 50))),
+          evidence: (p?.evidence || []).slice(0, 4).map((e: any) => String(e).slice(0, 150)),
+          patternStrength: ['strong', 'moderate', 'weak'].includes(String(p?.pattern_strength)) ? String(p.pattern_strength) : 'moderate',
         })),
-      patterns: (parsed?.patterns || []).slice(0, 12).map((p: any) => ({
-        pattern: PATTERN_TYPES.includes(String(p?.pattern) as any) ? String(p.pattern) : 'occasional_buyer',
-        buyerCount: Math.max(0, Number(p?.buyer_count ?? 0)),
-        avgSpentEur: Math.round(Number(p?.avg_spent_eur ?? 0)),
-        avgFrequencyDays: Math.round(Number(p?.avg_frequency_days ?? 0)),
-        retentionRatePct: Math.max(0, Math.min(100, Number(p?.retention_rate_pct ?? 50))),
-        valueToBusiness: ['high', 'medium', 'low'].includes(String(p?.value_to_business)) ? String(p.value_to_business) : 'medium',
-        bestStrategy: String(p?.best_strategy ?? '').slice(0, 250),
+        primaryPattern: PATTERN_TYPES.includes(String(b?.primary_pattern) as any) ? String(b.primary_pattern) : 'occasional_buyer',
+        anomalies: (b?.anomalies || []).filter((a: any) => Number(a?.probability_pct ?? 0) >= anomalyThreshold).slice(0, 4).map((a: any) => ({
+          type: ANOMALY_TYPES.includes(String(a?.type) as any) ? String(a.type) : 'purchase_pattern_break',
+          severity: ['low', 'medium', 'high', 'critical'].includes(String(a?.severity)) ? String(a.severity) : 'medium',
+          probabilityPct: Math.max(0, Math.min(100, Number(a?.probability_pct ?? 50))),
+          description: String(a?.description ?? '').slice(0, 250),
+          detectedBy: ['isolation_forest', 'k-means', 'dbscan', 'autoencoder', 'statistical'].includes(String(a?.detected_by)) ? String(a.detected_by) : 'statistical',
+          recommendedAction: ['monitor', 'investigate', 'contact', 'block'].includes(String(a?.recommended_action)) ? String(a.recommended_action) : 'monitor',
+        })),
+        behavioralConsistencyScore: Math.max(0, Math.min(100, Number(b?.behavioral_consistency_score ?? 50))),
+        anomalyRiskScore: Math.max(0, Math.min(100, Number(b?.anomaly_risk_score ?? 30))),
+        predictedNextAction: String(b?.predicted_next_action ?? '').slice(0, 200),
+        mlClusterId: Math.max(0, Number(b?.ml_cluster_id ?? 0)),
+        clusterDescription: String(b?.cluster_description ?? '').slice(0, 200),
       })),
-      anomalies: (parsed?.anomalies || []).slice(0, 8).map((a: any) => ({
-        anomalyType: ANOMALY_TYPES.includes(String(a?.anomaly_type) as any) ? String(a.anomaly_type) : 'purchase_pattern_break',
-        buyerCount: Math.max(0, Number(a?.buyer_count ?? 0)),
-        avgSeverity: ['low', 'medium', 'high', 'critical'].includes(String(a?.avg_severity)) ? String(a.avg_severity) : 'medium',
-        totalAnomalyValueEur: Math.round(Number(a?.total_anomaly_value_eur ?? 0)),
-        investigationPriority: ['high', 'medium', 'low'].includes(String(a?.investigation_priority)) ? String(a.investigation_priority) : 'medium',
-        recommendedInvestigation: String(a?.recommended_investigation ?? '').slice(0, 300),
-      })),
-      mlModels: (parsed?.ml_models || []).slice(0, 5).map((m: any) => ({
-        model: ['isolation_forest', 'k-means', 'dbscan', 'autoencoder', 'statistical'].includes(String(m?.model)) ? String(m.model) : 'statistical',
-        purpose: ['pattern_detection', 'anomaly_detection', 'clustering'].includes(String(m?.purpose)) ? String(m.purpose) : 'pattern_detection',
-        accuracyPct: Math.max(0, Math.min(100, Number(m?.accuracy_pct ?? 70))),
-        patternsDetected: Math.max(0, Number(m?.patterns_detected ?? 0)),
-        anomaliesDetected: Math.max(0, Number(m?.anomalies_detected ?? 0)),
-        falsePositiveRatePct: Math.max(0, Math.min(100, Number(m?.false_positive_rate_pct ?? 10))),
-        bestFor: String(m?.best_for ?? '').slice(0, 150),
-      })),
-      interventions: (parsed?.interventions || []).slice(0, 6).map((i: any) => ({
-        interventionType: ['personalized_outreach', 'loyalty_reward', 'anomaly_investigation', 'win_back', 'prevention'].includes(String(i?.intervention_type)) ? String(i.intervention_type) : 'personalized_outreach',
-        targetBuyers: (i?.target_buyers || []).filter((n: any) => validNames.has(String(n))).slice(0, 5).map((n: any) => String(n).slice(0, 100)),
-        description: String(i?.description ?? '').slice(0, 250),
-        expectedImpactEur: Math.round(Number(i?.expected_impact_eur ?? 0)),
-        priority: ['high', 'medium', 'low'].includes(String(i?.priority)) ? String(i.priority) : 'medium',
-        timeframeDays: Math.max(1, Number(i?.timeframe_days ?? 7)),
-      })),
-      summary: {
-        totalBuyersAnalyzed: targetBuyers.length,
-        totalPatternsDetected: Math.max(0, Number(parsed?.summary?.total_patterns_detected ?? 0)),
-        totalAnomaliesDetected: Math.max(0, Number(parsed?.summary?.total_anomalies_detected ?? 0)),
-        avgBehavioralConsistencyScore: Math.max(0, Math.min(100, Number(parsed?.summary?.avg_behavioral_consistency_score ?? 50))),
-        avgAnomalyRiskScore: Math.max(0, Math.min(100, Number(parsed?.summary?.avg_anomaly_risk_score ?? 30))),
-        mostCommonPattern: PATTERN_TYPES.includes(String(parsed?.summary?.most_common_pattern) as any) ? String(parsed.summary.most_common_pattern) : 'occasional_buyer',
-        biggestAnomalyThreat: String(parsed?.summary?.biggest_anomaly_threat ?? '').slice(0, 200),
-        biggestPatternOpportunity: String(parsed?.summary?.biggest_pattern_opportunity ?? '').slice(0, 200),
-        patternDetectionScore: Math.max(0, Math.min(100, Number(parsed?.summary?.pattern_detection_score ?? 60))),
-      },
-    };
-
-    const today = new Date().toISOString().slice(0, 10);
-    if (settings.aiCallsDate !== today) { await db.settings.update({ where: { id: 'singleton' }, data: { aiCallsDate: today, aiCallsToday: 1 } }); }
-    else { await db.settings.update({ where: { id: 'singleton' }, data: { aiCallsToday: { increment: 1 } } }); }
-
-    return NextResponse.json({ ok: true, detector });
-  } catch (e: any) { logger.error("/api/ai/buyer-behavior-pattern-detector", "POST handler failed", e); return NextResponse.json({ error: e?.message ?? 'Napaka' }, { status: 500 }); }
+    patterns: (parsed?.patterns || []).slice(0, 12).map((p: any) => ({
+      pattern: PATTERN_TYPES.includes(String(p?.pattern) as any) ? String(p.pattern) : 'occasional_buyer',
+      buyerCount: Math.max(0, Number(p?.buyer_count ?? 0)),
+      avgSpentEur: Math.round(Number(p?.avg_spent_eur ?? 0)),
+      avgFrequencyDays: Math.round(Number(p?.avg_frequency_days ?? 0)),
+      retentionRatePct: Math.max(0, Math.min(100, Number(p?.retention_rate_pct ?? 50))),
+      valueToBusiness: ['high', 'medium', 'low'].includes(String(p?.value_to_business)) ? String(p.value_to_business) : 'medium',
+      bestStrategy: String(p?.best_strategy ?? '').slice(0, 250),
+    })),
+    anomalies: (parsed?.anomalies || []).slice(0, 8).map((a: any) => ({
+      anomalyType: ANOMALY_TYPES.includes(String(a?.anomaly_type) as any) ? String(a.anomaly_type) : 'purchase_pattern_break',
+      buyerCount: Math.max(0, Number(a?.buyer_count ?? 0)),
+      avgSeverity: ['low', 'medium', 'high', 'critical'].includes(String(a?.avg_severity)) ? String(a.avg_severity) : 'medium',
+      totalAnomalyValueEur: Math.round(Number(a?.total_anomaly_value_eur ?? 0)),
+      investigationPriority: ['high', 'medium', 'low'].includes(String(a?.investigation_priority)) ? String(a.investigation_priority) : 'medium',
+      recommendedInvestigation: String(a?.recommended_investigation ?? '').slice(0, 300),
+    })),
+    mlModels: (parsed?.ml_models || []).slice(0, 5).map((m: any) => ({
+      model: ['isolation_forest', 'k-means', 'dbscan', 'autoencoder', 'statistical'].includes(String(m?.model)) ? String(m.model) : 'statistical',
+      purpose: ['pattern_detection', 'anomaly_detection', 'clustering'].includes(String(m?.purpose)) ? String(m.purpose) : 'pattern_detection',
+      accuracyPct: Math.max(0, Math.min(100, Number(m?.accuracy_pct ?? 70))),
+      patternsDetected: Math.max(0, Number(m?.patterns_detected ?? 0)),
+      anomaliesDetected: Math.max(0, Number(m?.anomalies_detected ?? 0)),
+      falsePositiveRatePct: Math.max(0, Math.min(100, Number(m?.false_positive_rate_pct ?? 10))),
+      bestFor: String(m?.best_for ?? '').slice(0, 150),
+    })),
+    interventions: (parsed?.interventions || []).slice(0, 6).map((i: any) => ({
+      interventionType: ['personalized_outreach', 'loyalty_reward', 'anomaly_investigation', 'win_back', 'prevention'].includes(String(i?.intervention_type)) ? String(i.intervention_type) : 'personalized_outreach',
+      targetBuyers: (i?.target_buyers || []).filter((n: any) => validNames.has(String(n))).slice(0, 5).map((n: any) => String(n).slice(0, 100)),
+      description: String(i?.description ?? '').slice(0, 250),
+      expectedImpactEur: Math.round(Number(i?.expected_impact_eur ?? 0)),
+      priority: ['high', 'medium', 'low'].includes(String(i?.priority)) ? String(i.priority) : 'medium',
+      timeframeDays: Math.max(1, Number(i?.timeframe_days ?? 7)),
+    })),
+    summary: {
+      totalBuyersAnalyzed: targetBuyers.length,
+      totalPatternsDetected: Math.max(0, Number(parsed?.summary?.total_patterns_detected ?? 0)),
+      totalAnomaliesDetected: Math.max(0, Number(parsed?.summary?.total_anomalies_detected ?? 0)),
+      avgBehavioralConsistencyScore: Math.max(0, Math.min(100, Number(parsed?.summary?.avg_behavioral_consistency_score ?? 50))),
+      avgAnomalyRiskScore: Math.max(0, Math.min(100, Number(parsed?.summary?.avg_anomaly_risk_score ?? 30))),
+      mostCommonPattern: PATTERN_TYPES.includes(String(parsed?.summary?.most_common_pattern) as any) ? String(parsed.summary.most_common_pattern) : 'occasional_buyer',
+      biggestAnomalyThreat: String(parsed?.summary?.biggest_anomaly_threat ?? '').slice(0, 200),
+      biggestPatternOpportunity: String(parsed?.summary?.biggest_pattern_opportunity ?? '').slice(0, 200),
+      patternDetectionScore: Math.max(0, Math.min(100, Number(parsed?.summary?.pattern_detection_score ?? 60))),
+    },
+  };
 }

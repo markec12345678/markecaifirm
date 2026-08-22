@@ -1,4 +1,4 @@
-// v8.10: AI Deal Source Annual Return Maximizer — AI MAKSIMIZIRA ANNUALIZED
+// v8.10 / v8.96.5-batch4: AI Deal Source Annual Return Maximizer — AI MAKSIMIZIRA ANNUALIZED
 // RETURN per source — konvertira per-source profit v annualized return rate za
 // primerjavo z drugimi investicijami. "Bolha annualized return: 85%, Vinted:
 // 42%, ampak bi lahko bila 120% in 68%." Razlika od deal-source-capital-return-
@@ -36,23 +36,14 @@
 
 // GET+POST /api/ai/deal-source-annual-return-maximizer
 // (AI-enhanced + grounding + anti-hallucination + 6h cache + deterministic fallback)
+// Refaktoriran z withAiRoute helperjem (v8.96.5) + enforceBudget guard.
 
-import { NextRequest, NextResponse } from 'next/server';
-import { db } from '@/lib/db';
-import { getSettingsRow } from '@/lib/pipeline';
-import {
-  callProviderForRaw,
-  parseJsonLooseExported,
-  type AiProviderType,
-  type AiSettings,
-} from '@/lib/ai';
+import { withAiRoute, AI_ROUTE_DEFAULTS, type AiRouteContext } from '@/lib/with-ai-route';
+import { apiOk } from '@/lib/api-response';
 import { GROUNDING_PROMPT_SUFFIX } from '@/lib/anti-hallucination';
 import { getCachedAI, setCachedAI } from '@/lib/ai-cache';
-import { checkRateLimit, rateLimitResponse } from '@/lib/rate-limit';
-import { logger } from '@/lib/logger';
 
-export const runtime = 'nodejs';
-export const dynamic = 'force-dynamic';
+export const { runtime, dynamic } = AI_ROUTE_DEFAULTS;
 export const maxDuration = 60;
 
 // --- Types ---------------------------------------------------------------
@@ -570,165 +561,50 @@ function buildSummary(entries: SourceEntry[], portfolio: PortfolioSummary): stri
   return parts.join(' ').slice(0, 500);
 }
 
-// --- Handler -------------------------------------------------------------
+// --- Prompt builder (extracted, pure) -----------------------------------
 
-export async function GET(req: NextRequest) {
-  return handleDealSourceAnnualReturnMaximizer(req);
+function buildPromptData(
+  computed: TradeComputed[],
+  entries: SourceEntry[],
+  portfolio: PortfolioSummary,
+): Record<string, unknown> {
+  const sourcesForAI = entries.map((e) => ({
+    source: e.source,
+    displayName: e.displayName,
+    metrics: e.metrics,
+    deterministicMaximization: e.maximization,
+  }));
+
+  return {
+    totalTrades: computed.length,
+    totalSources: entries.length,
+    benchmarks: {
+      stocks: BENCHMARK_STOCKS,
+      realEstate: BENCHMARK_REAL_ESTATE,
+      bonds: BENCHMARK_BONDS,
+    },
+    sources: sourcesForAI,
+    deterministicPortfolio: {
+      currentPortfolioAnnualReturn: portfolio.currentPortfolioAnnualReturn,
+      maximizedPortfolioAnnualReturn: portfolio.maximizedPortfolioAnnualReturn,
+      totalReturnUplift: portfolio.totalReturnUplift,
+      sourceReturnRanking: portfolio.sourceReturnRanking,
+      bestReturnSource: portfolio.bestReturnSource,
+    },
+    caps: {
+      capitalMin: CAPITAL_MIN, capitalMax: CAPITAL_MAX,
+      profitMin: PROFIT_MIN, profitMax: PROFIT_MAX,
+      returnMin: RETURN_MIN, returnMax: RETURN_MAX,
+      holdMin: HOLD_MIN, holdMax: HOLD_MAX,
+      upliftMin: UPLIFT_MIN, upliftMax: UPLIFT_MAX,
+      marginMin: MARGIN_MIN, marginMax: MARGIN_MAX,
+      scoreMin: SCORE_MIN, scoreMax: SCORE_MAX,
+    },
+  };
 }
-export async function POST(req: NextRequest) {
-  return handleDealSourceAnnualReturnMaximizer(req);
-}
 
-async function handleDealSourceAnnualReturnMaximizer(req: NextRequest) {
-  try {
-    const rl = checkRateLimit(req, 'ai-deal-source-annual-return-maximizer', 20);
-    if (!rl.allowed) return rateLimitResponse(rl);
-
-    const now = Date.now();
-    const twelveMonthsAgo = new Date(now - TWELVE_MONTHS_MS);
-
-    // 1) Query SOLD trades from last 12 months with linked Listing (for source)
-    const soldTrades = await db.trade.findMany({
-      where: {
-        status: 'sold',
-        sellDate: { gte: twelveMonthsAgo },
-        sellPrice: { gt: 0 },
-      },
-      select: {
-        id: true,
-        buyPrice: true,
-        buyFees: true,
-        buyDate: true,
-        sellPrice: true,
-        sellFees: true,
-        sellDate: true,
-        buyLocation: true,
-        listing: {
-          select: {
-            monitor: { select: { source: true, tags: true } },
-          },
-        },
-      },
-      orderBy: { sellDate: 'asc' },
-      take: 100000,
-    }) as unknown as SoldTradeRow[];
-
-    // Empty-state: no SOLD trades
-    if (soldTrades.length === 0) {
-      return NextResponse.json({
-        ok: true,
-        sources: [],
-        portfolio: {
-          currentPortfolioAnnualReturn: 0,
-          maximizedPortfolioAnnualReturn: 0,
-          totalReturnUplift: 0,
-          sourceReturnRanking: [],
-          bestReturnSource: '',
-        },
-        summary: 'Ni SOLD trgovin v zadnjih 12 mesecih — Deal Source Annual Return Maximizer ni mogoč.',
-        aiUsed: false,
-        message: 'Ni SOLD trgovin v zadnjih 12 mesecih — Deal Source Annual Return Maximizer ni mogoč.',
-      } satisfies DealSourceAnnualReturnResponse);
-    }
-
-    // 2) Compute per-trade metrics and aggregate by source
-    const computed: TradeComputed[] = [];
-    for (const t of soldTrades) {
-      const c = computeTrade(t, now);
-      if (c) computed.push(c);
-    }
-
-    if (computed.length === 0) {
-      return NextResponse.json({
-        ok: true,
-        sources: [],
-        portfolio: {
-          currentPortfolioAnnualReturn: 0,
-          maximizedPortfolioAnnualReturn: 0,
-          totalReturnUplift: 0,
-          sourceReturnRanking: [],
-          bestReturnSource: '',
-        },
-        summary: 'Ni veljavnih SOLD trgovin — Deal Source Annual Return Maximizer ni mogoč.',
-        aiUsed: false,
-        message: 'Ni veljavnih SOLD trgovin — Deal Source Annual Return Maximizer ni mogoč.',
-      } satisfies DealSourceAnnualReturnResponse);
-    }
-
-    const aggMap = aggregateBySource(computed);
-    let entries = buildSourceEntries(aggMap);
-    let portfolio = buildPortfolio(entries);
-    let summary = buildSummary(entries, portfolio);
-
-    // 3) AI cache check (6h TTL) — key by current month
-    const currentMonth = new Date(now).toISOString().slice(0, 7); // YYYY-MM
-    const cacheKey = `deal-source-annual-return-maximizer:${currentMonth}`;
-    const cached = getCachedAI<{
-      sources: SourceEntry[];
-      portfolio: PortfolioSummary;
-      summary: string;
-    }>(cacheKey);
-    if (cached) {
-      return NextResponse.json({
-        ok: true,
-        sources: cached.sources,
-        portfolio: cached.portfolio,
-        summary: cached.summary,
-        cached: true,
-        aiUsed: true,
-      } satisfies DealSourceAnnualReturnResponse);
-    }
-
-    // 4) AI prompt with grounding
-    const settings = await getSettingsRow();
-    const aiSettings: AiSettings = {
-      provider: settings.aiProvider as AiProviderType,
-      baseUrl: settings.aiBaseUrl,
-      apiKey: settings.aiApiKey,
-      model: settings.aiModel,
-      fallbackProvider: (settings.fallbackProvider || '') as
-        | AiProviderType
-        | '',
-      fallbackBaseUrl: settings.fallbackBaseUrl || '',
-      fallbackApiKey: settings.fallbackApiKey || '',
-      fallbackModel: settings.fallbackModel || '',
-    };
-
-    const sourcesForAI = entries.map((e) => ({
-      source: e.source,
-      displayName: e.displayName,
-      metrics: e.metrics,
-      deterministicMaximization: e.maximization,
-    }));
-
-    const promptData = {
-      totalTrades: computed.length,
-      totalSources: entries.length,
-      benchmarks: {
-        stocks: BENCHMARK_STOCKS,
-        realEstate: BENCHMARK_REAL_ESTATE,
-        bonds: BENCHMARK_BONDS,
-      },
-      sources: sourcesForAI,
-      deterministicPortfolio: {
-        currentPortfolioAnnualReturn: portfolio.currentPortfolioAnnualReturn,
-        maximizedPortfolioAnnualReturn: portfolio.maximizedPortfolioAnnualReturn,
-        totalReturnUplift: portfolio.totalReturnUplift,
-        sourceReturnRanking: portfolio.sourceReturnRanking,
-        bestReturnSource: portfolio.bestReturnSource,
-      },
-      caps: {
-        capitalMin: CAPITAL_MIN, capitalMax: CAPITAL_MAX,
-        profitMin: PROFIT_MIN, profitMax: PROFIT_MAX,
-        returnMin: RETURN_MIN, returnMax: RETURN_MAX,
-        holdMin: HOLD_MIN, holdMax: HOLD_MAX,
-        upliftMin: UPLIFT_MIN, upliftMax: UPLIFT_MAX,
-        marginMin: MARGIN_MIN, marginMax: MARGIN_MAX,
-        scoreMin: SCORE_MIN, scoreMax: SCORE_MAX,
-      },
-    };
-
-    const prompt = `Si AI "Deal Source Annual Return Maximizer" za slovenske in srednjeevropske oglasne platforme (Bolha, Vinted, Avtonet, mobile.de).
+function buildPrompt(promptData: Record<string, unknown>): string {
+  return `Si AI "Deal Source Annual Return Maximizer" za slovenske in srednjeevropske oglasne platforme (Bolha, Vinted, Avtonet, mobile.de).
 Si strokovnjak za ANNUALIZED RETURN MAXIMIZATION per source — kako maksimizirati ANNUALIZED RETURN per source (profit / capital × 365 / holdDays × 100 — annual % return primerljiv z drugimi investicijami). Tvoj cilj je "Bolha annualized return: 85%, Vinted: 42%, ampak bi lahko bila 120% in 68%." Razlika od deal-source-capital-return-maximizer (v8.09 ki maksimizira capital return rate per source — % capital returned) — ti MAKSIMIZIRAŠ ANNUALIZED RETURN per source (profit / capital × 365 / holdDays × 100, ne % capital returned). Razlika od deal-source-profit-velocity-maximizer (v8.08 ki maksimizira velocity profit-a per source — €/teden kako hitro profit kopiči) — ti MAKSIMIZIRAŠ ANNUALIZED RETURN per source (% annual return primerljiv z stocks/real estate, ne €/teden). Razlika od deal-source-roi-maximizer (v8.00 ki maksimizira ROI per source) — ti MAKSIMIZIRAŠ ANNUALIZED RETURN (ROI × 365 / holdDays, time-weighted) z returnVsBenchmark in capitalEfficiencyAdvice. Razlika od deal-source-cash-flow-maximizer (v8.06 ki maksimizira NET CASH FLOW per source) — ta maksimizira ANNUALIZED RETURN RATE per source (% return, ne € cash flow). Razlika od deal-source-revenue-maximizer (v8.07 ki maksimizira total revenue per source) — ta maksimizira ANNUALIZED RETURN (profit/capital annualized, ne top-line revenue). Razlika od deal-source-profit-maximizer (v7.97 ki maksimizira total profit per source) — ta maksimizira ANNUALIZED RETURN RATE per source (% annual, ne € profit). Razlika od inventory-annualized-return-maximizer (v8.06 ki maksimizira annualized return na HELD inventory) — ta MAKSIMIZIRA ANNUALIZED RETURN per SOLD SOURCE (realized trades, ne held inventory).
 
 DETERMINISTIČNI PODATKI (izračunano iz DB — SOLD trgovin v zadnjih 12 mesecih z linked Listing za source):
@@ -781,98 +657,248 @@ VRNI LE JSON:
   ],
   "summary": "2 source-a. Portfolio annualized return: 60.5% → 92.0% (+31.5pp). Vs stocks (8%): +84.0pp. Vs real estate (5%): +87.0pp. Best: Bolha (85% annual return, 30d hold)."
 }${GROUNDING_PROMPT_SUFFIX}`;
+}
 
+// --- AI override merge (extracted, pure) --------------------------------
+
+interface AiMergeResult {
+  entries: SourceEntry[];
+  portfolio: PortfolioSummary;
+  summary: string;
+  aiUsed: boolean;
+}
+
+function applyAiOverrides(
+  parsed: AiResponse | null,
+  entries: SourceEntry[],
+  portfolio: PortfolioSummary,
+): AiMergeResult {
+  let nextEntries = entries;
+  let nextPortfolio = portfolio;
+  let summary = buildSummary(entries, portfolio);
+  let aiUsed = false;
+
+  if (parsed && typeof parsed === 'object') {
+    const aiSourcesMap = new Map<string, NonNullable<AiResponse['sources']>[number]>();
+    if (Array.isArray(parsed.sources)) {
+      for (const ai of parsed.sources) {
+        if (ai && typeof ai === 'object' && typeof ai.source === 'string') {
+          aiSourcesMap.set(ai.source, ai);
+        }
+      }
+    }
+
+    const newEntries: SourceEntry[] = [];
+    for (const det of entries) {
+      const ai = aiSourcesMap.get(det.source);
+      if (!ai || !ai.maximization) {
+        newEntries.push(det);
+        continue;
+      }
+
+      const aiMax = ai.maximization;
+      const action = clampEnum(
+        aiMax.returnMaximizationAction,
+        VALID_ACTION,
+        det.maximization.returnMaximizationAction,
+      );
+
+      // Anti-hallucination: maximizedAnnualReturn ∈ [current, current + 200pp]
+      const minBound = Math.max(RETURN_MIN, det.metrics.annualizedReturn);
+      const maxBound = Math.min(RETURN_MAX, det.metrics.annualizedReturn + 200);
+      const maximizedAnnualReturn = round2(clampNum(
+        aiMax.maximizedAnnualReturn,
+        minBound, maxBound,
+        det.maximization.maximizedAnnualReturn,
+      ));
+      const returnUplift = round2(clampNum(
+        Math.max(0, maximizedAnnualReturn - det.metrics.annualizedReturn),
+        UPLIFT_MIN, UPLIFT_MAX, 0,
+      ));
+
+      // returnMaximizationLevers — must be array of strings
+      let returnMaximizationLevers: string[] = det.maximization.returnMaximizationLevers;
+      if (Array.isArray(aiMax.returnMaximizationLevers) &&
+          aiMax.returnMaximizationLevers.length >= 2) {
+        const aiLevers: string[] = [];
+        for (const l of aiMax.returnMaximizationLevers.slice(0, MAX_LEVERS)) {
+          aiLevers.push(clampString(l, 200, 'Annual return lever neopisan.'));
+        }
+        if (aiLevers.length >= 2) {
+          returnMaximizationLevers = aiLevers;
+        }
+      }
+
+      const capitalEfficiencyAdvice = clampString(
+        aiMax.capitalEfficiencyAdvice,
+        300,
+        det.maximization.capitalEfficiencyAdvice,
+      );
+
+      // Rebuild returnVsBenchmark with new maximizedAnnualReturn
+      const returnVsBenchmark = buildReturnVsBenchmark(det.metrics, maximizedAnnualReturn);
+
+      newEntries.push({
+        source: det.source,
+        displayName: det.displayName,
+        metrics: det.metrics,
+        maximization: {
+          returnMaximizationAction: action,
+          maximizedAnnualReturn,
+          returnUplift,
+          returnMaximizationLevers,
+          returnVsBenchmark,
+          capitalEfficiencyAdvice,
+        },
+      });
+    }
+
+    if (newEntries.length === entries.length) {
+      nextEntries = newEntries;
+    }
+
+    // Rebuild portfolio with new entries
+    nextPortfolio = buildPortfolio(nextEntries);
+
+    summary = clampString(parsed.summary, 500, buildSummary(nextEntries, nextPortfolio));
+    aiUsed = true;
+  }
+
+  return { entries: nextEntries, portfolio: nextPortfolio, summary, aiUsed };
+}
+
+// --- Input ---------------------------------------------------------------
+
+// eslint-disable-next-line @typescript-eslint/no-empty-object-type
+interface DealSourceAnnualReturnMaximizerInput {}
+
+// --- Handler -------------------------------------------------------------
+
+const dealSourceAnnualReturnHandler = withAiRoute<DealSourceAnnualReturnMaximizerInput>({
+  endpoint: '/api/ai/deal-source-annual-return-maximizer',
+  maxDuration: 60,
+  enforceBudget: true, // AI klic — preveri budget
+  method: 'GET', // GET+POST — body ignored
+
+  parseBody: async (req) => {
+    await req.json().catch(() => ({}));
+    return {};
+  },
+
+  handler: async (_input, ctx: AiRouteContext) => {
+    const { db, callAi, parseAi, logger } = ctx;
+    const now = Date.now();
+    const twelveMonthsAgo = new Date(now - TWELVE_MONTHS_MS);
+
+    // 1) Query SOLD trades from last 12 months with linked Listing (for source)
+    const soldTrades = await db.trade.findMany({
+      where: {
+        status: 'sold',
+        sellDate: { gte: twelveMonthsAgo },
+        sellPrice: { gt: 0 },
+      },
+      select: {
+        id: true,
+        buyPrice: true,
+        buyFees: true,
+        buyDate: true,
+        sellPrice: true,
+        sellFees: true,
+        sellDate: true,
+        buyLocation: true,
+        listing: {
+          select: {
+            monitor: { select: { source: true, tags: true } },
+          },
+        },
+      },
+      orderBy: { sellDate: 'asc' },
+      take: 100000,
+    }) as unknown as SoldTradeRow[];
+
+    // Empty-state: no SOLD trades
+    if (soldTrades.length === 0) {
+      return apiOk({
+        ok: true,
+        sources: [],
+        portfolio: {
+          currentPortfolioAnnualReturn: 0,
+          maximizedPortfolioAnnualReturn: 0,
+          totalReturnUplift: 0,
+          sourceReturnRanking: [],
+          bestReturnSource: '',
+        },
+        summary: 'Ni SOLD trgovin v zadnjih 12 mesecih — Deal Source Annual Return Maximizer ni mogoč.',
+        aiUsed: false,
+        message: 'Ni SOLD trgovin v zadnjih 12 mesecih — Deal Source Annual Return Maximizer ni mogoč.',
+      } satisfies DealSourceAnnualReturnResponse);
+    }
+
+    // 2) Compute per-trade metrics and aggregate by source
+    const computed: TradeComputed[] = [];
+    for (const t of soldTrades) {
+      const c = computeTrade(t, now);
+      if (c) computed.push(c);
+    }
+
+    if (computed.length === 0) {
+      return apiOk({
+        ok: true,
+        sources: [],
+        portfolio: {
+          currentPortfolioAnnualReturn: 0,
+          maximizedPortfolioAnnualReturn: 0,
+          totalReturnUplift: 0,
+          sourceReturnRanking: [],
+          bestReturnSource: '',
+        },
+        summary: 'Ni veljavnih SOLD trgovin — Deal Source Annual Return Maximizer ni mogoč.',
+        aiUsed: false,
+        message: 'Ni veljavnih SOLD trgovin — Deal Source Annual Return Maximizer ni mogoč.',
+      } satisfies DealSourceAnnualReturnResponse);
+    }
+
+    const aggMap = aggregateBySource(computed);
+    const deterministicEntries = buildSourceEntries(aggMap);
+    const deterministicPortfolio = buildPortfolio(deterministicEntries);
+    const deterministicSummary = buildSummary(deterministicEntries, deterministicPortfolio);
+
+    // 3) AI cache check (6h TTL) — key by current month
+    const currentMonth = new Date(now).toISOString().slice(0, 7); // YYYY-MM
+    const cacheKey = `deal-source-annual-return-maximizer:${currentMonth}`;
+    const cached = getCachedAI<{
+      sources: SourceEntry[];
+      portfolio: PortfolioSummary;
+      summary: string;
+    }>(cacheKey);
+    if (cached) {
+      return apiOk({
+        ok: true,
+        sources: cached.sources,
+        portfolio: cached.portfolio,
+        summary: cached.summary,
+        cached: true,
+        aiUsed: true,
+      } satisfies DealSourceAnnualReturnResponse);
+    }
+
+    // 4) AI prompt with grounding
+    const promptData = buildPromptData(computed, deterministicEntries, deterministicPortfolio);
+    const prompt = buildPrompt(promptData);
+
+    let entries = deterministicEntries;
+    let portfolio = deterministicPortfolio;
+    let summary = deterministicSummary;
     let aiUsed = false;
 
     try {
-      const raw = await callProviderForRaw(aiSettings, prompt);
-      const parsed = parseJsonLooseExported(raw) as AiResponse | null;
-
-      if (parsed && typeof parsed === 'object') {
-        const aiSourcesMap = new Map<string, NonNullable<AiResponse['sources']>[number]>();
-        if (Array.isArray(parsed.sources)) {
-          for (const ai of parsed.sources) {
-            if (ai && typeof ai === 'object' && typeof ai.source === 'string') {
-              aiSourcesMap.set(ai.source, ai);
-            }
-          }
-        }
-
-        const newEntries: SourceEntry[] = [];
-        for (const det of entries) {
-          const ai = aiSourcesMap.get(det.source);
-          if (!ai || !ai.maximization) {
-            newEntries.push(det);
-            continue;
-          }
-
-          const aiMax = ai.maximization;
-          const action = clampEnum(
-            aiMax.returnMaximizationAction,
-            VALID_ACTION,
-            det.maximization.returnMaximizationAction,
-          );
-
-          // Anti-hallucination: maximizedAnnualReturn ∈ [current, current + 200pp]
-          const minBound = Math.max(RETURN_MIN, det.metrics.annualizedReturn);
-          const maxBound = Math.min(RETURN_MAX, det.metrics.annualizedReturn + 200);
-          const maximizedAnnualReturn = round2(clampNum(
-            aiMax.maximizedAnnualReturn,
-            minBound, maxBound,
-            det.maximization.maximizedAnnualReturn,
-          ));
-          const returnUplift = round2(clampNum(
-            Math.max(0, maximizedAnnualReturn - det.metrics.annualizedReturn),
-            UPLIFT_MIN, UPLIFT_MAX, 0,
-          ));
-
-          // returnMaximizationLevers — must be array of strings
-          let returnMaximizationLevers: string[] = det.maximization.returnMaximizationLevers;
-          if (Array.isArray(aiMax.returnMaximizationLevers) &&
-              aiMax.returnMaximizationLevers.length >= 2) {
-            const aiLevers: string[] = [];
-            for (const l of aiMax.returnMaximizationLevers.slice(0, MAX_LEVERS)) {
-              aiLevers.push(clampString(l, 200, 'Annual return lever neopisan.'));
-            }
-            if (aiLevers.length >= 2) {
-              returnMaximizationLevers = aiLevers;
-            }
-          }
-
-          const capitalEfficiencyAdvice = clampString(
-            aiMax.capitalEfficiencyAdvice,
-            300,
-            det.maximization.capitalEfficiencyAdvice,
-          );
-
-          // Rebuild returnVsBenchmark with new maximizedAnnualReturn
-          const returnVsBenchmark = buildReturnVsBenchmark(det.metrics, maximizedAnnualReturn);
-
-          newEntries.push({
-            source: det.source,
-            displayName: det.displayName,
-            metrics: det.metrics,
-            maximization: {
-              returnMaximizationAction: action,
-              maximizedAnnualReturn,
-              returnUplift,
-              returnMaximizationLevers,
-              returnVsBenchmark,
-              capitalEfficiencyAdvice,
-            },
-          });
-        }
-
-        if (newEntries.length === entries.length) {
-          entries = newEntries;
-        }
-
-        // Rebuild portfolio with new entries
-        portfolio = buildPortfolio(entries);
-
-        summary = clampString(parsed.summary, 500, buildSummary(entries, portfolio));
-        aiUsed = true;
-      }
+      const raw = await callAi(prompt);
+      const parsed = parseAi(raw) as AiResponse | null;
+      const result = applyAiOverrides(parsed, deterministicEntries, deterministicPortfolio);
+      entries = result.entries;
+      portfolio = result.portfolio;
+      summary = result.summary;
+      aiUsed = result.aiUsed;
     } catch (err) {
       logger.warn(
         '/api/ai/deal-source-annual-return-maximizer',
@@ -886,22 +912,15 @@ VRNI LE JSON:
       setCachedAI(cacheKey, { sources: entries, portfolio, summary });
     }
 
-    return NextResponse.json({
+    return apiOk({
       ok: true,
       sources: entries,
       portfolio,
       summary,
       aiUsed,
     } satisfies DealSourceAnnualReturnResponse);
-  } catch (err: any) {
-    logger.error(
-      '/api/ai/deal-source-annual-return-maximizer',
-      'handler failed',
-      err,
-    );
-    return NextResponse.json(
-      { error: err?.message ?? 'Napaka' },
-      { status: 500 },
-    );
-  }
-}
+  },
+});
+
+export const GET = dealSourceAnnualReturnHandler;
+export const POST = dealSourceAnnualReturnHandler;

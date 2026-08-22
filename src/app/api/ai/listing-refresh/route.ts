@@ -1,21 +1,57 @@
-// v6.33: AI Predictive Listing Refresh — napove kdaj osvežiti oglase za max izpostavljenost
+// v6.33 / v8.95.8-listing: AI Predictive Listing Refresh — napove kdaj osvežiti oglase za max izpostavljenost
+// Refaktoriran z withAiRoute helperjem (v8.95.8) + enforceBudget guard.
+//
 // POST /api/ai/listing-refresh
 // Body: {}
-// Returns: { ok, refresh: { items: [], strategy, schedule, expectedImpact } }
+// Returns: { ok, refresh: { items, schedule, expectedImpact, insights } | null }
 
-import { NextRequest, NextResponse } from 'next/server';
-import { db } from '@/lib/db';
-import { getSettingsRow } from '@/lib/pipeline';
-import { callProviderForRaw, parseJsonLooseExported, type AiProviderType, type AiSettings } from '@/lib/ai';
-import { logger } from '@/lib/logger';
+import { withAiRoute, AI_ROUTE_DEFAULTS, type AiRouteContext } from '@/lib/with-ai-route';
+import { apiOk } from '@/lib/api-response';
 
-export const runtime = 'nodejs';
-export const dynamic = 'force-dynamic';
-export const maxDuration = 90;
+export const { runtime, dynamic, maxDuration } = AI_ROUTE_DEFAULTS;
 
-export async function POST(req: NextRequest) {
-  try {
+// eslint-disable-next-line @typescript-eslint/no-empty-object-type
+interface RefreshInput {}
+
+interface HeldTradeRow {
+  id: string;
+  title: string;
+  category: string;
+  buyPrice: number;
+  buyDate: Date;
+  listing: {
+    aiEstimatedValue: number | null;
+    dealScore: number | null;
+    priceDroppedAt: Date | null;
+    firstSeenAt: Date | null;
+  } | null;
+}
+
+interface RefreshItem {
+  id: string;
+  title: string;
+  category: string;
+  cost: number;
+  estValue: number;
+  daysHeld: number;
+  dealScore: number;
+  lastPriceDrop: number | null;
+}
+
+const REFRESH_STRATEGIES = ['relist_fresh', 'price_adjust', 'title_swap', 'image_refresh', 'platform_switch', 'bundle_refresh', 'hold'] as const;
+
+export const POST = withAiRoute<RefreshInput>({
+  endpoint: '/api/ai/listing-refresh',
+  maxDuration: 90,
+  enforceBudget: true,
+
+  parseBody: async (req) => {
     await req.json().catch(() => ({}));
+    return {};
+  },
+
+  handler: async (_input, ctx: AiRouteContext) => {
+    const { db, callAi, parseAi } = ctx;
 
     const heldTrades = await db.trade.findMany({
       where: { status: 'held' },
@@ -25,37 +61,43 @@ export async function POST(req: NextRequest) {
     });
 
     if (heldTrades.length === 0) {
-      return NextResponse.json({ ok: true, refresh: null, message: 'Ni held tradeov za refresh analizo.' });
+      return apiOk({ ok: true, refresh: null, message: 'Ni held tradeov za refresh analizo.' });
     }
 
-    const soldTrades = await db.trade.findMany({
-      where: { status: 'sold', sellDate: { not: null }, sellPrice: { not: null } },
-      select: { category: true, buyDate: true, sellDate: true, buyPrice: true, sellPrice: true },
-      take: 200,
-    });
+    const items = buildItems(heldTrades);
+    const itemsStr = buildItemsStr(items);
+    const prompt = buildPrompt(items, itemsStr);
 
-    const settings = await getSettingsRow();
-    const aiSettings: AiSettings = {
-      provider: settings.aiProvider as AiProviderType,
-      baseUrl: settings.aiBaseUrl, apiKey: settings.aiApiKey, model: settings.aiModel,
-      fallbackProvider: (settings.fallbackProvider || '') as AiProviderType | '',
-      fallbackBaseUrl: settings.fallbackBaseUrl || '', fallbackApiKey: settings.fallbackApiKey || '',
-      fallbackModel: settings.fallbackModel || '',
-    };
+    const raw = await callAi(prompt);
+    const parsed: any = parseAi(raw);
 
-    const items = heldTrades.map(t => ({
-      id: t.id, title: t.title, category: t.category || 'drugo',
-      cost: t.buyPrice, estValue: t.listing?.aiEstimatedValue ?? Math.round(t.buyPrice * 1.25),
-      daysHeld: Math.round((Date.now() - t.buyDate.getTime()) / (24*60*60*1000)),
-      dealScore: t.listing?.dealScore ?? 0,
-      lastPriceDrop: t.listing?.priceDroppedAt ? Math.round((Date.now() - t.listing.priceDroppedAt.getTime()) / (24*60*60*1000)) : null,
-    }));
+    const validIds = new Set(items.map(i => i.id));
+    const refresh = transformRefresh(parsed, validIds);
 
-    const itemsStr = items.slice(0, 20).map(i =>
-      `- [${i.id}] ${i.title} | ${i.category} | ${i.daysHeld}d | est. ${i.estValue}€ | deal: ${i.dealScore}${i.lastPriceDrop ? ` | zadnji padec: ${i.lastPriceDrop}d` : ''}`
-    ).join('\n');
+    return apiOk({ ok: true, refresh });
+  },
+});
 
-    const prompt = `Si ekspert za optimizacijo oglasov in algoritmično izpostavljenost.
+// --- Pomožne funkcije (čiste, testabilne) ---------------------------------
+
+function buildItems(heldTrades: HeldTradeRow[]): RefreshItem[] {
+  return heldTrades.map(t => ({
+    id: t.id, title: t.title, category: t.category || 'drugo',
+    cost: t.buyPrice, estValue: t.listing?.aiEstimatedValue ?? Math.round(t.buyPrice * 1.25),
+    daysHeld: Math.round((Date.now() - t.buyDate.getTime()) / (24 * 60 * 60 * 1000)),
+    dealScore: t.listing?.dealScore ?? 0,
+    lastPriceDrop: t.listing?.priceDroppedAt ? Math.round((Date.now() - t.listing.priceDroppedAt.getTime()) / (24 * 60 * 60 * 1000)) : null,
+  }));
+}
+
+function buildItemsStr(items: RefreshItem[]): string {
+  return items.slice(0, 20).map(i =>
+    `- [${i.id}] ${i.title} | ${i.category} | ${i.daysHeld}d | est. ${i.estValue}€ | deal: ${i.dealScore}${i.lastPriceDrop ? ` | zadnji padec: ${i.lastPriceDrop}d` : ''}`
+  ).join('\n');
+}
+
+function buildPrompt(items: RefreshItem[], itemsStr: string): string {
+  return `Si ekspert za optimizacijo oglasov in algoritmično izpostavljenost.
 Za vsak held item določi KDAJ in KAKO osvežiti oglas za maksimalno izpostavljenost.
 
 INVENTAR (${items.length}):
@@ -106,62 +148,37 @@ Odgovori LE z JSON:
     "items_needing_immediate_refresh": <number>
   }
 }`;
+}
 
-    let raw = '';
-    try {
-      raw = await callProviderForRaw(aiSettings, prompt);
-    } catch (primaryError: any) {
-      if (aiSettings.fallbackProvider && aiSettings.fallbackModel) {
-        const fb: AiSettings = { provider: aiSettings.fallbackProvider, baseUrl: aiSettings.fallbackBaseUrl || '',
-          apiKey: aiSettings.fallbackApiKey || '', model: aiSettings.fallbackModel };
-        raw = await callProviderForRaw(fb, prompt);
-      } else { return NextResponse.json({ error: primaryError?.message ?? 'AI failed' }, { status: 500 }); }
-    }
-
-    const parsed: any = parseJsonLooseExported(raw);
-    const validIds = new Set(items.map(i => i.id));
-
-    const refresh = {
-      insights: String(parsed?.insights ?? '').slice(0, 500),
-      items: (parsed?.items || []).filter((it: any) => validIds.has(String(it?.id ?? ''))).map((it: any) => ({
-        tradeId: String(it?.id ?? ''),
-        title: String(it?.title ?? '').slice(0, 150),
-        daysHeld: Math.max(0, Number(it?.days_held ?? 0)),
-        currentExposurePct: Math.max(0, Math.min(100, Number(it?.current_exposure_pct ?? 50))),
-        refreshStrategy: ['relist_fresh', 'price_adjust', 'title_swap', 'image_refresh', 'platform_switch', 'bundle_refresh', 'hold'].includes(String(it?.refresh_strategy))
-          ? String(it.refresh_strategy) : 'hold',
-        refreshInDays: Math.max(0, Number(it?.refresh_in_days ?? 0)),
-        changesNeeded: (it?.changes_needed || []).slice(0, 4).map((c: any) => String(c).slice(0, 150)),
-        suggestedTitle: String(it?.suggested_title ?? '').slice(0, 200),
-        suggestedPriceEur: Math.max(0, Number(it?.suggested_price_eur ?? 0)),
-        expectedExposureBoostPct: Math.round(Number(it?.expected_exposure_boost_pct ?? 0)),
-        priority: ['high', 'medium', 'low'].includes(String(it?.priority)) ? String(it.priority) : 'medium',
-        reasoning: String(it?.reasoning ?? '').slice(0, 200),
-      })),
-      schedule: (parsed?.schedule || []).slice(0, 7).map((s: any) => ({
-        day: String(s?.day ?? '').slice(0, 30),
-        itemsToRefresh: Math.max(0, Number(s?.items_to_refresh ?? 0)),
-        platforms: (s?.platforms || []).slice(0, 4).map((p: any) => String(p).slice(0, 30)),
-        timeWindow: String(s?.time_window ?? '').slice(0, 100),
-      })),
-      expectedImpact: {
-        avgExposureIncreasePct: Math.round(Number(parsed?.expected_impact?.avg_exposure_increase_pct ?? 0)),
-        expectedInquiriesIncreasePct: Math.round(Number(parsed?.expected_impact?.expected_inquiries_increase_pct ?? 0)),
-        expectedSellTimeReductionDays: Math.round(Number(parsed?.expected_impact?.expected_sell_time_reduction_days ?? 0)),
-        itemsNeedingImmediateRefresh: Math.max(0, Number(parsed?.expected_impact?.items_needing_immediate_refresh ?? 0)),
-      },
-    };
-
-    const today = new Date().toISOString().slice(0, 10);
-    if (settings.aiCallsDate !== today) {
-      await db.settings.update({ where: { id: 'singleton' }, data: { aiCallsDate: today, aiCallsToday: 1 } });
-    } else {
-      await db.settings.update({ where: { id: 'singleton' }, data: { aiCallsToday: { increment: 1 } } });
-    }
-
-    return NextResponse.json({ ok: true, refresh });
-  } catch (e: any) {
-    logger.error("/api/ai/listing-refresh", "POST handler failed", e);
-    return NextResponse.json({ error: e?.message ?? 'Napaka' }, { status: 500 });
-  }
+function transformRefresh(parsed: any, validIds: Set<string>): any {
+  return {
+    insights: String(parsed?.insights ?? '').slice(0, 500),
+    items: (parsed?.items || []).filter((it: any) => validIds.has(String(it?.id ?? ''))).map((it: any) => ({
+      tradeId: String(it?.id ?? ''),
+      title: String(it?.title ?? '').slice(0, 150),
+      daysHeld: Math.max(0, Number(it?.days_held ?? 0)),
+      currentExposurePct: Math.max(0, Math.min(100, Number(it?.current_exposure_pct ?? 50))),
+      refreshStrategy: REFRESH_STRATEGIES.includes(String(it?.refresh_strategy) as any)
+        ? String(it.refresh_strategy) : 'hold',
+      refreshInDays: Math.max(0, Number(it?.refresh_in_days ?? 0)),
+      changesNeeded: (it?.changes_needed || []).slice(0, 4).map((c: any) => String(c).slice(0, 150)),
+      suggestedTitle: String(it?.suggested_title ?? '').slice(0, 200),
+      suggestedPriceEur: Math.max(0, Number(it?.suggested_price_eur ?? 0)),
+      expectedExposureBoostPct: Math.round(Number(it?.expected_exposure_boost_pct ?? 0)),
+      priority: ['high', 'medium', 'low'].includes(String(it?.priority)) ? String(it.priority) : 'medium',
+      reasoning: String(it?.reasoning ?? '').slice(0, 200),
+    })),
+    schedule: (parsed?.schedule || []).slice(0, 7).map((s: any) => ({
+      day: String(s?.day ?? '').slice(0, 30),
+      itemsToRefresh: Math.max(0, Number(s?.items_to_refresh ?? 0)),
+      platforms: (s?.platforms || []).slice(0, 4).map((p: any) => String(p).slice(0, 30)),
+      timeWindow: String(s?.time_window ?? '').slice(0, 100),
+    })),
+    expectedImpact: {
+      avgExposureIncreasePct: Math.round(Number(parsed?.expected_impact?.avg_exposure_increase_pct ?? 0)),
+      expectedInquiriesIncreasePct: Math.round(Number(parsed?.expected_impact?.expected_inquiries_increase_pct ?? 0)),
+      expectedSellTimeReductionDays: Math.round(Number(parsed?.expected_impact?.expected_sell_time_reduction_days ?? 0)),
+      itemsNeedingImmediateRefresh: Math.max(0, Number(parsed?.expected_impact?.items_needing_immediate_refresh ?? 0)),
+    },
+  };
 }

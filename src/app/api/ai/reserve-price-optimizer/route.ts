@@ -1,17 +1,20 @@
-// v6.45: AI Reserve Price Optimizer — optimalni reserve price za auction listings z demand analizo
+// v6.45 / v8.96.1-batch4: AI Reserve Price Optimizer — optimalni reserve price za auction listings z demand analizo
+// Refaktoriran z withAiRoute helperjem (v8.94) + enforceBudget guard.
+//
 // POST /api/ai/reserve-price-optimizer
 // Body: { tradeId?: string, auctionDurationDays?: number }
 // Returns: { ok, optimizer: { items, demandAnalysis, reserveStrategy, auctionPlan, recommendations, summary } }
 
-import { NextRequest, NextResponse } from 'next/server';
-import { db } from '@/lib/db';
-import { getSettingsRow } from '@/lib/pipeline';
-import { callProviderForRaw, parseJsonLooseExported, type AiProviderType, type AiSettings } from '@/lib/ai';
-import { logger } from '@/lib/logger';
+import { withAiRoute, AI_ROUTE_DEFAULTS, type AiRouteContext } from '@/lib/with-ai-route';
+import { apiOk } from '@/lib/api-response';
 
-export const runtime = 'nodejs';
-export const dynamic = 'force-dynamic';
+export const { runtime, dynamic } = AI_ROUTE_DEFAULTS;
 export const maxDuration = 90;
+
+interface ReservePriceOptimizerInput {
+  tradeId: string | null;
+  auctionDurationDays: number;
+}
 
 // Kategorije z auction podatki
 const CATEGORY_AUCTION_PROFILE: Record<string, {
@@ -30,11 +33,77 @@ const CATEGORY_AUCTION_PROFILE: Record<string, {
   'drugo':        { auctionSuitability: 50, avgBidders: 3, priceVolatility: 15, optimalDuration: 7, reservePctOfValue: 70 },
 };
 
-export async function POST(req: NextRequest) {
-  try {
+interface HeldTradeRow {
+  id: string;
+  title: string;
+  category: string;
+  buyPrice: number;
+  buyFees: number | null;
+  buyDate: Date;
+  listing: {
+    aiEstimatedValue: number | null;
+    dealScore: number | null;
+    aiScore: number | null;
+    aiRisk: number | null;
+    location: string | null;
+    price: number | null;
+    firstSeenAt: Date | null;
+    url: string | null;
+  } | null;
+}
+
+interface SoldTradeRow {
+  id: string;
+  title: string;
+  category: string;
+  sellPrice: number | null;
+  sellDate: Date | null;
+  buyDate: Date;
+}
+
+interface ReserveItem {
+  id: string;
+  title: string;
+  category: string;
+  cost: number;
+  estValue: number;
+  daysHeld: number;
+  profile: typeof CATEGORY_AUCTION_PROFILE[string];
+  similarSoldCount: number;
+  avgSimilarPrice: number;
+  minSimilarPrice: number;
+  maxSimilarPrice: number;
+  avgDaysToSell: number;
+  baseReserve: number;
+  baseStartingPrice: number;
+  baseBuyNowPrice: number;
+  aiRisk: number;
+  dealScore: number;
+  source: string;
+}
+
+interface PromptData {
+  itemsCount: number;
+  itemsStr: string;
+}
+
+export const POST = withAiRoute<ReservePriceOptimizerInput>({
+  endpoint: '/api/ai/reserve-price-optimizer',
+  maxDuration: 90,
+  enforceBudget: true,
+
+  parseBody: async (req) => {
     const body = await req.json().catch(() => ({}));
-    const tradeId = body?.tradeId ? String(body.tradeId) : null;
-    const auctionDuration = Math.max(1, Math.min(30, Number(body?.auctionDurationDays ?? 7)));
+    return {
+      tradeId: body?.tradeId ? String(body.tradeId) : null,
+      auctionDurationDays: Math.max(1, Math.min(30, Number(body?.auctionDurationDays ?? 7))),
+    };
+  },
+
+  // No validateInput — auctionDurationDays has clamping default
+  handler: async (input, ctx: AiRouteContext) => {
+    const { db, callAi, parseAi } = ctx;
+    const { tradeId } = input;
 
     const where: any = { status: 'held' };
     if (tradeId) where.id = tradeId;
@@ -54,21 +123,12 @@ export async function POST(req: NextRequest) {
     });
 
     if (heldTrades.length === 0) {
-      return NextResponse.json({
+      return apiOk({
         ok: true,
         optimizer: null,
         message: 'Ni held tradeov za reserve price optimizacijo.',
       });
     }
-
-    const settings = await getSettingsRow();
-    const aiSettings: AiSettings = {
-      provider: settings.aiProvider as AiProviderType,
-      baseUrl: settings.aiBaseUrl, apiKey: settings.aiApiKey, model: settings.aiModel,
-      fallbackProvider: (settings.fallbackProvider || '') as AiProviderType | '',
-      fallbackBaseUrl: settings.fallbackBaseUrl || '', fallbackApiKey: settings.fallbackApiKey || '',
-      fallbackModel: settings.fallbackModel || '',
-    };
 
     // Pridobi zgodovino sold za similar items (za demand analizo)
     const recentSold = await db.trade.findMany({
@@ -78,64 +138,81 @@ export async function POST(req: NextRequest) {
       orderBy: { sellDate: 'desc' },
     });
 
-    const items = heldTrades.map(t => {
-      const cat = (t.category || 'drugo').toLowerCase();
-      const profile = CATEGORY_AUCTION_PROFILE[cat] ?? CATEGORY_AUCTION_PROFILE['drugo'];
-      const cost = t.buyPrice + (t.buyFees ?? 0);
-      const estValue = t.listing?.aiEstimatedValue ?? Math.round(cost * 1.25);
-      const daysHeld = Math.round((Date.now() - t.buyDate.getTime()) / (24*60*60*1000));
-
-      // Zgodovina podobnih (kategorija)
-      const similar = recentSold.filter(s => (s.category || '').toLowerCase() === cat);
-      const similarPrices = similar.map(s => s.sellPrice ?? 0);
-      const avgSimilarPrice = similarPrices.length > 0
-        ? Math.round(similarPrices.reduce((a, b) => a + b, 0) / similarPrices.length)
-        : estValue;
-      const minSimilar = similarPrices.length > 0 ? Math.min(...similarPrices) : Math.round(estValue * 0.8);
-      const maxSimilar = similarPrices.length > 0 ? Math.max(...similarPrices) : Math.round(estValue * 1.2);
-
-      // Hitrost prodaje v kategoriji (povprečni dni od buy do sell)
-      const similarDurations = similar.map(s => s.sellDate ? Math.round((s.sellDate.getTime() - s.buyDate.getTime()) / (24*60*60*1000)) : -1).filter(d => d >= 0);
-      const avgDaysToSell = similarDurations.length > 0
-        ? Math.round(similarDurations.reduce((a, b) => a + b, 0) / similarDurations.length)
-        : 14;
-
-      // Osnovni reserve price izračun (brez AI)
-      const baseReserve = Math.round(estValue * (profile.reservePctOfValue / 100));
-      const startingPrice = Math.round(baseReserve * 0.6); // 60% reserve = start
-      const buyNowPrice = Math.round(estValue * 1.05); // 5% nad estValue
-
-      return {
-        id: t.id,
-        title: t.title,
-        category: cat,
-        cost,
-        estValue,
-        daysHeld,
-        profile,
-        similarSoldCount: similar.length,
-        avgSimilarPrice,
-        minSimilarPrice: minSimilar,
-        maxSimilarPrice: maxSimilar,
-        avgDaysToSell,
-        baseReserve,
-        baseStartingPrice: startingPrice,
-        baseBuyNowPrice: buyNowPrice,
-        aiRisk: t.listing?.aiRisk ?? 5,
-        dealScore: t.listing?.dealScore ?? 50,
-        source: 'bolha',
-      };
-    });
+    const items = heldTrades.map(t => computeReserveItem(t, recentSold));
 
     const itemsStr = items.map(i =>
       `- [${i.id}] "${i.title}" | ${i.category} | ${i.cost}€→${i.estValue}€ | ${i.daysHeld}d v inventarju | podobnih prodanih: ${i.similarSoldCount} | povp cena: ${i.avgSimilarPrice}€ (${i.minSimilarPrice}-${i.maxSimilarPrice}€) | povp dni do prodaje: ${i.avgDaysToSell} | auctionSuitability ${i.profile.auctionSuitability}/100 | bidders ${i.profile.avgBidders} | volatilnost ${i.profile.priceVolatility}%`
     ).join('\n');
 
-    const prompt = `Si AI reserve price optimizer za dražbe (auction) na Bolha, Avtonet, eBay.
+    const prompt = buildPrompt({ itemsCount: items.length, itemsStr });
+    const raw = await callAi(prompt);
+
+    const parsed: any = parseAi(raw);
+    const validIds = new Set(items.map(i => i.id));
+
+    const optimizer = transformOptimizer(parsed, items, validIds);
+
+    return apiOk({ ok: true, optimizer });
+  },
+});
+
+// --- Pomožne funkcije (čiste, testabilne) --------------------------------
+
+function computeReserveItem(t: HeldTradeRow, recentSold: SoldTradeRow[]): ReserveItem {
+  const cat = (t.category || 'drugo').toLowerCase();
+  const profile = CATEGORY_AUCTION_PROFILE[cat] ?? CATEGORY_AUCTION_PROFILE['drugo'];
+  const cost = t.buyPrice + (t.buyFees ?? 0);
+  const estValue = t.listing?.aiEstimatedValue ?? Math.round(cost * 1.25);
+  const daysHeld = Math.round((Date.now() - t.buyDate.getTime()) / (24*60*60*1000));
+
+  // Zgodovina podobnih (kategorija)
+  const similar = recentSold.filter(s => (s.category || '').toLowerCase() === cat);
+  const similarPrices = similar.map(s => s.sellPrice ?? 0);
+  const avgSimilarPrice = similarPrices.length > 0
+    ? Math.round(similarPrices.reduce((a, b) => a + b, 0) / similarPrices.length)
+    : estValue;
+  const minSimilar = similarPrices.length > 0 ? Math.min(...similarPrices) : Math.round(estValue * 0.8);
+  const maxSimilar = similarPrices.length > 0 ? Math.max(...similarPrices) : Math.round(estValue * 1.2);
+
+  // Hitrost prodaje v kategoriji (povprečni dni od buy do sell)
+  const similarDurations = similar.map(s => s.sellDate ? Math.round((s.sellDate.getTime() - s.buyDate.getTime()) / (24*60*60*1000)) : -1).filter(d => d >= 0);
+  const avgDaysToSell = similarDurations.length > 0
+    ? Math.round(similarDurations.reduce((a, b) => a + b, 0) / similarDurations.length)
+    : 14;
+
+  // Osnovni reserve price izračun (brez AI)
+  const baseReserve = Math.round(estValue * (profile.reservePctOfValue / 100));
+  const startingPrice = Math.round(baseReserve * 0.6); // 60% reserve = start
+  const buyNowPrice = Math.round(estValue * 1.05); // 5% nad estValue
+
+  return {
+    id: t.id,
+    title: t.title,
+    category: cat,
+    cost,
+    estValue,
+    daysHeld,
+    profile,
+    similarSoldCount: similar.length,
+    avgSimilarPrice,
+    minSimilarPrice: minSimilar,
+    maxSimilarPrice: maxSimilar,
+    avgDaysToSell,
+    baseReserve,
+    baseStartingPrice: startingPrice,
+    baseBuyNowPrice: buyNowPrice,
+    aiRisk: t.listing?.aiRisk ?? 5,
+    dealScore: t.listing?.dealScore ?? 50,
+    source: 'bolha',
+  };
+}
+
+function buildPrompt(d: PromptData): string {
+  return `Si AI reserve price optimizer za dražbe (auction) na Bolha, Avtonet, eBay.
 Izračunaj optimalni reserve price, starting price in buy-now price za vsak item.
 
-ITEMS ZA DRAŽBO (${items.length}):
-${itemsStr}
+ITEMS ZA DRAŽBO (${d.itemsCount}):
+${d.itemsStr}
 
 Auction pravila:
 1. STARTING_PRICE: 50-70% reserve price (privabi bidders)
@@ -199,88 +276,71 @@ Odgovori LE z JSON:
     "quickest_win": "<max 100 znakov>"
   }
 }`;
+}
 
-    let raw = '';
-    try { raw = await callProviderForRaw(aiSettings, prompt); }
-    catch (primaryError: any) {
-      if (aiSettings.fallbackProvider && aiSettings.fallbackModel) {
-        const fb: AiSettings = { provider: aiSettings.fallbackProvider, baseUrl: aiSettings.fallbackBaseUrl || '', apiKey: aiSettings.fallbackApiKey || '', model: aiSettings.fallbackModel };
-        raw = await callProviderForRaw(fb, prompt);
-      } else { return NextResponse.json({ error: primaryError?.message ?? 'AI failed' }, { status: 500 }); }
-    }
-
-    const parsed: any = parseJsonLooseExported(raw);
-    const validIds = new Set(items.map(i => i.id));
-
-    const optimizer = {
-      insights: String(parsed?.insights ?? '').slice(0, 500),
-      items: (parsed?.items || [])
-        .filter((it: any) => validIds.has(String(it?.id ?? '')))
-        .slice(0, 25)
-        .map((it: any) => {
-          const orig = items.find(x => x.id === String(it?.id));
-          return {
-            tradeId: String(it?.id ?? ''),
-            title: String(it?.title ?? orig?.title ?? '').slice(0, 150),
-            demandLevel: ['high', 'medium', 'low'].includes(String(it?.demand_level)) ? String(it.demand_level) : 'medium',
-            expectedBidders: Math.max(0, Math.min(20, Number(it?.expected_bidders ?? orig?.profile.avgBidders ?? 3))),
-            startingPriceEur: Math.max(0, Math.round(Number(it?.starting_price_eur ?? orig?.baseStartingPrice ?? 0))),
-            reservePriceEur: Math.max(0, Math.round(Number(it?.reserve_price_eur ?? orig?.baseReserve ?? 0))),
-            buyNowPriceEur: Math.max(0, Math.round(Number(it?.buy_now_price_eur ?? orig?.baseBuyNowPrice ?? 0))),
-            optimalDurationDays: Math.max(1, Math.min(30, Number(it?.optimal_duration_days ?? orig?.profile.optimalDuration ?? 7))),
-            auctionStrategy: String(it?.auction_strategy ?? '').slice(0, 300),
-            expectedFinalPriceEur: Math.round(Number(it?.expected_final_price_eur ?? orig?.estValue ?? 0)),
-            probabilityOfSalePct: Math.max(0, Math.min(100, Number(it?.probability_of_sale_pct ?? 60))),
-            riskConsiderations: String(it?.risk_considerations ?? '').slice(0, 200),
-            sniperProtection: Boolean(it?.sniper_protection ?? true),
-            listingDay: ['pon', 'tor', 'sre', 'cet', 'pet', 'sob', 'ned'].includes(String(it?.listing_day)) ? String(it.listing_day) : 'pet',
-          };
-        }),
-      demandAnalysis: (parsed?.demand_analysis || []).slice(0, 8).map((d: any) => ({
-        category: String(d?.category ?? '').slice(0, 50),
-        demandTrend: ['rising', 'stable', 'falling'].includes(String(d?.demand_trend)) ? String(d.demand_trend) : 'stable',
-        avgBidders: Math.max(0, Math.min(15, Number(d?.avg_bidders ?? 3))),
-        priceTrend: ['up', 'flat', 'down'].includes(String(d?.price_trend)) ? String(d.price_trend) : 'flat',
-        bestAuctionDay: ['pon', 'tor', 'sre', 'cet', 'pet', 'sob', 'ned'].includes(String(d?.best_auction_day)) ? String(d.best_auction_day) : 'pet',
-        saturationLevel: ['low', 'medium', 'high'].includes(String(d?.saturation_level)) ? String(d.saturation_level) : 'medium',
-      })),
-      reserveStrategy: (parsed?.reserve_strategy || []).slice(0, 4).map((s: any) => ({
-        strategy: ['aggressive', 'moderate', 'conservative'].includes(String(s?.strategy)) ? String(s.strategy) : 'moderate',
-        reservePct: Math.max(0, Math.min(100, Number(s?.reserve_pct ?? 75))),
-        startingPct: Math.max(0, Math.min(100, Number(s?.starting_pct ?? 60))),
-        bestFor: String(s?.best_for ?? '').slice(0, 200),
-        riskLevel: ['low', 'medium', 'high'].includes(String(s?.risk_level)) ? String(s.risk_level) : 'medium',
-      })),
-      auctionPlan: (parsed?.auction_plan || []).slice(0, 14).map((p: any) => ({
-        day: Math.max(1, Math.min(30, Number(p?.day ?? 1))),
-        itemsToList: Math.max(0, Math.min(20, Number(p?.items_to_list ?? 0))),
-        categories: (p?.categories || []).slice(0, 5).map((c: any) => String(c).slice(0, 40)),
-        expectedRevenueEur: Math.round(Number(p?.expected_revenue_eur ?? 0)),
-        notes: String(p?.notes ?? '').slice(0, 150),
-      })),
-      recommendations: (parsed?.recommendations || []).slice(0, 6).map((r: any) => ({
-        action: String(r?.action ?? '').slice(0, 300),
-        priority: ['high', 'medium', 'low'].includes(String(r?.priority)) ? String(r.priority) : 'medium',
-        expectedImpactEur: Math.round(Number(r?.expected_impact_eur ?? 0)),
-        riskAddressed: String(r?.risk_addressed ?? '').slice(0, 150),
-      })),
-      summary: {
-        totalItems: items.length,
-        totalReserveValueEur: Math.round(Number(parsed?.summary?.total_reserve_value_eur ?? items.reduce((s, i) => s + i.baseReserve, 0))),
-        expectedTotalRevenueEur: Math.round(Number(parsed?.summary?.expected_total_revenue_eur ?? items.reduce((s, i) => s + i.estValue, 0))),
-        expectedTotalProfitEur: Math.round(Number(parsed?.summary?.expected_total_profit_eur ?? items.reduce((s, i) => s + (i.estValue - i.cost), 0))),
-        avgProbabilityOfSalePct: Math.max(0, Math.min(100, Number(parsed?.summary?.avg_probability_of_sale_pct ?? 60))),
-        bestAuctionDay: ['pon', 'tor', 'sre', 'cet', 'pet', 'sob', 'ned'].includes(String(parsed?.summary?.best_auction_day)) ? String(parsed.summary.best_auction_day) : 'pet',
-        reserveOptimizationScore: Math.max(0, Math.min(100, Number(parsed?.summary?.reserve_optimization_score ?? 60))),
-        biggestRisk: String(parsed?.summary?.biggest_risk ?? '').slice(0, 200),
-        quickestWin: String(parsed?.summary?.quickest_win ?? '').slice(0, 200),
-      },
-    };
-
-    const today = new Date().toISOString().slice(0, 10);
-    if (settings.aiCallsDate !== today) { await db.settings.update({ where: { id: 'singleton' }, data: { aiCallsDate: today, aiCallsToday: 1 } }); }
-    else { await db.settings.update({ where: { id: 'singleton' }, data: { aiCallsToday: { increment: 1 } } }); }
-
-    return NextResponse.json({ ok: true, optimizer });
-  } catch (e: any) { logger.error("/api/ai/reserve-price-optimizer", "POST handler failed", e); return NextResponse.json({ error: e?.message ?? 'Napaka' }, { status: 500 }); }
+function transformOptimizer(parsed: any, items: ReserveItem[], validIds: Set<string>) {
+  return {
+    insights: String(parsed?.insights ?? '').slice(0, 500),
+    items: (parsed?.items || [])
+      .filter((it: any) => validIds.has(String(it?.id ?? '')))
+      .slice(0, 25)
+      .map((it: any) => {
+        const orig = items.find(x => x.id === String(it?.id));
+        return {
+          tradeId: String(it?.id ?? ''),
+          title: String(it?.title ?? orig?.title ?? '').slice(0, 150),
+          demandLevel: ['high', 'medium', 'low'].includes(String(it?.demand_level)) ? String(it.demand_level) : 'medium',
+          expectedBidders: Math.max(0, Math.min(20, Number(it?.expected_bidders ?? orig?.profile.avgBidders ?? 3))),
+          startingPriceEur: Math.max(0, Math.round(Number(it?.starting_price_eur ?? orig?.baseStartingPrice ?? 0))),
+          reservePriceEur: Math.max(0, Math.round(Number(it?.reserve_price_eur ?? orig?.baseReserve ?? 0))),
+          buyNowPriceEur: Math.max(0, Math.round(Number(it?.buy_now_price_eur ?? orig?.baseBuyNowPrice ?? 0))),
+          optimalDurationDays: Math.max(1, Math.min(30, Number(it?.optimal_duration_days ?? orig?.profile.optimalDuration ?? 7))),
+          auctionStrategy: String(it?.auction_strategy ?? '').slice(0, 300),
+          expectedFinalPriceEur: Math.round(Number(it?.expected_final_price_eur ?? orig?.estValue ?? 0)),
+          probabilityOfSalePct: Math.max(0, Math.min(100, Number(it?.probability_of_sale_pct ?? 60))),
+          riskConsiderations: String(it?.risk_considerations ?? '').slice(0, 200),
+          sniperProtection: Boolean(it?.sniper_protection ?? true),
+          listingDay: ['pon', 'tor', 'sre', 'cet', 'pet', 'sob', 'ned'].includes(String(it?.listing_day)) ? String(it.listing_day) : 'pet',
+        };
+      }),
+    demandAnalysis: (parsed?.demand_analysis || []).slice(0, 8).map((d: any) => ({
+      category: String(d?.category ?? '').slice(0, 50),
+      demandTrend: ['rising', 'stable', 'falling'].includes(String(d?.demand_trend)) ? String(d.demand_trend) : 'stable',
+      avgBidders: Math.max(0, Math.min(15, Number(d?.avg_bidders ?? 3))),
+      priceTrend: ['up', 'flat', 'down'].includes(String(d?.price_trend)) ? String(d.price_trend) : 'flat',
+      bestAuctionDay: ['pon', 'tor', 'sre', 'cet', 'pet', 'sob', 'ned'].includes(String(d?.best_auction_day)) ? String(d.best_auction_day) : 'pet',
+      saturationLevel: ['low', 'medium', 'high'].includes(String(d?.saturation_level)) ? String(d.saturation_level) : 'medium',
+    })),
+    reserveStrategy: (parsed?.reserve_strategy || []).slice(0, 4).map((s: any) => ({
+      strategy: ['aggressive', 'moderate', 'conservative'].includes(String(s?.strategy)) ? String(s.strategy) : 'moderate',
+      reservePct: Math.max(0, Math.min(100, Number(s?.reserve_pct ?? 75))),
+      startingPct: Math.max(0, Math.min(100, Number(s?.starting_pct ?? 60))),
+      bestFor: String(s?.best_for ?? '').slice(0, 200),
+      riskLevel: ['low', 'medium', 'high'].includes(String(s?.risk_level)) ? String(s.risk_level) : 'medium',
+    })),
+    auctionPlan: (parsed?.auction_plan || []).slice(0, 14).map((p: any) => ({
+      day: Math.max(1, Math.min(30, Number(p?.day ?? 1))),
+      itemsToList: Math.max(0, Math.min(20, Number(p?.items_to_list ?? 0))),
+      categories: (p?.categories || []).slice(0, 5).map((c: any) => String(c).slice(0, 40)),
+      expectedRevenueEur: Math.round(Number(p?.expected_revenue_eur ?? 0)),
+      notes: String(p?.notes ?? '').slice(0, 150),
+    })),
+    recommendations: (parsed?.recommendations || []).slice(0, 6).map((r: any) => ({
+      action: String(r?.action ?? '').slice(0, 300),
+      priority: ['high', 'medium', 'low'].includes(String(r?.priority)) ? String(r.priority) : 'medium',
+      expectedImpactEur: Math.round(Number(r?.expected_impact_eur ?? 0)),
+      riskAddressed: String(r?.risk_addressed ?? '').slice(0, 150),
+    })),
+    summary: {
+      totalItems: items.length,
+      totalReserveValueEur: Math.round(Number(parsed?.summary?.total_reserve_value_eur ?? items.reduce((s, i) => s + i.baseReserve, 0))),
+      expectedTotalRevenueEur: Math.round(Number(parsed?.summary?.expected_total_revenue_eur ?? items.reduce((s, i) => s + i.estValue, 0))),
+      expectedTotalProfitEur: Math.round(Number(parsed?.summary?.expected_total_profit_eur ?? items.reduce((s, i) => s + (i.estValue - i.cost), 0))),
+      avgProbabilityOfSalePct: Math.max(0, Math.min(100, Number(parsed?.summary?.avg_probability_of_sale_pct ?? 60))),
+      bestAuctionDay: ['pon', 'tor', 'sre', 'cet', 'pet', 'sob', 'ned'].includes(String(parsed?.summary?.best_auction_day)) ? String(parsed.summary.best_auction_day) : 'pet',
+      reserveOptimizationScore: Math.max(0, Math.min(100, Number(parsed?.summary?.reserve_optimization_score ?? 60))),
+      biggestRisk: String(parsed?.summary?.biggest_risk ?? '').slice(0, 200),
+      quickestWin: String(parsed?.summary?.quickest_win ?? '').slice(0, 200),
+    },
+  };
 }

@@ -1,4 +1,4 @@
-// v7.72: AI Profit Trajectory Forecaster — AI napove "trajektorijo" rasti profita
+// v7.72 / v8.96.3-batch4: AI Profit Trajectory Forecaster — AI napove "trajektorijo" rasti profita
 // čez 6/12/24 mesecev pod različnimi scenariji (trenutni tempo, pospešen,
 // upočasnjen). Pokaže OBLIKO krivulje rasti — linearna, eksponentna ali
 // platoirajoča. "Trajectory: EXPONENTIAL (growth velocity +15%/mo). 24m
@@ -14,24 +14,18 @@
 //
 // GET+POST /api/ai/profit-trajectory-forecaster
 // (AI-enhanced + grounding + anti-hallucination + 6h cache + deterministic fallback)
+// Refaktoriran z withAiRoute helperjem (v8.96.3) + enforceBudget guard.
 
-import { NextRequest, NextResponse } from 'next/server';
-import { db } from '@/lib/db';
-import { getSettingsRow } from '@/lib/pipeline';
-import {
-  callProviderForRaw,
-  parseJsonLooseExported,
-  type AiProviderType,
-  type AiSettings,
-} from '@/lib/ai';
+import { withAiRoute, AI_ROUTE_DEFAULTS, type AiRouteContext } from '@/lib/with-ai-route';
+import { apiOk } from '@/lib/api-response';
 import { GROUNDING_PROMPT_SUFFIX } from '@/lib/anti-hallucination';
 import { getCachedAI, setCachedAI } from '@/lib/ai-cache';
-import { checkRateLimit, rateLimitResponse } from '@/lib/rate-limit';
-import { logger } from '@/lib/logger';
 
-export const runtime = 'nodejs';
-export const dynamic = 'force-dynamic';
+export const { runtime, dynamic } = AI_ROUTE_DEFAULTS;
 export const maxDuration = 60;
+
+// eslint-disable-next-line @typescript-eslint/no-empty-object-type
+interface ProfitTrajectoryInput {}
 
 // --- Types ---------------------------------------------------------------
 
@@ -72,7 +66,6 @@ interface AiTrajectoryResponse {
 // --- Helpers -------------------------------------------------------------
 
 const DAY_MS = 86_400_000;
-const MONTH_MS = 30 * DAY_MS;
 
 function clampNumber(
   raw: unknown,
@@ -91,25 +84,6 @@ function clampString(s: unknown, max: number, fallback: string): string {
     return s.trim().slice(0, max);
   }
   return fallback.slice(0, max);
-}
-
-const VALID_PATTERN: readonly GrowthPattern[] = [
-  'LINEAR',
-  'EXPONENTIAL',
-  'PLATEAUING',
-  'FLAT',
-];
-
-function clampEnum<T extends string>(
-  raw: unknown,
-  valid: readonly T[],
-  fallback: T,
-): T {
-  const s = String(raw).trim().toUpperCase().replace(/\s+/g, '_');
-  for (const v of valid) {
-    if (s === v.toUpperCase()) return v;
-  }
-  return fallback;
 }
 
 // Linear slope of values (month-over-month).
@@ -280,19 +254,208 @@ function buildDeterministicTrajectory(
   };
 }
 
+// --- Prompt builder + AI response transform (čisti helperji) ------------
+
+function buildPrompt(
+  baseline: {
+    trajectory: Trajectory;
+    projections: Projections;
+    analysis: Analysis;
+  },
+  monthlyProfits: number[],
+  currentMonthProfit: number,
+  maxMonthProfit: number,
+  maxTotal24m: number,
+): string {
+  return `Si AI "Profit Trajectory" analitik za slovenske in srednjeevropske oglasne platforme (Bolha, Vinted, Avtonet, mobile.de).
+Napovej "trajektorijo" rasti profita čez 6/12/24 mesecev pod 3 scenariji (CONTINUE_CURRENT, ACCELERATED, DECELERATED). Identificiraj obliko krivulje rasti, inflection point in bottleneck.
+
+MESEČNI PROFIT (zadnjih 12 mesecev, od najstarejšega do najnovejšega):
+${JSON.stringify(monthlyProfits)}
+
+TRAJEKTORIJA (deterministično izračunana):
+- monthlyGrowthRate: ${baseline.trajectory.monthlyGrowthRate}€/mo
+- growthPattern: ${baseline.trajectory.growthPattern}
+- growthVelocity: ${baseline.trajectory.growthVelocity}€/mo²
+- currentTrajectory: ${baseline.trajectory.currentTrajectory}
+
+TRENUTNI MESEČNI PROFIT: ${Math.round(currentMonthProfit)}€
+
+DETERMINISTIČNE PROJEKCIJE (baseline):
+${JSON.stringify(baseline.projections, null, 2)}
+
+PRAVILA ZA AI ODGOVOR:
+1. projections: 3 scenariji (CONTINUE_CURRENT, ACCELERATED, DECELERATED)
+   - Vsak scenario: month6, month12, month24, totalProfit24m
+   - month6/12/24 = pričakovan mesečni profit v tistem mesecu
+   - totalProfit24m = skupni profit v naslednjih 24 mesecih (vsota)
+   - Vrednosti MORAJO biti v [0, ${Math.round(maxMonthProfit)}] za month6/12/24 in [0, ${Math.round(maxTotal24m)}] za totalProfit24m (anti-hallucination)
+   - ACCELERATED > CONTINUE_CURRENT > DECELERATED (logično)
+2. analysis:
+   - inflectionPoint: kdaj se bo growth pattern spremenil (npr. "pri ~12 mesecih, ko trg nasiči") ali null
+   - growthBottleneck: kaj trenutno najbolj omejuje rast (kapital, volumen, win rate, kategorije)
+   - trajectoryAdvice: kako vzdrževati ali pospešiti trajektorijo (1-2 stavka v slovenščini)
+3. summary: 1-2 stavka povzetka v slovenščini — kaj projektiraš in ključna ugotovitev
+
+VRNI LE JSON:
+{
+  "projections": {
+    "CONTINUE_CURRENT": { "month6": 0, "month12": 0, "month24": 0, "totalProfit24m": 0 },
+    "ACCELERATED": { "month6": 0, "month12": 0, "month24": 0, "totalProfit24m": 0 },
+    "DECELERATED": { "month6": 0, "month12": 0, "month24": 0, "totalProfit24m": 0 }
+  },
+  "analysis": {
+    "inflectionPoint": "..." | null,
+    "growthBottleneck": "...",
+    "trajectoryAdvice": "..."
+  },
+  "summary": "1-2 stavka v slovenščini"
+}${GROUNDING_PROMPT_SUFFIX}`;
+}
+
+function parseAiTrajectory(
+  parsed: unknown,
+  baseline: { projections: Projections; analysis: Analysis },
+  maxMonthProfit: number,
+  maxTotal24m: number,
+): {
+  projections: Projections;
+  analysis: Analysis;
+  summary: string | null;
+  aiUsed: boolean;
+} {
+  const raw = parsed as AiTrajectoryResponse | null;
+  if (!raw || typeof raw !== 'object') {
+    return {
+      projections: baseline.projections,
+      analysis: baseline.analysis,
+      summary: null,
+      aiUsed: false,
+    };
+  }
+
+  let projections = baseline.projections;
+  let analysis = baseline.analysis;
+  let summary: string | null = null;
+
+  // Parse projections — apply anti-hallucination clamp [0, maxMonthProfit] / [0, maxTotal24m]
+  if (raw.projections && typeof raw.projections === 'object') {
+    const p = raw.projections as Record<string, unknown>;
+    const parseScenario = (
+      key: string,
+      fallback: ScenarioProjection,
+    ): ScenarioProjection => {
+      const sc = p[key];
+      if (!sc || typeof sc !== 'object') return fallback;
+      const r = sc as Record<string, unknown>;
+      return {
+        month6: clampNumber(
+          r.month6,
+          0,
+          maxMonthProfit,
+          fallback.month6,
+        ),
+        month12: clampNumber(
+          r.month12,
+          0,
+          maxMonthProfit,
+          fallback.month12,
+        ),
+        month24: clampNumber(
+          r.month24,
+          0,
+          maxMonthProfit,
+          fallback.month24,
+        ),
+        totalProfit24m: clampNumber(
+          r.totalProfit24m,
+          0,
+          maxTotal24m,
+          fallback.totalProfit24m,
+        ),
+      };
+    };
+    projections = {
+      CONTINUE_CURRENT: parseScenario(
+        'CONTINUE_CURRENT',
+        baseline.projections.CONTINUE_CURRENT,
+      ),
+      ACCELERATED: parseScenario(
+        'ACCELERATED',
+        baseline.projections.ACCELERATED,
+      ),
+      DECELERATED: parseScenario(
+        'DECELERATED',
+        baseline.projections.DECELERATED,
+      ),
+    };
+
+    // Enforce ACCELERATED >= CONTINUE_CURRENT >= DECELERATED for totalProfit24m
+    const totalAccel = projections.ACCELERATED.totalProfit24m;
+    const totalCont = projections.CONTINUE_CURRENT.totalProfit24m;
+    const totalDecel = projections.DECELERATED.totalProfit24m;
+    if (totalAccel < totalCont) {
+      projections.ACCELERATED = {
+        ...projections.ACCELERATED,
+        totalProfit24m: Math.max(totalAccel, totalCont),
+      };
+    }
+    if (totalCont < totalDecel) {
+      projections.CONTINUE_CURRENT = {
+        ...projections.CONTINUE_CURRENT,
+        totalProfit24m: Math.max(totalCont, totalDecel),
+      };
+    }
+  }
+
+  // Parse analysis
+  if (raw.analysis && typeof raw.analysis === 'object') {
+    const a = raw.analysis as Record<string, unknown>;
+    const ip = a.inflectionPoint;
+    analysis = {
+      inflectionPoint:
+        ip === null || ip === undefined
+          ? null
+          : clampString(ip, 400, baseline.analysis.inflectionPoint || ''),
+      growthBottleneck: clampString(
+        a.growthBottleneck,
+        600,
+        baseline.analysis.growthBottleneck,
+      ),
+      trajectoryAdvice: clampString(
+        a.trajectoryAdvice,
+        600,
+        baseline.analysis.trajectoryAdvice,
+      ),
+    };
+  }
+
+  if (
+    typeof raw.summary === 'string' &&
+    raw.summary.trim().length > 0
+  ) {
+    summary = raw.summary.trim().slice(0, 600);
+  }
+
+  return { projections, analysis, summary, aiUsed: true };
+}
+
 // --- Handler -------------------------------------------------------------
 
-export async function GET(req: NextRequest) {
-  return handleProfitTrajectory(req);
-}
-export async function POST(req: NextRequest) {
-  return handleProfitTrajectory(req);
-}
+const profitTrajectoryHandler = withAiRoute<ProfitTrajectoryInput>({
+  endpoint: '/api/ai/profit-trajectory-forecaster',
+  maxDuration: 60,
+  enforceBudget: true, // AI klic — preveri budget
+  method: 'GET', // Endpoint sprejema GET + POST — bypass POST-only check
 
-async function handleProfitTrajectory(req: NextRequest) {
-  try {
-    const rl = checkRateLimit(req, 'ai-profit-trajectory', 20);
-    if (!rl.allowed) return rateLimitResponse(rl);
+  parseBody: async (req) => {
+    await req.json().catch(() => ({}));
+    return {};
+  },
+
+  // No validateInput — body ignored
+  handler: async (_input, ctx: AiRouteContext) => {
+    const { db, callAi, parseAi, logger } = ctx;
 
     // 1) Query SOLD trades from last 12 months for monthly profit history
     // NOTE: Prisma 6 DateTime filter does not accept `not: null`; using `gte`
@@ -318,7 +481,7 @@ async function handleProfitTrajectory(req: NextRequest) {
 
     // Empty state
     if (soldTrades.length === 0) {
-      return NextResponse.json({
+      return apiOk({
         ok: true,
         trajectory: {
           monthlyGrowthRate: 0,
@@ -386,7 +549,7 @@ async function handleProfitTrajectory(req: NextRequest) {
       summary: string;
     }>(cacheKey);
     if (cached) {
-      return NextResponse.json({
+      return apiOk({
         ok: true,
         trajectory: baseline.trajectory,
         projections: cached.projections,
@@ -401,65 +564,14 @@ async function handleProfitTrajectory(req: NextRequest) {
     const maxMonthProfit = Math.max(currentMonthProfit * 4, 50000);
     const maxTotal24m = maxMonthProfit * 24;
 
-    // 6) AI prompt with grounding
-    const settings = await getSettingsRow();
-    const aiSettings: AiSettings = {
-      provider: settings.aiProvider as AiProviderType,
-      baseUrl: settings.aiBaseUrl,
-      apiKey: settings.aiApiKey,
-      model: settings.aiModel,
-      fallbackProvider: (settings.fallbackProvider || '') as
-        | AiProviderType
-        | '',
-      fallbackBaseUrl: settings.fallbackBaseUrl || '',
-      fallbackApiKey: settings.fallbackApiKey || '',
-      fallbackModel: settings.fallbackModel || '',
-    };
-
-    const prompt = `Si AI "Profit Trajectory" analitik za slovenske in srednjeevropske oglasne platforme (Bolha, Vinted, Avtonet, mobile.de).
-Napovej "trajektorijo" rasti profita čez 6/12/24 mesecev pod 3 scenariji (CONTINUE_CURRENT, ACCELERATED, DECELERATED). Identificiraj obliko krivulje rasti, inflection point in bottleneck.
-
-MESEČNI PROFIT (zadnjih 12 mesecev, od najstarejšega do najnovejšega):
-${JSON.stringify(monthlyProfits)}
-
-TRAJEKTORIJA (deterministično izračunana):
-- monthlyGrowthRate: ${baseline.trajectory.monthlyGrowthRate}€/mo
-- growthPattern: ${baseline.trajectory.growthPattern}
-- growthVelocity: ${baseline.trajectory.growthVelocity}€/mo²
-- currentTrajectory: ${baseline.trajectory.currentTrajectory}
-
-TRENUTNI MESEČNI PROFIT: ${Math.round(currentMonthProfit)}€
-
-DETERMINISTIČNE PROJEKCIJE (baseline):
-${JSON.stringify(baseline.projections, null, 2)}
-
-PRAVILA ZA AI ODGOVOR:
-1. projections: 3 scenariji (CONTINUE_CURRENT, ACCELERATED, DECELERATED)
-   - Vsak scenario: month6, month12, month24, totalProfit24m
-   - month6/12/24 = pričakovan mesečni profit v tistem mesecu
-   - totalProfit24m = skupni profit v naslednjih 24 mesecih (vsota)
-   - Vrednosti MORAJO biti v [0, ${Math.round(maxMonthProfit)}] za month6/12/24 in [0, ${Math.round(maxTotal24m)}] za totalProfit24m (anti-hallucination)
-   - ACCELERATED > CONTINUE_CURRENT > DECELERATED (logično)
-2. analysis:
-   - inflectionPoint: kdaj se bo growth pattern spremenil (npr. "pri ~12 mesecih, ko trg nasiči") ali null
-   - growthBottleneck: kaj trenutno najbolj omejuje rast (kapital, volumen, win rate, kategorije)
-   - trajectoryAdvice: kako vzdrževati ali pospešiti trajektorijo (1-2 stavka v slovenščini)
-3. summary: 1-2 stavka povzetka v slovenščini — kaj projektiraš in ključna ugotovitev
-
-VRNI LE JSON:
-{
-  "projections": {
-    "CONTINUE_CURRENT": { "month6": 0, "month12": 0, "month24": 0, "totalProfit24m": 0 },
-    "ACCELERATED": { "month6": 0, "month12": 0, "month24": 0, "totalProfit24m": 0 },
-    "DECELERATED": { "month6": 0, "month12": 0, "month24": 0, "totalProfit24m": 0 }
-  },
-  "analysis": {
-    "inflectionPoint": "..." | null,
-    "growthBottleneck": "...",
-    "trajectoryAdvice": "..."
-  },
-  "summary": "1-2 stavka v slovenščini"
-}${GROUNDING_PROMPT_SUFFIX}`;
+    // 6) AI prompt with grounding + call AI (try/catch z graceful fallback)
+    const prompt = buildPrompt(
+      baseline,
+      monthlyProfits,
+      currentMonthProfit,
+      maxMonthProfit,
+      maxTotal24m,
+    );
 
     let projections = baseline.projections;
     let analysis = baseline.analysis;
@@ -467,113 +579,12 @@ VRNI LE JSON:
     let aiUsed = false;
 
     try {
-      const raw = await callProviderForRaw(aiSettings, prompt);
-      const parsed = parseJsonLooseExported(
-        raw,
-      ) as AiTrajectoryResponse | null;
-
-      if (parsed && typeof parsed === 'object') {
-        // Parse projections — apply anti-hallucination clamp [0, maxMonthProfit] / [0, maxTotal24m]
-        if (parsed.projections && typeof parsed.projections === 'object') {
-          const p = parsed.projections as Record<string, unknown>;
-          const parseScenario = (
-            key: string,
-            fallback: ScenarioProjection,
-          ): ScenarioProjection => {
-            const sc = p[key];
-            if (!sc || typeof sc !== 'object') return fallback;
-            const r = sc as Record<string, unknown>;
-            return {
-              month6: clampNumber(
-                r.month6,
-                0,
-                maxMonthProfit,
-                fallback.month6,
-              ),
-              month12: clampNumber(
-                r.month12,
-                0,
-                maxMonthProfit,
-                fallback.month12,
-              ),
-              month24: clampNumber(
-                r.month24,
-                0,
-                maxMonthProfit,
-                fallback.month24,
-              ),
-              totalProfit24m: clampNumber(
-                r.totalProfit24m,
-                0,
-                maxTotal24m,
-                fallback.totalProfit24m,
-              ),
-            };
-          };
-          projections = {
-            CONTINUE_CURRENT: parseScenario(
-              'CONTINUE_CURRENT',
-              baseline.projections.CONTINUE_CURRENT,
-            ),
-            ACCELERATED: parseScenario(
-              'ACCELERATED',
-              baseline.projections.ACCELERATED,
-            ),
-            DECELERATED: parseScenario(
-              'DECELERATED',
-              baseline.projections.DECELERATED,
-            ),
-          };
-
-          // Enforce ACCELERATED >= CONTINUE_CURRENT >= DECELERATED for totalProfit24m
-          const totalAccel = projections.ACCELERATED.totalProfit24m;
-          const totalCont = projections.CONTINUE_CURRENT.totalProfit24m;
-          const totalDecel = projections.DECELERATED.totalProfit24m;
-          if (totalAccel < totalCont) {
-            projections.ACCELERATED = {
-              ...projections.ACCELERATED,
-              totalProfit24m: Math.max(totalAccel, totalCont),
-            };
-          }
-          if (totalCont < totalDecel) {
-            projections.CONTINUE_CURRENT = {
-              ...projections.CONTINUE_CURRENT,
-              totalProfit24m: Math.max(totalCont, totalDecel),
-            };
-          }
-        }
-
-        // Parse analysis
-        if (parsed.analysis && typeof parsed.analysis === 'object') {
-          const a = parsed.analysis as Record<string, unknown>;
-          const ip = a.inflectionPoint;
-          analysis = {
-            inflectionPoint:
-              ip === null || ip === undefined
-                ? null
-                : clampString(ip, 400, baseline.analysis.inflectionPoint || ''),
-            growthBottleneck: clampString(
-              a.growthBottleneck,
-              600,
-              baseline.analysis.growthBottleneck,
-            ),
-            trajectoryAdvice: clampString(
-              a.trajectoryAdvice,
-              600,
-              baseline.analysis.trajectoryAdvice,
-            ),
-          };
-        }
-
-        if (
-          typeof parsed.summary === 'string' &&
-          parsed.summary.trim().length > 0
-        ) {
-          summary = parsed.summary.trim().slice(0, 600);
-        }
-
-        aiUsed = true;
-      }
+      const raw = await callAi(prompt);
+      const result = parseAiTrajectory(parseAi(raw), baseline, maxMonthProfit, maxTotal24m);
+      projections = result.projections;
+      analysis = result.analysis;
+      if (result.summary !== null) summary = result.summary;
+      aiUsed = result.aiUsed;
     } catch (err) {
       logger.warn(
         '/api/ai/profit-trajectory-forecaster',
@@ -587,7 +598,7 @@ VRNI LE JSON:
       setCachedAI(cacheKey, { projections, analysis, summary });
     }
 
-    return NextResponse.json({
+    return apiOk({
       ok: true,
       trajectory: baseline.trajectory,
       projections,
@@ -595,11 +606,8 @@ VRNI LE JSON:
       summary,
       aiUsed,
     });
-  } catch (err: any) {
-    logger.error('/api/ai/profit-trajectory-forecaster', 'handler failed', err);
-    return NextResponse.json(
-      { error: err?.message ?? 'Napaka' },
-      { status: 500 },
-    );
-  }
-}
+  },
+});
+
+export const GET = profitTrajectoryHandler;
+export const POST = profitTrajectoryHandler;

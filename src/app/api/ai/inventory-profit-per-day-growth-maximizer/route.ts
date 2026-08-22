@@ -32,24 +32,20 @@
 
 // GET+POST /api/ai/inventory-profit-per-day-growth-maximizer
 // (AI-enhanced + grounding + anti-hallucination + 6h cache + deterministic fallback)
+// Refaktoriran z withAiRoute helperjem (v8.96.7) + enforceBudget guard.
 
-import { NextRequest, NextResponse } from 'next/server';
-import { db } from '@/lib/db';
-import { getSettingsRow } from '@/lib/pipeline';
-import {
-  callProviderForRaw,
-  parseJsonLooseExported,
-  type AiProviderType,
-  type AiSettings,
-} from '@/lib/ai';
+import { withAiRoute, AI_ROUTE_DEFAULTS, type AiRouteContext } from '@/lib/with-ai-route';
+import { apiOk } from '@/lib/api-response';
 import { GROUNDING_PROMPT_SUFFIX } from '@/lib/anti-hallucination';
 import { getCachedAI, setCachedAI } from '@/lib/ai-cache';
-import { checkRateLimit, rateLimitResponse } from '@/lib/rate-limit';
-import { logger } from '@/lib/logger';
 
-export const runtime = 'nodejs';
-export const dynamic = 'force-dynamic';
+export const { runtime, dynamic } = AI_ROUTE_DEFAULTS;
 export const maxDuration = 60;
+
+// --- Input ----------------------------------------------------------------
+
+// eslint-disable-next-line @typescript-eslint/no-empty-object-type
+interface InventoryProfitPerDayGrowthMaximizerInput {}
 
 // --- Types ---------------------------------------------------------------
 
@@ -585,206 +581,52 @@ function buildSummary(
   return parts.join(' ').slice(0, 500);
 }
 
-// --- Handler -------------------------------------------------------------
+// --- Extracted prompt helpers (pure, testable) ---------------------------
 
-export async function GET(req: NextRequest) {
-  return handleInventoryProfitPerDayGrowthMaximizer(req);
+function buildPromptData(
+  soldComputed: SoldComputed[],
+  heldComputed: HeldComputed[],
+  current: CurrentState,
+  maximization: ProfitPerDayGrowthMaximization,
+): unknown {
+  const soldSampleForAI = soldComputed
+    .slice(-MAX_TRADES_FOR_AI)
+    .map((t) => ({
+      profit: t.profit,
+      holdDays: t.holdDays,
+    }));
+
+  return {
+    soldCount12m: soldComputed.length,
+    heldCount: heldComputed.length,
+    current,
+    deterministicMaximization: {
+      currentGrowthRate: maximization.currentGrowthRate,
+      maximizedGrowthRate: maximization.maximizedGrowthRate,
+      growthUplift: maximization.growthUplift,
+      growthAccelerationActions: maximization.growthAccelerationActions,
+      growthTrajectory: maximization.growthTrajectory,
+      growthBottlenecks: maximization.growthBottlenecks,
+      growthSustainability: maximization.growthSustainability,
+      growthGrade: maximization.growthGrade,
+      doublingTime: maximization.doublingTime,
+    },
+    soldSample: soldSampleForAI,
+    caps: {
+      dailyProfitMin: DAILY_PROFIT_MIN, dailyProfitMax: DAILY_PROFIT_MAX,
+      growthRateMin: GROWTH_RATE_MIN, growthRateMax: GROWTH_RATE_MAX,
+      accelerationMin: ACCELERATION_MIN, accelerationMax: ACCELERATION_MAX,
+      volatilityMin: VOLATILITY_MIN, volatilityMax: VOLATILITY_MAX,
+      sustainabilityMin: SUSTAINABILITY_MIN, sustainabilityMax: SUSTAINABILITY_MAX,
+      upliftMin: UPLIFT_MIN, upliftMax: UPLIFT_MAX,
+      trajectoryMin: TRAJECTORY_MIN, trajectoryMax: TRAJECTORY_MAX,
+      doublingMin: DOUBLING_MIN, doublingMax: DOUBLING_MAX,
+    },
+  };
 }
-export async function POST(req: NextRequest) {
-  return handleInventoryProfitPerDayGrowthMaximizer(req);
-}
 
-async function handleInventoryProfitPerDayGrowthMaximizer(req: NextRequest) {
-  try {
-    const rl = checkRateLimit(req, 'ai-inventory-profit-per-day-growth-maximizer', 20);
-    if (!rl.allowed) return rateLimitResponse(rl);
-
-    const now = Date.now();
-    const twelveMonthsAgo = new Date(now - TWELVE_MONTHS_MS);
-
-    // 1) Parallel query SOLD trades (last 12m) + HELD trades (inventory pipeline)
-    const [soldTrades, heldTrades] = await Promise.all([
-      db.trade.findMany({
-        where: {
-          status: 'sold',
-          sellDate: { gte: twelveMonthsAgo },
-          sellPrice: { gt: 0 },
-        },
-        select: {
-          id: true,
-          buyPrice: true,
-          buyFees: true,
-          buyDate: true,
-          sellPrice: true,
-          sellFees: true,
-          sellDate: true,
-        },
-        orderBy: { sellDate: 'asc' },
-        take: 100000,
-      }) as unknown as SoldTradeRow[],
-      db.trade.findMany({
-        where: { status: 'held' },
-        select: {
-          id: true,
-          buyPrice: true,
-          buyFees: true,
-        },
-        take: 1000,
-      }) as unknown as HeldTradeRow[],
-    ]);
-
-    // Empty-state: no SOLD and no HELD trades
-    if (soldTrades.length === 0 && heldTrades.length === 0) {
-      return NextResponse.json({
-        ok: true,
-        current: {
-          weeklyProfitGrowthRate: 0,
-          dailyProfitGrowthRate: 0,
-          profitGrowthAcceleration: 0,
-          profitGrowthVolatility: 0,
-          currentDailyProfit: 0,
-          totalProfit12m: 0,
-          soldCount12m: 0,
-          heldCount: 0,
-          heldCapital: 0,
-        },
-        maximization: {
-          currentGrowthRate: 0,
-          maximizedGrowthRate: 0,
-          growthUplift: 0,
-          growthAccelerationActions: [],
-          growthTrajectory: [],
-          growthBottlenecks: [],
-          growthSustainability: 0,
-          growthGrade: 'F',
-          doublingTime: 0,
-        },
-        summary: 'Ni SOLD in HELD trgovin — Inventory Profit Per Day Growth Maximizer ni mogoč.',
-        aiUsed: false,
-        message: 'Ni SOLD in HELD trgovin — Inventory Profit Per Day Growth Maximizer ni mogoč.',
-      } satisfies ProfitPerDayGrowthResponse);
-    }
-
-    // 2) Compute SOLD trades within 12m
-    const soldComputed: SoldComputed[] = [];
-    for (const t of soldTrades) {
-      const c = computeSoldTrade(t, now);
-      if (c && c.within12m) soldComputed.push(c);
-    }
-
-    // 3) Compute HELD trades (inventory pipeline)
-    const heldComputed: HeldComputed[] = [];
-    for (const t of heldTrades) {
-      const c = computeHeldTrade(t);
-      if (c) heldComputed.push(c);
-    }
-
-    // If no SOLD trades, can't compute growth rate
-    if (soldComputed.length === 0) {
-      const heldCap = heldComputed.reduce((s, h) => s + h.capital, 0);
-      return NextResponse.json({
-        ok: true,
-        current: {
-          weeklyProfitGrowthRate: 0,
-          dailyProfitGrowthRate: 0,
-          profitGrowthAcceleration: 0,
-          profitGrowthVolatility: 0,
-          currentDailyProfit: 0,
-          totalProfit12m: 0,
-          soldCount12m: 0,
-          heldCount: heldComputed.length,
-          heldCapital: heldCap,
-        },
-        maximization: {
-          currentGrowthRate: 0,
-          maximizedGrowthRate: 0,
-          growthUplift: 0,
-          growthAccelerationActions: [],
-          growthTrajectory: [],
-          growthBottlenecks: [],
-          growthSustainability: 0,
-          growthGrade: 'F',
-          doublingTime: 0,
-        },
-        summary: 'Ni SOLD trgovin v zadnjih 12 mesecih — Inventory Profit Per Day Growth Maximizer ni mogoč.',
-        aiUsed: false,
-        message: 'Ni SOLD trgovin v zadnjih 12 mesecih — Inventory Profit Per Day Growth Maximizer ni mogoč.',
-      } satisfies ProfitPerDayGrowthResponse);
-    }
-
-    const current = computeCurrent(soldComputed, heldComputed, now);
-    let maximization = buildDeterministicMaximization(current);
-    let summary = buildSummary(current, maximization);
-
-    // 4) AI cache check (6h TTL) — key by current month
-    const currentMonth = new Date(now).toISOString().slice(0, 7); // YYYY-MM
-    const cacheKey = `inventory-profit-per-day-growth-maximizer:${currentMonth}`;
-    const cached = getCachedAI<{
-      maximization: ProfitPerDayGrowthMaximization;
-      summary: string;
-    }>(cacheKey);
-    if (cached) {
-      return NextResponse.json({
-        ok: true,
-        current,
-        maximization: cached.maximization,
-        summary: cached.summary,
-        cached: true,
-        aiUsed: true,
-      } satisfies ProfitPerDayGrowthResponse);
-    }
-
-    // 5) AI prompt with grounding
-    const settings = await getSettingsRow();
-    const aiSettings: AiSettings = {
-      provider: settings.aiProvider as AiProviderType,
-      baseUrl: settings.aiBaseUrl,
-      apiKey: settings.aiApiKey,
-      model: settings.aiModel,
-      fallbackProvider: (settings.fallbackProvider || '') as
-        | AiProviderType
-        | '',
-      fallbackBaseUrl: settings.fallbackBaseUrl || '',
-      fallbackApiKey: settings.fallbackApiKey || '',
-      fallbackModel: settings.fallbackModel || '',
-    };
-
-    const soldSampleForAI = soldComputed
-      .slice(-MAX_TRADES_FOR_AI)
-      .map((t) => ({
-        profit: t.profit,
-        holdDays: t.holdDays,
-      }));
-
-    const promptData = {
-      soldCount12m: soldComputed.length,
-      heldCount: heldComputed.length,
-      current,
-      deterministicMaximization: {
-        currentGrowthRate: maximization.currentGrowthRate,
-        maximizedGrowthRate: maximization.maximizedGrowthRate,
-        growthUplift: maximization.growthUplift,
-        growthAccelerationActions: maximization.growthAccelerationActions,
-        growthTrajectory: maximization.growthTrajectory,
-        growthBottlenecks: maximization.growthBottlenecks,
-        growthSustainability: maximization.growthSustainability,
-        growthGrade: maximization.growthGrade,
-        doublingTime: maximization.doublingTime,
-      },
-      soldSample: soldSampleForAI,
-      caps: {
-        dailyProfitMin: DAILY_PROFIT_MIN, dailyProfitMax: DAILY_PROFIT_MAX,
-        growthRateMin: GROWTH_RATE_MIN, growthRateMax: GROWTH_RATE_MAX,
-        accelerationMin: ACCELERATION_MIN, accelerationMax: ACCELERATION_MAX,
-        volatilityMin: VOLATILITY_MIN, volatilityMax: VOLATILITY_MAX,
-        sustainabilityMin: SUSTAINABILITY_MIN, sustainabilityMax: SUSTAINABILITY_MAX,
-        upliftMin: UPLIFT_MIN, upliftMax: UPLIFT_MAX,
-        trajectoryMin: TRAJECTORY_MIN, trajectoryMax: TRAJECTORY_MAX,
-        doublingMin: DOUBLING_MIN, doublingMax: DOUBLING_MAX,
-      },
-    };
-
-    const prompt = `Si AI "Inventory Profit Per Day Growth Maximizer" za slovenske in srednjeevropske oglasne platforme (Bolha, Vinted, Avtonet, mobile.de).
+function buildPrompt(promptData: unknown): string {
+  return `Si AI "Inventory Profit Per Day Growth Maximizer" za slovenske in srednjeevropske oglasne platforme (Bolha, Vinted, Avtonet, mobile.de).
 Si strokovnjak za PROFIT PER DAY GROWTH MAXIMIZATION — kako maksimizirati GROWTH RATE daily profit-a iz inventory-ja (koliko %/teden raste daily profit, ne sam absolutni €/dan). Tvoj cilj je "Tvoj daily profit growth je +2%/teden, ampak bi lahko bil +5%/teden z 4 akcijami." Razlika od profit-per-day-scaling-maximizer (v8.08 ki maksimizira in skalira DAILY PROFIT z scalingPath phases) — ti MAKSIMIZIRAŠ GROWTH RATE daily profit-a (%/teden kako hitro raste, ne absolutni €/dan). Razlika od profit-acceleration-maximizer (v8.05 ki maksimizira growth rate acceleration) — ta MAKSIMIZIRA GROWTH RATE daily profit-a iz INVENTORY-ja z growthAccelerationActions in doublingTime (ne sam acceleration). Razlika od profit-multiplier-maximizer (v8.09 ki maksimizira maximum profit multiplier z 6 dimensions) — ta MAKSIMIZIRA GROWTH RATE (koliko %/teden, ne × koliko-krat). Razlika od inventory-cash-yield-maximizer (v8.04 ki maksimizira annualized cash yield) — ta maksimizira GROWTH RATE daily profit-a (ne annualized yield). Razlika od inventory-turnover-yield-maximizer (v8.05 ki maksimizira yield z yieldCurve) — ta MAKSIMIZIRA GROWTH RATE z growthTrajectory in doublingTime. Razlika od inventory-yield-maximizer (v8.03 ki maksimizira yield % per item) — ta MAKSIMIZIRA GROWTH RATE daily profit-a z growthGrade in growthBottlenecks. Razlika od inventory-roi-maximizer-pro (v7.99 ki maksimizira ROI per item) — ta MAKSIMIZIRA GROWTH RATE daily profit-a iz inventory-ja (ne ROI per item). Razlika od inventory-capital-efficiency-maximizer (v8.01 ki maksimizira capital efficiency per item) — ta MAKSIMIZIRA GROWTH RATE daily profit-a z growthTrajectory (ne capital efficiency per item). Razlika od inventory-capital-return-maximizer (v8.07 ki maksimizira capital return OF inventory) — ta MAKSIMIZIRA GROWTH RATE daily profit-a (return ON profit growth, ne capital returned). Razlika od inventory-profit-per-day-maximizer (v8.02 ki maksimizira daily profit per item) — ta MAKSIMIZIRA GROWTH RATE daily profit-a (koliko %/teden raste, ne absolutni €/dan per item). Razlika od inventory-annualized-return-maximizer (v8.06 ki maksimizira annualized % return na held inventory) — ta MAKSIMIZIRA GROWTH RATE daily profit-a z doublingTime (ne annualized return).
 
 DETERMINISTIČNI PODATKI (izračunano iz DB — SOLD trgovin v zadnjih 12 mesecih + HELD trgovine):
@@ -835,129 +677,312 @@ VRNI LE JSON:
   },
   "summary": "Current: 2.00%/teden growth (45.00€/dan, 50 SOLD 12m, 3 HELD, 60/100 volatilnost). Maximized: 5.00%/teden (+3.00pp uplift, grade B). Doubling time: 98 dni. Sustainability: 65/100."
 }${GROUNDING_PROMPT_SUFFIX}`;
+}
+
+interface MergeAiResult {
+  maximization: ProfitPerDayGrowthMaximization;
+  summary: string;
+  aiUsed: boolean;
+}
+
+function mergeAiIntoMaximization(
+  parsed: AiResponse | null,
+  current: CurrentState,
+  detMax: ProfitPerDayGrowthMaximization,
+  detSummary: string,
+): MergeAiResult {
+  const result: MergeAiResult = {
+    maximization: detMax,
+    summary: detSummary,
+    aiUsed: false,
+  };
+
+  if (!parsed || typeof parsed !== 'object' || !parsed.maximization) return result;
+
+  const aiMax = parsed.maximization;
+  const maximization = detMax;
+
+  // Override maximizedGrowthRate — anti-hallucination: ≥ current, ≤ current × 2.5 + 50
+  const maxBound = Math.min(
+    GROWTH_RATE_MAX,
+    Math.max(
+      current.weeklyProfitGrowthRate + 5,
+      current.weeklyProfitGrowthRate * GROWTH_MAXIMIZATION_FACTOR + 10,
+    ),
+  );
+  const minBound = Math.max(GROWTH_RATE_MIN, current.weeklyProfitGrowthRate);
+  const maximizedGrowthRate = round2(clampNum(
+    aiMax.maximizedGrowthRate,
+    minBound, maxBound,
+    maximization.maximizedGrowthRate,
+  ));
+  const growthUplift = round2(clampNum(
+    Math.max(0, maximizedGrowthRate - current.weeklyProfitGrowthRate),
+    UPLIFT_MIN, UPLIFT_MAX, 0,
+  ));
+
+  // Override growthAccelerationActions
+  let growthAccelerationActions = maximization.growthAccelerationActions;
+  if (Array.isArray(aiMax.growthAccelerationActions) &&
+      aiMax.growthAccelerationActions.length >= 4) {
+    const aiAct: GrowthAction[] = [];
+    for (const a of aiMax.growthAccelerationActions.slice(0, MAX_ACTIONS)) {
+      if (!a || typeof a !== 'object') continue;
+      aiAct.push({
+        action: clampString(a.action, 200, 'Akcija za growth acceleration.'),
+        expectedGrowthLift: round2(clampNum(
+          a.expectedGrowthLift, UPLIFT_MIN, UPLIFT_MAX, 1.0,
+        )),
+        timeline: clampString(a.timeline, 100, '2-4 tedne'),
+        difficulty: clampEnum(a.difficulty, VALID_DIFFICULTY, 'MEDIUM'),
+      });
+    }
+    if (aiAct.length >= 4) {
+      growthAccelerationActions = aiAct;
+    }
+  }
+
+  // Override growthTrajectory — must be 8 entries with weeks 1-8
+  let growthTrajectory = maximization.growthTrajectory;
+  if (Array.isArray(aiMax.growthTrajectory) &&
+      aiMax.growthTrajectory.length >= 8) {
+    const aiTraj: GrowthTrajectoryEntry[] = [];
+    for (const expected of [1, 2, 3, 4, 5, 6, 7, 8]) {
+      const ai = aiMax.growthTrajectory.find(
+        (p) => p && Number(p.week) === expected,
+      );
+      if (!ai) continue;
+      aiTraj.push({
+        week: expected,
+        currentProjectedProfit: round2(clampNum(
+          ai.currentProjectedProfit,
+          TRAJECTORY_MIN, TRAJECTORY_MAX, current.currentDailyProfit,
+        )),
+        maximizedProjectedProfit: round2(clampNum(
+          ai.maximizedProjectedProfit,
+          TRAJECTORY_MIN, TRAJECTORY_MAX, current.currentDailyProfit,
+        )),
+      });
+    }
+    if (aiTraj.length === 8) {
+      growthTrajectory = aiTraj;
+    }
+  }
+
+  // Override growthBottlenecks
+  let growthBottlenecks = maximization.growthBottlenecks;
+  if (Array.isArray(aiMax.growthBottlenecks) &&
+      aiMax.growthBottlenecks.length >= 3) {
+    const aiBn: string[] = [];
+    for (const b of aiMax.growthBottlenecks.slice(0, MAX_BOTTLENECKS)) {
+      aiBn.push(clampString(b, 200, 'Growth bottleneck neopisan.'));
+    }
+    if (aiBn.length >= 3) {
+      growthBottlenecks = aiBn;
+    }
+  }
+
+  // Override growthSustainability
+  const growthSustainability = round0(clampNum(
+    aiMax.growthSustainability,
+    SUSTAINABILITY_MIN, SUSTAINABILITY_MAX,
+    maximization.growthSustainability,
+  ));
+
+  // Override growthGrade
+  const growthGrade = aiMax.growthGrade
+    ? clampEnum(aiMax.growthGrade, VALID_GRADE, decideGrowthGrade(maximizedGrowthRate, growthSustainability))
+    : decideGrowthGrade(maximizedGrowthRate, growthSustainability);
+
+  // Override doublingTime
+  const doublingTime = round0(clampNum(
+    aiMax.doublingTime ?? computeDoublingTime(maximizedGrowthRate),
+    DOUBLING_MIN, DOUBLING_MAX, computeDoublingTime(maximizedGrowthRate),
+  ));
+
+  result.maximization = {
+    currentGrowthRate: current.weeklyProfitGrowthRate,
+    maximizedGrowthRate,
+    growthUplift,
+    growthAccelerationActions,
+    growthTrajectory,
+    growthBottlenecks,
+    growthSustainability,
+    growthGrade,
+    doublingTime,
+  };
+
+  result.summary = clampString(parsed.summary, 500, buildSummary(current, result.maximization));
+  result.aiUsed = true;
+  return result;
+}
+
+// --- Handler -------------------------------------------------------------
+
+const inventoryProfitPerDayGrowthMaximizerHandler = withAiRoute<InventoryProfitPerDayGrowthMaximizerInput>({
+  endpoint: '/api/ai/inventory-profit-per-day-growth-maximizer',
+  maxDuration: 60,
+  enforceBudget: true, // AI klic — preveri budget
+  method: 'GET', // Endpoint sprejema GET + POST — bypass POST-only check
+
+  parseBody: async (req) => {
+    await req.json().catch(() => ({}));
+    return {};
+  },
+
+  // No validateInput — body ignored, identična logika za GET in POST
+  handler: async (_input, ctx: AiRouteContext) => {
+    const { db, callAi, parseAi, logger } = ctx;
+
+    const now = Date.now();
+    const twelveMonthsAgo = new Date(now - TWELVE_MONTHS_MS);
+
+    // 1) Parallel query SOLD trades (last 12m) + HELD trades (inventory pipeline)
+    const [soldTrades, heldTrades] = await Promise.all([
+      db.trade.findMany({
+        where: {
+          status: 'sold',
+          sellDate: { gte: twelveMonthsAgo },
+          sellPrice: { gt: 0 },
+        },
+        select: {
+          id: true,
+          buyPrice: true,
+          buyFees: true,
+          buyDate: true,
+          sellPrice: true,
+          sellFees: true,
+          sellDate: true,
+        },
+        orderBy: { sellDate: 'asc' },
+        take: 100000,
+      }) as unknown as SoldTradeRow[],
+      db.trade.findMany({
+        where: { status: 'held' },
+        select: {
+          id: true,
+          buyPrice: true,
+          buyFees: true,
+        },
+        take: 1000,
+      }) as unknown as HeldTradeRow[],
+    ]);
+
+    // Empty-state: no SOLD and no HELD trades
+    if (soldTrades.length === 0 && heldTrades.length === 0) {
+      return apiOk({
+        ok: true,
+        current: {
+          weeklyProfitGrowthRate: 0,
+          dailyProfitGrowthRate: 0,
+          profitGrowthAcceleration: 0,
+          profitGrowthVolatility: 0,
+          currentDailyProfit: 0,
+          totalProfit12m: 0,
+          soldCount12m: 0,
+          heldCount: 0,
+          heldCapital: 0,
+        },
+        maximization: {
+          currentGrowthRate: 0,
+          maximizedGrowthRate: 0,
+          growthUplift: 0,
+          growthAccelerationActions: [],
+          growthTrajectory: [],
+          growthBottlenecks: [],
+          growthSustainability: 0,
+          growthGrade: 'F',
+          doublingTime: 0,
+        },
+        summary: 'Ni SOLD in HELD trgovin — Inventory Profit Per Day Growth Maximizer ni mogoč.',
+        aiUsed: false,
+        message: 'Ni SOLD in HELD trgovin — Inventory Profit Per Day Growth Maximizer ni mogoč.',
+      } satisfies ProfitPerDayGrowthResponse);
+    }
+
+    // 2) Compute SOLD trades within 12m
+    const soldComputed: SoldComputed[] = [];
+    for (const t of soldTrades) {
+      const c = computeSoldTrade(t, now);
+      if (c && c.within12m) soldComputed.push(c);
+    }
+
+    // 3) Compute HELD trades (inventory pipeline)
+    const heldComputed: HeldComputed[] = [];
+    for (const t of heldTrades) {
+      const c = computeHeldTrade(t);
+      if (c) heldComputed.push(c);
+    }
+
+    // If no SOLD trades, can't compute growth rate
+    if (soldComputed.length === 0) {
+      const heldCap = heldComputed.reduce((s, h) => s + h.capital, 0);
+      return apiOk({
+        ok: true,
+        current: {
+          weeklyProfitGrowthRate: 0,
+          dailyProfitGrowthRate: 0,
+          profitGrowthAcceleration: 0,
+          profitGrowthVolatility: 0,
+          currentDailyProfit: 0,
+          totalProfit12m: 0,
+          soldCount12m: 0,
+          heldCount: heldComputed.length,
+          heldCapital: heldCap,
+        },
+        maximization: {
+          currentGrowthRate: 0,
+          maximizedGrowthRate: 0,
+          growthUplift: 0,
+          growthAccelerationActions: [],
+          growthTrajectory: [],
+          growthBottlenecks: [],
+          growthSustainability: 0,
+          growthGrade: 'F',
+          doublingTime: 0,
+        },
+        summary: 'Ni SOLD trgovin v zadnjih 12 mesecih — Inventory Profit Per Day Growth Maximizer ni mogoč.',
+        aiUsed: false,
+        message: 'Ni SOLD trgovin v zadnjih 12 mesecih — Inventory Profit Per Day Growth Maximizer ni mogoč.',
+      } satisfies ProfitPerDayGrowthResponse);
+    }
+
+    const current = computeCurrent(soldComputed, heldComputed, now);
+    let maximization = buildDeterministicMaximization(current);
+    let summary = buildSummary(current, maximization);
+
+    // 4) AI cache check (6h TTL) — key by current month
+    const currentMonth = new Date(now).toISOString().slice(0, 7); // YYYY-MM
+    const cacheKey = `inventory-profit-per-day-growth-maximizer:${currentMonth}`;
+    const cached = getCachedAI<{
+      maximization: ProfitPerDayGrowthMaximization;
+      summary: string;
+    }>(cacheKey);
+    if (cached) {
+      return apiOk({
+        ok: true,
+        current,
+        maximization: cached.maximization,
+        summary: cached.summary,
+        cached: true,
+        aiUsed: true,
+      } satisfies ProfitPerDayGrowthResponse);
+    }
+
+    // 5) AI prompt with grounding
+    const promptData = buildPromptData(soldComputed, heldComputed, current, maximization);
+    const prompt = buildPrompt(promptData);
 
     let aiUsed = false;
 
     try {
-      const raw = await callProviderForRaw(aiSettings, prompt);
-      const parsed = parseJsonLooseExported(raw) as AiResponse | null;
+      const raw = await callAi(prompt);
+      const parsed = parseAi(raw) as AiResponse | null;
 
-      if (parsed && typeof parsed === 'object' && parsed.maximization) {
-        const aiMax = parsed.maximization;
-
-        // Override maximizedGrowthRate — anti-hallucination: ≥ current, ≤ current × 2.5 + 50
-        const maxBound = Math.min(
-          GROWTH_RATE_MAX,
-          Math.max(
-            current.weeklyProfitGrowthRate + 5,
-            current.weeklyProfitGrowthRate * GROWTH_MAXIMIZATION_FACTOR + 10,
-          ),
-        );
-        const minBound = Math.max(GROWTH_RATE_MIN, current.weeklyProfitGrowthRate);
-        const maximizedGrowthRate = round2(clampNum(
-          aiMax.maximizedGrowthRate,
-          minBound, maxBound,
-          maximization.maximizedGrowthRate,
-        ));
-        const growthUplift = round2(clampNum(
-          Math.max(0, maximizedGrowthRate - current.weeklyProfitGrowthRate),
-          UPLIFT_MIN, UPLIFT_MAX, 0,
-        ));
-
-        // Override growthAccelerationActions
-        let growthAccelerationActions = maximization.growthAccelerationActions;
-        if (Array.isArray(aiMax.growthAccelerationActions) &&
-            aiMax.growthAccelerationActions.length >= 4) {
-          const aiAct: GrowthAction[] = [];
-          for (const a of aiMax.growthAccelerationActions.slice(0, MAX_ACTIONS)) {
-            if (!a || typeof a !== 'object') continue;
-            aiAct.push({
-              action: clampString(a.action, 200, 'Akcija za growth acceleration.'),
-              expectedGrowthLift: round2(clampNum(
-                a.expectedGrowthLift, UPLIFT_MIN, UPLIFT_MAX, 1.0,
-              )),
-              timeline: clampString(a.timeline, 100, '2-4 tedne'),
-              difficulty: clampEnum(a.difficulty, VALID_DIFFICULTY, 'MEDIUM'),
-            });
-          }
-          if (aiAct.length >= 4) {
-            growthAccelerationActions = aiAct;
-          }
-        }
-
-        // Override growthTrajectory — must be 8 entries with weeks 1-8
-        let growthTrajectory = maximization.growthTrajectory;
-        if (Array.isArray(aiMax.growthTrajectory) &&
-            aiMax.growthTrajectory.length >= 8) {
-          const aiTraj: GrowthTrajectoryEntry[] = [];
-          for (const expected of [1, 2, 3, 4, 5, 6, 7, 8]) {
-            const ai = aiMax.growthTrajectory.find(
-              (p) => p && Number(p.week) === expected,
-            );
-            if (!ai) continue;
-            aiTraj.push({
-              week: expected,
-              currentProjectedProfit: round2(clampNum(
-                ai.currentProjectedProfit,
-                TRAJECTORY_MIN, TRAJECTORY_MAX, current.currentDailyProfit,
-              )),
-              maximizedProjectedProfit: round2(clampNum(
-                ai.maximizedProjectedProfit,
-                TRAJECTORY_MIN, TRAJECTORY_MAX, current.currentDailyProfit,
-              )),
-            });
-          }
-          if (aiTraj.length === 8) {
-            growthTrajectory = aiTraj;
-          }
-        }
-
-        // Override growthBottlenecks
-        let growthBottlenecks = maximization.growthBottlenecks;
-        if (Array.isArray(aiMax.growthBottlenecks) &&
-            aiMax.growthBottlenecks.length >= 3) {
-          const aiBn: string[] = [];
-          for (const b of aiMax.growthBottlenecks.slice(0, MAX_BOTTLENECKS)) {
-            aiBn.push(clampString(b, 200, 'Growth bottleneck neopisan.'));
-          }
-          if (aiBn.length >= 3) {
-            growthBottlenecks = aiBn;
-          }
-        }
-
-        // Override growthSustainability
-        const growthSustainability = round0(clampNum(
-          aiMax.growthSustainability,
-          SUSTAINABILITY_MIN, SUSTAINABILITY_MAX,
-          maximization.growthSustainability,
-        ));
-
-        // Override growthGrade
-        const growthGrade = aiMax.growthGrade
-          ? clampEnum(aiMax.growthGrade, VALID_GRADE, decideGrowthGrade(maximizedGrowthRate, growthSustainability))
-          : decideGrowthGrade(maximizedGrowthRate, growthSustainability);
-
-        // Override doublingTime
-        const doublingTime = round0(clampNum(
-          aiMax.doublingTime ?? computeDoublingTime(maximizedGrowthRate),
-          DOUBLING_MIN, DOUBLING_MAX, computeDoublingTime(maximizedGrowthRate),
-        ));
-
-        maximization = {
-          currentGrowthRate: current.weeklyProfitGrowthRate,
-          maximizedGrowthRate,
-          growthUplift,
-          growthAccelerationActions,
-          growthTrajectory,
-          growthBottlenecks,
-          growthSustainability,
-          growthGrade,
-          doublingTime,
-        };
-
-        summary = clampString(parsed.summary, 500, buildSummary(current, maximization));
-        aiUsed = true;
-      }
+      const merged = mergeAiIntoMaximization(parsed, current, maximization, summary);
+      maximization = merged.maximization;
+      summary = merged.summary;
+      aiUsed = merged.aiUsed;
     } catch (err) {
       logger.warn(
         '/api/ai/inventory-profit-per-day-growth-maximizer',
@@ -971,22 +996,15 @@ VRNI LE JSON:
       setCachedAI(cacheKey, { maximization, summary });
     }
 
-    return NextResponse.json({
+    return apiOk({
       ok: true,
       current,
       maximization,
       summary,
       aiUsed,
     } satisfies ProfitPerDayGrowthResponse);
-  } catch (err: any) {
-    logger.error(
-      '/api/ai/inventory-profit-per-day-growth-maximizer',
-      'handler failed',
-      err,
-    );
-    return NextResponse.json(
-      { error: err?.message ?? 'Napaka' },
-      { status: 500 },
-    );
-  }
-}
+  },
+});
+
+export const GET = inventoryProfitPerDayGrowthMaximizerHandler;
+export const POST = inventoryProfitPerDayGrowthMaximizerHandler;

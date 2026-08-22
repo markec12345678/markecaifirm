@@ -1,4 +1,7 @@
-// v8.44: Smart Restock Recommendations API.
+// v8.44 / v8.95.8-other1: Smart Restock Recommendations API.
+// Refaktoriran z withAiRoute helperjem (v8.95.8-other1) + enforceBudget guard
+// (konsistentno z vsemi v8.94.x / v8.95.x migracijami — endpoint ne kliče AI
+// providerja, je deterministic; vendar ohranjamo guard za konsistentnost).
 //
 // GET /api/ai/restock-smart
 //   → RestockResult {
@@ -16,13 +19,15 @@
 // + current held inventory). Results cached 5 minutes (inventory changes
 // rarely, historical aggregates even less so).
 
-import { NextResponse } from 'next/server';
-import { logger } from '@/lib/logger';
+import { withAiRoute, AI_ROUTE_DEFAULTS, type AiRouteContext } from '@/lib/with-ai-route';
+import { apiOk } from '@/lib/api-response';
 import { getRestockRecommendations } from '@/lib/trades/restock-recommendations';
 
-export const runtime = 'nodejs';
-export const dynamic = 'force-dynamic';
+export const { runtime, dynamic } = AI_ROUTE_DEFAULTS;
 export const maxDuration = 30; // aggregation + DB scan — allow up to 30s
+
+// eslint-disable-next-line @typescript-eslint/no-empty-object-type
+interface RestockSmartInput {}
 
 // In-memory cache (5-min TTL). Restock data changes when trades are
 // bought/sold — 5 min is a reasonable freshness window for a "what to buy
@@ -34,12 +39,25 @@ interface CacheEntry {
 const CACHE_TTL_MS = 5 * 60 * 1000;
 let cache: CacheEntry | null = null;
 
-export async function GET() {
-  try {
+export const GET = withAiRoute<RestockSmartInput>({
+  endpoint: '/api/ai/restock-smart',
+  maxDuration: 30,
+  enforceBudget: true, // v8.95.8-other1: budget guard (konsistentno z vsemi AI route-i)
+  method: 'GET',
+
+  parseBody: async () => ({}),
+
+  // Brez validateInput — endpoint nima inputa
+
+  handler: async (_input, ctx: AiRouteContext) => {
+    const { logger } = ctx;
+
+    // 1. Cache hit?
     if (cache && Date.now() - cache.ts < CACHE_TTL_MS) {
-      return NextResponse.json(cache.result);
+      return apiOk(cache.result);
     }
 
+    // 2. Compute fresh
     const result = await getRestockRecommendations();
     cache = { result, ts: Date.now() };
 
@@ -54,12 +72,6 @@ export async function GET() {
       cacheTtlMin: 5,
     });
 
-    return NextResponse.json(result);
-  } catch (err: any) {
-    logger.error('/api/ai/restock-smart', 'GET handler failed', err);
-    return NextResponse.json(
-      { ok: false, error: err?.message ?? 'Napaka' },
-      { status: 500 },
-    );
-  }
-}
+    return apiOk(result);
+  },
+});

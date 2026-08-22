@@ -1,22 +1,33 @@
-// v6.15: AI Predictive Stockout Alerts — napove primanjkljaj kategorij v inventarju
+// v6.15 / v8.96.1-batch3: AI Predictive Stockout Alerts — napove primanjkljaj kategorij v inventarju
+// Refaktoriran z withAiRoute helperjem (v8.96.1-batch3) + enforceBudget guard.
+//
 // POST /api/ai/predictive-stockout
 // Body: { forecastDays?: number }
 // Returns: { ok, predictions: Array<{ category, currentStock, depletionRate, daysToStockout, stockoutDate, severity, recommendation }>, restockAlerts, insights }
 
-import { NextRequest, NextResponse } from 'next/server';
-import { db } from '@/lib/db';
-import { getSettingsRow } from '@/lib/pipeline';
-import { callProviderForRaw, parseJsonLooseExported, type AiProviderType, type AiSettings } from '@/lib/ai';
-import { logger } from '@/lib/logger';
+import { withAiRoute, AI_ROUTE_DEFAULTS, type AiRouteContext } from '@/lib/with-ai-route';
+import { apiOk } from '@/lib/api-response';
 
-export const runtime = 'nodejs';
-export const dynamic = 'force-dynamic';
+export const { runtime, dynamic } = AI_ROUTE_DEFAULTS;
 export const maxDuration = 90;
 
-export async function POST(req: NextRequest) {
-  try {
+interface PredictiveStockoutInput {
+  forecastDays: number;
+}
+
+export const POST = withAiRoute<PredictiveStockoutInput>({
+  endpoint: '/api/ai/predictive-stockout',
+  maxDuration: 90,
+  enforceBudget: true,
+
+  parseBody: async (req) => {
     const body = await req.json().catch(() => ({}));
-    const forecastDays = Math.max(7, Math.min(180, Number(body?.forecastDays) || 30));
+    return { forecastDays: Math.max(7, Math.min(180, Number(body?.forecastDays) || 30)) };
+  },
+
+  handler: async (input, ctx: AiRouteContext) => {
+    const { db, callAi, parseAi } = ctx;
+    const { forecastDays } = input;
 
     // 1. Pridobi held trades za trenutni stock
     const heldTrades = await db.trade.findMany({
@@ -35,7 +46,7 @@ export async function POST(req: NextRequest) {
     });
 
     if (heldTrades.length === 0 && soldTrades.length === 0) {
-      return NextResponse.json({
+      return apiOk({
         ok: true,
         predictions: [],
         message: 'Ni dovolj podatkov za napoved primanjkljaja.',
@@ -137,20 +148,22 @@ export async function POST(req: NextRequest) {
     });
 
     // 6. AI analiza in priporočila
-    const settings = await getSettingsRow();
-    const aiSettings: AiSettings = {
-      provider: settings.aiProvider as AiProviderType,
-      baseUrl: settings.aiBaseUrl, apiKey: settings.aiApiKey, model: settings.aiModel,
-      fallbackProvider: (settings.fallbackProvider || '') as AiProviderType | '',
-      fallbackBaseUrl: settings.fallbackBaseUrl || '', fallbackApiKey: settings.fallbackApiKey || '',
-      fallbackModel: settings.fallbackModel || '',
-    };
-
     const predsStr = predictions.slice(0, 20).map(p =>
       `- ${p.category}: ${p.currentStock} itemov (${p.currentValue}€), depletion ${p.depletionRate}/mesec, ${p.daysToStockout !== null ? `${p.daysToStockout}d do stockout` : 'ni prodaj'}, severity ${p.severity}`
     ).join('\n');
 
-    const prompt = `Si ekspert za supply chain management pri preprodaji rabljenih dobrin.
+    const prompt = buildPrompt(predsStr, forecastDays);
+    const raw = await callAi(prompt);
+    const parsed: any = parseAi(raw);
+
+    return apiOk(transformResponse(parsed, predictions, currentStock, heldTrades.length, forecastDays));
+  },
+});
+
+// --- Pomožne funkcije (čiste, testabilne) --------------------------------
+
+function buildPrompt(predsStr: string, forecastDays: number): string {
+  return `Si ekspert za supply chain management pri preprodaji rabljenih dobrin.
 Analiziraj stock levels in napovej primanjkljaj (stockout) za naslednje ${forecastDays} dni.
 
 TRENUTNO STANJE IN PRODAJNA ZGODOVINA:
@@ -193,76 +206,53 @@ Odgovori LE z JSON:
     }
   ]
 }`;
+}
 
-    let raw = '';
-    try {
-      raw = await callProviderForRaw(aiSettings, prompt);
-    } catch (primaryError: any) {
-      if (aiSettings.fallbackProvider && aiSettings.fallbackModel) {
-        const fb: AiSettings = {
-          provider: aiSettings.fallbackProvider,
-          baseUrl: aiSettings.fallbackBaseUrl || '',
-          apiKey: aiSettings.fallbackApiKey || '',
-          model: aiSettings.fallbackModel,
-        };
-        raw = await callProviderForRaw(fb, prompt);
-      } else {
-        return NextResponse.json({ error: primaryError?.message ?? 'AI failed' }, { status: 500 });
-      }
-    }
+function transformResponse(
+  parsed: any,
+  predictions: Array<{ severity: string }>,
+  currentStock: Record<string, { value: number }>,
+  heldTradesLength: number,
+  forecastDays: number
+): any {
+  const recommendations = (parsed?.recommendations || []).slice(0, 15).map((r: any) => ({
+    category: String(r?.category ?? '').slice(0, 50),
+    action: ['restock_now', 'start_sourcing', 'reduce', 'maintain', 'liquidate'].includes(String(r?.action))
+      ? String(r.action) : 'maintain',
+    suggestedQuantity: Math.max(0, Math.min(50, Number(r?.suggested_quantity ?? 0))),
+    urgency: Math.max(1, Math.min(10, Number(r?.urgency ?? 5))),
+    expectedRevenueEur: Math.max(0, Number(r?.expected_revenue_eur ?? 0)),
+    sourcingHint: String(r?.sourcing_hint ?? '').slice(0, 200),
+    reasoning: String(r?.reasoning ?? '').slice(0, 200),
+  }));
 
-    const parsed: any = parseJsonLooseExported(raw);
+  const restockAlerts = (parsed?.restock_alerts || []).slice(0, 10).map((a: any) => ({
+    category: String(a?.category ?? '').slice(0, 50),
+    alertLevel: ['critical', 'high', 'medium'].includes(String(a?.alert_level)) ? String(a.alert_level) : 'medium',
+    deadlineDays: Math.max(0, Number(a?.deadline_days ?? 0)),
+    message: String(a?.message ?? '').slice(0, 250),
+  }));
 
-    const recommendations = (parsed?.recommendations || []).slice(0, 15).map((r: any) => ({
-      category: String(r?.category ?? '').slice(0, 50),
-      action: ['restock_now', 'start_sourcing', 'reduce', 'maintain', 'liquidate'].includes(String(r?.action))
-        ? String(r.action) : 'maintain',
-      suggestedQuantity: Math.max(0, Math.min(50, Number(r?.suggested_quantity ?? 0))),
-      urgency: Math.max(1, Math.min(10, Number(r?.urgency ?? 5))),
-      expectedRevenueEur: Math.max(0, Number(r?.expected_revenue_eur ?? 0)),
-      sourcingHint: String(r?.sourcing_hint ?? '').slice(0, 200),
-      reasoning: String(r?.reasoning ?? '').slice(0, 200),
-    }));
+  // Summary
+  const criticalCount = predictions.filter(p => p.severity === 'critical').length;
+  const highCount = predictions.filter(p => p.severity === 'high').length;
+  const stagnantCount = predictions.filter(p => p.severity === 'stagnant').length;
+  const totalStockValue = Object.values(currentStock).reduce((s, c) => s + c.value, 0);
 
-    const restockAlerts = (parsed?.restock_alerts || []).slice(0, 10).map((a: any) => ({
-      category: String(a?.category ?? '').slice(0, 50),
-      alertLevel: ['critical', 'high', 'medium'].includes(String(a?.alert_level)) ? String(a.alert_level) : 'medium',
-      deadlineDays: Math.max(0, Number(a?.deadline_days ?? 0)),
-      message: String(a?.message ?? '').slice(0, 250),
-    }));
-
-    // Summary
-    const criticalCount = predictions.filter(p => p.severity === 'critical').length;
-    const highCount = predictions.filter(p => p.severity === 'high').length;
-    const stagnantCount = predictions.filter(p => p.severity === 'stagnant').length;
-    const totalStockValue = Object.values(currentStock).reduce((s, c) => s + c.value, 0);
-
-    // Increment AI usage
-    const today = new Date().toISOString().slice(0, 10);
-    if (settings.aiCallsDate !== today) {
-      await db.settings.update({ where: { id: 'singleton' }, data: { aiCallsDate: today, aiCallsToday: 1 } });
-    } else {
-      await db.settings.update({ where: { id: 'singleton' }, data: { aiCallsToday: { increment: 1 } } });
-    }
-
-    return NextResponse.json({
-      ok: true,
-      insights: String(parsed?.insights ?? '').slice(0, 600),
-      predictions,
-      recommendations,
-      restockAlerts,
-      summary: {
-        totalCategories: predictions.length,
-        criticalCount,
-        highCount,
-        stagnantCount,
-        totalStockValue: Math.round(totalStockValue),
-        totalItems: heldTrades.length,
-        forecastDays,
-      },
-    });
-  } catch (e: any) {
-    logger.error("/api/ai/predictive-stockout", "POST handler failed", e);
-    return NextResponse.json({ error: e?.message ?? 'Napaka' }, { status: 500 });
-  }
+  return {
+    ok: true,
+    insights: String(parsed?.insights ?? '').slice(0, 600),
+    predictions,
+    recommendations,
+    restockAlerts,
+    summary: {
+      totalCategories: predictions.length,
+      criticalCount,
+      highCount,
+      stagnantCount,
+      totalStockValue: Math.round(totalStockValue),
+      totalItems: heldTradesLength,
+      forecastDays,
+    },
+  };
 }

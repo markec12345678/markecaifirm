@@ -1,80 +1,56 @@
-// v5.2: Smart Filters — AI predlaga keywords/excludeKeywords glede na pretekle rezultate
+// v5.2 / v8.94-refactor: Smart Filters — AI predlaga keywords/excludeKeywords
+// Refaktoriran z withAiRoute helperjem (v8.94) + enforceBudget guard.
+//
 // POST /api/ai/suggest-filters
 // Body: { monitorId: string } — analiza existing listings za ta monitor
 // Body: { source: string, sourceUrl: string, currentKeywords?: string, currentExcludeKeywords?: string } — analiza brez monitorja
-// Returns: { ok, suggestions: { keywords, excludeKeywords, reasoning, confidence, sampleBadListings, sampleGoodListings } }
+// Returns: { ok, suggestions: { keywords, excludeKeywords, reasoning, confidence, ... } }
 
-import { NextRequest, NextResponse } from 'next/server';
-import { db } from '@/lib/db';
-import { getSettingsRow } from '@/lib/pipeline';
-import { callProviderForRaw, parseJsonLooseExported, type AiProviderType, type AiSettings } from '@/lib/ai';
-import { logger } from '@/lib/logger';
+import { NextResponse } from 'next/server';
+import { withAiRoute, AI_ROUTE_DEFAULTS, ApiRouteError, type AiRouteContext } from '@/lib/with-ai-route';
+import { apiOk, apiBadRequest } from '@/lib/api-response';
 
-export const runtime = 'nodejs';
-export const dynamic = 'force-dynamic';
+export const { runtime, dynamic } = AI_ROUTE_DEFAULTS;
 export const maxDuration = 60;
 
-export async function POST(req: NextRequest) {
-  try {
-    const body = await req.json();
-    const monitorId = body?.monitorId;
-    const source = body?.source;
-    const sourceUrl = body?.sourceUrl;
-    const currentKeywords = body?.currentKeywords ?? '';
-    const currentExcludeKeywords = body?.currentExcludeKeywords ?? '';
+interface SuggestFiltersInput {
+  monitorId?: string;
+  source?: string;
+  sourceUrl?: string;
+  currentKeywords?: string;
+  currentExcludeKeywords?: string;
+}
 
-    // Gather existing listings for analysis
-    let listings: any[] = [];
-    let monitorInfo: any = null;
+export const POST = withAiRoute<SuggestFiltersInput>({
+  endpoint: '/api/ai/suggest-filters',
+  maxDuration: 60,
+  enforceBudget: true,
 
-    if (monitorId) {
-      const monitor = await db.monitor.findUnique({ where: { id: monitorId } });
-      if (!monitor) {
-        return NextResponse.json({ error: 'Monitor ne obstaja' }, { status: 404 });
-      }
-      monitorInfo = monitor;
-      listings = await db.listing.findMany({
-        where: { monitorId },
-        orderBy: { firstSeenAt: 'desc' },
-        take: 100,
-        select: {
-          id: true,
-          title: true,
-          price: true,
-          priceText: true,
-          location: true,
-          description: true,
-          aiVerdict: true,
-          aiScore: true,
-          aiRisk: true,
-          aiReason: true,
-          aiEstimatedValue: true,
-          dealScore: true,
-          isBookmarked: true,
-          isHidden: true,
-          firstSeenAt: true,
-        },
-      });
-    } else if (source && sourceUrl) {
-      // No monitor yet — use URL/source as context
-      monitorInfo = { source, sourceUrl, name: 'Nov monitor', keywords: currentKeywords, excludeKeywords: currentExcludeKeywords };
-    } else {
-      return NextResponse.json({ error: 'Potreben je monitorId ali (source + sourceUrl)' }, { status: 400 });
-    }
-
-    const settings = await getSettingsRow();
-    const aiSettings: AiSettings = {
-      provider: settings.aiProvider as AiProviderType,
-      baseUrl: settings.aiBaseUrl,
-      apiKey: settings.aiApiKey,
-      model: settings.aiModel,
-      fallbackProvider: (settings.fallbackProvider || '') as AiProviderType | '',
-      fallbackBaseUrl: settings.fallbackBaseUrl || '',
-      fallbackApiKey: settings.fallbackApiKey || '',
-      fallbackModel: settings.fallbackModel || '',
+  parseBody: async (req) => {
+    const body = await req.json().catch(() => ({}));
+    return {
+      monitorId: body?.monitorId ? String(body.monitorId) : undefined,
+      source: body?.source ? String(body.source) : undefined,
+      sourceUrl: body?.sourceUrl ? String(body.sourceUrl) : undefined,
+      currentKeywords: body?.currentKeywords ? String(body.currentKeywords) : '',
+      currentExcludeKeywords: body?.currentExcludeKeywords ? String(body.currentExcludeKeywords) : '',
     };
+  },
 
-    // Categorize listings by quality
+  validateInput: (input) => {
+    if (!input.monitorId && !(input.source && input.sourceUrl)) {
+      return 'Potreben je monitorId ali (source + sourceUrl)';
+    }
+    return null;
+  },
+
+  handler: async (input, ctx: AiRouteContext) => {
+    const { db, callAi, parseAi } = ctx;
+
+    // 1. Pridobi monitor in listings
+    const { monitor, listings } = await resolveMonitorAndListings(input, db);
+
+    // 2. Kategoriziraj listings po kakovosti
     const goodListings = listings.filter(l =>
       l.aiVerdict === 'PRILIKA' || (l.dealScore != null && l.dealScore >= 60) || l.isBookmarked
     ).slice(0, 15);
@@ -85,26 +61,12 @@ export async function POST(req: NextRequest) {
       l.aiVerdict === 'NEZANIMIVO' || (l.aiScore != null && l.aiScore < 5)
     ).slice(0, 10);
 
-    const prompt = buildFilterPrompt(monitorInfo, listings, goodListings, badListings, neutralListings);
+    // 3. AI klic
+    const prompt = buildFilterPrompt(monitor, listings, goodListings, badListings, neutralListings);
+    const raw = await callAi(prompt);
+    const parsed: any = parseAi(raw);
 
-    let raw = '';
-    try {
-      raw = await callProviderForRaw(aiSettings, prompt);
-    } catch (primaryError: any) {
-      if (aiSettings.fallbackProvider && aiSettings.fallbackModel) {
-        const fallbackSettings: AiSettings = {
-          provider: aiSettings.fallbackProvider,
-          baseUrl: aiSettings.fallbackBaseUrl || '',
-          apiKey: aiSettings.fallbackApiKey || '',
-          model: aiSettings.fallbackModel,
-        };
-        raw = await callProviderForRaw(fallbackSettings, prompt);
-      } else {
-        throw primaryError;
-      }
-    }
-
-    const parsed: any = parseJsonLooseExported(raw);
+    // 4. Transformacija rezultata
     const suggestions = {
       keywords: String(parsed?.keywords ?? parsed?.kljucne_besede ?? '').slice(0, 500),
       excludeKeywords: String(parsed?.exclude_keywords ?? parsed?.excludeKeywords ?? parsed?.izkljucene_besede ?? '').slice(0, 500),
@@ -114,32 +76,53 @@ export async function POST(req: NextRequest) {
       sampleGoodListings: parsed?.sample_good ?? parsed?.dobri_primeri ?? [],
     };
 
-    // Increment AI usage counter
-    const today = new Date().toISOString().slice(0, 10);
-    if (settings.aiCallsDate !== today) {
-      await db.settings.update({
-        where: { id: 'singleton' },
-        data: { aiCallsDate: today, aiCallsToday: 1 },
-      });
-    } else {
-      await db.settings.update({
-        where: { id: 'singleton' },
-        data: { aiCallsToday: { increment: 1 } },
-      });
-    }
-
-    return NextResponse.json({
-      ok: true,
+    return apiOk({
       suggestions,
-      currentKeywords: monitorInfo?.keywords ?? currentKeywords,
-      currentExcludeKeywords: monitorInfo?.excludeKeywords ?? currentExcludeKeywords,
+      currentKeywords: monitor.keywords ?? input.currentKeywords ?? '',
+      currentExcludeKeywords: monitor.excludeKeywords ?? input.currentExcludeKeywords ?? '',
       analyzedListings: listings.length,
       analyzedAt: new Date().toISOString(),
     });
-  } catch (e: any) {
-    logger.error("/api/ai/suggest-filters", "POST handler failed", e);
-    return NextResponse.json({ error: e?.message ?? 'Napaka pri AI analizi filtrov' }, { status: 500 });
+  },
+});
+
+// --- Pomožne funkcije -----------------------------------------------------
+
+async function resolveMonitorAndListings(
+  input: SuggestFiltersInput,
+  db: AiRouteContext['db']
+): Promise<{ monitor: any; listings: any[] }> {
+  if (input.monitorId) {
+    const monitor = await db.monitor.findUnique({ where: { id: input.monitorId } });
+    if (!monitor) {
+      throw new ApiRouteError('Monitor ne obstaja', 404);
+    }
+    const listings = await db.listing.findMany({
+      where: { monitorId: input.monitorId },
+      orderBy: { firstSeenAt: 'desc' },
+      take: 100,
+      select: {
+        id: true, title: true, price: true, priceText: true,
+        location: true, description: true,
+        aiVerdict: true, aiScore: true, aiRisk: true, aiReason: true,
+        aiEstimatedValue: true, dealScore: true,
+        isBookmarked: true, isHidden: true, firstSeenAt: true,
+      },
+    });
+    return { monitor, listings };
   }
+
+  // Direct mode (brez monitorja)
+  return {
+    monitor: {
+      source: input.source,
+      sourceUrl: input.sourceUrl,
+      name: 'Nov monitor',
+      keywords: input.currentKeywords,
+      excludeKeywords: input.currentExcludeKeywords,
+    },
+    listings: [],
+  };
 }
 
 function buildFilterPrompt(monitor: any, allListings: any[], good: any[], bad: any[], neutral: any[]): string {
@@ -196,7 +179,7 @@ function buildFilterPrompt(monitor: any, allListings: any[], good: any[], bad: a
   return parts.join('\n');
 }
 
-function clampInt(v: any, min: number, max: number): number | null {
+function clampInt(v: unknown, min: number, max: number): number | null {
   if (v === null || v === undefined || v === '') return null;
   const n = typeof v === 'number' ? v : parseInt(String(v), 10);
   if (Number.isNaN(n)) return null;

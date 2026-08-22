@@ -1,16 +1,14 @@
-// v6.46: AI Auction Sniper v2 — napreden sniper z ML timing, anti-snipe in multi-platform podporo
+// v6.46 / v8.94-refactor: AI Auction Sniper v2 — napreden sniper z ML timing, anti-snipe in multi-platform podporo
+// Refaktoriran z withAiRoute helperjem (v8.94) + enforceBudget guard.
+//
 // POST /api/ai/auction-sniper-v2
 // Body: { listingId?: string, listing?: { title, price, location, source, postedAt, endsAt? } }
 // Returns: { ok, strategy: { mode, timing, bid, defenses, scenarios, summary } }
 
-import { NextRequest, NextResponse } from 'next/server';
-import { db } from '@/lib/db';
-import { getSettingsRow } from '@/lib/pipeline';
-import { callProviderForRaw, parseJsonLooseExported, type AiProviderType, type AiSettings } from '@/lib/ai';
-import { logger } from '@/lib/logger';
+import { withAiRoute, AI_ROUTE_DEFAULTS, ApiRouteError, type AiRouteContext } from '@/lib/with-ai-route';
+import { apiOk } from '@/lib/api-response';
 
-export const runtime = 'nodejs';
-export const dynamic = 'force-dynamic';
+export const { runtime, dynamic } = AI_ROUTE_DEFAULTS;
 export const maxDuration = 90;
 
 interface ListingInput {
@@ -26,12 +24,47 @@ interface ListingInput {
   currentBid?: number;
 }
 
-export async function POST(req: NextRequest) {
-  try {
-    const body = await req.json().catch(() => ({}));
-    const { listingId } = body;
-    let listingInput: ListingInput | null = body?.listing ?? null;
+interface AuctionSniperInput {
+  listingId?: string;
+  listing: ListingInput | null;
+}
 
+interface PromptContext {
+  title: string;
+  price: number | null;
+  location: string;
+  description: string;
+  source: string;
+  listingAgeHours: number;
+  hoursUntilEnd: number | null;
+  currentBidders: number;
+  currentBid: number | null;
+  recentSold: Array<{
+    title: string;
+    buyPrice: number | null;
+    sellPrice: number | null;
+  }>;
+}
+
+export const POST = withAiRoute<AuctionSniperInput>({
+  endpoint: '/api/ai/auction-sniper-v2',
+  maxDuration: 90,
+  enforceBudget: true, // AI klic — preveri budget
+
+  parseBody: async (req) => {
+    const body = await req.json().catch(() => ({}));
+    return {
+      listingId: body?.listingId ? String(body.listingId) : undefined,
+      listing: body?.listing ?? null,
+    };
+  },
+
+  // No validateInput — listingId/listing sta opcijska (fallback na PRILIKA listing)
+  handler: async (input, ctx: AiRouteContext) => {
+    const { db, callAi, parseAi } = ctx;
+    const { listingId, listing: listingInput } = input;
+
+    // 1. Pridobi listing podatke
     let title = '';
     let price: number | null = null;
     let location = '';
@@ -53,7 +86,7 @@ export async function POST(req: NextRequest) {
           monitor: { select: { name: true, source: true } },
         },
       });
-      if (!listing) return NextResponse.json({ error: 'Listing ne obstaja' }, { status: 404 });
+      if (!listing) throw new ApiRouteError('Listing ne obstaja', 404);
       title = listing.title;
       price = listing.price;
       location = listing.location;
@@ -83,7 +116,7 @@ export async function POST(req: NextRequest) {
           monitor: { select: { name: true, source: true } },
         },
       });
-      if (!listing) return NextResponse.json({ ok: true, strategy: null, message: 'Ni primernega listinga za auction sniper.' });
+      if (!listing) return apiOk({ ok: true, strategy: null, message: 'Ni primernega listinga za auction sniper.' });
       title = listing.title;
       price = listing.price;
       location = listing.location;
@@ -91,15 +124,6 @@ export async function POST(req: NextRequest) {
       source = listing.monitor?.source || 'bolha';
       postedAt = listing.postedAt ?? listing.firstSeenAt;
     }
-
-    const settings = await getSettingsRow();
-    const aiSettings: AiSettings = {
-      provider: settings.aiProvider as AiProviderType,
-      baseUrl: settings.aiBaseUrl, apiKey: settings.aiApiKey, model: settings.aiModel,
-      fallbackProvider: (settings.fallbackProvider || '') as AiProviderType | '',
-      fallbackBaseUrl: settings.fallbackBaseUrl || '', fallbackApiKey: settings.fallbackApiKey || '',
-      fallbackModel: settings.fallbackModel || '',
-    };
 
     const now = Date.now();
     const postedAtTime = postedAt ? postedAt.getTime() : now;
@@ -115,7 +139,27 @@ export async function POST(req: NextRequest) {
       orderBy: { sellDate: 'desc' },
     });
 
-    const prompt = `Si AI auction sniper v2 z ML timing modelom za slovenske oglasne platforme.
+    // 2. AI klic
+    const prompt = buildPrompt({
+      title, price, location, description, source,
+      listingAgeHours, hoursUntilEnd, currentBidders, currentBid, recentSold,
+    });
+    const raw = await callAi(prompt);
+    const parsed: unknown = parseAi(raw);
+
+    // 3. Transformacija rezultatov
+    const strategy = transformStrategy(parsed, price);
+
+    return apiOk({ ok: true, strategy });
+  },
+});
+
+// --- Pomožne funkcije (čiste, testabilne) --------------------------------
+
+function buildPrompt(ctx: PromptContext): string {
+  const { title, price, location, description, source, listingAgeHours,
+    hoursUntilEnd, currentBidders, currentBid, recentSold } = ctx;
+  return `Si AI auction sniper v2 z ML timing modelom za slovenske oglasne platforme.
 Analiziraj listing in predlagaj optimalno bid strategijo z naprednim timingom.
 
 LISTING:
@@ -196,75 +240,117 @@ Odgovori LE z JSON:
     "fallback_action": "<max 100 znakov>"
   }
 }`;
+}
 
-    let raw = '';
-    try { raw = await callProviderForRaw(aiSettings, prompt); }
-    catch (primaryError: any) {
-      if (aiSettings.fallbackProvider && aiSettings.fallbackModel) {
-        const fb: AiSettings = { provider: aiSettings.fallbackProvider, baseUrl: aiSettings.fallbackBaseUrl || '', apiKey: aiSettings.fallbackApiKey || '', model: aiSettings.fallbackModel };
-        raw = await callProviderForRaw(fb, prompt);
-      } else { return NextResponse.json({ error: primaryError?.message ?? 'AI failed' }, { status: 500 }); }
-    }
+interface StrategyResult {
+  insights: string;
+  mode: string;
+  action: string;
+  timing: {
+    waitUntilSecondsBeforeEnd: number;
+    optimalBidWindowSeconds: number;
+    earliestBidTime: string;
+    latestBidTime: string;
+    delayBetweenBidsSeconds: number;
+    antiSnipeBufferSeconds: number;
+    timezone: string;
+  };
+  bid: {
+    startingBidEur: number;
+    incrementStrategy: string;
+    maxBidEur: number;
+    snipeBidEur: number;
+    buyNowPriceEur: number;
+    expectedWinningBidEur: number;
+    winProbabilityPct: number;
+    expectedProfitEur: number;
+    bidCountPlanned: number;
+  };
+  defenses: Array<{
+    defense: string;
+    description: string;
+    trigger: string;
+    responseAction: string;
+  }>;
+  scenarios: Array<{
+    scenario: string;
+    probabilityPct: number;
+    expectedOutcome: string;
+    bestResponse: string;
+  }>;
+  competitorAnalysis: {
+    expectedBidders: number;
+    likelyMaxCompetitorBidEur: number;
+    competitionLevel: string;
+    bestStrategyVsCompetition: string;
+  };
+  summary: {
+    winProbabilityPct: number;
+    expectedProfitEur: number;
+    maxAcceptableBidEur: number;
+    optimalTiming: string;
+    biggestRisk: string;
+    sniperEfficiencyScore: number;
+    fallbackAction: string;
+  };
+}
 
-    const parsed: any = parseJsonLooseExported(raw);
-
-    const strategy = {
-      insights: String(parsed?.insights ?? '').slice(0, 500),
-      mode: ['aggressive', 'patient', 'psychological', 'incremental', 'decoy'].includes(String(parsed?.mode)) ? String(parsed.mode) : 'patient',
-      action: ['bid_now', 'wait', 'monitor', 'skip'].includes(String(parsed?.action)) ? String(parsed.action) : 'monitor',
-      timing: {
-        waitUntilSecondsBeforeEnd: Math.max(0, Math.min(300, Number(parsed?.timing?.wait_until_seconds_before_end ?? 5))),
-        optimalBidWindowSeconds: Math.max(1, Math.min(60, Number(parsed?.timing?.optimal_bid_window_seconds ?? 10))),
-        earliestBidTime: String(parsed?.timing?.earliest_bid_time ?? 'now').slice(0, 50),
-        latestBidTime: String(parsed?.timing?.latest_bid_time ?? '').slice(0, 50),
-        delayBetweenBidsSeconds: Math.max(0, Math.min(60, Number(parsed?.timing?.delay_between_bids_seconds ?? 3))),
-        antiSnipeBufferSeconds: Math.max(0, Math.min(30, Number(parsed?.timing?.anti_snipe_buffer_seconds ?? 5))),
-        timezone: 'Europe/Ljubljana',
-      },
-      bid: {
-        startingBidEur: Math.max(0, Math.round(Number(parsed?.bid?.starting_bid_eur ?? price ?? 0))),
-        incrementStrategy: ['aggressive', 'moderate', 'conservative'].includes(String(parsed?.bid?.increment_strategy)) ? String(parsed.bid.increment_strategy) : 'moderate',
-        maxBidEur: Math.max(0, Math.round(Number(parsed?.bid?.max_bid_eur ?? (price ?? 0) * 1.2))),
-        snipeBidEur: Math.max(0, Math.round(Number(parsed?.bid?.snipe_bid_eur ?? (price ?? 0) * 1.1))),
-        buyNowPriceEur: Math.max(0, Math.round(Number(parsed?.bid?.buy_now_price_eur ?? 0))),
-        expectedWinningBidEur: Math.max(0, Math.round(Number(parsed?.bid?.expected_winning_bid_eur ?? price ?? 0))),
-        winProbabilityPct: Math.max(0, Math.min(100, Number(parsed?.bid?.win_probability_pct ?? 50))),
-        expectedProfitEur: Math.round(Number(parsed?.bid?.expected_profit_eur ?? 0)),
-        bidCountPlanned: Math.max(1, Math.min(10, Number(parsed?.bid?.bid_count_planned ?? 1))),
-      },
-      defenses: (parsed?.defenses || []).slice(0, 6).map((d: any) => ({
-        defense: ['anti_snipe', 'incremental', 'psychological', 'decoy', 'fallback'].includes(String(d?.defense)) ? String(d.defense) : 'anti_snipe',
-        description: String(d?.description ?? '').slice(0, 200),
-        trigger: String(d?.trigger ?? '').slice(0, 150),
-        responseAction: String(d?.response_action ?? '').slice(0, 250),
-      })),
-      scenarios: (parsed?.scenarios || []).slice(0, 6).map((s: any) => ({
-        scenario: String(s?.scenario ?? '').slice(0, 50),
-        probabilityPct: Math.max(0, Math.min(100, Number(s?.probability_pct ?? 30))),
-        expectedOutcome: String(s?.expected_outcome ?? '').slice(0, 200),
-        bestResponse: String(s?.best_response ?? '').slice(0, 250),
-      })),
-      competitorAnalysis: {
-        expectedBidders: Math.max(0, Math.min(20, Number(parsed?.competitor_analysis?.expected_bidders ?? 3))),
-        likelyMaxCompetitorBidEur: Math.round(Number(parsed?.competitor_analysis?.likely_max_competitor_bid_eur ?? (price ?? 0) * 1.15)),
-        competitionLevel: ['low', 'medium', 'high', 'frenzy'].includes(String(parsed?.competitor_analysis?.competition_level)) ? String(parsed.competitor_analysis.competition_level) : 'medium',
-        bestStrategyVsCompetition: String(parsed?.competitor_analysis?.best_strategy_vs_competition ?? '').slice(0, 200),
-      },
-      summary: {
-        winProbabilityPct: Math.max(0, Math.min(100, Number(parsed?.summary?.win_probability_pct ?? 50))),
-        expectedProfitEur: Math.round(Number(parsed?.summary?.expected_profit_eur ?? 0)),
-        maxAcceptableBidEur: Math.max(0, Math.round(Number(parsed?.summary?.max_acceptable_bid_eur ?? (price ?? 0) * 1.3))),
-        optimalTiming: String(parsed?.summary?.optimal_timing ?? '').slice(0, 200),
-        biggestRisk: String(parsed?.summary?.biggest_risk ?? '').slice(0, 200),
-        sniperEfficiencyScore: Math.max(0, Math.min(100, Number(parsed?.summary?.sniper_efficiency_score ?? 60))),
-        fallbackAction: String(parsed?.summary?.fallback_action ?? '').slice(0, 200),
-      },
-    };
-
-    const today = new Date().toISOString().slice(0, 10);
-    if (settings.aiCallsDate !== today) { await db.settings.update({ where: { id: 'singleton' }, data: { aiCallsDate: today, aiCallsToday: 1 } }); }
-    else { await db.settings.update({ where: { id: 'singleton' }, data: { aiCallsToday: { increment: 1 } } }); }
-
-    return NextResponse.json({ ok: true, strategy });
-  } catch (e: any) { logger.error("/api/ai/auction-sniper-v2", "POST handler failed", e); return NextResponse.json({ error: e?.message ?? 'Napaka' }, { status: 500 }); }
+function transformStrategy(parsed: unknown, price: number | null): StrategyResult {
+  const p = (parsed ?? {}) as Record<string, any>;
+  const t = (p?.timing ?? {}) as Record<string, any>;
+  const b = (p?.bid ?? {}) as Record<string, any>;
+  const ca = (p?.competitor_analysis ?? {}) as Record<string, any>;
+  const s = (p?.summary ?? {}) as Record<string, any>;
+  return {
+    insights: String(p?.insights ?? '').slice(0, 500),
+    mode: ['aggressive', 'patient', 'psychological', 'incremental', 'decoy'].includes(String(p?.mode)) ? String(p.mode) : 'patient',
+    action: ['bid_now', 'wait', 'monitor', 'skip'].includes(String(p?.action)) ? String(p.action) : 'monitor',
+    timing: {
+      waitUntilSecondsBeforeEnd: Math.max(0, Math.min(300, Number(t?.wait_until_seconds_before_end ?? 5))),
+      optimalBidWindowSeconds: Math.max(1, Math.min(60, Number(t?.optimal_bid_window_seconds ?? 10))),
+      earliestBidTime: String(t?.earliest_bid_time ?? 'now').slice(0, 50),
+      latestBidTime: String(t?.latest_bid_time ?? '').slice(0, 50),
+      delayBetweenBidsSeconds: Math.max(0, Math.min(60, Number(t?.delay_between_bids_seconds ?? 3))),
+      antiSnipeBufferSeconds: Math.max(0, Math.min(30, Number(t?.anti_snipe_buffer_seconds ?? 5))),
+      timezone: 'Europe/Ljubljana',
+    },
+    bid: {
+      startingBidEur: Math.max(0, Math.round(Number(b?.starting_bid_eur ?? price ?? 0))),
+      incrementStrategy: ['aggressive', 'moderate', 'conservative'].includes(String(b?.increment_strategy)) ? String(b.increment_strategy) : 'moderate',
+      maxBidEur: Math.max(0, Math.round(Number(b?.max_bid_eur ?? (price ?? 0) * 1.2))),
+      snipeBidEur: Math.max(0, Math.round(Number(b?.snipe_bid_eur ?? (price ?? 0) * 1.1))),
+      buyNowPriceEur: Math.max(0, Math.round(Number(b?.buy_now_price_eur ?? 0))),
+      expectedWinningBidEur: Math.max(0, Math.round(Number(b?.expected_winning_bid_eur ?? price ?? 0))),
+      winProbabilityPct: Math.max(0, Math.min(100, Number(b?.win_probability_pct ?? 50))),
+      expectedProfitEur: Math.round(Number(b?.expected_profit_eur ?? 0)),
+      bidCountPlanned: Math.max(1, Math.min(10, Number(b?.bid_count_planned ?? 1))),
+    },
+    defenses: (p?.defenses || []).slice(0, 6).map((d: any) => ({
+      defense: ['anti_snipe', 'incremental', 'psychological', 'decoy', 'fallback'].includes(String(d?.defense)) ? String(d.defense) : 'anti_snipe',
+      description: String(d?.description ?? '').slice(0, 200),
+      trigger: String(d?.trigger ?? '').slice(0, 150),
+      responseAction: String(d?.response_action ?? '').slice(0, 250),
+    })),
+    scenarios: (p?.scenarios || []).slice(0, 6).map((sc: any) => ({
+      scenario: String(sc?.scenario ?? '').slice(0, 50),
+      probabilityPct: Math.max(0, Math.min(100, Number(sc?.probability_pct ?? 30))),
+      expectedOutcome: String(sc?.expected_outcome ?? '').slice(0, 200),
+      bestResponse: String(sc?.best_response ?? '').slice(0, 250),
+    })),
+    competitorAnalysis: {
+      expectedBidders: Math.max(0, Math.min(20, Number(ca?.expected_bidders ?? 3))),
+      likelyMaxCompetitorBidEur: Math.round(Number(ca?.likely_max_competitor_bid_eur ?? (price ?? 0) * 1.15)),
+      competitionLevel: ['low', 'medium', 'high', 'frenzy'].includes(String(ca?.competition_level)) ? String(ca.competition_level) : 'medium',
+      bestStrategyVsCompetition: String(ca?.best_strategy_vs_competition ?? '').slice(0, 200),
+    },
+    summary: {
+      winProbabilityPct: Math.max(0, Math.min(100, Number(s?.win_probability_pct ?? 50))),
+      expectedProfitEur: Math.round(Number(s?.expected_profit_eur ?? 0)),
+      maxAcceptableBidEur: Math.max(0, Math.round(Number(s?.max_acceptable_bid_eur ?? (price ?? 0) * 1.3))),
+      optimalTiming: String(s?.optimal_timing ?? '').slice(0, 200),
+      biggestRisk: String(s?.biggest_risk ?? '').slice(0, 200),
+      sniperEfficiencyScore: Math.max(0, Math.min(100, Number(s?.sniper_efficiency_score ?? 60))),
+      fallbackAction: String(s?.fallback_action ?? '').slice(0, 200),
+    },
+  };
 }

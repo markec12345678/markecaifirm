@@ -1,22 +1,33 @@
-// v6.58: AI Seller Trust Score v2 — advanced seller scoring z ML in behavioral patterns
+// v6.58 / v8.96.3-batch2: AI Seller Trust Score v2 — advanced seller scoring z ML in behavioral patterns
+// Refaktoriran z withAiRoute helperjem (v8.96.3) + enforceBudget guard.
+//
 // POST /api/ai/seller-trust-score-v2
 // Body: { sellerName?: string }
 // Returns: { ok, scoring: { sellers, mlScores, behavioralPatterns, riskIndicators, trustLevels, recommendations, summary } }
 
-import { NextRequest, NextResponse } from 'next/server';
-import { db } from '@/lib/db';
-import { getSettingsRow } from '@/lib/pipeline';
-import { callProviderForRaw, parseJsonLooseExported, type AiProviderType, type AiSettings } from '@/lib/ai';
-import { logger } from '@/lib/logger';
+import { withAiRoute, AI_ROUTE_DEFAULTS, type AiRouteContext } from '@/lib/with-ai-route';
+import { apiOk } from '@/lib/api-response';
 
-export const runtime = 'nodejs';
-export const dynamic = 'force-dynamic';
+export const { runtime, dynamic } = AI_ROUTE_DEFAULTS;
 export const maxDuration = 90;
 
-export async function POST(req: NextRequest) {
-  try {
+interface SellerTrustScoreInput {
+  sellerName: string | null;
+}
+
+export const POST = withAiRoute<SellerTrustScoreInput>({
+  endpoint: '/api/ai/seller-trust-score-v2',
+  maxDuration: 90,
+  enforceBudget: true,
+
+  parseBody: async (req) => {
     const body = await req.json().catch(() => ({}));
-    const sellerName = body?.sellerName ? String(body.sellerName).trim() : null;
+    return { sellerName: body?.sellerName ? String(body.sellerName).trim() : null };
+  },
+
+  handler: async (input, ctx: AiRouteContext) => {
+    const { db, callAi, parseAi } = ctx;
+    const { sellerName } = input;
 
     const trades = await db.trade.findMany({
       where: { buyLocation: { not: '' } },
@@ -29,7 +40,7 @@ export async function POST(req: NextRequest) {
     });
 
     if (trades.length === 0) {
-      return NextResponse.json({ ok: true, scoring: null, message: 'Ni tradeov za seller trust analizo.' });
+      return apiOk({ ok: true, scoring: null, message: 'Ni tradeov za seller trust analizo.' });
     }
 
     // Aggregation per seller
@@ -101,18 +112,9 @@ export async function POST(req: NextRequest) {
     if (sellerName) {
       const filtered = sellers.filter(s => s.name === sellerName);
       if (filtered.length === 0) {
-        return NextResponse.json({ ok: true, scoring: null, message: `Seller "${sellerName}" ni najden.` });
+        return apiOk({ ok: true, scoring: null, message: `Seller "${sellerName}" ni najden.` });
       }
     }
-
-    const settings = await getSettingsRow();
-    const aiSettings: AiSettings = {
-      provider: settings.aiProvider as AiProviderType,
-      baseUrl: settings.aiBaseUrl, apiKey: settings.aiApiKey, model: settings.aiModel,
-      fallbackProvider: (settings.fallbackProvider || '') as AiProviderType | '',
-      fallbackBaseUrl: settings.fallbackBaseUrl || '', fallbackApiKey: settings.fallbackApiKey || '',
-      fallbackModel: settings.fallbackModel || '',
-    };
 
     const targetSellers = sellerName ? sellers.filter(s => s.name === sellerName) : sellers.slice(0, 25);
 
@@ -120,7 +122,34 @@ export async function POST(req: NextRequest) {
       `- ${s.name} | ${s.totalPurchases}x nakup | ${s.totalSpent}€ | ${s.avgPurchasePrice}€ povp | ${s.daysAsCustomer}d | ${s.daysSinceLastPurchase}d zadnji | ${s.categories.size} kat | response ${s.responseRate}% | ${s.locations.size} lokacij | price ${s.priceRange.min}-${s.priceRange.max}€`
     ).join('\n');
 
-    const prompt = `Si AI seller trust score v2 z ML behavioral analysis.
+    const prompt = buildPrompt(targetSellers, sellersStr);
+    const raw = await callAi(prompt);
+    const parsed: any = parseAi(raw);
+    const scoring = transformScoring(parsed, targetSellers);
+
+    return apiOk({ ok: true, scoring });
+  },
+});
+
+// --- Pomožne funkcije (čiste, testabilne) --------------------------------
+
+interface SellerInfo {
+  name: string;
+  totalPurchases: number;
+  totalSpent: number;
+  avgPurchasePrice: number;
+  daysAsCustomer: number;
+  daysSinceLastPurchase: number;
+  categories: Set<string>;
+  contactStatuses: { contacted: number; responded: number; closed: number; none: number };
+  responseRate: number;
+  locations: Set<string>;
+  priceRange: { min: number; max: number };
+  listingAges: number[];
+}
+
+function buildPrompt(targetSellers: SellerInfo[], sellersStr: string): string {
+  return `Si AI seller trust score v2 z ML behavioral analysis.
 Oceni zaupanja vrednost prodajalcev z 12-dimenzionalno analizo in ML modelom.
 
 PRODAJALCI (${targetSellers.length}):
@@ -259,114 +288,99 @@ Odgovori LE z JSON:
     "trust_efficiency_score": <number 0-100>
   }
 }`;
+}
 
-    let raw = '';
-    try { raw = await callProviderForRaw(aiSettings, prompt); }
-    catch (primaryError: any) {
-      if (aiSettings.fallbackProvider && aiSettings.fallbackModel) {
-        const fb: AiSettings = { provider: aiSettings.fallbackProvider, baseUrl: aiSettings.fallbackBaseUrl || '', apiKey: aiSettings.fallbackApiKey || '', model: aiSettings.fallbackModel };
-        raw = await callProviderForRaw(fb, prompt);
-      } else { return NextResponse.json({ error: primaryError?.message ?? 'AI failed' }, { status: 500 }); }
-    }
+function transformScoring(parsed: any, targetSellers: SellerInfo[]): any {
+  const validNames = new Set(targetSellers.map(s => s.name));
 
-    const parsed: any = parseJsonLooseExported(raw);
-    const validNames = new Set(targetSellers.map(s => s.name));
-
-    const scoring = {
-      insights: String(parsed?.insights ?? '').slice(0, 500),
-      sellers: (parsed?.sellers || [])
-        .filter((s: any) => validNames.has(String(s?.name ?? '')))
-        .slice(0, 25)
-        .map((s: any) => ({
-          name: String(s?.name ?? '').slice(0, 100),
-          trustScore: Math.max(0, Math.min(100, Number(s?.trust_score ?? 50))),
-          trustLevel: ['verified_trader', 'trusted', 'neutral', 'cautious', 'suspicious', 'blacklisted'].includes(String(s?.trust_level)) ? String(s.trust_level) : 'neutral',
-          mlScores: {
-            randomForestScore: Math.max(0, Math.min(100, Number(s?.ml_scores?.random_forest_score ?? 50))),
-            gradientBoostingScore: Math.max(0, Math.min(100, Number(s?.ml_scores?.gradient_boosting_score ?? 50))),
-            neuralNetworkScore: Math.max(0, Math.min(100, Number(s?.ml_scores?.neural_network_score ?? 50))),
-            logisticRegressionScore: Math.max(0, Math.min(100, Number(s?.ml_scores?.logistic_regression_score ?? 50))),
-            ensembleScore: Math.max(0, Math.min(100, Number(s?.ml_scores?.ensemble_score ?? 50))),
-            modelConsensus: ['strong', 'moderate', 'weak'].includes(String(s?.ml_scores?.model_consensus)) ? String(s.ml_scores.model_consensus) : 'moderate',
-          },
-          dimensionScores: {
-            transactionHistory: Math.max(0, Math.min(100, Number(s?.dimension_scores?.transaction_history ?? 50))),
-            responsiveness: Math.max(0, Math.min(100, Number(s?.dimension_scores?.responsiveness ?? 50))),
-            consistency: Math.max(0, Math.min(100, Number(s?.dimension_scores?.consistency ?? 50))),
-            transparency: Math.max(0, Math.min(100, Number(s?.dimension_scores?.transparency ?? 50))),
-            fairness: Math.max(0, Math.min(100, Number(s?.dimension_scores?.fairness ?? 50))),
-            professionalism: Math.max(0, Math.min(100, Number(s?.dimension_scores?.professionalism ?? 50))),
-            reliabilityOfDelivery: Math.max(0, Math.min(100, Number(s?.dimension_scores?.reliability_of_delivery ?? 50))),
-            financialIntegrity: Math.max(0, Math.min(100, Number(s?.dimension_scores?.financial_integrity ?? 50))),
-            communicationQuality: Math.max(0, Math.min(100, Number(s?.dimension_scores?.communication_quality ?? 50))),
-            listingAccuracy: Math.max(0, Math.min(100, Number(s?.dimension_scores?.listing_accuracy ?? 50))),
-            postSaleSupport: Math.max(0, Math.min(100, Number(s?.dimension_scores?.post_sale_support ?? 50))),
-            marketReputation: Math.max(0, Math.min(100, Number(s?.dimension_scores?.market_reputation ?? 50))),
-          },
-          behavioralPattern: ['consistent_buyer', 'diverse_buyer', 'high_frequency', 'low_frequency', 'seasonal', 'reactive', 'unresponsive'].includes(String(s?.behavioral_pattern)) ? String(s.behavioral_pattern) : 'consistent_buyer',
-          redFlags: (s?.red_flags || []).slice(0, 5).map((f: any) => String(f).slice(0, 150)),
-          greenFlags: (s?.green_flags || []).slice(0, 5).map((f: any) => String(f).slice(0, 150)),
-          recommendedAction: ['strong_buy_from', 'buy_from', 'verify_first', 'small_transactions_only', 'avoid', 'blacklist'].includes(String(s?.recommended_action)) ? String(s.recommended_action) : 'verify_first',
-          maxSafeTransactionEur: Math.round(Number(s?.max_safe_transaction_eur ?? 500)),
-          specialty: String(s?.specialty ?? '').slice(0, 150),
-          riskAssessment: ['low', 'medium', 'high', 'critical'].includes(String(s?.risk_assessment)) ? String(s.risk_assessment) : 'medium',
-        })),
-      mlScores: (parsed?.ml_scores || []).slice(0, 5).map((m: any) => ({
-        model: ['random_forest', 'gradient_boosting', 'neural_network', 'logistic_regression', 'ensemble_voting'].includes(String(m?.model)) ? String(m.model) : 'ensemble_voting',
-        accuracyPct: Math.max(0, Math.min(100, Number(m?.accuracy_pct ?? 70))),
-        precisionPct: Math.max(0, Math.min(100, Number(m?.precision_pct ?? 65))),
-        recallPct: Math.max(0, Math.min(100, Number(m?.recall_pct ?? 60))),
-        f1Score: Math.max(0, Math.min(100, Number(m?.f1_score ?? 62))),
-        weightInEnsemble: Math.max(0, Math.min(100, Number(m?.weight_in_ensemble ?? 20))),
-        bestFor: String(m?.best_for ?? '').slice(0, 150),
+  return {
+    insights: String(parsed?.insights ?? '').slice(0, 500),
+    sellers: (parsed?.sellers || [])
+      .filter((s: any) => validNames.has(String(s?.name ?? '')))
+      .slice(0, 25)
+      .map((s: any) => ({
+        name: String(s?.name ?? '').slice(0, 100),
+        trustScore: Math.max(0, Math.min(100, Number(s?.trust_score ?? 50))),
+        trustLevel: ['verified_trader', 'trusted', 'neutral', 'cautious', 'suspicious', 'blacklisted'].includes(String(s?.trust_level)) ? String(s.trust_level) : 'neutral',
+        mlScores: {
+          randomForestScore: Math.max(0, Math.min(100, Number(s?.ml_scores?.random_forest_score ?? 50))),
+          gradientBoostingScore: Math.max(0, Math.min(100, Number(s?.ml_scores?.gradient_boosting_score ?? 50))),
+          neuralNetworkScore: Math.max(0, Math.min(100, Number(s?.ml_scores?.neural_network_score ?? 50))),
+          logisticRegressionScore: Math.max(0, Math.min(100, Number(s?.ml_scores?.logistic_regression_score ?? 50))),
+          ensembleScore: Math.max(0, Math.min(100, Number(s?.ml_scores?.ensemble_score ?? 50))),
+          modelConsensus: ['strong', 'moderate', 'weak'].includes(String(s?.ml_scores?.model_consensus)) ? String(s.ml_scores.model_consensus) : 'moderate',
+        },
+        dimensionScores: {
+          transactionHistory: Math.max(0, Math.min(100, Number(s?.dimension_scores?.transaction_history ?? 50))),
+          responsiveness: Math.max(0, Math.min(100, Number(s?.dimension_scores?.responsiveness ?? 50))),
+          consistency: Math.max(0, Math.min(100, Number(s?.dimension_scores?.consistency ?? 50))),
+          transparency: Math.max(0, Math.min(100, Number(s?.dimension_scores?.transparency ?? 50))),
+          fairness: Math.max(0, Math.min(100, Number(s?.dimension_scores?.fairness ?? 50))),
+          professionalism: Math.max(0, Math.min(100, Number(s?.dimension_scores?.professionalism ?? 50))),
+          reliabilityOfDelivery: Math.max(0, Math.min(100, Number(s?.dimension_scores?.reliability_of_delivery ?? 50))),
+          financialIntegrity: Math.max(0, Math.min(100, Number(s?.dimension_scores?.financial_integrity ?? 50))),
+          communicationQuality: Math.max(0, Math.min(100, Number(s?.dimension_scores?.communication_quality ?? 50))),
+          listingAccuracy: Math.max(0, Math.min(100, Number(s?.dimension_scores?.listing_accuracy ?? 50))),
+          postSaleSupport: Math.max(0, Math.min(100, Number(s?.dimension_scores?.post_sale_support ?? 50))),
+          marketReputation: Math.max(0, Math.min(100, Number(s?.dimension_scores?.market_reputation ?? 50))),
+        },
+        behavioralPattern: ['consistent_buyer', 'diverse_buyer', 'high_frequency', 'low_frequency', 'seasonal', 'reactive', 'unresponsive'].includes(String(s?.behavioral_pattern)) ? String(s.behavioral_pattern) : 'consistent_buyer',
+        redFlags: (s?.red_flags || []).slice(0, 5).map((f: any) => String(f).slice(0, 150)),
+        greenFlags: (s?.green_flags || []).slice(0, 5).map((f: any) => String(f).slice(0, 150)),
+        recommendedAction: ['strong_buy_from', 'buy_from', 'verify_first', 'small_transactions_only', 'avoid', 'blacklist'].includes(String(s?.recommended_action)) ? String(s.recommended_action) : 'verify_first',
+        maxSafeTransactionEur: Math.round(Number(s?.max_safe_transaction_eur ?? 500)),
+        specialty: String(s?.specialty ?? '').slice(0, 150),
+        riskAssessment: ['low', 'medium', 'high', 'critical'].includes(String(s?.risk_assessment)) ? String(s.risk_assessment) : 'medium',
       })),
-      behavioralPatterns: (parsed?.behavioral_patterns || []).slice(0, 7).map((p: any) => ({
-        pattern: ['consistent_buyer', 'diverse_buyer', 'high_frequency', 'low_frequency', 'seasonal', 'reactive', 'unresponsive'].includes(String(p?.pattern)) ? String(p.pattern) : 'consistent_buyer',
-        sellerCount: Math.max(0, Number(p?.seller_count ?? 0)),
-        avgTrustScore: Math.max(0, Math.min(100, Number(p?.avg_trust_score ?? 50))),
-        description: String(p?.description ?? '').slice(0, 250),
-        bestStrategy: String(p?.best_strategy ?? '').slice(0, 250),
-      })),
-      riskIndicators: (parsed?.risk_indicators || []).slice(0, 8).map((r: any) => ({
-        indicator: String(r?.indicator ?? '').slice(0, 200),
-        severity: ['low', 'medium', 'high', 'critical'].includes(String(r?.severity)) ? String(r.severity) : 'medium',
-        affectedSellers: Math.max(0, Number(r?.affected_sellers ?? 0)),
-        mitigation: String(r?.mitigation ?? '').slice(0, 300),
-        mlDetected: Boolean(r?.ml_detected ?? false),
-      })),
-      trustLevels: (parsed?.trust_levels || []).slice(0, 6).map((l: any) => ({
-        level: ['verified_trader', 'trusted', 'neutral', 'cautious', 'suspicious', 'blacklisted'].includes(String(l?.level)) ? String(l.level) : 'neutral',
-        sellerCount: Math.max(0, Number(l?.seller_count ?? 0)),
-        avgTrustScore: Math.max(0, Math.min(100, Number(l?.avg_trust_score ?? 50))),
-        totalSpentEur: Math.round(Number(l?.total_spent_eur ?? 0)),
-        strategy: String(l?.strategy ?? '').slice(0, 300),
-      })),
-      recommendations: (parsed?.recommendations || []).slice(0, 6).map((r: any) => ({
-        action: String(r?.action ?? '').slice(0, 300),
-        priority: ['high', 'medium', 'low'].includes(String(r?.priority)) ? String(r.priority) : 'medium',
-        expectedImpactEur: Math.round(Number(r?.expected_impact_eur ?? 0)),
-        sellersAffected: Math.max(0, Number(r?.sellers_affected ?? 0)),
-      })),
-      summary: {
-        totalSellersAnalyzed: targetSellers.length,
-        avgTrustScore: Math.max(0, Math.min(100, Number(parsed?.summary?.avg_trust_score ?? 50))),
-        verifiedTraderCount: Math.max(0, Number(parsed?.summary?.verified_trader_count ?? 0)),
-        trustedCount: Math.max(0, Number(parsed?.summary?.trusted_count ?? 0)),
-        neutralCount: Math.max(0, Number(parsed?.summary?.neutral_count ?? 0)),
-        cautiousCount: Math.max(0, Number(parsed?.summary?.cautious_count ?? 0)),
-        suspiciousCount: Math.max(0, Number(parsed?.summary?.suspicious_count ?? 0)),
-        blacklistedCount: Math.max(0, Number(parsed?.summary?.blacklisted_count ?? 0)),
-        bestModel: ['random_forest', 'gradient_boosting', 'neural_network', 'logistic_regression', 'ensemble_voting'].includes(String(parsed?.summary?.best_model)) ? String(parsed.summary.best_model) : 'ensemble_voting',
-        biggestRiskSeller: String(parsed?.summary?.biggest_risk_seller ?? '').slice(0, 200),
-        safestSeller: String(parsed?.summary?.safest_seller ?? '').slice(0, 200),
-        trustEfficiencyScore: Math.max(0, Math.min(100, Number(parsed?.summary?.trust_efficiency_score ?? 50))),
-      },
-    };
-
-    const today = new Date().toISOString().slice(0, 10);
-    if (settings.aiCallsDate !== today) { await db.settings.update({ where: { id: 'singleton' }, data: { aiCallsDate: today, aiCallsToday: 1 } }); }
-    else { await db.settings.update({ where: { id: 'singleton' }, data: { aiCallsToday: { increment: 1 } } }); }
-
-    return NextResponse.json({ ok: true, scoring });
-  } catch (e: any) { logger.error("/api/ai/seller-trust-score-v2", "POST handler failed", e); return NextResponse.json({ error: e?.message ?? 'Napaka' }, { status: 500 }); }
+    mlScores: (parsed?.ml_scores || []).slice(0, 5).map((m: any) => ({
+      model: ['random_forest', 'gradient_boosting', 'neural_network', 'logistic_regression', 'ensemble_voting'].includes(String(m?.model)) ? String(m.model) : 'ensemble_voting',
+      accuracyPct: Math.max(0, Math.min(100, Number(m?.accuracy_pct ?? 70))),
+      precisionPct: Math.max(0, Math.min(100, Number(m?.precision_pct ?? 65))),
+      recallPct: Math.max(0, Math.min(100, Number(m?.recall_pct ?? 60))),
+      f1Score: Math.max(0, Math.min(100, Number(m?.f1_score ?? 62))),
+      weightInEnsemble: Math.max(0, Math.min(100, Number(m?.weight_in_ensemble ?? 20))),
+      bestFor: String(m?.best_for ?? '').slice(0, 150),
+    })),
+    behavioralPatterns: (parsed?.behavioral_patterns || []).slice(0, 7).map((p: any) => ({
+      pattern: ['consistent_buyer', 'diverse_buyer', 'high_frequency', 'low_frequency', 'seasonal', 'reactive', 'unresponsive'].includes(String(p?.pattern)) ? String(p.pattern) : 'consistent_buyer',
+      sellerCount: Math.max(0, Number(p?.seller_count ?? 0)),
+      avgTrustScore: Math.max(0, Math.min(100, Number(p?.avg_trust_score ?? 50))),
+      description: String(p?.description ?? '').slice(0, 250),
+      bestStrategy: String(p?.best_strategy ?? '').slice(0, 250),
+    })),
+    riskIndicators: (parsed?.risk_indicators || []).slice(0, 8).map((r: any) => ({
+      indicator: String(r?.indicator ?? '').slice(0, 200),
+      severity: ['low', 'medium', 'high', 'critical'].includes(String(r?.severity)) ? String(r.severity) : 'medium',
+      affectedSellers: Math.max(0, Number(r?.affected_sellers ?? 0)),
+      mitigation: String(r?.mitigation ?? '').slice(0, 300),
+      mlDetected: Boolean(r?.ml_detected ?? false),
+    })),
+    trustLevels: (parsed?.trust_levels || []).slice(0, 6).map((l: any) => ({
+      level: ['verified_trader', 'trusted', 'neutral', 'cautious', 'suspicious', 'blacklisted'].includes(String(l?.level)) ? String(l.level) : 'neutral',
+      sellerCount: Math.max(0, Number(l?.seller_count ?? 0)),
+      avgTrustScore: Math.max(0, Math.min(100, Number(l?.avg_trust_score ?? 50))),
+      totalSpentEur: Math.round(Number(l?.total_spent_eur ?? 0)),
+      strategy: String(l?.strategy ?? '').slice(0, 300),
+    })),
+    recommendations: (parsed?.recommendations || []).slice(0, 6).map((r: any) => ({
+      action: String(r?.action ?? '').slice(0, 300),
+      priority: ['high', 'medium', 'low'].includes(String(r?.priority)) ? String(r.priority) : 'medium',
+      expectedImpactEur: Math.round(Number(r?.expected_impact_eur ?? 0)),
+      sellersAffected: Math.max(0, Number(r?.sellers_affected ?? 0)),
+    })),
+    summary: {
+      totalSellersAnalyzed: targetSellers.length,
+      avgTrustScore: Math.max(0, Math.min(100, Number(parsed?.summary?.avg_trust_score ?? 50))),
+      verifiedTraderCount: Math.max(0, Number(parsed?.summary?.verified_trader_count ?? 0)),
+      trustedCount: Math.max(0, Number(parsed?.summary?.trusted_count ?? 0)),
+      neutralCount: Math.max(0, Number(parsed?.summary?.neutral_count ?? 0)),
+      cautiousCount: Math.max(0, Number(parsed?.summary?.cautious_count ?? 0)),
+      suspiciousCount: Math.max(0, Number(parsed?.summary?.suspicious_count ?? 0)),
+      blacklistedCount: Math.max(0, Number(parsed?.summary?.blacklisted_count ?? 0)),
+      bestModel: ['random_forest', 'gradient_boosting', 'neural_network', 'logistic_regression', 'ensemble_voting'].includes(String(parsed?.summary?.best_model)) ? String(parsed.summary.best_model) : 'ensemble_voting',
+      biggestRiskSeller: String(parsed?.summary?.biggest_risk_seller ?? '').slice(0, 200),
+      safestSeller: String(parsed?.summary?.safest_seller ?? '').slice(0, 200),
+      trustEfficiencyScore: Math.max(0, Math.min(100, Number(parsed?.summary?.trust_efficiency_score ?? 50))),
+    },
+  };
 }

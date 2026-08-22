@@ -1,35 +1,49 @@
-// v6.9: AI Exit Strategy — AI predlaga kdaj in kako prodati (postopna prodaja, bulk, čakanje)
+// v6.9 / v8.94-refactor: AI Exit Strategy — AI predlaga kdaj in kako prodati
+// (postopna prodaja, bulk, čakanje)
+// Refaktoriran z withAiRoute helperjem (v8.94) + enforceBudget guard.
+//
 // POST /api/ai/exit-strategy
 // Body: { tradeId: string }
 // Returns: { ok, strategy: { recommendation, timing, pricing, alternatives, reasoning } }
 
-import { NextRequest, NextResponse } from 'next/server';
-import { db } from '@/lib/db';
-import { getSettingsRow } from '@/lib/pipeline';
-import { callProviderForRaw, parseJsonLooseExported, type AiProviderType, type AiSettings } from '@/lib/ai';
-import { logger } from '@/lib/logger';
+import { withAiRoute, AI_ROUTE_DEFAULTS, ApiRouteError, type AiRouteContext } from '@/lib/with-ai-route';
+import { apiOk } from '@/lib/api-response';
 
-export const runtime = 'nodejs';
-export const dynamic = 'force-dynamic';
+export const { runtime, dynamic } = AI_ROUTE_DEFAULTS;
 export const maxDuration = 60;
 
-export async function POST(req: NextRequest) {
-  try {
-    const body = await req.json();
-    const { tradeId } = body;
-    if (!tradeId) return NextResponse.json({ error: 'tradeId je obvezen' }, { status: 400 });
+interface ExitStrategyInput {
+  tradeId: string;
+}
 
+export const POST = withAiRoute<ExitStrategyInput>({
+  endpoint: '/api/ai/exit-strategy',
+  maxDuration: 60,
+  enforceBudget: true, // AI klic — preveri budget
+
+  parseBody: async (req) => {
+    const body = await req.json().catch(() => ({}));
+    return { tradeId: String(body?.tradeId ?? '') };
+  },
+
+  validateInput: (input) => (input.tradeId ? null : 'tradeId je obvezen'),
+
+  handler: async (input, ctx: AiRouteContext) => {
+    const { db, callAi, parseAi } = ctx;
+    const { tradeId } = input;
+
+    // 1. Load trade
     const trade = await db.trade.findUnique({
       where: { id: tradeId },
       include: { listing: { select: { aiEstimatedValue: true, dealScore: true, aiVerdict: true, title: true, url: true, priceDroppedAt: true } } },
     });
-    if (!trade) return NextResponse.json({ error: 'Trade ne obstaja' }, { status: 404 });
+    if (!trade) throw new ApiRouteError('Trade ne obstaja', 404);
 
     const now = new Date();
     const daysHeld = Math.round((now.getTime() - trade.buyDate.getTime()) / (24 * 60 * 60 * 1000));
     const buyCost = trade.buyPrice + (trade.buyFees ?? 0);
 
-    // Get market data
+    // 2. Get market data
     const minP = Math.floor(trade.buyPrice * 0.7);
     const maxP = Math.ceil(trade.buyPrice * 1.4);
     const similar = await db.listing.findMany({
@@ -42,43 +56,83 @@ export async function POST(req: NextRequest) {
     const marketMin = marketPrices.length > 0 ? Math.min(...marketPrices) : Math.round(buyCost * 0.9);
     const marketCount = marketPrices.length;
 
-    // Get category historical sell speed
+    // 3. Get category historical sell speed
     const catSold = await db.trade.findMany({
       where: { status: 'sold', sellPrice: { not: null }, category: trade.category || '' },
       select: { buyDate: true, sellDate: true, buyPrice: true, sellPrice: true },
       take: 20,
     });
     const avgDaysToSell = catSold.length > 0
-      ? Math.round(catSold.filter(t => t.sellDate && t.buyDate).reduce((s, t) => s + (t.sellDate!.getTime() - t.buyDate.getTime()) / (24*60*60*1000), 0) / Math.max(1, catSold.filter(t => t.sellDate).length))
+      ? Math.round(catSold.filter(t => t.sellDate && t.buyDate).reduce((s, t) => s + (t.sellDate!.getTime() - t.buyDate.getTime()) / (24 * 60 * 60 * 1000), 0) / Math.max(1, catSold.filter(t => t.sellDate).length))
       : 14;
     const avgCatROI = catSold.length > 0
       ? Math.round(catSold.reduce((s, t) => s + (((t.sellPrice ?? 0) - t.buyPrice) / t.buyPrice) * 100, 0) / catSold.length)
       : 20;
 
-    const settings = await getSettingsRow();
-    const aiSettings: AiSettings = {
-      provider: settings.aiProvider as AiProviderType,
-      baseUrl: settings.aiBaseUrl, apiKey: settings.aiApiKey, model: settings.aiModel,
-      fallbackProvider: (settings.fallbackProvider || '') as AiProviderType | '',
-      fallbackBaseUrl: settings.fallbackBaseUrl || '', fallbackApiKey: settings.fallbackApiKey || '',
-      fallbackModel: settings.fallbackModel || '',
-    };
+    // 4. Build prompt + call AI
+    const prompt = buildPrompt({
+      title: trade.title,
+      category: trade.category || 'drugo',
+      buyCost,
+      daysHeld,
+      aiEstimatedValue: trade.listing?.aiEstimatedValue ?? null,
+      dealScore: trade.listing?.dealScore ?? null,
+      marketAvg,
+      marketMin,
+      marketCount,
+      avgDaysToSell,
+      avgCatROI,
+    });
+    const raw = await callAi(prompt);
 
-    const prompt = `Si ekspert za izhodne strategije pri preprodaji na slovenskih oglasih.
+    // 5. Parse + transform
+    const parsed: any = parseAi(raw);
+    const strategy = transformStrategy(parsed, marketAvg);
+
+    return apiOk({
+      ok: true,
+      strategy,
+      trade: {
+        title: trade.title, buyCost, daysHeld,
+        aiValue: trade.listing?.aiEstimatedValue ?? null,
+        marketAvg, marketMin, marketCount, avgDaysToSell, avgCatROI,
+      },
+    });
+  },
+});
+
+// --- Pomožne funkcije (čiste, testabilne) --------------------------------
+
+interface PromptData {
+  title: string;
+  category: string;
+  buyCost: number;
+  daysHeld: number;
+  aiEstimatedValue: number | null;
+  dealScore: number | null;
+  marketAvg: number;
+  marketMin: number;
+  marketCount: number;
+  avgDaysToSell: number;
+  avgCatROI: number;
+}
+
+function buildPrompt(d: PromptData): string {
+  return `Si ekspert za izhodne strategije pri preprodaji na slovenskih oglasih.
 Predlagaj optimalno izhodno strategijo za naslednji trade.
 
-Item: ${trade.title}
-Kategorija: ${trade.category || 'drugo'}
-Kupna cena: ${buyCost}€
-Dni v skladišču: ${daysHeld}
-AI tržna vrednost: ${trade.listing?.aiEstimatedValue ?? '?'}€
-Deal score: ${trade.listing?.dealScore ?? '?'}
+Item: ${d.title}
+Kategorija: ${d.category}
+Kupna cena: ${d.buyCost}€
+Dni v skladišču: ${d.daysHeld}
+AI tržna vrednost: ${d.aiEstimatedValue ?? '?'}€
+Deal score: ${d.dealScore ?? '?'}
 
 Tržni podatki:
-- Povprečna tržna cena: ${marketAvg}€ (min: ${marketMin}€)
-- Št. konkurenčnih oglasov: ${marketCount}
-- Povp. dni do prodaje (kategorija): ${avgDaysToSell}d
-- Povp. ROI (kategorija): ${avgCatROI}%
+- Povprečna tržna cena: ${d.marketAvg}€ (min: ${d.marketMin}€)
+- Št. konkurenčnih oglasov: ${d.marketCount}
+- Povp. dni do prodaje (kategorija): ${d.avgDaysToSell}d
+- Povp. ROI (kategorija): ${d.avgCatROI}%
 
 Predlagaj:
 1. recommendation: sell_now / sell_soon / hold / bundle
@@ -97,46 +151,24 @@ Odgovori LE z JSON:
   "reasoning": "<max 200 znakov>",
   "confidence": <0-100>
 }`;
+}
 
-    let raw = '';
-    try {
-      raw = await callProviderForRaw(aiSettings, prompt);
-    } catch (primaryError: any) {
-      if (aiSettings.fallbackProvider && aiSettings.fallbackModel) {
-        const fb: AiSettings = { provider: aiSettings.fallbackProvider, baseUrl: aiSettings.fallbackBaseUrl || '', apiKey: aiSettings.fallbackApiKey || '', model: aiSettings.fallbackModel };
-        raw = await callProviderForRaw(fb, prompt);
-      } else { return NextResponse.json({ error: primaryError?.message ?? 'AI failed' }, { status: 500 }); }
-    }
-
-    const parsed: any = parseJsonLooseExported(raw);
-
-    // Increment AI usage
-    const today = new Date().toISOString().slice(0, 10);
-    if (settings.aiCallsDate !== today) {
-      await db.settings.update({ where: { id: 'singleton' }, data: { aiCallsDate: today, aiCallsToday: 1 } });
-    } else {
-      await db.settings.update({ where: { id: 'singleton' }, data: { aiCallsToday: { increment: 1 } } });
-    }
-
-    return NextResponse.json({
-      ok: true,
-      strategy: {
-        recommendation: String(parsed?.recommendation ?? 'hold'),
-        timing: String(parsed?.timing ?? ''),
-        suggestedPrice: parseInt(parsed?.suggested_price, 10) || Math.round(marketAvg * 0.95),
-        pricingStrategy: String(parsed?.pricing_strategy ?? 'fiksna'),
-        alternatives: Array.isArray(parsed?.alternatives) ? parsed.alternatives.slice(0, 5).map((a: any) => String(a).slice(0, 100)) : [],
-        reasoning: String(parsed?.reasoning ?? '').slice(0, 300),
-        confidence: Math.min(100, Math.max(0, parseInt(parsed?.confidence, 10) || 50)),
-      },
-      trade: {
-        title: trade.title, buyCost, daysHeld,
-        aiValue: trade.listing?.aiEstimatedValue ?? null,
-        marketAvg, marketMin, marketCount, avgDaysToSell, avgCatROI,
-      },
-    });
-  } catch (e: any) {
-    logger.error("/api/ai/exit-strategy", "POST handler failed", e);
-    return NextResponse.json({ error: e?.message ?? 'Napaka' }, { status: 500 });
-  }
+function transformStrategy(parsed: any, marketAvg: number): {
+  recommendation: string;
+  timing: string;
+  suggestedPrice: number;
+  pricingStrategy: string;
+  alternatives: string[];
+  reasoning: string;
+  confidence: number;
+} {
+  return {
+    recommendation: String(parsed?.recommendation ?? 'hold'),
+    timing: String(parsed?.timing ?? ''),
+    suggestedPrice: parseInt(parsed?.suggested_price, 10) || Math.round(marketAvg * 0.95),
+    pricingStrategy: String(parsed?.pricing_strategy ?? 'fiksna'),
+    alternatives: Array.isArray(parsed?.alternatives) ? parsed.alternatives.slice(0, 5).map((a: any) => String(a).slice(0, 100)) : [],
+    reasoning: String(parsed?.reasoning ?? '').slice(0, 300),
+    confidence: Math.min(100, Math.max(0, parseInt(parsed?.confidence, 10) || 50)),
+  };
 }

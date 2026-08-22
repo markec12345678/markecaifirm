@@ -1,4 +1,9 @@
-// v7.88: AI Listing Performance Forecaster Pro — AI forecast-a FULL performance
+/**
+ * @deprecated v8.94 — uporabi `/api/ai/listing-performance-forecaster-v4` namesto tega.
+ * Pro je prekompleksen — v4 je priporočena.
+ * Ta endpoint bo odstranjen v v9.0. Glej ENDPOINTS_AUDIT.md za migracijski načrt.
+ */
+// v7.88 / v8.96.7-batch2: AI Listing Performance Forecaster Pro — AI forecast-a FULL performance
 // spectrum vsakega HELD listing-a — predicted views, contacts, bookmarks in 30
 // dni + sell timeline + price optimization + performance grade. Razlika od
 // listing-performance-forecaster-v4 (ki se osredotoča na sell probability) —
@@ -19,24 +24,22 @@
 //
 // GET+POST /api/ai/listing-performance-forecaster-pro
 // (AI-enhanced + grounding + anti-hallucination + 6h cache + deterministic fallback)
+// Refaktoriran z withAiRoute helperjem (v8.96.7) + enforceBudget guard.
+// logDeprecatedCall PRESERVED iz originala (Phase 2 deprecation logging — kliče ctx.req).
 
-import { NextRequest, NextResponse } from 'next/server';
-import { db } from '@/lib/db';
-import { getSettingsRow } from '@/lib/pipeline';
-import {
-  callProviderForRaw,
-  parseJsonLooseExported,
-  type AiProviderType,
-  type AiSettings,
-} from '@/lib/ai';
+import { withAiRoute, AI_ROUTE_DEFAULTS, type AiRouteContext } from '@/lib/with-ai-route';
+import { apiOk } from '@/lib/api-response';
 import { GROUNDING_PROMPT_SUFFIX } from '@/lib/anti-hallucination';
 import { getCachedAI, setCachedAI } from '@/lib/ai-cache';
-import { checkRateLimit, rateLimitResponse } from '@/lib/rate-limit';
-import { logger } from '@/lib/logger';
+import { logDeprecatedCall } from '@/lib/deprecated-redirect';
 
-export const runtime = 'nodejs';
-export const dynamic = 'force-dynamic';
+export const { runtime, dynamic } = AI_ROUTE_DEFAULTS;
 export const maxDuration = 60;
+
+// --- Input ----------------------------------------------------------------
+
+// eslint-disable-next-line @typescript-eslint/no-empty-object-type
+interface ListingPerformanceForecasterProInput {}
 
 // --- Types ---------------------------------------------------------------
 
@@ -514,17 +517,23 @@ interface SoldTradeRow {
 
 // --- Handler -------------------------------------------------------------
 
-export async function GET(req: NextRequest) {
-  return handleListingPerformanceForecasterPro(req);
-}
-export async function POST(req: NextRequest) {
-  return handleListingPerformanceForecasterPro(req);
-}
+const listingPerformanceForecasterProHandler = withAiRoute<ListingPerformanceForecasterProInput>({
+  endpoint: '/api/ai/listing-performance-forecaster-pro',
+  maxDuration: 60,
+  enforceBudget: true, // AI klic — preveri budget
+  method: 'GET', // Endpoint sprejema GET + POST — bypass POST-only check
 
-async function handleListingPerformanceForecasterPro(req: NextRequest) {
-  try {
-    const rl = checkRateLimit(req, 'ai-listing-performance-forecaster-pro', 20);
-    if (!rl.allowed) return rateLimitResponse(rl);
+  parseBody: async (req) => {
+    await req.json().catch(() => ({}));
+    return {};
+  },
+
+  // No validateInput — body ignored, identična logika za GET in POST
+  handler: async (_input, ctx: AiRouteContext) => {
+    // PRESERVED iz originala — Phase 2 deprecation logging.
+    logDeprecatedCall('/api/ai/listing-performance-forecaster-pro', ctx.req, '/api/ai/listing-performance-forecaster-v4');
+
+    const { db, callAi, parseAi, logger } = ctx;
 
     const now = Date.now();
 
@@ -558,7 +567,7 @@ async function handleListingPerformanceForecasterPro(req: NextRequest) {
     const heldRows = heldTrades as unknown as HeldTradeRow[];
 
     if (heldRows.length === 0) {
-      return NextResponse.json({
+      return apiOk({
         ok: true,
         items: [],
         portfolio: {
@@ -744,7 +753,7 @@ async function handleListingPerformanceForecasterPro(req: NextRequest) {
     }>(cacheKey);
     if (cached) {
       const portfolioCached = buildPortfolioSummary(cached.items);
-      return NextResponse.json({
+      return apiOk({
         ok: true,
         items: cached.items,
         portfolio: portfolioCached,
@@ -755,20 +764,6 @@ async function handleListingPerformanceForecasterPro(req: NextRequest) {
     }
 
     // 6) AI prompt with grounding
-    const settings = await getSettingsRow();
-    const aiSettings: AiSettings = {
-      provider: settings.aiProvider as AiProviderType,
-      baseUrl: settings.aiBaseUrl,
-      apiKey: settings.aiApiKey,
-      model: settings.aiModel,
-      fallbackProvider: (settings.fallbackProvider || '') as
-        | AiProviderType
-        | '',
-      fallbackBaseUrl: settings.fallbackBaseUrl || '',
-      fallbackApiKey: settings.fallbackApiKey || '',
-      fallbackModel: settings.fallbackModel || '',
-    };
-
     const promptData = {
       heldItems,
       historicalPatterns: history,
@@ -844,8 +839,8 @@ VRNI LE JSON:
     let aiUsed = false;
 
     try {
-      const raw = await callProviderForRaw(aiSettings, prompt);
-      const parsed = parseJsonLooseExported(raw) as AiListingPerformanceResponse | null;
+      const raw = await callAi(prompt);
+      const parsed = parseAi(raw) as AiListingPerformanceResponse | null;
 
       if (parsed && typeof parsed === 'object' && Array.isArray(parsed.items)) {
         const aiItems = parsed.items as AiItemResponse[];
@@ -975,22 +970,15 @@ VRNI LE JSON:
       });
     }
 
-    return NextResponse.json({
+    return apiOk({
       ok: true,
       items,
       portfolio,
       summary: finalSummary,
       aiUsed,
     });
-  } catch (err: any) {
-    logger.error(
-      '/api/ai/listing-performance-forecaster-pro',
-      'handler failed',
-      err,
-    );
-    return NextResponse.json(
-      { error: err?.message ?? 'Napaka' },
-      { status: 500 },
-    );
-  }
-}
+  },
+});
+
+export const GET = listingPerformanceForecasterProHandler;
+export const POST = listingPerformanceForecasterProHandler;

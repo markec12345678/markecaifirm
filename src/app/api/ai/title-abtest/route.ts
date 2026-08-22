@@ -1,36 +1,58 @@
-// v6.22: AI Listing Title A/B Tester — generira in testira naslove oglasov za maksimalen CTR
+// v6.22 / v8.94-refactor: AI Listing Title A/B Tester — generira in testira naslove oglasov za maksimalen CTR
+// Refaktoriran z withAiRoute helperjem (v8.94) + enforceBudget guard.
+//
 // POST /api/ai/title-abtest
 // Body: { tradeId?: string, currentTitle?: string, category?: string, price?: number }
-// Returns: { ok, test: { currentTitle, variants: [], winner: [], analysis: [], platformSpecific: [] } }
+// Returns: { ok, test: { currentTitle, currentTitleAnalysis, variants, winner, platformSpecificTitles, tips } }
 
-import { NextRequest, NextResponse } from 'next/server';
-import { db } from '@/lib/db';
-import { getSettingsRow } from '@/lib/pipeline';
-import { callProviderForRaw, parseJsonLooseExported, type AiProviderType, type AiSettings } from '@/lib/ai';
-import { logger } from '@/lib/logger';
+import { withAiRoute, AI_ROUTE_DEFAULTS, ApiRouteError, type AiRouteContext } from '@/lib/with-ai-route';
+import { apiOk, apiBadRequest } from '@/lib/api-response';
 
-export const runtime = 'nodejs';
-export const dynamic = 'force-dynamic';
+export const { runtime, dynamic } = AI_ROUTE_DEFAULTS;
 export const maxDuration = 60;
 
-export async function POST(req: NextRequest) {
-  try {
+interface TitleAbTestInput {
+  tradeId?: string;
+  currentTitle?: string;
+  category?: string;
+  price?: number;
+}
+
+const TITLE_STRATEGIES = ['KEYWORD_OPTIMIZED', 'BENEFIT_DRIVEN', 'URGENCY', 'CURIOSITY', 'SPECIFICITY'] as const;
+const TITLE_PLATFORMS = ['bolha', 'vinted', 'facebook', 'avtonet', 'kleinanzeigen'] as const;
+
+export const POST = withAiRoute<TitleAbTestInput>({
+  endpoint: '/api/ai/title-abtest',
+  maxDuration: 60,
+  enforceBudget: true,
+
+  parseBody: async (req) => {
     const body = await req.json().catch(() => ({}));
-    const { tradeId } = body;
-    let currentTitle: string = body?.currentTitle ?? '';
-    let category: string = body?.category ?? '';
-    let price: number = body?.price ?? 0;
+    return {
+      tradeId: body?.tradeId ? String(body.tradeId) : undefined,
+      currentTitle: body?.currentTitle != null ? String(body.currentTitle) : undefined,
+      category: body?.category != null ? String(body.category) : undefined,
+      price: body?.price != null ? Number(body.price) : undefined,
+    };
+  },
+
+  // validateInput izpuščen — currentTitle pride lahko iz trade-a (DB lookup v handler-ju).
+  handler: async (input, ctx: AiRouteContext) => {
+    const { db, callAi, parseAi } = ctx;
+    let currentTitle = input.currentTitle ?? '';
+    let category = input.category ?? '';
+    let price = input.price ?? 0;
     let description = '';
 
-    if (tradeId) {
+    if (input.tradeId) {
       const trade = await db.trade.findUnique({
-        where: { id: String(tradeId) },
+        where: { id: input.tradeId },
         select: {
           title: true, category: true, buyPrice: true,
           listing: { select: { description: true, detailDescription: true, aiEstimatedValue: true } },
         },
       });
-      if (!trade) return NextResponse.json({ error: 'Trade ne obstaja' }, { status: 404 });
+      if (!trade) throw new ApiRouteError('Trade ne obstaja', 404);
       currentTitle = currentTitle || trade.title;
       category = category || trade.category || '';
       price = price || trade.buyPrice;
@@ -38,20 +60,29 @@ export async function POST(req: NextRequest) {
     }
 
     if (!currentTitle) {
-      return NextResponse.json({ error: 'currentTitle ali tradeId je obvezen' }, { status: 400 });
+      return apiBadRequest('currentTitle ali tradeId je obvezen');
     }
 
     // 1. AI A/B test naslovov
-    const settings = await getSettingsRow();
-    const aiSettings: AiSettings = {
-      provider: settings.aiProvider as AiProviderType,
-      baseUrl: settings.aiBaseUrl, apiKey: settings.aiApiKey, model: settings.aiModel,
-      fallbackProvider: (settings.fallbackProvider || '') as AiProviderType | '',
-      fallbackBaseUrl: settings.fallbackBaseUrl || '', fallbackApiKey: settings.fallbackApiKey || '',
-      fallbackModel: settings.fallbackModel || '',
-    };
+    const prompt = buildTitleAbTestPrompt(currentTitle, category, price, description);
 
-    const prompt = `Si ekspert za copywriting in A/B testiranje naslovov oglasov.
+    const raw = await callAi(prompt);
+    const parsed: any = parseAi(raw);
+    const test = transformTitleAbTestResult(parsed, currentTitle);
+
+    return apiOk({ test });
+  },
+});
+
+// --- Pomožne funkcije (čiste, testabilne) --------------------------------
+
+function buildTitleAbTestPrompt(
+  currentTitle: string,
+  category: string,
+  price: number,
+  description: string
+): string {
+  return `Si ekspert za copywriting in A/B testiranje naslovov oglasov.
 Generiraj 5 variants naslova za ta artikel in oceni njihovo učinkovitost.
 
 TRENUTNI NASLOV: ${currentTitle}
@@ -114,75 +145,46 @@ Odgovori LE z JSON:
   },
   "tips": ["<splošno priporočilo, max 100 znakov>", "..."]
 }`;
+}
 
-    let raw = '';
-    try {
-      raw = await callProviderForRaw(aiSettings, prompt);
-    } catch (primaryError: any) {
-      if (aiSettings.fallbackProvider && aiSettings.fallbackModel) {
-        const fb: AiSettings = {
-          provider: aiSettings.fallbackProvider,
-          baseUrl: aiSettings.fallbackBaseUrl || '',
-          apiKey: aiSettings.fallbackApiKey || '',
-          model: aiSettings.fallbackModel,
-        };
-        raw = await callProviderForRaw(fb, prompt);
-      } else {
-        return NextResponse.json({ error: primaryError?.message ?? 'AI failed' }, { status: 500 });
-      }
-    }
+function clampScore(v: any, def = 50): number {
+  return Math.max(0, Math.min(100, Number(v ?? def)));
+}
 
-    const parsed: any = parseJsonLooseExported(raw);
-
-    const test = {
-      currentTitle,
-      currentTitleAnalysis: {
-        score: Math.max(0, Math.min(100, Number(parsed?.current_title_analysis?.score ?? 50))),
-        strengths: (parsed?.current_title_analysis?.strengths || []).slice(0, 4).map((s: any) => String(s).slice(0, 150)),
-        weaknesses: (parsed?.current_title_analysis?.weaknesses || []).slice(0, 4).map((w: any) => String(w).slice(0, 150)),
-      },
-      variants: (parsed?.variants || []).slice(0, 6).map((v: any) => ({
-        title: String(v?.title ?? '').slice(0, 200),
-        strategy: ['KEYWORD_OPTIMIZED', 'BENEFIT_DRIVEN', 'URGENCY', 'CURIOSITY', 'SPECIFICITY'].includes(String(v?.strategy))
-          ? String(v.strategy) : 'KEYWORD_OPTIMIZED',
-        characterCount: Math.max(0, Number(v?.character_count ?? 0)),
-        ctrScore: Math.max(0, Math.min(100, Number(v?.ctr_score ?? 50))),
-        searchVisibility: Math.max(0, Math.min(100, Number(v?.search_visibility ?? 50))),
-        conversionScore: Math.max(0, Math.min(100, Number(v?.conversion_score ?? 50))),
-        overallScore: Math.max(0, Math.min(100, Number(v?.overall_score ?? 50))),
-        strengths: (v?.strengths || []).slice(0, 3).map((s: any) => String(s).slice(0, 150)),
-        weaknesses: (v?.weaknesses || []).slice(0, 3).map((w: any) => String(w).slice(0, 150)),
-        bestForPlatform: ['bolha', 'vinted', 'facebook', 'avtonet', 'kleinanzeigen'].includes(String(v?.best_for_platform))
-          ? String(v.best_for_platform) : 'bolha',
-      })),
-      winner: {
-        title: String(parsed?.winner?.title ?? '').slice(0, 200),
-        why: String(parsed?.winner?.why ?? '').slice(0, 300),
-        expectedImprovementPct: Math.max(0, Number(parsed?.winner?.expected_improvement_pct ?? 0)),
-      },
-      platformSpecificTitles: {
-        bolha: String(parsed?.platform_specific_titles?.bolha ?? '').slice(0, 100),
-        vinted: String(parsed?.platform_specific_titles?.vinted ?? '').slice(0, 120),
-        facebook: String(parsed?.platform_specific_titles?.facebook ?? '').slice(0, 150),
-        kleinanzeigen: String(parsed?.platform_specific_titles?.kleinanzeigen ?? '').slice(0, 120),
-      },
-      tips: (parsed?.tips || []).slice(0, 6).map((t: any) => String(t).slice(0, 250)),
-    };
-
-    // Increment AI usage
-    const today = new Date().toISOString().slice(0, 10);
-    if (settings.aiCallsDate !== today) {
-      await db.settings.update({ where: { id: 'singleton' }, data: { aiCallsDate: today, aiCallsToday: 1 } });
-    } else {
-      await db.settings.update({ where: { id: 'singleton' }, data: { aiCallsToday: { increment: 1 } } });
-    }
-
-    return NextResponse.json({
-      ok: true,
-      test,
-    });
-  } catch (e: any) {
-    logger.error("/api/ai/title-abtest", "POST handler failed", e);
-    return NextResponse.json({ error: e?.message ?? 'Napaka' }, { status: 500 });
-  }
+function transformTitleAbTestResult(parsed: any, currentTitle: string) {
+  const cta = parsed?.current_title_analysis ?? {};
+  return {
+    currentTitle,
+    currentTitleAnalysis: {
+      score: clampScore(cta.score),
+      strengths: (cta.strengths || []).slice(0, 4).map((s: any) => String(s).slice(0, 150)),
+      weaknesses: (cta.weaknesses || []).slice(0, 4).map((w: any) => String(w).slice(0, 150)),
+    },
+    variants: (parsed?.variants || []).slice(0, 6).map((v: any) => ({
+      title: String(v?.title ?? '').slice(0, 200),
+      strategy: (TITLE_STRATEGIES as readonly string[]).includes(String(v?.strategy))
+        ? String(v.strategy) : 'KEYWORD_OPTIMIZED',
+      characterCount: Math.max(0, Number(v?.character_count ?? 0)),
+      ctrScore: clampScore(v?.ctr_score),
+      searchVisibility: clampScore(v?.search_visibility),
+      conversionScore: clampScore(v?.conversion_score),
+      overallScore: clampScore(v?.overall_score),
+      strengths: (v?.strengths || []).slice(0, 3).map((s: any) => String(s).slice(0, 150)),
+      weaknesses: (v?.weaknesses || []).slice(0, 3).map((w: any) => String(w).slice(0, 150)),
+      bestForPlatform: (TITLE_PLATFORMS as readonly string[]).includes(String(v?.best_for_platform))
+        ? String(v.best_for_platform) : 'bolha',
+    })),
+    winner: {
+      title: String(parsed?.winner?.title ?? '').slice(0, 200),
+      why: String(parsed?.winner?.why ?? '').slice(0, 300),
+      expectedImprovementPct: Math.max(0, Number(parsed?.winner?.expected_improvement_pct ?? 0)),
+    },
+    platformSpecificTitles: {
+      bolha: String(parsed?.platform_specific_titles?.bolha ?? '').slice(0, 100),
+      vinted: String(parsed?.platform_specific_titles?.vinted ?? '').slice(0, 120),
+      facebook: String(parsed?.platform_specific_titles?.facebook ?? '').slice(0, 150),
+      kleinanzeigen: String(parsed?.platform_specific_titles?.kleinanzeigen ?? '').slice(0, 120),
+    },
+    tips: (parsed?.tips || []).slice(0, 6).map((t: any) => String(t).slice(0, 250)),
+  };
 }

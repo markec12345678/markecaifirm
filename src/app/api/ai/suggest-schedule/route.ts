@@ -1,23 +1,37 @@
-// v5.1: AI Scheduler — AI predlaga optimalne čase za poganjanje monitorjev
+// v5.1 / v8.96.1-refactor: AI Scheduler — AI predlaga optimalne čase za poganjanje monitorjev
+// Refaktoriran z withAiRoute helperjem (v8.96.1) + enforceBudget guard.
+//
 // POST /api/ai/suggest-schedule
 // Body: { monitorId: string } — analiza specificnega monitorja
 // Body: {} — analiza vseh monitorjev
 // Returns: { ok, suggestions: Array<{ monitorId, name, currentInterval, suggestedInterval, currentWindow, suggestedWindow, reasoning, expectedNewListingsPerDay, aiCallsPerDay }> }
 
-import { NextRequest, NextResponse } from 'next/server';
-import { db } from '@/lib/db';
-import { getSettingsRow } from '@/lib/pipeline';
-import { callProviderForRaw, parseJsonLooseExported, type AiProviderType, type AiSettings } from '@/lib/ai';
-import { logger } from '@/lib/logger';
+import { withAiRoute, AI_ROUTE_DEFAULTS, ApiRouteError, type AiRouteContext } from '@/lib/with-ai-route';
+import { apiOk } from '@/lib/api-response';
 
-export const runtime = 'nodejs';
-export const dynamic = 'force-dynamic';
+export const { runtime, dynamic } = AI_ROUTE_DEFAULTS;
 export const maxDuration = 60;
 
-export async function POST(req: NextRequest) {
-  try {
+interface SuggestScheduleInput {
+  monitorId?: string;
+}
+
+export const POST = withAiRoute<SuggestScheduleInput>({
+  endpoint: '/api/ai/suggest-schedule',
+  maxDuration: 60,
+  enforceBudget: true, // AI klic — preveri budget
+
+  parseBody: async (req) => {
     const body = await req.json().catch(() => ({}));
     const monitorId = body?.monitorId;
+    return { monitorId: monitorId ? String(monitorId) : undefined };
+  },
+
+  // No validateInput — monitorId je opcijski
+
+  handler: async (input, ctx: AiRouteContext) => {
+    const { db, callAi, parseAi } = ctx;
+    const { monitorId } = input;
 
     // Gather run logs for analysis (last 30 days)
     const thirtyDaysAgo = new Date(Date.now() - 30 * 24 * 60 * 60 * 1000);
@@ -26,7 +40,7 @@ export async function POST(req: NextRequest) {
     if (monitorId) {
       const m = await db.monitor.findUnique({ where: { id: monitorId } });
       if (!m) {
-        return NextResponse.json({ error: 'Monitor ne obstaja' }, { status: 404 });
+        throw new ApiRouteError('Monitor ne obstaja', 404);
       }
       monitors = [m];
     } else {
@@ -34,20 +48,8 @@ export async function POST(req: NextRequest) {
     }
 
     if (monitors.length === 0) {
-      return NextResponse.json({ ok: true, suggestions: [], message: 'Ni aktivnih monitorjev za analizo.' });
+      return apiOk({ ok: true, suggestions: [], message: 'Ni aktivnih monitorjev za analizo.' });
     }
-
-    const settings = await getSettingsRow();
-    const aiSettings: AiSettings = {
-      provider: settings.aiProvider as AiProviderType,
-      baseUrl: settings.aiBaseUrl,
-      apiKey: settings.aiApiKey,
-      model: settings.aiModel,
-      fallbackProvider: (settings.fallbackProvider || '') as AiProviderType | '',
-      fallbackBaseUrl: settings.fallbackBaseUrl || '',
-      fallbackApiKey: settings.fallbackApiKey || '',
-      fallbackModel: settings.fallbackModel || '',
-    };
 
     const suggestions: any[] = [];
 
@@ -127,24 +129,8 @@ export async function POST(req: NextRequest) {
         listingsCount,
       });
 
-      let raw = '';
-      try {
-        raw = await callProviderForRaw(aiSettings, prompt);
-      } catch (primaryError: any) {
-        if (aiSettings.fallbackProvider && aiSettings.fallbackModel) {
-          const fallbackSettings: AiSettings = {
-            provider: aiSettings.fallbackProvider,
-            baseUrl: aiSettings.fallbackBaseUrl || '',
-            apiKey: aiSettings.fallbackApiKey || '',
-            model: aiSettings.fallbackModel,
-          };
-          raw = await callProviderForRaw(fallbackSettings, prompt);
-        } else {
-          throw primaryError;
-        }
-      }
-
-      const parsed: any = parseJsonLooseExported(raw);
+      const raw = await callAi(prompt);
+      const parsed: any = parseAi(raw);
       suggestions.push({
         monitorId: monitor.id,
         name: monitor.name,
@@ -160,31 +146,16 @@ export async function POST(req: NextRequest) {
       });
     }
 
-    // Increment AI usage counter
-    const today = new Date().toISOString().slice(0, 10);
-    if (settings.aiCallsDate !== today) {
-      await db.settings.update({
-        where: { id: 'singleton' },
-        data: { aiCallsDate: today, aiCallsToday: monitors.length },
-      });
-    } else {
-      await db.settings.update({
-        where: { id: 'singleton' },
-        data: { aiCallsToday: { increment: monitors.length } },
-      });
-    }
-
-    return NextResponse.json({
+    return apiOk({
       ok: true,
       suggestions,
       analyzedAt: new Date().toISOString(),
       analyzedMonitors: monitors.length,
     });
-  } catch (e: any) {
-    logger.error("/api/ai/suggest-schedule", "POST handler failed", e);
-    return NextResponse.json({ error: e?.message ?? 'Napaka pri AI analizi' }, { status: 500 });
-  }
-}
+  },
+});
+
+// --- Pomožne funkcije (čiste, testabilne) --------------------------------
 
 function buildSchedulePrompt(monitor: any, data: any): string {
   const hourStats = data.peakHours.map((h: any) =>

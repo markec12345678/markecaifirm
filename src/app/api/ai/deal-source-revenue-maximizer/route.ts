@@ -24,24 +24,18 @@
 
 // GET+POST /api/ai/deal-source-revenue-maximizer
 // (AI-enhanced + grounding + anti-hallucination + 6h cache + deterministic fallback)
+// Refaktoriran z withAiRoute helperjem (v8.96.5) + enforceBudget guard.
 
-import { NextRequest, NextResponse } from 'next/server';
-import { db } from '@/lib/db';
-import { getSettingsRow } from '@/lib/pipeline';
-import {
-  callProviderForRaw,
-  parseJsonLooseExported,
-  type AiProviderType,
-  type AiSettings,
-} from '@/lib/ai';
+import { withAiRoute, AI_ROUTE_DEFAULTS, type AiRouteContext } from '@/lib/with-ai-route';
+import { apiOk } from '@/lib/api-response';
 import { GROUNDING_PROMPT_SUFFIX } from '@/lib/anti-hallucination';
 import { getCachedAI, setCachedAI } from '@/lib/ai-cache';
-import { checkRateLimit, rateLimitResponse } from '@/lib/rate-limit';
-import { logger } from '@/lib/logger';
 
-export const runtime = 'nodejs';
-export const dynamic = 'force-dynamic';
+export const { runtime, dynamic } = AI_ROUTE_DEFAULTS;
 export const maxDuration = 60;
+
+// eslint-disable-next-line @typescript-eslint/no-empty-object-type
+interface DealSourceRevenueMaximizerInput {}
 
 // --- Types ---------------------------------------------------------------
 
@@ -548,17 +542,20 @@ function buildSummary(entries: SourceEntry[], portfolio: PortfolioSummary): stri
 
 // --- Handler -------------------------------------------------------------
 
-export async function GET(req: NextRequest) {
-  return handleDealSourceRevenueMaximizer(req);
-}
-export async function POST(req: NextRequest) {
-  return handleDealSourceRevenueMaximizer(req);
-}
+const dealSourceRevenueMaximizerHandler = withAiRoute<DealSourceRevenueMaximizerInput>({
+  endpoint: '/api/ai/deal-source-revenue-maximizer',
+  maxDuration: 60,
+  enforceBudget: true, // AI klic — preveri budget
+  method: 'GET', // Endpoint sprejema GET + POST — bypass POST-only check
 
-async function handleDealSourceRevenueMaximizer(req: NextRequest) {
-  try {
-    const rl = checkRateLimit(req, 'ai-deal-source-revenue-maximizer', 20);
-    if (!rl.allowed) return rateLimitResponse(rl);
+  parseBody: async (req) => {
+    await req.json().catch(() => ({}));
+    return {};
+  },
+
+  // No validateInput — body ignored, identična logika za GET in POST
+  handler: async (_input, ctx: AiRouteContext) => {
+    const { db, callAi, parseAi, logger } = ctx;
 
     const now = Date.now();
     const twelveMonthsAgo = new Date(now - TWELVE_MONTHS_MS);
@@ -591,7 +588,7 @@ async function handleDealSourceRevenueMaximizer(req: NextRequest) {
 
     // Empty-state: no SOLD trades
     if (soldTrades.length === 0) {
-      return NextResponse.json({
+      return apiOk({
         ok: true,
         sources: [],
         portfolio: {
@@ -614,7 +611,7 @@ async function handleDealSourceRevenueMaximizer(req: NextRequest) {
     }
 
     if (computed.length === 0) {
-      return NextResponse.json({
+      return apiOk({
         ok: true,
         sources: [],
         portfolio: {
@@ -648,7 +645,7 @@ async function handleDealSourceRevenueMaximizer(req: NextRequest) {
       summary: string;
     }>(cacheKey);
     if (cached) {
-      return NextResponse.json({
+      return apiOk({
         ok: true,
         sources: cached.sources,
         portfolio: cached.portfolio,
@@ -658,112 +655,14 @@ async function handleDealSourceRevenueMaximizer(req: NextRequest) {
       } satisfies DealSourceRevenueResponse);
     }
 
-    // 4) AI prompt with grounding
-    const settings = await getSettingsRow();
-    const aiSettings: AiSettings = {
-      provider: settings.aiProvider as AiProviderType,
-      baseUrl: settings.aiBaseUrl,
-      apiKey: settings.aiApiKey,
-      model: settings.aiModel,
-      fallbackProvider: (settings.fallbackProvider || '') as
-        | AiProviderType
-        | '',
-      fallbackBaseUrl: settings.fallbackBaseUrl || '',
-      fallbackApiKey: settings.fallbackApiKey || '',
-      fallbackModel: settings.fallbackModel || '',
-    };
-
-    // Compact context for AI
-    const sourcesForAI = entries.map((e) => ({
-      source: e.source,
-      displayName: e.displayName,
-      metrics: e.metrics,
-      deterministicMaximization: e.maximization,
-    }));
-
-    const promptData = {
-      totalTrades: computed.length,
-      totalSources: entries.length,
-      sources: sourcesForAI,
-      deterministicPortfolio: {
-        totalCurrentRevenue: portfolio.totalCurrentRevenue,
-        totalMaximizedRevenue: portfolio.totalMaximizedRevenue,
-        totalRevenueUplift: portfolio.totalRevenueUplift,
-        sourceRevenueRanking: portfolio.sourceRevenueRanking,
-      },
-      caps: {
-        revenueMin: REVENUE_MIN, revenueMax: REVENUE_MAX,
-        revenuePerMonthMin: REVENUE_PER_MONTH_MIN, revenuePerMonthMax: REVENUE_PER_MONTH_MAX,
-        revenuePerTradeMin: REVENUE_PER_TRADE_MIN, revenuePerTradeMax: REVENUE_PER_TRADE_MAX,
-        grossRevenueMin: GROSS_REVENUE_MIN, grossRevenueMax: GROSS_REVENUE_MAX,
-        trendMin: TREND_MIN, trendMax: TREND_MAX,
-        marketShareMin: MARKET_SHARE_MIN, marketShareMax: MARKET_SHARE_MAX,
-        sellPriceMin: SELL_PRICE_MIN, sellPriceMax: SELL_PRICE_MAX,
-        upliftMin: UPLIFT_MIN, upliftMax: UPLIFT_MAX,
-        projected30dMin: PROJECTED_30D_MIN, projected30dMax: PROJECTED_30D_MAX,
-        scoreMin: SCORE_MIN, scoreMax: SCORE_MAX,
-      },
-    };
-
-    const prompt = `Si AI "Deal Source Revenue Maximizer" za slovenske in srednjeevropske oglasne platforme (Bolha, Vinted, Avtonet, mobile.de).
-Si strokovnjak za TOTAL REVENUE MAXIMIZATION per source — kako maksimizirati TOP-LINE REVENUE (ne profit, ne margin) per source per month. Tvoj cilj je "Bolha generira 4200€/mesec revenue, ampak bi lahko bilo 5800€ z EXPAND_VOLUME — Vinted 1800€ → 2400€ z RAISE_PRICES." Razlika od deal-source-cash-flow-maximizer (v8.06 ki maksimizira NET CASH FLOW per source = revenue − fees − carrying costs) — ti MAKSIMIZIRAŠ TOTAL REVENUE per source (top-line, brez fees in carrying). Razlika od deal-source-profit-maximizer (v7.97 ki maksimizira profit per source) — ta maksimizira REVENUE per source (top-line, pred costi). Razlika od deal-source-profit-per-trade-maximizer (v8.04 ki maksimizira profit per trade € per source) — ta maksimizira TOTAL REVENUE per source per month. Razlika od deal-source-margin-maximizer (v8.03 ki maksimizira margin % per source) — ta maksimizira REVENUE z revenueMaximizationLevers in pricingLeakageAnalysis. Razlika od deal-source-roi-maximizer (v8.00 ki maksimizira ROI per source) — ta maksimizira REVENUE z revenuePotentialScore in sourceRevenueRanking. Razlika od revenue-growth-maximizer (v8.01 ki maksimizira growth rate revenue čez portfolio) — ta maksimizira REVENUE PER SOURCE z revenueMaximizationAction in projectedRevenue30d. Razlika od revenue-per-trade-maximizer (v8.06 ki maksimizira avg sell price per trade) — ta maksimizira TOTAL REVENUE per source per month (ne per-trade). Razlika od revenue-stream-optimizer (v7.96 ki optimizira multiple revenue streams) — ta daje per-source REVENUE MAXIMIZATION z revenueMaximizationAction in pricingLeakageAnalysis. Razlika od profit-compounding-maximizer (v8.04 ki maksimizira compounding reinvest rate) — ta maksimizira REVENUE per source z revenueUplift in projectedRevenue30d.
-
-DETERMINISTIČNI PODATKI (izračunano iz DB — SOLD trgovin v zadnjih 12 mesecih z linked Listing za source):
-${JSON.stringify(promptData, null, 2)}
-
-PRAVILA ZA AI ODGOVOR:
-1. sources: za vsak source iz sources, daj:
-   - source (string, MORA match-at enega iz deterministic sources — anti-hallucination),
-   - maximization.revenueMaximizationAction: EXPAND_VOLUME | RAISE_PRICES | DIVERSIFY_WITHIN_SOURCE | ADD_NEW_CATEGORIES | FIX_PRICING_LEAKAGE,
-   - maximization.projectedRevenue30d € [0, 100000] (forecasted revenue next 30 days z action — ≥ current revenuePerMonth, ≤ current × 1.5 ali +5000€),
-   - maximization.revenueUplift €/mo [0, 50000] (improvement = projected − current revenuePerMonth),
-   - maximization.revenueMaximizationLevers: 3 string-i (max 200 vsak, slovenski — specifični levers za ta source),
-   - maximization.revenuePotentialScore [0, 100] (koliko % več revenue je možno iz tega source — higher = more upside),
-   - maximization.pricingLeakageAnalysis (max 500, slovenski — kje se izgublja revenue: underpricing, fees, discounts),
-2. summary: slovenski povzetek (max 400 znakov).
-
-VRNI LE JSON:
-{
-  "sources": [
-    {
-      "source": "bolha",
-      "maximization": {
-        "revenueMaximizationAction": "EXPAND_VOLUME",
-        "projectedRevenue30d": 5800,
-        "revenueUplift": 1600,
-        "revenueMaximizationLevers": [
-          "Povečaj trade volume za 30% v naslednjih 30 dneh.",
-          "Aktiviraj AI monitor alerts za premium segment.",
-          "Cross-list 20% inventory na to platformo."
-        ],
-        "revenuePotentialScore": 78,
-        "pricingLeakageAnalysis": "Fees 8% gross revenue. Avg sell 280€, revenue/trade 258€. Leakage: underpricing, fees, discounts."
-      }
-    },
-    {
-      "source": "vinted",
-      "maximization": {
-        "revenueMaximizationAction": "RAISE_PRICES",
-        "projectedRevenue30d": 2400,
-        "revenueUplift": 600,
-        "revenueMaximizationLevers": [
-          "Dvigni avg sell price z 150€ na 177€.",
-          "A/B testing na 30% novih oglasov.",
-          "Premakni top 20% listings v premium pozicioniranje."
-        ],
-        "revenuePotentialScore": 55,
-        "pricingLeakageAnalysis": "Fees 12% gross revenue. Avg sell 150€. Leakage: underpricing + discounts."
-      }
-    }
-  ],
-  "summary": "2 source-a. Bolha 4200€/mo → 5800€/mo (+1600€, EXPAND_VOLUME). Vinted 1800€/mo → 2400€/mo (+600€, RAISE_PRICES). Portfolio: 6000€ → 8200€/mo (+2200€)."
-}${GROUNDING_PROMPT_SUFFIX}`;
+    // 4) AI prompt with grounding (settings loaded by withAiRoute wrapper)
+    const prompt = buildPrompt(entries, computed, portfolio);
 
     let aiUsed = false;
 
     try {
-      const raw = await callProviderForRaw(aiSettings, prompt);
-      const parsed = parseJsonLooseExported(raw) as AiResponse | null;
+      const raw = await callAi(prompt);
+      const parsed = parseAi(raw) as AiResponse | null;
 
       if (parsed && typeof parsed === 'object') {
         const aiSourcesMap = new Map<string, NonNullable<AiResponse['sources']>[number]>();
@@ -869,22 +768,109 @@ VRNI LE JSON:
       setCachedAI(cacheKey, { sources: entries, portfolio, summary });
     }
 
-    return NextResponse.json({
+    return apiOk({
       ok: true,
       sources: entries,
       portfolio,
       summary,
       aiUsed,
     } satisfies DealSourceRevenueResponse);
-  } catch (err: any) {
-    logger.error(
-      '/api/ai/deal-source-revenue-maximizer',
-      'handler failed',
-      err,
-    );
-    return NextResponse.json(
-      { error: err?.message ?? 'Napaka' },
-      { status: 500 },
-    );
-  }
+  },
+});
+
+export const GET = dealSourceRevenueMaximizerHandler;
+export const POST = dealSourceRevenueMaximizerHandler;
+
+// --- Prompt builder (čist, testabilen) -----------------------------------
+
+function buildPrompt(
+  entries: SourceEntry[],
+  computed: TradeComputed[],
+  portfolio: PortfolioSummary,
+): string {
+  // Compact context for AI
+  const sourcesForAI = entries.map((e) => ({
+    source: e.source,
+    displayName: e.displayName,
+    metrics: e.metrics,
+    deterministicMaximization: e.maximization,
+  }));
+
+  const promptData = {
+    totalTrades: computed.length,
+    totalSources: entries.length,
+    sources: sourcesForAI,
+    deterministicPortfolio: {
+      totalCurrentRevenue: portfolio.totalCurrentRevenue,
+      totalMaximizedRevenue: portfolio.totalMaximizedRevenue,
+      totalRevenueUplift: portfolio.totalRevenueUplift,
+      sourceRevenueRanking: portfolio.sourceRevenueRanking,
+    },
+    caps: {
+      revenueMin: REVENUE_MIN, revenueMax: REVENUE_MAX,
+      revenuePerMonthMin: REVENUE_PER_MONTH_MIN, revenuePerMonthMax: REVENUE_PER_MONTH_MAX,
+      revenuePerTradeMin: REVENUE_PER_TRADE_MIN, revenuePerTradeMax: REVENUE_PER_TRADE_MAX,
+      grossRevenueMin: GROSS_REVENUE_MIN, grossRevenueMax: GROSS_REVENUE_MAX,
+      trendMin: TREND_MIN, trendMax: TREND_MAX,
+      marketShareMin: MARKET_SHARE_MIN, marketShareMax: MARKET_SHARE_MAX,
+      sellPriceMin: SELL_PRICE_MIN, sellPriceMax: SELL_PRICE_MAX,
+      upliftMin: UPLIFT_MIN, upliftMax: UPLIFT_MAX,
+      projected30dMin: PROJECTED_30D_MIN, projected30dMax: PROJECTED_30D_MAX,
+      scoreMin: SCORE_MIN, scoreMax: SCORE_MAX,
+    },
+  };
+
+  return `Si AI "Deal Source Revenue Maximizer" za slovenske in srednjeevropske oglasne platforme (Bolha, Vinted, Avtonet, mobile.de).
+Si strokovnjak za TOTAL REVENUE MAXIMIZATION per source — kako maksimizirati TOP-LINE REVENUE (ne profit, ne margin) per source per month. Tvoj cilj je "Bolha generira 4200€/mesec revenue, ampak bi lahko bilo 5800€ z EXPAND_VOLUME — Vinted 1800€ → 2400€ z RAISE_PRICES." Razlika od deal-source-cash-flow-maximizer (v8.06 ki maksimizira NET CASH FLOW per source = revenue − fees − carrying costs) — ti MAKSIMIZIRAŠ TOTAL REVENUE per source (top-line, brez fees in carrying). Razlika od deal-source-profit-maximizer (v7.97 ki maksimizira profit per source) — ta maksimizira REVENUE per source (top-line, pred costi). Razlika od deal-source-profit-per-trade-maximizer (v8.04 ki maksimizira profit per trade € per source) — ta maksimizira TOTAL REVENUE per source per month. Razlika od deal-source-margin-maximizer (v8.03 ki maksimizira margin % per source) — ta maksimizira REVENUE z revenueMaximizationLevers in pricingLeakageAnalysis. Razlika od deal-source-roi-maximizer (v8.00 ki maksimizira ROI per source) — ta maksimizira REVENUE z revenuePotentialScore in sourceRevenueRanking. Razlika od revenue-growth-maximizer (v8.01 ki maksimizira growth rate revenue čez portfolio) — ta maksimizira REVENUE PER SOURCE z revenueMaximizationAction in projectedRevenue30d. Razlika od revenue-per-trade-maximizer (v8.06 ki maksimizira avg sell price per trade) — ta maksimizira TOTAL REVENUE per source per month (ne per-trade). Razlika od revenue-stream-optimizer (v7.96 ki optimizira multiple revenue streams) — ta daje per-source REVENUE MAXIMIZATION z revenueMaximizationAction in pricingLeakageAnalysis. Razlika od profit-compounding-maximizer (v8.04 ki maksimizira compounding reinvest rate) — ta maksimizira REVENUE per source z revenueUplift in projectedRevenue30d.
+
+DETERMINISTIČNI PODATKI (izračunano iz DB — SOLD trgovin v zadnjih 12 mesecih z linked Listing za source):
+${JSON.stringify(promptData, null, 2)}
+
+PRAVILA ZA AI ODGOVOR:
+1. sources: za vsak source iz sources, daj:
+   - source (string, MORA match-at enega iz deterministic sources — anti-hallucination),
+   - maximization.revenueMaximizationAction: EXPAND_VOLUME | RAISE_PRICES | DIVERSIFY_WITHIN_SOURCE | ADD_NEW_CATEGORIES | FIX_PRICING_LEAKAGE,
+   - maximization.projectedRevenue30d € [0, 100000] (forecasted revenue next 30 days z action — ≥ current revenuePerMonth, ≤ current × 1.5 ali +5000€),
+   - maximization.revenueUplift €/mo [0, 50000] (improvement = projected − current revenuePerMonth),
+   - maximization.revenueMaximizationLevers: 3 string-i (max 200 vsak, slovenski — specifični levers za ta source),
+   - maximization.revenuePotentialScore [0, 100] (koliko % več revenue je možno iz tega source — higher = more upside),
+   - maximization.pricingLeakageAnalysis (max 500, slovenski — kje se izgublja revenue: underpricing, fees, discounts),
+2. summary: slovenski povzetek (max 400 znakov).
+
+VRNI LE JSON:
+{
+  "sources": [
+    {
+      "source": "bolha",
+      "maximization": {
+        "revenueMaximizationAction": "EXPAND_VOLUME",
+        "projectedRevenue30d": 5800,
+        "revenueUplift": 1600,
+        "revenueMaximizationLevers": [
+          "Povečaj trade volume za 30% v naslednjih 30 dneh.",
+          "Aktiviraj AI monitor alerts za premium segment.",
+          "Cross-list 20% inventory na to platformo."
+        ],
+        "revenuePotentialScore": 78,
+        "pricingLeakageAnalysis": "Fees 8% gross revenue. Avg sell 280€, revenue/trade 258€. Leakage: underpricing, fees, discounts."
+      }
+    },
+    {
+      "source": "vinted",
+      "maximization": {
+        "revenueMaximizationAction": "RAISE_PRICES",
+        "projectedRevenue30d": 2400,
+        "revenueUplift": 600,
+        "revenueMaximizationLevers": [
+          "Dvigni avg sell price z 150€ na 177€.",
+          "A/B testing na 30% novih oglasov.",
+          "Premakni top 20% listings v premium pozicioniranje."
+        ],
+        "revenuePotentialScore": 55,
+        "pricingLeakageAnalysis": "Fees 12% gross revenue. Avg sell 150€. Leakage: underpricing + discounts."
+      }
+    }
+  ],
+  "summary": "2 source-a. Bolha 4200€/mo → 5800€/mo (+1600€, EXPAND_VOLUME). Vinted 1800€/mo → 2400€/mo (+600€, RAISE_PRICES). Portfolio: 6000€ → 8200€/mo (+2200€)."
+}${GROUNDING_PROMPT_SUFFIX}`;
 }

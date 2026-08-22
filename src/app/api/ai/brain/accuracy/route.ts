@@ -1,4 +1,4 @@
-// v8.25: Historical Accuracy API — returns Master Brain accuracy % + grade trends.
+// v8.25 / v8.94-refactor: Historical Accuracy API — returns Master Brain accuracy % + grade trends.
 //
 // GET ?days=30 (default 30, clamp [1, 400])
 // → returns accuracy stats + grade trend array + summary (IMPROVING/STABLE/DECLINING).
@@ -51,14 +51,27 @@
 //   - If fewer than 4 snapshots → 'INSUFFICIENT_DATA'
 //
 // runtime='nodejs', dynamic='force-dynamic', maxDuration=60.
+//
+// DETERMINISTIC (aiUsed: false): no external AI/LLM SDK is called.
+// Reads BrainSnapshot rows via getSnapshots() from @/lib/brain/snapshots.
+//
+// Refaktoriran z withAiRoute helperjem (v8.95.0-a) + enforceBudget guard
+// (non-breaking — endpoint ne kliče AI direktno, ampak je konsistentno z
+// vsemi v8.94.x migracijami).
 
-import { NextRequest, NextResponse } from 'next/server';
-import { logger } from '@/lib/logger';
+import type { NextRequest } from 'next/server';
+import { withAiRoute, AI_ROUTE_DEFAULTS, type AiRouteContext } from '@/lib/with-ai-route';
+import { apiOk } from '@/lib/api-response';
 import { getSnapshots, type BrainSnapshotRow } from '@/lib/brain/snapshots';
 
-export const runtime = 'nodejs';
-export const dynamic = 'force-dynamic';
+export const { runtime, dynamic } = AI_ROUTE_DEFAULTS;
 export const maxDuration = 60;
+
+interface BrainAccuracyInput {
+  days: number;
+}
+
+// --- Pure helpers (čiste, testabilne) -------------------------------------
 
 /**
  * Parse `days` query param — clamp to [1, 400]. Default 30.
@@ -127,7 +140,10 @@ function computeTrend(snapshots: BrainSnapshotRow[]): {
  * Average of non-null accuracy values, rounded to 1 decimal.
  * Returns null if no snapshots have accuracy yet (insufficient data).
  */
-function avgAccuracy(snapshots: BrainSnapshotRow[], key: 'accuracy30d' | 'accuracy90d'): number | null {
+function avgAccuracy(
+  snapshots: BrainSnapshotRow[],
+  key: 'accuracy30d' | 'accuracy90d',
+): number | null {
   const withAccuracy = snapshots.filter(
     (s) => s[key] !== null && s[key] !== undefined,
   );
@@ -136,9 +152,21 @@ function avgAccuracy(snapshots: BrainSnapshotRow[], key: 'accuracy30d' | 'accura
   return Math.round((sum / withAccuracy.length) * 10) / 10;
 }
 
-export async function GET(req: NextRequest) {
-  try {
-    const days = parseDays(req);
+// --- Handler ---------------------------------------------------------------
+
+export const GET = withAiRoute<BrainAccuracyInput>({
+  endpoint: '/api/ai/brain/accuracy',
+  maxDuration: 60,
+  enforceBudget: true, // v8.95.0-a: budget guard + avtomatski recordAiCall
+  method: 'GET',
+
+  // GET — `days` iz query string-a, clamp [1, 400], default 30
+  parseBody: async (req) => ({ days: parseDays(req) }),
+
+  // Brez validateInput — parseDays vedno vrne valid število
+
+  handler: async (input, _ctx: AiRouteContext) => {
+    const { days } = input;
 
     const snapshots = await getSnapshots(days);
 
@@ -189,7 +217,7 @@ export async function GET(req: NextRequest) {
           : undefined,
     };
 
-    return NextResponse.json({
+    return apiOk({
       ok: true,
       days,
       accuracy30d,
@@ -197,11 +225,5 @@ export async function GET(req: NextRequest) {
       gradeTrend,
       summary,
     });
-  } catch (err: any) {
-    logger.error('/api/ai/brain/accuracy', 'GET handler failed', err);
-    return NextResponse.json(
-      { error: err?.message ?? 'Napaka' },
-      { status: 500 },
-    );
-  }
-}
+  },
+});

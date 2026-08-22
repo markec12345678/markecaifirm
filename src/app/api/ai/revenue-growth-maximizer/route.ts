@@ -1,4 +1,4 @@
-// v8.01: AI Revenue Growth Maximizer — AI maksimizira REVENUE GROWTH (top-line
+// v8.01 / v8.96.5-batch2: AI Revenue Growth Maximizer — AI maksimizira REVENUE GROWTH (top-line
 // revenue, ne samo profit). "Your revenue is 5000€/mo but could be 12,000€/mo
 // with 3 expansion actions." Fokus na total revenue growth, expansion v nove
 // kategorije, scaling trade volume in diversifikacijo revenue streams.
@@ -29,24 +29,20 @@
 
 // GET+POST /api/ai/revenue-growth-maximizer
 // (AI-enhanced + grounding + anti-hallucination + 6h cache + deterministic fallback)
+// Refaktoriran z withAiRoute helperjem (v8.96.5) + enforceBudget guard.
 
-import { NextRequest, NextResponse } from 'next/server';
-import { db } from '@/lib/db';
-import { getSettingsRow } from '@/lib/pipeline';
-import {
-  callProviderForRaw,
-  parseJsonLooseExported,
-  type AiProviderType,
-  type AiSettings,
-} from '@/lib/ai';
+import { withAiRoute, AI_ROUTE_DEFAULTS, type AiRouteContext } from '@/lib/with-ai-route';
+import { apiOk } from '@/lib/api-response';
 import { GROUNDING_PROMPT_SUFFIX } from '@/lib/anti-hallucination';
 import { getCachedAI, setCachedAI } from '@/lib/ai-cache';
-import { checkRateLimit, rateLimitResponse } from '@/lib/rate-limit';
-import { logger } from '@/lib/logger';
 
-export const runtime = 'nodejs';
-export const dynamic = 'force-dynamic';
+export const { runtime, dynamic } = AI_ROUTE_DEFAULTS;
 export const maxDuration = 60;
+
+// --- Input ----------------------------------------------------------------
+
+// eslint-disable-next-line @typescript-eslint/no-empty-object-type
+interface RevenueGrowthMaximizerInput {}
 
 // --- Types ---------------------------------------------------------------
 
@@ -554,19 +550,215 @@ function buildSummary(current: CurrentRevenue, max: Maximization): string {
   return parts.join(' ').slice(0, 400);
 }
 
+// --- AI prompt + merge helpers (pure, testable) ---------------------------
+
+interface PromptData {
+  soldCount12m: number;
+  soldCount6m: number;
+  soldCount3m: number;
+  revenue12m: number;
+  revenue6m: number;
+  revenue3m: number;
+  uniqueSources: number;
+  current: CurrentRevenue;
+  deterministicMaximization: {
+    maximizedMonthlyRevenue: number;
+    revenueGrowthMultiplier: number;
+    revenueGrowthGrade: RevenueGrade;
+    growthActions: Array<{
+      action: string;
+      expectedRevenueGain: number;
+      priority: Priority;
+      difficulty: Difficulty;
+    }>;
+    categoryExpansionOpportunities: CategoryExpansion[];
+  };
+  caps: Record<string, number>;
+}
+
+function buildPromptData(
+  agg: RevenueAgg,
+  current: CurrentRevenue,
+  maximization: Maximization,
+): PromptData {
+  return {
+    soldCount12m: agg.count12m,
+    soldCount6m: agg.count6m,
+    soldCount3m: agg.count3m,
+    revenue12m: agg.revenue12m,
+    revenue6m: agg.revenue6m,
+    revenue3m: agg.revenue3m,
+    uniqueSources: agg.perSource.size,
+    current,
+    deterministicMaximization: {
+      maximizedMonthlyRevenue: maximization.maximizedMonthlyRevenue,
+      revenueGrowthMultiplier: maximization.revenueGrowthMultiplier,
+      revenueGrowthGrade: maximization.revenueGrowthGrade,
+      growthActions: maximization.growthActions.map((a) => ({
+        action: a.action,
+        expectedRevenueGain: a.expectedRevenueGain,
+        priority: a.priority,
+        difficulty: a.difficulty,
+      })),
+      categoryExpansionOpportunities: maximization.categoryExpansionOpportunities,
+    },
+    caps: {
+      revenueMin: REVENUE_MIN, revenueMax: REVENUE_MAX,
+      multMin: MULT_MIN, multMax: MULT_MAX,
+      growthRateMin: GROWTH_RATE_MIN, growthRateMax: GROWTH_RATE_MAX,
+      gainMin: GAIN_MIN, gainMax: GAIN_MAX,
+      daysMin: DAYS_MIN, daysMax: DAYS_MAX,
+      pctMin: PERCENTAGE_MIN, pctMax: PERCENTAGE_MAX,
+    },
+  };
+}
+
+function buildPrompt(promptData: PromptData): string {
+  return `Si AI "Revenue Growth Maximizer" za slovenske in srednjeevropske oglasne platforme (Bolha, Vinted, Avtonet, mobile.de).
+Si strokovnjak za REVENUE GROWTH (top-line revenue, NE profit). Maksimiziraš TOTAL REVENUE z rastjo trade volume, širjenjem v nove kategorije in diversifikacijo revenue streams. Razlika od profit-multiplier-engine (v8.00 ki MULTIPLICIRA profit) — ti MAXIMIZIRAŠ REVENUE (top-line sales). Razlika od deal-source-roi-maximizer (v8.00 ki maksimizira ROI per source) — ti fokusiraš na REVENUE GROWTH rate in category expansion. Razlika od inventory-turnover-profit-maximizer (v8.00 ki maksimizira turnover-profit balance) — ti maksimiziraš TOTAL REVENUE preko volume scaling in category expansion. Razlika od capital-growth-maximizer (v7.99 ki maksimizira capital growth) — ti maksimiziraš REVENUE (top-line), ne capital. Razlika od revenue-stream-optimizer (v7.94 ki optimira revenue streams) — ti MAXIMIZIRAŠ revenue z growth actions in category expansion + 3m/6m/12m projection + timeToDoubleRevenue.
+
+DETERMINISTIČNI PODATKI (izračunano iz DB — SOLD trgovin v zadnjih 12 mesecih):
+${JSON.stringify(promptData, null, 2)}
+
+PRAVILA ZA AI ODGOVOR:
+1. growthActions: 4-6 akcij { action (string, max 200, slovenski), expectedRevenueGain € [0, 50000], priority HIGH | MEDIUM | LOW, difficulty EASY | MEDIUM | HARD },
+2. categoryExpansionOpportunities: 3-5 priložnosti { category (max 50), potentialRevenue € [0, 50000], reasoning (max 200, slovenski) },
+3. volumeScalingPlan: slovenski opis kako povečati trade volume (max 400),
+4. revenueDiversificationStrategy: slovenski opis kako zmanjšati revenue concentration (max 400),
+5. revenueGrowthGrade: A+ | A | B | C | D | F (A+ če multiplier ≥ 3.5, A ≥ 2.5, B ≥ 1.8, C ≥ 1.4, D ≥ 1.15, else F),
+6. summary: slovenski povzetek (max 400 znakov).
+
+VRNI LE JSON:
+{
+  "growthActions": [
+    { "action": "Razširi se v elektroniko.", "expectedRevenueGain": 2800, "priority": "HIGH", "difficulty": "MEDIUM" },
+    { "action": "Povečaj trade volume.", "expectedRevenueGain": 2500, "priority": "HIGH", "difficulty": "MEDIUM" }
+  ],
+  "categoryExpansionOpportunities": [
+    { "category": "Elektronika", "potentialRevenue": 2800, "reasoning": "Visoka vrednost, hitra prodaja." }
+  ],
+  "volumeScalingPlan": "Povečaj trade volume z avtomatiziranim sourcingom.",
+  "revenueDiversificationStrategy": "Diversificiraj preko 3 platform.",
+  "revenueGrowthGrade": "A",
+  "summary": "Current: 5000€/mo. Max: 12000€/mo (2.4x). Grade A. 12m proj: 58000€."
+}${GROUNDING_PROMPT_SUFFIX}`;
+}
+
+function mergeAiIntoMaximization(
+  parsed: AiResponse | null,
+  current: CurrentRevenue,
+  maximization: Maximization,
+): { maximization: Maximization; summary: string; aiUsed: boolean } {
+  if (!parsed || typeof parsed !== 'object') {
+    return { maximization, summary: buildSummary(current, maximization), aiUsed: false };
+  }
+
+  let mergedMax = maximization;
+
+  // Override growth actions if AI provided
+  if (Array.isArray(parsed.growthActions) && parsed.growthActions.length >= 3) {
+    const aiActions: GrowthAction[] = [];
+    for (const a of parsed.growthActions.slice(0, MAX_GROWTH_ACTIONS)) {
+      if (!a || typeof a !== 'object') continue;
+      aiActions.push({
+        action: clampString(a.action, 200, 'Growth akcija.'),
+        expectedRevenueGain: round0(clampNum(
+          a.expectedRevenueGain, GAIN_MIN, GAIN_MAX, 0,
+        )),
+        priority: clampEnum(a.priority, VALID_PRIORITY, 'MEDIUM'),
+        difficulty: clampEnum(a.difficulty, VALID_DIFFICULTY, 'MEDIUM'),
+      });
+    }
+    if (aiActions.length >= 3) {
+      // Recompute maximized revenue from AI actions
+      const totalGain = aiActions.reduce((s, a) => s + a.expectedRevenueGain, 0);
+      const aiMaximized = round0(clampNum(
+        current.currentMonthlyRevenue + totalGain,
+        REVENUE_MIN, REVENUE_MAX, current.currentMonthlyRevenue,
+      ));
+      const aiMult = round2(clampNum(
+        current.currentMonthlyRevenue > 0 ? aiMaximized / current.currentMonthlyRevenue : 1,
+        MULT_MIN, MULT_MAX, 1,
+      ));
+      mergedMax = {
+        ...mergedMax,
+        growthActions: aiActions,
+        maximizedMonthlyRevenue: aiMaximized,
+        revenueGrowthMultiplier: aiMult,
+        revenueGrowthGrade: decideGrade(aiMult),
+      };
+    }
+  }
+
+  // Override category expansions if AI provided
+  if (Array.isArray(parsed.categoryExpansionOpportunities) &&
+      parsed.categoryExpansionOpportunities.length >= 2) {
+    const aiCats: CategoryExpansion[] = [];
+    for (const c of parsed.categoryExpansionOpportunities.slice(0, MAX_CATEGORY_EXPANSIONS)) {
+      if (!c || typeof c !== 'object') continue;
+      aiCats.push({
+        category: clampString(c.category, 50, 'Kategorija'),
+        potentialRevenue: round0(clampNum(
+          c.potentialRevenue, GAIN_MIN, GAIN_MAX, 0,
+        )),
+        reasoning: clampString(c.reasoning, 200, 'Premium priložnost.'),
+      });
+    }
+    if (aiCats.length >= 2) {
+      mergedMax = { ...mergedMax, categoryExpansionOpportunities: aiCats };
+    }
+  }
+
+  // Override volume scaling plan
+  if (typeof parsed.volumeScalingPlan === 'string' && parsed.volumeScalingPlan.trim()) {
+    mergedMax = {
+      ...mergedMax,
+      volumeScalingPlan: clampString(parsed.volumeScalingPlan, 400, mergedMax.volumeScalingPlan),
+    };
+  }
+
+  // Override revenue diversification strategy
+  if (typeof parsed.revenueDiversificationStrategy === 'string' && parsed.revenueDiversificationStrategy.trim()) {
+    mergedMax = {
+      ...mergedMax,
+      revenueDiversificationStrategy: clampString(
+        parsed.revenueDiversificationStrategy, 400, mergedMax.revenueDiversificationStrategy,
+      ),
+    };
+  }
+
+  // Override grade
+  if (parsed.revenueGrowthGrade) {
+    mergedMax = {
+      ...mergedMax,
+      revenueGrowthGrade: clampEnum(
+        parsed.revenueGrowthGrade,
+        VALID_GRADE,
+        mergedMax.revenueGrowthGrade,
+      ),
+    };
+  }
+
+  const summary = clampString(parsed.summary, 400, buildSummary(current, mergedMax));
+  return { maximization: mergedMax, summary, aiUsed: true };
+}
+
 // --- Handler -------------------------------------------------------------
 
-export async function GET(req: NextRequest) {
-  return handleRevenueGrowthMaximizer(req);
-}
-export async function POST(req: NextRequest) {
-  return handleRevenueGrowthMaximizer(req);
-}
+const revenueGrowthMaximizerHandler = withAiRoute<RevenueGrowthMaximizerInput>({
+  endpoint: '/api/ai/revenue-growth-maximizer',
+  maxDuration: 60,
+  enforceBudget: true, // AI klic — preveri budget
+  method: 'GET', // Endpoint sprejema GET + POST — bypass POST-only check
 
-async function handleRevenueGrowthMaximizer(req: NextRequest) {
-  try {
-    const rl = checkRateLimit(req, 'ai-revenue-growth-maximizer', 20);
-    if (!rl.allowed) return rateLimitResponse(rl);
+  parseBody: async (req) => {
+    await req.json().catch(() => ({}));
+    return {};
+  },
+
+  // No validateInput — body ignored, identična logika za GET in POST
+  handler: async (_input, ctx: AiRouteContext) => {
+    const { db, callAi, parseAi, logger } = ctx;
 
     const now = Date.now();
     const twelveMonthsAgo = new Date(now - TWELVE_MONTHS_MS);
@@ -601,7 +793,7 @@ async function handleRevenueGrowthMaximizer(req: NextRequest) {
 
     // Empty-state: no SOLD trades
     if (soldTrades.length === 0) {
-      return NextResponse.json({
+      return apiOk({
         ok: true,
         current: {
           currentMonthlyRevenue: 0,
@@ -650,7 +842,7 @@ async function handleRevenueGrowthMaximizer(req: NextRequest) {
       summary: string;
     }>(cacheKey);
     if (cached) {
-      return NextResponse.json({
+      return apiOk({
         ok: true,
         current,
         maximization: cached.maximization,
@@ -661,172 +853,19 @@ async function handleRevenueGrowthMaximizer(req: NextRequest) {
     }
 
     // 4) AI prompt with grounding
-    const settings = await getSettingsRow();
-    const aiSettings: AiSettings = {
-      provider: settings.aiProvider as AiProviderType,
-      baseUrl: settings.aiBaseUrl,
-      apiKey: settings.aiApiKey,
-      model: settings.aiModel,
-      fallbackProvider: (settings.fallbackProvider || '') as
-        | AiProviderType
-        | '',
-      fallbackBaseUrl: settings.fallbackBaseUrl || '',
-      fallbackApiKey: settings.fallbackApiKey || '',
-      fallbackModel: settings.fallbackModel || '',
-    };
-
-    const promptData = {
-      soldCount12m: agg.count12m,
-      soldCount6m: agg.count6m,
-      soldCount3m: agg.count3m,
-      revenue12m: agg.revenue12m,
-      revenue6m: agg.revenue6m,
-      revenue3m: agg.revenue3m,
-      uniqueSources: agg.perSource.size,
-      current,
-      deterministicMaximization: {
-        maximizedMonthlyRevenue: maximization.maximizedMonthlyRevenue,
-        revenueGrowthMultiplier: maximization.revenueGrowthMultiplier,
-        revenueGrowthGrade: maximization.revenueGrowthGrade,
-        growthActions: maximization.growthActions.map((a) => ({
-          action: a.action,
-          expectedRevenueGain: a.expectedRevenueGain,
-          priority: a.priority,
-          difficulty: a.difficulty,
-        })),
-        categoryExpansionOpportunities: maximization.categoryExpansionOpportunities,
-      },
-      caps: {
-        revenueMin: REVENUE_MIN, revenueMax: REVENUE_MAX,
-        multMin: MULT_MIN, multMax: MULT_MAX,
-        growthRateMin: GROWTH_RATE_MIN, growthRateMax: GROWTH_RATE_MAX,
-        gainMin: GAIN_MIN, gainMax: GAIN_MAX,
-        daysMin: DAYS_MIN, daysMax: DAYS_MAX,
-        pctMin: PERCENTAGE_MIN, pctMax: PERCENTAGE_MAX,
-      },
-    };
-
-    const prompt = `Si AI "Revenue Growth Maximizer" za slovenske in srednjeevropske oglasne platforme (Bolha, Vinted, Avtonet, mobile.de).
-Si strokovnjak za REVENUE GROWTH (top-line revenue, NE profit). Maksimiziraš TOTAL REVENUE z rastjo trade volume, širjenjem v nove kategorije in diversifikacijo revenue streams. Razlika od profit-multiplier-engine (v8.00 ki MULTIPLICIRA profit) — ti MAXIMIZIRAŠ REVENUE (top-line sales). Razlika od deal-source-roi-maximizer (v8.00 ki maksimizira ROI per source) — ti fokusiraš na REVENUE GROWTH rate in category expansion. Razlika od inventory-turnover-profit-maximizer (v8.00 ki maksimizira turnover-profit balance) — ti maksimiziraš TOTAL REVENUE preko volume scaling in category expansion. Razlika od capital-growth-maximizer (v7.99 ki maksimizira capital growth) — ti maksimiziraš REVENUE (top-line), ne capital. Razlika od revenue-stream-optimizer (v7.94 ki optimira revenue streams) — ti MAXIMIZIRAŠ revenue z growth actions in category expansion + 3m/6m/12m projection + timeToDoubleRevenue.
-
-DETERMINISTIČNI PODATKI (izračunano iz DB — SOLD trgovin v zadnjih 12 mesecih):
-${JSON.stringify(promptData, null, 2)}
-
-PRAVILA ZA AI ODGOVOR:
-1. growthActions: 4-6 akcij { action (string, max 200, slovenski), expectedRevenueGain € [0, 50000], priority HIGH | MEDIUM | LOW, difficulty EASY | MEDIUM | HARD },
-2. categoryExpansionOpportunities: 3-5 priložnosti { category (max 50), potentialRevenue € [0, 50000], reasoning (max 200, slovenski) },
-3. volumeScalingPlan: slovenski opis kako povečati trade volume (max 400),
-4. revenueDiversificationStrategy: slovenski opis kako zmanjšati revenue concentration (max 400),
-5. revenueGrowthGrade: A+ | A | B | C | D | F (A+ če multiplier ≥ 3.5, A ≥ 2.5, B ≥ 1.8, C ≥ 1.4, D ≥ 1.15, else F),
-6. summary: slovenski povzetek (max 400 znakov).
-
-VRNI LE JSON:
-{
-  "growthActions": [
-    { "action": "Razširi se v elektroniko.", "expectedRevenueGain": 2800, "priority": "HIGH", "difficulty": "MEDIUM" },
-    { "action": "Povečaj trade volume.", "expectedRevenueGain": 2500, "priority": "HIGH", "difficulty": "MEDIUM" }
-  ],
-  "categoryExpansionOpportunities": [
-    { "category": "Elektronika", "potentialRevenue": 2800, "reasoning": "Visoka vrednost, hitra prodaja." }
-  ],
-  "volumeScalingPlan": "Povečaj trade volume z avtomatiziranim sourcingom.",
-  "revenueDiversificationStrategy": "Diversificiraj preko 3 platform.",
-  "revenueGrowthGrade": "A",
-  "summary": "Current: 5000€/mo. Max: 12000€/mo (2.4x). Grade A. 12m proj: 58000€."
-}${GROUNDING_PROMPT_SUFFIX}`;
+    const promptData = buildPromptData(agg, current, maximization);
+    const prompt = buildPrompt(promptData);
 
     let aiUsed = false;
 
     try {
-      const raw = await callProviderForRaw(aiSettings, prompt);
-      const parsed = parseJsonLooseExported(raw) as AiResponse | null;
+      const raw = await callAi(prompt);
+      const parsed = parseAi(raw) as AiResponse | null;
 
-      if (parsed && typeof parsed === 'object') {
-        // Override growth actions if AI provided
-        if (Array.isArray(parsed.growthActions) && parsed.growthActions.length >= 3) {
-          const aiActions: GrowthAction[] = [];
-          for (const a of parsed.growthActions.slice(0, MAX_GROWTH_ACTIONS)) {
-            if (!a || typeof a !== 'object') continue;
-            aiActions.push({
-              action: clampString(a.action, 200, 'Growth akcija.'),
-              expectedRevenueGain: round0(clampNum(
-                a.expectedRevenueGain, GAIN_MIN, GAIN_MAX, 0,
-              )),
-              priority: clampEnum(a.priority, VALID_PRIORITY, 'MEDIUM'),
-              difficulty: clampEnum(a.difficulty, VALID_DIFFICULTY, 'MEDIUM'),
-            });
-          }
-          if (aiActions.length >= 3) {
-            // Recompute maximized revenue from AI actions
-            const totalGain = aiActions.reduce((s, a) => s + a.expectedRevenueGain, 0);
-            const aiMaximized = round0(clampNum(
-              current.currentMonthlyRevenue + totalGain,
-              REVENUE_MIN, REVENUE_MAX, current.currentMonthlyRevenue,
-            ));
-            const aiMult = round2(clampNum(
-              current.currentMonthlyRevenue > 0 ? aiMaximized / current.currentMonthlyRevenue : 1,
-              MULT_MIN, MULT_MAX, 1,
-            ));
-            maximization = {
-              ...maximization,
-              growthActions: aiActions,
-              maximizedMonthlyRevenue: aiMaximized,
-              revenueGrowthMultiplier: aiMult,
-              revenueGrowthGrade: decideGrade(aiMult),
-            };
-          }
-        }
-
-        // Override category expansions if AI provided
-        if (Array.isArray(parsed.categoryExpansionOpportunities) &&
-            parsed.categoryExpansionOpportunities.length >= 2) {
-          const aiCats: CategoryExpansion[] = [];
-          for (const c of parsed.categoryExpansionOpportunities.slice(0, MAX_CATEGORY_EXPANSIONS)) {
-            if (!c || typeof c !== 'object') continue;
-            aiCats.push({
-              category: clampString(c.category, 50, 'Kategorija'),
-              potentialRevenue: round0(clampNum(
-                c.potentialRevenue, GAIN_MIN, GAIN_MAX, 0,
-              )),
-              reasoning: clampString(c.reasoning, 200, 'Premium priložnost.'),
-            });
-          }
-          if (aiCats.length >= 2) {
-            maximization = { ...maximization, categoryExpansionOpportunities: aiCats };
-          }
-        }
-
-        // Override volume scaling plan
-        if (typeof parsed.volumeScalingPlan === 'string' && parsed.volumeScalingPlan.trim()) {
-          maximization = {
-            ...maximization,
-            volumeScalingPlan: clampString(parsed.volumeScalingPlan, 400, maximization.volumeScalingPlan),
-          };
-        }
-
-        // Override revenue diversification strategy
-        if (typeof parsed.revenueDiversificationStrategy === 'string' && parsed.revenueDiversificationStrategy.trim()) {
-          maximization = {
-            ...maximization,
-            revenueDiversificationStrategy: clampString(
-              parsed.revenueDiversificationStrategy, 400, maximization.revenueDiversificationStrategy,
-            ),
-          };
-        }
-
-        // Override grade
-        if (parsed.revenueGrowthGrade) {
-          maximization = {
-            ...maximization,
-            revenueGrowthGrade: clampEnum(
-              parsed.revenueGrowthGrade,
-              VALID_GRADE,
-              maximization.revenueGrowthGrade,
-            ),
-          };
-        }
-
-        summary = clampString(parsed.summary, 400, buildSummary(current, maximization));
+      const result = mergeAiIntoMaximization(parsed, current, maximization);
+      if (result.aiUsed) {
+        maximization = result.maximization;
+        summary = result.summary;
         aiUsed = true;
       }
     } catch (err) {
@@ -842,22 +881,15 @@ VRNI LE JSON:
       setCachedAI(cacheKey, { maximization, summary });
     }
 
-    return NextResponse.json({
+    return apiOk({
       ok: true,
       current,
       maximization,
       summary,
       aiUsed,
     } satisfies RevenueGrowthResponse);
-  } catch (err: any) {
-    logger.error(
-      '/api/ai/revenue-growth-maximizer',
-      'handler failed',
-      err,
-    );
-    return NextResponse.json(
-      { error: err?.message ?? 'Napaka' },
-      { status: 500 },
-    );
-  }
-}
+  },
+});
+
+export const GET = revenueGrowthMaximizerHandler;
+export const POST = revenueGrowthMaximizerHandler;

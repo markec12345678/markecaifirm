@@ -1,16 +1,14 @@
-// v6.21: AI Listing Fake Detection — zazna ponaredke luksuznih izdelkov z vizualno analizo
+// v6.21 / v8.95.9-other-medium: AI Listing Fake Detection — zazna ponaredke luksuznih izdelkov z vizualno analizo
+// Refaktoriran z withAiRoute helperjem (v8.95.9) + enforceBudget guard.
+//
 // POST /api/ai/fake-detection
 // Body: { listingId?: string, imageUrl?: string, brand?: string }
 // Returns: { ok, detection: { authenticityScore, isLikelyFake, fakeProbability, indicators: [], verificationSteps: [], brandSpecificChecks: [], recommendation } }
 
-import { NextRequest, NextResponse } from 'next/server';
-import { db } from '@/lib/db';
-import { getSettingsRow } from '@/lib/pipeline';
-import { callProviderForRaw, parseJsonLooseExported, type AiProviderType, type AiSettings } from '@/lib/ai';
-import { logger } from '@/lib/logger';
+import { withAiRoute, AI_ROUTE_DEFAULTS, ApiRouteError, type AiRouteContext } from '@/lib/with-ai-route';
+import { apiOk } from '@/lib/api-response';
 
-export const runtime = 'nodejs';
-export const dynamic = 'force-dynamic';
+export const { runtime, dynamic } = AI_ROUTE_DEFAULTS;
 export const maxDuration = 60;
 
 // Slovar luksuznih blagovnih znamk z značilnimi znaki pristnosti
@@ -52,12 +50,34 @@ const BRAND_AUTHENTICITY_CHECKS: Record<string, { patterns: string[]; knownIssue
   },
 };
 
-export async function POST(req: NextRequest) {
-  try {
+interface FakeDetectionInput {
+  listingId: string | null;
+  imageUrl: string | null;
+  brand: string | null;
+}
+
+export const POST = withAiRoute<FakeDetectionInput>({
+  endpoint: '/api/ai/fake-detection',
+  maxDuration: 60,
+  enforceBudget: true, // AI klic — preveri budget
+
+  parseBody: async (req) => {
     const body = await req.json().catch(() => ({}));
     const { listingId } = body;
-    let imageUrl: string | null = body?.imageUrl ?? null;
-    let brandInput: string | null = body?.brand ?? null;
+    const imageUrl: string | null = body?.imageUrl ?? null;
+    const brandInput: string | null = body?.brand ?? null;
+    return {
+      listingId: listingId ? String(listingId) : null,
+      imageUrl,
+      brand: brandInput,
+    };
+  },
+
+  // No validateInput — validation se zgodi v handler-ju (odvisno od listingId/imageUrl)
+  handler: async (input, ctx: AiRouteContext) => {
+    const { db, callAi, parseAi } = ctx;
+    const { listingId, brand: brandInput } = input;
+    let imageUrl = input.imageUrl;
     let title = '';
     let description = '';
     let detailDescription = '';
@@ -71,7 +91,7 @@ export async function POST(req: NextRequest) {
           aiImageAnalysis: true, aiImageVerdict: true, aiRisk: true,
         },
       });
-      if (!listing) return NextResponse.json({ error: 'Listing ne obstaja' }, { status: 404 });
+      if (!listing) throw new ApiRouteError('Listing ne obstaja', 404);
       title = listing.title;
       description = listing.description;
       detailDescription = listing.detailDescription || '';
@@ -79,30 +99,12 @@ export async function POST(req: NextRequest) {
     }
 
     if (!imageUrl) {
-      return NextResponse.json({ error: 'imageUrl ali listingId z sliko je obvezen' }, { status: 400 });
+      throw new ApiRouteError('imageUrl ali listingId z sliko je obvezen', 400);
     }
 
     // 1. Identificiraj blagovno znamko iz naslova/opisa
     const fullText = `${title} ${description} ${detailDescription}`.toLowerCase();
-    let detectedBrand: string | null = null;
-    let brandChecks: { patterns: string[]; knownIssues: string[]; keyFeatures: string[] } | null = null;
-    for (const [brand, checks] of Object.entries(BRAND_AUTHENTICITY_CHECKS)) {
-      if (checks.patterns.some(p => fullText.includes(p.toLowerCase()))) {
-        detectedBrand = brand;
-        brandChecks = checks;
-        break;
-      }
-    }
-    if (brandInput) {
-      const lower = brandInput.toLowerCase();
-      for (const [brand, checks] of Object.entries(BRAND_AUTHENTICITY_CHECKS)) {
-        if (lower.includes(brand)) {
-          detectedBrand = brand;
-          brandChecks = checks;
-          break;
-        }
-      }
-    }
+    const { detectedBrand, brandChecks } = detectBrand(fullText, brandInput);
 
     // 2. Pridobi sliko
     let imageBase64: string | null = null;
@@ -114,26 +116,75 @@ export async function POST(req: NextRequest) {
     }
 
     // 3. AI fake detection
-    const settings = await getSettingsRow();
-    const aiSettings: AiSettings = {
-      provider: settings.aiProvider as AiProviderType,
-      baseUrl: settings.aiBaseUrl, apiKey: settings.aiApiKey, model: settings.aiModel,
-      fallbackProvider: (settings.fallbackProvider || '') as AiProviderType | '',
-      fallbackBaseUrl: settings.fallbackBaseUrl || '', fallbackApiKey: settings.fallbackApiKey || '',
-      fallbackModel: settings.fallbackModel || '',
-    };
+    const prompt = buildPrompt({ title, description, detailDescription, imageUrl, detectedBrand, brandChecks, imageBase64 });
 
-    const prompt = `Si forenzik za prepoznavanje ponaredkov luksuznih blagovnih znamk in elektronske opreme.
+    const raw = await callAi(prompt);
+
+    const parsed: any = parseAi(raw);
+
+    const detection = transformDetection(parsed, detectedBrand);
+
+    return apiOk({
+      ok: true,
+      detection,
+      hasImageBase64: !!imageBase64,
+      brandChecksAvailable: !!brandChecks,
+    });
+  },
+});
+
+// --- Pomožne funkcije (čiste, testabilne) --------------------------------
+
+function detectBrand(fullText: string, brandInput: string | null): {
+  detectedBrand: string | null;
+  brandChecks: { patterns: string[]; knownIssues: string[]; keyFeatures: string[] } | null;
+} {
+  let detectedBrand: string | null = null;
+  let brandChecks: { patterns: string[]; knownIssues: string[]; keyFeatures: string[] } | null = null;
+
+  for (const [brand, checks] of Object.entries(BRAND_AUTHENTICITY_CHECKS)) {
+    if (checks.patterns.some(p => fullText.includes(p.toLowerCase()))) {
+      detectedBrand = brand;
+      brandChecks = checks;
+      break;
+    }
+  }
+  if (brandInput) {
+    const lower = brandInput.toLowerCase();
+    for (const [brand, checks] of Object.entries(BRAND_AUTHENTICITY_CHECKS)) {
+      if (lower.includes(brand)) {
+        detectedBrand = brand;
+        brandChecks = checks;
+        break;
+      }
+    }
+  }
+
+  return { detectedBrand, brandChecks };
+}
+
+interface PromptData {
+  title: string;
+  description: string;
+  detailDescription: string;
+  imageUrl: string;
+  detectedBrand: string | null;
+  brandChecks: { patterns: string[]; knownIssues: string[]; keyFeatures: string[] } | null;
+  imageBase64: string | null;
+}
+
+function buildPrompt(d: PromptData): string {
+  return `Si forenzik za prepoznavanje ponaredkov luksuznih blagovnih znamk in elektronske opreme.
 Analiziraj oglas in sliko za znake ponarejanja.
 
-NASLOV: ${title}
-OPIS: ${(detailDescription || description).slice(0, 800)}
-URL SLIKE: ${imageUrl}
-${detectedBrand ? `ZAZNANA ZNAMKA: ${detectedBrand}` : 'ZNAMKA: neznan'}
-${brandChecks ? `
-ZNANI ZNAKI PONAREJANJA ZA ${detectedBrand}: ${brandChecks.knownIssues.join(', ')}
-KLJUČNI ZNAKI PRAISTNOSTI: ${brandChecks.keyFeatures.join(', ')}` : ''}
-${imageBase64 ? 'SLIKA: pridobljena za vizualno analizo' : 'SLIKA: ni na voljo'}
+NASLOV: ${d.title}
+OPIS: ${(d.detailDescription || d.description).slice(0, 800)}
+URL SLIKE: ${d.imageUrl}
+${d.detectedBrand ? `ZAZNANA ZNAMKA: ${d.detectedBrand}` : 'ZNAMKA: neznan'}
+${d.brandChecks ? `
+ZNANI ZNAKI PONAREJANJA ZA ${d.detectedBrand}: ${d.brandChecks.knownIssues.join(', ')}
+KLJUČNI ZNAKI PRAISTNOSTI: ${d.brandChecks.keyFeatures.join(', ')}` : ''}
+${d.imageBase64 ? 'SLIKA: pridobljena za vizualno analizo' : 'SLIKA: ni na voljo'}
 
 Splošni znaki ponarejkov:
 1. Stock fotografija namesto realne (Google reverse image search)
@@ -186,72 +237,36 @@ Odgovori LE z JSON:
   "recommendation": "<buy|verify_first|avoid|report>",
   "reasoning": "<max 200 znakov>"
 }`;
+}
 
-    let raw = '';
-    try {
-      raw = await callProviderForRaw(aiSettings, prompt);
-    } catch (primaryError: any) {
-      if (aiSettings.fallbackProvider && aiSettings.fallbackModel) {
-        const fb: AiSettings = {
-          provider: aiSettings.fallbackProvider,
-          baseUrl: aiSettings.fallbackBaseUrl || '',
-          apiKey: aiSettings.fallbackApiKey || '',
-          model: aiSettings.fallbackModel,
-        };
-        raw = await callProviderForRaw(fb, prompt);
-      } else {
-        return NextResponse.json({ error: primaryError?.message ?? 'AI failed' }, { status: 500 });
-      }
-    }
-
-    const parsed: any = parseJsonLooseExported(raw);
-
-    const detection = {
-      authenticityScore: Math.max(0, Math.min(100, Number(parsed?.authenticity_score ?? 50))),
-      isLikelyFake: Boolean(parsed?.is_likely_fake ?? false),
-      fakeProbabilityPct: Math.max(0, Math.min(100, Number(parsed?.fake_probability_pct ?? 50))),
-      imageFindings: String(parsed?.image_findings ?? '').slice(0, 400),
-      detectedBrand,
-      indicators: (parsed?.indicators || []).slice(0, 10).map((i: any) => ({
-        type: ['authentic', 'suspicious', 'fake'].includes(String(i?.type)) ? String(i.type) : 'suspicious',
-        description: String(i?.description ?? '').slice(0, 200),
-        weight: Math.max(1, Math.min(10, Number(i?.weight ?? 5))),
-      })),
-      brandSpecificChecks: (parsed?.brand_specific_checks || []).slice(0, 10).map((c: any) => ({
-        check: String(c?.check ?? '').slice(0, 200),
-        status: ['present', 'missing', 'unclear'].includes(String(c?.status)) ? String(c.status) : 'unclear',
-        concernLevel: ['high', 'medium', 'low'].includes(String(c?.concern_level)) ? String(c.concern_level) : 'medium',
-      })),
-      verificationSteps: (parsed?.verification_steps || []).slice(0, 8).map((s: any) => ({
-        step: String(s?.step ?? '').slice(0, 200),
-        priority: ['high', 'medium', 'low'].includes(String(s?.priority)) ? String(s.priority) : 'medium',
-        howTo: String(s?.how_to ?? '').slice(0, 200),
-      })),
-      onlineVerification: {
-        recommendedTools: (parsed?.online_verification?.recommended_tools || []).slice(0, 5).map((t: any) => String(t).slice(0, 100)),
-        websites: (parsed?.online_verification?.websites || []).slice(0, 5).map((w: any) => String(w).slice(0, 200)),
-      },
-      recommendation: ['buy', 'verify_first', 'avoid', 'report'].includes(String(parsed?.recommendation))
-        ? String(parsed.recommendation) : 'verify_first',
-      reasoning: String(parsed?.reasoning ?? '').slice(0, 400),
-    };
-
-    // Increment AI usage
-    const today = new Date().toISOString().slice(0, 10);
-    if (settings.aiCallsDate !== today) {
-      await db.settings.update({ where: { id: 'singleton' }, data: { aiCallsDate: today, aiCallsToday: 1 } });
-    } else {
-      await db.settings.update({ where: { id: 'singleton' }, data: { aiCallsToday: { increment: 1 } } });
-    }
-
-    return NextResponse.json({
-      ok: true,
-      detection,
-      hasImageBase64: !!imageBase64,
-      brandChecksAvailable: !!brandChecks,
-    });
-  } catch (e: any) {
-    logger.error("/api/ai/fake-detection", "POST handler failed", e);
-    return NextResponse.json({ error: e?.message ?? 'Napaka' }, { status: 500 });
-  }
+function transformDetection(parsed: any, detectedBrand: string | null) {
+  return {
+    authenticityScore: Math.max(0, Math.min(100, Number(parsed?.authenticity_score ?? 50))),
+    isLikelyFake: Boolean(parsed?.is_likely_fake ?? false),
+    fakeProbabilityPct: Math.max(0, Math.min(100, Number(parsed?.fake_probability_pct ?? 50))),
+    imageFindings: String(parsed?.image_findings ?? '').slice(0, 400),
+    detectedBrand,
+    indicators: (parsed?.indicators || []).slice(0, 10).map((i: any) => ({
+      type: ['authentic', 'suspicious', 'fake'].includes(String(i?.type)) ? String(i.type) : 'suspicious',
+      description: String(i?.description ?? '').slice(0, 200),
+      weight: Math.max(1, Math.min(10, Number(i?.weight ?? 5))),
+    })),
+    brandSpecificChecks: (parsed?.brand_specific_checks || []).slice(0, 10).map((c: any) => ({
+      check: String(c?.check ?? '').slice(0, 200),
+      status: ['present', 'missing', 'unclear'].includes(String(c?.status)) ? String(c.status) : 'unclear',
+      concernLevel: ['high', 'medium', 'low'].includes(String(c?.concern_level)) ? String(c.concern_level) : 'medium',
+    })),
+    verificationSteps: (parsed?.verification_steps || []).slice(0, 8).map((s: any) => ({
+      step: String(s?.step ?? '').slice(0, 200),
+      priority: ['high', 'medium', 'low'].includes(String(s?.priority)) ? String(s.priority) : 'medium',
+      howTo: String(s?.how_to ?? '').slice(0, 200),
+    })),
+    onlineVerification: {
+      recommendedTools: (parsed?.online_verification?.recommended_tools || []).slice(0, 5).map((t: any) => String(t).slice(0, 100)),
+      websites: (parsed?.online_verification?.websites || []).slice(0, 5).map((w: any) => String(w).slice(0, 200)),
+    },
+    recommendation: ['buy', 'verify_first', 'avoid', 'report'].includes(String(parsed?.recommendation))
+      ? String(parsed.recommendation) : 'verify_first',
+    reasoning: String(parsed?.reasoning ?? '').slice(0, 400),
+  };
 }
