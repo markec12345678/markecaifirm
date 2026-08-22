@@ -28,24 +28,20 @@
 
 // GET+POST /api/ai/inventory-turnover-yield-maximizer
 // (AI-enhanced + grounding + anti-hallucination + 6h cache + deterministic fallback)
+// Refaktoriran z withAiRoute helperjem (v8.96.6) + enforceBudget guard.
 
-import { NextRequest, NextResponse } from 'next/server';
-import { db } from '@/lib/db';
-import { getSettingsRow } from '@/lib/pipeline';
-import {
-  callProviderForRaw,
-  parseJsonLooseExported,
-  type AiProviderType,
-  type AiSettings,
-} from '@/lib/ai';
+import { withAiRoute, AI_ROUTE_DEFAULTS, type AiRouteContext } from '@/lib/with-ai-route';
+import { apiOk } from '@/lib/api-response';
 import { GROUNDING_PROMPT_SUFFIX } from '@/lib/anti-hallucination';
 import { getCachedAI, setCachedAI } from '@/lib/ai-cache';
-import { checkRateLimit, rateLimitResponse } from '@/lib/rate-limit';
-import { logger } from '@/lib/logger';
 
-export const runtime = 'nodejs';
-export const dynamic = 'force-dynamic';
+export const { runtime, dynamic } = AI_ROUTE_DEFAULTS;
 export const maxDuration = 60;
+
+// --- Input ----------------------------------------------------------------
+
+// eslint-disable-next-line @typescript-eslint/no-empty-object-type
+interface InventoryTurnoverYieldMaximizerInput {}
 
 // --- Types ---------------------------------------------------------------
 
@@ -574,17 +570,20 @@ function buildSummary(current: CurrentState, max: TurnoverYieldMaximization): st
 
 // --- Handler -------------------------------------------------------------
 
-export async function GET(req: NextRequest) {
-  return handleInventoryTurnoverYieldMaximizer(req);
-}
-export async function POST(req: NextRequest) {
-  return handleInventoryTurnoverYieldMaximizer(req);
-}
+const inventoryTurnoverYieldMaximizerHandler = withAiRoute<InventoryTurnoverYieldMaximizerInput>({
+  endpoint: '/api/ai/inventory-turnover-yield-maximizer',
+  maxDuration: 60,
+  enforceBudget: true, // AI klic — preveri budget
+  method: 'GET', // Endpoint sprejema GET + POST — bypass POST-only check
 
-async function handleInventoryTurnoverYieldMaximizer(req: NextRequest) {
-  try {
-    const rl = checkRateLimit(req, 'ai-inventory-turnover-yield-maximizer', 20);
-    if (!rl.allowed) return rateLimitResponse(rl);
+  parseBody: async (req) => {
+    await req.json().catch(() => ({}));
+    return {};
+  },
+
+  // No validateInput — body ignored, identična logika za GET in POST
+  handler: async (_input, ctx: AiRouteContext) => {
+    const { db, callAi, parseAi, logger } = ctx;
 
     const now = Date.now();
     const twelveMonthsAgo = new Date(now - TWELVE_MONTHS_MS);
@@ -623,7 +622,7 @@ async function handleInventoryTurnoverYieldMaximizer(req: NextRequest) {
 
     // Empty-state: no SOLD and no HELD trades
     if (soldTrades.length === 0 && heldTrades.length === 0) {
-      return NextResponse.json({
+      return apiOk({
         ok: true,
         current: {
           currentTurnoverRate: 0,
@@ -672,7 +671,7 @@ async function handleInventoryTurnoverYieldMaximizer(req: NextRequest) {
       summary: string;
     }>(cacheKey);
     if (cached) {
-      return NextResponse.json({
+      return apiOk({
         ok: true,
         current,
         maximization: cached.maximization,
@@ -683,20 +682,6 @@ async function handleInventoryTurnoverYieldMaximizer(req: NextRequest) {
     }
 
     // 4) AI prompt with grounding
-    const settings = await getSettingsRow();
-    const aiSettings: AiSettings = {
-      provider: settings.aiProvider as AiProviderType,
-      baseUrl: settings.aiBaseUrl,
-      apiKey: settings.aiApiKey,
-      model: settings.aiModel,
-      fallbackProvider: (settings.fallbackProvider || '') as
-        | AiProviderType
-        | '',
-      fallbackBaseUrl: settings.fallbackBaseUrl || '',
-      fallbackApiKey: settings.fallbackApiKey || '',
-      fallbackModel: settings.fallbackModel || '',
-    };
-
     const promptData = {
       soldCount12m: agg.count12m,
       heldInventoryCount: current.heldInventoryCount,
@@ -764,8 +749,8 @@ VRNI LE JSON:
     let aiUsed = false;
 
     try {
-      const raw = await callProviderForRaw(aiSettings, prompt);
-      const parsed = parseJsonLooseExported(raw) as AiResponse | null;
+      const raw = await callAi(prompt);
+      const parsed = parseAi(raw) as AiResponse | null;
 
       if (parsed && typeof parsed === 'object') {
         // Override yieldCurve if AI provided all 7
@@ -937,22 +922,15 @@ VRNI LE JSON:
       setCachedAI(cacheKey, { maximization, summary });
     }
 
-    return NextResponse.json({
+    return apiOk({
       ok: true,
       current,
       maximization,
       summary,
       aiUsed,
     } satisfies InventoryTurnoverYieldResponse);
-  } catch (err: any) {
-    logger.error(
-      '/api/ai/inventory-turnover-yield-maximizer',
-      'handler failed',
-      err,
-    );
-    return NextResponse.json(
-      { error: err?.message ?? 'Napaka' },
-      { status: 500 },
-    );
-  }
-}
+  },
+});
+
+export const GET = inventoryTurnoverYieldMaximizerHandler;
+export const POST = inventoryTurnoverYieldMaximizerHandler;

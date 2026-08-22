@@ -1,4 +1,4 @@
-// v8.06: AI Revenue Per Trade Maximizer — AI MAXIMIZIRA REVENUE per individual
+// v8.06 / v8.96.6-batch1: AI Revenue Per Trade Maximizer — AI MAXIMIZIRA REVENUE per individual
 // trade (top-line sell price per deal, ne profit-after-costs). "Tvoj avg
 // sell price je 180€, z 6 revenue akcijami bi lahko bil 245€ — multiplier 1.36x
 // in 17800€ več portfolio revenue na leto." Razlika od
@@ -20,27 +20,21 @@
 // bestRevenueCategory. Razlika od pricing-strategy engine (v7.70 ki daje
 // pricing recommendations) — ta MAXIMIZIRA REVENUE per trade z
 // portfolioRevenueProjection in pricingStrategyAdvice.
-
+//
 // GET+POST /api/ai/revenue-per-trade-maximizer
 // (AI-enhanced + grounding + anti-hallucination + 6h cache + deterministic fallback)
+// Refaktoriran z withAiRoute helperjem (v8.96.6) + enforceBudget guard.
 
-import { NextRequest, NextResponse } from 'next/server';
-import { db } from '@/lib/db';
-import { getSettingsRow } from '@/lib/pipeline';
-import {
-  callProviderForRaw,
-  parseJsonLooseExported,
-  type AiProviderType,
-  type AiSettings,
-} from '@/lib/ai';
+import { withAiRoute, AI_ROUTE_DEFAULTS, type AiRouteContext } from '@/lib/with-ai-route';
+import { apiOk } from '@/lib/api-response';
 import { GROUNDING_PROMPT_SUFFIX } from '@/lib/anti-hallucination';
 import { getCachedAI, setCachedAI } from '@/lib/ai-cache';
-import { checkRateLimit, rateLimitResponse } from '@/lib/rate-limit';
-import { logger } from '@/lib/logger';
 
-export const runtime = 'nodejs';
-export const dynamic = 'force-dynamic';
+export const { runtime, dynamic } = AI_ROUTE_DEFAULTS;
 export const maxDuration = 60;
+
+// eslint-disable-next-line @typescript-eslint/no-empty-object-type
+interface RevenuePerTradeInput {}
 
 // --- Types ---------------------------------------------------------------
 
@@ -531,19 +525,269 @@ function buildDeterministicMaximization(
   };
 }
 
+// --- Prompt builders (čisti, testabilni) ---------------------------------
+
+interface CategoryStat {
+  category: string;
+  avgRevenuePerTrade: number;
+  tradeCount: number;
+}
+
+function buildTradeSample(soldComputed: SoldComputed[]): Array<{
+  cat: string;
+  sell: number;
+  fees: number;
+  buy: number;
+  net: number;
+  markup: number;
+}> {
+  return soldComputed
+    .slice(-MAX_TRADES_FOR_AI)
+    .map((t) => ({
+      cat: t.category,
+      sell: t.sellPrice,
+      fees: t.sellFees,
+      buy: t.buyPrice,
+      net: t.netRevenue,
+      markup: round2(t.markup),
+    }));
+}
+
+function buildCategoryStats(soldComputed: SoldComputed[]): CategoryStat[] {
+  const catMap = new Map<string, { sum: number; count: number }>();
+  for (const t of soldComputed) {
+    const e = catMap.get(t.category);
+    if (e) { e.sum += t.sellPrice; e.count += 1; }
+    else catMap.set(t.category, { sum: t.sellPrice, count: 1 });
+  }
+  return Array.from(catMap.entries())
+    .map(([cat, agg]) => ({
+      category: cat,
+      avgRevenuePerTrade: round0(agg.sum / agg.count),
+      tradeCount: agg.count,
+    }))
+    .sort((a, b) => b.avgRevenuePerTrade - a.avgRevenuePerTrade)
+    .slice(0, 8);
+}
+
+function buildPromptData(
+  soldComputed: SoldComputed[],
+  current: CurrentState,
+  maximization: RevenueMaximization,
+  categoryStats: CategoryStat[],
+  tradeSample: ReturnType<typeof buildTradeSample>,
+): unknown {
+  return {
+    soldCount12m: soldComputed.length,
+    current,
+    deterministicMaximization: {
+      revenueMaximizationActions: maximization.revenueMaximizationActions,
+      maximizedRevenuePerTrade: maximization.maximizedRevenuePerTrade,
+      revenueUpliftPerTrade: maximization.revenueUpliftPerTrade,
+      revenueMultiplier: maximization.revenueMultiplier,
+      portfolioRevenueProjection: maximization.portfolioRevenueProjection,
+      revenueGrade: maximization.revenueGrade,
+      bestRevenueCategory: maximization.bestRevenueCategory,
+      pricingStrategyAdvice: maximization.pricingStrategyAdvice,
+    },
+    categoryStats,
+    tradeSample,
+    caps: {
+      revenueMin: REVENUE_MIN, revenueMax: REVENUE_MAX,
+      sellPriceMin: SELL_PRICE_MIN, sellPriceMax: SELL_PRICE_MAX,
+      feesMin: FEES_MIN, feesMax: FEES_MAX,
+      buyMin: BUY_MIN, buyMax: BUY_MAX,
+      markupMin: MARKUP_MIN, markupMax: MARKUP_MAX,
+      trendMin: TREND_MIN, trendMax: TREND_MAX,
+      multiplierMin: MULTIPLIER_MIN, multiplierMax: MULTIPLIER_MAX,
+      upliftPctMin: UPLIFT_PCT_MIN, upliftPctMax: UPLIFT_PCT_MAX,
+      portfolioMin: PORTFOLIO_MIN, portfolioMax: PORTFOLIO_MAX,
+    },
+  };
+}
+
+function buildPrompt(promptData: unknown): string {
+  return `Si AI "Revenue Per Trade Maximizer" za slovenske in srednjeevropske oglasne platforme (Bolha, Vinted, Avtonet, mobile.de).
+Si strokovnjak za REVENUE PER TRADE MAXIMIZATION — kako maksimizirati top-line SELL PRICE / REVENUE na vsakem individualnem trade-u (ne profit-after-costs ampak čisti sell price). Tvoj cilj je "tvoj avg sell price je 180€, z 6 revenue akcijami bi lahko bil 245€ — multiplier 1.36x in 17800€ več portfolio revenue na leto". Razlika od deal-source-profit-per-trade-maximizer (v8.04 ki maksimizira PROFIT per trade € po odštevanju costov) — ti MAKSIMIZIRAŠ REVENUE per trade (top-line sell price). Razlika od profit-per-trade-maximizer (v8.03 ki maksimizira profit per trade €) — ta maksimizira SELL PRICE / top-line revenue per trade, ne bottom-line profit. Razlika od revenue-growth-maximizer (v8.01 ki maksimizira growth rate revenue) — ta maksimizira REVENUE PER TRADE (avg sell price), ne growth rate. Razlika od revenue-stream-optimizer (v7.96 ki optimizira multiple revenue streams) — ta fokusira na enoto — REVENUE PER TRADE. Razlika od profit-compounding-maximizer (v8.04 ki maksimizira compounding reinvest rate) — ta maksimizira REVENUE PER TRADE z revenueMaximizationActions in revenueMultiplier. Razlika od profit-acceleration-maximizer (v8.05 ki maksimizira growth rate acceleration) — ta maksimizira REVENUE PER TRADE (avg sell price per deal), ne growth rate. Razlika od inventory-cash-yield-maximizer (v8.04 ki maksimizira annualized cash yield) — ta maksimizira REVENUE PER TRADE (per-deal top-line) z revenueGrade in bestRevenueCategory. Razlika od pricing-strategy engine (v7.70 ki daje pricing recommendations) — ta MAXIMIZIRA REVENUE per trade z portfolioRevenueProjection in pricingStrategyAdvice.
+
+DETERMINISTIČNI PODATKI (izračunano iz DB — SOLD trgovin v zadnjih 12 mesecih):
+${JSON.stringify(promptData, null, 2)}
+
+PRAVILA ZA AI ODGOVOR:
+1. revenueMaximizationActions: 4-6 elementov { action: INCREASE_SELL_PRICE | IMPROVE_LISTING_QUALITY | TARGET_PREMIUM_BUYERS | TIMING_THE_SALE | CROSS_PLATFORM_PREMIUM, expectedRevenueGain % [0, 200] (koliko % dvigne revenue per trade — TARGET_PREMIUM_BUYERS ~22%, INCREASE_SELL_PRICE ~18%, CROSS_PLATFORM_PREMIUM ~16%, IMPROVE_LISTING_QUALITY ~14%, TIMING_THE_SALE ~10%), difficulty LOW/MEDIUM/HIGH, implementation (max 200, slovenski — specifična akcija) },
+2. maximizedRevenuePerTrade € [0, 50000] (projected revenue per trade z actions — ≥ current.avgRevenuePerTrade),
+3. revenueUpliftPerTrade € [0, 50000] (improvement = maximized − current),
+4. revenueMultiplier [1.0, 3.0] (maximized / current ratio),
+5. portfolioRevenueProjection € [0, 2000000] (annual revenue če vsi trades pri maximized revenue = maximizedRevenuePerTrade × soldCount12m),
+6. revenueGrade: A+ | A | B | C | D | F (A+ če multiplier ≥ 1.6 ali uplift ≥ 50%, A ≥ 1.4/35, B ≥ 1.25/20, C ≥ 1.15/12, D ≥ 1.05/5, else F),
+7. bestRevenueCategory: kategorija z najvišjim avg sell price (MORA biti ena iz deterministic categoryStats — anti-hallucination),
+8. pricingStrategyAdvice: slovenski (max 400 znakov — kako ceniti za max revenue per trade),
+9. summary: slovenski povzetek (max 400 znakov).
+
+VRNI LE JSON:
+{
+  "revenueMaximizationActions": [
+    { "action": "TARGET_PREMIUM_BUYERS", "expectedRevenueGain": 22, "difficulty": "MEDIUM", "implementation": "Ciljaj premium kupce z izboljšano fotografijo in garancijo." },
+    { "action": "INCREASE_SELL_PRICE", "expectedRevenueGain": 18, "difficulty": "LOW", "implementation": "Dvigaj ask price za 15% z AI pricing engine." }
+  ],
+  "maximizedRevenuePerTrade": 245,
+  "revenueUpliftPerTrade": 65,
+  "revenueMultiplier": 1.36,
+  "portfolioRevenueProjection": 29400,
+  "revenueGrade": "A",
+  "bestRevenueCategory": "iphone",
+  "pricingStrategyAdvice": "Ciljaj premium pricing z 12-18% višjim ask price in AI A/B testing.",
+  "summary": "Current: 180€/trade, markup 1.4×. Maximized: 245€/trade (multiplier 1.36×, grade A). Uplift: +65€/trade → portfolio 29400€/leto."
+}${GROUNDING_PROMPT_SUFFIX}`;
+}
+
+// --- AI merge (čist, testabilen) ----------------------------------------
+
+function mergeAiIntoMaximization(
+  parsed: AiResponse | null,
+  current: CurrentState,
+  maximizationIn: RevenueMaximization,
+  categoryStats: CategoryStat[],
+): { maximization: RevenueMaximization; summary: string; aiUsed: boolean } {
+  let maximization = maximizationIn;
+  let summary = buildSummary(current, maximization);
+  let aiUsed = false;
+
+  if (parsed && typeof parsed === 'object') {
+    // Override revenueMaximizationActions if AI provided 4+
+    if (Array.isArray(parsed.revenueMaximizationActions) &&
+        parsed.revenueMaximizationActions.length >= 4) {
+      const aiActions: RevenueActionItem[] = [];
+      for (const a of parsed.revenueMaximizationActions.slice(0, MAX_ACTIONS)) {
+        if (!a || typeof a !== 'object') continue;
+        aiActions.push({
+          action: clampEnum(a.action, VALID_ACTION, 'INCREASE_SELL_PRICE'),
+          expectedRevenueGain: round2(clampNum(
+            a.expectedRevenueGain,
+            UPLIFT_PCT_MIN, UPLIFT_PCT_MAX, 10,
+          )),
+          difficulty: clampEnum(a.difficulty, VALID_DIFFICULTY, 'MEDIUM'),
+          implementation: clampString(a.implementation, 200, 'Izboljšaj listing in pricing.'),
+        });
+      }
+      if (aiActions.length >= 4) {
+        maximization = { ...maximization, revenueMaximizationActions: aiActions };
+        // Recompute maximizedRevenuePerTrade based on new actions
+        const r = computeMaximizedRevenue(current, aiActions);
+        maximization = {
+          ...maximization,
+          maximizedRevenuePerTrade: r.maximizedRevenuePerTrade,
+          revenueUpliftPerTrade: r.revenueUpliftPerTrade,
+          revenueMultiplier: r.revenueMultiplier,
+        };
+      }
+    }
+
+    // Override maximizedRevenuePerTrade
+    if (parsed.maximizedRevenuePerTrade !== undefined) {
+      const minBound = current.avgRevenuePerTrade;
+      const maxBound = Math.max(minBound + 1, Math.min(
+        REVENUE_MAX,
+        current.avgRevenuePerTrade * MULTIPLIER_MAX,
+      ));
+      const maximizedRevenuePerTrade = round0(clampNum(
+        parsed.maximizedRevenuePerTrade,
+        minBound, maxBound, maximization.maximizedRevenuePerTrade,
+      ));
+      const revenueUpliftPerTrade = round0(clampNum(
+        maximizedRevenuePerTrade - current.avgRevenuePerTrade,
+        0, REVENUE_MAX, maximization.revenueUpliftPerTrade,
+      ));
+      const revenueMultiplier = round2(clampNum(
+        current.avgRevenuePerTrade > 0
+          ? maximizedRevenuePerTrade / current.avgRevenuePerTrade
+          : 1.0,
+        MULTIPLIER_MIN, MULTIPLIER_MAX, maximization.revenueMultiplier,
+      ));
+      maximization = {
+        ...maximization,
+        maximizedRevenuePerTrade,
+        revenueUpliftPerTrade,
+        revenueMultiplier,
+      };
+    }
+
+    // Override portfolioRevenueProjection
+    if (parsed.portfolioRevenueProjection !== undefined) {
+      const v = round0(clampNum(
+        parsed.portfolioRevenueProjection,
+        PORTFOLIO_MIN, PORTFOLIO_MAX, maximization.portfolioRevenueProjection,
+      ));
+      maximization = { ...maximization, portfolioRevenueProjection: v };
+    } else {
+      // Recompute based on updated maximizedRevenuePerTrade
+      maximization = {
+        ...maximization,
+        portfolioRevenueProjection: computePortfolioRevenueProjection(
+          current,
+          maximization.maximizedRevenuePerTrade,
+        ),
+      };
+    }
+
+    // Override bestRevenueCategory — must match one of categoryStats (anti-hallucination)
+    if (parsed.bestRevenueCategory) {
+      const validCats = new Set(categoryStats.map((c) => c.category.toLowerCase()));
+      const aiCat = clampString(parsed.bestRevenueCategory, 60, maximization.bestRevenueCategory);
+      if (validCats.has(aiCat.toLowerCase())) {
+        maximization = { ...maximization, bestRevenueCategory: aiCat };
+      }
+    }
+
+    // Override pricingStrategyAdvice
+    if (parsed.pricingStrategyAdvice) {
+      maximization = {
+        ...maximization,
+        pricingStrategyAdvice: clampString(
+          parsed.pricingStrategyAdvice,
+          400,
+          maximization.pricingStrategyAdvice,
+        ),
+      };
+    }
+
+    // Override revenueGrade — recompute or use AI value
+    const upliftPct = current.avgRevenuePerTrade > 0
+      ? (maximization.revenueUpliftPerTrade / current.avgRevenuePerTrade) * 100
+      : 0;
+    if (parsed.revenueGrade) {
+      const grade = clampEnum(parsed.revenueGrade, VALID_GRADE, decideRevenueGrade(maximization.revenueMultiplier, upliftPct));
+      maximization = { ...maximization, revenueGrade: grade };
+    } else {
+      maximization = {
+        ...maximization,
+        revenueGrade: decideRevenueGrade(maximization.revenueMultiplier, upliftPct),
+      };
+    }
+
+    summary = clampString(parsed.summary, 400, buildSummary(current, maximization));
+    aiUsed = true;
+  }
+
+  return { maximization, summary, aiUsed };
+}
+
 // --- Handler -------------------------------------------------------------
 
-export async function GET(req: NextRequest) {
-  return handleRevenuePerTradeMaximizer(req);
-}
-export async function POST(req: NextRequest) {
-  return handleRevenuePerTradeMaximizer(req);
-}
+const revenuePerTradeHandler = withAiRoute<RevenuePerTradeInput>({
+  endpoint: '/api/ai/revenue-per-trade-maximizer',
+  maxDuration: 60,
+  enforceBudget: true, // AI klic — preveri budget
+  method: 'GET', // Endpoint sprejema GET + POST — bypass POST-only check
 
-async function handleRevenuePerTradeMaximizer(req: NextRequest) {
-  try {
-    const rl = checkRateLimit(req, 'ai-revenue-per-trade-maximizer', 20);
-    if (!rl.allowed) return rateLimitResponse(rl);
+  parseBody: async (req) => {
+    await req.json().catch(() => ({}));
+    return {};
+  },
+
+  // No validateInput — body ignored, identična logika za GET in POST
+  handler: async (_input, ctx: AiRouteContext) => {
+    const { db, callAi, parseAi, logger } = ctx;
 
     const now = Date.now();
     const twelveMonthsAgo = new Date(now - TWELVE_MONTHS_MS);
@@ -571,7 +815,7 @@ async function handleRevenuePerTradeMaximizer(req: NextRequest) {
 
     // Empty-state: no SOLD trades
     if (soldTrades.length === 0) {
-      return NextResponse.json({
+      return apiOk({
         ok: true,
         current: {
           avgRevenuePerTrade: 0,
@@ -607,7 +851,7 @@ async function handleRevenuePerTradeMaximizer(req: NextRequest) {
     }
 
     if (soldComputed.length === 0) {
-      return NextResponse.json({
+      return apiOk({
         ok: true,
         current: {
           avgRevenuePerTrade: 0,
@@ -636,8 +880,7 @@ async function handleRevenuePerTradeMaximizer(req: NextRequest) {
     }
 
     const current = computeCurrent(soldComputed);
-    let maximization = buildDeterministicMaximization(current, soldComputed);
-    let summary = buildSummary(current, maximization);
+    const deterministicMaximization = buildDeterministicMaximization(current, soldComputed);
 
     // 3) AI cache check (6h TTL) — key by current month
     const currentMonth = new Date(now).toISOString().slice(0, 7); // YYYY-MM
@@ -647,7 +890,7 @@ async function handleRevenuePerTradeMaximizer(req: NextRequest) {
       summary: string;
     }>(cacheKey);
     if (cached) {
-      return NextResponse.json({
+      return apiOk({
         ok: true,
         current,
         maximization: cached.maximization,
@@ -657,231 +900,31 @@ async function handleRevenuePerTradeMaximizer(req: NextRequest) {
       } satisfies RevenuePerTradeResponse);
     }
 
-    // 4) AI prompt with grounding
-    const settings = await getSettingsRow();
-    const aiSettings: AiSettings = {
-      provider: settings.aiProvider as AiProviderType,
-      baseUrl: settings.aiBaseUrl,
-      apiKey: settings.aiApiKey,
-      model: settings.aiModel,
-      fallbackProvider: (settings.fallbackProvider || '') as
-        | AiProviderType
-        | '',
-      fallbackBaseUrl: settings.fallbackBaseUrl || '',
-      fallbackApiKey: settings.fallbackApiKey || '',
-      fallbackModel: settings.fallbackModel || '',
-    };
-
-    // Compact trade sample for AI (top recent)
-    const tradeSampleForAI = soldComputed
-      .slice(-MAX_TRADES_FOR_AI)
-      .map((t) => ({
-        cat: t.category,
-        sell: t.sellPrice,
-        fees: t.sellFees,
-        buy: t.buyPrice,
-        net: t.netRevenue,
-        markup: round2(t.markup),
-      }));
-
-    // Category breakdown for AI
-    const catMap = new Map<string, { sum: number; count: number }>();
-    for (const t of soldComputed) {
-      const e = catMap.get(t.category);
-      if (e) { e.sum += t.sellPrice; e.count += 1; }
-      else catMap.set(t.category, { sum: t.sellPrice, count: 1 });
-    }
-    const categoryStats = Array.from(catMap.entries())
-      .map(([cat, agg]) => ({
-        category: cat,
-        avgRevenuePerTrade: round0(agg.sum / agg.count),
-        tradeCount: agg.count,
-      }))
-      .sort((a, b) => b.avgRevenuePerTrade - a.avgRevenuePerTrade)
-      .slice(0, 8);
-
-    const promptData = {
-      soldCount12m: soldComputed.length,
+    // 4) AI prompt with grounding (settings loaded by withAiRoute wrapper)
+    const tradeSampleForAI = buildTradeSample(soldComputed);
+    const categoryStats = buildCategoryStats(soldComputed);
+    const promptData = buildPromptData(
+      soldComputed,
       current,
-      deterministicMaximization: {
-        revenueMaximizationActions: maximization.revenueMaximizationActions,
-        maximizedRevenuePerTrade: maximization.maximizedRevenuePerTrade,
-        revenueUpliftPerTrade: maximization.revenueUpliftPerTrade,
-        revenueMultiplier: maximization.revenueMultiplier,
-        portfolioRevenueProjection: maximization.portfolioRevenueProjection,
-        revenueGrade: maximization.revenueGrade,
-        bestRevenueCategory: maximization.bestRevenueCategory,
-        pricingStrategyAdvice: maximization.pricingStrategyAdvice,
-      },
+      deterministicMaximization,
       categoryStats,
-      tradeSample: tradeSampleForAI,
-      caps: {
-        revenueMin: REVENUE_MIN, revenueMax: REVENUE_MAX,
-        sellPriceMin: SELL_PRICE_MIN, sellPriceMax: SELL_PRICE_MAX,
-        feesMin: FEES_MIN, feesMax: FEES_MAX,
-        buyMin: BUY_MIN, buyMax: BUY_MAX,
-        markupMin: MARKUP_MIN, markupMax: MARKUP_MAX,
-        trendMin: TREND_MIN, trendMax: TREND_MAX,
-        multiplierMin: MULTIPLIER_MIN, multiplierMax: MULTIPLIER_MAX,
-        upliftPctMin: UPLIFT_PCT_MIN, upliftPctMax: UPLIFT_PCT_MAX,
-        portfolioMin: PORTFOLIO_MIN, portfolioMax: PORTFOLIO_MAX,
-      },
-    };
+      tradeSampleForAI,
+    );
+    const prompt = buildPrompt(promptData);
 
-    const prompt = `Si AI "Revenue Per Trade Maximizer" za slovenske in srednjeevropske oglasne platforme (Bolha, Vinted, Avtonet, mobile.de).
-Si strokovnjak za REVENUE PER TRADE MAXIMIZATION — kako maksimizirati top-line SELL PRICE / REVENUE na vsakem individualnem trade-u (ne profit-after-costs ampak čisti sell price). Tvoj cilj je "tvoj avg sell price je 180€, z 6 revenue akcijami bi lahko bil 245€ — multiplier 1.36x in 17800€ več portfolio revenue na leto". Razlika od deal-source-profit-per-trade-maximizer (v8.04 ki maksimizira PROFIT per trade € po odštevanju costov) — ti MAKSIMIZIRAŠ REVENUE per trade (top-line sell price). Razlika od profit-per-trade-maximizer (v8.03 ki maksimizira profit per trade €) — ta maksimizira SELL PRICE / top-line revenue per trade, ne bottom-line profit. Razlika od revenue-growth-maximizer (v8.01 ki maksimizira growth rate revenue) — ta maksimizira REVENUE PER TRADE (avg sell price), ne growth rate. Razlika od revenue-stream-optimizer (v7.96 ki optimizira multiple revenue streams) — ta fokusira na enoto — REVENUE PER TRADE. Razlika od profit-compounding-maximizer (v8.04 ki maksimizira compounding reinvest rate) — ta maksimizira REVENUE PER TRADE z revenueMaximizationActions in revenueMultiplier. Razlika od profit-acceleration-maximizer (v8.05 ki maksimizira growth rate acceleration) — ta maksimizira REVENUE PER TRADE (avg sell price per deal), ne growth rate. Razlika od inventory-cash-yield-maximizer (v8.04 ki maksimizira annualized cash yield) — ta maksimizira REVENUE PER TRADE (per-deal top-line) z revenueGrade in bestRevenueCategory. Razlika od pricing-strategy engine (v7.70 ki daje pricing recommendations) — ta MAXIMIZIRA REVENUE per trade z portfolioRevenueProjection in pricingStrategyAdvice.
-
-DETERMINISTIČNI PODATKI (izračunano iz DB — SOLD trgovin v zadnjih 12 mesecih):
-${JSON.stringify(promptData, null, 2)}
-
-PRAVILA ZA AI ODGOVOR:
-1. revenueMaximizationActions: 4-6 elementov { action: INCREASE_SELL_PRICE | IMPROVE_LISTING_QUALITY | TARGET_PREMIUM_BUYERS | TIMING_THE_SALE | CROSS_PLATFORM_PREMIUM, expectedRevenueGain % [0, 200] (koliko % dvigne revenue per trade — TARGET_PREMIUM_BUYERS ~22%, INCREASE_SELL_PRICE ~18%, CROSS_PLATFORM_PREMIUM ~16%, IMPROVE_LISTING_QUALITY ~14%, TIMING_THE_SALE ~10%), difficulty LOW/MEDIUM/HIGH, implementation (max 200, slovenski — specifična akcija) },
-2. maximizedRevenuePerTrade € [0, 50000] (projected revenue per trade z actions — ≥ current.avgRevenuePerTrade),
-3. revenueUpliftPerTrade € [0, 50000] (improvement = maximized − current),
-4. revenueMultiplier [1.0, 3.0] (maximized / current ratio),
-5. portfolioRevenueProjection € [0, 2000000] (annual revenue če vsi trades pri maximized revenue = maximizedRevenuePerTrade × soldCount12m),
-6. revenueGrade: A+ | A | B | C | D | F (A+ če multiplier ≥ 1.6 ali uplift ≥ 50%, A ≥ 1.4/35, B ≥ 1.25/20, C ≥ 1.15/12, D ≥ 1.05/5, else F),
-7. bestRevenueCategory: kategorija z najvišjim avg sell price (MORA biti ena iz deterministic categoryStats — anti-hallucination),
-8. pricingStrategyAdvice: slovenski (max 400 znakov — kako ceniti za max revenue per trade),
-9. summary: slovenski povzetek (max 400 znakov).
-
-VRNI LE JSON:
-{
-  "revenueMaximizationActions": [
-    { "action": "TARGET_PREMIUM_BUYERS", "expectedRevenueGain": 22, "difficulty": "MEDIUM", "implementation": "Ciljaj premium kupce z izboljšano fotografijo in garancijo." },
-    { "action": "INCREASE_SELL_PRICE", "expectedRevenueGain": 18, "difficulty": "LOW", "implementation": "Dvigaj ask price za 15% z AI pricing engine." }
-  ],
-  "maximizedRevenuePerTrade": 245,
-  "revenueUpliftPerTrade": 65,
-  "revenueMultiplier": 1.36,
-  "portfolioRevenueProjection": 29400,
-  "revenueGrade": "A",
-  "bestRevenueCategory": "iphone",
-  "pricingStrategyAdvice": "Ciljaj premium pricing z 12-18% višjim ask price in AI A/B testing.",
-  "summary": "Current: 180€/trade, markup 1.4×. Maximized: 245€/trade (multiplier 1.36×, grade A). Uplift: +65€/trade → portfolio 29400€/leto."
-}${GROUNDING_PROMPT_SUFFIX}`;
-
+    // Deterministic baseline (fallback if AI call fails)
+    let maximization = deterministicMaximization;
+    let summary = buildSummary(current, maximization);
     let aiUsed = false;
 
     try {
-      const raw = await callProviderForRaw(aiSettings, prompt);
-      const parsed = parseJsonLooseExported(raw) as AiResponse | null;
+      const raw = await callAi(prompt);
+      const parsed = parseAi(raw) as AiResponse | null;
 
-      if (parsed && typeof parsed === 'object') {
-        // Override revenueMaximizationActions if AI provided 4+
-        if (Array.isArray(parsed.revenueMaximizationActions) &&
-            parsed.revenueMaximizationActions.length >= 4) {
-          const aiActions: RevenueActionItem[] = [];
-          for (const a of parsed.revenueMaximizationActions.slice(0, MAX_ACTIONS)) {
-            if (!a || typeof a !== 'object') continue;
-            aiActions.push({
-              action: clampEnum(a.action, VALID_ACTION, 'INCREASE_SELL_PRICE'),
-              expectedRevenueGain: round2(clampNum(
-                a.expectedRevenueGain,
-                UPLIFT_PCT_MIN, UPLIFT_PCT_MAX, 10,
-              )),
-              difficulty: clampEnum(a.difficulty, VALID_DIFFICULTY, 'MEDIUM'),
-              implementation: clampString(a.implementation, 200, 'Izboljšaj listing in pricing.'),
-            });
-          }
-          if (aiActions.length >= 4) {
-            maximization = { ...maximization, revenueMaximizationActions: aiActions };
-            // Recompute maximizedRevenuePerTrade based on new actions
-            const r = computeMaximizedRevenue(current, aiActions);
-            maximization = {
-              ...maximization,
-              maximizedRevenuePerTrade: r.maximizedRevenuePerTrade,
-              revenueUpliftPerTrade: r.revenueUpliftPerTrade,
-              revenueMultiplier: r.revenueMultiplier,
-            };
-          }
-        }
-
-        // Override maximizedRevenuePerTrade
-        if (parsed.maximizedRevenuePerTrade !== undefined) {
-          const minBound = current.avgRevenuePerTrade;
-          const maxBound = Math.max(minBound + 1, Math.min(
-            REVENUE_MAX,
-            current.avgRevenuePerTrade * MULTIPLIER_MAX,
-          ));
-          const maximizedRevenuePerTrade = round0(clampNum(
-            parsed.maximizedRevenuePerTrade,
-            minBound, maxBound, maximization.maximizedRevenuePerTrade,
-          ));
-          const revenueUpliftPerTrade = round0(clampNum(
-            maximizedRevenuePerTrade - current.avgRevenuePerTrade,
-            0, REVENUE_MAX, maximization.revenueUpliftPerTrade,
-          ));
-          const revenueMultiplier = round2(clampNum(
-            current.avgRevenuePerTrade > 0
-              ? maximizedRevenuePerTrade / current.avgRevenuePerTrade
-              : 1.0,
-            MULTIPLIER_MIN, MULTIPLIER_MAX, maximization.revenueMultiplier,
-          ));
-          maximization = {
-            ...maximization,
-            maximizedRevenuePerTrade,
-            revenueUpliftPerTrade,
-            revenueMultiplier,
-          };
-        }
-
-        // Override portfolioRevenueProjection
-        if (parsed.portfolioRevenueProjection !== undefined) {
-          const v = round0(clampNum(
-            parsed.portfolioRevenueProjection,
-            PORTFOLIO_MIN, PORTFOLIO_MAX, maximization.portfolioRevenueProjection,
-          ));
-          maximization = { ...maximization, portfolioRevenueProjection: v };
-        } else {
-          // Recompute based on updated maximizedRevenuePerTrade
-          maximization = {
-            ...maximization,
-            portfolioRevenueProjection: computePortfolioRevenueProjection(
-              current,
-              maximization.maximizedRevenuePerTrade,
-            ),
-          };
-        }
-
-        // Override bestRevenueCategory — must match one of categoryStats (anti-hallucination)
-        if (parsed.bestRevenueCategory) {
-          const validCats = new Set(categoryStats.map((c) => c.category.toLowerCase()));
-          const aiCat = clampString(parsed.bestRevenueCategory, 60, maximization.bestRevenueCategory);
-          if (validCats.has(aiCat.toLowerCase())) {
-            maximization = { ...maximization, bestRevenueCategory: aiCat };
-          }
-        }
-
-        // Override pricingStrategyAdvice
-        if (parsed.pricingStrategyAdvice) {
-          maximization = {
-            ...maximization,
-            pricingStrategyAdvice: clampString(
-              parsed.pricingStrategyAdvice,
-              400,
-              maximization.pricingStrategyAdvice,
-            ),
-          };
-        }
-
-        // Override revenueGrade — recompute or use AI value
-        const upliftPct = current.avgRevenuePerTrade > 0
-          ? (maximization.revenueUpliftPerTrade / current.avgRevenuePerTrade) * 100
-          : 0;
-        if (parsed.revenueGrade) {
-          const grade = clampEnum(parsed.revenueGrade, VALID_GRADE, decideRevenueGrade(maximization.revenueMultiplier, upliftPct));
-          maximization = { ...maximization, revenueGrade: grade };
-        } else {
-          maximization = {
-            ...maximization,
-            revenueGrade: decideRevenueGrade(maximization.revenueMultiplier, upliftPct),
-          };
-        }
-
-        summary = clampString(parsed.summary, 400, buildSummary(current, maximization));
-        aiUsed = true;
-      }
+      const merged = mergeAiIntoMaximization(parsed, current, maximization, categoryStats);
+      maximization = merged.maximization;
+      summary = merged.summary;
+      aiUsed = merged.aiUsed;
     } catch (err) {
       logger.warn(
         '/api/ai/revenue-per-trade-maximizer',
@@ -895,22 +938,15 @@ VRNI LE JSON:
       setCachedAI(cacheKey, { maximization, summary });
     }
 
-    return NextResponse.json({
+    return apiOk({
       ok: true,
       current,
       maximization,
       summary,
       aiUsed,
     } satisfies RevenuePerTradeResponse);
-  } catch (err: any) {
-    logger.error(
-      '/api/ai/revenue-per-trade-maximizer',
-      'handler failed',
-      err,
-    );
-    return NextResponse.json(
-      { error: err?.message ?? 'Napaka' },
-      { status: 500 },
-    );
-  }
-}
+  },
+});
+
+export const GET = revenuePerTradeHandler;
+export const POST = revenuePerTradeHandler;

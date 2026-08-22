@@ -1,4 +1,4 @@
-// v7.95: AI Deal Sourcing Intelligence — AI identificira NAJBOLJŠE vire za
+// v7.95 / v8.96.6-batch2: AI Deal Sourcing Intelligence — AI identificira NAJBOLJŠE vire za
 // iskanje novih deal-ov (kje iskati, katere ključne besede, kateri
 // monitorji za dodati, katere kategorije so zrele za sourcing). Razlika
 // od sourcing (basic suggestions) — ta je INTELLIGENCE o tem KODI deal-i
@@ -18,24 +18,20 @@
 //
 // GET+POST /api/ai/deal-sourcing-intelligence
 // (AI-enhanced + grounding + anti-hallucination + 6h cache + deterministic fallback)
+// Refaktoriran z withAiRoute helperjem (v8.96.6) + enforceBudget guard.
 
-import { NextRequest, NextResponse } from 'next/server';
-import { db } from '@/lib/db';
-import { getSettingsRow } from '@/lib/pipeline';
-import {
-  callProviderForRaw,
-  parseJsonLooseExported,
-  type AiProviderType,
-  type AiSettings,
-} from '@/lib/ai';
+import { withAiRoute, AI_ROUTE_DEFAULTS, type AiRouteContext } from '@/lib/with-ai-route';
+import { apiOk } from '@/lib/api-response';
 import { GROUNDING_PROMPT_SUFFIX } from '@/lib/anti-hallucination';
 import { getCachedAI, setCachedAI } from '@/lib/ai-cache';
-import { checkRateLimit, rateLimitResponse } from '@/lib/rate-limit';
-import { logger } from '@/lib/logger';
 
-export const runtime = 'nodejs';
-export const dynamic = 'force-dynamic';
+export const { runtime, dynamic } = AI_ROUTE_DEFAULTS;
 export const maxDuration = 60;
+
+// --- Input ----------------------------------------------------------------
+
+// eslint-disable-next-line @typescript-eslint/no-empty-object-type
+interface DealSourcingIntelligenceInput {}
 
 // --- Types ---------------------------------------------------------------
 
@@ -553,152 +549,65 @@ function buildSummary(intelligence: Intelligence, history: SourcingHistory): str
   return parts.join(' ').slice(0, 400);
 }
 
-// --- Handler -------------------------------------------------------------
+// --- AI prompt + merge helpers (pure, testable) ---------------------------
 
-export async function GET(req: NextRequest) {
-  return handleDealSourcingIntelligence(req);
+interface PromptData {
+  sourcingHistory: {
+    totalDeals: number;
+    totalProfit: number;
+    bySource: Array<{ source: string; count: number; avgProfit: number; avgROI: number }>;
+    byCategory: Array<{ category: string; count: number; avgProfit: number }>;
+    topKeywords: Array<{ keyword: string; count: number; avgProfit: number; category: string }>;
+  };
+  monitorCoverage: {
+    activeCount: number;
+    totalCount: number;
+    bySource: Array<{ source: string; activeCount: number }>;
+  };
+  deterministic: Intelligence;
+  caps: Record<string, number>;
 }
-export async function POST(req: NextRequest) {
-  return handleDealSourcingIntelligence(req);
+
+function buildPromptData(
+  history: SourcingHistory,
+  monitors: MonitorRow[],
+  intelligence: Intelligence,
+): PromptData {
+  return {
+    sourcingHistory: {
+      totalDeals: history.totalDeals,
+      totalProfit: round0(history.totalProfit),
+      bySource: Array.from(history.bySource.entries()).slice(0, 10).map(([src, s]) => ({
+        source: src, count: s.count, avgProfit: round0(s.avgProfit), avgROI: round0(s.avgROI),
+      })),
+      byCategory: Array.from(history.byCategory.entries()).slice(0, 10).map(([cat, c]) => ({
+        category: cat, count: c.count, avgProfit: round0(c.avgProfit),
+      })),
+      topKeywords: Array.from(history.topKeywords.entries()).slice(0, 15).map(([kw, k]) => ({
+        keyword: kw, count: k.count, avgProfit: round0(k.avgProfit), category: k.category,
+      })),
+    },
+    monitorCoverage: {
+      activeCount: monitors.filter((m) => m.isActive).length,
+      totalCount: monitors.length,
+      bySource: Array.from(new Set(monitors.map((m) => m.source))).map((src) => ({
+        source: src,
+        activeCount: monitors.filter((m) => m.source === src && m.isActive).length,
+      })),
+    },
+    deterministic: intelligence,
+    caps: {
+      scoreMin: SCORE_MIN, scoreMax: SCORE_MAX,
+      roiMin: ROI_MIN, roiMax: ROI_MAX,
+      profitMin: PROFIT_MIN, profitMax: PROFIT_MAX,
+      dealFreqMin: DEAL_FREQ_MIN, dealFreqMax: DEAL_FREQ_MAX,
+      expectedDealsMin: EXPECTED_DEALS_MIN, expectedDealsMax: EXPECTED_DEALS_MAX,
+    },
+  };
 }
 
-async function handleDealSourcingIntelligence(req: NextRequest) {
-  try {
-    const rl = checkRateLimit(req, 'ai-deal-sourcing-intelligence', 20);
-    if (!rl.allowed) return rateLimitResponse(rl);
-
-    const now = Date.now();
-    const cutoff12m = new Date(now - HORIZON_12M);
-
-    // 1) Query SOLD trades for sourcing history
-    const soldTrades = await db.trade.findMany({
-      where: {
-        status: 'sold',
-        sellDate: { not: null, gte: cutoff12m },
-      },
-      select: {
-        id: true,
-        title: true,
-        buyPrice: true,
-        buyFees: true,
-        sellPrice: true,
-        sellFees: true,
-        sellDate: true,
-        sellLocation: true,
-        category: true,
-      },
-      orderBy: { sellDate: 'asc' },
-      take: 100000,
-    }) as unknown as SoldTradeRow[];
-
-    // 2) Query all monitors for sourcing coverage
-    const monitors = await db.monitor.findMany({
-      select: {
-        id: true,
-        name: true,
-        source: true,
-        sourceUrl: true,
-        isActive: true,
-        keywords: true,
-        tags: true,
-      },
-      take: 10000,
-    }) as unknown as MonitorRow[];
-
-    // Empty-state: no SOLD trades
-    if (soldTrades.length === 0) {
-      return NextResponse.json({
-        ok: true,
-        intelligence: {
-          bestSources: [],
-          recommendedSearchKeywords: [],
-          recommendedPriceRanges: [],
-          recommendedCategories: [],
-          sourcingGaps: [{
-            gap: 'Ni SOLD trgovin v zadnjih 12 mesecih.',
-            impact: 'Brez zgodovine prodaj ni mogoče določiti best sources.',
-            recommendation: 'Začni kupovati in prodajati da zbereš sourcing data.',
-          }],
-          newMonitorRecommendations: [],
-          sourcingTimingAdvice: [],
-          competitorSourcingInsight: 'Ni podatkov o konkurenčnem sourcing-u.',
-          sourcingEfficiencyScore: 0,
-        },
-        summary: 'Ni SOLD trgovin v zadnjih 12 mesecih — Deal Sourcing Intelligence ni mogoč.',
-        aiUsed: false,
-        message: 'Ni SOLD trgovin v zadnjih 12 mesecih — Deal Sourcing Intelligence ni mogoč.',
-      } satisfies DealSourcingIntelligenceResponse);
-    }
-
-    // 3) Compute sourcing history
-    const history = computeSourcingHistory(soldTrades);
-
-    // 4) Build deterministic intelligence
-    let intelligence = buildDeterministicIntelligence(history, monitors);
-    let summary = buildSummary(intelligence, history);
-
-    // 5) AI cache check (6h TTL) — key by current month
-    const currentMonth = new Date(now).toISOString().slice(0, 7);
-    const cacheKey = `deal-sourcing-intelligence:${currentMonth}`;
-    const cached = getCachedAI<{ intelligence: Intelligence; summary: string }>(cacheKey);
-    if (cached) {
-      return NextResponse.json({
-        ok: true,
-        intelligence: cached.intelligence,
-        summary: cached.summary,
-        cached: true,
-        aiUsed: true,
-      } satisfies DealSourcingIntelligenceResponse);
-    }
-
-    // 6) AI prompt with grounding
-    const settings = await getSettingsRow();
-    const aiSettings: AiSettings = {
-      provider: settings.aiProvider as AiProviderType,
-      baseUrl: settings.aiBaseUrl,
-      apiKey: settings.aiApiKey,
-      model: settings.aiModel,
-      fallbackProvider: (settings.fallbackProvider || '') as
-        | AiProviderType
-        | '',
-      fallbackBaseUrl: settings.fallbackBaseUrl || '',
-      fallbackApiKey: settings.fallbackApiKey || '',
-      fallbackModel: settings.fallbackModel || '',
-    };
-
-    const promptData = {
-      sourcingHistory: {
-        totalDeals: history.totalDeals,
-        totalProfit: round0(history.totalProfit),
-        bySource: Array.from(history.bySource.entries()).slice(0, 10).map(([src, s]) => ({
-          source: src, count: s.count, avgProfit: round0(s.avgProfit), avgROI: round0(s.avgROI),
-        })),
-        byCategory: Array.from(history.byCategory.entries()).slice(0, 10).map(([cat, c]) => ({
-          category: cat, count: c.count, avgProfit: round0(c.avgProfit),
-        })),
-        topKeywords: Array.from(history.topKeywords.entries()).slice(0, 15).map(([kw, k]) => ({
-          keyword: kw, count: k.count, avgProfit: round0(k.avgProfit), category: k.category,
-        })),
-      },
-      monitorCoverage: {
-        activeCount: monitors.filter((m) => m.isActive).length,
-        totalCount: monitors.length,
-        bySource: Array.from(new Set(monitors.map((m) => m.source))).map((src) => ({
-          source: src,
-          activeCount: monitors.filter((m) => m.source === src && m.isActive).length,
-        })),
-      },
-      deterministic: intelligence,
-      caps: {
-        scoreMin: SCORE_MIN, scoreMax: SCORE_MAX,
-        roiMin: ROI_MIN, roiMax: ROI_MAX,
-        profitMin: PROFIT_MIN, profitMax: PROFIT_MAX,
-        dealFreqMin: DEAL_FREQ_MIN, dealFreqMax: DEAL_FREQ_MAX,
-        expectedDealsMin: EXPECTED_DEALS_MIN, expectedDealsMax: EXPECTED_DEALS_MAX,
-      },
-    };
-
-    const prompt = `Si AI "Deal Sourcing Intelligence" za slovenske in srednjeevropske oglasne platforme (Bolha, Vinted, Avtonet, mobile.de).
+function buildPrompt(promptData: PromptData): string {
+  return `Si AI "Deal Sourcing Intelligence" za slovenske in srednjeevropske oglasne platforme (Bolha, Vinted, Avtonet, mobile.de).
 Ti identificiraš NAJBOLJŠE vire za iskanje novih deal-ov — kje iskati, katere ključne besede, kateri monitorji za dodati, katere kategorije so zrele za sourcing. Razlika od sourcing (basic suggestions) — ti si INTELLIGENCE o tem KODI deal-i prihajajo in kje najti več.
 
 DETERMINISTIČNI PODATKI (izračunano iz DB — SOLD 12m za sourcing patterns + aktivni monitorji za coverage):
@@ -745,169 +654,292 @@ VRNI LE JSON:
   },
   "summary": "18 SOLD deal-ov analiziranih. Score: 68/100. Best source: bolha (85/100, avg 45€). Gap: Vinted za modo manjka."
 }${GROUNDING_PROMPT_SUFFIX}`;
+}
+
+function mergeAiResponse(
+  parsed: AiIntelligenceResponse | null,
+  detIntelligence: Intelligence,
+  history: SourcingHistory,
+): { intelligence: Intelligence; summary: string; aiUsed: boolean } {
+  if (!parsed || !parsed.intelligence || typeof parsed.intelligence !== 'object') {
+    return {
+      intelligence: detIntelligence,
+      summary: buildSummary(detIntelligence, history),
+      aiUsed: false,
+    };
+  }
+
+  const ai = parsed.intelligence;
+  const det = detIntelligence;
+
+  // bestSources — only accept sources that exist in deterministic OR are known sources
+  const knownSources = new Set(Array.from(history.bySource.keys()).concat(['bolha', 'vinted', 'avtonet', 'mobile-de', 'kleinanzeigen', 'subito', 'willhaben']));
+  const bestSources: BestSource[] = [];
+  if (Array.isArray(ai.bestSources)) {
+    for (const s of ai.bestSources.slice(0, 5)) {
+      if (!s || typeof s !== 'object') continue;
+      const src = clampString(s.source, 50, 'neznano').toLowerCase();
+      if (!knownSources.has(src)) continue; // anti-hallucination
+      const detScore = det.bestSources.find((b) => b.source === src)?.score ?? 50;
+      bestSources.push({
+        source: src,
+        score: round0(clampNum(s.score, SCORE_MIN, SCORE_MAX, detScore + Math.max(-10, Math.min(10, (Number(s.score) || detScore) - detScore)))),
+        avgProfit: round0(clampNum(s.avgProfit, PROFIT_MIN, PROFIT_MAX, det.bestSources.find((b) => b.source === src)?.avgProfit ?? 0)),
+        dealCount: round0(clampNum(s.dealCount, 0, 100000, det.bestSources.find((b) => b.source === src)?.dealCount ?? 0)),
+        reasoning: clampString(s.reasoning, 200, det.bestSources.find((b) => b.source === src)?.reasoning ?? `Vir ${src}.`),
+      });
+    }
+  }
+  if (bestSources.length === 0) bestSources.push(...det.bestSources);
+
+  // recommendedSearchKeywords — only from known historical keywords
+  const knownKeywords = new Set(history.topKeywords.keys());
+  const recommendedSearchKeywords: RecommendedKeyword[] = [];
+  if (Array.isArray(ai.recommendedSearchKeywords)) {
+    for (const k of ai.recommendedSearchKeywords.slice(0, 8)) {
+      if (!k || typeof k !== 'object') continue;
+      const kw = clampString(k.keyword, 50, '').toLowerCase();
+      if (!kw) continue;
+      // Accept if from history OR generic tech keyword (allow slight generalization)
+      const isKnown = knownKeywords.has(kw);
+      const detKw = det.recommendedSearchKeywords.find((r) => r.keyword === kw);
+      if (!isKnown && !detKw) continue; // anti-hallucination: only known keywords
+      const cat = detKw?.category || clampString(k.category, 50, 'drugo');
+      recommendedSearchKeywords.push({
+        keyword: kw,
+        expectedROI: round0(clampNum(k.expectedROI, ROI_MIN, ROI_MAX, detKw?.expectedROI ?? 50)),
+        category: cat,
+      });
+    }
+  }
+  if (recommendedSearchKeywords.length === 0) recommendedSearchKeywords.push(...det.recommendedSearchKeywords);
+
+  // recommendedPriceRanges
+  const recommendedPriceRanges: RecommendedPriceRange[] = [];
+  if (Array.isArray(ai.recommendedPriceRanges)) {
+    const knownRanges = new Set(history.byPriceRange.keys());
+    for (const r of ai.recommendedPriceRanges.slice(0, 5)) {
+      if (!r || typeof r !== 'object') continue;
+      const range = clampString(r.range, 30, '');
+      if (!range || !knownRanges.has(range)) {
+        // Accept ranges that match known format
+        const detRange = det.recommendedPriceRanges.find((p) => p.range === range);
+        if (!detRange) continue;
+      }
+      const detRange = det.recommendedPriceRanges.find((p) => p.range === range);
+      recommendedPriceRanges.push({
+        range,
+        avgROI: round0(clampNum(r.avgROI, ROI_MIN, ROI_MAX, detRange?.avgROI ?? 50)),
+        dealFrequency: round0(clampNum(r.dealFrequency, DEAL_FREQ_MIN, DEAL_FREQ_MAX, detRange?.dealFrequency ?? 10)),
+      });
+    }
+  }
+  if (recommendedPriceRanges.length === 0) recommendedPriceRanges.push(...det.recommendedPriceRanges);
+
+  // recommendedCategories
+  const recommendedCategories: RecommendedCategory[] = [];
+  if (Array.isArray(ai.recommendedCategories)) {
+    const knownCats = new Set(history.byCategory.keys());
+    for (const c of ai.recommendedCategories.slice(0, 8)) {
+      if (!c || typeof c !== 'object') continue;
+      const cat = clampString(c.category, 50, '').toLowerCase();
+      if (!cat || !knownCats.has(cat)) continue; // anti-hallucination: only known categories
+      const detCat = det.recommendedCategories.find((rc) => rc.category === cat);
+      recommendedCategories.push({
+        category: cat,
+        opportunity: clampString(c.opportunity, 100, detCat?.opportunity ?? 'STABLE'),
+        expectedProfit: round0(clampNum(c.expectedProfit, PROFIT_MIN, PROFIT_MAX, detCat?.expectedProfit ?? 0)),
+      });
+    }
+  }
+  if (recommendedCategories.length === 0) recommendedCategories.push(...det.recommendedCategories);
+
+  // sourcingGaps
+  const sourcingGaps: SourcingGap[] = [];
+  if (Array.isArray(ai.sourcingGaps)) {
+    for (const g of ai.sourcingGaps.slice(0, 5)) {
+      if (!g || typeof g !== 'object') continue;
+      sourcingGaps.push({
+        gap: clampString(g.gap, 200, det.sourcingGaps[0]?.gap ?? 'Sourcing gap identificiran.'),
+        impact: clampString(g.impact, 200, det.sourcingGaps[0]?.impact ?? 'Vpliv na sourcing.'),
+        recommendation: clampString(g.recommendation, 200, det.sourcingGaps[0]?.recommendation ?? 'Priporočilo za izboljšanje.'),
+      });
+    }
+  }
+  if (sourcingGaps.length === 0) sourcingGaps.push(...det.sourcingGaps);
+
+  // newMonitorRecommendations
+  const newMonitorRecommendations: NewMonitorRecommendation[] = [];
+  if (Array.isArray(ai.newMonitorRecommendations)) {
+    for (const m of ai.newMonitorRecommendations.slice(0, 4)) {
+      if (!m || typeof m !== 'object') continue;
+      const source = clampString(m.source, 30, 'bolha').toLowerCase();
+      if (!knownSources.has(source)) continue; // anti-hallucination
+      const kws = Array.isArray(m.keywords)
+        ? m.keywords.slice(0, 5).filter((k: unknown) => typeof k === 'string').map((k: unknown) => String(k).slice(0, 50))
+        : [];
+      newMonitorRecommendations.push({
+        name: clampString(m.name, 100, `Nov monitor: ${source}`),
+        source,
+        searchUrl: clampString(m.searchUrl, 200, ''),
+        keywords: kws.length > 0 ? kws : ['ps5', 'iphone'],
+        expectedDeals: round0(clampNum(m.expectedDeals, EXPECTED_DEALS_MIN, EXPECTED_DEALS_MAX, 5)),
+      });
+    }
+  }
+  if (newMonitorRecommendations.length === 0) newMonitorRecommendations.push(...det.newMonitorRecommendations);
+
+  // sourcingTimingAdvice
+  const sourcingTimingAdvice: SourcingTimingAdvice[] = [];
+  if (Array.isArray(ai.sourcingTimingAdvice)) {
+    for (const t of ai.sourcingTimingAdvice.slice(0, 5)) {
+      if (!t || typeof t !== 'object') continue;
+      sourcingTimingAdvice.push({
+        dayOfWeek: clampString(t.dayOfWeek, 10, 'Pon'),
+        hourRange: clampString(t.hourRange, 20, '18:00-22:00'),
+        dealQualityScore: round0(clampNum(t.dealQualityScore, SCORE_MIN, SCORE_MAX, 50)),
+      });
+    }
+  }
+  if (sourcingTimingAdvice.length === 0) sourcingTimingAdvice.push(...det.sourcingTimingAdvice);
+
+  const detScore = det.sourcingEfficiencyScore;
+  const sourcingEfficiencyScore = round0(
+    Math.max(SCORE_MIN, Math.min(SCORE_MAX,
+      detScore + Math.max(-10, Math.min(10,
+        (Number(ai.sourcingEfficiencyScore ?? detScore)) - detScore)))),
+  );
+
+  const intelligence: Intelligence = {
+    bestSources,
+    recommendedSearchKeywords,
+    recommendedPriceRanges,
+    recommendedCategories,
+    sourcingGaps,
+    newMonitorRecommendations,
+    sourcingTimingAdvice,
+    competitorSourcingInsight: clampString(ai.competitorSourcingInsight, 400, det.competitorSourcingInsight),
+    sourcingEfficiencyScore,
+  };
+  const summary = clampString(parsed.summary, 400, buildSummary(intelligence, history));
+  return { intelligence, summary, aiUsed: true };
+}
+
+// --- Handler -------------------------------------------------------------
+
+const dealSourcingIntelligenceHandler = withAiRoute<DealSourcingIntelligenceInput>({
+  endpoint: '/api/ai/deal-sourcing-intelligence',
+  maxDuration: 60,
+  enforceBudget: true, // AI klic — preveri budget
+  method: 'GET', // Endpoint sprejema GET + POST — bypass POST-only check
+
+  parseBody: async (req) => {
+    await req.json().catch(() => ({}));
+    return {};
+  },
+
+  // No validateInput — body ignored, identična logika za GET in POST
+  handler: async (_input, ctx: AiRouteContext) => {
+    const { db, callAi, parseAi, logger } = ctx;
+
+    const now = Date.now();
+    const cutoff12m = new Date(now - HORIZON_12M);
+
+    // 1) Query SOLD trades for sourcing history
+    const soldTrades = await db.trade.findMany({
+      where: {
+        status: 'sold',
+        sellDate: { not: null, gte: cutoff12m },
+      },
+      select: {
+        id: true,
+        title: true,
+        buyPrice: true,
+        buyFees: true,
+        sellPrice: true,
+        sellFees: true,
+        sellDate: true,
+        sellLocation: true,
+        category: true,
+      },
+      orderBy: { sellDate: 'asc' },
+      take: 100000,
+    }) as unknown as SoldTradeRow[];
+
+    // 2) Query all monitors for sourcing coverage
+    const monitors = await db.monitor.findMany({
+      select: {
+        id: true,
+        name: true,
+        source: true,
+        sourceUrl: true,
+        isActive: true,
+        keywords: true,
+        tags: true,
+      },
+      take: 10000,
+    }) as unknown as MonitorRow[];
+
+    // Empty-state: no SOLD trades
+    if (soldTrades.length === 0) {
+      return apiOk({
+        ok: true,
+        intelligence: {
+          bestSources: [],
+          recommendedSearchKeywords: [],
+          recommendedPriceRanges: [],
+          recommendedCategories: [],
+          sourcingGaps: [{
+            gap: 'Ni SOLD trgovin v zadnjih 12 mesecih.',
+            impact: 'Brez zgodovine prodaj ni mogoče določiti best sources.',
+            recommendation: 'Začni kupovati in prodajati da zbereš sourcing data.',
+          }],
+          newMonitorRecommendations: [],
+          sourcingTimingAdvice: [],
+          competitorSourcingInsight: 'Ni podatkov o konkurenčnem sourcing-u.',
+          sourcingEfficiencyScore: 0,
+        },
+        summary: 'Ni SOLD trgovin v zadnjih 12 mesecih — Deal Sourcing Intelligence ni mogoč.',
+        aiUsed: false,
+        message: 'Ni SOLD trgovin v zadnjih 12 mesecih — Deal Sourcing Intelligence ni mogoč.',
+      } satisfies DealSourcingIntelligenceResponse);
+    }
+
+    // 3) Compute sourcing history
+    const history = computeSourcingHistory(soldTrades);
+
+    // 4) Build deterministic intelligence
+    let intelligence = buildDeterministicIntelligence(history, monitors);
+    let summary = buildSummary(intelligence, history);
+
+    // 5) AI cache check (6h TTL) — key by current month
+    const currentMonth = new Date(now).toISOString().slice(0, 7);
+    const cacheKey = `deal-sourcing-intelligence:${currentMonth}`;
+    const cached = getCachedAI<{ intelligence: Intelligence; summary: string }>(cacheKey);
+    if (cached) {
+      return apiOk({
+        ok: true,
+        intelligence: cached.intelligence,
+        summary: cached.summary,
+        cached: true,
+        aiUsed: true,
+      } satisfies DealSourcingIntelligenceResponse);
+    }
+
+    // 6) AI prompt with grounding
+    const promptData = buildPromptData(history, monitors, intelligence);
+    const prompt = buildPrompt(promptData);
 
     let aiUsed = false;
 
     try {
-      const raw = await callProviderForRaw(aiSettings, prompt);
-      const parsed = parseJsonLooseExported(raw) as AiIntelligenceResponse | null;
+      const raw = await callAi(prompt);
+      const parsed = parseAi(raw) as AiIntelligenceResponse | null;
 
-      if (parsed && parsed.intelligence && typeof parsed.intelligence === 'object') {
-        const ai = parsed.intelligence;
-        const det = intelligence;
-
-        // bestSources — only accept sources that exist in deterministic OR are known sources
-        const knownSources = new Set(Array.from(history.bySource.keys()).concat(['bolha', 'vinted', 'avtonet', 'mobile-de', 'kleinanzeigen', 'subito', 'willhaben']));
-        const bestSources: BestSource[] = [];
-        if (Array.isArray(ai.bestSources)) {
-          for (const s of ai.bestSources.slice(0, 5)) {
-            if (!s || typeof s !== 'object') continue;
-            const src = clampString(s.source, 50, 'neznano').toLowerCase();
-            if (!knownSources.has(src)) continue; // anti-hallucination
-            const detScore = det.bestSources.find((b) => b.source === src)?.score ?? 50;
-            bestSources.push({
-              source: src,
-              score: round0(clampNum(s.score, SCORE_MIN, SCORE_MAX, detScore + Math.max(-10, Math.min(10, (Number(s.score) || detScore) - detScore)))),
-              avgProfit: round0(clampNum(s.avgProfit, PROFIT_MIN, PROFIT_MAX, det.bestSources.find((b) => b.source === src)?.avgProfit ?? 0)),
-              dealCount: round0(clampNum(s.dealCount, 0, 100000, det.bestSources.find((b) => b.source === src)?.dealCount ?? 0)),
-              reasoning: clampString(s.reasoning, 200, det.bestSources.find((b) => b.source === src)?.reasoning ?? `Vir ${src}.`),
-            });
-          }
-        }
-        if (bestSources.length === 0) bestSources.push(...det.bestSources);
-
-        // recommendedSearchKeywords — only from known historical keywords
-        const knownKeywords = new Set(history.topKeywords.keys());
-        const recommendedSearchKeywords: RecommendedKeyword[] = [];
-        if (Array.isArray(ai.recommendedSearchKeywords)) {
-          for (const k of ai.recommendedSearchKeywords.slice(0, 8)) {
-            if (!k || typeof k !== 'object') continue;
-            const kw = clampString(k.keyword, 50, '').toLowerCase();
-            if (!kw) continue;
-            // Accept if from history OR generic tech keyword (allow slight generalization)
-            const isKnown = knownKeywords.has(kw);
-            const detKw = det.recommendedSearchKeywords.find((r) => r.keyword === kw);
-            if (!isKnown && !detKw) continue; // anti-hallucination: only known keywords
-            const cat = detKw?.category || clampString(k.category, 50, 'drugo');
-            recommendedSearchKeywords.push({
-              keyword: kw,
-              expectedROI: round0(clampNum(k.expectedROI, ROI_MIN, ROI_MAX, detKw?.expectedROI ?? 50)),
-              category: cat,
-            });
-          }
-        }
-        if (recommendedSearchKeywords.length === 0) recommendedSearchKeywords.push(...det.recommendedSearchKeywords);
-
-        // recommendedPriceRanges
-        const recommendedPriceRanges: RecommendedPriceRange[] = [];
-        if (Array.isArray(ai.recommendedPriceRanges)) {
-          const knownRanges = new Set(history.byPriceRange.keys());
-          for (const r of ai.recommendedPriceRanges.slice(0, 5)) {
-            if (!r || typeof r !== 'object') continue;
-            const range = clampString(r.range, 30, '');
-            if (!range || !knownRanges.has(range)) {
-              // Accept ranges that match known format
-              const detRange = det.recommendedPriceRanges.find((p) => p.range === range);
-              if (!detRange) continue;
-            }
-            const detRange = det.recommendedPriceRanges.find((p) => p.range === range);
-            recommendedPriceRanges.push({
-              range,
-              avgROI: round0(clampNum(r.avgROI, ROI_MIN, ROI_MAX, detRange?.avgROI ?? 50)),
-              dealFrequency: round0(clampNum(r.dealFrequency, DEAL_FREQ_MIN, DEAL_FREQ_MAX, detRange?.dealFrequency ?? 10)),
-            });
-          }
-        }
-        if (recommendedPriceRanges.length === 0) recommendedPriceRanges.push(...det.recommendedPriceRanges);
-
-        // recommendedCategories
-        const recommendedCategories: RecommendedCategory[] = [];
-        if (Array.isArray(ai.recommendedCategories)) {
-          const knownCats = new Set(history.byCategory.keys());
-          for (const c of ai.recommendedCategories.slice(0, 8)) {
-            if (!c || typeof c !== 'object') continue;
-            const cat = clampString(c.category, 50, '').toLowerCase();
-            if (!cat || !knownCats.has(cat)) continue; // anti-hallucination: only known categories
-            const detCat = det.recommendedCategories.find((rc) => rc.category === cat);
-            recommendedCategories.push({
-              category: cat,
-              opportunity: clampString(c.opportunity, 100, detCat?.opportunity ?? 'STABLE'),
-              expectedProfit: round0(clampNum(c.expectedProfit, PROFIT_MIN, PROFIT_MAX, detCat?.expectedProfit ?? 0)),
-            });
-          }
-        }
-        if (recommendedCategories.length === 0) recommendedCategories.push(...det.recommendedCategories);
-
-        // sourcingGaps
-        const sourcingGaps: SourcingGap[] = [];
-        if (Array.isArray(ai.sourcingGaps)) {
-          for (const g of ai.sourcingGaps.slice(0, 5)) {
-            if (!g || typeof g !== 'object') continue;
-            sourcingGaps.push({
-              gap: clampString(g.gap, 200, det.sourcingGaps[0]?.gap ?? 'Sourcing gap identificiran.'),
-              impact: clampString(g.impact, 200, det.sourcingGaps[0]?.impact ?? 'Vpliv na sourcing.'),
-              recommendation: clampString(g.recommendation, 200, det.sourcingGaps[0]?.recommendation ?? 'Priporočilo za izboljšanje.'),
-            });
-          }
-        }
-        if (sourcingGaps.length === 0) sourcingGaps.push(...det.sourcingGaps);
-
-        // newMonitorRecommendations
-        const newMonitorRecommendations: NewMonitorRecommendation[] = [];
-        if (Array.isArray(ai.newMonitorRecommendations)) {
-          for (const m of ai.newMonitorRecommendations.slice(0, 4)) {
-            if (!m || typeof m !== 'object') continue;
-            const source = clampString(m.source, 30, 'bolha').toLowerCase();
-            if (!knownSources.has(source)) continue; // anti-hallucination
-            const kws = Array.isArray(m.keywords)
-              ? m.keywords.slice(0, 5).filter((k: unknown) => typeof k === 'string').map((k: unknown) => String(k).slice(0, 50))
-              : [];
-            newMonitorRecommendations.push({
-              name: clampString(m.name, 100, `Nov monitor: ${source}`),
-              source,
-              searchUrl: clampString(m.searchUrl, 200, ''),
-              keywords: kws.length > 0 ? kws : ['ps5', 'iphone'],
-              expectedDeals: round0(clampNum(m.expectedDeals, EXPECTED_DEALS_MIN, EXPECTED_DEALS_MAX, 5)),
-            });
-          }
-        }
-        if (newMonitorRecommendations.length === 0) newMonitorRecommendations.push(...det.newMonitorRecommendations);
-
-        // sourcingTimingAdvice
-        const sourcingTimingAdvice: SourcingTimingAdvice[] = [];
-        if (Array.isArray(ai.sourcingTimingAdvice)) {
-          for (const t of ai.sourcingTimingAdvice.slice(0, 5)) {
-            if (!t || typeof t !== 'object') continue;
-            sourcingTimingAdvice.push({
-              dayOfWeek: clampString(t.dayOfWeek, 10, 'Pon'),
-              hourRange: clampString(t.hourRange, 20, '18:00-22:00'),
-              dealQualityScore: round0(clampNum(t.dealQualityScore, SCORE_MIN, SCORE_MAX, 50)),
-            });
-          }
-        }
-        if (sourcingTimingAdvice.length === 0) sourcingTimingAdvice.push(...det.sourcingTimingAdvice);
-
-        const detScore = det.sourcingEfficiencyScore;
-        const sourcingEfficiencyScore = round0(
-          Math.max(SCORE_MIN, Math.min(SCORE_MAX,
-            detScore + Math.max(-10, Math.min(10,
-              (Number(ai.sourcingEfficiencyScore ?? detScore)) - detScore)))),
-        );
-
-        intelligence = {
-          bestSources,
-          recommendedSearchKeywords,
-          recommendedPriceRanges,
-          recommendedCategories,
-          sourcingGaps,
-          newMonitorRecommendations,
-          sourcingTimingAdvice,
-          competitorSourcingInsight: clampString(ai.competitorSourcingInsight, 400, det.competitorSourcingInsight),
-          sourcingEfficiencyScore,
-        };
-        summary = clampString(parsed.summary, 400, buildSummary(intelligence, history));
-        aiUsed = true;
-      }
+      const result = mergeAiResponse(parsed, intelligence, history);
+      intelligence = result.intelligence;
+      summary = result.summary;
+      aiUsed = result.aiUsed;
     } catch (err) {
       logger.warn(
         '/api/ai/deal-sourcing-intelligence',
@@ -921,21 +953,14 @@ VRNI LE JSON:
       setCachedAI(cacheKey, { intelligence, summary });
     }
 
-    return NextResponse.json({
+    return apiOk({
       ok: true,
       intelligence,
       summary,
       aiUsed,
     } satisfies DealSourcingIntelligenceResponse);
-  } catch (err: any) {
-    logger.error(
-      '/api/ai/deal-sourcing-intelligence',
-      'handler failed',
-      err,
-    );
-    return NextResponse.json(
-      { error: err?.message ?? 'Napaka' },
-      { status: 500 },
-    );
-  }
-}
+  },
+});
+
+export const GET = dealSourcingIntelligenceHandler;
+export const POST = dealSourcingIntelligenceHandler;

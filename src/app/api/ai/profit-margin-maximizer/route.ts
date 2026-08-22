@@ -1,4 +1,4 @@
-// v7.95: AI Profit Margin Maximizer — AI identificira specifične akcije
+// v7.95 / v8.96.6-batch1: AI Profit Margin Maximizer — AI identificira specifične akcije
 // za MAKSIMIZACIJO profitnih marž. Najde MAXIMUM dosegljivo maržo in
 // da plan za dosego. Razlika od profit-margin-forecaster-pro (v7.85 ki
 // forecast-a margin) — ta MAKSIMIZIRA margin z actionable plan.
@@ -18,24 +18,18 @@
 //
 // GET+POST /api/ai/profit-margin-maximizer
 // (AI-enhanced + grounding + anti-hallucination + 6h cache + deterministic fallback)
+// Refaktoriran z withAiRoute helperjem (v8.96.6) + enforceBudget guard.
 
-import { NextRequest, NextResponse } from 'next/server';
-import { db } from '@/lib/db';
-import { getSettingsRow } from '@/lib/pipeline';
-import {
-  callProviderForRaw,
-  parseJsonLooseExported,
-  type AiProviderType,
-  type AiSettings,
-} from '@/lib/ai';
+import { withAiRoute, AI_ROUTE_DEFAULTS, type AiRouteContext } from '@/lib/with-ai-route';
+import { apiOk } from '@/lib/api-response';
 import { GROUNDING_PROMPT_SUFFIX } from '@/lib/anti-hallucination';
 import { getCachedAI, setCachedAI } from '@/lib/ai-cache';
-import { checkRateLimit, rateLimitResponse } from '@/lib/rate-limit';
-import { logger } from '@/lib/logger';
 
-export const runtime = 'nodejs';
-export const dynamic = 'force-dynamic';
+export const { runtime, dynamic } = AI_ROUTE_DEFAULTS;
 export const maxDuration = 60;
+
+// eslint-disable-next-line @typescript-eslint/no-empty-object-type
+interface ProfitMarginMaximizerInput {}
 
 // --- Types ---------------------------------------------------------------
 
@@ -606,153 +600,48 @@ function buildSummary(baseline: MarginBaseline, plan: MarginPlan): string {
   return parts.join(' ').slice(0, 400);
 }
 
-// --- Handler -------------------------------------------------------------
+// --- Prompt builder + AI merge (čisti, testabilni) ----------------------
 
-export async function GET(req: NextRequest) {
-  return handleProfitMarginMaximizer(req);
+function buildPromptData(
+  ctx: MarginContext,
+  baseline: MarginBaseline,
+  opportunities: MarginOpportunities,
+  det: MarginPlan,
+): unknown {
+  return {
+    baseline,
+    opportunities,
+    marginContext: {
+      currentAvgMargin: ctx.currentAvgMargin,
+      bestMarginEver: ctx.bestMarginEver,
+      worstMarginEver: ctx.worstMarginEver,
+      monthlyMargins: ctx.monthlyMargins,
+      marginByCategory: Array.from(ctx.marginByCategory.entries()).slice(0, 10).map(([cat, c]) => ({
+        category: cat, margin: round0(c.margin * 100) / 100, count: c.count,
+      })),
+      marginBySource: Array.from(ctx.marginBySource.entries()).slice(0, 10).map(([src, s]) => ({
+        source: src, margin: round0(s.margin * 100) / 100, count: s.count,
+      })),
+      totalTrades: ctx.totalTrades,
+      totalRevenue: ctx.totalRevenue,
+      totalProfit: ctx.totalProfit,
+      avgProfitPerTrade: ctx.avgProfitPerTrade,
+      avgHoldDays: ctx.avgHoldDays,
+    },
+    deterministicPlan: det,
+    caps: {
+      scoreMin: SCORE_MIN, scoreMax: SCORE_MAX,
+      marginMin: MARGIN_MIN, marginMax: MARGIN_MAX,
+      marginImpactMin: MARGIN_IMPACT_MIN, marginImpactMax: MARGIN_IMPACT_MAX,
+      profitImpactMin: PROFIT_IMPACT_MIN, profitImpactMax: PROFIT_IMPACT_MAX,
+      easeMin: EASE_MIN, easeMax: EASE_MAX,
+      priorityMin: PRIORITY_MIN, priorityMax: PRIORITY_MAX,
+    },
+  };
 }
-export async function POST(req: NextRequest) {
-  return handleProfitMarginMaximizer(req);
-}
 
-async function handleProfitMarginMaximizer(req: NextRequest) {
-  try {
-    const rl = checkRateLimit(req, 'ai-profit-margin-maximizer', 20);
-    if (!rl.allowed) return rateLimitResponse(rl);
-
-    const now = Date.now();
-    const cutoff12m = new Date(now - HORIZON_12M);
-
-    // 1) Query SOLD trades from last 12 months
-    const soldTrades = await db.trade.findMany({
-      where: {
-        status: 'sold',
-        sellDate: { not: null, gte: cutoff12m },
-      },
-      select: {
-        id: true,
-        buyPrice: true,
-        buyFees: true,
-        sellPrice: true,
-        sellFees: true,
-        sellDate: true,
-        buyDate: true,
-        sellLocation: true,
-        category: true,
-      },
-      orderBy: { sellDate: 'asc' },
-      take: 100000,
-    }) as unknown as SoldTradeRow[];
-
-    // Empty-state: no SOLD trades
-    if (soldTrades.length === 0) {
-      return NextResponse.json({
-        ok: true,
-        baseline: {
-          currentAvgMargin: 0,
-          bestMarginEver: 0,
-          worstMarginEver: 0,
-          maxAchievableMargin: 0,
-          currentMarginGap: 0,
-        },
-        opportunities: {
-          priceOptimizationPotential: 0,
-          costReductionPotential: 0,
-          feeReductionPotential: 0,
-          categoryMixOptimization: 0,
-          efficiencyOptimization: 0,
-        },
-        plan: {
-          maximizationActions: [],
-          maximizationStrategy: 'Ni SOLD trgovin za margin maximization plan.',
-          prioritizedActions: [],
-          quickWins: [],
-          projectedMarginAfterActions: 0,
-          marginMaximizationScore: 0,
-          riskTradeoffs: [],
-        },
-        summary: 'Ni SOLD trgovin v zadnjih 12 mesecih — Profit Margin Maximizer ni mogoč.',
-        aiUsed: false,
-        message: 'Ni SOLD trgovin v zadnjih 12 mesecih — Profit Margin Maximizer ni mogoč.',
-      } satisfies ProfitMarginMaxResponse);
-    }
-
-    // 2) Compute margin context
-    const ctx = computeMarginContext(soldTrades, now);
-
-    // 3) Compute opportunities
-    const opportunities = computeOpportunities(ctx);
-
-    // 4) Compute baseline
-    const baseline = computeBaseline(ctx, opportunities);
-
-    // 5) Build deterministic plan (fallback)
-    let plan = buildDeterministicPlan(ctx, baseline, opportunities);
-    let summary = buildSummary(baseline, plan);
-
-    // 6) AI cache check (6h TTL) — key by current month
-    const currentMonth = new Date(now).toISOString().slice(0, 7);
-    const cacheKey = `profit-margin-maximizer:${currentMonth}`;
-    const cached = getCachedAI<{ plan: MarginPlan; summary: string }>(cacheKey);
-    if (cached) {
-      return NextResponse.json({
-        ok: true,
-        baseline,
-        opportunities,
-        plan: cached.plan,
-        summary: cached.summary,
-        cached: true,
-        aiUsed: true,
-      } satisfies ProfitMarginMaxResponse);
-    }
-
-    // 7) AI prompt with grounding
-    const settings = await getSettingsRow();
-    const aiSettings: AiSettings = {
-      provider: settings.aiProvider as AiProviderType,
-      baseUrl: settings.aiBaseUrl,
-      apiKey: settings.aiApiKey,
-      model: settings.aiModel,
-      fallbackProvider: (settings.fallbackProvider || '') as
-        | AiProviderType
-        | '',
-      fallbackBaseUrl: settings.fallbackBaseUrl || '',
-      fallbackApiKey: settings.fallbackApiKey || '',
-      fallbackModel: settings.fallbackModel || '',
-    };
-
-    const promptData = {
-      baseline,
-      opportunities,
-      marginContext: {
-        currentAvgMargin: ctx.currentAvgMargin,
-        bestMarginEver: ctx.bestMarginEver,
-        worstMarginEver: ctx.worstMarginEver,
-        monthlyMargins: ctx.monthlyMargins,
-        marginByCategory: Array.from(ctx.marginByCategory.entries()).slice(0, 10).map(([cat, c]) => ({
-          category: cat, margin: round0(c.margin * 100) / 100, count: c.count,
-        })),
-        marginBySource: Array.from(ctx.marginBySource.entries()).slice(0, 10).map(([src, s]) => ({
-          source: src, margin: round0(s.margin * 100) / 100, count: s.count,
-        })),
-        totalTrades: ctx.totalTrades,
-        totalRevenue: ctx.totalRevenue,
-        totalProfit: ctx.totalProfit,
-        avgProfitPerTrade: ctx.avgProfitPerTrade,
-        avgHoldDays: ctx.avgHoldDays,
-      },
-      deterministicPlan: plan,
-      caps: {
-        scoreMin: SCORE_MIN, scoreMax: SCORE_MAX,
-        marginMin: MARGIN_MIN, marginMax: MARGIN_MAX,
-        marginImpactMin: MARGIN_IMPACT_MIN, marginImpactMax: MARGIN_IMPACT_MAX,
-        profitImpactMin: PROFIT_IMPACT_MIN, profitImpactMax: PROFIT_IMPACT_MAX,
-        easeMin: EASE_MIN, easeMax: EASE_MAX,
-        priorityMin: PRIORITY_MIN, priorityMax: PRIORITY_MAX,
-      },
-    };
-
-    const prompt = `Si AI "Profit Margin Maximizer" za slovenske in srednjeevropske oglasne platforme (Bolha, Vinted, Avtonet, mobile.de).
+function buildPrompt(promptData: unknown): string {
+  return `Si AI "Profit Margin Maximizer" za slovenske in srednjeevropske oglasne platforme (Bolha, Vinted, Avtonet, mobile.de).
 Ti identificiraš specifične akcije za MAKSIMIZACIJO profitnih marž — najdeš MAXIMUM dosegljivo maržo in daš plan za dosego. Razlika od profit-margin-forecaster-pro (v7.85 ki forecast-a margin) — ti MAKSIMIZIRAŠ margin z actionable plan. Razlika od profit-margin-optimizer-v2 (ki optimizira margin) — ti najdeš MAXIMUM in daš plan za dosego.
 
 DETERMINISTIČNI PODATKI (izračunano iz DB — SOLD 12m za margin baseline + opportunities):
@@ -789,112 +678,239 @@ VRNI LE JSON:
   },
   "summary": "Current margin: 22%, max achievable: 35% (gap: 13%). Quick win: raise elektronika prices +5% → +3% margin."
 }${GROUNDING_PROMPT_SUFFIX}`;
+}
 
+function mergeAiIntoPlan(
+  parsed: AiResponse | null,
+  ctx: MarginContext,
+  baseline: MarginBaseline,
+  det: MarginPlan,
+): { plan: MarginPlan; summary: string; aiUsed: boolean } {
+  let plan = det;
+  let summary = buildSummary(baseline, det);
+  let aiUsed = false;
+
+  if (parsed && parsed.plan && typeof parsed.plan === 'object') {
+    const ai = parsed.plan;
+
+    // Maximization actions
+    const maximizationActions: MaximizationAction[] = [];
+    if (Array.isArray(ai.maximizationActions)) {
+      for (const a of ai.maximizationActions.slice(0, 6)) {
+        if (!a || typeof a !== 'object') continue;
+        const difficulty = clampEnum(a.difficulty, VALID_DIFFICULTY, 'MEDIUM');
+        const marginImpact = round0(clampNum(a.marginImpact, MARGIN_IMPACT_MIN, MARGIN_IMPACT_MAX, 0));
+        const profitImpact = round0(clampNum(a.profitImpact, PROFIT_IMPACT_MIN, PROFIT_IMPACT_MAX, ctx.totalRevenue * marginImpact / 100));
+        maximizationActions.push({
+          action: clampString(a.action, 250, det.maximizationActions[0]?.action ?? 'Margin maximization akcija.'),
+          marginImpact,
+          profitImpact,
+          difficulty,
+          timeframe: clampString(a.timeframe, 50, det.maximizationActions[0]?.timeframe ?? '1-2 tedna'),
+          category: clampString(a.category, 50, det.maximizationActions[0]?.category ?? 'pricing'),
+        });
+      }
+    }
+    if (maximizationActions.length === 0) maximizationActions.push(...det.maximizationActions);
+
+    // Prioritized
+    const prioritizedActions: PrioritizedAction[] = [];
+    if (Array.isArray(ai.prioritizedActions)) {
+      for (const p of ai.prioritizedActions.slice(0, 6)) {
+        if (!p || typeof p !== 'object') continue;
+        const marginImpact = round0(clampNum(p.marginImpact, MARGIN_IMPACT_MIN, MARGIN_IMPACT_MAX, 0));
+        const ease = round0(clampNum(p.ease, EASE_MIN, EASE_MAX, 50));
+        const priorityScore = round0(clampNum(p.priorityScore, PRIORITY_MIN, PRIORITY_MAX, marginImpact * 0.7 + ease * 0.3));
+        prioritizedActions.push({
+          action: clampString(p.action, 250, det.prioritizedActions[0]?.action ?? 'Akcija.'),
+          marginImpact,
+          ease,
+          priorityScore,
+        });
+      }
+    }
+    if (prioritizedActions.length === 0) prioritizedActions.push(...det.prioritizedActions);
+
+    // Quick wins
+    const quickWins: QuickWin[] = [];
+    if (Array.isArray(ai.quickWins)) {
+      for (const q of ai.quickWins.slice(0, 3)) {
+        if (!q || typeof q !== 'object') continue;
+        const marginImpact = round0(clampNum(q.marginImpact, MARGIN_IMPACT_MIN, MARGIN_IMPACT_MAX, 0));
+        const profitImpact = round0(clampNum(q.profitImpact, PROFIT_IMPACT_MIN, PROFIT_IMPACT_MAX, ctx.totalRevenue * marginImpact / 100));
+        quickWins.push({
+          action: clampString(q.action, 250, det.quickWins[0]?.action ?? 'Quick win akcija.'),
+          marginImpact,
+          profitImpact,
+        });
+      }
+    }
+    if (quickWins.length === 0) quickWins.push(...det.quickWins);
+
+    // Projected margin after actions
+    const projectedMarginAfterActions = round0(
+      clampNum(ai.projectedMarginAfterActions, MARGIN_MIN, MARGIN_MAX, det.projectedMarginAfterActions) * 100,
+    ) / 100;
+
+    // Score ±10
+    const detScore = det.marginMaximizationScore;
+    const marginMaximizationScore = round0(
+      Math.max(SCORE_MIN, Math.min(SCORE_MAX,
+        detScore + Math.max(-10, Math.min(10,
+          (Number(ai.marginMaximizationScore ?? detScore)) - detScore)))),
+    );
+
+    // Risks
+    const riskTradeoffs: RiskTradeoff[] = [];
+    if (Array.isArray(ai.riskTradeoffs)) {
+      for (const r of ai.riskTradeoffs.slice(0, 3)) {
+        if (!r || typeof r !== 'object') continue;
+        riskTradeoffs.push({
+          risk: clampString(r.risk, 200, det.riskTradeoffs[0]?.risk ?? 'Margin maximization tveganje.'),
+          severity: clampEnum(r.severity, VALID_SEVERITY, det.riskTradeoffs[0]?.severity ?? 'MEDIUM'),
+          mitigation: clampString(r.mitigation, 200, det.riskTradeoffs[0]?.mitigation ?? 'Testiraj postopoma.'),
+        });
+      }
+    }
+    if (riskTradeoffs.length === 0) riskTradeoffs.push(...det.riskTradeoffs);
+
+    const maximizationStrategy = clampString(ai.maximizationStrategy, 500, det.maximizationStrategy);
+
+    plan = {
+      maximizationActions,
+      maximizationStrategy,
+      prioritizedActions,
+      quickWins,
+      projectedMarginAfterActions,
+      marginMaximizationScore,
+      riskTradeoffs,
+    };
+    summary = clampString(parsed.summary, 400, buildSummary(baseline, plan));
+    aiUsed = true;
+  }
+
+  return { plan, summary, aiUsed };
+}
+
+// --- Handler -------------------------------------------------------------
+
+const profitMarginMaximizerHandler = withAiRoute<ProfitMarginMaximizerInput>({
+  endpoint: '/api/ai/profit-margin-maximizer',
+  maxDuration: 60,
+  enforceBudget: true, // AI klic — preveri budget
+  method: 'GET', // Endpoint sprejema GET + POST — bypass POST-only check
+
+  parseBody: async (req) => {
+    await req.json().catch(() => ({}));
+    return {};
+  },
+
+  // No validateInput — body ignored, identična logika za GET in POST
+  handler: async (_input, ctx: AiRouteContext) => {
+    const { db, callAi, parseAi, logger } = ctx;
+
+    const now = Date.now();
+    const cutoff12m = new Date(now - HORIZON_12M);
+
+    // 1) Query SOLD trades from last 12 months
+    const soldTrades = await db.trade.findMany({
+      where: {
+        status: 'sold',
+        sellDate: { not: null, gte: cutoff12m },
+      },
+      select: {
+        id: true,
+        buyPrice: true,
+        buyFees: true,
+        sellPrice: true,
+        sellFees: true,
+        sellDate: true,
+        buyDate: true,
+        sellLocation: true,
+        category: true,
+      },
+      orderBy: { sellDate: 'asc' },
+      take: 100000,
+    }) as unknown as SoldTradeRow[];
+
+    // Empty-state: no SOLD trades
+    if (soldTrades.length === 0) {
+      return apiOk({
+        ok: true,
+        baseline: {
+          currentAvgMargin: 0,
+          bestMarginEver: 0,
+          worstMarginEver: 0,
+          maxAchievableMargin: 0,
+          currentMarginGap: 0,
+        },
+        opportunities: {
+          priceOptimizationPotential: 0,
+          costReductionPotential: 0,
+          feeReductionPotential: 0,
+          categoryMixOptimization: 0,
+          efficiencyOptimization: 0,
+        },
+        plan: {
+          maximizationActions: [],
+          maximizationStrategy: 'Ni SOLD trgovin za margin maximization plan.',
+          prioritizedActions: [],
+          quickWins: [],
+          projectedMarginAfterActions: 0,
+          marginMaximizationScore: 0,
+          riskTradeoffs: [],
+        },
+        summary: 'Ni SOLD trgovin v zadnjih 12 mesecih — Profit Margin Maximizer ni mogoč.',
+        aiUsed: false,
+        message: 'Ni SOLD trgovin v zadnjih 12 mesecih — Profit Margin Maximizer ni mogoč.',
+      } satisfies ProfitMarginMaxResponse);
+    }
+
+    // 2) Compute margin context
+    const marginCtx = computeMarginContext(soldTrades, now);
+
+    // 3) Compute opportunities
+    const opportunities = computeOpportunities(marginCtx);
+
+    // 4) Compute baseline
+    const baseline = computeBaseline(marginCtx, opportunities);
+
+    // 5) Build deterministic plan (fallback)
+    const deterministicPlan = buildDeterministicPlan(marginCtx, baseline, opportunities);
+
+    // 6) AI cache check (6h TTL) — key by current month
+    const currentMonth = new Date(now).toISOString().slice(0, 7);
+    const cacheKey = `profit-margin-maximizer:${currentMonth}`;
+    const cached = getCachedAI<{ plan: MarginPlan; summary: string }>(cacheKey);
+    if (cached) {
+      return apiOk({
+        ok: true,
+        baseline,
+        opportunities,
+        plan: cached.plan,
+        summary: cached.summary,
+        cached: true,
+        aiUsed: true,
+      } satisfies ProfitMarginMaxResponse);
+    }
+
+    // 7) AI prompt with grounding (settings loaded by withAiRoute wrapper)
+    const promptData = buildPromptData(marginCtx, baseline, opportunities, deterministicPlan);
+    const prompt = buildPrompt(promptData);
+
+    // Deterministic baseline (fallback if AI call fails)
+    let plan = deterministicPlan;
+    let summary = buildSummary(baseline, plan);
     let aiUsed = false;
 
     try {
-      const raw = await callProviderForRaw(aiSettings, prompt);
-      const parsed = parseJsonLooseExported(raw) as AiResponse | null;
+      const raw = await callAi(prompt);
+      const parsed = parseAi(raw) as AiResponse | null;
 
-      if (parsed && parsed.plan && typeof parsed.plan === 'object') {
-        const ai = parsed.plan;
-        const det = plan;
-
-        // Maximization actions
-        const maximizationActions: MaximizationAction[] = [];
-        if (Array.isArray(ai.maximizationActions)) {
-          for (const a of ai.maximizationActions.slice(0, 6)) {
-            if (!a || typeof a !== 'object') continue;
-            const difficulty = clampEnum(a.difficulty, VALID_DIFFICULTY, 'MEDIUM');
-            const marginImpact = round0(clampNum(a.marginImpact, MARGIN_IMPACT_MIN, MARGIN_IMPACT_MAX, 0));
-            const profitImpact = round0(clampNum(a.profitImpact, PROFIT_IMPACT_MIN, PROFIT_IMPACT_MAX, ctx.totalRevenue * marginImpact / 100));
-            maximizationActions.push({
-              action: clampString(a.action, 250, det.maximizationActions[0]?.action ?? 'Margin maximization akcija.'),
-              marginImpact,
-              profitImpact,
-              difficulty,
-              timeframe: clampString(a.timeframe, 50, det.maximizationActions[0]?.timeframe ?? '1-2 tedna'),
-              category: clampString(a.category, 50, det.maximizationActions[0]?.category ?? 'pricing'),
-            });
-          }
-        }
-        if (maximizationActions.length === 0) maximizationActions.push(...det.maximizationActions);
-
-        // Prioritized
-        const prioritizedActions: PrioritizedAction[] = [];
-        if (Array.isArray(ai.prioritizedActions)) {
-          for (const p of ai.prioritizedActions.slice(0, 6)) {
-            if (!p || typeof p !== 'object') continue;
-            const marginImpact = round0(clampNum(p.marginImpact, MARGIN_IMPACT_MIN, MARGIN_IMPACT_MAX, 0));
-            const ease = round0(clampNum(p.ease, EASE_MIN, EASE_MAX, 50));
-            const priorityScore = round0(clampNum(p.priorityScore, PRIORITY_MIN, PRIORITY_MAX, marginImpact * 0.7 + ease * 0.3));
-            prioritizedActions.push({
-              action: clampString(p.action, 250, det.prioritizedActions[0]?.action ?? 'Akcija.'),
-              marginImpact,
-              ease,
-              priorityScore,
-            });
-          }
-        }
-        if (prioritizedActions.length === 0) prioritizedActions.push(...det.prioritizedActions);
-
-        // Quick wins
-        const quickWins: QuickWin[] = [];
-        if (Array.isArray(ai.quickWins)) {
-          for (const q of ai.quickWins.slice(0, 3)) {
-            if (!q || typeof q !== 'object') continue;
-            const marginImpact = round0(clampNum(q.marginImpact, MARGIN_IMPACT_MIN, MARGIN_IMPACT_MAX, 0));
-            const profitImpact = round0(clampNum(q.profitImpact, PROFIT_IMPACT_MIN, PROFIT_IMPACT_MAX, ctx.totalRevenue * marginImpact / 100));
-            quickWins.push({
-              action: clampString(q.action, 250, det.quickWins[0]?.action ?? 'Quick win akcija.'),
-              marginImpact,
-              profitImpact,
-            });
-          }
-        }
-        if (quickWins.length === 0) quickWins.push(...det.quickWins);
-
-        // Projected margin after actions
-        const projectedMarginAfterActions = round0(
-          clampNum(ai.projectedMarginAfterActions, MARGIN_MIN, MARGIN_MAX, det.projectedMarginAfterActions) * 100,
-        ) / 100;
-
-        // Score ±10
-        const detScore = det.marginMaximizationScore;
-        const marginMaximizationScore = round0(
-          Math.max(SCORE_MIN, Math.min(SCORE_MAX,
-            detScore + Math.max(-10, Math.min(10,
-              (Number(ai.marginMaximizationScore ?? detScore)) - detScore)))),
-        );
-
-        // Risks
-        const riskTradeoffs: RiskTradeoff[] = [];
-        if (Array.isArray(ai.riskTradeoffs)) {
-          for (const r of ai.riskTradeoffs.slice(0, 3)) {
-            if (!r || typeof r !== 'object') continue;
-            riskTradeoffs.push({
-              risk: clampString(r.risk, 200, det.riskTradeoffs[0]?.risk ?? 'Margin maximization tveganje.'),
-              severity: clampEnum(r.severity, VALID_SEVERITY, det.riskTradeoffs[0]?.severity ?? 'MEDIUM'),
-              mitigation: clampString(r.mitigation, 200, det.riskTradeoffs[0]?.mitigation ?? 'Testiraj postopoma.'),
-            });
-          }
-        }
-        if (riskTradeoffs.length === 0) riskTradeoffs.push(...det.riskTradeoffs);
-
-        const maximizationStrategy = clampString(ai.maximizationStrategy, 500, det.maximizationStrategy);
-
-        plan = {
-          maximizationActions,
-          maximizationStrategy,
-          prioritizedActions,
-          quickWins,
-          projectedMarginAfterActions,
-          marginMaximizationScore,
-          riskTradeoffs,
-        };
-        summary = clampString(parsed.summary, 400, buildSummary(baseline, plan));
-        aiUsed = true;
-      }
+      const merged = mergeAiIntoPlan(parsed, marginCtx, baseline, deterministicPlan);
+      plan = merged.plan;
+      summary = merged.summary;
+      aiUsed = merged.aiUsed;
     } catch (err) {
       logger.warn(
         '/api/ai/profit-margin-maximizer',
@@ -908,7 +924,7 @@ VRNI LE JSON:
       setCachedAI(cacheKey, { plan, summary });
     }
 
-    return NextResponse.json({
+    return apiOk({
       ok: true,
       baseline,
       opportunities,
@@ -916,15 +932,8 @@ VRNI LE JSON:
       summary,
       aiUsed,
     } satisfies ProfitMarginMaxResponse);
-  } catch (err: any) {
-    logger.error(
-      '/api/ai/profit-margin-maximizer',
-      'handler failed',
-      err,
-    );
-    return NextResponse.json(
-      { error: err?.message ?? 'Napaka' },
-      { status: 500 },
-    );
-  }
-}
+  },
+});
+
+export const GET = profitMarginMaximizerHandler;
+export const POST = profitMarginMaximizerHandler;

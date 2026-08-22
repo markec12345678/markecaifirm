@@ -18,24 +18,21 @@
 //
 // GET+POST /api/ai/deal-profitability-forecaster
 // (AI-enhanced + grounding + anti-hallucination + 6h cache + deterministic fallback)
+// Refaktoriran z withAiRoute helperjem (v8.96.6) + enforceBudget guard.
 
-import { NextRequest, NextResponse } from 'next/server';
-import { db } from '@/lib/db';
-import { getSettingsRow } from '@/lib/pipeline';
-import {
-  callProviderForRaw,
-  parseJsonLooseExported,
-  type AiProviderType,
-  type AiSettings,
-} from '@/lib/ai';
+import { withAiRoute, AI_ROUTE_DEFAULTS, type AiRouteContext } from '@/lib/with-ai-route';
+import { apiOk } from '@/lib/api-response';
 import { GROUNDING_PROMPT_SUFFIX } from '@/lib/anti-hallucination';
 import { getCachedAI, setCachedAI } from '@/lib/ai-cache';
-import { checkRateLimit, rateLimitResponse } from '@/lib/rate-limit';
-import { logger } from '@/lib/logger';
 
-export const runtime = 'nodejs';
-export const dynamic = 'force-dynamic';
+export const { runtime, dynamic } = AI_ROUTE_DEFAULTS;
 export const maxDuration = 60;
+
+// --- Input ----------------------------------------------------------------
+
+interface DealProfitabilityForecasterInput {
+  listingId?: string;
+}
 
 // --- Types ---------------------------------------------------------------
 
@@ -555,33 +552,26 @@ function buildSummary(results: ListingResult[]): Summary {
 
 // --- Handler -------------------------------------------------------------
 
-export async function GET(req: NextRequest) {
-  return handleDealProfitabilityForecaster(req);
-}
-export async function POST(req: NextRequest) {
-  return handleDealProfitabilityForecaster(req);
-}
+const dealProfitabilityForecasterHandler = withAiRoute<DealProfitabilityForecasterInput>({
+  endpoint: '/api/ai/deal-profitability-forecaster',
+  maxDuration: 60,
+  enforceBudget: true, // AI klic — preveri budget
+  method: 'GET', // Endpoint sprejema GET + POST — bypass POST-only check
 
-async function handleDealProfitabilityForecaster(req: NextRequest) {
-  try {
-    const rl = checkRateLimit(req, 'ai-deal-profitability-forecaster', 20);
-    if (!rl.allowed) return rateLimitResponse(rl);
+  parseBody: async (req) => {
+    const body = await req.json().catch(() => ({}));
+    return { listingId: body?.listingId ? String(body.listingId) : undefined };
+  },
 
-    // 1) Parse body — optional listingId
-    let body: { listingId?: string } = {};
-    try {
-      const parsed = await req.json();
-      if (parsed && typeof parsed === 'object') {
-        body = parsed as { listingId?: string };
-      }
-    } catch {
-      // GET request — no body, forecast all active PRILIKA listings
-    }
+  // No validateInput — listingId is optional (GET = forecast all PRILIKA)
+  handler: async (input, ctx: AiRouteContext) => {
+    const { db, callAi, parseAi, logger } = ctx;
+    const { listingId } = input;
 
-    // 2) Query listings (PRILIKA = active opportunity listings)
-    const listingWhere = body.listingId
+    // 1) Query listings (PRILIKA = active opportunity listings)
+    const listingWhere = listingId
       ? {
-        id: body.listingId,
+        id: listingId,
         isHidden: false,
         aiVerdict: 'PRILIKA',
       }
@@ -604,13 +594,13 @@ async function handleDealProfitabilityForecaster(req: NextRequest) {
         aiVerdict: true,
         monitor: { select: { tags: true } },
       },
-      take: body.listingId ? 1 : 50,
-      orderBy: body.listingId ? undefined : { dealScore: 'desc' },
+      take: listingId ? 1 : 50,
+      orderBy: listingId ? undefined : { dealScore: 'desc' },
     }) as unknown as ListingRow[];
 
     // Empty state
     if (listings.length === 0) {
-      return NextResponse.json({
+      return apiOk({
         ok: true,
         listings: [],
         summary: {
@@ -630,7 +620,7 @@ async function handleDealProfitabilityForecaster(req: NextRequest) {
       });
     }
 
-    // 3) Query historical SOLD trades for category baselines
+    // 2) Query historical SOLD trades for category baselines
     const soldTrades = await db.trade.findMany({
       where: {
         status: 'sold',
@@ -651,7 +641,7 @@ async function handleDealProfitabilityForecaster(req: NextRequest) {
 
     const categoryBaselines = computeCategoryBaselines(soldTrades);
 
-    // 4) Build deterministic forecasts (fallback)
+    // 3) Build deterministic forecasts (fallback)
     const detResults: ListingResult[] = listings.map((l) => {
       const category = getCategoryFromListing(l);
       const askingPrice = l.price ?? 0;
@@ -671,7 +661,7 @@ async function handleDealProfitabilityForecaster(req: NextRequest) {
       };
     });
 
-    // 5) AI cache check (6h TTL) — key by listing IDs
+    // 4) AI cache check (6h TTL) — key by listing IDs
     const listingIds = listings.map((l) => l.id).sort().join(',');
     const cacheKey = `deal-profitability-forecaster:${listingIds}`;
     const cached = getCachedAI<{
@@ -688,21 +678,7 @@ async function handleDealProfitabilityForecaster(req: NextRequest) {
       summaryAdviceOverride = cached.summaryAdvice;
       aiUsed = true;
     } else {
-      // 6) AI prompt with grounding
-      const settings = await getSettingsRow();
-      const aiSettings: AiSettings = {
-        provider: settings.aiProvider as AiProviderType,
-        baseUrl: settings.aiBaseUrl,
-        apiKey: settings.aiApiKey,
-        model: settings.aiModel,
-        fallbackProvider: (settings.fallbackProvider || '') as
-          | AiProviderType
-          | '',
-        fallbackBaseUrl: settings.fallbackBaseUrl || '',
-        fallbackApiKey: settings.fallbackApiKey || '',
-        fallbackModel: settings.fallbackModel || '',
-      };
-
+      // 5) AI prompt with grounding
       const listingContext = detResults.map((r) => ({
         listingId: r.listingId,
         title: r.title.slice(0, 100),
@@ -790,8 +766,8 @@ VRNI LE JSON:
 }${GROUNDING_PROMPT_SUFFIX}`;
 
       try {
-        const raw = await callProviderForRaw(aiSettings, prompt);
-        const parsed = parseJsonLooseExported(raw) as AiForecastResponse | null;
+        const raw = await callAi(prompt);
+        const parsed = parseAi(raw) as AiForecastResponse | null;
 
         if (parsed && typeof parsed === 'object' && parsed.forecasts) {
           for (const det of detResults) {
@@ -918,33 +894,27 @@ VRNI LE JSON:
       }
     }
 
-    // 7) Build final results using AI forecasts (or deterministic fallback)
+    // 6) Build final results using AI forecasts (or deterministic fallback)
     const results: ListingResult[] = detResults.map((det) => ({
       ...det,
       forecast: forecasts[det.listingId] ?? det.forecast,
     }));
 
-    // 8) Build summary
+    // 7) Build summary
     let summary = buildSummary(results);
     if (summaryAdviceOverride && summaryAdviceOverride.trim().length > 0) {
       summary = { ...summary, advice: summaryAdviceOverride };
     }
 
-    return NextResponse.json({
+    return apiOk({
       ok: true,
       listings: results,
       summary,
       aiUsed,
     });
-  } catch (err: any) {
-    logger.error(
-      '/api/ai/deal-profitability-forecaster',
-      'handler failed',
-      err,
-    );
-    return NextResponse.json(
-      { error: err?.message ?? 'Napaka' },
-      { status: 500 },
-    );
-  }
-}
+  },
+});
+
+export const GET = dealProfitabilityForecasterHandler;
+export const POST = dealProfitabilityForecasterHandler;
+

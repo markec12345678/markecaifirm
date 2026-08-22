@@ -1,4 +1,4 @@
-// v8.03: AI Inventory Yield Maximizer — AI MAXIMIZIRA YIELD (profit as % of
+// v8.03 / v8.96.6-batch2: AI Inventory Yield Maximizer — AI MAXIMIZIRA YIELD (profit as % of
 // capital deployed) na HELD inventory. Kot financial yield optimizer — kateri
 // items dajejo najboljši yield in kako izboljšati yield čez portfolio.
 // "iPhone 13: capitalDeployed 450€, estValue 580€, currentYield 28.9%,
@@ -31,24 +31,20 @@
 
 // GET+POST /api/ai/inventory-yield-maximizer
 // (AI-enhanced + grounding + anti-hallucination + 6h cache + deterministic fallback)
+// Refaktoriran z withAiRoute helperjem (v8.96.6) + enforceBudget guard.
 
-import { NextRequest, NextResponse } from 'next/server';
-import { db } from '@/lib/db';
-import { getSettingsRow } from '@/lib/pipeline';
-import {
-  callProviderForRaw,
-  parseJsonLooseExported,
-  type AiProviderType,
-  type AiSettings,
-} from '@/lib/ai';
+import { withAiRoute, AI_ROUTE_DEFAULTS, type AiRouteContext } from '@/lib/with-ai-route';
+import { apiOk } from '@/lib/api-response';
 import { GROUNDING_PROMPT_SUFFIX } from '@/lib/anti-hallucination';
 import { getCachedAI, setCachedAI } from '@/lib/ai-cache';
-import { checkRateLimit, rateLimitResponse } from '@/lib/rate-limit';
-import { logger } from '@/lib/logger';
 
-export const runtime = 'nodejs';
-export const dynamic = 'force-dynamic';
+export const { runtime, dynamic } = AI_ROUTE_DEFAULTS;
 export const maxDuration = 60;
+
+// --- Input ----------------------------------------------------------------
+
+// eslint-disable-next-line @typescript-eslint/no-empty-object-type
+interface InventoryYieldMaximizerInput {}
 
 // --- Types ---------------------------------------------------------------
 
@@ -580,19 +576,249 @@ function buildSummary(
   return parts.join(' ').slice(0, 400);
 }
 
+// --- AI prompt + merge helpers (pure, testable) ---------------------------
+
+interface PromptData {
+  heldCount: number;
+  current: CurrentState;
+  topItems: Array<{
+    tradeId: string;
+    title: string;
+    category: string;
+    capitalDeployed: number;
+    estValue: number;
+    currentYield: number;
+    annualizedYield: number;
+    yieldScore: number;
+    daysHeld: number;
+    deterministicMaximization: {
+      yieldMaximizationAction: YieldMaximizationAction;
+      maximizedYield: number;
+      yieldUplift: number;
+      optimalHoldTime: number;
+    };
+  }>;
+  deterministicPortfolio: {
+    currentPortfolioYield: number;
+    maximizedPortfolioYield: number;
+    totalYieldUplift: number;
+    yieldGrade: YieldGrade;
+  };
+  caps: Record<string, number>;
+}
+
+function buildPromptData(
+  heldCount: number,
+  current: CurrentState,
+  topForPrompt: ItemEntry[],
+  portfolio: PortfolioSummary,
+): PromptData {
+  return {
+    heldCount,
+    current,
+    topItems: topForPrompt.map((i) => ({
+      tradeId: i.tradeId,
+      title: i.title,
+      category: i.category,
+      capitalDeployed: i.capitalDeployed,
+      estValue: i.estValue,
+      currentYield: i.currentYield,
+      annualizedYield: i.annualizedYield,
+      yieldScore: i.yieldScore,
+      daysHeld: i.daysHeld,
+      deterministicMaximization: {
+        yieldMaximizationAction: i.maximization.yieldMaximizationAction,
+        maximizedYield: i.maximization.maximizedYield,
+        yieldUplift: i.maximization.yieldUplift,
+        optimalHoldTime: i.maximization.optimalHoldTime,
+      },
+    })),
+    deterministicPortfolio: {
+      currentPortfolioYield: portfolio.currentPortfolioYield,
+      maximizedPortfolioYield: portfolio.maximizedPortfolioYield,
+      totalYieldUplift: portfolio.totalYieldUplift,
+      yieldGrade: portfolio.yieldGrade,
+    },
+    caps: {
+      capitalMin: CAPITAL_MIN, capitalMax: CAPITAL_MAX,
+      yieldMin: YIELD_MIN, yieldMax: YIELD_MAX,
+      scoreMin: SCORE_MIN, scoreMax: SCORE_MAX,
+      daysMin: DAYS_MIN, daysMax: DAYS_MAX,
+      upliftMin: UPLIFT_MIN, upliftMax: UPLIFT_MAX,
+    },
+  };
+}
+
+function buildPrompt(promptData: PromptData, topCount: number): string {
+  return `Si AI "Inventory Yield Maximizer" za slovenske in srednjeevropske oglasne platforme (Bolha, Vinted, Avtonet, mobile.de).
+Si strokovnjak za YIELD MAXIMIZATION — kako maksimizirati YIELD (profit as % of capital deployed) na HELD inventory. Kot financial yield optimizer — identificiraš kateri items dajejo najboljši yield in kako izboljšati yield čez portfolio. Razlika od inventory-capital-efficiency-maximizer (v8.01 ki maksimizira capital efficiency per item z reallocation) — ti MAKSIMIZIRAŠ YIELD % (profit / capital deployed) z annualizedYield in yieldGrade (A+ to F). Razlika od inventory-roi-maximizer-pro (v7.99 ki maksimizira ROI per item) — ti maksimiziraš YIELD z annualizedYield in optimalHoldTime. Razlika od deal-profit-margin-enhancer-pro (v8.01 ki enhanca margin per item) — ti maksimiziraš YIELD (ne margin) z yieldUplift. Razlika od inventory-profit-per-day-maximizer (v8.02 ki maksimizira daily profit) — ti daje PER-ITEM yield analizo z annualizedYield. Razlika od profit-horizon-maximizer (v8.03 ki maksimizira profit per horizon) — ti fokusiraš na PER-ITEM yield maximization z yieldGrade in yieldRanking. Razlika od inventory-capital-allocator (ki alokira capital) — ti daje YIELD ANALYSIS z optimalHoldTime in yieldOptimizationActions. Razlika od profit-multiplier-engine (v8.00 ki multiplicira profit z 8 levers) — ti fokusiraš na YIELD % per item z annualized projection.
+
+DETERMINISTIČNI PODATKI (top ${topCount} HELD item-ov z najnižjim yield score):
+${JSON.stringify(promptData, null, 2)}
+
+PRAVILA ZA AI ODGOVOR:
+1. perItem: za vsak item iz topItems, daj:
+   - tradeId (string, MORA match-at enega iz topItems — anti-hallucination),
+   - maximization.yieldMaximizationAction: HOLD_FOR_YIELD | SELL_FOR_YIELD | REPRICE_FOR_YIELD | BUNDLE_FOR_YIELD | UPGRADE_FOR_YIELD (lahko se razlikuje od deterministic),
+   - maximization.maximizedYield % [-50, 500] (≥ currentYield, ≤ currentYield × 1.6 ali +35pp absolute — anti-hallucination),
+   - maximization.optimalHoldTime dni [0, 730],
+   - maximization.yieldOptimizationActions: 3-5 stringov (max 200 vsak, slovenski — specifične akcije za maksimiranje yield-a za ta item),
+2. portfolio.yieldGrade: A+ | A | B | C | D | F (A+ če annualized ≥ 200% AND yield ≥ 30%, A ≥ 150/25, B ≥ 100/20, C ≥ 60/15, D ≥ 30/10, else F),
+3. summary: slovenski povzetek (max 400 znakov).
+
+VRNI LE JSON:
+{
+  "perItem": [
+    {
+      "tradeId": "abc123",
+      "maximization": {
+        "yieldMaximizationAction": "HOLD_FOR_YIELD",
+        "maximizedYield": 35,
+        "optimalHoldTime": 14,
+        "yieldOptimizationActions": [
+          "HOLD iPhone 13 še 14 dni za yield growth iz 28.9% na 35%.",
+          "Cross-post na 3 platforme za širši buyer pool."
+        ]
+      }
+    }
+  ],
+  "portfolio": {
+    "yieldGrade": "B"
+  },
+  "summary": "8 items, 8500€ deployed. Portfolio yield: 22% (annualized 145%) → 32% (+10pp uplift). Grade B."
+}${GROUNDING_PROMPT_SUFFIX}`;
+}
+
+function mergeAiResponse(
+  parsed: AiResponse | null,
+  detEntries: ItemEntry[],
+  current: CurrentState,
+): { entries: ItemEntry[]; portfolio: PortfolioSummary; summary: string; aiUsed: boolean } {
+  if (!parsed || typeof parsed !== 'object') {
+    const detPortfolio = buildPortfolio(detEntries, current);
+    return {
+      entries: detEntries,
+      portfolio: detPortfolio,
+      summary: buildSummary(current, detPortfolio, detEntries.length),
+      aiUsed: false,
+    };
+  }
+
+  let entries = detEntries;
+  const validIds = new Set(detEntries.map((e) => e.tradeId));
+  const aiMap = new Map<string, NonNullable<AiResponse['perItem']>[number]>();
+  if (Array.isArray(parsed.perItem)) {
+    for (const ai of parsed.perItem) {
+      if (ai && typeof ai === 'object' && typeof ai.tradeId === 'string') {
+        aiMap.set(ai.tradeId, ai);
+      }
+    }
+  }
+
+  const newEntries: ItemEntry[] = [];
+  for (const det of detEntries) {
+    const ai = aiMap.get(det.tradeId);
+    if (!ai || !ai.maximization) {
+      newEntries.push(det);
+      continue;
+    }
+
+    const aiMax = ai.maximization;
+    const action = clampEnum(
+      aiMax.yieldMaximizationAction,
+      VALID_ACTION,
+      det.maximization.yieldMaximizationAction,
+    );
+
+    // Anti-hallucination: maximizedYield ∈ [currentYield, currentYield × 1.6 or +35pp]
+    const maxYieldBound = Math.min(
+      YIELD_MAX,
+      Math.max(
+        det.currentYield + 5,
+        Math.min(det.currentYield * 1.6 + 15, det.currentYield + 35),
+      ),
+    );
+    const maximizedYield = round2(clampNum(
+      aiMax.maximizedYield,
+      det.currentYield, maxYieldBound,
+      det.maximization.maximizedYield,
+    ));
+    const yieldUplift = round2(clampNum(
+      maximizedYield - det.currentYield,
+      UPLIFT_MIN, UPLIFT_MAX, 0,
+    ));
+
+    const optimalHoldTime = round0(clampNum(
+      aiMax.optimalHoldTime,
+      0, DAYS_MAX, det.maximization.optimalHoldTime,
+    ));
+
+    // Optimization actions
+    let yieldOptimizationActions: string[] = det.maximization.yieldOptimizationActions;
+    if (Array.isArray(aiMax.yieldOptimizationActions) &&
+        aiMax.yieldOptimizationActions.length >= 2) {
+      const aiActions = aiMax.yieldOptimizationActions
+        .slice(0, MAX_ACTIONS_PER_ITEM)
+        .map((a) => clampString(a, 200, 'Optimiziraj yield.'))
+        .filter((s) => s.length > 0);
+      if (aiActions.length >= 2) {
+        yieldOptimizationActions = aiActions;
+      }
+    }
+
+    newEntries.push({
+      ...det,
+      maximization: {
+        yieldMaximizationAction: action,
+        maximizedYield,
+        yieldUplift,
+        optimalHoldTime,
+        yieldOptimizationActions,
+      },
+    });
+  }
+
+  // Anti-hallucination: skip AI entries with unknown tradeIds
+  const filtered = newEntries.filter((e) => validIds.has(e.tradeId));
+  if (filtered.length === detEntries.length) {
+    entries = newEntries;
+  }
+
+  // Rebuild portfolio with new entries
+  let portfolio = buildPortfolio(entries, current);
+
+  // Override yieldGrade if AI provided
+  if (parsed.portfolio?.yieldGrade) {
+    portfolio = {
+      ...portfolio,
+      yieldGrade: clampEnum(
+        parsed.portfolio.yieldGrade,
+        VALID_GRADE,
+        portfolio.yieldGrade,
+      ),
+    };
+  }
+
+  const summary = clampString(parsed.summary, 400, buildSummary(current, portfolio, entries.length));
+  return { entries, portfolio, summary, aiUsed: true };
+}
+
 // --- Handler -------------------------------------------------------------
 
-export async function GET(req: NextRequest) {
-  return handleInventoryYieldMaximizer(req);
-}
-export async function POST(req: NextRequest) {
-  return handleInventoryYieldMaximizer(req);
-}
+const inventoryYieldMaximizerHandler = withAiRoute<InventoryYieldMaximizerInput>({
+  endpoint: '/api/ai/inventory-yield-maximizer',
+  maxDuration: 60,
+  enforceBudget: true, // AI klic — preveri budget
+  method: 'GET', // Endpoint sprejema GET + POST — bypass POST-only check
 
-async function handleInventoryYieldMaximizer(req: NextRequest) {
-  try {
-    const rl = checkRateLimit(req, 'ai-inventory-yield-maximizer', 20);
-    if (!rl.allowed) return rateLimitResponse(rl);
+  parseBody: async (req) => {
+    await req.json().catch(() => ({}));
+    return {};
+  },
+
+  // No validateInput — body ignored, identična logika za GET in POST
+  handler: async (_input, ctx: AiRouteContext) => {
+    const { db, callAi, parseAi, logger } = ctx;
 
     const now = Date.now();
 
@@ -621,7 +847,7 @@ async function handleInventoryYieldMaximizer(req: NextRequest) {
 
     // Empty-state: no HELD trades
     if (heldTrades.length === 0) {
-      return NextResponse.json({
+      return apiOk({
         ok: true,
         current: {
           totalCapitalDeployed: 0,
@@ -651,7 +877,7 @@ async function handleInventoryYieldMaximizer(req: NextRequest) {
     }
 
     if (heldComputed.length === 0) {
-      return NextResponse.json({
+      return apiOk({
         ok: true,
         current: {
           totalCapitalDeployed: 0,
@@ -697,7 +923,7 @@ async function handleInventoryYieldMaximizer(req: NextRequest) {
       summary: string;
     }>(cacheKey);
     if (cached) {
-      return NextResponse.json({
+      return apiOk({
         ok: true,
         current,
         perItem: cached.perItem,
@@ -709,201 +935,24 @@ async function handleInventoryYieldMaximizer(req: NextRequest) {
     }
 
     // 4) AI prompt with grounding
-    const settings = await getSettingsRow();
-    const aiSettings: AiSettings = {
-      provider: settings.aiProvider as AiProviderType,
-      baseUrl: settings.aiBaseUrl,
-      apiKey: settings.aiApiKey,
-      model: settings.aiModel,
-      fallbackProvider: (settings.fallbackProvider || '') as
-        | AiProviderType
-        | '',
-      fallbackBaseUrl: settings.fallbackBaseUrl || '',
-      fallbackApiKey: settings.fallbackApiKey || '',
-      fallbackModel: settings.fallbackModel || '',
-    };
-
     // Sort entries by yieldScore ASC (worst first) for AI prompt
     const sortedEntries = [...entries].sort((a, b) => a.yieldScore - b.yieldScore);
     const topForPrompt = sortedEntries.slice(0, MAX_ITEMS_TO_PROCESS);
 
-    const promptData = {
-      heldCount: heldComputed.length,
-      current,
-      topItems: topForPrompt.map((i) => ({
-        tradeId: i.tradeId,
-        title: i.title,
-        category: i.category,
-        capitalDeployed: i.capitalDeployed,
-        estValue: i.estValue,
-        currentYield: i.currentYield,
-        annualizedYield: i.annualizedYield,
-        yieldScore: i.yieldScore,
-        daysHeld: i.daysHeld,
-        deterministicMaximization: {
-          yieldMaximizationAction: i.maximization.yieldMaximizationAction,
-          maximizedYield: i.maximization.maximizedYield,
-          yieldUplift: i.maximization.yieldUplift,
-          optimalHoldTime: i.maximization.optimalHoldTime,
-        },
-      })),
-      deterministicPortfolio: {
-        currentPortfolioYield: portfolio.currentPortfolioYield,
-        maximizedPortfolioYield: portfolio.maximizedPortfolioYield,
-        totalYieldUplift: portfolio.totalYieldUplift,
-        yieldGrade: portfolio.yieldGrade,
-      },
-      caps: {
-        capitalMin: CAPITAL_MIN, capitalMax: CAPITAL_MAX,
-        yieldMin: YIELD_MIN, yieldMax: YIELD_MAX,
-        scoreMin: SCORE_MIN, scoreMax: SCORE_MAX,
-        daysMin: DAYS_MIN, daysMax: DAYS_MAX,
-        upliftMin: UPLIFT_MIN, upliftMax: UPLIFT_MAX,
-      },
-    };
-
-    const prompt = `Si AI "Inventory Yield Maximizer" za slovenske in srednjeevropske oglasne platforme (Bolha, Vinted, Avtonet, mobile.de).
-Si strokovnjak za YIELD MAXIMIZATION — kako maksimizirati YIELD (profit as % of capital deployed) na HELD inventory. Kot financial yield optimizer — identificiraš kateri items dajejo najboljši yield in kako izboljšati yield čez portfolio. Razlika od inventory-capital-efficiency-maximizer (v8.01 ki maksimizira capital efficiency per item z reallocation) — ti MAKSIMIZIRAŠ YIELD % (profit / capital deployed) z annualizedYield in yieldGrade (A+ to F). Razlika od inventory-roi-maximizer-pro (v7.99 ki maksimizira ROI per item) — ti maksimiziraš YIELD z annualizedYield in optimalHoldTime. Razlika od deal-profit-margin-enhancer-pro (v8.01 ki enhanca margin per item) — ti maksimiziraš YIELD (ne margin) z yieldUplift. Razlika od inventory-profit-per-day-maximizer (v8.02 ki maksimizira daily profit) — ti daje PER-ITEM yield analizo z annualizedYield. Razlika od profit-horizon-maximizer (v8.03 ki maksimizira profit per horizon) — ti fokusiraš na PER-ITEM yield maximization z yieldGrade in yieldRanking. Razlika od inventory-capital-allocator (ki alokira capital) — ti daje YIELD ANALYSIS z optimalHoldTime in yieldOptimizationActions. Razlika od profit-multiplier-engine (v8.00 ki multiplicira profit z 8 levers) — ti fokusiraš na YIELD % per item z annualized projection.
-
-DETERMINISTIČNI PODATKI (top ${topForPrompt.length} HELD item-ov z najnižjim yield score):
-${JSON.stringify(promptData, null, 2)}
-
-PRAVILA ZA AI ODGOVOR:
-1. perItem: za vsak item iz topItems, daj:
-   - tradeId (string, MORA match-at enega iz topItems — anti-hallucination),
-   - maximization.yieldMaximizationAction: HOLD_FOR_YIELD | SELL_FOR_YIELD | REPRICE_FOR_YIELD | BUNDLE_FOR_YIELD | UPGRADE_FOR_YIELD (lahko se razlikuje od deterministic),
-   - maximization.maximizedYield % [-50, 500] (≥ currentYield, ≤ currentYield × 1.6 ali +35pp absolute — anti-hallucination),
-   - maximization.optimalHoldTime dni [0, 730],
-   - maximization.yieldOptimizationActions: 3-5 stringov (max 200 vsak, slovenski — specifične akcije za maksimiranje yield-a za ta item),
-2. portfolio.yieldGrade: A+ | A | B | C | D | F (A+ če annualized ≥ 200% AND yield ≥ 30%, A ≥ 150/25, B ≥ 100/20, C ≥ 60/15, D ≥ 30/10, else F),
-3. summary: slovenski povzetek (max 400 znakov).
-
-VRNI LE JSON:
-{
-  "perItem": [
-    {
-      "tradeId": "abc123",
-      "maximization": {
-        "yieldMaximizationAction": "HOLD_FOR_YIELD",
-        "maximizedYield": 35,
-        "optimalHoldTime": 14,
-        "yieldOptimizationActions": [
-          "HOLD iPhone 13 še 14 dni za yield growth iz 28.9% na 35%.",
-          "Cross-post na 3 platforme za širši buyer pool."
-        ]
-      }
-    }
-  ],
-  "portfolio": {
-    "yieldGrade": "B"
-  },
-  "summary": "8 items, 8500€ deployed. Portfolio yield: 22% (annualized 145%) → 32% (+10pp uplift). Grade B."
-}${GROUNDING_PROMPT_SUFFIX}`;
+    const promptData = buildPromptData(heldComputed.length, current, topForPrompt, portfolio);
+    const prompt = buildPrompt(promptData, topForPrompt.length);
 
     let aiUsed = false;
 
     try {
-      const raw = await callProviderForRaw(aiSettings, prompt);
-      const parsed = parseJsonLooseExported(raw) as AiResponse | null;
+      const raw = await callAi(prompt);
+      const parsed = parseAi(raw) as AiResponse | null;
 
-      if (parsed && typeof parsed === 'object') {
-        const validIds = new Set(entries.map((e) => e.tradeId));
-        const aiMap = new Map<string, NonNullable<AiResponse['perItem']>[number]>();
-        if (Array.isArray(parsed.perItem)) {
-          for (const ai of parsed.perItem) {
-            if (ai && typeof ai === 'object' && typeof ai.tradeId === 'string') {
-              aiMap.set(ai.tradeId, ai);
-            }
-          }
-        }
-
-        const newEntries: ItemEntry[] = [];
-        for (const det of entries) {
-          const ai = aiMap.get(det.tradeId);
-          if (!ai || !ai.maximization) {
-            newEntries.push(det);
-            continue;
-          }
-
-          const aiMax = ai.maximization;
-          const action = clampEnum(
-            aiMax.yieldMaximizationAction,
-            VALID_ACTION,
-            det.maximization.yieldMaximizationAction,
-          );
-
-          // Anti-hallucination: maximizedYield ∈ [currentYield, currentYield × 1.6 or +35pp]
-          const maxYieldBound = Math.min(
-            YIELD_MAX,
-            Math.max(
-              det.currentYield + 5,
-              Math.min(det.currentYield * 1.6 + 15, det.currentYield + 35),
-            ),
-          );
-          const maximizedYield = round2(clampNum(
-            aiMax.maximizedYield,
-            det.currentYield, maxYieldBound,
-            det.maximization.maximizedYield,
-          ));
-          const yieldUplift = round2(clampNum(
-            maximizedYield - det.currentYield,
-            UPLIFT_MIN, UPLIFT_MAX, 0,
-          ));
-
-          const optimalHoldTime = round0(clampNum(
-            aiMax.optimalHoldTime,
-            0, DAYS_MAX, det.maximization.optimalHoldTime,
-          ));
-
-          // Optimization actions
-          let yieldOptimizationActions: string[] = det.maximization.yieldOptimizationActions;
-          if (Array.isArray(aiMax.yieldOptimizationActions) &&
-              aiMax.yieldOptimizationActions.length >= 2) {
-            const aiActions = aiMax.yieldOptimizationActions
-              .slice(0, MAX_ACTIONS_PER_ITEM)
-              .map((a) => clampString(a, 200, 'Optimiziraj yield.'))
-              .filter((s) => s.length > 0);
-            if (aiActions.length >= 2) {
-              yieldOptimizationActions = aiActions;
-            }
-          }
-
-          newEntries.push({
-            ...det,
-            maximization: {
-              yieldMaximizationAction: action,
-              maximizedYield,
-              yieldUplift,
-              optimalHoldTime,
-              yieldOptimizationActions,
-            },
-          });
-        }
-
-        // Anti-hallucination: skip AI entries with unknown tradeIds
-        const filtered = newEntries.filter((e) => validIds.has(e.tradeId));
-        if (filtered.length === entries.length) {
-          entries = newEntries;
-        }
-
-        // Rebuild portfolio with new entries
-        portfolio = buildPortfolio(entries, current);
-
-        // Override yieldGrade if AI provided
-        if (parsed.portfolio?.yieldGrade) {
-          portfolio = {
-            ...portfolio,
-            yieldGrade: clampEnum(
-              parsed.portfolio.yieldGrade,
-              VALID_GRADE,
-              portfolio.yieldGrade,
-            ),
-          };
-        }
-
-        summary = clampString(parsed.summary, 400, buildSummary(current, portfolio, entries.length));
-        aiUsed = true;
-      }
+      const result = mergeAiResponse(parsed, entries, current);
+      entries = result.entries;
+      portfolio = result.portfolio;
+      summary = result.summary;
+      aiUsed = result.aiUsed;
     } catch (err) {
       logger.warn(
         '/api/ai/inventory-yield-maximizer',
@@ -917,7 +966,7 @@ VRNI LE JSON:
       setCachedAI(cacheKey, { perItem: entries, portfolio, summary });
     }
 
-    return NextResponse.json({
+    return apiOk({
       ok: true,
       current,
       perItem: entries,
@@ -925,15 +974,8 @@ VRNI LE JSON:
       summary,
       aiUsed,
     } satisfies InventoryYieldResponse);
-  } catch (err: any) {
-    logger.error(
-      '/api/ai/inventory-yield-maximizer',
-      'handler failed',
-      err,
-    );
-    return NextResponse.json(
-      { error: err?.message ?? 'Napaka' },
-      { status: 500 },
-    );
-  }
-}
+  },
+});
+
+export const GET = inventoryYieldMaximizerHandler;
+export const POST = inventoryYieldMaximizerHandler;

@@ -1,4 +1,4 @@
-// v8.11: AI Inventory Annual Yield Maximizer — AI MAKSIMIZIRA ANNUAL YIELD
+// v8.11 / v8.96.6-batch4: AI Inventory Annual Yield Maximizer — AI MAKSIMIZIRA ANNUAL YIELD
 // held inventory-ja — letni profit kot % povprečne vrednosti inventory-ja.
 // "Tvoj letni yield je 32%, ampak bi lahko bil 58% z optimalno inventory
 // sestavo in turnover." Razlika od inventory-annualized-return-maximizer
@@ -40,23 +40,14 @@
 
 // GET+POST /api/ai/inventory-annual-yield-maximizer
 // (AI-enhanced + grounding + anti-hallucination + 6h cache + deterministic fallback)
+// Refaktoriran z withAiRoute helperjem (v8.96.6) + enforceBudget guard.
 
-import { NextRequest, NextResponse } from 'next/server';
-import { db } from '@/lib/db';
-import { getSettingsRow } from '@/lib/pipeline';
-import {
-  callProviderForRaw,
-  parseJsonLooseExported,
-  type AiProviderType,
-  type AiSettings,
-} from '@/lib/ai';
+import { withAiRoute, AI_ROUTE_DEFAULTS, type AiRouteContext } from '@/lib/with-ai-route';
+import { apiOk } from '@/lib/api-response';
 import { GROUNDING_PROMPT_SUFFIX } from '@/lib/anti-hallucination';
 import { getCachedAI, setCachedAI } from '@/lib/ai-cache';
-import { checkRateLimit, rateLimitResponse } from '@/lib/rate-limit';
-import { logger } from '@/lib/logger';
 
-export const runtime = 'nodejs';
-export const dynamic = 'force-dynamic';
+export const { runtime, dynamic } = AI_ROUTE_DEFAULTS;
 export const maxDuration = 60;
 
 // --- Types ---------------------------------------------------------------
@@ -550,19 +541,27 @@ function buildSummary(
   return parts.join(' ').slice(0, 500);
 }
 
+// --- Input ---------------------------------------------------------------
+
+// eslint-disable-next-line @typescript-eslint/no-empty-object-type
+interface InventoryAnnualYieldInput {}
+
 // --- Handler -------------------------------------------------------------
 
-export async function GET(req: NextRequest) {
-  return handleInventoryAnnualYieldMaximizer(req);
-}
-export async function POST(req: NextRequest) {
-  return handleInventoryAnnualYieldMaximizer(req);
-}
+const inventoryAnnualYieldHandler = withAiRoute<InventoryAnnualYieldInput>({
+  endpoint: '/api/ai/inventory-annual-yield-maximizer',
+  maxDuration: 60,
+  enforceBudget: true, // AI klic — preveri budget
+  method: 'GET', // GET+POST — body ignored
 
-async function handleInventoryAnnualYieldMaximizer(req: NextRequest) {
-  try {
-    const rl = checkRateLimit(req, 'ai-inventory-annual-yield-maximizer', 20);
-    if (!rl.allowed) return rateLimitResponse(rl);
+  parseBody: async (req) => {
+    await req.json().catch(() => ({}));
+    return {};
+  },
+
+  // No validateInput — body ignored
+  handler: async (_input, ctx: AiRouteContext) => {
+    const { db, callAi, parseAi, logger } = ctx;
 
     const now = Date.now();
     const twelveMonthsAgo = new Date(now - TWELVE_MONTHS_MS);
@@ -612,7 +611,7 @@ async function handleInventoryAnnualYieldMaximizer(req: NextRequest) {
 
     // Empty-state: no HELD and no SOLD trades
     if (heldTrades.length === 0 && soldTrades.length === 0) {
-      return NextResponse.json({
+      return apiOk({
         ok: true,
         current: {
           avgInventoryValue: 0,
@@ -664,7 +663,7 @@ async function handleInventoryAnnualYieldMaximizer(req: NextRequest) {
     // If no HELD inventory, yield is undefined — fallback to 0
     if (heldComputed.length === 0) {
       const soldCap = soldComputed.reduce((s, t) => s + t.capital, 0);
-      return NextResponse.json({
+      return apiOk({
         ok: true,
         current: {
           avgInventoryValue: 0,
@@ -722,7 +721,7 @@ async function handleInventoryAnnualYieldMaximizer(req: NextRequest) {
       summary: string;
     }>(cacheKey);
     if (cached) {
-      return NextResponse.json({
+      return apiOk({
         ok: true,
         current,
         maximization: cached.maximization,
@@ -733,20 +732,6 @@ async function handleInventoryAnnualYieldMaximizer(req: NextRequest) {
     }
 
     // 4) AI prompt with grounding
-    const settings = await getSettingsRow();
-    const aiSettings: AiSettings = {
-      provider: settings.aiProvider as AiProviderType,
-      baseUrl: settings.aiBaseUrl,
-      apiKey: settings.aiApiKey,
-      model: settings.aiModel,
-      fallbackProvider: (settings.fallbackProvider || '') as
-        | AiProviderType
-        | '',
-      fallbackBaseUrl: settings.fallbackBaseUrl || '',
-      fallbackApiKey: settings.fallbackApiKey || '',
-      fallbackModel: settings.fallbackModel || '',
-    };
-
     const heldSampleForAI = heldComputed
       .slice(0, MAX_ITEMS_FOR_AI)
       .map((h) => ({
@@ -832,8 +817,8 @@ VRNI LE JSON:
     let aiUsed = false;
 
     try {
-      const raw = await callProviderForRaw(aiSettings, prompt);
-      const parsed = parseJsonLooseExported(raw) as AiResponse | null;
+      const raw = await callAi(prompt);
+      const parsed = parseAi(raw) as AiResponse | null;
 
       if (parsed && typeof parsed === 'object' && parsed.maximization) {
         const aiMax = parsed.maximization;
@@ -953,22 +938,15 @@ VRNI LE JSON:
       setCachedAI(cacheKey, { maximization, summary });
     }
 
-    return NextResponse.json({
+    return apiOk({
       ok: true,
       current,
       maximization,
       summary,
       aiUsed,
     } satisfies InventoryAnnualYieldResponse);
-  } catch (err: any) {
-    logger.error(
-      '/api/ai/inventory-annual-yield-maximizer',
-      'handler failed',
-      err,
-    );
-    return NextResponse.json(
-      { error: err?.message ?? 'Napaka' },
-      { status: 500 },
-    );
-  }
-}
+  },
+});
+
+export const GET = inventoryAnnualYieldHandler;
+export const POST = inventoryAnnualYieldHandler;

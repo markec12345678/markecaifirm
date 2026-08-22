@@ -1,4 +1,4 @@
-// v7.64: AI Trading Coach — personal AI coach ki analizira tvoje trading
+// v7.64 / v8.96.6-batch1: AI Trading Coach — personal AI coach ki analizira tvoje trading
 // pattern-e, identificira weaknesse in da personaliziran advice za izboljšavo.
 // "80% koncentracija v elektronika — diverzificiraj v moda. Win rate 40% ob
 // vikendih — kupuj med tednom."
@@ -11,24 +11,18 @@
 //
 // GET+POST /api/ai/trading-coach
 // (AI-enhanced + grounding + anti-hallucination + 6h cache + deterministic fallback)
+// Refaktoriran z withAiRoute helperjem (v8.96.6) + enforceBudget guard.
 
-import { NextRequest, NextResponse } from 'next/server';
-import { db } from '@/lib/db';
-import { getSettingsRow } from '@/lib/pipeline';
-import {
-  callProviderForRaw,
-  parseJsonLooseExported,
-  type AiProviderType,
-  type AiSettings,
-} from '@/lib/ai';
+import { withAiRoute, AI_ROUTE_DEFAULTS, type AiRouteContext } from '@/lib/with-ai-route';
+import { apiOk } from '@/lib/api-response';
 import { GROUNDING_PROMPT_SUFFIX } from '@/lib/anti-hallucination';
 import { getCachedAI, setCachedAI } from '@/lib/ai-cache';
-import { checkRateLimit, rateLimitResponse } from '@/lib/rate-limit';
-import { logger } from '@/lib/logger';
 
-export const runtime = 'nodejs';
-export const dynamic = 'force-dynamic';
+export const { runtime, dynamic } = AI_ROUTE_DEFAULTS;
 export const maxDuration = 60;
+
+// eslint-disable-next-line @typescript-eslint/no-empty-object-type
+interface TradingCoachInput {}
 
 // --- Types ---------------------------------------------------------------
 
@@ -422,26 +416,187 @@ function buildDeterministicCoaching(stats: TradeStats): {
   return { coaching, summary };
 }
 
+// --- Prompt builder + AI merge (čisti, testabilni) ----------------------
+
+function buildPrompt(stats: TradeStats): string {
+  const categoryBlock = stats.categoryBreakdown
+    .map(
+      c =>
+        `- ${c.category}: ${c.count} prodaj, win rate ${c.winRate}%, avg ROI ${c.avgROI}%`,
+    )
+    .join('\n');
+  const dayBlock = stats.dayBreakdown
+    .map(d => `- ${d.day}: ${d.count} trade-ov, win rate ${d.winRate}%`)
+    .join('\n');
+  const rangeBlock = stats.priceRangeBreakdown
+    .map(
+      r =>
+        `- ${r.range}: ${r.count} trade-ov, win rate ${r.winRate}%, avg ROI ${r.avgROI}%`,
+    )
+    .join('\n');
+
+  return `Si osebni AI trading coach za preprodajo na slovenskih in srednjeevropskih oglasnih platformah (Bolha, Vinted, Avtonet, mobile.de).
+Analiziral si traderjevo zgodovino in mu dal personaliziran coaching za izboljšavo.
+
+STATISTIKA TRADERJA:
+- Skupno trade-ov: ${stats.totalTrades} (sold: ${stats.totalSold}, held: ${stats.heldCount}, cancelled: ${stats.totalCancelled})
+- Win rate: ${stats.winRate}%
+- Povprečni ROI: ${stats.avgROI}%
+- Povprečni hold time: ${stats.avgHoldDays} dni
+- Trades per week: ${stats.tradesPerWeek}
+- Held inventar: ${stats.heldCount} itemov (${stats.heldCapital}€ vezanega kapitala)
+- Top kategorija: ${stats.topCategory} (${stats.categoryConcentration}% koncentracije)
+- Najboljši dan za trgovanje: ${stats.bestDayOfWeek}
+- Najslabši dan za trgovanje: ${stats.worstDayOfWeek}
+- Recent trend: ${stats.recentTrend} (recent30 win rate ${stats.recent30WinRate}% vs previous30 ${stats.previous30WinRate}%)
+
+RAZČLENITEV PO KATEGORIJAH:
+${categoryBlock || '- Ni podatkov'}
+
+RAZČLENITEV PO DNEVIH (buyDate):
+${dayBlock || '- Ni podatkov'}
+
+RAZČLENITEV PO CENOVNIH RAZPONIH:
+${rangeBlock || '- Ni podatkov'}
+
+PRAVILA ZA COACHING:
+1. strengths: 2-3 konkretni STRENGTHSI bazirani na statistiki (npr. "Win rate 65% je nadpovprečen").
+2. weaknesses: 2-3 konkretni WEAKNESSI bazirani na statistiki (npr. "Koncentracija 80% v elektronika — prevelik sektorski risk").
+3. patterns: 2-4 identificirani vzorci (npr. "overtrading on weekends", "quick-flip strategija"). impact: POSITIVE/NEGATIVE/NEUTRAL. detail = konkretne številke iz statistike.
+4. recommendations: 3-5 specific actionable advice. priority: HIGH/MEDIUM/LOW. expectedImpact = kvantificiran rezultat (npr. "win rate +10%").
+5. riskProfile: CONSERVATIVE (low score, nizka koncentracija, dolgi hold) | BALANCED | AGGRESSIVE (visok ROI, kratki hold, visoka koncentracija).
+6. skillLevel: BEGINNER (<10 sold ali winRate <40%) | INTERMEDIATE | ADVANCED (>=25 sold, winRate >=55%) | EXPERT (>=40 sold, winRate >=70%, avgROI >=25%).
+7. nextSteps: 1-2 immediate akcije za naslednji teden.
+8. summary: 1-2 povedi overall assessment (slovensko).
+
+VRNI LE JSON:
+{
+  "strengths": ["...", "..."],
+  "weaknesses": ["...", "..."],
+  "patterns": [
+    { "pattern": "...", "impact": "POSITIVE|NEGATIVE|NEUTRAL", "detail": "..." }
+  ],
+  "recommendations": [
+    { "priority": "HIGH|MEDIUM|LOW", "action": "...", "expectedImpact": "..." }
+  ],
+  "riskProfile": "CONSERVATIVE|BALANCED|AGGRESSIVE",
+  "skillLevel": "BEGINNER|INTERMEDIATE|ADVANCED|EXPERT",
+  "nextSteps": ["...", "..."],
+  "summary": "1-2 povedi slovensko"
+}${GROUNDING_PROMPT_SUFFIX}`;
+}
+
+function mergeAiIntoCoaching(
+  parsed: AiCoachingResponse | null,
+  stats: TradeStats,
+): { coaching: CoachingReport; summary: string; aiUsed: boolean } {
+  // Build deterministic fallback as base for clamping
+  const det = buildDeterministicCoaching(stats);
+
+  if (!parsed) {
+    return { coaching: det.coaching, summary: det.summary, aiUsed: false };
+  }
+
+  // Validate AI strengths
+  const strengths = clampStringArray(parsed.strengths, 3, 240, det.coaching.strengths);
+
+  // Validate AI weaknesses
+  const weaknesses = clampStringArray(parsed.weaknesses, 3, 240, det.coaching.weaknesses);
+
+  // Validate patterns
+  let patterns: Pattern[] = [];
+  if (Array.isArray(parsed.patterns)) {
+    for (const p of parsed.patterns) {
+      if (p && typeof p === 'object') {
+        patterns.push({
+          pattern: clampString(
+            (p as any).pattern,
+            120,
+            'Neznan vzorec',
+          ),
+          impact: clampEnum(
+            (p as any).impact,
+            ['POSITIVE', 'NEGATIVE', 'NEUTRAL'] as const,
+            'NEUTRAL',
+          ),
+          detail: clampString(
+            (p as any).detail,
+            240,
+            'Brez podrobnosti.',
+          ),
+        });
+        if (patterns.length >= 4) break;
+      }
+    }
+  }
+  if (patterns.length === 0) patterns = det.coaching.patterns;
+
+  // Validate recommendations
+  let recommendations: Recommendation[] = [];
+  if (Array.isArray(parsed.recommendations)) {
+    for (const r of parsed.recommendations) {
+      if (r && typeof r === 'object') {
+        recommendations.push({
+          priority: clampEnum(
+            (r as any).priority,
+            ['HIGH', 'MEDIUM', 'LOW'] as const,
+            'MEDIUM',
+          ),
+          action: clampString((r as any).action, 280, 'Brez akcije.'),
+          expectedImpact: clampString(
+            (r as any).expectedImpact,
+            200,
+            'Brez pričakovanega vpliva.',
+          ),
+        });
+        if (recommendations.length >= 5) break;
+      }
+    }
+  }
+  if (recommendations.length === 0) recommendations = det.coaching.recommendations;
+
+  const riskProfile = clampEnum(
+    parsed.riskProfile,
+    ['CONSERVATIVE', 'BALANCED', 'AGGRESSIVE'] as const,
+    det.coaching.riskProfile,
+  );
+  const skillLevel = clampEnum(
+    parsed.skillLevel,
+    ['BEGINNER', 'INTERMEDIATE', 'ADVANCED', 'EXPERT'] as const,
+    det.coaching.skillLevel,
+  );
+  const nextSteps = clampStringArray(parsed.nextSteps, 2, 280, det.coaching.nextSteps);
+  const summary = clampString(parsed.summary, 400, det.summary);
+
+  const coaching: CoachingReport = {
+    strengths,
+    weaknesses,
+    patterns,
+    recommendations,
+    riskProfile,
+    skillLevel,
+    nextSteps,
+  };
+
+  return { coaching, summary, aiUsed: true };
+}
+
 // --- Handler -------------------------------------------------------------
 
-export async function GET(req: NextRequest) {
-  return handleTradingCoach(req);
-}
-export async function POST(req: NextRequest) {
-  return handleTradingCoach(req);
-}
+const tradingCoachHandler = withAiRoute<TradingCoachInput>({
+  endpoint: '/api/ai/trading-coach',
+  maxDuration: 60,
+  enforceBudget: true, // AI klic — preveri budget
+  method: 'GET', // Endpoint sprejema GET + POST — bypass POST-only check
 
-async function handleTradingCoach(req: NextRequest) {
-  try {
-    const rl = checkRateLimit(req, 'ai-trading-coach', 20);
-    if (!rl.allowed) return rateLimitResponse(rl);
+  parseBody: async (req) => {
+    await req.json().catch(() => ({}));
+    return {};
+  },
 
-    // Parse body (optional, ignored — coach analyzes all trades)
-    try {
-      await req.json().catch(() => ({}));
-    } catch {
-      // GET request — no body, ignore
-    }
+  // No validateInput — body ignored, identična logika za GET in POST
+  handler: async (_input, ctx: AiRouteContext) => {
+    const { db, callAi, parseAi, logger } = ctx;
 
     // 1) Query all SOLD trades with buy+sell prices+dates
     const soldTrades = await db.trade.findMany({
@@ -478,7 +633,7 @@ async function handleTradingCoach(req: NextRequest) {
     });
 
     if (soldTrades.length === 0) {
-      return NextResponse.json({
+      return apiOk({
         ok: true,
         stats: {
           totalTrades: heldTrades.length + cancelledTrades,
@@ -714,7 +869,7 @@ async function handleTradingCoach(req: NextRequest) {
       summary: string;
     }>(cacheKey);
     if (cached) {
-      return NextResponse.json({
+      return apiOk({
         ok: true,
         stats,
         coaching: cached.coaching,
@@ -724,192 +879,29 @@ async function handleTradingCoach(req: NextRequest) {
       });
     }
 
-    // 7) Build AI prompt with grounding
-    const settings = await getSettingsRow();
-    const aiSettings: AiSettings = {
-      provider: settings.aiProvider as AiProviderType,
-      baseUrl: settings.aiBaseUrl,
-      apiKey: settings.aiApiKey,
-      model: settings.aiModel,
-      fallbackProvider: (settings.fallbackProvider || '') as AiProviderType | '',
-      fallbackBaseUrl: settings.fallbackBaseUrl || '',
-      fallbackApiKey: settings.fallbackApiKey || '',
-      fallbackModel: settings.fallbackModel || '',
-    };
+    // 7) Build AI prompt with grounding (settings loaded by withAiRoute wrapper)
+    const prompt = buildPrompt(stats);
 
-    const categoryBlock = stats.categoryBreakdown
-      .map(
-        c =>
-          `- ${c.category}: ${c.count} prodaj, win rate ${c.winRate}%, avg ROI ${c.avgROI}%`,
-      )
-      .join('\n');
-    const dayBlock = stats.dayBreakdown
-      .map(d => `- ${d.day}: ${d.count} trade-ov, win rate ${d.winRate}%`)
-      .join('\n');
-    const rangeBlock = stats.priceRangeBreakdown
-      .map(
-        r =>
-          `- ${r.range}: ${r.count} trade-ov, win rate ${r.winRate}%, avg ROI ${r.avgROI}%`,
-      )
-      .join('\n');
-
-    const prompt = `Si osebni AI trading coach za preprodajo na slovenskih in srednjeevropskih oglasnih platformah (Bolha, Vinted, Avtonet, mobile.de).
-Analiziral si traderjevo zgodovino in mu dal personaliziran coaching za izboljšavo.
-
-STATISTIKA TRADERJA:
-- Skupno trade-ov: ${stats.totalTrades} (sold: ${stats.totalSold}, held: ${stats.heldCount}, cancelled: ${stats.totalCancelled})
-- Win rate: ${stats.winRate}%
-- Povprečni ROI: ${stats.avgROI}%
-- Povprečni hold time: ${stats.avgHoldDays} dni
-- Trades per week: ${stats.tradesPerWeek}
-- Held inventar: ${stats.heldCount} itemov (${stats.heldCapital}€ vezanega kapitala)
-- Top kategorija: ${stats.topCategory} (${stats.categoryConcentration}% koncentracije)
-- Najboljši dan za trgovanje: ${stats.bestDayOfWeek}
-- Najslabši dan za trgovanje: ${stats.worstDayOfWeek}
-- Recent trend: ${stats.recentTrend} (recent30 win rate ${stats.recent30WinRate}% vs previous30 ${stats.previous30WinRate}%)
-
-RAZČLENITEV PO KATEGORIJAH:
-${categoryBlock || '- Ni podatkov'}
-
-RAZČLENITEV PO DNEVIH (buyDate):
-${dayBlock || '- Ni podatkov'}
-
-RAZČLENITEV PO CENOVNIH RAZPONIH:
-${rangeBlock || '- Ni podatkov'}
-
-PRAVILA ZA COACHING:
-1. strengths: 2-3 konkretni STRENGTHSI bazirani na statistiki (npr. "Win rate 65% je nadpovprečen").
-2. weaknesses: 2-3 konkretni WEAKNESSI bazirani na statistiki (npr. "Koncentracija 80% v elektronika — prevelik sektorski risk").
-3. patterns: 2-4 identificirani vzorci (npr. "overtrading on weekends", "quick-flip strategija"). impact: POSITIVE/NEGATIVE/NEUTRAL. detail = konkretne številke iz statistike.
-4. recommendations: 3-5 specific actionable advice. priority: HIGH/MEDIUM/LOW. expectedImpact = kvantificiran rezultat (npr. "win rate +10%").
-5. riskProfile: CONSERVATIVE (low score, nizka koncentracija, dolgi hold) | BALANCED | AGGRESSIVE (visok ROI, kratki hold, visoka koncentracija).
-6. skillLevel: BEGINNER (<10 sold ali winRate <40%) | INTERMEDIATE | ADVANCED (>=25 sold, winRate >=55%) | EXPERT (>=40 sold, winRate >=70%, avgROI >=25%).
-7. nextSteps: 1-2 immediate akcije za naslednji teden.
-8. summary: 1-2 povedi overall assessment (slovensko).
-
-VRNI LE JSON:
-{
-  "strengths": ["...", "..."],
-  "weaknesses": ["...", "..."],
-  "patterns": [
-    { "pattern": "...", "impact": "POSITIVE|NEGATIVE|NEUTRAL", "detail": "..." }
-  ],
-  "recommendations": [
-    { "priority": "HIGH|MEDIUM|LOW", "action": "...", "expectedImpact": "..." }
-  ],
-  "riskProfile": "CONSERVATIVE|BALANCED|AGGRESSIVE",
-  "skillLevel": "BEGINNER|INTERMEDIATE|ADVANCED|EXPERT",
-  "nextSteps": ["...", "..."],
-  "summary": "1-2 povedi slovensko"
-}${GROUNDING_PROMPT_SUFFIX}`;
-
+    // Deterministic baseline (fallback if AI call fails)
+    const det = buildDeterministicCoaching(stats);
+    let coaching: CoachingReport = det.coaching;
+    let summary = det.summary;
     let aiUsed = false;
-    let coaching: CoachingReport;
-    let summary: string;
 
     try {
-      const raw = await callProviderForRaw(aiSettings, prompt);
-      const parsed = parseJsonLooseExported(raw) as AiCoachingResponse | null;
+      const raw = await callAi(prompt);
+      const parsed = parseAi(raw) as AiCoachingResponse | null;
 
-      if (parsed) {
-        // Build deterministic fallback as base for clamping
-        const det = buildDeterministicCoaching(stats);
-
-        // Validate AI strengths
-        const strengths = clampStringArray(parsed.strengths, 3, 240, det.coaching.strengths);
-
-        // Validate AI weaknesses
-        const weaknesses = clampStringArray(parsed.weaknesses, 3, 240, det.coaching.weaknesses);
-
-        // Validate patterns
-        let patterns: Pattern[] = [];
-        if (Array.isArray(parsed.patterns)) {
-          for (const p of parsed.patterns) {
-            if (p && typeof p === 'object') {
-              patterns.push({
-                pattern: clampString(
-                  (p as any).pattern,
-                  120,
-                  'Neznan vzorec',
-                ),
-                impact: clampEnum(
-                  (p as any).impact,
-                  ['POSITIVE', 'NEGATIVE', 'NEUTRAL'] as const,
-                  'NEUTRAL',
-                ),
-                detail: clampString(
-                  (p as any).detail,
-                  240,
-                  'Brez podrobnosti.',
-                ),
-              });
-              if (patterns.length >= 4) break;
-            }
-          }
-        }
-        if (patterns.length === 0) patterns = det.coaching.patterns;
-
-        // Validate recommendations
-        let recommendations: Recommendation[] = [];
-        if (Array.isArray(parsed.recommendations)) {
-          for (const r of parsed.recommendations) {
-            if (r && typeof r === 'object') {
-              recommendations.push({
-                priority: clampEnum(
-                  (r as any).priority,
-                  ['HIGH', 'MEDIUM', 'LOW'] as const,
-                  'MEDIUM',
-                ),
-                action: clampString((r as any).action, 280, 'Brez akcije.'),
-                expectedImpact: clampString(
-                  (r as any).expectedImpact,
-                  200,
-                  'Brez pričakovanega vpliva.',
-                ),
-              });
-              if (recommendations.length >= 5) break;
-            }
-          }
-        }
-        if (recommendations.length === 0) recommendations = det.coaching.recommendations;
-
-        const riskProfile = clampEnum(
-          parsed.riskProfile,
-          ['CONSERVATIVE', 'BALANCED', 'AGGRESSIVE'] as const,
-          det.coaching.riskProfile,
-        );
-        const skillLevel = clampEnum(
-          parsed.skillLevel,
-          ['BEGINNER', 'INTERMEDIATE', 'ADVANCED', 'EXPERT'] as const,
-          det.coaching.skillLevel,
-        );
-        const nextSteps = clampStringArray(parsed.nextSteps, 2, 280, det.coaching.nextSteps);
-        summary = clampString(parsed.summary, 400, det.summary);
-
-        coaching = {
-          strengths,
-          weaknesses,
-          patterns,
-          recommendations,
-          riskProfile,
-          skillLevel,
-          nextSteps,
-        };
-        aiUsed = true;
-      } else {
-        const det = buildDeterministicCoaching(stats);
-        coaching = det.coaching;
-        summary = det.summary;
-      }
+      const merged = mergeAiIntoCoaching(parsed, stats);
+      coaching = merged.coaching;
+      summary = merged.summary;
+      aiUsed = merged.aiUsed;
     } catch (err) {
       logger.warn(
         '/api/ai/trading-coach',
         'AI call failed — using deterministic fallback',
         err,
       );
-      const det = buildDeterministicCoaching(stats);
-      coaching = det.coaching;
-      summary = det.summary;
     }
 
     // 8) Cache (6h TTL) — only when AI was used
@@ -917,15 +909,15 @@ VRNI LE JSON:
       setCachedAI(cacheKey, { coaching, summary });
     }
 
-    return NextResponse.json({
+    return apiOk({
       ok: true,
       stats,
       coaching,
       summary,
       aiUsed,
     });
-  } catch (err: any) {
-    logger.error('/api/ai/trading-coach', 'handler failed', err);
-    return NextResponse.json({ error: err?.message ?? 'Napaka' }, { status: 500 });
-  }
-}
+  },
+});
+
+export const GET = tradingCoachHandler;
+export const POST = tradingCoachHandler;

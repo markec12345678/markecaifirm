@@ -1,4 +1,4 @@
-// v8.08: AI Deal Source Profit Velocity Maximizer — AI MAKSIMIZIRA VELOCITY
+// v8.08 / v8.96.6-batch2: AI Deal Source Profit Velocity Maximizer — AI MAKSIMIZIRA VELOCITY
 // profit-a per source — kako hitro se profit kopiči iz vsakega source-a. "Bolha
 // generira 100€/teden v profit-u, ampak bi lahko generiral 180€/teden če
 // povečaš trade frekvenco z 3/teden na 5/teden." Razlika od
@@ -27,24 +27,20 @@
 
 // GET+POST /api/ai/deal-source-profit-velocity-maximizer
 // (AI-enhanced + grounding + anti-hallucination + 6h cache + deterministic fallback)
+// Refaktoriran z withAiRoute helperjem (v8.96.6) + enforceBudget guard.
 
-import { NextRequest, NextResponse } from 'next/server';
-import { db } from '@/lib/db';
-import { getSettingsRow } from '@/lib/pipeline';
-import {
-  callProviderForRaw,
-  parseJsonLooseExported,
-  type AiProviderType,
-  type AiSettings,
-} from '@/lib/ai';
+import { withAiRoute, AI_ROUTE_DEFAULTS, type AiRouteContext } from '@/lib/with-ai-route';
+import { apiOk } from '@/lib/api-response';
 import { GROUNDING_PROMPT_SUFFIX } from '@/lib/anti-hallucination';
 import { getCachedAI, setCachedAI } from '@/lib/ai-cache';
-import { checkRateLimit, rateLimitResponse } from '@/lib/rate-limit';
-import { logger } from '@/lib/logger';
 
-export const runtime = 'nodejs';
-export const dynamic = 'force-dynamic';
+export const { runtime, dynamic } = AI_ROUTE_DEFAULTS;
 export const maxDuration = 60;
+
+// --- Input ----------------------------------------------------------------
+
+// eslint-disable-next-line @typescript-eslint/no-empty-object-type
+interface DealSourceProfitVelocityMaximizerInput {}
 
 // --- Types ---------------------------------------------------------------
 
@@ -573,160 +569,69 @@ function buildSummary(entries: SourceEntry[], portfolio: PortfolioSummary): stri
   return parts.join(' ').slice(0, 400);
 }
 
-// --- Handler -------------------------------------------------------------
+// --- AI prompt + merge helpers (pure, testable) ---------------------------
 
-export async function GET(req: NextRequest) {
-  return handleDealSourceProfitVelocityMaximizer(req);
+interface PromptData {
+  totalTrades: number;
+  totalSources: number;
+  sources: Array<{
+    source: string;
+    displayName: string;
+    metrics: SourceMetrics;
+    deterministicMaximization: SourceMaximization;
+  }>;
+  deterministicPortfolio: {
+    totalCurrentVelocity: number;
+    totalMaximizedVelocity: number;
+    totalVelocityUplift: number;
+    sourceVelocityRanking: Array<{
+      source: string;
+      displayName: string;
+      currentVelocity: number;
+      maximizedVelocity: number;
+      rank: number;
+    }>;
+    bestVelocitySource: string;
+  };
+  caps: Record<string, number>;
 }
-export async function POST(req: NextRequest) {
-  return handleDealSourceProfitVelocityMaximizer(req);
+
+function buildPromptData(
+  computedCount: number,
+  entries: SourceEntry[],
+  portfolio: PortfolioSummary,
+): PromptData {
+  const sourcesForAI = entries.map((e) => ({
+    source: e.source,
+    displayName: e.displayName,
+    metrics: e.metrics,
+    deterministicMaximization: e.maximization,
+  }));
+  return {
+    totalTrades: computedCount,
+    totalSources: entries.length,
+    sources: sourcesForAI,
+    deterministicPortfolio: {
+      totalCurrentVelocity: portfolio.totalCurrentVelocity,
+      totalMaximizedVelocity: portfolio.totalMaximizedVelocity,
+      totalVelocityUplift: portfolio.totalVelocityUplift,
+      sourceVelocityRanking: portfolio.sourceVelocityRanking,
+      bestVelocitySource: portfolio.bestVelocitySource,
+    },
+    caps: {
+      profitPerWeekMin: PROFIT_PER_WEEK_MIN, profitPerWeekMax: PROFIT_PER_WEEK_MAX,
+      tradesPerWeekMin: TRADES_PER_WEEK_MIN, tradesPerWeekMax: TRADES_PER_WEEK_MAX,
+      profitPerTradeMin: PROFIT_PER_TRADE_MIN, profitPerTradeMax: PROFIT_PER_TRADE_MAX,
+      trendMin: TREND_MIN, trendMax: TREND_MAX,
+      scoreMin: SCORE_MIN, scoreMax: SCORE_MAX,
+      upliftMin: UPLIFT_MIN, upliftMax: UPLIFT_MAX,
+      projectionMin: PROJECTION_MIN, projectionMax: PROJECTION_MAX,
+    },
+  };
 }
 
-async function handleDealSourceProfitVelocityMaximizer(req: NextRequest) {
-  try {
-    const rl = checkRateLimit(req, 'ai-deal-source-profit-velocity-maximizer', 20);
-    if (!rl.allowed) return rateLimitResponse(rl);
-
-    const now = Date.now();
-    const twelveMonthsAgo = new Date(now - TWELVE_MONTHS_MS);
-
-    // 1) Query SOLD trades from last 12 months with linked Listing (for source)
-    const soldTrades = await db.trade.findMany({
-      where: {
-        status: 'sold',
-        sellDate: { gte: twelveMonthsAgo },
-        sellPrice: { gt: 0 },
-      },
-      select: {
-        id: true,
-        buyPrice: true,
-        buyFees: true,
-        buyDate: true,
-        sellPrice: true,
-        sellFees: true,
-        sellDate: true,
-        buyLocation: true,
-        listing: {
-          select: {
-            monitor: { select: { source: true, tags: true } },
-          },
-        },
-      },
-      orderBy: { sellDate: 'asc' },
-      take: 100000,
-    }) as unknown as SoldTradeRow[];
-
-    // Empty-state: no SOLD trades
-    if (soldTrades.length === 0) {
-      return NextResponse.json({
-        ok: true,
-        sources: [],
-        portfolio: {
-          totalCurrentVelocity: 0,
-          totalMaximizedVelocity: 0,
-          totalVelocityUplift: 0,
-          sourceVelocityRanking: [],
-          bestVelocitySource: '',
-        },
-        summary: 'Ni SOLD trgovin v zadnjih 12 mesecih — Deal Source Profit Velocity Maximizer ni mogoč.',
-        aiUsed: false,
-        message: 'Ni SOLD trgovin v zadnjih 12 mesecih — Deal Source Profit Velocity Maximizer ni mogoč.',
-      } satisfies DealSourceProfitVelocityResponse);
-    }
-
-    // 2) Compute per-trade metrics and aggregate by source
-    const computed: TradeComputed[] = [];
-    for (const t of soldTrades) {
-      const c = computeTrade(t, now);
-      if (c) computed.push(c);
-    }
-
-    if (computed.length === 0) {
-      return NextResponse.json({
-        ok: true,
-        sources: [],
-        portfolio: {
-          totalCurrentVelocity: 0,
-          totalMaximizedVelocity: 0,
-          totalVelocityUplift: 0,
-          sourceVelocityRanking: [],
-          bestVelocitySource: '',
-        },
-        summary: 'Ni veljavnih SOLD trgovin — Deal Source Profit Velocity Maximizer ni mogoč.',
-        aiUsed: false,
-        message: 'Ni veljavnih SOLD trgovin — Deal Source Profit Velocity Maximizer ni mogoč.',
-      } satisfies DealSourceProfitVelocityResponse);
-    }
-
-    const aggMap = aggregateBySource(computed);
-    let entries = buildSourceEntries(aggMap);
-    let portfolio = buildPortfolio(entries);
-    let summary = buildSummary(entries, portfolio);
-
-    // 3) AI cache check (6h TTL) — key by current month
-    const currentMonth = new Date(now).toISOString().slice(0, 7); // YYYY-MM
-    const cacheKey = `deal-source-profit-velocity-maximizer:${currentMonth}`;
-    const cached = getCachedAI<{
-      sources: SourceEntry[];
-      portfolio: PortfolioSummary;
-      summary: string;
-    }>(cacheKey);
-    if (cached) {
-      return NextResponse.json({
-        ok: true,
-        sources: cached.sources,
-        portfolio: cached.portfolio,
-        summary: cached.summary,
-        cached: true,
-        aiUsed: true,
-      } satisfies DealSourceProfitVelocityResponse);
-    }
-
-    // 4) AI prompt with grounding
-    const settings = await getSettingsRow();
-    const aiSettings: AiSettings = {
-      provider: settings.aiProvider as AiProviderType,
-      baseUrl: settings.aiBaseUrl,
-      apiKey: settings.aiApiKey,
-      model: settings.aiModel,
-      fallbackProvider: (settings.fallbackProvider || '') as
-        | AiProviderType
-        | '',
-      fallbackBaseUrl: settings.fallbackBaseUrl || '',
-      fallbackApiKey: settings.fallbackApiKey || '',
-      fallbackModel: settings.fallbackModel || '',
-    };
-
-    const sourcesForAI = entries.map((e) => ({
-      source: e.source,
-      displayName: e.displayName,
-      metrics: e.metrics,
-      deterministicMaximization: e.maximization,
-    }));
-
-    const promptData = {
-      totalTrades: computed.length,
-      totalSources: entries.length,
-      sources: sourcesForAI,
-      deterministicPortfolio: {
-        totalCurrentVelocity: portfolio.totalCurrentVelocity,
-        totalMaximizedVelocity: portfolio.totalMaximizedVelocity,
-        totalVelocityUplift: portfolio.totalVelocityUplift,
-        sourceVelocityRanking: portfolio.sourceVelocityRanking,
-        bestVelocitySource: portfolio.bestVelocitySource,
-      },
-      caps: {
-        profitPerWeekMin: PROFIT_PER_WEEK_MIN, profitPerWeekMax: PROFIT_PER_WEEK_MAX,
-        tradesPerWeekMin: TRADES_PER_WEEK_MIN, tradesPerWeekMax: TRADES_PER_WEEK_MAX,
-        profitPerTradeMin: PROFIT_PER_TRADE_MIN, profitPerTradeMax: PROFIT_PER_TRADE_MAX,
-        trendMin: TREND_MIN, trendMax: TREND_MAX,
-        scoreMin: SCORE_MIN, scoreMax: SCORE_MAX,
-        upliftMin: UPLIFT_MIN, upliftMax: UPLIFT_MAX,
-        projectionMin: PROJECTION_MIN, projectionMax: PROJECTION_MAX,
-      },
-    };
-
-    const prompt = `Si AI "Deal Source Profit Velocity Maximizer" za slovenske in srednjeevropske oglasne platforme (Bolha, Vinted, Avtonet, mobile.de).
+function buildPrompt(promptData: PromptData): string {
+  return `Si AI "Deal Source Profit Velocity Maximizer" za slovenske in srednjeevropske oglasne platforme (Bolha, Vinted, Avtonet, mobile.de).
 Si strokovnjak za PROFIT VELOCITY MAXIMIZATION per source — kako maksimizirati VELOCITY profit-a per source (kako hitro profit kopiči iz vsakega source-a, €/teden). Tvoj cilj je "Bolha generira 100€/teden v profit-u, ampak bi lahko generiral 180€/teden če povečaš trade frekvenco z 3/teden na 5/teden." Razlika od deal-source-cash-flow-maximizer (v8.06 ki maksimizira NET CASH FLOW per source po fees + carrying costs) — ti MAKSIMIZIRAŠ VELOCITY profit-a per source (€/teden kako hitro profit kopiči — timing + frequency + value, ne cash flow accounting). Razlika od deal-source-revenue-maximizer (v8.07 ki maksimizira total revenue per source) — ta maksimizira VELOCITY profit-a (€/teden, ne top-line revenue). Razlika od deal-source-profit-maximizer (v7.97 ki maksimizira total profit per source) — ta maksimizira VELOCITY (€/teden kako hitro profit kopiči, ne total profit). Razlika od deal-source-profit-per-trade-maximizer (v8.04 ki maksimizira profit per trade €) — ta maksimizira VELOCITY profit-a per source (€/teden frequency × profit per trade, ne sam per-trade value). Razlika od deal-source-margin-maximizer (v8.03 ki maksimizira margin %) — ta maksimizira VELOCITY z velocityMaximizationAction in frequencyScalingPlan. Razlika od deal-source-roi-maximizer (v8.00 ki maksimizira ROI per source) — ta maksimizira VELOCITY z velocityScore in velocityProjection. Razlika od deal-source-capital-efficiency-maximizer (v8.05 ki maksimizira capital efficiency per source = profit per euro per day) — ta maksimizira VELOCITY profit-a (€/teden kako hitro profit kopiči, ne profit per euro per day). Razlika od deal-source-volume-maximizer (v8.02 ki maksimizira trade volume per source) — ta maksimizira VELOCITY (trade frequency × profit per trade optimized, ne sam trade volume).
 
 DETERMINISTIČNI PODATKI (izračunano iz DB — SOLD trgovin v zadnjih 12 mesecih z linked Listing za source):
@@ -786,120 +691,257 @@ VRNI LE JSON:
   ],
   "summary": "2 source-a. Bolha 100€/teden → 180€/teden (+80€, INCREASE_FREQUENCY). Vinted 72€/teden → 90€/teden (+18€, INCREASE_PROFIT_PER_TRADE). Portfolio: 172€ → 270€/teden (+98€)."
 }${GROUNDING_PROMPT_SUFFIX}`;
+}
+
+function mergeAiResponse(
+  parsed: AiResponse | null,
+  detEntries: SourceEntry[],
+): { entries: SourceEntry[]; portfolio: PortfolioSummary; summary: string; aiUsed: boolean } {
+  if (!parsed || typeof parsed !== 'object') {
+    const detPortfolio = buildPortfolio(detEntries);
+    return {
+      entries: detEntries,
+      portfolio: detPortfolio,
+      summary: buildSummary(detEntries, detPortfolio),
+      aiUsed: false,
+    };
+  }
+
+  let entries = detEntries;
+  const aiSourcesMap = new Map<string, NonNullable<AiResponse['sources']>[number]>();
+  if (Array.isArray(parsed.sources)) {
+    for (const ai of parsed.sources) {
+      if (ai && typeof ai === 'object' && typeof ai.source === 'string') {
+        aiSourcesMap.set(ai.source, ai);
+      }
+    }
+  }
+
+  const newEntries: SourceEntry[] = [];
+  for (const det of detEntries) {
+    const ai = aiSourcesMap.get(det.source);
+    if (!ai || !ai.maximization) {
+      newEntries.push(det);
+      continue;
+    }
+
+    const aiMax = ai.maximization;
+    const action = clampEnum(
+      aiMax.velocityMaximizationAction,
+      VALID_ACTION,
+      det.maximization.velocityMaximizationAction,
+    );
+
+    // Anti-hallucination: maximizedProfitPerWeek ∈ [current, current × 1.5 ali +2000€]
+    const maxBound = Math.min(
+      PROFIT_PER_WEEK_MAX,
+      Math.max(
+        det.metrics.profitPerWeek + 50,
+        Math.min(det.metrics.profitPerWeek * 1.5 + 200, det.metrics.profitPerWeek + 2000),
+      ),
+    );
+    const minBound = Math.max(PROFIT_PER_WEEK_MIN, det.metrics.profitPerWeek);
+    const maximizedProfitPerWeek = round2(clampNum(
+      aiMax.maximizedProfitPerWeek,
+      minBound, maxBound,
+      det.maximization.maximizedProfitPerWeek,
+    ));
+    const velocityUplift = round2(clampNum(
+      Math.max(0, maximizedProfitPerWeek - det.metrics.profitPerWeek),
+      UPLIFT_MIN, UPLIFT_MAX, 0,
+    ));
+
+    // velocityLevers — must be array of strings
+    let velocityLevers: string[] = det.maximization.velocityLevers;
+    if (Array.isArray(aiMax.velocityLevers) && aiMax.velocityLevers.length >= 2) {
+      const aiLevers: string[] = [];
+      for (const l of aiMax.velocityLevers.slice(0, MAX_LEVERS)) {
+        aiLevers.push(clampString(l, 200, 'Velocity lever neopisan.'));
+      }
+      if (aiLevers.length >= 2) {
+        velocityLevers = aiLevers;
+      }
+    }
+
+    const frequencyScalingPlan = clampString(
+      aiMax.frequencyScalingPlan, 500, det.maximization.frequencyScalingPlan,
+    );
+
+    // velocityProjection — must be 3 entries with weeks 4/8/12
+    let velocityProjection: VelocityProjectionEntry[] = det.maximization.velocityProjection;
+    if (Array.isArray(aiMax.velocityProjection) &&
+        aiMax.velocityProjection.length >= 3) {
+      const aiProj: VelocityProjectionEntry[] = [];
+      const expectedWeeks = [4, 8, 12];
+      for (const expected of expectedWeeks) {
+        const ai = aiMax.velocityProjection.find(
+          (p) => p && Number(p.weeks) === expected,
+        );
+        if (!ai) continue;
+        const projectedProfitPerWeek = round2(clampNum(
+          ai.projectedProfitPerWeek,
+          PROJECTION_MIN, PROJECTION_MAX, 0,
+        ));
+        aiProj.push({ weeks: expected, projectedProfitPerWeek });
+      }
+      if (aiProj.length === 3) {
+        velocityProjection = aiProj;
+      }
+    }
+
+    newEntries.push({
+      source: det.source,
+      displayName: det.displayName,
+      metrics: det.metrics,
+      maximization: {
+        velocityMaximizationAction: action,
+        maximizedProfitPerWeek,
+        velocityUplift,
+        velocityLevers,
+        frequencyScalingPlan,
+        velocityProjection,
+      },
+    });
+  }
+
+  if (newEntries.length === detEntries.length) {
+    entries = newEntries;
+  }
+
+  // Rebuild portfolio with new entries
+  const portfolio = buildPortfolio(entries);
+
+  const summary = clampString(parsed.summary, 400, buildSummary(entries, portfolio));
+  return { entries, portfolio, summary, aiUsed: true };
+}
+
+// --- Handler -------------------------------------------------------------
+
+const dealSourceProfitVelocityMaximizerHandler = withAiRoute<DealSourceProfitVelocityMaximizerInput>({
+  endpoint: '/api/ai/deal-source-profit-velocity-maximizer',
+  maxDuration: 60,
+  enforceBudget: true, // AI klic — preveri budget
+  method: 'GET', // Endpoint sprejema GET + POST — bypass POST-only check
+
+  parseBody: async (req) => {
+    await req.json().catch(() => ({}));
+    return {};
+  },
+
+  // No validateInput — body ignored, identična logika za GET in POST
+  handler: async (_input, ctx: AiRouteContext) => {
+    const { db, callAi, parseAi, logger } = ctx;
+
+    const now = Date.now();
+    const twelveMonthsAgo = new Date(now - TWELVE_MONTHS_MS);
+
+    // 1) Query SOLD trades from last 12 months with linked Listing (for source)
+    const soldTrades = await db.trade.findMany({
+      where: {
+        status: 'sold',
+        sellDate: { gte: twelveMonthsAgo },
+        sellPrice: { gt: 0 },
+      },
+      select: {
+        id: true,
+        buyPrice: true,
+        buyFees: true,
+        buyDate: true,
+        sellPrice: true,
+        sellFees: true,
+        sellDate: true,
+        buyLocation: true,
+        listing: {
+          select: {
+            monitor: { select: { source: true, tags: true } },
+          },
+        },
+      },
+      orderBy: { sellDate: 'asc' },
+      take: 100000,
+    }) as unknown as SoldTradeRow[];
+
+    // Empty-state: no SOLD trades
+    if (soldTrades.length === 0) {
+      return apiOk({
+        ok: true,
+        sources: [],
+        portfolio: {
+          totalCurrentVelocity: 0,
+          totalMaximizedVelocity: 0,
+          totalVelocityUplift: 0,
+          sourceVelocityRanking: [],
+          bestVelocitySource: '',
+        },
+        summary: 'Ni SOLD trgovin v zadnjih 12 mesecih — Deal Source Profit Velocity Maximizer ni mogoč.',
+        aiUsed: false,
+        message: 'Ni SOLD trgovin v zadnjih 12 mesecih — Deal Source Profit Velocity Maximizer ni mogoč.',
+      } satisfies DealSourceProfitVelocityResponse);
+    }
+
+    // 2) Compute per-trade metrics and aggregate by source
+    const computed: TradeComputed[] = [];
+    for (const t of soldTrades) {
+      const c = computeTrade(t, now);
+      if (c) computed.push(c);
+    }
+
+    if (computed.length === 0) {
+      return apiOk({
+        ok: true,
+        sources: [],
+        portfolio: {
+          totalCurrentVelocity: 0,
+          totalMaximizedVelocity: 0,
+          totalVelocityUplift: 0,
+          sourceVelocityRanking: [],
+          bestVelocitySource: '',
+        },
+        summary: 'Ni veljavnih SOLD trgovin — Deal Source Profit Velocity Maximizer ni mogoč.',
+        aiUsed: false,
+        message: 'Ni veljavnih SOLD trgovin — Deal Source Profit Velocity Maximizer ni mogoč.',
+      } satisfies DealSourceProfitVelocityResponse);
+    }
+
+    const aggMap = aggregateBySource(computed);
+    let entries = buildSourceEntries(aggMap);
+    let portfolio = buildPortfolio(entries);
+    let summary = buildSummary(entries, portfolio);
+
+    // 3) AI cache check (6h TTL) — key by current month
+    const currentMonth = new Date(now).toISOString().slice(0, 7); // YYYY-MM
+    const cacheKey = `deal-source-profit-velocity-maximizer:${currentMonth}`;
+    const cached = getCachedAI<{
+      sources: SourceEntry[];
+      portfolio: PortfolioSummary;
+      summary: string;
+    }>(cacheKey);
+    if (cached) {
+      return apiOk({
+        ok: true,
+        sources: cached.sources,
+        portfolio: cached.portfolio,
+        summary: cached.summary,
+        cached: true,
+        aiUsed: true,
+      } satisfies DealSourceProfitVelocityResponse);
+    }
+
+    // 4) AI prompt with grounding
+    const promptData = buildPromptData(computed.length, entries, portfolio);
+    const prompt = buildPrompt(promptData);
 
     let aiUsed = false;
 
     try {
-      const raw = await callProviderForRaw(aiSettings, prompt);
-      const parsed = parseJsonLooseExported(raw) as AiResponse | null;
+      const raw = await callAi(prompt);
+      const parsed = parseAi(raw) as AiResponse | null;
 
-      if (parsed && typeof parsed === 'object') {
-        const aiSourcesMap = new Map<string, NonNullable<AiResponse['sources']>[number]>();
-        if (Array.isArray(parsed.sources)) {
-          for (const ai of parsed.sources) {
-            if (ai && typeof ai === 'object' && typeof ai.source === 'string') {
-              aiSourcesMap.set(ai.source, ai);
-            }
-          }
-        }
-
-        const newEntries: SourceEntry[] = [];
-        for (const det of entries) {
-          const ai = aiSourcesMap.get(det.source);
-          if (!ai || !ai.maximization) {
-            newEntries.push(det);
-            continue;
-          }
-
-          const aiMax = ai.maximization;
-          const action = clampEnum(
-            aiMax.velocityMaximizationAction,
-            VALID_ACTION,
-            det.maximization.velocityMaximizationAction,
-          );
-
-          // Anti-hallucination: maximizedProfitPerWeek ∈ [current, current × 1.5 ali +2000€]
-          const maxBound = Math.min(
-            PROFIT_PER_WEEK_MAX,
-            Math.max(
-              det.metrics.profitPerWeek + 50,
-              Math.min(det.metrics.profitPerWeek * 1.5 + 200, det.metrics.profitPerWeek + 2000),
-            ),
-          );
-          const minBound = Math.max(PROFIT_PER_WEEK_MIN, det.metrics.profitPerWeek);
-          const maximizedProfitPerWeek = round2(clampNum(
-            aiMax.maximizedProfitPerWeek,
-            minBound, maxBound,
-            det.maximization.maximizedProfitPerWeek,
-          ));
-          const velocityUplift = round2(clampNum(
-            Math.max(0, maximizedProfitPerWeek - det.metrics.profitPerWeek),
-            UPLIFT_MIN, UPLIFT_MAX, 0,
-          ));
-
-          // velocityLevers — must be array of strings
-          let velocityLevers: string[] = det.maximization.velocityLevers;
-          if (Array.isArray(aiMax.velocityLevers) && aiMax.velocityLevers.length >= 2) {
-            const aiLevers: string[] = [];
-            for (const l of aiMax.velocityLevers.slice(0, MAX_LEVERS)) {
-              aiLevers.push(clampString(l, 200, 'Velocity lever neopisan.'));
-            }
-            if (aiLevers.length >= 2) {
-              velocityLevers = aiLevers;
-            }
-          }
-
-          const frequencyScalingPlan = clampString(
-            aiMax.frequencyScalingPlan, 500, det.maximization.frequencyScalingPlan,
-          );
-
-          // velocityProjection — must be 3 entries with weeks 4/8/12
-          let velocityProjection: VelocityProjectionEntry[] = det.maximization.velocityProjection;
-          if (Array.isArray(aiMax.velocityProjection) &&
-              aiMax.velocityProjection.length >= 3) {
-            const aiProj: VelocityProjectionEntry[] = [];
-            const expectedWeeks = [4, 8, 12];
-            for (const expected of expectedWeeks) {
-              const ai = aiMax.velocityProjection.find(
-                (p) => p && Number(p.weeks) === expected,
-              );
-              if (!ai) continue;
-              const projectedProfitPerWeek = round2(clampNum(
-                ai.projectedProfitPerWeek,
-                PROJECTION_MIN, PROJECTION_MAX, 0,
-              ));
-              aiProj.push({ weeks: expected, projectedProfitPerWeek });
-            }
-            if (aiProj.length === 3) {
-              velocityProjection = aiProj;
-            }
-          }
-
-          newEntries.push({
-            source: det.source,
-            displayName: det.displayName,
-            metrics: det.metrics,
-            maximization: {
-              velocityMaximizationAction: action,
-              maximizedProfitPerWeek,
-              velocityUplift,
-              velocityLevers,
-              frequencyScalingPlan,
-              velocityProjection,
-            },
-          });
-        }
-
-        if (newEntries.length === entries.length) {
-          entries = newEntries;
-        }
-
-        // Rebuild portfolio with new entries
-        portfolio = buildPortfolio(entries);
-
-        summary = clampString(parsed.summary, 400, buildSummary(entries, portfolio));
-        aiUsed = true;
-      }
+      const result = mergeAiResponse(parsed, entries);
+      entries = result.entries;
+      portfolio = result.portfolio;
+      summary = result.summary;
+      aiUsed = result.aiUsed;
     } catch (err) {
       logger.warn(
         '/api/ai/deal-source-profit-velocity-maximizer',
@@ -913,22 +955,15 @@ VRNI LE JSON:
       setCachedAI(cacheKey, { sources: entries, portfolio, summary });
     }
 
-    return NextResponse.json({
+    return apiOk({
       ok: true,
       sources: entries,
       portfolio,
       summary,
       aiUsed,
     } satisfies DealSourceProfitVelocityResponse);
-  } catch (err: any) {
-    logger.error(
-      '/api/ai/deal-source-profit-velocity-maximizer',
-      'handler failed',
-      err,
-    );
-    return NextResponse.json(
-      { error: err?.message ?? 'Napaka' },
-      { status: 500 },
-    );
-  }
-}
+  },
+});
+
+export const GET = dealSourceProfitVelocityMaximizerHandler;
+export const POST = dealSourceProfitVelocityMaximizerHandler;
