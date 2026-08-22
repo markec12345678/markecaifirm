@@ -16,23 +16,14 @@
 //
 // GET+POST /api/ai/deal-anatomy-analyzer
 // (AI-enhanced + grounding + anti-hallucination + 6h cache + deterministic fallback)
+// Refaktoriran z withAiRoute helperjem (v8.96.9) + enforceBudget guard.
 
-import { NextRequest, NextResponse } from 'next/server';
-import { db } from '@/lib/db';
-import { getSettingsRow } from '@/lib/pipeline';
-import {
-  callProviderForRaw,
-  parseJsonLooseExported,
-  type AiProviderType,
-  type AiSettings,
-} from '@/lib/ai';
+import { withAiRoute, AI_ROUTE_DEFAULTS, type AiRouteContext } from '@/lib/with-ai-route';
+import { apiOk } from '@/lib/api-response';
 import { GROUNDING_PROMPT_SUFFIX } from '@/lib/anti-hallucination';
 import { getCachedAI, setCachedAI } from '@/lib/ai-cache';
-import { checkRateLimit, rateLimitResponse } from '@/lib/rate-limit';
-import { logger } from '@/lib/logger';
 
-export const runtime = 'nodejs';
-export const dynamic = 'force-dynamic';
+export const { runtime, dynamic } = AI_ROUTE_DEFAULTS;
 export const maxDuration = 60;
 
 // --- Types ---------------------------------------------------------------
@@ -508,19 +499,27 @@ function buildDeterministicDealDNA(
   };
 }
 
+// --- Input ---------------------------------------------------------------
+
+// eslint-disable-next-line @typescript-eslint/no-empty-object-type
+interface DealAnatomyAnalyzerInput {}
+
 // --- Handler -------------------------------------------------------------
 
-export async function GET(req: NextRequest) {
-  return handleDealAnatomy(req);
-}
-export async function POST(req: NextRequest) {
-  return handleDealAnatomy(req);
-}
+const dealAnatomyAnalyzerHandler = withAiRoute<DealAnatomyAnalyzerInput>({
+  endpoint: '/api/ai/deal-anatomy-analyzer',
+  maxDuration: 60,
+  enforceBudget: true, // AI klic — preveri budget
+  method: 'GET', // GET+POST — body ignored
 
-async function handleDealAnatomy(req: NextRequest) {
-  try {
-    const rl = checkRateLimit(req, 'ai-deal-anatomy', 20);
-    if (!rl.allowed) return rateLimitResponse(rl);
+  parseBody: async (req) => {
+    await req.json().catch(() => ({}));
+    return {};
+  },
+
+  // No validateInput — body ignored
+  handler: async (_input, ctx: AiRouteContext) => {
+    const { db, callAi, parseAi, logger } = ctx;
 
     // 1) Query all SOLD trades with linked Listing (for dealScore, estValue,
     //    sellerName, monitor.source)
@@ -558,7 +557,7 @@ async function handleDealAnatomy(req: NextRequest) {
 
     // Empty state
     if (totalSold === 0) {
-      return NextResponse.json({
+      return apiOk({
         ok: true,
         anatomy: {
           winners: {
@@ -678,7 +677,7 @@ async function handleDealAnatomy(req: NextRequest) {
       cacheKey,
     );
     if (cached) {
-      return NextResponse.json({
+      return apiOk({
         ok: true,
         anatomy,
         dealDNA: cached.dealDNA,
@@ -697,20 +696,6 @@ async function handleDealAnatomy(req: NextRequest) {
     );
 
     // 6) AI prompt with grounding
-    const settings = await getSettingsRow();
-    const aiSettings: AiSettings = {
-      provider: settings.aiProvider as AiProviderType,
-      baseUrl: settings.aiBaseUrl,
-      apiKey: settings.aiApiKey,
-      model: settings.aiModel,
-      fallbackProvider: (settings.fallbackProvider || '') as
-        | AiProviderType
-        | '',
-      fallbackBaseUrl: settings.fallbackBaseUrl || '',
-      fallbackApiKey: settings.fallbackApiKey || '',
-      fallbackModel: settings.fallbackModel || '',
-    };
-
     // Build a compact trade listing for the AI (top 10 winners + top 10 losers by profit)
     const winTop = [...winners]
       .sort((a, b) => b.profit - a.profit)
@@ -816,10 +801,8 @@ VRNI LE JSON:
     let aiUsed = false;
 
     try {
-      const raw = await callProviderForRaw(aiSettings, prompt);
-      const parsed = parseJsonLooseExported(
-        raw,
-      ) as AiAnatomyResponse | null;
+      const raw = await callAi(prompt);
+      const parsed = parseAi(raw) as AiAnatomyResponse | null;
 
       if (parsed && typeof parsed === 'object') {
         // Parse dealDNA
@@ -1050,18 +1033,15 @@ VRNI LE JSON:
       setCachedAI(cacheKey, { dealDNA, summary });
     }
 
-    return NextResponse.json({
+    return apiOk({
       ok: true,
       anatomy,
       dealDNA,
       summary,
       aiUsed,
     });
-  } catch (err: any) {
-    logger.error('/api/ai/deal-anatomy-analyzer', 'handler failed', err);
-    return NextResponse.json(
-      { error: err?.message ?? 'Napaka' },
-      { status: 500 },
-    );
-  }
-}
+  },
+});
+
+export const GET = dealAnatomyAnalyzerHandler;
+export const POST = dealAnatomyAnalyzerHandler;

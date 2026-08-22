@@ -1,4 +1,4 @@
-// v7.86: AI Inventory Performance Forecaster — AI napove PORTFOLIO-level
+// v7.86 / v8.96.9-final2: AI Inventory Performance Forecaster — AI napove PORTFOLIO-level
 // PERFORMANCE celotnega inventarja za naslednje 30/60/90 dni — projected
 // profit, turnover, capital efficiency. Razlika od individual item forecasters
 // (ki napovedujejo posamezne item-e) — ta je PORTFOLIO-level prediction.
@@ -20,23 +20,14 @@
 //
 // GET+POST /api/ai/inventory-performance-forecaster
 // (AI-enhanced + grounding + anti-hallucination + 6h cache + deterministic fallback)
+// Refaktoriran z withAiRoute helperjem (v8.96.9) + enforceBudget guard.
 
-import { NextRequest, NextResponse } from 'next/server';
-import { db } from '@/lib/db';
-import { getSettingsRow } from '@/lib/pipeline';
-import {
-  callProviderForRaw,
-  parseJsonLooseExported,
-  type AiProviderType,
-  type AiSettings,
-} from '@/lib/ai';
+import { withAiRoute, AI_ROUTE_DEFAULTS, type AiRouteContext } from '@/lib/with-ai-route';
+import { apiOk } from '@/lib/api-response';
 import { GROUNDING_PROMPT_SUFFIX } from '@/lib/anti-hallucination';
 import { getCachedAI, setCachedAI } from '@/lib/ai-cache';
-import { checkRateLimit, rateLimitResponse } from '@/lib/rate-limit';
-import { logger } from '@/lib/logger';
 
-export const runtime = 'nodejs';
-export const dynamic = 'force-dynamic';
+export const { runtime, dynamic } = AI_ROUTE_DEFAULTS;
 export const maxDuration = 60;
 
 // --- Types ---------------------------------------------------------------
@@ -679,19 +670,27 @@ function buildDeterministicSummary(
   return `Inventar: ${totalItems} item-ov, ${totalInvested}€ investirano, estValue ${totalEstValue}€. 30d forecast: +${projectedProfit30d}€ profit. Grade: ${projectedPerformanceGrade}. Confidence: ${confidenceLevel}%.`;
 }
 
+// --- Input ---------------------------------------------------------------
+
+// eslint-disable-next-line @typescript-eslint/no-empty-object-type
+interface InventoryPerformanceForecasterInput {}
+
 // --- Handler -------------------------------------------------------------
 
-export async function GET(req: NextRequest) {
-  return handleInventoryPerformanceForecaster(req);
-}
-export async function POST(req: NextRequest) {
-  return handleInventoryPerformanceForecaster(req);
-}
+const inventoryPerformanceForecasterHandler = withAiRoute<InventoryPerformanceForecasterInput>({
+  endpoint: '/api/ai/inventory-performance-forecaster',
+  maxDuration: 60,
+  enforceBudget: true, // AI klic — preveri budget
+  method: 'GET', // GET+POST — body ignored
 
-async function handleInventoryPerformanceForecaster(req: NextRequest) {
-  try {
-    const rl = checkRateLimit(req, 'ai-inventory-performance-forecaster', 20);
-    if (!rl.allowed) return rateLimitResponse(rl);
+  parseBody: async (req) => {
+    await req.json().catch(() => ({}));
+    return {};
+  },
+
+  // No validateInput — body ignored
+  handler: async (_input, ctx: AiRouteContext) => {
+    const { db, callAi, parseAi, logger } = ctx;
 
     const now = Date.now();
     const cutoff12m = new Date(now - HORIZON_12M);
@@ -744,7 +743,7 @@ async function handleInventoryPerformanceForecaster(req: NextRequest) {
 
     // Empty state
     if (inventory.totalItems === 0) {
-      return NextResponse.json({
+      return apiOk({
         ok: true,
         inventory,
         historical,
@@ -793,7 +792,7 @@ async function handleInventoryPerformanceForecaster(req: NextRequest) {
       summary: string;
     }>(cacheKey);
     if (cached) {
-      return NextResponse.json({
+      return apiOk({
         ok: true,
         inventory,
         historical,
@@ -806,19 +805,6 @@ async function handleInventoryPerformanceForecaster(req: NextRequest) {
     }
 
     // 4) AI prompt with grounding
-    const settings = await getSettingsRow();
-    const aiSettings: AiSettings = {
-      provider: settings.aiProvider as AiProviderType,
-      baseUrl: settings.aiBaseUrl,
-      apiKey: settings.aiApiKey,
-      model: settings.aiModel,
-      fallbackProvider: (settings.fallbackProvider || '') as
-        | AiProviderType
-        | '',
-      fallbackBaseUrl: settings.fallbackBaseUrl || '',
-      fallbackApiKey: settings.fallbackApiKey || '',
-      fallbackModel: settings.fallbackModel || '',
-    };
 
     // Cap profit ceiling at totalEstValue × 0.5 (anti-hallucination)
     const profitCap30d = inventory.totalEstValue * 0.5;
@@ -888,10 +874,8 @@ VRNI LE JSON:
     let aiUsed = false;
 
     try {
-      const raw = await callProviderForRaw(aiSettings, prompt);
-      const parsed = parseJsonLooseExported(
-        raw,
-      ) as AiPerformanceResponse | null;
+      const raw = await callAi(prompt);
+      const parsed = parseAi(raw) as AiPerformanceResponse | null;
 
       if (parsed && typeof parsed === 'object') {
         // 1) forecast override (with anti-hallucination)
@@ -1066,7 +1050,7 @@ VRNI LE JSON:
       });
     }
 
-    return NextResponse.json({
+    return apiOk({
       ok: true,
       inventory,
       historical,
@@ -1075,15 +1059,8 @@ VRNI LE JSON:
       summary: finalSummary,
       aiUsed,
     });
-  } catch (err: any) {
-    logger.error(
-      '/api/ai/inventory-performance-forecaster',
-      'handler failed',
-      err,
-    );
-    return NextResponse.json(
-      { error: err?.message ?? 'Napaka' },
-      { status: 500 },
-    );
-  }
-}
+  },
+});
+
+export const GET = inventoryPerformanceForecasterHandler;
+export const POST = inventoryPerformanceForecasterHandler;

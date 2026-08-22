@@ -1,4 +1,4 @@
-// v7.87: AI Market Cycle Phase Predictor — AI napove EXACT TIMING market
+// v7.87 / v8.96.9-final3: AI Market Cycle Phase Predictor — AI napove EXACT TIMING market
 // cycle phase transitions — kdaj se bo MARKUP končal in DISTRIBUTION začel?
 // Uporablja multiple indicators (price/volume/dealQuality/sentiment momentum)
 // za prediction phase transition dates z confidence. Razlika od market-cycle-detector
@@ -10,24 +10,20 @@
 //
 // GET+POST /api/ai/market-cycle-phase-predictor
 // (AI-enhanced + grounding + anti-hallucination + 6h cache + deterministic fallback)
+// Refaktoriran z withAiRoute helperjem (v8.96.9) + enforceBudget guard.
 
-import { NextRequest, NextResponse } from 'next/server';
-import { db } from '@/lib/db';
-import { getSettingsRow } from '@/lib/pipeline';
-import {
-  callProviderForRaw,
-  parseJsonLooseExported,
-  type AiProviderType,
-  type AiSettings,
-} from '@/lib/ai';
+import { withAiRoute, AI_ROUTE_DEFAULTS, type AiRouteContext } from '@/lib/with-ai-route';
+import { apiOk } from '@/lib/api-response';
 import { GROUNDING_PROMPT_SUFFIX } from '@/lib/anti-hallucination';
 import { getCachedAI, setCachedAI } from '@/lib/ai-cache';
-import { checkRateLimit, rateLimitResponse } from '@/lib/rate-limit';
-import { logger } from '@/lib/logger';
 
-export const runtime = 'nodejs';
-export const dynamic = 'force-dynamic';
+export const { runtime, dynamic } = AI_ROUTE_DEFAULTS;
 export const maxDuration = 60;
+
+// --- Input ----------------------------------------------------------------
+
+// eslint-disable-next-line @typescript-eslint/no-empty-object-type
+interface MarketCyclePhasePredictorInput {}
 
 // --- Types ---------------------------------------------------------------
 
@@ -625,19 +621,315 @@ function emptyWeeklyAgg(): WeeklyAgg {
   };
 }
 
-// --- Handler -------------------------------------------------------------
+// --- Prompt + AI response sanitization (anti-hallucination overrides) -----
 
-export async function GET(req: NextRequest) {
-  return handleMarketCyclePhasePredictor(req);
-}
-export async function POST(req: NextRequest) {
-  return handleMarketCyclePhasePredictor(req);
+interface PromptData {
+  currentPhase: CurrentPhaseInfo;
+  indicators: Indicators;
+  deterministicPrediction: PhaseTransitionPrediction;
+  deterministicStrategy: Strategy;
+  weeklyData: {
+    last13Weeks: Array<{
+      weekStart: string;
+      avgPrice: number;
+      volume: number;
+      avgDealScore: number;
+      sentimentRatio: number;
+    }>;
+    volatilityIndex: number;
+    totalWeeks: number;
+  };
 }
 
-async function handleMarketCyclePhasePredictor(req: NextRequest) {
-  try {
-    const rl = checkRateLimit(req, 'ai-market-cycle-phase-predictor', 20);
-    if (!rl.allowed) return rateLimitResponse(rl);
+function buildPromptData(
+  currentPhase: CurrentPhaseInfo,
+  indicators: Indicators,
+  detPrediction: PhaseTransitionPrediction,
+  detStrategy: Strategy,
+  last13Weeks: number[],
+  weeklyAvgPrice13: number[],
+  weeklyVolume13: number[],
+  weeklyDealScore13: number[],
+  weeklySentiment13: number[],
+  volatilityIndex: number,
+  sortedWeekKeysCount: number,
+): PromptData {
+  return {
+    currentPhase,
+    indicators,
+    deterministicPrediction: detPrediction,
+    deterministicStrategy: detStrategy,
+    weeklyData: {
+      last13Weeks: last13Weeks.map((wk, i) => ({
+        weekStart: isoDate(wk),
+        avgPrice: round1(weeklyAvgPrice13[i]!),
+        volume: weeklyVolume13[i]!,
+        avgDealScore: round1(weeklyDealScore13[i]!),
+        sentimentRatio: round2(weeklySentiment13[i]!),
+      })),
+      volatilityIndex,
+      totalWeeks: sortedWeekKeysCount,
+    },
+  };
+}
+
+function buildPrompt(promptData: PromptData, detPrediction: PhaseTransitionPrediction): string {
+  return `Si AI "Market Cycle Phase Predictor" za slovenske in srednjeevropske oglasne platforme (Bolha, Vinted, Facebook, Avtonet, mobile.de).
+Napoveš EXACT TIMING market cycle phase transitions — kdaj se bo trenutna faza končala in katera bo naslednja. Uporabljaš Wyckoff-inspired 4-fazni cikel: ACCUMULATION → MARKUP → DISTRIBUTION → DECLINE → ACCUMULATION.
+
+DETERMINISTIČNI PODATKI (izračunano iz DB):
+${JSON.stringify(promptData, null, 2)}
+
+PRAVILA ZA AI ODGOVOR:
+1. prediction: {
+   - nextPhase: ACCUMULATION|MARKUP|DISTRIBUTION|DECLINE (logični naslednik trenutne faze — validiraj z Wyckoff cycle)
+   - predictedTransitionDate: ISO date (YYYY-MM-DD), ±7 dni od deterministične (${detPrediction.predictedTransitionDate})
+   - daysUntilTransition: 0-180, ±14 dni od deterministične (${detPrediction.daysUntilTransition})
+   - transitionConfidence: 0-100, ±15 od deterministične (${detPrediction.transitionConfidence})
+   - transitionSignals: 2-5 signalov (max 200 chars vsak) — kateri indikatorji nakazujejo transition (npr. "priceMomentum decelerating", "volume acceleration negative", "phase maturity LATE", "dealQuality declining")
+}
+2. strategy: {
+   - preTransitionActions: 2-4 akcije z { action (max 200, slovensko), priority: HIGH|MEDIUM|LOW, timing (max 80, slovensko — npr. "V naslednjih 7 dneh") }
+     * Akcije ki jih mora trader narediti ZDAJ da se pripravi na transition.
+     * MARKUP→DISTRIBUTION: začni prodajo inventarja.
+     * DISTRIBUTION→DECLINE: zaključi selling, zadrži kapital.
+     * DECLINE→ACCUMULATION: postavi buy alerts za bottom.
+     * ACCUMULATION→MARKUP: povečaj buying volume.
+   - postTransitionStrategy: slovenski opis (max 400 znakov) — kaj narediti PO prehodu v naslednjo fazo.
+   - phaseStrategy: slovenski opis (max 400 znakov) — kaj narediti v trenutni fazi (dodatno k preTransitionActions).
+}
+3. summary: slovenski povzetek (max 400 znakov). NE izmišljuj številk — uporabi zgornje deterministične.
+
+VRNI LE JSON:
+{
+  "prediction": {
+    "nextPhase": "DISTRIBUTION",
+    "predictedTransitionDate": "2026-09-15",
+    "daysUntilTransition": 18,
+    "transitionConfidence": 72,
+    "transitionSignals": [
+      "MARKUP faza v LATE maturity (10 tednov) — trend se izrablja.",
+      "priceMomentum decelerating (acceleration -0.4) — signal transition.",
+      "Phase intensity 85/100 — močan signal v smeri MARKUP, vendar bo prešel v DISTRIBUTION."
+    ]
+  },
+  "strategy": {
+    "preTransitionActions": [
+      { "action": "Začni postopno prodajo inventarja (50% v naslednjih 7-14 dneh)", "priority": "HIGH", "timing": "V naslednjih 7 dneh" },
+      { "action": "Ustavi nove nakupe (razen exception deal-ov >70% margin)", "priority": "HIGH", "timing": "Takoj" }
+    ],
+    "postTransitionStrategy": "Po prehodu v DISTRIBUTION: prodaj inventar, cene so na vrhu. Fokus na selling + cash collection.",
+    "phaseStrategy": "Trenutno MARKUP (LATE) — bull faza, vendar se bliža DISTRIBUTION. Nadaljuj nakupe manj agresivno in pripravi selling strategijo."
+  },
+  "summary": "Current: MARKUP (LATE, 85% intensity, 10w). Next: DISTRIBUTION v ~18d (2026-09-15). Confidence 72%. Action: start selling NOW."
+}${GROUNDING_PROMPT_SUFFIX}`;
+}
+
+function mergeAiIntoResponse(
+  parsed: AiPhaseResponse | null,
+  prediction: PhaseTransitionPrediction,
+  strategy: Strategy,
+  detPrediction: PhaseTransitionPrediction,
+  detStrategy: Strategy,
+  phase: CyclePhase,
+  currentPhase: CurrentPhaseInfo,
+  detSummary: string,
+): {
+  prediction: PhaseTransitionPrediction;
+  strategy: Strategy;
+  summary: string;
+  aiUsed: boolean;
+} {
+  let finalSummary = detSummary;
+  let aiUsed = false;
+
+  if (parsed && typeof parsed === 'object') {
+    // 1) prediction override (with anti-hallucination)
+    if (parsed.prediction && typeof parsed.prediction === 'object') {
+      const p = parsed.prediction as Record<string, unknown>;
+
+      // nextPhase: validate against Wyckoff cycle
+      const aiNext = clampEnum(p.nextPhase, VALID_PHASE, detPrediction.nextPhase);
+      prediction.nextPhase = aiNext === NEXT_PHASE_MAP[phase]
+        ? aiNext
+        : detPrediction.nextPhase;
+
+      // predictedTransitionDate: ±7 days from deterministic
+      if (typeof p.predictedTransitionDate === 'string') {
+        const parsedDate = Date.parse(p.predictedTransitionDate);
+        if (Number.isFinite(parsedDate)) {
+          const detDate = Date.parse(detPrediction.predictedTransitionDate);
+          const offset = parsedDate - detDate;
+          const clampedOffset = Math.max(-7 * DAY_MS, Math.min(7 * DAY_MS, offset));
+          prediction.predictedTransitionDate = isoDate(detDate + clampedOffset);
+        }
+      }
+
+      // daysUntilTransition: ±14 from deterministic, clamped [0, 180]
+      if (p.daysUntilTransition != null) {
+        const det = detPrediction.daysUntilTransition;
+        const adj = clampNumber(p.daysUntilTransition, DAYS_UNTIL_MIN, DAYS_UNTIL_MAX, det);
+        prediction.daysUntilTransition = round0(
+          Math.max(
+            DAYS_UNTIL_MIN,
+            Math.min(
+              DAYS_UNTIL_MAX,
+              det + Math.max(-14, Math.min(14, adj - det)),
+            ),
+          ),
+        );
+      }
+
+      // transitionConfidence: ±15 from deterministic, clamped [0, 100]
+      if (p.transitionConfidence != null) {
+        const det = detPrediction.transitionConfidence;
+        const adj = clampNumber(p.transitionConfidence, CONFIDENCE_MIN, CONFIDENCE_MAX, det);
+        prediction.transitionConfidence = round0(
+          Math.max(
+            CONFIDENCE_MIN,
+            Math.min(
+              CONFIDENCE_MAX,
+              det + Math.max(-15, Math.min(15, adj - det)),
+            ),
+          ),
+        );
+      }
+
+      // transitionSignals
+      if (Array.isArray(p.transitionSignals)) {
+        const signals = (p.transitionSignals as unknown[])
+          .map((s: unknown) => clampString(s, 200, ''))
+          .filter((s) => s.length > 0)
+          .slice(0, 5);
+        if (signals.length > 0) prediction.transitionSignals = signals;
+      }
+    }
+
+    // 2) strategy override
+    if (parsed.strategy && typeof parsed.strategy === 'object') {
+      const s = parsed.strategy as Record<string, unknown>;
+
+      if (Array.isArray(s.preTransitionActions)) {
+        const aiActions = (s.preTransitionActions as unknown[])
+          .map((ac: unknown) => {
+            const a2 = ac as Record<string, unknown>;
+            if (!a2 || typeof a2 !== 'object') return null;
+            const action = clampString(a2.action, 200, '');
+            if (!action) return null;
+            const priority = clampEnum(a2.priority, VALID_PRIORITY, 'MEDIUM');
+            const timing = clampString(a2.timing, 80, '');
+            if (!timing) return null;
+            return { action, priority, timing };
+          })
+          .filter((ac): ac is StrategyAction => ac !== null)
+          .slice(0, 4);
+        if (aiActions.length > 0) strategy.preTransitionActions = aiActions;
+      }
+
+      if (typeof s.postTransitionStrategy === 'string' && s.postTransitionStrategy.trim()) {
+        strategy.postTransitionStrategy = clampString(
+          s.postTransitionStrategy,
+          400,
+          detStrategy.postTransitionStrategy,
+        );
+      }
+      if (typeof s.phaseStrategy === 'string' && s.phaseStrategy.trim()) {
+        strategy.phaseStrategy = clampString(
+          s.phaseStrategy,
+          400,
+          detStrategy.phaseStrategy,
+        );
+      }
+    }
+
+    // 3) summary
+    if (typeof parsed.summary === 'string' && parsed.summary.trim()) {
+      finalSummary = clampString(parsed.summary, 400, buildDeterministicSummary(currentPhase, prediction));
+    }
+
+    aiUsed = true;
+  }
+
+  return { prediction, strategy, summary: finalSummary, aiUsed };
+}
+
+// --- Empty-state response ------------------------------------------------
+
+interface EmptyStateArgs {
+  sortedWeekKeysLength: number;
+  now: number;
+}
+
+function buildEmptyStateResponse(args: EmptyStateArgs): {
+  ok: true;
+  currentPhase: CurrentPhaseInfo;
+  indicators: Indicators;
+  prediction: PhaseTransitionPrediction;
+  strategy: Strategy;
+  summary: string;
+  aiUsed: boolean;
+  message: string;
+} {
+  const { sortedWeekKeysLength, now } = args;
+  return {
+    ok: true,
+    currentPhase: {
+      phase: 'ACCUMULATION',
+      phaseIntensityScore: 0,
+      phaseMaturity: 'EARLY',
+      weeksInPhase: sortedWeekKeysLength,
+    },
+    indicators: {
+      priceMomentum: { slope: 0, acceleration: 0, signal: 'Ni dovolj tedenskih podatkov.' },
+      volumeMomentum: { slope: 0, acceleration: 0, signal: 'Ni dovolj tedenskih podatkov.' },
+      dealQualityMomentum: { slope: 0, signal: 'Ni dovolj tedenskih podatkov.' },
+      sentimentMomentum: { slope: 0, signal: 'Ni dovolj tedenskih podatkov.' },
+    },
+    prediction: {
+      nextPhase: 'MARKUP',
+      predictedTransitionDate: isoDate(now + 90 * DAY_MS),
+      daysUntilTransition: 90,
+      transitionConfidence: 10,
+      transitionSignals: [
+        `Premalo tedenskih podatkov (${sortedWeekKeysLength} tednov) — zberi vsaj 4 tedne za zanesljivo phase prediction.`,
+      ],
+    },
+    strategy: {
+      preTransitionActions: [
+        { action: 'Zberi vsaj 4 tedne podatkov za zanesljivo analizo', priority: 'MEDIUM', timing: 'V naslednjih 30 dni' },
+      ],
+      postTransitionStrategy: 'Premalo podatkov za post-transition strategijo.',
+      phaseStrategy: 'Premalo podatkov za phase strategijo.',
+    },
+    summary:
+      sortedWeekKeysLength === 0
+        ? 'Ni listing-ov v zadnjih 365 dneh — Market Cycle Phase Predictor ni mogoč.'
+        : `Premalo tedenskih podatkov (${sortedWeekKeysLength} tednov) — zberi vsaj 4 tedne za zanesljivo analizo.`,
+    aiUsed: false,
+    message:
+      sortedWeekKeysLength === 0
+        ? 'Ni listing-ov v zadnjih 365 dneh — Market Cycle Phase Predictor ni mogoč.'
+        : `Premalo tedenskih podatkov (${sortedWeekKeysLength} tednov) — zberi vsaj 4 tedne za zanesljivo analizo.`,
+  };
+}
+
+// --- Route handler -------------------------------------------------------
+
+export const marketCyclePhasePredictorHandler = withAiRoute<MarketCyclePhasePredictorInput>({
+  endpoint: '/api/ai/market-cycle-phase-predictor',
+  maxDuration: 60,
+  enforceBudget: true, // AI klic — preveri budget
+  method: 'GET', // GET+POST dual-handler — bypass POST-only check
+
+  parseBody: async (req) => {
+    await req.json().catch(() => ({}));
+    return {};
+  },
+
+  // No validateInput — body ignored, identična logika za GET in POST
+
+  handler: async (_input, ctx: AiRouteContext) => {
+    const { db, callAi, parseAi, logger } = ctx;
 
     const now = Date.now();
     const cutoff = new Date(now - HORIZON_365D);
@@ -688,46 +980,10 @@ async function handleMarketCyclePhasePredictor(req: NextRequest) {
 
     // Empty state
     if (sortedWeekKeys.length < 4) {
-      return NextResponse.json({
-        ok: true,
-        currentPhase: {
-          phase: 'ACCUMULATION',
-          phaseIntensityScore: 0,
-          phaseMaturity: 'EARLY',
-          weeksInPhase: sortedWeekKeys.length,
-        },
-        indicators: {
-          priceMomentum: { slope: 0, acceleration: 0, signal: 'Ni dovolj tedenskih podatkov.' },
-          volumeMomentum: { slope: 0, acceleration: 0, signal: 'Ni dovolj tedenskih podatkov.' },
-          dealQualityMomentum: { slope: 0, signal: 'Ni dovolj tedenskih podatkov.' },
-          sentimentMomentum: { slope: 0, signal: 'Ni dovolj tedenskih podatkov.' },
-        },
-        prediction: {
-          nextPhase: 'MARKUP',
-          predictedTransitionDate: isoDate(now + 90 * DAY_MS),
-          daysUntilTransition: 90,
-          transitionConfidence: 10,
-          transitionSignals: [
-            `Premalo tedenskih podatkov (${sortedWeekKeys.length} tednov) — zberi vsaj 4 tedne za zanesljivo phase prediction.`,
-          ],
-        },
-        strategy: {
-          preTransitionActions: [
-            { action: 'Zberi vsaj 4 tedne podatkov za zanesljivo analizo', priority: 'MEDIUM', timing: 'V naslednjih 30 dni' },
-          ],
-          postTransitionStrategy: 'Premalo podatkov za post-transition strategijo.',
-          phaseStrategy: 'Premalo podatkov za phase strategijo.',
-        },
-        summary:
-          sortedWeekKeys.length === 0
-            ? 'Ni listing-ov v zadnjih 365 dneh — Market Cycle Phase Predictor ni mogoč.'
-            : `Premalo tedenskih podatkov (${sortedWeekKeys.length} tednov) — zberi vsaj 4 tedne za zanesljivo analizo.`,
-        aiUsed: false,
-        message:
-          sortedWeekKeys.length === 0
-            ? 'Ni listing-ov v zadnjih 365 dneh — Market Cycle Phase Predictor ni mogoč.'
-            : `Premalo tedenskih podatkov (${sortedWeekKeys.length} tednov) — zberi vsaj 4 tedne za zanesljivo analizo.`,
-      });
+      return apiOk(buildEmptyStateResponse({
+        sortedWeekKeysLength: sortedWeekKeys.length,
+        now,
+      }));
     }
 
     // 3) Compute indicators
@@ -884,7 +1140,7 @@ async function handleMarketCyclePhasePredictor(req: NextRequest) {
       summary: string;
     }>(cacheKey);
     if (cached) {
-      return NextResponse.json({
+      return apiOk({
         ok: true,
         currentPhase,
         indicators,
@@ -897,200 +1153,41 @@ async function handleMarketCyclePhasePredictor(req: NextRequest) {
     }
 
     // 6) AI prompt with grounding
-    const settings = await getSettingsRow();
-    const aiSettings: AiSettings = {
-      provider: settings.aiProvider as AiProviderType,
-      baseUrl: settings.aiBaseUrl,
-      apiKey: settings.aiApiKey,
-      model: settings.aiModel,
-      fallbackProvider: (settings.fallbackProvider || '') as
-        | AiProviderType
-        | '',
-      fallbackBaseUrl: settings.fallbackBaseUrl || '',
-      fallbackApiKey: settings.fallbackApiKey || '',
-      fallbackModel: settings.fallbackModel || '',
-    };
-
-    const promptData = {
+    const promptData = buildPromptData(
       currentPhase,
       indicators,
-      deterministicPrediction: detPrediction,
-      deterministicStrategy: detStrategy,
-      weeklyData: {
-        last13Weeks: last13Weeks.map((wk, i) => ({
-          weekStart: isoDate(wk),
-          avgPrice: round1(weeklyAvgPrice13[i]),
-          volume: weeklyVolume13[i],
-          avgDealScore: round1(weeklyDealScore13[i]!),
-          sentimentRatio: round2(weeklySentiment13[i]!),
-        })),
-        volatilityIndex,
-        totalWeeks: sortedWeekKeys.length,
-      },
-    };
-
-    const prompt = `Si AI "Market Cycle Phase Predictor" za slovenske in srednjeevropske oglasne platforme (Bolha, Vinted, Facebook, Avtonet, mobile.de).
-Napoveš EXACT TIMING market cycle phase transitions — kdaj se bo trenutna faza končala in katera bo naslednja. Uporabljaš Wyckoff-inspired 4-fazni cikel: ACCUMULATION → MARKUP → DISTRIBUTION → DECLINE → ACCUMULATION.
-
-DETERMINISTIČNI PODATKI (izračunano iz DB):
-${JSON.stringify(promptData, null, 2)}
-
-PRAVILA ZA AI ODGOVOR:
-1. prediction: {
-   - nextPhase: ACCUMULATION|MARKUP|DISTRIBUTION|DECLINE (logični naslednik trenutne faze — validiraj z Wyckoff cycle)
-   - predictedTransitionDate: ISO date (YYYY-MM-DD), ±7 dni od deterministične (${detPrediction.predictedTransitionDate})
-   - daysUntilTransition: 0-180, ±14 dni od deterministične (${detPrediction.daysUntilTransition})
-   - transitionConfidence: 0-100, ±15 od deterministične (${detPrediction.transitionConfidence})
-   - transitionSignals: 2-5 signalov (max 200 chars vsak) — kateri indikatorji nakazujejo transition (npr. "priceMomentum decelerating", "volume acceleration negative", "phase maturity LATE", "dealQuality declining")
-}
-2. strategy: {
-   - preTransitionActions: 2-4 akcije z { action (max 200, slovensko), priority: HIGH|MEDIUM|LOW, timing (max 80, slovensko — npr. "V naslednjih 7 dneh") }
-     * Akcije ki jih mora trader narediti ZDAJ da se pripravi na transition.
-     * MARKUP→DISTRIBUTION: začni prodajo inventarja.
-     * DISTRIBUTION→DECLINE: zaključi selling, zadrži kapital.
-     * DECLINE→ACCUMULATION: postavi buy alerts za bottom.
-     * ACCUMULATION→MARKUP: povečaj buying volume.
-   - postTransitionStrategy: slovenski opis (max 400 znakov) — kaj narediti PO prehodu v naslednjo fazo.
-   - phaseStrategy: slovenski opis (max 400 znakov) — kaj narediti v trenutni fazi (dodatno k preTransitionActions).
-}
-3. summary: slovenski povzetek (max 400 znakov). NE izmišljuj številk — uporabi zgornje deterministične.
-
-VRNI LE JSON:
-{
-  "prediction": {
-    "nextPhase": "DISTRIBUTION",
-    "predictedTransitionDate": "2026-09-15",
-    "daysUntilTransition": 18,
-    "transitionConfidence": 72,
-    "transitionSignals": [
-      "MARKUP faza v LATE maturity (10 tednov) — trend se izrablja.",
-      "priceMomentum decelerating (acceleration -0.4) — signal transition.",
-      "Phase intensity 85/100 — močan signal v smeri MARKUP, vendar bo prešel v DISTRIBUTION."
-    ]
-  },
-  "strategy": {
-    "preTransitionActions": [
-      { "action": "Začni postopno prodajo inventarja (50% v naslednjih 7-14 dneh)", "priority": "HIGH", "timing": "V naslednjih 7 dneh" },
-      { "action": "Ustavi nove nakupe (razen exception deal-ov >70% margin)", "priority": "HIGH", "timing": "Takoj" }
-    ],
-    "postTransitionStrategy": "Po prehodu v DISTRIBUTION: prodaj inventar, cene so na vrhu. Fokus na selling + cash collection.",
-    "phaseStrategy": "Trenutno MARKUP (LATE) — bull faza, vendar se bliža DISTRIBUTION. Nadaljuj nakupe manj agresivno in pripravi selling strategijo."
-  },
-  "summary": "Current: MARKUP (LATE, 85% intensity, 10w). Next: DISTRIBUTION v ~18d (2026-09-15). Confidence 72%. Action: start selling NOW."
-}${GROUNDING_PROMPT_SUFFIX}`;
+      detPrediction,
+      detStrategy,
+      last13Weeks,
+      weeklyAvgPrice13,
+      weeklyVolume13,
+      weeklyDealScore13,
+      weeklySentiment13,
+      volatilityIndex,
+      sortedWeekKeys.length,
+    );
+    const prompt = buildPrompt(promptData, detPrediction);
 
     let aiUsed = false;
 
     try {
-      const raw = await callProviderForRaw(aiSettings, prompt);
-      const parsed = parseJsonLooseExported(raw) as AiPhaseResponse | null;
+      const raw = await callAi(prompt);
+      const parsed = parseAi(raw) as AiPhaseResponse | null;
 
-      if (parsed && typeof parsed === 'object') {
-        // 1) prediction override (with anti-hallucination)
-        if (parsed.prediction && typeof parsed.prediction === 'object') {
-          const p = parsed.prediction as Record<string, unknown>;
-
-          // nextPhase: validate against Wyckoff cycle
-          const aiNext = clampEnum(p.nextPhase, VALID_PHASE, detPrediction.nextPhase);
-          prediction.nextPhase = aiNext === NEXT_PHASE_MAP[phase]
-            ? aiNext
-            : detPrediction.nextPhase;
-
-          // predictedTransitionDate: ±7 days from deterministic
-          if (typeof p.predictedTransitionDate === 'string') {
-            const parsedDate = Date.parse(p.predictedTransitionDate);
-            if (Number.isFinite(parsedDate)) {
-              const detDate = Date.parse(detPrediction.predictedTransitionDate);
-              const offset = parsedDate - detDate;
-              const clampedOffset = Math.max(-7 * DAY_MS, Math.min(7 * DAY_MS, offset));
-              prediction.predictedTransitionDate = isoDate(detDate + clampedOffset);
-            }
-          }
-
-          // daysUntilTransition: ±14 from deterministic, clamped [0, 180]
-          if (p.daysUntilTransition != null) {
-            const det = detPrediction.daysUntilTransition;
-            const adj = clampNumber(p.daysUntilTransition, DAYS_UNTIL_MIN, DAYS_UNTIL_MAX, det);
-            prediction.daysUntilTransition = round0(
-              Math.max(
-                DAYS_UNTIL_MIN,
-                Math.min(
-                  DAYS_UNTIL_MAX,
-                  det + Math.max(-14, Math.min(14, adj - det)),
-                ),
-              ),
-            );
-          }
-
-          // transitionConfidence: ±15 from deterministic, clamped [0, 100]
-          if (p.transitionConfidence != null) {
-            const det = detPrediction.transitionConfidence;
-            const adj = clampNumber(p.transitionConfidence, CONFIDENCE_MIN, CONFIDENCE_MAX, det);
-            prediction.transitionConfidence = round0(
-              Math.max(
-                CONFIDENCE_MIN,
-                Math.min(
-                  CONFIDENCE_MAX,
-                  det + Math.max(-15, Math.min(15, adj - det)),
-                ),
-              ),
-            );
-          }
-
-          // transitionSignals
-          if (Array.isArray(p.transitionSignals)) {
-            const signals = (p.transitionSignals as unknown[])
-              .map((s: unknown) => clampString(s, 200, ''))
-              .filter((s) => s.length > 0)
-              .slice(0, 5);
-            if (signals.length > 0) prediction.transitionSignals = signals;
-          }
-        }
-
-        // 2) strategy override
-        if (parsed.strategy && typeof parsed.strategy === 'object') {
-          const s = parsed.strategy as Record<string, unknown>;
-
-          if (Array.isArray(s.preTransitionActions)) {
-            const aiActions = (s.preTransitionActions as unknown[])
-              .map((ac: unknown) => {
-                const a2 = ac as Record<string, unknown>;
-                if (!a2 || typeof a2 !== 'object') return null;
-                const action = clampString(a2.action, 200, '');
-                if (!action) return null;
-                const priority = clampEnum(a2.priority, VALID_PRIORITY, 'MEDIUM');
-                const timing = clampString(a2.timing, 80, '');
-                if (!timing) return null;
-                return { action, priority, timing };
-              })
-              .filter((ac): ac is StrategyAction => ac !== null)
-              .slice(0, 4);
-            if (aiActions.length > 0) strategy.preTransitionActions = aiActions;
-          }
-
-          if (typeof s.postTransitionStrategy === 'string' && s.postTransitionStrategy.trim()) {
-            strategy.postTransitionStrategy = clampString(
-              s.postTransitionStrategy,
-              400,
-              detStrategy.postTransitionStrategy,
-            );
-          }
-          if (typeof s.phaseStrategy === 'string' && s.phaseStrategy.trim()) {
-            strategy.phaseStrategy = clampString(
-              s.phaseStrategy,
-              400,
-              detStrategy.phaseStrategy,
-            );
-          }
-        }
-
-        // 3) summary
-        if (typeof parsed.summary === 'string' && parsed.summary.trim()) {
-          finalSummary = clampString(parsed.summary, 400, buildDeterministicSummary(currentPhase, prediction));
-        }
-
-        aiUsed = true;
-      }
+      const merged = mergeAiIntoResponse(
+        parsed,
+        prediction,
+        strategy,
+        detPrediction,
+        detStrategy,
+        phase,
+        currentPhase,
+        finalSummary,
+      );
+      prediction = merged.prediction;
+      strategy = merged.strategy;
+      finalSummary = merged.summary;
+      aiUsed = merged.aiUsed;
     } catch (err) {
       logger.warn(
         '/api/ai/market-cycle-phase-predictor',
@@ -1108,7 +1205,7 @@ VRNI LE JSON:
       });
     }
 
-    return NextResponse.json({
+    return apiOk({
       ok: true,
       currentPhase,
       indicators,
@@ -1117,18 +1214,11 @@ VRNI LE JSON:
       summary: finalSummary,
       aiUsed,
     });
-  } catch (err: any) {
-    logger.error(
-      '/api/ai/market-cycle-phase-predictor',
-      'handler failed',
-      err,
-    );
-    return NextResponse.json(
-      { error: err?.message ?? 'Napaka' },
-      { status: 500 },
-    );
-  }
-}
+  },
+});
+
+export const GET = marketCyclePhasePredictorHandler;
+export const POST = marketCyclePhasePredictorHandler;
 
 // Generate signal description from slope + acceleration
 function momentumSignalFromSlope(

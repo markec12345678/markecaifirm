@@ -1,4 +1,4 @@
-// v7.94: AI Profit Maximizer Pro — ULTIMATIVNI profit maximization engine
+// v7.94 / v8.96.9-final3: AI Profit Maximizer Pro — ULTIMATIVNI profit maximization engine
 // ki kombinira VSE profit levers (pricing, timing, bundling, sourcing,
 // inventory mix, turnover, fees) v en sam AI-driven profit maximization
 // plan. Razlika od profit-maximizer (basic sell price optimization) —
@@ -24,24 +24,20 @@
 //
 // GET+POST /api/ai/profit-maximizer-pro
 // (AI-enhanced + grounding + anti-hallucination + 6h cache + deterministic fallback)
+// Refaktoriran z withAiRoute helperjem (v8.96.9) + enforceBudget guard.
 
-import { NextRequest, NextResponse } from 'next/server';
-import { db } from '@/lib/db';
-import { getSettingsRow } from '@/lib/pipeline';
-import {
-  callProviderForRaw,
-  parseJsonLooseExported,
-  type AiProviderType,
-  type AiSettings,
-} from '@/lib/ai';
+import { withAiRoute, AI_ROUTE_DEFAULTS, type AiRouteContext } from '@/lib/with-ai-route';
+import { apiOk } from '@/lib/api-response';
 import { GROUNDING_PROMPT_SUFFIX } from '@/lib/anti-hallucination';
 import { getCachedAI, setCachedAI } from '@/lib/ai-cache';
-import { checkRateLimit, rateLimitResponse } from '@/lib/rate-limit';
-import { logger } from '@/lib/logger';
 
-export const runtime = 'nodejs';
-export const dynamic = 'force-dynamic';
+export const { runtime, dynamic } = AI_ROUTE_DEFAULTS;
 export const maxDuration = 60;
+
+// --- Input ----------------------------------------------------------------
+
+// eslint-disable-next-line @typescript-eslint/no-empty-object-type
+interface ProfitMaximizerProInput {}
 
 // --- Types ---------------------------------------------------------------
 
@@ -143,7 +139,7 @@ interface AiProfitMaxResponse {
   plan?: {
     prioritizedActions?: Array<{
       action?: string;
-      lever?: string;
+      lever?: ActionPriority;
       priority?: ActionPriority;
       expectedProfitLift?: number;
       effort?: ActionEffort;
@@ -888,19 +884,314 @@ function buildSummary(
   return parts.join(' ').slice(0, 400);
 }
 
-// --- Handler -------------------------------------------------------------
+// --- Prompt + AI response sanitization (anti-hallucination overrides) -----
 
-export async function GET(req: NextRequest) {
-  return handleProfitMaximizerPro(req);
-}
-export async function POST(req: NextRequest) {
-  return handleProfitMaximizerPro(req);
+interface PromptData {
+  baseline: Baseline;
+  levers: Levers;
+  deterministicBaseline: { plan: Plan; projection: Projection };
+  caps: Record<string, number>;
 }
 
-async function handleProfitMaximizerPro(req: NextRequest) {
-  try {
-    const rl = checkRateLimit(req, 'ai-profit-maximizer-pro', 20);
-    if (!rl.allowed) return rateLimitResponse(rl);
+function buildPromptData(
+  baseline: Baseline,
+  levers: Levers,
+  det: { plan: Plan; projection: Projection },
+): PromptData {
+  return {
+    baseline,
+    levers,
+    deterministicBaseline: det,
+    caps: {
+      scoreMin: SCORE_MIN, scoreMax: SCORE_MAX,
+      liftMinEur: LIFT_MIN_EUR, liftMaxEur: LIFT_MAX_EUR,
+      roiMin: ROI_MIN, roiMax: ROI_MAX,
+      confMin: CONF_MIN, confMax: CONF_MAX,
+    },
+  };
+}
+
+function buildPrompt(promptData: PromptData): string {
+  return `Si AI "Profit Maximizer Pro" za slovenske in srednjeevropske oglasne platforme (Bolha, Vinted, Avtonet, mobile.de).
+Si ULTIMATIVNI profit maximization engine — kombiniraš VSE profit levers (pricing, timing, bundling, sourcing, inventory mix, turnover, fees) v en sam AI-driven profit maximization plan. Razlika od profit-maximizer (basic sell price optimization) — ti si COMPREHENSIVE engine z 7 levers in quick wins. Razlika od profit-maximizer-v2 (v7.56 ki dela ML compounding projections) — ti identificiraš KATERE levers so na voljo in kaj prinesejo.
+
+DETERMINISTIČNI PODATKI (izračunano iz DB — zadnjih 12 mesecev SOLD + HELD trgovin + aktivnih listings):
+${JSON.stringify(promptData, null, 2)}
+
+PRAVILA ZA AI ODGOVOR:
+1. plan.prioritizedActions: 5-10 akcij, ranked po ROI { action (max 200 chars), lever (eno od: pricingLever|timingLever|bundleLever|sourcingLever|inventoryMixLever|turnoverLever|feeLever), priority CRITICAL|HIGH|MEDIUM|LOW, expectedProfitLift EUR [0, 500000], effort LOW|MEDIUM|HIGH, timeline (max 50 chars), roi 0-100 }.
+2. plan.quickWins: 3 akcije, ki jih lahko narediš DANES za immediate profit { action (max 200), expectedProfitLift EUR, timeline (max 50) }.
+3. plan.mediumTermOptimizations: 3 akcije za naslednje 30 dni { action, expectedProfitLift, timeline }.
+4. plan.longTermStrategy: 3 strukturne spremembe za sustained profit maximization { action, expectedProfitLift, timeline }.
+5. projection.profitMaximizationScore: 0-100 (kako dobro je profit trenutno maximiziran — višji = bolje).
+6. projection.maximizedProfitProjection: 12 mesecev { month 1-12, currentProfit EUR, maximizedProfit EUR, cumulativeLift EUR } — ramp up 6 mesecev do max.
+7. projection.riskTradeoffs: 2-3 tveganja agresivne maximization { risk (max 200), severity LOW|MEDIUM|HIGH, mitigation (max 200) }.
+8. projection.confidenceLevel: 0-100, ±10 od deterministic.
+9. summary: slovenski povzetek (max 400 znakov). NE izmišljuj številk — uporabi deterministic baseline.
+
+VRNI LE JSON:
+{
+  "plan": {
+    "prioritizedActions": [
+      { "action": "Povišaj cene na 12 itemsih pod estValue.", "lever": "pricingLever", "priority": "CRITICAL", "expectedProfitLift": 1500, "effort": "LOW", "timeline": "1-7 dni", "roi": 75 }
+    ],
+    "quickWins": [
+      { "action": "Povišaj cene na 3 top itemsih.", "expectedProfitLift": 150, "timeline": "1-7 dni" }
+    ],
+    "mediumTermOptimizations": [
+      { "action": "Postavi sezonski koledar.", "expectedProfitLift": 400, "timeline": "2-4 tedne" }
+    ],
+    "longTermStrategy": [
+      { "action": "Premakni kapital v top-3 profit kategorije.", "expectedProfitLift": 2000, "timeline": "1-3 mesece" }
+    ]
+  },
+  "projection": {
+    "profitMaximizationScore": 62,
+    "maximizedProfitProjection": [
+      { "month": 1, "currentProfit": 1000, "maximizedProfit": 1100, "cumulativeLift": 100 }
+    ],
+    "riskTradeoffs": [
+      { "risk": "Agresivno povišanje cen lahko zmanjša sell-through rate.", "severity": "MEDIUM", "mitigation": "A/B test v 5-10% korakih." }
+    ],
+    "confidenceLevel": 72
+  },
+  "summary": "Annual profit: 12000€ → maximized 21000€ (+75% uplift). Quick win: raise elektronika prices 5% → +150€/mo. Lever #1: pricing (+3200€/yr)."
+}${GROUNDING_PROMPT_SUFFIX}`;
+}
+
+function mergeAiIntoResponse(
+  parsed: AiProfitMaxResponse | null,
+  det: { plan: Plan; projection: Projection },
+  baseline: Baseline,
+  levers: Levers,
+): { plan: Plan; projection: Projection; summary: string; aiUsed: boolean } {
+  let plan = det.plan;
+  let projection = det.projection;
+  let summary = buildSummary(baseline, levers, plan, projection);
+  let aiUsed = false;
+
+  if (parsed && typeof parsed === 'object') {
+    // Parse prioritized actions
+    const prioritizedActions: PrioritizedAction[] = [];
+    if (parsed.plan?.prioritizedActions && Array.isArray(parsed.plan.prioritizedActions)) {
+      for (const a of parsed.plan.prioritizedActions.slice(0, 10)) {
+        if (!a || typeof a !== 'object') continue;
+        const leverName = LEVER_NAMES.includes(a.lever as unknown as LeverName) ? (a.lever as unknown as LeverName) : 'pricingLever';
+        const leverData = levers[leverName];
+        const effort = clampEnum(a.effort, VALID_EFFORT, leverData.difficulty === 'LOW' ? 'LOW' : leverData.difficulty === 'MEDIUM' ? 'MEDIUM' : 'HIGH');
+        const expectedLift = round0(clampNum(a.expectedProfitLift, LIFT_MIN_EUR, LIFT_MAX_EUR, leverData.expectedProfitLift / Math.max(1, leverData.requiredActions.length)));
+        const roi = round0(clampNum(a.roi, ROI_MIN, ROI_MAX, 50));
+        const priority: ActionPriority = clampEnum(a.priority, VALID_PRIORITY, expectedLift > 1000 ? 'CRITICAL' : expectedLift > 500 ? 'HIGH' : expectedLift > 200 ? 'MEDIUM' : 'LOW');
+        const timeline = clampString(a.timeline, 50, effort === 'LOW' ? '1-7 dni' : effort === 'MEDIUM' ? '2-4 tedne' : '1-3 mesece');
+        prioritizedActions.push({
+          action: clampString(a.action, 200, leverData.requiredActions[0] ?? 'Optimiziraj profit strategijo.'),
+          lever: leverName,
+          priority,
+          expectedProfitLift: expectedLift,
+          effort,
+          timeline,
+          roi,
+        });
+      }
+    }
+    if (prioritizedActions.length === 0) {
+      for (const a of det.plan.prioritizedActions) prioritizedActions.push(a);
+    }
+
+    // Quick wins
+    const quickWins: QuickWin[] = [];
+    if (parsed.plan?.quickWins && Array.isArray(parsed.plan.quickWins)) {
+      for (const q of parsed.plan.quickWins.slice(0, 3)) {
+        if (!q || typeof q !== 'object') continue;
+        quickWins.push({
+          action: clampString(q.action, 200, det.plan.quickWins[0]?.action ?? 'Optimiziraj pricing danes.'),
+          expectedProfitLift: round0(clampNum(q.expectedProfitLift, LIFT_MIN_EUR, LIFT_MAX_EUR, det.plan.quickWins[0]?.expectedProfitLift ?? 100)),
+          timeline: clampString(q.timeline, 50, '1-7 dni'),
+        });
+      }
+    }
+    if (quickWins.length === 0) {
+      for (const q of det.plan.quickWins) quickWins.push(q);
+    }
+
+    // Medium-term
+    const mediumTerm: MediumTermOptimization[] = [];
+    if (parsed.plan?.mediumTermOptimizations && Array.isArray(parsed.plan.mediumTermOptimizations)) {
+      for (const m of parsed.plan.mediumTermOptimizations.slice(0, 3)) {
+        if (!m || typeof m !== 'object') continue;
+        mediumTerm.push({
+          action: clampString(m.action, 200, det.plan.mediumTermOptimizations[0]?.action ?? 'Optimiziraj v 30 dneh.'),
+          expectedProfitLift: round0(clampNum(m.expectedProfitLift, LIFT_MIN_EUR, LIFT_MAX_EUR, det.plan.mediumTermOptimizations[0]?.expectedProfitLift ?? 300)),
+          timeline: clampString(m.timeline, 50, '2-4 tedne'),
+        });
+      }
+    }
+    if (mediumTerm.length === 0) {
+      for (const m of det.plan.mediumTermOptimizations) mediumTerm.push(m);
+    }
+
+    // Long-term
+    const longTerm: LongTermStrategy[] = [];
+    if (parsed.plan?.longTermStrategy && Array.isArray(parsed.plan.longTermStrategy)) {
+      for (const l of parsed.plan.longTermStrategy.slice(0, 3)) {
+        if (!l || typeof l !== 'object') continue;
+        longTerm.push({
+          action: clampString(l.action, 200, det.plan.longTermStrategy[0]?.action ?? 'Strateška sprememba v 1-3 mesecih.'),
+          expectedProfitLift: round0(clampNum(l.expectedProfitLift, LIFT_MIN_EUR, LIFT_MAX_EUR, det.plan.longTermStrategy[0]?.expectedProfitLift ?? 1000)),
+          timeline: clampString(l.timeline, 50, '1-3 mesece'),
+        });
+      }
+    }
+    if (longTerm.length === 0) {
+      for (const l of det.plan.longTermStrategy) longTerm.push(l);
+    }
+
+    plan = {
+      prioritizedActions: prioritizedActions.slice(0, 10),
+      quickWins: quickWins.slice(0, 3),
+      mediumTermOptimizations: mediumTerm.slice(0, 3),
+      longTermStrategy: longTerm.slice(0, 3),
+    };
+
+    // Projection
+    const detScore = det.projection.profitMaximizationScore;
+    const profitMaximizationScore = round0(
+      Math.max(SCORE_MIN, Math.min(SCORE_MAX,
+        detScore + Math.max(-10, Math.min(10,
+          (Number(parsed.projection?.profitMaximizationScore ?? detScore)) - detScore)))),
+    );
+
+    const detConf = det.projection.confidenceLevel;
+    const confidenceLevel = round0(
+      Math.max(CONF_MIN, Math.min(CONF_MAX,
+        detConf + Math.max(-10, Math.min(10,
+          (Number(parsed.projection?.confidenceLevel ?? detConf)) - detConf)))),
+    );
+
+    // Projection points
+    const maximizedProfitProjection: ProjectionPoint[] = [];
+    if (parsed.projection?.maximizedProfitProjection && Array.isArray(parsed.projection.maximizedProfitProjection)) {
+      let cumLift = 0;
+      for (let i = 0; i < MONTHS_12; i++) {
+        const aiPoint = parsed.projection.maximizedProfitProjection[i];
+        const detPoint = det.projection.maximizedProfitProjection[i]!;
+        const month = i + 1;
+        const currentProfit = round0(clampNum(aiPoint?.currentProfit, 0, LIFT_MAX_EUR, detPoint.currentProfit));
+        // Clamp maximized to [current, current × 3] anti-hallucination
+        const maxAllowed = currentProfit * 3;
+        const maximizedProfit = round0(
+          Math.max(currentProfit, Math.min(maxAllowed, clampNum(aiPoint?.maximizedProfit, 0, LIFT_MAX_EUR, detPoint.maximizedProfit))),
+        );
+        const lift = round0(maximizedProfit - currentProfit);
+        cumLift = round0(cumLift + lift);
+        maximizedProfitProjection.push({
+          month,
+          currentProfit,
+          maximizedProfit,
+          cumulativeLift: cumLift,
+        });
+      }
+    }
+    if (maximizedProfitProjection.length === 0) {
+      for (const p of det.projection.maximizedProfitProjection) maximizedProfitProjection.push(p);
+    }
+
+    // Risk tradeoffs
+    const riskTradeoffs: RiskTradeoff[] = [];
+    if (parsed.projection?.riskTradeoffs && Array.isArray(parsed.projection.riskTradeoffs)) {
+      for (const r of parsed.projection.riskTradeoffs.slice(0, 3)) {
+        if (!r || typeof r !== 'object') continue;
+        riskTradeoffs.push({
+          risk: clampString(r.risk, 200, det.projection.riskTradeoffs[0]?.risk ?? 'Tveganje agresivne maximization.'),
+          severity: clampEnum(r.severity, VALID_SEVERITY, det.projection.riskTradeoffs[0]?.severity ?? 'MEDIUM'),
+          mitigation: clampString(r.mitigation, 200, det.projection.riskTradeoffs[0]?.mitigation ?? 'Testiraj postopoma.'),
+        });
+      }
+    }
+    if (riskTradeoffs.length === 0) {
+      for (const r of det.projection.riskTradeoffs) riskTradeoffs.push(r);
+    }
+
+    projection = {
+      profitMaximizationScore,
+      maximizedProfitProjection,
+      riskTradeoffs,
+      confidenceLevel,
+    };
+    summary = clampString(parsed.summary, 400, buildSummary(baseline, levers, plan, projection));
+    aiUsed = true;
+  }
+
+  return { plan, projection, summary, aiUsed };
+}
+
+// --- Empty-state response ------------------------------------------------
+
+function buildEmptyStateResponse(): {
+  ok: true;
+  baseline: Baseline;
+  levers: Levers;
+  plan: Plan;
+  projection: Projection;
+  summary: string;
+  aiUsed: boolean;
+  message: string;
+} {
+  const emptyLevers: Levers = {
+    pricingLever: { currentGap: 0, maximizationPotential: 0, difficulty: 'LOW', requiredActions: [], expectedProfitLift: 0 },
+    timingLever: { currentGap: 0, maximizationPotential: 0, difficulty: 'LOW', requiredActions: [], expectedProfitLift: 0 },
+    bundleLever: { currentGap: 0, maximizationPotential: 0, difficulty: 'LOW', requiredActions: [], expectedProfitLift: 0 },
+    sourcingLever: { currentGap: 0, maximizationPotential: 0, difficulty: 'LOW', requiredActions: [], expectedProfitLift: 0 },
+    inventoryMixLever: { currentGap: 0, maximizationPotential: 0, difficulty: 'LOW', requiredActions: [], expectedProfitLift: 0 },
+    turnoverLever: { currentGap: 0, maximizationPotential: 0, difficulty: 'LOW', requiredActions: [], expectedProfitLift: 0 },
+    feeLever: { currentGap: 0, maximizationPotential: 0, difficulty: 'LOW', requiredActions: [], expectedProfitLift: 0 },
+  };
+  const emptyBaseline: Baseline = {
+    currentAnnualProfit: 0,
+    currentMonthlyAvg: 0,
+    maximizedAnnualProfit: 0,
+    profitUpliftPercent: 0,
+    profitUpliftEuros: 0,
+  };
+  return {
+    ok: true,
+    baseline: emptyBaseline,
+    levers: emptyLevers,
+    plan: {
+      prioritizedActions: [],
+      quickWins: [],
+      mediumTermOptimizations: [],
+      longTermStrategy: [],
+    },
+    projection: {
+      profitMaximizationScore: 0,
+      maximizedProfitProjection: [],
+      riskTradeoffs: [],
+      confidenceLevel: 0,
+    },
+    summary: 'Ni SOLD trgovin v zadnjih 12 mesecih — Profit Maximizer Pro ni mogoč.',
+    aiUsed: false,
+    message: 'Ni SOLD trgovin v zadnjih 12 mesecih — Profit Maximizer Pro ni mogoč.',
+  };
+}
+
+// --- Route handler -------------------------------------------------------
+
+export const profitMaximizerProHandler = withAiRoute<ProfitMaximizerProInput>({
+  endpoint: '/api/ai/profit-maximizer-pro',
+  maxDuration: 60,
+  enforceBudget: true, // AI klic — preveri budget
+  method: 'GET', // GET+POST dual-handler — bypass POST-only check
+
+  parseBody: async (req) => {
+    await req.json().catch(() => ({}));
+    return {};
+  },
+
+  // No validateInput — body ignored, identična logika za GET in POST
+
+  handler: async (_input, ctx: AiRouteContext) => {
+    const { db, callAi, parseAi, logger } = ctx;
 
     const now = Date.now();
     const cutoff12m = new Date(now - HORIZON_12M);
@@ -962,52 +1253,17 @@ async function handleProfitMaximizerPro(req: NextRequest) {
 
     // Empty state: no SOLD trades in last 12 months
     if (soldTrades.length === 0) {
-      const emptyLevers: Levers = {
-        pricingLever: { currentGap: 0, maximizationPotential: 0, difficulty: 'LOW', requiredActions: [], expectedProfitLift: 0 },
-        timingLever: { currentGap: 0, maximizationPotential: 0, difficulty: 'LOW', requiredActions: [], expectedProfitLift: 0 },
-        bundleLever: { currentGap: 0, maximizationPotential: 0, difficulty: 'LOW', requiredActions: [], expectedProfitLift: 0 },
-        sourcingLever: { currentGap: 0, maximizationPotential: 0, difficulty: 'LOW', requiredActions: [], expectedProfitLift: 0 },
-        inventoryMixLever: { currentGap: 0, maximizationPotential: 0, difficulty: 'LOW', requiredActions: [], expectedProfitLift: 0 },
-        turnoverLever: { currentGap: 0, maximizationPotential: 0, difficulty: 'LOW', requiredActions: [], expectedProfitLift: 0 },
-        feeLever: { currentGap: 0, maximizationPotential: 0, difficulty: 'LOW', requiredActions: [], expectedProfitLift: 0 },
-      };
-      const emptyBaseline: Baseline = {
-        currentAnnualProfit: 0,
-        currentMonthlyAvg: 0,
-        maximizedAnnualProfit: 0,
-        profitUpliftPercent: 0,
-        profitUpliftEuros: 0,
-      };
-      return NextResponse.json({
-        ok: true,
-        baseline: emptyBaseline,
-        levers: emptyLevers,
-        plan: {
-          prioritizedActions: [],
-          quickWins: [],
-          mediumTermOptimizations: [],
-          longTermStrategy: [],
-        },
-        projection: {
-          profitMaximizationScore: 0,
-          maximizedProfitProjection: [],
-          riskTradeoffs: [],
-          confidenceLevel: 0,
-        },
-        summary: 'Ni SOLD trgovin v zadnjih 12 mesecih — Profit Maximizer Pro ni mogoč.',
-        aiUsed: false,
-        message: 'Ni SOLD trgovin v zadnjih 12 mesecih — Profit Maximizer Pro ni mogoč.',
-      });
+      return apiOk(buildEmptyStateResponse());
     }
 
     // 4) Compute lever context
-    const ctx = computeLeverContext(soldTrades, heldTrades, heldListings, now);
+    const ctxLever = computeLeverContext(soldTrades, heldTrades, heldListings, now);
 
     // 5) Build levers
-    const levers = buildLevers(ctx);
+    const levers = buildLevers(ctxLever);
 
     // 6) Build baseline
-    const baseline = buildBaseline(ctx, levers);
+    const baseline = buildBaseline(ctxLever, levers);
 
     // 7) Build deterministic plan + projection (fallback)
     const det = buildDeterministicPlan(levers, baseline);
@@ -1020,7 +1276,7 @@ async function handleProfitMaximizerPro(req: NextRequest) {
     const cacheKey = `profit-maximizer-pro:${currentMonth}`;
     const cached = getCachedAI<{ plan: Plan; projection: Projection; summary: string }>(cacheKey);
     if (cached) {
-      return NextResponse.json({
+      return apiOk({
         ok: true,
         baseline,
         levers,
@@ -1033,235 +1289,20 @@ async function handleProfitMaximizerPro(req: NextRequest) {
     }
 
     // 9) AI prompt with grounding
-    const settings = await getSettingsRow();
-    const aiSettings: AiSettings = {
-      provider: settings.aiProvider as AiProviderType,
-      baseUrl: settings.aiBaseUrl,
-      apiKey: settings.aiApiKey,
-      model: settings.aiModel,
-      fallbackProvider: (settings.fallbackProvider || '') as
-        | AiProviderType
-        | '',
-      fallbackBaseUrl: settings.fallbackBaseUrl || '',
-      fallbackApiKey: settings.fallbackApiKey || '',
-      fallbackModel: settings.fallbackModel || '',
-    };
-
-    const promptData = {
-      baseline,
-      levers,
-      deterministicBaseline: det,
-      caps: {
-        scoreMin: SCORE_MIN, scoreMax: SCORE_MAX,
-        liftMinEur: LIFT_MIN_EUR, liftMaxEur: LIFT_MAX_EUR,
-        roiMin: ROI_MIN, roiMax: ROI_MAX,
-        confMin: CONF_MIN, confMax: CONF_MAX,
-      },
-    };
-
-    const prompt = `Si AI "Profit Maximizer Pro" za slovenske in srednjeevropske oglasne platforme (Bolha, Vinted, Avtonet, mobile.de).
-Si ULTIMATIVNI profit maximization engine — kombiniraš VSE profit levers (pricing, timing, bundling, sourcing, inventory mix, turnover, fees) v en sam AI-driven profit maximization plan. Razlika od profit-maximizer (basic sell price optimization) — ti si COMPREHENSIVE engine z 7 levers in quick wins. Razlika od profit-maximizer-v2 (v7.56 ki dela ML compounding projections) — ti identificiraš KATERE levers so na voljo in kaj prinesejo.
-
-DETERMINISTIČNI PODATKI (izračunano iz DB — zadnjih 12 mesecev SOLD + HELD trgovin + aktivnih listings):
-${JSON.stringify(promptData, null, 2)}
-
-PRAVILA ZA AI ODGOVOR:
-1. plan.prioritizedActions: 5-10 akcij, ranked po ROI { action (max 200 chars), lever (eno od: pricingLever|timingLever|bundleLever|sourcingLever|inventoryMixLever|turnoverLever|feeLever), priority CRITICAL|HIGH|MEDIUM|LOW, expectedProfitLift EUR [0, 500000], effort LOW|MEDIUM|HIGH, timeline (max 50 chars), roi 0-100 }.
-2. plan.quickWins: 3 akcije, ki jih lahko narediš DANES za immediate profit { action (max 200), expectedProfitLift EUR, timeline (max 50) }.
-3. plan.mediumTermOptimizations: 3 akcije za naslednje 30 dni { action, expectedProfitLift, timeline }.
-4. plan.longTermStrategy: 3 strukturne spremembe za sustained profit maximization { action, expectedProfitLift, timeline }.
-5. projection.profitMaximizationScore: 0-100 (kako dobro je profit trenutno maximiziran — višji = bolje).
-6. projection.maximizedProfitProjection: 12 mesecev { month 1-12, currentProfit EUR, maximizedProfit EUR, cumulativeLift EUR } — ramp up 6 mesecev do max.
-7. projection.riskTradeoffs: 2-3 tveganja agresivne maximization { risk (max 200), severity LOW|MEDIUM|HIGH, mitigation (max 200) }.
-8. projection.confidenceLevel: 0-100, ±10 od deterministic.
-9. summary: slovenski povzetek (max 400 znakov). NE izmišljuj številk — uporabi deterministic baseline.
-
-VRNI LE JSON:
-{
-  "plan": {
-    "prioritizedActions": [
-      { "action": "Povišaj cene na 12 itemsih pod estValue.", "lever": "pricingLever", "priority": "CRITICAL", "expectedProfitLift": 1500, "effort": "LOW", "timeline": "1-7 dni", "roi": 75 }
-    ],
-    "quickWins": [
-      { "action": "Povišaj cene na 3 top itemsih.", "expectedProfitLift": 150, "timeline": "1-7 dni" }
-    ],
-    "mediumTermOptimizations": [
-      { "action": "Postavi sezonski koledar.", "expectedProfitLift": 400, "timeline": "2-4 tedne" }
-    ],
-    "longTermStrategy": [
-      { "action": "Premakni kapital v top-3 profit kategorije.", "expectedProfitLift": 2000, "timeline": "1-3 mesece" }
-    ]
-  },
-  "projection": {
-    "profitMaximizationScore": 62,
-    "maximizedProfitProjection": [
-      { "month": 1, "currentProfit": 1000, "maximizedProfit": 1100, "cumulativeLift": 100 }
-    ],
-    "riskTradeoffs": [
-      { "risk": "Agresivno povišanje cen lahko zmanjša sell-through rate.", "severity": "MEDIUM", "mitigation": "A/B test v 5-10% korakih." }
-    ],
-    "confidenceLevel": 72
-  },
-  "summary": "Annual profit: 12000€ → maximized 21000€ (+75% uplift). Quick win: raise elektronika prices 5% → +150€/mo. Lever #1: pricing (+3200€/yr)."
-}${GROUNDING_PROMPT_SUFFIX}`;
+    const promptData = buildPromptData(baseline, levers, det);
+    const prompt = buildPrompt(promptData);
 
     let aiUsed = false;
 
     try {
-      const raw = await callProviderForRaw(aiSettings, prompt);
-      const parsed = parseJsonLooseExported(raw) as AiProfitMaxResponse | null;
+      const raw = await callAi(prompt);
+      const parsed = parseAi(raw) as AiProfitMaxResponse | null;
 
-      if (parsed && typeof parsed === 'object') {
-        // Parse prioritized actions
-        const prioritizedActions: PrioritizedAction[] = [];
-        if (parsed.plan?.prioritizedActions && Array.isArray(parsed.plan.prioritizedActions)) {
-          for (const a of parsed.plan.prioritizedActions.slice(0, 10)) {
-            if (!a || typeof a !== 'object') continue;
-            const leverName = LEVER_NAMES.includes(a.lever as LeverName) ? (a.lever as LeverName) : 'pricingLever';
-            const leverData = levers[leverName];
-            const effort = clampEnum(a.effort, VALID_EFFORT, leverData.difficulty === 'LOW' ? 'LOW' : leverData.difficulty === 'MEDIUM' ? 'MEDIUM' : 'HIGH');
-            const expectedLift = round0(clampNum(a.expectedProfitLift, LIFT_MIN_EUR, LIFT_MAX_EUR, leverData.expectedProfitLift / Math.max(1, leverData.requiredActions.length)));
-            const roi = round0(clampNum(a.roi, ROI_MIN, ROI_MAX, 50));
-            const priority: ActionPriority = clampEnum(a.priority, VALID_PRIORITY, expectedLift > 1000 ? 'CRITICAL' : expectedLift > 500 ? 'HIGH' : expectedLift > 200 ? 'MEDIUM' : 'LOW');
-            const timeline = clampString(a.timeline, 50, effort === 'LOW' ? '1-7 dni' : effort === 'MEDIUM' ? '2-4 tedne' : '1-3 mesece');
-            prioritizedActions.push({
-              action: clampString(a.action, 200, leverData.requiredActions[0] ?? 'Optimiziraj profit strategijo.'),
-              lever: leverName,
-              priority,
-              expectedProfitLift: expectedLift,
-              effort,
-              timeline,
-              roi,
-            });
-          }
-        }
-        if (prioritizedActions.length === 0) {
-          for (const a of det.plan.prioritizedActions) prioritizedActions.push(a);
-        }
-
-        // Quick wins
-        const quickWins: QuickWin[] = [];
-        if (parsed.plan?.quickWins && Array.isArray(parsed.plan.quickWins)) {
-          for (const q of parsed.plan.quickWins.slice(0, 3)) {
-            if (!q || typeof q !== 'object') continue;
-            quickWins.push({
-              action: clampString(q.action, 200, det.plan.quickWins[0]?.action ?? 'Optimiziraj pricing danes.'),
-              expectedProfitLift: round0(clampNum(q.expectedProfitLift, LIFT_MIN_EUR, LIFT_MAX_EUR, det.plan.quickWins[0]?.expectedProfitLift ?? 100)),
-              timeline: clampString(q.timeline, 50, '1-7 dni'),
-            });
-          }
-        }
-        if (quickWins.length === 0) {
-          for (const q of det.plan.quickWins) quickWins.push(q);
-        }
-
-        // Medium-term
-        const mediumTerm: MediumTermOptimization[] = [];
-        if (parsed.plan?.mediumTermOptimizations && Array.isArray(parsed.plan.mediumTermOptimizations)) {
-          for (const m of parsed.plan.mediumTermOptimizations.slice(0, 3)) {
-            if (!m || typeof m !== 'object') continue;
-            mediumTerm.push({
-              action: clampString(m.action, 200, det.plan.mediumTermOptimizations[0]?.action ?? 'Optimiziraj v 30 dneh.'),
-              expectedProfitLift: round0(clampNum(m.expectedProfitLift, LIFT_MIN_EUR, LIFT_MAX_EUR, det.plan.mediumTermOptimizations[0]?.expectedProfitLift ?? 300)),
-              timeline: clampString(m.timeline, 50, '2-4 tedne'),
-            });
-          }
-        }
-        if (mediumTerm.length === 0) {
-          for (const m of det.plan.mediumTermOptimizations) mediumTerm.push(m);
-        }
-
-        // Long-term
-        const longTerm: LongTermStrategy[] = [];
-        if (parsed.plan?.longTermStrategy && Array.isArray(parsed.plan.longTermStrategy)) {
-          for (const l of parsed.plan.longTermStrategy.slice(0, 3)) {
-            if (!l || typeof l !== 'object') continue;
-            longTerm.push({
-              action: clampString(l.action, 200, det.plan.longTermStrategy[0]?.action ?? 'Strateška sprememba v 1-3 mesecih.'),
-              expectedProfitLift: round0(clampNum(l.expectedProfitLift, LIFT_MIN_EUR, LIFT_MAX_EUR, det.plan.longTermStrategy[0]?.expectedProfitLift ?? 1000)),
-              timeline: clampString(l.timeline, 50, '1-3 mesece'),
-            });
-          }
-        }
-        if (longTerm.length === 0) {
-          for (const l of det.plan.longTermStrategy) longTerm.push(l);
-        }
-
-        plan = {
-          prioritizedActions: prioritizedActions.slice(0, 10),
-          quickWins: quickWins.slice(0, 3),
-          mediumTermOptimizations: mediumTerm.slice(0, 3),
-          longTermStrategy: longTerm.slice(0, 3),
-        };
-
-        // Projection
-        const detScore = det.projection.profitMaximizationScore;
-        const profitMaximizationScore = round0(
-          Math.max(SCORE_MIN, Math.min(SCORE_MAX,
-            detScore + Math.max(-10, Math.min(10,
-              (Number(parsed.projection?.profitMaximizationScore ?? detScore)) - detScore)))),
-        );
-
-        const detConf = det.projection.confidenceLevel;
-        const confidenceLevel = round0(
-          Math.max(CONF_MIN, Math.min(CONF_MAX,
-            detConf + Math.max(-10, Math.min(10,
-              (Number(parsed.projection?.confidenceLevel ?? detConf)) - detConf)))),
-        );
-
-        // Projection points
-        const maximizedProfitProjection: ProjectionPoint[] = [];
-        if (parsed.projection?.maximizedProfitProjection && Array.isArray(parsed.projection.maximizedProfitProjection)) {
-          let cumLift = 0;
-          for (let i = 0; i < MONTHS_12; i++) {
-            const aiPoint = parsed.projection.maximizedProfitProjection[i];
-            const detPoint = det.projection.maximizedProfitProjection[i]!;
-            const month = i + 1;
-            const currentProfit = round0(clampNum(aiPoint?.currentProfit, 0, LIFT_MAX_EUR, detPoint.currentProfit));
-            // Clamp maximized to [current, current × 3] anti-hallucination
-            const maxAllowed = currentProfit * 3;
-            const maximizedProfit = round0(
-              Math.max(currentProfit, Math.min(maxAllowed, clampNum(aiPoint?.maximizedProfit, 0, LIFT_MAX_EUR, detPoint.maximizedProfit))),
-            );
-            const lift = round0(maximizedProfit - currentProfit);
-            cumLift = round0(cumLift + lift);
-            maximizedProfitProjection.push({
-              month,
-              currentProfit,
-              maximizedProfit,
-              cumulativeLift: cumLift,
-            });
-          }
-        }
-        if (maximizedProfitProjection.length === 0) {
-          for (const p of det.projection.maximizedProfitProjection) maximizedProfitProjection.push(p);
-        }
-
-        // Risk tradeoffs
-        const riskTradeoffs: RiskTradeoff[] = [];
-        if (parsed.projection?.riskTradeoffs && Array.isArray(parsed.projection.riskTradeoffs)) {
-          for (const r of parsed.projection.riskTradeoffs.slice(0, 3)) {
-            if (!r || typeof r !== 'object') continue;
-            riskTradeoffs.push({
-              risk: clampString(r.risk, 200, det.projection.riskTradeoffs[0]?.risk ?? 'Tveganje agresivne maximization.'),
-              severity: clampEnum(r.severity, VALID_SEVERITY, det.projection.riskTradeoffs[0]?.severity ?? 'MEDIUM'),
-              mitigation: clampString(r.mitigation, 200, det.projection.riskTradeoffs[0]?.mitigation ?? 'Testiraj postopoma.'),
-            });
-          }
-        }
-        if (riskTradeoffs.length === 0) {
-          for (const r of det.projection.riskTradeoffs) riskTradeoffs.push(r);
-        }
-
-        projection = {
-          profitMaximizationScore,
-          maximizedProfitProjection,
-          riskTradeoffs,
-          confidenceLevel,
-        };
-        summary = clampString(parsed.summary, 400, buildSummary(baseline, levers, plan, projection));
-        aiUsed = true;
-      }
+      const merged = mergeAiIntoResponse(parsed, det, baseline, levers);
+      plan = merged.plan;
+      projection = merged.projection;
+      summary = merged.summary;
+      aiUsed = merged.aiUsed;
     } catch (err) {
       logger.warn(
         '/api/ai/profit-maximizer-pro',
@@ -1275,7 +1316,7 @@ VRNI LE JSON:
       setCachedAI(cacheKey, { plan, projection, summary });
     }
 
-    return NextResponse.json({
+    return apiOk({
       ok: true,
       baseline,
       levers,
@@ -1284,15 +1325,8 @@ VRNI LE JSON:
       summary,
       aiUsed,
     });
-  } catch (err: any) {
-    logger.error(
-      '/api/ai/profit-maximizer-pro',
-      'handler failed',
-      err,
-    );
-    return NextResponse.json(
-      { error: err?.message ?? 'Napaka' },
-      { status: 500 },
-    );
-  }
-}
+  },
+});
+
+export const GET = profitMaximizerProHandler;
+export const POST = profitMaximizerProHandler;

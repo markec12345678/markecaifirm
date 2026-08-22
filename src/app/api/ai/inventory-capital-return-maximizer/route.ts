@@ -1,4 +1,4 @@
-// v8.07: AI Inventory Capital Return Maximizer — AI MAKSIMIZIRA CAPITAL RETURN —
+// v8.07 / v8.96.9-final2: AI Inventory Capital Return Maximizer — AI MAKSIMIZIRA CAPITAL RETURN —
 // koliko deployed kapitala se VRNE (return OF capital, ne return ON capital).
 // "Deployed 5000€ v inventory. 3200€ se je že vrnilo (64%), ampak z optimalnim
 // sell order bi se lahko 4800€ (96%) vrnilo v 30 dneh." Razlika od
@@ -25,23 +25,14 @@
 
 // GET+POST /api/ai/inventory-capital-return-maximizer
 // (AI-enhanced + grounding + anti-hallucination + 6h cache + deterministic fallback)
+// Refaktoriran z withAiRoute helperjem (v8.96.9) + enforceBudget guard.
 
-import { NextRequest, NextResponse } from 'next/server';
-import { db } from '@/lib/db';
-import { getSettingsRow } from '@/lib/pipeline';
-import {
-  callProviderForRaw,
-  parseJsonLooseExported,
-  type AiProviderType,
-  type AiSettings,
-} from '@/lib/ai';
+import { withAiRoute, AI_ROUTE_DEFAULTS, type AiRouteContext } from '@/lib/with-ai-route';
+import { apiOk } from '@/lib/api-response';
 import { GROUNDING_PROMPT_SUFFIX } from '@/lib/anti-hallucination';
 import { getCachedAI, setCachedAI } from '@/lib/ai-cache';
-import { checkRateLimit, rateLimitResponse } from '@/lib/rate-limit';
-import { logger } from '@/lib/logger';
 
-export const runtime = 'nodejs';
-export const dynamic = 'force-dynamic';
+export const { runtime, dynamic } = AI_ROUTE_DEFAULTS;
 export const maxDuration = 60;
 
 // --- Types ---------------------------------------------------------------
@@ -674,19 +665,27 @@ function buildDeterministicMaximization(
   };
 }
 
+// --- Input ---------------------------------------------------------------
+
+// eslint-disable-next-line @typescript-eslint/no-empty-object-type
+interface InventoryCapitalReturnMaximizerInput {}
+
 // --- Handler -------------------------------------------------------------
 
-export async function GET(req: NextRequest) {
-  return handleInventoryCapitalReturnMaximizer(req);
-}
-export async function POST(req: NextRequest) {
-  return handleInventoryCapitalReturnMaximizer(req);
-}
+const inventoryCapitalReturnMaximizerHandler = withAiRoute<InventoryCapitalReturnMaximizerInput>({
+  endpoint: '/api/ai/inventory-capital-return-maximizer',
+  maxDuration: 60,
+  enforceBudget: true, // AI klic — preveri budget
+  method: 'GET', // GET+POST — body ignored
 
-async function handleInventoryCapitalReturnMaximizer(req: NextRequest) {
-  try {
-    const rl = checkRateLimit(req, 'ai-inventory-capital-return-maximizer', 20);
-    if (!rl.allowed) return rateLimitResponse(rl);
+  parseBody: async (req) => {
+    await req.json().catch(() => ({}));
+    return {};
+  },
+
+  // No validateInput — body ignored
+  handler: async (_input, ctx: AiRouteContext) => {
+    const { db, callAi, parseAi, logger } = ctx;
 
     const now = Date.now();
     const twelveMonthsAgo = new Date(now - TWELVE_MONTHS_MS);
@@ -736,7 +735,7 @@ async function handleInventoryCapitalReturnMaximizer(req: NextRequest) {
 
     // Empty-state: no HELD and no SOLD trades
     if (heldTrades.length === 0 && soldTrades.length === 0) {
-      return NextResponse.json({
+      return apiOk({
         ok: true,
         current: {
           totalCapitalDeployed: 0,
@@ -771,7 +770,7 @@ async function handleInventoryCapitalReturnMaximizer(req: NextRequest) {
 
     // If no HELD trades, can't compute capital return
     if (heldComputed.length === 0) {
-      return NextResponse.json({
+      return apiOk({
         ok: true,
         current: {
           totalCapitalDeployed: 0,
@@ -819,7 +818,7 @@ async function handleInventoryCapitalReturnMaximizer(req: NextRequest) {
       summary: string;
     }>(cacheKey);
     if (cached) {
-      return NextResponse.json({
+      return apiOk({
         ok: true,
         current,
         perItem,
@@ -831,19 +830,6 @@ async function handleInventoryCapitalReturnMaximizer(req: NextRequest) {
     }
 
     // 4) AI prompt with grounding
-    const settings = await getSettingsRow();
-    const aiSettings: AiSettings = {
-      provider: settings.aiProvider as AiProviderType,
-      baseUrl: settings.aiBaseUrl,
-      apiKey: settings.aiApiKey,
-      model: settings.aiModel,
-      fallbackProvider: (settings.fallbackProvider || '') as
-        | AiProviderType
-        | '',
-      fallbackBaseUrl: settings.fallbackBaseUrl || '',
-      fallbackApiKey: settings.fallbackApiKey || '',
-      fallbackModel: settings.fallbackModel || '',
-    };
 
     // Compact context for AI — top N items by capital
     const perItemForAI = perItem
@@ -933,8 +919,8 @@ VRNI LE JSON:
     let aiUsed = false;
 
     try {
-      const raw = await callProviderForRaw(aiSettings, prompt);
-      const parsed = parseJsonLooseExported(raw) as AiResponse | null;
+      const raw = await callAi(prompt);
+      const parsed = parseAi(raw) as AiResponse | null;
 
       if (parsed && typeof parsed === 'object' && parsed.maximization) {
         const aiMax = parsed.maximization;
@@ -1097,7 +1083,7 @@ VRNI LE JSON:
       setCachedAI(cacheKey, { maximization, summary });
     }
 
-    return NextResponse.json({
+    return apiOk({
       ok: true,
       current,
       perItem,
@@ -1105,15 +1091,8 @@ VRNI LE JSON:
       summary,
       aiUsed,
     } satisfies InventoryCapitalReturnResponse);
-  } catch (err: any) {
-    logger.error(
-      '/api/ai/inventory-capital-return-maximizer',
-      'handler failed',
-      err,
-    );
-    return NextResponse.json(
-      { error: err?.message ?? 'Napaka' },
-      { status: 500 },
-    );
-  }
-}
+  },
+});
+
+export const GET = inventoryCapitalReturnMaximizerHandler;
+export const POST = inventoryCapitalReturnMaximizerHandler;

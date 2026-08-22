@@ -1,4 +1,4 @@
-// v7.85: AI Profit Margin Forecaster Pro — AI-powered PRO verzija ki
+// v7.85 / v8.96.9-final3: AI Profit Margin Forecaster Pro — AI-powered PRO verzija ki
 // forecast-a profit marže 30/60/90 dni naprej z SCENARIO analizo
 // (BEST/BASE/WORST case marže) in confidence intervalsi. "Margin: 22% →
 // base 20% v 30d, best 25%, worst 15%. Risk: cost increases. Action:
@@ -18,24 +18,20 @@
 //
 // GET+POST /api/ai/profit-margin-forecaster-pro
 // (AI-enhanced + grounding + anti-hallucination + 6h cache + deterministic fallback)
+// Refaktoriran z withAiRoute helperjem (v8.96.9) + enforceBudget guard.
 
-import { NextRequest, NextResponse } from 'next/server';
-import { db } from '@/lib/db';
-import { getSettingsRow } from '@/lib/pipeline';
-import {
-  callProviderForRaw,
-  parseJsonLooseExported,
-  type AiProviderType,
-  type AiSettings,
-} from '@/lib/ai';
+import { withAiRoute, AI_ROUTE_DEFAULTS, type AiRouteContext } from '@/lib/with-ai-route';
+import { apiOk } from '@/lib/api-response';
 import { GROUNDING_PROMPT_SUFFIX } from '@/lib/anti-hallucination';
 import { getCachedAI, setCachedAI } from '@/lib/ai-cache';
-import { checkRateLimit, rateLimitResponse } from '@/lib/rate-limit';
-import { logger } from '@/lib/logger';
 
-export const runtime = 'nodejs';
-export const dynamic = 'force-dynamic';
+export const { runtime, dynamic } = AI_ROUTE_DEFAULTS;
 export const maxDuration = 60;
+
+// --- Input ----------------------------------------------------------------
+
+// eslint-disable-next-line @typescript-eslint/no-empty-object-type
+interface ProfitMarginForecasterProInput {}
 
 // --- Types ---------------------------------------------------------------
 
@@ -740,19 +736,301 @@ function buildDeterministicForecast(
   return { forecast, analysis, summary };
 }
 
-// --- Handler -------------------------------------------------------------
+// --- AI response sanitization (anti-hallucination overrides) ------------
 
-export async function GET(req: NextRequest) {
-  return handleProfitMarginForecasterPro(req);
-}
-export async function POST(req: NextRequest) {
-  return handleProfitMarginForecasterPro(req);
+interface PromptData {
+  current: MarginCurrent;
+  influencers: MarginInfluencers;
+  monthlyMargins: Array<{
+    month: string;
+    margin: number;
+    tradeCount: number;
+    avgSellPrice: number;
+    avgBuyPrice: number;
+    avgFeePct: number;
+  }>;
+  influencerSlopes: { price: number; cost: number; fee: number };
+  deterministicForecast: MarginForecast;
+  deterministicDrivers: MarginDriver[];
 }
 
-async function handleProfitMarginForecasterPro(req: NextRequest) {
-  try {
-    const rl = checkRateLimit(req, 'ai-profit-margin-forecaster-pro', 20);
-    if (!rl.allowed) return rateLimitResponse(rl);
+function buildPromptData(
+  current: MarginCurrent,
+  influencers: MarginInfluencers,
+  monthly: MonthlyMarginAgg[],
+  agg: ReturnType<typeof computeMonthlyMargins>,
+  det: DeterministicResult,
+): PromptData {
+  return {
+    current,
+    influencers,
+    monthlyMargins: monthly.map((m) => ({
+      month: m.monthKey,
+      margin: m.margin,
+      tradeCount: m.tradeCount,
+      avgSellPrice: round1(m.avgSellPrice),
+      avgBuyPrice: round1(m.avgBuyPrice),
+      avgFeePct: round2(m.avgFeePct),
+    })),
+    influencerSlopes: {
+      price: agg.priceTrendSlope,
+      cost: agg.costTrendSlope,
+      fee: agg.feeTrendSlope,
+    },
+    deterministicForecast: det.forecast,
+    deterministicDrivers: det.analysis.keyMarginDrivers,
+  };
+}
+
+function buildPrompt(promptData: PromptData): string {
+  return `Si AI "Profit Margin Forecaster Pro" za slovenske in srednjeevropske oglasne platforme (Bolha, Vinted, Facebook, Avtonet, mobile.de).
+Napoveš profit marže 30/60/90 dni naprej z SCENARIO analizo (base/best/worst case) in confidence intervalsi.
+
+CURRENT MARGIN METRICS (deterministično izračunano):
+${JSON.stringify(promptData, null, 2)}
+
+PRAVILA ZA AI ODGOVOR:
+1. forecast: {
+   - baseCase: { margin30d/60d/90d: % v [-50, 100] (lahko prilagodiš znotraj [-10, +10] od deterministične vrednosti — anti-hallucination)
+   - bestCase: { margin30d/60d/90d: % (optimistični scenarij, >= baseCase, lahko prilagodiš ±5 od deterministične)
+   - worstCase: { margin30d/60d/90d: % (pesimistični scenarij, <= baseCase, lahko prilagodiš ±5 od deterministične)
+   - confidenceInterval: { low, high } v [-50, 100] za 30d forecast (±5 od deterministične)
+   - scenarioProbability: { base: 0-100, best: 0-100, worst: 0-100 } (vsota = 100, ±15 od deterministične)
+   - projectedMarginTrend: IMPROVING | STABLE | DECLINING (validiraj proti enum)
+}
+2. analysis: {
+   - keyMarginDrivers: 3 drivers z { driver (max 80), impact: POSITIVE|NEGATIVE, weight: 0-100, detail (max 200) }
+   - marginRiskFactors: 2-4 risks z { risk (max 100), severity: LOW|MEDIUM|HIGH, mitigation (max 250) }
+   - marginProtectionActions: 3-4 actions z { action (max 200), priority: HIGH|MEDIUM|LOW, expectedMarginLift: 0-15 (percentage points) }
+}
+3. summary: slovenski povzetek (max 400 znakov). NE izmišljuj številk — uporabi zgornje deterministične podatke.
+
+VRNI LE JSON:
+{
+  "forecast": {
+    "baseCase": { "margin30d": 20, "margin60d": 19, "margin90d": 18 },
+    "bestCase": { "margin30d": 25, "margin60d": 27, "margin90d": 28 },
+    "worstCase": { "margin30d": 15, "margin60d": 12, "margin90d": 10 },
+    "confidenceInterval": { "low": 17, "high": 23 },
+    "scenarioProbability": { "base": 60, "best": 25, "worst": 15 },
+    "projectedMarginTrend": "DECLINING"
+  },
+  "analysis": {
+    "keyMarginDrivers": [
+      { "driver": "Rast nabavnih cen", "impact": "NEGATIVE", "weight": 80, "detail": "Nabavne cene naraščajo — obremenitev marže." }
+    ],
+    "marginRiskFactors": [
+      { "risk": "Naraščajoče nabavne cene", "severity": "HIGH", "mitigation": "Pogajaj se z dobavitelji o nižjih cenah ali išči alternative." }
+    ],
+    "marginProtectionActions": [
+      { "action": "Pogajaj se o nižjih nabavnih cenah z glavnimi dobavitelji", "priority": "HIGH", "expectedMarginLift": 3 }
+    ]
+  },
+  "summary": "Marža: 22% → base 20% v 30d, best 25%, worst 15%. Trend: DECLINING. Glavni dejavnik: Rast nabavnih cen."
+}${GROUNDING_PROMPT_SUFFIX}`;
+}
+
+function mergeAiIntoForecast(
+  parsed: AiMarginProResponse | null,
+  forecast: MarginForecast,
+  analysis: MarginAnalysis,
+  detSummary: string,
+): { forecast: MarginForecast; analysis: MarginAnalysis; summary: string; aiUsed: boolean } {
+  let finalSummary = detSummary;
+  let aiUsed = false;
+
+  if (parsed && typeof parsed === 'object') {
+    // AI forecast override (with anti-hallucination clamping)
+    if (parsed.forecast && typeof parsed.forecast === 'object') {
+      const f = parsed.forecast as Record<string, unknown>;
+
+      // baseCase: ±10 from deterministic
+      const detBase30 = forecast.baseCase.margin30d;
+      const detBase60 = forecast.baseCase.margin60d;
+      const detBase90 = forecast.baseCase.margin90d;
+      if (f.baseCase && typeof f.baseCase === 'object') {
+        const bc = f.baseCase as Record<string, unknown>;
+        const adjB30 = clampNumber(bc.margin30d, MARGIN_MIN, MARGIN_MAX, detBase30);
+        const adjB60 = clampNumber(bc.margin60d, MARGIN_MIN, MARGIN_MAX, detBase60);
+        const adjB90 = clampNumber(bc.margin90d, MARGIN_MIN, MARGIN_MAX, detBase90);
+        forecast.baseCase.margin30d = round1(
+          Math.max(MARGIN_MIN, Math.min(MARGIN_MAX, detBase30 + Math.max(-10, Math.min(10, adjB30 - detBase30)))),
+        );
+        forecast.baseCase.margin60d = round1(
+          Math.max(MARGIN_MIN, Math.min(MARGIN_MAX, detBase60 + Math.max(-10, Math.min(10, adjB60 - detBase60)))),
+        );
+        forecast.baseCase.margin90d = round1(
+          Math.max(MARGIN_MIN, Math.min(MARGIN_MAX, detBase90 + Math.max(-10, Math.min(10, adjB90 - detBase90)))),
+        );
+      }
+
+      // bestCase: >= baseCase, ±5 from deterministic
+      if (f.bestCase && typeof f.bestCase === 'object') {
+        const bc = f.bestCase as Record<string, unknown>;
+        const adjBe30 = clampNumber(bc.margin30d, MARGIN_MIN, MARGIN_MAX, forecast.bestCase.margin30d);
+        const adjBe60 = clampNumber(bc.margin60d, MARGIN_MIN, MARGIN_MAX, forecast.bestCase.margin60d);
+        const adjBe90 = clampNumber(bc.margin90d, MARGIN_MIN, MARGIN_MAX, forecast.bestCase.margin90d);
+        forecast.bestCase.margin30d = round1(
+          Math.max(forecast.baseCase.margin30d, Math.min(MARGIN_MAX, forecast.bestCase.margin30d + Math.max(-5, Math.min(5, adjBe30 - forecast.bestCase.margin30d)))),
+        );
+        forecast.bestCase.margin60d = round1(
+          Math.max(forecast.baseCase.margin60d, Math.min(MARGIN_MAX, forecast.bestCase.margin60d + Math.max(-5, Math.min(5, adjBe60 - forecast.bestCase.margin60d)))),
+        );
+        forecast.bestCase.margin90d = round1(
+          Math.max(forecast.baseCase.margin90d, Math.min(MARGIN_MAX, forecast.bestCase.margin90d + Math.max(-5, Math.min(5, adjBe90 - forecast.bestCase.margin90d)))),
+        );
+      }
+
+      // worstCase: <= baseCase, ±5 from deterministic
+      if (f.worstCase && typeof f.worstCase === 'object') {
+        const wc = f.worstCase as Record<string, unknown>;
+        const adjW30 = clampNumber(wc.margin30d, MARGIN_MIN, MARGIN_MAX, forecast.worstCase.margin30d);
+        const adjW60 = clampNumber(wc.margin60d, MARGIN_MIN, MARGIN_MAX, forecast.worstCase.margin60d);
+        const adjW90 = clampNumber(wc.margin90d, MARGIN_MIN, MARGIN_MAX, forecast.worstCase.margin90d);
+        forecast.worstCase.margin30d = round1(
+          Math.max(MARGIN_MIN, Math.min(forecast.baseCase.margin30d, forecast.worstCase.margin30d + Math.max(-5, Math.min(5, adjW30 - forecast.worstCase.margin30d)))),
+        );
+        forecast.worstCase.margin60d = round1(
+          Math.max(MARGIN_MIN, Math.min(forecast.baseCase.margin60d, forecast.worstCase.margin60d + Math.max(-5, Math.min(5, adjW60 - forecast.worstCase.margin60d)))),
+        );
+        forecast.worstCase.margin90d = round1(
+          Math.max(MARGIN_MIN, Math.min(forecast.baseCase.margin90d, forecast.worstCase.margin90d + Math.max(-5, Math.min(5, adjW90 - forecast.worstCase.margin90d)))),
+        );
+      }
+
+      // confidenceInterval: ±5 from deterministic
+      if (f.confidenceInterval && typeof f.confidenceInterval === 'object') {
+        const ci = f.confidenceInterval as Record<string, unknown>;
+        const adjLow = clampNumber(ci.low, MARGIN_MIN, MARGIN_MAX, forecast.confidenceInterval.low);
+        const adjHigh = clampNumber(ci.high, MARGIN_MIN, MARGIN_MAX, forecast.confidenceInterval.high);
+        forecast.confidenceInterval.low = round1(
+          Math.max(MARGIN_MIN, Math.min(MARGIN_MAX, forecast.confidenceInterval.low + Math.max(-5, Math.min(5, adjLow - forecast.confidenceInterval.low)))),
+        );
+        forecast.confidenceInterval.high = round1(
+          Math.max(MARGIN_MIN, Math.min(MARGIN_MAX, forecast.confidenceInterval.high + Math.max(-5, Math.min(5, adjHigh - forecast.confidenceInterval.high)))),
+        );
+        if (forecast.confidenceInterval.low > forecast.confidenceInterval.high) {
+          const tmp = forecast.confidenceInterval.low;
+          forecast.confidenceInterval.low = forecast.confidenceInterval.high;
+          forecast.confidenceInterval.high = tmp;
+        }
+      }
+
+      // scenarioProbability: ±15 from deterministic, sum = 100
+      if (f.scenarioProbability && typeof f.scenarioProbability === 'object') {
+        const sp = f.scenarioProbability as Record<string, unknown>;
+        const adjBase = clampNumber(sp.base, 0, 100, forecast.scenarioProbability.base);
+        const adjBest = clampNumber(sp.best, 0, 100, forecast.scenarioProbability.best);
+        const adjWorst = clampNumber(sp.worst, 0, 100, forecast.scenarioProbability.worst);
+        const detBase = forecast.scenarioProbability.base;
+        const detBest = forecast.scenarioProbability.best;
+        const detWorst = forecast.scenarioProbability.worst;
+        let newBase = round0(Math.max(0, Math.min(100, detBase + Math.max(-15, Math.min(15, adjBase - detBase)))));
+        let newBest = round0(Math.max(0, Math.min(100, detBest + Math.max(-15, Math.min(15, adjBest - detBest)))));
+        let newWorst = round0(Math.max(0, Math.min(100, detWorst + Math.max(-15, Math.min(15, adjWorst - detWorst)))));
+        const sum = newBase + newBest + newWorst;
+        if (sum > 0) {
+          newBase = round0((newBase / sum) * 100);
+          newBest = round0((newBest / sum) * 100);
+          newWorst = 100 - newBase - newBest;
+          if (newWorst < 0) {
+            newWorst = 0;
+            newBest = 100 - newBase;
+          }
+        }
+        forecast.scenarioProbability = { base: newBase, best: newBest, worst: newWorst };
+      }
+
+      forecast.projectedMarginTrend = clampEnum(
+        f.projectedMarginTrend,
+        VALID_MARGIN_TREND,
+        forecast.projectedMarginTrend,
+      );
+    }
+
+    // Analysis override (with anti-hallucination)
+    if (parsed.analysis && typeof parsed.analysis === 'object') {
+      const a = parsed.analysis as Record<string, unknown>;
+
+      if (Array.isArray(a.keyMarginDrivers)) {
+        const aiDrivers = (a.keyMarginDrivers as unknown[])
+          .map((d: unknown) => {
+            const dr = d as Record<string, unknown>;
+            if (!dr || typeof dr !== 'object') return null;
+            const driver = clampString(dr.driver, 80, '');
+            if (!driver) return null;
+            const impact = clampEnum(dr.impact, VALID_IMPACT, 'POSITIVE');
+            const weight = clampInt(dr.weight, 0, 100, 50);
+            const detail = clampString(dr.detail, 200, '');
+            if (!detail) return null;
+            return { driver, impact, weight, detail };
+          })
+          .filter((d): d is MarginDriver => d !== null)
+          .slice(0, 3);
+        if (aiDrivers.length > 0) analysis.keyMarginDrivers = aiDrivers;
+      }
+
+      if (Array.isArray(a.marginRiskFactors)) {
+        const aiRisks = (a.marginRiskFactors as unknown[])
+          .map((r: unknown) => {
+            const rr = r as Record<string, unknown>;
+            if (!rr || typeof rr !== 'object') return null;
+            const risk = clampString(rr.risk, 100, '');
+            if (!risk) return null;
+            const severity = clampEnum(rr.severity, VALID_SEVERITY, 'MEDIUM');
+            const mitigation = clampString(rr.mitigation, 250, '');
+            if (!mitigation) return null;
+            return { risk, severity, mitigation };
+          })
+          .filter((r): r is MarginRiskFactor => r !== null)
+          .slice(0, 4);
+        if (aiRisks.length > 0) analysis.marginRiskFactors = aiRisks;
+      }
+
+      if (Array.isArray(a.marginProtectionActions)) {
+        const aiActions = (a.marginProtectionActions as unknown[])
+          .map((ac: unknown) => {
+            const a2 = ac as Record<string, unknown>;
+            if (!a2 || typeof a2 !== 'object') return null;
+            const action = clampString(a2.action, 200, '');
+            if (!action) return null;
+            const priority = clampEnum(a2.priority, VALID_PRIORITY, 'MEDIUM');
+            const expectedMarginLift = clampNumber(a2.expectedMarginLift, 0, 15, 1);
+            return { action, priority, expectedMarginLift: round1(expectedMarginLift) };
+          })
+          .filter((ac): ac is MarginProtectionAction => ac !== null)
+          .slice(0, 4);
+        if (aiActions.length > 0) analysis.marginProtectionActions = aiActions;
+      }
+    }
+
+    if (typeof parsed.summary === 'string' && parsed.summary.trim()) {
+      finalSummary = clampString(parsed.summary, 400, detSummary);
+    }
+
+    aiUsed = true;
+  }
+
+  return { forecast, analysis, summary: finalSummary, aiUsed };
+}
+
+// --- Route handler -------------------------------------------------------
+
+export const profitMarginForecasterProHandler = withAiRoute<ProfitMarginForecasterProInput>({
+  endpoint: '/api/ai/profit-margin-forecaster-pro',
+  maxDuration: 60,
+  enforceBudget: true, // AI klic — preveri budget
+  method: 'GET', // GET+POST dual-handler — bypass POST-only check
+
+  parseBody: async (req) => {
+    await req.json().catch(() => ({}));
+    return {};
+  },
+
+  // No validateInput — body ignored, identična logika za GET in POST
+
+  handler: async (_input, ctx: AiRouteContext) => {
+    const { db, callAi, parseAi, logger } = ctx;
 
     const now = Date.now();
 
@@ -803,7 +1081,7 @@ async function handleProfitMarginForecasterPro(req: NextRequest) {
 
     // Empty state: no SOLD history
     if (rows.length === 0) {
-      return NextResponse.json({
+      return apiOk({
         ok: true,
         current,
         influencers,
@@ -826,7 +1104,7 @@ async function handleProfitMarginForecasterPro(req: NextRequest) {
       summary: string;
     }>(cacheKey);
     if (cached) {
-      return NextResponse.json({
+      return apiOk({
         ok: true,
         current,
         influencers,
@@ -839,265 +1117,20 @@ async function handleProfitMarginForecasterPro(req: NextRequest) {
     }
 
     // 3) AI prompt with grounding
-    const settings = await getSettingsRow();
-    const aiSettings: AiSettings = {
-      provider: settings.aiProvider as AiProviderType,
-      baseUrl: settings.aiBaseUrl,
-      apiKey: settings.aiApiKey,
-      model: settings.aiModel,
-      fallbackProvider: (settings.fallbackProvider || '') as
-        | AiProviderType
-        | '',
-      fallbackBaseUrl: settings.fallbackBaseUrl || '',
-      fallbackApiKey: settings.fallbackApiKey || '',
-      fallbackModel: settings.fallbackModel || '',
-    };
-
-    const promptData = {
-      current,
-      influencers,
-      monthlyMargins: agg.monthly.map((m) => ({
-        month: m.monthKey,
-        margin: m.margin,
-        tradeCount: m.tradeCount,
-        avgSellPrice: round1(m.avgSellPrice),
-        avgBuyPrice: round1(m.avgBuyPrice),
-        avgFeePct: round2(m.avgFeePct),
-      })),
-      influencerSlopes: {
-        price: agg.priceTrendSlope,
-        cost: agg.costTrendSlope,
-        fee: agg.feeTrendSlope,
-      },
-      deterministicForecast: det.forecast,
-      deterministicDrivers: det.analysis.keyMarginDrivers,
-    };
-
-    const prompt = `Si AI "Profit Margin Forecaster Pro" za slovenske in srednjeevropske oglasne platforme (Bolha, Vinted, Facebook, Avtonet, mobile.de).
-Napoveš profit marže 30/60/90 dni naprej z SCENARIO analizo (base/best/worst case) in confidence intervalsi.
-
-CURRENT MARGIN METRICS (deterministično izračunano):
-${JSON.stringify(promptData, null, 2)}
-
-PRAVILA ZA AI ODGOVOR:
-1. forecast: {
-   - baseCase: { margin30d/60d/90d: % v [-50, 100] (lahko prilagodiš znotraj [-10, +10] od deterministične vrednosti — anti-hallucination)
-   - bestCase: { margin30d/60d/90d: % (optimistični scenarij, >= baseCase, lahko prilagodiš ±5 od deterministične)
-   - worstCase: { margin30d/60d/90d: % (pesimistični scenarij, <= baseCase, lahko prilagodiš ±5 od deterministične)
-   - confidenceInterval: { low, high } v [-50, 100] za 30d forecast (±5 od deterministične)
-   - scenarioProbability: { base: 0-100, best: 0-100, worst: 0-100 } (vsota = 100, ±15 od deterministične)
-   - projectedMarginTrend: IMPROVING | STABLE | DECLINING (validiraj proti enum)
-}
-2. analysis: {
-   - keyMarginDrivers: 3 drivers z { driver (max 80), impact: POSITIVE|NEGATIVE, weight: 0-100, detail (max 200) }
-   - marginRiskFactors: 2-4 risks z { risk (max 100), severity: LOW|MEDIUM|HIGH, mitigation (max 250) }
-   - marginProtectionActions: 3-4 actions z { action (max 200), priority: HIGH|MEDIUM|LOW, expectedMarginLift: 0-15 (percentage points) }
-}
-3. summary: slovenski povzetek (max 400 znakov). NE izmišljuj številk — uporabi zgornje deterministične podatke.
-
-VRNI LE JSON:
-{
-  "forecast": {
-    "baseCase": { "margin30d": 20, "margin60d": 19, "margin90d": 18 },
-    "bestCase": { "margin30d": 25, "margin60d": 27, "margin90d": 28 },
-    "worstCase": { "margin30d": 15, "margin60d": 12, "margin90d": 10 },
-    "confidenceInterval": { "low": 17, "high": 23 },
-    "scenarioProbability": { "base": 60, "best": 25, "worst": 15 },
-    "projectedMarginTrend": "DECLINING"
-  },
-  "analysis": {
-    "keyMarginDrivers": [
-      { "driver": "Rast nabavnih cen", "impact": "NEGATIVE", "weight": 80, "detail": "Nabavne cene naraščajo — obremenitev marže." }
-    ],
-    "marginRiskFactors": [
-      { "risk": "Naraščajoče nabavne cene", "severity": "HIGH", "mitigation": "Pogajaj se z dobavitelji o nižjih cenah ali išči alternative." }
-    ],
-    "marginProtectionActions": [
-      { "action": "Pogajaj se o nižjih nabavnih cenah z glavnimi dobavitelji", "priority": "HIGH", "expectedMarginLift": 3 }
-    ]
-  },
-  "summary": "Marža: 22% → base 20% v 30d, best 25%, worst 15%. Trend: DECLINING. Glavni dejavnik: Rast nabavnih cen."
-}${GROUNDING_PROMPT_SUFFIX}`;
+    const promptData = buildPromptData(current, influencers, agg.monthly, agg, det);
+    const prompt = buildPrompt(promptData);
 
     let aiUsed = false;
 
     try {
-      const raw = await callProviderForRaw(aiSettings, prompt);
-      const parsed = parseJsonLooseExported(
-        raw,
-      ) as AiMarginProResponse | null;
+      const raw = await callAi(prompt);
+      const parsed = parseAi(raw) as AiMarginProResponse | null;
 
-      if (parsed && typeof parsed === 'object') {
-        // AI forecast override (with anti-hallucination clamping)
-        if (parsed.forecast && typeof parsed.forecast === 'object') {
-          const f = parsed.forecast as Record<string, unknown>;
-
-          // baseCase: ±10 from deterministic
-          const detBase30 = forecast.baseCase.margin30d;
-          const detBase60 = forecast.baseCase.margin60d;
-          const detBase90 = forecast.baseCase.margin90d;
-          if (f.baseCase && typeof f.baseCase === 'object') {
-            const bc = f.baseCase as Record<string, unknown>;
-            const adjB30 = clampNumber(bc.margin30d, MARGIN_MIN, MARGIN_MAX, detBase30);
-            const adjB60 = clampNumber(bc.margin60d, MARGIN_MIN, MARGIN_MAX, detBase60);
-            const adjB90 = clampNumber(bc.margin90d, MARGIN_MIN, MARGIN_MAX, detBase90);
-            forecast.baseCase.margin30d = round1(
-              Math.max(MARGIN_MIN, Math.min(MARGIN_MAX, detBase30 + Math.max(-10, Math.min(10, adjB30 - detBase30)))),
-            );
-            forecast.baseCase.margin60d = round1(
-              Math.max(MARGIN_MIN, Math.min(MARGIN_MAX, detBase60 + Math.max(-10, Math.min(10, adjB60 - detBase60)))),
-            );
-            forecast.baseCase.margin90d = round1(
-              Math.max(MARGIN_MIN, Math.min(MARGIN_MAX, detBase90 + Math.max(-10, Math.min(10, adjB90 - detBase90)))),
-            );
-          }
-
-          // bestCase: >= baseCase, ±5 from deterministic
-          if (f.bestCase && typeof f.bestCase === 'object') {
-            const bc = f.bestCase as Record<string, unknown>;
-            const adjBe30 = clampNumber(bc.margin30d, MARGIN_MIN, MARGIN_MAX, forecast.bestCase.margin30d);
-            const adjBe60 = clampNumber(bc.margin60d, MARGIN_MIN, MARGIN_MAX, forecast.bestCase.margin60d);
-            const adjBe90 = clampNumber(bc.margin90d, MARGIN_MIN, MARGIN_MAX, forecast.bestCase.margin90d);
-            forecast.bestCase.margin30d = round1(
-              Math.max(forecast.baseCase.margin30d, Math.min(MARGIN_MAX, forecast.bestCase.margin30d + Math.max(-5, Math.min(5, adjBe30 - forecast.bestCase.margin30d)))),
-            );
-            forecast.bestCase.margin60d = round1(
-              Math.max(forecast.baseCase.margin60d, Math.min(MARGIN_MAX, forecast.bestCase.margin60d + Math.max(-5, Math.min(5, adjBe60 - forecast.bestCase.margin60d)))),
-            );
-            forecast.bestCase.margin90d = round1(
-              Math.max(forecast.baseCase.margin90d, Math.min(MARGIN_MAX, forecast.bestCase.margin90d + Math.max(-5, Math.min(5, adjBe90 - forecast.bestCase.margin90d)))),
-            );
-          }
-
-          // worstCase: <= baseCase, ±5 from deterministic
-          if (f.worstCase && typeof f.worstCase === 'object') {
-            const wc = f.worstCase as Record<string, unknown>;
-            const adjW30 = clampNumber(wc.margin30d, MARGIN_MIN, MARGIN_MAX, forecast.worstCase.margin30d);
-            const adjW60 = clampNumber(wc.margin60d, MARGIN_MIN, MARGIN_MAX, forecast.worstCase.margin60d);
-            const adjW90 = clampNumber(wc.margin90d, MARGIN_MIN, MARGIN_MAX, forecast.worstCase.margin90d);
-            forecast.worstCase.margin30d = round1(
-              Math.max(MARGIN_MIN, Math.min(forecast.baseCase.margin30d, forecast.worstCase.margin30d + Math.max(-5, Math.min(5, adjW30 - forecast.worstCase.margin30d)))),
-            );
-            forecast.worstCase.margin60d = round1(
-              Math.max(MARGIN_MIN, Math.min(forecast.baseCase.margin60d, forecast.worstCase.margin60d + Math.max(-5, Math.min(5, adjW60 - forecast.worstCase.margin60d)))),
-            );
-            forecast.worstCase.margin90d = round1(
-              Math.max(MARGIN_MIN, Math.min(forecast.baseCase.margin90d, forecast.worstCase.margin90d + Math.max(-5, Math.min(5, adjW90 - forecast.worstCase.margin90d)))),
-            );
-          }
-
-          // confidenceInterval: ±5 from deterministic
-          if (f.confidenceInterval && typeof f.confidenceInterval === 'object') {
-            const ci = f.confidenceInterval as Record<string, unknown>;
-            const adjLow = clampNumber(ci.low, MARGIN_MIN, MARGIN_MAX, forecast.confidenceInterval.low);
-            const adjHigh = clampNumber(ci.high, MARGIN_MIN, MARGIN_MAX, forecast.confidenceInterval.high);
-            forecast.confidenceInterval.low = round1(
-              Math.max(MARGIN_MIN, Math.min(MARGIN_MAX, forecast.confidenceInterval.low + Math.max(-5, Math.min(5, adjLow - forecast.confidenceInterval.low)))),
-            );
-            forecast.confidenceInterval.high = round1(
-              Math.max(MARGIN_MIN, Math.min(MARGIN_MAX, forecast.confidenceInterval.high + Math.max(-5, Math.min(5, adjHigh - forecast.confidenceInterval.high)))),
-            );
-            if (forecast.confidenceInterval.low > forecast.confidenceInterval.high) {
-              const tmp = forecast.confidenceInterval.low;
-              forecast.confidenceInterval.low = forecast.confidenceInterval.high;
-              forecast.confidenceInterval.high = tmp;
-            }
-          }
-
-          // scenarioProbability: ±15 from deterministic, sum = 100
-          if (f.scenarioProbability && typeof f.scenarioProbability === 'object') {
-            const sp = f.scenarioProbability as Record<string, unknown>;
-            const adjBase = clampNumber(sp.base, 0, 100, forecast.scenarioProbability.base);
-            const adjBest = clampNumber(sp.best, 0, 100, forecast.scenarioProbability.best);
-            const adjWorst = clampNumber(sp.worst, 0, 100, forecast.scenarioProbability.worst);
-            const detBase = forecast.scenarioProbability.base;
-            const detBest = forecast.scenarioProbability.best;
-            const detWorst = forecast.scenarioProbability.worst;
-            let newBase = round0(Math.max(0, Math.min(100, detBase + Math.max(-15, Math.min(15, adjBase - detBase)))));
-            let newBest = round0(Math.max(0, Math.min(100, detBest + Math.max(-15, Math.min(15, adjBest - detBest)))));
-            let newWorst = round0(Math.max(0, Math.min(100, detWorst + Math.max(-15, Math.min(15, adjWorst - detWorst)))));
-            const sum = newBase + newBest + newWorst;
-            if (sum > 0) {
-              newBase = round0((newBase / sum) * 100);
-              newBest = round0((newBest / sum) * 100);
-              newWorst = 100 - newBase - newBest;
-              if (newWorst < 0) {
-                newWorst = 0;
-                newBest = 100 - newBase;
-              }
-            }
-            forecast.scenarioProbability = { base: newBase, best: newBest, worst: newWorst };
-          }
-
-          forecast.projectedMarginTrend = clampEnum(
-            f.projectedMarginTrend,
-            VALID_MARGIN_TREND,
-            forecast.projectedMarginTrend,
-          );
-        }
-
-        // Analysis override (with anti-hallucination)
-        if (parsed.analysis && typeof parsed.analysis === 'object') {
-          const a = parsed.analysis as Record<string, unknown>;
-
-          if (Array.isArray(a.keyMarginDrivers)) {
-            const aiDrivers = (a.keyMarginDrivers as unknown[])
-              .map((d: unknown) => {
-                const dr = d as Record<string, unknown>;
-                if (!dr || typeof dr !== 'object') return null;
-                const driver = clampString(dr.driver, 80, '');
-                if (!driver) return null;
-                const impact = clampEnum(dr.impact, VALID_IMPACT, 'POSITIVE');
-                const weight = clampInt(dr.weight, 0, 100, 50);
-                const detail = clampString(dr.detail, 200, '');
-                if (!detail) return null;
-                return { driver, impact, weight, detail };
-              })
-              .filter((d): d is MarginDriver => d !== null)
-              .slice(0, 3);
-            if (aiDrivers.length > 0) analysis.keyMarginDrivers = aiDrivers;
-          }
-
-          if (Array.isArray(a.marginRiskFactors)) {
-            const aiRisks = (a.marginRiskFactors as unknown[])
-              .map((r: unknown) => {
-                const rr = r as Record<string, unknown>;
-                if (!rr || typeof rr !== 'object') return null;
-                const risk = clampString(rr.risk, 100, '');
-                if (!risk) return null;
-                const severity = clampEnum(rr.severity, VALID_SEVERITY, 'MEDIUM');
-                const mitigation = clampString(rr.mitigation, 250, '');
-                if (!mitigation) return null;
-                return { risk, severity, mitigation };
-              })
-              .filter((r): r is MarginRiskFactor => r !== null)
-              .slice(0, 4);
-            if (aiRisks.length > 0) analysis.marginRiskFactors = aiRisks;
-          }
-
-          if (Array.isArray(a.marginProtectionActions)) {
-            const aiActions = (a.marginProtectionActions as unknown[])
-              .map((ac: unknown) => {
-                const a2 = ac as Record<string, unknown>;
-                if (!a2 || typeof a2 !== 'object') return null;
-                const action = clampString(a2.action, 200, '');
-                if (!action) return null;
-                const priority = clampEnum(a2.priority, VALID_PRIORITY, 'MEDIUM');
-                const expectedMarginLift = clampNumber(a2.expectedMarginLift, 0, 15, 1);
-                return { action, priority, expectedMarginLift: round1(expectedMarginLift) };
-              })
-              .filter((ac): ac is MarginProtectionAction => ac !== null)
-              .slice(0, 4);
-            if (aiActions.length > 0) analysis.marginProtectionActions = aiActions;
-          }
-        }
-
-        if (typeof parsed.summary === 'string' && parsed.summary.trim()) {
-          finalSummary = clampString(parsed.summary, 400, det.summary);
-        }
-
-        aiUsed = true;
-      }
+      const merged = mergeAiIntoForecast(parsed, forecast, analysis, det.summary);
+      forecast = merged.forecast;
+      analysis = merged.analysis;
+      finalSummary = merged.summary;
+      aiUsed = merged.aiUsed;
     } catch (err) {
       logger.warn(
         '/api/ai/profit-margin-forecaster-pro',
@@ -1115,7 +1148,7 @@ VRNI LE JSON:
       });
     }
 
-    return NextResponse.json({
+    return apiOk({
       ok: true,
       current,
       influencers,
@@ -1124,15 +1157,8 @@ VRNI LE JSON:
       summary: finalSummary,
       aiUsed,
     });
-  } catch (err: any) {
-    logger.error(
-      '/api/ai/profit-margin-forecaster-pro',
-      'handler failed',
-      err,
-    );
-    return NextResponse.json(
-      { error: err?.message ?? 'Napaka' },
-      { status: 500 },
-    );
-  }
-}
+  },
+});
+
+export const GET = profitMarginForecasterProHandler;
+export const POST = profitMarginForecasterProHandler;

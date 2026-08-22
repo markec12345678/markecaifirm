@@ -1,4 +1,4 @@
-// v7.92: AI Market Cycle Transition Predictor — AI napove KDAJ se bo
+// v7.92 / v8.96.9-final2: AI Market Cycle Transition Predictor — AI napove KDAJ se bo
 // zgodil naslednji market cycle transition in kaj storiti PRED in PO
 // prehodu. Razlika od market-cycle-phase-predictor (v7.87 ki napove
 // phase timing — nextPhase + date) — ta se fokúsira na TRANSITION sam
@@ -16,23 +16,14 @@
 //
 // GET+POST /api/ai/market-cycle-transition-predictor
 // (AI-enhanced + grounding + anti-hallucination + 6h cache + deterministic fallback)
+// Refaktoriran z withAiRoute helperjem (v8.96.9) + enforceBudget guard.
 
-import { NextRequest, NextResponse } from 'next/server';
-import { db } from '@/lib/db';
-import { getSettingsRow } from '@/lib/pipeline';
-import {
-  callProviderForRaw,
-  parseJsonLooseExported,
-  type AiProviderType,
-  type AiSettings,
-} from '@/lib/ai';
+import { withAiRoute, AI_ROUTE_DEFAULTS, type AiRouteContext } from '@/lib/with-ai-route';
+import { apiOk } from '@/lib/api-response';
 import { GROUNDING_PROMPT_SUFFIX } from '@/lib/anti-hallucination';
 import { getCachedAI, setCachedAI } from '@/lib/ai-cache';
-import { checkRateLimit, rateLimitResponse } from '@/lib/rate-limit';
-import { logger } from '@/lib/logger';
 
-export const runtime = 'nodejs';
-export const dynamic = 'force-dynamic';
+export const { runtime, dynamic } = AI_ROUTE_DEFAULTS;
 export const maxDuration = 60;
 
 // --- Types ---------------------------------------------------------------
@@ -658,19 +649,27 @@ function buildDeterministicStrategy(
   };
 }
 
+// --- Input ---------------------------------------------------------------
+
+// eslint-disable-next-line @typescript-eslint/no-empty-object-type
+interface MarketCycleTransitionPredictorInput {}
+
 // --- Handler -------------------------------------------------------------
 
-export async function GET(req: NextRequest) {
-  return handleMarketCycleTransitionPredictor(req);
-}
-export async function POST(req: NextRequest) {
-  return handleMarketCycleTransitionPredictor(req);
-}
+const marketCycleTransitionPredictorHandler = withAiRoute<MarketCycleTransitionPredictorInput>({
+  endpoint: '/api/ai/market-cycle-transition-predictor',
+  maxDuration: 60,
+  enforceBudget: true, // AI klic — preveri budget
+  method: 'GET', // GET+POST — body ignored
 
-async function handleMarketCycleTransitionPredictor(req: NextRequest) {
-  try {
-    const rl = checkRateLimit(req, 'ai-market-cycle-transition-predictor', 20);
-    if (!rl.allowed) return rateLimitResponse(rl);
+  parseBody: async (req) => {
+    await req.json().catch(() => ({}));
+    return {};
+  },
+
+  // No validateInput — body ignored
+  handler: async (_input, ctx: AiRouteContext) => {
+    const { db, callAi, parseAi, logger } = ctx;
 
     const now = Date.now();
     const cutoff365d = new Date(now - HORIZON_365D);
@@ -747,7 +746,7 @@ async function handleMarketCycleTransitionPredictor(req: NextRequest) {
     // Empty state
     const totalListings = listings.length;
     if (totalListings === 0) {
-      return NextResponse.json({
+      return apiOk({
         ok: true,
         current: { phase: 'ACCUMULATION', phaseProgress: 0, weeksInPhase: 0 },
         signals: {
@@ -883,7 +882,7 @@ async function handleMarketCycleTransitionPredictor(req: NextRequest) {
     const cacheKey = `market-cycle-transition-predictor:${currentWeek}`;
     const cached = getCachedAI<{ prediction: TransitionPrediction; strategy: TransitionStrategy; summary: string }>(cacheKey);
     if (cached) {
-      return NextResponse.json({
+      return apiOk({
         ok: true,
         current: { phase, phaseProgress, weeksInPhase },
         signals,
@@ -896,19 +895,6 @@ async function handleMarketCycleTransitionPredictor(req: NextRequest) {
     }
 
     // 7) AI prompt with grounding
-    const settings = await getSettingsRow();
-    const aiSettings: AiSettings = {
-      provider: settings.aiProvider as AiProviderType,
-      baseUrl: settings.aiBaseUrl,
-      apiKey: settings.aiApiKey,
-      model: settings.aiModel,
-      fallbackProvider: (settings.fallbackProvider || '') as
-        | AiProviderType
-        | '',
-      fallbackBaseUrl: settings.fallbackBaseUrl || '',
-      fallbackApiKey: settings.fallbackApiKey || '',
-      fallbackModel: settings.fallbackModel || '',
-    };
 
     const promptData = {
       current: { phase, phaseProgress, weeksInPhase, phaseConfidence, volatilityIndex },
@@ -970,8 +956,8 @@ VRNI LE JSON:
     let aiUsed = false;
 
     try {
-      const raw = await callProviderForRaw(aiSettings, prompt);
-      const parsed = parseJsonLooseExported(raw) as AiTransitionResponse | null;
+      const raw = await callAi(prompt);
+      const parsed = parseAi(raw) as AiTransitionResponse | null;
 
       if (parsed && typeof parsed === 'object') {
         const probability = round0(
@@ -1051,7 +1037,7 @@ VRNI LE JSON:
       setCachedAI(cacheKey, { prediction, strategy, summary });
     }
 
-    return NextResponse.json({
+    return apiOk({
       ok: true,
       current: { phase, phaseProgress, weeksInPhase },
       signals,
@@ -1060,18 +1046,11 @@ VRNI LE JSON:
       summary,
       aiUsed,
     });
-  } catch (err: any) {
-    logger.error(
-      '/api/ai/market-cycle-transition-predictor',
-      'handler failed',
-      err,
-    );
-    return NextResponse.json(
-      { error: err?.message ?? 'Napaka' },
-      { status: 500 },
-    );
-  }
-}
+  },
+});
+
+export const GET = marketCycleTransitionPredictorHandler;
+export const POST = marketCycleTransitionPredictorHandler;
 
 // Validate future date — fallback to deterministic if invalid
 function validateFutureDate(

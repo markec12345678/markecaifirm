@@ -25,23 +25,14 @@
 
 // GET+POST /api/ai/profit-per-euro-maximizer
 // (AI-enhanced + grounding + anti-hallucination + 6h cache + deterministic fallback)
+// Refaktoriran z withAiRoute helperjem (v8.96.9) + enforceBudget guard.
 
-import { NextRequest, NextResponse } from 'next/server';
-import { db } from '@/lib/db';
-import { getSettingsRow } from '@/lib/pipeline';
-import {
-  callProviderForRaw,
-  parseJsonLooseExported,
-  type AiProviderType,
-  type AiSettings,
-} from '@/lib/ai';
+import { withAiRoute, AI_ROUTE_DEFAULTS, type AiRouteContext } from '@/lib/with-ai-route';
+import { apiOk } from '@/lib/api-response';
 import { GROUNDING_PROMPT_SUFFIX } from '@/lib/anti-hallucination';
 import { getCachedAI, setCachedAI } from '@/lib/ai-cache';
-import { checkRateLimit, rateLimitResponse } from '@/lib/rate-limit';
-import { logger } from '@/lib/logger';
 
-export const runtime = 'nodejs';
-export const dynamic = 'force-dynamic';
+export const { runtime, dynamic } = AI_ROUTE_DEFAULTS;
 export const maxDuration = 60;
 
 // --- Types ---------------------------------------------------------------
@@ -607,19 +598,27 @@ function buildDeterministicMaximization(
   };
 }
 
+// --- Input ---------------------------------------------------------------
+
+// eslint-disable-next-line @typescript-eslint/no-empty-object-type
+interface ProfitPerEuroMaximizerInput {}
+
 // --- Handler -------------------------------------------------------------
 
-export async function GET(req: NextRequest) {
-  return handleProfitPerEuroMaximizer(req);
-}
-export async function POST(req: NextRequest) {
-  return handleProfitPerEuroMaximizer(req);
-}
+const profitPerEuroMaximizerHandler = withAiRoute<ProfitPerEuroMaximizerInput>({
+  endpoint: '/api/ai/profit-per-euro-maximizer',
+  maxDuration: 60,
+  enforceBudget: true, // AI klic — preveri budget
+  method: 'GET', // GET+POST — body ignored
 
-async function handleProfitPerEuroMaximizer(req: NextRequest) {
-  try {
-    const rl = checkRateLimit(req, 'ai-profit-per-euro-maximizer', 20);
-    if (!rl.allowed) return rateLimitResponse(rl);
+  parseBody: async (req) => {
+    await req.json().catch(() => ({}));
+    return {};
+  },
+
+  // No validateInput — body ignored
+  handler: async (_input, ctx: AiRouteContext) => {
+    const { db, callAi, parseAi, logger } = ctx;
 
     const now = Date.now();
     const twelveMonthsAgo = new Date(now - TWELVE_MONTHS_MS);
@@ -668,7 +667,7 @@ async function handleProfitPerEuroMaximizer(req: NextRequest) {
 
     // Empty-state: no SOLD and no HELD trades
     if (soldTrades.length === 0 && heldTrades.length === 0) {
-      return NextResponse.json({
+      return apiOk({
         ok: true,
         current: {
           totalCapitalDeployed: 0,
@@ -722,7 +721,7 @@ async function handleProfitPerEuroMaximizer(req: NextRequest) {
     // If no SOLD trades, can't compute realized profit
     if (soldComputed.length === 0) {
       const heldCap = heldComputed.reduce((s, h) => s + h.capital, 0);
-      return NextResponse.json({
+      return apiOk({
         ok: true,
         current: {
           totalCapitalDeployed: heldCap,
@@ -771,7 +770,7 @@ async function handleProfitPerEuroMaximizer(req: NextRequest) {
       summary: string;
     }>(cacheKey);
     if (cached) {
-      return NextResponse.json({
+      return apiOk({
         ok: true,
         current,
         maximization: cached.maximization,
@@ -782,20 +781,6 @@ async function handleProfitPerEuroMaximizer(req: NextRequest) {
     }
 
     // 5) AI prompt with grounding
-    const settings = await getSettingsRow();
-    const aiSettings: AiSettings = {
-      provider: settings.aiProvider as AiProviderType,
-      baseUrl: settings.aiBaseUrl,
-      apiKey: settings.aiApiKey,
-      model: settings.aiModel,
-      fallbackProvider: (settings.fallbackProvider || '') as
-        | AiProviderType
-        | '',
-      fallbackBaseUrl: settings.fallbackBaseUrl || '',
-      fallbackApiKey: settings.fallbackApiKey || '',
-      fallbackModel: settings.fallbackModel || '',
-    };
-
     // Compact trade sample for AI
     const soldSampleForAI = soldComputed
       .slice(-MAX_TRADES_FOR_AI)
@@ -893,8 +878,8 @@ VRNI LE JSON:
     let aiUsed = false;
 
     try {
-      const raw = await callProviderForRaw(aiSettings, prompt);
-      const parsed = parseJsonLooseExported(raw) as AiResponse | null;
+      const raw = await callAi(prompt);
+      const parsed = parseAi(raw) as AiResponse | null;
 
       if (parsed && typeof parsed === 'object' && parsed.maximization) {
         const aiMax = parsed.maximization;
@@ -1054,22 +1039,15 @@ VRNI LE JSON:
       setCachedAI(cacheKey, { maximization, summary });
     }
 
-    return NextResponse.json({
+    return apiOk({
       ok: true,
       current,
       maximization,
       summary,
       aiUsed,
     } satisfies ProfitPerEuroResponse);
-  } catch (err: any) {
-    logger.error(
-      '/api/ai/profit-per-euro-maximizer',
-      'handler failed',
-      err,
-    );
-    return NextResponse.json(
-      { error: err?.message ?? 'Napaka' },
-      { status: 500 },
-    );
-  }
-}
+  },
+});
+
+export const GET = profitPerEuroMaximizerHandler;
+export const POST = profitPerEuroMaximizerHandler;

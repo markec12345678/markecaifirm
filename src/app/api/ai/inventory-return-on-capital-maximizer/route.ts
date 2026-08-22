@@ -1,4 +1,4 @@
-// v8.08: AI Inventory Return On Capital Maximizer — AI MAKSIMIZIRA RETURN ON
+// v8.08 / v8.96.9-final3: AI Inventory Return On Capital Maximizer — AI MAKSIMIZIRA RETURN ON
 // CAPITAL (ROC) za HELD inventory — ne samo ROI per item, ampak overall ROC celotne
 // inventory portfolio. "Tvoj ROC je 22%, ampak bi lahko bil 38% z boljšim inventory
 // mix in hitrejšim turnover." Razlika od inventory-capital-return-maximizer (v8.07
@@ -25,24 +25,20 @@
 
 // GET+POST /api/ai/inventory-return-on-capital-maximizer
 // (AI-enhanced + grounding + anti-hallucination + 6h cache + deterministic fallback)
+// Refaktoriran z withAiRoute helperjem (v8.96.9) + enforceBudget guard.
 
-import { NextRequest, NextResponse } from 'next/server';
-import { db } from '@/lib/db';
-import { getSettingsRow } from '@/lib/pipeline';
-import {
-  callProviderForRaw,
-  parseJsonLooseExported,
-  type AiProviderType,
-  type AiSettings,
-} from '@/lib/ai';
+import { withAiRoute, AI_ROUTE_DEFAULTS, type AiRouteContext } from '@/lib/with-ai-route';
+import { apiOk } from '@/lib/api-response';
 import { GROUNDING_PROMPT_SUFFIX } from '@/lib/anti-hallucination';
 import { getCachedAI, setCachedAI } from '@/lib/ai-cache';
-import { checkRateLimit, rateLimitResponse } from '@/lib/rate-limit';
-import { logger } from '@/lib/logger';
 
-export const runtime = 'nodejs';
-export const dynamic = 'force-dynamic';
+export const { runtime, dynamic } = AI_ROUTE_DEFAULTS;
 export const maxDuration = 60;
+
+// --- Input ----------------------------------------------------------------
+
+// eslint-disable-next-line @typescript-eslint/no-empty-object-type
+interface InventoryReturnOnCapitalMaximizerInput {}
 
 // --- Types ---------------------------------------------------------------
 
@@ -673,211 +669,87 @@ function buildSummary(
   return parts.join(' ').slice(0, 400);
 }
 
-// --- Handler -------------------------------------------------------------
+// --- Prompt + AI response sanitization (anti-hallucination overrides) -----
 
-export async function GET(req: NextRequest) {
-  return handleInventoryReturnOnCapitalMaximizer(req);
+interface PromptData {
+  heldCount: number;
+  sold12mCount: number;
+  current: CurrentState;
+  deterministicMaximization: {
+    maximizedROC: number;
+    rocUplift: number;
+    rocMaximizationLevers: RocLeverItem[];
+    inventoryMixOptimization: InventoryMixOptimization;
+    capitalReallocationPlan: CapitalReallocationEntry[];
+    rocProjection: RocProjectionEntry[];
+    rocGrade: RocGrade;
+    rocVsBenchmark: InventoryReturnOnCapitalMaximization['rocVsBenchmark'];
+    optimalPortfolioComposition: string;
+  };
+  heldSample: Array<{
+    cat: string;
+    cap: number;
+    est: number;
+    profit: number;
+    holdDays: number;
+    roc: number;
+  }>;
+  caps: Record<string, number>;
 }
-export async function POST(req: NextRequest) {
-  return handleInventoryReturnOnCapitalMaximizer(req);
+
+function buildPromptData(
+  heldComputed: HeldComputed[],
+  soldComputed: SoldComputed[],
+  current: CurrentState,
+  maximization: InventoryReturnOnCapitalMaximization,
+): PromptData {
+  const heldSampleForAI = heldComputed
+    .slice()
+    .sort((a, b) => b.capital - a.capital)
+    .slice(0, MAX_TRADES_FOR_AI)
+    .map((h) => ({
+      cat: h.category,
+      cap: h.capital,
+      est: h.estValue,
+      profit: h.unrealizedProfit,
+      holdDays: h.holdDays,
+      roc: h.roc,
+    }));
+
+  return {
+    heldCount: heldComputed.length,
+    sold12mCount: soldComputed.length,
+    current,
+    deterministicMaximization: {
+      maximizedROC: maximization.maximizedROC,
+      rocUplift: maximization.rocUplift,
+      rocMaximizationLevers: maximization.rocMaximizationLevers,
+      inventoryMixOptimization: maximization.inventoryMixOptimization,
+      capitalReallocationPlan: maximization.capitalReallocationPlan,
+      rocProjection: maximization.rocProjection,
+      rocGrade: maximization.rocGrade,
+      rocVsBenchmark: maximization.rocVsBenchmark,
+      optimalPortfolioComposition: maximization.optimalPortfolioComposition,
+    },
+    heldSample: heldSampleForAI,
+    caps: {
+      capitalMin: CAPITAL_MIN, capitalMax: CAPITAL_MAX,
+      profitMin: PROFIT_MIN, profitMax: PROFIT_MAX,
+      rocMin: ROC_MIN, rocMax: ROC_MAX,
+      annualizedRocMin: ANNUALIZED_ROC_MIN, annualizedRocMax: ANNUALIZED_ROC_MAX,
+      gainMin: GAIN_MIN, gainMax: GAIN_MAX,
+      upliftMin: UPLIFT_MIN, upliftMax: UPLIFT_MAX,
+      holdMin: HOLD_MIN, holdMax: HOLD_MAX,
+      projectionRocMin: PROJECTION_ROC_MIN, projectionRocMax: PROJECTION_ROC_MAX,
+      projectionProfitMin: PROJECTION_PROFIT_MIN, projectionProfitMax: PROJECTION_PROFIT_MAX,
+      scoreMin: SCORE_MIN, scoreMax: SCORE_MAX,
+      amountMin: AMOUNT_MIN, amountMax: AMOUNT_MAX,
+    },
+  };
 }
 
-async function handleInventoryReturnOnCapitalMaximizer(req: NextRequest) {
-  try {
-    const rl = checkRateLimit(req, 'ai-inventory-return-on-capital-maximizer', 20);
-    if (!rl.allowed) return rateLimitResponse(rl);
-
-    const now = Date.now();
-    const twelveMonthsAgo = new Date(now - TWELVE_MONTHS_MS);
-
-    // 1) Parallel query HELD trades + SOLD trades (12m) for historical ROC
-    const [heldTrades, soldTrades] = await Promise.all([
-      db.trade.findMany({
-        where: { status: 'held' },
-        select: {
-          id: true,
-          title: true,
-          category: true,
-          buyPrice: true,
-          buyFees: true,
-          buyDate: true,
-          listing: {
-            select: {
-              aiEstimatedValue: true,
-              price: true,
-              aiRisk: true,
-              dealScore: true,
-              aiScore: true,
-            },
-          },
-        },
-        take: 1000,
-      }) as unknown as HeldTradeRow[],
-      db.trade.findMany({
-        where: {
-          status: 'sold',
-          sellDate: { gte: twelveMonthsAgo },
-          sellPrice: { gt: 0 },
-        },
-        select: {
-          id: true,
-          buyPrice: true,
-          buyFees: true,
-          buyDate: true,
-          sellPrice: true,
-          sellFees: true,
-          sellDate: true,
-        },
-        orderBy: { sellDate: 'asc' },
-        take: 100000,
-      }) as unknown as SoldTradeRow[],
-    ]);
-
-    // Compute HELD trades
-    const heldComputed: HeldComputed[] = [];
-    for (const t of heldTrades) {
-      const c = computeHeldTrade(t, now);
-      if (c) heldComputed.push(c);
-    }
-
-    // Compute SOLD trades (12m) for historical ROC reference (avgHoldDays)
-    const soldComputed: SoldComputed[] = [];
-    for (const t of soldTrades) {
-      const c = computeSoldTrade(t, now);
-      if (c && c.within12m) soldComputed.push(c);
-    }
-
-    // Empty-state: no HELD trades
-    if (heldComputed.length === 0) {
-      return NextResponse.json({
-        ok: true,
-        current: {
-          totalCapitalDeployed: 0,
-          totalUnrealizedProfit: 0,
-          currentROC: 0,
-          annualizedROC: 0,
-          heldInventoryCount: 0,
-          avgHoldDays: 0,
-          avgEstValue: 0,
-        },
-        maximization: {
-          maximizedROC: 0,
-          rocUplift: 0,
-          rocMaximizationLevers: [],
-          inventoryMixOptimization: {
-            increaseCategories: [],
-            decreaseCategories: [],
-            rationale: '',
-          },
-          capitalReallocationPlan: [],
-          rocProjection: [],
-          rocGrade: 'F',
-          rocVsBenchmark: {
-            bankDeposit: BENCHMARK_BANK,
-            stocks: BENCHMARK_STOCKS,
-            realEstate: BENCHMARK_REAL_ESTATE,
-            yourCurrentROC: 0,
-            yourMaximizedROC: 0,
-            maximizedVsBank: 0,
-            maximizedVsStocks: 0,
-            maximizedVsRealEstate: 0,
-          },
-          optimalPortfolioComposition: '',
-        },
-        summary: 'Ni HELD trgovin — Inventory Return On Capital Maximizer ni mogoč.',
-        aiUsed: false,
-        message: 'Ni HELD trgovin — Inventory Return On Capital Maximizer ni mogoč.',
-      } satisfies InventoryReturnOnCapitalResponse);
-    }
-
-    const current = computeCurrent(heldComputed, soldComputed, now);
-    let maximization = buildDeterministicMaximization(current, heldComputed);
-    let summary = buildSummary(current, maximization);
-
-    // 4) AI cache check (6h TTL) — key by current month + held item ids hash
-    const currentMonth = new Date(now).toISOString().slice(0, 7); // YYYY-MM
-    const heldIdsHash = heldComputed
-      .map((h) => h.id)
-      .sort()
-      .join(',')
-      .slice(0, 200);
-    const cacheKey = `inventory-return-on-capital-maximizer:${currentMonth}:${heldIdsHash}`;
-    const cached = getCachedAI<{
-      maximization: InventoryReturnOnCapitalMaximization;
-      summary: string;
-    }>(cacheKey);
-    if (cached) {
-      return NextResponse.json({
-        ok: true,
-        current,
-        maximization: cached.maximization,
-        summary: cached.summary,
-        cached: true,
-        aiUsed: true,
-      } satisfies InventoryReturnOnCapitalResponse);
-    }
-
-    // 5) AI prompt with grounding
-    const settings = await getSettingsRow();
-    const aiSettings: AiSettings = {
-      provider: settings.aiProvider as AiProviderType,
-      baseUrl: settings.aiBaseUrl,
-      apiKey: settings.aiApiKey,
-      model: settings.aiModel,
-      fallbackProvider: (settings.fallbackProvider || '') as
-        | AiProviderType
-        | '',
-      fallbackBaseUrl: settings.fallbackBaseUrl || '',
-      fallbackApiKey: settings.fallbackApiKey || '',
-      fallbackModel: settings.fallbackModel || '',
-    };
-
-    // Compact trade sample for AI
-    const heldSampleForAI = heldComputed
-      .slice()
-      .sort((a, b) => b.capital - a.capital)
-      .slice(0, MAX_TRADES_FOR_AI)
-      .map((h) => ({
-        cat: h.category,
-        cap: h.capital,
-        est: h.estValue,
-        profit: h.unrealizedProfit,
-        holdDays: h.holdDays,
-        roc: h.roc,
-      }));
-
-    const promptData = {
-      heldCount: heldComputed.length,
-      sold12mCount: soldComputed.length,
-      current,
-      deterministicMaximization: {
-        maximizedROC: maximization.maximizedROC,
-        rocUplift: maximization.rocUplift,
-        rocMaximizationLevers: maximization.rocMaximizationLevers,
-        inventoryMixOptimization: maximization.inventoryMixOptimization,
-        capitalReallocationPlan: maximization.capitalReallocationPlan,
-        rocProjection: maximization.rocProjection,
-        rocGrade: maximization.rocGrade,
-        rocVsBenchmark: maximization.rocVsBenchmark,
-        optimalPortfolioComposition: maximization.optimalPortfolioComposition,
-      },
-      heldSample: heldSampleForAI,
-      caps: {
-        capitalMin: CAPITAL_MIN, capitalMax: CAPITAL_MAX,
-        profitMin: PROFIT_MIN, profitMax: PROFIT_MAX,
-        rocMin: ROC_MIN, rocMax: ROC_MAX,
-        annualizedRocMin: ANNUALIZED_ROC_MIN, annualizedRocMax: ANNUALIZED_ROC_MAX,
-        gainMin: GAIN_MIN, gainMax: GAIN_MAX,
-        upliftMin: UPLIFT_MIN, upliftMax: UPLIFT_MAX,
-        holdMin: HOLD_MIN, holdMax: HOLD_MAX,
-        projectionRocMin: PROJECTION_ROC_MIN, projectionRocMax: PROJECTION_ROC_MAX,
-        projectionProfitMin: PROJECTION_PROFIT_MIN, projectionProfitMax: PROJECTION_PROFIT_MAX,
-        scoreMin: SCORE_MIN, scoreMax: SCORE_MAX,
-        amountMin: AMOUNT_MIN, amountMax: AMOUNT_MAX,
-      },
-    };
-
-    const prompt = `Si AI "Inventory Return On Capital Maximizer" za slovenske in srednjeevropske oglasne platforme (Bolha, Vinted, Avtonet, mobile.de).
+function buildPrompt(promptData: PromptData): string {
+  return `Si AI "Inventory Return On Capital Maximizer" za slovenske in srednjeevropske oglasne platforme (Bolha, Vinted, Avtonet, mobile.de).
 Si strokovnjak za RETURN ON CAPITAL (ROC) MAXIMIZATION za HELD inventory — ne samo ROI per item ampak overall ROC celotne inventory portfolio. Tvoj cilj je "Tvoj ROC je 22%, ampak bi lahko bil 38% z boljšim inventory mix in hitrejšim turnover." Razlika od inventory-capital-return-maximizer (v8.07 ki maksimizira return OF capital — koliko deployed capital se vrne) — ti MAKSIMIZIRAŠ RETURN ON CAPITAL (ROC = unrealized profit / total capital deployed × 100, ne return rate of capital). Razlika od inventory-annualized-return-maximizer (v8.06 ki maksimizira annualized % return na held inventory) — ta maksimizira ROC z rocMaximizationLevers in capitalReallocationPlan (ne sam % annualized return). Razlika od inventory-roi-maximizer-pro (v7.99 ki maksimizira ROI per item) — ta maksimizira PORTFOLIO ROC z optimalPortfolioComposition in rocVsBenchmark. Razlika od inventory-capital-efficiency-maximizer (v8.01 ki maksimizira capital efficiency per item z reallocation) — ta maksimizira ROC z inventoryMixOptimization (ne sam per-item efficiency). Razlika od inventory-cash-yield-maximizer (v8.04 ki maksimizira annualized cash yield) — ta maksimizira ROC (return on capital, ne cash yield). Razlika od inventory-turnover-yield-maximizer (v8.05 ki maksimizira yield z yieldCurve) — ta maksimizira ROC z rocProjection (3/6/12 month). Razlika od inventory-yield-maximizer (v8.03 ki maksimizira yield % per item) — ta maksimizira PORTFOLIO ROC z rocGrade in rocVsBenchmark. Razlika od profit-per-euro-maximizer (v8.07 ki maksimizira profit per euro deployed čez SOLD+HELD) — ta maksimizira ROC samo za HELD inventory (return ON capital %, ne €/€ ratio). Razlika od inventory-capital-allocator (v7.97 ki alloca capital per item) — ta maksimizira ROC z capitalReallocationPlan med low-ROC in high-ROC items.
 
 DETERMINISTIČNI PODATKI (izračunano iz DB — HELD trgovine z linked Listing + SOLD 12m za historical ROC):
@@ -923,221 +795,390 @@ VRNI LE JSON:
   },
   "summary": "Current: 22.00% ROC (5000€ deployed, 1100€ unrealized, 15 HELD). Maximized: 38.00% (uplift +16.00pp, grade B). Vs stocks: +30pp, vs bank: +36pp."
 }${GROUNDING_PROMPT_SUFFIX}`;
+}
 
-    let aiUsed = false;
+function mergeAiIntoMaximization(
+  parsed: AiResponse | null,
+  maximization: InventoryReturnOnCapitalMaximization,
+  current: CurrentState,
+): { maximization: InventoryReturnOnCapitalMaximization; summary: string; aiUsed: boolean } {
+  let summary = buildSummary(current, maximization);
+  let aiUsed = false;
 
-    try {
-      const raw = await callProviderForRaw(aiSettings, prompt);
-      const parsed = parseJsonLooseExported(raw) as AiResponse | null;
+  if (parsed && typeof parsed === 'object' && parsed.maximization) {
+    const aiMax = parsed.maximization;
 
-      if (parsed && typeof parsed === 'object' && parsed.maximization) {
-        const aiMax = parsed.maximization;
+    // Override maximizedROC — anti-hallucination bounds
+    if (aiMax.maximizedROC !== undefined) {
+      const minBound = current.currentROC;
+      const maxBound = Math.max(
+        minBound + 1,
+        Math.min(
+          ROC_MAX,
+          Math.max(current.currentROC * 1.8, current.currentROC + 200),
+        ),
+      );
+      const maximizedROC = round2(clampNum(
+        aiMax.maximizedROC,
+        minBound, maxBound, maximization.maximizedROC,
+      ));
+      const rocUplift = round2(clampNum(
+        maximizedROC - current.currentROC,
+        UPLIFT_MIN, UPLIFT_MAX, 0,
+      ));
+      maximization = {
+        ...maximization,
+        maximizedROC,
+        rocUplift,
+      };
+    }
 
-        // Override maximizedROC — anti-hallucination bounds
-        if (aiMax.maximizedROC !== undefined) {
-          const minBound = current.currentROC;
-          const maxBound = Math.max(
-            minBound + 1,
-            Math.min(
-              ROC_MAX,
-              Math.max(current.currentROC * 1.8, current.currentROC + 200),
-            ),
-          );
-          const maximizedROC = round2(clampNum(
-            aiMax.maximizedROC,
-            minBound, maxBound, maximization.maximizedROC,
-          ));
-          const rocUplift = round2(clampNum(
-            maximizedROC - current.currentROC,
-            UPLIFT_MIN, UPLIFT_MAX, 0,
-          ));
-          maximization = {
-            ...maximization,
-            maximizedROC,
-            rocUplift,
-          };
-        }
+    // Override rocMaximizationLevers — must be 4 distinct levers
+    if (Array.isArray(aiMax.rocMaximizationLevers) &&
+        aiMax.rocMaximizationLevers.length >= 4) {
+      const aiLevers: RocLeverItem[] = [];
+      const seen = new Set<RocLever>();
+      for (const l of aiMax.rocMaximizationLevers.slice(0, MAX_LEVERS)) {
+        if (!l || typeof l !== 'object') continue;
+        const lever = clampEnum(l.lever, VALID_LEVER, 'OPTIMIZE_INVENTORY_MIX');
+        if (seen.has(lever)) continue;
+        seen.add(lever);
+        aiLevers.push({
+          lever,
+          potentialGain: round2(clampNum(
+            l.potentialGain,
+            GAIN_MIN, GAIN_MAX, 5,
+          )),
+          action: clampString(l.action, 200, 'Izboljšaj ta lever za max ROC.'),
+        });
+      }
+      if (aiLevers.length >= 4) {
+        maximization = { ...maximization, rocMaximizationLevers: aiLevers };
+      }
+    }
 
-        // Override rocMaximizationLevers — must be 4 distinct levers
-        if (Array.isArray(aiMax.rocMaximizationLevers) &&
-            aiMax.rocMaximizationLevers.length >= 4) {
-          const aiLevers: RocLeverItem[] = [];
-          const seen = new Set<RocLever>();
-          for (const l of aiMax.rocMaximizationLevers.slice(0, MAX_LEVERS)) {
-            if (!l || typeof l !== 'object') continue;
-            const lever = clampEnum(l.lever, VALID_LEVER, 'OPTIMIZE_INVENTORY_MIX');
-            if (seen.has(lever)) continue;
-            seen.add(lever);
-            aiLevers.push({
-              lever,
-              potentialGain: round2(clampNum(
-                l.potentialGain,
-                GAIN_MIN, GAIN_MAX, 5,
-              )),
-              action: clampString(l.action, 200, 'Izboljšaj ta lever za max ROC.'),
-            });
-          }
-          if (aiLevers.length >= 4) {
-            maximization = { ...maximization, rocMaximizationLevers: aiLevers };
-          }
-        }
-
-        // Override inventoryMixOptimization
-        if (aiMax.inventoryMixOptimization) {
-          const mix = aiMax.inventoryMixOptimization;
-          const increaseCategories = Array.isArray(mix.increaseCategories)
-            ? mix.increaseCategories
-                .filter((c): c is string => typeof c === 'string' && c.trim().length > 0)
-                .map((c) => c.trim().slice(0, 60))
-                .slice(0, 5)
-            : [];
-          const decreaseCategories = Array.isArray(mix.decreaseCategories)
-            ? mix.decreaseCategories
-                .filter((c): c is string => typeof c === 'string' && c.trim().length > 0)
-                .map((c) => c.trim().slice(0, 60))
-                .slice(0, 5)
-            : [];
-          if (increaseCategories.length >= 1 || decreaseCategories.length >= 1) {
-            maximization = {
-              ...maximization,
-              inventoryMixOptimization: {
-                increaseCategories,
-                decreaseCategories,
-                rationale: clampString(
-                  mix.rationale, 400,
-                  maximization.inventoryMixOptimization.rationale,
-                ),
-              },
-            };
-          }
-        }
-
-        // Override capitalReallocationPlan
-        if (Array.isArray(aiMax.capitalReallocationPlan) &&
-            aiMax.capitalReallocationPlan.length >= 1) {
-          const aiReallocs: CapitalReallocationEntry[] = [];
-          for (const r of aiMax.capitalReallocationPlan.slice(0, MAX_REALLOCATIONS)) {
-            if (!r || typeof r !== 'object') continue;
-            const fromCategory = clampString(r.fromCategory, 60, 'drugo');
-            const toCategory = clampString(r.toCategory, 60, 'drugo');
-            if (fromCategory === toCategory) continue;
-            aiReallocs.push({
-              fromCategory,
-              toCategory,
-              amount: round0(clampNum(r.amount, AMOUNT_MIN, AMOUNT_MAX, 100)),
-              expectedRocGain: round2(clampNum(r.expectedRocGain, GAIN_MIN, GAIN_MAX, 1)),
-            });
-          }
-          if (aiReallocs.length >= 1) {
-            maximization = { ...maximization, capitalReallocationPlan: aiReallocs };
-          }
-        }
-
-        // Override rocProjection — must be 3 entries with months 3/6/12
-        if (Array.isArray(aiMax.rocProjection) &&
-            aiMax.rocProjection.length >= 3) {
-          const aiProj: RocProjectionEntry[] = [];
-          const expectedMonths = [3, 6, 12];
-          for (const expected of expectedMonths) {
-            const ai = aiMax.rocProjection.find(
-              (p) => p && Number(p.months) === expected,
-            );
-            if (!ai) continue;
-            const projectedROC = round2(clampNum(
-              ai.projectedROC,
-              PROJECTION_ROC_MIN, PROJECTION_ROC_MAX, 0,
-            ));
-            const projectedProfit = round0(clampNum(
-              ai.projectedProfit,
-              PROJECTION_PROFIT_MIN, PROJECTION_PROFIT_MAX, 0,
-            ));
-            aiProj.push({ months: expected, projectedROC, projectedProfit });
-          }
-          if (aiProj.length === 3) {
-            maximization = { ...maximization, rocProjection: aiProj };
-          }
-        }
-
-        // Override rocVsBenchmark — recompute from maximizedROC
+    // Override inventoryMixOptimization
+    if (aiMax.inventoryMixOptimization) {
+      const mix = aiMax.inventoryMixOptimization;
+      const increaseCategories = Array.isArray(mix.increaseCategories)
+        ? mix.increaseCategories
+            .filter((c): c is string => typeof c === 'string' && c.trim().length > 0)
+            .map((c) => c.trim().slice(0, 60))
+            .slice(0, 5)
+        : [];
+      const decreaseCategories = Array.isArray(mix.decreaseCategories)
+        ? mix.decreaseCategories
+            .filter((c): c is string => typeof c === 'string' && c.trim().length > 0)
+            .map((c) => c.trim().slice(0, 60))
+            .slice(0, 5)
+        : [];
+      if (increaseCategories.length >= 1 || decreaseCategories.length >= 1) {
         maximization = {
           ...maximization,
-          rocVsBenchmark: {
-            bankDeposit: BENCHMARK_BANK,
-            stocks: BENCHMARK_STOCKS,
-            realEstate: BENCHMARK_REAL_ESTATE,
-            yourCurrentROC: round2(clampNum(current.currentROC, ROC_MIN, ROC_MAX, 0)),
-            yourMaximizedROC: round2(clampNum(maximization.maximizedROC, ROC_MIN, ROC_MAX, 0)),
-            maximizedVsBank: round2(clampNum(
-              maximization.maximizedROC - BENCHMARK_BANK, -100, 500, 0,
-            )),
-            maximizedVsStocks: round2(clampNum(
-              maximization.maximizedROC - BENCHMARK_STOCKS, -100, 500, 0,
-            )),
-            maximizedVsRealEstate: round2(clampNum(
-              maximization.maximizedROC - BENCHMARK_REAL_ESTATE, -100, 500, 0,
-            )),
+          inventoryMixOptimization: {
+            increaseCategories,
+            decreaseCategories,
+            rationale: clampString(
+              mix.rationale, 400,
+              maximization.inventoryMixOptimization.rationale,
+            ),
           },
         };
-
-        // Override optimalPortfolioComposition
-        if (aiMax.optimalPortfolioComposition) {
-          maximization = {
-            ...maximization,
-            optimalPortfolioComposition: clampString(
-              aiMax.optimalPortfolioComposition, 500, maximization.optimalPortfolioComposition,
-            ),
-          };
-        }
-
-        // Override rocGrade — recompute or use AI value
-        if (aiMax.rocGrade) {
-          maximization = {
-            ...maximization,
-            rocGrade: clampEnum(
-              aiMax.rocGrade,
-              VALID_GRADE,
-              decideRocGrade(maximization.maximizedROC, maximization.rocUplift),
-            ),
-          };
-        } else {
-          maximization = {
-            ...maximization,
-            rocGrade: decideRocGrade(maximization.maximizedROC, maximization.rocUplift),
-          };
-        }
-
-        summary = clampString(parsed.summary, 400, buildSummary(current, maximization));
-        aiUsed = true;
       }
-    } catch (err) {
-      logger.warn(
-        '/api/ai/inventory-return-on-capital-maximizer',
-        'AI call failed — using deterministic fallback',
-        err,
-      );
     }
 
-    // 6) Cache (6h TTL) — only when AI was used
-    if (aiUsed) {
-      setCachedAI(cacheKey, { maximization, summary });
+    // Override capitalReallocationPlan
+    if (Array.isArray(aiMax.capitalReallocationPlan) &&
+        aiMax.capitalReallocationPlan.length >= 1) {
+      const aiReallocs: CapitalReallocationEntry[] = [];
+      for (const r of aiMax.capitalReallocationPlan.slice(0, MAX_REALLOCATIONS)) {
+        if (!r || typeof r !== 'object') continue;
+        const fromCategory = clampString(r.fromCategory, 60, 'drugo');
+        const toCategory = clampString(r.toCategory, 60, 'drugo');
+        if (fromCategory === toCategory) continue;
+        aiReallocs.push({
+          fromCategory,
+          toCategory,
+          amount: round0(clampNum(r.amount, AMOUNT_MIN, AMOUNT_MAX, 100)),
+          expectedRocGain: round2(clampNum(r.expectedRocGain, GAIN_MIN, GAIN_MAX, 1)),
+        });
+      }
+      if (aiReallocs.length >= 1) {
+        maximization = { ...maximization, capitalReallocationPlan: aiReallocs };
+      }
     }
 
-    return NextResponse.json({
-      ok: true,
-      current,
-      maximization,
-      summary,
-      aiUsed,
-    } satisfies InventoryReturnOnCapitalResponse);
-  } catch (err: any) {
-    logger.error(
-      '/api/ai/inventory-return-on-capital-maximizer',
-      'handler failed',
-      err,
-    );
-    return NextResponse.json(
-      { error: err?.message ?? 'Napaka' },
-      { status: 500 },
-    );
+    // Override rocProjection — must be 3 entries with months 3/6/12
+    if (Array.isArray(aiMax.rocProjection) &&
+        aiMax.rocProjection.length >= 3) {
+      const aiProj: RocProjectionEntry[] = [];
+      const expectedMonths = [3, 6, 12];
+      for (const expected of expectedMonths) {
+        const ai = aiMax.rocProjection.find(
+          (p) => p && Number(p.months) === expected,
+        );
+        if (!ai) continue;
+        const projectedROC = round2(clampNum(
+          ai.projectedROC,
+          PROJECTION_ROC_MIN, PROJECTION_ROC_MAX, 0,
+        ));
+        const projectedProfit = round0(clampNum(
+          ai.projectedProfit,
+          PROJECTION_PROFIT_MIN, PROJECTION_PROFIT_MAX, 0,
+        ));
+        aiProj.push({ months: expected, projectedROC, projectedProfit });
+      }
+      if (aiProj.length === 3) {
+        maximization = { ...maximization, rocProjection: aiProj };
+      }
+    }
+
+    // Override rocVsBenchmark — recompute from maximizedROC
+    maximization = {
+      ...maximization,
+      rocVsBenchmark: {
+        bankDeposit: BENCHMARK_BANK,
+        stocks: BENCHMARK_STOCKS,
+        realEstate: BENCHMARK_REAL_ESTATE,
+        yourCurrentROC: round2(clampNum(current.currentROC, ROC_MIN, ROC_MAX, 0)),
+        yourMaximizedROC: round2(clampNum(maximization.maximizedROC, ROC_MIN, ROC_MAX, 0)),
+        maximizedVsBank: round2(clampNum(
+          maximization.maximizedROC - BENCHMARK_BANK, -100, 500, 0,
+        )),
+        maximizedVsStocks: round2(clampNum(
+          maximization.maximizedROC - BENCHMARK_STOCKS, -100, 500, 0,
+        )),
+        maximizedVsRealEstate: round2(clampNum(
+          maximization.maximizedROC - BENCHMARK_REAL_ESTATE, -100, 500, 0,
+        )),
+      },
+    };
+
+    // Override optimalPortfolioComposition
+    if (aiMax.optimalPortfolioComposition) {
+      maximization = {
+        ...maximization,
+        optimalPortfolioComposition: clampString(
+          aiMax.optimalPortfolioComposition, 500, maximization.optimalPortfolioComposition,
+        ),
+      };
+    }
+
+    // Override rocGrade — recompute or use AI value
+    if (aiMax.rocGrade) {
+      maximization = {
+        ...maximization,
+        rocGrade: clampEnum(
+          aiMax.rocGrade,
+          VALID_GRADE,
+          decideRocGrade(maximization.maximizedROC, maximization.rocUplift),
+        ),
+      };
+    } else {
+      maximization = {
+        ...maximization,
+        rocGrade: decideRocGrade(maximization.maximizedROC, maximization.rocUplift),
+      };
+    }
+
+    summary = clampString(parsed.summary, 400, buildSummary(current, maximization));
+    aiUsed = true;
   }
+
+  return { maximization, summary, aiUsed };
 }
+
+// --- Empty-state response ------------------------------------------------
+
+function emptyStateResponse(): InventoryReturnOnCapitalResponse {
+  return {
+    ok: true,
+    current: {
+      totalCapitalDeployed: 0,
+      totalUnrealizedProfit: 0,
+      currentROC: 0,
+      annualizedROC: 0,
+      heldInventoryCount: 0,
+      avgHoldDays: 0,
+      avgEstValue: 0,
+    },
+    maximization: {
+      maximizedROC: 0,
+      rocUplift: 0,
+      rocMaximizationLevers: [],
+      inventoryMixOptimization: {
+        increaseCategories: [],
+        decreaseCategories: [],
+        rationale: '',
+      },
+      capitalReallocationPlan: [],
+      rocProjection: [],
+      rocGrade: 'F',
+      rocVsBenchmark: {
+        bankDeposit: BENCHMARK_BANK,
+        stocks: BENCHMARK_STOCKS,
+        realEstate: BENCHMARK_REAL_ESTATE,
+        yourCurrentROC: 0,
+        yourMaximizedROC: 0,
+        maximizedVsBank: 0,
+        maximizedVsStocks: 0,
+        maximizedVsRealEstate: 0,
+      },
+      optimalPortfolioComposition: '',
+    },
+    summary: 'Ni HELD trgovin — Inventory Return On Capital Maximizer ni mogoč.',
+    aiUsed: false,
+    message: 'Ni HELD trgovin — Inventory Return On Capital Maximizer ni mogoč.',
+  };
+}
+
+// --- Route handler -------------------------------------------------------
+
+export const inventoryReturnOnCapitalMaximizerHandler =
+  withAiRoute<InventoryReturnOnCapitalMaximizerInput>({
+    endpoint: '/api/ai/inventory-return-on-capital-maximizer',
+    maxDuration: 60,
+    enforceBudget: true, // AI klic — preveri budget
+    method: 'GET', // GET+POST dual-handler — bypass POST-only check
+
+    parseBody: async (req) => {
+      await req.json().catch(() => ({}));
+      return {};
+    },
+
+    // No validateInput — body ignored, identična logika za GET in POST
+
+    handler: async (_input, ctx: AiRouteContext) => {
+      const { db, callAi, parseAi, logger } = ctx;
+
+      const now = Date.now();
+      const twelveMonthsAgo = new Date(now - TWELVE_MONTHS_MS);
+
+      // 1) Parallel query HELD trades + SOLD trades (12m) for historical ROC
+      const [heldTrades, soldTrades] = await Promise.all([
+        db.trade.findMany({
+          where: { status: 'held' },
+          select: {
+            id: true,
+            title: true,
+            category: true,
+            buyPrice: true,
+            buyFees: true,
+            buyDate: true,
+            listing: {
+              select: {
+                aiEstimatedValue: true,
+                price: true,
+                aiRisk: true,
+                dealScore: true,
+                aiScore: true,
+              },
+            },
+          },
+          take: 1000,
+        }) as unknown as HeldTradeRow[],
+        db.trade.findMany({
+          where: {
+            status: 'sold',
+            sellDate: { gte: twelveMonthsAgo },
+            sellPrice: { gt: 0 },
+          },
+          select: {
+            id: true,
+            buyPrice: true,
+            buyFees: true,
+            buyDate: true,
+            sellPrice: true,
+            sellFees: true,
+            sellDate: true,
+          },
+          orderBy: { sellDate: 'asc' },
+          take: 100000,
+        }) as unknown as SoldTradeRow[],
+      ]);
+
+      // Compute HELD trades
+      const heldComputed: HeldComputed[] = [];
+      for (const t of heldTrades) {
+        const c = computeHeldTrade(t, now);
+        if (c) heldComputed.push(c);
+      }
+
+      // Compute SOLD trades (12m) for historical ROC reference (avgHoldDays)
+      const soldComputed: SoldComputed[] = [];
+      for (const t of soldTrades) {
+        const c = computeSoldTrade(t, now);
+        if (c && c.within12m) soldComputed.push(c);
+      }
+
+      // Empty-state: no HELD trades
+      if (heldComputed.length === 0) {
+        return apiOk(emptyStateResponse());
+      }
+
+      const current = computeCurrent(heldComputed, soldComputed, now);
+      let maximization = buildDeterministicMaximization(current, heldComputed);
+      let summary = buildSummary(current, maximization);
+
+      // 4) AI cache check (6h TTL) — key by current month + held item ids hash
+      const currentMonth = new Date(now).toISOString().slice(0, 7); // YYYY-MM
+      const heldIdsHash = heldComputed
+        .map((h) => h.id)
+        .sort()
+        .join(',')
+        .slice(0, 200);
+      const cacheKey = `inventory-return-on-capital-maximizer:${currentMonth}:${heldIdsHash}`;
+      const cached = getCachedAI<{
+        maximization: InventoryReturnOnCapitalMaximization;
+        summary: string;
+      }>(cacheKey);
+      if (cached) {
+        return apiOk({
+          ok: true,
+          current,
+          maximization: cached.maximization,
+          summary: cached.summary,
+          cached: true,
+          aiUsed: true,
+        } satisfies InventoryReturnOnCapitalResponse);
+      }
+
+      // 5) AI prompt with grounding
+      const promptData = buildPromptData(heldComputed, soldComputed, current, maximization);
+      const prompt = buildPrompt(promptData);
+
+      let aiUsed = false;
+
+      try {
+        const raw = await callAi(prompt);
+        const parsed = parseAi(raw) as AiResponse | null;
+
+        const merged = mergeAiIntoMaximization(parsed, maximization, current);
+        maximization = merged.maximization;
+        summary = merged.summary;
+        aiUsed = merged.aiUsed;
+      } catch (err) {
+        logger.warn(
+          '/api/ai/inventory-return-on-capital-maximizer',
+          'AI call failed — using deterministic fallback',
+          err,
+        );
+      }
+
+      // 6) Cache (6h TTL) — only when AI was used
+      if (aiUsed) {
+        setCachedAI(cacheKey, { maximization, summary });
+      }
+
+      return apiOk({
+        ok: true,
+        current,
+        maximization,
+        summary,
+        aiUsed,
+      } satisfies InventoryReturnOnCapitalResponse);
+    },
+  });
+
+export const GET = inventoryReturnOnCapitalMaximizerHandler;
+export const POST = inventoryReturnOnCapitalMaximizerHandler;
