@@ -1,26 +1,42 @@
-// v5.2: AI Deal Summary — dnevni AI povzetek najboljših priložnosti
+// v5.2 / v8.95.9-other-medium: AI Deal Summary — dnevni AI povzetek najboljših priložnosti
 // Pošlje se na Email in/ali Telegram ob dogovorjenem času
+// Refaktoriran z withAiRoute helperjem (v8.95.9) + enforceBudget guard.
+//
 // POST /api/ai/daily-summary
 // Body: { sendEmail?: boolean, sendTelegram?: boolean, hours?: number }
 // Returns: { ok, summary, stats, sentTo: { email, telegram } }
 
-import { NextRequest, NextResponse } from 'next/server';
-import { db } from '@/lib/db';
+import { withAiRoute, AI_ROUTE_DEFAULTS, type AiRouteContext } from '@/lib/with-ai-route';
+import { apiOk } from '@/lib/api-response';
 import { getSettingsRow } from '@/lib/pipeline';
-import { callProviderForRaw, parseJsonLooseExported, type AiProviderType, type AiSettings } from '@/lib/ai';
-import { logger } from '@/lib/logger';
 
-export const runtime = 'nodejs';
-export const dynamic = 'force-dynamic';
+export const { runtime, dynamic } = AI_ROUTE_DEFAULTS;
 export const maxDuration = 120;
 
-export async function POST(req: NextRequest) {
-  try {
+interface DailySummaryInput {
+  sendEmail: boolean;
+  sendTelegram: boolean;
+  hours: number;
+}
+
+export const POST = withAiRoute<DailySummaryInput>({
+  endpoint: '/api/ai/daily-summary',
+  maxDuration: 120,
+  enforceBudget: true, // AI klic — preveri budget
+
+  parseBody: async (req) => {
     const body = await req.json().catch(() => ({}));
     const sendEmail = body?.sendEmail === true;
     const sendTelegram = body?.sendTelegram === true;
     const hoursRaw = typeof body?.hours === 'number' ? body.hours : Number(body?.hours);
     const hours = Number.isFinite(hoursRaw) ? Math.min(168, Math.max(1, hoursRaw)) : 24;
+    return { sendEmail, sendTelegram, hours };
+  },
+
+  // No validateInput — vsi input-i imajo defaults
+  handler: async (input, ctx: AiRouteContext) => {
+    const { db, callAi, parseAi } = ctx;
+    const { sendEmail, sendTelegram, hours } = input;
 
     const since = new Date(Date.now() - hours * 60 * 60 * 1000);
 
@@ -75,55 +91,14 @@ export async function POST(req: NextRequest) {
     if (listings.length === 0) {
       summary = `📊 *DNEVNI POVZETEK (${hours}h)*\n\nV zadnjih ${hours} urah ni bilo novih priložnosti, ki bi zadoščale kriterijem (PRILIKA ali dealScore ≥ 60).\n\n*Statistika:*\n• Novih oglasov: ${totalNewListings}\n• Alertov: ${totalAlerts}\n• Shranjenih: ${totalBookmarked}\n• Aktivnih monitorjev: ${monitorsActive}`;
     } else {
-      const settings = await getSettingsRow();
-      const aiSettings: AiSettings = {
-        provider: settings.aiProvider as AiProviderType,
-        baseUrl: settings.aiBaseUrl,
-        apiKey: settings.aiApiKey,
-        model: settings.aiModel,
-        fallbackProvider: (settings.fallbackProvider || '') as AiProviderType | '',
-        fallbackBaseUrl: settings.fallbackBaseUrl || '',
-        fallbackApiKey: settings.fallbackApiKey || '',
-        fallbackModel: settings.fallbackModel || '',
-      };
-
       const prompt = buildSummaryPrompt(listings, { hours, totalNewListings, totalAlerts, totalBookmarked });
 
-      let raw = '';
-      try {
-        raw = await callProviderForRaw(aiSettings, prompt);
-      } catch (primaryError: any) {
-        if (aiSettings.fallbackProvider && aiSettings.fallbackModel) {
-          const fallbackSettings: AiSettings = {
-            provider: aiSettings.fallbackProvider,
-            baseUrl: aiSettings.fallbackBaseUrl || '',
-            apiKey: aiSettings.fallbackApiKey || '',
-            model: aiSettings.fallbackModel,
-          };
-          raw = await callProviderForRaw(fallbackSettings, prompt);
-        } else {
-          throw primaryError;
-        }
-      }
+      const raw = await callAi(prompt);
 
-      const parsed: any = parseJsonLooseExported(raw);
+      const parsed: any = parseAi(raw);
       summary = String(parsed?.summary ?? parsed?.povzetek ?? raw).slice(0, 4000);
       topPick = parsed?.top_pick ?? parsed?.topPick ?? null;
       recommendation = parsed?.recommendation ?? parsed?.priporocilo ?? null;
-
-      // Increment AI usage counter
-      const today = new Date().toISOString().slice(0, 10);
-      if (settings.aiCallsDate !== today) {
-        await db.settings.update({
-          where: { id: 'singleton' },
-          data: { aiCallsDate: today, aiCallsToday: 1 },
-        });
-      } else {
-        await db.settings.update({
-          where: { id: 'singleton' },
-          data: { aiCallsToday: { increment: 1 } },
-        });
-      }
     }
 
     // Send to Telegram
@@ -171,7 +146,7 @@ export async function POST(req: NextRequest) {
       }
     }
 
-    return NextResponse.json({
+    return apiOk({
       ok: true,
       summary,
       topPick,
@@ -190,11 +165,10 @@ export async function POST(req: NextRequest) {
       },
       generatedAt: new Date().toISOString(),
     });
-  } catch (e: any) {
-    logger.error("/api/ai/daily-summary", "POST handler failed", e);
-    return NextResponse.json({ error: e?.message ?? 'Napaka pri AI povzetku' }, { status: 500 });
-  }
-}
+  },
+});
+
+// --- Pomožne funkcije (čiste, testabilne) --------------------------------
 
 function buildSummaryPrompt(listings: any[], stats: any): string {
   const lines: string[] = [

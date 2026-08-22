@@ -1,16 +1,14 @@
-// v6.62: AI Buyer Purchase Pattern Analyzer — analiza nakupnih vzorcev z ML sequence mining
+// v6.62 / v8.95.9-competitor: AI Buyer Purchase Pattern Analyzer — analiza nakupnih vzorcev z ML sequence mining
+// Refaktoriran z withAiRoute helperjem (v8.95.9) + enforceBudget guard.
+//
 // POST /api/ai/buyer-purchase-pattern-analyzer
 // Body: { customerName?: string }
 // Returns: { ok, analyzer: { buyers, patterns, sequences, associations, mlModels, recommendations, summary } }
 
-import { NextRequest, NextResponse } from 'next/server';
-import { db } from '@/lib/db';
-import { getSettingsRow } from '@/lib/pipeline';
-import { callProviderForRaw, parseJsonLooseExported, type AiProviderType, type AiSettings } from '@/lib/ai';
-import { logger } from '@/lib/logger';
+import { withAiRoute, AI_ROUTE_DEFAULTS, type AiRouteContext } from '@/lib/with-ai-route';
+import { apiOk } from '@/lib/api-response';
 
-export const runtime = 'nodejs';
-export const dynamic = 'force-dynamic';
+export const { runtime, dynamic } = AI_ROUTE_DEFAULTS;
 export const maxDuration = 90;
 
 const PATTERN_TYPES = [
@@ -26,10 +24,23 @@ const PATTERN_TYPES = [
   'declining_frequency',
 ] as const;
 
-export async function POST(req: NextRequest) {
-  try {
+interface PurchasePatternInput {
+  customerName: string | null;
+}
+
+export const POST = withAiRoute<PurchasePatternInput>({
+  endpoint: '/api/ai/buyer-purchase-pattern-analyzer',
+  maxDuration: 90,
+  enforceBudget: true,
+
+  parseBody: async (req) => {
     const body = await req.json().catch(() => ({}));
-    const customerName = body?.customerName ? String(body.customerName).trim() : null;
+    return { customerName: body?.customerName ? String(body.customerName).trim() : null };
+  },
+
+  handler: async (input, ctx: AiRouteContext) => {
+    const { db, callAi, parseAi } = ctx;
+    const { customerName } = input;
 
     const soldTrades = await db.trade.findMany({
       where: { status: 'sold', sellPrice: { not: null }, sellLocation: { not: '' }, sellDate: { not: null } },
@@ -39,61 +50,83 @@ export async function POST(req: NextRequest) {
     });
 
     if (soldTrades.length === 0) {
-      return NextResponse.json({ ok: true, analyzer: null, message: 'Ni prodaj za pattern analizo.' });
+      return apiOk({ ok: true, analyzer: null, message: 'Ni prodaj za pattern analizo.' });
     }
 
     // Aggregation
-    const buyerMap = new Map<string, {
-      name: string; purchases: number; totalSpent: number;
-      purchaseSequence: Array<{ title: string; category: string; price: number; date: Date }>;
-      categories: Set<string>; firstPurchase: Date | null; lastPurchase: Date | null;
-    }>();
-
-    for (const t of soldTrades) {
-      const name = (t.sellLocation || '').trim();
-      if (!name || name.length < 2 || !t.sellDate) continue;
-      const revenue = (t.sellPrice ?? 0) - (t.sellFees ?? 0);
-      if (!buyerMap.has(name)) {
-        buyerMap.set(name, { name, purchases: 0, totalSpent: 0, purchaseSequence: [], categories: new Set(), firstPurchase: t.sellDate, lastPurchase: t.sellDate });
-      }
-      const b = buyerMap.get(name)!;
-      b.purchases += 1; b.totalSpent += revenue;
-      b.purchaseSequence.push({ title: t.title, category: t.category || 'drugo', price: revenue, date: t.sellDate });
-      if (t.category) b.categories.add(t.category);
-      if (t.sellDate < (b.firstPurchase as Date)) b.firstPurchase = t.sellDate;
-      if (t.sellDate > b.lastPurchase!) b.lastPurchase = t.sellDate;
-    }
-
-    const buyers = Array.from(buyerMap.values()).filter(b => b.purchases >= 2).map(b => {
-      // Sort sequence chronologically
-      b.purchaseSequence.sort((a, b) => a.date.getTime() - b.date.getTime());
-      return b;
-    });
+    const buyers = aggregateBuyers(soldTrades);
 
     if (customerName) {
       const filtered = buyers.filter(b => b.name === customerName);
       if (filtered.length === 0) {
-        return NextResponse.json({ ok: true, analyzer: null, message: `Kupec "${customerName}" ni najden ali ima manj kot 2 nakupa.` });
+        return apiOk({ ok: true, analyzer: null, message: `Kupec "${customerName}" ni najden ali ima manj kot 2 nakupa.` });
       }
     }
 
-    const settings = await getSettingsRow();
-    const aiSettings: AiSettings = {
-      provider: settings.aiProvider as AiProviderType,
-      baseUrl: settings.aiBaseUrl, apiKey: settings.aiApiKey, model: settings.aiModel,
-      fallbackProvider: (settings.fallbackProvider || '') as AiProviderType | '',
-      fallbackBaseUrl: settings.fallbackBaseUrl || '', fallbackApiKey: settings.fallbackApiKey || '',
-      fallbackModel: settings.fallbackModel || '',
-    };
-
     const targetBuyers = customerName ? buyers.filter(b => b.name === customerName) : buyers.slice(0, 20);
 
-    const buyersStr = targetBuyers.slice(0, 15).map(b => {
-      const seq = b.purchaseSequence.slice(0, 5).map(p => `${p.title.slice(0, 30)}(${p.category.slice(0, 10)},${p.price}€)`).join(' → ');
-      return `- ${b.name} | ${b.purchases}x | ${b.totalSpent}€ | sequence: ${seq}`;
-    }).join('\n');
+    const prompt = buildPrompt(targetBuyers);
 
-    const prompt = `Si AI buyer purchase pattern analyzer z ML sequence mining.
+    const raw = await callAi(prompt);
+    const parsed: any = parseAi(raw);
+
+    const analyzer = transformAnalyzer(parsed, targetBuyers);
+
+    return apiOk({ ok: true, analyzer });
+  },
+});
+
+// --- Pomožne funkcije (čiste, testabilne) --------------------------------
+
+interface AggregatedBuyer {
+  name: string;
+  purchases: number;
+  totalSpent: number;
+  purchaseSequence: Array<{ title: string; category: string; price: number; date: Date }>;
+  categories: Set<string>;
+  firstPurchase: Date | null;
+  lastPurchase: Date | null;
+}
+
+function aggregateBuyers(
+  soldTrades: Array<{
+    title: string; category: string | null; sellPrice: number | null;
+    sellFees: number | null; sellDate: Date | null; sellLocation: string | null;
+  }>
+): AggregatedBuyer[] {
+  const buyerMap = new Map<string, AggregatedBuyer>();
+
+  for (const t of soldTrades) {
+    const name = (t.sellLocation || '').trim();
+    if (!name || name.length < 2 || !t.sellDate) continue;
+    const revenue = (t.sellPrice ?? 0) - (t.sellFees ?? 0);
+    if (!buyerMap.has(name)) {
+      buyerMap.set(name, {
+        name, purchases: 0, totalSpent: 0, purchaseSequence: [], categories: new Set(),
+        firstPurchase: t.sellDate, lastPurchase: t.sellDate,
+      });
+    }
+    const b = buyerMap.get(name)!;
+    b.purchases += 1; b.totalSpent += revenue;
+    b.purchaseSequence.push({ title: t.title, category: t.category || 'drugo', price: revenue, date: t.sellDate });
+    if (t.category) b.categories.add(t.category);
+    if (t.sellDate < (b.firstPurchase as Date)) b.firstPurchase = t.sellDate;
+    if (t.sellDate > b.lastPurchase!) b.lastPurchase = t.sellDate;
+  }
+
+  return Array.from(buyerMap.values()).filter(b => b.purchases >= 2).map(b => {
+    b.purchaseSequence.sort((a, b) => a.date.getTime() - b.date.getTime());
+    return b;
+  });
+}
+
+function buildPrompt(targetBuyers: AggregatedBuyer[]): string {
+  const buyersStr = targetBuyers.slice(0, 15).map(b => {
+    const seq = b.purchaseSequence.slice(0, 5).map(p => `${p.title.slice(0, 30)}(${p.category.slice(0, 10)},${p.price}€)`).join(' → ');
+    return `- ${b.name} | ${b.purchases}x | ${b.totalSpent}€ | sequence: ${seq}`;
+  }).join('\n');
+
+  return `Si AI buyer purchase pattern analyzer z ML sequence mining.
 Analizira nakupne vzorce z association rule mining in sequential pattern detection.
 
 KUPCI (${targetBuyers.length}):
@@ -204,112 +237,97 @@ Odgovori LE z JSON:
     "pattern_analysis_score": <number 0-100>
   }
 }`;
+}
 
-    let raw = '';
-    try { raw = await callProviderForRaw(aiSettings, prompt); }
-    catch (primaryError: any) {
-      if (aiSettings.fallbackProvider && aiSettings.fallbackModel) {
-        const fb: AiSettings = { provider: aiSettings.fallbackProvider, baseUrl: aiSettings.fallbackBaseUrl || '', apiKey: aiSettings.fallbackApiKey || '', model: aiSettings.fallbackModel };
-        raw = await callProviderForRaw(fb, prompt);
-      } else { return NextResponse.json({ error: primaryError?.message ?? 'AI failed' }, { status: 500 }); }
-    }
+function transformAnalyzer(parsed: any, targetBuyers: AggregatedBuyer[]): any {
+  const validNames = new Set(targetBuyers.map(b => b.name));
 
-    const parsed: any = parseJsonLooseExported(raw);
-    const validNames = new Set(targetBuyers.map(b => b.name));
-
-    const analyzer = {
-      insights: String(parsed?.insights ?? '').slice(0, 500),
-      buyers: (parsed?.buyers || [])
-        .filter((b: any) => validNames.has(String(b?.name ?? '')))
-        .slice(0, 20)
-        .map((b: any) => ({
-          name: String(b?.name ?? '').slice(0, 100),
-          detectedPatterns: (b?.detected_patterns || []).slice(0, 4).map((p: any) => ({
-            pattern: PATTERN_TYPES.includes(String(p?.pattern) as any) ? String(p.pattern) : 'sporadic_random',
-            confidencePct: Math.max(0, Math.min(100, Number(p?.confidence_pct ?? 50))),
-            evidence: (p?.evidence || []).slice(0, 4).map((e: any) => String(e).slice(0, 150)),
-            patternStrength: ['strong', 'moderate', 'weak'].includes(String(p?.pattern_strength)) ? String(p.pattern_strength) : 'moderate',
-          })),
-          primaryPattern: PATTERN_TYPES.includes(String(b?.primary_pattern) as any) ? String(b.primary_pattern) : 'sporadic_random',
-          purchaseSequenceAnalysis: {
-            totalPurchases: Math.max(0, Number(b?.purchase_sequence_analysis?.total_purchases ?? 0)),
-            avgIntervalDays: Math.round(Number(b?.purchase_sequence_analysis?.avg_interval_days ?? 0) * 10) / 10,
-            intervalConsistency: ['high', 'medium', 'low'].includes(String(b?.purchase_sequence_analysis?.interval_consistency)) ? String(b.purchase_sequence_analysis.interval_consistency) : 'medium',
-            priceTrend: ['increasing', 'decreasing', 'stable', 'volatile'].includes(String(b?.purchase_sequence_analysis?.price_trend)) ? String(b.purchase_sequence_analysis.price_trend) : 'stable',
-            categoryDiversification: ['high', 'medium', 'low'].includes(String(b?.purchase_sequence_analysis?.category_diversification)) ? String(b.purchase_sequence_analysis.category_diversification) : 'medium',
-          },
-          predictedNextPurchase: {
-            predictedCategory: String(b?.predicted_next_purchase?.predicted_category ?? '').slice(0, 80),
-            predictedPriceRangeEur: {
-              min: Math.max(0, Math.round(Number(b?.predicted_next_purchase?.predicted_price_range_eur?.min ?? 0))),
-              max: Math.max(0, Math.round(Number(b?.predicted_next_purchase?.predicted_price_range_eur?.max ?? 0))),
-            },
-            predictedDate: String(b?.predicted_next_purchase?.predicted_date ?? '').slice(0, 20),
-            probabilityPct: Math.max(0, Math.min(100, Number(b?.predicted_next_purchase?.probability_pct ?? 30))),
-            basedOnPattern: PATTERN_TYPES.includes(String(b?.predicted_next_purchase?.based_on_pattern) as any) ? String(b.predicted_next_purchase.based_on_pattern) : 'sporadic_random',
-          },
-          mlClusterId: Math.max(0, Number(b?.ml_cluster_id ?? 0)),
-          clusterDescription: String(b?.cluster_description ?? '').slice(0, 200),
-          lifetimeValueProjectionEur: Math.round(Number(b?.lifetime_value_projection_eur ?? 0)),
+  return {
+    insights: String(parsed?.insights ?? '').slice(0, 500),
+    buyers: (parsed?.buyers || [])
+      .filter((b: any) => validNames.has(String(b?.name ?? '')))
+      .slice(0, 20)
+      .map((b: any) => ({
+        name: String(b?.name ?? '').slice(0, 100),
+        detectedPatterns: (b?.detected_patterns || []).slice(0, 4).map((p: any) => ({
+          pattern: (PATTERN_TYPES as readonly string[]).includes(String(p?.pattern)) ? String(p.pattern) : 'sporadic_random',
+          confidencePct: Math.max(0, Math.min(100, Number(p?.confidence_pct ?? 50))),
+          evidence: (p?.evidence || []).slice(0, 4).map((e: any) => String(e).slice(0, 150)),
+          patternStrength: ['strong', 'moderate', 'weak'].includes(String(p?.pattern_strength)) ? String(p.pattern_strength) : 'moderate',
         })),
-      patterns: (parsed?.patterns || []).slice(0, 10).map((p: any) => ({
-        pattern: PATTERN_TYPES.includes(String(p?.pattern) as any) ? String(p.pattern) : 'sporadic_random',
-        buyerCount: Math.max(0, Number(p?.buyer_count ?? 0)),
-        avgSpentEur: Math.round(Number(p?.avg_spent_eur ?? 0)),
-        avgFrequencyDays: Math.round(Number(p?.avg_frequency_days ?? 0)),
-        valueToBusiness: ['high', 'medium', 'low'].includes(String(p?.value_to_business)) ? String(p.value_to_business) : 'medium',
-        predictionAccuracyPct: Math.max(0, Math.min(100, Number(p?.prediction_accuracy_pct ?? 60))),
-        bestStrategy: String(p?.best_strategy ?? '').slice(0, 250),
+        primaryPattern: (PATTERN_TYPES as readonly string[]).includes(String(b?.primary_pattern)) ? String(b.primary_pattern) : 'sporadic_random',
+        purchaseSequenceAnalysis: {
+          totalPurchases: Math.max(0, Number(b?.purchase_sequence_analysis?.total_purchases ?? 0)),
+          avgIntervalDays: Math.round(Number(b?.purchase_sequence_analysis?.avg_interval_days ?? 0) * 10) / 10,
+          intervalConsistency: ['high', 'medium', 'low'].includes(String(b?.purchase_sequence_analysis?.interval_consistency)) ? String(b.purchase_sequence_analysis.interval_consistency) : 'medium',
+          priceTrend: ['increasing', 'decreasing', 'stable', 'volatile'].includes(String(b?.purchase_sequence_analysis?.price_trend)) ? String(b.purchase_sequence_analysis.price_trend) : 'stable',
+          categoryDiversification: ['high', 'medium', 'low'].includes(String(b?.purchase_sequence_analysis?.category_diversification)) ? String(b.purchase_sequence_analysis.category_diversification) : 'medium',
+        },
+        predictedNextPurchase: {
+          predictedCategory: String(b?.predicted_next_purchase?.predicted_category ?? '').slice(0, 80),
+          predictedPriceRangeEur: {
+            min: Math.max(0, Math.round(Number(b?.predicted_next_purchase?.predicted_price_range_eur?.min ?? 0))),
+            max: Math.max(0, Math.round(Number(b?.predicted_next_purchase?.predicted_price_range_eur?.max ?? 0))),
+          },
+          predictedDate: String(b?.predicted_next_purchase?.predicted_date ?? '').slice(0, 20),
+          probabilityPct: Math.max(0, Math.min(100, Number(b?.predicted_next_purchase?.probability_pct ?? 30))),
+          basedOnPattern: (PATTERN_TYPES as readonly string[]).includes(String(b?.predicted_next_purchase?.based_on_pattern)) ? String(b.predicted_next_purchase.based_on_pattern) : 'sporadic_random',
+        },
+        mlClusterId: Math.max(0, Number(b?.ml_cluster_id ?? 0)),
+        clusterDescription: String(b?.cluster_description ?? '').slice(0, 200),
+        lifetimeValueProjectionEur: Math.round(Number(b?.lifetime_value_projection_eur ?? 0)),
       })),
-      sequences: (parsed?.sequences || []).slice(0, 8).map((s: any) => ({
-        sequenceName: String(s?.sequence_name ?? '').slice(0, 150),
-        sequencePattern: (s?.sequence_pattern || []).slice(0, 6).map((p: any) => String(p).slice(0, 100)),
-        buyerCount: Math.max(0, Number(s?.buyer_count ?? 0)),
-        frequency: Math.max(0, Number(s?.frequency ?? 0)),
-        confidencePct: Math.max(0, Math.min(100, Number(s?.confidence_pct ?? 50))),
-        supportPct: Math.max(0, Math.min(100, Number(s?.support_pct ?? 30))),
-        nextPredictedItem: String(s?.next_predicted_item ?? '').slice(0, 150),
-      })),
-      associations: (parsed?.associations || []).slice(0, 8).map((a: any) => ({
-        rule: String(a?.rule ?? '').slice(0, 200),
-        antecedent: (a?.antecedent || []).slice(0, 4).map((x: any) => String(x).slice(0, 80)),
-        consequent: (a?.consequent || []).slice(0, 4).map((x: any) => String(x).slice(0, 80)),
-        supportPct: Math.max(0, Math.min(100, Number(a?.support_pct ?? 30))),
-        confidencePct: Math.max(0, Math.min(100, Number(a?.confidence_pct ?? 50))),
-        lift: Math.round(Number(a?.lift ?? 1) * 100) / 100,
-        buyerCount: Math.max(0, Number(a?.buyer_count ?? 0)),
-      })),
-      mlModels: (parsed?.ml_models || []).slice(0, 5).map((m: any) => ({
-        model: ['sequence_mining', 'association_rules', 'markov_chain', 'lstm_sequence', 'clustering'].includes(String(m?.model)) ? String(m.model) : 'sequence_mining',
-        accuracyPct: Math.max(0, Math.min(100, Number(m?.accuracy_pct ?? 70))),
-        patternsDetected: Math.max(0, Number(m?.patterns_detected ?? 0)),
-        predictionsMade: Math.max(0, Number(m?.predictions_made ?? 0)),
-        weightInEnsemble: Math.max(0, Math.min(100, Number(m?.weight_in_ensemble ?? 20))),
-        bestFor: String(m?.best_for ?? '').slice(0, 150),
-      })),
-      recommendations: (parsed?.recommendations || []).slice(0, 6).map((r: any) => ({
-        action: String(r?.action ?? '').slice(0, 300),
-        priority: ['high', 'medium', 'low'].includes(String(r?.priority)) ? String(r.priority) : 'medium',
-        patternTargeted: String(r?.pattern_targeted ?? 'all').slice(0, 50),
-        expectedRevenueImpactEur: Math.round(Number(r?.expected_revenue_impact_eur ?? 0)),
-        buyersAffected: Math.max(0, Number(r?.buyers_affected ?? 0)),
-      })),
-      summary: {
-        totalBuyersAnalyzed: targetBuyers.length,
-        totalPatternsDetected: Math.max(0, Number(parsed?.summary?.total_patterns_detected ?? 0)),
-        totalSequencesFound: Math.max(0, Number(parsed?.summary?.total_sequences_found ?? 0)),
-        totalAssociationsFound: Math.max(0, Number(parsed?.summary?.total_associations_found ?? 0)),
-        avgPredictionAccuracyPct: Math.max(0, Math.min(100, Number(parsed?.summary?.avg_prediction_accuracy_pct ?? 60))),
-        mostCommonPattern: PATTERN_TYPES.includes(String(parsed?.summary?.most_common_pattern) as any) ? String(parsed.summary.most_common_pattern) : 'sporadic_random',
-        biggestPatternOpportunity: String(parsed?.summary?.biggest_pattern_opportunity ?? '').slice(0, 200),
-        patternAnalysisScore: Math.max(0, Math.min(100, Number(parsed?.summary?.pattern_analysis_score ?? 60))),
-      },
-    };
-
-    const today = new Date().toISOString().slice(0, 10);
-    if (settings.aiCallsDate !== today) { await db.settings.update({ where: { id: 'singleton' }, data: { aiCallsDate: today, aiCallsToday: 1 } }); }
-    else { await db.settings.update({ where: { id: 'singleton' }, data: { aiCallsToday: { increment: 1 } } }); }
-
-    return NextResponse.json({ ok: true, analyzer });
-  } catch (e: any) { logger.error("/api/ai/buyer-purchase-pattern-analyzer", "POST handler failed", e); return NextResponse.json({ error: e?.message ?? 'Napaka' }, { status: 500 }); }
+    patterns: (parsed?.patterns || []).slice(0, 10).map((p: any) => ({
+      pattern: (PATTERN_TYPES as readonly string[]).includes(String(p?.pattern)) ? String(p.pattern) : 'sporadic_random',
+      buyerCount: Math.max(0, Number(p?.buyer_count ?? 0)),
+      avgSpentEur: Math.round(Number(p?.avg_spent_eur ?? 0)),
+      avgFrequencyDays: Math.round(Number(p?.avg_frequency_days ?? 0)),
+      valueToBusiness: ['high', 'medium', 'low'].includes(String(p?.value_to_business)) ? String(p.value_to_business) : 'medium',
+      predictionAccuracyPct: Math.max(0, Math.min(100, Number(p?.prediction_accuracy_pct ?? 60))),
+      bestStrategy: String(p?.best_strategy ?? '').slice(0, 250),
+    })),
+    sequences: (parsed?.sequences || []).slice(0, 8).map((s: any) => ({
+      sequenceName: String(s?.sequence_name ?? '').slice(0, 150),
+      sequencePattern: (s?.sequence_pattern || []).slice(0, 6).map((p: any) => String(p).slice(0, 100)),
+      buyerCount: Math.max(0, Number(s?.buyer_count ?? 0)),
+      frequency: Math.max(0, Number(s?.frequency ?? 0)),
+      confidencePct: Math.max(0, Math.min(100, Number(s?.confidence_pct ?? 50))),
+      supportPct: Math.max(0, Math.min(100, Number(s?.support_pct ?? 30))),
+      nextPredictedItem: String(s?.next_predicted_item ?? '').slice(0, 150),
+    })),
+    associations: (parsed?.associations || []).slice(0, 8).map((a: any) => ({
+      rule: String(a?.rule ?? '').slice(0, 200),
+      antecedent: (a?.antecedent || []).slice(0, 4).map((x: any) => String(x).slice(0, 80)),
+      consequent: (a?.consequent || []).slice(0, 4).map((x: any) => String(x).slice(0, 80)),
+      supportPct: Math.max(0, Math.min(100, Number(a?.support_pct ?? 30))),
+      confidencePct: Math.max(0, Math.min(100, Number(a?.confidence_pct ?? 50))),
+      lift: Math.round(Number(a?.lift ?? 1) * 100) / 100,
+      buyerCount: Math.max(0, Number(a?.buyer_count ?? 0)),
+    })),
+    mlModels: (parsed?.ml_models || []).slice(0, 5).map((m: any) => ({
+      model: ['sequence_mining', 'association_rules', 'markov_chain', 'lstm_sequence', 'clustering'].includes(String(m?.model)) ? String(m.model) : 'sequence_mining',
+      accuracyPct: Math.max(0, Math.min(100, Number(m?.accuracy_pct ?? 70))),
+      patternsDetected: Math.max(0, Number(m?.patterns_detected ?? 0)),
+      predictionsMade: Math.max(0, Number(m?.predictions_made ?? 0)),
+      weightInEnsemble: Math.max(0, Math.min(100, Number(m?.weight_in_ensemble ?? 20))),
+      bestFor: String(m?.best_for ?? '').slice(0, 150),
+    })),
+    recommendations: (parsed?.recommendations || []).slice(0, 6).map((r: any) => ({
+      action: String(r?.action ?? '').slice(0, 300),
+      priority: ['high', 'medium', 'low'].includes(String(r?.priority)) ? String(r.priority) : 'medium',
+      patternTargeted: String(r?.pattern_targeted ?? 'all').slice(0, 50),
+      expectedRevenueImpactEur: Math.round(Number(r?.expected_revenue_impact_eur ?? 0)),
+      buyersAffected: Math.max(0, Number(r?.buyers_affected ?? 0)),
+    })),
+    summary: {
+      totalBuyersAnalyzed: targetBuyers.length,
+      totalPatternsDetected: Math.max(0, Number(parsed?.summary?.total_patterns_detected ?? 0)),
+      totalSequencesFound: Math.max(0, Number(parsed?.summary?.total_sequences_found ?? 0)),
+      totalAssociationsFound: Math.max(0, Number(parsed?.summary?.total_associations_found ?? 0)),
+      avgPredictionAccuracyPct: Math.max(0, Math.min(100, Number(parsed?.summary?.avg_prediction_accuracy_pct ?? 60))),
+      mostCommonPattern: (PATTERN_TYPES as readonly string[]).includes(String(parsed?.summary?.most_common_pattern)) ? String(parsed.summary.most_common_pattern) : 'sporadic_random',
+      biggestPatternOpportunity: String(parsed?.summary?.biggest_pattern_opportunity ?? '').slice(0, 200),
+      patternAnalysisScore: Math.max(0, Math.min(100, Number(parsed?.summary?.pattern_analysis_score ?? 60))),
+    },
+  };
 }

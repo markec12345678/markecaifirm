@@ -1,23 +1,39 @@
-// v6.46: AI Cross-Sell Recommender — priporoča cross-sell priložnosti per kupec in per inventar
+// v6.46 / v8.95.9-refactor: AI Cross-Sell Recommender — priporoča cross-sell priložnosti per kupec in per inventar
+// Refaktoriran z withAiRoute helperjem (v8.95.9) + enforceBudget guard.
+//
 // POST /api/ai/cross-sell-recommender
 // Body: { customerName?: string, tradeId?: string }
 // Returns: { ok, recommender: { opportunities, customerOffers, bundles, strategies, summary } }
 
-import { NextRequest, NextResponse } from 'next/server';
-import { db } from '@/lib/db';
-import { getSettingsRow } from '@/lib/pipeline';
-import { callProviderForRaw, parseJsonLooseExported, type AiProviderType, type AiSettings } from '@/lib/ai';
-import { logger } from '@/lib/logger';
+import { withAiRoute, AI_ROUTE_DEFAULTS, type AiRouteContext } from '@/lib/with-ai-route';
+import { apiOk } from '@/lib/api-response';
 
-export const runtime = 'nodejs';
-export const dynamic = 'force-dynamic';
+export const { runtime, dynamic } = AI_ROUTE_DEFAULTS;
 export const maxDuration = 90;
 
-export async function POST(req: NextRequest) {
-  try {
+interface CrossSellInput {
+  customerName: string | null;
+  tradeId: string | null;
+}
+
+export const POST = withAiRoute<CrossSellInput>({
+  endpoint: '/api/ai/cross-sell-recommender',
+  maxDuration: 90,
+  enforceBudget: true, // AI klic — preveri budget
+
+  parseBody: async (req) => {
     const body = await req.json().catch(() => ({}));
-    const customerName = body?.customerName ? String(body.customerName).trim() : null;
-    const tradeId = body?.tradeId ? String(body.tradeId) : null;
+    return {
+      customerName: body?.customerName ? String(body.customerName).trim() : null,
+      tradeId: body?.tradeId ? String(body.tradeId) : null,
+    };
+  },
+
+  // No validateInput — oba input-a sta opcijska
+
+  handler: async (input, ctx: AiRouteContext) => {
+    const { db, callAi, parseAi } = ctx;
+    const { customerName, tradeId } = input;
 
     // 1. Pridobi held trade-e (inventar za cross-sell)
     const where: any = { status: 'held' };
@@ -34,7 +50,7 @@ export async function POST(req: NextRequest) {
     });
 
     if (heldTrades.length === 0) {
-      return NextResponse.json({ ok: true, recommender: null, message: 'Ni held tradeov za cross-sell analizo.' });
+      return apiOk({ ok: true, recommender: null, message: 'Ni held tradeov za cross-sell analizo.' });
     }
 
     // 2. Pridobi prodaje (za customer purchase history)
@@ -46,29 +62,7 @@ export async function POST(req: NextRequest) {
     });
 
     // 3. Customer history aggregation
-    const customerHistory = new Map<string, { purchases: number; totalSpent: number; categories: Set<string>; items: string[]; lastPurchase: Date | null }>();
-    for (const t of soldTrades) {
-      const name = (t.sellLocation || '').trim();
-      if (!name) continue;
-      if (!customerHistory.has(name)) {
-        customerHistory.set(name, { purchases: 0, totalSpent: 0, categories: new Set<string>(), items: [], lastPurchase: null });
-      }
-      const c = customerHistory.get(name)!;
-      c.purchases += 1;
-      c.totalSpent += (t.sellPrice ?? 0) - (t.sellFees ?? 0);
-      if (t.category) c.categories.add(t.category);
-      c.items.push(t.title);
-      if (t.sellDate && (!c.lastPurchase || t.sellDate > c.lastPurchase)) c.lastPurchase = t.sellDate;
-    }
-
-    const settings = await getSettingsRow();
-    const aiSettings: AiSettings = {
-      provider: settings.aiProvider as AiProviderType,
-      baseUrl: settings.aiBaseUrl, apiKey: settings.aiApiKey, model: settings.aiModel,
-      fallbackProvider: (settings.fallbackProvider || '') as AiProviderType | '',
-      fallbackBaseUrl: settings.fallbackBaseUrl || '', fallbackApiKey: settings.fallbackApiKey || '',
-      fallbackModel: settings.fallbackModel || '',
-    };
+    const customerHistory = aggregateCustomerHistory(soldTrades);
 
     // 4. Pripravi podatke za AI
     const inventoryItems = heldTrades.map(t => {
@@ -93,15 +87,81 @@ export async function POST(req: NextRequest) {
       lastPurchase: c.lastPurchase ? c.lastPurchase.toISOString().slice(0, 10) : '',
     }));
 
-    const inventoryStr = inventoryItems.slice(0, 20).map(i =>
-      `- [${i.id}] "${i.title}" | ${i.category} | ${i.cost}€→${i.estValue}€ | ${i.daysHeld}d`
-    ).join('\n');
+    const prompt = buildPrompt(inventoryItems, customersData);
 
-    const customersStr = customersData.map(c =>
-      `- ${c.name} | ${c.purchases}x | ${c.totalSpent}€ | kategorije: ${c.categories.join(', ')} | ${c.lastPurchase}`
-    ).join('\n');
+    const raw = await callAi(prompt);
+    const parsed: any = parseAi(raw);
 
-    const prompt = `Si AI cross-sell recommender za slovenske oglasne platforme.
+    const recommender = transformRecommender(parsed, inventoryItems, customersData);
+
+    return apiOk({ ok: true, recommender });
+  },
+});
+
+// --- Pomožne funkcije (čiste, testabilne) --------------------------------
+
+interface CustomerHistoryEntry {
+  purchases: number;
+  totalSpent: number;
+  categories: Set<string>;
+  items: string[];
+  lastPurchase: Date | null;
+}
+
+function aggregateCustomerHistory(soldTrades: Array<{
+  sellLocation: string | null;
+  sellPrice: number | null;
+  sellFees: number | null;
+  category: string | null;
+  title: string;
+  sellDate: Date | null;
+}>): Map<string, CustomerHistoryEntry> {
+  const customerHistory = new Map<string, CustomerHistoryEntry>();
+  for (const t of soldTrades) {
+    const name = (t.sellLocation || '').trim();
+    if (!name) continue;
+    if (!customerHistory.has(name)) {
+      customerHistory.set(name, { purchases: 0, totalSpent: 0, categories: new Set<string>(), items: [], lastPurchase: null });
+    }
+    const c = customerHistory.get(name)!;
+    c.purchases += 1;
+    c.totalSpent += (t.sellPrice ?? 0) - (t.sellFees ?? 0);
+    if (t.category) c.categories.add(t.category);
+    c.items.push(t.title);
+    if (t.sellDate && (!c.lastPurchase || t.sellDate > c.lastPurchase)) c.lastPurchase = t.sellDate;
+  }
+  return customerHistory;
+}
+
+interface InventoryItem {
+  id: string;
+  title: string;
+  category: string;
+  cost: number;
+  estValue: number;
+  daysHeld: number;
+  description: string;
+}
+
+interface CustomerData {
+  name: string;
+  purchases: number;
+  totalSpent: number;
+  categories: string[];
+  items: string[];
+  lastPurchase: string;
+}
+
+function buildPrompt(inventoryItems: InventoryItem[], customersData: CustomerData[]): string {
+  const inventoryStr = inventoryItems.slice(0, 20).map(i =>
+    `- [${i.id}] "${i.title}" | ${i.category} | ${i.cost}€→${i.estValue}€ | ${i.daysHeld}d`
+  ).join('\n');
+
+  const customersStr = customersData.map(c =>
+    `- ${c.name} | ${c.purchases}x | ${c.totalSpent}€ | kategorije: ${c.categories.join(', ')} | ${c.lastPurchase}`
+  ).join('\n');
+
+  return `Si AI cross-sell recommender za slovenske oglasne platforme.
 Analiziraj inventar in zgodovino kupcev ter predlagaj cross-sell priložnosti.
 
 INVENTAR (${inventoryItems.length}):
@@ -152,86 +212,78 @@ Odgovori LE z JSON:
     "cross_sell_efficiency_score": <number 0-100>
   }
 }`;
+}
 
-    let raw = '';
-    try { raw = await callProviderForRaw(aiSettings, prompt); }
-    catch (primaryError: any) {
-      if (aiSettings.fallbackProvider && aiSettings.fallbackModel) {
-        const fb: AiSettings = { provider: aiSettings.fallbackProvider, baseUrl: aiSettings.fallbackBaseUrl || '', apiKey: aiSettings.fallbackApiKey || '', model: aiSettings.fallbackModel };
-        raw = await callProviderForRaw(fb, prompt);
-      } else { return NextResponse.json({ error: primaryError?.message ?? 'AI failed' }, { status: 500 }); }
-    }
+function transformRecommender(parsed: any, inventoryItems: InventoryItem[], customersData: CustomerData[]): {
+  insights: string;
+  opportunities: any[];
+  customerOffers: any[];
+  bundles: any[];
+  strategies: any[];
+  summary: any;
+} {
+  const validIds = new Set(inventoryItems.map(i => i.id));
+  const validNames = new Set(customersData.map(c => c.name));
 
-    const parsed: any = parseJsonLooseExported(raw);
-    const validIds = new Set(inventoryItems.map(i => i.id));
-    const validNames = new Set(customersData.map(c => c.name));
-
-    const recommender = {
-      insights: String(parsed?.insights ?? '').slice(0, 500),
-      opportunities: (parsed?.opportunities || [])
-        .filter((o: any) => validIds.has(String(o?.inventory_id ?? '')) && validNames.has(String(o?.customer_name ?? '')))
-        .slice(0, 25)
-        .map((o: any) => ({
-          customerName: String(o?.customer_name ?? '').slice(0, 100),
-          inventoryId: String(o?.inventory_id ?? '').slice(0, 50),
-          crossSellType: ['complementary', 'upsell', 'bundle', 'repeat_buy', 'accessory', 'warranty', 'related_category', 'seasonal'].includes(String(o?.cross_sell_type)) ? String(o.cross_sell_type) : 'complementary',
-          reasoning: String(o?.reasoning ?? '').slice(0, 250),
-          suggestedPriceEur: Math.max(0, Math.round(Number(o?.suggested_price_eur ?? 0))),
-          expectedAcceptancePct: Math.max(0, Math.min(100, Number(o?.expected_acceptance_pct ?? 50))),
-          profitEur: Math.round(Number(o?.profit_eur ?? 0)),
-          priority: ['high', 'medium', 'low'].includes(String(o?.priority)) ? String(o.priority) : 'medium',
-        })),
-      customerOffers: (parsed?.customer_offers || [])
-        .filter((o: any) => validNames.has(String(o?.customer_name ?? '')))
-        .slice(0, 15)
-        .map((o: any) => ({
-          customerName: String(o?.customer_name ?? '').slice(0, 100),
-          primaryItemId: String(o?.primary_item_id ?? '').slice(0, 50),
-          crossSellItems: (o?.cross_sell_items || []).filter((id: any) => validIds.has(String(id))).slice(0, 5).map((id: any) => String(id).slice(0, 50)),
-          bundlePriceEur: Math.max(0, Math.round(Number(o?.bundle_price_eur ?? 0))),
-          individualTotalEur: Math.max(0, Math.round(Number(o?.individual_total_eur ?? 0))),
-          savingsEur: Math.round(Number(o?.savings_eur ?? 0)),
-          expectedTotalProfitEur: Math.round(Number(o?.expected_total_profit_eur ?? 0)),
-          pitchMessage: String(o?.pitch_message ?? '').slice(0, 400),
-          bestChannel: ['email', 'sms', 'call', 'in_person'].includes(String(o?.best_channel)) ? String(o.best_channel) : 'email',
-        })),
-      bundles: (parsed?.bundles || [])
-        .filter((b: any) => (b?.item_ids || []).some((id: any) => validIds.has(String(id))))
-        .slice(0, 10)
-        .map((b: any) => ({
-          bundleName: String(b?.bundle_name ?? '').slice(0, 100),
-          itemIds: (b?.item_ids || []).filter((id: any) => validIds.has(String(id))).slice(0, 6).map((id: any) => String(id).slice(0, 50)),
-          categoryCombo: String(b?.category_combo ?? '').slice(0, 150),
-          bundlePriceEur: Math.max(0, Math.round(Number(b?.bundle_price_eur ?? 0))),
-          individualTotalEur: Math.max(0, Math.round(Number(b?.individual_total_eur ?? 0))),
-          discountPct: Math.round(Number(b?.discount_pct ?? 0)),
-          profitEur: Math.round(Number(b?.profit_eur ?? 0)),
-          targetAudience: String(b?.target_audience ?? '').slice(0, 150),
-          sellingPoint: String(b?.selling_point ?? '').slice(0, 200),
-        })),
-      strategies: (parsed?.strategies || []).slice(0, 8).map((s: any) => ({
-        strategy: ['complementary', 'upsell', 'bundle', 'repeat_buy', 'accessory', 'warranty', 'related_category', 'seasonal'].includes(String(s?.strategy)) ? String(s.strategy) : 'complementary',
-        description: String(s?.description ?? '').slice(0, 200),
-        bestFor: String(s?.best_for ?? '').slice(0, 150),
-        expectedUpliftPct: Math.round(Number(s?.expected_uplift_pct ?? 0)),
-        implementationEffort: ['low', 'medium', 'high'].includes(String(s?.implementation_effort)) ? String(s.implementation_effort) : 'medium',
+  return {
+    insights: String(parsed?.insights ?? '').slice(0, 500),
+    opportunities: (parsed?.opportunities || [])
+      .filter((o: any) => validIds.has(String(o?.inventory_id ?? '')) && validNames.has(String(o?.customer_name ?? '')))
+      .slice(0, 25)
+      .map((o: any) => ({
+        customerName: String(o?.customer_name ?? '').slice(0, 100),
+        inventoryId: String(o?.inventory_id ?? '').slice(0, 50),
+        crossSellType: ['complementary', 'upsell', 'bundle', 'repeat_buy', 'accessory', 'warranty', 'related_category', 'seasonal'].includes(String(o?.cross_sell_type)) ? String(o.cross_sell_type) : 'complementary',
+        reasoning: String(o?.reasoning ?? '').slice(0, 250),
+        suggestedPriceEur: Math.max(0, Math.round(Number(o?.suggested_price_eur ?? 0))),
+        expectedAcceptancePct: Math.max(0, Math.min(100, Number(o?.expected_acceptance_pct ?? 50))),
+        profitEur: Math.round(Number(o?.profit_eur ?? 0)),
+        priority: ['high', 'medium', 'low'].includes(String(o?.priority)) ? String(o.priority) : 'medium',
       })),
-      summary: {
-        totalOpportunities: Math.max(0, Number(parsed?.summary?.total_opportunities ?? 0)),
-        totalCustomersTargeted: Math.max(0, Number(parsed?.summary?.total_customers_targeted ?? 0)),
-        expectedExtraRevenueEur: Math.round(Number(parsed?.summary?.expected_extra_revenue_eur ?? 0)),
-        expectedExtraProfitEur: Math.round(Number(parsed?.summary?.expected_extra_profit_eur ?? 0)),
-        avgAcceptanceRatePct: Math.max(0, Math.min(100, Number(parsed?.summary?.avg_acceptance_rate_pct ?? 30))),
-        bestStrategy: String(parsed?.summary?.best_strategy ?? '').slice(0, 150),
-        quickestWin: String(parsed?.summary?.quickest_win ?? '').slice(0, 200),
-        crossSellEfficiencyScore: Math.max(0, Math.min(100, Number(parsed?.summary?.cross_sell_efficiency_score ?? 50))),
-      },
-    };
-
-    const today = new Date().toISOString().slice(0, 10);
-    if (settings.aiCallsDate !== today) { await db.settings.update({ where: { id: 'singleton' }, data: { aiCallsDate: today, aiCallsToday: 1 } }); }
-    else { await db.settings.update({ where: { id: 'singleton' }, data: { aiCallsToday: { increment: 1 } } }); }
-
-    return NextResponse.json({ ok: true, recommender });
-  } catch (e: any) { logger.error("/api/ai/cross-sell-recommender", "POST handler failed", e); return NextResponse.json({ error: e?.message ?? 'Napaka' }, { status: 500 }); }
+    customerOffers: (parsed?.customer_offers || [])
+      .filter((o: any) => validNames.has(String(o?.customer_name ?? '')))
+      .slice(0, 15)
+      .map((o: any) => ({
+        customerName: String(o?.customer_name ?? '').slice(0, 100),
+        primaryItemId: String(o?.primary_item_id ?? '').slice(0, 50),
+        crossSellItems: (o?.cross_sell_items || []).filter((id: any) => validIds.has(String(id))).slice(0, 5).map((id: any) => String(id).slice(0, 50)),
+        bundlePriceEur: Math.max(0, Math.round(Number(o?.bundle_price_eur ?? 0))),
+        individualTotalEur: Math.max(0, Math.round(Number(o?.individual_total_eur ?? 0))),
+        savingsEur: Math.round(Number(o?.savings_eur ?? 0)),
+        expectedTotalProfitEur: Math.round(Number(o?.expected_total_profit_eur ?? 0)),
+        pitchMessage: String(o?.pitch_message ?? '').slice(0, 400),
+        bestChannel: ['email', 'sms', 'call', 'in_person'].includes(String(o?.best_channel)) ? String(o.best_channel) : 'email',
+      })),
+    bundles: (parsed?.bundles || [])
+      .filter((b: any) => (b?.item_ids || []).some((id: any) => validIds.has(String(id))))
+      .slice(0, 10)
+      .map((b: any) => ({
+        bundleName: String(b?.bundle_name ?? '').slice(0, 100),
+        itemIds: (b?.item_ids || []).filter((id: any) => validIds.has(String(id))).slice(0, 6).map((id: any) => String(id).slice(0, 50)),
+        categoryCombo: String(b?.category_combo ?? '').slice(0, 150),
+        bundlePriceEur: Math.max(0, Math.round(Number(b?.bundle_price_eur ?? 0))),
+        individualTotalEur: Math.max(0, Math.round(Number(b?.individual_total_eur ?? 0))),
+        discountPct: Math.round(Number(b?.discount_pct ?? 0)),
+        profitEur: Math.round(Number(b?.profit_eur ?? 0)),
+        targetAudience: String(b?.target_audience ?? '').slice(0, 150),
+        sellingPoint: String(b?.selling_point ?? '').slice(0, 200),
+      })),
+    strategies: (parsed?.strategies || []).slice(0, 8).map((s: any) => ({
+      strategy: ['complementary', 'upsell', 'bundle', 'repeat_buy', 'accessory', 'warranty', 'related_category', 'seasonal'].includes(String(s?.strategy)) ? String(s.strategy) : 'complementary',
+      description: String(s?.description ?? '').slice(0, 200),
+      bestFor: String(s?.best_for ?? '').slice(0, 150),
+      expectedUpliftPct: Math.round(Number(s?.expected_uplift_pct ?? 0)),
+      implementationEffort: ['low', 'medium', 'high'].includes(String(s?.implementation_effort)) ? String(s.implementation_effort) : 'medium',
+    })),
+    summary: {
+      totalOpportunities: Math.max(0, Number(parsed?.summary?.total_opportunities ?? 0)),
+      totalCustomersTargeted: Math.max(0, Number(parsed?.summary?.total_customers_targeted ?? 0)),
+      expectedExtraRevenueEur: Math.round(Number(parsed?.summary?.expected_extra_revenue_eur ?? 0)),
+      expectedExtraProfitEur: Math.round(Number(parsed?.summary?.expected_extra_profit_eur ?? 0)),
+      avgAcceptanceRatePct: Math.max(0, Math.min(100, Number(parsed?.summary?.avg_acceptance_rate_pct ?? 30))),
+      bestStrategy: String(parsed?.summary?.best_strategy ?? '').slice(0, 150),
+      quickestWin: String(parsed?.summary?.quickest_win ?? '').slice(0, 200),
+      crossSellEfficiencyScore: Math.max(0, Math.min(100, Number(parsed?.summary?.cross_sell_efficiency_score ?? 50))),
+    },
+  };
 }

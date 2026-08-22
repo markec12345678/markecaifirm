@@ -1,16 +1,14 @@
-// v6.25: AI Geographical Price Map — analiza cen in priložnosti po regijah
+// v6.25 / v8.95.9-other-medium: AI Geographical Price Map — analiza cen in priložnosti po regijah
+// Refaktoriran z withAiRoute helperjem (v8.95.9) + enforceBudget guard.
+//
 // POST /api/ai/geo-price-map
 // Body: {}
 // Returns: { ok, regions: [{ name, avgPrice, listingCount, opportunityCount, priceIndex, recommendation }], insights, arbitrage }
 
-import { NextRequest, NextResponse } from 'next/server';
-import { db } from '@/lib/db';
-import { getSettingsRow } from '@/lib/pipeline';
-import { callProviderForRaw, parseJsonLooseExported, type AiProviderType, type AiSettings } from '@/lib/ai';
-import { logger } from '@/lib/logger';
+import { withAiRoute, AI_ROUTE_DEFAULTS, type AiRouteContext } from '@/lib/with-ai-route';
+import { apiOk } from '@/lib/api-response';
 
-export const runtime = 'nodejs';
-export const dynamic = 'force-dynamic';
+export const { runtime, dynamic } = AI_ROUTE_DEFAULTS;
 export const maxDuration = 90;
 
 // Slovenske regije z ključnimi mesti
@@ -41,9 +39,22 @@ function classifyRegion(location: string): string {
   return 'Ostalo';
 }
 
-export async function POST(req: NextRequest) {
-  try {
+// eslint-disable-next-line @typescript-eslint/no-empty-object-type
+interface GeoPriceMapInput {}
+
+export const POST = withAiRoute<GeoPriceMapInput>({
+  endpoint: '/api/ai/geo-price-map',
+  maxDuration: 90,
+  enforceBudget: true, // AI klic — preveri budget
+
+  parseBody: async (req) => {
     await req.json().catch(() => ({}));
+    return {};
+  },
+
+  // No validateInput — body je ignored
+  handler: async (_input, ctx: AiRouteContext) => {
+    const { db, callAi, parseAi } = ctx;
 
     // 1. Pridobi vse listinge z lokacijo in ceno
     const listings = await db.listing.findMany({
@@ -63,27 +74,11 @@ export async function POST(req: NextRequest) {
     });
 
     if (listings.length === 0 && soldTrades.length === 0) {
-      return NextResponse.json({ ok: true, regions: [], message: 'Ni podatkov o lokacijah.' });
+      return apiOk({ ok: true, regions: [], message: 'Ni podatkov o lokacijah.' });
     }
 
     // 3. Klasificiraj listinge po regijah
-    const byRegion: Record<string, { listings: number; totalValue: number; avgPrice: number;
-      minPrice: number; maxPrice: number; opportunities: number; avgDealScore: number; categories: Set<string> }> = {};
-
-    for (const l of listings) {
-      const region = classifyRegion(l.location || '');
-      if (!byRegion[region]) {
-        byRegion[region] = { listings: 0, totalValue: 0, avgPrice: 0, minPrice: Infinity,
-          maxPrice: 0, opportunities: 0, avgDealScore: 0, categories: new Set() };
-      }
-      const r = byRegion[region];
-      r.listings++;
-      r.totalValue += l.price ?? 0;
-      r.minPrice = Math.min(r.minPrice, l.price ?? 0);
-      r.maxPrice = Math.max(r.maxPrice, l.price ?? 0);
-      if (l.aiVerdict === 'PRILIKA' || (l.dealScore ?? 0) >= 70) r.opportunities++;
-      r.avgDealScore += l.dealScore ?? 0;
-    }
+    const byRegion = computeListingsByRegion(listings);
 
     // Izračunaj povprečja
     const allPrices = listings.map(l => l.price ?? 0).filter(p => p > 0);
@@ -97,43 +92,169 @@ export async function POST(req: NextRequest) {
     }
 
     // 4. Sold trades po regijah (buy in sell)
-    const buyByRegion: Record<string, { count: number; totalCost: number; avgCost: number }> = {};
-    const sellByRegion: Record<string, { count: number; totalRevenue: number; avgRevenue: number }> = {};
-    for (const t of soldTrades) {
-      const buyRegion = classifyRegion(t.buyLocation || '');
-      const sellRegion = classifyRegion(t.sellLocation || '');
-      if (!buyByRegion[buyRegion]) buyByRegion[buyRegion] = { count: 0, totalCost: 0, avgCost: 0 };
-      buyByRegion[buyRegion].count++;
-      buyByRegion[buyRegion].totalCost += t.buyPrice + (t.buyFees ?? 0);
-      if (!sellByRegion[sellRegion]) sellByRegion[sellRegion] = { count: 0, totalRevenue: 0, avgRevenue: 0 };
-      sellByRegion[sellRegion].count++;
-      sellByRegion[sellRegion].totalRevenue += (t.sellPrice ?? 0) - (t.sellFees ?? 0);
-    }
-    for (const r of Object.keys(buyByRegion)) buyByRegion[r].avgCost = buyByRegion[r].count > 0 ? Math.round(buyByRegion[r].totalCost / buyByRegion[r].count) : 0;
-    for (const r of Object.keys(sellByRegion)) sellByRegion[r].avgRevenue = sellByRegion[r].count > 0 ? Math.round(sellByRegion[r].totalRevenue / sellByRegion[r].count) : 0;
+    const { buyByRegion, sellByRegion } = computeTradesByRegion(soldTrades);
 
     // 5. AI analiza
-    const settings = await getSettingsRow();
-    const aiSettings: AiSettings = {
-      provider: settings.aiProvider as AiProviderType,
-      baseUrl: settings.aiBaseUrl, apiKey: settings.aiApiKey, model: settings.aiModel,
-      fallbackProvider: (settings.fallbackProvider || '') as AiProviderType | '',
-      fallbackBaseUrl: settings.fallbackBaseUrl || '', fallbackApiKey: settings.fallbackApiKey || '',
-      fallbackModel: settings.fallbackModel || '',
-    };
-
     const regionsStr = Object.entries(byRegion)
       .sort(([, a], [, b]) => a.avgPrice - b.avgPrice)
       .map(([region, r]) => `- ${region}: ${r.listings} oglasov, povp. ${r.avgPrice}€ (min ${r.minPrice}-max ${r.maxPrice}€), ${r.opportunities} priložnosti, deal score ${r.avgDealScore}/100`)
       .join('\n');
 
-    const prompt = `Si ekspert za geografsko analizo trga in cenovnih razlik.
+    const prompt = buildPrompt({ regionsStr, globalAvg });
+
+    const raw = await callAi(prompt);
+
+    const parsed: any = parseAi(raw);
+
+    const regions = (parsed?.regions || []).slice(0, 15).map((r: any) => ({
+      name: String(r?.name ?? '').slice(0, 50),
+      avgPriceEur: Math.max(0, Number(r?.avg_price_eur ?? 0)),
+      priceIndex: Math.round(Number(r?.price_index ?? 100)),
+      listingCount: Math.max(0, Number(r?.listing_count ?? 0)),
+      opportunityCount: Math.max(0, Number(r?.opportunity_count ?? 0)),
+      opportunityRatePct: Math.max(0, Math.min(100, Number(r?.opportunity_rate_pct ?? 0))),
+      avgDealScore: Math.max(0, Math.min(100, Number(r?.avg_deal_score ?? 0))),
+      priceRange: String(r?.price_range ?? '').slice(0, 50),
+      recommendation: ['buy_here', 'sell_here', 'avoid', 'monitor'].includes(String(r?.recommendation))
+        ? String(r.recommendation) : 'monitor',
+      bestCategories: (r?.best_categories || []).slice(0, 3).map((c: any) => String(c).slice(0, 80)),
+      reasoning: String(r?.reasoning ?? '').slice(0, 200),
+    }));
+
+    const arbitrageRoutes = (parsed?.arbitrage_routes || []).slice(0, 8).map((a: any) => ({
+      strategy: ['domestic_arbitrage', 'import_arbitrage', 'export_arbitrage', 'local_advantage'].includes(String(a?.strategy))
+        ? String(a.strategy) : 'domestic_arbitrage',
+      buyRegion: String(a?.buy_region ?? '').slice(0, 50),
+      sellRegion: String(a?.sell_region ?? '').slice(0, 50),
+      avgBuyPriceEur: Math.max(0, Number(a?.avg_buy_price_eur ?? 0)),
+      avgSellPriceEur: Math.max(0, Number(a?.avg_sell_price_eur ?? 0)),
+      potentialProfitEur: Math.max(0, Number(a?.potential_profit_eur ?? 0)),
+      potentialRoiPct: Math.round(Number(a?.potential_roi_pct ?? 0)),
+      shippingEur: Math.max(0, Number(a?.shipping_eur ?? 0)),
+      feasibility: ['easy', 'medium', 'hard'].includes(String(a?.feasibility)) ? String(a.feasibility) : 'medium',
+      reasoning: String(a?.reasoning ?? '').slice(0, 200),
+    }));
+
+    const summary = {
+      cheapestRegion: String(parsed?.summary?.cheapest_region ?? '').slice(0, 50),
+      mostExpensiveRegion: String(parsed?.summary?.most_expensive_region ?? '').slice(0, 50),
+      bestOpportunityRegion: String(parsed?.summary?.best_opportunity_region ?? '').slice(0, 50),
+      totalArbitragePotentialEur: Math.max(0, Number(parsed?.summary?.total_arbitrage_potential_eur ?? 0)),
+      priceSpreadPct: Math.round(Number(parsed?.summary?.price_spread_pct ?? 0)),
+    };
+
+    return apiOk({
+      ok: true,
+      insights: String(parsed?.insights ?? '').slice(0, 600),
+      regions,
+      arbitrageRoutes,
+      summary,
+      globalAvgPrice: Math.round(globalAvg),
+    });
+  },
+});
+
+// --- Pomožne funkcije (čiste, testabilne) --------------------------------
+
+interface ListingRow {
+  price: number | null;
+  location: string | null;
+  aiVerdict: string | null;
+  dealScore: number | null;
+  aiEstimatedValue: number | null;
+  title: string;
+  firstSeenAt: Date;
+  monitor: { source: string } | null;
+}
+
+interface RegionStats {
+  listings: number;
+  totalValue: number;
+  avgPrice: number;
+  minPrice: number;
+  maxPrice: number;
+  opportunities: number;
+  avgDealScore: number;
+}
+
+function computeListingsByRegion(listings: ListingRow[]): Record<string, RegionStats> {
+  const byRegion: Record<string, RegionStats> = {};
+
+  for (const l of listings) {
+    const region = classifyRegion(l.location || '');
+    if (!byRegion[region]) {
+      byRegion[region] = { listings: 0, totalValue: 0, avgPrice: 0, minPrice: Infinity,
+        maxPrice: 0, opportunities: 0, avgDealScore: 0 };
+    }
+    const r = byRegion[region];
+    r.listings++;
+    r.totalValue += l.price ?? 0;
+    r.minPrice = Math.min(r.minPrice, l.price ?? 0);
+    r.maxPrice = Math.max(r.maxPrice, l.price ?? 0);
+    if (l.aiVerdict === 'PRILIKA' || (l.dealScore ?? 0) >= 70) r.opportunities++;
+    r.avgDealScore += l.dealScore ?? 0;
+  }
+
+  return byRegion;
+}
+
+interface SoldTradeRow {
+  buyLocation: string | null;
+  sellLocation: string | null;
+  buyPrice: number;
+  sellPrice: number | null;
+  buyFees: number | null;
+  sellFees: number | null;
+  category: string | null;
+}
+
+interface BuyRegionStats {
+  count: number;
+  totalCost: number;
+  avgCost: number;
+}
+
+interface SellRegionStats {
+  count: number;
+  totalRevenue: number;
+  avgRevenue: number;
+}
+
+function computeTradesByRegion(soldTrades: SoldTradeRow[]): {
+  buyByRegion: Record<string, BuyRegionStats>;
+  sellByRegion: Record<string, SellRegionStats>;
+} {
+  const buyByRegion: Record<string, BuyRegionStats> = {};
+  const sellByRegion: Record<string, SellRegionStats> = {};
+  for (const t of soldTrades) {
+    const buyRegion = classifyRegion(t.buyLocation || '');
+    const sellRegion = classifyRegion(t.sellLocation || '');
+    if (!buyByRegion[buyRegion]) buyByRegion[buyRegion] = { count: 0, totalCost: 0, avgCost: 0 };
+    buyByRegion[buyRegion].count++;
+    buyByRegion[buyRegion].totalCost += t.buyPrice + (t.buyFees ?? 0);
+    if (!sellByRegion[sellRegion]) sellByRegion[sellRegion] = { count: 0, totalRevenue: 0, avgRevenue: 0 };
+    sellByRegion[sellRegion].count++;
+    sellByRegion[sellRegion].totalRevenue += (t.sellPrice ?? 0) - (t.sellFees ?? 0);
+  }
+  for (const r of Object.keys(buyByRegion)) buyByRegion[r].avgCost = buyByRegion[r].count > 0 ? Math.round(buyByRegion[r].totalCost / buyByRegion[r].count) : 0;
+  for (const r of Object.keys(sellByRegion)) sellByRegion[r].avgRevenue = sellByRegion[r].count > 0 ? Math.round(sellByRegion[r].totalRevenue / sellByRegion[r].count) : 0;
+
+  return { buyByRegion, sellByRegion };
+}
+
+interface PromptData {
+  regionsStr: string;
+  globalAvg: number;
+}
+
+function buildPrompt(d: PromptData): string {
+  return `Si ekspert za geografsko analizo trga in cenovnih razlik.
 Analiziraj cene in priložnosti po regijah ter identificiraj geografsko arbitražo.
 
 PODATKI PO REGIJAH:
-${regionsStr || '- Ni podatkov'}
+${d.regionsStr || '- Ni podatkov'}
 
-Globalno povprečje: ${Math.round(globalAvg)}€
+Globalno povprečje: ${Math.round(d.globalAvg)}€
 
 Slovenski kontekst:
 - Ljubljana: najvišje cene (bogatejši trg, več povprašanja)
@@ -187,74 +308,4 @@ Odgovori LE z JSON:
     "price_spread_pct": <number>
   }
 }`;
-
-    let raw = '';
-    try {
-      raw = await callProviderForRaw(aiSettings, prompt);
-    } catch (primaryError: any) {
-      if (aiSettings.fallbackProvider && aiSettings.fallbackModel) {
-        const fb: AiSettings = { provider: aiSettings.fallbackProvider, baseUrl: aiSettings.fallbackBaseUrl || '',
-          apiKey: aiSettings.fallbackApiKey || '', model: aiSettings.fallbackModel };
-        raw = await callProviderForRaw(fb, prompt);
-      } else { return NextResponse.json({ error: primaryError?.message ?? 'AI failed' }, { status: 500 }); }
-    }
-
-    const parsed: any = parseJsonLooseExported(raw);
-
-    const regions = (parsed?.regions || []).slice(0, 15).map((r: any) => ({
-      name: String(r?.name ?? '').slice(0, 50),
-      avgPriceEur: Math.max(0, Number(r?.avg_price_eur ?? 0)),
-      priceIndex: Math.round(Number(r?.price_index ?? 100)),
-      listingCount: Math.max(0, Number(r?.listing_count ?? 0)),
-      opportunityCount: Math.max(0, Number(r?.opportunity_count ?? 0)),
-      opportunityRatePct: Math.max(0, Math.min(100, Number(r?.opportunity_rate_pct ?? 0))),
-      avgDealScore: Math.max(0, Math.min(100, Number(r?.avg_deal_score ?? 0))),
-      priceRange: String(r?.price_range ?? '').slice(0, 50),
-      recommendation: ['buy_here', 'sell_here', 'avoid', 'monitor'].includes(String(r?.recommendation))
-        ? String(r.recommendation) : 'monitor',
-      bestCategories: (r?.best_categories || []).slice(0, 3).map((c: any) => String(c).slice(0, 80)),
-      reasoning: String(r?.reasoning ?? '').slice(0, 200),
-    }));
-
-    const arbitrageRoutes = (parsed?.arbitrage_routes || []).slice(0, 8).map((a: any) => ({
-      strategy: ['domestic_arbitrage', 'import_arbitrage', 'export_arbitrage', 'local_advantage'].includes(String(a?.strategy))
-        ? String(a.strategy) : 'domestic_arbitrage',
-      buyRegion: String(a?.buy_region ?? '').slice(0, 50),
-      sellRegion: String(a?.sell_region ?? '').slice(0, 50),
-      avgBuyPriceEur: Math.max(0, Number(a?.avg_buy_price_eur ?? 0)),
-      avgSellPriceEur: Math.max(0, Number(a?.avg_sell_price_eur ?? 0)),
-      potentialProfitEur: Math.max(0, Number(a?.potential_profit_eur ?? 0)),
-      potentialRoiPct: Math.round(Number(a?.potential_roi_pct ?? 0)),
-      shippingEur: Math.max(0, Number(a?.shipping_eur ?? 0)),
-      feasibility: ['easy', 'medium', 'hard'].includes(String(a?.feasibility)) ? String(a.feasibility) : 'medium',
-      reasoning: String(a?.reasoning ?? '').slice(0, 200),
-    }));
-
-    const summary = {
-      cheapestRegion: String(parsed?.summary?.cheapest_region ?? '').slice(0, 50),
-      mostExpensiveRegion: String(parsed?.summary?.most_expensive_region ?? '').slice(0, 50),
-      bestOpportunityRegion: String(parsed?.summary?.best_opportunity_region ?? '').slice(0, 50),
-      totalArbitragePotentialEur: Math.max(0, Number(parsed?.summary?.total_arbitrage_potential_eur ?? 0)),
-      priceSpreadPct: Math.round(Number(parsed?.summary?.price_spread_pct ?? 0)),
-    };
-
-    const today = new Date().toISOString().slice(0, 10);
-    if (settings.aiCallsDate !== today) {
-      await db.settings.update({ where: { id: 'singleton' }, data: { aiCallsDate: today, aiCallsToday: 1 } });
-    } else {
-      await db.settings.update({ where: { id: 'singleton' }, data: { aiCallsToday: { increment: 1 } } });
-    }
-
-    return NextResponse.json({
-      ok: true,
-      insights: String(parsed?.insights ?? '').slice(0, 600),
-      regions,
-      arbitrageRoutes,
-      summary,
-      globalAvgPrice: Math.round(globalAvg),
-    });
-  } catch (e: any) {
-    logger.error("/api/ai/geo-price-map", "POST handler failed", e);
-    return NextResponse.json({ error: e?.message ?? 'Napaka' }, { status: 500 });
-  }
 }
