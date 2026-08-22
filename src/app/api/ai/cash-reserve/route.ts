@@ -1,21 +1,32 @@
-// v6.26: AI Cash Reserve Optimizer — optimizira denarno rezervo za max fleksibilnost
+// v6.26 / v8.95.5-deal: AI Cash Reserve Optimizer — optimizira denarno rezervo za max fleksibilnost
+// Refaktoriran z withAiRoute helperjem (v8.95.5-deal) + enforceBudget guard.
+//
 // POST /api/ai/cash-reserve
 // Body: {}
 // Returns: { ok, reserve: { currentCash, optimalReserve, allocation, projections, recommendations } }
 
-import { NextRequest, NextResponse } from 'next/server';
-import { db } from '@/lib/db';
-import { getSettingsRow } from '@/lib/pipeline';
-import { callProviderForRaw, parseJsonLooseExported, type AiProviderType, type AiSettings } from '@/lib/ai';
-import { logger } from '@/lib/logger';
+import { withAiRoute, AI_ROUTE_DEFAULTS, type AiRouteContext } from '@/lib/with-ai-route';
+import { apiOk } from '@/lib/api-response';
 
-export const runtime = 'nodejs';
-export const dynamic = 'force-dynamic';
+export const { runtime, dynamic } = AI_ROUTE_DEFAULTS;
 export const maxDuration = 90;
 
-export async function POST(req: NextRequest) {
-  try {
+// eslint-disable-next-line @typescript-eslint/no-empty-object-type
+interface CashReserveInput {}
+
+export const POST = withAiRoute<CashReserveInput>({
+  endpoint: '/api/ai/cash-reserve',
+  maxDuration: 90,
+  enforceBudget: true, // AI klic — preveri budget
+
+  parseBody: async (req) => {
     await req.json().catch(() => ({}));
+    return {} as CashReserveInput;
+  },
+
+  // No validateInput — brez polj
+  handler: async (_input, ctx: AiRouteContext) => {
+    const { db, callAi, parseAi } = ctx;
 
     const heldTrades = await db.trade.findMany({
       where: { status: 'held' },
@@ -31,51 +42,109 @@ export async function POST(req: NextRequest) {
     });
 
     if (soldTrades.length === 0 && heldTrades.length === 0) {
-      return NextResponse.json({ ok: true, reserve: null, message: 'Ni podatkov za optimizacijo rezerve.' });
+      return apiOk({ ok: true, reserve: null, message: 'Ni podatkov za optimizacijo rezerve.' });
     }
 
-    // Izračunaj cash flow
-    const totalInvestedHeld = heldTrades.reduce((s, t) => s + t.buyPrice + (t.buyFees ?? 0), 0);
-    const totalRealized = soldTrades.reduce((s, t) => s + (t.sellPrice ?? 0) - (t.sellFees ?? 0) - t.buyPrice - (t.buyFees ?? 0), 0);
-    const totalRevenue = soldTrades.reduce((s, t) => s + (t.sellPrice ?? 0) - (t.sellFees ?? 0), 0);
-    const totalSpent = soldTrades.reduce((s, t) => s + t.buyPrice + (t.buyFees ?? 0), 0) + totalInvestedHeld;
-    const currentCash = totalRevenue - totalSpent;
+    // Izračunaj cash flow statove
+    const stats = computeCashFlowStats(heldTrades, soldTrades);
 
-    // Avg sales per month
-    const threeMonthsAgo = new Date();
-    threeMonthsAgo.setMonth(threeMonthsAgo.getMonth() - 3);
-    const recentSales = soldTrades.filter(t => t.sellDate && t.sellDate >= threeMonthsAgo);
-    const avgSalesPerMonth = recentSales.length / 3;
-    const avgRevenuePerSale = recentSales.length > 0
-      ? recentSales.reduce((s, t) => s + (t.sellPrice ?? 0) - (t.sellFees ?? 0), 0) / recentSales.length : 0;
-    const avgCostPerBuy = recentSales.length > 0
-      ? recentSales.reduce((s, t) => s + t.buyPrice + (t.buyFees ?? 0), 0) / recentSales.length : 0;
-    const avgDaysToSell = recentSales.length > 0
-      ? Math.round(recentSales.reduce((s, t) => {
-          if (t.sellDate && t.buyDate) return s + (t.sellDate.getTime() - t.buyDate.getTime()) / (24 * 60 * 60 * 1000);
-          return s;
-        }, 0) / recentSales.length) : 30;
+    const prompt = buildPrompt(stats);
+    const raw = await callAi(prompt);
+    const parsed: any = parseAi(raw);
 
-    const settings = await getSettingsRow();
-    const aiSettings: AiSettings = {
-      provider: settings.aiProvider as AiProviderType,
-      baseUrl: settings.aiBaseUrl, apiKey: settings.aiApiKey, model: settings.aiModel,
-      fallbackProvider: (settings.fallbackProvider || '') as AiProviderType | '',
-      fallbackBaseUrl: settings.fallbackBaseUrl || '', fallbackApiKey: settings.fallbackApiKey || '',
-      fallbackModel: settings.fallbackModel || '',
-    };
+    const reserve = transformReserve(parsed, stats.currentCash);
 
-    const prompt = `Si ekspert za treasury management in optimizacijo denarnih rezerv.
+    return apiOk({ ok: true, reserve });
+  },
+});
+
+// --- Pomožne funkcije (čiste, testabilne) --------------------------------
+
+interface HeldTradeRow {
+  buyPrice: number;
+  buyFees: number | null;
+}
+
+interface SoldTradeRow {
+  buyPrice: number;
+  buyFees: number | null;
+  sellPrice: number | null;
+  sellFees: number | null;
+  buyDate: Date;
+  sellDate: Date | null;
+}
+
+interface CashFlowStats {
+  totalInvestedHeld: number;
+  totalRealized: number;
+  currentCash: number;
+  heldCount: number;
+  avgSalesPerMonth: number;
+  avgRevenuePerSale: number;
+  avgCostPerBuy: number;
+  avgDaysToSell: number;
+}
+
+const STRATEGIES = ['aggressive_growth', 'balanced', 'conservative', 'opportunity_fund'] as const;
+const PRIORITIES = ['high', 'medium', 'low'] as const;
+
+function includes<T extends string>(arr: readonly T[], v: string): v is T {
+  return (arr as readonly string[]).includes(v);
+}
+
+/**
+ * Izračunaj cash flow statove iz held/sold trades.
+ * Logika IDENTIČNA originalu v6.26.
+ */
+function computeCashFlowStats(heldTrades: HeldTradeRow[], soldTrades: SoldTradeRow[]): CashFlowStats {
+  const totalInvestedHeld = heldTrades.reduce((s, t) => s + t.buyPrice + (t.buyFees ?? 0), 0);
+  const totalRealized = soldTrades.reduce((s, t) => s + (t.sellPrice ?? 0) - (t.sellFees ?? 0) - t.buyPrice - (t.buyFees ?? 0), 0);
+  const totalRevenue = soldTrades.reduce((s, t) => s + (t.sellPrice ?? 0) - (t.sellFees ?? 0), 0);
+  const totalSpent = soldTrades.reduce((s, t) => s + t.buyPrice + (t.buyFees ?? 0), 0) + totalInvestedHeld;
+  const currentCash = totalRevenue - totalSpent;
+
+  // Avg sales per month
+  const threeMonthsAgo = new Date();
+  threeMonthsAgo.setMonth(threeMonthsAgo.getMonth() - 3);
+  const recentSales = soldTrades.filter(t => t.sellDate && t.sellDate >= threeMonthsAgo);
+  const avgSalesPerMonth = recentSales.length / 3;
+  const avgRevenuePerSale = recentSales.length > 0
+    ? recentSales.reduce((s, t) => s + (t.sellPrice ?? 0) - (t.sellFees ?? 0), 0) / recentSales.length : 0;
+  const avgCostPerBuy = recentSales.length > 0
+    ? recentSales.reduce((s, t) => s + t.buyPrice + (t.buyFees ?? 0), 0) / recentSales.length : 0;
+  const avgDaysToSell = recentSales.length > 0
+    ? Math.round(recentSales.reduce((s, t) => {
+        if (t.sellDate && t.buyDate) return s + (t.sellDate.getTime() - t.buyDate.getTime()) / (24 * 60 * 60 * 1000);
+        return s;
+      }, 0) / recentSales.length) : 30;
+
+  return {
+    totalInvestedHeld,
+    totalRealized,
+    currentCash,
+    heldCount: heldTrades.length,
+    avgSalesPerMonth,
+    avgRevenuePerSale,
+    avgCostPerBuy,
+    avgDaysToSell,
+  };
+}
+
+/**
+ * Build AI prompt za cash reserve optimization (besedilo IDENTIČNO originalu v6.26).
+ */
+function buildPrompt(stats: CashFlowStats): string {
+  return `Si ekspert za treasury management in optimizacijo denarnih rezerv.
 Optimiziraj denarno rezervo za max fleksibilnost in dobiček pri preprodaji.
 
 TRENUTNO STANJE:
-- Trenutni cash: ${Math.round(currentCash)}€
-- Vezano v inventarju: ${Math.round(totalInvestedHeld)}€ (${heldTrades.length} itemov)
-- Realizirani dobiček: ${Math.round(totalRealized)}€
-- Povp. prodaje/mesec: ${avgSalesPerMonth.toFixed(1)}
-- Povp. prihodek/prodaja: ${Math.round(avgRevenuePerSale)}€
-- Povp. investicija/nakup: ${Math.round(avgCostPerBuy)}€
-- Povp. čas do prodaje: ${avgDaysToSell} dni
+- Trenutni cash: ${Math.round(stats.currentCash)}€
+- Vezano v inventarju: ${Math.round(stats.totalInvestedHeld)}€ (${stats.heldCount} itemov)
+- Realizirani dobiček: ${Math.round(stats.totalRealized)}€
+- Povp. prodaje/mesec: ${stats.avgSalesPerMonth.toFixed(1)}
+- Povp. prihodek/prodaja: ${Math.round(stats.avgRevenuePerSale)}€
+- Povp. investicija/nakup: ${Math.round(stats.avgCostPerBuy)}€
+- Povp. čas do prodaje: ${stats.avgDaysToSell} dni
 
 Pravila za cash reserve:
 1. Optimalna rezerva = 2-3 mesece povprečne investicije (za nove priložnosti)
@@ -134,72 +203,48 @@ Odgovori LE z JSON:
     "break_even_months": <number>
   }
 }`;
+}
 
-    let raw = '';
-    try {
-      raw = await callProviderForRaw(aiSettings, prompt);
-    } catch (primaryError: any) {
-      if (aiSettings.fallbackProvider && aiSettings.fallbackModel) {
-        const fb: AiSettings = { provider: aiSettings.fallbackProvider, baseUrl: aiSettings.fallbackBaseUrl || '',
-          apiKey: aiSettings.fallbackApiKey || '', model: aiSettings.fallbackModel };
-        raw = await callProviderForRaw(fb, prompt);
-      } else { return NextResponse.json({ error: primaryError?.message ?? 'AI failed' }, { status: 500 }); }
-    }
-
-    const parsed: any = parseJsonLooseExported(raw);
-
-    const reserve = {
-      insights: String(parsed?.insights ?? '').slice(0, 500),
-      optimalReserveEur: Math.max(0, Number(parsed?.optimal_reserve_eur ?? 0)),
-      reserveRatioPct: Math.max(0, Math.min(100, Number(parsed?.reserve_ratio_pct ?? 30))),
-      recommendedStrategy: ['aggressive_growth', 'balanced', 'conservative', 'opportunity_fund'].includes(String(parsed?.recommended_strategy))
-        ? String(parsed.recommended_strategy) : 'balanced',
-      allocation: {
-        reinvestPct: Math.max(0, Math.min(100, Number(parsed?.allocation?.reinvest_pct ?? 50))),
-        reservePct: Math.max(0, Math.min(100, Number(parsed?.allocation?.reserve_pct ?? 30))),
-        profitTakingPct: Math.max(0, Math.min(100, Number(parsed?.allocation?.profit_taking_pct ?? 20))),
-        reasoning: String(parsed?.allocation?.reasoning ?? '').slice(0, 300),
-      },
-      projections: (parsed?.projections || []).slice(0, 6).map((p: any) => ({
-        month: Math.max(1, Number(p?.month ?? 1)),
-        expectedInflowEur: Math.round(Number(p?.expected_inflow_eur ?? 0)),
-        expectedOutflowEur: Math.round(Number(p?.expected_outflow_eur ?? 0)),
-        netCashEur: Math.round(Number(p?.net_cash_eur ?? 0)),
-        cumulativeCashEur: Math.round(Number(p?.cumulative_cash_eur ?? 0)),
-        investedEur: Math.round(Number(p?.invested_eur ?? 0)),
-      })),
-      cashFlowGaps: (parsed?.cash_flow_gaps || []).slice(0, 4).map((g: any) => ({
-        monthRange: String(g?.month_range ?? '').slice(0, 50),
-        expectedShortfallEur: Math.max(0, Number(g?.expected_shortfall_eur ?? 0)),
-        mitigation: String(g?.mitigation ?? '').slice(0, 200),
-      })),
-      recommendations: (parsed?.recommendations || []).slice(0, 6).map((r: any) => ({
-        action: String(r?.action ?? '').slice(0, 200),
-        priority: ['high', 'medium', 'low'].includes(String(r?.priority)) ? String(r.priority) : 'medium',
-        impactEur: Number(r?.impact_eur ?? 0),
-      })),
-      summary: {
-        currentCashEur: Math.round(currentCash),
-        optimalReserveEur: Math.max(0, Number(parsed?.summary?.optimal_reserve_eur ?? 0)),
-        surplusDeficitEur: Math.round(Number(parsed?.summary?.surplus_deficit_eur ?? 0)),
-        expectedMonthlyGrowthPct: Math.round(Number(parsed?.summary?.expected_monthly_growth_pct ?? 0)),
-        breakEvenMonths: Math.max(0, Number(parsed?.summary?.break_even_months ?? 0)),
-      },
-    };
-
-    const today = new Date().toISOString().slice(0, 10);
-    if (settings.aiCallsDate !== today) {
-      await db.settings.update({ where: { id: 'singleton' }, data: { aiCallsDate: today, aiCallsToday: 1 } });
-    } else {
-      await db.settings.update({ where: { id: 'singleton' }, data: { aiCallsToday: { increment: 1 } } });
-    }
-
-    return NextResponse.json({
-      ok: true,
-      reserve,
-    });
-  } catch (e: any) {
-    logger.error("/api/ai/cash-reserve", "POST handler failed", e);
-    return NextResponse.json({ error: e?.message ?? 'Napaka' }, { status: 500 });
-  }
+/**
+ * Transform AI JSON v reserve objekt. Clamp/slice logika IDENTIČNA originalu v6.26.
+ */
+function transformReserve(parsed: any, currentCash: number): any {
+  return {
+    insights: String(parsed?.insights ?? '').slice(0, 500),
+    optimalReserveEur: Math.max(0, Number(parsed?.optimal_reserve_eur ?? 0)),
+    reserveRatioPct: Math.max(0, Math.min(100, Number(parsed?.reserve_ratio_pct ?? 30))),
+    recommendedStrategy: includes(STRATEGIES, String(parsed?.recommended_strategy))
+      ? String(parsed.recommended_strategy) : 'balanced',
+    allocation: {
+      reinvestPct: Math.max(0, Math.min(100, Number(parsed?.allocation?.reinvest_pct ?? 50))),
+      reservePct: Math.max(0, Math.min(100, Number(parsed?.allocation?.reserve_pct ?? 30))),
+      profitTakingPct: Math.max(0, Math.min(100, Number(parsed?.allocation?.profit_taking_pct ?? 20))),
+      reasoning: String(parsed?.allocation?.reasoning ?? '').slice(0, 300),
+    },
+    projections: (parsed?.projections || []).slice(0, 6).map((p: any) => ({
+      month: Math.max(1, Number(p?.month ?? 1)),
+      expectedInflowEur: Math.round(Number(p?.expected_inflow_eur ?? 0)),
+      expectedOutflowEur: Math.round(Number(p?.expected_outflow_eur ?? 0)),
+      netCashEur: Math.round(Number(p?.net_cash_eur ?? 0)),
+      cumulativeCashEur: Math.round(Number(p?.cumulative_cash_eur ?? 0)),
+      investedEur: Math.round(Number(p?.invested_eur ?? 0)),
+    })),
+    cashFlowGaps: (parsed?.cash_flow_gaps || []).slice(0, 4).map((g: any) => ({
+      monthRange: String(g?.month_range ?? '').slice(0, 50),
+      expectedShortfallEur: Math.max(0, Number(g?.expected_shortfall_eur ?? 0)),
+      mitigation: String(g?.mitigation ?? '').slice(0, 200),
+    })),
+    recommendations: (parsed?.recommendations || []).slice(0, 6).map((r: any) => ({
+      action: String(r?.action ?? '').slice(0, 200),
+      priority: includes(PRIORITIES, String(r?.priority)) ? String(r.priority) : 'medium',
+      impactEur: Number(r?.impact_eur ?? 0),
+    })),
+    summary: {
+      currentCashEur: Math.round(currentCash),
+      optimalReserveEur: Math.max(0, Number(parsed?.summary?.optimal_reserve_eur ?? 0)),
+      surplusDeficitEur: Math.round(Number(parsed?.summary?.surplus_deficit_eur ?? 0)),
+      expectedMonthlyGrowthPct: Math.round(Number(parsed?.summary?.expected_monthly_growth_pct ?? 0)),
+      breakEvenMonths: Math.max(0, Number(parsed?.summary?.break_even_months ?? 0)),
+    },
+  };
 }

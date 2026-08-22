@@ -1,21 +1,81 @@
-// v6.29: AI Inventory Insurance Claim Predictor — napove uspešnost zavarovalnih zahtevkov
+// v6.29 / v8.95.5-other: AI Inventory Insurance Claim Predictor — napove uspešnost zavarovalnih zahtevkov.
+// Refaktoriran z withAiRoute helperjem (v8.95.5-other) + enforceBudget guard.
+//
 // POST /api/ai/insurance-claim
 // Body: {}
 // Returns: { ok, claims: [{ tradeId, title, claimType, claimAmount, successProbability, evidence, process }], insights, summary }
 
-import { NextRequest, NextResponse } from 'next/server';
-import { db } from '@/lib/db';
-import { getSettingsRow } from '@/lib/pipeline';
-import { callProviderForRaw, parseJsonLooseExported, type AiProviderType, type AiSettings } from '@/lib/ai';
-import { logger } from '@/lib/logger';
+import { withAiRoute, AI_ROUTE_DEFAULTS, type AiRouteContext } from '@/lib/with-ai-route';
+import { apiOk } from '@/lib/api-response';
 
-export const runtime = 'nodejs';
-export const dynamic = 'force-dynamic';
+export const { runtime, dynamic } = AI_ROUTE_DEFAULTS;
 export const maxDuration = 90;
 
-export async function POST(req: NextRequest) {
-  try {
-    await req.json().catch(() => ({}));
+// eslint-disable-next-line @typescript-eslint/no-empty-object-type
+interface Input {}
+
+interface HeldTradeRow {
+  id: string;
+  title: string;
+  category: string;
+  buyPrice: number;
+  buyFees: number | null;
+  buyDate: Date;
+  buyLocation: string | null;
+  listing: { aiEstimatedValue: number | null; dealScore: number | null; aiRisk: number | null } | null;
+}
+
+interface HeldItem {
+  id: string;
+  title: string;
+  category: string;
+  cost: number;
+  estValue: number;
+  daysHeld: number;
+  buyLocation: string;
+  aiRisk: number;
+}
+
+interface Claim {
+  tradeId: string;
+  title: string;
+  claimType: string;
+  claimAmountEur: number;
+  successProbabilityPct: number;
+  evidenceNeeded: string[];
+  process: {
+    whereToFile: string;
+    deadlineDays: number;
+    steps: string[];
+  };
+  priority: string;
+  reasoning: string;
+}
+
+const CLAIM_TYPES = [
+  'damage_in_transit', 'not_as_described', 'fake_counterfeit', 'theft_loss',
+  'seller_fraud', 'warranty_claim', 'platform_protection', 'payment_chargeback',
+] as const;
+const PRIORITIES = ['high', 'medium', 'low'] as const;
+const DEFAULT_CLAIM_TYPE = 'platform_protection';
+const DEFAULT_PRIORITY = 'low';
+const DEFAULT_DEADLINE_DAYS = 30;
+
+function includes<T extends string>(arr: ReadonlyArray<T>, v: string): v is T {
+  return (arr as ReadonlyArray<string>).includes(v);
+}
+
+export const POST = withAiRoute<Input>({
+  endpoint: '/api/ai/insurance-claim',
+  maxDuration: 90,
+  enforceBudget: true, // AI klic — preveri budget
+
+  parseBody: async () => ({}),
+
+  // No validateInput — body ni uporabljen
+
+  handler: async (_input, ctx: AiRouteContext) => {
+    const { db, callAi, parseAi } = ctx;
 
     const heldTrades = await db.trade.findMany({
       where: { status: 'held' },
@@ -25,29 +85,51 @@ export async function POST(req: NextRequest) {
     });
 
     if (heldTrades.length === 0) {
-      return NextResponse.json({ ok: true, claims: [], message: 'Ni held tradeov za analizo zavarovalnih zahtevkov.' });
+      return apiOk({ ok: true, claims: [], message: 'Ni held tradeov za analizo zavarovalnih zahtevkov.' });
     }
 
-    const settings = await getSettingsRow();
-    const aiSettings: AiSettings = {
-      provider: settings.aiProvider as AiProviderType,
-      baseUrl: settings.aiBaseUrl, apiKey: settings.aiApiKey, model: settings.aiModel,
-      fallbackProvider: (settings.fallbackProvider || '') as AiProviderType | '',
-      fallbackBaseUrl: settings.fallbackBaseUrl || '', fallbackApiKey: settings.fallbackApiKey || '',
-      fallbackModel: settings.fallbackModel || '',
-    };
+    const items = buildItems(heldTrades);
+    const prompt = buildPrompt(items);
 
-    const items = heldTrades.map(t => {
-      const cost = t.buyPrice + (t.buyFees ?? 0);
-      const estValue = t.listing?.aiEstimatedValue ?? Math.round(cost * 1.25);
-      const daysHeld = Math.round((Date.now() - t.buyDate.getTime()) / (24 * 60 * 60 * 1000));
-      return { id: t.id, title: t.title, category: t.category || 'drugo', cost, estValue, daysHeld,
-        buyLocation: t.buyLocation || 'neznan', aiRisk: t.listing?.aiRisk ?? 5 };
+    const raw = await callAi(prompt);
+    const parsed: any = parseAi(raw);
+    const validIds = new Set(items.map(i => i.id));
+    const claims = transformClaims(parsed, validIds);
+    const summary = computeSummary(claims);
+
+    return apiOk({
+      ok: true,
+      insights: String(parsed?.insights ?? '').slice(0, 600),
+      claims,
+      summary,
     });
+  },
+});
 
-    const itemsStr = items.slice(0, 25).map(i => `- [${i.id}] ${i.title} | ${i.category} | nabavna: ${i.cost}€ | est: ${i.estValue}€ | ${i.daysHeld}d | vir: ${i.buyLocation} | AI risk: ${i.aiRisk}/10`).join('\n');
+// --- Pomožne funkcije (čiste, testabilne) --------------------------------
 
-    const prompt = `Si ekspert za zavarovalne zahtevke in vrednotenje škod pri preprodaji.
+function buildItems(heldTrades: HeldTradeRow[]): HeldItem[] {
+  return heldTrades.map(t => {
+    const cost = t.buyPrice + (t.buyFees ?? 0);
+    const estValue = t.listing?.aiEstimatedValue ?? Math.round(cost * 1.25);
+    const daysHeld = Math.round((Date.now() - t.buyDate.getTime()) / (24 * 60 * 60 * 1000));
+    return {
+      id: t.id,
+      title: t.title,
+      category: t.category || 'drugo',
+      cost,
+      estValue,
+      daysHeld,
+      buyLocation: t.buyLocation || 'neznan',
+      aiRisk: t.listing?.aiRisk ?? 5,
+    };
+  });
+}
+
+function buildPrompt(items: HeldItem[]): string {
+  const itemsStr = items.slice(0, 25).map(i => `- [${i.id}] ${i.title} | ${i.category} | nabavna: ${i.cost}€ | est: ${i.estValue}€ | ${i.daysHeld}d | vir: ${i.buyLocation} | AI risk: ${i.aiRisk}/10`).join('\n');
+
+  return `Si ekspert za zavarovalne zahtevke in vrednotenje škod pri preprodaji.
 Za vsak held item analiziraj morebitne zavarovalne zahtevke (škoda, izguba, kraja, napaka prodajalca).
 
 INVENTAR:
@@ -98,64 +180,35 @@ Odgovori LE z JSON:
     "avg_success_probability": <number>
   }
 }`;
+}
 
-    let raw = '';
-    try {
-      raw = await callProviderForRaw(aiSettings, prompt);
-    } catch (primaryError: any) {
-      if (aiSettings.fallbackProvider && aiSettings.fallbackModel) {
-        const fb: AiSettings = { provider: aiSettings.fallbackProvider, baseUrl: aiSettings.fallbackBaseUrl || '',
-          apiKey: aiSettings.fallbackApiKey || '', model: aiSettings.fallbackModel };
-        raw = await callProviderForRaw(fb, prompt);
-      } else { return NextResponse.json({ error: primaryError?.message ?? 'AI failed' }, { status: 500 }); }
-    }
+function transformClaims(parsed: any, validIds: Set<string>): Claim[] {
+  return (parsed?.claims || [])
+    .filter((c: any) => validIds.has(String(c?.id ?? '')))
+    .map((c: any): Claim => ({
+      tradeId: String(c?.id ?? ''),
+      title: String(c?.title ?? '').slice(0, 150),
+      claimType: includes(CLAIM_TYPES, String(c?.claim_type)) ? String(c.claim_type) : DEFAULT_CLAIM_TYPE,
+      claimAmountEur: Math.max(0, Number(c?.claim_amount_eur ?? 0)),
+      successProbabilityPct: Math.max(0, Math.min(100, Number(c?.success_probability_pct ?? 0))),
+      evidenceNeeded: (c?.evidence_needed || []).slice(0, 6).map((e: any) => String(e).slice(0, 150)),
+      process: {
+        whereToFile: String(c?.process?.where_to_file ?? '').slice(0, 200),
+        deadlineDays: Math.max(0, Number(c?.process?.deadline_days ?? DEFAULT_DEADLINE_DAYS)),
+        steps: (c?.process?.steps || []).slice(0, 6).map((s: any) => String(s).slice(0, 200)),
+      },
+      priority: includes(PRIORITIES, String(c?.priority)) ? String(c.priority) : DEFAULT_PRIORITY,
+      reasoning: String(c?.reasoning ?? '').slice(0, 250),
+    }))
+    .sort((a: Claim, b: Claim) => b.successProbabilityPct - a.successProbabilityPct);
+}
 
-    const parsed: any = parseJsonLooseExported(raw);
-    const validIds = new Set(items.map(i => i.id));
-
-    const claims = (parsed?.claims || [])
-      .filter((c: any) => validIds.has(String(c?.id ?? '')))
-      .map((c: any) => ({
-        tradeId: String(c?.id ?? ''),
-        title: String(c?.title ?? '').slice(0, 150),
-        claimType: ['damage_in_transit', 'not_as_described', 'fake_counterfeit', 'theft_loss', 'seller_fraud', 'warranty_claim', 'platform_protection', 'payment_chargeback'].includes(String(c?.claim_type))
-          ? String(c.claim_type) : 'platform_protection',
-        claimAmountEur: Math.max(0, Number(c?.claim_amount_eur ?? 0)),
-        successProbabilityPct: Math.max(0, Math.min(100, Number(c?.success_probability_pct ?? 0))),
-        evidenceNeeded: (c?.evidence_needed || []).slice(0, 6).map((e: any) => String(e).slice(0, 150)),
-        process: {
-          whereToFile: String(c?.process?.where_to_file ?? '').slice(0, 200),
-          deadlineDays: Math.max(0, Number(c?.process?.deadline_days ?? 30)),
-          steps: (c?.process?.steps || []).slice(0, 6).map((s: any) => String(s).slice(0, 200)),
-        },
-        priority: ['high', 'medium', 'low'].includes(String(c?.priority)) ? String(c.priority) : 'low',
-        reasoning: String(c?.reasoning ?? '').slice(0, 250),
-      }))
-      .sort((a, b) => b.successProbabilityPct - a.successProbabilityPct);
-
-    const summary = {
-      totalClaims: claims.length,
-      totalClaimAmountEur: claims.reduce((s, c) => s + c.claimAmountEur, 0),
-      highProbabilityCount: claims.filter(c => c.successProbabilityPct >= 60).length,
-      expectedRecoveryEur: Math.round(claims.reduce((s, c) => s + (c.claimAmountEur * c.successProbabilityPct / 100), 0)),
-      avgSuccessProbability: claims.length > 0 ? Math.round(claims.reduce((s, c) => s + c.successProbabilityPct, 0) / claims.length) : 0,
-    };
-
-    const today = new Date().toISOString().slice(0, 10);
-    if (settings.aiCallsDate !== today) {
-      await db.settings.update({ where: { id: 'singleton' }, data: { aiCallsDate: today, aiCallsToday: 1 } });
-    } else {
-      await db.settings.update({ where: { id: 'singleton' }, data: { aiCallsToday: { increment: 1 } } });
-    }
-
-    return NextResponse.json({
-      ok: true,
-      insights: String(parsed?.insights ?? '').slice(0, 600),
-      claims,
-      summary,
-    });
-  } catch (e: any) {
-    logger.error("/api/ai/insurance-claim", "POST handler failed", e);
-    return NextResponse.json({ error: e?.message ?? 'Napaka' }, { status: 500 });
-  }
+function computeSummary(claims: Claim[]) {
+  return {
+    totalClaims: claims.length,
+    totalClaimAmountEur: claims.reduce((s, c) => s + c.claimAmountEur, 0),
+    highProbabilityCount: claims.filter(c => c.successProbabilityPct >= 60).length,
+    expectedRecoveryEur: Math.round(claims.reduce((s, c) => s + (c.claimAmountEur * c.successProbabilityPct / 100), 0)),
+    avgSuccessProbability: claims.length > 0 ? Math.round(claims.reduce((s, c) => s + c.successProbabilityPct, 0) / claims.length) : 0,
+  };
 }
