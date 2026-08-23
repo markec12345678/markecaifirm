@@ -19880,3 +19880,41 @@ Stage Summary:
   * 13 novih modulskih datotek v src/components/dashboard/settings/
   * Tipa: 7 samostojnih podkomponent (lasten state) + 6 prop-accepting sekcij (deljen save flow)
 - NASLEDNJI KORAK (po želji): Nadaljnja optimizacija (npr. refactor save() da sprejme partial updates) ali nove funkcionalnosti.
+
+---
+Task ID: v8.97
+Agent: main + subagent
+Task: Modularizacija ai-hub-view.tsx (8167 vrstic) — ekstrakcija 19 podkomponent v ločene module
+
+Work Log:
+- Analiziral ai-hub-view.tsx (8167 vrstic, največja datoteka v projektu): 23 podkomponent, 48 tipov/interfaces, 20 pomožnih funkcij, glavni AIHubView() ~280 vrstic.
+- Korak 1 (subagent): Ustvaril src/components/dashboard/ai-hub/types.ts (858 vrstic, 48 tipov) in src/components/dashboard/ai-hub/utils.ts (210+ vrstic, 20 pomožnih funkcij + CATEGORIES + DOMAIN_LABELS + DOMAIN_DISPLAY + NOTIFICATION_SEVERITY_STYLES). Subagent je ustvaril tudi 19 od 23 komponentnih datotek pred timeout-om.
+- Korak 2 (main): Popravil types.ts — dodal 'export' ključne besede vsem interface/type deklaracijam (podagent jih je pozabil dodati).
+- Korak 3 (main): Dodal manjkajoče konstante v utils.ts: DOMAIN_LABELS (7 domen z ikonami), DOMAIN_DISPLAY (7 vnosov), NOTIFICATION_SEVERITY_STYLES (4 severity leveli).
+- Korak 4 (main): Popravil export v auto-pilot-card.tsx (manjkala 'export' ključna beseda).
+- Korak 5 (main): Python skripta izbrisala 19 ekstraktiranih funkcij iz ai-hub-view.tsx in dodala 19 import stavkov. Rezultat: 8167 → 2825 vrstic (−65%).
+- Preostalo v ai-hub-view.tsx (2825 vrstic): 4 komponente (NotificationCenterCard, NotificationBellDropdown, BrainSynthesisCard, AIRunnerModal) + tipi/helperji (za kompatibilnost) + glavni AIHubView() orchestrator.
+- Verifikacija (Agent Browser):
+  * Homepage: HTTP 200, dashboard z 18 zavihki ✓
+  * AI Hub: heading "AI Hub" (ne "Napaka") ✓
+  * 86 card elementov na strani (brain sekcije + kartice se renderirajo) ✓
+  * Console: 0 error-ov ✓
+  * Footer: v8.97.0 ✓
+  * Screenshot: download/ai-hub-modular-v8.97.png
+- Preveril lint: 0 napak, 0 warnings ✨
+- Preveril typecheck: 0 napak ✨
+
+Stage Summary:
+- NEW: src/components/dashboard/ai-hub/types.ts (858 vrstic, 48 shared tipov)
+- NEW: src/components/dashboard/ai-hub/utils.ts (250+ vrstic, 20 helpers + 4 konstante)
+- NEW: 19 komponentnih datotek v src/components/dashboard/ai-hub/:
+  * profit-brain-section.tsx, inventory-brain-section.tsx, market-brain-section.tsx, sourcing-brain-section.tsx, risk-brain-section.tsx, buyer-brain-section.tsx, pricing-brain-section.tsx (7 brain sekcij)
+  * system-health-card.tsx, seed-and-telegram-card.tsx, performance-card.tsx, actual-profit-card.tsx, risk-profile-card.tsx, brain-snapshots-section.tsx, accuracy-trend-card.tsx, master-brain-banner.tsx, scenario-brain-card.tsx, adaptive-weights-card.tsx, draft-queue-card.tsx, auto-pilot-card.tsx (12 kartic/sekcij)
+- MODIFIED: src/components/dashboard/ai-hub-view.tsx (8167 → 2825 vrstic, −65%)
+  * 19 funkcij odstranjenih in nadomeščenih z import stavki
+  * Preostale 4 komponente (NotificationCenterCard, NotificationBellDropdown, BrainSynthesisCard, AIRunnerModal) ostajajo inline za v8.98
+- MODIFIED: src/lib/version.ts (v8.96.0→v8.97.0)
+- Verzija: v8.97.0
+- Skupaj (v7.50 → v8.97): 147 verzij, 269 novih funkcij
+- ARHITEKTURA: ai-hub-view.tsx je sedaj bistvo manjši (2825 vrstic). 19 podkomponent je ekstraktiranih v samostojne module, vsak s svojim state-om in API klici. Shared types in helpers so centralizirani v types.ts in utils.ts.
+- NASLEDNJI KORAK (po želji): Ekstrakcija preostalih 4 komponent (NotificationCenterCard, NotificationBellDropdown, BrainSynthesisCard, AIRunnerModal) kot v8.98, ali modularizacija trades-view.tsx (4142 vrstic) ali listings-view.tsx (3550 vrstic).
