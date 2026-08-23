@@ -20936,3 +20936,35 @@ Stage Summary:
   * View datoteke: 28885 → 9615 vrstic (−67%)
   * 0 lint napak, 0 typecheck napak, 0 TODO
   * Vsa funkcionalnost ohranjena 1:1
+
+---
+Task ID: v9.13
+Agent: main
+Task: Cleanup analytics-view.tsx + finalna preverba vseh view datotek za duplikate
+
+Work Log:
+- Preveril VSE 16 view datotek za inline tip/helper duplikate (enak problem kot ai-hub-view.tsx v v9.12).
+- Rezultat: 15 od 16 view datotek je bile ČISTE (0 duplikatov) — pravilno ekstraktirane v v8.95-v9.09.
+- Samo analytics-view.tsx je imel 1 duplikat: AnalyticsData interface (inline v view, tudi v types.ts).
+- Odstranil AnalyticsData duplikat iz analytics-view.tsx in dodal import iz ./analytics/types.
+- Rezultat: analytics-view.tsx z 566 → 503 vrstic (−11%).
+- Verifikacija (Agent Browser):
+  * Homepage: HTTP 200 ✓
+  * Footer: v9.13.0 • HEALTHY 85/100 ✓
+  * Console: 0 error-ov ✓
+- Preveril lint: 0 napak, 0 warnings ✨
+- Preveril typecheck: 0 napak ✨
+
+Stage Summary:
+- MODIFIED: src/components/dashboard/analytics-view.tsx (566 → 503 vrstic, −11%)
+- MODIFIED: src/lib/version.ts (v9.12.0→v9.13.0)
+- MODIFIED: README.md (badge v9.13.0)
+- Verzija: v9.13.0
+- Skupaj (v7.50 → v9.13): 163 verzij, 285 novih funkcij
+- DAKLE: VSE 16 VIEW DATOTEKE SO SEDAJ POPOLNOMA ČISTE — 0 inline duplikatov tipov/helperjev.
+- SKUPNI REZULTAT modularizacije (v8.94→v9.13):
+  * 193 modulskih datotek v 16 direktorijih
+  * View datoteke: 28885 → 9552 vrstic (−67%)
+  * 0 lint napak, 0 typecheck napak, 0 TODO, 0 inline duplikatov
+  * Vsa funkcionalnost ohranjena 1:1
+  * Profesionalna modularna arhitektura — KONČANO
