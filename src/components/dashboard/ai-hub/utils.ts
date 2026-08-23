@@ -240,3 +240,28 @@ export const DOMAIN_DISPLAY: Array<{
   { key: 'buyer', label: 'Kupci', icon: '👥' },
   { key: 'pricing', label: 'Cene', icon: '💶' },
 ];
+
+export function timeAgo(isoDate: string): string {
+  const d = new Date(isoDate);
+  const diffMs = Date.now() - d.getTime();
+  const diffMin = Math.floor(diffMs / 60000);
+  if (diffMin < 1) return 'zdaj';
+  if (diffMin < 60) return `${diffMin} min nazaj`;
+  const diffHr = Math.floor(diffMin / 60);
+  if (diffHr < 24) return `${diffHr} h nazaj`;
+  const diffDay = Math.floor(diffHr / 24);
+  if (diffDay < 30) return `${diffDay} d nazaj`;
+  return d.toLocaleDateString('sl-SI');
+}
+
+export const NOTIFICATION_TYPE_LABELS: Record<string, { label: string; icon: string }> = {
+  brain_digest: { label: 'Brain Digest', icon: '🧠' },
+  autopilot_executed: { label: 'Auto-pilot', icon: '🤖' },
+  autopilot_rollback: { label: 'Auto-pilot Rollback', icon: '↩️' },
+  anomaly: { label: 'Anomalija', icon: '⚠️' },
+  price_drop: { label: 'Cena padec', icon: '📉' },
+  system: { label: 'Sistem', icon: '🔧' },
+  trade_sold: { label: 'Trade prodan', icon: '💰' },
+  error: { label: 'Napaka', icon: '❌' },
+  buy_request_match: { label: 'Iskalnik ujemanje', icon: '🔍' },
+};

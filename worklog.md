@@ -19918,3 +19918,52 @@ Stage Summary:
 - Skupaj (v7.50 → v8.97): 147 verzij, 269 novih funkcij
 - ARHITEKTURA: ai-hub-view.tsx je sedaj bistvo manjši (2825 vrstic). 19 podkomponent je ekstraktiranih v samostojne module, vsak s svojim state-om in API klici. Shared types in helpers so centralizirani v types.ts in utils.ts.
 - NASLEDNJI KORAK (po želji): Ekstrakcija preostalih 4 komponent (NotificationCenterCard, NotificationBellDropdown, BrainSynthesisCard, AIRunnerModal) kot v8.98, ali modularizacija trades-view.tsx (4142 vrstic) ali listings-view.tsx (3550 vrstic).
+
+---
+Task ID: v8.98
+Agent: main
+Task: Ekstrakcija preostalih 4 komponent iz ai-hub-view.tsx — dokončanje modularizacije AI Hub
+
+Work Log:
+- Analiziral preostale 4 komponente v ai-hub-view.tsx (2825 vrstic): NotificationCenterCard (335 vrstic), NotificationBellDropdown (155 vrstic), BrainSynthesisCard (134 vrstic, wrapper ki renderira vseh 21 podkomponent), AIRunnerModal (97 vrstic).
+- Korak 1: Dodal AIEndpoint interface v types.ts (prej inline v ai-hub-view.tsx).
+- Korak 2: Dodal timeAgo helper v utils.ts (prej inline v ai-hub-view.tsx, uporabljen v NotificationCenterCard in NotificationBellDropdown).
+- Korak 3: Dodal NOTIFICATION_TYPE_LABELS konstanto v utils.ts (9 tipov obvestil z ikonami — prej inline v ai-hub-view.tsx).
+- Korak 4: Ekstraktiral vse 4 komponente z Python skripto v ločene datoteke:
+  * notification-center-card.tsx (348 vrstic) — samostojna, fetch-a /api/brain-notifications
+  * notification-bell-dropdown.tsx (167 vrstic) — sprejema onJumpToCenter prop
+  * brain-synthesis-card.tsx (166 vrstic) — wrapper, import-a vseh 21 podkomponent
+  * ai-runner-modal.tsx (108 vrstic) — sprejema endpoint + onClose props, Dialog UI
+- Korak 5: Python skripta izbrisala 4 funkcije + duplikate tipov/helperjev iz ai-hub-view.tsx in dodala 5 import stavkov.
+- Popravil import poti v brain-synthesis-card.tsx (Python CamelCase→kebab-case konverzija je bila napačna — ročno popravljene vse 21 import poti).
+- Dodal Dialog/DialogContent/DialogHeader/DialogTitle/DialogDescription import-e v ai-runner-modal.tsx.
+- Dodal NOTIFICATION_TYPE_LABELS import v notification-center-card.tsx in notification-bell-dropdown.tsx.
+- Rezultat: ai-hub-view.tsx z 2825 → 2030 vrstic (−28% v tej fazi).
+- Verifikacija (Agent Browser):
+  * Homepage: HTTP 200 ✓
+  * AI Hub: heading "AI Hub" (ne "Napaka") ✓
+  * 86 card elementov na strani (brain sekcije + kartice se renderirajo) ✓
+  * Console: 0 error-ov ✓
+- Preveril lint: 0 napak, 0 warnings ✨
+- Preveril typecheck: 0 napak ✨
+
+Stage Summary:
+- NEW: src/components/dashboard/ai-hub/notification-center-card.tsx (348 vrstic)
+- NEW: src/components/dashboard/ai-hub/notification-bell-dropdown.tsx (167 vrstic)
+- NEW: src/components/dashboard/ai-hub/brain-synthesis-card.tsx (166 vrstic, wrapper za 21 podkomponent)
+- NEW: src/components/dashboard/ai-hub/ai-runner-modal.tsx (108 vrstic)
+- MODIFIED: src/components/dashboard/ai-hub/types.ts (+AIEndpoint interface)
+- MODIFIED: src/components/dashboard/ai-hub/utils.ts (+timeAgo, +NOTIFICATION_TYPE_LABELS)
+- MODIFIED: src/components/dashboard/ai-hub-view.tsx (2825 → 2030 vrstic, −28%)
+  * 4 funkcije odstranjene in nadomeščene z import stavki
+  * Duplikati tipov/helperjev (NOTIFICATION_SEVERITY_STYLES, severityBadgeClass, timeAgo, NOTIFICATION_TYPE_LABELS, NotificationCenterItem/Stats/Data, AIEndpoint) odstranjeni
+  * Preostane: glavni AIHubView() orchestrator + nekaj preostalih tipov/helperjev za kompatibilnost
+- MODIFIED: src/lib/version.ts (v8.97.0→v8.98.0)
+- MODIFIED: README.md (badge v8.98.0)
+- Verzija: v8.98.0
+- Skupaj (v7.50 → v8.98): 148 verzij, 270 novih funkcij
+- SKUPNI REZULTAT ai-hub modularizacije (v8.97+v8.98):
+  * ai-hub-view.tsx: 8167 → 2030 vrstic (−75%)
+  * 25 modulskih datotek v src/components/dashboard/ai-hub/ (23 komponente + types.ts + utils.ts)
+  * Vsa funkcionalnost ohranjena 1:1 — nobena logika spremenjena
+- NASLEDNJI KORAK (po želji): Modularizacija trades-view.tsx (4142 vrstic) ali listings-view.tsx (3550 vrstic) ali nove funkcionalnosti.
