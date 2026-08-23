@@ -19701,3 +19701,89 @@ Stage Summary:
 - Skupaj (v7.50 → v8.94): 144 verzij, 266 novih funkcij
 - LESSON: Modularizacija velikih komponent (3595 vrstic) mora biti INKREMENTALNA z testiranjem po vsakem koraku. Refactor commit 85ba870 je bil narejen brez lint/typecheck/browser preverjanja — sintaksne napake so zlomile celo aplikacijo. Za prihodnje refaktoriranje: (1) vedno poženi `bun run lint` + `bun run typecheck` pred commitom, (2) preveri da se aplikacija dejansko naloži v browserju, (3) ohrani .original kot LOKALNI backup (ne commit-an v git), (4) razdeli na manjše commite (ena sekcija na commit) za lažje revert-anje.
 - NASLEDNJI KORAK (po želji): Proper modularizacija kot v8.95.0 — inkrementalno, z ohranitvijo VSEH 18 sekcij + 4 pod-komponent, testirano po vsakem modulu.
+
+---
+Task ID: v8.95-extract-1
+Agent: subagent (settings extraction)
+Task: Extract 5 self-contained settings subcomponents into separate module files
+
+Work Log:
+- Branje worklog.md in obstoječega stanja settings-view.tsx (3142 vrstic).
+- Analiza obstoječih ekstraktov: QuickResponsesSection in WebhooksSection sta že v src/components/dashboard/settings/, types.ts vsebuje skupne tipe.
+- Ekstrakt 1: ProfitGoalSection (lines 1596-1871, sprejema props {monthlyProfitGoal, setMonthlyProfitGoal, saving}) → src/components/dashboard/settings/profit-goal-section.tsx (303 vrstice). Internal state: draft, savingGoal, preview, loadingPreview. Imports: useEffect/useState/useCallback, Button/Input/Label/Badge, lucide-react {RefreshCw, Save, AlertCircle, Target}, toast, cn. V settings-view.tsx: dodan import, original zamenjan z eno vrstico komentarja.
+- Typecheck + lint po ProfitGoalSection: 0 napak.
+- Ekstrakt 2: BackupSection (lines 1874-2002) + JsonBackupControls (lines 2005-2138, lokalni helper uporabljen samo znotraj BackupSection) → src/components/dashboard/settings/backup-section.tsx (277 vrstic). JsonBackupControls definiran kot ne-izvožena pomožna funkcija v isti datoteki.
+- Typecheck + lint po BackupSection: 0 napak.
+- Ekstrakt 3: CategoryNotificationsSection (lines 2143-2286) → src/components/dashboard/settings/category-notifications-section.tsx (157 vrstic). Imports: Card/CardContent/CardHeader/CardTitle/CardDescription, Button/Badge, lucide-react {Bell, RefreshCw}, toast, cn, useEffect/useState/useCallback.
+- Typecheck + lint po CategoryNotificationsSection: 0 napak.
+- Ekstrakt 4: ScrapingConfigSection (lines 2289-2496) → src/components/dashboard/settings/scraping-config-section.tsx (224 vrstic). Imports: Card-family, Button/Input/Label/Textarea/Switch/Badge, lucide-react {Zap, RefreshCw}, toast.
+- Typecheck + lint po ScrapingConfigSection: 0 napak.
+- Ekstrakt 5: FullBackupSection (lines 2563-3142) + vse lokalne definicije nad funkcijo (BACKUP_TABLE_PLURAL_KEYS, BACKUP_TABLE_LABELS, BackupMode type, BackupFileEntry/BackupStats/ParsedBackup/RestoreResultData interfaces — premaknjene skupaj s funkcijo) → src/components/dashboard/settings/full-backup-section.tsx (659 vrstic). Imports: Button/Label/Separator/Checkbox, lucide-react {RefreshCw, Download, Upload, Database, FileJson, CheckCircle2, HardDriveDownload, Clock, History, AlertCircle}, toast, cn, useEffect/useState/useRef/useCallback.
+- Typecheck + lint po FullBackupSection: 0 napak.
+- Končna velikost settings-view.tsx: 1599 vrstic (od 3142) — ~49% zmanjšanje.
+- Končni typecheck: 0 napak. Končni lint: 0 napak.
+- Restart dev serverja (pkill next, sleep 2, next dev -p 3000). HTTP 200 na http://localhost:3000/ po 15s.
+
+Stage Summary:
+- 5 novih modulov v src/components/dashboard/settings/: profit-goal-section.tsx (303), backup-section.tsx (277), category-notifications-section.tsx (157), scraping-config-section.tsx (224), full-backup-section.tsx (659).
+- settings-view.tsx: 3142 → 1599 vrstic (−1543, −49%).
+- ProfitGoalSection: sprejema props (edina ne-samostojna), vse ostale so self-contained.
+- BackupSection: vključuje lokalni helper JsonBackupControls (ne-izvožen) v isti datoteki.
+- FullBackupSection: vključuje vse lokalne tipe/const (BackupMode, BackupFileEntry, BackupStats, ParsedBackup, RestoreResultData, BACKUP_TABLE_PLURAL_KEYS, BACKUP_TABLE_LABELS) v isti datoteki.
+- Vsa koda kopirana 1:1 — brez sprememb logike, JSX, stringov ali obnašanja.
+- Vsaka nova datoteka se začne z 'use client'; direktivo, komentarjem, ustreznimi uvozovi in `export function XxxSection`.
+- V settings-view.tsx: vsaka odstranjena funkcija zamenjana z enovrstičnim komentarjem "// <original comment> — imported from ./settings/<name>".
+- Typecheck + lint po vsakem ekstraktu: 0 napak (incremental verification po vsakem koraku).
+- Dev server teče na portu 3000, HTTP 200.
+- Brez commitov, brez sprememb README/versions — samo ekstrakt modulov.
+
+---
+Task ID: v8.95
+Agent: main
+Task: Proper modularizacija nastavitev — inkrementalna ekstrakcija 7 podkomponent v ločene module
+
+Work Log:
+- Analiziral settings-view.tsx (3595 vrstic v v8.94): 18 sekcij + 7 podkomponent (ProfitGoalSection, BackupSection, FullBackupSection, QuickResponsesSection, WebhooksSection, CategoryNotificationsSection, ScrapingConfigSection).
+- Identificiral da je 6 od 7 podkomponent samostojnih (brez props, samo fetch-a API) — idealno za čisto ekstrakcijo. Samo ProfitGoalSection sprejema props.
+- Korak 1: Ustvaril src/components/dashboard/settings/types.ts — shared types (Provider, Settings, PROVIDER_PRESETS, urlBase64ToUint8Array helper). Single source of truth za tipe.
+- Korak 2: Ekstraktiral QuickResponsesSection (113 vrstic) → settings/quick-responses-section.tsx. Typecheck + lint čista.
+- Korak 3: Ekstraktiral WebhooksSection (228 vrstic) → settings/webhooks-section.tsx. Typecheck + lint čista.
+- Korak 4 (delegated subagent): Ekstraktiral 5 preostalih podkomponent:
+  * ProfitGoalSection (303 vrstice) → settings/profit-goal-section.tsx (sprejema props)
+  * BackupSection (277 vrstic) → settings/backup-section.tsx (vključuje JsonBackupControls helper)
+  * CategoryNotificationsSection (157 vrstic) → settings/category-notifications-section.tsx
+  * ScrapingConfigSection (224 vrstic) → settings/scraping-config-section.tsx
+  * FullBackupSection (659 vrstic) → settings/full-backup-section.tsx (vključuje BackupStats, ParsedBackup, RestoreResultData, BackupMode, BackupFileEntry, BACKUP_TABLE_PLURAL_KEYS, BACKUP_TABLE_LABELS)
+  Subagent je po vsaki ekstrakciji preveril typecheck + lint (vse 0 napak).
+- Rezultat ekstrakcije: settings-view.tsx z 3595 → 1599 vrstic (55% zmanjšanje). 7 novih modulskih datotek v src/components/dashboard/settings/.
+- ChunkLoadError diagnosticiran: vzrok = Service Worker (v6.92) cachira Next.js chunk-e. V dev mode ko se koda spremeni in .next regenerira chunk-e z novimi imeni, browser še vedno išče stare chunk-e iz SW cache-a.
+- Fix: layout.tsx — SW registracija samo v production mode (`process.env.NODE_ENV === 'production'`). V dev mode: SW se unregister-a + vsi cache-ji se izbrišejo. Standardna Next.js praksa.
+- Verifikacija (Agent Browser):
+  * Homepage: HTTP 200, onboarding wizard, dashboard z 18 zavihki ✓
+  * NASTAVITVE: heading "Nastavitve" (ne "Napaka") ✓
+  * Vseh 22 CardTitle sekcij prisotnih: AI Provider, AI Fallback v2.6, Telegram obveščanje, Discord webhook v1.4, Email v2.7, Backup konfiguracije v2.8, Thresholdi, Heartbeat v1.1, AI analiza slik v1.1, Bolha Playwright v1.1, Telegram inline tipke v1.1, Baza podatkov v1.3, Full System Backup v8.42, PWA+Push v1.5, Tihe ure v2.2, Samodejni cleanup v2.2, Profit cilj v4.2+v8.39, Hitre predloge v1.9, Digest mode v1.6, Obvestila po kategorijah v5.5, Napredno scrapanje v5.8, Webhook integracije v5.4 ✓
+  * Console: 0 error-ov ✓
+  * Screenshot: download/settings-modular-v8.95.png
+- Preveril lint: 0 napak ✨
+- Preveril typecheck: 0 napak ✨
+- Verzija bumpana: v8.94.0 → v8.95.0 v src/lib/version.ts
+- README.md badge posodobljen: v8.95.0
+
+Stage Summary:
+- NEW: src/components/dashboard/settings/types.ts (shared types: Provider, Settings, PROVIDER_PRESETS, urlBase64ToUint8Array)
+- NEW: src/components/dashboard/settings/quick-responses-section.tsx (113 vrstic, QuickResponsesSection)
+- NEW: src/components/dashboard/settings/webhooks-section.tsx (228 vrstic, WebhooksSection)
+- NEW: src/components/dashboard/settings/profit-goal-section.tsx (303 vrstice, ProfitGoalSection s props)
+- NEW: src/components/dashboard/settings/backup-section.tsx (277 vrstic, BackupSection + JsonBackupControls)
+- NEW: src/components/dashboard/settings/category-notifications-section.tsx (157 vrstic, CategoryNotificationsSection)
+- NEW: src/components/dashboard/settings/scraping-config-section.tsx (224 vrstic, ScrapingConfigSection)
+- NEW: src/components/dashboard/settings/full-backup-section.tsx (659 vrstic, FullBackupSection + 5 lokalnih tipov)
+- MODIFIED: src/components/dashboard/settings-view.tsx (3595 → 1599 vrstic, -55%, sedaj tanek orchestrator)
+- MODIFIED: src/app/layout.tsx (SW registracija samo v production — fix ChunkLoadError v dev)
+- MODIFIED: src/lib/version.ts (v8.94.0→v8.95.0)
+- MODIFIED: README.md (badge v8.95.0)
+- Verzija: v8.95.0
+- Skupaj (v7.50 → v8.95): 145 verzij, 267 novih funkcij
+- ARHITEKTURA: settings-view.tsx je sedaj tanek orchestrator (1599 vrstic) ki import-a 7 samostojnih modulov. Vsak modul je samostojen (lasten state, lastni API klici) razen ProfitGoalSection ki sprejema props. To omogoča: (1) lažje vzdrževanje, (2) lažje testiranje, (3) lažje dodajanje novih sekcij, (4) manjše merge konflikte. Vsa funkcionalnost ohranjena 1:1 — nobena logika spremenjena.
+- FIX: ChunkLoadError v dev mode odpravnik z SW-only-production pravilo. Prej: SW cachira stale chunk-e → SettingsView crash. Zdaj: SW se unregister-a v dev mode + cache-ji se čistijo.
+- NASLEDNJI KORAK (po želji): Nadaljnja modularizacija glavnih sekcij SettingsView (AI, Notifications, Automation, Push, Advanced) v ločene module. Ali pa nove funkcionalnosti.

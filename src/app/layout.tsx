@@ -50,22 +50,39 @@ export default function RootLayout({
   return (
     <html lang="sl" suppressHydrationWarning>
       <head>
-        {/* Service worker registration */}
-        <script
-          dangerouslySetInnerHTML={{
-            __html: `
-              if ('serviceWorker' in navigator) {
-                window.addEventListener('load', function() {
-                  navigator.serviceWorker.register('/sw.js').then(function(registration) {
-                    console.log('[SW] registered:', registration.scope);
-                  }).catch(function(err) {
-                    console.warn('[SW] registration failed:', err);
+        {/* Service worker registration — v8.95: samo v production (v dev mode povzroča ChunkLoadError zaradi stale chunk cache) */}
+        {process.env.NODE_ENV === 'production' ? (
+          <script
+            dangerouslySetInnerHTML={{
+              __html: `
+                if ('serviceWorker' in navigator) {
+                  window.addEventListener('load', function() {
+                    navigator.serviceWorker.register('/sw.js').then(function(registration) {
+                      console.log('[SW] registered:', registration.scope);
+                    }).catch(function(err) {
+                      console.warn('[SW] registration failed:', err);
+                    });
                   });
-                });
-              }
-            `,
-          }}
-        />
+                }
+              `,
+            }}
+          />
+        ) : (
+          <script
+            dangerouslySetInnerHTML={{
+              __html: `
+                if ('serviceWorker' in navigator) {
+                  navigator.serviceWorker.getRegistrations().then(function(regs) {
+                    regs.forEach(function(r) { r.unregister(); });
+                    if (window.caches) {
+                      caches.keys().then(function(names) { names.forEach(function(n) { caches.delete(n); }); });
+                    }
+                  });
+                }
+              `,
+            }}
+          />
+        )}
       </head>
       <body
         className={`${geistMono.variable} antialiased bg-background text-foreground scanline-bg min-h-screen`}
