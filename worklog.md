@@ -20375,3 +20375,92 @@ Stage Summary:
     - src/components/dashboard/statistics/   (26 datotek)
     - src/components/dashboard/monitors/      (6 datotek)
     - src/components/dashboard/dashboard/     (7 datotek)
+
+
+---
+Task ID: v9.05-extract-1
+Agent: subagent (analytics modularization)
+Task: Extract 6 self-contained AI/analytics sections from analytics-view.tsx into separate module files
+
+Work Log:
+- Read worklog.md (v9.01-extract-1 + v9.02-extract-1 entries) to confirm established extraction pattern
+- Read analytics-view.tsx (1140 lines) — confirmed 1 main AnalyticsView() + helper AccuracyCard + 7 useState + 7 fetch calls; 6 of 7 sections (Arbitrage, Cross-Portal, Trend Preds, Competitors, Seasonal, Price War) each own their state + fetch and are self-contained
+- Verified shared types file at src/components/dashboard/analytics/types.ts already exists with AnalyticsData interface + PIE_COLORS const (created earlier in v9.05 main agent work)
+- Confirmed actual state variable names + fetch patterns in source file (arbitrage / crossPortal+crossPortalLoading+crossPortalThreshold / trendPreds+trendLoading / competitors+compLoading / seasonal+seasonalLoading / priceWar+warLoading) — preserved ACTUAL names per "Copy JSX 1:1" rule
+- Created 6 new component files in src/components/dashboard/analytics/ (all 'use client', named exports, own useState/useCallback/useEffect, JSX copied 1:1):
+  * arbitrage-opportunities.tsx (ArbitrageOpportunities, v3.0 — fetch /api/arbitrage on mount via own useEffect)
+  * cross-portal-arbitrage.tsx (CrossPortalArbitrage, v5.2 — fetch /api/arbitrage/cross-portal?threshold=X&limit=50)
+  * ai-trend-predictions.tsx (AiTrendPredictions, v6.0 — POST /api/ai/trend-predictions body { days: 30 })
+  * competitor-sellers.tsx (CompetitorSellers, v6.4 — fetch /api/sellers/competitors)
+  * seasonal-calendar.tsx (SeasonalCalendar, v6.5 — fetch /api/ai/seasonal-calendar)
+  * price-war-detection.tsx (PriceWarDetection, v6.6 — fetch /api/ai/price-war?days=14)
+- Each new file: starts with `'use client';`, imports ONLY used hooks/icons/components (e.g. arbitrage-opportunities imports GitCompare+ExternalLink; price-war-detection imports AlertTriangle+RefreshCw only), owns its own useState declarations (moved from parent), owns its fetch logic via useCallback + useEffect, JSX preserved 1:1 (classNames, emoji, Slovenian strings, conditional logic, cn() helper)
+- In analytics-view.tsx:
+  * Removed 6 unused icons from lucide-react import: GitCompare, ExternalLink, Sparkles, Users, Calendar, AlertTriangle
+  * Added 6 named imports for the new components
+  * Deleted 12 useState declarations: arbitrage / crossPortal + crossPortalLoading + crossPortalThreshold / trendPreds + trendLoading / competitors + compLoading / seasonal + seasonalLoading / priceWar + warLoading
+  * Deleted 5 useCallback functions: loadCrossPortal, loadTrendPredictions, loadCompetitors, loadSeasonal, loadPriceWar
+  * Removed loadCrossPortal useEffect
+  * Refactored `load()` to fetch only /api/analytics (removed Promise.all with /api/arbitrage — arbitrage fetch now lives in ArbitrageOpportunities component)
+  * Replaced each JSX block with `<ComponentName />` (6 replacements, done in single MultiEdit)
+- Section 1 (ArbitrageOpportunities): special-case — original parent only rendered the Card when `arbitrage.opportunities.length > 0`. To preserve the conditional render behavior, the new component itself returns null when data is missing/empty, keeping the layout identical
+- CRITICAL rule followed: kept all original API endpoint URLs verbatim (the code uses /api/arbitrage, /api/arbitrage/cross-portal, /api/ai/trend-predictions, /api/sellers/competitors, /api/ai/seasonal-calendar, /api/ai/price-war — all match task description)
+- Final verification (all in single batch since the file is small enough): typecheck=0 errors, lint=0 errors, file 1140 → 566 lines (-574 lines, -50% reduction)
+- Restarted dev server (pkill next + rm .next + setsid next dev -p 3000), waited 15s, curl http://localhost:3000/ returned HTTP 200
+- Confirmed no errors/warnings in dev.log via grep
+
+Stage Summary:
+- 6 new files created in src/components/dashboard/analytics/ (all named exports, all 'use client'):
+  arbitrage-opportunities, cross-portal-arbitrage, ai-trend-predictions,
+  competitor-sellers, seasonal-calendar, price-war-detection
+- analytics-view.tsx reduced from 1140 → 566 lines (574 lines extracted, ~50% reduction)
+- 0 typecheck errors, 0 lint errors
+- Dev server HTTP 200 confirmed
+- All API URLs, JSX logic, classNames, and behavior preserved 1:1 from original (no logic changes)
+- Shared-data sections (AI Accuracy, Charts, Price drops, Top sellers, Monitor performance) remain inline as intended since they consume `data` from /api/analytics main fetch
+
+---
+Task ID: v9.05
+Agent: main + subagent
+Task: Modularizacija analytics-view.tsx (1140 vrstic) — ekstrakcija 6 AI sekcij
+
+Work Log:
+- Analiziral analytics-view.tsx (1140 vrstic): glavni AnalyticsView() + 1 helper (AccuracyCard). 7 useState + 7 fetch klicev. 6 sekcij ima lasten state + fetch (samostojne), 5 sekcij uporablja skupni `data` (ostanejo inline).
+- Korak 1: Ustvaril src/components/dashboard/analytics/ direktorij in types.ts (AnalyticsData interface + PIE_COLORS const).
+- Korak 2 (subagent): Ekstraktiral 6 samostojnih sekcij:
+  * arbitrage-opportunities.tsx (v3.0) — ArbitrageOpportunities, fetch /api/arbitrage
+  * cross-portal-arbitrage.tsx (v5.2) — CrossPortalArbitrage, fetch /api/arbitrage/cross-portal
+  * ai-trend-predictions.tsx (v6.0) — AiTrendPredictions, POST /api/ai/trend-predictions
+  * competitor-sellers.tsx (v6.4) — CompetitorSellers, fetch /api/sellers/competitors
+  * seasonal-calendar.tsx (v6.5) — SeasonalCalendar, fetch /api/ai/seasonal-calendar
+  * price-war-detection.tsx (v6.6) — PriceWarDetection, fetch /api/ai/price-war
+- Vsaka komponenta ima lasten state + useEffect fetch. Subagent je očistil tudi nepotrebne import-e.
+- Rezultat: analytics-view.tsx z 1140 → 566 vrstic (−50%).
+- Verifikacija (Agent Browser):
+  * Homepage: HTTP 200 ✓
+  * Analitika view: heading "Analitika" (ne "Napaka") ✓
+  * Console: 0 error-ov ✓
+- Preveril lint: 0 napak, 0 warnings ✨
+- Preveril typecheck: 0 napak ✨
+
+Stage Summary:
+- NEW: src/components/dashboard/analytics/types.ts (AnalyticsData + PIE_COLORS)
+- NEW: 6 komponentnih datotek v src/components/dashboard/analytics/
+- MODIFIED: src/components/dashboard/analytics-view.tsx (1140 → 566 vrstic, −50%)
+- MODIFIED: src/lib/version.ts (v9.04.0→v9.05.0)
+- MODIFIED: README.md (badge v9.05.0)
+- Verzija: v9.05.0
+- Skupaj (v7.50 → v9.05): 155 verzij, 277 novih funkcij
+- SKUPNI REZULTAT modularizacije (v8.94→v9.05):
+  * settings-view.tsx:    3595 → 736 vrstic   (−79%)
+  * ai-hub-view.tsx:      8167 → 2030 vrstic  (−75%)
+  * trades-view.tsx:      4142 → 3231 vrstic  (−22%)
+  * listings-view.tsx:    3550 → 980 vrstic    (−72%)
+  * statistics-view.tsx:  3418 → 629 vrstic    (−82%)
+  * monitors-view.tsx:   1729 → 588 vrstic    (−66%)
+  * dashboard-view.tsx:  1169 → 794 vrstic    (−32%)
+  * analytics-view.tsx:  1140 → 566 vrstic    (−50%)
+  * SKUPAJ:              26910 → 9554 vrstic  (−65%)
+  * 115 novih modulskih datotek:
+    - settings (13), ai-hub (25), trades (6), listings (6),
+      statistics (26), monitors (6), dashboard (7), analytics (7)
