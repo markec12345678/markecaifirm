@@ -20268,3 +20268,54 @@ Stage Summary:
     - src/components/dashboard/listings/      (6 datotek)
     - src/components/dashboard/statistics/   (26 datotek)
 - NASLEDNJI KORAK (po želji): Modularizacija monitors-view.tsx (1729 vrstic) ali nove funkcionalnosti.
+
+---
+Task ID: v9.03
+Agent: main
+Task: Modularizacija monitors-view.tsx (1729 vrstic) — ekstrakcija 4 podkomponent
+
+Work Log:
+- Analiziral monitors-view.tsx (1729 vrstic, peti največji view): glavni MonitorsView() + 4 podkomponente (Sparkline, TemplateModal, MonitorFormDialog, PromptLibraryModal) + 2 tipa (Source, Monitor) + 3 helperji (SOURCE_LABELS, SOURCE_PRESETS, formatTimeAgo).
+- Korak 1: Ustvaril src/components/dashboard/monitors/ direktorij, types.ts (Source + Monitor) in utils.ts (SOURCE_LABELS + SOURCE_PRESETS + formatTimeAgo).
+- Korak 2: Ekstraktiral 4 podkomponente:
+  * sparkline.tsx (212 vrstic) — Sparkline, mini SVG sparkline
+  * template-modal.tsx (222 vrstic) — TemplateModal, predloge monitorjev
+  * monitor-form-dialog.tsx (800 vrstic) — MonitorFormDialog, add/edit form
+  * prompt-library-modal.tsx (139 vrstic) — PromptLibraryModal, AI prompt library
+- Korak 3: Posodobil monitors-view.tsx — izbrisal 4 funkcije + inline tipe/helperje, dodal 6 import stavkov.
+- Popravil import težave: dodal manjkajoče import-e v monitors-view.tsx, dodal PromptLibraryModal import v monitor-form-dialog.tsx, odstranil duplikat Sparkline funkcije iz vseh 3 podkomponent (Python ekstrakcijska skripta je pomotoma vključila Sparkline), očistil ostanke Sparkline telesa.
+- Rezultat: monitors-view.tsx z 1729 → 588 vrstic (−66%).
+- Verifikacija (Agent Browser):
+  * Homepage: HTTP 200 ✓
+  * Monitorji view: heading "Monitorji" (ne "Napaka") ✓
+  * Console: 0 error-ov ✓
+- Preveril lint: 0 napak, 0 warnings ✨
+- Preveril typecheck: 0 napak ✨
+
+Stage Summary:
+- NEW: src/components/dashboard/monitors/types.ts (Source, Monitor)
+- NEW: src/components/dashboard/monitors/utils.ts (SOURCE_LABELS, SOURCE_PRESETS, formatTimeAgo)
+- NEW: src/components/dashboard/monitors/sparkline.tsx (212 vrstic)
+- NEW: src/components/dashboard/monitors/template-modal.tsx (222 vrstic)
+- NEW: src/components/dashboard/monitors/monitor-form-dialog.tsx (800 vrstic)
+- NEW: src/components/dashboard/monitors/prompt-library-modal.tsx (139 vrstic)
+- MODIFIED: src/components/dashboard/monitors-view.tsx (1729 → 588 vrstic, −66%)
+- MODIFIED: src/lib/version.ts (v9.02.0→v9.03.0)
+- MODIFIED: README.md (badge v9.03.0)
+- Verzija: v9.03.0
+- Skupaj (v7.50 → v9.03): 153 verzij, 275 novih funkcij
+- SKUPNI REZULTAT modularizacije (v8.94→v9.03):
+  * settings-view.tsx:    3595 → 736 vrstic   (−79%)
+  * ai-hub-view.tsx:      8167 → 2030 vrstic  (−75%)
+  * trades-view.tsx:      4142 → 3231 vrstic  (−22%)
+  * listings-view.tsx:    3550 → 980 vrstic    (−72%)
+  * statistics-view.tsx:  3418 → 629 vrstic    (−82%)
+  * monitors-view.tsx:   1729 → 588 vrstic    (−66%)
+  * SKUPAJ:              24601 → 8194 vrstic  (−67%)
+  * 101 novih modulskih datotek ustvarjenih:
+    - src/components/dashboard/settings/    (13 datotek)
+    - src/components/dashboard/ai-hub/       (25 datotek)
+    - src/components/dashboard/trades/        (6 datotek)
+    - src/components/dashboard/listings/      (6 datotek)
+    - src/components/dashboard/statistics/   (26 datotek)
+    - src/components/dashboard/monitors/      (6 datotek)
