@@ -20464,3 +20464,49 @@ Stage Summary:
   * 115 novih modulskih datotek:
     - settings (13), ai-hub (25), trades (6), listings (6),
       statistics (26), monitors (6), dashboard (7), analytics (7)
+
+---
+Task ID: v9.06
+Agent: main
+Task: Modularizacija iskalnik-view.tsx (1131 vrstic) — ekstrakcija 2 podkomponent
+
+Work Log:
+- Analiziral iskalnik-view.tsx (1131 vrstic): glavni IskalnikView() + 2 podkomponenti (CompareContent 184 vrstice, ResultCard 155 vrstic) + 3 tipi (SearchResult, SearchResponse, SavedRequest) + 5 helperjev (CATEGORIES, SOURCE_META, sourceIcon, sourceColor, timeAgo).
+- Korak 1: Ustvaril src/components/dashboard/iskalnik/ direktorij, types.ts (SearchResult, SearchResponse, SavedRequest) in utils.ts (CATEGORIES, SOURCE_META, sourceIcon, sourceColor, timeAgo).
+- Korak 2: Ekstraktiral 2 podkomponenti:
+  * compare-content.tsx (204 vrstic) — CompareContent, primerjava rezultatov
+  * result-card.tsx (175 vrstic) — ResultCard, kartica rezultata z expand/select
+- Korak 3: Posodobil iskalnik-view.tsx — izbrisal 2 funkciji + inline tipe/helperje in dodal 4 import stavke.
+- Popravil odvečni `}` v iskalnik-view.tsx in manjkajoči `}` v result-card.tsx.
+- Rezultat: iskalnik-view.tsx z 1131 → 705 vrstic (−38%).
+- Verifikacija (Agent Browser):
+  * Homepage: HTTP 200 ✓
+  * Iskalnik view: heading "Iskalnik" ✓
+  * Console: 0 error-ov ✓
+- Preveril lint: 0 napak, 0 warnings ✨
+- Preveril typecheck: 0 napak ✨
+
+Stage Summary:
+- NEW: src/components/dashboard/iskalnik/types.ts (SearchResult, SearchResponse, SavedRequest)
+- NEW: src/components/dashboard/iskalnik/utils.ts (CATEGORIES, SOURCE_META, sourceIcon, sourceColor, timeAgo)
+- NEW: src/components/dashboard/iskalnik/compare-content.tsx (204 vrstic)
+- NEW: src/components/dashboard/iskalnik/result-card.tsx (175 vrstic)
+- MODIFIED: src/components/dashboard/iskalnik-view.tsx (1131 → 705 vrstic, −38%)
+- MODIFIED: src/lib/version.ts (v9.05.0→v9.06.0)
+- MODIFIED: README.md (badge v9.06.0)
+- Verzija: v9.06.0
+- Skupaj (v7.50 → v9.06): 156 verzij, 278 novih funkcij
+- SKUPNI REZULTAT modularizacije (v8.94→v9.06):
+  * settings-view.tsx:    3595 → 736 vrstic   (−79%)
+  * ai-hub-view.tsx:      8167 → 2030 vrstic  (−75%)
+  * trades-view.tsx:      4142 → 3231 vrstic  (−22%)
+  * listings-view.tsx:    3550 → 980 vrstic    (−72%)
+  * statistics-view.tsx:  3418 → 629 vrstic    (−82%)
+  * monitors-view.tsx:   1729 → 588 vrstic    (−66%)
+  * dashboard-view.tsx:  1169 → 794 vrstic    (−32%)
+  * analytics-view.tsx:  1140 → 566 vrstic    (−50%)
+  * iskalnik-view.tsx:   1131 → 705 vrstic    (−38%)
+  * SKUPAJ:              28041 → 10259 vrstic (−63%)
+  * 119 novih modulskih datotek:
+    - settings (13), ai-hub (25), trades (6), listings (6),
+      statistics (26), monitors (6), dashboard (7), analytics (7), iskalnik (4)
