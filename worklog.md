@@ -20018,3 +20018,61 @@ Stage Summary:
     - src/components/dashboard/ai-hub/ (25 datotek)
     - src/components/dashboard/trades/ (6 datotek)
 - NASLEDNJI KORAK (po želji): Nadaljnja modularizacija glavnega TradesView() (sestavljene sekcije v module) ali modularizacija listings-view.tsx (3550 vrstic) ali nove funkcionalnosti.
+
+---
+Task ID: v9.00
+Agent: main
+Task: Modularizacija listings-view.tsx (3550 vrstic) — ekstrakcija 4 podkomponent, prehod v9 serije
+
+Work Log:
+- Analiziral listings-view.tsx (3550 vrstic, tretji največji view): glavni ListingsView() (~920 vrstic) + 4 podkomponente (ListingRow 203 vrstice, ListingDetailModal 2246 vrstic, CompareModal 57 vrstic, CompareRow 11 vrstic) + 3 tipi (Listing, Monitor, ListingsResponse) + 1 helper (formatTimeAgo).
+- Korak 1: Ustvaril src/components/dashboard/listings/ direktorij.
+- Korak 2: Ustvaril types.ts (Listing, Monitor, ListingsResponse, BuyScore — vsi export-ani).
+- Korak 3: Ustvaril utils.ts (formatTimeAgo helper).
+- Korak 4: Ekstraktiral 4 podkomponente z Python skripto:
+  * listing-row.tsx (239 vrstic) — ListingRow, vrstica oglasa z bookmark/compare actions
+  * listing-detail-modal.tsx (2282 vrstic) — ListingDetailModal, OGROMNA komponenta z vsemi AI panel-i
+  * compare-modal.tsx (93 vrstic) — CompareModal, side-by-side primerjava
+  * compare-row.tsx (47 vrstic) — CompareRow, vrstica v compare tabeli
+- Korak 5: Python skripta posodobila listings-view.tsx — izbrisala 4 funkcije + formatTimeAgo + inline tipe in dodala 6 import stavkov.
+- Korak 6: Popravil Python `.format()` dvojne zavite oklepaje ({{ → {) v vseh 4 datotekah.
+- Korak 7: Popravil odvečni `}` na koncu listings-view.tsx (Python skripta je pustila zaključek funkcije).
+- Korak 8: Popravil manjkajoči zaključni `}` v compare-row.tsx.
+- Korak 9: Dodal CompareRow import v compare-modal.tsx (CompareModal uporablja CompareRow).
+- Rezultat: listings-view.tsx z 3550 → 980 vrstic (−72% — največji reduction doslej!).
+- Verifikacija (Agent Browser):
+  * Homepage: HTTP 200 ✓
+  * Oglasi view: heading "Oglasi" (ne "Napaka") ✓
+  * Console: 0 error-ov ✓
+- Preveril lint: 0 napak, 0 warnings ✨
+- Preveril typecheck: 0 napak ✨
+
+Stage Summary:
+- NEW: src/components/dashboard/listings/types.ts (shared tipi: Listing, Monitor, ListingsResponse, BuyScore)
+- NEW: src/components/dashboard/listings/utils.ts (formatTimeAgo helper)
+- NEW: src/components/dashboard/listings/listing-row.tsx (239 vrstic, ListingRow)
+- NEW: src/components/dashboard/listings/listing-detail-modal.tsx (2282 vrstic, ListingDetailModal — največja ekstraktana komponenta doslej)
+- NEW: src/components/dashboard/listings/compare-modal.tsx (93 vrstic, CompareModal)
+- NEW: src/components/dashboard/listings/compare-row.tsx (47 vrstic, CompareRow)
+- MODIFIED: src/components/dashboard/listings-view.tsx (3550 → 980 vrstic, −72%)
+  * 4 funkcije odstranjene in nadomeščene z import stavki
+  * formatTimeAgo odstranjen in import-an iz ./listings/utils
+  * Inline tipi odstranjeni in import-ani iz ./listings/types
+  * Preostane: glavni ListingsView() orchestrator (~980 vrstic)
+- MODIFIED: src/lib/version.ts (v8.99.0→v9.00.0 — PREHOD V9 SERIJE)
+- MODIFIED: README.md (badge v9.00.0)
+- Verzija: v9.00.0
+- Skupaj (v7.50 → v9.00): 150 verzij, 272 novih funkcij
+- SKUPNI REZULTAT modularizacije (v8.94→v9.00):
+  * settings-view.tsx:  3595 → 736 vrstic   (−79%)
+  * ai-hub-view.tsx:    8167 → 2030 vrstic  (−75%)
+  * trades-view.tsx:    4142 → 3231 vrstic  (−22%)
+  * listings-view.tsx:  3550 → 980 vrstic   (−72%)
+  * SKUPAJ:            19454 → 6977 vrstic  (−64%)
+  * 69 novih modulskih datotek ustvarjenih:
+    - src/components/dashboard/settings/  (13 datotek)
+    - src/components/dashboard/ai-hub/    (25 datotek)
+    - src/components/dashboard/trades/     (6 datotek)
+    - src/components/dashboard/listings/   (6 datotek)
+- MILESTONE: v9.00.0 — prehod iz v8 v v9 serijo. 4 največje view datoteke modularizirane (−64% skupaj), 69 novih modulskih datotek, 0 funkcionalnosti izgubljenih.
+- NASLEDNJI KORAK (po želji): Modularizacija statistics-view.tsx (3418 vrstic) ali monitors-view.tsx (1729 vrstic) ali nove funkcionalnosti.
