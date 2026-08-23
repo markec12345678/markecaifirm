@@ -20170,3 +20170,101 @@ Stage Summary:
     - src/components/dashboard/listings/     (6 datotek)
     - src/components/dashboard/statistics/   (11 datotek)
 - NASLEDNJI KORAK (po želji): Nadaljnja modularizacija preostalih ~16 AI sekcij v statistics-view.tsx (v6.13-v6.40) ali modularizacija monitors-view.tsx (1729 vrstic) ali nove funkcionalnosti.
+
+---
+Task ID: v9.02-extract-1
+Agent: subagent (statistics final modularization)
+Task: Extract 15 remaining AI statistics sections into separate module files
+
+Work Log:
+- Read worklog.md (v9.01-extract-1 entry) to confirm established extraction pattern
+- Read statistics-view.tsx (2398 lines) — confirmed 15 remaining AI sections (v6.13-v6.40) all have own state + inline fetch onClick handlers
+- Read full JSX blocks + state declarations + fetch handlers for all 15 sections
+- Confirmed actual state variable names in file differ from task description (e.g. dashData/dashLoading, procData/procLoading/procBudget/procRisk, autoData/autoLoading/autoMode, tradeData/tradeLoading/tradeMode/tradeBudget) — used ACTUAL names per "Copy JSX 1:1" rule
+- Created 15 new component files in src/components/dashboard/statistics/ (all 'use client', named exports, own useState/useEffect, JSX copied 1:1):
+  * competitor-intelligence.tsx (CompetitorIntelligence, v6.13 — POST /api/ai/competitor-intel)
+  * cash-flow-optimizer.tsx (CashFlowOptimizer, v6.13 — POST /api/ai/cashflow)
+  * inventory-insurance.tsx (InventoryInsurance, v6.14 — POST /api/ai/insurance-optimizer)
+  * predictive-stockout.tsx (PredictiveStockout, v6.15 — POST /api/ai/predictive-stockout)
+  * profit-margin.tsx (ProfitMargin, v6.15 — POST /api/ai/margin-optimizer)
+  * email-campaign.tsx (EmailCampaign, v6.16 — POST /api/ai/email-campaign)
+  * customer-ltv.tsx (CustomerLtv, v6.16 — POST /api/ai/customer-ltv)
+  * inventory-aging.tsx (InventoryAging, v6.24 — POST /api/ai/inventory-aging)
+  * smart-restock.tsx (SmartRestock, v6.24 — POST /api/ai/smart-restock)
+  * profit-dashboard.tsx (ProfitDashboard, v6.30 — POST /api/ai/profit-dashboard)
+  * predictive-procurement.tsx (PredictiveProcurement, v6.30 — POST /api/ai/predictive-procurement)
+  * full-automation.tsx (FullAutomation, v6.30 — POST /api/ai/full-automation)
+  * master-dashboard.tsx (MasterDashboard, v6.40 — POST /api/ai/master-dashboard)
+  * autonomous-trading.tsx (AutonomousTrading, v6.40 — POST /api/ai/autonomous-trading, uses Check + X icons)
+  * profit-playbook.tsx (ProfitPlaybook, v6.40 — POST /api/ai/profit-playbook)
+- Each new file: starts with `'use client';`, imports only used hooks/icons/components/recharts bits (only AutonomousTrading imports Check + X), owns its useState declarations (moved from parent), inline onClick fetch handlers preserved 1:1, JSX wrapped in single Card (no Fragment needed since all are top-level Card)
+- In statistics-view.tsx: added 15 named imports, deleted all 15 sets of useState declarations (competitorData/competitorLoading/competitorCategory + cashflowData/cashflowLoading/cashflowDays + insuranceData/insuranceLoading/insuranceStorage + stockoutData/stockoutLoading/stockoutDays + marginData/marginLoading + campaignData/campaignLoading/campaignType/campaignCopied + ltvData/ltvLoading + agingData/agingLoading + restockData/restockLoading/restockBudget + dashData/dashLoading + procData/procLoading/procBudget/procRisk + autoData/autoLoading/autoMode + masterData/masterLoading + tradeData/tradeLoading/tradeMode/tradeBudget + playbookData/playbookLoading), replaced each JSX block with `<ComponentName />` using sed range-change in reverse order to preserve line numbers
+- CRITICAL rule followed: all original API endpoint URLs preserved verbatim (the code uses /api/ai/* paths — not the /api/analytics/* paths listed in task description; Copy JSX 1:1 takes precedence)
+- Batch 1 (Competitor+CashFlow+Insurance+Stockout+Margin): typecheck=0 errors, lint=0 errors, file 2398→1602 lines
+- Batch 2 (Email+LTV+Aging+Restock+ProfitDashboard): typecheck=0 errors, lint=0 errors, file 1602→1017 lines
+- Batch 3 (Procurement+Automation+Master+Autonomous+Playbook): typecheck=0 errors, lint=0 errors, file 1017→629 lines
+- Final verification: statistics-view.tsx = 629 lines (down from 2398, -1769 lines, -74% reduction — well under the expected ~1000-1400 range)
+- statistics/ directory now has 25 .tsx component files + types.ts (10 from v9.01 + 15 from v9.02)
+- Restarted dev server (pkill next + rm .next + setsid next dev -p 3000), waited 15s, curl http://localhost:3000/ returned HTTP 200
+
+Stage Summary:
+- 15 new files created in src/components/dashboard/statistics/ (all named exports, all 'use client')
+- statistics-view.tsx reduced from 2398 → 629 lines (1769 lines extracted, ~74% reduction — significantly exceeded the expected 1000-1400 line target because the extracted sections were larger than anticipated)
+- 0 typecheck errors, 0 lint errors across all 3 batches and final verification
+- Dev server HTTP 200 confirmed
+- All API URLs, JSX logic, classNames, and behavior preserved 1:1 from original (no logic changes)
+- 6 shared-data sections (P&L chart, Conversion funnel, AI accuracy, Source breakdown, Top categories, Monitor performance) remain inline as intended since they consume `data` from /api/stats/advanced
+- All 25 AI sections (v6.3-v6.40) are now modularized; statistics-view.tsx is fully cleaned up
+
+
+---
+Task ID: v9.02
+Agent: main + subagent
+Task: Dokončana modularizacija statistics-view.tsx — ekstrakcija preostalih 15 AI sekcij
+
+Work Log:
+- Analiziral preostale AI sekcije v statistics-view.tsx (2398 vrstic po v9.01): 15 samostojnih AI sekcij (v6.13-v6.40) z lastnim state-om + fetch-em, ki jih je mogoče ekstraktirati.
+- Subagent ekstraktiral vseh 15 sekcij v 3 batchih po 5:
+  * Batch 1: CompetitorIntelligence (v6.13), CashFlowOptimizer (v6.13), InventoryInsurance (v6.14), PredictiveStockout (v6.15), ProfitMargin (v6.15)
+  * Batch 2: EmailCampaign (v6.16), CustomerLtv (v6.16), InventoryAging (v6.24), SmartRestock (v6.24), ProfitDashboard (v6.30)
+  * Batch 3: PredictiveProcurement (v6.30), FullAutomation (v6.30), MasterDashboard (v6.40), AutonomousTrading (v6.40), ProfitPlaybook (v6.40)
+- Vsaka komponenta ima lasten state + useEffect fetch. Subagent je po vsakem batchu preveril typecheck + lint (vse 0 napak).
+- Rezultat: statistics-view.tsx z 2398 → 629 vrstic (−74% v tej fazi, −82% skupaj od 3418 vrstic).
+- Verifikacija (Agent Browser):
+  * Homepage: HTTP 200 ✓
+  * Statistike view: heading "Statistike" ✓
+  * 78 card elementov ✓
+  * Console: 0 error-ov ✓
+- Preveril lint: 0 napak, 0 warnings ✨
+- Preveril typecheck: 0 napak ✨
+
+Stage Summary:
+- NEW: 15 komponentnih datotek v src/components/dashboard/statistics/:
+  competitor-intelligence, cash-flow-optimizer, inventory-insurance,
+  predictive-stockout, profit-margin, email-campaign, customer-ltv,
+  inventory-aging, smart-restock, profit-dashboard, predictive-procurement,
+  full-automation, master-dashboard, autonomous-trading, profit-playbook
+- MODIFIED: src/components/dashboard/statistics-view.tsx (2398 → 629 vrstic, −74%)
+  * 15 AI sekcij ekstraktiranih (state + fetch + JSX premaknjeni v module)
+  * Preostane: 6 shared-data sekcij (P&L, Conversion, AI accuracy, Source, Categories, Monitors) + glavni StatisticsView() orchestrator
+- MODIFIED: src/lib/version.ts (v9.01.0→v9.02.0)
+- MODIFIED: README.md (badge v9.02.0)
+- Verzija: v9.02.0
+- Skupaj (v7.50 → v9.02): 152 verzij, 274 novih funkcij
+- STATISTIKS modularizacija KONČANA:
+  * statistics-view.tsx: 3418 → 629 vrstic (−82% skupaj)
+  * 26 modulskih datotek (25 komponent + types.ts)
+- SKUPNI REZULTAT modularizacije (v8.94→v9.02):
+  * settings-view.tsx:    3595 → 736 vrstic   (−79%)
+  * ai-hub-view.tsx:      8167 → 2030 vrstic  (−75%)
+  * trades-view.tsx:      4142 → 3231 vrstic  (−22%)
+  * listings-view.tsx:    3550 → 980 vrstic    (−72%)
+  * statistics-view.tsx:  3418 → 629 vrstic    (−82%)
+  * SKUPAJ:              22872 → 7606 vrstic  (−67%)
+  * 95 novih modulskih datotek ustvarjenih:
+    - src/components/dashboard/settings/    (13 datotek)
+    - src/components/dashboard/ai-hub/       (25 datotek)
+    - src/components/dashboard/trades/        (6 datotek)
+    - src/components/dashboard/listings/      (6 datotek)
+    - src/components/dashboard/statistics/   (26 datotek)
+- NASLEDNJI KORAK (po želji): Modularizacija monitors-view.tsx (1729 vrstic) ali nove funkcionalnosti.
