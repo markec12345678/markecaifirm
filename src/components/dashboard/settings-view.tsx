@@ -28,6 +28,12 @@ import { BackupSection } from './settings/backup-section';
 import { CategoryNotificationsSection } from './settings/category-notifications-section';
 import { ScrapingConfigSection } from './settings/scraping-config-section';
 import { FullBackupSection } from './settings/full-backup-section';
+import { SettingsAI } from './settings/settings-ai';
+import { SettingsNotifications } from './settings/settings-notifications';
+import { SettingsScoring } from './settings/settings-scoring';
+import { SettingsAutomation } from './settings/settings-automation';
+import { SettingsAdvanced } from './settings/settings-advanced';
+import { SettingsPush } from './settings/settings-push';
 import { PROVIDER_PRESETS, urlBase64ToUint8Array } from './settings/types';
 import type { Provider, Settings } from './settings/types';
 
@@ -497,667 +503,126 @@ export function SettingsView() {
         </Button>
       </div>
 
-      {/* AI Provider card */}
-      <Card className="bg-card/50">
-        <CardHeader>
-          <CardTitle className="text-sm font-bold uppercase tracking-wider flex items-center gap-2">
-            <Cpu className="w-4 h-4 text-primary" />
-            AI Provider
-          </CardTitle>
-          <CardDescription>
-            Izberi provider, vnesi API ključ (kjer potreben) in ime modela.
-          </CardDescription>
-        </CardHeader>
-        <CardContent className="space-y-4">
-          <div>
-            <Label className="text-xs uppercase tracking-wider">Provider</Label>
-            <Select value={provider} onValueChange={(v) => onProviderChange(v as Provider)}>
-              <SelectTrigger className="mt-1">
-                <SelectValue />
-              </SelectTrigger>
-              <SelectContent>
-                {(Object.keys(PROVIDER_PRESETS) as Provider[]).map((p) => (
-                  <SelectItem key={p} value={p}>
-                    {PROVIDER_PRESETS[p].label}
-                  </SelectItem>
-                ))}
-              </SelectContent>
-            </Select>
-            <p className="text-[11px] text-muted-foreground mt-1.5">{currentPreset.help}</p>
-          </div>
+      {/* AI Provider + AI Fallback — v8.96: imported from ./settings/settings-ai */}
+      <SettingsAI
+        settings={settings}
+        provider={provider}
+        setProvider={setProvider}
+        baseUrl={baseUrl}
+        setBaseUrl={setBaseUrl}
+        apiKey={apiKey}
+        setApiKey={setApiKey}
+        model={model}
+        setModel={setModel}
+        onProviderChange={onProviderChange}
+        currentPreset={currentPreset}
+        testingAi={testingAi}
+        aiTestResult={aiTestResult}
+        onTestAI={testAi}
+        fallbackProvider={fallbackProvider}
+        setFallbackProvider={setFallbackProvider}
+        fallbackBaseUrl={fallbackBaseUrl}
+        setFallbackBaseUrl={setFallbackBaseUrl}
+        fallbackApiKey={fallbackApiKey}
+        setFallbackApiKey={setFallbackApiKey}
+        fallbackModel={fallbackModel}
+        setFallbackModel={setFallbackModel}
+        testingFallbackAi={testingFallbackAi}
+        fallbackAiTestResult={fallbackAiTestResult}
+        onTestFallbackAI={testFallbackAi}
+      />
 
-          <div>
-            <Label htmlFor="s-baseurl" className="text-xs uppercase tracking-wider flex items-center gap-2">
-              <Bot className="w-3 h-3" /> Base URL
-            </Label>
-            <Input
-              id="s-baseurl"
-              value={baseUrl}
-              onChange={(e) => setBaseUrl(e.target.value)}
-              placeholder="https://..."
-              className="mt-1 font-mono text-xs"
-            />
-            {provider === 'ollama' && (
-              <p className="text-[11px] text-muted-foreground mt-1">
-                Privzeto <code>http://localhost:11434</code>. Če Ollama teče drugje, spremeni.
-              </p>
-            )}
-          </div>
+      {/* Notifications — v8.96: imported from ./settings/settings-notifications */}
+      <SettingsNotifications
+        settings={settings}
+        telegramBotToken={telegramBotToken}
+        setTelegramBotToken={setTelegramBotToken}
+        telegramChatId={telegramChatId}
+        setTelegramChatId={setTelegramChatId}
+        telegramEnabled={telegramEnabled}
+        setTelegramEnabled={setTelegramEnabled}
+        testingTg={testingTg}
+        tgTestResult={tgTestResult}
+        testTelegram={testTelegram}
+        discordWebhookUrl={discordWebhookUrl}
+        setDiscordWebhookUrl={setDiscordWebhookUrl}
+        discordEnabled={discordEnabled}
+        setDiscordEnabled={setDiscordEnabled}
+        testingDc={testingDc}
+        dcTestResult={dcTestResult}
+        testDiscord={testDiscord}
+        emailEnabled={emailEnabled}
+        setEmailEnabled={setEmailEnabled}
+        emailSmtpHost={emailSmtpHost}
+        setEmailSmtpHost={setEmailSmtpHost}
+        emailSmtpPort={emailSmtpPort}
+        setEmailSmtpPort={setEmailSmtpPort}
+        emailSmtpUser={emailSmtpUser}
+        setEmailSmtpUser={setEmailSmtpUser}
+        emailSmtpPassword={emailSmtpPassword}
+        setEmailSmtpPassword={setEmailSmtpPassword}
+        emailFrom={emailFrom}
+        setEmailFrom={setEmailFrom}
+        emailTo={emailTo}
+        setEmailTo={setEmailTo}
+        testingEmail={testingEmail}
+        emailTestResult={emailTestResult}
+        testEmailFn={testEmailFn}
+      />
 
-          <div>
-            <Label htmlFor="s-model" className="text-xs uppercase tracking-wider">Model</Label>
-            <Input
-              id="s-model"
-              value={model}
-              onChange={(e) => setModel(e.target.value)}
-              placeholder={currentPreset.model}
-              className="mt-1 font-mono text-xs"
-            />
-            {provider === 'ollama' && (
-              <p className="text-[11px] text-muted-foreground mt-1">
-                Priporočeni: <code>qwen2.5:7b</code> (hitro), <code>qwen2.5:14b</code> (natančneje), <code>llama3.1:8b</code>. Poženi z <code>ollama pull qwen2.5:7b</code>.
-              </p>
-            )}
-          </div>
+      {/* Scoring + Backup config — v8.96: imported from ./settings/settings-scoring */}
+      <SettingsScoring
+        minOpportunityScore={minOpportunityScore}
+        setMinOpportunityScore={setMinOpportunityScore}
+        maxRiskScore={maxRiskScore}
+        setMaxRiskScore={setMaxRiskScore}
+      />
 
-          {currentPreset.needsKey && (
-            <div>
-              <Label htmlFor="s-key" className="text-xs uppercase tracking-wider flex items-center gap-2">
-                <Key className="w-3 h-3" /> API ključ
-              </Label>
-              <Input
-                id="s-key"
-                type="password"
-                value={apiKey}
-                onChange={(e) => setApiKey(e.target.value)}
-                placeholder={settings.aiApiKeySet ? `shranjen (${settings.aiApiKeyMasked}) — pusti prazno za ohranitev` : 'vnesi API ključ'}
-                className="mt-1 font-mono text-xs"
-              />
-              <p className="text-[11px] text-muted-foreground mt-1">
-                Ključ se shrani lokalno v SQLite. Nikoli se ne pošilje nikamor razen izbranemu providerju.
-              </p>
-            </div>
-          )}
+      {/* Automation — v8.96: imported from ./settings/settings-automation */}
+      <SettingsAutomation
+        settings={settings}
+        heartbeatEnabled={heartbeatEnabled}
+        setHeartbeatEnabled={setHeartbeatEnabled}
+        heartbeatHour={heartbeatHour}
+        setHeartbeatHour={setHeartbeatHour}
+        heartbeatSending={heartbeatSending}
+        setHeartbeatSending={setHeartbeatSending}
+        digestMode={digestMode}
+        setDigestMode={setDigestMode}
+        digestHour={digestHour}
+        setDigestHour={setDigestHour}
+        digestSending={digestSending}
+        setDigestSending={setDigestSending}
+        aiSummarySending={aiSummarySending}
+        setAiSummarySending={setAiSummarySending}
+        aiSummaryPreview={aiSummaryPreview}
+        setAiSummaryPreview={setAiSummaryPreview}
+        quietHoursEnabled={quietHoursEnabled}
+        setQuietHoursEnabled={setQuietHoursEnabled}
+        quietStartHour={quietStartHour}
+        setQuietStartHour={setQuietStartHour}
+        quietEndHour={quietEndHour}
+        setQuietEndHour={setQuietEndHour}
+        autoCleanupEnabled={autoCleanupEnabled}
+        setAutoCleanupEnabled={setAutoCleanupEnabled}
+        autoCleanupAlertsDays={autoCleanupAlertsDays}
+        setAutoCleanupAlertsDays={setAutoCleanupAlertsDays}
+        autoCleanupListingsDays={autoCleanupListingsDays}
+        setAutoCleanupListingsDays={setAutoCleanupListingsDays}
+      />
 
-          <div className="flex items-center gap-2 pt-2 border-t border-border">
-            <Button size="sm" variant="outline" onClick={testAi} disabled={testingAi} className="gap-2">
-              {testingAi ? <RefreshCw className="w-3.5 h-3.5 animate-spin" /> : <Zap className="w-3.5 h-3.5" />}
-              Testiraj povezavo
-            </Button>
-            {aiTestResult && (
-              <span className={cn('flex items-center gap-1.5 text-xs', aiTestResult.ok ? 'text-primary' : 'text-destructive')}>
-                {aiTestResult.ok ? <CheckCircle2 className="w-3.5 h-3.5" /> : <AlertCircle className="w-3.5 h-3.5" />}
-                <span className="truncate max-w-md">{aiTestResult.message}</span>
-              </span>
-            )}
-          </div>
-        </CardContent>
-      </Card>
-
-      {/* v2.6: AI Fallback card */}
-      <Card className="bg-card/50 border-primary/20">
-        <CardHeader>
-          <CardTitle className="text-sm font-bold uppercase tracking-wider flex items-center gap-2">
-            <Zap className="w-4 h-4 text-amber-400" />
-            AI Fallback <Badge variant="outline" className="text-[10px] text-primary border-primary/40">v2.6</Badge>
-          </CardTitle>
-          <CardDescription>
-            Ko primarni AI provider odpove (npr. Ollama offline), samodejno preklopi na backup providerja.
-          </CardDescription>
-        </CardHeader>
-        <CardContent className="space-y-3">
-          <div>
-            <Label className="text-xs uppercase tracking-wider">Fallback provider</Label>
-            <Select value={fallbackProvider || 'none'} onValueChange={(v) => setFallbackProvider(v === 'none' ? '' : v as Provider)}>
-              <SelectTrigger className="mt-1"><SelectValue /></SelectTrigger>
-              <SelectContent>
-                <SelectItem value="none">Izklopljeno</SelectItem>
-                <SelectItem value="ollama">Ollama (lokalno)</SelectItem>
-                <SelectItem value="openai">OpenAI</SelectItem>
-                <SelectItem value="anthropic">Anthropic Claude</SelectItem>
-                <SelectItem value="openai-compatible">OpenAI-kompatibilni</SelectItem>
-                <SelectItem value="openrouter">OpenRouter</SelectItem>
-                <SelectItem value="gemini">Google Gemini</SelectItem>
-              </SelectContent>
-            </Select>
-          </div>
-          {fallbackProvider && (
-            <>
-              <div>
-                <Label className="text-xs uppercase tracking-wider">Base URL</Label>
-                <Input value={fallbackBaseUrl} onChange={(e) => setFallbackBaseUrl(e.target.value)} placeholder="https://api.openai.com" className="mt-1 font-mono text-xs" />
-              </div>
-              <div>
-                <Label className="text-xs uppercase tracking-wider">Model</Label>
-                <Input value={fallbackModel} onChange={(e) => setFallbackModel(e.target.value)} placeholder="gpt-4o-mini" className="mt-1 font-mono text-xs" />
-              </div>
-              <div>
-                <Label className="text-xs uppercase tracking-wider flex items-center gap-2">
-                  <Key className="w-3 h-3" /> API ključ
-                </Label>
-                <Input type="password" value={fallbackApiKey} onChange={(e) => setFallbackApiKey(e.target.value)} placeholder={settings?.fallbackApiKeySet ? 'shranjen — pusti prazno za ohranitev' : 'vnesi API ključ'} className="mt-1 font-mono text-xs" />
-              </div>
-              <p className="text-[11px] text-amber-400">
-                ⚠️ Fallback se aktivira samo ko primarni provider vrne napako. V normalnih razmerah se ne uporablja.
-              </p>
-
-              {/* v4.4: Test fallback AI button */}
-              <div className="pt-2 border-t border-border">
-                <Button size="sm" variant="outline" onClick={testFallbackAi} disabled={testingFallbackAi} className="gap-2">
-                  {testingFallbackAi ? <RefreshCw className="w-3 h-3 animate-spin" /> : <Zap className="w-3 h-3" />}
-                  Testiraj fallback povezavo
-                </Button>
-                {fallbackAiTestResult && (
-                  <div className={cn(
-                    'mt-2 p-2 rounded text-xs border',
-                    fallbackAiTestResult.ok
-                      ? 'border-primary/40 bg-primary/5 text-primary'
-                      : 'border-red-500/40 bg-red-500/5 text-red-500'
-                  )}>
-                    {fallbackAiTestResult.ok ? '✓' : '✗'} {fallbackAiTestResult.message}
-                  </div>
-                )}
-              </div>
-            </>
-          )}
-        </CardContent>
-      </Card>
-
-      {/* Telegram card */}
-      <Card className="bg-card/50">
-        <CardHeader>
-          <CardTitle className="text-sm font-bold uppercase tracking-wider flex items-center gap-2">
-            <MessageSquare className="w-4 h-4 text-primary" />
-            Telegram obveščanje
-          </CardTitle>
-          <CardDescription>
-            Pošilji alerte na Telegram bot. Bot token dobiš od <code>@BotFather</code>, chat ID od <code>@userinfobot</code>.
-          </CardDescription>
-        </CardHeader>
-        <CardContent className="space-y-4">
-          <div>
-            <Label htmlFor="s-tg-token" className="text-xs uppercase tracking-wider">Bot Token</Label>
-            <Input
-              id="s-tg-token"
-              type="password"
-              value={telegramBotToken}
-              onChange={(e) => setTelegramBotToken(e.target.value)}
-              placeholder={settings.telegramBotTokenSet ? 'shranjen — pusti prazno za ohranitev' : '1234567890:ABCdefGHIjklMNOpqrsTUVwxyz'}
-              className="mt-1 font-mono text-xs"
-            />
-          </div>
-          <div>
-            <Label htmlFor="s-tg-chat" className="text-xs uppercase tracking-wider">Chat ID</Label>
-            <Input
-              id="s-tg-chat"
-              value={telegramChatId}
-              onChange={(e) => setTelegramChatId(e.target.value)}
-              placeholder="123456789"
-              className="mt-1 font-mono text-xs"
-            />
-            <p className="text-[11px] text-muted-foreground mt-1">
-              Pošlji sporočilo <code>/start</code> svojemu botu, nato obišči <code>https://api.telegram.org/bot&lt;TOKEN&gt;/getUpdates</code> in najdi <code>chat.id</code>.
-            </p>
-          </div>
-          <div className="flex items-center justify-between pt-2 border-t border-border">
-            <div className="flex items-center gap-3">
-              <Switch checked={telegramEnabled} onCheckedChange={setTelegramEnabled} />
-              <div>
-                <p className="text-sm font-medium">Omogoči Telegram</p>
-                <p className="text-[11px] text-muted-foreground">Če izklopljeno, alerti pridejo samo na dashboard.</p>
-              </div>
-            </div>
-            <Button size="sm" variant="outline" onClick={testTelegram} disabled={testingTg} className="gap-2">
-              {testingTg ? <RefreshCw className="w-3.5 h-3.5 animate-spin" /> : <Send className="w-3.5 h-3.5" />}
-              Test
-            </Button>
-          </div>
-          {tgTestResult && (
-            <p className={cn('text-xs flex items-center gap-1.5', tgTestResult.ok ? 'text-primary' : 'text-destructive')}>
-              {tgTestResult.ok ? <CheckCircle2 className="w-3.5 h-3.5" /> : <AlertCircle className="w-3.5 h-3.5" />}
-              {tgTestResult.message}
-            </p>
-          )}
-
-          {/* v5.0: Bot commands setup */}
-          <div className="border-t border-border pt-3 mt-3">
-            <h4 className="text-xs uppercase tracking-wider text-primary flex items-center gap-1.5 mb-2">
-              <Bot className="w-3.5 h-3.5" />
-              Bot ukazi (v5.0)
-              <Badge variant="outline" className="text-[10px] text-primary border-primary/40">NOVO</Badge>
-            </h4>
-            <p className="text-[11px] text-muted-foreground mb-2">
-              Registriraj /ukaze pri Telegramu (da jih bo bot predlagal ko začneš tipkati /).
-              Potrebujes nastavljen webhook URL.
-            </p>
-            <div className="flex items-center gap-2 mb-2">
-              <Button
-                size="sm"
-                variant="outline"
-                onClick={async () => {
-                  try {
-                    const res = await fetch('/api/telegram/setup-commands', { method: 'POST' });
-                    const data = await res.json();
-                    if (data.ok) {
-                      toast.success(`✓ ${data.message}`);
-                    } else {
-                      toast.error(data.message ?? data.error ?? 'Napaka');
-                    }
-                  } catch (e: any) {
-                    toast.error(e?.message ?? 'Napaka');
-                  }
-                }}
-                className="gap-2 h-8"
-              >
-                <Bot className="w-3.5 h-3.5" />
-                Registriraj ukaze
-              </Button>
-              <a
-                href="https://core.telegram.org/bots/webhooks"
-                target="_blank"
-                rel="noopener noreferrer"
-                className="text-[10px] text-primary hover:underline"
-              >
-                Kako nastaviti webhook?
-              </a>
-            </div>
-            <details className="text-[11px] text-muted-foreground">
-              <summary className="cursor-pointer hover:text-foreground">📋 Razpoložljivi ukazi</summary>
-              <div className="mt-2 space-y-1 bg-background/30 rounded p-2">
-                <div><code className="text-primary">/help</code> — ta pomoč</div>
-                <div><code className="text-primary">/status</code> — stanje sistema</div>
-                <div><code className="text-primary">/run [id]</code> — poženi vse ali specifičen monitor</div>
-                <div><code className="text-primary">/alerts [n]</code> — zadnjih N alertov</div>
-                <div><code className="text-primary">/listings [n]</code> — zadnjih N oglasov</div>
-                <div><code className="text-primary">/monitors</code> — seznam monitorjev</div>
-                <div><code className="text-primary">/trades</code> — pregled skladišča</div>
-                <div><code className="text-primary">/stats</code> — ključne statistike</div>
-                <div><code className="text-primary">/ping</code> — preveri ali bot deluje</div>
-              </div>
-            </details>
-          </div>
-        </CardContent>
-      </Card>
-
-      {/* v1.4: Discord card */}
-      <Card className="bg-card/50">
-        <CardHeader>
-          <CardTitle className="text-sm font-bold uppercase tracking-wider flex items-center gap-2">
-            <Bell className="w-4 h-4 text-primary" />
-            Discord webhook <Badge variant="outline" className="text-[10px] text-primary border-primary/40">v1.4</Badge>
-          </CardTitle>
-          <CardDescription>
-            Alternativa Telegramu — alerti kot rich embed sporočila z barvami glede na verdikt.
-          </CardDescription>
-        </CardHeader>
-        <CardContent className="space-y-4">
-          <div>
-            <Label htmlFor="s-dc-url" className="text-xs uppercase tracking-wider">Webhook URL</Label>
-            <Input
-              id="s-dc-url"
-              type="password"
-              value={discordWebhookUrl}
-              onChange={(e) => setDiscordWebhookUrl(e.target.value)}
-              placeholder={settings.discordWebhookUrlSet ? `shranjen (${settings.discordWebhookUrlMasked}) — pusti prazno za ohranitev` : 'https://discord.com/api/webhooks/...'}
-              className="mt-1 font-mono text-xs"
-            />
-            <p className="text-[11px] text-muted-foreground mt-1">
-              Discord → Server Settings → Integrations → Webhooks → New Webhook → Copy Webhook URL.
-              Za razliko od Telegrama, Discord ne zahteva expose-anja localhosta (webhook je pull, ne push).
-            </p>
-          </div>
-          <div className="flex items-center justify-between pt-2 border-t border-border">
-            <div className="flex items-center gap-3">
-              <Switch checked={discordEnabled} onCheckedChange={setDiscordEnabled} />
-              <div>
-                <p className="text-sm font-medium">Omogoči Discord</p>
-                <p className="text-[11px] text-muted-foreground">Alerti in heartbeat bodo šli tudi na Discord (poleg Telegrama, če je vklopljen).</p>
-              </div>
-            </div>
-            <Button size="sm" variant="outline" onClick={testDiscord} disabled={testingDc} className="gap-2">
-              {testingDc ? <RefreshCw className="w-3.5 h-3.5 animate-spin" /> : <Send className="w-3.5 h-3.5" />}
-              Test
-            </Button>
-          </div>
-          {dcTestResult && (
-            <p className={cn('text-xs flex items-center gap-1.5', dcTestResult.ok ? 'text-primary' : 'text-destructive')}>
-              {dcTestResult.ok ? <CheckCircle2 className="w-3.5 h-3.5" /> : <AlertCircle className="w-3.5 h-3.5" />}
-              {dcTestResult.message}
-            </p>
-          )}
-        </CardContent>
-      </Card>
-
-      {/* v2.7: Email card */}
-      <Card className="bg-card/50">
-        <CardHeader>
-          <CardTitle className="text-sm font-bold uppercase tracking-wider flex items-center gap-2">
-            <Mail className="w-4 h-4 text-primary" />
-            Email (SMTP) <Badge variant="outline" className="text-[10px] text-primary border-primary/40">v2.7</Badge>
-          </CardTitle>
-          <CardDescription>
-            Pošiljaj alerte na email. Podpira Gmail, Outlook, ali custom SMTP.
-          </CardDescription>
-        </CardHeader>
-        <CardContent className="space-y-3">
-          <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-            <div>
-              <Label className="text-xs uppercase tracking-wider">SMTP Host</Label>
-              <Input value={emailSmtpHost} onChange={(e) => setEmailSmtpHost(e.target.value)} placeholder="smtp.gmail.com" className="mt-1 font-mono text-xs" />
-            </div>
-            <div>
-              <Label className="text-xs uppercase tracking-wider">SMTP Port</Label>
-              <Input type="number" value={emailSmtpPort} onChange={(e) => setEmailSmtpPort(parseInt(e.target.value, 10) || 587)} placeholder="587" className="mt-1 font-mono text-xs" />
-            </div>
-          </div>
-          <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-            <div>
-              <Label className="text-xs uppercase tracking-wider">SMTP Uporabnik</Label>
-              <Input value={emailSmtpUser} onChange={(e) => setEmailSmtpUser(e.target.value)} placeholder="tvoj.email@gmail.com" className="mt-1 font-mono text-xs" />
-            </div>
-            <div>
-              <Label className="text-xs uppercase tracking-wider">SMTP Geslo</Label>
-              <Input type="password" value={emailSmtpPassword} onChange={(e) => setEmailSmtpPassword(e.target.value)} placeholder={settings?.emailSmtpPasswordSet ? 'shranjeno — pusti prazno' : 'app-specific password'} className="mt-1 font-mono text-xs" />
-            </div>
-          </div>
-          <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-            <div>
-              <Label className="text-xs uppercase tracking-wider">Od (From)</Label>
-              <Input value={emailFrom} onChange={(e) => setEmailFrom(e.target.value)} placeholder="tvoj.email@gmail.com" className="mt-1 font-mono text-xs" />
-            </div>
-            <div>
-              <Label className="text-xs uppercase tracking-wider">Za (To)</Label>
-              <Input value={emailTo} onChange={(e) => setEmailTo(e.target.value)} placeholder="tvoj.email@gmail.com" className="mt-1 font-mono text-xs" />
-            </div>
-          </div>
-          <p className="text-[11px] text-muted-foreground">
-            Gmail: uporabi App Password (ne običajno geslo). Nastavi na myaccount.google.com → Security → App passwords.
-          </p>
-          <div className="flex items-center justify-between pt-2 border-t border-border">
-            <div className="flex items-center gap-3">
-              <Switch checked={emailEnabled} onCheckedChange={setEmailEnabled} />
-              <p className="text-sm font-medium">Omogoči Email</p>
-            </div>
-            <Button size="sm" variant="outline" onClick={testEmailFn} disabled={testingEmail} className="gap-2">
-              {testingEmail ? <RefreshCw className="w-3.5 h-3.5 animate-spin" /> : <Send className="w-3.5 h-3.5" />}
-              Test
-            </Button>
-          </div>
-          {emailTestResult && (
-            <p className={cn('text-xs flex items-center gap-1.5', emailTestResult.ok ? 'text-primary' : 'text-destructive')}>
-              {emailTestResult.ok ? <CheckCircle2 className="w-3.5 h-3.5" /> : <AlertCircle className="w-3.5 h-3.5" />}
-              {emailTestResult.message}
-            </p>
-          )}
-        </CardContent>
-      </Card>
-
-      {/* v2.8: Settings export/import */}
-      <Card className="bg-card/50">
-        <CardHeader>
-          <CardTitle className="text-sm font-bold uppercase tracking-wider flex items-center gap-2">
-            <Download className="w-4 h-4 text-primary" />
-            Backup konfiguracije <Badge variant="outline" className="text-[10px] text-primary border-primary/40">v2.8</Badge>
-          </CardTitle>
-          <CardDescription>
-            Izvozi/Uvozi nastavitve in monitorje kot JSON. API ključi in gesla niso vključeni.
-          </CardDescription>
-        </CardHeader>
-        <CardContent>
-          <div className="flex flex-wrap gap-2">
-            <Button size="sm" variant="outline" onClick={() => window.open('/api/settings/export', '_blank')} className="gap-2">
-              <Download className="w-3.5 h-3.5" /> Izvozi JSON
-            </Button>
-            <Button size="sm" variant="outline" onClick={() => {
-              const input = document.createElement('input');
-              input.type = 'file';
-              input.accept = '.json';
-              input.onchange = async (e) => {
-                const file = (e.target as HTMLInputElement).files?.[0];
-                if (!file) return;
-                try {
-                  const text = await file.text();
-                  const data = JSON.parse(text);
-                  const res = await fetch('/api/settings/export', {
-                    method: 'POST',
-                    headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify(data),
-                  });
-                  const result = await res.json();
-                  if (result.ok) toast.success(`Importirano: ${result.imported.settings} nastavitev, ${result.imported.monitors} monitorjev`);
-                  else toast.error('Napaka pri importu');
-                } catch { toast.error('Napaka pri branju datoteke'); }
-              };
-              input.click();
-            }} className="gap-2">
-              <Upload className="w-3.5 h-3.5" /> Uvozi JSON
-            </Button>
-          </div>
-          <p className="text-[11px] text-muted-foreground mt-2">
-            Po importu moraš ročno vnesti API ključe in gesla (varnostni razlog).
-          </p>
-        </CardContent>
-      </Card>
-
-      {/* Thresholds card */}
-      <Card className="bg-card/50">
-        <CardHeader>
-          <CardTitle className="text-sm font-bold uppercase tracking-wider flex items-center gap-2">
-            <AlertCircle className="w-4 h-4 text-amber-400" />
-            Thresholdi za alerte
-          </CardTitle>
-          <CardDescription>
-            Samo oglasi, ki zadenejo oba pogoja, sprožijo alert.
-          </CardDescription>
-        </CardHeader>
-        <CardContent className="space-y-6">
-          <div>
-            <div className="flex items-center justify-between mb-2">
-              <Label className="text-xs uppercase tracking-wider">Min ocena prilike</Label>
-              <Badge variant="outline" className="text-primary text-xs">{minOpportunityScore}/10</Badge>
-            </div>
-            <Slider
-              value={[minOpportunityScore]}
-              onValueChange={(v) => setMinOpportunityScore(v[0])}
-              min={1}
-              max={10}
-              step={1}
-            />
-            <p className="text-[11px] text-muted-foreground mt-1.5">
-              AI ocena priložnosti mora biti vsaj toliko. Višje = manj alertov, bolj selektivno.
-            </p>
-          </div>
-
-          <div>
-            <div className="flex items-center justify-between mb-2">
-              <Label className="text-xs uppercase tracking-wider">Max ocena tveganja</Label>
-              <Badge variant="outline" className="text-amber-400 text-xs">{maxRiskScore}/10</Badge>
-            </div>
-            <Slider
-              value={[maxRiskScore]}
-              onValueChange={(v) => setMaxRiskScore(v[0])}
-              min={1}
-              max={10}
-              step={1}
-            />
-            <p className="text-[11px] text-muted-foreground mt-1.5">
-              AI ocena tveganja (1=varno, 10=prevara) mora biti največ toliko.
-            </p>
-          </div>
-        </CardContent>
-      </Card>
-
-      {/* Heartbeat card - v1.1 implemented */}
-      <Card className="bg-card/50">
-        <CardHeader>
-          <CardTitle className="text-sm font-bold uppercase tracking-wider flex items-center gap-2">
-            <RefreshCw className="w-4 h-4 text-primary" />
-            Heartbeat <Badge variant="outline" className="text-[10px] text-primary border-primary/40">v1.1</Badge>
-          </CardTitle>
-          <CardDescription>
-            Dnevno poročilo o stanju sistema na Telegram. Pošlje se avtomatsko ob uri, ki jo nastaviš.
-          </CardDescription>
-        </CardHeader>
-        <CardContent>
-          <div className="flex items-center gap-3 mb-3">
-            <Switch checked={heartbeatEnabled} onCheckedChange={setHeartbeatEnabled} />
-            <div className="flex-1">
-              <p className="text-sm font-medium">Dnevno poročilo ob {heartbeatHour}:00</p>
-              <p className="text-[11px] text-muted-foreground">
-                Pošlje povzetek na Telegram (št. preverjenih oglasov, alerti, napake).
-                {settings.lastHeartbeatAt && (
-                  <span className="block mt-0.5">Zadnje poslano: {new Date(settings.lastHeartbeatAt).toLocaleString('sl-SI')}</span>
-                )}
-              </p>
-            </div>
-            <div className="flex items-center gap-2">
-              <Input
-                type="number"
-                min={0}
-                max={23}
-                value={heartbeatHour}
-                onChange={(e) => setHeartbeatHour(parseInt(e.target.value, 10) || 22)}
-                className="w-16 font-mono text-center"
-              />
-              <span className="text-xs text-muted-foreground">:00</span>
-            </div>
-          </div>
-          <Button
-            size="sm"
-            variant="outline"
-            disabled={heartbeatSending || !heartbeatEnabled}
-            onClick={async () => {
-              setHeartbeatSending(true);
-              try {
-                const res = await fetch('/api/heartbeats', { method: 'POST' });
-                const data = await res.json();
-                if (data.sent) toast.success('Heartbeat poslan');
-                else toast.info(`Heartbeat ni poslan: ${data.reason}`);
-              } catch {
-                toast.error('Napaka pri pošiljanju heartbeat');
-              } finally {
-                setHeartbeatSending(false);
-              }
-            }}
-            className="gap-2"
-          >
-            {heartbeatSending && <RefreshCw className="w-3.5 h-3.5 animate-spin" />}
-            Pošlji testni heartbeat
-          </Button>
-        </CardContent>
-      </Card>
-
-      {/* v1.1: Image analysis card */}
-      <Card className="bg-card/50">
-        <CardHeader>
-          <CardTitle className="text-sm font-bold uppercase tracking-wider flex items-center gap-2">
-            <Zap className="w-4 h-4 text-primary" />
-            AI analiza slik <Badge variant="outline" className="text-[10px] text-primary border-primary/40">v1.1</Badge>
-          </CardTitle>
-          <CardDescription>
-            AI pregleda tudi sliko oglasa in oceni, ali je realna amaterska fotografija, sumljiva stock foto ali manjkajoča.
-          </CardDescription>
-        </CardHeader>
-        <CardContent>
-          <div className="flex items-start gap-3">
-            <Switch checked={imageAnalysisEnabled} onCheckedChange={setImageAnalysisEnabled} />
-            <div className="flex-1">
-              <p className="text-sm font-medium">Omogoči analizo slik</p>
-              <p className="text-[11px] text-muted-foreground mt-0.5">
-                Za delovanje potrebuješ multimodalni model:
-              </p>
-              <ul className="text-[11px] text-muted-foreground mt-1 ml-3 list-disc space-y-0.5">
-                <li><b>Ollama</b>: <code>llava:7b</code>, <code>minicpm-v:8b</code> — poženi z <code>ollama pull llava:7b</code></li>
-                <li><b>OpenAI</b>: <code>gpt-4o</code>, <code>gpt-4o-mini</code> (oba podpirata slike)</li>
-                <li><b>Anthropic</b>: <code>claude-3-5-sonnet</code>, <code>claude-3-5-haiku</code></li>
-              </ul>
-              <p className="text-[11px] text-amber-400 mt-2">
-                ⚠️ Analiza slik poveča čas obdelave in porabo tokenov (~5-15s na oglas).
-              </p>
-            </div>
-          </div>
-        </CardContent>
-      </Card>
-
-      {/* v1.1: Bolha Playwright fallback */}
-      <Card className="bg-card/50">
-        <CardHeader>
-          <CardTitle className="text-sm font-bold uppercase tracking-wider flex items-center gap-2">
-            <Cpu className="w-4 h-4 text-primary" />
-            Bolha Playwright fallback <Badge variant="outline" className="text-[10px] text-primary border-primary/40">v1.1</Badge>
-          </CardTitle>
-          <CardDescription>
-            Ko cheerio scraping na Bolhi ne uspe zaradi Cloudflare, samodejno ponovi z browserjem (Playwright).
-          </CardDescription>
-        </CardHeader>
-        <CardContent>
-          <div className="flex items-start gap-3">
-            <Switch checked={playwrightEnabled} onCheckedChange={setPlaywrightEnabled} />
-            <div className="flex-1">
-              <p className="text-sm font-medium">Omogoči Playwright fallback</p>
-              <p className="text-[11px] text-muted-foreground mt-0.5">
-                Zahteva nameščen paket (<code>bun add playwright</code>) in brskalnik (<code>bunx playwright install chromium</code>).
-                Brez tega bo Bolha padla, če Cloudflare blokira.
-              </p>
-              <pre className="text-[11px] font-mono bg-background/70 p-2 rounded border border-border mt-2 overflow-x-auto">
-{`bun add playwright
-bunx playwright install chromium`}
-              </pre>
-            </div>
-          </div>
-        </CardContent>
-      </Card>
-
-      {/* v1.1: Telegram inline tipke */}
-      <Card className="bg-card/50">
-        <CardHeader>
-          <CardTitle className="text-sm font-bold uppercase tracking-wider flex items-center gap-2">
-            <MessageSquare className="w-4 h-4 text-primary" />
-            Telegram inline tipke <Badge variant="outline" className="text-[10px] text-primary border-primary/40">v1.1</Badge>
-          </CardTitle>
-          <CardDescription>
-            Alerti na Telegramu dobijo tipke: "Odpri oglas", "Dashboard", "Arhiviraj", "Označi prevaro".
-          </CardDescription>
-        </CardHeader>
-        <CardContent className="space-y-4">
-          <div className="flex items-start gap-3">
-            <Switch checked={telegramInlineButtons} onCheckedChange={setTelegramInlineButtons} />
-            <div className="flex-1">
-              <p className="text-sm font-medium">Omogoči inline tipke</p>
-              <p className="text-[11px] text-muted-foreground mt-0.5">
-                URL tipke (Odpri oglas, Dashboard) delujejo brez setupa.
-                Callback tipke (Arhiviraj, Označi prevaro) zahtevajo webhook (glej spodaj).
-              </p>
-            </div>
-          </div>
-
-          <div>
-            <Label htmlFor="s-wh-secret" className="text-xs uppercase tracking-wider">Webhook secret (izbirno)</Label>
-            <Input
-              id="s-wh-secret"
-              type="password"
-              value={telegramWebhookSecret}
-              onChange={(e) => setTelegramWebhookSecret(e.target.value)}
-              placeholder={settings.telegramWebhookSecretSet ? 'shranjen — pusti prazno za ohranitev' : 'naključni niz za zaščito webhooka'}
-              className="mt-1 font-mono text-xs"
-            />
-            <p className="text-[11px] text-muted-foreground mt-1.5">
-              Za aktivacijo callback tipk (Arhiviraj/Prevara) nastavi webhook:
-            </p>
-            <pre className="text-[11px] font-mono bg-background/70 p-2 rounded border border-border mt-1.5 overflow-x-auto">
-{`# 1. Expose localhost (izberi eno):
-ngrok http 3000
-# ali: cloudflared tunnel --url http://localhost:3000
-
-# 2. Set webhook (zamenjaj URL in dodaj ?secret=TVOJ_SECRET):
-curl "https://api.telegram.org/bot<TOKEN>/setWebhook\\
-?url=https://<tvoj-tunnel>/api/telegram/webhook?secret=TVOJ_SECRET"
-
-# 3. V .env dodaj: TELEGRAM_WEBHOOK_SECRET=TVOJ_SECRET`}
-            </pre>
-          </div>
-        </CardContent>
-      </Card>
+      {/* Advanced — v8.96: imported from ./settings/settings-advanced */}
+      <SettingsAdvanced
+        settings={settings}
+        imageAnalysisEnabled={imageAnalysisEnabled}
+        setImageAnalysisEnabled={setImageAnalysisEnabled}
+        playwrightEnabled={playwrightEnabled}
+        setPlaywrightEnabled={setPlaywrightEnabled}
+        telegramInlineButtons={telegramInlineButtons}
+        setTelegramInlineButtons={setTelegramInlineButtons}
+        telegramWebhookSecret={telegramWebhookSecret}
+        setTelegramWebhookSecret={setTelegramWebhookSecret}
+      />
 
       {/* v1.3: Database backup / restore */}
       <Card className="bg-card/50">
@@ -1191,156 +656,18 @@ curl "https://api.telegram.org/bot<TOKEN>/setWebhook\\
         </CardContent>
       </Card>
 
-      {/* v1.5: PWA + Push notifications */}
-      <Card className="bg-card/50">
-        <CardHeader>
-          <CardTitle className="text-sm font-bold uppercase tracking-wider flex items-center gap-2">
-            <SmartphoneCharging className="w-4 h-4 text-primary" />
-            PWA + Push obvestila <Badge variant="outline" className="text-[10px] text-primary border-primary/40">v1.5</Badge>
-          </CardTitle>
-          <CardDescription>
-            Instaliraj aplikacijo na telefon/desktop in prejemaj push obvestila o novih priložnostih.
-          </CardDescription>
-        </CardHeader>
-        <CardContent className="space-y-4">
-          {/* Push toggle */}
-          <div className="flex items-start gap-3">
-            <Switch checked={pushEnabled} onCheckedChange={setPushEnabled} />
-            <div className="flex-1">
-              <p className="text-sm font-medium">Omogoči push obvestila</p>
-              <p className="text-[11px] text-muted-foreground mt-0.5">
-                Ko je omogočeno, vsak alert sproži tudi browser push notification (preko service workerja).
-                {settings.vapidPublicKeySet
-                  ? ' VAPID ključi so generirani.'
-                  : ' VAPID ključi bodo generirani ob prvem shranjevanju.'}
-              </p>
-            </div>
-          </div>
-
-          {/* Subscription status + actions */}
-          {!pushSupported ? (
-            <div className="text-xs text-amber-400 p-2 bg-amber-400/5 border border-amber-400/20 rounded">
-              ⚠ Ta brskalnik ne podpira push obvestil. Uporabi Chrome/Edge/Firefox ali mobilni brskalnik s podporo.
-            </div>
-          ) : (
-            <div className="space-y-2">
-              <div className="flex items-center gap-2 text-xs">
-                <span className={pushSubscribed ? 'text-primary' : 'text-muted-foreground'}>
-                  {pushSubscribed ? '✅ Ta naprava je registrirana' : '⚪ Ta naprava ni registrirana'}
-                </span>
-              </div>
-              <div className="flex flex-wrap gap-2">
-                {!pushSubscribed ? (
-                  <Button size="sm" variant="outline" onClick={subscribePush} disabled={pushLoading || !pushEnabled} className="gap-2">
-                    {pushLoading ? <RefreshCw className="w-3.5 h-3.5 animate-spin" /> : <Smartphone className="w-3.5 h-3.5" />}
-                    Registriraj to napravo
-                  </Button>
-                ) : (
-                  <Button size="sm" variant="outline" onClick={unsubscribePush} disabled={pushLoading} className="gap-2">
-                    Odjavi napravo
-                  </Button>
-                )}
-                <Button size="sm" variant="outline" onClick={testPush} disabled={pushLoading || !pushSubscribed} className="gap-2">
-                  <Send className="w-3.5 h-3.5" /> Test push
-                </Button>
-              </div>
-            </div>
-          )}
-
-          {/* PWA install info */}
-          <div className="border-t border-border pt-3">
-            <h4 className="text-xs uppercase tracking-wider text-muted-foreground mb-2">📱 PWA instalacija</h4>
-            <p className="text-[11px] text-muted-foreground mb-2">
-              Aplikacija je PWA-kompatibilna. Lahko jo instaliraš kot native app:
-            </p>
-            <ul className="text-[11px] text-muted-foreground space-y-1 ml-3 list-disc">
-              <li><b>Chrome/Edge (desktop)</b>: klikni ikono "Instaliraj" v naslovni vrstici</li>
-              <li><b>Chrome (Android)</b>: menu → "Dodaj na domači zaslon"</li>
-              <li><b>Safari (iOS)</b>: Share → "Dodaj na domači zaslon" (iOS 16.4+)</li>
-              <li><b>Firefox (desktop)</b>: ikona "Instaliraj" v naslovni vrstici</li>
-            </ul>
-            <p className="text-[11px] text-amber-400 mt-2">
-              ⚠ Push na iOS zahteva iOS 16.4+ in instalirano PWA (ne deluje v Safari browserju).
-            </p>
-          </div>
-        </CardContent>
-      </Card>
-
-      {/* v2.2: Quiet hours */}
-      <Card className="bg-card/50">
-        <CardHeader>
-          <CardTitle className="text-sm font-bold uppercase tracking-wider flex items-center gap-2">
-            <Bell className="w-4 h-4 text-primary" />
-            Tihe ure <Badge variant="outline" className="text-[10px] text-primary border-primary/40">v2.2</Badge>
-          </CardTitle>
-          <CardDescription>
-            Ne pošiljaj alertov (Telegram/Discord/Slack/Push) v določenih urah. Alerti se še vedno shranijo v bazo.
-          </CardDescription>
-        </CardHeader>
-        <CardContent>
-          <div className="flex items-center gap-3 mb-3">
-            <Switch checked={quietHoursEnabled} onCheckedChange={setQuietHoursEnabled} />
-            <div className="flex-1">
-              <p className="text-sm font-medium">Omogoči tihe ure</p>
-              <p className="text-[11px] text-muted-foreground mt-0.5">
-                {quietHoursEnabled
-                  ? `Tihe ure: ${String(quietStartHour).padStart(2, '0')}:00 – ${String(quietEndHour).padStart(2, '0')}:00`
-                  : 'Izklopljeno — alerti prihajajo 24/7'}
-              </p>
-            </div>
-          </div>
-          {quietHoursEnabled && (
-            <div className="grid grid-cols-2 gap-3">
-              <div>
-                <Label className="text-xs uppercase">Od ure</Label>
-                <Input type="number" min={0} max={23} value={quietStartHour} onChange={(e) => setQuietStartHour(parseInt(e.target.value, 10) || 0)} className="mt-1 font-mono text-center w-24" />
-              </div>
-              <div>
-                <Label className="text-xs uppercase">Do ure</Label>
-                <Input type="number" min={0} max={23} value={quietEndHour} onChange={(e) => setQuietEndHour(parseInt(e.target.value, 10) || 0)} className="mt-1 font-mono text-center w-24" />
-              </div>
-            </div>
-          )}
-        </CardContent>
-      </Card>
-
-      {/* v2.2: Auto-cleanup */}
-      <Card className="bg-card/50">
-        <CardHeader>
-          <CardTitle className="text-sm font-bold uppercase tracking-wider flex items-center gap-2">
-            <Trash2 className="w-4 h-4 text-primary" />
-            Samodejni cleanup <Badge variant="outline" className="text-[10px] text-primary border-primary/40">v2.2</Badge>
-          </CardTitle>
-          <CardDescription>
-            Samodejno arhiviraj stare alerte in briši stare oglase. Bookmarked in v Skladišču ne bodo izbrisani.
-          </CardDescription>
-        </CardHeader>
-        <CardContent>
-          <div className="flex items-center gap-3 mb-3">
-            <Switch checked={autoCleanupEnabled} onCheckedChange={setAutoCleanupEnabled} />
-            <div className="flex-1">
-              <p className="text-sm font-medium">Omogoči samodejni cleanup</p>
-              <p className="text-[11px] text-muted-foreground mt-0.5">
-                {autoCleanupEnabled
-                  ? `Arhivira alerte >${autoCleanupAlertsDays} dni, briše oglase >${autoCleanupListingsDays} dni`
-                  : 'Izklopljeno — ročno upravljanje'}
-              </p>
-            </div>
-          </div>
-          {autoCleanupEnabled && (
-            <div className="grid grid-cols-2 gap-3">
-              <div>
-                <Label className="text-xs uppercase">Arhiviraj alerte po (dneh)</Label>
-                <Input type="number" min={1} max={365} value={autoCleanupAlertsDays} onChange={(e) => setAutoCleanupAlertsDays(parseInt(e.target.value, 10) || 30)} className="mt-1 font-mono text-center w-24" />
-              </div>
-              <div>
-                <Label className="text-xs uppercase">Briši oglase po (dneh)</Label>
-                <Input type="number" min={1} max={365} value={autoCleanupListingsDays} onChange={(e) => setAutoCleanupListingsDays(parseInt(e.target.value, 10) || 90)} className="mt-1 font-mono text-center w-24" />
-              </div>
-            </div>
-          )}
-        </CardContent>
-      </Card>
+      {/* Push — v8.96: imported from ./settings/settings-push */}
+      <SettingsPush
+        settings={settings}
+        pushEnabled={pushEnabled}
+        setPushEnabled={setPushEnabled}
+        pushSupported={pushSupported}
+        pushSubscribed={pushSubscribed}
+        pushLoading={pushLoading}
+        subscribePush={subscribePush}
+        unsubscribePush={unsubscribePush}
+        testPush={testPush}
+      />
 
       {/* v4.2 / v8.39: Profit goal — enhanced with live preview + dedicated set endpoint */}
       <Card className="bg-card/50">
@@ -1379,176 +706,6 @@ curl "https://api.telegram.org/bot<TOKEN>/setWebhook\\
         </CardContent>
       </Card>
 
-      {/* v1.6: Digest mode */}
-      <Card className="bg-card/50">
-        <CardHeader>
-          <CardTitle className="text-sm font-bold uppercase tracking-wider flex items-center gap-2">
-            <Mail className="w-4 h-4 text-primary" />
-            Digest mode <Badge variant="outline" className="text-[10px] text-primary border-primary/40">v1.6</Badge>
-          </CardTitle>
-          <CardDescription>
-            Namesto instant alertov (vsak posebej) prejmi dnevni ali tedenski povzetek z top priložnostmi.
-          </CardDescription>
-        </CardHeader>
-        <CardContent className="space-y-4">
-          <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-            <div>
-              <Label className="text-xs uppercase tracking-wider">Način</Label>
-              <Select value={digestMode} onValueChange={setDigestMode}>
-                <SelectTrigger className="mt-1"><SelectValue /></SelectTrigger>
-                <SelectContent>
-                  <SelectItem value="instant">⚡ Instant (vsak alert posebej)</SelectItem>
-                  <SelectItem value="daily">📊 Dnevni povzetek</SelectItem>
-                  <SelectItem value="weekly">📅 Tedenski povzetek</SelectItem>
-                </SelectContent>
-              </Select>
-            </div>
-            {digestMode !== 'instant' && (
-              <div>
-                <Label className="text-xs uppercase tracking-wider">Ura pošiljanja</Label>
-                <Input
-                  type="number"
-                  min={0}
-                  max={23}
-                  value={digestHour}
-                  onChange={(e) => setDigestHour(parseInt(e.target.value, 10) || 20)}
-                  className="mt-1 font-mono text-center w-24"
-                />
-              </div>
-            )}
-          </div>
-          {digestMode !== 'instant' && (
-            <p className="text-[11px] text-muted-foreground">
-              Povzetek se pošlje ob {digestHour}:00 ali ob naslednjem cron klicu po uri. Vsebuje: št. novih oglasov, št. alertov, top 5 priložnosti z AI razlogi.
-            </p>
-          )}
-          <div className="flex items-center gap-2">
-            <Button
-              size="sm"
-              variant="outline"
-              disabled={digestSending || digestMode === 'instant'}
-              onClick={async () => {
-                setDigestSending(true);
-                try {
-                  const res = await fetch('/api/digest?force=1', { method: 'POST' });
-                  const data = await res.json();
-                  if (data.ok && data.sent) toast.success('Digest poslan');
-                  else toast.info('Digest ni poslan: ' + (data.reason ?? 'napaka'));
-                } catch { toast.error('Napaka'); }
-                finally { setDigestSending(false); }
-              }}
-              className="gap-2"
-            >
-              {digestSending && <RefreshCw className="w-3.5 h-3.5 animate-spin" />}
-              Pošlji testni digest
-            </Button>
-          </div>
-
-          {/* v5.2: AI Daily Summary — AI generated report */}
-          <div className="border-t border-border pt-3 mt-3">
-            <h4 className="text-xs uppercase tracking-wider text-primary flex items-center gap-1.5 mb-2">
-              <Sparkles className="w-3.5 h-3.5" />
-              AI dnevni povzetek
-              <Badge variant="outline" className="text-[10px] text-primary border-primary/40">v5.2</Badge>
-            </h4>
-            <p className="text-[11px] text-muted-foreground mb-3">
-              AI analizira zadnje oglase in generira jedrnat povzetek s TOP 3 priložnostmi, trendi in priporočilom. Pošlje se na Telegram in/ali Email.
-            </p>
-            <div className="grid grid-cols-2 gap-2">
-              <Button
-                size="sm"
-                variant="outline"
-                className="gap-2 h-8"
-                disabled={aiSummarySending === 'telegram'}
-                onClick={async () => {
-                  setAiSummarySending('telegram');
-                  try {
-                    const res = await fetch('/api/ai/daily-summary', {
-                      method: 'POST',
-                      headers: { 'Content-Type': 'application/json' },
-                      body: JSON.stringify({ sendTelegram: true, hours: 24 }),
-                    });
-                    const data = await res.json();
-                    if (data.ok) {
-                      toast.success(`✓ AI povzetek poslan na Telegram (${data.stats.opportunitiesFound} priložnosti)`);
-                    } else {
-                      toast.error(data.error ?? 'Napaka');
-                    }
-                  } catch (e: any) { toast.error(e?.message ?? 'Napaka'); }
-                  finally { setAiSummarySending(null); }
-                }}
-              >
-                {aiSummarySending === 'telegram' ? <RefreshCw className="w-3.5 h-3.5 animate-spin" /> : <Send className="w-3.5 h-3.5" />}
-                Pošlji na Telegram
-              </Button>
-              <Button
-                size="sm"
-                variant="outline"
-                className="gap-2 h-8"
-                disabled={aiSummarySending === 'email'}
-                onClick={async () => {
-                  setAiSummarySending('email');
-                  try {
-                    const res = await fetch('/api/ai/daily-summary', {
-                      method: 'POST',
-                      headers: { 'Content-Type': 'application/json' },
-                      body: JSON.stringify({ sendEmail: true, hours: 24 }),
-                    });
-                    const data = await res.json();
-                    if (data.ok) {
-                      toast.success(`✓ AI povzetek poslan na Email (${data.stats.opportunitiesFound} priložnosti)`);
-                    } else {
-                      toast.error(data.error ?? 'Napaka');
-                    }
-                  } catch (e: any) { toast.error(e?.message ?? 'Napaka'); }
-                  finally { setAiSummarySending(null); }
-                }}
-              >
-                {aiSummarySending === 'email' ? <RefreshCw className="w-3.5 h-3.5 animate-spin" /> : <Mail className="w-3.5 h-3.5" />}
-                Pošlji na Email
-              </Button>
-            </div>
-            <details className="mt-2 text-[11px] text-muted-foreground">
-              <summary className="cursor-pointer hover:text-foreground">📋 Predogled povzetka</summary>
-              <div className="mt-2 space-y-2">
-                <Button
-                  size="sm"
-                  variant="ghost"
-                  className="h-7 text-[10px] gap-1"
-                  disabled={aiSummarySending === 'preview'}
-                  onClick={async () => {
-                    setAiSummarySending('preview');
-                    setAiSummaryPreview(null);
-                    try {
-                      const res = await fetch('/api/ai/daily-summary', {
-                        method: 'POST',
-                        headers: { 'Content-Type': 'application/json' },
-                        body: JSON.stringify({ hours: 24 }),
-                      });
-                      const data = await res.json();
-                      if (data.ok) {
-                        setAiSummaryPreview(data);
-                      } else {
-                        toast.error(data.error ?? 'Napaka');
-                      }
-                    } catch (e: any) { toast.error(e?.message ?? 'Napaka'); }
-                    finally { setAiSummarySending(null); }
-                  }}
-                >
-                  {aiSummarySending === 'preview' ? <RefreshCw className="w-3 h-3 animate-spin" /> : <Sparkles className="w-3 h-3" />}
-                  Generiraj predogled
-                </Button>
-                {aiSummaryPreview && (
-                  <div className="bg-background/30 border border-border rounded p-2 text-xs whitespace-pre-wrap max-h-60 overflow-y-auto">
-                    {aiSummaryPreview.summary}
-                  </div>
-                )}
-              </div>
-            </details>
-          </div>
-        </CardContent>
-      </Card>
-
       {/* v5.5: Category notification preferences */}
       <CategoryNotificationsSection />
 
@@ -1557,26 +714,6 @@ curl "https://api.telegram.org/bot<TOKEN>/setWebhook\\
 
       {/* v5.4: Webhook integrations */}
       <WebhooksSection />
-
-      {/* Cron info */}
-      <Card className="border-primary/30 bg-primary/5">
-        <CardContent className="p-4">
-          <h3 className="text-sm font-bold mb-2 text-primary uppercase tracking-wider">Avtomatsko poganjanje (cron)</h3>
-          <p className="text-xs text-muted-foreground mb-2">
-            Da bodo monitorji tekli samodejno, nastavi zunanji cron, ki vsakih 5–10 minut pokliče:
-          </p>
-          <pre className="text-[11px] font-mono bg-background/70 p-3 rounded border border-border overflow-x-auto">
-{`# Linux/Mac cron (vsakih 10 min):
-*/10 * * * * curl -s http://localhost:3000/api/cron/run-all > /dev/null
-
-# Windows Task Scheduler (PowerShell skripta):
-Invoke-WebRequest -Uri "http://localhost:3000/api/cron/run-all" -Method POST
-
-# Ali z zaščito (nastavi env MONITOR_CRON_KEY=secret):
-curl -s "http://localhost:3000/api/cron/run-all?key=secret"`}
-          </pre>
-        </CardContent>
-      </Card>
 
       <div className="text-[11px] text-muted-foreground text-center pb-4">
         Zadnja posodobitev nastavitev: {settings.updatedAt ? new Date(settings.updatedAt).toLocaleString('sl-SI') : '—'}
