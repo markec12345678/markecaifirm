@@ -11,49 +11,31 @@
  * 3. Market Saturation — /api/ai/market-saturation (5 nivojev: saturated → blue_ocean)
  * 4. Risk Parity — /api/ai/risk-parity (alokacija z enakim riskom)
  * 5. Margin Guardian — /api/ai/margin-guardian (avtomatski margin alerti)
+ *
+ * v9.09: 10 AI sekcij ekstraktiranih v ./risk/ module (vsaka z lastnim state-om + fetch-om).
  */
 
 import { useEffect, useState, useCallback } from 'react';
-import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
+import { Card, CardContent } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
-import { Badge } from '@/components/ui/badge';
-import { RefreshCw, Shield, Umbrella, Waves, Scale, ShieldCheck, Sparkles, FileText, AlertCircle, ClipboardCheck, BarChart3 } from 'lucide-react';
+import { RefreshCw, Shield } from 'lucide-react';
 import { toast } from 'sonner';
 import { cn } from '@/lib/utils';
-
-interface Trade {
-  id: string;
-  title: string;
-  buyPrice: number;
-  category: string;
-  status: string;
-}
+import type { Trade } from './risk/types';
+import { RiskHedging } from './risk/risk-hedging';
+import { InsuranceOptimizer } from './risk/insurance-optimizer';
+import { MarketSaturation } from './risk/market-saturation';
+import { RiskParity } from './risk/risk-parity';
+import { MarginGuardian } from './risk/margin-guardian';
+import { InsuranceClaim } from './risk/insurance-claim';
+import { AnomalyDetection } from './risk/anomaly-detection';
+import { InventoryRiskAssessor } from './risk/inventory-risk-assessor';
+import { QualityPredictor } from './risk/quality-predictor';
+import { QualityAggregator } from './risk/quality-aggregator';
 
 export function RiskView() {
   const [trades, setTrades] = useState<Trade[]>([]);
   const [loading, setLoading] = useState(true);
-
-  const [hedging, setHedging] = useState<any>(null);
-  const [hedgingLoading, setHedgingLoading] = useState(false);
-  const [insurance, setInsurance] = useState<any>(null);
-  const [insuranceLoading, setInsuranceLoading] = useState(false);
-  const [saturation, setSaturation] = useState<any>(null);
-  const [saturationLoading, setSaturationLoading] = useState(false);
-  const [parity, setParity] = useState<any>(null);
-  const [parityLoading, setParityLoading] = useState(false);
-  const [guardian, setGuardian] = useState<any>(null);
-  const [guardianLoading, setGuardianLoading] = useState(false);
-  // v7.16: 5 novih risk AI funkcij
-  const [claim, setClaim] = useState<any>(null);
-  const [claimLoading, setClaimLoading] = useState(false);
-  const [anomalies, setAnomalies] = useState<any>(null);
-  const [anomaliesLoading, setAnomaliesLoading] = useState(false);
-  const [invRisk, setInvRisk] = useState<any>(null);
-  const [invRiskLoading, setInvRiskLoading] = useState(false);
-  const [qualityPred, setQualityPred] = useState<any>(null);
-  const [qualityPredLoading, setQualityPredLoading] = useState(false);
-  const [qualityAgg, setQualityAgg] = useState<any>(null);
-  const [qualityAggLoading, setQualityAggLoading] = useState(false);
 
   const load = useCallback(async () => {
     try {
@@ -81,72 +63,6 @@ export function RiskView() {
     : { cat: '—', value: 0 };
   const concentrationPct = totalValue > 0 ? Math.round((topCategory.value / totalValue) * 100) : 0;
 
-  const runHedging = async () => {
-    setHedgingLoading(true); setHedging(null);
-    try {
-      const res = await fetch('/api/ai/risk-hedging', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: '{}' });
-      const data = await res.json();
-      if (data.ok) { setHedging(data); toast.success('✓ Hedge strategije generirane'); }
-      else toast.error(data.error ?? 'Napaka');
-    } catch (e: any) { toast.error(e?.message ?? 'Napaka'); }
-    finally { setHedgingLoading(false); }
-  };
-
-  const runInsurance = async () => {
-    setInsuranceLoading(true); setInsurance(null);
-    try {
-      const res = await fetch('/api/ai/insurance-optimizer-v2', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: '{}' });
-      const data = await res.json();
-      if (data.ok) { setInsurance(data); toast.success('✓ Zavarovalna optimizacija generirana'); }
-      else toast.error(data.error ?? 'Napaka');
-    } catch (e: any) { toast.error(e?.message ?? 'Napaka'); }
-    finally { setInsuranceLoading(false); }
-  };
-
-  const runSaturation = async () => {
-    setSaturationLoading(true); setSaturation(null);
-    try {
-      const res = await fetch('/api/ai/market-saturation', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: '{}' });
-      const data = await res.json();
-      if (data.ok) { setSaturation(data); toast.success('✓ Tržna saturacija analizirana'); }
-      else toast.error(data.error ?? 'Napaka');
-    } catch (e: any) { toast.error(e?.message ?? 'Napaka'); }
-    finally { setSaturationLoading(false); }
-  };
-
-  const runParity = async () => {
-    setParityLoading(true); setParity(null);
-    try {
-      const res = await fetch('/api/ai/risk-parity', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: '{}' });
-      const data = await res.json();
-      if (data.ok) { setParity(data); toast.success('✓ Risk parity analiza generirana'); }
-      else toast.error(data.error ?? 'Napaka');
-    } catch (e: any) { toast.error(e?.message ?? 'Napaka'); }
-    finally { setParityLoading(false); }
-  };
-
-  const runGuardian = async () => {
-    setGuardianLoading(true); setGuardian(null);
-    try {
-      const res = await fetch('/api/ai/margin-guardian', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: '{}' });
-      const data = await res.json();
-      if (data.ok) { setGuardian(data); toast.success('✓ Margin guardian aktiviran'); }
-      else toast.error(data.error ?? 'Napaka');
-    } catch (e: any) { toast.error(e?.message ?? 'Napaka'); }
-    finally { setGuardianLoading(false); }
-  };
-
-  // v7.16: 6-10. Pet novih risk AI funkcij
-  const runClaim = async () => { setClaimLoading(true); setClaim(null); try { const r = await fetch('/api/ai/insurance-claim', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: '{}' }); const d = await r.json(); if (d.ok) { setClaim(d); toast.success('✓ Claim analiza generirana'); } else toast.error(d.error ?? 'Napaka'); } catch (e: any) { toast.error(e?.message ?? 'Napaka'); } finally { setClaimLoading(false); } };
-  const runAnomalies = async () => { setAnomaliesLoading(true); setAnomalies(null); try { const r = await fetch('/api/ai/detect-anomalies', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: '{}' }); const d = await r.json(); if (d.ok) { setAnomalies(d); toast.success('✓ Anomalije detektirane'); } else toast.error(d.error ?? 'Napaka'); } catch (e: any) { toast.error(e?.message ?? 'Napaka'); } finally { setAnomaliesLoading(false); } };
-  const runInvRisk = async () => { setInvRiskLoading(true); setInvRisk(null); try { const r = await fetch('/api/ai/inventory-risk-assessor', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: '{}' }); const d = await r.json(); if (d.ok) { setInvRisk(d); toast.success('✓ Inventory risk ocenjen'); } else toast.error(d.error ?? 'Napaka'); } catch (e: any) { toast.error(e?.message ?? 'Napaka'); } finally { setInvRiskLoading(false); } };
-  const runQualityPred = async () => { setQualityPredLoading(true); setQualityPred(null); try { const r = await fetch('/api/ai/quality-predictor', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: '{}' }); const d = await r.json(); if (d.ok) { setQualityPred(d); toast.success('✓ Quality napoved generirana'); } else toast.error(d.error ?? 'Napaka'); } catch (e: any) { toast.error(e?.message ?? 'Napaka'); } finally { setQualityPredLoading(false); } };
-  const runQualityAgg = async () => { setQualityAggLoading(true); setQualityAgg(null); try { const r = await fetch('/api/ai/quality-aggregator', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: '{}' }); const d = await r.json(); if (d.ok) { setQualityAgg(d); toast.success('✓ Quality aggregator generiran'); } else toast.error(d.error ?? 'Napaka'); } catch (e: any) { toast.error(e?.message ?? 'Napaka'); } finally { setQualityAggLoading(false); } };
-
-  const runAll = async () => {
-    await Promise.all([runHedging(), runInsurance(), runSaturation(), runParity(), runGuardian(), runClaim(), runAnomalies(), runInvRisk(), runQualityPred(), runQualityAgg()]);
-  };
-
   if (loading) {
     return (
       <div className="flex items-center justify-center min-h-[60vh] text-muted-foreground">
@@ -172,9 +88,6 @@ export function RiskView() {
         <div className="flex gap-2">
           <Button onClick={load} variant="outline" size="sm" className="gap-2">
             <RefreshCw className="w-4 h-4" /> Osveži
-          </Button>
-          <Button onClick={runAll} disabled={trades.length === 0} size="sm" className="gap-2">
-            <Sparkles className="w-4 h-4" /> Generiraj vse
           </Button>
         </div>
       </div>
@@ -212,371 +125,37 @@ export function RiskView() {
       {/* AI Panels */}
       <div className="grid md:grid-cols-2 gap-4">
         {/* 1. Risk Hedging */}
-        <Card>
-          <CardHeader>
-            <CardTitle className="text-sm flex items-center justify-between">
-              <span className="flex items-center gap-2"><Shield className="w-4 h-4 text-red-500" /> AI Risk Hedging</span>
-              <Button size="sm" variant="outline" onClick={runHedging} disabled={hedgingLoading} className="h-6 text-xs gap-1.5">
-                {hedgingLoading ? <RefreshCw className="w-3 h-3 animate-spin" /> : <Shield className="w-3 h-3" />} Generiraj
-              </Button>
-            </CardTitle>
-          </CardHeader>
-          <CardContent>
-            {hedgingLoading ? (
-              <div className="py-4 text-center text-xs text-muted-foreground"><RefreshCw className="w-4 h-4 mx-auto mb-1 animate-spin opacity-50" /> AI analizira 8 hedge strategij...</div>
-            ) : hedging?.hedging ? (
-              <div className="space-y-2 text-xs">
-                {hedging.hedging.hedges?.slice(0, 4).map((h: any, i: number) => (
-                  <div key={i} className="bg-card/30 border rounded p-2">
-                    <div className="flex items-center justify-between mb-1">
-                      <Badge variant="outline" className="text-[9px] text-red-500 border-red-500/30">{h.type || h.strategy}</Badge>
-                      <span className="text-[9px] text-muted-foreground">{h.coveragePct ?? h.coverage ?? 0}% pokritost</span>
-                    </div>
-                    <div className="text-[10px] font-medium">{h.action || h.description}</div>
-                  </div>
-                ))}
-                {hedging.hedging.recommendations?.slice(0, 2).map((r: any, i: number) => (
-                  <div key={i} className="bg-primary/5 border border-primary/20 rounded p-2 text-[10px]">💡 {r.recommendation || r.action}</div>
-                ))}
-                {hedging.hedging.insights && <div className="text-[9px] text-muted-foreground">💡 {hedging.hedging.insights}</div>}
-              </div>
-            ) : (
-              <p className="text-xs text-muted-foreground text-center py-4">AI predlaga 8 hedge strategij (diversifikacija, counterweight, likvidnost, sezonsko...).</p>
-            )}
-          </CardContent>
-        </Card>
+        <RiskHedging />
 
         {/* 2. Insurance Optimizer v2 */}
-        <Card>
-          <CardHeader>
-            <CardTitle className="text-sm flex items-center justify-between">
-              <span className="flex items-center gap-2"><Umbrella className="w-4 h-4 text-blue-400" /> AI Insurance Optimizer v2</span>
-              <Button size="sm" variant="outline" onClick={runInsurance} disabled={insuranceLoading} className="h-6 text-xs gap-1.5">
-                {insuranceLoading ? <RefreshCw className="w-3 h-3 animate-spin" /> : <Umbrella className="w-3 h-3" />} Generiraj
-              </Button>
-            </CardTitle>
-          </CardHeader>
-          <CardContent>
-            {insuranceLoading ? (
-              <div className="py-4 text-center text-xs text-muted-foreground"><RefreshCw className="w-4 h-4 mx-auto mb-1 animate-spin opacity-50" /> AI analizira 4D risk matrix (7 kategorij)...</div>
-            ) : insurance?.optimizer ? (
-              <div className="space-y-2 text-xs">
-                {insurance.optimizer.riskMatrix?.slice(0, 3).map((r: any, i: number) => (
-                  <div key={i} className="bg-card/30 border rounded p-2">
-                    <div className="flex items-center justify-between mb-1">
-                      <span className="text-[10px] font-medium">{r.category}</span>
-                      <Badge variant="outline" className={cn('text-[9px]',
-                        (r.theftRisk ?? r.riskScore ?? 0) >= 70 ? 'text-red-500 border-red-500/30' : 'text-amber-400 border-amber-400/30')}>
-                        Risk: {r.theftRisk ?? r.riskScore ?? 0}
-                      </Badge>
-                    </div>
-                    <div className="text-[9px] text-muted-foreground">
-                      Krađa: {r.theftRisk ?? '?'} · Poškodba: {r.damageRisk ?? '?'} · Depreciacija: {r.depreciationRisk ?? '?'}
-                    </div>
-                  </div>
-                ))}
-                {insurance.optimizer.policies?.slice(0, 2).map((p: any, i: number) => (
-                  <div key={i} className="bg-blue-400/5 border border-blue-400/20 rounded p-2 text-[10px]">
-                    <b className="text-blue-400">{p.type || p.name}</b> — {p.coverage ?? p.description} · {p.premiumEur ?? p.cost ?? '?'}€/leto
-                  </div>
-                ))}
-                {insurance.optimizer.insights && <div className="text-[9px] text-muted-foreground">💡 {insurance.optimizer.insights}</div>}
-              </div>
-            ) : (
-              <p className="text-xs text-muted-foreground text-center py-4">AI 4D risk matrix (7 kategorij: elektronika, telefoni, avto, nepremičnine...) + police.</p>
-            )}
-          </CardContent>
-        </Card>
+        <InsuranceOptimizer />
 
         {/* 3. Market Saturation */}
-        <Card>
-          <CardHeader>
-            <CardTitle className="text-sm flex items-center justify-between">
-              <span className="flex items-center gap-2"><Waves className="w-4 h-4 text-cyan-400" /> AI Market Saturation</span>
-              <Button size="sm" variant="outline" onClick={runSaturation} disabled={saturationLoading} className="h-6 text-xs gap-1.5">
-                {saturationLoading ? <RefreshCw className="w-3 h-3 animate-spin" /> : <Waves className="w-3 h-3" />} Generiraj
-              </Button>
-            </CardTitle>
-          </CardHeader>
-          <CardContent>
-            {saturationLoading ? (
-              <div className="py-4 text-center text-xs text-muted-foreground"><RefreshCw className="w-4 h-4 mx-auto mb-1 animate-spin opacity-50" /> AI analizira saturacijo trga...</div>
-            ) : saturation?.saturation ? (
-              <div className="space-y-2 text-xs">
-                {saturation.saturation.categories?.slice(0, 4).map((c: any, i: number) => (
-                  <div key={i} className={cn('border rounded p-2',
-                    c.level === 'saturated' ? 'bg-red-500/5 border-red-500/20' :
-                    c.level === 'blue_ocean' ? 'bg-primary/10 border-primary/30' : 'bg-card/30 border-border')}>
-                    <div className="flex items-center justify-between">
-                      <span className="text-[10px] font-medium">{c.category || c.name}</span>
-                      <Badge variant="outline" className={cn('text-[9px]',
-                        c.level === 'saturated' ? 'text-red-500 border-red-500/30' :
-                        c.level === 'blue_ocean' ? 'text-primary border-primary/30' : 'text-muted-foreground')}>
-                        {c.level || c.saturationLevel}
-                      </Badge>
-                    </div>
-                    {c.opportunityRate != null && <div className="text-[9px] text-muted-foreground">{c.opportunityRate}% priložnosti</div>}
-                  </div>
-                ))}
-                {saturation.saturation.marketSignals?.slice(0, 2).map((s: any, i: number) => (
-                  <div key={i} className="bg-cyan-400/5 border border-cyan-400/20 rounded p-2 text-[10px]">{s.signal || s.description}</div>
-                ))}
-                {saturation.saturation.insights && <div className="text-[9px] text-muted-foreground">💡 {saturation.saturation.insights}</div>}
-              </div>
-            ) : (
-              <p className="text-xs text-muted-foreground text-center py-4">AI zazna saturacijo trga (5 nivojev: saturated → blue_ocean).</p>
-            )}
-          </CardContent>
-        </Card>
+        <MarketSaturation />
 
         {/* 4. Risk Parity */}
-        <Card>
-          <CardHeader>
-            <CardTitle className="text-sm flex items-center justify-between">
-              <span className="flex items-center gap-2"><Scale className="w-4 h-4 text-amber-400" /> AI Risk Parity</span>
-              <Button size="sm" variant="outline" onClick={runParity} disabled={parityLoading} className="h-6 text-xs gap-1.5">
-                {parityLoading ? <RefreshCw className="w-3 h-3 animate-spin" /> : <Scale className="w-3 h-3" />} Generiraj
-              </Button>
-            </CardTitle>
-          </CardHeader>
-          <CardContent>
-            {parityLoading ? (
-              <div className="py-4 text-center text-xs text-muted-foreground"><RefreshCw className="w-4 h-4 mx-auto mb-1 animate-spin opacity-50" /> AI računa risk parity alokacijo...</div>
-            ) : parity ? (
-              <div className="space-y-2 text-xs">
-                {parity.currentAllocation?.slice(0, 3).map((a: any, i: number) => (
-                  <div key={i} className="flex items-center justify-between bg-card/30 border rounded p-1.5">
-                    <span className="text-[10px]">{a.category}</span>
-                    <span className="font-mono text-[10px] text-amber-400">{a.percentage ?? a.allocation ?? 0}%</span>
-                  </div>
-                ))}
-                {parity.recommendedAllocation?.slice(0, 3).map((a: any, i: number) => (
-                  <div key={i} className="flex items-center justify-between bg-primary/5 border border-primary/20 rounded p-1.5">
-                    <span className="text-[10px]">{a.category}</span>
-                    <span className="font-mono text-[10px] text-primary">{a.percentage ?? a.allocation ?? 0}%</span>
-                  </div>
-                ))}
-                {parity.insights && <div className="text-[9px] text-muted-foreground">💡 {parity.insights}</div>}
-              </div>
-            ) : (
-              <p className="text-xs text-muted-foreground text-center py-4">AI alokacija z enakim riskom (risk-parity: vsaka kategorija enak prispevek k skupnemu tveganju).</p>
-            )}
-          </CardContent>
-        </Card>
+        <RiskParity />
 
         {/* 5. Margin Guardian */}
-        <Card className="md:col-span-2">
-          <CardHeader>
-            <CardTitle className="text-sm flex items-center justify-between">
-              <span className="flex items-center gap-2"><ShieldCheck className="w-4 h-4 text-primary" /> AI Margin Guardian</span>
-              <Button size="sm" variant="outline" onClick={runGuardian} disabled={guardianLoading} className="h-6 text-xs gap-1.5">
-                {guardianLoading ? <RefreshCw className="w-3 h-3 animate-spin" /> : <ShieldCheck className="w-3 h-3" />} Generiraj
-              </Button>
-            </CardTitle>
-          </CardHeader>
-          <CardContent>
-            {guardianLoading ? (
-              <div className="py-4 text-center text-xs text-muted-foreground"><RefreshCw className="w-4 h-4 mx-auto mb-1 animate-spin opacity-50" /> AI aktivira margin guardian...</div>
-            ) : guardian?.guardian ? (
-              <div className="space-y-2 text-xs">
-                {guardian.guardian.alerts?.slice(0, 4).map((a: any, i: number) => (
-                  <div key={i} className={cn('border rounded p-2',
-                    a.severity === 'critical' ? 'bg-red-500/5 border-red-500/20' :
-                    a.severity === 'high' ? 'bg-amber-400/5 border-amber-400/20' : 'bg-card/30 border-border')}>
-                    <div className="flex items-center justify-between mb-1">
-                      <span className="text-[10px] font-medium truncate flex-1">{a.title || a.item}</span>
-                      <Badge variant="outline" className={cn('text-[9px] ml-1',
-                        a.severity === 'critical' ? 'text-red-500 border-red-500/30' :
-                        a.severity === 'high' ? 'text-amber-400 border-amber-400/30' : 'text-muted-foreground')}>
-                        {a.severity}
-                      </Badge>
-                    </div>
-                    <div className="text-[9px] text-muted-foreground">
-                      Marža: {a.currentMargin ?? '?'}% → {a.targetMargin ?? '?'}% · {a.action || a.recommendation}
-                    </div>
-                  </div>
-                ))}
-                {guardian.guardian.insights && <div className="text-[9px] text-muted-foreground">💡 {guardian.guardian.insights}</div>}
-              </div>
-            ) : (
-              <p className="text-xs text-muted-foreground text-center py-4">
-                AI avtomatsko spremlja marže in opozarja na iteme z nizko/zapadajočo maržo.
-              </p>
-            )}
-          </CardContent>
-        </Card>
+        <MarginGuardian />
       </div>
 
       {/* v7.16: 5 novih risk AI panelov */}
       <div className="grid md:grid-cols-2 gap-4">
         {/* 6. Insurance Claim */}
-        <Card>
-          <CardHeader>
-            <CardTitle className="text-sm flex items-center justify-between">
-              <span className="flex items-center gap-2"><FileText className="w-4 h-4 text-blue-400" /> AI Insurance Claim</span>
-              <Button size="sm" variant="outline" onClick={runClaim} disabled={claimLoading} className="h-6 text-xs gap-1.5">
-                {claimLoading ? <RefreshCw className="w-3 h-3 animate-spin" /> : <FileText className="w-3 h-3" />} Generiraj
-              </Button>
-            </CardTitle>
-          </CardHeader>
-          <CardContent>
-            {claimLoading ? (
-              <div className="py-4 text-center text-xs text-muted-foreground"><RefreshCw className="w-4 h-4 mx-auto mb-1 animate-spin opacity-50" /> AI analizira zavarovalne zahtevke...</div>
-            ) : claim ? (
-              <div className="space-y-2 text-xs">
-                {claim.claims?.slice(0, 3).map((c: any, i: number) => (
-                  <div key={i} className="bg-card/30 border rounded p-2">
-                    <div className="flex items-center justify-between mb-1">
-                      <span className="text-[10px] font-medium">{c.type || c.category}</span>
-                      <Badge variant="outline" className={cn('text-[9px]', c.approved ? 'text-primary border-primary/30' : 'text-amber-400 border-amber-400/30')}>{c.status || (c.approved ? 'Odobren' : 'Čaka')}</Badge>
-                    </div>
-                    <div className="text-[9px] text-muted-foreground">{c.amount ?? '?'}€ — {c.reason || c.description}</div>
-                  </div>
-                ))}
-                {claim.insights && <div className="text-[9px] text-muted-foreground">💡 {claim.insights}</div>}
-              </div>
-            ) : (
-              <p className="text-xs text-muted-foreground text-center py-4">AI analizira zavarovalne zahtevke (odobritev, znesek, utemeljitev).</p>
-            )}
-          </CardContent>
-        </Card>
+        <InsuranceClaim />
 
         {/* 7. Detect Anomalies */}
-        <Card>
-          <CardHeader>
-            <CardTitle className="text-sm flex items-center justify-between">
-              <span className="flex items-center gap-2"><AlertCircle className="w-4 h-4 text-red-500" /> AI Anomaly Detection</span>
-              <Button size="sm" variant="outline" onClick={runAnomalies} disabled={anomaliesLoading} className="h-6 text-xs gap-1.5">
-                {anomaliesLoading ? <RefreshCw className="w-3 h-3 animate-spin" /> : <AlertCircle className="w-3 h-3" />} Generiraj
-              </Button>
-            </CardTitle>
-          </CardHeader>
-          <CardContent>
-            {anomaliesLoading ? (
-              <div className="py-4 text-center text-xs text-muted-foreground"><RefreshCw className="w-4 h-4 mx-auto mb-1 animate-spin opacity-50" /> AI detektira anomalije...</div>
-            ) : anomalies?.anomalies?.length > 0 ? (
-              <div className="space-y-2 text-xs">
-                {anomalies.anomalies.slice(0, 4).map((a: any, i: number) => (
-                  <div key={i} className={cn('border rounded p-2', a.severity === 'critical' ? 'bg-red-500/5 border-red-500/20' : 'bg-card/30 border-border')}>
-                    <div className="flex items-center justify-between mb-1">
-                      <span className="text-[10px] font-medium truncate flex-1">{a.title || a.description}</span>
-                      <Badge variant="outline" className={cn('text-[9px] ml-1', a.severity === 'critical' ? 'text-red-500 border-red-500/30' : a.severity === 'high' ? 'text-amber-400 border-amber-400/30' : 'text-muted-foreground')}>{a.severity}</Badge>
-                    </div>
-                    <div className="text-[9px] text-muted-foreground">{a.action || a.recommendation}</div>
-                  </div>
-                ))}
-                {anomalies.insights && <div className="text-[9px] text-muted-foreground">💡 {anomalies.insights}</div>}
-              </div>
-            ) : (
-              <p className="text-xs text-muted-foreground text-center py-4">AI detektira anomalije v cenah, vedenju, vzorcih nakupov.</p>
-            )}
-          </CardContent>
-        </Card>
+        <AnomalyDetection />
 
         {/* 8. Inventory Risk Assessor */}
-        <Card>
-          <CardHeader>
-            <CardTitle className="text-sm flex items-center justify-between">
-              <span className="flex items-center gap-2"><Shield className="w-4 h-4 text-amber-400" /> AI Inventory Risk Assessor</span>
-              <Button size="sm" variant="outline" onClick={runInvRisk} disabled={invRiskLoading} className="h-6 text-xs gap-1.5">
-                {invRiskLoading ? <RefreshCw className="w-3 h-3 animate-spin" /> : <Shield className="w-3 h-3" />} Generiraj
-              </Button>
-            </CardTitle>
-          </CardHeader>
-          <CardContent>
-            {invRiskLoading ? (
-              <div className="py-4 text-center text-xs text-muted-foreground"><RefreshCw className="w-4 h-4 mx-auto mb-1 animate-spin opacity-50" /> AI ocenjuje tveganja inventarja...</div>
-            ) : invRisk?.assessor ? (
-              <div className="space-y-2 text-xs">
-                {invRisk.assessor.risks?.slice(0, 3).map((r: any, i: number) => (
-                  <div key={i} className="bg-card/30 border rounded p-2">
-                    <div className="flex items-center justify-between mb-1">
-                      <span className="text-[10px] font-medium">{r.risk || r.type}</span>
-                      <Badge variant="outline" className={cn('text-[9px]', (r.score ?? r.probability ?? 0) >= 70 ? 'text-red-500 border-red-500/30' : 'text-amber-400 border-amber-400/30')}>{r.score ?? r.probability ?? '?'}%</Badge>
-                    </div>
-                    <div className="text-[9px] text-muted-foreground">{r.mitigation || r.action}</div>
-                  </div>
-                ))}
-                {invRisk.assessor.insights && <div className="text-[9px] text-muted-foreground">💡 {invRisk.assessor.insights}</div>}
-              </div>
-            ) : (
-              <p className="text-xs text-muted-foreground text-center py-4">AI oceni tveganja inventarja (poškodbe, zastaranje, krađa, likvidnost).</p>
-            )}
-          </CardContent>
-        </Card>
+        <InventoryRiskAssessor />
 
         {/* 9. Quality Predictor */}
-        <Card>
-          <CardHeader>
-            <CardTitle className="text-sm flex items-center justify-between">
-              <span className="flex items-center gap-2"><ClipboardCheck className="w-4 h-4 text-primary" /> AI Quality Predictor</span>
-              <Button size="sm" variant="outline" onClick={runQualityPred} disabled={qualityPredLoading} className="h-6 text-xs gap-1.5">
-                {qualityPredLoading ? <RefreshCw className="w-3 h-3 animate-spin" /> : <ClipboardCheck className="w-3 h-3" />} Generiraj
-              </Button>
-            </CardTitle>
-          </CardHeader>
-          <CardContent>
-            {qualityPredLoading ? (
-              <div className="py-4 text-center text-xs text-muted-foreground"><RefreshCw className="w-4 h-4 mx-auto mb-1 animate-spin opacity-50" /> AI napoveduje kakovost...</div>
-            ) : qualityPred?.prediction ? (
-              <div className="space-y-2 text-xs">
-                <div className="bg-primary/10 border border-primary/30 rounded p-2">
-                  <div className="flex items-center justify-between">
-                    <span className="text-[10px] uppercase text-primary font-bold">Quality Score</span>
-                    <span className="font-mono font-bold text-primary text-lg">{qualityPred.prediction.score ?? qualityPred.prediction.qualityScore ?? '?'}/100</span>
-                  </div>
-                </div>
-                {qualityPred.prediction.factors?.slice(0, 3).map((f: any, i: number) => (
-                  <div key={i} className="flex items-center justify-between bg-card/30 border rounded p-1.5">
-                    <span className="text-[10px]">{f.factor || f.name}</span>
-                    <span className="font-mono text-[10px] text-primary">{f.score ?? f.value}/10</span>
-                  </div>
-                ))}
-                {qualityPred.prediction.insights && <div className="text-[9px] text-muted-foreground">💡 {qualityPred.prediction.insights}</div>}
-              </div>
-            ) : (
-              <p className="text-xs text-muted-foreground text-center py-4">AI napove kakovost item-a pred nakupom (score 0-100, faktorji).</p>
-            )}
-          </CardContent>
-        </Card>
+        <QualityPredictor />
 
         {/* 10. Quality Aggregator */}
-        <Card className="md:col-span-2">
-          <CardHeader>
-            <CardTitle className="text-sm flex items-center justify-between">
-              <span className="flex items-center gap-2"><BarChart3 className="w-4 h-4 text-blue-400" /> AI Quality Aggregator</span>
-              <Button size="sm" variant="outline" onClick={runQualityAgg} disabled={qualityAggLoading} className="h-6 text-xs gap-1.5">
-                {qualityAggLoading ? <RefreshCw className="w-3 h-3 animate-spin" /> : <BarChart3 className="w-3 h-3" />} Generiraj
-              </Button>
-            </CardTitle>
-          </CardHeader>
-          <CardContent>
-            {qualityAggLoading ? (
-              <div className="py-4 text-center text-xs text-muted-foreground"><RefreshCw className="w-4 h-4 mx-auto mb-1 animate-spin opacity-50" /> AI agregira kakovost...</div>
-            ) : qualityAgg?.aggregator ? (
-              <div className="space-y-2 text-xs">
-                <div className="bg-blue-400/5 border border-blue-400/20 rounded p-2">
-                  <div className="flex items-center justify-between">
-                    <span className="text-[10px] uppercase text-blue-400">Skupna kakovost</span>
-                    <span className="font-mono font-bold text-blue-400">{qualityAgg.aggregator.overallScore ?? qualityAgg.aggregator.aggregateScore ?? '?'}/100</span>
-                  </div>
-                </div>
-                {qualityAgg.aggregator.categories?.slice(0, 4).map((c: any, i: number) => (
-                  <div key={i} className="flex items-center justify-between bg-card/30 border rounded p-1.5">
-                    <span className="text-[10px] font-medium">{c.category || c.name}</span>
-                    <div className="flex items-center gap-2">
-                      <span className="text-[9px] text-muted-foreground">{c.itemCount ?? c.count} itemov</span>
-                      <span className="font-mono text-primary text-[10px]">{c.avgScore ?? c.score ?? '?'}/100</span>
-                    </div>
-                  </div>
-                ))}
-                {qualityAgg.aggregator.insights && <div className="text-[9px] text-muted-foreground">💡 {qualityAgg.aggregator.insights}</div>}
-              </div>
-            ) : (
-              <p className="text-xs text-muted-foreground text-center py-4">AI agregira kakovost vsega inventarja (po kategorijah, skupni score).</p>
-            )}
-          </CardContent>
-        </Card>
+        <QualityAggregator />
       </div>
 
       {/* Footer */}

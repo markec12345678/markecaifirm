@@ -1,39 +1,20 @@
 'use client';
 
+// v9.09: AlertsView — modulariziran.
+// - AlertCard ekstraktiran v ./alerts/alert-card.tsx (presentational)
+// - AI Prioriteta sekcija ekstraktirana v ./alerts/ai-prioritized-alerts.tsx (own state + fetch)
+// - Alert interface in formatTimeAgo premaknjena v ./alerts/{types,utils}.ts
+
 import { useEffect, useState, useCallback } from 'react';
 import { Card, CardContent } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
-import { Badge } from '@/components/ui/badge';
 import { Switch } from '@/components/ui/switch';
-import { Checkbox } from '@/components/ui/checkbox';
-import { Bell, Check, Archive, Trash2, ExternalLink, RefreshCw, Filter, Target, AlertTriangle, Download, ThumbsUp, ThumbsDown, Square, RotateCcw, Sparkles } from 'lucide-react';
+import { Bell, Check, Archive, Trash2, RefreshCw, Filter, Download, ThumbsUp, ThumbsDown, Square } from 'lucide-react';
 import { toast } from 'sonner';
 import { cn } from '@/lib/utils';
-
-interface Alert {
-  id: string;
-  title: string;
-  body: string;
-  url: string;
-  aiScore: number | null;
-  aiRisk: number | null;
-  aiVerdict: string | null;
-  isRead: boolean;
-  isArchived: boolean;
-  userAction: string | null;
-  sentTelegram: boolean;
-  telegramError: string | null;
-  sentDiscord: boolean;
-  discordError: string | null;
-  sentSlack: boolean;
-  slackError: string | null;
-  sentEmail: boolean;
-  emailError: string | null;
-  sentPush: boolean;
-  pushError: string | null;
-  createdAt: string;
-  monitor: { name: string; source: string };
-}
+import type { Alert } from './alerts/types';
+import { AlertCard } from './alerts/alert-card';
+import { AiPrioritizedAlerts } from './alerts/ai-prioritized-alerts';
 
 export function AlertsView() {
   const [alerts, setAlerts] = useState<Alert[]>([]);
@@ -43,9 +24,6 @@ export function AlertsView() {
   const [notifStats, setNotifStats] = useState<{ total: number; success: number; error: number; byChannel: Record<string, number> } | null>(null);
   // v1.3: multi-select for bulk actions
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
-  // v6.6: AI alert prioritization
-  const [prioritized, setPrioritized] = useState<any>(null);
-  const [prioLoading, setPrioLoading] = useState(false);
 
   const load = useCallback(async () => {
     try {
@@ -206,26 +184,6 @@ export function AlertsView() {
           <Button size="sm" variant="outline" onClick={load} className="gap-2">
             <RefreshCw className="w-3.5 h-3.5" /> Osveži
           </Button>
-          {/* v6.6: AI Prioritize */}
-          <Button
-            size="sm"
-            variant="outline"
-            className="gap-2 border-primary/40 text-primary hover:bg-primary/10"
-            disabled={prioLoading}
-            onClick={async () => {
-              setPrioLoading(true); setPrioritized(null);
-              try {
-                const res = await fetch('/api/ai/prioritize-alerts', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ limit: 20 }) });
-                const data = await res.json();
-                if (data.ok) { setPrioritized(data); toast.success(`✓ ${data.highPriority} visokoprioritetnih, ${data.mediumPriority} srednjih`); }
-                else toast.error(data.error ?? 'Napaka');
-              } catch (e: any) { toast.error(e?.message ?? 'Napaka'); }
-              finally { setPrioLoading(false); }
-            }}
-          >
-            {prioLoading ? <RefreshCw className="w-3.5 h-3.5 animate-spin" /> : <Sparkles className="w-3.5 h-3.5" />}
-            AI Prioriteta
-          </Button>
           <Button size="sm" variant="outline" onClick={exportCsv} className="gap-2">
             <Download className="w-3.5 h-3.5" /> CSV
           </Button>
@@ -235,52 +193,8 @@ export function AlertsView() {
         </div>
       </div>
 
-      {/* v6.6: AI Prioritized alerts */}
-      {prioritized && !prioLoading && (
-        <Card className="bg-primary/5 border-primary/30">
-          <CardContent className="p-4">
-            <div className="flex items-center justify-between mb-3">
-              <h3 className="text-sm font-bold uppercase tracking-wider text-primary flex items-center gap-2">
-                <Sparkles className="w-4 h-4" />
-                AI Prioriteta alertov — {prioritized.highPriority}🟢 {prioritized.mediumPriority}🟡 {prioritized.lowPriority}⚪
-                <Badge variant="outline" className="text-[10px] text-primary border-primary/40">v6.6</Badge>
-              </h3>
-              <Button size="sm" variant="ghost" onClick={() => setPrioritized(null)} className="h-6 text-xs">×</Button>
-            </div>
-            <div className="space-y-1.5 max-h-80 overflow-y-auto">
-              {prioritized.prioritized.map((p: any, i: number) => (
-                <div key={i} className={cn('flex items-center gap-2 p-2 rounded text-xs border',
-                  p.profitScore >= 75 ? 'bg-primary/5 border-primary/20' :
-                  p.profitScore >= 55 ? 'bg-amber-400/5 border-amber-400/20' :
-                  'bg-background/30 border-border')}>
-                  <div className={cn('font-mono font-bold text-lg w-10 text-center shrink-0',
-                    p.profitScore >= 75 ? 'text-primary' :
-                    p.profitScore >= 55 ? 'text-amber-400' : 'text-muted-foreground')}>
-                    {p.profitScore}
-                  </div>
-                  <div className="flex-1 min-w-0">
-                    <a href={p.url} target="_blank" rel="noopener noreferrer" className="font-medium hover:text-primary truncate block">
-                      {p.title}
-                    </a>
-                    <div className="text-[10px] text-muted-foreground">
-                      {p.priceText} • {p.reasons || 'brez razloga'}
-                      {p.aiReason && <span className="italic ml-1">— {p.aiReason}</span>}
-                    </div>
-                  </div>
-                  <div className="text-right shrink-0 text-[10px]">
-                    {p.suggestedAction && <Badge variant="outline" className={cn('text-[9px]',
-                      p.suggestedAction === 'kupi' ? 'text-primary border-primary/40' :
-                      p.suggestedAction === 'preskoci' ? 'text-red-500 border-red-500/40' : 'text-muted-foreground')}>
-                      {p.suggestedAction}
-                    </Badge>}
-                    {p.aiPriority && <div className="text-[8px] text-muted-foreground mt-0.5">P{p.aiPriority}/5</div>}
-                  </div>
-                </div>
-              ))}
-            </div>
-          </CardContent>
-        </Card>
-      )}
+      {/* v6.6: AI Prioriteta (button + conditional card together) */}
+      <AiPrioritizedAlerts />
 
       {/* Filter chips */}
       <div className="flex items-center gap-2 flex-wrap">
@@ -399,183 +313,4 @@ export function AlertsView() {
       )}
     </div>
   );
-}
-
-function AlertCard({
-  alert,
-  selected,
-  onToggleSelect,
-  onMarkRead,
-  onArchive,
-  onDelete,
-  onUserAction,
-  onRetry,
-}: {
-  alert: Alert;
-  selected: boolean;
-  onToggleSelect: () => void;
-  onMarkRead: () => void;
-  onArchive: () => void;
-  onDelete: () => void;
-  onUserAction: (action: 'interested' | 'scam') => void;
-  onRetry: () => void;
-}) {
-  const verdictColor =
-    alert.aiVerdict === 'PRILIKA' ? 'text-primary terminal-glow' :
-    alert.aiVerdict === 'SUMNJIVO' ? 'text-amber-400 amber-glow' :
-    'text-muted-foreground';
-  const verdictIcon =
-    alert.aiVerdict === 'PRILIKA' ? <Target className="w-3.5 h-3.5" /> :
-    alert.aiVerdict === 'SUMNJIVO' ? <AlertTriangle className="w-3.5 h-3.5" /> :
-    null;
-  const userActionBadge =
-    alert.userAction === 'interested' ? { text: '👍 Zanima me', cls: 'border-primary/40 text-primary' } :
-    alert.userAction === 'scam' ? { text: '🚫 Prevara', cls: 'border-amber-400/40 text-amber-400' } :
-    alert.userAction === 'archived' ? { text: '✅ Arhivirano', cls: 'border-muted text-muted-foreground' } :
-    null;
-
-  return (
-    <Card
-      className={cn(
-        'bg-card/50 hover:bg-card transition-colors flex-row items-start gap-2',
-        !alert.isRead && 'border-primary/40 bg-primary/5',
-        selected && 'border-primary ring-1 ring-primary/30'
-      )}
-      onClick={onMarkRead}
-    >
-      <CardContent className="p-4 flex items-start gap-3 w-full">
-        {/* v1.3: selection checkbox */}
-        <div onClick={(e) => e.stopPropagation()} className="pt-0.5">
-          <Checkbox
-            checked={selected}
-            onCheckedChange={onToggleSelect}
-            className="border-muted-foreground/50"
-          />
-        </div>
-        <div className="min-w-0 flex-1">
-            <div className="flex items-center gap-2 mb-1.5 flex-wrap">
-              {verdictIcon && <span className={verdictColor}>{verdictIcon}</span>}
-              {alert.aiVerdict && (
-                <Badge
-                  variant="outline"
-                  className={cn(
-                    'text-[10px] uppercase tracking-wider',
-                    alert.aiVerdict === 'PRILIKA' && 'border-primary/40 text-primary',
-                    alert.aiVerdict === 'SUMNJIVO' && 'border-amber-400/40 text-amber-400',
-                    alert.aiVerdict === 'NEZANIMIVO' && 'border-muted text-muted-foreground'
-                  )}
-                >
-                  {alert.aiVerdict}
-                </Badge>
-              )}
-              {alert.aiScore != null && (
-                <span className="text-[11px] text-primary">⭐ {alert.aiScore}/10</span>
-              )}
-              {alert.aiRisk != null && (
-                <span className="text-[11px] text-amber-400">🛡 {alert.aiRisk}/10</span>
-              )}
-              <span className="text-[11px] text-muted-foreground">•</span>
-              <span className="text-[11px] text-muted-foreground">{alert.monitor.name}</span>
-              {userActionBadge && (
-                <Badge variant="outline" className={cn('text-[10px]', userActionBadge.cls)}>
-                  {userActionBadge.text}
-                </Badge>
-              )}
-              {!alert.isRead && !userActionBadge && (
-                <span className="w-1.5 h-1.5 rounded-full bg-primary pulse-dot ml-auto" />
-              )}
-            </div>
-            <h3 className="font-bold text-sm mb-1 truncate">{alert.title}</h3>
-            <pre className="text-xs text-muted-foreground whitespace-pre-wrap font-mono leading-relaxed line-clamp-6">
-              {alert.body}
-            </pre>
-            <div className="flex items-center gap-3 mt-2 text-[11px] text-muted-foreground">
-              <a
-                href={alert.url}
-                target="_blank"
-                rel="noopener noreferrer"
-                onClick={(e) => e.stopPropagation()}
-                className="flex items-center gap-1 text-primary/70 hover:text-primary"
-              >
-                <ExternalLink className="w-3 h-3" /> Odpri oglas
-              </a>
-              <span>•</span>
-              <span>{formatTimeAgo(alert.createdAt)}</span>
-              {alert.sentTelegram && (
-                <>
-                  <span>•</span>
-                  <span className="text-primary">TG ✓</span>
-                </>
-              )}
-              {alert.sentDiscord && (
-                <>
-                  <span>•</span>
-                  <span className="text-primary">DC ✓</span>
-                </>
-              )}
-              {alert.sentSlack && (
-                <>
-                  <span>•</span>
-                  <span className="text-primary">SL ✓</span>
-                </>
-              )}
-              {alert.sentPush && (
-                <>
-                  <span>•</span>
-                  <span className="text-primary">Push ✓</span>
-                </>
-              )}
-              {alert.sentEmail && (
-                <>
-                  <span>•</span>
-                  <span className="text-primary">Email ✓</span>
-                </>
-              )}
-              {(alert.telegramError || alert.discordError || alert.slackError || alert.emailError) && (
-                <>
-                  <span>•</span>
-                  <span className="text-destructive" title={alert.telegramError || alert.discordError || alert.slackError || alert.emailError || ''}>
-                    ⚠ Napaka
-                  </span>
-                </>
-              )}
-            </div>
-          </div>
-          <div className="flex flex-col gap-1" onClick={(e) => e.stopPropagation()}>
-            {!userActionBadge && (
-              <>
-                <Button size="sm" variant="ghost" onClick={() => onUserAction('interested')} className="h-7 w-7 p-0 text-primary hover:text-primary" title="Zanima me">
-                  <ThumbsUp className="w-3.5 h-3.5" />
-                </Button>
-                <Button size="sm" variant="ghost" onClick={() => onUserAction('scam')} className="h-7 w-7 p-0 text-amber-400 hover:text-amber-400" title="Prevara">
-                  <ThumbsDown className="w-3.5 h-3.5" />
-                </Button>
-              </>
-            )}
-            {/* v3.3: Retry button */}
-            <Button size="sm" variant="ghost" onClick={onRetry} className="h-7 w-7 p-0" title="Ponovno pošlji na vse kanale">
-              <RotateCcw className="w-3.5 h-3.5" />
-            </Button>
-            <Button size="sm" variant="ghost" onClick={onArchive} className="h-7 w-7 p-0" title="Arhiviraj">
-              <Archive className="w-3.5 h-3.5" />
-            </Button>
-            <Button size="sm" variant="ghost" onClick={onDelete} className="h-7 w-7 p-0 text-destructive hover:text-destructive" title="Izbriši">
-              <Trash2 className="w-3.5 h-3.5" />
-            </Button>
-          </div>
-      </CardContent>
-    </Card>
-  );
-}
-
-function formatTimeAgo(iso: string): string {
-  const d = new Date(iso);
-  const diff = Date.now() - d.getTime();
-  const s = Math.floor(diff / 1000);
-  if (s < 60) return `pred ${s}s`;
-  const m = Math.floor(s / 60);
-  if (m < 60) return `pred ${m}min`;
-  const h = Math.floor(m / 60);
-  if (h < 24) return `pred ${h}h`;
-  return d.toLocaleDateString('sl-SI');
 }

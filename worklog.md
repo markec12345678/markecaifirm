@@ -20675,3 +20675,120 @@ Stage Summary:
     - settings (13), ai-hub (25), trades (25), listings (6),
       statistics (26), monitors (6), dashboard (7), analytics (7), iskalnik (4)
     + types.ts/utils.ts v vsakem direktoriju
+
+---
+Task ID: v9.09-extract-1
+Agent: subagent (inventory modularization — 10 AI sections)
+Task: Extract 10 AI inventory sections from inventory-view.tsx into separate module files
+
+Work Log:
+- Read worklog.md (v9.01-extract-1 + v9.05-extract-1 + v9.08-extract-1 entries) to confirm established extraction pattern (Card with header button + CardContent result moved together into a single self-contained component; parent file imports the new component and deletes original useState + run function + JSX Card block)
+- Read inventory-view.tsx (724 lines) — confirmed 10 inline AI sections each with own useState pair + named run* function + Card JSX block. Actual state variable names confirmed (aging/agingLoading, stockout/stockoutLoading, shrinkage/shrinkageLoading, liquidation/liquidationLoading, rebalancer/rebalancerLoading, capitalAlloc/capitalAllocLoading, carryingCost/carryingCostLoading, depreciation/depreciationLoading, growth/growthLoading, health/healthLoading) — used ACTUAL names per "Copy JSX 1:1" rule, not the approximate names in the task description
+- Parent also had a `runAll` function (Promise.all of all 10 run* functions) + "Generiraj vse" button — these had to be removed since they reference run* functions which moved into children (consistent with v9.05-extract-1 pattern where load() was refactored to remove arbitrage Promise.all after ArbitrageOpportunities was extracted)
+- Created src/components/dashboard/inventory/ directory
+- Created src/components/dashboard/inventory/types.ts (Trade interface, 5 fields — shared by parent for trades state)
+
+BATCH 1 (4 components — Aging, Stockout, Shrinkage, Liquidation):
+- Created src/components/dashboard/inventory/inventory-aging.tsx — InventoryAging (no props; owns aging/agingLoading useState; own runAging function POST /api/ai/inventory-aging; imports Clock + RefreshCw + Badge + cn + toast)
+- Created src/components/dashboard/inventory/stockout-predictor.tsx — StockoutPredictor (no props; owns stockout/stockoutLoading useState; own runStockout function POST /api/ai/inventory-stockout-predictor; imports TrendingDown + RefreshCw + Badge + cn + toast)
+- Created src/components/dashboard/inventory/shrinkage-detector.tsx — ShrinkageDetector (no props; owns shrinkage/shrinkageLoading useState; own runShrinkage function POST /api/ai/inventory-shrinkage-detector; imports AlertTriangle + RefreshCw + Badge + cn + toast)
+- Created src/components/dashboard/inventory/liquidation-strategist.tsx — LiquidationStrategist (no props; owns liquidation/liquidationLoading useState; own runLiquidation function POST /api/ai/inventory-liquidation-strategist; imports TrendingDown + RefreshCw + Badge + toast — no cn since not used)
+
+BATCH 2 (3 components — Rebalancer, Capital Allocator, Carrying Cost):
+- Created src/components/dashboard/inventory/portfolio-rebalancer.tsx — PortfolioRebalancer (no props; owns rebalancer/rebalancerLoading useState; own runRebalancer function POST /api/ai/inventory-rebalancer-v3; preserves md:col-span-2 className on outer Card 1:1; imports Recycle + RefreshCw + Badge + toast — no cn since not used)
+- Created src/components/dashboard/inventory/capital-allocator.tsx — CapitalAllocator (no props; owns capitalAlloc/capitalAllocLoading useState; own runCapitalAlloc function POST /api/ai/inventory-capital-allocator; preserves inline single-line function style 1:1; imports DollarSign + RefreshCw + toast — no Badge, no cn)
+- Created src/components/dashboard/inventory/carrying-cost.tsx — CarryingCost (no props; owns carryingCost/carryingCostLoading useState; own runCarryingCost function POST /api/ai/inventory-carrying-cost; imports Wallet + RefreshCw + toast — no Badge, no cn)
+
+BATCH 3 (3 components — Depreciation, Growth, Health Monitor):
+- Created src/components/dashboard/inventory/depreciation-tracker.tsx — DepreciationTracker (no props; owns depreciation/depreciationLoading useState; own runDepreciation function POST /api/ai/inventory-depreciation-tracker; imports TrendingDown + RefreshCw + Badge + cn + toast)
+- Created src/components/dashboard/inventory/growth-planner.tsx — GrowthPlanner (no props; owns growth/growthLoading useState; own runGrowth function POST /api/ai/inventory-growth-planner; imports TrendingUp + RefreshCw + toast — no Badge, no cn)
+- Created src/components/dashboard/inventory/health-monitor.tsx — HealthMonitor (no props; owns health/healthLoading useState; own runHealth function POST /api/ai/inventory-health-monitor; preserves md:col-span-2 className on outer Card 1:1; imports Activity + RefreshCw + Badge + cn + toast)
+- Each file: 'use client'; imports ONLY used hooks/icons/components (useState, Card/CardContent/CardHeader/CardTitle, Button, Badge where used, RefreshCw + section-specific lucide icon, toast, cn where used)
+
+PARENT FILE MODIFICATIONS (inventory-view.tsx):
+- Imports section: removed Badge import (only used in extracted sections), removed CardHeader + CardTitle imports (only used in extracted sections), removed Sparkles + Clock + TrendingDown + AlertTriangle + Recycle + DollarSign + Wallet + TrendingUp + BarChart3 + Activity icon imports (only used in extracted sections). Added imports for Trade type from ./inventory/types + 10 new component imports. Final icon imports reduced to RefreshCw + Package only.
+- Removed Trade interface definition (moved to ./inventory/types.ts), replaced with `import type { Trade } from './inventory/types'`
+- Removed 10 AI useState declarations (lines 38-59 — aging/agingLoading through health/healthLoading)
+- Removed 10 AI run functions (runAging, runStockout, runShrinkage, runLiquidation, runRebalancer, runCapitalAlloc, runCarryingCost, runDepreciation, runGrowth, runHealth)
+- Removed runAll function (called all 10 run functions via Promise.all — would break after extraction since run* functions moved into children, consistent with v9.05-extract-1 load() refactoring pattern)
+- Removed "Generiraj vse" button from header (used runAll + Sparkles icon, both no longer available). Kept "Osveži" button (uses load function, parent-owned)
+- Replaced each Card JSX block with <ComponentName /> tag (10 replacements done via Python script for accuracy)
+- Verified formatting fix: 2 lines where `</div>` was glued to previous component tag were re-formatted with proper newline + indentation
+
+VERIFICATION:
+- typecheck: 0 errors ✅ (tsc --noEmit completed clean)
+- lint: 0 errors ✅ (eslint . completed clean)
+- Restarted dev server (pkill next + rm .next + setsid next dev -p 3000), waited 15s, curl http://localhost:3000/ returned HTTP 200 ✅
+- No errors in dev.log — only standard Next.js 16.3.0 Turbopack startup messages + GET / 200 responses
+
+Stage Summary:
+- 11 new files created in src/components/dashboard/inventory/ (10 component .tsx files + 1 types.ts):
+  * inventory-aging.tsx (InventoryAging)
+  * stockout-predictor.tsx (StockoutPredictor)
+  * shrinkage-detector.tsx (ShrinkageDetector)
+  * liquidation-strategist.tsx (LiquidationStrategist)
+  * portfolio-rebalancer.tsx (PortfolioRebalancer)
+  * capital-allocator.tsx (CapitalAllocator)
+  * carrying-cost.tsx (CarryingCost)
+  * depreciation-tracker.tsx (DepreciationTracker)
+  * growth-planner.tsx (GrowthPlanner)
+  * health-monitor.tsx (HealthMonitor)
+  * types.ts (Trade interface)
+- inventory-view.tsx reduced from 724 → 153 lines (571 lines extracted, 79% reduction — exceeded expected target since each section was compact)
+- All 10 sections are self-contained components with their own useState + run function + JSX, no props needed
+- ESLint @typescript-eslint/no-unused-vars rule allowed parent cleanup of unused imports (Badge, CardHeader, CardTitle, 10 unused icons, Sparkles)
+
+---
+Task ID: v9.09
+Agent: main + subagent
+Task: Modularizacija watchlist-view.tsx + inventory-view.tsx — ekstrakcija 12 AI sekcij
+
+Work Log:
+- Korak 1: Modularizacija watchlist-view.tsx (855 vrstic):
+  * Ustvaril src/components/dashboard/watchlist/ direktorij
+  * types.ts (WatchlistItem, WatchlistStats, View)
+  * watchlist-item-card.tsx (238 vrstic) — WatchlistItemCard
+  * smart-rules-modal.tsx (399 vrstic) — SmartRulesModal
+  * Rezultat: 855 → 213 vrstic (−75%)
+- Korak 2 (subagent): Modularizacija inventory-view.tsx (724 vrstic):
+  * Ustvaril src/components/dashboard/inventory/ direktorij
+  * types.ts (Trade interface)
+  * 10 AI komponent: inventory-aging, stockout-predictor, shrinkage-detector,
+    liquidation-strategist, portfolio-rebalancer, capital-allocator, carrying-cost,
+    depreciation-tracker, growth-planner, health-monitor
+  * Rezultat: 724 → 153 vrstic (−79%)
+- Verifikacija (Agent Browser):
+  * Homepage: HTTP 200 ✓
+  * Watchlist view: heading "Watchlist" ✓
+  * Console: 0 error-ov ✓
+- Preveril lint: 0 napak, 0 warnings ✨
+- Preveril typecheck: 0 napak ✨
+- Preostali pogledi (buyers, pricing, risk, alerts, listing-optimization) nimajo tipične AI sekcije strukture z lastnim state-om — manj primerni za ekstrakcijo.
+
+Stage Summary:
+- NEW: src/components/dashboard/watchlist/ (types.ts + 2 komponenti)
+- NEW: src/components/dashboard/inventory/ (types.ts + 10 komponent)
+- MODIFIED: watchlist-view.tsx (855 → 213 vrstic, −75%)
+- MODIFIED: inventory-view.tsx (724 → 153 vrstic, −79%)
+- MODIFIED: src/lib/version.ts (v9.08.0→v9.09.0)
+- MODIFIED: README.md (badge v9.09.0)
+- Verzija: v9.09.0
+- Skupaj (v7.50 → v9.09): 159 verzij, 281 novih funkcij
+- SKUPNI REZULTAT modularizacije (v8.94→v9.09):
+  * settings-view.tsx:    3595 → 736 vrstic   (−79%)
+  * ai-hub-view.tsx:      8167 → 2030 vrstic  (−75%)
+  * trades-view.tsx:      4142 → 1215 vrstic  (−71%)
+  * listings-view.tsx:    3550 → 980 vrstic    (−72%)
+  * statistics-view.tsx:  3418 → 629 vrstic    (−82%)
+  * monitors-view.tsx:   1729 → 588 vrstic    (−66%)
+  * dashboard-view.tsx:  1169 → 794 vrstic    (−32%)
+  * analytics-view.tsx:  1140 → 566 vrstic    (−50%)
+  * iskalnik-view.tsx:   1131 → 705 vrstic    (−38%)
+  * watchlist-view.tsx:   855 → 213 vrstic    (−75%)
+  * inventory-view.tsx:   724 → 153 vrstic    (−79%)
+  * SKUPAJ:              28885 → 8599 vrstic  (−70%)
+  * 151 novih modulskih datotek:
+    - settings (13), ai-hub (25), trades (25), listings (6),
+      statistics (26), monitors (6), dashboard (7), analytics (7),
+      iskalnik (4), watchlist (3), inventory (11)
+    + types.ts/utils.ts v vsakem direktoriju
