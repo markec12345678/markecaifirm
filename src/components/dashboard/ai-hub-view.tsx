@@ -195,35 +195,13 @@ import { BrainSynthesisCard } from './ai-hub/brain-synthesis-card';
 import { AIRunnerModal } from './ai-hub/ai-runner-modal';
 import type { AIEndpoint } from './ai-hub/types';
 
+// v9.12: Import helpers from shared utils (removed inline duplicates)
+import { CATEGORIES, DOMAIN_DISPLAY, DOMAIN_LABELS, categorize, confidenceColor, conflictSeverityColor, draftStatusColor, draftStatusLabel, gradeColor, gradeTextColor, gradeTrendPill, hitRateBarColor, hitRateColor, namespaceLabel, rateColor, rateLabel, responseTimeColor, riskLevelColor, signalGradeColor, trendBadgeClass, trendIcon, trustScoreColor } from './ai-hub/utils';
+
+// v9.12: Import types from shared types (removed inline duplicates)
+import type { AccuracyApiResponse, AccuracyTrendPoint, AccuracyTrendSummary, ActionExplanation, ActualProfitResponse, AdaptiveWeightsMap, AdaptiveWeightsResponse, AutoPilotHistoryDraft, AutoPilotHistoryResponse, AutoPilotMode, AutoPilotRunResponse, AutoPilotStatsResponse, BrainAction, BrainEndpointHealth, BrainResult, BuyerBrainResult, CacheStatsRow, ClearAnomalyResponse, DisableAggressiveResponse, DomainName, DomainWeightStats, DraftQueueResponse, DraftRow, DraftStatus, EnableAggressiveResponse, InventoryBrainResult, InvestmentHorizon, MarketBrainResult, MasterBrainExplanation, MasterBrainResult, PerfStatsRow, PerformanceReport, PricingBrainResult, RiskBrainResult, RiskProfileAdjustment, RiskProfileApiResponse, RiskTolerance, ScenarioComparisonResponse, SeedInfo, SnapshotView, SnapshotsApiResponse, SourcingBrainResult, SystemHealthReport, UserRiskProfile } from './ai-hub/types';
 
 
-// ===== Kategorije =====
-const CATEGORIES = [
-  { id: 'all', label: 'Vsi', icon: '📋', color: 'text-primary' },
-  { id: 'brain', label: 'Možgani', icon: '🧠', color: 'text-emerald-500' },
-  { id: 'buyer', label: 'Kupci', icon: '👥', color: 'text-blue-400' },
-  { id: 'inventory', label: 'Skladišče', icon: '📦', color: 'text-amber-400' },
-  { id: 'listing', label: 'Oglasi', icon: '📝', color: 'text-purple-400' },
-  { id: 'pricing', label: 'Cene', icon: '💰', color: 'text-primary' },
-  { id: 'risk', label: 'Tveganje', icon: '🛡️', color: 'text-red-500' },
-  { id: 'negotiation', label: 'Pogajanje', icon: '🤝', color: 'text-cyan-400' },
-  { id: 'reports', label: 'Poročila', icon: '📊', color: 'text-primary' },
-  { id: 'misc', label: 'Ostalo', icon: '🔧', color: 'text-muted-foreground' },
-] as const;
-
-// ===== Kategorizacija endpointov (mirror of /api/ai-list categorize) =====
-function categorize(name: string): string {
-  const n = name.toLowerCase();
-  if (n.startsWith('brain/') || n.split('/')[0] === 'brain') return 'brain';
-  if (n.startsWith('buyer') || n.includes('customer')) return 'buyer';
-  if (n.startsWith('inventory') || n.includes('stockout') || n.includes('shrinkage') || n.includes('liquidation') || n.includes('rebalancer') || n.includes('turnover') || n.includes('aging')) return 'inventory';
-  if (n.startsWith('listing') || n.includes('description') || n.includes('title') || n.includes('seo') || n.includes('thumbnail') || n.includes('image') || n.includes('tag') || n.includes('content') || n.includes('ctr') || n.includes('conversion') || n.includes('engagement') || n.includes('virality') || n.includes('performance')) return 'listing';
-  if (n.includes('price') || n.includes('pricing') || n.includes('margin') || n.includes('profit') || n.includes('bundle') || n.includes('cash') || n.includes('budget') || n.includes('seasonal') || n.includes('demand') || n.includes('depreciation') || n.includes('roi') || n.includes('cost')) return 'pricing';
-  if (n.includes('risk') || n.includes('fraud') || n.includes('fake') || n.includes('insurance') || n.includes('hedge') || n.includes('parity') || n.includes('saturation') || n.includes('anomal')) return 'risk';
-  if (n.includes('negotiation') || n.includes('negotiate') || n.includes('auction') || n.includes('sniper') || n.includes('bid') || n.includes('seller')) return 'negotiation';
-  if (n.includes('report') || n.includes('summary') || n.includes('dashboard') || n.includes('forecast') || n.includes('benchmark') || n.includes('insights') || n.includes('trend') || n.includes('monthly') || n.includes('daily') || n.includes('playbook') || n.includes('automation') || n.includes('autonomous')) return 'reports';
-  return 'misc';
-}
 
 // ===== Brain Synthesis Card (v8.22 Master + v8.15-v8.21 7 Domains) =====
 //
@@ -247,163 +225,10 @@ function categorize(name: string): string {
 // Visual hierarchy: Master Brain banner (top, prominent) → 7 Domain Brain
 // sections (below, detailed).
 
-interface BrainAction {
-  rank: number;
-  domain: string;
-  signal: string;
-  action: string;
-  expectedUpliftEUR: number;
-  confidence: 'HIGH' | 'MEDIUM' | 'LOW';
-}
-
-interface BrainResult {
-  ok: true;
-  signals: Array<{
-    name: string;
-    score: number;
-    grade: string;
-    upliftEURPerMonth: number;
-    topLever: string;
-  }>;
-  current: {
-    monthlyProfit: number;
-    profitGrowthRate: number;
-    avgProfitPerTrade: number;
-    tradesPerMonth: number;
-    capitalDeployed: number;
-  };
-  maximization: {
-    topActions: BrainAction[];
-    projection30d: number;
-    projection90d: number;
-    profitGrade: 'A+' | 'A' | 'B' | 'C' | 'D' | 'F';
-    bestOpportunity: string;
-    oneLineSummary: string;
-  };
-  aiUsed: false;
-  source: string;
-  cachedAt?: number;
-}
-
 // v8.17: Market Brain result — projection30d/projection90d are STRUCTURED
 // objects with `predictedPhase` + `predictedPriceChangePct` + `recommendedAction`
 // (BUY/SELL/HOLD/LIQUIDATE). Different from both Profit (scalars) and
-// Inventory (recommendedItemsToSell/Buy + projectedInventoryValue).
-interface MarketBrainResult {
-  ok: true;
-  signals: Array<{
-    name: string;
-    score: number;
-    grade: string;
-    upliftEURPerMonth: number;
-    topLever: string;
-  }>;
-  current: {
-    activeListingCount: number;
-    newLastWeek: number;
-    avgPriceChangePctWeek: number;
-    avgPriceChangePctMonth: number;
-    buyerInquiriesLastWeek: number;
-    sellThroughRatePct: number;
-    avgDaysOnMarket: number;
-    priceSpreadPct: number;
-    inferredCyclePhase: 'ACCUMULATION' | 'MARKUP' | 'DISTRIBUTION' | 'MARKDOWN';
-    inferredSentiment: 'BULLISH' | 'NEUTRAL' | 'BEARISH';
-  };
-  maximization: {
-    topActions: BrainAction[];
-    projection30d: {
-      predictedPhase: 'ACCUMULATION' | 'MARKUP' | 'DISTRIBUTION' | 'MARKDOWN';
-      predictedPriceChangePct: number;
-      recommendedAction: 'BUY' | 'SELL' | 'HOLD' | 'LIQUIDATE';
-    };
-    projection90d: {
-      predictedPhase: 'ACCUMULATION' | 'MARKUP' | 'DISTRIBUTION' | 'MARKDOWN';
-      predictedPriceChangePct: number;
-      recommendedAction: 'BUY' | 'SELL' | 'HOLD' | 'LIQUIDATE';
-    };
-    marketGrade: 'A+' | 'A' | 'B' | 'C' | 'D' | 'F';
-    bestOpportunity: string;
-    oneLineSummary: string;
-  };
-  aiUsed: false;
-  source: string;
-  cachedAt?: number;
-}
-
 // v8.16: Inventory Brain result — different `current` and `maximization`
-// shape from Profit Brain (projections are STRUCTURED objects, not scalars).
-interface InventoryBrainResult {
-  ok: true;
-  signals: Array<{
-    name: string;
-    score: number;
-    grade: string;
-    upliftEURPerMonth: number;
-    topLever: string;
-  }>;
-  current: {
-    itemCount: number;
-    totalInventoryValue: number;
-    avgDaysToSell: number;
-    agedItemsCount: number;
-    agedItemsPct: number;
-    avgProfitMarginPct: number;
-    capitalDeployed: number;
-    monthlySalesCount: number;
-    monthlyRevenue: number;
-    inventoryTurnoverRate: number;
-  };
-  maximization: {
-    topActions: BrainAction[];
-    projection30d: {
-      recommendedItemsToSell: number;
-      recommendedItemsToBuy: number;
-      projectedInventoryValue: number;
-      projectedAgedPct: number;
-    };
-    projection90d: {
-      projectedInventoryValue: number;
-      projectedAgedPct: number;
-      projectedTurnoverRate: number;
-    };
-    inventoryGrade: 'A+' | 'A' | 'B' | 'C' | 'D' | 'F';
-    bestOpportunity: string;
-    oneLineSummary: string;
-  };
-  aiUsed: false;
-  source: string;
-  cachedAt?: number;
-}
-
-function gradeColor(grade: string): string {
-  switch (grade) {
-    case 'A+':
-      return 'bg-emerald-500/15 text-emerald-600 border-emerald-500/30 dark:text-emerald-400';
-    case 'A':
-      return 'bg-green-500/15 text-green-600 border-green-500/30 dark:text-green-400';
-    case 'B':
-      return 'bg-amber-500/15 text-amber-600 border-amber-500/30 dark:text-amber-400';
-    case 'C':
-      return 'bg-orange-500/15 text-orange-600 border-orange-500/30 dark:text-orange-400';
-    case 'D':
-      return 'bg-red-500/15 text-red-600 border-red-500/30 dark:text-red-400';
-    default:
-      return 'bg-zinc-500/15 text-zinc-600 border-zinc-500/30 dark:text-zinc-400';
-  }
-}
-
-function confidenceColor(c: string): string {
-  switch (c) {
-    case 'HIGH':
-      return 'text-emerald-600 dark:text-emerald-400';
-    case 'MEDIUM':
-      return 'text-amber-600 dark:text-amber-400';
-    default:
-      return 'text-zinc-500 dark:text-zinc-400';
-  }
-}
-
 // ProfitBrainSection — v8.97: imported from ./ai-hub/profitbrain-section
 
 // InventoryBrainSection — v8.97: imported from ./ai-hub/inventorybrain-section
@@ -417,55 +242,6 @@ function confidenceColor(c: string): string {
 // objects with recommendedSourceToScale + recommendedSourceToReduce +
 // projectedConcentrationPct + recommendedNewSource). Distinct from Profit
 // (scalars), Inventory (recommendedItemsToSell/Buy + projectedInventoryValue),
-// and Market (predictedPhase + predictedPriceChangePct + recommendedAction).
-interface SourcingBrainResult {
-  ok: true;
-  signals: Array<{
-    name: string;
-    score: number;
-    grade: string;
-    upliftEURPerMonth: number;
-    topLever: string;
-  }>;
-  current: {
-    sourceCount: number;
-    sources: Array<{
-      name: string;
-      monthlyVolume: number;
-      avgProfitMarginPct: number;
-      avgDaysToSell: number;
-      capitalDeployedEUR: number;
-      monthlyProfitEUR: number;
-    }>;
-    totalCapitalDeployed: number;
-    totalMonthlyProfit: number;
-    bestSource: string;
-    worstSource: string;
-    avgMarginPct: number;
-    concentrationPct: number;
-  };
-  maximization: {
-    topActions: BrainAction[];
-    projection30d: {
-      recommendedSourceToScale: string;
-      recommendedSourceToReduce: string;
-      projectedTotalMonthlyProfit: number;
-      projectedConcentrationPct: number;
-    };
-    projection90d: {
-      projectedTotalMonthlyProfit: number;
-      projectedSourceCount: number;
-      projectedConcentrationPct: number;
-      recommendedNewSource?: string;
-    };
-    sourcingGrade: 'A+' | 'A' | 'B' | 'C' | 'D' | 'F';
-    bestOpportunity: string;
-    oneLineSummary: string;
-  };
-  aiUsed: false;
-  source: string;
-  cachedAt?: number;
-}
 // SourcingBrainSection — v8.97: imported from ./ai-hub/sourcingbrain-section
 
 // --- Risk Brain section (v8.19, red/rose) ----------------------------------
@@ -474,67 +250,6 @@ interface SourcingBrainResult {
 // objects with projectedRiskScore + projectedConcentrationPct +
 // projectedAgedPct + recommendedRiskBudget. Each signal has a `riskLevel`
 // (LOW/MEDIUM/HIGH/CRITICAL) inverse to score, and `riskReductionEUR` (EUR
-// saved if mitigated). Distinct from all four prior Brains.
-interface RiskBrainResult {
-  ok: true;
-  signals: Array<{
-    name: string;
-    score: number; // 0-100 (HIGHER = LOWER risk)
-    grade: string;
-    riskLevel: 'LOW' | 'MEDIUM' | 'HIGH' | 'CRITICAL';
-    riskReductionEUR: number;
-    topLever: string;
-  }>;
-  current: {
-    totalCapitalDeployed: number;
-    inventoryValue: number;
-    agedInventoryValue: number;
-    agedPct: number;
-    capitalConcentrationPct: number;
-    monthlyRevenue: number;
-    monthlyProfit: number;
-    activeSources: number;
-    fraudSuspicionsPct: number;
-    avgDaysToSell: number;
-    marketVolatilityPct: number;
-    overallRiskScore: number; // 0-100 (lower = more risk)
-  };
-  maximization: {
-    topActions: BrainAction[];
-    projection30d: {
-      projectedRiskScore: number;
-      projectedConcentrationPct: number;
-      projectedAgedPct: number;
-      recommendedRiskBudget: number;
-    };
-    projection90d: {
-      projectedRiskScore: number;
-      projectedConcentrationPct: number;
-      projectedAgedPct: number;
-      recommendedRiskBudget: number;
-    };
-    riskGrade: 'A+' | 'A' | 'B' | 'C' | 'D' | 'F';
-    biggestRisk: string;
-    oneLineSummary: string;
-  };
-  aiUsed: false;
-  source: string;
-  cachedAt?: number;
-}
-
-function riskLevelColor(level: string): string {
-  switch (level) {
-    case 'CRITICAL':
-      return 'bg-rose-600/20 text-rose-700 border-rose-600/40 dark:text-rose-300';
-    case 'HIGH':
-      return 'bg-rose-500/15 text-rose-600 border-rose-500/30 dark:text-rose-400';
-    case 'MEDIUM':
-      return 'bg-amber-500/15 text-amber-600 border-amber-500/30 dark:text-amber-400';
-    case 'LOW':
-    default:
-      return 'bg-emerald-500/15 text-emerald-600 border-emerald-500/30 dark:text-emerald-400';
-  }
-}
 // RiskBrainSection — v8.97: imported from ./ai-hub/riskbrain-section
 
 // --- Buyer Brain section (v8.20, cyan/teal) ---------------------------------
@@ -543,53 +258,6 @@ function riskLevelColor(level: string): string {
 // objects with projectedActiveBuyers + projectedLTV + projectedChurnRatePct +
 // recommendedOutreachCount. Each signal has score + grade + upliftEURPerMonth +
 // topLever (same shape as Profit/Inventory/Market/Sourcing — NOT inverted like
-// Risk). Distinct from all five prior Brains.
-interface BuyerBrainResult {
-  ok: true;
-  signals: Array<{
-    name: string;
-    score: number; // 0-100 (HIGHER = better buyer health)
-    grade: string;
-    upliftEURPerMonth: number;
-    topLever: string;
-  }>;
-  current: {
-    totalBuyers: number;
-    activeBuyersLast30d: number;
-    newBuyersLast30d: number;
-    churnedBuyersLast30d: number;
-    avgBuyerLifetimeValue: number;
-    avgPurchaseFrequency: number;
-    avgOrderValue: number;
-    repeatBuyerRatePct: number;
-    inquiriesConvertedPct: number;
-    avgEngagementScore: number;
-    highValueBuyersCount: number;
-    churnRatePct: number;
-    netGrowthPct: number;
-  };
-  maximization: {
-    topActions: BrainAction[];
-    projection30d: {
-      projectedActiveBuyers: number;
-      projectedLTV: number;
-      projectedChurnRatePct: number;
-      recommendedOutreachCount: number;
-    };
-    projection90d: {
-      projectedActiveBuyers: number;
-      projectedLTV: number;
-      projectedChurnRatePct: number;
-      recommendedOutreachCount: number;
-    };
-    buyerGrade: 'A+' | 'A' | 'B' | 'C' | 'D' | 'F';
-    bestOpportunity: string;
-    oneLineSummary: string;
-  };
-  aiUsed: false;
-  source: string;
-  cachedAt?: number;
-}
 // BuyerBrainSection — v8.97: imported from ./ai-hub/buyerbrain-section
 
 // --- Pricing Brain section (v8.21, green/lime) --------------------------------
@@ -600,53 +268,6 @@ interface BuyerBrainResult {
 // grade + upliftEURPerMonth + topLever (same shape as Profit/Inventory/
 // Market/Sourcing/Buyer — NOT inverted like Risk). Distinct from all six
 // prior Brains. Also exposes a `pricingPower` composite (0-100) on `current`
-// that represents the ability to raise prices without losing volume.
-interface PricingBrainResult {
-  ok: true;
-  signals: Array<{
-    name: string;
-    score: number; // 0-100 (HIGHER = better pricing health)
-    grade: string;
-    upliftEURPerMonth: number;
-    topLever: string;
-  }>;
-  current: {
-    activeListingsCount: number;
-    avgProfitMarginPct: number;
-    avgDaysOnMarket: number;
-    competitorPriceAvgPct: number;
-    priceElasticityScore: number;
-    sellThroughRatePct: number;
-    monthlyRevenue: number;
-    avgOrderValue: number;
-    priceWarDetected: boolean;
-    seasonalMultiplier: number;
-    psychologyOptimizedPct: number;
-    lastPriceChangePct: number;
-    pricingPower: number; // 0-100 composite — ability to raise prices
-  };
-  maximization: {
-    topActions: BrainAction[];
-    projection30d: {
-      projectedMarginPct: number;
-      projectedRevenue: number;
-      recommendedPriceChangePct: number;
-      listingsToReprice: number;
-    };
-    projection90d: {
-      projectedMarginPct: number;
-      projectedRevenue: number;
-      recommendedPriceChangePct: number;
-      listingsToReprice: number;
-    };
-    pricingGrade: 'A+' | 'A' | 'B' | 'C' | 'D' | 'F';
-    bestOpportunity: string;
-    oneLineSummary: string;
-  };
-  aiUsed: false;
-  source: string;
-  cachedAt?: number;
-}
 // PricingBrainSection — v8.97: imported from ./ai-hub/pricingbrain-section
 
 // --- System Health Card (v8.32, gradient by status: emerald/amber/red) ---
@@ -678,57 +299,6 @@ interface PricingBrainResult {
 //
 // Auto-refreshes every 60 seconds. Fetches /api/ai/brain/health (30s cache).
 
-interface BrainEndpointHealth {
-  name: string;
-  path: string;
-  responsive: boolean;
-  responseTimeMs: number;
-  lastError: string | null;
-  grade: 'A+' | 'A' | 'B' | 'C' | 'D' | 'F' | null;
-}
-
-interface SystemHealthReport {
-  ok: true;
-  timestamp: string;
-  overallHealthScore: number;
-  overallGrade: 'A+' | 'A' | 'B' | 'C' | 'D' | 'F';
-  status: 'HEALTHY' | 'DEGRADED' | 'UNHEALTHY';
-  brainEndpoints: BrainEndpointHealth[];
-  dataFreshness: {
-    latestSnapshotDate: string | null;
-    snapshotsCount: number;
-    daysSinceLastSnapshot: number | null;
-    accuracy30d: number | null;
-    tradesRecorded: number;
-  };
-  autoPilot: {
-    enabled: boolean;
-    mode: 'safe' | 'aggressive';
-    anomalySuspended: boolean;
-    todayAutoExecuted: number;
-    todayBudgetUsed: number;
-  };
-  draftQueue: {
-    pending: number;
-    executed: number;
-    rejected: number;
-    expired: number;
-    total: number;
-    executionRate: number;
-  };
-  riskProfile: {
-    riskTolerance: 'conservative' | 'balanced' | 'aggressive';
-    maxAcceptableRisk: number;
-  };
-  adaptiveWeights: {
-    adjustedDomains: number;
-    totalExecuted: number;
-    totalRejected: number;
-  };
-  recommendations: string[];
-  source: string;
-}
-
 // Map brain name → lucide icon + tint color for the endpoint grid chip.
 const BRAIN_HEALTH_ICONS: Record<string, { icon: typeof Brain; tint: string }> = {
   profit: { icon: Coins, tint: 'text-emerald-600 dark:text-emerald-400' },
@@ -741,14 +311,6 @@ const BRAIN_HEALTH_ICONS: Record<string, { icon: typeof Brain; tint: string }> =
   master: { icon: Crown, tint: 'text-amber-600 dark:text-amber-400' },
 };
 
-function gradeTextColor(grade: string | null): string {
-  if (!grade) return 'text-muted-foreground';
-  if (grade === 'A+' || grade === 'A') return 'text-emerald-600 dark:text-emerald-400';
-  if (grade === 'B') return 'text-sky-600 dark:text-sky-400';
-  if (grade === 'C') return 'text-amber-600 dark:text-amber-400';
-  if (grade === 'D') return 'text-orange-600 dark:text-orange-400';
-  return 'text-red-600 dark:text-red-400';
-}
 // SystemHealthCard — v8.97: imported from ./ai-hub/systemhealth-card
 
 // --- Seed & Telegram Card (v8.35, lime + cyan gradient) --------------------
@@ -776,13 +338,6 @@ function gradeTextColor(grade: string | null): string {
 // Dual-tint gradient: lime for seed (growth metaphor) + cyan for Telegram
 // (messaging metaphor). Auto-refreshes trade count every 60s.
 
-interface SeedInfo {
-  ok: true;
-  count: number;
-  byStatus: { sold: number; held: number; cancelled: number };
-  demoTemplateCount: number;
-  source: string;
-}
 // SeedAndTelegramCard — v8.97: imported from ./ai-hub/seedandtelegram-card
 
 // --- Performance & Cache Stats Card (v8.33, yellow/amber tint) -----------
@@ -812,68 +367,6 @@ interface SeedInfo {
 // Fetches /api/ai/brain/performance. Yellow/amber gradient (visual link
 // to the lightning/⚡ emoji — "this is the speed card").
 
-interface CacheStatsRow {
-  namespace: string;
-  hits: number;
-  misses: number;
-  sets: number;
-  evictions: number;
-  hitRate: number;
-  total: number;
-}
-
-interface PerfStatsRow {
-  brain: string;
-  count: number;
-  avgMs: number;
-  p50Ms: number;
-  p95Ms: number;
-  p99Ms: number;
-  minMs: number;
-  maxMs: number;
-  cacheHitRate: number;
-  lastDurationMs: number;
-}
-
-interface PerformanceReport {
-  ok: true;
-  timestamp: string;
-  cacheStats: CacheStatsRow[];
-  perfStats: PerfStatsRow[];
-  cacheStoreSize: number;
-  summary: {
-    overallHitRate: number;
-    totalRequests: number;
-    totalCached: number;
-    avgResponseTimeMs: number;
-    p95ResponseTimeMs: number;
-  };
-  source: string;
-}
-
-// Color thresholds (shared between cache hit rate + response time).
-function hitRateColor(rate: number): string {
-  if (rate >= 70) return 'text-emerald-600 dark:text-emerald-400';
-  if (rate >= 40) return 'text-amber-600 dark:text-amber-400';
-  return 'text-red-600 dark:text-red-400';
-}
-
-function responseTimeColor(ms: number): string {
-  if (ms < 50) return 'text-emerald-600 dark:text-emerald-400';
-  if (ms <= 200) return 'text-amber-600 dark:text-amber-400';
-  return 'text-red-600 dark:text-red-400';
-}
-
-function hitRateBarColor(rate: number): string {
-  if (rate >= 70) return 'bg-emerald-500';
-  if (rate >= 40) return 'bg-amber-500';
-  return 'bg-red-500';
-}
-
-// Human-readable namespace label — strip the "-brain" suffix and capitalize.
-function namespaceLabel(ns: string): string {
-  return ns.replace(/-brain$/, '').replace(/^./, (c) => c.toUpperCase());
-}
 // PerformanceCard — v8.97: imported from ./ai-hub/performance-card
 
 // --- Actual Profit Card (v8.23, indigo/violet tint) ----------------------
@@ -898,19 +391,6 @@ const ACTUAL_PROFIT_DAYS_PRESETS = [
   { label: '12m', days: 365 },
 ] as const;
 
-interface ActualProfitResponse {
-  ok: true;
-  period: string;
-  totalProfitEUR: number;
-  totalRevenueEUR: number;
-  totalCostEUR: number;
-  tradeCount: number;
-  avgProfitPerTradeEUR: number;
-  avgMarginPct: number;
-  dailyAvgEUR: number;
-  bestTrade: { title: string; profitEUR: number } | null;
-  worstTrade: { title: string; profitEUR: number } | null;
-}
 // ActualProfitCard — v8.97: imported from ./ai-hub/actualprofit-card
 
 // --- User Risk Profile Card (v8.24, violet/indigo tint) ------------------
@@ -937,33 +417,6 @@ interface ActualProfitResponse {
 // Master Brain's gold/amber). Placed BETWEEN Actual Profit (top) and Master
 // Brain banner (predictions) because the profile DEFINES how the predictions
 // are interpreted — context before content.
-
-type RiskTolerance = 'conservative' | 'balanced' | 'aggressive';
-type InvestmentHorizon = 'short' | 'medium' | 'long';
-
-interface UserRiskProfile {
-  riskTolerance: RiskTolerance;
-  maxAcceptableRisk: number;
-  liquidityReserve: number;
-  investmentHorizon: InvestmentHorizon;
-}
-
-interface RiskProfileAdjustment {
-  profile: UserRiskProfile;
-  adjusted: boolean;
-  recommendationOverride: {
-    action: 'REDUCE_RISK' | 'ACCEPT_RISK' | 'PROCEED' | 'CAUTIOUS_PROCEED';
-    urgency: 'HIGH' | 'MEDIUM' | 'LOW';
-    reason: string;
-  } | null;
-  profileSummary: string;
-}
-
-interface RiskProfileApiResponse {
-  ok: true;
-  profile: UserRiskProfile;
-  adjustment: RiskProfileAdjustment | null;
-}
 
 const RISK_TOLERANCE_OPTIONS: Array<{ value: RiskTolerance; label: string; hint: string }> = [
   { value: 'conservative', label: 'Konzervativni', hint: 'Nizko tveganje, filter HIGH akcij, 0.5× budget' },
@@ -992,49 +445,6 @@ const INVESTMENT_HORIZON_OPTIONS: Array<{ value: InvestmentHorizon; label: strin
 // snapshots, we can compare predicted (projection30dEUR) vs actual
 // (actualProfit30d, filled by backfill cron).
 
-interface SnapshotView {
-  id: string;
-  date: string;
-  overallHealth: number;
-  healthGrade: string;
-  riskLevel: string;
-  topActionCount: number;
-  conflictCount: number;
-  bottleneckCount: number;
-  strengthCount: number;
-  projection30dEUR: number;
-  projection90dEUR: number;
-  projection12mEUR: number;
-  profitGrade: string;
-  inventoryGrade: string;
-  marketGrade: string;
-  sourcingGrade: string;
-  riskGrade: string;
-  buyerGrade: string;
-  pricingGrade: string;
-  actualProfit30d: number | null;
-  actualProfit90d: number | null;
-  accuracy30d: number | null;
-  accuracy90d: number | null;
-  createdAt: string;
-}
-
-interface SnapshotsApiResponse {
-  ok: true;
-  days: number;
-  snapshots: SnapshotView[];
-  actualProfit: ActualProfitResponse;
-  summary: {
-    days: number;
-    snapshotCount: number;
-    latestSnapshot: SnapshotView | null;
-    oldestSnapshot: SnapshotView | null;
-    avgOverallHealth: number;
-    avgProjection30d: number;
-    actualProfit30d: number;
-    actualProfitTradeCount: number;
-  };
-}
 // BrainSnapshotsSection — v8.97: imported from ./ai-hub/brainsnapshots-section
 
 // --- Accuracy & Trend Card (v8.25, teal/emerald tint) --------------------
@@ -1069,74 +479,7 @@ interface SnapshotsApiResponse {
 //
 // Fetches from /api/ai/brain/accuracy?days=30 on mount.
 
-interface AccuracyTrendPoint {
-  date: string;
-  profitGrade: string;
-  inventoryGrade: string;
-  marketGrade: string;
-  sourcingGrade: string;
-  riskGrade: string;
-  buyerGrade: string;
-  pricingGrade: string;
-  overallHealth: number;
-  healthGrade: string;
-  accuracy30d: number | null;
-  accuracy90d: number | null;
-}
-
-interface AccuracyTrendSummary {
-  totalSnapshots: number;
-  snapshotsWithAccuracy30d: number;
-  snapshotsWithAccuracy90d: number;
-  avgAccuracy30d: number | null;
-  avgAccuracy90d: number | null;
-  trend: 'IMPROVING' | 'STABLE' | 'DECLINING' | 'INSUFFICIENT_DATA';
-  firstHalfAvg: number | null;
-  secondHalfAvg: number | null;
-  message?: string;
-}
-
-interface AccuracyApiResponse {
-  ok: true;
-  days: number;
-  accuracy30d: number | null;
-  accuracy90d: number | null;
-  gradeTrend: AccuracyTrendPoint[];
-  summary: AccuracyTrendSummary;
-}
-
 // 7 Domain grade pill style — reuses the existing gradeColor() helper but with
-// smaller padding for compact trend display.
-function gradeTrendPill(grade: string): string {
-  return cn('text-[9px] font-bold px-1.5 py-0.5 rounded border', gradeColor(grade));
-}
-
-function trendBadgeClass(trend: AccuracyTrendSummary['trend']): string {
-  switch (trend) {
-    case 'IMPROVING':
-      return 'border-emerald-500/40 bg-emerald-500/10 text-emerald-700 dark:text-emerald-400';
-    case 'STABLE':
-      return 'border-sky-500/40 bg-sky-500/10 text-sky-700 dark:text-sky-400';
-    case 'DECLINING':
-      return 'border-red-500/40 bg-red-500/10 text-red-700 dark:text-red-400';
-    default:
-      return 'border-zinc-500/40 bg-zinc-500/10 text-zinc-600 dark:text-zinc-400';
-  }
-}
-
-function trendIcon(trend: AccuracyTrendSummary['trend']): string {
-  switch (trend) {
-    case 'IMPROVING':
-      return '↗️';
-    case 'STABLE':
-      return '→';
-    case 'DECLINING':
-      return '↘️';
-    default:
-      return '—';
-  }
-}
-
 const DOMAIN_TREND_LABELS: Array<{ key: keyof AccuracyTrendPoint; label: string }> = [
   { key: 'profitGrade', label: 'Profit' },
   { key: 'inventoryGrade', label: 'Inventar' },
@@ -1165,134 +508,14 @@ const DOMAIN_TREND_LABELS: Array<{ key: keyof AccuracyTrendPoint; label: string 
 // the reasoning + reasoningParts grid + per-action trustScore pill. An overall
 // trustScore pill is also added to the banner header.
 
-type DomainName = 'profit' | 'inventory' | 'market' | 'sourcing' | 'risk' | 'buyer' | 'pricing';
-
-interface ActionExplanation {
-  rank: number;
-  domain: DomainName;
-  signal: string;
-  action: string;
-  expectedUpliftEUR: number;
-  confidence: 'HIGH' | 'MEDIUM' | 'LOW';
-  finalScore: number;
-  reasoning: string;
-  reasoningParts: {
-    trigger: string;
-    signalScore: number;
-    signalGrade: 'A+' | 'A' | 'B' | 'C' | 'D' | 'F';
-    whyRankedHere: string;
-    profileImpact: string | null;
-    conflictImpact: string | null;
-    expectedOutcome: string;
-  };
-  trustScore: number; // 0-100
-}
-
-interface MasterBrainExplanation {
-  ok: true;
-  explanations: ActionExplanation[];
-  summaryBlurb: string;
-  trustScore: number; // 0-100 overall (weighted by finalScore)
-  source: string;
-  cachedAt?: number;
-}
-
-interface MasterBrainResult {
-  ok: true;
-  domainSummary: Array<{
-    name: DomainName;
-    grade: 'A+' | 'A' | 'B' | 'C' | 'D' | 'F';
-    gradeScore: number;
-    bestOpportunity: string;
-    oneLineSummary: string;
-  }>;
-  topActions: Array<{
-    rank: number;
-    domain: DomainName;
-    signal: string;
-    action: string;
-    expectedUpliftEUR: number;
-    confidence: 'HIGH' | 'MEDIUM' | 'LOW';
-    domainWeight: number;
-    finalScore: number;
-  }>;
-  conflicts: Array<{
-    id: string;
-    domainA: DomainName;
-    domainB: DomainName;
-    description: string;
-    resolution: string;
-    severity: 'LOW' | 'MEDIUM' | 'HIGH';
-  }>;
-  overallHealth: {
-    score: number;
-    grade: 'A+' | 'A' | 'B' | 'C' | 'D' | 'F';
-    riskLevel: 'LOW' | 'MEDIUM' | 'HIGH' | 'CRITICAL';
-    bottlenecks: DomainName[];
-    strengths: DomainName[];
-  };
-  strategy: {
-    projection30d: { profitEUR: number; riskScore: number; keyMilestone: string };
-    projection90d: { profitEUR: number; riskScore: number; keyMilestone: string };
-    projection12m: { profitEUR: number; riskScore: number; keyMilestone: string };
-  };
-  oneLineSummary: string;
-  aiUsed: false;
-  source: string;
-  cachedAt?: number;
-  // v8.26: per-action explanations array (one per TOP action — up to 5)
-  explanations?: ActionExplanation[];
-  // v8.26: overall explanation summary (mirror from /api/ai/brain/explain response
-  // when computed by master endpoint). Optional — only present if the master
-  // endpoint included explanations in the response.
-  explanationSummary?: {
-    summaryBlurb: string;
-    trustScore: number;
-  };
-}
-
-const DOMAIN_LABELS: Record<DomainName, { icon: string; label: string; color: string }> = {
-  profit: { icon: '🧠', label: 'Profit', color: 'text-emerald-600 dark:text-emerald-400' },
-  inventory: { icon: '📦', label: 'Inventar', color: 'text-amber-600 dark:text-amber-400' },
-  market: { icon: '📈', label: 'Trg', color: 'text-sky-600 dark:text-sky-400' },
-  sourcing: { icon: '🎯', label: 'Sourcing', color: 'text-purple-600 dark:text-purple-400' },
-  risk: { icon: '🛡️', label: 'Tveganje', color: 'text-rose-600 dark:text-rose-400' },
-  buyer: { icon: '👥', label: 'Kupci', color: 'text-cyan-600 dark:text-cyan-400' },
-  pricing: { icon: '💶', label: 'Cene', color: 'text-lime-700 dark:text-lime-400' },
-};
-
-function conflictSeverityColor(severity: string): string {
-  switch (severity) {
-    case 'HIGH':
-      return 'text-red-600 dark:text-red-400 border-red-500/30 bg-red-500/5';
-    case 'MEDIUM':
-      return 'text-amber-600 dark:text-amber-400 border-amber-500/30 bg-amber-500/5';
-    default:
-      return 'text-zinc-600 dark:text-zinc-400 border-zinc-500/30 bg-zinc-500/5';
-  }
-}
-
 /**
  * v8.26: Color a 0-100 trustScore value for a pill.
  * ≥70 = emerald (high trust), ≥50 = amber (medium), <50 = red (low trust).
  */
-function trustScoreColor(score: number): string {
-  if (score >= 70) {
-    return 'bg-emerald-500/15 text-emerald-600 border-emerald-500/30 dark:text-emerald-400';
-  }
-  if (score >= 50) {
-    return 'bg-amber-500/15 text-amber-600 border-amber-500/30 dark:text-amber-400';
-  }
-  return 'bg-red-500/15 text-red-600 border-red-500/30 dark:text-red-400';
-}
-
 /**
  * v8.26: Color a signal grade pill (mirrors the master brain's gradeColor but
  * with slightly tighter styling for the reasoning grid).
  */
-function signalGradeColor(grade: string): string {
-  return gradeColor(grade);
-}
 // MasterBrainBanner — v8.97: imported from ./ai-hub/masterbrainbanner
 
 // --- v8.27: Scenario Brain card (rose/pink-tinted, "What If?" simulator) -------
@@ -1314,42 +537,6 @@ function signalGradeColor(grade: string): string {
 //
 // Recommendation: scenario with highest projectedProfit12m (tie-break: higher overallHealth).
 
-interface ScenarioComparisonResponse {
-  ok: true;
-  scenarios: Array<{
-    type: 'conservative' | 'balanced' | 'aggressive' | 'custom';
-    label: string;
-    description: string;
-    comparison: {
-      projectedProfit30d: number;
-      projectedProfit90d: number;
-      projectedProfit12m: number;
-      overallHealth: number;
-      healthGrade: 'A+' | 'A' | 'B' | 'C' | 'D' | 'F';
-      riskLevel: string;
-      topAction: string;
-      topActionUpliftEUR: number;
-      capitalRequired: number;
-      conflictsCount: number;
-      bottlenecksCount: number;
-    };
-  }>;
-  baseCapital: number;
-  custom?: ScenarioComparisonResponse['scenarios'][number];
-  comparisonTable: Array<{
-    metric: string;
-    conservative: string | number;
-    balanced: string | number;
-    aggressive: string | number;
-    custom?: string | number;
-  }>;
-  recommendation: {
-    bestScenario: 'conservative' | 'balanced' | 'aggressive' | 'custom';
-    reasoning: string;
-  };
-  source: string;
-  cachedAt?: number;
-}
 // ScenarioBrainCard — v8.97: imported from ./ai-hub/scenariobrain-card
 
 // --- v8.28: Adaptive Weights card (bright orange-tinted, "feedback loop") ------
@@ -1368,58 +555,12 @@ interface ScenarioComparisonResponse {
 // and Inventory's amber). Card sits BETWEEN ScenarioBrainCard and the 7 Domain
 // Brain sections.
 
-interface DomainWeightStats {
-  weight: number;
-  executed: number;
-  rejected: number;
-  lastAdjustedAt: string | null;
-  adjustmentHistory: Array<{
-    date: string;
-    oldWeight: number;
-    newWeight: number;
-    reason: string;
-  }>;
-}
-
-type AdaptiveWeightsMap = Record<DomainName, DomainWeightStats>;
-
-interface AdaptiveWeightsResponse {
-  ok: true;
-  adaptiveWeights: AdaptiveWeightsMap;
-  source: string;
-}
-
-const DOMAIN_DISPLAY: Array<{
-  key: DomainName;
-  label: string;
-  icon: string;
-}> = [
-  { key: 'profit', label: 'Profit', icon: '💰' },
-  { key: 'inventory', label: 'Inventar', icon: '📦' },
-  { key: 'market', label: 'Trg', icon: '📈' },
-  { key: 'sourcing', label: 'Sourcing', icon: '🎯' },
-  { key: 'risk', label: 'Tveganje', icon: '🛡️' },
-  { key: 'buyer', label: 'Kupci', icon: '👥' },
-  { key: 'pricing', label: 'Cene', icon: '💶' },
-];
-
 /**
  * Color the execution rate bar:
  *  - >80% (≥0.8): green — user executes most actions in this domain
  *  - 40-80%: amber — mixed signals
  *  - <40% (<0.4): red — user ignores this domain
  */
-function rateColor(rate: number): string {
-  if (rate >= 0.8) return 'bg-emerald-500';
-  if (rate >= 0.4) return 'bg-amber-500';
-  return 'bg-red-500';
-}
-
-function rateLabel(rate: number): string {
-  if (rate >= 0.8) return 'VISOKA (boost ×1.1)';
-  if (rate >= 0.4) return 'SREDNJA';
-  return 'NIZKA (reduce ×0.9)';
-}
 // AdaptiveWeightsCard — v8.97: imported from ./ai-hub/adaptiveweights-card
 
 // --- v8.29: Draft Queue card (slate/blue-gray-tinted, closed feedback loop) ---
@@ -1442,46 +583,6 @@ function rateLabel(rate: number): string {
 //   - Risk Profile (violet) — user's stated preferences
 //   - This card (slate) — the DECISION LEDGER (history of past decisions)
 
-type DraftStatus = 'pending' | 'approved' | 'executed' | 'rejected' | 'expired';
-
-interface DraftRow {
-  id: string;
-  rank: number;
-  domain: DomainName;
-  signal: string;
-  action: string;
-  expectedUpliftEUR: number;
-  confidence: 'HIGH' | 'MEDIUM' | 'LOW';
-  status: DraftStatus;
-  feedbackNote: string | null;
-  executedAt: string | Date | null;
-  rejectedAt: string | Date | null;
-  snapshotDate: string | null;
-  createdAt: string | Date;
-  updatedAt: string | Date;
-}
-
-interface DraftQueueResponse {
-  ok: true;
-  drafts: DraftRow[];
-  stats: {
-    total: number;
-    pending: number;
-    approved: number;
-    executed: number;
-    rejected: number;
-    expired: number;
-    executionRate: number;
-  };
-  domainStats: Array<{
-    domain: DomainName;
-    executed: number;
-    rejected: number;
-    pending: number;
-    executionRate: number;
-  }>;
-}
-
 /**
  * v8.29: Color a draft status pill.
  *   pending   = blue (awaiting decision)
@@ -1490,33 +591,6 @@ interface DraftQueueResponse {
  *   rejected  = red (user marked ❌ Zavrnil)
  *   expired   = gray (replaced by newer recommendations)
  */
-function draftStatusColor(status: DraftStatus): string {
-  switch (status) {
-    case 'pending':
-      return 'text-blue-600 dark:text-blue-400 border-blue-500/30 bg-blue-500/5';
-    case 'approved':
-      return 'text-amber-600 dark:text-amber-400 border-amber-500/30 bg-amber-500/5';
-    case 'executed':
-      return 'text-emerald-600 dark:text-emerald-400 border-emerald-500/30 bg-emerald-500/5';
-    case 'rejected':
-      return 'text-red-600 dark:text-red-400 border-red-500/30 bg-red-500/5';
-    case 'expired':
-      return 'text-zinc-500 dark:text-zinc-500 border-zinc-500/30 bg-zinc-500/5';
-    default:
-      return 'text-muted-foreground border-border';
-  }
-}
-
-function draftStatusLabel(status: DraftStatus): string {
-  switch (status) {
-    case 'pending': return '⏳ Čaka';
-    case 'approved': return '👍 Odobreno';
-    case 'executed': return '✅ Izvedeno';
-    case 'rejected': return '❌ Zavrnjeno';
-    case 'expired': return '⌛ Poteklo';
-    default: return status;
-  }
-}
 // DraftQueueCard — v8.97: imported from ./ai-hub/draftqueue-card
 
 // --- v8.30: Safe Auto-pilot card (purple/indigo-tinted, Automation phase) ---
@@ -1551,110 +625,6 @@ function draftStatusLabel(status: DraftStatus): string {
 //   - Scenario Brain (rose/pink) — WHAT IF?
 //   - This card (purple/indigo) — AUTONOMOUS EXECUTION
 
-type AutoPilotMode = 'safe' | 'aggressive';
-
-interface AutoPilotStatsResponse {
-  ok: true;
-  config: {
-    enabled: boolean;
-    mode: AutoPilotMode;
-    dailyLimit: number;
-    dailyBudgetEUR: number;
-    lastRunAt: string | null;
-    // v8.31: aggressive double-confirm + anomaly detection fields.
-    aggressiveConfirmedAt: string | null;
-    anomalySuspended: boolean;
-    anomalySuspendedAt: string | null;
-    anomalyReason: string | null;
-    hourlyExecCount: number;
-    hourlyWindowStart: string | null;
-  };
-  today: {
-    autoExecuted: number;
-    budgetUsed: number;
-    budgetRemaining: number;
-    limitRemaining: number;
-  };
-  allTime: {
-    totalAutoExecuted: number;
-    totalRolledBack: number;
-    rollbackRate: number;
-  };
-  source: string;
-}
-
-interface AutoPilotHistoryDraft {
-  id: string;
-  rank: number;
-  domain: DomainName;
-  action: string;
-  signal: string;
-  expectedUpliftEUR: number;
-  confidence: string;
-  status: string;
-  autoExecuted: boolean;
-  autoPilotReason: string | null;
-  rolledBack: boolean;
-  rolledBackAt: string | null;
-  rollbackReason: string | null;
-  executedAt: string | null;
-  createdAt: string;
-}
-
-interface AutoPilotHistoryResponse {
-  ok: true;
-  drafts: AutoPilotHistoryDraft[];
-  source: string;
-}
-
-interface AutoPilotRunResponse {
-  ok: true;
-  config: AutoPilotStatsResponse['config'];
-  checked: number;
-  autoExecuted: number;
-  skipped: number;
-  executedDrafts: Array<{
-    id: string;
-    action: string;
-    domain: DomainName;
-    reasons: string[];
-  }>;
-  skippedDrafts: Array<{
-    id: string;
-    action: string;
-    reasons: string[];
-  }>;
-  todayStats: {
-    autoExecuted: number;
-    budgetUsed: number;
-    budgetRemaining: number;
-    limitRemaining: number;
-  };
-  // v8.31: anomaly detection result — if suspended mid-run or pre-run.
-  anomalySuspended?: boolean;
-  anomalyReason?: string | null;
-  source: string;
-}
-
-// v8.31: Response shape for POST {action:'enable_aggressive'}.
-interface EnableAggressiveResponse {
-  ok: true;
-  confirmed: boolean; // false = pending first confirmation, true = aggressive enabled
-  message: string;
-  confirmedAt?: string;
-}
-
-// v8.31: Response shape for POST {action:'disable_aggressive'}.
-interface DisableAggressiveResponse {
-  ok: true;
-  mode: string;
-}
-
-// v8.31: Response shape for POST {action:'clear_anomaly'}.
-interface ClearAnomalyResponse {
-  ok: true;
-  message: string;
-}
 // AutoPilotCard — v8.97: imported from ./ai-hub/autopilot-card
 
 // --- Outer card wrapper (v8.30 Auto-pilot + v8.29 Draft Queue + v8.28 Adaptive + v8.27 Scenario + v8.26 Intelligence + v8.25 Accuracy + v8.24 Personal + v8.23 Validation + v8.22 Master + v8.15-v8.21 7 Domains) --------------------
