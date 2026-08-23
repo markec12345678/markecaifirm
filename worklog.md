@@ -21007,3 +21007,35 @@ Stage Summary:
   * 0 lint napak, 0 typecheck napak, 0 TODO, 0 inline duplikatov, 0 inline konstant
   * Vsa funkcionalnost ohranjena 1:1
   * MODULARIZACIJA + CLEANUP POPOLNOMA KONČANA
+
+---
+Task ID: v9.15
+Agent: main
+Task: Demo podatki — seed trades + listings + tags + monthly goal za boljšo predstavitev
+
+Work Log:
+- Preveril health status: setup 1/7 (samo AI provider konfiguriran), baza prazna.
+- Korak 1: Run seed-listings.ts — 8 demo elektronika listings (iPhone, MacBook, PS5, etc.)
+- Korak 2: Run seed-cars.ts — 7 avto listings (VW Golf, BMW, Audi z različnimi letniki/lokacijami)
+- Korak 3: Set monthly profit goal na 500€ preko /api/settings POST
+- Korak 4: Seed 25 demo trades preko /api/ai/brain/seed (25 realistic Slovenian trades — Bolha, Vinted, Avtonet, mobile.de)
+- Korak 5: Run seed-tags.ts — assign sensible tags na vseh 25 trades
+- Rezultat: setup 5/7 (AI ✓, Monitor ✓, Oglasi ✓, Trgovine ✓, Cilj ✓). Preostala 2: Cron (zunanji) in Web Push (browser-only).
+- Verifikacija (Agent Browser):
+  * Homepage: HTTP 200 ✓
+  * Trades view: 58 card elementov (25 trades z vsemi podrobnostmi) ✓
+  * Footer: v9.15.0 • HEALTHY 85/100 ✓
+  * Console: 0 error-ov ✓
+  * Screenshot: download/demo-data-v9.14.png
+
+Stage Summary:
+- SEEDED: 15 listings (8 elektronika + 7 avto)
+- SEEDED: 25 trades (realistic Slovenian trade history)
+- SEEDED: 25 tag assignments
+- SET: monthly profit goal = 500€
+- Setup: 5/7 končano (71%)
+- MODIFIED: src/lib/version.ts (v9.14.0→v9.15.0)
+- MODIFIED: README.md (badge v9.15.0)
+- Verzija: v9.15.0
+- Skupaj (v7.50 → v9.15): 165 verzij, 287 novih funkcij
+- Aplikacija je sedaj polno uporabna z demo podatki — vse view datoteke prikazujejo realne podatke.
