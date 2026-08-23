@@ -20319,3 +20319,59 @@ Stage Summary:
     - src/components/dashboard/listings/      (6 datotek)
     - src/components/dashboard/statistics/   (26 datotek)
     - src/components/dashboard/monitors/      (6 datotek)
+
+---
+Task ID: v9.04
+Agent: main
+Task: Modularizacija dashboard-view.tsx (1169 vrstic) — ekstrakcija 5 podkomponent
+
+Work Log:
+- Analiziral dashboard-view.tsx (1169 vrstic, šesti največji view): glavni DashboardView() + 5 podkomponent (StatCard, StatusDot, ActivityFeed, SkladisceWidget, WidgetWrapper) + 3 tipi (WidgetId, Stats, ViewProps) + 3 helperji (WIDGET_IDS const, formatDuration, formatTimeAgo).
+- Korak 1: Ustvaril src/components/dashboard/dashboard/ direktorij, types.ts (WIDGET_IDS, WidgetId, Stats, ViewProps) in utils.ts (formatDuration, formatTimeAgo).
+- Korak 2: Ekstraktiral 5 podkomponent:
+  * stat-card.tsx (65 vrstic) — StatCard, statistična kartica
+  * status-dot.tsx (24 vrstic) — StatusDot, indikator statusa
+  * activity-feed.tsx (102 vrstic) — ActivityFeed, vir aktivnosti
+  * skladisce-widget.tsx (168 vrstic) — SkladisceWidget, widget skladišča
+  * widget-wrapper.tsx (52 vrstic) — WidgetWrapper, ovojnica widgeta z move functionality
+- Korak 3: Posodobil dashboard-view.tsx — izbrisal 5 funkcij + 2 helperja + inline tipe in dodal 8 import stavkov.
+- Popravil import težave: WIDGET_IDS je v types.ts ne v utils.ts — popravil vseh 5 datotek.
+- Popravil odvečni `}` v dashboard-view.tsx in widget-wrapper.tsx.
+- Rezultat: dashboard-view.tsx z 1169 → 794 vrstic (−32%).
+- Verifikacija (Agent Browser):
+  * Homepage: HTTP 200 ✓
+  * Dashboard view: heading "Pregled sistema" ✓
+  * Console: 0 error-ov ✓
+- Preveril lint: 0 napak, 0 warnings ✨
+- Preveril typecheck: 0 napak ✨
+
+Stage Summary:
+- NEW: src/components/dashboard/dashboard/types.ts (WIDGET_IDS, WidgetId, Stats, ViewProps)
+- NEW: src/components/dashboard/dashboard/utils.ts (formatDuration, formatTimeAgo)
+- NEW: src/components/dashboard/dashboard/stat-card.tsx (65 vrstic)
+- NEW: src/components/dashboard/dashboard/status-dot.tsx (24 vrstic)
+- NEW: src/components/dashboard/dashboard/activity-feed.tsx (102 vrstic)
+- NEW: src/components/dashboard/dashboard/skladisce-widget.tsx (168 vrstic)
+- NEW: src/components/dashboard/dashboard/widget-wrapper.tsx (52 vrstic)
+- MODIFIED: src/components/dashboard/dashboard-view.tsx (1169 → 794 vrstic, −32%)
+- MODIFIED: src/lib/version.ts (v9.03.0→v9.04.0)
+- MODIFIED: README.md (badge v9.04.0)
+- Verzija: v9.04.0
+- Skupaj (v7.50 → v9.04): 154 verzij, 276 novih funkcij
+- SKUPNI REZULTAT modularizacije (v8.94→v9.04):
+  * settings-view.tsx:    3595 → 736 vrstic   (−79%)
+  * ai-hub-view.tsx:      8167 → 2030 vrstic  (−75%)
+  * trades-view.tsx:      4142 → 3231 vrstic  (−22%)
+  * listings-view.tsx:    3550 → 980 vrstic    (−72%)
+  * statistics-view.tsx:  3418 → 629 vrstic    (−82%)
+  * monitors-view.tsx:   1729 → 588 vrstic    (−66%)
+  * dashboard-view.tsx:  1169 → 794 vrstic    (−32%)
+  * SKUPAJ:              25770 → 8988 vrstic  (−65%)
+  * 108 novih modulskih datotek ustvarjenih:
+    - src/components/dashboard/settings/    (13 datotek)
+    - src/components/dashboard/ai-hub/       (25 datotek)
+    - src/components/dashboard/trades/        (6 datotek)
+    - src/components/dashboard/listings/      (6 datotek)
+    - src/components/dashboard/statistics/   (26 datotek)
+    - src/components/dashboard/monitors/      (6 datotek)
+    - src/components/dashboard/dashboard/     (7 datotek)
