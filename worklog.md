@@ -19967,3 +19967,54 @@ Stage Summary:
   * 25 modulskih datotek v src/components/dashboard/ai-hub/ (23 komponente + types.ts + utils.ts)
   * Vsa funkcionalnost ohranjena 1:1 — nobena logika spremenjena
 - NASLEDNJI KORAK (po želji): Modularizacija trades-view.tsx (4142 vrstic) ali listings-view.tsx (3550 vrstic) ali nove funkcionalnosti.
+
+---
+Task ID: v8.99
+Agent: main
+Task: Modularizacija trades-view.tsx (4142 vrstic) — ekstrakcija 4 podkomponent
+
+Work Log:
+- Analiziral trades-view.tsx (4142 vrstic, drugi največji view): glavni TradesView() (~3190 vrstic) + 4 podkomponente (StatBox, TradeRow, TradeFormDialog, CsvImportDialog) + 4 tipi (Trade, TradeStats, SavedViewFilters, SavedView) + 2 helperja (CATEGORIES, parseTagsLocal).
+- Korak 1: Ustvaril src/components/dashboard/trades/ direktorij.
+- Korak 2: Ustvaril types.ts (Trade, TradeStats, SavedViewFilters, SavedView — vsi export-ani).
+- Korak 3: Ustvaril utils.ts (CATEGORIES const + parseTagsLocal funkcija — oba export-ana).
+- Korak 4: Ekstraktiral 4 podkomponente z Python skripto:
+  * stat-box.tsx (13 vrstic) — StatBox, majhna presentational komponenta
+  * trade-row.tsx (360 vrstic) — TradeRow, velika komponenta z inline actions
+  * trade-form-dialog.tsx (209 vrstic) — TradeFormDialog, add/edit form
+  * csv-import-dialog.tsx (271 vrstic) — CsvImportDialog, bulk CSV import
+- Korak 5: Python skripta posodobila trades-view.tsx — izbrisala 4 funkcije + inline tipe/helperje in dodala 6 import stavkov.
+- Korak 6: Popravil manjkajoče importe v trade-form-dialog.tsx (CATEGORIES, parseTagsLocal, triggerGlobalRefresh) in trade-row.tsx (parseTagsLocal, useLocalStorage, useHaptic, triggerGlobalRefresh).
+- Rezultat: trades-view.tsx z 4142 → 3231 vrstic (−22%).
+- Verifikacija (Agent Browser):
+  * Homepage: HTTP 200 ✓
+  * Skladišče (Trades) view: heading "Skladišče" (ne "Napaka") ✓
+  * Console: 0 error-ov ✓
+- Preveril lint: 0 napak, 0 warnings ✨
+- Preveril typecheck: 0 napak ✨
+
+Stage Summary:
+- NEW: src/components/dashboard/trades/types.ts (shared tipi: Trade, TradeStats, SavedViewFilters, SavedView)
+- NEW: src/components/dashboard/trades/utils.ts (CATEGORIES + parseTagsLocal)
+- NEW: src/components/dashboard/trades/stat-box.tsx (13 vrstic, StatBox)
+- NEW: src/components/dashboard/trades/trade-row.tsx (360 vrstic, TradeRow)
+- NEW: src/components/dashboard/trades/trade-form-dialog.tsx (209 vrstic, TradeFormDialog)
+- NEW: src/components/dashboard/trades/csv-import-dialog.tsx (271 vrstic, CsvImportDialog)
+- MODIFIED: src/components/dashboard/trades-view.tsx (4142 → 3231 vrstic, −22%)
+  * 4 funkcije odstranjene in nadomeščene z import stavki
+  * Inline tipi/helperji odstranjeni in import-ani iz ./trades/types in ./trades/utils
+  * Preostane: glavni TradesView() orchestrator (~3230 vrstic) — še vedno velik, ampak bolj pregleden
+- MODIFIED: src/lib/version.ts (v8.98.0→v8.99.0)
+- MODIFIED: README.md (badge v8.99.0)
+- Verzija: v8.99.0
+- Skupaj (v7.50 → v8.99): 149 verzij, 271 novih funkcij
+- SKUPNI REZULTAT modularizacije (v8.94→v8.99):
+  * settings-view.tsx:  3595 → 736 vrstic  (−79%)
+  * ai-hub-view.tsx:    8167 → 2030 vrstic (−75%)
+  * trades-view.tsx:    4142 → 3231 vrstic (−22%)
+  * SKUPAJ:            15904 → 5997 vrstic (−62%)
+  * 63 novih modulskih datotek ustvarjenih:
+    - src/components/dashboard/settings/ (13 datotek)
+    - src/components/dashboard/ai-hub/ (25 datotek)
+    - src/components/dashboard/trades/ (6 datotek)
+- NASLEDNJI KORAK (po želji): Nadaljnja modularizacija glavnega TradesView() (sestavljene sekcije v module) ali modularizacija listings-view.tsx (3550 vrstic) ali nove funkcionalnosti.
