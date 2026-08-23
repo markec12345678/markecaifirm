@@ -20556,3 +20556,122 @@ Stage Summary:
     - settings (13), ai-hub (25), trades (17), listings (6),
       statistics (26), monitors (6), dashboard (7), analytics (7), iskalnik (4)
 - NASLEDNJI KORAK: Nadaljnja modularizacija preostalih sekcij v trades-view.tsx ali nove funkcionalnosti.
+
+---
+Task ID: v9.08-extract-1
+Agent: subagent (trades modularization — 8 AI sections)
+Task: Extract 8 remaining AI sections from trades-view.tsx into separate module files
+
+Work Log:
+- Read worklog.md (v9.05-extract-1 + v9.07 entries) to confirm established extraction pattern (button + card moved together into a single self-contained component, parent file imports the new component and deletes original useState + button JSX + result card JSX)
+- Read trades-view.tsx (2339 lines) — confirmed 8 remaining inline AI sections each with own useState + inline onClick fetch handler + result JSX block: Tax Loss Harvesting, Multi-Vendor Bundle, Optimal Time Predictor, Title A/B Tester, Buyer Persona Generator, Cross-Platform Price Comparison, Inventory Depreciation Forecaster, Listing Performance Tracker
+- Verified shared types file at src/components/dashboard/trades/types.ts already exists with Trade interface (needed by components that read trades prop for first-held lookup)
+- Confirmed ESLint config: @typescript-eslint/no-unused-vars is OFF, so dead-code refs (e.g. `const ids = Array.from(bulkTradeIds);` never used in MultiVendorBundle, `setTaxHarvestYear` never called in TaxLossHarvesting) are preserved 1:1 from original without lint failures
+- Confirmed icon usage via grep: Receipt, Network, Clock, Type, Users, Globe, LineChart as LineChartIcon, Activity icons appear ONLY in the 8 sections being extracted (each icon used twice — once in button + once in card header) — safe to remove all 8 from parent lucide-react import
+
+BATCH 1 (4 components, typecheck + lint must be 0 errors before continuing):
+- Created src/components/dashboard/trades/tax-loss-harvesting.tsx — TaxLossHarvesting (no props; owns taxHarvestData/taxHarvestLoading/taxHarvestYear useState; fetch POST /api/ai/tax-loss-harvesting body {year}; button uses Receipt icon + card uses Receipt icon; both preserved 1:1)
+- Created src/components/dashboard/trades/multi-vendor-bundle.tsx — MultiVendorBundle (bulkTradeIds: Set<string> prop; owns multiVendorData/multiVendorLoading useState; fetch POST /api/ai/multi-vendor-bundle body {maxItems:8}; preserves dead-code `const ids = Array.from(bulkTradeIds);` 1:1 from original)
+- Created src/components/dashboard/trades/optimal-time-predictor.tsx — OptimalTimePredictor (no props; owns optimalTimeData/optimalTimeLoading useState; fetch POST /api/ai/optimal-time body {})
+- Created src/components/dashboard/trades/title-ab-tester.tsx — TitleABTester (trades: Trade[] prop; owns titleAbTestData/titleAbTestLoading/titleAbTestCopied useState; fetch POST /api/ai/title-abtest body {tradeId:firstHeld.id}; preserves clipboard copy + state-copied logic 1:1)
+- Each file: 'use client'; imports ONLY used hooks/icons/components (useState, Card/CardContent, Button, Badge, RefreshCw + section-specific lucide icon, toast, cn, optional Trade type for trades-prop components)
+- In trades-view.tsx:
+  * Added 4 named imports for new components
+  * Removed 4 unused icons from lucide-react import (Receipt, Network, Clock, Type)
+  * Deleted 11 useState declarations: taxHarvestData/taxHarvestLoading/taxHarvestYear + multiVendorData/multiVendorLoading + optimalTimeData/optimalTimeLoading + titleAbTestData/titleAbTestLoading/titleAbTestCopied
+  * Deleted 4 button JSX blocks (104 lines total) from the action-button flex row
+  * Replaced 4 result card JSX blocks with `<ComponentName />` (sed -i range replacement, in reverse line order to keep line numbers stable)
+- Lint + typecheck: 0 errors, 0 warnings ✨
+
+BATCH 2 (4 components):
+- Created src/components/dashboard/trades/buyer-persona-generator.tsx — BuyerPersonaGenerator (trades: Trade[] prop; owns personaData/personaLoading useState; fetch POST /api/ai/buyer-persona body {tradeId:firstHeld.id})
+- Created src/components/dashboard/trades/cross-platform-price-comparison.tsx — CrossPlatformPriceComparison (trades: Trade[] prop; owns crossPriceData/crossPriceLoading useState; fetch POST /api/ai/cross-platform-price body {tradeId:firstHeld.id})
+- Created src/components/dashboard/trades/inventory-depreciation.tsx — InventoryDepreciation (no props; owns depreciationData/depreciationLoading useState; fetch POST /api/ai/depreciation-forecast body {})
+- Created src/components/dashboard/trades/listing-performance-tracker.tsx — ListingPerformanceTracker (no props; owns perfData/perfLoading useState; fetch POST /api/ai/listing-performance body {})
+- In trades-view.tsx:
+  * Added 4 named imports for new components
+  * Removed 4 more unused icons from lucide-react import (Users, Globe, LineChart as LineChartIcon, Activity) — lucide-react import now: RefreshCw, Plus, Pencil, Trash2, TrendingUp, Wallet, Target, ShoppingCart, Tag, Download, Sparkles, Flame, Upload (13 icons, all still in use)
+  * Deleted 12 useState declarations: personaData/personaLoading + crossPriceData/crossPriceLoading + depreciationData/depreciationLoading + perfData/perfLoading
+  * Deleted 4 button JSX blocks (106 lines total) from the action-button flex row
+  * Replaced 4 result card JSX blocks with `<ComponentName />`
+- Lint + typecheck: 0 errors, 0 warnings ✨
+
+FINAL VERIFICATION:
+- trades-view.tsx: 2339 → 1215 lines (−1124 lines, −48% reduction) — well within the ~1200-1500 target range
+- 8 new files created in src/components/dashboard/trades/ (all named exports, all 'use client'):
+  tax-loss-harvesting, multi-vendor-bundle, optimal-time-predictor, title-ab-tester,
+  buyer-persona-generator, cross-platform-price-comparison, inventory-depreciation, listing-performance-tracker
+- Typecheck: 0 errors
+- Lint: 0 errors, 0 warnings
+- Dev server restart (pkill next + rm .next + setsid next dev -p 3000): ready in 311ms, HTTP 200 on http://localhost:3000/, no errors/warnings in dev.log
+- All API URLs preserved verbatim: /api/ai/tax-loss-harvesting, /api/ai/multi-vendor-bundle, /api/ai/optimal-time, /api/ai/title-abtest, /api/ai/buyer-persona, /api/ai/cross-platform-price, /api/ai/depreciation-forecast, /api/ai/listing-performance
+- All JSX classNames, Slovenian strings, conditional logic, toast messages, cn() helpers preserved 1:1 (no logic changes)
+- Component ordering matches original v6.15→v6.24 sequence (Tax → MultiVendor → OptimalTime → TitleAB → BuyerPersona → CrossPlatform → InventoryDepreciation → ListingPerf)
+- New component props: MultiVendorBundle uses bulkTradeIds (Set<string>); TitleABTester + BuyerPersonaGenerator + CrossPlatformPriceComparison use trades (Trade[]) — all imported from ./types
+- TaxLossHarvesting, OptimalTimePredictor, InventoryDepreciation, ListingPerformanceTracker: zero props (fully self-contained)
+
+Stage Summary:
+- NEW: 8 komponentnih datotek v src/components/dashboard/trades/:
+  tax-loss-harvesting, multi-vendor-bundle, optimal-time-predictor, title-ab-tester,
+  buyer-persona-generator, cross-platform-price-comparison, inventory-depreciation, listing-performance-tracker
+- MODIFIED: src/components/dashboard/trades-view.tsx (2339 → 1215 vrstic, −48%)
+- Verzija: v9.08.0 (no version bump applied per task instructions)
+- Skupaj (v7.50 → v9.08-extract-1): 158 verzij, 280 novih funkcij
+- SKUPNI REZULTAT modularizacije trades-view.tsx (v8.99 → v9.08-extract-1):
+  * Prej: 3231 vrstic (v8.99 baseline) → 1215 vrstic (−62%)
+  * Skupno število modulskih datotek v src/components/dashboard/trades/: 17 → 25 (8 novih)
+  * Vsi AI feature-gumbi (v6.15–v6.24) sedaj samostojni (button + state + card v eni datoteki)
+  * V prihodnjih verzijah ostanejo v trades-view.tsx samo: shared state (trades, stats, filter, bulkTradeIds, priorityMap, priceMap, outcomeMap), shared-data cards (Stats overview, Profit chart, This month P&L, Category breakdown), TradeRow renderer, bulk actions, saved views, CSV import/export
+
+---
+Task ID: v9.08
+Agent: main + subagent
+Task: Dokončana modularizacija trades-view.tsx — ekstrakcija preostalih 8 AI sekcij
+
+Work Log:
+- Analiziral preostale AI sekcije v trades-view.tsx (2339 vrstic po v9.07): 8 AI sekcij z lastnim state-om + inline onClick fetch handlerji.
+- Subagent ekstraktiral 8 AI komponent v 2 batchih po 4:
+  * tax-loss-harvesting.tsx — TaxLossHarvesting (samostojna, v6.15)
+  * multi-vendor-bundle.tsx — MultiVendorBundle (bulkTradeIds prop, v6.16)
+  * optimal-time-predictor.tsx — OptimalTimePredictor (samostojna, v6.21)
+  * title-ab-tester.tsx — TitleABTester (trades prop, v6.22)
+  * buyer-persona-generator.tsx — BuyerPersonaGenerator (trades prop, v6.22)
+  * cross-platform-price-comparison.tsx — CrossPlatformPriceComparison (trades prop, v6.23)
+  * inventory-depreciation.tsx — InventoryDepreciation (samostojna, v6.23)
+  * listing-performance-tracker.tsx — ListingPerformanceTracker (samostojna, v6.24)
+- Vsaka komponenta ima lasten state + fetch. Subagent je očistil tudi nepotrebne import-e iz parent-a.
+- Rezultat: trades-view.tsx z 2339 → 1215 vrstic (−48% v tej fazi).
+- Verifikacija (Agent Browser):
+  * Homepage: HTTP 200 ✓
+  * Skladišče (Trades) view: heading "Skladišče" ✓
+  * Console: 0 error-ov ✓
+- Preveril lint: 0 napak, 0 warnings ✨
+- Preveril typecheck: 0 napak ✨
+
+Stage Summary:
+- NEW: 8 komponentnih datotek v src/components/dashboard/trades/
+- MODIFIED: src/components/dashboard/trades-view.tsx (2339 → 1215 vrstic, −48%)
+  * 8 AI sekcij ekstraktiranih (state + fetch + JSX premaknjeni v module)
+  * Preostane: shared state, stats/cards, TradeRow renderer, bulk actions, saved views, CSV import
+- MODIFIED: src/lib/version.ts (v9.07.0→v9.08.0)
+- MODIFIED: README.md (badge v9.08.0)
+- Verzija: v9.08.0
+- Skupaj (v7.50 → v9.08): 158 verzij, 280 novih funkcij
+- TRADES modularizacija KONČANA:
+  * trades-view.tsx: 4142 → 1215 vrstic (−71% skupaj)
+  * 25 modulskih datotek (4 iz v8.99 + 11 iz v9.07 + 8 iz v9.08 + types.ts + utils.ts)
+- SKUPNI REZULTAT modularizacije (v8.94→v9.08):
+  * settings-view.tsx:    3595 → 736 vrstic   (−79%)
+  * ai-hub-view.tsx:      8167 → 2030 vrstic  (−75%)
+  * trades-view.tsx:      4142 → 1215 vrstic  (−71%)
+  * listings-view.tsx:    3550 → 980 vrstic    (−72%)
+  * statistics-view.tsx:  3418 → 629 vrstic    (−82%)
+  * monitors-view.tsx:   1729 → 588 vrstic    (−66%)
+  * dashboard-view.tsx:  1169 → 794 vrstic    (−32%)
+  * analytics-view.tsx:  1140 → 566 vrstic    (−50%)
+  * iskalnik-view.tsx:   1131 → 705 vrstic    (−38%)
+  * SKUPAJ:              28041 → 8243 vrstic  (−71%)
+  * 138 novih modulskih datotek:
+    - settings (13), ai-hub (25), trades (25), listings (6),
+      statistics (26), monitors (6), dashboard (7), analytics (7), iskalnik (4)
+    + types.ts/utils.ts v vsakem direktoriju
