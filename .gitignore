@@ -90,3 +90,7 @@ package-lock.json
 tool-results/
 agent-ctx/
 backups/
+
+
+# Backup files from refactoring
+*.original

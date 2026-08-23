@@ -19652,3 +19652,52 @@ Stage Summary:
 - Verzija: v8.93.0
 - Skupaj (v7.50 → v8.93): 143 verzij, 265 novih funkcij
 - ACCESSIBILITY: 9 ARIA atributov dodanih. Screen reader uporabniki razumejo kaj vsak element dela.
+
+---
+Task ID: v8.94
+Agent: main
+Task: Revert nepopolnega settings refactorja (commit 85ba870) — obnova delujoče aplikacije
+
+Work Log:
+- Analiziral zadnji commit 85ba870 (20. avg 2026, "refactor(settings): modularizacija settings-view.tsx"). Commit je bil narejen 3 dni PO v8.93 brez verzijskega bumpa, brez README/worklog posodobitve.
+- Odkril DVE kritični regresiji v commitu 85ba870:
+  1. JSX SINTAKSNA NAPAKA: settings-general.tsx vrstice 31 in 39 vsebujeta neescapirane `>` znake v JSX tekstu ("score >= " in "risk score > "). Aplikacija je bila POPOLNOMA ZLOMLJENA — HTTP 500 na homepage, nobena stran se ni naložila.
+  2. IZBRISANIH 11 SEKCIJ nastavitev: refactor je zmanjšal settings-view.tsx z 155K znakov (3595 vrstic) na 5.4K znakov (96.5% zmanjšanje), a pri tem IZBRISAL (ne prestavil) 11 od 18 sekcij:
+     - AI Fallback v2.6 (backup provider)
+     - Backup konfiguracije v2.8 (JSON export/import)
+     - AI analiza slik v1.1
+     - Bolha Playwright fallback v1.1
+     - Telegram inline tipke v1.1
+     - Baza podatkov v1.3 (SQLite backup)
+     - Full System Backup & Restore v8.42 (JSON vseh 18 tabel)
+     - PWA + Push obvestila v1.5 (VAPID)
+     - Samodejni cleanup v2.2
+     - Hitre predloge v1.9
+     - Digest mode v1.6
+  Grep po celotnem src/ za JsonBackup, test-fallback-ai, vapidPublicKey, slackWebhookUrl je vrnil NIČ izven .original datoteke — funkcionalnost je bila DEJANSKO izbrisana, ne prestavljena.
+- Obnovil delujoči monolit:
+  * `cp src/components/dashboard/settings-view.tsx.original src/components/dashboard/settings-view.tsx` (3595 vrstic, v8.93 working state)
+  * `rm -rf src/components/dashboard/settings/` (izbrisal nepopolne module: settings-ai.tsx, settings-notifications.tsx, settings-general.tsx, index.ts)
+  * `rm src/components/dashboard/settings-view.tsx.original` (backup ni več potreben)
+- Dodal `*.original` v .gitignore (prepreči prihodnje commit-anje backup datotek).
+- Dodal `allowedDevOrigins: ["*.space-z.ai"]` v next.config.ts (sandbox preview panel dostop).
+- Preveril lint: 0 napak, 0 warnings ✨
+- Preveril typecheck: 0 napak ✨
+- HTTP check: GET / 200 (aplikacija spet deluje)
+- Verzija bumpana: v8.93.0 → v8.94.0 v src/lib/version.ts
+- README.md badge posodobljen: v8.93.0 → v8.94.0
+- Števci preverjeni: 432 AI + 84 analytics = 651 routes (nespremenjeno)
+
+Stage Summary:
+- REVERTED: commit 85ba870 (nepopolni settings refactor) — aplikacija popolnoma zlomljena zaradi JSX sintaksnih napak + izgubljenih 11 sekcij nastavitev
+- RESTORED: src/components/dashboard/settings-view.tsx (3595 vrstic, working v8.93 monolith z vsemi 18 sekcijami + 4 pod-komponentami: ProfitGoalSection, BackupSection, QuickResponsesSection, FullBackupSection)
+- DELETED: src/components/dashboard/settings/ (4 nepopolne modularne datoteke)
+- DELETED: src/components/dashboard/settings-view.tsx.original (backup)
+- MODIFIED: .gitignore (+*.original)
+- MODIFIED: next.config.ts (+allowedDevOrigins za sandbox preview)
+- MODIFIED: src/lib/version.ts (v8.93.0→v8.94.0)
+- MODIFIED: README.md (badge v8.94.0)
+- Verzija: v8.94.0
+- Skupaj (v7.50 → v8.94): 144 verzij, 266 novih funkcij
+- LESSON: Modularizacija velikih komponent (3595 vrstic) mora biti INKREMENTALNA z testiranjem po vsakem koraku. Refactor commit 85ba870 je bil narejen brez lint/typecheck/browser preverjanja — sintaksne napake so zlomile celo aplikacijo. Za prihodnje refaktoriranje: (1) vedno poženi `bun run lint` + `bun run typecheck` pred commitom, (2) preveri da se aplikacija dejansko naloži v browserju, (3) ohrani .original kot LOKALNI backup (ne commit-an v git), (4) razdeli na manjše commite (ena sekcija na commit) za lažje revert-anje.
+- NASLEDNJI KORAK (po želji): Proper modularizacija kot v8.95.0 — inkrementalno, z ohranitvijo VSEH 18 sekcij + 4 pod-komponent, testirano po vsakem modulu.
