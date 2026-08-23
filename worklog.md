@@ -20968,3 +20968,42 @@ Stage Summary:
   * 0 lint napak, 0 typecheck napak, 0 TODO, 0 inline duplikatov
   * Vsa funkcionalnost ohranjena 1:1
   * Profesionalna modularna arhitektura — KONČANO
+
+---
+Task ID: v9.14
+Agent: main
+Task: Post-modularization cleanup — odstranitev preostalih 5 inline konstant
+
+Work Log:
+- Preveril vse view datoteke za preostale inline konstante ki bi morale biti v utils.ts/types.ts.
+- Odkril 5 preostalih inline konstant:
+  1. PIE_COLORS v analytics-view.tsx (duplikat — je tudi v analytics/types.ts)
+  2. ACTUAL_PROFIT_DAYS_PRESETS v ai-hub-view.tsx (ni v utils.ts)
+  3. RISK_TOLERANCE_OPTIONS v ai-hub-view.tsx (ni v utils.ts)
+  4. INVESTMENT_HORIZON_OPTIONS v ai-hub-view.tsx (ni v utils.ts)
+  5. DOMAIN_TREND_LABELS v ai-hub-view.tsx (ni v utils.ts)
+- Korak 1: Odstranil PIE_COLORS duplikat iz analytics-view.tsx, dodal import iz ./analytics/types.
+- Korak 2: Premaknil 4 konstante iz ai-hub-view.tsx v ai-hub/utils.ts (z export), dodal import v ai-hub-view.tsx.
+- Popravil manjkajoče type import-e v utils.ts (RiskTolerance, InvestmentHorizon, AccuracyTrendPoint).
+- Rezultat: ai-hub-view.tsx z 1000 → 972 vrstic, analytics-view.tsx z 566 → 503 vrstic.
+- Verifikacija (Agent Browser):
+  * Homepage: HTTP 200 ✓
+  * Footer: v9.14.0 • HEALTHY 85/100 ✓
+  * Console: 0 error-ov ✓
+- Preveril lint: 0 napak, 0 warnings ✨
+- Preveril typecheck: 0 napak ✨
+
+Stage Summary:
+- MODIFIED: src/components/dashboard/analytics-view.tsx (566 → 503, PIE_COLORS odstranjen)
+- MODIFIED: src/components/dashboard/ai-hub-view.tsx (1000 → 972, 4 konstante premaknjene v utils.ts)
+- MODIFIED: src/components/dashboard/ai-hub/utils.ts (+4 exportane konstante + type imports)
+- MODIFIED: src/lib/version.ts (v9.13.0→v9.14.0)
+- MODIFIED: README.md (badge v9.14.0)
+- Verzija: v9.14.0
+- Skupaj (v7.50 → v9.14): 164 verzij, 286 novih funkcij
+- SKUPNI REZULTAT modularizacije (v8.94→v9.14):
+  * 193 modulskih datotek v 16 direktorijih
+  * View datoteke: 28885 → 9524 vrstic (−67%)
+  * 0 lint napak, 0 typecheck napak, 0 TODO, 0 inline duplikatov, 0 inline konstant
+  * Vsa funkcionalnost ohranjena 1:1
+  * MODULARIZACIJA + CLEANUP POPOLNOMA KONČANA

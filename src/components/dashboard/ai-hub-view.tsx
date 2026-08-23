@@ -196,7 +196,7 @@ import { AIRunnerModal } from './ai-hub/ai-runner-modal';
 import type { AIEndpoint } from './ai-hub/types';
 
 // v9.12: Import helpers from shared utils (removed inline duplicates)
-import { CATEGORIES, DOMAIN_DISPLAY, DOMAIN_LABELS, categorize, confidenceColor, conflictSeverityColor, draftStatusColor, draftStatusLabel, gradeColor, gradeTextColor, gradeTrendPill, hitRateBarColor, hitRateColor, namespaceLabel, rateColor, rateLabel, responseTimeColor, riskLevelColor, signalGradeColor, trendBadgeClass, trendIcon, trustScoreColor } from './ai-hub/utils';
+import { CATEGORIES, DOMAIN_DISPLAY, DOMAIN_LABELS, categorize, confidenceColor, conflictSeverityColor, draftStatusColor, draftStatusLabel, gradeColor, gradeTextColor, gradeTrendPill, hitRateBarColor, hitRateColor, namespaceLabel, rateColor, rateLabel, responseTimeColor, riskLevelColor, signalGradeColor, trendBadgeClass, trendIcon, trustScoreColor, ACTUAL_PROFIT_DAYS_PRESETS, RISK_TOLERANCE_OPTIONS, INVESTMENT_HORIZON_OPTIONS, DOMAIN_TREND_LABELS } from './ai-hub/utils';
 
 // v9.12: Import types from shared types (removed inline duplicates)
 import type { AccuracyApiResponse, AccuracyTrendPoint, AccuracyTrendSummary, ActionExplanation, ActualProfitResponse, AdaptiveWeightsMap, AdaptiveWeightsResponse, AutoPilotHistoryDraft, AutoPilotHistoryResponse, AutoPilotMode, AutoPilotRunResponse, AutoPilotStatsResponse, BrainAction, BrainEndpointHealth, BrainResult, BuyerBrainResult, CacheStatsRow, ClearAnomalyResponse, DisableAggressiveResponse, DomainName, DomainWeightStats, DraftQueueResponse, DraftRow, DraftStatus, EnableAggressiveResponse, InventoryBrainResult, InvestmentHorizon, MarketBrainResult, MasterBrainExplanation, MasterBrainResult, PerfStatsRow, PerformanceReport, PricingBrainResult, RiskBrainResult, RiskProfileAdjustment, RiskProfileApiResponse, RiskTolerance, ScenarioComparisonResponse, SeedInfo, SnapshotView, SnapshotsApiResponse, SourcingBrainResult, SystemHealthReport, UserRiskProfile } from './ai-hub/types';
@@ -384,13 +384,6 @@ const BRAIN_HEALTH_ICONS: Record<string, { icon: typeof Brain; tint: string }> =
 //
 // Days selector: 7d / 30d / 90d / 12m (12m = 365d).
 
-const ACTUAL_PROFIT_DAYS_PRESETS = [
-  { label: '7d', days: 7 },
-  { label: '30d', days: 30 },
-  { label: '90d', days: 90 },
-  { label: '12m', days: 365 },
-] as const;
-
 // ActualProfitCard — v8.97: imported from ./ai-hub/actualprofit-card
 
 // --- User Risk Profile Card (v8.24, violet/indigo tint) ------------------
@@ -418,17 +411,6 @@ const ACTUAL_PROFIT_DAYS_PRESETS = [
 // Brain banner (predictions) because the profile DEFINES how the predictions
 // are interpreted — context before content.
 
-const RISK_TOLERANCE_OPTIONS: Array<{ value: RiskTolerance; label: string; hint: string }> = [
-  { value: 'conservative', label: 'Konzervativni', hint: 'Nizko tveganje, filter HIGH akcij, 0.5× budget' },
-  { value: 'balanced', label: 'Uravnoteženi', hint: 'Brez prilagoditev — Master Brain kot je' },
-  { value: 'aggressive', label: 'Agresivni', hint: 'Visoka rast, dovoli HIGH akcij, 1.5× budget' },
-];
-
-const INVESTMENT_HORIZON_OPTIONS: Array<{ value: InvestmentHorizon; label: string }> = [
-  { value: 'short', label: 'Kratka' },
-  { value: 'medium', label: 'Srednja' },
-  { value: 'long', label: 'Dolga' },
-];
 // RiskProfileCard — v8.97: imported from ./ai-hub/riskprofile-card
 
 // --- Brain Snapshots Section (v8.23, emerald-tinted, horizontal scroll) ---
@@ -479,16 +461,6 @@ const INVESTMENT_HORIZON_OPTIONS: Array<{ value: InvestmentHorizon; label: strin
 //
 // Fetches from /api/ai/brain/accuracy?days=30 on mount.
 
-// 7 Domain grade pill style — reuses the existing gradeColor() helper but with
-const DOMAIN_TREND_LABELS: Array<{ key: keyof AccuracyTrendPoint; label: string }> = [
-  { key: 'profitGrade', label: 'Profit' },
-  { key: 'inventoryGrade', label: 'Inventar' },
-  { key: 'marketGrade', label: 'Trg' },
-  { key: 'sourcingGrade', label: 'Sourcing' },
-  { key: 'riskGrade', label: 'Tveganje' },
-  { key: 'buyerGrade', label: 'Kupci' },
-  { key: 'pricingGrade', label: 'Cene' },
-];
 // AccuracyTrendCard — v8.97: imported from ./ai-hub/accuracytrend-card
 
 // --- Master Brain BANNER (v8.22, gold/amber gradient) --------------------

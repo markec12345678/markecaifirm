@@ -18,9 +18,9 @@ import { CompetitorSellers } from './analytics/competitor-sellers';
 import { SeasonalCalendar } from './analytics/seasonal-calendar';
 import { PriceWarDetection } from './analytics/price-war-detection';
 
+import { PIE_COLORS } from './analytics/types';
 import type { AnalyticsData } from './analytics/types';
 
-const PIE_COLORS = ['#4ade80', '#fbbf24', '#6b7280'];
 
 export function AnalyticsView() {
   const [data, setData] = useState<AnalyticsData | null>(null);

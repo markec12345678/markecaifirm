@@ -5,7 +5,7 @@
  * Extracted from ai-hub-view.tsx to enable modular AI Hub components.
  */
 
-import type { AccuracyTrendSummary, DraftStatus, DomainName } from './types';
+import type { AccuracyTrendSummary, AccuracyTrendPoint, DraftStatus, DomainName, RiskTolerance, InvestmentHorizon } from './types';
 import { cn } from '@/lib/utils';
 
 // v7.01: Categories for AI endpoint grid
@@ -265,3 +265,36 @@ export const NOTIFICATION_TYPE_LABELS: Record<string, { label: string; icon: str
   error: { label: 'Napaka', icon: '❌' },
   buy_request_match: { label: 'Iskalnik ujemanje', icon: '🔍' },
 };
+
+export const ACTUAL_PROFIT_DAYS_PRESETS = [
+  { label: '7d', days: 7 },
+  { label: '30d', days: 30 },
+  { label: '90d', days: 90 },
+  { label: '12m', days: 365 },
+] as const;
+
+
+export const RISK_TOLERANCE_OPTIONS: Array<{ value: RiskTolerance; label: string; hint: string }> = [
+  { value: 'conservative', label: 'Konzervativni', hint: 'Nizko tveganje, filter HIGH akcij, 0.5× budget' },
+  { value: 'balanced', label: 'Uravnoteženi', hint: 'Brez prilagoditev — Master Brain kot je' },
+  { value: 'aggressive', label: 'Agresivni', hint: 'Visoka rast, dovoli HIGH akcij, 1.5× budget' },
+];
+
+
+export const INVESTMENT_HORIZON_OPTIONS: Array<{ value: InvestmentHorizon; label: string }> = [
+  { value: 'short', label: 'Kratka' },
+  { value: 'medium', label: 'Srednja' },
+  { value: 'long', label: 'Dolga' },
+];
+
+
+export const DOMAIN_TREND_LABELS: Array<{ key: keyof AccuracyTrendPoint; label: string }> = [
+  { key: 'profitGrade', label: 'Profit' },
+  { key: 'inventoryGrade', label: 'Inventar' },
+  { key: 'marketGrade', label: 'Trg' },
+  { key: 'sourcingGrade', label: 'Sourcing' },
+  { key: 'riskGrade', label: 'Tveganje' },
+  { key: 'buyerGrade', label: 'Kupci' },
+  { key: 'pricingGrade', label: 'Cene' },
+];
+
