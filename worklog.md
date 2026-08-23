@@ -20863,3 +20863,30 @@ Stage Summary:
   * Vsa funkcionalnost ohranjena 1:1
   * Profesionalna modularna arhitektura
 - NASLEDNJI KORAK (po želji): Nove funkcionalnosti ali performance optimizacije (lazy loading, code splitting).
+
+---
+Task ID: v9.11
+Agent: main
+Task: Poskus optimizacije ai-hub-view.tsx — analiza duplikatov + varna reverzija
+
+Work Log:
+- Analiziral ai-hub-view.tsx (2030 vrstic): odkril 44 inline tipov + 22 inline helperjev, ki so DUPLIKATI tistih v types.ts in utils.ts (ustvarjenih v v8.97 ampak nikoli odstranjeni iz glavne datoteke).
+- Poskus odstranitve vseh 66 duplikatov z Python skripto — zmanjšal datoteko z 2030 na ~610 vrstic (−70%), ampak skripta je pustila nepopolne ostanke (orphan interface fields, incomplete block removals) ki so povzročili 15+ sintaktičnih napak.
+- Ročno popravil večino ostankov (DOMAIN_LABELS remnant, AutoPilotStatsResponse remnant, MasterBrainResult remnant, AdaptiveWeightsResponse remnant, dodal manjkajoči AIHubView() function declaration).
+- Preostale napake so preveč kompleksne za varno ročno popravilo — tveganje okvare aplikacije.
+- Odločitev: varna reverzija na git HEAD (delujoče stanje, 2030 vrstic, typecheck 0 napak).
+- Ai-hub-view.tsx je najbolj kompleksna datoteka (8167 originalnih vrstic, 25 modulov ekstraktiranih v v8.97-v8.98). Preostali inline tipi/helperji so duplikati, ampak njihova odstranitev zahteva bolj previdno inkrementalno pristop (ena skupina naenkrat z typecheck preverjanjem).
+- Verifikacija po reverziji:
+  * HTTP 200 ✓
+  * Lint: 0 napak ✨
+  * Typecheck: 0 napak ✨
+
+Stage Summary:
+- POSKUS: odstranitev 66 inline duplikatov iz ai-hub-view.tsx
+- REZULTAT: delno uspešno (−70% vrstic) ampak preveč sintaktičnih napak za varno produkcijo
+- REVERZIJA: varna vrnitev na git HEAD (2030 vrstic, stabilno)
+- LESSON: ai-hub-view.tsx je preveč kompleksna za batch odstranitev tipov/helperjev. Potreben je inkrementalen pristop (ena skupina tipov naenkrat, typecheck po vsaki) — to je naloga za v9.12.
+- MODIFIED: src/lib/version.ts (v9.10.0→v9.11.0)
+- MODIFIED: README.md (badge v9.11.0)
+- Verzija: v9.11.0
+- Skupaj (v7.50 → v9.11): 161 verzij, 283 novih funkcij
