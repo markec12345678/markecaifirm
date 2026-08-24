@@ -8,6 +8,40 @@ Format sledi [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), verzije s
 
 ---
 
+## [9.26.0] - 2026-08-24
+
+### 🤖 GitHub Actions CI/CD — Module Count Check
+
+- **Nov workflow**: `.github/workflows/module-check.yml`
+  - Trigger: push na main pri spremembah dashboard komponent
+  - Preverja module count (minimum 190, trenutno 193)
+  - Generira module breakdown po 17 direktorijih
+  - FAIL-a če module count pade pod 190 (prepreči accidental deletion)
+- **CI/CD pokritost** (3 workflow-i skupaj):
+  1. `ci.yml`: lint + typecheck + build + security audit
+  2. `ai-endpoints.yml`: auto-update AI_ENDPOINTS.md
+  3. `module-check.yml`: module count verification
+
+---
+
+## [9.25.0] - 2026-08-24
+
+### 📝 CHANGELOG.md Posodobitev
+
+- **10 novih CHANGELOG vnosov** dodanih na vrh (v8.94–v9.24):
+  - v9.24: README sinhronizacija + badges
+  - v9.23: React.memo na 4 komponente
+  - v9.22: Comprehensive seed script
+  - v9.21: SEO/meta tags (OpenGraph, JSON-LD, sitemap)
+  - v9.18: 44 ARIA labelov
+  - v9.15: Demo podatki + Setup 7/7
+  - v9.10: Code quality audit
+  - v9.00: Modularizacija 16 view-jev (193 modulov)
+  - v8.94: Revert settings refactorja
+- Dodana modularizacija breakdown tabela (16 view-jev)
+
+---
+
 ## [9.24.0] - 2026-08-24
 
 ### 📄 README Sinhronizacija + Badges

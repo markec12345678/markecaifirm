@@ -13,6 +13,7 @@
 [![Prisma](https://img.shields.io/badge/Prisma-6-indigo.svg)](https://www.prisma.io/)
 [![Modules](https://img.shields.io/badge/modules-193-blue.svg)](#️-v9x--architecture--quality-v894v923)
 [![Local-First](https://img.shields.io/badge/local-first-purple.svg)](#-local-first--zero-cloud)
+[![CI/CD](https://img.shields.io/badge/CI%2FCD-3%20workflows-brightgreen.svg)](https://github.com/markec12345678/markecaifirm/actions)
 [![Accessibility](https://img.shields.io/badge/a11y-44%20ARIA-brightgreen.svg)](#accessibility-audit-v918v920)
 [![PRs Welcome](https://img.shields.io/badge/PRs-welcome-brightgreen.svg)](./CONTRIBUTING.md)
 
@@ -99,7 +100,11 @@
 > - **robots.txt**: Allow /, Disallow /api/, Sitemap directive
 > - **19 keywords** za boljšo iskalno optimizacijo
 >
-> ### Performance Optimization (v9.23)
+> ### CI/CD (v9.26)
+> - **3 GitHub Actions workflow-i**: lint+typecheck+build, AI endpoints auto-update, module count verification
+> - Module count check: minimum 190 modulov (trenutno 193) — prepreči accidental deletion
+
+### Performance Optimization (v9.23)
 > - **React.memo** na 4 ključne list komponente: TradeRow, ResultCard, WatchlistItemCard, StatCard
 > - Preprečuje nepotrebne re-render-e pri parent state changes
 > - Dashboard auto-refresh (30s): re-render samo spremenjenih card-ov
@@ -172,9 +177,9 @@ računalniku — brez cloud storitev, brez mesečnih naročnin, brez deljenja po
 Lovi podcenjene oglase na Bolhi/Facebooku/Vintedu z AI, jih kupi poceni, preprodaj drago z
 AI-optimiziranimi oglasi, in avtomatiziraj celoten workflow od odkritja do prodaje.
 
-### Verzija v9.23.0 (avgust 2026)
+### Verzija v9.26.0 (avgust 2026)
 
-**432 AI endpointov** + **84 analytics** + **18 cron automatizacij** + **11 Telegram ukazov** + **11 platform** + **193 modulov** organiziranih v 18 zavihkov:
+**432 AI endpointov** + **84 analytics** + **18 cron automatizacij** + **11 Telegram ukazov** + **11 platform** + **193 modulov** + **3 CI/CD workflow-i** organiziranih v 18 zavihkov:
 - **Statistike** (analytics, predictions, forecasting) — 35+ funkcij
 - **Skladišče** (inventory management, aging, depreciation) — 20+ funkcij
 - **Oglasi** (listing optimization, SEO, image analysis) — 25+ funkcij
