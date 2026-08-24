@@ -21565,3 +21565,38 @@ Stage Summary:
   * ARCHITECTURE.md — arhitektura, načela, statistika, vzorci
   * CONTRIBUTING.md — modularna arhitektura, navodila za nove module
   * worklog.md — vsi Task ID-ji (v8.94-v9.30)
+
+---
+Task ID: v9.31
+Agent: main
+Task: Dependency cleanup — 8 nepotrebnih paketov odstranjenih
+
+Work Log:
+- Dependency audit: preveril 86 paketov za uporabo v src/ kodi.
+- Odkril 8 nepotrebnih paketov z 0 datotekami ki jih uporabljajo:
+  * zod — 0 datotek (form validation library, nikoli uporabljen)
+  * zustand — 0 datotek (state management, nikoli uporabljen)
+  * @hookform/resolvers — 0 datotek (zod resolver, nikoli uporabljen)
+  * @dnd-kit/core — 0 datotek (drag & drop, nikoli uporabljen)
+  * @dnd-kit/sortable — 0 datotek (drag & drop, nikoli uporabljen)
+  * @dnd-kit/utilities — 0 datotek (drag & drop, nikoli uporabljen)
+  * react-syntax-highlighter — 0 datotek (code highlighting, nikoli uporabljen)
+  * @mdxeditor/editor — 0 datotek (MDX editor, nikoli uporabljen)
+- Odstranil vseh 8 z `bun remove` — 305ms.
+- Rezultat: 86 → 78 paketov (−8, −9.3%).
+- Preveril lint: 0 napak ✨
+- Preveril typecheck: 0 napak ✨
+- Preveril testi: 158/158 passing (100%) ✨
+
+Stage Summary:
+- MODIFIED: package.json (−8 nepotrebnih paketov: zod, zustand, @hookform/resolvers, @dnd-kit/core/sortable/utilities, react-syntax-highlighter, @mdxeditor/editor)
+- MODIFIED: bun.lock (posodobljen po odstranitvi)
+- MODIFIED: src/lib/version.ts (v9.30.0→v9.31.0)
+- MODIFIED: README.md (badge v9.31.0)
+- Verzija: v9.31.0
+- Skupaj (v7.50 → v9.31): 181 verzij, 303 novih funkcij
+- DEPENDENCY CLEANUP:
+  * Prej: 75 dependencies + 11 devDependencies = 86 total
+  * Zdaj: 67 dependencies + 11 devDependencies = 78 total
+  * Odstranjeno: 8 nepotrebnih paketov (−9.3%)
+  * Bundle size naj bi se zmanjšal (manj paketov za install/build)
