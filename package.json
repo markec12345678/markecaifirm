@@ -41,7 +41,8 @@
     "db:reset": "prisma migrate reset",
     "setup": "bash scripts/setup.sh",
     "test": "vitest run",
-    "test:watch": "vitest"
+    "test:watch": "vitest",
+    "seed-all": "bun run scripts/seed-all.ts"
   },
   "dependencies": {
     "@dnd-kit/core": "^6.3.1",

@@ -21283,3 +21283,42 @@ Stage Summary:
   * Working tree clean
   * Local = Remote (sinhronizirano)
 - Vse na GitHubu je posodobljeno in sinhronizirano.
+
+---
+Task ID: v9.22
+Agent: main
+Task: Comprehensive seed script + popolna GitHub sinhronizacija
+
+Work Log:
+- POPOLNA SINHRONIZACIJA Z GITHUB KONFIRMIRANA:
+  * 129 commits v zgodovini (zdaj 131 po v9.22)
+  * 0 necommitanih sprememb
+  * 0 ne-pushanih commitov
+  * 0 untracked datotek
+  * Working tree clean
+  * Local = Remote (sinhronizirano)
+  * Database: db/custom.db (405KB) — v .gitignore (local-only, pravilno)
+  * Setup: 7/7 (100%)
+  * Demo data: 2 monitors, 15 listings, 25 trades
+- Korak 1: Ustvaril scripts/seed-all.ts — comprehensive seed script ki združuje:
+  1. Seed 15 demo listings (8 elektronika + 7 avto)
+  2. Seed 25 demo trades (via /api/ai/brain/seed)
+  3. Seed tags na vseh trades
+  4. Set monthly profit goal (500€)
+  5. Enable Web Push + generiraj VAPID ključe (P-256 ECDSA)
+  6. Aktiviraj demo monitor + set lastRunAt (cron simulacija)
+- Korak 2: Dodal "seed-all" script v package.json (bun run scripts/seed-all.ts)
+- Korak 3: Popravil lint napako (require() → ES import crypto)
+- Korak 4: Popravil typecheck napako (Prisma null filter → findMany + filter)
+- IDEMPOTENT: varno za večkratni zagon — preskoči že obstoječe podatke.
+- Preveril lint: 0 napak, 0 warnings ✨
+- Preveril typecheck: 0 napak ✨
+
+Stage Summary:
+- NEW: scripts/seed-all.ts (comprehensive seed — 6 korakov v 1 skripti)
+- MODIFIED: package.json (+seed-all script)
+- MODIFIED: src/lib/version.ts (v9.21.0→v9.22.0)
+- MODIFIED: README.md (badge v9.22.0)
+- Verzija: v9.22.0
+- Skupaj (v7.50 → v9.22): 172 verzij, 294 novih funkcij
+- POPOLNA SINHRONIZACIJA: Vse commitano in pushano na GitHub.
