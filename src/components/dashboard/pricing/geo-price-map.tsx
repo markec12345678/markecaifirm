@@ -12,7 +12,7 @@ export function GeoPriceMap() {
   const [geoPrice, setGeoPrice] = useState<any>(null);
   const [geoPriceLoading, setGeoPriceLoading] = useState(false);
 
-  const runGeoPrice = async () => { setGeoPriceLoading(true); setGeoPrice(null); try { const r = await fetch('/api/ai/geo-price-map', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: '{}' }); const d = await r.json(); if (d.ok) { setGeoPrice(d); toast.success('✓ Geo price map generiran'); } else toast.error(d.error ?? 'Napaka'); } catch (e: any) { toast.error(e?.message ?? 'Napaka'); } finally { setGeoPriceLoading(false); } };
+  const runGeoPrice = async () => { setGeoPriceLoading(true); setGeoPrice(null); try { const r = await fetch('/api/ai/geo-price-map', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: '{}' }); const d = await r.json(); if (d.ok) { setGeoPrice(d); toast.success('✓ Geo price map generiran'); } else toast.error(d.error ?? 'Napaka'); } catch (e: unknown) { toast.error((e as Error)?.message ?? 'Napaka'); } finally { setGeoPriceLoading(false); } };
 
   return (
     <Card className="md:col-span-2">

@@ -27,8 +27,8 @@ export function InventoryBrainSection() {
       const json = (await res.json()) as InventoryBrainResult;
       if (!json?.ok) throw new Error(json?.source ? 'Brain ni vrnil rezultata' : 'Napaka');
       setData(json);
-    } catch (e: any) {
-      setError(e?.message ?? 'Napaka');
+    } catch (e: unknown) {
+      setError((e as Error)?.message ?? 'Napaka');
     } finally {
       setLoading(false);
     }

@@ -35,8 +35,8 @@ export function ActualProfitCard() {
       const json = (await res.json()) as ActualProfitResponse;
       if (!json?.ok) throw new Error('Actual profit API ni vrnil rezultata');
       setData(json);
-    } catch (e: any) {
-      setError(e?.message ?? 'Napaka');
+    } catch (e: unknown) {
+      setError((e as Error)?.message ?? 'Napaka');
     } finally {
       setLoading(false);
     }

@@ -133,8 +133,8 @@ export function DealCalculatorWidget() {
         throw new Error(err?.error || `HTTP ${res.status}`);
       }
       toast.success('✓ Trade shranjen (v skladišču)');
-    } catch (e: any) {
-      toast.error(e?.message ?? 'Napaka pri shranjevanju');
+    } catch (e: unknown) {
+      toast.error((e as Error)?.message ?? 'Napaka pri shranjevanju');
     } finally {
       setSaving(false);
     }

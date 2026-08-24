@@ -21,7 +21,7 @@ export function AiPrioritizedAlerts() {
       const data = await res.json();
       if (data.ok) { setPrioritized(data); toast.success(`✓ ${data.highPriority} visokoprioritetnih, ${data.mediumPriority} srednjih`); }
       else toast.error(data.error ?? 'Napaka');
-    } catch (e: any) { toast.error(e?.message ?? 'Napaka'); }
+    } catch (e: unknown) { toast.error((e as Error)?.message ?? 'Napaka'); }
     finally { setPrioLoading(false); }
   };
 

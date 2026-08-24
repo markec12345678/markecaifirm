@@ -106,7 +106,7 @@ export function NegotiationPanel({ listingId, price }: NegotiationPanelProps) {
       const data = await res.json();
       if (data.ok) { setPlaybook(data); toast.success('✓ Pogajalski playbook generiran'); }
       else toast.error(data.error ?? 'Napaka');
-    } catch (e: any) { toast.error(e?.message ?? 'Napaka'); }
+    } catch (e: unknown) { toast.error((e as Error)?.message ?? 'Napaka'); }
     finally { setPlaybookLoading(false); }
   };
 
@@ -127,7 +127,7 @@ export function NegotiationPanel({ listingId, price }: NegotiationPanelProps) {
       const data = await res.json();
       if (data.ok) { setOutcome(data); toast.success('✓ Napoved izida generirana'); }
       else toast.error(data.error ?? 'Napaka');
-    } catch (e: any) { toast.error(e?.message ?? 'Napaka'); }
+    } catch (e: unknown) { toast.error((e as Error)?.message ?? 'Napaka'); }
     finally { setOutcomeLoading(false); }
   };
 
@@ -159,7 +159,7 @@ export function NegotiationPanel({ listingId, price }: NegotiationPanelProps) {
           toast.success(`✓ AI odgovor (${data.reply.confidencePct}% confidence)`);
         } else toast.error(data.error ?? 'Napaka');
       })
-      .catch(err => toast.error(err?.message ?? 'Napaka'))
+      .catch(err => toast.error((err as Error)?.message ?? 'Napaka'))
       .finally(() => setChatbotLoading(false));
   };
 

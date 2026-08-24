@@ -18,7 +18,7 @@ export function BuyerConversion({ selectedBuyer }: BuyerConversionProps) {
   const [conversion, setConversion] = useState<any>(null);
   const [conversionLoading, setConversionLoading] = useState(false);
 
-  const runConversion = async () => { if (!selectedBuyer) { toast.error('Izberi kupca'); return; } setConversionLoading(true); setConversion(null); try { const r = await fetch('/api/ai/buyer-conversion-predictor', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ customerName: selectedBuyer }) }); const d = await r.json(); if (d.ok) { setConversion(d); toast.success('✓ Conversion napoved generirana'); } else toast.error(d.error ?? 'Napaka'); } catch (e: any) { toast.error(e?.message ?? 'Napaka'); } finally { setConversionLoading(false); } };
+  const runConversion = async () => { if (!selectedBuyer) { toast.error('Izberi kupca'); return; } setConversionLoading(true); setConversion(null); try { const r = await fetch('/api/ai/buyer-conversion-predictor', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ customerName: selectedBuyer }) }); const d = await r.json(); if (d.ok) { setConversion(d); toast.success('✓ Conversion napoved generirana'); } else toast.error(d.error ?? 'Napaka'); } catch (e: unknown) { toast.error((e as Error)?.message ?? 'Napaka'); } finally { setConversionLoading(false); } };
 
   return (
     <Card className="md:col-span-2">

@@ -59,8 +59,8 @@ export function AutoPilotCard() {
       // v8.31: Sync aggressive pending state from server (aggressiveConfirmedAt
       // is set by first enable call, cleared on second call or expiry).
       setAggressivePending(Boolean(json.config.aggressiveConfirmedAt));
-    } catch (e: any) {
-      setError(e?.message ?? 'Napaka');
+    } catch (e: unknown) {
+      setError((e as Error)?.message ?? 'Napaka');
     } finally {
       setLoading(false);
     }
@@ -94,8 +94,8 @@ export function AutoPilotCard() {
           : '🤖 Auto-pilot IZKLJUČEN — vse akcije zahtevajo ročni ✅ Izvedel',
       );
       await fetchStats();
-    } catch (e: any) {
-      toast.error(e?.message ?? 'Napaka pri preklopu auto-pilot-a');
+    } catch (e: unknown) {
+      toast.error((e as Error)?.message ?? 'Napaka pri preklopu auto-pilot-a');
     } finally {
       setToggling(false);
     }
@@ -124,8 +124,8 @@ export function AutoPilotCard() {
         `💾 Config shranjen: ${dailyLimitInput}/dan, ${dailyBudgetInput}€/dan budget`,
       );
       await fetchStats();
-    } catch (e: any) {
-      toast.error(e?.message ?? 'Napaka pri shranjevanju config-a');
+    } catch (e: unknown) {
+      toast.error((e as Error)?.message ?? 'Napaka pri shranjevanju config-a');
     } finally {
       setToggling(false);
     }
@@ -153,8 +153,8 @@ export function AutoPilotCard() {
         `▶️ Auto-pilot tekel: preveril ${json.checked} draft-ov${executedMsg}${skippedMsg}`,
       );
       await fetchStats();
-    } catch (e: any) {
-      toast.error(e?.message ?? 'Napaka pri zagonu auto-pilot-a');
+    } catch (e: unknown) {
+      toast.error((e as Error)?.message ?? 'Napaka pri zagonu auto-pilot-a');
     } finally {
       setRunning(false);
     }
@@ -180,9 +180,9 @@ export function AutoPilotCard() {
       // pre-v8.30 drafts are never auto-executed).
       const auto = (json.drafts as any[]).filter((d) => d.autoExecuted === true);
       setHistory(auto as AutoPilotHistoryDraft[]);
-    } catch (e: any) {
+    } catch (e: unknown) {
       // Fallback: show empty history with error toast
-      toast.error(e?.message ?? 'Napaka pri pridobivanju zgodovine');
+      toast.error((e as Error)?.message ?? 'Napaka pri pridobivanju zgodovine');
       setHistory([]);
     } finally {
       setHistoryLoading(false);
@@ -212,8 +212,8 @@ export function AutoPilotCard() {
         // Refresh history + stats
         await fetchHistory();
         await fetchStats();
-      } catch (e: any) {
-        toast.error(e?.message ?? 'Napaka pri razveljavitvi');
+      } catch (e: unknown) {
+        toast.error((e as Error)?.message ?? 'Napaka pri razveljavitvi');
       } finally {
         setRollingBackId(null);
       }
@@ -248,8 +248,8 @@ export function AutoPilotCard() {
         setAggressivePending(true);
       }
       await fetchStats();
-    } catch (e: any) {
-      toast.error(e?.message ?? 'Napaka pri vklopu aggressive mode');
+    } catch (e: unknown) {
+      toast.error((e as Error)?.message ?? 'Napaka pri vklopu aggressive mode');
     } finally {
       setTogglingMode(false);
     }
@@ -272,8 +272,8 @@ export function AutoPilotCard() {
       toast.success('🛡️ Aggressive mode izklopljen — vrnjen v safe mode (LOW risk only)');
       setAggressivePending(false);
       await fetchStats();
-    } catch (e: any) {
-      toast.error(e?.message ?? 'Napaka pri izklopu aggressive mode');
+    } catch (e: unknown) {
+      toast.error((e as Error)?.message ?? 'Napaka pri izklopu aggressive mode');
     } finally {
       setTogglingMode(false);
     }
@@ -294,8 +294,8 @@ export function AutoPilotCard() {
       }
       toast.success(json.message);
       await fetchStats();
-    } catch (e: any) {
-      toast.error(e?.message ?? 'Napaka pri razveljavitvi suspenzije');
+    } catch (e: unknown) {
+      toast.error((e as Error)?.message ?? 'Napaka pri razveljavitvi suspenzije');
     } finally {
       setClearingAnomaly(false);
     }

@@ -39,9 +39,9 @@ export function AIRunnerModal({ endpoint, onClose }: { endpoint: AIEndpoint | nu
       setResult(JSON.stringify(data, null, 2));
       if (data.ok) toast.success(`✓ ${endpoint.name} uspešen`);
       else toast.error(data.error ?? 'AI je vrnil napako');
-    } catch (e: any) {
-      setResult(`Error: ${e?.message ?? 'Napaka'}`);
-      toast.error(e?.message ?? 'Napaka');
+    } catch (e: unknown) {
+      setResult(`Error: ${(e as Error)?.message ?? 'Napaka'}`);
+      toast.error((e as Error)?.message ?? 'Napaka');
     } finally {
       setLoading(false);
     }

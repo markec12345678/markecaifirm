@@ -17,7 +17,7 @@ export function ListingRefresh({ selectedTradeId }: ListingRefreshProps) {
   const [refresh, setRefresh] = useState<any>(null);
   const [refreshLoading, setRefreshLoading] = useState(false);
 
-  const runRefresh = async () => { if (!selectedTradeId) { toast.error('Izberi item'); return; } setRefreshLoading(true); setRefresh(null); try { const r = await fetch('/api/ai/listing-refresh', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ tradeId: selectedTradeId }) }); const d = await r.json(); if (d.ok) { setRefresh(d); toast.success('✓ Refresh strategija generirana'); } else toast.error(d.error ?? 'Napaka'); } catch (e: any) { toast.error(e?.message ?? 'Napaka'); } finally { setRefreshLoading(false); } };
+  const runRefresh = async () => { if (!selectedTradeId) { toast.error('Izberi item'); return; } setRefreshLoading(true); setRefresh(null); try { const r = await fetch('/api/ai/listing-refresh', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ tradeId: selectedTradeId }) }); const d = await r.json(); if (d.ok) { setRefresh(d); toast.success('✓ Refresh strategija generirana'); } else toast.error(d.error ?? 'Napaka'); } catch (e: unknown) { toast.error((e as Error)?.message ?? 'Napaka'); } finally { setRefreshLoading(false); } };
 
   return (
     <Card className="md:col-span-2">

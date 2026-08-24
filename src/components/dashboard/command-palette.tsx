@@ -57,8 +57,8 @@ export function CommandPalette({ open, onOpenChange, onNavigate }: CommandPalett
       } else {
         toast.error(`✗ ${label}: ${data.error || 'Napaka'}`);
       }
-    } catch (err: any) {
-      toast.error(`✗ ${label}: ${err?.message || 'Napaka'}`);
+    } catch (err: unknown) {
+      toast.error(`✗ ${label}: ${(err as Error)?.message || 'Napaka'}`);
     }
   }, [onOpenChange]);
 

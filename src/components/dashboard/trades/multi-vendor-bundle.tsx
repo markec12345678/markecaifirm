@@ -36,7 +36,7 @@ export function MultiVendorBundle({ bulkTradeIds }: MultiVendorBundleProps) {
             const data = await res.json();
             if (data.ok) { setMultiVendorData(data); toast.success('✓ Multi-vendor bundle-i generirani'); }
             else toast.error(data.error ?? data.message ?? 'Napaka');
-          } catch (e: any) { toast.error(e?.message ?? 'Napaka'); }
+          } catch (e: unknown) { toast.error((e as Error)?.message ?? 'Napaka'); }
           finally { setMultiVendorLoading(false); }
         }}
         title="AI kombinira inventar iz različnih virov v bundle"

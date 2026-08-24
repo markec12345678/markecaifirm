@@ -118,8 +118,8 @@ export function ProfitGoalSection({
       }
       // Refresh preview to reflect new state.
       loadPreview();
-    } catch (e: any) {
-      toast.error(e?.message ?? 'Napaka pri shranjevanju cilja');
+    } catch (e: unknown) {
+      toast.error((e as Error)?.message ?? 'Napaka pri shranjevanju cilja');
     } finally {
       setSavingGoal(false);
     }

@@ -25,7 +25,7 @@ export function ViralityPredictor({ selectedTradeId }: ViralityPredictorProps) {
       const data = await res.json();
       if (data.ok) { setVirality(data); toast.success('✓ Viralnost napovedana'); }
       else toast.error(data.error ?? 'Napaka');
-    } catch (e: any) { toast.error(e?.message ?? 'Napaka'); }
+    } catch (e: unknown) { toast.error((e as Error)?.message ?? 'Napaka'); }
     finally { setViralityLoading(false); }
   };
 

@@ -58,8 +58,8 @@ export function RiskProfileCard() {
       setDraftMaxRisk(json.profile.maxAcceptableRisk);
       setDraftReserve(json.profile.liquidityReserve);
       setDraftHorizon(json.profile.investmentHorizon);
-    } catch (e: any) {
-      setError(e?.message ?? 'Napaka');
+    } catch (e: unknown) {
+      setError((e as Error)?.message ?? 'Napaka');
     } finally {
       setLoading(false);
     }
@@ -97,8 +97,8 @@ export function RiskProfileCard() {
       // Re-fetch to refresh the adjustment preview (Master Brain will pick
       // up the new profile on next call).
       setTimeout(() => fetchProfile(), 300);
-    } catch (e: any) {
-      toast.error(e?.message ?? 'Napaka pri shranjevanju');
+    } catch (e: unknown) {
+      toast.error((e as Error)?.message ?? 'Napaka pri shranjevanju');
     } finally {
       setSaving(false);
     }

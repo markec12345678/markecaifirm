@@ -317,8 +317,8 @@ export function ListingDetailModal({ listingId, onClose }: { listingId: string |
       } else {
         toast.error(data.error ?? 'Napaka');
       }
-    } catch (e: any) {
-      toast.error(e?.message ?? 'Napaka');
+    } catch (e: unknown) {
+      toast.error((e as Error)?.message ?? 'Napaka');
     } finally {
       setComparing(false);
     }
@@ -349,8 +349,8 @@ export function ListingDetailModal({ listingId, onClose }: { listingId: string |
       } else {
         toast.error(data.error ?? 'Napaka pri generiranju ponudbe');
       }
-    } catch (e: any) {
-      toast.error(e?.message ?? 'Napaka');
+    } catch (e: unknown) {
+      toast.error((e as Error)?.message ?? 'Napaka');
     } finally {
       setBidding(false);
     }
@@ -391,8 +391,8 @@ export function ListingDetailModal({ listingId, onClose }: { listingId: string |
       } else {
         toast.error(data.error ?? 'Napaka pri napovedi');
       }
-    } catch (e: any) {
-      toast.error(e?.message ?? 'Napaka');
+    } catch (e: unknown) {
+      toast.error((e as Error)?.message ?? 'Napaka');
     } finally {
       setPredicting(false);
     }
@@ -1210,7 +1210,7 @@ export function ListingDetailModal({ listingId, onClose }: { listingId: string |
                       } else {
                         toast.error(data.error ?? 'Napaka');
                       }
-                    } catch (e: any) { toast.error(e?.message ?? 'Napaka'); }
+                    } catch (e: unknown) { toast.error((e as Error)?.message ?? 'Napaka'); }
                     finally { setEnrichLoading(false); }
                   }}
                 >
@@ -1313,7 +1313,7 @@ export function ListingDetailModal({ listingId, onClose }: { listingId: string |
                         const data = await res.json();
                         if (data.ok) { setFlipScore(data); toast.success(`Flip Score: ${data.flipScore}/100`); }
                         else toast.error(data.error ?? 'Napaka');
-                      } catch (e: any) { toast.error(e?.message ?? 'Napaka'); }
+                      } catch (e: unknown) { toast.error((e as Error)?.message ?? 'Napaka'); }
                       finally { setFlipLoading(false); }
                     }}>
                     {flipLoading ? <RefreshCw className="w-3 h-3 animate-spin" /> : <TrendingUp className="w-3 h-3" />}
@@ -1401,7 +1401,7 @@ export function ListingDetailModal({ listingId, onClose }: { listingId: string |
                         const data = await res.json();
                         if (data.ok) { setSaturation(data.saturation); toast.success(`${data.saturation.levelLabel} nasičenost (${data.saturation.count} oglasov)`); }
                         else toast.error(data.error ?? 'Napaka');
-                      } catch (e: any) { toast.error(e?.message ?? 'Napaka'); }
+                      } catch (e: unknown) { toast.error((e as Error)?.message ?? 'Napaka'); }
                       finally { setSatLoading(false); }
                     }}>
                     {satLoading ? <RefreshCw className="w-3 h-3 animate-spin" /> : <BarChart3 className="w-3 h-3" />}
@@ -1482,7 +1482,7 @@ export function ListingDetailModal({ listingId, onClose }: { listingId: string |
                         const data = await res.json();
                         if (data.ok) { setRoiResult(data.roi); toast.success(`ROI: ${data.roi.roiPct}%`); }
                         else toast.error(data.error ?? 'Napaka');
-                      } catch (e: any) { toast.error(e?.message ?? 'Napaka'); }
+                      } catch (e: unknown) { toast.error((e as Error)?.message ?? 'Napaka'); }
                       finally { setRoiLoading(false); }
                     }}>
                     {roiLoading ? <RefreshCw className="w-3 h-3 animate-spin" /> : <Wallet className="w-3 h-3" />}
@@ -1594,7 +1594,7 @@ export function ListingDetailModal({ listingId, onClose }: { listingId: string |
                         } else {
                           toast.error(data.error ?? 'Napaka');
                         }
-                      } catch (e: any) { toast.error(e?.message ?? 'Napaka'); }
+                      } catch (e: unknown) { toast.error((e as Error)?.message ?? 'Napaka'); }
                       finally { setExtCompareLoading(false); }
                     }}
                   >
@@ -1690,7 +1690,7 @@ export function ListingDetailModal({ listingId, onClose }: { listingId: string |
                       } else {
                         toast.error(data.error ?? 'Napaka');
                       }
-                    } catch (e: any) { toast.error(e?.message ?? 'Napaka'); }
+                    } catch (e: unknown) { toast.error((e as Error)?.message ?? 'Napaka'); }
                     finally { setSimilarLoading(false); }
                   }}
                 >

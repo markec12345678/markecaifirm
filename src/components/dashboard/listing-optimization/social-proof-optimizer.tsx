@@ -16,7 +16,7 @@ export function SocialProofOptimizer({ selectedTradeId }: SocialProofOptimizerPr
   const [socialProof, setSocialProof] = useState<any>(null);
   const [socialProofLoading, setSocialProofLoading] = useState(false);
 
-  const runSocialProof = async () => { if (!selectedTradeId) { toast.error('Izberi item'); return; } setSocialProofLoading(true); setSocialProof(null); try { const r = await fetch('/api/ai/listing-social-proof-optimizer', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ tradeId: selectedTradeId }) }); const d = await r.json(); if (d.ok) { setSocialProof(d); toast.success('✓ Social proof generiran'); } else toast.error(d.error ?? 'Napaka'); } catch (e: any) { toast.error(e?.message ?? 'Napaka'); } finally { setSocialProofLoading(false); } };
+  const runSocialProof = async () => { if (!selectedTradeId) { toast.error('Izberi item'); return; } setSocialProofLoading(true); setSocialProof(null); try { const r = await fetch('/api/ai/listing-social-proof-optimizer', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ tradeId: selectedTradeId }) }); const d = await r.json(); if (d.ok) { setSocialProof(d); toast.success('✓ Social proof generiran'); } else toast.error(d.error ?? 'Napaka'); } catch (e: unknown) { toast.error((e as Error)?.message ?? 'Napaka'); } finally { setSocialProofLoading(false); } };
 
   return (
     <Card>

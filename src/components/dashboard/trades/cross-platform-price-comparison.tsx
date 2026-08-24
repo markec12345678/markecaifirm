@@ -40,7 +40,7 @@ export function CrossPlatformPriceComparison({ trades }: CrossPlatformPriceCompa
             const data = await res.json();
             if (data.ok) { setCrossPriceData(data); toast.success('✓ Cross-platform primerjava generirana'); }
             else toast.error(data.error ?? 'Napaka');
-          } catch (e: any) { toast.error(e?.message ?? 'Napaka'); }
+          } catch (e: unknown) { toast.error((e as Error)?.message ?? 'Napaka'); }
           finally { setCrossPriceLoading(false); }
         }}
         title="AI primerja cene na 10 platformah in identificira arbitražo"

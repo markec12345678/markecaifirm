@@ -30,7 +30,7 @@ export function BuyerLifecycle({ selectedBuyer }: BuyerLifecycleProps) {
       const data = await res.json();
       if (data.ok) { setLifecycle(data); toast.success('✓ Lifecycle napoved generirana'); }
       else toast.error(data.error ?? 'Napaka');
-    } catch (e: any) { toast.error(e?.message ?? 'Napaka'); }
+    } catch (e: unknown) { toast.error((e as Error)?.message ?? 'Napaka'); }
     finally { setLifecycleLoading(false); }
   };
 

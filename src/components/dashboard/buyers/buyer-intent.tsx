@@ -14,7 +14,7 @@ export function BuyerIntent() {
   const [intent, setIntent] = useState<any>(null);
   const [intentLoading, setIntentLoading] = useState(false);
 
-  const runIntent = async () => { setIntentLoading(true); setIntent(null); try { const r = await fetch('/api/ai/buyer-intent', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: '{}' }); const d = await r.json(); if (d.ok) { setIntent(d); toast.success('✓ Intent analiza generirana'); } else toast.error(d.error ?? 'Napaka'); } catch (e: any) { toast.error(e?.message ?? 'Napaka'); } finally { setIntentLoading(false); } };
+  const runIntent = async () => { setIntentLoading(true); setIntent(null); try { const r = await fetch('/api/ai/buyer-intent', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: '{}' }); const d = await r.json(); if (d.ok) { setIntent(d); toast.success('✓ Intent analiza generirana'); } else toast.error(d.error ?? 'Napaka'); } catch (e: unknown) { toast.error((e as Error)?.message ?? 'Napaka'); } finally { setIntentLoading(false); } };
 
   return (
     <Card>

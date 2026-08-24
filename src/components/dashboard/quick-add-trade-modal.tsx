@@ -134,8 +134,8 @@ export function QuickAddTradeModal({
       onOpenChange(false);
       onSaved?.();
       triggerGlobalRefresh('trade-added'); // v8.57: all cards refetch instantly
-    } catch (e: any) {
-      toast.error(e?.message ?? 'Napaka pri shranjevanju');
+    } catch (e: unknown) {
+      toast.error((e as Error)?.message ?? 'Napaka pri shranjevanju');
     } finally {
       setSaving(false);
     }

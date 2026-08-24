@@ -50,7 +50,7 @@ export function CrossBorderArbitrage() {
                   const data = await res.json();
                   if (data.ok) { setCrossBorderData(data); toast.success('✓ Cross-border priložnosti identificirane'); }
                   else toast.error(data.error ?? data.message ?? 'Napaka');
-                } catch (e: any) { toast.error(e?.message ?? 'Napaka'); }
+                } catch (e: unknown) { toast.error((e as Error)?.message ?? 'Napaka'); }
                 finally { setCrossBorderLoading(false); }
               }}>
               {crossBorderLoading ? <RefreshCw className="w-3 h-3 animate-spin" /> : <Sparkles className="w-3 h-3" />}

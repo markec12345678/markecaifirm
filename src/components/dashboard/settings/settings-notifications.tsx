@@ -177,8 +177,8 @@ export function SettingsNotifications({
                     } else {
                       toast.error(data.message ?? data.error ?? 'Napaka');
                     }
-                  } catch (e: any) {
-                    toast.error(e?.message ?? 'Napaka');
+                  } catch (e: unknown) {
+                    toast.error((e as Error)?.message ?? 'Napaka');
                   }
                 }}
                 className="gap-2 h-8"

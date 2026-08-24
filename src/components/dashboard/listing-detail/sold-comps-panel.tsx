@@ -55,8 +55,8 @@ export function SoldCompsPanel({ listingId, title, askingPrice }: {
       const json = await res.json();
       if (json.ok) setData(json);
       else toast.error(json.error || 'Napaka');
-    } catch (e: any) {
-      toast.error(e?.message || 'Napaka');
+    } catch (e: unknown) {
+      toast.error((e as Error)?.message || 'Napaka');
     } finally {
       setLoading(false);
     }

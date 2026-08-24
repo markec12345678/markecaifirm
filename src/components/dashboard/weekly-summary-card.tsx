@@ -129,9 +129,9 @@ export function WeeklySummaryCard() {
       const json = (await res.json()) as WeeklySummary;
       if (!json.ok) throw new Error('Napaka v odgovoru');
       setData(json);
-    } catch (e: any) {
+    } catch (e: unknown) {
       // Silent fail — non-critical widget
-      console.warn('[WeeklySummaryCard] load failed:', e?.message);
+      console.warn('[WeeklySummaryCard] load failed:', (e as Error)?.message);
     } finally {
       setLoading(false);
     }
@@ -168,8 +168,8 @@ export function WeeklySummaryCard() {
           description: 'Preveri Notification Center za zgodovino.',
         });
       }
-    } catch (e: any) {
-      toast.error(e?.message ?? 'Napaka pri pošiljanju');
+    } catch (e: unknown) {
+      toast.error((e as Error)?.message ?? 'Napaka pri pošiljanju');
     } finally {
       setSending(false);
     }

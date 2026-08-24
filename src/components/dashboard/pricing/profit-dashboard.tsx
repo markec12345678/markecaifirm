@@ -12,7 +12,7 @@ export function ProfitDashboard() {
   const [profitDash, setProfitDash] = useState<any>(null);
   const [profitDashLoading, setProfitDashLoading] = useState(false);
 
-  const runProfitDash = async () => { setProfitDashLoading(true); setProfitDash(null); try { const r = await fetch('/api/ai/profit-dashboard', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: '{}' }); const d = await r.json(); if (d.ok) { setProfitDash(d); toast.success('✓ Profit dashboard generiran'); } else toast.error(d.error ?? 'Napaka'); } catch (e: any) { toast.error(e?.message ?? 'Napaka'); } finally { setProfitDashLoading(false); } };
+  const runProfitDash = async () => { setProfitDashLoading(true); setProfitDash(null); try { const r = await fetch('/api/ai/profit-dashboard', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: '{}' }); const d = await r.json(); if (d.ok) { setProfitDash(d); toast.success('✓ Profit dashboard generiran'); } else toast.error(d.error ?? 'Napaka'); } catch (e: unknown) { toast.error((e as Error)?.message ?? 'Napaka'); } finally { setProfitDashLoading(false); } };
 
   return (
     <Card>

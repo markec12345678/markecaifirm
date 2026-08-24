@@ -21,7 +21,7 @@ export function HealthMonitor() {
       const d = await r.json();
       if (d.ok) { setHealth(d); toast.success('✓ Health monitor generiran'); }
       else toast.error(d.error ?? 'Napaka');
-    } catch (e: any) { toast.error(e?.message ?? 'Napaka'); }
+    } catch (e: unknown) { toast.error((e as Error)?.message ?? 'Napaka'); }
     finally { setHealthLoading(false); }
   };
 

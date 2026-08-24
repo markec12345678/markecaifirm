@@ -21,7 +21,7 @@ export function InsuranceOptimizer() {
       const data = await res.json();
       if (data.ok) { setInsurance(data); toast.success('✓ Zavarovalna optimizacija generirana'); }
       else toast.error(data.error ?? 'Napaka');
-    } catch (e: any) { toast.error(e?.message ?? 'Napaka'); }
+    } catch (e: unknown) { toast.error((e as Error)?.message ?? 'Napaka'); }
     finally { setInsuranceLoading(false); }
   };
 

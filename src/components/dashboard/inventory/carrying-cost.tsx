@@ -19,7 +19,7 @@ export function CarryingCost() {
       const d = await r.json();
       if (d.ok) { setCarryingCost(d); toast.success('✓ Carrying cost analiza generirana'); }
       else toast.error(d.error ?? 'Napaka');
-    } catch (e: any) { toast.error(e?.message ?? 'Napaka'); }
+    } catch (e: unknown) { toast.error((e as Error)?.message ?? 'Napaka'); }
     finally { setCarryingCostLoading(false); }
   };
 

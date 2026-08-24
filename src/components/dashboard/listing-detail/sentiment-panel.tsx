@@ -56,8 +56,8 @@ export function SentimentPanel({ listingId }: { listingId: string }) {
       } else {
         toast.error(data.error ?? 'Napaka');
       }
-    } catch (e: any) {
-      toast.error(e?.message ?? 'Napaka');
+    } catch (e: unknown) {
+      toast.error((e as Error)?.message ?? 'Napaka');
     } finally {
       setSentimentLoading(false);
     }

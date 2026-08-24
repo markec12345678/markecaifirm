@@ -349,7 +349,7 @@ export function ListingsView() {
                   } else {
                     toast.error(data.error ?? 'Napaka');
                   }
-                } catch (e: any) { toast.error(e?.message ?? 'Napaka'); }
+                } catch (e: unknown) { toast.error((e as Error)?.message ?? 'Napaka'); }
                 finally { setCategorizing(false); }
               }}
               title="AI kategoriziraj nekategorizirane oglase"
@@ -383,7 +383,7 @@ export function ListingsView() {
                 } else {
                   toast.error(data.error ?? 'Napaka');
                 }
-              } catch (e: any) { toast.error(e?.message ?? 'Napaka'); }
+              } catch (e: unknown) { toast.error((e as Error)?.message ?? 'Napaka'); }
               finally { setScanningAnomalies(false); }
             }}
             title="AI skeniraj za sumljive oglase (prevarantski vzorci)"
@@ -413,7 +413,7 @@ export function ListingsView() {
                   setDuplicates(data.duplicates || []);
                   toast.success(`✓ ${data.duplicateGroups} duplikatov najdenih (${data.totalDuplicates} oglasov)`);
                 } else { toast.error(data.error ?? 'Napaka'); }
-              } catch (e: any) { toast.error(e?.message ?? 'Napaka'); }
+              } catch (e: unknown) { toast.error((e as Error)?.message ?? 'Napaka'); }
               finally { setDedupLoading(false); }
             }}
             title="AI najdi duplicirane oglase"
@@ -434,7 +434,7 @@ export function ListingsView() {
                 const data = await res.json();
                 if (data.ok) { setBulkBuyData(data); toast.success(`✓ ${data.bulkOpportunities} bulk priložnosti (${data.totalPotentialSavings}€ prihranka)`); }
                 else toast.error(data.error ?? 'Napaka');
-              } catch (e: any) { toast.error(e?.message ?? 'Napaka'); }
+              } catch (e: unknown) { toast.error((e as Error)?.message ?? 'Napaka'); }
               finally { setBulkBuyLoading(false); }
             }}
             title="AI najdi bulk buy priložnosti (paketni nakup s popustom)"

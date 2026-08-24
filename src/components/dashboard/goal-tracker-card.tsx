@@ -202,8 +202,8 @@ export function GoalTrackerCard() {
       }
       setEditing(false);
       await load();
-    } catch (e: any) {
-      toast.error(e?.message ?? 'Napaka pri shranjevanju');
+    } catch (e: unknown) {
+      toast.error((e as Error)?.message ?? 'Napaka pri shranjevanju');
     } finally {
       setSaving(false);
     }

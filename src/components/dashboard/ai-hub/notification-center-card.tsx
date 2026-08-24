@@ -60,8 +60,8 @@ export function NotificationCenterCard() {
       if (!json?.ok) throw new Error(json?.error ?? 'Failed');
       toast.success('✓ Označeno kot prebrano');
       await fetchData();
-    } catch (e: any) {
-      toast.error(e?.message ?? 'Napaka');
+    } catch (e: unknown) {
+      toast.error((e as Error)?.message ?? 'Napaka');
     } finally {
       setActing(null);
     }
@@ -75,8 +75,8 @@ export function NotificationCenterCard() {
       if (!json?.ok) throw new Error(json?.error ?? 'Failed');
       toast.success('✓ Izbrisano');
       await fetchData();
-    } catch (e: any) {
-      toast.error(e?.message ?? 'Napaka');
+    } catch (e: unknown) {
+      toast.error((e as Error)?.message ?? 'Napaka');
     } finally {
       setActing(null);
     }
@@ -94,8 +94,8 @@ export function NotificationCenterCard() {
       if (!json?.ok) throw new Error(json?.error ?? 'Failed');
       toast.success(`✓ ${json.updated} obvestil označenih kot prebranih`);
       await fetchData();
-    } catch (e: any) {
-      toast.error(e?.message ?? 'Napaka');
+    } catch (e: unknown) {
+      toast.error((e as Error)?.message ?? 'Napaka');
     } finally {
       setActing(null);
     }
@@ -113,8 +113,8 @@ export function NotificationCenterCard() {
       if (!json?.ok) throw new Error(json?.error ?? 'Failed');
       toast.success(`✓ ${json.deleted} prebranih obvestil izbrisanih`);
       await fetchData();
-    } catch (e: any) {
-      toast.error(e?.message ?? 'Napaka');
+    } catch (e: unknown) {
+      toast.error((e as Error)?.message ?? 'Napaka');
     } finally {
       setActing(null);
     }

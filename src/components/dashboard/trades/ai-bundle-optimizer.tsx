@@ -36,7 +36,7 @@ export function AIBundleOptimizer({ bulkTradeIds }: AIBundleOptimizerProps) {
             const data = await res.json();
             if (data.ok) { setBundleData(data); toast.success('✓ Bundle predlogi generirani'); }
             else toast.error(data.error ?? data.message ?? 'Napaka');
-          } catch (e: any) { toast.error(e?.message ?? 'Napaka'); }
+          } catch (e: unknown) { toast.error((e as Error)?.message ?? 'Napaka'); }
           finally { setBundleLoading(false); }
         }}
         title="AI kombinira inventar v bundle za maksimalni profit"

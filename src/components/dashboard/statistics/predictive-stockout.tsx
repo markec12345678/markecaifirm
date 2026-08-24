@@ -50,7 +50,7 @@ export function PredictiveStockout() {
                 const data = await res.json();
                 if (data.ok) { setStockoutData(data); toast.success('✓ Stockout napoved generirana'); }
                 else toast.error(data.error ?? data.message ?? 'Napaka');
-              } catch (e: any) { toast.error(e?.message ?? 'Napaka'); }
+              } catch (e: unknown) { toast.error((e as Error)?.message ?? 'Napaka'); }
               finally { setStockoutLoading(false); }
             }}>
             {stockoutLoading ? <RefreshCw className="w-3 h-3 animate-spin" /> : <Sparkles className="w-3 h-3" />}

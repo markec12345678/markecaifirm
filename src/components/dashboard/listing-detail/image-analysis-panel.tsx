@@ -63,7 +63,7 @@ export function ImageAnalysisPanel({ listingId, imageUrl, title, description, de
       const data = await res.json();
       if (data.ok) { setImageQuality(data); toast.success('✓ Analiza kakovosti slike generirana'); }
       else toast.error(data.error ?? 'Napaka');
-    } catch (e: any) { toast.error(e?.message ?? 'Napaka'); }
+    } catch (e: unknown) { toast.error((e as Error)?.message ?? 'Napaka'); }
     finally { setImageQualityLoading(false); }
   };
 
@@ -86,7 +86,7 @@ export function ImageAnalysisPanel({ listingId, imageUrl, title, description, de
       const data = await res.json();
       if (data.ok) { setDescOpt(data); toast.success('✓ Optimizacija opisa generirana'); }
       else toast.error(data.error ?? 'Napaka');
-    } catch (e: any) { toast.error(e?.message ?? 'Napaka'); }
+    } catch (e: unknown) { toast.error((e as Error)?.message ?? 'Napaka'); }
     finally { setDescOptLoading(false); }
   };
 
@@ -103,7 +103,7 @@ export function ImageAnalysisPanel({ listingId, imageUrl, title, description, de
       const data = await res.json();
       if (data.ok) { setRefurb(data); toast.success('✓ Refurbishment ocena generirana'); }
       else toast.error(data.error ?? 'Napaka');
-    } catch (e: any) { toast.error(e?.message ?? 'Napaka'); }
+    } catch (e: unknown) { toast.error((e as Error)?.message ?? 'Napaka'); }
     finally { setRefurbLoading(false); }
   };
 

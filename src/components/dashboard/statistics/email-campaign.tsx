@@ -52,7 +52,7 @@ export function EmailCampaign() {
                 const data = await res.json();
                 if (data.ok) { setCampaignData(data); toast.success('✓ Email kampanja generirana'); }
                 else toast.error(data.error ?? data.message ?? 'Napaka');
-              } catch (e: any) { toast.error(e?.message ?? 'Napaka'); }
+              } catch (e: unknown) { toast.error((e as Error)?.message ?? 'Napaka'); }
               finally { setCampaignLoading(false); }
             }}>
             {campaignLoading ? <RefreshCw className="w-3 h-3 animate-spin" /> : <Sparkles className="w-3 h-3" />}

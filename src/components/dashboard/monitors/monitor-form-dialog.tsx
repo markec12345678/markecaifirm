@@ -172,8 +172,8 @@ export function MonitorFormDialog({
       } else {
         toast.error(`Napaka: ${data.error?.slice(0, 80)}`);
       }
-    } catch (e: any) {
-      setDryRunResult({ ok: false, error: e?.message ?? 'Napaka' });
+    } catch (e: unknown) {
+      setDryRunResult({ ok: false, error: (e as Error)?.message ?? 'Napaka' });
       toast.error('Dry-run ni uspel');
     } finally {
       setDryRunLoading(false);
@@ -223,8 +223,8 @@ export function MonitorFormDialog({
       }
       toast.success(editing ? 'Monitor posodobljen' : 'Monitor dodan');
       onSaved();
-    } catch (e: any) {
-      toast.error(e?.message ?? 'Napaka pri shranjevanju');
+    } catch (e: unknown) {
+      toast.error((e as Error)?.message ?? 'Napaka pri shranjevanju');
     } finally {
       setSaving(false);
     }
@@ -377,7 +377,7 @@ export function MonitorFormDialog({
                         } else {
                           toast.error(data.error ?? 'Napaka');
                         }
-                      } catch (e: any) { toast.error(e?.message ?? 'Napaka'); }
+                      } catch (e: unknown) { toast.error((e as Error)?.message ?? 'Napaka'); }
                       finally { setFilterLoading(false); }
                     }}
                   >
@@ -577,8 +577,8 @@ export function MonitorFormDialog({
                         } else {
                           toast.error(data.error ?? 'Napaka');
                         }
-                      } catch (e: any) {
-                        toast.error(e?.message ?? 'Napaka');
+                      } catch (e: unknown) {
+                        toast.error((e as Error)?.message ?? 'Napaka');
                       } finally {
                         setScheduleLoading(false);
                       }

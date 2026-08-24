@@ -56,8 +56,8 @@ export function ProfitMaximizerPanel({ tradeId }: { tradeId: string }) {
       } else {
         toast.error(json.error || 'Napaka pri analizi');
       }
-    } catch (e: any) {
-      toast.error(e?.message || 'Napaka');
+    } catch (e: unknown) {
+      toast.error((e as Error)?.message || 'Napaka');
     } finally {
       setLoading(false);
     }

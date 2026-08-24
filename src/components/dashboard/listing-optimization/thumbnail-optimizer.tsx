@@ -16,7 +16,7 @@ export function ThumbnailOptimizer({ selectedTradeId }: ThumbnailOptimizerProps)
   const [thumbnailOpt, setThumbnailOpt] = useState<any>(null);
   const [thumbnailOptLoading, setThumbnailOptLoading] = useState(false);
 
-  const runThumbnailOpt = async () => { if (!selectedTradeId) { toast.error('Izberi item'); return; } setThumbnailOptLoading(true); setThumbnailOpt(null); try { const r = await fetch('/api/ai/listing-thumbnail-optimizer', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ tradeId: selectedTradeId }) }); const d = await r.json(); if (d.ok) { setThumbnailOpt(d); toast.success('✓ Thumbnail optimizacija generirana'); } else toast.error(d.error ?? 'Napaka'); } catch (e: any) { toast.error(e?.message ?? 'Napaka'); } finally { setThumbnailOptLoading(false); } };
+  const runThumbnailOpt = async () => { if (!selectedTradeId) { toast.error('Izberi item'); return; } setThumbnailOptLoading(true); setThumbnailOpt(null); try { const r = await fetch('/api/ai/listing-thumbnail-optimizer', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ tradeId: selectedTradeId }) }); const d = await r.json(); if (d.ok) { setThumbnailOpt(d); toast.success('✓ Thumbnail optimizacija generirana'); } else toast.error(d.error ?? 'Napaka'); } catch (e: unknown) { toast.error((e as Error)?.message ?? 'Napaka'); } finally { setThumbnailOptLoading(false); } };
 
   return (
     <Card>

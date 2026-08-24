@@ -182,9 +182,9 @@ export function RestockRecommendationsCard() {
       const json = (await res.json()) as RestockResult;
       if (!json.ok) throw new Error('Napaka v odgovoru');
       setData(json);
-    } catch (e: any) {
+    } catch (e: unknown) {
       // Silent fail — non-critical widget
-      console.warn('[RestockRecommendationsCard] load failed:', e?.message);
+      console.warn('[RestockRecommendationsCard] load failed:', (e as Error)?.message);
     } finally {
       setLoading(false);
     }

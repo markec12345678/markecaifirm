@@ -33,7 +33,7 @@ export function ProfitDashboard() {
               const data = await res.json();
               if (data.ok) { setDashData(data); toast.success('✓ Profit dashboard generiran'); }
               else toast.error(data.error ?? data.message ?? 'Napaka');
-            } catch (e: any) { toast.error(e?.message ?? 'Napaka'); }
+            } catch (e: unknown) { toast.error((e as Error)?.message ?? 'Napaka'); }
             finally { setDashLoading(false); }
           }}>
           {dashLoading ? <RefreshCw className="w-3 h-3 animate-spin" /> : <Sparkles className="w-3 h-3" />}

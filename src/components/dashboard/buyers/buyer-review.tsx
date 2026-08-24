@@ -30,7 +30,7 @@ export function BuyerReview({ selectedBuyer }: BuyerReviewProps) {
       const data = await res.json();
       if (data.ok) { setReview(data); toast.success('✓ Review generiran'); }
       else toast.error(data.error ?? 'Napaka');
-    } catch (e: any) { toast.error(e?.message ?? 'Napaka'); }
+    } catch (e: unknown) { toast.error((e as Error)?.message ?? 'Napaka'); }
     finally { setReviewLoading(false); }
   };
 

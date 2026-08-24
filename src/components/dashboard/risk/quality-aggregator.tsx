@@ -12,7 +12,7 @@ export function QualityAggregator() {
   const [qualityAgg, setQualityAgg] = useState<any>(null);
   const [qualityAggLoading, setQualityAggLoading] = useState(false);
 
-  const runQualityAgg = async () => { setQualityAggLoading(true); setQualityAgg(null); try { const r = await fetch('/api/ai/quality-aggregator', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: '{}' }); const d = await r.json(); if (d.ok) { setQualityAgg(d); toast.success('✓ Quality aggregator generiran'); } else toast.error(d.error ?? 'Napaka'); } catch (e: any) { toast.error(e?.message ?? 'Napaka'); } finally { setQualityAggLoading(false); } };
+  const runQualityAgg = async () => { setQualityAggLoading(true); setQualityAgg(null); try { const r = await fetch('/api/ai/quality-aggregator', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: '{}' }); const d = await r.json(); if (d.ok) { setQualityAgg(d); toast.success('✓ Quality aggregator generiran'); } else toast.error(d.error ?? 'Napaka'); } catch (e: unknown) { toast.error((e as Error)?.message ?? 'Napaka'); } finally { setQualityAggLoading(false); } };
 
   return (
     <Card className="md:col-span-2">

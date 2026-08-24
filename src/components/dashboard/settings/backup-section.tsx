@@ -49,8 +49,8 @@ export function BackupSection() {
       } else {
         toast.error(data.error ?? 'Napaka pri obnovi');
       }
-    } catch (e: any) {
-      toast.error(e?.message ?? 'Napaka pri obnovi');
+    } catch (e: unknown) {
+      toast.error((e as Error)?.message ?? 'Napaka pri obnovi');
     } finally {
       setRestoring(false);
       if (fileInputRef.current) fileInputRef.current.value = '';
@@ -66,8 +66,8 @@ export function BackupSection() {
       if (data.ok) toast.success(data.message);
       else toast.error(data.error ?? 'Napaka');
       await loadInfo();
-    } catch (e: any) {
-      toast.error(e?.message ?? 'Napaka');
+    } catch (e: unknown) {
+      toast.error((e as Error)?.message ?? 'Napaka');
     }
   };
 
@@ -162,8 +162,8 @@ function JsonBackupControls() {
       document.body.removeChild(a);
       URL.revokeObjectURL(url);
       toast.success('JSON backup prenešen');
-    } catch (e: any) {
-      toast.error(e?.message ?? 'Napaka pri exportu');
+    } catch (e: unknown) {
+      toast.error((e as Error)?.message ?? 'Napaka pri exportu');
     } finally {
       setExporting(false);
     }
@@ -188,8 +188,8 @@ function JsonBackupControls() {
       } else {
         toast.error(data.error ?? 'Napaka pri importu');
       }
-    } catch (e: any) {
-      toast.error(e?.message ?? 'Napaka pri branju JSON datoteke');
+    } catch (e: unknown) {
+      toast.error((e as Error)?.message ?? 'Napaka pri branju JSON datoteke');
     } finally {
       setImporting(false);
       if (fileInputRef.current) fileInputRef.current.value = '';

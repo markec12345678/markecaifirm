@@ -25,7 +25,7 @@ export function DescriptionGenerator({ selectedTradeId }: DescriptionGeneratorPr
       const data = await res.json();
       if (data.ok) { setDescGen(data); toast.success('✓ Opisi generirani'); }
       else toast.error(data.error ?? 'Napaka');
-    } catch (e: any) { toast.error(e?.message ?? 'Napaka'); }
+    } catch (e: unknown) { toast.error((e as Error)?.message ?? 'Napaka'); }
     finally { setDescGenLoading(false); }
   };
 

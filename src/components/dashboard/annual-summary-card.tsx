@@ -177,9 +177,9 @@ export function AnnualSummaryCard({ onNavigate }: ViewProps) {
       const json = (await res.json()) as AnnualSummaryData;
       if (!json.ok) throw new Error('Napaka v odgovoru');
       setData(json);
-    } catch (e: any) {
+    } catch (e: unknown) {
       // Silent fail — non-critical widget
-      console.warn('[AnnualSummaryCard] load failed:', e?.message);
+      console.warn('[AnnualSummaryCard] load failed:', (e as Error)?.message);
     } finally {
       setLoading(false);
     }
@@ -201,8 +201,8 @@ export function AnnualSummaryCard({ onNavigate }: ViewProps) {
       toast.success(`Davčno poročilo ${year} se prenaša…`, {
         description: 'PDF z 6 sekcijami (povzetek, četrtletja, meseci, top transakcije, kategorije, viri).',
       });
-    } catch (e: any) {
-      toast.error(e?.message ?? 'Napaka pri prenosu PDF');
+    } catch (e: unknown) {
+      toast.error((e as Error)?.message ?? 'Napaka pri prenosu PDF');
     } finally {
       // Brief delay so user sees the success state
       setTimeout(() => setDownloadingPdf(false), 1500);

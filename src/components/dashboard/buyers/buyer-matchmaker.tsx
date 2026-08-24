@@ -13,7 +13,7 @@ export function BuyerMatchmaker() {
   const [matchmaker, setMatchmaker] = useState<any>(null);
   const [matchmakerLoading, setMatchmakerLoading] = useState(false);
 
-  const runMatchmaker = async () => { setMatchmakerLoading(true); setMatchmaker(null); try { const r = await fetch('/api/ai/buyer-matchmaker', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: '{}' }); const d = await r.json(); if (d.ok) { setMatchmaker(d); toast.success('✓ Matchmaker generiran'); } else toast.error(d.error ?? 'Napaka'); } catch (e: any) { toast.error(e?.message ?? 'Napaka'); } finally { setMatchmakerLoading(false); } };
+  const runMatchmaker = async () => { setMatchmakerLoading(true); setMatchmaker(null); try { const r = await fetch('/api/ai/buyer-matchmaker', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: '{}' }); const d = await r.json(); if (d.ok) { setMatchmaker(d); toast.success('✓ Matchmaker generiran'); } else toast.error(d.error ?? 'Napaka'); } catch (e: unknown) { toast.error((e as Error)?.message ?? 'Napaka'); } finally { setMatchmakerLoading(false); } };
 
   return (
     <Card>

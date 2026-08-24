@@ -55,8 +55,8 @@ export function AdaptiveWeightsCard() {
       }
       setDraftWeights(drafts);
       setDirty(false);
-    } catch (e: any) {
-      setError(e?.message ?? 'Napaka');
+    } catch (e: unknown) {
+      setError((e as Error)?.message ?? 'Napaka');
     } finally {
       setLoading(false);
     }
@@ -99,8 +99,8 @@ export function AdaptiveWeightsCard() {
         toast.warning(`Delno: ${ok} OK, ${fail} napake`);
       }
       await fetchWeights();
-    } catch (e: any) {
-      toast.error(e?.message ?? 'Napaka pri shranjevanju');
+    } catch (e: unknown) {
+      toast.error((e as Error)?.message ?? 'Napaka pri shranjevanju');
     } finally {
       setSaving(false);
     }
@@ -120,8 +120,8 @@ export function AdaptiveWeightsCard() {
       if (!json?.ok) throw new Error('Reset ni uspel');
       toast.success('✓ Vse uteži resetirane na default');
       await fetchWeights();
-    } catch (e: any) {
-      toast.error(e?.message ?? 'Napaka pri resetu');
+    } catch (e: unknown) {
+      toast.error((e as Error)?.message ?? 'Napaka pri resetu');
     } finally {
       setResetting(false);
     }
@@ -145,8 +145,8 @@ export function AdaptiveWeightsCard() {
         : ` (executed: ${json.executed}, rejected: ${json.rejected}, rate: ${Math.round(json.executionRate * 100)}%)`;
       toast.success(`${emoji} ${feedbackDomain}: ${feedback}${adjText}`);
       await fetchWeights();
-    } catch (e: any) {
-      toast.error(e?.message ?? 'Napaka pri record');
+    } catch (e: unknown) {
+      toast.error((e as Error)?.message ?? 'Napaka pri record');
     } finally {
       setRecording(false);
     }

@@ -19,7 +19,7 @@ export function GrowthPlanner() {
       const d = await r.json();
       if (d.ok) { setGrowth(d); toast.success('✓ Growth planner generiran'); }
       else toast.error(d.error ?? 'Napaka');
-    } catch (e: any) { toast.error(e?.message ?? 'Napaka'); }
+    } catch (e: unknown) { toast.error((e as Error)?.message ?? 'Napaka'); }
     finally { setGrowthLoading(false); }
   };
 

@@ -26,7 +26,7 @@ export function CtrOptimizer({ selectedTradeId }: CtrOptimizerProps) {
       const data = await res.json();
       if (data.ok) { setCtrOpt(data); toast.success('✓ CTR optimizacija generirana'); }
       else toast.error(data.error ?? 'Napaka');
-    } catch (e: any) { toast.error(e?.message ?? 'Napaka'); }
+    } catch (e: unknown) { toast.error((e as Error)?.message ?? 'Napaka'); }
     finally { setCtrOptLoading(false); }
   };
 

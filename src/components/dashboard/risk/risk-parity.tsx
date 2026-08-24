@@ -19,7 +19,7 @@ export function RiskParity() {
       const data = await res.json();
       if (data.ok) { setParity(data); toast.success('✓ Risk parity analiza generirana'); }
       else toast.error(data.error ?? 'Napaka');
-    } catch (e: any) { toast.error(e?.message ?? 'Napaka'); }
+    } catch (e: unknown) { toast.error((e as Error)?.message ?? 'Napaka'); }
     finally { setParityLoading(false); }
   };
 

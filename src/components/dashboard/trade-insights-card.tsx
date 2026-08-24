@@ -183,9 +183,9 @@ export function TradeInsightsCard() {
       const json = (await res.json()) as TradeInsights;
       if (!json.ok) throw new Error('Napaka v odgovoru');
       setData(json);
-    } catch (e: any) {
+    } catch (e: unknown) {
       // Silent fail — Dashboard stats card is non-critical (toast would be too noisy on auto-refresh)
-      console.warn('[TradeInsightsCard] load failed:', e?.message);
+      console.warn('[TradeInsightsCard] load failed:', (e as Error)?.message);
     } finally {
       setLoading(false);
     }

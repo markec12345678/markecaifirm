@@ -33,7 +33,7 @@ export function ProfitPlaybook() {
               const data = await res.json();
               if (data.ok) { setPlaybookData(data); toast.success('✓ Profit playbook generiran'); }
               else toast.error(data.error ?? 'Napaka');
-            } catch (e: any) { toast.error(e?.message ?? 'Napaka'); }
+            } catch (e: unknown) { toast.error((e as Error)?.message ?? 'Napaka'); }
             finally { setPlaybookLoading(false); }
           }}>
           {playbookLoading ? <RefreshCw className="w-3 h-3 animate-spin" /> : <Sparkles className="w-3 h-3" />}

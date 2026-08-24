@@ -40,7 +40,7 @@ export function BuyerPersonaGenerator({ trades }: BuyerPersonaGeneratorProps) {
             const data = await res.json();
             if (data.ok) { setPersonaData(data); toast.success('✓ Buyer persone generirane'); }
             else toast.error(data.error ?? 'Napaka');
-          } catch (e: any) { toast.error(e?.message ?? 'Napaka'); }
+          } catch (e: unknown) { toast.error((e as Error)?.message ?? 'Napaka'); }
           finally { setPersonaLoading(false); }
         }}
         title="AI ustvari buyer persone za ciljano trženje"

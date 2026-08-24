@@ -21,7 +21,7 @@ export function SeasonalPricing() {
       const data = await res.json();
       if (data.ok) { setSeasonal(data); toast.success('✓ Sezonsko določanje cen generirano'); }
       else toast.error(data.error ?? 'Napaka');
-    } catch (e: any) { toast.error(e?.message ?? 'Napaka'); }
+    } catch (e: unknown) { toast.error((e as Error)?.message ?? 'Napaka'); }
     finally { setSeasonalLoading(false); }
   };
 

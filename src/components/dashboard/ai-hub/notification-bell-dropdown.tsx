@@ -63,8 +63,8 @@ export function NotificationBellDropdown({ onJumpToCenter }: { onJumpToCenter: (
           setRecent(json.notifications);
         }
       }
-    } catch (e: any) {
-      toast.error(e?.message ?? 'Napaka');
+    } catch (e: unknown) {
+      toast.error((e as Error)?.message ?? 'Napaka');
     } finally {
       setLoading(false);
     }

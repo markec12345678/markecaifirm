@@ -36,7 +36,7 @@ export function AILiquidationStrategy({ bulkTradeIds }: AILiquidationStrategyPro
             const data = await res.json();
             if (data.ok) { setLiquidationData(data); toast.success('✓ Likvidacijska strategija generirana'); }
             else toast.error(data.error ?? data.message ?? 'Napaka');
-          } catch (e: any) { toast.error(e?.message ?? 'Napaka'); }
+          } catch (e: unknown) { toast.error((e as Error)?.message ?? 'Napaka'); }
           finally { setLiquidationLoading(false); }
         }}
         title="AI predlaga kako hitro likvidirati stalled inventar"

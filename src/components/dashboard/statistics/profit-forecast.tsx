@@ -36,7 +36,7 @@ export function ProfitForecast() {
                 const data = await res.json();
                 if (data.ok) { setForecastData(data); toast.success(`✓ Pričakovan dobiček: ${data.forecast.expectedProfit}€`); }
                 else toast.error(data.error ?? 'Napaka');
-              } catch (e: any) { toast.error(e?.message ?? 'Napaka'); }
+              } catch (e: unknown) { toast.error((e as Error)?.message ?? 'Napaka'); }
               finally { setForecastLoading(false); }
             }}>
             {forecastLoading ? <RefreshCw className="w-3 h-3 animate-spin" /> : <Sparkles className="w-3 h-3" />}

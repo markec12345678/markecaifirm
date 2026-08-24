@@ -47,7 +47,7 @@ export function CompetitorIntelligence() {
                 const data = await res.json();
                 if (data.ok) { setCompetitorData(data); toast.success('✓ Konkurenčna analiza generirana'); }
                 else toast.error(data.error ?? data.message ?? 'Napaka');
-              } catch (e: any) { toast.error(e?.message ?? 'Napaka'); }
+              } catch (e: unknown) { toast.error((e as Error)?.message ?? 'Napaka'); }
               finally { setCompetitorLoading(false); }
             }}>
             {competitorLoading ? <RefreshCw className="w-3 h-3 animate-spin" /> : <Sparkles className="w-3 h-3" />}

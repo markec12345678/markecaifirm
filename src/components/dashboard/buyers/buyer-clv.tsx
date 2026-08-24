@@ -17,7 +17,7 @@ export function BuyerClv({ selectedBuyer }: BuyerClvProps) {
   const [clv, setClv] = useState<any>(null);
   const [clvLoading, setClvLoading] = useState(false);
 
-  const runClv = async () => { if (!selectedBuyer) { toast.error('Izberi kupca'); return; } setClvLoading(true); setClv(null); try { const r = await fetch('/api/ai/buyer-clv-predictor', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ customerName: selectedBuyer }) }); const d = await r.json(); if (d.ok) { setClv(d); toast.success('✓ CLV napoved generirana'); } else toast.error(d.error ?? 'Napaka'); } catch (e: any) { toast.error(e?.message ?? 'Napaka'); } finally { setClvLoading(false); } };
+  const runClv = async () => { if (!selectedBuyer) { toast.error('Izberi kupca'); return; } setClvLoading(true); setClv(null); try { const r = await fetch('/api/ai/buyer-clv-predictor', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ customerName: selectedBuyer }) }); const d = await r.json(); if (d.ok) { setClv(d); toast.success('✓ CLV napoved generirana'); } else toast.error(d.error ?? 'Napaka'); } catch (e: unknown) { toast.error((e as Error)?.message ?? 'Napaka'); } finally { setClvLoading(false); } };
 
   return (
     <Card>

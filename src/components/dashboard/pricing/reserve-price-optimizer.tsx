@@ -12,7 +12,7 @@ export function ReservePriceOptimizer() {
   const [reservePrice, setReservePrice] = useState<any>(null);
   const [reservePriceLoading, setReservePriceLoading] = useState(false);
 
-  const runReservePrice = async () => { setReservePriceLoading(true); setReservePrice(null); try { const r = await fetch('/api/ai/reserve-price-optimizer', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: '{}' }); const d = await r.json(); if (d.ok) { setReservePrice(d); toast.success('✓ Reserve price generiran'); } else toast.error(d.error ?? 'Napaka'); } catch (e: any) { toast.error(e?.message ?? 'Napaka'); } finally { setReservePriceLoading(false); } };
+  const runReservePrice = async () => { setReservePriceLoading(true); setReservePrice(null); try { const r = await fetch('/api/ai/reserve-price-optimizer', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: '{}' }); const d = await r.json(); if (d.ok) { setReservePrice(d); toast.success('✓ Reserve price generiran'); } else toast.error(d.error ?? 'Napaka'); } catch (e: unknown) { toast.error((e as Error)?.message ?? 'Napaka'); } finally { setReservePriceLoading(false); } };
 
   return (
     <Card>

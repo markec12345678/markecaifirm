@@ -64,8 +64,8 @@ export function MakeOfferPanel({ listingId, listingUrl, listingTitle, askingPric
       } else {
         toast.error(json.error || 'Napaka pri generiranju ponudbe');
       }
-    } catch (e: any) {
-      toast.error(e?.message || 'Napaka');
+    } catch (e: unknown) {
+      toast.error((e as Error)?.message || 'Napaka');
     } finally {
       setLoading(false);
     }

@@ -102,8 +102,8 @@ export function ProfitTimelineChart() {
       } else {
         throw new Error('Napaka v odgovoru');
       }
-    } catch (e: any) {
-      toast.error(e?.message ?? 'Napaka pri nalaganju timeline');
+    } catch (e: unknown) {
+      toast.error((e as Error)?.message ?? 'Napaka pri nalaganju timeline');
     } finally {
       setLoading(false);
     }

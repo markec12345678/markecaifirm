@@ -29,7 +29,7 @@ export function BuyerJourney({ selectedBuyer }: BuyerJourneyProps) {
       const data = await res.json();
       if (data.ok) { setJourney(data); toast.success('✓ Journey optimizacija generirana'); }
       else toast.error(data.error ?? 'Napaka');
-    } catch (e: any) { toast.error(e?.message ?? 'Napaka'); }
+    } catch (e: unknown) { toast.error((e as Error)?.message ?? 'Napaka'); }
     finally { setJourneyLoading(false); }
   };
 

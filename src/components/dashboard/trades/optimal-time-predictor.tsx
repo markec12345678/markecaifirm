@@ -32,7 +32,7 @@ export function OptimalTimePredictor() {
             const data = await res.json();
             if (data.ok) { setOptimalTimeData(data); toast.success('✓ Optimalni čas objave generiran'); }
             else toast.error(data.error ?? data.message ?? 'Napaka');
-          } catch (e: any) { toast.error(e?.message ?? 'Napaka'); }
+          } catch (e: unknown) { toast.error((e as Error)?.message ?? 'Napaka'); }
           finally { setOptimalTimeLoading(false); }
         }}
         title="AI napove kdaj objaviti oglas za max dobiček"

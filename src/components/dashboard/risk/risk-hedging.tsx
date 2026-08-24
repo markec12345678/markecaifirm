@@ -20,7 +20,7 @@ export function RiskHedging() {
       const data = await res.json();
       if (data.ok) { setHedging(data); toast.success('✓ Hedge strategije generirane'); }
       else toast.error(data.error ?? 'Napaka');
-    } catch (e: any) { toast.error(e?.message ?? 'Napaka'); }
+    } catch (e: unknown) { toast.error((e as Error)?.message ?? 'Napaka'); }
     finally { setHedgingLoading(false); }
   };
 

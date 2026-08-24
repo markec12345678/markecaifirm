@@ -101,7 +101,7 @@ export function FraudDetectionPanel({ listingId, imageUrl }: { listingId: string
       const data = await res.json();
       if (data.ok) { setFraud(data); toast.success('✓ Fraud analiza generirana'); }
       else toast.error(data.error ?? 'Napaka');
-    } catch (e: any) { toast.error(e?.message ?? 'Napaka'); }
+    } catch (e: unknown) { toast.error((e as Error)?.message ?? 'Napaka'); }
     finally { setFraudLoading(false); }
   };
 
@@ -118,7 +118,7 @@ export function FraudDetectionPanel({ listingId, imageUrl }: { listingId: string
       const data = await res.json();
       if (data.ok) { setFakeDetect(data); toast.success('✓ Fake detection analiza generirana'); }
       else toast.error(data.error ?? 'Napaka');
-    } catch (e: any) { toast.error(e?.message ?? 'Napaka'); }
+    } catch (e: unknown) { toast.error((e as Error)?.message ?? 'Napaka'); }
     finally { setFakeDetectLoading(false); }
   };
 
@@ -135,7 +135,7 @@ export function FraudDetectionPanel({ listingId, imageUrl }: { listingId: string
       const data = await res.json();
       if (data.ok) { setReverseSearch(data); toast.success('✓ Reverse image search generiran'); }
       else toast.error(data.error ?? 'Napaka');
-    } catch (e: any) { toast.error(e?.message ?? 'Napaka'); }
+    } catch (e: unknown) { toast.error((e as Error)?.message ?? 'Napaka'); }
     finally { setReverseSearchLoading(false); }
   };
 

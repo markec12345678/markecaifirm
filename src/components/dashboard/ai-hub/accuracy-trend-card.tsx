@@ -42,8 +42,8 @@ export function AccuracyTrendCard() {
       const json = (await res.json()) as AccuracyApiResponse;
       if (!json?.ok) throw new Error('Accuracy API ni vrnil rezultata');
       setData(json);
-    } catch (e: any) {
-      setError(e?.message ?? 'Napaka');
+    } catch (e: unknown) {
+      setError((e as Error)?.message ?? 'Napaka');
     } finally {
       setLoading(false);
     }
@@ -65,8 +65,8 @@ export function AccuracyTrendCard() {
       );
       // Refetch to show updated accuracy
       await fetchAccuracy();
-    } catch (e: any) {
-      toast.error(e?.message ?? 'Napaka pri backfill');
+    } catch (e: unknown) {
+      toast.error((e as Error)?.message ?? 'Napaka pri backfill');
     } finally {
       setBackfilling(false);
     }

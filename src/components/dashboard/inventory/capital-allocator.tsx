@@ -19,7 +19,7 @@ export function CapitalAllocator() {
       const d = await r.json();
       if (d.ok) { setCapitalAlloc(d); toast.success('✓ Capital allocator generiran'); }
       else toast.error(d.error ?? 'Napaka');
-    } catch (e: any) { toast.error(e?.message ?? 'Napaka'); }
+    } catch (e: unknown) { toast.error((e as Error)?.message ?? 'Napaka'); }
     finally { setCapitalAllocLoading(false); }
   };
 

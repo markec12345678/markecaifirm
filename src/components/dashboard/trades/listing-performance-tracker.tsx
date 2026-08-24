@@ -32,7 +32,7 @@ export function ListingPerformanceTracker() {
             const data = await res.json();
             if (data.ok) { setPerfData(data); toast.success('✓ Analiza uspešnosti generirana'); }
             else toast.error(data.error ?? data.message ?? 'Napaka');
-          } catch (e: any) { toast.error(e?.message ?? 'Napaka'); }
+          } catch (e: unknown) { toast.error((e as Error)?.message ?? 'Napaka'); }
           finally { setPerfLoading(false); }
         }}
         title="AI analizira uspešnost prodaj in priporoči optimizacije"

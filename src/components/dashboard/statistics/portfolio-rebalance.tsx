@@ -36,7 +36,7 @@ export function PortfolioRebalance() {
                 const data = await res.json();
                 if (data.ok) { setRebalanceData(data); toast.success('✓ Rebalancing predlog generiran'); }
                 else toast.error(data.error ?? 'Napaka');
-              } catch (e: any) { toast.error(e?.message ?? 'Napaka'); }
+              } catch (e: unknown) { toast.error((e as Error)?.message ?? 'Napaka'); }
               finally { setRebalanceLoading(false); }
             }}>
             {rebalanceLoading ? <RefreshCw className="w-3 h-3 animate-spin" /> : <Sparkles className="w-3 h-3" />}

@@ -40,7 +40,7 @@ export function BudgetAllocator() {
                   const data = await res.json();
                   if (data.ok) { setBudgetData(data); toast.success(`✓ Pričakovani dobiček: ${data.totalExpectedProfit}€`); }
                   else toast.error(data.error ?? 'Napaka');
-                } catch (e: any) { toast.error(e?.message ?? 'Napaka'); }
+                } catch (e: unknown) { toast.error((e as Error)?.message ?? 'Napaka'); }
                 finally { setBudgetLoading(false); }
               }}>
               {budgetLoading ? <RefreshCw className="w-3 h-3 animate-spin" /> : <Wallet className="w-3 h-3" />}

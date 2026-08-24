@@ -35,8 +35,8 @@ export function ScenarioBrainCard() {
       const json = (await res.json()) as ScenarioComparisonResponse;
       if (!json?.ok) throw new Error(json?.source ? 'Scenario Brain ni vrnil rezultata' : 'Napaka');
       setData(json);
-    } catch (e: any) {
-      setError(e?.message ?? 'Napaka');
+    } catch (e: unknown) {
+      setError((e as Error)?.message ?? 'Napaka');
     } finally {
       setLoading(false);
     }
@@ -81,9 +81,9 @@ export function ScenarioBrainCard() {
       if (!json?.ok) throw new Error('Scenario Brain (custom) ni vrnil rezultata');
       setData(json);
       toast.success('✓ Custom scenarij izračunan');
-    } catch (e: any) {
-      setError(e?.message ?? 'Napaka');
-      toast.error(e?.message ?? 'Napaka');
+    } catch (e: unknown) {
+      setError((e as Error)?.message ?? 'Napaka');
+      toast.error((e as Error)?.message ?? 'Napaka');
     } finally {
       setSubmitting(false);
     }

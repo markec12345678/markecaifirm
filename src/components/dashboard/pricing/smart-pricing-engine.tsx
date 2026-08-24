@@ -21,7 +21,7 @@ export function SmartPricingEngine() {
       const data = await res.json();
       if (data.ok) { setSmartPricing(data); toast.success('✓ Smart pricing generiran'); }
       else toast.error(data.error ?? 'Napaka');
-    } catch (e: any) { toast.error(e?.message ?? 'Napaka'); }
+    } catch (e: unknown) { toast.error((e as Error)?.message ?? 'Napaka'); }
     finally { setSmartPricingLoading(false); }
   };
 

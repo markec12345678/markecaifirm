@@ -21,7 +21,7 @@ export function MarketSaturation() {
       const data = await res.json();
       if (data.ok) { setSaturation(data); toast.success('✓ Tržna saturacija analizirana'); }
       else toast.error(data.error ?? 'Napaka');
-    } catch (e: any) { toast.error(e?.message ?? 'Napaka'); }
+    } catch (e: unknown) { toast.error((e as Error)?.message ?? 'Napaka'); }
     finally { setSaturationLoading(false); }
   };
 

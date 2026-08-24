@@ -29,7 +29,7 @@ export function AutoReprice({ onApplied }: AutoRepriceProps) {
             const data = await res.json();
             if (data.ok) { setRepriceData(data); toast.success(`✓ ${data.needsReprice} od ${data.totalHeld} potrebuje reprice`); }
             else toast.error(data.error ?? 'Napaka');
-          } catch (e: any) { toast.error(e?.message ?? 'Napaka'); }
+          } catch (e: unknown) { toast.error((e as Error)?.message ?? 'Napaka'); }
           finally { setRepriceLoading(false); }
         }}
         disabled={repriceLoading}

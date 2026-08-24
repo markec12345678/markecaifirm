@@ -99,8 +99,8 @@ export function CsvImportDialog({
         setResult(data);
         toast.error(data.error ?? 'Napaka pri uvozu');
       }
-    } catch (e: any) {
-      toast.error(e?.message ?? 'Napaka pri povezavi');
+    } catch (e: unknown) {
+      toast.error((e as Error)?.message ?? 'Napaka pri povezavi');
     } finally {
       setImporting(false);
     }

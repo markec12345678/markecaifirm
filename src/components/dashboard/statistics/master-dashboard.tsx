@@ -33,7 +33,7 @@ export function MasterDashboard() {
               const data = await res.json();
               if (data.ok) { setMasterData(data); toast.success('✓ Master dashboard generiran'); }
               else toast.error(data.error ?? 'Napaka');
-            } catch (e: any) { toast.error(e?.message ?? 'Napaka'); }
+            } catch (e: unknown) { toast.error((e as Error)?.message ?? 'Napaka'); }
             finally { setMasterLoading(false); }
           }}>
           {masterLoading ? <RefreshCw className="w-3 h-3 animate-spin" /> : <Sparkles className="w-3 h-3" />}

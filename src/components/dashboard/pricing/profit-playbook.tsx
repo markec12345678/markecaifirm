@@ -12,7 +12,7 @@ export function ProfitPlaybook() {
   const [playbook, setPlaybook] = useState<any>(null);
   const [playbookLoading, setPlaybookLoading] = useState(false);
 
-  const runPlaybook = async () => { setPlaybookLoading(true); setPlaybook(null); try { const r = await fetch('/api/ai/profit-playbook', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: '{}' }); const d = await r.json(); if (d.ok) { setPlaybook(d); toast.success('✓ Profit playbook generiran'); } else toast.error(d.error ?? 'Napaka'); } catch (e: any) { toast.error(e?.message ?? 'Napaka'); } finally { setPlaybookLoading(false); } };
+  const runPlaybook = async () => { setPlaybookLoading(true); setPlaybook(null); try { const r = await fetch('/api/ai/profit-playbook', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: '{}' }); const d = await r.json(); if (d.ok) { setPlaybook(d); toast.success('✓ Profit playbook generiran'); } else toast.error(d.error ?? 'Napaka'); } catch (e: unknown) { toast.error((e as Error)?.message ?? 'Napaka'); } finally { setPlaybookLoading(false); } };
 
   return (
     <Card>

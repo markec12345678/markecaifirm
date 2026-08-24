@@ -33,7 +33,7 @@ export function TaxLossHarvesting() {
             const data = await res.json();
             if (data.ok) { setTaxHarvestData(data); toast.success('✓ Davčna optimizacija generirana'); }
             else toast.error(data.error ?? 'Napaka');
-          } catch (e: any) { toast.error(e?.message ?? 'Napaka'); }
+          } catch (e: unknown) { toast.error((e as Error)?.message ?? 'Napaka'); }
           finally { setTaxHarvestLoading(false); }
         }}
         title="AI identificira izgube za davčno optimizacijo (loss harvesting)"

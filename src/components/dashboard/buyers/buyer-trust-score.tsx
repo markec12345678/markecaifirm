@@ -31,7 +31,7 @@ export function BuyerTrustScore({ selectedBuyer }: BuyerTrustScoreProps) {
       const data = await res.json();
       if (data.ok) { setTrustScore(data); toast.success('✓ Trust score generiran'); }
       else toast.error(data.error ?? 'Napaka');
-    } catch (e: any) { toast.error(e?.message ?? 'Napaka'); }
+    } catch (e: unknown) { toast.error((e as Error)?.message ?? 'Napaka'); }
     finally { setTrustLoading(false); }
   };
 

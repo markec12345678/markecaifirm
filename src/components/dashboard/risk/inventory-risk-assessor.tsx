@@ -14,7 +14,7 @@ export function InventoryRiskAssessor() {
   const [invRisk, setInvRisk] = useState<any>(null);
   const [invRiskLoading, setInvRiskLoading] = useState(false);
 
-  const runInvRisk = async () => { setInvRiskLoading(true); setInvRisk(null); try { const r = await fetch('/api/ai/inventory-risk-assessor', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: '{}' }); const d = await r.json(); if (d.ok) { setInvRisk(d); toast.success('✓ Inventory risk ocenjen'); } else toast.error(d.error ?? 'Napaka'); } catch (e: any) { toast.error(e?.message ?? 'Napaka'); } finally { setInvRiskLoading(false); } };
+  const runInvRisk = async () => { setInvRiskLoading(true); setInvRisk(null); try { const r = await fetch('/api/ai/inventory-risk-assessor', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: '{}' }); const d = await r.json(); if (d.ok) { setInvRisk(d); toast.success('✓ Inventory risk ocenjen'); } else toast.error(d.error ?? 'Napaka'); } catch (e: unknown) { toast.error((e as Error)?.message ?? 'Napaka'); } finally { setInvRiskLoading(false); } };
 
   return (
     <Card>

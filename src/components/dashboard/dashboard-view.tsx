@@ -166,8 +166,8 @@ export function DashboardView({ onNavigate }: ViewProps) {
       } else {
         toast.error(data.error ?? 'Napaka pri generiranju povzetka');
       }
-    } catch (e: any) {
-      toast.error(e?.message ?? 'Napaka');
+    } catch (e: unknown) {
+      toast.error((e as Error)?.message ?? 'Napaka');
     } finally {
       setSummaryLoading(false);
     }

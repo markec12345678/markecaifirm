@@ -41,7 +41,7 @@ export function TitleABTester({ trades }: TitleABTesterProps) {
             const data = await res.json();
             if (data.ok) { setTitleAbTestData(data); toast.success('✓ A/B test naslovov generiran'); }
             else toast.error(data.error ?? 'Napaka');
-          } catch (e: any) { toast.error(e?.message ?? 'Napaka'); }
+          } catch (e: unknown) { toast.error((e as Error)?.message ?? 'Napaka'); }
           finally { setTitleAbTestLoading(false); }
         }}
         title="AI generira in testira naslove oglasov za maksimalen CTR"

@@ -67,8 +67,8 @@ export function SeedAndTelegramCard() {
         // Skipped because trades already exist
         toast.info(`ℹ️ Trade-i že obstajajo (${json.total}). Uporabi 'reseed' za reset.`);
       }
-    } catch (e: any) {
-      toast.error(e?.message ?? 'Napaka pri nalaganju demo podatkov');
+    } catch (e: unknown) {
+      toast.error((e as Error)?.message ?? 'Napaka pri nalaganju demo podatkov');
     } finally {
       setSeeding(false);
     }
@@ -95,9 +95,9 @@ export function SeedAndTelegramCard() {
         toast.warning(`ℹ️ ${type}: ${reason}`);
         setLastResult({ type, sent: false, reason });
       }
-    } catch (e: any) {
-      toast.error(e?.message ?? 'Napaka pri testiranju Telegram-a');
-      setLastResult({ type, sent: false, reason: e?.message ?? 'Napaka' });
+    } catch (e: unknown) {
+      toast.error((e as Error)?.message ?? 'Napaka pri testiranju Telegram-a');
+      setLastResult({ type, sent: false, reason: (e as Error)?.message ?? 'Napaka' });
     } finally {
       setSendingTest(null);
     }

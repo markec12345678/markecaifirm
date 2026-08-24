@@ -43,8 +43,8 @@ export function DraftQueueCard() {
       const json = (await res.json()) as DraftQueueResponse;
       if (!json?.ok) throw new Error('Draft Queue API ni vrnil rezultata');
       setData(json);
-    } catch (e: any) {
-      setError(e?.message ?? 'Napaka');
+    } catch (e: unknown) {
+      setError((e as Error)?.message ?? 'Napaka');
     } finally {
       setLoading(false);
     }
@@ -74,8 +74,8 @@ export function DraftQueueCard() {
         : '';
       toast.success(`${emoji} Akcija označena kot ${slovenian}${feedbackNote}`);
       await fetchDrafts();
-    } catch (e: any) {
-      toast.error(e?.message ?? 'Napaka pri posodobitvi drafta');
+    } catch (e: unknown) {
+      toast.error((e as Error)?.message ?? 'Napaka pri posodobitvi drafta');
     } finally {
       setPatchingId(null);
     }
@@ -89,8 +89,8 @@ export function DraftQueueCard() {
       if (!res.ok) throw new Error(json?.error ?? `HTTP ${res.status}`);
       toast.success(`🧹 Počiščeno: ${json.deleted ?? 0} starih draftov`);
       await fetchDrafts();
-    } catch (e: any) {
-      toast.error(e?.message ?? 'Napaka pri cleanup');
+    } catch (e: unknown) {
+      toast.error((e as Error)?.message ?? 'Napaka pri cleanup');
     }
   }, [fetchDrafts]);
 

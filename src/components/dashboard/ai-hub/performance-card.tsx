@@ -35,8 +35,8 @@ export function PerformanceCard({ onBrainCategoryClick }: PerformanceCardProps) 
       const json = (await res.json()) as PerformanceReport;
       if (!json?.ok) throw new Error('Performance API ni vrnil rezultata');
       setData(json);
-    } catch (e: any) {
-      setError(e?.message ?? 'Napaka');
+    } catch (e: unknown) {
+      setError((e as Error)?.message ?? 'Napaka');
     } finally {
       setLoading(false);
     }
@@ -54,8 +54,8 @@ export function PerformanceCard({ onBrainCategoryClick }: PerformanceCardProps) 
       // After reset, refetch immediately to show cleared state.
       await fetchPerf();
       toast.success('Stats reset.');
-    } catch (e: any) {
-      toast.error(`Reset failed: ${e?.message ?? 'Napaka'}`);
+    } catch (e: unknown) {
+      toast.error(`Reset failed: ${(e as Error)?.message ?? 'Napaka'}`);
     } finally {
       setResetting(false);
     }

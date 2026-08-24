@@ -69,8 +69,8 @@ export function LoginModal({ onSuccess }: { onSuccess?: () => void }) {
       }
       toast.success('Avtentikacija uspešna');
       onSuccess?.();
-    } catch (e: any) {
-      toast.error(e?.message ?? 'Napaka pri prijavi');
+    } catch (e: unknown) {
+      toast.error((e as Error)?.message ?? 'Napaka pri prijavi');
     } finally {
       setLoading(false);
     }

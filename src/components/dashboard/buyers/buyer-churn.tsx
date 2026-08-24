@@ -17,7 +17,7 @@ export function BuyerChurn({ selectedBuyer }: BuyerChurnProps) {
   const [churn, setChurn] = useState<any>(null);
   const [churnLoading, setChurnLoading] = useState(false);
 
-  const runChurn = async () => { if (!selectedBuyer) { toast.error('Izberi kupca'); return; } setChurnLoading(true); setChurn(null); try { const r = await fetch('/api/ai/buyer-churn-prevention-strategist', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ customerName: selectedBuyer }) }); const d = await r.json(); if (d.ok) { setChurn(d); toast.success('✓ Churn strategija generirana'); } else toast.error(d.error ?? 'Napaka'); } catch (e: any) { toast.error(e?.message ?? 'Napaka'); } finally { setChurnLoading(false); } };
+  const runChurn = async () => { if (!selectedBuyer) { toast.error('Izberi kupca'); return; } setChurnLoading(true); setChurn(null); try { const r = await fetch('/api/ai/buyer-churn-prevention-strategist', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ customerName: selectedBuyer }) }); const d = await r.json(); if (d.ok) { setChurn(d); toast.success('✓ Churn strategija generirana'); } else toast.error(d.error ?? 'Napaka'); } catch (e: unknown) { toast.error((e as Error)?.message ?? 'Napaka'); } finally { setChurnLoading(false); } };
 
   return (
     <Card>

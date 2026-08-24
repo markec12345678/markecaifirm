@@ -281,8 +281,8 @@ export function SettingsView() {
       setAiTestResult(data);
       if (data.ok) toast.success('AI povezava OK');
       else toast.error(`AI test: ${data.message?.slice(0, 80)}`);
-    } catch (e: any) {
-      setAiTestResult({ ok: false, message: e?.message ?? 'napaka' });
+    } catch (e: unknown) {
+      setAiTestResult({ ok: false, message: (e as Error)?.message ?? 'napaka' });
       toast.error('AI test ni uspel');
     } finally {
       setTestingAi(false);
@@ -314,8 +314,8 @@ export function SettingsView() {
       setFallbackAiTestResult(data);
       if (data.ok) toast.success('Fallback AI povezava OK');
       else toast.error(`Fallback AI: ${data.message?.slice(0, 80)}`);
-    } catch (e: any) {
-      setFallbackAiTestResult({ ok: false, message: e?.message ?? 'napaka' });
+    } catch (e: unknown) {
+      setFallbackAiTestResult({ ok: false, message: (e as Error)?.message ?? 'napaka' });
       toast.error('Fallback AI test ni uspel');
     } finally {
       setTestingFallbackAi(false);
@@ -338,8 +338,8 @@ export function SettingsView() {
       setTgTestResult(data);
       if (data.ok) toast.success('Telegram test poslan');
       else toast.error(`Telegram: ${data.message?.slice(0, 80)}`);
-    } catch (e: any) {
-      setTgTestResult({ ok: false, message: e?.message ?? 'napaka' });
+    } catch (e: unknown) {
+      setTgTestResult({ ok: false, message: (e as Error)?.message ?? 'napaka' });
     } finally {
       setTestingTg(false);
     }
@@ -361,8 +361,8 @@ export function SettingsView() {
       setDcTestResult(data);
       if (data.ok) toast.success('Discord test poslan');
       else toast.error(`Discord: ${data.message?.slice(0, 80)}`);
-    } catch (e: any) {
-      setDcTestResult({ ok: false, message: e?.message ?? 'napaka' });
+    } catch (e: unknown) {
+      setDcTestResult({ ok: false, message: (e as Error)?.message ?? 'napaka' });
     } finally {
       setTestingDc(false);
     }
@@ -389,8 +389,8 @@ export function SettingsView() {
       setEmailTestResult(data);
       if (data.ok) toast.success('Email test poslan');
       else toast.error(`Email: ${data.message?.slice(0, 80)}`);
-    } catch (e: any) {
-      setEmailTestResult({ ok: false, message: e?.message ?? 'napaka' });
+    } catch (e: unknown) {
+      setEmailTestResult({ ok: false, message: (e as Error)?.message ?? 'napaka' });
     } finally {
       setTestingEmail(false);
     }
@@ -428,8 +428,8 @@ export function SettingsView() {
       } else {
         toast.error(subData.error ?? 'Napaka pri registraciji');
       }
-    } catch (e: any) {
-      toast.error(`Napaka: ${e?.message ?? 'push ni podprt'}`);
+    } catch (e: unknown) {
+      toast.error(`Napaka: ${(e as Error)?.message ?? 'push ni podprt'}`);
     } finally {
       setPushLoading(false);
     }
@@ -451,8 +451,8 @@ export function SettingsView() {
       }
       setPushSubscribed(false);
       toast.success('Odjavljen od push obvestil');
-    } catch (e: any) {
-      toast.error(`Napaka: ${e?.message ?? 'napaka'}`);
+    } catch (e: unknown) {
+      toast.error(`Napaka: ${(e as Error)?.message ?? 'napaka'}`);
     } finally {
       setPushLoading(false);
     }
@@ -465,8 +465,8 @@ export function SettingsView() {
       const data = await res.json();
       if (data.ok) toast.success(`Test poslan: ${data.message}`);
       else toast.error(data.message ?? 'Napaka');
-    } catch (e: any) {
-      toast.error(e?.message ?? 'Napaka');
+    } catch (e: unknown) {
+      toast.error((e as Error)?.message ?? 'Napaka');
     } finally {
       setPushLoading(false);
     }

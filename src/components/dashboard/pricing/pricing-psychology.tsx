@@ -12,7 +12,7 @@ export function PricingPsychology() {
   const [psychology, setPsychology] = useState<any>(null);
   const [psychologyLoading, setPsychologyLoading] = useState(false);
 
-  const runPsychology = async () => { setPsychologyLoading(true); setPsychology(null); try { const r = await fetch('/api/ai/pricing-psychology-optimizer', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: '{}' }); const d = await r.json(); if (d.ok) { setPsychology(d); toast.success('✓ Pricing psychology generiran'); } else toast.error(d.error ?? 'Napaka'); } catch (e: any) { toast.error(e?.message ?? 'Napaka'); } finally { setPsychologyLoading(false); } };
+  const runPsychology = async () => { setPsychologyLoading(true); setPsychology(null); try { const r = await fetch('/api/ai/pricing-psychology-optimizer', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: '{}' }); const d = await r.json(); if (d.ok) { setPsychology(d); toast.success('✓ Pricing psychology generiran'); } else toast.error(d.error ?? 'Napaka'); } catch (e: unknown) { toast.error((e as Error)?.message ?? 'Napaka'); } finally { setPsychologyLoading(false); } };
 
   return (
     <Card>

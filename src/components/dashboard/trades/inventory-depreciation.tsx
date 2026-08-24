@@ -32,7 +32,7 @@ export function InventoryDepreciation() {
             const data = await res.json();
             if (data.ok) { setDepreciationData(data); toast.success('✓ Napoved amortizacije generirana'); }
             else toast.error(data.error ?? data.message ?? 'Napaka');
-          } catch (e: any) { toast.error(e?.message ?? 'Napaka'); }
+          } catch (e: unknown) { toast.error((e as Error)?.message ?? 'Napaka'); }
           finally { setDepreciationLoading(false); }
         }}
         title="AI napove padec vrednosti inventarja in kdaj prodati"

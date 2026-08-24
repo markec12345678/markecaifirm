@@ -17,7 +17,7 @@ export function TitleGenerator({ selectedTradeId }: TitleGeneratorProps) {
   const [titleGen, setTitleGen] = useState<any>(null);
   const [titleGenLoading, setTitleGenLoading] = useState(false);
 
-  const runTitleGen = async () => { if (!selectedTradeId) { toast.error('Izberi item'); return; } setTitleGenLoading(true); setTitleGen(null); try { const r = await fetch('/api/ai/listing-title-generator-v2', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ tradeId: selectedTradeId }) }); const d = await r.json(); if (d.ok) { setTitleGen(d); toast.success('✓ Naslovi generirani'); } else toast.error(d.error ?? 'Napaka'); } catch (e: any) { toast.error(e?.message ?? 'Napaka'); } finally { setTitleGenLoading(false); } };
+  const runTitleGen = async () => { if (!selectedTradeId) { toast.error('Izberi item'); return; } setTitleGenLoading(true); setTitleGen(null); try { const r = await fetch('/api/ai/listing-title-generator-v2', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ tradeId: selectedTradeId }) }); const d = await r.json(); if (d.ok) { setTitleGen(d); toast.success('✓ Naslovi generirani'); } else toast.error(d.error ?? 'Napaka'); } catch (e: unknown) { toast.error((e as Error)?.message ?? 'Napaka'); } finally { setTitleGenLoading(false); } };
 
   return (
     <Card>

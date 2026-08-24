@@ -87,8 +87,8 @@ export function MasterBrainBanner() {
           // Non-fatal: drafts just won't be trackable, banner still works.
         }
       }
-    } catch (e: any) {
-      setError(e?.message ?? 'Napaka');
+    } catch (e: unknown) {
+      setError((e as Error)?.message ?? 'Napaka');
     } finally {
       setLoading(false);
     }
@@ -126,8 +126,8 @@ export function MasterBrainBanner() {
         ? ` · sistem se uči (${json.feedbackResult?.adjusted ? `utež ${json.feedbackResult.oldWeight} → ${json.feedbackResult.newWeight}` : 'utež nespremenjena'})`
         : '';
       toast.success(`${emoji} Akcija #${rank} označena kot ${slovenian}${feedbackNote}`);
-    } catch (e: any) {
-      toast.error(e?.message ?? 'Napaka pri posodobitvi drafta');
+    } catch (e: unknown) {
+      toast.error((e as Error)?.message ?? 'Napaka pri posodobitvi drafta');
     } finally {
       setPatchingRank(null);
     }

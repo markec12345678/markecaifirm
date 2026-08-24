@@ -47,8 +47,8 @@ export function SystemHealthCard({ onBrainCategoryClick }: SystemHealthCardProps
       const json = (await res.json()) as SystemHealthReport;
       if (!json?.ok) throw new Error('System Health API ni vrnil rezultata');
       setData(json);
-    } catch (e: any) {
-      setError(e?.message ?? 'Napaka');
+    } catch (e: unknown) {
+      setError((e as Error)?.message ?? 'Napaka');
     } finally {
       setLoading(false);
     }

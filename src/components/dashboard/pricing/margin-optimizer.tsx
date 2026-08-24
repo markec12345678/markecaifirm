@@ -21,7 +21,7 @@ export function MarginOptimizer() {
       const data = await res.json();
       if (data.ok) { setMargin(data); toast.success('✓ Optimizacija marže generirana'); }
       else toast.error(data.error ?? 'Napaka');
-    } catch (e: any) { toast.error(e?.message ?? 'Napaka'); }
+    } catch (e: unknown) { toast.error((e as Error)?.message ?? 'Napaka'); }
     finally { setMarginLoading(false); }
   };
 

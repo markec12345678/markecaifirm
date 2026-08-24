@@ -14,7 +14,7 @@ export function InsuranceClaim() {
   const [claim, setClaim] = useState<any>(null);
   const [claimLoading, setClaimLoading] = useState(false);
 
-  const runClaim = async () => { setClaimLoading(true); setClaim(null); try { const r = await fetch('/api/ai/insurance-claim', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: '{}' }); const d = await r.json(); if (d.ok) { setClaim(d); toast.success('✓ Claim analiza generirana'); } else toast.error(d.error ?? 'Napaka'); } catch (e: any) { toast.error(e?.message ?? 'Napaka'); } finally { setClaimLoading(false); } };
+  const runClaim = async () => { setClaimLoading(true); setClaim(null); try { const r = await fetch('/api/ai/insurance-claim', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: '{}' }); const d = await r.json(); if (d.ok) { setClaim(d); toast.success('✓ Claim analiza generirana'); } else toast.error(d.error ?? 'Napaka'); } catch (e: unknown) { toast.error((e as Error)?.message ?? 'Napaka'); } finally { setClaimLoading(false); } };
 
   return (
     <Card>

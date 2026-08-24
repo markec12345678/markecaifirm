@@ -14,7 +14,7 @@ export function AnomalyDetection() {
   const [anomalies, setAnomalies] = useState<any>(null);
   const [anomaliesLoading, setAnomaliesLoading] = useState(false);
 
-  const runAnomalies = async () => { setAnomaliesLoading(true); setAnomalies(null); try { const r = await fetch('/api/ai/detect-anomalies', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: '{}' }); const d = await r.json(); if (d.ok) { setAnomalies(d); toast.success('✓ Anomalije detektirane'); } else toast.error(d.error ?? 'Napaka'); } catch (e: any) { toast.error(e?.message ?? 'Napaka'); } finally { setAnomaliesLoading(false); } };
+  const runAnomalies = async () => { setAnomaliesLoading(true); setAnomalies(null); try { const r = await fetch('/api/ai/detect-anomalies', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: '{}' }); const d = await r.json(); if (d.ok) { setAnomalies(d); toast.success('✓ Anomalije detektirane'); } else toast.error(d.error ?? 'Napaka'); } catch (e: unknown) { toast.error((e as Error)?.message ?? 'Napaka'); } finally { setAnomaliesLoading(false); } };
 
   return (
     <Card>

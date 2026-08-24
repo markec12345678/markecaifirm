@@ -42,7 +42,7 @@ export function AutonomousTrading() {
                 const data = await res.json();
                 if (data.ok) { setTradeData(data); toast.success('✓ Autonomous trading konfiguriran'); }
                 else toast.error(data.error ?? 'Napaka');
-              } catch (e: any) { toast.error(e?.message ?? 'Napaka'); }
+              } catch (e: unknown) { toast.error((e as Error)?.message ?? 'Napaka'); }
               finally { setTradeLoading(false); }
             }}>
             {tradeLoading ? <RefreshCw className="w-3 h-3 animate-spin" /> : <Sparkles className="w-3 h-3" />}

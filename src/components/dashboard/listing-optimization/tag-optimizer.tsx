@@ -17,7 +17,7 @@ export function TagOptimizer({ selectedTradeId }: TagOptimizerProps) {
   const [tagOpt, setTagOpt] = useState<any>(null);
   const [tagOptLoading, setTagOptLoading] = useState(false);
 
-  const runTagOpt = async () => { if (!selectedTradeId) { toast.error('Izberi item'); return; } setTagOptLoading(true); setTagOpt(null); try { const r = await fetch('/api/ai/listing-tag-optimizer', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ tradeId: selectedTradeId }) }); const d = await r.json(); if (d.ok) { setTagOpt(d); toast.success('✓ Tag optimizacija generirana'); } else toast.error(d.error ?? 'Napaka'); } catch (e: any) { toast.error(e?.message ?? 'Napaka'); } finally { setTagOptLoading(false); } };
+  const runTagOpt = async () => { if (!selectedTradeId) { toast.error('Izberi item'); return; } setTagOptLoading(true); setTagOpt(null); try { const r = await fetch('/api/ai/listing-tag-optimizer', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ tradeId: selectedTradeId }) }); const d = await r.json(); if (d.ok) { setTagOpt(d); toast.success('✓ Tag optimizacija generirana'); } else toast.error(d.error ?? 'Napaka'); } catch (e: unknown) { toast.error((e as Error)?.message ?? 'Napaka'); } finally { setTagOptLoading(false); } };
 
   return (
     <Card>

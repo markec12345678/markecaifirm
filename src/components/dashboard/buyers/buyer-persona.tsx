@@ -30,7 +30,7 @@ export function BuyerPersona({ selectedBuyer }: BuyerPersonaProps) {
       const data = await res.json();
       if (data.ok) { setPersona(data); toast.success('✓ Persona generirana'); }
       else toast.error(data.error ?? 'Napaka');
-    } catch (e: any) { toast.error(e?.message ?? 'Napaka'); }
+    } catch (e: unknown) { toast.error((e as Error)?.message ?? 'Napaka'); }
     finally { setPersonaLoading(false); }
   };
 

@@ -30,8 +30,8 @@ export function BrainSnapshotsSection() {
       const json = (await res.json()) as SnapshotsApiResponse;
       if (!json?.ok) throw new Error('Snapshots API ni vrnil rezultata');
       setData(json);
-    } catch (e: any) {
-      setError(e?.message ?? 'Napaka');
+    } catch (e: unknown) {
+      setError((e as Error)?.message ?? 'Napaka');
     } finally {
       setLoading(false);
     }
@@ -55,8 +55,8 @@ export function BrainSnapshotsSection() {
       toast.success(`✓ Snapshot shranjen za ${json.date}`);
       // Refetch to show the new snapshot in the list
       await fetchSnapshots();
-    } catch (e: any) {
-      toast.error(e?.message ?? 'Napaka pri shranjevanju snapshot-a');
+    } catch (e: unknown) {
+      toast.error((e as Error)?.message ?? 'Napaka pri shranjevanju snapshot-a');
     } finally {
       setSaving(false);
     }

@@ -21,7 +21,7 @@ export function PriceWarStrategist() {
       const data = await res.json();
       if (data.ok) { setPriceWar(data); toast.success('✓ Price war strategija generirana'); }
       else toast.error(data.error ?? 'Napaka');
-    } catch (e: any) { toast.error(e?.message ?? 'Napaka'); }
+    } catch (e: unknown) { toast.error((e as Error)?.message ?? 'Napaka'); }
     finally { setPriceWarLoading(false); }
   };
 

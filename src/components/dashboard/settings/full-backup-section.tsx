@@ -151,8 +151,8 @@ export function FullBackupSection() {
       });
       // Refresh backup list (in case auto-backup also saved)
       await loadBackups();
-    } catch (e: any) {
-      toast.error(e?.message ?? 'Napaka pri exportu');
+    } catch (e: unknown) {
+      toast.error((e as Error)?.message ?? 'Napaka pri exportu');
     } finally {
       setExporting(false);
     }
@@ -176,8 +176,8 @@ export function FullBackupSection() {
       toast.success(`Backup naložen: ${file.name}`, {
         description: `v${parsed.version} · ${Object.keys(parsed.tables).length} tabel · ${parsed.stats?.totalRecords ?? '?'} zapisov`,
       });
-    } catch (e: any) {
-      toast.error(e?.message ?? 'Napaka pri branju JSON datoteke');
+    } catch (e: unknown) {
+      toast.error((e as Error)?.message ?? 'Napaka pri branju JSON datoteke');
       setParsedBackup(null);
       setParsedFileName('');
     } finally {
@@ -273,8 +273,8 @@ export function FullBackupSection() {
           description: `${data.errors.length} napak. Poglej podrobnosti spodaj.`,
         });
       }
-    } catch (e: any) {
-      toast.error(e?.message ?? 'Napaka pri restore');
+    } catch (e: unknown) {
+      toast.error((e as Error)?.message ?? 'Napaka pri restore');
     } finally {
       setRestoring(false);
     }
@@ -295,8 +295,8 @@ export function FullBackupSection() {
       } else {
         toast.error(data.error ?? 'Napaka pri auto-backup');
       }
-    } catch (e: any) {
-      toast.error(e?.message ?? 'Napaka pri auto-backup');
+    } catch (e: unknown) {
+      toast.error((e as Error)?.message ?? 'Napaka pri auto-backup');
     } finally {
       setAutoBackupRunning(false);
     }

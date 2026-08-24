@@ -40,7 +40,7 @@ export function AIListingGenerator({ trades }: AIListingGeneratorProps) {
             const data = await res.json();
             if (data.ok) { setListingGen(data); toast.success('✓ Listing generiran'); }
             else toast.error(data.error ?? 'Napaka');
-          } catch (e: any) { toast.error(e?.message ?? 'Napaka'); }
+          } catch (e: unknown) { toast.error((e as Error)?.message ?? 'Napaka'); }
           finally { setListingGenLoading(null); }
         }}
         title="AI generira celovit listing za prodajo (naslov, opis, cene, slikovna strategija)"

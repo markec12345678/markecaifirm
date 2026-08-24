@@ -12,7 +12,7 @@ export function QualityPredictor() {
   const [qualityPred, setQualityPred] = useState<any>(null);
   const [qualityPredLoading, setQualityPredLoading] = useState(false);
 
-  const runQualityPred = async () => { setQualityPredLoading(true); setQualityPred(null); try { const r = await fetch('/api/ai/quality-predictor', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: '{}' }); const d = await r.json(); if (d.ok) { setQualityPred(d); toast.success('✓ Quality napoved generirana'); } else toast.error(d.error ?? 'Napaka'); } catch (e: any) { toast.error(e?.message ?? 'Napaka'); } finally { setQualityPredLoading(false); } };
+  const runQualityPred = async () => { setQualityPredLoading(true); setQualityPred(null); try { const r = await fetch('/api/ai/quality-predictor', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: '{}' }); const d = await r.json(); if (d.ok) { setQualityPred(d); toast.success('✓ Quality napoved generirana'); } else toast.error(d.error ?? 'Napaka'); } catch (e: unknown) { toast.error((e as Error)?.message ?? 'Napaka'); } finally { setQualityPredLoading(false); } };
 
   return (
     <Card>
