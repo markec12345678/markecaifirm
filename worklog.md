@@ -22136,3 +22136,50 @@ Stage Summary:
   * Nov uporabnik vidi samo 4 zavihke + 2 gumba (66% manj cognitive load)
   * Power user z 1 klikom dostopa do vseh 18 funkcij
   * Sistemske funkcije (Alerti/Nastavitve/Zdravje) premaknjene v drawer iz desne — stran od dnevnega workflow-a
+
+---
+Task ID: v9.50
+Agent: main
+Task: Dashboard Progressive Disclosure — 4 tabi znotraj Dashboard-a (30+ widgetov razdeljenih)
+
+Work Log:
+- Uporabnik: "še vedno je isto, vse je vidno za uporabnika ki ne pozna programa, skrito manj pomembno mora bit"
+- Analiza: Dashboard sam je imel 30+ widgetov na enem zaslonu — prenatrpano tudi po v9.49 nav fixu.
+- Raziščil kateri widgeti so najbolj pomembni za nov uporabnik:
+  * PREGLED: Danes, filter chips, StatGrid, Daily Briefing, Goal Tracker, Recent Runs, Activity Feed
+  * ANALITIKA: AI Insights, Deal Flow, Funnel, Niche, Velocity, Trade Insights, Forecast, MoM, Tag Performance
+  * TRGOVINE: Flip Status, Trade Stats, Deal Calculator, Profit Timeline, Weekly, Annual, Restock, Outcome, Skladišče
+  * AI: Buy Opportunity, Decision Accuracy, Cross-Platform, Saved Searches
+- Implementiral v src/components/dashboard/dashboard-view.tsx:
+  * Dodal state: dashboardTab = 'pregled' | 'analitika' | 'trgovine' | 'ai'
+  * Tab UI vrstica na vrhu dashboard-a (pod header z gumbi)
+  * Vsak tab gumb: aria-label, aria-current, haptic feedback, terminal-glow active state
+  * Vsebina dashboard-a ovita v 4 {dashboardTab === 'xxx' && (...)} bloke
+  * Pregled vključuje tudi: Danes card, filter chips, StatGrid, Quick stats, Quick links, Recent runs
+- Preveril lint: 0 napak ✨
+- Preveril typecheck: 0 napak ✨
+- Verifikacija (Agent Browser):
+  * Dashboard tabs: 4 gumbi (Pregled, Analitika, Trgovine, AI) ✓
+  * Pregled tab: Danes card + Mesečni cilj + metrike ✓
+  * Analitika tab: AI Insights, Deal Flow (16.71×/leto), Trade Insights, Forecast ✓
+  * Trgovine tab: Tedenski povzetek, Letno poročilo, Kaj naj kupim, Skladišče ✓
+  * AI tab: Buy Opportunity (75€+452% ROI), Decision Accuracy (A 100/100) ✓
+  * Footer: v9.50.0 • HEALTHY 85/100 ✓
+  * Screenshot: download/dashboard-tabs-v9.50.png
+
+Stage Summary:
+- MODIFIED: src/components/dashboard/dashboard-view.tsx (4 tab sistem znotraj dashboard-a)
+  * Pregled: ~10 widgetov (najbolj pomembno za nov uporabnik)
+  * Analitika: ~10 widgetov (deal flow, funel, niše, velocity, insights)
+  * Trgovine: ~9 widgetov (flip status, trade stats, kalkulator, poročila)
+  * AI: ~4 widgeti (buy opportunity, decision accuracy, cross-platform, saved searches)
+- MODIFIED: src/lib/version.ts (v9.49→v9.50)
+- MODIFIED: README.md (badge v9.50)
+- Verzija: v9.50.0
+- Skupaj (v7.50 → v9.50): 196 verzij, 317 novih funkcij
+- UX TRANSFORMACIJA (nadaljevanje v9.49):
+  * Prej (v9.49): Dashboard z 30+ widgeti na enem zaslonu — preplavljeno
+  * Zdaj  (v9.50): Dashboard z 4 tabi — vsak tab ~5-10 widgetov
+  * Nov uporabnik privzeto vidi Pregled (najbolj pomembno)
+  * Power user z 1 klikom dostopa do Analitike/Trgovin/AI
+  * Skupaj z v9.49 (6 elementov v nav + 4 tabi v dashboard) = 10 elementov namesto 48

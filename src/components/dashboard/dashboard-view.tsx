@@ -64,6 +64,9 @@ export function DashboardView({ onNavigate }: ViewProps) {
   // v5.6: Dashboard customization
   const [widgetOrder, setWidgetOrder] = useState<WidgetId[]>([...WIDGET_IDS]);
   const [customizeMode, setCustomizeMode] = useState(false);
+  // v9.50: Dashboard tabs — progressive disclosure within Dashboard
+  // Pregled (default) | Analitika | Trgovine | AI
+  const [dashboardTab, setDashboardTab] = useState<'pregled' | 'analitika' | 'trgovine' | 'ai'>('pregled');
   // v8.39: Goal tracker state moved into <GoalTrackerCard /> component (self-fetches).
   // v8.36: Quick Add Trade modal (floating button)
   const [showQuickAddTrade, setShowQuickAddTrade] = useState(false);
@@ -270,251 +273,65 @@ export function DashboardView({ onNavigate }: ViewProps) {
         </div>
       </div>
 
-      {/* v4.0: Danes summary card */}
-      {stats.today && (
-        <Card className="bg-card/50 border-primary/20">
-          <CardContent className="p-4">
-            <div className="flex items-center justify-between mb-3">
-              <h3 className="text-sm font-bold uppercase tracking-wider text-primary flex items-center gap-2">
-                <Clock className="w-4 h-4" />
-                Danes
-              </h3>
-              <span className="text-[10px] text-muted-foreground">
-                {new Date().toLocaleDateString('sl-SI', { weekday: 'long', day: 'numeric', month: 'long' })}
-              </span>
-            </div>
-            <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-5 gap-3 sm:gap-4">
-              <div className="text-center">
-                <div className="text-[10px] text-muted-foreground uppercase">Novi oglasi</div>
-                <div className="text-2xl sm:text-3xl font-bold font-mono text-primary">{stats.today.newListings}</div>
-              </div>
-              <div className="text-center">
-                <div className="text-[10px] text-muted-foreground uppercase">Novi alerti</div>
-                <div className="text-2xl sm:text-3xl font-bold font-mono text-amber-400">{stats.today.newAlerts}</div>
-              </div>
-              <div className="text-center">
-                <div className="text-[10px] text-muted-foreground uppercase">Padci cen</div>
-                <div className="text-2xl sm:text-3xl font-bold font-mono text-primary">{stats.today.priceDrops}</div>
-              </div>
-              <div className="text-center">
-                <div className="text-[10px] text-muted-foreground uppercase">Izvedbe</div>
-                <div className="text-2xl sm:text-3xl font-bold font-mono">{stats.today.runs}</div>
-              </div>
-              <div className="text-center">
-                <div className="text-[10px] text-muted-foreground uppercase">Uspeh</div>
-                <div className={cn(
-                  'text-2xl sm:text-3xl font-bold font-mono',
-                  stats.today.runs > 0 && (stats.today.successfulRuns / stats.today.runs) >= 0.9 ? 'text-primary' :
-                  stats.today.runs > 0 && (stats.today.successfulRuns / stats.today.runs) >= 0.7 ? 'text-amber-400' : 'text-destructive'
-                )}>
-                  {stats.today.runs > 0 ? Math.round((stats.today.successfulRuns / stats.today.runs) * 100) : 0}%
-                </div>
-              </div>
-            </div>
-          </CardContent>
-        </Card>
-      )}
-
-      {/* v3.7: Quick filter chips */}
-      <div className="flex items-center gap-2 flex-wrap">
+      {/* v9.50: Dashboard tabs — progressive disclosure within Dashboard */}
+      <div className="flex items-center gap-1 border-b border-border mb-4 overflow-x-auto touch-scroll">
         <button
-          onClick={() => { haptic.light(); onNavigate('alerts'); }}
-          aria-label={`Priložnosti: ${stats.prilikaAlerts} oglasov z AI verdiktom PRILIKA`}
-          className="px-3 py-2.5 sm:py-1 rounded-full min-h-[40px] sm:min-h-0 border border-primary/30 bg-primary/5 text-primary text-xs hover:bg-primary/10 transition-colors"
-        >
-          🎯 Priložnosti ({stats.prilikaAlerts})
-        </button>
-        <button
-          onClick={() => { haptic.light(); onNavigate('listings'); }}
-          aria-label={`Sumljivi oglasi: ${stats.sumnjivoAlerts} oglasov z AI verdiktom SUMNJIVO`}
-          className="px-3 py-2.5 sm:py-1 rounded-full min-h-[40px] sm:min-h-0 border border-amber-400/30 bg-amber-400/5 text-amber-400 text-xs hover:bg-amber-400/10 transition-colors"
-        >
-          ⚠️ Sumljivi ({stats.sumnjivoAlerts})
-        </button>
-        <button
-          onClick={() => { haptic.light(); onNavigate('listings'); }}
-          aria-label={`Padci cen: ${stats.priceDropCount || 0} oglasov z nižjo ceno`}
-          className="px-3 py-2.5 sm:py-1 rounded-full min-h-[40px] sm:min-h-0 border border-border bg-card/50 text-muted-foreground text-xs hover:border-primary/30 hover:text-primary transition-colors"
-        >
-          📉 Padci cen ({stats.priceDropCount || 0})
-        </button>
-        <button
-          onClick={() => { haptic.light(); onNavigate('listings'); }}
-          aria-label={`Kontaktirani oglasi: ${stats.contactedListings || 0} oglasov ki ste jih kontaktirali`}
-          className="px-3 py-2.5 sm:py-1 rounded-full min-h-[40px] sm:min-h-0 border border-border bg-card/50 text-muted-foreground text-xs hover:border-primary/30 hover:text-primary transition-colors"
-        >
-          📞 Kontaktirani ({stats.contactedListings || 0})
-        </button>
-        <button
-          onClick={() => { haptic.light(); onNavigate('listings'); }}
-          aria-label={`Priljubljeni oglasi: ${stats.bookmarkedListings} zaznamovanih oglasov`}
-          className="px-3 py-2.5 sm:py-1 rounded-full min-h-[40px] sm:min-h-0 border border-border bg-card/50 text-muted-foreground text-xs hover:border-primary/30 hover:text-primary transition-colors"
-        >
-          ⭐ Priljubljeni ({stats.bookmarkedListings})
-        </button>
-        <button
-          onClick={() => { haptic.light(); onNavigate('trades'); }}
-          aria-label="Skladišče: pregled trgovin in dobička"
-          className="px-3 py-2.5 sm:py-1 rounded-full min-h-[40px] sm:min-h-0 border border-primary/30 bg-primary/5 text-primary text-xs hover:bg-primary/10 transition-colors"
-        >
-          🛒 Skladišče
-        </button>
-      </div>
-
-      {/* Stat grid */}
-      <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-5 gap-4">
-        <StatCard
-          icon={<Activity className="w-4 h-4" />}
-          label="Aktivni monitorji"
-          value={stats.activeMonitors}
-          total={stats.totalMonitors}
-          color="primary"
-          onClick={() => onNavigate('monitors')}
-        />
-        <StatCard
-          icon={<TrendingUp className="w-4 h-4" />}
-          label="Oglasov v bazi"
-          value={stats.totalListings}
-          subtext={`${stats.newListings24h} novih v 24h`}
-          color="primary"
-        />
-        <StatCard
-          icon={<Bell className="w-4 h-4" />}
-          label="Nebrani alerti"
-          value={stats.unreadAlerts}
-          total={stats.totalAlerts}
-          subtext={`${stats.newAlerts24h} novih v 24h`}
-          color="amber"
-          onClick={() => onNavigate('alerts')}
-        />
-        <StatCard
-          icon={<Target className="w-4 h-4" />}
-          label="Priložnosti"
-          value={stats.prilikaAlerts}
-          subtext={`${stats.sumnjivoAlerts} sumljivih`}
-          color="primary"
-          onClick={() => onNavigate('alerts')}
-        />
-        <StatCard
-          icon={<Bookmark className="w-4 h-4" />}
-          label="Priljubljeni"
-          value={stats.bookmarkedListings}
-          subtext="shranjeni"
-          color="amber"
-          onClick={() => onNavigate('listings')}
-        />
-      </div>
-
-      {/* v3.1: Quick action stats row */}
-      <div className="grid grid-cols-2 sm:grid-cols-3 gap-3">
-        <Card
-          className="bg-card/50 hover:bg-card hover:border-primary/30 cursor-pointer transition-colors"
-          onClick={() => onNavigate('listings')}
-        >
-          <CardContent className="p-3 flex items-center gap-2">
-            <TrendingDown className="w-4 h-4 text-primary" />
-            <div>
-              <p className="text-xs font-bold text-primary">{stats.priceDropCount || 0}</p>
-              <p className="text-[10px] text-muted-foreground">Padci cen</p>
-            </div>
-          </CardContent>
-        </Card>
-        <Card
-          className="bg-card/50 hover:bg-card hover:border-primary/30 cursor-pointer transition-colors"
-          onClick={() => onNavigate('listings')}
-        >
-          <CardContent className="p-3 flex items-center gap-2">
-            <ShoppingCart className="w-4 h-4 text-amber-400" />
-            <div>
-              <p className="text-xs font-bold text-amber-400">{stats.contactedListings || 0}</p>
-              <p className="text-[10px] text-muted-foreground">Kontaktirani</p>
-            </div>
-          </CardContent>
-        </Card>
-        <Card
-          className="bg-card/50 hover:bg-card hover:border-primary/30 cursor-pointer transition-colors"
-          onClick={() => onNavigate('trades')}
-        >
-          <CardContent className="p-3 flex items-center gap-2">
-            <ShoppingCart className="w-4 h-4 text-primary" />
-            <div>
-              <p className="text-xs font-bold text-primary">Skladišče</p>
-              <p className="text-[10px] text-muted-foreground">Profit tracker</p>
-            </div>
-          </CardContent>
-        </Card>
-      </div>
-
-      {/* Quick links row */}
-      <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-        <Card
-          className="bg-card/50 hover:bg-card hover:border-primary/30 cursor-pointer transition-colors"
-          onClick={() => onNavigate('listings')}
-        >
-          <CardContent className="p-4 flex items-center gap-3">
-            <LayoutGrid className="w-5 h-5 text-primary" />
-            <div>
-              <p className="text-sm font-bold">Pregled vseh oglasov</p>
-              <p className="text-[11px] text-muted-foreground">Validiraj AI — vidi tudi NEZANIMIVO</p>
-            </div>
-          </CardContent>
-        </Card>
-        <Card
-          className="bg-card/50 hover:bg-card hover:border-primary/30 cursor-pointer transition-colors"
-          onClick={() => onNavigate('analytics')}
-        >
-          <CardContent className="p-4 flex items-center gap-3">
-            <BarChart3 className="w-5 h-5 text-primary" />
-            <div>
-              <p className="text-sm font-bold">Analitika sistema</p>
-              <p className="text-[11px] text-muted-foreground">Trendi, performansa monitorjev, natančnost AI</p>
-            </div>
-          </CardContent>
-        </Card>
-      </div>
-
-      {/* Recent runs */}
-      <Card className="bg-card/50">
-        <CardHeader>
-          <CardTitle className="text-sm font-bold uppercase tracking-wider flex items-center gap-2">
-            <Clock className="w-4 h-4 text-primary" />
-            Zadnje izvedbe
-          </CardTitle>
-          <CardDescription>Zadnjih 10 poganjanj monitorjev.</CardDescription>
-        </CardHeader>
-        <CardContent>
-          {stats.recentRuns.length === 0 ? (
-            <div className="text-center py-8 text-muted-foreground text-sm">
-              <Zap className="w-6 h-6 mx-auto mb-2 opacity-50" />
-              Še ni bilo izvedb. Dodaj monitor in ga poženi.
-            </div>
-          ) : (
-            <div className="space-y-1.5 max-h-96 overflow-y-auto">
-              {stats.recentRuns.map((run) => (
-                <div
-                  key={run.id}
-                  className="flex items-center justify-between gap-3 px-3 py-2.5 sm:py-2 min-h-[48px] sm:min-h-0 rounded bg-background/50 border border-border hover:border-primary/30 transition-colors text-sm"
-                >
-                  <div className="flex items-center gap-3 min-w-0 flex-1">
-                    <StatusDot status={run.status} />
-                    <span className="font-medium truncate">{run.monitor.name}</span>
-                  </div>
-                  <div className="flex items-center gap-3 text-xs text-muted-foreground shrink-0">
-                    <span>{run.newListings}/{run.listingsFound} novih</span>
-                    {run.alertsSent > 0 && (
-                      <Badge className="bg-primary/20 text-primary border-primary/40 text-[10px]">
-                        +{run.alertsSent} alertov
-                      </Badge>
-                    )}
-                    <span className="font-mono">{formatDuration(run.durationMs)}</span>
-                    <span>{formatTimeAgo(run.startedAt)}</span>
-                  </div>
-                </div>
-              ))}
-            </div>
+          onClick={() => { haptic.light(); setDashboardTab('pregled'); }}
+          aria-label="Pregled — glavne metrike in dnevni briefing"
+          aria-current={dashboardTab === 'pregled' ? 'page' : undefined}
+          className={cn(
+            'flex items-center gap-2 px-4 py-2.5 text-sm font-medium border-b-2 -mb-px transition-colors whitespace-nowrap',
+            dashboardTab === 'pregled'
+              ? 'border-primary text-primary terminal-glow'
+              : 'border-transparent text-muted-foreground hover:text-foreground hover:border-border'
           )}
-        </CardContent>
-      </Card>
+        >
+          <Activity className="w-4 h-4" />
+          <span className="uppercase tracking-wider">Pregled</span>
+        </button>
+        <button
+          onClick={() => { haptic.light(); setDashboardTab('analitika'); }}
+          aria-label="Analitika — deal flow, funel, niše, velocity"
+          aria-current={dashboardTab === 'analitika' ? 'page' : undefined}
+          className={cn(
+            'flex items-center gap-2 px-4 py-2.5 text-sm font-medium border-b-2 -mb-px transition-colors whitespace-nowrap',
+            dashboardTab === 'analitika'
+              ? 'border-primary text-primary terminal-glow'
+              : 'border-transparent text-muted-foreground hover:text-foreground hover:border-border'
+          )}
+        >
+          <BarChart3 className="w-4 h-4" />
+          <span className="uppercase tracking-wider">Analitika</span>
+        </button>
+        <button
+          onClick={() => { haptic.light(); setDashboardTab('trgovine'); }}
+          aria-label="Trgovine — flip status, trade stats, kalkulator, profit timeline"
+          aria-current={dashboardTab === 'trgovine' ? 'page' : undefined}
+          className={cn(
+            'flex items-center gap-2 px-4 py-2.5 text-sm font-medium border-b-2 -mb-px transition-colors whitespace-nowrap',
+            dashboardTab === 'trgovine'
+              ? 'border-primary text-primary terminal-glow'
+              : 'border-transparent text-muted-foreground hover:text-foreground hover:border-border'
+          )}
+        >
+          <TrendingUp className="w-4 h-4" />
+          <span className="uppercase tracking-wider">Trgovine</span>
+        </button>
+        <button
+          onClick={() => { haptic.light(); setDashboardTab('ai'); }}
+          aria-label="AI — AI insights, decision accuracy, buy opportunity, cross-platform"
+          aria-current={dashboardTab === 'ai' ? 'page' : undefined}
+          className={cn(
+            'flex items-center gap-2 px-4 py-2.5 text-sm font-medium border-b-2 -mb-px transition-colors whitespace-nowrap',
+            dashboardTab === 'ai'
+              ? 'border-primary text-primary terminal-glow'
+              : 'border-transparent text-muted-foreground hover:text-foreground hover:border-border'
+          )}
+        >
+          <Sparkles className="w-4 h-4" />
+          <span className="uppercase tracking-wider">AI</span>
+        </button>
+      </div>
 
       {/* v5.6: Customize mode info */}
       {customizeMode && (
@@ -523,82 +340,348 @@ export function DashboardView({ onNavigate }: ViewProps) {
         </div>
       )}
 
-      {/* v8.39: Goal Tracker Dashboard Card — replaces v6.7 inline card.
-          Self-fetches from /api/trades/goal-tracker every 60s. Handles both
-          states: disabled (input prompt) and enabled (progress + milestones). */}
-      <GoalTrackerCard />
+      {/* ════════════════════════════════════════════════════════════════════
+          v9.50: TAB CONTENT — progressive disclosure within Dashboard
+          ════════════════════════════════════════════════════════════════════ */}
 
-      {/* v2.7: Activity feed */}
-      <WidgetWrapper id="activityFeed" order={widgetOrder} customizeMode={customizeMode} onMove={moveWidget}>
-        <ActivityFeed />
-      </WidgetWrapper>
+      {/* ────────────────────────────────────────────────────────────────────
+          TAB 1: PREGLED — glavne metrike + dnevni briefing + cilj + aktivnost
+          ──────────────────────────────────────────────────────────────────── */}
+      {dashboardTab === 'pregled' && (
+        <>
+          {/* v4.0: Danes summary card */}
+          {stats.today && (
+            <Card className="bg-card/50 border-primary/20">
+              <CardContent className="p-4">
+                <div className="flex items-center justify-between mb-3">
+                  <h3 className="text-sm font-bold uppercase tracking-wider text-primary flex items-center gap-2">
+                    <Clock className="w-4 h-4" />
+                    Danes
+                  </h3>
+                  <span className="text-[10px] text-muted-foreground">
+                    {new Date().toLocaleDateString('sl-SI', { weekday: 'long', day: 'numeric', month: 'long' })}
+                  </span>
+                </div>
+                <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-5 gap-3 sm:gap-4">
+                  <div className="text-center">
+                    <div className="text-[10px] text-muted-foreground uppercase">Novi oglasi</div>
+                    <div className="text-2xl sm:text-3xl font-bold font-mono text-primary">{stats.today.newListings}</div>
+                  </div>
+                  <div className="text-center">
+                    <div className="text-[10px] text-muted-foreground uppercase">Novi alerti</div>
+                    <div className="text-2xl sm:text-3xl font-bold font-mono text-amber-400">{stats.today.newAlerts}</div>
+                  </div>
+                  <div className="text-center">
+                    <div className="text-[10px] text-muted-foreground uppercase">Padci cen</div>
+                    <div className="text-2xl sm:text-3xl font-bold font-mono text-primary">{stats.today.priceDrops}</div>
+                  </div>
+                  <div className="text-center">
+                    <div className="text-[10px] text-muted-foreground uppercase">Izvedbe</div>
+                    <div className="text-2xl sm:text-3xl font-bold font-mono">{stats.today.runs}</div>
+                  </div>
+                  <div className="text-center">
+                    <div className="text-[10px] text-muted-foreground uppercase">Uspeh</div>
+                    <div className={cn(
+                      'text-2xl sm:text-3xl font-bold font-mono',
+                      stats.today.runs > 0 && (stats.today.successfulRuns / stats.today.runs) >= 0.9 ? 'text-primary' :
+                      stats.today.runs > 0 && (stats.today.successfulRuns / stats.today.runs) >= 0.7 ? 'text-amber-400' : 'text-destructive'
+                    )}>
+                      {stats.today.runs > 0 ? Math.round((stats.today.successfulRuns / stats.today.runs) * 100) : 0}%
+                    </div>
+                  </div>
+                </div>
+              </CardContent>
+            </Card>
+          )}
 
-      {/* v5.3: AI Insights widget */}
-      <WidgetWrapper id="aiInsights" order={widgetOrder} customizeMode={customizeMode} onMove={moveWidget}>
-        <AiInsightsWidget />
-        <DealFlowWidget onNavigate={onNavigate} />
-        <DealFunnelWidget />
-        <NicheScoreWidget onNavigate={onNavigate} />
-        <FlipStatusWidget onNavigate={onNavigate} />
-        <DealVelocityWidget />
-      </WidgetWrapper>
+          {/* v3.7: Quick filter chips */}
+          <div className="flex items-center gap-2 flex-wrap">
+            <button
+              onClick={() => { haptic.light(); onNavigate('alerts'); }}
+              aria-label={`Priložnosti: ${stats.prilikaAlerts} oglasov z AI verdiktom PRILIKA`}
+              className="px-3 py-2.5 sm:py-1 rounded-full min-h-[40px] sm:min-h-0 border border-primary/30 bg-primary/5 text-primary text-xs hover:bg-primary/10 transition-colors"
+            >
+              🎯 Priložnosti ({stats.prilikaAlerts})
+            </button>
+            <button
+              onClick={() => { haptic.light(); onNavigate('listings'); }}
+              aria-label={`Sumljivi oglasi: ${stats.sumnjivoAlerts} oglasov z AI verdiktom SUMNJIVO`}
+              className="px-3 py-2.5 sm:py-1 rounded-full min-h-[40px] sm:min-h-0 border border-amber-400/30 bg-amber-400/5 text-amber-400 text-xs hover:bg-amber-400/10 transition-colors"
+            >
+              ⚠️ Sumljivi ({stats.sumnjivoAlerts})
+            </button>
+            <button
+              onClick={() => { haptic.light(); onNavigate('listings'); }}
+              aria-label={`Padci cen: ${stats.priceDropCount || 0} oglasov z nižjo ceno`}
+              className="px-3 py-2.5 sm:py-1 rounded-full min-h-[40px] sm:min-h-0 border border-border bg-card/50 text-muted-foreground text-xs hover:border-primary/30 hover:text-primary transition-colors"
+            >
+              📉 Padci cen ({stats.priceDropCount || 0})
+            </button>
+            <button
+              onClick={() => { haptic.light(); onNavigate('listings'); }}
+              aria-label={`Kontaktirani oglasi: ${stats.contactedListings || 0} oglasov ki ste jih kontaktirali`}
+              className="px-3 py-2.5 sm:py-1 rounded-full min-h-[40px] sm:min-h-0 border border-border bg-card/50 text-muted-foreground text-xs hover:border-primary/30 hover:text-primary transition-colors"
+            >
+              📞 Kontaktirani ({stats.contactedListings || 0})
+            </button>
+            <button
+              onClick={() => { haptic.light(); onNavigate('listings'); }}
+              aria-label={`Priljubljeni oglasi: ${stats.bookmarkedListings} zaznamovanih oglasov`}
+              className="px-3 py-2.5 sm:py-1 rounded-full min-h-[40px] sm:min-h-0 border border-border bg-card/50 text-muted-foreground text-xs hover:border-primary/30 hover:text-primary transition-colors"
+            >
+              ⭐ Priljubljeni ({stats.bookmarkedListings})
+            </button>
+            <button
+              onClick={() => { haptic.light(); onNavigate('trades'); }}
+              aria-label="Skladišče: pregled trgovin in dobička"
+              className="px-3 py-2.5 sm:py-1 rounded-full min-h-[40px] sm:min-h-0 border border-primary/30 bg-primary/5 text-primary text-xs hover:bg-primary/10 transition-colors"
+            >
+              🛒 Skladišče
+            </button>
+          </div>
 
-      {/* v8.36: Trade Stats card — profit + win rate + best niche + Quick Add */}
-      <TradeStatsCard />
+          {/* Stat grid */}
+          <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-5 gap-4">
+            <StatCard
+              icon={<Activity className="w-4 h-4" />}
+              label="Aktivni monitorji"
+              value={stats.activeMonitors}
+              total={stats.totalMonitors}
+              color="primary"
+              onClick={() => onNavigate('monitors')}
+            />
+            <StatCard
+              icon={<TrendingUp className="w-4 h-4" />}
+              label="Oglasov v bazi"
+              value={stats.totalListings}
+              subtext={`${stats.newListings24h} novih v 24h`}
+              color="primary"
+            />
+            <StatCard
+              icon={<Bell className="w-4 h-4" />}
+              label="Nebrani alerti"
+              value={stats.unreadAlerts}
+              total={stats.totalAlerts}
+              subtext={`${stats.newAlerts24h} novih v 24h`}
+              color="amber"
+              onClick={() => onNavigate('alerts')}
+            />
+            <StatCard
+              icon={<Target className="w-4 h-4" />}
+              label="Priložnosti"
+              value={stats.prilikaAlerts}
+              subtext={`${stats.sumnjivoAlerts} sumljivih`}
+              color="primary"
+              onClick={() => onNavigate('alerts')}
+            />
+            <StatCard
+              icon={<Bookmark className="w-4 h-4" />}
+              label="Priljubljeni"
+              value={stats.bookmarkedListings}
+              subtext="shranjeni"
+              color="amber"
+              onClick={() => onNavigate('listings')}
+            />
+          </div>
 
-      {/* v8.37: Deal Calculator + Profit Timeline — hitra ROI kalkulacija + profit trend */}
-      <DealCalculatorWidget />
-      <ProfitTimelineChart />
+          {/* v3.1: Quick action stats row */}
+          <div className="grid grid-cols-2 sm:grid-cols-3 gap-3">
+            <Card
+              className="bg-card/50 hover:bg-card hover:border-primary/30 cursor-pointer transition-colors"
+              onClick={() => onNavigate('listings')}
+            >
+              <CardContent className="p-3 flex items-center gap-2">
+                <TrendingDown className="w-4 h-4 text-primary" />
+                <div>
+                  <p className="text-xs font-bold text-primary">{stats.priceDropCount || 0}</p>
+                  <p className="text-[10px] text-muted-foreground">Padci cen</p>
+                </div>
+              </CardContent>
+            </Card>
+            <Card
+              className="bg-card/50 hover:bg-card hover:border-primary/30 cursor-pointer transition-colors"
+              onClick={() => onNavigate('listings')}
+            >
+              <CardContent className="p-3 flex items-center gap-2">
+                <ShoppingCart className="w-4 h-4 text-amber-400" />
+                <div>
+                  <p className="text-xs font-bold text-amber-400">{stats.contactedListings || 0}</p>
+                  <p className="text-[10px] text-muted-foreground">Kontaktirani</p>
+                </div>
+              </CardContent>
+            </Card>
+            <Card
+              className="bg-card/50 hover:bg-card hover:border-primary/30 cursor-pointer transition-colors"
+              onClick={() => onNavigate('trades')}
+            >
+              <CardContent className="p-3 flex items-center gap-2">
+                <ShoppingCart className="w-4 h-4 text-primary" />
+                <div>
+                  <p className="text-xs font-bold text-primary">Skladišče</p>
+                  <p className="text-[10px] text-muted-foreground">Profit tracker</p>
+                </div>
+              </CardContent>
+            </Card>
+          </div>
 
-      {/* v8.40: Trade Insights Deep Dive — "KDaj in KJE prodati za maksimalen profit?"
-          6 analytics: day-of-week, source platform, category, hold period, profit
-          distribution, actionable insights. Self-fetches from
-          /api/analytics/trade-insights every 60s. */}
-      <TradeInsightsCard />
+          {/* Quick links row */}
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+            <Card
+              className="bg-card/50 hover:bg-card hover:border-primary/30 cursor-pointer transition-colors"
+              onClick={() => onNavigate('listings')}
+            >
+              <CardContent className="p-4 flex items-center gap-3">
+                <LayoutGrid className="w-5 h-5 text-primary" />
+                <div>
+                  <p className="text-sm font-bold">Pregled vseh oglasov</p>
+                  <p className="text-[11px] text-muted-foreground">Validiraj AI — vidi tudi NEZANIMIVO</p>
+                </div>
+              </CardContent>
+            </Card>
+            <Card
+              className="bg-card/50 hover:bg-card hover:border-primary/30 cursor-pointer transition-colors"
+              onClick={() => onNavigate('analytics')}
+            >
+              <CardContent className="p-4 flex items-center gap-3">
+                <BarChart3 className="w-5 h-5 text-primary" />
+                <div>
+                  <p className="text-sm font-bold">Analitika sistema</p>
+                  <p className="text-[11px] text-muted-foreground">Trendi, performansa monitorjev, natančnost AI</p>
+                </div>
+              </CardContent>
+            </Card>
+          </div>
 
-      {/* v8.41: Weekly Summary Report — comprehensive weekly digest (profit, MoM,
-          goal progress, top 3 trades, worst trade, Brain health, top 3 insights
-          from v8.40, recommendations for next week). Sent to Telegram + Email +
-          Notification Center. Self-fetches from /api/ai/brain/weekly-summary
-          every 60s. "Pošlji zdaj" button sends manually. */}
-      <WeeklySummaryCard />
+          {/* Recent runs */}
+          <Card className="bg-card/50">
+            <CardHeader>
+              <CardTitle className="text-sm font-bold uppercase tracking-wider flex items-center gap-2">
+                <Clock className="w-4 h-4 text-primary" />
+                Zadnje izvedbe
+              </CardTitle>
+              <CardDescription>Zadnjih 10 poganjanj monitorjev.</CardDescription>
+            </CardHeader>
+            <CardContent>
+              {stats.recentRuns.length === 0 ? (
+                <div className="text-center py-8 text-muted-foreground text-sm">
+                  <Zap className="w-6 h-6 mx-auto mb-2 opacity-50" />
+                  Še ni bilo izvedb. Dodaj monitor in ga poženi.
+                </div>
+              ) : (
+                <div className="space-y-1.5 max-h-96 overflow-y-auto">
+                  {stats.recentRuns.map((run) => (
+                    <div
+                      key={run.id}
+                      className="flex items-center justify-between gap-3 px-3 py-2.5 sm:py-2 min-h-[48px] sm:min-h-0 rounded bg-background/50 border border-border hover:border-primary/30 transition-colors text-sm"
+                    >
+                      <div className="flex items-center gap-3 min-w-0 flex-1">
+                        <StatusDot status={run.status} />
+                        <span className="font-medium truncate">{run.monitor.name}</span>
+                      </div>
+                      <div className="flex items-center gap-3 text-xs text-muted-foreground shrink-0">
+                        <span>{run.newListings}/{run.listingsFound} novih</span>
+                        {run.alertsSent > 0 && (
+                          <Badge className="bg-primary/20 text-primary border-primary/40 text-[10px]">
+                            +{run.alertsSent} alertov
+                          </Badge>
+                        )}
+                        <span className="font-mono">{formatDuration(run.durationMs)}</span>
+                        <span>{formatTimeAgo(run.startedAt)}</span>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              )}
+            </CardContent>
+          </Card>
 
-      {/* v8.43: Annual Summary + Tax Report PDF — yearly profit/loss breakdown for
-          tax/FURS/accountant. Self-fetches from /api/trades/annual-summary?year=YYYY
-          every 60s. Year selector (currentYear-1 to currentYear+1). Big profit
-          number + tax estimate (22% Slovenian flat tax) + net after tax + quarterly
-          BarChart + best/worst month + win rate + avg ROI + top trade + "Prenesi PDF"
-          button (opens /api/trades/tax-report-pdf?year=YYYY) + "Celoten pregled"
-          (navigate to Statistics view). */}
-      <AnnualSummaryCard onNavigate={onNavigate} />
+          {/* v8.80: Daily Briefing — TOP of dashboard, unifies all intelligence */}
+          <DailyBriefingCard />
 
-      {/* v8.44: Smart Restock Recommendations — "KAJ naj kupim naslednje za
-          maksimalen profit?" Kombinira v8.40 Trade Insights (historical
-          performance per category) z current held inventory za actionable
-          "buy next" priporočila. Top 5 RESTOCK cards z projected profit/ROI/
-          hold time/suggested buy price range/best source/confidence. Category
-          status table (RESTOCK/MAINTAIN/REDUCE/AVOID). Inventory gaps +
-          overstock warnings. Self-fetches from /api/ai/restock-smart every 60s. */}
-      {/* v8.83: Setup Health Banner — shows setup progress, auto-hides when complete */}
-      <SetupHealthBanner />
+          {/* v8.39: Goal Tracker Dashboard Card */}
+          <GoalTrackerCard />
 
-      {/* v8.80: Daily Briefing — TOP of dashboard, unifies all intelligence */}
-      <DailyBriefingCard />
+          {/* v8.83: Setup Health Banner — shows setup progress, auto-hides when complete */}
+          <SetupHealthBanner />
 
-      <RestockRecommendationsCard />
-      <ProfitForecastCard />
-      <MonthOverMonthCard />
-      <TagPerformanceCard />
-      <OutcomeSummaryCard />
-      <BuyOpportunitySummaryCard />
-      <DecisionAccuracyCard />
-      <PlatformPriceComparisonCard />
-      <SavedSearchStatusCard />
+          {/* v2.7: Activity feed */}
+          <WidgetWrapper id="activityFeed" order={widgetOrder} customizeMode={customizeMode} onMove={moveWidget}>
+            <ActivityFeed />
+          </WidgetWrapper>
+        </>
+      )}
 
-      {/* v4.5: Skladišče dashboard widget */}
-      <WidgetWrapper id="skladisceWidget" order={widgetOrder} customizeMode={customizeMode} onMove={moveWidget}>
-        <SkladisceWidget onNavigate={onNavigate} />
-      </WidgetWrapper>
+      {/* ────────────────────────────────────────────────────────────────────
+          TAB 2: ANALITIKA — deal flow, funel, niše, velocity, insights, forecast
+          ──────────────────────────────────────────────────────────────────── */}
+      {dashboardTab === 'analitika' && (
+        <>
+          <WidgetWrapper id="aiInsights" order={widgetOrder} customizeMode={customizeMode} onMove={moveWidget}>
+            <AiInsightsWidget />
+            <DealFlowWidget onNavigate={onNavigate} />
+            <DealFunnelWidget />
+            <NicheScoreWidget onNavigate={onNavigate} />
+            <DealVelocityWidget />
+          </WidgetWrapper>
+
+          {/* v8.40: Trade Insights Deep Dive */}
+          <TradeInsightsCard />
+
+          <ProfitForecastCard />
+          <MonthOverMonthCard />
+          <TagPerformanceCard />
+        </>
+      )}
+
+      {/* ────────────────────────────────────────────────────────────────────
+          TAB 3: TRGOVINE — flip status, trade stats, kalkulator, profit timeline, poročila
+          ──────────────────────────────────────────────────────────────────── */}
+      {dashboardTab === 'trgovine' && (
+        <>
+          {/* Flip status — aging alerts for held inventory */}
+          <FlipStatusWidget onNavigate={onNavigate} />
+
+          {/* v8.36: Trade Stats card */}
+          <TradeStatsCard />
+
+          {/* v8.37: Deal Calculator + Profit Timeline */}
+          <DealCalculatorWidget />
+          <ProfitTimelineChart />
+
+          {/* v8.41: Weekly Summary Report */}
+          <WeeklySummaryCard />
+
+          {/* v8.43: Annual Summary + Tax Report PDF */}
+          <AnnualSummaryCard onNavigate={onNavigate} />
+
+          {/* v8.44: Smart Restock Recommendations */}
+          <RestockRecommendationsCard />
+
+          {/* Outcome summary — post-sale quality analysis */}
+          <OutcomeSummaryCard />
+
+          {/* v4.5: Skladišče dashboard widget */}
+          <WidgetWrapper id="skladisceWidget" order={widgetOrder} customizeMode={customizeMode} onMove={moveWidget}>
+            <SkladisceWidget onNavigate={onNavigate} />
+          </WidgetWrapper>
+        </>
+      )}
+
+      {/* ────────────────────────────────────────────────────────────────────
+          TAB 4: AI — AI insights, decision accuracy, buy opportunity, cross-platform
+          ──────────────────────────────────────────────────────────────────── */}
+      {dashboardTab === 'ai' && (
+        <>
+          <BuyOpportunitySummaryCard />
+          <DecisionAccuracyCard />
+          <PlatformPriceComparisonCard />
+          <SavedSearchStatusCard />
+        </>
+      )}
+
+      {/* ════════════════════════════════════════════════════════════════════
+          END TAB CONTENT
+          ════════════════════════════════════════════════════════════════════ */}
 
       {/* Quick start hint */}
       {stats.totalMonitors === 0 && (
