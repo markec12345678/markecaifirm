@@ -60,10 +60,10 @@ export function MonitorFormDialog({
   const [showPromptLibrary, setShowPromptLibrary] = useState(false);
   // v5.1: AI scheduler suggestion
   const [scheduleLoading, setScheduleLoading] = useState(false);
-  const [scheduleSuggestion, setScheduleSuggestion] = useState<any>(null);
+  const [scheduleSuggestion, setScheduleSuggestion] = useState<Record<string, unknown> | null>(null);
   // v5.2: AI filter suggestion
   const [filterLoading, setFilterLoading] = useState(false);
-  const [filterSuggestion, setFilterSuggestion] = useState<any>(null);
+  const [filterSuggestion, setFilterSuggestion] = useState<Record<string, unknown> | null>(null);
   // v4.4: tags
   const [tags, setTags] = useState('');
   // v1.2: schedule window
@@ -73,7 +73,7 @@ export function MonitorFormDialog({
   // v1.3: auto-pause
   const [autoPauseThreshold, setAutoPauseThreshold] = useState(5);
   const [dryRunLoading, setDryRunLoading] = useState(false);
-  const [dryRunResult, setDryRunResult] = useState<any>(null);
+  const [dryRunResult, setDryRunResult] = useState<Record<string, unknown> | null>(null);
   // v2.5: notification channels
   const [useCustomChannels, setUseCustomChannels] = useState(false);
   const [chanTelegram, setChanTelegram] = useState(true);
@@ -330,13 +330,13 @@ export function MonitorFormDialog({
                   ? 'border-primary/30 bg-primary/5 text-primary'
                   : 'border-amber-400/30 bg-amber-400/5 text-amber-400'
               )}>
-                {dryRunResult.ok ? (
+                {(dryRunResult as Record<string, unknown>)?.ok ? (
                   <>
-                    ✓ Najdenih <b>{dryRunResult.count}</b> oglasov v {dryRunResult.durationMs}ms.
-                    {dryRunResult.sample?.length > 0 && (
+                    ✓ Najdenih <b>{String((dryRunResult as Record<string, unknown>)?.count ?? "")}</b> oglasov v {String((dryRunResult as Record<string, unknown>)?.durationMs ?? "")}ms.
+                    {((dryRunResult as Record<string, unknown>)?.sample as Record<string, unknown>[] ?? [])?.length > 0 && (
                       <ul className="mt-1 ml-3 list-disc text-[10px] text-muted-foreground">
-                        {dryRunResult.sample.slice(0, 3).map((s: any, i: number) => (
-                          <li key={i} className="truncate">{s.title} — {s.priceText}</li>
+                        {((dryRunResult as Record<string, unknown>)?.sample as Record<string, unknown>[] ?? []).slice(0, 3).map((s: Record<string, unknown>, i: number) => (
+                          <li key={i} className="truncate">{String(s?.title ?? "")} — {String(s?.priceText ?? "")}</li>
                         ))}
                       </ul>
                     )}
@@ -414,7 +414,7 @@ export function MonitorFormDialog({
                   <Sparkles className="w-3 h-3" />
                   AI predlog filtrov
                   <Badge variant="outline" className="text-[10px] text-primary border-primary/40">
-                    {filterSuggestion.suggestions.confidence}% zaupanje
+                    {String((filterSuggestion as Record<string, unknown>)?.confidence ?? "")}% zaupanje
                   </Badge>
                 </span>
                 <button
@@ -425,25 +425,25 @@ export function MonitorFormDialog({
               <div className="grid grid-cols-2 gap-2 text-xs mb-2">
                 <div>
                   <div className="text-[10px] text-muted-foreground uppercase">Trenutni keywords</div>
-                  <div className="font-mono text-[11px]">{filterSuggestion.currentKeywords || '(prazno)'}</div>
+                  <div className="font-mono text-[11px]">{String((filterSuggestion as Record<string, unknown>)?.currentKeywords ?? "") || '(prazno)'}</div>
                 </div>
                 <div>
                   <div className="text-[10px] text-primary uppercase">Predlog keywords</div>
-                  <div className="font-mono text-[11px] text-primary">{filterSuggestion.suggestions.keywords || '(brez sprememb)'}</div>
+                  <div className="font-mono text-[11px] text-primary">{(((filterSuggestion as Record<string, unknown>)?.suggestions as Record<string, unknown>[])[0]?.keywords as string[] ?? []).join(', ') || '(brez sprememb)'}</div>
                 </div>
                 <div>
                   <div className="text-[10px] text-muted-foreground uppercase">Trenutni exclude</div>
-                  <div className="font-mono text-[11px]">{filterSuggestion.currentExcludeKeywords || '(prazno)'}</div>
+                  <div className="font-mono text-[11px]">{String((filterSuggestion as Record<string, unknown>)?.currentExcludeKeywords ?? "") || '(prazno)'}</div>
                 </div>
                 <div>
                   <div className="text-[10px] text-primary uppercase">Predlog exclude</div>
-                  <div className="font-mono text-[11px] text-primary">{filterSuggestion.suggestions.excludeKeywords || '(brez sprememb)'}</div>
+                  <div className="font-mono text-[11px] text-primary">{(((filterSuggestion as Record<string, unknown>)?.suggestions as Record<string, unknown>[])[0]?.excludeKeywords as string[] ?? []).join(', ') || '(brez sprememb)'}</div>
                 </div>
               </div>
-              <p className="text-[11px] text-muted-foreground italic mb-2">"{filterSuggestion.suggestions.reasoning}"</p>
+              <p className="text-[11px] text-muted-foreground italic mb-2">"{String(((filterSuggestion as Record<string, unknown>)?.suggestions as Record<string, unknown>[])[0]?.reasoning ?? "")}"</p>
               {filterSuggestion.analyzedListings != null && (
                 <p className="text-[10px] text-muted-foreground mb-2">
-                  📊 Analiziranih {filterSuggestion.analyzedListings} oglasov iz tega monitorja.
+                  📊 Analiziranih {String((filterSuggestion as Record<string, unknown>)?.analyzedListings ?? "")} oglasov iz tega monitorja.
                 </p>
               )}
               <Button
@@ -451,11 +451,11 @@ export function MonitorFormDialog({
                 size="sm"
                 className="h-7 text-xs gap-1 w-full"
                 onClick={() => {
-                  if (filterSuggestion.suggestions.keywords) {
-                    setKeywords(filterSuggestion.suggestions.keywords);
+                  if ((((filterSuggestion as Record<string, unknown>)?.suggestions as Record<string, unknown>[])[0]?.keywords as string[] ?? []).length > 0) {
+                    setKeywords((((filterSuggestion as Record<string, unknown>)?.suggestions as Record<string, unknown>[])[0]?.keywords as string[] ?? []).join(', '));
                   }
-                  if (filterSuggestion.suggestions.excludeKeywords) {
-                    setExcludeKeywords(filterSuggestion.suggestions.excludeKeywords);
+                  if ((((filterSuggestion as Record<string, unknown>)?.suggestions as Record<string, unknown>[])[0]?.excludeKeywords as string[] ?? []).length > 0) {
+                    setExcludeKeywords((((filterSuggestion as Record<string, unknown>)?.suggestions as Record<string, unknown>[])[0]?.excludeKeywords as string[] ?? []).join(', '));
                   }
                   toast.success('AI predlog filtrov apliciran');
                   setFilterSuggestion(null);
@@ -600,7 +600,7 @@ export function MonitorFormDialog({
                     <Sparkles className="w-3 h-3" />
                     AI predlog urnika
                     <Badge variant="outline" className="text-[10px] text-primary border-primary/40">
-                      {scheduleSuggestion.confidence}% zaupanje
+                      {String(scheduleSuggestion?.confidence ?? "")}% zaupanje
                     </Badge>
                   </span>
                   <button
@@ -612,35 +612,35 @@ export function MonitorFormDialog({
                   <div>
                     <div className="text-[10px] text-muted-foreground uppercase">Trenutno</div>
                     <div className="font-mono">
-                      {scheduleSuggestion.currentInterval}min • {scheduleSuggestion.currentWindow}
+                      {String(scheduleSuggestion?.currentInterval ?? "")}min • {String(scheduleSuggestion?.currentWindow ?? "")}
                     </div>
                   </div>
                   <div>
                     <div className="text-[10px] text-primary uppercase">Predlog</div>
                     <div className="font-mono text-primary">
-                      {scheduleSuggestion.suggestedInterval}min • {scheduleSuggestion.suggestedWindow}
+                      {(scheduleSuggestion as Record<string, unknown>)?.suggestedInterval as number}min • {String((scheduleSuggestion as Record<string, unknown>)?.suggestedWindow ?? "")}
                     </div>
                   </div>
                 </div>
                 <div className="grid grid-cols-2 gap-2 text-[10px] mb-2">
                   <div className="bg-background/30 rounded p-1.5 text-center">
                     <div className="text-muted-foreground">Pričakovani novi/dan</div>
-                    <div className="font-mono font-bold text-primary">~{scheduleSuggestion.expectedNewListingsPerDay}</div>
+                    <div className="font-mono font-bold text-primary">~{String(scheduleSuggestion?.expectedNewListingsPerDay ?? "")}</div>
                   </div>
                   <div className="bg-background/30 rounded p-1.5 text-center">
                     <div className="text-muted-foreground">AI klici/dan</div>
-                    <div className="font-mono">{scheduleSuggestion.aiCallsPerDay}</div>
+                    <div className="font-mono">{String(scheduleSuggestion?.aiCallsPerDay ?? "")}</div>
                   </div>
                 </div>
-                <p className="text-[11px] text-muted-foreground italic mb-2">"{scheduleSuggestion.reasoning}"</p>
+                <p className="text-[11px] text-muted-foreground italic mb-2">"{String(scheduleSuggestion?.reasoning ?? "")}"</p>
                 <Button
                   type="button"
                   size="sm"
                   className="h-7 text-xs gap-1 w-full"
                   onClick={() => {
-                    setIntervalMinutes(scheduleSuggestion.suggestedInterval);
-                    if (scheduleSuggestion.suggestedWindow && scheduleSuggestion.suggestedWindow !== '24/7') {
-                      const match = scheduleSuggestion.suggestedWindow.match(/(\d+)-(\d+)/);
+                    setIntervalMinutes((scheduleSuggestion as Record<string, unknown>)?.suggestedInterval as number);
+                    if ((scheduleSuggestion as Record<string, unknown>)?.suggestedWindow && (scheduleSuggestion as Record<string, unknown>)?.suggestedWindow !== '24/7') {
+                      const match = (((scheduleSuggestion as Record<string, unknown>)?.suggestedWindow as string) ?? "")?.match(/(\d+)-(\d+)/);
                       if (match) {
                         setUseSchedule(true);
                         setRunStartHour(parseInt(match[1], 10));

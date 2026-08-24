@@ -66,7 +66,7 @@ export function PromptLibraryModal({
 
         {/* Category tabs */}
         <div className="flex items-center gap-1 flex-wrap mb-3">
-          {PROMPT_CATEGORIES.map((c: any) => (
+          {PROMPT_CATEGORIES.map((c: { id: string; label: string; icon?: string }) => (
             <button
               key={c.id}
               onClick={() => setActiveCategory(c.id)}
@@ -84,7 +84,7 @@ export function PromptLibraryModal({
 
         {/* Templates grid */}
         <div className="grid grid-cols-1 md:grid-cols-2 gap-2">
-          {templates.map((tpl: any) => (
+          {templates.map((tpl: { id?: string; title?: string; name?: string; prompt: string; category: string; icon?: string; description?: string }) => (
             <div
               key={tpl.id}
               className="bg-card/50 border border-border rounded p-3 hover:border-primary/30 transition-colors cursor-pointer"

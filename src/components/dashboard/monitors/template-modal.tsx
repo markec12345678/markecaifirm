@@ -65,8 +65,8 @@ export function TemplateModal({
     if (open) load();
   }, [open, load]);
 
-  const createFromTemplate = async (tpl: any) => {
-    setCreating(tpl.id);
+  const createFromTemplate = async (tpl: { id?: string; source: string; label: string; url: string; hint: string }) => {
+    setCreating(tpl.id ?? null);
     try {
       const res = await fetch('/api/monitors/from-template', {
         method: 'POST',
