@@ -21639,3 +21639,42 @@ Stage Summary:
   * 1/2 vulnerabilities fixed (deepmerge-ts)
   * 1 remaining: nanoid (transitive — nizko tveganje, čaka na postcss update)
   * 12 paketov posodobljenih na najnovejše kompatibilne verzije
+
+---
+Task ID: v9.33
+Agent: main
+Task: SECURITY.md posodobitev z v9.x varnostnimi izboljšavami
+
+Work Log:
+- SECURITY.md je bil zastarel — podprte verzije so stale pri v6.92, brez omenitve v9.x sprememb.
+- Korak 1: Posodobil "Supported Versions" tabelo:
+  * 6.92.x → 9.32.x (Active support)
+  * 6.49-6.91 → 8.94-9.31 (Security fixes only)
+  * < 6.49 → < 8.94 (No support)
+- Korak 2: Dodal novo sekcijo "v9.x Security Enhancements" z 5 podsekcijami:
+  * Modularna arhitektura (v8.94-v9.09): 193 modulov — manjša attack surface
+  * Dependency Cleanup (v9.31): 8 nepotrebnih paketov odstranjenih (−9.3%)
+  * Security Audit (v9.32): 1/2 vulnerabilities fixed, 12 paketov posodobljenih
+  * CI/CD Security (v9.26): 3 workflow-i, ne tolerira napak
+  * Service Worker (v8.95): SW samo v production, dev mode unregister
+- Korak 3: Dodal 9 priporočil za deployment:
+  * .env ni v git, API ključi v SQLite, VAPID P-256 ECDSA, webhook secret, cron key
+  * SSRF zaščita, HTML escape, Slack Block Kit, Telegram MarkdownV2
+- Preveril lint: 0 napak ✨
+- Preveril typecheck: 0 napak ✨
+- Preveril testi: 158/158 passing (100%) ✨
+
+Stage Summary:
+- MODIFIED: SECURITY.md (146 → 189 vrstic, +v9.x sekcija + supported versions)
+- MODIFIED: src/lib/version.ts (v9.32.0→v9.33.0)
+- MODIFIED: README.md (badge v9.33.0)
+- Verzija: v9.33.0
+- Skupaj (v7.50 → v9.33): 183 verzij, 305 novih funkcij
+- DOKUMENTACIJA POPOLNA (vse datoteke sinhronizirane z v9.33):
+  * README.md — 15 badge-ov, v9.x sekcija, stats
+  * CHANGELOG.md — 14 vnosov (v8.94-v9.28)
+  * ARCHITECTURE.md — arhitektura, načela, statistika
+  * CONTRIBUTING.md — modularna arhitektura, navodila za nove module
+  * SECURITY.md — v9.x varnostne izboljšave, supported versions
+  * LICENSE — MIT (2024-2026, pravilno)
+  * worklog.md — vsi Task ID-ji (v8.94-v9.33)

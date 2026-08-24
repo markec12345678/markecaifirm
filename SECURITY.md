@@ -6,9 +6,9 @@ Trenutno podpiramo samo najnovejjo verzijo. Varnostne popravke bomo izdajali sam
 
 | Version | Supported          |
 |---------|--------------------|
-| 6.92.x  | ✅ Active support   |
-| 6.49.x - 6.91.x | ⚠️ Security fixes only |
-| < 6.49  | ❌ No support       |
+| 9.32.x  | ✅ Active support   |
+| 8.94.x - 9.31.x | ⚠️ Security fixes only |
+| < 8.94  | ❌ No support       |
 
 ## Reporting a Vulnerability
 
@@ -144,3 +144,46 @@ Vsa dependencie so zaklenjene v `bun.lock`. Pri update-ih preverjamo:
 - **Security issues**: security@markec.local
 - **General questions**: GitHub Issues
 - **Feature requests**: GitHub Issues z `[feat]` label
+
+---
+
+## v9.x Security Enhancements
+
+### Modularna arhitektura (v8.94-v9.09)
+- **193 modulskih datotek** v 17 direktorijeh — manjša attack surface per modul
+- Vsak modul je samostojen z lastnim state-om — lažje auditiranje
+- Shared types/utils centralizirani — eno mesto za varnostne preglede
+
+### Dependency Cleanup (v9.31)
+- **8 nepotrebnih paketov odstranjenih** (zod, zustand, @dnd-kit, react-syntax-highlighter, @mdxeditor/editor)
+- Manj paketov = manj attack surface = manj varnostnih tveganj
+- 86 → 78 paketov (−9.3%)
+
+### Security Audit (v9.32)
+- **1/2 vulnerabilities fixed** (deepmerge-ts — stack exhaustion)
+- 1 remaining: nanoid (transitive od postcss — nizko tveganje, ne uporabljamo custom generators z size=0)
+- 12 paketov posodobljenih na najnovejše varne verzije
+
+### CI/CD Security (v9.26)
+- **3 GitHub Actions workflow-i** avtomatsko preverjajo:
+  1. `ci.yml`: lint + typecheck + build + `bun audit` (security audit)
+  2. `ai-endpoints.yml`: auto-update endpoint dokumentacije
+  3. `module-check.yml`: module count verification (prepreči accidental deletion)
+- CI **ne tolerira napak** — `continue-on-error: true` je odstranjen
+- Build/lint/typecheck failure ustavi CI
+
+### Service Worker (v8.95)
+- SW registracija samo v production (`process.env.NODE_ENV === 'production'`)
+- V dev mode: SW se unregister-a + vsi cache-ji se izbrišejo
+- Preprečuje ChunkLoadError v dev mode zaradi stale chunk cache
+
+### Priporočila za deployment
+1. **`.env` NI v git** — vse skrivnosti (API ključi, gesla) so lokalne
+2. **API ključi** so shranjeni v SQLite z enkripcijo na aplikacijskem nivoju
+3. **VAPID ključi** (Web Push) so P-256 ECDSA generirani
+4. **Telegram webhook secret** je naključno generiran
+5. **Cron key** (`MONITOR_CRON_KEY`) ščiti cron endpoint-e
+6. **SSRF zaščita** (`isUrlSafe()`) na vseh outbound URL-jih
+7. **HTML escape** na vseh uporabniških vsebinah v email HTML-ju
+8. **Slack Block Kit** uporablja `type: 'mrkdwn'` (ne neveljaven `mrkdwn_section`)
+9. **Telegram MarkdownV2** z `escapeMd()` na uporabniških tekstih
