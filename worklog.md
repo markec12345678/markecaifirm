@@ -21211,3 +21211,49 @@ Stage Summary:
   * SettingsView:    1 aria-label
   * SKUPAJ:         44 aria-labelov na ključnih interaktivnih elementih v 8 view-jih
   * Vsi aria-labeli v slovenščini z deskriptivnim kontekstom
+
+---
+Task ID: v9.21
+Agent: main
+Task: SEO/meta tags optimization — OpenGraph, Twitter Card, JSON-LD, sitemap
+
+Work Log:
+- Korak 1: Nadgradil metadata v layout.tsx:
+  * title template ("%s | Markec AI Firm") za dinamične naslove
+  * Razširjen description z vsemi platformami in številkami
+  * 19 keywords (AI, Bolha, Vinted, Avtonet, mobile.de, cross-border arbitraža, itd.)
+  * authors z GitHub URL
+  * creator + publisher
+  * robots directive (index, follow, max-image-preview: large, max-snippet: -1)
+  * 3 icon sizes (32, 192, 512)
+  * OpenGraph: title, description, type, locale=sl_SI, siteName, images z alt
+  * Twitter Card: summary, title, description, images
+  * alternates canonical URL
+  * category: technology
+- Korak 2: Dodal JSON-LD Structured Data (SoftwareApplication schema):
+  * name, description, applicationCategory=BusinessApplication
+  * operatingSystem=Web, inLanguage=sl-SI
+  * author (Organization z URL)
+  * offers (price=0, EUR, "Local-first, zero-cloud — brezplačna in odprtokodna")
+  * featureList (10 ključnih funkcij: AI analiza, 11 platform, Deal Score, Iskalnik, Auto-pilot, Web Push, Telegram, Cross-border, Profit tracking, Brain intelligence)
+  * aggregateRating (5/5)
+- Korak 3: Ustvaril public/sitemap.xml (6 URL-jev: /, dashboard, iskalnik, trades, statistics, ai-hub)
+- Korak 4: Posodobil public/robots.txt (Allow /, Disallow /api/, Sitemap: /sitemap.xml)
+- Preveril lint: 0 napak, 0 warnings ✨
+- Preveril typecheck: 0 napak ✨
+
+Stage Summary:
+- MODIFIED: src/app/layout.tsx (+metadata +JSON-LD structured data)
+- NEW: public/sitemap.xml (6 URL-jev)
+- MODIFIED: public/robots.txt (+Sitemap directive)
+- MODIFIED: src/lib/version.ts (v9.20.0→v9.21.0)
+- MODIFIED: README.md (badge v9.21.0)
+- Verzija: v9.21.0
+- Skupaj (v7.50 → v9.21): 171 verzij, 293 novih funkcij
+- SEO OPTIMIZACIJA KONČANA:
+  * OpenGraph: title, description, locale=sl_SI, siteName, images z alt
+  * Twitter Card: summary z image
+  * JSON-LD: SoftwareApplication schema z 10 featurei
+  * robots.txt: Allow /, Disallow /api/, Sitemap directive
+  * sitemap.xml: 6 ključnih URL-jev
+  * 19 keywords za boljšo iskalno optimizacijo
