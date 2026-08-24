@@ -21975,3 +21975,54 @@ Stage Summary:
   * Buy Score correlation: -0.05 (nizka — potrebuje več prodanih trgovin z buyScore)
   * Overall: 65/100 grade C
   * Naslednji koraki: povezati več trgovin z listing-i, dodati več demo trgovin z buyScore
+
+---
+Task ID: v9.47
+Agent: main
+Task: UI reorganizacija — grupirana navigacija v 4 kategorije
+
+Work Log:
+- Raziščil UX best practices: progressive disclosure, command palette, dashboard design, tabs vs accordions.
+- Glavna ugotovitev: 18 zavihkov v eni vrstici je preveč za cognitive load (NN/groupon priporoča 5-7 max).
+- Implementiral grupirano navigacijo z 4 kategorijami:
+  📋 GLAVNO (5 zavihkov — vedno vidno):
+    Dashboard | Monitorji | Oglasi | Skladišče | Iskalnik
+  
+  🤖 AI ORODJA (collapsible — 5 zavihkov):
+    Skladišče AI | Cene AI | Oglasi AI | Tveganja AI | Kupci
+  
+  📊 ANALITIKA (collapsible — 3 zavihki):
+    Analitika | Statistike | AI Hub
+  
+  ⚙️ SISTEM (collapsible — 5 zavihkov):
+    Alerti | Watchlist | Obvestila | Zdravje | Nastavitve
+
+- Desktop navigacija: 3 collapsible skupine z ChevronDown ikono + auto-expand aktivne skupine.
+- Mobile navigacija: 4 kategorije z barvno kodiranimi header-ji (Glavno, AI Orodja, Analitika, Sistem).
+- ARIA labels dodani na vse navigacijske gumbe (aria-label, aria-expanded).
+- Preveril lint: 0 napak ✨
+- Preveril typecheck: 0 napak ✨
+- Preveril testi: 158/158 passing (100%) ✨
+- Verifikacija (Agent Browser):
+  * Homepage: 73 cards, 0 errors ✓
+  * AI Orodja expand: 18 nav buttons (5+5+3+5) ✓
+  * Settings (?view=settings): heading "Nastavitve", 57 cards, 0 errors ✓
+  * Footer: v9.47.0 • HEALTHY 85/100 ✓
+  * Screenshot: download/nav-grouped-v9.47.png
+
+Stage Summary:
+- MODIFIED: src/app/page.tsx (grupirana navigacija — desktop + mobile)
+  * 4 kategorije z collapsible skupinami
+  * Auto-expand aktivne skupine
+  * Color-coded skupine (amber za AI, sky za analitiko, muted za sistem)
+  * Aria labels na vseh navigacijskih gumbih
+- MODIFIED: src/lib/version.ts (v9.46→v9.47)
+- MODIFIED: README.md (badge v9.47)
+- Verzija: v9.47.0
+- Skupaj (v7.50 → v9.47): 193 verzij, 314 novih funkcij
+- UX IZBOLJŠAVA:
+  * Prej: 18 zavihkov v eni vrstici — preplavljeno
+  * Zdaj: 5 glavnih + 3 collapsible skupine (AI, Analitika, Sistem)
+  * Nov uporabnik vidi samo 8 elementov (5 + 3 skupine)
+  * Power user razširi skupino z 1 klikom
+  * Auto-expand: aktivna skupina se samodejno razširi
