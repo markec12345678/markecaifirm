@@ -319,36 +319,42 @@ export function DashboardView({ onNavigate }: ViewProps) {
       <div className="flex items-center gap-2 flex-wrap">
         <button
           onClick={() => { haptic.light(); onNavigate('alerts'); }}
+          aria-label={`Priložnosti: ${stats.prilikaAlerts} oglasov z AI verdiktom PRILIKA`}
           className="px-3 py-2.5 sm:py-1 rounded-full min-h-[40px] sm:min-h-0 border border-primary/30 bg-primary/5 text-primary text-xs hover:bg-primary/10 transition-colors"
         >
           🎯 Priložnosti ({stats.prilikaAlerts})
         </button>
         <button
           onClick={() => { haptic.light(); onNavigate('listings'); }}
+          aria-label={`Sumljivi oglasi: ${stats.sumnjivoAlerts} oglasov z AI verdiktom SUMNJIVO`}
           className="px-3 py-2.5 sm:py-1 rounded-full min-h-[40px] sm:min-h-0 border border-amber-400/30 bg-amber-400/5 text-amber-400 text-xs hover:bg-amber-400/10 transition-colors"
         >
           ⚠️ Sumljivi ({stats.sumnjivoAlerts})
         </button>
         <button
           onClick={() => { haptic.light(); onNavigate('listings'); }}
+          aria-label={`Padci cen: ${stats.priceDropCount || 0} oglasov z nižjo ceno`}
           className="px-3 py-2.5 sm:py-1 rounded-full min-h-[40px] sm:min-h-0 border border-border bg-card/50 text-muted-foreground text-xs hover:border-primary/30 hover:text-primary transition-colors"
         >
           📉 Padci cen ({stats.priceDropCount || 0})
         </button>
         <button
           onClick={() => { haptic.light(); onNavigate('listings'); }}
+          aria-label={`Kontaktirani oglasi: ${stats.contactedListings || 0} oglasov ki ste jih kontaktirali`}
           className="px-3 py-2.5 sm:py-1 rounded-full min-h-[40px] sm:min-h-0 border border-border bg-card/50 text-muted-foreground text-xs hover:border-primary/30 hover:text-primary transition-colors"
         >
           📞 Kontaktirani ({stats.contactedListings || 0})
         </button>
         <button
           onClick={() => { haptic.light(); onNavigate('listings'); }}
+          aria-label={`Priljubljeni oglasi: ${stats.bookmarkedListings} zaznamovanih oglasov`}
           className="px-3 py-2.5 sm:py-1 rounded-full min-h-[40px] sm:min-h-0 border border-border bg-card/50 text-muted-foreground text-xs hover:border-primary/30 hover:text-primary transition-colors"
         >
           ⭐ Priljubljeni ({stats.bookmarkedListings})
         </button>
         <button
           onClick={() => { haptic.light(); onNavigate('trades'); }}
+          aria-label="Skladišče: pregled trgovin in dobička"
           className="px-3 py-2.5 sm:py-1 rounded-full min-h-[40px] sm:min-h-0 border border-primary/30 bg-primary/5 text-primary text-xs hover:bg-primary/10 transition-colors"
         >
           🛒 Skladišče

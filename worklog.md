@@ -21104,3 +21104,25 @@ Stage Summary:
 - Verzija: v9.17.0
 - Skupaj (v7.50 → v9.17): 167 verzij, 289 novih funkcij
 - MILESTONE: Setup 100% končan! Aplikacija je popolnoma konfigurirana z demo podatki in vsemi komponentami aktivnimi.
+
+---
+Task ID: v9.18
+Agent: main
+Task: Accessibility audit — 12 ARIA labelov dodanih na ključne interaktivne elemente
+
+Work Log:
+- Code-level accessibility audit: preveril vse view datoteke za gumbe brez aria-label.
+- Dashboard view: 6 quick filter chips (Priložnosti, Sumljivi, Padci cen, Kontaktirani, Priljubljeni, Skladišče) — vsi so imeli emoji + tekst ampak brez aria-label. Dodal descriptive aria-labele z dinamičnimi številkami (npr. "Priložnosti: 5 oglasov z AI verdiktom PRILIKA").
+- Alerts view: 6 bulk action gumbov (Prebrano, Zanima me, Arhiviraj, Prevara, Izbriši, Prekliči izbiro) — vsi so imeli ikono + tekst ampak brez aria-label. Dodal descriptive aria-labele (npr. "Označi izbrane alerte kot prebrane").
+- Skupaj: 12 novih ARIA labelov na ključnih interaktivnih elementih.
+- Preveril lint: 0 napak, 0 warnings ✨
+- Preveril typecheck: 0 napak ✨
+
+Stage Summary:
+- MODIFIED: src/components/dashboard/dashboard-view.tsx (+6 aria-label na filter chips)
+- MODIFIED: src/components/dashboard/alerts-view.tsx (+6 aria-label na bulk action gumbe)
+- MODIFIED: src/lib/version.ts (v9.17.0→v9.18.0)
+- MODIFIED: README.md (badge v9.18.0)
+- Verzija: v9.18.0
+- Skupaj (v7.50 → v9.18): 168 verzij, 290 novih funkcij
+- ACCESSIBILITY: Screen reader uporabniki sedaj razumejo kaj vsak filter chip in bulk akcijski gumb dela. Vsi aria-labeli so v slovenščini z deskriptivnim kontekstom.

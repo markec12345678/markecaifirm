@@ -244,22 +244,22 @@ export function AlertsView() {
               <span className="text-sm font-medium text-primary mr-2">
                 {selectedIds.size} izbranih
               </span>
-              <Button size="sm" variant="outline" onClick={() => bulkAction('read')} className="h-7 gap-1.5 text-xs">
+              <Button size="sm" variant="outline" onClick={() => bulkAction('read')} aria-label="Označi izbrane alerte kot prebrane" className="h-7 gap-1.5 text-xs">
                 <Check className="w-3 h-3" /> Prebrano
               </Button>
-              <Button size="sm" variant="outline" onClick={() => bulkAction('interested')} className="h-7 gap-1.5 text-xs text-primary">
+              <Button size="sm" variant="outline" onClick={() => bulkAction('interested')} aria-label="Označi izbrane alerte kot zanimive" className="h-7 gap-1.5 text-xs text-primary">
                 <ThumbsUp className="w-3 h-3" /> Zanima me
               </Button>
-              <Button size="sm" variant="outline" onClick={() => bulkAction('archive')} className="h-7 gap-1.5 text-xs">
+              <Button size="sm" variant="outline" onClick={() => bulkAction('archive')} aria-label="Arhiviraj izbrane alerte" className="h-7 gap-1.5 text-xs">
                 <Archive className="w-3 h-3" /> Arhiviraj
               </Button>
-              <Button size="sm" variant="outline" onClick={() => bulkAction('scam')} className="h-7 gap-1.5 text-xs text-amber-400">
+              <Button size="sm" variant="outline" onClick={() => bulkAction('scam')} aria-label="Označi izbrane alerte kot prevaro" className="h-7 gap-1.5 text-xs text-amber-400">
                 <ThumbsDown className="w-3 h-3" /> Prevara
               </Button>
-              <Button size="sm" variant="outline" onClick={() => bulkAction('delete')} className="h-7 gap-1.5 text-xs text-destructive">
+              <Button size="sm" variant="outline" onClick={() => bulkAction('delete')} aria-label="Izbriši izbrane alerte" className="h-7 gap-1.5 text-xs text-destructive">
                 <Trash2 className="w-3 h-3" /> Izbriši
               </Button>
-              <Button size="sm" variant="ghost" onClick={clearSelection} className="h-7 text-xs ml-auto">
+              <Button size="sm" variant="ghost" onClick={clearSelection} aria-label="Prekliči izbiro vseh alertov" className="h-7 text-xs ml-auto">
                 Prekliči izbiro
               </Button>
             </div>
