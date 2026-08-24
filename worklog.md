@@ -21706,3 +21706,27 @@ Stage Summary:
   * 199 catch(e:any) → catch(e:unknown) (100% odstranjeno)
   * 523 → 425 any tipov (−98, −19%)
   * Vsi error handling je sedaj type-safe z (e as Error)?.message pattern
+
+---
+Task ID: v9.35
+Agent: main
+Task: API response tipizacija — poskus + varna reverzija
+
+Work Log:
+- POSKUS: dodal 17 API response interface-ov v trades/types.ts (PortfolioAnalysisResponse, AutoRepriceResponse, AgingAlertsResponse, RestockResponse, ExitStrategyResponse, BundleOptimizerResponse, LiquidationResponse, ListingGeneratorResponse, TaxLossHarvestingResponse, MultiVendorBundleResponse, OptimalTimeResponse, TitleABTestResponse, BuyerPersonaResponse, CrossPlatformPriceResponse, InventoryDepreciationResponse, ListingPerformanceResponse, ProfitMaximizerResponse).
+- Zamenjal useState<any> z useState<TypeName | null> v 15 trades modulih.
+- REZULTAT: 0 useState<any> v trades! Ampak 130+ typecheck napak ker interface-i niso dovolj popolni za dinamične AI response strukture (AI vrača različne field-e ki jih ni mogoče predvideti).
+- ODLOČITEV: Varna reverzija na v9.34 stanje (catch(e:unknown) brez useState tipizacije).
+  * useState<any> je PRAGMATIČEN za AI response podatke ker AI vrača dinamične strukture.
+  * Pravi popravek bi zahteval zod ali runtime validation — preobsežno za eno verzijo.
+- Preveril lint: 0 napak ✨
+- Preveril typecheck: 0 napak ✨
+- Preveril testi: 158/158 passing (100%) ✨
+
+Stage Summary:
+- LESSON: AI response tipizacija z statičnimi interface-i je nepraktična ker AI vrača dinamične strukture. Pravi popravek bi zahteval runtime validation (zod) ali pa sprejem useState<any> kot pragmatično izbiro za AI response podatke.
+- STATUS: Varna reverzija na v9.34 stanje. catch(e:unknown) (199 popravljenih v v9.34) ostaja.
+- MODIFIED: src/lib/version.ts (v9.34.0→v9.35.0)
+- MODIFIED: README.md (badge v9.35.0)
+- Verzija: v9.35.0
+- Skupaj (v7.50 → v9.35): 185 verzij, 307 novih funkcij
