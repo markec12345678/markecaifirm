@@ -346,11 +346,11 @@ export function IskalnikView() {
             {selectedIds.size < 2 && ' — izberi še vsaj 1 za primerjavo'}
           </span>
           <div className="flex items-center gap-2">
-            <Button variant="ghost" size="sm" className="h-6 text-xs" onClick={() => setSelectedIds(new Set())}>
+            <Button variant="ghost" size="sm" className="h-6 text-xs" onClick={() => setSelectedIds(new Set())} aria-label="Počisti izbiro vseh oglasov">
               <X className="w-3 h-3" /> Počisti
             </Button>
             {selectedIds.size >= 2 && (
-              <Button size="sm" onClick={runCompare} className="h-6 text-xs gap-1 bg-primary text-primary-foreground hover:bg-primary/90">
+              <Button size="sm" onClick={runCompare} className="h-6 text-xs gap-1 bg-primary text-primary-foreground hover:bg-primary/90" aria-label="Primerjaj izbrane oglase">
                 <GitCompare className="w-3 h-3" /> Primerjaj
               </Button>
             )}
@@ -663,8 +663,8 @@ export function IskalnikView() {
             </div>
           </div>
           <DialogFooter>
-            <Button variant="outline" onClick={() => setShowSaveDialog(false)}>Prekliči</Button>
-            <Button onClick={saveCurrentAsRequest} className="gap-2 bg-primary text-primary-foreground hover:bg-primary/90">
+            <Button variant="outline" onClick={() => setShowSaveDialog(false)} aria-label="Prekliči shranjevanje iskanja">Prekliči</Button>
+            <Button onClick={saveCurrentAsRequest} className="gap-2 bg-primary text-primary-foreground hover:bg-primary/90" aria-label="Shrani trenutno iskanje">
               <Save className="w-3.5 h-3.5" /> Shrani
             </Button>
           </DialogFooter>
@@ -692,7 +692,7 @@ export function IskalnikView() {
             <p className="text-sm text-muted-foreground text-center py-8">Napaka pri nalaganju primerjave.</p>
           )}
           <DialogFooter>
-            <Button variant="outline" onClick={() => setShowCompare(false)}>Zapri</Button>
+            <Button variant="outline" onClick={() => setShowCompare(false)} aria-label="Zapri primerjavo oglasov">Zapri</Button>
           </DialogFooter>
         </DialogContent>
       </Dialog>

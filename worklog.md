@@ -21126,3 +21126,50 @@ Stage Summary:
 - Verzija: v9.18.0
 - Skupaj (v7.50 → v9.18): 168 verzij, 290 novih funkcij
 - ACCESSIBILITY: Screen reader uporabniki sedaj razumejo kaj vsak filter chip in bulk akcijski gumb dela. Vsi aria-labeli so v slovenščini z deskriptivnim kontekstom.
+
+---
+Task ID: v9.19
+Agent: main
+Task: Nadaljnji accessibility audit — 17 ARIA labelov na monitors, listings, iskalnik
+
+Work Log:
+- Code-level accessibility audit treh view-jev: monitors (15 gumbov brez aria), listings (28 gumbov brez aria), iskalnik (10 gumbov brez aria).
+- Korak 1: monitors-view.tsx — dodal 5 aria-labelov:
+  * "Zaženi {N} izbranih monitorjev" (batch run)
+  * "Počisti izbiro vseh monitorjev" (clear selection)
+  * "Prikaži vse monitorje brez filtra" (tag filter all)
+  * "Filtriraj monitorje po tag: {tag}" (tag filter chips)
+  * "Reaktiviraj monitor: {name}" (auto-paused reaktivacija)
+- Korak 2: listings-view.tsx — dodal 7 aria-labelov:
+  * "Zapri prikaz anomalij" (× close)
+  * "Zapri prikaz podvojenih oglasov" (× close)
+  * "Zapri prikaz skupnih nakupov" (× close)
+  * "Počisti vse filtre" (clear filters)
+  * "Zaznamuj izbrane oglase" (bulk bookmark)
+  * "Označi izbrane oglase kot kontaktirane" (bulk contact)
+  * "Skrij izbrane oglase" (bulk hide)
+- Korak 3: iskalnik-view.tsx — dodal 5 aria-labelov:
+  * "Počisti izbiro vseh oglasov" (clear selection)
+  * "Primerjaj izbrane oglase" (run compare)
+  * "Prekliči shranjevanje iskanja" (save dialog cancel)
+  * "Shrani trenutno iskanje" (save search)
+  * "Zapri primerjavo oglasov" (compare dialog close)
+- Skupaj: 17 novih ARIA labelov v tej iteraciji.
+- Preveril lint: 0 napak, 0 warnings ✨
+- Preveril typecheck: 0 napak ✨
+
+Stage Summary:
+- MODIFIED: src/components/dashboard/monitors-view.tsx (+5 aria-label)
+- MODIFIED: src/components/dashboard/listings-view.tsx (+7 aria-label)
+- MODIFIED: src/components/dashboard/iskalnik-view.tsx (+5 aria-label)
+- MODIFIED: src/lib/version.ts (v9.18.0→v9.19.0)
+- MODIFIED: README.md (badge v9.19.0)
+- Verzija: v9.19.0
+- Skupaj (v7.50 → v9.19): 169 verzij, 291 novih funkcij
+- ACCESSIBILITY SKUPNO (v8.93 + v9.18 + v9.19):
+  * IskalnikView: 9 aria-label (v8.93: 4, v9.19: 5)
+  * DashboardView: 6 aria-label (v9.18)
+  * AlertsView: 6 aria-label (v9.18)
+  * ListingsView: 7 aria-label (v9.19)
+  * MonitorsView: 5 aria-label (v9.19)
+  * SKUPAJ: 33 aria-labelov na ključnih interaktivnih elementih

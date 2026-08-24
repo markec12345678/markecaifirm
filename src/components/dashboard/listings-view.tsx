@@ -476,7 +476,7 @@ export function ListingsView() {
                 AI Anomaly Scan — {anomalies.filter(a => a.anomalyScore >= 50).length} sumljivih od {anomalies.length}
                 <Badge variant="outline" className="text-[10px] text-amber-400 border-amber-400/40">v5.6</Badge>
               </h3>
-              <Button size="sm" variant="ghost" onClick={() => setAnomalies([])} className="h-6 text-xs">×</Button>
+              <Button size="sm" variant="ghost" onClick={() => setAnomalies([])} aria-label="Zapri prikaz anomalij" className="h-6 text-xs">×</Button>
             </div>
             <div className="space-y-1.5 max-h-80 overflow-y-auto">
               {anomalies.filter(a => a.anomalyScore >= 30).sort((a, b) => b.anomalyScore - a.anomalyScore).map((a, i) => (
@@ -554,7 +554,7 @@ export function ListingsView() {
                 >
                   Skrij vse duplikate
                 </Button>
-                <Button size="sm" variant="ghost" onClick={() => setDuplicates([])} className="h-6 text-xs">×</Button>
+                <Button size="sm" variant="ghost" onClick={() => setDuplicates([])} aria-label="Zapri prikaz podvojenih oglasov" className="h-6 text-xs">×</Button>
               </div>
             </div>
             <div className="space-y-2 max-h-80 overflow-y-auto">
@@ -598,7 +598,7 @@ export function ListingsView() {
                 Bulk Buy priložnosti — {bulkBuyData.bulkOpportunities} prodajalcev, {bulkBuyData.totalPotentialSavings}€ prihranka
                 <Badge variant="outline" className="text-[10px] text-green-400 border-green-400/40">v6.5</Badge>
               </h3>
-              <Button size="sm" variant="ghost" onClick={() => setBulkBuyData(null)} className="h-6 text-xs">×</Button>
+              <Button size="sm" variant="ghost" onClick={() => setBulkBuyData(null)} aria-label="Zapri prikaz skupnih nakupov" className="h-6 text-xs">×</Button>
             </div>
             <div className="space-y-2 max-h-80 overflow-y-auto">
               {bulkBuyData.opportunities.map((opp: any, i: number) => (
@@ -819,7 +819,7 @@ export function ListingsView() {
               Samo priljubljeni
             </Button>
             {(monitorId !== 'all' || verdict !== 'all' || minScore || maxRisk || hasImage || bookmarkedOnly || contactFilter !== 'all') && (
-              <Button size="sm" variant="ghost" onClick={() => { setMonitorId('all'); setVerdict('all'); setMinScore(''); setMaxRisk(''); setHasImage(false); setBookmarkedOnly(false); setContactFilter('all'); }} className="h-7 text-xs">
+              <Button size="sm" variant="ghost" onClick={() => { setMonitorId('all'); setVerdict('all'); setMinScore(''); setMaxRisk(''); setHasImage(false); setBookmarkedOnly(false); setContactFilter('all'); }} aria-label="Počisti vse filtre" className="h-7 text-xs">
                 Počisti filtre
               </Button>
             )}
@@ -923,13 +923,13 @@ export function ListingsView() {
           <CardContent className="p-3">
             <div className="flex flex-wrap items-center gap-2">
               <span className="text-sm font-medium text-primary">{bulkIds.size} izbranih</span>
-              <Button size="sm" variant="outline" onClick={() => bulkAction('bookmark')} disabled={bulkLoading} className="gap-1.5 text-xs h-7">
+              <Button size="sm" variant="outline" onClick={() => bulkAction('bookmark')} disabled={bulkLoading} aria-label="Zaznamuj izbrane oglase" className="gap-1.5 text-xs h-7">
                 <Bookmark className="w-3 h-3" /> Priljubljeni
               </Button>
-              <Button size="sm" variant="outline" onClick={() => bulkAction('contact')} disabled={bulkLoading} className="gap-1.5 text-xs h-7">
+              <Button size="sm" variant="outline" onClick={() => bulkAction('contact')} disabled={bulkLoading} aria-label="Označi izbrane oglase kot kontaktirane" className="gap-1.5 text-xs h-7">
                 📞 Kontaktiran
               </Button>
-              <Button size="sm" variant="outline" onClick={() => bulkAction('hide')} disabled={bulkLoading} className="gap-1.5 text-xs h-7">
+              <Button size="sm" variant="outline" onClick={() => bulkAction('hide')} disabled={bulkLoading} aria-label="Skrij izbrane oglase" className="gap-1.5 text-xs h-7">
                 <EyeOff className="w-3 h-3" /> Skrij
               </Button>
               <Button size="sm" variant="outline" onClick={() => bulkAction('delete')} disabled={bulkLoading} className="gap-1.5 text-xs h-7 text-destructive">

@@ -283,11 +283,11 @@ export function MonitorsView() {
           <CardContent className="p-3">
             <div className="flex items-center gap-2 flex-wrap">
               <span className="text-sm font-medium text-primary">{selectedIds.size} izbranih</span>
-              <Button size="sm" onClick={batchRun} disabled={batchRunning} className="gap-2 bg-primary text-primary-foreground hover:bg-primary/90 h-7">
+              <Button size="sm" onClick={batchRun} disabled={batchRunning} aria-label={`Zaženi ${selectedIds.size} izbranih monitorjev`} className="gap-2 bg-primary text-primary-foreground hover:bg-primary/90 h-7">
                 {batchRunning ? <RefreshCw className="w-3.5 h-3.5 animate-spin" /> : <Play className="w-3.5 h-3.5" />}
                 Zaženi izbrane ({selectedIds.size})
               </Button>
-              <Button size="sm" variant="ghost" onClick={() => setSelectedIds(new Set())} className="h-7 text-xs">
+              <Button size="sm" variant="ghost" onClick={() => setSelectedIds(new Set())} aria-label="Počisti izbiro vseh monitorjev" className="h-7 text-xs">
                 Počisti
               </Button>
             </div>
@@ -327,6 +327,7 @@ export function MonitorsView() {
               </span>
               <button
                 onClick={() => setActiveTag('all')}
+                aria-label="Prikaži vse monitorje brez filtra"
                 className={cn(
                   'px-2 py-0.5 rounded-full text-[11px] border transition-colors',
                   activeTag === 'all'
@@ -379,6 +380,7 @@ export function MonitorsView() {
                         <button
                           key={tag}
                           onClick={() => setActiveTag(tag)}
+                          aria-label={`Filtriraj monitorje po tag: ${tag}`}
                           className={cn(
                             'text-[10px] px-1.5 py-0.5 rounded-full border transition-colors',
                             activeTag === tag
@@ -468,6 +470,7 @@ export function MonitorsView() {
                       Auto-paused {formatTimeAgo(m.autoPausedAt)} po {m.consecutiveErrors} zaporednih napakah.
                       <button
                         onClick={(e) => { e.stopPropagation(); toggleActive(m); }}
+                        aria-label={`Reaktiviraj monitor: ${m.name}`}
                         className="ml-1 underline hover:text-amber-300"
                       >
                         Reaktiviraj
