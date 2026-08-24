@@ -49,6 +49,11 @@ jobs:
       - name: Run TypeScript check
         run: bun run typecheck
 
+      - name: Run unit tests
+        run: bun run test
+        env:
+          DATABASE_URL: "file:./dev.db"
+
       - name: Build check
         run: bun run build
         env:

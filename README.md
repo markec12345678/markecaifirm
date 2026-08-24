@@ -1,6 +1,6 @@
 # Markec AI Firm — AI Trading Firm za slovenske oglase
 
-[![Version](https://img.shields.io/badge/version-v9.36.0-blue.svg)](./CHANGELOG.md)
+[![Version](https://img.shields.io/badge/version-v9.37.0-blue.svg)](./CHANGELOG.md)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](./LICENSE)
 [![GitHub Stars](https://img.shields.io/github/stars/markec12345678/markecaifirm?style=social)](https://github.com/markec12345678/markecaifirm/stargazers)
 [![AI Endpoints](https://img.shields.io/badge/AI%20endpoints-432-green.svg)](./AI_ENDPOINTS.md)
@@ -8,7 +8,7 @@
 [![Next.js](https://img.shields.io/badge/Next.js-16-black.svg)](https://nextjs.org/)
 [![TypeScript](https://img.shields.io/badge/TypeScript-5-blue.svg)](https://www.typescriptlang.org/)
 [![TypeScript Errors](https://img.shields.io/badge/TS%20errors-0-brightgreen.svg)](#)
-[![Vulnerabilities](https://img.shields.io/badge/vulns-1-brightgreen.svg)](#)
+[![Vulnerabilities](https://img.shields.io/badge/vulns-0-brightgreen.svg)](#)
 [![Tests](https://img.shields.io/badge/tests-158-brightgreen.svg)](#)
 [![Prisma](https://img.shields.io/badge/Prisma-6-indigo.svg)](https://www.prisma.io/)
 [![Modules](https://img.shields.io/badge/modules-193-blue.svg)](#️-v9x--architecture--quality-v894v923)
