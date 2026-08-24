@@ -37,6 +37,13 @@ export interface Stats {
   }>;
 }
 
+// v9.51: Extended ViewProps to support full View union (PinnedKpiRow navigates to ai-hub for Win Rate).
+export type DashboardView =
+  | 'dashboard' | 'monitors' | 'alerts' | 'listings' | 'trades'
+  | 'analytics' | 'health' | 'notifications' | 'settings'
+  | 'watchlist' | 'statistics' | 'buyers' | 'ai-hub'
+  | 'inventory' | 'pricing' | 'listing-opt' | 'risk' | 'iskalnik';
+
 export interface ViewProps {
-  onNavigate: (v: 'dashboard' | 'monitors' | 'alerts' | 'listings' | 'trades' | 'analytics' | 'health' | 'notifications' | 'settings') => void;
+  onNavigate: (v: DashboardView) => void;
 }

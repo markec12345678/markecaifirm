@@ -51,6 +51,8 @@ import { StatusDot } from './dashboard/status-dot';
 import { ActivityFeed } from './dashboard/activity-feed';
 import { SkladisceWidget } from './dashboard/skladisce-widget';
 import { WidgetWrapper } from './dashboard/widget-wrapper';
+// v9.51: Pinned KPI Row — 4 ključne metrike na vrhu Pregled tab-a
+import { PinnedKpiRow } from './pinned-kpi-row';
 
 export function DashboardView({ onNavigate }: ViewProps) {
   const [stats, setStats] = useState<Stats | null>(null);
@@ -349,6 +351,17 @@ export function DashboardView({ onNavigate }: ViewProps) {
           ──────────────────────────────────────────────────────────────────── */}
       {dashboardTab === 'pregled' && (
         <>
+          {/* v9.51: PINNED KPI ROW — 4 ključne metrike na vrhu (stanje v 3 sekundah)
+              💰 Profit | 🚨 Alerti | 🎯 Cilj | 📊 Win Rate
+              Subtilne barve, klikljivi za navigacijo. */}
+          {stats && (
+            <PinnedKpiRow
+              onNavigate={onNavigate}
+              unreadAlerts={stats.unreadAlerts}
+              totalAlerts={stats.totalAlerts}
+            />
+          )}
+
           {/* v4.0: Danes summary card */}
           {stats.today && (
             <Card className="bg-card/50 border-primary/20">

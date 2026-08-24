@@ -22183,3 +22183,70 @@ Stage Summary:
   * Nov uporabnik privzeto vidi Pregled (najbolj pomembno)
   * Power user z 1 klikom dostopa do Analitike/Trgovin/AI
   * Skupaj z v9.49 (6 elementov v nav + 4 tabi v dashboard) = 10 elementov namesto 48
+
+---
+Task ID: v9.51
+Agent: main
+Task: Pinned KPI Row — 4 ključne metrike na vrhu Pregled tab-a (po predlogu uporabnika)
+
+Work Log:
+- Uporabnik predlagal Pinned KPI Row z 4 KPI-ji (Profit, Alerti, Cilj, Win Rate) na vrhu Dashboard-a.
+- Navdih: Sellerboard Tiles + Linear glanceable dashboard.
+- Cilj: "Tukaj je stanje sistema v 3 sekundah" namesto "tukaj je 10 stvari, ki jih lahko narediš".
+- Raziščil API-je za podatke:
+  * /api/trades/dashboard → totalRealizedProfit (973€) + thisMonthProfit + lastMonthProfit + trend (MoM)
+  * /api/trades/goal-tracker → goal.goalPct (104%) + goal.monthlyGoal (500€) + current.realizedProfit (521€)
+  * /api/stats → unreadAlerts + totalAlerts (prej iz parent state)
+  * /api/trades?status=sold → za izračun win rate (profitable / total)
+- Ustvaril src/components/dashboard/pinned-kpi-row.tsx:
+  * 4 KpiCard komponente z subtilnimi barvami (emerald/amber/primary/sky, nizka saturacija)
+  * Glavna številka (2xl/3xl font-mono) + sekundarni signal (11px)
+  * Loading skeleton z animate-pulse (ne skače layout)
+  * Auto-refresh vsakih 60s
+  * Promise.all za parallel fetch (4 API klici hkrati)
+  * Klikljivi — navigacijski control layer:
+    - Profit → Trgovine
+    - Alerti → Alerti (Sistem drawer)
+    - Cilj → Trgovine (Goal Tracker)
+    - Win Rate → AI Hub (Decision Accuracy)
+  * Aria labels za screen readers
+  * Focus ring za keyboard accessibility
+  * Hover efekt (border + bg)
+  * TrendPill komponenta: ↑ zelen / ↓ rdec / → siv
+- Posodobil src/components/dashboard/dashboard/types.ts:
+  * Razširil ViewProps.onNavigate z DashboardView union (vsi 18 view-ov)
+  * Prej: omejeno na 9 view-ov; zdaj: polna podpora za navigacijo
+- Integriral v dashboard-view.tsx:
+  * PinnedKpiRow na vrhu Pregled tab-a (nad Danes card)
+  * Pre-fetch alerti iz parent state (avoid duplicate fetch)
+- Preveril lint: 0 napak ✨
+- Preveril typecheck: 0 napak ✨
+- Verifikacija (Agent Browser):
+  * Pinned KPI Row prikazan z 4 karticami ✓
+  * Profit: +€973, ↑15% vs prejšnji mesec ✓
+  * Alerti: 0 neprebranih · 0 skupaj ✓
+  * Cilj: 104% · €521 / €500 ✓
+  * Win rate: 95% · 18/19 dobičkonosnih ✓
+  * Klik na Profit KPI → navigira v Skladišče (Trades) ✓
+  * Footer: v9.51.0 ✓
+  * Screenshot: download/pinned-kpi-v9.51.png
+  * VLM analiza: "KPI kartice so vidne in profesionalno oblikovane. Barve so subtilne in uravnotežene. Izgleda kot kvalitetni terminalski vmesnik."
+
+Stage Summary:
+- NEW: src/components/dashboard/pinned-kpi-row.tsx (4 KPI kartice z navigacijo)
+- MODIFIED: src/components/dashboard/dashboard/types.ts (ViewProps razširjen z DashboardView union)
+- MODIFIED: src/components/dashboard/dashboard-view.tsx (PinnedKpiRow na vrhu Pregled tab)
+- MODIFIED: src/lib/version.ts (v9.50→v9.51)
+- MODIFIED: README.md (badge v9.51)
+- Verzija: v9.51.0
+- Skupaj (v7.50 → v9.51): 197 verzij, 318 novih funkcij
+- UX IZBOLJŠAVA (po predlogu uporabnika):
+  * Prej (v9.50): ~10 widgetov na Pregled, uporabnik sam ugotavlja kaj je pomembno
+  * Zdaj  (v9.51): 4 KPI kartice na vrhu — "stanje v 3 sekundah"
+  * KPI-ji so klikljivi — navigacijski control layer, ne samo dekoracija
+  * Subtilne barve (ne agresivne) — emerald/amber/primary/sky z nizko saturacijo
+  * VLM potrjeno: "profesionalno oblikovane, subtilne barve"
+- Naslednji koraki po roadmap-u uporabnika:
+  * v9.52 — Professional Theme (subtilnejše barve kot opcija)
+  * v9.53 — Sidebar Toggle (večja sprememba, testirati na power-userjih)
+  * v9.54 — Keyboard-first expansion (g d, g t, g l, /, ?)
