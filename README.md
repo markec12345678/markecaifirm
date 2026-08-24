@@ -11,7 +11,9 @@
 [![Vulnerabilities](https://img.shields.io/badge/vulns-0-brightgreen.svg)](#)
 [![Tests](https://img.shields.io/badge/tests-129-brightgreen.svg)](#)
 [![Prisma](https://img.shields.io/badge/Prisma-6-indigo.svg)](https://www.prisma.io/)
+[![Modules](https://img.shields.io/badge/modules-193-blue.svg)](#️-v9x--architecture--quality-v894v923)
 [![Local-First](https://img.shields.io/badge/local-first-purple.svg)](#-local-first--zero-cloud)
+[![Accessibility](https://img.shields.io/badge/a11y-44%20ARIA-brightgreen.svg)](#accessibility-audit-v918v920)
 [![PRs Welcome](https://img.shields.io/badge/PRs-welcome-brightgreen.svg)](./CONTRIBUTING.md)
 
 <div align="center">
