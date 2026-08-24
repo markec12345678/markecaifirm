@@ -21499,3 +21499,37 @@ Stage Summary:
 - Verzija: v9.28.0
 - Skupaj (v7.50 → v9.28): 178 verzij, 300 novih funkcij
 - TEST PASS RATE: 100% (158/158) 🎉
+
+---
+Task ID: v9.29
+Agent: main
+Task: Architecture documentation + popolna sinhronizacija
+
+Work Log:
+- POPOLNA SINHRONIZACIJA: Local = Remote = 3f77f02, 0 diffs, working tree clean
+- CHANGELOG posodobljen z v9.27 in v9.28 vnosi
+- README stats posodobljen (158 testov, 100% pass)
+- Ustvaril ARCHITECTURE.md — celovita arhitekturna dokumentacija:
+  * Direktorij struktura (17 direktorijev, 193 modulov)
+  * Načela (tanek orchestrator, samostojni moduli, shared types/utils, React.memo)
+  * Statistika (vrstice, moduli, testi, ARIA, CI/CD)
+  * Ekstrakcijski vzorec (korak-po-korak)
+  * Testiranje (158 testov v 6 kategorijah)
+  * CI/CD (3 workflow-i)
+  * Seed data (bun run seed-all)
+  * Accessibility (44 ARIA labelov)
+- Preveril lint: 0 napak ✨
+- Preveril typecheck: 0 napak ✨
+- Preveril testi: 158/158 passing (100%) ✨
+
+Stage Summary:
+- NEW: ARCHITECTURE.md (celovita arhitekturna dokumentacija)
+- MODIFIED: src/lib/version.ts (v9.28.0→v9.29.0)
+- MODIFIED: README.md (badge v9.29.0)
+- Verzija: v9.29.0
+- Skupaj (v7.50 → v9.29): 179 verzij, 301 novih funkcij
+- DOKUMENTACIJA POPOLNA:
+  * README.md — 15 badge-ov, v9.x sekcija, stats
+  * CHANGELOG.md — 14 vnosov (v8.94-v9.28)
+  * ARCHITECTURE.md — arhitektura, načela, statistika
+  * worklog.md — vsi Task ID-ji
