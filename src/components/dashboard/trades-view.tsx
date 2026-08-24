@@ -857,6 +857,7 @@ export function TradesView() {
             size="sm"
             variant={filter === f ? 'default' : 'outline'}
             onClick={() => setFilter(f)}
+            aria-label={`Filtriraj trgovine po status: ${f === 'all' ? 'vsi' : f === 'held' ? 'v skladišču' : f === 'sold' ? 'prodani' : 'preklicani'}`}
             className={cn('h-7 text-xs uppercase', filter === f && 'bg-primary text-primary-foreground')}
           >
             {f === 'all' ? 'Vsi' : f === 'held' ? 'V skladišču' : f === 'sold' ? 'Prodani' : 'Preklicani'}
@@ -872,6 +873,7 @@ export function TradesView() {
             <button
               key={v.name}
               onClick={() => applyView(v)}
+              aria-label={`Uporabi shranjeni pogled: ${v.name}`}
               className={cn(
                 'h-7 px-2.5 text-xs rounded border transition-colors flex items-center gap-1',
                 activeViewName === v.name && !isDirty
@@ -902,6 +904,7 @@ export function TradesView() {
           {!showSaveViewInput ? (
             <button
               onClick={() => setShowSaveViewInput(true)}
+              aria-label="Shrani trenutne filtre kot nov pogled"
               className="h-7 px-2.5 text-xs rounded border border-dashed border-border text-muted-foreground hover:border-primary/40 hover:text-primary transition-colors"
               title="Shrani trenutne filtre kot pogled"
             >
@@ -920,10 +923,10 @@ export function TradesView() {
                 }}
                 className="h-7 w-32 text-xs"
               />
-              <Button size="sm" onClick={saveCurrentAsView} className="h-7 px-2 text-xs bg-primary text-primary-foreground hover:bg-primary/90">
+              <Button size="sm" onClick={saveCurrentAsView} aria-label="Shrani pogled z vnesenim imenom" className="h-7 px-2 text-xs bg-primary text-primary-foreground hover:bg-primary/90">
                 ✓
               </Button>
-              <Button size="sm" variant="ghost" onClick={() => { setShowSaveViewInput(false); setNewViewName(''); }} className="h-7 px-2 text-xs">
+              <Button size="sm" variant="ghost" onClick={() => { setShowSaveViewInput(false); setNewViewName(''); }} aria-label="Prekliči shranjevanje pogleda" className="h-7 px-2 text-xs">
                 ✕
               </Button>
             </div>
@@ -1133,17 +1136,17 @@ export function TradesView() {
                     placeholder="Prodajna cena (€)"
                     className="h-7 w-32 text-xs font-mono"
                   />
-                  <Button size="sm" className="h-7 text-xs gap-1" onClick={bulkSell} disabled={bulkTradeLoading}>
+                  <Button size="sm" className="h-7 text-xs gap-1" onClick={bulkSell} disabled={bulkTradeLoading} aria-label="Prodaj vse izbrane trgovine">
                     {bulkTradeLoading ? <RefreshCw className="w-3 h-3 animate-spin" /> : <TrendingUp className="w-3 h-3" />}
                     Prodaj vse
                   </Button>
-                  <Button size="sm" variant="outline" className="h-7 text-xs gap-1" onClick={bulkCategorize} disabled={bulkTradeLoading}>
+                  <Button size="sm" variant="outline" className="h-7 text-xs gap-1" onClick={bulkCategorize} disabled={bulkTradeLoading} aria-label="Kategoriziraj izbrane trgovine">
                     <Tag className="w-3 h-3" /> Kategoriziraj
                   </Button>
-                  <Button size="sm" variant="outline" className="h-7 text-xs gap-1 text-red-500" onClick={bulkDelete} disabled={bulkTradeLoading}>
+                  <Button size="sm" variant="outline" className="h-7 text-xs gap-1 text-red-500" onClick={bulkDelete} disabled={bulkTradeLoading} aria-label="Izbriši izbrane trgovine">
                     <Trash2 className="w-3 h-3" /> Izbriši
                   </Button>
-                  <Button size="sm" variant="ghost" className="h-7 text-xs" onClick={() => setBulkTradeIds(new Set())}>
+                  <Button size="sm" variant="ghost" className="h-7 text-xs" onClick={() => setBulkTradeIds(new Set())} aria-label="Počisti izbiro vseh trgovin">
                     Počisti
                   </Button>
                 </div>

@@ -21173,3 +21173,41 @@ Stage Summary:
   * ListingsView: 7 aria-label (v9.19)
   * MonitorsView: 5 aria-label (v9.19)
   * SKUPAJ: 33 aria-labelov na ključnih interaktivnih elementih
+
+---
+Task ID: v9.20
+Agent: main
+Task: Accessibility audit zaključek — 11 ARIA labelov na trades, statistics, settings
+
+Work Log:
+- Korak 1: trades-view.tsx — dodal 9 aria-labelov:
+  * Filter buttons (all/held/sold/cancelled) z dinamičnim opisom statusa
+  * Saved view apply buttons z imenom pogleda
+  * "+ Shrani pogled" gumb
+  * Save/cancel view input gumba
+  * Bulk actions: Prodaj vse, Kategoriziraj, Izbriši, Počisti
+- Korak 2: statistics-view.tsx — dodal 1 aria-label na "Osveži" gumb
+- Korak 3: settings-view.tsx — dodal 1 aria-label na "Shrani" gumb
+- Skupaj: 11 novih ARIA labelov v tej iteraciji.
+- Preveril lint: 0 napak, 0 warnings ✨
+- Preveril typecheck: 0 napak ✨
+
+Stage Summary:
+- MODIFIED: src/components/dashboard/trades-view.tsx (+9 aria-label)
+- MODIFIED: src/components/dashboard/statistics-view.tsx (+1 aria-label)
+- MODIFIED: src/components/dashboard/settings-view.tsx (+1 aria-label)
+- MODIFIED: src/lib/version.ts (v9.19.0→v9.20.0)
+- MODIFIED: README.md (badge v9.20.0)
+- Verzija: v9.20.0
+- Skupaj (v7.50 → v9.20): 170 verzij, 292 novih funkcij
+- ACCESSIBILITY KONČANO — SKUPNI PREGLED (v8.93+v9.18+v9.19+v9.20):
+  * IskalnikView:    9 aria-label
+  * TradesView:      9 aria-label
+  * DashboardView:   6 aria-label
+  * AlertsView:      6 aria-label
+  * ListingsView:    7 aria-label
+  * MonitorsView:    5 aria-label
+  * StatisticsView:  1 aria-label
+  * SettingsView:    1 aria-label
+  * SKUPAJ:         44 aria-labelov na ključnih interaktivnih elementih v 8 view-jih
+  * Vsi aria-labeli v slovenščini z deskriptivnim kontekstom

@@ -497,7 +497,7 @@ export function SettingsView() {
             AI provider, Telegram, thresholdi za alerte.
           </p>
         </div>
-        <Button onClick={save} disabled={saving} className="gap-2 bg-primary text-primary-foreground hover:bg-primary/90">
+        <Button onClick={save} disabled={saving} aria-label="Shrani vse nastavitve" className="gap-2 bg-primary text-primary-foreground hover:bg-primary/90">
           {saving ? <RefreshCw className="w-3.5 h-3.5 animate-spin" /> : <Save className="w-3.5 h-3.5" />}
           Shrani
         </Button>

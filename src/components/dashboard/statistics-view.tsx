@@ -150,7 +150,7 @@ export function StatisticsView() {
             Globoka analitika: P&L, konverzije, AI natančnost, uspešnost monitorjev.
           </p>
         </div>
-        <Button variant="outline" size="sm" onClick={load} className="gap-2">
+        <Button variant="outline" size="sm" onClick={load} aria-label="Osveži statistike" className="gap-2">
           <RefreshCw className="w-3.5 h-3.5" />
           Osveži
         </Button>
