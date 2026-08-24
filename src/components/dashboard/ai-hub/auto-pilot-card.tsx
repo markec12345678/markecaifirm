@@ -142,7 +142,7 @@ export function AutoPilotCard() {
       });
       const json = (await res.json()) as AutoPilotRunResponse;
       if (!res.ok || !json?.ok) {
-        throw new Error((json as any)?.error ?? `HTTP ${res.status}`);
+        throw new Error(((json as unknown) as Record<string, unknown>)?.error as string ?? `HTTP ${res.status}`);
       }
       const executedMsg =
         json.autoExecuted > 0
@@ -171,14 +171,14 @@ export function AutoPilotCard() {
       // we filter client-side. This is intentional — reuses the existing
       // drafts endpoint without adding a new one. (The auto-pilot/rollback
       // route is the only auto-pilot-specific fetch besides GET/POST main.)
-      const json = (await res.json()) as any;
+      const json = await res.json() as Record<string, unknown>;
       if (!res.ok || !json?.ok) throw new Error(`HTTP ${res.status}`);
       // Filter: only drafts where autoExecuted=true (v8.30 field).
       // The drafts endpoint returns DraftRow[] which may not include the
       // autoExecuted field — we accept both shapes (autoExecuted may be
       // missing → we treat undefined as false, which is fine since
       // pre-v8.30 drafts are never auto-executed).
-      const auto = (json.drafts as any[]).filter((d) => d.autoExecuted === true);
+      const auto = ((json.drafts as unknown as AutoPilotHistoryDraft[]) ?? []).filter((d) => d.autoExecuted === true);
       setHistory(auto as AutoPilotHistoryDraft[]);
     } catch (e: unknown) {
       // Fallback: show empty history with error toast
@@ -235,7 +235,7 @@ export function AutoPilotCard() {
       });
       const json = (await res.json()) as EnableAggressiveResponse;
       if (!res.ok || !json?.ok) {
-        throw new Error((json as any)?.error ?? `HTTP ${res.status}`);
+        throw new Error(((json as unknown) as Record<string, unknown>)?.error as string ?? `HTTP ${res.status}`);
       }
       setAggressiveMsg(json.message);
       if (json.confirmed) {
@@ -267,7 +267,7 @@ export function AutoPilotCard() {
       });
       const json = (await res.json()) as DisableAggressiveResponse;
       if (!res.ok || !json?.ok) {
-        throw new Error((json as any)?.error ?? `HTTP ${res.status}`);
+        throw new Error(((json as unknown) as Record<string, unknown>)?.error as string ?? `HTTP ${res.status}`);
       }
       toast.success('🛡️ Aggressive mode izklopljen — vrnjen v safe mode (LOW risk only)');
       setAggressivePending(false);
@@ -290,7 +290,7 @@ export function AutoPilotCard() {
       });
       const json = (await res.json()) as ClearAnomalyResponse;
       if (!res.ok || !json?.ok) {
-        throw new Error((json as any)?.error ?? `HTTP ${res.status}`);
+        throw new Error(((json as unknown) as Record<string, unknown>)?.error as string ?? `HTTP ${res.status}`);
       }
       toast.success(json.message);
       await fetchStats();

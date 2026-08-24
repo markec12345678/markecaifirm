@@ -16,7 +16,7 @@ import { formatDuration, formatTimeAgo } from './utils';
 
 
 export function SkladisceWidget({ onNavigate }: { onNavigate: (v: any) => void }) {
-  const [data, setData] = useState<any>(null);
+  const [data, setData] = useState<Record<string, any> | null>(null);
   const [loading, setLoading] = useState(true);
 
   const load = useCallback(async () => {
@@ -43,7 +43,7 @@ export function SkladisceWidget({ onNavigate }: { onNavigate: (v: any) => void }
     return null; // Don't show widget if no trades yet
   }
 
-  const hasMonthlyData = data.monthlyPnl?.some((m: any) => m.count > 0);
+  const hasMonthlyData = data.monthlyPnl?.some((m: Record<string, any>) => m.count > 0);
 
   return (
     <Card className="bg-card/50">
@@ -106,7 +106,7 @@ export function SkladisceWidget({ onNavigate }: { onNavigate: (v: any) => void }
             </h4>
             <div className="flex items-end gap-1 h-20">
               {data.monthlyPnl.map((m: any, i: number) => {
-                const maxAbs = Math.max(...data.monthlyPnl.map((x: any) => Math.abs(x.profit)), 1);
+                const maxAbs = Math.max(...data.monthlyPnl.map((x: Record<string, any>) => Math.abs(x.profit)), 1);
                 const heightPct = Math.abs(m.profit) / maxAbs * 100;
                 const isPositive = m.profit >= 0;
                 return (
