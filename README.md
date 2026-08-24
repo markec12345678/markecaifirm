@@ -177,9 +177,9 @@ računalniku — brez cloud storitev, brez mesečnih naročnin, brez deljenja po
 Lovi podcenjene oglase na Bolhi/Facebooku/Vintedu z AI, jih kupi poceni, preprodaj drago z
 AI-optimiziranimi oglasi, in avtomatiziraj celoten workflow od odkritja do prodaje.
 
-### Verzija v9.26.0 (avgust 2026)
+### Verzija v9.28.0 (avgust 2026)
 
-**432 AI endpointov** + **84 analytics** + **18 cron automatizacij** + **11 Telegram ukazov** + **11 platform** + **193 modulov** + **3 CI/CD workflow-i** organiziranih v 18 zavihkov:
+**432 AI endpointov** + **84 analytics** + **18 cron automatizacij** + **11 Telegram ukazov** + **11 platform** + **193 modulov** + **3 CI/CD workflow-i** + **158 testov (100% pass)** organiziranih v 18 zavihkov:
 - **Statistike** (analytics, predictions, forecasting) — 35+ funkcij
 - **Skladišče** (inventory management, aging, depreciation) — 20+ funkcij
 - **Oglasi** (listing optimization, SEO, image analysis) — 25+ funkcij
