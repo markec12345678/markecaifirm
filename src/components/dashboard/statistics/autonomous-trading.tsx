@@ -29,7 +29,7 @@ export function AutonomousTrading() {
       </CardHeader>
       <CardContent className="space-y-3">
         <div className="flex gap-2 items-center">
-          <select value={tradeMode} onChange={(e) => setTradeMode(e.target.value as any)} className="h-7 text-xs bg-background border rounded px-2 flex-1">
+          <select value={tradeMode} onChange={(e) => setTradeMode(e.target.value as unknown as "paper" | "live")} className="h-7 text-xs bg-background border rounded px-2 flex-1">
             <option value="paper">📋 Paper (simulacija)</option>
             <option value="live">💰 Live (pravi denar)</option>
           </select>

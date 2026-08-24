@@ -30,7 +30,7 @@ export function PredictiveProcurement() {
       <CardContent className="space-y-3">
         <div className="flex gap-2 items-center">
           <Input type="number" placeholder="Budget (€)" value={procBudget} onChange={(e) => setProcBudget(e.target.value)} className="h-7 text-xs w-32" />
-          <select value={procRisk} onChange={(e) => setProcRisk(e.target.value as any)} className="h-7 text-xs bg-background border rounded px-2">
+          <select value={procRisk} onChange={(e) => setProcRisk(e.target.value as unknown as "low" | "medium" | "high")} className="h-7 text-xs bg-background border rounded px-2">
             <option value="low">🛡️ Low risk</option>
             <option value="medium">⚖️ Medium</option>
             <option value="high">🔥 High risk</option>

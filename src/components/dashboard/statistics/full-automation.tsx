@@ -27,7 +27,7 @@ export function FullAutomation() {
       </CardHeader>
       <CardContent className="space-y-3">
         <div className="flex gap-2 items-center">
-          <select value={autoMode} onChange={(e) => setAutoMode(e.target.value as any)} className="h-7 text-xs bg-background border rounded px-2 flex-1">
+          <select value={autoMode} onChange={(e) => setAutoMode(e.target.value as unknown as "advisory" | "semi_auto" | "full_auto")} className="h-7 text-xs bg-background border rounded px-2 flex-1">
             <option value="advisory">📋 Advisory (samo priporočila)</option>
             <option value="semi_auto">⚙️ Semi-auto (monitoring + alerti)</option>
             <option value="full_auto">🤖 Full-auto (avtomatski nakup + prodaja)</option>

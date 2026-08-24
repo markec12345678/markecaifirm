@@ -619,11 +619,11 @@ export function ListingDetailModal({ listingId, onClose }: { listingId: string |
                       <div className="text-primary font-bold mb-1">📊 Povzetek</div>
                       {(() => {
                         const valid = compareResults.filter(r => r.ok);
-                        const best = valid.reduce((a: Record<string, any>, b: any) =>
+                        const best = valid.reduce((a: Record<string, any>, b: Record<string, any>) =>
                           (a.evaluation.ocena_prilike - a.evaluation.ocena_tveganja) >
                           (b.evaluation.ocena_prilike - b.evaluation.ocena_tveganja) ? a : b
                         );
-                        const fastest = valid.reduce((a: Record<string, any>, b: any) => a.durationMs < b.durationMs ? a : b);
+                        const fastest = valid.reduce((a: Record<string, any>, b: Record<string, any>) => a.durationMs < b.durationMs ? a : b);
                         return (
                           <div className="space-y-0.5">
                             <div>🏆 <b>Najboljša ocena</b>: {best.label} (prilika {best.evaluation.ocena_prilike}/10, tveganje {best.evaluation.ocena_tveganja}/10)</div>
@@ -1280,7 +1280,7 @@ export function ListingDetailModal({ listingId, onClose }: { listingId: string |
                     <details className="text-[11px]">
                       <summary className="cursor-pointer hover:text-foreground text-muted-foreground">📋 Specifikacije ({Object.keys(enrichment.specs).length})</summary>
                       <div className="mt-1 grid grid-cols-2 gap-1">
-                        {Object.entries(enrichment.specs).map(([k, v]: any) => (
+                        {Object.entries(enrichment.specs).map(([k, v]: [string, unknown]) => (
                           <div key={k} className="bg-background/30 rounded px-2 py-0.5">
                             <span className="text-muted-foreground">{k}:</span> <span className="font-bold">{String(v)}</span>
                           </div>
@@ -1466,7 +1466,7 @@ export function ListingDetailModal({ listingId, onClose }: { listingId: string |
                 </div>
                 <div className="flex items-center gap-2 mb-2">
                   <Input type="number" value={roiSellPrice} onChange={(e) => setRoiSellPrice(e.target.value)} placeholder="Prodajna cena (€)" className="text-xs font-mono h-7 flex-1" />
-                  <select value={roiPlatform} onChange={(e) => setRoiPlatform(e.target.value as any)} className="bg-card border border-border rounded px-2 py-1 text-[10px]">
+                  <select value={roiPlatform} onChange={(e) => setRoiPlatform(e.target.value as unknown as "bolha" | "vinted" | "other")} className="bg-card border border-border rounded px-2 py-1 text-[10px]">
                     <option value="bolha">Bolha</option>
                     <option value="vinted">Vinted</option>
                     <option value="other">Drugo</option>

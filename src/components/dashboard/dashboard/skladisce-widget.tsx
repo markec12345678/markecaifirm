@@ -105,7 +105,7 @@ export function SkladisceWidget({ onNavigate }: { onNavigate: (v: any) => void }
               Dobiček po mesecih (zadnjih 12)
             </h4>
             <div className="flex items-end gap-1 h-20">
-              {data.monthlyPnl.map((m: any, i: number) => {
+              {data.monthlyPnl.map((m: Record<string, any>, i: number) => {
                 const maxAbs = Math.max(...data.monthlyPnl.map((x: Record<string, any>) => Math.abs(x.profit)), 1);
                 const heightPct = Math.abs(m.profit) / maxAbs * 100;
                 const isPositive = m.profit >= 0;
@@ -143,7 +143,7 @@ export function SkladisceWidget({ onNavigate }: { onNavigate: (v: any) => void }
               Top 3 najbolj dobičkonosne prodaje
             </h4>
             <div className="space-y-1">
-              {data.topTrades.slice(0, 3).map((t: any, i: number) => (
+              {data.topTrades.slice(0, 3).map((t: Record<string, any>, i: number) => (
                 <div key={t.id} className="flex items-center gap-2 p-1.5 bg-background/30 rounded text-xs">
                   <span className="text-[10px] font-mono text-muted-foreground">#{i + 1}</span>
                   <div className="flex-1 min-w-0">

@@ -77,7 +77,7 @@ export function AiSourcing() {
                   </div>
                   <div className="bg-background/40 rounded p-1.5 border">
                     <div className="text-muted-foreground uppercase">Priložnosti (14d)</div>
-                    <div className="font-bold">{sourcingData.stats.recentOpportunities?.reduce((s: number, r: any) => s + r.opportunities, 0) ?? 0}</div>
+                    <div className="font-bold">{sourcingData.stats.recentOpportunities?.reduce((s: number, r: Record<string, any>) => s + r.opportunities, 0) ?? 0}</div>
                   </div>
                 </div>
               )}

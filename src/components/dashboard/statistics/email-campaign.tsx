@@ -30,7 +30,7 @@ export function EmailCampaign() {
           <span className="text-[10px] text-muted-foreground shrink-0">Tip:</span>
           <select
             value={campaignType}
-            onChange={(e) => setCampaignType(e.target.value as any)}
+            onChange={(e) => setCampaignType(e.target.value as unknown as "win_back" | "new_buyers" | "bundle_offer" | "clearance" | "seasonal" | "newsletter")}
             className="h-7 text-xs bg-background border rounded px-2"
           >
             <option value="newsletter">📬 Newsletter</option>
