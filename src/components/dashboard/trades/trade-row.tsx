@@ -2,7 +2,7 @@
 
 // v8.99: TradeRow — extracted from trades-view.tsx.
 
-import { useState, useEffect, useCallback } from 'react';
+import { useState, useEffect, useCallback, memo } from 'react';
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
@@ -23,7 +23,7 @@ import { useHaptic } from '@/hooks/use-haptic';
 import { triggerGlobalRefresh } from '@/hooks/use-global-refresh';
 
 
-export function TradeRow({ trade, onEdit, onDelete, onSync, onExit, onTagClick, priority, priceHint, outcome }: {
+export const TradeRow = memo(function TradeRow({ trade, onEdit, onDelete, onSync, onExit, onTagClick, priority, priceHint, outcome }: {
   trade: Trade;
   onEdit: () => void;
   onDelete: () => void;
@@ -381,6 +381,6 @@ export function TradeRow({ trade, onEdit, onDelete, onSync, onExit, onTagClick, 
       </CardContent>
     </Card>
   );
-}
+})
 
 

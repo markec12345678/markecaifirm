@@ -2,7 +2,7 @@
 
 // v9.04: StatCard — extracted from dashboard-view.tsx.
 
-import { useEffect, useState, useCallback } from 'react';
+import { useEffect, useState, useCallback, memo } from 'react';
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
@@ -15,7 +15,7 @@ import type { Stats, ViewProps, WidgetId } from './types';
 import { formatDuration, formatTimeAgo } from './utils';
 
 
-export function StatCard({
+export const StatCard = memo(function StatCard({
   icon,
   label,
   value,
@@ -62,5 +62,5 @@ export function StatCard({
       </CardContent>
     </Card>
   );
-}
+})
 

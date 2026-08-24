@@ -2,7 +2,7 @@
 
 // v9.09: WatchlistItemCard — extracted from watchlist-view.tsx.
 
-import { useEffect, useState, useCallback } from 'react';
+import { useEffect, useState, useCallback, memo } from 'react';
 import { Card, CardContent } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
@@ -14,7 +14,7 @@ import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import type { WatchlistItem, View } from './types';
 
-export function WatchlistItemCard({
+export const WatchlistItemCard = memo(function WatchlistItemCard({
   item,
   onRemoveBookmark,
   onClearTarget,
@@ -233,6 +233,6 @@ export function WatchlistItemCard({
       </CardContent>
     </Card>
   );
-}
+})
 
 

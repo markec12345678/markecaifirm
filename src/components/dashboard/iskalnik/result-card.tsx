@@ -2,7 +2,7 @@
 
 // v9.06: ResultCard — extracted from iskalnik-view.tsx.
 
-import { useState, useCallback, useEffect } from 'react';
+import { useState, useCallback, useEffect, memo } from 'react';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
@@ -17,7 +17,7 @@ import { cn } from '@/lib/utils';
 import type { SearchResult } from './types';
 import { sourceIcon, sourceColor, timeAgo } from './utils';
 
-export function ResultCard({ result, rank, expanded, onToggle, selected, onToggleSelect }: { result: SearchResult; rank: number; expanded: boolean; onToggle: () => void; selected?: boolean; onToggleSelect?: () => void }) {
+export const ResultCard = memo(function ResultCard({ result, rank, expanded, onToggle, selected, onToggleSelect }: { result: SearchResult; rank: number; expanded: boolean; onToggle: () => void; selected?: boolean; onToggleSelect?: () => void }) {
   const verdictColor =
     result.aiVerdict === 'PRILIKA' ? 'border-primary/40 text-primary' :
     result.aiVerdict === 'SUMNJIVO' ? 'border-amber-400/40 text-amber-400' :
@@ -173,4 +173,4 @@ export function ResultCard({ result, rank, expanded, onToggle, selected, onToggl
     </Card>
   );
 
-}
+})

@@ -21322,3 +21322,40 @@ Stage Summary:
 - Verzija: v9.22.0
 - Skupaj (v7.50 → v9.22): 172 verzij, 294 novih funkcij
 - POPOLNA SINHRONIZACIJA: Vse commitano in pushano na GitHub.
+
+---
+Task ID: v9.23
+Agent: main
+Task: Performance optimization — React.memo na 4 ključne list komponente
+
+Work Log:
+- Performance audit: odkril 0 React.memo usages v celotni kodi — vse komponente se re-render-a na vsaki parent state change.
+- Dashboard auto-refresh vsakih 30s povzroča re-render VSEH child komponent — z memo samo spremenjene se re-render-a.
+- Korak 1: Dodal React.memo na 4 ključne list komponente:
+  * TradeRow (386 vrstic) — render-a za vsako trgovino v seznamu (25 trades = 25 re-renders namesto 25 na vsaki refresh)
+  * ResultCard (176 vrstic) — render-a za vsak iskalni rezultat
+  * WatchlistItemCard (238 vrstic) — render-a za vsak watchlist item
+  * StatCard (66 vrstic) — render-a za vsako stat kartico na dashboardu
+- Korak 2: Preveril console.log: 0 v production kodi (čisto) ✓
+- Korak 3: Preveril duplicate API calls: 0 ✓
+- Impact:
+  * Dashboard refresh (30s): prej re-render vseh 36 card-ov, zdaj samo spremenjene
+  * Trades view: prej re-render vseh 25 TradeRow, zdaj samo spremenjena
+  * Iskalnik: prej re-render vseh rezultatov, zdaj samo spremenjeni
+  * Watchlist: prej re-render vseh item-ov, zdaj samo spremenjeni
+- Preveril lint: 0 napak, 0 warnings ✨
+- Preveril typecheck: 0 napak ✨
+
+Stage Summary:
+- MODIFIED: src/components/dashboard/trades/trade-row.tsx (+memo)
+- MODIFIED: src/components/dashboard/iskalnik/result-card.tsx (+memo)
+- MODIFIED: src/components/dashboard/watchlist/watchlist-item-card.tsx (+memo)
+- MODIFIED: src/components/dashboard/dashboard/stat-card.tsx (+memo)
+- MODIFIED: src/lib/version.ts (v9.22.0→v9.23.0)
+- MODIFIED: README.md (badge v9.23.0)
+- Verzija: v9.23.0
+- Skupaj (v7.50 → v9.23): 173 verzij, 295 novih funkcij
+- PERFORMANCE OPTIMIZACIJA:
+  * 4 ključne list komponente memoizirane z React.memo
+  * Preprečuje nepotrebne re-render-e pri parent state changes
+  * Največji impact na dashboard (auto-refresh 30s) in trades view (25 list items)
