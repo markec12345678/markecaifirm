@@ -6,6 +6,149 @@ Format sledi [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), verzije s
 
 ## [Unreleased]
 
+---
+
+## [9.24.0] - 2026-08-24
+
+### 📄 README Sinhronizacija + Badges
+
+- **README.md** popolnoma posodobljen z v9.x spremembami:
+  - Nova "v9.x — Architecture & Quality" sekcijska z 7 podsekcijami
+  - Posodobljen version reference (v8.45 → v9.24)
+  - Posodobljen stats (432 AI, 84 analytics, 193 modulov, 18 zavihkov)
+  - 14 badge-ov (Modules: 193, Accessibility: 44 ARIA, itd.)
+- **Popolna GitHub sinhronizacija**: 134 commits, 0 diffs, Local = Remote
+
+---
+
+## [9.23.0] - 2026-08-24
+
+### ⚡ Performance Optimization — React.memo
+
+- **React.memo** dodan na 4 ključne list komponente:
+  - `TradeRow` (trades list — 25 items)
+  - `ResultCard` (iskalnik results)
+  - `WatchlistItemCard` (watchlist items)
+  - `StatCard` (dashboard stats)
+- Impact: Dashboard auto-refresh (30s) → re-render samo spremenjenih card-ov
+- Preprečuje nepotrebne re-render-e pri parent state changes
+
+---
+
+## [9.22.0] - 2026-08-24
+
+### 🌱 Comprehensive Seed Script
+
+- **`scripts/seed-all.ts`** — ena skripta za vse (idempotentna):
+  1. Seed 15 demo listings (8 elektronika + 7 avto)
+  2. Seed 25 demo trades (realistic Slovenian data)
+  3. Seed tags na vseh trades
+  4. Set monthly profit goal (500€)
+  5. Enable Web Push + generiraj VAPID ključe (P-256 ECDSA)
+  6. Aktiviraj demo monitor + cron simulacija (lastRunAt)
+- Usage: `bun run seed-all`
+- IDEMPOTENT — varno za večkratni zagon
+
+---
+
+## [9.21.0] - 2026-08-24
+
+### 🔍 SEO/Meta Tags Optimization
+
+- **Metadata** (layout.tsx): title template, 19 keywords, robots directive, canonical URL
+- **OpenGraph**: title, description, locale=sl_SI, siteName, images z alt
+- **Twitter Card**: summary z image
+- **JSON-LD Structured Data**: SoftwareApplication schema z 10 featurei + aggregateRating
+- **sitemap.xml**: 6 ključnih URL-jev
+- **robots.txt**: Allow /, Disallow /api/, Sitemap directive
+
+---
+
+## [9.18.0] - 2026-08-24
+
+### ♿ Accessibility Audit — 44 ARIA Labels
+
+- **44 ARIA labelov** dodanih na ključne interaktivne elemente v 8 view-jih:
+  - Dashboard: 6 (filter chips z dinamičnimi številkami)
+  - Alerts: 6 (bulk action gumbe)
+  - Monitors: 5 (batch run, tag filters, reaktivacija)
+  - Listings: 7 (close buttons, bulk actions, clear filters)
+  - Iskalnik: 9 (search, compare, save dialog)
+  - Trades: 9 (filter buttons, saved views, bulk actions)
+  - Statistics: 1 (refresh button)
+  - Settings: 1 (save button)
+- Vsi aria-labeli v slovenščini z deskriptivnim kontekstom
+
+---
+
+## [9.15.0] - 2026-08-24
+
+### 🌱 Demo Podatki + Setup 7/7
+
+- **25 demo trades** z realistic Slovenian trade history (4 vira, 5 kategorij)
+- **15 demo listings** (8 elektronika + 7 avto)
+- **25 tag assignments** na trades
+- **Monthly goal** 500€
+- **Setup 7/7 (100%)**: AI provider, monitor, cron, oglasi, trgovine, Web Push, cilj
+- **VAPID ključi** generirani (P-256 ECDSA)
+
+---
+
+## [9.10.0] - 2026-08-24
+
+### 🔧 Code Quality Audit
+
+- **0 lint napak**, 0 warnings, 0 TODO, 0 inline duplikatov
+- **66 duplikatov** odstranjenih iz ai-hub-view.tsx (v9.12)
+- **5 inline konstant** premaknjenih v shared utils (v9.14)
+- Vsa funkcionalnost ohranjena 1:1 — nobena logika spremenjena
+
+---
+
+## [9.00.0] - 2026-08-23
+
+### 🏗️ Modularizacija VSEH 16 View Datotek
+
+- **193 modulskih datotek** v 16 direktorijeh
+- **−67% vrstic** v view datotekah (28885 → 9524)
+- **16 view-jev modulariziranih**: settings, ai-hub, trades, listings, statistics, monitors, dashboard, analytics, iskalnik, watchlist, inventory, buyers, pricing, risk, alerts, listing-optimization
+- Vsaka view datoteka je sedaj tanek orchestrator ki import-a samostojne module
+- Vsa funkcionalnost ohranjena 1:1 — nobena logika spremenjena
+
+### Modularizacija breakdown:
+| Verzija | View | Original → Trenutno | Modulov |
+|---|---|---|---|
+| v8.95-v8.96 | settings | 3595 → 736 (−79%) | 13 |
+| v8.97-v8.98 | ai-hub | 8167 → 972 (−88%) | 25 |
+| v8.99, v9.07-v9.08 | trades | 4142 → 1215 (−71%) | 25 |
+| v9.00 | listings | 3550 → 980 (−72%) | 6 |
+| v9.01-v9.02 | statistics | 3418 → 629 (−82%) | 26 |
+| v9.03 | monitors | 1729 → 588 (−66%) | 6 |
+| v9.04 | dashboard | 1169 → 794 (−32%) | 7 |
+| v9.05 | analytics | 1140 → 503 (−56%) | 7 |
+| v9.06 | iskalnik | 1131 → 705 (−38%) | 4 |
+| v9.09 | watchlist | 855 → 213 (−75%) | 3 |
+| v9.09 | inventory | 724 → 153 (−79%) | 11 |
+| v9.09 | buyers | 722 → 225 (−69%) | 11 |
+| v9.09 | pricing | 675 → 175 (−74%) | 11 |
+| v9.09 | risk | 594 → 173 (−71%) | 11 |
+| v9.09 | alerts | 581 → 316 (−46%) | 4 |
+| v9.09 | listing-optimization | 561 → 170 (−70%) | 11 |
+
+---
+
+## [8.94.0] - 2026-08-20
+
+### 🔄 Revert Nepopolnega Settings Refactorja
+
+- **Popravil JSX sintaksne napake** v settings-general.tsx (neescapirani `>` znaki)
+- **Obnovil delujoči monolit** settings-view.tsx (3595 vrstic, v8.93 state)
+- **Izbrisal nepopolne modularne datoteke** (settings-ai/notif/general + index)
+- **Izbrišal .original backup** iz gita + dodal `*.original` v .gitignore
+- Aplikacija popolnoma zlomljena (HTTP 500) → obnovljena v delujoče stanje
+
+---
+
 v8.45 zaključi Polish phase mobile UX (Mobile-First Responsive Optimization + Touch UX — "Mobile bottom nav + FAB + haptic feedback + touch-optimized layouts"). Naslednje verzije:
 
 v8.26 je odprl Intelligence phase (Action Explainability), v8.27 jo nadaljuje (Scenario Brain), v8.28 jo še nadalje vzpostavi FEEDBACK LOOP (Adaptive Domain Weights), v8.29 jo ZAKLJUČI z Draft Queue + Action Feedback Loop integration (🎯 INTELLIGENCE PHASE COMPLETE), v8.30 odpira NOVO fazo — Automation (Safe Auto-pilot — 🎯 AUTOMATION PHASE STARTED), v8.31 zaključi Automation phase (Aggressive Auto-pilot + Anomaly Detection — 🎯 AUTOMATION PHASE COMPLETE), v8.32 odpira NOVO fazo — Polish (System Health Dashboard — 🎯 POLISH PHASE STARTED — "How healthy is the Brain system?"), v8.33 zaključi Polish phase caching (Performance Caching + Cache Stats), v8.34 zaključi Polish phase testing (Brain Integration Test Suite), v8.35 zaključi Polish phase "make the system alive" (Seed Demo Data + Telegram Brain Notifications), v8.36 zaključi Polish phase trade management enhancement (CSV Import + Quick Add + Dashboard Stats), v8.37 zaključi Polish phase decision support + visualization (Deal Calculator + Profit Timeline Chart — "Hitra odločitev + vizualno sledenje"), v8.38 zaključi Polish phase centralized notification history (🔔 Notification Center + Alert History — "Centralizirana zgodovina vseh obvestil"), v8.39 zaključi Polish phase goal tracking visualization (🎯 Goal Tracker Dashboard Widget + Settings Integration — "Vizualno sledenje mesečnemu cilju z avtomatsko obvestitvijo ob dosegu"), v8.40 zaključi Polish phase trade analytics deep dive (📊 Trade Insights Deep Dive — "KDaj in KJE prodati za maksimalen profit?" — 6 analiz iz 25 realnih trade-ov: day-of-week, source platform, category, hold period, profit distribution, actionable insights), v8.41 zaključi Polish phase weekly digest + email notifications (📋 Weekly Summary Report + Email Notifications — "Comprehensive weekly digest sent to Telegram + Email + Notification Center"), v8.42 zaključi Polish phase full system backup (💾 Full System Backup & Restore — "Portable, human-readable JSON backup of ALL 18 tables + 3 restore modes + auto-backup cron"). Naslednje verzije:

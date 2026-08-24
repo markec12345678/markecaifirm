@@ -21389,3 +21389,31 @@ Stage Summary:
 - Verzija: v9.24.0
 - Skupaj (v7.50 → v9.24): 174 verzij, 296 novih funkcij
 - README POPOLNOMA SINHRONIZIRAN z v9.24.0 stanjem.
+
+---
+Task ID: v9.25
+Agent: main
+Task: CHANGELOG.md posodobitev z v8.94-v9.24 vnosi
+
+Work Log:
+- CHANGELOG.md je bil zastarel — končal pri v8.45, manjkali so v8.46-v8.93 in v9.x vnosi.
+- Dodal 10 novih CHANGELOG vnosov na vrh (po Keep a Changelog formatu):
+  * v9.24: README sinhronizacija + badges
+  * v9.23: Performance optimization — React.memo na 4 komponente
+  * v9.22: Comprehensive seed script (seed-all.ts)
+  * v9.21: SEO/meta tags optimization (OpenGraph, Twitter, JSON-LD, sitemap)
+  * v9.18: Accessibility audit — 44 ARIA labelov
+  * v9.15: Demo podatki + Setup 7/7 (25 trades, 15 listings, VAPID)
+  * v9.10: Code quality audit (0 napak, 66 duplikatov)
+  * v9.00: Modularizacija VSEH 16 view datotek (193 modulov, −67%)
+  * v8.94: Revert nepopolnega settings refactorja
+- Vsak vnos vsebuje: datum, kratek opis, ključne spremembe, stats.
+- Dodal modularizacija breakdown tabelo (16 view-jev z original→trenutno vrsticami).
+
+Stage Summary:
+- MODIFIED: CHANGELOG.md (+10 novih vnosov za v8.94-v9.24)
+- MODIFIED: src/lib/version.ts (v9.24.0→v9.25.0)
+- MODIFIED: README.md (badge v9.25.0)
+- Verzija: v9.25.0
+- Skupaj (v7.50 → v9.25): 175 verzij, 297 novih funkcij
+- CHANGELOG.md, README.md, worklog.md so sedaj VSI sinhronizirani z v9.25.0.
