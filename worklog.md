@@ -22079,3 +22079,60 @@ Stage Summary:
   * Yeezy loss (-39€) pravilno klasificiran kot AVOID (score 17)
   * STRONG_BUY trades (n=9) outcome 92 — odlična diferenciacija
 - Naslednji koraki: morebiti dodati še več trgovin za AVOID bucket (trenutno samo 1), preveriti buyScore calibration na novih listing-ih
+
+---
+Task ID: v9.49
+Agent: main
+Task: UI poenostavitev — Progressive Disclosure (3-nivojski vmesnik, 18→6 elementov v nav vrstici)
+
+Work Log:
+- Uporabnik: "preveč informacij v vmesniku, nepotrebne skrij v stransko vrstico"
+- Analiza problema: v9.47 je imel 18 zavihkov (5 glavnih + 3 collapsible skupine). Tudi skrite skupine so povzročale cognitive overload.
+- Raziščil UX best practices: progressive disclosure (3-nivojski princip — minimal, moderate, deep).
+- Dizajniral novo strukturo:
+  * NIVO 1 (glavna vrstica, vedno vidno): 4 zavihki — Dashboard, Monitorji, Oglasi, Skladišče
+  * NIVO 2 ("Več" dropdown, 1 klik): Iskalnik + 5 AI Orodja + 3 Analitika = 9 podfunkcij
+  * NIVO 3 ("Sistem" gear v desnem kotu, drawer iz desne): Alerti, Watchlist, Obvestila, Zdravje, Nastavitve = 5 sistemskih
+- Implementiral v src/app/page.tsx:
+  * NAV_PRIMARY (4 elementi) — zamenjal prejšnjih 5
+  * NAV_MORE_GROUPS (3 skupine z 9 podfunkcijami) — za "Več" dropdown
+  * NAV_SYSTEM (5 elementov) — za drawer iz desne
+  * NAV (zdaj flat array iz vseh treh) — za PWA shortcut kompatibilnost
+  * State: odstranil navExpanded (3 boolean), dodal moreMenuOpen + systemDrawerOpen
+  * moreMenuRef + useEffect za click-outside zapiranje dropdown-a
+  * isMoreActive / isSystemActive — auto-highlight aktivne skupine
+  * Aria labels: aria-haspopup, role="menu", role="menuitem", aria-current="page"
+  * Sistem drawer: fixed inset-0 backdrop + w-72 panel iz desne z ml-auto
+  * Drawer prikazuje tudi hint: "? za pomoč, Ctrl+K za ukaze, 18 funkcij v 3-nivojskem vmesniku"
+- Mobile nav drawer posodobljen: uporablja NAV_PRIMARY + NAV_MORE_GROUPS + NAV_SYSTEM
+- MobileBottomNav (spodnji bar) pustil nespremenjen — 5 hitrih akcij (Dashboard, AI Hub, Trades, Alerti, Nastavitve) je primerno za mobilni spodnji bar
+- Preveril lint: 0 napak ✨
+- Preveril typecheck: 0 napak ✨
+- Verifikacija (Agent Browser):
+  * Homepage nav: 6 elementov (4 glavni + Več + Sistem) — prej 18 ✓
+  * "Več" dropdown: odpre meni z 9 podfunkcijami (Iskalnik, 5 AI, 3 Analitika) ✓
+  * Klik "AI Hub" v dropdown → preklopi na AI Hub view ✓
+  * "Sistem" gear → odpre drawer iz desne z 5 sistemskimi ✓
+  * Klik "Nastavitve" v drawer → preklopi na Nastavitve view ✓
+  * Footer: v9.49.0 • HEALTHY 85/100 ✓
+  * Screenshot: download/progressive-disclosure-v9.49.png
+  * 0 napak v dev logu
+
+Stage Summary:
+- MODIFIED: src/app/page.tsx (progressive disclosure — 3-nivojski vmesnik)
+  * 18 zavihkov v vrstici → 6 elementov (4 + Več + Sistem)
+  * Dropdown "Več" z 9 podfunkcijami v 3 kategorijah
+  * Drawer "Sistem" iz desne z 5 sistemskimi
+  * Click-outside zapiranje dropdown-a
+  * Auto-highlight aktivne skupine
+  * Aria labels za dostopnost
+- MODIFIED: src/lib/version.ts (v9.48→v9.49)
+- MODIFIED: README.md (badge v9.49)
+- Verzija: v9.49.0
+- Skupaj (v7.50 → v9.49): 195 verzij, 316 novih funkcij
+- UX TRANSFORMACIJA:
+  * Prej (v9.47): 18 zavihkov v vrstici (5 + 3 collapsible skupine) — preplavljeno
+  * Zdaj  (v9.49): 6 elementov v vrstici (4 glavni + Več + Sistem) — čisto
+  * Nov uporabnik vidi samo 4 zavihke + 2 gumba (66% manj cognitive load)
+  * Power user z 1 klikom dostopa do vseh 18 funkcij
+  * Sistemske funkcije (Alerti/Nastavitve/Zdravje) premaknjene v drawer iz desne — stran od dnevnega workflow-a

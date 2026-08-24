@@ -67,24 +67,51 @@ function LoadingFallback() {
 
 type View = 'dashboard' | 'monitors' | 'alerts' | 'listings' | 'watchlist' | 'analytics' | 'statistics' | 'trades' | 'health' | 'notifications' | 'settings' | 'buyers' | 'ai-hub' | 'inventory' | 'pricing' | 'listing-opt' | 'risk' | 'iskalnik';
 
-const NAV: { id: View; label: string; icon: typeof Activity }[] = [
-  // 📋 GLAVNO — 5 zavihkov, vedno vidno
+// v9.49: Progressive Disclosure — 3-nivojski vmesnik.
+// Nivo 1: 4 GLAVNI zavihki (vedno vidni) — najbolj uporabljani dnevno.
+// Nivo 2: "Več" dropdown (AI Orodja + Analitika + Iskalnik) — dostop z 1 klikom.
+// Nivo 3: Sistem drawer (gear v desnem kotu) — Alerti/Watchlist/Obvestila/Zdravje/Nastavitve.
+const NAV_PRIMARY: { id: View; label: string; icon: typeof Activity }[] = [
   { id: 'dashboard', label: 'Dashboard', icon: Activity },
   { id: 'monitors', label: 'Monitorji', icon: ListPlus },
   { id: 'listings', label: 'Oglasi', icon: LayoutGrid },
   { id: 'trades', label: 'Skladišče', icon: TrendingUp },
-  { id: 'iskalnik', label: 'Iskalnik', icon: Search },
-  // 🤖 AI ORODJA — collapsible skupina
-  { id: 'inventory', label: 'Skladišče AI', icon: Package },
-  { id: 'pricing', label: 'Cene AI', icon: DollarSign },
-  { id: 'listing-opt', label: 'Oglasi AI', icon: FileText },
-  { id: 'risk', label: 'Tveganja AI', icon: Shield },
-  { id: 'buyers', label: 'Kupci', icon: Users },
-  // 📊 ANALITIKA — collapsible skupina
-  { id: 'analytics', label: 'Analitika', icon: BarChart3 },
-  { id: 'statistics', label: 'Statistike', icon: PieChart },
-  { id: 'ai-hub', label: 'AI Hub', icon: Sparkles },
-  // ⚙️ SISTEM — collapsible skupina
+];
+
+const NAV_MORE_GROUPS: { title: string; icon: typeof Activity; accent: string; items: { id: View; label: string; icon: typeof Activity }[] }[] = [
+  {
+    title: 'Iskanje',
+    icon: Search,
+    accent: 'text-emerald-400',
+    items: [
+      { id: 'iskalnik', label: 'Iskalnik', icon: Search },
+    ],
+  },
+  {
+    title: 'AI Orodja',
+    icon: Sparkles,
+    accent: 'text-amber-400',
+    items: [
+      { id: 'inventory', label: 'Skladišče AI', icon: Package },
+      { id: 'pricing', label: 'Cene AI', icon: DollarSign },
+      { id: 'listing-opt', label: 'Oglasi AI', icon: FileText },
+      { id: 'risk', label: 'Tveganja AI', icon: Shield },
+      { id: 'buyers', label: 'Kupci', icon: Users },
+    ],
+  },
+  {
+    title: 'Analitika',
+    icon: BarChart3,
+    accent: 'text-sky-400',
+    items: [
+      { id: 'analytics', label: 'Analitika', icon: BarChart3 },
+      { id: 'statistics', label: 'Statistike', icon: PieChart },
+      { id: 'ai-hub', label: 'AI Hub', icon: Sparkles },
+    ],
+  },
+];
+
+const NAV_SYSTEM: { id: View; label: string; icon: typeof Activity }[] = [
   { id: 'alerts', label: 'Alerti', icon: Bell },
   { id: 'watchlist', label: 'Watchlist', icon: Eye },
   { id: 'notifications', label: 'Obvestila', icon: History },
@@ -92,15 +119,22 @@ const NAV: { id: View; label: string; icon: typeof Activity }[] = [
   { id: 'settings', label: 'Nastavitve', icon: Settings },
 ];
 
+// Vsi views (za kompatibilnost s PWA shortcut handlerjem)
+const NAV: { id: View; label: string; icon: typeof Activity }[] = [
+  ...NAV_PRIMARY,
+  ...NAV_MORE_GROUPS.flatMap(g => g.items),
+  ...NAV_SYSTEM,
+];
+
 export default function Home() {
   const [view, setView] = useState<View>('dashboard');
   const [unreadAlerts, setUnreadAlerts] = useState(0);
-  // v9.47: Collapsible nav groups — auto-expand active group
-  const [navExpanded, setNavExpanded] = useState<{ ai: boolean; analytics: boolean; system: boolean }>({
-    ai: ['inventory', 'pricing', 'listing-opt', 'risk', 'buyers'].includes(view),
-    analytics: ['analytics', 'statistics', 'ai-hub'].includes(view),
-    system: ['alerts', 'watchlist', 'notifications', 'health', 'settings'].includes(view),
-  });
+  // v9.49: Progressive Disclosure — dropdown menu + system drawer
+  const [moreMenuOpen, setMoreMenuOpen] = useState(false);
+  const [systemDrawerOpen, setSystemDrawerOpen] = useState(false);
+  // Auto-highlight "Več" when active view is in secondary groups
+  const isMoreActive = NAV_MORE_GROUPS.some(g => g.items.some(i => i.id === view));
+  const isSystemActive = NAV_SYSTEM.some(i => i.id === view);
   const [now, setNow] = useState<Date | null>(null);
   const [searchOpen, setSearchOpen] = useState(false);
   const [cmdkOpen, setCmdkOpen] = useState(false); // v8.46: Command Palette (Cmd+K)
@@ -211,6 +245,23 @@ export default function Home() {
       }
     }
   }, [lastAlert, view]);
+
+  // v9.49: Close "Več" dropdown when clicking outside or on navigation
+  const moreMenuRef = useRef<HTMLDivElement>(null);
+  useEffect(() => {
+    if (!moreMenuOpen) return;
+    const handler = (e: MouseEvent) => {
+      if (moreMenuRef.current && !moreMenuRef.current.contains(e.target as Node)) {
+        setMoreMenuOpen(false);
+      }
+    };
+    // Delay to avoid immediate close from the toggle click
+    const t = setTimeout(() => document.addEventListener('mousedown', handler), 0);
+    return () => {
+      clearTimeout(t);
+      document.removeEventListener('mousedown', handler);
+    };
+  }, [moreMenuOpen]);
 
   // Ctrl+K shortcut for global search
   useEffect(() => {
@@ -345,12 +396,12 @@ export default function Home() {
         </div>
       </header>
 
-      {/* Nav tabs — desktop only — v9.47: Grouped navigation */}
+      {/* Nav tabs — desktop only — v9.49: Progressive Disclosure (4 primary + Več dropdown + Sistem gear) */}
       <nav className="hidden md:block border-b border-border bg-card/30">
         <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
-          <div className="flex items-center gap-1 overflow-x-auto touch-scroll">
-            {/* 📋 GLAVNO — vedno vidno */}
-            {NAV.slice(0, 5).map((item) => {
+          <div className="flex items-center gap-1">
+            {/* 🎯 NIVO 1: 4 GLAVNI zavihki — vedno vidni */}
+            {NAV_PRIMARY.map((item) => {
               const Icon = item.icon;
               const active = view === item.id;
               return (
@@ -358,6 +409,7 @@ export default function Home() {
                   key={item.id}
                   onClick={() => setView(item.id)}
                   aria-label={item.label}
+                  aria-current={active ? 'page' : undefined}
                   className={cn(
                     'flex items-center gap-2 px-4 py-3 text-sm font-medium border-b-2 -mb-px transition-colors whitespace-nowrap',
                     active
@@ -374,128 +426,151 @@ export default function Home() {
             {/* Divider */}
             <div className="h-6 w-px bg-border mx-1 shrink-0" />
 
-            {/* 🤖 AI ORODJA — collapsible */}
-            <button
-              onClick={() => setNavExpanded(s => ({ ...s, ai: !s.ai }))}
-              aria-label="AI Orodja — razširi/skrči"
-              aria-expanded={navExpanded.ai}
-              className={cn(
-                'flex items-center gap-2 px-3 py-3 text-sm font-medium border-b-2 -mb-px transition-colors whitespace-nowrap',
-                ['inventory', 'pricing', 'listing-opt', 'risk', 'buyers'].includes(view)
-                  ? 'border-amber-400 text-amber-400'
-                  : 'border-transparent text-muted-foreground hover:text-foreground hover:border-border',
-                navExpanded.ai && 'border-amber-400/50 text-amber-400'
-              )}
-            >
-              <Sparkles className="w-4 h-4" />
-              <span className="uppercase tracking-wider">AI Orodja</span>
-              <ChevronDown className={cn('w-3 h-3 transition-transform', navExpanded.ai && 'rotate-180')} />
-            </button>
-            {navExpanded.ai && NAV.slice(5, 10).map((item) => {
-              const Icon = item.icon;
-              const active = view === item.id;
-              return (
-                <button
-                  key={item.id}
-                  onClick={() => setView(item.id)}
-                  aria-label={item.label}
-                  className={cn(
-                    'flex items-center gap-2 px-3 py-3 text-sm font-medium border-b-2 -mb-px transition-colors whitespace-nowrap',
-                    active
+            {/* 📂 NIVO 2: "Več" dropdown — Iskalnik + AI Orodja + Analitika */}
+            <div className="relative" ref={moreMenuRef}>
+              <button
+                onClick={() => setMoreMenuOpen(o => !o)}
+                aria-label="Več funkcij — razširi meni"
+                aria-expanded={moreMenuOpen}
+                aria-haspopup="menu"
+                className={cn(
+                  'flex items-center gap-2 px-4 py-3 text-sm font-medium border-b-2 -mb-px transition-colors whitespace-nowrap',
+                  moreMenuOpen
+                    ? 'border-primary/50 text-primary'
+                    : isMoreActive
                       ? 'border-primary text-primary terminal-glow'
                       : 'border-transparent text-muted-foreground hover:text-foreground hover:border-border'
-                  )}
-                >
-                  <Icon className="w-4 h-4" />
-                  <span className="uppercase tracking-wider text-xs">{item.label}</span>
-                </button>
-              );
-            })}
+                )}
+              >
+                <ChevronDown className={cn('w-3 h-3 transition-transform', moreMenuOpen && 'rotate-180')} />
+                <span className="uppercase tracking-wider">Več</span>
+              </button>
 
-            {/* 📊 ANALITIKA — collapsible */}
-            <button
-              onClick={() => setNavExpanded(s => ({ ...s, analytics: !s.analytics }))}
-              aria-label="Analitika — razširi/skrči"
-              aria-expanded={navExpanded.analytics}
-              className={cn(
-                'flex items-center gap-2 px-3 py-3 text-sm font-medium border-b-2 -mb-px transition-colors whitespace-nowrap',
-                ['analytics', 'statistics', 'ai-hub'].includes(view)
-                  ? 'border-sky-400 text-sky-400'
-                  : 'border-transparent text-muted-foreground hover:text-foreground hover:border-border',
-                navExpanded.analytics && 'border-sky-400/50 text-sky-400'
+              {moreMenuOpen && (
+                <div
+                  role="menu"
+                  className="absolute left-0 top-full mt-px w-72 bg-card border border-border rounded-b-lg shadow-xl z-40 overflow-hidden"
+                >
+                  {NAV_MORE_GROUPS.map((group) => {
+                    const GroupIcon = group.icon;
+                    return (
+                      <div key={group.title} className="border-b border-border/50 last:border-0">
+                        <div className={cn('flex items-center gap-2 px-4 py-2 text-[10px] uppercase font-bold tracking-wider bg-card/50', group.accent)}>
+                          <GroupIcon className="w-3 h-3" />
+                          {group.title}
+                        </div>
+                        {group.items.map((item) => {
+                          const Icon = item.icon;
+                          const active = view === item.id;
+                          return (
+                            <button
+                              key={item.id}
+                              onClick={() => { setView(item.id); setMoreMenuOpen(false); }}
+                              role="menuitem"
+                              aria-label={item.label}
+                              aria-current={active ? 'page' : undefined}
+                              className={cn(
+                                'w-full flex items-center gap-3 px-4 py-2.5 text-sm transition-colors text-left',
+                                active
+                                  ? 'bg-primary/10 text-primary border-l-2 border-primary'
+                                  : 'text-muted-foreground hover:text-foreground hover:bg-card/50 border-l-2 border-transparent'
+                              )}
+                            >
+                              <Icon className="w-4 h-4 shrink-0" />
+                              <span className="uppercase tracking-wider">{item.label}</span>
+                            </button>
+                          );
+                        })}
+                      </div>
+                    );
+                  })}
+                </div>
               )}
-            >
-              <BarChart3 className="w-4 h-4" />
-              <span className="uppercase tracking-wider">Analitika</span>
-              <ChevronDown className={cn('w-3 h-3 transition-transform', navExpanded.analytics && 'rotate-180')} />
-            </button>
-            {navExpanded.analytics && NAV.slice(10, 13).map((item) => {
-              const Icon = item.icon;
-              const active = view === item.id;
-              return (
-                <button
-                  key={item.id}
-                  onClick={() => setView(item.id)}
-                  aria-label={item.label}
-                  className={cn(
-                    'flex items-center gap-2 px-3 py-3 text-sm font-medium border-b-2 -mb-px transition-colors whitespace-nowrap',
-                    active
-                      ? 'border-primary text-primary terminal-glow'
-                      : 'border-transparent text-muted-foreground hover:text-foreground hover:border-border'
-                  )}
-                >
-                  <Icon className="w-4 h-4" />
-                  <span className="uppercase tracking-wider text-xs">{item.label}</span>
-                </button>
-              );
-            })}
+            </div>
 
-            {/* ⚙️ SISTEM — collapsible */}
+            {/* Spacer pushes Sistem to the right */}
+            <div className="flex-1" />
+
+            {/* ⚙️ NIVO 3: Sistem gear — odpre drawer iz desne */}
             <button
-              onClick={() => setNavExpanded(s => ({ ...s, system: !s.system }))}
-              aria-label="Sistem — razširi/skrči"
-              aria-expanded={navExpanded.system}
+              onClick={() => setSystemDrawerOpen(true)}
+              aria-label="Sistem — nastavitve, alerti, zdravje"
+              aria-expanded={systemDrawerOpen}
               className={cn(
-                'flex items-center gap-2 px-3 py-3 text-sm font-medium border-b-2 -mb-px transition-colors whitespace-nowrap',
-                ['alerts', 'watchlist', 'notifications', 'health', 'settings'].includes(view)
+                'flex items-center gap-2 px-4 py-3 text-sm font-medium border-b-2 -mb-px transition-colors whitespace-nowrap relative',
+                isSystemActive
                   ? 'border-muted-foreground text-foreground'
-                  : 'border-transparent text-muted-foreground hover:text-foreground hover:border-border',
-                navExpanded.system && 'border-muted-foreground/50 text-foreground'
+                  : 'border-transparent text-muted-foreground hover:text-foreground hover:border-border'
               )}
             >
               <Settings className="w-4 h-4" />
               <span className="uppercase tracking-wider">Sistem</span>
-              {view === 'alerts' && unreadAlerts > 0 && (
+              {unreadAlerts > 0 && (
                 <Badge variant="destructive" className="ml-1 px-1.5 py-0 text-xs">{unreadAlerts}</Badge>
               )}
-              <ChevronDown className={cn('w-3 h-3 transition-transform', navExpanded.system && 'rotate-180')} />
             </button>
-            {navExpanded.system && NAV.slice(13).map((item) => {
-              const Icon = item.icon;
-              const active = view === item.id;
-              return (
-                <button
-                  key={item.id}
-                  onClick={() => setView(item.id)}
-                  aria-label={item.label}
-                  className={cn(
-                    'flex items-center gap-2 px-3 py-3 text-sm font-medium border-b-2 -mb-px transition-colors whitespace-nowrap',
-                    active
-                      ? 'border-primary text-primary terminal-glow'
-                      : 'border-transparent text-muted-foreground hover:text-foreground hover:border-border'
-                  )}
-                >
-                  <Icon className="w-4 h-4" />
-                  <span className="uppercase tracking-wider text-xs">{item.label}</span>
-                  {item.id === 'alerts' && unreadAlerts > 0 && (
-                    <Badge variant="destructive" className="ml-1 px-1.5 py-0 text-xs">{unreadAlerts}</Badge>
-                  )}
-                </button>
-              );
-            })}
           </div>
         </div>
       </nav>
+
+      {/* 🗄️ NIVO 3: Sistem drawer — odpre se iz desne strani */}
+      {systemDrawerOpen && (
+        <div
+          className="fixed inset-0 bg-background/80 backdrop-blur-sm z-50"
+          onClick={() => setSystemDrawerOpen(false)}
+        >
+          <div
+            className="bg-card border-l border-border h-full w-72 max-w-[85vw] ml-auto p-4 overflow-y-auto shadow-2xl"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <div className="flex items-center justify-between mb-4">
+              <span className="text-primary terminal-glow font-bold text-sm uppercase tracking-wider flex items-center gap-2">
+                <Settings className="w-4 h-4" />
+                Sistem
+              </span>
+              <button
+                onClick={() => setSystemDrawerOpen(false)}
+                className="text-muted-foreground hover:text-foreground p-1 rounded hover:bg-card/50"
+                aria-label="Zapri drawer"
+              >
+                <X className="w-4 h-4" />
+              </button>
+            </div>
+            <div className="space-y-1">
+              <div className="text-[9px] uppercase text-muted-foreground/60 font-bold px-3 pt-2 pb-1">⚙️ Sistem & Nastavitve</div>
+              {NAV_SYSTEM.map((item) => {
+                const Icon = item.icon;
+                const active = view === item.id;
+                return (
+                  <button
+                    key={item.id}
+                    onClick={() => { setView(item.id); setSystemDrawerOpen(false); }}
+                    aria-label={item.label}
+                    aria-current={active ? 'page' : undefined}
+                    className={cn(
+                      'w-full flex items-center gap-3 px-3 py-2.5 rounded text-sm transition-colors',
+                      active
+                        ? 'bg-primary/10 text-primary border border-primary/30'
+                        : 'text-muted-foreground hover:text-foreground hover:bg-card/50 border border-transparent'
+                    )}
+                  >
+                    <Icon className="w-4 h-4" />
+                    <span className="uppercase tracking-wider flex-1 text-left">{item.label}</span>
+                    {item.id === 'alerts' && unreadAlerts > 0 && (
+                      <Badge variant="destructive" className="px-1.5 py-0 text-xs">{unreadAlerts}</Badge>
+                    )}
+                  </button>
+                );
+              })}
+            </div>
+            <div className="mt-4 pt-4 border-t border-border text-[10px] text-muted-foreground/70 leading-relaxed">
+              <p className="mb-1">⚡ Pritisni <kbd className="bg-background/60 px-1.5 py-0.5 rounded border border-border">?</kbd> za pomoč</p>
+              <p className="mb-1">⌨️ <kbd className="bg-background/60 px-1.5 py-0.5 rounded border border-border">Ctrl+K</kbd> za ukazno paleto</p>
+              <p>📊 18 funkcij skritih v 3-nivojskem vmesniku</p>
+            </div>
+          </div>
+        </div>
+      )}
 
       {/* v4.7: Mobile nav drawer */}
       {mobileNavOpen && (
@@ -518,9 +593,9 @@ export default function Home() {
               </button>
             </div>
             <div className="space-y-1">
-              {/* 📋 GLAVNO */}
+              {/* 🎯 GLAVNO — 4 zavihki */}
               <div className="text-[9px] uppercase text-muted-foreground/60 font-bold px-3 pt-2 pb-1">Glavno</div>
-              {NAV.slice(0, 5).map((item) => {
+              {NAV_PRIMARY.map((item) => {
                 const Icon = item.icon;
                 const active = view === item.id;
                 return (
@@ -528,6 +603,7 @@ export default function Home() {
                     key={item.id}
                     onClick={() => { setView(item.id); setMobileNavOpen(false); }}
                     aria-label={item.label}
+                    aria-current={active ? 'page' : undefined}
                     className={cn(
                       'w-full flex items-center gap-3 px-3 py-2.5 rounded text-sm transition-colors',
                       active
@@ -541,55 +617,43 @@ export default function Home() {
                 );
               })}
 
-              {/* 🤖 AI ORODJA */}
-              <div className="text-[9px] uppercase text-amber-400/60 font-bold px-3 pt-3 pb-1">🤖 AI Orodja</div>
-              {NAV.slice(5, 10).map((item) => {
-                const Icon = item.icon;
-                const active = view === item.id;
+              {/* 📂 VEČ — Iskalnik + AI Orodja + Analitika */}
+              {NAV_MORE_GROUPS.map((group) => {
+                const GroupIcon = group.icon;
                 return (
-                  <button
-                    key={item.id}
-                    onClick={() => { setView(item.id); setMobileNavOpen(false); }}
-                    aria-label={item.label}
-                    className={cn(
-                      'w-full flex items-center gap-3 px-3 py-2.5 rounded text-sm transition-colors',
-                      active
-                        ? 'bg-amber-400/10 text-amber-400 border border-amber-400/30'
-                        : 'text-muted-foreground hover:text-foreground hover:bg-card/50 border border-transparent'
-                    )}
-                  >
-                    <Icon className="w-4 h-4" />
-                    <span className="uppercase tracking-wider flex-1 text-left">{item.label}</span>
-                  </button>
-                );
-              })}
-
-              {/* 📊 ANALITIKA */}
-              <div className="text-[9px] uppercase text-sky-400/60 font-bold px-3 pt-3 pb-1">📊 Analitika</div>
-              {NAV.slice(10, 13).map((item) => {
-                const Icon = item.icon;
-                const active = view === item.id;
-                return (
-                  <button
-                    key={item.id}
-                    onClick={() => { setView(item.id); setMobileNavOpen(false); }}
-                    aria-label={item.label}
-                    className={cn(
-                      'w-full flex items-center gap-3 px-3 py-2.5 rounded text-sm transition-colors',
-                      active
-                        ? 'bg-sky-400/10 text-sky-400 border border-sky-400/30'
-                        : 'text-muted-foreground hover:text-foreground hover:bg-card/50 border border-transparent'
-                    )}
-                  >
-                    <Icon className="w-4 h-4" />
-                    <span className="uppercase tracking-wider flex-1 text-left">{item.label}</span>
-                  </button>
+                  <div key={group.title}>
+                    <div className={cn('text-[9px] uppercase font-bold px-3 pt-3 pb-1 flex items-center gap-1', group.accent)}>
+                      <GroupIcon className="w-3 h-3" />
+                      {group.title}
+                    </div>
+                    {group.items.map((item) => {
+                      const Icon = item.icon;
+                      const active = view === item.id;
+                      return (
+                        <button
+                          key={item.id}
+                          onClick={() => { setView(item.id); setMobileNavOpen(false); }}
+                          aria-label={item.label}
+                          aria-current={active ? 'page' : undefined}
+                          className={cn(
+                            'w-full flex items-center gap-3 px-3 py-2.5 rounded text-sm transition-colors',
+                            active
+                              ? 'bg-primary/10 text-primary border border-primary/30'
+                              : 'text-muted-foreground hover:text-foreground hover:bg-card/50 border border-transparent'
+                          )}
+                        >
+                          <Icon className="w-4 h-4" />
+                          <span className="uppercase tracking-wider flex-1 text-left">{item.label}</span>
+                        </button>
+                      );
+                    })}
+                  </div>
                 );
               })}
 
               {/* ⚙️ SISTEM */}
               <div className="text-[9px] uppercase text-muted-foreground/60 font-bold px-3 pt-3 pb-1">⚙️ Sistem</div>
-              {NAV.slice(13).map((item) => {
+              {NAV_SYSTEM.map((item) => {
                 const Icon = item.icon;
                 const active = view === item.id;
                 return (
@@ -597,6 +661,7 @@ export default function Home() {
                     key={item.id}
                     onClick={() => { setView(item.id); setMobileNavOpen(false); }}
                     aria-label={item.label}
+                    aria-current={active ? 'page' : undefined}
                     className={cn(
                       'w-full flex items-center gap-3 px-3 py-2.5 rounded text-sm transition-colors',
                       active
