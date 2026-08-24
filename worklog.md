@@ -21815,3 +21815,43 @@ Stage Summary:
   * Security: 0/0 vulnerabilities (100% fixed)
   * CI: test gate added (158 tests mandatory)
   * Performance: 18.3x measured improvement
+
+---
+Task ID: v9.38
+Agent: main (po uporabnikovem načrtu #2)
+Task: Type safety postopno — alerts + iskalnik (8 any → 0)
+
+Work Log:
+- #2 Type safety postopno zmanjševanje 425 any tipov:
+- Pristop: en direktorij naenkrat, od najmanjšega (alerts: 2) navzgor
+- Korak 1: alerts/ (2 any → 0)
+  * Ustvaril PrioritizedAlert + PrioritizedAlertsResponse interface v alerts/types.ts
+  * Zamenjal useState<any> z useState<PrioritizedAlertsResponse | null>
+  * Zamenjal .map((p: any) z .map((p: PrioritizedAlert)
+  * Dodal optional polja (profitScore, suggestedAction, aiReason, reasons, priceText, aiPriority, highPriority, mediumPriority, lowPriority)
+  * Dodal null checks ((p.profitScore ?? 0))
+- Korak 2: iskalnik/ (6 any → 0)
+  * Razširil SearchResult interface z optional polji (expectedROI, year, discountPercent, expectedProfit, recommendation, confidenceLabel, buyVerdict)
+  * Zamenjal data: any z typed interface v CompareContent
+  * Zamenjal (c: any) z (c: SearchResult) v vseh .map klicih
+  * Dodal null checks za buyScore
+- Rezultat: alerts 2→0, iskalnik 6→0 (skupaj −8)
+- Total any: 425 → 417 (−8, −1.9%)
+- Preveril lint: 0 napak ✨
+- Preveril typecheck: 0 napak ✨
+- Preveril testi: 158/158 passing (100%) ✨
+
+Stage Summary:
+- MODIFIED: alerts/types.ts (+PrioritizedAlert, PrioritizedAlertsResponse interface)
+- MODIFIED: alerts/ai-prioritized-alerts.tsx (useState<any> → typed, .map typed)
+- MODIFIED: iskalnik/types.ts (+optional polja v SearchResult)
+- MODIFIED: iskalnik/compare-content.tsx (data: any → typed, .map typed)
+- MODIFIED: src/lib/version.ts (v9.37→v9.38)
+- MODIFIED: README.md (badge v9.38)
+- Verzija: v9.38.0
+- Skupaj (v7.50 → v9.38): 188 verzij, 310 novih funkcij
+- TYPE SAFETY NAPREDEK (skupaj v8.94→v9.38):
+  * catch(e:any): 199 → 0 (100% odstranjeno v v9.34)
+  * useState<any>: 425 → 417 (−8 v v9.38, alerts + iskalnik čista)
+  * Preostali: dashboard 6, settings 5, watchlist 5, ai-hub 6, monitors 7, analytics 16, buyers 18, pricing 20, listing-optimization 21, inventory 23, risk 24, listings 38, trades 51, statistics 75
+  * Naslednji koraki: settings (5), watchlist (5), ai-hub (6), dashboard (6)

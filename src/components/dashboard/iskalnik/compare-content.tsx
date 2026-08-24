@@ -17,13 +17,13 @@ import { cn } from '@/lib/utils';
 import type { SearchResult } from './types';
 import { sourceIcon, sourceColor, timeAgo } from './utils';
 
-export function CompareContent({ data }: { data: any }) {
+export function CompareContent({ data }: { data: { compared: SearchResult[]; winner?: SearchResult; cheapest?: SearchResult; bestAI?: SearchResult; advisorInsights?: Record<string, unknown>; summary?: Record<string, unknown> } }) {
   const { compared, winner, cheapest, bestAI, advisorInsights, summary } = data;
 
   // Rows for the comparison table
-  const rows: { label: string; getValue: (c: any) => React.ReactNode; highlight?: (c: any) => boolean }[] = [
+  const rows: { label: string; getValue: (c: SearchResult) => React.ReactNode; highlight?: (c: SearchResult) => boolean }[] = [
     { label: 'Cena', getValue: c => <span className="font-mono font-bold">{c.price ?? '?'}€</span>, highlight: c => c.id === cheapest?.id },
-    { label: 'Buy Score', getValue: c => <span className={c.buyScore >= 75 ? 'text-emerald-500 font-bold' : c.buyScore >= 55 ? 'text-primary' : 'text-amber-500'}>{c.buyScore} ({c.buyVerdict})</span>, highlight: c => c.id === winner?.id },
+    { label: 'Buy Score', getValue: c => <span className={(c.buyScore ?? 0) >= 75 ? 'text-emerald-500 font-bold' : (c.buyScore ?? 0) >= 55 ? 'text-primary' : 'text-amber-500'}>{c.buyScore} ({c.buyVerdict})</span>, highlight: c => c.id === winner?.id },
     { label: 'AI Score', getValue: c => c.aiScore != null ? `⭐ ${c.aiScore}/10` : '—', highlight: c => c.id === bestAI?.id },
     { label: 'AI Risk', getValue: c => c.aiRisk != null ? <span className={c.aiRisk >= 6 ? 'text-red-500' : c.aiRisk >= 4 ? 'text-amber-500' : 'text-emerald-500'}>🛡 {c.aiRisk}/10</span> : '—' },
     { label: 'AI Verdict', getValue: c => c.aiVerdict || '—' },
@@ -41,8 +41,8 @@ export function CompareContent({ data }: { data: any }) {
     <div className="space-y-4">
       {/* v8.72.2: Best of bad warning — if all candidates are weak (<35) */}
       {(() => {
-        const allWeak = compared.every((c: any) => c.buyScore < 35);
-        const allBelow55 = compared.every((c: any) => c.buyScore < 55);
+        const allWeak = compared.every((c: SearchResult) => (c.buyScore ?? 0) < 35);
+        const allBelow55 = compared.every((c: SearchResult) => (c.buyScore ?? 0) < 55);
         if (allWeak) {
           return (
             <div className="bg-red-500/10 border border-red-500/30 rounded-lg p-2.5 flex items-start gap-2">
@@ -73,7 +73,7 @@ export function CompareContent({ data }: { data: any }) {
         <div className="text-xs uppercase text-primary font-bold flex items-center gap-1.5">
           <Trophy className="w-3.5 h-3.5" /> AI Buy Advisor
         </div>
-        {advisorInsights.map((insight: string, i: number) => {
+        {(advisorInsights as unknown as string[]).map((insight: string, i: number) => {
           const isWarning = insight.includes('⚠️');
           return (
             <div key={i} className="text-xs flex items-start gap-1.5">
@@ -90,31 +90,31 @@ export function CompareContent({ data }: { data: any }) {
         // Winner = "best among selected" (relative). Absolute = "should you actually buy?"
         const score = winner.buyScore;
         let absRec: { label: string; cls: string; icon: string };
-        if (score >= 75) {
+        if ((score ?? 0) >= 75) {
           absRec = { label: 'STRONG BUY', cls: 'bg-emerald-500/15 text-emerald-500 border-emerald-500/40', icon: '🟢' };
-        } else if (score >= 55) {
+        } else if ((score ?? 0) >= 55) {
           absRec = { label: 'BUY', cls: 'bg-primary/10 text-primary border-primary/30', icon: '✓' };
-        } else if (score >= 35) {
+        } else if ((score ?? 0) >= 35) {
           absRec = { label: 'BUY WITH CAUTION', cls: 'bg-amber-500/10 text-amber-600 border-amber-500/30', icon: '🟡' };
         } else {
           absRec = { label: 'AVOID — best of bad options', cls: 'bg-red-500/10 text-red-500 border-red-500/30', icon: '✗' };
         }
         // Confidence label
-        const conf = winner.confidenceLabel || 'LOW';
+        const conf = (winner as unknown as Record<string, unknown>)?.confidenceLabel as string || "LOW";
         const confCls = conf === 'HIGH' ? 'text-emerald-500' : conf === 'MEDIUM' ? 'text-amber-500' : 'text-muted-foreground';
         // Winner card color depends on absolute recommendation
-        const cardCls = score >= 55
+        const cardCls = (score ?? 0) >= 55
           ? 'bg-emerald-500/10 border-emerald-500/30'
-          : score >= 35
+          : (score ?? 0) >= 35
             ? 'bg-amber-500/10 border-amber-500/30'
             : 'bg-red-500/10 border-red-500/30';
         return (
           <div className={cn('border rounded-lg p-3', cardCls)}>
             <div className="flex items-center justify-between gap-2 mb-1.5 flex-wrap">
               <div className="flex items-center gap-2">
-                <Trophy className={score >= 55 ? 'w-4 h-4 text-emerald-500' : score >= 35 ? 'w-4 h-4 text-amber-500' : 'w-4 h-4 text-red-500'} />
+                <Trophy className={(score ?? 0) >= 55 ? 'w-4 h-4 text-emerald-500' : (score ?? 0) >= 35 ? 'w-4 h-4 text-amber-500' : 'w-4 h-4 text-red-500'} />
                 <span className="text-sm font-bold">
-                  {score >= 35 ? '🏆 Najboljša vrednost' : '⚠️ Najmanj slaba možnost'}
+                  {(score ?? 0) >= 35 ? '🏆 Najboljša vrednost' : '⚠️ Najmanj slaba možnost'}
                 </span>
               </div>
               {/* v8.72.2: Absolute Recommendation badge */}
@@ -127,11 +127,11 @@ export function CompareContent({ data }: { data: any }) {
               <span>{winner.price}€ · buy score {winner.buyScore}/100 · {winner.location}</span>
               <span className={cn('text-[10px]', confCls)}>· Confidence: {conf}</span>
             </div>
-            <p className="text-xs text-foreground/80 mt-1.5 italic">{winner.recommendation}</p>
+            <p className="text-xs text-foreground/80 mt-1.5 italic">{(winner as unknown as Record<string, unknown>)?.recommendation as string ?? ""}</p>
             {/* v8.72.2: Clarification — relative vs absolute */}
             <div className="text-[10px] text-muted-foreground mt-2 pt-2 border-t border-border/30">
               ℹ️ "Winner" = najboljši med izbranimi kandidati. Absolutno priporočilo glede na buy score.
-              {score < 55 && ' To ni objektivno dober nakup — premisli ali sploh kupovati.'}
+              {(score ?? 0) < 55 && ' To ni objektivno dober nakup — premisli ali sploh kupovati.'}
             </div>
           </div>
         );
@@ -143,7 +143,7 @@ export function CompareContent({ data }: { data: any }) {
           <thead>
             <tr className="border-b border-border">
               <th className="text-left p-2 text-muted-foreground uppercase text-[10px]">Kriterij</th>
-              {compared.map((c: any) => (
+              {compared.map((c: SearchResult) => (
                 <th key={c.id} className={cn(
                   'text-left p-2 min-w-[140px] align-top',
                   c.id === winner?.id && 'bg-emerald-500/10'
@@ -165,7 +165,7 @@ export function CompareContent({ data }: { data: any }) {
             {rows.map((row, i) => (
               <tr key={i} className="border-b border-border/50">
                 <td className="p-2 text-muted-foreground text-[10px] uppercase">{row.label}</td>
-                {compared.map((c: any) => (
+                {compared.map((c: SearchResult) => (
                   <td key={c.id} className={cn(
                     'p-2',
                     row.highlight?.(c) && 'bg-emerald-500/10 font-medium'
@@ -183,19 +183,19 @@ export function CompareContent({ data }: { data: any }) {
       <div className="grid grid-cols-4 gap-2 text-center text-xs">
         <div className="bg-muted/20 rounded p-2">
           <div className="text-[9px] uppercase text-muted-foreground">Število</div>
-          <div className="font-bold">{summary.count}</div>
+          <div className="font-bold">{summary?.count as number ?? 0}</div>
         </div>
         <div className="bg-muted/20 rounded p-2">
           <div className="text-[9px] uppercase text-muted-foreground">Cena min</div>
-          <div className="font-bold text-emerald-500">{summary.priceRange.min}€</div>
+          <div className="font-bold text-emerald-500">{(summary?.priceRange as Record<string, number>)?.min ?? 0}€</div>
         </div>
         <div className="bg-muted/20 rounded p-2">
           <div className="text-[9px] uppercase text-muted-foreground">Cena max</div>
-          <div className="font-bold text-amber-500">{summary.priceRange.max}€</div>
+          <div className="font-bold text-amber-500">{(summary?.priceRange as Record<string, number>)?.max ?? 0}€</div>
         </div>
         <div className="bg-muted/20 rounded p-2">
           <div className="text-[9px] uppercase text-muted-foreground">Avg buy score</div>
-          <div className="font-bold text-primary">{summary.avgBuyScore.toFixed(0)}</div>
+          <div className="font-bold text-primary">{(summary?.avgBuyScore as number)?.toFixed(0)}</div>
         </div>
       </div>
     </div>

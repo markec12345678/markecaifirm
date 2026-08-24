@@ -25,3 +25,28 @@ export interface Alert {
   createdAt: string;
   monitor: { name: string; source: string };
 }
+
+// v9.38: Alert types
+export interface PrioritizedAlert {
+  id: string;
+  title: string;
+  priority: string;
+  suggestedAction?: string;
+  aiPriority?: string;
+  reasons?: string[];
+  aiReason?: string;
+  profitScore?: number;
+  priceText?: string;
+  reason: string;
+  url: string;
+  aiScore: number | null;
+  aiVerdict: string | null;
+}
+
+export interface PrioritizedAlertsResponse {
+  ok: boolean;
+  prioritized: PrioritizedAlert[];
+  highPriority?: number;
+  mediumPriority?: number;
+  lowPriority?: number;
+}

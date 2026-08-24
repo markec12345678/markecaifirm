@@ -9,9 +9,10 @@ import { Badge } from '@/components/ui/badge';
 import { RefreshCw, Sparkles } from 'lucide-react';
 import { toast } from 'sonner';
 import { cn } from '@/lib/utils';
+import type { PrioritizedAlertsResponse, PrioritizedAlert } from './types';
 
 export function AiPrioritizedAlerts() {
-  const [prioritized, setPrioritized] = useState<any>(null);
+  const [prioritized, setPrioritized] = useState<PrioritizedAlertsResponse | null>(null);
   const [prioLoading, setPrioLoading] = useState(false);
 
   const runPrioritize = async () => {
@@ -52,15 +53,15 @@ export function AiPrioritizedAlerts() {
               <Button size="sm" variant="ghost" onClick={() => setPrioritized(null)} className="h-6 text-xs">×</Button>
             </div>
             <div className="space-y-1.5 max-h-80 overflow-y-auto">
-              {prioritized.prioritized.map((p: any, i: number) => (
+              {prioritized.prioritized.map((p: PrioritizedAlert, i: number) => (
                 <div key={i} className={cn('flex items-center gap-2 p-2 rounded text-xs border',
-                  p.profitScore >= 75 ? 'bg-primary/5 border-primary/20' :
-                  p.profitScore >= 55 ? 'bg-amber-400/5 border-amber-400/20' :
+                  (p.profitScore ?? 0) >= 75 ? 'bg-primary/5 border-primary/20' :
+                  (p.profitScore ?? 0) >= 55 ? 'bg-amber-400/5 border-amber-400/20' :
                   'bg-background/30 border-border')}>
                   <div className={cn('font-mono font-bold text-lg w-10 text-center shrink-0',
-                    p.profitScore >= 75 ? 'text-primary' :
-                    p.profitScore >= 55 ? 'text-amber-400' : 'text-muted-foreground')}>
-                    {p.profitScore}
+                    (p.profitScore ?? 0) >= 75 ? 'text-primary' :
+                    (p.profitScore ?? 0) >= 55 ? 'text-amber-400' : 'text-muted-foreground')}>
+                    {p.profitScore ?? "—"}
                   </div>
                   <div className="flex-1 min-w-0">
                     <a href={p.url} target="_blank" rel="noopener noreferrer" className="font-medium hover:text-primary truncate block">

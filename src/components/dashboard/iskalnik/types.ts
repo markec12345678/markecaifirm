@@ -24,6 +24,13 @@ export interface SearchResult {
   priceDroppedAt: string | null;
   sellerName: string | null;
   buyScore: number | null;
+  expectedROI?: number | null;
+  year?: number | null;
+  discountPercent?: number | null;
+  expectedProfit?: number | null;
+  recommendation?: string;
+  confidenceLabel?: string;
+  buyVerdict?: string;
   monitor?: { name: string; source: string; tags: string } | null;
 }
 
