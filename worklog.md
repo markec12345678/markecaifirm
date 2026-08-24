@@ -21855,3 +21855,42 @@ Stage Summary:
   * useState<any>: 425 → 417 (−8 v v9.38, alerts + iskalnik čista)
   * Preostali: dashboard 6, settings 5, watchlist 5, ai-hub 6, monitors 7, analytics 16, buyers 18, pricing 20, listing-optimization 21, inventory 23, risk 24, listings 38, trades 51, statistics 75
   * Naslednji koraki: settings (5), watchlist (5), ai-hub (6), dashboard (6)
+
+---
+Task ID: v9.39
+Agent: main (po uporabnikovem načrtu #2)
+Task: Type safety postopno — settings + watchlist (10 any → 0)
+
+Work Log:
+- #2 Type safety postopno zmanjševanje:
+- Korak 1: settings/ (5 any → 0)
+  * backup-section.tsx: useState<any> → typed (ok, imported, restored, meta)
+  * full-backup-section.tsx: body: any → Record<string, unknown>
+  * webhooks-section.tsx: (ep: any) → typed webhook endpoint
+  * settings-automation.tsx: aiSummaryPreview: any → typed, setAiSummaryPreview: (v: any) → typed
+- Korak 2: watchlist/ (5 any → 0)
+  * smart-rules-modal.tsx: buildConfig(): any → Record<string, unknown>, cfg: any → typed
+  * monitors.map((m: any)) → typed Monitor
+  * rules.map((r: any)) → typed Rule z vsemi polji (isActive, channels, description, triggerCount, ruleType, name)
+  * Object.entries(r.config).map(([k, v]: any)) → [string, unknown]
+- Rezultat: settings 5→0, watchlist 5→0 (skupaj −10)
+- Total any: 425 → 407 (−18, −4.2% skupaj od v8.94)
+- 4 direktoriji popolnoma čisti: alerts, iskalnik, settings, watchlist
+- Preveril lint: 0 napak ✨
+- Preveril typecheck: 0 napak ✨
+- Preveril testi: 158/158 passing (100%) ✨
+
+Stage Summary:
+- MODIFIED: settings/backup-section.tsx (useState typed)
+- MODIFIED: settings/full-backup-section.tsx (body: Record<string, unknown>)
+- MODIFIED: settings/webhooks-section.tsx (ep typed)
+- MODIFIED: settings/settings-automation.tsx (aiSummaryPreview typed)
+- MODIFIED: watchlist/smart-rules-modal.tsx (buildConfig, monitors, rules typed)
+- MODIFIED: src/lib/version.ts (v9.38→v9.39)
+- MODIFIED: README.md (badge v9.39)
+- Verzija: v9.39.0
+- Skupaj (v7.50 → v9.39): 189 verzij, 311 novih funkcij
+- TYPE SAFETY NAPREDEK:
+  * 4 direktoriji čisti (0 any): alerts, iskalnik, settings, watchlist
+  * Total any: 425 → 407 (−18, −4.2%)
+  * Naslednji: ai-hub (6), dashboard (6), monitors (7)

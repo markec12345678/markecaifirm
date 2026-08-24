@@ -163,7 +163,7 @@ export function WebhooksSection() {
           <p className="text-xs text-muted-foreground text-center py-4">Ni webhookov. Dodaj prvega z "Dodaj webhook".</p>
         ) : (
           <div className="space-y-2">
-            {endpoints.map((ep: any) => (
+            {endpoints.map((ep: { id: string; name: string; url: string; isActive: boolean; events: string[]; triggerCount: number; failCount: number; lastTriggeredAt: string | null; lastResponseStatus: number | null; lastError: string | null }) => (
               <div key={ep.id} className={cn(
                 'border rounded p-2 text-xs',
                 ep.isActive ? 'bg-card/50 border-border' : 'bg-card/30 border-border opacity-60'

@@ -42,8 +42,8 @@ export interface SettingsAutomationProps {
   // AI daily summary
   aiSummarySending: AiSummarySending;
   setAiSummarySending: (v: AiSummarySending) => void;
-  aiSummaryPreview: any;
-  setAiSummaryPreview: (v: any) => void;
+  aiSummaryPreview: { summary?: string; stats?: { opportunitiesFound?: number } } | null;
+  setAiSummaryPreview: (v: { summary?: string; stats?: { opportunitiesFound?: number } } | null) => void;
   // Quiet hours
   quietHoursEnabled: boolean;
   setQuietHoursEnabled: (b: boolean) => void;

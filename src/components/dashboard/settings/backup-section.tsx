@@ -144,7 +144,7 @@ export function BackupSection() {
 function JsonBackupControls() {
   const [exporting, setExporting] = useState(false);
   const [importing, setImporting] = useState(false);
-  const [importResult, setImportResult] = useState<any>(null);
+  const [importResult, setImportResult] = useState<{ ok?: boolean; imported?: { settings?: number; monitors?: number }; restored?: Record<string, number>; meta?: { version?: string; createdAt?: string; exportedAt?: string } } | null>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
 
   const exportJson = async () => {
@@ -236,31 +236,31 @@ function JsonBackupControls() {
           <div className="grid grid-cols-2 sm:grid-cols-3 gap-2">
             <div>
               <div className="text-muted-foreground">Monitorji:</div>
-              <div className="font-mono font-bold text-primary">{importResult.restored.monitors}</div>
+              <div className="font-mono font-bold text-primary">{importResult?.restored?.monitors}</div>
             </div>
             <div>
               <div className="text-muted-foreground">Oglasi:</div>
-              <div className="font-mono font-bold text-primary">{importResult.restored.listings}</div>
+              <div className="font-mono font-bold text-primary">{importResult?.restored?.listings}</div>
             </div>
             <div>
               <div className="text-muted-foreground">Alerti:</div>
-              <div className="font-mono font-bold text-primary">{importResult.restored.alerts}</div>
+              <div className="font-mono font-bold text-primary">{importResult?.restored?.alerts}</div>
             </div>
             <div>
               <div className="text-muted-foreground">Tradei:</div>
-              <div className="font-mono font-bold text-primary">{importResult.restored.trades}</div>
+              <div className="font-mono font-bold text-primary">{importResult?.restored?.trades}</div>
             </div>
             <div>
               <div className="text-muted-foreground">Run logi:</div>
-              <div className="font-mono font-bold text-primary">{importResult.restored.runLogs}</div>
+              <div className="font-mono font-bold text-primary">{importResult?.restored?.runLogs}</div>
             </div>
             <div>
               <div className="text-muted-foreground">Cenovna zgodovina:</div>
-              <div className="font-mono font-bold text-primary">{importResult.restored.priceHistory}</div>
+              <div className="font-mono font-bold text-primary">{importResult?.restored?.priceHistory}</div>
             </div>
           </div>
           <div className="text-[10px] text-muted-foreground mt-2">
-            Backup ustvarjen: {new Date(importResult.meta?.exportedAt).toLocaleString('sl-SI')}
+            Backup ustvarjen: {new Date(importResult?.meta?.exportedAt ?? '').toLocaleString('sl-SI')}
           </div>
         </div>
       )}

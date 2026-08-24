@@ -239,7 +239,7 @@ export function FullBackupSection() {
     setRestoring(true);
     setRestoreResult(null);
     try {
-      const body: any = {
+      const body: Record<string, unknown> = {
         data: parsedBackup,
         mode,
       };

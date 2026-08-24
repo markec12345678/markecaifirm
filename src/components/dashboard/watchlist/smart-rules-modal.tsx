@@ -57,8 +57,8 @@ export function SmartRulesModal({ open, onOpenChange }: { open: boolean; onOpenC
 
   useEffect(() => { if (open) load(); }, [open, load]);
 
-  const buildConfig = (): any => {
-    const cfg: any = {};
+  const buildConfig = (): Record<string, unknown> => {
+    const cfg: Record<string, unknown> = {};
     if (monitorId) cfg.monitorId = monitorId;
     if (priceBelow) cfg.priceBelow = parseInt(priceBelow, 10);
     if (minDealScore) cfg.minDealScore = parseInt(minDealScore, 10);
@@ -226,7 +226,7 @@ export function SmartRulesModal({ open, onOpenChange }: { open: boolean; onOpenC
                 className="mt-1 w-full bg-card border border-border rounded px-2 py-1.5 text-xs"
               >
                 <option value="">Vsi monitorji</option>
-                {monitors.map((m: any) => (
+                {monitors.map((m: { id: string; name: string; source: string; isActive: boolean }) => (
                   <option key={m.id} value={m.id}>{m.name} ({m.source})</option>
                 ))}
               </select>
@@ -332,19 +332,19 @@ export function SmartRulesModal({ open, onOpenChange }: { open: boolean; onOpenC
           </div>
         ) : (
           <div className="space-y-2">
-            {rules.map((r: any) => (
+            {rules.map((r: { id: string; monitorId: string; config: Record<string, unknown>; isActive?: boolean; lastTriggeredAt?: string | null; channels?: string[]; description?: string; triggerCount?: number; ruleType?: string; name?: string }) => (
               <div key={r.id} className={cn(
                 'border rounded p-2 text-xs',
-                r.isActive ? 'bg-card/50 border-border' : 'bg-card/30 border-border opacity-60'
+                (r?.isActive ?? false) ? 'bg-card/50 border-border' : 'bg-card/30 border-border opacity-60'
               )}>
                 <div className="flex items-start justify-between gap-2">
                   <div className="flex-1 min-w-0">
                     <div className="flex items-center gap-1.5 mb-0.5 flex-wrap">
                       <span className="font-bold">{r.name}</span>
-                      <Badge variant="outline" className="text-[9px]">{ruleTypeLabels[r.ruleType] || r.ruleType}</Badge>
-                      {r.triggerCount > 0 && (
+                      <Badge variant="outline" className="text-[9px]">{ruleTypeLabels[r.ruleType ?? "unknown"] || r.ruleType}</Badge>
+                      {(r.triggerCount ?? 0) > 0 && (
                         <Badge variant="outline" className="text-[9px] text-primary border-primary/40">
-                          🔥 {r.triggerCount}×
+                          🔥 {(r.triggerCount ?? 0)}×
                         </Badge>
                       )}
                     </div>
@@ -352,11 +352,11 @@ export function SmartRulesModal({ open, onOpenChange }: { open: boolean; onOpenC
                       <div className="text-[10px] text-muted-foreground mb-1">{r.description}</div>
                     )}
                     <div className="text-[10px] text-muted-foreground font-mono">
-                      {Object.entries(r.config).map(([k, v]: any) => `${k}=${v}`).join(', ')}
+                      {Object.entries(r.config).map(([k, v]: [string, unknown]) => `${k}=${v}`).join(', ')}
                     </div>
-                    {r.channels?.length > 0 && (
+                    {(r.channels?.length ?? 0) > 0 && (
                       <div className="text-[9px] text-muted-foreground mt-0.5">
-                        Kanali: {r.channels.join(', ')}
+                        Kanali: {(r.channels ?? []).join(', ')}
                       </div>
                     )}
                     {r.lastTriggeredAt && (
@@ -367,15 +367,15 @@ export function SmartRulesModal({ open, onOpenChange }: { open: boolean; onOpenC
                   </div>
                   <div className="flex items-center gap-1 shrink-0">
                     <button
-                      onClick={() => toggleActive(r.id, r.isActive)}
+                      onClick={() => toggleActive(r.id, (r?.isActive ?? false))}
                       className={cn(
                         'text-[10px] px-1.5 py-0.5 rounded border',
-                        r.isActive
+                        (r?.isActive ?? false)
                           ? 'border-primary/40 text-primary'
                           : 'border-border text-muted-foreground'
                       )}
                     >
-                      {r.isActive ? 'AKTIVNO' : 'IZKLOP'}
+                      {(r?.isActive ?? false) ? 'AKTIVNO' : 'IZKLOP'}
                     </button>
                     <button
                       onClick={() => deleteRule(r.id)}
