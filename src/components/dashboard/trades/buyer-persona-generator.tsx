@@ -15,7 +15,7 @@ interface BuyerPersonaGeneratorProps {
 
 export function BuyerPersonaGenerator({ trades }: BuyerPersonaGeneratorProps) {
   // v6.22: Buyer Persona
-  const [personaData, setPersonaData] = useState<any>(null);
+  const [personaData, setPersonaData] = useState<Record<string, any> | null>(null);
   const [personaLoading, setPersonaLoading] = useState(false);
 
   return (
@@ -28,7 +28,7 @@ export function BuyerPersonaGenerator({ trades }: BuyerPersonaGeneratorProps) {
         disabled={personaLoading}
         onClick={async () => {
           if (trades.length === 0) { toast.error('Ni tradeov v skladišču'); return; }
-          const firstHeld = trades.find((t: any) => t.status === 'held');
+          const firstHeld = trades.find((t: Record<string, any>) => t.status === 'held');
           if (!firstHeld) { toast.error('Ni held tradeov'); return; }
           setPersonaLoading(true); setPersonaData(null);
           try {
@@ -92,7 +92,7 @@ export function BuyerPersonaGenerator({ trades }: BuyerPersonaGeneratorProps) {
 
             {/* Personas */}
             <div className="space-y-2 max-h-96 overflow-y-auto">
-              {personaData.personas.map((p: any, i: number) => {
+              {personaData.personas.map((p: Record<string, any>, i: number) => {
                 const typeCfg: Record<string, { color: string; bg: string; icon: string }> = {
                   BUDGET_CONSCIOUS: { color: 'text-amber-400', bg: 'border-amber-400/20 bg-amber-400/5', icon: '💰' },
                   QUALITY_SEEKER: { color: 'text-blue-400', bg: 'border-blue-400/20 bg-blue-400/5', icon: '⭐' },
@@ -140,7 +140,7 @@ export function BuyerPersonaGenerator({ trades }: BuyerPersonaGeneratorProps) {
                     {p.objectionHandling?.length > 0 && (
                       <div className="text-[9px] space-y-0.5">
                         <div className="text-amber-400 font-semibold">🔄 Objection handling:</div>
-                        {p.objectionHandling.map((o: any, j: number) => (
+                        {p.objectionHandling.map((o: Record<string, any>, j: number) => (
                           <div key={j} className="ml-2">
                             <div className="text-red-500">„{o.objection}"</div>
                             <div className="text-primary">→ {o.response}</div>

@@ -11,7 +11,7 @@ import { toast } from 'sonner';
 import { cn } from '@/lib/utils';
 
 export function FullAutomation() {
-  const [autoData, setAutoData] = useState<any>(null);
+  const [autoData, setAutoData] = useState<Record<string, any> | null>(null);
   const [autoLoading, setAutoLoading] = useState(false);
   const [autoMode, setAutoMode] = useState<'advisory' | 'semi_auto' | 'full_auto'>('advisory');
 
@@ -60,7 +60,7 @@ export function FullAutomation() {
             {autoData.automation.buyPipeline?.length > 0 && (
               <div>
                 <div className="text-[10px] uppercase text-primary mb-1">🛒 Buy Pipeline:</div>
-                {autoData.automation.buyPipeline.slice(0, 5).map((s: any, i: number) => (
+                {autoData.automation.buyPipeline.slice(0, 5).map((s: Record<string, any>, i: number) => (
                   <div key={i} className="text-[10px] flex items-center gap-1 bg-background/40 rounded p-1 border mb-0.5">
                     <span className="font-mono font-bold shrink-0">{s.step}.</span>
                     <span className="flex-1 truncate">{s.name}</span>
@@ -73,7 +73,7 @@ export function FullAutomation() {
             {autoData.automation.sellPipeline?.length > 0 && (
               <div>
                 <div className="text-[10px] uppercase text-primary mb-1">💰 Sell Pipeline:</div>
-                {autoData.automation.sellPipeline.slice(0, 5).map((s: any, i: number) => (
+                {autoData.automation.sellPipeline.slice(0, 5).map((s: Record<string, any>, i: number) => (
                   <div key={i} className="text-[10px] flex items-center gap-1 bg-background/40 rounded p-1 border mb-0.5">
                     <span className="font-mono font-bold shrink-0">{s.step}.</span>
                     <span className="flex-1 truncate">{s.name}</span>
@@ -86,7 +86,7 @@ export function FullAutomation() {
             {autoData.automation.safeguards?.length > 0 && (
               <div className="bg-amber-400/5 border border-amber-400/20 rounded p-2">
                 <div className="text-[10px] uppercase text-amber-400 mb-1">🛡️ Zaščite:</div>
-                {autoData.automation.safeguards.slice(0, 4).map((s: any, i: number) => (
+                {autoData.automation.safeguards.slice(0, 4).map((s: Record<string, any>, i: number) => (
                   <div key={i} className="text-[10px]">• <b>{s.name}</b>: {s.rule}</div>
                 ))}
               </div>

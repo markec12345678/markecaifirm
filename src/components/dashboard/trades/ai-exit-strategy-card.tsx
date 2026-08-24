@@ -7,7 +7,7 @@ import { Target } from 'lucide-react';
 import { cn } from '@/lib/utils';
 
 interface AIExitStrategyCardProps {
-  data: any;
+  data: Record<string, any>;
   onClear: () => void;
 }
 

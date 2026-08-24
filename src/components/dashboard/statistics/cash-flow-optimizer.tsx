@@ -12,7 +12,7 @@ import { toast } from 'sonner';
 import { cn } from '@/lib/utils';
 
 export function CashFlowOptimizer() {
-  const [cashflowData, setCashflowData] = useState<any>(null);
+  const [cashflowData, setCashflowData] = useState<Record<string, any> | null>(null);
   const [cashflowLoading, setCashflowLoading] = useState(false);
   const [cashflowDays, setCashflowDays] = useState('30');
 
@@ -145,7 +145,7 @@ export function CashFlowOptimizer() {
               <div className="bg-red-500/5 border border-red-500/20 rounded p-2">
                 <div className="text-[10px] uppercase text-red-500 mb-1">⚠️ Bottlenecks:</div>
                 <div className="space-y-1">
-                  {cashflowData.analysis.bottlenecks.map((b: any, i: number) => (
+                  {cashflowData.analysis.bottlenecks.map((b: Record<string, any>, i: number) => (
                     <div key={i} className="text-[10px]">
                       <div className="flex items-center justify-between">
                         <span className="font-medium">{b.type.replace('_', ' ')}</span>
@@ -164,7 +164,7 @@ export function CashFlowOptimizer() {
               <div className="bg-primary/5 border border-primary/20 rounded p-2">
                 <div className="text-[10px] uppercase text-primary mb-1">💡 Priporočila:</div>
                 <div className="space-y-1">
-                  {cashflowData.analysis.recommendations.map((r: any, i: number) => {
+                  {cashflowData.analysis.recommendations.map((r: Record<string, any>, i: number) => {
                     const prColor = r.priority === 'high' ? 'text-red-500' : r.priority === 'medium' ? 'text-amber-400' : 'text-blue-400';
                     return (
                       <div key={i} className="text-[10px]">
@@ -188,7 +188,7 @@ export function CashFlowOptimizer() {
               <div className="bg-amber-400/5 border border-amber-400/20 rounded p-2">
                 <div className="text-[10px] uppercase text-amber-400 mb-1">📉 Cash flow gap-i:</div>
                 <div className="space-y-1">
-                  {cashflowData.analysis.cashFlowGaps.map((g: any, i: number) => (
+                  {cashflowData.analysis.cashFlowGaps.map((g: Record<string, any>, i: number) => (
                     <div key={i} className="text-[10px]">
                       <div className="flex items-center justify-between">
                         <span className="font-medium">{g.dateRange}</span>

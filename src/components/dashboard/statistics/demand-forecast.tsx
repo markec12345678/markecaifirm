@@ -13,7 +13,7 @@ import { cn } from '@/lib/utils';
 
 export function DemandForecast() {
   // v6.12: Demand Forecast
-  const [demandData, setDemandData] = useState<any>(null);
+  const [demandData, setDemandData] = useState<Record<string, any> | null>(null);
   const [demandLoading, setDemandLoading] = useState(false);
   const [demandMonths, setDemandMonths] = useState('3');
 
@@ -92,7 +92,7 @@ export function DemandForecast() {
                 </div>
               )}
               <div className="space-y-2 max-h-80 overflow-y-auto">
-                {demandData.forecasts?.map((f: any, i: number) => {
+                {demandData.forecasts?.map((f: Record<string, any>, i: number) => {
                   const trendIcon = f.trend === 'growing' ? '📈' : f.trend === 'declining' ? '📉' : '➡️';
                   const trendColor = f.trend === 'growing' ? 'text-primary' : f.trend === 'declining' ? 'text-destructive' : 'text-muted-foreground';
                   const recColor = f.recommendation === 'buy' ? 'text-primary' : f.recommendation === 'sell' ? 'text-amber-400' : 'text-blue-400';

@@ -12,7 +12,7 @@ import { cn } from '@/lib/utils';
 
 export function PricingABTest() {
   // v6.11: A/B Testing
-  const [abTestData, setAbTestData] = useState<any>(null);
+  const [abTestData, setAbTestData] = useState<Record<string, any> | null>(null);
   const [abTestLoading, setAbTestLoading] = useState(false);
 
   return (
@@ -70,7 +70,7 @@ export function PricingABTest() {
                 </div>
               )}
               <div className="space-y-2 max-h-80 overflow-y-auto">
-                {abTestData.tests?.map((t: any, i: number) => {
+                {abTestData.tests?.map((t: Record<string, any>, i: number) => {
                   const recColor = t.recommendation === 'premium' ? 'text-primary' : t.recommendation === 'aggressive' ? 'text-amber-400' : 'text-blue-400';
                   return (
                     <div key={i} className="border rounded p-2 space-y-1.5">
@@ -82,7 +82,7 @@ export function PricingABTest() {
                         <Badge variant="outline" className={cn('text-[9px] shrink-0', recColor)}>→ {t.recommendation}</Badge>
                       </div>
                       <div className="grid grid-cols-3 gap-1 text-[9px]">
-                        {t.variants?.map((v: any, j: number) => {
+                        {t.variants?.map((v: Record<string, any>, j: number) => {
                           const isRec = v.name === t.recommendation;
                           const cfg: Record<string, string> = {
                             premium: 'text-primary border-primary/30',

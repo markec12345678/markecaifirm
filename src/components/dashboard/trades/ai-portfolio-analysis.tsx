@@ -8,7 +8,7 @@ import { RefreshCw, Sparkles } from 'lucide-react';
 import { cn } from '@/lib/utils';
 
 export function AIPortfolioAnalysis() {
-  const [portfolioAI, setPortfolioAI] = useState<any>(null);
+  const [portfolioAI, setPortfolioAI] = useState<Record<string, any> | null>(null);
   const [portfolioAILoading, setPortfolioAILoading] = useState(false);
 
   const loadPortfolioAI = useCallback(async () => {
@@ -74,7 +74,7 @@ export function AIPortfolioAnalysis() {
                 <div className="text-[10px] uppercase tracking-wider text-muted-foreground mb-1">
                   Priporočila za vsak trade ({portfolioAI.recommendations.length})
                 </div>
-                {portfolioAI.recommendations.map((rec: any, i: number) => {
+                {portfolioAI.recommendations.map((rec: Record<string, any>, i: number) => {
                   const actionConfig: Record<string, { color: string; icon: string; label: string }> = {
                     sell: { color: 'text-primary border-primary/40', icon: '💰', label: 'PRODAJ' },
                     hold: { color: 'text-muted-foreground border-border', icon: '✋', label: 'DRŽI' },

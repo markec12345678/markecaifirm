@@ -11,7 +11,7 @@ import { toast } from 'sonner';
 import { cn } from '@/lib/utils';
 
 export function ProfitMargin() {
-  const [marginData, setMarginData] = useState<any>(null);
+  const [marginData, setMarginData] = useState<Record<string, any> | null>(null);
   const [marginLoading, setMarginLoading] = useState(false);
 
   return (
@@ -73,7 +73,7 @@ export function ProfitMargin() {
 
             {/* Per-item optimizations */}
             <div className="space-y-2 max-h-72 overflow-y-auto">
-              {marginData.items?.map((it: any, i: number) => (
+              {marginData.items?.map((it: Record<string, any>, i: number) => (
                 <div key={i} className="border rounded p-2 space-y-1.5">
                   <div className="flex items-center justify-between gap-2">
                     <div className="flex-1 min-w-0">
@@ -104,7 +104,7 @@ export function ProfitMargin() {
                   </div>
                   {it.improvements?.length > 0 && (
                     <div className="space-y-0.5">
-                      {it.improvements.map((imp: any, j: number) => (
+                      {it.improvements.map((imp: Record<string, any>, j: number) => (
                         <div key={j} className="text-[9px] flex items-center justify-between">
                           <span><span className="text-primary font-semibold">{imp.type.replace('_', ' ')}:</span> {imp.description}</span>
                           <span className="font-mono text-primary">+{imp.savingsEur}€</span>

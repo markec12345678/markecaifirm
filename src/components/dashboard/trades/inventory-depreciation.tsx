@@ -10,7 +10,7 @@ import { cn } from '@/lib/utils';
 
 export function InventoryDepreciation() {
   // v6.23: Inventory Depreciation
-  const [depreciationData, setDepreciationData] = useState<any>(null);
+  const [depreciationData, setDepreciationData] = useState<Record<string, any> | null>(null);
   const [depreciationLoading, setDepreciationLoading] = useState(false);
 
   return (
@@ -82,7 +82,7 @@ export function InventoryDepreciation() {
 
             {/* Forecasts per item */}
             <div className="space-y-2 max-h-80 overflow-y-auto">
-              {depreciationData.forecasts?.map((f: any, i: number) => {
+              {depreciationData.forecasts?.map((f: Record<string, any>, i: number) => {
                 const actionCfg: Record<string, { color: string; bg: string; icon: string }> = {
                   sell_now: { color: 'text-red-500', bg: 'border-red-500/20 bg-red-500/5', icon: '🔴' },
                   sell_soon: { color: 'text-amber-400', bg: 'border-amber-400/20 bg-amber-400/5', icon: '🟡' },

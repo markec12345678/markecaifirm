@@ -10,7 +10,7 @@ import { cn } from '@/lib/utils';
 
 export function OptimalTimePredictor() {
   // v6.21: Optimal Time Predictor
-  const [optimalTimeData, setOptimalTimeData] = useState<any>(null);
+  const [optimalTimeData, setOptimalTimeData] = useState<Record<string, any> | null>(null);
   const [optimalTimeLoading, setOptimalTimeLoading] = useState(false);
 
   return (
@@ -81,7 +81,7 @@ export function OptimalTimePredictor() {
 
             {/* Predictions */}
             <div className="space-y-2 max-h-80 overflow-y-auto">
-              {optimalTimeData.predictions?.map((p: any, i: number) => {
+              {optimalTimeData.predictions?.map((p: Record<string, any>, i: number) => {
                 const stratCfg: Record<string, { color: string; bg: string; icon: string }> = {
                   premium_time: { color: 'text-primary', bg: 'border-primary/20 bg-primary/5', icon: '⭐' },
                   off_peak: { color: 'text-blue-400', bg: 'border-blue-400/20 bg-blue-400/5', icon: '🔵' },
@@ -127,11 +127,11 @@ export function OptimalTimePredictor() {
             </div>
 
             {/* Historical data */}
-            {optimalTimeData.historicalData?.salesByDay?.some((d: any) => d.count > 0) && (
+            {optimalTimeData.historicalData?.salesByDay?.some((d: Record<string, any>) => d.count > 0) && (
               <div className="bg-background/40 border rounded p-2">
                 <div className="text-[10px] uppercase text-muted-foreground mb-1">📊 Zgodovina prodaj po dnevih:</div>
                 <div className="grid grid-cols-7 gap-1 text-[9px]">
-                  {optimalTimeData.historicalData.salesByDay.map((d: any, j: number) => (
+                  {optimalTimeData.historicalData.salesByDay.map((d: Record<string, any>, j: number) => (
                     <div key={j} className="text-center">
                       <div className="text-muted-foreground capitalize truncate">{d.day.slice(0, 3)}</div>
                       <div className={cn('font-mono font-bold', d.count > 0 ? 'text-primary' : 'text-muted-foreground')}>{d.count}</div>

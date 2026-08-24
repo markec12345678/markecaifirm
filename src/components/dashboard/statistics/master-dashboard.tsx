@@ -11,7 +11,7 @@ import { toast } from 'sonner';
 import { cn } from '@/lib/utils';
 
 export function MasterDashboard() {
-  const [masterData, setMasterData] = useState<any>(null);
+  const [masterData, setMasterData] = useState<Record<string, any> | null>(null);
   const [masterLoading, setMasterLoading] = useState(false);
 
   return (
@@ -64,7 +64,7 @@ export function MasterDashboard() {
             {/* Actions */}
             {masterData.master.actions?.length > 0 && (
               <div><div className="text-[10px] uppercase text-muted-foreground mb-1">📋 Top akcije:</div>
-                {masterData.master.actions.slice(0, 4).map((a: any, i: number) => (
+                {masterData.master.actions.slice(0, 4).map((a: Record<string, any>, i: number) => (
                   <div key={i} className="text-[10px] flex items-center justify-between bg-background/40 rounded p-1 border mb-0.5">
                     <span>{a.action}</span>
                     <div className="flex items-center gap-1 shrink-0">

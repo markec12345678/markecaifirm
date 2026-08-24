@@ -13,7 +13,7 @@ import { cn } from '@/lib/utils';
 
 export function CrossBorderArbitrage() {
   // v6.11: Cross-Border
-  const [crossBorderData, setCrossBorderData] = useState<any>(null);
+  const [crossBorderData, setCrossBorderData] = useState<Record<string, any> | null>(null);
   const [crossBorderLoading, setCrossBorderLoading] = useState(false);
   const [crossBorderQuery, setCrossBorderQuery] = useState('');
 
@@ -85,7 +85,7 @@ export function CrossBorderArbitrage() {
                 </div>
               )}
               <div className="space-y-2 max-h-80 overflow-y-auto">
-                {crossBorderData.opportunities?.map((o: any, i: number) => {
+                {crossBorderData.opportunities?.map((o: Record<string, any>, i: number) => {
                   const stratColor = o.arbitrage.strategy === 'export' ? 'text-primary' :
                                      o.arbitrage.strategy === 'import' ? 'text-blue-400' :
                                      o.arbitrage.strategy === 'wait' ? 'text-muted-foreground' : 'text-amber-400';
@@ -111,7 +111,7 @@ export function CrossBorderArbitrage() {
                       </div>
                       {o.foreignPrices?.length > 0 && (
                         <div className="text-[9px] text-muted-foreground">
-                          🌍 {o.foreignPrices.slice(0, 3).map((f: any) => `${f.country}: ${f.price}€`).join(' · ')}
+                          🌍 {o.foreignPrices.slice(0, 3).map((f: Record<string, any>) => `${f.country}: ${f.price}€`).join(' · ')}
                         </div>
                       )}
                       <div className="flex items-center justify-between text-[9px]">

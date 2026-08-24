@@ -13,7 +13,7 @@ interface AIBundleOptimizerProps {
 }
 
 export function AIBundleOptimizer({ bulkTradeIds }: AIBundleOptimizerProps) {
-  const [bundleData, setBundleData] = useState<any>(null);
+  const [bundleData, setBundleData] = useState<Record<string, any> | null>(null);
   const [bundleLoading, setBundleLoading] = useState(false);
 
   return (
@@ -85,7 +85,7 @@ export function AIBundleOptimizer({ bulkTradeIds }: AIBundleOptimizerProps) {
               </div>
             )}
             <div className="space-y-2">
-              {bundleData.bundles?.map((b: any, i: number) => (
+              {bundleData.bundles?.map((b: Record<string, any>, i: number) => (
                 <div key={i} className="border border-primary/20 bg-primary/5 rounded p-2 space-y-1.5">
                   <div className="flex items-center justify-between gap-2">
                     <div className="flex items-center gap-2 flex-wrap">
@@ -107,7 +107,7 @@ export function AIBundleOptimizer({ bulkTradeIds }: AIBundleOptimizerProps) {
                     <span className="text-amber-400">−{b.savingsPct}%</span> popust · {b.reasoning}
                   </div>
                   <div className="text-[10px]">
-                    {b.items?.map((it: any, j: number) => (
+                    {b.items?.map((it: Record<string, any>, j: number) => (
                       <span key={j} className="inline-block bg-background/60 px-1.5 py-0.5 rounded mr-1 mb-1 text-[9px]">{it.title}</span>
                     ))}
                   </div>
@@ -120,7 +120,7 @@ export function AIBundleOptimizer({ bulkTradeIds }: AIBundleOptimizerProps) {
             {bundleData.individualSale?.length > 0 && (
               <div className="text-[10px] text-muted-foreground">
                 <span className="font-semibold">Za posamično prodajo:</span>{' '}
-                {bundleData.individualSale.map((it: any) => it.title).join(', ')}
+                {bundleData.individualSale.map((it: Record<string, any>) => it.title).join(', ')}
               </div>
             )}
           </CardContent>

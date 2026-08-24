@@ -13,7 +13,7 @@ interface AILiquidationStrategyProps {
 }
 
 export function AILiquidationStrategy({ bulkTradeIds }: AILiquidationStrategyProps) {
-  const [liquidationData, setLiquidationData] = useState<any>(null);
+  const [liquidationData, setLiquidationData] = useState<Record<string, any> | null>(null);
   const [liquidationLoading, setLiquidationLoading] = useState(false);
 
   return (
@@ -104,7 +104,7 @@ export function AILiquidationStrategy({ bulkTradeIds }: AILiquidationStrategyPro
               </div>
             )}
             <div className="space-y-2">
-              {liquidationData.items?.map((it: any, i: number) => {
+              {liquidationData.items?.map((it: Record<string, any>, i: number) => {
                 const urgencyCfg: Record<string, { color: string; bg: string; icon: string }> = {
                   critical: { color: 'text-red-500', bg: 'border-red-500/20 bg-red-500/5', icon: '🔴' },
                   high: { color: 'text-amber-400', bg: 'border-amber-400/20 bg-amber-400/5', icon: '🟡' },

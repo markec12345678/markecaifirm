@@ -10,7 +10,7 @@ import { cn } from '@/lib/utils';
 
 export function SpeedToSell() {
   // v6.4: Speed-to-Sell
-  const [speedData, setSpeedData] = useState<any>(null);
+  const [speedData, setSpeedData] = useState<Record<string, any> | null>(null);
 
   useEffect(() => {
     fetch('/api/stats/speed-to-sell').then(r => r.ok ? r.json() : null).then(d => d && setSpeedData(d)).catch(() => {});
@@ -76,7 +76,7 @@ export function SpeedToSell() {
                 <div>
                   <div className="text-[10px] uppercase tracking-wider text-muted-foreground mb-1">Po kategorijah</div>
                   <div className="space-y-1">
-                    {speedData.byCategory.map((c: any, i: number) => (
+                    {speedData.byCategory.map((c: Record<string, any>, i: number) => (
                       <div key={i} className="flex items-center gap-2 p-1.5 bg-background/30 rounded text-[11px]">
                         <Badge variant="outline" className="text-[9px] shrink-0">{c.category}</Badge>
                         <span className="font-mono font-bold w-12">{c.avgDays}d</span>
@@ -97,7 +97,7 @@ export function SpeedToSell() {
                 <div>
                   <div className="text-[10px] uppercase tracking-wider text-muted-foreground mb-1">Po cenovnem rangu</div>
                   <div className="grid grid-cols-5 gap-1">
-                    {speedData.byPriceRange.map((r: any, i: number) => (
+                    {speedData.byPriceRange.map((r: Record<string, any>, i: number) => (
                       <div key={i} className="bg-background/30 rounded p-1.5 text-center text-[10px]">
                         <div className="text-muted-foreground">{r.label}</div>
                         {r.count > 0 ? (

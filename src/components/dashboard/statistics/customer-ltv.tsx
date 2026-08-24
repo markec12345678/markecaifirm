@@ -11,7 +11,7 @@ import { toast } from 'sonner';
 import { cn } from '@/lib/utils';
 
 export function CustomerLtv() {
-  const [ltvData, setLtvData] = useState<any>(null);
+  const [ltvData, setLtvData] = useState<Record<string, any> | null>(null);
   const [ltvLoading, setLtvLoading] = useState(false);
 
   return (
@@ -73,7 +73,7 @@ export function CustomerLtv() {
 
             {/* Customer list */}
             <div className="space-y-2 max-h-72 overflow-y-auto">
-              {ltvData.customers?.map((c: any, i: number) => {
+              {ltvData.customers?.map((c: Record<string, any>, i: number) => {
                 const segCfg: Record<string, { color: string; bg: string; icon: string }> = {
                   vip: { color: 'text-primary', bg: 'bg-primary/5 border-primary/20', icon: '⭐' },
                   loyal: { color: 'text-blue-400', bg: 'bg-blue-400/5 border-blue-400/20', icon: '💙' },

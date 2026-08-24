@@ -12,7 +12,7 @@ import { cn } from '@/lib/utils';
 
 export function PortfolioRebalance() {
   // v6.9: Rebalance
-  const [rebalanceData, setRebalanceData] = useState<any>(null);
+  const [rebalanceData, setRebalanceData] = useState<Record<string, any> | null>(null);
   const [rebalanceLoading, setRebalanceLoading] = useState(false);
 
   return (
@@ -49,7 +49,7 @@ export function PortfolioRebalance() {
               {rebalanceData.strategy && <div className="bg-primary/5 border border-primary/20 rounded p-2 text-primary">{rebalanceData.strategy}</div>}
               <div className="text-[10px] uppercase text-muted-foreground">Trenutna alokacija: {rebalanceData.totalInvested}€</div>
               <div className="space-y-1">
-                {rebalanceData.actions?.map((a: any, i: number) => {
+                {rebalanceData.actions?.map((a: Record<string, any>, i: number) => {
                   const actionCfg: Record<string, { icon: string; color: string; label: string }> = {
                     buy_more: { icon: '📈', color: 'text-primary', label: 'Povečaj' },
                     reduce: { icon: '📉', color: 'text-amber-400', label: 'Zmanjšaj' },

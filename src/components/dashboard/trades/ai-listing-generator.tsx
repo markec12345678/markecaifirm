@@ -13,7 +13,7 @@ interface AIListingGeneratorProps {
 }
 
 export function AIListingGenerator({ trades }: AIListingGeneratorProps) {
-  const [listingGen, setListingGen] = useState<any>(null);
+  const [listingGen, setListingGen] = useState<Record<string, any> | null>(null);
   const [listingGenLoading, setListingGenLoading] = useState<string | null>(null);
   const [listingGenPlatform, setListingGenPlatform] = useState<'bolha' | 'vinted' | 'facebook' | 'avtonet'>('bolha');
   const [listingGenCopied, setListingGenCopied] = useState<string | null>(null);
@@ -28,7 +28,7 @@ export function AIListingGenerator({ trades }: AIListingGeneratorProps) {
         disabled={!!listingGenLoading}
         onClick={async () => {
           if (trades.length === 0) { toast.error('Ni tradeov v skladišču'); return; }
-          const firstHeld = trades.find((t: any) => t.status === 'held');
+          const firstHeld = trades.find((t: Record<string, any>) => t.status === 'held');
           if (!firstHeld) { toast.error('Ni held tradeov za prodajo'); return; }
           setListingGenLoading(firstHeld.id); setListingGen(null);
           try {
@@ -146,7 +146,7 @@ export function AIListingGenerator({ trades }: AIListingGeneratorProps) {
                   <div>
                     <div className="text-[10px] uppercase text-muted-foreground mb-1">📱 Prilagoditve po platformah:</div>
                     <div className="space-y-2">
-                      {listingGen.listing.platformsAdaptations.map((p: any, i: number) => (
+                      {listingGen.listing.platformsAdaptations.map((p: Record<string, any>, i: number) => (
                         <div key={i} className="bg-background/40 border rounded p-2">
                           <div className="flex items-center justify-between mb-1">
                             <Badge variant="outline" className="text-[9px] uppercase">{p.platform}</Badge>

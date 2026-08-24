@@ -15,7 +15,7 @@ interface CrossPlatformPriceComparisonProps {
 
 export function CrossPlatformPriceComparison({ trades }: CrossPlatformPriceComparisonProps) {
   // v6.23: Cross-Platform Price
-  const [crossPriceData, setCrossPriceData] = useState<any>(null);
+  const [crossPriceData, setCrossPriceData] = useState<Record<string, any> | null>(null);
   const [crossPriceLoading, setCrossPriceLoading] = useState(false);
 
   return (
@@ -28,7 +28,7 @@ export function CrossPlatformPriceComparison({ trades }: CrossPlatformPriceCompa
         disabled={crossPriceLoading}
         onClick={async () => {
           if (trades.length === 0) { toast.error('Ni tradeov v skladišču'); return; }
-          const firstHeld = trades.find((t: any) => t.status === 'held');
+          const firstHeld = trades.find((t: Record<string, any>) => t.status === 'held');
           if (!firstHeld) { toast.error('Ni held tradeov'); return; }
           setCrossPriceLoading(true); setCrossPriceData(null);
           try {
@@ -90,7 +90,7 @@ export function CrossPlatformPriceComparison({ trades }: CrossPlatformPriceCompa
               <div>
                 <div className="text-[10px] uppercase text-muted-foreground mb-1">💰 Cene po platformah:</div>
                 <div className="space-y-1 max-h-60 overflow-y-auto">
-                  {crossPriceData.comparison.prices.map((p: any, i: number) => (
+                  {crossPriceData.comparison.prices.map((p: Record<string, any>, i: number) => (
                     <div key={i} className={cn('border rounded p-1.5 flex items-center justify-between gap-2',
                       p === crossPriceData.comparison.cheapest ? 'bg-primary/5 border-primary/20' : 'bg-background/40')}>
                       <div className="flex items-center gap-2 flex-1 min-w-0">
@@ -117,7 +117,7 @@ export function CrossPlatformPriceComparison({ trades }: CrossPlatformPriceCompa
               <div>
                 <div className="text-[10px] uppercase text-muted-foreground mb-1">⚡ Arbitražne priložnosti:</div>
                 <div className="space-y-1">
-                  {crossPriceData.comparison.arbitrageOpportunities.map((a: any, i: number) => (
+                  {crossPriceData.comparison.arbitrageOpportunities.map((a: Record<string, any>, i: number) => (
                     <div key={i} className="bg-indigo-400/5 border border-indigo-400/20 rounded p-1.5 text-[10px]">
                       <div className="flex items-center justify-between">
                         <span><Badge variant="outline" className="text-[8px] mr-1">{a.strategy.replace('_', ' ')}</Badge> {a.buyPlatform} → {a.sellPlatform}</span>

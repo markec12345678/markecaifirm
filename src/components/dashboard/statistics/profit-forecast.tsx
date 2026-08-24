@@ -12,7 +12,7 @@ import { cn } from '@/lib/utils';
 
 export function ProfitForecast() {
   // v6.8: Profit forecast
-  const [forecastData, setForecastData] = useState<any>(null);
+  const [forecastData, setForecastData] = useState<Record<string, any> | null>(null);
   const [forecastLoading, setForecastLoading] = useState(false);
 
   return (
@@ -83,7 +83,7 @@ export function ProfitForecast() {
                 <div className="bg-primary/5 border border-primary/20 rounded p-2 text-primary">{forecastData.forecast.recommendation}</div>
               )}
               <div className="bg-background/30 rounded p-2 text-[10px] text-muted-foreground">
-                📈 Zadnjih 6 mesecev: {forecastData.historicalData.monthlyProfits.map((m: any) => `${m.profit}€`).join(' → ')}
+                📈 Zadnjih 6 mesecev: {forecastData.historicalData.monthlyProfits.map((m: Record<string, any>) => `${m.profit}€`).join(' → ')}
                 <br />📊 Povprečno: {forecastData.historicalData.avgMonthlyProfit}€/mesec • Trend: {forecastData.historicalData.trendPct > 0 ? '+' : ''}{forecastData.historicalData.trendPct}%
                 <br />💼 V skladišču: {forecastData.historicalData.heldCount} itemov, potencial: {forecastData.historicalData.heldPotential}€
               </div>

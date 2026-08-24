@@ -11,7 +11,7 @@ import { toast } from 'sonner';
 import { cn } from '@/lib/utils';
 
 export function InventoryAging() {
-  const [agingData, setAgingData] = useState<any>(null);
+  const [agingData, setAgingData] = useState<Record<string, any> | null>(null);
   const [agingLoading, setAgingLoading] = useState(false);
 
   return (
@@ -53,7 +53,7 @@ export function InventoryAging() {
               </div>
             )}
             <div className="space-y-1 max-h-72 overflow-y-auto">
-              {agingData.alerts?.map((a: any, i: number) => {
+              {agingData.alerts?.map((a: Record<string, any>, i: number) => {
                 const urgencyCfg: Record<string, { color: string; bg: string; icon: string }> = {
                   critical: { color: 'text-red-500', bg: 'border-red-500/20 bg-red-500/5', icon: '🔴' },
                   high: { color: 'text-amber-400', bg: 'border-amber-400/20 bg-amber-400/5', icon: '🟡' },

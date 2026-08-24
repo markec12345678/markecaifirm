@@ -10,7 +10,7 @@ import { Sparkles, RefreshCw } from 'lucide-react';
 import { toast } from 'sonner';
 
 export function EmailCampaign() {
-  const [campaignData, setCampaignData] = useState<any>(null);
+  const [campaignData, setCampaignData] = useState<Record<string, any> | null>(null);
   const [campaignLoading, setCampaignLoading] = useState(false);
   const [campaignType, setCampaignType] = useState<'win_back' | 'new_buyers' | 'bundle_offer' | 'clearance' | 'seasonal' | 'newsletter'>('newsletter');
   const [campaignCopied, setCampaignCopied] = useState<string | null>(null);
@@ -154,7 +154,7 @@ export function EmailCampaign() {
               <div>
                 <div className="text-[10px] uppercase text-muted-foreground mb-1">👥 Segmenti:</div>
                 <div className="space-y-1">
-                  {campaignData.campaign.segments.map((s: any, i: number) => (
+                  {campaignData.campaign.segments.map((s: Record<string, any>, i: number) => (
                     <div key={i} className="bg-background/40 border rounded p-1.5 text-[10px]">
                       <div className="flex items-center justify-between">
                         <span className="font-bold">{s.name}</span>

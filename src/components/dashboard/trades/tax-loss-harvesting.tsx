@@ -10,7 +10,7 @@ import { cn } from '@/lib/utils';
 
 export function TaxLossHarvesting() {
   // v6.15: Tax Loss Harvesting
-  const [taxHarvestData, setTaxHarvestData] = useState<any>(null);
+  const [taxHarvestData, setTaxHarvestData] = useState<Record<string, any> | null>(null);
   const [taxHarvestLoading, setTaxHarvestLoading] = useState(false);
   const [taxHarvestYear, setTaxHarvestYear] = useState(String(new Date().getFullYear()));
 
@@ -131,7 +131,7 @@ export function TaxLossHarvesting() {
               <div>
                 <div className="text-[10px] uppercase text-muted-foreground mb-1">🌱 Kandidati za harvesting ({taxHarvestData.recommendations.length}):</div>
                 <div className="space-y-1 max-h-60 overflow-y-auto">
-                  {taxHarvestData.recommendations.map((r: any, i: number) => {
+                  {taxHarvestData.recommendations.map((r: Record<string, any>, i: number) => {
                     const actCfg: Record<string, { color: string; bg: string; icon: string }> = {
                       harvest_now: { color: 'text-red-500', bg: 'bg-red-500/5 border-red-500/20', icon: '🔴' },
                       wait_year_end: { color: 'text-amber-400', bg: 'bg-amber-400/5 border-amber-400/20', icon: '🟡' },

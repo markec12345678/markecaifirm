@@ -11,7 +11,7 @@ import { toast } from 'sonner';
 import { cn } from '@/lib/utils';
 
 export function ProfitPlaybook() {
-  const [playbookData, setPlaybookData] = useState<any>(null);
+  const [playbookData, setPlaybookData] = useState<Record<string, any> | null>(null);
   const [playbookLoading, setPlaybookLoading] = useState(false);
 
   return (
@@ -46,7 +46,7 @@ export function ProfitPlaybook() {
             {/* Phases */}
             {playbookData.playbook.phases?.length > 0 && (
               <div className="space-y-1">
-                {playbookData.playbook.phases.map((p: any, i: number) => (
+                {playbookData.playbook.phases.map((p: Record<string, any>, i: number) => (
                   <div key={i} className="bg-background/40 border rounded p-1.5 space-y-0.5">
                     <div className="flex items-center justify-between">
                       <span className="font-bold text-[10px]">{p.phase}. {p.name}</span>

@@ -13,7 +13,7 @@ import { cn } from '@/lib/utils';
 
 export function AiSourcing() {
   // v6.10: AI Sourcing
-  const [sourcingData, setSourcingData] = useState<any>(null);
+  const [sourcingData, setSourcingData] = useState<Record<string, any> | null>(null);
   const [sourcingLoading, setSourcingLoading] = useState(false);
   const [sourcingBudget, setSourcingBudget] = useState('');
 
@@ -82,7 +82,7 @@ export function AiSourcing() {
                 </div>
               )}
               <div className="space-y-1">
-                {sourcingData.recommendations?.map((r: any, i: number) => {
+                {sourcingData.recommendations?.map((r: Record<string, any>, i: number) => {
                   const riskColor = r.risk <= 3 ? 'text-primary' : r.risk <= 6 ? 'text-amber-400' : 'text-red-500';
                   const riskBg = r.risk <= 3 ? 'bg-primary/5 border-primary/20' : r.risk <= 6 ? 'bg-amber-400/5 border-amber-400/20' : 'bg-red-500/5 border-red-500/20';
                   return (

@@ -12,7 +12,7 @@ import { cn } from '@/lib/utils';
 
 export function PortfolioCorrelation() {
   // v6.12: Portfolio Correlation
-  const [correlationData, setCorrelationData] = useState<any>(null);
+  const [correlationData, setCorrelationData] = useState<Record<string, any> | null>(null);
   const [correlationLoading, setCorrelationLoading] = useState(false);
 
   return (
@@ -109,7 +109,7 @@ export function PortfolioCorrelation() {
                 <div>
                   <div className="text-[10px] uppercase text-muted-foreground mb-1">🔗 Clustri kategorij:</div>
                   <div className="space-y-1">
-                    {correlationData.clusters.map((c: any, i: number) => (
+                    {correlationData.clusters.map((c: Record<string, any>, i: number) => (
                       <div key={i} className="bg-background/40 rounded p-1.5 border">
                         <div className="flex items-center gap-2 flex-wrap">
                           <span className="font-bold text-[10px]">{c.name}</span>
@@ -133,7 +133,7 @@ export function PortfolioCorrelation() {
                 <div>
                   <div className="text-[10px] uppercase text-muted-foreground mb-1">📊 Top korelacije:</div>
                   <div className="space-y-1 max-h-40 overflow-y-auto">
-                    {correlationData.correlations.map((c: any, i: number) => {
+                    {correlationData.correlations.map((c: Record<string, any>, i: number) => {
                       const cfg: Record<string, { color: string; bg: string; icon: string }> = {
                         strong_positive: { color: 'text-red-500', bg: 'bg-red-500/5 border-red-500/20', icon: '🔴' },
                         weak_positive: { color: 'text-amber-400', bg: 'bg-amber-400/5 border-amber-400/20', icon: '🟡' },
@@ -163,7 +163,7 @@ export function PortfolioCorrelation() {
                 <div className="bg-primary/5 border border-primary/20 rounded p-2">
                   <div className="text-[10px] uppercase text-primary mb-1">🛡️ Hedging priložnosti:</div>
                   <div className="space-y-1">
-                    {correlationData.hedgingOpportunities.map((h: any, i: number) => (
+                    {correlationData.hedgingOpportunities.map((h: Record<string, any>, i: number) => (
                       <div key={i} className="text-[10px]">
                         <span className="font-bold">{h.category}</span>
                         <span className="text-muted-foreground"> hedga </span>

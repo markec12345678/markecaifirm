@@ -12,7 +12,7 @@ import { toast } from 'sonner';
 import { cn } from '@/lib/utils';
 
 export function PredictiveStockout() {
-  const [stockoutData, setStockoutData] = useState<any>(null);
+  const [stockoutData, setStockoutData] = useState<Record<string, any> | null>(null);
   const [stockoutLoading, setStockoutLoading] = useState(false);
   const [stockoutDays, setStockoutDays] = useState('30');
 
@@ -94,7 +94,7 @@ export function PredictiveStockout() {
               <div className="bg-red-500/5 border border-red-500/20 rounded p-2">
                 <div className="text-[10px] uppercase text-red-500 mb-1">🚨 Restock alerti:</div>
                 <div className="space-y-1">
-                  {stockoutData.restockAlerts.map((a: any, i: number) => (
+                  {stockoutData.restockAlerts.map((a: Record<string, any>, i: number) => (
                     <div key={i} className={cn('text-[10px] rounded p-1',
                       a.alertLevel === 'critical' ? 'bg-red-500/10 text-red-500' :
                       a.alertLevel === 'high' ? 'bg-amber-400/10 text-amber-400' : 'text-muted-foreground')}>
@@ -109,7 +109,7 @@ export function PredictiveStockout() {
 
             {/* Predictions table */}
             <div className="space-y-1 max-h-60 overflow-y-auto">
-              {stockoutData.predictions?.map((p: any, i: number) => {
+              {stockoutData.predictions?.map((p: Record<string, any>, i: number) => {
                 const sevCfg: Record<string, { color: string; bg: string; icon: string }> = {
                   critical: { color: 'text-red-500', bg: 'bg-red-500/5 border-red-500/20', icon: '🔴' },
                   high: { color: 'text-amber-400', bg: 'bg-amber-400/5 border-amber-400/20', icon: '🟡' },
@@ -150,7 +150,7 @@ export function PredictiveStockout() {
               <div className="bg-primary/5 border border-primary/20 rounded p-2">
                 <div className="text-[10px] uppercase text-primary mb-1">💡 Restock priporočila:</div>
                 <div className="space-y-1 max-h-40 overflow-y-auto">
-                  {stockoutData.recommendations.map((r: any, i: number) => {
+                  {stockoutData.recommendations.map((r: Record<string, any>, i: number) => {
                     const actColor = r.action === 'restock_now' ? 'text-red-500' :
                                      r.action === 'start_sourcing' ? 'text-amber-400' :
                                      r.action === 'liquidate' ? 'text-destructive' : 'text-primary';

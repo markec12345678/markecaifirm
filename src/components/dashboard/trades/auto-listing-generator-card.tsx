@@ -7,7 +7,7 @@ import { Sparkles, Copy } from 'lucide-react';
 import { toast } from 'sonner';
 
 interface AutoListingGeneratorCardProps {
-  data: any;
+  data: Record<string, any>;
   onClear: () => void;
 }
 

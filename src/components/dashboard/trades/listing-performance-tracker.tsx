@@ -10,7 +10,7 @@ import { cn } from '@/lib/utils';
 
 export function ListingPerformanceTracker() {
   // v6.24: Listing Performance Tracker
-  const [perfData, setPerfData] = useState<any>(null);
+  const [perfData, setPerfData] = useState<Record<string, any> | null>(null);
   const [perfLoading, setPerfLoading] = useState(false);
 
   return (
@@ -73,7 +73,7 @@ export function ListingPerformanceTracker() {
               <div>
                 <div className="text-[10px] uppercase text-muted-foreground mb-1">📊 Uspešnost po kategorijah:</div>
                 <div className="space-y-1 max-h-40 overflow-y-auto">
-                  {perfData.categoryPerformance.map((c: any, i: number) => {
+                  {perfData.categoryPerformance.map((c: Record<string, any>, i: number) => {
                     const recCfg: Record<string, { color: string; icon: string }> = {
                       double_down: { color: 'text-primary', icon: '📈' },
                       pivot: { color: 'text-amber-400', icon: '🔄' },
@@ -105,7 +105,7 @@ export function ListingPerformanceTracker() {
               <div>
                 <div className="text-[10px] uppercase text-primary mb-1">🏆 Top uspešne prodaje:</div>
                 <div className="space-y-1 max-h-40 overflow-y-auto">
-                  {perfData.topPerformersAnalysis.map((t: any, i: number) => (
+                  {perfData.topPerformersAnalysis.map((t: Record<string, any>, i: number) => (
                     <div key={i} className="bg-primary/5 border border-primary/20 rounded p-1.5 text-[10px]">
                       <div className="flex items-center justify-between">
                         <span className="font-bold truncate flex-1">{t.title}</span>
@@ -127,7 +127,7 @@ export function ListingPerformanceTracker() {
               <div>
                 <div className="text-[10px] uppercase text-red-500 mb-1">⚠️ Neuspešne prodaje:</div>
                 <div className="space-y-1 max-h-32 overflow-y-auto">
-                  {perfData.worstPerformersAnalysis.map((t: any, i: number) => (
+                  {perfData.worstPerformersAnalysis.map((t: Record<string, any>, i: number) => (
                     <div key={i} className="bg-red-500/5 border border-red-500/20 rounded p-1.5 text-[10px]">
                       <div className="flex items-center justify-between">
                         <span className="font-bold truncate flex-1">{t.title}</span>
@@ -146,7 +146,7 @@ export function ListingPerformanceTracker() {
               <div>
                 <div className="text-[10px] uppercase text-muted-foreground mb-1">🔮 Napoved za held iteme:</div>
                 <div className="space-y-1 max-h-40 overflow-y-auto">
-                  {perfData.heldItemsForecast.map((h: any, i: number) => (
+                  {perfData.heldItemsForecast.map((h: Record<string, any>, i: number) => (
                     <div key={i} className="bg-background/40 border rounded p-1.5 text-[10px]">
                       <div className="flex items-center justify-between">
                         <span className="font-bold truncate flex-1">{h.title}</span>

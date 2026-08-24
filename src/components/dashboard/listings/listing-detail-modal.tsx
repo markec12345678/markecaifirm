@@ -34,7 +34,7 @@ import { formatTimeAgo } from './utils';
 
 
 export function ListingDetailModal({ listingId, onClose }: { listingId: string | null; onClose: () => void }) {
-  const [data, setData] = useState<any>(null);
+  const [data, setData] = useState<Record<string, any> | null>(null);
   const [loading, setLoading] = useState(false);
   const [fetchingDetail, setFetchingDetail] = useState(false);
   const [togglingBookmark, setTogglingBookmark] = useState(false);
@@ -52,35 +52,35 @@ export function ListingDetailModal({ listingId, onClose }: { listingId: string |
   const [compareModelsInput, setCompareModelsInput] = useState<string>(''); // comma-separated model names
   // v5.0: AI auto-bid
   const [bidding, setBidding] = useState(false);
-  const [bidResult, setBidResult] = useState<any>(null);
+  const [bidResult, setBidResult] = useState<Record<string, any> | null>(null);
   const [bidStrategy, setBidStrategy] = useState<'aggressive' | 'moderate' | 'conservative'>('moderate');
   const [bidMaxBudget, setBidMaxBudget] = useState('');
   const [bidCopied, setBidCopied] = useState(false);
   // v5.1: Price prediction
   const [predicting, setPredicting] = useState(false);
-  const [prediction, setPrediction] = useState<any>(null);
+  const [prediction, setPrediction] = useState<Record<string, any> | null>(null);
   const [predictTarget, setPredictTarget] = useState('');
   // v6.97: refurb + imageQuality + descOpt so v ImageAnalysisPanel
   // v5.1: Seller reputation
-  const [sellerRep, setSellerRep] = useState<any>(null);
+  const [sellerRep, setSellerRep] = useState<Record<string, any> | null>(null);
   const [sellerLoading, setSellerLoading] = useState(false);
   // v5.6: External price comparison
-  const [extCompare, setExtCompare] = useState<any>(null);
+  const [extCompare, setExtCompare] = useState<Record<string, any> | null>(null);
   const [extCompareLoading, setExtCompareLoading] = useState(false);
   // v5.7: AI similar listings
   const [similarListings, setSimilarListings] = useState<any[]>([]);
   const [similarLoading, setSimilarLoading] = useState(false);
   // v6.0: AI listing enrichment
-  const [enrichment, setEnrichment] = useState<any>(null);
+  const [enrichment, setEnrichment] = useState<Record<string, any> | null>(null);
   const [enrichLoading, setEnrichLoading] = useState(false);
   // v6.2: AI Flip Score
-  const [flipScore, setFlipScore] = useState<any>(null);
+  const [flipScore, setFlipScore] = useState<Record<string, any> | null>(null);
   const [flipLoading, setFlipLoading] = useState(false);
   // v6.2: Market Saturation
-  const [saturation, setSaturation] = useState<any>(null);
+  const [saturation, setSaturation] = useState<Record<string, any> | null>(null);
   const [satLoading, setSatLoading] = useState(false);
   // v6.2: ROI Calculator
-  const [roiResult, setRoiResult] = useState<any>(null);
+  const [roiResult, setRoiResult] = useState<Record<string, any> | null>(null);
   const [roiLoading, setRoiLoading] = useState(false);
   const [roiSellPrice, setRoiSellPrice] = useState('');
   const [roiPlatform, setRoiPlatform] = useState<'bolha' | 'vinted' | 'other'>('bolha');
@@ -312,7 +312,7 @@ export function ListingDetailModal({ listingId, onClose }: { listingId: string |
       const data = await res.json();
       if (data.ok) {
         setCompareResults(data.results);
-        const ok = data.results.filter((r: any) => r.ok).length;
+        const ok = data.results.filter((r: Record<string, any>) => r.ok).length;
         toast.success(`Primerjava končana: ${ok}/${data.results.length} modelov uspešnih`);
       } else {
         toast.error(data.error ?? 'Napaka');
@@ -330,7 +330,7 @@ export function ListingDetailModal({ listingId, onClose }: { listingId: string |
     setBidding(true);
     setBidResult(null);
     try {
-      const body: any = { strategy: bidStrategy };
+      const body: Record<string, unknown> = { strategy: bidStrategy };
       if (bidMaxBudget.trim()) {
         const budget = parseInt(bidMaxBudget, 10);
         if (!Number.isNaN(budget) && budget > 0) {
@@ -619,11 +619,11 @@ export function ListingDetailModal({ listingId, onClose }: { listingId: string |
                       <div className="text-primary font-bold mb-1">📊 Povzetek</div>
                       {(() => {
                         const valid = compareResults.filter(r => r.ok);
-                        const best = valid.reduce((a: any, b: any) =>
+                        const best = valid.reduce((a: Record<string, any>, b: any) =>
                           (a.evaluation.ocena_prilike - a.evaluation.ocena_tveganja) >
                           (b.evaluation.ocena_prilike - b.evaluation.ocena_tveganja) ? a : b
                         );
-                        const fastest = valid.reduce((a: any, b: any) => a.durationMs < b.durationMs ? a : b);
+                        const fastest = valid.reduce((a: Record<string, any>, b: any) => a.durationMs < b.durationMs ? a : b);
                         return (
                           <div className="space-y-0.5">
                             <div>🏆 <b>Najboljša ocena</b>: {best.label} (prilika {best.evaluation.ocena_prilike}/10, tveganje {best.evaluation.ocena_tveganja}/10)</div>
@@ -929,7 +929,7 @@ export function ListingDetailModal({ listingId, onClose }: { listingId: string |
                           📋 Top {sellerRep.topListings.length} oglasov tega prodajalca
                         </summary>
                         <div className="mt-1 space-y-1">
-                          {sellerRep.topListings.map((l: any) => (
+                          {sellerRep.topListings.map((l: Record<string, any>) => (
                             <a
                               key={l.id}
                               href={l.url}
@@ -1144,7 +1144,7 @@ export function ListingDetailModal({ listingId, onClose }: { listingId: string |
                     <div className="bg-background/30 rounded p-2">
                       <div className="text-[10px] uppercase tracking-wider text-muted-foreground mb-2">🔮 Projekcija cene</div>
                       <div className="space-y-1">
-                        {prediction.prediction.projectedPrices.map((p: any, i: number) => {
+                        {prediction.prediction.projectedPrices.map((p: Record<string, any>, i: number) => {
                           const currentPrice = prediction.currentPrice;
                           const targetPrice = prediction.targetPrice;
                           const pct = currentPrice > 0 ? Math.round(((p.price - currentPrice) / currentPrice) * 100) : 0;
@@ -1611,7 +1611,7 @@ export function ListingDetailModal({ listingId, onClose }: { listingId: string |
                   <div className="space-y-2">
                     {extCompare.comparisons?.length > 0 ? (
                       <div className="space-y-1">
-                        {extCompare.comparisons.map((c: any, i: number) => {
+                        {extCompare.comparisons.map((c: Record<string, any>, i: number) => {
                           const isCheaper = c.priceDiff > 0; // local is more expensive = external is cheaper
                           return (
                             <a
@@ -1705,7 +1705,7 @@ export function ListingDetailModal({ listingId, onClose }: { listingId: string |
                 </div>
               ) : similarListings.length > 0 ? (
                 <div className="space-y-1">
-                  {similarListings.slice(0, 8).map((s: any, i: number) => (
+                  {similarListings.slice(0, 8).map((s: Record<string, any>, i: number) => (
                     <a
                       key={i}
                       href={s.url}
@@ -1834,7 +1834,7 @@ export function ListingDetailModal({ listingId, onClose }: { listingId: string |
                   📈 Zgodovina cene ({priceHistory.length} {priceHistory.length === 1 ? 'zapisek' : 'zapiskov'})
                 </h4>
                 <div className="space-y-1">
-                  {priceHistory.map((ph: any, i: number) => {
+                  {priceHistory.map((ph: Record<string, any>, i: number) => {
                     const prev = i > 0 ? priceHistory[i - 1] : null;
                     const changed = prev && (prev.price !== ph.price);
                     const diff = changed && prev.price != null && ph.price != null ? ph.price - prev.price : null;
@@ -1950,7 +1950,7 @@ export function ListingDetailModal({ listingId, onClose }: { listingId: string |
                   Podobni oglasi (isti monitor, cena ±30%)
                 </h4>
                 <div className="space-y-1.5">
-                  {similar.map((s: any) => (
+                  {similar.map((s: Record<string, any>) => (
                     <a
                       key={s.id}
                       href={s.url}
@@ -2073,7 +2073,7 @@ export function ListingDetailModal({ listingId, onClose }: { listingId: string |
             />
 
             {/* v3.8: Quick sell — mark as sold and add to Skladišče */}
-            {listing.trades && listing.trades.length > 0 && listing.trades.some((t: any) => t.status === 'held') && (
+            {listing.trades && listing.trades.length > 0 && listing.trades.some((t: Record<string, any>) => t.status === 'held') && (
               <div className="border-t border-border pt-3">
                 <h4 className="text-xs uppercase tracking-wider text-muted-foreground mb-2">⚡ Hitra prodaja</h4>
                 <div className="flex gap-2 items-end">
@@ -2092,7 +2092,7 @@ export function ListingDetailModal({ listingId, onClose }: { listingId: string |
                     onClick={async () => {
                       const input = document.getElementById('quick-sell-price') as HTMLInputElement;
                       const sellPrice = input?.value ? parseFloat(input.value) : listing.price ?? 0;
-                      const trade = listing.trades.find((t: any) => t.status === 'held');
+                      const trade = listing.trades.find((t: Record<string, any>) => t.status === 'held');
                       if (!trade) return;
                       try {
                         await fetch(`/api/trades/${trade.id}`, {

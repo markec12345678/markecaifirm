@@ -13,7 +13,7 @@ interface AutoRepriceProps {
 }
 
 export function AutoReprice({ onApplied }: AutoRepriceProps) {
-  const [repriceData, setRepriceData] = useState<any>(null);
+  const [repriceData, setRepriceData] = useState<Record<string, any> | null>(null);
   const [repriceLoading, setRepriceLoading] = useState(false);
 
   return (
@@ -53,7 +53,7 @@ export function AutoReprice({ onApplied }: AutoRepriceProps) {
               <Button size="sm" variant="ghost" onClick={() => setRepriceData(null)} className="h-6 text-xs">×</Button>
             </div>
             <div className="space-y-1.5 max-h-80 overflow-y-auto">
-              {repriceData.repricing.filter((r: any) => r.needsReprice).map((r: any, i: number) => (
+              {repriceData.repricing.filter((r: Record<string, any>) => r.needsReprice).map((r: Record<string, any>, i: number) => (
                 <div key={i} className="flex items-center gap-2 p-2 bg-background/30 rounded text-xs border border-amber-400/20">
                   <div className="flex-1 min-w-0">
                     <div className="font-medium truncate">{r.title}</div>
@@ -85,7 +85,7 @@ export function AutoReprice({ onApplied }: AutoRepriceProps) {
                   </Button>
                 </div>
               ))}
-              {repriceData.repricing.filter((r: any) => r.needsReprice).length === 0 && (
+              {repriceData.repricing.filter((r: Record<string, any>) => r.needsReprice).length === 0 && (
                 <p className="text-xs text-muted-foreground text-center py-3">✅ Vsi tradei imajo ustrezno ceno — reprice ni potreben.</p>
               )}
             </div>

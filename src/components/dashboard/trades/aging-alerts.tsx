@@ -9,7 +9,7 @@ import { toast } from 'sonner';
 import { cn } from '@/lib/utils';
 
 export function AgingAlerts() {
-  const [agingData, setAgingData] = useState<any>(null);
+  const [agingData, setAgingData] = useState<Record<string, any> | null>(null);
   const [agingLoading, setAgingLoading] = useState(false);
 
   return (
@@ -55,7 +55,7 @@ export function AgingAlerts() {
               <div className="bg-background/30 rounded p-1.5 text-center"><div className="text-[9px] text-muted-foreground uppercase">Itemi</div><div className="font-mono font-bold">{agingData.summary.totalItems}</div></div>
             </div>
             <div className="space-y-1 max-h-60 overflow-y-auto">
-              {agingData.alerts.filter((a: any) => a.urgency !== 'low').map((a: any, i: number) => (
+              {agingData.alerts.filter((a: Record<string, any>) => a.urgency !== 'low').map((a: Record<string, any>, i: number) => (
                 <div key={i} className={cn('flex items-center gap-2 p-1.5 rounded text-xs border',
                   a.urgency === 'critical' ? 'bg-red-500/10 border-red-500/30' :
                   a.urgency === 'high' ? 'bg-red-500/5 border-red-500/20' : 'bg-amber-400/5 border-amber-400/20')}>

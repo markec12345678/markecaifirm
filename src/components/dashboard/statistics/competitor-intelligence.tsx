@@ -12,7 +12,7 @@ import { toast } from 'sonner';
 import { cn } from '@/lib/utils';
 
 export function CompetitorIntelligence() {
-  const [competitorData, setCompetitorData] = useState<any>(null);
+  const [competitorData, setCompetitorData] = useState<Record<string, any> | null>(null);
   const [competitorLoading, setCompetitorLoading] = useState(false);
   const [competitorCategory, setCompetitorCategory] = useState('');
 
@@ -84,7 +84,7 @@ export function CompetitorIntelligence() {
 
             {/* Competitor list */}
             <div className="space-y-2 max-h-80 overflow-y-auto">
-              {competitorData.competitors?.map((c: any, i: number) => {
+              {competitorData.competitors?.map((c: Record<string, any>, i: number) => {
                 const threatCfg: Record<string, { color: string; bg: string; icon: string }> = {
                   high: { color: 'text-red-500', bg: 'border-red-500/20 bg-red-500/5', icon: '🔴' },
                   medium: { color: 'text-amber-400', bg: 'border-amber-400/20 bg-amber-400/5', icon: '🟡' },
@@ -142,7 +142,7 @@ export function CompetitorIntelligence() {
               <div className="bg-primary/5 border border-primary/20 rounded p-2">
                 <div className="text-[10px] uppercase text-primary mb-1">🌊 Blue ocean kategorije:</div>
                 <div className="space-y-1">
-                  {competitorData.blueOcean.map((b: any, i: number) => (
+                  {competitorData.blueOcean.map((b: Record<string, any>, i: number) => (
                     <div key={i} className="text-[10px]">
                       <span className="font-bold">{b.category}</span>
                       <span className="text-muted-foreground"> (ROI ~{b.potentialRoiPct}%) — {b.reasoning}</span>

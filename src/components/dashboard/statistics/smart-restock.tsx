@@ -12,7 +12,7 @@ import { toast } from 'sonner';
 import { cn } from '@/lib/utils';
 
 export function SmartRestock() {
-  const [restockData, setRestockData] = useState<any>(null);
+  const [restockData, setRestockData] = useState<Record<string, any> | null>(null);
   const [restockLoading, setRestockLoading] = useState(false);
   const [restockBudget, setRestockBudget] = useState('');
 
@@ -59,7 +59,7 @@ export function SmartRestock() {
               </div>
             )}
             <div className="space-y-1 max-h-60 overflow-y-auto">
-              {restockData.predictions?.map((p: any, i: number) => {
+              {restockData.predictions?.map((p: Record<string, any>, i: number) => {
                 const urgencyCfg: Record<string, { color: string; bg: string; icon: string }> = {
                   critical: { color: 'text-red-500', bg: 'border-red-500/20 bg-red-500/5', icon: '🔴' },
                   high: { color: 'text-amber-400', bg: 'border-amber-400/20 bg-amber-400/5', icon: '🟡' },
@@ -93,7 +93,7 @@ export function SmartRestock() {
               <div className="bg-primary/5 border border-primary/20 rounded p-2">
                 <div className="text-[10px] uppercase text-primary mb-1">💰 Budget alokacija:</div>
                 <div className="space-y-0.5">
-                  {restockData.budgetAllocation.allocation.map((a: any, i: number) => (
+                  {restockData.budgetAllocation.allocation.map((a: Record<string, any>, i: number) => (
                     <div key={i} className="text-[10px] flex items-center justify-between">
                       <span><Badge variant="outline" className="text-[8px] mr-1">{a.category}</Badge> {a.reasoning}</span>
                       <span className="font-mono font-bold text-primary">{a.amountEur}€ ({a.pct}%)</span>
@@ -109,7 +109,7 @@ export function SmartRestock() {
               <div className="bg-amber-400/5 border border-amber-400/20 rounded p-2">
                 <div className="text-[10px] uppercase text-amber-400 mb-1">🗓 Sezonska opozorila:</div>
                 <div className="space-y-1">
-                  {restockData.seasonalAlerts.map((s: any, i: number) => (
+                  {restockData.seasonalAlerts.map((s: Record<string, any>, i: number) => (
                     <div key={i} className="text-[10px]">
                       <div className="font-bold capitalize">{s.season} — {s.deadline}</div>
                       {s.itemsToBuy?.length > 0 && <div className="text-primary">🛒 Kupi: {s.itemsToBuy.join(' · ')}</div>}

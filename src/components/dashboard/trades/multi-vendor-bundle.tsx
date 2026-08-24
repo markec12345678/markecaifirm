@@ -13,7 +13,7 @@ interface MultiVendorBundleProps {
 
 export function MultiVendorBundle({ bulkTradeIds }: MultiVendorBundleProps) {
   // v6.16: Multi-Vendor Bundle
-  const [multiVendorData, setMultiVendorData] = useState<any>(null);
+  const [multiVendorData, setMultiVendorData] = useState<Record<string, any> | null>(null);
   const [multiVendorLoading, setMultiVendorLoading] = useState(false);
 
   return (
@@ -90,7 +90,7 @@ export function MultiVendorBundle({ bulkTradeIds }: MultiVendorBundleProps) {
             {/* Bundle deals */}
             {multiVendorData.deals?.length > 0 && (
               <div className="space-y-2">
-                {multiVendorData.deals.map((d: any, i: number) => (
+                {multiVendorData.deals.map((d: Record<string, any>, i: number) => (
                   <div key={i} className="border border-primary/20 bg-primary/5 rounded p-2 space-y-1.5">
                     <div className="flex items-center justify-between gap-2">
                       <div className="flex items-center gap-2 flex-wrap">
@@ -118,7 +118,7 @@ export function MultiVendorBundle({ bulkTradeIds }: MultiVendorBundleProps) {
                     </div>
                     {d.reasoning && <div className="text-[10px] italic">{d.reasoning}</div>}
                     <div className="text-[10px]">
-                      {d.items?.map((it: any, j: number) => (
+                      {d.items?.map((it: Record<string, any>, j: number) => (
                         <span key={j} className="inline-block bg-background/60 px-1.5 py-0.5 rounded mr-1 mb-1 text-[9px]">
                           {it.title} ({it.source})
                         </span>
@@ -133,7 +133,7 @@ export function MultiVendorBundle({ bulkTradeIds }: MultiVendorBundleProps) {
             {multiVendorData.unbundledItems?.length > 0 && (
               <div className="text-[10px] text-muted-foreground border-t border-border pt-2">
                 <span className="font-semibold">Ne-bundlani itemi ({multiVendorData.unbundledItems.length}):</span>{' '}
-                {multiVendorData.unbundledItems.slice(0, 5).map((it: any) => it.title).join(', ')}
+                {multiVendorData.unbundledItems.slice(0, 5).map((it: Record<string, any>) => it.title).join(', ')}
                 {multiVendorData.unbundledItems.length > 5 && '...'}
               </div>
             )}

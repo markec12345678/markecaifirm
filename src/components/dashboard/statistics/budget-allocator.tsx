@@ -13,7 +13,7 @@ import { cn } from '@/lib/utils';
 
 export function BudgetAllocator() {
   // v6.6: Budget allocator
-  const [budgetData, setBudgetData] = useState<any>(null);
+  const [budgetData, setBudgetData] = useState<Record<string, any> | null>(null);
   const [budgetLoading, setBudgetLoading] = useState(false);
   const [budgetInput, setBudgetInput] = useState('1000');
 
@@ -63,7 +63,7 @@ export function BudgetAllocator() {
                 </div>
               </div>
               <div className="space-y-1">
-                {budgetData.allocation?.map((a: any, i: number) => (
+                {budgetData.allocation?.map((a: Record<string, any>, i: number) => (
                   <div key={i} className="flex items-center gap-2 p-1.5 bg-background/30 rounded">
                     <Badge variant="outline" className="text-[9px] shrink-0">{a.category}</Badge>
                     <div className="flex-1">

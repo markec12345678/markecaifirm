@@ -11,7 +11,7 @@ import { toast } from 'sonner';
 import { cn } from '@/lib/utils';
 
 export function ProfitDashboard() {
-  const [dashData, setDashData] = useState<any>(null);
+  const [dashData, setDashData] = useState<Record<string, any> | null>(null);
   const [dashLoading, setDashLoading] = useState(false);
 
   return (
@@ -67,7 +67,7 @@ export function ProfitDashboard() {
             {dashData.dashboard.topOpportunities?.length > 0 && (
               <div className="bg-primary/5 border border-primary/20 rounded p-2">
                 <div className="text-[10px] uppercase text-primary mb-1">🚀 Top priložnosti:</div>
-                {dashData.dashboard.topOpportunities.slice(0, 3).map((o: any, i: number) => (
+                {dashData.dashboard.topOpportunities.slice(0, 3).map((o: Record<string, any>, i: number) => (
                   <div key={i} className="text-[10px] flex items-center justify-between">
                     <span><Badge variant="outline" className="text-[8px] mr-1">{o.category}</Badge> {o.action}</span>
                     <span className="font-mono text-primary">{o.expectedRoiPct}% ROI</span>
@@ -79,7 +79,7 @@ export function ProfitDashboard() {
             {dashData.dashboard.topRisks?.length > 0 && (
               <div className="bg-red-500/5 border border-red-500/20 rounded p-2">
                 <div className="text-[10px] uppercase text-red-500 mb-1">⚠️ Top tveganja:</div>
-                {dashData.dashboard.topRisks.slice(0, 3).map((r: any, i: number) => (
+                {dashData.dashboard.topRisks.slice(0, 3).map((r: Record<string, any>, i: number) => (
                   <div key={i} className="text-[10px] flex items-center justify-between">
                     <span><Badge variant="outline" className="text-[8px] mr-1">{r.riskType}</Badge> {r.item}</span>
                     <span className="font-mono text-destructive">−{r.potentialLossEur}€</span>
@@ -91,7 +91,7 @@ export function ProfitDashboard() {
             {dashData.dashboard.recommendedActions?.length > 0 && (
               <div>
                 <div className="text-[10px] uppercase text-muted-foreground mb-1">📋 Priporočene akcije:</div>
-                {dashData.dashboard.recommendedActions.slice(0, 4).map((a: any, i: number) => (
+                {dashData.dashboard.recommendedActions.slice(0, 4).map((a: Record<string, any>, i: number) => (
                   <div key={i} className="text-[10px] flex items-center justify-between bg-background/40 rounded p-1 border mb-0.5">
                     <span>{a.action}</span>
                     <div className="flex items-center gap-1 shrink-0">

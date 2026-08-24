@@ -12,7 +12,7 @@ import { toast } from 'sonner';
 import { cn } from '@/lib/utils';
 
 export function AutonomousTrading() {
-  const [tradeData, setTradeData] = useState<any>(null);
+  const [tradeData, setTradeData] = useState<Record<string, any> | null>(null);
   const [tradeLoading, setTradeLoading] = useState(false);
   const [tradeMode, setTradeMode] = useState<'paper' | 'live'>('paper');
   const [tradeBudget, setTradeBudget] = useState('1000');
@@ -61,7 +61,7 @@ export function AutonomousTrading() {
             {/* Buy rules */}
             {tradeData.autonomous.buyRules?.length > 0 && (
               <div><div className="text-[10px] uppercase text-primary mb-1">🛒 Buy Rules:</div>
-                {tradeData.autonomous.buyRules.slice(0, 4).map((r: any, i: number) => (
+                {tradeData.autonomous.buyRules.slice(0, 4).map((r: Record<string, any>, i: number) => (
                   <div key={i} className="text-[10px] flex items-center gap-1 bg-background/40 rounded p-1 border mb-0.5">
                     {r.enabled ? <Check className="w-3 h-3 text-primary shrink-0" /> : <X className="w-3 h-3 text-muted-foreground shrink-0" />}
                     <span className="flex-1 truncate">{r.rule}</span>
@@ -72,7 +72,7 @@ export function AutonomousTrading() {
             {/* Sell rules */}
             {tradeData.autonomous.sellRules?.length > 0 && (
               <div><div className="text-[10px] uppercase text-primary mb-1">💰 Sell Rules:</div>
-                {tradeData.autonomous.sellRules.slice(0, 4).map((r: any, i: number) => (
+                {tradeData.autonomous.sellRules.slice(0, 4).map((r: Record<string, any>, i: number) => (
                   <div key={i} className="text-[10px] flex items-center gap-1 bg-background/40 rounded p-1 border mb-0.5">
                     {r.enabled ? <Check className="w-3 h-3 text-primary shrink-0" /> : <X className="w-3 h-3 text-muted-foreground shrink-0" />}
                     <span className="flex-1 truncate">{r.rule}</span>
@@ -84,7 +84,7 @@ export function AutonomousTrading() {
             {tradeData.autonomous.safeguards?.length > 0 && (
               <div className="bg-amber-400/5 border border-amber-400/20 rounded p-2">
                 <div className="text-[10px] uppercase text-amber-400 mb-1">🛡️ Safeguards:</div>
-                {tradeData.autonomous.safeguards.slice(0, 4).map((s: any, i: number) => (
+                {tradeData.autonomous.safeguards.slice(0, 4).map((s: Record<string, any>, i: number) => (
                   <div key={i} className="text-[10px]">• <b>{s.name}</b>: {s.trigger} → {s.action}</div>
                 ))}
               </div>

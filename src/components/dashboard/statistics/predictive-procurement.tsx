@@ -12,7 +12,7 @@ import { toast } from 'sonner';
 import { cn } from '@/lib/utils';
 
 export function PredictiveProcurement() {
-  const [procData, setProcData] = useState<any>(null);
+  const [procData, setProcData] = useState<Record<string, any> | null>(null);
   const [procLoading, setProcLoading] = useState(false);
   const [procBudget, setProcBudget] = useState('');
   const [procRisk, setProcRisk] = useState<'low' | 'medium' | 'high'>('medium');
@@ -66,7 +66,7 @@ export function PredictiveProcurement() {
               </div>
             )}
             <div className="space-y-1 max-h-60 overflow-y-auto">
-              {procData.procurement.plan?.map((p: any, i: number) => (
+              {procData.procurement.plan?.map((p: Record<string, any>, i: number) => (
                 <div key={i} className={cn('border rounded p-1.5 space-y-0.5',
                   p.riskLevel === 'high' ? 'bg-red-500/5 border-red-500/20' :
                   p.riskLevel === 'medium' ? 'bg-amber-400/5 border-amber-400/20' : 'bg-primary/5 border-primary/20')}>

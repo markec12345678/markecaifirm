@@ -15,7 +15,7 @@ interface TitleABTesterProps {
 
 export function TitleABTester({ trades }: TitleABTesterProps) {
   // v6.22: Title A/B Test
-  const [titleAbTestData, setTitleAbTestData] = useState<any>(null);
+  const [titleAbTestData, setTitleAbTestData] = useState<Record<string, any> | null>(null);
   const [titleAbTestLoading, setTitleAbTestLoading] = useState(false);
   const [titleAbTestCopied, setTitleAbTestCopied] = useState<string | null>(null);
 
@@ -29,7 +29,7 @@ export function TitleABTester({ trades }: TitleABTesterProps) {
         disabled={titleAbTestLoading}
         onClick={async () => {
           if (trades.length === 0) { toast.error('Ni tradeov v skladišču'); return; }
-          const firstHeld = trades.find((t: any) => t.status === 'held');
+          const firstHeld = trades.find((t: Record<string, any>) => t.status === 'held');
           if (!firstHeld) { toast.error('Ni held tradeov'); return; }
           setTitleAbTestLoading(true); setTitleAbTestData(null);
           try {
@@ -95,7 +95,7 @@ export function TitleABTester({ trades }: TitleABTesterProps) {
               <div>
                 <div className="text-[10px] uppercase text-muted-foreground mb-1">📋 Variante naslovov:</div>
                 <div className="space-y-2 max-h-60 overflow-y-auto">
-                  {titleAbTestData.test.variants.map((v: any, i: number) => (
+                  {titleAbTestData.test.variants.map((v: Record<string, any>, i: number) => (
                     <div key={i} className="bg-background/40 border rounded p-2 space-y-1">
                       <div className="flex items-center justify-between gap-2">
                         <div className="font-bold text-[11px] flex-1">{v.title}</div>

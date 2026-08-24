@@ -8,7 +8,7 @@ import { toast } from 'sonner';
 import { cn } from '@/lib/utils';
 
 interface MultiPlatformSyncCardProps {
-  data: any;
+  data: Record<string, any>;
   onClear: () => void;
 }
 
@@ -29,7 +29,7 @@ export function MultiPlatformSyncCard({ data, onClear }: MultiPlatformSyncCardPr
             <Button size="sm" variant="ghost" onClick={onClear} className="h-6 text-xs">×</Button>
           </div>
           <div className="space-y-2">
-            {data.listings?.map((l: any, i: number) => (
+            {data.listings?.map((l: Record<string, any>, i: number) => (
               <div key={i} className="bg-background/30 rounded p-2 border border-blue-400/20">
                 <div className="flex items-center justify-between mb-1">
                   <Badge variant="outline" className="text-[9px] text-blue-400 border-blue-400/40 uppercase">{l.platform}</Badge>

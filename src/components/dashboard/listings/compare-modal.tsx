@@ -34,15 +34,15 @@ import { formatTimeAgo } from './utils';
 import { CompareRow } from './compare-row';
 
 
-export function CompareModal({ data, onClose }: { data: any; onClose: () => void }) {
+export function CompareModal({ data, onClose }: { data: Record<string, any>; onClose: () => void }) {
   if (!data || !data.listings || data.listings.length === 0) return null;
   const listings = data.listings;
 
   // Find best price (lowest)
-  const prices = listings.map((l: any) => l.price).filter((p: any) => p != null);
+  const prices = listings.map((l: Record<string, any>) => l.price).filter((p: Record<string, any>) => p != null);
   const bestPrice = prices.length > 0 ? Math.min(...prices) : null;
   // Find best AI score (highest)
-  const scores = listings.map((l: any) => l.aiScore).filter((s: any) => s != null);
+  const scores = listings.map((l: Record<string, any>) => l.aiScore).filter((s: Record<string, any>) => s != null);
   const bestScore = scores.length > 0 ? Math.max(...scores) : null;
 
   return (
@@ -60,7 +60,7 @@ export function CompareModal({ data, onClose }: { data: any; onClose: () => void
             <thead>
               <tr className="border-b border-border">
                 <th className="text-left p-2 text-muted-foreground uppercase tracking-wider w-32">Lastnost</th>
-                {listings.map((l: any, i: number) => (
+                {listings.map((l: Record<string, any>, i: number) => (
                   <th key={i} className="text-left p-2 align-top min-w-[180px]">
                     {l.imageUrl && (
                       <img src={l.imageUrl} alt="" className="w-full h-24 object-cover rounded mb-2" loading="lazy" />
@@ -73,17 +73,17 @@ export function CompareModal({ data, onClose }: { data: any; onClose: () => void
               </tr>
             </thead>
             <tbody>
-              <CompareRow label="Cena" values={listings.map((l: any) => l.priceText ?? '—')} best={listings.map((l: any) => l.price === bestPrice && l.price != null)} />
-              <CompareRow label="AI verdikt" values={listings.map((l: any) => l.aiVerdict ?? '—')} />
-              <CompareRow label="AI prilika" values={listings.map((l: any) => l.aiScore != null ? `${l.aiScore}/10` : '—')} best={listings.map((l: any) => l.aiScore === bestScore && l.aiScore != null)} />
-              <CompareRow label="AI tveganje" values={listings.map((l: any) => l.aiRisk != null ? `${l.aiRisk}/10` : '—')} />
-              <CompareRow label="AI tržna vrednost" values={listings.map((l: any) => l.aiEstimatedValue ? `${l.aiEstimatedValue} €` : '—')} />
-              <CompareRow label="Lokacija" values={listings.map((l: any) => l.location || '—')} />
-              <CompareRow label="Monitor" values={listings.map((l: any) => l.monitor?.name ?? '—')} />
-              <CompareRow label="Prvič videno" values={listings.map((l: any) => new Date(l.firstSeenAt).toLocaleDateString('sl-SI'))} />
-              <CompareRow label="Starost (dni)" values={listings.map((l: any) => String(Math.floor((Date.now() - new Date(l.firstSeenAt).getTime()) / 86400000)))} />
-              <CompareRow label="Padec cene" values={listings.map((l: any) => l.priceDroppedAt ? `📉 ${new Date(l.priceDroppedAt).toLocaleDateString('sl-SI')}` : '—')} />
-              <CompareRow label="AI razlog" values={listings.map((l: any) => (l.aiReason || '—').slice(0, 100))} />
+              <CompareRow label="Cena" values={listings.map((l: Record<string, any>) => l.priceText ?? '—')} best={listings.map((l: Record<string, any>) => l.price === bestPrice && l.price != null)} />
+              <CompareRow label="AI verdikt" values={listings.map((l: Record<string, any>) => l.aiVerdict ?? '—')} />
+              <CompareRow label="AI prilika" values={listings.map((l: Record<string, any>) => l.aiScore != null ? `${l.aiScore}/10` : '—')} best={listings.map((l: Record<string, any>) => l.aiScore === bestScore && l.aiScore != null)} />
+              <CompareRow label="AI tveganje" values={listings.map((l: Record<string, any>) => l.aiRisk != null ? `${l.aiRisk}/10` : '—')} />
+              <CompareRow label="AI tržna vrednost" values={listings.map((l: Record<string, any>) => l.aiEstimatedValue ? `${l.aiEstimatedValue} €` : '—')} />
+              <CompareRow label="Lokacija" values={listings.map((l: Record<string, any>) => l.location || '—')} />
+              <CompareRow label="Monitor" values={listings.map((l: Record<string, any>) => l.monitor?.name ?? '—')} />
+              <CompareRow label="Prvič videno" values={listings.map((l: Record<string, any>) => new Date(l.firstSeenAt).toLocaleDateString('sl-SI'))} />
+              <CompareRow label="Starost (dni)" values={listings.map((l: Record<string, any>) => String(Math.floor((Date.now() - new Date(l.firstSeenAt).getTime()) / 86400000)))} />
+              <CompareRow label="Padec cene" values={listings.map((l: Record<string, any>) => l.priceDroppedAt ? `📉 ${new Date(l.priceDroppedAt).toLocaleDateString('sl-SI')}` : '—')} />
+              <CompareRow label="AI razlog" values={listings.map((l: Record<string, any>) => (l.aiReason || '—').slice(0, 100))} />
             </tbody>
           </table>
         </div>

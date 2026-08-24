@@ -11,7 +11,7 @@ import { toast } from 'sonner';
 import { cn } from '@/lib/utils';
 
 export function InventoryInsurance() {
-  const [insuranceData, setInsuranceData] = useState<any>(null);
+  const [insuranceData, setInsuranceData] = useState<Record<string, any> | null>(null);
   const [insuranceLoading, setInsuranceLoading] = useState(false);
   const [insuranceStorage, setInsuranceStorage] = useState('home');
 
@@ -134,7 +134,7 @@ export function InventoryInsurance() {
               <div className="bg-red-500/5 border border-red-500/20 rounded p-2">
                 <div className="text-[10px] uppercase text-red-500 mb-1">⚠️ Visoko tvegani itemi:</div>
                 <div className="space-y-1 max-h-40 overflow-y-auto">
-                  {insuranceData.analysis.highRiskItems.map((h: any, i: number) => (
+                  {insuranceData.analysis.highRiskItems.map((h: Record<string, any>, i: number) => (
                     <div key={i} className="text-[10px]">
                       <div className="flex items-center justify-between">
                         <span className="font-medium truncate">{h.title}</span>
@@ -155,7 +155,7 @@ export function InventoryInsurance() {
               <div className="bg-primary/5 border border-primary/20 rounded p-2">
                 <div className="text-[10px] uppercase text-primary mb-1">💡 Priporočila:</div>
                 <div className="space-y-1">
-                  {insuranceData.analysis.recommendations.map((r: any, i: number) => {
+                  {insuranceData.analysis.recommendations.map((r: Record<string, any>, i: number) => {
                     const prColor = r.priority === 'high' ? 'text-red-500' : r.priority === 'medium' ? 'text-amber-400' : 'text-blue-400';
                     return (
                       <div key={i} className="text-[10px]">

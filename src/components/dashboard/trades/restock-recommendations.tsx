@@ -8,7 +8,7 @@ import { RefreshCw, ShoppingCart } from 'lucide-react';
 import { toast } from 'sonner';
 
 export function RestockRecommendations() {
-  const [restockData, setRestockData] = useState<any>(null);
+  const [restockData, setRestockData] = useState<Record<string, any> | null>(null);
   const [restockLoading, setRestockLoading] = useState(false);
 
   return (
@@ -48,7 +48,7 @@ export function RestockRecommendations() {
               <Button size="sm" variant="ghost" onClick={() => setRestockData(null)} className="h-6 text-xs">×</Button>
             </div>
             <div className="space-y-2 max-h-80 overflow-y-auto">
-              {restockData.recommendations.map((r: any, i: number) => (
+              {restockData.recommendations.map((r: Record<string, any>, i: number) => (
                 <div key={i} className="p-2 bg-background/30 rounded border border-green-400/20">
                   <div className="flex items-center justify-between mb-1">
                     <Badge variant="outline" className="text-[9px] text-green-400 border-green-400/40">{r.category}</Badge>
@@ -61,7 +61,7 @@ export function RestockRecommendations() {
                   </div>
                   <p className="text-[10px] text-muted-foreground mb-1">{r.reason}</p>
                   <div className="space-y-0.5">
-                    {r.opportunities.map((o: any, j: number) => (
+                    {r.opportunities.map((o: Record<string, any>, j: number) => (
                       <a key={j} href={o.url} target="_blank" rel="noopener noreferrer" className="flex items-center gap-1.5 p-1 hover:bg-card/50 rounded text-[10px]">
                         <span className="truncate flex-1">{o.title}</span>
                         <span className="font-mono text-amber-400 shrink-0">{o.priceText}</span>

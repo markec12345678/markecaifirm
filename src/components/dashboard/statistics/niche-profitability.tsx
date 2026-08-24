@@ -10,7 +10,7 @@ import { cn } from '@/lib/utils';
 
 export function NicheProfitability() {
   // v6.3: Niche profitability
-  const [nicheData, setNicheData] = useState<any>(null);
+  const [nicheData, setNicheData] = useState<Record<string, any> | null>(null);
   const [nicheLoading, setNicheLoading] = useState(false);
 
   // v6.3: Load niche profitability
@@ -81,7 +81,7 @@ export function NicheProfitability() {
 
                 {/* Niche list */}
                 <div className="space-y-1.5">
-                  {nicheData.niches.map((n: any, i: number) => (
+                  {nicheData.niches.map((n: Record<string, any>, i: number) => (
                     <div key={i} className={cn('flex items-center gap-2 p-2 rounded text-xs border',
                       n.score >= 70 ? 'bg-primary/5 border-primary/20' :
                       n.score >= 50 ? 'bg-amber-400/5 border-amber-400/20' :
