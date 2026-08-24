@@ -59,6 +59,50 @@
 > - **⚡ Analytics Cache** (v8.87) — 8 endpoints cached (2.8-4.3x hitrejši Dashboard)
 > - **📌 Version.ts** (v8.89-90) — single source of truth + accurate route counts
 >
+> ---
+>
+> ## 🏗️ v9.x — Architecture & Quality (v8.94–v9.23)
+>
+> ### Modularizacija (v8.94–v9.09)
+> - **193 modulskih datotek** v 16 direktorijeh — vsaka view datoteka je tanek orchestrator
+> - **−67% vrstic** v view datotekah (28885 → 9524)
+> - **16 view-jev modulariziranih**: settings, ai-hub, trades, listings, statistics, monitors, dashboard, analytics, iskalnik, watchlist, inventory, buyers, pricing, risk, alerts, listing-optimization
+> - Inkrementalna ekstrakcija: 7 podkomponent iz settings (v8.95-v8.96), 25 iz ai-hub (v8.97-v8.98), 25 iz trades (v8.99, v9.07-v9.08), 6 iz listings (v9.00), 26 iz statistics (v9.01-v9.02), 6 iz monitors (v9.03), 7 iz dashboard (v9.04), 7 iz analytics (v9.05), 4 iz iskalnik (v9.06), 3 iz watchlist (v9.09), 11 iz inventory (v9.09), 11 iz buyers (v9.09), 11 iz pricing (v9.09), 11 iz risk (v9.09), 4 iz alerts (v9.09), 11 iz listing-optimization (v9.09)
+>
+> ### Code Quality Audit (v9.10–v9.14)
+> - **0 lint napak**, 0 warnings, 0 TODO, 0 inline duplikatov
+> - **66 duplikatov** odstranjenih iz ai-hub-view.tsx (v9.12)
+> - **5 inline konstant** premaknjenih v shared utils (v9.14)
+> - Vsa funkcionalnost ohranjena 1:1 — nobena logika spremenjena
+>
+> ### Demo Podatki & Setup (v9.15–v9.17)
+> - **25 demo trades** z realistic Slovenian trade history (4 vira, 5 kategorij)
+> - **15 demo listings** (8 elektronika + 7 avto)
+> - **25 tag assignments** na trades
+> - **Monthly goal** 500€
+> - **Setup 7/7 (100%)** — AI provider, monitor, cron, oglasi, trgovine, Web Push, cilj
+> - **VAPID ključi** generirani (P-256 ECDSA)
+> - **Comprehensive seed script**: `bun run seed-all` (6 korakov v 1 skripti, idempotentna)
+>
+> ### Accessibility Audit (v9.18–v9.20)
+> - **44 ARIA labelov** na ključnih interaktivnih elementih v 8 view-jih
+> - Vsi aria-labeli v slovenščini z deskriptivnim kontekstom
+> - Dashboard: 6, Alerts: 6, Monitors: 5, Listings: 7, Iskalnik: 9, Trades: 9, Statistics: 1, Settings: 1
+>
+> ### SEO Optimization (v9.21)
+> - **OpenGraph**: title, description, locale=sl_SI, siteName, images z alt
+> - **Twitter Card**: summary z image
+> - **JSON-LD Structured Data**: SoftwareApplication schema z 10 featurei + aggregateRating
+> - **sitemap.xml**: 6 ključnih URL-jev
+> - **robots.txt**: Allow /, Disallow /api/, Sitemap directive
+> - **19 keywords** za boljšo iskalno optimizacijo
+>
+> ### Performance Optimization (v9.23)
+> - **React.memo** na 4 ključne list komponente: TradeRow, ResultCard, WatchlistItemCard, StatCard
+> - Preprečuje nepotrebne re-render-e pri parent state changes
+> - Dashboard auto-refresh (30s): re-render samo spremenjenih card-ov
+> - Trades view (25 items): re-render samo spremenjene trgovine
+>
 > ### Platforms (11)
 > 🇸🇮 Bolha, Nepremičnine, Avtonet, Salomon, Vinted · 🇩🇪 Mobile.de, Kleinanzeigen, Quoka · 🇮🇹 Subito · 🇦🇹 Willhaben · 📡 Custom RSS
 >
@@ -126,9 +170,9 @@ računalniku — brez cloud storitev, brez mesečnih naročnin, brez deljenja po
 Lovi podcenjene oglase na Bolhi/Facebooku/Vintedu z AI, jih kupi poceni, preprodaj drago z
 AI-optimiziranimi oglasi, in avtomatiziraj celoten workflow od odkritja do prodaje.
 
-### Verzija v8.45.0 (avgust 2026)
+### Verzija v9.23.0 (avgust 2026)
 
-**431 AI endpointov** + **73 analytics** + **15 cron automatizacij** + **11 Telegram ukazov** + **~307 funkcij** organiziranih v 8 kategorij:
+**432 AI endpointov** + **84 analytics** + **18 cron automatizacij** + **11 Telegram ukazov** + **11 platform** + **193 modulov** organiziranih v 18 zavihkov:
 - **Statistike** (analytics, predictions, forecasting) — 35+ funkcij
 - **Skladišče** (inventory management, aging, depreciation) — 20+ funkcij
 - **Oglasi** (listing optimization, SEO, image analysis) — 25+ funkcij
@@ -545,7 +589,7 @@ AI-optimiziranimi oglasi, in avtomatiziraj celoten workflow od odkritja do proda
 - ListingDetailModal razbit z 4070 na ~2227 vrstic (−45%)
 - 6 podkomponent izvlečenih (SentimentPanel, AuctionSniperPanel, FraudDetectionPanel, ImageAnalysisPanel, NegotiationPanel, ListingActionsBar)
 
-**Aplikacija sedaj ima 17 zavihkov z 55+ AI funkcijami** z keyboard shortcuts:
+**Aplikacija sedaj ima 18 zavihkov z 432 AI funkcijami** z keyboard shortcuts:
 `1-9/0` (osnovni), `b` (kupci), `a` (AI Hub), `i` (skladišče AI), `p` (cene AI), `l` (oglasi AI), `r` (tveganja AI)
 
 ▶️ Glej [CHANGELOG.md](./CHANGELOG.md) za popolno zgodovino v1.0 → v7.80. Za starejše verzije (v1.0–v6.x) glej [ARCHIVE.md](./ARCHIVE.md).
@@ -554,7 +598,7 @@ AI-optimiziranimi oglasi, in avtomatiziraj celoten workflow od odkritja do proda
 
 ## 🚀 Ključne funkcije
 
-### 📱 17 zavihkov v aplikaciji
+### 📱 18 zavihkov v aplikaciji
 
 | # | Zavihek | Shortcut | Kaj |
 |---|---|---|---|
