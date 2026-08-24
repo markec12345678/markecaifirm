@@ -14,7 +14,7 @@ interface BuyerPersonaProps {
 }
 
 export function BuyerPersona({ selectedBuyer }: BuyerPersonaProps) {
-  const [persona, setPersona] = useState<any>(null);
+  const [persona, setPersona] = useState<Record<string, any> | null>(null);
   const [personaLoading, setPersonaLoading] = useState(false);
 
   const runPersona = async () => {
@@ -56,7 +56,7 @@ export function BuyerPersona({ selectedBuyer }: BuyerPersonaProps) {
           </div>
         ) : persona?.personas?.length > 0 ? (
           <div className="space-y-2 text-xs">
-            {persona.personas.slice(0, 3).map((p: any, i: number) => (
+            {persona?.personas.slice(0, 3).map((p: Record<string, any>, i: number) => (
               <div key={i} className="bg-card/30 border rounded p-2">
                 <div className="flex items-center justify-between mb-1">
                   <Badge variant="outline" className="text-[9px] text-blue-400 border-blue-400/40">{p.type || p.archetype}</Badge>

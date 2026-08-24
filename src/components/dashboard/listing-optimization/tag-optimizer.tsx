@@ -14,7 +14,7 @@ interface TagOptimizerProps {
 }
 
 export function TagOptimizer({ selectedTradeId }: TagOptimizerProps) {
-  const [tagOpt, setTagOpt] = useState<any>(null);
+  const [tagOpt, setTagOpt] = useState<Record<string, any> | null>(null);
   const [tagOptLoading, setTagOptLoading] = useState(false);
 
   const runTagOpt = async () => { if (!selectedTradeId) { toast.error('Izberi item'); return; } setTagOptLoading(true); setTagOpt(null); try { const r = await fetch('/api/ai/listing-tag-optimizer', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ tradeId: selectedTradeId }) }); const d = await r.json(); if (d.ok) { setTagOpt(d); toast.success('✓ Tag optimizacija generirana'); } else toast.error(d.error ?? 'Napaka'); } catch (e: unknown) { toast.error((e as Error)?.message ?? 'Napaka'); } finally { setTagOptLoading(false); } };
@@ -35,11 +35,11 @@ export function TagOptimizer({ selectedTradeId }: TagOptimizerProps) {
         ) : tagOpt?.optimizer ? (
           <div className="space-y-2 text-xs">
             <div className="flex flex-wrap gap-1">
-              {tagOpt.optimizer.suggestedTags?.slice(0, 8).map((t: string, i: number) => (
+              {tagOpt?.optimizer.suggestedTags?.slice(0, 8).map((t: string, i: number) => (
                 <Badge key={i} variant="outline" className="text-[9px] text-blue-400 border-blue-400/30">{t}</Badge>
               ))}
             </div>
-            {tagOpt.optimizer.insights && <div className="text-[9px] text-muted-foreground">💡 {tagOpt.optimizer.insights}</div>}
+            {tagOpt?.optimizer.insights && <div className="text-[9px] text-muted-foreground">💡 {tagOpt?.optimizer.insights}</div>}
           </div>
         ) : (
           <p className="text-xs text-muted-foreground text-center py-4">AI optimizira oznake/Tag-e za boljšo vidljivost.</p>

@@ -10,7 +10,7 @@ import { RefreshCw, Shield } from 'lucide-react';
 import { toast } from 'sonner';
 
 export function RiskHedging() {
-  const [hedging, setHedging] = useState<any>(null);
+  const [hedging, setHedging] = useState<Record<string, any> | null>(null);
   const [hedgingLoading, setHedgingLoading] = useState(false);
 
   const runHedging = async () => {
@@ -39,7 +39,7 @@ export function RiskHedging() {
           <div className="py-4 text-center text-xs text-muted-foreground"><RefreshCw className="w-4 h-4 mx-auto mb-1 animate-spin opacity-50" /> AI analizira 8 hedge strategij...</div>
         ) : hedging?.hedging ? (
           <div className="space-y-2 text-xs">
-            {hedging.hedging.hedges?.slice(0, 4).map((h: any, i: number) => (
+            {hedging?.hedging.hedges?.slice(0, 4).map((h: Record<string, any>, i: number) => (
               <div key={i} className="bg-card/30 border rounded p-2">
                 <div className="flex items-center justify-between mb-1">
                   <Badge variant="outline" className="text-[9px] text-red-500 border-red-500/30">{h.type || h.strategy}</Badge>
@@ -48,10 +48,10 @@ export function RiskHedging() {
                 <div className="text-[10px] font-medium">{h.action || h.description}</div>
               </div>
             ))}
-            {hedging.hedging.recommendations?.slice(0, 2).map((r: any, i: number) => (
+            {hedging?.hedging.recommendations?.slice(0, 2).map((r: Record<string, any>, i: number) => (
               <div key={i} className="bg-primary/5 border border-primary/20 rounded p-2 text-[10px]">💡 {r.recommendation || r.action}</div>
             ))}
-            {hedging.hedging.insights && <div className="text-[9px] text-muted-foreground">💡 {hedging.hedging.insights}</div>}
+            {hedging?.hedging?.insights && <div className="text-[9px] text-muted-foreground">💡 {hedging?.hedging.insights}</div>}
           </div>
         ) : (
           <p className="text-xs text-muted-foreground text-center py-4">AI predlaga 8 hedge strategij (diversifikacija, counterweight, likvidnost, sezonsko...).</p>

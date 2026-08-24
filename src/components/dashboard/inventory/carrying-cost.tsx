@@ -9,7 +9,7 @@ import { RefreshCw, Wallet } from 'lucide-react';
 import { toast } from 'sonner';
 
 export function CarryingCost() {
-  const [carryingCost, setCarryingCost] = useState<any>(null);
+  const [carryingCost, setCarryingCost] = useState<Record<string, any> | null>(null);
   const [carryingCostLoading, setCarryingCostLoading] = useState(false);
 
   const runCarryingCost = async () => {
@@ -41,16 +41,16 @@ export function CarryingCost() {
             <div className="bg-amber-400/5 border border-amber-400/20 rounded p-2">
               <div className="flex items-center justify-between">
                 <span className="text-[10px] uppercase text-amber-400">Skupni stroški/mesec</span>
-                <span className="font-mono font-bold text-amber-400">{carryingCost.analyzer.totalCarryingCost ?? carryingCost.analyzer.monthlyCost ?? '?'}€</span>
+                <span className="font-mono font-bold text-amber-400">{carryingCost?.analyzer.totalCarryingCost ?? carryingCost?.analyzer?.monthlyCost ?? '?'}€</span>
               </div>
             </div>
-            {carryingCost.analyzer.breakdown?.slice(0, 3).map((b: any, i: number) => (
+            {carryingCost?.analyzer.breakdown?.slice(0, 3).map((b: Record<string, any>, i: number) => (
               <div key={i} className="flex items-center justify-between bg-card/30 border rounded p-1.5">
                 <span className="text-[10px]">{b.category || b.type}</span>
                 <span className="font-mono text-[10px]">{b.costEur ?? b.amount ?? '?'}€</span>
               </div>
             ))}
-            {carryingCost.analyzer.insights && <div className="text-[9px] text-muted-foreground">💡 {carryingCost.analyzer.insights}</div>}
+            {carryingCost?.analyzer.insights && <div className="text-[9px] text-muted-foreground">💡 {carryingCost?.analyzer.insights}</div>}
           </div>
         ) : (
           <p className="text-xs text-muted-foreground text-center py-4">AI analizira stroške držanja inventarja (shranjevanje, zavarovanje, kapital).</p>

@@ -11,7 +11,7 @@ import { toast } from 'sonner';
 import { cn } from '@/lib/utils';
 
 export function InsuranceClaim() {
-  const [claim, setClaim] = useState<any>(null);
+  const [claim, setClaim] = useState<Record<string, any> | null>(null);
   const [claimLoading, setClaimLoading] = useState(false);
 
   const runClaim = async () => { setClaimLoading(true); setClaim(null); try { const r = await fetch('/api/ai/insurance-claim', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: '{}' }); const d = await r.json(); if (d.ok) { setClaim(d); toast.success('✓ Claim analiza generirana'); } else toast.error(d.error ?? 'Napaka'); } catch (e: unknown) { toast.error((e as Error)?.message ?? 'Napaka'); } finally { setClaimLoading(false); } };
@@ -31,7 +31,7 @@ export function InsuranceClaim() {
           <div className="py-4 text-center text-xs text-muted-foreground"><RefreshCw className="w-4 h-4 mx-auto mb-1 animate-spin opacity-50" /> AI analizira zavarovalne zahtevke...</div>
         ) : claim ? (
           <div className="space-y-2 text-xs">
-            {claim.claims?.slice(0, 3).map((c: any, i: number) => (
+            {claim?.claims?.slice(0, 3).map((c: Record<string, any>, i: number) => (
               <div key={i} className="bg-card/30 border rounded p-2">
                 <div className="flex items-center justify-between mb-1">
                   <span className="text-[10px] font-medium">{c.type || c.category}</span>
@@ -40,7 +40,7 @@ export function InsuranceClaim() {
                 <div className="text-[9px] text-muted-foreground">{c.amount ?? '?'}€ — {c.reason || c.description}</div>
               </div>
             ))}
-            {claim.insights && <div className="text-[9px] text-muted-foreground">💡 {claim.insights}</div>}
+            {claim?.insights && <div className="text-[9px] text-muted-foreground">💡 {claim?.insights}</div>}
           </div>
         ) : (
           <p className="text-xs text-muted-foreground text-center py-4">AI analizira zavarovalne zahtevke (odobritev, znesek, utemeljitev).</p>

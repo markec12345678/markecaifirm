@@ -11,7 +11,7 @@ import { toast } from 'sonner';
 import { cn } from '@/lib/utils';
 
 export function MarginOptimizer() {
-  const [margin, setMargin] = useState<any>(null);
+  const [margin, setMargin] = useState<Record<string, any> | null>(null);
   const [marginLoading, setMarginLoading] = useState(false);
 
   const runMargin = async () => {
@@ -47,7 +47,7 @@ export function MarginOptimizer() {
           </div>
         ) : margin?.items?.length > 0 ? (
           <div className="space-y-2 text-xs">
-            {margin.items.slice(0, 4).map((item: any, i: number) => (
+            {margin?.items.slice(0, 4).map((item: Record<string, any>, i: number) => (
               <div key={i} className="bg-card/30 border rounded p-2">
                 <div className="flex items-center justify-between mb-1">
                   <span className="font-medium text-[10px] truncate flex-1">{item.title || item.name}</span>
@@ -62,8 +62,8 @@ export function MarginOptimizer() {
                 </div>
               </div>
             ))}
-            {margin.summary?.summary && (
-              <div className="text-[9px] text-muted-foreground">💡 {margin.summary.summary}</div>
+            {margin?.summary?.summary && (
+              <div className="text-[9px] text-muted-foreground">💡 {margin?.summary.summary}</div>
             )}
           </div>
         ) : (

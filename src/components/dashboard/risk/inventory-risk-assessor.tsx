@@ -11,7 +11,7 @@ import { toast } from 'sonner';
 import { cn } from '@/lib/utils';
 
 export function InventoryRiskAssessor() {
-  const [invRisk, setInvRisk] = useState<any>(null);
+  const [invRisk, setInvRisk] = useState<Record<string, any> | null>(null);
   const [invRiskLoading, setInvRiskLoading] = useState(false);
 
   const runInvRisk = async () => { setInvRiskLoading(true); setInvRisk(null); try { const r = await fetch('/api/ai/inventory-risk-assessor', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: '{}' }); const d = await r.json(); if (d.ok) { setInvRisk(d); toast.success('✓ Inventory risk ocenjen'); } else toast.error(d.error ?? 'Napaka'); } catch (e: unknown) { toast.error((e as Error)?.message ?? 'Napaka'); } finally { setInvRiskLoading(false); } };
@@ -31,7 +31,7 @@ export function InventoryRiskAssessor() {
           <div className="py-4 text-center text-xs text-muted-foreground"><RefreshCw className="w-4 h-4 mx-auto mb-1 animate-spin opacity-50" /> AI ocenjuje tveganja inventarja...</div>
         ) : invRisk?.assessor ? (
           <div className="space-y-2 text-xs">
-            {invRisk.assessor.risks?.slice(0, 3).map((r: any, i: number) => (
+            {invRisk?.assessor.risks?.slice(0, 3).map((r: Record<string, any>, i: number) => (
               <div key={i} className="bg-card/30 border rounded p-2">
                 <div className="flex items-center justify-between mb-1">
                   <span className="text-[10px] font-medium">{r.risk || r.type}</span>
@@ -40,7 +40,7 @@ export function InventoryRiskAssessor() {
                 <div className="text-[9px] text-muted-foreground">{r.mitigation || r.action}</div>
               </div>
             ))}
-            {invRisk.assessor.insights && <div className="text-[9px] text-muted-foreground">💡 {invRisk.assessor.insights}</div>}
+            {invRisk?.assessor.insights && <div className="text-[9px] text-muted-foreground">💡 {invRisk?.assessor.insights}</div>}
           </div>
         ) : (
           <p className="text-xs text-muted-foreground text-center py-4">AI oceni tveganja inventarja (poškodbe, zastaranje, krađa, likvidnost).</p>

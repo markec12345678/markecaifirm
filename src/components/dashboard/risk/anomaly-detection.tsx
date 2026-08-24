@@ -11,7 +11,7 @@ import { toast } from 'sonner';
 import { cn } from '@/lib/utils';
 
 export function AnomalyDetection() {
-  const [anomalies, setAnomalies] = useState<any>(null);
+  const [anomalies, setAnomalies] = useState<Record<string, any> | null>(null);
   const [anomaliesLoading, setAnomaliesLoading] = useState(false);
 
   const runAnomalies = async () => { setAnomaliesLoading(true); setAnomalies(null); try { const r = await fetch('/api/ai/detect-anomalies', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: '{}' }); const d = await r.json(); if (d.ok) { setAnomalies(d); toast.success('✓ Anomalije detektirane'); } else toast.error(d.error ?? 'Napaka'); } catch (e: unknown) { toast.error((e as Error)?.message ?? 'Napaka'); } finally { setAnomaliesLoading(false); } };
@@ -31,7 +31,7 @@ export function AnomalyDetection() {
           <div className="py-4 text-center text-xs text-muted-foreground"><RefreshCw className="w-4 h-4 mx-auto mb-1 animate-spin opacity-50" /> AI detektira anomalije...</div>
         ) : anomalies?.anomalies?.length > 0 ? (
           <div className="space-y-2 text-xs">
-            {anomalies.anomalies.slice(0, 4).map((a: any, i: number) => (
+            {anomalies?.anomalies.slice(0, 4).map((a: Record<string, any>, i: number) => (
               <div key={i} className={cn('border rounded p-2', a.severity === 'critical' ? 'bg-red-500/5 border-red-500/20' : 'bg-card/30 border-border')}>
                 <div className="flex items-center justify-between mb-1">
                   <span className="text-[10px] font-medium truncate flex-1">{a.title || a.description}</span>
@@ -40,7 +40,7 @@ export function AnomalyDetection() {
                 <div className="text-[9px] text-muted-foreground">{a.action || a.recommendation}</div>
               </div>
             ))}
-            {anomalies.insights && <div className="text-[9px] text-muted-foreground">💡 {anomalies.insights}</div>}
+            {anomalies?.insights && <div className="text-[9px] text-muted-foreground">💡 {anomalies?.insights}</div>}
           </div>
         ) : (
           <p className="text-xs text-muted-foreground text-center py-4">AI detektira anomalije v cenah, vedenju, vzorcih nakupov.</p>

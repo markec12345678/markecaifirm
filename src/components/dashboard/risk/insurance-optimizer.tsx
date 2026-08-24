@@ -11,7 +11,7 @@ import { toast } from 'sonner';
 import { cn } from '@/lib/utils';
 
 export function InsuranceOptimizer() {
-  const [insurance, setInsurance] = useState<any>(null);
+  const [insurance, setInsurance] = useState<Record<string, any> | null>(null);
   const [insuranceLoading, setInsuranceLoading] = useState(false);
 
   const runInsurance = async () => {
@@ -40,7 +40,7 @@ export function InsuranceOptimizer() {
           <div className="py-4 text-center text-xs text-muted-foreground"><RefreshCw className="w-4 h-4 mx-auto mb-1 animate-spin opacity-50" /> AI analizira 4D risk matrix (7 kategorij)...</div>
         ) : insurance?.optimizer ? (
           <div className="space-y-2 text-xs">
-            {insurance.optimizer.riskMatrix?.slice(0, 3).map((r: any, i: number) => (
+            {insurance?.optimizer.riskMatrix?.slice(0, 3).map((r: Record<string, any>, i: number) => (
               <div key={i} className="bg-card/30 border rounded p-2">
                 <div className="flex items-center justify-between mb-1">
                   <span className="text-[10px] font-medium">{r.category}</span>
@@ -54,12 +54,12 @@ export function InsuranceOptimizer() {
                 </div>
               </div>
             ))}
-            {insurance.optimizer.policies?.slice(0, 2).map((p: any, i: number) => (
+            {insurance?.optimizer.policies?.slice(0, 2).map((p: Record<string, any>, i: number) => (
               <div key={i} className="bg-blue-400/5 border border-blue-400/20 rounded p-2 text-[10px]">
                 <b className="text-blue-400">{p.type || p.name}</b> — {p.coverage ?? p.description} · {p.premiumEur ?? p.cost ?? '?'}€/leto
               </div>
             ))}
-            {insurance.optimizer.insights && <div className="text-[9px] text-muted-foreground">💡 {insurance.optimizer.insights}</div>}
+            {insurance?.optimizer.insights && <div className="text-[9px] text-muted-foreground">💡 {insurance?.optimizer.insights}</div>}
           </div>
         ) : (
           <p className="text-xs text-muted-foreground text-center py-4">AI 4D risk matrix (7 kategorij: elektronika, telefoni, avto, nepremičnine...) + police.</p>

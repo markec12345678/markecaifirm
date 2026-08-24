@@ -13,7 +13,7 @@ interface BuyerJourneyProps {
 }
 
 export function BuyerJourney({ selectedBuyer }: BuyerJourneyProps) {
-  const [journey, setJourney] = useState<any>(null);
+  const [journey, setJourney] = useState<Record<string, any> | null>(null);
   const [journeyLoading, setJourneyLoading] = useState(false);
 
   const runJourney = async () => {
@@ -55,12 +55,12 @@ export function BuyerJourney({ selectedBuyer }: BuyerJourneyProps) {
           </div>
         ) : journey?.optimizer ? (
           <div className="space-y-2 text-xs">
-            {journey.optimizer.insights && (
+            {journey?.optimizer.insights && (
               <div className="bg-purple-500/5 border border-purple-500/20 rounded p-2 text-[10px]">
-                💡 {journey.optimizer.insights}
+                💡 {journey?.optimizer.insights}
               </div>
             )}
-            {journey.optimizer.optimizations?.slice(0, 3).map((o: any, i: number) => (
+            {journey?.optimizer.optimizations?.slice(0, 3).map((o: Record<string, any>, i: number) => (
               <div key={i} className="bg-card/30 border rounded p-2">
                 <div className="font-medium text-[10px]">{o.stage || o.touchpoint || `Optimizacija ${i + 1}`}</div>
                 <div className="text-[10px] text-muted-foreground mt-1">{o.action || o.recommendation || o.description}</div>

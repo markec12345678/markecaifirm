@@ -11,7 +11,7 @@ import { toast } from 'sonner';
 import { cn } from '@/lib/utils';
 
 export function PriceWarStrategist() {
-  const [priceWar, setPriceWar] = useState<any>(null);
+  const [priceWar, setPriceWar] = useState<Record<string, any> | null>(null);
   const [priceWarLoading, setPriceWarLoading] = useState(false);
 
   const runPriceWar = async () => {
@@ -47,7 +47,7 @@ export function PriceWarStrategist() {
           </div>
         ) : priceWar?.strategist ? (
           <div className="space-y-2 text-xs">
-            {priceWar.strategist.wars?.slice(0, 3).map((w: any, i: number) => (
+            {priceWar?.strategist.wars?.slice(0, 3).map((w: Record<string, any>, i: number) => (
               <div key={i} className={cn('border rounded p-2',
                 w.threatLevel === 'high' ? 'bg-red-500/5 border-red-500/20' : 'bg-card/30 border-border')}>
                 <div className="flex items-center justify-between mb-1">
@@ -62,14 +62,14 @@ export function PriceWarStrategist() {
                 {w.priceDrops != null && <div className="text-[9px] text-amber-400">{w.priceDrops} padcev cen</div>}
               </div>
             ))}
-            {priceWar.strategist.strategies?.slice(0, 2).map((s: any, i: number) => (
+            {priceWar?.strategist.strategies?.slice(0, 2).map((s: Record<string, any>, i: number) => (
               <div key={i} className="bg-primary/5 border border-primary/20 rounded p-2">
                 <div className="text-[10px] font-medium text-primary">{s.strategy || s.name}</div>
                 <div className="text-[9px] text-muted-foreground">{s.description || s.action}</div>
               </div>
             ))}
-            {priceWar.strategist.insights && (
-              <div className="text-[9px] text-muted-foreground">💡 {priceWar.strategist.insights}</div>
+            {priceWar?.strategist.insights && (
+              <div className="text-[9px] text-muted-foreground">💡 {priceWar?.strategist.insights}</div>
             )}
           </div>
         ) : (

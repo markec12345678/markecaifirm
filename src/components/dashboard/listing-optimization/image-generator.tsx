@@ -14,7 +14,7 @@ interface ImageGeneratorProps {
 }
 
 export function ImageGenerator({ selectedTradeId }: ImageGeneratorProps) {
-  const [imageGen, setImageGen] = useState<any>(null);
+  const [imageGen, setImageGen] = useState<Record<string, any> | null>(null);
   const [imageGenLoading, setImageGenLoading] = useState(false);
 
   const runImageGen = async () => {
@@ -44,13 +44,13 @@ export function ImageGenerator({ selectedTradeId }: ImageGeneratorProps) {
           <div className="py-4 text-center text-xs text-muted-foreground"><RefreshCw className="w-4 h-4 mx-auto mb-1 animate-spin opacity-50" /> AI generira VLM prompte za slike...</div>
         ) : imageGen?.generator ? (
           <div className="space-y-2 text-xs">
-            {imageGen.generator.imagePrompts?.slice(0, 3).map((p: any, i: number) => (
+            {imageGen?.generator.imagePrompts?.slice(0, 3).map((p: Record<string, any>, i: number) => (
               <div key={i} className="bg-card/30 border rounded p-2">
                 <Badge variant="outline" className="text-[9px] mb-1">{p.shotType || p.type}</Badge>
                 <div className="text-[10px] font-mono text-primary">{p.prompt?.slice(0, 120)}...</div>
               </div>
             ))}
-            {imageGen.generator.insights && <div className="text-[9px] text-muted-foreground">💡 {imageGen.generator.insights}</div>}
+            {imageGen?.generator.insights && <div className="text-[9px] text-muted-foreground">💡 {imageGen?.generator.insights}</div>}
           </div>
         ) : (
           <p className="text-xs text-muted-foreground text-center py-4">AI generira VLM prompte za Midjourney/DALL-E (10 shot tipov, editing presets).</p>

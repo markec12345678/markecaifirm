@@ -14,7 +14,7 @@ interface BuyerClvProps {
 }
 
 export function BuyerClv({ selectedBuyer }: BuyerClvProps) {
-  const [clv, setClv] = useState<any>(null);
+  const [clv, setClv] = useState<Record<string, any> | null>(null);
   const [clvLoading, setClvLoading] = useState(false);
 
   const runClv = async () => { if (!selectedBuyer) { toast.error('Izberi kupca'); return; } setClvLoading(true); setClv(null); try { const r = await fetch('/api/ai/buyer-clv-predictor', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ customerName: selectedBuyer }) }); const d = await r.json(); if (d.ok) { setClv(d); toast.success('✓ CLV napoved generirana'); } else toast.error(d.error ?? 'Napaka'); } catch (e: unknown) { toast.error((e as Error)?.message ?? 'Napaka'); } finally { setClvLoading(false); } };
@@ -37,11 +37,11 @@ export function BuyerClv({ selectedBuyer }: BuyerClvProps) {
             <div className="bg-primary/10 border border-primary/30 rounded p-2">
               <div className="flex items-center justify-between">
                 <span className="text-[10px] uppercase text-primary font-bold">Pričakovan CLV</span>
-                <span className="font-mono font-bold text-primary text-lg">{clv.predictor.clv ?? clv.predictor.lifetimeValue ?? '?'}€</span>
+                <span className="font-mono font-bold text-primary text-lg">{clv?.predictor.clv ?? clv?.predictor?.lifetimeValue ?? '?'}€</span>
               </div>
             </div>
-            {clv.predictor.tier && <div className="text-[10px]"><Badge variant="outline" className="text-[9px]">{clv.predictor.tier}</Badge></div>}
-            {clv.predictor.insights && <div className="text-[9px] text-muted-foreground">💡 {clv.predictor.insights}</div>}
+            {clv?.predictor.tier && <div className="text-[10px]"><Badge variant="outline" className="text-[9px]">{clv?.predictor.tier}</Badge></div>}
+            {clv?.predictor.insights && <div className="text-[9px] text-muted-foreground">💡 {clv?.predictor.insights}</div>}
           </div>
         ) : (
           <p className="text-xs text-muted-foreground text-center py-4">AI napove Customer Lifetime Value (napoved dolgoročne vrednosti kupca).</p>

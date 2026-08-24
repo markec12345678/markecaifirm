@@ -11,7 +11,7 @@ import { toast } from 'sonner';
 import { cn } from '@/lib/utils';
 
 export function SmartPricingEngine() {
-  const [smartPricing, setSmartPricing] = useState<any>(null);
+  const [smartPricing, setSmartPricing] = useState<Record<string, any> | null>(null);
   const [smartPricingLoading, setSmartPricingLoading] = useState(false);
 
   const runSmartPricing = async () => {
@@ -47,15 +47,15 @@ export function SmartPricingEngine() {
           </div>
         ) : smartPricing?.pricing ? (
           <div className="space-y-2 text-xs">
-            {smartPricing.pricing.adjustmentsSummary && (
+            {smartPricing?.pricing.adjustmentsSummary && (
               <div className="bg-primary/5 border border-primary/20 rounded p-2">
                 <div className="flex items-center justify-between">
                   <span className="text-[10px] uppercase text-primary">Adjustments</span>
-                  <span className="font-mono text-primary">{smartPricing.pricing.adjustmentsSummary.totalItems ?? smartPricing.pricing.items?.length ?? 0} itemov</span>
+                  <span className="font-mono text-primary">{smartPricing?.pricing.adjustmentsSummary.totalItems ?? smartPricing?.pricing?.items?.length ?? 0} itemov</span>
                 </div>
               </div>
             )}
-            {smartPricing.pricing.items?.slice(0, 4).map((item: any, i: number) => (
+            {smartPricing?.pricing.items?.slice(0, 4).map((item: Record<string, any>, i: number) => (
               <div key={i} className="bg-card/30 border rounded p-2">
                 <div className="flex items-center justify-between mb-1">
                   <span className="font-medium text-[10px] truncate flex-1">{item.title || item.name}</span>
@@ -71,8 +71,8 @@ export function SmartPricingEngine() {
                 </div>
               </div>
             ))}
-            {smartPricing.pricing.insights && (
-              <div className="text-[9px] text-muted-foreground">💡 {smartPricing.pricing.insights}</div>
+            {smartPricing?.pricing.insights && (
+              <div className="text-[9px] text-muted-foreground">💡 {smartPricing?.pricing.insights}</div>
             )}
           </div>
         ) : (

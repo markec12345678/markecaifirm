@@ -11,7 +11,7 @@ import { toast } from 'sonner';
 import { cn } from '@/lib/utils';
 
 export function BuyerIntent() {
-  const [intent, setIntent] = useState<any>(null);
+  const [intent, setIntent] = useState<Record<string, any> | null>(null);
   const [intentLoading, setIntentLoading] = useState(false);
 
   const runIntent = async () => { setIntentLoading(true); setIntent(null); try { const r = await fetch('/api/ai/buyer-intent', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: '{}' }); const d = await r.json(); if (d.ok) { setIntent(d); toast.success('✓ Intent analiza generirana'); } else toast.error(d.error ?? 'Napaka'); } catch (e: unknown) { toast.error((e as Error)?.message ?? 'Napaka'); } finally { setIntentLoading(false); } };
@@ -31,7 +31,7 @@ export function BuyerIntent() {
           <div className="py-4 text-center text-xs text-muted-foreground"><RefreshCw className="w-4 h-4 mx-auto mb-1 animate-spin opacity-50" /> AI analizira nakupne namene kupcev...</div>
         ) : intent?.intent ? (
           <div className="space-y-2 text-xs">
-            {intent.intent.buyers?.slice(0, 4).map((b: any, i: number) => (
+            {intent?.intent.buyers?.slice(0, 4).map((b: Record<string, any>, i: number) => (
               <div key={i} className="flex items-center justify-between bg-card/30 border rounded p-1.5">
                 <span className="text-[10px] font-medium truncate flex-1">{b.name || b.buyerName}</span>
                 <Badge variant="outline" className={cn('text-[9px]', (b.intentScore ?? b.score ?? 0) >= 70 ? 'text-primary border-primary/30' : 'text-muted-foreground')}>
@@ -39,7 +39,7 @@ export function BuyerIntent() {
                 </Badge>
               </div>
             ))}
-            {intent.intent.insights && <div className="text-[9px] text-muted-foreground">💡 {intent.intent.insights}</div>}
+            {intent?.intent?.insights && <div className="text-[9px] text-muted-foreground">💡 {intent?.intent.insights}</div>}
           </div>
         ) : (
           <p className="text-xs text-muted-foreground text-center py-4">AI analizira nakupne namene kupcev (kdo bo verjetno kupil znova).</p>

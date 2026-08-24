@@ -11,7 +11,7 @@ import { toast } from 'sonner';
 import { cn } from '@/lib/utils';
 
 export function SeasonalPricing() {
-  const [seasonal, setSeasonal] = useState<any>(null);
+  const [seasonal, setSeasonal] = useState<Record<string, any> | null>(null);
   const [seasonalLoading, setSeasonalLoading] = useState(false);
 
   const runSeasonal = async () => {
@@ -47,7 +47,7 @@ export function SeasonalPricing() {
           </div>
         ) : seasonal?.pricing ? (
           <div className="space-y-2 text-xs">
-            {seasonal.pricing.seasonalFactors?.slice(0, 4).map((f: any, i: number) => (
+            {seasonal?.pricing.seasonalFactors?.slice(0, 4).map((f: Record<string, any>, i: number) => (
               <div key={i} className="bg-card/30 border rounded p-2">
                 <div className="flex items-center justify-between mb-1">
                   <span className="font-medium text-[10px]">{f.season || f.month || f.factor}</span>
@@ -59,7 +59,7 @@ export function SeasonalPricing() {
                 {f.recommendation && <div className="text-[9px] text-muted-foreground">{f.recommendation}</div>}
               </div>
             ))}
-            {seasonal.pricing.items?.slice(0, 3).map((item: any, i: number) => (
+            {seasonal?.pricing.items?.slice(0, 3).map((item: Record<string, any>, i: number) => (
               <div key={i} className="bg-card/30 border rounded p-2">
                 <div className="flex items-center justify-between">
                   <span className="text-[10px] font-medium truncate flex-1">{item.title || item.name}</span>
@@ -69,8 +69,8 @@ export function SeasonalPricing() {
                 </div>
               </div>
             ))}
-            {seasonal.pricing.insights && (
-              <div className="text-[9px] text-muted-foreground">💡 {seasonal.pricing.insights}</div>
+            {seasonal?.pricing.insights && (
+              <div className="text-[9px] text-muted-foreground">💡 {seasonal?.pricing.insights}</div>
             )}
           </div>
         ) : (

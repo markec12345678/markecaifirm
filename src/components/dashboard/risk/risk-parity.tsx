@@ -9,7 +9,7 @@ import { RefreshCw, Scale } from 'lucide-react';
 import { toast } from 'sonner';
 
 export function RiskParity() {
-  const [parity, setParity] = useState<any>(null);
+  const [parity, setParity] = useState<Record<string, any> | null>(null);
   const [parityLoading, setParityLoading] = useState(false);
 
   const runParity = async () => {
@@ -38,19 +38,19 @@ export function RiskParity() {
           <div className="py-4 text-center text-xs text-muted-foreground"><RefreshCw className="w-4 h-4 mx-auto mb-1 animate-spin opacity-50" /> AI računa risk parity alokacijo...</div>
         ) : parity ? (
           <div className="space-y-2 text-xs">
-            {parity.currentAllocation?.slice(0, 3).map((a: any, i: number) => (
+            {parity?.currentAllocation?.slice(0, 3).map((a: Record<string, any>, i: number) => (
               <div key={i} className="flex items-center justify-between bg-card/30 border rounded p-1.5">
                 <span className="text-[10px]">{a.category}</span>
                 <span className="font-mono text-[10px] text-amber-400">{a.percentage ?? a.allocation ?? 0}%</span>
               </div>
             ))}
-            {parity.recommendedAllocation?.slice(0, 3).map((a: any, i: number) => (
+            {parity?.recommendedAllocation?.slice(0, 3).map((a: Record<string, any>, i: number) => (
               <div key={i} className="flex items-center justify-between bg-primary/5 border border-primary/20 rounded p-1.5">
                 <span className="text-[10px]">{a.category}</span>
                 <span className="font-mono text-[10px] text-primary">{a.percentage ?? a.allocation ?? 0}%</span>
               </div>
             ))}
-            {parity.insights && <div className="text-[9px] text-muted-foreground">💡 {parity.insights}</div>}
+            {parity?.insights && <div className="text-[9px] text-muted-foreground">💡 {parity?.insights}</div>}
           </div>
         ) : (
           <p className="text-xs text-muted-foreground text-center py-4">AI alokacija z enakim riskom (risk-parity: vsaka kategorija enak prispevek k skupnemu tveganju).</p>

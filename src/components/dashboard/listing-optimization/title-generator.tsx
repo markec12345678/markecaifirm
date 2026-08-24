@@ -14,7 +14,7 @@ interface TitleGeneratorProps {
 }
 
 export function TitleGenerator({ selectedTradeId }: TitleGeneratorProps) {
-  const [titleGen, setTitleGen] = useState<any>(null);
+  const [titleGen, setTitleGen] = useState<Record<string, any> | null>(null);
   const [titleGenLoading, setTitleGenLoading] = useState(false);
 
   const runTitleGen = async () => { if (!selectedTradeId) { toast.error('Izberi item'); return; } setTitleGenLoading(true); setTitleGen(null); try { const r = await fetch('/api/ai/listing-title-generator-v2', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ tradeId: selectedTradeId }) }); const d = await r.json(); if (d.ok) { setTitleGen(d); toast.success('✓ Naslovi generirani'); } else toast.error(d.error ?? 'Napaka'); } catch (e: unknown) { toast.error((e as Error)?.message ?? 'Napaka'); } finally { setTitleGenLoading(false); } };
@@ -34,7 +34,7 @@ export function TitleGenerator({ selectedTradeId }: TitleGeneratorProps) {
           <div className="py-4 text-center text-xs text-muted-foreground"><RefreshCw className="w-4 h-4 mx-auto mb-1 animate-spin opacity-50" /> AI generira naslove...</div>
         ) : titleGen?.generator ? (
           <div className="space-y-2 text-xs">
-            {titleGen.generator.titles?.slice(0, 4).map((t: any, i: number) => (
+            {titleGen?.generator.titles?.slice(0, 4).map((t: Record<string, any>, i: number) => (
               <div key={i} className="bg-card/30 border rounded p-2">
                 <div className="flex items-center justify-between mb-1">
                   <span className="text-[10px] font-medium">{t.title || t.text}</span>
@@ -43,7 +43,7 @@ export function TitleGenerator({ selectedTradeId }: TitleGeneratorProps) {
                 {t.reason && <div className="text-[9px] text-muted-foreground">{t.reason}</div>}
               </div>
             ))}
-            {titleGen.generator.insights && <div className="text-[9px] text-muted-foreground">💡 {titleGen.generator.insights}</div>}
+            {titleGen?.generator.insights && <div className="text-[9px] text-muted-foreground">💡 {titleGen?.generator.insights}</div>}
           </div>
         ) : (
           <p className="text-xs text-muted-foreground text-center py-4">AI generira optimizirane naslove z A/B test scoring.</p>

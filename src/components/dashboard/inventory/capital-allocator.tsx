@@ -9,7 +9,7 @@ import { RefreshCw, DollarSign } from 'lucide-react';
 import { toast } from 'sonner';
 
 export function CapitalAllocator() {
-  const [capitalAlloc, setCapitalAlloc] = useState<any>(null);
+  const [capitalAlloc, setCapitalAlloc] = useState<Record<string, any> | null>(null);
   const [capitalAllocLoading, setCapitalAllocLoading] = useState(false);
 
   const runCapitalAlloc = async () => {
@@ -38,13 +38,13 @@ export function CapitalAllocator() {
           <div className="py-4 text-center text-xs text-muted-foreground"><RefreshCw className="w-4 h-4 mx-auto mb-1 animate-spin opacity-50" /> AI alokira kapital po kategorijah...</div>
         ) : capitalAlloc?.allocator ? (
           <div className="space-y-2 text-xs">
-            {capitalAlloc.allocator.allocations?.slice(0, 4).map((a: any, i: number) => (
+            {capitalAlloc?.allocator.allocations?.slice(0, 4).map((a: Record<string, any>, i: number) => (
               <div key={i} className="flex items-center justify-between bg-card/30 border rounded p-1.5">
                 <span className="text-[10px] font-medium">{a.category || a.name}</span>
                 <span className="font-mono text-primary">{a.allocationEur ?? a.amount ?? '?'}€</span>
               </div>
             ))}
-            {capitalAlloc.allocator.insights && <div className="text-[9px] text-muted-foreground">💡 {capitalAlloc.allocator.insights}</div>}
+            {capitalAlloc?.allocator.insights && <div className="text-[9px] text-muted-foreground">💡 {capitalAlloc?.allocator.insights}</div>}
           </div>
         ) : (
           <p className="text-xs text-muted-foreground text-center py-4">AI alokira kapital po kategorijah za maksimalni ROI.</p>

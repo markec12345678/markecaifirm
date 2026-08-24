@@ -11,7 +11,7 @@ import { toast } from 'sonner';
 import { cn } from '@/lib/utils';
 
 export function ProfitForecast() {
-  const [forecast, setForecast] = useState<any>(null);
+  const [forecast, setForecast] = useState<Record<string, any> | null>(null);
   const [forecastLoading, setForecastLoading] = useState(false);
 
   const runForecast = async () => {
@@ -48,42 +48,42 @@ export function ProfitForecast() {
         ) : forecast?.forecast ? (
           <div className="space-y-2 text-xs">
             <div className={cn('border rounded p-2',
-              forecast.forecast.expectedProfit >= 0 ? 'bg-primary/10 border-primary/30' : 'bg-red-500/10 border-red-500/30')}>
+              forecast?.forecast?.expectedProfit >= 0 ? 'bg-primary/10 border-primary/30' : 'bg-red-500/10 border-red-500/30')}>
               <div className="flex items-center justify-between">
                 <span className="font-bold uppercase text-[10px]">Pričakovan dobiček</span>
                 <Badge variant="outline" className="text-[9px] font-mono font-bold text-primary border-primary/40">
-                  {forecast.forecast.confidence}% confidence
+                  {forecast?.forecast.confidence}% confidence
                 </Badge>
               </div>
               <div className="text-lg font-mono font-bold text-primary mt-1">
-                {forecast.forecast.expectedProfit.toLocaleString('sl-SI')} €
+                {forecast?.forecast?.expectedProfit?.toLocaleString('sl-SI')} €
               </div>
             </div>
-            {forecast.forecast.scenarios && (
+            {forecast?.forecast?.scenarios && (
               <div className="grid grid-cols-3 gap-1 text-[10px]">
                 <div className="bg-primary/5 rounded p-1.5 border text-center">
                   <div className="text-[9px] text-muted-foreground">Optimistično</div>
-                  <div className="font-mono font-bold text-primary">{forecast.forecast.scenarios.optimistic?.profit ?? 0}€</div>
-                  <div className="text-[9px] text-muted-foreground">{forecast.forecast.scenarios.optimistic?.probability ?? 25}%</div>
+                  <div className="font-mono font-bold text-primary">{forecast?.forecast?.scenarios?.optimistic?.profit ?? 0}€</div>
+                  <div className="text-[9px] text-muted-foreground">{forecast?.forecast?.scenarios?.optimistic?.probability ?? 25}%</div>
                 </div>
                 <div className="bg-card/30 rounded p-1.5 border text-center">
                   <div className="text-[9px] text-muted-foreground">Realno</div>
-                  <div className="font-mono font-bold">{forecast.forecast.scenarios.realistic?.profit ?? 0}€</div>
-                  <div className="text-[9px] text-muted-foreground">{forecast.forecast.scenarios.realistic?.probability ?? 50}%</div>
+                  <div className="font-mono font-bold">{forecast?.forecast?.scenarios?.realistic?.profit ?? 0}€</div>
+                  <div className="text-[9px] text-muted-foreground">{forecast?.forecast?.scenarios?.realistic?.probability ?? 50}%</div>
                 </div>
                 <div className="bg-red-500/5 rounded p-1.5 border text-center">
                   <div className="text-[9px] text-muted-foreground">Pessimistično</div>
-                  <div className="font-mono font-bold text-amber-400">{forecast.forecast.scenarios.pessimistic?.profit ?? 0}€</div>
-                  <div className="text-[9px] text-muted-foreground">{forecast.forecast.scenarios.pessimistic?.probability ?? 25}%</div>
+                  <div className="font-mono font-bold text-amber-400">{forecast?.forecast?.scenarios?.pessimistic?.profit ?? 0}€</div>
+                  <div className="text-[9px] text-muted-foreground">{forecast?.forecast?.scenarios?.pessimistic?.probability ?? 25}%</div>
                 </div>
               </div>
             )}
-            {forecast.forecast.factors?.length > 0 && (
-              <div className="text-[9px] text-muted-foreground">📊 {forecast.forecast.factors.slice(0, 3).join(' · ')}</div>
+            {forecast?.forecast.factors?.length > 0 && (
+              <div className="text-[9px] text-muted-foreground">📊 {forecast?.forecast?.factors?.slice(0, 3).join(' · ')}</div>
             )}
-            {forecast.forecast.recommendation && (
+            {forecast?.forecast?.recommendation && (
               <div className="bg-primary/5 border border-primary/20 rounded p-2 text-[10px]">
-                💡 {forecast.forecast.recommendation}
+                💡 {forecast?.forecast.recommendation}
               </div>
             )}
           </div>

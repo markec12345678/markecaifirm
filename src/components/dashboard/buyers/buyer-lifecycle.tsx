@@ -14,7 +14,7 @@ interface BuyerLifecycleProps {
 }
 
 export function BuyerLifecycle({ selectedBuyer }: BuyerLifecycleProps) {
-  const [lifecycle, setLifecycle] = useState<any>(null);
+  const [lifecycle, setLifecycle] = useState<Record<string, any> | null>(null);
   const [lifecycleLoading, setLifecycleLoading] = useState(false);
 
   const runLifecycle = async () => {
@@ -56,12 +56,12 @@ export function BuyerLifecycle({ selectedBuyer }: BuyerLifecycleProps) {
           </div>
         ) : lifecycle?.predictor ? (
           <div className="space-y-2 text-xs">
-            {lifecycle.predictor.insights && (
+            {lifecycle?.predictor.insights && (
               <div className="bg-primary/5 border border-primary/20 rounded p-2 text-[10px]">
-                💡 {lifecycle.predictor.insights}
+                💡 {lifecycle?.predictor.insights}
               </div>
             )}
-            {lifecycle.predictor.lifecycleStages?.slice(0, 5).map((s: any, i: number) => (
+            {lifecycle?.predictor.lifecycleStages?.slice(0, 5).map((s: Record<string, any>, i: number) => (
               <div key={i} className="flex items-center gap-2 bg-card/30 border rounded p-2">
                 <Badge variant="outline" className="text-[9px]">{s.stage || s.name}</Badge>
                 <span className="text-[10px] flex-1">{s.action || s.recommendation || s.description || ''}</span>

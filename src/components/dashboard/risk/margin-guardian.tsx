@@ -11,7 +11,7 @@ import { toast } from 'sonner';
 import { cn } from '@/lib/utils';
 
 export function MarginGuardian() {
-  const [guardian, setGuardian] = useState<any>(null);
+  const [guardian, setGuardian] = useState<Record<string, any> | null>(null);
   const [guardianLoading, setGuardianLoading] = useState(false);
 
   const runGuardian = async () => {
@@ -40,7 +40,7 @@ export function MarginGuardian() {
           <div className="py-4 text-center text-xs text-muted-foreground"><RefreshCw className="w-4 h-4 mx-auto mb-1 animate-spin opacity-50" /> AI aktivira margin guardian...</div>
         ) : guardian?.guardian ? (
           <div className="space-y-2 text-xs">
-            {guardian.guardian.alerts?.slice(0, 4).map((a: any, i: number) => (
+            {guardian?.guardian.alerts?.slice(0, 4).map((a: Record<string, any>, i: number) => (
               <div key={i} className={cn('border rounded p-2',
                 a.severity === 'critical' ? 'bg-red-500/5 border-red-500/20' :
                 a.severity === 'high' ? 'bg-amber-400/5 border-amber-400/20' : 'bg-card/30 border-border')}>
@@ -57,7 +57,7 @@ export function MarginGuardian() {
                 </div>
               </div>
             ))}
-            {guardian.guardian.insights && <div className="text-[9px] text-muted-foreground">💡 {guardian.guardian.insights}</div>}
+            {guardian?.guardian?.insights && <div className="text-[9px] text-muted-foreground">💡 {guardian?.guardian.insights}</div>}
           </div>
         ) : (
           <p className="text-xs text-muted-foreground text-center py-4">

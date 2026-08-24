@@ -13,7 +13,7 @@ interface SocialProofOptimizerProps {
 }
 
 export function SocialProofOptimizer({ selectedTradeId }: SocialProofOptimizerProps) {
-  const [socialProof, setSocialProof] = useState<any>(null);
+  const [socialProof, setSocialProof] = useState<Record<string, any> | null>(null);
   const [socialProofLoading, setSocialProofLoading] = useState(false);
 
   const runSocialProof = async () => { if (!selectedTradeId) { toast.error('Izberi item'); return; } setSocialProofLoading(true); setSocialProof(null); try { const r = await fetch('/api/ai/listing-social-proof-optimizer', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ tradeId: selectedTradeId }) }); const d = await r.json(); if (d.ok) { setSocialProof(d); toast.success('✓ Social proof generiran'); } else toast.error(d.error ?? 'Napaka'); } catch (e: unknown) { toast.error((e as Error)?.message ?? 'Napaka'); } finally { setSocialProofLoading(false); } };
@@ -33,13 +33,13 @@ export function SocialProofOptimizer({ selectedTradeId }: SocialProofOptimizerPr
           <div className="py-4 text-center text-xs text-muted-foreground"><RefreshCw className="w-4 h-4 mx-auto mb-1 animate-spin opacity-50" /> AI dodaja social proof...</div>
         ) : socialProof?.optimizer ? (
           <div className="space-y-2 text-xs">
-            {socialProof.optimizer.elements?.slice(0, 3).map((e: any, i: number) => (
+            {socialProof?.optimizer.elements?.slice(0, 3).map((e: Record<string, any>, i: number) => (
               <div key={i} className="bg-primary/5 border border-primary/20 rounded p-2">
                 <div className="text-[10px] font-medium text-primary">{e.type || e.element}</div>
                 <div className="text-[9px] text-muted-foreground">{e.content || e.description}</div>
               </div>
             ))}
-            {socialProof.optimizer.insights && <div className="text-[9px] text-muted-foreground">💡 {socialProof.optimizer.insights}</div>}
+            {socialProof?.optimizer.insights && <div className="text-[9px] text-muted-foreground">💡 {socialProof?.optimizer.insights}</div>}
           </div>
         ) : (
           <p className="text-xs text-muted-foreground text-center py-4">AI doda social proof elemente (review-i, rating-i, trust badges).</p>

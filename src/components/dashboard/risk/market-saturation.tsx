@@ -11,7 +11,7 @@ import { toast } from 'sonner';
 import { cn } from '@/lib/utils';
 
 export function MarketSaturation() {
-  const [saturation, setSaturation] = useState<any>(null);
+  const [saturation, setSaturation] = useState<Record<string, any> | null>(null);
   const [saturationLoading, setSaturationLoading] = useState(false);
 
   const runSaturation = async () => {
@@ -40,7 +40,7 @@ export function MarketSaturation() {
           <div className="py-4 text-center text-xs text-muted-foreground"><RefreshCw className="w-4 h-4 mx-auto mb-1 animate-spin opacity-50" /> AI analizira saturacijo trga...</div>
         ) : saturation?.saturation ? (
           <div className="space-y-2 text-xs">
-            {saturation.saturation.categories?.slice(0, 4).map((c: any, i: number) => (
+            {saturation?.saturation.categories?.slice(0, 4).map((c: Record<string, any>, i: number) => (
               <div key={i} className={cn('border rounded p-2',
                 c.level === 'saturated' ? 'bg-red-500/5 border-red-500/20' :
                 c.level === 'blue_ocean' ? 'bg-primary/10 border-primary/30' : 'bg-card/30 border-border')}>
@@ -55,10 +55,10 @@ export function MarketSaturation() {
                 {c.opportunityRate != null && <div className="text-[9px] text-muted-foreground">{c.opportunityRate}% priložnosti</div>}
               </div>
             ))}
-            {saturation.saturation.marketSignals?.slice(0, 2).map((s: any, i: number) => (
+            {saturation?.saturation.marketSignals?.slice(0, 2).map((s: Record<string, any>, i: number) => (
               <div key={i} className="bg-cyan-400/5 border border-cyan-400/20 rounded p-2 text-[10px]">{s.signal || s.description}</div>
             ))}
-            {saturation.saturation.insights && <div className="text-[9px] text-muted-foreground">💡 {saturation.saturation.insights}</div>}
+            {saturation?.saturation?.insights && <div className="text-[9px] text-muted-foreground">💡 {saturation?.saturation.insights}</div>}
           </div>
         ) : (
           <p className="text-xs text-muted-foreground text-center py-4">AI zazna saturacijo trga (5 nivojev: saturated → blue_ocean).</p>

@@ -10,7 +10,7 @@ import { RefreshCw, Recycle } from 'lucide-react';
 import { toast } from 'sonner';
 
 export function PortfolioRebalancer() {
-  const [rebalancer, setRebalancer] = useState<any>(null);
+  const [rebalancer, setRebalancer] = useState<Record<string, any> | null>(null);
   const [rebalancerLoading, setRebalancerLoading] = useState(false);
 
   const runRebalancer = async () => {
@@ -46,16 +46,16 @@ export function PortfolioRebalancer() {
           </div>
         ) : rebalancer?.rebalancer ? (
           <div className="space-y-2 text-xs">
-            {rebalancer.rebalancer.insights && (
+            {rebalancer?.rebalancer?.insights && (
               <div className="bg-primary/5 border border-primary/20 rounded p-2 text-[10px]">
-                💡 {rebalancer.rebalancer.insights}
+                💡 {rebalancer?.rebalancer.insights}
               </div>
             )}
-            {rebalancer.rebalancer.current && rebalancer.rebalancer.target && (
+            {rebalancer?.rebalancer?.current && rebalancer?.rebalancer?.target && (
               <div className="grid grid-cols-2 gap-2">
                 <div className="bg-card/30 border rounded p-2">
                   <div className="text-[9px] uppercase text-muted-foreground mb-1">Trenutno stanje</div>
-                  {rebalancer.rebalancer.current.categories?.slice(0, 3).map((c: any, i: number) => (
+                  {rebalancer?.rebalancer?.current?.categories?.slice(0, 3).map((c: Record<string, any>, i: number) => (
                     <div key={i} className="text-[10px] flex justify-between">
                       <span>{c.category || c.name}</span>
                       <span className="font-mono">{c.percentage ?? c.allocationPct}%</span>
@@ -64,7 +64,7 @@ export function PortfolioRebalancer() {
                 </div>
                 <div className="bg-primary/5 border border-primary/20 rounded p-2">
                   <div className="text-[9px] uppercase text-primary mb-1">Priporočeno</div>
-                  {rebalancer.rebalancer.target.categories?.slice(0, 3).map((c: any, i: number) => (
+                  {rebalancer?.rebalancer?.target?.categories?.slice(0, 3).map((c: Record<string, any>, i: number) => (
                     <div key={i} className="text-[10px] flex justify-between">
                       <span>{c.category || c.name}</span>
                       <span className="font-mono text-primary">{c.percentage ?? c.allocationPct}%</span>
@@ -73,7 +73,7 @@ export function PortfolioRebalancer() {
                 </div>
               </div>
             )}
-            {rebalancer.rebalancer.actions?.slice(0, 3).map((a: any, i: number) => (
+            {rebalancer?.rebalancer.actions?.slice(0, 3).map((a: Record<string, any>, i: number) => (
               <div key={i} className="bg-card/30 border rounded p-2">
                 <div className="flex items-center justify-between">
                   <span className="text-[10px] font-medium">{a.action || a.description}</span>

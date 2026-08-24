@@ -11,7 +11,7 @@ import { toast } from 'sonner';
 import { cn } from '@/lib/utils';
 
 export function StockoutPredictor() {
-  const [stockout, setStockout] = useState<any>(null);
+  const [stockout, setStockout] = useState<Record<string, any> | null>(null);
   const [stockoutLoading, setStockoutLoading] = useState(false);
 
   const runStockout = async () => {
@@ -47,23 +47,23 @@ export function StockoutPredictor() {
           </div>
         ) : stockout?.predictor ? (
           <div className="space-y-2 text-xs">
-            {stockout.predictor.current && (
+            {stockout?.predictor.current && (
               <div className={cn('border rounded p-2',
-                stockout.predictor.current.stockoutRiskLevel === 'critical' ? 'bg-red-500/10 border-red-500/30' :
-                stockout.predictor.current.stockoutRiskLevel === 'high' ? 'bg-amber-400/10 border-amber-400/30' : 'bg-card/30 border-border')}>
+                stockout?.predictor?.current.stockoutRiskLevel === 'critical' ? 'bg-red-500/10 border-red-500/30' :
+                stockout?.predictor?.current.stockoutRiskLevel === 'high' ? 'bg-amber-400/10 border-amber-400/30' : 'bg-card/30 border-border')}>
                 <div className="flex items-center justify-between">
                   <Badge variant="outline" className={cn('text-[9px] uppercase font-bold',
-                    stockout.predictor.current.stockoutRiskLevel === 'critical' ? 'text-red-500 border-red-500/40' :
-                    stockout.predictor.current.stockoutRiskLevel === 'high' ? 'text-amber-400 border-amber-400/40' : 'text-primary border-primary/40')}>
-                    {stockout.predictor.current.stockoutRiskLevel} risk
+                    stockout?.predictor?.current.stockoutRiskLevel === 'critical' ? 'text-red-500 border-red-500/40' :
+                    stockout?.predictor?.current.stockoutRiskLevel === 'high' ? 'text-amber-400 border-amber-400/40' : 'text-primary border-primary/40')}>
+                    {stockout?.predictor.current.stockoutRiskLevel} risk
                   </Badge>
                   <span className="text-[9px] text-muted-foreground">
-                    ~{stockout.predictor.current.avgDaysToSell}d za prodajo · {stockout.predictor.current.stockCoverageDays}d pokritje
+                    ~{stockout?.predictor.current.avgDaysToSell}d za prodajo · {stockout?.predictor.current.stockCoverageDays}d pokritje
                   </span>
                 </div>
               </div>
             )}
-            {stockout.predictor.predictions?.slice(0, 4).map((p: any, i: number) => (
+            {stockout?.predictor.predictions?.slice(0, 4).map((p: Record<string, any>, i: number) => (
               <div key={i} className="bg-card/30 border rounded p-2">
                 <div className="flex items-center justify-between mb-1">
                   <span className="font-medium text-[10px]">{p.category || `Kategorija ${i + 1}`}</span>
@@ -83,8 +83,8 @@ export function StockoutPredictor() {
                 )}
               </div>
             ))}
-            {stockout.predictor.insights && (
-              <div className="text-[9px] text-muted-foreground">💡 {stockout.predictor.insights}</div>
+            {stockout?.predictor.insights && (
+              <div className="text-[9px] text-muted-foreground">💡 {stockout?.predictor.insights}</div>
             )}
           </div>
         ) : (

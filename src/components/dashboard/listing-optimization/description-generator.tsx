@@ -14,7 +14,7 @@ interface DescriptionGeneratorProps {
 }
 
 export function DescriptionGenerator({ selectedTradeId }: DescriptionGeneratorProps) {
-  const [descGen, setDescGen] = useState<any>(null);
+  const [descGen, setDescGen] = useState<Record<string, any> | null>(null);
   const [descGenLoading, setDescGenLoading] = useState(false);
 
   const runDescGen = async () => {
@@ -44,7 +44,7 @@ export function DescriptionGenerator({ selectedTradeId }: DescriptionGeneratorPr
           <div className="py-4 text-center text-xs text-muted-foreground"><RefreshCw className="w-4 h-4 mx-auto mb-1 animate-spin opacity-50" /> AI generira opise (10 stilov)...</div>
         ) : descGen?.generator ? (
           <div className="space-y-2 text-xs">
-            {descGen.generator.descriptions?.slice(0, 3).map((d: any, i: number) => (
+            {descGen?.generator.descriptions?.slice(0, 3).map((d: Record<string, any>, i: number) => (
               <div key={i} className="bg-card/30 border rounded p-2">
                 <div className="flex items-center justify-between mb-1">
                   <Badge variant="outline" className="text-[9px] text-pink-400 border-pink-400/30">{d.style || d.strategy}</Badge>
@@ -53,7 +53,7 @@ export function DescriptionGenerator({ selectedTradeId }: DescriptionGeneratorPr
                 <div className="text-[10px] line-clamp-2">{d.description?.slice(0, 120)}...</div>
               </div>
             ))}
-            {descGen.generator.insights && <div className="text-[9px] text-muted-foreground">💡 {descGen.generator.insights}</div>}
+            {descGen?.generator.insights && <div className="text-[9px] text-muted-foreground">💡 {descGen?.generator.insights}</div>}
           </div>
         ) : (
           <p className="text-xs text-muted-foreground text-center py-4">AI generira opise z 10 stilovi (BENEFIT/STORY/TECHNICAL/SCANNABLE) in A/B testi.</p>

@@ -10,7 +10,7 @@ import { RefreshCw, TrendingDown } from 'lucide-react';
 import { toast } from 'sonner';
 
 export function LiquidationStrategist() {
-  const [liquidation, setLiquidation] = useState<any>(null);
+  const [liquidation, setLiquidation] = useState<Record<string, any> | null>(null);
   const [liquidationLoading, setLiquidationLoading] = useState(false);
 
   const runLiquidation = async () => {
@@ -46,12 +46,12 @@ export function LiquidationStrategist() {
           </div>
         ) : liquidation?.strategist ? (
           <div className="space-y-2 text-xs">
-            {liquidation.strategist.insights && (
+            {liquidation?.strategist.insights && (
               <div className="bg-amber-400/5 border border-amber-400/20 rounded p-2 text-[10px]">
-                💡 {liquidation.strategist.insights}
+                💡 {liquidation?.strategist.insights}
               </div>
             )}
-            {liquidation.strategist.items?.slice(0, 4).map((item: any, i: number) => (
+            {liquidation?.strategist.items?.slice(0, 4).map((item: Record<string, any>, i: number) => (
               <div key={i} className="bg-card/30 border rounded p-2">
                 <div className="flex items-center justify-between mb-1">
                   <span className="font-medium text-[10px] truncate flex-1">{item.title}</span>
@@ -62,9 +62,9 @@ export function LiquidationStrategist() {
                 </div>
               </div>
             ))}
-            {liquidation.strategist.summary && (
+            {liquidation?.strategist.summary && (
               <div className="text-[9px] text-muted-foreground border-t border-border pt-1">
-                📊 {liquidation.strategist.summary.itemsToLiquidate ?? 0} za likvidacijo · {liquidation.strategist.summary.potentialRecoveryEur ?? 0}€
+                📊 {liquidation?.strategist.summary.itemsToLiquidate ?? 0} za likvidacijo · {liquidation?.strategist.summary.potentialRecoveryEur ?? 0}€
               </div>
             )}
           </div>

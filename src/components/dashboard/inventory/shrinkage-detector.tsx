@@ -11,7 +11,7 @@ import { toast } from 'sonner';
 import { cn } from '@/lib/utils';
 
 export function ShrinkageDetector() {
-  const [shrinkage, setShrinkage] = useState<any>(null);
+  const [shrinkage, setShrinkage] = useState<Record<string, any> | null>(null);
   const [shrinkageLoading, setShrinkageLoading] = useState(false);
 
   const runShrinkage = async () => {
@@ -47,24 +47,24 @@ export function ShrinkageDetector() {
           </div>
         ) : shrinkage?.detector ? (
           <div className="space-y-2 text-xs">
-            {shrinkage.detector.overview && (
+            {shrinkage?.detector.overview && (
               <div className={cn('border rounded p-2',
-                shrinkage.detector.overview.shrinkageGrade === 'F' || shrinkage.detector.overview.shrinkageGrade === 'D' ? 'bg-red-500/10 border-red-500/30' :
-                shrinkage.detector.overview.shrinkageGrade === 'C' ? 'bg-amber-400/10 border-amber-400/30' : 'bg-primary/10 border-primary/30')}>
+                shrinkage?.detector?.overview.shrinkageGrade === 'F' || shrinkage?.detector?.overview.shrinkageGrade === 'D' ? 'bg-red-500/10 border-red-500/30' :
+                shrinkage?.detector?.overview.shrinkageGrade === 'C' ? 'bg-amber-400/10 border-amber-400/30' : 'bg-primary/10 border-primary/30')}>
                 <div className="flex items-center justify-between">
                   <Badge variant="outline" className="text-[9px] uppercase font-bold">
-                    Grade: {shrinkage.detector.overview.shrinkageGrade}
+                    Grade: {shrinkage?.detector.overview.shrinkageGrade}
                   </Badge>
                   <span className="font-mono font-bold text-[10px]">
-                    {shrinkage.detector.overview.shrinkagePct}% shrinkage
+                    {shrinkage?.detector.overview.shrinkagePct}% shrinkage
                   </span>
                 </div>
                 <div className="text-[9px] text-muted-foreground mt-1">
-                  {shrinkage.detector.overview.totalShrinkageValueEur}€ izguba · {shrinkage.detector.overview.revenueGapEur}€ gap
+                  {shrinkage?.detector.overview.totalShrinkageValueEur}€ izguba · {shrinkage?.detector.overview.revenueGapEur}€ gap
                 </div>
               </div>
             )}
-            {shrinkage.detector.shrinkageEvents?.slice(0, 3).map((e: any, i: number) => (
+            {shrinkage?.detector.shrinkageEvents?.slice(0, 3).map((e: Record<string, any>, i: number) => (
               <div key={i} className="bg-card/30 border rounded p-2">
                 <div className="flex items-center justify-between mb-1">
                   <Badge variant="outline" className="text-[9px]">{e.eventType}</Badge>
@@ -78,8 +78,8 @@ export function ShrinkageDetector() {
                 {e.preventiveAction && <div className="text-[9px] text-primary mt-0.5">→ {e.preventiveAction}</div>}
               </div>
             ))}
-            {shrinkage.detector.insights && (
-              <div className="text-[9px] text-muted-foreground">💡 {shrinkage.detector.insights}</div>
+            {shrinkage?.detector.insights && (
+              <div className="text-[9px] text-muted-foreground">💡 {shrinkage?.detector.insights}</div>
             )}
           </div>
         ) : (

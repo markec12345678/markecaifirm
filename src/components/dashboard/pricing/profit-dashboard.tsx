@@ -9,7 +9,7 @@ import { RefreshCw, BarChart3 } from 'lucide-react';
 import { toast } from 'sonner';
 
 export function ProfitDashboard() {
-  const [profitDash, setProfitDash] = useState<any>(null);
+  const [profitDash, setProfitDash] = useState<Record<string, any> | null>(null);
   const [profitDashLoading, setProfitDashLoading] = useState(false);
 
   const runProfitDash = async () => { setProfitDashLoading(true); setProfitDash(null); try { const r = await fetch('/api/ai/profit-dashboard', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: '{}' }); const d = await r.json(); if (d.ok) { setProfitDash(d); toast.success('✓ Profit dashboard generiran'); } else toast.error(d.error ?? 'Napaka'); } catch (e: unknown) { toast.error((e as Error)?.message ?? 'Napaka'); } finally { setProfitDashLoading(false); } };
@@ -29,16 +29,16 @@ export function ProfitDashboard() {
           <div className="py-4 text-center text-xs text-muted-foreground"><RefreshCw className="w-4 h-4 mx-auto mb-1 animate-spin opacity-50" /> AI gradi profit dashboard...</div>
         ) : profitDash?.dashboard ? (
           <div className="space-y-2 text-xs">
-            {profitDash.dashboard.summary && (
-              <div className="bg-primary/5 border border-primary/20 rounded p-2 text-[10px]">💡 {profitDash.dashboard.summary}</div>
+            {profitDash?.dashboard.summary && (
+              <div className="bg-primary/5 border border-primary/20 rounded p-2 text-[10px]">💡 {profitDash?.dashboard.summary}</div>
             )}
-            {profitDash.dashboard.metrics?.slice(0, 4).map((m: any, i: number) => (
+            {profitDash?.dashboard.metrics?.slice(0, 4).map((m: Record<string, any>, i: number) => (
               <div key={i} className="flex items-center justify-between bg-card/30 border rounded p-1.5">
                 <span className="text-[10px]">{m.label || m.name}</span>
                 <span className="font-mono text-primary text-[10px]">{m.value}{m.unit ?? '€'}</span>
               </div>
             ))}
-            {profitDash.dashboard.insights && <div className="text-[9px] text-muted-foreground">💡 {profitDash.dashboard.insights}</div>}
+            {profitDash?.dashboard.insights && <div className="text-[9px] text-muted-foreground">💡 {profitDash?.dashboard.insights}</div>}
           </div>
         ) : (
           <p className="text-xs text-muted-foreground text-center py-4">AI zgradi celovit profit dashboard z metrikami.</p>

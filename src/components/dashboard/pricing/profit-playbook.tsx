@@ -9,7 +9,7 @@ import { RefreshCw, BookOpen } from 'lucide-react';
 import { toast } from 'sonner';
 
 export function ProfitPlaybook() {
-  const [playbook, setPlaybook] = useState<any>(null);
+  const [playbook, setPlaybook] = useState<Record<string, any> | null>(null);
   const [playbookLoading, setPlaybookLoading] = useState(false);
 
   const runPlaybook = async () => { setPlaybookLoading(true); setPlaybook(null); try { const r = await fetch('/api/ai/profit-playbook', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: '{}' }); const d = await r.json(); if (d.ok) { setPlaybook(d); toast.success('✓ Profit playbook generiran'); } else toast.error(d.error ?? 'Napaka'); } catch (e: unknown) { toast.error((e as Error)?.message ?? 'Napaka'); } finally { setPlaybookLoading(false); } };
@@ -29,13 +29,13 @@ export function ProfitPlaybook() {
           <div className="py-4 text-center text-xs text-muted-foreground"><RefreshCw className="w-4 h-4 mx-auto mb-1 animate-spin opacity-50" /> AI pripravlja profit playbook...</div>
         ) : playbook?.playbook ? (
           <div className="space-y-2 text-xs">
-            {playbook.playbook.strategies?.slice(0, 3).map((s: any, i: number) => (
+            {playbook?.playbook.strategies?.slice(0, 3).map((s: Record<string, any>, i: number) => (
               <div key={i} className="bg-primary/5 border border-primary/20 rounded p-2">
                 <div className="text-[10px] font-medium text-primary">{s.strategy || s.name}</div>
                 <div className="text-[9px] text-muted-foreground">{s.description || s.action}</div>
               </div>
             ))}
-            {playbook.playbook.insights && <div className="text-[9px] text-muted-foreground">💡 {playbook.playbook.insights}</div>}
+            {playbook?.playbook?.insights && <div className="text-[9px] text-muted-foreground">💡 {playbook?.playbook.insights}</div>}
           </div>
         ) : (
           <p className="text-xs text-muted-foreground text-center py-4">AI pripravi strategije za maksimiranje dobička (v6.40 MILESTONE).</p>

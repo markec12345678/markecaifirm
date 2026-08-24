@@ -9,7 +9,7 @@ import { RefreshCw, MapPin } from 'lucide-react';
 import { toast } from 'sonner';
 
 export function GeoPriceMap() {
-  const [geoPrice, setGeoPrice] = useState<any>(null);
+  const [geoPrice, setGeoPrice] = useState<Record<string, any> | null>(null);
   const [geoPriceLoading, setGeoPriceLoading] = useState(false);
 
   const runGeoPrice = async () => { setGeoPriceLoading(true); setGeoPrice(null); try { const r = await fetch('/api/ai/geo-price-map', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: '{}' }); const d = await r.json(); if (d.ok) { setGeoPrice(d); toast.success('✓ Geo price map generiran'); } else toast.error(d.error ?? 'Napaka'); } catch (e: unknown) { toast.error((e as Error)?.message ?? 'Napaka'); } finally { setGeoPriceLoading(false); } };
@@ -29,7 +29,7 @@ export function GeoPriceMap() {
           <div className="py-4 text-center text-xs text-muted-foreground"><RefreshCw className="w-4 h-4 mx-auto mb-1 animate-spin opacity-50" /> AI gradi geo price map...</div>
         ) : geoPrice?.map ? (
           <div className="space-y-2 text-xs">
-            {geoPrice.map.regions?.slice(0, 4).map((r: any, i: number) => (
+            {geoPrice?.map.regions?.slice(0, 4).map((r: Record<string, any>, i: number) => (
               <div key={i} className="flex items-center justify-between bg-card/30 border rounded p-1.5">
                 <span className="text-[10px] font-medium">{r.region || r.location || r.name}</span>
                 <div className="flex items-center gap-2">
@@ -38,7 +38,7 @@ export function GeoPriceMap() {
                 </div>
               </div>
             ))}
-            {geoPrice.map.insights && <div className="text-[9px] text-muted-foreground">💡 {geoPrice.map.insights}</div>}
+            {geoPrice?.map.insights && <div className="text-[9px] text-muted-foreground">💡 {geoPrice?.map.insights}</div>}
           </div>
         ) : (
           <p className="text-xs text-muted-foreground text-center py-4">AI gradi zemljevid cen po regijah (kje je najdražje/najceneje prodati).</p>

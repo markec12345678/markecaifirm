@@ -9,7 +9,7 @@ import { RefreshCw, Target } from 'lucide-react';
 import { toast } from 'sonner';
 
 export function ReservePriceOptimizer() {
-  const [reservePrice, setReservePrice] = useState<any>(null);
+  const [reservePrice, setReservePrice] = useState<Record<string, any> | null>(null);
   const [reservePriceLoading, setReservePriceLoading] = useState(false);
 
   const runReservePrice = async () => { setReservePriceLoading(true); setReservePrice(null); try { const r = await fetch('/api/ai/reserve-price-optimizer', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: '{}' }); const d = await r.json(); if (d.ok) { setReservePrice(d); toast.success('✓ Reserve price generiran'); } else toast.error(d.error ?? 'Napaka'); } catch (e: unknown) { toast.error((e as Error)?.message ?? 'Napaka'); } finally { setReservePriceLoading(false); } };
@@ -32,11 +32,11 @@ export function ReservePriceOptimizer() {
             <div className="bg-amber-400/5 border border-amber-400/20 rounded p-2">
               <div className="flex items-center justify-between">
                 <span className="text-[10px] uppercase text-amber-400">Priporočen reserve price</span>
-                <span className="font-mono font-bold text-amber-400">{reservePrice.optimizer.reservePrice ?? reservePrice.optimizer.suggestedPrice ?? '?'}€</span>
+                <span className="font-mono font-bold text-amber-400">{reservePrice?.optimizer.reservePrice ?? reservePrice?.optimizer?.suggestedPrice ?? '?'}€</span>
               </div>
             </div>
-            {reservePrice.optimizer.reasoning && <div className="text-[9px] text-muted-foreground">{reservePrice.optimizer.reasoning}</div>}
-            {reservePrice.optimizer.insights && <div className="text-[9px] text-muted-foreground">💡 {reservePrice.optimizer.insights}</div>}
+            {reservePrice?.optimizer.reasoning && <div className="text-[9px] text-muted-foreground">{reservePrice?.optimizer.reasoning}</div>}
+            {reservePrice?.optimizer.insights && <div className="text-[9px] text-muted-foreground">💡 {reservePrice?.optimizer.insights}</div>}
           </div>
         ) : (
           <p className="text-xs text-muted-foreground text-center py-4">AI optimizira reserve price za dražbe (minimalna sprejemljiva cena).</p>

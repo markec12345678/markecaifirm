@@ -15,7 +15,7 @@ interface BuyerTrustScoreProps {
 }
 
 export function BuyerTrustScore({ selectedBuyer }: BuyerTrustScoreProps) {
-  const [trustScore, setTrustScore] = useState<any>(null);
+  const [trustScore, setTrustScore] = useState<Record<string, any> | null>(null);
   const [trustLoading, setTrustLoading] = useState(false);
 
   const runTrust = async () => {
@@ -58,23 +58,23 @@ export function BuyerTrustScore({ selectedBuyer }: BuyerTrustScoreProps) {
         ) : trustScore?.scoring ? (
           <div className="space-y-2 text-xs">
             <div className={cn('border rounded p-2',
-              trustScore.scoring.tier === 'platinum' || trustScore.scoring.tier === 'gold' ? 'bg-primary/10 border-primary/30' :
-              trustScore.scoring.tier === 'risk' || trustScore.scoring.tier === 'blocked' ? 'bg-red-500/10 border-red-500/30' : 'bg-card/30 border-border')}>
+              trustScore?.scoring?.tier === 'platinum' || trustScore?.scoring?.tier === 'gold' ? 'bg-primary/10 border-primary/30' :
+              trustScore?.scoring?.tier === 'risk' || trustScore?.scoring?.tier === 'blocked' ? 'bg-red-500/10 border-red-500/30' : 'bg-card/30 border-border')}>
               <div className="flex items-center justify-between">
                 <Badge variant="outline" className={cn('text-[9px] uppercase font-bold',
-                  trustScore.scoring.tier === 'platinum' ? 'text-primary border-primary/40' :
-                  trustScore.scoring.tier === 'blocked' ? 'text-red-500 border-red-500/40' : 'text-muted-foreground')}>
-                  {trustScore.scoring.tier}
+                  trustScore?.scoring?.tier === 'platinum' ? 'text-primary border-primary/40' :
+                  trustScore?.scoring?.tier === 'blocked' ? 'text-red-500 border-red-500/40' : 'text-muted-foreground')}>
+                  {trustScore?.scoring.tier}
                 </Badge>
-                <span className="font-mono font-bold">{trustScore.scoring.trustScore ?? '?'}/100</span>
+                <span className="font-mono font-bold">{trustScore?.scoring.trustScore ?? '?'}/100</span>
               </div>
-              {trustScore.scoring.reasoning && (
-                <p className="text-[10px] text-muted-foreground mt-1">{trustScore.scoring.reasoning}</p>
+              {trustScore?.scoring.reasoning && (
+                <p className="text-[10px] text-muted-foreground mt-1">{trustScore?.scoring.reasoning}</p>
               )}
             </div>
-            {trustScore.scoring.recommendation && (
+            {trustScore?.scoring.recommendation && (
               <div className="bg-card/30 border rounded p-2 text-[10px]">
-                💡 <b>Priporočilo:</b> {trustScore.scoring.recommendation}
+                💡 <b>Priporočilo:</b> {trustScore?.scoring.recommendation}
               </div>
             )}
           </div>

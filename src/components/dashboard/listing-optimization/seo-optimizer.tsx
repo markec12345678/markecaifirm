@@ -14,7 +14,7 @@ interface SeoOptimizerProps {
 }
 
 export function SeoOptimizer({ selectedTradeId }: SeoOptimizerProps) {
-  const [seoOpt, setSeoOpt] = useState<any>(null);
+  const [seoOpt, setSeoOpt] = useState<Record<string, any> | null>(null);
   const [seoOptLoading, setSeoOptLoading] = useState(false);
 
   const runSeoOpt = async () => {
@@ -44,7 +44,7 @@ export function SeoOptimizer({ selectedTradeId }: SeoOptimizerProps) {
           <div className="py-4 text-center text-xs text-muted-foreground"><RefreshCw className="w-4 h-4 mx-auto mb-1 animate-spin opacity-50" /> AI analizira SEO...</div>
         ) : seoOpt?.optimizer ? (
           <div className="space-y-2 text-xs">
-            {seoOpt.optimizer.keywordResearch?.slice(0, 4).map((k: any, i: number) => (
+            {seoOpt?.optimizer.keywordResearch?.slice(0, 4).map((k: Record<string, any>, i: number) => (
               <div key={i} className="flex items-center justify-between bg-card/30 border rounded p-1.5">
                 <span className="text-[10px] font-medium">{k.keyword || k.term}</span>
                 <div className="flex items-center gap-1">
@@ -53,12 +53,12 @@ export function SeoOptimizer({ selectedTradeId }: SeoOptimizerProps) {
                 </div>
               </div>
             ))}
-            {seoOpt.optimizer.optimizationPlan?.slice(0, 2).map((o: any, i: number) => (
+            {seoOpt?.optimizer.optimizationPlan?.slice(0, 2).map((o: Record<string, any>, i: number) => (
               <div key={i} className="bg-cyan-400/5 border border-cyan-400/20 rounded p-2 text-[10px]">
                 <b className="text-cyan-400">{o.action || o.title}</b> — {o.description || o.impact}
               </div>
             ))}
-            {seoOpt.optimizer.insights && <div className="text-[9px] text-muted-foreground">💡 {seoOpt.optimizer.insights}</div>}
+            {seoOpt?.optimizer.insights && <div className="text-[9px] text-muted-foreground">💡 {seoOpt?.optimizer.insights}</div>}
           </div>
         ) : (
           <p className="text-xs text-muted-foreground text-center py-4">AI keyword research (CPC, volume) + competitor analysis + optimization plan.</p>

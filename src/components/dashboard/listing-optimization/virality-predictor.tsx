@@ -14,7 +14,7 @@ interface ViralityPredictorProps {
 }
 
 export function ViralityPredictor({ selectedTradeId }: ViralityPredictorProps) {
-  const [virality, setVirality] = useState<any>(null);
+  const [virality, setVirality] = useState<Record<string, any> | null>(null);
   const [viralityLoading, setViralityLoading] = useState(false);
 
   const runVirality = async () => {
@@ -44,7 +44,7 @@ export function ViralityPredictor({ selectedTradeId }: ViralityPredictorProps) {
           <div className="py-4 text-center text-xs text-muted-foreground"><RefreshCw className="w-4 h-4 mx-auto mb-1 animate-spin opacity-50" /> AI napoveduje viralnost (8 heuristik)...</div>
         ) : virality?.predictor ? (
           <div className="space-y-2 text-xs">
-            {virality.predictor.viralityFactors?.slice(0, 4).map((f: any, i: number) => (
+            {virality?.predictor.viralityFactors?.slice(0, 4).map((f: Record<string, any>, i: number) => (
               <div key={i} className="flex items-center justify-between bg-card/30 border rounded p-1.5">
                 <span className="text-[10px] font-medium">{f.factor || f.name}</span>
                 <div className="flex items-center gap-1">
@@ -55,12 +55,12 @@ export function ViralityPredictor({ selectedTradeId }: ViralityPredictorProps) {
                 </div>
               </div>
             ))}
-            {virality.predictor.predictions?.slice(0, 2).map((p: any, i: number) => (
+            {virality?.predictor.predictions?.slice(0, 2).map((p: Record<string, any>, i: number) => (
               <div key={i} className="bg-orange-400/5 border border-orange-400/20 rounded p-2 text-[10px]">
                 <b className="text-orange-400">{p.platform || p.channel}</b>: {p.viralProbabilityPct ?? p.probability ?? 0}% viral
               </div>
             ))}
-            {virality.predictor.insights && <div className="text-[9px] text-muted-foreground">💡 {virality.predictor.insights}</div>}
+            {virality?.predictor.insights && <div className="text-[9px] text-muted-foreground">💡 {virality?.predictor.insights}</div>}
           </div>
         ) : (
           <p className="text-xs text-muted-foreground text-center py-4">AI napove viralnost (8 heuristik: scarcity, emotional, controversy, utility, social proof...).</p>

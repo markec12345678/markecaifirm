@@ -11,7 +11,7 @@ import { toast } from 'sonner';
 import { cn } from '@/lib/utils';
 
 export function DepreciationTracker() {
-  const [depreciation, setDepreciation] = useState<any>(null);
+  const [depreciation, setDepreciation] = useState<Record<string, any> | null>(null);
   const [depreciationLoading, setDepreciationLoading] = useState(false);
 
   const runDepreciation = async () => {
@@ -40,7 +40,7 @@ export function DepreciationTracker() {
           <div className="py-4 text-center text-xs text-muted-foreground"><RefreshCw className="w-4 h-4 mx-auto mb-1 animate-spin opacity-50" /> AI sledi depreciaciji inventarja...</div>
         ) : depreciation?.tracker ? (
           <div className="space-y-2 text-xs">
-            {depreciation.tracker.items?.slice(0, 4).map((item: any, i: number) => (
+            {depreciation?.tracker.items?.slice(0, 4).map((item: Record<string, any>, i: number) => (
               <div key={i} className="bg-card/30 border rounded p-2">
                 <div className="flex items-center justify-between mb-1">
                   <span className="text-[10px] font-medium truncate flex-1">{item.title || item.name}</span>
@@ -53,7 +53,7 @@ export function DepreciationTracker() {
                 </div>
               </div>
             ))}
-            {depreciation.tracker.insights && <div className="text-[9px] text-muted-foreground">💡 {depreciation.tracker.insights}</div>}
+            {depreciation?.tracker.insights && <div className="text-[9px] text-muted-foreground">💡 {depreciation?.tracker.insights}</div>}
           </div>
         ) : (
           <p className="text-xs text-muted-foreground text-center py-4">AI sledi depreciaciji vrednosti inventarja skozi čas.</p>

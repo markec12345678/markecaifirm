@@ -9,7 +9,7 @@ import { RefreshCw, ClipboardCheck } from 'lucide-react';
 import { toast } from 'sonner';
 
 export function QualityPredictor() {
-  const [qualityPred, setQualityPred] = useState<any>(null);
+  const [qualityPred, setQualityPred] = useState<Record<string, any> | null>(null);
   const [qualityPredLoading, setQualityPredLoading] = useState(false);
 
   const runQualityPred = async () => { setQualityPredLoading(true); setQualityPred(null); try { const r = await fetch('/api/ai/quality-predictor', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: '{}' }); const d = await r.json(); if (d.ok) { setQualityPred(d); toast.success('✓ Quality napoved generirana'); } else toast.error(d.error ?? 'Napaka'); } catch (e: unknown) { toast.error((e as Error)?.message ?? 'Napaka'); } finally { setQualityPredLoading(false); } };
@@ -32,16 +32,16 @@ export function QualityPredictor() {
             <div className="bg-primary/10 border border-primary/30 rounded p-2">
               <div className="flex items-center justify-between">
                 <span className="text-[10px] uppercase text-primary font-bold">Quality Score</span>
-                <span className="font-mono font-bold text-primary text-lg">{qualityPred.prediction.score ?? qualityPred.prediction.qualityScore ?? '?'}/100</span>
+                <span className="font-mono font-bold text-primary text-lg">{qualityPred?.prediction.score ?? qualityPred?.prediction?.qualityScore ?? '?'}/100</span>
               </div>
             </div>
-            {qualityPred.prediction.factors?.slice(0, 3).map((f: any, i: number) => (
+            {qualityPred?.prediction.factors?.slice(0, 3).map((f: Record<string, any>, i: number) => (
               <div key={i} className="flex items-center justify-between bg-card/30 border rounded p-1.5">
                 <span className="text-[10px]">{f.factor || f.name}</span>
                 <span className="font-mono text-[10px] text-primary">{f.score ?? f.value}/10</span>
               </div>
             ))}
-            {qualityPred.prediction.insights && <div className="text-[9px] text-muted-foreground">💡 {qualityPred.prediction.insights}</div>}
+            {qualityPred?.prediction.insights && <div className="text-[9px] text-muted-foreground">💡 {qualityPred?.prediction.insights}</div>}
           </div>
         ) : (
           <p className="text-xs text-muted-foreground text-center py-4">AI napove kakovost item-a pred nakupom (score 0-100, faktorji).</p>

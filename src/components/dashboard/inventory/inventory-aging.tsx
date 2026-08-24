@@ -11,7 +11,7 @@ import { toast } from 'sonner';
 import { cn } from '@/lib/utils';
 
 export function InventoryAging() {
-  const [aging, setAging] = useState<any>(null);
+  const [aging, setAging] = useState<Record<string, any> | null>(null);
   const [agingLoading, setAgingLoading] = useState(false);
 
   const runAging = async () => {
@@ -47,12 +47,12 @@ export function InventoryAging() {
           </div>
         ) : aging?.alerts?.length > 0 ? (
           <div className="space-y-2 text-xs">
-            {aging.insights && (
+            {aging?.insights && (
               <div className="bg-amber-400/5 border border-amber-400/20 rounded p-2 text-[10px]">
-                💡 {aging.insights}
+                💡 {aging?.insights}
               </div>
             )}
-            {aging.alerts.slice(0, 5).map((a: any, i: number) => (
+            {aging?.alerts.slice(0, 5).map((a: Record<string, any>, i: number) => (
               <div key={i} className={cn('border rounded p-2',
                 a.urgency === 'critical' ? 'bg-red-500/5 border-red-500/20' :
                 a.urgency === 'high' ? 'bg-amber-400/5 border-amber-400/20' : 'bg-card/30 border-border')}>
@@ -69,9 +69,9 @@ export function InventoryAging() {
                 </div>
               </div>
             ))}
-            {aging.summary && (
+            {aging?.summary && (
               <div className="text-[9px] text-muted-foreground border-t border-border pt-1">
-                📊 {aging.summary.totalItems ?? aging.alerts.length} itemov · {aging.summary.stalledCount ?? 0} stagnira
+                📊 {aging?.summary.totalItems ?? aging?.alerts?.length} itemov · {aging?.summary.stalledCount ?? 0} stagnira
               </div>
             )}
           </div>

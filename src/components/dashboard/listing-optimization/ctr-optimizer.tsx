@@ -15,7 +15,7 @@ interface CtrOptimizerProps {
 }
 
 export function CtrOptimizer({ selectedTradeId }: CtrOptimizerProps) {
-  const [ctrOpt, setCtrOpt] = useState<any>(null);
+  const [ctrOpt, setCtrOpt] = useState<Record<string, any> | null>(null);
   const [ctrOptLoading, setCtrOptLoading] = useState(false);
 
   const runCtrOpt = async () => {
@@ -45,7 +45,7 @@ export function CtrOptimizer({ selectedTradeId }: CtrOptimizerProps) {
           <div className="py-4 text-center text-xs text-muted-foreground"><RefreshCw className="w-4 h-4 mx-auto mb-1 animate-spin opacity-50" /> AI optimizira click-through rate...</div>
         ) : ctrOpt?.optimizer ? (
           <div className="space-y-2 text-xs">
-            {ctrOpt.optimizer.items?.slice(0, 3).map((item: any, i: number) => (
+            {ctrOpt?.optimizer.items?.slice(0, 3).map((item: Record<string, any>, i: number) => (
               <div key={i} className="bg-card/30 border rounded p-2">
                 <div className="flex items-center justify-between mb-1">
                   <span className="text-[10px] font-medium truncate flex-1">{item.title || item.name}</span>
@@ -58,7 +58,7 @@ export function CtrOptimizer({ selectedTradeId }: CtrOptimizerProps) {
                 {item.recommendation && <div className="text-[9px] text-muted-foreground mt-0.5">{item.recommendation}</div>}
               </div>
             ))}
-            {ctrOpt.optimizer.insights && <div className="text-[9px] text-muted-foreground">💡 {ctrOpt.optimizer.insights}</div>}
+            {ctrOpt?.optimizer.insights && <div className="text-[9px] text-muted-foreground">💡 {ctrOpt?.optimizer.insights}</div>}
           </div>
         ) : (
           <p className="text-xs text-muted-foreground text-center py-4">AI optimizira click-through rate (naslovi, thumbnaili, časi objave, A/B testi).</p>

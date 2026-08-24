@@ -14,7 +14,7 @@ interface BuyerReviewProps {
 }
 
 export function BuyerReview({ selectedBuyer }: BuyerReviewProps) {
-  const [review, setReview] = useState<any>(null);
+  const [review, setReview] = useState<Record<string, any> | null>(null);
   const [reviewLoading, setReviewLoading] = useState(false);
 
   const runReview = async () => {
@@ -56,13 +56,13 @@ export function BuyerReview({ selectedBuyer }: BuyerReviewProps) {
           </div>
         ) : review?.generator ? (
           <div className="space-y-2 text-xs">
-            {review.generator.reviews?.slice(0, 3).map((r: any, i: number) => (
+            {review?.generator.reviews?.slice(0, 3).map((r: Record<string, any>, i: number) => (
               <div key={i} className="bg-card/30 border rounded p-2">
                 <Badge variant="outline" className="text-[9px] mb-1">{r.type || r.style || `Review ${i + 1}`}</Badge>
                 <div className="text-[10px] italic">"{r.text || r.content || r.message}"</div>
               </div>
             ))}
-            {review.generator.reviews?.length === 0 && (
+            {review?.generator.reviews?.length === 0 && (
               <p className="text-[10px] text-muted-foreground text-center">Ni review-ov.</p>
             )}
           </div>

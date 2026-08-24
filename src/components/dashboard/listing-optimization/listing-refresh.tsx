@@ -14,7 +14,7 @@ interface ListingRefreshProps {
 }
 
 export function ListingRefresh({ selectedTradeId }: ListingRefreshProps) {
-  const [refresh, setRefresh] = useState<any>(null);
+  const [refresh, setRefresh] = useState<Record<string, any> | null>(null);
   const [refreshLoading, setRefreshLoading] = useState(false);
 
   const runRefresh = async () => { if (!selectedTradeId) { toast.error('Izberi item'); return; } setRefreshLoading(true); setRefresh(null); try { const r = await fetch('/api/ai/listing-refresh', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ tradeId: selectedTradeId }) }); const d = await r.json(); if (d.ok) { setRefresh(d); toast.success('✓ Refresh strategija generirana'); } else toast.error(d.error ?? 'Napaka'); } catch (e: unknown) { toast.error((e as Error)?.message ?? 'Napaka'); } finally { setRefreshLoading(false); } };
@@ -34,18 +34,18 @@ export function ListingRefresh({ selectedTradeId }: ListingRefreshProps) {
           <div className="py-4 text-center text-xs text-muted-foreground"><RefreshCw className="w-4 h-4 mx-auto mb-1 animate-spin opacity-50" /> AI pripravlja refresh strategijo...</div>
         ) : refresh ? (
           <div className="space-y-2 text-xs">
-            {refresh.strategy && (
+            {refresh?.strategy && (
               <div className="bg-amber-400/5 border border-amber-400/20 rounded p-2">
-                <div className="text-[10px] font-medium text-amber-400">Strategija: {refresh.strategy}</div>
+                <div className="text-[10px] font-medium text-amber-400">Strategija: {refresh?.strategy}</div>
               </div>
             )}
-            {refresh.actions?.slice(0, 3).map((a: any, i: number) => (
+            {refresh?.actions?.slice(0, 3).map((a: Record<string, any>, i: number) => (
               <div key={i} className="flex items-center justify-between bg-card/30 border rounded p-1.5">
                 <span className="text-[10px]">{a.action || a.description}</span>
                 {a.impact && <Badge variant="outline" className="text-[9px] text-primary border-primary/30">{a.impact}</Badge>}
               </div>
             ))}
-            {refresh.insights && <div className="text-[9px] text-muted-foreground">💡 {refresh.insights}</div>}
+            {refresh?.insights && <div className="text-[9px] text-muted-foreground">💡 {refresh?.insights}</div>}
           </div>
         ) : (
           <p className="text-xs text-muted-foreground text-center py-4">AI pripravi strategijo za osvežitev oglasa (nov naslov, slika, cena) za boljši ranking.</p>

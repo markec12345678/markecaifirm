@@ -9,7 +9,7 @@ import { RefreshCw, BarChart3 } from 'lucide-react';
 import { toast } from 'sonner';
 
 export function QualityAggregator() {
-  const [qualityAgg, setQualityAgg] = useState<any>(null);
+  const [qualityAgg, setQualityAgg] = useState<Record<string, any> | null>(null);
   const [qualityAggLoading, setQualityAggLoading] = useState(false);
 
   const runQualityAgg = async () => { setQualityAggLoading(true); setQualityAgg(null); try { const r = await fetch('/api/ai/quality-aggregator', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: '{}' }); const d = await r.json(); if (d.ok) { setQualityAgg(d); toast.success('✓ Quality aggregator generiran'); } else toast.error(d.error ?? 'Napaka'); } catch (e: unknown) { toast.error((e as Error)?.message ?? 'Napaka'); } finally { setQualityAggLoading(false); } };
@@ -32,10 +32,10 @@ export function QualityAggregator() {
             <div className="bg-blue-400/5 border border-blue-400/20 rounded p-2">
               <div className="flex items-center justify-between">
                 <span className="text-[10px] uppercase text-blue-400">Skupna kakovost</span>
-                <span className="font-mono font-bold text-blue-400">{qualityAgg.aggregator.overallScore ?? qualityAgg.aggregator.aggregateScore ?? '?'}/100</span>
+                <span className="font-mono font-bold text-blue-400">{qualityAgg?.aggregator.overallScore ?? qualityAgg?.aggregator?.aggregateScore ?? '?'}/100</span>
               </div>
             </div>
-            {qualityAgg.aggregator.categories?.slice(0, 4).map((c: any, i: number) => (
+            {qualityAgg?.aggregator.categories?.slice(0, 4).map((c: Record<string, any>, i: number) => (
               <div key={i} className="flex items-center justify-between bg-card/30 border rounded p-1.5">
                 <span className="text-[10px] font-medium">{c.category || c.name}</span>
                 <div className="flex items-center gap-2">
@@ -44,7 +44,7 @@ export function QualityAggregator() {
                 </div>
               </div>
             ))}
-            {qualityAgg.aggregator.insights && <div className="text-[9px] text-muted-foreground">💡 {qualityAgg.aggregator.insights}</div>}
+            {qualityAgg?.aggregator.insights && <div className="text-[9px] text-muted-foreground">💡 {qualityAgg?.aggregator.insights}</div>}
           </div>
         ) : (
           <p className="text-xs text-muted-foreground text-center py-4">AI agregira kakovost vsega inventarja (po kategorijah, skupni score).</p>
