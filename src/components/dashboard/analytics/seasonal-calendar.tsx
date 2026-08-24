@@ -8,7 +8,7 @@ import { RefreshCw, Calendar } from 'lucide-react';
 import { cn } from '@/lib/utils';
 
 export function SeasonalCalendar() {
-  const [seasonal, setSeasonal] = useState<any>(null);
+  const [seasonal, setSeasonal] = useState<Record<string, any> | null>(null);
   const [seasonalLoading, setSeasonalLoading] = useState(false);
 
   // v6.5: Load seasonal calendar
@@ -80,7 +80,7 @@ export function SeasonalCalendar() {
 
             {/* Monthly calendar */}
             <div className="grid grid-cols-3 sm:grid-cols-4 lg:grid-cols-6 gap-1">
-              {seasonal.calendar.map((m: any, i: number) => {
+              {seasonal.calendar.map((m: Record<string, any>, i: number) => {
                 const currentMonth = new Date().getMonth();
                 const isCurrent = m.monthNum === currentMonth;
                 const isNext = m.monthNum === (currentMonth + 1) % 12;

@@ -8,7 +8,7 @@ import { RefreshCw, AlertTriangle } from 'lucide-react';
 import { cn } from '@/lib/utils';
 
 export function PriceWarDetection() {
-  const [priceWar, setPriceWar] = useState<any>(null);
+  const [priceWar, setPriceWar] = useState<Record<string, any> | null>(null);
   const [warLoading, setWarLoading] = useState(false);
 
   // v6.6: Load price war detection
@@ -68,7 +68,7 @@ export function PriceWarDetection() {
               </div>
             </div>
             <div className="space-y-1.5">
-              {priceWar.wars.map((w: any, i: number) => (
+              {priceWar.wars.map((w: Record<string, any>, i: number) => (
                 <div key={i} className={cn('p-2 rounded text-xs border',
                   w.isPriceWar ? 'bg-red-500/5 border-red-500/20' :
                   w.buyerMarket ? 'bg-primary/5 border-primary/20' :
@@ -90,7 +90,7 @@ export function PriceWarDetection() {
                     <details className="mt-1">
                       <summary className="cursor-pointer text-[10px] text-muted-foreground hover:text-foreground">Top padci ({w.topDrops.length})</summary>
                       <div className="mt-0.5 space-y-0.5">
-                        {w.topDrops.map((d: any, j: number) => (
+                        {w.topDrops.map((d: Record<string, any>, j: number) => (
                           <a key={j} href={d.url} target="_blank" rel="noopener noreferrer" className="flex items-center gap-1 p-0.5 hover:bg-card/50 rounded text-[10px]">
                             <span className="truncate flex-1">{d.title}</span>
                             <span className="text-muted-foreground line-through">{d.previousPrice}€</span>

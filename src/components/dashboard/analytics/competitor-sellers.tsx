@@ -8,7 +8,7 @@ import { RefreshCw, Users } from 'lucide-react';
 import { cn } from '@/lib/utils';
 
 export function CompetitorSellers() {
-  const [competitors, setCompetitors] = useState<any>(null);
+  const [competitors, setCompetitors] = useState<Record<string, any> | null>(null);
   const [compLoading, setCompLoading] = useState(false);
 
   // v6.4: Load competitors
@@ -68,7 +68,7 @@ export function CompetitorSellers() {
               </div>
             </div>
             <div className="space-y-1 max-h-60 overflow-y-auto">
-              {competitors.competitors.slice(0, 15).map((c: any, i: number) => (
+              {competitors.competitors.slice(0, 15).map((c: Record<string, any>, i: number) => (
                 <div key={i} className={cn('flex items-center gap-2 p-1.5 rounded text-xs border',
                   c.threatLevel === 'high' ? 'bg-red-500/5 border-red-500/20' :
                   c.threatLevel === 'medium' ? 'bg-amber-400/5 border-amber-400/20' :

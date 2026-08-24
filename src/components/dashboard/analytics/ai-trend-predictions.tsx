@@ -8,7 +8,7 @@ import { RefreshCw, TrendingUp, Sparkles } from 'lucide-react';
 import { cn } from '@/lib/utils';
 
 export function AiTrendPredictions() {
-  const [trendPreds, setTrendPreds] = useState<any>(null);
+  const [trendPreds, setTrendPreds] = useState<Record<string, any> | null>(null);
   const [trendLoading, setTrendLoading] = useState(false);
 
   // v6.0: Load AI trend predictions
@@ -57,7 +57,7 @@ export function AiTrendPredictions() {
           </div>
         ) : (
           <div className="space-y-2">
-            {trendPreds.predictions.map((p: any, i: number) => {
+            {trendPreds.predictions.map((p: Record<string, any>, i: number) => {
               const trendCfg: Record<string, { icon: string; color: string; label: string }> = {
                 rising: { icon: '📈', color: 'text-red-500', label: 'Raste' },
                 stable: { icon: '➡️', color: 'text-amber-400', label: 'Stabilno' },

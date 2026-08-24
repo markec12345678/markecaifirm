@@ -8,7 +8,7 @@ import { RefreshCw, GitCompare } from 'lucide-react';
 import { cn } from '@/lib/utils';
 
 export function CrossPortalArbitrage() {
-  const [crossPortal, setCrossPortal] = useState<any>(null);
+  const [crossPortal, setCrossPortal] = useState<Record<string, any> | null>(null);
   const [crossPortalLoading, setCrossPortalLoading] = useState(false);
   const [crossPortalThreshold, setCrossPortalThreshold] = useState(20);
 
@@ -101,9 +101,9 @@ export function CrossPortalArbitrage() {
               <div className="bg-background/30 rounded p-2 text-[11px]">
                 <div className="text-[10px] uppercase tracking-wider text-muted-foreground mb-1">Par portalov</div>
                 <div className="flex items-center gap-2 flex-wrap">
-                  {Object.entries(crossPortal.stats.bySourcePair).map(([pair, count]: any) => (
+                  {Object.entries(crossPortal.stats.bySourcePair).map(([pair, count]: [string, unknown]) => (
                     <Badge key={pair} variant="outline" className="text-[10px]">
-                      {pair}: {count}
+                      {pair}: {String(count)}
                     </Badge>
                   ))}
                 </div>
@@ -112,7 +112,7 @@ export function CrossPortalArbitrage() {
 
             {/* Opportunities list */}
             <div className="space-y-2">
-              {crossPortal.opportunities.slice(0, 15).map((opp: any, i: number) => (
+              {crossPortal.opportunities.slice(0, 15).map((opp: Record<string, any>, i: number) => (
                 <div key={i} className="p-2 bg-background/30 rounded border border-border">
                   <div className="flex items-center justify-between gap-2 mb-2">
                     <span className="text-xs font-medium truncate flex-1" title={opp.title}>{opp.title}</span>
@@ -126,7 +126,7 @@ export function CrossPortalArbitrage() {
                     </div>
                   </div>
                   <div className="grid grid-cols-1 sm:grid-cols-2 gap-1.5 text-[11px]">
-                    {opp.sources.map((s: any, j: number) => (
+                    {opp.sources.map((s: Record<string, any>, j: number) => (
                       <a
                         key={j}
                         href={s.url}

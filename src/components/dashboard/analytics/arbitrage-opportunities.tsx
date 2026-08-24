@@ -7,7 +7,7 @@ import { GitCompare, ExternalLink } from 'lucide-react';
 import { cn } from '@/lib/utils';
 
 export function ArbitrageOpportunities() {
-  const [arbitrage, setArbitrage] = useState<any>(null);
+  const [arbitrage, setArbitrage] = useState<Record<string, any> | null>(null);
 
   useEffect(() => {
     let cancelled = false;
@@ -35,7 +35,7 @@ export function ArbitrageOpportunities() {
       </CardHeader>
       <CardContent>
         <div className="space-y-2">
-          {arbitrage.opportunities.slice(0, 10).map((opp: any, i: number) => (
+          {arbitrage.opportunities.slice(0, 10).map((opp: Record<string, any>, i: number) => (
             <div key={i} className="p-2 bg-background/30 rounded border border-border">
               <div className="flex items-center justify-between gap-2 mb-1">
                 <span className="text-xs font-medium truncate flex-1">{opp.title}</span>
@@ -44,7 +44,7 @@ export function ArbitrageOpportunities() {
                 </Badge>
               </div>
               <div className="grid grid-cols-2 gap-2 text-[11px]">
-                {opp.listings.map((l: any, j: number) => (
+                {opp.listings.map((l: Record<string, any>, j: number) => (
                   <a key={j} href={l.url} target="_blank" rel="noopener noreferrer" className={cn(
                     'flex items-center justify-between gap-1 p-1.5 rounded hover:bg-card/50 transition-colors',
                     l.price === opp.cheapestPrice && 'bg-primary/5 border border-primary/20'
