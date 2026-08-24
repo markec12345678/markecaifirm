@@ -395,7 +395,7 @@ Do takrat testiraj ročno:
 
 ## Verzija
 
-Trenutna verzija: **v9.29.0**
+Trenutna verzija: **v9.36.0**
 
 ### v6.92 Security fixes (obvezno preberi)
 

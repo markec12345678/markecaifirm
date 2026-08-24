@@ -8,6 +8,77 @@ Format sledi [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), verzije s
 
 ---
 
+## [9.35.0] - 2026-08-24
+
+### 🔒 API Response Tipizacija — Poskus + Varna Reverzija
+
+- Poskus dodajanja 17 API response interface-ov v trades/types.ts
+- Zamenjava useState<any> z useState<TypeName | null> v 15 modulih
+- Rezultat: 0 useState<any>, ampak 130+ typecheck napak (AI vrača dinamične strukture)
+- **Varna reverzija** na v9.34 stanje — catch(e:unknown) ohranjeno
+- Lesson: useState<any> je pragmatičen za AI response — pravi popravek bi zahteval zod
+
+---
+
+## [9.34.0] - 2026-08-24
+
+### 🔒 Type Safety — 199 catch(e:any) → catch(e:unknown)
+
+- **199 catch(e:any)** vzorcev popravljenih v 128 datotekah
+- `e?.message` → `(e as Error)?.message` (type-safe error access)
+- **0 catch(e:any)** remaining v dashboard komponentah
+- any tipov: 523 → 425 (−98, −19%)
+- Preostali any: useState<any> za API response (pragmatična izbira)
+
+---
+
+## [9.33.0] - 2026-08-24
+
+### 🔒 SECURITY.md Posodobitev
+
+- Supported Versions posodobljene: v6.92 → v9.32
+- Nova "v9.x Security Enhancements" sekcija (5 podsekcij)
+- 9 priporočil za deployment
+
+---
+
+## [9.32.0] - 2026-08-24
+
+### 🔒 Security Audit + Dependency Update
+
+- 1/2 vulnerabilities fixed (deepmerge-ts)
+- 1 remaining: nanoid (transitive — nizko tveganje)
+- 12 paketov posodobljenih (next, eslint, vitest, itd.)
+
+---
+
+## [9.31.0] - 2026-08-24
+
+### 🧹 Dependency Cleanup
+
+- 8 nepotrebnih paketov odstranjenih (zod, zustand, @dnd-kit, itd.)
+- 86 → 78 paketov (−9.3%)
+
+---
+
+## [9.30.0] - 2026-08-24
+
+### 📝 CONTRIBUTING.md Posodobitev
+
+- Nova "Modularna arhitektura (v9.x)" sekcija z navodili za nove module
+- React.memo vzorec, shared types/utils, accessibility zahteve
+
+---
+
+## [9.29.0] - 2026-08-24
+
+### 📝 ARCHITECTURE.md — Celovita Arhitekturna Dokumentacija
+
+- Nova datoteka ARCHITECTURE.md z direktoj strukturo, načeli, statistiko
+- Ekstrakcijski vzorec, testiranje, CI/CD, seed data, accessibility
+
+---
+
 ## [9.28.0] - 2026-08-24
 
 ### 🧪 100% Test Pass Rate
