@@ -1,0 +1,50 @@
+name: Module Count Check
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'src/components/dashboard/**'
+
+jobs:
+  count-modules:
+    name: Count Module Files
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Count module files
+        id: count
+        run: |
+          MODULE_COUNT=$(find src/components/dashboard -mindepth 2 \( -name "*.tsx" -o -name "*.ts" \) | wc -l)
+          VIEW_COUNT=$(find src/components/dashboard -maxdepth 1 -name "*-view.tsx" | wc -l)
+          DIR_COUNT=$(find src/components/dashboard -mindepth 1 -maxdepth 1 -type d | wc -l)
+          echo "modules=$MODULE_COUNT" >> $GITHUB_OUTPUT
+          echo "views=$VIEW_COUNT" >> $GITHUB_OUTPUT
+          echo "dirs=$DIR_COUNT" >> $GITHUB_OUTPUT
+          echo "📊 Module Statistics:"
+          echo "  Module files: $MODULE_COUNT"
+          echo "  View files: $VIEW_COUNT"
+          echo "  Directories: $DIR_COUNT"
+
+      - name: Verify minimum module count
+        run: |
+          MODULES=${{ steps.count.outputs.modules }}
+          if [ "$MODULES" -lt 190 ]; then
+            echo "⚠️  WARNING: Module count dropped below 190 (current: $MODULES)"
+            echo "This may indicate accidental module deletion."
+            exit 1
+          else
+            echo "✅ Module count OK: $MODULES modules (minimum: 190)"
+          fi
+
+      - name: Module breakdown
+        run: |
+          echo "📁 Module breakdown by directory:"
+          for dir in src/components/dashboard/*/; do
+            dirname=$(basename "$dir")
+            count=$(find "$dir" -name "*.tsx" -o -name "*.ts" | wc -l)
+            echo "  $dirname: $count files"
+          done

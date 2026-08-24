@@ -21417,3 +21417,31 @@ Stage Summary:
 - Verzija: v9.25.0
 - Skupaj (v7.50 → v9.25): 175 verzij, 297 novih funkcij
 - CHANGELOG.md, README.md, worklog.md so sedaj VSI sinhronizirani z v9.25.0.
+
+---
+Task ID: v9.26
+Agent: main
+Task: GitHub Actions CI/CD — module count check workflow
+
+Work Log:
+- Preveril obstoječe CI/CD: ci.yml (lint + typecheck + build + security audit) + ai-endpoints.yml (auto-update AI_ENDPOINTS.md) — oba že dobro strukturirana.
+- Dodal nov workflow: .github/workflows/module-check.yml:
+  * Trigger: push na main ko se spremenijo komponente v src/components/dashboard/
+  * Preverja module count (minimum 190 — trenutno 193)
+  * Generira module breakdown po direktorijih (17 direktorijev)
+  * FAIL-a če module count pade pod 190 (prepreči accidental deletion)
+- Lokalno preveril: 193 modulov v 17 direktorijeh ✓
+- Preveril lint: 0 napak, 0 warnings ✨
+- Preveril typecheck: 0 napak ✨
+
+Stage Summary:
+- NEW: .github/workflows/module-check.yml (module count verification)
+- MODIFIED: src/lib/version.ts (v9.25.0→v9.26.0)
+- MODIFIED: README.md (badge v9.26.0)
+- Verzija: v9.26.0
+- Skupaj (v7.50 → v9.26): 176 verzij, 298 novih funkcij
+- CI/CD POKRITOST:
+  * ci.yml: lint + typecheck + build + security audit
+  * ai-endpoints.yml: auto-update AI_ENDPOINTS.md
+  * module-check.yml: module count verification (min 190)
+  * 3 workflow-i skupaj za avtomatsko preverjanje kakovosti
