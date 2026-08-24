@@ -21600,3 +21600,42 @@ Stage Summary:
   * Zdaj: 67 dependencies + 11 devDependencies = 78 total
   * Odstranjeno: 8 nepotrebnih paketov (−9.3%)
   * Bundle size naj bi se zmanjšal (manj paketov za install/build)
+
+---
+Task ID: v9.32
+Agent: main
+Task: Security audit + dependency update
+
+Work Log:
+- Zagnal `bun audit` — odkril 2 varnostni ranljivosti (obe high):
+  1. deepmerge-ts <8.0.0 (v @prisma/config) — stack exhaustion pri recursive object merging
+  2. nanoid <3.3.18 (v postcss — transitive od next, vitest, @tailwindcss/postcss) — custom generators loop
+- Popravil z `bun update`:
+  * deepmerge-ts: POPRAVLJENO ✓ (posodobljen preko Prisma update)
+  * nanoid 3.3.17 → ostaja (transitive dependency od postcss, ne moremo neposredno nadzorovati)
+    - Tveganje: NIZKO — vulnerability je "custom generators can loop indefinitely when size is zero"
+    - Naša aplikacija ne uporablja nanoid direktno in ne kliče z size=0
+    - Popravljeno bo ko postcss izda novo verzijo z nanoid 3.3.18+
+- Posodobljenih 12 paketov:
+  * next 16.3.0 → 16.3.2
+  * eslint-config-next 16.3.0 → 16.3.2
+  * vitest 4.1.10 → 4.1.11
+  * @tanstack/react-query 5.101.4 → 5.102.2
+  * react-hook-form 7.84.0 → 7.86.0
+  * sonner 2.0.7 → 2.0.8
+  * + 6 več (input-otp, next-intl, nodemailer, @reactuses/core, @types/react-dom, bun-types)
+- Preveril lint: 0 napak ✨
+- Preveril typecheck: 0 napak ✨
+- Preveril testi: 158/158 passing (100%) ✨
+
+Stage Summary:
+- MODIFIED: package.json (12 paketov posodobljenih)
+- MODIFIED: bun.lock (posodobljen)
+- MODIFIED: src/lib/version.ts (v9.31.0→v9.32.0)
+- MODIFIED: README.md (badge v9.32.0 + vulns badge)
+- Verzija: v9.32.0
+- Skupaj (v7.50 → v9.32): 182 verzij, 304 novih funkcij
+- SECURITY AUDIT:
+  * 1/2 vulnerabilities fixed (deepmerge-ts)
+  * 1 remaining: nanoid (transitive — nizko tveganje, čaka na postcss update)
+  * 12 paketov posodobljenih na najnovejše kompatibilne verzije
