@@ -61,6 +61,126 @@ V Settings UI (http://localhost:3000/settings) nastavi:
 - Model (npr. `qwen2.5:7b` za Ollama, `gpt-4o-mini` za OpenAI)
 - API ključe (kjer potrebno)
 
+## 🏗️ Modularna arhitektura (v9.x)
+
+Projekt uporablja **modularno arhitekturo** z 193 moduli v 17 direktorijeh. Vsaka view datoteka je tanek orchestrator.
+
+### Struktura direktorijev
+
+```
+src/components/dashboard/
+├── *-view.tsx              # 18 tanhih orchestratorjev
+├── settings/              # 14 modulov
+├── ai-hub/                # 25 modulov
+├── trades/                # 25 modulov
+├── listings/              # 6 modulov
+├── statistics/            # 26 modulov
+├── monitors/              # 6 modulov
+├── dashboard/             # 7 modulov
+├── analytics/             # 7 modulov
+├── iskalnik/              # 4 modulov
+├── watchlist/             # 3 modulov
+├── inventory/             # 11 modulov
+├── buyers/                # 11 modulov
+├── pricing/               # 11 modulov
+├── risk/                  # 11 modulov
+├── alerts/                # 4 modulov
+├── listing-optimization/ # 11 modulov
+└── listing-detail/       # 11 modulov
+```
+
+### Dodajanje nove komponente
+
+1. **Ustvari datoteko** v ustreznem direktoriju:
+```bash
+# Primer: nova AI sekcija v trades
+touch src/components/dashboard/trades/my-new-feature.tsx
+```
+
+2. **Struktura modula**:
+```typescript
+'use client';
+
+import { useState, useEffect } from 'react';
+import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
+import { Button } from '@/components/ui/button';
+import { toast } from 'sonner';
+
+export function MyNewFeature() {
+  const [data, setData] = useState(null);
+  const [loading, setLoading] = useState(false);
+
+  const load = async () => {
+    setLoading(true);
+    try {
+      const res = await fetch('/api/ai/my-feature');
+      if (res.ok) setData(await res.json());
+    } catch { toast.error('Napaka'); }
+    finally { setLoading(false); }
+  };
+
+  return (
+    <Card>
+      <CardHeader><CardTitle>My Feature</CardTitle></CardHeader>
+      <CardContent>
+        <Button onClick={load} disabled={loading}>Naloži</Button>
+        {data && <div>{JSON.stringify(data)}</div>}
+      </CardContent>
+    </Card>
+  );
+}
+```
+
+3. **Dodaj import v view datoteko**:
+```typescript
+// v trades-view.tsx
+import { MyNewFeature } from './trades/my-new-feature';
+
+// V JSX:
+<MyNewFeature />
+```
+
+4. **Preveri**:
+```bash
+bun run typecheck  # 0 errors
+bun run lint       # 0 errors
+```
+
+### React.memo za list komponente
+
+Komponente ki se render-a v seznamih (list items) morajo biti memoizirane:
+```typescript
+import { memo } from 'react';
+
+export const MyListItem = memo(function MyListItem({ item, onClick }: Props) {
+  return <div onClick={onClick}>{item.name}</div>;
+});
+```
+
+### Shared types in utils
+
+Vsak direktorij ima `types.ts` in `utils.ts` za skupne tipe/helperje:
+```typescript
+// trades/types.ts
+export interface Trade { ... }
+
+// trades/utils.ts
+export const CATEGORIES = ['elektronika', 'avto', ...];
+export function parseTagsLocal(raw: string): string[] { ... }
+```
+
+### Accessibility (ARIA labels)
+
+Vsi interaktivni elementi morajo imeti `aria-label`:
+```typescript
+<Button onClick={load} aria-label="Naloži podatke">Naloži</Button>
+<button onClick={toggle} aria-label={`Filtriraj po: ${tag}`}>#{tag}</button>
+```
+
+### Glej tudi
+- [ARCHITECTURE.md](./ARCHITECTURE.md) — celovita arhitekturna dokumentacija
+- [README.md](./README.md) — v9.x Architecture & Quality sekcija
+
 ## Coding standards
 
 ### TypeScript
@@ -275,7 +395,7 @@ Do takrat testiraj ročno:
 
 ## Verzija
 
-Trenutna verzija: **v7.24.0**
+Trenutna verzija: **v9.29.0**
 
 ### v6.92 Security fixes (obvezno preberi)
 

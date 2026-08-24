@@ -21533,3 +21533,35 @@ Stage Summary:
   * CHANGELOG.md — 14 vnosov (v8.94-v9.28)
   * ARCHITECTURE.md — arhitektura, načela, statistika
   * worklog.md — vsi Task ID-ji
+
+---
+Task ID: v9.30
+Agent: main
+Task: CONTRIBUTING.md posodobitev z v9.x modularno arhitekturo
+
+Work Log:
+- CONTRIBUTING.md je bil zastarel (v7.24.0, brez omenitve modularizacije).
+- Dodal novo sekcijo "Modularna arhitektura (v9.x)" z:
+  * Direktorij struktura (17 direktorijev, 193 modulov)
+  * Navodila za dodajanje nove komponente (4 koraki z code primeri)
+  * React.memo vzorec za list komponente
+  * Shared types/utils vzorec
+  * Accessibility (ARIA labels) zahteve
+  * Povezave na ARCHITECTURE.md in README.md
+- Posodobil verzijo: v7.24.0 → v9.29.0
+- Preveril lint: 0 napak ✨
+- Preveril typecheck: 0 napak ✨
+- Preveril testi: 158/158 passing (100%) ✨
+
+Stage Summary:
+- MODIFIED: CONTRIBUTING.md (+120 vrstic modularne arhitekture sekcija)
+- MODIFIED: src/lib/version.ts (v9.29.0→v9.30.0)
+- MODIFIED: README.md (badge v9.30.0)
+- Verzija: v9.30.0
+- Skupaj (v7.50 → v9.30): 180 verzij, 302 novih funkcij
+- DOKUMENTACIJA POPOLNA:
+  * README.md — 15 badge-ov, v9.x sekcija, stats (158 testov)
+  * CHANGELOG.md — 14 vnosov (v8.94-v9.28)
+  * ARCHITECTURE.md — arhitektura, načela, statistika, vzorci
+  * CONTRIBUTING.md — modularna arhitektura, navodila za nove module
+  * worklog.md — vsi Task ID-ji (v8.94-v9.30)
