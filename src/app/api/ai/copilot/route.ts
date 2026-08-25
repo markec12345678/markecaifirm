@@ -37,6 +37,10 @@ interface SuggestionInput {
   icon: string;
   category: string;
   autoExecutable: boolean;
+  // v9.63: AI prediction tracking for Decision Learning Loop
+  expectedProfit: number | null;
+  expectedRoi: number | null;
+  confidence: number | null; // 0-100
 }
 
 /**
@@ -115,6 +119,10 @@ async function generateAndSaveSuggestions(): Promise<{ saved: number; suggestion
       icon: '🛒',
       category: 'opportunity',
       autoExecutable: false,
+      // v9.63: Store AI predictions for outcome comparison
+      expectedProfit: potentialProfit > 0 ? potentialProfit : null,
+      expectedRoi: roi > 0 ? roi : null,
+      confidence: dealScore, // dealScore as confidence proxy
     });
   }
 
@@ -150,6 +158,10 @@ async function generateAndSaveSuggestions(): Promise<{ saved: number; suggestion
       icon: '💰',
       category: 'warning',
       autoExecutable: false,
+      // v9.63: Store AI predictions
+      expectedProfit: null, // sell outcome is about selling fast, not specific profit
+      expectedRoi: null,
+      confidence: item.daysHeld > 35 ? 90 : 70, // higher confidence for older items
     });
   }
 
@@ -169,6 +181,9 @@ async function generateAndSaveSuggestions(): Promise<{ saved: number; suggestion
         icon: '⏸️',
         category: 'optimization',
         autoExecutable: false,
+        expectedProfit: null,
+        expectedRoi: null,
+        confidence: 80,
       });
     }
   }
@@ -210,6 +225,9 @@ async function generateAndSaveSuggestions(): Promise<{ saved: number; suggestion
         icon: '🔄',
         category: 'opportunity',
         autoExecutable: false,
+        expectedProfit: Math.round(top.profit / top.count),
+        expectedRoi: top.roi,
+        confidence: Math.min(95, 60 + top.count * 5),
       });
     }
   }
@@ -250,6 +268,10 @@ async function generateAndSaveSuggestions(): Promise<{ saved: number; suggestion
           status: 'pending',
           relatedListingId: actionData.listingId ?? null,
           relatedTradeId: actionData.tradeId ?? null,
+          // v9.63: Store AI predictions
+          expectedProfit: input.expectedProfit,
+          expectedRoi: input.expectedRoi,
+          confidenceAtSuggestion: input.confidence,
         },
       });
       savedSuggestions.push(saved);

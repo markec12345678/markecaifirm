@@ -561,8 +561,17 @@ model CopilotSuggestion {
   outcomeRecordedAt DateTime?
   // Outcome tracking (samo za approved+executed)
   outcome         String?  // profit | loss | neutral | null (if not yet known)
-  profitAmount    Float?   // actual profit/loss in EUR (null if not yet known)
+  profitAmount    Float?   // actual profit/loss in EUR (null if not yet known) — legacy field
   wasCorrect      Boolean? // was the AI recommendation correct? (true if outcome matched expectation)
+  // v9.63: Richer metrics for Decision Learning Loop
+  expectedProfit  Float?   // AI predicted profit in EUR (at suggestion time)
+  expectedRoi     Float?   // AI predicted ROI % (at suggestion time)
+  actualProfit    Float?   // actual profit/loss in EUR (when outcome recorded)
+  actualRoi       Float?   // actual ROI % (when outcome recorded)
+  confidenceAtSuggestion Int?  // AI confidence 0-100 at suggestion time
+  timeToOutcomeDays Int?   // days from executedAt to outcomeRecordedAt
+  wasCorrectReason String? // human-readable explanation why correct/incorrect
+  wasCorrectRule  String?  // which rule was used: "profit_positive" | "roi_match" | "sold_within_window" | etc.
   // User feedback
   feedback        String?  // optional user feedback on reject
   // Relations

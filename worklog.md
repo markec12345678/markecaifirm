@@ -22907,3 +22907,91 @@ Stage Summary:
   * BuyBotPro: "Ali je to dober deal?"
   * Sellerboard: "Koliko sem zaslužil?"
   * Markec: "Kaj naj naredim, zakaj, pokaži original, počakaj na odločitev, preveri ali je bila pravilna."
+
+---
+Task ID: v9.63
+Agent: main
+Task: Outcome Evaluation Logic — jasna definicija wasCorrect + Financial Impact
+
+Work Log:
+- Uporabnik (ocena 9.2/10): "wasCorrect mora imeti jasno definicijo. Kaj pomeni 'pravilen'?"
+- Uporabnik: "Namesto samo wasCorrect = true/false, spremljaj: Decision, Expected outcome, Actual outcome, Profit impact, ROI impact, Decision confidence, Time to outcome"
+- Uporabnik: "Ko boš lahko pokazal 'Financial Impact: +€4,280' poleg 'Decision Accuracy: 73%' — to je veliko močnejše"
+- Uporabnik: "Ne dodajaj takoj še novega velikega sistema. Pusti v9.62 zbirati podatke."
+- Dopolnil DB model CopilotSuggestion z 8 novimi polji:
+  * expectedProfit (Float?) — AI napovedan profit
+  * expectedRoi (Float?) — AI napovedan ROI
+  * actualProfit (Float?) — dejanski profit
+  * actualRoi (Float?) — dejanski ROI
+  * confidenceAtSuggestion (Int?) — AI confidence 0-100
+  * timeToOutcomeDays (Int?) — dni od execute do outcome
+  * wasCorrectReason (String?) — human-readable razlaga
+  * wasCorrectRule (String?) — katero pravilo je bilo uporabljeno
+- Ustvaril src/lib/copilot/outcome-evaluator.ts z JASNIMI pravili:
+  * BUY: wasCorrect = actualProfit > 0 (rule: "profit_positive")
+    - Dodatno: primerja actualProfit s expectedProfit (ali je AI napovedal prav?)
+  * SELL: wasCorrect = sold within 30 days of reprice (rule: "sold_within_window")
+    - Dodatno: primerja dejansko ceno s predlagano ceno
+  * STOP-MONITOR: wasCorrect = not reactivated within 30 days (rule: "not_reactivated")
+  * RESTOCK/INVESTIGATE: zaenkrat null (kompleksnejša logika, implementirano ko bomo imeli več podatkov)
+  - evaluateSuggestionOutcome(id) — evaluira en predlog
+  - evaluatePendingOutcomes() — evalvira vse executed brez outcome
+- Ustvaril /api/ai/copilot/accuracy endpoint:
+  * Decision Accuracy % (null if no data — NE prikazuje izmišljenih številk)
+  * Financial Impact (vsota actualProfit — EUR)
+  * Breakdown by type (total, correct, incorrect, avgProfit, avgRoi)
+  * Average time to outcome (days)
+  * Average confidence at suggestion
+  * Rules used breakdown
+  * Recent outcomes (zadnjih 10)
+  * hasEnoughData flag (≥10 outcomes za smiselno statistiko)
+- Ustvaril /api/ai/copilot/evaluate endpoint:
+  * Trigger za evaluatePendingOutcomes()
+  * Klicano ko je trade prodan ali by cron (daily)
+- Posodobil /api/ai/copilot/route.ts — generiranje predlogov shranjuje:
+  * expectedProfit (AI napovedan profit)
+  * expectedRoi (AI napovedan ROI)
+  * confidenceAtSuggestion (dealScore kot confidence proxy)
+  - Buy: expectedProfit = potentialProfit, confidence = dealScore
+  - Sell: confidence = 90 (high) za >35 dni, 70 za 20-35 dni
+  - Stop-monitor: confidence = 80
+  - Restock: expectedProfit = profit/count, confidence = 60+count*5
+- Preveril typecheck: 0 napak ✨
+- Preveril lint: 0 napak ✨
+- Verifikacija (curl):
+  * Accuracy API: decisionAccuracy=null, financialImpact=0, hasEnoughData=false
+    → PRAVILNO — 0 outcomes, ne prikazuje izmišljenih številk
+  * Evaluate API: "Preverjenih 1 predlogov — noben še nima končnega izida (trades še niso prodani)"
+    → PRAVILNO — trade še ni prodan, outcome še ni znan
+  * Footer: v9.63.0 ✓
+  * 0 napak v dev logu ✓
+
+Stage Summary:
+- NEW: src/lib/copilot/outcome-evaluator.ts (jasna wasCorrect pravila za vsak tip)
+- NEW: src/app/api/ai/copilot/accuracy/route.ts (Financial Impact + breakdown)
+- NEW: src/app/api/ai/copilot/evaluate/route.ts (trigger za outcome evalvacijo)
+- MODIFIED: prisma/schema.prisma (8 novih polj v CopilotSuggestion)
+- MODIFIED: src/app/api/ai/copilot/route.ts (shranjuje AI napovedi)
+- MODIFIED: src/lib/version.ts (v9.62→v9.63)
+- MODIFIED: README.md (badge v9.63)
+- Verzija: v9.63.0
+- Skupaj (v7.50 → v9.63): 209 verzij, 330 novih funkcij
+- WASCORRECT DEFINICIJA (po predlogu uporabnika):
+  * Prej (v9.62): wasCorrect = true/false (brez jasne definicije)
+  * Zdaj  (v9.63): jasna pravila glede na tip:
+    - BUY: actualProfit > 0 (rule: "profit_positive")
+    - SELL: sold within 30 days (rule: "sold_within_window")
+    - STOP-MONITOR: not reactivated 30 days (rule: "not_reactivated")
+  + wasCorrectReason (human-readable razlaga)
+  + wasCorrectRule (katero pravilo je bilo uporabljeno)
+- RICHER METRICS (po predlogu uporabnika):
+  * expectedProfit, expectedRoi (AI napovedi)
+  * actualProfit, actualRoi (dejanski izidi)
+  * confidenceAtSuggestion (AI confidence 0-100)
+  * timeToOutcomeDays (čakalna doba)
+  * Financial Impact (vsota actualProfit — EUR)
+- HONEST DISPLAY (po opozorilu uporabnika):
+  * "Ne bi smel prikazovati izmišljene številke 73% samo zato, da UI izgleda bolj impresivno."
+  * decisionAccuracy = null ko ni podatkov (NE 0% ali izmišljena številka)
+  * hasEnoughData = false dokler ni ≥10 outcomes
+  * "0 outcomes — premalo podatkov" je pravilen in zaupanja vreden rezultat
