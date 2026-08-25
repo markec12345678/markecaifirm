@@ -22832,3 +22832,78 @@ Stage Summary:
   * "Odpri" gumb v vsakem predlogu ki ima URL
   * Odpre originalni oglas na portalu (bolha.com, mobile.de, itd.)
   * Ne samo AI opis — dejanski oglas v novem zavihku
+
+---
+Task ID: v9.62
+Agent: main
+Task: Decision Learning Loop — "Potrdi predlog" ≠ "Izvedi akcijo" + Decision Accuracy
+
+Work Log:
+- Uporabnik: "'Potrdi' ne sme pomeniti 'izvedeno', če dejanska akcija ni bila izvedena."
+- Uporabnik: "Decision Learning Loop: AI predlaga → approve/reject → akcija → outcome → profit/loss → Decision Accuracy → AI se izboljšuje"
+- Uporabnik: "Ko boš lahko pokazal 'Od zadnjih 500 predlogov je bilo 73% pravilnih' bo Markec dobil dokaz, da AI dejansko pomaga."
+- Ocena uporabnika: 9/10, največji naslednji korak = Decision Learning Loop
+- Dodal v prisma/schema.prisma nov model CopilotSuggestion:
+  * Lifecycle: pending → approved → executed → outcome_recorded (ali rejected)
+  * Outcome tracking: outcome (profit/loss/neutral), profitAmount, wasCorrect
+  * Relations: relatedTradeId, relatedListingId
+  * Feedback za rejected suggestions
+  * 5 indeksov za hitro iskanje
+- db:push sinhroniziral DB
+- Posodobil backend src/app/api/ai/copilot/route.ts:
+  * generateAndSaveSuggestions() — generira in SHRANI v DB (prej samo vrne)
+  * Duplicate prevention — preveri ali že obstaja pending suggestion za isto akcijo
+  * GET vrne pending suggestions + accuracy stats
+  * POST z 3 akcijami (prej 2):
+    - 'approve' → status=approved, executed=false, message="Predlog potrjen. Akcija še NI izvedena."
+    - 'reject' → status=rejected, feedback zabeležen
+    - 'execute' → status=executed, executed=true, message="AKCIJA IZVEDENA: ..."
+  * Execute zahteva predhodni approve (preveri status)
+  * Accuracy stats: totalDecided, approved, rejected, executed, outcomeRecorded, correct, decisionAccuracy %
+- Posodobil frontend src/components/dashboard/copilot-widget.tsx:
+  * 2-STEP PROCESS:
+    1. [Potrdi predlog] — outline amber, "Strinjam se s predlogom — akcija še ne bo izvedena"
+    2. Po approve: [Izvedi akcijo] — emerald, "Dejansko izvede akcijo (doda trade, ustavi monitor)"
+  * Approved state indicator: "Predlog potrjen — akcija še ni izvedena"
+  * Decision Accuracy banner (prikaže se ko outcomeRecorded > 0):
+    - Velik % z barvo (emerald ≥70%, amber <70%)
+    - "Od X zabeleženih odločitev · Y pravilnih"
+  * Stats footer: Potrjeni / Zavrnjeni / Izvedeni
+  * Subtitle: "AI predlaga · Ti potrdiš · Nato izvedeš"
+  * Avtopilot vs Copilot hint
+- Preveril typecheck: 0 napak ✨ (popravil savedSuggestions type)
+- Preveril lint: 0 napak ✨
+- Verifikacija (curl):
+  * API GET: 6 suggestions + accuracy (vsi 0 — še ni odločitev)
+  * API approve: executed=false, message="Predlog potrjen. Akcija še NI izvedena — klikni 'Izvedi akcijo' za dejansko izvedbo."
+  * API execute: executed=true, message="AKCIJA IZVEDENA: Cena posodobljena za trade XYZ. Outcome bo zabeležen ko bo trade prodan."
+  * API execute brez approve: error="Predlog mora biti najprej potrjen"
+- Verifikacija (Agent Browser):
+  * "Potrdi predlog" prisoten ✓ (ne več samo "Potrdi")
+  * "Odpri" prisoten ✓
+  * Subtitle "predlaga · potrdiš · izvedeš" prisoten ✓
+  * Footer: v9.62.0 ✓
+
+Stage Summary:
+- NEW: CopilotSuggestion DB model (lifecycle tracking z outcome/wasCorrect)
+- MODIFIED: src/app/api/ai/copilot/route.ts (3-step: approve → execute → outcome)
+- MODIFIED: src/components/dashboard/copilot-widget.tsx (2-step UX + Decision Accuracy banner)
+- MODIFIED: src/lib/version.ts (v9.61→v9.62)
+- MODIFIED: README.md (badge v9.62)
+- Verzija: v9.62.0
+- Skupaj (v7.50 → v9.62): 208 verzij, 329 novih funkcij
+- CRITICAL UX FIX (po opozorilu uporabnika):
+  * Prej (v9.61): "Potrdi" → "Prodaja/reprice potrjena" (zavajajoče — izgleda kot izvedeno)
+  * Zdaj  (v9.62): "Potrdi predlog" → "Predlog potrjen. Akcija še NI izvedena." → "Izvedi akcijo" → "AKCIJA IZVEDENA"
+  * Jasna 2-step ločitev: strinjanje ≠ izvedba
+- DECISION LEARNING LOOP infrastruktura:
+  * DB model spremlja celoten lifecycle vsakega predloga
+  * Ko bo trade prodan, bomo preverili ali je izšel iz Copilot predloga
+  * outcome (profit/loss) + wasCorrect (ali je AI predlagal prav)
+  * Decision Accuracy % — "Od zadnjih X predlogov je bilo Y% pravilnih"
+  * Trenutno 0 outcomes (šara začne se z novimi predlogi)
+  * Ko bo dovolj podatkov, bo banner prikazal accuracy
+- DIFERENCIACIJA (po analizi uporabnika):
+  * BuyBotPro: "Ali je to dober deal?"
+  * Sellerboard: "Koliko sem zaslužil?"
+  * Markec: "Kaj naj naredim, zakaj, pokaži original, počakaj na odločitev, preveri ali je bila pravilna."

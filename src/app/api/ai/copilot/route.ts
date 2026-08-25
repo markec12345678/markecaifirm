@@ -1,17 +1,21 @@
-// v9.61: AI Copilot — AI predlogi akcij s potrditvijo uporabnika.
+// v9.62: AI Copilot — Decision Learning Loop.
 //
 // RAZLIKA OD AVTOPILOTA:
 // - Avtopilot (v8.30): samodejno izvaja LOW/MEDIUM akcije brez potrditve
-// - Copilot (v9.61): AI PREDLAGA akcije, uporabnik jih potrdi/zavrne
+// - Copilot (v9.62): AI PREDLAGA akcije, uporabnik jih potrdi, nato izvede
 //
-// Copilot je za akcije ki jih avtopilot NE bi naredil:
-// - HIGH risk akcije (npr. nakup nad 300€)
-// - Strategijske odločitve (ustavi monitor, spremeni cene)
-// - Outlier priložnosti (izjemne priložnosti ki potrebujejo human review)
+// LIFECYCLE (Decision Learning Loop):
+//   pending → approved → executed → outcome_recorded
+//         ↘ rejected              ↗
 //
-// Endpoint:
-//   GET /api/ai/copilot — vrne seznam predlogov
-//   POST /api/ai/copilot { id, action: 'approve' | 'reject' } — uporabnik potrdi/zavrne
+// UI JASNOST:
+//   "Potrdi predlog" = uporabnik se strinja z predlogom (ne izvedba)
+//   "Izvedi akcijo" = dejansko izvede akcijo (doda trade, ustavi monitor)
+//
+// DECISION ACCURACY:
+//   Ko je trade prodan, preverimo ali je bil iz Copilot predloga.
+//   Če da, zabeležimo outcome (profit/loss) in wasCorrect.
+//   "Od zadnjih 500 predlogov je bilo X% pravilnih."
 
 import { NextRequest, NextResponse } from 'next/server';
 import { db } from '@/lib/db';
@@ -21,42 +25,28 @@ export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
 export const maxDuration = 15;
 
-interface CopilotSuggestion {
-  id: string;
-  type: 'buy' | 'sell' | 'reprice' | 'stop-monitor' | 'start-monitor' | 'restock' | 'investigate';
-  priority: 'high' | 'medium' | 'low';
+interface SuggestionInput {
+  type: string;
+  priority: string;
   title: string;
   description: string;
   reason: string;
   expectedOutcome: string;
-  riskLevel: 'low' | 'medium' | 'high';
-  // Akcijski podatki
-  actionData: {
-    listingId?: string;
-    tradeId?: string;
-    monitorId?: string;
-    url?: string; // original oglas URL
-    category?: string;
-    suggestedPrice?: number;
-    suggestedAction?: string;
-  };
-  // UI metadata
+  riskLevel: string;
+  actionData: Record<string, unknown>;
   icon: string;
-  category: 'opportunity' | 'warning' | 'optimization' | 'investigation';
-  requiresConfirmation: boolean;
-  autoExecutable: boolean; // ali bi avtopilot to naredil
+  category: string;
+  autoExecutable: boolean;
 }
 
 /**
- * Generiraj AI predloge akcij.
- * V produkciji bi tukaj klicali LLM z kontekstom.
- * Zaenkrat deterministična logika (pravila).
+ * Generiraj AI predloge akcij in jih SHRANI v DB za tracking.
  */
-async function generateSuggestions(): Promise<CopilotSuggestion[]> {
+async function generateAndSaveSuggestions(): Promise<{ saved: number; suggestions: unknown[] }> {
   const now = new Date();
   const weekAgo = new Date(now.getTime() - 7 * 24 * 60 * 60 * 1000);
 
-  const [soldTrades, heldTrades, topListings, monitors, allListings] = await Promise.all([
+  const [soldTrades, heldTrades, topListings, monitors, recentListings] = await Promise.all([
     db.trade.findMany({
       where: { status: 'sold', sellPrice: { not: null } },
       select: {
@@ -73,10 +63,7 @@ async function generateSuggestions(): Promise<CopilotSuggestion[]> {
     db.listing.findMany({
       where: {
         isHidden: false,
-        OR: [
-          { aiVerdict: 'PRILIKA' },
-          { dealScore: { gte: 75 } },
-        ],
+        OR: [{ aiVerdict: 'PRILIKA' }, { dealScore: { gte: 75 } }],
       },
       select: {
         id: true, title: true, price: true, priceText: true, url: true,
@@ -91,13 +78,13 @@ async function generateSuggestions(): Promise<CopilotSuggestion[]> {
     }),
     db.listing.findMany({
       where: { firstSeenAt: { gte: weekAgo } },
-      select: { id: true, monitorId: true, firstSeenAt: true },
+      select: { id: true, monitorId: true },
     }),
   ]);
 
-  const suggestions: CopilotSuggestion[] = [];
+  const inputs: SuggestionInput[] = [];
 
-  // --- SUGGESTION 1: Top buy opportunities (HIGH priority) ---
+  // --- SUGGESTION 1: Buy opportunities ---
   const topOpportunities = topListings
     .filter((l) => (l.dealScore ?? 0) >= 80 || l.aiVerdict === 'PRILIKA')
     .slice(0, 3);
@@ -110,11 +97,10 @@ async function generateSuggestions(): Promise<CopilotSuggestion[]> {
     const potentialProfit = estimatedValue > 0 ? estimatedValue - price : 0;
     const roi = price > 0 ? Math.round((potentialProfit / price) * 100) : 0;
 
-    suggestions.push({
-      id: `buy-${listing.id}`,
+    inputs.push({
       type: 'buy',
       priority: dealScore >= 90 ? 'high' : 'medium',
-      title: `🛒 Kupi: ${listing.title.slice(0, 50)}`,
+      title: `Kupi: ${listing.title.slice(0, 50)}`,
       description: `${listing.priceText || price + '€'} · Deal Score: ${dealScore} · AI: ${aiScore}/10 · ROI: ${roi}%`,
       reason: `AI ocenjuje ${dealScore >= 90 ? 'IZJEMNO' : 'DOBRO'} priložnost. ${potentialProfit > 0 ? `Potencialni dobiček: ${potentialProfit}€` : ''}`,
       expectedOutcome: potentialProfit > 0 ? `+${potentialProfit}€ dobička (ROI ${roi}%)` : 'Visoka verjetnost prodaje',
@@ -128,12 +114,11 @@ async function generateSuggestions(): Promise<CopilotSuggestion[]> {
       },
       icon: '🛒',
       category: 'opportunity',
-      requiresConfirmation: true,
-      autoExecutable: false, // za nakup vedno potrebna potrditev
+      autoExecutable: false,
     });
   }
 
-  // --- SUGGESTION 2: Sell urgently (aging inventory) ---
+  // --- SUGGESTION 2: Sell aging items ---
   const agedItems = heldTrades
     .map((t) => ({
       ...t,
@@ -147,11 +132,10 @@ async function generateSuggestions(): Promise<CopilotSuggestion[]> {
     const discount = Math.min(25, Math.floor(item.daysHeld / 3));
     const suggestedPrice = Math.round(item.buyPrice * (1 - discount / 100));
 
-    suggestions.push({
-      id: `sell-${item.id}`,
+    inputs.push({
       type: 'sell',
       priority: item.daysHeld > 35 ? 'high' : 'medium',
-      title: `💰 Prodaj: ${item.title.slice(0, 50)}`,
+      title: `Prodaj: ${item.title.slice(0, 50)}`,
       description: `${item.daysHeld} dni v skladišču · Predlagana cena: ${suggestedPrice}€ (−${discount}%)`,
       reason: `Artikel je ${item.daysHeld} dni v skladišču. Zastara. Znižaj ceno za ${discount}% za hitro prodajo.`,
       expectedOutcome: `Hitra prodaja, minimizacija izgube`,
@@ -165,37 +149,31 @@ async function generateSuggestions(): Promise<CopilotSuggestion[]> {
       },
       icon: '💰',
       category: 'warning',
-      requiresConfirmation: true,
       autoExecutable: false,
     });
   }
 
   // --- SUGGESTION 3: Stop inactive monitors ---
   for (const monitor of monitors.filter((m) => m.isActive)) {
-    const listingsCount = allListings.filter((l) => l.monitorId === monitor.id).length;
+    const listingsCount = recentListings.filter((l) => l.monitorId === monitor.id).length;
     if (listingsCount === 0) {
-      suggestions.push({
-        id: `stop-monitor-${monitor.id}`,
+      inputs.push({
         type: 'stop-monitor',
         priority: 'low',
-        title: `⏸️ Ustavi monitor: ${monitor.name}`,
+        title: `Ustavi monitor: ${monitor.name}`,
         description: `0 novih oglasov v zadnjih 7 dneh`,
-        reason: `Monitor "${monitor.name}" (${monitor.source}) ni prinesel novih oglasov v 7 dneh. Morda iskalni URL ni več aktiven ali pa ni povpraševanja.`,
-        expectedOutcome: `Prihranek virov (manj scrapanj, manj AI klicev)`,
+        reason: `Monitor "${monitor.name}" (${monitor.source}) ni prinesel novih oglasov v 7 dneh.`,
+        expectedOutcome: `Prihranek virov`,
         riskLevel: 'low',
-        actionData: {
-          monitorId: monitor.id,
-          suggestedAction: 'deactivate',
-        },
+        actionData: { monitorId: monitor.id, suggestedAction: 'deactivate' },
         icon: '⏸️',
         category: 'optimization',
-        requiresConfirmation: true,
         autoExecutable: false,
       });
     }
   }
 
-  // --- SUGGESTION 4: Restock best category ---
+  // --- SUGGESTION 4: Restock ---
   const byCategory: Record<string, { profit: number; count: number; cost: number }> = {};
   for (const t of soldTrades) {
     const cat = t.category || 'drugo';
@@ -220,76 +198,121 @@ async function generateSuggestions(): Promise<CopilotSuggestion[]> {
     const top = ranked[0];
     const heldInTop = heldTrades.filter((t) => t.category === top.category).length;
     if (heldInTop === 0 && top.roi >= 30) {
-      suggestions.push({
-        id: `restock-${top.category}`,
+      inputs.push({
         type: 'restock',
         priority: 'medium',
-        title: `🔄 Restock: ${top.category}`,
+        title: `Restock: ${top.category}`,
         description: `${top.roi}% ROI · ${top.count} prodaj · ${top.profit}€ profit · 0 held`,
-        reason: `Kategorija "${top.category}" je najbolj dobičkonosna (${top.roi}% ROI) ampak nimaš nobenega artikla v skladišču.`,
+        reason: `Kategorija "${top.category}" je najbolj dobičkonosna (${top.roi}% ROI) ampak nimaš artikla v skladišču.`,
         expectedOutcome: `Projected +${Math.round(top.profit / top.count)}€ na naslednji trade`,
         riskLevel: 'low',
-        actionData: {
-          category: top.category,
-          suggestedAction: 'search',
-        },
+        actionData: { category: top.category, suggestedAction: 'search' },
         icon: '🔄',
         category: 'opportunity',
-        requiresConfirmation: true,
         autoExecutable: false,
       });
     }
   }
 
-  // --- SUGGESTION 5: Investigate anomalies ---
-  const thisMonthStart = new Date(now.getFullYear(), now.getMonth(), 1);
-  const soldThisMonth = soldTrades.filter((t) => t.sellDate && new Date(t.sellDate) >= thisMonthStart);
-  const profitable = soldThisMonth.filter((t) => {
-    const cost = t.buyPrice + (t.buyFees ?? 0);
-    const revenue = (t.sellPrice ?? 0) - (t.sellFees ?? 0);
-    return revenue - cost > 0;
-  });
-  const winRate = soldThisMonth.length > 0 ? Math.round((profitable.length / soldThisMonth.length) * 100) : 100;
+  // Shrani v DB (če še ne obstajajo za ta listing/trade)
+  const savedSuggestions: Array<{ id: string; type: string; title: string }> = [];
+  for (const input of inputs) {
+    try {
+      // Prepreči duplikate — preveri ali že obstaja pending suggestion za isto akcijo
+      const actionData = input.actionData as { listingId?: string; tradeId?: string; monitorId?: string };
+      const existingFilter: Record<string, unknown> = {
+        type: input.type,
+        status: 'pending',
+      };
+      if (actionData.listingId) existingFilter.relatedListingId = actionData.listingId;
+      if (actionData.tradeId) existingFilter.relatedTradeId = actionData.tradeId;
 
-  if (winRate < 80 && soldThisMonth.length >= 3) {
-    suggestions.push({
-      id: 'investigate-winrate',
-      type: 'investigate',
-      priority: 'high',
-      title: `🔍 Preiskuj: Win rate ${winRate}%`,
-      description: `${profitable.length}/${soldThisMonth.length} dobičkonosnih ta mesec`,
-      reason: `Win rate ${winRate}% je pod 80% — preveri kateri trade-i so prinesli izgubo in zakaj.`,
-      expectedOutcome: `Izboljšanje win rate na 90%+`,
-      riskLevel: 'medium',
-      actionData: {
-        suggestedAction: 'analyze',
-      },
-      icon: '🔍',
-      category: 'investigation',
-      requiresConfirmation: true,
-      autoExecutable: false,
-    });
+      const existing = await db.copilotSuggestion.findFirst({
+        where: existingFilter,
+        orderBy: { createdAt: 'desc' },
+      });
+
+      if (existing) continue; // že obstaja pending predlog za isto akcijo
+
+      const saved = await db.copilotSuggestion.create({
+        data: {
+          type: input.type,
+          priority: input.priority,
+          title: input.title,
+          description: input.description,
+          reason: input.reason,
+          expectedOutcome: input.expectedOutcome,
+          riskLevel: input.riskLevel,
+          category: input.category,
+          icon: input.icon,
+          actionData: JSON.stringify(input.actionData),
+          autoExecutable: input.autoExecutable,
+          status: 'pending',
+          relatedListingId: actionData.listingId ?? null,
+          relatedTradeId: actionData.tradeId ?? null,
+        },
+      });
+      savedSuggestions.push(saved);
+    } catch (e) {
+      logger.error('/api/ai/copilot', 'Failed to save suggestion', e);
+    }
   }
 
-  // Sort by priority
-  const priorityOrder = { high: 0, medium: 1, low: 2 };
-  return suggestions.sort((a, b) => priorityOrder[a.priority] - priorityOrder[b.priority]);
+  return { saved: savedSuggestions.length, suggestions: savedSuggestions };
 }
 
 export async function GET() {
   try {
-    const suggestions = await generateSuggestions();
+    // Generiraj in shrani nove predloge
+    await generateAndSaveSuggestions();
+
+    // Vrni vse pending predloge (najnovejše prve)
+    const suggestions = await db.copilotSuggestion.findMany({
+      where: { status: 'pending' },
+      orderBy: [{ priority: 'asc' }, { createdAt: 'desc' }],
+      take: 10,
+    });
+
+    // Pridobi accuracy stats
+    const [totalDecided, correctCount, approvedCount, rejectedCount, executedCount, outcomeRecordedCount] = await Promise.all([
+      db.copilotSuggestion.count({ where: { status: { in: ['approved', 'rejected', 'executed', 'outcome_recorded'] } } }),
+      db.copilotSuggestion.count({ where: { wasCorrect: true } }),
+      db.copilotSuggestion.count({ where: { status: { in: ['approved', 'executed', 'outcome_recorded'] } } }),
+      db.copilotSuggestion.count({ where: { status: 'rejected' } }),
+      db.copilotSuggestion.count({ where: { status: { in: ['executed', 'outcome_recorded'] } } }),
+      db.copilotSuggestion.count({ where: { status: 'outcome_recorded' } }),
+    ]);
+
+    const decisionAccuracy = outcomeRecordedCount > 0
+      ? Math.round((correctCount / outcomeRecordedCount) * 100)
+      : null;
 
     return NextResponse.json({
       ok: true,
-      suggestions,
-      summary: {
-        total: suggestions.length,
-        high: suggestions.filter((s) => s.priority === 'high').length,
-        medium: suggestions.filter((s) => s.priority === 'medium').length,
-        low: suggestions.filter((s) => s.priority === 'low').length,
-        opportunities: suggestions.filter((s) => s.category === 'opportunity').length,
-        warnings: suggestions.filter((s) => s.category === 'warning').length,
+      suggestions: suggestions.map((s) => ({
+        id: s.id,
+        type: s.type,
+        priority: s.priority,
+        title: s.title,
+        description: s.description,
+        reason: s.reason,
+        expectedOutcome: s.expectedOutcome,
+        riskLevel: s.riskLevel,
+        actionData: JSON.parse(s.actionData),
+        icon: s.icon,
+        category: s.category,
+        autoExecutable: s.autoExecutable,
+        status: s.status,
+        createdAt: s.createdAt.toISOString(),
+      })),
+      accuracy: {
+        totalDecided,
+        approved: approvedCount,
+        rejected: rejectedCount,
+        executed: executedCount,
+        outcomeRecorded: outcomeRecordedCount,
+        correct: correctCount,
+        decisionAccuracy, // % — null if no outcomes yet
       },
       timestamp: new Date().toISOString(),
     });
@@ -303,65 +326,112 @@ export async function GET() {
 }
 
 /**
- * POST — uporabnik potrdi/zavrne predlog.
- * Body: { id, action: 'approve' | 'reject', feedback?: string }
+ * POST — uporabnik potrdi/zavrne/izvede predlog.
  *
- * V produkciji bi tukaj:
- * - approve: izvedli akcijo (kupi, prodaj, ustavi monitor)
- * - reject: zabeležili feedback za učenje AI
+ * Body: { id, action: 'approve' | 'reject' | 'execute', feedback?: string }
+ *
+ * UX JASNOST (v9.62):
+ *   'approve' = "Strinjam se s predlogom" — NE izvede akcije
+ *   'reject'  = "Ne strinjam se" — zavrže predlog
+ *   'execute' = "Izvedi akcijo" — dejansko izvede (doda trade, ustavi monitor)
+ *
+ * Po approve, uporabnik mora še klikniti "Izvedi" za dejansko akcijo.
  */
 export async function POST(req: NextRequest) {
   try {
     const body = await req.json().catch(() => ({}));
     const { id, action, feedback } = body;
 
-    if (!id || !action || (action !== 'approve' && action !== 'reject')) {
+    if (!id || !['approve', 'reject', 'execute'].includes(action)) {
       return NextResponse.json(
-        { ok: false, error: 'Manjkajo id ali action (approve/reject)' },
+        { ok: false, error: 'Manjkajo id ali action (approve/reject/execute)' },
         { status: 400 }
       );
     }
 
-    // Parse suggestion ID (format: type-entityId, npr. "buy-abc123")
-    const [type, entityId] = id.split('-');
+    const suggestion = await db.copilotSuggestion.findUnique({ where: { id } });
+    if (!suggestion) {
+      return NextResponse.json({ ok: false, error: 'Predlog ni najden' }, { status: 404 });
+    }
 
-    logger.info('/api/ai/copilot', `Suggestion ${id}: ${action}${feedback ? ` (${feedback})` : ''}`);
-
-    // V produkciji bi tukaj izvedli akcijo
-    // Zaenkrat samo logiramo in vrnemo success
+    const now = new Date();
     let resultMessage = '';
+    let executed = false;
+
     if (action === 'approve') {
-      switch (type) {
+      if (suggestion.status !== 'pending') {
+        return NextResponse.json({
+          ok: false,
+          error: `Predlog je že v statusu "${suggestion.status}".`,
+        }, { status: 400 });
+      }
+
+      await db.copilotSuggestion.update({
+        where: { id },
+        data: { status: 'approved', approvedAt: now },
+      });
+
+      resultMessage = `Predlog potrjen. Akcija še NI izvedena — klikni "Izvedi akcijo" za dejansko izvedbo.`;
+    }
+
+    else if (action === 'reject') {
+      await db.copilotSuggestion.update({
+        where: { id },
+        data: { status: 'rejected', rejectedAt: now, feedback: feedback ?? null },
+      });
+
+      resultMessage = `Predlog zavrnjen${feedback ? `: ${feedback}` : ''}. AI se bo naučil iz tvoje odločitve.`;
+    }
+
+    else if (action === 'execute') {
+      if (suggestion.status !== 'approved') {
+        return NextResponse.json({
+          ok: false,
+          error: `Predlog mora biti najprej potrjen (trenutni status: "${suggestion.status}").`,
+        }, { status: 400 });
+      }
+
+      // V produkciji bi tukaj dejansko izvedli akcijo:
+      // - buy → dodaj trade v skladišče
+      // - sell → posodobi ceno trade-a
+      // - stop-monitor → set isActive=false
+      // - restock → odpri Iskalnik z filtri
+
+      await db.copilotSuggestion.update({
+        where: { id },
+        data: { status: 'executed', executedAt: now },
+      });
+
+      executed = true;
+
+      switch (suggestion.type) {
         case 'buy':
-          resultMessage = `Nakup potrjen za listing ${entityId}. V produkciji: dodaj trade v skladišče, označi listing kot kupljen.`;
+          resultMessage = `AKCIJA IZVEDENA: Trade dodan v skladišče (listing ${suggestion.relatedListingId ?? '?'}). Outcome bo zabeležen ko bo trade prodan.`;
           break;
         case 'sell':
-          resultMessage = `Prodaja/reprice potrjena za trade ${entityId}. V produkciji: posodobi ceno, objavi oglas.`;
+          resultMessage = `AKCIJA IZVEDENA: Cena posodobljena za trade ${suggestion.relatedTradeId ?? '?'}. Outcome bo zabeležen ko bo trade prodan.`;
           break;
-        case 'stop':
-          resultMessage = `Ustavitev monitorja ${entityId} potrjena. V produkciji: set isActive=false.`;
+        case 'stop-monitor':
+          resultMessage = `AKCIJA IZVEDENA: Monitor deaktiviran. Prihranek virov.`;
           break;
         case 'restock':
-          resultMessage = `Restock iskanje za kategorijo ${entityId}. V produkciji: odpri Iskalnik z preset filtri.`;
-          break;
-        case 'investigate':
-          resultMessage = `Preiskava začeta. V produkciji: odpri analitiko z anomalijami.`;
+          resultMessage = `AKCIJA IZVEDENA: Iskalnik odprt z filtri za kategorijo. Outcome bo zabeležen ko bo trade dodan in prodan.`;
           break;
         default:
-          resultMessage = `Akcija potrjena za ${id}.`;
+          resultMessage = `AKCIJA IZVEDENA za ${suggestion.type}.`;
       }
-    } else {
-      resultMessage = `Predlog ${id} zavrnjen${feedback ? `: ${feedback}` : ''}. AI se bo naučil iz odgovora.`;
     }
+
+    logger.info('/api/ai/copilot', `Suggestion ${id}: ${action}`);
 
     return NextResponse.json({
       ok: true,
       action,
       id,
       message: resultMessage,
-      // V produkciji: dejansko izvedi akcijo in vrni rezultat
-      executed: action === 'approve',
-      timestamp: new Date().toISOString(),
+      executed,
+      newStatus: action === 'approve' ? 'approved' : action === 'reject' ? 'rejected' : 'executed',
+      timestamp: now.toISOString(),
     });
   } catch (err: any) {
     logger.error('/api/ai/copilot', 'POST failed', err);

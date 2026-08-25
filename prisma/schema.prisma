@@ -527,6 +527,58 @@ model ScraperStatus {
   @@index([source])
 }
 
+// v9.62: CopilotSuggestion — Decision Learning Loop tracking.
+// Vsak AI predlog gre skozi lifecycle:
+//   pending → approved/rejected → executed → outcome_recorded
+//
+// To omogoča Decision Accuracy metric:
+// "Od zadnjih 500 Copilot priporočil je bilo 73% pravilnih."
+model CopilotSuggestion {
+  id              String   @id @default(cuid())
+  // Suggestion metadata
+  type            String   // buy | sell | stop-monitor | restock | investigate
+  priority        String   // high | medium | low
+  title           String
+  description     String
+  reason          String   @default("")
+  expectedOutcome String  @default("")
+  riskLevel       String   @default("medium") // low | medium | high
+  category        String   @default("opportunity") // opportunity | warning | optimization | investigation
+  icon            String   @default("💡")
+  actionData      String   @default("{}") // JSON: { listingId, tradeId, monitorId, url, suggestedPrice, ... }
+  autoExecutable  Boolean  @default(false)
+  // Lifecycle status
+  // pending = čaka na uporabnikovo odločitev
+  // approved = uporabnik je potrdil predlog (še ni izvedeno)
+  // rejected = uporabnik je zavrnil predlog
+  // executed = akcija je bila dejansko izvedena (trade dodan, monitor ustavljen, etc.)
+  // outcome_recorded = izid je bil zabeležen (profit/loss znan)
+  // expired = predlog je potekel brez odziva
+  status          String   @default("pending")
+  approvedAt      DateTime?
+  rejectedAt      DateTime?
+  executedAt      DateTime?
+  outcomeRecordedAt DateTime?
+  // Outcome tracking (samo za approved+executed)
+  outcome         String?  // profit | loss | neutral | null (if not yet known)
+  profitAmount    Float?   // actual profit/loss in EUR (null if not yet known)
+  wasCorrect      Boolean? // was the AI recommendation correct? (true if outcome matched expectation)
+  // User feedback
+  feedback        String?  // optional user feedback on reject
+  // Relations
+  relatedTradeId   String?  // link to Trade if became a trade
+  relatedListingId String?  // link to Listing for buy suggestions
+  // Timestamps
+  createdAt       DateTime @default(now())
+  updatedAt       DateTime @updatedAt
+
+  @@index([status])
+  @@index([type])
+  @@index([priority])
+  @@index([createdAt])
+  @@index([wasCorrect])
+}
+
 // Heartbeat log — daily system health report (v1.1)
 model HeartbeatLog {
   id            String   @id @default(cuid())
