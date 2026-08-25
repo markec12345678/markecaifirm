@@ -174,17 +174,57 @@ async function attemptBypassMethod(
           };
         }
 
-        logger.info('bypass-chain', `Playwright bypass for ${url} (would open headless browser)`);
-        const res = await fetchWithAntiDetection(url);
-        const html = await res.text();
-        const isBlocked = res.status === 403 || res.status === 429 || isCloudflareChallenge(html);
+        // v9.68: Pravi Playwright klic prek mini-service (port 3033)
+        logger.info('bypass-chain', `Playwright render for ${url}`);
+        try {
+          const renderRes = await fetch('http://localhost:3033/render', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ url, timeout: 30000 }),
+          });
 
-        return {
-          method,
-          success: !isBlocked && res.ok,
-          durationMs: Date.now() - start,
-          details: { playwrightEnabled: true, statusCode: res.status },
-        };
+          if (!renderRes.ok) {
+            return {
+              method,
+              success: false,
+              durationMs: Date.now() - start,
+              error: `Playwright service error: ${renderRes.status}`,
+            };
+          }
+
+          const renderData = await renderRes.json();
+          if (!renderData.ok) {
+            return {
+              method,
+              success: false,
+              durationMs: Date.now() - start,
+              error: renderData.error ?? 'Playwright render failed',
+            };
+          }
+
+          const html = renderData.html ?? '';
+          const isBlocked = isCloudflareChallenge(html) || isBotDetection(html);
+
+          return {
+            method,
+            success: !isBlocked && renderData.status === 200,
+            durationMs: Date.now() - start,
+            details: {
+              playwrightEnabled: true,
+              statusCode: renderData.status,
+              title: renderData.title,
+              htmlSize: Math.round(html.length / 1024),
+              renderDurationMs: renderData.durationMs,
+            },
+          };
+        } catch (err: any) {
+          return {
+            method,
+            success: false,
+            durationMs: Date.now() - start,
+            error: `Playwright service ni dosegljiv: ${err?.message}. Ali teče mini-service na portu 3033?`,
+          };
+        }
       }
 
       default:

@@ -23229,3 +23229,53 @@ Stage Summary:
   * JavaScript rendering flag (renderJs + Playwright fallback) — v9.68
   * Country targeting (proxy iz specifične države) — v9.69
   * Failed request queue (retry failed scrapes) — v9.70
+
+---
+Task ID: v9.68
+Agent: main
+Task: JavaScript Rendering — Playwright mini service kot zadnji fallback v bypass chain
+
+Work Log:
+- Ustvaril mini-services/playwright-renderer/ — standalone Bun service:
+  * Port 3033 (fiksno)
+  * POST /render — odpre URL v headless Chromium, vrne rendered HTML
+  * Blocka unnecessary resources (images, fonts, media) za hitrost
+  * Realistic UA, viewport 1920x1080, locale sl-SI, timezone Europe/Ljubljana
+  * waitFor selector opcija
+  * 30s timeout
+  * CORS headers
+  * SIGTERM/SIGINT cleanup (browser.close)
+  * @ts-nocheck ker je standalone Bun projekt
+- Posodobil src/lib/scraper/bypass-chain.ts:
+  * 'playwright' case zdaj dejansko kliče mini-service (http://localhost:3033/render)
+  * Prej: simulacija (fetchWithAntiDetection + check)
+  * Zdaj: pravi headless browser render z Chromium
+  * Block detection: isCloudflareChallenge + isBotDetection na rendered HTML
+  * Details: statusCode, title, htmlSize (KB), renderDurationMs
+  * Error handling: "Playwright service ni dosegljiv. Ali teče mini-service na portu 3033?"
+- Preveril typecheck: 0 napak
+- Preveril lint: 0 napak
+- Verifikacija:
+  * Footer: v9.68.0 ✓
+  * 0 napak v dev logu ✓
+
+Stage Summary:
+- NEW: mini-services/playwright-renderer/index.ts (standalone Playwright service)
+- NEW: mini-services/playwright-renderer/package.json
+- MODIFIED: src/lib/scraper/bypass-chain.ts (pravi Playwright klic namesto simulacije)
+- MODIFIED: src/lib/version.ts (v9.67→v9.68)
+- MODIFIED: README.md (badge v9.68)
+- Verzija: v9.68.0
+- Skupaj (v7.50 → v9.68): 214 verzij, 335 novih funkcij
+- PRAVI PLAYWRIGHT (ne simulacija):
+  * Prej (v9.58): "would open headless browser" + fetchWithAntiDetection (simulacija)
+  * Zdaj  (v9.68): pravi headless Chromium prek mini-service na portu 3033
+  * Blocka images/fonts/media za hitrost
+  * Realistic browser fingerprint (UA, viewport, locale, timezone)
+  * CORS headers za cross-origin iz aplikacije
+- BYPASS CHAIN KONČAN (5 metod):
+  1. retry-backoff (brezplačno)
+  2. proxy-rotation (session-sticky, v9.67)
+  3. stealth-mode (realistic headers)
+  4. captcha-solve (2captcha/anti-captcha/capmonster)
+  5. playwright (pravi headless browser, v9.68) ← NOVO
