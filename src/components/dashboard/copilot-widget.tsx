@@ -222,7 +222,7 @@ export function CopilotWidget({ onNavigate }: CopilotWidgetProps) {
         </p>
       </CardHeader>
       <CardContent className="space-y-2">
-        {/* Decision Accuracy banner (če ima dovolj podatkov) */}
+        {/* Decision Accuracy banner — v9.63.1: vedno prikaži sample size + early data warning */}
         {accuracy.outcomeRecorded > 0 && (
           <div className={cn(
             'p-2 rounded-md border text-center',
@@ -240,10 +240,30 @@ export function CopilotWidget({ onNavigate }: CopilotWidgetProps) {
                 : 'text-amber-500'
             )}>
               {accuracy.decisionAccuracy !== null ? `${accuracy.decisionAccuracy}%` : '—'}
+              <span className="text-[10px] font-normal text-muted-foreground ml-1">
+                · {accuracy.correct}/{accuracy.outcomeRecorded}
+              </span>
             </div>
-            <div className="text-[9px] text-muted-foreground">
-              Od {accuracy.outcomeRecorded} {accuracy.outcomeRecorded === 1 ? 'zabeležene' : 'zabeleženih'} odločitev
-              {' · '}{accuracy.correct} {accuracy.correct === 1 ? 'pravilna' : 'pravilnih'}
+            {/* Early data warning — vedno prikaži ko je <10 outcomes */}
+            {accuracy.outcomeRecorded < 10 && (
+              <div className="text-[9px] text-amber-500 mt-0.5 flex items-center justify-center gap-0.5">
+                <AlertCircle className="w-2 h-2" />
+                Early data — limited sample
+              </div>
+            )}
+          </div>
+        )}
+        {/* Honest empty state — ko ni še nobenega outcome-a */}
+        {accuracy.outcomeRecorded === 0 && (
+          <div className="p-2 rounded-md border border-border bg-background/30 text-center">
+            <div className="text-[10px] uppercase text-muted-foreground font-bold mb-0.5">
+              🎯 Decision Accuracy
+            </div>
+            <div className="text-sm text-muted-foreground italic">
+              N/A — premalo podatkov
+            </div>
+            <div className="text-[9px] text-muted-foreground/70 mt-0.5">
+              Čakamo na prve rezultate (potrebno ≥10 odločitev)
             </div>
           </div>
         )}
