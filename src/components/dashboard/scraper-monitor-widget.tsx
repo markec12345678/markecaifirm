@@ -44,6 +44,16 @@ interface ScraperStatusRow {
   listingsFound: number;
   newListings: number;
   error: string | null;
+  // v9.69: AI ocene
+  avgDealScore: number | null;
+  avgAiScore: number | null;
+  bestDealScore: number | null;
+  bestListingTitle: string | null;
+  bestListingUrl: string | null;
+  bestAiVerdict: string | null;
+  prilikaCount: number;
+  sumnjivoCount: number;
+  nezanimivoCount: number;
   monitor?: { name: string; source: string } | null;
 }
 
@@ -300,7 +310,13 @@ export function ScraperMonitorWidget() {
               <span className="w-1.5 h-1.5 rounded-full bg-sky-500 animate-pulse" />
               Trenutno scrapa
             </div>
-            {live.map((row) => (
+            {live.map((row) => {
+              // v9.69: Live duration calculator — koliko časa že scrapa
+              const liveDuration = row.status === 'running' && row.startedAt
+                ? Math.floor((Date.now() - new Date(row.startedAt).getTime()) / 1000)
+                : null;
+
+              return (
               <div
                 key={row.id}
                 className={cn(
@@ -311,8 +327,15 @@ export function ScraperMonitorWidget() {
                 <div className="flex items-center gap-2 mb-1">
                   <span className="text-lg">{SOURCE_ICONS[row.source] ?? '🌐'}</span>
                   <div className="flex-1 min-w-0">
-                    <div className="text-xs font-medium truncate">
+                    <div className="text-xs font-medium truncate flex items-center gap-1.5">
                       {row.monitor?.name ?? row.source}
+                      {/* v9.69: Live duration indikator */}
+                      {row.status === 'running' && liveDuration !== null && (
+                        <span className="text-[9px] text-sky-500 font-mono flex items-center gap-0.5">
+                          <span className="w-1 h-1 rounded-full bg-sky-500 animate-pulse" />
+                          {liveDuration < 60 ? `${liveDuration}s` : `${Math.floor(liveDuration / 60)}min ${liveDuration % 60}s`}
+                        </span>
+                      )}
                     </div>
                     <div className="text-[10px] text-muted-foreground truncate flex items-center gap-1">
                       <ExternalLink className="w-2.5 h-2.5 shrink-0" />
@@ -329,6 +352,101 @@ export function ScraperMonitorWidget() {
                     {data.statusLabels[row.status]?.icon} {data.statusLabels[row.status]?.label}
                   </Badge>
                 </div>
+
+                {/* v9.69: Live progress bar — animirana ko scraper dela */}
+                {row.status === 'running' && (
+                  <div className="h-0.5 bg-muted rounded-full overflow-hidden mb-1.5">
+                    <div className="h-full bg-gradient-to-r from-sky-500 to-sky-300 animate-pulse" style={{ width: '60%' }} />
+                  </div>
+                )}
+
+                {/* v9.69: AI ocene za končane scrape (success/bypassed) */}
+                {(row.status === 'success' || row.status === 'bypassed') && row.listingsFound > 0 && (
+                  <div className="mt-1.5 p-1.5 rounded bg-background/30 border border-border/50 space-y-1">
+                    {/* Stats row */}
+                    <div className="flex items-center gap-2 text-[10px]">
+                      <span className="text-emerald-500 font-bold">{row.newListings}</span>
+                      <span className="text-muted-foreground">novih</span>
+                      <span className="text-muted-foreground">/</span>
+                      <span className="text-foreground font-bold">{row.listingsFound}</span>
+                      <span className="text-muted-foreground">skupaj</span>
+                      {row.durationMs && (
+                        <>
+                          <span className="text-muted-foreground">·</span>
+                          <span className="text-muted-foreground">{formatDuration(row.durationMs)}</span>
+                        </>
+                      )}
+                    </div>
+
+                    {/* Verdikt counts */}
+                    {(row.prilikaCount > 0 || row.sumnjivoCount > 0) && (
+                      <div className="flex items-center gap-2 text-[9px]">
+                        {row.prilikaCount > 0 && (
+                          <span className="text-emerald-500 flex items-center gap-0.5">
+                            🎯 {row.prilikaCount} priložnosti
+                          </span>
+                        )}
+                        {row.sumnjivoCount > 0 && (
+                          <span className="text-amber-500 flex items-center gap-0.5">
+                            ⚠️ {row.sumnjivoCount} sumljivih
+                          </span>
+                        )}
+                      </div>
+                    )}
+
+                    {/* Best listing */}
+                    {row.bestDealScore !== null && row.bestListingTitle && (
+                      <div className="pt-1 border-t border-border/30">
+                        <div className="text-[9px] uppercase text-muted-foreground font-bold mb-0.5">
+                          🏆 Najboljši oglas
+                        </div>
+                        <div className="flex items-center gap-1.5">
+                          {row.bestListingUrl ? (
+                            <a
+                              href={row.bestListingUrl}
+                              target="_blank"
+                              rel="noopener noreferrer"
+                              className="text-[10px] text-primary hover:underline truncate flex-1"
+                            >
+                              {row.bestListingTitle.slice(0, 40)}{row.bestListingTitle.length > 40 ? '...' : ''}
+                            </a>
+                          ) : (
+                            <span className="text-[10px] truncate flex-1">
+                              {row.bestListingTitle.slice(0, 40)}{row.bestListingTitle.length > 40 ? '...' : ''}
+                            </span>
+                          )}
+                          <Badge className={cn(
+                            'text-[9px] px-1 py-0 shrink-0',
+                            row.bestDealScore >= 80 ? 'bg-emerald-500/10 text-emerald-500 border-emerald-500/30'
+                              : row.bestDealScore >= 50 ? 'bg-amber-500/10 text-amber-500 border-amber-500/30'
+                                : 'bg-muted text-muted-foreground border-border'
+                          )}>
+                            {row.bestDealScore}/100
+                          </Badge>
+                        </div>
+                        {row.bestAiVerdict && (
+                          <div className="text-[9px] text-muted-foreground mt-0.5">
+                            AI verdikt: <span className={cn(
+                              'font-bold',
+                              row.bestAiVerdict === 'PRILIKA' ? 'text-emerald-500'
+                                : row.bestAiVerdict === 'SUMNJIVO' ? 'text-amber-500'
+                                  : 'text-muted-foreground'
+                            )}>{row.bestAiVerdict}</span>
+                          </div>
+                        )}
+                      </div>
+                    )}
+
+                    {/* Average scores */}
+                    {row.avgDealScore !== null && (
+                      <div className="flex items-center gap-2 text-[9px] text-muted-foreground pt-1 border-t border-border/30">
+                        <span>Povprečje:</span>
+                        <span>Deal {row.avgDealScore}/100</span>
+                        {row.avgAiScore !== null && <span>· AI {row.avgAiScore}/10</span>}
+                      </div>
+                    )}
+                  </div>
+                )}
 
                 {/* Block info */}
                 {row.status === 'blocked' && row.blockType && (
@@ -369,7 +487,8 @@ export function ScraperMonitorWidget() {
                   </div>
                 )}
               </div>
-            ))}
+              );
+            })}
           </div>
         ) : (
           <div className="text-center py-6 text-xs text-muted-foreground">

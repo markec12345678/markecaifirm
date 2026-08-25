@@ -524,6 +524,18 @@ model ScraperStatus {
   newListings   Int      @default(0)
   // Error (if status=error)
   error         String?
+  // v9.69: AI evaluation results — kaj je AI mislil o najdenih oglasih
+  // Povprečne AI ocene za vse oglase v tem scrapu
+  avgDealScore   Int?    // 0-100 povprečni deal score
+  avgAiScore     Int?    // 1-10 povprečni AI score
+  bestDealScore  Int?    // najvišji deal score v tem scrapu
+  bestListingTitle String? // naslov najboljšega oglasa
+  bestListingUrl  String?  // URL najboljšega oglasa
+  bestAiVerdict   String?  // PRILIKA | SUMNJIVO | NEZANIMIVO (za best listing)
+  // Število oglasov po verdiktu
+  prilikaCount   Int     @default(0) // št. oglasov z verdiktom PRILIKA
+  sumnjivoCount  Int     @default(0)
+  nezanimivoCount Int    @default(0)
 
   @@index([monitorId, startedAt])
   @@index([status])

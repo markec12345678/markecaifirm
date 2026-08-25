@@ -38,6 +38,16 @@ interface ScraperStatusRow {
   listingsFound: number;
   newListings: number;
   error: string | null;
+  // v9.69: AI ocene
+  avgDealScore: number | null;
+  avgAiScore: number | null;
+  bestDealScore: number | null;
+  bestListingTitle: string | null;
+  bestListingUrl: string | null;
+  bestAiVerdict: string | null;
+  prilikaCount: number;
+  sumnjivoCount: number;
+  nezanimivoCount: number;
   monitor?: { name: string; source: string } | null;
 }
 
@@ -107,6 +117,16 @@ export async function GET() {
       listingsFound: r.listingsFound,
       newListings: r.newListings,
       error: r.error,
+      // v9.69: AI ocene
+      avgDealScore: r.avgDealScore,
+      avgAiScore: r.avgAiScore,
+      bestDealScore: r.bestDealScore,
+      bestListingTitle: r.bestListingTitle,
+      bestListingUrl: r.bestListingUrl,
+      bestAiVerdict: r.bestAiVerdict,
+      prilikaCount: r.prilikaCount,
+      sumnjivoCount: r.sumnjivoCount,
+      nezanimivoCount: r.nezanimivoCount,
       monitor: r.monitor ? { name: r.monitor.name, source: r.monitor.source } : null,
     }));
 
@@ -187,6 +207,16 @@ export async function POST(req: NextRequest) {
       listingsFound = 0,
       newListings = 0,
       error,
+      // v9.69: AI ocene
+      avgDealScore,
+      avgAiScore,
+      bestDealScore,
+      bestListingTitle,
+      bestListingUrl,
+      bestAiVerdict,
+      prilikaCount = 0,
+      sumnjivoCount = 0,
+      nezanimivoCount = 0,
     } = body;
 
     if (!source || !targetUrl) {
@@ -209,6 +239,16 @@ export async function POST(req: NextRequest) {
         listingsFound,
         newListings,
         error: error ?? null,
+        // v9.69: AI ocene
+        avgDealScore: avgDealScore ?? null,
+        avgAiScore: avgAiScore ?? null,
+        bestDealScore: bestDealScore ?? null,
+        bestListingTitle: bestListingTitle ?? null,
+        bestListingUrl: bestListingUrl ?? null,
+        bestAiVerdict: bestAiVerdict ?? null,
+        prilikaCount,
+        sumnjivoCount,
+        nezanimivoCount,
         finishedAt: status !== 'running' ? new Date() : null,
         durationMs: status !== 'running' ? 0 : null,
       },

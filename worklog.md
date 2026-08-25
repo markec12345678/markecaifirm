@@ -23279,3 +23279,75 @@ Stage Summary:
   3. stealth-mode (realistic headers)
   4. captcha-solve (2captcha/anti-captcha/capmonster)
   5. playwright (pravi headless browser, v9.68) ← NOVO
+
+---
+Task ID: v9.69
+Agent: main
+Task: Scraper indikator — AI ocene, live progress, found listings, če dela ali ne
+
+Work Log:
+- Uporabnik: "ali obstaja indikator ko scrapa kaj scrapa koliko casa sproti ce kaj nasel kaksno oceno ima oglas ki mu je dal ai model itd ce se nic ne dogaja ko scrapa neves ce sploh dela"
+- Dopolnil ScraperStatus DB model z 9 novimi polji:
+  * avgDealScore (Int?) — povprečni deal score
+  * avgAiScore (Int?) — povprečni AI score (1-10)
+  * bestDealScore (Int?) — najvišji deal score v scrapu
+  * bestListingTitle (String?) — naslov najboljšega oglasa
+  * bestListingUrl (String?) — URL najboljšega oglasa
+  * bestAiVerdict (String?) — PRILIKA/SUMNJIVO/NEZANIMIVO
+  * prilikaCount (Int, default 0) — št. oglasov z verdiktom PRILIKA
+  * sumnjivoCount (Int, default 0)
+  * nezanimivoCount (Int, default 0)
+- Posodobil /api/scraper-status:
+  * ScraperStatusRow interface z novimi polji
+  * GET mapira nova polja v odgovor
+  * POST sprejema nova polja ob create
+- Posodobil ScraperMonitorWidget z 3 novimi sekcijami:
+
+1. LIVE DURATION INDIKATOR (ko scraper dela):
+   - Sky blue pulse dot + timer "12s" / "1min 23s"
+   - Live se posodablja (Date.now() - startedAt)
+   - Animirana progress bar (gradient sky-500 → sky-300)
+
+2. AI OCENE (za končane scrape - success/bypassed):
+   - Stats row: "5 novih / 12 skupaj · 8.3s"
+   - Verdikt counts: "🎯 3 priložnosti · ⚠️ 2 sumljivih"
+   - Najboljši oglas (klikljiv do original URL):
+     * Naslov (truncated 40 chars)
+     * Deal Score badge (barva glede na score: ≥80 zelena, ≥50 rumena, drugače siva)
+     * AI verdikt (PRILIKA zelena, SUMNJIVO rumena)
+   - Povprečje: "Deal 67/100 · AI 7/10"
+
+3. EMPTY STATE (če ni aktivnih):
+   - "Trenutno ni aktivnega scrapanja."
+   - Hint: "Pojdi v Monitorji → Poženi za začetek"
+
+- Preveril typecheck: 0 napak
+- Preveril lint: 0 napak
+- Verifikacija:
+  * Footer: v9.69.0 ✓
+  * 0 napak v dev logu ✓
+
+Stage Summary:
+- MODIFIED: prisma/schema.prisma (9 novih polj v ScraperStatus)
+- MODIFIED: src/app/api/scraper-status/route.ts (AI ocene v GET + POST)
+- MODIFIED: src/components/dashboard/scraper-monitor-widget.tsx (live progress + AI ocene + best listing)
+- MODIFIED: src/lib/version.ts (v9.68→v9.69)
+- MODIFIED: README.md (badge v9.69)
+- Verzija: v9.69.0
+- Skupaj (v7.50 → v9.69): 215 verzij, 336 novih funkcij
+- SCRAPER INDIKATOR (po predlogu uporabnika):
+  * Prej: samo status (running/blocked) + newListings count
+  * Zdaj:
+    - Live duration timer (koliko časa že scrapa)
+    - Animirana progress bar (vidiš da dela)
+    - AI ocene: povprečni deal score, povprečni AI score
+    - Verdikt counts: koliko PRILIKA/SUMNJIVO/NEZANIMIVO
+    - Najboljši oglas z naslovom, URL, deal score, AI verdikt
+    - Povprečje vseh oglasov v scrapu
+  * Uporabnik zdaj VE:
+    - Ali scraper dela (pulse dot + timer)
+    - Kaj scrapa (URL)
+    - Koliko časa že (live timer)
+    - Koliko je našel (newListings/total)
+    - Kakšno oceno ima AI dal oglasom (deal score, verdikt)
+    - Kateri je najboljši (klikljiv do original)
