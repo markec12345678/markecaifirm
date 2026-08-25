@@ -46,6 +46,8 @@ import { SearchModal } from '@/components/dashboard/search-modal';
 import { HelpCenterContent } from '@/components/dashboard/help-center-content';
 // v9.54: Sidebar Navigation — opcijska levo stranska navigacija (po vzoru Linear/Vercel)
 import { SidebarNav } from '@/components/dashboard/sidebar-nav';
+// v9.55: AI Assistant — Natural Language Query interface (po vzoru Tableau AI / Metabase AI)
+import { AiAssistant } from '@/components/dashboard/ai-assistant';
 import { useAlertsStream } from '@/lib/use-alerts-stream';
 import { useAuth, LoginModal } from '@/components/dashboard/login-modal';
 // v8.45: Mobile-First Responsive Optimization — bottom nav + FAB + haptic
@@ -182,6 +184,8 @@ export default function Home() {
   const [cmdkOpen, setCmdkOpen] = useState(false); // v8.46: Command Palette (Cmd+K)
   const [onboardingOpen, setOnboardingOpen] = useState(false); // v8.50: First-Run Onboarding
   const [helpOpen, setHelpOpen] = useState(false);
+  // v9.55: AI Assistant state — Natural Language Query modal
+  const [aiAssistantOpen, setAiAssistantOpen] = useState(false);
   const [helpTab, setHelpTab] = useState<'shortcuts' | 'quickstart' | 'help'>('quickstart'); // v8.82: default to quickstart for new users. v9.52: added 'help' tab
   // v4.7: Mobile nav drawer
   const [mobileNavOpen, setMobileNavOpen] = useState(false);
@@ -314,11 +318,17 @@ export default function Home() {
         setCmdkOpen(true);
         return;
       }
+      // v9.55: Ctrl+J or Cmd+J → AI Assistant
+      if ((e.ctrlKey || e.metaKey) && e.key === 'j') {
+        e.preventDefault();
+        setAiAssistantOpen(true);
+        return;
+      }
       // Don't trigger shortcuts when typing in inputs
       const target = e.target as HTMLElement;
       if (target.tagName === 'INPUT' || target.tagName === 'TEXTAREA' || target.isContentEditable) return;
       // Don't trigger when dialog is open
-      if (searchOpen || cmdkOpen) return;
+      if (searchOpen || cmdkOpen || aiAssistantOpen) return;
 
       // v2.5: Tab navigation shortcuts
       const navMap: Record<string, View> = {
@@ -352,7 +362,7 @@ export default function Home() {
     };
     window.addEventListener('keydown', handler);
     return () => window.removeEventListener('keydown', handler);
-  }, [searchOpen, cmdkOpen]);
+  }, [searchOpen, cmdkOpen, aiAssistantOpen]);
 
   return (
     <div className="min-h-screen flex flex-col bg-background text-foreground pb-16 md:pb-0">
@@ -393,6 +403,17 @@ export default function Home() {
               >
                 <HelpCircle className="w-3.5 h-3.5" />
                 <span className="hidden lg:inline">Pomoč</span>
+              </button>
+              {/* v9.55: AI Assistant button — Cmd+J shortcut */}
+              <button
+                onClick={() => setAiAssistantOpen(true)}
+                className="flex items-center gap-1.5 px-3 py-1.5 rounded border border-primary/40 bg-primary/10 hover:bg-primary/20 text-primary transition-colors"
+                title="AI Asistent (Ctrl+J) — Vprašaj AI o svojih trgovinah"
+                aria-label="Odpri AI asistent"
+              >
+                <Sparkles className="w-3.5 h-3.5" />
+                <span className="hidden lg:inline font-medium">Vprašaj AI</span>
+                <kbd className="hidden xl:inline text-[9px] bg-background/60 px-1 py-0.5 rounded border border-primary/30 font-mono">⌘J</kbd>
               </button>
               {/* v8.47: Theme toggle */}
               <ThemeToggle />
@@ -1026,6 +1047,8 @@ Invoke-WebRequest -Uri "http://localhost:3000/api/cron/run-all" -Method POST`}
       <SearchModal open={searchOpen} onOpenChange={setSearchOpen} onNavigate={setView} />
       {/* v8.46: Command Palette (Cmd+K) — Raycast/Spotlight-style search */}
       <CommandPalette open={cmdkOpen} onOpenChange={setCmdkOpen} onNavigate={(v) => setView(v as View)} />
+      {/* v9.55: AI Assistant — Natural Language Query modal (Cmd+J) */}
+      <AiAssistant open={aiAssistantOpen} onOpenChange={setAiAssistantOpen} />
 
       {/* v8.50: First-Run Onboarding Wizard */}
       <OnboardingWizard open={onboardingOpen} onComplete={() => setOnboardingOpen(false)} />

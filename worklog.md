@@ -22437,3 +22437,70 @@ Stage Summary:
 - MILESTONE: 200. verzija aplikacije! 🎉
 - Naslednji koraki po roadmap-u uporabnika:
   * v9.55 — Keyboard-first expansion (g d, g t, g l, /, ?)
+
+---
+Task ID: v9.55
+Agent: main
+Task: AI Assistant — Natural Language Query interface (po vzoru Tableau AI / Metabase AI)
+
+Work Log:
+- Raziščel 2026 trend: Natural Language Query je #1 feature v SaaS dashboard-ih (Tableau AI, Metabase AI, Databricks AI/BI).
+- Konkurenca (BuyBotPro, Sellerboard) tega NIMA — diferenciacija.
+- Ustvaril backend src/app/api/ai/assistant/route.ts:
+  * POST endpoint — sprejme { query, history } in vrne AI odgovor
+  * GET endpoint — vrne 8 suggested queries za UI chips
+  * gatherContext() — zbira podatke o uporabniku (soldTrades, heldTrades, monitors, listings, alerts)
+  * Izračuna: totalProfit, thisMonthProfit, lastMonthProfit, winRate, ROI per kategorija, held aging
+  * buildSystemPrompt() — AI navodila v slovenščini z formatom (💰 kratko, 📊 podrobnosti, 🎯 akcije)
+  * extractSuggestedActions() — parse AI odgovor za predlagane akcije
+  * Fallback provider podpora (če glavni faila)
+  * Error handling z jasnimi sporočili (npr. "AI provider ni konfiguriran")
+  * maxDuration=60s (AI klici lahko trajajo)
+- Ustvaril frontend src/components/dashboard/ai-assistant.tsx:
+  * Chat modal z zgodovino (zadnjih 6 sporočil za kontekst)
+  * 8 suggestion chip-ov za hitri start (💰🎯📊🛒📈🔥⏱️💡)
+  * Markdown-style rendering odgovorov (whitespace-pre-wrap)
+  * Predlagane akcije so klikljive → pošlje kot novo vprašanje
+  * Loading state z "AI razmišlja..." + spinner
+  * Error state z rdečo ikono
+  * Auto-scroll na najnovejši odgovor
+  * Enter za pošiljanje, Shift+Enter za novo vrstico, Esc za zapiranje
+  * Char counter (500 znakov max)
+  * User/Assistant avatarji (User/Bot ikone)
+- Integriral v src/app/page.tsx:
+  * "Vprašaj AI" gumb v header (Sparkles ikona, primary barva, ⌘J badge)
+  * Cmd+J / Ctrl+J shortcut za odprtje
+  * AiAssistant modal render na dnu page-a
+  * aiAssistantOpen state + included v keyboard handler check
+- Preveril lint (novih datotek): 0 napak ✨
+- Preveril typecheck: 0 napak ✨
+- Verifikacija (Agent Browser):
+  * "Vprašaj AI" gumb najden v header ✓
+  * Title: "AI Asistent (Ctrl+J) — Vprašaj AI o svojih trgovinah" ✓
+  * Cmd+J shortcut odpre modal ✓
+  * Modal prikazuje: heading "AI ASISTENT", welcome screen, 8 suggestion chip-ov ✓
+  * Textbox input + Pošlji gumb (disabled ko prazen) ✓
+  * Footer: v9.55.0 ✓
+  * Screenshot: download/ai-assistant-v9.55.png
+  * Escape zapre modal ✓
+  * 0 napak v dev logu ✓
+
+Stage Summary:
+- NEW: src/app/api/ai/assistant/route.ts (POST + GET endpoint z gatherContext + system prompt v slovenščini)
+- NEW: src/components/dashboard/ai-assistant.tsx (chat interface z suggestion chips + history)
+- MODIFIED: src/app/page.tsx (Vprašaj AI gumb + Cmd+J shortcut + modal render)
+- MODIFIED: src/lib/version.ts (v9.54→v9.55)
+- MODIFIED: README.md (badge v9.55)
+- Verzija: v9.55.0
+- Skupaj (v7.50 → v9.55): 201 verzij, 322 novih funkcij
+- INOVACIJA (po vzoru Tableau AI / Metabase AI):
+  * Prej (v9.54): uporabnik ročno išče podatke po dashboard-u
+  * Zdaj  (v9.55): uporabnik VPRAŠA AI v naravnem jeziku → dobi strukturiran odgovor
+  * AI ima kontekst o: profit, ROI per kategorija, held inventory z aging, top priložnosti
+  * Format: 💰 kratko + 📊 podrobnosti + 🎯 predlagane akcije
+  * Predlagane akcije so klikljive → nadaljuje pogovor
+  * Konkurenca (BuyBotPro, Sellerboard) tega NIMA — diferenciacija
+- Naslednji možni koraki:
+  * v9.56 — Gamification (streaks + badges) — engagement boost
+  * v9.57 — Smart Notification Digest — reši notification fatigue
+  * v9.58 — Predictive Analytics & Anomaly Detection — proaktivno opozarjanje
