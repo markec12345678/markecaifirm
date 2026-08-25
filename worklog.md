@@ -22250,3 +22250,66 @@ Stage Summary:
   * v9.52 — Professional Theme (subtilnejše barve kot opcija)
   * v9.53 — Sidebar Toggle (večja sprememba, testirati na power-userjih)
   * v9.54 — Keyboard-first expansion (g d, g t, g l, /, ?)
+
+---
+Task ID: v9.52
+Agent: main
+Task: In-app Help Center — kategorizirani članki po vzoru Sellerboard (27 člankov v 7 kategorijah)
+
+Work Log:
+- Uporabnik: "kako imajo navodila za uporabo narejena podobni programi najdi na spletu"
+- Raziščel help centre konkurence:
+  * Sellerboard: help.sellerboard.com — 6 kategorij + search + webinarji
+  * BuyBotPro: 7-day free course + articles + FAQ
+  * SaaS best practices (userpilot, appcues, helphero): 3-5 onboarding items, in-app video, FAQ
+- Ugotovitev: Sellerboard ima najboljšo strukturo za naš tip aplikacije
+- Ustvaril src/components/dashboard/help-center-content.tsx:
+  * 🔍 Iskalnik ("Kako ti lahko pomagamo?") z real-time filter
+  * 📚 7 kategorij z 27 članki v slovenščini:
+    1. 🚀 Začetek (4 članki) — kaj je app, prvi koraki, monitorji, cron
+    2. 🔍 Monitorji & iskanje (4 članki) — dodajanje, portali, iskalnik, tags
+    3. 🤖 AI analiza (4 članki) — Deal Score, Buy Score, Decision Accuracy, Smart Price
+    4. 🛒 Skladišče & trgovine (4 članki) — dodajanje trade, flip status, kalkulator, restock
+    5. 📊 Analitika & poročila (4 članki) — deal flow, forecast, poročila, davcni PDF
+    6. ⚙️ Nastavitve & integracije (4 članki) — AI provider, Telegram, email/PWA, webhooks
+    7. 🔧 Troubleshooting (3 članki) — AI ne deluje, monitor ne najde, cache
+  * ❓ FAQ (7 pogostih vprašanj) — collapsible z <details>
+  * 🎥 Video tutoriji link
+  * ✉️ Kontakt (24h response)
+  * Article detail view z markdown-like formatting
+  * Search highlight + category filter
+- Integriral v src/app/page.tsx:
+  * Dodal 3. tab "📚 Pomoč" v obstoječi help overlay
+  * Modal širši na help tab (max-w-4xl namesto max-w-2xl)
+  * Skril "? shortcut hint" ko je uporabnik že na help tab
+  * Posodobil helpTab state: dodali 'help' union member
+- Preveril lint: 0 napak ✨
+- Preveril typecheck: 0 napak ✨
+- Verifikacija (Agent Browser):
+  * Help overlay se odpre (klik "Pomoč" v header ali pritisk ?)
+  * 3 tab-i: Quick Start | Bližnjice | Pomoč ✓
+  * Help Center prikazuje: "27 člankov v 7 kategorijah" ✓
+  * Iskalnik deluje: "Buy Score" → 4 rezultati ✓
+  * Kategorije klikljive (7 kategorij + FAQ + Video + Kontakt) ✓
+  * Modal širši na help tab (max-w-4xl) ✓
+  * Screenshot: download/help-center-v9.52.png
+  * Footer: v9.52.0 ✓
+
+Stage Summary:
+- NEW: src/components/dashboard/help-center-content.tsx (Help Center z 27 članki)
+- MODIFIED: src/app/page.tsx (3. tab "Pomoč" + wider modal on help tab)
+- MODIFIED: src/lib/version.ts (v9.51→v9.52)
+- MODIFIED: README.md (badge v9.52)
+- Verzija: v9.52.0
+- Skupaj (v7.50 → v9.52): 198 verzij, 319 novih funkcij
+- DOKUMENTACIJSKA IZBOLJŠAVA (po vzoru Sellerboard):
+  * Prej (v9.51): samo Quick Start checklist + keyboard shortcuts
+  * Zdaj  (v9.52): poln Help Center z 27 članki v 7 kategorijah + iskalnik + FAQ
+  * Vsak članek: naslov + povzetek + podrobnosti (markdown-style)
+  * Iskalnik: real-time filter čez naslove, povzetke, vsebino
+  * FAQ: 7 pogostih vprašanj (collapsible)
+  * Video tutoriji + Kontakt link
+- Naslednji koraki po roadmap-u uporabnika:
+  * v9.53 — Professional Theme (subtilnejše barve kot opcija)
+  * v9.54 — Sidebar Toggle (večja sprememba, testirati na power-userjih)
+  * v9.55 — Keyboard-first expansion (g d, g t, g l, /, ?)

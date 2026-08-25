@@ -42,6 +42,8 @@ import { ErrorBoundary } from '@/components/error-boundary';
 import { PwaInstallPrompt } from '@/components/dashboard/pwa-install-prompt';
 import { ProfileSwitcher } from '@/components/dashboard/profile-switcher';
 import { SearchModal } from '@/components/dashboard/search-modal';
+// v9.52: Help Center Content — kategorizirani članki po vzoru Sellerboard
+import { HelpCenterContent } from '@/components/dashboard/help-center-content';
 import { useAlertsStream } from '@/lib/use-alerts-stream';
 import { useAuth, LoginModal } from '@/components/dashboard/login-modal';
 // v8.45: Mobile-First Responsive Optimization — bottom nav + FAB + haptic
@@ -140,7 +142,7 @@ export default function Home() {
   const [cmdkOpen, setCmdkOpen] = useState(false); // v8.46: Command Palette (Cmd+K)
   const [onboardingOpen, setOnboardingOpen] = useState(false); // v8.50: First-Run Onboarding
   const [helpOpen, setHelpOpen] = useState(false);
-  const [helpTab, setHelpTab] = useState<'shortcuts' | 'quickstart'>('quickstart'); // v8.82: default to quickstart for new users
+  const [helpTab, setHelpTab] = useState<'shortcuts' | 'quickstart' | 'help'>('quickstart'); // v8.82: default to quickstart for new users. v9.52: added 'help' tab
   // v4.7: Mobile nav drawer
   const [mobileNavOpen, setMobileNavOpen] = useState(false);
   // v8.45: Quick Add Trade modal state (triggered by MobileFAB on mobile).
@@ -756,7 +758,7 @@ export default function Home() {
           onClick={() => setHelpOpen(false)}
         >
           <div
-            className="bg-card border border-border rounded-lg max-w-2xl w-full max-h-[85vh] overflow-y-auto p-6 shadow-xl"
+            className={`bg-card border border-border rounded-lg w-full max-h-[85vh] overflow-y-auto p-6 shadow-xl ${helpTab === 'help' ? 'max-w-4xl' : 'max-w-2xl'}`}
             onClick={(e) => e.stopPropagation()}
           >
             <div className="flex items-center justify-between mb-4">
@@ -779,6 +781,12 @@ export default function Home() {
                 className={`px-3 py-1.5 text-xs font-medium border-b-2 transition-colors ${helpTab === 'shortcuts' ? 'border-primary text-primary' : 'border-transparent text-muted-foreground hover:text-foreground'}`}
               >
                 ⌨️ Bližnjice
+              </button>
+              <button
+                onClick={() => setHelpTab('help')}
+                className={`px-3 py-1.5 text-xs font-medium border-b-2 transition-colors ${helpTab === 'help' ? 'border-primary text-primary' : 'border-transparent text-muted-foreground hover:text-foreground'}`}
+              >
+                📚 Pomoč
               </button>
             </div>
 
@@ -910,9 +918,18 @@ Invoke-WebRequest -Uri "http://localhost:3000/api/cron/run-all" -Method POST`}
                 ))}
               </div>
             )}
-            <p className="text-[11px] text-muted-foreground mt-4 text-center">
-              Pritisni <kbd className="px-1 py-0.5 bg-background border border-border rounded text-xs">?</kbd> za prikaz tega okna.
-            </p>
+
+            {/* v9.52: Help Center Tab — kategorizirani članki po vzoru Sellerboard */}
+            {helpTab === 'help' && (
+              <HelpCenterContent />
+            )}
+
+            {/* v8.82: Hint for '?' shortcut — skrij na help tab (ker si že tam) */}
+            {helpTab !== 'help' && (
+              <p className="text-[11px] text-muted-foreground mt-4 text-center">
+                Pritisni <kbd className="px-1 py-0.5 bg-background border border-border rounded text-xs">?</kbd> za prikaz tega okna.
+              </p>
+            )}
           </div>
         </div>
       )}
