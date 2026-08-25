@@ -76,9 +76,8 @@ export function DashboardView({ onNavigate }: ViewProps) {
   // v5.6: Dashboard customization
   const [widgetOrder, setWidgetOrder] = useState<WidgetId[]>([...WIDGET_IDS]);
   const [customizeMode, setCustomizeMode] = useState(false);
-  // v9.50: Dashboard tabs — progressive disclosure within Dashboard
-  // Pregled (default) | Analitika | Trgovine | AI
-  const [dashboardTab, setDashboardTab] = useState<'pregled' | 'analitika' | 'trgovine' | 'ai'>('pregled');
+  // v9.72: Dashboard je zdaj en sam "Decision Center" — brez tab-ov.
+  // Analitika/Trgovine/AI so zdaj ločene navigacijske kategorije.
   // v8.39: Goal tracker state moved into <GoalTrackerCard /> component (self-fetches).
   // v8.36: Quick Add Trade modal (floating button)
   const [showQuickAddTrade, setShowQuickAddTrade] = useState(false);
@@ -285,66 +284,6 @@ export function DashboardView({ onNavigate }: ViewProps) {
         </div>
       </div>
 
-      {/* v9.50: Dashboard tabs — progressive disclosure within Dashboard */}
-      <div className="flex items-center gap-1 border-b border-border mb-4 overflow-x-auto touch-scroll">
-        <button
-          onClick={() => { haptic.light(); setDashboardTab('pregled'); }}
-          aria-label="Pregled — glavne metrike in dnevni briefing"
-          aria-current={dashboardTab === 'pregled' ? 'page' : undefined}
-          className={cn(
-            'flex items-center gap-2 px-4 py-2.5 text-sm font-medium border-b-2 -mb-px transition-colors whitespace-nowrap',
-            dashboardTab === 'pregled'
-              ? 'border-primary text-primary terminal-glow'
-              : 'border-transparent text-muted-foreground hover:text-foreground hover:border-border'
-          )}
-        >
-          <Activity className="w-4 h-4" />
-          <span className="uppercase tracking-wider">Pregled</span>
-        </button>
-        <button
-          onClick={() => { haptic.light(); setDashboardTab('analitika'); }}
-          aria-label="Analitika — deal flow, funel, niše, velocity"
-          aria-current={dashboardTab === 'analitika' ? 'page' : undefined}
-          className={cn(
-            'flex items-center gap-2 px-4 py-2.5 text-sm font-medium border-b-2 -mb-px transition-colors whitespace-nowrap',
-            dashboardTab === 'analitika'
-              ? 'border-primary text-primary terminal-glow'
-              : 'border-transparent text-muted-foreground hover:text-foreground hover:border-border'
-          )}
-        >
-          <BarChart3 className="w-4 h-4" />
-          <span className="uppercase tracking-wider">Analitika</span>
-        </button>
-        <button
-          onClick={() => { haptic.light(); setDashboardTab('trgovine'); }}
-          aria-label="Trgovine — flip status, trade stats, kalkulator, profit timeline"
-          aria-current={dashboardTab === 'trgovine' ? 'page' : undefined}
-          className={cn(
-            'flex items-center gap-2 px-4 py-2.5 text-sm font-medium border-b-2 -mb-px transition-colors whitespace-nowrap',
-            dashboardTab === 'trgovine'
-              ? 'border-primary text-primary terminal-glow'
-              : 'border-transparent text-muted-foreground hover:text-foreground hover:border-border'
-          )}
-        >
-          <TrendingUp className="w-4 h-4" />
-          <span className="uppercase tracking-wider">Trgovine</span>
-        </button>
-        <button
-          onClick={() => { haptic.light(); setDashboardTab('ai'); }}
-          aria-label="AI — AI insights, decision accuracy, buy opportunity, cross-platform"
-          aria-current={dashboardTab === 'ai' ? 'page' : undefined}
-          className={cn(
-            'flex items-center gap-2 px-4 py-2.5 text-sm font-medium border-b-2 -mb-px transition-colors whitespace-nowrap',
-            dashboardTab === 'ai'
-              ? 'border-primary text-primary terminal-glow'
-              : 'border-transparent text-muted-foreground hover:text-foreground hover:border-border'
-          )}
-        >
-          <Sparkles className="w-4 h-4" />
-          <span className="uppercase tracking-wider">AI</span>
-        </button>
-      </div>
-
       {/* v5.6: Customize mode info */}
       {customizeMode && (
         <div className="bg-primary/5 border border-primary/20 rounded p-2 text-xs text-primary text-center">
@@ -353,14 +292,9 @@ export function DashboardView({ onNavigate }: ViewProps) {
       )}
 
       {/* ════════════════════════════════════════════════════════════════════
-          v9.50: TAB CONTENT — progressive disclosure within Dashboard
+          v9.72: DECISION CENTER — en sam pregled s prioritetno hierarhijo
           ════════════════════════════════════════════════════════════════════ */}
-
-      {/* ────────────────────────────────────────────────────────────────────
-          TAB 1: PREGLED — glavne metrike + dnevni briefing + cilj + aktivnost
-          ──────────────────────────────────────────────────────────────────── */}
-      {dashboardTab === 'pregled' && (
-        <>
+      <>
           {/* v9.51: PINNED KPI ROW — 4 ključne metrike na vrhu (stanje v 3 sekundah)
               💰 Profit | 🚨 Alerti | 🎯 Cilj | 📊 Win Rate
               Subtilne barve, klikljivi za navigacijo. */}
@@ -647,78 +581,9 @@ export function DashboardView({ onNavigate }: ViewProps) {
             <ActivityFeed />
           </WidgetWrapper>
         </>
-      )}
-
-      {/* ────────────────────────────────────────────────────────────────────
-          TAB 2: ANALITIKA — deal flow, funel, niše, velocity, insights, forecast
-          ──────────────────────────────────────────────────────────────────── */}
-      {dashboardTab === 'analitika' && (
-        <>
-          <WidgetWrapper id="aiInsights" order={widgetOrder} customizeMode={customizeMode} onMove={moveWidget}>
-            <AiInsightsWidget />
-            <DealFlowWidget onNavigate={onNavigate} />
-            <DealFunnelWidget />
-            <NicheScoreWidget onNavigate={onNavigate} />
-            <DealVelocityWidget />
-          </WidgetWrapper>
-
-          {/* v8.40: Trade Insights Deep Dive */}
-          <TradeInsightsCard />
-
-          <ProfitForecastCard />
-          <MonthOverMonthCard />
-          <TagPerformanceCard />
-        </>
-      )}
-
-      {/* ────────────────────────────────────────────────────────────────────
-          TAB 3: TRGOVINE — flip status, trade stats, kalkulator, profit timeline, poročila
-          ──────────────────────────────────────────────────────────────────── */}
-      {dashboardTab === 'trgovine' && (
-        <>
-          {/* Flip status — aging alerts for held inventory */}
-          <FlipStatusWidget onNavigate={onNavigate} />
-
-          {/* v8.36: Trade Stats card */}
-          <TradeStatsCard />
-
-          {/* v8.37: Deal Calculator + Profit Timeline */}
-          <DealCalculatorWidget />
-          <ProfitTimelineChart />
-
-          {/* v8.41: Weekly Summary Report */}
-          <WeeklySummaryCard />
-
-          {/* v8.43: Annual Summary + Tax Report PDF */}
-          <AnnualSummaryCard onNavigate={onNavigate} />
-
-          {/* v8.44: Smart Restock Recommendations */}
-          <RestockRecommendationsCard />
-
-          {/* Outcome summary — post-sale quality analysis */}
-          <OutcomeSummaryCard />
-
-          {/* v4.5: Skladišče dashboard widget */}
-          <WidgetWrapper id="skladisceWidget" order={widgetOrder} customizeMode={customizeMode} onMove={moveWidget}>
-            <SkladisceWidget onNavigate={onNavigate} />
-          </WidgetWrapper>
-        </>
-      )}
-
-      {/* ────────────────────────────────────────────────────────────────────
-          TAB 4: AI — AI insights, decision accuracy, buy opportunity, cross-platform
-          ──────────────────────────────────────────────────────────────────── */}
-      {dashboardTab === 'ai' && (
-        <>
-          <BuyOpportunitySummaryCard />
-          <DecisionAccuracyCard />
-          <PlatformPriceComparisonCard />
-          <SavedSearchStatusCard />
-        </>
-      )}
 
       {/* ════════════════════════════════════════════════════════════════════
-          END TAB CONTENT
+          END DECISION CENTER
           ════════════════════════════════════════════════════════════════════ */}
 
       {/* Quick start hint */}
