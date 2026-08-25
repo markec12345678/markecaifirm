@@ -162,6 +162,9 @@ model Settings {
   autoPilotAnomalyReason         String?    // why suspended (e.g. "8 akcij v 1 uri — possible loop")
   autoPilotHourlyExecCount       Int       @default(0)  // count of executions in current hour window
   autoPilotHourlyWindowStart     DateTime?  // start of current 1-hour window
+  // v9.65: Internal Scheduler settings (no external cron needed)
+  internalSchedulerEnabled        Boolean  @default(true)   // master switch — default ON
+  internalSchedulerIntervalMin    Int      @default(30)      // interval in minutes (5-1440)
   // Metadata
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt

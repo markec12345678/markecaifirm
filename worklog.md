@@ -23055,3 +23055,64 @@ Stage Summary:
   * Shimmer effect: profesionalen skeleton loader class
   * Time toggle: klik na čas preklopi relativni → exact datum
   * Format utility: centralen, dosleden, slovenski formati povsod
+
+---
+Task ID: v9.65
+Agent: main
+Task: Internal Scheduler — ne rabi zunanjega cron-a več!
+
+Work Log:
+- Uporabnik: "zakaj moram cron nastavljat a nemoremo to taoj naredit"
+- Raziščel forume: Next.js instrumentation.ts hook omogoča zagon kode ob server startup.
+- Ker je aplikacija local-first (stalni Node.js proces, ne serverless), setInterval deluje zanesljivo.
+- Ustvaril src/instrumentation.ts — Next.js native startup hook:
+  * register() funkcija se zažene enkrat ob server start
+  * Samo na nodejs runtime (ne edge)
+  * Uvozi in zažene startInternalScheduler()
+- Ustvaril src/lib/scheduler/internal-scheduler.ts:
+  * startInternalScheduler() — setInterval z configurable intervalom (default 30 min)
+  * runScheduledTask() — klice runDueMonitors() + maybeSendHeartbeat() direktne (ne HTTP)
+  * stopInternalScheduler() — cleanup ob SIGTERM/SIGINT
+  * triggerManualRun() — za ročni trigger iz UI
+  * getSchedulerStatus() — vrača running, lastRunAt, totalRuns, successfulRuns, itd.
+  * restartScheduler() — ko uporabnik spremeni interval
+  * 5s delay ob startu da se server popolnoma starta
+- Dodal v prisma/schema.prisma 2 novi polji v Settings:
+  * internalSchedulerEnabled (Boolean, default true — ON by default!)
+  * internalSchedulerIntervalMin (Int, default 30)
+- Ustvaril src/app/api/scheduler/route.ts:
+  * GET — vrne status + config
+  * POST z 3 akcijami:
+    - 'trigger' — ročno zaženi scheduled run
+    - 'restart' — restart z novim intervalom
+    - 'config' — posodobi enabled/intervalMin
+- db:push sinhroniziral DB
+- Preveril typecheck: 0 napak (popravil runDueMonitors return type)
+- Preveril lint: 0 napak
+- Verifikacija (curl + dev log):
+  * API GET: config={enabled:true, intervalMin:30} ✓
+  * API POST trigger: status=success, totalRuns=1, message="Uspešno izvedeno — monitorji pognani" ✓
+  * Dev log: "internal-scheduler: Run completed: monitors ran=0, skipped=0, heartbeat=skip" ✓
+  * Scheduler se samodejno zažene ob server start ✓
+  * Footer: v9.65.0 ✓
+
+Stage Summary:
+- NEW: src/instrumentation.ts (Next.js startup hook)
+- NEW: src/lib/scheduler/internal-scheduler.ts (setInterval scheduler)
+- NEW: src/app/api/scheduler/route.ts (status + trigger + config API)
+- MODIFIED: prisma/schema.prisma (internalSchedulerEnabled + internalSchedulerIntervalMin)
+- MODIFIED: src/lib/version.ts (v9.64→v9.65)
+- MODIFIED: README.md (badge v9.65)
+- Verzija: v9.65.0
+- Skupaj (v7.50 → v9.65): 211 verzij, 332 novih funkcij
+- REŠITEV UPORABNIKOVE TEŽAVE:
+  * Prej: uporabnik je moral registrirati na cron-job.org, nastaviti URL, interval, itd.
+  * Zdaj: scheduler se samodejno zažene ob server start — NIč ne rabi nastavljati!
+  * Default: ON, vsakih 30 minut
+  * Configurable v /api/scheduler (lahko spremeni interval ali izklopi)
+  * Zunanji cron še vedno podprt kot optional backup (za serverless deploy)
+- LOCAL-FIRST FILOZOFIJA:
+  * Vse v aplikaciji — brez zunanjih servisov
+  * Brezplačno (cron-job.org ima limite na brezplačnem tieru)
+  * Samodejno (starta z aplikacijo, ustavi z aplikacijo)
+  * Transparentno (status prikazan v API-ju)
