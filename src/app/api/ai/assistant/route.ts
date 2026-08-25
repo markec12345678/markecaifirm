@@ -54,7 +54,7 @@ async function gatherContext(): Promise<string> {
       orderBy: { buyDate: 'desc' },
     }),
     db.monitor.findMany({
-      select: { id: true, name: true, source: true, isActive: true, url: true },
+      select: { id: true, name: true, source: true, isActive: true },
     }),
     db.listing.findMany({
       where: { isHidden: false },

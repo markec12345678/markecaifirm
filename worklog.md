@@ -22504,3 +22504,72 @@ Stage Summary:
   * v9.56 — Gamification (streaks + badges) — engagement boost
   * v9.57 — Smart Notification Digest — reši notification fatigue
   * v9.58 — Predictive Analytics & Anomaly Detection — proaktivno opozarjanje
+
+---
+Task ID: v9.56
+Agent: main
+Task: Gamification — streaks, badges, level system (engagement boost po vzoru Duolingo/Strava)
+
+Work Log:
+- Raziščil: gamification boost user engagement za 62% (StriveClub) / 100-150% (AmplifAI).
+- Ustvaril backend src/app/api/gamification/route.ts:
+  * GET endpoint — izračuna vse iz obstoječih podatkov (brez novega DB modela)
+  * 6 level-ov: Beginner (🌱) → Trader (🛒) → Pro (⭐) → Expert (🏆) → Master (👑) → Legend (💎)
+  * Streak tracking: zaporedni dnevi z aktivnostjo (trade, monitor run, alert)
+  * 19 badge-ov v 6 kategorijah:
+    - Trades (5): first-trade, 10/25/50/100 trades
+    - Profit (4): 100/500/1000/5000€
+    - Streak (3): 7/30/100 dni
+    - AI (2): first-ai, ai-100
+    - Goals (2): goal-achieved, goal-exceeded
+    - Special (3): win-rate-90, first-loss, category-master
+  * Progress tracking za nedosežene badge-e
+  * Recent achievements timeline (zadnjih 5)
+  * Level progression z nextLevel + progressToNext
+- Ustvaril frontend src/components/dashboard/gamification-widget.tsx:
+  * Level badge (velika ikona + ime + opis)
+  * Streak counter (🔥 flame, zelen dot če aktiven danes)
+  * Progress bar do naslednjega level-a (gradient primary → amber)
+  * Zadnji dosežki (gold chips z icon + name)
+  * Badge grid (6 kategorij, klikljivi za expand/collapse)
+  * Locked badges z grayscale + progress bar + Lock ikona
+  * Unlocked badges z barva + hover efekt
+  * Expand/collapse za prikaz vseh badge-ov
+  * Streak stats (longest, badges unlocked, level) v expanded
+  * Auto-refresh vsakih 2 minuti
+  * Loading skeleton z animate-pulse
+- Integriral v DashboardView Pregled tab:
+  * Postavljen med GoalTracker in SetupHealthBanner
+  * Logičen vrstni red: Daily Briefing → Goal Tracker → Gamification → Setup → Activity Feed
+- Preveril lint (nove datoteke): 0 napak ✨
+- Popravil 2 type error-ja:
+  * Gamification: `let progressToNext = null` → ekspliciten tip `ProgressToNext | null`
+  * Assistant: `url: true` v Monitor select → odstranjeno (Monitor nima `url` polja, samo `sourceUrl`)
+- Preveril typecheck: 0 napak ✨
+- Verifikacija (Agent Browser):
+  * API test: Level 3 Pro ⭐, Streak 2, Badges 8/19 (42%), Next: Expert ✓
+  * UI: "Tvoji Dosežki" prisoten v DOM ✓
+  * Footer: v9.56.0 ✓
+  * VLM full-page: "gamification widget z naslovom 'TVOJI DOSEŽKI' je viden. Prikazuje level, streak, badge-e." ✓
+  * Screenshot: download/gamification-fullpage-v9.56.png
+  * 0 napak v dev logu ✓
+
+Stage Summary:
+- NEW: src/app/api/gamification/route.ts (GET endpoint z level/streak/badges izračun)
+- NEW: src/components/dashboard/gamification-widget.tsx (UI widget)
+- MODIFIED: src/components/dashboard/dashboard-view.tsx (GamificationWidget v Pregled tab)
+- MODIFIED: src/app/api/ai/assistant/route.ts (fix: odstranjen url iz Monitor select)
+- MODIFIED: src/lib/version.ts (v9.55→v9.56)
+- MODIFIED: README.md (badge v9.56)
+- Verzija: v9.56.0
+- Skupaj (v7.50 → v9.56): 202 verzij, 323 novih funkcij
+- ENGAGEMENT BOOST (po vzoru Duolingo/Strava):
+  * 6 level-ov z napredkom (Beginner → Legend)
+  * 19 badge-ov v 6 kategorijah
+  * Streak counter z daily aktivnostjo
+  * Progress bars za nedosežene badge-e
+  * Recent achievements timeline
+  * Po raziskavi: +62% monthly active users
+- Naslednji možni koraki:
+  * v9.57 — Smart Notification Digest (AI summary namesto spam)
+  * v9.58 — Predictive Analytics & Anomaly Detection

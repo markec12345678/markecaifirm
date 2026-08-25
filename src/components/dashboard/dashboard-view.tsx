@@ -53,6 +53,8 @@ import { SkladisceWidget } from './dashboard/skladisce-widget';
 import { WidgetWrapper } from './dashboard/widget-wrapper';
 // v9.51: Pinned KPI Row — 4 ključne metrike na vrhu Pregled tab-a
 import { PinnedKpiRow } from './pinned-kpi-row';
+// v9.56: Gamification Widget — streaks, badges, level system
+import { GamificationWidget } from './gamification-widget';
 
 export function DashboardView({ onNavigate }: ViewProps) {
   const [stats, setStats] = useState<Stats | null>(null);
@@ -613,6 +615,9 @@ export function DashboardView({ onNavigate }: ViewProps) {
 
           {/* v8.39: Goal Tracker Dashboard Card */}
           <GoalTrackerCard />
+
+          {/* v9.56: Gamification Widget — streaks, badges, level system (engagement boost) */}
+          <GamificationWidget />
 
           {/* v8.83: Setup Health Banner — shows setup progress, auto-hides when complete */}
           <SetupHealthBanner />
