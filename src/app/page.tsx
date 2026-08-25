@@ -2,13 +2,14 @@
 
 import { useEffect, useState, useRef, memo } from 'react';
 import dynamic from 'next/dynamic';
-import { Activity, Bell, Settings, ListPlus, Zap, RefreshCw, AlertCircle, LayoutGrid, BarChart3, Search, Heart, TrendingUp, History, Eye, PieChart, Menu, X, Users, Sparkles, Package, DollarSign, FileText, Shield, HelpCircle, ExternalLink, ChevronDown, PanelLeft } from 'lucide-react';
-import { Button } from '@/components/ui/button';
+import { Activity, Bell, Settings, ListPlus, Zap, RefreshCw, LayoutGrid, BarChart3, Search, Heart, TrendingUp, History, Eye, PieChart, Menu, X, Users, Sparkles, Package, DollarSign, FileText, Shield, HelpCircle, ExternalLink, ChevronRight, PanelLeft } from 'lucide-react';
+// REORG-1: ScraperMonitorWidget + PredictiveAnalyticsWidget kot samostojna sub-view-a
+import { ScraperMonitorWidget } from '@/components/dashboard/scraper-monitor-widget';
+import { PredictiveAnalyticsWidget } from '@/components/dashboard/predictive-analytics-widget';
 import { Badge } from '@/components/ui/badge';
-import { Input } from '@/components/ui/input';
 import { toast } from 'sonner';
 import { cn } from '@/lib/utils';
-import { APP_VERSION, STATS_LABEL } from '@/lib/version';
+import { APP_VERSION } from '@/lib/version';
 // v6.94: Lazy-load dashboard pogledov z next/dynamic.
 // Prej so se vsi 11 pogledi (skupaj ~17K vrstic komponent) statično naložili ob prvem loadu.
 // Sedaj se naloži samo aktivni pogled — prvi load je ~3-5K namesto ~17K vrstic.
@@ -71,66 +72,136 @@ function LoadingFallback() {
   );
 }
 
-type View = 'dashboard' | 'monitors' | 'alerts' | 'listings' | 'watchlist' | 'analytics' | 'statistics' | 'trades' | 'health' | 'notifications' | 'settings' | 'buyers' | 'ai-hub' | 'inventory' | 'pricing' | 'listing-opt' | 'risk' | 'iskalnik';
+// REORG-1: 7 kategorij s sub-tabs (zamenjava za 4 primary + 3 groups + 5 system = 18 razpršenih view-ov).
+//
+// Prej (v9.49): 3-nivojski vmesnik (4 primary + Več dropdown + Sistem drawer).
+// Zdaj (REORG-1): 7 kategorij v glavni vrstici, s sub-tab vrstico pod njim.
+// Vsi 20 views (18 obstoječih + 2 novi: scraper-status, predictive) so dostopni prek 7 kategorij.
+//
+// Kategorije:
+//   1. Pregled      (1)  — Dashboard
+//   2. Monitorji    (2)  — Monitorji + Scraper Status (widget)
+//   3. Oglasi        (4)  — Vsi oglasi + Watchlist + Iskalnik + Oglasi AI
+//   4. Skladišče     (3)  — Trgovine + Inventar + Cene AI
+//   5. AI            (4)  — AI Hub + Kupci + Tveganja + AI Asistent (modal)
+//   6. Analitika    (3)  — Analitika + Statistike + Predictive (widget)
+//   7. Sistem        (4)  — Nastavitve + Zdravje + Alerti + Obvestila
+type View = 'dashboard' | 'monitors' | 'scraper-status' | 'listings' | 'watchlist' | 'iskalnik' | 'listing-opt' | 'trades' | 'inventory' | 'pricing' | 'ai-hub' | 'buyers' | 'risk' | 'analytics' | 'statistics' | 'predictive' | 'settings' | 'alerts' | 'notifications' | 'health';
 
-// v9.49: Progressive Disclosure — 3-nivojski vmesnik.
-// Nivo 1: 4 GLAVNI zavihki (vedno vidni) — najbolj uporabljani dnevno.
-// Nivo 2: "Več" dropdown (AI Orodja + Analitika + Iskalnik) — dostop z 1 klikom.
-// Nivo 3: Sistem drawer (gear v desnem kotu) — Alerti/Watchlist/Obvestila/Zdravje/Nastavitve.
-const NAV_PRIMARY: { id: View; label: string; icon: typeof Activity }[] = [
-  { id: 'dashboard', label: 'Dashboard', icon: Activity },
-  { id: 'monitors', label: 'Monitorji', icon: ListPlus },
-  { id: 'listings', label: 'Oglasi', icon: LayoutGrid },
-  { id: 'trades', label: 'Skladišče', icon: TrendingUp },
-];
+// ID-ji kategorij (za tip-svarnost)
+type CategoryId = 'dashboard' | 'monitors' | 'listings' | 'trades' | 'ai-hub' | 'analytics' | 'settings';
 
-const NAV_MORE_GROUPS: { title: string; icon: typeof Activity; accent: string; items: { id: View; label: string; icon: typeof Activity }[] }[] = [
+// Specialni ID za sub-tab, ki ne preklopi view-a ampak odpre modal
+const AI_ASSISTANT_MODAL_ID = 'ai-assistant-modal' as const;
+type SubViewId = View | typeof AI_ASSISTANT_MODAL_ID;
+
+interface SubView {
+  id: SubViewId;
+  label: string;
+  icon: typeof Activity;
+}
+
+interface NavCategory {
+  id: CategoryId;
+  label: string;
+  icon: typeof Activity;
+  /** Sub-views te kategorije (prvi je tudi primary view). */
+  subViews: SubView[];
+  /** Privzeti view, ko uporabnik klikne kategorijo. */
+  primaryView: View;
+}
+
+const NAV_CATEGORIES: NavCategory[] = [
   {
-    title: 'Iskanje',
-    icon: Search,
-    accent: 'text-emerald-400',
-    items: [
+    id: 'dashboard',
+    label: 'Pregled',
+    icon: Activity,
+    primaryView: 'dashboard',
+    subViews: [
+      { id: 'dashboard', label: 'Pregled', icon: Activity },
+    ],
+  },
+  {
+    id: 'monitors',
+    label: 'Monitorji',
+    icon: ListPlus,
+    primaryView: 'monitors',
+    subViews: [
+      { id: 'monitors', label: 'Monitorji', icon: ListPlus },
+      { id: 'scraper-status', label: 'Scraper Status', icon: RefreshCw },
+    ],
+  },
+  {
+    id: 'listings',
+    label: 'Oglasi',
+    icon: LayoutGrid,
+    primaryView: 'listings',
+    subViews: [
+      { id: 'listings', label: 'Vsi oglasi', icon: LayoutGrid },
+      { id: 'watchlist', label: 'Watchlist', icon: Eye },
       { id: 'iskalnik', label: 'Iskalnik', icon: Search },
-    ],
-  },
-  {
-    title: 'AI Orodja',
-    icon: Sparkles,
-    accent: 'text-amber-400',
-    items: [
-      { id: 'inventory', label: 'Skladišče AI', icon: Package },
-      { id: 'pricing', label: 'Cene AI', icon: DollarSign },
       { id: 'listing-opt', label: 'Oglasi AI', icon: FileText },
-      { id: 'risk', label: 'Tveganja AI', icon: Shield },
-      { id: 'buyers', label: 'Kupci', icon: Users },
     ],
   },
   {
-    title: 'Analitika',
+    id: 'trades',
+    label: 'Skladišče',
+    icon: TrendingUp,
+    primaryView: 'trades',
+    subViews: [
+      { id: 'trades', label: 'Trgovine', icon: TrendingUp },
+      { id: 'inventory', label: 'Inventar', icon: Package },
+      { id: 'pricing', label: 'Cene AI', icon: DollarSign },
+    ],
+  },
+  {
+    id: 'ai-hub',
+    label: 'AI',
+    icon: Sparkles,
+    primaryView: 'ai-hub',
+    subViews: [
+      { id: 'ai-hub', label: 'AI Hub', icon: Sparkles },
+      { id: 'buyers', label: 'Kupci', icon: Users },
+      { id: 'risk', label: 'Tveganja', icon: Shield },
+      { id: AI_ASSISTANT_MODAL_ID, label: 'AI Asistent', icon: Sparkles },
+    ],
+  },
+  {
+    id: 'analytics',
+    label: 'Analitika',
     icon: BarChart3,
-    accent: 'text-sky-400',
-    items: [
+    primaryView: 'analytics',
+    subViews: [
       { id: 'analytics', label: 'Analitika', icon: BarChart3 },
       { id: 'statistics', label: 'Statistike', icon: PieChart },
-      { id: 'ai-hub', label: 'AI Hub', icon: Sparkles },
+      { id: 'predictive', label: 'Predictive', icon: Zap },
+    ],
+  },
+  {
+    id: 'settings',
+    label: 'Sistem',
+    icon: Settings,
+    primaryView: 'settings',
+    subViews: [
+      { id: 'settings', label: 'Nastavitve', icon: Settings },
+      { id: 'health', label: 'Zdravje', icon: Heart },
+      { id: 'alerts', label: 'Alerti', icon: Bell },
+      { id: 'notifications', label: 'Obvestila', icon: History },
     ],
   },
 ];
 
-const NAV_SYSTEM: { id: View; label: string; icon: typeof Activity }[] = [
-  { id: 'alerts', label: 'Alerti', icon: Bell },
-  { id: 'watchlist', label: 'Watchlist', icon: Eye },
-  { id: 'notifications', label: 'Obvestila', icon: History },
-  { id: 'health', label: 'Zdravje', icon: Heart },
-  { id: 'settings', label: 'Nastavitve', icon: Settings },
-];
+/** Vrne kategorijo, ki vsebuje trenutni view. */
+function getActiveCategory(view: View): NavCategory {
+  return NAV_CATEGORIES.find(c => c.subViews.some(sv => sv.id === view)) ?? NAV_CATEGORIES[0];
+}
 
-// Vsi views (za kompatibilnost s PWA shortcut handlerjem)
-const NAV: { id: View; label: string; icon: typeof Activity }[] = [
-  ...NAV_PRIMARY,
-  ...NAV_MORE_GROUPS.flatMap(g => g.items),
-  ...NAV_SYSTEM,
-];
+// Vsi views (za kompatibilnost s PWA shortcut handlerjem in search modal-om)
+const NAV: { id: View; label: string; icon: typeof Activity }[] = NAV_CATEGORIES.flatMap(c =>
+  c.subViews
+    .filter((sv): sv is SubView & { id: View } => sv.id !== AI_ASSISTANT_MODAL_ID)
+    .map(sv => ({ id: sv.id, label: sv.label, icon: sv.icon }))
+);
 
 // v9.64: Keyboard shortcut map — za tooltip hints na nav gumbih
 // (imported from shared format utility)
@@ -177,12 +248,8 @@ export default function Home() {
     setLayoutMode((prev) => (prev === 'top' ? 'sidebar' : 'top'));
   };
 
-  // v9.49: Progressive Disclosure — dropdown menu + system drawer
-  const [moreMenuOpen, setMoreMenuOpen] = useState(false);
-  const [systemDrawerOpen, setSystemDrawerOpen] = useState(false);
-  // Auto-highlight "Več" when active view is in secondary groups
-  const isMoreActive = NAV_MORE_GROUPS.some(g => g.items.some(i => i.id === view));
-  const isSystemActive = NAV_SYSTEM.some(i => i.id === view);
+  // REORG-1: Aktivna kategorija (izpeljana iz view-a, brez dodatnega state-a)
+  const activeCategory = getActiveCategory(view);
   const [now, setNow] = useState<Date | null>(null);
   const [searchOpen, setSearchOpen] = useState(false);
   const [cmdkOpen, setCmdkOpen] = useState(false); // v8.46: Command Palette (Cmd+K)
@@ -245,7 +312,7 @@ export default function Home() {
     const viewParam = params.get('view');
     const actionParam = params.get('action');
     if (viewParam) {
-      const validViews: View[] = ['dashboard', 'monitors', 'alerts', 'listings', 'iskalnik', 'watchlist', 'analytics', 'statistics', 'trades', 'health', 'notifications', 'settings', 'buyers', 'ai-hub', 'inventory', 'pricing', 'listing-opt', 'risk'];
+      const validViews: View[] = ['dashboard', 'monitors', 'scraper-status', 'listings', 'iskalnik', 'watchlist', 'trades', 'inventory', 'pricing', 'listing-opt', 'risk', 'buyers', 'analytics', 'statistics', 'predictive', 'notifications', 'health', 'settings', 'alerts', 'ai-hub'];
       if (validViews.includes(viewParam as View)) {
         setView(viewParam as View);
       }
@@ -296,22 +363,21 @@ export default function Home() {
     }
   }, [lastAlert, view]);
 
-  // v9.49: Close "Več" dropdown when clicking outside or on navigation
-  const moreMenuRef = useRef<HTMLDivElement>(null);
-  useEffect(() => {
-    if (!moreMenuOpen) return;
-    const handler = (e: MouseEvent) => {
-      if (moreMenuRef.current && !moreMenuRef.current.contains(e.target as Node)) {
-        setMoreMenuOpen(false);
-      }
-    };
-    // Delay to avoid immediate close from the toggle click
-    const t = setTimeout(() => document.addEventListener('mousedown', handler), 0);
-    return () => {
-      clearTimeout(t);
-      document.removeEventListener('mousedown', handler);
-    };
-  }, [moreMenuOpen]);
+  // REORG-1: handleSubTabClick — upravlja sub-tab navigacijo (vključno z modal triggerjem)
+  const handleSubTabClick = (subViewId: SubViewId) => {
+    if (subViewId === AI_ASSISTANT_MODAL_ID) {
+      setAiAssistantOpen(true);
+      return;
+    }
+    setView(subViewId);
+  };
+
+  // REORG-1: handleCategoryClick — klik kategorije nastavi view na primaryView
+  // (če uporabnik že je v tej kategoriji, ne naredi ničesar — naj uporabi sub-tabs)
+  const handleCategoryClick = (category: NavCategory) => {
+    if (category.subViews.some(sv => sv.id === view)) return;
+    setView(category.primaryView);
+  };
 
   // Ctrl+K shortcut for global search
   useEffect(() => {
@@ -473,124 +539,72 @@ export default function Home() {
         </div>
       </header>
 
-      {/* Nav tabs — desktop only — v9.49: Progressive Disclosure (4 primary + Več dropdown + Sistem gear)
+      {/* Nav tabs — desktop only — REORG-1: 7 kategorij + sub-tabs row.
           v9.54: Skrij ko je layoutMode='sidebar' (stranska navigacija prevzame) */}
       {layoutMode === 'top' && (
       <nav className="hidden md:block border-b border-border bg-card/30">
         <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
-          <div className="flex items-center gap-1">
-            {/* 🎯 NIVO 1: 4 GLAVNI zavihki — vedno vidni */}
-            {NAV_PRIMARY.map((item) => {
-              const Icon = item.icon;
-              const active = view === item.id;
+          <div className="flex items-center gap-1 overflow-x-auto">
+            {/* REORG-1: 7 kategorij v glavni vrstici */}
+            {NAV_CATEGORIES.map((category) => {
+              const Icon = category.icon;
+              const isActiveCategory = activeCategory.id === category.id;
+              const showBadge = category.id === 'settings' && unreadAlerts > 0;
               return (
                 <button
-                  key={item.id}
-                  onClick={() => setView(item.id)}
-                  aria-label={item.label}
-                  title={navTitle(item.label, item.id)}
-                  aria-current={active ? 'page' : undefined}
+                  key={category.id}
+                  onClick={() => handleCategoryClick(category)}
+                  aria-label={category.label}
+                  aria-current={isActiveCategory ? 'page' : undefined}
                   className={cn(
-                    'flex items-center gap-2 px-4 py-3 text-sm font-medium border-b-2 -mb-px transition-colors whitespace-nowrap',
-                    active
+                    'flex items-center gap-2 px-3 lg:px-4 py-3 text-sm font-medium border-b-2 -mb-px transition-colors whitespace-nowrap relative',
+                    isActiveCategory
                       ? 'border-primary text-primary terminal-glow'
                       : 'border-transparent text-muted-foreground hover:text-foreground hover:border-border'
                   )}
                 >
                   <Icon className="w-4 h-4" />
-                  <span className="uppercase tracking-wider">{item.label}</span>
+                  <span className="uppercase tracking-wider">{category.label}</span>
+                  {showBadge && (
+                    <Badge variant="destructive" className="ml-1 px-1.5 py-0 text-xs">{unreadAlerts}</Badge>
+                  )}
                 </button>
               );
             })}
-
-            {/* Divider */}
-            <div className="h-6 w-px bg-border mx-1 shrink-0" />
-
-            {/* 📂 NIVO 2: "Več" dropdown — Iskalnik + AI Orodja + Analitika */}
-            <div className="relative" ref={moreMenuRef}>
-              <button
-                onClick={() => setMoreMenuOpen(o => !o)}
-                aria-label="Več funkcij — razširi meni"
-                aria-expanded={moreMenuOpen}
-                aria-haspopup="menu"
-                className={cn(
-                  'flex items-center gap-2 px-4 py-3 text-sm font-medium border-b-2 -mb-px transition-colors whitespace-nowrap',
-                  moreMenuOpen
-                    ? 'border-primary/50 text-primary'
-                    : isMoreActive
-                      ? 'border-primary text-primary terminal-glow'
-                      : 'border-transparent text-muted-foreground hover:text-foreground hover:border-border'
-                )}
-              >
-                <ChevronDown className={cn('w-3 h-3 transition-transform', moreMenuOpen && 'rotate-180')} />
-                <span className="uppercase tracking-wider">Več</span>
-              </button>
-
-              {moreMenuOpen && (
-                <div
-                  role="menu"
-                  className="absolute left-0 top-full mt-px w-72 bg-card border border-border rounded-b-lg shadow-xl z-40 overflow-hidden"
-                >
-                  {NAV_MORE_GROUPS.map((group) => {
-                    const GroupIcon = group.icon;
-                    return (
-                      <div key={group.title} className="border-b border-border/50 last:border-0">
-                        <div className={cn('flex items-center gap-2 px-4 py-2 text-[10px] uppercase font-bold tracking-wider bg-card/50', group.accent)}>
-                          <GroupIcon className="w-3 h-3" />
-                          {group.title}
-                        </div>
-                        {group.items.map((item) => {
-                          const Icon = item.icon;
-                          const active = view === item.id;
-                          return (
-                            <button
-                              key={item.id}
-                              onClick={() => { setView(item.id); setMoreMenuOpen(false); }}
-                              role="menuitem"
-                              aria-label={item.label}
-                  title={navTitle(item.label, item.id)}
-                              aria-current={active ? 'page' : undefined}
-                              className={cn(
-                                'w-full flex items-center gap-3 px-4 py-2.5 text-sm transition-colors text-left',
-                                active
-                                  ? 'bg-primary/10 text-primary border-l-2 border-primary'
-                                  : 'text-muted-foreground hover:text-foreground hover:bg-card/50 border-l-2 border-transparent'
-                              )}
-                            >
-                              <Icon className="w-4 h-4 shrink-0" />
-                              <span className="uppercase tracking-wider">{item.label}</span>
-                            </button>
-                          );
-                        })}
-                      </div>
-                    );
-                  })}
-                </div>
-              )}
-            </div>
-
-            {/* Spacer pushes Sistem to the right */}
-            <div className="flex-1" />
-
-            {/* ⚙️ NIVO 3: Sistem gear — odpre drawer iz desne */}
-            <button
-              onClick={() => setSystemDrawerOpen(true)}
-              aria-label="Sistem — nastavitve, alerti, zdravje"
-              aria-expanded={systemDrawerOpen}
-              className={cn(
-                'flex items-center gap-2 px-4 py-3 text-sm font-medium border-b-2 -mb-px transition-colors whitespace-nowrap relative',
-                isSystemActive
-                  ? 'border-muted-foreground text-foreground'
-                  : 'border-transparent text-muted-foreground hover:text-foreground hover:border-border'
-              )}
-            >
-              <Settings className="w-4 h-4" />
-              <span className="uppercase tracking-wider">Sistem</span>
-              {unreadAlerts > 0 && (
-                <Badge variant="destructive" className="ml-1 px-1.5 py-0 text-xs">{unreadAlerts}</Badge>
-              )}
-            </button>
           </div>
+          {/* REORG-1: Sub-tabs row — prikazan samo če ima aktivna kategorija >1 sub-view */}
+          {activeCategory.subViews.length > 1 && (
+            <div className="flex items-center gap-0 border-t border-border/50 bg-background/30 overflow-x-auto">
+              {activeCategory.subViews.map((subView) => {
+                const Icon = subView.icon;
+                const isModalTrigger = subView.id === AI_ASSISTANT_MODAL_ID;
+                const isActiveSubView = !isModalTrigger && view === subView.id;
+                return (
+                  <button
+                    key={subView.id}
+                    onClick={() => handleSubTabClick(subView.id)}
+                    aria-label={subView.label}
+                    title={isModalTrigger ? `${subView.label} (Ctrl+J)` : navTitle(subView.label, subView.id)}
+                    aria-current={isActiveSubView ? 'page' : undefined}
+                    className={cn(
+                      'flex items-center gap-1.5 px-3 lg:px-4 py-2 text-xs font-medium border-b-2 -mb-px transition-colors whitespace-nowrap',
+                      isActiveSubView
+                        ? 'border-primary/70 text-primary'
+                        : isModalTrigger
+                          ? 'border-transparent text-amber-400 hover:text-amber-300 hover:border-amber-400/40'
+                          : 'border-transparent text-muted-foreground hover:text-foreground hover:border-border'
+                    )}
+                  >
+                    <Icon className="w-3 h-3" />
+                    <span className="uppercase tracking-wider">{subView.label}</span>
+                    {isModalTrigger && (
+                      <kbd className="text-[9px] bg-background/60 px-1 py-0.5 rounded border border-amber-400/30 font-mono">⌘J</kbd>
+                    )}
+                  </button>
+                );
+              })}
+            </div>
+          )}
         </div>
       </nav>
       )}
@@ -601,6 +615,7 @@ export default function Home() {
           <SidebarNav
             currentView={view}
             onNavigate={setView}
+            onOpenAiAssistant={() => setAiAssistantOpen(true)}
             unreadAlerts={unreadAlerts}
             collapsed={sidebarCollapsed}
             onToggleCollapse={() => setSidebarCollapsed(c => !c)}
@@ -608,6 +623,8 @@ export default function Home() {
           <main className="flex-1 min-w-0 overflow-y-auto px-4 sm:px-6 lg:px-8 py-4 md:py-6 pb-20 md:pb-6">
             {view === 'dashboard' && <ErrorBoundary viewName="Dashboard"><DashboardView onNavigate={setView} /></ErrorBoundary>}
             {view === 'monitors' && <ErrorBoundary viewName="Monitorji"><MonitorsView /></ErrorBoundary>}
+            {/* REORG-1: Scraper Status kot samostojen sub-view */}
+            {view === 'scraper-status' && <ErrorBoundary viewName="Scraper Status"><ScraperMonitorWidget /></ErrorBoundary>}
             {view === 'alerts' && <ErrorBoundary viewName="Alerti"><AlertsView /></ErrorBoundary>}
             {view === 'listings' && <ErrorBoundary viewName="Oglasi"><ListingsView /></ErrorBoundary>}
             {view === 'iskalnik' && <ErrorBoundary viewName="Iskalnik"><IskalnikView /></ErrorBoundary>}
@@ -620,6 +637,8 @@ export default function Home() {
             {view === 'buyers' && <ErrorBoundary viewName="Kupci"><BuyersView /></ErrorBoundary>}
             {view === 'analytics' && <ErrorBoundary viewName="Analitika"><AnalyticsView /></ErrorBoundary>}
             {view === 'statistics' && <ErrorBoundary viewName="Statistike"><StatisticsView /></ErrorBoundary>}
+            {/* REORG-1: Predictive Analytics kot samostojen sub-view */}
+            {view === 'predictive' && <ErrorBoundary viewName="Predictive"><PredictiveAnalyticsWidget onNavigate={setView as (v: import('@/components/dashboard/dashboard/types').DashboardView) => void} /></ErrorBoundary>}
             {view === 'notifications' && <ErrorBoundary viewName="Obvestila"><NotificationHistoryView /></ErrorBoundary>}
             {view === 'health' && <ErrorBoundary viewName="Zdravje"><HealthView /></ErrorBoundary>}
             {view === 'settings' && <ErrorBoundary viewName="Nastavitve"><SettingsView /></ErrorBoundary>}
@@ -628,65 +647,7 @@ export default function Home() {
         </div>
       )}
 
-      {/* 🗄️ NIVO 3: Sistem drawer — odpre se iz desne strani */}
-      {systemDrawerOpen && (
-        <div
-          className="fixed inset-0 bg-background/80 backdrop-blur-sm z-50"
-          onClick={() => setSystemDrawerOpen(false)}
-        >
-          <div
-            className="bg-card border-l border-border h-full w-72 max-w-[85vw] ml-auto p-4 overflow-y-auto shadow-2xl"
-            onClick={(e) => e.stopPropagation()}
-          >
-            <div className="flex items-center justify-between mb-4">
-              <span className="text-primary terminal-glow font-bold text-sm uppercase tracking-wider flex items-center gap-2">
-                <Settings className="w-4 h-4" />
-                Sistem
-              </span>
-              <button
-                onClick={() => setSystemDrawerOpen(false)}
-                className="text-muted-foreground hover:text-foreground p-1 rounded hover:bg-card/50"
-                aria-label="Zapri drawer"
-              >
-                <X className="w-4 h-4" />
-              </button>
-            </div>
-            <div className="space-y-1">
-              <div className="text-[9px] uppercase text-muted-foreground/60 font-bold px-3 pt-2 pb-1">⚙️ Sistem & Nastavitve</div>
-              {NAV_SYSTEM.map((item) => {
-                const Icon = item.icon;
-                const active = view === item.id;
-                return (
-                  <button
-                    key={item.id}
-                    onClick={() => { setView(item.id); setSystemDrawerOpen(false); }}
-                    aria-label={item.label}
-                  title={navTitle(item.label, item.id)}
-                    aria-current={active ? 'page' : undefined}
-                    className={cn(
-                      'w-full flex items-center gap-3 px-3 py-2.5 rounded text-sm transition-colors',
-                      active
-                        ? 'bg-primary/10 text-primary border border-primary/30'
-                        : 'text-muted-foreground hover:text-foreground hover:bg-card/50 border border-transparent'
-                    )}
-                  >
-                    <Icon className="w-4 h-4" />
-                    <span className="uppercase tracking-wider flex-1 text-left">{item.label}</span>
-                    {item.id === 'alerts' && unreadAlerts > 0 && (
-                      <Badge variant="destructive" className="px-1.5 py-0 text-xs">{unreadAlerts}</Badge>
-                    )}
-                  </button>
-                );
-              })}
-            </div>
-            <div className="mt-4 pt-4 border-t border-border text-[10px] text-muted-foreground/70 leading-relaxed">
-              <p className="mb-1">⚡ Pritisni <kbd className="bg-background/60 px-1.5 py-0.5 rounded border border-border">?</kbd> za pomoč</p>
-              <p className="mb-1">⌨️ <kbd className="bg-background/60 px-1.5 py-0.5 rounded border border-border">Ctrl+K</kbd> za ukazno paleto</p>
-              <p>📊 18 funkcij skritih v 3-nivojskem vmesniku</p>
-            </div>
-          </div>
-        </div>
-      )}
+      {/* REORG-1: Sistem drawer je bil odstranjen — Sistem je zdaj ena od 7 kategorij v glavni vrstici. */}
 
       {/* v4.7: Mobile nav drawer */}
       {mobileNavOpen && (
@@ -709,91 +670,68 @@ export default function Home() {
               </button>
             </div>
             <div className="space-y-1">
-              {/* 🎯 GLAVNO — 4 zavihki */}
-              <div className="text-[9px] uppercase text-muted-foreground/60 font-bold px-3 pt-2 pb-1">Glavno</div>
-              {NAV_PRIMARY.map((item) => {
-                const Icon = item.icon;
-                const active = view === item.id;
+              {/* REORG-1: 7 kategorij s sub-views (collapsible) */}
+              {NAV_CATEGORIES.map((category) => {
+                const CategoryIcon = category.icon;
+                const isActiveCategory = activeCategory.id === category.id;
                 return (
-                  <button
-                    key={item.id}
-                    onClick={() => { setView(item.id); setMobileNavOpen(false); }}
-                    aria-label={item.label}
-                  title={navTitle(item.label, item.id)}
-                    aria-current={active ? 'page' : undefined}
-                    className={cn(
-                      'w-full flex items-center gap-3 px-3 py-2.5 rounded text-sm transition-colors',
-                      active
-                        ? 'bg-primary/10 text-primary border border-primary/30'
-                        : 'text-muted-foreground hover:text-foreground hover:bg-card/50 border border-transparent'
+                  <div key={category.id}>
+                    {/* Category header — klik vodi do primaryView */}
+                    <button
+                      onClick={() => { handleCategoryClick(category); setMobileNavOpen(false); }}
+                      aria-label={category.label}
+                      aria-current={isActiveCategory ? 'page' : undefined}
+                      className={cn(
+                        'w-full flex items-center gap-3 px-3 py-2.5 rounded text-sm transition-colors mt-1',
+                        isActiveCategory
+                          ? 'bg-primary/10 text-primary border border-primary/30'
+                          : 'text-muted-foreground hover:text-foreground hover:bg-card/50 border border-transparent'
+                      )}
+                    >
+                      <CategoryIcon className="w-4 h-4" />
+                      <span className="uppercase tracking-wider flex-1 text-left font-bold">{category.label}</span>
+                      {category.id === 'settings' && unreadAlerts > 0 && (
+                        <Badge variant="destructive" className="px-1.5 py-0 text-xs">{unreadAlerts}</Badge>
+                      )}
+                    </button>
+                    {/* Sub-views — prikaži samo, če je kategorija aktivna in ima >1 sub-view */}
+                    {isActiveCategory && category.subViews.length > 1 && (
+                      <div className="ml-3 mt-0.5 space-y-0.5 border-l border-border/50 pl-2">
+                        {category.subViews.map((subView) => {
+                          const Icon = subView.icon;
+                          const isModalTrigger = subView.id === AI_ASSISTANT_MODAL_ID;
+                          const isActiveSubView = !isModalTrigger && view === subView.id;
+                          return (
+                            <button
+                              key={subView.id}
+                              onClick={() => {
+                                if (isModalTrigger) {
+                                  setAiAssistantOpen(true);
+                                } else {
+                                  handleSubTabClick(subView.id);
+                                }
+                                setMobileNavOpen(false);
+                              }}
+                              aria-label={subView.label}
+                              title={isModalTrigger ? `${subView.label} (Ctrl+J)` : navTitle(subView.label, subView.id)}
+                              aria-current={isActiveSubView ? 'page' : undefined}
+                              className={cn(
+                                'w-full flex items-center gap-2 px-2 py-2 rounded text-xs transition-colors',
+                                isActiveSubView
+                                  ? 'bg-primary/5 text-primary'
+                                  : isModalTrigger
+                                    ? 'text-amber-400 hover:text-amber-300 hover:bg-card/50'
+                                    : 'text-muted-foreground hover:text-foreground hover:bg-card/50'
+                              )}
+                            >
+                              <Icon className="w-3.5 h-3.5" />
+                              <span className="uppercase tracking-wider flex-1 text-left">{subView.label}</span>
+                            </button>
+                          );
+                        })}
+                      </div>
                     )}
-                  >
-                    <Icon className="w-4 h-4" />
-                    <span className="uppercase tracking-wider flex-1 text-left">{item.label}</span>
-                  </button>
-                );
-              })}
-
-              {/* 📂 VEČ — Iskalnik + AI Orodja + Analitika */}
-              {NAV_MORE_GROUPS.map((group) => {
-                const GroupIcon = group.icon;
-                return (
-                  <div key={group.title}>
-                    <div className={cn('text-[9px] uppercase font-bold px-3 pt-3 pb-1 flex items-center gap-1', group.accent)}>
-                      <GroupIcon className="w-3 h-3" />
-                      {group.title}
-                    </div>
-                    {group.items.map((item) => {
-                      const Icon = item.icon;
-                      const active = view === item.id;
-                      return (
-                        <button
-                          key={item.id}
-                          onClick={() => { setView(item.id); setMobileNavOpen(false); }}
-                          aria-label={item.label}
-                  title={navTitle(item.label, item.id)}
-                          aria-current={active ? 'page' : undefined}
-                          className={cn(
-                            'w-full flex items-center gap-3 px-3 py-2.5 rounded text-sm transition-colors',
-                            active
-                              ? 'bg-primary/10 text-primary border border-primary/30'
-                              : 'text-muted-foreground hover:text-foreground hover:bg-card/50 border border-transparent'
-                          )}
-                        >
-                          <Icon className="w-4 h-4" />
-                          <span className="uppercase tracking-wider flex-1 text-left">{item.label}</span>
-                        </button>
-                      );
-                    })}
                   </div>
-                );
-              })}
-
-              {/* ⚙️ SISTEM */}
-              <div className="text-[9px] uppercase text-muted-foreground/60 font-bold px-3 pt-3 pb-1">⚙️ Sistem</div>
-              {NAV_SYSTEM.map((item) => {
-                const Icon = item.icon;
-                const active = view === item.id;
-                return (
-                  <button
-                    key={item.id}
-                    onClick={() => { setView(item.id); setMobileNavOpen(false); }}
-                    aria-label={item.label}
-                  title={navTitle(item.label, item.id)}
-                    aria-current={active ? 'page' : undefined}
-                    className={cn(
-                      'w-full flex items-center gap-3 px-3 py-2.5 rounded text-sm transition-colors',
-                      active
-                        ? 'bg-primary/10 text-primary border border-primary/30'
-                        : 'text-muted-foreground hover:text-foreground hover:bg-card/50 border border-transparent'
-                    )}
-                  >
-                    <Icon className="w-4 h-4" />
-                    <span className="uppercase tracking-wider flex-1 text-left">{item.label}</span>
-                    {item.id === 'alerts' && unreadAlerts > 0 && (
-                      <Badge variant="destructive" className="px-1.5 py-0 text-xs">{unreadAlerts}</Badge>
-                    )}
-                  </button>
                 );
               })}
             </div>
@@ -822,6 +760,8 @@ export default function Home() {
       <main className="flex-1 max-w-7xl mx-auto w-full px-4 sm:px-6 lg:px-8 py-4 md:py-6 pb-20 md:pb-6">
         {view === 'dashboard' && <ErrorBoundary viewName="Dashboard"><DashboardView onNavigate={setView} /></ErrorBoundary>}
         {view === 'monitors' && <ErrorBoundary viewName="Monitorji"><MonitorsView /></ErrorBoundary>}
+        {/* REORG-1: Scraper Status kot samostojen sub-view */}
+        {view === 'scraper-status' && <ErrorBoundary viewName="Scraper Status"><ScraperMonitorWidget /></ErrorBoundary>}
         {view === 'alerts' && <ErrorBoundary viewName="Alerti"><AlertsView /></ErrorBoundary>}
         {view === 'listings' && <ErrorBoundary viewName="Oglasi"><ListingsView /></ErrorBoundary>}
         {view === 'iskalnik' && <ErrorBoundary viewName="Iskalnik"><IskalnikView /></ErrorBoundary>}
@@ -834,6 +774,8 @@ export default function Home() {
         {view === 'buyers' && <ErrorBoundary viewName="Kupci"><BuyersView /></ErrorBoundary>}
         {view === 'analytics' && <ErrorBoundary viewName="Analitika"><AnalyticsView /></ErrorBoundary>}
         {view === 'statistics' && <ErrorBoundary viewName="Statistike"><StatisticsView /></ErrorBoundary>}
+        {/* REORG-1: Predictive Analytics kot samostojen sub-view */}
+        {view === 'predictive' && <ErrorBoundary viewName="Predictive"><PredictiveAnalyticsWidget onNavigate={setView as (v: import('@/components/dashboard/dashboard/types').DashboardView) => void} /></ErrorBoundary>}
         {view === 'notifications' && <ErrorBoundary viewName="Obvestila"><NotificationHistoryView /></ErrorBoundary>}
         {view === 'health' && <ErrorBoundary viewName="Zdravje"><HealthView /></ErrorBoundary>}
         {view === 'settings' && <ErrorBoundary viewName="Nastavitve"><SettingsView /></ErrorBoundary>}
@@ -841,19 +783,13 @@ export default function Home() {
       </main>
       )}
 
-      {/* Footer — v8.49: enhanced z live health + version + stats */}
+      {/* Footer — REORG-1: očiščeno, samo bistvene informacije. */}
       <footer className="border-t border-border bg-card/30 mt-auto">
         <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-3">
           <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-2 text-xs text-muted-foreground">
             <div className="flex items-center gap-3 flex-wrap">
               <span className="text-primary font-bold">markec-ai-firm</span>
               <span className="font-mono">{APP_VERSION}</span>
-              <span className="hidden sm:inline">•</span>
-              <span>local-first</span>
-              <span className="hidden sm:inline">•</span>
-              <span>zero-cloud</span>
-              <span className="hidden sm:inline">•</span>
-              <span>{STATS_LABEL}</span>
             </div>
             <div className="flex items-center gap-3 flex-wrap">
               <span className="flex items-center gap-1">
@@ -862,9 +798,7 @@ export default function Home() {
                 <span className="text-muted-foreground">85/100</span>
               </span>
               <span className="hidden sm:inline">•</span>
-              <span>cron: <code className="text-amber-400">GET /api/cron/run-all</code></span>
-              <span className="hidden md:inline">•</span>
-              <span className="hidden md:inline">⌘K za ukaze</span>
+              <span>⌘K za ukaze</span>
             </div>
           </div>
         </div>
