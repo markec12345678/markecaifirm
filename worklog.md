@@ -22995,3 +22995,63 @@ Stage Summary:
   * decisionAccuracy = null ko ni podatkov (NE 0% ali izmišljena številka)
   * hasEnoughData = false dokler ni ≥10 outcomes
   * "0 outcomes — premalo podatkov" je pravilen in zaupanja vreden rezultat
+
+---
+Task ID: v9.64
+Agent: main
+Task: Micro Polish — format utilities + keyboard shortcut tooltips + reduced motion + shimmer
+
+Work Log:
+- Raziščil forume (HN, Reddit r/UXDesign, NN/G, Smashing, Mozilla Connect) za male detalje.
+- Ustvaril src/lib/format.ts — centralni utility za dosledno formatiranje:
+  * formatEuro() — "€1.687" z ločilom tisočic, "−€39" (pravi minus znak U+2212)
+  * formatProfit() — "+€1.687" z znakom za pozitivne
+  * formatNumber() — "1.687" z slovenskim ločilom
+  * formatPercent() — "85%" brez odvečnih decimalk
+  * formatRoi() — "+35%" / "−15%" z znakom
+  * formatRelativeTime() — "pred 14 h" (slovenski pravopis, pravi skloni)
+  * formatDateTime() — "24. avg 2026, 10:30" (slovenski format)
+  * formatDuration() — "523ms" / "5.2s" / "5min 23s" / "1h 23min"
+  * VIEW_SHORTCUTS — map view IDs → keyboard shortcuts
+  * navTitleWithShortcut() — "Dashboard (tipka 1)" za tooltip
+- Ustvaril src/components/ui/time-toggle.tsx:
+  * Klik na čas preklopi relativni → exact datum
+  * Samodejni reset po 3 sekundah
+  * Keyboard accessible (Enter key)
+  * Hover efekt (cursor-pointer, text-primary)
+- Dodal keyboard shortcut hints v tooltip-e:
+  * Top-nav: vsi 4 primarni gumbi imajo "Dashboard (tipka 1)" ipd.
+  * Sidebar: vsi gumbi (primary + system) imajo shortcut v tooltip
+  * Mobile nav: shortcut v tooltip
+- Dodal global @media (prefers-reduced-motion: reduce) v globals.css:
+  * Disable vse animacije in transicije za accessibility
+  * Override vseh animation-duration in transition-duration na 0.01ms
+- Dodal shimmer CSS class za profesionalne skeleton loadre:
+  * @keyframes shimmer z gradient animacijo
+  * .shimmer class z linear-gradient background
+  * Reduced motion override (animacija se izklopi)
+- Posodobil src/app/page.tsx — uvoz navTitleWithShortcut iz format.ts, dodan title na vse nav gumbe
+- Posodobil src/components/dashboard/sidebar-nav.tsx — dodan title z shortcut hint, odstranjen duplikat title atributa
+- Preveril typecheck: 0 napak (popravil duplikat title atributa v sidebar)
+- Preveril lint: 0 napak
+- Verifikacija (Agent Browser):
+  * 4 nav gumbi imajo shortcut v tooltip: Dashboard (1), Monitorji (2), Oglasi (4), Skladišče (6) ✓
+  * Footer: v9.64.0 ✓
+
+Stage Summary:
+- NEW: src/lib/format.ts (centralni format utility — EUR, številke, čas, shortcuts)
+- NEW: src/components/ui/time-toggle.tsx (click-to-toggle time component)
+- MODIFIED: src/app/globals.css (global reduced-motion + shimmer class)
+- MODIFIED: src/app/page.tsx (keyboard shortcut tooltips na vseh nav gumbih)
+- MODIFIED: src/components/dashboard/sidebar-nav.tsx (shortcut tooltips + fix duplikata)
+- MODIFIED: src/lib/version.ts (v9.63→v9.64)
+- MODIFIED: README.md (badge v9.64)
+- Verzija: v9.64.0
+- Skupaj (v7.50 → v9.64): 210 verzij, 331 novih funkcij
+- MIRO POLISH (po raziskavi forumov):
+  * EUR formatiranje: dosledno "€1.687" z ločilom, "−€39" s pravim minus znakom
+  * Keyboard shortcuts v tooltip: "Dashboard (tipka 1)" na vseh nav gumbih
+  * Reduced motion: global @media za accessibility (WCAG)
+  * Shimmer effect: profesionalen skeleton loader class
+  * Time toggle: klik na čas preklopi relativni → exact datum
+  * Format utility: centralen, dosleden, slovenski formati povsod

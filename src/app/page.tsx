@@ -132,6 +132,10 @@ const NAV: { id: View; label: string; icon: typeof Activity }[] = [
   ...NAV_SYSTEM,
 ];
 
+// v9.64: Keyboard shortcut map — za tooltip hints na nav gumbih
+// (imported from shared format utility)
+import { navTitleWithShortcut as navTitle } from '@/lib/format';
+
 export default function Home() {
   const [view, setView] = useState<View>('dashboard');
   const [unreadAlerts, setUnreadAlerts] = useState(0);
@@ -484,6 +488,7 @@ export default function Home() {
                   key={item.id}
                   onClick={() => setView(item.id)}
                   aria-label={item.label}
+                  title={navTitle(item.label, item.id)}
                   aria-current={active ? 'page' : undefined}
                   className={cn(
                     'flex items-center gap-2 px-4 py-3 text-sm font-medium border-b-2 -mb-px transition-colors whitespace-nowrap',
@@ -543,6 +548,7 @@ export default function Home() {
                               onClick={() => { setView(item.id); setMoreMenuOpen(false); }}
                               role="menuitem"
                               aria-label={item.label}
+                  title={navTitle(item.label, item.id)}
                               aria-current={active ? 'page' : undefined}
                               className={cn(
                                 'w-full flex items-center gap-3 px-4 py-2.5 text-sm transition-colors text-left',
@@ -655,6 +661,7 @@ export default function Home() {
                     key={item.id}
                     onClick={() => { setView(item.id); setSystemDrawerOpen(false); }}
                     aria-label={item.label}
+                  title={navTitle(item.label, item.id)}
                     aria-current={active ? 'page' : undefined}
                     className={cn(
                       'w-full flex items-center gap-3 px-3 py-2.5 rounded text-sm transition-colors',
@@ -712,6 +719,7 @@ export default function Home() {
                     key={item.id}
                     onClick={() => { setView(item.id); setMobileNavOpen(false); }}
                     aria-label={item.label}
+                  title={navTitle(item.label, item.id)}
                     aria-current={active ? 'page' : undefined}
                     className={cn(
                       'w-full flex items-center gap-3 px-3 py-2.5 rounded text-sm transition-colors',
@@ -743,6 +751,7 @@ export default function Home() {
                           key={item.id}
                           onClick={() => { setView(item.id); setMobileNavOpen(false); }}
                           aria-label={item.label}
+                  title={navTitle(item.label, item.id)}
                           aria-current={active ? 'page' : undefined}
                           className={cn(
                             'w-full flex items-center gap-3 px-3 py-2.5 rounded text-sm transition-colors',
@@ -770,6 +779,7 @@ export default function Home() {
                     key={item.id}
                     onClick={() => { setView(item.id); setMobileNavOpen(false); }}
                     aria-label={item.label}
+                  title={navTitle(item.label, item.id)}
                     aria-current={active ? 'page' : undefined}
                     className={cn(
                       'w-full flex items-center gap-3 px-3 py-2.5 rounded text-sm transition-colors',

@@ -34,6 +34,7 @@ import {
   ChevronLeft, ChevronRight, X,
 } from 'lucide-react';
 import { cn } from '@/lib/utils';
+import { navTitleWithShortcut } from '@/lib/format';
 import { Badge } from '@/components/ui/badge';
 import { useHaptic } from '@/hooks/use-haptic';
 
@@ -181,8 +182,8 @@ export function SidebarNav({ currentView, onNavigate, unreadAlerts, collapsed, o
                 key={item.id}
                 onClick={() => handleNavigate(item.id)}
                 aria-label={item.label}
+                title={navTitleWithShortcut(item.label, item.id)}
                 aria-current={active ? 'page' : undefined}
-                title={collapsed ? item.label : undefined}
                 className={cn(
                   'w-full flex items-center gap-3 px-2 py-2 rounded text-sm transition-colors',
                   collapsed && 'justify-center',
@@ -242,6 +243,7 @@ export function SidebarNav({ currentView, onNavigate, unreadAlerts, collapsed, o
                           key={item.id}
                           onClick={() => handleNavigate(item.id)}
                           aria-label={item.label}
+                title={navTitleWithShortcut(item.label, item.id)}
                           aria-current={active ? 'page' : undefined}
                           className={cn(
                             'w-full flex items-center gap-3 px-2 py-1.5 rounded text-xs transition-colors',
@@ -283,8 +285,8 @@ export function SidebarNav({ currentView, onNavigate, unreadAlerts, collapsed, o
                 key={item.id}
                 onClick={() => handleNavigate(item.id)}
                 aria-label={item.label}
+                title={navTitleWithShortcut(item.label, item.id)}
                 aria-current={active ? 'page' : undefined}
-                title={collapsed ? item.label : undefined}
                 className={cn(
                   'w-full flex items-center gap-3 px-2 py-2 rounded text-sm transition-colors relative',
                   collapsed && 'justify-center',
