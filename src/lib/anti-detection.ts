@@ -78,6 +78,90 @@ const USER_AGENTS = [
 // v7.40: Per-domain session affinity — same UA per domain per session
 const domainSessions = new Map<string, { ua: string; cookies: Map<string, string> }>();
 
+// v9.67: Session-sticky proxies — isti proxy za isto domeno v 30-min oknu
+// (professional scrapers uporabljajo to da ne fingerprinta behavioral patterns)
+interface SessionProxy {
+  proxyUrl: string;
+  assignedAt: number;
+  domain: string;
+}
+const domainProxyAssignment = new Map<string, SessionProxy>();
+const PROXY_STICKINESS_MS = 30 * 60 * 1000; // 30 minut
+
+/**
+ * v9.67: Pridobi session-sticky proxy za domeno.
+ * Isti proxy se uporablja za isto domeno v 30-min oknu,
+ * da se izognemo behavioral fingerprintingu.
+ */
+function getSessionStickyProxy(domain: string, proxies: ProxyConfig[]): ProxyConfig | null {
+  if (proxies.length === 0) return null;
+
+  const existing = domainProxyAssignment.get(domain);
+  const now = Date.now();
+
+  // Če obstaja in ni potekel (mlajši od 30 min) — uporabi isti
+  if (existing && now - existing.assignedAt < PROXY_STICKINESS_MS) {
+    const proxy = proxies.find((p) => p.url === existing.proxyUrl);
+    if (proxy) return proxy;
+  }
+
+  // Drugače izberi nov proxy in ga shrani za to domeno
+  const proxy = proxies[Math.floor(Math.random() * proxies.length)];
+  domainProxyAssignment.set(domain, {
+    proxyUrl: proxy.url,
+    assignedAt: now,
+    domain,
+  });
+
+  return proxy;
+}
+
+/**
+ * v9.67: HTML cache — ne fetchaj iste strani dvakrat v 1h.
+ * (Scrapfly ima caching na API nivoju — isto funkcionalnost)
+ */
+interface CachedHtml {
+  html: string;
+  status: number;
+  cachedAt: number;
+  url: string;
+}
+const htmlCache = new Map<string, CachedHtml>();
+const HTML_CACHE_TTL_MS = 60 * 60 * 1000; // 1 ura
+
+/**
+ * Preveri ali je URL v HTML cache-u in še veljaven.
+ */
+export function getCachedHtml(url: string): { html: string; status: number } | null {
+  const cached = htmlCache.get(url);
+  if (!cached) return null;
+  if (Date.now() - cached.cachedAt > HTML_CACHE_TTL_MS) {
+    htmlCache.delete(url);
+    return null;
+  }
+  return { html: cached.html, status: cached.status };
+}
+
+/**
+ * Shrani HTML v cache.
+ */
+export function setCachedHtml(url: string, html: string, status: number): void {
+  // Omeji cache na 1000 vnosov (prepreči memory leak)
+  if (htmlCache.size > 1000) {
+    const oldestKey = Array.from(htmlCache.keys())[0];
+    if (oldestKey) htmlCache.delete(oldestKey);
+  }
+  htmlCache.set(url, { html, status, cachedAt: Date.now(), url });
+}
+
+/**
+ * Počisti HTML cache (za settings spremembe ali debug).
+ */
+export function clearHtmlCache(): void {
+  htmlCache.clear();
+  logger.info('anti-detection', 'HTML cache cleared');
+}
+
 function getDomainSession(domain: string): { ua: string; cookies: Map<string, string> } {
   if (!domainSessions.has(domain)) {
     domainSessions.set(domain, {
@@ -199,8 +283,21 @@ const RETRY_STATUS_CODES = new Set([429, 503, 502, 504]);
 
 export async function fetchWithAntiDetection(
   url: string,
-  opts: { headers?: Record<string, string>; method?: string } = {}
+  opts: { headers?: Record<string, string>; method?: string; skipCache?: boolean } = {}
 ): Promise<Response> {
+  // v9.67: Preveri HTML cache (1h TTL) — ne fetchaj iste strani dvakrat
+  if (!opts.skipCache) {
+    const cached = getCachedHtml(url);
+    if (cached) {
+      logger.info('anti-detection', `HTML cache hit: ${url.slice(0, 60)}...`);
+      // Vrni Response-like objekt (cached)
+      return new Response(cached.html, {
+        status: cached.status,
+        headers: { 'Content-Type': 'text/html', 'X-Cache': 'HIT' },
+      });
+    }
+  }
+
   const s = await getSettings();
   const domain = getDomain(url);
   const session = getDomainSession(domain);
@@ -213,14 +310,16 @@ export async function fetchWithAntiDetection(
 
   const headers = buildHeaders(s.realisticHeaders, url, session, opts.headers);
 
-  // v7.40: Proxy with undici
+  // v9.67: Session-sticky proxy — isti proxy za isto domeno v 30-min oknu
   let dispatcher: Dispatcher | undefined;
   if (s.proxyEnabled && s.proxyList.length > 0) {
-    const proxy = s.proxyList[Math.floor(Math.random() * s.proxyList.length)];
-    try {
-      dispatcher = new ProxyAgent({ uri: proxy.url });
-      logger.info('anti-detection', `Proxy: ${proxy.url.replace(/\/\/[^@]*@/, '//***@')}`);
-    } catch { /* fall through */ }
+    const proxy = getSessionStickyProxy(domain, s.proxyList);
+    if (proxy) {
+      try {
+        dispatcher = new ProxyAgent({ uri: proxy.url });
+        logger.info('anti-detection', `Session-sticky proxy for ${domain}: ${proxy.url.replace(/\/\/[^@]*@/, '//***@')}`);
+      } catch { /* fall through */ }
+    }
   }
 
   // v7.40: Retry loop with exponential backoff
@@ -254,6 +353,18 @@ export async function fetchWithAntiDetection(
         const newHeaders = buildHeaders(s.realisticHeaders, url, session, opts.headers);
         Object.assign(headers, newHeaders);
         continue;
+      }
+
+      // v9.67: Shrani v HTML cache (samo za uspešne GET, ne za cached)
+      if (!opts.skipCache && res.ok && (!opts.method || opts.method === 'GET')) {
+        try {
+          const cloned = res.clone();
+          const html = await cloned.text();
+          setCachedHtml(url, html, res.status);
+          logger.info('anti-detection', `HTML cached: ${url.slice(0, 60)}... (${Math.round(html.length / 1024)}KB)`);
+        } catch {
+          // ignore — don't fail request if cache fails
+        }
       }
 
       return res;
@@ -315,4 +426,6 @@ export function isBotDetection(html: string): boolean {
 export function resetAntiDetectionCache(): void {
   cached = null;
   domainSessions.clear();
+  domainProxyAssignment.clear(); // v9.67: clear session-sticky proxy assignments
+  htmlCache.clear(); // v9.67: clear HTML cache
 }

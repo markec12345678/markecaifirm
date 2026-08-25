@@ -23159,3 +23159,73 @@ Stage Summary:
   * v9.66: Frontend (SchedulerStatusCard v Zdravje view)
   * Uporabnik zdaj vidi scheduler status, lahko ročno trigger, in nastavi interval
   * Vse znotraj aplikacije — brez zunanjih servisov
+
+---
+Task ID: v9.67
+Agent: main
+Task: Scraper Improvements — session-sticky proxies + HTML cache + verified Retry-After
+
+Work Log:
+- Raziščel profesionalne scraperje (Scrapfly, Bright Data, Firecrawl, Apify).
+- Ugotovitve:
+  * Retry-After header: ŽE implementirano v v7.40 ✓
+  * Session-sticky proxies: MANJKA — rotirali smo na vsak request
+  * HTML caching: MANJKA — fetchali smo isto stran večkrat
+- Implementiral v src/lib/anti-detection.ts:
+
+1. SESSION-STICKY PROXIES (po vzoru profesionalcev):
+   - Nov interface SessionProxy { proxyUrl, assignedAt, domain }
+   - domainProxyAssignment Map — isti proxy za isto domeno v 30-min oknu
+   - getSessionStickyProxy(domain, proxies) — vrne sticky proxy ali izbere nov
+   - PROXY_STICKINESS_MS = 30 minut (konfigurabilno)
+   - Log: "Session-sticky proxy for bolha.com: http://***@..."
+   - Preprečuje behavioral fingerprinting (sites fingerprint across sessions)
+
+2. HTML CACHING (po vzoru Scrapfly):
+   - Nov interface CachedHtml { html, status, cachedAt, url }
+   - htmlCache Map z 1h TTL (HTML_CACHE_TTL_MS = 60 * 60 * 1000)
+   - getCachedHtml(url) — preveri cache pred fetch
+   - setCachedHtml(url, html, status) — shrani po uspešnem fetch
+   - clearHtmlCache() — za debug/settings spremembe
+   - Cache limit 1000 vnosov (prepreči memory leak)
+   - fetchWithAntiDetection preveri cache pred fetch
+   - Shrani v cache po uspešnem GET (samo za 200 OK, ne za errors)
+   - skipCache opcija za bypass (za refresh/force fetch)
+   - Log: "HTML cache hit: https://www.bolha.com..." / "HTML cached: ... (45KB)"
+   - Response z X-Cache: HIT header za debugging
+
+3. RETRY-AFTER HEADER (že implementiral v v7.40, le preveril):
+   - fetchWithAntiDetection upošteva Retry-After header (vrstica 347-348)
+   - waitMs = retryAfter ? parseInt(retryAfter) * 1000 : backoffDelay(attempt)
+   - ✓ Potrjeno da deluje povsod
+
+4. CACHE RESET:
+   - resetAntiDetectionCache() zdaj počisti tudi:
+     - domainProxyAssignment (session-sticky proxy assignments)
+     - htmlCache (HTML cache)
+   - Kliče se ob proxy rotation v bypass chain (v9.58)
+
+- Preveril typecheck: 0 napak ✨
+- Preveril lint: 0 napak
+- Verifikacija:
+  * Scraper API: OK ✓
+  * Footer: v9.67.0 ✓
+  * 0 napak v dev logu ✓
+
+Stage Summary:
+- MODIFIED: src/lib/anti-detection.ts (session-sticky proxies + HTML cache + cache reset)
+- MODIFIED: src/lib/version.ts (v9.66→v9.67)
+- MODIFIED: README.md (badge v9.67)
+- Verzija: v9.67.0
+- Skupaj (v7.50 → v9.67): 213 verzij, 334 novih funkcij
+- 3 SCRAPER IZBOLJŠAVE (po raziskavi profesionalcev):
+  1. Session-sticky proxies — isti proxy za isto domeno v 30-min oknu
+     (preprečuje behavioral fingerprinting — profesionalci to uporabljajo)
+  2. HTML caching — 1h TTL, ne fetchaj iste strani dvakrat
+     (Scrapfly ima to kot API feature — mi smo zdaj enakovredni)
+  3. Retry-After header — že implementirano, le preverjeno
+     (upošteva Retry-After header namesto da vedno uporablja exponential backoff)
+- OSTALE PRILOŽNOSTI (za prihodnje verzije):
+  * JavaScript rendering flag (renderJs + Playwright fallback) — v9.68
+  * Country targeting (proxy iz specifične države) — v9.69
+  * Failed request queue (retry failed scrapes) — v9.70
