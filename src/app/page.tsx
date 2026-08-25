@@ -2,7 +2,7 @@
 
 import { useEffect, useState, useRef, memo } from 'react';
 import dynamic from 'next/dynamic';
-import { Activity, Bell, Settings, ListPlus, Zap, RefreshCw, AlertCircle, LayoutGrid, BarChart3, Search, Heart, TrendingUp, History, Eye, PieChart, Menu, X, Users, Sparkles, Package, DollarSign, FileText, Shield, HelpCircle, ExternalLink, ChevronDown } from 'lucide-react';
+import { Activity, Bell, Settings, ListPlus, Zap, RefreshCw, AlertCircle, LayoutGrid, BarChart3, Search, Heart, TrendingUp, History, Eye, PieChart, Menu, X, Users, Sparkles, Package, DollarSign, FileText, Shield, HelpCircle, ExternalLink, ChevronDown, PanelLeft } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
 import { Input } from '@/components/ui/input';
@@ -44,6 +44,8 @@ import { ProfileSwitcher } from '@/components/dashboard/profile-switcher';
 import { SearchModal } from '@/components/dashboard/search-modal';
 // v9.52: Help Center Content — kategorizirani članki po vzoru Sellerboard
 import { HelpCenterContent } from '@/components/dashboard/help-center-content';
+// v9.54: Sidebar Navigation — opcijska levo stranska navigacija (po vzoru Linear/Vercel)
+import { SidebarNav } from '@/components/dashboard/sidebar-nav';
 import { useAlertsStream } from '@/lib/use-alerts-stream';
 import { useAuth, LoginModal } from '@/components/dashboard/login-modal';
 // v8.45: Mobile-First Responsive Optimization — bottom nav + FAB + haptic
@@ -131,6 +133,44 @@ const NAV: { id: View; label: string; icon: typeof Activity }[] = [
 export default function Home() {
   const [view, setView] = useState<View>('dashboard');
   const [unreadAlerts, setUnreadAlerts] = useState(0);
+  // v9.54: Sidebar layout mode — 'top' (default) ali 'sidebar' (po vzoru Linear/Vercel)
+  // Persisten v localStorage. Power-user feature.
+  const [layoutMode, setLayoutMode] = useState<'top' | 'sidebar'>('top');
+  const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
+
+  // Load layout mode iz localStorage na mount
+  useEffect(() => {
+    if (typeof window === 'undefined') return;
+    const saved = localStorage.getItem('markec-layout-mode');
+    if (saved === 'sidebar' || saved === 'top') {
+      setLayoutMode(saved);
+    }
+    const collapsed = localStorage.getItem('markec-sidebar-collapsed');
+    if (collapsed === 'true') {
+      setSidebarCollapsed(true);
+    }
+  }, []);
+
+  // Apply data-layout na <html> + persist
+  useEffect(() => {
+    if (typeof document === 'undefined') return;
+    const root = document.documentElement;
+    if (layoutMode === 'sidebar') {
+      root.setAttribute('data-layout', 'sidebar');
+    } else {
+      root.removeAttribute('data-layout');
+    }
+    localStorage.setItem('markec-layout-mode', layoutMode);
+  }, [layoutMode]);
+
+  useEffect(() => {
+    localStorage.setItem('markec-sidebar-collapsed', String(sidebarCollapsed));
+  }, [sidebarCollapsed]);
+
+  const toggleLayout = () => {
+    setLayoutMode((prev) => (prev === 'top' ? 'sidebar' : 'top'));
+  };
+
   // v9.49: Progressive Disclosure — dropdown menu + system drawer
   const [moreMenuOpen, setMoreMenuOpen] = useState(false);
   const [systemDrawerOpen, setSystemDrawerOpen] = useState(false);
@@ -356,6 +396,16 @@ export default function Home() {
               </button>
               {/* v8.47: Theme toggle */}
               <ThemeToggle />
+              {/* v9.54: Layout toggle — top-nav ↔ sidebar (power user feature) */}
+              <button
+                onClick={toggleLayout}
+                className="flex items-center gap-1 px-2 py-1.5 rounded border border-border bg-card/50 hover:border-primary/30 hover:text-primary transition-colors"
+                title={layoutMode === 'top' ? 'Preklopi na stransko navigacijo (power user)' : 'Preklopi na zgornjo navigacijo'}
+                aria-label={layoutMode === 'top' ? 'Preklopi na stransko navigacijo' : 'Preklopi na zgornjo navigacijo'}
+              >
+                <PanelLeft className={cn('w-3.5 h-3.5', layoutMode === 'sidebar' && 'text-primary')} />
+                <span className="hidden xl:inline">{layoutMode === 'top' ? 'Sidebar' : 'Top nav'}</span>
+              </button>
               {now && (
                 <span className="font-mono">
                   {now.toLocaleDateString('sl-SI')} {now.toLocaleTimeString('sl-SI')}
@@ -398,7 +448,9 @@ export default function Home() {
         </div>
       </header>
 
-      {/* Nav tabs — desktop only — v9.49: Progressive Disclosure (4 primary + Več dropdown + Sistem gear) */}
+      {/* Nav tabs — desktop only — v9.49: Progressive Disclosure (4 primary + Več dropdown + Sistem gear)
+          v9.54: Skrij ko je layoutMode='sidebar' (stranska navigacija prevzame) */}
+      {layoutMode === 'top' && (
       <nav className="hidden md:block border-b border-border bg-card/30">
         <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
           <div className="flex items-center gap-1">
@@ -514,6 +566,40 @@ export default function Home() {
           </div>
         </div>
       </nav>
+      )}
+
+      {/* v9.54: Sidebar layout — ko je layoutMode='sidebar', prikaži stransko navigacijo + main v flex row */}
+      {layoutMode === 'sidebar' && (
+        <div className="hidden md:flex flex-1 min-h-0">
+          <SidebarNav
+            currentView={view}
+            onNavigate={setView}
+            unreadAlerts={unreadAlerts}
+            collapsed={sidebarCollapsed}
+            onToggleCollapse={() => setSidebarCollapsed(c => !c)}
+          />
+          <main className="flex-1 min-w-0 overflow-y-auto px-4 sm:px-6 lg:px-8 py-4 md:py-6 pb-20 md:pb-6">
+            {view === 'dashboard' && <ErrorBoundary viewName="Dashboard"><DashboardView onNavigate={setView} /></ErrorBoundary>}
+            {view === 'monitors' && <ErrorBoundary viewName="Monitorji"><MonitorsView /></ErrorBoundary>}
+            {view === 'alerts' && <ErrorBoundary viewName="Alerti"><AlertsView /></ErrorBoundary>}
+            {view === 'listings' && <ErrorBoundary viewName="Oglasi"><ListingsView /></ErrorBoundary>}
+            {view === 'iskalnik' && <ErrorBoundary viewName="Iskalnik"><IskalnikView /></ErrorBoundary>}
+            {view === 'watchlist' && <ErrorBoundary viewName="Watchlist"><WatchlistView onNavigate={setView} /></ErrorBoundary>}
+            {view === 'trades' && <ErrorBoundary viewName="Skladišče"><TradesView /></ErrorBoundary>}
+            {view === 'inventory' && <ErrorBoundary viewName="Skladišče AI"><InventoryView /></ErrorBoundary>}
+            {view === 'pricing' && <ErrorBoundary viewName="Cene AI"><PricingView /></ErrorBoundary>}
+            {view === 'listing-opt' && <ErrorBoundary viewName="Oglasi AI"><ListingOptimizationView /></ErrorBoundary>}
+            {view === 'risk' && <ErrorBoundary viewName="Tveganja AI"><RiskView /></ErrorBoundary>}
+            {view === 'buyers' && <ErrorBoundary viewName="Kupci"><BuyersView /></ErrorBoundary>}
+            {view === 'analytics' && <ErrorBoundary viewName="Analitika"><AnalyticsView /></ErrorBoundary>}
+            {view === 'statistics' && <ErrorBoundary viewName="Statistike"><StatisticsView /></ErrorBoundary>}
+            {view === 'notifications' && <ErrorBoundary viewName="Obvestila"><NotificationHistoryView /></ErrorBoundary>}
+            {view === 'health' && <ErrorBoundary viewName="Zdravje"><HealthView /></ErrorBoundary>}
+            {view === 'settings' && <ErrorBoundary viewName="Nastavitve"><SettingsView /></ErrorBoundary>}
+            {view === 'ai-hub' && <ErrorBoundary viewName="AI Hub"><AIHubView /></ErrorBoundary>}
+          </main>
+        </div>
+      )}
 
       {/* 🗄️ NIVO 3: Sistem drawer — odpre se iz desne strani */}
       {systemDrawerOpen && (
@@ -699,8 +785,9 @@ export default function Home() {
         </div>
       )}
 
-      {/* Main content */}
+      {/* Main content — top-nav layout (default). v9.54: Skrij ko je layoutMode='sidebar' (prikazan zgoraj v sidebar bloku) */}
       {/* v8.45: pb-20 on mobile clears the fixed bottom nav (56px) + FAB. */}
+      {layoutMode === 'top' && (
       <main className="flex-1 max-w-7xl mx-auto w-full px-4 sm:px-6 lg:px-8 py-4 md:py-6 pb-20 md:pb-6">
         {view === 'dashboard' && <ErrorBoundary viewName="Dashboard"><DashboardView onNavigate={setView} /></ErrorBoundary>}
         {view === 'monitors' && <ErrorBoundary viewName="Monitorji"><MonitorsView /></ErrorBoundary>}
@@ -721,6 +808,7 @@ export default function Home() {
         {view === 'settings' && <ErrorBoundary viewName="Nastavitve"><SettingsView /></ErrorBoundary>}
         {view === 'ai-hub' && <ErrorBoundary viewName="AI Hub"><AIHubView /></ErrorBoundary>}
       </main>
+      )}
 
       {/* Footer — v8.49: enhanced z live health + version + stats */}
       <footer className="border-t border-border bg-card/30 mt-auto">

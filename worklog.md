@@ -22379,3 +22379,61 @@ Stage Summary:
 - Naslednji koraki po roadmap-u uporabnika:
   * v9.54 — Sidebar Toggle (večja sprememba, testirati na power-userjih)
   * v9.55 — Keyboard-first expansion (g d, g t, g l, /, ?)
+
+---
+Task ID: v9.54
+Agent: main
+Task: Sidebar Toggle — opcijska levo stranska navigacija (po vzoru Linear/Vercel/Stripe)
+
+Work Log:
+- Uporabnik (v9.51 roadmap): "v9.53 — Sidebar Toggle (večja sprememba; najprej bi jo testiral na power-userjih)"
+- Raziščil Linear/Vercel/Stripe sidebar pattern: collapsible, 4 primarni + groups + sistem na dnu.
+- Ustvaril src/components/dashboard/sidebar-nav.tsx:
+  * Levo stran sidebar (w-60 full / w-16 collapsed)
+  * 4 primarni zavihki (Dashboard, Monitorji, Oglasi, Skladišče)
+  * 3 collapsible skupine (Iskanje, AI Orodja, Analitika)
+  * 5 sistemskih na dnu (Alerti, Watchlist, Obvestila, Zdravje, Nastavitve)
+  * Auto-expand skupine, ki vsebujejo aktivni view
+  * Collapse toggle gumb (ChevronLeft/Right)
+  * Badge za neprebrani alerti
+  * Hover efekt + focus ring + aria-labels
+  * Title atributi v collapsed načinu (tooltip)
+- Integriral v src/app/page.tsx:
+  * layoutMode state ('top' | 'sidebar') + sidebarCollapsed state
+  * Persisten v localStorage (markec-layout-mode, markec-sidebar-collapsed)
+  * data-layout atribut na <html> za CSS hook
+  * Layout toggle gumb v header (PanelLeft ikona)
+  * Pogojno prikazovanje: top-nav + main (top mode) ALI sidebar + main (sidebar mode)
+  * Mobile fallback: sidebar hidden, uporabi MobileBottomNav
+- Preveril lint: 0 napak ✨
+- Preveril typecheck: 0 napak ✨
+- Verifikacija (Agent Browser):
+  * Layout toggle gumb najden v header ✓
+  * Klik → data-layout="sidebar" apliciran ✓
+  * Sidebar visible (aside[aria-label*=Stranska]) ✓
+  * Top-nav hidden ✓
+  * 4 primarni + 3 skupine + 5 sistemskih = 18 elementov ✓
+  * Klik "AI Orodja" → skupina se razširi ✓
+  * Klik "Skrči sidebar" → width 64px (samo ikone) ✓
+  * Klik "Dashboard" v sidebar → navigira na Pregled sistema ✓
+  * Toggle nazaj na top-nav deluje ✓
+  * VLM analiza: "Izgleda zelo profesionalno in je vizualno blizu standardov Linear/Vercel/Stripe. Dizajn sledi istim principom čistote, kontrasta in funkcionalnosti."
+  * Screenshots: download/sidebar-layout-v9.54.png (collapsed), download/sidebar-expanded-v9.54.png (expanded)
+  * Footer: v9.54.0 ✓
+
+Stage Summary:
+- NEW: src/components/dashboard/sidebar-nav.tsx (collapsible levo stranska navigacija)
+- MODIFIED: src/app/page.tsx (layout toggle + pogojno top-nav/sidebar)
+- MODIFIED: src/lib/version.ts (v9.53→v9.54)
+- MODIFIED: README.md (badge v9.54)
+- Verzija: v9.54.0
+- Skupaj (v7.50 → v9.54): 200 verzij, 321 novih funkcij
+- UX IZBOLJŠAVA (po vzoru Linear/Vercel/Stripe):
+  * Prej (v9.53): samo top-nav (6 elementov v vrstici)
+  * Zdaj  (v9.54): top-nav (default) ALI sidebar (power user) — toggle v header
+  * Sidebar: collapsible (240px full / 64px ikone)
+  * Persisten v localStorage (uporabnikove nastavitve se ohranijo)
+  * VLM potrjeno: "vizualno blizu Linear/Vercel/Stripe standardov"
+- MILESTONE: 200. verzija aplikacije! 🎉
+- Naslednji koraki po roadmap-u uporabnika:
+  * v9.55 — Keyboard-first expansion (g d, g t, g l, /, ?)
