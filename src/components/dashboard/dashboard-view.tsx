@@ -55,6 +55,8 @@ import { WidgetWrapper } from './dashboard/widget-wrapper';
 import { PinnedKpiRow } from './pinned-kpi-row';
 // v9.56: Gamification Widget — streaks, badges, level system
 import { GamificationWidget } from './gamification-widget';
+// v9.57: Scraper Monitor Widget — real-time tracking + block bypass
+import { ScraperMonitorWidget } from './scraper-monitor-widget';
 
 export function DashboardView({ onNavigate }: ViewProps) {
   const [stats, setStats] = useState<Stats | null>(null);
@@ -618,6 +620,9 @@ export function DashboardView({ onNavigate }: ViewProps) {
 
           {/* v9.56: Gamification Widget — streaks, badges, level system (engagement boost) */}
           <GamificationWidget />
+
+          {/* v9.57: Scraper Monitor — real-time tracking + block bypass */}
+          <ScraperMonitorWidget />
 
           {/* v8.83: Setup Health Banner — shows setup progress, auto-hides when complete */}
           <SetupHealthBanner />

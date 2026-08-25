@@ -349,6 +349,7 @@ model Monitor {
   listings   Listing[]
   alerts     Alert[]
   runLogs    RunLog[]
+  scraperStatuses ScraperStatus[] // v9.57: real-time scraper tracking
   // v7.32: Missing indexes
   @@index([isActive])
   @@index([profileId])
@@ -493,6 +494,37 @@ model RunLog {
   @@index([monitorId, startedAt])
   // v7.32: Missing index
   @@index([status])
+}
+
+// v9.57: ScraperStatus — real-time tracking of scraping activity + block detection + bypass attempts
+model ScraperStatus {
+  id            String   @id @default(cuid())
+  monitorId     String?
+  monitor       Monitor? @relation(fields: [monitorId], references: [id], onDelete: SetNull)
+  // What URL/source is being scraped right now
+  source        String   // bolha | vinted | avtonet | mobile-de | etc
+  targetUrl     String   // the search URL being scraped
+  status        String   @default("idle") // idle | running | blocked | bypassed | error | success
+  // When did scraping start
+  startedAt     DateTime @default(now())
+  finishedAt    DateTime?
+  durationMs    Int?
+  // Block detection details
+  blockType     String? // captcha | cloudflare | 403 | 429 | timeout | ip-ban | empty-response
+  blockDetails  String? // JSON: { statusCode, headers, body snippet }
+  // Bypass attempts
+  bypassAttempts Int     @default(0)
+  bypassMethod  String? // proxy-rotation | captcha-solve | stealth-mode | retry-backoff | playwright
+  bypassSuccess Boolean  @default(false)
+  // Stats from this scrape
+  listingsFound Int      @default(0)
+  newListings   Int      @default(0)
+  // Error (if status=error)
+  error         String?
+
+  @@index([monitorId, startedAt])
+  @@index([status])
+  @@index([source])
 }
 
 // Heartbeat log — daily system health report (v1.1)
