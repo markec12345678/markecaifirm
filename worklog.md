@@ -22771,3 +22771,64 @@ Stage Summary:
   * Smart Digest (AI povzetek alertov)
   * Scraper Monitor (real-time tracking + bypass)
   * Predictive Analytics (anomalije + napovedi)
+
+---
+Task ID: v9.61
+Agent: main
+Task: AI Copilot + Odpri original oglas
+
+Work Log:
+- Uporabnik: "ce se dodamo copilot to je razlika kot avtopilot, in ali ko najde oglas kliknes odpre original oglas naprimer mobile.de original ne samo opis kaj ai napise ampak dejanski oglas"
+- Razlika Avtopilot vs Copilot:
+  * AVTOPILOT (v8.30): samodejno izvaja LOW/MEDIUM akcije BREZ potrditve
+  * COPILOT (v9.61): AI PREDLAGA akcije, uporabnik jih potrdi/zavrne
+  * Copilot je za HIGH risk akcije, strategijske odločitve, outlier priložnosti
+- Ustvaril backend src/app/api/ai/copilot/route.ts:
+  * GET — vrne seznam predlogov (deterministična logika, v produkciji bi klicali LLM)
+  * POST — uporabnik potrdi/zavrne predlog
+  * 5 tipov predlogov:
+    1. buy — top priložnosti (dealScore >= 80)
+    2. sell — zastareli artikli (> 20 dni)
+    3. stop-monitor — neaktivni monitorji (0 novih v 7 dneh)
+    4. restock — najboljša kategorija z 0 held
+    5. investigate — anomalije (win rate < 80%)
+  * Vsak predlog ima: priority (high/medium/low), reason, expectedOutcome, riskLevel
+  * actionData z url (original oglas), suggestedPrice, suggestedAction
+  * autoExecutable flag — ali bi avtopilot to naredil (za prikaz razlike)
+- Ustvaril frontend src/components/dashboard/copilot-widget.tsx:
+  * AI predlogi z [Potrdi] [Zavrni] [Odpri] gumbi
+  * "Odpri" gumb odpre originalni oglas na portalu (bolha.com, mobile.de, itd.)
+  * Expand/collapse za podrobnosti (reason, expectedOutcome, riskLevel)
+  * Priority barve (high=red, medium=amber, low=sky)
+  * Dismiss state — potvrjeni/zavrnjeni predlogi izginejo
+  * "Vse opravljeno" empty state
+  * Avtopilot vs Copilot hint na dnu
+  * Auto-refresh vsakih 2 min
+- Integriral v DashboardView Pregled tab (med PinnedKpiRow in Danes card)
+- Preveril typecheck: 0 napak ✨ (popravil Listing.source → monitor.source)
+- Preveril lint: 0 napak ✨
+- Verifikacija (curl + Agent Browser):
+  * API GET: 6 predlogov (2 high, 4 medium)
+    - 2 sell (Sony A7III 51 dni, Xbox Series X 41 dni) — HIGH priority
+    - 3 buy (iPhone 13, VW Golf 5, MacBook Air) — MEDIUM, vsi z URL do bolha.com
+    - 1 restock (oblačila) — MEDIUM
+  * API POST approve: "Prodaja/reprice potrjena za trade XYZ. V produkciji: posodobi ceno, objavi oglas."
+  * UI: "AI Copilot" prisoten, "predlogov", "Potrdi", "Zavrni", "Odpri" vsi prisotni ✓
+  * Footer: v9.61.0 ✓
+  * 0 napak v dev logu ✓
+
+Stage Summary:
+- NEW: src/app/api/ai/copilot/route.ts (GET suggestions + POST approve/reject)
+- NEW: src/components/dashboard/copilot-widget.tsx (UI z Potrdi/Zavrni/Odpri gumbi)
+- MODIFIED: src/components/dashboard/dashboard-view.tsx (CopilotWidget v Pregled)
+- MODIFIED: src/lib/version.ts (v9.60→v9.61)
+- MODIFIED: README.md (badge v9.61)
+- Verzija: v9.61.0
+- Skupaj (v7.50 → v9.61): 207 verzij, 328 novih funkcij
+- COPILOT VS AVTOPILOT (jasna razlika):
+  * Avtopilot: samodejno, brez potrditve, LOW/MEDIUM risk
+  * Copilot: predlogi, uporabnik potrdi, za HIGH risk in strategijske odločitve
+- ODPRI ORIGINAL OGLAS:
+  * "Odpri" gumb v vsakem predlogu ki ima URL
+  * Odpre originalni oglas na portalu (bolha.com, mobile.de, itd.)
+  * Ne samo AI opis — dejanski oglas v novem zavihku

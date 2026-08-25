@@ -61,6 +61,8 @@ import { ScraperMonitorWidget } from './scraper-monitor-widget';
 import { SmartDigestWidget } from './smart-digest-widget';
 // v9.60: Predictive Analytics Widget — anomaly detection + predictions
 import { PredictiveAnalyticsWidget } from './predictive-analytics-widget';
+// v9.61: AI Copilot — AI predlogi akcij s potrditvijo (razlika od avtopilota)
+import { CopilotWidget } from './copilot-widget';
 
 export function DashboardView({ onNavigate }: ViewProps) {
   const [stats, setStats] = useState<Stats | null>(null);
@@ -369,6 +371,9 @@ export function DashboardView({ onNavigate }: ViewProps) {
               totalAlerts={stats.totalAlerts}
             />
           )}
+
+          {/* v9.61: AI Copilot — predlogi akcij s potrditvijo (razlika od avtopilota) */}
+          <CopilotWidget onNavigate={onNavigate} />
 
           {/* v4.0: Danes summary card */}
           {stats.today && (
