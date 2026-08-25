@@ -96,6 +96,79 @@
   --ring: #4ade80;
 }
 
+/* ═══════════════════════════════════════════════════════════════════════
+   v9.53: PROFESSIONAL THEME — subtilnejše barve po vzoru Stripe/Linear.
+   Aktivira se z [data-theme="professional"] na <html> elementu.
+   - Background: temno siva (ne črna)
+   - Primary: emerald 600 (umirjena zelena)
+   - Brez text-shadow glow
+   - Brez scanline ozadja
+   - Mehkejše border barve
+   - Manj agresiven scroll thumb
+   ═══════════════════════════════════════════════════════════════════════ */
+[data-theme="professional"] {
+  --radius: 0.5rem;
+  --background: #0f1419;
+  --foreground: #e2e8f0;
+  --card: #1a1f26;
+  --card-foreground: #e2e8f0;
+  --popover: #1a1f26;
+  --popover-foreground: #e2e8f0;
+  --primary: #059669;
+  --primary-foreground: #f8fafc;
+  --secondary: #242b35;
+  --secondary-foreground: #e2e8f0;
+  --muted: #1a1f26;
+  --muted-foreground: #94a3b8;
+  --accent: #242b35;
+  --accent-foreground: #38bdf8;
+  --destructive: #dc2626;
+  --border: #2a3441;
+  --input: #242b35;
+  --ring: #059669;
+  --chart-1: #059669;
+  --chart-2: #38bdf8;
+  --chart-3: #f59e0b;
+  --chart-4: #dc2626;
+  --chart-5: #8b5cf6;
+  --sidebar: #1a1f26;
+  --sidebar-foreground: #e2e8f0;
+  --sidebar-primary: #059669;
+  --sidebar-primary-foreground: #f8fafc;
+  --sidebar-accent: #242b35;
+  --sidebar-accent-foreground: #38bdf8;
+  --sidebar-border: #2a3441;
+  --sidebar-ring: #059669;
+}
+
+/* Professional theme overrides — izklopi terminal glow in scanline */
+[data-theme="professional"] .terminal-glow {
+  text-shadow: none;
+}
+[data-theme="professional"] .amber-glow {
+  text-shadow: none;
+}
+[data-theme="professional"] .danger-glow {
+  text-shadow: none;
+}
+[data-theme="professional"] .scanline-bg {
+  background-image: none;
+}
+[data-theme="professional"] body {
+  font-family: var(--font-sans), ui-sans-serif, system-ui, -apple-system, "Segoe UI", sans-serif;
+  font-feature-settings: normal;
+}
+/* Professional scroll thumb — mehkejši */
+[data-theme="professional"] ::-webkit-scrollbar-track {
+  background: #0f1419;
+}
+[data-theme="professional"] ::-webkit-scrollbar-thumb {
+  background: #2a3441;
+}
+[data-theme="professional"] ::-webkit-scrollbar-thumb:hover {
+  background: #059669;
+}
+
 @layer base {
   * {
     @apply border-border outline-ring/50;

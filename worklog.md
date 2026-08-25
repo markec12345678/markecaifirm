@@ -22313,3 +22313,69 @@ Stage Summary:
   * v9.53 — Professional Theme (subtilnejše barve kot opcija)
   * v9.54 — Sidebar Toggle (večja sprememba, testirati na power-userjih)
   * v9.55 — Keyboard-first expansion (g d, g t, g l, /, ?)
+
+---
+Task ID: v9.53
+Agent: main
+Task: Professional Theme — subtilnejše barve kot opcija (po vzoru Stripe/Linear)
+
+Work Log:
+- Preveril obstoječi theme sistem: next-themes z dark/light/system, Terminal-style (zelena #4ade80 + glow).
+- Strategija: dodati 4. temo "Professional" z umirjenimi barvami, brez glow/scanline.
+- Dodal v src/app/globals.css:
+  * [data-theme="professional"] blok z novimi CSS spremenljivkami:
+    - Background: #0f1419 (temno siva, ne črna)
+    - Primary: #059669 (emerald 600, umirjena zelena)
+    - Foreground: #e2e8f0 (slate 200)
+    - Border: #2a3441 (mehkejša)
+    - Accent-foreground: #38bdf8 (sky 400, ne amber)
+    - Chart barve: emerald/sky/amber/red/violet
+    - Radius: 0.5rem (mehkejši robovi)
+  * Override pravila za Professional:
+    - .terminal-glow → text-shadow: none
+    - .amber-glow → text-shadow: none
+    - .danger-glow → text-shadow: none
+    - .scanline-bg → background-image: none
+    - body → sans-serif font (ne monospace)
+    - scrollbar track/thumb → mehkejši
+- Posodobil src/components/theme-provider.tsx:
+  * Dodal themes={['dark', 'light', 'professional']} v NextThemesProvider
+  * Prej: default 3 teme; zdaj: 4 teme podprte
+- Posodobil src/components/theme-toggle.tsx:
+  * 4 cikli: dark → light → system → professional → dark
+  * Nov ikona: Briefcase (za Professional)
+  * THEME_LABELS: "Dark (Terminal)", "Light", "Sistem", "Professional"
+  * useEffect: apply/remove data-theme="professional" na <html>
+  * Aria-label posodobljen
+- Preveril lint: 0 napak ✨
+- Preveril typecheck: 0 napak ✨
+- Verifikacija (Agent Browser):
+  * Cikliranje: dark → light → system → professional ✓
+  * Professional theme CSS apliciran:
+    - data-theme="professional" ✓
+    - --primary: #059669 (umirjena emerald) ✓
+    - --background: #0f1419 (temno siva) ✓
+    - --border: #2a3441 (mehkejša) ✓
+    - --accent-foreground: #38bdf8 (sky) ✓
+  * Glow izklopljen: .terminal-glow text-shadow: none ✓
+  * VLM analiza: "Izgleda precej bolj profesionalen in čist kot tipičen terminal. Barve so subtilne in uravnotežene."
+  * Screenshot: download/professional-theme-v9.53.png
+  * Cikliranje nazaj na dark deluje ✓
+  * Footer: v9.53.0 ✓
+
+Stage Summary:
+- MODIFIED: src/app/globals.css (Professional theme blok + override pravila)
+- MODIFIED: src/components/theme-provider.tsx (dodana 'professional' v allowed themes)
+- MODIFIED: src/components/theme-toggle.tsx (4 cikli + Briefcase ikona + data-theme sync)
+- MODIFIED: src/lib/version.ts (v9.52→v9.53)
+- MODIFIED: README.md (badge v9.53)
+- Verzija: v9.53.0
+- Skupaj (v7.50 → v9.53): 199 verzij, 320 novih funkcij
+- VIZUALNA IZBOLJŠAVA (po vzoru Stripe/Linear):
+  * Terminal tema (default): zelena #4ade80, glow, scanline, monospace
+  * Professional tema (optional): emerald #059669, brez glow, sans-serif, mehkejši robovi
+  * 4 cikli: Dark (Terminal) → Light → System → Professional
+  * VLM potrjeno: "bolj profesionalen in čist"
+- Naslednji koraki po roadmap-u uporabnika:
+  * v9.54 — Sidebar Toggle (večja sprememba, testirati na power-userjih)
+  * v9.55 — Keyboard-first expansion (g d, g t, g l, /, ?)
