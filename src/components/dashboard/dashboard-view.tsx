@@ -59,6 +59,8 @@ import { GamificationWidget } from './gamification-widget';
 import { ScraperMonitorWidget } from './scraper-monitor-widget';
 // v9.59: Smart Digest Widget — AI povzetek alertov namesto spam-a
 import { SmartDigestWidget } from './smart-digest-widget';
+// v9.60: Predictive Analytics Widget — anomaly detection + predictions
+import { PredictiveAnalyticsWidget } from './predictive-analytics-widget';
 
 export function DashboardView({ onNavigate }: ViewProps) {
   const [stats, setStats] = useState<Stats | null>(null);
@@ -628,6 +630,9 @@ export function DashboardView({ onNavigate }: ViewProps) {
 
           {/* v9.59: Smart Digest — AI povzetek alertov namesto spam-a */}
           <SmartDigestWidget />
+
+          {/* v9.60: Predictive Analytics — anomaly detection + predictions */}
+          <PredictiveAnalyticsWidget onNavigate={onNavigate} />
 
           {/* v8.83: Setup Health Banner — shows setup progress, auto-hides when complete */}
           <SetupHealthBanner />

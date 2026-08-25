@@ -22722,3 +22722,52 @@ Stage Summary:
   * Povezava med avtopilot sistemom (v8.30) in scraping (v9.57)
   * Ko je autoPilotEnabled=true, samodejno izvaja bypass za blokirane scraperje
   * Uporablja obstoječe 8 varnostnih pravil + anomaly detection
+
+---
+Task ID: v9.58 + v9.59 + v9.60
+Agent: main
+Task: 3 verzije v eni seriji — Pravi bypass, Smart Digest, Predictive Analytics
+
+v9.58 — Pravi bypass z anti-detection.ts + avtopilot za scrapanje:
+- NEW: src/lib/scraper/bypass-chain.ts (executeBypassChain z 5 metodami)
+- Pravi klici fetchWithAntiDetection() + solveCaptcha() (ne simulacija)
+- Dev log potrdil: "anti-detection: Fetch error from www.bolha.com - retry 1/3"
+- autoPilotScrapingBypass() — povezava z avtopilot sistemom (v8.30)
+- 5 metod: retry-backoff, proxy-rotation, stealth-mode, captcha-solve, playwright
+
+v9.59 — Smart Notification Digest:
+- NEW: src/components/dashboard/smart-digest-widget.tsx
+- AI povzetek zadnjih 24h (uses /api/digest/ai-summary)
+- Quick stats + Top priložnosti (expandable)
+- Mode toggle: Instant ↔ Digest (zbrano ob 20:00)
+- Reši "notification fatigue"
+
+v9.60 — Predictive Analytics & Anomaly Detection:
+- NEW: src/app/api/analytics/predictive/route.ts
+- NEW: src/components/dashboard/predictive-analytics-widget.tsx
+- 5 tipov anomalij: win-rate-drop, inventory-aging, profit-drop, category-decline, low-activity
+- 3 tipi napovedi: profit-forecast, restock recommendation, sell warning
+- Insights: positive/warning/opportunity
+- Vsaka anomalija/predikcija klikljiva → navigira na relevantni view
+
+Verifikacija:
+- API test: 2 anomalije (1 high - inventory aging, 1 medium - category decline)
+- 3 napovedi (profit forecast 646€, restock oblačila, sell warning)
+- 2 vpogledi
+- UI: vsi elementi prisotni
+- Footer: v9.60.0
+
+Stage Summary:
+- NEW: src/lib/scraper/bypass-chain.ts
+- NEW: src/components/dashboard/smart-digest-widget.tsx
+- NEW: src/app/api/analytics/predictive/route.ts
+- NEW: src/components/dashboard/predictive-analytics-widget.tsx
+- MODIFIED: src/app/api/scraper-status/route.ts + [id]/bypass/route.ts
+- MODIFIED: src/components/dashboard/dashboard-view.tsx (3 novi widgeti v Pregled)
+- MODIFIED: src/lib/version.ts (v9.57→v9.60)
+- Verzija: v9.60.0
+- Skupaj (v7.50 → v9.60): 206 verzij, 327 novih funkcij
+- 3 NOVE FUNKCIJE V PREGLED TAB:
+  * Smart Digest (AI povzetek alertov)
+  * Scraper Monitor (real-time tracking + bypass)
+  * Predictive Analytics (anomalije + napovedi)
