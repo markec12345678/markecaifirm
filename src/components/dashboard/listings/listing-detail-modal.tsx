@@ -642,15 +642,15 @@ export function ListingDetailModal({ listingId, onClose }: { listingId: string |
               <div className="flex items-center justify-between mb-2">
                 <h4 className="text-xs uppercase tracking-wider text-muted-foreground flex items-center gap-1.5">
                   <Sparkles className="w-3.5 h-3.5" />
-                  AI Deal Score (0-100)
+                  AI Deal Score (ocena kakovosti oglasa)
                 </h4>
-                {listing.dealScore != null && (
+                {listing.dealScore != null && listing.dealScore > 0 && (
                   <span className="text-[10px] text-muted-foreground">
                     {listing.dealScoreComputedAt && new Date(listing.dealScoreComputedAt).toLocaleString('sl-SI')}
                   </span>
                 )}
               </div>
-              {listing.dealScore != null ? (
+              {listing.dealScore != null && listing.dealScore > 0 ? (
                 <div>
                   <div className="flex items-center gap-3 mb-2">
                     <div className={cn(
@@ -712,7 +712,7 @@ export function ListingDetailModal({ listingId, onClose }: { listingId: string |
                 </div>
               ) : (
                 <div className="text-center py-3">
-                  <p className="text-xs text-muted-foreground mb-2">Še ni ocenjen s Deal Score</p>
+                  <p className="text-xs text-muted-foreground mb-2">Deal Score še ni izračunan za ta oglas</p>
                   <Button
                     size="sm"
                     className="h-7 text-xs"

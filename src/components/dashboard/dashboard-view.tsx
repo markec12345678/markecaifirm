@@ -555,28 +555,28 @@ export function DashboardView({ onNavigate }: ViewProps) {
             </CardContent>
           </Card>
 
-          {/* v8.80: Daily Briefing — TOP of dashboard, unifies all intelligence */}
-          <DailyBriefingCard />
+          {/* v8.80: Daily Briefing — premaknjeno v AI kategorijo (v9.73) */}
+          {/* <DailyBriefingCard /> */}
 
-          {/* v8.39: Goal Tracker Dashboard Card */}
+          {/* v8.39: Goal Tracker — sekundarna kartica */}
           <GoalTrackerCard />
 
-          {/* v9.56: Gamification Widget — streaks, badges, level system (engagement boost) */}
-          <GamificationWidget />
+          {/* v9.56: Gamification — premaknjeno v AI kategorijo (v9.73) */}
+          {/* <GamificationWidget /> */}
 
-          {/* v9.57: Scraper Monitor — real-time tracking + block bypass */}
-          <ScraperMonitorWidget />
+          {/* v9.57: Scraper Monitor — premaknjeno v Monitorji kategorijo (v9.73) */}
+          {/* <ScraperMonitorWidget /> */}
 
-          {/* v9.59: Smart Digest — AI povzetek alertov namesto spam-a */}
-          <SmartDigestWidget />
+          {/* v9.59: Smart Digest — premaknjeno v Obvestila kategorijo (v9.73) */}
+          {/* <SmartDigestWidget /> */}
 
-          {/* v9.60: Predictive Analytics — anomaly detection + predictions */}
+          {/* v9.60: Predictive Analytics — sekundarna kartica */}
           <PredictiveAnalyticsWidget onNavigate={onNavigate} />
 
-          {/* v8.83: Setup Health Banner — shows setup progress, auto-hides when complete */}
-          <SetupHealthBanner />
+          {/* v8.83: Setup Health Banner — premaknjeno v Sistem kategorijo (v9.73) */}
+          {/* <SetupHealthBanner /> */}
 
-          {/* v2.7: Activity feed */}
+          {/* v2.7: Activity feed — sekundarna kartica */}
           <WidgetWrapper id="activityFeed" order={widgetOrder} customizeMode={customizeMode} onMove={moveWidget}>
             <ActivityFeed />
           </WidgetWrapper>
@@ -738,7 +738,7 @@ export function DashboardView({ onNavigate }: ViewProps) {
                               {l.priceText} • {l.monitor?.name}
                             </div>
                           </div>
-                          {l.dealScore != null && (
+                          {l.dealScore != null && l.dealScore > 0 && (
                             <Badge variant="outline" className="text-[10px] text-primary border-primary/40 shrink-0">
                               🎯 {l.dealScore}
                             </Badge>

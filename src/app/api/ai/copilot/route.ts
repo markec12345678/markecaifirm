@@ -94,21 +94,22 @@ async function generateAndSaveSuggestions(): Promise<{ saved: number; suggestion
     .slice(0, 3);
 
   for (const listing of topOpportunities) {
-    const dealScore = listing.dealScore ?? 0;
+    const dealScore = listing.dealScore; // null = ni izračunana
     const aiScore = listing.aiScore ?? 0;
     const estimatedValue = listing.aiEstimatedValue ?? 0;
     const price = listing.price ?? 0;
     const potentialProfit = estimatedValue > 0 ? estimatedValue - price : 0;
     const roi = price > 0 ? Math.round((potentialProfit / price) * 100) : 0;
+    const dealScoreText = dealScore != null ? `Deal Score: ${dealScore}` : 'Deal Score: ni izračunana';
 
     inputs.push({
       type: 'buy',
-      priority: dealScore >= 90 ? 'high' : 'medium',
+      priority: (dealScore ?? 0) >= 90 ? 'high' : 'medium',
       title: `Kupi: ${listing.title.slice(0, 50)}`,
-      description: `${listing.priceText || price + '€'} · Deal Score: ${dealScore} · AI: ${aiScore}/10 · ROI: ${roi}%`,
-      reason: `AI ocenjuje ${dealScore >= 90 ? 'IZJEMNO' : 'DOBRO'} priložnost. ${potentialProfit > 0 ? `Potencialni dobiček: ${potentialProfit}€` : ''}`,
+      description: `${listing.priceText || price + '€'} · ${dealScoreText} · AI ocena: ${aiScore}/10 · ROI: ${roi}%`,
+      reason: `AI ocenjuje ${(dealScore ?? 0) >= 90 ? 'IZJEMNO' : 'DOBRO'} priložnost. ${potentialProfit > 0 ? `Potencialni dobiček: ${potentialProfit}€` : ''}`,
       expectedOutcome: potentialProfit > 0 ? `+${potentialProfit}€ dobička (ROI ${roi}%)` : 'Visoka verjetnost prodaje',
-      riskLevel: dealScore >= 90 ? 'low' : 'medium',
+      riskLevel: (dealScore ?? 0) >= 90 ? 'low' : 'medium',
       actionData: {
         listingId: listing.id,
         url: listing.url,
@@ -122,7 +123,7 @@ async function generateAndSaveSuggestions(): Promise<{ saved: number; suggestion
       // v9.63: Store AI predictions for outcome comparison
       expectedProfit: potentialProfit > 0 ? potentialProfit : null,
       expectedRoi: roi > 0 ? roi : null,
-      confidence: dealScore, // dealScore as confidence proxy
+      confidence: dealScore ?? null, // null če ni izračunan
     });
   }
 

@@ -623,7 +623,7 @@ export function ListingsView() {
                       <a key={j} href={l.url} target="_blank" rel="noopener noreferrer" className="flex items-center gap-1.5 p-0.5 hover:bg-card/50 rounded text-[10px]">
                         <span className="truncate flex-1">{l.title}</span>
                         <span className="font-mono text-amber-400 shrink-0">{l.priceText}</span>
-                        {l.dealScore != null && <Badge variant="outline" className="text-[8px] text-primary border-primary/40 shrink-0">🎯{l.dealScore}</Badge>}
+                        {l.dealScore != null && l.dealScore > 0 && <Badge variant="outline" className="text-[8px] text-primary border-primary/40 shrink-0">🎯{l.dealScore}</Badge>}
                       </a>
                     ))}
                     {opp.listings.length > 4 && <div className="text-[9px] text-muted-foreground">... in {opp.listings.length - 4} več</div>}

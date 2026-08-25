@@ -65,7 +65,7 @@ export function RestockRecommendations() {
                       <a key={j} href={o.url} target="_blank" rel="noopener noreferrer" className="flex items-center gap-1.5 p-1 hover:bg-card/50 rounded text-[10px]">
                         <span className="truncate flex-1">{o.title}</span>
                         <span className="font-mono text-amber-400 shrink-0">{o.priceText}</span>
-                        {o.dealScore != null && <Badge variant="outline" className="text-[8px] text-primary border-primary/40 shrink-0">🎯{o.dealScore}</Badge>}
+                        {o.dealScore != null && o.dealScore > 0 && <Badge variant="outline" className="text-[8px] text-primary border-primary/40 shrink-0">🎯{o.dealScore}</Badge>}
                         <span className="font-mono text-green-400 shrink-0">+{o.potentialProfit}€</span>
                       </a>
                     ))}
