@@ -36,30 +36,31 @@ export async function POST(req: NextRequest) {
     }
 
     // 1. Find YOUR sold trades with similar title (keyword matching)
+    // SQLite ne podpira mode: 'insensitive' — uporabljamo lowercase contains
     const titleWords = title.toLowerCase().split(/\s+/).filter(w => w.length > 3).slice(0, 5);
-    const soldTrades = await db.trade.findMany({
+    const soldTrades = titleWords.length > 0 ? await db.trade.findMany({
       where: {
         status: 'sold',
         sellPrice: { not: null },
         sellDate: { not: null },
-        OR: titleWords.map(w => ({ title: { contains: w, mode: 'insensitive' } })),
+        OR: titleWords.map(w => ({ title: { contains: w } })),
       },
       select: { title: true, category: true, buyPrice: true, sellPrice: true, buyDate: true, sellDate: true, sellLocation: true },
       take: 30,
       orderBy: { sellDate: 'desc' },
-    });
+    }) : [];
 
     // 2. Find active listings with similar title (market asking prices)
-    const activeListings = await db.listing.findMany({
+    const activeListings = titleWords.length > 0 ? await db.listing.findMany({
       where: {
         isHidden: false,
         price: { not: null, gt: 0 },
-        OR: titleWords.map(w => ({ title: { contains: w, mode: 'insensitive' } })),
+        OR: titleWords.map(w => ({ title: { contains: w } })),
       },
       select: { title: true, price: true, priceText: true, location: true, firstSeenAt: true, monitor: { select: { source: true } } },
       take: 30,
       orderBy: { firstSeenAt: 'desc' },
-    });
+    }) : [];
 
     // 3. AI-powered comps analysis
     const settings = await getSettingsRow();
