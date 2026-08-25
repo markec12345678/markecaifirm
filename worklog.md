@@ -22659,3 +22659,66 @@ Stage Summary:
   * v9.58 — Integriraj pravi bypass z anti-detection.ts (namesto simulacije)
   * v9.59 — Smart Notification Digest
   * v9.60 — Predictive Analytics & Anomaly Detection
+
+---
+Task ID: v9.58
+Agent: main
+Task: Pravi bypass z anti-detection.ts + avtopilot za scrapanje
+
+Work Log:
+- Uporabnik: "ali je mozno da dodamo avtopilot ze imamo da moznost copilot? ... naredi v9.58 — Integriraj pravi bypass z anti-detection.ts"
+- Preveril obstoječ avtopilot sistem: v8.30/v8.31 — že implementiran za akcije Master Brain (LOW/MEDIUM tveganje).
+- Avtopilot je bil povezan z akcijami (auto-relist, auto-reprice), NE PA neposredno s scrapanjem.
+- Ustvaril src/lib/scraper/bypass-chain.ts:
+  * executeBypassChain() — pravi bypass z 5 metodami v zaporedju:
+    1. retry-backoff — počakaj 2-5s, retry z fetchWithAntiDetection
+    2. proxy-rotation — resetAntiDetectionCache + retry z novim proxy
+    3. stealth-mode — realistic headers (Accept, Accept-Language, Sec-Fetch-*)
+    4. captcha-solve — solveCaptcha() z 2captcha/anti-captcha/capmonster
+    5. playwright — full browser fallback (if playwrightEnabled)
+  * Vsaka metoda dejansko kliče fetchWithAntiDetection() — NE simulacija
+  * isAutoPilotEnabled() — preveri Settings (autoPilotEnabled, mode, anomaly)
+  * autoPilotScrapingBypass() — samodejno izvede bypass za vse blokirane (max 10)
+  * Vsi poskusi se zabeležijo v ScraperStatus (bypassAttempts, bypassMethod, bypassSuccess)
+  * Logiranje vsakega poskusa z durationMs in details
+- Posodobil src/app/api/scraper-status/[id]/bypass/route.ts:
+  * Zamenjal simulacijo z executeBypassChain()
+  * method='auto' — izvede celoten chain
+  * method=specifičen — izvede chain in vrne rezultat te metode
+  * maxDuration=60s (captcha solve lahko traja)
+  * Vrne detailed attempts array z vsemi poskusi
+- Posodobil src/app/api/scraper-status/route.ts:
+  * autoBypass=true — kliče autoPilotScrapingBypass()
+  * Preveri isAutoPilotEnabled() in prikaže v odgovoru
+  * Razlika v message: "Avtopilot: X uspešnih" vs "Ročni bypass: X uspešnih (Avtopilot je izklopljen)"
+- Preveril typecheck: 0 napak ✨
+- Preveril lint: 0 napak ✨
+- Verifikacija:
+  * API autoBypass: "Ni blokiranih scraper-jev za bypass." ✓
+  * Ustvaril testni blocked status (bolha 429)
+  * Dev log potrdil pravi bypass:
+    - "[anti-detection] Fetch error from www.bolha.com — retry 1/3 in 2s: fetch failed"
+    - To dokazuje da fetchWithAntiDetection() dejansko pošilja HTTP zahteve
+  * Prejšnji captcha-solve test: success=true, method=captcha-solve, 1 poskus
+  * Novi bolha test: 2 poskusa (proxy-rotation zadnji), success=false (bolha blokira v sandboxu)
+  * ScraperStatus pravilno posodobljen: bypassAttempts=2, bypassMethod=proxy-rotation
+- Povezava z avtopilotom:
+  * Ko je autoPilotEnabled=true in scraper blokiran → autoPilotScrapingBypass() samodejno izvede chain
+  * Anomaly detection (v8.31) še vedno velja — če >8 akcij v 1 uri, avtopilot se suspendira
+
+Stage Summary:
+- NEW: src/lib/scraper/bypass-chain.ts (pravi bypass chain z anti-detection + captcha)
+- MODIFIED: src/app/api/scraper-status/route.ts (autoBypass uporablja autoPilotScrapingBypass)
+- MODIFIED: src/app/api/scraper-status/[id]/bypass/route.ts (executeBypassChain namesto simulacije)
+- MODIFIED: src/lib/version.ts (v9.57→v9.58)
+- MODIFIED: README.md (badge v9.58)
+- Verzija: v9.58.0
+- Skupaj (v7.50 → v9.58): 204 verzij, 325 novih funkcij
+- PRAVI BYPASS (ne simulacija):
+  * Prej (v9.57): Math.random() za success rate (simulacija)
+  * Zdaj  (v9.58): dejanski klici fetchWithAntiDetection() + solveCaptcha()
+  * Dev log potrdil: "anti-detection: Fetch error from www.bolha.com — retry 1/3 in 2s"
+- AVTOPILOT ZA SCRAPANJE:
+  * Povezava med avtopilot sistemom (v8.30) in scraping (v9.57)
+  * Ko je autoPilotEnabled=true, samodejno izvaja bypass za blokirane scraperje
+  * Uporablja obstoječe 8 varnostnih pravil + anomaly detection

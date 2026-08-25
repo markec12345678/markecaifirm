@@ -15,6 +15,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { db } from '@/lib/db';
 import { logger } from '@/lib/logger';
+import { autoPilotScrapingBypass, isAutoPilotEnabled } from '@/lib/scraper/bypass-chain';
 
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
@@ -148,51 +149,27 @@ export async function POST(req: NextRequest) {
     const url = new URL(req.url);
     const autoBypass = url.searchParams.get('autoBypass') === 'true';
 
-    // Auto-bypass mode
+    // Auto-bypass mode — v9.58: uporablja pravi bypass chain
     if (autoBypass) {
-      const blocked = await db.scraperStatus.findMany({
-        where: { status: 'blocked' },
-        take: 10,
-      });
+      // Preveri ali je avtopilot omogočen
+      const autoPilotActive = await isAutoPilotEnabled();
 
-      let bypassed = 0;
-      let failed = 0;
-
-      for (const b of blocked) {
-        try {
-          // Poskusi bypass — simulacija (v produkciji bi klicali anti-detection)
-          const methods = ['proxy-rotation', 'stealth-mode', 'retry-backoff', 'captcha-solve'];
-          const method = methods[Math.floor(Math.random() * methods.length)];
-          const success = Math.random() > 0.3; // 70% success rate
-
-          await db.scraperStatus.update({
-            where: { id: b.id },
-            data: {
-              status: success ? 'bypassed' : 'error',
-              bypassAttempts: { increment: 1 },
-              bypassMethod: method,
-              bypassSuccess: success,
-              finishedAt: new Date(),
-              durationMs: Date.now() - b.startedAt.getTime(),
-              error: success ? null : `Bypass z ${method} ni uspel`,
-            },
-          });
-
-          if (success) bypassed++;
-          else failed++;
-        } catch (e) {
-          failed++;
-          logger.error('/api/scraper-status', `Bypass failed for ${b.id}`, e);
-        }
-      }
+      // Izvedi bypass chain za vse blokirane
+      const result = await autoPilotScrapingBypass();
 
       return NextResponse.json({
         ok: true,
         autoBypass: true,
-        bypassed,
-        failed,
-        total: blocked.length,
-        message: `Avtomatski bypass: ${bypassed} uspešnih, ${failed} neuspešnih od ${blocked.length} blokiranih.`,
+        autoPilotActive,
+        bypassed: result.bypassed,
+        failed: result.failed,
+        total: result.checked,
+        results: result.results,
+        message: result.checked === 0
+          ? 'Ni blokiranih scraper-jev za bypass.'
+          : autoPilotActive
+            ? `Avtopilot: ${result.bypassed} uspešnih, ${result.failed} neuspešnih od ${result.checked} blokiranih.`
+            : `Ročni bypass: ${result.bypassed} uspešnih, ${result.failed} neuspešnih od ${result.checked} blokiranih. (Avtopilot je izklopljen — omogoči v Nastavitve)`,
       });
     }
 

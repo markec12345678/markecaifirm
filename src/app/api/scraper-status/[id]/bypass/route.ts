@@ -1,55 +1,29 @@
-// v9.57: Bypass posameznega blokiranega scraperja.
+// v9.58: Bypass posameznega blokiranega scraperja — PRAVI bypass z anti-detection.ts.
+//
 // POST /api/scraper-status/[id]/bypass
 // Body: { method?: 'auto' | 'proxy-rotation' | 'stealth-mode' | 'captcha-solve' | 'retry-backoff' | 'playwright' }
 //
-// Poskusi bypass za določen scraper status.
+// v9.58: Uporablja executeBypassChain() iz src/lib/scraper/bypass-chain.ts
+//        (pravi klici fetchWithAntiDetection + solveCaptcha, ne simulacija).
 
 import { NextRequest, NextResponse } from 'next/server';
 import { db } from '@/lib/db';
 import { logger } from '@/lib/logger';
+import { executeBypassChain, isAutoPilotEnabled } from '@/lib/scraper/bypass-chain';
 
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
-export const maxDuration = 30;
+export const maxDuration = 60; // 60s ker bypass chain lahko traja (captcha solve)
 
 interface BypassResult {
   ok: boolean;
   success: boolean;
-  method: string;
+  method: string | null;
   attempts: number;
   message: string;
-}
-
-/**
- * Simulira bypass poskus.
- * V produkciji bi tukaj klicali:
- * - proxy-rotation → switch na drug proxy iz pool-a
- * - stealth-mode → enable stealth mode + Playwright
- * - captcha-solve → 2captcha/anti-captcha/capmonster API
- * - retry-backoff → počakaj z exponential backoff in retry
- * - playwright → full headless browser fetch
- */
-async function attemptBypass(method: string): Promise<BypassResult> {
-  const successRates: Record<string, number> = {
-    'proxy-rotation': 0.75,
-    'stealth-mode': 0.65,
-    'captcha-solve': 0.85, // najvišji success rate, ampak plačljiv
-    'retry-backoff': 0.45,
-    'playwright': 0.90, // najvišji, ampak počasen
-    'auto': 0.70,
-  };
-
-  const rate = successRates[method] ?? 0.5;
-  const success = Math.random() < rate;
-
-  return {
-    ok: true,
-    success,
-    method,
-    attempts: 1,
-    message: success
-      ? `Bypass z metodo "${method}" je uspel.`
-      : `Bypass z metodo "${method}" ni uspel. Poskusi drugo metodo.`,
+  details?: {
+    attempts: Array<{ method: string; success: boolean; durationMs: number; error?: string }>;
+    totalDurationMs: number;
   };
 }
 
@@ -60,7 +34,7 @@ export async function POST(
   try {
     const { id } = await params;
     const body = await req.json().catch(() => ({}));
-    const method = body.method || 'auto';
+    const requestedMethod = body.method || 'auto';
 
     const existing = await db.scraperStatus.findUnique({ where: { id } });
     if (!existing) {
@@ -77,28 +51,73 @@ export async function POST(
       }, { status: 400 });
     }
 
-    // Izvedi bypass
-    const result = await attemptBypass(method);
+    // v9.58: Preveri ali je avtopilot omogočen
+    const autoPilotActive = await isAutoPilotEnabled();
 
-    // Posodobi status
-    const updated = await db.scraperStatus.update({
-      where: { id },
-      data: {
-        status: result.success ? 'bypassed' : 'error',
-        bypassAttempts: { increment: 1 },
-        bypassMethod: method,
-        bypassSuccess: result.success,
-        finishedAt: new Date(),
-        durationMs: existing.startedAt ? Date.now() - existing.startedAt.getTime() : null,
-        error: result.success ? null : `Bypass z ${method} ni uspel`,
-      },
-    });
+    // Če je method='auto', izvedi celoten chain
+    if (requestedMethod === 'auto') {
+      const result = await executeBypassChain(
+        id,
+        existing.targetUrl,
+        existing.blockType ?? undefined,
+        body.siteKey,
+        autoPilotActive
+      );
+
+      const response: BypassResult = {
+        ok: true,
+        success: result.success,
+        method: result.finalMethod,
+        attempts: result.attempts.length,
+        message: result.success
+          ? `Bypass uspešen z metodo "${result.finalMethod}" (${result.attempts.length} poskusov, ${result.totalDurationMs}ms)`
+          : `Vse ${result.attempts.length} metode odpadle. Zadnja napaka: ${result.error}`,
+        details: {
+          attempts: result.attempts.map(a => ({
+            method: a.method,
+            success: a.success,
+            durationMs: a.durationMs,
+            error: a.error,
+          })),
+          totalDurationMs: result.totalDurationMs,
+        },
+      };
+
+      return NextResponse.json({
+        ...response,
+        id,
+        newStatus: result.success ? 'bypassed' : 'error',
+        autoPilotActive,
+      });
+    }
+
+    // Specifična metoda — izvedi chain in najdi rezultat za to metodo
+    const result = await executeBypassChain(
+      id,
+      existing.targetUrl,
+      existing.blockType ?? undefined,
+      body.siteKey,
+      autoPilotActive
+    );
+
+    // Najdi rezultat zahtevane metode
+    const specificAttempt = result.attempts.find(a => a.method === requestedMethod);
+
+    const response: BypassResult = {
+      ok: true,
+      success: specificAttempt?.success ?? false,
+      method: requestedMethod,
+      attempts: 1,
+      message: specificAttempt?.success
+        ? `Bypass z metodo "${requestedMethod}" je uspel (${specificAttempt.durationMs}ms)`
+        : `Bypass z metodo "${requestedMethod}" ni uspel: ${specificAttempt?.error ?? 'neznan vzrok'}`,
+    };
 
     return NextResponse.json({
-      ...result,
-      id: updated.id,
-      newStatus: updated.status,
-      bypassAttempts: updated.bypassAttempts,
+      ...response,
+      id,
+      newStatus: specificAttempt?.success ? 'bypassed' : existing.status,
+      autoPilotActive,
     });
   } catch (err: any) {
     logger.error('/api/scraper-status/[id]/bypass', 'POST failed', err);
