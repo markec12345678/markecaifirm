@@ -57,6 +57,8 @@ import { PinnedKpiRow } from './pinned-kpi-row';
 import { GamificationWidget } from './gamification-widget';
 // v9.57: Scraper Monitor Widget — real-time tracking + block bypass
 import { ScraperMonitorWidget } from './scraper-monitor-widget';
+// v9.59: Smart Digest Widget — AI povzetek alertov namesto spam-a
+import { SmartDigestWidget } from './smart-digest-widget';
 
 export function DashboardView({ onNavigate }: ViewProps) {
   const [stats, setStats] = useState<Stats | null>(null);
@@ -623,6 +625,9 @@ export function DashboardView({ onNavigate }: ViewProps) {
 
           {/* v9.57: Scraper Monitor — real-time tracking + block bypass */}
           <ScraperMonitorWidget />
+
+          {/* v9.59: Smart Digest — AI povzetek alertov namesto spam-a */}
+          <SmartDigestWidget />
 
           {/* v8.83: Setup Health Banner — shows setup progress, auto-hides when complete */}
           <SetupHealthBanner />
