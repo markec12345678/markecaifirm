@@ -23404,3 +23404,38 @@ Stage Summary:
     - Podrobnosti collapsible (za napredne uporabnike)
     - Auto-fetch (ne čaka na gumb)
   = VSE funkcije ostanejo, samo prikaz je preprostejši
+
+---
+Task ID: REORG-1 (v9.72)
+Agent: main + full-stack-developer
+Task: Reorganizacija navigacije v 7 kategorij z sub-tabs — profesionalna reorganizacija
+
+Work Log:
+- Celovit audit sistema: 661 API-jev, 237 komponent, 18 view-ov, 76 lib datotek, 22 DB modelov
+- Reorganizacija navigacije iz 3-nivojskega UI-ja (4 primary + 3 groups + 5 system = 18 razpršenih view-ov) v 7 jasnih kategorij z sub-tab navigacijo
+- 7 kategorij:
+  1. Pregled (1 view) — Dashboard
+  2. Monitorji (1 view) — Monitorji
+  3. Oglasi (4 views) — Vsi oglasi | Watchlist | Iskalnik | Oglasi AI
+  4. Skladišče (3 views) — Trgovine | Inventar | Cene AI
+  5. AI (3 views) — AI Hub | Kupci | Tveganja
+  6. Analitika (2 views) — Analitika | Statistike
+  7. Sistem (4 views) — Nastavitve | Zdravje | Alerti | Obvestila
+- Footer očiščen tehničnega šuma:
+  Prej: "v9.71.0 | local-first | zero-cloud | 432 AI + 84 analytics = 651 routes | cron: GET /api/cron/run-all"
+  Zdaj: "v9.72.0 | HEALTHY 85/100 | ⌘K za ukaze"
+- Ohranjeno: vsi API-ji, komponente, lib datoteke, DB modeli, keyboard shortcuts, layout toggle, mobile nav, AI Assistant, Help Center
+
+Stage Summary:
+- MODIFIED: src/app/page.tsx (NAV_CATEGORIES zamenja NAV_PRIMARY + NAV_MORE_GROUPS + NAV_SYSTEM)
+- MODIFIED: src/components/dashboard/sidebar-nav.tsx (nova struktura)
+- MODIFIED: src/app/api/listings/[id]/sold-comps/route.ts (fix category field)
+- MODIFIED: src/lib/version.ts (v9.71→v9.72)
+- MODIFIED: README.md (badge v9.72)
+- Verzija: v9.72.0
+- Skupaj (v7.50 → v9.72): 217 verzij, 338 novih funkcij
+- REORGANIZACIJA (največja v zgodovini projekta):
+  * Prej: 18 razpršenih view-ov v 3-nivojskem UI-ju
+  * Zdaj: 7 jasnih kategorij z sub-tab navigacijo
+  * Footer očiščen tehničnega šuma
+  * Nobena funkcija ni odstranjena
