@@ -7,6 +7,8 @@ import { Badge } from '@/components/ui/badge';
 import { RefreshCw, Heart, CheckCircle2, AlertCircle, AlertTriangle, XCircle, Server, Cpu, MessageSquare, Bell, Globe, Clock, Smartphone, Activity } from 'lucide-react';
 import { toast } from 'sonner';
 import { cn } from '@/lib/utils';
+// v9.66: Scheduler Status Card — prikaz internega schedulerja v Zdravje
+import { SchedulerStatusCard } from '@/components/dashboard/scheduler-status-card';
 
 interface HealthCheck {
   name: string;
@@ -152,6 +154,9 @@ export function HealthView() {
 
       {/* v8.84: Setup Completion Card — shows setup checklist progress */}
       <SetupCompletionCard />
+
+      {/* v9.66: Interni Scheduler status */}
+      <SchedulerStatusCard />
 
       {/* Individual checks grid */}
       <div className="grid grid-cols-1 md:grid-cols-2 gap-3">

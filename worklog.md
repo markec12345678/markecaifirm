@@ -23116,3 +23116,46 @@ Stage Summary:
   * Brezplačno (cron-job.org ima limite na brezplačnem tieru)
   * Samodejno (starta z aplikacijo, ustavi z aplikacijo)
   * Transparentno (status prikazan v API-ju)
+
+---
+Task ID: v9.66
+Agent: main
+Task: Scheduler UI — SchedulerStatusCard v Zdravje view
+
+Work Log:
+- Ustvaril src/components/dashboard/scheduler-status-card.tsx:
+  * Status badge (AKTIVEN/USTAVLJEN z pulse dot)
+  * Interval + Uptime prikaz (grid 2 kolone)
+  * Last run info (kdaj, status, error če je)
+  * Stats grid (total, successful, failed)
+  * Success rate progress bar (z barvami glede na %)
+  * "Poženi zdaj" gumb — manual trigger
+  * "Nastavitve" gumb — expand/collapse config panel
+  * Config panel: enable toggle + interval input (5-1440 min) + "Shrani & restart"
+  * Info hint: "Samodejno se zažene ob startu aplikacije — brez zunanjega cron-a"
+  * Auto-refresh vsakih 10s
+  * Toast notifications za akcije
+  * Haptic feedback
+- Integriral v src/components/dashboard/health-view.tsx:
+  * Uvoz SchedulerStatusCard
+  * Dodan med SetupCompletionCard in Individual checks grid
+- Preveril typecheck: 0 napak (popravil JSX strukturo — bil </div> namesto </Card>)
+- Preveril lint: 0 napak
+- Verifikacija (Agent Browser):
+  * "Interni Scheduler" prisoten v Zdravje view ✓
+  * "Poženi zdaj" gumb prisoten ✓
+  * "Nastavitve" prisoten ✓
+  * Footer: v9.66.0 ✓
+
+Stage Summary:
+- NEW: src/components/dashboard/scheduler-status-card.tsx (UI za scheduler)
+- MODIFIED: src/components/dashboard/health-view.tsx (SchedulerStatusCard v Zdravje)
+- MODIFIED: src/lib/version.ts (v9.65→v9.66)
+- MODIFIED: README.md (badge v9.66)
+- Verzija: v9.66.0
+- Skupaj (v7.50 → v9.66): 212 verzij, 333 novih funkcij
+- ZAKLJUČEK SCHEDULER FEATURE-A:
+  * v9.65: Backend (instrumentation.ts + internal-scheduler.ts + API)
+  * v9.66: Frontend (SchedulerStatusCard v Zdravje view)
+  * Uporabnik zdaj vidi scheduler status, lahko ročno trigger, in nastavi interval
+  * Vse znotraj aplikacije — brez zunanjih servisov
