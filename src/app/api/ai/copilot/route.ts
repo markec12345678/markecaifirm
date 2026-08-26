@@ -50,7 +50,7 @@ async function generateAndSaveSuggestions(): Promise<{ saved: number; suggestion
   const now = new Date();
   const weekAgo = new Date(now.getTime() - 7 * 24 * 60 * 60 * 1000);
 
-  const [soldTrades, heldTrades, topListings, monitors, recentListings] = await Promise.all([
+  const [soldTrades, heldTrades, topListings, monitors, recentListings, allListingsForArbitrage] = await Promise.all([
     db.trade.findMany({
       where: { status: 'sold', sellPrice: { not: null } },
       select: {
@@ -83,6 +83,19 @@ async function generateAndSaveSuggestions(): Promise<{ saved: number; suggestion
     db.listing.findMany({
       where: { firstSeenAt: { gte: weekAgo } },
       select: { id: true, monitorId: true },
+    }),
+    // v9.79: Arbitrage — najdi oglase z istim naslovom na različnih portalih
+    db.listing.findMany({
+      where: {
+        price: { not: null },
+        firstSeenAt: { gte: new Date(now.getTime() - 30 * 24 * 60 * 60 * 1000) },
+      },
+      select: {
+        id: true, title: true, price: true, priceText: true, url: true,
+        monitor: { select: { source: true, name: true } },
+      },
+      take: 500,
+      orderBy: { firstSeenAt: 'desc' },
     }),
   ]);
 
@@ -231,6 +244,78 @@ async function generateAndSaveSuggestions(): Promise<{ saved: number; suggestion
         confidence: Math.min(95, 60 + top.count * 5),
       });
     }
+  }
+
+  // --- SUGGESTION 5: Arbitrage — kupi tukaj, prodaj drugje ---
+  // Grupiraj oglase po podobnem naslovu, najdi razliko v ceni med portali
+  const arbitrageGroups = new Map<string, typeof allListingsForArbitrage>();
+  for (const l of allListingsForArbitrage) {
+    const normalized = l.title
+      .toLowerCase()
+      .replace(/[^a-z0-9\s]/g, '')
+      .trim()
+      .split(/\s+/)
+      .slice(0, 5)
+      .join(' ');
+    if (!arbitrageGroups.has(normalized)) arbitrageGroups.set(normalized, []);
+    arbitrageGroups.get(normalized)!.push(l);
+  }
+
+  const arbitrageOps: Array<{ title: string; buyFrom: string; buyPrice: number; buyUrl: string; sellOn: string; sellPrice: number; sellUrl: string; profit: number; roi: number }> = [];
+
+  for (const [, group] of arbitrageGroups) {
+    if (group.length < 2) continue;
+    const sources = new Set(group.map(l => l.monitor.source));
+    if (sources.size < 2) continue;
+
+    const sorted = group.sort((a, b) => (a.price ?? 0) - (b.price ?? 0));
+    const cheapest = sorted[0];
+    const expensive = sorted[sorted.length - 1];
+    if (!cheapest.price || !expensive.price) continue;
+
+    const profit = expensive.price - cheapest.price;
+    const roi = cheapest.price > 0 ? Math.round((profit / cheapest.price) * 100) : 0;
+
+    if (profit < 10 || roi < 5) continue;
+
+    arbitrageOps.push({
+      title: cheapest.title,
+      buyFrom: cheapest.monitor.source,
+      buyPrice: cheapest.price,
+      buyUrl: cheapest.url,
+      sellOn: expensive.monitor.source,
+      sellPrice: expensive.price,
+      sellUrl: expensive.url,
+      profit,
+      roi,
+    });
+  }
+
+  // Sortiraj po dobičku in vzemi top 2
+  arbitrageOps.sort((a, b) => b.profit - a.profit);
+  for (const opp of arbitrageOps.slice(0, 2)) {
+    inputs.push({
+      type: 'arbitrage',
+      priority: opp.roi >= 50 ? 'high' : 'medium',
+      title: `🔀 Arbitraža: ${opp.title.slice(0, 40)}`,
+      description: `Kupi na ${opp.buyFrom} za ${opp.buyPrice}€ → prodaj na ${opp.sellOn} za ${opp.sellPrice}€ = +${opp.profit}€ dobička (${opp.roi}% donosnost)`,
+      reason: `Isti artikel je cenejši na ${opp.buyFrom} (${opp.buyPrice}€) in dražji na ${opp.sellOn} (${opp.sellPrice}€). Razlika: ${opp.profit}€ dobička.`,
+      expectedOutcome: `+${opp.profit}€ dobička (donosnost ${opp.roi}%)`,
+      riskLevel: opp.roi >= 50 ? 'low' : 'medium',
+      actionData: {
+        buyUrl: opp.buyUrl,
+        sellUrl: opp.sellUrl,
+        buyPrice: opp.buyPrice,
+        sellPrice: opp.sellPrice,
+        suggestedAction: 'arbitrage',
+      },
+      icon: '🔀',
+      category: 'opportunity',
+      autoExecutable: false,
+      expectedProfit: opp.profit,
+      expectedRoi: opp.roi,
+      confidence: Math.min(90, 50 + opp.roi),
+    });
   }
 
   // Shrani v DB (če še ne obstajajo za ta listing/trade)
