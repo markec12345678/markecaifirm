@@ -319,16 +319,17 @@ export function PinnedKpiRow({ onNavigate, unreadAlerts: passedUnread, totalAler
         icon={<Trophy className="w-4 h-4" />}
         label="Win Rate"
         value={loading ? '' : `${data.winRate}%`}
+        secondary={
+          loading ? null : (
+            <span className="text-muted-foreground">
+              {data.profitableCount}/{data.soldCount} dobičkonosnih
+            </span>
+          )
+        }
         accent="winrate"
         onClick={() => onNavigate('ai-hub')}
         ariaLabel={`Win rate: ${data.winRate}% dobičkonosnih trade-ov (${data.profitableCount} od ${data.soldCount}). Klik za AI analizo.`}
         loading={loading}
-        secondary={
-          <span className="inline-flex items-center gap-1 text-muted-foreground">
-            <Trophy className="w-3 h-3 text-sky-500" />
-            <span>{data.profitableCount}/{data.soldCount} dobičkonosnih</span>
-          </span>
-        }
       />
     </div>
   );

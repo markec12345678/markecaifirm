@@ -258,13 +258,13 @@ export function CopilotWidget({ onNavigate }: CopilotWidgetProps) {
         {accuracy.outcomeRecorded === 0 && (
           <div className="p-2 rounded-md border border-border bg-background/30 text-center">
             <div className="text-[10px] uppercase text-muted-foreground font-bold mb-0.5">
-              🎯 Decision Accuracy
+              🎯 Natančnost AI odločitev
             </div>
             <div className="text-sm text-muted-foreground italic">
-              N/A — premalo podatkov
+              Še ni na voljo
             </div>
             <div className="text-[9px] text-muted-foreground/70 mt-0.5">
-              Čakamo na prve rezultate (potrebno ≥10 odločitev)
+              Potrebujemo najmanj 10 ocenjenih odločitev
             </div>
           </div>
         )}

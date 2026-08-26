@@ -164,7 +164,7 @@ export function PredictiveAnalyticsWidget({ onNavigate }: PredictiveAnalyticsWid
         <div className="grid grid-cols-4 gap-2 text-center text-[10px]">
           <div className="p-1.5 rounded bg-background/30">
             <div className="text-base font-bold text-foreground">{summary.winRateThisWeek}%</div>
-            <div className="uppercase text-muted-foreground">Win (7d)</div>
+            <div className="uppercase text-muted-foreground">Uspeh 7 dni</div>
           </div>
           <div className="p-1.5 rounded bg-background/30">
             <div className="text-base font-bold text-emerald-500">{summary.projectedMonthEnd}€</div>

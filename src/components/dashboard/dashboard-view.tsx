@@ -420,10 +420,20 @@ export function DashboardView({ onNavigate }: ViewProps) {
               color={stats.activeMonitors === 0 && stats.totalMonitors > 0 ? 'amber' : 'primary'}
               onClick={() => onNavigate('monitors')}
             />
+            {/* v9.76: Akcijski gumb ko noben monitor ne deluje */}
+            {stats.activeMonitors === 0 && stats.totalMonitors > 0 && (
+              <button
+                onClick={() => { haptic.light(); onNavigate('monitors'); }}
+                className="col-span-2 sm:col-span-3 md:col-span-5 -mt-2 mb-2 px-3 py-2 rounded-md border border-amber-500/40 bg-amber-500/5 text-amber-500 text-xs hover:bg-amber-500/10 transition-colors flex items-center justify-center gap-2"
+              >
+                <span>⚠ Noben monitor trenutno ne deluje — klikni za aktiviranje</span>
+              </button>
+            )}
             <StatCard
               icon={<TrendingUp className="w-4 h-4" />}
-              label="Oglasov v bazi"
+              label="Oglasi skupaj"
               value={stats.totalListings}
+              subtext={stats.newListings24h > 0 ? `+${stats.newListings24h} novih danes` : undefined}
               color="primary"
             />
             <StatCard

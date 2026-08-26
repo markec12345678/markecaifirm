@@ -502,21 +502,20 @@ export default function Home() {
                   {now.toLocaleDateString('sl-SI')} {now.toLocaleTimeString('sl-SI')}
                 </span>
               )}
-              <span className="flex items-center gap-1.5">
-                <span className="w-1.5 h-1.5 rounded-full bg-primary pulse-dot" />
-                ONLINE
-              </span>
-              {/* v4.9: SSE live indicator */}
+              {/* v9.76: Simplified status — samo en indikator (SSE connection) */}
               <span
                 className="flex items-center gap-1.5"
-                title={sseConnected ? 'Real-time povezava aktivna' : 'Real-time povezava prekinjena'}
+                title={sseConnected ? 'Aplikacija je povezana in deluje' : 'Real-time povezava prekinjena'}
               >
                 <span className={cn(
-                  'w-1.5 h-1.5 rounded-full',
-                  sseConnected ? 'bg-primary pulse-dot' : 'bg-amber-400'
+                  'w-2 h-2 rounded-full',
+                  sseConnected ? 'bg-emerald-500 animate-pulse' : 'bg-red-500'
                 )} />
-                <span className={sseConnected ? 'text-primary' : 'text-amber-400'}>
-                  {sseConnected ? 'LIVE' : 'OFFLINE'}
+                <span className={cn(
+                  'text-xs font-medium',
+                  sseConnected ? 'text-emerald-500' : 'text-red-500'
+                )}>
+                  {sseConnected ? '🟢 Online' : '🔴 Brez povezave'}
                 </span>
               </span>
             </div>
