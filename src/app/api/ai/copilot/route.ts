@@ -106,9 +106,9 @@ async function generateAndSaveSuggestions(): Promise<{ saved: number; suggestion
       type: 'buy',
       priority: (dealScore ?? 0) >= 90 ? 'high' : 'medium',
       title: `Kupi: ${listing.title.slice(0, 50)}`,
-      description: `${listing.priceText || price + '€'} · ${dealScoreText} · AI ocena: ${aiScore}/10 · ROI: ${roi}%`,
+      description: `${listing.priceText || price + '€'} · ${dealScoreText} · AI ocena: ${aiScore}/10 · Donosnost: ${roi}%`,
       reason: `AI ocenjuje ${(dealScore ?? 0) >= 90 ? 'IZJEMNO' : 'DOBRO'} priložnost. ${potentialProfit > 0 ? `Potencialni dobiček: ${potentialProfit}€` : ''}`,
-      expectedOutcome: potentialProfit > 0 ? `+${potentialProfit}€ dobička (ROI ${roi}%)` : 'Visoka verjetnost prodaje',
+      expectedOutcome: potentialProfit > 0 ? `+${potentialProfit}€ dobička (donosnost ${roi}%)` : 'Visoka verjetnost prodaje',
       riskLevel: (dealScore ?? 0) >= 90 ? 'low' : 'medium',
       actionData: {
         listingId: listing.id,

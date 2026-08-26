@@ -791,9 +791,9 @@ export default function Home() {
               <span className="font-mono">{APP_VERSION}</span>
             </div>
             <div className="flex items-center gap-3 flex-wrap">
-              <span className="flex items-center gap-1">
+              <span className="flex items-center gap-1" title="Sistemsko zdravje — stanje vseh komponent">
                 <span className="w-2 h-2 rounded-full bg-emerald-500 animate-pulse" />
-                <span className="text-emerald-500 font-medium">HEALTHY</span>
+                <span className="text-emerald-500 font-medium">Sistem: Zdrav</span>
                 <span className="text-muted-foreground">85/100</span>
               </span>
               <span className="hidden sm:inline">•</span>
