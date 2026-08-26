@@ -23457,3 +23457,28 @@ Stage Summary:
 - GitHub sedaj vsebuje vse do v9.78.0 (zadnji commit: 6fddd0f)
 - Lokalno vs remote: 0 commitov za push (sinhronizirano)
 - Token očiščen iz git config za varnost
+
+---
+Task ID: QA-FINAL
+Agent: main
+Task: QA vseh 7 kategorij + Decision Accuracy simulacija
+
+Work Log:
+- QA Pregled: PASS (KPI, Copilot, Danes, Stat grid, Recent runs, Predictive, Activity)
+- QA Monitorji: PASS (aktivacija 0→2, Poženi, RunLog v DB, Dashboard osvežitev)
+- QA Oglasi: PASS (15 oglasov, detail modal, bookmark → DB → UI → filter)
+- QA Skladišče: PASS (25 trades, Nov trade → DB → UI → cleanup, filtri, sub-tabs)
+- QA AI: PASS (Copilot reject/approve/execute → DB → UI, AI Assistant Cmd+J)
+- QA Analitika: PASS (monitor performance, statistike, predictive, številke konsistentne)
+- QA Sistem: PASS (Nastavitve, Zdravje, Scheduler, Alerti, Obvestila)
+- Decision Accuracy: 92% (12 outcomes, 11 correct, 1 incorrect — Yeezy izguba)
+- Financial Impact: 366€
+- SSE: PASS (0-2s začasno → Online)
+- Footer health: PASS (/api/health → 🔴 Težave, ne hardkodirano 85/100)
+- DB nedotaknjena: 25 trades, 15 listings, 2 monitors, 8 pending Copilot
+
+Stage Summary:
+- Vseh 7 kategorij: PASS
+- Decision Accuracy: 92% (11/12)
+- GitHub: sinhroniziran (v9.78.0)
+- Aplikacija: QA-certificirana
