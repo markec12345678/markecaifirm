@@ -100,7 +100,7 @@ async function generateAndSaveSuggestions(): Promise<{ saved: number; suggestion
     const price = listing.price ?? 0;
     const potentialProfit = estimatedValue > 0 ? estimatedValue - price : 0;
     const roi = price > 0 ? Math.round((potentialProfit / price) * 100) : 0;
-    const dealScoreText = dealScore != null ? `Deal Score: ${dealScore}` : 'Deal Score: ni izračunana';
+    const dealScoreText = (dealScore != null && dealScore > 0) ? `Deal Score: ${dealScore}` : 'Deal Score: ni izračunana';
 
     inputs.push({
       type: 'buy',
@@ -144,10 +144,10 @@ async function generateAndSaveSuggestions(): Promise<{ saved: number; suggestion
     inputs.push({
       type: 'sell',
       priority: item.daysHeld > 35 ? 'high' : 'medium',
-      title: `Prodaj: ${item.title.slice(0, 50)}`,
-      description: `${item.daysHeld} dni v skladišču · Predlagana cena: ${suggestedPrice}€ (−${discount}%)`,
-      reason: `Artikel je ${item.daysHeld} dni v skladišču. Zastara. Znižaj ceno za ${discount}% za hitro prodajo.`,
-      expectedOutcome: `Hitra prodaja, minimizacija izgube`,
+      title: `💰 Prodaj: ${item.title.slice(0, 50)}`,
+      description: `${item.daysHeld} dni v skladišču · Predlagana cena: ${suggestedPrice}€ (${discount}% nižje)`,
+      reason: `Artikel je že ${item.daysHeld} dni v skladišču. Znižaj ceno za ${discount}% za hitrejšo prodajo.`,
+      expectedOutcome: `Hitrejša prodaja, manjša izguba`,
       riskLevel: 'low',
       actionData: {
         tradeId: item.id,
@@ -173,10 +173,10 @@ async function generateAndSaveSuggestions(): Promise<{ saved: number; suggestion
       inputs.push({
         type: 'stop-monitor',
         priority: 'low',
-        title: `Ustavi monitor: ${monitor.name}`,
+        title: `⏸️ Ustavi monitor: ${monitor.name}`,
         description: `0 novih oglasov v zadnjih 7 dneh`,
-        reason: `Monitor "${monitor.name}" (${monitor.source}) ni prinesel novih oglasov v 7 dneh.`,
-        expectedOutcome: `Prihranek virov`,
+        reason: `Monitor "${monitor.name}" (${monitor.source}) v zadnjih 7 dneh ni našel nobenega novega oglasa. Verjetno ni več aktiven ali pa ni povpraševanja.`,
+        expectedOutcome: `Prihranek virov (manj scrapanj)`,
         riskLevel: 'low',
         actionData: { monitorId: monitor.id, suggestedAction: 'deactivate' },
         icon: '⏸️',
@@ -217,10 +217,10 @@ async function generateAndSaveSuggestions(): Promise<{ saved: number; suggestion
       inputs.push({
         type: 'restock',
         priority: 'medium',
-        title: `Restock: ${top.category}`,
-        description: `${top.roi}% ROI · ${top.count} prodaj · ${top.profit}€ profit · 0 held`,
-        reason: `Kategorija "${top.category}" je najbolj dobičkonosna (${top.roi}% ROI) ampak nimaš artikla v skladišču.`,
-        expectedOutcome: `Projected +${Math.round(top.profit / top.count)}€ na naslednji trade`,
+        title: `🟢 Kupi več: ${top.category}`,
+        description: `${top.roi}% donosnost · ${top.count} uspešne prodaje · ${top.profit}€ dobička · trenutno nimaš nobenega artikla`,
+        reason: `Kategorija "${top.category}" je najbolj dobičkonosna (${top.roi}% donosnost), ampak v skladišču nimaš nobenega artikla iz te kategorije.`,
+        expectedOutcome: `Projiciran dobiček +${Math.round(top.profit / top.count)}€ na naslednji nakup`,
         riskLevel: 'low',
         actionData: { category: top.category, suggestedAction: 'search' },
         icon: '🔄',

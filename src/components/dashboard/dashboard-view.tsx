@@ -309,7 +309,7 @@ export function DashboardView({ onNavigate }: ViewProps) {
           {/* v9.61: AI Copilot — predlogi akcij s potrditvijo (razlika od avtopilota) */}
           <CopilotWidget onNavigate={onNavigate} />
 
-          {/* v4.0: Danes summary card */}
+          {/* v4.0: Danes summary card — v9.74: ločeno Danes od Zadnjih 24 ur */}
           {stats.today && (
             <Card className="bg-card/50 border-primary/20">
               <CardContent className="p-4">
@@ -348,6 +348,15 @@ export function DashboardView({ onNavigate }: ViewProps) {
                     )}>
                       {stats.today.runs > 0 ? Math.round((stats.today.successfulRuns / stats.today.runs) * 100) : 0}%
                     </div>
+                  </div>
+                </div>
+                {/* v9.74: Zadnjih 24 ur — jasno ločeno od Danes */}
+                <div className="mt-3 pt-3 border-t border-border/50 flex items-center justify-between text-[10px] text-muted-foreground">
+                  <span>Zadnjih 24 ur:</span>
+                  <div className="flex items-center gap-3">
+                    <span>{stats.newListings24h} novih oglasov</span>
+                    <span>·</span>
+                    <span>{stats.newAlerts24h} novih alertov</span>
                   </div>
                 </div>
               </CardContent>
@@ -407,14 +416,14 @@ export function DashboardView({ onNavigate }: ViewProps) {
               label="Aktivni monitorji"
               value={stats.activeMonitors}
               total={stats.totalMonitors}
-              color="primary"
+              subtext={stats.activeMonitors === 0 && stats.totalMonitors > 0 ? '⚠ noben ne deluje' : undefined}
+              color={stats.activeMonitors === 0 && stats.totalMonitors > 0 ? 'amber' : 'primary'}
               onClick={() => onNavigate('monitors')}
             />
             <StatCard
               icon={<TrendingUp className="w-4 h-4" />}
               label="Oglasov v bazi"
               value={stats.totalListings}
-              subtext={`${stats.newListings24h} novih v 24h`}
               color="primary"
             />
             <StatCard
@@ -422,7 +431,6 @@ export function DashboardView({ onNavigate }: ViewProps) {
               label="Nebrani alerti"
               value={stats.unreadAlerts}
               total={stats.totalAlerts}
-              subtext={`${stats.newAlerts24h} novih v 24h`}
               color="amber"
               onClick={() => onNavigate('alerts')}
             />
