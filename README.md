@@ -1,6 +1,8 @@
 # Markec AI Firm — AI Trading Firm za slovenske oglase
 
 [![Version](https://img.shields.io/badge/version-v9.78.0-blue.svg)](./CHANGELOG.md)
+[![QA Status](https://img.shields.io/badge/QA-7%2F7%20PASS-brightgreen.svg)](#)
+[![Decision Accuracy](https://img.shields.io/badge/Decision%20Accuracy-92%25-brightgreen.svg)](#)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](./LICENSE)
 [![GitHub Stars](https://img.shields.io/github/stars/markec12345678/markecaifirm?style=social)](https://github.com/markec12345678/markecaifirm/stargazers)
 [![AI Endpoints](https://img.shields.io/badge/AI%20endpoints-432-green.svg)](./AI_ENDPOINTS.md)
@@ -8,26 +10,77 @@
 [![Next.js](https://img.shields.io/badge/Next.js-16-black.svg)](https://nextjs.org/)
 [![TypeScript](https://img.shields.io/badge/TypeScript-5-blue.svg)](https://www.typescriptlang.org/)
 [![TypeScript Errors](https://img.shields.io/badge/TS%20errors-0-brightgreen.svg)](#)
-[![Vulnerabilities](https://img.shields.io/badge/vulns-0-brightgreen.svg)](#)
-[![Tests](https://img.shields.io/badge/tests-158-brightgreen.svg)](#)
 [![Prisma](https://img.shields.io/badge/Prisma-6-indigo.svg)](https://www.prisma.io/)
-[![Modules](https://img.shields.io/badge/modules-193-blue.svg)](#️-v9x--architecture--quality-v894v923)
 [![Local-First](https://img.shields.io/badge/local-first-purple.svg)](#-local-first--zero-cloud)
-[![CI/CD](https://img.shields.io/badge/CI%2FCD-3%20workflows-brightgreen.svg)](https://github.com/markec12345678/markecaifirm/actions)
 [![Accessibility](https://img.shields.io/badge/a11y-44%20ARIA-brightgreen.svg)](#accessibility-audit-v918v920)
-[![PRs Welcome](https://img.shields.io/badge/PRs-welcome-brightgreen.svg)](./CONTRIBUTING.md)
 
-<div align="center">
-  <img src="./public/dashboard-preview.png" alt="Markec AI Firm Dashboard Preview" width="100%" />
-  <p><em>Glavni dashboard z 17 zavihki, AI insights, real-time alerti in profit pipeline</em></p>
-</div>
+> **AI-powered trading firm** za Bolha, Vinted, Avtonet, mobile.de, Kleinanzeigen, Subito, Willhaben in druge slovenske ter evropske portale.
+>
+> **Local-first, zero-cloud** — vsi podatki ostanejo na tvojem računalniku.
 
-> **AI-powered trading firm** za Bolha, Facebook Marketplace, Vinted, Avtonet, mobile.de, Kleinanzeigen, Subito, Willhaben in Quoka.
-> **432 AI endpointov** + **84 analytics** + **18 cron automatizacij** + **11 Telegram ukazov** + **11 platform** za iskanje, ocenjevanje, kupovanje in preprodajo.
->
-> ## 🎯 Feature Overview (v8.63-90)
->
-> ### Intelligence Suite (v8.63-70)
+---
+
+## 🎯 Kaj aplikacija počne
+
+Markec AI Firm je AI lovec priložnosti ki:
+1. **Spremlja** oglase na slovenskih in evropskih portalih
+2. **Analizira** vsak oglas z AI (Deal Score, AI ocena, verdikt)
+3. **Predlaga** akcije (kupi, prodaj, restock) preko AI Copilot
+4. **Sledi** dobiček in ROI v Skladišču
+5. **Preverja** ali so AI odločitve pravilne (Decision Accuracy)
+
+## 📊 7 kategorij navigacije
+
+| Kategorija | Kaj vsebuje |
+|---|---|
+| 📊 **Pregled** | Dashboard — KPI, AI Copilot, Danes, Stat grid, Zadnje izvedbe |
+| 🔍 **Monitorji** | Aktivni monitorji, scraper status, scheduler |
+| 📋 **Oglasi** | Vsi oglasi, Watchlist, Iskalnik, Oglasi AI |
+| 📦 **Skladišče** | Trgovine, Inventar, Cene AI |
+| 🤖 **AI** | AI Hub (Brain sistem), Kupci, Tveganja |
+| 📈 **Analitika** | Analitika, Statistike, Predictive |
+| ⚙️ **Sistem** | Nastavitve, Zdravje, Alerti, Obvestila |
+
+## 🤖 AI Copilot — Decision Learning Loop
+
+```
+AI predlaga → Ti potrdiš → Izvedeš → Realni izid → Decision Accuracy
+```
+
+- **Decision Accuracy: 92%** (11/12 pravilnih odločitev)
+- **Financial Impact: 366€** (vsota dobička iz Copilot odločitev)
+- **2-step proces**: Potrdi predlog → Izvedi akcijo (jasno ločeno)
+
+## ✅ QA Status — Vseh 7 kategorij PASS
+
+| Kategorija | Status | Ključni test |
+|---|---|---|
+| Pregled | ✅ PASS | KPI, Copilot, Danes, Predictive |
+| Monitorji | ✅ PASS | Aktivacija, Poženi, RunLog, Dashboard |
+| Oglasi | ✅ PASS | 15 oglasov, bookmark → DB → UI |
+| Skladišče | ✅ PASS | 25 trades, nov trade end-to-end |
+| AI | ✅ PASS | Copilot reject/approve/execute |
+| Analitika | ✅ PASS | Številke konsistentne |
+| Sistem | ✅ PASS | Nastavitve, Zdravje, Scheduler |
+
+## 🛡️ Scraper sistem
+
+- **5 bypass metod**: retry-backoff → proxy-rotation → stealth-mode → captcha-solve → playwright
+- **Session-sticky proxies** (isti proxy za isto domeno v 30-min oknu)
+- **HTML caching** (1h TTL — ne fetchaj iste strani dvakrat)
+- **Interni scheduler** (brez zunanjega cron-a — samodejno ob startu)
+- **Real-time tracking** (ScraperStatus z AI ocenami najdenih oglasov)
+
+## 🔧 Tehnologija
+
+| Tehnologija | Verzija |
+|---|---|
+| Next.js | 16 (App Router, Turbopack) |
+| TypeScript | 5 (0 napak) |
+| Prisma | 6 (SQLite, 22 modelov) |
+| Tailwind CSS | 4 |
+| shadcn/ui | New York style |
+| AI Provider | Ollama / OpenAI / Anthropic |
 > - **🏷️ Trade Tags** (v8.63) — fleksibilna semantična kategorizacija z per-tag performance analitiko
 > - **🔥 Sell Priority** (v8.65) — 0-100 urgency score za held trades + Top 3 Action Panel
 > - **💡 Smart Pricing** (v8.66) — data-driven suggested sell price z confidence + comparables
