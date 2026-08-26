@@ -87,6 +87,7 @@ export function CopilotWidget({ onNavigate }: CopilotWidgetProps) {
   const [dismissed, setDismissed] = useState<Set<string>>(new Set());
   const [approvedIds, setApprovedIds] = useState<Set<string>>(new Set());
   const [expanded, setExpanded] = useState<string | null>(null);
+  const [showAll, setShowAll] = useState(false);
   const haptic = useHaptic();
 
   const load = useCallback(async () => {
@@ -279,7 +280,8 @@ export function CopilotWidget({ onNavigate }: CopilotWidgetProps) {
             </p>
           </div>
         ) : (
-          visibleSuggestions.slice(0, 5).map((suggestion) => {
+          <>
+          {(showAll ? visibleSuggestions : visibleSuggestions.slice(0, 5)).map((suggestion) => {
             const prio = PRIORITY_COLORS[suggestion.priority] ?? PRIORITY_COLORS.medium;
             const isExpanded = expanded === suggestion.id;
             const hasUrl = !!suggestion.actionData.url;
@@ -433,7 +435,26 @@ export function CopilotWidget({ onNavigate }: CopilotWidgetProps) {
                 </div>
               </div>
             );
-          })
+          })}
+
+          {/* v9.75: "Prikaži vseh" gumb ko je več predlogov kot prikazanih */}
+          {!showAll && visibleSuggestions.length > 5 && (
+            <button
+              onClick={() => { haptic.light(); setShowAll(true); }}
+              className="w-full text-[10px] text-primary hover:underline py-1"
+            >
+              Prikaži vseh {visibleSuggestions.length} predlogov ▼
+            </button>
+          )}
+          {showAll && visibleSuggestions.length > 5 && (
+            <button
+              onClick={() => { haptic.light(); setShowAll(false); }}
+              className="w-full text-[10px] text-muted-foreground hover:text-foreground py-1"
+            >
+              Prikaži 5 najpomembnejših ▲
+            </button>
+          )}
+          </>
         )}
 
         {/* Stats footer */}
