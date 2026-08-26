@@ -291,6 +291,20 @@ export default function Home() {
     }).catch(() => {});
   }, []);
 
+  // v9.78: Fetch real health status from /api/health (ne hardkodirano 85/100)
+  const [healthStatus, setHealthStatus] = useState<'ok' | 'warn' | 'error' | 'loading'>('loading');
+  useEffect(() => {
+    const loadHealth = () => {
+      fetch('/api/health').then(r => r.ok ? r.json() : null).then(h => {
+        if (h?.overall) setHealthStatus(h.overall);
+        else setHealthStatus('loading');
+      }).catch(() => setHealthStatus('loading'));
+    };
+    loadHealth();
+    const t = setInterval(loadHealth, 60_000); // osveži vsako minuto
+    return () => clearInterval(t);
+  }, []);
+
   // v8.50: First-Run Onboarding — check if onboarding is completed
   useEffect(() => {
     fetch('/api/settings')
@@ -791,10 +805,35 @@ export default function Home() {
               <span className="font-mono">{APP_VERSION}</span>
             </div>
             <div className="flex items-center gap-3 flex-wrap">
-              <span className="flex items-center gap-1" title="Sistemsko zdravje — stanje vseh komponent">
-                <span className="w-2 h-2 rounded-full bg-emerald-500 animate-pulse" />
-                <span className="text-emerald-500 font-medium">Sistem: Zdrav</span>
-                <span className="text-muted-foreground">85/100</span>
+              {/* v9.78: Dejansko stanje iz /api/health (ne hardkodirano 85/100) */}
+              <span
+                className="flex items-center gap-1"
+                title="Sistemsko zdravje — dejansko stanje vseh komponent iz /api/health"
+              >
+                {healthStatus === 'ok' && (
+                  <>
+                    <span className="w-2 h-2 rounded-full bg-emerald-500 animate-pulse" />
+                    <span className="text-emerald-500 font-medium">🟢 Sistem: Zdrav</span>
+                  </>
+                )}
+                {healthStatus === 'warn' && (
+                  <>
+                    <span className="w-2 h-2 rounded-full bg-amber-500 animate-pulse" />
+                    <span className="text-amber-500 font-medium">🟡 Sistem: Delno</span>
+                  </>
+                )}
+                {healthStatus === 'error' && (
+                  <>
+                    <span className="w-2 h-2 rounded-full bg-red-500" />
+                    <span className="text-red-500 font-medium">🔴 Sistem: Težave</span>
+                  </>
+                )}
+                {healthStatus === 'loading' && (
+                  <>
+                    <span className="w-2 h-2 rounded-full bg-muted-foreground animate-pulse" />
+                    <span className="text-muted-foreground font-medium">Preverjam...</span>
+                  </>
+                )}
               </span>
               <span className="hidden sm:inline">•</span>
               <span>⌘K za ukaze</span>
