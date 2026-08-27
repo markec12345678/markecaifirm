@@ -3,9 +3,9 @@
 // Run `find src/app/api -name "route.ts" | wc -l` to verify counts.
 
 export const APP_VERSION = 'v9.82.1';
-export const AI_ENDPOINTS = 433;
+export const AI_ENDPOINTS = 437;
 export const ANALYTICS_ENDPOINTS = 84;
-export const TOTAL_API_ROUTES = 662;
+export const TOTAL_API_ROUTES = 663;
 export const PLATFORMS = 11;
 export const BRAIN_LAYERS = 8;
 

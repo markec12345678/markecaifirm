@@ -1,0 +1,49 @@
+# Stale — avtomatsko označi in zapre nerešene issue/PR
+# https://github.com/actions/stale
+
+name: Mark Stale Issues & PRs
+
+on:
+  schedule:
+    # Vsak dan ob 02:00 UTC
+    - cron: "0 2 * * *"
+
+permissions:
+  issues: write
+  pull-requests: write
+
+jobs:
+  stale:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/stale@v9
+        with:
+          # Po 60 dneh neaktivnosti označi kot stale
+          days-before-stale: 60
+          # Po dodatnih 14 dneh (skupno 74) zapri
+          days-before-close: 14
+
+          # Issue labels
+          stale-issue-label: "stale"
+          exempt-issue-labels: "pinned,security,enhancement,bug,documentation"
+          stale-issue-message: |
+            👋 Ta issue je bil nedejaven 60 dni in je označen kot **stale**.
+            Če je še vedno relevanten, dodaj komentar ali pa bo samodejno zaprt čez 14 dni.
+            Hvala za tvoje prispevke!
+
+          # PR labels
+          stale-pr-label: "stale"
+          exempt-pr-labels: "pinned,security,WIP,blocked"
+          stale-pr-message: |
+            👋 Ta PR je bil nedejaven 60 dni in je označen kot **stale**.
+            Če še vedno delaš na tem, dodaj komentar ali rebase na najnovejši main.
+            Samodejno bo zaprt čez 14 dni če ni aktivnosti.
+
+          # Maximum issues/PRs per run (rate limit protection)
+          operations-per-run: 50
+
+          # Ne označi recent issue-jev
+          start-date: "2024-01-01"
+
+          # Statistika v logu
+          debug-only: false

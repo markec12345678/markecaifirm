@@ -1,0 +1,49 @@
+# =============================================================================
+# Markec AI Firm — Docker Compose
+# =============================================================================
+# Uporaba:
+#   docker compose up -d         # Zaženi v ozadju
+#   docker compose logs -f       # Spremljaj loge
+#   docker compose down          # Ustavi
+#   docker compose down -v       # Ustavi + pobriši database volume
+# =============================================================================
+
+services:
+  markec-app:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    image: markec-ai-firm:v9.82.1
+    container_name: markec-ai-firm
+    restart: unless-stopped
+    ports:
+      - "3000:3000"
+    volumes:
+      # Persistent database
+      - markec-db:/app/db
+      # Custom .env če imaš (opcijsko — odkomentiraj)
+      # - ./.env:/app/.env:ro
+    environment:
+      - NODE_ENV=production
+      - DATABASE_URL=file:./db/custom.db
+      - PORT=3000
+      - HOSTNAME=0.0.0.0
+      # Set APP_API_KEY za production (generiraj z: openssl rand -hex 32)
+      # - APP_API_KEY=your-api-key-here
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:3000/api/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 15s
+    # Reverse proxy: odkomentiraj če imaš caddy/nginx spredaj
+    # networks:
+    #   - proxy
+
+# networks:
+#   proxy:
+#     external: true
+
+volumes:
+  markec-db:
+    driver: local

@@ -1,0 +1,103 @@
+# =============================================================================
+# Release Workflow — avtomatski GitHub Release na tag push
+# =============================================================================
+# Sproži: git tag v9.x.x && git push origin v9.x.x
+# Ustvari: GitHub Release z auto-generated notes + ZIP asset
+# =============================================================================
+
+name: Release
+
+on:
+  push:
+    tags:
+      - 'v*.*.*'
+
+permissions:
+  contents: write
+
+jobs:
+  build-and-release:
+    name: Build & Release
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Bun
+        uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: latest
+
+      - name: Install dependencies
+        run: bun install --frozen-lockfile
+
+      - name: Generate Prisma client
+        run: bun run db:generate
+        env:
+          DATABASE_URL: "file:./dev.db"
+
+      - name: Typecheck
+        run: bun run typecheck
+
+      - name: Lint
+        run: bun run lint
+
+      - name: Build (standalone)
+        run: bun run build
+        env:
+          DATABASE_URL: "file:./dev.db"
+          NEXT_TELEMETRY_DISABLED: "1"
+          NODE_OPTIONS: "--max-old-space-size=4096"
+
+      - name: Prepare release directory
+        run: |
+          VERSION=${GITHUB_REF_NAME#v}
+          DIR="markec-ai-firm-${GITHUB_REF_NAME}"
+          mkdir -p "$DIR"
+          # Copy standalone build
+          cp -r .next/standalone/. "$DIR/"
+          # Copy prisma schema
+          mkdir -p "$DIR/prisma"
+          cp prisma/schema.prisma "$DIR/prisma/"
+          # Portable .env
+          echo "DATABASE_URL=file:./db/custom.db" > "$DIR/.env"
+          # Remove dev-only files
+          rm -f "$DIR/dev.log" "$DIR/server.log" "$DIR/bun.lock"
+          rm -f "$DIR/eslint.config.mjs" "$DIR/postcss.config.mjs"
+          rm -f "$DIR/tailwind.config.ts" "$DIR/components.json"
+          rm -f "$DIR/tsconfig.json" "$DIR/tsconfig.tsbuildinfo"
+          rm -f "$DIR/vitest.config.ts" "$DIR/next.config.ts"
+          rm -rf "$DIR/src" "$DIR/tests" "$DIR/examples" "$DIR/skills"
+          rm -rf "$DIR/mini-services" "$DIR/tool-results" "$DIR/upload"
+          rm -rf "$DIR/db"/*.db "$DIR/db"/*.db-journal
+          # Create db dir
+          mkdir -p "$DIR/db"
+          echo "✓ Release directory prepared: $DIR"
+          ls -la "$DIR" | head -20
+
+      - name: Create ZIP
+        run: |
+          DIR="markec-ai-firm-${GITHUB_REF_NAME}"
+          zip -r "markec-ai-firm-${GITHUB_REF_NAME}.zip" "$DIR" -q
+          echo "✓ ZIP created: markec-ai-firm-${GITHUB_REF_NAME}.zip"
+          ls -lh "markec-ai-firm-${GITHUB_REF_NAME}.zip"
+
+      - name: Generate SHA256 checksum
+        run: |
+          sha256sum "markec-ai-firm-${GITHUB_REF_NAME}.zip" > "markec-ai-firm-${GITHUB_REF_NAME}.zip.sha256"
+          cat "markec-ai-firm-${GITHUB_REF_NAME}.zip.sha256"
+
+      - name: Create GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ github.ref_name }}
+          name: ${{ github.ref_name }}: Markec AI Firm Release
+          generate_release_notes: true
+          draft: false
+          prerelease: false
+          files: |
+            markec-ai-firm-${{ github.ref_name }}.zip
+            markec-ai-firm-${{ github.ref_name }}.zip.sha256
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

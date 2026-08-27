@@ -1,0 +1,71 @@
+# =============================================================================
+# .dockerignore — datoteke ki se NE kopirajo v Docker image
+# =============================================================================
+
+# Version control
+.git
+.gitignore
+.github
+
+# Dependencies (se instalirajo znotraj Docker-a)
+node_modules
+
+# Next.js build cache
+.next
+out
+build
+dist
+
+# Database (ustvari se ob prvem zagonu)
+db/*.db
+db/*.db-journal
+db/*.db-shm
+db/*.db-wal
+
+# Logs
+dev.log
+server.log
+*.log
+
+# Environment files (nosi skrite — setn v docker-compose)
+.env
+.env.local
+.env.development.local
+.env.test.local
+.env.production.local
+
+# Editor / OS
+.vscode
+.idea
+.DS_Store
+Thumbs.db
+*.swp
+*.swo
+
+# Tests & docs (niso potrebni za runtime)
+tests
+examples
+docs
+skills
+mini-services
+download
+tool-results
+upload
+
+# Build artifacts
+*.tsbuildinfo
+next-env.d.ts
+tsconfig.tsbuildinfo
+
+# Misc dev files
+eslint.config.mjs
+vitest.config.ts
+postcss.config.mjs
+tailwind.config.ts
+components.json
+Caddyfile
+
+# Already in image via COPY
+Dockerfile
+docker-compose.yml
+.dockerignore

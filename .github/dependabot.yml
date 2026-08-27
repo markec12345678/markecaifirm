@@ -1,0 +1,61 @@
+# Dependabot — avtomatski dependency updates
+# https://docs.github.com/en/code-security/dependabot/dependabot-version-updates/configuration-options-for-the-dependabot.yml-file
+
+version: 2
+
+updates:
+  # npm dependencies (Bun uporablja package.json + bun.lock)
+  - package-ecosystem: "npm"
+    directory: "/"
+    schedule:
+      interval: "weekly"
+      day: "monday"
+      time: "06:00"
+      timezone: "Europe/Ljubljana"
+    open-pull-requests-limit: 10
+    # Group minor/patch updates skupaj da ne zamašejo PR čakalne vrste
+    groups:
+      # Vse minor + patch v en PR
+      minor-and-patch:
+        update-types:
+          - "minor"
+          - "patch"
+      # Major posodobitve v ločen PR (potential breaking changes)
+      major:
+        update-types:
+          - "major"
+    # Ignoriraj dev dependency-je v prvi fazi (lahko odkomentiraš kasneje)
+    allow:
+      - dependency-type: "production"
+      - dependency-type: "development"
+    commit-message:
+      prefix: "deps(npm)"
+      prefix-development: "deps(npm-dev)"
+      include: "scope"
+    labels:
+      - "dependencies"
+      - "automated"
+    reviewers:
+      - "markec12345678"
+    # Auto-merge patch updates po uspešnem CI (varno)
+    # Odkomentiraj ko bo CI stabilen
+    # auto-merge: true
+
+  # GitHub Actions versions
+  - package-ecosystem: "github-actions"
+    directory: "/"
+    schedule:
+      interval: "weekly"
+      day: "monday"
+      time: "06:00"
+      timezone: "Europe/Ljubljana"
+    open-pull-requests-limit: 5
+    commit-message:
+      prefix: "deps(actions)"
+      include: "scope"
+    labels:
+      - "dependencies"
+      - "github-actions"
+      - "automated"
+    reviewers:
+      - "markec12345678"

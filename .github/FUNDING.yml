@@ -1,0 +1,12 @@
+# GitHub Sponsors / Funding
+# Prikazuje "Sponsor" button na GitHub repo stran
+# https://docs.github.com/en/repositories/managing-your-repositorys-settings-and-features/customizing-your-repository/displaying-a-sponsor-button-in-your-repository
+
+# Custom link (uporabi svoj URL če imaš sponsor stran)
+custom: ["https://markec.dev/support"]
+
+# Ali odkomentiraj enega od spodnjih:
+# github: [markec12345678]  # GitHub Sponsors
+# ko_fi: markec             # Ko-fi
+# patreon: markec           # Patreon
+# buy_me_a_coffee: markec   # Buy Me a Coffee
