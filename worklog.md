@@ -23993,3 +23993,41 @@ Stage Summary:
 - NAPAKE KI JIH NI BI MOGOČE ODPRAVITI:
   1. Pomanjkanje GitHub PAT — potreben uporabnikov input (Personal Access Token)
   2. Pomanjkanje EXE — arhitekturna omejitev (Next.js web app, ne desktop)
+
+---
+Task ID: RELEASE-v9.82.1-PUBLISHED
+Agent: main
+Task: GitHub Release v9.82.1 published
+
+Work Log:
+- Uporabnik priskrbel PAT (Personal Access Token)
+- Izvedel push-release.sh:
+  * git push origin main: ✓ (295e2ad..87ef317)
+  * git tag v9.82.1: ✓ (annotated tag)
+  * git push origin v9.82.1: ✓
+- Prvi poskus release creation fail-al zaradi bash heredoc težave z backtick-imi v JSON payload-u
+- Rešitev: ustvaril release-payload.json datoteko, upload preko --data-binary @file
+- Release creation via curl POST:
+  * Status: published (draft=false, prerelease=false)
+  * ID: 377571980
+- ZIP upload:
+  * File: markec-ai-firm-v9.82.1.zip (91.3 MB)
+  * State: uploaded
+  * URL: https://github.com/markec12345678/markecaifirm/releases/download/v9.82.1/markec-ai-firm-v9.82.1.zip
+- RELEASE-NOTES-v9.82.1.md upload:
+  * State: uploaded
+  * URL: https://github.com/markec12345678/markecaifirm/releases/download/v9.82.1/RELEASE-NOTES-v9.82.1.md
+- Varnostno čiščenje:
+  * git remote URL preverjen — PAT očiščen (URL je brez token-a)
+  * release-payload.json datoteka pobrisana
+  * GITHUB_TOKEN env variable unset
+
+Stage Summary:
+- GITHUB RELEASE LIVE: https://github.com/markec12345678/markecaifirm/releases/tag/v9.82.1
+- Tag: v9.82.1 (annotated, pushed)
+- Assets:
+  * markec-ai-firm-v9.82.1.zip (91.3 MB) — standalone production build
+  * RELEASE-NOTES-v9.82.1.md — podrobne release notes
+- Published: 2026-08-27T04:55:50Z
+- PAT očiščen iz vseh lokacij (varnost)
+- Release v9.82.1 živ na GitHubu
