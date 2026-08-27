@@ -6,6 +6,9 @@ on:
     paths:
       - 'src/app/api/ai/**'
 
+permissions:
+  contents: write
+
 jobs:
   count-endpoints:
     name: Count AI Endpoints
@@ -14,25 +17,42 @@ jobs:
     steps:
       - name: Checkout
         uses: actions/checkout@v4
+        with:
+          token: ${{ secrets.GITHUB_TOKEN }}
 
       - name: Count AI endpoint directories
         id: count
         run: |
           ENDPOINT_COUNT=$(find src/app/api/ai -mindepth 1 -maxdepth 1 -type d | wc -l)
+          ROUTE_COUNT=$(find src/app/api/ai -name route.ts | wc -l)
+          TOTAL_ROUTES=$(find src/app/api -name route.ts | wc -l)
           echo "count=$ENDPOINT_COUNT" >> $GITHUB_OUTPUT
-          echo "📊 Total AI endpoints: $ENDPOINT_COUNT"
+          echo "routes=$ROUTE_COUNT" >> $GITHUB_OUTPUT
+          echo "total=$TOTAL_ROUTES" >> $GITHUB_OUTPUT
+          echo "📊 Total AI endpoints (directories): $ENDPOINT_COUNT"
+          echo "📊 AI route.ts files: $ROUTE_COUNT"
+          echo "📊 Total API routes: $TOTAL_ROUTES"
 
       - name: Generate endpoint list
         run: |
-          echo "# AI Endpoints (auto-generated)" > AI_ENDPOINTS.md
+          echo "# AI Endpoints" > AI_ENDPOINTS.md
           echo "" >> AI_ENDPOINTS.md
-          echo "Total: ${{ steps.count.outputs.count }} endpoints" >> AI_ENDPOINTS.md
+          echo "**Total: ${{ steps.count.outputs.routes }} endpoints** (v ${{ steps.count.outputs.total }} total API routes)" >> AI_ENDPOINTS.md
+          echo "" >> AI_ENDPOINTS.md
+          echo "Avtomatsko generirano iz \`src/app/api/ai/\`. Vsaka datoteka \`route.ts\` predstavlja en endpoint." >> AI_ENDPOINTS.md
+          echo "" >> AI_ENDPOINTS.md
+          echo "## Top-level AI endpointi" >> AI_ENDPOINTS.md
           echo "" >> AI_ENDPOINTS.md
           echo "| # | Endpoint | Path |" >> AI_ENDPOINTS.md
           echo "|---|----------|------|" >> AI_ENDPOINTS.md
           i=1
           for dir in $(ls -1 src/app/api/ai/ | sort); do
-            echo "| $i | $dir | \`/api/ai/$dir\` |" >> AI_ENDPOINTS.md
+            sub_count=$(find "src/app/api/ai/$dir" -name route.ts | wc -l)
+            if [ "$sub_count" -gt 1 ]; then
+              echo "| $i | $dir ($sub_count routes) | \`/api/ai/$dir\` |" >> AI_ENDPOINTS.md
+            else
+              echo "| $i | $dir | \`/api/ai/$dir\` |" >> AI_ENDPOINTS.md
+            fi
             i=$((i+1))
           done
 
@@ -41,5 +61,5 @@ jobs:
           git config --local user.email "github-actions[bot]@users.noreply.github.com"
           git config --local user.name "github-actions[bot]"
           git add AI_ENDPOINTS.md
-          git diff --staged --quiet || git commit -m "docs: auto-update AI_ENDPOINTS.md (${{ steps.count.outputs.count }} endpoints)"
+          git diff --staged --quiet || git commit -m "docs: auto-update AI_ENDPOINTS.md (${{ steps.count.outputs.routes }} endpoints in ${{ steps.count.outputs.count }} dirs)"
           git push
