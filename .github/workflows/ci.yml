@@ -38,6 +38,14 @@ jobs:
         env:
           DATABASE_URL: "file:./dev.db"
 
+      # v9.82.1 FIX: db:push mora biti pred test-i da tabele obstajajo
+      # Prej so test-i fail-ali z "PrismaClientKnownRequestError" ker deleteMany
+      # na neobstoječi tabeli vrne error (SQLite mode).
+      - name: Initialize database
+        run: bun run db:push
+        env:
+          DATABASE_URL: "file:./dev.db"
+
       # v6.92 FIX: Odstranjen `continue-on-error: true` — CI je bil dekorativen.
       # Prej je CI vedno uspel, ne glede na dejansko stanje (lint, typecheck, build).
       # Sedaj bo CI realno preprečil merge, če kaj odpove.
