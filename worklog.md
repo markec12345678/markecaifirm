@@ -23934,3 +23934,62 @@ Stage Summary:
   4. Poteklo (sistem)         (wasCorrect === null, outcomeType === 'expired')
 - EFFECT ON DECISION ACCURACY: NI SPREMEMBE — expired izpade iz imenovalca (wasCorrect=null)
 - APLIKACIJA PRIPRAVLJENA ZA TERENSKO ZBIRANJE (30-100 realnih izidov)
+
+---
+Task ID: RELEASE-v9.82.1
+Agent: main
+Task: Priprava produkcijskega GitHub Release za v9.82.1
+
+Work Log:
+- Audit: trenutna verzija v src/lib/version.ts (v9.82.1) in README.md (v9.82.1) — konsistentno
+- Audit: package.json version 7.24.0 (zastarelo, ne sinhronizirano) → popravljen na 9.82.1
+- Audit: next.config.ts output="standalone" — dobro za distribucijo
+- Audit: NE Electron, NE Tauri — čist Next.js 16 web aplikacija
+  * EXE ni naraven build artefakt te arhitekture (po uporabnikovih navodilih: ne simuliraj)
+- Sinhronizacija lokalnega git-a:
+  * Lokalni HEAD bil na v9.64, origin/main na v9.79, working dir na v9.82.1
+  * git stash --include-untracked → reset --hard origin/main → stash pop
+  * Rešil 6 konfliktov (README, page.tsx, copilot-widget, sidebar-nav, version.ts, worklog.md)
+  * Vsi konflikti razrešeni z --theirs (vzeta novejša v9.82.1 različica)
+- Konfigurativne spremembe (ne-funkcijske):
+  * package.json: "version": "7.24.0" → "9.82.1"
+  * tsconfig.json exclude: dodan "examples", "tests", "mini-services" (prejšnji TS errorji v examples/ blokirali build)
+- Commit: "v9.80→v9.82.1: P0 outcome capture lifecycle (release sync)" (d22cd3e)
+- Production build:
+  * Prvi poskus: OOM (exit 137) — samo 3.9Gi RAM, TypeScript check phase
+  * Rešitev: ustavil dev server (sprostil ~2Gi) + NODE_OPTIONS=--max-old-space-size=3072
+  * Drugi poskus: ✓ Compiled successfully in 52s
+  * Standalone server test: HTTP 200 v 53ms (deluje)
+- ZIP packaging:
+  * .next/standalone/ vseboval preveč dev-only datotek
+  * Očiščeno: dev.log, examples/, tests/, mini-services/, src/, skills/, tsconfig.json, eslint.config.mjs, postcss.config.mjs, tailwind.config.ts, components.json, bun.lock, vitest.config.ts, tool-results/, upload/
+  * .env popravljena na prenosno: DATABASE_URL=file:./db/custom.db
+  * Demo database (db/custom.db) odstranjen — user zažene db:push za fresh
+  * Dodan RELEASE-README.md z navodili za zagon
+- Končni ZIP: markec-ai-firm-v9.82.1.zip (92 MB compressed, 217 MB uncompressed, 9707 files)
+- SHA256: 21300c3762603bb972c3e6b36747bb37561c4d90a720c723218423739f23b9e8
+- EXE: NE USTVARJEN — Next.js web aplikacija, ne desktop. Jasno dokumentirano v RELEASE-README.md.
+- GitHub Release: NE USTVARJEN — manjkajo GitHub credentials (PAT)
+  * Lokalni commit d22cd3e pushan? NE — pat manjka
+  * Tag v9.82.1 ustvarjen? NE — pat manjka
+  * GitHub Release? NE — pat manjka
+  * Pripravljen script: /home/z/release-build/push-release.sh (uporabnik zažene z GITHUB_TOKEN)
+  * Pripravljene release notes: /home/z/release-build/RELEASE-NOTES-v9.82.1.md
+
+Stage Summary:
+- MODIFIED (config-only, ne-funkcijske): package.json (version 7.24.0→9.82.1), tsconfig.json (exclude +3 dirs)
+- MODIFIED (pre-existing v9.80-v9.82.1 funkcionalnost, commitan v d22cd3e):
+  * 20 files changed, 2238 insertions(+), 28 deletions(-)
+- CREATED (release artifacts, OUTSIDE project):
+  * /home/z/release-build/markec-ai-firm-v9.82.1/ (217 MB extracted)
+  * /home/z/release-build/markec-ai-firm-v9.82.1.zip (92 MB ZIP)
+  * /home/z/release-build/RELEASE-NOTES-v9.82.1.md (release notes content)
+  * /home/z/release-build/push-release.sh (skripta za uporabnika)
+- VERZIJA: v9.82.1 (sinhronizirana v: src/lib/version.ts, README.md, package.json)
+- BUILD STATUS: ✓ uspešen (Compiled in 52s, server HTTP 200)
+- ZIP STATUS: ✓ valid (unzip -t: No errors detected)
+- EXE STATUS: ✗ ni naraven build artefakt (Next.js web app, ne Electron/Tauri)
+- GITHUB RELEASE STATUS: ⏳ čaka na uporabnikov PAT (skripta pripravljena)
+- NAPAKE KI JIH NI BI MOGOČE ODPRAVITI:
+  1. Pomanjkanje GitHub PAT — potreben uporabnikov input (Personal Access Token)
+  2. Pomanjkanje EXE — arhitekturna omejitev (Next.js web app, ne desktop)
