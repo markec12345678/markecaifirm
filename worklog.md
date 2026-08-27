@@ -24031,3 +24031,66 @@ Stage Summary:
 - Published: 2026-08-27T04:55:50Z
 - PAT očiščen iz vseh lokacij (varnost)
 - Release v9.82.1 živ na GitHubu
+
+---
+Task ID: REPO-HEALTH-v9.82.1
+Agent: main
+Task: GitHub repo health polish — P0+P1+P2 + CI fix
+
+Work Log:
+- Analiza GitHub repozitorija je pokazala 12 manjkajočih elementov + zastarele vsebine
+- Lažno alarm za "CI broken" — YAML je pravilen, ANSI escape [m se je prikazal kot 'ain' v terminalu
+- Vse P0+P1+P2 narejene v 3 commit-ih + 1 CI fix:
+
+P0 (kritično):
+1. README badges posodobljeni: 432→437 AI endpoints, 651→663 API routes
+2. AI_ENDPOINTS.md regeneriran: 431→437 endpoints z accurate count (route.ts files)
+3. version.ts posodobljen: 433→437 AI, 662→663 total
+4. README Roadmap posodobljen: v8.15-v8.23 (zastarelo) → v9.82.1 (trenutno)
+   - Odstranjeno 66 vrstic zastarelih v8.x podsekcij
+   - Dodan "Zgodovina faz" povzetek
+5. README Contact email popravljen: security@markec.local → security@markec.dev
+
+P1 (standard GitHub projekt):
+6. Ustvarjen CODE_OF_CONDUCT.md (Contributor Covenant 2.1, slovenščina)
+7. Ustvarjen .github/dependabot.yml (weekly npm + GitHub Actions updates z groups)
+8. Ustvarjen .github/FUNDING.yml (sponsor button na custom URL)
+
+P2 (deployment & code consistency):
+9. Ustvarjen Dockerfile (multi-stage: deps → builder → runner, non-root user)
+10. Ustvarjen docker-compose.yml (one-command deploy z persistent DB volume + healthcheck)
+11. Ustvarjen .dockerignore (prepreči kopiranje node_modules v image)
+12. Ustvarjen .github/workflows/release.yml (avtomatski release na tag push z ZIP + SHA256)
+13. Ustvarjen .github/workflows/stale.yml (auto-close nerešeni issues/PR po 74 dneh)
+14. Ustvarjen .editorconfig (konsistentno formatiranje cross-editor)
+15. Ustvarjen .nvmrc (Node.js 20.0.0)
+16. Ustvarjen .tool-versions (asdf: nodejs 20 + bun 1.3.14)
+
+GitHub repo settings (via API z PAT):
+- has_discussions: false → true (README Contact jih omenja, sedaj delujejo)
+- topics: [] → 17 topics (nextjs, typescript, prisma, ai, llm, slovenia, itd.)
+- homepage: null → https://github.com/markec12345678/markecaifirm/releases
+
+BONUS (kritičen CI fix):
+- CI je fail-al v "Run unit tests" stepu z "PrismaClientKnownRequestError"
+- Vzrok: db.listing.deleteMany() in db.trade.deleteMany() kličejo v test-ih
+  ampak tabele niso bile kreirane — samo db:generate (Prisma client) je bil
+  v CI, ne pa tudi db:push (ki dejansko kreira tabele v SQLite)
+- VSI prejšnji CI runs od v9.79 so fail-ali zaradi tega (nisem opazil ker sem mislil da je YAML broken)
+- Fix: dodan "Initialize database" step (bun run db:push) pred "Run unit tests"
+- Verifikacija: ✅ CI zdaj zelen (success) po fix-u!
+
+Commits (4):
+- 23d5bda: repo-health: GitHub project polish (P0+P1+P2) — vse datoteke + README posodobitve
+- 6b4f7d5: fix(ci): ai-endpoints workflow — add contents:write permission
+- 2776fbc: fix(ci): add db:push step before unit tests ← CI ZELEN!
+- (worklog entry)
+
+Stage Summary:
+- USTVARJENE datoteke: 13 (CODE_OF_CONDUCT, dependabot, FUNDING, Dockerfile, docker-compose, .dockerignore, release.yml, stale.yml, .editorconfig, .nvmrc, .tool-versions)
+- POSODOBLJENE datoteke: 4 (README badges+roadmap+email, AI_ENDPOINTS.md, version.ts, ci.yml, ai-endpoints.yml)
+- GitHub settings: 3 spremembe (Discussions enabled, 17 topics, Homepage)
+- CI STATUS: ✅ ZELEN (prej ❌ rdeč od v9.79 naprej)
+- DEPENDABOT: 4 PR-ji odprti (2 npm + 2 github_actions) — dependabot deluje!
+- Typecheck: 0 napak
+- Lint: 0 napak
