@@ -28,6 +28,8 @@ const StatisticsView = dynamic(() => import('@/components/dashboard/statistics-v
 const BuyersView = memo(dynamic(() => import('@/components/dashboard/buyers-view').then(m => ({ default: m.BuyersView })), { ssr: false, loading: () => <LoadingFallback /> }));
 // v7.01: AIHubView — centralen pregled vseh 254 AI endpointov z iskalnikom
 const AIHubView = memo(dynamic(() => import('@/components/dashboard/ai-hub-view').then(m => ({ default: m.AIHubView })), { ssr: false, loading: () => <LoadingFallback /> }));
+// v9.81: DecisionHistoryView — zgodovina Copilot odločitev z realnimi izidi
+const DecisionHistoryView = memo(dynamic(() => import('@/components/dashboard/decision-history-view').then(m => ({ default: m.DecisionHistoryView })), { ssr: false, loading: () => <LoadingFallback /> }));
 // v7.02: InventoryView — AI analiza skladišča (aging, stockout, shrinkage, liquidation, rebalancer)
 const InventoryView = memo(dynamic(() => import('@/components/dashboard/inventory-view').then(m => ({ default: m.InventoryView })), { ssr: false, loading: () => <LoadingFallback /> }));
 // v7.04: PricingView — AI analiza cen in dobička (smart-pricing, forecast, margin, price-war, seasonal)
@@ -86,7 +88,7 @@ function LoadingFallback() {
 //   5. AI            (4)  — AI Hub + Kupci + Tveganja + AI Asistent (modal)
 //   6. Analitika    (3)  — Analitika + Statistike + Predictive (widget)
 //   7. Sistem        (4)  — Nastavitve + Zdravje + Alerti + Obvestila
-type View = 'dashboard' | 'monitors' | 'scraper-status' | 'listings' | 'watchlist' | 'iskalnik' | 'listing-opt' | 'trades' | 'inventory' | 'pricing' | 'ai-hub' | 'buyers' | 'risk' | 'analytics' | 'statistics' | 'predictive' | 'settings' | 'alerts' | 'notifications' | 'health';
+type View = 'dashboard' | 'monitors' | 'scraper-status' | 'listings' | 'watchlist' | 'iskalnik' | 'listing-opt' | 'trades' | 'inventory' | 'pricing' | 'ai-hub' | 'decision-history' | 'buyers' | 'risk' | 'analytics' | 'statistics' | 'predictive' | 'settings' | 'alerts' | 'notifications' | 'health';
 
 // ID-ji kategorij (za tip-svarnost)
 type CategoryId = 'dashboard' | 'monitors' | 'listings' | 'trades' | 'ai-hub' | 'analytics' | 'settings';
@@ -161,6 +163,7 @@ const NAV_CATEGORIES: NavCategory[] = [
     primaryView: 'ai-hub',
     subViews: [
       { id: 'ai-hub', label: 'AI Hub', icon: Sparkles },
+      { id: 'decision-history', label: 'Zgodovina', icon: History },
       { id: 'buyers', label: 'Kupci', icon: Users },
       { id: 'risk', label: 'Tveganja', icon: Shield },
       { id: AI_ASSISTANT_MODAL_ID, label: 'AI Asistent', icon: Sparkles },
@@ -326,7 +329,7 @@ export default function Home() {
     const viewParam = params.get('view');
     const actionParam = params.get('action');
     if (viewParam) {
-      const validViews: View[] = ['dashboard', 'monitors', 'scraper-status', 'listings', 'iskalnik', 'watchlist', 'trades', 'inventory', 'pricing', 'listing-opt', 'risk', 'buyers', 'analytics', 'statistics', 'predictive', 'notifications', 'health', 'settings', 'alerts', 'ai-hub'];
+      const validViews: View[] = ['dashboard', 'monitors', 'scraper-status', 'listings', 'iskalnik', 'watchlist', 'trades', 'inventory', 'pricing', 'listing-opt', 'risk', 'buyers', 'analytics', 'statistics', 'predictive', 'notifications', 'health', 'settings', 'alerts', 'ai-hub', 'decision-history'];
       if (validViews.includes(viewParam as View)) {
         setView(viewParam as View);
       }
@@ -656,6 +659,7 @@ export default function Home() {
             {view === 'health' && <ErrorBoundary viewName="Zdravje"><HealthView /></ErrorBoundary>}
             {view === 'settings' && <ErrorBoundary viewName="Nastavitve"><SettingsView /></ErrorBoundary>}
             {view === 'ai-hub' && <ErrorBoundary viewName="AI Hub"><AIHubView /></ErrorBoundary>}
+            {view === 'decision-history' && <ErrorBoundary viewName="Zgodovina odločitev"><DecisionHistoryView /></ErrorBoundary>}
           </main>
         </div>
       )}
@@ -793,6 +797,7 @@ export default function Home() {
         {view === 'health' && <ErrorBoundary viewName="Zdravje"><HealthView /></ErrorBoundary>}
         {view === 'settings' && <ErrorBoundary viewName="Nastavitve"><SettingsView /></ErrorBoundary>}
         {view === 'ai-hub' && <ErrorBoundary viewName="AI Hub"><AIHubView /></ErrorBoundary>}
+        {view === 'decision-history' && <ErrorBoundary viewName="Zgodovina odločitev"><DecisionHistoryView /></ErrorBoundary>}
       </main>
       )}
 

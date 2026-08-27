@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from 'next/server';
 import { db } from '@/lib/db';
 import { logger } from '@/lib/logger';
 import { serializeTags } from '../route';
+import { evaluateSuggestionOutcome } from '@/lib/copilot/outcome-evaluator';
 
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
@@ -53,6 +54,43 @@ export async function PUT(req: NextRequest, { params }: { params: Promise<{ id: 
     }
 
     const updated = await db.trade.update({ where: { id }, data });
+
+    // v9.82: Auto-trigger Copilot outcome evaluation when a trade is sold.
+    // Če je ta trade povezan z Copilot predlogom (preko relatedTradeId ali relatedListingId),
+    // avtomatsko evalviraj in zabeleži izid — ne rabi uporabnik ročno zabeležiti.
+    const becameSold = data.status === 'sold' || (typeof body.sellPrice === 'number' && body.sellPrice > 0);
+    if (becameSold) {
+      try {
+        // Najdi povezan predlog (sell → relatedTradeId, buy → relatedListingId)
+        const trade = await db.trade.findUnique({
+          where: { id },
+          select: { id: true, listingId: true },
+        });
+        if (trade) {
+          const linkedSuggestions = await db.copilotSuggestion.findMany({
+            where: {
+              status: 'executed',
+              OR: [
+                { relatedTradeId: trade.id },
+                ...(trade.listingId ? [{ relatedListingId: trade.listingId }] : []),
+              ],
+            },
+            select: { id: true, type: true },
+          });
+          for (const sug of linkedSuggestions) {
+            // evaluateSuggestionOutcome sam posodobi status in polja če je trade sold
+            const result = await evaluateSuggestionOutcome(sug.id);
+            if (result) {
+              logger.info('/api/trades/[id]', `Auto-evaluated outcome for suggestion ${sug.id} (${sug.type}) → wasCorrect=${result.wasCorrect}`);
+            }
+          }
+        }
+      } catch (evalErr) {
+        // Ne failaj celotnega PUT-a če evalvacija ne uspe — samo logiraj
+        logger.error('/api/trades/[id]', 'Auto-evaluate outcome failed (non-fatal)', evalErr);
+      }
+    }
+
     return NextResponse.json(updated);
 
   } catch (err) {

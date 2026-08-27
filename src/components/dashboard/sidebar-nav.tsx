@@ -43,7 +43,7 @@ type View =
   | 'dashboard' | 'monitors' | 'scraper-status'
   | 'listings' | 'watchlist' | 'iskalnik' | 'listing-opt'
   | 'trades' | 'inventory' | 'pricing'
-  | 'ai-hub' | 'buyers' | 'risk'
+  | 'ai-hub' | 'decision-history' | 'buyers' | 'risk'
   | 'analytics' | 'statistics' | 'predictive'
   | 'settings' | 'alerts' | 'notifications' | 'health';
 

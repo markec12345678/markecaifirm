@@ -23482,3 +23482,455 @@ Stage Summary:
 - Decision Accuracy: 92% (11/12)
 - GitHub: sinhroniziran (v9.78.0)
 - Aplikacija: QA-certificirana
+
+---
+Task ID: AUDIT-COPILOT-OUTCOME
+Agent: Explore
+Task: Audit existing Copilot suggestion + outcome system
+
+Work Log:
+- Prebral worklog (zadnjih ~150 vrstic) — kontekst: aplikacija v9.78.0, Copilot v9.62/v9.63, Decision Accuracy 92% (12 outcomes, 11 correct)
+- Prebral prisma/schema.prisma (model CopilotSuggestion, vrstice 551-604)
+- Grep po API-ju: našel 3 copilot rute pod /api/ai/copilot/ (route.ts, accuracy/route.ts, evaluate/route.ts)
+- Prebral vse 3 API route datoteke v celoti
+- Grep po /src/lib: našel /src/lib/copilot/outcome-evaluator.ts (353 vrstic) — jedro outcome logike
+- Prebral tudi /src/lib/trades/decision-accuracy.ts — ločena v8.70 analytics (Buy Score korelacija, NE Copilot outcome)
+- Grep po UI: našel /src/components/dashboard/copilot-widget.tsx (487 vrstic) — edina komponenta
+- Prebral copilot-widget.tsx v celoti
+- Grep po cron + trades rute: NOPE — noben cron ne kliče evaluatePendingOutcomes, noben trades/[id]/route.ts ne kliče evaluateSuggestionOutcome ob prodaji
+- Preveril seed scripts (/scripts/seed-*.ts) — NO CopilotSuggestion seed
+- Preveril DB stanje preko Prisma: 12 outcome_recorded + 6 pending (vsi outcome_recorded so bili ročno vnešeni med QA, ne iz seed-a)
+- Preveril reusable infra: shadcn Dialog, Form, Input, Select, Button, Badge, Textarea vse obstajajo v /src/components/ui/
+- Pattern example: /src/components/dashboard/trades/trade-form-dialog.tsx (234 vrstic) — isti pattern kot bo potreben za fast outcome dialog
+- Potrdil: NE obstaja `/api/copilot/[id]/outcome` ali kakšn similar endpoint za direktno ročno zbiranje outcome-a
+
+Stage Summary:
+
+## 1. DB Schema (`prisma/schema.prisma`, vrstice 551-604)
+
+**NI separate `CopilotOutcome` modela** — vsi outcome podatki so EMBEDDED direktno na `CopilotSuggestion`.
+
+**Brez enumov** — vsi "enumi" (type, priority, status, outcome, riskLevel, category) so stored kot plain String (comment-documented vrednosti).
+
+Verbatim `model CopilotSuggestion`:
+```prisma
+model CopilotSuggestion {
+  id              String   @id @default(cuid())
+  // Suggestion metadata
+  type            String   // buy | sell | stop-monitor | restock | investigate
+  priority        String   // high | medium | low
+  title           String
+  description     String
+  reason          String   @default("")
+  expectedOutcome String  @default("")
+  riskLevel       String   @default("medium") // low | medium | high
+  category        String   @default("opportunity") // opportunity | warning | optimization | investigation
+  icon            String   @default("💡")
+  actionData      String   @default("{}") // JSON: { listingId, tradeId, monitorId, url, suggestedPrice, ... }
+  autoExecutable  Boolean  @default(false)
+  // Lifecycle status
+  // pending = čaka na uporabnikovo odločitev
+  // approved = uporabnik je potrdil predlog (še ni izvedeno)
+  // rejected = uporabnik je zavrnil predlog
+  // executed = akcija je bila dejansko izvedena (trade dodan, monitor ustavljen, etc.)
+  // outcome_recorded = izid je bil zabeležen (profit/loss znan)
+  // expired = predlog je potekel brez odziva
+  status          String   @default("pending")
+  approvedAt      DateTime?
+  rejectedAt      DateTime?
+  executedAt      DateTime?
+  outcomeRecordedAt DateTime?
+  // Outcome tracking (samo za approved+executed)
+  outcome         String?  // profit | loss | neutral | null (if not yet known)
+  profitAmount    Float?   // actual profit/loss in EUR (null if not yet known) — legacy field
+  wasCorrect      Boolean? // was the AI recommendation correct? (true if outcome matched expectation)
+  // v9.63: Richer metrics for Decision Learning Loop
+  expectedProfit  Float?   // AI predicted profit in EUR (at suggestion time)
+  expectedRoi     Float?   // AI predicted ROI % (at suggestion time)
+  actualProfit    Float?   // actual profit/loss in EUR (when outcome recorded)
+  actualRoi       Float?   // actual ROI % (when outcome recorded)
+  confidenceAtSuggestion Int?  // AI confidence 0-100 at suggestion time
+  timeToOutcomeDays Int?   // days from executedAt to outcomeRecordedAt
+  wasCorrectReason String? // human-readable explanation why correct/incorrect
+  wasCorrectRule  String?  // which rule was used: "profit_positive" | "roi_match" | "sold_within_window" | etc.
+  // User feedback
+  feedback        String?  // optional user feedback on reject
+  // Relations
+  relatedTradeId   String?  // link to Trade if became a trade
+  relatedListingId String?  // link to Listing for buy suggestions
+  // Timestamps
+  createdAt       DateTime @default(now())
+  updatedAt       DateTime @updatedAt
+
+  @@index([status])
+  @@index([type])
+  @@index([priority])
+  @@index([createdAt])
+  @@index([wasCorrect])
+}
+```
+**Pomembno**: `relatedTradeId` in `relatedListingId` so plain String (brez Prisma @relation foreign key constraint) — loose reference, ne cascada.
+
+## 2. API Endpoints (vse pod `/api/ai/copilot/`)
+
+### a) `/api/ai/copilot` (src/app/api/ai/copilot/route.ts)
+- **GET**: Generira nove AI predloge (buy/sell/stop-monitor/restock/arbitrage) in jih shrani v DB. Vrne pending suggestions + accuracy stats. Response: `{ ok, suggestions: [...], accuracy: { totalDecided, approved, rejected, executed, outcomeRecorded, correct, decisionAccuracy } }`
+- **POST**: Uporabnik potrdi/zavrne/izvede predlog. Body: `{ id, action: 'approve'|'reject'|'execute', feedback? }`. Response: `{ ok, action, id, message, executed, newStatus }`. **POMEMBNO**: 'execute' samo nastavi status='executed' — NE kreira Trade-a (v kodi je komentar "V produkciji bi tukaj dejansko izvedli akcijo")
+
+### b) `/api/ai/copilot/accuracy` (src/app/api/ai/copilot/accuracy/route.ts)
+- **GET**: Vrne detailed Decision Accuracy analytics — totalOutcomes, correct, incorrect, decisionAccuracy %, financialImpact (EUR), avgTimeToOutcomeDays, avgConfidenceAtSuggestion, byType breakdown, rulesUsed, recentOutcomes[10], hasEnoughData (>=10)
+
+### c) `/api/ai/copilot/evaluate` (src/app/api/ai/copilot/evaluate/route.ts)
+- **POST** (brez body-ja): Manually triggera `evaluatePendingOutcomes()` — za vse status='executed' suggestions poskusi najti povezan prodan Trade in zabeleži outcome. Response: `{ ok, checked, evaluated, correct, incorrect, message }`
+
+**NI endpoint-a za direktno ročno vnašanje outcome-a** (npr. POST /api/copilot/[id]/outcome) — to je GLAVNA VRZEL za novo fast-outcome-capture funkcionalnost.
+
+## 3. UI Components
+
+### Edina komponenta: `/home/z/my-project/src/components/dashboard/copilot-widget.tsx` (487 vrstic)
+- Rendered v `/src/components/dashboard/dashboard-view.tsx` (line 310) kot `<CopilotWidget onNavigate={onNavigate} />`
+- Prikazuje: naslov "AI Copilot", Decision Accuracy banner (zelen/amber glede na %), seznam pending suggestions, "Prikaži vseh" gumb, footer stats (Potrjeni/Zavrnjeni/Izvedeni)
+- **Action buttons** (per suggestion):
+  - "Potrdi predlog" (approve) — `POST /api/ai/copilot { action: 'approve' }`
+  - "Izvedi akcijo" (execute) — `POST /api/ai/copilot { action: 'execute' }` (vidno šele po approve)
+  - "Zavrni" (reject) — `POST /api/ai/copilot { action: 'reject' }`
+  - "Odpri" (open URL) — `window.open(actionData.url)`
+- **NI nobenega modal-a/dialog-a/form-a za ročno vnašanje outcome-a** — noben "Record outcome" gumb, noben "Sem prodal to za X€" input
+- **Auto-refresh vsakih 120s** (load interval)
+
+## 4. Current Outcome Flow (lifecycle step-by-step)
+
+1. **Suggestion generated**: `GET /api/ai/copilot` kliče `generateAndSaveSuggestions()` — kreira buy/sell/stop-monitor/restock/arbitrage predloge iz Listings/Trades/Monitors (status='pending')
+2. **User approves**: klik "Potrdi predlog" → `POST { action: 'approve' }` → status='approved', approvedAt set
+3. **User executes**: klik "Izvedi akcijo" → `POST { action: 'execute' }` → status='executed', executedAt set. **POMEMBNO**: 'execute' NE kreira pravega Trade-a ali NE deaktivira monitorja — samo spremeni status (v kodi je komentar da bi v produkciji dejansko izvedli akcijo)
+4. **Wait for trade sold**: nekje drugje (uporabnik ročno v Skladišče), Trade z matching `listingId` dobi `status='sold'` + `sellPrice`. **NI nobenega auto-triggerja** ob prodaji trade-a — `src/app/api/trades/[id]/route.ts` (vrstica 49-52) auto-set-uje status='sold' ko sellPrice je nastavljen, AMPAK ne kliče `evaluateSuggestionOutcome`.
+5. **Evaluate outcome (manual)**: nekdo mora poklicati `POST /api/ai/copilot/evaluate` (ki ni vezan na noben UI gumb) — `evaluatePendingOutcomes()` loop-a čez vse status='executed', za vsakega:
+   - **buy**: najde Trade z `listingId === suggestion.relatedListingId` AND `status='sold'` AND `sellPrice != null` → computa actualProfit, actualRoi, wasCorrect=(profit>0), rule='profit_positive'
+   - **sell**: najde Trade z `id === suggestion.relatedTradeId` AND sold → wasCorrect=(sold within 30 days of execute), rule='sold_within_window'
+   - **stop-monitor**: wasCorrect=(30+ dni od execute in ni reaktiviran), rule='not_reactivated' — ne rabi trade
+   - **restock/investigate**: **NI IMPLEMENTIRANO** — vrne null (komentar: "bo implementirano ko bomo imeli več podatkov")
+6. **Outcome recorded**: `db.copilotSuggestion.update` set-uje: status='outcome_recorded', outcomeRecordedAt, outcome, profitAmount (legacy), actualProfit, actualRoi, timeToOutcomeDays, wasCorrect, wasCorrectReason, wasCorrectRule
+
+**Skriti bug**: Če uporabnik nikoli ne kliče `/api/ai/copilot/evaluate` (in noben cron ga ne kliče — preverjeno), outcome NIKOLI ne bo zabeležen tudi če je trade prodan. DB trenutno ima 12 outcome_recorded + 6 pending — vseh 12 je bilo vnešenih ročno med QA.
+
+## 5. Decision Accuracy Calculation
+
+### Lokacija 1: Inline v `/api/ai/copilot` GET (vrstice 385-423)
+- Formula: `decisionAccuracy = Math.round((correctCount / outcomeRecordedCount) * 100)` — null če outcomeRecordedCount=0
+- Displayed v **CopilotWidget** kot `🎯 Decision Accuracy {N}%` z subtitle `{correct}/{outcomeRecorded}`
+
+### Lokacija 2: Detailed v `/api/ai/copilot/accuracy` GET (file `/src/app/api/ai/copilot/accuracy/route.ts`)
+- Ista formula + financialImpact (sum actualProfit), byType breakdown, rulesUsed count, recentOutcomes[10], avgTimeToOutcomeDays, avgConfidenceAtSuggestion
+- Ta endpoint **NI klican iz UI-ja** (samo admin/debug)
+
+### Lokacija 3 (ločena, ne Copilot): `/api/analytics/decision-accuracy` (file `/src/lib/trades/decision-accuracy.ts`)
+- To je v8.70 analytics — Buy Score (iz trades) korelacija z Outcome Score (iz `computeOutcomeScore`). **NE mešati** s Copilot Decision Accuracy.
+
+### "wasCorrect" rule logic — `/src/lib/copilot/outcome-evaluator.ts` (353 vrstic)
+| type | wasCorrect rule | rule string |
+|------|----------------|-------------|
+| buy | `actualProfit > 0` | `profit_positive` |
+| sell | sold within 30 days of execute | `sold_within_window` |
+| stop-monitor | not reactivated within 30 days | `not_reactivated` |
+| restock | (not implemented, returns null) | — |
+| investigate | (not implemented, returns null) | — |
+| arbitrage | (not handled, falls to default → null) | — |
+
+## 6. Existing Demo Data
+
+- **Seed file**: `/home/z/my-project/scripts/seed-all.ts` (171 vrstic) — seed-a listings, trades, tags, monthly goal, VAPID keys, monitor. **NE seed-a nobenega CopilotSuggestion-a.**
+- Drugi seed files (`seed-listings.ts`, `seed-cars.ts`, `seed-tags.ts`) — tudi nič Copilot.
+- **Trenutno DB stanje** (queried via Prisma):
+  - 12 suggestion-ov s `status='outcome_recorded'` (vsi ročno med QA)
+  - 6 suggestion-ov s `status='pending'`
+  - Sample outcome: `{ type:'buy', outcome:'profit', wasCorrect:true, actualProfit:29, actualRoi:88, wasCorrectRule:'profit_positive', timeToOutcomeDays:11, expectedProfit:23, expectedRoi:70, confidenceAtSuggestion:50 }`
+- Worklog QA-FINAL: "Decision Accuracy: 92% (12 outcomes, 11 correct, 1 incorrect — Yeezy izguba)"
+
+## Gaps za "fast outcome capture" feature
+
+1. **NI API endpoint-a za direktno ročno vnašanje outcome-a** — treba dodati npr. `POST /api/ai/copilot/[id]/outcome` s body-jem `{ actualProfit, actualRoi?, outcome: 'profit'|'loss'|'neutral', wasCorrect?, reason?, timeToOutcomeDays? }`
+2. **NI UI form-a/modal-a za "Record outcome"** — treba dodati Dialog z input-i za buy price / sell price / fees / dates / profit loss. Pattern: `/src/components/dashboard/trades/trade-form-dialog.tsx` (234 vrstic).
+3. **NI auto-triggerja** ob prodaji Trade-a — `src/app/api/trades/[id]/route.ts` ne kliče `evaluateSuggestionOutcome` ko status postane 'sold'. To lahko ostane za ločeno nalogo.
+4. **NI podpore za restock/investigate/arbitrage outcome** — `evaluateSuggestionOutcome` za te tipe vrne null. Hitri capture bi lahko pokril vse tipe.
+5. **NI seed demo CopilotOutcome podatkov** — za testiranje nove UI bi bilo dobro dodati v `/scripts/seed-all.ts`
+6. **`execute` ne dejansko izvede akcije** — `POST /api/ai/copilot { action: 'execute' }` samo spremeni status, ne kreira Trade. Morda je to INTENTIONAL (uporabnik sam kreira Trade v Skladišču), ampak oteži povezavo suggestion → trade → outcome.
+
+## Reusable infrastructure (že v codebase-u, ne treba dodajati)
+
+- **shadcn Dialog**: `/src/components/ui/dialog.tsx` — izvozi: Dialog, DialogTrigger, DialogContent, DialogHeader, DialogTitle, DialogDescription, DialogFooter, DialogClose. Že uporabljen v ~13 komponentah (npr. trade-form-dialog, listing-detail-modal, ai-runner-modal).
+- **shadcn Form**: `/src/components/ui/form.tsx` — izvozi: Form, FormItem, FormLabel, FormControl, FormDescription, FormMessage. (Form je lazy-implementiran brez react-hook-form — style-only wrapper.)
+- **Input/Textarea/Label/Select/Button/Badge/Card**: vsi v `/src/components/ui/`
+- **toast (sonner)**: pattern `import { toast } from 'sonner'` uporabljen povsod
+- **useHaptic hook**: `/src/hooks/use-haptic` — `haptic.light()`, `haptic.medium()`, `haptic.success()` (že v copilot-widget)
+- **triggerGlobalRefresh**: `/src/hooks/use-global-refresh` — refresh-a dashboard po save (uporabljen v trade-form-dialog)
+- **db (Prisma)**: `/src/lib/db`
+- **logger**: `/src/lib/logger`
+- **Pattern example**: `/src/components/dashboard/trades/trade-form-dialog.tsx` — 234 vrstic, isti dialog pattern (open/onOpenChange/editing/onSaved props, useState za input-e, save() funkcija ktera POST-a na API)
+- **Vrzel recommendation**: Nov `OutcomeFormDialog` component v `/src/components/dashboard/copilot/` (nova mapa), nova API ruta `/api/ai/copilot/[id]/outcome` (POST), in "Zabeleži izid" gumb v CopilotWidget za vsak approved/executed suggestion.
+
+---
+Task ID: v9.80
+Agent: main
+Task: Fast Outcome Capture — hiter vnos dejanskega rezultata (P0 po predlogu uporabnika)
+
+Work Log:
+- Audit obstoječega Copilot sistema (Explore subagent):
+  * CopilotSuggestion model že ima outcome/wasCorrect/actualProfit/actualRoi polja
+  * Toda outcomes so se avtomatsko evalvirali SAMO ko je Trade postal 'sold' v DB
+  * V realnosti uporabnik redek zapisuje Trade v sistem → outcomes skoraj nikoli zbrani
+  * To je blokiralo P0 cilj: "AI, ki se meri na rezultatih"
+- User spec:
+  * 4 outcome tipi: sold / not_bought / not_executed / wrong_prediction
+  * Za sold: dejanska kupna/prodajna cena/stroški/referenčna točka
+  * Cilj: 10-20 sekund od klik do save
+- Spremembe:
+  1. DB Schema (prisma/schema.prisma):
+     - 5 novih polj na CopilotSuggestion:
+       * outcomeType (sold | not_bought | not_executed | wrong_prediction)
+       * actualBuyPrice (Float?)
+       * actualSellPrice (Float?)
+       * actualCosts (Float?)
+       * referencePoint (String?)
+     - db:push sinhroniziral
+  2. API: POST /api/ai/copilot/[id]/outcome
+     - Sprejme outcomeType + (za sold) actualBuyPrice/actualSellPrice/actualCosts/referencePoint + note
+     - Logika:
+       * sold → wasCorrect = actualProfit >= 0, outcome = profit/loss/neutral, actualProfit/actualRoi izračunana
+       * not_bought / not_executed → wasCorrect = null (ne preverjeno), outcome = neutral
+       * wrong_prediction → wasCorrect = false (eksplicitno), outcome = loss
+     - wasCorrectRule: manual_entry_sold | manual_no_action | manual_wrong_prediction
+     - Blokira double-record in rejected predloge
+  3. GET /api/ai/copilot:
+     - Nova formula: decisionAccuracy = correctCount / evaluableCount (wasCorrect != null)
+     - Prej: / outcomeRecordedCount (vključevala wasCorrect=null)
+     - Sedaj vrača tudi: evaluable, expectedProfit, expectedRoi za vsak predlog
+  4. UI: OutcomeFormDialog (nova komponenta v src/components/dashboard/copilot/)
+     - Step 1: 4 velike gumbe (Uspešno prodano / Nisem kupil / Nisem izvedel / Napačna napoved)
+     - Step 2 (samo za sold): inputi za cene + live prikaz dobička/ROI + primerjava z AI napovedjo
+     - Auto-fill suggestedPrice iz actionData
+     - Auto-refresh dashboarda po save (triggerGlobalRefresh)
+  5. CopilotWidget:
+     - "Zabeleži izid" gumb (vijoličen) na vsakem predlogu (vedno viden)
+     - Banner sedaj prikazuje "X/Y evaluiranih" + "+ N ne preverjenih (nisem kupil)" ločeno
+     - Empty state: "Zabeleži vsaj en izid z realnimi številkami"
+- Verifikacija (Agent Browser):
+  * Sold outcome: kupna 305€, prodajna 450€ → +145€ (47.5% ROI) → POST 200, wasCorrect=true
+  * Wrong prediction: POST 200, wasCorrect=false, Decision Accuracy 92% → 86% (12/14)
+  * Not bought: POST 200, wasCorrect=null, prikaz "+ 1 ne preverjenih"
+  * Vsi 3 tipi delujočo, dialog se zapre, dashboard refresha
+  * Testni vnosi pobrisani — Decision Accuracy nazaj na 92% (11/12)
+- Typecheck: 0 napak
+- Lint: 0 napak
+- API routes: 661 → 662 (+1)
+
+Stage Summary:
+- MODIFIED: prisma/schema.prisma (5 novih polj)
+- MODIFIED: src/app/api/ai/copilot/route.ts (accuracy formula + expectedProfit/expectedRoi v odgovoru)
+- CREATED: src/app/api/ai/copilot/[id]/outcome/route.ts (POST endpoint za hitri outcome zapis)
+- CREATED: src/components/dashboard/copilot/outcome-form-dialog.tsx (4-outcome dialog z live profit calc)
+- MODIFIED: src/components/dashboard/copilot-widget.tsx (Zabeleži izid gumb + split banner prikaz)
+- MODIFIED: src/lib/version.ts (v9.79→v9.80, 432→433 AI endpointov, 651→662 routes)
+- MODIFIED: README.md (badge v9.80)
+- Verzija: v9.80.0
+- P0 FEATURE DOSTOPEN:
+  * Uporabnik lahko sedaj zabeleži IZID v 10-20 sekundah
+  * 4 izidi pokrivajo vse realne scenarije (kupil & prodal / ne kupil / ne izvedel / napaka AI)
+  * "Sold" vnese realne cene → auto-izračun profit + ROI + primerjava z AI napovedjo
+  * wasCorrect=null (ne preverjeni) ne falšujejo Decision Accuracy %
+  * Banner prikazuje "X/Y evaluiranih" + ločeno "+ N ne preverjenih"
+- P0 STATUS: Sedaj lahko uporabnik zbere realne podatke o AI odločitvah
+
+---
+Task ID: v9.81
+Agent: main
+Task: Zapri P0 zanko — "Čaka na izid" + Decision History view
+
+Work Log:
+- Problem v9.80: GET /api/ai/copilot vračal samo status='pending' predloge
+  * Ko uporabnik klikne Potrdi/Izvedi → predlog izgine iz UI
+  * Form iz v9.80 nedosegljiv po approve/execute
+  * Uporabnik ne more zabeležiti izida za potrdjene predloge!
+- Spremembe:
+
+1. API: GET /api/ai/copilot
+   - Novo polje awaitingOutcome[] v odgovoru (status approved/executed, brez outcomeType)
+   - Limit 8, sort: executed prednostno, nato po datumu
+   - Vrača tudi approvedAt/executedAt za prikaz "čaka X dni"
+
+2. CopilotWidget:
+   - Nov collapsible "Čaka na izid" section pod pending listo
+   - Vsak item: icon, title, badge (POTRJENO/IZVEDENO), ageDays ("danes/včeraj/pred N dni")
+   - "Zabeleži izid" gumb (vijoličen, full-width) → odpre OutcomeFormDialog
+   - Auto-expanded prvotno (showAwaiting=true)
+   - Limit 5 + "+ N ostalih" če je več
+
+3. API: GET /api/ai/copilot/accuracy (posodobljen)
+   - Vrača 50 (ne 10) zadnjih izidov
+   - Polni podatki za vsak izid: title, description, priority, expectedOutcome,
+     outcome, outcomeType, actualBuyPrice/actualSellPrice/actualCosts, referencePoint,
+     feedback, executedAt, outcomeRecordedAt, createdAt
+   - Sort: outcomeRecordedAt desc (že v query-ju)
+
+4. NOVA KOMPONENTA: src/components/dashboard/decision-history-view.tsx (~440 vrstic)
+   - 4 KPI kartice: Decision Accuracy / Financial Impact / Čas do izida / AI Confidence
+   - Breakdown by tip predloga (grid 1/2/3 stolpce)
+   - Filter bar: Vsi / Pravilni / Napačni / Nepreverjeni
+   - List 50 izidov z expand-collapse:
+     * Header: icon, title, type label, ageDays, wasCorrect badge
+     * 2-column grid: AI napoved (expected profit/roi/confidence) vs Realnost (actual profit/roi)
+     * Expand: reason, buy/sell/costs prices, reference, feedback, time, rule
+   - Empty state: "Še ni zabeleženih izidov"
+   - Custom scrollbar styling (max-h-[600px] overflow-y-auto)
+   - Early data warning (< 10 izidov)
+
+5. NAVIGACIJA:
+   - Nov sub-tab "Zgodovina" v AI kategoriji (med AI Hub in Kupci)
+   - View tip razširjen z 'decision-history'
+   - Registrirana komponenta v page.tsx (oba layouta — desktop + mobile)
+   - SidebarNav View tip razširjen z 'decision-history'
+
+- Verifikacija (Agent Browser):
+  * AI > Zgodovina sub-tab → view naloži: 92% / +366€ / 19d / 50%
+  * Breakdown: Nakup 12×, 92% natančnost, +31€ povprečje
+  * Filter ✓ Pravilni (11) / ✗ Napačni (1) / ○ Nepreverjeni (0)
+  * Expand: prikaže reason, time, rule (profit_positive)
+  * Dashboard: Potrdi predlog → "Čaka na izid" section se pojavi s POTRJENO badge
+  * "Zabeleži izid" v awaiting section odpre dialog
+  * Test approve pobrisan — dashboard nazaj na normalno stanje
+- Typecheck: 0 napak
+- Lint: 0 napak
+
+Stage Summary:
+- MODIFIED: src/app/api/ai/copilot/route.ts (awaitingOutcome[] v GET odgovoru)
+- MODIFIED: src/app/api/ai/copilot/accuracy/route.ts (50 izidov, vsa polja)
+- MODIFIED: src/components/dashboard/copilot-widget.tsx (awaitingOutcome section + Zabeleži gumb)
+- MODIFIED: src/components/dashboard/copilot/outcome-form-dialog.tsx (OutcomeSuggestion optional fields)
+- CREATED: src/components/dashboard/decision-history-view.tsx (~440 vrstic)
+- MODIFIED: src/app/page.tsx (View tip + sub-tab + render v 2 layoutih)
+- MODIFIED: src/components/dashboard/sidebar-nav.tsx (View tip)
+- MODIFIED: src/lib/version.ts (v9.80→v9.81)
+- MODIFIED: README.md (badge v9.81)
+- Verzija: v9.81.0
+- P0 STATUS: ZAPRTA ZANKA
+  * Prej: form v9.80 nedosegljiv po approve
+  * Zdaj: pending → approve → ČAKA NA IZID (viden v widgetu) → Zabeleži izid → ZGODOVINA (viden v view)
+  * Celoten workflow od predloga do realnega rezultata je sedaj dostopen v UI
+
+---
+Task ID: v9.82
+Agent: main
+Task: Tehnični dolg zaprt — A (auto-expire) + C (auto-trigger) + B (sold comps prefill)
+
+Work Log:
+- 3 majhne izboljšave, skupaj ~110 vrstic. Po tem je Copilot lifecycle povsem avtomatski.
+
+A) AUTO-EXPIRE PENDING PREDLOGOV (>7 dni)
+  - Nova funkcija expireStalePendingSuggestions() v /api/ai/copilot/route.ts
+  - Klice se ob vsakem GET (na začetku, pred generacijo novih predlogov)
+  - Vsak pending predlog starejši od 7 dni → status='expired'
+  - Razlog: v accuracy stats bi se sicer vedno šteli kot "čakajoči"
+  - V demo: 0 predlogov starejših od 7 dni (vs ustvarjeni danes), ne sproži ničesar
+  - V produkciji: čisti pending listo avtomatsko
+
+B) SOLD COMPS PRE-FILL V OUTCOME DIALOG
+  - Ko se OutcomeFormDialog odpre za buy predlog z listingId v actionData:
+    * Async fetch /api/listings/[listingId]/sold-comps
+    * Če so comps > 0, setSellPrice(avgSellPrice) in setReferencePoint("N podobnih prodaj, povprečje X€")
+  - UI:
+    * Label: "Prodajna cena (€) * 📊 predlagano iz N prodaj"
+    * Placeholder = avgSellPrice
+    * Quick gumb: "↻ Uporabi povprečje X€" (ponovno nastavi če je user spremenil)
+  - Verifikacija (MacBook buy predlog):
+    * buyPrice auto-fill: 720€ (iz actionData.suggestedPrice = listing.price)
+    * sellPrice auto-fill: 750€ (iz sold comps avgSellPrice)
+    * referencePoint auto-fill: "1 podobnih prodaj, povprečje 750€"
+    * Live dobiček preview: +30€ (4.2% ROI)
+    * AI napoved: +80€ (11% donosnost) — comparison prikazan
+  - Vnos pade iz 15s na ~5s (samo potrdi Shrani izid)
+
+C) AUTO-TRIGGER EVALUATE SUGGESTION OUTCOME KO TRADE POSTANE SOLD
+  - V PUT /api/trades/[id] ko data.status='sold' ali body.sellPrice > 0:
+    * Poišči vse CopilotSuggestion z status='executed' ki imajo:
+      - relatedTradeId === trade.id (sell predlogi)
+      - relatedListingId === trade.listingId (buy predlogi)
+    * Za vsakega klici evaluateSuggestionOutcome(suggestionId)
+    * outcome-evaluator.ts sam posodobi status='outcome_recorded' in zapiše wasCorrect
+  - Non-fatal: če evalvacija ne uspe, logiraj in nadaljuj (PUT ne sme failati)
+  - Pomen: ko uporabnik proda trade v Skladišče, AI napoved se avtomatsko preveri
+    brez da bi moral user ročno klikniti "Zabeleži izid"
+  - Komplementarno z v9.81 awaitingOutcome section (ki je še vedno dostopen kot fallback)
+
+- Typecheck: 0 napak
+- Lint: 0 napak
+
+Stage Summary:
+- MODIFIED: src/app/api/ai/copilot/route.ts (expireStalePendingSuggestions funkcija + klic v GET)
+- MODIFIED: src/app/api/trades/[id]/route.ts (import + auto-trigger blok v PUT)
+- MODIFIED: src/components/dashboard/copilot/outcome-form-dialog.tsx (sold comps fetch + UI hint)
+- MODIFIED: src/lib/version.ts (v9.81→v9.82)
+- MODIFIED: README.md (badge v9.82)
+- Verzija: v9.82.0
+- COPILOT LIFECYCLE STATUS: POVNEMA AVTOMATSKI
+  * Auto-expire: pending >7d → expired (čisti pending listo)
+  * Auto-evaluate: trade sold → outcome_recorded (brez user interakcije)
+  * Sold comps pre-fill: dialog predlaga realno prodajno ceno iz zgodovine
+  * Ročni workflow (v9.80/81) še vedno dostopen kot fallback
+
+---
+Task ID: v9.82.1
+Agent: main
+Task: Fix auto-expire data model — wasCorrect ostane null, dodana rich metadata
+
+Work Log:
+- Uporabnikova pripomba na v9.82: "Auto-expire po 7 dneh naj ne pomeni wasCorrect=false."
+- Preveritev moje v9.82 implementacije:
+  * Trenutno: data: { status: 'expired' } — samo to
+  * wasCorrect: null (NI false — formula pravilno izključi iz accuracy %) ✓
+  * MANJKA: outcomeType, outcomeRecordedAt, wasCorrectRule, wasCorrectReason
+- Brez manjkajočih polj prihodnja analitika NE more ločiti:
+  * "AI dokazano napačna" (wasCorrect=false)
+  * "uporabnik ni dal podatkov" (wasCorrect=null, user-decided)
+  * "predlog je potekel" (wasCorrect=null, sistem-decided)
+- Spremembe:
+  1. expireStalePendingSuggestions() — sedaj sets:
+     * status: 'expired'
+     * outcomeType: 'expired'
+     * outcomeRecordedAt: now (resolvedAt ekvivalent)
+     * wasCorrect: null (izrecno — NIKAKRO NE false)
+     * wasCorrectRule: 'auto_expired' (resolutionReason ekvivalent)
+     * wasCorrectReason: human-readable explanation
+  2. Schema comment za outcomeType posodobljen (dodan 'expired' v list)
+  3. Accuracy endpoint: dodan expiredCount v response
+  4. Copilot GET /api/ai/copilot: dodan expiredCount v accuracy stats
+  5. CopilotWidget banner: prikaže "N poteklih (brez odziva)" kot ločeno vrstico
+  6. incorrect formula popravljena: eksplicitno wasCorrect === false (ne total - correct)
+
+- Verifikacija (script):
+  * Ustvarjen testni pending predlog (8 dni star)
+  * Po expire: status='expired', outcomeType='expired', wasCorrect=null, wasCorrectRule='auto_expired'
+  * Vse 4 kategorije izidov sedaj razločljive
+- Verifikacija (API):
+  * GET /api/ai/copilot: accuracy.expired = 0 (demo nima starejših od 7 dni)
+  * GET /api/ai/copilot/accuracy: expiredCount = 0
+  * decisionAccuracy: 92% (nespremenjeno — expired izpade iz imenovalca)
+- Verifikacija (Browser):
+  * Banner: "92% · 11/12 evaluiranih" (nespremenjeno)
+  * "Expired" badge se ne prikaže ker je 0 (pravilno)
+- Typecheck: 0 napak
+- Lint: 0 napak
+
+Stage Summary:
+- MODIFIED: src/app/api/ai/copilot/route.ts (expireStalePendingSuggestions rich fields + expired count in stats)
+- MODIFIED: src/app/api/ai/copilot/accuracy/route.ts (expiredCount v response + incorrect formula fix)
+- MODIFIED: src/components/dashboard/copilot-widget.tsx (expired badge v banner + AccuracyStats interface)
+- MODIFIED: prisma/schema.prisma (comment-only: 'expired' dodan v outcomeType list)
+- MODIFIED: src/lib/version.ts (v9.82.0 → v9.82.1)
+- MODIFIED: README.md (badge v9.82.1)
+- Verzija: v9.82.1
+- 4 KATEGORIJE IZIDOV SEDAJ RAZLOČLJIVE:
+  1. AI dokazano pravilna    (wasCorrect === true)
+  2. AI dokazano napačna     (wasCorrect === false)
+  3. Ne preverjeno (user)    (wasCorrect === null, outcomeType IN sold/not_bought/not_executed/wrong_prediction)
+  4. Poteklo (sistem)         (wasCorrect === null, outcomeType === 'expired')
+- EFFECT ON DECISION ACCURACY: NI SPREMEMBE — expired izpade iz imenovalca (wasCorrect=null)
+- APLIKACIJA PRIPRAVLJENA ZA TERENSKO ZBIRANJE (30-100 realnih izidov)

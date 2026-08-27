@@ -15,30 +15,51 @@ export const maxDuration = 15;
 
 export async function GET() {
   try {
-    // Fetch all suggestions with outcomes recorded
+    // Fetch all suggestions with outcomes recorded (wasCorrect != null — only verified)
     const withOutcome = await db.copilotSuggestion.findMany({
       where: { status: 'outcome_recorded', wasCorrect: { not: null } },
       select: {
         id: true,
         type: true,
         priority: true,
+        title: true,
+        description: true,
+        expectedOutcome: true,
         wasCorrect: true,
         wasCorrectRule: true,
         wasCorrectReason: true,
+        outcome: true,
+        outcomeType: true,
         actualProfit: true,
         actualRoi: true,
+        actualBuyPrice: true,
+        actualSellPrice: true,
+        actualCosts: true,
+        referencePoint: true,
         expectedProfit: true,
         expectedRoi: true,
         confidenceAtSuggestion: true,
         timeToOutcomeDays: true,
         executedAt: true,
         outcomeRecordedAt: true,
+        feedback: true,
+        createdAt: true,
       },
+      orderBy: { outcomeRecordedAt: 'desc' },
+    });
+
+    // v9.82.1: Pridobi tudi expiredCount — predlogi ki so potekli brez odziva.
+    // WasCorrect=null, ampak razločljivo od "not_bought"/"not_executed" (user-decided)
+    // preko outcomeType='expired'. Pomembno za prihodnjo kalibracijo modela.
+    const expiredCount = await db.copilotSuggestion.count({
+      where: { status: 'expired', outcomeType: 'expired' },
     });
 
     const total = withOutcome.length;
     const correct = withOutcome.filter((s) => s.wasCorrect === true).length;
-    const incorrect = total - correct;
+    // v9.82.1: incorrect eksplicitno = wasCorrect === false (ne total - correct),
+    // da bo pravilno tudi če bi kdaj vključili wasCorrect=null v withOutcome.
+    const incorrect = withOutcome.filter((s) => s.wasCorrect === false).length;
     const decisionAccuracy = total > 0 ? Math.round((correct / total) * 100) : null;
 
     // Financial Impact = sum of actualProfit for correct - sum of |actualProfit| for incorrect
@@ -86,18 +107,35 @@ export async function GET() {
       rulesUsed[rule] = (rulesUsed[rule] ?? 0) + 1;
     }
 
-    // Recent outcomes (zadnjih 10)
+    // Recent outcomes (zadnjih 50 — v9.81: popolna zgodovina za Decision History view)
     const recent = withOutcome
-      .sort((a, b) => (b.outcomeRecordedAt?.getTime() ?? 0) - (a.outcomeRecordedAt?.getTime() ?? 0))
-      .slice(0, 10)
+      .slice(0, 50)
       .map((s) => ({
+        id: s.id,
         type: s.type,
+        title: s.title,
+        description: s.description,
+        priority: s.priority,
+        expectedOutcome: s.expectedOutcome,
         wasCorrect: s.wasCorrect,
+        outcome: s.outcome,
+        outcomeType: s.outcomeType,
         actualProfit: s.actualProfit,
         actualRoi: s.actualRoi,
+        actualBuyPrice: s.actualBuyPrice,
+        actualSellPrice: s.actualSellPrice,
+        actualCosts: s.actualCosts,
+        referencePoint: s.referencePoint,
+        expectedProfit: s.expectedProfit,
+        expectedRoi: s.expectedRoi,
+        confidenceAtSuggestion: s.confidenceAtSuggestion,
         timeToOutcomeDays: s.timeToOutcomeDays,
         wasCorrectRule: s.wasCorrectRule,
         reason: s.wasCorrectReason,
+        feedback: s.feedback,
+        executedAt: s.executedAt?.toISOString() ?? null,
+        outcomeRecordedAt: s.outcomeRecordedAt?.toISOString() ?? null,
+        createdAt: s.createdAt.toISOString(),
       }));
 
     return NextResponse.json({
@@ -111,6 +149,9 @@ export async function GET() {
       // Additional metrics
       avgTimeToOutcomeDays: avgTimeToOutcome,
       avgConfidenceAtSuggestion: avgConfidence,
+      // v9.82.1: Expired count (ločeno od "unverified" — expired je sistem-sprejel,
+      // unverified je uporabnik-sprejel kot "not_bought"/"not_executed")
+      expiredCount,
       // Breakdown
       byType,
       rulesUsed,

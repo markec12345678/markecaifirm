@@ -369,8 +369,59 @@ async function generateAndSaveSuggestions(): Promise<{ saved: number; suggestion
   return { saved: savedSuggestions.length, suggestions: savedSuggestions };
 }
 
+/**
+ * v9.82.1: Auto-expire pending predlogov z RICH metadata.
+ *
+ * Pomembno (po predlogu uporabnika): auto-expire NE pomeni wasCorrect=false!
+ * - wasCorrect = null (napoved NI bila preverjena — uporabnik ni odgovoril)
+ * - outcomeType = 'expired' (razločljivo od 'not_bought'/'not_executed')
+ * - outcomeRecordedAt = timestamp (kdaj je bil rezultat zabeležen)
+ * - wasCorrectRule = 'auto_expired' (audit trail)
+ * - wasCorrectReason = human-readable explanation
+ *
+ * Tako lahko prihodnja analitika loči 4 kategorije izidov:
+ *   1. AI dokazano pravilna    (wasCorrect === true)
+ *   2. AI dokazano napačna     (wasCorrect === false)
+ *   3. Ne preverjeno           (wasCorrect === null, outcomeType IN sold/not_bought/not_executed/wrong_prediction)
+ *   4. Poteklo                 (wasCorrect === null, outcomeType === 'expired')
+ *
+ * EFFECT ON DECISION ACCURACY:
+ *   - evaluableCount = wasCorrect != null → expired izpade iz imenovalca in numeratorja
+ *   - decisionAccuracy = correct / evaluable → nespremenjeno zaradi expired
+ */
+async function expireStalePendingSuggestions(): Promise<number> {
+  try {
+    const sevenDaysAgo = new Date(Date.now() - 7 * 24 * 60 * 60 * 1000);
+    const now = new Date();
+    const result = await db.copilotSuggestion.updateMany({
+      where: {
+        status: 'pending',
+        createdAt: { lt: sevenDaysAgo },
+      },
+      data: {
+        status: 'expired',
+        outcomeType: 'expired',
+        outcomeRecordedAt: now,
+        wasCorrect: null, // izrecno — nikakor ne false
+        wasCorrectRule: 'auto_expired',
+        wasCorrectReason: `Predlog potekel po 7 dneh brez uporabnikovega odziva (ustvarjen ${sevenDaysAgo.toISOString().slice(0, 10)}).`,
+      },
+    });
+    if (result.count > 0) {
+      logger.info('/api/ai/copilot', `Auto-expired ${result.count} stale pending suggestions (>7 days, wasCorrect=null)`);
+    }
+    return result.count;
+  } catch (err) {
+    logger.error('/api/ai/copilot', 'expireStalePendingSuggestions failed', err);
+    return 0;
+  }
+}
+
 export async function GET() {
   try {
+    // v9.82: Auto-expire pending predlogov (>7 dni) — najprej, da ne vplivajo na stats
+    await expireStalePendingSuggestions();
+
     // Generiraj in shrani nove predloge
     await generateAndSaveSuggestions();
 
@@ -381,18 +432,44 @@ export async function GET() {
       take: 10,
     });
 
+    // v9.81: "Čaka na izid" — predlogi, ki so approved/executed a še brez izida.
+    // Uporabnik jih je potrdil/izvedel, ampak še ni zabeležil dejanskega rezultata.
+    // Brez tega bi form iz v9.80 bil nedosegljiv po approve/execute.
+    const awaitingOutcome = await db.copilotSuggestion.findMany({
+      where: {
+        status: { in: ['approved', 'executed'] },
+        outcomeType: null, // še ni zabeležen izid
+      },
+      orderBy: [
+        // executed prednostno (uporabnik je že dejansko nekaj naredil)
+        { status: 'desc' },
+        { executedAt: 'desc' },
+        { approvedAt: 'desc' },
+      ],
+      take: 8,
+    });
+
     // Pridobi accuracy stats
-    const [totalDecided, correctCount, approvedCount, rejectedCount, executedCount, outcomeRecordedCount] = await Promise.all([
+    // v9.80: wasCorrect=null pomeni "ni preverjeno" (npr. "nisem kupil") —
+    // ne šteje v imenovalec accuracy %. Samo resnično evaluirani izidi se štejejo.
+    // v9.82.1: expiredCount dodan ločeno — predlogi ki so potekli po 7 dneh.
+    const [totalDecided, correctCount, approvedCount, rejectedCount, executedCount, outcomeRecordedCount, evaluableCount, expiredCount] = await Promise.all([
       db.copilotSuggestion.count({ where: { status: { in: ['approved', 'rejected', 'executed', 'outcome_recorded'] } } }),
       db.copilotSuggestion.count({ where: { wasCorrect: true } }),
       db.copilotSuggestion.count({ where: { status: { in: ['approved', 'executed', 'outcome_recorded'] } } }),
       db.copilotSuggestion.count({ where: { status: 'rejected' } }),
       db.copilotSuggestion.count({ where: { status: { in: ['executed', 'outcome_recorded'] } } }),
       db.copilotSuggestion.count({ where: { status: 'outcome_recorded' } }),
+      // v9.80: samo tisti z wasCorrect != null (sold / wrong_prediction)
+      db.copilotSuggestion.count({ where: { wasCorrect: { not: null } } }),
+      // v9.82.1: expired = sistem-sprejel (wasCorrect=null, outcomeType='expired')
+      db.copilotSuggestion.count({ where: { status: 'expired', outcomeType: 'expired' } }),
     ]);
 
-    const decisionAccuracy = outcomeRecordedCount > 0
-      ? Math.round((correctCount / outcomeRecordedCount) * 100)
+    // Decision Accuracy = pravilni / evalvirani (wasCorrect != null)
+    // wasCorrect=null (not_bought, not_executed) izpade iz oba
+    const decisionAccuracy = evaluableCount > 0
+      ? Math.round((correctCount / evaluableCount) * 100)
       : null;
 
     return NextResponse.json({
@@ -412,6 +489,29 @@ export async function GET() {
         autoExecutable: s.autoExecutable,
         status: s.status,
         createdAt: s.createdAt.toISOString(),
+        // v9.80: AI predictions for outcome form comparison
+        expectedProfit: s.expectedProfit,
+        expectedRoi: s.expectedRoi,
+      })),
+      // v9.81: predlogi, ki čakajo na zabeležitev izida
+      awaitingOutcome: awaitingOutcome.map((s) => ({
+        id: s.id,
+        type: s.type,
+        priority: s.priority,
+        title: s.title,
+        description: s.description,
+        reason: s.reason,
+        expectedOutcome: s.expectedOutcome,
+        riskLevel: s.riskLevel,
+        actionData: JSON.parse(s.actionData),
+        icon: s.icon,
+        status: s.status, // 'approved' | 'executed'
+        createdAt: s.createdAt.toISOString(),
+        approvedAt: s.approvedAt?.toISOString() ?? null,
+        executedAt: s.executedAt?.toISOString() ?? null,
+        // v9.80: AI predictions
+        expectedProfit: s.expectedProfit,
+        expectedRoi: s.expectedRoi,
       })),
       accuracy: {
         totalDecided,
@@ -419,8 +519,10 @@ export async function GET() {
         rejected: rejectedCount,
         executed: executedCount,
         outcomeRecorded: outcomeRecordedCount,
+        evaluable: evaluableCount, // v9.80: samo tisti z wasCorrect != null
         correct: correctCount,
-        decisionAccuracy, // % — null if no outcomes yet
+        decisionAccuracy, // % — null if no evaluable outcomes yet
+        expired: expiredCount, // v9.82.1: sistem-sprejel (wasCorrect=null, outcomeType='expired')
       },
       timestamp: new Date().toISOString(),
     });

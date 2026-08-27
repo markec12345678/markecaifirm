@@ -1,6 +1,6 @@
 # Markec AI Firm — AI Trading Firm za slovenske oglase
 
-[![Version](https://img.shields.io/badge/version-v9.79.0-blue.svg)](./CHANGELOG.md)
+[![Version](https://img.shields.io/badge/version-v9.82.1-blue.svg)](./CHANGELOG.md)
 [![QA Status](https://img.shields.io/badge/QA-7%2F7%20PASS-brightgreen.svg)](#)
 [![Decision Accuracy](https://img.shields.io/badge/Decision%20Accuracy-92%25-brightgreen.svg)](#)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](./LICENSE)

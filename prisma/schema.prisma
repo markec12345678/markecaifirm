@@ -587,6 +587,18 @@ model CopilotSuggestion {
   timeToOutcomeDays Int?   // days from executedAt to outcomeRecordedAt
   wasCorrectReason String? // human-readable explanation why correct/incorrect
   wasCorrectRule  String?  // which rule was used: "profit_positive" | "roi_match" | "sold_within_window" | etc.
+  // v9.80: Fast outcome capture — real numbers from actual execution
+  // outcomeType klasificira kakšen je bil izid:
+  //   "sold"             = uporabnik je dejansko kupil in prodal — realni dobiček se izračuna
+  //   "not_bought"       = uporabnik se odločil ne kupiti (napoved ni bila preverjena)
+  //   "not_executed"     = uporabnik nikoli izvedel akcije
+  //   "wrong_prediction" = uporabnik eksplicitno označil napoved kot napačno (wasCorrect=false)
+  //   "expired"          = sistem auto-expire po 7 dneh brez odziva (wasCorrect=null — v9.82.1)
+  outcomeType     String? // sold | not_bought | not_executed | wrong_prediction | expired
+  actualBuyPrice  Float?  // dejanska kupna cena (EUR) — v9.80
+  actualSellPrice Float?  // dejanska prodajna cena (EUR) — v9.80
+  actualCosts     Float?  // vsi stroški skupaj (fees + poštnina) — v9.80
+  referencePoint  String? // referenčna točka za primerjavo (npr. "Konkurenca 80€") — v9.80
   // User feedback
   feedback        String?  // optional user feedback on reject
   // Relations

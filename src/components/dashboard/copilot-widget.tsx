@@ -22,12 +22,13 @@ import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import {
   Sparkles, Check, X, ExternalLink, RefreshCw,
-  AlertCircle, ChevronDown, ChevronRight, Play, TrendingUp,
+  AlertCircle, ChevronDown, ChevronRight, Play, TrendingUp, ClipboardList, Clock,
 } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import { toast } from 'sonner';
 import { useHaptic } from '@/hooks/use-haptic';
 import type { DashboardView } from './dashboard/types';
+import { OutcomeFormDialog, type OutcomeSuggestion } from './copilot/outcome-form-dialog';
 
 interface Suggestion {
   id: string;
@@ -45,6 +46,8 @@ interface Suggestion {
     url?: string;
     category?: string;
     suggestedPrice?: number;
+    buyPrice?: number;
+    sellPrice?: number;
     suggestedAction?: string;
   };
   icon: string;
@@ -52,6 +55,9 @@ interface Suggestion {
   autoExecutable: boolean;
   status: string;
   createdAt: string;
+  // v9.80: prediction info za outcome form
+  expectedProfit?: number | null;
+  expectedRoi?: number | null;
 }
 
 interface AccuracyStats {
@@ -60,13 +66,45 @@ interface AccuracyStats {
   rejected: number;
   executed: number;
   outcomeRecorded: number;
+  evaluable: number; // v9.80: samo tisti z wasCorrect != null
   correct: number;
   decisionAccuracy: number | null;
+  expired?: number; // v9.82.1: sistem-sprejel (auto-expire >7 dni)
+}
+
+interface AwaitingSuggestion {
+  id: string;
+  type: string;
+  priority: string;
+  title: string;
+  description: string;
+  reason: string;
+  expectedOutcome: string;
+  riskLevel: string;
+  actionData: {
+    listingId?: string;
+    tradeId?: string;
+    monitorId?: string;
+    url?: string;
+    category?: string;
+    suggestedPrice?: number;
+    buyPrice?: number;
+    sellPrice?: number;
+    suggestedAction?: string;
+  };
+  icon: string;
+  status: string; // 'approved' | 'executed'
+  createdAt: string;
+  approvedAt: string | null;
+  executedAt: string | null;
+  expectedProfit?: number | null;
+  expectedRoi?: number | null;
 }
 
 interface CopilotData {
   ok: true;
   suggestions: Suggestion[];
+  awaitingOutcome?: AwaitingSuggestion[];
   accuracy: AccuracyStats;
 }
 
@@ -88,6 +126,9 @@ export function CopilotWidget({ onNavigate }: CopilotWidgetProps) {
   const [approvedIds, setApprovedIds] = useState<Set<string>>(new Set());
   const [expanded, setExpanded] = useState<string | null>(null);
   const [showAll, setShowAll] = useState(false);
+  const [outcomeOpen, setOutcomeOpen] = useState(false);
+  const [outcomeTarget, setOutcomeTarget] = useState<OutcomeSuggestion | null>(null);
+  const [showAwaiting, setShowAwaiting] = useState(true);
   const haptic = useHaptic();
 
   const load = useCallback(async () => {
@@ -191,6 +232,20 @@ export function CopilotWidget({ onNavigate }: CopilotWidgetProps) {
     }
   };
 
+  const handleOpenOutcome = (suggestion: OutcomeSuggestion) => {
+    haptic.light();
+    setOutcomeTarget({
+      id: suggestion.id,
+      type: suggestion.type,
+      title: suggestion.title,
+      description: suggestion.description,
+      expectedProfit: suggestion.expectedProfit ?? null,
+      expectedRoi: suggestion.expectedRoi ?? null,
+      actionData: suggestion.actionData,
+    });
+    setOutcomeOpen(true);
+  };
+
   if (loading) {
     return (
       <Card className="bg-card/50">
@@ -223,8 +278,8 @@ export function CopilotWidget({ onNavigate }: CopilotWidgetProps) {
         </p>
       </CardHeader>
       <CardContent className="space-y-2">
-        {/* Decision Accuracy banner — v9.63.1: vedno prikaži sample size + early data warning */}
-        {accuracy.outcomeRecorded > 0 && (
+        {/* Decision Accuracy banner — v9.80: uporablja evaluable (wasCorrect != null) */}
+        {accuracy.evaluable > 0 && (
           <div className={cn(
             'p-2 rounded-md border text-center',
             accuracy.decisionAccuracy !== null && accuracy.decisionAccuracy >= 70
@@ -242,11 +297,24 @@ export function CopilotWidget({ onNavigate }: CopilotWidgetProps) {
             )}>
               {accuracy.decisionAccuracy !== null ? `${accuracy.decisionAccuracy}%` : '—'}
               <span className="text-[10px] font-normal text-muted-foreground ml-1">
-                · {accuracy.correct}/{accuracy.outcomeRecorded}
+                · {accuracy.correct}/{accuracy.evaluable} evaluiranih
               </span>
             </div>
-            {/* Early data warning — vedno prikaži ko je <10 outcomes */}
-            {accuracy.outcomeRecorded < 10 && (
+            {/* Vrstica: vseh zabeleženih izidov (vključno z ne-energibilnimi) */}
+            {accuracy.outcomeRecorded > accuracy.evaluable && (
+              <div className="text-[9px] text-muted-foreground mt-0.5">
+                + {accuracy.outcomeRecorded - accuracy.evaluable} ne preverjenih (nisem kupil)
+              </div>
+            )}
+            {/* v9.82.1: Expired — predlogi ki so potekli po 7 dneh (sistem-sprejel) */}
+            {(accuracy.expired ?? 0) > 0 && (
+              <div className="text-[9px] text-amber-500/80 mt-0.5 flex items-center justify-center gap-0.5">
+                <Clock className="w-2 h-2" />
+                {(accuracy.expired ?? 0)} poteklih (brez odziva)
+              </div>
+            )}
+            {/* Early data warning — vedno prikaži ko je <10 evaluable */}
+            {accuracy.evaluable < 10 && (
               <div className="text-[9px] text-amber-500 mt-0.5 flex items-center justify-center gap-0.5">
                 <AlertCircle className="w-2 h-2" />
                 Early data — limited sample
@@ -254,8 +322,8 @@ export function CopilotWidget({ onNavigate }: CopilotWidgetProps) {
             )}
           </div>
         )}
-        {/* Honest empty state — ko ni še nobenega outcome-a */}
-        {accuracy.outcomeRecorded === 0 && (
+        {/* Honest empty state — ko ni še nobenega evaluable outcome-a */}
+        {accuracy.evaluable === 0 && (
           <div className="p-2 rounded-md border border-border bg-background/30 text-center">
             <div className="text-[10px] uppercase text-muted-foreground font-bold mb-0.5">
               🎯 Natančnost AI odločitev
@@ -264,7 +332,7 @@ export function CopilotWidget({ onNavigate }: CopilotWidgetProps) {
               Še ni na voljo
             </div>
             <div className="text-[9px] text-muted-foreground/70 mt-0.5">
-              Potrebujemo najmanj 10 ocenjenih odločitev
+              Zabeleži vsaj en izid z realnimi številkami
             </div>
           </div>
         )}
@@ -346,7 +414,20 @@ export function CopilotWidget({ onNavigate }: CopilotWidgetProps) {
                 )}
 
                 {/* Action buttons — JASNO RAZLOČENO */}
-                <div className="flex gap-1.5 mt-2">
+                <div className="flex flex-wrap gap-1.5 mt-2">
+                  {/* v9.80: Zabeleži izid — vedno na voljo (tudi za pending) */}
+                  <Button
+                    onClick={() => handleOpenOutcome(suggestion)}
+                    size="sm"
+                    variant="outline"
+                    className="h-7 text-[10px] gap-1 border-violet-500/40 text-violet-500 hover:bg-violet-500/10"
+                    title="Zabeleži kaj se je dejansko zgodilo (kupna/prodajna cena)"
+                    aria-label="Zabeleži izid"
+                  >
+                    <ClipboardList className="w-3 h-3" />
+                    Zabeleži izid
+                  </Button>
+
                   {!isApproved ? (
                     <>
                       {/* Step 1: Potrdi predlog (samo strinjanje) */}
@@ -457,6 +538,87 @@ export function CopilotWidget({ onNavigate }: CopilotWidgetProps) {
           </>
         )}
 
+        {/* v9.81: "Čaka na izid" — predlogi, ki so approved/executed a še brez izida */}
+        {(data.awaitingOutcome?.length ?? 0) > 0 && (
+          <div className="border-t border-border pt-2 mt-1">
+            <button
+              onClick={() => { haptic.light(); setShowAwaiting((v) => !v); }}
+              className="w-full flex items-center justify-between text-[10px] uppercase text-muted-foreground font-bold hover:text-foreground"
+            >
+              <span className="flex items-center gap-1">
+                <Clock className="w-3 h-3" />
+                Čaka na izid
+                <Badge className="bg-amber-500/10 text-amber-500 border-amber-500/30 text-[9px] px-1 py-0">
+                  {data.awaitingOutcome!.length}
+                </Badge>
+              </span>
+              {showAwaiting ? <ChevronDown className="w-3 h-3" /> : <ChevronRight className="w-3 h-3" />}
+            </button>
+
+            {showAwaiting && (
+              <div className="space-y-1.5 mt-2">
+                {data.awaitingOutcome!.slice(0, 5).map((s) => {
+                  const prio = PRIORITY_COLORS[s.priority] ?? PRIORITY_COLORS.medium;
+                  const isExecuted = s.status === 'executed';
+                  const ageDays = Math.floor((Date.now() - new Date(s.createdAt).getTime()) / (1000 * 60 * 60 * 24));
+
+                  return (
+                    <div
+                      key={s.id}
+                      className={cn('rounded-md border p-2 text-xs', prio.bg, prio.border)}
+                    >
+                      <div className="flex items-start gap-1.5 mb-1">
+                        <span className="text-sm">{s.icon}</span>
+                        <div className="flex-1 min-w-0">
+                          <div className={cn('font-semibold text-[11px] line-clamp-1', prio.text)}>{s.title}</div>
+                          <div className="text-[9px] text-muted-foreground line-clamp-1">{s.description}</div>
+                        </div>
+                        <Badge className={cn(
+                          'text-[8px] px-1 py-0 shrink-0',
+                          isExecuted
+                            ? 'bg-sky-500/10 text-sky-500 border-sky-500/30'
+                            : 'bg-amber-500/10 text-amber-500 border-amber-500/30'
+                        )}>
+                          {isExecuted ? 'IZVEDENO' : 'POTRJENO'}
+                        </Badge>
+                      </div>
+
+                      <div className="flex items-center justify-between text-[9px] text-muted-foreground">
+                        <span>{ageDays === 0 ? 'danes' : ageDays === 1 ? 'včeraj' : `pred ${ageDays} dni`}</span>
+                        {s.expectedProfit != null && s.expectedProfit > 0 && (
+                          <span className="text-emerald-500">AI napoved: +{s.expectedProfit}€</span>
+                        )}
+                      </div>
+
+                      <Button
+                        onClick={() => handleOpenOutcome({
+                          id: s.id,
+                          type: s.type,
+                          title: s.title,
+                          description: s.description,
+                          expectedProfit: s.expectedProfit ?? null,
+                          expectedRoi: s.expectedRoi ?? null,
+                          actionData: s.actionData,
+                        })}
+                        size="sm"
+                        className="w-full h-7 text-[10px] gap-1 mt-1.5 bg-violet-500 hover:bg-violet-600 text-white"
+                      >
+                        <ClipboardList className="w-3 h-3" />
+                        Zabeleži izid
+                      </Button>
+                    </div>
+                  );
+                })}
+                {data.awaitingOutcome!.length > 5 && (
+                  <div className="text-[9px] text-muted-foreground text-center pt-1">
+                    + {data.awaitingOutcome!.length - 5} ostalih
+                  </div>
+                )}
+              </div>
+            )}
+          </div>
+        )}
+
         {/* Stats footer */}
         {accuracy.totalDecided > 0 && (
           <div className="grid grid-cols-3 gap-2 pt-2 border-t border-border text-center text-[9px]">
@@ -481,6 +643,14 @@ export function CopilotWidget({ onNavigate }: CopilotWidgetProps) {
           Copilot predlaga · Avtopilot izvaja sam (v nastavitvah)
         </div>
       </CardContent>
+
+      {/* v9.80: Outcome form dialog */}
+      <OutcomeFormDialog
+        open={outcomeOpen}
+        onOpenChange={setOutcomeOpen}
+        suggestion={outcomeTarget}
+        onSaved={() => load()}
+      />
     </Card>
   );
 }
