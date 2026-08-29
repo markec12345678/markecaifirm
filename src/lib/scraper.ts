@@ -25,62 +25,12 @@ export interface ScraperFilters {
   maxPrice?: number | null;
 }
 
-export type SourceType = 'bolha' | 'nepremicnine' | 'avtonet' | 'salomon' | 'custom-rss' | 'vinted' | 'mobile-de' | 'kleinanzeigen' | 'subito' | 'willhaben' | 'quoka';
+export type SourceType = 'bolha' | 'nepremicnine' | 'avtonet' | 'salomon' | 'custom-rss' | 'vinted' | 'quoka' | 'autoscout24';
 
-const USER_AGENTS = [
-  'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36',
-  'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/123.0.0.0 Safari/537.36',
-  'Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:124.0) Gecko/20100101 Firefox/124.0',
-];
+export type ProgressCallback = (msg: string) => void;
 
-function randomUA(): string {
-  return USER_AGENTS[Math.floor(Math.random() * USER_AGENTS.length)];
-}
-
-function hashExternalId(input: string): string {
-  // Simple FNV-1a hash — stable across runs, no crypto needed
-  let h = 0x811c9dc5;
-  for (let i = 0; i < input.length; i++) {
-    h ^= input.charCodeAt(i);
-    h = (h * 0x01000193) >>> 0;
-  }
-  return h.toString(16).padStart(8, '0');
-}
-
-function parsePrice(text: string): { priceText: string; price: number | null } {
-  const t = (text ?? '').replace(/\s+/g, ' ').trim();
-  if (!t) return { priceText: '', price: null };
-  // Match number with optional thousand separators (1.234 or 1,234 or 1234)
-  const m = t.match(/(\d[\d.\s]*\d|\d)/);
-  if (!m) return { priceText: t, price: null };
-  const n = parseInt(m[1].replace(/[\s.]/g, ''), 10);
-  return { priceText: t, price: isNaN(n) ? null : n };
-}
-
-function applyFilters(listings: ScrapedListing[], f: ScraperFilters): ScrapedListing[] {
-  let out = listings;
-  if (f.keywords && f.keywords.length > 0) {
-    const kws = f.keywords.map(k => k.toLowerCase().trim()).filter(Boolean);
-    out = out.filter(l => {
-      const blob = `${l.title} ${l.description ?? ''}`.toLowerCase();
-      return kws.some(k => blob.includes(k));
-    });
-  }
-  if (f.excludeKeywords && f.excludeKeywords.length > 0) {
-    const ex = f.excludeKeywords.map(k => k.toLowerCase().trim()).filter(Boolean);
-    out = out.filter(l => {
-      const blob = `${l.title} ${l.description ?? ''}`.toLowerCase();
-      return !ex.some(k => blob.includes(k));
-    });
-  }
-  if (f.minPrice != null) {
-    out = out.filter(l => l.price != null && l.price >= f.minPrice!);
-  }
-  if (f.maxPrice != null) {
-    out = out.filter(l => l.price != null && l.price <= f.maxPrice!);
-  }
-  return out;
-}
+// Shared helpers — import from scraper-helpers.ts instead of duplicating
+import { hashExternalId, randomUA, parsePrice, applyFilters, isCloudflareChallenge, dedupByUrl } from './scraper-helpers';
 
 // v7.32: Import anti-detection fetch helper (proxy + delay + realistic headers)
 import { fetchWithAntiDetection } from './anti-detection';
@@ -102,35 +52,156 @@ async function fetchRss(url: string): Promise<string> {
 }
 
 /**
- * Bolha.com scraper — uses the listings page HTML.
- * Bolha uses Cloudflare; if the simple fetch returns 0 results (likely blocked),
- * the pipeline will optionally retry with Playwright (v1.1) if enabled.
- *
- * v1.5: First tries Bolha RSS feed (?output=rss) before falling back to HTML.
- * Bolha RSS structure: https://www.bolha.com/iskanje?q=...&output=rss
- * or per-category: https://www.bolha.com/<category>?output=rss
+ * Parse Bolha LD+JSON structured data — most reliable method.
+ * Bolha embeds all listings in a <script type="application/ld+json"> block
+ * with @graph containing Product items with name, url, image, price.
  */
-async function scrapeBolha(url: string, filters: ScraperFilters): Promise<ScrapedListing[]> {
-  // v1.5: Try RSS first if URL supports ?output=rss
-  const rssUrl = appendRssParam(url);
-  if (rssUrl !== url) {
+function parseBolhaLdJson(html: string): ScrapedListing[] {
+  const out: ScrapedListing[] = [];
+  // Find all LD+JSON blocks
+  const ldJsonRegex = /<script\s+type="application\/ld\+json">([\s\S]*?)<\/script>/gi;
+  let m: RegExpExecArray | null;
+  while ((m = ldJsonRegex.exec(html)) !== null) {
     try {
-      const rssListings = await scrapeBolhaRss(rssUrl, filters);
-      if (rssListings.length > 0) return rssListings;
-      // If RSS returns 0, fall through to HTML scraping
+      const data = JSON.parse(m[1]);
+      // Handle @graph array (Bolha's format)
+      const items = data['@graph'] || (Array.isArray(data) ? data : [data]);
+      if (!Array.isArray(items)) continue;
+      
+      for (const item of items) {
+        // Look for Product or ListItem with Product
+        let product: any = null;
+        if (item['@type'] === 'Product') {
+          product = item;
+        } else if (item['@type'] === 'ListItem' && item.item?.['@type'] === 'Product') {
+          product = item.item;
+        }
+        if (!product) continue;
+        
+        const title = product.name || '';
+        let link = product.url || '';
+        if (link && !link.startsWith('http')) {
+          link = link.startsWith('/') ? `https://www.bolha.com${link}` : `https://www.bolha.com/${link}`;
+        }
+        const imageUrl = product.image || null;
+        const price = product.offers?.price ?? null;
+        const priceText = price != null ? `${price} €` : 'po dogovoru';
+        
+        if (!title || !link) continue;
+        // Skip image-only URLs
+        if (link.includes('/image-') || link.includes('slika-')) continue;
+        
+        out.push({
+          externalId: hashExternalId(link),
+          title,
+          priceText,
+          price: typeof price === 'number' ? price : null,
+          url: link,
+          location: '',
+          description: product.description || '',
+          imageUrl: imageUrl ?? undefined,
+          postedAt: null,
+        });
+      }
     } catch {
-      // RSS not available for this URL, fall through to HTML
+      // Invalid JSON in this block, skip
     }
   }
+  return dedupByUrl(out);
+}
 
+/**
+ * Parse Bolha HTML links — finds all listing URLs and extracts title/price.
+ * Bolha uses: <a href="/category/slug-oglas-ID" class="link" name="ID">
+ *   <!--[--><span>Title</span><!--]--></a>
+ */
+function parseBolhaLinks(html: string): ScrapedListing[] {
+  const out: ScrapedListing[] = [];
+  // Match: <a href="/...-oglas-NUMBER" class="link" name="NUMBER">
+  //   optionally Vue comments <!--[-->, then <span>TITLE</span>, optionally <!--]-->
+  const linkRegex = /<a\s+href="(\/[^"]*-oglas-(\d+))"[^>]*class="link"[^>]*>(?:<!--\[-->)?<span>([^<]*)<\/span>(?:<!--\]-->)?<\/a>/gi;
+  let m: RegExpExecArray | null;
+  while ((m = linkRegex.exec(html)) !== null) {
+    const href = m[1];
+    const title = m[3].trim();
+    const link = `https://www.bolha.com${href}`;
+    if (!title) continue;
+    // Skip image-only URLs
+    if (href.includes('/image-') || href.includes('slika-')) continue;
+
+    // Find price within next 2000 chars
+    const afterLink = html.substring(m.index, Math.min(html.length, m.index + 2000));
+    let price: number | null = null;
+    let priceText = 'po dogovoru';
+    // Look for price spans: <span ... class="...price...">XXX €</span>
+    const priceSpanMatch = afterLink.match(/class="[^"]*price[^"]*"[^>]*>([^<]*)<\/span>/i);
+    if (priceSpanMatch) {
+      priceText = priceSpanMatch[1].trim();
+      const numMatch = priceText.match(/([\d.]+)/);
+      if (numMatch) price = parseInt(numMatch[1].replace(/\./g, ''), 10);
+    }
+    if (price == null) {
+      const simplePrice = afterLink.match(/(\d[\d.]*)\s*€/);
+      if (simplePrice) {
+        price = parseInt(simplePrice[1].replace(/\./g, ''), 10);
+        priceText = simplePrice[0];
+      }
+    }
+
+    out.push({
+      externalId: hashExternalId(link),
+      title,
+      priceText,
+      price,
+      url: link,
+      location: '',
+      description: '',
+      imageUrl: undefined,
+      postedAt: null,
+    });
+  }
+  return dedupByUrl(out);
+}
+
+/**
+ * Bolha.com scraper — multi-strategy approach.
+ * v1.5: RSS first (if available)
+ * v9.83: LD+JSON structured data (most reliable)
+ * v9.83: HTML link parsing (fallback)
+ * v1.1: Playwright for Cloudflare bypass
+ */
+async function scrapeBolha(url: string, filters: ScraperFilters): Promise<ScrapedListing[]> {
   const html = await fetchHtml(url);
   // Detect Cloudflare challenge page
   if (isCloudflareChallenge(html)) {
     throw new Error('Cloudflare blokada — omogoči Playwright v nastavitvah za fallback');
   }
+
+  // Strategy 1: LD+JSON structured data (most reliable, no CSS selector issues)
+  const ldJsonListings = parseBolhaLdJson(html);
+  if (ldJsonListings.length > 0) {
+    return applyFilters(ldJsonListings, filters);
+  }
+
+  // Strategy 2: Parse listing links directly from HTML
+  const linkListings = parseBolhaLinks(html);
+  if (linkListings.length > 0) {
+    return applyFilters(linkListings, filters);
+  }
+
+  // Strategy 3: Try RSS feed
+  const rssUrl = appendRssParam(url);
+  if (rssUrl !== url) {
+    try {
+      const rssListings = await scrapeBolhaRss(rssUrl, filters);
+      if (rssListings.length > 0) return rssListings;
+    } catch {
+      // RSS not available
+    }
+  }
+
+  // Strategy 4: Legacy cheerio parsing (may fail if Bolha changed DOM)
   const listings = await parseBolhaHtml(html);
-  // If we got 0 listings with cheerio, the page may have changed structure or be blocked.
-  // The pipeline decides whether to retry with Playwright.
   return applyFilters(listings, filters);
 }
 
@@ -151,6 +222,10 @@ function appendRssParam(url: string): string {
 /** Parse Bolha RSS feed (similar to generic RSS but with Bolha-specific price extraction). */
 async function scrapeBolhaRss(url: string, filters: ScraperFilters): Promise<ScrapedListing[]> {
   const xml = await fetchRss(url);
+  // v9.83: Bolha sometimes returns HTML instead of RSS — detect and bail
+  if (xml.trimStart().startsWith('<!DOCTYPE') || xml.includes('<html')) {
+    return []; // Not RSS, fall through to other strategies
+  }
   const out: ScrapedListing[] = [];
   const itemRegex = /<item>([\s\S]*?)<\/item>/gi;
   const fieldRegex = (tag: string) => new RegExp(`<${tag}[^>]*>([\\s\\S]*?)<\\/${tag}>`, 'i');
@@ -212,18 +287,7 @@ async function scrapeBolhaRss(url: string, filters: ScraperFilters): Promise<Scr
   return applyFilters(out, filters);
 }
 
-/** Detect Cloudflare "Just a moment" or similar challenge page. */
-function isCloudflareChallenge(html: string): boolean {
-  const lower = html.toLowerCase();
-  return (
-    lower.includes('just a moment') ||
-    lower.includes('cf-browser-verification') ||
-    lower.includes('cf-challenge-running') ||
-    lower.includes('_cf_chl_opt') ||
-    lower.includes('attention required! | cloudflare') ||
-    (lower.includes('cloudflare') && lower.includes('ray id') && html.length < 5000)
-  );
-}
+
 
 /** Parse Bolha HTML using cheerio — extracted so Playwright fallback can reuse it. */
 async function parseBolhaHtml(html: string): Promise<ScrapedListing[]> {
@@ -268,13 +332,7 @@ async function parseBolhaHtml(html: string): Promise<ScrapedListing[]> {
     });
   });
 
-  // Deduplicate by URL
-  const seen = new Set<string>();
-  return out.filter(l => {
-    if (seen.has(l.url)) return false;
-    seen.add(l.url);
-    return true;
-  });
+  return dedupByUrl(out);
 }
 
 /**
@@ -649,11 +707,15 @@ export async function scrape(
   source: SourceType,
   url: string,
   filters: ScraperFilters,
-  opts: { playwrightEnabled?: boolean } = {}
+  opts: { playwrightEnabled?: boolean; onProgress?: ProgressCallback } = {}
 ): Promise<ScrapedListing[]> {
+  const notify = opts.onProgress || (() => {});
   if (source === 'bolha' || source === 'salomon') {
     try {
-      return await scrapeBolha(url, filters);
+      notify('Pridobivam HTML iz Bolha...');
+      const result = await scrapeBolha(url, filters);
+      notify(`Parsal ${result.length} oglasov iz Bolha`);
+      return result;
     } catch (e: any) {
       // If Cloudflare detected AND Playwright enabled, retry with browser
       if (opts.playwrightEnabled && e?.message?.toLowerCase().includes('cloudflare')) {
@@ -663,33 +725,15 @@ export async function scrape(
     }
   }
   switch (source) {
-    case 'nepremicnine': return scrapeNepremicnine(url, filters);
-    case 'avtonet': return scrapeAvtonet(url, filters);
-    case 'custom-rss': return scrapeCustomRss(url, filters);
-    case 'vinted': return scrapeVinted(url, filters);
-    case 'mobile-de': {
-      // v6.17: mobile.de 3-stopenjski hibrid (JSON API → HTML → Playwright)
-      const { scrapeMobileDe } = await import('./scraper-mobile-de');
-      return scrapeMobileDe(url, filters, opts);
-    }
-    case 'kleinanzeigen': {
-      // v6.18: Kleinanzeigen.de (Nemčija) — največji generalni oglasnik
-      const { scrapeKleinanzeigenFull } = await import('./scraper-foreign');
-      return scrapeKleinanzeigenFull(url, filters, opts);
-    }
-    case 'subito': {
-      // v6.18: Subito.it (Italija) — največji italijanski oglasnik
-      const { scrapeSubitoFull } = await import('./scraper-foreign');
-      return scrapeSubitoFull(url, filters, opts);
-    }
-    case 'willhaben': {
-      // v6.18: Willhaben.at (Avstrija) — največji avstrijski oglasnik
-      const { scrapeWillhabenFull } = await import('./scraper-foreign');
-      return scrapeWillhabenFull(url, filters, opts);
-    }
-    case 'quoka': {
-      // v8.73: Quoka.de (Nemčija) — nemški oglasnik, preprost HTML brez Cloudflare
-      return scrapeQuoka(url, filters);
+    case 'nepremicnine': notify('Pridobivam iz Nepremičnin...'); return scrapeNepremicnine(url, filters);
+    case 'avtonet': notify('Pridobivam iz Avtoneta...'); return scrapeAvtonet(url, filters);
+    case 'custom-rss': notify('Pridobivam iz RSS...'); return scrapeCustomRss(url, filters);
+    case 'vinted': notify('Pridobivam iz Vinted...'); return scrapeVinted(url, filters);
+    case 'quoka': notify('Pridobivam iz Quoke...'); return scrapeQuoka(url, filters);
+    case 'autoscout24': {
+      notify('Pridobivam iz AutoScout24...');
+      const { scrapeAutoScout24 } = await import('./scraper-autoscout24');
+      return scrapeAutoScout24(url, filters);
     }
     default: throw new Error(`Unknown source: ${source}`);
   }
@@ -736,4 +780,48 @@ export async function fetchListingDetail(url: string): Promise<ListingDetail> {
     images: Array.from(imageSet).slice(0, 20), // limit to 20
     fetchedAt: new Date(),
   };
+}
+
+/**
+ * Scrape multiple URLs in parallel and merge results.
+ * Used for multi-query monitors (e.g. one monitor scraping iPhone + Samsung + VW Golf from Bolha).
+ */
+export async function scrapeMulti(
+  source: SourceType,
+  urls: string[],
+  filters: ScraperFilters,
+  opts: { playwrightEnabled?: boolean; onProgress?: ProgressCallback } = {}
+): Promise<ScrapedListing[]> {
+  const notify = opts.onProgress || (() => {});
+
+  if (urls.length === 1) {
+    return scrape(source, urls[0], filters, opts);
+  }
+
+  notify(`Scraperjam ${urls.length} virov hkrati...`);
+
+  const results = await Promise.allSettled(
+    urls.map((url, i) =>
+      scrape(source, url, filters, {
+        playwrightEnabled: opts.playwrightEnabled,
+        onProgress: (msg) => notify(`[${i + 1}/${urls.length}] ${msg}`),
+      }).catch(() => [] as ScrapedListing[])
+    )
+  );
+
+  const all: ScrapedListing[] = [];
+  for (const r of results) {
+    if (r.status === 'fulfilled') all.push(...r.value);
+  }
+
+  // Dedup by externalId
+  const seen = new Set<string>();
+  const deduped = all.filter(l => {
+    if (seen.has(l.externalId)) return false;
+    seen.add(l.externalId);
+    return true;
+  });
+
+  notify(`Skupaj ${deduped} oglasov iz ${urls.length} virov`);
+  return deduped;
 }

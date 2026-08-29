@@ -1,132 +1,133 @@
 'use client';
 
-import { useEffect, useState, useCallback } from 'react';
-import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '@/components/ui/card';
+import { useEffect, useState, useCallback, useRef } from 'react';
+import { Card, CardContent } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
-import { Activity, Bell, AlertTriangle, Target, TrendingUp, Play, RefreshCw, Clock, Zap, LayoutGrid, BarChart3, Bookmark, ShoppingCart, TrendingDown, ExternalLink, Check, Sparkles, ArrowUp, ArrowDown, Settings2, Plus } from 'lucide-react';
+import { Play, RefreshCw, Clock, Plus, ChevronRight } from 'lucide-react';
 import { toast } from 'sonner';
 import { cn } from '@/lib/utils';
-// v8.45: Haptic feedback for mobile touch interactions
 import { useHaptic } from '@/hooks/use-haptic';
-import { AiInsightsWidget } from '@/components/dashboard/ai-insights-widget';
-import { DealFlowWidget } from '@/components/dashboard/deal-flow-widget';
-import { DealFunnelWidget } from '@/components/dashboard/deal-funnel-widget';
-import { NicheScoreWidget } from '@/components/dashboard/niche-score-widget';
-import { FlipStatusWidget } from '@/components/dashboard/flip-status-widget';
-import { DealVelocityWidget } from '@/components/dashboard/deal-velocity-widget';
-// v8.36: Trade Management Enhancement — Quick Add modal + Trade Stats card
-import { TradeStatsCard } from '@/components/dashboard/trade-stats-card';
-import { QuickAddTradeModal } from '@/components/dashboard/quick-add-trade-modal';
-// v8.37: Deal Calculator + Profit Timeline Chart — Polish phase continues
-import { DealCalculatorWidget } from '@/components/dashboard/deal-calculator-widget';
-import { ProfitTimelineChart } from '@/components/dashboard/profit-timeline-chart';
-// v8.39: Goal Tracker Dashboard Widget — visual progress bar + milestones + edit mode
-import { GoalTrackerCard } from '@/components/dashboard/goal-tracker-card';
-// v8.40: Trade Insights Deep Dive — day-of-week + source + category + hold + distribution
-import { TradeInsightsCard } from '@/components/dashboard/trade-insights-card';
-// v8.41: Weekly Summary Report — comprehensive weekly digest (profit, goal, top trades, Brain health, insights, recommendations) sent to Telegram + Email
-import { WeeklySummaryCard } from '@/components/dashboard/weekly-summary-card';
-// v8.43: Annual Summary + Tax Report PDF — yearly profit/loss breakdown + davčno poročilo PDF
-import { AnnualSummaryCard } from '@/components/dashboard/annual-summary-card';
-// v8.44: Smart Restock Recommendations — "KAJ naj kupim naslednje?" kombinira
-// v8.40 Trade Insights z current inventory za actionable "buy next" priporočila.
-import { RestockRecommendationsCard } from '@/components/dashboard/restock-recommendations-card';
-import { ProfitForecastCard } from '@/components/dashboard/profit-forecast-card';
-import { MonthOverMonthCard } from '@/components/dashboard/month-over-month-card';
-import { TagPerformanceCard } from '@/components/dashboard/tag-performance-card';
-import { OutcomeSummaryCard } from '@/components/dashboard/outcome-summary-card';
-import { BuyOpportunitySummaryCard } from '@/components/dashboard/buy-opportunity-summary-card';
-import { DecisionAccuracyCard } from '@/components/dashboard/decision-accuracy-card';
-import { PlatformPriceComparisonCard } from '@/components/dashboard/platform-price-comparison-card';
-import { SavedSearchStatusCard } from '@/components/dashboard/saved-search-status-card';
-import { DailyBriefingCard } from '@/components/dashboard/daily-briefing-card';
-import { SetupHealthBanner } from '@/components/dashboard/setup-health-banner';
+import type { ViewProps } from './dashboard/types';
 
-import { WIDGET_IDS } from './dashboard/types';
-import type { WidgetId, Stats, ViewProps } from './dashboard/types';
-import { formatDuration, formatTimeAgo } from './dashboard/utils';
-import { StatCard } from './dashboard/stat-card';
-import { StatusDot } from './dashboard/status-dot';
-import { ActivityFeed } from './dashboard/activity-feed';
-import { SkladisceWidget } from './dashboard/skladisce-widget';
-import { WidgetWrapper } from './dashboard/widget-wrapper';
-// v9.51: Pinned KPI Row — 4 ključne metrike na vrhu Pregled tab-a
-import { PinnedKpiRow } from './pinned-kpi-row';
-// v9.56: Gamification Widget — streaks, badges, level system
-import { GamificationWidget } from './gamification-widget';
-// v9.57: Scraper Monitor Widget — real-time tracking + block bypass
-import { ScraperMonitorWidget } from './scraper-monitor-widget';
-// v9.59: Smart Digest Widget — AI povzetek alertov namesto spam-a
-import { SmartDigestWidget } from './smart-digest-widget';
-// v9.60: Predictive Analytics Widget — anomaly detection + predictions
-import { PredictiveAnalyticsWidget } from './predictive-analytics-widget';
-// v9.61: AI Copilot — AI predlogi akcij s potrditvijo (razlika od avtopilota)
-import { CopilotWidget } from './copilot-widget';
+interface FoundListing {
+  id: string;
+  title: string;
+  price: string;
+  url: string;
+  location?: string;
+  isNew: boolean;
+  aiScore?: number;
+  aiRisk?: number;
+  aiVerdict?: string;
+  aiReason?: string;
+  dealScore?: number;
+}
+
+interface ScraperProgress {
+  monitorId: string;
+  monitorName: string;
+  status: 'scraping' | 'dedup' | 'ai-evaluating' | 'sending-alerts' | 'done' | 'error';
+  step: string;
+  progress: number;
+  listingsFound: number;
+  newListings: number;
+  alertsSent: number;
+  aiEvaluated: number;
+  aiTotal: number;
+  startedAt: number;
+  error?: string;
+  foundListings: FoundListing[];
+}
+
+interface MonitorCard {
+  id: string;
+  name: string;
+  source: string;
+  isActive: boolean;
+  lastRunAt: string | null;
+  lastStatus: string | null;
+  newListings: number;
+  totalListings: number;
+  alertsSent: number;
+  consecutiveErrors: number;
+}
+
+interface Stats {
+  activeMonitors: number;
+  totalMonitors: number;
+  totalListings: number;
+  newListings24h: number;
+  unreadAlerts: number;
+  prilikaAlerts: number;
+  sumnjivoAlerts: number;
+  today: {
+    newListings: number;
+    newAlerts: number;
+    runs: number;
+    successfulRuns: number;
+  } | null;
+  monitors: MonitorCard[];
+  recentRuns: Array<{
+    id: string;
+    monitor: { name: string };
+    status: string;
+    newListings: number;
+    listingsFound: number;
+    alertsSent: number;
+    durationMs: number;
+    startedAt: string;
+  }>;
+}
+
+function formatTimeAgo(date: string): string {
+  const diff = Date.now() - new Date(date).getTime();
+  const mins = Math.floor(diff / 60000);
+  if (mins < 1) return 'pravkar';
+  if (mins < 60) return `pred ${mins}min`;
+  const hrs = Math.floor(mins / 60);
+  if (hrs < 24) return `pred ${hrs}h`;
+  return `pred ${Math.floor(hrs / 24)}d`;
+}
+
+function Spinner() {
+  return (
+    <svg className="animate-spin h-4 w-4 text-primary" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24">
+      <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
+      <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z" />
+    </svg>
+  );
+}
+
+function getStatusColor(status: string | null) {
+  if (status === 'ok' || status === 'success') return 'bg-emerald-500';
+  if (status === 'error') return 'bg-red-500';
+  if (status === 'empty') return 'bg-amber-500';
+  return 'bg-zinc-500';
+}
+
+function getSourceIcon(source: string) {
+  const icons: Record<string, string> = {
+    bolha: '🛒',
+    nepremicnine: '🏠',
+    avtonet: '🚗',
+    'mobile-de': '🚙',
+    autoscout24: '🏎️',
+    vinted: '👗',
+    quoka: '📋',
+    salomon: '👟',
+    'custom-rss': '📡',
+  };
+  return icons[source] || '🔍';
+}
 
 export function DashboardView({ onNavigate }: ViewProps) {
   const [stats, setStats] = useState<Stats | null>(null);
   const [loading, setLoading] = useState(true);
   const [running, setRunning] = useState(false);
-  // v4.5: AI Summary
-  const [summaryOpen, setSummaryOpen] = useState(false);
-  const [summaryLoading, setSummaryLoading] = useState(false);
-  const [summaryData, setSummaryData] = useState<any>(null);
-  const [summaryHours, setSummaryHours] = useState(24);
-  // v5.6: Dashboard customization
-  const [widgetOrder, setWidgetOrder] = useState<WidgetId[]>([...WIDGET_IDS]);
-  const [customizeMode, setCustomizeMode] = useState(false);
-  // v9.72: Dashboard je zdaj en sam "Decision Center" — brez tab-ov.
-  // Analitika/Trgovine/AI so zdaj ločene navigacijske kategorije.
-  // v8.39: Goal tracker state moved into <GoalTrackerCard /> component (self-fetches).
-  // v8.36: Quick Add Trade modal (floating button)
-  const [showQuickAddTrade, setShowQuickAddTrade] = useState(false);
-  // v8.45: Haptic feedback instance for mobile touch interactions
+  const [progress, setProgress] = useState<ScraperProgress[]>([]);
+  const abortRef = useRef<AbortController | null>(null);
   const haptic = useHaptic();
-
-  // Load dashboard layout from settings
-  useEffect(() => {
-    fetch('/api/settings')
-      .then(res => res.ok ? res.json() : null)
-      .then(data => {
-        if (data?.dashboardLayout) {
-          try {
-            const layout = JSON.parse(data.dashboardLayout);
-            if (Array.isArray(layout) && layout.length > 0) {
-              const merged = [...layout.filter((w: string) => WIDGET_IDS.includes(w as WidgetId)) as WidgetId[]];
-              for (const w of WIDGET_IDS) {
-                if (!merged.includes(w)) merged.push(w);
-              }
-              setWidgetOrder(merged);
-            }
-          } catch { /* ignore */ }
-        }
-      })
-      .catch(() => {});
-  }, []);
-
-  const saveLayout = useCallback(async (newOrder: WidgetId[]) => {
-    try {
-      await fetch('/api/settings', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ dashboardLayout: JSON.stringify(newOrder) }),
-      });
-    } catch { /* ignore */ }
-  }, []);
-
-  const moveWidget = (id: WidgetId, direction: 'up' | 'down') => {
-    setWidgetOrder(prev => {
-      const idx = prev.indexOf(id);
-      if (idx === -1) return prev;
-      const newIdx = direction === 'up' ? idx - 1 : idx + 1;
-      if (newIdx < 0 || newIdx >= prev.length) return prev;
-      const next = [...prev];
-      [next[idx], next[newIdx]] = [next[newIdx], next[idx]];
-      saveLayout(next);
-      return next;
-    });
-  };
 
   const load = useCallback(async () => {
     try {
@@ -134,7 +135,7 @@ export function DashboardView({ onNavigate }: ViewProps) {
       if (!res.ok) throw new Error('napaka');
       const data = await res.json();
       setStats(data);
-    } catch (e) {
+    } catch {
       toast.error('Ne morem naložiti statistik');
     } finally {
       setLoading(false);
@@ -147,658 +148,274 @@ export function DashboardView({ onNavigate }: ViewProps) {
     return () => clearInterval(t);
   }, [load]);
 
+  const connectSSE = useCallback(() => {
+    abortRef.current?.abort();
+    const abort = new AbortController();
+    abortRef.current = abort;
+
+    (async () => {
+      try {
+        const res = await fetch('/api/scraper-progress', { signal: abort.signal });
+        const reader = res.body!.getReader();
+        const decoder = new TextDecoder();
+        let buffer = '';
+
+        while (true) {
+          const { done, value } = await reader.read();
+          if (done) break;
+          buffer += decoder.decode(value, { stream: true });
+          const events = buffer.split('\n\n');
+          buffer = events.pop() || '';
+          for (const event of events) {
+            const dataLine = event.trim();
+            if (!dataLine.startsWith('data: ')) continue;
+            try {
+              const data = JSON.parse(dataLine.slice(6));
+              setProgress(data);
+            } catch {}
+          }
+        }
+      } catch (e: any) {
+        if (e.name !== 'AbortError') setTimeout(connectSSE, 3000);
+      }
+    })();
+  }, []);
+
+  useEffect(() => {
+    connectSSE();
+    return () => abortRef.current?.abort();
+  }, [connectSSE]);
+
   const runAll = async () => {
     setRunning(true);
     try {
-      const res = await fetch('/api/cron/run-all', { method: 'POST' });
+      const res = await fetch('/api/run-all', { method: 'POST' });
       if (!res.ok) throw new Error('napaka');
-      const data = await res.json();
-      toast.success(`Pognan ${data.ran} monitorjev. Preveri alerte.`);
-      await load();
-    } catch (e) {
+      toast.success('Monitorji zagnani');
+    } catch {
       toast.error('Napaka pri poganjanju');
     } finally {
       setRunning(false);
     }
   };
 
-  // v4.5: Generate AI summary
-  const generateSummary = async () => {
-    setSummaryOpen(true);
-    setSummaryLoading(true);
-    setSummaryData(null);
-    try {
-      const res = await fetch('/api/digest/ai-summary', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ hours: summaryHours, limit: 20 }),
-      });
-      const data = await res.json();
-      if (data.ok) {
-        setSummaryData(data);
-        toast.success(`Povzetek generiran (${data.stats.opportunitiesFound} priložnosti)`);
-      } else {
-        toast.error(data.error ?? 'Napaka pri generiranju povzetka');
-      }
-    } catch (e: unknown) {
-      toast.error((e as Error)?.message ?? 'Napaka');
-    } finally {
-      setSummaryLoading(false);
-    }
-  };
-
   if (loading || !stats) {
     return (
-      <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-4 gap-4">
-        {[...Array(4)].map((_, i) => (
-          <Card key={i} className="bg-card/50">
-            <CardContent className="p-6">
-              <div className="h-16 animate-pulse bg-muted rounded" />
-            </CardContent>
-          </Card>
-        ))}
+      <div className="space-y-4">
+        <div className="grid grid-cols-3 gap-3">
+          {[...Array(3)].map((_, i) => (
+            <Card key={i} className="bg-card/50">
+              <CardContent className="p-4">
+                <div className="h-14 animate-pulse bg-muted rounded" />
+              </CardContent>
+            </Card>
+          ))}
+        </div>
       </div>
     );
   }
 
+  const successRate = stats.today && stats.today.runs > 0
+    ? Math.round((stats.today.successfulRuns / stats.today.runs) * 100)
+    : 0;
+
   return (
-    <div className="space-y-6">
-      {/* Quick action bar */}
-      <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3">
-        <div>
-          <h1 className="text-xl font-bold tracking-tight text-primary terminal-glow uppercase">
-            Pregled sistema
-          </h1>
-          <p className="text-xs text-muted-foreground mt-1">
-            Stanje monitorjev, zadnje aktivnosti in alerti.
-          </p>
-        </div>
-        <div className="flex items-center gap-2 flex-wrap">
-          {stats.unreadAlerts > 0 && (
-            <Button
-              variant="outline"
-              size="sm"
-              onClick={async () => {
-                try {
-                  const res = await fetch('/api/alerts?archived=0&limit=100');
-                  const alerts = await res.json();
-                  const unread = alerts.filter((a: any) => !a.isRead);
-                  if (unread.length === 0) return;
-                  await Promise.all(unread.map((a: any) =>
-                    fetch('/api/alerts', {
-                      method: 'PATCH',
-                      headers: { 'Content-Type': 'application/json' },
-                      body: JSON.stringify({ id: a.id, isRead: true }),
-                    })
-                  ));
-                  toast.success(`${unread.length} alertov označenih kot prebrani`);
-                  await load();
-                } catch { toast.error('Napaka'); }
-              }}
-              className="gap-2"
-            >
-              <Check className="w-3.5 h-3.5" /> Preberi vse ({stats.unreadAlerts})
-            </Button>
-          )}
-          <Button variant="outline" size="sm" onClick={load} className="gap-2">
-            <RefreshCw className="w-3.5 h-3.5" />
-            Osveži
-          </Button>
-          <Button size="sm" onClick={runAll} disabled={running} className="gap-2 bg-primary text-primary-foreground hover:bg-primary/90 min-h-[44px] sm:min-h-0">
-            {running ? <RefreshCw className="w-3.5 h-3.5 animate-spin" /> : <Play className="w-3.5 h-3.5" />}
-            Poženi vse monitorje
-          </Button>
-          {/* v4.5: AI Summary button */}
-          <Button
-            size="sm"
-            variant="outline"
-            onClick={generateSummary}
-            disabled={summaryLoading}
-            className="gap-2 border-primary/40 text-primary hover:bg-primary/10"
-            title="AI POVzetek zadnjih priložnosti"
-          >
-            {summaryLoading ? <RefreshCw className="w-3.5 h-3.5 animate-spin" /> : <Sparkles className="w-3.5 h-3.5" />}
-            AI POVzetek
-          </Button>
-          {/* v5.6: Customize dashboard layout */}
-          <Button
-            size="sm"
-            variant="outline"
-            onClick={() => setCustomizeMode(!customizeMode)}
-            className={cn('gap-2', customizeMode && 'border-primary text-primary')}
-            title="Preuredi vrstni red widgetov"
-          >
-            <Settings2 className="w-3.5 h-3.5" />
-            {customizeMode ? 'Končaj' : 'Uredi'}
-          </Button>
-          {/* v8.36: Floating Quick Add Trade button */}
-          <Button
-            size="sm"
-            onClick={() => { haptic.medium(); setShowQuickAddTrade(true); }}
-            className="gap-2 bg-primary text-primary-foreground hover:bg-primary/90 min-h-[44px] sm:min-h-0"
-            title="Hitri dodaj trade"
-          >
-            <Plus className="w-3.5 h-3.5" />
-            Dodaj trade
-          </Button>
-        </div>
+    <div className="space-y-4">
+      {/* ── Stats Row ── */}
+      <div className="grid grid-cols-3 gap-3">
+        <Card
+          className="bg-card/50 hover:bg-card hover:border-primary/30 cursor-pointer transition-all"
+          onClick={() => { haptic.light(); onNavigate('listings'); }}
+        >
+          <CardContent className="p-3 text-center">
+            <div className="text-2xl font-bold font-mono text-primary">{stats.today?.newListings ?? stats.newListings24h}</div>
+            <div className="text-[10px] text-muted-foreground uppercase tracking-wider">Novi oglasi</div>
+          </CardContent>
+        </Card>
+        <Card
+          className="bg-card/50 hover:bg-card hover:border-amber-500/30 cursor-pointer transition-all"
+          onClick={() => { haptic.light(); onNavigate('alerts'); }}
+        >
+          <CardContent className="p-3 text-center">
+            <div className="text-2xl font-bold font-mono text-amber-400">{stats.unreadAlerts}</div>
+            <div className="text-[10px] text-muted-foreground uppercase tracking-wider">Alerti</div>
+          </CardContent>
+        </Card>
+        <Card className="bg-card/50">
+          <CardContent className="p-3 text-center">
+            <div className={cn(
+              'text-2xl font-bold font-mono',
+              successRate >= 90 ? 'text-emerald-400' :
+              successRate >= 70 ? 'text-amber-400' : 'text-red-400'
+            )}>
+              {successRate}%
+            </div>
+            <div className="text-[10px] text-muted-foreground uppercase tracking-wider">Uspeh</div>
+          </CardContent>
+        </Card>
       </div>
 
-      {/* v5.6: Customize mode info */}
-      {customizeMode && (
-        <div className="bg-primary/5 border border-primary/20 rounded p-2 text-xs text-primary text-center">
-          🔧 Customize mode — uporabi ↑↓ gumbe za preureditev widgetov. Spremembe se samodejno shranijo.
-        </div>
-      )}
-
-      {/* ════════════════════════════════════════════════════════════════════
-          v9.72: DECISION CENTER — en sam pregled s prioritetno hierarhijo
-          ════════════════════════════════════════════════════════════════════ */}
-      <>
-          {/* v9.51: PINNED KPI ROW — 4 ključne metrike na vrhu (stanje v 3 sekundah)
-              💰 Profit | 🚨 Alerti | 🎯 Cilj | 📊 Win Rate
-              Subtilne barve, klikljivi za navigacijo. */}
-          {stats && (
-            <PinnedKpiRow
-              onNavigate={onNavigate}
-              unreadAlerts={stats.unreadAlerts}
-              totalAlerts={stats.totalAlerts}
-            />
-          )}
-
-          {/* v9.61: AI Copilot — predlogi akcij s potrditvijo (razlika od avtopilota) */}
-          <CopilotWidget onNavigate={onNavigate} />
-
-          {/* v4.0: Danes summary card — v9.74: ločeno Danes od Zadnjih 24 ur */}
-          {stats.today && (
-            <Card className="bg-card/50 border-primary/20">
-              <CardContent className="p-4">
-                <div className="flex items-center justify-between mb-3">
-                  <h3 className="text-sm font-bold uppercase tracking-wider text-primary flex items-center gap-2">
-                    <Clock className="w-4 h-4" />
-                    Danes
-                  </h3>
-                  <span className="text-[10px] text-muted-foreground">
-                    {new Date().toLocaleDateString('sl-SI', { weekday: 'long', day: 'numeric', month: 'long' })}
-                  </span>
-                </div>
-                <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-5 gap-3 sm:gap-4">
-                  <div className="text-center">
-                    <div className="text-[10px] text-muted-foreground uppercase">Novi oglasi</div>
-                    <div className="text-2xl sm:text-3xl font-bold font-mono text-primary">{stats.today.newListings}</div>
-                  </div>
-                  <div className="text-center">
-                    <div className="text-[10px] text-muted-foreground uppercase">Novi alerti</div>
-                    <div className="text-2xl sm:text-3xl font-bold font-mono text-amber-400">{stats.today.newAlerts}</div>
-                  </div>
-                  <div className="text-center">
-                    <div className="text-[10px] text-muted-foreground uppercase">Padci cen</div>
-                    <div className="text-2xl sm:text-3xl font-bold font-mono text-primary">{stats.today.priceDrops}</div>
-                  </div>
-                  <div className="text-center">
-                    <div className="text-[10px] text-muted-foreground uppercase">Izvedbe</div>
-                    <div className="text-2xl sm:text-3xl font-bold font-mono">{stats.today.runs}</div>
-                  </div>
-                  <div className="text-center">
-                    <div className="text-[10px] text-muted-foreground uppercase">Uspeh</div>
-                    <div className={cn(
-                      'text-2xl sm:text-3xl font-bold font-mono',
-                      stats.today.runs > 0 && (stats.today.successfulRuns / stats.today.runs) >= 0.9 ? 'text-primary' :
-                      stats.today.runs > 0 && (stats.today.successfulRuns / stats.today.runs) >= 0.7 ? 'text-amber-400' : 'text-destructive'
-                    )}>
-                      {stats.today.runs > 0 ? Math.round((stats.today.successfulRuns / stats.today.runs) * 100) : 0}%
-                    </div>
-                  </div>
-                </div>
-                {/* v9.74: Zadnjih 24 ur — jasno ločeno od Danes */}
-                <div className="mt-3 pt-3 border-t border-border/50 flex items-center justify-between text-[10px] text-muted-foreground">
-                  <span>Zadnjih 24 ur:</span>
-                  <div className="flex items-center gap-3">
-                    <span>{stats.newListings24h} novih oglasov</span>
-                    <span>·</span>
-                    <span>{stats.newAlerts24h} novih alertov</span>
-                  </div>
-                </div>
-              </CardContent>
-            </Card>
-          )}
-
-          {/* v3.7: Quick filter chips */}
-          <div className="flex items-center gap-2 flex-wrap">
-            <button
-              onClick={() => { haptic.light(); onNavigate('alerts'); }}
-              aria-label={`Priložnosti: ${stats.prilikaAlerts} oglasov z AI verdiktom PRILIKA`}
-              className="px-3 py-2.5 sm:py-1 rounded-full min-h-[40px] sm:min-h-0 border border-primary/30 bg-primary/5 text-primary text-xs hover:bg-primary/10 transition-colors"
-            >
-              🎯 Priložnosti ({stats.prilikaAlerts})
-            </button>
-            <button
-              onClick={() => { haptic.light(); onNavigate('listings'); }}
-              aria-label={`Sumljivi oglasi: ${stats.sumnjivoAlerts} oglasov z AI verdiktom SUMNJIVO`}
-              className="px-3 py-2.5 sm:py-1 rounded-full min-h-[40px] sm:min-h-0 border border-amber-400/30 bg-amber-400/5 text-amber-400 text-xs hover:bg-amber-400/10 transition-colors"
-            >
-              ⚠️ Sumljivi ({stats.sumnjivoAlerts})
-            </button>
-            <button
-              onClick={() => { haptic.light(); onNavigate('listings'); }}
-              aria-label={`Padci cen: ${stats.priceDropCount || 0} oglasov z nižjo ceno`}
-              className="px-3 py-2.5 sm:py-1 rounded-full min-h-[40px] sm:min-h-0 border border-border bg-card/50 text-muted-foreground text-xs hover:border-primary/30 hover:text-primary transition-colors"
-            >
-              📉 Padci cen ({stats.priceDropCount || 0})
-            </button>
-            <button
-              onClick={() => { haptic.light(); onNavigate('listings'); }}
-              aria-label={`Kontaktirani oglasi: ${stats.contactedListings || 0} oglasov ki ste jih kontaktirali`}
-              className="px-3 py-2.5 sm:py-1 rounded-full min-h-[40px] sm:min-h-0 border border-border bg-card/50 text-muted-foreground text-xs hover:border-primary/30 hover:text-primary transition-colors"
-            >
-              📞 Kontaktirani ({stats.contactedListings || 0})
-            </button>
-            <button
-              onClick={() => { haptic.light(); onNavigate('listings'); }}
-              aria-label={`Priljubljeni oglasi: ${stats.bookmarkedListings} zaznamovanih oglasov`}
-              className="px-3 py-2.5 sm:py-1 rounded-full min-h-[40px] sm:min-h-0 border border-border bg-card/50 text-muted-foreground text-xs hover:border-primary/30 hover:text-primary transition-colors"
-            >
-              ⭐ Priljubljeni ({stats.bookmarkedListings})
-            </button>
-            <button
-              onClick={() => { haptic.light(); onNavigate('trades'); }}
-              aria-label="Skladišče: pregled trgovin in dobička"
-              className="px-3 py-2.5 sm:py-1 rounded-full min-h-[40px] sm:min-h-0 border border-primary/30 bg-primary/5 text-primary text-xs hover:bg-primary/10 transition-colors"
-            >
-              🛒 Skladišče
-            </button>
-          </div>
-
-          {/* Stat grid */}
-          <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-5 gap-4">
-            <StatCard
-              icon={<Activity className="w-4 h-4" />}
-              label="Aktivni monitorji"
-              value={stats.activeMonitors}
-              total={stats.totalMonitors}
-              subtext={stats.activeMonitors === 0 && stats.totalMonitors > 0 ? '⚠ noben ne deluje' : undefined}
-              color={stats.activeMonitors === 0 && stats.totalMonitors > 0 ? 'amber' : 'primary'}
-              onClick={() => onNavigate('monitors')}
-            />
-            {/* v9.76: Akcijski gumb ko noben monitor ne deluje */}
-            {stats.activeMonitors === 0 && stats.totalMonitors > 0 && (
-              <button
-                onClick={() => { haptic.light(); onNavigate('monitors'); }}
-                className="col-span-2 sm:col-span-3 md:col-span-5 -mt-2 mb-2 px-3 py-2 rounded-md border border-amber-500/40 bg-amber-500/5 text-amber-500 text-xs hover:bg-amber-500/10 transition-colors flex items-center justify-center gap-2"
-              >
-                <span>⚠ Noben monitor trenutno ne deluje — klikni za aktiviranje</span>
-              </button>
-            )}
-            <StatCard
-              icon={<TrendingUp className="w-4 h-4" />}
-              label="Oglasi skupaj"
-              value={stats.totalListings}
-              subtext={stats.newListings24h > 0 ? `+${stats.newListings24h} novih danes` : undefined}
-              color="primary"
-            />
-            <StatCard
-              icon={<Bell className="w-4 h-4" />}
-              label="Nebrani alerti"
-              value={stats.unreadAlerts}
-              total={stats.totalAlerts}
-              color="amber"
-              onClick={() => onNavigate('alerts')}
-            />
-            <StatCard
-              icon={<Target className="w-4 h-4" />}
-              label="Priložnosti"
-              value={stats.prilikaAlerts}
-              subtext={`${stats.sumnjivoAlerts} sumljivih`}
-              color="primary"
-              onClick={() => onNavigate('alerts')}
-            />
-            <StatCard
-              icon={<Bookmark className="w-4 h-4" />}
-              label="Priljubljeni"
-              value={stats.bookmarkedListings}
-              subtext="shranjeni"
-              color="amber"
-              onClick={() => onNavigate('listings')}
-            />
-          </div>
-
-          {/* v3.1: Quick action stats row */}
-          <div className="grid grid-cols-2 sm:grid-cols-3 gap-3">
-            <Card
-              className="bg-card/50 hover:bg-card hover:border-primary/30 cursor-pointer transition-colors"
-              onClick={() => onNavigate('listings')}
-            >
-              <CardContent className="p-3 flex items-center gap-2">
-                <TrendingDown className="w-4 h-4 text-primary" />
-                <div>
-                  <p className="text-xs font-bold text-primary">{stats.priceDropCount || 0}</p>
-                  <p className="text-[10px] text-muted-foreground">Padci cen</p>
-                </div>
-              </CardContent>
-            </Card>
-            <Card
-              className="bg-card/50 hover:bg-card hover:border-primary/30 cursor-pointer transition-colors"
-              onClick={() => onNavigate('listings')}
-            >
-              <CardContent className="p-3 flex items-center gap-2">
-                <ShoppingCart className="w-4 h-4 text-amber-400" />
-                <div>
-                  <p className="text-xs font-bold text-amber-400">{stats.contactedListings || 0}</p>
-                  <p className="text-[10px] text-muted-foreground">Kontaktirani</p>
-                </div>
-              </CardContent>
-            </Card>
-            <Card
-              className="bg-card/50 hover:bg-card hover:border-primary/30 cursor-pointer transition-colors"
-              onClick={() => onNavigate('trades')}
-            >
-              <CardContent className="p-3 flex items-center gap-2">
-                <ShoppingCart className="w-4 h-4 text-primary" />
-                <div>
-                  <p className="text-xs font-bold text-primary">Skladišče</p>
-                  <p className="text-[10px] text-muted-foreground">Profit tracker</p>
-                </div>
-              </CardContent>
-            </Card>
-          </div>
-
-          {/* Quick links row */}
-          <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-            <Card
-              className="bg-card/50 hover:bg-card hover:border-primary/30 cursor-pointer transition-colors"
-              onClick={() => onNavigate('listings')}
-            >
-              <CardContent className="p-4 flex items-center gap-3">
-                <LayoutGrid className="w-5 h-5 text-primary" />
-                <div>
-                  <p className="text-sm font-bold">Pregled vseh oglasov</p>
-                  <p className="text-[11px] text-muted-foreground">Validiraj AI — vidi tudi NEZANIMIVO</p>
-                </div>
-              </CardContent>
-            </Card>
-            <Card
-              className="bg-card/50 hover:bg-card hover:border-primary/30 cursor-pointer transition-colors"
-              onClick={() => onNavigate('analytics')}
-            >
-              <CardContent className="p-4 flex items-center gap-3">
-                <BarChart3 className="w-5 h-5 text-primary" />
-                <div>
-                  <p className="text-sm font-bold">Analitika sistema</p>
-                  <p className="text-[11px] text-muted-foreground">Trendi, performansa monitorjev, natančnost AI</p>
-                </div>
-              </CardContent>
-            </Card>
-          </div>
-
-          {/* Recent runs */}
-          <Card className="bg-card/50">
-            <CardHeader>
-              <CardTitle className="text-sm font-bold uppercase tracking-wider flex items-center gap-2">
-                <Clock className="w-4 h-4 text-primary" />
-                Zadnje izvedbe
-              </CardTitle>
-              <CardDescription>Zadnjih 10 poganjanj monitorjev.</CardDescription>
-            </CardHeader>
-            <CardContent>
-              {stats.recentRuns.length === 0 ? (
-                <div className="text-center py-8 text-muted-foreground text-sm">
-                  <Zap className="w-6 h-6 mx-auto mb-2 opacity-50" />
-                  Še ni bilo izvedb. Dodaj monitor in ga poženi.
-                </div>
-              ) : (
-                <div className="space-y-1.5 max-h-96 overflow-y-auto">
-                  {stats.recentRuns.map((run) => (
-                    <div
-                      key={run.id}
-                      className="flex items-center justify-between gap-3 px-3 py-2.5 sm:py-2 min-h-[48px] sm:min-h-0 rounded bg-background/50 border border-border hover:border-primary/30 transition-colors text-sm"
-                    >
-                      <div className="flex items-center gap-3 min-w-0 flex-1">
-                        <StatusDot status={run.status} />
-                        <span className="font-medium truncate">{run.monitor.name}</span>
-                      </div>
-                      <div className="flex items-center gap-3 text-xs text-muted-foreground shrink-0">
-                        <span>{run.newListings}/{run.listingsFound} novih</span>
-                        {run.alertsSent > 0 && (
-                          <Badge className="bg-primary/20 text-primary border-primary/40 text-[10px]">
-                            +{run.alertsSent} alertov
-                          </Badge>
-                        )}
-                        <span className="font-mono">{formatDuration(run.durationMs)}</span>
-                        <span>{formatTimeAgo(run.startedAt)}</span>
-                      </div>
-                    </div>
-                  ))}
-                </div>
-              )}
-            </CardContent>
-          </Card>
-
-          {/* v8.80: Daily Briefing — premaknjeno v AI kategorijo (v9.73) */}
-          {/* <DailyBriefingCard /> */}
-
-          {/* v8.39: Goal Tracker — sekundarna kartica */}
-          <GoalTrackerCard />
-
-          {/* v9.56: Gamification — premaknjeno v AI kategorijo (v9.73) */}
-          {/* <GamificationWidget /> */}
-
-          {/* v9.57: Scraper Monitor — premaknjeno v Monitorji kategorijo (v9.73) */}
-          {/* <ScraperMonitorWidget /> */}
-
-          {/* v9.59: Smart Digest — premaknjeno v Obvestila kategorijo (v9.73) */}
-          {/* <SmartDigestWidget /> */}
-
-          {/* v9.60: Predictive Analytics — sekundarna kartica */}
-          <PredictiveAnalyticsWidget onNavigate={onNavigate} />
-
-          {/* v8.83: Setup Health Banner — premaknjeno v Sistem kategorijo (v9.73) */}
-          {/* <SetupHealthBanner /> */}
-
-          {/* v2.7: Activity feed — sekundarna kartica */}
-          <WidgetWrapper id="activityFeed" order={widgetOrder} customizeMode={customizeMode} onMove={moveWidget}>
-            <ActivityFeed />
-          </WidgetWrapper>
-        </>
-
-      {/* ════════════════════════════════════════════════════════════════════
-          END DECISION CENTER
-          ════════════════════════════════════════════════════════════════════ */}
-
-      {/* Quick start hint */}
-      {stats.totalMonitors === 0 && (
+      {/* ── Live Scraping Progress ── */}
+      {progress.length > 0 && (
         <Card className="border-primary/40 bg-primary/5">
-          <CardContent className="p-6">
-            <div className="flex items-start gap-4">
-              <AlertTriangle className="w-5 h-5 text-amber-400 mt-0.5" />
-              <div className="flex-1">
-                <h3 className="font-bold text-sm mb-1">Začenjamo</h3>
-                <p className="text-sm text-muted-foreground mb-3">
-                  Začni tako, da dodaš prvi monitor (npr. iskanje na Bolhi ali Nepremičninah),
-                  nato v <span className="text-primary">Nastavitve</span> vnesi AI provider
-                  (Ollama na localhostu ali API ključ za OpenAI/Anthropic).
-                </p>
-                <div className="flex gap-2">
-                  <Button size="sm" onClick={() => onNavigate('monitors')} className="gap-2">
-                    Dodaj monitor
-                  </Button>
-                  <Button size="sm" variant="outline" onClick={() => onNavigate('settings')} className="gap-2">
-                    Konfiguriraj AI
-                  </Button>
-                </div>
-              </div>
+          <CardContent className="p-3">
+            <div className="flex items-center gap-2 mb-2">
+              <Spinner />
+              <span className="text-xs font-bold uppercase tracking-wider text-primary">Potek</span>
+            </div>
+            <div className="space-y-2">
+              {progress.map((p) => {
+                const elapsed = Math.floor((Date.now() - p.startedAt) / 1000);
+                return (
+                  <div key={p.monitorId} className="bg-background/50 rounded p-2 border border-border">
+                    <div className="flex items-center justify-between mb-1">
+                      <span className="text-xs font-medium truncate">{p.monitorName}</span>
+                      <span className="text-[10px] text-muted-foreground font-mono">{elapsed}s</span>
+                    </div>
+                    <div className="w-full bg-muted rounded-full h-1.5 overflow-hidden">
+                      <div
+                        className="h-full bg-primary rounded-full transition-all duration-700"
+                        style={{ width: `${Math.min(p.progress, 100)}%` }}
+                      />
+                    </div>
+                    <div className="flex gap-3 text-[10px] text-muted-foreground mt-1">
+                      <span>{p.listingsFound} oglasov</span>
+                      {p.newListings > 0 && <span className="text-primary">+{p.newListings} novih</span>}
+                      {p.alertsSent > 0 && <span className="text-amber-400">+{p.alertsSent} alertov</span>}
+                    </div>
+                  </div>
+                );
+              })}
             </div>
           </CardContent>
         </Card>
       )}
 
-      {/* v4.5: AI Summary Modal */}
-      {summaryOpen && (
-        <div
-          className="fixed inset-0 bg-background/80 backdrop-blur-sm z-50 flex items-center justify-center p-4"
-          onClick={() => !summaryLoading && setSummaryOpen(false)}
-        >
-          <div
-            className="bg-card border border-border rounded-lg max-w-2xl w-full max-h-[85vh] overflow-y-auto p-6 shadow-xl"
-            onClick={(e) => e.stopPropagation()}
+      {/* ── Active Monitors ── */}
+      <div>
+        <div className="flex items-center justify-between mb-2">
+          <h2 className="text-xs font-bold uppercase tracking-wider text-muted-foreground">
+            Aktivni monitorji ({stats.monitors?.filter(m => m.isActive).length ?? 0})
+          </h2>
+          <Button
+            variant="ghost"
+            size="sm"
+            className="h-7 text-xs gap-1"
+            onClick={() => { haptic.light(); onNavigate('monitors'); }}
           >
-            <div className="flex items-center justify-between mb-4">
-              <h2 className="text-lg font-bold text-primary terminal-glow uppercase flex items-center gap-2">
-                <Sparkles className="w-5 h-5" />
-                AI POVzetek
-              </h2>
-              <button
-                onClick={() => !summaryLoading && setSummaryOpen(false)}
-                className="text-muted-foreground hover:text-foreground text-xl disabled:opacity-50"
-                disabled={summaryLoading}
-              >×</button>
-            </div>
-
-            {/* Hours selector */}
-            <div className="flex items-center gap-2 mb-4 text-xs">
-              <span className="text-muted-foreground">Obdobje:</span>
-              {[
-                { v: 6, l: '6h' },
-                { v: 24, l: '24h' },
-                { v: 72, l: '3 dni' },
-                { v: 168, l: '7 dni' },
-              ].map(opt => (
-                <button
-                  key={opt.v}
-                  onClick={() => setSummaryHours(opt.v)}
-                  className={cn(
-                    'px-2 py-0.5 rounded border text-xs transition-colors',
-                    summaryHours === opt.v
-                      ? 'border-primary bg-primary/10 text-primary'
-                      : 'border-border text-muted-foreground hover:text-foreground'
-                  )}
-                >
-                  {opt.l}
-                </button>
-              ))}
-              <Button
-                size="sm"
-                variant="outline"
-                className="ml-auto h-7 text-xs gap-1"
-                onClick={generateSummary}
-                disabled={summaryLoading}
-              >
-                {summaryLoading ? <RefreshCw className="w-3 h-3 animate-spin" /> : <RefreshCw className="w-3 h-3" />}
-                Osveži
-              </Button>
-            </div>
-
-            {summaryLoading ? (
-              <div className="py-12 text-center text-sm text-muted-foreground">
-                <RefreshCw className="w-5 h-5 mx-auto mb-3 animate-spin opacity-50" />
-                AI analizira oglase in generira povzetek...
-              </div>
-            ) : summaryData ? (
-              <div className="space-y-4">
-                {/* Stats bar */}
-                <div className="grid grid-cols-4 gap-2 text-xs">
-                  <div className="bg-background/30 rounded p-2 text-center">
-                    <div className="text-[10px] text-muted-foreground uppercase">Najdeno</div>
-                    <div className="font-mono font-bold text-primary">{summaryData.stats.opportunitiesFound}</div>
-                  </div>
-                  <div className="bg-background/30 rounded p-2 text-center">
-                    <div className="text-[10px] text-muted-foreground uppercase">Novi</div>
-                    <div className="font-mono">{summaryData.stats.totalNewListings}</div>
-                  </div>
-                  <div className="bg-background/30 rounded p-2 text-center">
-                    <div className="text-[10px] text-muted-foreground uppercase">Alertov</div>
-                    <div className="font-mono">{summaryData.stats.totalAlerts}</div>
-                  </div>
-                  <div className="bg-background/30 rounded p-2 text-center">
-                    <div className="text-[10px] text-muted-foreground uppercase">Shranjeni</div>
-                    <div className="font-mono">{summaryData.stats.totalBookmarked}</div>
-                  </div>
-                </div>
-
-                {/* Summary text */}
-                <div className="bg-background/30 rounded p-3 text-sm whitespace-pre-wrap leading-relaxed">
-                  {summaryData.summary}
-                </div>
-
-                {/* Top pick */}
-                {summaryData.topPick && (
-                  <div className="bg-primary/5 border border-primary/20 rounded p-3">
-                    <div className="text-[10px] uppercase tracking-wider text-primary mb-1">🏆 TOP izbor</div>
-                    <div className="text-sm font-medium">{summaryData.topPick}</div>
-                  </div>
-                )}
-
-                {/* Recommendation */}
-                {summaryData.recommendation && (
-                  <div className="bg-amber-400/5 border border-amber-400/20 rounded p-3">
-                    <div className="text-[10px] uppercase tracking-wider text-amber-400 mb-1">💡 Priporočilo</div>
-                    <div className="text-sm">{summaryData.recommendation}</div>
-                  </div>
-                )}
-
-                {/* Listings list */}
-                {summaryData.listings && summaryData.listings.length > 0 && (
-                  <div>
-                    <h4 className="text-xs uppercase tracking-wider text-muted-foreground mb-2">
-                      Oglasi v povzetku ({summaryData.listings.length})
-                    </h4>
-                    <div className="space-y-1">
-                      {summaryData.listings.map((l: any) => (
-                        <a
-                          key={l.id}
-                          href={l.url}
-                          target="_blank"
-                          rel="noopener noreferrer"
-                          className="flex items-center gap-2 p-2 bg-background/30 rounded hover:bg-background/50 transition-colors text-xs"
-                        >
-                          <div className="flex-1 min-w-0">
-                            <div className="truncate font-medium">{l.title}</div>
-                            <div className="text-[10px] text-muted-foreground">
-                              {l.priceText} • {l.monitor?.name}
-                            </div>
-                          </div>
-                          {l.dealScore != null && l.dealScore > 0 && (
-                            <Badge variant="outline" className="text-[10px] text-primary border-primary/40 shrink-0">
-                              🎯 {l.dealScore}
-                            </Badge>
-                          )}
-                          <ExternalLink className="w-3 h-3 text-muted-foreground shrink-0" />
-                        </a>
-                      ))}
+            Vsi <ChevronRight className="w-3 h-3" />
+          </Button>
+        </div>
+        <div className="space-y-2">
+          {(stats.monitors?.filter(m => m.isActive) ?? []).slice(0, 5).map((monitor) => (
+            <Card
+              key={monitor.id}
+              className="bg-card/50 hover:bg-card hover:border-primary/20 cursor-pointer transition-all group"
+              onClick={() => { haptic.light(); onNavigate('monitors'); }}
+            >
+              <CardContent className="p-3">
+                <div className="flex items-start justify-between gap-3">
+                  <div className="flex items-center gap-2.5 min-w-0 flex-1">
+                    <span className="text-base shrink-0">{getSourceIcon(monitor.source)}</span>
+                    <div className="min-w-0 flex-1">
+                      <div className="text-sm font-medium truncate">{monitor.name}</div>
+                      <div className="flex items-center gap-2 text-[10px] text-muted-foreground">
+                        {monitor.lastRunAt && (
+                          <span className="flex items-center gap-1">
+                            <Clock className="w-2.5 h-2.5" />
+                            {formatTimeAgo(monitor.lastRunAt)}
+                          </span>
+                        )}
+                        <span>·</span>
+                        <span>{monitor.newListings}/{monitor.totalListings} novih</span>
+                      </div>
                     </div>
                   </div>
+                  <div className="flex items-center gap-2 shrink-0">
+                    <div className={cn('w-2 h-2 rounded-full', getStatusColor(monitor.lastStatus))} />
+                    <ChevronRight className="w-4 h-4 text-muted-foreground opacity-0 group-hover:opacity-100 transition-opacity" />
+                  </div>
+                </div>
+                {monitor.alertsSent > 0 && (
+                  <Badge className="mt-2 bg-amber-400/20 text-amber-400 border-amber-400/40 text-[10px]">
+                    +{monitor.alertsSent} alertov
+                  </Badge>
                 )}
+                {monitor.consecutiveErrors >= 3 && (
+                  <Badge className="mt-2 bg-red-500/20 text-red-400 border-red-500/40 text-[10px]">
+                    ⚠ {monitor.consecutiveErrors} zaporednih napak
+                  </Badge>
+                )}
+              </CardContent>
+            </Card>
+          ))}
+          {(stats.monitors?.filter(m => m.isActive).length ?? 0) === 0 && (
+            <Card className="border-dashed border-primary/30 bg-primary/5">
+              <CardContent className="p-4 text-center">
+                <p className="text-xs text-muted-foreground mb-2">Še ni aktivnih monitorjev</p>
+                <Button
+                  size="sm"
+                  className="gap-1.5"
+                  onClick={() => { haptic.light(); onNavigate('monitors'); }}
+                >
+                  <Plus className="w-3 h-3" /> Dodaj monitor
+                </Button>
+              </CardContent>
+            </Card>
+          )}
+        </div>
+      </div>
 
-                <p className="text-[10px] text-muted-foreground text-center pt-2">
-                  Generirano: {new Date(summaryData.generatedAt).toLocaleString('sl-SI')}
-                </p>
+      {/* ── Recent Runs ── */}
+      {stats.recentRuns.length > 0 && (
+        <div>
+          <h2 className="text-xs font-bold uppercase tracking-wider text-muted-foreground mb-2">Zadnje izvedbe</h2>
+          <div className="space-y-1">
+            {stats.recentRuns.slice(0, 5).map((run) => (
+              <div
+                key={run.id}
+                className="flex items-center gap-2 px-3 py-1.5 rounded bg-background/50 border border-border text-xs"
+              >
+                <div className={cn(
+                  'w-1.5 h-1.5 rounded-full shrink-0',
+                  run.status === 'ok' || run.status === 'success' ? 'bg-emerald-500' :
+                  run.status === 'error' ? 'bg-red-500' : 'bg-zinc-500'
+                )} />
+                <span className="truncate flex-1">{run.monitor.name}</span>
+                <span className="text-muted-foreground">{run.newListings}/{run.listingsFound}</span>
+                {run.alertsSent > 0 && (
+                  <Badge className="bg-amber-400/20 text-amber-400 border-amber-400/40 text-[9px] px-1">
+                    +{run.alertsSent}
+                  </Badge>
+                )}
+                <span className="text-muted-foreground font-mono">{formatTimeAgo(run.startedAt)}</span>
               </div>
-            ) : (
-              <div className="py-8 text-center text-sm text-muted-foreground">
-                Klikni "Osveži" za generiranje povzetka.
-              </div>
-            )}
+            ))}
           </div>
         </div>
       )}
 
-      {/* v8.36: Quick Add Trade modal — floating button trigger */}
-      <QuickAddTradeModal
-        open={showQuickAddTrade}
-        onOpenChange={setShowQuickAddTrade}
-        onSaved={() => {
-          toast.success('Trade dodan');
-          // Reload stats after add (cheap refetch)
-          load();
-        }}
-      />
+      {/* ── Quick Actions ── */}
+      <div className="flex gap-2">
+        <Button
+          size="sm"
+          onClick={runAll}
+          disabled={running}
+          className="gap-1.5 flex-1"
+        >
+          {running ? <RefreshCw className="w-3.5 h-3.5 animate-spin" /> : <Play className="w-3.5 h-3.5" />}
+          Poženi vse
+        </Button>
+        <Button
+          size="sm"
+          variant="outline"
+          onClick={() => { haptic.light(); onNavigate('monitors'); }}
+          className="gap-1.5"
+        >
+          <Plus className="w-3.5 h-3.5" />
+          Dodaj
+        </Button>
+      </div>
     </div>
   );
 }
-
-// StatCard — v9.04: imported from ./dashboard/stat-card
-// StatusDot — v9.04: imported from ./dashboard/status-dot
-// formatDuration — v9.04: imported from ./dashboard/format-duration
-// formatTimeAgo — v9.04: imported from ./dashboard/format-timeago
-// ActivityFeed — v9.04: imported from ./dashboard/activity-feed
-// SkladisceWidget — v9.04: imported from ./dashboard/skladisce-widget
-// WidgetWrapper — v9.04: imported from ./dashboard/-widget-wrapper

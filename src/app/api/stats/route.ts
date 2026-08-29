@@ -39,6 +39,44 @@ export async function GET() {
       }),
     ]);
 
+    // Monitor cards for dashboard
+    const monitors = await db.monitor.findMany({
+      orderBy: { createdAt: 'desc' },
+      select: {
+        id: true,
+        name: true,
+        source: true,
+        isActive: true,
+        lastRunAt: true,
+        lastStatus: true,
+        consecutiveErrors: true,
+        _count: { select: { listings: true, alerts: true } },
+      },
+    });
+
+    // Get new listings per monitor from last run
+    const monitorCards = await Promise.all(
+      monitors.map(async (m) => {
+        const lastRun = await db.runLog.findFirst({
+          where: { monitorId: m.id },
+          orderBy: { startedAt: 'desc' },
+          select: { newListings: true, listingsFound: true, alertsSent: true },
+        });
+        return {
+          id: m.id,
+          name: m.name,
+          source: m.source,
+          isActive: m.isActive,
+          lastRunAt: m.lastRunAt?.toISOString() || null,
+          lastStatus: m.lastStatus,
+          newListings: lastRun?.newListings ?? 0,
+          totalListings: m._count.listings,
+          alertsSent: m._count.alerts,
+          consecutiveErrors: m.consecutiveErrors,
+        };
+      })
+    );
+
     const last24h = new Date(Date.now() - 24 * 60 * 60 * 1000);
     const todayStart = new Date();
     todayStart.setHours(0, 0, 0, 0);
@@ -71,6 +109,7 @@ export async function GET() {
         runs: todayRuns,
         successfulRuns: todaySuccessfulRuns,
       },
+      monitors: monitorCards,
       recentRuns,
     });
 

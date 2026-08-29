@@ -36,6 +36,7 @@ export interface ListingEvaluation {
   ocena_prilike: number;  // 1-10
   razlog: string;
   predvidena_trzna_vrednost?: number | null; // EUR
+  deal_score?: number | null; // 0-100, higher = better deal
   verdict: 'PRILIKA' | 'SUMNJIVO' | 'NEZANIMIVO';
   // v1.1: image analysis fields
   image_analysis?: string | null;
@@ -46,21 +47,45 @@ const SYSTEM_PROMPT = `Si izkušen analitik slovenskega trga rabljenih dobrin in
 Tvoja naloga je oceniti, ali je oglas resnična priložnost za zaslužek (preprodaja, najem, investicija)
 ali pa sumljiv oglas (morebitna prevara).
 
+POJMI SLOVENSKEGA TRGA (to so NORMALNI vzorci, NE sumljivi):
+- "KUPIM" / "ODKUP" / "odkupim" — legitimne prošnje za nakup. To je običajen tip oglasa na Bolhi. NI sumljivo.
+- "po dogovoru" cena — zelo pogosta na slovenskih oglasih. Pomeni "cena je fleksibilna". NI sumljivo.
+- Kratki opisi — na Bolhi imajo mnogi oglasi zelo kratke opise. To je normalno.
+- "pošiljam" / "poštnina" — običajno pri prodaji prek pošte. NI sumljivo samo po sebi.
+- Brez slik — nekateri prodajalci ne dodajo slik. NI sumljivo samo po sebi.
+
+SUMLJIVI VZORCI (šele TO je resnično sumljivo):
+- paysafecard / western union / predračun / kriptovalute — plačilo samo v teh oblikah
+- Prodajalec zahteva plačilo V naprej pred ogledom
+- "pošiljam samo" + zahteva plačila vnaprej — to je sumljivo
+- Nerealna cena (npr. iPhone 17 za 100€) — očitna prevara
+- Kopirani opisi iz uradnih strani + nerealna cena
+
+PRERAČUN MARŽE (DEAL SCORE):
+Za vsak oglas izračunaj maržo za preprodajo:
+- PREDVIDENA_TRZNA_VREDNOST = koliko bi kupec NA eBay/Amazon plačal za ta artikel (nova ali rabljena cena)
+- Če je prodajalka cena 300€ in tržna vrednost 500€, potem je marža 40% — to je ODLIČNA priložnost
+- Če je marža > 30% = zelo dobra priložnost
+- Če je marža 15-30% = dobra priložnost
+- Če je marža < 15% = nič posebnega
+
 Oceniš:
 1. PRILIKA (boolean) — ali je cena vsaj 20% pod realno tržno vrednostjo ALI gre za izjemno redko/iskano ponudbo?
-2. OCENA_TVEGANJA (1-10) — 1 = zelo varno, 10 = skoraj gotovo prevara. Upoštevaj:
-   - rdeče zastave: "pošiljam samo", "paysafecard", "western union", "predračun", prevelika ugodnost
-   - krajši opis = sumljivo, daljši z konkretnimi podrobnostmi = verodostojneje
-   - fotografije amaterske = bolje kot profesionalne (prevaranti uporabljajo stock)
-   - "nujna prodaja" / "selim se" / "dedovanje" — lahko je res, lahko pa taktika
+2. OCENA_TVEGANJA (1-10) — 1 = zelo varno, 10 = skoraj gotovo prevara. NE daj visokega tveganja samo zato ker:
+   - oglas ima kratko besedilo
+   - cena je "po dogovoru"
+   - oglas je tipa "KUPIM" ali "ODKUP"
+   - ni slik
+   Resnično sumljivo so: plačilo vnaprej, paysafecard/western union, nerealna cena
 3. OCENA_PRILIKE (1-10) — 1 = nič posebnega, 10 = izjemna priložnost
 4. RAZLOG — v 1-2 stavkih v slovenščini pojasni oceno
 5. PREDVIDENA_TRZNA_VREDNOST — EUR znesek (samo številka) ali null če ne moreš oceniti
-6. VERDICT — PRILIKA (ocena_prilike >= 7 in ocena_tveganja <= 3) | SUMNJIVO (ocena_tveganja >= 6) | NEZANIMIVO
+6. DEAL_SCORE — 0-100, kjer 100 = najboljša priložnost (najvišja marža za preprodajo)
+7. VERDICT — PRILIKA (ocena_prilike >= 5 in ocena_tveganja <= 4) | SUMNJIVO (ocena_tveganja >= 7) | NEZANIMIVO
 
 Če prejmeš tudi SLIKO oglasa, dodatno oceni:
-7. IMAGE_ANALYSIS — v 1 stavku v slovenščini opiši, kaj vidiš na sliki (kakovost, ali je realna ali stock foto, ali se ujema z opisom)
-8. IMAGE_VERDICT — AUTHENTIC (realna amaterska fotografija) | SUSPICIOUS (sumljivo — stock foto, vodeni žig, neresnično) | STOCK_PHOTO (profesionalna stock fotografija) | NO_IMAGE (slike ni)
+8. IMAGE_ANALYSIS — v 1 stavku v slovenščini opiši, kaj vidiš na sliki (kakovost, ali je realna ali stock foto, ali se ujema z opisom)
+9. IMAGE_VERDICT — AUTHENTIC (realna amaterska fotografija) | SUSPICIOUS (sumljivo — stock foto, vodeni žig, neresnično) | STOCK_PHOTO (profesionalna stock fotografija) | NO_IMAGE (slike ni)
 
 Vedno odgovori JSON, nič drugega.
 
@@ -68,7 +93,17 @@ ANTI-HALLUCINATION PRAVILA:
 - PREDVIDENA_TRZNA_VREDNOST mora biti realna. Ne pretiravaj (ne reci 5000€ za iPhone 12).
 - Če si negotov o vrednosti, nastavi null — ne izmišljaj.
 - RAZLOG mora vsebovati specifične podatke iz oglasa (ne generične fraze).
-- Oceni s strogo realnostjo — bolje je konzervativen kot preveč optimističen.`;
+- Oceni s strogo realnostjo — bolje je konzervativen kot preveč optimističen.
+
+AVTOMOBILI (AutoScout24):
+Za avtomobile upoštevaj dodatna merila za oceno priložnosti:
+- STAROST IN KILOMETRINA: Nov avto (do 3 let) z malo kilometri = dober. Star avto (10+ let) z veliko kilometri = tvegano
+- CENA V primerjavi s trgom: Preveri, ali je cena pod povprečno tržno ceno za ta model/starost/kilometrino
+- STANJE: Opis naj bo realen (npr. "manjše praske", "redno servisiran"). Preveč idealen opis = sumljivo
+- PREVOZNIKI: Avto z malo prevozniki (do 50k km) = odlično. 200k+ km = tvegano
+- GORIVO: Dizel = boljše za preprodajo (nižji stroški). Elektro = trend v porastu
+- SERVISNA KNJIŽICA: Če jo ima = velika prednost
+- NEPREMIČNINE: Oglasi za nepremičnine — primerjaj s tržno ceno v regiji`;
 
 const JSON_SCHEMA = {
   type: 'object',
@@ -78,6 +113,7 @@ const JSON_SCHEMA = {
     ocena_prilike: { type: 'integer', minimum: 1, maximum: 10 },
     razlog: { type: 'string' },
     predvidena_trzna_vrednost: { type: ['integer', 'null'] },
+    deal_score: { type: 'integer', minimum: 0, maximum: 100 },
     verdict: { type: 'string', enum: ['PRILIKA', 'SUMNJIVO', 'NEZANIMIVO'] },
     image_analysis: { type: ['string', 'null'] },
     image_verdict: { type: ['string', 'null'], enum: ['AUTHENTIC', 'SUSPICIOUS', 'STOCK_PHOTO', 'NO_IMAGE', null] },
@@ -231,7 +267,36 @@ function parseJsonLoose(raw: string): unknown {
   if (start !== -1 && end !== -1 && end > start) {
     s = s.slice(start, end + 1);
   }
-  return JSON.parse(s);
+  try {
+    return JSON.parse(s);
+  } catch {
+    // Fallback: try to extract key-value pairs from non-JSON response
+    const result: any = {};
+    // Match patterns like "likelihood": 7 or "risk": 3 or "verdict": "PRILIKA"
+    const kvRegex = /["']?([\w_]+)["']?\s*[:=]\s*(?:(\d+(?:\.\d+)?)|["']([^"']+)["']|(\w+))/gi;
+    let m;
+    while ((m = kvRegex.exec(raw)) !== null) {
+      const key = m[1].toLowerCase();
+      const numVal = m[2] ? Number(m[2]) : null;
+      const strVal = m[3] || m[4] || null;
+      // Map English keys to Slovenian
+      if (key === 'likelihood' || key === 'ocena_prilike' || key === 'opportunity') {
+        result.ocena_prilike = numVal || parseInt(strVal || '5', 10) || 5;
+      } else if (key === 'risk' || key === 'ocena_tveganja') {
+        result.ocena_tveganja = numVal || parseInt(strVal || '5', 10) || 5;
+      } else if (key === 'verdict') {
+        result.verdict = strVal;
+      } else if (key === 'reason' || key === 'razlog') {
+        result.razlog = strVal;
+      } else if (key === 'prilika') {
+        result.prilika = strVal === 'true' || numVal === 1;
+      } else if (key === 'estimated_value' || key === 'predvidena_trzna_vrednost') {
+        result.predvidena_trzna_vrednost = numVal;
+      }
+    }
+    if (Object.keys(result).length > 0) return result;
+    throw new Error(`No JSON found in response: ${raw.slice(0, 200)}`);
+  }
 }
 
 /**
@@ -490,13 +555,14 @@ function buildDealScorePrompt(l: {
 }
 
 function normalizeEvaluation(parsed: any, askingPrice?: number | null): ListingEvaluation {
-  const risk = clamp(parseInt(String(parsed?.ocena_tveganja ?? '5'), 10) || 5, 1, 10);
-  const opp = clamp(parseInt(String(parsed?.ocena_prilike ?? '5'), 10) || 5, 1, 10);
-  const prilika = parsed?.prilika ?? (opp >= 7 && risk <= 3);
+  // Support both Slovenian (ocena_prilike, ocena_tveganja) and English (likelihood, risk) field names
+  const risk = clamp(parseInt(String(parsed?.ocena_tveganja ?? parsed?.risk ?? '5'), 10) || 5, 1, 10);
+  const opp = clamp(parseInt(String(parsed?.ocena_prilike ?? parsed?.likelihood ?? '5'), 10) || 5, 1, 10);
+  const prilika = parsed?.prilika ?? (opp >= 5 && risk <= 4);
   let verdict: ListingEvaluation['verdict'] = parsed?.verdict;
   if (!verdict || !['PRILIKA', 'SUMNJIVO', 'NEZANIMIVO'].includes(verdict)) {
-    if (risk >= 6) verdict = 'SUMNJIVO';
-    else if (opp >= 7 && risk <= 3) verdict = 'PRILIKA';
+    if (risk >= 7) verdict = 'SUMNJIVO';
+    else if (opp >= 5 && risk <= 4) verdict = 'PRILIKA';
     else verdict = 'NEZANIMIVO';
   }
   let estVal: number | null | undefined = parsed?.predvidena_trzna_vrednost;
@@ -522,12 +588,14 @@ function normalizeEvaluation(parsed: any, askingPrice?: number | null): ListingE
   const imageVerdict = imageVerdictRaw && validImageVerdicts.includes(imageVerdictRaw)
     ? imageVerdictRaw as ListingEvaluation['image_verdict']
     : null;
+  const dealScore = clampInt(parsed?.deal_score ?? parsed?.dealScore, 0, 100);
   return {
     prilika: Boolean(prilika),
     ocena_tveganja: risk,
     ocena_prilike: opp,
     razlog: String(parsed?.razlog ?? '').slice(0, 600),
     predvidena_trzna_vrednost: estVal ?? null,
+    deal_score: dealScore,
     verdict,
     image_analysis: parsed?.image_analysis ? String(parsed.image_analysis).slice(0, 500) : null,
     image_verdict: imageVerdict,

@@ -9,21 +9,16 @@
  */
 
 import { db } from './db';
-import { scrape, type SourceType, type ScraperFilters } from './scraper';
+import { scrape, scrapeMulti, type SourceType, type ScraperFilters } from './scraper';
 import { evaluateListing, downloadImageAsBase64, type AiSettings, type AiProviderType, type ListingEvaluation } from './ai';
-import { sendTelegramMessage, formatAlertMessage, buildAlertInlineButtons } from './telegram';
-import { sendDiscordMessage, buildAlertEmbed } from './discord';
-import { sendSlackMessage, buildAlertSlackBlocks } from './slack';
-import { sendPushNotification } from './push';
-// v6.93: Priklop smart-push — pametno batchanje alertov po prioriteti (critical/high/medium/low).
-// Prej je pipeline pošiljal vsak alert individualno (spam). Sedaj uporablja sendSmartPush.
-import { sendSmartPush, sendImmediatePush, calculatePriority } from './smart-push';
-import { sendEmail, formatAlertEmail } from './email';
-// v6.93: Priklop webhook-engine na pipeline — prej je bil mrtva koda.
-// v7.32: Transparent encryption for Settings + env-var app URL
+import { formatAlertMessage, buildAlertInlineButtons, sendTelegramMessage } from './telegram';
+import { sendDiscordMessage } from './discord';
+import { calculatePriority } from './smart-push';
 import { decryptSettingsFromStorage } from './secrets';
 import { getAppUrl } from './app-url';
-import { triggerWebhooks } from './webhook-engine';
+// v9.83: Unified notification dispatch — replaces 3× duplicated notification blocks
+import { dispatchAlert, triggerAlertWebhooks, type NotificationSettings, type AlertDispatchData, type DeliveryResult } from './dispatch-alerts';
+import { progressStart, progressUpdate, progressDone, progressError, progressAddListing, progressUpdateListing } from './scraper-progress';
 
 /** v3.2: Increment AI call counter, reset if date changed. */
 async function trackAiCall() {
@@ -116,6 +111,8 @@ export async function runMonitor(monitorId: string): Promise<RunResult> {
     return { status: 'error', listingsFound: 0, newListings: 0, alertsSent: 0, error: 'Monitor ne obstaja', durationMs: 0 };
   }
 
+  progressStart(monitor.id, monitor.name);
+
   const filters: ScraperFilters = {
     keywords: parseFilterList(monitor.keywords),
     excludeKeywords: parseFilterList(monitor.excludeKeywords),
@@ -136,15 +133,64 @@ export async function runMonitor(monitorId: string): Promise<RunResult> {
     runLogId = runLog.id;
 
     // 1. Scrape
+    progressUpdate(monitor.id, { status: 'scraping', step: 'Pridobivam oglase...', progress: 5 });
+    await new Promise(r => setTimeout(r, 300)); // 0.3s delay for UI to pick up
     const preSettings = await getSettingsRow();
-    const listings = await scrape(
-      monitor.source as SourceType,
-      monitor.sourceUrl,
-      filters,
-      { playwrightEnabled: preSettings.playwrightEnabled }
-    );
+
+    // Emit progress every 3s while scraping
+    let scrapeSeconds = 0;
+    const scrapeTimer = setInterval(() => {
+      scrapeSeconds += 3;
+      // Scraping is ~20-30s, cap at 30%
+      const pct = Math.min(5 + Math.round((scrapeSeconds / 30) * 25), 30);
+      progressUpdate(monitor.id, { step: `Pridobivam oglase... (${scrapeSeconds}s)`, progress: pct });
+    }, 3000);
+
+    let listings;
+    try {
+      // Check if monitor has multiple source URLs
+      let sourceUrls: string[] = [];
+      try { sourceUrls = JSON.parse(monitor.sourceUrls || '[]'); } catch {}
+      
+      if (sourceUrls.length > 1) {
+        listings = await scrapeMulti(
+          monitor.source as SourceType,
+          sourceUrls,
+          filters,
+          {
+            playwrightEnabled: preSettings.playwrightEnabled,
+            onProgress: (msg) => progressUpdate(monitor.id, { step: msg }),
+          }
+        );
+      } else {
+        listings = await scrape(
+          monitor.source as SourceType,
+          monitor.sourceUrl,
+          filters,
+          {
+            playwrightEnabled: preSettings.playwrightEnabled,
+            onProgress: (msg) => progressUpdate(monitor.id, { step: msg }),
+          }
+        );
+      }
+    } finally {
+      clearInterval(scrapeTimer);
+    }
+
+    // Add all found listings to progress
+    for (const l of listings) {
+      progressAddListing(monitor.id, {
+        id: l.externalId,
+        title: l.title,
+        price: l.priceText || (l.price != null ? `${l.price}€` : '?'),
+        url: l.url,
+        location: l.location || undefined,
+        isNew: false,
+      });
+    }
 
     if (listings.length === 0) {
+      progressDone(monitor.id);
       await db.runLog.update({
         where: { id: runLog.id },
         data: {
@@ -164,6 +210,8 @@ export async function runMonitor(monitorId: string): Promise<RunResult> {
     }
 
     // 2. Dedup — find which externalIds already exist
+    progressUpdate(monitor.id, { status: 'dedup', step: `Primerjam ${listings.length} oglasov z znanimi...`, listingsFound: listings.length, progress: 35 });
+    await new Promise(r => setTimeout(r, 800)); // 0.8s for UI to see dedup step
     const externalIds = listings.map(l => l.externalId);
     const existing = await db.listing.findMany({
       where: { monitorId: monitor.id, externalId: { in: externalIds } },
@@ -172,7 +220,15 @@ export async function runMonitor(monitorId: string): Promise<RunResult> {
     const existingIds = new Set(existing.map(e => e.externalId));
     const fresh = listings.filter(l => !existingIds.has(l.externalId));
 
+    // Mark new listings in progress
+    for (const l of fresh) {
+      progressUpdateListing(monitor.id, l.externalId, { isNew: true });
+    }
+    progressUpdate(monitor.id, { step: `Najdenih ${fresh.length} novih oglasov od ${listings.length}`, newListings: fresh.length, progress: 40 });
+    await new Promise(r => setTimeout(r, 800)); // 0.8s for UI to see dedup result
+
     if (fresh.length === 0) {
+      progressDone(monitor.id);
       await db.runLog.update({
         where: { id: runLog.id },
         data: {
@@ -192,6 +248,8 @@ export async function runMonitor(monitorId: string): Promise<RunResult> {
     }
 
     // 3. AI evaluation + persist + alert
+    progressUpdate(monitor.id, { status: 'ai-evaluating', step: `AI ocenjuje ${fresh.length} novih oglasov...`, newListings: fresh.length, aiTotal: fresh.length, aiEvaluated: 0, progress: 45 });
+    await new Promise(r => setTimeout(r, 800)); // 0.8s for UI to see AI step start
     const settings = await getSettingsRow();
     const aiSettings = toAiSettings(settings);
     let alertsSent = 0;
@@ -213,28 +271,6 @@ export async function runMonitor(monitorId: string): Promise<RunResult> {
         },
       }))
     );
-
-    // v6.93: Trigger webhook 'listing.new' za vsak nov listing (priklop webhook-engine)
-    // Uporabljamo Promise.allSettled — webhook failures ne vplivajo na pipeline.
-    if (createdListings.length > 0) {
-      try {
-        await Promise.allSettled(createdListings.map((listing, i) => {
-          const scraped = fresh[i];
-          return triggerWebhooks('listing.new', {
-            listingId: listing.id,
-            monitorId: monitor.id,
-            monitorName: monitor.name,
-            source: monitor.source,
-            title: listing.title,
-            url: listing.url,
-            price: listing.price,
-            priceText: listing.priceText,
-            location: listing.location,
-            firstSeenAt: listing.firstSeenAt,
-          }).catch(() => {/* tih fail — ne vpliva */});
-        }));
-      } catch { /* allSettled nikoli ne reject-a, a vseeno */ }
-    }
 
     // v1.4: Record initial price history for each new listing
     await Promise.all(
@@ -298,57 +334,40 @@ export async function runMonitor(monitorId: string): Promise<RunResult> {
             },
           });
 
-          // v6.93: Trigger webhook 'price.drop' (priklop webhook-engine)
-          try {
-            await triggerWebhooks('price.drop', {
+          // v9.83: Unified notification dispatch
+          await triggerAlertWebhooks('price.drop', {
+            alertId: alert.id,
+            monitorId: monitor.id,
+            listingId: existing.id,
+            title: existing.title,
+            oldPrice: existing.price,
+            newPrice: newListings.price,
+            dropAmount,
+            dropPct,
+            url: existing.url,
+          });
+
+          const delivery = await dispatchAlert(
+            settings as NotificationSettings,
+            monitor.notificationChannels,
+            {
               alertId: alert.id,
               monitorId: monitor.id,
-              listingId: existing.id,
-              title: existing.title,
-              oldPrice: existing.price,
-              newPrice: newListings.price,
-              dropAmount,
-              dropPct,
-              url: existing.url,
-            });
-          } catch (e) { /* webhook failures ne vplivajo na pipeline */ }
-
-          // Send notifications
-          if (settings.telegramEnabled && settings.telegramBotToken && settings.telegramChatId) {
-            const inlineButtons = settings.telegramInlineButtons
-              ? buildAlertInlineButtons({ alertId: alert.id, listingUrl: existing.url, dashboardUrl: getAppUrl() + '/alerts' })
-              : undefined;
-            await sendTelegramMessage(
-              { botToken: settings.telegramBotToken, chatId: settings.telegramChatId },
-              alertBody,
-              { inlineButtons }
-            );
-          }
-          if (settings.discordEnabled && settings.discordWebhookUrl) {
-            const embed = buildAlertEmbed({
               monitorName: monitor.name,
+              listingId: existing.id,
               title: `📉 CENA PADLA: ${existing.title}`,
               priceText: `${newListings.priceText} (prej ${existing.priceText})`,
               url: existing.url,
-              aiVerdict: 'PRILIKA',
-              aiReason: `Cena padla za ${dropAmount}€ (${dropPct}%).`,
               aiScore: null,
               aiRisk: null,
-            });
-            await sendDiscordMessage({ webhookUrl: settings.discordWebhookUrl }, embed);
-          }
-          if (settings.pushEnabled) {
-            // v6.93: Smart push — batched by priority (target hit = critical/high)
-            // Target hit je vedno high prioritetna (uporabnik je izrecno postavil cilj)
-            try {
-              await sendImmediatePush({
-                title: `📉 Cena padla: ${existing.title.slice(0, 50)}`,
-                body: `${newListings.priceText} (prej ${existing.priceText}) — ${dropPct}% nižje!`,
-                url: '/alerts',
-                priority: 'high',
-              });
-            } catch { /* push failures ne vplivajo */ }
-          }
+              aiVerdict: 'PRILIKA',
+              aiReason: `Cena padla za ${dropAmount}€ (${dropPct}%).`,
+              alertBody,
+            },
+            'high',
+          );
+
+          if (delivery.alertsSentCount > 0) alertsSent++;
           priceDropAlerts++;
         }
 
@@ -407,55 +426,39 @@ export async function runMonitor(monitorId: string): Promise<RunResult> {
           },
         });
 
-        // v6.93: Trigger webhook 'target.hit'
-        try {
-          await triggerWebhooks('target.hit', {
+        // v9.83: Unified notification dispatch
+        await triggerAlertWebhooks('target.hit', {
+          alertId: alert.id,
+          monitorId: monitor.id,
+          listingId: l.id,
+          title: l.title,
+          currentPrice: l.price,
+          targetPrice: l.targetPrice,
+          savings,
+          url: l.url,
+        });
+
+        const delivery = await dispatchAlert(
+          settings as NotificationSettings,
+          monitor.notificationChannels,
+          {
             alertId: alert.id,
             monitorId: monitor.id,
-            listingId: l.id,
-            title: l.title,
-            currentPrice: l.price,
-            targetPrice: l.targetPrice,
-            savings,
-            url: l.url,
-          });
-        } catch (e) { /* webhook failures ne vplivajo na pipeline */ }
-
-        // Send notifications
-        if (settings.telegramEnabled && settings.telegramBotToken && settings.telegramChatId) {
-          const inlineButtons = settings.telegramInlineButtons
-            ? buildAlertInlineButtons({ alertId: alert.id, listingUrl: l.url, dashboardUrl: getAppUrl() + '/alerts' })
-            : undefined;
-          await sendTelegramMessage(
-            { botToken: settings.telegramBotToken, chatId: settings.telegramChatId },
-            alertBody,
-            { inlineButtons }
-          );
-        }
-        if (settings.discordEnabled && settings.discordWebhookUrl) {
-          const embed = buildAlertEmbed({
             monitorName: l.monitor.name,
+            listingId: l.id,
             title: `🎯 CILJNA CENA DOSEŽENA: ${l.title}`,
             priceText: `${l.priceText} (cilj ${l.targetPrice}€)`,
             url: l.url,
-            aiVerdict: 'PRILIKA',
-            aiReason: `Tvoja ciljna cena dosežena — ${savings}€ pod ciljem.`,
             aiScore: null,
             aiRisk: null,
-          });
-          await sendDiscordMessage({ webhookUrl: settings.discordWebhookUrl }, embed);
-        }
-        if (settings.pushEnabled) {
-          // v6.93: Smart push — target hit je vedno high/critical prioritetna (immediate)
-          try {
-            await sendImmediatePush({
-              title: `🎯 Ciljna cena dosežena: ${l.title.slice(0, 50)}`,
-              body: `${l.priceText} — cilj ${l.targetPrice}€, ${savings}€ pod ciljem!`,
-              url: '/alerts',
-              priority: 'critical',
-            });
-          } catch { /* push failures ne vplivajo */ }
-        }
+            aiVerdict: 'PRILIKA',
+            aiReason: `Tvoja ciljna cena dosežena — ${savings}€ pod ciljem.`,
+            alertBody,
+          },
+          'critical',
+        );
+
+        if (delivery.alertsSentCount > 0) alertsSent++;
         targetPriceAlerts++;
 
         // Mark alert as sent to prevent spam
@@ -468,6 +471,9 @@ export async function runMonitor(monitorId: string): Promise<RunResult> {
 
     // Evaluate each fresh listing with AI
     for (let i = 0; i < createdListings.length; i++) {
+      const aiPct = Math.round(45 + ((i + 1) / createdListings.length) * 50);
+      progressUpdate(monitor.id, { step: `AI ocenjuje oglas ${i + 1}/${createdListings.length}: ${fresh[i].title.slice(0, 40)}...`, aiEvaluated: i, progress: aiPct });
+      await new Promise(r => setTimeout(r, 200)); // 0.2s delay for UI to see each step
       const listing = createdListings[i];
       const scraped = fresh[i];
       let evaluation: ListingEvaluation | null = null;
@@ -508,10 +514,22 @@ export async function runMonitor(monitorId: string): Promise<RunResult> {
             aiVerdict: evaluation.verdict,
             aiReason: evaluation.razlog,
             aiEstimatedValue: evaluation.predvidena_trzna_vrednost ?? null,
+            dealScore: evaluation.deal_score ?? null,
+            dealScoreReason: evaluation.razlog,
+            dealScoreComputedAt: new Date(),
             aiEvaluatedAt: new Date(),
             aiImageAnalysis: evaluation.image_analysis ?? null,
             aiImageVerdict: evaluation.image_verdict ?? null,
           },
+        });
+
+        // Update listing in progress with AI scores
+        progressUpdateListing(monitor.id, scraped.externalId, {
+          aiScore: evaluation.ocena_prilike,
+          aiRisk: evaluation.ocena_tveganja,
+          aiVerdict: evaluation.verdict,
+          aiReason: evaluation.razlog,
+          dealScore: evaluation.deal_score ?? undefined,
         });
 
         // Check thresholds for alert
@@ -547,129 +565,72 @@ export async function runMonitor(monitorId: string): Promise<RunResult> {
             },
           });
 
-          // v6.93: Trigger webhook 'alert.created' (glavni AI alert)
-          try {
-            await triggerWebhooks('alert.created', {
+          // v9.83: Unified notification dispatch
+          await triggerAlertWebhooks('alert.created', {
+            alertId: alert.id,
+            monitorId: monitor.id,
+            listingId: listing.id,
+            title: listing.title,
+            url: listing.url,
+            priceText: listing.priceText,
+            price: listing.price,
+            aiScore: evaluation.ocena_prilike,
+            aiRisk: evaluation.ocena_tveganja,
+            aiVerdict: evaluation.verdict,
+            aiReason: evaluation.razlog,
+            estimatedValue: evaluation.predvidena_trzna_vrednost,
+          });
+
+          // Calculate priority for push notifications
+          const pushPriority = calculatePriority({
+            aiVerdict: evaluation.verdict,
+            aiScore: evaluation.ocena_prilike,
+            aiRisk: evaluation.ocena_tveganja,
+            dealScore: listing.dealScore ?? null,
+          });
+
+          const delivery = await dispatchAlert(
+            settings as NotificationSettings,
+            monitor.notificationChannels,
+            {
               alertId: alert.id,
               monitorId: monitor.id,
+              monitorName: monitor.name,
               listingId: listing.id,
               title: listing.title,
-              url: listing.url,
               priceText: listing.priceText,
-              price: listing.price,
+              url: listing.url,
+              location: listing.location || undefined,
               aiScore: evaluation.ocena_prilike,
               aiRisk: evaluation.ocena_tveganja,
               aiVerdict: evaluation.verdict,
               aiReason: evaluation.razlog,
-              estimatedValue: evaluation.predvidena_trzna_vrednost,
-            });
-          } catch (e) { /* webhook failures ne vplivajo na pipeline */ }
-
-          // v2.5: Check quiet hours and monitor-specific channels
-          const inQuietHours = settings.quietHoursEnabled &&
-            isInQuietHours(settings.quietStartHour, settings.quietEndHour);
-          const monitorChannels = getMonitorChannels(monitor.notificationChannels);
-          const useTelegram = monitorChannels ? monitorChannels.telegram : settings.telegramEnabled;
-          const useDiscord = monitorChannels ? monitorChannels.discord : settings.discordEnabled;
-          const useSlack = monitorChannels ? monitorChannels.slack : settings.slackEnabled;
-          const usePush = monitorChannels ? monitorChannels.push : settings.pushEnabled;
-          const useEmail = settings.emailEnabled;
-
-          // Delivery tracking data
-          const delivery: any = {};
-
-          // Skip notifications during quiet hours (but still create alert in DB)
-          if (!inQuietHours) {
-            // Send Telegram if enabled
-            if (useTelegram && settings.telegramBotToken && settings.telegramChatId) {
-              const inlineButtons = settings.telegramInlineButtons
-                ? buildAlertInlineButtons({ alertId: alert.id, listingUrl: listing.url, dashboardUrl: getAppUrl() + '/alerts' })
-                : undefined;
-              const tg = await sendTelegramMessage(
-                { botToken: settings.telegramBotToken, chatId: settings.telegramChatId }, alertBody, { inlineButtons }
-              );
-              delivery.sentTelegram = tg.ok;
-              delivery.telegramSentAt = tg.ok ? new Date() : null;
-              delivery.telegramError = tg.ok ? null : tg.error;
-              if (tg.ok) alertsSent++;
-            }
-
-            if (useDiscord && settings.discordWebhookUrl) {
-              const embed = buildAlertEmbed({
-                monitorName: monitor.name, title: listing.title, priceText: listing.priceText,
-                url: listing.url, location: listing.location || undefined,
-                aiScore: evaluation.ocena_prilike, aiRisk: evaluation.ocena_tveganja,
-                aiVerdict: evaluation.verdict, aiReason: evaluation.razlog,
-                estimatedValue: evaluation.predvidena_trzna_vrednost ?? null,
-                imageAnalysis: evaluation.image_analysis ?? null, imageUrl: listing.imageUrl ?? null,
-              });
-              const dc = await sendDiscordMessage({ webhookUrl: settings.discordWebhookUrl }, embed);
-              delivery.sentDiscord = dc.ok;
-              delivery.discordError = dc.ok ? null : dc.error;
-              if (dc.ok && alertsSent === 0) alertsSent++;
-            }
-
-            if (useSlack && settings.slackWebhookUrl) {
-              const blocks = buildAlertSlackBlocks({
-                title: listing.title, priceText: listing.priceText, url: listing.url,
-                monitorName: monitor.name, aiScore: evaluation.ocena_prilike,
-                aiRisk: evaluation.ocena_tveganja, aiVerdict: evaluation.verdict,
-                aiReason: evaluation.razlog, estimatedValue: evaluation.predvidena_trzna_vrednost ?? null,
-              });
-              const sl = await sendSlackMessage({ webhookUrl: settings.slackWebhookUrl }, `🎯 ${listing.title}`, blocks);
-              delivery.sentSlack = sl.ok;
-              delivery.slackError = sl.ok ? null : sl.error;
-              if (sl.ok && alertsSent === 0) alertsSent++;
-            }
-
-            if (usePush) {
-              // v6.93: Smart push — AI alert-i gredo skozi sendSmartPush (batched by priority).
-              // PRILIKA z aiScore>=8 in dealScore>=80 = critical (immediate), drugače batched.
-              // calculatePriority upošteva verdict, aiScore, dealScore, isBookmarked.
-              const isHighPriority = evaluation.verdict === 'PRILIKA'
-                && evaluation.ocena_prilike >= 8
-                && (listing.dealScore ?? 0) >= 80;
-              try {
-                if (isHighPriority) {
-                  await sendImmediatePush({
-                    title: `${evaluation.verdict === 'PRILIKA' ? '🎯' : evaluation.verdict === 'SUMNJIVO' ? '⚠️' : '•'} ${listing.title.slice(0, 60)}`,
-                    body: `${listing.priceText} • ${monitor.name} (prilika ${evaluation.ocena_prilike}/10, tveganje ${evaluation.ocena_tveganja}/10)`,
-                    url: '/alerts',
-                    priority: isHighPriority ? 'critical' : 'medium',
-                  });
-                } else {
-                  await sendSmartPush();
-                }
-              } catch (e: any) {
-                delivery.pushError = (e?.message ?? 'push error').slice(0, 200);
-              }
-              // Za delivery tracking — preberi nazadnje poslane (pošljemo batch)
-              delivery.sentPush = true; // sendSmartPush/sendImmediatePush poskata vse pending
-            }
-
-            if (useEmail && settings.emailSmtpHost && settings.emailTo) {
-              const html = formatAlertEmail({
-                title: listing.title, priceText: listing.priceText, url: listing.url,
-                monitorName: monitor.name, aiScore: evaluation.ocena_prilike,
-                aiRisk: evaluation.ocena_tveganja, aiVerdict: evaluation.verdict,
-                aiReason: evaluation.razlog, estimatedValue: evaluation.predvidena_trzna_vrednost ?? null,
-              });
-              const em = await sendEmail(
-                { smtpHost: settings.emailSmtpHost, smtpPort: settings.emailSmtpPort, smtpUser: settings.emailSmtpUser,
-                  smtpPassword: settings.emailSmtpPassword, from: settings.emailFrom, to: settings.emailTo },
-                `🎯 ${listing.title.slice(0, 60)}`, html
-              );
-              delivery.sentEmail = em.ok;
-              delivery.emailError = em.ok ? null : em.error;
-            }
-          }
+              estimatedValue: evaluation.predvidena_trzna_vrednost ?? null,
+              imageAnalysis: evaluation.image_analysis ?? null,
+              imageUrl: listing.imageUrl ?? null,
+              alertBody,
+            },
+            pushPriority,
+          );
 
           // Update alert with delivery status
-          if (Object.keys(delivery).length > 0) {
-            await db.alert.update({ where: { id: alert.id }, data: delivery });
-          }
-
-          if (!useTelegram && !useDiscord && !useSlack && !usePush && !useEmail) {
+          if (delivery.alertsSentCount > 0) {
+            await db.alert.update({
+              where: { id: alert.id },
+              data: {
+                sentTelegram: delivery.sentTelegram,
+                telegramSentAt: delivery.telegramSentAt,
+                telegramError: delivery.telegramError,
+                sentDiscord: delivery.sentDiscord,
+                discordError: delivery.discordError,
+                sentSlack: delivery.sentSlack,
+                slackError: delivery.slackError,
+                sentPush: delivery.sentPush,
+                pushError: delivery.pushError,
+                sentEmail: delivery.sentEmail,
+                emailError: delivery.emailError,
+              },
+            });
             alertsSent++;
           }
         }
@@ -686,19 +647,6 @@ export async function runMonitor(monitorId: string): Promise<RunResult> {
     alertsSent += priceDropAlerts;
     // v4.5: Add target price alerts to total
     alertsSent += targetPriceAlerts;
-
-    // v5.3: Check smart rules (kompleksna pravila alertov)
-    try {
-      const { checkSmartRules } = await import('@/lib/smart-rules-engine');
-      const triggeredRules = await checkSmartRules();
-      if (triggeredRules.length > 0) {
-        const smartAlerts = triggeredRules.reduce((s, r) => s + r.matchedCount, 0);
-        alertsSent += smartAlerts;
-      }
-    } catch (e) {
-      // Smart rules are non-critical — don't fail the run
-      console.error('Smart rules check failed:', e);
-    }
 
     await db.runLog.update({
       where: { id: runLog.id },
@@ -722,6 +670,9 @@ export async function runMonitor(monitorId: string): Promise<RunResult> {
       },
     });
 
+    progressUpdate(monitor.id, { status: 'done', step: `Končano — ${fresh.length} novih, ${alertsSent} alertov`, progress: 100 });
+    await new Promise(r => setTimeout(r, 500)); // 0.5s delay so UI shows final state
+    progressDone(monitor.id);
     return {
       status: 'ok',
       listingsFound: listings.length,
@@ -731,6 +682,7 @@ export async function runMonitor(monitorId: string): Promise<RunResult> {
     };
   } catch (e: any) {
     const error = e?.message ?? 'Neznana napaka';
+    progressError(monitor.id, error);
     if (runLogId) {
       await db.runLog.update({
         where: { id: runLogId },
@@ -820,6 +772,17 @@ export async function runDueMonitors(): Promise<{ ran: number; results: RunResul
     results.push(r);
   }
   return { ran: due.length, results, skipped, autoPaused };
+}
+
+/** Force-run ALL active monitors immediately, ignoring intervals. Used by "Poženi vse" button. */
+export async function forceRunAll(): Promise<{ ran: number; results: RunResult[] }> {
+  const monitors = await db.monitor.findMany({ where: { isActive: true } });
+  const results: RunResult[] = [];
+  for (const m of monitors) {
+    const r = await runMonitor(m.id);
+    results.push(r);
+  }
+  return { ran: monitors.length, results };
 }
 
 /**

@@ -75,7 +75,7 @@ const NAV_CATEGORIES: NavCategory[] = [
     id: 'monitors', label: 'Monitorji', icon: ListPlus, primaryView: 'monitors',
     subViews: [
       { id: 'monitors', label: 'Monitorji', icon: ListPlus },
-      { id: 'scraper-status', label: 'Scraper Status', icon: RefreshCw },
+      { id: 'scraper-status', label: 'Status', icon: RefreshCw },
     ],
   },
   {
@@ -83,42 +83,13 @@ const NAV_CATEGORIES: NavCategory[] = [
     subViews: [
       { id: 'listings', label: 'Vsi oglasi', icon: LayoutGrid },
       { id: 'watchlist', label: 'Watchlist', icon: Eye },
-      { id: 'iskalnik', label: 'Iskalnik', icon: FileText },
-      { id: 'listing-opt', label: 'Oglasi AI', icon: FileText },
     ],
   },
   {
-    id: 'trades', label: 'Skladišče', icon: TrendingUp, primaryView: 'trades',
-    subViews: [
-      { id: 'trades', label: 'Trgovine', icon: TrendingUp },
-      { id: 'inventory', label: 'Inventar', icon: Package },
-      { id: 'pricing', label: 'Cene AI', icon: DollarSign },
-    ],
-  },
-  {
-    id: 'ai-hub', label: 'AI', icon: Sparkles, primaryView: 'ai-hub',
-    subViews: [
-      { id: 'ai-hub', label: 'AI Hub', icon: Sparkles },
-      { id: 'buyers', label: 'Kupci', icon: Users },
-      { id: 'risk', label: 'Tveganja', icon: Shield },
-      { id: AI_ASSISTANT_MODAL_ID, label: 'AI Asistent', icon: Sparkles },
-    ],
-  },
-  {
-    id: 'analytics', label: 'Analitika', icon: BarChart3, primaryView: 'analytics',
-    subViews: [
-      { id: 'analytics', label: 'Analitika', icon: BarChart3 },
-      { id: 'statistics', label: 'Statistike', icon: PieChart },
-      { id: 'predictive', label: 'Predictive', icon: Zap },
-    ],
-  },
-  {
-    id: 'settings', label: 'Sistem', icon: Settings, primaryView: 'settings',
+    id: 'settings', label: 'Nastavitve', icon: Settings, primaryView: 'settings',
     subViews: [
       { id: 'settings', label: 'Nastavitve', icon: Settings },
-      { id: 'health', label: 'Zdravje', icon: Heart },
       { id: 'alerts', label: 'Alerti', icon: Bell },
-      { id: 'notifications', label: 'Obvestila', icon: History },
     ],
   },
 ];

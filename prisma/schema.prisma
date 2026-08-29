@@ -318,7 +318,8 @@ model Monitor {
   id          String   @id @default(cuid())
   name        String
   source      String   // bolha | nepremicnine | avtonet | salomon | custom-rss | vinted | mobile-de | kleinanzeigen | subito | willhaben
-  sourceUrl   String   // the search URL or RSS URL
+  sourceUrl   String   // the search URL or RSS URL (primary, for single-query monitors)
+  sourceUrls  String   @default("[]") // JSON array of URLs for multi-query monitors (e.g. ["url1","url2","url3"])
   // v4.9: Profile assignment (null = no profile / visible in all)
   profileId   String?
   profile     Profile? @relation(fields: [profileId], references: [id], onDelete: SetNull)

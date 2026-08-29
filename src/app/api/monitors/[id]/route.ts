@@ -36,6 +36,7 @@ export async function PUT(req: NextRequest, { params }: { params: Promise<{ id: 
     if (typeof body.name === 'string') data.name = body.name;
     if (typeof body.source === 'string') data.source = body.source;
     if (typeof body.sourceUrl === 'string') data.sourceUrl = body.sourceUrl;
+    if (typeof body.sourceUrls === 'string') data.sourceUrls = body.sourceUrls;
     if (typeof body.keywords === 'string') data.keywords = body.keywords;
     if (typeof body.excludeKeywords === 'string') data.excludeKeywords = body.excludeKeywords;
     if (typeof body.minPrice === 'number' || body.minPrice === null) data.minPrice = body.minPrice;

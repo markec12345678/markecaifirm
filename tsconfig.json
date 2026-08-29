@@ -41,6 +41,7 @@
     "skills",
     "examples",
     "tests",
-    "mini-services"
+    "mini-services",
+    "cf-scraper-bypass"
   ]
 }

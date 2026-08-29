@@ -57,7 +57,7 @@ export function ThemeToggle({ compact = false }: { compact?: boolean }) {
   if (!mounted) {
     // Avoid hydration mismatch — render placeholder until mounted
     return (
-      <Button variant="ghost" size="icon" className="h-9 w-9" disabled>
+      <Button variant="ghost" size="icon" className="h-9 w-9" disabled={true}>
         <Sun className="h-4 w-4" />
       </Button>
     );

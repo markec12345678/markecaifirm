@@ -15,7 +15,6 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { db } from '@/lib/db';
 import { logger } from '@/lib/logger';
-import { autoPilotScrapingBypass, isAutoPilotEnabled } from '@/lib/scraper/bypass-chain';
 
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
@@ -169,27 +168,17 @@ export async function POST(req: NextRequest) {
     const url = new URL(req.url);
     const autoBypass = url.searchParams.get('autoBypass') === 'true';
 
-    // Auto-bypass mode — v9.58: uporablja pravi bypass chain
+    // Auto-bypass mode — simplified (bypass-chain removed)
     if (autoBypass) {
-      // Preveri ali je avtopilot omogočen
-      const autoPilotActive = await isAutoPilotEnabled();
-
-      // Izvedi bypass chain za vse blokirane
-      const result = await autoPilotScrapingBypass();
-
       return NextResponse.json({
         ok: true,
         autoBypass: true,
-        autoPilotActive,
-        bypassed: result.bypassed,
-        failed: result.failed,
-        total: result.checked,
-        results: result.results,
-        message: result.checked === 0
-          ? 'Ni blokiranih scraper-jev za bypass.'
-          : autoPilotActive
-            ? `Avtopilot: ${result.bypassed} uspešnih, ${result.failed} neuspešnih od ${result.checked} blokiranih.`
-            : `Ročni bypass: ${result.bypassed} uspešnih, ${result.failed} neuspešnih od ${result.checked} blokiranih. (Avtopilot je izklopljen — omogoči v Nastavitve)`,
+        autoPilotActive: false,
+        bypassed: 0,
+        failed: 0,
+        total: 0,
+        results: [],
+        message: 'Bypass chain je bil odstranjen. Uporabi Playwright fallback v nastavitvah.',
       });
     }
 
